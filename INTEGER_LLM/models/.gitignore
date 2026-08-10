@@ -1,0 +1,4 @@
+# Heruntergeladene Modelle nicht versionieren; Verzeichnis und Doku behalten
+/*
+!/.gitignore
+!/README.md

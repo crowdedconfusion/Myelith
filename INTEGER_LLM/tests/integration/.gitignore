@@ -1,0 +1,6 @@
+# Synthetische Artefakt-Verzeichnisse aus test_end2end.py nicht versionieren
+_synthetic_artifact*
+_incomplete_artifact
+_corrupted_artifact
+_badversion_artifact
+_tamperedmanifest_artifact

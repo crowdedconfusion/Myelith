@@ -1,0 +1,17 @@
+//! Integer-LLM Kernels
+//! 
+//! Strenge Fixed-Point-Operationen fuer bit-exakte LLM-Inferenz.
+//! Kein Float im Hot-Path.
+
+pub mod backend;
+pub mod backends;
+pub mod fixed_point;
+pub mod integer_math;
+pub mod prng;
+pub mod rmsnorm;
+pub mod linear;
+pub mod rope;
+pub mod softmax;
+pub mod attention;
+pub mod mlp;
+pub mod sampling;

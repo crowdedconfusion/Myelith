@@ -1,0 +1,1237 @@
+//! Modell-Lader mit theta_v-Validierung
+
+use std::path::Path;
+use std::collections::HashMap;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use crate::model::{IntegerModel, TransformerLayer, QTensor, ModelConfig};
+
+/// Zur Kompilierzeit eingebettete Ausfuehrungsspezifikation (Kap. 6.5 des
+/// Whitepapers: Teil von theta_v, damit konsensrelevant). Bewusst per
+/// `include_str!` statt zur Laufzeit von der Platte gelesen: Die Spezifikation,
+/// gegen die validiert wird, muss die sein, die tatsaechlich in diesem Binary
+/// kompiliert ist - nicht eine Datei, die seit dem letzten Build editiert
+/// worden sein koennte.
+const SPEC_JSON: &str = include_str!("../../theta_v/spec.json");
+
+/// SHA-256 der eingebetteten spec.json, zu Diagnose-/Audit-Zwecken.
+pub fn spec_hash() -> String {
+    sha256_hex(SPEC_JSON.as_bytes())
+}
+
+/// theta_v-Version aus der eingebetteten spec.json.
+fn spec_version() -> Result<String, String> {
+    let parsed: serde_json::Value = serde_json::from_str(SPEC_JSON)
+        .map_err(|e| format!("Eingebettetes theta_v/spec.json ist ungueltig: {}", e))?;
+    parsed["theta_v"]["version"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "theta_v/spec.json: Feld theta_v.version fehlt".to_string())
+}
+
+#[derive(Debug, Clone)]
+pub struct ThetaV {
+    pub version: String,
+    pub weights_hash: String,
+    pub scales_hash: String,
+    pub luts_hash: String,
+}
+
+impl ThetaV {
+    pub fn load_from_dir<P: AsRef<Path>>(dir: P) -> Result<Self, String> {
+        let manifest_path = dir.as_ref().join("theta_v.json");
+        let content = std::fs::read_to_string(&manifest_path)
+            .map_err(|e| format!("Fehler beim Lesen: {}", e))?;
+        let manifest: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("Invalid JSON: {}", e))?;
+
+        Ok(ThetaV {
+            version: manifest["version"].as_str().unwrap_or("unknown").to_string(),
+            weights_hash: manifest["weights_hash"].as_str().unwrap_or("").to_string(),
+            scales_hash: manifest["scales_hash"].as_str().unwrap_or("").to_string(),
+            luts_hash: manifest["luts_hash"].as_str().unwrap_or("").to_string(),
+        })
+    }
+
+    /// Prueft, dass das Artefakt gegen dieselbe theta_v-Version kalibriert
+    /// wurde, die in diesem Binary als Ausfuehrungsspezifikation eingebettet
+    /// ist. Ein Versions-Mismatch bedeutet: Gewichte/Skalen/LUTs koennten
+    /// unter anderen Annahmen (Bitbreiten, LUT-Bereiche, Rundungsregeln)
+    /// erzeugt worden sein als das, was dieser Runtime-Build tatsaechlich
+    /// ausfuehrt - stillschweigendes Laden waere hier gefaehrlicher als ein
+    /// fehlgeschlagenes Laden.
+    pub fn verify_version_against_spec(&self) -> Result<(), String> {
+        let expected = spec_version()?;
+        if self.version != expected {
+            return Err(format!(
+                "theta_v-Version des Artefakts ({}) stimmt nicht mit der in diesem Binary \
+                 eingebetteten Ausfuehrungsspezifikation ({}) ueberein",
+                self.version, expected
+            ));
+        }
+        Ok(())
+    }
+
+    /// Prueft die im Artefakt deklarierten Hashes gegen tatsaechlich
+    /// berechnete Hashes der geladenen Manifest-Dateien.
+    pub fn verify(&self, weights_hash: &str, scales_hash: &str, luts_hash: &str) -> Result<(), String> {
+        if self.weights_hash != weights_hash {
+            return Err("weights hash mismatch".to_string());
+        }
+        if self.scales_hash != scales_hash {
+            return Err("scales hash mismatch".to_string());
+        }
+        if self.luts_hash != luts_hash {
+            return Err("luts hash mismatch".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Ein Eintrag in `weights_manifest.json` (Format: calibrate/src/export_weights.py).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WeightManifestEntry {
+    pub original_name: String,
+    pub file: String,
+    pub shape: Vec<usize>,
+    pub scale: f64,
+    pub shift: i64,
+    pub dtype: String,
+    pub hash: String,
+}
+
+/// Ein geladener INT8-Tensor mit seinen Manifest-Metadaten.
+#[derive(Debug)]
+pub struct LoadedWeight {
+    pub tensor: QTensor,
+    pub original_name: String,
+    pub scale: f64,
+}
+
+/// Alle INT8-Gewichte eines Artefakt-Verzeichnisses, indexiert ueber den
+/// Manifest-Key (Tensorname mit Unterstrichen statt Punkten).
+#[derive(Debug)]
+pub struct LoadedWeights {
+    pub weights: HashMap<String, LoadedWeight>,
+}
+
+impl LoadedWeights {
+    /// Sucht einen Tensor ueber seinen HF-Originalnamen (Punkte werden zu
+    /// Unterstrichen normalisiert, wie im Manifest-Key aus
+    /// calibrate/src/export_weights.py).
+    pub fn get(&self, original_name: &str) -> Option<&QTensor> {
+        let key = original_name.replace('.', "_");
+        self.weights.get(&key).map(|w| &w.tensor)
+    }
+}
+
+/// Ein Eintrag in `luts.json` (Format: calibrate/src/export.py, `export_theta_v`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct LutManifestEntry {
+    pub file: String,
+    pub hash: String,
+    pub length: usize,
+    pub dtype: String,
+}
+
+/// Alle Lookup-Tabellen eines Artefakt-Verzeichnisses, indexiert ueber den
+/// Manifest-Key (`rsqrt`, `silu`, `exp`, `sin`, `cos`).
+#[derive(Debug)]
+pub struct LoadedLuts {
+    pub tables: HashMap<String, Vec<i16>>,
+}
+
+impl LoadedLuts {
+    pub fn get(&self, name: &str) -> Option<&Vec<i16>> {
+        self.tables.get(name)
+    }
+}
+
+/// Ein Eintrag in `scales.json` (Format: calibrate/src/scales.py, `compute_scales_from_stats`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScaleEntry {
+    pub shift: i64,
+    pub scale: f64,
+    pub absmax_observed: f64,
+}
+
+/// Alle Aktivierungsskalen eines Artefakt-Verzeichnisses, indexiert ueber den
+/// Layer-/Modul-Namen (z. B. "model.layers.0.self_attn.q_proj").
+#[derive(Debug)]
+pub struct LoadedScales {
+    pub scales: HashMap<String, ScaleEntry>,
+}
+
+impl LoadedScales {
+    /// Rechts-Shift fuer die Reskalierung des benannten Layers/Moduls.
+    pub fn shift(&self, name: &str) -> Option<u8> {
+        self.scales.get(name).map(|e| e.shift as u8)
+    }
+}
+
+/// Modell-Dimensionen aus `model_config.json` (ein Eintrag je Artefakt,
+/// Spiegel der `model`-Sektion aus `theta_v/spec.json` bzw. der Eintraege in
+/// `calibrate/src/model_configs.py`). Ersetzt die zuvor in `load_model()`
+/// hartkodierten Rust-Literale, damit ein Wechsel auf eine groessere
+/// Qwen2.5-Variante ein Config-Wechsel bleibt statt einer Codeaenderung.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelDims {
+    pub family: String,
+    pub variant: String,
+    pub num_layers: usize,
+    pub hidden_size: usize,
+    pub intermediate_size: usize,
+    pub num_heads: usize,
+    /// Anzahl Key/Value-Heads (Grouped-Query-Attention). Bei Modellen ohne
+    /// GQA identisch zu `num_heads`. Qwen2.5-0.5B: 2 (gegenueber 14 Query-Heads,
+    /// siehe `models/Qwen2.5-0.5B/config.json`, Feld `num_key_value_heads`).
+    pub num_kv_heads: usize,
+    pub head_dim: usize,
+    pub vocab_size: usize,
+    pub max_context: usize,
+    /// Ob LM-Head und Embedding-Tabelle dasselbe Gewicht teilen (HF-Feld
+    /// `tie_word_embeddings`). Bei Qwen2.5-0.5B `true` - der Export enthaelt
+    /// dann kein eigenes `lm_head.weight`.
+    pub tie_word_embeddings: bool,
+}
+
+/// Laedt und validiert die Modell-Dimensionen aus `model_config.json`.
+pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
+    let path = artifact_dir.join("model_config.json");
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Fehler beim Lesen von model_config.json: {}", e))?;
+    let dims: ModelDims = serde_json::from_str(&content)
+        .map_err(|e| format!("Ungueltiges model_config.json: {}", e))?;
+
+    if dims.num_layers == 0
+        || dims.hidden_size == 0
+        || dims.num_heads == 0
+        || dims.num_kv_heads == 0
+        || dims.head_dim == 0
+        || dims.vocab_size == 0
+    {
+        return Err("model_config.json: alle Modell-Dimensionen muessen > 0 sein".to_string());
+    }
+    if dims.hidden_size != dims.num_heads * dims.head_dim {
+        return Err(format!(
+            "model_config.json: hidden_size ({}) != num_heads ({}) * head_dim ({})",
+            dims.hidden_size, dims.num_heads, dims.head_dim
+        ));
+    }
+    if dims.num_heads % dims.num_kv_heads != 0 {
+        return Err(format!(
+            "model_config.json: num_heads ({}) ist kein Vielfaches von num_kv_heads ({}) (GQA-Gruppierung nicht moeglich)",
+            dims.num_heads, dims.num_kv_heads
+        ));
+    }
+
+    Ok(dims)
+}
+
+/// Laedt alle INT8-Gewichte aus `weights_manifest.json` und den darin
+/// referenzierten `.bin`-Dateien (raw int8, row-major, little-endian).
+///
+/// Validiert pro Tensor dtype, Form, Dateigroesse und den SHA-256-Hash gegen
+/// das Manifest. Fehlerhafte Artefakte werden komplett abgelehnt.
+pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
+    let manifest_path = artifact_dir.join("weights_manifest.json");
+    let content = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Fehler beim Lesen von weights_manifest.json: {}", e))?;
+    let entries: HashMap<String, WeightManifestEntry> = serde_json::from_str(&content)
+        .map_err(|e| format!("Ungueltiges weights_manifest.json: {}", e))?;
+
+    let mut weights = HashMap::with_capacity(entries.len());
+    for (name, entry) in entries {
+        if entry.dtype != "int8" {
+            return Err(format!(
+                "{}: nicht unterstuetzter dtype '{}' (erwartet 'int8')",
+                name, entry.dtype
+            ));
+        }
+        if entry.shape.is_empty() {
+            return Err(format!("{}: leere shape im Manifest", name));
+        }
+        if entry.shift < 0 || entry.shift > u8::MAX as i64 {
+            return Err(format!(
+                "{}: shift {} liegt ausserhalb von 0..=255",
+                name, entry.shift
+            ));
+        }
+
+        let bytes = std::fs::read(artifact_dir.join(&entry.file))
+            .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+
+        let expected_len: usize = entry.shape.iter().product();
+        if bytes.len() != expected_len {
+            return Err(format!(
+                "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes",
+                name, bytes.len(), entry.file, entry.shape, expected_len
+            ));
+        }
+
+        let digest = sha256_hex(&bytes);
+        if digest != entry.hash {
+            return Err(format!(
+                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                name, digest, entry.hash
+            ));
+        }
+
+        let tensor = QTensor {
+            data: bytes.into_iter().map(|b| b as i8).collect(),
+            shape: entry.shape,
+            shift: entry.shift as u8,
+        };
+        weights.insert(name, LoadedWeight {
+            tensor,
+            original_name: entry.original_name,
+            scale: entry.scale,
+        });
+    }
+
+    Ok(LoadedWeights { weights })
+}
+
+/// Laedt alle Lookup-Tabellen aus `luts.json` und den darin referenzierten
+/// `.lut.bin`-Dateien (raw int16, little-endian, Format `struct.pack("<Nh", ...)`
+/// aus `calibrate/src/export.py`).
+///
+/// Validiert pro Tabelle dtype, Laenge und den SHA-256-Hash gegen das
+/// Manifest. Fehlerhafte Artefakte werden komplett abgelehnt, analog zu
+/// `load_weights`.
+pub fn load_luts(artifact_dir: &Path) -> Result<LoadedLuts, String> {
+    let manifest_path = artifact_dir.join("luts.json");
+    let content = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Fehler beim Lesen von luts.json: {}", e))?;
+    let entries: HashMap<String, LutManifestEntry> = serde_json::from_str(&content)
+        .map_err(|e| format!("Ungueltiges luts.json: {}", e))?;
+
+    let mut tables = HashMap::with_capacity(entries.len());
+    for (name, entry) in entries {
+        if entry.dtype != "int16" {
+            return Err(format!(
+                "{}: nicht unterstuetzter dtype '{}' (erwartet 'int16')",
+                name, entry.dtype
+            ));
+        }
+
+        let bytes = std::fs::read(artifact_dir.join(&entry.file))
+            .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+
+        let expected_bytes = entry.length * 2;
+        if bytes.len() != expected_bytes {
+            return Err(format!(
+                "{}: {} Bytes in '{}', aber length {} erwartet {} Bytes",
+                name, bytes.len(), entry.file, entry.length, expected_bytes
+            ));
+        }
+
+        let digest = sha256_hex(&bytes);
+        if digest != entry.hash {
+            return Err(format!(
+                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                name, digest, entry.hash
+            ));
+        }
+
+        // struct-unpack "<Nh": little-endian i16, ein Wert pro zwei Bytes.
+        let values: Vec<i16> = bytes
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+
+        tables.insert(name, values);
+    }
+
+    Ok(LoadedLuts { tables })
+}
+
+/// Laedt alle Aktivierungsskalen aus `scales.json` (Format: calibrate/src/scales.py).
+///
+/// Jeder Eintrag traegt einen Zweierpotenz-Shift sowie den daraus abgeleiteten
+/// Faktor `scale = 2^shift`. Die Skalenwahl selbst ist Aufgabe der Kalibrierung
+/// (`calibrate/`); der Loader validiert nur Wertebereich und die Konsistenz
+/// zwischen `shift` und `scale` und lehnt widerspruechliche Artefakte ab.
+pub fn load_scales(artifact_dir: &Path) -> Result<LoadedScales, String> {
+    let path = artifact_dir.join("scales.json");
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Fehler beim Lesen von scales.json: {}", e))?;
+    let entries: HashMap<String, ScaleEntry> = serde_json::from_str(&content)
+        .map_err(|e| format!("Ungueltiges scales.json: {}", e))?;
+
+    for (name, entry) in &entries {
+        if entry.shift < 0 || entry.shift > u8::MAX as i64 {
+            return Err(format!(
+                "{}: shift {} liegt ausserhalb von 0..=255",
+                name, entry.shift
+            ));
+        }
+
+        // shift ist frac_bits (Laufzeit-Konvention: real ≈ quantized >> shift,
+        // siehe calibrate/src/scales.py); scale ist die zugehoerige
+        // Dequantisierungs-Konstante 2^-shift, nicht 2^shift.
+        let expected_scale = 2f64.powi(-(entry.shift as i32));
+        if (entry.scale - expected_scale).abs() > expected_scale * 1e-9 {
+            return Err(format!(
+                "{}: scale {} ist keine Zweierpotenz zu shift {} (erwartet {})",
+                name, entry.scale, entry.shift, expected_scale
+            ));
+        }
+    }
+
+    Ok(LoadedScales { scales: entries })
+}
+
+/// SHA-256-Hash eines Byte-Slices als kleingeschriebener Hex-String.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Laedt ein komplettes Modell aus dem Artefakt-Verzeichnis: theta_v-Manifest,
+/// Modell-Dimensionen, Gewichte, Aktivierungsskalen und Lookup-Tabellen.
+pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
+    let theta_v = ThetaV::load_from_dir(artifact_dir)?;
+    theta_v.verify_version_against_spec()?;
+
+    let dims = load_model_dims(artifact_dir)?;
+    let weights = load_weights(artifact_dir)?;
+    let scales = load_scales(artifact_dir)?;
+    let luts = load_luts(artifact_dir)?;
+
+    let weights_manifest_hash = sha256_hex(
+        &std::fs::read(artifact_dir.join("weights_manifest.json"))
+            .map_err(|e| format!("Fehler beim Lesen von weights_manifest.json: {}", e))?,
+    );
+    let scales_file_hash = sha256_hex(
+        &std::fs::read(artifact_dir.join("scales.json"))
+            .map_err(|e| format!("Fehler beim Lesen von scales.json: {}", e))?,
+    );
+    let luts_file_hash = sha256_hex(
+        &std::fs::read(artifact_dir.join("luts.json"))
+            .map_err(|e| format!("Fehler beim Lesen von luts.json: {}", e))?,
+    );
+    theta_v.verify(&weights_manifest_hash, &scales_file_hash, &luts_file_hash)?;
+
+    build_model(theta_v, dims, weights, scales, luts)
+}
+
+/// Sucht einen Pflicht-Tensor ueber seinen HF-Originalnamen; fehlt er, wird
+/// das Artefakt als unvollstaendig abgelehnt statt eine Luecke stillschweigend
+/// mit Platzhalterdaten zu fuellen.
+fn require_tensor<'a>(weights: &'a LoadedWeights, name: &str) -> Result<&'a QTensor, String> {
+    weights
+        .get(name)
+        .ok_or_else(|| format!("Fehlendes Gewicht im Artefakt: {}", name))
+}
+
+fn require_lut(luts: &LoadedLuts, name: &str) -> Result<Vec<i16>, String> {
+    luts.get(name)
+        .cloned()
+        .ok_or_else(|| format!("Fehlende Lookup-Tabelle im Artefakt: {}", name))
+}
+
+/// Baut ein vollstaendiges [`IntegerModel`] aus bereits geladenen Artefakten.
+///
+/// Erwartet HF-Tensornamen, wie sie `calibrate/src/quantize.py` erzeugt (z. B.
+/// `model.layers.0.self_attn.q_proj.weight`). Bei `tie_word_embeddings = true`
+/// wird kein eigenstaendiges `lm_head.weight` gesucht, sondern die
+/// Embedding-Tabelle wiederverwendet - Qwen2.5-0.5B exportiert in diesem Fall
+/// kein separates LM-Head-Gewicht (siehe `models/Qwen2.5-0.5B/config.json`).
+pub fn build_model(
+    theta_v: ThetaV,
+    dims: ModelDims,
+    weights: LoadedWeights,
+    scales: LoadedScales,
+    luts: LoadedLuts,
+) -> Result<IntegerModel, String> {
+    let embedding_table = require_tensor(&weights, "model.embed_tokens.weight")?.clone();
+
+    let lm_head = if dims.tie_word_embeddings {
+        embedding_table.clone()
+    } else {
+        require_tensor(&weights, "lm_head.weight")?.clone()
+    };
+
+    let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.data.clone();
+
+    let mut layers = Vec::with_capacity(dims.num_layers);
+    for layer_idx in 0..dims.num_layers {
+        let p = format!("model.layers.{}", layer_idx);
+        layers.push(TransformerLayer {
+            layer_idx,
+            input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.data.clone(),
+            post_attention_layernorm_gamma: require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.data.clone(),
+            q_proj: require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?.clone(),
+            k_proj: require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?.clone(),
+            v_proj: require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?.clone(),
+            o_proj: require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?.clone(),
+            gate_proj: require_tensor(&weights, &format!("{}.mlp.gate_proj.weight", p))?.clone(),
+            up_proj: require_tensor(&weights, &format!("{}.mlp.up_proj.weight", p))?.clone(),
+            down_proj: require_tensor(&weights, &format!("{}.mlp.down_proj.weight", p))?.clone(),
+        });
+    }
+
+    // "rsqrt" wird geladen und damit gegen theta_v validiert, von der
+    // Reference-Runtime aber (noch) nicht konsumiert: rmsnorm_int8 berechnet
+    // 1/sqrt(x) algorithmisch (integer_math::rsqrt_q, binaere Suche statt
+    // Tabellen-Lookup). Beides ist vollstaendig ganzzahlig und deterministisch;
+    // die Diskrepanz zur "method": "lut"-Angabe in theta_v/spec.json ist rein
+    // dokumentarisch und aendert nichts an der Bitgleichheits-Eigenschaft.
+    let _rsqrt_lut = require_lut(&luts, "rsqrt")?;
+
+    let model = IntegerModel {
+        theta_v,
+        vocab_size: dims.vocab_size,
+        hidden_size: dims.hidden_size,
+        num_layers: dims.num_layers,
+        num_heads: dims.num_heads,
+        num_kv_heads: dims.num_kv_heads,
+        head_dim: dims.head_dim,
+        max_context: dims.max_context,
+        embedding_table,
+        lm_head,
+        final_norm_gamma,
+        layers,
+        cos_lut: require_lut(&luts, "cos")?,
+        sin_lut: require_lut(&luts, "sin")?,
+        exp_lut: require_lut(&luts, "exp")?,
+        silu_lut: require_lut(&luts, "silu")?,
+        activation_scales: scales,
+        config: ModelConfig::default(),
+    };
+
+    Ok(model)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Eindeutiges Temp-Verzeichnis pro Test anlegen.
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("integer-llm-loader-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("Temp-Verzeichnis anlegen");
+        dir
+    }
+
+    /// Schreibt ein Minimal-Manifest mit einem Tensor.
+    fn write_manifest(dir: &Path, key: &str, entry: serde_json::Value) {
+        let manifest = serde_json::json!({ key: entry });
+        fs::write(
+            dir.join("weights_manifest.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .expect("Manifest schreiben");
+    }
+
+    fn entry(file: &str, shape: Vec<usize>, shift: i64, hash: &str) -> serde_json::Value {
+        serde_json::json!({
+            "original_name": file.replace(".bin", "").replace('_', "."),
+            "file": file,
+            "shape": shape,
+            "scale": 1.0,
+            "shift": shift,
+            "dtype": "int8",
+            "hash": hash,
+        })
+    }
+
+    #[test]
+    fn test_sha256_hex_known_vector() {
+        // Referenzwert aus FIPS 180-4, identisch zu Python hashlib.sha256(b"abc")
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_load_weights_roundtrip() {
+        let dir = test_dir("roundtrip");
+
+        // -128, -1, 0, 1, 127 als raw int8
+        let raw: Vec<u8> = vec![0x80, 0xFF, 0x00, 0x01, 0x7F, 0x40];
+        fs::write(dir.join("t_a.bin"), &raw).expect("Tensor schreiben");
+
+        write_manifest(
+            &dir,
+            "t_a",
+            entry("t_a.bin", vec![2, 3], 2, &sha256_hex(&raw)),
+        );
+
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        let tensor = &loaded.weights["t_a"].tensor;
+        assert_eq!(tensor.data, vec![-128i8, -1, 0, 1, 127, 64]);
+        assert_eq!(tensor.shape, vec![2, 3]);
+        assert_eq!(tensor.shift, 2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_weights_rejects_bad_hash() {
+        let dir = test_dir("badhash");
+        let raw: Vec<u8> = vec![1, 2, 3, 4];
+        fs::write(dir.join("t_b.bin"), &raw).expect("Tensor schreiben");
+
+        write_manifest(&dir, "t_b", entry("t_b.bin", vec![4], 0, "0".repeat(64).as_str()));
+
+        let err = load_weights(&dir).expect_err("Hash-Mismatch muss fehlschlagen");
+        assert!(err.contains("SHA-256"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_weights_rejects_size_mismatch() {
+        let dir = test_dir("badsize");
+        let raw: Vec<u8> = vec![1, 2, 3]; // 3 Bytes, Manifest behauptet 4
+        fs::write(dir.join("t_c.bin"), &raw).expect("Tensor schreiben");
+
+        write_manifest(&dir, "t_c", entry("t_c.bin", vec![2, 2], 0, &sha256_hex(&raw)));
+
+        let err = load_weights(&dir).expect_err("Groessen-Mismatch muss fehlschlagen");
+        assert!(err.contains("Bytes"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_weights_missing_manifest() {
+        let dir = test_dir("nomanifest");
+        let err = load_weights(&dir).expect_err("Ohne Manifest muss Laden fehlschlagen");
+        assert!(err.contains("weights_manifest.json"), "Fehlermeldung: {}", err);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Schreibt ein Minimal-`luts.json`-Manifest mit einem Eintrag.
+    fn write_luts_manifest(dir: &Path, key: &str, entry: serde_json::Value) {
+        let manifest = serde_json::json!({ key: entry });
+        fs::write(
+            dir.join("luts.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .expect("LUT-Manifest schreiben");
+    }
+
+    fn lut_entry(file: &str, length: usize, hash: &str) -> serde_json::Value {
+        serde_json::json!({
+            "file": file,
+            "hash": hash,
+            "length": length,
+            "dtype": "int16",
+        })
+    }
+
+    /// Packt i16-Werte wie `struct.pack(f"<{n}h", ...)` in `calibrate/src/export.py`.
+    fn pack_i16_le(values: &[i16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn test_load_luts_roundtrip() {
+        let dir = test_dir("luts-roundtrip");
+
+        let values: Vec<i16> = vec![256, -1, 0, 32767, -32768];
+        let raw = pack_i16_le(&values);
+        fs::write(dir.join("exp.lut.bin"), &raw).expect("LUT schreiben");
+
+        write_luts_manifest(&dir, "exp", lut_entry("exp.lut.bin", values.len(), &sha256_hex(&raw)));
+
+        let loaded = load_luts(&dir).expect("Laden erfolgreich");
+        assert_eq!(loaded.get("exp"), Some(&values));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_luts_multiple_tables() {
+        let dir = test_dir("luts-multi");
+
+        let sin: Vec<i16> = vec![0, 181, 256, 181, 0, -181, -256, -181];
+        let cos: Vec<i16> = vec![256, 181, 0, -181, -256, -181, 0, 181];
+        let sin_raw = pack_i16_le(&sin);
+        let cos_raw = pack_i16_le(&cos);
+        fs::write(dir.join("sin.lut.bin"), &sin_raw).expect("LUT schreiben");
+        fs::write(dir.join("cos.lut.bin"), &cos_raw).expect("LUT schreiben");
+
+        let manifest = serde_json::json!({
+            "sin": lut_entry("sin.lut.bin", sin.len(), &sha256_hex(&sin_raw)),
+            "cos": lut_entry("cos.lut.bin", cos.len(), &sha256_hex(&cos_raw)),
+        });
+        fs::write(dir.join("luts.json"), serde_json::to_string(&manifest).unwrap())
+            .expect("LUT-Manifest schreiben");
+
+        let loaded = load_luts(&dir).expect("Laden erfolgreich");
+        assert_eq!(loaded.get("sin"), Some(&sin));
+        assert_eq!(loaded.get("cos"), Some(&cos));
+        assert_eq!(loaded.get("exp"), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_luts_rejects_bad_hash() {
+        let dir = test_dir("luts-badhash");
+        let raw = pack_i16_le(&[1, 2, 3, 4]);
+        fs::write(dir.join("silu.lut.bin"), &raw).expect("LUT schreiben");
+
+        write_luts_manifest(&dir, "silu", lut_entry("silu.lut.bin", 4, "0".repeat(64).as_str()));
+
+        let err = load_luts(&dir).expect_err("Hash-Mismatch muss fehlschlagen");
+        assert!(err.contains("SHA-256"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_luts_rejects_size_mismatch() {
+        let dir = test_dir("luts-badsize");
+        let raw = pack_i16_le(&[1, 2, 3]); // 3 Werte, Manifest behauptet 4
+        fs::write(dir.join("rsqrt.lut.bin"), &raw).expect("LUT schreiben");
+
+        write_luts_manifest(&dir, "rsqrt", lut_entry("rsqrt.lut.bin", 4, &sha256_hex(&raw)));
+
+        let err = load_luts(&dir).expect_err("Groessen-Mismatch muss fehlschlagen");
+        assert!(err.contains("Bytes"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_luts_rejects_wrong_dtype() {
+        let dir = test_dir("luts-baddtype");
+        let raw = pack_i16_le(&[1, 2]);
+        fs::write(dir.join("exp.lut.bin"), &raw).expect("LUT schreiben");
+
+        let mut entry = lut_entry("exp.lut.bin", 2, &sha256_hex(&raw));
+        entry["dtype"] = serde_json::json!("int8");
+        write_luts_manifest(&dir, "exp", entry);
+
+        let err = load_luts(&dir).expect_err("Falscher dtype muss fehlschlagen");
+        assert!(err.contains("dtype"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_luts_missing_manifest() {
+        let dir = test_dir("luts-nomanifest");
+        let err = load_luts(&dir).expect_err("Ohne Manifest muss Laden fehlschlagen");
+        assert!(err.contains("luts.json"), "Fehlermeldung: {}", err);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    fn write_scales(dir: &Path, content: &serde_json::Value) {
+        fs::write(dir.join("scales.json"), serde_json::to_string(content).unwrap())
+            .expect("scales.json schreiben");
+    }
+
+    fn scale_entry(shift: i64, scale: f64, absmax: f64) -> serde_json::Value {
+        serde_json::json!({ "shift": shift, "scale": scale, "absmax_observed": absmax })
+    }
+
+    #[test]
+    fn test_load_scales_roundtrip() {
+        let dir = test_dir("scales-roundtrip");
+        // shift=3 (frac_bits) => scale = 2^-3 = 0.125 (Dequantisierungskonstante,
+        // nicht 2^shift - siehe Hinweis zu 12.10/Numerik-Fix).
+        let manifest = serde_json::json!({
+            "model.layers.0.self_attn.q_proj": scale_entry(3, 0.125, 5.2),
+        });
+        write_scales(&dir, &manifest);
+
+        let loaded = load_scales(&dir).expect("Laden erfolgreich");
+        assert_eq!(loaded.shift("model.layers.0.self_attn.q_proj"), Some(3));
+        assert_eq!(loaded.scales["model.layers.0.self_attn.q_proj"].absmax_observed, 5.2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_scales_multiple_layers() {
+        let dir = test_dir("scales-multi");
+        let manifest = serde_json::json!({
+            "model.layers.0.self_attn.q_proj": scale_entry(0, 1.0, 0.4),
+            "model.layers.0.mlp.gate_proj": scale_entry(5, 0.03125, 20.1),
+        });
+        write_scales(&dir, &manifest);
+
+        let loaded = load_scales(&dir).expect("Laden erfolgreich");
+        assert_eq!(loaded.shift("model.layers.0.self_attn.q_proj"), Some(0));
+        assert_eq!(loaded.shift("model.layers.0.mlp.gate_proj"), Some(5));
+        assert_eq!(loaded.shift("model.layers.99.does_not_exist"), None);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_scales_rejects_non_power_of_two() {
+        let dir = test_dir("scales-badscale");
+        // shift=3 verlangt scale=2^-3=0.125, hier absichtlich 0.1 (kein Zweierpotenz-Faktor)
+        let manifest = serde_json::json!({
+            "model.layers.0.self_attn.k_proj": scale_entry(3, 0.1, 5.0),
+        });
+        write_scales(&dir, &manifest);
+
+        let err = load_scales(&dir).expect_err("Inkonsistente Skala muss fehlschlagen");
+        assert!(err.contains("Zweierpotenz"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_scales_rejects_out_of_range_shift() {
+        let dir = test_dir("scales-badshift");
+        let manifest = serde_json::json!({
+            "model.layers.0.self_attn.v_proj": scale_entry(-1, 0.5, 1.0),
+        });
+        write_scales(&dir, &manifest);
+
+        let err = load_scales(&dir).expect_err("Negativer shift muss fehlschlagen");
+        assert!(err.contains("0..=255"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_scales_missing_manifest() {
+        let dir = test_dir("scales-nomanifest");
+        let err = load_scales(&dir).expect_err("Ohne Manifest muss Laden fehlschlagen");
+        assert!(err.contains("scales.json"), "Fehlermeldung: {}", err);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- ModelDims (12.10) ---
+
+    fn model_dims_json(num_heads: i64, num_kv_heads: i64, hidden_size: i64, head_dim: i64, tie: bool) -> serde_json::Value {
+        serde_json::json!({
+            "family": "qwen2.5",
+            "variant": "test",
+            "num_layers": 1,
+            "hidden_size": hidden_size,
+            "intermediate_size": 8,
+            "num_heads": num_heads,
+            "num_kv_heads": num_kv_heads,
+            "head_dim": head_dim,
+            "vocab_size": 3,
+            "max_context": 8,
+            "tie_word_embeddings": tie,
+        })
+    }
+
+    fn write_model_config(dir: &Path, content: &serde_json::Value) {
+        fs::write(dir.join("model_config.json"), serde_json::to_string(content).unwrap())
+            .expect("model_config.json schreiben");
+    }
+
+    #[test]
+    fn test_load_model_dims_roundtrip() {
+        let dir = test_dir("dims-roundtrip");
+        write_model_config(&dir, &model_dims_json(4, 2, 8, 2, true));
+
+        let dims = load_model_dims(&dir).expect("Laden erfolgreich");
+        assert_eq!(dims.num_heads, 4);
+        assert_eq!(dims.num_kv_heads, 2);
+        assert_eq!(dims.hidden_size, 8);
+        assert!(dims.tie_word_embeddings);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_dims_rejects_hidden_size_mismatch() {
+        let dir = test_dir("dims-badhidden");
+        // hidden_size=9, aber num_heads*head_dim = 4*2 = 8
+        write_model_config(&dir, &model_dims_json(4, 2, 9, 2, true));
+
+        let err = load_model_dims(&dir).expect_err("hidden_size-Mismatch muss fehlschlagen");
+        assert!(err.contains("hidden_size"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_dims_rejects_non_divisible_gqa() {
+        let dir = test_dir("dims-badgqa");
+        // num_heads=5 ist kein Vielfaches von num_kv_heads=2
+        write_model_config(&dir, &model_dims_json(5, 2, 10, 2, true));
+
+        let err = load_model_dims(&dir).expect_err("Nicht-teilbare GQA-Gruppierung muss fehlschlagen");
+        assert!(err.contains("Vielfaches"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_dims_missing_manifest() {
+        let dir = test_dir("dims-nomanifest");
+        let err = load_model_dims(&dir).expect_err("Ohne Manifest muss Laden fehlschlagen");
+        assert!(err.contains("model_config.json"), "Fehlermeldung: {}", err);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- LoadedWeights::get (12.10) ---
+
+    #[test]
+    fn test_loaded_weights_get_normalizes_dots_to_underscores() {
+        let dir = test_dir("weights-get");
+        let raw: Vec<u8> = vec![0x01, 0x02];
+        fs::write(dir.join("model_norm_weight.bin"), &raw).expect("Tensor schreiben");
+        write_manifest(&dir, "model_norm_weight", entry("model_norm_weight.bin", vec![2], 0, &sha256_hex(&raw)));
+
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        assert!(loaded.get("model.norm.weight").is_some());
+        assert!(loaded.get("does.not.exist").is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- build_model / load_model End-to-End (12.10) ---
+
+    /// Baut ein minimales, aber vollstaendiges Artefakt-Verzeichnis: 1 Layer,
+    /// hidden_size=4, num_heads=2, num_kv_heads=1, head_dim=2, vocab_size=3,
+    /// intermediate_size=4 - klein genug fuer einen schnellen Test, aber mit
+    /// derselben GQA-Asymmetrie (num_heads != num_kv_heads) wie das echte
+    /// Qwen2.5-0.5B-Modell.
+    fn write_full_fixture(dir: &Path, tie_word_embeddings: bool) {
+        let hidden = 4usize;
+        let heads = 2usize;
+        let kv_heads = 1usize;
+        let head_dim = 2usize;
+        let inter = 4usize;
+        let vocab = 3usize;
+
+        write_model_config(dir, &serde_json::json!({
+            "family": "qwen2.5",
+            "variant": "test",
+            "num_layers": 1,
+            "hidden_size": hidden,
+            "intermediate_size": inter,
+            "num_heads": heads,
+            "num_kv_heads": kv_heads,
+            "head_dim": head_dim,
+            "vocab_size": vocab,
+            "max_context": 8,
+            "tie_word_embeddings": tie_word_embeddings,
+        }));
+
+        fs::write(dir.join("scales.json"), "{}").expect("scales.json schreiben");
+
+        // Gewichte
+        let mut manifest = serde_json::Map::new();
+        let mut put = |original_name: &str, shape: Vec<usize>| {
+            let n: usize = shape.iter().product();
+            let data: Vec<u8> = (0..n).map(|i| (i % 7) as u8).collect();
+            let safe = original_name.replace('.', "_");
+            let file = format!("{}.bin", safe);
+            fs::write(dir.join(&file), &data).expect("Gewicht schreiben");
+            manifest.insert(safe, serde_json::json!({
+                "original_name": original_name,
+                "file": file,
+                "shape": shape,
+                "scale": 1.0,
+                "shift": 0,
+                "dtype": "int8",
+                "hash": sha256_hex(&data),
+            }));
+        };
+
+        put("model.embed_tokens.weight", vec![vocab, hidden]);
+        put("model.norm.weight", vec![hidden]);
+        if !tie_word_embeddings {
+            put("lm_head.weight", vec![vocab, hidden]);
+        }
+        put("model.layers.0.input_layernorm.weight", vec![hidden]);
+        put("model.layers.0.post_attention_layernorm.weight", vec![hidden]);
+        put("model.layers.0.self_attn.q_proj.weight", vec![heads * head_dim, hidden]);
+        put("model.layers.0.self_attn.k_proj.weight", vec![kv_heads * head_dim, hidden]);
+        put("model.layers.0.self_attn.v_proj.weight", vec![kv_heads * head_dim, hidden]);
+        put("model.layers.0.self_attn.o_proj.weight", vec![hidden, heads * head_dim]);
+        put("model.layers.0.mlp.gate_proj.weight", vec![inter, hidden]);
+        put("model.layers.0.mlp.up_proj.weight", vec![inter, hidden]);
+        put("model.layers.0.mlp.down_proj.weight", vec![hidden, inter]);
+
+        fs::write(dir.join("weights_manifest.json"), serde_json::to_string(&manifest).unwrap())
+            .expect("weights_manifest.json schreiben");
+
+        // LUTs
+        let mut luts_manifest = serde_json::Map::new();
+        let mut put_lut = |name: &str, values: Vec<i16>| {
+            let raw = pack_i16_le(&values);
+            let file = format!("{}.lut.bin", name);
+            fs::write(dir.join(&file), &raw).expect("LUT schreiben");
+            luts_manifest.insert(name.to_string(), lut_entry(&file, values.len(), &sha256_hex(&raw)));
+        };
+        put_lut("cos", vec![256, 0, -256, 0]);
+        put_lut("sin", vec![0, 256, 0, -256]);
+        put_lut("exp", vec![256, 128, 64]);
+        put_lut("silu", vec![-10, 0, 10, 20]);
+        put_lut("rsqrt", vec![256, 181, 148]);
+
+        fs::write(dir.join("luts.json"), serde_json::to_string(&luts_manifest).unwrap())
+            .expect("luts.json schreiben");
+
+        // theta_v.json zuletzt schreiben: Version und Hashes muessen zu den
+        // gerade geschriebenen Manifest-Dateien passen (Punkt 12.13).
+        write_theta_v(dir);
+    }
+
+    /// Schreibt theta_v.json mit der aktuellen spec-Version und echten
+    /// Hashes der bereits vorhandenen weights_manifest.json/scales.json/
+    /// luts.json - passend zu `ThetaV::verify()` und
+    /// `verify_version_against_spec()`.
+    fn write_theta_v(dir: &Path) {
+        let weights_hash = sha256_hex(&fs::read(dir.join("weights_manifest.json")).expect("weights_manifest.json lesen"));
+        let scales_hash = sha256_hex(&fs::read(dir.join("scales.json")).expect("scales.json lesen"));
+        let luts_hash = sha256_hex(&fs::read(dir.join("luts.json")).expect("luts.json lesen"));
+
+        fs::write(
+            dir.join("theta_v.json"),
+            serde_json::to_string(&serde_json::json!({
+                "version": spec_version().expect("spec_version"),
+                "weights_hash": weights_hash,
+                "scales_hash": scales_hash,
+                "luts_hash": luts_hash,
+            })).unwrap(),
+        ).expect("theta_v.json schreiben");
+    }
+
+    #[test]
+    fn test_load_model_end_to_end_tied_embeddings() {
+        let dir = test_dir("model-e2e-tied");
+        write_full_fixture(&dir, true);
+
+        let model = load_model(&dir).expect("Modell-Laden erfolgreich");
+
+        assert_eq!(model.num_layers, 1);
+        assert_eq!(model.num_heads, 2);
+        assert_eq!(model.num_kv_heads, 1);
+        assert_eq!(model.head_dim, 2);
+        assert_eq!(model.hidden_size, 4);
+        assert_eq!(model.vocab_size, 3);
+        assert_eq!(model.layers.len(), 1);
+
+        // Weight Tying: lm_head muss exakt der Embedding-Tabelle entsprechen,
+        // obwohl kein eigenes lm_head.weight im Artefakt lag.
+        assert_eq!(model.lm_head.data, model.embedding_table.data);
+        assert_eq!(model.lm_head.shape, model.embedding_table.shape);
+
+        // GQA-Asymmetrie muss sich in den geladenen Tensorformen widerspiegeln:
+        // q_proj hat num_heads*head_dim=4 Zeilen, k_proj/v_proj nur
+        // num_kv_heads*head_dim=2.
+        assert_eq!(model.layers[0].q_proj.shape, vec![4, 4]);
+        assert_eq!(model.layers[0].k_proj.shape, vec![2, 4]);
+        assert_eq!(model.layers[0].v_proj.shape, vec![2, 4]);
+
+        assert_eq!(model.cos_lut.len(), 4);
+        assert_eq!(model.exp_lut.len(), 3);
+        assert_eq!(model.silu_lut.len(), 4);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_end_to_end_untied_embeddings() {
+        let dir = test_dir("model-e2e-untied");
+        write_full_fixture(&dir, false);
+
+        let model = load_model(&dir).expect("Modell-Laden erfolgreich");
+        // Ohne Tying muss lm_head aus dem eigenen Gewicht stammen, nicht aus
+        // der Embedding-Tabelle (hier bewusst mit anderem Fuellmuster nicht
+        // unterscheidbar, da write_full_fixture beide gleich befuellt - der
+        // eigentliche Test ist, dass das Laden ohne Fallback funktioniert).
+        assert_eq!(model.lm_head.shape, vec![3, 4]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_forward_token_runs_with_gqa_fixture() {
+        // End-to-End-Rauchtest: ein geladenes GQA-Modell (num_heads != num_kv_heads)
+        // muss durch einen kompletten Forward-Schritt laufen, ohne zu paniken
+        // (Index-/Laengen-Fehler waeren hier der typische Fehlerfall bei falscher
+        // Head-Gruppierung).
+        let dir = test_dir("model-e2e-forward");
+        write_full_fixture(&dir, true);
+        let model = load_model(&dir).expect("Modell-Laden erfolgreich");
+
+        let mut cache = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+        let logits = model.forward_token(0, 0, &mut cache);
+        assert_eq!(logits.len(), model.vocab_size);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_missing_weight() {
+        let dir = test_dir("model-e2e-missing");
+        write_full_fixture(&dir, true);
+        // Ein Pflichtgewicht aus dem Artefakt entfernen und theta_v.json neu
+        // schreiben, damit der Hash-Check aus 12.13 (der jetzt VOR dem
+        // Tensor-Lookup laeuft) hier nicht schon vorher zuschlaegt - dieser
+        // Test soll gezielt build_model()s require_tensor()-Pfad pruefen,
+        // nicht die Manifest-Konsistenzpruefung (dafuer siehe
+        // test_load_model_rejects_tampered_theta_v_hash).
+        fs::remove_file(dir.join("model_norm_weight.bin")).ok();
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).unwrap()
+        ).unwrap();
+        manifest.as_object_mut().unwrap().remove("model_norm_weight");
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Fehlendes Pflichtgewicht muss Laden verhindern"),
+        };
+        assert!(err.contains("model.norm.weight"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_missing_lm_head_when_not_tied() {
+        let dir = test_dir("model-e2e-notied-missing");
+        write_full_fixture(&dir, false);
+        fs::remove_file(dir.join("lm_head_weight.bin")).ok();
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).unwrap()
+        ).unwrap();
+        manifest.as_object_mut().unwrap().remove("lm_head_weight");
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Fehlendes lm_head.weight ohne Tying muss fehlschlagen"),
+        };
+        assert!(err.contains("lm_head.weight"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- theta_v-Hash-Validierung gegen spec.json (12.13) ---
+
+    #[test]
+    fn test_spec_hash_is_stable_and_looks_like_sha256() {
+        let h1 = spec_hash();
+        let h2 = spec_hash();
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64);
+        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_spec_version_matches_embedded_spec_json() {
+        // Sanity-Check: die zur Kompilierzeit eingebettete spec.json ist
+        // lesbar und liefert eine nichtleere Version.
+        let v = spec_version().expect("spec_version");
+        assert!(!v.is_empty());
+    }
+
+    #[test]
+    fn test_theta_v_verify_accepts_matching_hashes() {
+        let theta_v = ThetaV {
+            version: "x".to_string(),
+            weights_hash: "abc".to_string(),
+            scales_hash: "def".to_string(),
+            luts_hash: "ghi".to_string(),
+        };
+        assert!(theta_v.verify("abc", "def", "ghi").is_ok());
+    }
+
+    #[test]
+    fn test_theta_v_verify_rejects_mismatched_hash() {
+        let theta_v = ThetaV {
+            version: "x".to_string(),
+            weights_hash: "abc".to_string(),
+            scales_hash: "def".to_string(),
+            luts_hash: "ghi".to_string(),
+        };
+        assert!(theta_v.verify("wrong", "def", "ghi").is_err());
+        assert!(theta_v.verify("abc", "wrong", "ghi").is_err());
+        assert!(theta_v.verify("abc", "def", "wrong").is_err());
+    }
+
+    #[test]
+    fn test_theta_v_verify_version_against_spec_accepts_match() {
+        let theta_v = ThetaV {
+            version: spec_version().unwrap(),
+            weights_hash: String::new(),
+            scales_hash: String::new(),
+            luts_hash: String::new(),
+        };
+        assert!(theta_v.verify_version_against_spec().is_ok());
+    }
+
+    #[test]
+    fn test_theta_v_verify_version_against_spec_rejects_mismatch() {
+        let theta_v = ThetaV {
+            version: "0.0.0-definitely-not-the-real-spec-version".to_string(),
+            weights_hash: String::new(),
+            scales_hash: String::new(),
+            luts_hash: String::new(),
+        };
+        let err = theta_v.verify_version_against_spec().expect_err("Mismatch muss fehlschlagen");
+        assert!(err.contains("theta_v-Version"), "Fehlermeldung: {}", err);
+    }
+
+    #[test]
+    fn test_load_model_rejects_theta_v_version_mismatch() {
+        let dir = test_dir("model-e2e-badversion");
+        write_full_fixture(&dir, true);
+
+        // theta_v.json mit einer Version ueberschreiben, die nicht zur
+        // eingebetteten spec.json passt (Hashes bleiben korrekt - der
+        // Versions-Check muss unabhaengig davon greifen und zuerst laufen).
+        let theta_v_path = dir.join("theta_v.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&theta_v_path).unwrap()).unwrap();
+        manifest["version"] = serde_json::json!("0.0.0-stale");
+        fs::write(&theta_v_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Versions-Mismatch muss Laden verhindern"),
+        };
+        assert!(err.contains("theta_v-Version"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_tampered_manifest_hash() {
+        let dir = test_dir("model-e2e-tamperedmanifest");
+        write_full_fixture(&dir, true);
+
+        // weights_manifest.json nach dem Schreiben von theta_v.json
+        // veraendern (z. B. eine Metadaten-Aenderung ohne Datei-Tausch) -
+        // der Hash in theta_v.json passt danach nicht mehr, unabhaengig
+        // davon, ob einzelne Tensoren noch ladbar waeren.
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["model_norm_weight"]["scale"] = serde_json::json!(2.0);
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Manipuliertes Manifest muss Laden verhindern"),
+        };
+        assert!(err.contains("hash mismatch"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+}

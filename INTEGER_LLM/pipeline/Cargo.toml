@@ -1,0 +1,25 @@
+[package]
+name = "integer-llm-pipeline"
+version = "0.12.15"
+edition = "2021"
+
+[[bin]]
+name = "integer-llm-pipeline"
+path = "src/main.rs"
+
+[lib]
+name = "integer_llm_pipeline"
+path = "src/lib.rs"
+
+[features]
+default = ["reference"]
+reference = ["integer-llm-kernels/reference"]
+cpu-simd = ["integer-llm-kernels/cpu-simd"]
+cuda = ["integer-llm-kernels/cuda"]
+rocm = ["integer-llm-kernels/rocm"]
+
+[dependencies]
+integer-llm-kernels = { path = "../kernels" }
+crc32fast = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

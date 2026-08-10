@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Lokale Umgebungsvariablen (nie versionieren, auch wenn befüllt)
+.env
+
+# Rust-Build-Artefakte
+target/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Lokale Agenten-/Tool-Einstellungen
+.claude/settings.local.json
+.qwen/
+
+# Hinweis: Modelle (INTEGER_LLM/models/), Export-Artefakte (INTEGER_LLM/artifacts/),
+# Evaluierungs-Datensätze (INTEGER_LLM/eval/datasets/) und synthetische Test-Artefakte
+# werden über die jeweiligen lokalen .gitignore-Dateien ausgeschlossen.
