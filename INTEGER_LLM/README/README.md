@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.25
+> **Version:** 0.12.26
 > **Datum:** 2026-08-11
-> **Status:** Eskalation nach Entscheidungspunkt 12.21 umgesetzt (Per-Channel-int8 für alle Gewichte, θ_v 0.7.0) — Perplexität 14 546 → 3 257, Akzeptanzkriterium weiterhin VERFEHLT; nächste Eskalationsstufe offen (Fund 14)
+> **Status:** Fund-14-Kandidat (i) geprüft: Aktivierungs-Skalen ohne Headroom waren real (50/314 Module clampten), Kalibrierkorpus verbreitert → Clamping behoben (0/314) — aber Perplexität kaum verändert (3257 → 3242), Kandidat (i) ist NICHT dominant; Akzeptanzkriterium weiterhin VERFEHLT, nächste Eskalationsstufe offen
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,29 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.26 – 2026-08-11
+- **Fund-14-Kandidat (i) geprüft (außerplanmäßiger Patch):** Neue Diagnose
+  `tests/diag/scale_headroom_hf.py` misst die realen Aktivierungs-Spannweiten
+  auf denselben WikiText-2-Sequenzen wie der Entscheidungspunkt und
+  vergleicht sie mit den kalibrierten Per-Layer-Skalen. Ergebnis: die auf
+  nur vier Kurz-Prompts (~200 Token) kalibrierten Skalen hatten keinen
+  Headroom — **50 von 314 Modulen clampten** still an der int16-Grenze
+  (schlimmste: `layers.12.mlp.down_proj.input` 2,8× über Skala,
+  `model.norm.input` 2,2× über Skala = der finale Residualstrom vor dem
+  LM-Head), weitere 185 waren knapp (<1,5×).
+- **Abhilfe:** `calibrate/src/main.py` kalibriert jetzt zusätzlich auf einer
+  breiten Stichprobe von 64 WikiText-2-Sequenzen à ≤128 Tokens aus derselben
+  Verteilung (die vier konkreten Mess-Sequenzen werden ausgespart, keine
+  Benchmark-Überpassung). Neukalibrierung: **0 von 314 Modulen clampen**,
+  schlechtester Headroom jetzt 1,01×.
+- **Wichtiges Negativ-Ergebnis:** Die Perplexität änderte sich dadurch kaum
+  (3 257 → **3 242**, weiterhin +21 579 % vs. FP-Baseline 14,95). Das
+  Aktivierungs-Clamping war also real und ist behoben, aber **nicht die
+  dominante Fehlerquelle**. Fund 14 bleibt offen; die verbleibende Lücke
+  verlangt die übrigen Kandidaten (ii: SiLU-Eingangsraster, iii:
+  Mehrpositions-Attention) oder eine gezielte Mehrpositions-Divergenzsuche.
+- Tests: alle drei Crates grün (kernels 28, runtime 44, pipeline-Build).
 
 ### v0.12.25 – 2026-08-11
 - **Eskalation nach Entscheidungspunkt 12.21 (außerplanmäßiger Patch,

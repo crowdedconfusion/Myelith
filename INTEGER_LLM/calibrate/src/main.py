@@ -10,6 +10,7 @@ loader.py und models/README.md).
 """
 
 import json
+from pathlib import Path
 
 from .loader import load_reference_model
 from .stats import ActivationStatsCollector
@@ -24,6 +25,52 @@ from .paths import model_artifacts_dir, local_model_dir
 
 MODEL_NAME = "qwen2.5-0.5b"
 HF_MODEL_ID = "Qwen/Qwen2.5-0.5B"
+
+# Breiterer Kalibrierungs-Korpus (Fund 14, Kandidat i): Die alten vier
+# Kurz-Prompts (~200 Token) deckten die realen Aktivierungs-Spannweiten
+# nicht ab — auf den WikiText-2-Messsequenzen clampten 50 von 314 Modulen
+# still an der int16-Grenze (Diagnose: tests/diag/scale_headroom_hf.py).
+# Deshalb wird zusaetzlich auf einer breiten Stichprobe aus derselben
+# Verteilung (WikiText-2-Testsplit) kalibriert.
+CALIB_WIKITEXT_SEQUENCES = 64
+CALIB_WIKITEXT_SEQ_LEN = 128
+_MIN_LINE_CHARS = 160  # identisch zu eval/wikitext_common.py
+
+
+def _wikitext_calibration_texts(n_sequences):
+    """Breite Kalibrier-Stichprobe aus dem WikiText-2-Testsplit-Cache.
+
+    Repliziert die Sequenzauswahl des Entscheidungspunkts
+    (eval/wikitext_common.py::select_sequences), waehlt aber eine BREITERE
+    Stichprobe und laesst die konkreten Mess-Sequenzen aus, damit die
+    Kalibrierung nicht auf den Benchmark ueberpasst. Liefert Rohtexte; die
+    Begrenzung auf CALIB_WIKITEXT_SEQ_LEN Tokens geschieht beim
+    Tokenisieren (truncation).
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    cache = repo_root / "eval" / "datasets" / "wikitext2_test.txt"
+    if not cache.exists():
+        print(f"[calibrate] WARNUNG: WikiText-2-Cache fehlt ({cache}) — "
+              "kalibriere nur auf den kuratierten Prompts.")
+        return []
+    lines = cache.read_text(encoding="utf-8").splitlines()
+    candidates = [l.strip() for l in lines if len(l.strip()) >= _MIN_LINE_CHARS]
+    if not candidates:
+        return []
+
+    # Mess-Sequenzen des Entscheidungspunkts (4 Stueck) bestimmen und
+    # aus der Kalibrier-Stichprobe heraushalten.
+    eval_stride = max(1, len(candidates) // 4)
+    eval_idx = {(i * eval_stride) % len(candidates) for i in range(4)}
+
+    stride = max(1, len(candidates) // n_sequences)
+    texts = []
+    for i in range(n_sequences):
+        idx = (i * stride) % len(candidates)
+        if idx in eval_idx:
+            idx = (idx + 1) % len(candidates)
+        texts.append(candidates[idx])
+    return texts
 
 
 def main():
@@ -53,6 +100,18 @@ def main():
     ]
     for prompt in prompts:
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            _ = model(**inputs)
+
+    # Breiterer WikiText-2-Korpus (Fund 14, Kandidat i): dieselbe Verteilung
+    # wie die Messsequenzen, aber breit genug, damit die Per-Layer-Skalen die
+    # realen Aktivierungs-Spannweiten abdecken statt still zu clampen.
+    wikitext_texts = _wikitext_calibration_texts(CALIB_WIKITEXT_SEQUENCES)
+    print(f"[calibrate] Breite Kalibrierbasis: {len(wikitext_texts)} "
+          f"WikiText-2-Sequenzen à <= {CALIB_WIKITEXT_SEQ_LEN} Tokens ...")
+    for text in wikitext_texts:
+        inputs = tokenizer(text, return_tensors="pt", truncation=True,
+                           max_length=CALIB_WIKITEXT_SEQ_LEN).to(model.device)
         with torch.no_grad():
             _ = model(**inputs)
 
