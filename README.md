@@ -36,7 +36,7 @@ und Governance:
 | **L1 Consensus Layer** | BFT-Konsens, Proof-of-Inference-Aggregation, Staking, Slashing |
 | **L0 Networking Layer** | P2P-Gossip, Latenz-Topologie, verschlüsselte Aktivierungs-Streams |
 
-## Repositoriumsstruktur
+## Repositorystruktur
 
 ```
 ├── LICENSE.md                 PolyForm Shield License 1.0.0

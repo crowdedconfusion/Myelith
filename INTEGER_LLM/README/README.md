@@ -2,15 +2,57 @@
 
 > **Version:** 0.12.15
 > **Datum:** 2026-08-11
-> **Status:** Phase 12.14–12.17 – HF-Export und Kalibrierung (12.14 abgeschlossen); nächster Punkt 12.15 – export.py Gewichts-Hashes (v0.12.16, größtenteils bereits miterledigt)
+> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase
 
-Fully-Integer Inferenzsystem fuer LLMs auf Qwen-W8A8-Basis.
+Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
+Qwen-W8A8-Basis.
 
 ## Ziel
 
-Bit-exakte, deterministische Integer-Inferenz ohne Gleitkommaoperationen im Hot-Path, mit Pipeline-Parallelismus auf heterogenen Hardware-Knoten (NVIDIA, AMD, CPU).
+Deterministische Integer-Inferenz ohne Gleitkommaoperationen im Rechenpfad
+(Division ausschließlich als arithmetischer Rechtsshift), mit
+Pipeline-Parallelismus auf heterogenen Hardware-Knoten (NVIDIA, AMD, CPU).
+Die Ganzzahlarithmetik ist die Voraussetzung für bitgleiche Ausführung über
+unabhängige Knoten hinweg — die Grundlage des Myelith-Verifikationsmodells
+(Whitepaper Kap. 6.2). Referenzmodell ist Qwen2.5-0.5B (W8A8: Gewichte und
+Aktivierungen als int8, Akkumulator int32).
 
 ## Struktur
+
+| Verzeichnis | Zweck |
+|---|---|
+| `kernels/` | Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Softmax, Attention, MLP, Sampling) mit austauschbaren Backends über ein `Backend`-Trait. Implementiert ist das `reference`-Backend; `cpu-simd`, `cuda` und `rocm` sind als Features vorbereitet. |
+| `runtime/` | Modell-Loader, Transformer-Forward-Pass, KV-Cache, Tokenizer, Generierungs-Loop und CLI (`integer-llm-runtime`). |
+| `pipeline/` | Mehrknoten-Orchestrierung (Stage-Runtime; der Betrieb über ein echtes Netz folgt in einer späteren Phase). |
+| `calibrate/` | Python-Offline-Phase: lädt das HF-Referenzmodell, quantisiert Gewichte, berechnet Aktivierungsskalen, erzeugt Lookup-Tabellen und exportiert die θ_v-Artefakte. |
+| `theta_v/` | Der kanonische numerische Vertrag (`spec.json`). |
+| `tests/` | Unit-, Integrations-, Regressions- und Golden-Vector-Tests. Python-Tests sind eigenständige Skripte, Rust-Tests liegen inline in den Modulen. |
+| `eval/` | Qualitätsmessung: Gleitkomma-Baseline und Perplexitätsvergleich. |
+| `models/` | Quellmodell (Qwen/Qwen2.5-0.5B, nicht versioniert). |
+| `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert). |
+| `scripts/` | Hilfs-Skripte: `fetch_model.sh` (Modell-Download mit fixierter Revision), `build_artifacts.sh` (Kalibrierung + Export in einem Lauf). |
+| `deploy/` | Docker-Deployment (Dockerfile, docker-compose). |
+
+## Bauen und Testen
+
+Rust-Seite — jede der drei Crates wird einzeln gebaut und getestet:
+
+```bash
+cd kernels   && cargo build && cargo test
+cd runtime   && cargo build && cargo test
+cd pipeline  && cargo build && cargo test
+```
+
+Python-Seite — Kalibrierung in einem eigenen venv (Python ≥ 3.10):
+
+```bash
+python3 -m venv calibrate/.venv
+calibrate/.venv/bin/pip install -r calibrate/requirements.txt
+scripts/build_artifacts.sh    # Kalibrierung + Export, von INTEGER_LLM/ aus
+```
+
+Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
+(siehe `models/README.md`).
 
 ## Changelog
 
