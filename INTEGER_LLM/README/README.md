@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.27
+> **Version:** 0.12.28
 > **Datum:** 2026-08-11
-> **Status:** Mehrpositions-Divergenzsuche (Fund-14-Kandidat iii): Lokalisierung gelungen — AbsMax stimmt in allen 24 Ebenen, aber Bulk-Dimensionen weichen schon ab Layer 3 ~25–30 % ab; kritisch wird es in den letzten Ebenen (21–23), wo die Residual-Ausreißer weggekürzt werden und das Signal ~50× kleiner wird (Layer 23: Integer 43 vs. HF 188). Gewichtsquantisierung ist über alle Ebenen gleichmäßig gut, Skalen clampen nicht → akkumuliertes Quantisierungsrauschen, kein Einzel-Bug. Akzeptanzkriterium weiterhin VERFEHLT
+> **Status:** GPTQ-Eskalation (Strategie 3, θ_v 0.8.0) umgesetzt und gemessen: reduziert den Ausgabefehler der linearen Projektionen nachweislich, aber die Perplexität verbessert sich NICHT (3 242 → 3 318) → die lineare Gewichtsquantisierung ist nicht die dominante Fehlerquelle; der Fehler liegt in den Nichtlinearitäten/LUTs und/oder der Aktivierungsquantisierung (Bulk weicht ab Ebene 3 ab, Ebene 23 divergiert weiter 5×). Akzeptanzkriterium weiterhin VERFEHLT
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,33 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.28 – 2026-08-11
+- **GPTQ-Eskalation (Strategie 3, θ_v 0.7.0 → 0.8.0):** Neues Modul
+  `calibrate/src/gptq.py` — `HessianCollector` sammelt in derselben
+  Kalibrier-Vorwärtspassage die Hessischen Matrizen (H = Σ x·xᵀ) für alle
+  168 linearen Projektionen; `gptq_quantize()` quantisiert mit
+  Hessian-gestützter Fehlerkompensation (oberer Cholesky-Faktor von H⁻¹,
+  sequenzielle Spaltenverarbeitung nach Frantar et al. 2022). Zielgröße ist
+  der AUSGABEFEHLER ||X·W − X·Q||² statt des einzelnen Gewichtsfehlers.
+  Artefakt-Format unverändert (int8, Per-Channel-Zweierpotenz-Shifts), der
+  Integer-Inferenzpfad bleibt unberührt deterministisch. `main.py` wendet
+  GPTQ auf die linearen Projektionen an (überschreibt die RNE-Einträge);
+  Embedding/Biases/Gammas bleiben RNE, LM-Head bleibt int16.
+- **spec.json 0.8.0:** `rounding` ausdifferenziert —
+  `linear_weights: "gptq_error_feedback"`, `default:
+  "round_to_nearest_even"`.
+- **Messergebnis (wichtiges Negativ-Ergebnis):** GPTQ reduziert den
+  Ausgabefehler der linearen Schichten nachweislich (Synthetik-Test −47 %,
+  21–25 % der int8-Werte weichen von RNE ab), aber die End-to-End-
+  Perplexität verbessert sich nicht: **3 242 → 3 318** (weiterhin +22 086 %
+  vs. FP-Baseline 14,95). Die Divergenz in Ebene 23 (Integer ~36 vs. HF
+  188) bleibt bestehen. **Schlussfolgerung:** die lineare
+  Gewichtsquantisierung ist NICHT die dominante Fehlerquelle — der Fehler
+  liegt in den Nichtlinearitäten (SiLU-/exp-/rsqrt-LUT) und/oder der
+  Aktivierungsquantisierung. Neue Tests `tests/test_gptq.py` (4 Tests).
+- Tests: alle drei Crates grün (kernels 28, runtime 44, pipeline-Build),
+  Python-Suite komplett inkl. neuer GPTQ-Tests.
 
 ### v0.12.27 – 2026-08-11
 - **Mehrpositions-Divergenzsuche (Fund-14-Kandidat iii, Diagnose-Patch):**

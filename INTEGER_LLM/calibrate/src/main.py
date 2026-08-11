@@ -19,6 +19,7 @@ from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                    generate_sin_cos_lut, load_nonlinear_spec)
 from .export import export_theta_v
 from .quantize import quantize_model_weights, quantize_symmetric_int16_per_channel
+from .gptq import HessianCollector, quantize_linear_layers_gptq
 from .export_weights import export_quantized_weights, export_lm_head
 from .model_configs import get_export_model_config
 from .paths import model_artifacts_dir, local_model_dir
@@ -81,6 +82,11 @@ def main():
     print("[calibrate] Sammle Aktivierungsstatistiken...")
     collector = ActivationStatsCollector()
     collector.attach(model)
+    # GPTQ (Eskalationsstrategie 3, theta_v 0.8.0): dieselbe Vorwaerts-
+    # Passage liefert die Hessischen Matrizen (H = Summe x x^T) fuer die
+    # Fehlerkompensations-Quantisierung der linearen Projektionen.
+    hessian_collector = HessianCollector()
+    hessian_collector.attach(model)
 
     # Kalibrierungs-Korpus: mehrere sprachlich unterschiedliche Prompts,
     # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
@@ -116,8 +122,11 @@ def main():
             _ = model(**inputs)
 
     collector.detach()
+    hessian_collector.detach()
     stats = collector.compute()
     print(f"[calibrate] Statistiken fuer {len(stats)} Module gesammelt.")
+    print(f"[calibrate] Hessische Matrizen fuer {len(hessian_collector.hessians)} "
+          f"lineare Projektionen gesammelt.")
 
     print("[calibrate] Berechne Zweierpotenz-Skalen...")
     scales = compute_scales_from_stats(stats)
@@ -163,7 +172,21 @@ def main():
     # braucht die Datei deshalb bereits auf der Platte (siehe export.py).
     print("[calibrate] Quantisiere Modell-Gewichte...")
     quantized = quantize_model_weights(model)
-    print(f"[calibrate] {len(quantized)} Gewichts-Tensoren quantisiert.")
+    print(f"[calibrate] {len(quantized)} Gewichts-Tensoren quantisiert "
+          "(Per-Channel RNE).")
+
+    # GPTQ (theta_v 0.8.0, Eskalationsstrategie 3): die linearen
+    # Projektionen werden mit Hessian-gestützter Fehlerkompensation
+    # nachquantisiert — das überschreibt die RNE-Einträge für exakt diese
+    # Tensoren (gleiche Schlüssel, gleiches Artefakt-Format). Reduziert den
+    # Ausgabefehler statt des Gewichtsfehlers und damit das akkumulierte
+    # Quantisierungsrauschen (Fund 14).
+    print("[calibrate] GPTQ: quantisiere lineare Projektionen mit "
+          "Fehlerkompensation...")
+    gptq_quantized = quantize_linear_layers_gptq(model, hessian_collector.hessians)
+    quantized.update(gptq_quantized)
+    print(f"[calibrate] GPTQ auf {len(gptq_quantized)} lineare Projektionen "
+          "angewendet.")
 
     print(f"[calibrate] Exportiere Gewichte nach {artifacts_dir}...")
     export_quantized_weights(quantized, artifacts_dir)

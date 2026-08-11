@@ -70,10 +70,10 @@ Jede Komponente enthält ein `README/` mit Zielbeschreibung und Status.
 ## Stand
 
 **INTEGER_LLM** ist die einzige Komponente mit laufender Implementierung
-(v0.12.27): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
+(v0.12.28): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
 mit Per-Channel-Zweierpotenz-Skalen, Aktivierungen int16 mit kalibrierten
 Per-Layer-Skalen), mit Loader, Modell-Forward-Pass (inkl. Grouped-Query-
-Attention und Q/K/V-Biases), theta_v-Spezifikationsvalidierung (θ_v 0.7.0),
+Attention und Q/K/V-Biases), theta_v-Spezifikationsvalidierung (θ_v 0.8.0),
 Export-Workflow, echtem Kalibrierungslauf (314 kalibrierte Skalen, 291
 quantisierte Gewichts-Tensoren inkl. eigenem LM-Head in int16) und erster
 echter Inferenz (deterministisch). Der Qualitätsvergleich gegen eine

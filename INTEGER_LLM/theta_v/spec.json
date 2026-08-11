@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.7.0",
+    "version": "0.8.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -27,7 +27,11 @@
         "weight_scale": "per_channel",
         "activation_scale": "per_layer"
       },
-      "rounding": "round_to_nearest_even",
+      "rounding": {
+        "default": "round_to_nearest_even",
+        "linear_weights": "gptq_error_feedback",
+        "note": "Seit theta_v 0.8.0 (Eskalationsstrategie 3): die linearen Projektionen (q/k/v/o/gate/up/down) werden offline per GPTQ quantisiert — Hessian-gestützte Fehlerkompensation minimiert den Ausgabefehler auf dem Kalibrierkorpus statt des einzelnen Gewichtsfehlers. Alle übrigen Gewichte (Embedding, Biases, Gammas, LM-Head) bleiben Round-to-nearest-even. Das Artefakt-Format (int8, Per-Channel-Zweierpotenz-Shifts) und der deterministische Integer-Inferenzpfad ändern sich nicht."
+      },
       "shift_semantics": "arithmetic_right_shift",
       "overflow": "explicit_clamp_only"
     },
