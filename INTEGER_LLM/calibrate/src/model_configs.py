@@ -26,6 +26,11 @@ MODEL_CONFIGS = {
         "vocab_size": 151936,
         "max_context": 2048,
         "tie_word_embeddings": True,
+        # Qwen2.5 besitzt Biases an q/k/v_proj (verifiziert gegen die echte
+        # models/Qwen2.5-0.5B/config.json, Feld "attention_bias"); die
+        # Runtime verlangt bei true die zugehoerigen Bias-Tensoren im
+        # Artefakt (ausserplanmaessiger Patch v0.12.19).
+        "attention_bias": True,
     },
     "qwen2.5-1.5b-instruct": {
         "num_layers": 28,

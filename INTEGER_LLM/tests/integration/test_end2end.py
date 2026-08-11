@@ -98,6 +98,7 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
         "vocab_size": VOCAB,
         "max_context": 8,
         "tie_word_embeddings": tie_word_embeddings,
+        "attention_bias": True,
     })
 
     (root / "tokenizer.json").write_text(
@@ -136,6 +137,11 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
     put_weight("model.layers.0.self_attn.q_proj.weight", [NUM_HEADS * HEAD_DIM, HIDDEN])
     put_weight("model.layers.0.self_attn.k_proj.weight", [NUM_KV_HEADS * HEAD_DIM, HIDDEN])
     put_weight("model.layers.0.self_attn.v_proj.weight", [NUM_KV_HEADS * HEAD_DIM, HIDDEN])
+    # Attention-Biases wie im echten Qwen2.5-Format (attention_bias=true):
+    # Laenge = Ausgabe-Dimension der Projektion.
+    put_weight("model.layers.0.self_attn.q_proj.bias", [NUM_HEADS * HEAD_DIM])
+    put_weight("model.layers.0.self_attn.k_proj.bias", [NUM_KV_HEADS * HEAD_DIM])
+    put_weight("model.layers.0.self_attn.v_proj.bias", [NUM_KV_HEADS * HEAD_DIM])
     put_weight("model.layers.0.self_attn.o_proj.weight", [HIDDEN, NUM_HEADS * HEAD_DIM])
     put_weight("model.layers.0.mlp.gate_proj.weight", [INTERMEDIATE, HIDDEN])
     put_weight("model.layers.0.mlp.up_proj.weight", [INTERMEDIATE, HIDDEN])

@@ -266,6 +266,7 @@ def test_synthetic_export_loads_in_real_runtime_binary():
             "hidden_size": hidden, "intermediate_size": inter, "num_heads": heads,
             "num_kv_heads": kv_heads, "head_dim": head_dim, "vocab_size": vocab,
             "max_context": 8, "tie_word_embeddings": True,
+            "attention_bias": False,
         }
         (out_dir / "model_config.json").write_text(json.dumps(model_config))
 

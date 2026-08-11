@@ -193,6 +193,13 @@ pub struct ModelDims {
     /// `tie_word_embeddings`). Bei Qwen2.5-0.5B `true` - der Export enthaelt
     /// dann kein eigenes `lm_head.weight`.
     pub tie_word_embeddings: bool,
+    /// Ob die Attention-Projektionen q/k/v Biases besitzen (HF-Feld
+    /// `attention_bias` im Modell-Config; Qwen2.5-0.5B: `true`). Bei `true`
+    /// muessen im Artefakt die Tensoren `*.self_attn.{q,k,v}_proj.bias`
+    /// vorliegen - fehlen sie, scheitert das Laden laut statt still
+    /// (ausserplanmaessiger Patch v0.12.19, Beschluss mit dem Projektinhaber:
+    /// explizit per model_config wie `num_kv_heads`/`tie_word_embeddings`).
+    pub attention_bias: bool,
 }
 
 /// Laedt und validiert die Modell-Dimensionen aus `model_config.json`.
@@ -459,6 +466,34 @@ pub fn build_model(
     let mut layers = Vec::with_capacity(dims.num_layers);
     for layer_idx in 0..dims.num_layers {
         let p = format!("model.layers.{}", layer_idx);
+
+        // Attention-Biases: nur bei `attention_bias: true` erwartet, dann
+        // aber zwingend (lautes Scheitern statt stiller Abweichung vom
+        // Referenzmodell). Bias-Laengen muessen zu den Projektions-Ausgaben
+        // passen (q: num_heads*head_dim, k/v: num_kv_heads*head_dim).
+        let (q_bias, k_bias, v_bias) = if dims.attention_bias {
+            let qb = require_tensor(&weights, &format!("{}.self_attn.q_proj.bias", p))?.clone();
+            let kb = require_tensor(&weights, &format!("{}.self_attn.k_proj.bias", p))?.clone();
+            let vb = require_tensor(&weights, &format!("{}.self_attn.v_proj.bias", p))?.clone();
+            let q_len = dims.num_heads * dims.head_dim;
+            let kv_len = dims.num_kv_heads * dims.head_dim;
+            if qb.data.len() != q_len {
+                return Err(format!(
+                    "Bias-Laenge fuer {}.self_attn.q_proj.bias ({}) passt nicht zu num_heads*head_dim ({})",
+                    p, qb.data.len(), q_len
+                ));
+            }
+            if kb.data.len() != kv_len || vb.data.len() != kv_len {
+                return Err(format!(
+                    "Bias-Laenge fuer {}.self_attn.k/v_proj.bias ({}/{}) passt nicht zu num_kv_heads*head_dim ({})",
+                    p, kb.data.len(), vb.data.len(), kv_len
+                ));
+            }
+            (Some(qb), Some(kb), Some(vb))
+        } else {
+            (None, None, None)
+        };
+
         layers.push(TransformerLayer {
             layer_idx,
             input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.data.clone(),
@@ -470,6 +505,9 @@ pub fn build_model(
             gate_proj: require_tensor(&weights, &format!("{}.mlp.gate_proj.weight", p))?.clone(),
             up_proj: require_tensor(&weights, &format!("{}.mlp.up_proj.weight", p))?.clone(),
             down_proj: require_tensor(&weights, &format!("{}.mlp.down_proj.weight", p))?.clone(),
+            q_bias,
+            k_bias,
+            v_bias,
         });
     }
 
@@ -813,7 +851,7 @@ mod tests {
 
     // --- ModelDims (12.10) ---
 
-    fn model_dims_json(num_heads: i64, num_kv_heads: i64, hidden_size: i64, head_dim: i64, tie: bool) -> serde_json::Value {
+    fn model_dims_json(num_heads: i64, num_kv_heads: i64, hidden_size: i64, head_dim: i64, tie: bool, attention_bias: bool) -> serde_json::Value {
         serde_json::json!({
             "family": "qwen2.5",
             "variant": "test",
@@ -826,6 +864,7 @@ mod tests {
             "vocab_size": 3,
             "max_context": 8,
             "tie_word_embeddings": tie,
+            "attention_bias": attention_bias,
         })
     }
 
@@ -837,13 +876,14 @@ mod tests {
     #[test]
     fn test_load_model_dims_roundtrip() {
         let dir = test_dir("dims-roundtrip");
-        write_model_config(&dir, &model_dims_json(4, 2, 8, 2, true));
+        write_model_config(&dir, &model_dims_json(4, 2, 8, 2, true, true));
 
         let dims = load_model_dims(&dir).expect("Laden erfolgreich");
         assert_eq!(dims.num_heads, 4);
         assert_eq!(dims.num_kv_heads, 2);
         assert_eq!(dims.hidden_size, 8);
         assert!(dims.tie_word_embeddings);
+        assert!(dims.attention_bias);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -852,7 +892,7 @@ mod tests {
     fn test_load_model_dims_rejects_hidden_size_mismatch() {
         let dir = test_dir("dims-badhidden");
         // hidden_size=9, aber num_heads*head_dim = 4*2 = 8
-        write_model_config(&dir, &model_dims_json(4, 2, 9, 2, true));
+        write_model_config(&dir, &model_dims_json(4, 2, 9, 2, true, true));
 
         let err = load_model_dims(&dir).expect_err("hidden_size-Mismatch muss fehlschlagen");
         assert!(err.contains("hidden_size"), "Fehlermeldung: {}", err);
@@ -864,10 +904,26 @@ mod tests {
     fn test_load_model_dims_rejects_non_divisible_gqa() {
         let dir = test_dir("dims-badgqa");
         // num_heads=5 ist kein Vielfaches von num_kv_heads=2
-        write_model_config(&dir, &model_dims_json(5, 2, 10, 2, true));
+        write_model_config(&dir, &model_dims_json(5, 2, 10, 2, true, true));
 
         let err = load_model_dims(&dir).expect_err("Nicht-teilbare GQA-Gruppierung muss fehlschlagen");
         assert!(err.contains("Vielfaches"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_dims_rejects_missing_attention_bias_field() {
+        // attention_bias ist ein Pflichtfeld (Beschluss v0.12.19): ein
+        // model_config.json ohne das Feld muss laut scheitern, damit kein
+        // Artefakt still ohne Bias-Information geladen wird.
+        let dir = test_dir("dims-nobiasfield");
+        let mut config = model_dims_json(4, 2, 8, 2, true, true);
+        config.as_object_mut().unwrap().remove("attention_bias");
+        write_model_config(&dir, &config);
+
+        let err = load_model_dims(&dir).expect_err("Fehlendes attention_bias-Feld muss fehlschlagen");
+        assert!(err.contains("attention_bias"), "Fehlermeldung: {}", err);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -903,7 +959,7 @@ mod tests {
     /// intermediate_size=4 - klein genug fuer einen schnellen Test, aber mit
     /// derselben GQA-Asymmetrie (num_heads != num_kv_heads) wie das echte
     /// Qwen2.5-0.5B-Modell.
-    fn write_full_fixture(dir: &Path, tie_word_embeddings: bool) {
+    fn write_full_fixture(dir: &Path, tie_word_embeddings: bool, attention_bias: bool) {
         let hidden = 4usize;
         let heads = 2usize;
         let kv_heads = 1usize;
@@ -923,6 +979,7 @@ mod tests {
             "vocab_size": vocab,
             "max_context": 8,
             "tie_word_embeddings": tie_word_embeddings,
+            "attention_bias": attention_bias,
         }));
 
         fs::write(dir.join("scales.json"), "{}").expect("scales.json schreiben");
@@ -957,6 +1014,13 @@ mod tests {
         put("model.layers.0.self_attn.k_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.v_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.o_proj.weight", vec![hidden, heads * head_dim]);
+        if attention_bias {
+            // Qwen2.5-Format: Bias je q/k/v_proj, Laenge = Ausgabe-Dimension
+            // der Projektion (q: heads*head_dim, k/v: kv_heads*head_dim).
+            put("model.layers.0.self_attn.q_proj.bias", vec![heads * head_dim]);
+            put("model.layers.0.self_attn.k_proj.bias", vec![kv_heads * head_dim]);
+            put("model.layers.0.self_attn.v_proj.bias", vec![kv_heads * head_dim]);
+        }
         put("model.layers.0.mlp.gate_proj.weight", vec![inter, hidden]);
         put("model.layers.0.mlp.up_proj.weight", vec![inter, hidden]);
         put("model.layers.0.mlp.down_proj.weight", vec![hidden, inter]);
@@ -1009,7 +1073,7 @@ mod tests {
     #[test]
     fn test_load_model_end_to_end_tied_embeddings() {
         let dir = test_dir("model-e2e-tied");
-        write_full_fixture(&dir, true);
+        write_full_fixture(&dir, true, true);
 
         let model = load_model(&dir).expect("Modell-Laden erfolgreich");
 
@@ -1033,6 +1097,16 @@ mod tests {
         assert_eq!(model.layers[0].k_proj.shape, vec![2, 4]);
         assert_eq!(model.layers[0].v_proj.shape, vec![2, 4]);
 
+        // Attention-Biases (Qwen2.5-Format, attention_bias=true): muessen
+        // geladen sein und die Laenge der Projektions-Ausgabe tragen
+        // (q: heads*head_dim=4, k/v: kv_heads*head_dim=2).
+        assert!(model.layers[0].q_bias.is_some());
+        assert!(model.layers[0].k_bias.is_some());
+        assert!(model.layers[0].v_bias.is_some());
+        assert_eq!(model.layers[0].q_bias.as_ref().unwrap().data.len(), 4);
+        assert_eq!(model.layers[0].k_bias.as_ref().unwrap().data.len(), 2);
+        assert_eq!(model.layers[0].v_bias.as_ref().unwrap().data.len(), 2);
+
         assert_eq!(model.cos_lut.len(), 4);
         assert_eq!(model.exp_lut.len(), 3);
         assert_eq!(model.silu_lut.len(), 4);
@@ -1043,7 +1117,7 @@ mod tests {
     #[test]
     fn test_load_model_end_to_end_untied_embeddings() {
         let dir = test_dir("model-e2e-untied");
-        write_full_fixture(&dir, false);
+        write_full_fixture(&dir, false, true);
 
         let model = load_model(&dir).expect("Modell-Laden erfolgreich");
         // Ohne Tying muss lm_head aus dem eigenen Gewicht stammen, nicht aus
@@ -1062,7 +1136,7 @@ mod tests {
         // (Index-/Laengen-Fehler waeren hier der typische Fehlerfall bei falscher
         // Head-Gruppierung).
         let dir = test_dir("model-e2e-forward");
-        write_full_fixture(&dir, true);
+        write_full_fixture(&dir, true, true);
         let model = load_model(&dir).expect("Modell-Laden erfolgreich");
 
         let mut cache = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
@@ -1075,7 +1149,7 @@ mod tests {
     #[test]
     fn test_load_model_rejects_missing_weight() {
         let dir = test_dir("model-e2e-missing");
-        write_full_fixture(&dir, true);
+        write_full_fixture(&dir, true, true);
         // Ein Pflichtgewicht aus dem Artefakt entfernen und theta_v.json neu
         // schreiben, damit der Hash-Check aus 12.13 (der jetzt VOR dem
         // Tensor-Lookup laeuft) hier nicht schon vorher zuschlaegt - dieser
@@ -1103,7 +1177,7 @@ mod tests {
     #[test]
     fn test_load_model_rejects_missing_lm_head_when_not_tied() {
         let dir = test_dir("model-e2e-notied-missing");
-        write_full_fixture(&dir, false);
+        write_full_fixture(&dir, false, true);
         fs::remove_file(dir.join("lm_head_weight.bin")).ok();
         let manifest_path = dir.join("weights_manifest.json");
         let mut manifest: serde_json::Value = serde_json::from_str(
@@ -1191,7 +1265,7 @@ mod tests {
     #[test]
     fn test_load_model_rejects_theta_v_version_mismatch() {
         let dir = test_dir("model-e2e-badversion");
-        write_full_fixture(&dir, true);
+        write_full_fixture(&dir, true, true);
 
         // theta_v.json mit einer Version ueberschreiben, die nicht zur
         // eingebetteten spec.json passt (Hashes bleiben korrekt - der
@@ -1212,9 +1286,78 @@ mod tests {
     }
 
     #[test]
+    fn test_load_model_end_to_end_without_attention_bias() {
+        // attention_bias=false: keine Bias-Tensoren im Artefakt, Layer laden
+        // mit None-Biases (Modellfamilien ohne Attention-Biases).
+        let dir = test_dir("model-e2e-nobias");
+        write_full_fixture(&dir, true, false);
+
+        let model = load_model(&dir).expect("Modell-Laden erfolgreich");
+        assert!(model.layers[0].q_bias.is_none());
+        assert!(model.layers[0].k_bias.is_none());
+        assert!(model.layers[0].v_bias.is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_missing_bias_tensors() {
+        // attention_bias=true, aber der q_proj.bias-Tensor fehlt im Artefakt:
+        // muss laut scheitern (stilles Weglassen wuerde das Modell vom
+        // Referenzmodell abweichen lassen).
+        let dir = test_dir("model-e2e-missingbias");
+        write_full_fixture(&dir, true, true);
+        fs::remove_file(dir.join("model_layers_0_self_attn_q_proj_bias.bin")).ok();
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).unwrap()
+        ).unwrap();
+        manifest.as_object_mut().unwrap().remove("model_layers_0_self_attn_q_proj_bias");
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Fehlender Bias-Tensor muss Laden verhindern"),
+        };
+        assert!(err.contains("q_proj.bias"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_bias_shape_mismatch() {
+        // Bias-Tensor mit falscher Laenge (3 statt heads*head_dim=4): muss
+        // scheitern, sonst wuerde add_bias_i8 mit falscher Laenge arbeiten.
+        let dir = test_dir("model-e2e-badbiasshape");
+        write_full_fixture(&dir, true, true);
+
+        let bias_file = dir.join("model_layers_0_self_attn_q_proj_bias.bin");
+        let bad_data: Vec<u8> = vec![1, 2, 3]; // 3 statt 4 Elemente
+        fs::write(&bias_file, &bad_data).expect("Bias ueberschreiben");
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&manifest_path).unwrap()
+        ).unwrap();
+        manifest["model_layers_0_self_attn_q_proj_bias"]["shape"] = serde_json::json!([3]);
+        manifest["model_layers_0_self_attn_q_proj_bias"]["hash"] =
+            serde_json::json!(sha256_hex(&bad_data));
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Falsche Bias-Laenge muss Laden verhindern"),
+        };
+        assert!(err.contains("Bias-Laenge"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn test_load_model_rejects_tampered_manifest_hash() {
         let dir = test_dir("model-e2e-tamperedmanifest");
-        write_full_fixture(&dir, true);
+        write_full_fixture(&dir, true, true);
 
         // weights_manifest.json nach dem Schreiben von theta_v.json
         // veraendern (z. B. eine Metadaten-Aenderung ohne Datei-Tausch) -

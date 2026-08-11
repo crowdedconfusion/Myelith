@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.18
+> **Version:** 0.12.19
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase (Phase 12.14–12.17 vollständig abgeschlossen)
+> **Status:** Aktive Entwicklung — Phase 12.14–12.17 vollständig, außerplanmäßiger Bias-Patch abgeschlossen
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,26 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.19 – 2026-08-11 (außerplanmäßiger Patch)
+- **Attention-Biases in der Runtime** (Fund aus dem Kalibrierungslauf 12.16,
+  mit dem Projektinhaber als außerplanmäßiger Patch beschlossen): Qwen2.5
+  besitzt Biases an q/k/v_proj — sie werden jetzt im Integerpfad verarbeitet
+  statt still verworfen
+- Neues Pflichtfeld `attention_bias` in `model_config.json`/`ModelDims`
+  (Muster wie `num_kv_heads`/`tie_word_embeddings`); fehlt es, scheitert das
+  Laden laut
+- `loader.rs` lädt bei `attention_bias: true` je Layer die Bias-Tensoren
+  `*.self_attn.{q,k,v}_proj.bias` und validiert ihre Längen (q:
+  num_heads×head_dim, k/v: num_kv_heads×head_dim)
+- Neuer Kernel `add_bias_i8()`: Bias mit eigener kalibrierter Skala wird per
+  `rescale` auf die Q/K/V-Ausgabeskala gebracht, i32-Addition mit Clamping —
+  reine Ganzzahlarithmetik; Aufruf in `model.rs` nach den q/k/v-Projektionen
+- `model_configs.py`: `"attention_bias": True` für 0.5b; Kalibrierungslauf
+  wiederholt, Artefakte tragen das Feld
+- Acht neue Tests (4 Kernel: Rescale-Richtung/RNE/Sättigung/Länge, 4 Runtime:
+  Pflichtfeld/Laden/fehlender Tensor/falsche Länge); Python-Fixtures im
+  echten Qwen2.5-Format
 
 ### v0.12.18 – 2026-08-11
 - LUT-Generierung vollständig aus `theta_v/spec.json` gesteuert (neues

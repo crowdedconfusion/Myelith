@@ -5,7 +5,7 @@
 
 use integer_llm_kernels::fixed_point::{clamp_i8, clamp_i16, rescale};
 use integer_llm_kernels::rmsnorm::rmsnorm_int8;
-use integer_llm_kernels::linear::linear_w8a8;
+use integer_llm_kernels::linear::{linear_w8a8, add_bias_i8};
 use integer_llm_kernels::rope::rotate_pairs;
 use integer_llm_kernels::softmax::softmax_int;
 use integer_llm_kernels::attention::attention_int;
@@ -55,6 +55,13 @@ pub struct TransformerLayer {
     pub gate_proj: QTensor,
     pub up_proj: QTensor,
     pub down_proj: QTensor,
+    /// Q/K/V-Attention-Biases (Qwen2.5 besitzt sie an q/k/v_proj). `None`
+    /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
+    /// model_config.json); sonst je ein Bias-Tensor mit eigener Skala,
+    /// der nach der Projektion addiert wird (siehe `add_bias_i8`).
+    pub q_bias: Option<QTensor>,
+    pub k_bias: Option<QTensor>,
+    pub v_bias: Option<QTensor>,
 }
 
 /// Das komplette Modell.
@@ -178,9 +185,23 @@ impl IntegerModel {
         // Q, K, V Projektionen: Gewichtsskala kommt aus der jeweils eigenen
         // kalibrierten QTensor.shift (siehe Numerik-Fix nach 12.10), nicht
         // aus der globalen weight_frac_bits-Konstante.
-        let q_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.q_proj), cfg.act_frac_bits, layer.q_proj.shift, cfg.act_frac_bits);
-        let k_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.k_proj), cfg.act_frac_bits, layer.k_proj.shift, cfg.act_frac_bits);
-        let v_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.v_proj), cfg.act_frac_bits, layer.v_proj.shift, cfg.act_frac_bits);
+        let mut q_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.q_proj), cfg.act_frac_bits, layer.q_proj.shift, cfg.act_frac_bits);
+        let mut k_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.k_proj), cfg.act_frac_bits, layer.k_proj.shift, cfg.act_frac_bits);
+        let mut v_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.v_proj), cfg.act_frac_bits, layer.v_proj.shift, cfg.act_frac_bits);
+
+        // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche): eigener
+        // kalibrierter Shift, Reskalierung auf die Q/K/V-Ausgabeskala
+        // (act_frac_bits) und i32-Addition mit Clamping - reine
+        // Ganzzahlarithmetik (ausserplanmaessiger Patch v0.12.19).
+        if let Some(qb) = &layer.q_bias {
+            add_bias_i8(&mut q_flat, &qb.data, qb.shift, cfg.act_frac_bits);
+        }
+        if let Some(kb) = &layer.k_bias {
+            add_bias_i8(&mut k_flat, &kb.data, kb.shift, cfg.act_frac_bits);
+        }
+        if let Some(vb) = &layer.v_bias {
+            add_bias_i8(&mut v_flat, &vb.data, vb.shift, cfg.act_frac_bits);
+        }
 
         // Auf Heads aufteilen. Q hat num_heads Heads, K/V bei GQA nur
         // num_kv_heads (Qwen2.5-0.5B: 14 vs. 2) - deshalb getrennte Aufteilung
