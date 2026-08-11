@@ -391,7 +391,15 @@ impl IntegerModel {
             // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
             // dort in die Eingangsskala der exp-LUT (spec 0.5.2: Domaene
             // [0, 64) statt [0, 0.5) — gemessene Score-Differenzen bis ~28).
-            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16)
+            //
+            // Fund 17 (Attention-Skalierung): HF-Qwen2 skaliert die Scores mit
+            // 1/sqrt(head_dim) (attn_weights = q·k * head_dim^-0.5). Dieser
+            // Faktor fehlte hier, die Scores waren dadurch um sqrt(head_dim)
+            // (=8 bei head_dim 64) zu groß und die Softmax viel zu scharf.
+            // 1/sqrt(head_dim) = 2^-log2(head_dim)/2, also ein zusaetzlicher
+            // Rechtsshift um log2(head_dim)/2 (bei head_dim 64 = 3).
+            let attn_scale_shift = (self.head_dim.trailing_zeros() / 2) as u16;
+            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + attn_scale_shift)
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
             let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 

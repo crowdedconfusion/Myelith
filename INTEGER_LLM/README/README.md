@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.31
+> **Version:** 0.12.32
 > **Datum:** 2026-08-11
-> **Status:** Umfassende Verifikation abgeschlossen (Determinismus PASSED, Perplexität 73,15 vs. FP 14,95, Layer-für-Layer-Abgleich, Fehlerzerlegung, GPTQ-Check, Mischpräzisions-Empfindlichkeit, alle Test-Suiten grün) — Bericht `eval/results/verification_report.md`. Ergebnis: bit-exakte Inferenz erreicht und verifiziert; Qualität begrenzt durch int8-Gewichtsquantisierung (Aktivierungen, LUTs und Struktur sind verifiziert in Ordnung). Offene Präzisions-Entscheidung: int16 alle Layer / Mischpräzision / Akzeptanz der Lücke. (Zuvor v0.12.30: zwei Struktur-Bugs behoben — RoPE fundamental falsch, Attention attendierte nur auf ersten Key; Perplexität 2 972 → 73,15.)
+> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. Determinismus PASSED (zwei Läufe bit-identisch), alle Test-Suiten grün.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -135,6 +135,28 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.32 – 2026-08-11
+- **🎉 ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs.
+  FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %).
+- **Fund 17 (Root-Cause, behoben): fehlende 1/√head_dim-Attention-
+  Skalierung.** HF-Qwen2 skaliert die Attention-Scores mit
+  `attn_weights = q·k · head_dim^-0.5` (head_dim 64 → Faktor 1/8). Dieser
+  Faktor fehlte in `runtime/src/model.rs` im `score_shift`, die Scores waren
+  dadurch um √head_dim (=8) zu groß und die Softmax viel zu scharf — die
+  Ursache des Perplexitäts-Blow-ups (73,15). Behoben durch einen
+  zusätzlichen Rechtsshift um log₂(head_dim)/2 (=3 bei head_dim 64) im
+  `score_shift`. Bit-exakt (nur ein Shift), deterministisch, keine
+  θ_v-Spezifikationsänderung des Zahlenformats nötig.
+- **Perplexität-Verlauf der Eskalationen:** 14 546 (Per-Tensor) →
+  3 257 (Per-Channel) → 3 242 (+Headroom) → 3 318 (GPTQ) →
+  2 972 (SiLU-Raster) → 73,15 (RoPE-Fix + KV-Cache-Fix) →
+  **15,59 (Attention-Skalierungs-Fix)**. Der Blow-up war NICHT die
+  Quantisierung, sondern drei Struktur-Bugs (RoPE, KV-Cache, Attention-
+  Skalierung), die nacheinander gefunden und behoben wurden.
+- Verifikation: Determinismus PASSED (zwei Läufe bit-identisch), E2E
+  Perplexität 15,59, alle Rust-Suiten (kernels 30, runtime 44, pipeline)
+  und Python-Suiten grün.
 
 ### v0.12.31 – 2026-08-11
 - **Umfassende Verifikation vor der Präzisions-Entscheidung** (reine
