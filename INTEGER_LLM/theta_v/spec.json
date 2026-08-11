@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.5.2",
+    "version": "0.7.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -19,11 +19,12 @@
         "activation": { "dtype": "int16", "storage": "int16" },
         "residual": { "dtype": "int16", "storage": "int16" },
         "accumulator": { "dtype": "int32", "storage": "int32" },
-        "kv_cache": { "dtype": "int16", "storage": "int16", "frac_bits": 8 }
+        "kv_cache": { "dtype": "int16", "storage": "int16", "frac_bits": 8 },
+        "lm_head": { "dtype": "int16", "storage": "int16", "scale": "per_channel", "weight_tying": false, "note": "Benannte Ausnahme (Eskalation nach Entscheidungspunkt 12.21): eigener Tensor (Weight-Tying aufgelöst) in int16, da der LM-Head bei Logit-Spannweiten von wenigen Einheiten direkt über die Token-Rangfolge entscheidet; int8-per-channel (seit 0.7.0 Standard für alle übrigen Gewichte) reicht dort nicht. Determinismus bleibt unberührt: alle Skalen sind Zweierpotenzen, alle Operationen bleiben ganzzahlig." }
       },
       "scales": {
         "mode": "power_of_two",
-        "weight_scale": "per_tensor",
+        "weight_scale": "per_channel",
         "activation_scale": "per_layer"
       },
       "rounding": "round_to_nearest_even",

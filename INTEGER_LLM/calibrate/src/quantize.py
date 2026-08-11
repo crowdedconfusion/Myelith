@@ -20,41 +20,107 @@ def quantize_symmetric_int8(tensor: torch.Tensor) -> Tuple[np.ndarray, float, in
     Symmetrische per-tensor Quantisierung nach INT8, Zweierpotenz-Skala.
     Returns: (quantized_array, scale, shift)
 
-    "shift" bezeichnet hier frac_bits in der Laufzeit-Konvention (Kap. 6.2 /
-    Anhang B.5.4 des Whitepapers): Quantisierung ist eine Linksverschiebung
-    um `shift` Bit (quantized = round(t * 2^shift)), Dequantisierung der
-    entsprechende arithmetische Rechtsshift (real ≈ quantized >> shift).
-
-    Fruehere Fassung dieser Funktion berechnete "shift" nur fuer den Fall
-    absmax > 127 (Wert muss VERKLEINERT werden, um in int8 zu passen) und
-    gab sonst unbedingt shift=0 zurueck. Fuer reale Modellgewichte
-    (absmax typischerweise deutlich unter 1) bedeutete das:
-    quantized = round(t), also praktisch durchgaengig 0. Diese Fassung
-    waehlt stattdessen die groesstmoegliche Zweierpotenz-Praezision, die
-    absmax noch verlustfrei in [-127, 127] abbildet.
+    Hinweis (theta_v 0.7.0): fuer Gewichte wird diese Funktion nicht mehr
+    verwendet — Per-Tensor-Skalen zerstoeren bei Matrizen mit Ausreisser-
+    AbsMax 10–17 % der Eintraege (sie werden zu 0 gerundet). Gewichte werden
+    per-channel quantisiert (quantize_symmetric_int8_per_channel). Diese
+    Funktion bleibt fuer Spezialfaelle und Tests erhalten.
     """
     t = tensor.detach().float().cpu()
     absmax = t.abs().max().item()
     if absmax < 1e-9:
         return np.zeros(t.shape, dtype=np.int8), 1.0, 0
 
-    # Groesstmoegliche Praezision, sodass absmax * 2^shift <= 127. floor() ist
-    # zwingend: ceil() koennte den Wertebereich von int8 verletzen. Bei sehr
-    # grossem absmax (> 127) wird shift <= 0, geklammert auf 0 - Werte
-    # ausserhalb des Bereichs saettigen dann beim Runden/Clamping.
     shift = int(np.floor(np.log2(127.0 / absmax)))
     shift = max(0, min(shift, MAX_FRAC_BITS))
     scale_pow2 = 2.0 ** (-shift)
 
-    # Quantisiere: Linksverschiebung um shift Bit statt Division.
     quantized = torch.clamp(torch.round(t * (2.0 ** shift)), -128, 127).to(torch.int8)
     return quantized.numpy(), scale_pow2, shift
 
 
+def quantize_symmetric_int8_per_channel(tensor: torch.Tensor) -> dict:
+    """
+    Symmetrische Per-Channel-Quantisierung nach INT8 mit eigener
+    Zweierpotenz-Skala je Zeile (Achse 0; bei 1D-Tensoren je Element).
+
+    Standard seit theta_v 0.7.0 (Eskalation nach dem Entscheidungspunkt
+    12.21): Per-Tensor-Skalen zerstoerten bei Projektionsmatrizen 10–17 %
+    der Eintraege, weil der AbsMax 17–34x ueber der typischen Groesse liegt;
+    per-channel sind es 0,0 %. Determinismus bleibt unberuehrt: alle Skalen
+    sind Zweierpotenzen, alle Runtime-Operationen bleiben ganzzahlig.
+
+    Returns: {"int8": np.ndarray[int8], "shifts": np.ndarray[int8] je Zeile,
+              "shape": [...]}
+    """
+    t = tensor.detach().float().cpu()
+    # 1D-Tensoren (Bias, Gamma) werden als Spaltenvektor behandelt, damit
+    # die Broadcasting-Multiplikation t * 2^shifts nicht zu einer [n,n]-
+    # Matrix aufblaest (Fund 11: q_proj.bias wurde zu 896x896 expandiert).
+    was_1d = t.dim() == 1
+    if was_1d:
+        t = t.unsqueeze(1)
+
+    absmax = t.abs().amax(dim=tuple(range(1, t.dim())), keepdim=True)
+
+    shifts = torch.where(
+        absmax < 1e-9,
+        torch.zeros_like(absmax),
+        torch.floor(torch.log2(127.0 / absmax.clamp(min=1e-9))),
+    )
+    shifts = torch.clamp(shifts, 0, MAX_FRAC_BITS)
+    quantized = torch.clamp(torch.round(t * (2.0 ** shifts)), -128, 127).to(torch.int8)
+    if was_1d:
+        quantized = quantized.squeeze(1)
+    return {
+        "int8": quantized.numpy(),
+        "shifts": shifts.squeeze(1).round().to(torch.int8).numpy(),
+        "shape": list(quantized.shape),
+    }
+
+
+def quantize_symmetric_int16_per_channel(tensor: torch.Tensor) -> dict:
+    """
+    Symmetrische Per-Channel-Quantisierung nach INT16 mit eigener
+    Zweierpotenz-Skala je Zeile (Achse 0).
+
+    Benannte Ausnahme der spec (theta_v 0.6.0, Eskalation nach dem
+    Entscheidungspunkt 12.21): der LM-Head entscheidet bei Spannweiten von
+    wenigen Einheiten direkt über die Token-Rangfolge; die int8-Per-Tensor-
+    Quantisierung der geteilten Embedding-Tabelle hatte dort ~20 % relativen
+    Fehler pro Eintrag und die Logits unbrauchbar gemacht. Per-Channel-int16
+    senkt den Fehler um ~4 Größenordnungen und bleibt vollständig
+    ganzzahlig und deterministisch (Zweierpotenz-Skalen, arithmetische
+    Shifts in der Runtime).
+
+    Returns: {"int16": np.ndarray[int16], "shifts": np.ndarray[int8] je Zeile,
+              "shape": [...]}
+    """
+    t = tensor.detach().float().cpu()
+    absmax = t.abs().amax(dim=1, keepdim=True)  # [rows, 1]
+
+    shifts = torch.where(
+        absmax < 1e-9,
+        torch.zeros_like(absmax),
+        torch.floor(torch.log2(32767.0 / absmax.clamp(min=1e-9))),
+    )
+    shifts = torch.clamp(shifts, 0, MAX_FRAC_BITS)
+    scale = 2.0 ** shifts
+
+    quantized = torch.clamp(torch.round(t * scale), -32768, 32767).to(torch.int16)
+    return {
+        "int16": quantized.numpy(),
+        "shifts": shifts.squeeze(1).round().to(torch.int8).numpy(),
+        "shape": list(quantized.shape),
+    }
+
+
 def quantize_model_weights(model) -> Dict[str, dict]:
     """
-    Quantisert alle relevanten Gewichte eines HF-Modells.
-    Returns: Dict[tensor_name -> {int8_data, scale, shift, shape}]
+    Quantisiert alle relevanten Gewichte eines HF-Modells per-channel
+    (theta_v 0.7.0: Zweierpotenz-Skala je Ausgabe-Zeile; bei 1D-Tensoren
+    wie LayerNorm-Gammas je Element).
+    Returns: Dict[tensor_name -> {int8_data, shifts, shape}]
     """
     quantized = {}
     target_keys = [
@@ -66,13 +132,6 @@ def quantize_model_weights(model) -> Dict[str, dict]:
 
     for name, param in model.named_parameters():
         if any(key in name for key in target_keys):
-            q_data, scale, shift = quantize_symmetric_int8(param)
-            quantized[name] = {
-                "int8": q_data,
-                "scale": scale,
-                "shift": shift,
-                "shape": list(q_data.shape),
-                "original_dtype": str(param.dtype),
-            }
+            quantized[name] = quantize_symmetric_int8_per_channel(param)
 
     return quantized

@@ -51,11 +51,17 @@ fn main() {
 }
 
 fn run_rmsnorm(gv: &GoldenVector) -> bool {
-    // theta_v 0.5.0: int16-Eingang, LUT-gestuetztes rsqrt mit dynamischem
-    // geradem Index-Shift, divisionsfrei (inv_n_q20-Konstante).
+    // theta_v 0.7.0: int16-Eingang, LUT-gestuetztes rsqrt mit dynamischem
+    // geradem Index-Shift, divisionsfrei; Gamma mit Per-Element-Skalen
+    // (abwaertskompatibel: ohne gamma_shifts wird gamma_shift repliziert).
     let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
     let gamma: Vec<i8> = gv.inputs["gamma"].data.iter().map(|&v| v as i8).collect();
-    let gamma_shift = gv.metadata["gamma_shift"].as_u64().unwrap() as u8;
+    let gamma_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("gamma_shifts") {
+        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
+    } else {
+        let gamma_shift = gv.metadata["gamma_shift"].as_u64().unwrap() as u8;
+        vec![gamma_shift; gamma.len()]
+    };
     let rsqrt_lut: Vec<i16> = gv.metadata["rsqrt_lut"].as_array().unwrap()
         .iter().map(|v| v.as_i64().unwrap() as i16).collect();
     let lut_input_shift = gv.metadata["lut_input_shift"].as_u64().unwrap() as u8;
@@ -64,7 +70,7 @@ fn run_rmsnorm(gv: &GoldenVector) -> bool {
     let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
 
     let result = integer_llm_kernels::rmsnorm::rmsnorm_i16(
-        &x, &gamma, gamma_shift, &rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        &x, &gamma, &gamma_shifts, &rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
     let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
 
     if result != expected {
@@ -81,10 +87,15 @@ fn run_linear(gv: &GoldenVector) -> bool {
         row.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i8).collect()
     }).collect();
     let act_frac = gv.metadata["act_frac"].as_u64().unwrap() as u8;
-    let weight_frac = gv.metadata["weight_frac"].as_u64().unwrap() as u8;
+    let w_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("w_shifts") {
+        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
+    } else {
+        let weight_frac = gv.metadata["weight_frac"].as_u64().unwrap() as u8;
+        vec![weight_frac; w.len()]
+    };
     let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
 
-    let result = integer_llm_kernels::linear::linear_w8a16(&x, &w, act_frac, weight_frac, out_frac);
+    let result = integer_llm_kernels::linear::linear_w8a16(&x, &w, &w_shifts, act_frac, out_frac);
     let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
 
     if result != expected {

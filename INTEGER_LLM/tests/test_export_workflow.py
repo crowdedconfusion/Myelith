@@ -102,6 +102,7 @@ def test_export_weights_rejects_shape_byte_mismatch():
                 "shape": [2, 4],  # 8 Bytes erwartet, 3 geliefert
                 "scale": 1.0,
                 "shift": 0,
+                "shifts": np.zeros(2, dtype=np.int8),
             },
         }
         try:
@@ -124,6 +125,7 @@ def test_export_weights_rejects_wrong_dtype():
                 "shape": [4],
                 "scale": 1.0,
                 "shift": 0,
+                "shifts": np.zeros(4, dtype=np.int8),
             },
         }
         try:
@@ -143,12 +145,14 @@ def test_export_weights_hashes_match_manifest():
                 "shape": [2, 4],
                 "scale": 0.5,
                 "shift": 1,
+                "shifts": np.array([1, 1], dtype=np.int8),
             },
             "model.norm.weight": {
                 "int8": FakeInt8Array([64, 64, 64, 64]),
                 "shape": [4],
                 "scale": 1.0,
                 "shift": 0,
+                "shifts": np.zeros(4, dtype=np.int8),
             },
         }
         manifest = export_quantized_weights(quantized, out_dir)
@@ -157,6 +161,10 @@ def test_export_weights_hashes_match_manifest():
             file_bytes = (out_dir / entry["file"]).read_bytes()
             assert entry["hash"] == _sha256_hex(file_bytes), safe_name
             assert entry["dtype"] == "int8"
+            assert entry["scale"] == -1.0 and entry["shift"] == -1  # Sentinels
+            shifts_bytes = (out_dir / entry["shifts_file"]).read_bytes()
+            assert entry["shifts_hash"] == _sha256_hex(shifts_bytes), safe_name
+            assert len(shifts_bytes) == entry["shape"][0], safe_name
             n = 1
             for d in entry["shape"]:
                 n *= d
@@ -194,12 +202,14 @@ def test_export_workflow_order_produces_consistent_theta_v():
                 "shape": [2, 4],
                 "scale": 1.0,
                 "shift": 0,
+                "shifts": np.zeros(2, dtype=np.int8),
             },
             "model.norm.weight": {
                 "int8": FakeInt8Array([64, 64, 64, 64]),
                 "shape": [4],
                 "scale": 1.0,
                 "shift": 0,
+                "shifts": np.zeros(4, dtype=np.int8),
             },
         }
         export_quantized_weights(quantized, out_dir)
@@ -244,7 +254,13 @@ def test_synthetic_export_loads_in_real_runtime_binary():
             n = 1
             for d in shape:
                 n *= d
-            return {"int8": FakeInt8Array(range(n)), "shape": list(shape), "scale": 1.0, "shift": 0}
+            return {
+                "int8": FakeInt8Array(range(n)),
+                "shape": list(shape),
+                "scale": 1.0,
+                "shift": 0,
+                "shifts": np.zeros(shape[0], dtype=np.int8),
+            }
 
         quantized = {
             "model.embed_tokens.weight": w([vocab, hidden]),
@@ -307,6 +323,98 @@ def test_synthetic_export_loads_in_real_runtime_binary():
         assert "Token-Hash:" in result.stdout
 
 
+# ---------------------------------------------------------------------------
+# LM-Head int16/per-channel (spec-Ausnahme 0.6.0, Eskalation nach 12.21).
+# Diese Tests brauchen numpy (und für die Quantisierungs-Rundung torch);
+# ohne die Abhängigkeiten werden sie übersprungen.
+# ---------------------------------------------------------------------------
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
+
+def test_export_lm_head_writes_files_and_manifest():
+    if not HAS_NUMPY:
+        print("[test] SKIPPED (numpy fehlt): export_lm_head")
+        return
+    from src.export_weights import export_lm_head
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        # Leeres Manifest voraussetzen (export_lm_head ergänzt den Eintrag).
+        (out_dir / "weights_manifest.json").write_text("{}", encoding="utf-8")
+
+        data = np.arange(12, dtype=np.int16).reshape(3, 4)
+        shifts = np.array([17, 18, 19], dtype=np.int8)
+        entry = export_lm_head({"int16": data, "shifts": shifts, "shape": [3, 4]}, out_dir)
+
+        assert (out_dir / "lm_head.bin").read_bytes() == data.astype("<i2").tobytes()
+        assert (out_dir / "lm_head_shifts.bin").read_bytes() == shifts.tobytes()
+        assert entry["dtype"] == "int16"
+        assert entry["shifts_file"] == "lm_head_shifts.bin"
+        assert entry["scale"] == -1.0 and entry["shift"] == -1  # Sentinels
+        manifest = json.loads((out_dir / "weights_manifest.json").read_text())
+        assert manifest["lm_head"]["hash"] == entry["hash"]
+        assert manifest["lm_head"]["shifts_hash"] == entry["shifts_hash"]
+
+
+def test_quantize_int16_per_channel_roundtrip():
+    if not (HAS_NUMPY and HAS_TORCH):
+        print("[test] SKIPPED (torch/numpy fehlt): quantize_int16_per_channel")
+        return
+    from src.quantize import quantize_symmetric_int16_per_channel
+
+    # Zwei Zeilen mit sehr unterschiedlichen Absmax: eigene Skalen je Zeile.
+    t = torch.tensor([
+        [0.05, -0.05, 0.01, -0.01],   # absmax 0.05 -> hoher Shift
+        [2.0, -1.0, 0.5, -0.25],      # absmax 2.0  -> niedriger Shift
+    ])
+    q = quantize_symmetric_int16_per_channel(t)
+    assert q["int16"].dtype == np.int16
+    assert q["shifts"].shape == (2,)
+    assert q["shifts"][0] > q["shifts"][1], "kleinere Werte brauchen feinere Skalen"
+
+    # Rundlauf: Dequantisierung darf pro Zeile um höchstens einen halben
+    # Quantisierungsschritt abweichen.
+    for row in range(2):
+        step = 2.0 ** (-int(q["shifts"][row]))
+        deq = q["int16"][row].astype(np.float64) * step
+        err = np.abs(deq - t[row].numpy())
+        assert err.max() <= step / 2 + 1e-9, f"Zeile {row}: max. Fehler {err.max()}"
+
+
+def test_quantize_int8_per_channel_1d_keeps_shape():
+    # Regressionstest Fund 11: bei 1D-Tensoren (Bias, Gamma) blies das
+    # Broadcasting t[n] * shifts[n,1] das Ergebnis zu einer [n,n]-Matrix
+    # auf (q_proj.bias: 896 -> 802816 Elemente), und der Runtime-Loader
+    # verweigerte die Modell-Ladung.
+    if not (HAS_NUMPY and HAS_TORCH):
+        print("[test] SKIPPED (torch/numpy fehlt): quantize_int8_per_channel_1d")
+        return
+    from src.quantize import quantize_symmetric_int8_per_channel
+
+    t = torch.tensor([0.5, -0.25, 0.0625])
+    q = quantize_symmetric_int8_per_channel(t)
+    assert q["shape"] == [3], f"1D-Tensor muss 1D bleiben, war {q['shape']}"
+    assert q["int8"].shape == (3,)
+    assert q["shifts"].shape == (3,)
+
+    # Rundlauf je Element: Fehler höchstens ein halber Quantisierungsschritt.
+    for i in range(3):
+        step = 2.0 ** (-int(q["shifts"][i]))
+        deq = float(q["int8"][i]) * step
+        assert abs(deq - float(t[i])) <= step / 2 + 1e-9, f"Element {i}"
+
+
 if __name__ == "__main__":
     test_get_export_model_config_accepts_verified_variant()
     print("[test] get_export_model_config akzeptiert 0.5B: PASSED")
@@ -330,4 +438,10 @@ if __name__ == "__main__":
     print("[test] Export-Reihenfolge erzeugt konsistente Hashes: PASSED")
     test_synthetic_export_loads_in_real_runtime_binary()
     print("[test] Echtes Runtime-Binary laedt synthetischen Export: PASSED")
+    test_export_lm_head_writes_files_and_manifest()
+    print("[test] export_lm_head schreibt int16/Per-Channel-Artefakte: PASSED")
+    test_quantize_int16_per_channel_roundtrip()
+    print("[test] int16-Per-Channel-Quantisierung Rundlauf: PASSED")
+    test_quantize_int8_per_channel_1d_keeps_shape()
+    print("[test] int8-Per-Channel-Quantisierung 1D behaelt Shape: PASSED")
     print("[test] Alle Tests bestanden.")

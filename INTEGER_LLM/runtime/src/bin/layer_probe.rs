@@ -62,36 +62,37 @@ fn main() {
         sc.residual_in_frac, sc.residual_mid_frac
     );
 
-    // S0: Embedding
+    // S0: Embedding (Per-Channel-Skala der Token-Zeile, theta_v 0.7.0)
     let emb = model.embedding_table.row(token_id);
+    let emb_shift = model.embedding_table.shifts[token_id];
     let hidden: Vec<i16> = emb
         .iter()
-        .map(|v| clamp_i16(rescale(*v as i32, model.embedding_table.shift, sc.residual_in_frac)))
+        .map(|v| clamp_i16(rescale(*v as i32, emb_shift, sc.residual_in_frac)))
         .collect();
-    println!("embedding_shift={}", model.embedding_table.shift);
+    println!("embedding_shift={}", emb_shift);
     summary("S0 hidden(embed)", &hidden, sc.residual_in_frac);
 
     // S1: Pre-Attention RMSNorm
     let norm_hidden = rmsnorm_i16(
         &hidden,
         &layer.input_layernorm_gamma.data,
-        layer.input_layernorm_gamma.shift,
+        &layer.input_layernorm_gamma.shifts,
         &model.rsqrt_lut,
         cfg.rsqrt_input_shift,
         cfg.rsqrt_output_frac,
         model.inv_n_q20,
         sc.norm_attn_frac,
     );
-    println!("gamma_in_shift={}", layer.input_layernorm_gamma.shift);
+    println!("gamma_in_shifts (erste 4) = {:?}", &layer.input_layernorm_gamma.shifts[..4]);
     summary("S1 norm_hidden", &norm_hidden, sc.norm_attn_frac);
 
     // S2: Q/K/V + Bias
-    let mut q_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.q_proj), sc.norm_attn_frac, layer.q_proj.shift, sc.q_frac);
-    let mut k_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.k_proj), sc.norm_attn_frac, layer.k_proj.shift, sc.k_frac);
-    let mut v_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.v_proj), sc.norm_attn_frac, layer.v_proj.shift, sc.v_frac);
-    if let Some(qb) = &layer.q_bias { add_bias_i16(&mut q_flat, &qb.data, qb.shift, sc.q_frac); }
-    if let Some(kb) = &layer.k_bias { add_bias_i16(&mut k_flat, &kb.data, kb.shift, sc.k_frac); }
-    if let Some(vb) = &layer.v_bias { add_bias_i16(&mut v_flat, &vb.data, vb.shift, sc.v_frac); }
+    let mut q_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.q_proj), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
+    let mut k_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.k_proj), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
+    let mut v_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.v_proj), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
+    if let Some(qb) = &layer.q_bias { add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac); }
+    if let Some(kb) = &layer.k_bias { add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac); }
+    if let Some(vb) = &layer.v_bias { add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac); }
     summary("S2 q_flat", &q_flat, sc.q_frac);
     summary("S2 k_flat", &k_flat, sc.k_frac);
     summary("S2 v_flat", &v_flat, sc.v_frac);
@@ -147,7 +148,7 @@ fn main() {
     // (im echten Forward waere es die Eingangsskala von Layer 1).
     let out_frac = model.final_residual_frac;
 
-    let o_out = linear_w8a16(&attn_out, &to_vec_vec(&layer.o_proj), sc.attn_out_frac, layer.o_proj.shift, sc.residual_mid_frac);
+    let o_out = linear_w8a16(&attn_out, &to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, sc.residual_mid_frac);
     summary("S5 o_out", &o_out, sc.residual_mid_frac);
 
     let residual: Vec<i16> = hidden.iter().zip(o_out.iter())
@@ -161,7 +162,7 @@ fn main() {
     let norm_residual = rmsnorm_i16(
         &residual,
         &layer.post_attention_layernorm_gamma.data,
-        layer.post_attention_layernorm_gamma.shift,
+        &layer.post_attention_layernorm_gamma.shifts,
         &model.rsqrt_lut,
         cfg.rsqrt_input_shift,
         cfg.rsqrt_output_frac,
@@ -175,11 +176,11 @@ fn main() {
         &to_vec_vec(&layer.gate_proj),
         &to_vec_vec(&layer.up_proj),
         &to_vec_vec(&layer.down_proj),
+        &layer.gate_proj.shifts,
+        &layer.up_proj.shifts,
+        &layer.down_proj.shifts,
         &model.silu_lut,
         sc.norm_mlp_frac,
-        layer.gate_proj.shift,
-        layer.up_proj.shift,
-        layer.down_proj.shift,
         sc.gate_frac,
         sc.up_frac,
         sc.down_in_frac,

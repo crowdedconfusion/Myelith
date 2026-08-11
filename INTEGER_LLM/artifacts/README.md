@@ -14,10 +14,19 @@ artifacts/
 ├── README.md
 └── <modell>/                    # z. B. qwen2.5-0.5b, zur Laufzeit erzeugt
     ├── theta_v.json             # θ_v-Manifest (Version, SHA-256-Hashes der Artefakte)
-    ├── weights_manifest.json    # Tensor-Manifest (Name, Form, Skala, Hash)
-    ├── <tensor_name>.bin        # INT8-Gewichte, eine Datei pro Tensor
+    ├── weights_manifest.json    # Tensor-Manifest (Name, Form, Hash; seit θ_v 0.7.0
+    │                            # Sentinel scale:-1.0/shift:-1 plus shifts_file/shifts_hash)
+    ├── <tensor_name>.bin        # Gewichte, eine Datei pro Tensor
     │                            # (raw int8, row-major; HF-Tensorname, Punkte
     │                            # durch Unterstriche ersetzt)
+    ├── <tensor_name>_shifts.bin # Per-Channel-Zweierpotenz-Shifts (raw int8,
+    │                            # ein Shift je Ausgabe-Zeile; bei 1D-Tensoren
+    │                            # je Element) — θ_v 0.7.0
+    ├── lm_head.bin              # benannte spec-Ausnahme (θ_v 0.6.0): eigener
+    │                            # Tensor in raw int16, row-major (Weight-Tying
+    │                            # aufgelöst), dazu lm_head_shifts.bin
+    ├── model_config.json        # Modellparameter (inkl. attention_bias,
+    │                            # lm_head-Ausnahme)
     ├── scales.json              # Per-Layer-Aktivierungsskalen (Zweierpotenzen)
     ├── luts.json                # LUT-Manifest
     ├── <name>.lut.bin           # Lookup-Tabellen (exp, silu, sin, cos, rsqrt),

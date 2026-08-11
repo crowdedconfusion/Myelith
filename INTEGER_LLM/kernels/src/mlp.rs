@@ -23,11 +23,11 @@ pub fn mlp_int(
     W_gate: &[Vec<i8>],
     W_up: &[Vec<i8>],
     W_down: &[Vec<i8>],
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    down_w_shifts: &[u8],
     silu_lut: &[i16],
     in_frac_bits: u8,
-    gate_w_shift: u8,
-    up_w_shift: u8,
-    down_w_shift: u8,
     gate_out_frac: u8,
     up_out_frac: u8,
     down_in_frac: u8,
@@ -36,8 +36,8 @@ pub fn mlp_int(
     silu_out_frac: u8,
     out_frac_bits: u8,
 ) -> Vec<i16> {
-    let gate = linear_w8a16(x, W_gate, in_frac_bits, gate_w_shift, gate_out_frac);
-    let up = linear_w8a16(x, W_up, in_frac_bits, up_w_shift, up_out_frac);
+    let gate = linear_w8a16(x, W_gate, gate_w_shifts, in_frac_bits, gate_out_frac);
+    let up = linear_w8a16(x, W_up, up_w_shifts, in_frac_bits, up_out_frac);
 
     let mut h = Vec::with_capacity(gate.len());
     for (g, u) in gate.iter().zip(up.iter()) {
@@ -53,7 +53,7 @@ pub fn mlp_int(
         )));
     }
 
-    linear_w8a16(&h, W_down, down_in_frac, down_w_shift, out_frac_bits)
+    linear_w8a16(&h, W_down, down_w_shifts, down_in_frac, out_frac_bits)
 }
 
 #[cfg(test)]
@@ -80,9 +80,10 @@ mod tests {
         let w_down = vec![vec![64i8, 32], vec![32, 64]];
         let lut = spec_silu_lut();
         let out = mlp_int(
-            &x, &w_gate, &w_up, &w_down, &lut,
+            &x, &w_gate, &w_up, &w_down,
+            &[6, 6], &[6, 6], &[6, 6], // Per-Channel-Gewichts-Shifts
+            &lut,
             6,   // in_frac
-            6, 6, 6, // Gewichts-Shifts
             6, 6, 6, // gate/up/down-Eingangs-Skalen
             1, 256, 6, // SiLU-Domäne (frac 1, Offset 256, Output frac 6)
             6,   // out_frac
@@ -90,8 +91,10 @@ mod tests {
         assert_eq!(out.len(), 2);
         // Alle Werte muessen im i16-Bereich und deterministisch sein.
         let out2 = mlp_int(
-            &x, &w_gate, &w_up, &w_down, &lut,
-            6, 6, 6, 6, 6, 6, 6, 1, 256, 6, 6,
+            &x, &w_gate, &w_up, &w_down,
+            &[6, 6], &[6, 6], &[6, 6],
+            &lut,
+            6, 6, 6, 6, 1, 256, 6, 6,
         );
         assert_eq!(out, out2);
     }

@@ -53,6 +53,18 @@ def main():
     n_sequences = baseline["n_sequences"]
     seq_len = baseline["seq_len"]
     ppl_fp = baseline["perplexity"]
+
+    # θ_v-Beschreibung aus der spec ableiten (Single Source of Truth),
+    # damit das Protokoll bei künftigen Eskalationsstufen nicht veraltet.
+    spec = json.loads((REPO / "theta_v" / "spec.json").read_text(encoding="utf-8"))
+    theta_v = spec["theta_v"]
+    spec_version = theta_v["version"]
+    scales = theta_v.get("numeric", {}).get("scales", {})
+    weight_scale = scales.get("weight_scale", "per_tensor")
+    activation_scale = scales.get("activation_scale", "per_layer")
+    theta_v_desc = (f"θ_v {spec_version} (Gewichte int8 {weight_scale}, "
+                    f"Aktivierungen int16 {activation_scale}, "
+                    f"LM-Head int16 per-channel als benannte spec-Ausnahme)")
     print(f"[ppl] FP-Baseline: Perplexitaet {ppl_fp:.2f} "
           f"({baseline['evaluated_tokens']} Positionen, "
           f"{n_sequences} Sequenzen à {seq_len} Tokens)")
@@ -107,7 +119,7 @@ def main():
 |---|---|
 | Modell | Qwen/Qwen2.5-0.5B (Basis-Variante) |
 | FP-Baseline | BF16, HF-Implementierung: Perplexität {ppl_fp:.2f} |
-| Integer-Modell | θ_v 0.5.2 (W8-Gewichte, int16-Aktivierungen, Per-Layer-Skalen): Perplexität {ppl_int:.2f} |
+| Integer-Modell | {theta_v_desc}: Perplexität {ppl_int:.2f} |
 | Datensatz | WikiText-2, Testsplit; {n_sequences} Sequenzen à {seq_len} Tokens ({n_eval} ausgewertete Positionen) |
 | Relativer Anstieg | **{delta_pct:+.2f} %** |
 | Akzeptanzkriterium | max. {acceptance_pct:.1f} % relativer Anstieg (Vorschlag des Fahrplans) |
@@ -127,7 +139,7 @@ def main():
 
 ## Konsequenz
 
-{'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Vor Fortsetzung ist gemäß Fahrplan zu klären, welcher Eskalationspfad verfolgt wird (priorisiert: 1. Weight-Tying aufbrechen (Embedding int8/LM-Head int16) + 2. Per-Channel-Skalen für den LM-Head; weitere: GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden). Die Eskalationsstrategien sind im Fahrplan (Abschnitt zu Phase 12.18–12.21) dokumentiert.'}
+{'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden. Siehe Fahrplan, Abschnitt „Eskalationsstrategien".'}
 """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_md = RESULTS_DIR / "decision_12-21.md"

@@ -8,9 +8,9 @@
 |---|---|
 | Modell | Qwen/Qwen2.5-0.5B (Basis-Variante) |
 | FP-Baseline | BF16, HF-Implementierung: Perplexität 14.95 |
-| Integer-Modell | θ_v 0.5.2 (W8-Gewichte, int16-Aktivierungen, Per-Layer-Skalen): Perplexität 14546.38 |
+| Integer-Modell | θ_v 0.7.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 3257.26 |
 | Datensatz | WikiText-2, Testsplit; 4 Sequenzen à 128 Tokens (435 ausgewertete Positionen) |
-| Relativer Anstieg | **+97179.25 %** |
+| Relativer Anstieg | **+21682.98 %** |
 | Akzeptanzkriterium | max. 5.0 % relativer Anstieg (Vorschlag des Fahrplans) |
 | **Ergebnis** | **VERFEHLT** |
 
@@ -28,4 +28,4 @@
 
 ## Konsequenz
 
-Das Akzeptanzkriterium ist verfehlt. Vor Fortsetzung ist gemäß Fahrplan zu klären, welcher Eskalationspfad verfolgt wird (priorisiert: 1. Weight-Tying aufbrechen (Embedding int8/LM-Head int16) + 2. Per-Channel-Skalen für den LM-Head; weitere: GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden). Die Eskalationsstrategien sind im Fahrplan (Abschnitt zu Phase 12.18–12.21) dokumentiert.
+Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden. Siehe Fahrplan, Abschnitt „Eskalationsstrategien".

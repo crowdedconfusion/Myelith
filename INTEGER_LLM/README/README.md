@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.22
+> **Version:** 0.12.25
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Entscheidungspunkt 12.18–12.21 in Messung
+> **Status:** Eskalation nach Entscheidungspunkt 12.21 umgesetzt (Per-Channel-int8 für alle Gewichte, θ_v 0.7.0) — Perplexität 14 546 → 3 257, Akzeptanzkriterium weiterhin VERFEHLT; nächste Eskalationsstufe offen (Fund 14)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,73 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.25 – 2026-08-11
+- **Eskalation nach Entscheidungspunkt 12.21 (außerplanmäßiger Patch,
+  θ_v 0.6.0 → 0.7.0):** Per-Channel-int8-Quantisierung für ALLE Gewichte
+  (zuvor nur LM-Head-Ausnahme in int16): eine Zweierpotenz-Skala je
+  Ausgabe-Zeile, bei 1D-Tensoren (Biases, LayerNorm-Gammas) je Element.
+  Per-Tensor-Skalen hatten 10–17 % der Gewichtseinträge zu 0 gerundet
+  (AbsMax 17–34× über typischer Größe); per-channel sind es 0,0 %.
+  Determinismus unberührt: alle Skalen bleiben Zweierpotenzen, der
+  Rechenpfad bleibt rein ganzzahlig (Shifts statt Division).
+  - `calibrate/src/quantize.py`: `quantize_symmetric_int8_per_channel()`
+    (neu, Standard für alle Gewichte); `quantize_model_weights()` darauf
+    umgestellt. Legacy-Per-Tensor-Funktion bleibt für Tests erhalten.
+  - `calibrate/src/export_weights.py`: je Tensor eine zusätzliche
+    `<name>_shifts.bin` (int8, ein Shift je Zeile); Manifest-Einträge
+    tragen `shifts_file` + `shifts_hash` und Sentinel `scale:-1.0` /
+    `shift:-1`; SHA-256-Nachschreiben-Verifikation auch der Shifts.
+  - `runtime/src/loader.rs`: `QTensor.shifts: Vec<u8>` (je Zeile);
+    Loader liest per-row Shifts (mit Längen- und Hash-Prüfung),
+    abwärtkompatibler Fallback repliziert einen Einzel-Shift.
+  - `kernels/`: `linear_w8a16`, `add_bias_i16`, `rmsnorm_i16`, `mlp_int`
+    und das Backend-Trait auf per-channel Signaturen umgestellt
+    (`w_shifts`/`gamma_shifts`/`bias_shifts` je Ausgabe-Zeile bzw. Element).
+  - `runtime/src/model.rs`: Embedding-Lookup, RMSNorm, alle Projektionen,
+    Bias-Addition und LM-Head konsumieren die Zeilen-Shifts.
+- **Fund 11 (behoben):** Per-Channel-Quantisierung blies 1D-Tensoren
+  (Bias, Gamma) durch Broadcasting `t[n] · shifts[n,1]` zu einer
+  `[n,n]`-Matrix auf (`q_proj.bias`: 896 → 802 816 Elemente), der
+  Runtime-Loader verweigerte darauf die Modell-Ladung. Fix: 1D-Tensoren
+  werden als Spaltenvektor behandelt und zurückgequetscht;
+  Regressionstest `test_quantize_int8_per_channel_1d_keeps_shape`.
+- **Funde 12+13 (behoben, nur Diagnose-Werkzeuge):** `tests/diag/
+  layer_probe_hf.py` addierte die Q/K/V-Biases doppelt (Fund 12) und
+  wandte `o_proj` doppelt an, weil transformers ≥ 5.x ihn bereits intern
+  in `Qwen2Attention.forward` ausführt (Fund 13); außerdem auf die neue
+  self_attn-API (`position_embeddings`, `attention_mask`) portiert.
+  Beide Fehler verfälschten nur die HF-Vergleichsprobe, nie die
+  Messungen (Baseline/Perplexität laufen über den vollen Modell-Forward).
+- **Neukalibrierung + Neumessung (Entscheidungspunkt 12.21, 2. Lauf):**
+  Perplexität **14 546 → 3 257** (Faktor 4,5 besser), FP-Baseline 14,95
+  → relativer Anstieg **+21 683 %** → Akzeptanzkriterium (max. 5 %)
+  **weiterhin VERFEHLT**. Logit-/Layer-Proben: S0–S7 stimmen in der
+  Skala mit HF überein, ' die'/' der' bleiben in den Top-10, aber die
+  Logit-Spannweite ist komprimiert und der korrekte Token (' Paris')
+  fällt aus den Top-10 — Muster akkumulierten Quantisierungsrauschens,
+  kein lokalisierter Stufenfehler. Dokumentiert als Fund 14; Protokoll
+  in `eval/results/decision_12-21.md`.
+- Tests: alle drei Crates grün (kernels 28, runtime 44, pipeline 0+Build),
+  Python-Suite vollständig (inkl. neuer 1D-Regression), Ganzzahligkeits-
+  Prüfung ohne Treffer im Rechenpfad.
+
+### v0.12.24 – 2026-08-11
+- **Entscheidungspunkt 12.21 gemessen:** `eval/perplexity.py` vergleicht
+  Integer-Modell und FP-Baseline auf identischen WikiText-2-Sequenzen
+  (Parameter aus dem Baseline-JSON, Single Source of Truth). Ergebnis:
+  14,95 (FP) vs. 14 546,38 (Integer) → **+97 179 %** → Akzeptanzkriterium
+  (Vorschlag max. 5 %) **VERFEHLT**. Protokoll mit der zwingenden
+  Einordnung (Decodierstrategie, 0,5B-als-ungünstigster-Fall) unter
+  `eval/results/decision_12-21.md`. Nächster Schritt: Wahl des
+  Eskalationspfads (Fahrplan, Abschnitt „Eskalationsstrategien")
+
+### v0.12.23 – 2026-08-11
+- **FP-Baseline gemessen (12.20):** `eval/baseline.py` — HF-Referenzmodell
+  in BF16, Teacher-Forcing, exakt dieselben WikiText-2-Sequenzen wie der
+  Integer-E2E-Test (gemeinsame Sequenzauswahl). Ergebnis: Perplexität
+  **14,95** auf 435 Positionen — gesichert unter
+  `eval/results/baseline_wikitext2.json`
 
 ### v0.12.22 – 2026-08-11
 - **Messinfrastruktur für den Entscheidungspunkt:** `runtime/src/bin/perplexity_probe`

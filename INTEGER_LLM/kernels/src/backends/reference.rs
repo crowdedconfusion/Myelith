@@ -40,17 +40,18 @@ impl Backend for ReferenceBackend {
         out: &mut [i16],
         in_features: usize,
         out_features: usize,
+        w_shifts: &[u8],
         act_frac: u8,
-        weight_frac: u8,
         out_frac: u8,
     ) {
-        // W ist als flat [out_features * in_features] gespeichert
+        // W ist als flat [out_features * in_features] gespeichert;
+        // jede Ausgabe-Zeile hat ihren eigenen Zweierpotenz-Shift.
         for row in 0..out_features {
             let mut acc: i64 = 0;
             for col in 0..in_features {
                 acc += (W[row * in_features + col] as i64) * (x[col] as i64);
             }
-            out[row] = clamp_i16_from_i64(rescale_i64(acc, act_frac + weight_frac, out_frac));
+            out[row] = clamp_i16_from_i64(rescale_i64(acc, act_frac + w_shifts[row], out_frac));
         }
     }
 
@@ -58,7 +59,7 @@ impl Backend for ReferenceBackend {
         &self,
         x: &[i16],
         gamma: &[i8],
-        gamma_shift: u8,
+        gamma_shifts: &[u8],
         rsqrt_lut: &[i16],
         lut_input_shift: u8,
         lut_output_frac: u8,
@@ -66,7 +67,7 @@ impl Backend for ReferenceBackend {
         out: &mut [i16],
         out_frac: u8,
     ) {
-        let result = rmsnorm_i16(x, gamma, gamma_shift, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        let result = rmsnorm_i16(x, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
         out.copy_from_slice(&result);
     }
 
@@ -125,11 +126,11 @@ impl Backend for ReferenceBackend {
         W_up: &[i8],
         W_down: &[i8],
         out: &mut [i16],
+        gate_w_shifts: &[u8],
+        up_w_shifts: &[u8],
+        down_w_shifts: &[u8],
         silu_lut: &[i16],
         in_frac: u8,
-        gate_w_shift: u8,
-        up_w_shift: u8,
-        down_w_shift: u8,
         gate_out_frac: u8,
         up_out_frac: u8,
         down_in_frac: u8,
@@ -150,9 +151,9 @@ impl Backend for ReferenceBackend {
         let result = mlp_int(
             x,
             &gate, &up, &down,
+            gate_w_shifts, up_w_shifts, down_w_shifts,
             silu_lut,
             in_frac,
-            gate_w_shift, up_w_shift, down_w_shift,
             gate_out_frac, up_out_frac, down_in_frac,
             silu_in_frac, silu_lut_offset, silu_out_frac,
             out_frac,

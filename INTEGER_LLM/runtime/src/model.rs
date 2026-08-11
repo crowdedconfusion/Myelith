@@ -20,7 +20,10 @@ use std::collections::HashMap;
 pub struct QTensor {
     pub data: Vec<i8>,      // flat, row-major
     pub shape: Vec<usize>,
-    pub shift: u8,          // Rechts-Shift fuer Reskalierung (Zweierpotenz)
+    /// Zweierpotenz-Shift je Zeile (theta_v 0.7.0: Per-Channel-Skalen;
+    /// bei 1D-Tensoren wie Biases/Gammas je Element). Ältere Artefakte mit
+    /// Per-Tensor-Skala werden vom Loader als replizierter Shift geladen.
+    pub shifts: Vec<u8>,    // Rechts-Shifts fuer Reskalierung, len == shape[0]
 }
 
 impl QTensor {
@@ -117,6 +120,11 @@ pub struct IntegerModel {
     pub max_context: usize,
     pub embedding_table: QTensor,   // [vocab_size, hidden_size]
     pub lm_head: QTensor,           // [vocab_size, hidden_size] (oder mit embedding_table getied)
+    /// INT16-LM-Head mit Per-Channel-Skalen (benannte spec-Ausnahme 0.6.0,
+    /// Eskalation nach dem Entscheidungspunkt 12.21). Falls vorhanden, wird
+    /// er für die Logits verwendet; `lm_head` (int8, getied) dient dann nur
+    /// noch als Fallback-Pfad für ältere Artefakte.
+    pub lm_head_int16: Option<crate::loader::LmHead>,
     /// Gamma der finalen RMSNorm als QTensor (data + kalibrierter Shift).
     pub final_norm_gamma: QTensor,
     /// Kalibrierte Skala des finalen Norm-Ausgangs = Eingang des LM-Heads.
@@ -204,13 +212,14 @@ impl IntegerModel {
     ) -> Vec<i32> {
         let cfg = &self.config;
 
-        // 1. Embedding Lookup: Gewicht int8 (eigener Shift) -> erstes
-        //    Residualstrom-Segment (kalibrierte Per-Segment-Skala, spec 0.5.1).
+        // 1. Embedding Lookup: Gewicht int8 mit Per-Channel-Skala der
+        //    Token-Zeile (theta_v 0.7.0) -> erstes Residualstrom-Segment.
         let first_residual_frac = self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
+        let emb_shift = self.embedding_table.shifts[token_id];
         let mut hidden: Vec<i16> = emb
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, self.embedding_table.shift, first_residual_frac)))
+            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
             .collect();
 
         // 2. Transformer Layers: jeder Layer gibt den Strom auf der Skala
@@ -230,7 +239,7 @@ impl IntegerModel {
         let normed = rmsnorm_i16(
             &hidden,
             &self.final_norm_gamma.data,
-            self.final_norm_gamma.shift,
+            &self.final_norm_gamma.shifts,
             &self.rsqrt_lut,
             cfg.rsqrt_input_shift,
             cfg.rsqrt_output_frac,
@@ -238,20 +247,38 @@ impl IntegerModel {
             self.final_norm_frac,
         );
 
-        // 4. LM Head (INT8 x INT16 -> INT32 Logits; i64-Akkumulator, da
-        //    896 * 127 * 32767 den i32-Bereich ueberschreiten kann).
+        // 4. LM Head.
+        //    Pfad A (spec-Ausnahme): INT16-LM-Head mit Per-Channel-
+        //    Skalen — i64-Akkumulator (896 * 32767 * 32767 > i32) und
+        //    Zeilen-Rescale auf die gemeinsame Logit-Skala (jede Zeile hat
+        //    ihren eigenen Zweierpotenz-Shift).
+        //    Pfad B (Fallback, ältere Artefakte mit Weight-Tying): INT8 x
+        //    INT16 -> INT32 Logits, i64-Akkumulator, Per-Channel-Zeilen-
+        //    Rescale (theta_v 0.7.0).
         let mut logits = vec![0i32; self.vocab_size];
-        for row in 0..self.vocab_size {
-            let mut acc: i64 = 0;
-            let weight_row = self.lm_head.row(row);
-            for (w, v) in weight_row.iter().zip(normed.iter()) {
-                acc += (*w as i64) * (*v as i64);
+        if let Some(lmh) = &self.lm_head_int16 {
+            let hidden_dim = normed.len();
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let base = row * hidden_dim;
+                for (d, v) in normed.iter().enumerate() {
+                    acc += (lmh.data[base + d] as i64) * (*v as i64);
+                }
+                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }
-            logits[row] = clamp_i32(rescale_i64(
-                acc,
-                self.lm_head.shift + self.final_norm_frac,
-                cfg.logit_frac_bits,
-            ));
+        } else {
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let weight_row = self.lm_head.row(row);
+                for (w, v) in weight_row.iter().zip(normed.iter()) {
+                    acc += (*w as i64) * (*v as i64);
+                }
+                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
         }
 
         logits
@@ -271,11 +298,11 @@ impl IntegerModel {
 
         // === Attention-Block ===
         // Pre-Attention RMSNorm (int16 -> int16 auf der kalibrierten
-        // q/k/v-Eingangsskala).
+        // q/k/v-Eingangsskala; Gamma mit Per-Element-Skalen, theta_v 0.7.0).
         let norm_hidden = rmsnorm_i16(
             hidden,
             &layer.input_layernorm_gamma.data,
-            layer.input_layernorm_gamma.shift,
+            &layer.input_layernorm_gamma.shifts,
             &self.rsqrt_lut,
             cfg.rsqrt_input_shift,
             cfg.rsqrt_output_frac,
@@ -283,23 +310,23 @@ impl IntegerModel {
             sc.norm_attn_frac,
         );
 
-        // Q, K, V Projektionen: Gewichtsskala aus der eigenen QTensor.shift,
+        // Q, K, V Projektionen: Per-Channel-Gewichtsskalen (theta_v 0.7.0),
         // Ausgang auf der jeweils kalibrierten Per-Layer-Skala.
-        let mut q_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.q_proj), sc.norm_attn_frac, layer.q_proj.shift, sc.q_frac);
-        let mut k_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.k_proj), sc.norm_attn_frac, layer.k_proj.shift, sc.k_frac);
-        let mut v_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.v_proj), sc.norm_attn_frac, layer.v_proj.shift, sc.v_frac);
+        let mut q_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.q_proj), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
+        let mut k_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.k_proj), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
+        let mut v_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.v_proj), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
 
-        // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche): eigener
-        // kalibrierter Shift, Reskalierung auf die Q/K/V-Ausgabeskala und
+        // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche):
+        // Per-Element-Skalen, Reskalierung auf die Q/K/V-Ausgabeskala und
         // i64-Addition mit Clamping — reine Ganzzahlarithmetik.
         if let Some(qb) = &layer.q_bias {
-            add_bias_i16(&mut q_flat, &qb.data, qb.shift, sc.q_frac);
+            add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac);
         }
         if let Some(kb) = &layer.k_bias {
-            add_bias_i16(&mut k_flat, &kb.data, kb.shift, sc.k_frac);
+            add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac);
         }
         if let Some(vb) = &layer.v_bias {
-            add_bias_i16(&mut v_flat, &vb.data, vb.shift, sc.v_frac);
+            add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac);
         }
 
         // Auf Heads aufteilen. Q hat num_heads Heads, K/V bei GQA nur
@@ -385,7 +412,7 @@ impl IntegerModel {
 
         // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang auf der
         // Skala des mittleren Residual-Segments (vor der zweiten Norm).
-        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), sc.attn_out_frac, layer.o_proj.shift, sc.residual_mid_frac);
+        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, sc.residual_mid_frac);
 
         // Residual Add 1 (int16): hidden (Eingangs-Segment-Skala) wird auf
         // die mittere Segment-Skala umreskaliert, dann Addition.
@@ -399,7 +426,7 @@ impl IntegerModel {
         let norm_residual = rmsnorm_i16(
             &residual,
             &layer.post_attention_layernorm_gamma.data,
-            layer.post_attention_layernorm_gamma.shift,
+            &layer.post_attention_layernorm_gamma.shifts,
             &self.rsqrt_lut,
             cfg.rsqrt_input_shift,
             cfg.rsqrt_output_frac,
@@ -415,11 +442,11 @@ impl IntegerModel {
             &self.to_vec_vec(&layer.gate_proj),
             &self.to_vec_vec(&layer.up_proj),
             &self.to_vec_vec(&layer.down_proj),
+            &layer.gate_proj.shifts,
+            &layer.up_proj.shifts,
+            &layer.down_proj.shifts,
             &self.silu_lut,
             sc.norm_mlp_frac,
-            layer.gate_proj.shift,
-            layer.up_proj.shift,
-            layer.down_proj.shift,
             sc.gate_frac,
             sc.up_frac,
             sc.down_in_frac,
@@ -439,6 +466,89 @@ impl IntegerModel {
         }
 
         out
+    }
+
+    /// Diagnose-Variante von `forward_token`: gibt zusätzlich je Layer den
+    /// AbsMax und die ersten vier Werte des Residualstroms nach dem Layer
+    /// zurück (inkl. der Skala des Segments). Nur für Messpfade — der
+    /// Inferenzpfad bleibt unverändert.
+    pub fn forward_token_dump(
+        &self,
+        token_id: usize,
+        pos: usize,
+        cache: &mut KVCache,
+    ) -> (Vec<i32>, Vec<(i32, [i16; 4], u8)>) {
+        let cfg = &self.config;
+
+        let first_residual_frac = self.layers[0].scales.residual_in_frac;
+        let emb = self.embedding_table.row(token_id);
+        let emb_shift = self.embedding_table.shifts[token_id];
+        let mut hidden: Vec<i16> = emb
+            .iter()
+            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
+            .collect();
+
+        let mut dump = Vec::with_capacity(self.layers.len());
+        for (i, layer) in self.layers.iter().enumerate() {
+            let out_frac = if i + 1 < self.layers.len() {
+                self.layers[i + 1].scales.residual_in_frac
+            } else {
+                self.final_residual_frac
+            };
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
+            let absmax = hidden.iter().map(|v| v.abs() as i32).max().unwrap_or(0);
+            let mut first4 = [0i16; 4];
+            for (k, v) in hidden.iter().take(4).enumerate() {
+                first4[k] = *v;
+            }
+            dump.push((absmax, first4, out_frac));
+        }
+
+        // Finale Norm + LM-Head-Logits wie im echten Pfad.
+        let normed = rmsnorm_i16(
+            &hidden,
+            &self.final_norm_gamma.data,
+            &self.final_norm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+        );
+        let norm_absmax = normed.iter().map(|v| v.abs() as i32).max().unwrap_or(0);
+        let mut norm_first4 = [0i16; 4];
+        for (k, v) in normed.iter().take(4).enumerate() {
+            norm_first4[k] = *v;
+        }
+        dump.push((norm_absmax, norm_first4, self.final_norm_frac));
+
+        let mut logits = vec![0i32; self.vocab_size];
+        if let Some(lmh) = &self.lm_head_int16 {
+            let hidden_dim = normed.len();
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let base = row * hidden_dim;
+                for (d, v) in normed.iter().enumerate() {
+                    acc += (lmh.data[base + d] as i64) * (*v as i64);
+                }
+                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
+        } else {
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let weight_row = self.lm_head.row(row);
+                for (w, v) in weight_row.iter().zip(normed.iter()) {
+                    acc += (*w as i64) * (*v as i64);
+                }
+                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
+        }
+
+        (logits, dump)
     }
 
     /// Teilt einen flachen Q/K/V-Vektor in `n` Heads zu je `head_dim` auf.

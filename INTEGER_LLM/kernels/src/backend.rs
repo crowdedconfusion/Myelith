@@ -23,7 +23,8 @@ pub trait Backend {
     // Kern-Operationen
     // ==============================
 
-    /// W8A16 Matrix-Vektor: y = clamp(rescale(W * x))
+    /// W8A16 Matrix-Vektor: y = clamp(rescale(W * x)), Per-Channel-
+    /// Gewichtsskalen (theta_v 0.7.0: ein Zweierpotenz-Shift je Ausgabe-Zeile).
     fn linear_w8a16(
         &self,
         x: &[i16],
@@ -31,18 +32,19 @@ pub trait Backend {
         out: &mut [i16],
         in_features: usize,
         out_features: usize,
+        w_shifts: &[u8],
         act_frac: u8,
-        weight_frac: u8,
         out_frac: u8,
     );
 
     /// RMSNorm: y = x * rsqrt(mean(x^2)) * gamma (int16, LUT-gestuetzt,
-    /// dynamischer gerader Index-Shift, divisionsfrei).
+    /// dynamischer gerader Index-Shift, divisionsfrei; Gamma mit
+    /// Per-Element-Skalen, theta_v 0.7.0).
     fn rmsnorm(
         &self,
         x: &[i16],
         gamma: &[i8],
-        gamma_shift: u8,
+        gamma_shifts: &[u8],
         rsqrt_lut: &[i16],
         lut_input_shift: u8,
         lut_output_frac: u8,
@@ -96,11 +98,11 @@ pub trait Backend {
         W_up: &[i8],
         W_down: &[i8],
         out: &mut [i16],
+        gate_w_shifts: &[u8],
+        up_w_shifts: &[u8],
+        down_w_shifts: &[u8],
         silu_lut: &[i16],
         in_frac: u8,
-        gate_w_shift: u8,
-        up_w_shift: u8,
-        down_w_shift: u8,
         gate_out_frac: u8,
         up_out_frac: u8,
         down_in_frac: u8,

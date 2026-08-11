@@ -39,7 +39,7 @@ pub fn inv_n_q20(n: usize) -> i64 {
 pub fn rmsnorm_i16(
     x: &[i16],
     gamma: &[i8],
-    gamma_shift: u8,
+    gamma_shifts: &[u8],
     rsqrt_lut: &[i16],
     lut_input_shift: u8,
     lut_output_frac: u8,
@@ -48,6 +48,7 @@ pub fn rmsnorm_i16(
 ) -> Vec<i16> {
     let n = x.len();
     assert_eq!(n, gamma.len(), "rmsnorm_i16: x und gamma muessen gleich lang sein");
+    assert_eq!(n, gamma_shifts.len(), "rmsnorm_i16: ein Gamma-Shift je Element (theta_v 0.7.0)");
     assert!(lut_input_shift % 2 == 0, "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
 
     let mut acc: i64 = 0;
@@ -71,10 +72,10 @@ pub fn rmsnorm_i16(
 
     let lut_val = rsqrt_lut[idx] as i64;
     let norm_frac = lut_output_frac + lut_input_shift / 2 + q / 2;
-    let total_frac = norm_frac + gamma_shift;
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
+        let total_frac = norm_frac + gamma_shifts[i];
         let prod = (x[i] as i64) * lut_val * (gamma[i] as i64);
         out.push(clamp_i16(rescale_i64(prod, total_frac, out_frac_bits) as i32));
     }
@@ -110,7 +111,7 @@ mod tests {
     #[test]
     fn test_rmsnorm_zero_input() {
         let lut = spec_lut(1024);
-        let out = rmsnorm_i16(&[0, 0, 0], &[64, 64, 64], 6, &lut, 8, 8, inv_n_q20(3), 6);
+        let out = rmsnorm_i16(&[0, 0, 0], &[64, 64, 64], &[6, 6, 6], &lut, 8, 8, inv_n_q20(3), 6);
         assert_eq!(out, vec![0, 0, 0]);
     }
 
@@ -119,9 +120,9 @@ mod tests {
         // Alle x gleich -> mean(x^2) = x^2 -> normalisierter Wert ±1.
         // gamma = 1.0 (shift 6 -> 64), out_frac 6 -> erwartet ±64.
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[16, 16], &[64, 64], 6, &lut, 8, 8, inv_n_q20(2), 6);
+        let out = rmsnorm_i16(&[16, 16], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(out, vec![64, 64]);
-        let out_neg = rmsnorm_i16(&[-16, -16], &[64, 64], 6, &lut, 8, 8, inv_n_q20(2), 6);
+        let out_neg = rmsnorm_i16(&[-16, -16], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(out_neg, vec![-64, -64]);
     }
 
@@ -130,7 +131,7 @@ mod tests {
         // x = 12000 -> M = 1.44e8 > 32767 -> q > 0 noetig. Ergebnis muss
         // trotzdem ±1 * gamma sein (Normalisierung), innerhalb LUT-Rundung.
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[12000, 12000], &[32, 32], 5, &lut, 8, 8, inv_n_q20(2), 3);
+        let out = rmsnorm_i16(&[12000, 12000], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 3);
         // ±1.0 bei frac 3 = ±8; LUT-/Indexrundung erlaubt ±1 Abweichung.
         assert!((out[0] - 8).abs() <= 1, "out[0] = {}", out[0]);
         assert!((out[1] - 8).abs() <= 1, "out[1] = {}", out[1]);
@@ -142,7 +143,7 @@ mod tests {
         // normalisiert: [16/11.3137, 0] = [1.4142, 0]; gamma 1.0 (shift 5: 32)
         // out_frac 6: [round(1.4142*64), 0] = [90 oder 91, 0]
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[16, 0], &[32, 32], 5, &lut, 8, 8, inv_n_q20(2), 6);
+        let out = rmsnorm_i16(&[16, 0], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
         assert!(out[0] == 90 || out[0] == 91, "out[0] = {}", out[0]);
         assert_eq!(out[1], 0);
     }
@@ -152,9 +153,20 @@ mod tests {
         // gamma 2.0 (shift 5 -> 64) verdoppelt das Ergebnis gegenueber 1.0.
         // (i16-Ausgang: 2.0 bei frac 6 = 128, kein i8-Clamping mehr.)
         let lut = spec_lut(32768);
-        let one = rmsnorm_i16(&[16, 16], &[32, 32], 5, &lut, 8, 8, inv_n_q20(2), 6);
-        let two = rmsnorm_i16(&[16, 16], &[64, 64], 5, &lut, 8, 8, inv_n_q20(2), 6);
+        let one = rmsnorm_i16(&[16, 16], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
+        let two = rmsnorm_i16(&[16, 16], &[64, 64], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(one, vec![64, 64]);
         assert_eq!(two, vec![128, 128]);
+    }
+
+    #[test]
+    fn test_rmsnorm_gamma_per_element_shifts() {
+        // Unterschiedliche Gamma-Shifts je Element (theta_v 0.7.0):
+        // gamma[0] = 32 mit Shift 5 (= 1.0), gamma[1] = 32 mit Shift 4 (= 2.0)
+        // -> Element 1 wird verdoppelt.
+        let lut = spec_lut(32768);
+        let out = rmsnorm_i16(&[16, 16], &[32, 32], &[5, 4], &lut, 8, 8, inv_n_q20(2), 6);
+        assert_eq!(out[0], 64);  // 1.0 * 1.0
+        assert_eq!(out[1], 128); // 1.0 * 2.0
     }
 }

@@ -17,8 +17,8 @@ from .scales import compute_scales_from_stats
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                    generate_sin_cos_lut, load_nonlinear_spec)
 from .export import export_theta_v
-from .quantize import quantize_model_weights
-from .export_weights import export_quantized_weights
+from .quantize import quantize_model_weights, quantize_symmetric_int16_per_channel
+from .export_weights import export_quantized_weights, export_lm_head
 from .model_configs import get_export_model_config
 from .paths import model_artifacts_dir, local_model_dir
 
@@ -108,6 +108,19 @@ def main():
 
     print(f"[calibrate] Exportiere Gewichte nach {artifacts_dir}...")
     export_quantized_weights(quantized, artifacts_dir)
+
+    # Eskalation nach Entscheidungspunkt 12.21 (spec-Ausnahme 0.6.0): der
+    # LM-Head wird als EIGENER Tensor exportiert (Weight-Tying aufgelöst),
+    # in int16 mit Per-Channel-Zweierpotenz-Skalen. Muss VOR export_theta_v
+    # laufen, damit der theta_v-Gewichtshash den aktualisierten
+    # weights_manifest-Eintrag einschließt.
+    print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
+    lm_head_weight = model.get_output_embeddings().weight
+    lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
+    export_lm_head(lm_head_quant, artifacts_dir)
+
+    # Das Artefakt dokumentiert die LM-Head-Ausnahme im model_config.
+    model_config["lm_head"] = {"dtype": "int16", "scale": "per_channel"}
 
     print("[calibrate] Schreibe model_config.json...")
     artifacts_dir.mkdir(parents=True, exist_ok=True)

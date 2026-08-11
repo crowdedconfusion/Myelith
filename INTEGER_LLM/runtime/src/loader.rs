@@ -98,6 +98,14 @@ pub struct WeightManifestEntry {
     pub shift: i64,
     pub dtype: String,
     pub hash: String,
+    /// Nur für Per-Channel-Tensoren (spec-Ausnahme 0.6.0, LM-Head):
+    /// Name der Datei mit einem int8-Shift je Zeile. scale/shift des
+    /// Eintrags sind dann Sentinels (-1).
+    #[serde(default)]
+    pub shifts_file: Option<String>,
+    /// SHA-256 der Shifts-Datei (nur Per-Channel-Tensoren).
+    #[serde(default)]
+    pub shifts_hash: Option<String>,
 }
 
 /// Ein geladener INT8-Tensor mit seinen Manifest-Metadaten.
@@ -108,11 +116,25 @@ pub struct LoadedWeight {
     pub scale: f64,
 }
 
-/// Alle INT8-Gewichte eines Artefakt-Verzeichnisses, indexiert ueber den
+/// INT16-LM-Head mit Per-Channel-Skalen (benannte spec-Ausnahme 0.6.0:
+/// Eskalation nach dem Entscheidungspunkt 12.21). Ein Shift je Zeile
+/// (= Vokabular-Eintrag); die Logits werden zeilenweise auf die gemeinsame
+/// Logit-Skala reskaliert (i64-Akkumulation, siehe model.rs).
+#[derive(Debug)]
+pub struct LmHead {
+    pub data: Vec<i16>,    // flat, row-major [vocab, hidden]
+    pub shape: Vec<usize>,
+    pub shifts: Vec<u8>,   // ein Zweierpotenz-Shift je Zeile
+}
+
+/// Alle Gewichte eines Artefakt-Verzeichnisses, indexiert ueber den
 /// Manifest-Key (Tensorname mit Unterstrichen statt Punkten).
 #[derive(Debug)]
 pub struct LoadedWeights {
     pub weights: HashMap<String, LoadedWeight>,
+    /// INT16/Per-Channel-LM-Head (spec-Ausnahme 0.6.0). `None` bei Artefakten
+    /// ohne eigenen LM-Head (ältere Artefakte mit Weight-Tying).
+    pub lm_head: Option<LmHead>,
 }
 
 impl LoadedWeights {
@@ -248,7 +270,70 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         .map_err(|e| format!("Ungueltiges weights_manifest.json: {}", e))?;
 
     let mut weights = HashMap::with_capacity(entries.len());
+    let mut lm_head: Option<LmHead> = None;
     for (name, entry) in entries {
+        // INT16-LM-Head mit Per-Channel-Skalen (spec-Ausnahme 0.6.0).
+        if entry.dtype == "int16" {
+            if name != "lm_head" {
+                return Err(format!(
+                    "{}: int16-Tensoren sind als spec-Ausnahme nur fuer den LM-Head zulaessig",
+                    name
+                ));
+            }
+            let shifts_file = entry.shifts_file.as_ref().ok_or_else(|| {
+                format!("{}: int16-Eintrag ohne shifts_file", name)
+            })?;
+            if entry.shape.len() != 2 {
+                return Err(format!("{}: LM-Head erwartet shape [vocab, hidden]", name));
+            }
+
+            let bytes = std::fs::read(artifact_dir.join(&entry.file))
+                .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+            let expected_len: usize = entry.shape.iter().product::<usize>() * 2;
+            if bytes.len() != expected_len {
+                return Err(format!(
+                    "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes (int16)",
+                    name, bytes.len(), entry.file, entry.shape, expected_len
+                ));
+            }
+            let digest = sha256_hex(&bytes);
+            if digest != entry.hash {
+                return Err(format!(
+                    "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                    name, digest, entry.hash
+                ));
+            }
+
+            let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
+                .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
+            if shift_bytes.len() != entry.shape[0] {
+                return Err(format!(
+                    "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
+                    name, shift_bytes.len(), shifts_file, entry.shape[0]
+                ));
+            }
+            if let Some(expected_shifts_hash) = &entry.shifts_hash {
+                let shifts_digest = sha256_hex(&shift_bytes);
+                if shifts_digest != *expected_shifts_hash {
+                    return Err(format!(
+                        "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
+                        name, shifts_digest, expected_shifts_hash
+                    ));
+                }
+            }
+
+            let data: Vec<i16> = bytes
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            lm_head = Some(LmHead {
+                data,
+                shape: entry.shape,
+                shifts: shift_bytes,
+            });
+            continue;
+        }
+
         if entry.dtype != "int8" {
             return Err(format!(
                 "{}: nicht unterstuetzter dtype '{}' (erwartet 'int8')",
@@ -257,12 +342,6 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         }
         if entry.shape.is_empty() {
             return Err(format!("{}: leere shape im Manifest", name));
-        }
-        if entry.shift < 0 || entry.shift > u8::MAX as i64 {
-            return Err(format!(
-                "{}: shift {} liegt ausserhalb von 0..=255",
-                name, entry.shift
-            ));
         }
 
         let bytes = std::fs::read(artifact_dir.join(&entry.file))
@@ -284,10 +363,43 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
             ));
         }
 
+        // Per-Channel-Shifts (theta_v 0.7.0): eine shifts_file mit einem
+        // Shift je Zeile. Aeltere Artefakte/Synthetik-Fixtures ohne
+        // shifts_file tragen einen uniformen entry.shift, der je Zeile
+        // repliziert wird.
+        let shifts: Vec<u8> = if let Some(shifts_file) = &entry.shifts_file {
+            let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
+                .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
+            if shift_bytes.len() != entry.shape[0] {
+                return Err(format!(
+                    "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
+                    name, shift_bytes.len(), shifts_file, entry.shape[0]
+                ));
+            }
+            if let Some(expected_shifts_hash) = &entry.shifts_hash {
+                let shifts_digest = sha256_hex(&shift_bytes);
+                if shifts_digest != *expected_shifts_hash {
+                    return Err(format!(
+                        "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
+                        name, shifts_digest, expected_shifts_hash
+                    ));
+                }
+            }
+            shift_bytes
+        } else {
+            if entry.shift < 0 || entry.shift > u8::MAX as i64 {
+                return Err(format!(
+                    "{}: shift {} liegt ausserhalb von 0..=255 (und keine shifts_file vorhanden)",
+                    name, entry.shift
+                ));
+            }
+            vec![entry.shift as u8; entry.shape[0]]
+        };
+
         let tensor = QTensor {
             data: bytes.into_iter().map(|b| b as i8).collect(),
             shape: entry.shape,
-            shift: entry.shift as u8,
+            shifts,
         };
         weights.insert(name, LoadedWeight {
             tensor,
@@ -296,7 +408,7 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         });
     }
 
-    Ok(LoadedWeights { weights })
+    Ok(LoadedWeights { weights, lm_head })
 }
 
 /// Laedt alle Lookup-Tabellen aus `luts.json` und den darin referenzierten
@@ -491,11 +603,22 @@ fn require_scale(scales: &LoadedScales, name: &str) -> Result<u8, String> {
 pub fn build_model(
     theta_v: ThetaV,
     dims: ModelDims,
-    weights: LoadedWeights,
+    mut weights: LoadedWeights,
     scales: LoadedScales,
     luts: LoadedLuts,
 ) -> Result<IntegerModel, String> {
     let config = spec_model_params()?;
+
+    // INT16-LM-Head (spec-Ausnahme 0.6.0), falls das Artefakt einen trägt.
+    let lm_head_int16 = weights.lm_head.take();
+    if let Some(lmh) = &lm_head_int16 {
+        if lmh.shape.len() != 2 || lmh.shape[0] != dims.vocab_size || lmh.shape[1] != dims.hidden_size {
+            return Err(format!(
+                "LM-Head-shape {:?} passt nicht zu vocab_size {} / hidden_size {}",
+                lmh.shape, dims.vocab_size, dims.hidden_size
+            ));
+        }
+    }
 
     let embedding_table = require_tensor(&weights, "model.embed_tokens.weight")?.clone();
 
@@ -588,6 +711,7 @@ pub fn build_model(
         max_context: dims.max_context,
         embedding_table,
         lm_head,
+        lm_head_int16,
         final_norm_gamma,
         final_norm_frac,
         final_residual_frac,
@@ -674,7 +798,29 @@ mod tests {
         let tensor = &loaded.weights["t_a"].tensor;
         assert_eq!(tensor.data, vec![-128i8, -1, 0, 1, 127, 64]);
         assert_eq!(tensor.shape, vec![2, 3]);
-        assert_eq!(tensor.shift, 2);
+        // Ohne shifts_file wird der uniforme Manifest-Shift je Zeile repliziert.
+        assert_eq!(tensor.shifts, vec![2, 2]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_weights_per_channel_shifts() {
+        // theta_v 0.7.0: shifts_file mit einem Shift je Zeile.
+        let dir = test_dir("perchannel-shifts");
+        let raw: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
+        fs::write(dir.join("t_c.bin"), &raw).expect("Tensor schreiben");
+        let shifts_raw: Vec<u8> = vec![7, 9];
+        fs::write(dir.join("t_c_shifts.bin"), &shifts_raw).expect("Shifts schreiben");
+
+        let mut e = entry("t_c.bin", vec![2, 3], -1, &sha256_hex(&raw));
+        e["scale"] = serde_json::json!(-1.0);
+        e["shifts_file"] = serde_json::json!("t_c_shifts.bin");
+        e["shifts_hash"] = serde_json::json!(sha256_hex(&shifts_raw));
+        write_manifest(&dir, "t_c", e);
+
+        let loaded = load_weights(&dir).expect("Laden erfolgreich");
+        assert_eq!(loaded.weights["t_c"].tensor.shifts, vec![7, 9]);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -1491,6 +1637,110 @@ mod tests {
             Ok(_) => panic!("Manipuliertes Manifest muss Laden verhindern"),
         };
         assert!(err.contains("hash mismatch"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Ergänzt das Fixture um einen INT16-LM-Head mit Per-Channel-Skalen
+    /// (spec-Ausnahme 0.6.0): lm_head.bin (int16 LE) + lm_head_shifts.bin
+    /// (int8 je Zeile) + Manifest-Eintrag. Mit `valid = false` wird die
+    /// shape im Manifest auf [vocab, hidden+1] gesetzt UND die Datenmenge
+    /// entsprechend geschrieben, damit die Shape-Validierung (nicht die
+    /// Byte-Laengen-Prüfung) greift.
+    fn add_int16_lm_head(dir: &Path, vocab: usize, hidden: usize, valid: bool) {
+        let shape = if valid { vec![vocab, hidden] } else { vec![vocab, hidden + 1] };
+        let n: usize = shape.iter().product();
+        let data: Vec<i16> = (0..n).map(|i| ((i % 11) as i16) - 5).collect();
+        let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_le_bytes()).collect();
+        fs::write(dir.join("lm_head.bin"), &bytes).expect("lm_head.bin schreiben");
+
+        let shifts: Vec<i8> = (0..vocab).map(|r| 17 + (r % 4) as i8).collect();
+        let shifts_bytes: Vec<u8> = shifts.iter().map(|s| *s as u8).collect();
+        fs::write(dir.join("lm_head_shifts.bin"), &shifts_bytes)
+            .expect("lm_head_shifts.bin schreiben");
+
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        let entry = serde_json::json!({
+            "original_name": "lm_head.weight",
+            "file": "lm_head.bin",
+            "shape": shape,
+            "scale": -1.0,
+            "shift": -1,
+            "dtype": "int16",
+            "shifts_file": "lm_head_shifts.bin",
+            "hash": sha256_hex(&bytes),
+            "shifts_hash": sha256_hex(&shifts_bytes),
+        });
+        manifest.as_object_mut().unwrap().insert("lm_head".to_string(), entry);
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_load_model_with_int16_lm_head() {
+        // spec-Ausnahme 0.6.0: INT16-LM-Head mit Per-Channel-Skalen wird
+        // geladen, validiert und im Modell als Logits-Pfad verdrahtet.
+        let dir = test_dir("model-e2e-lmhead-int16");
+        write_full_fixture(&dir, true, true);
+        add_int16_lm_head(&dir, 3, 4, true);
+        write_theta_v(&dir); // theta_v-Hashes über das ergänzte Manifest
+
+        let model = load_model(&dir).expect("Modell-Ladung fehlgeschlagen");
+        assert!(model.lm_head_int16.is_some());
+        let lmh = model.lm_head_int16.as_ref().unwrap();
+        assert_eq!(lmh.shape, vec![3, 4]);
+        assert_eq!(lmh.shifts.len(), 3);
+        assert_eq!(lmh.shifts[0], 17);
+        assert_eq!(lmh.data.len(), 12);
+        assert_eq!(lmh.data[0], -5); // (0 % 11) - 5
+
+        // Der Per-Channel-Pfad muss auch im Forward funktionieren.
+        let mut cache = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+        let logits_a = model.forward_token(0, 0, &mut cache);
+        let mut cache2 = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+        let logits_b = model.forward_token(0, 0, &mut cache2);
+        assert_eq!(logits_a, logits_b, "Per-Channel-Logits müssen deterministisch sein");
+        assert_eq!(logits_a.len(), 3);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_lm_head_shape_mismatch() {
+        let dir = test_dir("model-e2e-lmhead-badshape");
+        write_full_fixture(&dir, true, true);
+        add_int16_lm_head(&dir, 3, 4, false); // shape [3, 5] statt [3, 4]
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Falsche LM-Head-shape muss Laden verhindern"),
+        };
+        assert!(err.contains("LM-Head"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_int16_without_shifts_file() {
+        let dir = test_dir("model-e2e-lmhead-noshifts");
+        write_full_fixture(&dir, true, true);
+        add_int16_lm_head(&dir, 3, 4, true);
+
+        // shifts_file aus dem Manifest-Eintrag entfernen.
+        let manifest_path = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        manifest["lm_head"].as_object_mut().unwrap().remove("shifts_file");
+        fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("int16-Tensor ohne shifts_file muss Laden verhindern"),
+        };
+        assert!(err.contains("shifts_file"), "Fehlermeldung: {}", err);
 
         fs::remove_dir_all(&dir).ok();
     }
