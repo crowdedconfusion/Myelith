@@ -1,0 +1,34 @@
+{
+  "baseline_perplexity": 14.953218401528314,
+  "integer_perplexity": 14546.378384475121,
+  "delta_pct": 97179.24781054752,
+  "acceptance_pct": 5.0,
+  "accepted": false,
+  "evaluated_tokens": 435,
+  "sequences": [
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -1188.947579,
+      "perplexity": 11635.2198
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -1287.564449,
+      "perplexity": 25293.5005
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -1177.535985,
+      "perplexity": 10635.3314
+    },
+    {
+      "tokens": 55,
+      "evaluated": 54,
+      "sum_logp": -515.469327,
+      "perplexity": 13984.8276
+    }
+  ]
+}
