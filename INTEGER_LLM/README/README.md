@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.21
+> **Version:** 0.12.22
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — erste echte Inferenz läuft deterministisch (Entscheidungspunkt 12.18–12.21 steht an)
+> **Status:** Aktive Entwicklung — Entscheidungspunkt 12.18–12.21 in Messung
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,19 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.22 – 2026-08-11
+- **Messinfrastruktur für den Entscheidungspunkt:** `runtime/src/bin/perplexity_probe`
+  (Teacher-Forcing-Log-Probabilities über Token-Sequenzen; Log-Softmax im
+  Messpfad f64, Logits aus dem Integerpfad), `eval/wikitext_common.py`
+  (gemeinsame deterministische WikiText-2-Sequenzauswahl für alle drei
+  Messungen) und `tests/integration/test_end2end_real.py` (E2E-Test mit
+  echten Gewichten)
+- Erster Messlauf: Determinismus bewiesen (zwei Läufe bitidentisch),
+  Integer-Perplexität 14 546 auf 435 WikiText-2-Positionen — quantitative
+  Bestätigung von Fund 9; ein Skalierungsfehler der Probe (z_max über
+  unskalierte Logits) wurde durch die Endlichkeits-Assertion des Tests
+  gefangen und behoben
 
 ### v0.12.21 – 2026-08-11
 - **Erste echte Integer-Inferenz:** die Runtime lädt die echten kalibrierten
