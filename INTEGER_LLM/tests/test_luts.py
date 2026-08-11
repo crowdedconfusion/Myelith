@@ -34,7 +34,8 @@ def test_load_nonlinear_spec_structure():
     assert nl["silu"]["input_range"] == [-256, 255]
     assert nl["silu"]["input_frac_bits"] == 1
     assert nl["silu"]["output_frac_bits"] == 6
-    assert nl["softmax"]["exp_lut_range"] == 128
+    assert nl["softmax"]["exp_lut_range"] == 1024
+    assert nl["softmax"]["exp_input_frac_bits"] == 4
     assert nl["softmax"]["exp_lut_frac_bits"] == 8
     assert nl["rope"]["max_seq_len"] == 2048
     assert nl["rope"]["frac_bits"] == 8
@@ -75,10 +76,14 @@ def test_silu_lut_spot_values():
 
 
 def test_exp_lut_spot_values():
-    lut = generate_exp_lut(exp_range=128, frac_bits=8)
-    assert len(lut) == 129
+    # Spec 0.5.2: Domaene [0, 64) mit Eingang frac 4, Ausgang frac 8.
+    lut = generate_exp_lut(exp_range=1024, input_frac_bits=4, output_frac_bits=8)
+    assert len(lut) == 1025
     assert lut[0] == 256, "exp(0) = 1.0"
-    assert lut[128] == round(math.exp(-0.5) * 256), "exp(-0.5) bei frac 8"
+    assert lut[16] == round(math.exp(-1.0) * 256), "exp(-1) bei Eingang frac 4"
+    assert lut[32] == round(math.exp(-2.0) * 256), "exp(-2)"
+    # Am Domaenenrand ist exp(-64) praktisch 0.
+    assert lut[1024] == 0
     assert all(lut[i] >= lut[i + 1] for i in range(len(lut) - 1)), \
         "exp(-x) muss monoton fallend sein"
 
@@ -106,12 +111,13 @@ def test_spec_driven_generation_lengths():
                              input_frac_bits=nl["silu"]["input_frac_bits"],
                              output_frac_bits=nl["silu"]["output_frac_bits"])
     exp = generate_exp_lut(exp_range=nl["softmax"]["exp_lut_range"],
-                           frac_bits=nl["softmax"]["exp_lut_frac_bits"])
+                           input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
+                           output_frac_bits=nl["softmax"]["exp_lut_frac_bits"])
     sin, cos = generate_sin_cos_lut(n=nl["rope"]["max_seq_len"],
                                     frac_bits=nl["rope"]["frac_bits"])
     assert len(rsqrt) == 32768
     assert len(silu) == 512
-    assert len(exp) == 129
+    assert len(exp) == 1025
     assert len(sin) == 2048 and len(cos) == 2048
     # Alle Werte muessen in int16 passen (LUT-Format der Runtime).
     for lut in (rsqrt, silu, exp, sin, cos):

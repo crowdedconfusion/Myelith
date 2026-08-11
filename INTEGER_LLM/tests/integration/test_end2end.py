@@ -122,7 +122,10 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
         "model.layers.0.mlp.gate_proj": _scale(4, 30.0),
         "model.layers.0.mlp.up_proj": _scale(3, 60.0),
         "model.layers.0.mlp.down_proj.input": _scale(0, 100.0),
+        "model.layers.0.input_layernorm.input": _scale(12, 0.06),
+        "model.layers.0.post_attention_layernorm.input": _scale(5, 25.0),
         "model.norm": _scale(2, 120.0),
+        "model.norm.input": _scale(4, 80.0),
     })
 
     # Gewichte: dieselben Tensor-Namen wie calibrate/src/quantize.py erzeugt.

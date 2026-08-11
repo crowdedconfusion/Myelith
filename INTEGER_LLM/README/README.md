@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.20
+> **Version:** 0.12.21
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Phase 12.14–12.17 vollständig, zwei außerplanmäßige Patches (Biases, Numerik-Realitätsabgleich, theta_v 0.5.0)
+> **Status:** Aktive Entwicklung — erste echte Inferenz läuft deterministisch (Entscheidungspunkt 12.18–12.21 steht an)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,25 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.21 – 2026-08-11
+- **Erste echte Integer-Inferenz:** die Runtime lädt die echten kalibrierten
+  Gewichte (290 Tensoren inkl. 72 Biases, 314 Skalen, 5 LUTs) und generiert
+  deterministisch (zwei Läufe → identischer Token-Hash)
+- Diagnose-Binaries ergänzt: `runtime/src/bin/layer_probe` (Layer-0-
+  Zwischenwerte vs. HF-Referenz), `logit_probe` (Top-k-Logits nach Prefill),
+  `rank_probe` (Teacher-Forcing-Rang des echten nächsten Tokens); verifiziert:
+  Embedding/RMSNorm/Q/K/V stimmen innerhalb der Quantisierungstoleranz mit
+  float64-Ground-Truth überein
+- exp-LUT-Domäne [0, 0.5) → [0, 64) erweitert (theta_v 0.5.2): Messung
+  zeigte, dass die alte Domäne 79–92 % der Attention-Positionen
+  (Score-Differenzen bis ~28) auf Wahrscheinlichkeit 0 setzte; neuer
+  spec-Parameter `exp_input_frac_bits` (Eingang frac 4, Ausgang frac 8),
+  `lut_shift` der Attention wird daraus abgeleitet
+- Fund 9 (Qualität): Generierung kollabiert nach 1–2 Tokens in
+  Repetitions-Loops; Teacher-Forcing-Ränge mehrheitlich 10³–10⁴; Ursache ist
+  die Logit-Verzerrung durch die int8-Quantisierung der Embedding-Tabelle
+  (= geteilter LM-Head) — Eskalationspfade am Entscheidungspunkt 12.21
 
 ### v0.12.20 – 2026-08-11 (außerplanmäßiger Patch)
 - **Numerik-Realitätsabgleich:** Messungen am echten Qwen2.5-0.5B zeigten,

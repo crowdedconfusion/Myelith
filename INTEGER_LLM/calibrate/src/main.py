@@ -86,7 +86,8 @@ def main():
             output_frac_bits=nl["silu"]["output_frac_bits"]),
         "exp": generate_exp_lut(
             exp_range=nl["softmax"]["exp_lut_range"],
-            frac_bits=nl["softmax"]["exp_lut_frac_bits"]),
+            input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
+            output_frac_bits=nl["softmax"]["exp_lut_frac_bits"]),
         "sin": sin_lut,
         "cos": cos_lut,
     }

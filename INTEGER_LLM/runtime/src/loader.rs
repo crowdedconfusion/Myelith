@@ -457,9 +457,9 @@ fn spec_model_params() -> Result<ModelConfig, String> {
         .ok_or_else(|| "theta_v/spec.json: nonlinear.silu.input_range[0] fehlt".to_string())?;
 
     Ok(ModelConfig {
-        residual_frac_bits: num("numeric.formats.residual.frac_bits", &formats["residual"]["frac_bits"])?,
         kv_cache_frac_bits: num("numeric.formats.kv_cache.frac_bits", &formats["kv_cache"]["frac_bits"])?,
         score_frac_bits: num("nonlinear.softmax.exp_lut_frac_bits", &nonlinear["softmax"]["exp_lut_frac_bits"])?,
+        exp_input_frac: num("nonlinear.softmax.exp_input_frac_bits", &nonlinear["softmax"]["exp_input_frac_bits"])?,
         prob_frac_bits: num("nonlinear.softmax.prob_frac_bits", &nonlinear["softmax"]["prob_frac_bits"])?,
         rope_frac_bits: num("nonlinear.rope.frac_bits", &nonlinear["rope"]["frac_bits"])?,
         silu_in_frac: num("nonlinear.silu.input_frac_bits", &nonlinear["silu"]["input_frac_bits"])?,
@@ -507,6 +507,8 @@ pub fn build_model(
 
     let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.clone();
     let final_norm_frac = require_scale(&scales, "model.norm")?;
+    // Letztes Residualstrom-Segment (spec 0.5.1: Per-Segment-Skalen).
+    let final_residual_frac = require_scale(&scales, "model.norm.input")?;
 
     let mut layers = Vec::with_capacity(dims.num_layers);
     for layer_idx in 0..dims.num_layers {
@@ -540,7 +542,9 @@ pub fn build_model(
         };
 
         // Kalibrierte Per-Layer-Aktivierungsskalen (vollstaendig Pflicht,
-        // v0.12.20). Schluessel-Konvention identisch zu calibrate/src/stats.py.
+        // v0.12.20) plus Per-Segment-Skalen des Residualstroms (spec 0.5.1,
+        // v0.12.21). Schluessel-Konvention identisch zu
+        // calibrate/src/stats.py.
         let layer_scales = LayerScales {
             norm_attn_frac: require_scale(&scales, &format!("{}.input_layernorm", p))?,
             q_frac: require_scale(&scales, &format!("{}.self_attn.q_proj", p))?,
@@ -551,6 +555,8 @@ pub fn build_model(
             gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
             up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
             down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
+            residual_in_frac: require_scale(&scales, &format!("{}.input_layernorm.input", p))?,
+            residual_mid_frac: require_scale(&scales, &format!("{}.post_attention_layernorm.input", p))?,
         };
 
         layers.push(TransformerLayer {
@@ -584,6 +590,7 @@ pub fn build_model(
         lm_head,
         final_norm_gamma,
         final_norm_frac,
+        final_residual_frac,
         layers,
         cos_lut: require_lut(&luts, "cos")?,
         sin_lut: require_lut(&luts, "sin")?,
@@ -1041,7 +1048,8 @@ mod tests {
 
         // Vollstaendige Per-Layer-Aktivierungsskalen (seit v0.12.20 Pflicht:
         // der Forward-Pass verbraucht alle Eintraege; Schluessel-Konvention
-        // identisch zu calibrate/src/stats.py).
+        // identisch zu calibrate/src/stats.py) plus Per-Segment-Skalen des
+        // Residualstroms (spec 0.5.1).
         let scales = serde_json::json!({
             "model.layers.0.input_layernorm": scale_entry(4, 0.0625, 10.0),
             "model.layers.0.self_attn.q_proj": scale_entry(5, 0.03125, 20.0),
@@ -1052,7 +1060,10 @@ mod tests {
             "model.layers.0.mlp.gate_proj": scale_entry(4, 0.0625, 30.0),
             "model.layers.0.mlp.up_proj": scale_entry(3, 0.125, 60.0),
             "model.layers.0.mlp.down_proj.input": scale_entry(0, 1.0, 100.0),
+            "model.layers.0.input_layernorm.input": scale_entry(12, 0.000244140625, 0.06),
+            "model.layers.0.post_attention_layernorm.input": scale_entry(5, 0.03125, 25.0),
             "model.norm": scale_entry(2, 0.25, 120.0),
+            "model.norm.input": scale_entry(4, 0.0625, 80.0),
         });
         write_scales(&dir, &scales);
 
@@ -1215,12 +1226,15 @@ mod tests {
         let logits = model.forward_token(0, 0, &mut cache);
         assert_eq!(logits.len(), model.vocab_size);
 
-        // Per-Layer-Skalen muessen aus scales.json verdrahtet sein (v0.12.20).
+        // Per-Layer-Skalen muessen aus scales.json verdrahtet sein (v0.12.20),
+        // inklusive der Per-Segment-Residualskalen (spec 0.5.1).
         assert_eq!(model.layers[0].scales.q_frac, 5);
         assert_eq!(model.layers[0].scales.down_in_frac, 0);
+        assert_eq!(model.layers[0].scales.residual_in_frac, 12);
+        assert_eq!(model.layers[0].scales.residual_mid_frac, 5);
         assert_eq!(model.final_norm_frac, 2);
+        assert_eq!(model.final_residual_frac, 4);
         // Konfigurationswerte kommen aus der eingebetteten spec.json.
-        assert_eq!(model.config.residual_frac_bits, 3);
         assert_eq!(model.config.silu_lut_offset, 256);
 
         fs::remove_dir_all(&dir).ok();

@@ -283,7 +283,10 @@ def test_synthetic_export_loads_in_real_runtime_binary():
             "model.layers.0.mlp.gate_proj": _scale(4),
             "model.layers.0.mlp.up_proj": _scale(3),
             "model.layers.0.mlp.down_proj.input": _scale(0),
+            "model.layers.0.input_layernorm.input": _scale(12),
+            "model.layers.0.post_attention_layernorm.input": _scale(5),
             "model.norm": _scale(2),
+            "model.norm.input": _scale(4),
         }
         luts = {
             "cos": [256, 0, -256, 0], "sin": [0, 256, 0, -256], "exp": [256, 128, 64],

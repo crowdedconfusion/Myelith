@@ -66,6 +66,10 @@ fn run() -> Result<(), String> {
     })?;
     let seed = 42u64;
 
+    // Prompt-Token-IDs ausgeben: nuetzlich fuer Bitexaktheits-Abgleiche mit
+    // der HF-Referenz (identische Tokenisierung ist Voraussetzung dafuer,
+    // dass Numerik-Vergleiche ueberhaupt vergleichbare Eingaben sehen).
+    println!("[runtime] Prompt-Tokens: {:?}", tokenizer.encode(prompt));
     println!("[runtime] Prompt: {}", prompt);
     println!("[runtime] Generiere bis zu {} Token (greedy)...", max_tokens);
 

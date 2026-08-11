@@ -268,12 +268,15 @@ def generate_op_vectors(theta_v_hash: str, output_dir: Path):
     gv.add_output("y", y, "int16")
     gv.save(output_dir / "linear_w8a16_identity.golden.json")
 
-    # Softmax
+    # Softmax (spec 0.5.2: exp-LUT-Domaene [0, 64), Eingang frac 4,
+    # Ausgang frac 8; lut_shift = score_frac(8) - exp_input_frac(4) = 4).
+    # Die LUT wird im Vektor mitgefuehrt, damit der golden_runner exakt
+    # dieselbe Tabelle verwendet (er wuerde sonst eine eigene bauen).
     gv = GoldenVector("softmax_basic", "op", theta_v_hash)
     gv.add_input("logits", [100, 200, 50, 300], "int32")
-    gv.metadata = {"lut_shift": 0, "frac_bits": 8}
-    exp_lut = [int(round(math.exp(-i / 256.0) * 256)) for i in range(128)]
-    y = softmax_int_ref([100, 200, 50, 300], exp_lut, 0, 8)
+    exp_lut = [int(round(math.exp(-i / 16.0) * 256)) for i in range(1025)]
+    gv.metadata = {"lut_shift": 4, "frac_bits": 8, "exp_lut": exp_lut}
+    y = softmax_int_ref([100, 200, 50, 300], exp_lut, 4, 8)
     gv.add_output("probs", y, "int32")
     gv.save(output_dir / "softmax_basic.golden.json")
 

@@ -63,6 +63,14 @@ class ActivationStatsCollector:
             elif any(name.endswith(k) for k in norm_keys) or name == "model.norm":
                 h = module.register_forward_hook(self._make_hook(name))
                 self._handles.append(h)
+                # Per-Segment-Skalen des Residualstroms (v0.12.21/spec 0.5.1):
+                # Die Norm-EINGAENGE sind die Residual-Stromsegmente. Die
+                # Spanne reicht von winzigen Embedding-Werten (~±0,2) bis zu
+                # Ausreisser-Spitzen (~±1576) — eine globale Skala kann das
+                # nicht abdecken, daher kalibrierte Skalen je Segment.
+                h_in = module.register_forward_hook(
+                    self._make_hook(name + ".input", take_input=True))
+                self._handles.append(h_in)
             elif name.endswith(".self_attn"):
                 # Modul-Ausgabe ist ein Tupel; der Hook nimmt Element 0.
                 h = module.register_forward_hook(self._make_hook(name))

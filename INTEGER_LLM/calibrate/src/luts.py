@@ -69,13 +69,23 @@ def generate_silu_lut(input_min: int, input_max: int, input_frac_bits: int,
     return lut
 
 
-def generate_exp_lut(exp_range: int, frac_bits: int) -> List[int]:
-    scale = 1 << frac_bits
+def generate_exp_lut(exp_range: int, input_frac_bits: int, output_frac_bits: int) -> List[int]:
+    """
+    exp-LUT: Index i repraesentiert den Realwert i * 2^-input_frac_bits
+    (spec: softmax.exp_input_frac_bits), Eintrag ist
+    round(exp(-real) * 2^output_frac_bits). Eingangsbereich und
+    Ausgangspraeezision sind getrennt parametrisiert (spec 0.5.2): die
+    Domaene [0, exp_range * 2^-input_frac_bits) muss die realen
+    Attention-Score-Differenzen abdecken (gemessen bis ~28), waehrend die
+    Ausgangsskala die Wahrscheinlichkeitspraeezision bestimmt.
+    """
+    in_scale = 1 << input_frac_bits
+    out_scale = 1 << output_frac_bits
     lut = []
     for i in range(exp_range + 1):
-        x = i / scale
+        x = i / in_scale
         val = math.exp(-x)
-        lut.append(int(round(val * scale)))
+        lut.append(int(round(val * out_scale)))
     return lut
 
 

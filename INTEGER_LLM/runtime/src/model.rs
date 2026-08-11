@@ -65,6 +65,15 @@ pub struct LayerScales {
     pub up_frac: u8,
     /// h = silu(gate)*up = Eingang von down_proj.
     pub down_in_frac: u8,
+    /// Residualstrom-Segment am Eingang dieses Layers
+    /// (Eingang von input_layernorm). Per-Segment-Skalen seit spec 0.5.1:
+    /// die Spanne des Stroms reicht von winzigen Embedding-Werten bis zu
+    /// Ausreisser-Spitzen — eine globale Skala wuerde einen der beiden
+    /// Bereiche zerstoeren.
+    pub residual_in_frac: u8,
+    /// Mittleres Residualstrom-Segment zwischen erstem Residual-Add und
+    /// post_attention_layernorm.
+    pub residual_mid_frac: u8,
 }
 
 /// Ein Transformer-Layer.
@@ -112,6 +121,9 @@ pub struct IntegerModel {
     pub final_norm_gamma: QTensor,
     /// Kalibrierte Skala des finalen Norm-Ausgangs = Eingang des LM-Heads.
     pub final_norm_frac: u8,
+    /// Kalibrierte Skala des letzten Residualstrom-Segments (Eingang von
+    /// model.norm; Per-Segment-Skalen seit spec 0.5.1).
+    pub final_residual_frac: u8,
     pub layers: Vec<TransformerLayer>,
     pub cos_lut: Vec<i16>,
     pub sin_lut: Vec<i16>,
@@ -131,9 +143,6 @@ pub struct IntegerModel {
 
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
-    /// Skala des Residualstroms (int16; spec: numeric.formats.residual,
-    /// seit v0.12.20 frac 3 — gemessene Residual-Spitzen bis ~±1576).
-    pub residual_frac_bits: u8,
     /// Skala des KV-Cache (spec: kv_cache, frac 8). K/V werden beim
     /// Schreiben/Lesen zwischen ihrer Per-Layer-Skala und dieser Skala
     /// umgerechnet.
@@ -142,6 +151,10 @@ pub struct ModelConfig {
     /// indizieren. Muss mit dem Kalibrierungsbereich der LUT
     /// uebereinstimmen (spec: softmax.exp_lut_frac_bits).
     pub score_frac_bits: u8,
+    /// Eingangsskala der exp-LUT (spec: softmax.exp_input_frac_bits):
+    /// Index i der LUT steht fuer den Score-Differenz-Realwert i * 2^-Wert.
+    /// Der lut_shift der Attention ist score_frac_bits - exp_input_frac_bits.
+    pub exp_input_frac: u8,
     pub prob_frac_bits: u8,
     pub rope_frac_bits: u8,
     /// Feste Eingangsskala der SiLU-LUT (spec: silu.input_frac_bits);
@@ -165,9 +178,9 @@ impl Default for ModelConfig {
         // Modellbau (build_model) liest die Werte aus der eingebetteten
         // theta_v/spec.json.
         ModelConfig {
-            residual_frac_bits: 3,
             kv_cache_frac_bits: 8,
             score_frac_bits: 8,
+            exp_input_frac: 4,
             prob_frac_bits: 8,
             rope_frac_bits: 8,
             silu_in_frac: 1,
@@ -191,17 +204,25 @@ impl IntegerModel {
     ) -> Vec<i32> {
         let cfg = &self.config;
 
-        // 1. Embedding Lookup: Gewicht int8 (eigener Shift) -> Residualstrom
-        //    (int16, residual_frac_bits).
+        // 1. Embedding Lookup: Gewicht int8 (eigener Shift) -> erstes
+        //    Residualstrom-Segment (kalibrierte Per-Segment-Skala, spec 0.5.1).
+        let first_residual_frac = self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let mut hidden: Vec<i16> = emb
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, self.embedding_table.shift, cfg.residual_frac_bits)))
+            .map(|v| clamp_i16(rescale(*v as i32, self.embedding_table.shift, first_residual_frac)))
             .collect();
 
-        // 2. Transformer Layers
-        for layer in &self.layers {
-            hidden = self.forward_layer(layer, &hidden, pos, cache);
+        // 2. Transformer Layers: jeder Layer gibt den Strom auf der Skala
+        //    des Folge-Segments aus (Eingangsskala des naechsten Layers bzw.
+        //    des finalen Norm-Eingangs).
+        for (i, layer) in self.layers.iter().enumerate() {
+            let out_frac = if i + 1 < self.layers.len() {
+                self.layers[i + 1].scales.residual_in_frac
+            } else {
+                self.final_residual_frac
+            };
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
         }
 
         // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
@@ -242,6 +263,7 @@ impl IntegerModel {
         hidden: &[i16],
         pos: usize,
         cache: &mut KVCache,
+        out_residual_frac: u8,
     ) -> Vec<i16> {
         let cfg = &self.config;
         let hs = self.hidden_size;
@@ -334,14 +356,16 @@ impl IntegerModel {
 
             // Q liegt bei sc.q_frac, K bei sc.k_frac; der rohe Skalarproduktwert
             // traegt q_frac + k_frac Nachkommabits. score_shift bringt ihn auf
-            // die exp-LUT-Domäne (score_frac_bits), dadurch bleibt lut_shift=0
-            // korrekt — pro Layer dynamisch aus den kalibrierten Skalen.
+            // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
+            // dort in die Eingangsskala der exp-LUT (spec 0.5.2: Domaene
+            // [0, 64) statt [0, 0.5) — gemessene Score-Differenzen bis ~28).
             let score_shift = (sc.q_frac as u16 + sc.k_frac as u16)
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
+            let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 
             let head_out = attention_int(
                 &q_seq, &k_seq, &v_seq, &mask,
-                score_shift, &self.exp_lut, 0, cfg.prob_frac_bits,
+                score_shift, &self.exp_lut, exp_lut_shift, cfg.prob_frac_bits,
             );
 
             // Ergebnis in attn_out schreiben
@@ -359,14 +383,16 @@ impl IntegerModel {
             }
         }
 
-        // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang =
-        // Residual-Skala.
-        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), sc.attn_out_frac, layer.o_proj.shift, cfg.residual_frac_bits);
+        // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang auf der
+        // Skala des mittleren Residual-Segments (vor der zweiten Norm).
+        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), sc.attn_out_frac, layer.o_proj.shift, sc.residual_mid_frac);
 
-        // Residual Add (int16, spec: residual)
+        // Residual Add 1 (int16): hidden (Eingangs-Segment-Skala) wird auf
+        // die mittere Segment-Skala umreskaliert, dann Addition.
         let mut residual = vec![0i16; hs];
         for i in 0..hs {
-            residual[i] = clamp_i16((hidden[i] as i32) + (o_out[i] as i32));
+            let h_rescaled = clamp_i16(rescale(hidden[i] as i32, sc.residual_in_frac, sc.residual_mid_frac));
+            residual[i] = clamp_i16((h_rescaled as i32) + (o_out[i] as i32));
         }
 
         // === MLP-Block ===
@@ -400,13 +426,16 @@ impl IntegerModel {
             cfg.silu_in_frac,
             cfg.silu_lut_offset,
             cfg.silu_out_frac,
-            cfg.residual_frac_bits,
+            out_residual_frac,
         );
 
-        // Final Residual Add
+        // Final Residual Add: mittleres Segment wird auf die Ausgangs-
+        // Segment-Skala (Eingang des Folge-Layers bzw. der finalen Norm)
+        // umreskaliert, dann Addition.
         let mut out = vec![0i16; hs];
         for i in 0..hs {
-            out[i] = clamp_i16((residual[i] as i32) + (mlp_out[i] as i32));
+            let r_rescaled = clamp_i16(rescale(residual[i] as i32, sc.residual_mid_frac, out_residual_frac));
+            out[i] = clamp_i16((r_rescaled as i32) + (mlp_out[i] as i32));
         }
 
         out

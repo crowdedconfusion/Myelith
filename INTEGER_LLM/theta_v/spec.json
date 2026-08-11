@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.5.0",
+    "version": "0.5.2",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -17,7 +17,7 @@
       "formats": {
         "weight": { "dtype": "int8", "storage": "int8", "frac_bits": 7 },
         "activation": { "dtype": "int16", "storage": "int16" },
-        "residual": { "dtype": "int16", "storage": "int16", "frac_bits": 3 },
+        "residual": { "dtype": "int16", "storage": "int16" },
         "accumulator": { "dtype": "int32", "storage": "int32" },
         "kv_cache": { "dtype": "int16", "storage": "int16", "frac_bits": 8 }
       },
@@ -46,7 +46,8 @@
       },
       "softmax": {
         "method": "lut_exp",
-        "exp_lut_range": 128,
+        "exp_lut_range": 1024,
+        "exp_input_frac_bits": 4,
         "exp_lut_frac_bits": 8,
         "prob_frac_bits": 8
       },
