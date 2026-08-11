@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.26
+> **Version:** 0.12.27
 > **Datum:** 2026-08-11
-> **Status:** Fund-14-Kandidat (i) geprüft: Aktivierungs-Skalen ohne Headroom waren real (50/314 Module clampten), Kalibrierkorpus verbreitert → Clamping behoben (0/314) — aber Perplexität kaum verändert (3257 → 3242), Kandidat (i) ist NICHT dominant; Akzeptanzkriterium weiterhin VERFEHLT, nächste Eskalationsstufe offen
+> **Status:** Mehrpositions-Divergenzsuche (Fund-14-Kandidat iii): Lokalisierung gelungen — AbsMax stimmt in allen 24 Ebenen, aber Bulk-Dimensionen weichen schon ab Layer 3 ~25–30 % ab; kritisch wird es in den letzten Ebenen (21–23), wo die Residual-Ausreißer weggekürzt werden und das Signal ~50× kleiner wird (Layer 23: Integer 43 vs. HF 188). Gewichtsquantisierung ist über alle Ebenen gleichmäßig gut, Skalen clampen nicht → akkumuliertes Quantisierungsrauschen, kein Einzel-Bug. Akzeptanzkriterium weiterhin VERFEHLT
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,28 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.27 – 2026-08-11
+- **Mehrpositions-Divergenzsuche (Fund-14-Kandidat iii, Diagnose-Patch):**
+  Neue Diagnose-Binaries `runtime/src/bin/seq_layer_dump` (Reststrom-
+  Statistiken nach jedem Layer an der letzten Position einer Sequenz,
+  KV-Cache gefüllt) und `runtime/src/bin/seq_logits_sweep` (Top-1-Logit je
+  Position), Gegenstücke `tests/diag/seq_layer_dump_hf.py` /
+  `seq_logits_sweep_hf.py`.
+- **Lokalisierung (Single-Token, Position 0):** Der AbsMax des Reststroms
+  stimmt in allen 24 Ebenen mit HF überein (Ausreißer-Plateau ~1600 in den
+  Ebenen 3–20, Abfall auf ~30 in 21–22 — beides echtes Modellverhalten, das
+  der Integerpfad reproduziert). Aber die Bulk-Dimensionen (erste 4 Werte)
+  weichen schon ab Ebene 3 um ~25–30 % ab. In den letzten Ebenen wird die
+  Abweichung kritisch: dort werden die Residual-Ausreißer weggekürzt und das
+  Signal ~50× kleiner — Ebene 23 liefert Integer 43 vs. HF 188 (4,4×, anderer
+  Inhalt, nicht nur Skala).
+- **Ausschlüsse:** Die Gewichtsquantisierung ist über die Ebenen gleichmäßig
+  gut (Layer 22 vs. 23: identischer relativer Fehler ~1,5–2 %), und die
+  Skalen clampen nicht (Headroom-Check v0.12.26). Damit ist die verbleibende
+  Lücke akkumuliertes Quantisierungsrauschen (int8-Gewichte + LUT-Näherungen),
+  das in den letzten Ebenen verstärkt wird — kein lokalisierter Einzel-Bug.
+- Tests: alle drei Crates grün (kernels 28, runtime 44, pipeline-Build).
 
 ### v0.12.26 – 2026-08-11
 - **Fund-14-Kandidat (i) geprüft (außerplanmäßiger Patch):** Neue Diagnose
