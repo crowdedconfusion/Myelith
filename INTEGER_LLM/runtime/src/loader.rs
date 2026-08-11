@@ -4,7 +4,7 @@ use std::path::Path;
 use std::collections::HashMap;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use crate::model::{IntegerModel, TransformerLayer, QTensor, ModelConfig};
+use crate::model::{IntegerModel, LayerScales, ModelConfig, QTensor, TransformerLayer};
 
 /// Zur Kompilierzeit eingebettete Ausfuehrungsspezifikation (Kap. 6.5 des
 /// Whitepapers: Teil von theta_v, damit konsensrelevant). Bewusst per
@@ -439,6 +439,48 @@ fn require_lut(luts: &LoadedLuts, name: &str) -> Result<Vec<i16>, String> {
         .ok_or_else(|| format!("Fehlende Lookup-Tabelle im Artefakt: {}", name))
 }
 
+/// Liest die Modellbau-Konstanten aus der eingebetteten theta_v/spec.json
+/// (Single Source of Truth des numerischen Vertrags, theta_v 0.5.0).
+fn spec_model_params() -> Result<ModelConfig, String> {
+    let parsed: serde_json::Value = serde_json::from_str(SPEC_JSON)
+        .map_err(|e| format!("Eingebettetes theta_v/spec.json ist ungueltig: {}", e))?;
+    let tv = &parsed["theta_v"];
+    let num = |path: &str, node: &serde_json::Value| -> Result<u8, String> {
+        node.as_u64()
+            .and_then(|v| u8::try_from(v).ok())
+            .ok_or_else(|| format!("theta_v/spec.json: {} fehlt oder ist kein u8", path))
+    };
+    let formats = &tv["numeric"]["formats"];
+    let nonlinear = &tv["nonlinear"];
+    let silu_range_min = nonlinear["silu"]["input_range"][0]
+        .as_i64()
+        .ok_or_else(|| "theta_v/spec.json: nonlinear.silu.input_range[0] fehlt".to_string())?;
+
+    Ok(ModelConfig {
+        residual_frac_bits: num("numeric.formats.residual.frac_bits", &formats["residual"]["frac_bits"])?,
+        kv_cache_frac_bits: num("numeric.formats.kv_cache.frac_bits", &formats["kv_cache"]["frac_bits"])?,
+        score_frac_bits: num("nonlinear.softmax.exp_lut_frac_bits", &nonlinear["softmax"]["exp_lut_frac_bits"])?,
+        prob_frac_bits: num("nonlinear.softmax.prob_frac_bits", &nonlinear["softmax"]["prob_frac_bits"])?,
+        rope_frac_bits: num("nonlinear.rope.frac_bits", &nonlinear["rope"]["frac_bits"])?,
+        silu_in_frac: num("nonlinear.silu.input_frac_bits", &nonlinear["silu"]["input_frac_bits"])?,
+        silu_lut_offset: (-silu_range_min) as i16,
+        silu_out_frac: num("nonlinear.silu.output_frac_bits", &nonlinear["silu"]["output_frac_bits"])?,
+        rsqrt_input_shift: num("nonlinear.rsqrt.input_shift", &nonlinear["rsqrt"]["input_shift"])?,
+        rsqrt_output_frac: num("nonlinear.rsqrt.output_frac_bits", &nonlinear["rsqrt"]["output_frac_bits"])?,
+        logit_frac_bits: 6, // nur fuer Sampling/Argmax (skaleninvariant)
+    })
+}
+
+/// Fordert eine kalibrierte Per-Layer-Aktivierungsskala an; fehlt sie,
+/// scheitert der Modellbau laut (v0.12.20: der Forward-Pass verbraucht
+/// saemtliche Skalen, ein unvollstaendiges scales.json ist kein gueltiges
+/// Artefakt).
+fn require_scale(scales: &LoadedScales, name: &str) -> Result<u8, String> {
+    scales.shift(name).ok_or_else(|| {
+        format!("Fehlende kalibrierte Aktivierungsskala in scales.json: {}", name)
+    })
+}
+
 /// Baut ein vollstaendiges [`IntegerModel`] aus bereits geladenen Artefakten.
 ///
 /// Erwartet HF-Tensornamen, wie sie `calibrate/src/quantize.py` erzeugt (z. B.
@@ -453,6 +495,8 @@ pub fn build_model(
     scales: LoadedScales,
     luts: LoadedLuts,
 ) -> Result<IntegerModel, String> {
+    let config = spec_model_params()?;
+
     let embedding_table = require_tensor(&weights, "model.embed_tokens.weight")?.clone();
 
     let lm_head = if dims.tie_word_embeddings {
@@ -461,7 +505,8 @@ pub fn build_model(
         require_tensor(&weights, "lm_head.weight")?.clone()
     };
 
-    let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.data.clone();
+    let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.clone();
+    let final_norm_frac = require_scale(&scales, "model.norm")?;
 
     let mut layers = Vec::with_capacity(dims.num_layers);
     for layer_idx in 0..dims.num_layers {
@@ -494,10 +539,24 @@ pub fn build_model(
             (None, None, None)
         };
 
+        // Kalibrierte Per-Layer-Aktivierungsskalen (vollstaendig Pflicht,
+        // v0.12.20). Schluessel-Konvention identisch zu calibrate/src/stats.py.
+        let layer_scales = LayerScales {
+            norm_attn_frac: require_scale(&scales, &format!("{}.input_layernorm", p))?,
+            q_frac: require_scale(&scales, &format!("{}.self_attn.q_proj", p))?,
+            k_frac: require_scale(&scales, &format!("{}.self_attn.k_proj", p))?,
+            v_frac: require_scale(&scales, &format!("{}.self_attn.v_proj", p))?,
+            attn_out_frac: require_scale(&scales, &format!("{}.self_attn", p))?,
+            norm_mlp_frac: require_scale(&scales, &format!("{}.post_attention_layernorm", p))?,
+            gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
+            up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
+            down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
+        };
+
         layers.push(TransformerLayer {
             layer_idx,
-            input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.data.clone(),
-            post_attention_layernorm_gamma: require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.data.clone(),
+            input_layernorm_gamma: require_tensor(&weights, &format!("{}.input_layernorm.weight", p))?.clone(),
+            post_attention_layernorm_gamma: require_tensor(&weights, &format!("{}.post_attention_layernorm.weight", p))?.clone(),
             q_proj: require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?.clone(),
             k_proj: require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?.clone(),
             v_proj: require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?.clone(),
@@ -508,16 +567,9 @@ pub fn build_model(
             q_bias,
             k_bias,
             v_bias,
+            scales: layer_scales,
         });
     }
-
-    // "rsqrt" wird geladen und damit gegen theta_v validiert, von der
-    // Reference-Runtime aber (noch) nicht konsumiert: rmsnorm_int8 berechnet
-    // 1/sqrt(x) algorithmisch (integer_math::rsqrt_q, binaere Suche statt
-    // Tabellen-Lookup). Beides ist vollstaendig ganzzahlig und deterministisch;
-    // die Diskrepanz zur "method": "lut"-Angabe in theta_v/spec.json ist rein
-    // dokumentarisch und aendert nichts an der Bitgleichheits-Eigenschaft.
-    let _rsqrt_lut = require_lut(&luts, "rsqrt")?;
 
     let model = IntegerModel {
         theta_v,
@@ -531,13 +583,18 @@ pub fn build_model(
         embedding_table,
         lm_head,
         final_norm_gamma,
+        final_norm_frac,
         layers,
         cos_lut: require_lut(&luts, "cos")?,
         sin_lut: require_lut(&luts, "sin")?,
         exp_lut: require_lut(&luts, "exp")?,
         silu_lut: require_lut(&luts, "silu")?,
+        rsqrt_lut: require_lut(&luts, "rsqrt")?,
+        // Einmalige Initialisierung (die einzige Division; nicht im
+        // tokenweisen Hot-Path, dort wird nur noch multipliziert/geschoben).
+        inv_n_q20: integer_llm_kernels::rmsnorm::inv_n_q20(dims.hidden_size),
         activation_scales: scales,
-        config: ModelConfig::default(),
+        config,
     };
 
     Ok(model)
@@ -982,7 +1039,22 @@ mod tests {
             "attention_bias": attention_bias,
         }));
 
-        fs::write(dir.join("scales.json"), "{}").expect("scales.json schreiben");
+        // Vollstaendige Per-Layer-Aktivierungsskalen (seit v0.12.20 Pflicht:
+        // der Forward-Pass verbraucht alle Eintraege; Schluessel-Konvention
+        // identisch zu calibrate/src/stats.py).
+        let scales = serde_json::json!({
+            "model.layers.0.input_layernorm": scale_entry(4, 0.0625, 10.0),
+            "model.layers.0.self_attn.q_proj": scale_entry(5, 0.03125, 20.0),
+            "model.layers.0.self_attn.k_proj": scale_entry(5, 0.03125, 20.0),
+            "model.layers.0.self_attn.v_proj": scale_entry(5, 0.03125, 20.0),
+            "model.layers.0.self_attn": scale_entry(6, 0.015625, 15.0),
+            "model.layers.0.post_attention_layernorm": scale_entry(3, 0.125, 40.0),
+            "model.layers.0.mlp.gate_proj": scale_entry(4, 0.0625, 30.0),
+            "model.layers.0.mlp.up_proj": scale_entry(3, 0.125, 60.0),
+            "model.layers.0.mlp.down_proj.input": scale_entry(0, 1.0, 100.0),
+            "model.norm": scale_entry(2, 0.25, 120.0),
+        });
+        write_scales(&dir, &scales);
 
         // Gewichte
         let mut manifest = serde_json::Map::new();
@@ -1142,6 +1214,37 @@ mod tests {
         let mut cache = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
         let logits = model.forward_token(0, 0, &mut cache);
         assert_eq!(logits.len(), model.vocab_size);
+
+        // Per-Layer-Skalen muessen aus scales.json verdrahtet sein (v0.12.20).
+        assert_eq!(model.layers[0].scales.q_frac, 5);
+        assert_eq!(model.layers[0].scales.down_in_frac, 0);
+        assert_eq!(model.final_norm_frac, 2);
+        // Konfigurationswerte kommen aus der eingebetteten spec.json.
+        assert_eq!(model.config.residual_frac_bits, 3);
+        assert_eq!(model.config.silu_lut_offset, 256);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_model_rejects_missing_activation_scale() {
+        // Seit v0.12.20 ist jede Per-Layer-Aktivierungsskala Pflicht: fehlt
+        // ein Eintrag, muss der Modellbau laut scheitern.
+        let dir = test_dir("model-e2e-missingscale");
+        write_full_fixture(&dir, true, true);
+        let scales_path = dir.join("scales.json");
+        let mut scales: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&scales_path).unwrap()
+        ).unwrap();
+        scales.as_object_mut().unwrap().remove("model.layers.0.mlp.down_proj.input");
+        fs::write(&scales_path, serde_json::to_string(&scales).unwrap()).unwrap();
+        write_theta_v(&dir);
+
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("Fehlende Aktivierungsskala muss Laden verhindern"),
+        };
+        assert!(err.contains("mlp.down_proj.input"), "Fehlermeldung: {}", err);
 
         fs::remove_dir_all(&dir).ok();
     }

@@ -1,39 +1,98 @@
-//! MLP / Feed Forward – Integer
+//! MLP / Feed Forward – Integer (Aktivierungen int16, Per-Layer-Skalen)
 
-use crate::fixed_point::{clamp_i8, rshift_round};
-use crate::linear::linear_w8a8;
+use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 use crate::integer_math::lut_lookup;
+use crate::linear::linear_w8a16;
 
 /// Integer-MLP mit SiLU-Approximation via LUT.
 ///
-/// `gate_frac_bits`/`up_frac_bits`/`down_frac_bits` sind die kalibrierten
-/// Gewichtsskalen der drei Projektionen (je Tensor unterschiedlich, siehe
-/// `QTensor.shift`) - anders als `act_frac_bits`/`out_frac_bits`, die den
-/// internen Arbeits- bzw. Ziel-Skalenbereich der Aktivierungen festlegen und
-/// an den SiLU-LUT-Kalibrierungsbereich gebunden bleiben (siehe Aufrufer).
+/// Skalen (alles kalibrierte Per-Layer-Zweierpotenz-Skalen, siehe
+/// `scales.json`):
+/// - `in_frac_bits`: Eingang (Ausgabe der post_attention_layernorm)
+/// - `gate_out_frac`/`up_out_frac`: Ausgaenge von gate-/up-Projektion
+/// - `down_in_frac`: Eingang von down_proj (h = silu(gate)*up)
+/// - `out_frac_bits`: Ausgangsskala (Residualstrom)
+///
+/// Die SiLU-LUT arbeitet in einer festen Domäne (`silu_in_frac`, Index-
+/// Offset `silu_lut_offset` = -input_min der spec): Gate-Werte werden vor
+/// dem Lookup in diese Domäne reskaliert; große Betragswerte saturieren
+/// deterministisch am LUT-Rand.
+#[allow(clippy::too_many_arguments)]
 pub fn mlp_int(
-    x: &[i8],
+    x: &[i16],
     W_gate: &[Vec<i8>],
     W_up: &[Vec<i8>],
     W_down: &[Vec<i8>],
     silu_lut: &[i16],
-    act_frac_bits: u8,
-    gate_frac_bits: u8,
-    up_frac_bits: u8,
-    down_frac_bits: u8,
+    in_frac_bits: u8,
+    gate_w_shift: u8,
+    up_w_shift: u8,
+    down_w_shift: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
     out_frac_bits: u8,
-    act_lut_shift: u8,
-    act_lut_offset: i16,
-) -> Vec<i8> {
-    let gate = linear_w8a8(x, W_gate, act_frac_bits, gate_frac_bits, act_frac_bits);
-    let up = linear_w8a8(x, W_up, act_frac_bits, up_frac_bits, act_frac_bits);
+) -> Vec<i16> {
+    let gate = linear_w8a16(x, W_gate, in_frac_bits, gate_w_shift, gate_out_frac);
+    let up = linear_w8a16(x, W_up, in_frac_bits, up_w_shift, up_out_frac);
 
     let mut h = Vec::with_capacity(gate.len());
     for (g, u) in gate.iter().zip(up.iter()) {
-        let activated = lut_lookup(*g as i16, silu_lut, act_lut_shift, act_lut_offset);
-        let prod = (activated as i32) * (*u as i32);
-        h.push(clamp_i8(rshift_round(prod, act_frac_bits)));
+        // Gate in die feste LUT-Domäne reskalieren, Lookup, dann Produkt mit
+        // up auf die kalibrierte down-Eingangsskala bringen.
+        let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
+        let activated = lut_lookup(g_dom as i16, silu_lut, 0, silu_lut_offset);
+        let prod = (activated as i64) * (*u as i64);
+        h.push(clamp_i16_from_i64(rescale_i64(
+            prod,
+            silu_out_frac + up_out_frac,
+            down_in_frac,
+        )));
     }
 
-    linear_w8a8(&h, W_down, act_frac_bits, down_frac_bits, out_frac_bits)
+    linear_w8a16(&h, W_down, down_in_frac, down_w_shift, out_frac_bits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SiLU-LUT im spec-Format (input_frac 1, output_frac 6, [-256, 255]).
+    fn spec_silu_lut() -> Vec<i16> {
+        let mut lut = Vec::with_capacity(512);
+        for x in -256..256 {
+            let xf = x as f64 / 2.0;
+            let val = xf * (1.0 / (1.0 + (-xf).exp()));
+            lut.push((val * 64.0).round() as i16);
+        }
+        lut
+    }
+
+    #[test]
+    fn test_mlp_runs_with_per_layer_scales() {
+        // Rauchtest: 2 Kanaele, intermediate 2; alle Skalen explizit.
+        let x = vec![64i16, -32];
+        let w_gate = vec![vec![64i8, 0], vec![0, 64]];
+        let w_up = vec![vec![64i8, 0], vec![0, 64]];
+        let w_down = vec![vec![64i8, 32], vec![32, 64]];
+        let lut = spec_silu_lut();
+        let out = mlp_int(
+            &x, &w_gate, &w_up, &w_down, &lut,
+            6,   // in_frac
+            6, 6, 6, // Gewichts-Shifts
+            6, 6, 6, // gate/up/down-Eingangs-Skalen
+            1, 256, 6, // SiLU-Domäne (frac 1, Offset 256, Output frac 6)
+            6,   // out_frac
+        );
+        assert_eq!(out.len(), 2);
+        // Alle Werte muessen im i16-Bereich und deterministisch sein.
+        let out2 = mlp_int(
+            &x, &w_gate, &w_up, &w_down, &lut,
+            6, 6, 6, 6, 6, 6, 6, 1, 256, 6, 6,
+        );
+        assert_eq!(out, out2);
+    }
 }

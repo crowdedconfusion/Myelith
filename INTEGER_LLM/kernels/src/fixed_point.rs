@@ -18,6 +18,14 @@ pub fn clamp_i16(x: i32) -> i16 {
     else { x as i16 }
 }
 
+/// Clamp auf i16-Bereich aus i64 (fuer Akkumulator-Zwischenwerte).
+#[inline(always)]
+pub fn clamp_i16_from_i64(x: i64) -> i16 {
+    if x < -32768 { -32768 }
+    else if x > 32767 { 32767 }
+    else { x as i16 }
+}
+
 /// Clamp auf i32-Bereich (nützlich fuer i64-Zwischenwerte).
 #[inline(always)]
 pub fn clamp_i32(x: i64) -> i32 {
@@ -44,12 +52,41 @@ pub fn rshift_round(value: i32, shift: u8) -> i32 {
     }
 }
 
+/// Round-to-nearest-even Rechts-Shift (i64, fuer Zwischenprodukte).
+#[inline(always)]
+pub fn rshift_round_i64(value: i64, shift: u8) -> i64 {
+    if shift == 0 {
+        return value;
+    }
+    let mask = (1i64 << shift) - 1;
+    let half = 1i64 << (shift - 1);
+    let quotient = value >> shift;
+    let remainder = value & mask;
+
+    if remainder > half || (remainder == half && (quotient & 1) != 0) {
+        quotient + 1
+    } else {
+        quotient
+    }
+}
+
 /// Rescale: von in_frac Bits nach out_frac Bits.
 #[inline(always)]
 pub fn rescale(acc: i32, in_frac: u8, out_frac: u8) -> i32 {
     let shift = in_frac as i8 - out_frac as i8;
     if shift >= 0 {
         rshift_round(acc, shift as u8)
+    } else {
+        acc << (-shift)
+    }
+}
+
+/// Rescale fuer i64-Zwischenprodukte (z. B. RMSNorm-Tripelprodukt).
+#[inline(always)]
+pub fn rescale_i64(acc: i64, in_frac: u8, out_frac: u8) -> i64 {
+    let shift = in_frac as i8 - out_frac as i8;
+    if shift >= 0 {
+        rshift_round_i64(acc, shift as u8)
     } else {
         acc << (-shift)
     }

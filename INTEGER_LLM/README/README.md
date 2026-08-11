@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.19
+> **Version:** 0.12.20
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Phase 12.14–12.17 vollständig, außerplanmäßiger Bias-Patch abgeschlossen
+> **Status:** Aktive Entwicklung — Phase 12.14–12.17 vollständig, zwei außerplanmäßige Patches (Biases, Numerik-Realitätsabgleich, theta_v 0.5.0)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,35 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.20 – 2026-08-11 (außerplanmäßiger Patch)
+- **Numerik-Realitätsabgleich:** Messungen am echten Qwen2.5-0.5B zeigten,
+  dass die alten Format-Annahmen nicht tragen (Residual-Spitzen ±1576 statt
+  der i8-Annahme ±0,5; h = silu(gate)·up bis ±1640). Aktivierungen sind
+  jetzt **int16 mit kalibrierten Per-Layer-Zweierpotenz-Skalen**, Gewichte
+  bleiben int8; Residualstrom int16 frac 3
+- **theta_v/spec.json 0.4.0 → 0.5.0** (konsensrelevant, mit Zustimmung des
+  Projektinhabers): residual frac 3, activation int16, rsqrt input_shift 8
+  + `index_normalization: dynamic_even_shift`, SiLU-Domäne [-256,255] mit
+  `input_frac_bits: 1` / `output_frac_bits: 6`
+- **Neuer Kernel `rmsnorm_i16`:** LUT-gestütztes rsqrt wird jetzt
+  konsumiert, divisionsfrei im Hot-Path (Mittelwert via
+  Reziproken-Multiplikation, dynamischer gerader Index-Shift), explizite
+  Ziel-Ausgabeskala, gamma mit eigenem kalibriertem Shift — Funde 1 und 8
+  sind damit behoben
+- Kernel auf int16-Aktivierungen umgebaut: `linear_w8a16` (i64-Akkumulator),
+  `add_bias_i16`, `rotate_pairs_i16`, `attention_int`/`mlp_int` mit
+  Per-Layer-Skalen; `softmax_int`-Overflow-Fix (maskierte i32::MIN-Werte)
+- Runtime: Per-Layer-Skalen vollständig verdrahtet (Fund 2 gelöst),
+  `ModelConfig` aus der eingebetteten spec.json (`spec_model_params()`),
+  `build_model` validiert alle Skalen-Einträge laut
+- Kalibrierung: int16-Wertebereich (`ACTIVATION_MAX_INT = 32767`),
+  erweiterter Korpus (vier Prompts), neue Hooks; 265 Skalen (Shifts 4–16),
+  θ_v-Hashes konsistent
+- Backend-Trait/Platzhalter auf neue API; alte AVX2-Intrinsics entfernt
+  (Neuaufbau in Phase 12.35–12.39); Golden Vectors regeneriert
+- Volle Suite grün: kernels 25, runtime 40 Tests, alle Python-Skripte inkl.
+  Cross-Hardware (6/6 Backends)
 
 ### v0.12.19 – 2026-08-11 (außerplanmäßiger Patch)
 - **Attention-Biases in der Runtime** (Fund aus dem Kalibrierungslauf 12.16,

@@ -20,7 +20,10 @@ pub fn softmax_int(logits: &[i32], exp_lut: &[i16], lut_shift: u8, frac_bits: u8
 
     let mut exps = Vec::with_capacity(logits.len());
     for z in logits {
-        let diff = m - z;
+        // saturating_sub: maskierte Positionen (i32::MIN) wuerden m - z
+        // ueberlaufen lassen; die Saettigung liefert einen grossen Diff-Wert
+        // und damit exp ~ 0 (Masken-Verhalten korrekt).
+        let diff = m.saturating_sub(*z);
         exps.push(exp_lut_lookup(diff, exp_lut, lut_shift, one));
     }
 

@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.4.0",
+    "version": "0.5.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -16,8 +16,8 @@
     "numeric": {
       "formats": {
         "weight": { "dtype": "int8", "storage": "int8", "frac_bits": 7 },
-        "activation": { "dtype": "int8", "storage": "int8", "frac_bits": 6 },
-        "residual": { "dtype": "int16", "storage": "int16", "frac_bits": 8 },
+        "activation": { "dtype": "int16", "storage": "int16" },
+        "residual": { "dtype": "int16", "storage": "int16", "frac_bits": 3 },
         "accumulator": { "dtype": "int32", "storage": "int32" },
         "kv_cache": { "dtype": "int16", "storage": "int16", "frac_bits": 8 }
       },
@@ -34,13 +34,14 @@
       "rsqrt": {
         "method": "lut",
         "input_range": [0, 32767],
-        "input_shift": 7,
-        "output_frac_bits": 8
+        "input_shift": 8,
+        "output_frac_bits": 8,
+        "index_normalization": "dynamic_even_shift"
       },
       "silu": {
         "method": "lut",
-        "input_range": [-128, 127],
-        "input_shift": 0,
+        "input_range": [-256, 255],
+        "input_frac_bits": 1,
         "output_frac_bits": 6
       },
       "softmax": {

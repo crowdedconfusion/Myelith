@@ -106,7 +106,24 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
         '"vocab":{"H":0,"e":1,"l":2,"o":3},"merges":[]}}'
     )
 
-    _write_json(root / "scales.json", {})
+    # Per-Layer-Aktivierungsskalen: seit v0.12.20 Pflicht (der Forward-Pass
+    # verbraucht alle Eintraege; Schluessel-Konvention identisch zu
+    # calibrate/src/stats.py).
+    _scale = lambda shift, absmax: {
+        "shift": shift, "scale": 2.0 ** (-shift), "absmax_observed": absmax,
+    }
+    _write_json(root / "scales.json", {
+        "model.layers.0.input_layernorm": _scale(4, 10.0),
+        "model.layers.0.self_attn.q_proj": _scale(5, 20.0),
+        "model.layers.0.self_attn.k_proj": _scale(5, 20.0),
+        "model.layers.0.self_attn.v_proj": _scale(5, 20.0),
+        "model.layers.0.self_attn": _scale(6, 15.0),
+        "model.layers.0.post_attention_layernorm": _scale(3, 40.0),
+        "model.layers.0.mlp.gate_proj": _scale(4, 30.0),
+        "model.layers.0.mlp.up_proj": _scale(3, 60.0),
+        "model.layers.0.mlp.down_proj.input": _scale(0, 100.0),
+        "model.norm": _scale(2, 120.0),
+    })
 
     # Gewichte: dieselben Tensor-Namen wie calibrate/src/quantize.py erzeugt.
     weights_manifest = {}

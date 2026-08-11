@@ -35,20 +35,36 @@ def test_small_absmax_gets_positive_shift():
 
 
 def test_shift_respects_int8_range():
+    # int8-Wertebereich (Gewichtsquantisierung bzw. allgemeine Semantik
+    # mit explizitem max_int).
     for absmax in [0.001, 0.02, 0.5, 1.0, 5.2, 50.0]:
-        shift = choose_pow2_shift(absmax)
+        shift = choose_pow2_shift(absmax, max_int=127)
         quantized_absmax = absmax * (2 ** shift)
         assert quantized_absmax <= 127.0 + 1e-6, (
             f"absmax={absmax}, shift={shift}: quantized(absmax)={quantized_absmax} > 127"
         )
 
 
+def test_shift_respects_int16_range():
+    # Seit v0.12.20 sind Aktivierungsskalen int16 (Default max_int=32767):
+    # auch grosse Aktivierungen (gemessen bis ~±1640) muessen passen.
+    for absmax in [0.001, 0.02, 0.5, 1.0, 46.5, 336.0, 1640.0]:
+        shift = choose_pow2_shift(absmax)
+        quantized_absmax = absmax * (2 ** shift)
+        assert quantized_absmax <= 32767.0 + 1e-6, (
+            f"absmax={absmax}, shift={shift}: quantized(absmax)={quantized_absmax} > 32767"
+        )
+    # Spot-Check des Realitaetsabgleichs: h=1640 -> shift 4 (32767/1640).
+    assert choose_pow2_shift(1640.0) == 4
+
+
 def test_large_absmax_falls_back_to_shift_zero():
     # absmax > max_int: Werte muessen beim Quantisieren/Clamping saettigen,
     # nicht ueberlaufen. shift=0 ist hier korrekt (kein Ueberlauf-Handling
     # jenseits von Clamping vorgesehen).
-    assert choose_pow2_shift(200.0) == 0
-    assert choose_pow2_shift(127.0) == 0
+    assert choose_pow2_shift(200.0, max_int=127) == 0
+    assert choose_pow2_shift(127.0, max_int=127) == 0
+    assert choose_pow2_shift(40000.0) == 0  # auch im int16-Bereich
 
 
 def test_shift_capped_at_max_frac_bits():
@@ -97,10 +113,10 @@ def test_scales_always_pow2_consistent_batch():
         assert 0 <= entry["shift"] <= MAX_FRAC_BITS, name
         assert math.isclose(entry["scale"], 2.0 ** (-entry["shift"])), name
         absmax = stats[name]["absmax"]
-        if absmax <= 127.0:
+        if absmax <= 32767.0:
             # Nicht-Saettigungsregime: quantisiertes absmax muss in den
-            # int8-Bereich passen.
-            assert absmax * (2 ** entry["shift"]) <= 127.0 + 1e-6, name
+            # int16-Bereich passen (Aktivierungsskalen seit v0.12.20).
+            assert absmax * (2 ** entry["shift"]) <= 32767.0 + 1e-6, name
         else:
             # Saettigungsregime: shift=0, Werte clampen beim Quantisieren.
             assert entry["shift"] == 0, name
@@ -111,6 +127,8 @@ if __name__ == "__main__":
     print("[test] Regression: kleines absmax bekommt positiven Shift: PASSED")
     test_shift_respects_int8_range()
     print("[test] Shift respektiert int8-Bereich: PASSED")
+    test_shift_respects_int16_range()
+    print("[test] Shift respektiert int16-Bereich (Aktivierungen): PASSED")
     test_large_absmax_falls_back_to_shift_zero()
     print("[test] Grosses absmax faellt auf shift=0 zurueck: PASSED")
     test_shift_capped_at_max_frac_bits()

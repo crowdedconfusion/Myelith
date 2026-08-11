@@ -7,8 +7,13 @@ import math
 # Siehe calibrate/src/quantize.py::MAX_FRAC_BITS fuer die Begruendung.
 MAX_FRAC_BITS = 20
 
+# Aktivierungen sind seit dem Numerik-Realitaetsabgleich (v0.12.20) int16
+# mit Per-Layer-Skalen; Gewichte bleiben int8 (siehe quantize.py). Die
+# Aktivierungsskalen muessen daher den int16-Wertebereich abdecken.
+ACTIVATION_MAX_INT = 32767
 
-def choose_pow2_shift(absmax: float, max_int: int = 127) -> int:
+
+def choose_pow2_shift(absmax: float, max_int: int = ACTIVATION_MAX_INT) -> int:
     """
     Bestimmt frac_bits (Laufzeit-Konvention, arithmetischer Rechtsshift bei
     der Dequantisierung: real ≈ quantized >> shift), sodass
@@ -26,7 +31,7 @@ def choose_pow2_shift(absmax: float, max_int: int = 127) -> int:
     return max(0, min(shift, MAX_FRAC_BITS))
 
 
-def compute_scales_from_stats(stats: dict, max_int: int = 127) -> dict:
+def compute_scales_from_stats(stats: dict, max_int: int = ACTIVATION_MAX_INT) -> dict:
     scales = {}
     for name, s in stats.items():
         shift = choose_pow2_shift(s["absmax"], max_int)

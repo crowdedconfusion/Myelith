@@ -3,11 +3,10 @@
 //! Embedding -> [Layer x 24] -> Final RMSNorm -> LM Head
 //! Jeder Layer: RMSNorm -> Attention -> ResAdd -> RMSNorm -> MLP -> ResAdd
 
-use integer_llm_kernels::fixed_point::{clamp_i8, clamp_i16, rescale};
-use integer_llm_kernels::rmsnorm::rmsnorm_int8;
-use integer_llm_kernels::linear::{linear_w8a8, add_bias_i8};
-use integer_llm_kernels::rope::rotate_pairs;
-use integer_llm_kernels::softmax::softmax_int;
+use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i32, rescale, rescale_i64};
+use integer_llm_kernels::rmsnorm::rmsnorm_i16;
+use integer_llm_kernels::linear::{linear_w8a16, add_bias_i16};
+use integer_llm_kernels::rope::rotate_pairs_i16;
 use integer_llm_kernels::attention::attention_int;
 use integer_llm_kernels::mlp::mlp_int;
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
@@ -43,11 +42,38 @@ impl QTensor {
     }
 }
 
+/// Kalibrierte Per-Layer-Aktivierungsskalen (Zweierpotenzen, aus
+/// `scales.json`; Schluessel-Konvention identisch zu
+/// `calibrate/src/stats.py`). Seit dem Numerik-Realitaetsabgleich (v0.12.20)
+/// tragen Aktivierungen int16 mit diesen Skalen; der Loader validiert die
+/// Vollstaendigkeit beim Modellbau.
+#[derive(Debug, Clone, Copy)]
+pub struct LayerScales {
+    /// Ausgang von input_layernorm = Eingang von q/k/v_proj.
+    pub norm_attn_frac: u8,
+    /// Ausgaenge der q/k/v-Projektionen (Q/K/V-Skala, beeinflusst
+    /// score_shift und KV-Cache-Reskalierung).
+    pub q_frac: u8,
+    pub k_frac: u8,
+    pub v_frac: u8,
+    /// Ausgang des Attention-Moduls = Eingang von o_proj.
+    pub attn_out_frac: u8,
+    /// Ausgang von post_attention_layernorm = Eingang von gate/up_proj.
+    pub norm_mlp_frac: u8,
+    /// Ausgaenge von gate-/up_proj.
+    pub gate_frac: u8,
+    pub up_frac: u8,
+    /// h = silu(gate)*up = Eingang von down_proj.
+    pub down_in_frac: u8,
+}
+
 /// Ein Transformer-Layer.
 pub struct TransformerLayer {
     pub layer_idx: usize,
-    pub input_layernorm_gamma: Vec<i8>,
-    pub post_attention_layernorm_gamma: Vec<i8>,
+    /// Gamma der input_layernorm als QTensor: `data` + eigener kalibrierter
+    /// Shift (vor v0.12.20 wurde der Shift verworfen, siehe Fund 1).
+    pub input_layernorm_gamma: QTensor,
+    pub post_attention_layernorm_gamma: QTensor,
     pub q_proj: QTensor,
     pub k_proj: QTensor,
     pub v_proj: QTensor,
@@ -58,10 +84,12 @@ pub struct TransformerLayer {
     /// Q/K/V-Attention-Biases (Qwen2.5 besitzt sie an q/k/v_proj). `None`
     /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
     /// model_config.json); sonst je ein Bias-Tensor mit eigener Skala,
-    /// der nach der Projektion addiert wird (siehe `add_bias_i8`).
+    /// der nach der Projektion addiert wird (siehe `add_bias_i16`).
     pub q_bias: Option<QTensor>,
     pub k_bias: Option<QTensor>,
     pub v_bias: Option<QTensor>,
+    /// Kalibrierte Per-Layer-Aktivierungsskalen.
+    pub scales: LayerScales,
 }
 
 /// Das komplette Modell.
@@ -80,54 +108,74 @@ pub struct IntegerModel {
     pub max_context: usize,
     pub embedding_table: QTensor,   // [vocab_size, hidden_size]
     pub lm_head: QTensor,           // [vocab_size, hidden_size] (oder mit embedding_table getied)
-    pub final_norm_gamma: Vec<i8>,
+    /// Gamma der finalen RMSNorm als QTensor (data + kalibrierter Shift).
+    pub final_norm_gamma: QTensor,
+    /// Kalibrierte Skala des finalen Norm-Ausgangs = Eingang des LM-Heads.
+    pub final_norm_frac: u8,
     pub layers: Vec<TransformerLayer>,
     pub cos_lut: Vec<i16>,
     pub sin_lut: Vec<i16>,
     pub exp_lut: Vec<i16>,
     pub silu_lut: Vec<i16>,
-    /// Kalibrierte Aktivierungsskalen aus scales.json (geladen und
-    /// validiert, siehe Loader-Punkt 12.9). Noch nicht in den Forward-Pass
-    /// verdrahtet: `ModelConfig` traegt weiterhin globale, nicht per-Layer
-    /// aufgeloeste frac_bits-Werte. Siehe Hinweis zu Fahrplan-Punkt 12.10.
+    /// rsqrt-LUT (spec: rsqrt.method = "lut"), konsumiert von `rmsnorm_i16`
+    /// mit dynamischem geradem Index-Shift.
+    pub rsqrt_lut: Vec<i16>,
+    /// Reziproken-Konstante 2^20/hidden_size fuer den divisionsfreien
+    /// Mittelwert in `rmsnorm_i16` (einmalige Initialisierung).
+    pub inv_n_q20: i64,
+    /// Kalibrierte Aktivierungsskalen aus scales.json (vollstaendig
+    /// validiert und in den Forward-Pass verdrahtet, v0.12.20).
     pub activation_scales: LoadedScales,
     pub config: ModelConfig,
 }
 
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
-    pub act_frac_bits: u8,
-    /// Fallback-Gewichtsskala, nur falls ein Tensor keine eigene kalibrierte
-    /// Skala traegt (z. B. in Tests). Der Forward-Pass verwendet fuer reale
-    /// Gewichte durchgehend `QTensor.shift` des jeweiligen Tensors, nicht
-    /// diesen globalen Wert - siehe Hinweis zum Numerik-Fix nach 12.10.
-    pub weight_frac_bits: u8,
+    /// Skala des Residualstroms (int16; spec: numeric.formats.residual,
+    /// seit v0.12.20 frac 3 — gemessene Residual-Spitzen bis ~±1576).
     pub residual_frac_bits: u8,
-    /// Ziel-Fracbits des Q*K-Scores NACH dem Rescale, bevor er in die
-    /// exp-LUT indiziert. Muss mit dem Kalibrierungsbereich der LUT
-    /// uebereinstimmen (`generate_exp_lut(..., frac_bits=8)` in
-    /// `calibrate/src/main.py`) - beide sind bewusst an denselben Wert
-    /// gekoppelt, siehe `forward_layer()`.
+    /// Skala des KV-Cache (spec: kv_cache, frac 8). K/V werden beim
+    /// Schreiben/Lesen zwischen ihrer Per-Layer-Skala und dieser Skala
+    /// umgerechnet.
+    pub kv_cache_frac_bits: u8,
+    /// Skala der Q*K-Scores NACH dem Rescale, bevor sie in die exp-LUT
+    /// indizieren. Muss mit dem Kalibrierungsbereich der LUT
+    /// uebereinstimmen (spec: softmax.exp_lut_frac_bits).
     pub score_frac_bits: u8,
     pub prob_frac_bits: u8,
-    pub rmsnorm_eps: i32,
     pub rope_frac_bits: u8,
-    pub silu_lut_shift: u8,
+    /// Feste Eingangsskala der SiLU-LUT (spec: silu.input_frac_bits);
+    /// Gate-Werte werden vor dem Lookup dorthin reskaliert.
+    pub silu_in_frac: u8,
+    /// Index-Offset der SiLU-LUT = -input_min (spec: silu.input_range).
     pub silu_lut_offset: i16,
+    /// Ausgangsskala der SiLU-LUT (spec: silu.output_frac_bits).
+    pub silu_out_frac: u8,
+    /// Parameter der rsqrt-LUT (spec: rsqrt.input_shift / output_frac_bits).
+    pub rsqrt_input_shift: u8,
+    pub rsqrt_output_frac: u8,
+    /// Skala der Logits (nur fuer Sampling/Argmax; gemeinsame Skala reicht,
+    /// da beide skaleninvariant sind).
+    pub logit_frac_bits: u8,
 }
 
 impl Default for ModelConfig {
     fn default() -> Self {
+        // Fallback-Konstanten fuer Tests ohne spec-Parsing; der reale
+        // Modellbau (build_model) liest die Werte aus der eingebetteten
+        // theta_v/spec.json.
         ModelConfig {
-            act_frac_bits: 6,
-            weight_frac_bits: 7,
-            residual_frac_bits: 8,
+            residual_frac_bits: 3,
+            kv_cache_frac_bits: 8,
             score_frac_bits: 8,
             prob_frac_bits: 8,
-            rmsnorm_eps: 1,  // 1/256 bei frac_bits=8
             rope_frac_bits: 8,
-            silu_lut_shift: 0,
-            silu_lut_offset: 128,
+            silu_in_frac: 1,
+            silu_lut_offset: 256,
+            silu_out_frac: 6,
+            rsqrt_input_shift: 8,
+            rsqrt_output_frac: 8,
+            logit_frac_bits: 6,
         }
     }
 }
@@ -141,28 +189,48 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
     ) -> Vec<i32> {
-        // 1. Embedding Lookup
-        let mut hidden = self.embedding_table.row(token_id);
+        let cfg = &self.config;
+
+        // 1. Embedding Lookup: Gewicht int8 (eigener Shift) -> Residualstrom
+        //    (int16, residual_frac_bits).
+        let emb = self.embedding_table.row(token_id);
+        let mut hidden: Vec<i16> = emb
+            .iter()
+            .map(|v| clamp_i16(rescale(*v as i32, self.embedding_table.shift, cfg.residual_frac_bits)))
+            .collect();
 
         // 2. Transformer Layers
         for layer in &self.layers {
             hidden = self.forward_layer(layer, &hidden, pos, cache);
         }
 
-        // 3. Final RMSNorm
-        let mut normed = vec![0i8; self.hidden_size];
-        let norm_out = rmsnorm_int8(&hidden, &self.final_norm_gamma, self.config.residual_frac_bits, self.config.rmsnorm_eps);
-        normed.copy_from_slice(&norm_out);
+        // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
+        //    final-norm-Skala; LUT-gestuetzt, divisionsfrei).
+        let normed = rmsnorm_i16(
+            &hidden,
+            &self.final_norm_gamma.data,
+            self.final_norm_gamma.shift,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+        );
 
-        // 4. LM Head (INT8 x INT8 -> INT32 Logits)
+        // 4. LM Head (INT8 x INT16 -> INT32 Logits; i64-Akkumulator, da
+        //    896 * 127 * 32767 den i32-Bereich ueberschreiten kann).
         let mut logits = vec![0i32; self.vocab_size];
         for row in 0..self.vocab_size {
-            let mut acc: i32 = 0;
+            let mut acc: i64 = 0;
             let weight_row = self.lm_head.row(row);
             for (w, v) in weight_row.iter().zip(normed.iter()) {
-                acc += (*w as i32) * (*v as i32);
+                acc += (*w as i64) * (*v as i64);
             }
-            logits[row] = rescale(acc, self.lm_head.shift + self.config.residual_frac_bits, self.config.act_frac_bits);
+            logits[row] = clamp_i32(rescale_i64(
+                acc,
+                self.lm_head.shift + self.final_norm_frac,
+                cfg.logit_frac_bits,
+            ));
         }
 
         logits
@@ -171,36 +239,45 @@ impl IntegerModel {
     fn forward_layer(
         &self,
         layer: &TransformerLayer,
-        hidden: &[i8],
+        hidden: &[i16],
         pos: usize,
         cache: &mut KVCache,
-    ) -> Vec<i8> {
+    ) -> Vec<i16> {
         let cfg = &self.config;
         let hs = self.hidden_size;
+        let sc = &layer.scales;
 
         // === Attention-Block ===
-        // Pre-Attention RMSNorm
-        let norm_hidden = rmsnorm_int8(hidden, &layer.input_layernorm_gamma, cfg.residual_frac_bits, cfg.rmsnorm_eps);
+        // Pre-Attention RMSNorm (int16 -> int16 auf der kalibrierten
+        // q/k/v-Eingangsskala).
+        let norm_hidden = rmsnorm_i16(
+            hidden,
+            &layer.input_layernorm_gamma.data,
+            layer.input_layernorm_gamma.shift,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            sc.norm_attn_frac,
+        );
 
-        // Q, K, V Projektionen: Gewichtsskala kommt aus der jeweils eigenen
-        // kalibrierten QTensor.shift (siehe Numerik-Fix nach 12.10), nicht
-        // aus der globalen weight_frac_bits-Konstante.
-        let mut q_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.q_proj), cfg.act_frac_bits, layer.q_proj.shift, cfg.act_frac_bits);
-        let mut k_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.k_proj), cfg.act_frac_bits, layer.k_proj.shift, cfg.act_frac_bits);
-        let mut v_flat = linear_w8a8(&norm_hidden, &self.to_vec_vec(&layer.v_proj), cfg.act_frac_bits, layer.v_proj.shift, cfg.act_frac_bits);
+        // Q, K, V Projektionen: Gewichtsskala aus der eigenen QTensor.shift,
+        // Ausgang auf der jeweils kalibrierten Per-Layer-Skala.
+        let mut q_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.q_proj), sc.norm_attn_frac, layer.q_proj.shift, sc.q_frac);
+        let mut k_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.k_proj), sc.norm_attn_frac, layer.k_proj.shift, sc.k_frac);
+        let mut v_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.v_proj), sc.norm_attn_frac, layer.v_proj.shift, sc.v_frac);
 
         // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche): eigener
-        // kalibrierter Shift, Reskalierung auf die Q/K/V-Ausgabeskala
-        // (act_frac_bits) und i32-Addition mit Clamping - reine
-        // Ganzzahlarithmetik (ausserplanmaessiger Patch v0.12.19).
+        // kalibrierter Shift, Reskalierung auf die Q/K/V-Ausgabeskala und
+        // i64-Addition mit Clamping — reine Ganzzahlarithmetik.
         if let Some(qb) = &layer.q_bias {
-            add_bias_i8(&mut q_flat, &qb.data, qb.shift, cfg.act_frac_bits);
+            add_bias_i16(&mut q_flat, &qb.data, qb.shift, sc.q_frac);
         }
         if let Some(kb) = &layer.k_bias {
-            add_bias_i8(&mut k_flat, &kb.data, kb.shift, cfg.act_frac_bits);
+            add_bias_i16(&mut k_flat, &kb.data, kb.shift, sc.k_frac);
         }
         if let Some(vb) = &layer.v_bias {
-            add_bias_i8(&mut v_flat, &vb.data, vb.shift, cfg.act_frac_bits);
+            add_bias_i16(&mut v_flat, &vb.data, vb.shift, sc.v_frac);
         }
 
         // Auf Heads aufteilen. Q hat num_heads Heads, K/V bei GQA nur
@@ -211,40 +288,43 @@ impl IntegerModel {
         let v_heads = self.split_heads(&v_flat, self.num_kv_heads);
 
         // RoPE: Q- und K-Heads separat rotieren (unterschiedliche Head-Anzahl,
-        // daher kein gemeinsamer apply_rope-Aufruf, der gleiche Laenge voraussetzt).
+        // daher kein gemeinsamer apply_rope-Aufruf, der gleiche Laenge
+        // voraussetzt). Die Rotation ist skaleninvariant gegenueber der
+        // Eingangs-Skala (cos/sin tragen rope_frac_bits).
         let idx = pos % self.cos_lut.len();
         let cos_q = self.cos_lut[idx];
         let sin_q = self.sin_lut[idx];
         for qh in q_heads.iter_mut() {
-            *qh = rotate_pairs(qh, cos_q, sin_q, cfg.rope_frac_bits);
+            *qh = rotate_pairs_i16(qh, cos_q, sin_q, cfg.rope_frac_bits);
         }
         for kh in k_heads.iter_mut() {
-            *kh = rotate_pairs(kh, cos_q, sin_q, cfg.rope_frac_bits);
+            *kh = rotate_pairs_i16(kh, cos_q, sin_q, cfg.rope_frac_bits);
         }
 
-        // KV-Cache schreiben (ein Eintrag pro KV-Head, nicht pro Query-Head)
+        // KV-Cache schreiben: Reskalierung von der Per-Layer-Skala auf die
+        // Cache-Skala (spec: kv_cache, frac 8) und zurueck beim Lesen.
         for h in 0..self.num_kv_heads {
             cache.write(layer.layer_idx, h, pos,
-                self.head_to_i16(&k_heads[h], cfg.act_frac_bits),
-                self.head_to_i16(&v_heads[h], cfg.act_frac_bits));
+                self.rescale_head(&k_heads[h], sc.k_frac, cfg.kv_cache_frac_bits),
+                self.rescale_head(&v_heads[h], sc.v_frac, cfg.kv_cache_frac_bits));
         }
 
         // Attention pro Query-Head; group_size aufeinanderfolgende Query-Heads
         // teilen sich denselben KV-Head (Standard-GQA-Gruppierung, wie in
         // HF's repeat_kv: Head h liest KV-Head h / group_size).
         let group_size = self.num_heads / self.num_kv_heads;
-        let mut attn_out = vec![0i8; hs];
+        let mut attn_out = vec![0i16; hs];
         for h in 0..self.num_heads {
             let kv_h = h / group_size;
             let (past_k, past_v) = cache.read(layer.layer_idx, kv_h, pos);
             let seq_len = past_k.len();
 
-            // K, V als i8 zurueckskalieren
-            let k_seq: Vec<Vec<i8>> = past_k.iter()
-                .map(|k| self.head_from_i16(k, cfg.act_frac_bits))
+            // K, V von der Cache-Skala zurueck auf ihre Per-Layer-Skalen.
+            let k_seq: Vec<Vec<i16>> = past_k.iter()
+                .map(|k| self.rescale_head(k, cfg.kv_cache_frac_bits, sc.k_frac))
                 .collect();
-            let v_seq: Vec<Vec<i8>> = past_v.iter()
-                .map(|v| self.head_from_i16(v, cfg.act_frac_bits))
+            let v_seq: Vec<Vec<i16>> = past_v.iter()
+                .map(|v| self.rescale_head(v, cfg.kv_cache_frac_bits, sc.v_frac))
                 .collect();
 
             let q_seq = vec![q_heads[h].clone()];
@@ -252,14 +332,11 @@ impl IntegerModel {
             // Causal mask: nur letzte Position attendet auf alle vorherigen
             let mask = vec![vec![true; seq_len]];
 
-            // Q und K liegen beide bei act_frac_bits (siehe Projektionen oben),
-            // der rohe Skalarproduktwert traegt daher 2*act_frac_bits
-            // Nachkommabits. score_shift bringt ihn exakt auf den
-            // Kalibrierungsbereich der exp-LUT (score_frac_bits) herunter,
-            // dadurch bleibt lut_shift=0 korrekt (vormals hartkodiert 0 bei
-            // gleichzeitig zu grossem, nicht darauf abgestimmtem score_shift -
-            // die Attention-Gewichtung war dadurch faktisch verzerrt).
-            let score_shift = (2u16 * cfg.act_frac_bits as u16)
+            // Q liegt bei sc.q_frac, K bei sc.k_frac; der rohe Skalarproduktwert
+            // traegt q_frac + k_frac Nachkommabits. score_shift bringt ihn auf
+            // die exp-LUT-Domäne (score_frac_bits), dadurch bleibt lut_shift=0
+            // korrekt — pro Layer dynamisch aus den kalibrierten Skalen.
+            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16)
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
 
             let head_out = attention_int(
@@ -273,41 +350,63 @@ impl IntegerModel {
             }
         }
 
-        // O-Projektion (Gewichtsskala aus layer.o_proj.shift statt Konstante)
-        let o_out = linear_w8a8(&attn_out, &self.to_vec_vec(&layer.o_proj), cfg.act_frac_bits, layer.o_proj.shift, cfg.residual_frac_bits);
+        // Die Attention-Ausgabe liegt auf der V-Skala (gewichtete Summe
+        // erhaelt die V-Skala); Umreskalieren auf die kalibrierte
+        // o_proj-Eingangsskala.
+        if sc.attn_out_frac != sc.v_frac {
+            for v in attn_out.iter_mut() {
+                *v = clamp_i16(rescale(*v as i32, sc.v_frac, sc.attn_out_frac));
+            }
+        }
 
-        // Residual Add (INT16-Pfad empfohlen, hier vereinfacht)
-        let mut residual = vec![0i8; hs];
+        // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang =
+        // Residual-Skala.
+        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), sc.attn_out_frac, layer.o_proj.shift, cfg.residual_frac_bits);
+
+        // Residual Add (int16, spec: residual)
+        let mut residual = vec![0i16; hs];
         for i in 0..hs {
-            let sum = (hidden[i] as i16) + (o_out[i] as i16);
-            residual[i] = clamp_i8(sum as i32);
+            residual[i] = clamp_i16((hidden[i] as i32) + (o_out[i] as i32));
         }
 
         // === MLP-Block ===
-        let norm_residual = rmsnorm_int8(&residual, &layer.post_attention_layernorm_gamma, cfg.residual_frac_bits, cfg.rmsnorm_eps);
+        let norm_residual = rmsnorm_i16(
+            &residual,
+            &layer.post_attention_layernorm_gamma.data,
+            layer.post_attention_layernorm_gamma.shift,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            sc.norm_mlp_frac,
+        );
 
-        // Gewichtsskalen aus den jeweils eigenen QTensor.shift statt einer
-        // gemeinsamen Konstante fuer alle drei Projektionen.
+        // Per-Layer-Skalen fuer alle Zwischenstufen; die SiLU-LUT arbeitet
+        // in ihrer festen Domaene (silu_in_frac/Offset), Gate-Werte werden
+        // dorthin reskaliert.
         let mlp_out = mlp_int(
             &norm_residual,
             &self.to_vec_vec(&layer.gate_proj),
             &self.to_vec_vec(&layer.up_proj),
             &self.to_vec_vec(&layer.down_proj),
             &self.silu_lut,
-            cfg.act_frac_bits,
+            sc.norm_mlp_frac,
             layer.gate_proj.shift,
             layer.up_proj.shift,
             layer.down_proj.shift,
-            cfg.residual_frac_bits,
-            cfg.silu_lut_shift,
+            sc.gate_frac,
+            sc.up_frac,
+            sc.down_in_frac,
+            cfg.silu_in_frac,
             cfg.silu_lut_offset,
+            cfg.silu_out_frac,
+            cfg.residual_frac_bits,
         );
 
         // Final Residual Add
-        let mut out = vec![0i8; hs];
+        let mut out = vec![0i16; hs];
         for i in 0..hs {
-            let sum = (residual[i] as i16) + (mlp_out[i] as i16);
-            out[i] = clamp_i8(sum as i32);
+            out[i] = clamp_i16((residual[i] as i32) + (mlp_out[i] as i32));
         }
 
         out
@@ -315,7 +414,7 @@ impl IntegerModel {
 
     /// Teilt einen flachen Q/K/V-Vektor in `n` Heads zu je `head_dim` auf.
     /// `n` ist `num_heads` fuer Q, bei GQA `num_kv_heads` fuer K/V.
-    fn split_heads(&self, flat: &[i8], n: usize) -> Vec<Vec<i8>> {
+    fn split_heads(&self, flat: &[i16], n: usize) -> Vec<Vec<i16>> {
         let mut heads = Vec::with_capacity(n);
         for h in 0..n {
             let start = h * self.head_dim;
@@ -325,12 +424,12 @@ impl IntegerModel {
         heads
     }
 
-    fn head_to_i16(&self, head: &[i8], frac_bits: u8) -> Vec<i16> {
-        head.iter().map(|v| ((*v as i32) << (frac_bits - 6)) as i16).collect()
-    }
-
-    fn head_from_i16(&self, head: &[i16], frac_bits: u8) -> Vec<i8> {
-        head.iter().map(|v| clamp_i8((*v as i32) >> (frac_bits - 6))).collect()
+    /// Reskaliert einen Head zwischen zwei Zweierpotenz-Skalen
+    /// (KV-Cache schreiben/lesen).
+    fn rescale_head(&self, head: &[i16], from_frac: u8, to_frac: u8) -> Vec<i16> {
+        head.iter()
+            .map(|v| clamp_i16(rescale(*v as i32, from_frac, to_frac)))
+            .collect()
     }
 
     fn to_vec_vec(&self, qt: &QTensor) -> Vec<Vec<i8>> {

@@ -49,13 +49,23 @@ def generate_rsqrt_lut(max_input: int, input_shift: int, frac_bits: int) -> List
     return lut
 
 
-def generate_silu_lut(input_min: int, input_max: int, frac_bits: int) -> List[int]:
-    scale = 1 << frac_bits
+def generate_silu_lut(input_min: int, input_max: int, input_frac_bits: int,
+                      output_frac_bits: int) -> List[int]:
+    """
+    SiLU-LUT: Index x im Bereich [input_min, input_max] repraesentiert den
+    Realwert x * 2^-input_frac_bits (spec: silu.input_frac_bits); der
+    Eintrag ist round(silu(real) * 2^output_frac_bits). Ein- und Ausgangs-
+    fraktionierung sind getrennt, weil der Eingangsbereich (kalibriertes
+    Gate-AbsMax mit Sicherheitsabstand) und die Ausgangspraezision
+    unabhaengig voneinander gewaehlt werden.
+    """
+    in_scale = 1 << input_frac_bits
+    out_scale = 1 << output_frac_bits
     lut = []
     for x in range(input_min, input_max + 1):
-        xf = x / scale
+        xf = x / in_scale
         val = xf * (1.0 / (1.0 + math.exp(-xf)))
-        lut.append(int(round(val * scale)))
+        lut.append(int(round(val * out_scale)))
     return lut
 
 

@@ -35,14 +35,30 @@ def main():
     collector = ActivationStatsCollector()
     collector.attach(model)
 
-    prompt = "Die numerische Stabilitaet von Fixed-Point-Inferenz ist entscheidend."
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        _ = model(**inputs)
+    # Kalibrierungs-Korpus: mehrere sprachlich unterschiedliche Prompts,
+    # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
+    # abhaengen (Numerik-Realitaetsabgleich v0.12.20: die Skalen tragen
+    # jetzt den kompletten Aktivierungsfluss, inkl. RMSNorm-Ausgaben).
+    prompts = [
+        "Die numerische Stabilitaet von Fixed-Point-Inferenz ist entscheidend "
+        "fuer die Bitgleichheit ueber unabhaengige Knoten hinweg.",
+        "Decentralized consensus networks coordinate independent nodes by "
+        "verifying identical computation, and deterministic integer "
+        "arithmetic enables dispute resolution through bisection.",
+        "Ein Agent plant mehrere Schritte, ruft Werkzeuge auf und beachtet "
+        "dabei Budgetgrenzen, bevor er eine Transaktion signiert.",
+        "Quantization maps floating point weights to int8 with calibrated "
+        "power-of-two scales; lookup tables approximate nonlinear functions "
+        "such as silu, exp, rsqrt and the rotary position embeddings.",
+    ]
+    for prompt in prompts:
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            _ = model(**inputs)
 
     collector.detach()
     stats = collector.compute()
-    print(f"[calibrate] Statistiken fuer {len(stats)} Layer gesammelt.")
+    print(f"[calibrate] Statistiken fuer {len(stats)} Module gesammelt.")
 
     print("[calibrate] Berechne Zweierpotenz-Skalen...")
     scales = compute_scales_from_stats(stats)
@@ -50,9 +66,11 @@ def main():
     print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
     # Fahrplan 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
     # der spec.json (Single Source of Truth), keine hartkodierten Duplikate.
-    # Kopplung: die Eingangsskala der SiLU-LUT ist ihre frac_bits und muss
-    # mit act_frac_bits der Runtime übereinstimmen (aktuell beides 6); die
-    # exp-LUT-frac muss score_frac_bits der Runtime sein (aktuell beides 8).
+    # Kopplung (Numerik-Realitaetsabgleich v0.12.20): Die SiLU-LUT arbeitet
+    # in einer festen Eingangsskala (ihre frac_bits = 6); die Runtime
+    # reskaliert Gate-Werte vor dem Lookup dorthin. Die exp-LUT-frac (8) ist
+    # die Score-Skala der Attention. Die rsqrt-LUT wird per dynamischem
+    # geradem Index-Shift gespeist (spec: index_normalization).
     nl = load_nonlinear_spec()
     sin_lut, cos_lut = generate_sin_cos_lut(
         n=nl["rope"]["max_seq_len"], frac_bits=nl["rope"]["frac_bits"])
@@ -64,7 +82,8 @@ def main():
         "silu": generate_silu_lut(
             input_min=nl["silu"]["input_range"][0],
             input_max=nl["silu"]["input_range"][1],
-            frac_bits=nl["silu"]["output_frac_bits"]),
+            input_frac_bits=nl["silu"]["input_frac_bits"],
+            output_frac_bits=nl["silu"]["output_frac_bits"]),
         "exp": generate_exp_lut(
             exp_range=nl["softmax"]["exp_lut_range"],
             frac_bits=nl["softmax"]["exp_lut_frac_bits"]),

@@ -2,6 +2,10 @@
 //!
 //! Jeder Backend muss gegen die Referenz-Implementierung validiert werden.
 //! Golden Vectors sind die normative Wahrheit.
+//!
+//! Numerik-Vertrag seit theta_v 0.5.0 (Numerik-Realitaetsabgleich v0.12.20):
+//! Gewichte int8, Aktivierungen int16 mit kalibrierten Per-Layer-
+//! Zweierpotenz-Skalen, Residualstrom int16 frac 3.
 
 /// Ein numerisches Backend fuer Integer-Inferenz.
 /// Alle Methoden muessen bit-identisch zur Referenz sein (Golden-Vector-Test).
@@ -19,12 +23,12 @@ pub trait Backend {
     // Kern-Operationen
     // ==============================
 
-    /// W8A8 Matrix-Vektor: y = clamp(rescale(W * x))
-    fn linear_w8a8(
+    /// W8A16 Matrix-Vektor: y = clamp(rescale(W * x))
+    fn linear_w8a16(
         &self,
-        x: &[i8],
+        x: &[i16],
         W: &[i8],
-        out: &mut [i8],
+        out: &mut [i16],
         in_features: usize,
         out_features: usize,
         act_frac: u8,
@@ -32,14 +36,19 @@ pub trait Backend {
         out_frac: u8,
     );
 
-    /// RMSNorm: y = x / rsqrt(mean_sq + eps) * gamma
+    /// RMSNorm: y = x * rsqrt(mean(x^2)) * gamma (int16, LUT-gestuetzt,
+    /// dynamischer gerader Index-Shift, divisionsfrei).
     fn rmsnorm(
         &self,
-        x: &[i8],
+        x: &[i16],
         gamma: &[i8],
-        out: &mut [i8],
-        frac_bits: u8,
-        eps: i32,
+        gamma_shift: u8,
+        rsqrt_lut: &[i16],
+        lut_input_shift: u8,
+        lut_output_frac: u8,
+        inv_n_q20: i64,
+        out: &mut [i16],
+        out_frac: u8,
     );
 
     /// Softmax-Approximation via exp-LUT.
@@ -52,13 +61,13 @@ pub trait Backend {
         frac_bits: u8,
     );
 
-    /// Attention: Q*K^T -> softmax -> *V
+    /// Attention: Q*K^T -> softmax -> *V (i64-Akkumulation)
     fn attention(
         &self,
-        q: &[Vec<i8>],
-        k: &[Vec<i8>],
-        v: &[Vec<i8>],
-        out: &mut [Vec<i8>],
+        q: &[Vec<i16>],
+        k: &[Vec<i16>],
+        v: &[Vec<i16>],
+        out: &mut [Vec<i16>],
         mask: &[Vec<bool>],
         score_shift: u8,
         exp_lut: &[i16],
@@ -66,11 +75,11 @@ pub trait Backend {
         prob_frac: u8,
     );
 
-    /// RoPE: Rotiere Q/K um Sin/Cos-LUT.
+    /// RoPE: Rotiere Q/K um Sin/Cos-LUT (skaleninvariant).
     fn rope(
         &self,
-        q: &mut [Vec<i8>],
-        k: &mut [Vec<i8>],
+        q: &mut [Vec<i16>],
+        k: &mut [Vec<i16>],
         cos_lut: &[i16],
         sin_lut: &[i16],
         positions: &[usize],
@@ -78,19 +87,27 @@ pub trait Backend {
     );
 
     /// MLP: gate = SiLU(W_gate * x) * (W_up * x); out = W_down * gate
+    /// (Per-Layer-Skalen fuer alle Zwischenstufen).
+    #[allow(clippy::too_many_arguments)]
     fn mlp(
         &self,
-        x: &[i8],
+        x: &[i16],
         W_gate: &[i8],
         W_up: &[i8],
         W_down: &[i8],
-        out: &mut [i8],
+        out: &mut [i16],
         silu_lut: &[i16],
-        act_frac: u8,
-        weight_frac: u8,
+        in_frac: u8,
+        gate_w_shift: u8,
+        up_w_shift: u8,
+        down_w_shift: u8,
+        gate_out_frac: u8,
+        up_out_frac: u8,
+        down_in_frac: u8,
+        silu_in_frac: u8,
+        silu_lut_offset: i16,
+        silu_out_frac: u8,
         out_frac: u8,
-        lut_shift: u8,
-        lut_offset: i16,
     );
 }
 

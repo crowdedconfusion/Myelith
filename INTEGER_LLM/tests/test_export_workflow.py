@@ -270,7 +270,21 @@ def test_synthetic_export_loads_in_real_runtime_binary():
         }
         (out_dir / "model_config.json").write_text(json.dumps(model_config))
 
-        scales = {}
+        # Per-Layer-Aktivierungsskalen: seit v0.12.20 Pflicht (der
+        # Forward-Pass verbraucht alle Eintraege).
+        _scale = lambda shift: {"shift": shift, "scale": 2.0 ** (-shift), "absmax_observed": 1.0}
+        scales = {
+            "model.layers.0.input_layernorm": _scale(4),
+            "model.layers.0.self_attn.q_proj": _scale(5),
+            "model.layers.0.self_attn.k_proj": _scale(5),
+            "model.layers.0.self_attn.v_proj": _scale(5),
+            "model.layers.0.self_attn": _scale(6),
+            "model.layers.0.post_attention_layernorm": _scale(3),
+            "model.layers.0.mlp.gate_proj": _scale(4),
+            "model.layers.0.mlp.up_proj": _scale(3),
+            "model.layers.0.mlp.down_proj.input": _scale(0),
+            "model.norm": _scale(2),
+        }
         luts = {
             "cos": [256, 0, -256, 0], "sin": [0, 256, 0, -256], "exp": [256, 128, 64],
             "silu": [-10, 0, 10, 20], "rsqrt": [256, 181, 148],

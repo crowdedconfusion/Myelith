@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Tests fuer calibrate/src/luts.py (Fahrplan-Punkt 12.17): LUT-Generierung
-ausschliesslich aus den Parametern von theta_v/spec.json, inkl. der
-input_shift-Semantik der rsqrt-LUT (Index x repraesentiert x * 2^-input_shift).
+Tests fuer calibrate/src/luts.py (Fahrplan-Punkt 12.17, aktualisiert fuer
+theta_v 0.5.0 / v0.12.20): LUT-Generierung ausschliesslich aus den
+Parametern von theta_v/spec.json, inkl. der input_shift-Semantik der
+rsqrt-LUT (Index x repraesentiert x * 2^-input_shift) und der getrennten
+Ein-/Ausgangs-Fraktionierung der SiLU-LUT.
 
 Eigenstaendiges Skript nach Projektkonvention (siehe test_fixed_point.py),
 kein pytest, keine torch/numpy-Abhaengigkeit.
@@ -26,9 +28,11 @@ def test_load_nonlinear_spec_structure():
     for key in ("rsqrt", "silu", "softmax", "rope"):
         assert key in nl, f"spec.json-Abchnitt 'nonlinear' ohne '{key}'"
     assert nl["rsqrt"]["input_range"] == [0, 32767]
-    assert nl["rsqrt"]["input_shift"] == 7
+    assert nl["rsqrt"]["input_shift"] == 8
     assert nl["rsqrt"]["output_frac_bits"] == 8
-    assert nl["silu"]["input_range"] == [-128, 127]
+    assert nl["rsqrt"]["index_normalization"] == "dynamic_even_shift"
+    assert nl["silu"]["input_range"] == [-256, 255]
+    assert nl["silu"]["input_frac_bits"] == 1
     assert nl["silu"]["output_frac_bits"] == 6
     assert nl["softmax"]["exp_lut_range"] == 128
     assert nl["softmax"]["exp_lut_frac_bits"] == 8
@@ -37,30 +41,37 @@ def test_load_nonlinear_spec_structure():
 
 
 def test_rsqrt_lut_input_shift_semantics():
-    # input_shift=7: Index x steht fuer den Realwert x/128.
-    lut = generate_rsqrt_lut(max_input=1024, input_shift=7, frac_bits=8)
+    # input_shift=8 (spec 0.5.0): Index x steht fuer den Realwert x/256.
+    lut = generate_rsqrt_lut(max_input=2048, input_shift=8, frac_bits=8)
     assert lut[0] == 256, "Sentinel fuer x=0 muss 1.0 (scale) sein"
-    assert lut[128] == 256, "rsqrt(1.0) = 1.0"
-    assert lut[512] == 128, "rsqrt(4.0) = 0.5"
-    assert lut[32] == 512, "rsqrt(0.25) = 2.0"
+    assert lut[256] == 256, "rsqrt(1.0) = 1.0"
+    assert lut[1024] == 128, "rsqrt(4.0) = 0.5"
+    assert lut[64] == 512, "rsqrt(0.25) = 2.0"
     assert all(v > 0 for v in lut), "rsqrt ist ueberall positiv"
     assert all(lut[i] >= lut[i + 1] for i in range(1, len(lut) - 1)), \
         "rsqrt muss monoton fallend sein"
 
 
 def test_rsqrt_lut_input_shift_zero_entspricht_alter_skala():
-    # input_shift=0: Index x steht fuer den Realwert x (alte Interpretation).
+    # input_shift=0: Index x steht fuer den Realwert x (triviale Skala).
     lut = generate_rsqrt_lut(max_input=16, input_shift=0, frac_bits=8)
     assert lut[1] == 256, "rsqrt(1) = 1.0"
     assert lut[4] == 128, "rsqrt(4) = 0.5"
 
 
 def test_silu_lut_spot_values():
-    lut = generate_silu_lut(input_min=-128, input_max=127, frac_bits=6)
-    assert len(lut) == 256
-    assert lut[128] == 0, "silu(0) = 0"
-    assert lut[0] == round(silu_ref(-2.0) * 64), "silu(-2) bei frac 6"
-    assert lut[255] == round(silu_ref(127 / 64) * 64), "silu(127/64) bei frac 6"
+    # Spec 0.5.0: Indexbereich [-256, 255], Eingang frac 1 (Realwert idx/2),
+    # Ausgang frac 6.
+    lut = generate_silu_lut(input_min=-256, input_max=255,
+                            input_frac_bits=1, output_frac_bits=6)
+    assert len(lut) == 512
+    assert lut[256] == 0, "silu(0) = 0"
+    assert lut[256 + 2] == round(silu_ref(1.0) * 64), "silu(1) bei frac 6"
+    assert lut[256 - 4] == round(silu_ref(-2.0) * 64), "silu(-2) bei frac 6"
+    assert lut[256 + 8] == round(silu_ref(4.0) * 64), "silu(4) bei frac 6"
+    # Domaeenenrand (Realwert +/-128) wird abgedeckt.
+    assert lut[0] == round(silu_ref(-128.0) * 64)
+    assert lut[511] == round(silu_ref(127.5) * 64)
 
 
 def test_exp_lut_spot_values():
@@ -92,13 +103,14 @@ def test_spec_driven_generation_lengths():
                                frac_bits=nl["rsqrt"]["output_frac_bits"])
     silu = generate_silu_lut(input_min=nl["silu"]["input_range"][0],
                              input_max=nl["silu"]["input_range"][1],
-                             frac_bits=nl["silu"]["output_frac_bits"])
+                             input_frac_bits=nl["silu"]["input_frac_bits"],
+                             output_frac_bits=nl["silu"]["output_frac_bits"])
     exp = generate_exp_lut(exp_range=nl["softmax"]["exp_lut_range"],
                            frac_bits=nl["softmax"]["exp_lut_frac_bits"])
     sin, cos = generate_sin_cos_lut(n=nl["rope"]["max_seq_len"],
                                     frac_bits=nl["rope"]["frac_bits"])
     assert len(rsqrt) == 32768
-    assert len(silu) == 256
+    assert len(silu) == 512
     assert len(exp) == 129
     assert len(sin) == 2048 and len(cos) == 2048
     # Alle Werte muessen in int16 passen (LUT-Format der Runtime).
@@ -108,13 +120,13 @@ def test_spec_driven_generation_lengths():
 
 if __name__ == "__main__":
     test_load_nonlinear_spec_structure()
-    print("[test] spec.json-nonlinear-Abschnitt hat erwartete Struktur: PASSED")
+    print("[test] spec.json-nonlinear-Abschnitt hat erwartete Struktur (0.5.0): PASSED")
     test_rsqrt_lut_input_shift_semantics()
-    print("[test] rsqrt-LUT input_shift-Semantik (x * 2^-7): PASSED")
+    print("[test] rsqrt-LUT input_shift-Semantik (x * 2^-8): PASSED")
     test_rsqrt_lut_input_shift_zero_entspricht_alter_skala()
-    print("[test] rsqrt-LUT input_shift=0 (alte Skala): PASSED")
+    print("[test] rsqrt-LUT input_shift=0 (triviale Skala): PASSED")
     test_silu_lut_spot_values()
-    print("[test] SiLU-LUT Stuetzwerte: PASSED")
+    print("[test] SiLU-LUT Stuetzwerte (Domäne +/-128): PASSED")
     test_exp_lut_spot_values()
     print("[test] exp-LUT Stuetzwerte: PASSED")
     test_sin_cos_lut_spot_values()

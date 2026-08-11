@@ -1,15 +1,15 @@
 //! Referenz-Backend – Pure Rust, portabel, langsam, aber normativ.
-//! 
+//!
 //! Dies ist die "Single Source of Truth" fuer alle numerischen Ergebnisse.
 //! Jedes andere Backend muss gegen dieses hier validiert werden.
 
 use crate::backend::Backend;
-use crate::fixed_point::{clamp_i8, rescale};
-use crate::rmsnorm::rmsnorm_int8;
-use crate::linear::linear_w8a8;
+use crate::fixed_point::{clamp_i16_from_i64, rescale_i64};
+use crate::rmsnorm::rmsnorm_i16;
+use crate::linear::linear_w8a16;
 use crate::softmax::softmax_int;
 use crate::attention::attention_int;
-use crate::rope::apply_rope;
+use crate::rope::apply_rope_i16;
 use crate::mlp::mlp_int;
 
 pub struct ReferenceBackend;
@@ -33,11 +33,11 @@ impl Backend for ReferenceBackend {
         "reference"
     }
 
-    fn linear_w8a8(
+    fn linear_w8a16(
         &self,
-        x: &[i8],
+        x: &[i16],
         W: &[i8],
-        out: &mut [i8],
+        out: &mut [i16],
         in_features: usize,
         out_features: usize,
         act_frac: u8,
@@ -46,23 +46,27 @@ impl Backend for ReferenceBackend {
     ) {
         // W ist als flat [out_features * in_features] gespeichert
         for row in 0..out_features {
-            let mut acc: i32 = 0;
+            let mut acc: i64 = 0;
             for col in 0..in_features {
-                acc += (W[row * in_features + col] as i32) * (x[col] as i32);
+                acc += (W[row * in_features + col] as i64) * (x[col] as i64);
             }
-            out[row] = clamp_i8(rescale(acc, act_frac + weight_frac, out_frac));
+            out[row] = clamp_i16_from_i64(rescale_i64(acc, act_frac + weight_frac, out_frac));
         }
     }
 
     fn rmsnorm(
         &self,
-        x: &[i8],
+        x: &[i16],
         gamma: &[i8],
-        out: &mut [i8],
-        frac_bits: u8,
-        eps: i32,
+        gamma_shift: u8,
+        rsqrt_lut: &[i16],
+        lut_input_shift: u8,
+        lut_output_frac: u8,
+        inv_n_q20: i64,
+        out: &mut [i16],
+        out_frac: u8,
     ) {
-        let result = rmsnorm_int8(x, gamma, frac_bits, eps);
+        let result = rmsnorm_i16(x, gamma, gamma_shift, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
         out.copy_from_slice(&result);
     }
 
@@ -80,10 +84,10 @@ impl Backend for ReferenceBackend {
 
     fn attention(
         &self,
-        q: &[Vec<i8>],
-        k: &[Vec<i8>],
-        v: &[Vec<i8>],
-        out: &mut [Vec<i8>],
+        q: &[Vec<i16>],
+        k: &[Vec<i16>],
+        v: &[Vec<i16>],
+        out: &mut [Vec<i16>],
         mask: &[Vec<bool>],
         score_shift: u8,
         exp_lut: &[i16],
@@ -98,14 +102,14 @@ impl Backend for ReferenceBackend {
 
     fn rope(
         &self,
-        q: &mut [Vec<i8>],
-        k: &mut [Vec<i8>],
+        q: &mut [Vec<i16>],
+        k: &mut [Vec<i16>],
         cos_lut: &[i16],
         sin_lut: &[i16],
         positions: &[usize],
         frac_bits: u8,
     ) {
-        let (q_out, k_out) = apply_rope(q, k, cos_lut, sin_lut, positions, frac_bits);
+        let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
         for (i, row) in q_out.iter().enumerate() {
             q[i].copy_from_slice(row);
         }
@@ -116,17 +120,23 @@ impl Backend for ReferenceBackend {
 
     fn mlp(
         &self,
-        x: &[i8],
+        x: &[i16],
         W_gate: &[i8],
         W_up: &[i8],
         W_down: &[i8],
-        out: &mut [i8],
+        out: &mut [i16],
         silu_lut: &[i16],
-        act_frac: u8,
-        weight_frac: u8,
+        in_frac: u8,
+        gate_w_shift: u8,
+        up_w_shift: u8,
+        down_w_shift: u8,
+        gate_out_frac: u8,
+        up_out_frac: u8,
+        down_in_frac: u8,
+        silu_in_frac: u8,
+        silu_lut_offset: i16,
+        silu_out_frac: u8,
         out_frac: u8,
-        lut_shift: u8,
-        lut_offset: i16,
     ) {
         let hidden_size = x.len();
         let intermediate_size = W_gate.len() / hidden_size;
@@ -137,15 +147,15 @@ impl Backend for ReferenceBackend {
         let up: Vec<Vec<i8>> = W_up.chunks(hidden_size).map(|c| c.to_vec()).collect();
         let down: Vec<Vec<i8>> = W_down.chunks(intermediate_size).map(|c| c.to_vec()).collect();
 
-        // Der Backend-Trait kennt nur eine gemeinsame Gewichtsskala (fuer
-        // Golden-Vector-Tests mit synthetischen, gleich skalierten Gewichten
-        // ausreichend); reale, pro Tensor kalibrierte Skalen verwendet die
-        // Modell-Ebene direkt (runtime/src/model.rs), nicht dieser Pfad.
         let result = mlp_int(
             x,
             &gate, &up, &down,
-            silu_lut, act_frac, weight_frac, weight_frac, weight_frac, out_frac,
-            lut_shift, lut_offset,
+            silu_lut,
+            in_frac,
+            gate_w_shift, up_w_shift, down_w_shift,
+            gate_out_frac, up_out_frac, down_in_frac,
+            silu_in_frac, silu_lut_offset, silu_out_frac,
+            out_frac,
         );
         out.copy_from_slice(&result);
     }
