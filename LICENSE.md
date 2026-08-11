@@ -21,8 +21,6 @@ Was als „kanonisches Myelith-Netzwerk" gilt, richtet sich nach der in Kapitel 
 
 **Kein automatischer Übergang zu einer klassischen Open-Source-Lizenz.** Anders als z. B. die Business Source License enthält PolyForm Shield keinen eingebauten Stichtag, zu dem die Lizenz automatisch in eine von der Open Source Initiative anerkannte Lizenz übergeht. Ein solcher Übergang (etwa zu AGPLv3) bliebe eine spätere, bewusste Entscheidung.
 
-**Das hier ist keine Rechtsberatung.** Bei Fragen zur Anwendung dieser Lizenz auf einen konkreten Fall empfiehlt sich juristischer Rat.
-
 ---
 
 ## PolyForm Shield License 1.0.0
