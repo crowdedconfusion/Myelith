@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.30
+> **Version:** 0.12.31
 > **Datum:** 2026-08-11
-> **Status:** DURCHBRUCH — zwei Struktur-Bugs im Mehrpositions-Pfad behoben: (Fund 15) RoPE war fundamental falsch (ein Winkel pro Position + benachbarte Paarung statt Qwen2-Multi-Frequenz-RoPE mit half-split), korrigiert in θ_v 0.10.0; (Fund 16) `attention_int` attendierte im KV-Cache-Betrieb nur auf den ERSTEN Key (q.len() statt k.len()), wodurch RoPE und Mehrpositions-Attention wirkungslos waren. Perplexität **2 972 → 73,15** (Faktor 40). Akzeptanzkriterium weiterhin VERFEHLT (+389 % vs. max. 5 %), aber der Abstand ist jetzt „normales" Quantisierungsrauschen statt Strukturfehler
+> **Status:** Umfassende Verifikation abgeschlossen (Determinismus PASSED, Perplexität 73,15 vs. FP 14,95, Layer-für-Layer-Abgleich, Fehlerzerlegung, GPTQ-Check, Mischpräzisions-Empfindlichkeit, alle Test-Suiten grün) — Bericht `eval/results/verification_report.md`. Ergebnis: bit-exakte Inferenz erreicht und verifiziert; Qualität begrenzt durch int8-Gewichtsquantisierung (Aktivierungen, LUTs und Struktur sind verifiziert in Ordnung). Offene Präzisions-Entscheidung: int16 alle Layer / Mischpräzision / Akzeptanz der Lücke. (Zuvor v0.12.30: zwei Struktur-Bugs behoben — RoPE fundamental falsch, Attention attendierte nur auf ersten Key; Perplexität 2 972 → 73,15.)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -16,6 +16,86 @@ Die Ganzzahlarithmetik ist die Voraussetzung für bitgleiche Ausführung über
 unabhängige Knoten hinweg — die Grundlage des Myelith-Verifikationsmodells
 (Whitepaper Kap. 6.2). Referenzmodell ist Qwen2.5-0.5B (W8A8: Gewichte und
 Aktivierungen als int8, Akkumulator int32).
+
+## Modell-Austauschbarkeit & Skalierbarkeit (Design-Prinzip)
+
+**Verbindliche Vorgabe:** Alle Code-Anpassungen — auch und gerade die
+Eskalationen der Quantisierungsqualität — sind so anzulegen, dass das
+Testmodell später ohne größeren Aufwand durch andere Gewichte ersetzt werden
+kann (z. B. Qwen3 bis in den dreistelligen Milliarden-Bereich). Ziel ist,
+dass ein Modellwechsel dann möglichst wenig Neucode erfordert.
+
+**Bereits modell-agnostisch (Stand der Analyse):** Der gesamte Rechenpfad
+ist frei von hart kodierten Modell-Dimensionen. Alle Kernels
+(`linear`, `rmsnorm`, `mlp`, `attention`, `rope`, `softmax`, Fixed-Point,
+Sampling) nehmen Dimensionen und Skalen als Parameter und akkumulieren in
+i64; der Runtime-Loader liest die Dimensionen ausschließlich aus dem
+Artefakt (`model_config.json`), und die Binaries nehmen das
+Artefakt-Verzeichnis als CLI-Argument. Das Artefakt-Format
+(weights_manifest + `_shifts.bin`, `scales.json`, `luts.json`,
+`theta_v.json`) ist dimensions-agnostisch und wird über Form/Hash validiert.
+Die Kalibrierung ist Hook-Namen-getrieben ohne Dimensions-Literale.
+Geprüft ist das durch synthetische Fixtures mit abweichenden Dimensionen
+(hidden=4, heads=2), die einen vollen Forward-Pass durchlaufen.
+
+**Stellen mit Modell-Kopplung (bei einem Wechsel anzupassen):**
+1. `calibrate/src/main.py`: `MODEL_NAME`/`HF_MODEL_ID` (zwei Konstanten,
+   derzeit kein CLI-/Env-Hebel).
+2. `theta_v/spec.json`: `rope_theta` und `max_seq_len` (zur Kompilierzeit
+   per `include_str!` eingebettet; Änderung erzwingt Runtime-Rebuild,
+   θ_v-Versionssprung und Neukalibrierung).
+3. Hart kodierte Pfade in `eval/` (`wikitext_common.py`, `perplexity.py`,
+   `baseline.py`), `tests/` und den Pipeline-Configs.
+4. Feste LLaMA/Qwen2-Block-Topologie: **Qwen3 benötigt QK-Norm
+   (`q_norm`/`k_norm`), die aktuell durch die gesamte Kette fehlt** — der
+   einzige echte Struktur-Blocker für einen Qwen3-Wechsel.
+
+**Austausch-Aufwand (Abschätzung):**
+- Innerhalb der Qwen2.5-Familie: ~1 Config-Eintrag in `model_configs.py`
+  (verifiziert gegen die echte HF-config.json) + ~5 Zeilen
+  Konstanten/Pfade + Neukalibrierung; Runtime-Änderungen: keine.
+- Qwen3: zusätzlich QK-Norm durch Kalibrierung/Export/Loader/Forward.
+- Sehr große Modelle (hidden 4096+, mehrere 100B): keine Dimensions- oder
+  Overflow-Blocker im Rechenpfad; offen sind Speicher-/Perf-Fragen
+  (dichter int16-LM-Head im RAM, zeilenweise Logit-Berechnung,
+  BTreeMap-KV-Cache, fehlende CUDA/ROCm-Backends).
+
+**Konsequenz für neue Eskalationen:** Neue Bausteine (z. B. Block-Hadamard)
+dürfen Modell-Dimensionen nicht hart kodieren, sondern müssen sie aus der
+Modell-Config ableiten (z. B. Blockgröße als Teiler von `hidden_size`),
+damit sie bei einem Modellwechsel erhalten bleiben.
+
+### Zurückgestellt: Hadamard-Basiswechsel (Vermerk für die Zukunft)
+
+**Stand 2026-08-11 — zurückgestellt, nicht verworfen.** Die
+Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
+(`tests/diag/hadamard_prestudy.py`, `tests/diag/rmsnorm_hadamard_check.py`):
+
+- **Nutzen bestätigt:** Block-Hadamard (normiert, k=64) senkt das
+  Residual-peak/rms in allen 24 Blöcken von ~15–20 auf ~4 — die Ausreißer
+  würden also wirklich geglättet.
+- **Showstopper für die vereinfachte Variante:** RMSNorm kommutiert nicht
+  mit der Rotation. Die Gamma-Nichtkommutativität
+  `‖RMSNorm(H·x,γ) − H·RMSNorm(x,γ)‖/‖…‖` liegt bei 0,70–1,59 (Median
+  ~1,12), der Fehler ist damit größer als das Signal. Eine Rotation ohne
+  Gamma-Transformation würde die normalisierte Aktivierung zerstören.
+- **Folgerung:** Hadamard ist nur als *voller Basiswechsel* zu haben, bei
+  dem die per-Channel-Gammas in dichte 64×64-Blockmatrizen
+  `Q·diag(γ_block)·Qᵀ` transformiert werden — die RMSNorm wird zur
+  Block-Matrix-Multiplikation. Das ist ein eigenes Teilprojekt
+  (Kalibrierung + Runtime + θ_v-Vertrag + Tests), deutlich größer als ein
+  Einzel-Patch, und der Perplexitäts-Gewinn ist vorab nicht seriös zu
+  beziffern.
+- **Warum zurückstellen:** Die Architektur ist modell-agnostisch und sauber
+  geschichtet, daher ist der Basiswechsel **jederzeit nachrüstbar, ohne dass
+  heutige Arbeit ihn blockiert oder verteuert** (er erfordert ohnehin einen
+  θ_v-Versionssprung + Neukalibrierung). Zuerst werden billigere
+  Alternativen gegen die Ausreißer geprüft (SmoothQuant-artige
+  Skalen-Umverteilung, Mischpräzision).
+- **Wiederaufnahme:** Wenn die billigeren Alternativen die Perplexitäts-Lücke
+  nicht ausreichend schließen, kann der Basiswechsel aufgegriffen werden.
+  Dann blockgrößen-parametrisiert und modell-agnostisch umsetzen (k=64 für
+  hidden=896, s. Vorstudien).
 
 ## Struktur
 
@@ -55,6 +135,29 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.31 – 2026-08-11
+- **Umfassende Verifikation vor der Präzisions-Entscheidung** (reine
+  Diagnose-/Analyse-Werkzeuge, keine Änderung des Inferenzpfads):
+  - `tests/diag/verification_layer_compare.py`: Layer-für-Layer-Abgleich
+    Integer vs. HF — Aktivierungs-Skalen stimmen (absmax-Verh. 0,84–1,19 in
+    Layern 0–22), Werte haben akkumuliertes Quantisierungsrauschen
+    (first4-Abw. 0,15→0,83), kein Struktur-Bug.
+  - `tests/diag/error_decomposition.py`: Gewichtsquantisierung dominiert
+    (0,4–1,4 %/Layer RNE), Aktivierungen (<0,2 %) und LUTs (<1 %)
+    vernachlässigbar.
+  - `tests/diag/gptq_verification.py`: GPTQ senkt Layer-Fehler 6–8× und ist
+    aktiv (das frühere „bringt nichts" war durch die kaputte Attention
+    verfälscht).
+  - `tests/diag/mixed_precision_sensitivity.py`: Layer-Empfindlichkeit
+    gleichmäßig (Faktor 3) → Mischpräzision nur moderat wirksam.
+  - Dazu: `hadamard_prestudy.py`, `rmsnorm_hadamard_check.py` (Hadamard
+    zurückgestellt, s. Vermerk), `activation_outlier_analysis.py`,
+    `smoothquant_simulation.py` (SmoothQuant = Sackgasse, da Aktivierungen
+    nicht das Problem sind).
+  - **Ergebnis-Bericht:** `eval/results/verification_report.md`. Determinismus
+    PASSED (bit-identisch), Perplexität 73,15 vs. FP 14,95, alle Test-Suiten
+    grün (Rust kernels 30 + runtime 44, Python komplett).
 
 ### v0.12.30 – 2026-08-11
 - **DURCHBRUCH: Zwei Struktur-Bugs im Mehrpositions-Pfad behoben**
