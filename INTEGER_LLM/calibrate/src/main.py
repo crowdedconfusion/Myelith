@@ -14,7 +14,8 @@ import json
 from .loader import load_reference_model
 from .stats import ActivationStatsCollector
 from .scales import compute_scales_from_stats
-from .luts import generate_rsqrt_lut, generate_silu_lut, generate_exp_lut, generate_sin_cos_lut
+from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
+                   generate_sin_cos_lut, load_nonlinear_spec)
 from .export import export_theta_v
 from .quantize import quantize_model_weights
 from .export_weights import export_quantized_weights
@@ -46,13 +47,29 @@ def main():
     print("[calibrate] Berechne Zweierpotenz-Skalen...")
     scales = compute_scales_from_stats(stats)
 
-    print("[calibrate] Generiere LUTs...")
+    print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
+    # Fahrplan 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
+    # der spec.json (Single Source of Truth), keine hartkodierten Duplikate.
+    # Kopplung: die Eingangsskala der SiLU-LUT ist ihre frac_bits und muss
+    # mit act_frac_bits der Runtime übereinstimmen (aktuell beides 6); die
+    # exp-LUT-frac muss score_frac_bits der Runtime sein (aktuell beides 8).
+    nl = load_nonlinear_spec()
+    sin_lut, cos_lut = generate_sin_cos_lut(
+        n=nl["rope"]["max_seq_len"], frac_bits=nl["rope"]["frac_bits"])
     luts = {
-        "rsqrt": generate_rsqrt_lut(max_input=32767, frac_bits=8),
-        "silu": generate_silu_lut(input_min=-128, input_max=127, frac_bits=6),
-        "exp": generate_exp_lut(exp_range=128, frac_bits=8),
-        "sin": generate_sin_cos_lut(n=2048, frac_bits=8)[0],
-        "cos": generate_sin_cos_lut(n=2048, frac_bits=8)[1],
+        "rsqrt": generate_rsqrt_lut(
+            max_input=nl["rsqrt"]["input_range"][1],
+            input_shift=nl["rsqrt"]["input_shift"],
+            frac_bits=nl["rsqrt"]["output_frac_bits"]),
+        "silu": generate_silu_lut(
+            input_min=nl["silu"]["input_range"][0],
+            input_max=nl["silu"]["input_range"][1],
+            frac_bits=nl["silu"]["output_frac_bits"]),
+        "exp": generate_exp_lut(
+            exp_range=nl["softmax"]["exp_lut_range"],
+            frac_bits=nl["softmax"]["exp_lut_frac_bits"]),
+        "sin": sin_lut,
+        "cos": cos_lut,
     }
 
     # Wirft klar und fruehzeitig, falls MODEL_NAME auf eine Variante zeigt,

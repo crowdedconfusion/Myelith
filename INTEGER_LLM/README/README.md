@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.17
+> **Version:** 0.12.18
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase (erster echter Kalibrierungslauf abgeschlossen)
+> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase (Phase 12.14–12.17 vollständig abgeschlossen)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,22 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.18 – 2026-08-11
+- LUT-Generierung vollständig aus `theta_v/spec.json` gesteuert (neues
+  `calibrate/src/luts.py::load_nonlinear_spec()`): keine hartkodierten
+  LUT-Parameter mehr in `main.py`
+- `generate_rsqrt_lut()` um den bisher ignorierten `input_shift`-Parameter
+  korrigiert (Index x = Realwert x · 2^-input_shift, spec: 2^-7) —
+  die LUT-Werte ändern sich dadurch grundlegend (z. B. lut[128]: 23 → 256)
+- Kernel-Vertrag verifiziert: SiLU (Eingang frac 6, shift 0/offset 128),
+  exp (Eingang frac 8, lut_shift 0), RoPE (frac 8) konsistent zur Runtime
+- Neuer Test `tests/test_luts.py` (spec-Struktur, input_shift-Semantik,
+  Stützwerte, spec-gesteuerte Längen/int16-Bereich)
+- Fund: rsqrt-LUT wird noch von keinem Kernel konsumiert (rmsnorm.rs nutzt
+  `rsqrt_q()` direkt, spec sagt Methode „lut"); Fund: `rmsnorm_int8`
+  dividiert mit `/` statt arithmetischem Rechtsshift — beides Teil der
+  RMSNorm-Klärung vor dem Laden echter Gewichte
 
 ### v0.12.17 – 2026-08-11
 - **Erster echter Kalibrierungslauf** gegen das lokale Qwen2.5-0.5B:
