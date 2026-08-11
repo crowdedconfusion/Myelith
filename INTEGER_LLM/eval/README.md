@@ -31,7 +31,7 @@ WikiText-2-Testsplit aus (substantielle Zeilen, fester Stride,
 Qwen-Tokenizer). Integer-E2E-Test, BF16-Baseline, Perplexitätsvergleich
 und das Top-1-Agreement verwenden dieselbe Auswahl, denselben Tokenizer
 und dieselbe Sequenzlänge — nur so ist der Vergleich aussagekräftig
-(„identische Messmethode", Fahrplan 12.20). Gleitkomma darf nur im
+(„identische Messmethode"). Gleitkomma darf nur im
 Mess-/Referenzpfad verwendet werden (BF16-Baseline, Log-Softmax-
 Auswertung der Proben), niemals im Integer-Inferenzpfad.
 

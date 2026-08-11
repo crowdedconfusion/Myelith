@@ -122,10 +122,10 @@ def main():
 | Integer-Modell | {theta_v_desc}: Perplexität {ppl_int:.2f} |
 | Datensatz | WikiText-2, Testsplit; {n_sequences} Sequenzen à {seq_len} Tokens ({n_eval} ausgewertete Positionen) |
 | Relativer Anstieg | **{delta_pct:+.2f} %** |
-| Akzeptanzkriterium | max. {acceptance_pct:.1f} % relativer Anstieg (Vorschlag des Fahrplans) |
+| Akzeptanzkriterium | max. {acceptance_pct:.1f} % relativer Anstieg |
 | **Ergebnis** | **{'AKZEPTIERT' if accepted else 'VERFEHLT'}** |
 
-## Zwingende Einordnung (Fahrplan-Vorgabe)
+## Zwingende Einordnung
 
 1. **Decodierstrategie:** Perplexität ist unabhängig von der
    Decodierstrategie, die beobachtete Repetitionsneigung nicht — Greedy
@@ -139,7 +139,7 @@ def main():
 
 ## Konsequenz
 
-{'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden. Siehe Fahrplan, Abschnitt „Eskalationsstrategien".'}
+{'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden.'}
 """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_md = RESULTS_DIR / "decision_12-21.md"

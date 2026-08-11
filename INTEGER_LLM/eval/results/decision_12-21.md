@@ -11,10 +11,10 @@
 | Integer-Modell | θ_v 0.10.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 15.59 |
 | Datensatz | WikiText-2, Testsplit; 4 Sequenzen à 128 Tokens (435 ausgewertete Positionen) |
 | Relativer Anstieg | **+4.29 %** |
-| Akzeptanzkriterium | max. 5.0 % relativer Anstieg (Vorschlag des Fahrplans) |
+| Akzeptanzkriterium | max. 5.0 % relativer Anstieg |
 | **Ergebnis** | **AKZEPTIERT** |
 
-## Zwingende Einordnung (Fahrplan-Vorgabe)
+## Zwingende Einordnung
 
 1. **Decodierstrategie:** Perplexität ist unabhängig von der
    Decodierstrategie, die beobachtete Repetitionsneigung nicht — Greedy

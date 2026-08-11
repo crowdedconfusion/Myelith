@@ -39,6 +39,8 @@ Ein Backend gegen die Vektoren prüfen:
 python3 tests/golden/validate.py <backend> tests/golden/vectors
 ```
 
-Zum aktuellen Stand enthalten die Vektoren synthetische Referenzwerte; sobald
-das Modell vollständig kalibriert ist, werden sie aus echten Modellwerten neu
-generiert, um reale Wertebereiche und Ausreißer abzubilden.
+Zum aktuellen Stand enthalten die Vektoren synthetische Referenzwerte; die
+Neu-Generierung aus echten Modellwerten (Layer- und E2E-Vektoren mit realen
+Wertebereichen und Ausreißern) folgt in einer späteren Ausbaustufe — das
+Modell ist inzwischen vollständig kalibriert, die Vektoren selbst stammen
+aber noch aus der Frühphase.

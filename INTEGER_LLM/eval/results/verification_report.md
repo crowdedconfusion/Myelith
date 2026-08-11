@@ -7,6 +7,21 @@ GPTQ-/Aktivierungs-Analyse.
 Dieser Bericht dokumentiert den verifizierten Zustand des Integer-Inferenzpfads
 vor der Präzisions-Entscheidung (int16 / Mischpräzision / Akzeptanz).
 
+> **⚠️ Nachtrag 2026-08-12 (Stand nach Fund 17, v0.12.32):** Die
+> Perplexitäts-Angaben unten (73,15, „+389 %", „Offene
+> Präzisions-Entscheidung") sind der Diagnose-Stand VOR der Behebung von
+> Fund 17 (fehlende 1/√head_dim-Attention-Skalierung). Der
+> Entscheidungspunkt 12.21 ist inzwischen **AKZEPTIERT**: Perplexität
+> **15,59** vs. FP 14,95 = **+4,29 %** (Kriterium max. +5 %); die
+> verbleibende Lücke ist echtes Quantisierungsrauschen, keine offene
+> Präzisions-Entscheidung mehr. Maßgebliche Dokumente:
+> `decision_12-21.md` und `INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`.
+> Ebenfalls überholt ist die Schlussfolgerung in Abschnitt 4, die
+> Gewichtsquantisierung sei „dominant": Die damalige Perplexitäts-Messung
+> war durch die noch unentdeckten Struktur-Bugs (Fund 15/16) kontaminiert.
+> Korrekt bleibt: GPTQ reduziert den linearen Layer-Ausgabefehler
+> nachweislich (Abschnitt 5) und ist in den Artefakten aktiv.
+
 ---
 
 ## 1. Determinismus (Kern-Eigenschaft von Myelith)

@@ -96,6 +96,14 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
   nicht ausreichend schließen, kann der Basiswechsel aufgegriffen werden.
   Dann blockgrößen-parametrisiert und modell-agnostisch umsetzen (k=64 für
   hidden=896, s. Vorstudien).
+- **Literatur-Einordnung (FSBR/I-LLM):** Die publizierten Vergleichswerte
+  (I-LLM, arXiv:2405.17849: W6A6 mit +3 % Perplexität auf LLaMA-7B) beruhen
+  wesentlich auf FSBR — der Glättung der Kanal-/Token-Varianz VOR der
+  Quantisierung. Dieser Baustein fehlt hier bislang; als zweiter
+  Ausreißer-Pfad neben Hadamard bleibt der FSBR-Nachbau vermerkt (mit
+  bitweiser Varianzberechnung statt Newton-Verfahren, damit Kalibrierung
+  und Inferenz übereinstimmen). Der Literaturvergleich „Integer gegen
+  Gleitkomma" wird erst mit einer Ausreißerbehandlung vollständig.
 
 ## Struktur
 
@@ -371,7 +379,7 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
   (Vorschlag max. 5 %) **VERFEHLT**. Protokoll mit der zwingenden
   Einordnung (Decodierstrategie, 0,5B-als-ungünstigster-Fall) unter
   `eval/results/decision_12-21.md`. Nächster Schritt: Wahl des
-  Eskalationspfads (Fahrplan, Abschnitt „Eskalationsstrategien")
+  Eskalationspfads
 
 ### v0.12.23 – 2026-08-11
 - **FP-Baseline gemessen (12.20):** `eval/baseline.py` — HF-Referenzmodell
@@ -561,7 +569,7 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 - Manuell gegen das kompilierte Binary verifiziert (kein Rust-Unit-Test, `main.rs` hängt
   direkt an `std::env::args()`)
 
-### v0.12.11 – 2026-08-10 (außerplanmäßiger Patch, kein regulärer Fahrplan-Punkt)
+### v0.12.11 – 2026-08-10 (außerplanmäßiger Patch, kein regulärer Entwicklungspunkt)
 - `calibrate/src/quantize.py`, `calibrate/src/scales.py`: Skalierungs-Formel korrigiert. Bisher
   wurde der Zweierpotenz-Shift nur für den Fall berechnet, dass ein Wert zu GROSS für int8 ist
   (`absmax > 127`); für den Regelfall realer LLM-Gewichte (`absmax` deutlich unter 1) lieferte
@@ -581,7 +589,8 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 - Neuer Test `tests/test_calibration.py` (sieben Fälle, Regressionstest für den Bug)
 - **Bewusst offen gelassen:** RMSNorm-Ausgabeskala folgt näherungsweise der (aktuell
   verworfenen) Gamma-Kalibrierung; vollständige Verdrahtung der Q/K/V-Aktivierungsskalen aus
-  `scales.json` zurückgestellt. Details im Fahrplan-Abschnitt „Außerplanmäßiger Patch"
+  `scales.json` zurückgestellt (später vollständig umgesetzt im Patch
+  „Numerik-Realitätsabgleich", v0.12.20)
 - **Nummerierungs-Konsequenz:** Punkt 12.11 und alle Folgepunkte behalten ihre Nummer,
   verschieben sich aber je um eine Version (12.11→v0.12.12, …, 13.0→v0.13.1)
 
@@ -642,7 +651,8 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 
 ### v0.12.6 – 2026-08-10
 - `eval/` angelegt: `README.md` (Zweck, geplanter Inhalt `baseline.py`/`perplexity.py` für
-  Fahrplan-Punkte 12.20/12.21, Verweis auf den Entscheidungspunkt 12.18–12.21) und
+  die Gleitkomma-Baseline und den Perplexitätsvergleich, Verweis auf den
+  Entscheidungspunkt 12.18–12.21) und
   `datasets/.gitignore` (Datensätze nicht versioniert, Verzeichnis und Doku bleiben)
 
 ### v0.12.5 – 2026-08-10
@@ -658,7 +668,7 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 ### v0.12.3 – 2026-08-10
 - `artifacts/` angelegt: `.gitignore` (erzeugte Inhalte ausgeschlossen, Verzeichnis und Doku bleiben versioniert) und `README.md` mit Struktur, Herkunft und Pfadregel
 - `runtime/src/paths.rs` (neu): zentrale Pfadkonstanten `ARTIFACTS_DIR` und `MODELS_DIR` für calibrate/runtime/pipeline, überschreibbar über die Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR`, mit Unit-Test
-- Fahrplan-Umnummerierung nach Regel 5 (Fahrplan v3.0.1): Binär-Format-Parser ist Punkt 12.2 ↔ v0.12.2, Grundgerüst rückt auf 12.3–12.7, alle Punkte ab 12.8 unverändert
+- Umnummerierung der Entwicklungsplanung nach Regel 5: Binär-Format-Parser ist Punkt 12.2 ↔ v0.12.2, Grundgerüst rückt auf 12.3–12.7, alle Punkte ab 12.8 unverändert
 
 ### v0.12.2 – 2026-08-10
 - `loader.rs`: Binär-Format-Parser für INT8-Gewichte (`weights_manifest.json` + `.bin`, raw int8, row-major) mit dtype-, Form-, Größen- und SHA-256-Validierung pro Tensor; neue Dependency `sha2`
