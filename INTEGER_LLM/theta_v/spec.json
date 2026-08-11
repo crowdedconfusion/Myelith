@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.9.0",
+    "version": "0.10.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -60,7 +60,10 @@
       "rope": {
         "method": "lut_sin_cos",
         "max_seq_len": 2048,
-        "frac_bits": 8
+        "frac_bits": 8,
+        "rope_theta": 1000000.0,
+        "pairing": "half_split",
+        "note": "Theta_v 0.10.0 (Fund 15, RoPE-Fix): Multi-Frequenz-RoPE im Qwen2/LLaMA-Schema. Pro Dimensions-Paar j in [0, head_dim/2) eigene Frequenz theta_j = 1/rope_theta^(j/(head_dim/2)), Winkel an Position p = p*theta_j; LUTs flach row-major [max_seq_len, head_dim/2]. Paarung half-split ((x_j, x_{j+head_dim/2})) wie HF rotate_half. Die vorherige Fassung (ein Winkel 2*pi*p/max_seq_len fuer alle Paare, benachbarte Paarung) wich von Qwen2 ab und war die dominante Fehlerquelle der Perplexitaet."
       }
     },
     "sampling": {

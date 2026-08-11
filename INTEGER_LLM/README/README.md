@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.29
+> **Version:** 0.12.30
 > **Datum:** 2026-08-11
-> **Status:** SiLU-Eingangsraster verfeinert (θ_v 0.9.0, input_frac_bits 1 → 3, Raster 0,5 → 0,125): Perplexität 3 318 → **2 972** (−10 %) → SiLU-Raster ist eine reale, aber nicht die dominante Fehlerquelle. Neue Lokalisierung: die Divergenz wächst mit der Position (Position 0: Ebenen 0–22 gut; schon Position 1: Abweichung ab Ebene 5) → der Mehrpositions-Pfad (RoPE/KV-Cache/positionsabhängige Attention) ist der nächste Verdacht. Akzeptanzkriterium weiterhin VERFEHLT (+19 778 %)
+> **Status:** DURCHBRUCH — zwei Struktur-Bugs im Mehrpositions-Pfad behoben: (Fund 15) RoPE war fundamental falsch (ein Winkel pro Position + benachbarte Paarung statt Qwen2-Multi-Frequenz-RoPE mit half-split), korrigiert in θ_v 0.10.0; (Fund 16) `attention_int` attendierte im KV-Cache-Betrieb nur auf den ERSTEN Key (q.len() statt k.len()), wodurch RoPE und Mehrpositions-Attention wirkungslos waren. Perplexität **2 972 → 73,15** (Faktor 40). Akzeptanzkriterium weiterhin VERFEHLT (+389 % vs. max. 5 %), aber der Abstand ist jetzt „normales" Quantisierungsrauschen statt Strukturfehler
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,44 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.30 – 2026-08-11
+- **DURCHBRUCH: Zwei Struktur-Bugs im Mehrpositions-Pfad behoben**
+  (aus der gezielten RoPE/Attention-Untersuchung, θ_v 0.9.0 → 0.10.0):
+- **Fund 15 — RoPE war fundamental falsch:** Die Integer-RoPE nutzte einen
+  einzigen Winkel `2π·pos/max_seq_len` für alle Dimensions-Paare und
+  benachbarte Paarung `(x_0,x_1)`. Qwen2/LLaMA-RoPE nutzt aber pro Paar
+  `j ∈ [0, head_dim/2)` eine eigene Frequenz `θ_j = 1/rope_theta^(j/half)`
+  (rope_theta = 1 000 000, aus der Modell-Config) und half-split-Paarung
+  `(x_j, x_{j+half})` (`rotate_half`). Behoben:
+  - `calibrate/src/luts.py`: `generate_rope_luts(max_seq_len, head_dim,
+    rope_theta, frac_bits)` erzeugt 2D-LUTs `[max_seq_len, head_dim/2]`
+    (flach row-major, Index `p·half + j`), ersetzt `generate_sin_cos_lut`.
+  - `kernels/src/rope.rs`: `rotate_half_split_i16` (half-split, pro Paar
+    eigener Winkel); `apply_rope_i16` indiziert die 2D-LUT.
+  - `runtime/src/model.rs` + `bin/layer_probe.rs`: RoPE-Aufruf auf
+    Zeilen-Slices umgestellt.
+  - `theta_v/spec.json` 0.10.0: `rope.rope_theta`, `rope.pairing:
+    "half_split"`, Note. `main.py` zieht `head_dim` aus der Modell-Config.
+  - Tests: `tests/test_rope.py` (Integer-RoPE vs. HF-Formel, Pos
+    0/1/2/7/63/2047), erweiterte `rope.rs`-Unit-Tests, `test_luts.py`.
+- **Fund 16 — Attention attendierte nur auf den ersten Key (der dominante
+  Bug):** In `kernels/src/attention.rs::attention_int` war
+  `seq_len = q.len()` die Obergrenze der Key-/Value-Schleife. Im
+  KV-Cache-Betrieb ist `q.len() == 1` (nur die aktuelle Position), aber
+  `k.len() == v.len() == seq_len` (alle bisherigen Positionen). Damit
+  attendierte jede Query nur auf `k[0]` — RoPE und Mehrpositions-Attention
+  waren wirkungslos, die Perplexität positionsunabhängig schlecht. Belegt
+  durch das Experiment „RoPE = Identität ändert den Seq-Dump nicht". Fix:
+  Score-/Value-Schleife läuft über `kv_len = k.len()`. Neuer Regressionstest
+  `test_attention_kv_cache_single_query_attends_all_keys`.
+- **Messergebnis:** Perplexität **2 972 → 73,15** (Faktor 40; weiterhin
+  +389 % vs. FP-Baseline 14,95, Kriterium max. 5 %). Seq-Dump-Vergleich
+  Position 7: Ebenen 0–20 stimmen jetzt in Vorzeichen und Größenordnung mit
+  HF überein. Der verbleibende Abstand ist akkumuliertes
+  Quantisierungsrauschen (int8-Gewichte + LUTs), kein Strukturfehler mehr.
+- Tests: alle drei Crates grün (kernels 30, runtime 44, pipeline-Build),
+  Python-Suite komplett; Ganzzahligkeitsprüfung ohne Treffer im Rechenpfad.
 
 ### v0.12.29 – 2026-08-11
 - **SiLU-Eingangsraster verfeinert (θ_v 0.8.0 → 0.9.0):**

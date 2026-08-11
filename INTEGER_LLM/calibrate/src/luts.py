@@ -89,12 +89,28 @@ def generate_exp_lut(exp_range: int, input_frac_bits: int, output_frac_bits: int
     return lut
 
 
-def generate_sin_cos_lut(n: int, frac_bits: int):
+def generate_rope_luts(max_seq_len: int, head_dim: int, rope_theta: float,
+                       frac_bits: int):
+    """
+    RoPE-LUTs im Qwen2/LLaMA-Schema (theta_v 0.10.0, Fund-15-RoPE-Fix):
+    Jedes Dimensions-Paar j (j in [0, head_dim/2)) hat seine EIGENE Frequenz
+    theta_j = 1 / rope_theta^(j / (head_dim/2)); der Winkel an Position p ist
+    p * theta_j. Die LUTs sind flach row-major mit Index p*(head_dim/2)+j
+    (Laenge max_seq_len * head_dim/2). Die Paarung im Kernel ist half-split
+    ((x_j, x_{j+head_dim/2})), konsistent zu HF's rotate_half.
+
+    Die alte Fassung nutzte einen einzigen Winkel 2*pi*p/max_seq_len fuer alle
+    Paare und benachbarte Paarung — beides weicht von Qwen2 ab und war die
+    dominante Fehlerquelle (Fund 15).
+    """
     scale = 1 << frac_bits
+    half = head_dim // 2
     sin_lut = []
     cos_lut = []
-    for i in range(n):
-        angle = 2.0 * math.pi * i / n
-        sin_lut.append(int(round(math.sin(angle) * scale)))
-        cos_lut.append(int(round(math.cos(angle) * scale)))
+    for p in range(max_seq_len):
+        for j in range(half):
+            theta_j = 1.0 / (rope_theta ** (j / half))
+            angle = p * theta_j
+            cos_lut.append(int(round(math.cos(angle) * scale)))
+            sin_lut.append(int(round(math.sin(angle) * scale)))
     return sin_lut, cos_lut

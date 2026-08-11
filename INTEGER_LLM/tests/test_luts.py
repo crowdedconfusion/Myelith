@@ -16,7 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "calibrate"))
 from src.luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
-                      generate_sin_cos_lut, load_nonlinear_spec)
+                      generate_rope_luts, load_nonlinear_spec)
+from src.model_configs import get_model_config
 
 
 def silu_ref(x):
@@ -39,6 +40,8 @@ def test_load_nonlinear_spec_structure():
     assert nl["softmax"]["exp_lut_frac_bits"] == 8
     assert nl["rope"]["max_seq_len"] == 2048
     assert nl["rope"]["frac_bits"] == 8
+    assert nl["rope"]["rope_theta"] == 1000000.0
+    assert nl["rope"]["pairing"] == "half_split"
 
 
 def test_rsqrt_lut_input_shift_semantics():
@@ -88,15 +91,42 @@ def test_exp_lut_spot_values():
         "exp(-x) muss monoton fallend sein"
 
 
-def test_sin_cos_lut_spot_values():
-    sin_lut, cos_lut = generate_sin_cos_lut(n=2048, frac_bits=8)
-    assert len(sin_lut) == 2048 and len(cos_lut) == 2048
-    assert cos_lut[0] == 256, "cos(0) = 1.0"
-    assert sin_lut[0] == 0, "sin(0) = 0"
-    assert sin_lut[512] == 256, "sin(pi/2) = 1.0"
-    assert cos_lut[1024] == -256, "cos(pi) = -1.0"
-    assert sin_lut[1536] == -256, "sin(3pi/2) = -1.0"
+def test_rope_lut_spot_values():
+    # Multi-Frequenz-RoPE (theta_v 0.10.0): Index p*half + j, Winkel
+    # p * theta_j mit theta_j = 1/rope_theta^(j/half). Kleine Parameter fuer
+    # handrechnbare Stuetzwerte: max_seq_len=4, head_dim=4 (half=2).
+    half = 2
+    sin_lut, cos_lut = generate_rope_luts(max_seq_len=4, head_dim=4,
+                                          rope_theta=1000000.0, frac_bits=8)
+    assert len(sin_lut) == 4 * half and len(cos_lut) == 4 * half
+    # Position 0: alle Winkel 0 -> cos=1.0 (256), sin=0.
+    assert cos_lut[0] == 256 and cos_lut[1] == 256, "pos 0: cos = 1.0"
+    assert sin_lut[0] == 0 and sin_lut[1] == 0, "pos 0: sin = 0"
+    # Position 1, Paar j=0: theta_0 = 1 -> Winkel 1 rad.
+    assert cos_lut[1 * half + 0] == round(math.cos(1.0) * 256)
+    assert sin_lut[1 * half + 0] == round(math.sin(1.0) * 256)
+    # Position 1, Paar j=1: theta_1 = 1/1e6^(1/2) = 1e-3 -> Winkel 1e-3 rad.
+    assert cos_lut[1 * half + 1] == round(math.cos(1e-3) * 256)
+    assert sin_lut[1 * half + 1] == round(math.sin(1e-3) * 256)
+    # hoeheres Paar -> kleinere Frequenz: j=1 rotiert kaum (sin ~ 0).
+    assert abs(sin_lut[1 * half + 1]) <= 1
     assert all(abs(v) <= 256 for v in sin_lut + cos_lut)
+
+
+def test_rope_lut_full_spec_parameters():
+    # Mit den echten spec-Parametern (0.5B: head_dim 64, max_seq_len 2048)
+    # muss die LUT die erwartete Groesse haben und wohlgeformt sein.
+    nl = load_nonlinear_spec()
+    head_dim = get_model_config("qwen2.5-0.5b")["head_dim"]
+    sin_lut, cos_lut = generate_rope_luts(
+        max_seq_len=nl["rope"]["max_seq_len"], head_dim=head_dim,
+        rope_theta=nl["rope"]["rope_theta"], frac_bits=nl["rope"]["frac_bits"])
+    half = head_dim // 2
+    assert len(sin_lut) == nl["rope"]["max_seq_len"] * half
+    assert len(cos_lut) == nl["rope"]["max_seq_len"] * half
+    # Position 0 ist die Identitaet (alle Paare cos=1.0, sin=0).
+    assert all(cos_lut[j] == 256 for j in range(half))
+    assert all(sin_lut[j] == 0 for j in range(half))
 
 
 def test_spec_driven_generation_lengths():
@@ -113,12 +143,16 @@ def test_spec_driven_generation_lengths():
     exp = generate_exp_lut(exp_range=nl["softmax"]["exp_lut_range"],
                            input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
                            output_frac_bits=nl["softmax"]["exp_lut_frac_bits"])
-    sin, cos = generate_sin_cos_lut(n=nl["rope"]["max_seq_len"],
-                                    frac_bits=nl["rope"]["frac_bits"])
+    head_dim = get_model_config("qwen2.5-0.5b")["head_dim"]
+    sin, cos = generate_rope_luts(max_seq_len=nl["rope"]["max_seq_len"],
+                                  head_dim=head_dim,
+                                  rope_theta=nl["rope"]["rope_theta"],
+                                  frac_bits=nl["rope"]["frac_bits"])
+    rope_len = nl["rope"]["max_seq_len"] * (head_dim // 2)
     assert len(rsqrt) == 32768
     assert len(silu) == 2048
     assert len(exp) == 1025
-    assert len(sin) == 2048 and len(cos) == 2048
+    assert len(sin) == rope_len and len(cos) == rope_len
     # Alle Werte muessen in int16 passen (LUT-Format der Runtime).
     for lut in (rsqrt, silu, exp, sin, cos):
         assert all(-32768 <= v <= 32767 for v in lut)
@@ -135,8 +169,10 @@ if __name__ == "__main__":
     print("[test] SiLU-LUT Stuetzwerte (Domäne +/-128): PASSED")
     test_exp_lut_spot_values()
     print("[test] exp-LUT Stuetzwerte: PASSED")
-    test_sin_cos_lut_spot_values()
-    print("[test] Sin/Cos-LUT Stuetzwerte: PASSED")
+    test_rope_lut_spot_values()
+    print("[test] RoPE-LUT Stuetzwerte (Multi-Frequenz, half-split): PASSED")
+    test_rope_lut_full_spec_parameters()
+    print("[test] RoPE-LUT mit spec-Parametern (Groesse/Identitaet): PASSED")
     test_spec_driven_generation_lengths()
     print("[test] spec-gesteuerte Erzeugung: Laengen und int16-Bereich: PASSED")
     print("Alle Tests bestanden.")

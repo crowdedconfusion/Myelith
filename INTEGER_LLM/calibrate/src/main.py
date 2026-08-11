@@ -16,7 +16,7 @@ from .loader import load_reference_model
 from .stats import ActivationStatsCollector
 from .scales import compute_scales_from_stats
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
-                   generate_sin_cos_lut, load_nonlinear_spec)
+                   generate_rope_luts, load_nonlinear_spec)
 from .export import export_theta_v
 from .quantize import quantize_model_weights, quantize_symmetric_int16_per_channel
 from .gptq import HessianCollector, quantize_linear_layers_gptq
@@ -140,8 +140,19 @@ def main():
     # die Score-Skala der Attention. Die rsqrt-LUT wird per dynamischem
     # geradem Index-Shift gespeist (spec: index_normalization).
     nl = load_nonlinear_spec()
-    sin_lut, cos_lut = generate_sin_cos_lut(
-        n=nl["rope"]["max_seq_len"], frac_bits=nl["rope"]["frac_bits"])
+    # Wirft klar und fruehzeitig, falls MODEL_NAME auf eine Variante zeigt,
+    # deren num_kv_heads/tie_word_embeddings noch nicht gegen die echte
+    # HF-config.json verifiziert sind (siehe model_configs.py-Docstring).
+    # (Vor die LUT-Erzeugung gezogen, da RoPE head_dim braucht, Fund-15-Fix.)
+    model_config = dict(get_export_model_config(MODEL_NAME))
+    # RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-LUTs mit
+    # half-split-Paarung. head_dim aus der (verifizierten) Modell-Config,
+    # rope_theta aus der spec (Qwen2.5-0.5B: 1e6, siehe Modelle-config.json).
+    sin_lut, cos_lut = generate_rope_luts(
+        max_seq_len=nl["rope"]["max_seq_len"],
+        head_dim=model_config["head_dim"],
+        rope_theta=nl["rope"]["rope_theta"],
+        frac_bits=nl["rope"]["frac_bits"])
     luts = {
         "rsqrt": generate_rsqrt_lut(
             max_input=nl["rsqrt"]["input_range"][1],
@@ -159,11 +170,6 @@ def main():
         "sin": sin_lut,
         "cos": cos_lut,
     }
-
-    # Wirft klar und fruehzeitig, falls MODEL_NAME auf eine Variante zeigt,
-    # deren num_kv_heads/tie_word_embeddings noch nicht gegen die echte
-    # HF-config.json verifiziert sind (siehe model_configs.py-Docstring).
-    model_config = dict(get_export_model_config(MODEL_NAME))
 
     artifacts_dir = model_artifacts_dir(MODEL_NAME)
 

@@ -9,7 +9,7 @@ use integer_llm_kernels::fixed_point::{clamp_i16, rescale};
 use integer_llm_kernels::linear::{add_bias_i16, linear_w8a16};
 use integer_llm_kernels::mlp::mlp_int;
 use integer_llm_kernels::rmsnorm::rmsnorm_i16;
-use integer_llm_kernels::rope::rotate_pairs_i16;
+use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_runtime::loader::load_model;
 
 fn summary(name: &str, v: &[i16], frac: u8) {
@@ -115,9 +115,14 @@ fn main() {
         .map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap_or(0);
     println!("S3 max|head_out - v0| = {}", diff);
 
-    // S4: RoPE-Einfluss auf q/k (Sanity: Norm-Erhaltung)
-    let idx = 0usize % model.cos_lut.len();
-    let q_rot = rotate_pairs_i16(&q0, model.cos_lut[idx], model.sin_lut[idx], cfg.rope_frac_bits);
+    // S4: RoPE-Einfluss auf q/k (Sanity: Norm-Erhaltung). Position 0 -> alle
+    // Winkel 0 (cos=1.0, sin=0) -> Identitaet (Multi-Frequenz-RoPE, theta_v 0.10.0).
+    let half = model.head_dim / 2;
+    let n_pos = model.cos_lut.len() / half;
+    let idx = 0usize % n_pos;
+    let cos_row = &model.cos_lut[idx * half..(idx + 1) * half];
+    let sin_row = &model.sin_lut[idx * half..(idx + 1) * half];
+    let q_rot = rotate_half_split_i16(&q0, cos_row, sin_row, cfg.rope_frac_bits);
     println!(
         "S4 rope q0: vor=[{}, {}] nach=[{}, {}]",
         q0[0], q0[1], q_rot[0], q_rot[1]

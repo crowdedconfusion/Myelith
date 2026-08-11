@@ -6,7 +6,7 @@
 use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i32, rescale, rescale_i64};
 use integer_llm_kernels::rmsnorm::rmsnorm_i16;
 use integer_llm_kernels::linear::{linear_w8a16, add_bias_i16};
-use integer_llm_kernels::rope::rotate_pairs_i16;
+use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::attention_int;
 use integer_llm_kernels::mlp::mlp_int;
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
@@ -336,18 +336,23 @@ impl IntegerModel {
         let mut k_heads = self.split_heads(&k_flat, self.num_kv_heads);
         let v_heads = self.split_heads(&v_flat, self.num_kv_heads);
 
-        // RoPE: Q- und K-Heads separat rotieren (unterschiedliche Head-Anzahl,
-        // daher kein gemeinsamer apply_rope-Aufruf, der gleiche Laenge
-        // voraussetzt). Die Rotation ist skaleninvariant gegenueber der
+        // RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-RoPE mit
+        // half-split-Paarung. Die cos/sin-LUTs sind flach row-major
+        // [max_seq_len, head_dim/2]; je Position wird die Zeile
+        // [idx*half, (idx+1)*half) gelesen und jedes Paar j nutzt seinen
+        // eigenen Winkel. Q- und K-Heads separat rotieren (unterschiedliche
+        // Head-Anzahl). Die Rotation ist skaleninvariant gegenueber der
         // Eingangs-Skala (cos/sin tragen rope_frac_bits).
-        let idx = pos % self.cos_lut.len();
-        let cos_q = self.cos_lut[idx];
-        let sin_q = self.sin_lut[idx];
+        let half = self.head_dim / 2;
+        let n_pos = self.cos_lut.len() / half;
+        let idx = pos % n_pos;
+        let cos_row = &self.cos_lut[idx * half..(idx + 1) * half];
+        let sin_row = &self.sin_lut[idx * half..(idx + 1) * half];
         for qh in q_heads.iter_mut() {
-            *qh = rotate_pairs_i16(qh, cos_q, sin_q, cfg.rope_frac_bits);
+            *qh = rotate_half_split_i16(qh, cos_row, sin_row, cfg.rope_frac_bits);
         }
         for kh in k_heads.iter_mut() {
-            *kh = rotate_pairs_i16(kh, cos_q, sin_q, cfg.rope_frac_bits);
+            *kh = rotate_half_split_i16(kh, cos_row, sin_row, cfg.rope_frac_bits);
         }
 
         // KV-Cache schreiben: Reskalierung von der Per-Layer-Skala auf die

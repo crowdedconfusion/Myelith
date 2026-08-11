@@ -22,6 +22,13 @@ pub fn dot_int(a: &[i16], b: &[i16]) -> i64 {
 /// `score_shift` bringt das Skalarprodukt (Skala `q_frac + k_frac`) auf die
 /// exp-LUT-Domäne (`score_frac_bits`, typisch 8) und wird pro Layer aus den
 /// kalibrierten Q/K-Skalen abgeleitet (dynamisch, aber deterministisch).
+///
+/// WICHTIG (Fund 16): Query- und Key-/Value-Laenge sind getrennt zu
+/// behandeln. Im KV-Cache-Betrieb besteht `q` nur aus der aktuellen Position
+/// (q.len() == 1), waehrend `k`/`v` alle bisherigen Positionen enthalten
+/// (k.len() == seq_len). Die Score-/Value-Schleife muss daher ueber
+/// `k.len()` laufen, NICHT ueber `q.len()` — sonst attendiert jede Query nur
+/// auf den ersten Key und RoPE/Mehrpositions-Attention sind wirkungslos.
 pub fn attention_int(
     q: &[Vec<i16>],
     k: &[Vec<i16>],
@@ -32,13 +39,15 @@ pub fn attention_int(
     lut_shift: u8,
     prob_frac_bits: u8,
 ) -> Vec<Vec<i16>> {
-    let seq_len = q.len();
+    let q_len = q.len();
+    let kv_len = k.len();
+    assert_eq!(kv_len, v.len(), "attention_int: k und v muessen gleich lang sein");
     let head_dim = v[0].len();
-    let mut out = Vec::with_capacity(seq_len);
+    let mut out = Vec::with_capacity(q_len);
 
-    for i in 0..seq_len {
-        let mut scores = Vec::with_capacity(seq_len);
-        for j in 0..seq_len {
+    for i in 0..q_len {
+        let mut scores = Vec::with_capacity(kv_len);
+        for j in 0..kv_len {
             if mask[i][j] {
                 let s = dot_int(&q[i], &k[j]);
                 scores.push(rshift_round_i64(s, score_shift) as i32);
@@ -50,7 +59,7 @@ pub fn attention_int(
         let probs = softmax_int(&scores, exp_lut, lut_shift, prob_frac_bits);
 
         let mut row = vec![0i64; head_dim];
-        for j in 0..seq_len {
+        for j in 0..kv_len {
             if probs[j] == 0 { continue; }
             for d in 0..head_dim {
                 row[d] += (probs[j] as i64) * (v[j][d] as i64);
@@ -94,5 +103,25 @@ mod tests {
         let b = vec![30000i16; 64];
         let d = dot_int(&a, &b);
         assert_eq!(d, 64 * 30000i64 * 30000i64);
+    }
+
+    #[test]
+    fn test_attention_kv_cache_single_query_attends_all_keys() {
+        // Fund 16: Im KV-Cache-Betrieb hat q nur 1 Element (aktuelle
+        // Position), k/v aber alle bisherigen Positionen. Die Query muss auf
+        // ALLE Keys attendieren, nicht nur auf den ersten. Bei identischen
+        // Keys sind die Scores gleich -> uniforme Gewichte -> Ausgabe ist der
+        // Durchschnitt der Values. Waere der Bug aktiv (nur erster Key),
+        // kaeme v[0] = [100, 0] heraus statt [200, 0].
+        let q = vec![vec![64i16, 0]];
+        let k = vec![vec![64i16, 0], vec![64, 0], vec![64, 0]];
+        let v = vec![vec![100i16, 0], vec![200, 0], vec![300, 0]];
+        let mask = vec![vec![true, true, true]];
+        let exp_lut: Vec<i16> = (0..129).map(|i| ((-(i as f64) / 256.0).exp() * 256.0).round() as i16).collect();
+        let out = attention_int(&q, &k, &v, &mask, 4, &exp_lut, 0, 8);
+        assert_eq!(out.len(), 1);
+        // Uniforme Gewichte (1/3, 1/3, 1/3) -> Durchschnitt [200, 0].
+        assert!((out[0][0] - 200).abs() <= 2, "out[0][0] = {}", out[0][0]);
+        assert!(out[0][1].abs() <= 1);
     }
 }
