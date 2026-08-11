@@ -14,9 +14,9 @@ in INTEGER_LLM/README/Fahrplan-v3.md.
 """
 
 MODEL_CONFIGS = {
-    "qwen2.5-0.5b-instruct": {
+    "qwen2.5-0.5b": {
         "family": "qwen2.5",
-        "variant": "0.5b-instruct",
+        "variant": "0.5b",
         "num_layers": 24,
         "hidden_size": 896,
         "intermediate_size": 4864,
@@ -150,7 +150,7 @@ def print_sharding_plan(model_name: str, num_nodes: int):
 
 if __name__ == "__main__":
     # Beispiel: Sharding-Plaene fuer verschiedene Konfigurationen
-    for model in ["qwen2.5-0.5b-instruct", "qwen2.5-7b-instruct", "qwen2.5-72b-instruct"]:
+    for model in ["qwen2.5-0.5b", "qwen2.5-7b-instruct", "qwen2.5-72b-instruct"]:
         for nodes in [2, 4, 8]:
             try:
                 print_sharding_plan(model, nodes)

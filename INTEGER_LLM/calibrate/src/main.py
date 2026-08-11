@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Kalibrierungs-Workflow fuer Qwen2.5-0.5B-Instruct.
+Kalibrierungs-Workflow fuer Qwen2.5-0.5B (Basis-Modell).
 Phase 3 + Phase 6 Vorbereitung (Gewichtsexport).
+
+Referenzmodell ist die Basis-Variante Qwen/Qwen2.5-0.5B — konsistent mit
+Whitepaper, oeffentlichem README und models/README.md. Das Modell wird
+ausschliesslich aus dem lokalen Snapshot unter models/ geladen (siehe
+loader.py und models/README.md).
 """
 
 import json
@@ -14,15 +19,16 @@ from .export import export_theta_v
 from .quantize import quantize_model_weights
 from .export_weights import export_quantized_weights
 from .model_configs import get_export_model_config
-from .paths import model_artifacts_dir
+from .paths import model_artifacts_dir, local_model_dir
 
-MODEL_NAME = "qwen2.5-0.5b-instruct"
-HF_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+MODEL_NAME = "qwen2.5-0.5b"
+HF_MODEL_ID = "Qwen/Qwen2.5-0.5B"
 
 
 def main():
-    print("[calibrate] Lade Referenzmodell...")
-    model, tokenizer = load_reference_model(HF_MODEL_ID)
+    model_dir = local_model_dir(HF_MODEL_ID.split("/")[-1])
+    print(f"[calibrate] Lade Referenzmodell aus {model_dir} ...")
+    model, tokenizer = load_reference_model(model_dir)
 
     print("[calibrate] Sammle Aktivierungsstatistiken...")
     collector = ActivationStatsCollector()

@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.12.15
+> **Version:** 0.12.16
 > **Datum:** 2026-08-11
 > **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase
 
@@ -55,6 +55,23 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.16 – 2026-08-11
+- `calibrate/src/export_weights.py` gehärtet: dtype-Prüfung (nur int8), Prüfung
+  Byte-Länge = Produkt der shape, SHA-256-Nachschreiben-Verifikation jeder
+  exportierten Datei gegen den Manifest-Eintrag — Manifest und `.bin`-Dateien
+  können nicht mehr divergieren
+- Referenzmodell auf die Basis-Variante festgelegt: `MODEL_NAME = "qwen2.5-0.5b"`,
+  `HF_MODEL_ID = "Qwen/Qwen2.5-0.5B"` (der Code trug bisher Instruct-Strings,
+  Whitepaper/Doku/lokales Modell benennen die Basis-Variante); model_configs-Schlüssel
+  jetzt `"qwen2.5-0.5b"`, `fetch_model.sh`-Default angepasst
+- `calibrate/src/loader.py` lädt das Referenzmodell ausschließlich aus dem lokalen
+  Snapshot unter `models/` (reproduzierbare Herkunft) statt aus dem HF-Cache; neu:
+  `calibrate/src/paths.py::local_model_dir()` mit klarem Fehlerhinweis auf
+  `scripts/fetch_model.sh`
+- Fund: `scripts/fetch_model.sh` nutzte das in huggingface_hub ≥ 1.x entfernte
+  `huggingface-cli` — auf `hf download` umgestellt
+- Vier neue Tests in `tests/test_export_workflow.py`; volle Rust- und Python-Suite grün
 
 ### v0.12.15 – 2026-08-11
 - `calibrate/src/main.py`: vollständiger Export-Workflow — `model_artifacts_dir()` (neues

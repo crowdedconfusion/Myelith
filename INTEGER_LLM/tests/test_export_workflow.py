@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Tests fuer den Export-Workflow (Fahrplan-Punkt 12.14): calibrate/src/export.py,
-calibrate/src/paths.py, calibrate/src/model_configs.py.
+Tests fuer den Export-Workflow (Fahrplan-Punkte 12.14/12.15): calibrate/src/export.py,
+calibrate/src/export_weights.py, calibrate/src/paths.py, calibrate/src/model_configs.py.
 
 Bewusst ohne torch/numpy-Abhaengigkeit (nicht in jeder Umgebung installiert,
 insbesondere nicht in einer reinen Test-Sandbox): ein winziger Fake-Array-Typ
@@ -52,7 +52,7 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def test_get_export_model_config_accepts_verified_variant():
-    config = get_export_model_config("qwen2.5-0.5b-instruct")
+    config = get_export_model_config("qwen2.5-0.5b")
     assert config["num_kv_heads"] == 2
     assert config["tie_word_embeddings"] is True
 
@@ -92,6 +92,91 @@ def test_export_theta_v_requires_weights_manifest_first():
             raise AssertionError("Fehlendes weights_manifest.json haette fehlschlagen muessen")
         except FileNotFoundError as e:
             assert "weights_manifest.json" in str(e)
+
+
+def test_export_weights_rejects_shape_byte_mismatch():
+    with tempfile.TemporaryDirectory() as tmp:
+        quantized = {
+            "model.norm.weight": {
+                "int8": FakeInt8Array([1, 2, 3]),
+                "shape": [2, 4],  # 8 Bytes erwartet, 3 geliefert
+                "scale": 1.0,
+                "shift": 0,
+            },
+        }
+        try:
+            export_quantized_weights(quantized, Path(tmp))
+            raise AssertionError("Shape/Byte-Laengen-Divergenz haette fehlschlagen muessen")
+        except ValueError as e:
+            assert "shape" in str(e)
+
+
+def test_export_weights_rejects_wrong_dtype():
+    class FakeTypedArray(FakeInt8Array):
+        def __init__(self, values, dtype):
+            super().__init__(values)
+            self.dtype = dtype
+
+    with tempfile.TemporaryDirectory() as tmp:
+        quantized = {
+            "model.norm.weight": {
+                "int8": FakeTypedArray([1, 2, 3, 4], "float32"),
+                "shape": [4],
+                "scale": 1.0,
+                "shift": 0,
+            },
+        }
+        try:
+            export_quantized_weights(quantized, Path(tmp))
+            raise AssertionError("Nicht-int8-Tensor haette fehlschlagen muessen")
+        except ValueError as e:
+            assert "int8" in str(e)
+
+
+def test_export_weights_hashes_match_manifest():
+    """Jeder Manifest-Eintrag muss den tatsaechlichen SHA-256 der Datei tragen."""
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        quantized = {
+            "model.embed_tokens.weight": {
+                "int8": FakeInt8Array([1, 2, 3, 4, 5, 6, 7, 8]),
+                "shape": [2, 4],
+                "scale": 0.5,
+                "shift": 1,
+            },
+            "model.norm.weight": {
+                "int8": FakeInt8Array([64, 64, 64, 64]),
+                "shape": [4],
+                "scale": 1.0,
+                "shift": 0,
+            },
+        }
+        manifest = export_quantized_weights(quantized, out_dir)
+        assert len(manifest) == 2
+        for safe_name, entry in manifest.items():
+            file_bytes = (out_dir / entry["file"]).read_bytes()
+            assert entry["hash"] == _sha256_hex(file_bytes), safe_name
+            assert entry["dtype"] == "int8"
+            n = 1
+            for d in entry["shape"]:
+                n *= d
+            assert len(file_bytes) == n, safe_name
+
+
+def test_local_model_dir_missing_and_present():
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            try:
+                paths_mod.local_model_dir("Qwen2.5-0.5B")
+                raise AssertionError("Fehlendes Modell-Verzeichnis haette fehlschlagen muessen")
+            except FileNotFoundError as e:
+                assert "fetch_model.sh" in str(e)
+            (Path(tmp) / "models" / "Qwen2.5-0.5B").mkdir(parents=True)
+            assert paths_mod.local_model_dir("Qwen2.5-0.5B") == Path("models") / "Qwen2.5-0.5B"
+        finally:
+            os.chdir(old_cwd)
 
 
 def test_export_workflow_order_produces_consistent_theta_v():
@@ -215,6 +300,14 @@ if __name__ == "__main__":
     print("[test] spec_version liest echte spec.json: PASSED")
     test_export_theta_v_requires_weights_manifest_first()
     print("[test] export_theta_v verlangt vorherige Gewichte: PASSED")
+    test_export_weights_rejects_shape_byte_mismatch()
+    print("[test] Export lehnt Shape/Byte-Laengen-Divergenz ab: PASSED")
+    test_export_weights_rejects_wrong_dtype()
+    print("[test] Export lehnt Nicht-int8-Tensoren ab: PASSED")
+    test_export_weights_hashes_match_manifest()
+    print("[test] Manifest-Hashes stimmen mit Dateien ueberein: PASSED")
+    test_local_model_dir_missing_and_present()
+    print("[test] local_model_dir prueft models/-Snapshot: PASSED")
     test_export_workflow_order_produces_consistent_theta_v()
     print("[test] Export-Reihenfolge erzeugt konsistente Hashes: PASSED")
     test_synthetic_export_loads_in_real_runtime_binary()

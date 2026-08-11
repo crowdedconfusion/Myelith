@@ -3,7 +3,8 @@
 # Siehe models/README.md fuer Herkunft, Struktur und die Revision-Angabe.
 #
 # Env-Variablen (optional):
-#   MODEL_ID  HF-Modell-ID, Default: Qwen/Qwen2.5-0.5B-Instruct
+#   MODEL_ID  HF-Modell-ID, Default: Qwen/Qwen2.5-0.5B (Basis-Modell,
+#             das Referenzmodell des Projekts — siehe models/README.md)
 #   REVISION  HF-Revision (Branch, Tag oder Commit-Hash), Default: main
 #
 # Ohne fixierte REVISION ist der Download nicht reproduzierbar. Das Skript
@@ -12,21 +13,21 @@
 
 set -euo pipefail
 
-MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-0.5B-Instruct}"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-0.5B}"
 REVISION="${REVISION:-main}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${REPO_ROOT}/models/$(basename "${MODEL_ID}")"
 
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-    echo "[fetch_model] huggingface-cli nicht gefunden." >&2
-    echo "[fetch_model] 'pip install -r calibrate/requirements.txt' ausfuehren." >&2
+if ! command -v hf >/dev/null 2>&1; then
+    echo "[fetch_model] hf-CLI nicht gefunden." >&2
+    echo "[fetch_model] 'pip install -r calibrate/requirements.txt' ausfuehren (huggingface_hub >= 1.x stellt den 'hf'-Befehl bereit)." >&2
     exit 1
 fi
 
 echo "[fetch_model] Lade ${MODEL_ID}@${REVISION} nach ${TARGET_DIR} ..."
 mkdir -p "${TARGET_DIR}"
-huggingface-cli download "${MODEL_ID}" --revision "${REVISION}" --local-dir "${TARGET_DIR}"
+hf download "${MODEL_ID}" --revision "${REVISION}" --local-dir "${TARGET_DIR}"
 
 RESOLVED_COMMIT="$(python3 -c "
 from huggingface_hub import HfApi

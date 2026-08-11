@@ -24,5 +24,35 @@ def artifacts_dir() -> Path:
 
 
 def model_artifacts_dir(model_name: str) -> Path:
-    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/qwen2.5-0.5b-instruct."""
+    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/qwen2.5-0.5b."""
     return artifacts_dir() / model_name
+
+
+MODELS_DIR = "models"
+
+
+def models_dir() -> Path:
+    """
+    Aufgeloester Pfad zum Quellmodell-Verzeichnis, relativ zum aktuellen
+    Arbeitsverzeichnis (wie runtime/src/paths.rs::MODELS_DIR; dort gibt es
+    bewusst keine Env-Var-Ueberschreibung, also hier ebenfalls nicht).
+    """
+    return Path(MODELS_DIR)
+
+
+def local_model_dir(model_name: str) -> Path:
+    """
+    Verzeichnis eines lokalen Modell-Snapshots unter models/, z. B.
+    models/Qwen2.5-0.5B. Schlägt mit einem klaren Hinweis fehl, falls der
+    Snapshot fehlt — calibrate laedt ausschliesslich aus models/
+    (reproduzierbare Herkunft, siehe models/README.md), nie aus dem
+    impliziten Hugging-Face-Cache.
+    """
+    path = models_dir() / model_name
+    if not path.is_dir():
+        raise FileNotFoundError(
+            f"{path} fehlt. Quellmodell zuerst mit scripts/fetch_model.sh "
+            "holen und die Revision in models/README.md eintragen "
+            "(siehe models/README.md, Abschnitt Beschaffung)."
+        )
+    return path
