@@ -10,8 +10,13 @@ verbrennen MYL gegen Inferenz-Credits, Miner erhalten neu geprägte MYL
 proportional zur verifizierten Arbeit.
 
 Die vollständige Architektur, Tokenomics, das Verifikationsmodell und die
-offenen Forschungsfragen stehen im
-[Whitepaper (v0.2)](README/Whitepaper/myelith-whitepaper-v0.2.md).
+offenen Forschungsfragen stehen im Whitepaper v0.3:
+[Deutsch (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.md) /
+[Deutsch (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.pdf) /
+[English (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.md) /
+[English (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.pdf).
+Die Simulationsprogramme zu Anhang B liegen unter
+[`README/Whitepaper/myelith-v0.3/simulations/`](README/Whitepaper/myelith-v0.3/simulations/).
 
 ## Kernthese
 
@@ -41,7 +46,7 @@ und Governance:
 ```
 ├── LICENSE.md                 PolyForm Shield License 1.0.0
 ├── README.md                  diese Datei
-├── README/Whitepaper/         Whitepaper v0.2
+├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + Simulationen
 ├── INTEGER_LLM/               bit-exakte Ganzzahl-Inferenz (Rust + Python)
 │   ├── kernels/               Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Attention, …)
 │   ├── runtime/               Modell-Loader, Forward-Pass, KV-Cache, CLI

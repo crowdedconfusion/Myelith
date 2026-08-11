@@ -12,12 +12,12 @@ Myelith wird unter der PolyForm Shield License 1.0.0 veröffentlicht. Der Kernge
 
 Für Myelith bedeutet das im Kern:
 
-- **Erlaubt, ausdrücklich auch kommerziell:** den Quellcode nutzen, verändern und einsetzen, um als Shard-Miner, Pod-Koordinator, Validator, Checker oder Gateway am kanonischen Myelith-Netzwerk teilzunehmen (Rollen wie im [Whitepaper](README/Whitepaper/myelith-whitepaper-v0.2.md), Kap. 3.3, definiert); Clients, Wallets, Dashboards oder andere Anwendungen zu bauen und zu betreiben, die mit dem kanonischen Myelith-Netzwerk interagieren; den Code zu verändern, zu erweitern und beizutragen.
+- **Erlaubt, ausdrücklich auch kommerziell:** den Quellcode nutzen, verändern und einsetzen, um als Shard-Miner, Pod-Koordinator, Validator, Checker oder Gateway am kanonischen Myelith-Netzwerk teilzunehmen (Rollen wie im [Whitepaper](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.md), Kap. 3.3, definiert); Clients, Wallets, Dashboards oder andere Anwendungen zu bauen und zu betreiben, die mit dem kanonischen Myelith-Netzwerk interagieren; den Code zu verändern, zu erweitern und beizutragen.
 - **Nicht erlaubt:** den Code (verändert oder unverändert) zu verwenden, um ein eigenständiges, konkurrierendes Netzwerk, Protokoll oder Produkt zu betreiben oder anzubieten — etwa einen Fork, der als eigene Chain oder als eigenständiger, geschlossener Dienst läuft, statt am kanonischen Myelith-Netzwerk teilzunehmen.
 
 Was als „kanonisches Myelith-Netzwerk" gilt, richtet sich nach der in Kapitel 10 des Whitepapers beschriebenen Governance, sobald diese existiert; bis dahin nach der Referenzimplementierung in diesem Repository.
 
-**Geltungsbereich:** Diese Lizenz gilt für den gesamten Quellcode in diesem Repository, sofern nicht ein Unterverzeichnis eine eigene, abweichende Lizenz für dort enthaltenen Fremdcode ausweist. Das [Whitepaper](README/Whitepaper/myelith-whitepaper-v0.2.md) selbst steht unter einer eigenen Lizenz (CC BY-SA 4.0, siehe Titelseite des Whitepapers) — das ist eine separate Festlegung für den Text des Papiers, nicht für den Code.
+**Geltungsbereich:** Diese Lizenz gilt für den gesamten Quellcode in diesem Repository, sofern nicht ein Unterverzeichnis eine eigene, abweichende Lizenz für dort enthaltenen Fremdcode ausweist. Das [Whitepaper](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.md) selbst steht unter einer eigenen Lizenz (CC BY-SA 4.0, siehe Titelseite des Whitepapers) — das ist eine separate Festlegung für den Text des Papiers, nicht für den Code.
 
 **Kein automatischer Übergang zu einer klassischen Open-Source-Lizenz.** Anders als z. B. die Business Source License enthält PolyForm Shield keinen eingebauten Stichtag, zu dem die Lizenz automatisch in eine von der Open Source Initiative anerkannte Lizenz übergeht. Ein solcher Übergang (etwa zu AGPLv3) bliebe eine spätere, bewusste Entscheidung.
 
