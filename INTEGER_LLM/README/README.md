@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.32
-> **Datum:** 2026-08-11
-> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. Determinismus PASSED (zwei Läufe bit-identisch), alle Test-Suiten grün.
+> **Version:** 0.12.33
+> **Datum:** 2026-08-12
+> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. **v0.12.33 (Evidenz-Paket):** der Beleg ist plastisch gesichert — Bit-Identität über 5 Prompts × 5 unabhängige Läufe (Token-Hash + SHA-256 identisch), Parallelgenerierung DE/EN + Top-1-Agreement 89,3 % gegen die BF16-Referenz, Durchsatz-Basis ~19 tok/s (Referenz-Backend). Zusammenfassung: [`docs/02_empirischer_beleg_bit-exakte-inferenz.md`](../docs/02_empirischer_beleg_bit-exakte-inferenz.md). Determinismus PASSED, alle Test-Suiten grün.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.

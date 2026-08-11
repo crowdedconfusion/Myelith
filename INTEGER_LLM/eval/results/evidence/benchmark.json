@@ -1,0 +1,45 @@
+{
+  "backend": "reference (skalar, ohne SIMD/CUDA/ROCm)",
+  "build": "release",
+  "platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.13"
+  },
+  "scenarios": [
+    {
+      "name": "decode_lastig",
+      "prompt_tokens": 4,
+      "decode_tokens": 128,
+      "repeats": 3,
+      "decode_hash": "68a33dbcf8b8b0b3",
+      "prefill_tokens_per_s": {
+        "min": 17.92,
+        "max": 18.95,
+        "median": 18.31
+      },
+      "decode_tokens_per_s": {
+        "min": 18.29,
+        "max": 19.3,
+        "median": 19.11
+      }
+    },
+    {
+      "name": "prefill_anteil",
+      "prompt_tokens": 27,
+      "decode_tokens": 64,
+      "repeats": 3,
+      "decode_hash": "1cc02cd08e36c9fa",
+      "prefill_tokens_per_s": {
+        "min": 19.74,
+        "max": 20.1,
+        "median": 19.77
+      },
+      "decode_tokens_per_s": {
+        "min": 19.2,
+        "max": 19.52,
+        "median": 19.24
+      }
+    }
+  ]
+}

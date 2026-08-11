@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-pipeline"
-version = "0.12.32"
+version = "0.12.33"
 edition = "2021"
 
 [[bin]]

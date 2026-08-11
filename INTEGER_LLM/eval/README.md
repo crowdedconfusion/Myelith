@@ -1,38 +1,60 @@
 # eval/
 
-Ablageort für die Qualitätsmessung des Integer-Modells: Gleitkomma-Baseline,
-Perplexitätsberechnung und die dafür benötigten Datensätze. Eine
-Qualitätsmessung ist kein Integrationstest (siehe `tests/`) und gehört
-deshalb in ein eigenes Verzeichnis.
+Ablageort für die Qualitätsmessung des Integer-Modells: Gleitkomma-
+Baseline, Perplexitätsberechnung, Evidenz-Läufe und die dafür benötigten
+Datensätze. Eine Qualitätsmessung ist kein Integrationstest (siehe
+`tests/`) und gehört deshalb in ein eigenes Verzeichnis.
 
 ## Struktur
 
 ```
 eval/
 ├── README.md
-└── datasets/
-    └── .gitignore          # Datensätze nicht versioniert, Verzeichnis behalten
+├── wikitext_common.py      # EINZIGE Quelle der Messsequenzen (alle Messungen)
+├── baseline.py             # BF16-Baseline (HF), Teacher-Forcing
+├── perplexity.py           # Perplexitätsvergleich + Protokoll (12.21)
+├── evidence_determinism.py # Evidenz: Bit-Identität (5 Prompts × 5 Läufe)
+├── evidence_quality.py     # Evidenz: Parallelgenerierung + Top-1-Agreement
+├── evidence_benchmark.py   # Evidenz: Durchsatz Prefill/Decode (bench_probe)
+├── datasets/               # WikiText-2-Cache (nicht versioniert)
+└── results/                # Messergebnisse (versioniert)
+    ├── baseline_wikitext2.json
+    ├── decision_12-21.md
+    ├── perplexity_comparison.json
+    └── evidence/           # Ergebnisse der drei Evidenz-Läufe
 ```
 
-`datasets/` nimmt die WikiText-2-Prompts auf, gegen die sowohl die
-Gleitkomma-Baseline als auch das Integer-Modell gemessen werden. Der Inhalt
-wird zur Laufzeit heruntergeladen beziehungsweise erzeugt und ist nicht
-versioniert.
+## Messmethode (identisch für alle Vergleiche)
 
-## Geplanter Inhalt (noch nicht implementiert)
+`wikitext_common.py` wählt deterministisch Sequenzen aus dem
+WikiText-2-Testsplit aus (substantielle Zeilen, fester Stride,
+Qwen-Tokenizer). Integer-E2E-Test, BF16-Baseline, Perplexitätsvergleich
+und das Top-1-Agreement verwenden dieselbe Auswahl, denselben Tokenizer
+und dieselbe Sequenzlänge — nur so ist der Vergleich aussagekräftig
+(„identische Messmethode", Fahrplan 12.20). Gleitkomma darf nur im
+Mess-/Referenzpfad verwendet werden (BF16-Baseline, Log-Softmax-
+Auswertung der Proben), niemals im Integer-Inferenzpfad.
 
-- `baseline.py` — Gleitkomma-Baseline: Qwen2.5-0.5B in FP16 auf WikiText-2,
-  identische Messmethode wie beim Integer-Modell
-- `perplexity.py` — Perplexitätsberechnung für das Integer-Modell;
-  Akzeptanzkriterium ist der relative Abstand zur Baseline
+## Entscheidungspunkt 12.21 — AKZEPTIERT
 
-Der konkrete Schwellwert für den zulässigen relativen Abstand ist eine
-Protokoll-Entscheidung (konsensrelevant) und bewusst noch nicht festgelegt.
+Perplexität Integer-Modell **15,59** vs. BF16-Baseline **14,95** =
+**+4,29 %** (Kriterium: max. +5 % relativer Anstieg). Protokoll:
+`results/decision_12-21.md`. Der zugehörige plastische Beleg
+(Bit-Identität, Parallelgenerierung DE/EN, Top-1-Agreement 89,3 %,
+Durchsatz-Basis) liegt unter `results/evidence/`; Zusammenfassung und
+Einordnung in `../docs/02_empirischer_beleg_bit-exakte-inferenz.md`.
 
-## Entscheidungspunkt
+## Aufruf
 
-Die Perplexitätsmessung ist der Entscheidungspunkt des Projekts: Erst wenn
-das Integer-Modell die Gleitkomma-Baseline um höchstens den festgelegten
-relativen Abstand überschreitet, ist die Kernthese bestätigt, dass
-vollständig ganzzahlige Inferenz qualitativ trägt — darauf bauen die
-weiteren Backends (SIMD, CUDA, ROCm) und die Verifikationsarchitektur auf.
+```bash
+cd INTEGER_LLM
+cargo build --release --bins                       # Proben bauen
+calibrate/.venv/bin/python eval/baseline.py        # BF16-Baseline (einmalig)
+calibrate/.venv/bin/python eval/perplexity.py      # Entscheidungspunkt
+calibrate/.venv/bin/python eval/evidence_determinism.py
+calibrate/.venv/bin/python eval/evidence_quality.py
+calibrate/.venv/bin/python eval/evidence_benchmark.py
+```
+
+Steuerung der Sequenz-Parameter (Baseline und E2E-Test):
+`E2E_SEQUENCES` (Standard 4), `E2E_SEQ_LEN` (Standard 128).
