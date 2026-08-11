@@ -18,7 +18,7 @@ def load_reference_model(model_path: Union[str, Path]):
     path = Path(model_path)
     model = AutoModelForCausalLM.from_pretrained(
         str(path),
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
     )
     tokenizer = AutoTokenizer.from_pretrained(str(path))

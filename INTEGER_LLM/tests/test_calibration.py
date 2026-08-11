@@ -80,12 +80,47 @@ def test_monotonic_in_absmax():
     assert shifts == sorted(shifts, reverse=True)
 
 
+def test_scales_always_pow2_consistent_batch():
+    # Fahrplan 12.16 (Akzeptanzkriterium „ausschließlich Zweierpotenzen"):
+    # ueber einen weiten Bereich realistischer absmax-Werte muss jeder
+    # Eintrag shift in [0, MAX_FRAC_BITS] tragen und scale == 2^-shift sein.
+    # Deterministischer Pseudozufall (LCG), keine numpy-Abhaengigkeit.
+    state = 0x243F6A88
+    stats = {}
+    for i in range(200):
+        state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        absmax = 2.0 ** ((state % 4000) / 100.0 - 20.0)  # 2^-20 .. 2^20
+        stats[f"layer{i}.q_proj"] = {"absmax": absmax}
+    scales = compute_scales_from_stats(stats)
+    assert len(scales) == 200
+    for name, entry in scales.items():
+        assert 0 <= entry["shift"] <= MAX_FRAC_BITS, name
+        assert math.isclose(entry["scale"], 2.0 ** (-entry["shift"])), name
+        absmax = stats[name]["absmax"]
+        if absmax <= 127.0:
+            # Nicht-Saettigungsregime: quantisiertes absmax muss in den
+            # int8-Bereich passen.
+            assert absmax * (2 ** entry["shift"]) <= 127.0 + 1e-6, name
+        else:
+            # Saettigungsregime: shift=0, Werte clampen beim Quantisieren.
+            assert entry["shift"] == 0, name
+
+
 if __name__ == "__main__":
     test_small_absmax_gets_positive_shift()
+    print("[test] Regression: kleines absmax bekommt positiven Shift: PASSED")
     test_shift_respects_int8_range()
+    print("[test] Shift respektiert int8-Bereich: PASSED")
     test_large_absmax_falls_back_to_shift_zero()
+    print("[test] Grosses absmax faellt auf shift=0 zurueck: PASSED")
     test_shift_capped_at_max_frac_bits()
+    print("[test] Shift ist bei MAX_FRAC_BITS gedeckelt: PASSED")
     test_degenerate_zero_absmax()
+    print("[test] Degeneriertes absmax=0: PASSED")
     test_scale_field_is_inverse_power_of_two_of_shift()
+    print("[test] scale ist 2^-shift: PASSED")
     test_monotonic_in_absmax()
+    print("[test] Monotonie in absmax: PASSED")
+    test_scales_always_pow2_consistent_batch()
+    print("[test] Batch: 200 Skalen durchgaengig Zweierpotenz-konsistent: PASSED")
     print("Alle Tests bestanden.")

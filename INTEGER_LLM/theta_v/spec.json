@@ -3,8 +3,8 @@
     "version": "0.4.0",
     "model": {
       "family": "qwen2.5",
-      "variant": "0.5b-instruct",
-      "source": "Qwen/Qwen2.5-0.5B-Instruct",
+      "variant": "0.5b",
+      "source": "Qwen/Qwen2.5-0.5B",
       "num_layers": 24,
       "hidden_size": 896,
       "intermediate_size": 4864,

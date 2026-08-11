@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.16
+> **Version:** 0.12.17
 > **Datum:** 2026-08-11
-> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase
+> **Status:** Aktive Entwicklung — Export- und Kalibrierungsphase (erster echter Kalibrierungslauf abgeschlossen)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,23 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.17 – 2026-08-11
+- **Erster echter Kalibrierungslauf** gegen das lokale Qwen2.5-0.5B:
+  vollständige θ_v-Artefakte in `artifacts/qwen2.5-0.5b/` — 168
+  Aktivierungsskalen (ausschließlich Zweierpotenzen, Shifts 0–8), 290
+  quantisierte Gewichts-Tensoren, θ_v-Hashes konsistent
+- Neuer Batch-Test in `tests/test_calibration.py` (200 synthetische
+  absmax-Werte: Shift-Grenzen, `scale == 2^-shift`, int8-Bereichs- und
+  Sättigungsregime)
+- Fund: Qwen2.5-0.5B besitzt Q/K/V-Attention-Biases (72 Tensoren) — sie
+  werden exportiert, aber von runtime/kernels noch nicht verarbeitet;
+  vor dem Laden echter Gewichte zu klären
+- `calibrate/requirements.txt`: `accelerate` ergänzt, auf
+  `transformers>=5.0.0`/`huggingface_hub>=1.0.0` konkretisiert;
+  `loader.py` von deprecated `torch_dtype` auf `dtype`
+- `theta_v/spec.json`: Modell-Angaben auf die Basis-Variante korrigiert
+  (konsensrelevant, mit Zustimmung des Projektinhabers; Numerik unverändert)
 
 ### v0.12.16 – 2026-08-11
 - `calibrate/src/export_weights.py` gehärtet: dtype-Prüfung (nur int8), Prüfung
