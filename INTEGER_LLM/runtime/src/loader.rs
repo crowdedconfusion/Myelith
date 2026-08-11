@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(model.final_norm_frac, 2);
         assert_eq!(model.final_residual_frac, 4);
         // Konfigurationswerte kommen aus der eingebetteten spec.json.
-        assert_eq!(model.config.silu_lut_offset, 256);
+        assert_eq!(model.config.silu_lut_offset, 1024);
 
         fs::remove_dir_all(&dir).ok();
     }

@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.28
+> **Version:** 0.12.29
 > **Datum:** 2026-08-11
-> **Status:** GPTQ-Eskalation (Strategie 3, θ_v 0.8.0) umgesetzt und gemessen: reduziert den Ausgabefehler der linearen Projektionen nachweislich, aber die Perplexität verbessert sich NICHT (3 242 → 3 318) → die lineare Gewichtsquantisierung ist nicht die dominante Fehlerquelle; der Fehler liegt in den Nichtlinearitäten/LUTs und/oder der Aktivierungsquantisierung (Bulk weicht ab Ebene 3 ab, Ebene 23 divergiert weiter 5×). Akzeptanzkriterium weiterhin VERFEHLT
+> **Status:** SiLU-Eingangsraster verfeinert (θ_v 0.9.0, input_frac_bits 1 → 3, Raster 0,5 → 0,125): Perplexität 3 318 → **2 972** (−10 %) → SiLU-Raster ist eine reale, aber nicht die dominante Fehlerquelle. Neue Lokalisierung: die Divergenz wächst mit der Position (Position 0: Ebenen 0–22 gut; schon Position 1: Abweichung ab Ebene 5) → der Mehrpositions-Pfad (RoPE/KV-Cache/positionsabhängige Attention) ist der nächste Verdacht. Akzeptanzkriterium weiterhin VERFEHLT (+19 778 %)
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -55,6 +55,28 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.29 – 2026-08-11
+- **SiLU-Eingangsraster verfeinert (θ_v 0.8.0 → 0.9.0):**
+  `silu.input_frac_bits` 1 → 3 (Raster 0,5 → 0,125 reale Einheiten),
+  `silu.input_range` [-256,255] → [-1024,1023] (gleiche reale Domäne
+  [-128, 127.875], LUT 512 → 2048 Einträge). Umsetzung nur in spec.json +
+  Kalibrierung/LUT-Generierung; der Inferenzpfad konsumiert `silu_in_frac`
+  und `silu_lut_offset` weiterhin spec-gesteuert (Loader), Kernel-Logik
+  unverändert. Angepasst: `ModelConfig::default()`, Loader-Test-Assertion
+  (Offset 256 → 1024), `tests/test_luts.py` (Struktur/Stützwerte/Längen).
+- **Messergebnis:** Perplexität **3 318 → 2 972** (−10 %, weiterhin +19 778 %
+  vs. FP-Baseline 14,95). Das SiLU-Raster ist damit eine reale, aber nicht
+  die dominante Fehlerquelle.
+- **Neue Lokalisierung (Seq-Dump-Vergleich Position 0/1/7):** Position 0
+  (Einzeltoken, RoPE = Identität) zeigt Ebenen 0–22 in AbsMax übereinstimmend;
+  schon Position 1 (2 Tokens) weicht ab Ebene 5 ab, Position 7 ab Ebene 15 —
+  die Divergenz wächst mit der Position. Da RoPE an Position 0 trivial ist
+  und ab Position 1 tatsächlich rotiert, rückt der Mehrpositions-Pfad
+  (RoPE/KV-Cache/positionsabhängige Attention) in den Fokus — er war durch
+  die bisherigen Position-0-Proben nie abgedeckt.
+- Tests: alle drei Crates grün (kernels 28, runtime 44, pipeline-Build),
+  Python-Suite komplett.
 
 ### v0.12.28 – 2026-08-11
 - **GPTQ-Eskalation (Strategie 3, θ_v 0.7.0 → 0.8.0):** Neues Modul

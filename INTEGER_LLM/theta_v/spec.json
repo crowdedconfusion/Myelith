@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.8.0",
+    "version": "0.9.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -45,9 +45,10 @@
       },
       "silu": {
         "method": "lut",
-        "input_range": [-256, 255],
-        "input_frac_bits": 1,
-        "output_frac_bits": 6
+        "input_range": [-1024, 1023],
+        "input_frac_bits": 3,
+        "output_frac_bits": 6,
+        "note": "Theta_v 0.9.0 (Fund-14-Folge, Eskalation Nichtlinearitäten): Eingangsraster von 0,5 auf 0,125 Einheiten verfeinert (input_frac_bits 1 -> 3), gleiche reale Domäne [-128, 127.875]. Die lineare Gewichtsquantisierung war durch GPTQ als dominante Fehlerquelle ausgeschlossen; das grobe SiLU-Eingangsraster (0,5) im dominanten MLP-Pfad ist der Top-Kandidat für die Bulk-Abweichung ab Ebene 3."
       },
       "softmax": {
         "method": "lut_exp",

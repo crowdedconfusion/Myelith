@@ -31,8 +31,8 @@ def test_load_nonlinear_spec_structure():
     assert nl["rsqrt"]["input_shift"] == 8
     assert nl["rsqrt"]["output_frac_bits"] == 8
     assert nl["rsqrt"]["index_normalization"] == "dynamic_even_shift"
-    assert nl["silu"]["input_range"] == [-256, 255]
-    assert nl["silu"]["input_frac_bits"] == 1
+    assert nl["silu"]["input_range"] == [-1024, 1023]
+    assert nl["silu"]["input_frac_bits"] == 3
     assert nl["silu"]["output_frac_bits"] == 6
     assert nl["softmax"]["exp_lut_range"] == 1024
     assert nl["softmax"]["exp_input_frac_bits"] == 4
@@ -61,18 +61,18 @@ def test_rsqrt_lut_input_shift_zero_entspricht_alter_skala():
 
 
 def test_silu_lut_spot_values():
-    # Spec 0.5.0: Indexbereich [-256, 255], Eingang frac 1 (Realwert idx/2),
-    # Ausgang frac 6.
-    lut = generate_silu_lut(input_min=-256, input_max=255,
-                            input_frac_bits=1, output_frac_bits=6)
-    assert len(lut) == 512
-    assert lut[256] == 0, "silu(0) = 0"
-    assert lut[256 + 2] == round(silu_ref(1.0) * 64), "silu(1) bei frac 6"
-    assert lut[256 - 4] == round(silu_ref(-2.0) * 64), "silu(-2) bei frac 6"
-    assert lut[256 + 8] == round(silu_ref(4.0) * 64), "silu(4) bei frac 6"
-    # Domaeenenrand (Realwert +/-128) wird abgedeckt.
+    # Spec 0.9.0: Indexbereich [-1024, 1023], Eingang frac 3 (Realwert idx/8),
+    # Ausgang frac 6. Nullpunkt bei Index 1024 (Offset = -input_min).
+    lut = generate_silu_lut(input_min=-1024, input_max=1023,
+                            input_frac_bits=3, output_frac_bits=6)
+    assert len(lut) == 2048
+    assert lut[1024] == 0, "silu(0) = 0"
+    assert lut[1024 + 8] == round(silu_ref(1.0) * 64), "silu(1) bei frac 6"
+    assert lut[1024 - 16] == round(silu_ref(-2.0) * 64), "silu(-2) bei frac 6"
+    assert lut[1024 + 32] == round(silu_ref(4.0) * 64), "silu(4) bei frac 6"
+    # Domaeenenrand (Realwert -128 bzw. +127.875) wird abgedeckt.
     assert lut[0] == round(silu_ref(-128.0) * 64)
-    assert lut[511] == round(silu_ref(127.5) * 64)
+    assert lut[2047] == round(silu_ref(127.875) * 64)
 
 
 def test_exp_lut_spot_values():
@@ -116,7 +116,7 @@ def test_spec_driven_generation_lengths():
     sin, cos = generate_sin_cos_lut(n=nl["rope"]["max_seq_len"],
                                     frac_bits=nl["rope"]["frac_bits"])
     assert len(rsqrt) == 32768
-    assert len(silu) == 512
+    assert len(silu) == 2048
     assert len(exp) == 1025
     assert len(sin) == 2048 and len(cos) == 2048
     # Alle Werte muessen in int16 passen (LUT-Format der Runtime).
