@@ -26,6 +26,8 @@
 pub mod hash;
 pub mod merkle;
 pub mod protocol;
+pub mod vrf;
 
 pub use hash::Hash;
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
+pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

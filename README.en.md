@@ -93,8 +93,10 @@ generation DE/EN; see
 is the second component with an active implementation: the design
 decisions are made (Rust, SHA-256 as the protocol hash, ECVRF with a
 documented post-quantum migration path, BLS12-381, Borsh; quantum
-hardening is an overarching design mandate), and the `myl-types` crate
-v0.1.1 provides the scaffold with the `Hash` newtype. All other
+hardening is an overarching design mandate). The `myl-types` crate
+v0.1.3 already provides the `Hash` newtype, the Merkle tree, and the
+VRF interface (ECVRF per RFC 9381, verified bit-exact against the
+official RFC test vectors). All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 

@@ -19,10 +19,12 @@ pub const PROTOCOL_HASH_ALGORITHM: &str = "SHA-256";
 /// ML-DSA/Dilithium, SPHINCS+, Hybrid).
 pub const PROTOCOL_SIGNATURE_ALGORITHM: &str = "BLS12-381";
 
-/// VRF-Konstruktion: ECVRF (RFC 9381) über curve25519.
+/// VRF-Konstruktion: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381, §5.5) —
+/// die standardisierte ECVRF-Suite für Edwards25519 (Suite-String 0x03,
+/// SHA-512, cLen 16, Cofactor 8, deterministische Nonce nach RFC 8032).
 /// Shor-anfällig — dokumentierter Migrationspfad über das
 /// Algorithms-Versionsfeld in `VrfOutput`.
-pub const PROTOCOL_VRF_ALGORITHM: &str = "ECVRF-curve25519 (RFC 9381)";
+pub const PROTOCOL_VRF_ALGORITHM: &str = "ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381)";
 
 /// Kanonische Serialisierung aller konsensrelevanten Strukturen.
 /// Borsh ist deterministisch ohne Encoding-Spielraum — Voraussetzung
@@ -49,7 +51,7 @@ mod tests {
     fn konstanten_sind_fest() {
         assert_eq!(PROTOCOL_HASH_ALGORITHM, "SHA-256");
         assert_eq!(PROTOCOL_SIGNATURE_ALGORITHM, "BLS12-381");
-        assert_eq!(PROTOCOL_VRF_ALGORITHM, "ECVRF-curve25519 (RFC 9381)");
+        assert_eq!(PROTOCOL_VRF_ALGORITHM, "ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381)");
         assert_eq!(PROTOCOL_SERIALIZATION, "Borsh");
         assert_eq!(VRF_ALGO_ECVRF_CURVE25519, 0);
         assert_eq!(SIG_ALGO_BLS12_381, 0);

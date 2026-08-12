@@ -1,11 +1,11 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.1.2
+> **Version:** 0.1.3
 > **Datum:** 2026-08-12
 > **Status:** Design-Entscheidungen getroffen (Rust, SHA-256, ECVRF mit
 > dokumentiertem PQ-Migrationspfad, BLS12-381, Borsh — Details und
-> Quantum-Einordnung im Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.2
-> abgeschlossen (`myl-types` v0.1.2: Hash-Newtype + Merkle-Baum)
+> Quantum-Einordnung im Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.3
+> abgeschlossen (`myl-types` v0.1.3: Hash, Merkle-Baum, VRF)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -32,11 +32,27 @@ SHARED_TYPES/
         ├── protocol.rs        Protokoll-Konstanten (Hash/VRF/Signatur/Serialisierung)
         ├── hash.rs            Hash-Newtype: SHA-256, Konstantzeit-Vergleich,
         │                      Borsh, Hex-Darstellung
-        └── merkle.rs          Merkle-Baum: Aufbau, Beweis-Erzeugung/-Prüfung,
-                               Domain-Separation, Borsh-Beweise
+        ├── merkle.rs          Merkle-Baum: Aufbau, Beweis-Erzeugung/-Prüfung,
+        │                      Domain-Separation, Borsh-Beweise
+        └── vrf.rs             VRF: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381),
+                               Kanonizitätsprüfung, RFC-Testvektoren
 ```
 
 ## Changelog
+
+### v0.1.3 – 2026-08-12 (Punkt 1.3)
+- VRF-Schnittstelle: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381 §5.5) —
+  `VrfSecretKey`/`VrfPublicKey`/`VrfProof`/`VrfOutput`, Try-and-Increment-
+  Hash-to-Curve mit Cofactor-Bereinigung, deterministische Nonce
+  (RFC-8032-Variante), validate_key gegen Kleinordnungs-Schlüssel.
+- Gegen die **offiziellen RFC-Testvektoren** (Anhang B.3, Beispiele 16–18)
+  geprüft: Beweis-Erzeugung und Verifikation bit-exakt.
+- Konsens-Verschärfung: kanonische Punkt-Dekodierung (y < p,
+  Vorzeichen-Bit maskiert) — curve25519-dalek allein akzeptiert nicht
+  kanonische Kodierungen, die der RFC ablehnt.
+- `VrfOutput.algorithm` trägt das Versionsfeld für den dokumentierten
+  Post-Quantum-Migrationspfad (GOVERNANCE, Krypto-Agilität) —
+  34 Tests grün, keine Warnungen.
 
 ### v0.1.2 – 2026-08-12 (Punkt 1.2)
 - Merkle-Baum über SHA-256: Aufbau (Duplikationsregel für ungerade
