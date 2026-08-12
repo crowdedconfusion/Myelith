@@ -1,11 +1,11 @@
 # networking (`myl-net`)
 
-> **Version:** 0.1.2
+> **Version:** 0.1.3
 > **Datum:** 2026-08-13
 > **Status:** Design-Entscheidungen getroffen (rust-libp2p, Latenzmessung
 > 15 s/EMA/Attest alle 5 min, zwei Verschlüsselungsschichten mit
 > verpflichtender Session-E2E — Details und Quantum-Einordnung im
-> Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.2 abgeschlossen
+> Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.3 abgeschlossen
 
 P2P-Gossip, latenzbasierte Topologie-Erkennung, verschlüsselte
 Aktivierungs-Streams. Referenzimplementierung von Whitepaper Kap. 3.2
@@ -36,11 +36,28 @@ NETWORKING/
         │                      Datei-Persistenz (load_or_create)
         ├── node.rs            Swarm-Aufbau: Gossipsub + Kademlia + Identify
         │                      + Ping über TCP/Noise/Yamux
-        └── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
-                               anwählen, Kademlia-Bootstrap (/myelith/kad/1)
+        ├── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
+        │                      anwählen, Kademlia-Bootstrap (/myelith/kad/1)
+        └── gossip.rs          Gossip-Topics (Blöcke, Transaktionen,
+                               PoI-Bündel, Challenges, Latenz-Atteste),
+                               Subscribe/Publish mit Borsh-Payloads
 ```
 
 ## Changelog
+
+### v0.1.3 – 2026-08-13 (Punkt 1.3)
+- Gossip-Topic-Struktur: fünf Topics mit versioniertem Namensschema
+  (`/myelith/blocks/1`, `/myelith/transactions/1`, `/myelith/poi-bundles/1`,
+  `/myelith/challenges/1`, `/myelith/latency-attests/1`) — Konsens-Feld,
+  Änderung nur über Governance; das Latenz-Topic wird ab Phase 2 genutzt.
+- Payload-Konvention: Borsh-Serialisierung der zugehörigen
+  `myl-types`-Datentypen (kanonisch, bitstabil — Voraussetzung für alle
+  Hashes/Signaturen über Nachrichten).
+- `subscribe`/`subscribe_all`/`publish` mit benannten Fehlern
+  (Subscribe-, Serialisierungs-, Publish-Fehler).
+- End-to-End-Test: zwei Nodes, Node B publiziert ein echtes `PoIBundle`
+  auf dem PoI-Bündel-Topic, Node A empfängt dieselben Borsh-Bytes — grün.
+  17 Tests grün, keine Warnungen.
 
 ### v0.1.2 – 2026-08-13 (Punkt 1.2)
 - Peer-Discovery: Kademlia-DHT unter dem Myelith-eigenen Protokoll-Namen
