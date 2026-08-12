@@ -1,8 +1,12 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.0.0
-> **Datum:** 2026-08-11
-> **Status:** Planungsphase — nicht begonnen
+> **Version:** 0.1.4
+> **Datum:** 2026-08-13
+> **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
+> vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
+> α=2/31 — Details im Fahrplan); 🎉 **Phase 1 vollständig**
+> (`myl-tokenomics` v0.1.1–v0.1.4, Akzeptanzkriterium erfüllt); als
+> Nächstes folgt Phase 2 (Credit-Preisbildung mit LUT-exp()).
 
 Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,
 Staking/Slashing-Matrix, Ausgabestruktur und Genesis. Referenzimplementierung
@@ -27,8 +31,33 @@ fertige BFT-Blockproduktion ist dafür noch nicht vorausgesetzt.
 
 ## Struktur
 
-Entsteht mit der Implementierung.
+```
+TOKENOMICS/
+├── README/                   diese Kurzübersicht + Fahrplan
+└── myl-tokenomics/           Tokenomik-Berechnungen (Kap. 5)
+    └── src/
+        ├── lib.rs             Fixed-Point-Grundregeln, Einheiten-Skalierungen
+        │                      (1 MYL = 10⁶ Kleinstbeträge, vTFE 10⁻⁶)
+        ├── ema.rs             Ganzzahlige EMA für B̄_e (α = 2/31, i128,
+        │                      dokumentierte Totzone)
+        ├── mint.rs            Prägefunktion M_e = min(B̄_e·(1+s), M_max)
+        ├── distribute.rs      Kap.-5.3-Verteilung (Basispunkte, exakte
+        │                      Summe, Redundanz-Normierung, proportionale
+        │                      Aufteilung)
+        └── training.rs        Trainingsvergütungs-Obergrenze (≤ 70 %)
+```
 
 ## Changelog
 
-Noch keine Version veröffentlicht.
+### v0.1.1–v0.1.4 – 2026-08-13 (Phase 1)
+- Durchgehend Fixed-Point-Ganzzahl-Arithmetik: Brüche als
+  Zähler/Nenner-Paare, floor-Divisionen dokumentiert,
+  u128/i128-Zwischenrechnungen gegen Überlauf — jede Formel ist ein
+  Ledger-Zustandsübergang und muss auf jedem Node bitgleich
+  nachrechenbar sein.
+- Ganzzahlige EMA (α = 2/31, 30-Epochen-Fenster) mit dokumentierter
+  Totzone; Prägefunktion mit M_max-Kappung; Verteilung 78/5/10/4/3 %
+  mit Summe-exakt-M_e-Invariante (Rundungsrest ans Treasury);
+  Trainingsvergütungs-Obergrenze 70 %.
+- Akzeptanzkriterium erfüllt: 10.000-Epochen-Tests (Determinismus und
+  Verteilungsexaktheit). 26 Tests grün, keine Warnungen.

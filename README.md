@@ -121,7 +121,17 @@ Blockproduktions-Validatoren und 7 Schiedsrichtern, Streitfrist
 Zustandsübergänge aus Anhang A.5 (burn→mint_credits, apply_verdict,
 credit_spend) als reine, atomare Ganzzahl-Funktionen, mit erfülltem
 Akzeptanzkriterium: Replay derselben Übergangsfolge liefert auf zwei
-unabhängigen Läufen bitgleiche Zustände. Alle
+unabhängigen Läufen bitgleiche Zustände.
+
+**TOKENOMICS** (Whitepaper Kap. 5) hat ebenfalls die Implementierung
+begonnen: Die Design-Entscheidungen sind getroffen (Fixed-Point-
+Ganzzahl-Arithmetik, 1 MYL = 10⁶ Kleinstbeträge, vTFE-Skalierung 10⁻⁶,
+EMA-Fenster 30 Epochen), und `myl-tokenomics` v0.1.4 hat **Phase 1
+vollständig** abgeschlossen — ganzzahlige EMA für das geglättete
+Burn-Volumen, Prägefunktion, die Kap.-5.3-Verteilung (78/5/10/4/3 % mit
+exakter Summen-Invariante) und die Trainingsvergütungs-Obergrenze;
+Akzeptanzkriterium erfüllt (10.000-Epochen-Determinismus- und
+Verteilungsexaktheitstests). Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 

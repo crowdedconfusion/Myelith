@@ -24,6 +24,7 @@
 pub mod distribute;
 pub mod ema;
 pub mod mint;
+pub mod training;
 
 /// Anzahl der Kleinstbeträge je MYL (1 MYL = 10⁶ Kleinstbeträge).
 pub const UNITS_PER_MYL: u64 = 1_000_000;
@@ -39,3 +40,4 @@ pub use distribute::{
 };
 pub use ema::{ema_update, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
 pub use mint::{mint_amount, MintParams};
+pub use training::{capped_training_reward, training_reward_cap, TRAINING_CAP_BPS};

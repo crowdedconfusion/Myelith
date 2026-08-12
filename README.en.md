@@ -120,7 +120,16 @@ v0.1.5 has **completed Phase 1** — all state transitions from
 Appendix A.5 (burn→mint_credits, apply_verdict, credit_spend) as pure,
 atomic integer functions, with the acceptance criterion met: replaying
 the same transition sequence yields bit-identical states across two
-independent runs. All other
+independent runs.
+
+**TOKENOMICS** (Whitepaper Chap. 5) has also started implementation:
+the design decisions are made (fixed-point integer arithmetic,
+1 MYL = 10⁶ base units, vTFE scaling 10⁻⁶, 30-epoch EMA window), and
+`myl-tokenomics` v0.1.4 has **completed Phase 1** — integer EMA for the
+smoothed burn volume, the minting function, the Chap.-5.3 distribution
+(78/5/10/4/3 % with an exact-sum invariant), and the training-reward
+cap; the acceptance criterion is met (10,000-epoch determinism and
+distribution-exactness tests). All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 
