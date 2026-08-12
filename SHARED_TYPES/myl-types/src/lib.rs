@@ -24,6 +24,8 @@
 #![deny(unsafe_code)]
 
 pub mod hash;
+pub mod merkle;
 pub mod protocol;
 
 pub use hash::Hash;
+pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
