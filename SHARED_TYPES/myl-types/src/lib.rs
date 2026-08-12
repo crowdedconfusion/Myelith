@@ -25,6 +25,7 @@
 
 pub mod bls;
 pub mod hash;
+pub mod ids;
 pub mod merkle;
 pub mod protocol;
 pub mod vrf;
@@ -34,5 +35,9 @@ pub use bls::{
     BlsError, BlsPublicKey, BlsSecretKey, BlsSignature, BLS_DST,
 };
 pub use hash::Hash;
+pub use ids::{
+    ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,
+    ID_LEN,
+};
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};
