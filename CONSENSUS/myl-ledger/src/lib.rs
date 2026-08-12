@@ -25,5 +25,7 @@
 #![deny(unsafe_code)]
 
 pub mod state;
+pub mod transitions;
 
 pub use state::{AccountState, LedgerState};
+pub use transitions::{burn_to_credits, TransitionError};
