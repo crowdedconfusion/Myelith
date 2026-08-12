@@ -61,7 +61,7 @@ fn parse_id_hex(s: &str) -> Result<[u8; ID_LEN], IdParseError> {
 macro_rules! define_id_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize)]
         pub struct $name([u8; ID_LEN]);
 
         impl $name {

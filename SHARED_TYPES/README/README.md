@@ -47,6 +47,12 @@ SHARED_TYPES/
 
 ## Changelog
 
+### v0.1.7 – 2026-08-13
+- ID-Newtypes leiten zusätzlich `PartialOrd`/`Ord` ab — benötigt für
+  `BTreeMap`-Schlüssel (u. a. das Kontenregister in `myl-ledger`,
+  dessen deterministische Ordnung Konsens-Eigenschaft ist). Rein
+  additive Änderung, keine Serialisierungs-Änderung.
+
 ### v0.1.6 – 2026-08-13 (Punkt 1.5) — Phase 1 vollständig
 - Kern-Structs aus Anhang A.1, Feldnamen und -reihenfolge exakt wie im
   Whitepaper (Borsh-Reihenfolge ist Konsens-Vertrag): `Segment`
