@@ -90,14 +90,15 @@ generation DE/EN; see
 `INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
 
 **SHARED_TYPES** (protocol-wide core data types, Whitepaper Appendix A.1)
-is the second component with an active implementation: the design
-decisions are made (Rust, SHA-256 as the protocol hash, ECVRF with a
-documented post-quantum migration path, BLS12-381, Borsh; quantum
-hardening is an overarching design mandate). The `myl-types` crate
-v0.1.4 already provides the `Hash` newtype, the Merkle tree, the
+is the second component with an active implementation — **Phase 1 is
+complete** (myl-types v0.1.6): the `Hash` newtype, the Merkle tree, the
 VRF interface (ECVRF per RFC 9381, verified bit-exact against the
-official RFC test vectors), and BLS12-381 signatures (min-pk,
-including signature aggregation for the PoI bundles). All other
+official RFC test vectors), BLS12-381 signatures (min-pk, including
+signature aggregation and rogue-key protection for the PoI bundles), and
+the core structs `Segment`/`PoIBundle`/`InferenceCredit` exactly per
+Appendix A.1. The design decisions are documented (Rust, SHA-256, Borsh;
+quantum hardening as an overarching mandate with anchored post-quantum
+migration paths). All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 

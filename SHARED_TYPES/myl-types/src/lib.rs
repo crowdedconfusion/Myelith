@@ -24,6 +24,7 @@
 #![deny(unsafe_code)]
 
 pub mod bls;
+pub mod core_types;
 pub mod hash;
 pub mod ids;
 pub mod merkle;
@@ -34,6 +35,7 @@ pub use bls::{
     aggregate_signatures, aggregate_verify, fast_aggregate_verify, BlsAggregateSignature,
     BlsError, BlsPublicKey, BlsSecretKey, BlsSignature, BLS_DST,
 };
+pub use core_types::{segments_root, InferenceCredit, PoIBundle, Segment};
 pub use hash::Hash;
 pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,

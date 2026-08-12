@@ -90,14 +90,15 @@ gegen die BF16-Referenz, Parallelgenerierung DE/EN;
 `INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
 
 **SHARED_TYPES** (protokollweite Kern-Datentypen, Whitepaper Anhang A.1)
-ist die zweite Komponente mit begonnener Implementierung: Die
-Design-Entscheidungen sind getroffen (Rust, SHA-256 als Protokoll-Hash,
-ECVRF mit dokumentiertem Post-Quantum-Migrationspfad, BLS12-381, Borsh;
-Quantum-Hardening ist übergreifende Design-Vorgabe). Das Crate
-`myl-types` v0.1.4 liefert bereits Hash-Newtype, Merkle-Baum, die
+ist die zweite Komponente mit laufender Implementierung — **Phase 1 ist
+vollständig** (myl-types v0.1.6): Hash-Newtype, Merkle-Baum, die
 VRF-Schnittstelle (ECVRF nach RFC 9381, gegen die offiziellen
-RFC-Testvektoren bit-exakt geprüft) und die BLS12-381-Signaturen
-(min-pk, inkl. Signatur-Aggregation für die PoI-Bündel). Alle
+RFC-Testvektoren bit-exakt geprüft), BLS12-381-Signaturen (min-pk, inkl.
+Signatur-Aggregation und Rogue-Key-Schutz für die PoI-Bündel) sowie die
+Kern-Structs `Segment`/`PoIBundle`/`InferenceCredit` exakt nach
+Anhang A.1. Die Design-Entscheidungen sind dokumentiert (Rust, SHA-256,
+Borsh; Quantum-Hardening als übergreifende Vorgabe mit verankerten
+Post-Quantum-Migrationspfaden). Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 
