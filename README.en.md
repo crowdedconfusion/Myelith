@@ -98,7 +98,15 @@ signature aggregation and rogue-key protection for the PoI bundles), and
 the core structs `Segment`/`PoIBundle`/`InferenceCredit` exactly per
 Appendix A.1. The design decisions are documented (Rust, SHA-256, Borsh;
 quantum hardening as an overarching mandate with anchored post-quantum
-migration paths). All other
+migration paths).
+
+**NETWORKING** (L0 network layer, Whitepaper Chap. 3.2) is the third
+component with an active implementation: the design decisions are made
+(rust-libp2p, latency measurement every 15 s with signed attestations
+every 5 minutes, two encryption layers with mandatory session-level E2E
+encryption — per Chap. 9.2, gateways are an attacker class), and the
+network crate `myl-net` v0.1.1 provides the scaffold with node identity
+and swarm setup (Gossipsub/Identify/Ping over TCP/Noise). All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 
