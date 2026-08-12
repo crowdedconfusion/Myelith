@@ -108,7 +108,19 @@ structure (blocks, transactions, PoI bundles, challenges, latency
 attestations) with Borsh payloads, and message validation before
 forwarding. Both acceptance criteria are empirically met: a testnet of
 20 nodes reaches full gossip connectivity in under 5 seconds, and
-invalid messages are not forwarded (adversarial test). All other
+invalid messages are not forwarded (adversarial test).
+
+**CONSENSUS** (L1 consensus layer, Whitepaper Chap. 3.5 and
+Appendix A.5) has also started implementation: the design decisions are
+made (malachite consensus engine behind a narrow trait boundary with a
+documented custom-build fallback, 2 s block time, a committee of 21
+block-producing validators and 7 adjudicators, 7-day dispute window,
+Reed-Solomon erasure coding k=8/m=4), and the ledger `myl-ledger`
+v0.1.5 has **completed Phase 1** — all state transitions from
+Appendix A.5 (burn→mint_credits, apply_verdict, credit_spend) as pure,
+atomic integer functions, with the acceptance criterion met: replaying
+the same transition sequence yields bit-identical states across two
+independent runs. All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 

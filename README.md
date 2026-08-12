@@ -109,7 +109,19 @@ Atteste) mit Borsh-Payloads und Nachrichtenvalidierung vor
 Weiterverbreitung. Beide Akzeptanzkriterien sind empirisch erfüllt:
 ein Testnetz aus 20 Nodes erreicht Voll-Konnektivität über Gossip in
 unter 5 Sekunden, und ungültige Nachrichten werden nicht
-weiterverbreitet (adversarialer Test). Alle
+weiterverbreitet (adversarialer Test).
+
+**CONSENSUS** (L1-Konsensschicht, Whitepaper Kap. 3.5 und Anhang A.5)
+hat ebenfalls die Implementierung begonnen: Die Design-Entscheidungen
+sind getroffen (malachite-Konsens-Engine hinter schmaler trait-Grenze
+mit dokumentiertem Eigenbau-Fallback, Blockzeit 2 s, Komitee aus 21
+Blockproduktions-Validatoren und 7 Schiedsrichtern, Streitfrist
+7 Tage, Reed-Solomon-Erasure-Coding k=8/m=4), und das Ledger
+`myl-ledger` v0.1.5 hat **Phase 1 vollständig** abgeschlossen — alle
+Zustandsübergänge aus Anhang A.5 (burn→mint_credits, apply_verdict,
+credit_spend) als reine, atomare Ganzzahl-Funktionen, mit erfülltem
+Akzeptanzkriterium: Replay derselben Übergangsfolge liefert auf zwei
+unabhängigen Läufen bitgleiche Zustände. Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 
