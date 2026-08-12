@@ -29,9 +29,11 @@
 #![deny(unsafe_code)]
 
 pub mod config;
+pub mod discovery;
 pub mod identity;
 pub mod node;
 
 pub use config::NetConfig;
+pub use discovery::{bootstrap_from_config, parse_bootstrap_peer, start_bootstrap, DiscoveryError, KAD_PROTOCOL};
 pub use identity::NodeIdentity;
 pub use node::{build_swarm, MylBehaviour};

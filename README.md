@@ -105,9 +105,10 @@ Komponente mit begonnener Implementierung: Die Design-Entscheidungen
 sind getroffen (rust-libp2p, Latenzmessung alle 15 s mit signierten
 Attesten alle 5 Minuten, zwei Verschlüsselungsschichten mit
 verpflichtender Session-E2E-Verschlüsselung — Gateways sind laut
-Kap. 9.2 eine Angreiferklasse), und die Netzwerk-Crate `myl-net` v0.1.1
-liefert das Grundgerüst mit Node-Identität und Swarm-Aufbau
-(Gossipsub/Identify/Ping über TCP/Noise). Alle
+Kap. 9.2 eine Angreiferklasse), und die Netzwerk-Crate `myl-net` v0.1.2
+liefert das Grundgerüst mit Node-Identität, Swarm-Aufbau
+(Gossipsub/Identify/Ping über TCP/Noise) und Peer-Discovery über die
+Kademlia-DHT. Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 
