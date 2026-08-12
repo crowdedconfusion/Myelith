@@ -57,7 +57,7 @@ und Governance:
 │   ├── pipeline/              Mehrknoten-Orchestrierung
 │   ├── calibrate/             Quantisierung/Kalibrierung (Python, Offline-Phase)
 │   └── tests/, eval/, …       Golden Vectors, End-to-End- und Regressionstests
-├── SHARED_TYPES/              protokollweite Kern-Datentypen (Planungsphase)
+├── SHARED_TYPES/              protokollweite Kern-Datentypen (Implementierung begonnen)
 ├── NETWORKING/                P2P-Gossip, Latenztopologie (Planungsphase)
 ├── CONSENSUS/                 BFT, PoI-Abrechnung, Epochen-Zuteilung (Planungsphase)
 ├── VERIFICATION/              Redundanzvergleich, Bisektions-Spiel (Planungsphase)
@@ -87,10 +87,16 @@ Perplexität 15,59 vs. FP 14,95 = +4,29 % (Kriterium max. +5 %),
 Determinismus bit-exakt. Der Beleg ist als Evidenz-Paket gesichert
 (Bit-Identität über 5 × 5 unabhängige Läufe, Top-1-Agreement 89,3 %
 gegen die BF16-Referenz, Parallelgenerierung DE/EN;
-`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`). Alle
-übrigen Komponenten sind in der
-Planungsphase; ihre Umsetzung folgt der im Whitepaper beschriebenen
-Abhängigkeitsordnung.
+`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
+
+**SHARED_TYPES** (protokollweite Kern-Datentypen, Whitepaper Anhang A.1)
+ist die zweite Komponente mit begonnener Implementierung: Die
+Design-Entscheidungen sind getroffen (Rust, SHA-256 als Protokoll-Hash,
+ECVRF mit dokumentiertem Post-Quantum-Migrationspfad, BLS12-381, Borsh;
+Quantum-Hardening ist übergreifende Design-Vorgabe), und das Crate
+`myl-types` v0.1.1 liefert das Grundgerüst mit dem Hash-Newtype. Alle
+übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
+im Whitepaper beschriebenen Abhängigkeitsordnung.
 
 ## Lizenz
 

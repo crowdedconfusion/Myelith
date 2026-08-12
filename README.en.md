@@ -57,7 +57,7 @@ governance cutting across them:
 │   ├── pipeline/              multi-node orchestration
 │   ├── calibrate/             quantization/calibration (Python, offline phase)
 │   └── tests/, eval/, …       golden vectors, end-to-end and regression tests
-├── SHARED_TYPES/              protocol-wide core data types (planning phase)
+├── SHARED_TYPES/              protocol-wide core data types (implementation started)
 ├── NETWORKING/                P2P gossip, latency topology (planning phase)
 ├── CONSENSUS/                 BFT, PoI accounting, epoch allocation (planning phase)
 ├── VERIFICATION/              redundancy comparison, bisection game (planning phase)
@@ -87,9 +87,16 @@ inference: the quality comparison against the floating-point baseline
 secured as an evidence package (bit-identity across 5 × 5 independent
 runs, 89.3 % top-1 agreement against the BF16 reference, parallel
 generation DE/EN; see
-`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`). All
-other components are in the planning phase; their implementation follows
-the dependency order described in the Whitepaper.
+`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
+
+**SHARED_TYPES** (protocol-wide core data types, Whitepaper Appendix A.1)
+is the second component with an active implementation: the design
+decisions are made (Rust, SHA-256 as the protocol hash, ECVRF with a
+documented post-quantum migration path, BLS12-381, Borsh; quantum
+hardening is an overarching design mandate), and the `myl-types` crate
+v0.1.1 provides the scaffold with the `Hash` newtype. All other
+components are in the planning phase; their implementation follows the
+dependency order described in the Whitepaper.
 
 ## License
 
