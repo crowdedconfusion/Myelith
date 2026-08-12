@@ -42,8 +42,18 @@ pub fn build_swarm(
     identity: &NodeIdentity,
     config: &NetConfig,
 ) -> Result<Swarm<MylBehaviour>, Box<dyn std::error::Error + Send + Sync>> {
+    // Gossipsub-Konfiguration:
+    // - `max_transmit_size`: hartes Transport-Größenlimit.
+    // - `validate_messages()`: Nachrichten werden gehalten, bis die
+    //   Validierung (Punkt 1.4, `validation::report`) sie freigibt —
+    //   nichts Ungültiges wird weiterverbreitet.
+    // - `ValidationMode::Strict`: jede Nachricht muss einen gültigen
+    //   Absender mit Signatur tragen — unsignierte/imitierte
+    //   Nachrichten scheitern auf Protokollebene.
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .max_transmit_size(MAX_GOSSIP_MESSAGE_BYTES)
+        .validate_messages()
+        .validation_mode(gossipsub::ValidationMode::Strict)
         .build()
         .map_err(|e| format!("Gossipsub-Konfiguration fehlgeschlagen: {}", e))?;
     let gossipsub = gossipsub::Behaviour::new(

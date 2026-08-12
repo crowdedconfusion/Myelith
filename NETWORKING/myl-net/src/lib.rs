@@ -33,6 +33,8 @@ pub mod discovery;
 pub mod gossip;
 pub mod identity;
 pub mod node;
+pub mod runtime;
+pub mod validation;
 
 pub use config::NetConfig;
 pub use discovery::{bootstrap_from_config, parse_bootstrap_peer, start_bootstrap, DiscoveryError, KAD_PROTOCOL};
@@ -42,3 +44,5 @@ pub use gossip::{
 };
 pub use identity::NodeIdentity;
 pub use node::{build_swarm, MylBehaviour};
+pub use runtime::{run_node, InboundMessage, NodeCommand, NodeEvent};
+pub use validation::{report, topic_from_hash, validate_payload, ValidationError};

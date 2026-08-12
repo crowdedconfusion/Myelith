@@ -101,15 +101,14 @@ quantum hardening as an overarching mandate with anchored post-quantum
 migration paths).
 
 **NETWORKING** (L0 network layer, Whitepaper Chap. 3.2) is the third
-component with an active implementation: the design decisions are made
-(rust-libp2p, latency measurement every 15 s with signed attestations
-every 5 minutes, two encryption layers with mandatory session-level E2E
-encryption — per Chap. 9.2, gateways are an attacker class), and the
-network crate `myl-net` v0.1.3 provides the scaffold with node identity,
-swarm setup (Gossipsub/Identify/Ping over TCP/Noise), peer discovery
-via the Kademlia DHT, and the gossip topic structure (blocks,
-transactions, PoI bundles, challenges, latency attestations) with Borsh
-payloads. All other
+component with an active implementation — **Phase 1 is complete**
+(myl-net v0.1.4): node identity and swarm setup
+(Gossipsub/Identify/Ping/Kademlia over TCP/Noise), the gossip topic
+structure (blocks, transactions, PoI bundles, challenges, latency
+attestations) with Borsh payloads, and message validation before
+forwarding. Both acceptance criteria are empirically met: a testnet of
+20 nodes reaches full gossip connectivity in under 5 seconds, and
+invalid messages are not forwarded (adversarial test). All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 

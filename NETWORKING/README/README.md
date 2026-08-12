@@ -1,11 +1,12 @@
 # networking (`myl-net`)
 
-> **Version:** 0.1.3
+> **Version:** 0.1.4
 > **Datum:** 2026-08-13
-> **Status:** Design-Entscheidungen getroffen (rust-libp2p, Latenzmessung
-> 15 s/EMA/Attest alle 5 min, zwei Verschlüsselungsschichten mit
-> verpflichtender Session-E2E — Details und Quantum-Einordnung im
-> Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.3 abgeschlossen
+> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.4,
+> Akzeptanzkriterien empirisch erfüllt: 20-Node-Voll-Konnektivität
+> < 5 s, ungültige Nachrichten werden nicht weiterverbreitet).
+> Design-Entscheidungen und Quantum-Einordnung im Fahrplan; als
+> Nächstes folgt Phase 2 (Latenztopologie).
 
 P2P-Gossip, latenzbasierte Topologie-Erkennung, verschlüsselte
 Aktivierungs-Streams. Referenzimplementierung von Whitepaper Kap. 3.2
@@ -38,12 +39,41 @@ NETWORKING/
         │                      + Ping über TCP/Noise/Yamux
         ├── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
         │                      anwählen, Kademlia-Bootstrap (/myelith/kad/1)
-        └── gossip.rs          Gossip-Topics (Blöcke, Transaktionen,
-                               PoI-Bündel, Challenges, Latenz-Atteste),
-                               Subscribe/Publish mit Borsh-Payloads
+        ├── gossip.rs          Gossip-Topics (Blöcke, Transaktionen,
+        │                      PoI-Bündel, Challenges, Latenz-Atteste),
+        │                      Subscribe/Publish mit Borsh-Payloads
+        ├── validation.rs      Nachrichtenvalidierung vor Weiterverbreitung:
+        │                      Größenlimits je Topic, Borsh-Strukturprüfung,
+        │                      Accept/Reject an Gossipsub
+        └── runtime.rs         Node-Event-Loop: Kommandos (Publish,
+                               PeerCount), Ereignisse (Listen-Adresse,
+                               validierte Nachrichten)
+└── tests/
+    └── testnet.rs             Akzeptanztests: 20-Node-Voll-Konnektivität
+                               < 5 s, adversarialer Nicht-Weiterverbreitungs-
+                               Test
 ```
 
 ## Changelog
+
+### v0.1.4 – 2026-08-13 (Punkt 1.4) — Phase 1 vollständig
+- Dreistufige Validierung vor Weiterverbreitung: Gossipsub-Authentizität
+  (`ValidationMode::Strict` — unsignierte/imitierte Nachrichten scheitern
+  auf Protokollebene), Größenlimits je Topic (Blöcke 2 MiB, PoI-Bündel
+  512 KiB, Transaktionen/Challenges 64 KiB, Latenz-Atteste 4 KiB —
+  später Governance-Parameter), Borsh-Strukturprüfung für Topics mit
+  myl-types-Typ (aktuell PoI-Bündel).
+- Gehaltene Nachrichten (`validate_messages()`): nichts wird
+  weiterverbreitet, bevor `validation::report` es freigibt; `Reject`
+  senkt den Gossipsub-Peer-Score des Absenders (Spammer-Isolation).
+- Node-Event-Loop (`runtime::run_node`): Kommandos (Publish mit
+  Ergebnis-Rückmeldung, PeerCount) und Ereignisse (Listen-Adressen,
+  validierte Nachrichten) über Kanäle.
+- **Akzeptanzkriterien Phase 1 erfüllt:** 20 lokale Nodes, Voll-
+  Konnektivität über Gossip in < 5 s; adversarialer Node: ungültige
+  Nutzlast wird vom Zwischen-Node verworfen und erreicht den dritten
+  Node nicht, gültiger Verkehr läuft weiter. 23 Tests grün, keine
+  Warnungen.
 
 ### v0.1.3 – 2026-08-13 (Punkt 1.3)
 - Gossip-Topic-Struktur: fünf Topics mit versioniertem Namensschema

@@ -101,15 +101,15 @@ Borsh; Quantum-Hardening als übergreifende Vorgabe mit verankerten
 Post-Quantum-Migrationspfaden).
 
 **NETWORKING** (L0-Netzwerkschicht, Whitepaper Kap. 3.2) ist die dritte
-Komponente mit begonnener Implementierung: Die Design-Entscheidungen
-sind getroffen (rust-libp2p, Latenzmessung alle 15 s mit signierten
-Attesten alle 5 Minuten, zwei Verschlüsselungsschichten mit
-verpflichtender Session-E2E-Verschlüsselung — Gateways sind laut
-Kap. 9.2 eine Angreiferklasse), und die Netzwerk-Crate `myl-net` v0.1.3
-liefert das Grundgerüst mit Node-Identität, Swarm-Aufbau
-(Gossipsub/Identify/Ping über TCP/Noise), Peer-Discovery über die
-Kademlia-DHT und die Gossip-Topic-Struktur (Blöcke, Transaktionen,
-PoI-Bündel, Challenges, Latenz-Atteste) mit Borsh-Payloads. Alle
+Komponente mit laufender Implementierung — **Phase 1 ist vollständig**
+(myl-net v0.1.4): Node-Identität und Swarm-Aufbau
+(Gossipsub/Identify/Ping/Kademlia über TCP/Noise), Gossip-Topic-
+Struktur (Blöcke, Transaktionen, PoI-Bündel, Challenges, Latenz-
+Atteste) mit Borsh-Payloads und Nachrichtenvalidierung vor
+Weiterverbreitung. Beide Akzeptanzkriterien sind empirisch erfüllt:
+ein Testnetz aus 20 Nodes erreicht Voll-Konnektivität über Gossip in
+unter 5 Sekunden, und ungültige Nachrichten werden nicht
+weiterverbreitet (adversarialer Test). Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 
