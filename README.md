@@ -1,4 +1,4 @@
-![Myelith — Ein dezentrales Netzwerk, in dem Konsensarbeit ein agentisches Sprachmodell betreibt](README/Whitepaper/myelith-v0.3/myelith-banner.png)
+![Myelith — Ein dezentrales Netzwerk, in dem Konsensarbeit ein agentisches Sprachmodell betreibt](README/Grafiken/myelith-banner.png)
 
 Dieses README ist auch auf [Englisch](README.en.md) verfügbar.
 
@@ -50,6 +50,7 @@ und Governance:
 ├── README.md                  diese Datei (Deutsch)
 ├── README.en.md               English version of this file
 ├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + Simulationen
+├── README/Grafiken/           Titelgrafiken und Abbildungen (DE/EN)
 ├── INTEGER_LLM/               bit-exakte Ganzzahl-Inferenz (Rust + Python)
 │   ├── kernels/               Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Attention, …)
 │   ├── runtime/               Modell-Loader, Forward-Pass, KV-Cache, CLI

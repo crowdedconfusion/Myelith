@@ -1,4 +1,4 @@
-![Myelith — A decentralized network in which consensus work powers an agentic language model](README/Whitepaper/myelith-v0.3/myelith-banner-en.png)
+![Myelith — A decentralized network in which consensus work powers an agentic language model](README/Grafiken/myelith-banner-en.png)
 
 This README is also available in [German](README.md).
 
@@ -50,6 +50,7 @@ governance cutting across them:
 ├── README.md                  German version of this file
 ├── README.en.md               this file
 ├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + simulations
+├── README/Grafiken/           title banners and figures (DE/EN)
 ├── INTEGER_LLM/               bit-exact integer inference (Rust + Python)
 │   ├── kernels/               compute kernels (RMSNorm, W8A8 linear, RoPE, attention, …)
 │   ├── runtime/               model loader, forward pass, KV cache, CLI
