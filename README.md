@@ -1,4 +1,6 @@
-# Myelith
+![Myelith — Ein dezentrales Netzwerk, in dem Konsensarbeit ein agentisches Sprachmodell betreibt](README/Whitepaper/myelith-v0.3/myelith-banner.png)
+
+Dieses README ist auch auf [Englisch](README.en.md) verfügbar.
 
 Myelith ist ein dezentrales Netzwerk, in dem dieselbe Rechenarbeit, die den
 Konsens sichert, zugleich ein großes agentisches Sprachmodell betreibt
@@ -45,7 +47,8 @@ und Governance:
 
 ```
 ├── LICENSE.md                 PolyForm Shield License 1.0.0
-├── README.md                  diese Datei
+├── README.md                  diese Datei (Deutsch)
+├── README.en.md               English version of this file
 ├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + Simulationen
 ├── INTEGER_LLM/               bit-exakte Ganzzahl-Inferenz (Rust + Python)
 │   ├── kernels/               Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Attention, …)
