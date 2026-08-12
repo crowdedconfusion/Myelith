@@ -21,7 +21,9 @@
 
 #![deny(unsafe_code)]
 
+pub mod distribute;
 pub mod ema;
+pub mod mint;
 
 /// Anzahl der Kleinstbeträge je MYL (1 MYL = 10⁶ Kleinstbeträge).
 pub const UNITS_PER_MYL: u64 = 1_000_000;
@@ -30,4 +32,10 @@ pub const UNITS_PER_MYL: u64 = 1_000_000;
 /// Token-Forward-Äquivalenten (symmetrisch zu [`UNITS_PER_MYL`]).
 pub const VTFE_UNITS_PER_TFE: u64 = 1_000_000;
 
+pub use distribute::{
+    distribute_mint, redundancy_normalized_weight, split_proportional, Distribution,
+    DistributeError, SHARE_CHECKERS_BPS, SHARE_COORDINATORS_BPS, SHARE_SHARD_MINERS_BPS,
+    SHARE_TREASURY_BPS, SHARE_VALIDATORS_BPS, SHARES_TOTAL_BPS,
+};
 pub use ema::{ema_update, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
+pub use mint::{mint_amount, MintParams};
