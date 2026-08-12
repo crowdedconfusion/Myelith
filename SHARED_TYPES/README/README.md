@@ -1,11 +1,11 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.1.3
-> **Datum:** 2026-08-12
+> **Version:** 0.1.4
+> **Datum:** 2026-08-13
 > **Status:** Design-Entscheidungen getroffen (Rust, SHA-256, ECVRF mit
 > dokumentiertem PQ-Migrationspfad, BLS12-381, Borsh — Details und
-> Quantum-Einordnung im Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.3
-> abgeschlossen (`myl-types` v0.1.3: Hash, Merkle-Baum, VRF)
+> Quantum-Einordnung im Fahrplan), Phase 1 in Umsetzung; Punkte 1.1–1.4
+> abgeschlossen (`myl-types` v0.1.4: Hash, Merkle-Baum, VRF, BLS)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -34,11 +34,28 @@ SHARED_TYPES/
         │                      Borsh, Hex-Darstellung
         ├── merkle.rs          Merkle-Baum: Aufbau, Beweis-Erzeugung/-Prüfung,
         │                      Domain-Separation, Borsh-Beweise
-        └── vrf.rs             VRF: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381),
-                               Kanonizitätsprüfung, RFC-Testvektoren
+        ├── vrf.rs             VRF: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381),
+        │                      Kanonizitätsprüfung, RFC-Testvektoren
+        └── bls.rs             BLS12-381 (min-pk, blst): KeyGen, Signatur,
+                               Aggregation, FastAggregateVerify/AggregateVerify
 ```
 
 ## Changelog
+
+### v0.1.4 – 2026-08-13 (Punkt 1.4)
+- BLS-Signaturschnittstelle: BLS12-381 in der min-pk-Variante
+  (Public Key G1/48 B, Signatur G2/96 B, Ethereum-DST
+  `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_`) über das `blst`-Crate
+  (Supranational-Referenzimplementierung).
+- KeyGen nach BLS-Draft §2.3 (HKDF, IKM ≥ 32 Bytes), deterministisches
+  Signieren, `aggregate_signatures`, `fast_aggregate_verify` (der
+  PoI-Bündel-Fall: gleiche Nachricht, viele Unterzeichner) und
+  `aggregate_verify` (verschiedene Nachrichten).
+- Konsens-Sicherheitsfestlegungen: Signatur-Gruppenprüfung bei jeder
+  Verifikation, Public-Key-Validierung (Identität + Untergruppe) vor
+  jeder Aggregat-Verifikation als Rogue-Key-Schutz.
+- Geheimschlüssel-Typ bewusst ohne Debug/PartialEq/öffentliche
+  Serialisierung — 44 Tests grün, keine Warnungen.
 
 ### v0.1.3 – 2026-08-12 (Punkt 1.3)
 - VRF-Schnittstelle: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381 §5.5) —

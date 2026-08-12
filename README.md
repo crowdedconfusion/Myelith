@@ -94,9 +94,10 @@ ist die zweite Komponente mit begonnener Implementierung: Die
 Design-Entscheidungen sind getroffen (Rust, SHA-256 als Protokoll-Hash,
 ECVRF mit dokumentiertem Post-Quantum-Migrationspfad, BLS12-381, Borsh;
 Quantum-Hardening ist übergreifende Design-Vorgabe). Das Crate
-`myl-types` v0.1.3 liefert bereits Hash-Newtype, Merkle-Baum und die
+`myl-types` v0.1.4 liefert bereits Hash-Newtype, Merkle-Baum, die
 VRF-Schnittstelle (ECVRF nach RFC 9381, gegen die offiziellen
-RFC-Testvektoren bit-exakt geprüft). Alle
+RFC-Testvektoren bit-exakt geprüft) und die BLS12-381-Signaturen
+(min-pk, inkl. Signatur-Aggregation für die PoI-Bündel). Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 

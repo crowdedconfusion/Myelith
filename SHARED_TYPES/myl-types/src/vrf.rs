@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn verifikation_lehnt_falsche_eingabe_ab() {
-        let (sk_hex, pk_hex, alpha_hex, pi_hex, _) = VECTORS[0];
+        let (_, pk_hex, _, pi_hex, _) = VECTORS[0];
         let pk = VrfPublicKey(hex_arr(pk_hex));
         let proof = VrfProof(hex_arr(pi_hex));
         assert_eq!(
