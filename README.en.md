@@ -52,7 +52,7 @@ governance cutting across them:
 ## Components
 
 Each component has its own folder with a roadmap, design decisions, and
-tests — the details live there, not here:
+tests:
 
 | Component | Task | Status |
 |---|---|---|

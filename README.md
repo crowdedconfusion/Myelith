@@ -52,7 +52,7 @@ Training und Governance:
 ## Komponenten
 
 Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen
-und Tests — die Details stehen dort, nicht hier:
+und Tests:
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
