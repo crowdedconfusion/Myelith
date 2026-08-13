@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.34
+> **Version:** 0.12.35
 > **Datum:** 2026-08-13
-> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. **v0.12.33 (Evidenz-Paket):** der Beleg ist plastisch gesichert — Bit-Identität über 5 Prompts × 5 unabhängige Läufe (Token-Hash + SHA-256 identisch), Parallelgenerierung DE/EN + Top-1-Agreement 89,3 % gegen die BF16-Referenz, Durchsatz-Basis ~19 tok/s (Referenz-Backend). Zusammenfassung: [`docs/02_empirischer_beleg_bit-exakte-inferenz.md`](../docs/02_empirischer_beleg_bit-exakte-inferenz.md). Determinismus PASSED, alle Test-Suiten grün.
+> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. **v0.12.33 (Evidenz-Paket):** der Beleg ist plastisch gesichert — Bit-Identität über 5 Prompts × 5 unabhängige Läufe (Token-Hash + SHA-256 identisch), Parallelgenerierung DE/EN + Top-1-Agreement 89,3 % gegen die BF16-Referenz, Durchsatz-Basis ~19 tok/s (Referenz-Backend). Zusammenfassung: [`docs/02_empirischer_beleg_bit-exakte-inferenz.md`](../docs/02_empirischer_beleg_bit-exakte-inferenz.md). Determinismus PASSED, alle Test-Suiten grün. **v0.12.35 (Zahlensemantik-Audit, Phase 12.22–12.25):** Audit-Suite unter `tests/audit/` — Gleitkomma-Audit (null Treffer im Heißpfad), Skalen-Zweierpotenz-Prüfung, fixierte Divisionssemantik- und Überlaufvektoren; `theta_v/spec.json` erklärt das Überlaufverhalten explizit; alle Audits bestehen.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -143,6 +143,24 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.35 – 2026-08-13 (Phase 12.22–12.25, Zahlensemantik-Audit)
+- **Audit-Suite `tests/audit/`** sichert die Kerneigenschaft automatisch:
+  - `test_no_float.py`: Gleitkomma-Audit des Heißpfads (20 Dateien,
+    null Treffer; erlaubte Zonen = Test-Fixtures/golden_runner/loader
+    dokumentiert).
+  - `test_scales.py`: alle 314 Skalen sind Zweierpotenzen
+    (shift ganzzahlig, scale == 2^-shift).
+  - `test_division.py` + `fixed_point::division_semantics_vector`:
+    fixierte Divisionssemantik (arithmetischer Rechtsshift,
+    Round-to-nearest-even), 21 Vektoren, Kreuzvalidierung Rust↔Python.
+  - `test_overflow.py` + `fixed_point::overflow_saturation_vector`:
+    Sättigung (kein Wrap), fixierte Sättigungsgrenzen.
+- `theta_v/spec.json` erklärt das Überlaufverhalten explizit
+  (`overflow.behavior = explicit_clamp_only`, `wrap = false`,
+  Sättigungsgrenzen i8/i16/i32).
+- Volle Suiten grün: kernels 32, runtime 44; alle vier Audit-Skripte
+  bestehen.
 
 ### v0.12.34 – 2026-08-13 (Phasen 12.56–12.59 + 12.60–12.63)
 - **Multi-Node-Pipeline mit echter Inferenz:** Die Stage-Runtime führt

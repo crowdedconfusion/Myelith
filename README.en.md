@@ -74,7 +74,7 @@ Each component contains a `README/` describing its purpose and status.
 ## Current state
 
 **INTEGER_LLM** is the only component with an active implementation
-(v0.12.34): fully integer inference on a Qwen2.5-0.5B base (int8 weights
+(v0.12.35): fully integer inference on a Qwen2.5-0.5B base (int8 weights
 with per-channel power-of-two scales, int16 activations with calibrated
 per-layer scales), with loader, model forward pass (including
 grouped-query attention, Q/K/V biases, and multi-frequency RoPE),
@@ -91,7 +91,10 @@ generation DE/EN; see
 multi-node pipeline (4 stages on 4 nodes) performs real layer execution
 and provably produces token sequences bit-identical to the single-node
 runtime — even under artificial latency, packet loss (retry logic), and
-node restarts.
+node restarts. A numeric-semantics audit automatically secures the core
+property (a floating-point audit with zero hot-path hits, a
+power-of-two scale check, and pinned division-semantics and overflow
+vectors).
 
 **SHARED_TYPES** (protocol-wide core data types, Whitepaper Appendix A.1)
 is the second component with an active implementation — **Phase 1 is

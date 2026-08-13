@@ -74,7 +74,7 @@ Jede Komponente enthält ein `README/` mit Zielbeschreibung und Status.
 ## Stand
 
 **INTEGER_LLM** ist die einzige Komponente mit laufender Implementierung
-(v0.12.34): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
+(v0.12.35): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
 mit Per-Channel-Zweierpotenz-Skalen, Aktivierungen int16 mit kalibrierten
 Per-Layer-Skalen), mit Loader, Modell-Forward-Pass (inkl. Grouped-Query-
 Attention, Q/K/V-Biases und Multi-Frequenz-RoPE), theta_v-
@@ -91,11 +91,14 @@ gegen die BF16-Referenz, Parallelgenerierung DE/EN;
 Multi-Node-Pipeline (4 Stages auf 4 Nodes) führt echte Layer-Ausführung
 aus und erzeugt nachweislich bitgleiche Token-Sequenzen mit der
 Einzelknoten-Runtime — auch unter künstlicher Latenz, Paketverlust
-(Retry-Logik) und Node-Neustarts.
+(Retry-Logik) und Node-Neustarts. Ein Zahlensemantik-Audit sichert die
+Kerneigenschaft automatisch (Gleitkomma-Audit mit null Treffern im
+Heißpfad, Skalen-Zweierpotenz-Prüfung, fixierte Divisionssemantik- und
+Überlaufvektoren).
 
 **SHARED_TYPES** (protokollweite Kern-Datentypen, Whitepaper Anhang A.1)
 ist die zweite Komponente mit laufender Implementierung — **Phase 1 ist
-vollständig** (myl-types v0.1.6): Hash-Newtype, Merkle-Baum, die
+vollständig** (myl-types v0.1.7): Hash-Newtype, Merkle-Baum, die
 VRF-Schnittstelle (ECVRF nach RFC 9381, gegen die offiziellen
 RFC-Testvektoren bit-exakt geprüft), BLS12-381-Signaturen (min-pk, inkl.
 Signatur-Aggregation und Rogue-Key-Schutz für die PoI-Bündel) sowie die
