@@ -232,17 +232,19 @@ Die Begründung ist keine Latenzfrage, sondern die Grundlage der Stufe-1-Sicherh
 Der native Coin **MYL** erfüllt drei Funktionen: Sicherung des Konsenses (Staking), Vergütung der Miner (Minting) und Bezahlung der Inferenz (Burning). Der Kreislauf ist geschlossen:
 
 ```
-                 ┌──────────────────────────────┐
-                 │                              │
-   Nutzer ──burn MYL──► Inferenz-Credits (IC)   │
-                 │            │                 │
-                 │            ▼                 │
-                 │      Pods leisten Arbeit     │
-                 │            │                 │
-                 │            ▼                 │
-                 │   bestätigte PoI-Bündel      │
-                 │            │                 │
-                 └──mint MYL──┘ (an Miner)      
+┌─── Markt: Miner verkauft MYL an Nutzer ───┐
+│                                           │
+▼                                           │
+Nutzer ──burn MYL──► Inferenz-Credits (IC)  │
+                     │                      │
+                     ▼                      │
+                     Pods leisten Arbeit    │
+                     │                      │
+                     ▼                      │
+                     bestätigte PoI-Bündel  │
+                     │                      │
+                     ▼                      │
+                     mint MYL ──► Miner─────┘
 ```
 
 Training fügt diesem Kreislauf keine zweite Geldquelle hinzu, sondern eine Rückkopplung: Verbessert sich die Modellqualität, steigt die Nachfrage und damit der Burn, aus dem sich die Prägung speist. Die Ausgabe für Training rechtfertigt sich also über die Nachfrage, die sie erzeugt, nicht über die aufgewandte Rechenzeit (Anhang B.7).

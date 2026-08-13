@@ -229,17 +229,19 @@ The rationale is not a latency question but the foundation of Tier-1 security: r
 The native coin **MYL** serves three functions: securing consensus (staking), compensating miners (minting), and paying for inference (burning). The cycle is closed:
 
 ```
-                 ┌──────────────────────────────┐
-                 │                              │
-   Users ──burn MYL──► inference credits (IC)   │
-                 │            │                 │
-                 │            ▼                 │
-                 │      pods perform work       │
-                 │            │                 │
-                 │            ▼                 │
-                 │   confirmed PoI bundles      │
-                 │            │                 │
-                 └──mint MYL──┘ (to miners)     
+┌──── Market: miners sell MYL to users ─────┐
+│                                           │
+▼                                           │
+Users ──burn MYL──► inference credits (IC)  │
+                    │                       │
+                    ▼                       │
+                    pods perform work       │
+                    │                       │
+                    ▼                       │
+                    confirmed PoI bundles   │
+                    │                       │
+                    ▼                       │
+                    mint MYL ──► miners─────┘
 ```
 
 Training adds no second source of money to this cycle but a feedback loop: if model quality improves, demand rises and with it the burn from which minting is fed. Expenditure on training thus justifies itself through the demand it creates, not through the compute time expended (Appendix B.7).
