@@ -13,12 +13,12 @@ verified work.
 
 The complete architecture, tokenomics, verification model, and open
 research questions are set out in Whitepaper v0.3:
-[German (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.md) /
-[German (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.pdf) /
-[English (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.md) /
-[English (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.pdf).
+[German (MD)](README/Whitepaper/myelith-whitepaper-v0.3.md) /
+[German (PDF)](README/Whitepaper/myelith-whitepaper-v0.3.pdf) /
+[English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) /
+[English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
 The simulation programs for Appendix B live under
-[`README/Whitepaper/myelith-v0.3/simulations/`](README/Whitepaper/myelith-v0.3/simulations/).
+[`README/Whitepaper/simulations/`](README/Whitepaper/simulations/).
 
 ## Core thesis
 
@@ -50,6 +50,7 @@ governance cutting across them:
 ├── README.md                  German version of this file
 ├── README.en.md               this file
 ├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + simulations
+│   └── Archiv/                 earlier versions (v0.1 "Myelin", v0.2)
 ├── README/Grafiken/           title banners and figures (DE/EN)
 ├── INTEGER_LLM/               bit-exact integer inference (Rust + Python)
 │   ├── kernels/               compute kernels (RMSNorm, W8A8 linear, RoPE, attention, …)

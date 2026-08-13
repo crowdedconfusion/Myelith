@@ -13,12 +13,12 @@ proportional zur verifizierten Arbeit.
 
 Die vollständige Architektur, Tokenomics, das Verifikationsmodell und die
 offenen Forschungsfragen stehen im Whitepaper v0.3:
-[Deutsch (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.md) /
-[Deutsch (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3.pdf) /
-[English (MD)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.md) /
-[English (PDF)](README/Whitepaper/myelith-v0.3/myelith-whitepaper-v0.3-en.pdf).
+[Deutsch (MD)](README/Whitepaper/myelith-whitepaper-v0.3.md) /
+[Deutsch (PDF)](README/Whitepaper/myelith-whitepaper-v0.3.pdf) /
+[English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) /
+[English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
 Die Simulationsprogramme zu Anhang B liegen unter
-[`README/Whitepaper/myelith-v0.3/simulations/`](README/Whitepaper/myelith-v0.3/simulations/).
+[`README/Whitepaper/simulations/`](README/Whitepaper/simulations/).
 
 ## Kernthese
 
