@@ -51,8 +51,7 @@ Training und Governance:
 
 ## Komponenten
 
-Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen
-und Tests:
+Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und Tests, welche nachfolgend aufgeführt sind:
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
