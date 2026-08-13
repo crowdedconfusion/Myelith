@@ -58,11 +58,11 @@ und Governance:
 │   ├── calibrate/             Quantisierung/Kalibrierung (Python, Offline-Phase)
 │   └── tests/, eval/, …       Golden Vectors, End-to-End- und Regressionstests
 ├── SHARED_TYPES/              protokollweite Kern-Datentypen (Implementierung begonnen)
-├── NETWORKING/                P2P-Gossip, Latenztopologie (Planungsphase)
-├── CONSENSUS/                 BFT, PoI-Abrechnung, Epochen-Zuteilung (Planungsphase)
+├── NETWORKING/                P2P-Gossip, Latenztopologie (Implementierung begonnen)
+├── CONSENSUS/                 BFT, PoI-Abrechnung, Epochen-Zuteilung (Implementierung begonnen)
 ├── VERIFICATION/              Redundanzvergleich, Bisektions-Spiel (Planungsphase)
-├── TOKENOMICS/                Prägefunktion, Burn-and-Mint (Planungsphase)
-├── COMPUTE_PIPELINE/          Pod-Orchestrierung über echtes Netz (Planungsphase)
+├── TOKENOMICS/                Prägefunktion, Burn-and-Mint (Implementierung begonnen)
+├── COMPUTE_PIPELINE/          Pod-Orchestrierung über echtes Netz (Implementierung begonnen)
 ├── AGENT_LAYER/               Session-Kontrakte, Dual-LLM-Trennung (Planungsphase)
 ├── TRAINING/                  Datenprovenienz, robuste Aggregation (Planungsphase)
 ├── GOVERNANCE/                Parameter-Registry, Modell-Updates (Planungsphase)
@@ -135,7 +135,19 @@ vollständig** abgeschlossen — ganzzahlige EMA für das geglättete
 Burn-Volumen, Prägefunktion, die Kap.-5.3-Verteilung (78/5/10/4/3 % mit
 exakter Summen-Invariante) und die Trainingsvergütungs-Obergrenze;
 Akzeptanzkriterium erfüllt (10.000-Epochen-Determinismus- und
-Verteilungsexaktheitstests). Alle
+Verteilungsexaktheitstests).
+
+**COMPUTE_PIPELINE** (L2-Compute-Schicht, Whitepaper Kap. 4 und Anhang
+A.3) hat ebenfalls die Implementierung begonnen: Die Design-Entscheidungen
+sind getroffen (separates Crate `myl-pod`, Micro-Batching-Fenster 250 ms,
+Draft-Modell-Richtung Layer-Subset aus derselben θ_v-Familie), und
+`myl-pod` v0.1.4 hat **Phase 1 vollständig** abgeschlossen — der
+Pod-Mining-Loop (`shard_loop`) mit Spur-Hashes und Manipulationserkennung,
+`coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität und
+erasure-codierter DA-Archivierung. Akzeptanzkriterien erfüllt: Ein
+4-Node-Pod liefert bei wiederholtem identischem Prompt eine bitgleiche
+Token-Sequenz und ist dabei bitgleich mit der Einzelknoten-Runtime; die
+Eingangs-Hash-Prüfung lehnt manipulierte Aktivierungen ab. Alle
 übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
 im Whitepaper beschriebenen Abhängigkeitsordnung.
 

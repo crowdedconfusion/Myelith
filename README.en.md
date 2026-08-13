@@ -58,11 +58,11 @@ governance cutting across them:
 │   ├── calibrate/             quantization/calibration (Python, offline phase)
 │   └── tests/, eval/, …       golden vectors, end-to-end and regression tests
 ├── SHARED_TYPES/              protocol-wide core data types (implementation started)
-├── NETWORKING/                P2P gossip, latency topology (planning phase)
-├── CONSENSUS/                 BFT, PoI accounting, epoch allocation (planning phase)
+├── NETWORKING/                P2P gossip, latency topology (implementation started)
+├── CONSENSUS/                 BFT, PoI accounting, epoch allocation (implementation started)
 ├── VERIFICATION/              redundancy comparison, bisection game (planning phase)
-├── TOKENOMICS/                minting function, burn-and-mint (planning phase)
-├── COMPUTE_PIPELINE/          pod orchestration over a real network (planning phase)
+├── TOKENOMICS/                minting function, burn-and-mint (implementation started)
+├── COMPUTE_PIPELINE/          pod orchestration over a real network (implementation started)
 ├── AGENT_LAYER/               session contracts, dual-LLM separation (planning phase)
 ├── TRAINING/                  data provenance, robust aggregation (planning phase)
 ├── GOVERNANCE/                parameter registry, model updates (planning phase)
@@ -133,7 +133,19 @@ the design decisions are made (fixed-point integer arithmetic,
 smoothed burn volume, the minting function, the Chap.-5.3 distribution
 (78/5/10/4/3 % with an exact-sum invariant), and the training-reward
 cap; the acceptance criterion is met (10,000-epoch determinism and
-distribution-exactness tests). All other
+distribution-exactness tests).
+
+**COMPUTE_PIPELINE** (L2 compute layer, Whitepaper Chap. 4 and Appendix
+A.3) has also started implementation: the design decisions are made
+(separate crate `myl-pod`, 250 ms micro-batching window, draft-model
+direction layer-subset from the same θ_v family), and `myl-pod` v0.1.4
+has **completed Phase 1** — the pod mining loop (`shard_loop`) with
+trace hashes and tamper detection, `coordinator_loop` with
+micro-batching, KV-cache session affinity, and erasure-coded DA
+archiving. The acceptance criteria are met: a 4-node pod produces a
+bit-identical token sequence on a repeated identical prompt and is
+bit-identical to the single-node runtime; the input-hash check rejects
+tampered activations. All other
 components are in the planning phase; their implementation follows the
 dependency order described in the Whitepaper.
 

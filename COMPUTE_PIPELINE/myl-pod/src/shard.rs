@@ -1,0 +1,333 @@
+//! Shard-Knoten: der Mining-Loop eines einzelnen Shards (Anhang A.3,
+//! `shard_loop`).
+//!
+//! Verarbeitungsschritte je Nachricht (eine Token-Position):
+//! 1. Aktivierungen vom Vorgänger empfangen (oder Token-Embedding für
+//!    Shard 0).
+//! 2. **Eingangs-Hash gegen die Spur prüfen** (Manipulationserkennung) —
+//!    manipulierte Aktivierungen werden verworfen.
+//! 3. Forward-Pass über die INTEGER_LLM-Stage-API (deterministisch,
+//!    θ_v-konform).
+//! 4. Spur fortschreiben (Ausgabe-Hash anhängen), Übergang BLS-signieren,
+//!    Aktivierungen weiterreichen.
+//! 5. KV-Cache der Session lokal fortschreiben (Session-Affinität).
+//! 6. Aktivierungen erasure-codiert für die Streitfrist archivieren.
+//!
+//! Eine Nachricht trägt genau eine Token-Position; der Prompt wird als
+//! Folge von Nachrichten verarbeitet.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use integer_llm_kernels::fixed_point::{clamp_i16, rescale};
+use integer_llm_runtime::kv_cache::KVCache;
+use integer_llm_runtime::model::IntegerModel;
+use myl_types::bls::{BlsPublicKey, BlsSecretKey};
+
+use crate::da::DaStore;
+use crate::trace::{activation_hash, verify_input_hash, TransitionSig, ZERO_HASH};
+use crate::wire::{unpack_tokens, PodMessage, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
+
+/// Ausgabe eines Shard-Schritts.
+#[derive(Debug)]
+pub enum ShardOut {
+    /// Aktivierungen an den nächsten Shard weiterreichen.
+    Forward(PodMessage),
+    /// Letzter Shard hat ein Token gesampelt (autoregressive Ausgabe).
+    Token {
+        token: u32,
+        position: u64,
+        /// Feedback-Nachricht an Shard 0 (falls die Generation weitergeht).
+        feedback: Option<PodMessage>,
+    },
+    /// Prefill-Position: KV-Cache wurde fortgeschrieben, aber es wird
+    /// kein Token emittiert (nur die letzte Prompt-Position und
+    /// Feedback-Nachrichten sampeln).
+    Prefill,
+}
+
+/// Ein Shard-Miner im Pod.
+pub struct ShardNode {
+    pub shard_index: usize,
+    pub layer_start: usize,
+    pub layer_end: usize,
+    pub has_embedding: bool,
+    pub has_lm_head: bool,
+    model: Arc<IntegerModel>,
+    bls_sk: BlsSecretKey,
+    bls_pk: BlsPublicKey,
+    /// KV-Cache je Session (Session-Affinität, Kap. 4.2).
+    caches: Mutex<HashMap<u64, KVCache>>,
+    /// DA-Archiv für die Streitfrist.
+    da: Mutex<DaStore>,
+    /// Gemeinsame Boundary-Skala auf dem Draht.
+    boundary_frac: u8,
+    /// Budget an zu generierenden Tokens je Request.
+    max_new_tokens: u64,
+    /// Generierungs-Zähler je Session.
+    gen_count: Mutex<HashMap<u64, u64>>,
+}
+
+impl ShardNode {
+    pub fn new(
+        shard_index: usize,
+        layer_start: usize,
+        layer_end: usize,
+        has_embedding: bool,
+        has_lm_head: bool,
+        model: Arc<IntegerModel>,
+        bls_sk: BlsSecretKey,
+        boundary_frac: u8,
+        da: DaStore,
+        max_new_tokens: u64,
+    ) -> Self {
+        let bls_pk = bls_sk.public_key().expect("BLS Public Key");
+        Self {
+            shard_index,
+            layer_start,
+            layer_end,
+            has_embedding,
+            has_lm_head,
+            model,
+            bls_sk,
+            bls_pk,
+            caches: Mutex::new(HashMap::new()),
+            da: Mutex::new(da),
+            boundary_frac,
+            max_new_tokens,
+            gen_count: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn public_key(&self) -> BlsPublicKey {
+        self.bls_pk
+    }
+
+    /// Natürliche Eingangsskala dieses Shards.
+    fn input_scale(&self) -> u8 {
+        self.model.layers[self.layer_start].scales.residual_in_frac
+    }
+
+    /// Natürliche Ausgangsskala dieses Shards.
+    fn output_scale(&self) -> u8 {
+        if self.layer_end < self.model.num_layers {
+            self.model.layers[self.layer_end].scales.residual_in_frac
+        } else {
+            self.model.final_residual_frac
+        }
+    }
+
+    /// Reskaliert einen Hidden-Vektor von `from` nach `to`.
+    fn rescale_vec(&self, hidden: &[i16], from: u8, to: u8) -> Vec<i16> {
+        if from == to {
+            return hidden.to_vec();
+        }
+        hidden
+            .iter()
+            .map(|v| clamp_i16(rescale(*v as i32, from, to)))
+            .collect()
+    }
+
+    /// KV-Cache einer Session entnehmen oder anlegen.
+    fn take_cache(&self, session_id: u64) -> KVCache {
+        let mut caches = self.caches.lock().unwrap();
+        caches.remove(&session_id).unwrap_or_else(|| {
+            KVCache::for_range(self.layer_start, self.layer_end, self.model.num_kv_heads)
+        })
+    }
+
+    fn put_cache(&self, session_id: u64, cache: KVCache) {
+        let mut caches = self.caches.lock().unwrap();
+        caches.insert(session_id, cache);
+    }
+
+    /// Verarbeitet eine Nachricht; liefert die Ausgabe des Shards.
+    pub fn process(&self, msg: &PodMessage) -> Result<ShardOut, String> {
+        if !msg.is_valid_frame() {
+            return Err("ungültiger Rahmen (Magic)".to_string());
+        }
+        if msg.flags & crate::wire::FLAG_ABORT != 0 {
+            return Err("Request abgebrochen".to_string());
+        }
+
+        let pos = msg.position as usize;
+        let session_id = msg.session_id;
+
+        if msg.carries_tokens() {
+            // Shard 0: Token-Embedding.
+            if !self.has_embedding {
+                return Err("Token-Eingang an einem Shard ohne Embedding".to_string());
+            }
+            let tokens = unpack_tokens(&msg.payload)?;
+            if tokens.len() != 1 {
+                return Err("erwarte genau ein Token je Nachricht".to_string());
+            }
+            let token = tokens[0] as usize;
+
+            let mut cache = self.take_cache(session_id);
+            let hidden = self.model.embed_token(token);
+            let out = self.model.run_layers(
+                hidden,
+                pos,
+                &mut cache,
+                self.layer_start,
+                self.layer_end,
+            );
+            self.put_cache(session_id, cache);
+
+            // Spur fortschreiben + signieren + archivieren.
+            let out_hash = activation_hash(&out);
+            let mut trace = msg.trace.clone();
+            trace.push(out_hash);
+            let prev = ZERO_HASH;
+            let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev, &out_hash)?;
+            self.archive(&msg.segment_id, &out);
+
+            return self.finish(msg, session_id, pos as u64, out, trace, sig);
+        }
+
+        // Zwischen-/End-Shard: Aktivierungen.
+        // 2. Eingangs-Hash gegen die Spur prüfen (Manipulationserkennung).
+        if !verify_input_hash(&msg.payload, &msg.trace) {
+            return Err(format!(
+                "Eingangs-Hash stimmt nicht mit der Spur überein (Shard {}, Position {})",
+                self.shard_index, pos
+            ));
+        }
+        // Signatur des Vorgängers prüfen.
+        let prev_hash = msg.trace.last().copied().unwrap_or(ZERO_HASH);
+
+        // Boundary → natürliche Eingangsskala reskalieren.
+        let hidden = self.rescale_vec(&msg.payload, self.boundary_frac, self.input_scale());
+
+        let mut cache = self.take_cache(session_id);
+        let out = self.model.run_layers(
+            hidden,
+            pos,
+            &mut cache,
+            self.layer_start,
+            self.layer_end,
+        );
+        self.put_cache(session_id, cache);
+
+        let out_hash = activation_hash(&out);
+        let mut trace = msg.trace.clone();
+        trace.push(out_hash);
+        let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev_hash, &out_hash)?;
+        self.archive(&msg.segment_id, &out);
+
+        self.finish(msg, session_id, pos as u64, out, trace, sig)
+    }
+
+    /// Signiert den Übergang `(segment_id, prev_hash, next_hash)`.
+    fn sign_transition(
+        &self,
+        segment_id: &myl_types::ids::SegmentId,
+        position: u64,
+        prev_hash: &[u8; 32],
+        next_hash: &[u8; 32],
+    ) -> Result<myl_types::bls::BlsSignature, String> {
+        let t = TransitionSig {
+            segment_id: *segment_id,
+            shard_index: self.shard_index as u64,
+            position,
+            prev_hash: *prev_hash,
+            next_hash: *next_hash,
+        };
+        t.sign(&self.bls_sk)
+    }
+
+    /// Archiviert die Ausgabe-Aktivierungen (DA-Pflicht, Anhang A.3 Schritt 6).
+    fn archive(&self, segment_id: &myl_types::ids::SegmentId, activations: &[i16]) {
+        let mut da = self.da.lock().unwrap();
+        da.put(*segment_id.as_bytes(), self.shard_index as u64, activations);
+    }
+
+    /// Gemeinsamer Abschluss: weiterreichen (Zwischen-Shard) oder sampeln
+    /// (End-Shard).
+    fn finish(
+        &self,
+        msg: &PodMessage,
+        session_id: u64,
+        position: u64,
+        out: Vec<i16>,
+        trace: Vec<[u8; 32]>,
+        sig: myl_types::bls::BlsSignature,
+    ) -> Result<ShardOut, String> {
+        if self.has_lm_head {
+            // Letzter Shard: Nur Positionen mit FLAG_SAMPLE sampeln ein
+            // Token (letzte Prompt-Position und Feedback-Positionen).
+            // Prefill-Positionen ohne FLAG_SAMPLE schreiben nur den
+            // KV-Cache fort.
+            if msg.flags & FLAG_SAMPLE == 0 {
+                return Ok(ShardOut::Prefill);
+            }
+
+            // Norm + LM-Head + Sampling.
+            let logits = self.model.head_logits(&out);
+            let token = self.model.greedy_next(&logits) as u32;
+
+            // Generierungs-Buchhaltung + Feedback.
+            let mut gen = self.gen_count.lock().unwrap();
+            let entry = gen.entry(session_id).or_insert(0);
+            *entry += 1;
+            let feedback = if *entry < self.max_new_tokens {
+                let packed = crate::wire::pack_tokens(&[token]);
+                Some(PodMessage {
+                    magic: crate::wire::MAGIC,
+                    segment_id: msg.segment_id,
+                    session_id,
+                    sender_shard: self.shard_index as u64,
+                    position: position + 1,
+                    flags: FLAG_FEEDBACK | FLAG_TOKEN_INPUT | FLAG_SAMPLE,
+                    trace: Vec::new(),
+                    signature: myl_types::bls::BlsSignature([0u8; 96]),
+                    payload: packed,
+                })
+            } else {
+                gen.remove(&session_id);
+                None
+            };
+            Ok(ShardOut::Token {
+                token,
+                position,
+                feedback,
+            })
+        } else {
+            // Zwischen-Shard: Ausgang auf Boundary-Skala reskalieren.
+            // Token- und Feedback-Flags werden entfernt (ab hier fließen
+            // Aktivierungen); FLAG_SAMPLE bleibt für den End-Shard
+            // erhalten.
+            let boundary_out = self.rescale_vec(&out, self.output_scale(), self.boundary_frac);
+            let next = PodMessage {
+                magic: crate::wire::MAGIC,
+                segment_id: msg.segment_id,
+                session_id,
+                sender_shard: self.shard_index as u64,
+                position,
+                flags: msg.flags & !(FLAG_TOKEN_INPUT | FLAG_FEEDBACK),
+                trace,
+                signature: sig,
+                payload: boundary_out,
+            };
+            Ok(ShardOut::Forward(next))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trace::activation_hash;
+
+    /// Dummy-Aktivierungen und eine Spur, die dazu passt.
+    #[test]
+    fn eingangs_pruefung_in_isolation() {
+        let akt = [1i16, 2, 3, 4];
+        let h = activation_hash(&akt);
+        assert!(verify_input_hash(&akt, &[h]));
+        let mut bad = akt.clone();
+        bad[0] = 99;
+        assert!(!verify_input_hash(&bad, &[h]));
+    }
+}
