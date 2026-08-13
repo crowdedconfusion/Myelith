@@ -74,5 +74,3 @@ und Tests:
 kommerzielle Teilnahme am Myelith-Netzwerk (Mining, Validierung, Gateways,
 Clients) sind erlaubt; ein konkurrierendes Netzwerk oder Produkt auf Basis
 des Codes zu betreiben ist es nicht.
-
-TEST
