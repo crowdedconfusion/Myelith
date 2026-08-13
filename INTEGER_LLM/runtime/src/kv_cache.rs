@@ -12,9 +12,17 @@ pub struct KVCache {
 
 impl KVCache {
     pub fn new(num_layers: usize, num_heads: usize) -> Self {
+        Self::for_range(0, num_layers, num_heads)
+    }
+
+    /// KV-Cache für einen Layer-Bereich `[layer_start, layer_end)` —
+    /// für Pipeline-Stages, die nur ihre eigenen Layer halten
+    /// (indiziert wird mit den absoluten Layer-Indizes, siehe
+    /// `TransformerLayer.layer_idx`).
+    pub fn for_range(layer_start: usize, layer_end: usize, num_heads: usize) -> Self {
         let mut k = BTreeMap::new();
         let mut v = BTreeMap::new();
-        for l in 0..num_layers {
+        for l in layer_start..layer_end {
             let mut k_heads = BTreeMap::new();
             let mut v_heads = BTreeMap::new();
             for h in 0..num_heads {

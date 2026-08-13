@@ -74,7 +74,7 @@ Each component contains a `README/` describing its purpose and status.
 ## Current state
 
 **INTEGER_LLM** is the only component with an active implementation
-(v0.12.33): fully integer inference on a Qwen2.5-0.5B base (int8 weights
+(v0.12.34): fully integer inference on a Qwen2.5-0.5B base (int8 weights
 with per-channel power-of-two scales, int16 activations with calibrated
 per-layer scales), with loader, model forward pass (including
 grouped-query attention, Q/K/V biases, and multi-frequency RoPE),
@@ -87,11 +87,15 @@ inference: the quality comparison against the floating-point baseline
 secured as an evidence package (bit-identity across 5 × 5 independent
 runs, 89.3 % top-1 agreement against the BF16 reference, parallel
 generation DE/EN; see
-`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
+`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`). The
+multi-node pipeline (4 stages on 4 nodes) performs real layer execution
+and provably produces token sequences bit-identical to the single-node
+runtime — even under artificial latency, packet loss (retry logic), and
+node restarts.
 
 **SHARED_TYPES** (protocol-wide core data types, Whitepaper Appendix A.1)
 is the second component with an active implementation — **Phase 1 is
-complete** (myl-types v0.1.6): the `Hash` newtype, the Merkle tree, the
+complete** (myl-types v0.1.7): the `Hash` newtype, the Merkle tree, the
 VRF interface (ECVRF per RFC 9381, verified bit-exact against the
 official RFC test vectors), BLS12-381 signatures (min-pk, including
 signature aggregation and rogue-key protection for the PoI bundles), and

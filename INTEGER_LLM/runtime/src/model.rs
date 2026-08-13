@@ -284,6 +284,92 @@ impl IntegerModel {
         logits
     }
 
+    // === Pipeline-Stage-API (Phase 12.56–12.59) =======================
+    // Die drei Methoden zerlegen `forward_token` in Stage-Bausteine:
+    // Embedding (Stage 0), Layer-Block (alle Stages), Norm+LM-Head
+    // (letzte Stage). Zusammengesetzt mit denselben Skalen und
+    // Rundungen wie der Einzelknoten-Pfad — eine Stage-Pipeline rechnet
+    // dadurch dieselben Werte (plus dokumentierte Boundary-Reskalierung
+    // zwischen den Stages, siehe `integer-llm-pipeline`).
+
+    /// Embedding-Lookup: liefert das erste Residualstrom-Segment auf der
+    /// Eingangsskala von Layer 0 (`layers[0].scales.residual_in_frac`).
+    pub fn embed_token(&self, token_id: usize) -> Vec<i16> {
+        let first_residual_frac = self.layers[0].scales.residual_in_frac;
+        let emb = self.embedding_table.row(token_id);
+        let emb_shift = self.embedding_table.shifts[token_id];
+        emb.iter()
+            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
+            .collect()
+    }
+
+    /// Führt die Layer `[layer_start, layer_end)` auf dem Residualstrom
+    /// aus. Eingang auf der Skala von
+    /// `layers[layer_start].scales.residual_in_frac`, Ausgang auf der
+    /// Skala von `layers[layer_end].scales.residual_in_frac` (bzw.
+    /// `final_residual_frac` für `layer_end == num_layers`).
+    /// KV-Cache wird gelesen und geschrieben (absolute Layer-Indizes).
+    pub fn run_layers(
+        &self,
+        mut hidden: Vec<i16>,
+        pos: usize,
+        cache: &mut KVCache,
+        layer_start: usize,
+        layer_end: usize,
+    ) -> Vec<i16> {
+        for i in layer_start..layer_end {
+            let out_frac = if i + 1 < self.layers.len() {
+                self.layers[i + 1].scales.residual_in_frac
+            } else {
+                self.final_residual_frac
+            };
+            hidden = self.forward_layer(&self.layers[i], &hidden, pos, cache, out_frac);
+        }
+        hidden
+    }
+
+    /// Finale RMSNorm + LM-Head: Eingang auf `final_residual_frac`,
+    /// Ausgabe die Logits auf `config.logit_frac_bits`.
+    pub fn head_logits(&self, hidden: &[i16]) -> Vec<i32> {
+        let cfg = &self.config;
+        let normed = rmsnorm_i16(
+            hidden,
+            &self.final_norm_gamma.data,
+            &self.final_norm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+        );
+        let mut logits = vec![0i32; self.vocab_size];
+        if let Some(lmh) = &self.lm_head_int16 {
+            let hidden_dim = normed.len();
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let base = row * hidden_dim;
+                for (d, v) in normed.iter().enumerate() {
+                    acc += (lmh.data[base + d] as i64) * (*v as i64);
+                }
+                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
+        } else {
+            for row in 0..self.vocab_size {
+                let mut acc: i64 = 0;
+                let weight_row = self.lm_head.row(row);
+                for (w, v) in weight_row.iter().zip(normed.iter()) {
+                    acc += (*w as i64) * (*v as i64);
+                }
+                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
+                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            }
+        }
+        logits
+    }
+
     fn forward_layer(
         &self,
         layer: &TransformerLayer,

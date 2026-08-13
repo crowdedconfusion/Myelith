@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.12.33
-> **Datum:** 2026-08-12
+> **Version:** 0.12.34
+> **Datum:** 2026-08-13
 > **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. **v0.12.33 (Evidenz-Paket):** der Beleg ist plastisch gesichert — Bit-Identität über 5 Prompts × 5 unabhängige Läufe (Token-Hash + SHA-256 identisch), Parallelgenerierung DE/EN + Top-1-Agreement 89,3 % gegen die BF16-Referenz, Durchsatz-Basis ~19 tok/s (Referenz-Backend). Zusammenfassung: [`docs/02_empirischer_beleg_bit-exakte-inferenz.md`](../docs/02_empirischer_beleg_bit-exakte-inferenz.md). Determinismus PASSED, alle Test-Suiten grün.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
@@ -143,6 +143,31 @@ Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
 ## Changelog
+
+### v0.12.34 – 2026-08-13 (Phasen 12.56–12.59 + 12.60–12.63)
+- **Multi-Node-Pipeline mit echter Inferenz:** Die Stage-Runtime führt
+  echte Layer-Ausführung über die Integer-Kernel aus — Embedding in
+  Stage 0, Layer-Blöcke je Shard, finale RMSNorm + LM-Head +
+  greedy-Sampling mit autoregressiver Feedback-Schleife zur Stage 0;
+  shard-spezifische Modell-Ladung mit θ_v-Kanon-Hash-Prüfung
+  (SHA-256 über version|weights|scales|luts, trunkiert im
+  Nachrichten-Header), KV-Cache je Request im Layer-Range der Stage.
+- **Boundary-Kontrakt:** Zwischen den Stages wandert der Residualstrom
+  als int16 little-endian auf der natürlichen Zwischen-Stage-Skala
+  (bei Qwen2.5-0.5B frac 4); die Reskalierung ist dadurch
+  identitätstreu und die Pipeline rechnet dieselben Werte wie der
+  Einzelknoten.
+- **Bitgleichheit nachgewiesen:** Die 4-Node-Pipeline erzeugt dieselbe
+  Token-Sequenz wie die Einzelknoten-Runtime (Prompt „Die Hauptstadt
+  von Frankreich ist" → `[12095, 13, 9236, 5999, 2746, 89931]`) und ist
+  über zwei unabhängige Läufe deterministisch
+  (`tests/integration/test_pipeline_multinode.py`).
+- **Chaos-Tests** (`tests/chaos/test_chaos.py`): künstliche Latenz
+  (100 ms/Hop), Paketverlust mit Retry-Logik (idempotente Retransmits
+  über Duplikaterkennung) und Node-Restart-Idempotenz — alle bitgleich.
+- Retry-Logik im Node-Transport (Backoff, 4 Versuche),
+  Nachrichten-Rahmen werden vollständig gelesen (Multi-read-fähig),
+  Token-IDs als i16-Paare gepackt (Vokabular > i16).
 
 ### v0.12.32 – 2026-08-11
 - **🎉 ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs.

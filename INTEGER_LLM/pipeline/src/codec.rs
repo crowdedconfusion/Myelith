@@ -19,11 +19,46 @@ pub struct MessageMeta {
     pub request_id: u64,
     pub sequence_id: u64,        // Fuer Multi-Token-Streaming
     pub stage_id: u64,
-    pub token_position: u64,     // Position im Kontext (0 = erstes Token)
+    pub token_position: u64,     // Basis-Position der Nachricht im Kontext
     pub payload_len: u64,
-    pub flags: u64,              // Bit 0: is_last_token, Bit 1: is_abort
+    pub flags: u64,              // Bit 0: starts_generation, Bit 1: is_abort,
+                                 // Bit 2: token_input (Payload = gepackte
+                                 // Token-IDs statt Aktivierungen)
     pub reserved: u64,
     pub crc: u32,
+}
+
+/// Bit 0: Nach diesem Token beginnt die Generation (Feedback-Schleife).
+pub const FLAG_STARTS_GENERATION: u64 = 0x1;
+/// Bit 1: Request abbrechen.
+pub const FLAG_ABORT: u64 = 0x2;
+/// Bit 2: Payload sind gepackte Token-IDs (je Token zwei i16:
+/// Low-/High-Hälften des u32-Token-IDs, little-endian) statt
+/// Aktivierungs-Tensoren. Nur für Stages mit Embedding (Stage 0).
+pub const FLAG_TOKEN_INPUT: u64 = 0x4;
+
+/// Packt Token-IDs in das i16-Payload-Format (je ID zwei i16).
+pub fn pack_tokens(tokens: &[u32]) -> Vec<i16> {
+    let mut out = Vec::with_capacity(tokens.len() * 2);
+    for t in tokens {
+        out.push((t & 0xFFFF) as i16);
+        out.push((t >> 16) as i16);
+    }
+    out
+}
+
+/// Entpackt Token-IDs aus dem i16-Payload-Format.
+pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
+    if payload.len() % 2 != 0 {
+        return Err("Token-Payload muss eine gerade Anzahl i16 haben".to_string());
+    }
+    let mut out = Vec::with_capacity(payload.len() / 2);
+    for pair in payload.chunks_exact(2) {
+        let lo = pair[0] as u16 as u32;
+        let hi = pair[1] as u16 as u32;
+        out.push(lo | (hi << 16));
+    }
+    Ok(out)
 }
 
 impl MessageMeta {
@@ -31,13 +66,17 @@ impl MessageMeta {
     pub fn dedup_key(&self) -> (u64, u64, u64) {
         (self.request_id, self.stage_id, self.token_position)
     }
-    
-    pub fn is_last_token(&self) -> bool {
-        (self.flags & 1) != 0
+
+    pub fn starts_generation(&self) -> bool {
+        (self.flags & FLAG_STARTS_GENERATION) != 0
     }
-    
+
     pub fn is_abort(&self) -> bool {
-        (self.flags & 2) != 0
+        (self.flags & FLAG_ABORT) != 0
+    }
+
+    pub fn is_token_input(&self) -> bool {
+        (self.flags & FLAG_TOKEN_INPUT) != 0
     }
 }
 

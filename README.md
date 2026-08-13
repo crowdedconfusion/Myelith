@@ -74,7 +74,7 @@ Jede Komponente enthält ein `README/` mit Zielbeschreibung und Status.
 ## Stand
 
 **INTEGER_LLM** ist die einzige Komponente mit laufender Implementierung
-(v0.12.33): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
+(v0.12.34): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
 mit Per-Channel-Zweierpotenz-Skalen, Aktivierungen int16 mit kalibrierten
 Per-Layer-Skalen), mit Loader, Modell-Forward-Pass (inkl. Grouped-Query-
 Attention, Q/K/V-Biases und Multi-Frequenz-RoPE), theta_v-
@@ -87,7 +87,11 @@ Perplexität 15,59 vs. FP 14,95 = +4,29 % (Kriterium max. +5 %),
 Determinismus bit-exakt. Der Beleg ist als Evidenz-Paket gesichert
 (Bit-Identität über 5 × 5 unabhängige Läufe, Top-1-Agreement 89,3 %
 gegen die BF16-Referenz, Parallelgenerierung DE/EN;
-`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`).
+`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`). Die
+Multi-Node-Pipeline (4 Stages auf 4 Nodes) führt echte Layer-Ausführung
+aus und erzeugt nachweislich bitgleiche Token-Sequenzen mit der
+Einzelknoten-Runtime — auch unter künstlicher Latenz, Paketverlust
+(Retry-Logik) und Node-Neustarts.
 
 **SHARED_TYPES** (protokollweite Kern-Datentypen, Whitepaper Anhang A.1)
 ist die zweite Komponente mit laufender Implementierung — **Phase 1 ist

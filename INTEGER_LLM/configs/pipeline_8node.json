@@ -1,6 +1,6 @@
 {
   "pipeline_hash": "sha256:0000",
-  "theta_v_hash": "sha256:1111",
+  "theta_v_hash": "sha256:dd4a8abad5b7e67961ee5c661fdad50c1e3709dc4d288dec0e4e612944c67919",
   "stages": [
     {
       "stage_id": 0,
@@ -132,8 +132,9 @@
     }
   ],
   "boundary_dtype": "int16",
-  "boundary_frac_bits": 8,
+  "boundary_frac_bits": 4,
   "boundary_endianness": "little",
   "communication_protocol": "tcp-binary-custom",
-  "checksum_algorithm": "crc32"
+  "checksum_algorithm": "crc32",
+  "boundary_contract": "int16-little-endian-frac4"
 }
