@@ -39,7 +39,7 @@ in [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
 ## Architektur
 
-Vier Schichten (Whitepaper Kap. 3.2), dazu querliegend Tokenomics,
+Vier Schichten (Whitepaper Kap. 3.2), ergänzt durch Tokenomics,
 Training und Governance:
 
 | Schicht | Aufgabe |
