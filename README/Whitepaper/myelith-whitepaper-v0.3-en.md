@@ -282,6 +282,8 @@ An upper bound applies to compensation per compute hour: it must not reach that 
 
 **Redundancy normalization:** Since every segment is computed by r = 2 pods, each pod receives half the vTFE credit. Miners are thus paid for *useful net work*; the redundancy overhead is priced in, not hidden.
 
+**Implementation status.** The minting function from 5.2, the distribution from 5.3, and the training compensation cap are implemented in the reference implementation and verified across 10,000 simulated epochs with random values: the sum of distributed shares equals `M_e` exactly in every epoch (floor rounding per share, rounding remainder closed to the treasury). The computation is entirely integer-based, analogous to Chapter 6.2.
+
 ### 5.4 Credit Pricing
 
 The MYL → vTFE exchange rate is set algorithmically per epoch (EIP-1559-analogous):
@@ -452,6 +454,8 @@ The assumption of 6.2 — that a language model can be executed entirely in inte
 
 **Determinism is confirmed.** Twenty-five independent runs in five groups yield bit-identical results. Instrumentation of the entire forward path finds no floating-point operation. The property on which this chapter's verification rests is thus demonstrated on a real implementation, not merely argued.
 
+**The demonstration extends to distributed execution as well.** A four-stage pipeline of genuinely separate operating-system processes, communicating over real TCP connections, produces the same token sequence as the single-node reference for a repeated identical prompt and is deterministic across independent runs. Under artificially injected network stress — a 100-millisecond delay per stage transition, connection drops with retry logic via duplicate detection, and a full restart of individual nodes with an idempotency check — the result remains bit-identical. This tests the assumption from 6.2, that independently executing nodes arrive at the same result, for the first time not merely within one process but across the network protocol between separate processes — so far, however, on a single machine (loopback connections), not across physically separate hosts.
+
 **Where the cost arises — and where it does not.** More informative than the final figure is the decomposition of the error. Performing the same quantization in floating-point arithmetic yields:
 
 | Configuration | Perplexity | Gap |
@@ -469,7 +473,7 @@ A clear priority follows for practice: whoever implements integer execution shou
 
 **Not every tensor tolerates the same bit width.** Where a model carries input embedding and output projection on the same weight, the error tolerance of the two uses differs considerably. In the embedding lookup the quantization error acts additively on a residual stream of far greater amplitude and remains inconsequential; in the output projection the same error directly decides the ranking of tokens. Bit width is therefore to be fixed per tensor and forms part of θ_v. Determinism is unaffected, since a higher bit width does not alter associativity; only memory requirements are concerned.
 
-**Limits of this result.** Measurement was performed on a model at the lower end of the size range, which represents the least favorable case for quantization: as model size grows, the gaps between leading logits widen, so that a given error weighs relatively less. A more favorable result is therefore to be expected at the scale intended in this paper, but is not established. Likewise outstanding is the demonstration that bit equality holds across different hardware classes; the runs reported here were performed on a reference implementation without accelerators (Ch. 11, points 2 and 3).
+**Limits of this result.** Measurement was performed on a model at the lower end of the size range, which represents the least favorable case for quantization: as model size grows, the gaps between leading logits widen, so that a given error weighs relatively less. A more favorable result is therefore to be expected at the scale intended in this paper, but is not established. Likewise outstanding is the demonstration that bit equality holds across different hardware classes and across physically separate hosts; the runs reported here were performed on a reference implementation without accelerators, and the multi-node runs on a single machine (Ch. 11, points 2 and 3).
 
 ### 6.10 What This Design Costs
 
@@ -684,7 +688,7 @@ Changeable by vote: sampling rate p, subsidy rate s, kernel whitelist, utilizati
 The following points are deliberately formulated as *measurement questions*: each names the quantity to be determined and the milestone in which this happens.
 
 1. **Output quality of integer inference at the target scale (M0).** *Measured for 0.5 billion parameters (Ch. 6.9): 4.3 percent gap to the floating-point reference.* What remains open is the transfer to the intended scale, for which a more favorable result is to be expected but is not established. The verification of Chapter 6 presupposes a model executable entirely in integer arithmetic. Eight-bit quantization is broadly established for transformers [18][19]; its extension to large language models is more recent [20] and not comprehensively validated at the intended scale. To be measured: the quality gap to the floating-point reference on established benchmarks. Should it prove too large, the basis of the chapter requires reassessment; the fallback would be tolerance-based commitments (point 10).
-2. **Completeness of the execution specification (M0).** *Partial result available (Ch. 6.9):* the specification must be obtained from the weights, not from the documentation; on a reference implementation without accelerators it is complete. What remains open is the demonstration across different hardware classes. The determinism property rests on all platform-dependent operations being covered. To be examined in particular: the behavior of integer matrix units at range boundaries, saturation semantics, possible compiler transformations, and the approximations of the non-linear functions. The result is a conformance suite with test vectors that admits new hardware without protocol changes.
+2. **Completeness of the execution specification (M0).** *Partial result available (Ch. 6.9):* the specification must be obtained from the weights, not from the documentation; on a reference implementation without accelerators it is complete, including across separate, network-coupled processes. What remains open is the demonstration across different hardware classes and across physically separate hosts. The determinism property rests on all platform-dependent operations being covered. To be examined in particular: the behavior of integer matrix units at range boundaries, saturation semantics, possible compiler transformations, and the approximations of the non-linear functions. The result is a conformance suite with test vectors that admits new hardware without protocol changes.
 3. **Throughput on heterogeneous hardware (M0/M1).** For integer inference, speedups by factors of 2.4 to 4 over fp32 are reported [18][19]. To be measured: whether this advantage appears uniformly across NVIDIA, AMD, Apple, and CPU hardware; uneven distribution would be a centralization risk.
 4. **Grid width of token selection (M1).** Selection proceeds deterministically from quantized logits. To be measured: the quality impact of quantization and the frequency of boundary cases exactly on grid lines.
 5. **Indistinguishability of control segments (M2).** The security gain of 6.7 stands or falls with miners being unable to recognize canaries. To be examined: by what statistical features they could be identified (prompt distribution, length, context construction, recurrence, timing), and whether admitting audited genuine segments removes those features. The share γ is further to be determined as a trade-off between deterrence and overhead.
@@ -706,6 +710,8 @@ The following points are deliberately formulated as *measurement questions*: eac
 ## Appendix A: Core Data Types and Reference Algorithms
 
 This appendix documents the protocol-relevant data types and the core algorithms of the reference implementation. Engineering documentation (repository structure, build conventions, implementation milestones, CI) can be found in the project repository under `docs/`.
+
+The data types in A.1 and the algorithms in A.3 and A.5 are by now no longer merely reference algorithms but have a tested implementation: `myl-types` (Merkle tree, VRF per RFC 9381, BLS12-381 signatures, the structs from A.1 with exact field order as a consensus contract), `myl-pod` (the mining loop from A.3, including tamper detection), and `myl-ledger` (the state transitions from A.5, whose determinism is verified across independent runs). The current implementation status is documented in the repository, not in this paper.
 
 ### A.1 Core Data Types (`myl-types`)
 
