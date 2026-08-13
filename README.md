@@ -5,36 +5,42 @@ Dieses README ist auch auf [Englisch](README.en.md) verfügbar.
 Myelith ist ein dezentrales Netzwerk, in dem dieselbe Rechenarbeit, die den
 Konsens sichert, zugleich ein großes agentisches Sprachmodell betreibt
 („Proof of Inference"). Anders als bei klassischem Proof-of-Work wird keine
-verworfene Rechenleistung verbrannt, sondern nützliche Inferenz erbracht,
-deren Korrektheit über vollständig ganzzahlige, bitgleiche Ausführung
-überprüfbar ist. Der native Coin MYL schließt den Kreislauf: Nutzer
-verbrennen MYL gegen Inferenz-Credits, Miner erhalten neu geprägte MYL
-proportional zur verifizierten Arbeit.
+verworfene Rechenleistung verbrannt, sondern nützliche Inferenz erbracht —
+verifizierbar, weil sie vollständig ganzzahlig und damit bitgleich zwischen
+unabhängigen Knoten abläuft, statt sich auf Vertrauen in einzelne Betreiber
+zu verlassen. Der native Coin MYL (noch nicht im Umlauf) schließt den
+Kreislauf: Nutzer verbrennen MYL gegen Inferenz-Credits, Miner erhalten neu
+geprägte MYL proportional zur verifizierten Arbeit.
 
-Die vollständige Architektur, Tokenomics, das Verifikationsmodell und die
-offenen Forschungsfragen stehen im Whitepaper v0.3:
-[Deutsch (MD)](README/Whitepaper/myelith-whitepaper-v0.3.md) /
-[Deutsch (PDF)](README/Whitepaper/myelith-whitepaper-v0.3.pdf) /
-[English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) /
+Die vollständige Architektur, Tokenomics und das Verifikationsmodell stehen
+im **Whitepaper v0.3**:
+[Deutsch (MD)](README/Whitepaper/myelith-whitepaper-v0.3.md) ·
+[Deutsch (PDF)](README/Whitepaper/myelith-whitepaper-v0.3.pdf) ·
+[English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) ·
 [English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
-Die Simulationsprogramme zu Anhang B liegen unter
-[`README/Whitepaper/simulations/`](README/Whitepaper/simulations/).
 
 ## Kernthese
 
 Ganzzahladdition ist assoziativ. Wird Inferenz vollständig in
-Ganzzahlarithmetik ausgeführt (kein Gleitkomma im Rechenpfad, Division
-ausschließlich als arithmetischer Rechtsshift), entsteht Bitgleichheit
-zwischen unabhängigen Knoten — die Grundlage der gesamten
-Verifikationsarchitektur (Redundanzvergleich, Bisektions-Spiel,
-Kontrollsegmente, Whitepaper Kap. 6). Ob ganzzahlig quantisierte Inferenz in
-der Zielgrößenordnung qualitativ trägt, ist dabei eine offene Messfrage, die
-das Projekt am kleinen Modell beantwortet, bevor Infrastruktur skaliert wird.
+Ganzzahlarithmetik ausgeführt, entsteht Bitgleichheit zwischen unabhängigen
+Knoten — die Grundlage der gesamten Verifikationsarchitektur (Whitepaper
+Kap. 6). Ob das bei realistischer Modellgröße auch qualitativ trägt, ist
+eine offene Messfrage; das Projekt beantwortet sie zuerst am kleinen
+Modell, bevor Infrastruktur skaliert wird.
+
+**Erstes Ergebnis:** Ein 0,5-Milliarden-Parameter-Modell, vollständig
+ganzzahlig ausgeführt, erreicht eine Perplexität von 15,59 gegenüber 14,95
+in der Gleitkomma-Referenz (+4,3 %, akzeptiert bei ≤5 %) — bei
+nachgewiesener Bitgleichheit über unabhängige Läufe und sogar über eine
+echte Mehrknoten-Pipeline unter künstlicher Netzwerklast (Latenz,
+Paketverlust, Node-Neustarts). Details dazu im
+[Whitepaper (Kap. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3.md) und
+in [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
 ## Architektur
 
-Vier Schichten (Whitepaper Kap. 3.2), dazu querliegend Tokenomics, Training
-und Governance:
+Vier Schichten (Whitepaper Kap. 3.2), dazu querliegend Tokenomics,
+Training und Governance:
 
 | Schicht | Aufgabe |
 |---|---|
@@ -43,116 +49,24 @@ und Governance:
 | **L1 Consensus Layer** | BFT-Konsens, Proof-of-Inference-Aggregation, Staking, Slashing |
 | **L0 Networking Layer** | P2P-Gossip, Latenz-Topologie, verschlüsselte Aktivierungs-Streams |
 
-## Repositorystruktur
+## Komponenten
 
-```
-├── LICENSE.md                 PolyForm Shield License 1.0.0
-├── README.md                  diese Datei (Deutsch)
-├── README.en.md               English version of this file
-├── README/Whitepaper/         Whitepaper v0.3 (DE/EN, MD+PDF) + Simulationen
-├── README/Grafiken/           Titelgrafiken und Abbildungen (DE/EN)
-├── INTEGER_LLM/               bit-exakte Ganzzahl-Inferenz (Rust + Python)
-│   ├── kernels/               Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Attention, …)
-│   ├── runtime/               Modell-Loader, Forward-Pass, KV-Cache, CLI
-│   ├── pipeline/              Mehrknoten-Orchestrierung
-│   ├── calibrate/             Quantisierung/Kalibrierung (Python, Offline-Phase)
-│   └── tests/, eval/, …       Golden Vectors, End-to-End- und Regressionstests
-├── SHARED_TYPES/              protokollweite Kern-Datentypen (Implementierung begonnen)
-├── NETWORKING/                P2P-Gossip, Latenztopologie (Implementierung begonnen)
-├── CONSENSUS/                 BFT, PoI-Abrechnung, Epochen-Zuteilung (Implementierung begonnen)
-├── VERIFICATION/              Redundanzvergleich, Bisektions-Spiel (Planungsphase)
-├── TOKENOMICS/                Prägefunktion, Burn-and-Mint (Implementierung begonnen)
-├── COMPUTE_PIPELINE/          Pod-Orchestrierung über echtes Netz (Implementierung begonnen)
-├── AGENT_LAYER/               Session-Kontrakte, Dual-LLM-Trennung (Planungsphase)
-├── TRAINING/                  Datenprovenienz, robuste Aggregation (Planungsphase)
-├── GOVERNANCE/                Parameter-Registry, Modell-Updates (Planungsphase)
-└── CLIENT/                    Nutzer-Client inkl. Wallet (Konzeptphase)
-```
+Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen
+und Tests — die Details stehen dort, nicht hier:
 
-Jede Komponente enthält ein `README/` mit Zielbeschreibung und Status.
-
-## Stand
-
-**INTEGER_LLM** ist die einzige Komponente mit laufender Implementierung
-(v0.12.35): Fully-Integer-Inferenz auf Qwen2.5-0.5B-Basis (Gewichte int8
-mit Per-Channel-Zweierpotenz-Skalen, Aktivierungen int16 mit kalibrierten
-Per-Layer-Skalen), mit Loader, Modell-Forward-Pass (inkl. Grouped-Query-
-Attention, Q/K/V-Biases und Multi-Frequenz-RoPE), theta_v-
-Spezifikationsvalidierung (θ_v 0.10.0), Export-Workflow, echtem
-Kalibrierungslauf (314 kalibrierte Skalen, 291
-quantisierte Gewichts-Tensoren inkl. eigenem LM-Head in int16) und
-qualitativ validierter Inferenz: Der Qualitätsvergleich gegen die
-Gleitkomma-Baseline (Entscheidungspunkt 12.21) ist **AKZEPTIERT** —
-Perplexität 15,59 vs. FP 14,95 = +4,29 % (Kriterium max. +5 %),
-Determinismus bit-exakt. Der Beleg ist als Evidenz-Paket gesichert
-(Bit-Identität über 5 × 5 unabhängige Läufe, Top-1-Agreement 89,3 %
-gegen die BF16-Referenz, Parallelgenerierung DE/EN;
-`INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`). Die
-Multi-Node-Pipeline (4 Stages auf 4 Nodes) führt echte Layer-Ausführung
-aus und erzeugt nachweislich bitgleiche Token-Sequenzen mit der
-Einzelknoten-Runtime — auch unter künstlicher Latenz, Paketverlust
-(Retry-Logik) und Node-Neustarts. Ein Zahlensemantik-Audit sichert die
-Kerneigenschaft automatisch (Gleitkomma-Audit mit null Treffern im
-Heißpfad, Skalen-Zweierpotenz-Prüfung, fixierte Divisionssemantik- und
-Überlaufvektoren).
-
-**SHARED_TYPES** (protokollweite Kern-Datentypen, Whitepaper Anhang A.1)
-ist die zweite Komponente mit laufender Implementierung — **Phase 1 ist
-vollständig** (myl-types v0.1.7): Hash-Newtype, Merkle-Baum, die
-VRF-Schnittstelle (ECVRF nach RFC 9381, gegen die offiziellen
-RFC-Testvektoren bit-exakt geprüft), BLS12-381-Signaturen (min-pk, inkl.
-Signatur-Aggregation und Rogue-Key-Schutz für die PoI-Bündel) sowie die
-Kern-Structs `Segment`/`PoIBundle`/`InferenceCredit` exakt nach
-Anhang A.1. Die Design-Entscheidungen sind dokumentiert (Rust, SHA-256,
-Borsh; Quantum-Hardening als übergreifende Vorgabe mit verankerten
-Post-Quantum-Migrationspfaden).
-
-**NETWORKING** (L0-Netzwerkschicht, Whitepaper Kap. 3.2) ist die dritte
-Komponente mit laufender Implementierung — **Phase 1 ist vollständig**
-(myl-net v0.1.4): Node-Identität und Swarm-Aufbau
-(Gossipsub/Identify/Ping/Kademlia über TCP/Noise), Gossip-Topic-
-Struktur (Blöcke, Transaktionen, PoI-Bündel, Challenges, Latenz-
-Atteste) mit Borsh-Payloads und Nachrichtenvalidierung vor
-Weiterverbreitung. Beide Akzeptanzkriterien sind empirisch erfüllt:
-ein Testnetz aus 20 Nodes erreicht Voll-Konnektivität über Gossip in
-unter 5 Sekunden, und ungültige Nachrichten werden nicht
-weiterverbreitet (adversarialer Test).
-
-**CONSENSUS** (L1-Konsensschicht, Whitepaper Kap. 3.5 und Anhang A.5)
-hat ebenfalls die Implementierung begonnen: Die Design-Entscheidungen
-sind getroffen (malachite-Konsens-Engine hinter schmaler trait-Grenze
-mit dokumentiertem Eigenbau-Fallback, Blockzeit 2 s, Komitee aus 21
-Blockproduktions-Validatoren und 7 Schiedsrichtern, Streitfrist
-7 Tage, Reed-Solomon-Erasure-Coding k=8/m=4), und das Ledger
-`myl-ledger` v0.1.5 hat **Phase 1 vollständig** abgeschlossen — alle
-Zustandsübergänge aus Anhang A.5 (burn→mint_credits, apply_verdict,
-credit_spend) als reine, atomare Ganzzahl-Funktionen, mit erfülltem
-Akzeptanzkriterium: Replay derselben Übergangsfolge liefert auf zwei
-unabhängigen Läufen bitgleiche Zustände.
-
-**TOKENOMICS** (Whitepaper Kap. 5) hat ebenfalls die Implementierung
-begonnen: Die Design-Entscheidungen sind getroffen (Fixed-Point-
-Ganzzahl-Arithmetik, 1 MYL = 10⁶ Kleinstbeträge, vTFE-Skalierung 10⁻⁶,
-EMA-Fenster 30 Epochen), und `myl-tokenomics` v0.1.4 hat **Phase 1
-vollständig** abgeschlossen — ganzzahlige EMA für das geglättete
-Burn-Volumen, Prägefunktion, die Kap.-5.3-Verteilung (78/5/10/4/3 % mit
-exakter Summen-Invariante) und die Trainingsvergütungs-Obergrenze;
-Akzeptanzkriterium erfüllt (10.000-Epochen-Determinismus- und
-Verteilungsexaktheitstests).
-
-**COMPUTE_PIPELINE** (L2-Compute-Schicht, Whitepaper Kap. 4 und Anhang
-A.3) hat ebenfalls die Implementierung begonnen: Die Design-Entscheidungen
-sind getroffen (separates Crate `myl-pod`, Micro-Batching-Fenster 250 ms,
-Draft-Modell-Richtung Layer-Subset aus derselben θ_v-Familie), und
-`myl-pod` v0.1.4 hat **Phase 1 vollständig** abgeschlossen — der
-Pod-Mining-Loop (`shard_loop`) mit Spur-Hashes und Manipulationserkennung,
-`coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität und
-erasure-codierter DA-Archivierung. Akzeptanzkriterien erfüllt: Ein
-4-Node-Pod liefert bei wiederholtem identischem Prompt eine bitgleiche
-Token-Sequenz und ist dabei bitgleich mit der Einzelknoten-Runtime; die
-Eingangs-Hash-Prüfung lehnt manipulierte Aktivierungen ab. Alle
-übrigen Komponenten sind in der Planungsphase; ihre Umsetzung folgt der
-im Whitepaper beschriebenen Abhängigkeitsordnung.
+| Komponente | Aufgabe | Status |
+|---|---|---|
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese empirisch bestätigt, Mehrknoten-Pipeline läuft |
+| [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 abgeschlossen |
+| [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery | Phase 1 abgeschlossen |
+| [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Ledger (Phase 1) abgeschlossen |
+| [TOKENOMICS](TOKENOMICS/README/README.md) | Burn-and-Mint, Verteilung | Phase 1 abgeschlossen |
+| [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 abgeschlossen |
+| [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Planungsphase |
+| [AGENT_LAYER](AGENT_LAYER/README/README.md) | Session-Kontrakte, Dual-LLM-Trennung | Planungsphase |
+| [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Planungsphase |
+| [GOVERNANCE](GOVERNANCE/README/README.md) | Parameter-Registry, Modell-Updates | Planungsphase |
+| [CLIENT](CLIENT/README/README.md) | Nutzer-Client inkl. Wallet | Konzeptphase |
 
 ## Lizenz
 
