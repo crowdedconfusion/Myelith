@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.3.5
-> **Datum:** 2026-08-17
+> **Version:** 0.3.5 (`myl-scheduler` 0.2.7)
+> **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
@@ -51,6 +51,20 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### myl-scheduler v0.2.7 – 2026-08-18 (Fix: Testbuild wiederhergestellt)
+- **Fund A1:** `myl-scheduler` ließ sich seit dem Roundhouse-Check-Commit
+  nicht mehr im Testmodus bauen (`error[E0433]: cannot find type MinerId`).
+  Beim Beheben einer `unused import`-Warnung wurde `use myl_types::ids::MinerId`
+  aus `shard_assignment.rs` entfernt — im Lib-Rumpf tatsächlich unbenutzt,
+  im `#[cfg(test)] mod tests` aber gebraucht. `cargo build` blieb grün,
+  `cargo test` brach ab.
+- Fix: Import in den Test-Modul verschoben. 56 Tests grün (die in der
+  Doku bereits behauptete Zahl).
+- **Ursachenanalyse:** Der Fehler konnte unentdeckt nach `main` gelangen,
+  weil die CI `myl-scheduler` überhaupt nicht baute. Siehe CI-Ausweitung
+  im selben Patch (`.github/workflows/ci.yml`): jetzt laufen alle acht
+  `myl-*`-Crates plus `INTEGER_LLM/pipeline`.
 
 ### v0.3.5 – 2026-08-17 (Phase 3: BFT-Blockproduktion)
 - `myl-consensus`: Neuer Crate mit 5 Modulen für BFT-Blockproduktion:

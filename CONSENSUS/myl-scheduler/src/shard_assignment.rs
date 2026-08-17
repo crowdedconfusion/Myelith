@@ -139,6 +139,7 @@ pub fn assign_pods(
 mod tests {
     use super::*;
     use crate::miner_filter::HardwareClass;
+    use myl_types::ids::MinerId;
 
     fn test_registration(miner_byte: u8) -> MinerRegistration {
         MinerRegistration {

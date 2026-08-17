@@ -6,8 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Laufende Prüfungen für denselben Branch abbrechen, wenn ein neuer Push kommt.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  # Fehlschlag statt Warnung, wenn ein Crate in der CI nicht aufgelöst werden kann.
+  CARGO_NET_RETRY: 3
 
 jobs:
   # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
@@ -60,7 +67,35 @@ jobs:
         working-directory: INTEGER_LLM/runtime
         run: cargo test --lib --quiet
 
+  # ── Pipeline: Mehrknoten-Orchestrierung (Build + Unit-Tests) ─────
+  # Die Integrationstests der Pipeline laufen über die Python-Suite und
+  # brauchen Artefakte — hier daher nur Build und Unit-Ebene.
+  pipeline:
+    name: Pipeline Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: INTEGER_LLM/pipeline
+
+      - name: cargo test --lib
+        working-directory: INTEGER_LLM/pipeline
+        run: cargo test --lib --quiet
+
+      - name: cargo build --all-targets
+        working-directory: INTEGER_LLM/pipeline
+        run: cargo build --all-targets --quiet
+
   # ── Netzwerkkomponenten: Cargo-Tests ────────────────────────────
+  # Vollständig: alle acht myl-*-Crates. Fehlende Abdeckung war die
+  # Ursache dafür, dass ein kaputter Testbuild in myl-scheduler
+  # unentdeckt in main landen konnte.
   network-crates:
     name: Network Crates Tests
     runs-on: ubuntu-latest
@@ -77,35 +112,64 @@ jobs:
             SHARED_TYPES/myl-types
             NETWORKING/myl-net
             CONSENSUS/myl-ledger
+            CONSENSUS/myl-scheduler
+            CONSENSUS/myl-consensus
             TOKENOMICS/myl-tokenomics
+            VERIFICATION/myl-verifier
             COMPUTE_PIPELINE/myl-pod
 
-      - name: cargo test — SHARED_TYPES
+      - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types
         run: cargo test --quiet
 
-      - name: cargo test — NETWORKING
+      - name: cargo test — NETWORKING (myl-net)
         working-directory: NETWORKING/myl-net
         run: cargo test --quiet
 
-      - name: cargo test — CONSENSUS
+      - name: cargo test — CONSENSUS (myl-ledger)
         working-directory: CONSENSUS/myl-ledger
         run: cargo test --quiet
 
-      - name: cargo test — TOKENOMICS
+      - name: cargo test — CONSENSUS (myl-scheduler)
+        working-directory: CONSENSUS/myl-scheduler
+        run: cargo test --quiet
+
+      - name: cargo test — CONSENSUS (myl-consensus)
+        working-directory: CONSENSUS/myl-consensus
+        run: cargo test --quiet
+
+      - name: cargo test — TOKENOMICS (myl-tokenomics)
         working-directory: TOKENOMICS/myl-tokenomics
         run: cargo test --quiet
 
-      - name: cargo test — COMPUTE_PIPELINE (lib only)
+      - name: cargo test — VERIFICATION (myl-verifier)
+        working-directory: VERIFICATION/myl-verifier
+        run: cargo test --quiet
+
+      # myl-pod: nur lib — der Integrationstest fährt einen echten
+      # 4-Node-Pod gegen die INTEGER_LLM-Runtime (~2 min, braucht Artefakte).
+      - name: cargo test — COMPUTE_PIPELINE (myl-pod, lib only)
         working-directory: COMPUTE_PIPELINE/myl-pod
         run: cargo test --lib --quiet
 
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
+  # test_division.py und test_overflow.py rufen `cargo test` als
+  # maßgebliche Prüfstufe auf — der Rust-Toolchain muss daher explizit
+  # installiert und gecacht sein, statt sich auf die Runner-Vorinstallation
+  # zu verlassen. test_scales.py skippt sauber, wenn Artefakte fehlen.
   audit:
     name: Zahlensemantik-Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: INTEGER_LLM/kernels
 
       - name: Python
         uses: actions/setup-python@v5
