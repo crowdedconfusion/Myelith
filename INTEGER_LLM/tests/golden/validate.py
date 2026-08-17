@@ -58,7 +58,8 @@ class ValidationReport:
 
 def validate_vector(gv_path: Path, backend_name: str) -> tuple:
     """
-    Validiert einen einzelnen Golden Vector via golden_runner Binary.
+    Validiert einen einzelnen Golden Vector (nur Op-Level).
+    Layer/E2E werden ueber validate_batch() effizienter geprueft.
     Returns: (name, level, passed, error_msg)
     """
     with open(gv_path, "r") as f:
@@ -67,14 +68,9 @@ def validate_vector(gv_path: Path, backend_name: str) -> tuple:
     name = gv["name"]
     level = gv["level"]
 
-    # Layer und E2E werden von golden_runner noch nicht unterstuetzt
-    if level in ("layer", "e2e"):
-        return name, level, True, "SKIPPED (no runner yet)"
+    project_root = Path(__file__).parent.parent.parent
+    kernels_dir = project_root / "kernels"
 
-    # Pfad zum golden_runner Binary
-    kernels_dir = Path(__file__).parent.parent.parent / "kernels"
-
-    # Feature-Mapping
     feature_map = {
         "reference": "reference",
         "simd-avx2": "cpu-simd",
@@ -104,19 +100,79 @@ def validate_vector(gv_path: Path, backend_name: str) -> tuple:
         return name, level, False, error
 
 
+def validate_batch(backend_name: str, golden_dir: Path) -> list:
+    """
+    Validiert Layer- und E2E-Vektoren im Batch-Modus via golden_model.
+    Das Modell wird einmal geladen und alle Vektoren in einem Durchlauf
+    geprueft. Returns: Liste von (name, level, passed, error_msg).
+    """
+    project_root = Path(__file__).parent.parent.parent
+    runtime_dir = project_root / "runtime"
+    artifact_dir = project_root / "artifacts" / "qwen2.5-0.5b"
+    vectors_dir = golden_dir / VECTORS_DIRNAME
+
+    cmd = [
+        "cargo", "run", "--bin", "golden_model",
+        "--quiet", "--",
+        str(artifact_dir), "--batch", str(vectors_dir),
+    ]
+
+    result = subprocess.run(cmd, cwd=runtime_dir, capture_output=True, text=True,
+                            timeout=600)
+
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    results = []
+
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("PASS:"):
+            name = line[len("PASS:"):].strip()
+            # Level aus der Dateinamen-Struktur ableiten
+            level = _guess_level(name)
+            results.append((name, level, True, ""))
+        elif line.startswith("FAIL:"):
+            name = line[len("FAIL:"):].strip()
+            level = _guess_level(name)
+            results.append((name, level, False, stderr or "FAIL"))
+        elif "von" in line and "bestanden" in line:
+            pass  # Summary-Zeile, wird ignoriert
+
+    if result.returncode != 0 and not results:
+        # Kein einzelnes Ergebnis parsbar — Gesamtfehler.
+        results.append(("batch", "layer/e2e", False, stderr or stdout))
+
+    return results
+
+
+def _guess_level(name: str) -> str:
+    if name.startswith("transformer_layer_"):
+        return "layer"
+    elif name.startswith("e2e_prompt_"):
+        return "e2e"
+    return "unknown"
+
+
 def validate_backend(backend_name: str, golden_dir: Path) -> ValidationReport:
     """
     Validiert ein komplettes Backend gegen alle Golden Vectors.
+    Op-Level: einzeln via golden_runner.
+    Layer/E2E: Batch via golden_model (ein Modell-Load fuer alle).
     """
     report = ValidationReport(backend_name)
     vectors_dir = golden_dir / VECTORS_DIRNAME
 
-    for level in LEVELS:
-        level_dir = vectors_dir / level
-        if level_dir.exists():
-            for gv_path in sorted(level_dir.glob("*.golden.json")):
-                name, gv_level, passed, error = validate_vector(gv_path, backend_name)
-                report.add_result(name, gv_level, passed, error)
+    # Op-Level: einzeln validieren (schnell, kein Modell-Load).
+    op_dir = vectors_dir / "op"
+    if op_dir.exists():
+        for gv_path in sorted(op_dir.glob("*.golden.json")):
+            name, gv_level, passed, error = validate_vector(gv_path, backend_name)
+            report.add_result(name, gv_level, passed, error)
+
+    # Layer + E2E: Batch-Validierung (Modell wird einmal geladen).
+    batch_results = validate_batch(backend_name, golden_dir)
+    for name, level, passed, error in batch_results:
+        report.add_result(name, level, passed, error)
 
     return report
 

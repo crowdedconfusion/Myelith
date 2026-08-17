@@ -2,32 +2,47 @@
 //!
 //! Feature-Gate: `cargo build --features rocm`
 //!
-//! WARNUNG: Dieses Backend darf NUR aktiviert werden, wenn es die
-//! Golden Vectors gegen das Referenz-Backend besteht.
+//! Status: Delegations-Stub — alle Operationen werden an die Referenz-
+//! Kernel delegiert (numerisch identisch, nicht beschleunigt). Echte
+//! HIP-Kernels erfordern AMD-GPU-Hardware zum Testen.
 //!
-//! Determinismus-Strategie:
-//! - 1:1-Port des CUDA-Codes nach HIP (95% identisch)
-//! - AMD WarpSize = 64 (vs. NVIDIA = 32) -> Keine Warp-Angewiesenheit
+//! Determinismus-Strategie (fuer zukuenftige echte HIP-Kernels):
+//! - 1:1-Port des CUDA-Codes nach HIP (95% syntaktisch identisch)
+//! - AMD WarpSize = 64 (vs. NVIDIA = 32) → keine Warp-Angewiesenheit
 //! - Shared Memory fuer Reductions statt Warp-Shuffle
-//! - Separater Golden-Vector-Test-Suite fuer AMD-Hardware
+//! - Separate Golden-Vector-Test-Suite fuer AMD-Hardware
 //!
-//! Ziel-Vertrag seit dem Numerik-Realitaetsabgleich (v0.12.20, theta_v 0.5.0):
-//! Gewichte int8, Aktivierungen int16 mit Per-Layer-Zweierpotenz-Skalen,
-//! i64-Akkumulation, divisionsfreie RMSNorm mit LUT-gestuetztem rsqrt.
+//! Ziel-Vertrag seit theta_v 0.7.0:
+//! Gewichte int8 (Per-Channel-Skalen), Aktivierungen int16 (Per-Layer-Skalen),
+//! i64-Akkumulation, divisionsfreie RMSNorm mit LUT-gestuetztem rsqrt,
+//! RNE-Rundung, Saettigung (Clamp).
 
 use crate::backend::Backend;
+use crate::linear::linear_w8a16;
+use crate::rmsnorm::rmsnorm_i16;
+use crate::softmax::softmax_int;
+use crate::attention::attention_int;
+use crate::rope::apply_rope_i16;
+use crate::mlp::mlp_int;
 
 pub struct RocmBackend {
     device_id: usize,
-    gcn_arch: String,  // z.B. "gfx908" (MI100), "gfx90a" (MI200)
+    gcn_arch: String,
 }
 
 impl RocmBackend {
+    /// Initialisiert das ROCm/HIP-Backend.
+    ///
+    /// Hinweis: Ohne HIP-Runtime (hipcc, libamdhip64) wird eine Platzhalter-
+    /// Architektur zurueckgegeben. Echte Initialisierung erfordert:
+    /// - hipSetDevice(device_id)
+    /// - hipDeviceGetAttribute fuer GCN-Architektur
+    /// - hipBLAS/hipDNN-Handles (fuer zukuenftige beschleunigte Pfade)
     pub fn init(device_id: usize) -> Result<Self, String> {
-        // TODO: HIP-Kontext initialisieren, GCN-Arch ermitteln
+        // TODO: Echte HIP-Initialisierung wenn Runtime verfuegbar
         Ok(RocmBackend {
             device_id,
-            gcn_arch: "gfx90a".to_string(),  // Placeholder
+            gcn_arch: "gfx90a".to_string(), // Placeholder: MI200
         })
     }
 
@@ -55,97 +70,133 @@ impl Backend for RocmBackend {
 
     fn linear_w8a16(
         &self,
-        _x: &[i16],
-        _W: &[i8],
-        _out: &mut [i16],
-        _in_features: usize,
-        _out_features: usize,
-        _act_frac: u8,
-        _weight_frac: u8,
-        _out_frac: u8,
+        x: &[i16],
+        W: &[i8],
+        out: &mut [i16],
+        in_features: usize,
+        out_features: usize,
+        w_shifts: &[u8],
+        act_frac: u8,
+        out_frac: u8,
     ) {
-        // TODO: HIP-Kernel-Launch (1:1-Port von CUDA)
-        panic!("ROCm linear_w8a16 not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — 1:1-Port von CUDA, WarpSize 64 beachten.
+        let rows: Vec<Vec<i8>> = W.chunks(in_features).map(|c| c.to_vec()).collect();
+        let result = linear_w8a16(x, &rows, w_shifts, act_frac, out_frac);
+        out[..out_features].copy_from_slice(&result[..out_features]);
     }
 
     fn rmsnorm(
         &self,
-        _x: &[i16],
-        _gamma: &[i8],
-        _gamma_shift: u8,
-        _rsqrt_lut: &[i16],
-        _lut_input_shift: u8,
-        _lut_output_frac: u8,
-        _inv_n_q20: i64,
-        _out: &mut [i16],
-        _out_frac: u8,
+        x: &[i16],
+        gamma: &[i8],
+        gamma_shifts: &[u8],
+        rsqrt_lut: &[i16],
+        lut_input_shift: u8,
+        lut_output_frac: u8,
+        inv_n_q20: i64,
+        out: &mut [i16],
+        out_frac: u8,
     ) {
-        // TODO: HIP-Kernel-Launch
-        panic!("ROCm rmsnorm not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — Shared-Memory-Reduktion (Wavefront-Size 64).
+        let result = rmsnorm_i16(x, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        out.copy_from_slice(&result);
     }
 
     fn softmax(
         &self,
-        _logits: &[i32],
-        _out: &mut [i32],
-        _exp_lut: &[i16],
-        _lut_shift: u8,
-        _frac_bits: u8,
+        logits: &[i32],
+        out: &mut [i32],
+        exp_lut: &[i16],
+        lut_shift: u8,
+        frac_bits: u8,
     ) {
-        // TODO: HIP-Kernel-Launch
-        panic!("ROCm softmax not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — Workgroup-Reduce fuer Max und Summe.
+        let result = softmax_int(logits, exp_lut, lut_shift, frac_bits);
+        out.copy_from_slice(&result);
     }
 
     fn attention(
         &self,
-        _q: &[Vec<i16>],
-        _k: &[Vec<i16>],
-        _v: &[Vec<i16>],
-        _out: &mut [Vec<i16>],
-        _mask: &[Vec<bool>],
-        _score_shift: u8,
-        _exp_lut: &[i16],
-        _lut_shift: u8,
-        _prob_frac: u8,
+        q: &[Vec<i16>],
+        k: &[Vec<i16>],
+        v: &[Vec<i16>],
+        out: &mut [Vec<i16>],
+        mask: &[Vec<bool>],
+        score_shift: u8,
+        exp_lut: &[i16],
+        lut_shift: u8,
+        prob_frac: u8,
     ) {
-        // TODO: HIP-Kernel-Launch
-        panic!("ROCm attention not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — Flash-Attention-Port, Workgroup-Sync.
+        let result = attention_int(q, k, v, mask, score_shift, exp_lut, lut_shift, prob_frac);
+        for (i, row) in result.iter().enumerate() {
+            out[i].copy_from_slice(row);
+        }
     }
 
     fn rope(
         &self,
-        _q: &mut [Vec<i16>],
-        _k: &mut [Vec<i16>],
-        _cos_lut: &[i16],
-        _sin_lut: &[i16],
-        _positions: &[usize],
-        _frac_bits: u8,
+        q: &mut [Vec<i16>],
+        k: &mut [Vec<i16>],
+        cos_lut: &[i16],
+        sin_lut: &[i16],
+        positions: &[usize],
+        frac_bits: u8,
     ) {
-        // TODO: HIP-Kernel-Launch
-        panic!("ROCm rope not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — Thread-per-Pair, Wavefront-Size 64.
+        let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
+        for (i, row) in q_out.iter().enumerate() {
+            q[i].copy_from_slice(row);
+        }
+        for (i, row) in k_out.iter().enumerate() {
+            k[i].copy_from_slice(row);
+        }
     }
 
     fn mlp(
         &self,
-        _x: &[i16],
-        _W_gate: &[i8],
-        _W_up: &[i8],
-        _W_down: &[i8],
-        _out: &mut [i16],
-        _silu_lut: &[i16],
-        _in_frac: u8,
-        _gate_w_shift: u8,
-        _up_w_shift: u8,
-        _down_w_shift: u8,
-        _gate_out_frac: u8,
-        _up_out_frac: u8,
-        _down_in_frac: u8,
-        _silu_in_frac: u8,
-        _silu_lut_offset: i16,
-        _silu_out_frac: u8,
-        _out_frac: u8,
+        x: &[i16],
+        W_gate: &[i8],
+        W_up: &[i8],
+        W_down: &[i8],
+        out: &mut [i16],
+        gate_w_shifts: &[u8],
+        up_w_shifts: &[u8],
+        down_w_shifts: &[u8],
+        silu_lut: &[i16],
+        in_frac: u8,
+        gate_out_frac: u8,
+        up_out_frac: u8,
+        down_in_frac: u8,
+        silu_in_frac: u8,
+        silu_lut_offset: i16,
+        silu_out_frac: u8,
+        out_frac: u8,
     ) {
-        // TODO: HIP-Kernel-Launch
-        panic!("ROCm mlp not yet implemented");
+        // Delegiert an Referenz-Kernel.
+        // TODO: Echter HIP-Kernel — Fused Gate+Up+SiLU+Down.
+        let hidden_size = x.len();
+        let intermediate_size = W_gate.len() / hidden_size;
+
+        let gate: Vec<Vec<i8>> = W_gate.chunks(hidden_size).map(|c| c.to_vec()).collect();
+        let up: Vec<Vec<i8>> = W_up.chunks(hidden_size).map(|c| c.to_vec()).collect();
+        let down: Vec<Vec<i8>> = W_down.chunks(intermediate_size).map(|c| c.to_vec()).collect();
+
+        let result = mlp_int(
+            x,
+            &gate, &up, &down,
+            gate_w_shifts, up_w_shifts, down_w_shifts,
+            silu_lut,
+            in_frac,
+            gate_out_frac, up_out_frac, down_in_frac,
+            silu_in_frac, silu_lut_offset, silu_out_frac,
+            out_frac,
+        );
+        out.copy_from_slice(&result);
     }
 }

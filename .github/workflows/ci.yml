@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Rust: Cargo-Tests aller drei Crates ──────────────────────────
+  cargo-test:
+    name: Cargo Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            INTEGER_LLM/kernels
+            INTEGER_LLM/runtime
+            INTEGER_LLM/pipeline
+
+      - name: cargo test — kernels
+        working-directory: INTEGER_LLM/kernels
+        run: cargo test --quiet
+
+      - name: cargo test — runtime
+        working-directory: INTEGER_LLM/runtime
+        run: cargo test --quiet
+
+      - name: cargo test — pipeline
+        working-directory: INTEGER_LLM/pipeline
+        run: cargo test --quiet
+
+  # ── SIMD-Backend: Kompilation + Paritaetstests ───────────────────
+  simd-backend:
+    name: SIMD Backend (AVX2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: INTEGER_LLM/kernels
+
+      - name: cargo build --features cpu-simd
+        working-directory: INTEGER_LLM/kernels
+        run: cargo build --features cpu-simd --quiet
+
+      - name: cargo test --features cpu-simd (Paritaetstests)
+        working-directory: INTEGER_LLM/kernels
+        run: cargo test --features cpu-simd --test test_backend_parity -v
+
+  # ── GPU-Backends: Compile-Check (CUDA + ROCm) ───────────────────
+  # Hinweis: Vollstaendige Tests erfordern GPU-Hardware. Dieser Job
+  # verifiziert nur, dass der Code mit den GPU-Features kompiliert.
+  gpu-backends:
+    name: GPU Backends (Compile-Check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: INTEGER_LLM/kernels
+
+      - name: cargo build --features cuda
+        working-directory: INTEGER_LLM/kernels
+        run: cargo build --features cuda --quiet
+
+      - name: cargo build --features rocm
+        working-directory: INTEGER_LLM/kernels
+        run: cargo build --features rocm --quiet
+
+  # ── Netzwerkkomponenten: Cargo-Tests ────────────────────────────
+  network-crates:
+    name: Network Crates Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            SHARED_TYPES
+            NETWORKING
+            CONSENSUS
+            TOKENOMICS
+            COMPUTE_PIPELINE
+
+      - name: cargo test — SHARED_TYPES
+        working-directory: SHARED_TYPES
+        run: cargo test --quiet
+
+      - name: cargo test — NETWORKING
+        working-directory: NETWORKING
+        run: cargo test --quiet
+
+      - name: cargo test — CONSENSUS
+        working-directory: CONSENSUS
+        run: cargo test --quiet
+
+      - name: cargo test — TOKENOMICS
+        working-directory: TOKENOMICS
+        run: cargo test --quiet
+
+      - name: cargo test — COMPUTE_PIPELINE
+        working-directory: COMPUTE_PIPELINE
+        run: cargo test --quiet
+
+  # ── Golden Vectors: Op-Level (immer) + Layer/E2E (falls Artefakte) ─
+  golden-vectors:
+    name: Golden Vector Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            INTEGER_LLM/kernels
+            INTEGER_LLM/runtime
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Op-Level: golden_runner validiert die 3 Op-Vektoren (kein Modell noetig).
+      - name: Golden Vectors — Op-Level
+        working-directory: INTEGER_LLM/kernels
+        run: |
+          for f in ../tests/golden/vectors/op/*.golden.json; do
+            cargo run --bin golden_runner --quiet -- "$f" reference || exit 1
+          done
+
+      # Layer/E2E: nur wenn kalibrierte Artefakte vorhanden sind.
+      # In CI typischerweise nicht der Fall (Artefakte sind gitignored);
+      # lokal und in speziellen Runs mit Artefakt-Cache wird dieser
+      # Schritt automatisch aktiv.
+      - name: Golden Vectors — Layer + E2E (conditional)
+        if: hashFiles('INTEGER_LLM/artifacts/qwen2.5-0.5b/theta_v.json') != ''
+        working-directory: INTEGER_LLM/runtime
+        run: cargo run --bin golden_model --quiet -- ../artifacts/qwen2.5-0.5b --batch ../tests/golden/vectors
+
+  # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
+  audit:
+    name: Zahlensemantik-Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit-Tests
+        working-directory: INTEGER_LLM
+        run: |
+          python3 -m pytest tests/audit/ -v

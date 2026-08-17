@@ -11,6 +11,7 @@ Nur das Referenz-Backend darf Vektoren erzeugen.
 """
 
 import math
+import sys
 
 import json
 
@@ -298,23 +299,29 @@ def dummy_layer_forward(hidden, layer_idx, theta_v_hash, hidden_size=896):
 
 
 def generate_layer_vectors(theta_v_hash: str, output_dir: Path):
-    """Generiert Golden Vectors fuer komplette Transformer-Layer."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    for layer_idx in range(24):
-        gv = GoldenVector(f"transformer_layer_{layer_idx}", "layer", theta_v_hash)
-        seed_in = int(hashlib.sha256(f"{theta_v_hash}:layer_in:{layer_idx}".encode()).hexdigest(), 16)
-        hidden_in = [clamp_i8((seed_in >> (i % 32)) ^ (i * 7)) for i in range(896)]
-        hidden_out = dummy_layer_forward(hidden_in, layer_idx, theta_v_hash)
+    """Generiert Golden Vectors fuer komplette Transformer-Layer.
 
-        gv = GoldenVector(f"transformer_layer_{layer_idx}", "layer", theta_v_hash)
-        gv.add_input("hidden", hidden_in, "int8")
-        gv.add_input("position", [0], "int32")
-        gv.metadata = {"layer_idx": layer_idx, "seq_len": 1}
-        gv.add_output("hidden_out", hidden_out, "int8")
-        gv.save(output_dir / f"layer_{layer_idx:02d}.golden.json")
-    
-    print(f"[golden] 24 Layer-Vektoren erzeugt.")
+    Seit v0.12.36 werden die Vektoren vom Rust-Binary ``golden_generate``
+    mit dem echten kalibrierten Modell erzeugt (kein Dummy-Forward mehr).
+    """
+    import subprocess
+    project_root = Path(__file__).parent.parent.parent
+    runtime_dir = project_root / "runtime"
+    artifact_dir = project_root / "artifacts" / "qwen2.5-0.5b"
+    golden_dir = output_dir.parent  # vectors/ ist das Elternverzeichnis
+
+    cmd = [
+        "cargo", "run", "--bin", "golden_generate",
+        "--quiet", "--",
+        str(artifact_dir), str(golden_dir),
+    ]
+    result = subprocess.run(cmd, cwd=runtime_dir, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[golden] FEHLER bei golden_generate: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    # Ausgabe des Binaries weiterleiten
+    for line in result.stdout.strip().splitlines():
+        print(f"[golden] {line}")
 
 
 def dummy_forward_token(token_id, pos, num_layers, hidden_size, vocab_size, seed):
@@ -351,43 +358,28 @@ def dummy_forward_token(token_id, pos, num_layers, hidden_size, vocab_size, seed
 
 
 def generate_e2e_vectors(theta_v_hash: str, output_dir: Path):
-    """Generiert End-to-End Golden Vectors (Prompt -> Tokens)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Generiert End-to-End Golden Vectors (Prompt -> Tokens).
 
-    seed = int(hashlib.sha256(f"{theta_v_hash}:e2e".encode()).hexdigest(), 16) % (2**64)
-    
-    test_prompts = [
-        ("hello", [ord(c) for c in "hello"]),
-        ("world", [ord(c) for c in "world"]),
-        ("test", [ord(c) for c in "test"]),
-    ]
-
-    for prompt, prompt_tokens in test_prompts:
-        gv = GoldenVector(f"e2e_prompt_{prompt}", "e2e", theta_v_hash)
-        gv.add_input("prompt_tokens", prompt_tokens, "int32")
-        gv.metadata = {"max_new_tokens": 3, "greedy": True, "seed": 42}
-
-        tokens = []
-        current_seed = seed
-        next_token = prompt_tokens[0] if prompt_tokens else 0
-        for _ in range(3):
-            next_token = dummy_forward_token(next_token, len(tokens), 24, 896, 151936, current_seed)
-            tokens.append(next_token)
-            current_seed = (current_seed + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
-
-        gv.add_output("tokens", tokens, "int32")
-        gv.save(output_dir / f"e2e_{prompt}.golden.json")
-    
-    print(f"[golden] {len(test_prompts)} E2E-Vektoren erzeugt.")
+    Seit v0.12.36 werden die Vektoren vom Rust-Binary ``golden_generate``
+    mit dem echten kalibrierten Modell und Tokenizer erzeugt.
+    """
+    # golden_generate erzeugt Layer- und E2E-Vektoren in einem Aufruf.
+    # Diese Funktion ist ein No-Op, da generate_layer_vectors den
+    # Rust-Aufruf bereits getaetigt hat.
+    pass
 
 
 def main():
-    theta_v_hash = "sha256:abc123def456"  # Wuerde aus spec.json berechnet
+    # theta_v_hash = SHA-256 der eingebetteten Ausfuehrungsspezifikation.
+    # Identisch zu loader::spec_hash() im Rust-Runtime.
+    spec_path = Path(__file__).parent.parent.parent / "theta_v" / "spec.json"
+    spec_bytes = spec_path.read_bytes()
+    theta_v_hash = "sha256:" + hashlib.sha256(spec_bytes).hexdigest()
 
     generate_op_vectors(theta_v_hash, VECTORS_DIR / "op")
     generate_layer_vectors(theta_v_hash, VECTORS_DIR / "layer")
     generate_e2e_vectors(theta_v_hash, VECTORS_DIR / "e2e")
-    
+
     print("[golden] Alle Golden Vectors erzeugt.")
 
 

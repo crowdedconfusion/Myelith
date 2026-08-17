@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.12.35"
+version = "0.12.37"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.12.35"
+version = "0.12.37"
 dependencies = [
  "integer-llm-kernels",
  "serde",

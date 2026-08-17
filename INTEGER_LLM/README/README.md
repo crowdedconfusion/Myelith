@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.35
-> **Datum:** 2026-08-13
-> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %** (Kriterium: max. +5 %). Root-Cause des Qualitätseinbruchs war Fund 17: die fehlende 1/√head_dim-Attention-Skalierung (Scores waren um √head_dim=8 zu groß, Softmax zu scharf). Behoben → Perplexität 73,15 → 15,59. Bit-exakte Ganzzahl-Inferenz ist damit **qualitativ validiert**. **v0.12.33 (Evidenz-Paket):** der Beleg ist plastisch gesichert — Bit-Identität über 5 Prompts × 5 unabhängige Läufe (Token-Hash + SHA-256 identisch), Parallelgenerierung DE/EN + Top-1-Agreement 89,3 % gegen die BF16-Referenz, Durchsatz-Basis ~19 tok/s (Referenz-Backend). Zusammenfassung: [`docs/02_empirischer_beleg_bit-exakte-inferenz.md`](../docs/02_empirischer_beleg_bit-exakte-inferenz.md). Determinismus PASSED, alle Test-Suiten grün. **v0.12.35 (Zahlensemantik-Audit, Phase 12.22–12.25):** Audit-Suite unter `tests/audit/` — Gleitkomma-Audit (null Treffer im Heißpfad), Skalen-Zweierpotenz-Prüfung, fixierte Divisionssemantik- und Überlaufvektoren; `theta_v/spec.json` erklärt das Überlaufverhalten explizit; alle Audits bestehen.
+> **Version:** 0.12.40
+> **Datum:** 2026-08-17
+> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -142,7 +142,95 @@ scripts/build_artifacts.sh    # Kalibrierung + Export, von INTEGER_LLM/ aus
 Voraussetzung für den Kalibrierungslauf ist das Quellmodell unter `models/`
 (siehe `models/README.md`).
 
+### Hardware-Teststrategie
+
+Die Kerneigenschaft des Projekts ist **bit-identische Inferenz über alle
+Hardware-Klassen hinweg**. Jedes Backend muss gegen die Referenz
+(Rust, `reference`-Feature) validiert werden — Golden Vectors und
+Konformitätspaket sind die normative Wahrheit.
+
+| Hardware-Klasse | Backend | Test-Methode | Anforderung |
+|---|---|---|---|
+| **x86_64 CPU** | `reference`, `cpu-simd` (AVX2) | Lokal + CI | Keine (Standard-Runner) |
+| **aarch64 CPU** | `cpu-simd` (NEON) | Lokal + CI | Apple Silicon oder ARM-Server |
+| **NVIDIA GPU** | `cuda` | CI mit GPU-Runner | `ubuntu-latest-gpu` oder äquivalent |
+| **AMD GPU** | `rocm` | CI mit GPU-Runner | AMD GPU + ROCm-Toolkit |
+
+**Test-Prozedur pro Backend:**
+
+```bash
+# 1. Backend-spezifisch kompilieren
+cargo build --features <backend-feature>
+
+# 2. Paritätstests (SimdBackend vs. ReferenceBackend)
+cargo test --features <backend-feature> --test test_backend_parity
+
+# 3. Konformitätspaket (alle 30 Golden Vectors)
+cd conformance && ./run.sh <backend-name>
+
+# 4. E2E-Validierung (optional, benötigt Artefakte)
+cd runtime && cargo run --bin golden_model --features <backend-feature> \
+    -- ../artifacts/qwen2.5-0.5b --batch ../tests/golden/vectors
+```
+
+**Simulations-Limitation:** GPU-Ausführung (CUDA/ROCm) kann **nicht**
+auf CPU simuliert werden. Hardware-spezifische Eigenschaften (Warp-Größe,
+Memory Alignment, Synchronisation) werden nur auf echter GPU sichtbar.
+Daher: GPU-Backends werden auf CPU cross-kompiliert (Syntax-Check),
+aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
+(lokal oder CI).
+
+**CI-Strategie:**
+
+- **CPU-Backends** (reference, AVX2, NEON): Tests auf jedem Commit
+- **GPU-Backends** (CUDA, ROCm): Compile-Check auf jedem Commit,
+  volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
+
 ## Changelog
+
+### v0.12.40 – 2026-08-17 (Phase 12.40–12.55, GPU-Backends)
+- **CUDA + ROCm/HIP Delegations-Stubs** (`cuda.rs`, `rocm.rs`):
+  - Backend-Trait-Signaturen an theta_v 0.7.0 (Per-Channel-Shifts).
+  - Alle Operationen delegieren an Referenz-Kernel (numerisch identisch).
+  - Beide kompilieren mit `--features cuda` / `--features rocm`.
+  - CI-Job `gpu-backends` verifiziert Compile-Fähigkeit.
+- **Hardware-Teststrategie** im README dokumentiert.
+
+### v0.12.39 – 2026-08-17 (NEON-Backend für ARM64)
+- **NEON-Implementierungen** für Apple Silicon / ARM64:
+  - Softmax: `vmaxvq_s32` Max-Reduktion (4x i32 parallel)
+  - RoPE: `rotate_half_split_neon` (4 Paare parallel, RNE-SIMD-Shift)
+  - Paritätstests auf M5 Pro: 6/6 bestanden (bit-identisch zur Referenz)
+
+### v0.12.38 – 2026-08-17 (Phase 12.35–12.39, SIMD-Backend)
+- **AVX2-SIMD-Backend** (`kernels/src/backends/simd.rs`):
+  - Backend-Trait-Signaturen an theta_v 0.7.0 (Per-Channel-Shifts).
+  - AVX2 Softmax: Max-Reduktion vektorisiert (8x i32 parallel).
+  - AVX2 RoPE: rotate_half_split, 8 Paare parallel, RNE-SIMD-Shift.
+  - AVX2 MLP SiLU: Fusionsloop implementiert.
+  - Paritätstests: 6 Tests, SimdBackend vs. ReferenceBackend, alle PASS.
+  - CI-Job `simd-backend` für x86_64 (AVX2).
+
+### v0.12.37 – 2026-08-17 (Phase 12.32–12.34, Konformitätspaket)
+- **Eigenständiges Konformitäts-Artefakt** unter `conformance/`:
+  - `README.md`: Format-Doku, Anforderungen pro Ebene (Op/Layer/E2E),
+    Rundungsregeln (RNE, Sättigung), theta_v-Bindung.
+  - `vectors/`: 30 eingefrorene Golden Vectors (3 Op + 24 Layer + 3 E2E).
+  - `run.sh`: Prüflauf gegen beliebige Backends, 30/30 PASS.
+
+### v0.12.36 – 2026-08-17 (Phase 12.26–12.31, Golden Vectors)
+- **Layer- und E2E-Golden-Vektoren mit echtem Modell** (kein Dummy mehr):
+  - `runtime/src/bin/golden_generate.rs`: erzeugt 24 Layer-Vektoren
+    (int16-Residualstrom, echte kalibrierte Gewichte) und 3 E2E-Vektoren
+    (echter Qwen2.5-Tokenizer, Greedy-Decoding).
+  - `runtime/src/bin/golden_model.rs`: validiert Layer/E2E einzeln oder
+    im Batch-Modus (ein Modell-Load fuer alle 27 Vektoren).
+  - `tests/golden/generate.py`: ruft `golden_generate` per Subprozess,
+    theta_v_hash jetzt aus spec.json (SHA-256).
+  - `tests/golden/validate.py`: Batch-Validierung fuer Layer/E2E,
+    Skip-Logik entfernt. Ergebnis: 30/30 PASS.
+  - `.github/workflows/ci.yml`: CI-Workflow mit Cargo-Tests, Op-Golden
+    (immer), Layer/E2E-Golden (conditional), Audit-Suite.
 
 ### v0.12.35 – 2026-08-13 (Phase 12.22–12.25, Zahlensemantik-Audit)
 - **Audit-Suite `tests/audit/`** sichert die Kerneigenschaft automatisch:
