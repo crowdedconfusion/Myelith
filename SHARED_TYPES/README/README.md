@@ -1,12 +1,11 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.1.6
-> **Datum:** 2026-08-13
-> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.6): Hash,
-> Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381 mit
-> Aggregation, ID-Newtypes und die Kern-Structs aus Anhang A.1.
-> Design-Entscheidungen und Quantum-Einordnung im Fahrplan; als Nächstes
-> folgt Phase 2 (Golden Vectors, Fuzzing, Konformität).
+> **Version:** 0.2.3
+> **Datum:** 2026-08-17
+> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.6, 2.1–2.3):
+> Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
+> mit Aggregation, ID-Newtypes, Kern-Structs aus Anhang A.1, Golden
+> Vectors (18 Vektoren), Fuzz-Harness (100.000 Iterationen), Konformitätspaket.
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -87,6 +86,24 @@ SHARED_TYPES/
   jeder Aggregat-Verifikation als Rogue-Key-Schutz.
 - Geheimschlüssel-Typ bewusst ohne Debug/PartialEq/öffentliche
   Serialisierung — 44 Tests grün, keine Warnungen.
+
+### v0.2.3 – 2026-08-17 (Phase 2.3: Konformitätspaket)
+- `conformance/`-Verzeichnis mit 18 eingefrorenen Golden Vectors
+  (4 Hash, 4 Merkle, 5 VRF, 5 BLS) und README für Drittimplementierungen.
+- Validierungstest (`tests/validate_conformance.rs`) prüft alle Vektoren
+  gegen die Referenz-Implementierung — 4 Tests grün.
+- Phase 2 damit vollständig abgeschlossen.
+
+### v0.2.2 – 2026-08-17 (Phase 2.2: Fuzz-Harness)
+- Fuzz-Test (`tests/fuzz_deserialization.rs`) für alle Borsh-Deserialisierungspfade:
+  100.000 Iterationen pro Typ (Hash, MerkleProof, VRF, BLS, IDs, Core-Types)
+  mit zufälligen/adversarialen Eingaben — keine Panics, nur `Ok` oder `Err`.
+- Deterministischer PRNG (SplitMix64) für reproduzierbare Tests.
+
+### v0.2.1 – 2026-08-17 (Phase 2.1: Golden Vectors)
+- Golden Vector Generator (`src/bin/generate_golden_vectors.rs`) erzeugt
+  18 deterministische Testvektoren für Hash, Merkle, VRF und BLS.
+- Vektoren dienen als Referenz für Drittimplementierungen in anderen Sprachen.
 
 ### v0.1.3 – 2026-08-12 (Punkt 1.3)
 - VRF-Schnittstelle: ECVRF-EDWARDS25519-SHA512-TAI (RFC 9381 §5.5) —

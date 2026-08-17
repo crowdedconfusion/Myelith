@@ -1,6 +1,6 @@
 [package]
 name = "myl-types"
-version = "0.1.7"
+version = "0.2.3"
 edition = "2021"
 rust-version = "1.82"
 description = "Protokollweite Kern-Datentypen und Primitiven für Myelith (Referenzimplementierung von Whitepaper Anhang A.1): Hash-/Merkle-Primitiven, VRF- und BLS-Signatur-Schnittstellen, Segment/PoIBundle/InferenceCredit. Deterministische Borsh-Serialisierung, SHA-256 über das gesamte Protokoll."
@@ -12,6 +12,11 @@ borsh = { version = "1.6", features = ["derive"] }
 curve25519-dalek = "4"
 sha2 = "0.10"
 subtle = "2.6"
+hex = "0.4"
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [lib]
 name = "myl_types"
