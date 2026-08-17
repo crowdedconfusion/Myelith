@@ -39,7 +39,12 @@ pub mod trace;
 pub mod shard;
 pub mod da;
 pub mod coordinator;
+pub mod micro_batch;
 
 pub use da::{DaStore, ErasureCoder, XorParityCoder};
 pub use trace::{activation_hash, verify_input_hash, TransitionSig, ZERO_HASH};
 pub use wire::{PodMessage, MAGIC, FLAG_ABORT, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
+pub use micro_batch::{
+    InferenceRequest, MicroBatch, MicroBatchCollector, PipelineStage, PipelineTracker,
+    DEFAULT_WINDOW_MS, MAX_BATCH_SIZE,
+};

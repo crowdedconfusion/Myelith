@@ -1,12 +1,12 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.1.4
-> **Datum:** 2026-08-13
-> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.4, Akzeptanzkriterien
-> erfüllt): `shard_loop` mit Spur-Hashes und Manipulationserkennung,
+> **Version:** 0.2.1
+> **Datum:** 2026-08-17
+> **Status:** 🎉 **Phase 1 + 2.1 vollständig** (Punkte 1.1–1.4, 2.1):
+> `shard_loop` mit Spur-Hashes und Manipulationserkennung,
 > `coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität,
-> erasure-codierte DA-Archivierung. Als Nächstes folgt Phase 2
-> (Durchsatzoptimierung).
+> erasure-codierte DA-Archivierung, Micro-Batching-Fenster-Tuning,
+> Pipeline-Tracker für überlappende Batch-Verarbeitung.
 
 Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
 Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
@@ -55,6 +55,12 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.2.1 – 2026-08-17 (Phase 2.1: Micro-Batching + Pipelining)
+- Micro-Batching-Collector mit konfigurierbarem Zeitfenster (default 250 ms)
+  und Max-Batch-Größe (default 32). Pipeline-Tracker für überlappende
+  Batch-Verarbeitung (4 Stadien: Receiving, Processing, Finalizing, Completed).
+- Neues Modul `micro_batch.rs` mit 10 Tests grün.
 
 ### v0.1.4 – 2026-08-13 (Phase 1)
 - `shard_loop` (Anhang A.3): Aktivierungen empfangen, Eingangs-Hash gegen
