@@ -14,7 +14,7 @@
 //!
 //! Der Algorithmus ist deterministisch (gleicher Seed → gleiche Cluster).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use myl_types::ids::MinerId;
 

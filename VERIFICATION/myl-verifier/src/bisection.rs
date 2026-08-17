@@ -164,7 +164,7 @@ impl BisectionSession {
         }
 
         // Aktualisiere Bounds basierend auf dem Vergleich
-        let mid = (self.lower + self.upper) / 2;
+        let _mid = (self.lower + self.upper) / 2;
 
         // Wenn die Hashes an der mid-Position unterschiedlich sind,
         // liegt die Abweichung in der linken Hälfte [lower, mid]

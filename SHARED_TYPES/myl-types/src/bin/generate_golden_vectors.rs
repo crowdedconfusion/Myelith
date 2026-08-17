@@ -4,7 +4,7 @@
 //! Diese Vektoren dienen als Referenz für Drittimplementierungen und
 //! werden im `conformance/`-Verzeichnis eingefroren.
 
-use myl_types::bls::{aggregate_signatures, BlsSecretKey, BLS_DST};
+use myl_types::bls::{aggregate_signatures, BlsSecretKey};
 use myl_types::hash::Hash;
 use myl_types::merkle::{MerkleProof, MerkleTree};
 use myl_types::vrf::VrfSecretKey;

@@ -10,7 +10,6 @@
 //! Die Miner werden mit Fisher-Yates shuffle deterministisch zugewiesen.
 //! Jeder Shard bekommt eine gleichmäßige Anzahl von Minern (±1 bei ungerader Teilung).
 
-use myl_types::ids::MinerId;
 
 use crate::geo_clustering::MinerCluster;
 use crate::miner_filter::MinerRegistration;

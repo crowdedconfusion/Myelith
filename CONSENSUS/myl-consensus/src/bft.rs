@@ -11,7 +11,7 @@
 
 use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// BFT-Rundennummer.
 pub type Round = u64;

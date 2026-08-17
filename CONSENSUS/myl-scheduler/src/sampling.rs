@@ -10,7 +10,6 @@
 //! **Design:** Fisher-Yates Shuffle mit dem Seed, dann die ersten p·|segments|
 //! Segmente auswählen. Deterministisch und gleichverteilt.
 
-use myl_types::ids::MinerId;
 
 /// Ergebnis der Stichproben-Lotterie.
 #[derive(Debug, Clone, PartialEq)]

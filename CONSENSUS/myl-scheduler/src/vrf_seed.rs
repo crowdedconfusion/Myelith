@@ -12,10 +12,9 @@
 //! 64 Bytes, abgeleitet aus dem Block-Hash als Alpha-String.
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use sha2::{Digest, Sha256};
 
 use myl_types::hash::Hash;
-use myl_types::vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};
+use myl_types::vrf::{VrfError, VrfProof, VrfPublicKey, VrfSecretKey};
 
 /// Fehler bei der VRF-Seed-Ableitung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +104,7 @@ pub fn derive_epoch_seed(
     // VRF-Beweis über den Block-Hash erstellen
     // Der Block-Hash wird als Alpha-String verwendet (RFC 9381)
     let alpha = prev_block_hash.as_bytes();
-    let (proof, output) = vrf_sk.prove(alpha)?;
+    let (_proof, output) = vrf_sk.prove(alpha)?;
 
     // Epochenseed konstruieren
     Ok(EpochSeed {
