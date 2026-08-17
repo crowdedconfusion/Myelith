@@ -1,13 +1,13 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.1.5
-> **Datum:** 2026-08-13
+> **Version:** 0.2.6
+> **Datum:** 2026-08-17
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
-> 🎉 **Phase 1 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
-> Akzeptanzkriterium erfüllt: bitgleicher Replay); als Nächstes folgt
-> Phase 2 (deterministischer Epochen-Scheduler).
+> 🎉 **Phase 1 + 2 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
+> `myl-scheduler` v0.2.1–v0.2.6, Akzeptanzkriterien erfüllt: bitgleicher
+> Replay + deterministischer Epochen-Scheduler).
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -50,6 +50,18 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### v0.2.6 – 2026-08-17 (Phase 2: Deterministischer Epochen-Scheduler)
+- `myl-scheduler`: Neuer Crate mit 6 Modulen für den deterministischen
+  Epochen-Scheduler (Whitepaper Anhang A.2):
+  - VRF-Seed-Ableitung aus finalisiertem Block (7 Tests)
+  - Miner-Filterung nach Hardware-Klasse und Registrierungsschluss (11 Tests)
+  - Geo-Clustering unter Latenz-Constraint (8 Tests)
+  - Shard-Zuweisung mit Fisher-Yates (9 Tests)
+  - Redundanz-Zuteilung (zonendivers, disjunkt) (9 Tests)
+  - Stichproben-Lotterie für Checker (12 Tests)
+- Alle Schritte sind deterministisch und von jedem Node unabhängig
+  nachrechenbar. 56 Tests grün insgesamt.
 
 ### v0.1.1–v0.1.5 – 2026-08-13 (Phase 1)
 - `myl-ledger`: Kontenmodell mit deterministischer BTreeMap-Ordnung,
