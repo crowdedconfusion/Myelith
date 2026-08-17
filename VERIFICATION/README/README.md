@@ -1,41 +1,96 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.0.1
-> **Datum:** 2026-08-12
-> **Status:** Planungsphase — blockiert durch CONSENSUS; die inhaltliche
-> INTEGER_LLM-Voraussetzung (Qualität + Determinismus am Referenzmodell)
-> ist seit 2026-08-12 bestätigt, der Cross-Hardware-Nachweis steht aus
+> **Version:** 0.1.1
+> **Datum:** 2026-08-17
+> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.3): Redundanzvergleich
+> (Stufe 1) mit Commitment-Hash-Vergleich und zwei Auslieferungsmodi
+> (Optimistic/Confirmed). Binärer Vergleich, 21 Tests grün.
 
-Redundanzvergleich, optimistische Stichproben, Bisektions-Spiel,
-Kontrollsegmente. Referenzimplementierung von Whitepaper Kap. 6.4–6.9 und
-Anhang A.4.
+Verifikations-Subsystem: Redundanzvergleich, Bisektions-Spiel (Stufe 2),
+Kontrollsegmente (Stufe 3). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
+und Anhang A.4.
 
 ## Aufgabe
 
-Die drei Verifikationsstufen aus Kap. 3.4/6.4: deterministische Redundanz
-(Stufe 1, sofort), optimistische Stichproben mit Bisektions-Spiel (Stufe 2,
-verzögert) sowie das Kontrollsegment-Verfahren gegen den einmaligen
-gezielten Eingriff (Kap. 6.7). Stufe 3 (zkML-Anker) ist explizit als
-späterer Aufrüstpfad benannt (Kap. 6.4) und nicht Teil dieser Komponente.
+Die Komponente, die INTEGER_LLMs Determinismus-Eigenschaft (Kap. 6.2) erst
+wirtschaftlich nutzbar macht: Sie entscheidet, wann zwei Berechnungen als
+"gleich" gelten, was bei Abweichung passiert, und wie eine Manipulation
+wirtschaftlich unattraktiv gemacht wird.
+
+**Drei Verifikationsstufen:**
+1. **Redundanz (Stufe 1):** Commitment-Hash-Vergleich zweier Pods
+2. **Stichproben (Stufe 2):** Bisektions-Spiel bei Abweichung
+3. **zkML-Anker (Stufe 3):** Zukunftspfad (noch nicht implementiert)
 
 ## Abhängigkeiten
 
-CONSENSUS (Challenges und Verdicts sind Blockinhalt, Kap. 3.5) sowie eine
-**harte inhaltliche Voraussetzung** aus INTEGER_LLM: Das Bisektions-Spiel
-(Kap. 6.6) setzt voraus, dass eine Referenz-Ausführung gemäß θ_v auf jeder
-Validator-Hardware dasselbe Ergebnis liefert. Bitgleichheit und tragfähige
-Qualität ganzzahliger Inferenz sind am Referenzmodell (Qwen2.5-0.5B)
-gemessen und bestätigt (Entscheidungspunkt 12.21 AKZEPTIERT am 2026-08-12:
-Perplexität 15,59 vs. BF16-Baseline 14,95 = +4,29 %, Determinismus
-laufübergreifend bit-identisch; Protokoll:
-`INTEGER_LLM/eval/results/decision_12-21.md`). Noch offen ist der
-Cross-Hardware-Nachweis über Validator-Hardware-Generationen hinweg — er
-setzt die SIMD-/CUDA-/ROCm-Backends und GPU-Zugang voraus.
+- **INTEGER_LLM:** Determinismus-Eigenschaft (Kap. 6.2) — ✅ Phase 12.21 akzeptiert
+- **CONSENSUS:** BFT-Blockproduktion (Phase 3) für On-Chain-Schiedsrunde — ⏳ offen
+- **NETWORKING:** Verschlüsselte Aktivierungs-Streams (Phase 3) für DA-Fragmente — ⏳ offen
 
 ## Struktur
 
-Entsteht mit der Implementierung.
+```
+VERIFICATION/
+├── README/                   diese Kurzübersicht + Fahrplan
+└── myl-verifier/             das Verifikations-Crate (Bibliothek)
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs            Crate-Root
+        ├── redundancy.rs     Commitment-Hash-Vergleich (Stufe 1)
+        └── delivery.rs       Auslieferungsmodi (Optimistic/Confirmed)
+```
+
+## Module
+
+### `redundancy` — Commitment-Hash-Vergleich
+
+Vergleicht die Commitment-Hashes zweier Pods an allen Spur-Positionen.
+Binärer Vergleich (gleich/ungleich), parameterfrei (kein Schwellenwert).
+
+```rust
+use myl_verifier::compare_commitments;
+
+let result = compare_commitments(&primary_trace, &redundant_trace)?;
+match result {
+    CompareResult::Match => { /* Pods stimmen überein */ },
+    CompareResult::Mismatch { first_divergence } => { /* Abweichung bei Position */ },
+}
+```
+
+### `delivery` — Auslieferungsmodi
+
+Zwei Modi für die Ergebnis-Auslieferung:
+- **Optimistic:** Sofortige Auslieferung + asynchroner Abgleich
+- **Confirmed:** Zurückhalten bis Übereinstimmung bestätigt
+
+```rust
+use myl_verifier::{decide_delivery, VerificationMode};
+
+let decision = decide_delivery(
+    VerificationMode::Optimistic,
+    &primary_trace,
+    &redundant_trace,
+)?;
+
+match decision {
+    DeliveryDecision::Deliver => { /* Ausliefern */ },
+    DeliveryDecision::Hold => { /* Zurückhalten */ },
+    DeliveryDecision::DeliverAndSlash { first_divergence } => { /* Ausliefern + Slashing */ },
+}
+```
+
+## Tests
+
+21 Tests grün (11 redundancy + 10 delivery):
+- Commitment-Hash-Vergleich (identisch, abweichend, Längen-Mismatch)
+- Auslieferungsentscheidungen (Optimistic/Confirmed × Match/Mismatch)
+- Fehlerbehandlung (leere Spuren, Längen-Mismatch)
 
 ## Changelog
 
-Noch keine Version veröffentlicht.
+### v0.1.1 – 2026-08-17 (Phase 1: Redundanzvergleich)
+- Commitment-Hash-Vergleich zweier Pods an allen Spur-Positionen
+- Optimistische Auslieferung (sofort + asynchroner Abgleich)
+- Bestätigte Auslieferung (zurückhalten bis Bestätigung)
+- Binärer Vergleich (kein Schwellenwert), 21 Tests grün
