@@ -1,0 +1,19 @@
+[package]
+name = "myl-consensus"
+version = "0.3.5"
+edition = "2021"
+rust-version = "1.82"
+description = "BFT-Konsens für Myelith (Whitepaper Kap. 3.5, Anhang A.2): Validator-Registrierung, Stake-basierte Komiteewahl, BFT-Blockproduktion (Propose/Vote/Commit), Stimmgewichts-Kopplung, Double-Signing-Erkennung. Design-Entscheidung: malachite-consensus hinter Trait-Grenze, Eigenbau als Fallback."
+license = "PolyForm Shield License 1.0.0"
+
+[dependencies]
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+myl-ledger = { path = "../myl-ledger" }
+sha2 = "0.10"
+borsh = { version = "1.6", features = ["derive"] }
+
+[lib]
+name = "myl_consensus"
+path = "src/lib.rs"
+
+[dev-dependencies]

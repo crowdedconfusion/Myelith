@@ -1,13 +1,14 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.2.6
+> **Version:** 0.3.5
 > **Datum:** 2026-08-17
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
-> 🎉 **Phase 1 + 2 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
-> `myl-scheduler` v0.2.1–v0.2.6, Akzeptanzkriterien erfüllt: bitgleicher
-> Replay + deterministischer Epochen-Scheduler).
+> 🎉 **Phase 1 + 2 + 3 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
+> `myl-scheduler` v0.2.1–v0.2.6, `myl-consensus` v0.3.1–v0.3.5,
+> Akzeptanzkriterien erfüllt: bitgleicher Replay + deterministischer
+> Epochen-Scheduler + BFT-Blockproduktion).
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -50,6 +51,15 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### v0.3.5 – 2026-08-17 (Phase 3: BFT-Blockproduktion)
+- `myl-consensus`: Neuer Crate mit 5 Modulen für BFT-Blockproduktion:
+  - Validator-Registrierung mit Stake-Minimum und Komiteewahl (12 Tests)
+  - BFT-Protokoll mit Propose/Vote/Commit-Zyklus (9 Tests)
+  - Block-Struktur mit Borsh-Serialisierung (9 Tests)
+  - Stimmgewichts-Kopplung mit Decay-Faktor (13 Tests)
+  - Double-Signing-Erkennung und Slashing (10 Tests)
+- 53 neue Tests grün, insgesamt 109 Tests
 
 ### v0.2.6 – 2026-08-17 (Phase 2: Deterministischer Epochen-Scheduler)
 - `myl-scheduler`: Neuer Crate mit 6 Modulen für den deterministischen
