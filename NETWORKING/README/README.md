@@ -1,12 +1,11 @@
 # networking (`myl-net`)
 
-> **Version:** 0.1.4
-> **Datum:** 2026-08-13
-> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.4,
-> Akzeptanzkriterien empirisch erfüllt: 20-Node-Voll-Konnektivität
-> < 5 s, ungültige Nachrichten werden nicht weiterverbreitet).
-> Design-Entscheidungen und Quantum-Einordnung im Fahrplan; als
-> Nächstes folgt Phase 2 (Latenztopologie).
+> **Version:** 0.2.3
+> **Datum:** 2026-08-17
+> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.4, 2.1–2.3).
+> Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
+> werden nicht weiterverbreitet. Phase 2: Paarlatenzmessung mit
+> EMA-Glättung, Latenz-Atteste, LatencyGraph, Geo-/AS-Diversität.
 
 P2P-Gossip, latenzbasierte Topologie-Erkennung, verschlüsselte
 Aktivierungs-Streams. Referenzimplementierung von Whitepaper Kap. 3.2
@@ -55,6 +54,22 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.2.3 – 2026-08-17 (Phase 2.3: Geo-/AS-Diversitäts-Metadaten)
+- Geo-/AS-Diversitäts-Metadaten in SHARED_TYPES `node_metadata.rs`:
+  GeoRegion (7 Regionen: NorthAmerica, SouthAmerica, Europe, Africa,
+  Asia, Oceania, MiddleEast), Asn (32-bit ASN), NodeMetadata,
+  DiversityChecker für Pod-Bildung (Kap. 4.4). 7 Tests grün.
+
+### v0.2.2 – 2026-08-17 (Phase 2.2: Latenz-Atteste + LatencyGraph)
+- Latenz-Atteste und LatencyGraph in SHARED_TYPES `latency_attest.rs`:
+  LatencyAttest (signierte Latenzwerte), LatencyGraph (ungerichteter
+  Graph mit Cleanup), PeerIdBytes, BlsSignatureBytes. 8 Tests grün.
+
+### v0.2.1 – 2026-08-17 (Phase 2.1: Paarlatenzmessung)
+- Paarlatenzmessung mit EMA-Glättung in `latency.rs`: Ping/Pong-
+  Nachrichten, LatencyTracker mit EMA (α = 0,25), Cleanup-Mechanismus
+  für veraltete Pings. 8 Tests grün.
 
 ### v0.1.4 – 2026-08-13 (Punkt 1.4) — Phase 1 vollständig
 - Dreistufige Validierung vor Weiterverbreitung: Gossipsub-Authentizität

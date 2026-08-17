@@ -27,7 +27,9 @@ pub mod bls;
 pub mod core_types;
 pub mod hash;
 pub mod ids;
+pub mod latency_attest;
 pub mod merkle;
+pub mod node_metadata;
 pub mod protocol;
 pub mod vrf;
 
@@ -41,5 +43,9 @@ pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,
     ID_LEN,
 };
+pub use latency_attest::{
+    BlsSignatureBytes, LatencyAttest, LatencyAttestError, LatencyGraph, PeerIdBytes,
+};
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
+pub use node_metadata::{Asn, DiversityChecker, GeoRegion, NodeMetadata, NodeMetadataError};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

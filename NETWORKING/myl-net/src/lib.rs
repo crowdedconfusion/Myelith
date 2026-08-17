@@ -32,6 +32,7 @@ pub mod config;
 pub mod discovery;
 pub mod gossip;
 pub mod identity;
+pub mod latency;
 pub mod node;
 pub mod runtime;
 pub mod validation;
@@ -43,6 +44,9 @@ pub use gossip::{
     TOPIC_CHALLENGES, TOPIC_LATENCY_ATTESTS, TOPIC_POI_BUNDLES, TOPIC_TRANSACTIONS,
 };
 pub use identity::NodeIdentity;
+pub use latency::{
+    LatencyTracker, PeerLatency, PingMessage, PongMessage, EMA_ALPHA, PING_INTERVAL_SECS,
+};
 pub use node::{build_swarm, MylBehaviour};
 pub use runtime::{run_node, InboundMessage, NodeCommand, NodeEvent};
 pub use validation::{report, topic_from_hash, validate_payload, ValidationError};

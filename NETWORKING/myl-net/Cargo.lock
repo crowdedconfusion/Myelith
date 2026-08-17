@@ -1929,11 +1929,12 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.1.6"
+version = "0.2.3"
 dependencies = [
  "blst",
  "borsh",
  "curve25519-dalek",
+ "hex",
  "sha2",
  "subtle",
 ]
