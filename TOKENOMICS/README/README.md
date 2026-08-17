@@ -1,12 +1,11 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.1.4
-> **Datum:** 2026-08-13
+> **Version:** 0.2.3
+> **Datum:** 2026-08-17
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
-> α=2/31 — Details im Fahrplan); 🎉 **Phase 1 vollständig**
-> (`myl-tokenomics` v0.1.1–v0.1.4, Akzeptanzkriterium erfüllt); als
-> Nächstes folgt Phase 2 (Credit-Preisbildung mit LUT-exp()).
+> α=2/31 — Details im Fahrplan); 🎉 **Phase 1 + 2 vollständig**
+> (`myl-tokenomics` v0.1.1–v0.2.3, Akzeptanzkriterien erfüllt).
 
 Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,
 Staking/Slashing-Matrix, Ausgabestruktur und Genesis. Referenzimplementierung
@@ -48,6 +47,15 @@ TOKENOMICS/
 ```
 
 ## Changelog
+
+### v0.2.3 – 2026-08-17 (Phase 2: Credit-Preisbildung)
+- Ganzzahlige exp()-Approximation (LUT-basiert, 2048 Stützstellen,
+  lineare Interpolation) für Preisformel P_{e+1} = P_e · exp(κ(u_e − u*)).
+  10 Tests, <1% Fehler im Bereich [-10, +10].
+- Auslastungsmessung u_e = demanded_vtfe / available_capacity mit
+  Fixed-Point-Arithmetik (16 Bit Nachkommastellen). 9 Tests.
+- Preis-Update-Funktion update_price() mit Überlaufsicherung (i128).
+- Neue Module: `exp_approx.rs`, `utilization.rs`. 19 neue Tests grün.
 
 ### v0.1.1–v0.1.4 – 2026-08-13 (Phase 1)
 - Durchgehend Fixed-Point-Ganzzahl-Arithmetik: Brüche als

@@ -23,8 +23,10 @@
 
 pub mod distribute;
 pub mod ema;
+pub mod exp_approx;
 pub mod mint;
 pub mod training;
+pub mod utilization;
 
 /// Anzahl der Kleinstbeträge je MYL (1 MYL = 10⁶ Kleinstbeträge).
 pub const UNITS_PER_MYL: u64 = 1_000_000;
@@ -39,5 +41,10 @@ pub use distribute::{
     SHARE_TREASURY_BPS, SHARE_VALIDATORS_BPS, SHARES_TOTAL_BPS,
 };
 pub use ema::{ema_update, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
+pub use exp_approx::{exp_approx, update_price};
 pub use mint::{mint_amount, MintParams};
 pub use training::{capped_training_reward, training_reward_cap, TRAINING_CAP_BPS};
+pub use utilization::{
+    calculate_utilization, utilization_from_burns, utilization_from_f64, utilization_to_f64,
+    UTILIZATION_SCALE,
+};
