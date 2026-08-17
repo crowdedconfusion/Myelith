@@ -33,7 +33,17 @@ jobs:
         working-directory: INTEGER_LLM/kernels
         run: cargo build --features cpu-simd --quiet
 
+      - name: Check AVX2 support
+        id: avx2_check
+        run: |
+          if grep -q avx2 /proc/cpuinfo; then
+            echo "avx2_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "avx2_available=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: cargo test --features cpu-simd (Paritaetstests)
+        if: steps.avx2_check.outputs.avx2_available == 'true'
         working-directory: INTEGER_LLM/kernels
         run: cargo test --features cpu-simd --test test_backend_parity --quiet
 
