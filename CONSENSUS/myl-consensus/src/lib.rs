@@ -27,9 +27,12 @@ pub use validator::{
 pub use bft::{
     BftState, Propose, Vote, Commit, Round, RoundStatus, BftError, select_leader,
 };
-pub use block::{
-    Block, EpochMeta, Transaction, BurnTx, PoiBundle, Challenge, Verdict,
-};
+pub use block::{Block, BurnTx, EpochMeta, Transaction};
+// Die Protokolltypen des Blockinhalts kommen aus den kanonischen Crates
+// (Fund A8) — hier nur re-exportiert, nicht neu definiert.
+pub use myl_ledger::transitions::{Verdict, VerdictOutcome};
+pub use myl_types::challenge::Challenge;
+pub use myl_types::core_types::PoIBundle;
 pub use voting_weight::{
     InferenceHistory, calculate_voting_weight, compare_voting_weight,
     DECAY_FACTOR_NUM, DECAY_FACTOR_DEN, MAX_HISTORY_EPOCHS, VTFE_UNIT,

@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.4.0 (`myl-scheduler` 0.2.9)
+> **Version:** 0.4.1 (`myl-scheduler` 0.2.9)
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -53,6 +53,41 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+
+### v0.4.1 – 2026-08-18 (Audit-Block 4: kanonische Blocktypen)
+
+**Fund A8 — der Block definierte eigene Fassungen der Protokolltypen.**
+`block.rs` hatte eigene `PoiBundle`, `Challenge` und `Verdict` mit
+anderen Feldern als die Typen, die die übrigen Komponenten tatsächlich
+produzieren:
+
+| block.rs (alt) | kanonisch |
+|---|---|
+| `PoiBundle { segment_id, commitment_hash, pod_id: [u8;32], signature: [u8;96] }` | `myl_types::PoIBundle { epoch, pod, segments_root, vtfe_claimed, aggregate_sig }` |
+| `Challenge { segment_id, first_divergence, challenger, accused }` | `myl_types::Challenge` (mit beiden Pods und beiden Hashes) |
+| `Verdict { segment_id, winner, loser, slash_amount }` | `myl_ledger::Verdict { segment_id, miner, checker, outcome }` |
+
+Die Folge war eine stille Integrationslücke: `myl-pod` erzeugt das
+Epochen-Aggregat `myl_types::PoIBundle` (Anhang A.1), aber
+`Block::add_poi_bundle` nahm eine per-Segment-Struktur — der Pfad
+Pod → Block war nie verdrahtet, obwohl beide Seiten als „vollständig"
+geführt wurden. Ebenso hätte kein Verdict des Verifiers je gebucht
+werden können. Rohe `[u8; 32]`/`[u8; 96]`-Felder sind durch die
+Newtypes aus `myl-types` ersetzt — genau dafür gibt es SHARED_TYPES.
+
+**Fund A10 — `myl-ledger` war als Abhängigkeit deklariert, aber nie
+benutzt** (null Referenzen im Quelltext). Konsequenz: `EpochMeta` trug
+keinen `state_root`. Ein Validator konnte nur prüfen, ob die Bytes des
+Blocks gleich sind — nicht, ob der Vorschlagende die Zustandsübergänge
+korrekt angewendet hat. Ein Leader hätte einen syntaktisch
+einwandfreien Block mit falsch gebuchtem Slashing vorschlagen können.
+`EpochMeta` hat jetzt `state_root: Hash`
+(`LedgerState::commitment()`), und der Test
+`state_root_geht_in_den_blockhash_ein` sichert, dass er in den Hash
+eingeht, über den abgestimmt wird.
+
+- 97 → 100 Tests.
 
 ### v0.4.0 / myl-scheduler v0.2.9 – 2026-08-18 (Audit-Block 3: BFT-Kryptografie)
 

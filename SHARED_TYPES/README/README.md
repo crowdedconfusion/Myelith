@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.2.4
+> **Version:** 0.2.5
 > **Datum:** 2026-08-18
 > **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -45,6 +45,20 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+
+### v0.2.5 – 2026-08-18 (Audit-Block 4: Challenge als Protokolltyp)
+- Neues Modul `challenge.rs` mit `Challenge` (Anhang A.4) und
+  `validate_structure()`.
+- **Warum hier (Fund A8/A12):** Der Typ wird von drei Komponenten
+  gebraucht, die einander nicht kennen dürfen — VERIFICATION erzeugt
+  ihn, NETWORKING validiert ihn beim Gossip, CONSENSUS nimmt ihn in den
+  Block auf. Läge er in einer davon, müsste die Schichtung verletzt
+  werden (L0 Networking hinge an L1 Consensus). Vorher existierten
+  **zwei** unabhängige `Challenge`-Definitionen mit verschiedenen
+  Feldern; der Block konnte gar nicht aufnehmen, was der Verifier
+  produziert.
+- 90 → 94 Tests.
 
 ### v0.2.4 – 2026-08-18 (Audit-Block 3: geteilter Seed-RNG)
 - Neues Modul `seed_rng.rs`: `SeedRng` (SHA-256 im Zählermodus),

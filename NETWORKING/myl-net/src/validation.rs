@@ -12,14 +12,29 @@
 //!    imitierte Nachrichten scheitern bereits auf Protokollebene.
 //! 2. **Größenlimits je Topic** (gegen Ressourcen-Erschöpfung): unten
 //!    als Konstanten definiert; sie sind später Governance-Parameter.
-//! 3. **Struktur-Validierung per Borsh** für Topics, deren Datentyp in
-//!    `myl-types` bereits existiert (aktuell PoI-Bündel). Für Blöcke,
-//!    Transaktionen, Challenges und Latenz-Atteste gelten bis zur
-//!    Definition der Typen in CONSENSUS/VERIFICATION nur die
-//!    Größenlimits (dokumentierte Zwischenstufe).
+//! 3. **Struktur-Validierung per Borsh** für alle Topics, deren Datentyp
+//!    in `myl-types` liegt: PoI-Bündel, Challenges und Latenz-Atteste.
+//!    Bei Challenges und Attesten kommt eine strukturelle
+//!    Plausibilitätsprüfung dazu (verschiedene Miner, verschiedene
+//!    Hashes bzw. Feldgrenzen) — das ist alles, was ohne Kenntnis der
+//!    Segment-Spur bzw. des Netzzustands entscheidbar ist.
 //!
-//! Inhaltliche Konsensregeln (z. B. BLS-Signatur über das PoI-Bündel,
-//! Epochengültigkeit) sind Aufgabe von CONSENSUS und werden hier nicht
+//! **Blöcke und Transaktionen bleiben bewusst bei der Größenprüfung.**
+//! Ihre Typen liegen in `myl-consensus` (L1); `myl-net` ist die
+//! Netzschicht (L0) und darf nicht an die Konsensschicht hängen, sonst
+//! wird die Schichtung umgekehrt. Wer beide Seiten kennt — die
+//! Node-Verdrahtung — reicht die vollständige Prüfung über
+//! [`PayloadValidator`] herein. Ohne einen solchen Validator gilt für
+//! diese beiden Topics weiterhin nur das Größenlimit; das ist eine
+//! bewusste Entscheidung, keine Auslassung.
+//!
+//! **Signaturen prüft diese Schicht nicht** (mit Ausnahme der
+//! Gossipsub-Peer-Signatur aus Stufe 1). Ein Latenz-Attest trägt eine
+//! BLS-Signatur, deren Gültigkeit nur gegen die Validator-Registry
+//! entscheidbar ist — auch das läuft über [`PayloadValidator`].
+//!
+//! Inhaltliche Konsensregeln (Epochengültigkeit, Stake-Prüfung,
+//! Attest-Signaturen) sind Aufgabe von CONSENSUS und werden hier nicht
 //! vorweggenommen — die Netzschicht erzwingt nur die transportnahen
 //! Regeln, damit das Netz auch unter adversarialem Verkehr funktions-
 //! fähig bleibt.
@@ -30,8 +45,8 @@ use libp2p::{PeerId, Swarm};
 use crate::gossip::GossipTopic;
 use crate::node::MylBehaviour;
 
-/// Maximale Größe einer Block-Nachricht (Zwischenwert bis CONSENSUS den
-/// Block-Typ definiert; dann wird auch die Struktur geprüft).
+/// Maximale Größe einer Block-Nachricht. Die Strukturprüfung von Blöcken
+/// erfolgt über einen [`PayloadValidator`] (Schichtung, siehe Modul-Doku).
 pub const MAX_BLOCKS_BYTES: usize = 2 * 1024 * 1024;
 /// Maximale Größe einer Transaktions-Nachricht.
 pub const MAX_TRANSACTIONS_BYTES: usize = 64 * 1024;
@@ -102,22 +117,79 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
             borsh::from_slice::<myl_types::PoIBundle>(data)
                 .map_err(|_| ValidationError::MalformedPayload)?;
         }
-        // Blöcke, Transaktionen, Challenges, Latenz-Atteste: Die
-        // zugehörigen Typen entstehen in CONSENSUS/VERIFICATION bzw. in
-        // Phase 2; bis dahin nur Größenprüfung (dokumentierte
-        // Zwischenstufe, siehe Modul-Dokumentation).
-        GossipTopic::Blocks
-        | GossipTopic::Transactions
-        | GossipTopic::Challenges
-        | GossipTopic::LatencyAttests => {}
+        // Challenge: Borsh-Struktur plus die Plausibilitätsprüfung, die
+        // ohne Kenntnis der Segment-Spur entscheidbar ist (verschiedene
+        // Miner, verschiedene Hashes). Verhindert, dass offensichtlich
+        // unsinnige Streitanzeigen das Netz fluten.
+        GossipTopic::Challenges => {
+            let challenge = borsh::from_slice::<myl_types::Challenge>(data)
+                .map_err(|_| ValidationError::MalformedPayload)?;
+            challenge
+                .validate_structure()
+                .map_err(|_| ValidationError::MalformedPayload)?;
+        }
+        // Latenz-Attest: Borsh-Struktur plus die vorhandene
+        // Feldprüfung. Die BLS-Signatur ist hier NICHT prüfbar — dafür
+        // braucht es die Validator-Registry (siehe PayloadValidator).
+        GossipTopic::LatencyAttests => {
+            let attest = borsh::from_slice::<myl_types::LatencyAttest>(data)
+                .map_err(|_| ValidationError::MalformedPayload)?;
+            attest
+                .validate_structure()
+                .map_err(|_| ValidationError::MalformedPayload)?;
+        }
+        // Blöcke und Transaktionen: Ihre Typen liegen in myl-consensus
+        // (L1). Die Netzschicht (L0) darf nicht daran hängen — die
+        // vollständige Prüfung kommt über einen PayloadValidator von der
+        // Node-Verdrahtung. Bewusste Entscheidung, keine Auslassung.
+        GossipTopic::Blocks | GossipTopic::Transactions => {}
     }
     Ok(())
+}
+
+/// Hereingereichte Prüfung für Topics, deren Typen oberhalb der
+/// Netzschicht liegen.
+///
+/// `myl-net` ist L0 und kennt weder `myl-consensus` noch die
+/// Validator-Registry. Wer beide Seiten kennt — die Node-Verdrahtung —
+/// implementiert diesen Trait und reicht ihn an [`report_with`]. Damit
+/// bleibt die Schichtung erhalten und die Netzschicht kann trotzdem
+/// vollständig validieren, statt Blöcke ungeprüft weiterzuverbreiten.
+///
+/// Aufrufe müssen **schnell und seiteneffektfrei** sein: Sie laufen im
+/// Gossip-Pfad für jede eingehende Nachricht.
+pub trait PayloadValidator {
+    /// Prüft eine Nutzlast, die `validate_payload` nicht abschließend
+    /// beurteilen kann.
+    ///
+    /// **Returns:** `true`, wenn die Nachricht weiterverbreitet werden
+    /// darf. Die transportnahen Prüfungen aus [`validate_payload`]
+    /// laufen bereits vorher — hier geht es um Konsensregeln
+    /// (Blockstruktur, Attest-Signaturen, Epochengültigkeit).
+    fn validate(&self, topic: GossipTopic, data: &[u8]) -> bool;
+}
+
+/// Ein Validator, der nichts zusätzlich prüft.
+///
+/// Nur für Tests und für Nodes, die bewusst ohne Konsensschicht laufen
+/// (z. B. reine Relay-Knoten). Im Produktivbetrieb eines Validators ist
+/// das die falsche Wahl.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AcceptAllValidator;
+
+impl PayloadValidator for AcceptAllValidator {
+    fn validate(&self, _topic: GossipTopic, _data: &[u8]) -> bool {
+        true
+    }
 }
 
 /// Meldet das Validierungsergebnis einer gehaltenen Gossip-Nachricht an
 /// Gossipsub zurück: `Accept` gibt die Nachricht zur Weiterverbreitung
 /// frei, `Reject` verwirft sie netzweit (für diesen Node) und bestraft
 /// den Absender im Gossipsub-Scoring.
+/// Prüft nur die transportnahen Regeln. Für Blöcke und Transaktionen
+/// bleibt es dabei bei der Größenprüfung — nutze [`report_with`], sobald
+/// die Konsensschicht verfügbar ist.
 pub fn report(
     swarm: &mut Swarm<MylBehaviour>,
     message_id: &MessageId,
@@ -125,8 +197,26 @@ pub fn report(
     topic_hash: &TopicHash,
     data: &[u8],
 ) -> MessageAcceptance {
+    report_with(swarm, message_id, source, topic_hash, data, &AcceptAllValidator)
+}
+
+/// Wie [`report`], aber mit einer zusätzlichen, von oben hereingereichten
+/// Prüfung für die Topics, die `myl-net` nicht abschließend beurteilen
+/// kann (Blöcke, Transaktionen, Attest-Signaturen).
+///
+/// Die transportnahen Regeln laufen zuerst; der `PayloadValidator` wird
+/// nur befragt, wenn sie bestanden sind. So kann eine teure
+/// Konsensprüfung nicht als DoS-Fläche vor den billigen Filtern stehen.
+pub fn report_with(
+    swarm: &mut Swarm<MylBehaviour>,
+    message_id: &MessageId,
+    source: &PeerId,
+    topic_hash: &TopicHash,
+    data: &[u8],
+    validator: &dyn PayloadValidator,
+) -> MessageAcceptance {
     let ok = match topic_from_hash(topic_hash) {
-        Some(topic) => validate_payload(topic, data).is_ok(),
+        Some(topic) => validate_payload(topic, data).is_ok() && validator.validate(topic, data),
         None => false,
     };
     swarm.behaviour_mut().gossipsub.report_message_validation_result(
@@ -149,8 +239,20 @@ pub fn report(
 mod tests {
     use super::*;
     use libp2p::gossipsub::IdentTopic;
-    use myl_types::ids::{EpochId, PodId, SegmentId};
-    use myl_types::{segments_root, BlsSecretKey, PoIBundle};
+    use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
+    use myl_types::{segments_root, BlsSecretKey, Challenge, Hash, PoIBundle};
+
+    fn gueltige_challenge() -> Challenge {
+        Challenge {
+            segment_id: SegmentId::new([1u8; 32]),
+            first_divergence: 3,
+            primary_miner: MinerId::new([1u8; 32]),
+            redundant_miner: MinerId::new([2u8; 32]),
+            primary_hash: Hash::sha256(b"a"),
+            redundant_hash: Hash::sha256(b"b"),
+            timestamp_ms: 1_700_000_000_000,
+        }
+    }
 
     fn gueltiges_bundle() -> Vec<u8> {
         let sk = BlsSecretKey::key_gen(&[0x5au8; 32]).expect("KeyGen");
@@ -199,5 +301,75 @@ mod tests {
         }
         let fremd = IdentTopic::new("/fremdes/topic/1").hash();
         assert_eq!(topic_from_hash(&fremd), None);
+    }
+
+    // ── Challenge-Validierung (Fund A12) ────────────────────────────
+
+    #[test]
+    fn gueltige_challenge_wird_akzeptiert() {
+        let data = borsh::to_vec(&gueltige_challenge()).unwrap();
+        assert!(validate_payload(GossipTopic::Challenges, &data).is_ok());
+    }
+
+    /// Vorher wurde jede Bytefolge unterhalb des Groessenlimits
+    /// akzeptiert und weiterverbreitet.
+    #[test]
+    fn challenge_mit_kaputtem_borsh_wird_abgelehnt() {
+        assert_eq!(
+            validate_payload(GossipTopic::Challenges, b"kein-borsh"),
+            Err(ValidationError::MalformedPayload)
+        );
+    }
+
+    #[test]
+    fn challenge_mit_gleichen_minern_wird_abgelehnt() {
+        let mut c = gueltige_challenge();
+        c.redundant_miner = c.primary_miner;
+        let data = borsh::to_vec(&c).unwrap();
+        assert_eq!(
+            validate_payload(GossipTopic::Challenges, &data),
+            Err(ValidationError::MalformedPayload)
+        );
+    }
+
+    #[test]
+    fn challenge_ohne_abweichung_wird_abgelehnt() {
+        let mut c = gueltige_challenge();
+        c.redundant_hash = c.primary_hash;
+        let data = borsh::to_vec(&c).unwrap();
+        assert_eq!(
+            validate_payload(GossipTopic::Challenges, &data),
+            Err(ValidationError::MalformedPayload)
+        );
+    }
+
+    #[test]
+    fn latenz_attest_mit_kaputtem_borsh_wird_abgelehnt() {
+        assert_eq!(
+            validate_payload(GossipTopic::LatencyAttests, b"kein-borsh"),
+            Err(ValidationError::MalformedPayload)
+        );
+    }
+
+    /// Bloecke bleiben bewusst bei der Groessenpruefung — ihre Typen
+    /// liegen in der Konsensschicht. Die vollstaendige Pruefung kommt
+    /// ueber einen PayloadValidator.
+    #[test]
+    fn bloecke_bleiben_bei_der_groessenpruefung() {
+        assert!(validate_payload(GossipTopic::Blocks, b"beliebige-bytes").is_ok());
+        let zu_gross = vec![0u8; MAX_BLOCKS_BYTES + 1];
+        assert!(validate_payload(GossipTopic::Blocks, &zu_gross).is_err());
+    }
+
+    #[test]
+    fn payload_validator_kann_ablehnen() {
+        struct AlleAblehnen;
+        impl PayloadValidator for AlleAblehnen {
+            fn validate(&self, _t: GossipTopic, _d: &[u8]) -> bool {
+                false
+            }
+        }
+        assert!(!AlleAblehnen.validate(GossipTopic::Blocks, b"x"));
+        assert!(AcceptAllValidator.validate(GossipTopic::Blocks, b"x"));
     }
 }

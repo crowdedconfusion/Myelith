@@ -41,8 +41,7 @@ pub use bisection::{
     BisectionSession, BisectionRequest, BisectionResponse, BisectionResult, BisectionError,
 };
 pub use slash::{
-    create_slash_decision, net_transfer, has_sufficient_stake, SlashConfig, SlashDecision,
-    SlashError, SlashReason, VerdictOutcome,
+    create_slash_decision, SlashDecision, SlashError, SlashReason, VerdictOutcome,
 };
 pub use adjudicate::{
     AdjudicationRequest, AdjudicationResponse, AdjudicationResult, AdjudicationError,

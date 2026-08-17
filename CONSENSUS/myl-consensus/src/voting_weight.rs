@@ -19,9 +19,28 @@
 //! Validator mit einer vollen vTFE-Einheit abgeklungener Arbeit hat
 //! doppeltes Gewicht gegenüber einem gleich gestakten ohne Arbeit.
 //!
-//! **Diese Formel ist konsensrelevant und sollte vom Projektinhaber
-//! bestätigt werden** — die Alternative wäre, die Bootstrap-Phase anders
-//! zu lösen (z. B. Genesis-Komitee per Konfiguration).
+//! **Status der Formel: vorläufig bestätigt (Projektinhaber,
+//! 2026-08-18) — ZUR WIEDERVORLAGE.** Sie löst die Bootstrap-Blockade,
+//! ist aber nicht als endgültige Kalibrierung gedacht. Vor dem
+//! Mainnet-Start neu zu bewerten sind mindestens:
+//!
+//! - **Die Gewichtung zwischen den beiden Quellen.** `VTFE_UNIT` als
+//!   Bezugsgröße bedeutet: eine volle abgeklungene vTFE-Einheit
+//!   verdoppelt das Gewicht. Ob das den Anreiz richtig setzt, ist eine
+//!   ökonomische Frage, keine technische — sie hängt an der real
+//!   erreichbaren vTFE-Menge pro Epoche, die noch nicht gemessen ist.
+//! - **Die Obergrenze.** Aktuell ist der Arbeitsanteil unbeschränkt;
+//!   ein Miner mit sehr viel Arbeit kann sein Stimmgewicht beliebig weit
+//!   über seinen Stake heben. Eine Deckelung (z. B. Faktor 10) wäre zu
+//!   erwägen, sonst verliert der Stake seine Funktion als
+//!   Angriffskosten.
+//! - **Die Alternative:** Bootstrap über ein per Konfiguration gesetztes
+//!   Genesis-Komitee, danach reines Produkt `stake × Arbeit`. Das wurde
+//!   zugunsten der Summenform zurückgestellt, nicht verworfen.
+//!
+//! Wiedervorlage-Vermerk auch in `CONSENSUS/README/Fahrplan-v1.md`
+//! (Abschnitt „Zur Wiedervorlage") und in
+//! `README/Intern/State-of-the-Project.md`, Abschnitt 7.
 //!
 //! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).

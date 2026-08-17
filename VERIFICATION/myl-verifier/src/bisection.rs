@@ -354,7 +354,7 @@ mod tests {
         let mut session = BisectionSession::new(segment_id, 2);
 
         // Eine Runde sollte genügen
-        let request = session.next_request().unwrap();
+        assert!(session.next_request().is_some());
         let response = BisectionResponse {
             round: 0,
             activation_hash: Hash::sha256(b"activation"),

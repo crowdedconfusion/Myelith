@@ -49,4 +49,7 @@ pub use latency::{
 };
 pub use node::{build_swarm, MylBehaviour};
 pub use runtime::{run_node, InboundMessage, NodeCommand, NodeEvent};
-pub use validation::{report, topic_from_hash, validate_payload, ValidationError};
+pub use validation::{
+    report, report_with, topic_from_hash, validate_payload, AcceptAllValidator,
+    PayloadValidator, ValidationError,
+};

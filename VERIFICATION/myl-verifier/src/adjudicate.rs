@@ -5,10 +5,38 @@
 //! Shard-Forward durch und vergleicht den Hash mit dem behaupteten Hash.
 //!
 //! **Ablauf:**
-//! 1. Checker fordert Aktivierung a_{j-1} an
+//! 1. Checker fordert Aktivierung a_{j-1} an — unter Nennung des in der
+//!    Spur festgeschriebenen Hashes h(a_{j-1})
 //! 2. Angeklagter legt a_{j-1} offen
-//! 3. Validatoren-Komitee führt Shard-Forward durch
-//! 4. Hash-Vergleich: Übereinstimmung = unschuldig, Abweichung = schuldig
+//! 3. Komitee prüft, dass die offengelegte Aktivierung **genau die aus
+//!    der Spur** ist
+//! 4. Validatoren-Komitee führt den Shard-Forward durch
+//! 5. Hash-Vergleich: Übereinstimmung = unschuldig, Abweichung = schuldig
+//!
+//! ## Warum Schritt 3 nicht fehlen darf (Fund A11)
+//!
+//! Bis v0.2.6 prüfte `adjudicate()` die offengelegte Aktivierung nur
+//! **gegen sich selbst**:
+//!
+//! ```text
+//! let computed = Hash::sha256(&response.activation);
+//! if computed != response.activation_hash { return Guilty; }
+//! ```
+//!
+//! Beide Werte kamen aus derselben Antwort — die Prüfung war
+//! tautologisch und stellte nur fest, dass der Angeklagte in sich
+//! konsistent geantwortet hat. Der `AdjudicationRequest` trug keinen
+//! Hash von a_{j-1}, also gab es nichts, woran die Eingabe gebunden
+//! gewesen wäre. Ein Angeklagter, der eine **andere** Eingabe findet,
+//! die unter seiner Ausführung den erwarteten Ausgabe-Hash ergibt,
+//! wurde freigesprochen.
+//!
+//! Das untergräbt die zentrale Zusage aus Kap. 6.6 („Die
+//! Schuldzuweisung ist eindeutig, weil das Ergebnis kanonisch ist"):
+//! kanonisch ist das Ergebnis nur **bezogen auf die committete
+//! Eingabe**. Der Request trägt deshalb jetzt `input_hash` aus
+//! `Segment.trace[j-1]`, und die offengelegte Aktivierung wird dagegen
+//! geprüft.
 //!
 //! **Konsens-Feld:** Die Schiedsrunden-Logik ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
@@ -28,7 +56,15 @@ pub struct AdjudicationRequest {
     pub checker: MinerId,
     /// Angeklagter (Miner-ID).
     pub accused: MinerId,
-    /// Erwarteter Hash an der Position (vom Checker).
+    /// Hash der **committeten** Eingabe-Aktivierung a_{j-1} aus der
+    /// Segment-Spur (`Segment.trace[divergence_position - 1]`, bzw. das
+    /// Eingangs-Commitment des Segments bei Position 0).
+    ///
+    /// Ohne dieses Feld wäre die Offenlegung an nichts gebunden: der
+    /// Angeklagte könnte eine beliebige Eingabe liefern, die unter
+    /// seiner Ausführung zufällig den erwarteten Ausgabe-Hash ergibt.
+    pub input_hash: Hash,
+    /// Erwarteter Hash der Ausgabe a_j an der Position (vom Checker).
     pub expected_hash: Hash,
 }
 
@@ -127,9 +163,16 @@ pub fn adjudicate(
         return AdjudicationResult::Guilty;
     }
 
-    // Validierung: Hash der Aktivierung muss mit dem behaupteten Hash übereinstimmen
+    // Die offengelegte Aktivierung muss zum mitgelieferten Hash passen …
     let computed_activation_hash = Hash::sha256(&response.activation);
     if computed_activation_hash != response.activation_hash {
+        return AdjudicationResult::Guilty;
+    }
+
+    // … und dieser Hash muss der in der Spur committete sein. Ohne
+    // diesen zweiten Vergleich wäre die Prüfung tautologisch: beide
+    // Werte stammten aus derselben Antwort (Fund A11).
+    if computed_activation_hash != request.input_hash {
         return AdjudicationResult::Guilty;
     }
 
@@ -205,6 +248,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: activation_hash,
             expected_hash: output_hash,
         };
 
@@ -233,6 +277,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: activation_hash,
             expected_hash: wrong_output_hash,
         };
 
@@ -261,6 +306,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: activation_hash,
             expected_hash: output_hash,
         };
 
@@ -289,6 +335,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: activation_hash,
             expected_hash: output_hash,
         };
 
@@ -305,6 +352,102 @@ mod tests {
         assert_eq!(result, AdjudicationResult::Guilty);
     }
 
+    /// Der Kern von Fund A11: Ein Angeklagter, der eine **andere** als
+    /// die committete Eingabe offenlegt, muss schuldig sein — auch dann,
+    /// wenn seine Ausführung darauf genau den erwarteten Ausgabe-Hash
+    /// liefert. Vorher wurde er freigesprochen, weil die Eingabe nur
+    /// gegen den selbst mitgelieferten Hash geprüft wurde.
+    #[test]
+    fn untergeschobene_eingabe_wird_nicht_freigesprochen() {
+        let committete_eingabe = vec![1, 2, 3];
+        let untergeschobene_eingabe = vec![9, 9, 9];
+        let ausgabe = vec![4, 5, 6];
+
+        let request = AdjudicationRequest {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            checker: test_miner(2),
+            accused: test_miner(3),
+            // Die Spur schreibt DIESE Eingabe fest.
+            input_hash: Hash::sha256(&committete_eingabe),
+            expected_hash: Hash::sha256(&ausgabe),
+        };
+
+        // Der Angeklagte legt eine andere Eingabe offen — in sich
+        // konsistent gehasht, also fuer die alte Pruefung einwandfrei.
+        let response = AdjudicationResponse {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            activation: untergeschobene_eingabe.clone(),
+            activation_hash: Hash::sha256(&untergeschobene_eingabe),
+        };
+
+        // Und der Executor liefert darauf exakt den erwarteten Hash.
+        let executor = MockShardExecutor::new(ausgabe);
+
+        assert_eq!(
+            adjudicate(&request, Some(&response), &executor),
+            AdjudicationResult::Guilty,
+            "eine nicht-committete Eingabe darf nie zum Freispruch führen"
+        );
+    }
+
+    /// Die Gegenprobe: Mit der committeten Eingabe und korrekter
+    /// Ausführung bleibt der Freispruch möglich.
+    #[test]
+    fn committete_eingabe_erlaubt_freispruch() {
+        let eingabe = vec![1, 2, 3];
+        let ausgabe = vec![4, 5, 6];
+
+        let request = AdjudicationRequest {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            checker: test_miner(2),
+            accused: test_miner(3),
+            input_hash: Hash::sha256(&eingabe),
+            expected_hash: Hash::sha256(&ausgabe),
+        };
+        let response = AdjudicationResponse {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            activation: eingabe.clone(),
+            activation_hash: Hash::sha256(&eingabe),
+        };
+
+        assert_eq!(
+            adjudicate(&request, Some(&response), &MockShardExecutor::new(ausgabe)),
+            AdjudicationResult::Innocent
+        );
+    }
+
+    /// Eine in sich inkonsistente Antwort (Hash passt nicht zur
+    /// Aktivierung) bleibt ebenfalls schuldig.
+    #[test]
+    fn inkonsistente_antwort_bleibt_schuldig() {
+        let eingabe = vec![1, 2, 3];
+        let ausgabe = vec![4, 5, 6];
+
+        let request = AdjudicationRequest {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            checker: test_miner(2),
+            accused: test_miner(3),
+            input_hash: Hash::sha256(&eingabe),
+            expected_hash: Hash::sha256(&ausgabe),
+        };
+        let response = AdjudicationResponse {
+            segment_id: test_segment_id(1),
+            divergence_position: 5,
+            activation: eingabe,
+            activation_hash: test_hash(200), // passt zu nichts
+        };
+
+        assert_eq!(
+            adjudicate(&request, Some(&response), &MockShardExecutor::new(ausgabe)),
+            AdjudicationResult::Guilty
+        );
+    }
+
     #[test]
     fn adjudicate_no_response() {
         let request = AdjudicationRequest {
@@ -312,6 +455,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: test_hash(2),
             expected_hash: test_hash(1),
         };
 
@@ -328,6 +472,7 @@ mod tests {
             divergence_position: 5,
             checker: test_miner(2),
             accused: test_miner(3),
+            input_hash: test_hash(2),
             expected_hash: test_hash(1),
         };
 

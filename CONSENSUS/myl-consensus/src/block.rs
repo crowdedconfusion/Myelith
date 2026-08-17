@@ -1,14 +1,42 @@
-//! Blockinhalt — Whitepaper Anhang A.5.
+//! Blockstruktur — Whitepaper Kap. 3.5, Anhang A.5.
 //!
-//! Definiert die Struktur eines Blocks im Myelith-Netzwerk:
-//! { txs, poi_bundles, challenges, verdicts, epoch_meta }
+//! Ein Block enthält Transaktionen, PoI-Bündel, Challenges und
+//! Verdicts (Anhang A.5) sowie die Epochen-Metadaten, die ihn in die
+//! Kette einhängen.
 //!
-//! **Konsens-Feld:** Die Block-Struktur ist Teil des Konsensvertrags.
+//! ## Kanonische Typen statt Dubletten (Fund A8)
+//!
+//! Bis v0.4.0 definierte diese Datei **eigene** Fassungen von
+//! `PoiBundle`, `Challenge` und `Verdict` — mit anderen Feldern als die
+//! Typen, die die übrigen Komponenten tatsächlich produzieren:
+//!
+//! | hier (alt) | kanonisch |
+//! |---|---|
+//! | `PoiBundle { segment_id, commitment_hash, pod_id: [u8;32], signature: [u8;96] }` | `myl_types::PoIBundle { epoch, pod, segments_root, vtfe_claimed, aggregate_sig }` |
+//! | `Challenge { segment_id, first_divergence, challenger, accused }` | `myl_types::Challenge` (mit beiden Pods **und** beiden Hashes) |
+//! | `Verdict { segment_id, winner, loser, slash_amount }` | `myl_ledger::Verdict { segment_id, miner, checker, outcome }` |
+//!
+//! Die Folge war eine stille Integrationslücke: `myl-pod` erzeugt
+//! `myl_types::PoIBundle` (das Epochen-Aggregat aus Anhang A.1), aber
+//! `Block::add_poi_bundle` nahm eine per-Segment-Struktur — der Pfad
+//! Pod → Block war nicht verdrahtet, obwohl beide Seiten als
+//! „vollständig" geführt wurden. Ebenso hätte kein `Verdict` des
+//! Verifiers je in den Ledger gebucht werden können.
+//!
+//! Diese Datei definiert deshalb keine Protokolltypen mehr, sondern
+//! verwendet die kanonischen. Rohe `[u8; 32]`/`[u8; 96]`-Felder sind
+//! durch die Newtypes aus `myl-types` ersetzt — genau dafür gibt es
+//! SHARED_TYPES.
+//!
+//! **Konsens-Feld:** Die Blockkodierung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
 
-use myl_types::hash::Hash;
-use myl_types::ids::{MinerId, SegmentId};
 use borsh::{BorshDeserialize, BorshSerialize};
+use myl_ledger::transitions::Verdict;
+use myl_types::challenge::Challenge;
+use myl_types::core_types::PoIBundle;
+use myl_types::hash::Hash;
+use myl_types::ids::{Address, MinerId};
 
 /// Epochen-Metadaten im Block.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -19,54 +47,29 @@ pub struct EpochMeta {
     pub prev_block_hash: Hash,
     /// Zeitstempel (Unix-Millisekunden).
     pub timestamp_ms: u64,
+    /// Commitment über den Ledger-Zustand **nach** Anwendung dieses
+    /// Blocks (`myl_ledger::LedgerState::commitment()`).
+    ///
+    /// Ohne dieses Feld kann ein Validator nur prüfen, ob die Bytes des
+    /// Blocks gleich sind — nicht, ob der Vorschlagende die
+    /// Zustandsübergänge korrekt angewendet hat. Ein Leader könnte einen
+    /// syntaktisch einwandfreien Block mit falsch gebuchtem Slashing
+    /// vorschlagen, und das Komitee hätte nichts, woran es den Fehler
+    /// festmachen könnte.
+    pub state_root: Hash,
 }
 
 /// Eine Burn-Transaktion (MYL → Credits).
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct BurnTx {
-    /// Absender-Adresse (MinerId).
-    pub sender: MinerId,
+    /// Absender-Adresse.
+    ///
+    /// `Address`, nicht `MinerId`: Der Ledger führt Konten unter
+    /// Adressen (`Address = SHA-256(komprimierter BLS-Public-Key)`),
+    /// und wer MYL verbrennt, muss kein Miner sein.
+    pub sender: Address,
     /// Betrag in MYL-Kleinstbeträgen.
     pub amount: u64,
-}
-
-/// Ein PoI-Bundle (Proof-of-Inference).
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct PoiBundle {
-    /// Segment-ID.
-    pub segment_id: SegmentId,
-    /// Commitment-Hash.
-    pub commitment_hash: Hash,
-    /// Pod-ID.
-    pub pod_id: [u8; 32],
-    /// Aggregierte BLS-Signatur der Pod-Mitglieder.
-    pub signature: [u8; 96],
-}
-
-/// Eine Challenge (Start des Bisektions-Spiels).
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct Challenge {
-    /// Segment-ID.
-    pub segment_id: SegmentId,
-    /// Erste abweichende Position.
-    pub first_divergence: usize,
-    /// Challenger (MinerId).
-    pub challenger: MinerId,
-    /// Angeklagter (MinerId).
-    pub accused: MinerId,
-}
-
-/// Ein Verdict (Ergebnis des Bisektions-Spiels).
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct Verdict {
-    /// Segment-ID.
-    pub segment_id: SegmentId,
-    /// Gewinner (MinerId).
-    pub winner: MinerId,
-    /// Verlierer (MinerId).
-    pub loser: MinerId,
-    /// Slash-Betrag.
-    pub slash_amount: u64,
 }
 
 /// Transaktionstypen im Block.
@@ -83,11 +86,12 @@ pub struct Block {
     pub epoch_meta: EpochMeta,
     /// Transaktionen.
     pub txs: Vec<Transaction>,
-    /// PoI-Bundles.
-    pub poi_bundles: Vec<PoiBundle>,
-    /// Challenges.
+    /// PoI-Bündel (Anhang A.1 — je Epoche und Pod eines).
+    pub poi_bundles: Vec<PoIBundle>,
+    /// Challenges (Anhang A.4).
     pub challenges: Vec<Challenge>,
-    /// Verdicts.
+    /// Verdicts — dieselbe Struktur, die `myl_ledger::apply_verdict`
+    /// verarbeitet.
     pub verdicts: Vec<Verdict>,
 }
 
@@ -108,8 +112,8 @@ impl Block {
         self.txs.push(tx);
     }
 
-    /// Fügt ein PoI-Bundle hinzu.
-    pub fn add_poi_bundle(&mut self, bundle: PoiBundle) {
+    /// Fügt ein PoI-Bündel hinzu.
+    pub fn add_poi_bundle(&mut self, bundle: PoIBundle) {
         self.poi_bundles.push(bundle);
     }
 
@@ -123,7 +127,11 @@ impl Block {
         self.verdicts.push(verdict);
     }
 
-    /// Berechnet den Block-Hash (SHA-256 über serialisierte Daten).
+    /// Berechnet den Block-Hash (SHA-256 über kanonisches Borsh).
+    ///
+    /// Der Hash deckt `state_root` mit ab — eine Manipulation der
+    /// gebuchten Zustandsübergänge verändert damit den Hash, über den
+    /// abgestimmt wird.
     pub fn hash(&self) -> Hash {
         let bytes = borsh::to_vec(self).expect("Borsh-Serialisierung sollte nicht fehlschlagen");
         Hash::sha256(&bytes)
@@ -131,225 +139,198 @@ impl Block {
 
     /// Gibt die Gesamtanzahl der Einträge zurück.
     pub fn total_entries(&self) -> usize {
-        self.txs.len()
-            + self.poi_bundles.len()
-            + self.challenges.len()
-            + self.verdicts.len()
+        self.txs.len() + self.poi_bundles.len() + self.challenges.len() + self.verdicts.len()
+    }
+
+    /// Strukturelle Plausibilitätsprüfung der enthaltenen Challenges.
+    ///
+    /// Verwirft Blöcke mit offensichtlich unsinnigen Challenges (gleiche
+    /// Miner, gleiche Hashes), ohne die Segment-Spuren zu kennen. Die
+    /// vollständige Prüfung leistet VERIFICATION.
+    pub fn validate_challenges(&self) -> Result<(), myl_types::ChallengeStructureError> {
+        for c in &self.challenges {
+            c.validate_structure()?;
+        }
+        Ok(())
+    }
+
+    /// Alle in diesem Block genannten Miner (aus Challenges und Verdicts
+    /// lässt sich nicht direkt auf `MinerId` schließen — Verdicts führen
+    /// Adressen). Liefert die Miner der Challenges.
+    pub fn challenged_miners(&self) -> Vec<MinerId> {
+        let mut out = Vec::new();
+        for c in &self.challenges {
+            out.push(c.primary_miner);
+            out.push(c.redundant_miner);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_miner(byte: u8) -> MinerId {
-        MinerId::new([byte; 32])
-    }
+    use myl_ledger::transitions::VerdictOutcome;
+    use myl_types::bls::BlsSignature;
+    use myl_types::ids::{EpochId, MerkleRoot, PodId, SegmentId};
 
     fn test_hash(byte: u8) -> Hash {
         Hash::sha256(&[byte])
     }
 
-    fn test_segment_id(byte: u8) -> SegmentId {
-        SegmentId::new([byte; 32])
+    fn test_meta() -> EpochMeta {
+        EpochMeta {
+            epoch: 42,
+            prev_block_hash: test_hash(0),
+            timestamp_ms: 1_700_000_000_000,
+            state_root: test_hash(99),
+        }
+    }
+
+    fn test_bundle() -> PoIBundle {
+        PoIBundle {
+            epoch: EpochId(42),
+            pod: PodId::new([7u8; 32]),
+            segments_root: MerkleRoot::new([8u8; 32]),
+            vtfe_claimed: 1234,
+            aggregate_sig: BlsSignature([9u8; 96]),
+        }
+    }
+
+    fn test_challenge() -> Challenge {
+        Challenge {
+            segment_id: SegmentId::new([1u8; 32]),
+            first_divergence: 3,
+            primary_miner: MinerId::new([1u8; 32]),
+            redundant_miner: MinerId::new([2u8; 32]),
+            primary_hash: test_hash(1),
+            redundant_hash: test_hash(2),
+            timestamp_ms: 1_700_000_000_000,
+        }
+    }
+
+    fn test_verdict() -> Verdict {
+        Verdict {
+            segment_id: SegmentId::new([1u8; 32]),
+            miner: Address::new([3u8; 32]),
+            checker: Address::new([4u8; 32]),
+            outcome: VerdictOutcome::SlashMiner,
+        }
     }
 
     #[test]
     fn block_creation() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let block = Block::new(meta.clone());
-        assert_eq!(block.epoch_meta, meta);
-        assert!(block.txs.is_empty());
-        assert!(block.poi_bundles.is_empty());
-        assert!(block.challenges.is_empty());
-        assert!(block.verdicts.is_empty());
+        let block = Block::new(test_meta());
+        assert_eq!(block.epoch_meta.epoch, 42);
+        assert_eq!(block.total_entries(), 0);
     }
 
     #[test]
-    fn add_transaction() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
+    fn block_nimmt_kanonische_typen_auf() {
+        let mut block = Block::new(test_meta());
+        block.add_transaction(Transaction::Burn(BurnTx {
+            sender: Address::new([5u8; 32]),
+            amount: 1000,
+        }));
+        block.add_poi_bundle(test_bundle());
+        block.add_challenge(test_challenge());
+        block.add_verdict(test_verdict());
 
-        let mut block = Block::new(meta);
-        let tx = Transaction::Burn(BurnTx {
-            sender: test_miner(1),
-            amount: 1_000_000,
-        });
-
-        block.add_transaction(tx.clone());
-        assert_eq!(block.txs.len(), 1);
-        assert_eq!(block.txs[0], tx);
+        assert_eq!(block.total_entries(), 4);
     }
 
+    /// Der Kern von Fund A8: Was `myl-pod` produziert, muss in den Block
+    /// passen. Vorher war `Block::add_poi_bundle` auf eine andere
+    /// Struktur typisiert und der Pfad Pod → Block nicht verdrahtet.
     #[test]
-    fn add_poi_bundle() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let mut block = Block::new(meta);
-        let bundle = PoiBundle {
-            segment_id: test_segment_id(1),
-            commitment_hash: test_hash(2),
-            pod_id: [3u8; 32],
-            signature: [4u8; 96],
-        };
-
+    fn poi_buendel_aus_myl_types_passt_in_den_block() {
+        let bundle: PoIBundle = test_bundle();
+        let mut block = Block::new(test_meta());
         block.add_poi_bundle(bundle.clone());
-        assert_eq!(block.poi_bundles.len(), 1);
         assert_eq!(block.poi_bundles[0], bundle);
     }
 
+    /// Das Verdict des Blocks muss der Ledger direkt verarbeiten können.
     #[test]
-    fn add_challenge() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let mut block = Block::new(meta);
-        let challenge = Challenge {
-            segment_id: test_segment_id(1),
-            first_divergence: 5,
-            challenger: test_miner(2),
-            accused: test_miner(3),
-        };
-
-        block.add_challenge(challenge.clone());
-        assert_eq!(block.challenges.len(), 1);
-        assert_eq!(block.challenges[0], challenge);
+    fn verdict_ist_der_ledger_typ() {
+        let v: myl_ledger::transitions::Verdict = test_verdict();
+        let mut block = Block::new(test_meta());
+        block.add_verdict(v);
+        assert_eq!(block.verdicts[0].outcome, VerdictOutcome::SlashMiner);
     }
 
     #[test]
-    fn add_verdict() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let mut block = Block::new(meta);
-        let verdict = Verdict {
-            segment_id: test_segment_id(1),
-            winner: test_miner(2),
-            loser: test_miner(3),
-            slash_amount: 1_000_000,
-        };
-
-        block.add_verdict(verdict.clone());
-        assert_eq!(block.verdicts.len(), 1);
-        assert_eq!(block.verdicts[0], verdict);
+    fn block_hash_deterministisch() {
+        let block = Block::new(test_meta());
+        assert_eq!(block.hash(), block.hash());
     }
 
     #[test]
-    fn block_hash_deterministic() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
+    fn block_hash_aendert_sich_mit_inhalt() {
+        let mut a = Block::new(test_meta());
+        let b = a.clone();
+        a.add_challenge(test_challenge());
+        assert_ne!(a.hash(), b.hash());
+    }
 
-        let block1 = Block::new(meta.clone());
-        let block2 = Block::new(meta);
-
-        assert_eq!(block1.hash(), block2.hash());
+    /// `state_root` muss in den Block-Hash eingehen — sonst könnte ein
+    /// Leader die gebuchten Zustandsübergänge fälschen, ohne dass sich
+    /// der Hash ändert, über den abgestimmt wird.
+    #[test]
+    fn state_root_geht_in_den_blockhash_ein() {
+        let a = Block::new(test_meta());
+        let mut meta_b = test_meta();
+        meta_b.state_root = test_hash(100);
+        let b = Block::new(meta_b);
+        assert_ne!(a.hash(), b.hash());
     }
 
     #[test]
-    fn block_hash_different_for_different_blocks() {
-        let meta1 = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let meta2 = EpochMeta {
-            epoch: 11,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let block1 = Block::new(meta1);
-        let block2 = Block::new(meta2);
-
-        assert_ne!(block1.hash(), block2.hash());
-    }
-
-    #[test]
-    fn total_entries() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let mut block = Block::new(meta);
-
-        // 2 Transaktionen
-        block.add_transaction(Transaction::Burn(BurnTx {
-            sender: test_miner(1),
-            amount: 1_000_000,
-        }));
-        block.add_transaction(Transaction::Burn(BurnTx {
-            sender: test_miner(2),
-            amount: 2_000_000,
-        }));
-
-        // 1 PoI-Bundle
-        block.add_poi_bundle(PoiBundle {
-            segment_id: test_segment_id(1),
-            commitment_hash: test_hash(2),
-            pod_id: [3u8; 32],
-            signature: [4u8; 96],
-        });
-
-        // 1 Challenge
-        block.add_challenge(Challenge {
-            segment_id: test_segment_id(2),
-            first_divergence: 5,
-            challenger: test_miner(3),
-            accused: test_miner(4),
-        });
-
-        // 1 Verdict
-        block.add_verdict(Verdict {
-            segment_id: test_segment_id(3),
-            winner: test_miner(5),
-            loser: test_miner(6),
-            slash_amount: 1_000_000,
-        });
-
-        assert_eq!(block.total_entries(), 5);
+    fn prev_block_hash_geht_in_den_blockhash_ein() {
+        let a = Block::new(test_meta());
+        let mut meta_b = test_meta();
+        meta_b.prev_block_hash = test_hash(50);
+        let b = Block::new(meta_b);
+        assert_ne!(a.hash(), b.hash());
     }
 
     #[test]
     fn block_borsh_roundtrip() {
-        let meta = EpochMeta {
-            epoch: 10,
-            prev_block_hash: test_hash(1),
-            timestamp_ms: 1000,
-        };
-
-        let mut block = Block::new(meta);
-        block.add_transaction(Transaction::Burn(BurnTx {
-            sender: test_miner(1),
-            amount: 1_000_000,
-        }));
+        let mut block = Block::new(test_meta());
+        block.add_poi_bundle(test_bundle());
+        block.add_challenge(test_challenge());
+        block.add_verdict(test_verdict());
 
         let bytes = borsh::to_vec(&block).unwrap();
         let decoded: Block = borsh::from_slice(&bytes).unwrap();
-
         assert_eq!(block, decoded);
+    }
+
+    #[test]
+    fn unsinnige_challenge_wird_erkannt() {
+        let mut block = Block::new(test_meta());
+        let mut c = test_challenge();
+        c.redundant_miner = c.primary_miner;
+        block.add_challenge(c);
+        assert!(block.validate_challenges().is_err());
+    }
+
+    #[test]
+    fn gueltige_challenges_passieren() {
+        let mut block = Block::new(test_meta());
+        block.add_challenge(test_challenge());
+        assert!(block.validate_challenges().is_ok());
+    }
+
+    #[test]
+    fn challenged_miners_sind_sortiert_und_eindeutig() {
+        let mut block = Block::new(test_meta());
+        block.add_challenge(test_challenge());
+        block.add_challenge(test_challenge());
+        let miners = block.challenged_miners();
+        assert_eq!(miners.len(), 2);
+        assert!(miners.windows(2).all(|w| w[0] < w[1]));
     }
 }

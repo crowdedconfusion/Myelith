@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.2.3
-> **Datum:** 2026-08-17
+> **Version:** 0.2.4
+> **Datum:** 2026-08-18
 > **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.4, 2.1–2.3).
 > Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet. Phase 2: Paarlatenzmessung mit
@@ -54,6 +54,36 @@ NETWORKING/
 ```
 
 ## Changelog
+
+
+### v0.2.4 – 2026-08-18 (Audit-Block 4: Gossip-Validierung vervollständigt)
+
+**Fund A12 — die Strukturprüfung war auf PoI-Bündel beschränkt.**
+`validate_payload()` prüfte für Blöcke, Transaktionen, Challenges und
+Latenz-Atteste nur die Größe, mit dem Kommentar „die zugehörigen Typen
+entstehen in CONSENSUS/VERIFICATION bzw. in Phase 2". Diese Typen
+existierten längst (myl-consensus v0.4.0, myl-verifier v0.2.6,
+`myl_types::LatencyAttest`) — der Kommentar war veraltet, und jede
+Bytefolge unterhalb des Limits wurde weiterverbreitet.
+
+Behoben:
+- **Challenges** werden gegen `myl_types::Challenge` deserialisiert und
+  strukturell geprüft (verschiedene Miner, verschiedene Hashes) — das
+  ist alles, was ohne Kenntnis der Segment-Spur entscheidbar ist.
+- **Latenz-Atteste** werden gegen `myl_types::LatencyAttest`
+  deserialisiert und feldgeprüft.
+- **Blöcke und Transaktionen bleiben bewusst bei der Größenprüfung.**
+  Ihre Typen liegen in `myl-consensus` (L1); `myl-net` ist L0 und darf
+  nicht an die Konsensschicht hängen, sonst kehrt sich die Schichtung
+  um. Stattdessen neuer Trait `PayloadValidator` + `report_with()`:
+  die Node-Verdrahtung, die beide Seiten kennt, reicht die
+  vollständige Prüfung herein. Das ist eine dokumentierte Entscheidung,
+  keine Auslassung.
+- **Weiterhin offen und bewusst so:** Diese Schicht prüft keine
+  BLS-Signaturen. Ein Latenz-Attest trägt eine, deren Gültigkeit aber
+  nur gegen die Validator-Registry entscheidbar ist — also ebenfalls
+  über `PayloadValidator`.
+- 31 → 38 Tests.
 
 ### v0.2.3 – 2026-08-17 (Phase 2.3: Geo-/AS-Diversitäts-Metadaten)
 - Geo-/AS-Diversitäts-Metadaten in SHARED_TYPES `node_metadata.rs`:
