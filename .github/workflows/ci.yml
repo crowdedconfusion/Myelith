@@ -102,30 +102,30 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            SHARED_TYPES
-            NETWORKING
-            CONSENSUS
-            TOKENOMICS
-            COMPUTE_PIPELINE
+            SHARED_TYPES/myl-types
+            NETWORKING/myl-net
+            CONSENSUS/myl-ledger
+            TOKENOMICS/myl-tokenomics
+            COMPUTE_PIPELINE/myl-pod
 
       - name: cargo test — SHARED_TYPES
-        working-directory: SHARED_TYPES
+        working-directory: SHARED_TYPES/myl-types
         run: cargo test --quiet
 
       - name: cargo test — NETWORKING
-        working-directory: NETWORKING
+        working-directory: NETWORKING/myl-net
         run: cargo test --quiet
 
       - name: cargo test — CONSENSUS
-        working-directory: CONSENSUS
+        working-directory: CONSENSUS/myl-ledger
         run: cargo test --quiet
 
       - name: cargo test — TOKENOMICS
-        working-directory: TOKENOMICS
+        working-directory: TOKENOMICS/myl-tokenomics
         run: cargo test --quiet
 
       - name: cargo test — COMPUTE_PIPELINE
-        working-directory: COMPUTE_PIPELINE
+        working-directory: COMPUTE_PIPELINE/myl-pod
         run: cargo test --quiet
 
   # ── Golden Vectors: Op-Level (immer) + Layer/E2E (falls Artefakte) ─
@@ -178,6 +178,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install pytest
 
       - name: Audit-Tests
         working-directory: INTEGER_LLM

@@ -64,6 +64,7 @@ impl SimdBackend {
 mod avx2 {
     #[cfg(target_arch = "x86_64")]
     use core::arch::x86_64::*;
+    use crate::fixed_point::{clamp_i16, clamp_i16_from_i64, rescale, rescale_i64, rshift_round};
 
     /// AVX2 Softmax: exp-LUT-basiert, numerisch stabil (Max-Subtraktion),
     /// ganzzahlige Normalisierung mit RNE-Rundung.
@@ -215,7 +216,7 @@ mod avx2 {
         }
         let shift_v = _mm256_set1_epi32(shift as i32);
         // quotient = v >> shift (arithmetisch)
-        let quotient = _mm256_sra_epi32(v, _mm256_set_epi32(0,0,0,0,0,0,0,shift as i32));
+        let quotient = _mm256_sra_epi32(v, _mm_set_epi32(0, 0, 0, shift as i32));
         // mask = (1 << shift) - 1
         let mask = _mm256_set1_epi32((1i32 << shift) - 1);
         // half = 1 << (shift - 1)
