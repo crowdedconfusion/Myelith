@@ -1,10 +1,10 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.1.1
+> **Version:** 0.2.5
 > **Datum:** 2026-08-17
-> **Status:** 🎉 **Phase 1 vollständig** (Punkte 1.1–1.3): Redundanzvergleich
-> (Stufe 1) mit Commitment-Hash-Vergleich und zwei Auslieferungsmodi
-> (Optimistic/Confirmed). Binärer Vergleich, 21 Tests grün.
+> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.3, 2.1–2.3, 2.5):
+> Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2) mit Checker-Modul,
+> Challenge-Erzeugung, Bisektionsprotokoll, Slash-Logik. 58 Tests grün.
 
 Verifikations-Subsystem: Redundanzvergleich, Bisektions-Spiel (Stufe 2),
 Kontrollsegmente (Stufe 3). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
@@ -88,6 +88,13 @@ match decision {
 - Fehlerbehandlung (leere Spuren, Längen-Mismatch)
 
 ## Changelog
+
+### v0.2.5 – 2026-08-17 (Phase 2: Bisektions-Spiel)
+- Checker-Modul: Segment-Nachrechnung mit SegmentAuditor-Trait (7 Tests)
+- Challenge-Erzeugung: Erste abweichende Position bestimmen (10 Tests)
+- Bisektionsprotokoll: O(log L) Runden, binäre Eingrenzung (9 Tests)
+- Slash-Logik: VerdictOutcome, SlashDecision, Kopfgeld-Auszahlung (11 Tests)
+- 37 neue Tests grün, insgesamt 58 Tests
 
 ### v0.1.1 – 2026-08-17 (Phase 1: Redundanzvergleich)
 - Commitment-Hash-Vergleich zweier Pods an allen Spur-Positionen

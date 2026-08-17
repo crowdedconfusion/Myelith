@@ -61,7 +61,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Ledger (Phase 1) + Scheduler (Phase 2) abgeschlossen |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | Burn-and-Mint, Verteilung | Phase 1 + 2 abgeschlossen (Credit-Preisbildung mit exp()-LUT) |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 + 2.1 abgeschlossen (Micro-Batching, Pipelining) |
-| [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Phase 1 abgeschlossen (Redundanzvergleich, Auslieferungsmodi) |
+| [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Phase 1 + 2 abgeschlossen (Bisektions-Spiel, Slash-Logik) |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | Session-Kontrakte, Dual-LLM-Trennung | Planungsphase |
 | [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Planungsphase |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | Parameter-Registry, Modell-Updates | Planungsphase |

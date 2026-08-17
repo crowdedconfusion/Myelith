@@ -19,10 +19,27 @@
 
 pub mod redundancy;
 pub mod delivery;
+pub mod checker;
+pub mod challenge;
+pub mod bisection;
+pub mod slash;
 
 pub use redundancy::{
     compare_commitments, CompareResult, RedundancyError, VerificationMode,
 };
 pub use delivery::{
     decide_delivery, DeliveryDecision, DeliveryError, first_divergence, should_deliver_confirmed,
+};
+pub use checker::{
+    check_segment, CheckError, CheckResult, SegmentAuditor,
+};
+pub use challenge::{
+    create_challenge, find_first_divergence, challenge_hash, Challenge, ChallengeError,
+};
+pub use bisection::{
+    BisectionSession, BisectionRequest, BisectionResponse, BisectionResult, BisectionError,
+};
+pub use slash::{
+    create_slash_decision, net_transfer, has_sufficient_stake, SlashConfig, SlashDecision,
+    SlashError, SlashReason, VerdictOutcome,
 };
