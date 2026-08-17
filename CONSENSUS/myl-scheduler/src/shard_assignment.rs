@@ -10,7 +10,7 @@
 //! Die Miner werden mit Fisher-Yates shuffle deterministisch zugewiesen.
 //! Jeder Shard bekommt eine gleichmäßige Anzahl von Minern (±1 bei ungerader Teilung).
 
-
+use crate::shuffle::deterministic_shuffle;
 use crate::geo_clustering::MinerCluster;
 use crate::miner_filter::MinerRegistration;
 
@@ -64,7 +64,7 @@ pub fn assign_shards(
 
     // Fisher-Yates Shuffle mit Seed
     let mut shuffled_miners = cluster.miners.clone();
-    fisher_yates_shuffle(&mut shuffled_miners, seed);
+    deterministic_shuffle(&mut shuffled_miners, seed);
 
     // Teile Miner gleichmäßig auf Shards auf
     let num_miners = shuffled_miners.len();
@@ -93,27 +93,6 @@ pub fn assign_shards(
     }
 }
 
-/// Fisher-Yates Shuffle mit Seed (deterministisch).
-fn fisher_yates_shuffle<T>(items: &mut [T], seed: &[u8; 32]) {
-    let mut state = *seed;
-    
-    for i in (1..items.len()).rev() {
-        // Deterministischer RNG basierend auf Seed
-        state = xorshift128(state);
-        let j = (state[0] as usize) % (i + 1);
-        items.swap(i, j);
-    }
-}
-
-/// Einfacher XOR-Shift RNG für deterministisches Shuffling.
-fn xorshift128(mut state: [u8; 32]) -> [u8; 32] {
-    let mut x = u64::from_le_bytes(state[0..8].try_into().unwrap());
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    state[0..8].copy_from_slice(&x.to_le_bytes());
-    state
-}
 
 /// Weist mehrere Cluster auf mehrere Pods auf.
 ///

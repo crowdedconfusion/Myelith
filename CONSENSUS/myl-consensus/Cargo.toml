@@ -1,6 +1,6 @@
 [package]
 name = "myl-consensus"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 rust-version = "1.82"
 description = "BFT-Konsens für Myelith (Whitepaper Kap. 3.5, Anhang A.2): Validator-Registrierung, Stake-basierte Komiteewahl, BFT-Blockproduktion (Propose/Vote/Commit), Stimmgewichts-Kopplung, Double-Signing-Erkennung. Design-Entscheidung: malachite-consensus hinter Trait-Grenze, Eigenbau als Fallback."

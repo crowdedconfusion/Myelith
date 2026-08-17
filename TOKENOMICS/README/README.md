@@ -1,11 +1,11 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.2.3
-> **Datum:** 2026-08-17
+> **Version:** 0.2.4
+> **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31 — Details im Fahrplan); 🎉 **Phase 1 + 2 vollständig**
-> (`myl-tokenomics` v0.1.1–v0.2.3, Akzeptanzkriterien erfüllt).
+> (`myl-tokenomics` v0.1.1–v0.2.4, Akzeptanzkriterien erfüllt).
 
 Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,
 Staking/Slashing-Matrix, Ausgabestruktur und Genesis. Referenzimplementierung
@@ -47,6 +47,41 @@ TOKENOMICS/
 ```
 
 ## Changelog
+
+### v0.2.4 – 2026-08-18 (Audit-Block 2: exp-LUT eingefroren)
+
+**Fund A5 — die exp()-LUT wurde zur Laufzeit mit `f64::exp()` gebaut.**
+`exp_approx.rs` erzeugte die 2048 Stützstellen beim ersten Aufruf per
+`OnceLock` mit `x_float.exp()` und `.round()`. `f64::exp()` ist **nicht**
+korrekt gerundet und unterscheidet sich zwischen glibc-Versionen, musl,
+macOS-libm und Windows-CRT. Da jeder Node die Tabelle lokal erzeugt,
+hätten zwei Nodes auf verschiedenen Betriebssystemen unterschiedliche
+Credit-Preise berechnet — ein Konsens-Fork, und zwar genau die Klasse
+Nichtdeterminismus, gegen die Whitepaper Kap. 6.2 auf der Inferenzseite
+argumentiert. Der Modul-Header behauptete dabei wörtlich „Determinismus:
+Bitgleich auf allen Plattformen".
+
+**Zusatzfund im selben Modul:** `step = (EXP_MAX - EXP_MIN) / (LUT_SIZE - 1)`
+war eine Ganzzahldivision → 640 statt 640,3126. Die Tabelle endete damit
+bei x = 9,990, während der Interpolator bis x = 10,0 indizierte. Ergebnis:
+ein systematischer Drift von bis zu **0,97 %** am oberen Rand — die
+dokumentierte „<1 % Fehler"-Zusage wurde nur knapp gehalten, und nicht
+wegen der Auflösung.
+
+Behoben (Muster von INTEGER_LLM: einfrieren statt zur Laufzeit erzeugen):
+- Neues `src/exp_lut_table.rs` mit der eingefrorenen Tabelle, erzeugt von
+  `tools/generate_exp_lut.py` (60 Stellen Dezimalgenauigkeit,
+  ROUND_HALF_EVEN, exakte Bruch-Stützstellen).
+- `exp_approx()` liest nur noch aus der Konstanten — kein Gleitkomma mehr
+  zur Laufzeit. Zwischenprodukt der Interpolation auf `i128` gezogen.
+- SHA-256 über die Tabelle als Konstante, im Test geprüft: eine
+  versehentliche Änderung des Konsens-Felds fällt sofort auf.
+- Golden Vectors (12 Stützpunkte, unabhängig mit Dezimalarithmetik
+  gerechnet), Genauigkeitsschranke, Monotonie, Klemmverhalten,
+  Regressionstest gegen den Step-Bug.
+- **Genauigkeit jetzt 0,00125 % statt 0,97 %** (Faktor ~780).
+- 45 → 52 Tests.
+- **Konsensrelevant:** Die Preisformel liefert andere Werte als zuvor.
 
 ### v0.2.3 – 2026-08-17 (Phase 2: Credit-Preisbildung)
 - Ganzzahlige exp()-Approximation (LUT-basiert, 2048 Stützstellen,

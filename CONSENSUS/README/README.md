@@ -1,12 +1,12 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.3.5 (`myl-scheduler` 0.2.7)
+> **Version:** 0.3.6 (`myl-scheduler` 0.2.8)
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
 > 🎉 **Phase 1 + 2 + 3 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
-> `myl-scheduler` v0.2.1–v0.2.6, `myl-consensus` v0.3.1–v0.3.5,
+> `myl-scheduler` v0.2.1–v0.2.8, `myl-consensus` v0.3.1–v0.3.6,
 > Akzeptanzkriterien erfüllt: bitgleicher Replay + deterministischer
 > Epochen-Scheduler + BFT-Blockproduktion).
 
@@ -51,6 +51,57 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### v0.3.6 / myl-scheduler v0.2.8 – 2026-08-18 (Audit-Block 2: Konsens-Determinismus)
+
+**Fund A4 — Double-Signing-Beweise waren wertlos und zugleich fälschbar.**
+`SignedBlocksRegistry::register_signed_block()` erzeugte bei erkanntem
+Double-Signing einen Beweis mit `signature_1 = signature_2 = [0u8; 96]`,
+während `DoubleSignProof::validate()` verlangte, dass die Signaturen
+verschieden sind — der Erkennungspfad konnte also **nie** einen
+verwertbaren Beweis liefern. Umgekehrt prüfte `validate()` die Signaturen
+nie gegen einen öffentlichen Schlüssel: jeder Beliebige hätte mit zwei
+erfundenen Bytefolgen einen „gültigen" Beweis gegen jeden Validator
+fabrizieren können. Beide Funktionen waren einzeln getestet, nie gemeinsam.
+
+Behoben:
+- Die Registry speichert die tatsächlich abgegebene BLS-Signatur mit
+  (`HashMap<u64, (Hash, BlsSignature)>`) und liefert echte Beweise.
+- `validate()` ist durch `verify(&BlsPublicKey)` ersetzt — es gibt keine
+  Prüfung ohne Schlüssel mehr, damit dieselbe Lücke nicht wiederkehren kann.
+  Geprüft werden: verschiedene Block-Hashes, verschiedene Signaturen und
+  **beide BLS-Signaturen gegen den Schlüssel des Beschuldigten**.
+- `signature_1/2` sind jetzt `BlsSignature` statt nackter `[u8; 96]`.
+- Neues Modul `signing.rs`: kanonische, domain-getrennte Signierbotschaften
+  für Propose/Vote/Commit (`MYELITH_BFT_*_v1 ‖ u64_le(round) ‖ block_hash`).
+  Ohne Domain-Separation wäre eine Vote zugleich ein gültiger Commit.
+- Regressionstest `erkannter_beweis_besteht_die_eigene_pruefung` plus Tests
+  für erfundene, fremde, rundenfremde und typfremde Signaturen.
+- 53 → 63 Tests.
+
+**Fund A6 — Die Stichproben-Lotterie war nicht gleichverteilt.**
+Der Fisher-Yates-Shuffle zog den Vertauschungsindex aus einem einzigen
+Byte (`state[0] as usize % (i + 1)`). Messung bei 1 000 Segmenten und 2 %
+Rate: Index 0 wurde mit dem **0,14-fachen**, Index 256 mit dem
+**3,87-fachen** des Erwartungswerts gezogen — Spreizung Faktor ~28. Für
+die Lotterie, die entscheidet, welche Arbeit auditiert wird, hing die
+Prüfwahrscheinlichkeit damit am Segmentindex statt am Zufall. Zusätzlich
+nutzte der XOR-Shift nur `state[0..8]`: **192 der 256 VRF-Seed-Bits
+gingen nie ein**. Dieselbe fehlerhafte Funktion lag in **vier Kopien** in
+`sampling.rs`, `redundancy.rs`, `shard_assignment.rs` und
+`geo_clustering.rs`.
+
+Behoben:
+- Neues Modul `shuffle.rs` mit **einer** Implementierung für alle vier
+  Verwendungen. RNG: SHA-256 im Zählermodus (`sha256(seed ‖ counter_le)`),
+  alle 256 Seed-Bits gehen ein. Index-Wahl per Verwerfungsverfahren statt
+  `% n` (exakte Gleichverteilung, Determinismus bleibt erhalten).
+- Nachmessung: Spreizung **0,89× – 1,14×** (reine Stichprobenstreuung).
+- Tests für Seed-Vollständigkeit, Gleichverteilung über 1 000 Positionen
+  und das Fehlen einer Stufe an der alten 256er-Grenze.
+- 56 → 66 Tests.
+- **Konsensrelevant:** Die Zuteilung aller Epochen verschiebt sich. Da MYL
+  nicht im Umlauf ist, ist das der richtige Zeitpunkt.
 
 ### myl-scheduler v0.2.7 – 2026-08-18 (Fix: Testbuild wiederhergestellt)
 - **Fund A1:** `myl-scheduler` ließ sich seit dem Roundhouse-Check-Commit

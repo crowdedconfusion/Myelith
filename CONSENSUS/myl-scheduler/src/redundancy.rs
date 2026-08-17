@@ -12,6 +12,7 @@
 //! 2. Aus verschiedenen geografischen Regionen kommen
 //! 3. Deterministisch mit dem Seed ausgewählt werden
 
+use crate::shuffle::deterministic_shuffle;
 use std::collections::{HashMap, HashSet};
 
 use myl_types::ids::MinerId;
@@ -121,7 +122,7 @@ pub fn assign_redundant_pods(
 
     // Shuffle die Paare mit dem Seed (deterministisch)
     let mut shuffled_pairs = valid_pairs;
-    fisher_yates_shuffle(&mut shuffled_pairs, seed);
+    deterministic_shuffle(&mut shuffled_pairs, seed);
 
     // Weise Segmente zu (rotierend über die Paare)
     let mut assignments = Vec::with_capacity(num_segments as usize);
@@ -140,26 +141,6 @@ pub fn assign_redundant_pods(
     assignments
 }
 
-/// Fisher-Yates Shuffle mit Seed (deterministisch).
-fn fisher_yates_shuffle<T>(items: &mut [T], seed: &[u8; 32]) {
-    let mut state = *seed;
-    
-    for i in (1..items.len()).rev() {
-        state = xorshift128(state);
-        let j = (state[0] as usize) % (i + 1);
-        items.swap(i, j);
-    }
-}
-
-/// Einfacher XOR-Shift RNG für deterministisches Shuffling.
-fn xorshift128(mut state: [u8; 32]) -> [u8; 32] {
-    let mut x = u64::from_le_bytes(state[0..8].try_into().unwrap());
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    state[0..8].copy_from_slice(&x.to_le_bytes());
-    state
-}
 
 #[cfg(test)]
 mod tests {

@@ -14,6 +14,7 @@
 //!
 //! Der Algorithmus ist deterministisch (gleicher Seed → gleiche Cluster).
 
+use crate::shuffle::deterministic_shuffle;
 use std::collections::HashMap;
 
 use myl_types::ids::MinerId;
@@ -153,28 +154,6 @@ pub fn form_clusters(
     clusters
 }
 
-/// Deterministischer Shuffle mit Seed (Fisher-Yates mit Seed-basiertem RNG).
-fn deterministic_shuffle<T>(items: &mut [T], seed: &[u8; 32]) {
-    let mut state = *seed;
-    
-    for i in (1..items.len()).rev() {
-        // Einfacher deterministischer RNG basierend auf Seed
-        state = xorshift128(state);
-        let j = (state[0] as usize) % (i + 1);
-        items.swap(i, j);
-    }
-}
-
-/// Einfacher XOR-Shift RNG für deterministisches Shuffling.
-fn xorshift128(mut state: [u8; 32]) -> [u8; 32] {
-    // Vereinfachte Version: XOR-Shift auf den ersten 8 Bytes
-    let mut x = u64::from_le_bytes(state[0..8].try_into().unwrap());
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    state[0..8].copy_from_slice(&x.to_le_bytes());
-    state
-}
 
 #[cfg(test)]
 mod tests {

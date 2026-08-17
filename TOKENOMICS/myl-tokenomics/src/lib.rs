@@ -24,6 +24,7 @@
 pub mod distribute;
 pub mod ema;
 pub mod exp_approx;
+pub mod exp_lut_table;
 pub mod mint;
 pub mod training;
 pub mod utilization;

@@ -9,7 +9,13 @@
 //!
 //! **Design:** Fisher-Yates Shuffle mit dem Seed, dann die ersten p·|segments|
 //! Segmente auswählen. Deterministisch und gleichverteilt.
+//!
+//! Der Shuffle liegt in [`crate::shuffle`] — eine Implementierung für alle
+//! Verwendungen. Die Gleichverteilung ist hier keine Bequemlichkeit,
+//! sondern Sicherheitseigenschaft: sie entscheidet, welche Arbeit
+//! überhaupt auditiert wird. Siehe dort die Beschreibung von Fund A6.
 
+use crate::shuffle::deterministic_shuffle;
 
 /// Ergebnis der Stichproben-Lotterie.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +75,7 @@ pub fn sample_segments(
     let mut indices: Vec<u32> = (0..num_segments).collect();
 
     // Fisher-Yates Shuffle mit Seed
-    fisher_yates_shuffle(&mut indices, seed);
+    deterministic_shuffle(&mut indices, seed);
 
     // Wähle die ersten num_samples Segmente
     let mut sampled: Vec<u32> = indices[..num_samples as usize].to_vec();
@@ -84,26 +90,6 @@ pub fn sample_segments(
     }
 }
 
-/// Fisher-Yates Shuffle mit Seed (deterministisch).
-fn fisher_yates_shuffle<T>(items: &mut [T], seed: &[u8; 32]) {
-    let mut state = *seed;
-    
-    for i in (1..items.len()).rev() {
-        state = xorshift128(state);
-        let j = (state[0] as usize) % (i + 1);
-        items.swap(i, j);
-    }
-}
-
-/// Einfacher XOR-Shift RNG für deterministisches Shuffling.
-fn xorshift128(mut state: [u8; 32]) -> [u8; 32] {
-    let mut x = u64::from_le_bytes(state[0..8].try_into().unwrap());
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    state[0..8].copy_from_slice(&x.to_le_bytes());
-    state
-}
 
 #[cfg(test)]
 mod tests {
