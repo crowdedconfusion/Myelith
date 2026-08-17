@@ -10,12 +10,13 @@
 //! **Design:** Fisher-Yates Shuffle mit dem Seed, dann die ersten p·|segments|
 //! Segmente auswählen. Deterministisch und gleichverteilt.
 //!
-//! Der Shuffle liegt in [`crate::shuffle`] — eine Implementierung für alle
-//! Verwendungen. Die Gleichverteilung ist hier keine Bequemlichkeit,
-//! sondern Sicherheitseigenschaft: sie entscheidet, welche Arbeit
-//! überhaupt auditiert wird. Siehe dort die Beschreibung von Fund A6.
+//! Der Shuffle liegt in `myl_types::seed_rng` — eine Implementierung für
+//! alle Verwendungen im Protokoll. Die Gleichverteilung ist hier keine
+//! Bequemlichkeit, sondern Sicherheitseigenschaft: sie entscheidet,
+//! welche Arbeit überhaupt auditiert wird. Siehe dort die Beschreibung
+//! von Fund A6.
 
-use crate::shuffle::deterministic_shuffle;
+use myl_types::seed_rng::deterministic_shuffle;
 
 /// Ergebnis der Stichproben-Lotterie.
 #[derive(Debug, Clone, PartialEq)]

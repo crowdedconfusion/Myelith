@@ -31,6 +31,7 @@ pub mod latency_attest;
 pub mod merkle;
 pub mod node_metadata;
 pub mod protocol;
+pub mod seed_rng;
 pub mod vrf;
 
 pub use bls::{
@@ -48,4 +49,5 @@ pub use latency_attest::{
 };
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
 pub use node_metadata::{Asn, DiversityChecker, GeoRegion, NodeMetadata, NodeMetadataError};
+pub use seed_rng::{deterministic_shuffle, weighted_sample_without_replacement, SeedRng};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

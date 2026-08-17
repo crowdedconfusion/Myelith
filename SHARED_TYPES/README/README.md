@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.2.3
-> **Datum:** 2026-08-17
+> **Version:** 0.2.4
+> **Datum:** 2026-08-18
 > **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation, ID-Newtypes, Kern-Structs aus Anhang A.1, Golden
@@ -45,6 +45,20 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.2.4 – 2026-08-18 (Audit-Block 3: geteilter Seed-RNG)
+- Neues Modul `seed_rng.rs`: `SeedRng` (SHA-256 im Zählermodus),
+  `deterministic_shuffle` und `weighted_sample_without_replacement`.
+- **Warum hier:** Beide Verwendungen sind Konsens-Feld — der
+  Epochen-Scheduler (Shard-Zuweisung, Redundanz, Stichprobenlotterie,
+  Geo-Clustering) und die Komiteewahl im Konsens. Vorher lag der
+  Shuffle in vier Kopien in `myl-scheduler`; mit `myl-consensus` wäre
+  eine fünfte dazugekommen. Protokollweite Primitive gehören in
+  `myl-types`, damit es genau eine Fassung gibt.
+- `weighted_sample_without_replacement` ist die Grundlage der
+  VRF-rotierenden, stimmgewichteten Komiteewahl (Whitepaper Kap. 3.5:
+  „gewählt nach Stake, rotierend per VRF").
+- 74 → 90 Tests.
 
 ### v0.1.7 – 2026-08-13
 - ID-Newtypes leiten zusätzlich `PartialOrd`/`Ord` ab — benötigt für

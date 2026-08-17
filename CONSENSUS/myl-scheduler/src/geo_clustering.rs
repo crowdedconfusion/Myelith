@@ -14,7 +14,7 @@
 //!
 //! Der Algorithmus ist deterministisch (gleicher Seed → gleiche Cluster).
 
-use crate::shuffle::deterministic_shuffle;
+use myl_types::seed_rng::deterministic_shuffle;
 use std::collections::HashMap;
 
 use myl_types::ids::MinerId;

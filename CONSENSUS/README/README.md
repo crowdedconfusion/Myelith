@@ -1,14 +1,16 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.3.6 (`myl-scheduler` 0.2.8)
+> **Version:** 0.4.0 (`myl-scheduler` 0.2.9)
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
-> 🎉 **Phase 1 + 2 + 3 vollständig** (`myl-ledger` v0.1.1–v0.1.5,
-> `myl-scheduler` v0.2.1–v0.2.8, `myl-consensus` v0.3.1–v0.3.6,
-> Akzeptanzkriterien erfüllt: bitgleicher Replay + deterministischer
-> Epochen-Scheduler + BFT-Blockproduktion).
+> Phase 1 + 2 ✅ vollständig (`myl-ledger` v0.1.1–v0.1.5,
+> `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ⚠️ Safety erfüllt,
+> Liveness offen** (`myl-consensus` v0.3.1–v0.4.0): signiertes,
+> stimmgewichtetes BFT mit VRF-rotierender Komiteewahl — aber noch
+> ohne Rundenwechsel/Timeouts (Punkt 3.6), daher kein Leader-Ausfall
+> überstehbar.
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -51,6 +53,59 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### v0.4.0 / myl-scheduler v0.2.9 – 2026-08-18 (Audit-Block 3: BFT-Kryptografie)
+
+**Fund A3 — das BFT-Protokoll enthielt keine Kryptografie.**
+`Propose`, `Vote` und `Commit` hatten kein Signaturfeld, und `BftState`
+kannte das Komitee nicht: der Zustandsautomat zählte Nachrichten, ohne
+zu prüfen, wer sie geschickt hat. Ein einzelner Angreifer erreichte den
+Threshold mit 15 erfundenen Miner-IDs. `BftError::InvalidSignature` war
+als „(Placeholder)" deklariert und wurde nirgends zurückgegeben.
+
+Behoben:
+- Alle drei Nachrichtentypen tragen eine `BlsSignature`.
+- Neuer Typ `VotingSet` bündelt, was die Runde zur Prüfung braucht:
+  wer stimmberechtigt ist, mit welchem Schlüssel geprüft wird und mit
+  welchem Gewicht die Stimme zählt.
+- Jede Nachricht durchläuft vier Prüfungen in der Reihenfolge billig
+  vor teuer: Runde → Mitgliedschaft → Duplikat → BLS-Signatur.
+- Validatoren registrieren sich mit ihrem BLS-Public-Key; ein
+  ungültiger Schlüssel wird bei der Registrierung abgelehnt statt
+  später jede Signaturprüfung scheitern zu lassen.
+
+**Fund A7 — Stimmgewicht war berechnet, aber nirgends angeschlossen.**
+`voting_weight.rs` (297 Zeilen, getestet) wurde von keinem anderen Modul
+aufgerufen. `receive_vote` zählte Köpfe, `select_committee` sortierte
+rein nach Stake und nahm die ersten 28 — eine feste Rangliste ohne die
+im Whitepaper (Kap. 3.5) genannte VRF-Rotation, also in jeder Epoche
+dieselben 21 Adressen.
+
+Behoben:
+- Quorum ist `> 2/3` des **Stimmgewichts** statt der Nachrichtenzahl.
+- `select_committee(registry, epoch, vrf_seed)` zieht gewichtet ohne
+  Zurücklegen aus dem VRF-Epochenseed → Rotation **und** Kopplung an
+  Stake und Arbeit.
+- Validatoren führen eine `InferenceHistory` statt eines flachen
+  Zählers; `record_work(miner, epoch, work)` speist sie.
+- **Formeländerung (konsensrelevant, bitte bestätigen):**
+  `stake × Arbeit` → `stake + stake · Arbeit / VTFE_UNIT`. Das reine
+  Produkt gab jedem Validator ohne Arbeitshistorie Gewicht 0 — bei
+  Genesis wäre kein Komitee wählbar gewesen, und wer bei 0 startet,
+  wird nie gewählt und kann nie Arbeit nachweisen.
+
+**Weitere Korrekturen im selben Block:**
+- `BftState::new` gibt `Result` zurück — vorher `(committee_size - 1) / 3`
+  mit usize-Underflow bei leerem Komitee.
+- `select_leader` gibt `Option` zurück — vorher Division durch null bei
+  leerer Producer-Liste.
+- `apply_decay` rechnet in u128 mit Sättigung — vorher `value * 95` in
+  u64: Panic im Debug-Build, stiller Umlauf im Release-Build, also
+  je nach Build-Profil verschiedene Stimmgewichte.
+- `SeedRng`/`deterministic_shuffle` nach `myl-types` verschoben und um
+  `weighted_sample_without_replacement` ergänzt; `myl-scheduler` nutzt
+  jetzt die geteilte Fassung.
+- 63 → 97 Tests.
 
 ### v0.3.6 / myl-scheduler v0.2.8 – 2026-08-18 (Audit-Block 2: Konsens-Determinismus)
 

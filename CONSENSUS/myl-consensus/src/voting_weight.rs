@@ -1,7 +1,27 @@
 //! Stimmgewichts-Kopplung — Whitepaper Kap. 3.5.2.
 //!
-//! Koppelt das Stimmgewicht an die nachgewiesene historische Inferenzarbeit:
-//! `voting_weight = stake × inference_work × decay_factor`
+//! Koppelt das Stimmgewicht an gestakten Coin **und** nachgewiesene
+//! historische Inferenzarbeit (mit Abklingfaktor):
+//!
+//! ```text
+//! voting_weight = stake + (stake · abgeklungene_Arbeit) / VTFE_UNIT
+//! ```
+//!
+//! **Warum eine Summe und kein reines Produkt (Design-Entscheidung
+//! 2026-08-18, Audit-Block 3):** Die ursprüngliche Formel war
+//! `stake × Arbeit / 10¹²`. Ein reines Produkt gibt jedem Validator ohne
+//! Arbeitshistorie das Gewicht **null** — und wer Gewicht null hat, wird
+//! nie ins Komitee gewählt, kann nie Arbeit nachweisen und bleibt
+//! dauerhaft bei null. Bei Genesis hätte *kein* Validator Gewicht, das
+//! Komitee wäre nicht wählbar. Die Summenform hält die Aussage des
+//! Whitepapers („speist sich aus zwei Quellen") und löst die Blockade:
+//! der Stake ist die Grundlage, die Arbeit multipliziert sie hoch. Ein
+//! Validator mit einer vollen vTFE-Einheit abgeklungener Arbeit hat
+//! doppeltes Gewicht gegenüber einem gleich gestakten ohne Arbeit.
+//!
+//! **Diese Formel ist konsensrelevant und sollte vom Projektinhaber
+//! bestätigt werden** — die Alternative wäre, die Bootstrap-Phase anders
+//! zu lösen (z. B. Genesis-Komitee per Konfiguration).
 //!
 //! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
@@ -15,7 +35,7 @@ pub const DECAY_FACTOR_DEN: u64 = 100;
 pub const MAX_HISTORY_EPOCHS: usize = 10;
 
 /// Historische Inferenzarbeit über mehrere Epochen.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InferenceHistory {
     /// Arbeit pro Epoche (Epoche → vTFE-Einheiten).
     pub work_per_epoch: Vec<(u64, u64)>,
@@ -68,7 +88,11 @@ impl InferenceHistory {
             // decay = 95/100 = 0.95
             // decay^age = (95/100)^age
             let decayed = apply_decay(*work, age);
-            total += decayed;
+            // Sättigen statt überlaufen: ein Überlauf würde im
+            // Debug-Build panicken und im Release-Build stillschweigend
+            // umlaufen — zwei Nodes mit verschiedenen Build-Profilen
+            // kämen zu verschiedenen Stimmgewichten.
+            total = total.saturating_add(decayed);
         }
 
         total
@@ -83,26 +107,39 @@ impl InferenceHistory {
 ///
 /// **Returns:** Abgeklingter Wert.
 fn apply_decay(value: u64, epochs: u64) -> u64 {
-    let mut result = value;
+    let mut result = value as u128;
 
     for _ in 0..epochs {
-        // result = result * 95 / 100
-        result = (result * DECAY_FACTOR_NUM) / DECAY_FACTOR_DEN;
+        // result = result * 95 / 100 — u128, weil `value * 95` für
+        // Werte oberhalb von u64::MAX/95 sonst überläuft (Panic im
+        // Debug-Build, stiller Umlauf im Release-Build).
+        result = (result * DECAY_FACTOR_NUM as u128) / DECAY_FACTOR_DEN as u128;
     }
 
-    result
+    u64::try_from(result).unwrap_or(u64::MAX)
 }
+
+/// Eine vTFE-Einheit in vTFE-Kleinstbeträgen (1 vTFE = 10⁶).
+///
+/// Bezugsgröße für den Arbeitsanteil des Stimmgewichts: eine volle
+/// abgeklungene vTFE-Einheit verdoppelt das Gewicht gegenüber dem
+/// reinen Stake.
+pub const VTFE_UNIT: u64 = 1_000_000;
 
 /// Berechnet das Stimmgewicht eines Validators.
 ///
-/// **Formel:** `voting_weight = (stake × decayed_work) / 10^12`
+/// **Formel:** `voting_weight = stake + (stake × decayed_work) / VTFE_UNIT`
+///
+/// Der Stake ist die Grundlage, die nachgewiesene Arbeit multipliziert
+/// sie hoch. Siehe die Modul-Dokumentation für die Begründung, warum
+/// hier eine Summe und kein reines Produkt steht (Bootstrap-Blockade).
 ///
 /// **Parameter:**
 /// - `stake`: Stake des Validators (in MYL-Kleinstbeträgen)
 /// - `history`: Historische Inferenzarbeit
 /// - `current_epoch`: Aktuelle Epoche
 ///
-/// **Returns:** Stimmgewicht (u64).
+/// **Returns:** Stimmgewicht (u64, gesättigt statt überlaufend).
 pub fn calculate_voting_weight(
     stake: u64,
     history: &InferenceHistory,
@@ -110,14 +147,13 @@ pub fn calculate_voting_weight(
 ) -> u64 {
     let decayed_work = history.decayed_weight(current_epoch);
 
-    // voting_weight = (stake × decayed_work) / 10^12
-    // stake ist in MYL-Kleinstbeträgen (1 MYL = 10^6)
-    // decayed_work ist in vTFE-Einheiten (1 vTFE = 10^6)
-    // Ergebnis ist in MYL × vTFE
-    // Verwende u128 für Zwischenrechnung, um Überlauf zu vermeiden
-    let weight = (stake as u128 * decayed_work as u128) / 1_000_000_000_000;
+    // stake ist in MYL-Kleinstbeträgen (1 MYL = 10^6),
+    // decayed_work in vTFE-Kleinstbeträgen (1 vTFE = 10^6).
+    // u128 für die Zwischenrechnung, Sättigung statt Überlauf.
+    let work_bonus = (stake as u128 * decayed_work as u128) / VTFE_UNIT as u128;
+    let weight = stake as u128 + work_bonus;
 
-    weight as u64
+    u64::try_from(weight).unwrap_or(u64::MAX)
 }
 
 /// Vergleicht zwei Validatoren nach Stimmgewicht (für Komiteewahl).
@@ -221,25 +257,68 @@ mod tests {
     #[test]
     fn calculate_voting_weight_basic() {
         let mut history = InferenceHistory::new();
-        history.add_work(10, 1_000_000); // 1 vTFE
+        history.add_work(10, VTFE_UNIT); // 1 vTFE
 
         let stake = 10_000_000; // 10 MYL
         let weight = calculate_voting_weight(stake, &history, 10);
 
-        // weight = 10 * 1 = 10 (normalisiert)
-        assert_eq!(weight, 10);
+        // stake + stake * 1 vTFE / VTFE_UNIT = stake * 2
+        assert_eq!(weight, 20_000_000);
     }
 
     #[test]
     fn calculate_voting_weight_with_decay() {
         let mut history = InferenceHistory::new();
-        history.add_work(10, 1_000_000); // 1 vTFE
+        history.add_work(10, VTFE_UNIT); // 1 vTFE
 
         let stake = 10_000_000; // 10 MYL
         let weight = calculate_voting_weight(stake, &history, 11);
 
-        // weight = 10 * 0.95 = 9 (normalisiert)
-        assert_eq!(weight, 9);
+        // Arbeit klingt eine Epoche ab: 1 vTFE * 0,95
+        // weight = stake + stake * 0,95 = 19_500_000
+        assert_eq!(weight, 19_500_000);
+    }
+
+    /// Bootstrap: ohne Arbeitshistorie muss der Stake allein zählen.
+    /// Die alte Produktformel lieferte hier 0 — ein Validator mit
+    /// Gewicht 0 wird nie gewählt, kann nie Arbeit nachweisen und
+    /// bleibt dauerhaft bei 0. Bei Genesis wäre kein Komitee wählbar.
+    #[test]
+    fn ohne_arbeitshistorie_zaehlt_der_stake() {
+        let history = InferenceHistory::new();
+        let stake = 10_000_000;
+        assert_eq!(calculate_voting_weight(stake, &history, 0), stake);
+    }
+
+    /// Arbeit erhöht das Gewicht monoton.
+    #[test]
+    fn mehr_arbeit_ergibt_mehr_gewicht() {
+        let stake = 10_000_000;
+        let mut wenig = InferenceHistory::new();
+        wenig.add_work(5, VTFE_UNIT);
+        let mut viel = InferenceHistory::new();
+        viel.add_work(5, VTFE_UNIT * 3);
+
+        assert!(
+            calculate_voting_weight(stake, &viel, 5)
+                > calculate_voting_weight(stake, &wenig, 5)
+        );
+    }
+
+    /// Kein Überlauf bei extremen Werten — vorher panickte
+    /// `apply_decay` im Debug-Build (`value * 95`) und lief im
+    /// Release-Build still um.
+    #[test]
+    fn extremwerte_saettigen_statt_zu_ueberlaufen() {
+        let mut history = InferenceHistory::new();
+        history.add_work(0, u64::MAX);
+        // Darf weder panicken noch umlaufen.
+        let w = calculate_voting_weight(u64::MAX, &history, 0);
+        assert_eq!(w, u64::MAX);
+
+        let mut spaet = InferenceHistory::new();
+        spaet.add_work(0, u64::MAX);
+        let _ = spaet.decayed_weight(9); // neun Abkling-Schritte
     }
 
     #[test]

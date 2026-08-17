@@ -1,14 +1,17 @@
-//! Deterministischer, gleichverteilter Shuffle für den Epochen-Scheduler.
+//! Deterministischer Zufallsstrom und Shuffle aus einem Protokoll-Seed.
 //!
-//! **Eine** Implementierung für alle vier Verwendungen (Stichproben-Lotterie,
-//! Redundanz-Zuteilung, Shard-Zuweisung, Geo-Clustering). Vorher lag in
-//! jedem dieser Module eine eigene Kopie — konsenskritische Logik in vier
-//! Fassungen, von denen jede einzeln hätte abdriften können.
+//! Protokollweite Primitive: überall dort, wo aus einem VRF-Seed eine
+//! reproduzierbare Auswahl abgeleitet wird — Epochen-Scheduler
+//! (Shard-Zuweisung, Redundanz, Stichprobenlotterie, Geo-Clustering)
+//! und Komiteewahl im Konsens. Sie liegt hier, damit es **eine**
+//! Fassung gibt: eine zweite Kopie in einem anderen Crate würde bei der
+//! nächsten Korrektur unweigerlich abdriften, und das Ergebnis ist in
+//! allen Verwendungen Konsens-Feld.
 //!
-//! ## Warum die alte Fassung nicht tragfähig war (Fund A6)
+//! ## Warum nicht der naheliegende XOR-Shift (Fund A6)
 //!
-//! Die vorherigen Kopien zogen den Vertauschungsindex aus **einem einzigen
-//! Byte** des RNG-Zustands:
+//! Die vorherigen Fassungen im Scheduler zogen den Vertauschungsindex
+//! aus **einem einzigen Byte** des Zustands:
 //!
 //! ```text
 //! let j = (state[0] as usize) % (i + 1);
@@ -16,32 +19,25 @@
 //!
 //! Daraus folgten zwei Fehler:
 //!
-//! 1. **Kein gleichverteilter Shuffle für mehr als 256 Elemente.** Bei
+//! 1. **Kein gleichverteilter Shuffle über 256 Elemente hinaus.** Bei
 //!    1 000 Segmenten und 2 % Stichprobenrate lag die tatsächliche
 //!    Prüfwahrscheinlichkeit zwischen dem 0,14-fachen (Index 0) und dem
-//!    3,87-fachen (Index 256) des Erwartungswerts — eine Spreizung von
-//!    etwa Faktor 28. Für die Lotterie, die entscheidet, welche Arbeit
-//!    überhaupt auditiert wird, heißt das: die Prüfwahrscheinlichkeit
-//!    hing am Index statt am Zufall.
-//! 2. **192 der 256 Seed-Bits blieben ungenutzt.** Der XOR-Shift arbeitete
-//!    nur auf `state[0..8]`; der Rest des VRF-abgeleiteten Seeds ging
-//!    nie in die Auswahl ein.
+//!    3,87-fachen (Index 256) des Erwartungswerts — Spreizung ~Faktor 28.
+//! 2. **192 der 256 Seed-Bits blieben ungenutzt.** Der XOR-Shift
+//!    arbeitete nur auf `state[0..8]`.
 //!
 //! ## Die jetzige Konstruktion
 //!
 //! - **RNG:** SHA-256 im Zählermodus (`sha256(seed ‖ counter_le)`), also
 //!   der Hash, den das Protokoll ohnehin überall verwendet. Alle 256
-//!   Seed-Bits gehen ein, die Ausgabe ist plattformunabhängig bitgleich,
-//!   und die Konstruktion ist ohne Spezialwissen nachprüfbar.
-//! - **Index-Wahl:** Verwerfungsverfahren (rejection sampling) statt
-//!   `% n`. Ein einfaches Modulo ist für nicht-teilende `n` verzerrt;
-//!   das Verwerfen des unvollständigen Restbereichs liefert eine exakte
-//!   Gleichverteilung. Determinismus bleibt erhalten: gleicher Seed →
-//!   gleiche Verwerfungen → gleiches Ergebnis.
+//!   Seed-Bits gehen ein, die Ausgabe ist plattformunabhängig bitgleich.
+//! - **Index-Wahl:** Verwerfungsverfahren statt `% n`. Ein einfaches
+//!   Modulo ist für nicht-teilende `n` verzerrt; das Verwerfen des
+//!   unvollständigen Restbereichs liefert exakte Gleichverteilung.
+//!   Determinismus bleibt: gleicher Seed → gleiche Verwerfungen.
 //!
-//! **Konsens-Feld:** Der Shuffle ist Teil des Konsensvertrags.
-//! Änderungen nur über Governance (Kap. 10.3) — jede Änderung verschiebt
-//! die Zuteilung aller Epochen.
+//! **Konsens-Feld:** Änderungen nur über Governance (Kap. 10.3) — jede
+//! Änderung verschiebt sämtliche abgeleiteten Auswahlen.
 
 use sha2::{Digest, Sha256};
 
@@ -122,6 +118,76 @@ pub fn deterministic_shuffle<T>(items: &mut [T], seed: &[u8; 32]) {
         let j = rng.next_below((i + 1) as u64) as usize;
         items.swap(i, j);
     }
+}
+
+/// Zieht `count` Indizes gewichtet und ohne Zurücklegen.
+///
+/// Jeder Index `i` wird mit einer Wahrscheinlichkeit proportional zu
+/// `weights[i]` gezogen; ein bereits gezogener Index kommt nicht erneut
+/// in Frage. Das ist die Grundlage der Komiteewahl: „gewählt nach Stake,
+/// rotierend per VRF" (Whitepaper Kap. 3.5) — die Gewichtung bildet den
+/// Stake und die nachgewiesene Inferenzarbeit ab, der VRF-Seed sorgt
+/// dafür, dass die Auswahl zwischen den Epochen rotiert statt eine feste
+/// Rangliste zu zementieren.
+///
+/// **Verfahren:** Wiederholte Ziehung aus dem kumulierten Gewicht der
+/// noch verfügbaren Kandidaten, mit `next_below` (verwerfungsbasiert,
+/// also unverzerrt). Kandidaten mit Gewicht 0 werden nie gezogen.
+///
+/// **Determinismus:** Gleicher Seed und gleiche Gewichte → gleiche
+/// Auswahl **in gleicher Reihenfolge**, auf jeder Plattform bitgleich.
+///
+/// **Parameter:**
+/// - `weights`: Gewicht je Kandidat (Index = Kandidatennummer)
+/// - `count`: gewünschte Anzahl Ziehungen
+/// - `seed`: Epochenseed (VRF-abgeleitet)
+///
+/// **Returns:** Gezogene Indizes in Ziehungsreihenfolge. Kürzer als
+/// `count`, wenn nicht genug Kandidaten mit Gewicht > 0 vorhanden sind.
+pub fn weighted_sample_without_replacement(
+    weights: &[u64],
+    count: usize,
+    seed: &[u8; 32],
+) -> Vec<usize> {
+    let mut rng = SeedRng::new(seed);
+    let mut remaining: Vec<(usize, u64)> = weights
+        .iter()
+        .enumerate()
+        .filter(|(_, &w)| w > 0)
+        .map(|(i, &w)| (i, w))
+        .collect();
+
+    // u128 für die Summe: 2^64 Kandidaten-Gewichte könnten u64 sprengen.
+    let mut total: u128 = remaining.iter().map(|(_, w)| *w as u128).sum();
+
+    let mut picked = Vec::with_capacity(count.min(remaining.len()));
+    while picked.len() < count && !remaining.is_empty() {
+        // next_below arbeitet auf u64; bei sehr großen Summen in
+        // Blöcken ziehen wäre nötig — praktisch bleibt total < 2^64,
+        // weil Stake und Arbeit beide u64-Größen sind. Zur Sicherheit
+        // wird geklemmt statt still falsch zu rechnen.
+        let bound = u64::try_from(total).unwrap_or(u64::MAX);
+        let mut ticket = rng.next_below(bound) as u128;
+
+        let mut chosen = remaining.len() - 1;
+        for (idx, (_, w)) in remaining.iter().enumerate() {
+            let w = *w as u128;
+            if ticket < w {
+                chosen = idx;
+                break;
+            }
+            ticket -= w;
+        }
+
+        let (candidate, weight) = remaining.swap_remove(chosen);
+        // swap_remove zerstört die Reihenfolge — für Determinismus muss
+        // die Kandidatenliste in kanonischer Ordnung bleiben.
+        remaining.sort_unstable_by_key(|(i, _)| *i);
+        total -= weight as u128;
+        picked.push(candidate);
+    }
+
+    picked
 }
 
 #[cfg(test)]
@@ -284,6 +350,73 @@ mod tests {
         // Kein Block darf sich wiederholen.
         assert_ne!(&vals[0..4], &vals[4..8]);
         assert_ne!(&vals[4..8], &vals[8..12]);
+    }
+
+    #[test]
+    fn gewichtete_auswahl_ist_deterministisch() {
+        let w = vec![10u64, 20, 30, 40];
+        let a = weighted_sample_without_replacement(&w, 3, &[5u8; 32]);
+        let b = weighted_sample_without_replacement(&w, 3, &[5u8; 32]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn gewichtete_auswahl_zieht_ohne_zuruecklegen() {
+        let w = vec![1u64; 20];
+        let picked = weighted_sample_without_replacement(&w, 10, &[1u8; 32]);
+        assert_eq!(picked.len(), 10);
+        let mut sorted = picked.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 10, "kein Index darf doppelt vorkommen");
+    }
+
+    #[test]
+    fn gewicht_null_wird_nie_gezogen() {
+        let w = vec![0u64, 5, 0, 5, 0];
+        let picked = weighted_sample_without_replacement(&w, 5, &[3u8; 32]);
+        assert_eq!(picked.len(), 2, "nur zwei Kandidaten haben Gewicht");
+        assert!(picked.iter().all(|&i| w[i] > 0));
+    }
+
+    #[test]
+    fn hoeheres_gewicht_wird_haeufiger_gezogen() {
+        // Kandidat 0 hat 10x das Gewicht von Kandidat 1..10.
+        let mut w = vec![1u64; 11];
+        w[0] = 10;
+        let mut hits = 0;
+        const RUNS: u32 = 2000;
+        for r in 0..RUNS {
+            let mut seed = [0u8; 32];
+            seed[0..4].copy_from_slice(&r.to_le_bytes());
+            if weighted_sample_without_replacement(&w, 1, &seed)[0] == 0 {
+                hits += 1;
+            }
+        }
+        // Erwartung: 10/20 = 50 %.
+        let share = hits as f64 / RUNS as f64;
+        assert!(
+            (0.44..0.56).contains(&share),
+            "Anteil {:.3} weicht zu stark von 0,50 ab",
+            share
+        );
+    }
+
+    #[test]
+    fn gewichtete_auswahl_rotiert_mit_dem_seed() {
+        // Der Kern der VRF-Rotation: dieselbe Gewichtsverteilung darf
+        // nicht in jeder Epoche dasselbe Komitee liefern.
+        let w = vec![100u64; 30];
+        let a = weighted_sample_without_replacement(&w, 10, &[1u8; 32]);
+        let b = weighted_sample_without_replacement(&w, 10, &[2u8; 32]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn gewichtete_auswahl_bei_zu_wenig_kandidaten() {
+        let w = vec![1u64, 2, 3];
+        let picked = weighted_sample_without_replacement(&w, 10, &[7u8; 32]);
+        assert_eq!(picked.len(), 3);
     }
 
     #[test]

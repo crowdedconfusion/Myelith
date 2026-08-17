@@ -12,7 +12,7 @@
 //! 2. Aus verschiedenen geografischen Regionen kommen
 //! 3. Deterministisch mit dem Seed ausgewählt werden
 
-use crate::shuffle::deterministic_shuffle;
+use myl_types::seed_rng::deterministic_shuffle;
 use std::collections::{HashMap, HashSet};
 
 use myl_types::ids::MinerId;
