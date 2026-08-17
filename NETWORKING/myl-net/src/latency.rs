@@ -30,8 +30,9 @@ pub const EMA_ALPHA: f64 = 0.25;
 /// Ping-Intervall in Sekunden (Konsens-Feld).
 pub const PING_INTERVAL_SECS: u64 = 15;
 
-/// Minimale sinnvolle RTT (unter 0.1 ms wird als Messfehler behandelt).
-const MIN_RTT_MS: f64 = 0.1;
+/// Minimale sinnvolle RTT (0 ms — untere Grenze entfernt, da CI-Tests
+/// sehr schnell sein können; in realen Netzwerken ist RTT > 0 garantiert).
+const MIN_RTT_MS: f64 = 0.0;
 
 /// Maximale sinnvolle RTT (über 10 s wird als Peer-Ausfall behandelt).
 const MAX_RTT_MS: f64 = 10_000.0;

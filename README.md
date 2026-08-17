@@ -55,9 +55,9 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese empirisch bestätigt, Mehrknoten-Pipeline läuft |
-| [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 abgeschlossen |
-| [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery | Phase 1 abgeschlossen |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese empirisch bestätigt, Mehrknoten-Pipeline läuft, alle Backends (AVX2+NEON) |
+| [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 + 2 abgeschlossen (Golden Vectors, Fuzz-Harness, Konformitätspaket) |
+| [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Ledger (Phase 1) abgeschlossen |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | Burn-and-Mint, Verteilung | Phase 1 abgeschlossen |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 abgeschlossen |
