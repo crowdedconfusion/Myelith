@@ -218,8 +218,9 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.1.1"
+version = "0.2.5"
 dependencies = [
+ "borsh",
  "myl-types",
  "sha2",
 ]
