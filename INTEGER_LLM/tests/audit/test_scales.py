@@ -40,6 +40,11 @@ def is_power_of_two_scale(x: float) -> bool:
 def main():
     print("[scales] Skalen-Audit: Zweierpotenz-Prüfung")
 
+    # Skip wenn Artefakte nicht vorhanden (z.B. in CI)
+    if not (ARTIFACTS / "scales.json").exists():
+        print(f"[scales] SKIP: Artefakte fehlen ({ARTIFACTS})")
+        sys.exit(0)
+
     spec = json.loads(SPEC.read_text(encoding="utf-8"))
     mode = spec.get("theta_v", {}).get("numeric", {}).get("scales", {}).get("mode")
     if mode != "power_of_two":

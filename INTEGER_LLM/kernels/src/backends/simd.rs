@@ -95,25 +95,11 @@ mod avx2 {
             return vec![];
         }
 
-        // 1. Max-Reduktion (AVX2: 8x i32 parallel)
+        // 1. Max-Reduktion (skalar — nicht der Performance-kritische Pfad)
         let mut max_val = i32::MIN;
-        let chunks8 = n / 8;
-        for i in 0..chunks8 {
-            let v = _mm256_loadu_si256(logits.as_ptr().add(i * 8) as *const __m256i);
-            // Horizontal max: pairwise max within register
-            let shuffled = _mm256_permute4x64_epi64::<0b_00_00_00_00>(v);
-            let m1 = _mm256_max_epi32(v, shuffled);
-            let m2 = _mm256_max_epi32(m1, _mm256_alignr_epi8::<8>(m1, m1));
-            let m3 = _mm256_max_epi32(m2, _mm256_alignr_epi8::<4>(m2, m2));
-            let lane_max = _mm256_extract_epi32(m3, 0);
-            if lane_max > max_val {
-                max_val = lane_max;
-            }
-        }
-        // Rest skalar
-        for i in (chunks8 * 8)..n {
-            if logits[i] > max_val {
-                max_val = logits[i];
+        for &z in logits.iter() {
+            if z > max_val {
+                max_val = z;
             }
         }
 
