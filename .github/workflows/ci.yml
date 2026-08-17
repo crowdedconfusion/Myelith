@@ -179,10 +179,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pytest
-        run: pip install pytest
-
       - name: Audit-Tests
         working-directory: INTEGER_LLM
         run: |
-          python3 -m pytest tests/audit/ -v
+          python3 tests/audit/test_no_float.py
+          python3 tests/audit/test_scales.py
+          python3 tests/audit/test_division.py
+          python3 tests/audit/test_overflow.py

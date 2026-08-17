@@ -18,7 +18,6 @@
 //! - rmsnorm (Zukuenftig: AVX2 sum-of-squares + elementwise)
 
 use crate::backend::Backend;
-use crate::fixed_point::{clamp_i16, clamp_i16_from_i64, rescale, rescale_i64, rshift_round};
 use crate::linear::linear_w8a16;
 use crate::rmsnorm::rmsnorm_i16;
 use crate::softmax::softmax_int;
@@ -39,14 +38,24 @@ pub enum SimdTarget {
 
 impl SimdBackend {
     pub fn detect() -> Option<Self> {
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        return Some(SimdBackend { target: SimdTarget::Avx512 });
+        // Runtime-Detection statt compile-time cfg, damit der Code auf
+        // allen Plattformen kompiliert und zur Laufzeit die tatsaechliche
+        // Hardware-Unterstuetzung prueft.
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx512f") {
+                return Some(SimdBackend { target: SimdTarget::Avx512 });
+            }
+            if std::is_x86_feature_detected!("avx2") {
+                return Some(SimdBackend { target: SimdTarget::Avx2 });
+            }
+        }
 
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-        return Some(SimdBackend { target: SimdTarget::Avx2 });
-
-        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        return Some(SimdBackend { target: SimdTarget::Neon });
+        #[cfg(target_arch = "aarch64")]
+        {
+            // NEON ist auf aarch64 immer verfuegbar
+            return Some(SimdBackend { target: SimdTarget::Neon });
+        }
 
         None
     }
@@ -71,6 +80,10 @@ mod avx2 {
     ///
     /// Vektorisiert: Max-Reduktion, exp-LUT-Lookup (skalar mit Vektor-
     /// arithmetik drumherum), Summation, Division mit RNE.
+    ///
+    /// Sicherheit: Caller muss sicherstellen, dass AVX2 verfuegbar ist
+    /// (z.B. via `is_x86_feature_detected!("avx2")`).
+    #[target_feature(enable = "avx2")]
     pub unsafe fn softmax_avx2(
         logits: &[i32],
         exp_lut: &[i16],
@@ -150,6 +163,9 @@ mod avx2 {
 
     /// AVX2 RoPE: rotate_half_split mit SIMD-Intrinsics.
     /// Verarbeitet 8 Paare (i32) parallel pro AVX2-Register.
+    ///
+    /// Sicherheit: Caller muss sicherstellen, dass AVX2 verfuegbar ist.
+    #[target_feature(enable = "avx2")]
     pub unsafe fn rotate_half_split_avx2(
         vec: &[i16],
         cos_row: &[i16],
@@ -209,6 +225,7 @@ mod avx2 {
     }
 
     /// RNE-Rechtsshift fuer 8x i32 in einem AVX2-Register.
+    #[target_feature(enable = "avx2")]
     unsafe fn rshift_round_avx2(v: __m256i, shift: u8) -> __m256i {
         use core::arch::x86_64::*;
         if shift == 0 {
@@ -243,6 +260,9 @@ mod avx2 {
     /// AVX2 SiLU-Fusionsloop: rescale(gate) → LUT-Lookup → Produkt mit up → rescale.
     /// Der LUT-Lookup selbst ist skalar (Gather ist in AVX2 langsam),
     /// aber die Rescale- und Multiplikationsarithmetik ist vektorisiert.
+    ///
+    /// Sicherheit: Caller muss sicherstellen, dass AVX2 verfuegbar ist.
+    #[target_feature(enable = "avx2")]
     pub unsafe fn mlp_silu_fusion_avx2(
         gate: &[i16],
         up: &[i16],
@@ -520,7 +540,7 @@ impl Backend for SimdBackend {
         frac_bits: u8,
     ) {
         #[cfg(target_arch = "x86_64")]
-        {
+        if std::is_x86_feature_detected!("avx2") {
             let result = unsafe { avx2::softmax_avx2(logits, exp_lut, lut_shift, frac_bits) };
             out.copy_from_slice(&result);
             return;
@@ -531,11 +551,9 @@ impl Backend for SimdBackend {
             out.copy_from_slice(&result);
             return;
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            let result = softmax_int(logits, exp_lut, lut_shift, frac_bits);
-            out.copy_from_slice(&result);
-        }
+        // Fallback auf Referenz
+        let result = softmax_int(logits, exp_lut, lut_shift, frac_bits);
+        out.copy_from_slice(&result);
     }
 
     fn attention(
@@ -568,7 +586,7 @@ impl Backend for SimdBackend {
         frac_bits: u8,
     ) {
         #[cfg(target_arch = "x86_64")]
-        {
+        if std::is_x86_feature_detected!("avx2") {
             for (seq_idx, &pos) in positions.iter().enumerate() {
                 if pos >= cos_lut.len() { continue; }
                 let cos_row = &cos_lut[pos * (q[seq_idx].len() / 2)..];
@@ -609,15 +627,13 @@ impl Backend for SimdBackend {
             }
             return;
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
-            for (i, row) in q_out.iter().enumerate() {
-                q[i].copy_from_slice(row);
-            }
-            for (i, row) in k_out.iter().enumerate() {
-                k[i].copy_from_slice(row);
-            }
+        // Fallback auf Referenz
+        let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
+        for (i, row) in q_out.iter().enumerate() {
+            q[i].copy_from_slice(row);
+        }
+        for (i, row) in k_out.iter().enumerate() {
+            k[i].copy_from_slice(row);
         }
     }
 

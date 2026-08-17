@@ -52,7 +52,10 @@ fn test_rsqrt_lut() -> Vec<i16> {
 #[test]
 fn softmax_parity_basic() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
     let exp_lut = test_exp_lut();
     let frac_bits = 8u8;
     let lut_shift = 4u8;
@@ -71,7 +74,10 @@ fn softmax_parity_basic() {
 #[test]
 fn softmax_parity_edge_cases() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
     let exp_lut = test_exp_lut();
     let frac_bits = 8u8;
     let lut_shift = 4u8;
@@ -110,7 +116,10 @@ fn softmax_parity_edge_cases() {
 #[test]
 fn rope_parity_basic() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
     let frac_bits = 8u8;
     let head_dim = 64;
     let half = head_dim / 2;
@@ -151,7 +160,10 @@ fn rope_parity_basic() {
 #[test]
 fn linear_parity_basic() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
 
     let in_features = 64;
     let out_features = 32;
@@ -178,7 +190,10 @@ fn linear_parity_basic() {
 #[test]
 fn rmsnorm_parity_basic() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
     let rsqrt_lut = test_rsqrt_lut();
     let n = 64;
 
@@ -204,7 +219,10 @@ fn rmsnorm_parity_basic() {
 #[test]
 fn mlp_parity_basic() {
     let ref_backend = ReferenceBackend::new();
-    let simd_backend = SimdBackend::detect().expect("SIMD nicht verfuegbar");
+    let simd_backend = match SimdBackend::detect() {
+        Some(b) => b,
+        None => return, // SIMD nicht verfuegbar — Test ueberspringen
+    };
     let silu_lut = test_silu_lut();
 
     let hidden = 32;
