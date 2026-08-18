@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.12.42
+> **Version:** 0.12.43
 > **Datum:** 2026-08-18
 > **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
 
@@ -188,6 +188,39 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.12.43 – 2026-08-18
+
+**Vorbereitung der 7B-Skalierung (Phase 12.70–12.72).** Reine
+Kalibrierungs-Seite; an der Runtime war nichts zu ändern.
+
+- **Verifizierte 7B-Konfiguration** in `calibrate/src/model_configs.py`,
+  geprüft gegen `Qwen/Qwen2.5-7B` Revision `d1497293`
+  (`config.json` + `model.safetensors.index.json`), Lizenz **Apache 2.0**
+  wie von Whitepaper Kap. 10.1 / ETHICS G7 verlangt. Basis-Variante, keine
+  Instruct-Variante. Drei Unterschiede zu 0,5B berühren den Exportpfad:
+  `num_kv_heads` 2 → 4, `tie_word_embeddings` true → **false**,
+  `head_dim` 64 → 128 (RoPE-LUTs doppelt so breit).
+- **Export-Gate über ein `verified`-Feld.** `get_export_model_config()`
+  verlangt jetzt zusätzlich `attention_bias`, `verified` und
+  `hf_model_id`. Die abgeschriebenen Instruct-Einträge fallen damit
+  weiterhin laut durch — ein Export mit geratenen Werten erzeugt keine
+  Fehlermeldung, nur schlechtere Zahlen.
+- **Modellwahl per `INTEGER_LLM_MODEL`** statt Codekonstante; die HF-ID
+  kommt aus der Config, damit sie nicht an zwei Stellen steht. Neues
+  `artifact_model_config()` hält die Herkunftsfelder aus dem Artefakt
+  heraus.
+- **GPTQ schaltet sich bei zu wenig RAM selbst ab.** Der Hessian-Satz
+  wächst quadratisch mit `intermediate_size`: 2,5 GB bei 0,5B,
+  **45,5 GB** bei 7B. Der Lauf rechnet das vorab aus, statt nach Stunden
+  am Speicher zu scheitern. Vertretbar, weil GPTQ auf 0,5B ein gemessenes
+  Negativ-Ergebnis war (v0.12.28). `INTEGER_LLM_GPTQ=1|0` überstimmt.
+- **Fund 18 (offen):** Bei `tie_word_embeddings: false` verlangt
+  `build_model()` einen int8-`lm_head.weight` *zusätzlich* zum
+  int16-LM-Head — 545 MB toter Tensor bei 7B. Artefaktformat-relevant,
+  dokumentiert statt stillschweigend behoben.
+- Vier neue Tests in `tests/test_export_workflow.py` (7B-Werte gegen die
+  veröffentlichte config.json, Herkunftsfelder, Hessian-Rechnung samt
+  Abschaltung, Modellwahl per Umgebungsvariable).
 ### v0.12.42 – 2026-08-18 (Audit-Block 5, Nachtrag: Feature-Builds)
 
 Die CI hat eine Lücke in meiner eigenen Prüfung aufgedeckt: `simd.rs`,

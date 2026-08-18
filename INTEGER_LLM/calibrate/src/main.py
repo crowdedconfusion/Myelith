@@ -1,15 +1,32 @@
 #!/usr/bin/env python3
 """
-Kalibrierungs-Workflow fuer Qwen2.5-0.5B (Basis-Modell).
+Kalibrierungs-Workflow fuer die Qwen2.5-Basis-Reihe.
 Phase 3 + Phase 6 Vorbereitung (Gewichtsexport).
 
-Referenzmodell ist die Basis-Variante Qwen/Qwen2.5-0.5B — konsistent mit
-Whitepaper, oeffentlichem README und models/README.md. Das Modell wird
+Referenzmodell ist die Basis-Variante (keine Instruct-Variante) — konsistent
+mit Whitepaper, oeffentlichem README und models/README.md. Das Modell wird
 ausschliesslich aus dem lokalen Snapshot unter models/ geladen (siehe
-loader.py und models/README.md).
+loader.py und models/README.md), nie aus dem impliziten HF-Cache.
+
+**Modellwahl** ueber die Umgebungsvariable INTEGER_LLM_MODEL, Vorgabe
+qwen2.5-0.5b:
+
+    INTEGER_LLM_MODEL=qwen2.5-7b python -m calibrate.src.main
+
+Waehlbar sind nur Varianten, deren Felder gegen die echte HF-config.json
+geprueft sind (model_configs.py, Feld "verified"). Jede Variante bekommt ihr
+eigenes Artefaktverzeichnis unter artifacts/<name>/; ein Lauf ueberschreibt
+nie das Artefakt einer anderen Groesse.
+
+Was sich mit der Modellgroesse *nicht* aendert: der numerische Vertrag in
+theta_v/spec.json. Die Runtime liest daraus nur Format- und
+Nichtlinearitaets-Parameter; die Dimensionen kommen aus dem
+model_config.json des Artefakts. Der Wechsel auf eine andere Groesse ist
+deshalb ein Artefaktwechsel, keine Codeaenderung.
 """
 
 import json
+import os
 from pathlib import Path
 
 from .loader import load_reference_model
@@ -21,11 +38,18 @@ from .export import export_theta_v
 from .quantize import quantize_model_weights, quantize_symmetric_int16_per_channel
 from .gptq import HessianCollector, quantize_linear_layers_gptq
 from .export_weights import export_quantized_weights, export_lm_head
-from .model_configs import get_export_model_config
+from .model_configs import get_export_model_config, artifact_model_config
 from .paths import model_artifacts_dir, local_model_dir
 
-MODEL_NAME = "qwen2.5-0.5b"
-HF_MODEL_ID = "Qwen/Qwen2.5-0.5B"
+MODEL_ENV = "INTEGER_LLM_MODEL"
+DEFAULT_MODEL = "qwen2.5-0.5b"
+
+MODEL_NAME = os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL
+# Die HF-ID steht in der verifizierten Config, nicht hier: sie gehoert zur
+# Variante, und eine zweite Stelle waere eine zweite Wahrheit. Der Aufruf
+# schlaegt fehl, falls MODEL_NAME auf eine ungeprueffte Variante zeigt -
+# und zwar bevor irgendetwas geladen wird.
+HF_MODEL_ID = get_export_model_config(MODEL_NAME)["hf_model_id"]
 
 # Breiterer Kalibrierungs-Korpus (Fund 14, Kandidat i): Die alten vier
 # Kurz-Prompts (~200 Token) deckten die realen Aktivierungs-Spannweiten
@@ -74,7 +98,70 @@ def _wikitext_calibration_texts(n_sequences):
     return texts
 
 
+def gptq_hessian_bytes(config: dict) -> int:
+    """
+    RAM, den HessianCollector fuer diese Modellgroesse belegt.
+
+    H ist je linearer Projektion eine Gram-Matrix [in_features, in_features]
+    in float32. Die sechs Projektionen mit in = hidden_size sind harmlos; die
+    Kosten stecken in down_proj, deren Eingang intermediate_size ist:
+
+        0.5B  24 Ebenen x (6 x 896^2 + 4864^2) x 4 B  =  2,5 GB
+        7B    28 Ebenen x (6 x 3584^2 + 18944^2) x 4 B = 45,5 GB
+
+    Der Sprung ist quadratisch in intermediate_size, nicht linear in der
+    Parameterzahl. Deshalb wird das hier ausgerechnet und nicht geschaetzt.
+    """
+    h = config["hidden_size"]
+    i = config["intermediate_size"]
+    return config["num_layers"] * (6 * h * h + i * i) * 4
+
+
+def verfuegbarer_ram() -> int:
+    """Physischer Arbeitsspeicher in Bytes; 0, wenn nicht ermittelbar."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):
+        return 0
+
+
+def gptq_entscheidung(config: dict) -> tuple:
+    """
+    Entscheidet, ob GPTQ in diesem Lauf mitlaeuft. Rueckgabe: (bool, Grund).
+
+    INTEGER_LLM_GPTQ=0 schaltet es hart ab, =1 erzwingt es. Ohne Vorgabe
+    entscheidet der Speicherbedarf: passt der Hessian-Satz nicht in zwei
+    Drittel des RAM, laeuft der Export ohne GPTQ weiter, statt nach Stunden
+    am Speicher zu scheitern.
+
+    Das ist vertretbar, weil GPTQ auf 0.5B ein **gemessenes Negativ-Ergebnis**
+    war (v0.12.28: Perplexitaet 3242 -> 3318, also leicht schlechter). Wer es
+    auf einer grossen Variante trotzdem will, braucht die schichtweise
+    Hessian-Berechnung (sammeln, quantisieren, freigeben) - siehe Hinweis in
+    README/Fahrplan-v3.md.
+    """
+    env = os.environ.get("INTEGER_LLM_GPTQ", "").strip()
+    if env in ("0", "aus", "off", "false"):
+        return False, "INTEGER_LLM_GPTQ=0"
+    bedarf = gptq_hessian_bytes(config)
+    if env in ("1", "an", "on", "true"):
+        return True, f"INTEGER_LLM_GPTQ=1, Bedarf {bedarf / 2**30:.1f} GB"
+    ram = verfuegbarer_ram()
+    if ram and bedarf > ram * 2 // 3:
+        return False, (
+            f"Hessian-Bedarf {bedarf / 2**30:.1f} GB ueberschreitet zwei Drittel "
+            f"der {ram / 2**30:.0f} GB RAM; GPTQ war auf 0.5B ohnehin ein "
+            f"Negativ-Ergebnis (v0.12.28). Erzwingen mit INTEGER_LLM_GPTQ=1"
+        )
+    return True, f"Bedarf {bedarf / 2**30:.1f} GB"
+
+
 def main():
+    config_vorab = get_export_model_config(MODEL_NAME)
+    use_gptq, gptq_grund = gptq_entscheidung(config_vorab)
+    print(f"[calibrate] Modell: {MODEL_NAME} ({HF_MODEL_ID}), "
+          f"verifiziert gegen {config_vorab['verified']}")
+
     model_dir = local_model_dir(HF_MODEL_ID.split("/")[-1])
     print(f"[calibrate] Lade Referenzmodell aus {model_dir} ...")
     model, tokenizer = load_reference_model(model_dir)
@@ -85,8 +172,12 @@ def main():
     # GPTQ (Eskalationsstrategie 3, theta_v 0.8.0): dieselbe Vorwaerts-
     # Passage liefert die Hessischen Matrizen (H = Summe x x^T) fuer die
     # Fehlerkompensations-Quantisierung der linearen Projektionen.
-    hessian_collector = HessianCollector()
-    hessian_collector.attach(model)
+    hessian_collector = None
+    if use_gptq:
+        hessian_collector = HessianCollector()
+        hessian_collector.attach(model)
+    else:
+        print(f"[calibrate] GPTQ ausgelassen ({gptq_grund}).")
 
     # Kalibrierungs-Korpus: mehrere sprachlich unterschiedliche Prompts,
     # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
@@ -144,10 +235,11 @@ def main():
     # deren num_kv_heads/tie_word_embeddings noch nicht gegen die echte
     # HF-config.json verifiziert sind (siehe model_configs.py-Docstring).
     # (Vor die LUT-Erzeugung gezogen, da RoPE head_dim braucht, Fund-15-Fix.)
-    model_config = dict(get_export_model_config(MODEL_NAME))
+    model_config = artifact_model_config(MODEL_NAME)
     # RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-LUTs mit
-    # half-split-Paarung. head_dim aus der (verifizierten) Modell-Config,
-    # rope_theta aus der spec (Qwen2.5-0.5B: 1e6, siehe Modelle-config.json).
+    # half-split-Paarung. head_dim aus der (verifizierten) Modell-Config —
+    # bei 7B ist es 128 statt 64, die LUTs werden entsprechend doppelt so
+    # breit. rope_theta aus der spec (die gesamte Qwen2.5-Reihe: 1e6).
     sin_lut, cos_lut = generate_rope_luts(
         max_seq_len=nl["rope"]["max_seq_len"],
         head_dim=model_config["head_dim"],
@@ -187,12 +279,13 @@ def main():
     # Tensoren (gleiche Schlüssel, gleiches Artefakt-Format). Reduziert den
     # Ausgabefehler statt des Gewichtsfehlers und damit das akkumulierte
     # Quantisierungsrauschen (Fund 14).
-    print("[calibrate] GPTQ: quantisiere lineare Projektionen mit "
-          "Fehlerkompensation...")
-    gptq_quantized = quantize_linear_layers_gptq(model, hessian_collector.hessians)
-    quantized.update(gptq_quantized)
-    print(f"[calibrate] GPTQ auf {len(gptq_quantized)} lineare Projektionen "
-          "angewendet.")
+    if use_gptq:
+        print("[calibrate] GPTQ: quantisiere lineare Projektionen mit "
+              "Fehlerkompensation...")
+        gptq_quantized = quantize_linear_layers_gptq(model, hessian_collector.hessians)
+        quantized.update(gptq_quantized)
+        print(f"[calibrate] GPTQ auf {len(gptq_quantized)} lineare Projektionen "
+              "angewendet.")
 
     print(f"[calibrate] Exportiere Gewichte nach {artifacts_dir}...")
     export_quantized_weights(quantized, artifacts_dir)

@@ -420,6 +420,117 @@ def test_quantize_int8_per_channel_1d_keeps_shape():
         assert abs(deq - float(t[i])) <= step / 2 + 1e-9, f"Element {i}"
 
 
+def test_7b_config_matches_published_hf_config():
+    """
+    Die 7B-Eintraege gegen die veroeffentlichte config.json von
+    Qwen/Qwen2.5-7B (Revision d1497293) festgenagelt. Der Test haelt fest,
+    WAS geprueft wurde — nicht, dass jemand geprueft hat.
+
+    Drei Werte unterscheiden sich von 0.5B und beruehren den Exportpfad:
+    num_kv_heads (GQA-Gruppierung), tie_word_embeddings (eigener LM-Head)
+    und head_dim (RoPE-LUT-Breite). Genau die sind hier verankert.
+    """
+    from src.model_configs import get_export_model_config
+
+    c = get_export_model_config("qwen2.5-7b")
+    erwartet = {
+        "num_layers": 28,          # num_hidden_layers
+        "hidden_size": 3584,
+        "intermediate_size": 18944,
+        "num_heads": 28,           # num_attention_heads
+        "num_kv_heads": 4,         # num_key_value_heads (0.5B: 2)
+        "vocab_size": 152064,      # 0.5B: 151936
+        "tie_word_embeddings": False,  # 0.5B: True
+        "attention_bias": True,    # q/k/v_proj.bias in der index.json
+    }
+    for k, v in erwartet.items():
+        assert c[k] == v, f"7B-Feld {k}: {c[k]!r} statt {v!r}"
+
+    # head_dim ist abgeleitet, keine eigene Angabe der config.json.
+    assert c["head_dim"] == c["hidden_size"] // c["num_heads"] == 128
+
+    # Basis-Variante, nicht Instruct (Scope-Entscheidung 12.15).
+    assert c["hf_model_id"] == "Qwen/Qwen2.5-7B"
+    assert "instruct" not in c["hf_model_id"].lower()
+
+
+def test_artifact_model_config_omits_provenance_fields():
+    """
+    model_config.json traegt Modellparameter, keine Herkunftsnachweise.
+    "verified"/"hf_model_id" sind fuer Menschen da und haben im vom Loader
+    gelesenen Artefakt nichts zu suchen.
+    """
+    from src.model_configs import artifact_model_config, _REQUIRED_EXPORT_FIELDS
+
+    cfg = artifact_model_config("qwen2.5-7b")
+    assert "verified" not in cfg and "hf_model_id" not in cfg
+    # Alles Uebrige, was der Loader braucht, ist noch da.
+    for feld in _REQUIRED_EXPORT_FIELDS:
+        if feld in ("verified", "hf_model_id"):
+            continue
+        assert feld in cfg, f"model_config.json fehlt {feld}"
+
+
+def test_gptq_hessian_bedarf_waechst_quadratisch():
+    """
+    Der Hessian-Speicher skaliert quadratisch mit intermediate_size, nicht
+    linear mit der Parameterzahl — deshalb sprengt 7B den RAM, waehrend
+    0.5B bequem hineinpasst. Die automatische GPTQ-Abschaltung haengt an
+    dieser Rechnung; wenn sie kippt, laeuft eine Kalibrierung stundenlang
+    ins Leere.
+    """
+    import os
+    from src.model_configs import get_export_model_config
+    from src.main import gptq_hessian_bytes, gptq_entscheidung
+
+    klein = gptq_hessian_bytes(get_export_model_config("qwen2.5-0.5b"))
+    gross = gptq_hessian_bytes(get_export_model_config("qwen2.5-7b"))
+    assert 2.0 < klein / 2**30 < 3.0, f"0.5B: {klein / 2**30:.1f} GB"
+    assert 40.0 < gross / 2**30 < 50.0, f"7B: {gross / 2**30:.1f} GB"
+
+    # Die Umgebungsvariable ueberstimmt die Heuristik in beide Richtungen.
+    alt = os.environ.get("INTEGER_LLM_GPTQ")
+    try:
+        os.environ["INTEGER_LLM_GPTQ"] = "0"
+        an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-0.5b"))
+        assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
+        os.environ["INTEGER_LLM_GPTQ"] = "1"
+        an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
+        assert an is True, "INTEGER_LLM_GPTQ=1 muss GPTQ erzwingen"
+    finally:
+        os.environ.pop("INTEGER_LLM_GPTQ", None)
+        if alt is not None:
+            os.environ["INTEGER_LLM_GPTQ"] = alt
+
+
+def test_model_name_folgt_umgebungsvariable():
+    """
+    Ein Wechsel der Modellgroesse darf keine Codeaenderung sein. Der Test
+    laedt calibrate.src.main frisch mit gesetzter Variable und prueft, dass
+    Name UND HF-ID mitwandern (die ID kommt aus der Config, nicht aus einer
+    zweiten Konstante).
+    """
+    import os
+    import importlib
+
+    alt = os.environ.get("INTEGER_LLM_MODEL")
+    try:
+        os.environ["INTEGER_LLM_MODEL"] = "qwen2.5-7b"
+        main_mod = importlib.reload(importlib.import_module("src.main"))
+        assert main_mod.MODEL_NAME == "qwen2.5-7b"
+        assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-7B"
+
+        os.environ.pop("INTEGER_LLM_MODEL")
+        main_mod = importlib.reload(importlib.import_module("src.main"))
+        assert main_mod.MODEL_NAME == "qwen2.5-0.5b", "Vorgabe bleibt 0.5B"
+        assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-0.5B"
+    finally:
+        os.environ.pop("INTEGER_LLM_MODEL", None)
+        if alt is not None:
+            os.environ["INTEGER_LLM_MODEL"] = alt
+        importlib.reload(importlib.import_module("src.main"))
+
+
 if __name__ == "__main__":
     test_get_export_model_config_accepts_verified_variant()
     print("[test] get_export_model_config akzeptiert 0.5B: PASSED")
@@ -449,4 +560,12 @@ if __name__ == "__main__":
     print("[test] int16-Per-Channel-Quantisierung Rundlauf: PASSED")
     test_quantize_int8_per_channel_1d_keeps_shape()
     print("[test] int8-Per-Channel-Quantisierung 1D behaelt Shape: PASSED")
+    test_7b_config_matches_published_hf_config()
+    print("[test] 7B-Config stimmt mit veroeffentlichter HF-config.json: PASSED")
+    test_artifact_model_config_omits_provenance_fields()
+    print("[test] model_config.json ohne Herkunftsfelder: PASSED")
+    test_gptq_hessian_bedarf_waechst_quadratisch()
+    print("[test] GPTQ-Hessian-Bedarf und Abschaltung: PASSED")
+    test_model_name_folgt_umgebungsvariable()
+    print("[test] Modellwahl per INTEGER_LLM_MODEL: PASSED")
     print("[test] Alle Tests bestanden.")

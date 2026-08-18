@@ -2,15 +2,28 @@
 Modell-Konfigurationen fuer verschiedene Qwen2.5-Groessen.
 Ermoeglicht einfachen Austausch: 0.5B -> 72B.
 
-WICHTIG (Fund aus Fahrplan-Punkt 12.10/12.14): Nur der 0.5B-Eintrag traegt
-"num_key_value_heads" und "tie_word_embeddings" - verifiziert gegen die
-tatsaechliche models/Qwen2.5-0.5B/config.json. Fuer die uebrigen Varianten
-sind diese Werte NICHT geraten worden, sondern fehlen bewusst, bis sie gegen
-die jeweils echte HF-config.json der Variante geprueft sind. runtime/src/
-loader.rs::ModelDims verlangt beide Felder zwingend (GQA-Gruppierung,
-Weight-Tying) - ein Export ohne verifizierte Werte wuerde falsche Attention-
-Berechnung oder ein fehlendes lm_head.weight erzeugen, siehe Hinweis zu 12.10
-in INTEGER_LLM/README/Fahrplan-v3.md.
+WICHTIG (Fund aus Fahrplan-Punkt 12.10/12.14): Exportfaehig sind nur die
+Eintraege, deren Felder gegen die *echte* HF-config.json der jeweiligen
+Variante geprueft wurden - erkennbar am Feld "verified". Die uebrigen
+Eintraege sind Groessenangaben aus den Modellkarten und tragen bewusst
+weder "num_kv_heads" noch "tie_word_embeddings"; get_export_model_config()
+weist sie deshalb laut zurueck.
+
+Der Grund: runtime/src/loader.rs::ModelDims verlangt beide Felder zwingend
+(GQA-Gruppierung, Weight-Tying). Ein Export mit geratenen Werten wuerde
+falsche Attention-Berechnung oder ein fehlendes lm_head.weight erzeugen -
+und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen. Siehe Hinweis zu
+12.10 in INTEGER_LLM/README/Fahrplan-v3.md.
+
+Verifizierte Varianten:
+  qwen2.5-0.5b  models/Qwen2.5-0.5B/config.json (lokaler Snapshot)
+  qwen2.5-7b    huggingface.co/Qwen/Qwen2.5-7B/raw/main/config.json
+                + model.safetensors.index.json (Bias- und lm_head-Tensoren),
+                Revision d149729398750b98c0af14eb82c78cfe92750796,
+                Lizenz apache-2.0 (Whitepaper Kap. 10.1 / ETHICS G7)
+
+Nur Basis-Varianten, keine Instruct-Varianten: Referenzmodell des Projekts
+ist die Basis-Reihe (Scope-Entscheidung 12.15).
 """
 
 MODEL_CONFIGS = {
@@ -31,6 +44,40 @@ MODEL_CONFIGS = {
         # Runtime verlangt bei true die zugehoerigen Bias-Tensoren im
         # Artefakt (ausserplanmaessiger Patch v0.12.19).
         "attention_bias": True,
+        "verified": "models/Qwen2.5-0.5B/config.json",
+        "hf_model_id": "Qwen/Qwen2.5-0.5B",
+    },
+    # Verifiziert gegen Qwen/Qwen2.5-7B (Basis), Revision
+    # d149729398750b98c0af14eb82c78cfe92750796. Drei Unterschiede zur
+    # 0.5B-Variante, die den Exportpfad tatsaechlich beruehren:
+    #   num_kv_heads   2 -> 4    (GQA-Gruppierung: 28 Query- auf 4 KV-Heads)
+    #   tie_word_embeddings True -> False  (eigenstaendiges lm_head.weight;
+    #                            die Weight-Tying-Ausnahme aus v0.12.25
+    #                            entfaellt hier, der LM-Head ist ohnehin
+    #                            ein eigener Tensor)
+    #   head_dim       64 -> 128 (RoPE-LUTs werden [max_context, 64] statt
+    #                            [max_context, 32] - LUT-Groesse verdoppelt)
+    # attention_bias True gilt weiter: die index.json der Variante fuehrt
+    # q_proj.bias/k_proj.bias/v_proj.bias je Layer.
+    "qwen2.5-7b": {
+        "family": "qwen2.5",
+        "variant": "7b",
+        "num_layers": 28,
+        "hidden_size": 3584,
+        "intermediate_size": 18944,
+        "num_heads": 28,
+        "num_kv_heads": 4,
+        "head_dim": 128,
+        "vocab_size": 152064,
+        # Bewusst 2048 wie bei 0.5B, nicht die 131072 der Modellkarte: der
+        # max_context bestimmt die Zeilenzahl der RoPE-LUTs und damit die
+        # Artefaktgroesse. 2048 haelt die Messung mit dem 0.5B-Lauf
+        # vergleichbar; eine Erhoehung ist eine eigene Entscheidung.
+        "max_context": 2048,
+        "tie_word_embeddings": False,
+        "attention_bias": True,
+        "verified": "huggingface.co/Qwen/Qwen2.5-7B@d1497293",
+        "hf_model_id": "Qwen/Qwen2.5-7B",
     },
     "qwen2.5-1.5b-instruct": {
         "num_layers": 28,
@@ -100,7 +147,7 @@ def get_model_config(name: str) -> dict:
 _REQUIRED_EXPORT_FIELDS = (
     "family", "variant", "num_layers", "hidden_size", "intermediate_size",
     "num_heads", "num_kv_heads", "head_dim", "vocab_size", "max_context",
-    "tie_word_embeddings",
+    "tie_word_embeddings", "attention_bias", "verified", "hf_model_id",
 )
 
 
@@ -110,6 +157,13 @@ def get_export_model_config(name: str) -> dict:
     model_config.json noetigen Felder vorhanden sind - schlaegt laut und
     fruehzeitig fehl statt ein Artefakt zu exportieren, das der Rust-Loader
     ohnehin ablehnen wuerde (oder schlimmer: mit falschen Annahmen laedt).
+
+    "attention_bias" steht mit in der Liste, seit der Loader die Q/K/V-Biases
+    verarbeitet (v0.12.19): fehlt das Feld, exportiert der Lauf ein Artefakt,
+    das die Runtime beim Laden ablehnt. "verified" erzwingt, dass jemand die
+    Werte gegen die echte config.json der Variante gehalten hat - dieses Feld
+    ist der Unterschied zwischen einer geprueften und einer abgeschriebenen
+    Konfiguration.
     """
     config = get_model_config(name)
     missing = [f for f in _REQUIRED_EXPORT_FIELDS if f not in config]
@@ -117,9 +171,30 @@ def get_export_model_config(name: str) -> dict:
         raise ValueError(
             f"Modell '{name}' fehlen fuer den Export noetige, verifizierte Felder: {missing}. "
             "Gegen die echte HF-config.json dieser Variante pruefen und in MODEL_CONFIGS "
-            "ergaenzen, bevor sie exportiert wird (siehe Modul-Docstring)."
+            "ergaenzen, bevor sie exportiert wird (siehe Modul-Docstring). "
+            f"Exportfaehig sind derzeit: {export_ready()}."
         )
     return config
+
+
+def export_ready() -> list:
+    """Namen aller Varianten, die den Export-Gate von get_export_model_config() bestehen."""
+    return [
+        name for name, cfg in MODEL_CONFIGS.items()
+        if all(f in cfg for f in _REQUIRED_EXPORT_FIELDS)
+    ]
+
+
+# Felder, die als model_config.json ins Artefakt geschrieben werden. "verified"
+# und "hf_model_id" sind Herkunftsnachweise fuer den Menschen, keine
+# Modellparameter - sie gehoeren nicht in die vom Loader gepruefte Struktur.
+_ARTIFACT_EXCLUDED_FIELDS = ("verified", "hf_model_id")
+
+
+def artifact_model_config(name: str) -> dict:
+    """Die Felder aus get_export_model_config(), die in model_config.json gehoeren."""
+    config = get_export_model_config(name)
+    return {k: v for k, v in config.items() if k not in _ARTIFACT_EXCLUDED_FIELDS}
 
 
 def suggest_sharding(num_layers: int, num_nodes: int) -> list:
