@@ -1,0 +1,13 @@
+# Gemeinsames Ausgabeverzeichnis für alle Crates dieses Repositoriums.
+#
+# WARUM: Jedes Crate ist ein eigenständiges Cargo-Projekt (bewusst — siehe
+# AGENTS.md, kein gemeinsames Workspace-Cargo.toml). Ohne diese Einstellung
+# legt jedes Crate ein eigenes `target/` an und übersetzt dort alle
+# gemeinsamen Abhängigkeiten erneut: `myl_types` lag in 66 Kopien vor,
+# `sha2` in 34, insgesamt 2789 .rlib-Dateien und 23,8 GB.
+#
+# Diese Zeile ändert NICHT die Bau-Struktur — die Crates bleiben
+# eigenständig, es gibt weiterhin kein Workspace. Sie legt nur fest,
+# WOHIN gebaut wird.
+[build]
+target-dir = "target-shared"

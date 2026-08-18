@@ -24,7 +24,12 @@ from src.loader import load_reference_model  # noqa: E402
 # Erste 8 Tokens der Mess-Sequenz (identisch zu den Seq-Dump-Skripten).
 TOKENS = [34532, 425, 10965, 465, 374, 458, 6364, 4531]
 ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
-SEQ_DUMP = REPO / "runtime" / "target" / "release" / "seq_layer_dump"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+import cargo_paths  # noqa: E402
+
+SEQ_DUMP = cargo_paths.binary("runtime", "seq_layer_dump")
 
 
 def run_integer_dump():

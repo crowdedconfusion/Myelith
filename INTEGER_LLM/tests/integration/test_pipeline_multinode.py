@@ -27,8 +27,13 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent.parent
 ARTIFACTS = ROOT / "artifacts" / "qwen2.5-0.5b"
 CONFIG = ROOT / "configs" / "pipeline_4node.json"
-PIPELINE_BIN = ROOT / "pipeline" / "target" / "release" / "integer-llm-pipeline"
-RUNTIME_BIN = ROOT / "runtime" / "target" / "release" / "integer-llm-runtime"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+import cargo_paths  # noqa: E402
+
+PIPELINE_BIN = cargo_paths.binary("pipeline", "integer-llm-pipeline")
+RUNTIME_BIN = cargo_paths.binary("runtime", "integer-llm-runtime")
 
 PROMPT = "Die Hauptstadt von Frankreich ist"
 MAX_NEW_TOKENS = 6

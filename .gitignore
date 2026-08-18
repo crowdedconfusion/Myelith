@@ -6,6 +6,11 @@
 
 # Rust-Build-Artefakte
 target/
+# Gemeinsames Ausgabeverzeichnis (siehe .cargo/config.toml). Alle Crates
+# bauen dorthin, statt je ein eigenes target/ anzulegen — das sparte
+# 23,8 GB auf 2,1 GB, weil gemeinsame Abhängigkeiten nur noch einmal
+# übersetzt werden.
+target-shared/
 
 # Python
 __pycache__/

@@ -30,7 +30,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
-PROBE = REPO / "runtime" / "target" / "release" / "perplexity_probe"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+import cargo_paths  # noqa: E402
+
+PROBE = cargo_paths.binary("runtime", "perplexity_probe")
 
 # Gemeinsame Messsequenzen-Aufbereitung (identische Messmethode mit der
 # FP-Baseline und dem Perplexitätsvergleich, siehe eval/wikitext_common.py).

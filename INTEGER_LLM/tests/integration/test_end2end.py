@@ -29,7 +29,12 @@ import subprocess
 from pathlib import Path
 
 RUNTIME_DIR = Path(__file__).parent.parent.parent / "runtime"
-BINARY = RUNTIME_DIR / "target" / "release" / "integer-llm-runtime"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+import cargo_paths  # noqa: E402
+
+BINARY = cargo_paths.binary("runtime", "integer-llm-runtime")
 SPEC_JSON_PATH = Path(__file__).parent.parent.parent / "theta_v" / "spec.json"
 
 # Kleine, aber strukturell vollstaendige Dimensionen (dieselbe GQA-Asymmetrie

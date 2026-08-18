@@ -20,6 +20,16 @@ env:
   # `unused import`-Warnung war die Ursache dafür, dass ein kaputter
   # Testbuild in main landen konnte (Fund A1).
   RUSTFLAGS: "-D warnings"
+  # Setzt `build.target-dir` aus .cargo/config.toml außer Kraft.
+  #
+  # Lokal bauen alle Crates in ein gemeinsames `target-shared/`, weil
+  # sonst jede gemeinsame Abhängigkeit zwölfmal auf der Platte liegt
+  # (gemessen: 23,8 GB statt 2,1 GB). In der CI ist das unnötig — jeder
+  # Job läuft in einem eigenen Container und baut nur seine Crates — und
+  # `Swatinem/rust-cache` erwartet die Voreinstellung `target/`. Die
+  # Umgebungsvariable hat Vorrang vor der Konfigurationsdatei, damit die
+  # CI unverändert weiterläuft.
+  CARGO_TARGET_DIR: target
 
 jobs:
   # ── Lint: rustc-Warnungen und clippy über alle Crates ────────────
