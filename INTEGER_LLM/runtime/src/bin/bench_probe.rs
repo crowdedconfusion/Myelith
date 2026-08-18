@@ -48,13 +48,12 @@ fn main() {
 
     // Decode: Token fuer Token, greedy (deterministisch).
     let mut out = Vec::with_capacity(decode_tokens);
-    let mut pos = ids.len();
+    let start_pos = ids.len();
     let t0 = Instant::now();
-    for _ in 0..decode_tokens {
+    for step in 0..decode_tokens {
         let next = model.greedy_next(&logits);
         out.push(next);
-        logits = model.forward_token(next, pos, &mut cache);
-        pos += 1;
+        logits = model.forward_token(next, start_pos + step, &mut cache);
     }
     let decode = t0.elapsed();
 

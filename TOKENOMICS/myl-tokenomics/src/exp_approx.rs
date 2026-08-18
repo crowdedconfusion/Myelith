@@ -80,7 +80,7 @@ pub fn exp_approx(x_fixed: i64) -> i64 {
     let lut = &EXP_LUT;
 
     // Clamp auf gültigen Bereich
-    let x_clamped = x_fixed.max(EXP_MIN).min(EXP_MAX);
+    let x_clamped = x_fixed.clamp(EXP_MIN, EXP_MAX);
 
     // Berechne Index und Interpolationsfaktor in Fixed-Point.
     //

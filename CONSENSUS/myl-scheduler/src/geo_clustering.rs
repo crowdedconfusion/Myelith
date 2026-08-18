@@ -83,12 +83,11 @@ pub struct MinerCluster {
 /// Bildet Cluster aus Minern unter einem Latenz-Constraint.
 ///
 /// **Algorithmus (Anhang A.2, Schritt 3):**
-/// 1. Shuffle die Miner mit dem Seed (deterministisch)
-/// 2. Für jeden Miner:
-///    a. Finde ein bestehendes Cluster, dem der Miner hinzugefügt werden kann
-///       (maximale Latenz zu allen Cluster-Mitgliedern <= max_latency_ms)
-///    b. Wenn kein passendes Cluster gefunden wird, erstelle ein neues Cluster
-/// 3. Gib alle Cluster zurück
+/// 1. Shuffle die Miner mit dem Seed (deterministisch).
+/// 2. Für jeden Miner: suche ein bestehendes Cluster, dessen Mitglieder
+///    alle innerhalb von `max_latency_ms` liegen. Gibt es keines, wird
+///    ein neues Cluster eröffnet.
+/// 3. Gib alle Cluster zurück.
 ///
 /// **Determinismus:** Gleicher Seed + gleiche Miner + gleiche Latenz-Matrix → gleiche Cluster.
 /// Die Reihenfolge der Cluster ist deterministisch (sortiert nach erstem Miner).

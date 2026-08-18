@@ -333,7 +333,7 @@ mod tests {
         // Ein Unterzeichner fehlt ⇒ scheitert.
         assert!(!fast_aggregate_verify(&pks[..2], msg, &agg));
         // Ein falscher Schlüssel darunter ⇒ scheitert.
-        let mut pks_falsch = pks.clone();
+        let mut pks_falsch = pks;
         let fremd = BlsSecretKey::key_gen(&[0x99u8; 32]).expect("KeyGen");
         pks_falsch[2] = fremd.public_key().expect("pk");
         assert!(!fast_aggregate_verify(&pks_falsch, msg, &agg));

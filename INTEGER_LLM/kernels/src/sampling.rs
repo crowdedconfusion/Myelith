@@ -1,4 +1,6 @@
 //! Integer-Sampling (Greedy + CDF)
+// Der Index ist die Token-ID — er ist das Ergebnis, nicht nur ein Zaehler.
+#![allow(clippy::needless_range_loop)]
 
 use crate::prng::splitmix64;
 

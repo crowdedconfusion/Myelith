@@ -343,16 +343,17 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.12.40"
+version = "0.12.41"
 dependencies = [
  "itertools 0.13.0",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "integer-llm-pipeline"
-version = "0.12.40"
+version = "0.12.41"
 dependencies = [
  "crc32fast",
  "integer-llm-kernels",
@@ -364,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.12.40"
+version = "0.12.41"
 dependencies = [
  "integer-llm-kernels",
  "serde",

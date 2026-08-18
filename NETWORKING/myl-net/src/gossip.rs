@@ -228,8 +228,10 @@ mod tests {
         let addr_a = wait_for_listen_addr(&mut swarm_a).await;
         let addr_a = addr_a.with_p2p(identity_a.peer_id()).expect("p2p");
 
-        let mut config_b = NetConfig::default();
-        config_b.bootstrap_peers = vec![addr_a.to_string()];
+        let config_b = NetConfig {
+            bootstrap_peers: vec![addr_a.to_string()],
+            ..Default::default()
+        };
         let mut swarm_b = build_swarm(&identity_b, &config_b).expect("Swarm B");
         crate::discovery::bootstrap_from_config(&mut swarm_b, &config_b).expect("Bootstrap");
 
@@ -247,23 +249,23 @@ mod tests {
             loop {
                 tokio::select! {
                     ev_a = swarm_a.next() => {
-                        if let Some(SwarmEvent::Behaviour(myl_event)) = ev_a {
-                            if let crate::node::MylBehaviourEvent::Gossipsub(
+                        if let Some(SwarmEvent::Behaviour(
+                            crate::node::MylBehaviourEvent::Gossipsub(
                                 gossipsub::Event::Message { message, .. },
-                            ) = myl_event {
-                                if message.topic == GossipTopic::PoiBundles.topic().hash() {
-                                    break message.data;
-                                }
+                            ),
+                        )) = ev_a
+                        {
+                            if message.topic == GossipTopic::PoiBundles.topic().hash() {
+                                break message.data;
                             }
                         }
                     }
                     ev_b = swarm_b.next() => {
                         let _ = ev_b;
-                        if !publiziert && swarm_b.is_connected(&identity_a.peer_id()) {
-                            if publish(&mut swarm_b, GossipTopic::PoiBundles, &bundle).is_ok() {
+                        if !publiziert && swarm_b.is_connected(&identity_a.peer_id())
+                            && publish(&mut swarm_b, GossipTopic::PoiBundles, &bundle).is_ok() {
                                 publiziert = true;
                             }
-                        }
                     }
                 }
             }

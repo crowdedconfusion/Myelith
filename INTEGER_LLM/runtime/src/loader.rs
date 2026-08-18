@@ -247,7 +247,7 @@ pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
             dims.hidden_size, dims.num_heads, dims.head_dim
         ));
     }
-    if dims.num_heads % dims.num_kv_heads != 0 {
+    if !dims.num_heads.is_multiple_of(dims.num_kv_heads) {
         return Err(format!(
             "model_config.json: num_heads ({}) ist kein Vielfaches von num_kv_heads ({}) (GQA-Gruppierung nicht moeglich)",
             dims.num_heads, dims.num_kv_heads
@@ -1211,7 +1211,7 @@ mod tests {
             "model.norm": scale_entry(2, 0.25, 120.0),
             "model.norm.input": scale_entry(4, 0.0625, 80.0),
         });
-        write_scales(&dir, &scales);
+        write_scales(dir, &scales);
 
         // Gewichte
         let mut manifest = serde_json::Map::new();

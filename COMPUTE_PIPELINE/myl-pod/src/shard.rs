@@ -15,6 +15,13 @@
 //!
 //! Eine Nachricht trägt genau eine Token-Position; der Prompt wird als
 //! Folge von Nachrichten verarbeitet.
+// Die Kernel-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag:
+// Eingangs- und Ausgangs-frac_bits, Per-Channel-Shifts, LUT-Parameter.
+// In eine Parameter-Struct gefasst waere die Entsprechung zu den
+// Referenzformeln (Whitepaper Anhang B) beim Nachrechnen nicht mehr
+// ablesbar — und genau dieses Nachrechnen ist die Pruefmethode des
+// Projekts. Bewusste Abweichung von clippy::too_many_arguments.
+#![allow(clippy::too_many_arguments)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -326,8 +333,22 @@ mod tests {
         let akt = [1i16, 2, 3, 4];
         let h = activation_hash(&akt);
         assert!(verify_input_hash(&akt, &[h]));
-        let mut bad = akt.clone();
+        let mut bad = akt;
         bad[0] = 99;
         assert!(!verify_input_hash(&bad, &[h]));
+    }
+
+    /// Regression zu Fund A17: Der Pod teilt seine Shards als
+    /// `Arc<ShardNode>` und fuehrt sie nebenlaeufig aus (Micro-Batching,
+    /// Pipelining). Fehlt irgendwo im Typbaum eine `Send`/`Sync`-Schranke,
+    /// ist der Arc wertlos — vorher blockierte ein
+    /// `Box<dyn ErasureCoder>` ohne Schranken die gesamte
+    /// Nebenlaeufigkeit, ohne dass es auffiel.
+    #[test]
+    fn shardnode_ist_ueber_threads_teilbar() {
+        fn ist_send<T: Send>() {}
+        fn ist_sync<T: Sync>() {}
+        ist_send::<ShardNode>();
+        ist_sync::<ShardNode>();
     }
 }

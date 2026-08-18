@@ -33,8 +33,16 @@ mod tests {
         let (s1, z1) = splitmix64(s0);
         let (s2, z2) = splitmix64(s1);
         let (s1b, z1b) = splitmix64(s0);
+
+        // Reproduzierbarkeit: gleicher Zustand → gleiche Ausgabe.
         assert_eq!(s1, s1b);
         assert_eq!(z1, z1b);
+
+        // Fortschaltung: der Zustand muss sich bei jedem Schritt ändern.
+        // Das wurde vorher nicht geprüft — `s2` war gebunden, aber
+        // ungenutzt (Compiler-Warnung als Hinweis auf die Lücke).
+        assert_ne!(s0, s1);
+        assert_ne!(s1, s2);
         assert_ne!(z1, z2);
     }
 }

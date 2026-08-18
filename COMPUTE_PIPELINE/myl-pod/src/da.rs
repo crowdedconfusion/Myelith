@@ -8,11 +8,22 @@
 //! (k=8/m=4, CONSENSUS/TOKENOMICS-Design-Entscheidung, toleriert 4
 //! verlorene Fragmente) ist eine Folge-Implementierung hinter derselben
 //! Schnittstelle.
+// Der Index ist die Fragmentnummer und geht in den Schluessel ein.
+#![allow(clippy::needless_range_loop)]
 
 use std::collections::BTreeMap;
 
 /// Erasure-Coding-Schnittstelle.
-pub trait ErasureCoder {
+///
+/// **`Send + Sync` ist Teil des Vertrags (Fund A17):** Ein Pod führt
+/// seine Shards nebenläufig aus (Micro-Batching und Pipelining,
+/// Phase 2.1). Ohne diese Schranken war `Box<dyn ErasureCoder>` weder
+/// `Send` noch `Sync`, damit `DaStore` nicht, damit `ShardNode` nicht —
+/// und der `Arc<ShardNode>` im Pod-Loop war ein `Arc`, der gar nicht
+/// über Threads geteilt werden konnte. Die Nebenläufigkeit des Pods
+/// scheiterte an dieser einen fehlenden Schranke, ohne dass es
+/// irgendwo aufgefallen wäre (der aktuelle Loop läuft sequenziell).
+pub trait ErasureCoder: Send + Sync {
     /// Zerlegt `data` in Fragmente (Daten- + ggf. Paritäts-Fragmente).
     fn encode(&self, data: &[u8]) -> Vec<Vec<u8>>;
     /// Rekonstruiert `data` aus den Fragmenten. Fehlende/leere
@@ -40,7 +51,7 @@ impl XorParityCoder {
     /// Zerlegt `data` in `k` Blöcke gleicher Länge (letzter wird mit 0
     /// aufgefüllt). Liefert die Blöcke und die Auffüll-Länge.
     fn split(&self, data: &[u8]) -> (Vec<Vec<u8>>, usize) {
-        let block_len = (data.len() + self.k - 1) / self.k;
+        let block_len = data.len().div_ceil(self.k);
         let block_len = block_len.max(1);
         let mut blocks = Vec::with_capacity(self.k);
         for i in 0..self.k {

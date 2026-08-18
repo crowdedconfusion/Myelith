@@ -3,6 +3,13 @@
 //! Eingang: int16-Residualstrom; Ausgang: int16-Aktivierung auf einer
 //! kalibrierten Per-Layer-Skala. Reine Ganzzahlarithmetik ohne Division im
 //! Hot-Path (spec: shift_semantics = arithmetic_right_shift).
+// Die Kernel-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag:
+// Eingangs- und Ausgangs-frac_bits, Per-Channel-Shifts, LUT-Parameter.
+// In eine Parameter-Struct gefasst waere die Entsprechung zu den
+// Referenzformeln (Whitepaper Anhang B) beim Nachrechnen nicht mehr
+// ablesbar — und genau dieses Nachrechnen ist die Pruefmethode des
+// Projekts. Bewusste Abweichung von clippy::too_many_arguments.
+#![allow(clippy::too_many_arguments)]
 
 use crate::fixed_point::{clamp_i16, rescale_i64, rshift_round_i64};
 
@@ -49,7 +56,7 @@ pub fn rmsnorm_i16(
     let n = x.len();
     assert_eq!(n, gamma.len(), "rmsnorm_i16: x und gamma muessen gleich lang sein");
     assert_eq!(n, gamma_shifts.len(), "rmsnorm_i16: ein Gamma-Shift je Element (theta_v 0.7.0)");
-    assert!(lut_input_shift % 2 == 0, "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
+    assert!(lut_input_shift.is_multiple_of(2), "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
 
     let mut acc: i64 = 0;
     for &v in x {

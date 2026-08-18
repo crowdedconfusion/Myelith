@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.4.1 (`myl-scheduler` 0.2.9)
+> **Version:** 0.4.2 (`myl-scheduler` 0.2.10)
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -53,6 +53,24 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+
+### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
+
+Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+
+- **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
+  Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter
+  „harmlosen" Warnungen versteckten (siehe unten).
+- **clippy sauber** über alle Crates; `RUSTFLAGS: -D warnings` und ein
+  eigener `lint`-Job in der CI verankern den Zustand. Bewusste Ausnahmen
+  stehen als `#![allow(...)]` **mit Begründung** im Modulkopf (die
+  Kernel-Signaturen tragen den vollständigen Fixed-Point-Vertrag; die
+  Matrix-Namen `W`, `W_gate` folgen Whitepaper-Anhang B).
+- **Fund A18 behoben:** Das Gleitkomma-Audit prüfte nur INTEGER_LLM
+  (20 Dateien). Es deckt jetzt auch den **Konsenspfad** ab (37 weitere
+  Dateien aus myl-types, -ledger, -scheduler, -consensus, -tokenomics,
+  -verifier). Beide Pfade: null Treffer.
 
 
 ### v0.4.1 – 2026-08-18 (Audit-Block 4: kanonische Blocktypen)

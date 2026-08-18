@@ -6,6 +6,17 @@
 //! Numerik-Vertrag seit theta_v 0.5.0 (Numerik-Realitaetsabgleich v0.12.20):
 //! Gewichte int8, Aktivierungen int16 mit kalibrierten Per-Layer-
 //! Zweierpotenz-Skalen, Residualstrom int16 frac 3.
+// Die Gewichtsmatrizen heißen wie im Whitepaper (Anhang B): `W`, `W_gate`,
+// `W_up`, `W_down`. Klein geschrieben wären sie von den Einzelgewichten
+// `w` im selben Rumpf nicht mehr zu unterscheiden — die Entsprechung zur
+// Referenzformel ist beim Nachrechnen mehr wert als die Namenskonvention.
+#![allow(non_snake_case)]
+// Die Backend-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag
+// (frac_bits, Per-Channel-Shifts, LUT-Parameter). In eine Parameter-Struct
+// gefasst waere die Entsprechung zu den Referenzformeln (Anhang B) beim
+// Nachrechnen nicht mehr ablesbar — und genau dieses Nachrechnen ist die
+// Pruefmethode des Projekts.
+#![allow(clippy::too_many_arguments)]
 
 /// Ein numerisches Backend fuer Integer-Inferenz.
 /// Alle Methoden muessen bit-identisch zur Referenz sein (Golden-Vector-Test).

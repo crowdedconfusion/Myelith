@@ -59,7 +59,7 @@ fn fuzz_type<T: borsh::BorshDeserialize>(rng: &mut Rng, size: usize) -> bool {
 
 #[test]
 fn fuzz_all_deserialization_paths() {
-    let mut rng = Rng::new(0xC0FFEE_BEEF);
+    let mut rng = Rng::new(0x00C0_FFEE_BEEF);
     let iterations = 100_000;
 
     println!("Starting fuzz tests with {} iterations per type...", iterations);

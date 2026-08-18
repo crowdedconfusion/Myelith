@@ -45,10 +45,10 @@ pub fn calculate_utilization(demanded_vtfe: u64, available_capacity: u64) -> i64
     // u_e = demanded / capacity
     // Ergebnis als Fixed-Point mit 16 Bit Nachkommastellen
     // Verwende u128 für Zwischenrechnung, um Überlauf zu vermeiden
-    let utilization = ((demanded_vtfe as u128 * UTILIZATION_SCALE as u128) 
-                       / available_capacity as u128) as i64;
     
-    utilization
+    
+    ((demanded_vtfe as u128 * UTILIZATION_SCALE as u128) 
+                       / available_capacity as u128) as i64
 }
 
 /// Berechnet die Auslastung aus der Burn-Historie.

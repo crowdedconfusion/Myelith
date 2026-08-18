@@ -49,7 +49,7 @@ pub fn pack_tokens(tokens: &[u32]) -> Vec<i16> {
 
 /// Entpackt Token-IDs aus dem i16-Payload-Format.
 pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         return Err("Token-Payload muss eine gerade Anzahl i16 haben".to_string());
     }
     let mut out = Vec::with_capacity(payload.len() / 2);
@@ -103,7 +103,7 @@ pub fn encode_message(meta: &MessageMeta, tensor: &[i16]) -> Vec<u8> {
     
     // 8-Byte Alignment
     let pad = (8 - (buf.len() % 8)) % 8;
-    buf.extend(std::iter::repeat(0u8).take(pad));
+    buf.extend(std::iter::repeat_n(0u8, pad));
     buf
 }
 
@@ -134,7 +134,20 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageMeta, Vec<i16>), String> {
     let crc = u32::from_le_bytes(buf[off..off+4].try_into().unwrap());
     off += 4;
     
-    let payload_end = off + payload_len as usize;
+    // Fund A13: `off + payload_len as usize` lief bei manipulierter
+    // Laengenangabe ueber — Panic im Debug-Build, im Release-Build ein
+    // Umlauf auf einen kleinen Wert, der die folgende Schranke passiert
+    // haette. `payload_len` kommt ungeprueft von der Gegenstelle; ein
+    // einzelnes Feld reichte, um einen Pipeline-Node abzuschiessen.
+    let payload_end = match usize::try_from(payload_len).ok().and_then(|n| off.checked_add(n)) {
+        Some(end) => end,
+        None => {
+            return Err(format!(
+                "Payload-Laenge {} unplausibel (Ueberlauf)",
+                payload_len
+            ))
+        }
+    };
     if payload_end > buf.len() {
         return Err(format!("Payload ueberlaeuft Buffer: {} > {}", payload_end, buf.len()));
     }
@@ -145,7 +158,7 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageMeta, Vec<i16>), String> {
         return Err(format!("CRC mismatch: {:08x} != {:08x}", crc, computed_crc));
     }
     
-    if payload.len() % 2 != 0 {
+    if !payload.len().is_multiple_of(2) {
         return Err("Ungerade Payload-Laenge".to_string());
     }
     
@@ -159,4 +172,164 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageMeta, Vec<i16>), String> {
     };
     
     Ok((meta, tensor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(payload_len: u64) -> MessageMeta {
+        MessageMeta {
+            version: 1,
+            theta_v_hash: 0xDEAD_BEEF,
+            request_id: 7,
+            sequence_id: 3,
+            stage_id: 2,
+            token_position: 11,
+            payload_len,
+            flags: 0,
+            reserved: 0,
+            crc: 0,
+        }
+    }
+
+    #[test]
+    fn rundtrip_erhaelt_metadaten_und_tensor() {
+        let tensor: Vec<i16> = vec![-32768, -1, 0, 1, 32767];
+        let buf = encode_message(&meta(tensor.len() as u64 * 2), &tensor);
+        let (m, t) = decode_message(&buf).expect("dekodierbar");
+
+        assert_eq!(t, tensor);
+        assert_eq!(m.request_id, 7);
+        assert_eq!(m.sequence_id, 3);
+        assert_eq!(m.stage_id, 2);
+        assert_eq!(m.token_position, 11);
+        assert_eq!(m.theta_v_hash, 0xDEAD_BEEF);
+        assert_eq!(m.payload_len, tensor.len() as u64 * 2);
+    }
+
+    #[test]
+    fn leerer_tensor_ist_gueltig() {
+        let buf = encode_message(&meta(0), &[]);
+        let (m, t) = decode_message(&buf).expect("dekodierbar");
+        assert!(t.is_empty());
+        assert_eq!(m.payload_len, 0);
+    }
+
+    #[test]
+    fn ausgabe_ist_acht_byte_ausgerichtet() {
+        // Ungerade Tensorlaengen erzeugen Padding — die Ausrichtung ist
+        // Vertrag des Formats (Direktzugriff ohne Kopie).
+        for n in 0..8usize {
+            let tensor: Vec<i16> = (0..n as i16).collect();
+            let buf = encode_message(&meta(n as u64 * 2), &tensor);
+            assert_eq!(buf.len() % 8, 0, "Laenge {} nicht ausgerichtet (n={})", buf.len(), n);
+        }
+    }
+
+    #[test]
+    fn kodierung_ist_deterministisch() {
+        let tensor: Vec<i16> = vec![5, -5, 100];
+        let a = encode_message(&meta(6), &tensor);
+        let b = encode_message(&meta(6), &tensor);
+        assert_eq!(a, b, "gleiche Eingabe muss bitgleiche Bytes liefern");
+    }
+
+    #[test]
+    fn falsche_magic_wird_abgelehnt() {
+        let mut buf = encode_message(&meta(2), &[1i16]);
+        buf[0] = b'X';
+        assert!(decode_message(&buf).is_err());
+    }
+
+    #[test]
+    fn zu_kurzer_puffer_wird_abgelehnt() {
+        let buf = encode_message(&meta(2), &[1i16]);
+        for len in 0..HEADER_SIZE {
+            assert!(
+                decode_message(&buf[..len]).is_err(),
+                "Puffer der Laenge {} muesste abgelehnt werden",
+                len
+            );
+        }
+    }
+
+    /// Jedes gekippte Nutzlast-Bit muss die CRC-Pruefung ausloesen —
+    /// das ist der Manipulationsschutz auf der Leitung.
+    #[test]
+    fn verfaelschte_nutzlast_wird_von_der_crc_gefangen() {
+        let tensor: Vec<i16> = (0..32).collect();
+        let original = encode_message(&meta(64), &tensor);
+
+        for byte_idx in HEADER_SIZE..HEADER_SIZE + 64 {
+            for bit in 0..8 {
+                let mut buf = original.clone();
+                buf[byte_idx] ^= 1 << bit;
+                assert!(
+                    decode_message(&buf).is_err(),
+                    "Bitflip an Byte {} Bit {} blieb unentdeckt",
+                    byte_idx,
+                    bit
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ueberlaufende_payload_laenge_wird_abgelehnt() {
+        let mut buf = encode_message(&meta(2), &[1i16]);
+        // payload_len steht als 7. u64 nach der Magic.
+        let off = 8 + 6 * 8;
+        buf[off..off + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(decode_message(&buf).is_err());
+    }
+
+    #[test]
+    fn flags_werden_korrekt_ausgewertet() {
+        let mut m = meta(0);
+        assert!(!m.starts_generation() && !m.is_abort() && !m.is_token_input());
+
+        m.flags = FLAG_STARTS_GENERATION;
+        assert!(m.starts_generation() && !m.is_abort() && !m.is_token_input());
+
+        m.flags = FLAG_ABORT | FLAG_TOKEN_INPUT;
+        assert!(!m.starts_generation() && m.is_abort() && m.is_token_input());
+    }
+
+    #[test]
+    fn flags_ueberstehen_den_rundtrip() {
+        let mut m = meta(0);
+        m.flags = FLAG_STARTS_GENERATION | FLAG_TOKEN_INPUT;
+        let buf = encode_message(&m, &[]);
+        let (back, _) = decode_message(&buf).expect("dekodierbar");
+        assert!(back.starts_generation());
+        assert!(back.is_token_input());
+        assert!(!back.is_abort());
+    }
+
+    #[test]
+    fn dedup_key_unterscheidet_die_richtigen_felder() {
+        let a = meta(0);
+        let mut b = meta(0);
+        b.token_position = 12;
+        assert_ne!(a.dedup_key(), b.dedup_key());
+
+        let mut c = meta(0);
+        c.flags = FLAG_ABORT; // Flags gehoeren nicht zum Schluessel
+        assert_eq!(a.dedup_key(), c.dedup_key());
+    }
+
+    #[test]
+    fn token_rundtrip_ueber_den_ganzen_u32_bereich() {
+        let tokens: Vec<u32> = vec![0, 1, 0x7FFF, 0x8000, 0xFFFF, 0x1_0000, 0x7FFF_FFFF, u32::MAX];
+        let packed = pack_tokens(&tokens);
+        assert_eq!(packed.len(), tokens.len() * 2);
+        assert_eq!(unpack_tokens(&packed).expect("entpackbar"), tokens);
+    }
+
+    #[test]
+    fn ungerade_token_payload_wird_abgelehnt() {
+        assert!(unpack_tokens(&[1i16, 2, 3]).is_err());
+        assert!(unpack_tokens(&[]).expect("leer ist gueltig").is_empty());
+    }
 }

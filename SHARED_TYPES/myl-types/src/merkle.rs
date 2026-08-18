@@ -259,10 +259,10 @@ mod tests {
         for n in [1usize, 2, 3, 4, 5, 7, 8, 16, 17, 31, 32, 33, 64] {
             let (tree, data) = tree_of(n);
             let root = tree.root();
-            for i in 0..n {
+            for (i, blatt) in data.iter().enumerate().take(n) {
                 let proof = tree.proof(i).expect("Beweis-Erzeugung");
                 assert!(
-                    proof.verify(&root, &data[i], i as u64),
+                    proof.verify(&root, blatt, i as u64),
                     "Beweis für n={}, i={} muss verifizieren",
                     n,
                     i

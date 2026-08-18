@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.12.40
-> **Datum:** 2026-08-17
+> **Version:** 0.12.41
+> **Datum:** 2026-08-18
 > **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
@@ -187,6 +187,26 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.12.41 – 2026-08-18 (Audit-Block 5)
+- **`pipeline` hatte null Tests** — jetzt 33 (codec, manifest,
+  kv_cache_node). Der Codec-Test deckte dabei einen echten Überlauf in
+  `decode_message()` auf: ein manipuliertes Längenfeld reichte, um
+  einen Pipeline-Node abzuschießen. Behoben mit `checked_add`.
+- **`golden_runner` prüft jetzt die deklarierten Tensor-Hashes** (SHA-256
+  über Little-Endian-Payload, Vertrag aus `tests/golden/generate.py`).
+  Vorher waren die Felder eingelesen, aber nie ausgewertet — ein
+  nachträglich bearbeiteter Vektor wäre unbemerkt durchgelaufen.
+- **PRNG-Test** prüft jetzt die Zustandsfortschaltung (vorher wurde der
+  zweite Zustand gebunden, aber nie verglichen).
+- **Warnungsfrei:** kernels, runtime und pipeline melden null rustc- und
+  null clippy-Warnungen; `-D warnings` ist in der CI verankert. Die
+  Matrix-Namen aus Whitepaper Anhang B (`W`, `W_gate`, …) und die
+  vielargumentigen Kernel-Signaturen tragen jetzt begründete
+  `#![allow(...)]` statt Dauerwarnungen.
+- **Ganzzahligkeits-Audit** deckt zusätzlich den Konsenspfad der
+  Netzwerkkomponenten ab (37 Dateien). Beide Pfade: null Treffer.
+- Golden Vectors weiterhin 30/30, Bit-Exaktheit unverändert.
 
 ### v0.12.40 – 2026-08-17 (Phase 12.40–12.55, GPU-Backends)
 - **CUDA + ROCm/HIP Delegations-Stubs** (`cuda.rs`, `rocm.rs`):

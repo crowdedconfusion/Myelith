@@ -28,7 +28,7 @@ use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::model::IntegerModel;
 
 use crate::codec::{
-    unpack_tokens, MessageMeta, FLAG_STARTS_GENERATION, FLAG_TOKEN_INPUT,
+    unpack_tokens, MessageMeta, FLAG_TOKEN_INPUT,
 };
 use crate::manifest::{PipelineManifest, StageManifest};
 
@@ -182,7 +182,7 @@ impl StageRuntime {
         tensor: &[i16],
     ) -> Result<StageOutput, String> {
         let hs = self.model.hidden_size;
-        if tensor.len() % hs != 0 {
+        if !tensor.len().is_multiple_of(hs) {
             return Err(format!(
                 "Stage {}: Payload-Länge {} ist kein Vielfaches von hidden_size {}",
                 self.manifest.stage_id,

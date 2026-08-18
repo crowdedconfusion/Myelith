@@ -105,7 +105,7 @@ fn main() {
     let score_shift = (sc.q_frac as u16 + sc.k_frac as u16).saturating_sub(cfg.score_frac_bits as u16) as u8;
     println!("score_shift={}", score_shift);
     let head_out = attention_int(
-        &[q0.clone()], &[k0.clone()], &[v0.clone()],
+        std::slice::from_ref(&q0), std::slice::from_ref(&k0), std::slice::from_ref(&v0),
         &[vec![true]],
         score_shift, &model.exp_lut, 0, cfg.prob_frac_bits,
     );

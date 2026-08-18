@@ -3,6 +3,15 @@
 //! Aktivierungen int16 mit Per-Layer-Skalen (Numerik-Realitaetsabgleich
 //! v0.12.20): Skalarprodukte und V-Gewichtung akkumulieren in i64, da
 //! int16-Werte den i32-Bereich ueberschreiten koennen.
+// Die Kernel-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag:
+// Eingangs- und Ausgangs-frac_bits, Per-Channel-Shifts, LUT-Parameter.
+// In eine Parameter-Struct gefasst waere die Entsprechung zu den
+// Referenzformeln (Whitepaper Anhang B) beim Nachrechnen nicht mehr
+// ablesbar — und genau dieses Nachrechnen ist die Pruefmethode des
+// Projekts. Bewusste Abweichung von clippy::too_many_arguments.
+#![allow(clippy::too_many_arguments)]
+// Schleifenindizes sind Kopf-/Dimensionsnummern ueber parallele Puffer.
+#![allow(clippy::needless_range_loop)]
 
 use crate::fixed_point::{clamp_i16_from_i64, rshift_round_i64};
 use crate::softmax::softmax_int;

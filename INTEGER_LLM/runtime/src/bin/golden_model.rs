@@ -86,8 +86,8 @@ fn run_batch(model: &integer_llm_runtime::model::IntegerModel, vectors_dir: &Pat
             .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().map_or(false, |ext| ext == "json"))
-            .filter(|p| p.to_str().map_or(false, |s| s.ends_with(".golden.json")))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+            .filter(|p| p.to_str().is_some_and(|s| s.ends_with(".golden.json")))
             .collect();
         files.sort();
 

@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.2.1
-> **Datum:** 2026-08-17
+> **Version:** 0.2.2
+> **Datum:** 2026-08-18
 > **Status:** 🎉 **Phase 1 + 2.1 vollständig** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
 > `coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität,
@@ -55,6 +55,24 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+
+### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
+
+Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+
+- **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
+  Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter
+  „harmlosen" Warnungen versteckten (siehe unten).
+- **clippy sauber** über alle Crates; `RUSTFLAGS: -D warnings` und ein
+  eigener `lint`-Job in der CI verankern den Zustand. Bewusste Ausnahmen
+  stehen als `#![allow(...)]` **mit Begründung** im Modulkopf (die
+  Kernel-Signaturen tragen den vollständigen Fixed-Point-Vertrag; die
+  Matrix-Namen `W`, `W_gate` folgen Whitepaper-Anhang B).
+- **Fund A18 behoben:** Das Gleitkomma-Audit prüfte nur INTEGER_LLM
+  (20 Dateien). Es deckt jetzt auch den **Konsenspfad** ab (37 weitere
+  Dateien aus myl-types, -ledger, -scheduler, -consensus, -tokenomics,
+  -verifier). Beide Pfade: null Treffer.
 
 ### v0.2.1 – 2026-08-17 (Phase 2.1: Micro-Batching + Pipelining)
 - Micro-Batching-Collector mit konfigurierbarem Zeitfenster (default 250 ms)

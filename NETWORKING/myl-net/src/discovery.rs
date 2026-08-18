@@ -161,8 +161,10 @@ mod tests {
         let addr_a = addr_a.with_p2p(identity_a.peer_id()).expect("p2p-Anhang");
 
         // Node B: bootstrappt über Node A.
-        let mut config_b = NetConfig::default();
-        config_b.bootstrap_peers = vec![addr_a.to_string()];
+        let config_b = NetConfig {
+            bootstrap_peers: vec![addr_a.to_string()],
+            ..Default::default()
+        };
         let mut swarm_b = build_swarm(&identity_b, &config_b).expect("Swarm B");
         let peers = bootstrap_from_config(&mut swarm_b, &config_b).expect("Bootstrap-Eintrag");
         assert_eq!(peers, 1);

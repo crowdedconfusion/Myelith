@@ -3,11 +3,10 @@
 //! Startet alle Nodes, verteilt Manifeste, prueft theta_v-Konsistenz,
 //! und routet den ersten Request.
 
-use crate::manifest::{PipelineManifest, StageManifest};
+use crate::manifest::PipelineManifest;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
-use std::thread;
 
 /// Zentraler Coordinator fuer die Pipeline-Initialisierung.
 pub struct Coordinator {

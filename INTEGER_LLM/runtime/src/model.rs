@@ -2,18 +2,26 @@
 //! 
 //! Embedding -> [Layer x 24] -> Final RMSNorm -> LM Head
 //! Jeder Layer: RMSNorm -> Attention -> ResAdd -> RMSNorm -> MLP -> ResAdd
+// Die Schleifenvariable `row` ist hier die Ausgabe-Zeile der
+// Gewichtsmatrix und wird als solche auch fuer die Per-Channel-Shifts
+// gebraucht — ein Iterator ueber `logits` allein wuerde den Bezug
+// verlieren. Der Heisspfad wird zudem gegen Golden Vectors geprueft;
+// eine rein stilistische Umschreibung waere hier reines Risiko.
+#![allow(clippy::needless_range_loop)]
+// `Vec<(Vec<i8>, Vec<u8>)>`-Rueckgaben spiegeln das Artefaktformat
+// (Gewichte + Per-Channel-Shifts). Ein Typalias wuerde die Struktur
+// verstecken, die beim Lesen des Loaders gebraucht wird.
+#![allow(clippy::type_complexity)]
 
-use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i32, rescale, rescale_i64};
+use integer_llm_kernels::fixed_point::{clamp_i16, rescale, rescale_i64};
 use integer_llm_kernels::rmsnorm::rmsnorm_i16;
 use integer_llm_kernels::linear::{linear_w8a16, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::attention_int;
 use integer_llm_kernels::mlp::mlp_int;
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
-use integer_llm_kernels::prng::seed_from_ids;
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
-use std::collections::HashMap;
 
 /// Quantisierungs-Metadaten fuer einen Tensor.
 #[derive(Debug, Clone)]
@@ -264,7 +272,7 @@ impl IntegerModel {
                 for (d, v) in normed.iter().enumerate() {
                     acc += (lmh.data[base + d] as i64) * (*v as i64);
                 }
-                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let row_frac = lmh.shifts[row] + self.final_norm_frac;
                 let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
                 logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }
@@ -351,7 +359,7 @@ impl IntegerModel {
                 for (d, v) in normed.iter().enumerate() {
                     acc += (lmh.data[base + d] as i64) * (*v as i64);
                 }
-                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let row_frac = lmh.shifts[row] + self.final_norm_frac;
                 let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
                 logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }
@@ -630,7 +638,7 @@ impl IntegerModel {
                 for (d, v) in normed.iter().enumerate() {
                     acc += (lmh.data[base + d] as i64) * (*v as i64);
                 }
-                let row_frac = (lmh.shifts[row] as u8) + self.final_norm_frac;
+                let row_frac = lmh.shifts[row] + self.final_norm_frac;
                 let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
                 logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }

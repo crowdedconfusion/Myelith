@@ -454,16 +454,17 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.12.40"
+version = "0.12.41"
 dependencies = [
  "itertools 0.13.0",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.12.40"
+version = "0.12.41"
 dependencies = [
  "integer-llm-kernels",
  "serde",
@@ -571,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
@@ -582,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "blst",
  "borsh",

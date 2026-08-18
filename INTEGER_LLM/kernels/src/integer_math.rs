@@ -1,6 +1,6 @@
 //! Integer-Mathematik (sqrt, rsqrt, LUT-Lookup)
 
-use crate::fixed_point::{clamp_i16, rshift_round};
+use crate::fixed_point::clamp_i16;
 
 /// Integer-Quadratwurzel via binaerer Suche.
 /// Berechnet floor(sqrt(x * 2^frac_bits)) rein integer.

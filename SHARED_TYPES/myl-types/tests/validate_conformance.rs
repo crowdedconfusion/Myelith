@@ -3,7 +3,7 @@
 //! Lädt die Golden Vectors aus `conformance/vectors/` und prüft, dass
 //! die Referenz-Implementierung die erwarteten Ausgaben erzeugt.
 
-use myl_types::bls::{aggregate_signatures, BlsSecretKey, BlsSignature, BLS_DST};
+use myl_types::bls::{aggregate_signatures, BlsSecretKey};
 use myl_types::hash::Hash;
 use myl_types::merkle::MerkleTree;
 use myl_types::vrf::VrfSecretKey;
@@ -36,37 +36,6 @@ struct VrfVector {
     output: String,
 }
 
-#[derive(Deserialize)]
-struct BlsVector {
-    name: String,
-    message: String,
-    public_key: String,
-    signature: String,
-}
-
-#[derive(Deserialize)]
-struct BlsAggregateVector {
-    name: String,
-    message: String,
-    public_keys: Vec<String>,
-    signatures: Vec<String>,
-    aggregate_signature: String,
-}
-
-fn hex_to_bytes(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
-        .collect()
-}
-
-fn hex_to_arr<const N: usize>(s: &str) -> [u8; N] {
-    let v = hex_to_bytes(s);
-    assert_eq!(v.len(), N, "hex length mismatch for {}", s);
-    let mut arr = [0u8; N];
-    arr.copy_from_slice(&v);
-    arr
-}
 
 #[test]
 fn validate_hash_vectors() {
@@ -174,18 +143,44 @@ fn validate_bls_vectors() {
     let sk = BlsSecretKey::key_gen(&ikm).expect("key gen");
     let pk = sk.public_key().expect("public key");
 
-    // Erste 4 Vektoren sind Einzelsignaturen
-    for i in 0..4 {
-        let v = &vectors[i];
+    // Erste 4 Vektoren sind Einzelsignaturen.
+    //
+    // Drei Stufen, nicht nur eine: Bis v0.2.5 wurde ausschliesslich die
+    // erzeugte Signatur mit der gespeicherten verglichen. Damit war der
+    // im Vektor mitgelieferte `public_key` nie geprueft, und die
+    // Verifikationsrichtung — genau das, was eine Fremdimplementierung
+    // gegen das Konformitaetspaket braucht — lief nie. Die
+    // Compiler-Warnung „unused variable: pk" war der Hinweis darauf.
+    for v in vectors.iter().take(4) {
+        let name = v["name"].as_str().unwrap();
         let msg = v["message"].as_str().unwrap();
         let expected_sig = v["signature"].as_str().unwrap();
+        let expected_pk = v["public_key"].as_str().unwrap();
 
+        // 1. Der oeffentliche Schluessel des Vektors muss aus dem
+        //    dokumentierten Seed hervorgehen.
+        assert_eq!(
+            hex::encode(pk.0),
+            expected_pk,
+            "BLS public key mismatch for vector '{}'",
+            name
+        );
+
+        // 2. Signieren ist deterministisch und liefert den Vektor.
         let sig = sk.sign(msg.as_bytes()).expect("sign");
         assert_eq!(
             hex::encode(sig.0),
             expected_sig,
             "BLS signature mismatch for vector '{}'",
-            v["name"].as_str().unwrap()
+            name
+        );
+
+        // 3. Die gespeicherte Signatur verifiziert gegen den
+        //    gespeicherten Schluessel.
+        assert!(
+            pk.verify(msg.as_bytes(), &sig),
+            "BLS signature does not verify for vector '{}'",
+            name
         );
     }
 

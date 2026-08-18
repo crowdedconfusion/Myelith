@@ -187,7 +187,7 @@ impl LatencyTracker {
         let rtt_ms = rtt.as_secs_f64() * 1000.0;
 
         // Plausibilitätsprüfung (extreme Werte filtern)
-        if rtt_ms < MIN_RTT_MS || rtt_ms > MAX_RTT_MS {
+        if !(MIN_RTT_MS..=MAX_RTT_MS).contains(&rtt_ms) {
             return false;
         }
 

@@ -78,7 +78,8 @@ impl InferenceHistory {
         }
 
         // Sortiere nach Epoche (absteigend)
-        self.work_per_epoch.sort_by(|a, b| b.0.cmp(&a.0));
+        self.work_per_epoch
+            .sort_by_key(|(epoch, _)| std::cmp::Reverse(*epoch));
 
         // Behalte nur die letzten MAX_HISTORY_EPOCHS Einträge
         self.work_per_epoch.truncate(MAX_HISTORY_EPOCHS);

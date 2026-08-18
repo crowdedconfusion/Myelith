@@ -1,6 +1,5 @@
 //! Generierungs-Loop (Prefill + Decode)
 
-use integer_llm_kernels::prng::seed_from_ids;
 use crate::model::IntegerModel;
 use crate::kv_cache::KVCache;
 use crate::tokenizer::Tokenizer;

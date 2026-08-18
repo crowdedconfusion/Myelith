@@ -17,14 +17,32 @@ Ansatz (statische Quell-Analyse, deterministisch und CI-fähig):
      float-Literale, float-Methoden wie .exp()/.sqrt()) wird gemeldet.
   4. Fund im Heißpfad => Test failt.
 
-Dokumentiert erlaubte Zonen (kein Heißpfad):
+Geprüft werden ZWEI Pfade:
+  A. **Inferenz-Heißpfad** (kernels, runtime) — die Ganzzahligkeit der
+     Inferenz, Kernthese des Projekts (Kap. 6.2).
+  B. **Konsenspfad** (myl-types, myl-ledger, myl-scheduler,
+     myl-consensus, myl-tokenomics, myl-verifier) — dieselbe
+     Anforderung auf der Protokollseite. Ein `f64` in der
+     Preisformel oder der Komiteewahl bricht den Konsens genauso wie
+     eines in der Inferenz; bis v0.2.9 war dieser Pfad ungeprüft, und
+     genau dort lagen zwei reale Funde (die zur Laufzeit mit
+     `f64::exp()` gebaute Preis-LUT und die `f64`-Sampling-Rate).
+
+Dokumentiert erlaubte Zonen (kein Heiß-/Konsenspfad):
   - #[cfg(test)]-Module (Test-Fixtures, z. B. LUT-Erzeugung in
-    kernels/src/{mlp,attention,rmsnorm}.rs)
+    kernels/src/{mlp,attention,rmsnorm}.rs, statistische Schranken in
+    myl-types/src/seed_rng.rs)
   - kernels/src/bin/golden_runner.rs (Offline-Referenz-Erzeugung)
   - runtime/src/loader.rs (Kalibrier-Metadaten + Skalen-Validierung,
     Setup statt Inferenzpfad)
+  - myl-tokenomics/src/utilization.rs (`utilization_to_f64` /
+    `utilization_from_f64` sind ausdrücklich als Debug-/Logging-Helfer
+    dokumentiert und gehen nicht in den Konsenswert ein)
+  - myl-net (Netzschicht: die EMA-Latenzglättung ist Eingangsgröße für
+    Attest-Erzeugung, nicht selbst Konsens-Feld — die Atteste tragen
+    ganzzahlige Millisekunden)
 
-Akzeptanzkriterium: null Gleitkomma-Treffer im Inferenzpfad.
+Akzeptanzkriterium: null Gleitkomma-Treffer in beiden Pfaden.
 """
 
 import re
@@ -56,6 +74,51 @@ HOT_PATH = [
     REPO / "runtime" / "src" / "model.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
+]
+
+# Konsenspfad der Netzwerkkomponenten. Dieselbe Anforderung wie oben:
+# jede dieser Dateien berechnet Werte, die alle Nodes bitgleich
+# nachrechnen können müssen. `utilization.rs` ist bewusst nicht dabei
+# (dokumentierte Debug-Helfer, siehe Modul-Doku dort).
+ROOT = REPO.parent
+CONSENSUS_PATH = [
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "hash.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "merkle.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "ids.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "core_types.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "challenge.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "seed_rng.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "bls.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "vrf.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "latency_attest.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "node_metadata.rs",
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "state.rs",
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "transitions.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "miner_filter.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "geo_clustering.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "redundancy.rs",
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "sampling.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "bft.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "block.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "signing.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "validator.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "voting_weight.rs",
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "double_signing.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "ema.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "mint.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "distribute.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "training.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "exp_approx.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "exp_lut_table.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "redundancy.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "checker.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "challenge.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "bisection.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "slash.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
 ]
 
 # Gleitkomma-Indikatoren (angewandt nach Entfernen von Kommentaren,
@@ -139,31 +202,37 @@ def audit_file(path: Path):
     return findings
 
 
-def main():
-    print("[no-float] Gleitkomma-Audit des Inferenzpfads")
-    print(f"[no-float] Heißpfad-Dateien: {len(HOT_PATH)}")
+def audit_group(label: str, paths) -> int:
+    """Prüft eine Dateigruppe; liefert die Anzahl der Treffer."""
+    print(f"[no-float] {label}: {len(paths)} Dateien")
 
-    # Sanity: alle Heißpfad-Dateien müssen existieren.
-    missing = [p for p in HOT_PATH if not p.exists()]
+    missing = [p for p in paths if not p.exists()]
     if missing:
         for p in missing:
             print(f"[no-float] FEHLT: {p}")
-        print("[no-float] FEHLGESCHLAGEN (Heißpfad-Dateien fehlen)")
+        print(f"[no-float] FEHLGESCHLAGEN ({label}: Dateien fehlen)")
         sys.exit(1)
 
     total = 0
-    for path in HOT_PATH:
+    for path in paths:
         findings = audit_file(path)
-        if findings:
-            for line_no, label, line in findings:
-                print(f"[no-float] TREFFER {path.name}:{line_no} ({label}): {line}")
-            total += len(findings)
+        for line_no, pattern_label, line in findings:
+            print(f"[no-float] TREFFER {path.name}:{line_no} ({pattern_label}): {line}")
+        total += len(findings)
+    return total
+
+
+def main():
+    print("[no-float] Gleitkomma-Audit (Inferenz- und Konsenspfad)")
+
+    total = audit_group("Inferenz-Heißpfad", HOT_PATH)
+    total += audit_group("Konsenspfad", CONSENSUS_PATH)
 
     if total == 0:
-        print("[no-float] PASSED: null Gleitkomma-Treffer im Inferenzpfad")
+        print("[no-float] PASSED: null Gleitkomma-Treffer in Inferenz- und Konsenspfad")
         sys.exit(0)
     else:
-        print(f"[no-float] FEHLGESCHLAGEN: {total} Gleitkomma-Treffer im Inferenzpfad")
+        print(f"[no-float] FEHLGESCHLAGEN: {total} Gleitkomma-Treffer")
         sys.exit(1)
 
 

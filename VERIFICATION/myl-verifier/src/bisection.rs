@@ -94,6 +94,26 @@ impl std::fmt::Display for BisectionError {
 
 impl std::error::Error for BisectionError {}
 
+/// Ganzzahliges `ceil(log2(n))` — ohne Gleitkomma (Fund A18).
+///
+/// Vorher stand hier `(trace_len as f64).log2().ceil() as u32`.
+/// `f64::log2()` ist eine libm-Funktion und **nicht korrekt gerundet**:
+/// sie unterscheidet sich zwischen glibc-Versionen, musl, macOS-libm und
+/// Windows-CRT. Für exakte Zweierpotenzen kann das Ergebnis knapp unter
+/// oder über der ganzen Zahl liegen, und `.ceil()` kippt dann in die eine
+/// oder andere Richtung — zwei Schiedsrichter auf verschiedenen
+/// Plattformen hätten verschieden viele Bisektionsrunden erwartet und
+/// wären über die Gültigkeit des Spiels uneins geworden.
+///
+/// `n.next_power_of_two().trailing_zeros()` liefert dasselbe exakt und
+/// auf jeder Plattform gleich.
+fn ceil_log2(n: usize) -> u32 {
+    if n <= 1 {
+        return 0;
+    }
+    n.next_power_of_two().trailing_zeros()
+}
+
 impl BisectionSession {
     /// Erstellt eine neue Bisektions-Session.
     ///
@@ -101,7 +121,7 @@ impl BisectionSession {
     /// - `segment_id`: ID des betroffenen Segments
     /// - `trace_len`: Länge der Spur (Anzahl Layer-Gruppen)
     pub fn new(segment_id: SegmentId, trace_len: usize) -> Self {
-        let max_rounds = (trace_len as f64).log2().ceil() as u32 + 1;
+        let max_rounds = ceil_log2(trace_len) + 1;
         Self {
             segment_id,
             lower: 0,
@@ -237,7 +257,7 @@ impl BisectionSession {
 
     /// Berechnet die erwartete Anzahl von Runden für eine gegebene Spur-Länge.
     pub fn expected_rounds(trace_len: usize) -> u32 {
-        (trace_len as f64).log2().ceil() as u32 + 1
+        ceil_log2(trace_len) + 1
     }
 }
 
@@ -406,5 +426,44 @@ mod tests {
 
         let result = session.process_response_with_comparison(&response, &primary_hash, &redundant_hash);
         assert!(matches!(result, Err(BisectionError::AlreadyComplete)));
+    }
+
+    /// Regression zu Fund A18: Die Rundenzahl muss ganzzahlig und ohne
+    /// libm berechnet werden. Geprueft gegen die Referenzwerte an den
+    /// Zweierpotenz-Grenzen, wo die alte f64-Fassung am ehesten kippte.
+    #[test]
+    fn ceil_log2_ist_exakt() {
+        let faelle: &[(usize, u32)] = &[
+            (0, 0), (1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (7, 3), (8, 3),
+            (9, 4), (15, 4), (16, 4), (17, 5), (1023, 10), (1024, 10),
+            (1025, 11), (65_536, 16), (65_537, 17),
+        ];
+        for &(n, erwartet) in faelle {
+            assert_eq!(ceil_log2(n), erwartet, "ceil_log2({})", n);
+        }
+    }
+
+    /// Die Bisektion halbiert das Intervall — nach `expected_rounds`
+    /// Runden muss jede Spurlaenge auf eine Position eingegrenzt sein.
+    #[test]
+    fn rundenzahl_reicht_zum_eingrenzen() {
+        for trace_len in [1usize, 2, 3, 7, 8, 100, 1024, 4096] {
+            let noetig = {
+                let mut span = trace_len;
+                let mut r = 0u32;
+                while span > 1 {
+                    span = span.div_ceil(2);
+                    r += 1;
+                }
+                r
+            };
+            assert!(
+                BisectionSession::expected_rounds(trace_len) >= noetig,
+                "trace_len {}: {} Runden angekuendigt, {} noetig",
+                trace_len,
+                BisectionSession::expected_rounds(trace_len),
+                noetig
+            );
+        }
     }
 }

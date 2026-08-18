@@ -5,10 +5,14 @@
 //! Dieser Test ist die normative Garantie dafuer, dass kein Backend jemals
 //! numerisch von der Referenz abweicht — die Kerneigenschaft des Projekts.
 
+// Ohne das Feature `cpu-simd` gibt es kein zweites Backend, gegen das
+// verglichen werden koennte — dann ist diese Datei vollstaendig leer
+// statt halb-tot (vorher: sechs Warnungen ueber ungenutzte Helfer bei
+// jedem Standard-Build).
+#![cfg(feature = "cpu-simd")]
+
 use integer_llm_kernels::backend::Backend;
 use integer_llm_kernels::backends::reference::ReferenceBackend;
-
-#[cfg(feature = "cpu-simd")]
 use integer_llm_kernels::backends::simd::SimdBackend;
 
 // =====================================================================
@@ -48,7 +52,6 @@ fn test_rsqrt_lut() -> Vec<i16> {
 // Softmax-Paritaet
 // =====================================================================
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn softmax_parity_basic() {
     let ref_backend = ReferenceBackend::new();
@@ -70,7 +73,6 @@ fn softmax_parity_basic() {
     assert_eq!(ref_out, simd_out, "Softmax: SIMD weicht von Referenz ab");
 }
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn softmax_parity_edge_cases() {
     let ref_backend = ReferenceBackend::new();
@@ -112,7 +114,6 @@ fn softmax_parity_edge_cases() {
 // RoPE-Paritaet
 // =====================================================================
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn rope_parity_basic() {
     let ref_backend = ReferenceBackend::new();
@@ -156,7 +157,6 @@ fn rope_parity_basic() {
 // Linear-Paritaet
 // =====================================================================
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn linear_parity_basic() {
     let ref_backend = ReferenceBackend::new();
@@ -186,7 +186,6 @@ fn linear_parity_basic() {
 // RMSNorm-Paritaet
 // =====================================================================
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn rmsnorm_parity_basic() {
     let ref_backend = ReferenceBackend::new();
@@ -215,7 +214,6 @@ fn rmsnorm_parity_basic() {
 // MLP-Paritaet
 // =====================================================================
 
-#[cfg(feature = "cpu-simd")]
 #[test]
 fn mlp_parity_basic() {
     let ref_backend = ReferenceBackend::new();

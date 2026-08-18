@@ -15,8 +15,64 @@ env:
   CARGO_TERM_COLOR: always
   # Fehlschlag statt Warnung, wenn ein Crate in der CI nicht aufgelöst werden kann.
   CARGO_NET_RETRY: 3
+  # Warnungen sind Fehler. Der Bestand ist bei null (Audit-Block 5);
+  # ab hier soll keine einzige wieder hereinkommen — eine unbeachtete
+  # `unused import`-Warnung war die Ursache dafür, dass ein kaputter
+  # Testbuild in main landen konnte (Fund A1).
+  RUSTFLAGS: "-D warnings"
 
 jobs:
+  # ── Lint: rustc-Warnungen und clippy über alle Crates ────────────
+  lint:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            SHARED_TYPES/myl-types
+            NETWORKING/myl-net
+            CONSENSUS/myl-ledger
+            CONSENSUS/myl-scheduler
+            CONSENSUS/myl-consensus
+            TOKENOMICS/myl-tokenomics
+            VERIFICATION/myl-verifier
+            COMPUTE_PIPELINE/myl-pod
+            INTEGER_LLM/kernels
+            INTEGER_LLM/runtime
+            INTEGER_LLM/pipeline
+
+      # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
+      # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
+      # Fixed-Point-Vertrag, Matrix-Namen folgen Whitepaper-Anhang B).
+      - name: cargo clippy (alle Crates)
+        run: |
+          set -e
+          for crate in \
+            SHARED_TYPES/myl-types \
+            NETWORKING/myl-net \
+            CONSENSUS/myl-ledger \
+            CONSENSUS/myl-scheduler \
+            CONSENSUS/myl-consensus \
+            TOKENOMICS/myl-tokenomics \
+            VERIFICATION/myl-verifier \
+            COMPUTE_PIPELINE/myl-pod \
+            INTEGER_LLM/kernels \
+            INTEGER_LLM/runtime \
+            INTEGER_LLM/pipeline
+          do
+            echo "── clippy: $crate"
+            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
+          done
+
   # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
   kernels:
     name: Kernels Tests

@@ -256,6 +256,17 @@ async fn zwanzig_nodes_voll_konnektivitaet_unter_zehn_sekunden() {
     // aufbau.
     node0.wait_peers(N - 1, Duration::from_secs(25)).await;
 
+    // Die Node-Identitäten müssen paarweise verschieden sein — sonst
+    // wären Peer-Zählung und Gossip-Routing bedeutungslos. Das wurde
+    // vorher nicht geprüft; `TestNode.peer_id` war gespeichert, aber
+    // ungenutzt (Compiler-Warnung als Hinweis auf die Lücke).
+    let mut ids: Vec<libp2p::PeerId> =
+        std::iter::once(node0.peer_id).chain(nodes.iter().map(|n| n.peer_id)).collect();
+    let gesamt = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), gesamt, "Node-Identitäten müssen paarweise verschieden sein");
+
     // Mesh-Bildung läuft asynchron; der Publish wird wiederholt, bis
     // Gossipsub annimmt.
     let nachricht = beispiel_bundle(20);

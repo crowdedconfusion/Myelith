@@ -1,4 +1,9 @@
 //! MLP / Feed Forward – Integer (Aktivierungen int16, Per-Layer-Skalen)
+// Die Gewichtsmatrizen heißen wie im Whitepaper (Anhang B): `W`, `W_gate`,
+// `W_up`, `W_down`. Klein geschrieben wären sie von den Einzelgewichten
+// `w` im selben Rumpf nicht mehr zu unterscheiden — die Entsprechung zur
+// Referenzformel ist beim Nachrechnen mehr wert als die Namenskonvention.
+#![allow(non_snake_case)]
 
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 use crate::integer_math::lut_lookup;

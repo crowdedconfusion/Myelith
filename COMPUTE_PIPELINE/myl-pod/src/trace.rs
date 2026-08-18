@@ -88,7 +88,7 @@ mod tests {
         let h2 = activation_hash(&a);
         assert_eq!(h1, h2);
         // Ein verändertes Byte ⇒ anderer Hash.
-        let mut b = a.clone();
+        let mut b = a;
         b[3] ^= 1;
         assert_ne!(activation_hash(&b), h1);
         // Leer ⇒ definierter Hash.
@@ -128,7 +128,7 @@ mod tests {
         // Leere Spur (Shard 0) ⇒ ok.
         assert!(verify_input_hash(&akt, &[]));
         // Verfälschte Aktivierungen ⇒ abgelehnt.
-        let mut manipuliert = akt.clone();
+        let mut manipuliert = akt;
         manipuliert[0] = 99;
         assert!(!verify_input_hash(&manipuliert, &[h]));
         // Falscher Spur-Eintrag ⇒ abgelehnt.

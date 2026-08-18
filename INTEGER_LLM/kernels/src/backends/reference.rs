@@ -2,17 +2,34 @@
 //!
 //! Dies ist die "Single Source of Truth" fuer alle numerischen Ergebnisse.
 //! Jedes andere Backend muss gegen dieses hier validiert werden.
+// Die Kernel-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag:
+// Eingangs- und Ausgangs-frac_bits, Per-Channel-Shifts, LUT-Parameter.
+// In eine Parameter-Struct gefasst waere die Entsprechung zu den
+// Referenzformeln (Whitepaper Anhang B) beim Nachrechnen nicht mehr
+// ablesbar — und genau dieses Nachrechnen ist die Pruefmethode des
+// Projekts. Bewusste Abweichung von clippy::too_many_arguments.
+#![allow(clippy::too_many_arguments)]
+// Die Gewichtsmatrizen heißen wie im Whitepaper (Anhang B): `W`, `W_gate`,
+// `W_up`, `W_down`. Klein geschrieben wären sie von den Einzelgewichten
+// `w` im selben Rumpf nicht mehr zu unterscheiden — die Entsprechung zur
+// Referenzformel ist beim Nachrechnen mehr wert als die Namenskonvention.
+#![allow(non_snake_case)]
 
 use crate::backend::Backend;
 use crate::fixed_point::{clamp_i16_from_i64, rescale_i64};
 use crate::rmsnorm::rmsnorm_i16;
-use crate::linear::linear_w8a16;
 use crate::softmax::softmax_int;
 use crate::attention::attention_int;
 use crate::rope::apply_rope_i16;
 use crate::mlp::mlp_int;
 
 pub struct ReferenceBackend;
+
+impl Default for ReferenceBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ReferenceBackend {
     pub fn new() -> Self {

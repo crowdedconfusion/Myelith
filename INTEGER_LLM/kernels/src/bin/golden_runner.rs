@@ -1,10 +1,31 @@
-use std::collections::HashMap;
+//! Prueflauf eines Golden Vectors gegen die Kernel-Implementierung.
+//!
+//! Neben dem Ergebnisvergleich wird der im Vektor deklarierte
+//! Tensor-Hash geprueft. Die Felder `hash` und `theta_v_hash` waren
+//! bis v0.12.40 zwar eingelesen, aber nie ausgewertet (Compiler-Warnung
+//! „never read" als Hinweis) — ein Vektor, dessen Daten nachtraeglich
+//! bearbeitet wurden, ohne den Hash mitzuziehen, waere unbemerkt
+//! durchgelaufen. Hash-Vertrag laut `tests/golden/generate.py`:
+//! SHA-256 ueber die Little-Endian-gepackte Nutzlast.
+
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 struct GoldenVector {
     name: String,
+    /// Ebene des Vektors (`op`, `layer`, `e2e`) — Teil des
+    /// Vektorformats, hier nicht ausgewertet. Das Feld bleibt, damit
+    /// ein unvollstaendiger Vektor beim Parsen auffaellt statt still
+    /// durchzugehen.
+    #[allow(dead_code)]
     level: String,
+    /// θ_v-Hash des erzeugenden Modells. **Noch nicht geprueft** — die
+    /// Gegenprobe braucht die eingebettete `spec.json` aus der Runtime,
+    /// die dieses Binary nicht kennt (kernels haengt nicht an runtime).
+    /// Vermerkt im INTEGER_LLM-Fahrplan als offener Punkt.
+    #[allow(dead_code)]
     theta_v_hash: String,
     metadata: serde_json::Value,
     inputs: HashMap<String, TensorData>,
@@ -14,9 +35,55 @@ struct GoldenVector {
 #[derive(Debug, Deserialize)]
 struct TensorData {
     dtype: String,
+    /// Tensorform — Teil des Formats; die Kernel arbeiten auf flachen
+    /// Vektoren und leiten die Form aus den Metadaten ab.
+    #[allow(dead_code)]
     shape: Option<Vec<usize>>,
     hash: String,
     data: Vec<i64>,
+}
+
+/// SHA-256 ueber die Little-Endian-gepackte Nutzlast — identisch zu
+/// `GoldenVectorBuilder._hash_tensor` in `tests/golden/generate.py`.
+fn hash_tensor(data: &[i64], dtype: &str) -> String {
+    let mut payload: Vec<u8> = Vec::with_capacity(data.len() * 4);
+    match dtype {
+        "int8" => data.iter().for_each(|&v| payload.push(v as i8 as u8)),
+        "int16" => data
+            .iter()
+            .for_each(|&v| payload.extend_from_slice(&(v as i16).to_le_bytes())),
+        "int32" => data
+            .iter()
+            .for_each(|&v| payload.extend_from_slice(&(v as i32).to_le_bytes())),
+        other => {
+            eprintln!("  Unbekannter dtype '{}': Hash-Pruefung uebersprungen", other);
+            return String::new();
+        }
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(&payload);
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Prueft die deklarierten Hashes aller Ein- und Ausgabetensoren.
+fn verify_tensor_hashes(gv: &GoldenVector) -> bool {
+    let mut ok = true;
+    for (bereich, tensors) in [("input", &gv.inputs), ("output", &gv.outputs)] {
+        for (name, t) in tensors.iter() {
+            let computed = hash_tensor(&t.data, &t.dtype);
+            if computed.is_empty() {
+                continue; // dtype nicht gepackt darstellbar
+            }
+            if computed != t.hash {
+                eprintln!(
+                    "  Hash-Abweichung bei {} '{}': deklariert {}, berechnet {}",
+                    bereich, name, t.hash, computed
+                );
+                ok = false;
+            }
+        }
+    }
+    ok
 }
 
 fn main() {
@@ -30,6 +97,12 @@ fn main() {
 
     let content = std::fs::read_to_string(path).expect("Failed to read golden file");
     let gv: GoldenVector = serde_json::from_str(&content).expect("Failed to parse JSON");
+
+    // Integritaet des Vektors selbst, bevor er als Massstab dient.
+    if !verify_tensor_hashes(&gv) {
+        println!("FAIL: {} (Hash-Pruefung des Vektors)", gv.name);
+        std::process::exit(1);
+    }
 
     let passed = match gv.name.as_str() {
         "rmsnorm_basic" => run_rmsnorm(&gv),

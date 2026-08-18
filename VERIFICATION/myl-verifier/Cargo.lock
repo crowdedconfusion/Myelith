@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "blst",
  "borsh",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "borsh",
  "myl-ledger",
