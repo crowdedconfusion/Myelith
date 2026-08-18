@@ -56,13 +56,13 @@ tests:
 
 | Component | Task | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exact integer inference (Rust + Python) | core thesis empirically confirmed, multi-node pipeline running |
-| [SHARED_TYPES](SHARED_TYPES/README/README.md) | core data types, cryptography (VRF, BLS, Merkle) | Phase 1 complete |
-| [NETWORKING](NETWORKING/README/README.md) | P2P gossip, peer discovery | Phase 1 complete |
-| [CONSENSUS](CONSENSUS/README/README.md) | ledger, BFT, slashing | ledger (Phase 1) complete |
-| [TOKENOMICS](TOKENOMICS/README/README.md) | burn-and-mint, distribution | Phase 1 complete |
-| [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | pod orchestration over a real network | Phase 1 complete |
-| [VERIFICATION](VERIFICATION/README/README.md) | redundancy comparison, bisection game | planning phase |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exact integer inference (Rust + Python) | core thesis empirically confirmed, multi-node pipeline running, all backends (AVX2+NEON) |
+| [SHARED_TYPES](SHARED_TYPES/README/README.md) | core data types, cryptography (VRF, BLS, Merkle) | Phases 1 + 2 complete (golden vectors, fuzz harness, conformance package) |
+| [NETWORKING](NETWORKING/README/README.md) | P2P gossip, peer discovery, latency topology | Phases 1 + 2 complete (pairwise latency measurement, LatencyGraph, geo/AS diversity) |
+| [CONSENSUS](CONSENSUS/README/README.md) | ledger, BFT, slashing | Phases 1 + 2 complete; Phase 3 with a caveat — signed, stake-and-work-weighted BFT with VRF-rotating committee election, but no round change / timeouts yet |
+| [TOKENOMICS](TOKENOMICS/README/README.md) | burn-and-mint, distribution | Phases 1 + 2 complete (credit pricing with a frozen exp() LUT) |
+| [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | pod orchestration over a real network | Phases 1 + 2.1 complete (micro-batching, pipelining) |
+| [VERIFICATION](VERIFICATION/README/README.md) | redundancy comparison, bisection game | Phases 1 + 2 complete (arbitration round, slashing via the ledger) |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | session contracts, dual-LLM separation | planning phase |
 | [TRAINING](TRAINING/README/README.md) | data provenance, robust aggregation | planning phase |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | parameter registry, model updates | planning phase |
