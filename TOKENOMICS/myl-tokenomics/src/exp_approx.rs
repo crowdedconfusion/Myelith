@@ -174,26 +174,45 @@ mod tests {
         assert!((result - expected).abs() < tolerance, "exp(0) should be ~1.0, got {}", result);
     }
 
+    /// exp(1) = e. Geprüft wird **exakt** gegen den Golden Vector, nicht
+    /// gegen eine handgetippte Näherung wie `2.71828` — der erwartete
+    /// Wert ist seit dem Einfrieren der Tabelle bit-genau bekannt, und
+    /// eine Toleranzprüfung würde einen Drift der Tabelle verschlucken.
     #[test]
     fn exp_one() {
-        // exp(1) ≈ 2.71828
-        let one = EXP_SCALE; // 1.0 als Fixed-Point
-        let result = exp_approx(one);
-        let expected = (2.71828 * RESULT_SCALE as f64) as i64;
-        // Toleranz: < 1%
-        let tolerance = expected / 100;
-        assert!((result - expected).abs() < tolerance, "exp(1) should be ~2.718, got {}", result);
+        // e · 2^32 = 11 675 001 401 (Referenz: 60-stellige Dezimalarithmetik)
+        assert_eq!(exp_approx(EXP_SCALE), 11_675_001_401);
     }
 
+    /// exp(−1) = 1/e, ebenfalls exakt gegen den Golden Vector.
     #[test]
     fn exp_negative() {
-        // exp(-1) ≈ 0.36788
-        let neg_one = -EXP_SCALE; // -1.0 als Fixed-Point
-        let result = exp_approx(neg_one);
-        let expected = (0.36788 * RESULT_SCALE as f64) as i64;
-        // Toleranz: < 1%
-        let tolerance = expected / 100;
-        assert!((result - expected).abs() < tolerance, "exp(-1) should be ~0.368, got {}", result);
+        // (1/e) · 2^32 = 1 580 039 711
+        assert_eq!(exp_approx(-EXP_SCALE), 1_580_039_711);
+    }
+
+    /// Die exakten Erwartungswerte müssen zur mathematischen Konstante
+    /// passen — das fängt einen Zahlendreher in den Golden Vectors ab,
+    /// den ein reiner Selbstvergleich nicht sehen würde.
+    #[test]
+    fn exakte_erwartungswerte_stimmen_mit_der_konstante_ueberein() {
+        let e_erwartet = std::f64::consts::E;
+        let e_gemessen = exp_approx(EXP_SCALE) as f64 / RESULT_SCALE as f64;
+        assert!(
+            ((e_gemessen - e_erwartet) / e_erwartet).abs() < 2e-5,
+            "exp(1) = {} weicht von e = {} ab",
+            e_gemessen,
+            e_erwartet
+        );
+
+        let inv_e_gemessen = exp_approx(-EXP_SCALE) as f64 / RESULT_SCALE as f64;
+        let inv_e_erwartet = 1.0 / std::f64::consts::E;
+        assert!(
+            ((inv_e_gemessen - inv_e_erwartet) / inv_e_erwartet).abs() < 2e-5,
+            "exp(-1) = {} weicht von 1/e = {} ab",
+            inv_e_gemessen,
+            inv_e_erwartet
+        );
     }
 
     #[test]

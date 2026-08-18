@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.2.5
+> **Version:** 0.2.6
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -47,6 +47,19 @@ TOKENOMICS/
 ```
 
 ## Changelog
+
+### v0.2.6 – 2026-08-18 (Audit-Block 5, Nachtrag)
+- `exp_one` und `exp_negative` prüften gegen handgetippte Näherungen
+  (`2.71828`, `0.36788`) mit 1 % Toleranz. Seit dem Einfrieren der
+  Tabelle ist der erwartete Wert bit-genau bekannt — die Tests
+  vergleichen jetzt **exakt** gegen die Golden Vectors
+  (e·2³² = 11 675 001 401, (1/e)·2³² = 1 580 039 711). Eine
+  Toleranzprüfung hätte einen Drift der Tabelle verschluckt.
+- Neuer Test `exakte_erwartungswerte_stimmen_mit_der_konstante_ueberein`:
+  bindet die exakten Werte an `std::f64::consts::E` zurück, damit ein
+  Zahlendreher in den Golden Vectors auffällt — ein reiner
+  Selbstvergleich würde ihn nicht sehen.
+- 55 → 56 Tests.
 
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
