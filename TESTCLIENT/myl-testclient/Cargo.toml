@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Terminal-Testclient für Myelith: Hardware-Erhebung, Cross-Backend-Determinismus und geshardete Inferenz — jeder Lauf mit maschinenlesbarem Protokoll, damit Läufe verschiedener Maschinen und Modellstände vergleichbar bleiben."
@@ -11,7 +11,13 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
 integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
 myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
+myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
+myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
+myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
+myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 sha2 = "0.10"
+borsh = { version = "1.6", features = ["derive"] }
 
 [features]
 cpu-simd = ["integer-llm-kernels/cpu-simd"]

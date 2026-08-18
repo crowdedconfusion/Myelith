@@ -1,10 +1,10 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.1.0
+> **Version:** 0.2.0
 > **Datum:** 2026-08-18
-> **Status:** Phase 1 vollständig (Hardware-Erhebung, Determinismuslauf,
-> geshardete Inferenz — 21 Tests grün, beide Läufe gegen die echten
-> Artefakte verifiziert).
+> **Status:** Phase 1 vollständig; dazu Protokoll-Durchlauf über alle
+> Komponenten, interaktives Menü und Banner (32 Tests grün, alle Läufe
+> gegen die echten Artefakte verifiziert).
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
 geshardete Inferenz — jeder Lauf mit einem Protokoll, das zwischen
@@ -52,12 +52,29 @@ einen Test, der Feldnamen und Wertformate prüft.
 
 ## Aufruf
 
+**Interaktiv — ohne Unterbefehl öffnet sich ein Menü:**
+
+```bash
+cd TESTCLIENT/myl-testclient
+cargo run --release --bin myl-test
+```
+
+Das ist der vorgesehene Weg für Testläufe auf fremden Maschinen: Wer
+erst eine Hilfeseite lesen muss, führt den Test seltener aus. Das Menü
+erklärt jeden Punkt in zwei Zeilen und zeigt, was Artefakte braucht und
+was nicht.
+
+**Als Befehl — für Skripte und CI:**
+
 ```bash
 cd TESTCLIENT/myl-testclient
 
 # Hardware erheben — der erste Befehl auf einer neuen Maschine.
 # Braucht kein Modell und keine Artefakte.
 cargo run --bin myl-test -- hardware
+
+# Protokoll-Durchlauf über alle Komponenten. Kein Modell nötig, ~1 s.
+cargo run --release --bin myl-test -- stack
 
 # Determinismus: derselbe Prompt zweimal, bitgleich?
 cargo run --release --bin myl-test -- determinismus --steps 8
@@ -71,6 +88,31 @@ etwa 40 s je Durchlauf, im Release-Build Bruchteile davon.
 
 Optionen: `--prompt`, `--steps`, `--shards`, `--artifacts`, `--logs`,
 `--quiet`. `myl-test --help` zeigt sie mit Erklärung.
+`MYL_NO_BANNER=1` unterdrückt das Banner dauerhaft.
+
+## Was der Client abdeckt
+
+| Befehl | Geprüfte Komponenten | Artefakte nötig |
+|---|---|---|
+| `hardware` | — (nur Erhebung) | nein |
+| `stack` | myl-types, -scheduler, -consensus, -verifier, -ledger, -tokenomics | nein |
+| `determinismus` | INTEGER_LLM (runtime, kernels) | **ja** |
+| `shard` | COMPUTE_PIPELINE (myl-pod) + INTEGER_LLM | **ja** |
+
+**Nicht abgedeckt:** `myl-net` (Gossip über echte Sockets gehört in die
+NETWORKING-Testsuite) und BFT-Liveness (Rundenwechsel fehlt noch,
+CONSENSUS Punkt 3.6). Die vollständige Abgrenzung steht in
+[ANLEITUNG.md](ANLEITUNG.md), Abschnitt 5.
+
+## Anleitung für Tests mit mehreren Beteiligten
+
+**[ANLEITUNG.md](ANLEITUNG.md)** — nach Rollen getrennt: Ein Teilnehmer
+liest Abschnitt 1 und ist fertig; der Koordinator bekommt die
+Urteilstabelle, die Ausschlussfragen bei abweichenden Digests und eine
+Meldevorlage. Enthält außerdem, welche Hardware-Kombinationen sich
+lohnen und was die Tests **nicht** abdecken.
+
+Kurzfassung auch im Menü unter Punkt 7.
 
 ## Cross-Hardware-Nachweis — das Verfahren
 
@@ -100,9 +142,12 @@ laut, gesprächig und roh sein; ein Nutzer-Client nicht.
 ## Abhängigkeiten
 
 INTEGER_LLM (`runtime`, `kernels`), COMPUTE_PIPELINE (`myl-pod`),
-SHARED_TYPES (`myl-types`). Keine Fremd-Crates außer `sha2` — der Client
-soll auf einer fremden Maschine mit möglichst wenig Voraussetzungen
-bauen. Die Argumentauswertung ist deshalb von Hand.
+SHARED_TYPES (`myl-types`), CONSENSUS (`myl-ledger`, `-scheduler`,
+`-consensus`), TOKENOMICS, VERIFICATION — der `stack`-Lauf braucht sie
+alle. Keine Fremd-Crates außer `sha2` und `borsh`; der Client soll auf
+einer fremden Maschine mit möglichst wenig Voraussetzungen bauen. Die
+Argumentauswertung ist deshalb von Hand, und das Menü kommt ohne
+TUI-Bibliothek aus.
 
 ## Struktur
 
@@ -110,6 +155,7 @@ bauen. Die Argumentauswertung ist deshalb von Hand.
 TESTCLIENT/
 ├── README/
 │   ├── README.md             diese Kurzübersicht
+│   ├── ANLEITUNG.md          Tests mit mehreren Beteiligten
 │   └── Fahrplan-v1.md        Phasenplan
 └── myl-testclient/
     ├── src/
@@ -117,7 +163,10 @@ TESTCLIENT/
     │   ├── main.rs           Argumentauswertung, Hilfetext
     │   ├── logging.rs        Laufprotokolle (JSONL + Text)
     │   ├── hardware.rs       Fingerabdruck (Klasse, nicht Gerät)
-    │   └── runs.rs           die drei Prüfläufe
+    │   ├── banner.rs         ASCII-Banner zum Projektbanner
+    │   ├── menu.rs           interaktives Menü
+    │   ├── runs.rs           Hardware, Determinismus, Shards
+    │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
     └── logs/                 Laufprotokolle (gitignored)
 ```
 
@@ -127,12 +176,44 @@ TESTCLIENT/
 |---|---|
 | `determinismus --steps 6` | bitgleich über zwei Läufe, Digest `977ff1b4…` |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
+| `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
 
 Der Shard-Lauf erfüllt damit das Akzeptanzkriterium aus
 COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.2.0 – 2026-08-18
+
+**Der Client prüfte nur zwei von neun Crates.** Determinismus (INTEGER_LLM)
+und Sharding (COMPUTE_PIPELINE) waren abgedeckt; `myl-types`, `-ledger`,
+`-scheduler`, `-consensus`, `-tokenomics` und `-verifier` fasste er nicht
+an. Die haben Unit-Tests, aber niemand prüfte, ob sie **zusammen**
+funktionieren — und genau dort lagen die schwersten Audit-Funde.
+
+- **Neuer Befehl `stack`**: zehn Stufen von der Kryptografie über
+  Epochenseed, Komiteewahl, BFT (mit echten Signaturen und Negativproben),
+  Double-Signing, Blockstruktur, Verifikation und Ledger-Buchung bis zur
+  Preisbildung. Läuft ohne Artefakte in ~1 s.
+- **Fund A20, gefunden vom neuen Stack-Lauf:** `derive_epoch_seed` nahm
+  die Epoche als Parameter entgegen, speicherte sie im `EpochSeed` — und
+  ließ sie **nicht in den VRF-Eingang einfließen**. Folge: Ein Seed für
+  Epoche 42 galt unverändert als gültiger Seed für Epoche 99, mit
+  demselben Beweis (empirisch bestätigt). Zusätzlich hätten zwei Epochen
+  mit demselben Vorgängerblock exakt dieselbe Zuteilung ergeben. Behoben
+  in `myl-scheduler` v0.2.11 durch domain-getrenntes Alpha
+  (`MYELITH_EPOCH_SEED_v1 ‖ block ‖ epoch`). **Konsensrelevant.**
+- **Interaktives Menü**: `myl-test` ohne Unterbefehl öffnet eine
+  Ziffernauswahl mit Erklärung je Punkt, Einstellungen und
+  Kurzanleitung. Bewusst ohne TUI-Bibliothek — der Client soll über SSH
+  und in einer seriellen Konsole funktionieren.
+- **ASCII-Banner** nach dem Projektbanner (Knotennetz, Schriftzug, Zeile
+  und die drei Schlagworte). Unterdrückbar über `--quiet` und
+  `MYL_NO_BANNER`.
+- **[ANLEITUNG.md](ANLEITUNG.md)** für Tests mit mehreren Beteiligten —
+  vorher gab es nur acht Zeilen im README.
+- 21 → 32 Tests.
 
 ### v0.1.0 – 2026-08-18
 - Erstfassung mit drei Unterbefehlen: `hardware`, `determinismus`, `shard`.

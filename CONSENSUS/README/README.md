@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.4.2 (`myl-scheduler` 0.2.10)
+> **Version:** 0.4.2 (`myl-scheduler` 0.2.11)
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -53,6 +53,35 @@ CONSENSUS/
 ```
 
 ## Changelog
+
+### myl-scheduler v0.2.11 – 2026-08-18 (Fund A20: Epoche geht in den VRF-Seed)
+
+**Gefunden vom neuen `stack`-Lauf des Testclients** — ein Beleg dafür,
+dass komponentenübergreifende Durchläufe etwas anderes finden als
+Unit-Tests.
+
+`derive_epoch_seed(prev_block_hash, vrf_sk, epoch)` nahm die Epoche
+entgegen, speicherte sie im `EpochSeed` — und ließ sie **nicht in den
+VRF-Eingang einfließen**. Alpha war allein der Block-Hash. Zwei Folgen:
+
+1. **Umetikettierung.** `verify_epoch_seed` prüfte Alpha ohne Epoche.
+   Ein Seed für Epoche 42 galt unverändert als gültiger Seed für Epoche
+   99, mit demselben Beweis. Empirisch bestätigt, bevor der Fix einging.
+2. **Wiederholte Zuteilung.** Zwei Epochen mit demselben Vorgängerblock
+   (Reorganisation, leere Epoche, Neustart aus einem Snapshot) hätten
+   exakt dieselbe Pod-Bildung, Shard-Zuweisung und Stichprobenauswahl
+   ergeben.
+
+Der bestehende Test `derive_seed_different_epochs` behauptete das alte
+Verhalten ausdrücklich als gewollt („Beta sollte gleich sein"). Es war
+also eine bewusste Festlegung — aber eine, die die eigene
+Verifikationsfunktion unterläuft.
+
+Behoben: neues `seed_alpha()` mit
+`"MYELITH_EPOCH_SEED_v1" ‖ prev_block_hash ‖ u64_le(epoch)`; Ableitung
+und Verifikation nutzen dieselbe Bytefolge. Regressionstest
+`umetikettierter_seed_wird_abgelehnt`. 58 → 60 Tests.
+**Konsensrelevant** — jede abgeleitete Zuteilung verschiebt sich.
 
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)

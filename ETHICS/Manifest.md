@@ -8,7 +8,7 @@ begründen und hier zu vermerken.
 
 ---
 
-## 0. Warum dieses Dokument existiert — und was es nicht ist
+## Warum dieses Dokument existiert — und was es nicht ist
 
 Myelith baut ein Netzwerk, in dem niemand die Kontrolle hat. Das ist der
 Zweck: keine zentrale Instanz, die abschalten, zensieren oder

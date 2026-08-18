@@ -6,14 +6,17 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use myl_testclient::menu::{self, Einstellungen};
 use myl_testclient::{
-    default_artifact_dir, default_log_dir, run_determinism, run_hardware, run_shard, RunLog,
+    banner, default_artifact_dir, default_log_dir, run_determinism, run_hardware, run_shard,
+    run_stack, RunLog,
 };
 
 const HILFE: &str = "\
 myl-test — Testclient für Myelith
 
 AUFRUF
+    myl-test                 ohne Befehl: interaktives Menü
     myl-test <BEFEHL> [OPTIONEN]
 
 BEFEHLE
@@ -24,6 +27,10 @@ BEFEHLE
                     Maschine derselbe sein.
     shard           Geshardete Inferenz über einen Pod fahren und gegen
                     die Einzelknoten-Runtime prüfen.
+    stack           Protokoll-Durchlauf über Krypto, Epochenseed,
+                    Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
+                    Braucht kein Modell.
+    menu            Interaktives Menü (wie ohne Befehl).
 
 OPTIONEN
     --prompt <TEXT>     Eingabetext (Vorgabe: \"Die Hauptstadt von Frankreich ist\")
@@ -32,7 +39,10 @@ OPTIONEN
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
     --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/myl-testclient/logs)
     --quiet             Nur ins Protokoll schreiben, nicht aufs Terminal
+                        (unterdrückt auch das Banner)
     -h, --help          Diese Hilfe
+
+    Umgebung: MYL_NO_BANNER=1 unterdrückt das Banner dauerhaft.
 
 PROTOKOLLE
     Jeder Lauf schreibt <lauf-id>.jsonl (maschinenlesbar, für den
@@ -57,20 +67,38 @@ struct Args {
     quiet: bool,
 }
 
+impl Args {
+    fn vorgaben() -> Self {
+        Self {
+            command: String::new(),
+            prompt: "Die Hauptstadt von Frankreich ist".to_string(),
+            steps: 8,
+            shards: 4,
+            artifacts: default_artifact_dir(),
+            logs: default_log_dir(),
+            quiet: false,
+        }
+    }
+}
+
 fn parse() -> Result<Args, String> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
-    if raw.is_empty() || raw[0] == "-h" || raw[0] == "--help" {
+    if raw.iter().any(|a| a == "-h" || a == "--help") {
         return Err(String::new());
+    }
+    // Ohne Unterbefehl (oder nur mit Optionen) ins Menü.
+    if raw.is_empty() || raw[0].starts_with('-') {
+        let mut a = Args {
+            command: "menu".to_string(),
+            ..Args::vorgaben()
+        };
+        a.quiet = raw.iter().any(|x| x == "--quiet");
+        return Ok(a);
     }
 
     let mut a = Args {
         command: raw[0].clone(),
-        prompt: "Die Hauptstadt von Frankreich ist".to_string(),
-        steps: 8,
-        shards: 4,
-        artifacts: default_artifact_dir(),
-        logs: default_log_dir(),
-        quiet: false,
+        ..Args::vorgaben()
     };
 
     let mut i = 1;
@@ -134,7 +162,19 @@ fn main() -> ExitCode {
         }
     };
 
+    if args.command == "menu" {
+        let ok = menu::run(Einstellungen {
+            prompt: args.prompt,
+            steps: args.steps,
+            shards: args.shards,
+            artifacts: args.artifacts,
+            logs: args.logs,
+        });
+        return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+    }
+
     let echo = !args.quiet;
+    banner::print_if(echo);
     let mut log = RunLog::new(&args.logs, &args.command, echo);
 
     let ok = match args.command.as_str() {
@@ -147,6 +187,7 @@ fn main() -> ExitCode {
             args.steps,
             args.shards,
         ),
+        "stack" => run_stack(&mut log),
         other => {
             log.error(format!("unbekannter Befehl: {}", other));
             log.finish(false);

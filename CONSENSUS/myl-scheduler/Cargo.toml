@@ -1,6 +1,6 @@
 [package]
 name = "myl-scheduler"
-version = "0.2.10"
+version = "0.2.11"
 edition = "2021"
 rust-version = "1.82"
 description = "Deterministischer Epochen-Scheduler für Myelith (Whitepaper Anhang A.2): VRF-Seed-Ableitung, Miner-Filterung, Geo-Clustering, Shard-Zuweisung (Fisher-Yates), Redundanz-Zuteilung, Stichproben-Lotterie. Alle Schritte sind deterministisch und von jedem Node unabhängig nachrechenbar."

@@ -91,6 +91,34 @@ impl EpochSeed {
 /// - `epoch`: Epoche, für die der Seed abgeleitet wird
 ///
 /// **Returns:** `EpochSeed` mit der 64-Byte VRF-Ausgabe
+/// Kanonische Alpha-Bytefolge des Epochenseeds (RFC 9381).
+///
+/// **Aufbau:** `"MYELITH_EPOCH_SEED_v1" ‖ prev_block_hash ‖ u64_le(epoch)`
+///
+/// **Warum die Epoche mit hinein muss (Fund A20):** Bis
+/// `myl-scheduler` v0.2.10 war Alpha allein der Block-Hash. Die Epoche
+/// wurde als Parameter entgegengenommen, im `EpochSeed` gespeichert und
+/// hatte **keinerlei Wirkung** auf die Ausgabe. Zwei Folgen:
+///
+/// 1. **Umetikettierung.** `verify_epoch_seed` prüfte Alpha ohne
+///    Epoche — ein Seed für Epoche 42 galt unverändert als gültiger
+///    Seed für Epoche 99, mit demselben Beweis. Empirisch bestätigt,
+///    bevor der Fix einging.
+/// 2. **Wiederholte Zuteilung.** Zwei Epochen mit demselben
+///    Vorgängerblock (Reorganisation, leere Epoche, Neustart aus einem
+///    Snapshot) hätten exakt dieselbe Pod-Bildung, Shard-Zuweisung und
+///    Stichprobenauswahl ergeben.
+///
+/// **Konsens-Feld:** Änderungen verschieben jede abgeleitete Zuteilung.
+pub fn seed_alpha(prev_block_hash: &Hash, epoch: u64) -> Vec<u8> {
+    const DOMAIN: &[u8] = b"MYELITH_EPOCH_SEED_v1";
+    let mut alpha = Vec::with_capacity(DOMAIN.len() + 32 + 8);
+    alpha.extend_from_slice(DOMAIN);
+    alpha.extend_from_slice(prev_block_hash.as_bytes());
+    alpha.extend_from_slice(&epoch.to_le_bytes());
+    alpha
+}
+
 pub fn derive_epoch_seed(
     prev_block_hash: Hash,
     vrf_sk: &VrfSecretKey,
@@ -101,10 +129,9 @@ pub fn derive_epoch_seed(
         return Err(VrfSeedError::EmptyBlockHash);
     }
 
-    // VRF-Beweis über den Block-Hash erstellen
-    // Der Block-Hash wird als Alpha-String verwendet (RFC 9381)
-    let alpha = prev_block_hash.as_bytes();
-    let (_proof, output) = vrf_sk.prove(alpha)?;
+    // VRF-Beweis über die kanonische Alpha-Bytefolge (RFC 9381).
+    let alpha = seed_alpha(&prev_block_hash, epoch);
+    let (_proof, output) = vrf_sk.prove(&alpha)?;
 
     // Epochenseed konstruieren
     Ok(EpochSeed {
@@ -127,9 +154,10 @@ pub fn verify_epoch_seed(
     proof: &VrfProof,
     vrf_pk: &VrfPublicKey,
 ) -> bool {
-    // VRF-Beweis verifizieren
-    let alpha = seed.prev_block_hash.as_bytes();
-    match vrf_pk.verify(alpha, proof) {
+    // VRF-Beweis verifizieren — Alpha muss dieselbe Bytefolge sein wie
+    // bei der Ableitung, inklusive Epoche.
+    let alpha = seed_alpha(&seed.prev_block_hash, seed.epoch);
+    match vrf_pk.verify(&alpha, proof) {
         Ok(output) => output.beta == seed.beta,
         Err(_) => false,
     }
@@ -171,6 +199,15 @@ mod tests {
         assert_ne!(seed1.beta, seed2.beta);
     }
 
+    /// Die Epoche geht in Alpha ein (Fund A20).
+    ///
+    /// **Dieser Test behauptete bis v0.2.10 das Gegenteil** — „Beta
+    /// sollte gleich sein (gleicher Block-Hash)". Das war eine bewusste
+    /// Festlegung, aber eine, die `verify_epoch_seed` unterläuft: Ohne
+    /// Epoche in Alpha gilt ein Seed für Epoche 42 unverändert als
+    /// gültiger Seed für Epoche 99, mit demselben Beweis. Zusätzlich
+    /// hätten zwei Epochen mit demselben Vorgängerblock exakt dieselbe
+    /// Zuteilung ergeben.
     #[test]
     fn derive_seed_different_epochs() {
         let (sk, _) = test_vrf_keypair();
@@ -179,9 +216,45 @@ mod tests {
         let seed1 = derive_epoch_seed(block_hash, &sk, 1).expect("seed derivation");
         let seed2 = derive_epoch_seed(block_hash, &sk, 2).expect("seed derivation");
 
-        // Beta sollte gleich sein (gleicher Block-Hash), aber Epoche unterschiedlich
-        assert_eq!(seed1.beta, seed2.beta);
+        assert_ne!(
+            seed1.beta, seed2.beta,
+            "verschiedene Epochen müssen verschiedene Seeds ergeben"
+        );
         assert_ne!(seed1.epoch, seed2.epoch);
+    }
+
+    /// Der eigentliche Grund für Fund A20: Ein umetikettierter Seed darf
+    /// die Prüfung nicht bestehen.
+    #[test]
+    fn umetikettierter_seed_wird_abgelehnt() {
+        let (sk, pk) = test_vrf_keypair();
+        let block_hash = Hash::sha256(b"block-der-epoche-42");
+
+        let echt = derive_epoch_seed(block_hash, &sk, 42).expect("seed derivation");
+        let (proof, _) = sk.prove(&seed_alpha(&block_hash, 42)).expect("prove");
+        assert!(verify_epoch_seed(&echt, &proof, &pk), "echter Seed muss gelten");
+
+        let gefaelscht = EpochSeed {
+            beta: echt.beta,
+            epoch: 99,
+            prev_block_hash: block_hash,
+        };
+        assert!(
+            !verify_epoch_seed(&gefaelscht, &proof, &pk),
+            "Seed für Epoche 42 darf nicht als Seed für Epoche 99 gelten"
+        );
+    }
+
+    /// Alpha ist domain-getrennt und feldweise eindeutig kodiert.
+    #[test]
+    fn alpha_ist_eindeutig_kodiert() {
+        let h1 = Hash::sha256(b"a");
+        let h2 = Hash::sha256(b"b");
+        assert_ne!(seed_alpha(&h1, 1), seed_alpha(&h1, 2));
+        assert_ne!(seed_alpha(&h1, 1), seed_alpha(&h2, 1));
+        assert_eq!(seed_alpha(&h1, 1), seed_alpha(&h1, 1));
+        assert!(seed_alpha(&h1, 1).starts_with(b"MYELITH_EPOCH_SEED_v1"));
+        assert_eq!(seed_alpha(&h1, 1).len(), 21 + 32 + 8);
     }
 
     #[test]

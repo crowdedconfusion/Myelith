@@ -36,4 +36,4 @@ pub use miner_filter::{
 pub use redundancy::{assign_redundant_pods, SegmentAssignment};
 pub use sampling::{sample_segments, SamplingResult};
 pub use shard_assignment::{assign_pods, assign_shards, Pod, Shard};
-pub use vrf_seed::{derive_epoch_seed, EpochSeed, VrfSeedError};
+pub use vrf_seed::{derive_epoch_seed, seed_alpha, verify_epoch_seed, EpochSeed, VrfSeedError};
