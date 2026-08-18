@@ -17,6 +17,11 @@
 //! Gewichte int8 (Per-Channel-Skalen), Aktivierungen int16 (Per-Layer-Skalen),
 //! i64-Akkumulation, divisionsfreie RMSNorm mit LUT-gestuetztem rsqrt,
 //! RNE-Rundung, Saettigung (Clamp).
+// Die Gewichtsmatrizen heissen wie im Whitepaper (Anhang B): `W`,
+// `W_gate`, `W_up`, `W_down` — konsistent mit den uebrigen Kerneln.
+#![allow(non_snake_case)]
+// Die Signaturen tragen den vollstaendigen Fixed-Point-Vertrag.
+#![allow(clippy::too_many_arguments)]
 
 use crate::backend::Backend;
 use crate::linear::linear_w8a16;

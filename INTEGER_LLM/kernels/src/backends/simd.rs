@@ -6,22 +6,40 @@
 //! Alle Shifts sind Zweierpotenzen (arithmetischer Rechtsshift),
 //! Rundung: Round-to-nearest-even, Overflow: Saettigung (Clamp).
 //!
-//! Status: Phase 12.35-12.39 (SIMD-Neuaufbau). Die folgenden Operationen
-//! sind bereits AVX2-vektorisiert:
-//! - softmax_avx2 (12.35)
-//! - attention_avx2 (12.36)
-//! - rope_avx2 (12.37)
-//! - mlp_silu_avx2 (12.38)
+//! Status: Phase 12.35-12.39 (SIMD-Neuaufbau). Tatsaechlich ueber die
+//! Backend-Methoden angebunden sind:
+//! - softmax (12.35) — AVX2 und NEON
+//! - attention (12.36) — AVX2
+//! - rope (12.37) — AVX2 und NEON
 //!
-//! Nicht-vektorisierte Operationen (delegieren an Referenz-Kernel):
+//! Nicht-vektorisierte Operationen (delegieren an den Referenz-Kernel
+//! und sind dadurch bit-identisch):
 //! - linear_w8a16 (Zukuenftig: AVX2 dot-product)
 //! - rmsnorm (Zukuenftig: AVX2 sum-of-squares + elementwise)
+//! - **mlp** — siehe `avx2::mlp_silu_fusion_avx2`: der Fusionskernel ist
+//!   geschrieben, aber **nicht angebunden**; `Backend::mlp` ruft den
+//!   skalaren `mlp_int` auf. Der Modulkopf behauptete bis v0.12.41
+//!   „mlp_silu_avx2 (12.38)" sei vektorisiert — das stimmte fuer den
+//!   Kernel, nicht fuer den Aufrufpfad (Fund A19).
+
+// Die Gewichtsmatrizen heissen wie im Whitepaper (Anhang B): `W`,
+// `W_gate`, `W_up`, `W_down` — konsistent mit
+// `kernels/src/{linear,mlp,backend}.rs`, wo `w` die Einzelgewichte sind.
+#![allow(non_snake_case)]
+// Die Kernel-Signaturen tragen den vollstaendigen Fixed-Point-Vertrag
+// (frac_bits, LUT-Offsets, Ziel-Skalen) — wie in
+// `kernels/src/{linear,mlp,backend}.rs`.
+#![allow(clippy::too_many_arguments)]
+// Schleifenindizes sind Kanal-/Positionsnummern ueber parallele Puffer.
+#![allow(clippy::needless_range_loop)]
 
 use crate::backend::Backend;
 use crate::linear::linear_w8a16;
 use crate::rmsnorm::rmsnorm_i16;
+#[cfg(not(target_arch = "aarch64"))]
 use crate::softmax::softmax_int;
 use crate::attention::attention_int;
+#[cfg(not(target_arch = "aarch64"))]
 use crate::rope::apply_rope_i16;
 use crate::mlp::mlp_int;
 
@@ -53,11 +71,17 @@ impl SimdBackend {
 
         #[cfg(target_arch = "aarch64")]
         {
-            // NEON ist auf aarch64 immer verfuegbar
-            return Some(SimdBackend { target: SimdTarget::Neon });
+            // NEON ist auf aarch64 immer verfuegbar.
+            Some(SimdBackend { target: SimdTarget::Neon })
         }
 
-        None
+        // Auf aarch64 ist dieser Zweig nicht erreichbar (NEON immer da);
+        // auf x86_64 ohne AVX2 und auf allen uebrigen Architekturen ist
+        // er der reale Ausgang.
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            None
+        }
     }
 
     pub fn target(&self) -> SimdTarget {
@@ -217,7 +241,8 @@ mod avx2 {
         if shift == 0 {
             return v;
         }
-        let shift_v = _mm256_set1_epi32(shift as i32);
+        // quotient = v >> shift (arithmetisch). `_mm256_sra_epi32` nimmt
+        // die Schiebeweite als __m128i, dessen niedrige 64 Bit zaehlen.
         // quotient = v >> shift (arithmetisch)
         let quotient = _mm256_sra_epi32(v, _mm_set_epi32(0, 0, 0, shift as i32));
         // mask = (1 << shift) - 1
@@ -247,7 +272,21 @@ mod avx2 {
     /// Der LUT-Lookup selbst ist skalar (Gather ist in AVX2 langsam),
     /// aber die Rescale- und Multiplikationsarithmetik ist vektorisiert.
     ///
+    /// **NICHT ANGEBUNDEN (Fund A19).** `Backend::mlp` ruft den skalaren
+    /// `mlp_int` auf; dieser Kernel wird nirgends verwendet. Der
+    /// Modulkopf fuehrte ihn bis v0.12.41 als „vektorisiert", was fuer
+    /// den Kernel stimmte, nicht fuer den Aufrufpfad — die
+    /// Paritaetstests waren dadurch trotzdem gruen, weil die Delegation
+    /// an die Referenz per Konstruktion bit-identisch ist.
+    ///
+    /// Bewusst **nicht** in diesem Audit angebunden: Das Anbinden
+    /// braucht einen Paritaetslauf auf echter x86_64-Hardware
+    /// (AGENTS.md: SIMD-Paritaet wird nur lokal auf Entwicklermaschinen
+    /// mit passender Hardware validiert, nie in CI). Vermerkt im
+    /// INTEGER_LLM-Fahrplan als offener Punkt.
+    ///
     /// Sicherheit: Caller muss sicherstellen, dass AVX2 verfuegbar ist.
+    #[allow(dead_code)]
     #[target_feature(enable = "avx2")]
     pub unsafe fn mlp_silu_fusion_avx2(
         gate: &[i16],
@@ -291,7 +330,7 @@ mod avx2 {
 #[cfg(target_arch = "aarch64")]
 mod neon {
     use core::arch::aarch64::*;
-    use crate::fixed_point::{clamp_i16, clamp_i16_from_i64, rescale, rescale_i64, rshift_round};
+    use crate::fixed_point::{clamp_i16, rshift_round};
 
     /// NEON Softmax: exp-LUT-basiert, numerisch stabil.
     /// Vektorisiert: Max-Reduktion (4x i32 parallel pro NEON-Register).
@@ -535,11 +574,14 @@ impl Backend for SimdBackend {
         {
             let result = unsafe { neon::softmax_neon(logits, exp_lut, lut_shift, frac_bits) };
             out.copy_from_slice(&result);
-            return;
         }
-        // Fallback auf Referenz
-        let result = softmax_int(logits, exp_lut, lut_shift, frac_bits);
-        out.copy_from_slice(&result);
+        // Fallback auf Referenz. Auf aarch64 nicht erreichbar (NEON
+        // behandelt jeden Fall), deshalb dort auch nicht kompiliert.
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let result = softmax_int(logits, exp_lut, lut_shift, frac_bits);
+            out.copy_from_slice(&result);
+        }
     }
 
     fn attention(
@@ -611,15 +653,18 @@ impl Backend for SimdBackend {
                 let k_rot = unsafe { neon::rotate_half_split_neon(&k[seq_idx], cos_row, sin_row, frac_bits) };
                 k[seq_idx].copy_from_slice(&k_rot);
             }
-            return;
         }
-        // Fallback auf Referenz
-        let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
-        for (i, row) in q_out.iter().enumerate() {
-            q[i].copy_from_slice(row);
-        }
-        for (i, row) in k_out.iter().enumerate() {
-            k[i].copy_from_slice(row);
+        // Fallback auf Referenz. Auf aarch64 nicht erreichbar (NEON
+        // behandelt jeden Fall), deshalb dort auch nicht kompiliert.
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            let (q_out, k_out) = apply_rope_i16(q, k, cos_lut, sin_lut, positions, frac_bits);
+            for (i, row) in q_out.iter().enumerate() {
+                q[i].copy_from_slice(row);
+            }
+            for (i, row) in k_out.iter().enumerate() {
+                k[i].copy_from_slice(row);
+            }
         }
     }
 

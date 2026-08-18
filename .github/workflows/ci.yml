@@ -73,6 +73,18 @@ jobs:
             (cd "$crate" && cargo clippy --all-targets -- -D warnings)
           done
 
+      # `simd.rs`, `cuda.rs` und `rocm.rs` werden NUR mit ihrem Feature
+      # kompiliert — ein Lauf ohne Flags sieht sie nie. Genau daran ist
+      # der Warnungs-Check aus v0.12.41 vorbeigelaufen (Fund A19).
+      - name: cargo clippy — kernels über alle Feature-Flags
+        working-directory: INTEGER_LLM/kernels
+        run: |
+          set -e
+          for feat in cpu-simd cuda rocm; do
+            echo "── clippy: kernels --features $feat"
+            cargo clippy --all-targets --features "$feat" -- -D warnings
+          done
+
   # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
   kernels:
     name: Kernels Tests

@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.12.41
+> **Version:** 0.12.42
 > **Datum:** 2026-08-18
 > **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
 
@@ -187,6 +187,35 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.12.42 – 2026-08-18 (Audit-Block 5, Nachtrag: Feature-Builds)
+
+Die CI hat eine Lücke in meiner eigenen Prüfung aufgedeckt: `simd.rs`,
+`cuda.rs` und `rocm.rs` werden nur mit ihrem jeweiligen Feature
+kompiliert. Der Warnungs-Check aus v0.12.41 lief ohne Features und hat
+sie deshalb nie gesehen.
+
+- **Fund A19:** Der Modulkopf von `simd.rs` führte `mlp_silu_avx2 (12.38)`
+  als „AVX2-vektorisiert". Das stimmte für den Kernel, **nicht für den
+  Aufrufpfad**: `Backend::mlp` ruft den skalaren `mlp_int` auf, der
+  Fusionskernel `mlp_silu_fusion_avx2` wird nirgends verwendet. Die
+  Paritätstests waren trotzdem grün, weil die Delegation an die Referenz
+  per Konstruktion bit-identisch ist. Modulkopf korrigiert; der Kernel
+  bleibt mit `#[allow(dead_code)]` und einer ehrlichen Notiz stehen.
+  **Bewusst nicht angebunden** — das braucht einen Paritätslauf auf
+  echter x86_64-Hardware (AGENTS.md).
+- Toter `shift_v` in `rshift_round_avx2` entfernt (der Shift selbst nutzt
+  korrekt `_mm_set_epi32`; die Variable war Rest eines früheren Versuchs).
+- `unreachable`-Warnungen im NEON-Pfad beseitigt: der Referenz-Fallback
+  wird auf aarch64 jetzt gar nicht erst kompiliert (NEON behandelt dort
+  jeden Fall), statt als toter Code dazustehen.
+- Ungenutzte Importe im NEON-Modul entfernt, Matrix-Namen und
+  Kernel-Signaturen mit denselben begründeten `#![allow(...)]` versehen
+  wie die übrigen Kernel-Dateien.
+- **Verifikationslücke geschlossen:** Ab jetzt wird die volle
+  Feature×Ziel-Matrix geprüft (default/cpu-simd/cuda/rocm × aarch64/x86_64,
+  x86_64 per Cross-`check`). Alle acht Kombinationen: null Warnungen,
+  null clippy-Meldungen.
 
 ### v0.12.41 – 2026-08-18 (Audit-Block 5)
 - **`pipeline` hatte null Tests** — jetzt 33 (codec, manifest,
