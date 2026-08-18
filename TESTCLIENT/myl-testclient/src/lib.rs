@@ -38,11 +38,13 @@ pub mod hardware;
 pub mod menu;
 pub mod logging;
 pub mod runs;
+pub mod spec;
 pub mod stack;
 
 pub use hardware::Fingerprint;
-pub use logging::{sha256_hex, Event, RunLog};
+pub use logging::{sha256_hex, Event, LogZiel, RunLog};
 pub use runs::{default_artifact_dir, run_determinism, run_hardware, run_shard, DEFAULT_MODEL};
+pub use spec::{PlanError, TestPlan};
 pub use stack::run_stack;
 
 /// Standard-Verzeichnis für Laufprotokolle.

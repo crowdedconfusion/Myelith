@@ -1,6 +1,6 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
-**Version:** 1.0.0 · **Datum:** 2026-08-18
+**Version:** 1.1.0 · **Datum:** 2026-08-18
 
 Diese Anleitung richtet sich an zwei Rollen:
 
@@ -28,6 +28,63 @@ Bestehen des Repositoriums.
 
 ---
 
+## 0a. Der Testplan — die Datei, die alles zusammenhält
+
+Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt, verteilt
+der Koordinator eine **Plandatei**. Sie legt Prompt, Tokenzahl, Shards
+und Modell fest und trägt eine Prüfsumme darüber.
+
+```text
+plan_id     = 2026-08-18-cross-arch-01
+prompt      = "Die Hauptstadt von Frankreich ist"
+steps       = 6
+shards      = 4
+model       = qwen2.5-0.5b
+
+spec_sha256 = 94be3bfc…
+```
+
+**Zwei Dinge macht diese Datei:**
+
+1. **Sie verhindert den häufigsten Fehlalarm.** Wer den Prompt ändert,
+   bekommt beim nächsten Lauf einen Fehler und Exit-Code 3 — statt
+   eines abweichenden Digests, der wie ein Befund aussieht:
+
+   ```
+   myl-test: Der Testplan wurde verändert.
+        Prüfsumme in der Datei: 94be3bfc…
+        tatsächlicher Inhalt:   5b6bde79…
+        Verwende die Originaldatei des Koordinators …
+   ```
+
+   Der Prompt steht in Anführungszeichen, damit auch ein
+   Randleerzeichen erhalten bleibt — es ist Teil des Prompts und
+   verändert das Ergebnis.
+
+2. **Sie sortiert die Protokolle.** Die ersten acht Zeichen der
+   Prüfsumme benennen das Protokollverzeichnis:
+
+   ```text
+   logs/
+   ├── determinismus/
+   │   └── 2026-08-18_94be3bfc/
+   │       ├── 081222-aarch64-macos-reference.jsonl
+   │       └── 143515-x86-64-linux-avx2.jsonl
+   └── stack/
+       └── 2026-08-18_94be3bfc/
+   ```
+
+   Alle Teilnehmer mit demselben Plan landen im **gleichnamigen
+   Ordner** — auf jeder Maschine. Wer versehentlich andere Parameter
+   nimmt, landet sichtbar woanders. Die Zuordnungsarbeit entfällt.
+   Der Dateiname trägt Uhrzeit und Hardware-Kurzform, damit sich die
+   Protokolle mehrerer Maschinen in einem Ordner nicht überschreiben.
+
+Ohne Plan läuft alles weiter wie bisher; die Kennung heißt dann
+`ohne-plan`.
+
+---
+
 ## 1. Für Teilnehmer — die Kurzfassung
 
 ### 1.1 Einmalig einrichten
@@ -47,6 +104,19 @@ cargo run --release --bin myl-test
 ```
 
 Ohne Unterbefehl öffnet sich das Menü. Alles Weitere per Ziffer.
+
+**Hast du eine `.plan`-Datei bekommen?** Dann als Erstes **Menüpunkt 8**
+(Testplan laden) — danach laufen alle Prüfungen mit den Werten des
+Koordinators, und die Protokolle landen im richtigen Ordner.
+
+Oder direkt:
+
+```bash
+cargo run --release --bin myl-test -- --plan cross-arch.plan determinismus
+```
+
+**Ändere die Plandatei nicht.** Der Client lehnt eine veränderte Datei
+ab — genau dafür ist die Prüfsumme da.
 
 ### 1.3 Was du ausführst
 
@@ -77,7 +147,24 @@ werden.
 
 ## 2. Für Koordinatoren — das Verfahren
 
-### 2.1 Vorher festlegen und an alle verteilen
+### 2.1 Plan erzeugen und verteilen
+
+```bash
+myl-test plan \
+  --plan-id 2026-08-18-cross-arch-01 \
+  --prompt "Die Hauptstadt von Frankreich ist" \
+  --steps 6 --shards 4 \
+  --out cross-arch.plan
+```
+
+Oder im Menü über **Punkt 9**. Der Client zeigt danach die
+Einstellungs-ID und den Ordner, in dem alle Protokolle landen werden.
+
+Die Datei `cross-arch.plan` unverändert an alle Teilnehmer schicken —
+Chat, Mail, Repository, egal. Sie ist reiner Text und enthält keine
+personenbezogenen Daten.
+
+### 2.2 Was der Plan festlegt
 
 | Parameter | Beispiel | Warum es exakt gleich sein muss |
 |---|---|---|
@@ -85,39 +172,44 @@ werden.
 | Token (`--steps`) | `8` | Bestimmt, wie viele Schritte in den Digest eingehen |
 | θ_v / Artefaktstand | `qwen2.5-0.5b`, Stand vom … | Ein anderes Modell → anderer Digest, völlig zu Recht |
 
-**Tipp:** Verteile die Parameter als fertige Befehlszeile, nicht als
-Fließtext. Ein Leerzeichen zu viel im Prompt kostet einen Testlauf.
+Diese Werte stehen im Plan und sind durch die Prüfsumme abgesichert.
+**`plan_id` geht bewusst nicht in die Prüfsumme ein** — zwei
+Koordinatoren, die denselben Test unter verschiedenen Namen fahren,
+sollen vergleichbare Ergebnisse bekommen.
+
+### 2.3 Auswerten
+
+Alle Protokolle desselben Plans liegen im gleichnamigen Ordner — die
+Teilnehmerdateien einfach dort hineinlegen:
 
 ```bash
-cargo run --release --bin myl-test -- determinismus \
-  --prompt "Die Hauptstadt von Frankreich ist" --steps 8
-```
+cd logs/determinismus/2026-08-18_94be3bfc/
 
-### 2.2 Auswerten
-
-Aus jedem Protokoll drei Werte ziehen:
-
-```bash
 grep '"name":"hardware_fingerprint"' *.jsonl   # muss sich unterscheiden
 grep '"name":"determinismus"'        *.jsonl   # muss übereinstimmen
-grep '"name":"stack_gesamt"'         *.jsonl   # muss übereinstimmen
 grep '"key":"backend_selected"'      *.jsonl   # zur Einordnung
+grep '"key":"einstellungen_id"'      *.jsonl   # muss überall gleich sein
 ```
 
-### 2.3 Urteilstabelle
+Die letzte Zeile ist die Gegenprobe: Steht dort bei jemandem etwas
+anderes, hat er einen anderen Plan verwendet — dann ist ein Vergleich
+gegenstandslos, ganz gleich was die Digests sagen.
+
+### 2.4 Urteilstabelle
 
 | Fingerabdrücke | Digests | Urteil |
 |---|---|---|
 | verschieden | gleich | ✅ **Nachweis erbracht** — für diese Architekturen und Backends |
 | **gleich** | gleich | ⚠️ **Nichts bewiesen.** Es war dieselbe Maschinenklasse. Andere Hardware besorgen. |
-| verschieden | **verschieden** | 🔴 **Befund.** Erst die drei Ausschlussfragen in 2.4 durchgehen. |
+| verschieden | **verschieden** | 🔴 **Befund.** Erst die drei Ausschlussfragen in 2.5 durchgehen. |
 
-### 2.4 Bei verschiedenen Digests — in dieser Reihenfolge prüfen
+### 2.5 Bei verschiedenen Digests — in dieser Reihenfolge prüfen
 
-1. **Ist der Prompt zeichengleich?**
-   `grep '"prompt_sha256"' *.jsonl` — genau dafür steht der Hash im
-   Protokoll. Unterschiedliche Hashes heißen: unterschiedliche Prompts,
-   kein Befund.
+1. **Haben alle denselben Plan verwendet?**
+   `grep '"key":"einstellungen_id"' *.jsonl` — bei gleichem Plan steht
+   überall derselbe Wert, und die Protokolle liegen ohnehin im selben
+   Ordner. Zusätzlich `grep '"prompt_sha256"' *.jsonl` als Gegenprobe
+   auf den Prompt selbst.
 2. **Ist θ_v identisch?**
    `grep '"kind":"artifact"' *.jsonl` — verschiedene Modelldimensionen
    oder Artefaktstände erklären jeden Unterschied.
@@ -136,7 +228,7 @@ ist es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
   Grund ist eine Gleitkomma-Operation, die in den Rechenpfad geraten ist.
   `INTEGER_LLM/tests/audit/test_no_float.py` ist der erste Griff.
 
-### 2.5 Ergebnis festhalten
+### 2.6 Ergebnis festhalten
 
 Laufprotokolle sind flüchtig (`logs/` ist gitignored). Ein bestätigter
 Cross-Hardware-Nachweis gehört dauerhaft nach
@@ -223,6 +315,12 @@ Im Debug-Build ~40 s je Durchlauf. Immer `--release` verwenden.
 `MYL_NO_BANNER=1` setzen oder `--quiet` verwenden. In Skripten ohnehin
 zu empfehlen.
 
+**„Der Testplan wurde verändert"**
+Die Datei wurde nach dem Erzeugen bearbeitet — auch ein zusätzliches
+Leerzeichen im Prompt zählt. Originaldatei vom Koordinator neu anfordern.
+Kommentarzeilen (`#`) dürfen dagegen frei ergänzt werden, sie gehen
+nicht in die Prüfsumme ein.
+
 **Zwei Läufe auf derselben Maschine ergeben verschiedene Digests**
 Das wäre schwerwiegend — die Determinismusprüfung meldet es als
 `ABWEICHUNG`. Protokoll sichern und melden; hier liegt kein
@@ -238,6 +336,7 @@ diesen Lauf.
 ## 7. Meldevorlage
 
 ```
+Testplan:        <plan_id>   (Einstellungs-ID: <einstellungen_id>)
 Maschine:        z. B. Apple M2 Pro / Ryzen 5950X
 Architektur:     aus dem Protokoll (arch)
 Betriebssystem:  aus dem Protokoll (os)
@@ -256,6 +355,18 @@ Anhang:          <lauf-id>.jsonl
 ---
 
 ## Changelog
+
+### v1.1.0 – 2026-08-18
+- **Testplan ergänzt** (Abschnitt 0a): Die Vorgabe der Parameter ist
+  jetzt eine Datei mit Prüfsumme statt einer Bitte im Fließtext. Der
+  häufigste Fehlalarm — ein versehentlich veränderter Prompt, der wie
+  ein Befund an der Kernthese aussieht — ist damit technisch
+  ausgeschlossen.
+- **Protokoll-Ablage** nach Prüflauf, Datum und Einstellungs-Kennung.
+  Alle Teilnehmer eines Plans landen im gleichnamigen Ordner; die
+  Zuordnungsarbeit beim Auswerten entfällt.
+- Abschnitt 2 auf das Planverfahren umgestellt, neue Gegenprobe über
+  `einstellungen_id`, Meldevorlage um den Plan erweitert.
 
 ### v1.0.0 – 2026-08-18
 - Erstfassung. Vorher gab es nur acht Zeilen im README, die zwar die

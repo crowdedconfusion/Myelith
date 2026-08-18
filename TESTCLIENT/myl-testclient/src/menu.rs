@@ -14,7 +14,9 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 use crate::logging::RunLog;
-use crate::{banner, runs, stack};
+use crate::logging::LogZiel;
+use crate::spec::TestPlan;
+use crate::{banner, hardware, runs, stack};
 
 /// Laufeinstellungen, die im Menü verändert werden können.
 pub struct Einstellungen {
@@ -23,6 +25,30 @@ pub struct Einstellungen {
     pub shards: usize,
     pub artifacts: PathBuf,
     pub logs: PathBuf,
+    /// Kurzkennung der Einstellungen — benennt das Protokollverzeichnis.
+    /// `ohne-plan`, solange kein Testplan geladen wurde.
+    pub einstellungen_id: String,
+}
+
+impl Einstellungen {
+    /// Baut den zu den aktuellen Werten passenden Testplan.
+    fn als_plan(&self) -> TestPlan {
+        TestPlan {
+            plan_id: "unbenannt".to_string(),
+            prompt: self.prompt.clone(),
+            steps: self.steps,
+            shards: self.shards,
+            model: crate::runs::DEFAULT_MODEL.to_string(),
+        }
+    }
+
+    /// Übernimmt einen geladenen Plan.
+    fn uebernehmen(&mut self, plan: &TestPlan) {
+        self.prompt = plan.prompt.clone();
+        self.steps = plan.steps;
+        self.shards = plan.shards;
+        self.einstellungen_id = plan.short_id();
+    }
 }
 
 impl Einstellungen {
@@ -33,6 +59,7 @@ impl Einstellungen {
         println!("    Shards      {}", self.shards);
         println!("    Artefakte   {}", kurz(&self.artifacts));
         println!("    Protokolle  {}", kurz(&self.logs));
+        println!("    Einstellungs-ID {}", self.einstellungen_id);
     }
 }
 
@@ -73,6 +100,10 @@ const MENUE: &str = "\
 
    7  Anleitung für Tests auf mehreren Maschinen
 
+   8  Testplan laden (vom Koordinator erhalten)
+
+   9  Testplan erzeugen und speichern (als Koordinator)
+
    0  Beenden
 ";
 
@@ -91,7 +122,7 @@ pub fn run(mut e: Einstellungen) -> bool {
     loop {
         println!("{}", MENUE);
         e.zeigen();
-        print!("\n  Auswahl [0-7]: ");
+        print!("\n  Auswahl [0-9]: ");
         let _ = io::stdout().flush();
 
         let Some(Ok(eingabe)) = zeilen.next() else {
@@ -131,6 +162,8 @@ pub fn run(mut e: Einstellungen) -> bool {
             }
             "6" => einstellungen_aendern(&mut e, &mut zeilen),
             "7" => anleitung_zeigen(),
+            "8" => plan_laden(&mut e, &mut zeilen),
+            "9" => plan_erzeugen(&e, &mut zeilen),
             "0" | "q" | "quit" | "exit" => {
                 println!("  Fertig.");
                 return letztes_ergebnis;
@@ -152,9 +185,61 @@ fn ja_nein(b: bool) -> &'static str {
 
 /// Führt einen Lauf mit eigenem Protokoll aus.
 fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) -> bool {
-    let mut log = RunLog::new(&e.logs, befehl, true);
+    let hw = hardware::Fingerprint::collect().short_id();
+    let ziel = LogZiel::neu(&e.logs, befehl, &e.einstellungen_id, &hw);
+    let mut log = RunLog::mit_ziel(ziel, true);
     let ok = f(&mut log);
     log.finish(ok)
+}
+
+/// Menüpunkt 8: einen erhaltenen Testplan laden.
+fn plan_laden(e: &mut Einstellungen, zeilen: &mut impl Iterator<Item = io::Result<String>>) {
+    print!("  Pfad zur Plandatei: ");
+    let _ = io::stdout().flush();
+    let Some(Ok(pfad)) = zeilen.next() else { return };
+    let pfad = pfad.trim();
+    if pfad.is_empty() {
+        return;
+    }
+    match TestPlan::load(std::path::Path::new(pfad)) {
+        Ok(plan) => {
+            println!("\n  Plan geladen: {}", plan.plan_id);
+            println!("    Prompt          {:?}", plan.prompt);
+            println!("    Token           {}", plan.steps);
+            println!("    Shards          {}", plan.shards);
+            println!("    Modell          {}", plan.model);
+            println!("    Einstellungs-ID {}", plan.short_id());
+            println!("\n  Ab jetzt laufen alle Prüfungen mit diesen Werten.");
+            e.uebernehmen(&plan);
+        }
+        Err(err) => println!("\n  {}", err),
+    }
+}
+
+/// Menüpunkt 9: einen Testplan erzeugen und verteilen.
+fn plan_erzeugen(e: &Einstellungen, zeilen: &mut impl Iterator<Item = io::Result<String>>) {
+    print!("  Kennung des Durchgangs (z. B. 2026-08-18-cross-arch-01): ");
+    let _ = io::stdout().flush();
+    let Some(Ok(kennung)) = zeilen.next() else { return };
+    let kennung = kennung.trim();
+    let kennung = if kennung.is_empty() { "unbenannt" } else { kennung };
+
+    let mut plan = e.als_plan();
+    plan.plan_id = kennung.to_string();
+    let ziel = std::path::PathBuf::from(format!("{}.plan", kennung));
+
+    match plan.save(&ziel) {
+        Ok(()) => {
+            println!("\n  Geschrieben: {}", ziel.display());
+            println!("    Einstellungs-ID {}", plan.short_id());
+            println!("\n  Diese Datei unverändert an alle Teilnehmer schicken.");
+            println!("  Sie laden sie über Menüpunkt 8 oder mit");
+            println!("      myl-test --plan {} determinismus", ziel.display());
+            println!("\n  Alle Protokolle landen dann unter");
+            println!("      logs/<befehl>/<datum>_{}/", plan.short_id());
+        }
+        Err(err) => println!("\n  {}", err),
+    }
 }
 
 fn einstellungen_aendern(
@@ -263,7 +348,7 @@ mod tests {
 
     #[test]
     fn menue_nennt_alle_punkte() {
-        for punkt in ["1", "2", "3", "4", "5", "6", "7", "0"] {
+        for punkt in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] {
             assert!(
                 MENUE.contains(&format!("   {}  ", punkt)),
                 "Menüpunkt {} fehlt",

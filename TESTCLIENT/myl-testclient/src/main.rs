@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use myl_testclient::menu::{self, Einstellungen};
 use myl_testclient::{
     banner, default_artifact_dir, default_log_dir, run_determinism, run_hardware, run_shard,
-    run_stack, RunLog,
+    run_stack, LogZiel, RunLog, TestPlan,
 };
 
 const HILFE: &str = "\
@@ -30,13 +30,19 @@ BEFEHLE
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
                     Braucht kein Modell.
+    plan            Testplan erzeugen (Koordinator) — die Datei, die an
+                    alle Teilnehmer geht. Siehe TESTPLAN unten.
     menu            Interaktives Menü (wie ohne Befehl).
 
 OPTIONEN
     --prompt <TEXT>     Eingabetext (Vorgabe: \"Die Hauptstadt von Frankreich ist\")
     --steps <N>         Zu erzeugende Token (Vorgabe: 8)
     --shards <N>        Anzahl Shards für `shard` (Vorgabe: 4)
+    --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
+                        Modell und prüft die Datei gegen ihre Prüfsumme.
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
+    --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
+    --out <DATEI>       Zieldatei beim Erzeugen eines Plans
     --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/myl-testclient/logs)
     --quiet             Nur ins Protokoll schreiben, nicht aufs Terminal
                         (unterdrückt auch das Banner)
@@ -48,6 +54,22 @@ PROTOKOLLE
     Jeder Lauf schreibt <lauf-id>.jsonl (maschinenlesbar, für den
     Vergleich zwischen Maschinen) und <lauf-id>.log (Fließtext).
     Prompttexte werden gehasht, nicht gespeichert.
+
+TESTPLAN
+    Koordinator erzeugt und verschickt:
+        myl-test plan --plan-id 2026-08-18-arch --prompt \"...\" --steps 8
+        → schreibt <plan-id>.plan
+
+    Teilnehmer verwenden ihn:
+        myl-test --plan 2026-08-18-arch.plan determinismus
+
+    Die Datei trägt eine Prüfsumme über Prompt, Token, Shards und
+    Modell. Wird sie verändert, verweigert der Client den Lauf — ein
+    Tippfehler soll nicht als Befund durchgehen.
+
+PROTOKOLL-ABLAGE
+    logs/<befehl>/<datum>_<einstellungs-id>/<uhrzeit>-<hardware>.jsonl
+    Alle Teilnehmer mit demselben Plan landen im gleichnamigen Ordner.
 
 CROSS-HARDWARE-NACHWEIS
     1. Auf jeder Maschine:  myl-test hardware
@@ -65,6 +87,9 @@ struct Args {
     artifacts: PathBuf,
     logs: PathBuf,
     quiet: bool,
+    plan: Option<PathBuf>,
+    plan_id: Option<String>,
+    out: Option<PathBuf>,
 }
 
 impl Args {
@@ -77,6 +102,9 @@ impl Args {
             artifacts: default_artifact_dir(),
             logs: default_log_dir(),
             quiet: false,
+            plan: None,
+            plan_id: None,
+            out: None,
         }
     }
 }
@@ -86,22 +114,14 @@ fn parse() -> Result<Args, String> {
     if raw.iter().any(|a| a == "-h" || a == "--help") {
         return Err(String::new());
     }
-    // Ohne Unterbefehl (oder nur mit Optionen) ins Menü.
-    if raw.is_empty() || raw[0].starts_with('-') {
-        let mut a = Args {
-            command: "menu".to_string(),
-            ..Args::vorgaben()
-        };
-        a.quiet = raw.iter().any(|x| x == "--quiet");
-        return Ok(a);
-    }
 
-    let mut a = Args {
-        command: raw[0].clone(),
-        ..Args::vorgaben()
-    };
+    let mut a = Args::vorgaben();
+    let mut befehl: Option<String> = None;
 
-    let mut i = 1;
+    // Optionen dürfen VOR und NACH dem Befehl stehen — `myl-test --plan x
+    // stack` ist genauso gültig wie `myl-test stack --plan x`. Der erste
+    // Wert, der keine Option und kein Optionswert ist, ist der Befehl.
+    let mut i = 0;
     while i < raw.len() {
         let need = |i: usize, name: &str| -> Result<String, String> {
             raw.get(i + 1)
@@ -133,19 +153,83 @@ fn parse() -> Result<Args, String> {
                 a.logs = PathBuf::from(need(i, "--logs")?);
                 i += 2;
             }
+            "--plan" => {
+                a.plan = Some(PathBuf::from(need(i, "--plan")?));
+                i += 2;
+            }
+            "--plan-id" => {
+                a.plan_id = Some(need(i, "--plan-id")?);
+                i += 2;
+            }
+            "--out" => {
+                a.out = Some(PathBuf::from(need(i, "--out")?));
+                i += 2;
+            }
             "--quiet" => {
                 a.quiet = true;
                 i += 1;
             }
-            "-h" | "--help" => return Err(String::new()),
-            other => return Err(format!("unbekannte Option: {}", other)),
+            wort if wort.starts_with('-') => {
+                return Err(format!("unbekannte Option: {}", wort));
+            }
+            wort => {
+                if befehl.is_some() {
+                    return Err(format!("unerwartetes Argument: {}", wort));
+                }
+                befehl = Some(wort.to_string());
+                i += 1;
+            }
         }
     }
+
+    // Ohne Unterbefehl ins Menü.
+    a.command = befehl.unwrap_or_else(|| "menu".to_string());
 
     if a.steps == 0 {
         return Err("--steps muss > 0 sein".into());
     }
     Ok(a)
+}
+
+fn plan_erzeugen(args: &Args) -> ExitCode {
+    let plan = TestPlan {
+        plan_id: args
+            .plan_id
+            .clone()
+            .unwrap_or_else(|| "unbenannt".to_string()),
+        prompt: args.prompt.clone(),
+        steps: args.steps,
+        shards: args.shards,
+        model: myl_testclient::DEFAULT_MODEL.to_string(),
+    };
+    let ziel = args
+        .out
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("{}.plan", plan.plan_id)));
+
+    if let Err(e) = plan.save(&ziel) {
+        eprintln!("myl-test: {}", e);
+        return ExitCode::FAILURE;
+    }
+
+    println!("Testplan geschrieben: {}", ziel.display());
+    println!();
+    println!("  Kennung        {}", plan.plan_id);
+    println!("  Prompt         {:?}", plan.prompt);
+    println!("  Token          {}", plan.steps);
+    println!("  Shards         {}", plan.shards);
+    println!("  Modell         {}", plan.model);
+    println!("  Einstellungs-ID {}", plan.short_id());
+    println!();
+    println!("Diese Datei unverändert an alle Teilnehmer schicken. Sie starten damit:");
+    println!("    myl-test --plan {} determinismus", ziel.display());
+    println!();
+    println!("Alle Protokolle landen dann unter");
+    println!(
+        "    logs/<befehl>/<datum>_{}/  —  ohne Zuordnungsarbeit vergleichbar.",
+        plan.short_id()
+    );
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
@@ -162,6 +246,30 @@ fn main() -> ExitCode {
         }
     };
 
+    // Testplan laden, falls angegeben — er überschreibt die Optionen.
+    let mut args = args;
+    let mut einstellungen_id = "ohne-plan".to_string();
+    if let Some(pfad) = args.plan.clone() {
+        match TestPlan::load(&pfad) {
+            Ok(plan) => {
+                println!("Testplan: {} ({})", plan.plan_id, pfad.display());
+                println!("  Einstellungs-ID {}\n", plan.short_id());
+                einstellungen_id = plan.short_id();
+                args.prompt = plan.prompt;
+                args.steps = plan.steps;
+                args.shards = plan.shards;
+            }
+            Err(e) => {
+                eprintln!("myl-test: {}", e);
+                return ExitCode::from(3);
+            }
+        }
+    }
+
+    if args.command == "plan" {
+        return plan_erzeugen(&args);
+    }
+
     if args.command == "menu" {
         let ok = menu::run(Einstellungen {
             prompt: args.prompt,
@@ -169,13 +277,18 @@ fn main() -> ExitCode {
             shards: args.shards,
             artifacts: args.artifacts,
             logs: args.logs,
+            einstellungen_id,
         });
         return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
 
     let echo = !args.quiet;
     banner::print_if(echo);
-    let mut log = RunLog::new(&args.logs, &args.command, echo);
+    let hardware = myl_testclient::Fingerprint::collect().short_id();
+    let mut log = RunLog::mit_ziel(
+        LogZiel::neu(&args.logs, &args.command, &einstellungen_id, &hardware),
+        echo,
+    );
 
     let ok = match args.command.as_str() {
         "hardware" => run_hardware(&mut log),

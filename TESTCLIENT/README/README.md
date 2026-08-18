@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.2.0
+> **Version:** 0.3.0
 > **Datum:** 2026-08-18
 > **Status:** Phase 1 vollständig; dazu Protokoll-Durchlauf über alle
 > Komponenten, interaktives Menü und Banner (32 Tests grün, alle Läufe
@@ -39,8 +39,52 @@ Jeder Lauf schreibt deshalb **immer** zwei Dateien nach `logs/`:
 | `<lauf-id>.jsonl` | Eine JSON-Zeile je Ereignis, stabile Feldnamen und Reihenfolge — die Fassung, die zwischen Maschinen gediffed wird |
 | `<lauf-id>.log` | Dieselben Ereignisse als Fließtext, für die Fehlersuche am Terminal |
 
-Die Lauf-Kennung ist `<unix-sekunden>-<befehl>`: sortierbar und ohne
-Rückfrage einem Befehl zuzuordnen.
+**Sortiert nach Prüflauf, Datum und Einstellungen:**
+
+```text
+logs/
+├── determinismus/
+│   └── 2026-08-18_94be3bfc/       ← Datum + Kurzkennung der Einstellungen
+│       ├── 081222-aarch64-macos-reference.jsonl
+│       └── 143515-x86-64-linux-avx2.jsonl
+└── stack/
+    └── 2026-08-18_94be3bfc/
+```
+
+Die Kurzkennung ist der Hash genau der Parameter, die gleich sein
+müssen (Prompt, Token, Shards, Modell). **Alle Teilnehmer eines
+Testplans landen im gleichnamigen Ordner** — auf jeder Maschine. Wer
+versehentlich andere Parameter nimmt, landet sichtbar woanders; die
+Zuordnungsarbeit beim Auswerten entfällt. Der Dateiname trägt Uhrzeit
+und Hardware-Kurzform, damit sich Protokolle mehrerer Maschinen in
+einem Ordner nicht überschreiben.
+
+## Testplan — die Datei, die der Koordinator verteilt
+
+Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
+
+```bash
+# Koordinator:
+myl-test plan --plan-id 2026-08-18-cross-arch-01 \
+  --prompt "Die Hauptstadt von Frankreich ist" --steps 6 --shards 4 \
+  --out cross-arch.plan
+
+# Teilnehmer:
+myl-test --plan cross-arch.plan determinismus
+```
+
+Die Datei trägt eine Prüfsumme über Prompt, Token, Shards und Modell.
+Wird sie verändert, **verweigert der Client den Lauf** (Exit-Code 3)
+statt einen abweichenden Digest zu liefern, der wie ein Befund
+aussieht. Der Prompt steht in Anführungszeichen, damit auch ein
+Randleerzeichen erhalten bleibt.
+
+Kommentarzeilen dürfen frei ergänzt werden — sie gehen nicht in die
+Prüfsumme ein. `plan_id` ebenfalls nicht: Zwei Koordinatoren mit
+demselben Test unter verschiedenen Namen sollen vergleichbare
+Ergebnisse bekommen.
+
+Im Menü: Punkt 9 erzeugt, Punkt 8 lädt.
 
 **Prompttexte werden gehasht, nicht gespeichert.** Testprotokolle wandern
 per Copy-Paste in Tickets und Chats; ein Prompt, der dabei mitwandert,
@@ -166,6 +210,7 @@ TESTCLIENT/
     │   ├── banner.rs         ASCII-Banner zum Projektbanner
     │   ├── menu.rs           interaktives Menü
     │   ├── runs.rs           Hardware, Determinismus, Shards
+    │   ├── spec.rs           Testplan (erzeugen, prüfen, laden)
     │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
     └── logs/                 Laufprotokolle (gitignored)
 ```
@@ -183,6 +228,34 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.3.0 – 2026-08-18 (Testplan und sortierte Ablage)
+
+- **Testplan** (`spec.rs`): Der Koordinator erzeugt eine `.plan`-Datei
+  mit Prompt, Token, Shards, Modell und einer Prüfsumme darüber; die
+  Teilnehmer laden sie. Eine veränderte Datei wird abgelehnt
+  (Exit-Code 3). Damit ist der häufigste Fehlalarm ausgeschlossen: ein
+  versehentlich abweichender Prompt, dessen anderer Digest wie ein
+  Befund an der Kernthese aussieht.
+- **Der Prompt steht in Anführungszeichen.** Beim Bauen fiel auf, dass
+  ein führendes oder abschließendes Leerzeichen im ungequoteten Format
+  beim Einlesen verschwindet — es ist aber Teil des Prompts und
+  verändert den Digest. Ein Test deckt Randleerzeichen, `=`,
+  Anführungszeichen, Backslash und Zeilenumbrüche ab.
+- **Protokoll-Ablage** nach `logs/<befehl>/<datum>_<einstellungs-id>/`
+  mit `<uhrzeit>-<hardware>` als Dateiname. Alle Teilnehmer eines Plans
+  landen im gleichnamigen Ordner. Die Einstellungs-Kennung steht auch
+  **im** Protokoll, nicht nur im Pfad — Protokolle werden einzeln
+  weitergereicht.
+- Datum und Uhrzeit in UTC, von Hand aus Unix-Sekunden gerechnet (kein
+  Datums-Crate). UTC bewusst: Teilnehmer sitzen in verschiedenen
+  Zeitzonen, und ein Ordner je Zeitzone wäre genau die
+  Zuordnungsarbeit, die vermieden werden soll.
+- Argumentauswertung akzeptiert Optionen **vor** dem Befehl
+  (`myl-test --plan x stack`) — beim ersten Praxistest landete genau
+  dieser Aufruf im Menü statt im Prüflauf.
+- Menüpunkte 8 (Plan laden) und 9 (Plan erzeugen).
+- 32 → 50 Tests.
 
 ### v0.2.0 – 2026-08-18
 

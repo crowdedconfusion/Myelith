@@ -1,9 +1,10 @@
 //! Begrüßungsbanner.
 //!
 //! Greift das Projektbanner (`README/Grafiken/myelith-banner.png`) auf:
-//! ein Netz aus Knoten und dünnen Verbindungen, darin der Schriftzug,
-//! darunter die Zeile „Ein dezentrales Netzwerk, in dem Konsensarbeit
-//! ein agentisches Sprachmodell betreibt" und die drei Schlagworte.
+//! ein Netz aus Knoten und dünnen Verbindungen, darin der Schriftzug.
+//! Die Tagline des Projektbanners bleibt bewusst weg — im Terminal
+//! steht darunter ohnehin sofort das Menü, und drei Textzeilen zwischen
+//! Schriftzug und Auswahl drängen die eigentliche Bedienung nach unten.
 //!
 //! **Breite:** 58 Zeichen im Schriftzug, das Ganze bleibt unter 80
 //! Spalten — Terminals unter 80 Zeichen sind selten, aber ein Banner,
@@ -28,13 +29,6 @@ pub const BANNER: &str = r#"
   ██║ ╚═╝ ██║   ██║   ███████╗███████╗██║   ██║   ██║  ██║
   ╚═╝     ╚═╝   ╚═╝   ╚══════╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═╝
 
-              ────────────────────────────
-
-     Ein dezentrales Netzwerk, in dem Konsensarbeit
-            ein agentisches Sprachmodell betreibt
-
-   Proof of Inference · bit-exakte Ganzzahl-Inferenz
-                    · Burn-and-Mint
 
     ∘──·        ╲          ·────∘         ╱        ·
    ╱     ╲       ∘────────╱      ╲   ·───╱   ╲    ╱
@@ -77,14 +71,15 @@ mod tests {
         assert!(SUBTITLE.chars().count() <= 78);
     }
 
+    /// Der Schriftzug und das Netzmotiv sind der Wiedererkennungswert —
+    /// sie müssen bleiben. Die Tagline steht bewusst nicht im Banner
+    /// (siehe Modul-Doku), sondern gekürzt im Untertitel.
     #[test]
-    fn banner_traegt_den_schriftzug_und_die_schlagworte() {
-        assert!(BANNER.contains("Proof of Inference"));
-        assert!(BANNER.contains("Burn-and-Mint"));
-        assert!(BANNER.contains("Ganzzahl-Inferenz"));
-        assert!(BANNER.contains("dezentrales Netzwerk"));
-        // Der Schriftzug besteht aus Blockzeichen, nicht aus Buchstaben.
-        assert!(BANNER.contains('█'));
+    fn banner_traegt_schriftzug_und_netzmotiv() {
+        assert!(BANNER.contains('█'), "Blockschriftzug fehlt");
+        assert!(BANNER.contains('∘'), "Netzknoten fehlen");
+        assert!(BANNER.contains('─'), "Netzverbindungen fehlen");
+        assert!(!SUBTITLE.trim().is_empty(), "Untertitel fehlt");
     }
 
     /// Der Schriftzug muss über alle sechs Zeilen gleich breit sein —

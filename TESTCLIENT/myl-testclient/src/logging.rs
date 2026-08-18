@@ -13,6 +13,27 @@
 //! - **`<run-id>.log`** — dieselben Ereignisse als Fließtext, für die
 //!   Fehlersuche am Terminal.
 //!
+//! ## Wo die Dateien liegen
+//!
+//! ```text
+//! logs/
+//! └── determinismus/            ← je Prüflauf ein Ordner
+//!     └── 2026-08-18_9f2c1a4b/  ← Datum + Kurzkennung der Einstellungen
+//!         ├── 143052-aarch64-macos-reference.jsonl
+//!         └── 143052-aarch64-macos-reference.log
+//! ```
+//!
+//! Die **Kurzkennung** ist die halbe Miete beim Vergleich zwischen
+//! Maschinen: Sie ist der Hash genau der Parameter, die gleich sein
+//! müssen (Prompt, Tokenzahl, Shards, Modell — siehe [`crate::spec`]).
+//! Alle Teilnehmer mit demselben Testplan landen im **gleichnamigen
+//! Ordner**; wer versehentlich andere Parameter nimmt, landet sichtbar
+//! woanders. Die Zuordnungsarbeit entfällt damit ganz.
+//!
+//! Der Dateiname trägt Uhrzeit und Hardware-Kurzform — damit sind auch
+//! die Protokolle mehrerer Maschinen in einem Ordner ohne Umbenennen
+//! unterscheidbar.
+//!
 //! Beide werden **immer** geschrieben, auch bei Abbruch. Ein Lauf, der
 //! ohne Protokoll endet, ist ein Fehler des Clients, kein Sonderfall.
 //!
@@ -234,6 +255,100 @@ pub fn sha256_hex(data: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Beschreibt, wohin ein Lauf protokolliert wird.
+///
+/// Getrennt von [`RunLog`], damit die Ablagelogik für sich testbar ist —
+/// sie ist der Teil, der beim Vergleich zwischen Maschinen zählt.
+#[derive(Debug, Clone)]
+pub struct LogZiel {
+    /// Wurzelverzeichnis aller Protokolle.
+    pub wurzel: PathBuf,
+    /// Name des Prüflaufs (`hardware`, `determinismus`, `shard`, `stack`).
+    pub befehl: String,
+    /// Datum als `JJJJ-MM-TT`.
+    pub datum: String,
+    /// Kurzkennung der Einstellungen (8 Hexzeichen) oder `ohne-plan`.
+    pub einstellungen: String,
+    /// Hardware-Kurzform für den Dateinamen.
+    pub hardware: String,
+    /// Uhrzeit als `HHMMSS`.
+    pub uhrzeit: String,
+}
+
+impl LogZiel {
+    /// Baut das Ziel aus Befehl und Einstellungs-Kurzkennung.
+    pub fn neu(wurzel: &Path, befehl: &str, einstellungen: &str, hardware: &str) -> Self {
+        let (datum, uhrzeit) = datum_und_uhrzeit();
+        Self {
+            wurzel: wurzel.to_path_buf(),
+            befehl: befehl.to_string(),
+            datum,
+            einstellungen: einstellungen.to_string(),
+            hardware: saeubern(hardware),
+            uhrzeit,
+        }
+    }
+
+    /// Verzeichnis dieses Laufs: `<wurzel>/<befehl>/<datum>_<einstellungen>`.
+    pub fn verzeichnis(&self) -> PathBuf {
+        self.wurzel
+            .join(&self.befehl)
+            .join(format!("{}_{}", self.datum, self.einstellungen))
+    }
+
+    /// Dateiname ohne Endung: `<uhrzeit>-<hardware>`.
+    pub fn dateiname(&self) -> String {
+        format!("{}-{}", self.uhrzeit, self.hardware)
+    }
+}
+
+/// Ersetzt alles, was in Dateinamen stört.
+fn saeubern(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// Datum und Uhrzeit als `(JJJJ-MM-TT, HHMMSS)` in UTC.
+///
+/// Von Hand gerechnet statt mit einem Datums-Crate: Der Client soll
+/// ohne zusätzliche Abhängigkeiten bauen, und für die Ablage reicht
+/// eine Umrechnung aus Unix-Sekunden. UTC bewusst — Teilnehmer sitzen
+/// in verschiedenen Zeitzonen, und ein Ordner je Zeitzone wäre genau
+/// die Zuordnungsarbeit, die vermieden werden soll.
+fn datum_und_uhrzeit() -> (String, String) {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let tage = secs / 86_400;
+    let rest = secs % 86_400;
+    let (h, m, s) = (rest / 3600, (rest % 3600) / 60, rest % 60);
+
+    // Zivildatum aus Tagen seit 1970 (Howard Hinnants Algorithmus).
+    let z = tage as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mon = if mp < 10 { mp + 3 } else { mp - 9 };
+    let jahr = if mon <= 2 { y + 1 } else { y };
+
+    (
+        format!("{:04}-{:02}-{:02}", jahr, mon, d),
+        format!("{:02}{:02}{:02}", h, m, s),
+    )
+}
+
 /// Schreibt ein Laufprotokoll in zwei Fassungen.
 pub struct RunLog {
     run_id: String,
@@ -248,19 +363,25 @@ pub struct RunLog {
 }
 
 impl RunLog {
-    /// Legt ein Protokoll unter `dir/<run-id>.{jsonl,log}` an.
-    ///
-    /// Die Lauf-Kennung ist `<unix-sekunden>-<befehl>` — sortierbar und
-    /// ohne Rückfrage einem Befehl zuzuordnen. Schlägt das Anlegen der
-    /// Dateien fehl, läuft der Client **trotzdem weiter** und meldet es
-    /// auf stderr: Ein fehlendes Protokoll darf einen Hardwaretest nicht
-    /// verhindern, aber es darf auch nicht unbemerkt bleiben.
+    /// Legt ein Protokoll ohne Testplan an (Kurzkennung `ohne-plan`).
     pub fn new(dir: &Path, command: &str, echo: bool) -> Self {
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let run_id = format!("{}-{}", secs, command);
+        Self::mit_ziel(
+            LogZiel::neu(dir, command, "ohne-plan", &crate::hardware::Fingerprint::collect().short_id()),
+            echo,
+        )
+    }
+
+    /// Legt ein Protokoll an dem beschriebenen Ziel an.
+    ///
+    /// Schlägt das Anlegen der Dateien fehl, läuft der Client
+    /// **trotzdem weiter** und meldet es auf stderr: Ein fehlendes
+    /// Protokoll darf einen Hardwaretest nicht verhindern, aber es darf
+    /// auch nicht unbemerkt bleiben.
+    pub fn mit_ziel(ziel: LogZiel, echo: bool) -> Self {
+        let command = ziel.befehl.clone();
+        let run_id = ziel.dateiname();
+        let dir = ziel.verzeichnis();
+        let dir = &dir;
 
         if let Err(e) = fs::create_dir_all(dir) {
             eprintln!(
@@ -296,6 +417,12 @@ impl RunLog {
         };
         log.event(Event::RunStarted {
             command: command.to_string(),
+        });
+        // Die Einstellungs-Kurzkennung gehört ins Protokoll selbst, nicht
+        // nur in den Pfad — Protokolle werden einzeln weitergereicht.
+        log.event(Event::Artifact {
+            key: "einstellungen_id".into(),
+            value: ziel.einstellungen.clone(),
         });
         log
     }
@@ -407,10 +534,11 @@ mod tests {
         let mut log = RunLog::new(&dir, "probe", false);
         log.note("hallo");
         let run_id = log.run_id().to_string();
+        let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
-        let text = fs::read_to_string(dir.join(format!("{}.log", run_id))).expect("log");
+        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
+        let text = fs::read_to_string(lauf_dir.join(format!("{}.log", run_id))).expect("log");
 
         assert!(jsonl.contains("\"kind\":\"run_started\""));
         assert!(jsonl.contains("\"kind\":\"note\""));
@@ -429,9 +557,10 @@ mod tests {
         });
         log.result("token_hash", "abc", "42 Token");
         let run_id = log.run_id().to_string();
+        let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
+        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
         for line in jsonl.lines() {
             assert!(line.starts_with('{') && line.ends_with('}'), "Zeile: {}", line);
             // Ausgewogene Anfuehrungszeichen (grobe Struktursicht).
@@ -449,9 +578,10 @@ mod tests {
         let mut log = RunLog::new(&dir, "probe", false);
         log.note("Zeile\nmit \"Anführungszeichen\" und \\Backslash\tTab");
         let run_id = log.run_id().to_string();
+        let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
+        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
         for line in jsonl.lines() {
             assert_eq!(line.lines().count(), 1, "Ereignis über mehrere Zeilen");
         }
@@ -487,8 +617,9 @@ mod tests {
         let wert = log.timed("rechnen", "", || 6 * 7);
         assert_eq!(wert, 42);
         let run_id = log.run_id().to_string();
+        let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
-        let jsonl = fs::read_to_string(dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
         assert!(jsonl.contains("\"kind\":\"step\""));
         assert!(jsonl.contains("\"name\":\"rechnen\""));
         let _ = fs::remove_dir_all(&dir);
@@ -505,13 +636,97 @@ mod tests {
         assert!(log.finish(true));
     }
 
+    /// Der Dateiname trägt Uhrzeit und Hardware, der Pfad den Befehl —
+    /// so sind Protokolle mehrerer Maschinen in einem Ordner
+    /// unterscheidbar, ohne umbenannt zu werden.
     #[test]
-    fn run_id_traegt_den_befehl() {
-        let dir = tempdir("runid");
-        let log = RunLog::new(&dir, "determinismus", false);
-        assert!(log.run_id().ends_with("-determinismus"));
+    fn ablage_nach_befehl_datum_und_einstellungen() {
+        let dir = tempdir("ablage");
+        let ziel = LogZiel::neu(&dir, "determinismus", "9f2c1a4b", "aarch64-macos-reference");
+        let pfad = ziel.verzeichnis();
+
+        assert!(pfad.ends_with(format!("{}_9f2c1a4b", ziel.datum)));
+        assert!(pfad.to_string_lossy().contains("determinismus"));
+        assert!(ziel.dateiname().ends_with("-aarch64-macos-reference"));
+        assert_eq!(ziel.datum.len(), 10, "Datum als JJJJ-MM-TT");
+        assert_eq!(ziel.uhrzeit.len(), 6, "Uhrzeit als HHMMSS");
+
+        let log = RunLog::mit_ziel(ziel, false);
+        let lauf_dir = log.dir().to_path_buf();
+        let run_id = log.run_id().to_string();
         log.finish(true);
+        assert!(lauf_dir.join(format!("{}.jsonl", run_id)).exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Zwei Läufe mit derselben Einstellungs-Kennung müssen im
+    /// **gleichen** Ordner landen — das ist der Zweck der Kennung.
+    #[test]
+    fn gleiche_einstellungen_gleicher_ordner() {
+        let dir = tempdir("gleich");
+        let a = LogZiel::neu(&dir, "determinismus", "abcd1234", "aarch64-macos-reference");
+        let b = LogZiel::neu(&dir, "determinismus", "abcd1234", "x86-64-linux-avx2");
+        assert_eq!(a.verzeichnis(), b.verzeichnis());
+        assert_ne!(a.dateiname(), b.dateiname(), "Hardware muss unterscheiden");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Verschiedene Einstellungen dürfen NICHT im selben Ordner landen —
+    /// sonst würden unvergleichbare Läufe vermischt.
+    #[test]
+    fn andere_einstellungen_anderer_ordner() {
+        let dir = tempdir("anders");
+        let a = LogZiel::neu(&dir, "determinismus", "abcd1234", "hw");
+        let b = LogZiel::neu(&dir, "determinismus", "99998888", "hw");
+        assert_ne!(a.verzeichnis(), b.verzeichnis());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Die Einstellungs-Kennung steht auch IM Protokoll, nicht nur im
+    /// Pfad — Protokolle werden einzeln weitergereicht.
+    #[test]
+    fn einstellungs_id_steht_im_protokoll() {
+        let dir = tempdir("id-im-log");
+        let log = RunLog::mit_ziel(LogZiel::neu(&dir, "stack", "deadbeef", "hw"), false);
+        let lauf_dir = log.dir().to_path_buf();
+        let run_id = log.run_id().to_string();
+        log.finish(true);
+        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        assert!(jsonl.contains("einstellungen_id"));
+        assert!(jsonl.contains("deadbeef"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Sonderzeichen in der Hardware-Kurzform dürfen keinen kaputten
+    /// Dateinamen erzeugen.
+    #[test]
+    fn dateiname_wird_gesaeubert() {
+        let dir = tempdir("saeubern");
+        let z = LogZiel::neu(&dir, "hardware", "id", "arch/os:back end");
+        assert!(!z.dateiname().contains('/'));
+        assert!(!z.dateiname().contains(':'));
+        assert!(!z.dateiname().contains(' '));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Das Datum muss ein plausibles Kalenderdatum sein — die
+    /// Umrechnung aus Unix-Sekunden ist von Hand geschrieben.
+    #[test]
+    fn datum_ist_plausibel() {
+        let (datum, uhrzeit) = datum_und_uhrzeit();
+        let teile: Vec<&str> = datum.split('-').collect();
+        assert_eq!(teile.len(), 3);
+        let jahr: i32 = teile[0].parse().expect("Jahr");
+        let monat: u32 = teile[1].parse().expect("Monat");
+        let tag: u32 = teile[2].parse().expect("Tag");
+        assert!((2020..2200).contains(&jahr), "Jahr {}", jahr);
+        assert!((1..=12).contains(&monat), "Monat {}", monat);
+        assert!((1..=31).contains(&tag), "Tag {}", tag);
+
+        let h: u32 = uhrzeit[0..2].parse().expect("Stunde");
+        let m: u32 = uhrzeit[2..4].parse().expect("Minute");
+        let s: u32 = uhrzeit[4..6].parse().expect("Sekunde");
+        assert!(h < 24 && m < 60 && s < 60);
     }
 
     #[test]

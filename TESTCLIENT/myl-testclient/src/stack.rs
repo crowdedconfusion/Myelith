@@ -653,10 +653,11 @@ mod tests {
         let mut log = RunLog::new(&dir, "stack", false);
         let ok = run_stack(&mut log);
         let run_id = log.run_id().to_string();
+        let lauf_dir = log.dir().to_path_buf();
         log.finish(ok);
 
         assert!(ok, "Stack-Durchlauf fehlgeschlagen");
-        let jsonl = std::fs::read_to_string(dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
         for stufe in [
             "krypto",
             "epochenseed",
@@ -686,6 +687,7 @@ mod tests {
         run_stack(&mut l1);
         run_stack(&mut l2);
         let (id1, id2) = (l1.run_id().to_string(), l2.run_id().to_string());
+        let (d1, d2) = (l1.dir().to_path_buf(), l2.dir().to_path_buf());
         l1.finish(true);
         l2.finish(true);
 
