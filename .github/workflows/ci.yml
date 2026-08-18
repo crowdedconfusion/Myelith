@@ -49,6 +49,7 @@ jobs:
             INTEGER_LLM/kernels
             INTEGER_LLM/runtime
             INTEGER_LLM/pipeline
+            TESTCLIENT/myl-testclient
 
       # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
       # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
@@ -67,7 +68,8 @@ jobs:
             COMPUTE_PIPELINE/myl-pod \
             INTEGER_LLM/kernels \
             INTEGER_LLM/runtime \
-            INTEGER_LLM/pipeline
+            INTEGER_LLM/pipeline \
+            TESTCLIENT/myl-testclient
           do
             echo "── clippy: $crate"
             (cd "$crate" && cargo clippy --all-targets -- -D warnings)
@@ -185,6 +187,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             COMPUTE_PIPELINE/myl-pod
+            TESTCLIENT/myl-testclient
 
       - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types
@@ -219,6 +222,13 @@ jobs:
       - name: cargo test — COMPUTE_PIPELINE (myl-pod, lib only)
         working-directory: COMPUTE_PIPELINE/myl-pod
         run: cargo test --lib --quiet
+
+      # Testclient: Die Tests decken Protokollformat und Fingerabdruck ab
+      # und laufen ohne Artefakte; die Modellläufe selbst brauchen welche
+      # und melden ihr Fehlen sauber, statt fehlzuschlagen.
+      - name: cargo test — TESTCLIENT (myl-testclient)
+        working-directory: TESTCLIENT/myl-testclient
+        run: cargo test --quiet
 
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
   # test_division.py und test_overflow.py rufen `cargo test` als

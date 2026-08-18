@@ -65,6 +65,8 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | Session-Kontrakte, Dual-LLM-Trennung | Planungsphase |
 | [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Planungsphase |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | Parameter-Registry, Modell-Updates | Planungsphase |
+| [ETHICS](ETHICS/README/README.md) | Ethische und rechtliche Standards, Manifest | Manifest v1.0.0 steht, Fahrplan steht, Design-Entscheidungen offen |
+| [TESTCLIENT](TESTCLIENT/README/README.md) | Terminal-Testclient: Hardwaretests, geshardete Inferenz | Phase 1 abgeschlossen (Hardware-Erhebung, Determinismus, Shard-Lauf mit Protokollen) |
 | [CLIENT](CLIENT/README/README.md) | Nutzer-Client inkl. Wallet | Konzeptphase |
 
 ## Lizenz

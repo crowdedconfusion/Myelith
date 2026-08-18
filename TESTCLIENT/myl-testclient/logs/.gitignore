@@ -1,0 +1,7 @@
+# Laufprotokolle sind maschinenlokal und gehören nicht ins Repository —
+# sie tragen Zeitstempel, Hardware-Fingerabdrücke und Messwerte einer
+# konkreten Maschine. Vergleichswerte, die dauerhaft gelten sollen,
+# gehören in den Fahrplan oder nach INTEGER_LLM/eval/results/.
+*.jsonl
+*.log
+!.gitignore

@@ -66,6 +66,8 @@ tests:
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | session contracts, dual-LLM separation | planning phase |
 | [TRAINING](TRAINING/README/README.md) | data provenance, robust aggregation | planning phase |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | parameter registry, model updates | planning phase |
+| [ETHICS](ETHICS/README/README.md) | ethical and legal standards, manifesto | manifesto v1.0.0 in place, roadmap in place, design decisions open |
+| [TESTCLIENT](TESTCLIENT/README/README.md) | terminal test client: hardware tests, sharded inference | Phase 1 complete (hardware fingerprint, determinism, shard run with run logs) |
 | [CLIENT](CLIENT/README/README.md) | user client incl. wallet | concept phase |
 
 ## License

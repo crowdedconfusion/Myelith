@@ -1,0 +1,25 @@
+[package]
+name = "myl-testclient"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Terminal-Testclient für Myelith: Hardware-Erhebung, Cross-Backend-Determinismus und geshardete Inferenz — jeder Lauf mit maschinenlesbarem Protokoll, damit Läufe verschiedener Maschinen und Modellstände vergleichbar bleiben."
+license = "PolyForm Shield License 1.0.0"
+
+[dependencies]
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
+myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+sha2 = "0.10"
+
+[features]
+cpu-simd = ["integer-llm-kernels/cpu-simd"]
+
+[lib]
+name = "myl_testclient"
+path = "src/lib.rs"
+
+[[bin]]
+name = "myl-test"
+path = "src/main.rs"
