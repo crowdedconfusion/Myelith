@@ -28,29 +28,37 @@ Whether that holds up qualitatively at realistic model scale is an open
 empirical question; the project answers it first on a small model,
 before infrastructure is scaled.
 
-**Results.** Executed entirely in integer arithmetic, measured against
+**Results,** executed entirely in integer arithmetic and measured against
 the floating-point reference of the same model:
 
-| Model | Integer | BF16 reference | Gap |
+| Model | Integer perplexity | BF16 reference | Gap |
 |---|---|---|---|
-| Qwen2.5-0.5B | 15.29 | 14.95 | **+2.3 %** (criterion ≤5 % met) |
-| Qwen2.5-7B | 9.40 | 8.68 | +8.3 % |
+| Qwen2.5-0.5B | 15.29 | 14.95 | **+2.3 %** — criterion ≤5 % met |
+| Qwen2.5-7B | **9.40** | 8.68 | +8.3 % — target ≤5 %, remaining gap documented |
 
-**The bit-identity that matters is that of the integer path with
-itself** — across independent runs, across nodes, across hardware. That
-is the consensus requirement (Whitepaper Chap. 6.2), and it is proven:
-across independent runs, across a genuine multi-node pipeline, and under
-artificially injected network stress (latency, packet loss, node
-restarts).
+*The metric is perplexity on WikiText-2 under teacher forcing, on identical
+sequences for both paths; lower is better. "Gap" is the relative premium the
+integer path pays over its own BF16 reference. On 7B that figure stood at
+41.42 before the last bug hunt — two implementation errors, a factor of 45.*
 
-*Closeness to the floating-point reference* is a separate matter. The
-integer path is a quantisation and deviates by construction — that is
-precisely why it carries a perplexity gap at all. In a
+**Bit-identity here is not a side effect, it is the product.** What matters
+is the agreement of the integer path with itself — across independent runs,
+across nodes, across hardware. That is the consensus requirement (Whitepaper
+Chap. 6.2), and it holds: proven across independent runs, across a genuine
+multi-node pipeline, and under artificially injected network stress — latency,
+packet loss, node restarts. No tolerance windows, no "reproducible within
+measurement error", no trust in individual operators. Bit for bit or not at
+all.
+
+*Closeness to the floating-point reference* is a different question — and it
+comes out better than the percentage suggests. The integer path is a
+quantisation and deviates by construction; that is precisely why it carries a
+perplexity gap at all. In the
 [qualitative benchmark](INTEGER_LLM/README/README.md#qualitativer-benchmark)
-over eight real prompts it nevertheless produces the same text as BF16 in
-five of eight cases on 7B (73.8 % matching tokens). That is a quality
-indicator for the quantisation, not a target: 8/8 would not be a success
-but an indication that the quantisation has no effect. Details in the
+over eight real prompts, 7B nevertheless produces word-for-word the same text
+as BF16 in five of eight cases, at 73.8 % matching tokens. That is a quality
+indicator, not a target: 8/8 would not be a success but an indication that the
+quantisation has no effect. Details in the
 [whitepaper (Ch. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3-en.md)
 and in [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
@@ -76,7 +84,7 @@ tests:
 | [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exact integer inference (Rust + Python) | core thesis empirically confirmed on 0.5B (+2.3 % against the floating-point baseline), multi-node pipeline running, backends AVX2+NEON. **On 7B +8.3 % after fixing two implementation defects (previously +377 %); criterion not yet met** |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | core data types, cryptography (VRF, BLS, Merkle) | Phases 1 + 2 complete (golden vectors, fuzz harness, conformance package) |
 | [NETWORKING](NETWORKING/README/README.md) | P2P gossip, peer discovery, latency topology | Phases 1 + 2 complete (pairwise latency measurement, LatencyGraph, geo/AS diversity) |
-| [CONSENSUS](CONSENSUS/README/README.md) | ledger, BFT, slashing | Phases 1 + 2 complete; Phase 3 with a caveat — signed, stake-and-work-weighted BFT with VRF-rotating committee election, but no round change / timeouts yet |
+| [CONSENSUS](CONSENSUS/README/README.md) | ledger, BFT, slashing | Phases 1–3 complete — signed, stake-and-work-weighted BFT with VRF-rotating committee election, double-signing proof, and round change with locking. **Safety and liveness**, acceptance test matrix run over 21 simulated validators (leader failure, partition below/above GST, byzantine minority) |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | burn-and-mint, distribution | Phases 1 + 2 complete (credit pricing with a frozen exp() LUT) |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | pod orchestration over a real network | Phases 1 + 2.1 complete (micro-batching, pipelining). **Pipeline determinism holds** (two independent runs bit-identical) and the shard layout is pinned via `pipeline_hash` since finding 25. **Open:** boundary rescaling is scalar while the residual stream has been per-channel since finding 20 — the Phase 1 guarantee "bit-identical **with the single node**" therefore no longer holds |
 | [VERIFICATION](VERIFICATION/README/README.md) | redundancy comparison, bisection game | Phases 1 + 2 complete (arbitration round, slashing via the ledger) |

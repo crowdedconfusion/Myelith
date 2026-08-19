@@ -28,29 +28,38 @@ Kap. 6). Ob das bei realistischer Modellgröße auch qualitativ trägt, ist
 eine offene Messfrage; das Projekt beantwortet sie zuerst am kleinen
 Modell, bevor Infrastruktur skaliert wird.
 
-**Ergebnisse.** Vollständig ganzzahlig ausgeführt, gegen die
+**Ergebnisse,** vollständig ganzzahlig ausgeführt und gegen die
 Gleitkomma-Referenz desselben Modells gemessen:
 
-| Modell | Integer | BF16-Referenz | Abstand |
+| Modell | Integer-Perplexität | BF16-Referenz | Abstand |
 |---|---|---|---|
-| Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** (Kriterium ≤5 % erfüllt) |
-| Qwen2.5-7B | 9,40 | 8,68 | +8,3 % |
+| Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** — Kriterium ≤5 % erfüllt |
+| Qwen2.5-7B | **9,40** | 8,68 | +8,3 % — Ziel ≤5 %, Restweg dokumentiert |
 
-**Die Bitgleichheit, auf die es ankommt, ist die des Integer-Pfads mit
-sich selbst** — über unabhängige Läufe, verschiedene Knoten und
-verschiedene Hardware. Das ist die Konsensbedingung (Whitepaper Kap. 6.2),
-und sie ist nachgewiesen: über unabhängige Läufe, über eine echte
-Mehrknoten-Pipeline und unter künstlicher Netzwerklast (Latenz,
-Paketverlust, Node-Neustarts).
+*Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
+Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
+relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
+Bei 7B lag dieser Wert vor der letzten Fehlersuche bei 41,42 — zwei
+Implementierungsfehler, ein Faktor 45.*
 
-Die *Nähe zur Gleitkomma-Referenz* ist davon zu trennen. Der Integer-Pfad
-ist eine Quantisierung und weicht per Konstruktion ab — genau deshalb hat
-er überhaupt einen Perplexitätsabstand. In einem
+**Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
+ankommt, ist die Übereinstimmung des Integer-Pfads mit sich selbst — über
+unabhängige Läufe, über Knoten, über Hardware hinweg. Das ist die
+Konsensbedingung (Whitepaper Kap. 6.2), und sie steht: nachgewiesen über
+unabhängige Läufe, über eine echte Mehrknoten-Pipeline und unter künstlich
+erzeugter Netzwerklast — Latenz, Paketverlust, Node-Neustarts. Keine
+Toleranzfenster, kein „reproduzierbar im Rahmen der Messgenauigkeit", kein
+Vertrauen in einzelne Betreiber. Bit für Bit oder gar nicht.
+
+Die *Nähe zur Gleitkomma-Referenz* ist eine andere Frage — und sie fällt
+besser aus, als der Prozentwert vermuten lässt. Der Integer-Pfad ist eine
+Quantisierung, er weicht per Konstruktion ab; genau deshalb existiert
+überhaupt ein Perplexitätsabstand. Im
 [qualitativen Benchmark](INTEGER_LLM/README/README.md#qualitativer-benchmark)
-über acht echte Prompts erzeugt er bei 7B trotzdem in fünf von acht Fällen
-denselben Text wie BF16 (73,8 % deckungsgleiche Token). Das ist eine
-Gütezahl für die Quantisierung, kein Zielwert: 8/8 wäre kein Erfolg,
-sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist. Details im
+über acht echte Prompts liefert 7B dennoch in fünf von acht Fällen Wort für
+Wort denselben Text wie BF16, bei 73,8 % deckungsgleichen Token. Das ist eine
+Gütezahl, kein Zielwert: 8/8 wäre kein Erfolg, sondern der Hinweis, dass die
+Quantisierung wirkungslos ist. Details im
 [Whitepaper (Kap. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3.md) und in
 [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
@@ -75,7 +84,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 | [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+2,3 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft, Backends AVX2+NEON. **Auf 7B +8,29 % nach Behebung zweier Implementierungsfehler (vorher +377 %); Kriterium noch nicht erreicht** |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 + 2 abgeschlossen (Golden Vectors, Fuzz-Harness, Konformitätspaket) |
 | [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
-| [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1 + 2 abgeschlossen; Phase 3 mit Einschränkung — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, aber noch ohne Rundenwechsel/Timeouts |
+| [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1–3 abgeschlossen — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, Double-Signing-Beweis und Rundenwechsel mit Sperrmechanik. **Safety und Liveness**, Akzeptanz-Testmatrix über 21 simulierte Validatoren durchlaufen (Leader-Ausfall, Partition unter/über GST, byzantinische Minderheit) |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | Burn-and-Mint, Verteilung | Phase 1 + 2 abgeschlossen (Credit-Preisbildung mit exp()-LUT) |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 + 2.1 abgeschlossen (Micro-Batching, Pipelining). **Pipeline-Determinismus ist gegeben** (zwei unabhängige Läufe bitgleich) und das Shard-Layout seit Fund 25 über `pipeline_hash` abgesichert. **Offen:** Die Boundary-Reskalierung ist skalar, der Residualstrom seit Fund 20 per Kanal — die Phase-1-Zusicherung „bitgleich **mit Einzelknoten**" gilt deshalb nicht mehr |
 | [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Phase 1 + 2 abgeschlossen (Schiedsrunde, Slash-Logik über den Ledger) |

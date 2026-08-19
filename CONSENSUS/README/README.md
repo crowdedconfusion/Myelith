@@ -1,16 +1,16 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.4.2 (`myl-scheduler` 0.2.11)
-> **Datum:** 2026-08-18
+> **Version:** 0.5.0 (`myl-scheduler` 0.2.11)
+> **Datum:** 2026-08-19
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
 > Phase 1 + 2 ✅ vollständig (`myl-ledger` v0.1.1–v0.1.5,
-> `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ⚠️ Safety erfüllt,
-> Liveness offen** (`myl-consensus` v0.3.1–v0.4.0): signiertes,
-> stimmgewichtetes BFT mit VRF-rotierender Komiteewahl — aber noch
-> ohne Rundenwechsel/Timeouts (Punkt 3.6), daher kein Leader-Ausfall
-> überstehbar.
+> `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ✅ vollständig**
+> (`myl-consensus` v0.3.1–v0.5.0): signiertes, stimmgewichtetes BFT mit
+> VRF-rotierender Komiteewahl, Double-Signing-Beweis und seit v0.5.0
+> Rundenwechsel mit Sperrmechanik — Safety **und** Liveness, die
+> Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft.
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -52,7 +52,95 @@ CONSENSUS/
                                Läufe, inkl. 1.000-Übergangs-Folge)
 ```
 
+`myl-consensus` (BFT) und `myl-scheduler` (Epochen-Zuteilung) liegen
+daneben. Die BFT-Module im Überblick:
+
+```
+myl-consensus/src/
+├── validator.rs        Registrierung, VRF-rotierende Komiteewahl,
+│                       VotingSet (wer darf, mit welchem Schlüssel,
+│                       mit welchem Gewicht)
+├── bft.rs              eine Runde: Propose/Vote/Commit, signiert und
+│                       stimmgewichtet
+├── round_change.rs     mehrere Runden: Timeouts, Leaderwechsel,
+│                       Sperre/Entsperrung, PolkaCertificate
+├── signing.rs          kanonische, domain-getrennte Signierbotschaften
+├── voting_weight.rs    Stimmgewicht aus Stake und Arbeitshistorie
+├── double_signing.rs   Erkennung + nachprüfbarer BLS-Beweis
+└── block.rs            Blockinhalt nach Anhang A.5
+
+myl-consensus/tests/
+└── liveness.rs         Akzeptanz-Testmatrix Phase 3 über 21 Validatoren
+```
+
 ## Changelog
+
+### myl-consensus v0.5.0 – 2026-08-19 (Phase 3 abgeschlossen: Rundenwechsel)
+
+**Punkt 3.6, der letzte offene der Phase.** Bis hierher deckte
+`bft.rs` genau **eine** Runde ab. Fiel der Leader aus, blieb sie stehen:
+niemand schlug vor, nichts schaltete weiter. Safety war erfüllt (nichts
+Falsches wurde commitet), Liveness nicht (unter Umständen wurde gar
+nichts commitet). Die Akzeptanz-Testmatrix der Phase war damit nicht
+durchführbar — ein Test, der auf einen Fortschritt wartet, der nicht
+kommen kann, prüft nichts.
+
+Neu: `round_change.rs` mit `RoundDriver`, `TimeoutConfig`, `Lock` und
+`PolkaCertificate`.
+
+**Der Rundenwechsel bringt die Sperrmechanik zwingend mit.** Der naive
+Wechsel — „Timeout, nächster Leader, neuer Vorschlag" — ist nicht bloß
+unvollständig, er ist falsch: Erreicht Block A in Runde 1 ein Quorum,
+sehen das aber wegen einer Partition nur einige Knoten, so wechseln die
+übrigen in Runde 2 und commiten dort B. Zwei Blöcke auf derselben Höhe,
+erzeugt durch genau den Mechanismus, der die Liveness herstellen sollte.
+Deshalb sperrt sich ein Validator mit dem Quorum auf `(A, r)` und löst
+die Sperre nur gegen ein `PolkaCertificate` für B aus einer Runde echt
+zwischen Sperrrunde und laufender Runde — dann kann A nicht commitet
+worden sein.
+
+**Fristen wachsen linear mit der Rundennummer.** Ein fester Timeout
+stellt keine Liveness her: ist er kürzer als die reale
+Nachrichtenlaufzeit, platzt jede Runde vor Eintreffen der Votes und das
+Protokoll wechselt endlos. Da die Laufzeit vor GST unbeschränkt ist, kann
+kein fester Wert richtig sein. Mit `basis + runde × delta` gibt es eine
+Runde, ab der die Frist das reale Δ überschreitet — ab dort commitet das
+Protokoll. `TimeoutConfig::is_live()` macht kenntlich, dass `delta = 0`
+sicher, aber möglicherweise dauerhaft blockiert ist.
+
+**Keine Uhr im Modul.** Jede zeitabhängige Funktion bekommt `now_ms`
+übergeben. Ein Zustandsautomat, der selbst `SystemTime::now()` aufruft,
+ist nicht reproduzierbar und damit nicht nachprüfbar (Kap. 10.3). Als
+Nebeneffekt läuft die ganze Testmatrix ohne Threads und ohne Warten.
+
+**Konsensvertrag additiv erweitert:** neues Domain-Präfix
+`DST_PROPOSE_POL` für Vorschläge mit Polka-Bezug, statt `DST_PROPOSE`
+zu ändern — so bleibt jede zuvor erzeugte Signatur gültig. Die
+`valid_round` ist mitsigniert; ohne diese Bindung könnte ein Angreifer
+sie hochsetzen und gesperrte Validatoren zum Entsperren bewegen, bei
+weiterhin gültiger Signatur.
+
+**Härtung des Zertifikats.** Die Unterzeichnerliste muss streng
+aufsteigend sein. Das ist nicht Kosmetik: ohne Duplikatschutz erreicht
+ein einzelner Schlüssel das Quorum, indem er dieselbe Stimme mehrfach
+einreicht. Geprüft wird in der Reihenfolge billig-vor-teuer, damit die
+Aggregat-Verifikation nicht als DoS-Fläche vorn steht.
+
+**Tests:** 34 neue Unit-Tests in `round_change.rs`, 3 in `signing.rs`,
+dazu die Akzeptanz-Testmatrix `tests/liveness.rs` mit 21 simulierten
+Validatoren (Fahrplan verlangt ≥ 20) — Leader-Ausfall über drei Runden,
+wachsende Fristen, Sperre gegen konkurrierenden Block, byzantinische
+Minderheit unter f < 1/3 (600 von 1401 nötigem Quorumgewicht),
+Partition unter GST (nichts commitet) und über GST (alle commiten
+denselben Block), Sperrtreue nach der Heilung, verzögerte Nachrichten,
+Zustandsgleichheit aller 21 Knoten. Crate insgesamt **147 Tests grün**,
+clippy mit `-D warnings` sauber.
+
+**Grenze, bewusst offen gelassen:** Der Treiber deckt den Rundenwechsel
+innerhalb einer Epoche ab. Ein Zertifikat wird gegen die übergebene
+stimmberechtigte Menge geprüft; über eine Epochengrenze hinweg müsste
+die Menge der Ursprungsepoche mitgeführt werden. Dokumentiert, nicht
+implementiert — bislang kein Fahrplanpunkt.
 
 ### myl-scheduler v0.2.11 – 2026-08-18 (Fund A20: Epoche geht in den VRF-Seed)
 

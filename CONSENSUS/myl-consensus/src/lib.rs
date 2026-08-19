@@ -2,7 +2,9 @@
 //!
 //! Implementiert Validator-Registrierung, Stake-basierte Komiteewahl,
 //! BFT-Blockproduktion (Propose/Vote/Commit), Stimmgewichts-Kopplung,
-//! und Double-Signing-Erkennung.
+//! Double-Signing-Erkennung sowie Rundenwechsel mit Sperrmechanik
+//! ([`round_change`]) — letztere stellt die Liveness her, die das
+//! Ein-Runden-Protokoll aus [`bft`] allein nicht leisten kann.
 //!
 //! **Design-Entscheidung:** malachite-consensus hinter Trait-Grenze,
 //! Eigenbau als Fallback.
@@ -18,6 +20,7 @@ pub mod block;
 pub mod signing;
 pub mod voting_weight;
 pub mod double_signing;
+pub mod round_change;
 
 pub use validator::{
     Validator, ValidatorRegistry, Committee, CommitteeRole, select_committee,
@@ -39,7 +42,13 @@ pub use voting_weight::{
 };
 pub use signing::{
     signable_bytes, propose_message, vote_message, commit_message,
-    DST_PROPOSE, DST_VOTE, DST_COMMIT,
+    propose_pol_message,
+    DST_PROPOSE, DST_VOTE, DST_COMMIT, DST_PROPOSE_POL,
+};
+pub use round_change::{
+    Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,
+    DEFAULT_TIMEOUT_COMMIT_MS, DEFAULT_TIMEOUT_DELTA_MS, DEFAULT_TIMEOUT_PROPOSE_MS,
+    DEFAULT_TIMEOUT_VOTE_MS,
 };
 pub use double_signing::{
     DoubleSignProof, DoubleSignError, SignedBlocksRegistry,
