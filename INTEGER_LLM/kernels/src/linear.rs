@@ -84,14 +84,16 @@ pub fn linear_w8a16_pc(
 
 /// Addiert einen quantisierten Bias auf eine int16-Aktivierungsausgabe.
 ///
-/// Der Bias liegt als int8 mit Per-Element-Skalen vor (`bias_shifts[i]`,
-/// theta_v 0.7.0: Per-Channel-Quantisierung, bei 1D-Tensoren je Element)
+/// Der Bias liegt als **int16** mit Per-Element-Skalen vor
+/// (`bias_shifts[i]`). Bis theta_v 0.12.0 war es int8 — das saettigte
+/// still bei Betraegen ueber 127 und verfaelschte bei Qwen2.5-7B die
+/// Attention ab Ebene 0 (Fund 23, k_proj.bias erreicht 414)
 /// und wird elementweise mit `rescale` auf die Ziel-Skala
 /// (`out_frac_bits`) gebracht — arithmetischer Rechtsshift mit
 /// Round-to-nearest-even, danach i64-Addition mit Clamping auf i16. Reine
 /// Ganzzahlarithmetik, deterministisch über alle Backends (Whitepaper
 /// Kap. 6.2; Qwen2.5 besitzt Biases an q/k/v_proj).
-pub fn add_bias_i16(out: &mut [i16], bias: &[i8], bias_shifts: &[u8], out_frac_bits: u8) {
+pub fn add_bias_i16(out: &mut [i16], bias: &[i16], bias_shifts: &[u8], out_frac_bits: u8) {
     assert_eq!(
         out.len(),
         bias.len(),
@@ -182,7 +184,7 @@ mod tests {
     fn test_add_bias_i16_rescale_left_shift() {
         // bias_shift (2) < out_frac (4): Linksverschiebung, exakt.
         let mut out = vec![10i16, -10];
-        add_bias_i16(&mut out, &[1i8, 1], &[2, 2], 4);
+        add_bias_i16(&mut out, &[1i16, 1], &[2, 2], 4);
         assert_eq!(out, vec![14, -6]);
     }
 
@@ -190,7 +192,7 @@ mod tests {
     fn test_add_bias_i16_rescale_right_shift_rounds_rne() {
         // bias_shift (3) > out_frac (1): Rechtsshift um 2 mit RNE-Rundung.
         let mut out = vec![0i16, 0];
-        add_bias_i16(&mut out, &[3i8, -3], &[3, 3], 1);
+        add_bias_i16(&mut out, &[3i16, -3], &[3, 3], 1);
         assert_eq!(out, vec![1, -1]);
     }
 
@@ -199,14 +201,14 @@ mod tests {
         // Unterschiedliche Shifts je Element (theta_v 0.7.0):
         // Bias 4 mit Shift 1 (= 2.0), Bias 4 mit Shift 0 (= 4.0).
         let mut out = vec![0i16, 0];
-        add_bias_i16(&mut out, &[4i8, 4], &[1, 0], 0);
+        add_bias_i16(&mut out, &[4i16, 4], &[1, 0], 0);
         assert_eq!(out, vec![2, 4]);
     }
 
     #[test]
     fn test_add_bias_i16_clamping() {
         let mut out = vec![32766i16, -32767, 0];
-        add_bias_i16(&mut out, &[4i8, -4, 0], &[1, 1, 1], 0); // +2 bzw. -2
+        add_bias_i16(&mut out, &[4i16, -4, 0], &[1, 1, 1], 0); // +2 bzw. -2
         assert_eq!(out, vec![32767, -32768, 0]); // Saettigung an beiden Grenzen
     }
 
@@ -214,6 +216,6 @@ mod tests {
     #[should_panic(expected = "dieselbe Laenge")]
     fn test_add_bias_i16_length_mismatch_panics() {
         let mut out = vec![0i16; 3];
-        add_bias_i16(&mut out, &[1i8, 1], &[0, 0], 0);
+        add_bias_i16(&mut out, &[1i16, 1], &[0, 0], 0);
     }
 }

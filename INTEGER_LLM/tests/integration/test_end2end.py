@@ -153,6 +153,34 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
             "hash": _sha256_hex(data),
         }
 
+    def put_bias(original_name: str, n: int):
+        """Attention-Bias im int16-Format (theta_v 0.13.0, Fund 23).
+
+        Biases lagen bis 0.12.0 in int8 und saettigten dort still bei
+        Betraegen ueber 127; bei Qwen2.5-7B traf das k_proj.bias mit
+        Werten bis 414. Das Fixture spiegelt bewusst das ECHTE Format,
+        nicht ein vereinfachtes (Projektkonvention: Tests arbeiten mit
+        strukturell identischen Artefakten).
+        """
+        import struct
+        werte = [(i % 11) - 5 for i in range(n)]
+        data = b"".join(struct.pack("<h", w) for w in werte)
+        shifts = bytes((i % 3) for i in range(n))
+        safe_name = original_name.replace(".", "_")
+        (root / f"{safe_name}.bin").write_bytes(data)
+        (root / f"{safe_name}_shifts.bin").write_bytes(shifts)
+        weights_manifest[safe_name] = {
+            "original_name": original_name,
+            "file": f"{safe_name}.bin",
+            "shape": [n],
+            "scale": -1.0,
+            "shift": -1,
+            "dtype": "int16",
+            "hash": _sha256_hex(data),
+            "shifts_file": f"{safe_name}_shifts.bin",
+            "shifts_hash": _sha256_hex(shifts),
+        }
+
     put_weight("model.embed_tokens.weight", [VOCAB, HIDDEN])
     put_weight("model.norm.weight", [HIDDEN])
     if not tie_word_embeddings:
@@ -164,9 +192,9 @@ def build_synthetic_artifact(root: Path, tie_word_embeddings: bool = True) -> No
     put_weight("model.layers.0.self_attn.v_proj.weight", [NUM_KV_HEADS * HEAD_DIM, HIDDEN])
     # Attention-Biases wie im echten Qwen2.5-Format (attention_bias=true):
     # Laenge = Ausgabe-Dimension der Projektion.
-    put_weight("model.layers.0.self_attn.q_proj.bias", [NUM_HEADS * HEAD_DIM])
-    put_weight("model.layers.0.self_attn.k_proj.bias", [NUM_KV_HEADS * HEAD_DIM])
-    put_weight("model.layers.0.self_attn.v_proj.bias", [NUM_KV_HEADS * HEAD_DIM])
+    put_bias("model.layers.0.self_attn.q_proj.bias", NUM_HEADS * HEAD_DIM)
+    put_bias("model.layers.0.self_attn.k_proj.bias", NUM_KV_HEADS * HEAD_DIM)
+    put_bias("model.layers.0.self_attn.v_proj.bias", NUM_KV_HEADS * HEAD_DIM)
     put_weight("model.layers.0.self_attn.o_proj.weight", [HIDDEN, NUM_HEADS * HEAD_DIM])
     put_weight("model.layers.0.mlp.gate_proj.weight", [INTERMEDIATE, HIDDEN])
     put_weight("model.layers.0.mlp.up_proj.weight", [INTERMEDIATE, HIDDEN])

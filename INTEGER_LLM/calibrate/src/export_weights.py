@@ -33,20 +33,27 @@ def export_quantized_weights(quantized: Dict[str, dict], output_dir: Path):
         bin_path = output_dir / f"{safe_name}.bin"
         shifts_path = output_dir / f"{safe_name}_shifts.bin"
 
-        data = meta["int8"]
+        # Fund 23 (theta_v 0.13.0): Biases liegen in int16, alles andere
+        # in int8. Biases saettigten zuvor still bei Betraegen ueber 127
+        # (Qwen2.5-7B, k_proj.bias: 414 -> 127) und verfaelschten die
+        # Attention ab Ebene 0. Sie sind winzig (1D), int16 kostet daher
+        # kaum Platz.
+        ist_int16 = "int16" in meta
+        data = meta["int16"] if ist_int16 else meta["int8"]
         shifts = meta["shifts"]
+        erwarteter_dtype = "int16" if ist_int16 else "int8"
+        bytes_je_wert = 2 if ist_int16 else 1
 
         dtype = getattr(data, "dtype", None)
-        if dtype is not None and str(dtype) != "int8":
+        if dtype is not None and str(dtype) != erwarteter_dtype:
             raise ValueError(
-                f"Tensor '{name}': erwartet int8, bekommen '{dtype}'. "
-                "Nur int8 darf exportiert werden — alles andere verletzt "
-                "das theta_v-Binaerformat (raw int8, row-major)."
+                f"Tensor '{name}': erwartet {erwarteter_dtype}, bekommen '{dtype}'. "
+                "Das verletzt das theta_v-Binaerformat (raw, row-major)."
             )
 
         raw = data.tobytes()
 
-        expected_bytes = 1
+        expected_bytes = bytes_je_wert
         for dim in meta["shape"]:
             expected_bytes *= dim
         if len(raw) != expected_bytes:
@@ -71,7 +78,7 @@ def export_quantized_weights(quantized: Dict[str, dict], output_dir: Path):
             "shape": meta["shape"],
             "scale": -1.0,  # Sentinel: Per-Channel-Skalen in shifts_file
             "shift": -1,    # Sentinel: Per-Channel-Shifts in shifts_file
-            "dtype": "int8",
+            "dtype": erwarteter_dtype,
             "shifts_file": str(shifts_path.name),
             "hash": hash_file(bin_path),
             "shifts_hash": hash_file(shifts_path),

@@ -102,7 +102,16 @@ def compute_scales_from_stats(stats: dict, max_int: int = ACTIVATION_MAX_INT) ->
             "scale": 2.0 ** (-shift),
             "absmax_observed": s["absmax"],
         }
-        if "channel_absmax" in s:
+        # Fund 20 laesst sich zu Diagnosezwecken abschalten
+        # (INTEGER_LLM_PER_CHANNEL_RESIDUAL=0): dann faellt der Loader auf
+        # den skalaren Broadcast zurueck, also exakt das Verhalten vor
+        # theta_v 0.11.0. Noetig, um zu messen, ob Fund 20 fuer eine
+        # bestimmte Modellgroesse Gewinn oder Verlust ist — bei 0,5B
+        # verbessert er (15,59 -> 15,29), bei 7B fiel die Perplexitaet
+        # zeitgleich von 16,26 auf 40,48.
+        import os as _os
+        per_kanal_an = _os.environ.get("INTEGER_LLM_PER_CHANNEL_RESIDUAL", "1").strip() != "0"
+        if "channel_absmax" in s and per_kanal_an:
             entry["shifts"] = [
                 max(0, choose_pow2_shift(v, max_int) - PER_CHANNEL_HEADROOM_BITS)
                 for v in s["channel_absmax"]

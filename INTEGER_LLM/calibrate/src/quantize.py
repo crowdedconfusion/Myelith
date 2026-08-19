@@ -69,7 +69,31 @@ def quantize_symmetric_int8_per_channel(tensor: torch.Tensor) -> dict:
         torch.floor(torch.log2(127.0 / absmax.clamp(min=1e-9))),
     )
     shifts = torch.clamp(shifts, 0, MAX_FRAC_BITS)
-    quantized = torch.clamp(torch.round(t * (2.0 ** shifts)), -128, 127).to(torch.int8)
+    skaliert = torch.round(t * (2.0 ** shifts))
+    # **Fund 23 (2026-08-19): stilles Clipping wird laut.**
+    # Fuer absmax > 127 braeuchte es einen NEGATIVEN Shift; das
+    # clamp(shifts, 0, ...) oben verbietet den, und torch.clamp unten
+    # schnitt den Wert dann kommentarlos auf 127 ab. Bei Qwen2.5-7B traf
+    # das den k_proj-Bias in den Ebenen 0 und 27 (Spitzenwert 414 -> 127,
+    # also 69 % Verlust) und verfaelschte die Attention ab der ERSTEN
+    # Ebene. Gewichtszeilen waren nie betroffen (0 von 1 694 720), nur
+    # Biases (16 von 129 024) — deshalb tragen Biases seit theta_v 0.13.0
+    # int16 (siehe quantize_bias_int16_per_element).
+    #
+    # Diese Pruefung ist die eigentliche Lehre: ein Quantisierer darf
+    # nicht stillschweigend saettigen. Lieber ein lauter Abbruch als ein
+    # Artefakt, das monatelang wie Quantisierungsrauschen aussieht.
+    ueberlauf = int((skaliert.abs() > 127).sum())
+    if ueberlauf:
+        schlimmster = float(t.abs().max())
+        raise ValueError(
+            f"int8-Quantisierung wuerde {ueberlauf} Werte saettigen "
+            f"(groesster Betrag {schlimmster:.2f} > 127). Das waere stiller "
+            f"Genauigkeitsverlust. Fuer Tensoren mit Betraegen ueber 127 "
+            f"int16 verwenden (quantize_symmetric_int16_per_channel bzw. "
+            f"quantize_bias_int16_per_element)."
+        )
+    quantized = skaliert.to(torch.int8)
     if was_1d:
         quantized = quantized.squeeze(1)
     return {
@@ -78,6 +102,58 @@ def quantize_symmetric_int8_per_channel(tensor: torch.Tensor) -> dict:
         "shape": list(quantized.shape),
     }
 
+
+def quantize_bias_int16_per_element(tensor: torch.Tensor) -> dict:
+    """
+    Bias-Quantisierung nach INT16 mit eigener Zweierpotenz-Skala je Element.
+
+    **Fund 23 (theta_v 0.13.0).** Biases lagen bis 0.12.0 in int8 und
+    saettigten dadurch still bei Betraegen ueber 127. Qwen2.5-7B traf das
+    hart: der k_proj-Bias erreicht in Ebene 27 den Wert 414 und in Ebene 0
+    den Wert 171 — beide wurden auf 127 abgeschnitten (69 % bzw. 26 %
+    Verlust). Da der Fehler in Ebene 0 sitzt, verfaelschte er die Attention
+    ab dem ersten Layer und propagierte durch alle 28.
+
+    int16 ist hier praktisch gratis: Biases sind 1D und winzig (129 024
+    Werte bei 7B gegen 1,7 Mio. Gewichtszeilen), die Artefaktgroesse waechst
+    um ~0,25 MB. Der Wertebereich waechst um Faktor 256 und deckt die
+    beobachteten Betraege muehelos.
+
+    Warum je ELEMENT und nicht je Tensor: identisch zur Begruendung von
+    quantize_symmetric_int8_per_channel — ein einzelner grosser Eintrag
+    wuerde sonst die Aufloesung aller uebrigen zerstoeren. Bei 1D-Tensoren
+    ist "je Zeile" gleichbedeutend mit "je Element".
+
+    Returns: {"int16": np.ndarray[int16], "shifts": np.ndarray[int8] je
+              Element, "shape": [...]}
+    """
+    t = tensor.detach().float().cpu()
+    assert t.dim() == 1, "quantize_bias_int16_per_element erwartet einen 1D-Tensor"
+
+    absmax = t.abs()
+    shifts = torch.where(
+        absmax < 1e-9,
+        torch.zeros_like(absmax),
+        torch.floor(torch.log2(32767.0 / absmax.clamp(min=1e-9))),
+    )
+    shifts = torch.clamp(shifts, 0, MAX_FRAC_BITS)
+    skaliert = torch.round(t * (2.0 ** shifts))
+
+    # Dieselbe laute Pruefung wie im int8-Pfad: saettigt es hier trotzdem,
+    # ist der Wert jenseits von 32767 und braucht eine eigene Entscheidung.
+    ueberlauf = int((skaliert.abs() > 32767).sum())
+    if ueberlauf:
+        raise ValueError(
+            f"int16-Bias-Quantisierung wuerde {ueberlauf} Werte saettigen "
+            f"(groesster Betrag {float(t.abs().max()):.2f}). Das braucht "
+            f"eine eigene Design-Entscheidung, kein stilles Abschneiden."
+        )
+
+    return {
+        "int16": skaliert.to(torch.int16).numpy(),
+        "shifts": shifts.round().to(torch.int8).numpy(),
+        "shape": list(t.shape),
+    }
 
 def quantize_symmetric_int16_per_channel(tensor: torch.Tensor) -> dict:
     """
@@ -120,7 +196,16 @@ def quantize_model_weights(model) -> Dict[str, dict]:
     Quantisiert alle relevanten Gewichte eines HF-Modells per-channel
     (theta_v 0.7.0: Zweierpotenz-Skala je Ausgabe-Zeile; bei 1D-Tensoren
     wie LayerNorm-Gammas je Element).
-    Returns: Dict[tensor_name -> {int8_data, shifts, shape}]
+
+    **Attention-Biases liegen seit theta_v 0.13.0 in int16** (Fund 23):
+    int8 saettigte still bei Betraegen ueber 127, und Qwen2.5-7B hat in
+    k_proj.bias Werte bis 414 — in Ebene 0 und 27, also unter anderem an
+    der ersten Ebene, deren Fehler durch alle folgenden propagiert.
+    Betroffen waren ausschliesslich Biases (16 von 129 024 Elementen),
+    keine einzige Gewichtszeile (0 von 1 694 720). Biases sind 1D und
+    winzig; int16 kostet ~0,25 MB und beseitigt das Problem vollstaendig.
+
+    Returns: Dict[tensor_name -> {int8|int16, shifts, shape}]
     """
     quantized = {}
     target_keys = [
@@ -131,7 +216,11 @@ def quantize_model_weights(model) -> Dict[str, dict]:
     ]
 
     for name, param in model.named_parameters():
-        if any(key in name for key in target_keys):
+        if not any(key in name for key in target_keys):
+            continue
+        if name.endswith(".bias"):
+            quantized[name] = quantize_bias_int16_per_element(param)
+        else:
             quantized[name] = quantize_symmetric_int8_per_channel(param)
 
     return quantized

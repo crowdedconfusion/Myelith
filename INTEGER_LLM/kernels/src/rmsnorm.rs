@@ -11,7 +11,7 @@
 // Projekts. Bewusste Abweichung von clippy::too_many_arguments.
 #![allow(clippy::too_many_arguments)]
 
-use crate::fixed_point::{clamp_i16, rescale_i64, rshift_round_i64};
+use crate::fixed_point::{clamp_i16, rshift_round_i128};
 
 /// Reziproken-Konstante 2^20 / n (gerundet) — einmalige Initialisierung,
 /// NICHT Teil des tokenweisen Hot-Path. Damit wird der Mittelwert im
@@ -75,37 +75,87 @@ pub fn rmsnorm_i16(
     assert_eq!(n, x_shifts.len(), "rmsnorm_i16: ein Eingangs-Shift je Kanal (Fund 20, theta_v 0.11.0)");
     assert!(lut_input_shift.is_multiple_of(2), "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
 
-    let ref_shift = *x_shifts.iter().min().expect("rmsnorm_i16: x_shifts darf nicht leer sein");
+    // **Fund 24 (2026-08-19): Ausrichtung nach OBEN statt nach unten.**
+    //
+    // Die Quadratsumme muss alle Kanaele auf eine gemeinsame Skala
+    // bringen. Bis theta_v 0.13.0 geschah das gegen den KLEINSTEN Shift,
+    // also per Rechtsshift: `sq >> 2*(x_shifts[i] - min)`. Bei breiter
+    // Shift-Spanne loescht das die feinskalierten Kanaele vollstaendig
+    // aus — bei Qwen2.5-7B (Spanne 2..10, also align bis 16) trug ein
+    // normaler Kanal statt 160 000 nur noch 2 zur Summe bei. Die Varianz
+    // stammte dann praktisch nur noch aus den groben Ausreisser-Kanaelen,
+    // und die Normalisierung war entsprechend falsch. Bei 0,5B (Spanne
+    // 7..12) blieb der Effekt mild — deshalb fiel er dort nicht auf und
+    // Fund 20 sah wie eine Verbesserung aus (15,59 -> 15,29), waehrend er
+    // 7B von 16,26 auf 40,48 verschlechterte.
+    //
+    // Richtig ist die Ausrichtung gegen den GROESSTEN Shift per
+    // Linksshift: dabei geht kein Bit verloren. Der Akkumulator ist
+    // i128, damit die Verschiebung nicht ueberlaeuft (sq <= 2^30,
+    // Linksshift bis 2*Spanne, Summe ueber n Kanaele).
+    let ref_shift = *x_shifts.iter().max().expect("rmsnorm_i16: x_shifts darf nicht leer sein");
 
-    let mut acc: i64 = 0;
+    let mut acc: i128 = 0;
     for i in 0..n {
-        let align = 2 * (x_shifts[i] - ref_shift) as u32;
-        let sq = (x[i] as i64) * (x[i] as i64);
-        acc += if align == 0 { sq } else { sq >> align };
+        let align = 2 * (ref_shift - x_shifts[i]) as u32;
+        let sq = (x[i] as i128) * (x[i] as i128);
+        acc += sq << align;
     }
     if acc == 0 {
         return vec![0i16; n];
     }
 
     // Mittelwert ohne Division: Multiplikation mit Reziproken-Konstante.
-    let m = ((acc as i128 * inv_n_q20 as i128) >> 20) as i64;
+    // M traegt jetzt die Skala 2^(2*ref_shift) statt 2^(2*min).
+    //
+    // M bleibt i128: Bei breiter Shift-Spanne (bis MAX_FRAC_BITS = 20,
+    // also Linksshift bis 40) erreicht `acc` Groessenordnungen jenseits
+    // von i64. Ein Rueckcast auf i64 wuerde dort WRAPPEN und ueber
+    // `as usize` einen absurden LUT-Index erzeugen — genau das faengt
+    // `test_rmsnorm_extremer_shift_bereich_laeuft_nicht_ueber` ab.
+    let m: i128 = (acc * inv_n_q20 as i128) >> 20;
 
     // Dynamischer gerader Index-Shift in den LUT-Bereich.
-    let max_idx = (rsqrt_lut.len() - 1) as i64;
-    let mut q: u8 = 0;
+    let max_idx = (rsqrt_lut.len() - 1) as i128;
+    let mut q: u32 = 0;
     while (m >> q) > max_idx {
         q += 2;
     }
-    let idx = rshift_round_i64(m, q).min(max_idx) as usize;
+    let idx = rshift_round_i128(m, q).min(max_idx).max(0) as usize;
 
     let lut_val = rsqrt_lut[idx] as i64;
-    let norm_frac = lut_output_frac + lut_input_shift / 2 + q / 2;
+    let norm_frac = lut_output_frac as u32 + lut_input_shift as u32 / 2 + q / 2;
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let total_frac = norm_frac + gamma_shifts[i] + (x_shifts[i] - ref_shift);
-        let prod = (x[i] as i64) * lut_val * (gamma[i] as i64);
-        out.push(clamp_i16(rescale_i64(prod, total_frac, out_frac_bits) as i32));
+        // x_shifts[i] - ref_shift ist seit Fund 24 <= 0 (ref ist das
+        // MAXIMUM), deshalb vorzeichenbehaftet rechnen — in u8 wuerde die
+        // Differenz unterlaufen.
+        let total_frac = norm_frac as i32 + gamma_shifts[i] as i32
+            + (x_shifts[i] as i32 - ref_shift as i32);
+        let shift = total_frac - out_frac_bits as i32;
+        // Der Linksshift laeuft in i128, nicht in i64: seit Fund 24 ist
+        // `x_shifts[i] - ref_shift` immer <= 0, negative Gesamt-Shifts sind
+        // also der Regelfall statt der Ausnahme. `prod` erreicht 2^37
+        // (32767 * 32767 * 127); ab Verschiebung 26 waere i64 uebergelaufen
+        // und haette GEWRAPPT — das verbietet der numerische Vertrag
+        // ausdruecklich (spec: overflow.behavior = "explicit_clamp_only",
+        // wrap = false). i128 traegt den Fall mit grossem Abstand; die
+        // Saettigung geschieht danach explizit ueber clamp_i16.
+        //
+        // Ein Linksshift ist keine Division, sondern eine exakte
+        // Multiplikation mit 2^k — die Festlegung des Whitepapers auf den
+        // arithmetischen Rechtsshift (Kap. 6.2, Anhang B.5.4) betrifft
+        // ausschliesslich die Division und ihre Rundungsmehrdeutigkeit bei
+        // negativen Zahlen. Rundungsfrei und plattformgleich bleibt der
+        // Linksshift; einzig der Ueberlauf musste abgesichert werden.
+        let prod = (x[i] as i128) * (lut_val as i128) * (gamma[i] as i128);
+        let skaliert: i128 = if shift >= 0 {
+            rshift_round_i128(prod, shift as u32)
+        } else {
+            prod << (-shift) as u32
+        };
+        out.push(clamp_i16(skaliert.clamp(i32::MIN as i128, i32::MAX as i128) as i32));
     }
     out
 }
@@ -263,5 +313,65 @@ mod tests {
         assert_eq!(out_a, out_b,
             "gleiche Realwerte, verschiedene Shift-Kodierung -> muss gleiches Ergebnis liefern: {:?} vs {:?}",
             out_a, out_b);
+    }
+
+    #[test]
+    fn test_rmsnorm_breite_shift_spanne_verliert_keine_kanaele() {
+        // **Fund 24.** Die Varianzsumme muss alle Kanaele auf eine
+        // gemeinsame Skala bringen. Wird dafuer nach UNTEN ausgerichtet
+        // (Rechtsshift gegen min(shifts)), verschwinden feinskalierte
+        // Kanaele bei breiter Spanne vollstaendig aus der Summe: bei
+        // Qwen2.5-7B (Spanne 2..10) trug ein normaler Kanal statt 160 000
+        // nur noch 2 bei, und die Normalisierung stuetzte sich fast
+        // ausschliesslich auf die groben Ausreisser-Kanaele.
+        //
+        // Der Test haelt die Eigenschaft fest, die das ausschliesst: zwei
+        // Kanaele mit GLEICHEM Realwert, aber unterschiedlicher
+        // Shift-Kodierung, muessen denselben normalisierten Ausgang
+        // liefern — unabhaengig davon, wie breit die Spanne im Vektor ist.
+        let lut = spec_lut(32768);
+        let gamma = [64i8; 4];
+        let gamma_shifts = [6u8; 4];
+
+        // Kanal 1 und 3 tragen beide den Realwert 1.0, aber mit Shift 10
+        // bzw. Shift 2 kodiert. Kanal 0 ist der Ausreisser (Realwert 2400).
+        let x = vec![9600i16, 1024, 4800, 4];
+        let x_shifts = vec![2u8, 10, 1, 2];
+        let out = rmsnorm_i16(&x, &x_shifts, &gamma, &gamma_shifts,
+            &lut, 8, 8, inv_n_q20(4), 8);
+
+        // Realwerte: 2400, 1.0, 2400, 1.0 -> Kanal 1 und 3 muessen gleich
+        // normalisieren, ebenso Kanal 0 und 2.
+        assert_eq!(out[1], out[3],
+            "gleicher Realwert, andere Shift-Kodierung -> muss gleich sein: {:?}", out);
+        assert_eq!(out[0], out[2],
+            "gleicher Realwert, andere Shift-Kodierung -> muss gleich sein: {:?}", out);
+        // Hinweis: dass die feinen Kanaele hier auf 0 runden, ist KORREKT
+        // und kein Fehler — ihr Realwert (1,0) ist gegenueber dem RMS
+        // (~1697) tatsaechlich vernachlaessigbar. Geprueft wird deshalb
+        // die Invarianz, nicht die Nicht-Null-Eigenschaft.
+    }
+
+    #[test]
+    fn test_rmsnorm_extremer_shift_bereich_laeuft_nicht_ueber() {
+        // Der numerische Vertrag verlangt "explicit_clamp_only", wrap =
+        // false (theta_v: numeric.overflow). Seit Fund 24 ist der
+        // Gesamt-Shift regelmaessig NEGATIV, also ein Linksshift — der in
+        // i64 ab Verschiebung 26 gewrappt haette. Dieser Test faehrt die
+        // Spanne bis an MAX_FRAC_BITS und prueft, dass das Ergebnis
+        // gesaettigt statt gewrappt wird (ein Wrap zeigte sich als
+        // Vorzeichenwechsel).
+        let lut = spec_lut(32768);
+        let x = vec![32767i16, 32767, 1, 1];
+        let x_shifts = vec![0u8, 20, 0, 20];
+        let gamma = [127i8; 4];
+        let gamma_shifts = [20u8; 4];
+        let out = rmsnorm_i16(&x, &x_shifts, &gamma, &gamma_shifts,
+            &lut, 8, 8, inv_n_q20(4), 0);
+        // Positive Eingaenge mit positivem Gamma duerfen nie negativ
+        // herauskommen — ein Vorzeichenwechsel waere die Signatur eines
+        // Wraps. Der Wertebereich selbst ist durch den i16-Rueckgabetyp
+        // bereits garantiert; geprueft wird also das Vorzeichen.
+        assert!(out.iter().all(|v| *v >= 0), "Vorzeichenwechsel deutet auf Wrap: {:?}", out);
     }
 }

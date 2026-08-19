@@ -1,8 +1,8 @@
 # integer-llm
 
-> **Version:** 0.12.46
+> **Version:** 0.12.48
 > **Datum:** 2026-08-18
-> **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
+> **Status:** 🎉 **7B-Bug gefunden und behoben** — Perplexität **41,42 → 9,40** (+8,29 % gegen BF16-Baseline 8,68), Faktor 45. Ursache: zwei Implementierungsfehler (Fund 23: int8-Bias sättigte still; Fund 24: Varianzsumme richtete nach unten aus). 0,5B unverändert bei 15,29 (+2,3 %).
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -188,6 +188,71 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.12.48 – 2026-08-19
+
+**Der 7B-Fehler ist gefunden: 41,42 → 9,40 (Faktor 45).** Zwei
+Implementierungsfehler, beide in Code, den ich in dieser Untersuchung
+selbst eingeführt oder übersehen hatte.
+
+| Stand (7B) | Perplexität |
+|---|---|
+| Ausgangspunkt | 41,42 (+377 %) |
+| Fund 20 abgeschaltet | 14,83 (+71 %) |
+| **Fund 20 + Fund 24 korrigiert** | **9,40 (+8,29 %)** |
+
+FP-Baseline 8,68. 0,5B bleibt bei **15,29** (+2,3 %) — beide Modelle
+profitieren.
+
+**Fund 24: Die Varianzsumme der RMSNorm richtete nach UNTEN aus.**
+Um alle Kanäle auf eine gemeinsame Skala zu bringen, schob der Code
+gegen `min(shifts)` nach rechts: `sq >> 2*(x_shifts[i] - min)`. Bei
+breiter Shift-Spanne löscht das feinskalierte Kanäle aus der Summe —
+bei Qwen2.5-7B (Spanne 2–10, also Verschiebung bis 16) trug ein
+normaler Kanal statt 160 000 nur noch **2** bei. Die Normalisierung
+stützte sich damit fast ausschließlich auf die groben
+Ausreißer-Kanäle. Richtig ist die Ausrichtung gegen `max(shifts)` per
+Linksshift — dabei geht kein Bit verloren.
+
+Bei 0,5B ist die Spanne schmal (7–12), der Effekt mild. **Deshalb sah
+Fund 20 dort wie eine Verbesserung aus (15,59 → 15,29), während er 7B
+von 16,26 auf 40,48 verschlechterte.** Fund 20 selbst war nie falsch —
+nur seine Implementierung.
+
+**Zum Linksshift und dem numerischen Vertrag:** Whitepaper Kap. 6.2 und
+Anhang B.5.4 legen die *Division* auf den arithmetischen Rechtsshift
+fest, wegen der Rundungsmehrdeutigkeit bei negativen Zahlen. Ein
+Linksshift ist eine exakte Multiplikation mit 2ᵏ, rundungsfrei und
+plattformgleich — die Festlegung trifft ihn nicht. Was er sehr wohl
+berührt, ist `overflow.behavior = "explicit_clamp_only", wrap = false`:
+ein überlaufender Linksshift wrappt. Beide Stellen laufen deshalb in
+i128 mit anschließendem expliziten Clamp; neu ist
+`fixed_point::rshift_round_i128`. Zwei Tests sichern das ab, darunter
+`test_rmsnorm_extremer_shift_bereich_laeuft_nicht_ueber` — der beim
+Schreiben prompt einen echten i64-Überlauf im Mittelwert-Rückcast fand.
+
+**Fund 23: int8-Quantisierung sättigte still bei Beträgen über 127.**
+
+```python
+shifts = torch.floor(torch.log2(127.0 / absmax))   # 414 -> -1.70 -> floor -2
+shifts = torch.clamp(shifts, 0, MAX_FRAC_BITS)     # -2 -> 0   <- hier verloren
+quantized = torch.clamp(torch.round(t * 2**0), -128, 127)   # 414 -> 127
+```
+
+Für Beträge über 127 bräuchte es einen negativen Shift; das
+`clamp(shifts, 0, …)` verbietet ihn, und `torch.clamp` schnitt danach
+kommentarlos ab. Betroffen: **16 von 129 024 Bias-Elementen**, keine
+einzige Gewichtszeile (0 von 1 694 720) — ausschließlich `k_proj.bias`
+in Ebene 27 (414 → 127, 69 % Verlust) und **Ebene 0** (171 → 127).
+
+Biases liegen jetzt in **int16** (`quantize_bias_int16_per_element`,
+neuer `BiasTensor` im Loader, `add_bias_i16` nimmt `&[i16]`). Kosten:
+~0,25 MB. Wichtiger als der Fix: **beide Quantisierer brechen jetzt laut
+ab statt zu sättigen.** Ein Quantisierer, der still abschneidet,
+produziert Artefakte, die monatelang wie Quantisierungsrauschen
+aussehen.
+
+θ_v 0.12.0 → 0.14.0. Beide Modelle neu kalibriert, Golden Vectors neu
+erzeugt (30/30), Pipeline-Konfiguration nachgezogen.
 ### v0.12.46 – 2026-08-19
 
 **Ursachensuche 7B: Das Quantisierungsschema ist unschuldig — der Fehler

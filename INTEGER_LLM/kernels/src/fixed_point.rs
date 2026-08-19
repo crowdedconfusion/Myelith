@@ -145,6 +145,29 @@ pub fn isqrt_round(n: u64) -> u64 {
     }
 }
 
+/// Round-to-nearest-even Rechts-Shift in i128.
+///
+/// Gleiche Semantik wie `rshift_round_i64`, nur mit breiterem Typ: seit
+/// Fund 24 laeuft die RMSNorm-Ausgabe ueber i128, weil der dortige
+/// Linksshift in i64 haette ueberlaufen koennen (spec:
+/// overflow.behavior = "explicit_clamp_only", wrap = false).
+#[inline(always)]
+pub fn rshift_round_i128(value: i128, shift: u32) -> i128 {
+    if shift == 0 {
+        return value;
+    }
+    let mask = (1i128 << shift) - 1;
+    let half = 1i128 << (shift - 1);
+    let quotient = value >> shift;
+    let remainder = value & mask;
+
+    if remainder > half || (remainder == half && (quotient & 1) != 0) {
+        quotient + 1
+    } else {
+        quotient
+    }
+}
+
 /// Rescale: von in_frac Bits nach out_frac Bits.
 #[inline(always)]
 pub fn rescale(acc: i32, in_frac: u8, out_frac: u8) -> i32 {

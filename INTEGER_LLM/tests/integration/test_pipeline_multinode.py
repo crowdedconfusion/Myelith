@@ -44,7 +44,7 @@ FLAG_TOKEN_INPUT = 0x4
 
 # Kanonischer theta_v-Hash aus configs/pipeline_4node.json, trunkiert
 # auf die ersten 16 Hex-Ziffern (u64 im Nachrichten-Header).
-THETA_U64 = int("8cf678804cc2c2c2", 16)
+THETA_U64 = int("16f0e49c0ee8c719", 16)
 
 
 def find_free_port():

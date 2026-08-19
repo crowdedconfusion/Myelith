@@ -109,9 +109,9 @@ pub struct TransformerLayer {
     /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
     /// model_config.json); sonst je ein Bias-Tensor mit eigener Skala,
     /// der nach der Projektion addiert wird (siehe `add_bias_i16`).
-    pub q_bias: Option<QTensor>,
-    pub k_bias: Option<QTensor>,
-    pub v_bias: Option<QTensor>,
+    pub q_bias: Option<crate::loader::BiasTensor>,
+    pub k_bias: Option<crate::loader::BiasTensor>,
+    pub v_bias: Option<crate::loader::BiasTensor>,
     /// Kalibrierte Per-Layer-Aktivierungsskalen.
     pub scales: LayerScales,
 }

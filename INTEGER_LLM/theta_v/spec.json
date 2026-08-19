@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.12.0",
+    "version": "0.14.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",

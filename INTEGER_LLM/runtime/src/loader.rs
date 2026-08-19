@@ -127,6 +127,26 @@ pub struct LmHead {
     pub shifts: Vec<u8>,   // ein Zweierpotenz-Shift je Zeile
 }
 
+/// Attention-Bias in int16 mit einer Zweierpotenz-Skala je Element
+/// (theta_v 0.13.0, Fund 23).
+///
+/// Bis 0.12.0 lagen Biases in int8 und saettigten dort STILL bei Betraegen
+/// ueber 127: `quantize_symmetric_int8_per_channel` haette dafuer einen
+/// negativen Shift gebraucht, den die Implementierung auf 0 klemmte, und
+/// schnitt den Wert danach kommentarlos auf 127 ab. Qwen2.5-7B traf das in
+/// `k_proj.bias` der Ebenen 0 und 27 (Spitzenwerte 414 und 171, also 69 %
+/// bzw. 26 % Verlust) — und weil Ebene 0 betroffen war, verfaelschte der
+/// Fehler die Attention ab dem ersten Layer und propagierte durch alle 28.
+///
+/// Betroffen waren ausschliesslich Biases (16 von 129 024 Elementen), keine
+/// einzige Gewichtszeile (0 von 1 694 720). Biases sind 1D und winzig,
+/// int16 kostet daher kaum Artefaktgroesse.
+#[derive(Debug, Clone)]
+pub struct BiasTensor {
+    pub data: Vec<i16>,
+    pub shifts: Vec<u8>,   // ein Shift je Element
+}
+
 /// Alle Gewichte eines Artefakt-Verzeichnisses, indexiert ueber den
 /// Manifest-Key (Tensorname mit Unterstrichen statt Punkten).
 #[derive(Debug)]
@@ -135,6 +155,9 @@ pub struct LoadedWeights {
     /// INT16/Per-Channel-LM-Head (spec-Ausnahme 0.6.0). `None` bei Artefakten
     /// ohne eigenen LM-Head (ältere Artefakte mit Weight-Tying).
     pub lm_head: Option<LmHead>,
+    /// INT16-Attention-Biases je Manifest-Key (theta_v 0.13.0, Fund 23).
+    /// Leer bei aelteren Artefakten, deren Biases noch int8 waren.
+    pub biases: HashMap<String, BiasTensor>,
 }
 
 impl LoadedWeights {
@@ -305,20 +328,26 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
 
     let mut weights = HashMap::with_capacity(entries.len());
     let mut lm_head: Option<LmHead> = None;
+    let mut biases: HashMap<String, BiasTensor> = HashMap::new();
     for (name, entry) in entries {
-        // INT16-LM-Head mit Per-Channel-Skalen (spec-Ausnahme 0.6.0).
+        // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
+        // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
         if entry.dtype == "int16" {
-            if name != "lm_head" {
+            let ist_bias = name.ends_with("_bias");
+            if name != "lm_head" && !ist_bias {
                 return Err(format!(
-                    "{}: int16-Tensoren sind als spec-Ausnahme nur fuer den LM-Head zulaessig",
+                    "{}: int16 ist nur fuer den LM-Head und Attention-Biases zulaessig",
                     name
                 ));
             }
             let shifts_file = entry.shifts_file.as_ref().ok_or_else(|| {
                 format!("{}: int16-Eintrag ohne shifts_file", name)
             })?;
-            if entry.shape.len() != 2 {
+            if !ist_bias && entry.shape.len() != 2 {
                 return Err(format!("{}: LM-Head erwartet shape [vocab, hidden]", name));
+            }
+            if ist_bias && entry.shape.len() != 1 {
+                return Err(format!("{}: Bias erwartet eindimensionale shape", name));
             }
 
             let bytes = std::fs::read(artifact_dir.join(&entry.file))
@@ -360,11 +389,15 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
                 .chunks_exact(2)
                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
                 .collect();
-            lm_head = Some(LmHead {
-                data,
-                shape: entry.shape,
-                shifts: shift_bytes,
-            });
+            if ist_bias {
+                biases.insert(name, BiasTensor { data, shifts: shift_bytes });
+            } else {
+                lm_head = Some(LmHead {
+                    data,
+                    shape: entry.shape,
+                    shifts: shift_bytes,
+                });
+            }
             continue;
         }
 
@@ -442,7 +475,7 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         });
     }
 
-    Ok(LoadedWeights { weights, lm_head })
+    Ok(LoadedWeights { weights, lm_head, biases })
 }
 
 /// Laedt alle Lookup-Tabellen aus `luts.json` und den darin referenzierten
@@ -686,9 +719,20 @@ pub fn build_model(
         // Referenzmodell). Bias-Laengen muessen zu den Projektions-Ausgaben
         // passen (q: num_heads*head_dim, k/v: num_kv_heads*head_dim).
         let (q_bias, k_bias, v_bias) = if dims.attention_bias {
-            let qb = require_tensor(&weights, &format!("{}.self_attn.q_proj.bias", p))?.clone();
-            let kb = require_tensor(&weights, &format!("{}.self_attn.k_proj.bias", p))?.clone();
-            let vb = require_tensor(&weights, &format!("{}.self_attn.v_proj.bias", p))?.clone();
+            // theta_v 0.13.0 (Fund 23): Biases liegen in int16. Der
+            // Manifest-Key traegt Unterstriche statt Punkte.
+            let hole_bias = |suffix: &str| -> Result<BiasTensor, String> {
+                let key = format!("{}.self_attn.{}.bias", p, suffix).replace('.', "_");
+                weights.biases.get(&key).cloned().ok_or_else(|| format!(
+                    "Fehlender int16-Bias '{}' im Artefakt. Artefakte vor \
+                     theta_v 0.13.0 tragen int8-Biases und muessen neu \
+                     kalibriert werden (Fund 23: int8 saettigte still bei \
+                     Betraegen ueber 127).", key
+                ))
+            };
+            let qb = hole_bias("q_proj")?;
+            let kb = hole_bias("k_proj")?;
+            let vb = hole_bias("v_proj")?;
             let q_len = dims.num_heads * dims.head_dim;
             let kv_len = dims.num_kv_heads * dims.head_dim;
             if qb.data.len() != q_len {
@@ -1357,16 +1401,47 @@ mod tests {
         put("model.layers.0.self_attn.k_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.v_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.o_proj.weight", vec![hidden, heads * head_dim]);
-        if attention_bias {
-            // Qwen2.5-Format: Bias je q/k/v_proj, Laenge = Ausgabe-Dimension
-            // der Projektion (q: heads*head_dim, k/v: kv_heads*head_dim).
-            put("model.layers.0.self_attn.q_proj.bias", vec![heads * head_dim]);
-            put("model.layers.0.self_attn.k_proj.bias", vec![kv_heads * head_dim]);
-            put("model.layers.0.self_attn.v_proj.bias", vec![kv_heads * head_dim]);
-        }
         put("model.layers.0.mlp.gate_proj.weight", vec![inter, hidden]);
         put("model.layers.0.mlp.up_proj.weight", vec![inter, hidden]);
         put("model.layers.0.mlp.down_proj.weight", vec![hidden, inter]);
+
+        if attention_bias {
+            // Qwen2.5-Format: Bias je q/k/v_proj, Laenge = Ausgabe-Dimension
+            // der Projektion (q: heads*head_dim, k/v: kv_heads*head_dim).
+            //
+            // Seit theta_v 0.13.0 (Fund 23) liegen Biases in int16 mit einer
+            // Shifts-Datei je Element — strukturell identisch zum echten
+            // Export, damit das Fixture nicht an einem Format testet, das
+            // es in der Produktion nicht gibt (Projektkonvention).
+            for (original_name, n) in [
+                ("model.layers.0.self_attn.q_proj.bias", heads * head_dim),
+                ("model.layers.0.self_attn.k_proj.bias", kv_heads * head_dim),
+                ("model.layers.0.self_attn.v_proj.bias", kv_heads * head_dim),
+            ] {
+                let werte: Vec<i16> = (0..n).map(|i| ((i % 11) as i16) - 5).collect();
+                let mut data = Vec::with_capacity(n * 2);
+                for w in &werte {
+                    data.extend_from_slice(&w.to_le_bytes());
+                }
+                let shifts: Vec<u8> = (0..n).map(|i| (i % 3) as u8).collect();
+                let safe = original_name.replace('.', "_");
+                let file = format!("{}.bin", safe);
+                let shifts_file = format!("{}_shifts.bin", safe);
+                fs::write(dir.join(&file), &data).expect("Bias schreiben");
+                fs::write(dir.join(&shifts_file), &shifts).expect("Bias-Shifts schreiben");
+                manifest.insert(safe, serde_json::json!({
+                    "original_name": original_name,
+                    "file": file,
+                    "shape": [n],
+                    "scale": -1.0,
+                    "shift": -1,
+                    "dtype": "int16",
+                    "hash": sha256_hex(&data),
+                    "shifts_file": shifts_file,
+                    "shifts_hash": sha256_hex(&shifts),
+                }));
+            }
+        }
 
         fs::write(dir.join("weights_manifest.json"), serde_json::to_string(&manifest).unwrap())
             .expect("weights_manifest.json schreiben");
@@ -1700,7 +1775,13 @@ mod tests {
             Err(e) => e,
             Ok(_) => panic!("Fehlender Bias-Tensor muss Laden verhindern"),
         };
-        assert!(err.contains("q_proj.bias"), "Fehlermeldung: {}", err);
+        // Der Manifest-Key traegt seit theta_v 0.13.0 Unterstriche statt
+        // Punkte (int16-Bias-Pfad); die Meldung muss den Tensor trotzdem
+        // eindeutig benennen.
+        assert!(
+            err.contains("q_proj_bias") || err.contains("q_proj.bias"),
+            "Fehlermeldung benennt den fehlenden Bias nicht: {}", err
+        );
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -1708,13 +1789,17 @@ mod tests {
     #[test]
     fn test_load_model_rejects_bias_shape_mismatch() {
         // Bias-Tensor mit falscher Laenge (3 statt heads*head_dim=4): muss
-        // scheitern, sonst wuerde add_bias_i8 mit falscher Laenge arbeiten.
+        // scheitern, sonst wuerde add_bias_i16 mit falscher Laenge arbeiten.
         let dir = test_dir("model-e2e-badbiasshape");
         write_full_fixture(&dir, true, true);
 
         let bias_file = dir.join("model_layers_0_self_attn_q_proj_bias.bin");
-        let bad_data: Vec<u8> = vec![1, 2, 3]; // 3 statt 4 Elemente
+        // int16 seit theta_v 0.13.0: 3 Elemente = 6 Bytes (statt 4 Elemente).
+        let bad_data: Vec<u8> = vec![1, 0, 2, 0, 3, 0];
         fs::write(&bias_file, &bad_data).expect("Bias ueberschreiben");
+        let bad_shifts: Vec<u8> = vec![0, 0, 0];
+        fs::write(dir.join("model_layers_0_self_attn_q_proj_bias_shifts.bin"), &bad_shifts)
+            .expect("Bias-Shifts ueberschreiben");
         let manifest_path = dir.join("weights_manifest.json");
         let mut manifest: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(&manifest_path).unwrap()
@@ -1722,6 +1807,8 @@ mod tests {
         manifest["model_layers_0_self_attn_q_proj_bias"]["shape"] = serde_json::json!([3]);
         manifest["model_layers_0_self_attn_q_proj_bias"]["hash"] =
             serde_json::json!(sha256_hex(&bad_data));
+        manifest["model_layers_0_self_attn_q_proj_bias"]["shifts_hash"] =
+            serde_json::json!(sha256_hex(&bad_shifts));
         fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
         write_theta_v(&dir);
 

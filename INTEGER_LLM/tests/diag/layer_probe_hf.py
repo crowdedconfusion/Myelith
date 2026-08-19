@@ -5,7 +5,9 @@ import torch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "calibrate"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "eval"))
 from src.loader import load_reference_model
+from wikitext_common import MODEL_DIR
 
 TOKEN_ID = 22171
 
@@ -18,7 +20,7 @@ def summary(name, t):
 
 
 def main():
-    model, _ = load_reference_model(Path("models/Qwen2.5-0.5B"))
+    model, _ = load_reference_model(MODEL_DIR)
     model.eval()
     model.to("cpu")  # Diagnose bewusst auf CPU (MPS-Quirks in RoPE)
     layer = model.model.layers[0]
@@ -45,9 +47,14 @@ def main():
     # deshalb manuell rekonstruiert: an Position 0 ist der Softmax über die
     # Einzelposition exakt 1.0, also ist der Pre-o_proj-Ausgang die
     # head-major Konkatenation der (GQA-wiederholten) v-Heads.
-    kv_heads = v.view(-1, 64)  # [2, 64]
+    # head_dim aus der Modellkonfiguration statt hartkodiert — sonst
+    # laeuft die Probe nur fuer Qwen2.5-0.5B (head_dim 64) und wirft bei
+    # jeder groesseren Variante einen Shape-Fehler.
+    cfg_attn = layer.self_attn.config
+    head_dim = cfg_attn.hidden_size // cfg_attn.num_attention_heads
+    kv_heads = v.view(-1, head_dim)  # [num_kv_heads, head_dim]
     n_groups = layer.self_attn.num_key_value_groups
-    heads = [kv_heads[h // n_groups] for h in range(layer.self_attn.config.num_attention_heads)]
+    heads = [kv_heads[h // n_groups] for h in range(cfg_attn.num_attention_heads)]
     attn_pre = torch.cat(heads).view(1, 1, -1)
     summary("S5 attn_out(vor o_proj)", attn_pre)
 
