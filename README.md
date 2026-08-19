@@ -28,14 +28,26 @@ Kap. 6). Ob das bei realistischer Modellgröße auch qualitativ trägt, ist
 eine offene Messfrage; das Projekt beantwortet sie zuerst am kleinen
 Modell, bevor Infrastruktur skaliert wird.
 
-**Erstes Ergebnis:** Ein 0,5-Milliarden-Parameter-Modell, vollständig
-ganzzahlig ausgeführt, erreicht eine Perplexität von 15,59 gegenüber 14,95
-in der Gleitkomma-Referenz (+4,3 %, akzeptiert bei ≤5 %) — bei
-nachgewiesener Bitgleichheit über unabhängige Läufe und sogar über eine
-echte Mehrknoten-Pipeline unter künstlicher Netzwerklast (Latenz,
-Paketverlust, Node-Neustarts). Details dazu im
-[Whitepaper (Kap. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3.md) und
-in [INTEGER_LLM](INTEGER_LLM/README/README.md).
+**Ergebnisse.** Vollständig ganzzahlig ausgeführt, gegen die
+Gleitkomma-Referenz desselben Modells gemessen:
+
+| Modell | Integer | BF16-Referenz | Abstand |
+|---|---|---|---|
+| Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** (Kriterium ≤5 % erfüllt) |
+| Qwen2.5-7B | 9,40 | 8,68 | +8,3 % |
+
+Dazu kommt ein zweiter, unabhängiger Beleg: In einem
+[qualitativen Benchmark](INTEGER_LLM/README/README.md#qualitativer-benchmark)
+über acht echte Prompts erzeugt der Integer-Pfad bei 7B in **fünf von acht
+Fällen eine bitidentische Ausgabe** zur Gleitkomma-Referenz, bei 73,8 %
+deckungsgleichen Token insgesamt. Perplexität misst Teacher-Forcing; dieser
+Benchmark prüft freie Generierung.
+
+Die Bitgleichheit selbst ist über unabhängige Läufe nachgewiesen und sogar
+über eine echte Mehrknoten-Pipeline unter künstlicher Netzwerklast (Latenz,
+Paketverlust, Node-Neustarts). Details im
+[Whitepaper (Kap. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3.md) und in
+[INTEGER_LLM](INTEGER_LLM/README/README.md).
 
 ## Architektur
 
@@ -55,7 +67,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+4,29 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft, Backends AVX2+NEON. **Auf 7B +8,29 % nach Behebung zweier Implementierungsfehler (vorher +377 %); Kriterium noch nicht erreicht** |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+2,3 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft, Backends AVX2+NEON. **Auf 7B +8,29 % nach Behebung zweier Implementierungsfehler (vorher +377 %); Kriterium noch nicht erreicht** |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 + 2 abgeschlossen (Golden Vectors, Fuzz-Harness, Konformitätspaket) |
 | [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1 + 2 abgeschlossen; Phase 3 mit Einschränkung — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, aber noch ohne Rundenwechsel/Timeouts |

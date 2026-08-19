@@ -116,10 +116,68 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 | `theta_v/` | Der kanonische numerische Vertrag (`spec.json`). |
 | `tests/` | Unit-, Integrations-, Regressions- und Golden-Vector-Tests. Python-Tests sind eigenständige Skripte, Rust-Tests liegen inline in den Modulen. |
 | `eval/` | Qualitätsmessung: Gleitkomma-Baseline und Perplexitätsvergleich. |
+| `bench/` | Qualitativer Benchmark: echte Prompts durch den Integer-Pfad, Seite an Seite mit der BF16-Referenz (siehe [Qualitativer Benchmark](#qualitativer-benchmark)). |
 | `models/` | Quellmodell (Qwen/Qwen2.5-0.5B, nicht versioniert). |
 | `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert). |
 | `scripts/` | Hilfs-Skripte: `fetch_model.sh` (Modell-Download mit fixierter Revision), `build_artifacts.sh` (Kalibrierung + Export in einem Lauf). |
 | `deploy/` | Docker-Deployment (Dockerfile, docker-compose). |
+
+## Qualitativer Benchmark
+
+Perplexität misst Teacher-Forcing: wie gut das Modell das jeweils nächste
+Token einer **vorgegebenen** Sequenz bewertet. Sie sagt nicht, ob freie
+Generierung brauchbaren Text liefert. `bench/qualitativ.py` liefert diesen
+zweiten, unabhängigen Beleg — acht echte Prompts, greedy, Token für Token
+gegen die BF16-Referenz desselben Modells.
+
+```bash
+INTEGER_LLM_MODEL=qwen2.5-7b python bench/qualitativ.py 10
+```
+
+Die Modellwahl folgt derselben Umgebungsvariablen wie Kalibrierung und
+Messung; ohne Angabe läuft er gegen `qwen2.5-0.5b`.
+
+### Ergebnis (2026-08-19, θ_v 0.14.0)
+
+| | 0,5B | 7B |
+|---|---|---|
+| Perplexität Integer / BF16 | 15,29 / 14,95 (+2,3 %) | 9,40 / 8,68 (+8,3 %) |
+| **Identische Generierungen** | 3/8 | **5/8** |
+| **Deckungsgleiche Token** | 65,0 % | **73,8 %** |
+
+**7B ist qualitativ deutlich besser, obwohl sein relativer Abstand zur
+eigenen Baseline größer ist.** Das ist kein Widerspruch: 8,68 absolut ist
+ein erheblich stärkeres Modell als 14,95, und der Prozentabstand sagt
+nichts über die absolute Textqualität.
+
+Bitidentisch zur Referenz über zehn Token (7B):
+
+```
+"Die Hauptstadt von Frankreich ist"     -> " Paris. Paris ist die größte Stadt Frankreich"
+"Der Satz des Pythagoras besagt, dass"  -> " in einem rechtwinkligen Dreieck"
+"Die Quadratwurzel aus 144 ist"         -> " 12. Das ist die Zahl, die"
+"A large language model is a type of"   -> " artificial intelligence that can understand
+                                            and generate human language."
+```
+
+Die Abweichungen sind überwiegend harmlos — `212°F or 100` gegen
+`212 °F or 10` unterscheidet sich in einem Leerzeichen-Token, beide Male
+mit der richtigen Zahl. **Genau ein Fall ist inhaltlich schwächer:**
+„Der wichtigste Bestandteil der Luft ist" → *„der Sauerstoff"* statt
+*„der Stickstoff"*. Das ist die Art von Fehler, die die verbleibenden
+3,3 Prozentpunkte bis zum 5-%-Kriterium ausmacht.
+
+**Wozu der Vergleich mit 0,5B taugt:** Dort halluzinieren bei denselben
+Prompts *beide* Pfade („die Luftstrahlung", „The moon is a planet") — das
+ist eine Modellgrenze, keine Quantisierungsgrenze. Der Benchmark trennt
+die beiden Fehlerarten damit sauber, statt sie zu vermischen.
+
+**Aussagekraft und Grenzen:** Acht Prompts sind eine Stichprobe, kein
+Benchmark im Sinne einer Standardsuite (MMLU, HellaSwag o. ä.) — die
+gehören in Phase 12.64/12.65. Was er belegt, ist die Größenordnung: Ein
+Modell mit dem Fehlerstand vor Fund 23/24 (+377 % Perplexität) hätte hier
+unbrauchbaren Text erzeugt. Fünf von acht bitidentischen Generierungen
+gegen eine Gleitkomma-Referenz sind ein starkes qualitatives Signal.
 
 ## Bauen und Testen
 
