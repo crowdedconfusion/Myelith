@@ -18,6 +18,7 @@
 // Referenzformel ist beim Nachrechnen mehr wert als die Namenskonvention.
 #![allow(non_snake_case)]
 
+use crate::dot::dot_i8_i16;
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 
 /// W8A16 Matrix-Vektor-Multiplikation.
@@ -36,10 +37,10 @@ pub fn linear_w8a16(
     let mut out = Vec::with_capacity(W.len());
 
     for (row, &w_shift) in W.iter().zip(w_shifts.iter()) {
-        let mut acc: i64 = 0;
-        for (w, v) in row.iter().zip(x.iter()) {
-            acc += (*w as i64) * (*v as i64);
-        }
+        // Vektorisiert, wenn `cpu-simd` aktiv ist — bitgleich zur
+        // Skalarfassung, weil die i64-Akkumulation exakt und damit
+        // assoziativ ist (siehe `dot.rs`-Modulkopf).
+        let acc = dot_i8_i16(row, x);
         let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac_bits);
         out.push(clamp_i16_from_i64(y));
     }
@@ -72,10 +73,7 @@ pub fn linear_w8a16_pc(
     let mut out = Vec::with_capacity(W.len());
 
     for (row, (&w_shift, &out_frac)) in W.iter().zip(w_shifts.iter().zip(out_frac_bits.iter())) {
-        let mut acc: i64 = 0;
-        for (w, v) in row.iter().zip(x.iter()) {
-            acc += (*w as i64) * (*v as i64);
-        }
+        let acc = dot_i8_i16(row, x);
         let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac);
         out.push(clamp_i16_from_i64(y));
     }

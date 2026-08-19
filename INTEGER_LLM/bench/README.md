@@ -38,37 +38,45 @@ Modell. In einem Netz mit Bitgleichheits-Konsens (Whitepaper Kap. 6.2)
 wäre ein Miner, der es einsetzt, beim Redundanzvergleich auffällig und
 würde geslasht.
 
-## Messwerte (2026-08-19, arm64 / Darwin, Referenz-Backend)
+## Messwerte (2026-08-20, arm64 / Darwin)
 
-| Modell | Artefakt | Prefill | Decode | Gleitkomma (bf16) |
+| Modell | Artefakt | Backend | Prefill | Decode |
 |---|---|---|---|---|
-| Qwen2.5-0,5B | 0,78 GB | 18,65 tok/s | **19,50 tok/s** | 67,93 tok/s |
-| Qwen2.5-7B | 8,72 GB | 0,80 tok/s | **1,42 tok/s** | nicht gemessen |
+| Qwen2.5-0,5B | 0,78 GB | reference | 18,85 tok/s | 18,58 tok/s |
+| Qwen2.5-0,5B | 0,78 GB | **cpu-simd** | 23,46 tok/s | **24,26 tok/s** |
+| Qwen2.5-0,5B | — | bf16 (HF) | 14,52 tok/s | 66,19 tok/s |
+| Qwen2.5-7B | 8,72 GB | reference | 0,90 tok/s | 1,35 tok/s |
+| Qwen2.5-7B | 8,72 GB | **cpu-simd** | 1,60 tok/s | **2,03 tok/s** |
 
-**Einordnung, die zu den Zahlen gehört:**
+**`cpu-simd` bringt jetzt +31 % (0,5B) und +50 % (7B)** — bei
+identischem `decode_hash` und 30/30 Konformitätsvektoren unter beiden
+Backends.
 
-- **Der Integerpfad ist auf 0,5B etwa 3,5× langsamer als bf16.** Das ist
-  der heutige Stand einer Referenzimplementierung ohne
-  Kernel-Optimierung, nicht die erreichbare Grenze. Die
-  Gleitkomma-Referenz nutzt hochoptimierte, seit Jahren gepflegte
-  Kernel; der Integerpfad rechnet Skalar-Schleifen.
-- **`cpu-simd` (NEON) ist auf dieser Maschine nicht schneller** —
-  18,66 gegen 19,50 tok/s im Decode, also eher minimal langsamer. Das
-  SIMD-Backend deckt Softmax, RoPE und MLP ab; offenbar liegt der
-  Engpass woanders. **Das ist ein Messergebnis, kein Fehler**, und es
-  gehört sichtbar dokumentiert, statt in einer Fußnote zu verschwinden:
-  Wer SIMD einschaltet und Beschleunigung erwartet, bekommt sie hier
-  nicht. Wo die Zeit tatsächlich hingeht, ist offen und wäre eine
-  eigene Messung (Profil je Operation).
-- **CUDA und ROCm wurden nicht gemessen** — die Backends sind
-  Delegations-Stubs, und auf dieser Maschine fehlt die Toolchain.
-  `run.py` überspringt sie mit Begründung, statt eine Referenzmessung
-  unter falschem Namen zu protokollieren.
+**Bis zum 2026-08-20 brachte es nichts, und der Grund war lehrreich.**
+Das Operationsprofil (`kernels/src/bin/op_profile.rs`) hat gemessen,
+wohin die Zeit geht:
+
+| Operation | Anteil |
+|---|---|
+| `linear_w8a16` (Layer + LM-Head) | **99,4 %** |
+| rmsnorm | 0,4 % |
+| rope + softmax | 0,15 % |
+
+Vektorisiert waren Softmax, RoPE und Attention — zusammen 0,15 %.
+`linear_w8a16` und `rmsnorm` delegierten an die Referenz. Es war die
+falsche Operation optimiert, und niemand hatte nachgesehen. Seit
+`kernels/src/dot.rs` ist das Skalarprodukt vektorisiert.
+
+**Der Abstand zu bf16 bleibt** (Faktor 0,37 im Decode). Der Integerpfad
+rechnet weiterhin ohne Blocking, ohne Prefetch und mit
+`Vec<Vec<i8>>`-Gewichten, also einer Heap-Allokation je Zeile. Das ist
+der nächste offensichtliche Hebel und größer als alles, was SIMD noch
+hergibt.
 
 ### Skalierung: zwei Punkte, mehr nicht
 
 Von 0,5B auf 7B wächst das Artefakt um Faktor **11,2**, der Durchsatz
-fällt um Faktor **13,7**. Grob linear in der Modellgröße, mit leichtem
+fällt um Faktor **12,0** (cpu-simd: 24,26 → 2,03 tok/s). Grob linear in der Modellgröße, mit leichtem
 Aufschlag — für eine speicherbandbreitengebundene
 Referenzimplementierung das Erwartbare.
 

@@ -4,9 +4,15 @@
 # Usage:
 #   ./run.sh [backend]
 #
-# backend = "reference" (default) → nutzt die Rust-Referenzimplementierung
-#           (goldener Standard, keine Artefakte fuer Op-Level noetig;
-#            Artefakte in ../artifacts/ fuer Layer/E2E)
+# backend = Cargo-Feature des zu zertifizierenden Backends:
+#           "reference" (default, goldener Standard), "cpu-simd",
+#           "cuda", "rocm".
+#
+# Bis 2026-08-19 wurde der Parameter nur ausgegeben und dann ignoriert:
+# beide cargo-Aufrufe standen fest auf `--features reference`. Damit
+# konnte der Prüflauf ausschliesslich sich selbst zertifizieren — genau
+# das, wofuer er nicht da ist. Ein fremdes Backend gilt als konform, wenn
+# es alle Vektoren bitgleich reproduziert; dafuer muss es auch laufen.
 #
 # Exit 0 = alle Vektoren bestanden, Exit 1 = mindestens einer fehlgeschlagen.
 
@@ -37,7 +43,7 @@ if [ -d "${VECTORS_DIR}/op" ]; then
         TOTAL=$((TOTAL + 1))
         NAME=$(basename "$f" .golden.json)
         if cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
-                --bin golden_runner --features reference --quiet -- \
+                --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
                 "$f" "$BACKEND" 2>/dev/null | grep -q "^PASS:"; then
             PASSED=$((PASSED + 1))
             echo "  PASS: ${NAME}"
@@ -56,7 +62,7 @@ if [ -d "${ARTIFACT_DIR}" ]; then
     PASSED_BEFORE=$PASSED
 
     OUTPUT=$(cargo run --manifest-path "${RUNTIME_DIR}/Cargo.toml" \
-        --bin golden_model --quiet -- \
+        --bin golden_model --no-default-features --features "${BACKEND}" --quiet -- \
         "$ARTIFACT_DIR" --batch "$VECTORS_DIR" 2>/dev/null) || true
 
     while IFS= read -r line; do

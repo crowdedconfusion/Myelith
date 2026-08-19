@@ -1,6 +1,6 @@
 # Modellkarte — Myelith Integer-Artefakte
 
-**Stand:** 2026-08-19 · **θ_v:** 0.14.0 · **Crates:** v0.12.49
+**Stand:** 2026-08-20 · **θ_v:** 0.14.0 · **Crates:** v0.13.4
 
 Diese Karte beschreibt die **quantisierten Artefakte** unter
 `artifacts/`, nicht die Basismodelle. Ein Artefakt ist das Ergebnis
@@ -86,22 +86,27 @@ wirkungslos ist.
 
 ## 5. Durchsatz
 
-| Modell | Prefill | Decode | bf16-Referenz (Decode) |
-|---|---|---|---|
-| 0,5B | 18,65 tok/s | 19,50 tok/s | 67,93 tok/s |
-| 7B | 0,80 tok/s | 1,42 tok/s | nicht gemessen |
+| Modell | Backend | Prefill | Decode | bf16 (Decode) |
+|---|---|---|---|---|
+| 0,5B | reference | 18,85 tok/s | 18,58 tok/s | 66,19 tok/s |
+| 0,5B | **cpu-simd** | 23,46 tok/s | **24,26 tok/s** | — |
+| 7B | reference | 0,90 tok/s | 1,35 tok/s | nicht gemessen |
+| 7B | **cpu-simd** | 1,60 tok/s | **2,03 tok/s** | — |
 
-arm64 / Darwin, Referenz-Backend, 2026-08-19. Details und Einordnung in
-[`bench/README.md`](../bench/README.md). Der Integerpfad ist heute eine
-Referenzimplementierung ohne Kernel-Optimierung; `cpu-simd` bringt auf
-dieser Maschine **keinen** messbaren Vorteil.
+arm64 / Darwin, 2026-08-20. Details und Einordnung in
+[`bench/README.md`](../bench/README.md). `cpu-simd` ist seit dem
+vektorisierten Skalarprodukt (`kernels/src/dot.rs`) um 31 % (0,5B) bzw.
+50 % (7B) schneller — bei identischem `decode_hash` und 30/30
+Konformitätsvektoren unter beiden Backends. Der verbleibende Abstand zu
+bf16 liegt an fehlendem Blocking und der `Vec<Vec<i8>>`-Gewichtsablage
+(eine Heap-Allokation je Zeile).
 
 ## 6. Werkzeugversionen
 
 | | Wert |
 |---|---|
 | θ_v (Ausführungsspezifikation) | 0.14.0 |
-| Crates (`kernels`/`runtime`/`pipeline`) | v0.12.49 |
+| Crates (`kernels`/`runtime`/`pipeline`) | v0.13.4 |
 | Kalibrierung | `calibrate/`, Python 3.12 (uv-venv) |
 | Referenz-Framework | PyTorch 2.13.0, HuggingFace `transformers` |
 | Konformitätsvektoren | 30, eingefroren unter `conformance/vectors/` |
@@ -149,8 +154,9 @@ python3 bench/qualitativ.py
 # Durchsatz
 ./calibrate/.venv/bin/python bench/run.py
 
-# Konformität (30 eingefrorene Vektoren gegen das Referenz-Backend)
-bash conformance/run.sh
+# Konformität — je Backend, das zertifiziert werden soll
+bash conformance/run.sh reference
+bash conformance/run.sh cpu-simd
 ```
 
 Die Artefakte selbst sind **nicht** eingecheckt (Größe); sie entstehen

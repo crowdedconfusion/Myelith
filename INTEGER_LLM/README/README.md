@@ -372,6 +372,76 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.13.4 – 2026-08-20 (SIMD wirkt: vektorisiertes Skalarprodukt)
+
+**`--features cpu-simd` brachte nichts, und der Grund war, dass die
+falsche Operation optimiert war.** Das neue Operationsprofil
+(`kernels/src/bin/op_profile.rs`) hat gemessen, wohin die Zeit geht:
+
+| Operation | Anteil |
+|---|---|
+| `linear_w8a16` (Layer + LM-Head) | **99,4 %** |
+| rmsnorm | 0,4 % |
+| rope + softmax | **0,15 %** |
+
+Vektorisiert waren genau die 0,15 %. `linear_w8a16` und `rmsnorm`
+delegierten an die Referenz — das stand sogar im Modulkopf von
+`backends/simd.rs`, nur hatte niemand ausgerechnet, was das bedeutet.
+Selbst ein perfekter 10×-Gewinn auf Softmax und RoPE hätte 0,13 %
+gebracht.
+
+**Dazu ein zweiter Befund:** Das `Backend`-Trait wird vom Inferenzpfad
+**gar nicht benutzt**. `model.rs` importiert die Kernel direkt
+(`integer_llm_kernels::rmsnorm::rmsnorm_i16`); `SimdBackend` wird
+ausschließlich im Paritätstest instanziiert. Dasselbe Muster wie Fund A7
+und Fund 25: implementiert, getestet, nie aufgerufen. Deshalb sitzt die
+Vektorisierung jetzt in `kernels/src/dot.rs`, also dort, wo die
+Aufrufstellen sind; das Anbinden des Traits ist eine eigene, größere
+Aufgabe.
+
+**Warum das die Bitgleichheit nicht gefährdet:** Die Akkumulation läuft
+exakt in i64 (≤ 4,2 · 10⁶ je Produkt, zehn Größenordnungen Reserve).
+Exakte Ganzzahladdition ist assoziativ, also ist **jede**
+Summationsreihenfolge bitgleich — die vektorisierte Fassung ist per
+Konstruktion identisch, nicht bloß getestet identisch. Bei Gleitkomma
+wäre dieselbe Umstellung unzulässig. Die Kernthese des Projekts arbeitet
+hier für uns.
+
+**Der erste Versuch war langsamer** (12,4 gegen 18,9 tok/s). Ursache
+war nicht der Rechenaufwand, sondern eine serielle Abhängigkeitskette:
+Ein einziger Akkumulator ließ jede Iteration auf die vorige warten. Mit
+vier unabhängigen i32-Akkumulatoren und blockweisem Ausräumen nach i64
+liegen die Multiplikationen überlappend in der Pipeline.
+
+**Ergebnis:**
+
+| Modell | reference | cpu-simd | Gewinn |
+|---|---|---|---|
+| 0,5B | 18,58 tok/s | **24,26 tok/s** | +31 % |
+| 7B | 1,35 tok/s | **2,03 tok/s** | +50 % |
+
+Bitgleichheit belegt: identischer `decode_hash` über 32 Token **und**
+30/30 Konformitätsvektoren unter beiden Backends.
+
+**Dabei aufgefallen:** `conformance/run.sh` nahm zwar einen
+Backend-Parameter entgegen, gab ihn aus und **ignorierte ihn dann** —
+beide cargo-Aufrufe standen fest auf `--features reference`. Der
+Prüflauf konnte also ausschließlich sich selbst zertifizieren, obwohl
+sein erklärter Zweck ist, fremde Backends zu prüfen. Behoben.
+
+**Kein AVX2 in diesem Patch, bewusst.** Diese Maschine ist aarch64; eine
+AVX2-Fassung ließe sich übersetzen, aber nicht ausführen und nicht auf
+Parität prüfen. Unverifizierte Numerik in einen Konsenspfad zu geben ist
+die eine Sache, die sich dieses Projekt nicht leisten kann — ein Miner
+mit abweichendem Kernel wird geslasht, ohne etwas falsch gemacht zu
+haben. Gehört auf echte x86_64-Hardware (K1).
+
+**Nächster Hebel, größer als SIMD:** Die Gewichte liegen als
+`Vec<Vec<i8>>`, also eine Heap-Allokation je Zeile — schlecht für
+Cache-Lokalität und Prefetch. Der Abstand zu bf16 (Faktor 0,37) dürfte
+zum guten Teil daher rühren.
+
+
 ### v0.13.3 – 2026-08-19 (Phase 12.64–13.0: Benchmarks, Modellkarte, Anleitung)
 
 **Die letzten Punkte der Inferenz-Phase.** Neu: `bench/run.py`,
