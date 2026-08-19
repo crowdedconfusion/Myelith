@@ -110,28 +110,46 @@ impl ShardNode {
         self.bls_pk
     }
 
-    /// Natürliche Eingangsskala dieses Shards.
-    fn input_scale(&self) -> u8 {
-        self.model.layers[self.layer_start].scales.residual_in_frac
+    /// Natürliche Eingangsskala dieses Shards — seit INTEGER_LLM Fund 20
+    /// (theta_v 0.11.0) eine Skala JE KANAL statt einer je Segment.
+    fn input_scale(&self) -> &[u8] {
+        &self.model.layers[self.layer_start].scales.residual_in_frac
     }
 
-    /// Natürliche Ausgangsskala dieses Shards.
-    fn output_scale(&self) -> u8 {
+    /// Natürliche Ausgangsskala dieses Shards (ebenfalls je Kanal).
+    fn output_scale(&self) -> &[u8] {
         if self.layer_end < self.model.num_layers {
-            self.model.layers[self.layer_end].scales.residual_in_frac
+            &self.model.layers[self.layer_end].scales.residual_in_frac
         } else {
-            self.model.final_residual_frac
+            &self.model.final_residual_frac
         }
     }
 
-    /// Reskaliert einen Hidden-Vektor von `from` nach `to`.
-    fn rescale_vec(&self, hidden: &[i16], from: u8, to: u8) -> Vec<i16> {
-        if from == to {
-            return hidden.to_vec();
-        }
+    /// Reskaliert einen Hidden-Vektor von einer Per-Kanal-Skala auf die
+    /// SKALARE Boundary-Skala des Pod-Wire-Formats.
+    ///
+    /// **Bekannte Einschränkung (INTEGER_LLM Fund 20):** `boundary_frac`
+    /// ist weiterhin ein einziger Skalar für alle Kanäle — dieselbe
+    /// Struktur, die Fund 20 innerhalb einer Node als unzureichend
+    /// erwiesen hat, nur an der Pod-Grenze. Eine per-Kanal-Erweiterung
+    /// des Wire-Formats ist eine eigene, konsensrelevante
+    /// Design-Entscheidung für COMPUTE_PIPELINE; Details und ein
+    /// Lösungsvorschlag stehen in `README/Fahrplan-v1.md`, Phase 1.
+    fn rescale_von_kanal(&self, hidden: &[i16], from: &[u8], to: u8) -> Vec<i16> {
         hidden
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, from, to)))
+            .zip(from.iter())
+            .map(|(v, &f)| clamp_i16(rescale(*v as i32, f, to)))
+            .collect()
+    }
+
+    /// Gegenrichtung: von der skalaren Boundary-Skala auf die
+    /// Per-Kanal-Skala des Shards.
+    fn rescale_zu_kanal(&self, hidden: &[i16], from: u8, to: &[u8]) -> Vec<i16> {
+        hidden
+            .iter()
+            .zip(to.iter())
+            .map(|(v, &t)| clamp_i16(rescale(*v as i32, from, t)))
             .collect()
     }
 
@@ -205,7 +223,7 @@ impl ShardNode {
         let prev_hash = msg.trace.last().copied().unwrap_or(ZERO_HASH);
 
         // Boundary → natürliche Eingangsskala reskalieren.
-        let hidden = self.rescale_vec(&msg.payload, self.boundary_frac, self.input_scale());
+        let hidden = self.rescale_zu_kanal(&msg.payload, self.boundary_frac, self.input_scale());
 
         let mut cache = self.take_cache(session_id);
         let out = self.model.run_layers(
@@ -305,7 +323,7 @@ impl ShardNode {
             // Token- und Feedback-Flags werden entfernt (ab hier fließen
             // Aktivierungen); FLAG_SAMPLE bleibt für den End-Shard
             // erhalten.
-            let boundary_out = self.rescale_vec(&out, self.output_scale(), self.boundary_frac);
+            let boundary_out = self.rescale_von_kanal(&out, self.output_scale(), self.boundary_frac);
             let next = PodMessage {
                 magic: crate::wire::MAGIC,
                 segment_id: msg.segment_id,

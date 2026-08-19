@@ -14,6 +14,24 @@
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
 
+/// Realwerte je Kanal aus Rohwerten und Per-Kanal-Shifts (Fund 20).
+/// Die Umrechnung geschieht hier und nicht in `model.rs`: dort verbietet
+/// das Gleitkomma-Audit (tests/audit/test_no_float.py) jeden Float, weil
+/// die Datei auf der Heisspfad-Liste steht. Diagnose-Binaries sind davon
+/// ausgenommen — sie sind kein Teil des Auslieferungspfads.
+fn real_absmax_und_first4(werte: &[i16], shifts: &[u8]) -> (f64, [f64; 4]) {
+    let absmax = werte
+        .iter()
+        .zip(shifts.iter())
+        .map(|(v, &s)| (*v as f64).abs() * 2f64.powi(-(s as i32)))
+        .fold(0.0, f64::max);
+    let mut first4 = [0.0f64; 4];
+    for (k, (v, &s)) in werte.iter().zip(shifts.iter()).take(4).enumerate() {
+        first4[k] = *v as f64 * 2f64.powi(-(s as i32));
+    }
+    (absmax, first4)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -46,7 +64,8 @@ fn main() {
     println!("Sequenz: {:?} (Dump an Position {})", tokens, last);
     // Fund 20: der Residualstrom traegt seit theta_v 0.11.0 eine Skala je
     // Kanal - forward_token_dump liefert bereits umgerechnete Realwerte.
-    for (i, (absmax, first4)) in dump.iter().enumerate() {
+    for (i, (werte, shifts)) in dump.iter().enumerate() {
+        let (absmax, first4) = real_absmax_und_first4(werte, shifts);
         let label = if i < model.num_layers {
             format!("layer {:2}", i)
         } else {

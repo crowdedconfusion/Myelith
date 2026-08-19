@@ -223,21 +223,6 @@ impl Default for ModelConfig {
     }
 }
 
-/// Realwertiges (AbsMax, first4) fuer die Diagnose-Ausgabe von
-/// `forward_token_dump` — jeder Kanal wird mit SEINEM eigenen Shift in
-/// Realwerte umgerechnet (Fund 20: bei per-Kanal-Skalen ist ein einziger
-/// gemeinsamer Shift nicht mehr aussagekraeftig).
-fn real_dump_entry(hidden: &[i16], shifts: &[u8]) -> (f64, [f64; 4]) {
-    let absmax = hidden.iter().zip(shifts.iter())
-        .map(|(v, &s)| (*v as f64).abs() * 2f64.powi(-(s as i32)))
-        .fold(0.0, f64::max);
-    let mut first4 = [0.0f64; 4];
-    for (k, (v, &s)) in hidden.iter().zip(shifts.iter()).take(4).enumerate() {
-        first4[k] = *v as f64 * 2f64.powi(-(s as i32));
-    }
-    (absmax, first4)
-}
-
 impl IntegerModel {
     /// Einzelner Forward-Schritt fuer ein Token an Position `pos`.
     /// KV-Cache wird gelesen und geschrieben.
@@ -644,15 +629,20 @@ impl IntegerModel {
     /// **Fund 20:** der Residualstrom trägt seit theta_v 0.11.0 eine Skala
     /// je Kanal, nicht mehr eine je Segment. Ein einzelnes `frac` fürs
     /// ganze Segment gibt es deshalb nicht mehr sinnvoll her — die
-    /// Rückgabe liefert direkt Realwerte (`f64`), pro Kanal korrekt mit
-    /// SEINEM eigenen Shift umgerechnet, statt Rohwert + einem
-    /// (potenziell falschen) gemeinsamen Shift an den Aufrufer zu geben.
+    /// Rückgabe liefert je Stufe den vollständigen Vektor UND seine
+    /// Per-Kanal-Shifts, damit der Aufrufer jeden Kanal mit SEINEM
+    /// eigenen Shift umrechnen kann.
+    ///
+    /// Die Umrechnung in Realwerte geschieht bewusst erst im aufrufenden
+    /// Diagnose-Binary: `model.rs` steht auf der Heißpfad-Liste des
+    /// Gleitkomma-Audits (`tests/audit/test_no_float.py`) und bleibt
+    /// deshalb vollständig ganzzahlig.
     pub fn forward_token_dump(
         &self,
         token_id: usize,
         pos: usize,
         cache: &mut KVCache,
-    ) -> (Vec<i32>, Vec<(f64, [f64; 4])>) {
+    ) -> (Vec<i32>, Vec<(Vec<i16>, Vec<u8>)>) {
         let cfg = &self.config;
 
         let first_residual_frac = &self.layers[0].scales.residual_in_frac;
@@ -672,7 +662,7 @@ impl IntegerModel {
                 &self.final_residual_frac
             };
             hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
-            dump.push(real_dump_entry(&hidden, out_frac));
+            dump.push((hidden.clone(), out_frac.to_vec()));
         }
 
         // Finale Norm + LM-Head-Logits wie im echten Pfad.
@@ -690,7 +680,7 @@ impl IntegerModel {
         // Ausgang der finalen Norm bleibt skalar (Post-Norm-Aktivierungen
         // haben keine Massive-Activation-Ausreisser, siehe rmsnorm.rs).
         let norm_shifts = vec![self.final_norm_frac; normed.len()];
-        dump.push(real_dump_entry(&normed, &norm_shifts));
+        dump.push((normed.clone(), norm_shifts));
 
         let mut logits = vec![0i32; self.vocab_size];
         if let Some(lmh) = &self.lm_head_int16 {
