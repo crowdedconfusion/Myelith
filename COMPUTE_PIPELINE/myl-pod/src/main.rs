@@ -66,7 +66,6 @@ fn main() {
         let ikm = [(s as u8 + 1) * 17; 32];
         let sk = BlsSecretKey::key_gen(&ikm).expect("BLS KeyGen");
         let da = DaStore::new(Box::new(XorParityCoder::new(4)));
-        let boundary_frac = 4;
         let shard = ShardNode::new(
             s,
             layer_start,
@@ -75,7 +74,6 @@ fn main() {
             has_lm_head,
             model.clone(),
             sk,
-            boundary_frac,
             da,
             max_tokens,
         );

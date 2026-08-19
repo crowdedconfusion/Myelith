@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.2.2"
+version = "0.2.4"
 edition = "2021"
 rust-version = "1.82"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."

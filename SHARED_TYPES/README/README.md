@@ -1,11 +1,13 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.2.6
-> **Datum:** 2026-08-18
+> **Version:** 0.4.0
+> **Datum:** 2026-08-19
 > **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
-> mit Aggregation, ID-Newtypes, Kern-Structs aus Anhang A.1, Golden
-> Vectors (18 Vektoren), Fuzz-Harness (100.000 Iterationen), Konformitätspaket.
+> mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
+> GF(2⁸)**, ID-Newtypes, Kern-Structs
+> aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
+> (100.000 Iterationen), Konformitätspaket.
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -45,6 +47,85 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.4.0 – 2026-08-19 (Erasure-Codierung als Primitive)
+
+Neues Modul `erasure.rs` für die Datenverfügbarkeits-Schicht
+(CONSENSUS 4.3): Reed-Solomon-artige Codierung in **systematischer
+Cauchy-Form** über GF(2⁸), Startparameter k=8/m=4.
+
+**Warum hier und nicht in CONSENSUS:** Erasure-Codierung ist eine
+Primitive wie Hash, Merkle, VRF und BLS. Eine zweite Kopie in einer
+Komponente wäre genau der Fehler aus Fund A6 (der Fisher-Yates-Shuffle
+lag in vier Fassungen vor, drei davon fehlerhaft).
+
+**Cauchy statt Vandermonde — der Grund ist eine Falle.** Bei einer
+Vandermonde-Matrix ist die Invertierbarkeit **jeder** k×k-Teilmatrix
+nicht automatisch gegeben. Das Loch äußert sich nicht als Fehler,
+sondern als Rekonstruktion, die für bestimmte Ausfallmuster
+stillschweigend falsche Daten liefert — die schlechteste Art von Bug.
+Bei `C[i][j] = 1/(x_i ⊕ y_j)` mit disjunkten Mengen `{x_i}`, `{y_j}` ist
+jede quadratische Teilmatrix invertierbar.
+
+**Geprüft, nicht angenommen:** `jede_k_aus_n_teilmenge_rekonstruiert`
+fährt alle **495** Teilmengen von 8 aus 12 durch; eine zweite
+Parametrierung (3 aus 5, alle 10 Teilmengen) prüft, dass die
+Konstruktion nicht nur für die Standardwerte trägt.
+
+**Beschädigte Eingaben ergeben Fehler, keine Rekonstruktion.** Doppelte
+Indizes machten die Matrix singulär, uneinheitliche Längen lieferten
+Müll — beides wird abgewiesen, statt still falsche Daten zu erzeugen.
+Zu wenige Fragmente sind ein **definierter** Ausfall
+(`NotEnoughFragments`), kein Bug.
+
+**Ganzzahligkeit:** GF(2⁸) ist reine Bitarithmetik — kein Gleitkomma,
+keine Ordnungsabhängigkeit, bitgleich auf jeder Hardware. Dieselbe
+Eigenschaft, auf der die Inferenz beruht, hier für die
+Datenverfügbarkeit.
+
+17 Tests; Crate 95 → 112 Unit-Tests.
+
+### v0.3.0 – 2026-08-19 (Fund 27: Rogue-Key-Schutz nachgerüstet)
+
+**Eine Sicherheitszusage in diesem Crate war falsch.** Der Modulkopf von
+`bls.rs` sagte zu: „Öffentliche Schlüssel werden vor jeder
+Aggregat-Verifikation validiert (Identitäts- und Subgruppen-Prüfung) —
+**schützt gegen Rogue-Key-Angriffe bei `FastAggregateVerify`**." Das
+stimmt nicht. Die beiden Prüfungen wehren Kleine-Untergruppen-Angriffe
+ab, nicht Rogue Keys.
+
+**Nicht bezweifelt, sondern gebrochen.** Zu einem fremden `pk_opfer`
+bildet der Angreifer mit eigenem Geheimnis `x` den Schlüssel
+`pk_rogue = g₁^x · pk_opfer⁻¹`. Der Punkt liegt in der richtigen
+Untergruppe, ist nicht die Identität und besteht damit `key_validate()`.
+Weil `pk_opfer · pk_rogue = g₁^x` gilt, verifiziert eine Signatur, die
+der Angreifer **allein** erzeugt hat, als Aggregat beider Schlüssel — das
+Opfer hat nie unterschrieben.
+
+**Nachgerüstet:** `BLS_POP_DST`, `BlsProofOfPossession`,
+`BlsSecretKey::prove_possession()` und `BlsPublicKey::verify_possession()`
+nach draft-irtf-cfrg-bls-signature §3.3. Der Nachweis signiert die
+komprimierten Bytes des eigenen öffentlichen Schlüssels unter einem
+**eigenen** Domain-Tag — ohne diese Trennung wäre eine gewöhnliche
+Signatur über die eigenen Schlüsselbytes ein gültiger Nachweis und
+umgekehrt. Wer einen Nachweis liefern kann, kennt den diskreten
+Logarithmus seines Schlüssels; der Erzeuger eines Rogue Keys kann das
+nicht (er wäre `x − sk_opfer`).
+
+**Regression:** `tests/rogue_key.rs` hält beide Tatsachen als
+ausführbaren Nachweis fest — dass der Rogue Key die Validierung besteht
+und `FastAggregateVerify` täuscht, **und** dass der Besitznachweis ihn
+ausschließt. Als Integrationstest, weil die Konstruktion
+`blst`-Punktarithmetik und damit `unsafe` braucht, was dieses Crate per
+`#![deny(unsafe_code)]` ausschließt.
+
+**Aufrufer:** `ValidatorRegistry::register` und `PodMembership::new` in
+`myl-consensus` verlangen den Nachweis jetzt (dort v0.7.0). Die
+Prüfungen `validate()`/`decode_validated_pk` bleiben unverändert — sie
+waren nie falsch, nur falsch beschrieben.
+
+**Konsensrelevant** (Kap. 10.3): neues Domain-Tag, geänderte
+Registrierungsbedingung. 89 → 95 Unit-Tests, dazu 5 Regressionstests.
 
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)

@@ -56,6 +56,79 @@ COMPUTE_PIPELINE/
 
 ## Changelog
 
+### myl-pod v0.2.4 – 2026-08-19 (Reed-Solomon hinter der bestehenden Schnittstelle)
+
+**Ein Fund über die eigene Arbeit.** Beim Bau der DA-Schicht für
+CONSENSUS 4.3 hatte ich die Erasure-Mathematik in `myl-types` neu
+angelegt — richtig — aber übersehen, dass `myl-pod` bereits eine
+`ErasureCoder`-Schnittstelle mitbringt und der Modulkopf ausdrücklich
+sagt: *„Die beschlossene Reed-Solomon-Variante (k=8/m=4) ist eine
+Folge-Implementierung hinter derselben Schnittstelle."* Es gab also
+einen vorgesehenen Platz, und ich hatte danebengebaut statt hinein.
+Aufgefallen ist es erst, als `myl-testclient` nicht mehr übersetzte.
+
+Jetzt: `ReedSolomonCoder` implementiert die vorhandene Schnittstelle und
+setzt auf `myl_types::erasure` auf.
+
+**Er behebt zugleich die dokumentierte Phase-1-Einschränkung.**
+`XorParityCoder` legt den Längenkopf ungeschützt an den Anfang von
+Fragment 0 und kann deshalb nicht rekonstruieren, wenn ausgerechnet
+dieses Fragment fehlt (*„vollständige Kopf-Rekonstruktion folgt mit RS"*
+stand im Code). `ReedSolomonCoder` stellt die Länge dem Klartext voran
+und **codiert sie mit** — es gibt kein ausgezeichnetes Fragment mehr,
+jede Teilmenge der Größe k genügt. Statt einem fehlenden Fragment
+verträgt er **vier beliebige**; getestet über alle 495 Kombinationen.
+
+`XorParityCoder` bleibt erhalten, der Modulkopf sagt jetzt aber, welcher
+zu nehmen ist. `myl-testclient` nutzt den neuen.
+
+### myl-pod v0.2.3 – 2026-08-19 (Fund 26 + Fund 20: Boundary-Schritt entfallen)
+
+**Die Spur band den falschen Wert.** `ShardNode::process` bildete
+`out_hash = activation_hash(&out)` über die Aktivierung in natürlicher
+Ausgangsskala und schrieb ihn in die Spur; erst danach reskalierte
+`finish()` auf die Boundary-Skala, und **dieser** Wert ging als `payload`
+auf die Leitung. Der Folge-Shard prüfte mit
+`verify_input_hash(&msg.payload, &msg.trace)` — also den Hash des
+reskalierten Nutzdatensatzes gegen den Hash des unreskalierten. Beide
+stimmen nur überein, solange die Reskalierung die Identität ist; seit
+Fund 20 war sie es nicht. Der E2E-Test lehnte damit selbst die
+**unmanipulierte** Aktivierung ab.
+
+Das war mehr als ein roter Test: Die Spur ist die Commitment-Kette, die
+VERIFICATION zwischen redundanten Pods vergleicht und die das
+Bisektions-Spiel halbiert. Committet sie etwas anderes als das, was
+übertragen wird, bindet sie nicht die ausgelieferte Arbeit.
+
+**Behoben, indem der Boundary-Schritt ganz entfällt.** Er war reiner
+Verlust ohne Gegenwert: Die Ausgangsskala des Senders ist
+`layers[layer_end].residual_in_frac`, die Eingangsskala des Empfängers
+`layers[layer_start].residual_in_frac` — und `layer_start` des Empfängers
+**ist** `layer_end` des Senders. Beide Seiten lasen denselben Wert aus
+demselben Artefakt (erzwungen durch `theta_v_hash`) und rechneten ihn
+trotzdem über einen dritten, gröberen Skalar hin und zurück. Entfernt:
+`rescale_von_kanal`, `rescale_zu_kanal`, `input_scale`, `output_scale`
+und das Feld `boundary_frac`.
+
+**Fund 20 fällt damit mit.** `test_pipeline_multinode.py` ist wieder
+bitgleich mit der Einzelknoten-Runtime (vorher Divergenz ab dem sechsten
+Token, 2746 gegen 2694); der weiche Zweig im Test ist zurück in ein
+hartes `assert` überführt, wie es der Kommentar dort vorsah. Die
+Phase-1-Akzeptanz „bitgleich mit Einzelknoten" gilt wieder
+uneingeschränkt.
+
+**Nachweis:** `pod_e2e.rs` 2/2 (vorher 0/2), Multi-Node-Integration
+vollständig, Konformitätsvektoren 30/30, Gleitkomma-Audit null Treffer.
+**θ_v unverändert** — die Einzelknoten-Inferenz war nie betroffen.
+
+**Offen, im Fahrplan vermerkt:** Fund 25 (`canonical_layout_id`) hat
+seine Begründung verloren — eine Stage-Grenze ist jetzt rechnerisch ein
+No-Op, verschiedene Layouts sollten dieselben Token liefern. Die Bindung
+bleibt vorerst als Konsistenzprüfung, blockiert aber den Entwurf
+„variable Knotenzahl je Pipeline". Dass 4-Node und 8-Node übereinstimmen,
+ist **nicht gemessen**: `configs/pipeline_8node.json` trägt einen
+veralteten `theta_v_hash`.
+
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 

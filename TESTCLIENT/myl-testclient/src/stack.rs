@@ -258,7 +258,12 @@ fn stufe_komiteewahl() -> Stufe {
             Ok(p) => p,
             Err(e) => return Stufe::fehler("komiteewahl", format!("PubKey: {:?}", e)),
         };
-        if let Err(e) = reg.register(MinerId::new([i; 32]), pk, 10_000_000 + i as u64, 5) {
+        // Besitznachweis ist seit Fund 27 Pflicht bei der Registrierung.
+        let pop = match testschluessel(i).prove_possession() {
+            Ok(p) => p,
+            Err(e) => return Stufe::fehler("komiteewahl", format!("PoP: {:?}", e)),
+        };
+        if let Err(e) = reg.register(MinerId::new([i; 32]), pk, &pop, 10_000_000 + i as u64, 5) {
             return Stufe::fehler("komiteewahl", format!("Registrierung: {:?}", e));
         }
     }
@@ -297,7 +302,14 @@ fn stufe_bft_runde() -> Stufe {
             Ok(p) => p,
             Err(e) => return Stufe::fehler("bft", format!("PubKey: {:?}", e)),
         };
-        if reg.register(MinerId::new([i; 32]), pk, 10_000_000, 5).is_err() {
+        let pop = match testschluessel(i).prove_possession() {
+            Ok(p) => p,
+            Err(e) => return Stufe::fehler("bft", format!("PoP: {:?}", e)),
+        };
+        if reg
+            .register(MinerId::new([i; 32]), pk, &pop, 10_000_000, 5)
+            .is_err()
+        {
             return Stufe::fehler("bft", "Registrierung fehlgeschlagen");
         }
     }

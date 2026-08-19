@@ -87,25 +87,43 @@ impl PipelineManifest {
 
     /// Kanonischer Bezeichner des SHARD-LAYOUTS.
     ///
-    /// **Warum das konsensrelevant ist (Fund 25, 2026-08-19).** Die
-    /// Boundary-Reskalierung zwischen zwei Stages ist verlustbehaftet:
-    /// Der Residualstrom traegt seit INTEGER_LLM Fund 20 eine Skala je
-    /// Kanal, das Wire-Format zwischen Pods dagegen einen einzigen Skalar
-    /// (`boundary_frac_bits`). Jede Stage-Grenze fuegt damit einen
-    /// Rundungsschritt hinzu — und **das Ergebnis haengt davon ab, WO die
-    /// Grenzen liegen**. Zwei Pods, die dieselbe Anfrage mit
-    /// unterschiedlichem Layout rechnen (etwa 4 gegen 8 Shards), kommen
-    /// zu verschiedenen Token. Der Redundanzvergleich aus Whitepaper
-    /// Kap. 6.4 wuerde daraufhin ehrliche Knoten als fehlerhaft
-    /// markieren und slashen.
+    /// **Ursprung (Fund 25, 2026-08-19).** `pipeline_hash` war ein Feld,
+    /// das nie berechnet und nie geprueft wurde — der Wert stand auf
+    /// `sha256:0000`. Diese Funktion schliesst die Luecke.
     ///
-    /// Bis 2026-08-19 trug `pipeline_hash` deshalb ein Feld, das nie
-    /// berechnet und nie geprueft wurde (der Wert stand auf
-    /// `sha256:0000`). Diese Funktion schliesst die Luecke.
+    /// **Die urspruengliche Begruendung gilt seit Fund 26 nicht mehr —
+    /// bitte nicht ungeprueft weitertragen.** Sie lautete: die
+    /// Boundary-Reskalierung sei verlustbehaftet, deshalb haenge das
+    /// Ergebnis davon ab, WO die Stage-Grenzen liegen, und zwei Pods mit
+    /// unterschiedlichem Layout kaemen zu verschiedenen Token. Der
+    /// Boundary-Schritt ist am 2026-08-19 ersatzlos entfallen
+    /// (`stage.rs`, `myl-pod/src/shard.rs`); Aktivierungen wandern in
+    /// ihrer natuerlichen Per-Kanal-Skala ueber die Grenze. Damit ist
+    /// eine Stage-Grenze rechnerisch ein No-Op, und verschiedene Layouts
+    /// **sollten** dieselben Token liefern.
     ///
-    /// **Was in den Hash eingeht:** ausschliesslich das, was die Zahlen
-    /// beeinflusst — die Stage-Grenzen, die Sonderrollen (Embedding,
-    /// LM-Head, Sampling) und das Boundary-Format. **Nicht** enthalten
+    /// „Sollten" heisst hier: nicht gemessen. Der Test dazu waere ein
+    /// 4-Node- gegen einen 8-Node-Lauf; `configs/pipeline_8node.json`
+    /// traegt aber einen veralteten `theta_v_hash` und selbst noch
+    /// `pipeline_hash: sha256:0000`. Vermerkt im COMPUTE_PIPELINE-Fahrplan.
+    ///
+    /// **Warum die Bindung trotzdem bleibt:** Sie kostet nichts und faengt
+    /// Fehlkonfiguration. Aber sie ist damit eine
+    /// Konsistenzpruefung, keine Konsensnotwendigkeit mehr — und sie steht
+    /// dem Entwurf „variable Knotenzahl je Pipeline" im Weg, der genau
+    /// darauf beruht, dass redundante Pods verschiedene Layouts haben
+    /// duerfen. Ob sie gelockert wird, ist eine Entscheidung fuer
+    /// COMPUTE_PIPELINE und nicht hier zu treffen.
+    ///
+    /// **Was in den Hash eingeht:** die Stage-Grenzen, die Sonderrollen
+    /// (Embedding, LM-Head, Sampling) und das Wire-Format. Von letzterem
+    /// sind `boundary_dtype` und `boundary_endianness` weiterhin wirksam
+    /// (die Nutzdaten sind int16, little-endian); `boundary_frac_bits`
+    /// wird seit Fund 26 **im Rechenpfad nicht mehr gelesen** und bleibt
+    /// nur im Hash, weil das Feld in `theta_v/spec.json` steht und ein
+    /// Entfernen einen theta_v-Bump samt Neuexport aller Artefakte
+    /// ausloesen wuerde. Beim naechsten ohnehin faelligen Bump gehoert es
+    /// heraus. **Nicht** enthalten
     /// sind Betriebsangaben wie `node_id`, `node_address` oder
     /// `max_batch_size`: Zwei Pods duerfen auf verschiedenen Maschinen
     /// mit verschiedenen Batch-Groessen laufen und muessen trotzdem

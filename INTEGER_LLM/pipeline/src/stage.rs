@@ -23,7 +23,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use integer_llm_kernels::fixed_point::{clamp_i16, rescale};
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::model::IntegerModel;
 
@@ -153,7 +152,7 @@ impl StageRuntime {
                 self.manifest.layer_start,
                 self.manifest.layer_end,
             );
-            out.extend_from_slice(&self.to_boundary_scale(&hidden));
+            out.extend_from_slice(&hidden);
         }
         self.put_cache(meta.request_id, cache);
 
@@ -192,40 +191,25 @@ impl StageRuntime {
         }
         let count = tensor.len() / hs;
         let base = meta.token_position as usize;
-        let in_frac = self.input_frac();
-        let boundary = self.pipeline.boundary_frac_bits;
-
         let mut cache = self.take_cache(meta.request_id);
         let mut last_hidden: Option<Vec<i16>> = None;
         let mut forwarded = Vec::new();
         for i in 0..count {
-            let slice = &tensor[i * hs..(i + 1) * hs];
-            // Fund 20 (INTEGER_LLM, theta_v 0.11.0): residual_in_frac ist
-            // seit dort eine Skala je Kanal. `boundary` (das Netzwerk-
-            // Boundary-Format zwischen Pod-Stages) bleibt bewusst skalar -
-            // eine per-Kanal-Erweiterung des Wire-Formats ist eine eigene,
-            // konsensrelevante Entscheidung fuer COMPUTE_PIPELINE (myl-pod),
-            // nicht Teil dieser INTEGER_LLM-Aenderung.
+            // Fund 26/20 behoben (2026-08-19): Aktivierungen wandern in
+            // ihrer NATUERLICHEN Per-Kanal-Skala ueber die Stage-Grenze,
+            // ohne Umweg ueber ein skalares Boundary-Format.
             //
-            // **Bestaetigt, nicht nur theoretisch (2026-08-18):**
-            // test_pipeline_multinode.py::test_pipeline_bitgleich_mit_einzelknoten
-            // divergiert seit Fund 20 am 6. generierten Token (Pipeline
-            // [..., 2746, ...] vs. Einzelknoten [..., 2694, ...]). Ursache:
-            // `boundary_frac_bits` (configs/pipeline_4node.json) ist mit 4
-            // bereits am Minimum, das den Ausreisser-Kanal ohne Ueberlauf
-            // traegt - ein hoeherer Wert wuerde nicht die uebrigen Kanaele
-            // retten, sondern den Ausreisser clippen. Ein einzelner
-            // Boundary-Skalar hat strukturell dieselbe Grenze, die Fund 20
-            // innerhalb einer Node bereits behoben hat, nur jetzt an der
-            // Pod-Grenze. Vermerkt im COMPUTE_PIPELINE-Fahrplan als
-            // offener Punkt; nicht in dieser Aenderung behoben, da eine
-            // Wire-Format-Entscheidung eine eigene Design-Entscheidung
-            // fuer COMPUTE_PIPELINE ist.
-            let hidden: Vec<i16> = slice
-                .iter()
-                .enumerate()
-                .map(|(c, v)| clamp_i16(rescale(*v as i32, boundary, in_frac[c])))
-                .collect();
+            // Der Umweg war reiner Verlust ohne Gegenwert: Die
+            // Ausgangsskala des Senders ist
+            // `layers[layer_end].residual_in_frac`, die Eingangsskala des
+            // Empfaengers `layers[layer_start].residual_in_frac` — und
+            // `layer_start` des Empfaengers IST `layer_end` des Senders.
+            // Beide Seiten lasen also denselben Wert aus demselben
+            // Artefakt (erzwungen durch `theta_v_hash`) und rechneten ihn
+            // trotzdem ueber einen dritten, groeberen Skalar hin und
+            // zurueck. Seit Fund 20 die Skala per Kanal fuehrt, ist dieser
+            // Rundweg verlustbehaftet.
+            let hidden: Vec<i16> = tensor[i * hs..(i + 1) * hs].to_vec();
             let hidden = self.model.run_layers(
                 hidden,
                 base + i,
@@ -236,7 +220,7 @@ impl StageRuntime {
             if self.manifest.has_lm_head {
                 last_hidden = Some(hidden);
             } else {
-                forwarded.extend_from_slice(&self.to_boundary_scale(&hidden));
+                forwarded.extend_from_slice(&hidden);
             }
         }
         self.put_cache(meta.request_id, cache);
@@ -297,28 +281,6 @@ impl StageRuntime {
             }
         }
         Ok(output)
-    }
-
-    /// Eingangsskala des ersten Layers dieser Stage (Fund 20: je Kanal).
-    fn input_frac(&self) -> Vec<u8> {
-        self.model.layers[self.manifest.layer_start].scales.residual_in_frac.clone()
-    }
-
-    /// Reskaliert einen Hidden-Vektor von seiner natürlichen Skala
-    /// (Ausgang des letzten Stage-Layers, seit Fund 20 per Kanal) auf die
-    /// skalare Boundary-Skala des Netzwerkformats zwischen Pod-Stages.
-    fn to_boundary_scale(&self, hidden: &[i16]) -> Vec<i16> {
-        let out_frac: &[u8] = if self.manifest.layer_end < self.model.num_layers {
-            &self.model.layers[self.manifest.layer_end].scales.residual_in_frac
-        } else {
-            &self.model.final_residual_frac
-        };
-        let boundary = self.pipeline.boundary_frac_bits;
-        hidden
-            .iter()
-            .zip(out_frac.iter())
-            .map(|(v, &f)| clamp_i16(rescale(*v as i32, f, boundary)))
-            .collect()
     }
 
     /// KV-Cache eines Requests entnehmen (oder anlegen).

@@ -26,7 +26,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use integer_llm_kernels::fixed_point::{clamp_i16, rescale};
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::model::IntegerModel;
 use myl_types::bls::{BlsPublicKey, BlsSecretKey};
@@ -68,7 +67,6 @@ pub struct ShardNode {
     /// DA-Archiv für die Streitfrist.
     da: Mutex<DaStore>,
     /// Gemeinsame Boundary-Skala auf dem Draht.
-    boundary_frac: u8,
     /// Budget an zu generierenden Tokens je Request.
     max_new_tokens: u64,
     /// Generierungs-Zähler je Session.
@@ -84,7 +82,6 @@ impl ShardNode {
         has_lm_head: bool,
         model: Arc<IntegerModel>,
         bls_sk: BlsSecretKey,
-        boundary_frac: u8,
         da: DaStore,
         max_new_tokens: u64,
     ) -> Self {
@@ -100,7 +97,6 @@ impl ShardNode {
             bls_pk,
             caches: Mutex::new(HashMap::new()),
             da: Mutex::new(da),
-            boundary_frac,
             max_new_tokens,
             gen_count: Mutex::new(HashMap::new()),
         }
@@ -108,49 +104,6 @@ impl ShardNode {
 
     pub fn public_key(&self) -> BlsPublicKey {
         self.bls_pk
-    }
-
-    /// Natürliche Eingangsskala dieses Shards — seit INTEGER_LLM Fund 20
-    /// (theta_v 0.11.0) eine Skala JE KANAL statt einer je Segment.
-    fn input_scale(&self) -> &[u8] {
-        &self.model.layers[self.layer_start].scales.residual_in_frac
-    }
-
-    /// Natürliche Ausgangsskala dieses Shards (ebenfalls je Kanal).
-    fn output_scale(&self) -> &[u8] {
-        if self.layer_end < self.model.num_layers {
-            &self.model.layers[self.layer_end].scales.residual_in_frac
-        } else {
-            &self.model.final_residual_frac
-        }
-    }
-
-    /// Reskaliert einen Hidden-Vektor von einer Per-Kanal-Skala auf die
-    /// SKALARE Boundary-Skala des Pod-Wire-Formats.
-    ///
-    /// **Bekannte Einschränkung (INTEGER_LLM Fund 20):** `boundary_frac`
-    /// ist weiterhin ein einziger Skalar für alle Kanäle — dieselbe
-    /// Struktur, die Fund 20 innerhalb einer Node als unzureichend
-    /// erwiesen hat, nur an der Pod-Grenze. Eine per-Kanal-Erweiterung
-    /// des Wire-Formats ist eine eigene, konsensrelevante
-    /// Design-Entscheidung für COMPUTE_PIPELINE; Details und ein
-    /// Lösungsvorschlag stehen in `README/Fahrplan-v1.md`, Phase 1.
-    fn rescale_von_kanal(&self, hidden: &[i16], from: &[u8], to: u8) -> Vec<i16> {
-        hidden
-            .iter()
-            .zip(from.iter())
-            .map(|(v, &f)| clamp_i16(rescale(*v as i32, f, to)))
-            .collect()
-    }
-
-    /// Gegenrichtung: von der skalaren Boundary-Skala auf die
-    /// Per-Kanal-Skala des Shards.
-    fn rescale_zu_kanal(&self, hidden: &[i16], from: u8, to: &[u8]) -> Vec<i16> {
-        hidden
-            .iter()
-            .zip(to.iter())
-            .map(|(v, &t)| clamp_i16(rescale(*v as i32, from, t)))
-            .collect()
     }
 
     /// KV-Cache einer Session entnehmen oder anlegen.
@@ -222,8 +175,12 @@ impl ShardNode {
         // Signatur des Vorgängers prüfen.
         let prev_hash = msg.trace.last().copied().unwrap_or(ZERO_HASH);
 
-        // Boundary → natürliche Eingangsskala reskalieren.
-        let hidden = self.rescale_zu_kanal(&msg.payload, self.boundary_frac, self.input_scale());
+        // Fund 26/20 behoben (2026-08-19): Die Aktivierungen kommen in
+        // ihrer natürlichen Per-Kanal-Skala an — kein Boundary-Umweg
+        // mehr. Damit ist der übertragene Nutzdatensatz genau das, was
+        // der Sender gehasht hat, und die Spur bindet wieder die
+        // ausgelieferte Arbeit.
+        let hidden = msg.payload.clone();
 
         let mut cache = self.take_cache(session_id);
         let out = self.model.run_layers(
@@ -319,11 +276,10 @@ impl ShardNode {
                 feedback,
             })
         } else {
-            // Zwischen-Shard: Ausgang auf Boundary-Skala reskalieren.
+            // Zwischen-Shard: Ausgang unverändert weiterreichen.
             // Token- und Feedback-Flags werden entfernt (ab hier fließen
             // Aktivierungen); FLAG_SAMPLE bleibt für den End-Shard
             // erhalten.
-            let boundary_out = self.rescale_von_kanal(&out, self.output_scale(), self.boundary_frac);
             let next = PodMessage {
                 magic: crate::wire::MAGIC,
                 segment_id: msg.segment_id,
@@ -333,7 +289,7 @@ impl ShardNode {
                 flags: msg.flags & !(FLAG_TOKEN_INPUT | FLAG_FEEDBACK),
                 trace,
                 signature: sig,
-                payload: boundary_out,
+                payload: out,
             };
             Ok(ShardOut::Forward(next))
         }

@@ -22,7 +22,7 @@
 //! Änderungen nur über Governance (Kap. 10.3).
 
 use crate::voting_weight::{calculate_voting_weight, InferenceHistory};
-use myl_types::bls::BlsPublicKey;
+use myl_types::bls::{BlsProofOfPossession, BlsPublicKey};
 use myl_types::ids::MinerId;
 use myl_types::seed_rng::weighted_sample_without_replacement;
 use std::collections::BTreeMap;
@@ -83,6 +83,9 @@ pub enum ValidatorError {
     NotEnoughValidators { eligible: usize, required: usize },
     /// Der öffentliche BLS-Schlüssel ist kein gültiger Gruppenpunkt.
     InvalidPublicKey,
+    /// Der Besitznachweis zum öffentlichen Schlüssel fehlt oder gilt
+    /// nicht. Ohne ihn wäre ein Rogue Key registrierbar (Fund 27).
+    InvalidProofOfPossession,
 }
 
 impl std::fmt::Display for ValidatorError {
@@ -104,6 +107,9 @@ impl std::fmt::Display for ValidatorError {
                 eligible, required
             ),
             Self::InvalidPublicKey => write!(f, "Ungültiger öffentlicher BLS-Schlüssel"),
+            Self::InvalidProofOfPossession => {
+                write!(f, "Besitznachweis zum öffentlichen Schlüssel fehlt oder gilt nicht")
+            }
         }
     }
 }
@@ -144,6 +150,7 @@ impl ValidatorRegistry {
         &mut self,
         miner_id: MinerId,
         pubkey: BlsPublicKey,
+        pop: &BlsProofOfPossession,
         stake: u64,
         current_epoch: u64,
     ) -> Result<(), ValidatorError> {
@@ -156,6 +163,15 @@ impl ValidatorRegistry {
 
         if pubkey.validate().is_err() {
             return Err(ValidatorError::InvalidPublicKey);
+        }
+
+        // Besitznachweis (Fund 27). Die Validierung darüber schließt nur
+        // Identitäts- und Untergruppen-Punkte aus; ein Rogue Key
+        // `g₁^x · pk_opfer⁻¹` besteht sie. Erst der Nachweis, den
+        // diskreten Logarithmus zu kennen, macht `FastAggregateVerify`
+        // über die Menge der registrierten Schlüssel tragfähig.
+        if !pubkey.verify_possession(pop) {
+            return Err(ValidatorError::InvalidProofOfPossession);
         }
 
         if self.validators.contains_key(&miner_id) {
@@ -449,6 +465,14 @@ mod tests {
             .expect("public_key")
     }
 
+    /// Besitznachweis zum Schlüssel aus [`test_pubkey`] (Fund 27).
+    fn test_pop(byte: u8) -> BlsProofOfPossession {
+        BlsSecretKey::key_gen(&[byte.wrapping_add(1); 32])
+            .expect("key_gen")
+            .prove_possession()
+            .expect("prove_possession")
+    }
+
     fn seed(byte: u8) -> [u8; 32] {
         [byte; 32]
     }
@@ -458,7 +482,7 @@ mod tests {
         let mut registry = ValidatorRegistry::new();
         for i in 0..n {
             registry
-                .register(test_miner(i), test_pubkey(i), MIN_STAKE, 5)
+                .register(test_miner(i), test_pubkey(i), &test_pop(i), MIN_STAKE, 5)
                 .unwrap();
         }
         registry
@@ -467,7 +491,7 @@ mod tests {
     #[test]
     fn register_validator_success() {
         let mut registry = ValidatorRegistry::new();
-        let result = registry.register(test_miner(1), test_pubkey(1), MIN_STAKE, 10);
+        let result = registry.register(test_miner(1), test_pubkey(1), &test_pop(1), MIN_STAKE, 10);
         assert!(result.is_ok());
         assert_eq!(registry.validator_count(), 1);
     }
@@ -475,7 +499,7 @@ mod tests {
     #[test]
     fn register_validator_insufficient_stake() {
         let mut registry = ValidatorRegistry::new();
-        let result = registry.register(test_miner(1), test_pubkey(1), MIN_STAKE - 1, 10);
+        let result = registry.register(test_miner(1), test_pubkey(1), &test_pop(1), MIN_STAKE - 1, 10);
         assert!(matches!(
             result,
             Err(ValidatorError::InsufficientStake {
@@ -489,9 +513,9 @@ mod tests {
     fn register_validator_already_registered() {
         let mut registry = ValidatorRegistry::new();
         registry
-            .register(test_miner(1), test_pubkey(1), MIN_STAKE, 10)
+            .register(test_miner(1), test_pubkey(1), &test_pop(1), MIN_STAKE, 10)
             .unwrap();
-        let result = registry.register(test_miner(1), test_pubkey(1), MIN_STAKE, 10);
+        let result = registry.register(test_miner(1), test_pubkey(1), &test_pop(1), MIN_STAKE, 10);
         assert!(matches!(result, Err(ValidatorError::AlreadyRegistered)));
     }
 
@@ -503,10 +527,38 @@ mod tests {
         let result = registry.register(
             test_miner(1),
             BlsPublicKey([0u8; 48]),
+            &test_pop(1),
             MIN_STAKE,
             10,
         );
         assert!(matches!(result, Err(ValidatorError::InvalidPublicKey)));
+    }
+
+    /// Fund 27: Ein Rogue Key `g₁^x · pk_opfer⁻¹` besteht die
+    /// Identitäts- und Subgruppen-Prüfung. Erst der Besitznachweis
+    /// hält ihn aus der Registry — und damit aus jeder Menge, gegen die
+    /// später aggregiert verifiziert wird.
+    #[test]
+    fn register_verlangt_besitznachweis() {
+        let mut registry = ValidatorRegistry::new();
+        // Gültiger Schlüssel, aber der Nachweis gehört zu einem anderen.
+        let result = registry.register(
+            test_miner(1),
+            test_pubkey(1),
+            &test_pop(2),
+            MIN_STAKE,
+            10,
+        );
+        assert!(matches!(
+            result,
+            Err(ValidatorError::InvalidProofOfPossession)
+        ));
+        assert_eq!(registry.validator_count(), 0);
+
+        // Mit dem richtigen Nachweis geht es durch.
+        assert!(registry
+            .register(test_miner(1), test_pubkey(1), &test_pop(1), MIN_STAKE, 10)
+            .is_ok());
     }
 
     #[test]
@@ -514,7 +566,7 @@ mod tests {
         let mut registry = ValidatorRegistry::new();
         let miner = test_miner(1);
         registry
-            .register(miner, test_pubkey(1), MIN_STAKE, 10)
+            .register(miner, test_pubkey(1), &test_pop(1), MIN_STAKE, 10)
             .unwrap();
 
         let ohne_arbeit = registry.get_validator(&miner).unwrap().voting_weight(10);
@@ -543,7 +595,7 @@ mod tests {
         let mut registry = ValidatorRegistry::new();
         let miner = test_miner(1);
         registry
-            .register(miner, test_pubkey(1), MIN_STAKE, 0)
+            .register(miner, test_pubkey(1), &test_pop(1), MIN_STAKE, 0)
             .unwrap();
         assert!(registry.get_validator(&miner).unwrap().voting_weight(0) > 0);
     }
@@ -606,11 +658,11 @@ mod tests {
         let mut registry = ValidatorRegistry::new();
         // Miner 0 hat 20x den Stake der uebrigen 39.
         registry
-            .register(test_miner(0), test_pubkey(0), MIN_STAKE * 20, 5)
+            .register(test_miner(0), test_pubkey(0), &test_pop(0), MIN_STAKE * 20, 5)
             .unwrap();
         for i in 1..40 {
             registry
-                .register(test_miner(i), test_pubkey(i), MIN_STAKE, 5)
+                .register(test_miner(i), test_pubkey(i), &test_pop(i), MIN_STAKE, 5)
                 .unwrap();
         }
 
@@ -648,7 +700,7 @@ mod tests {
         for i in 0..28 {
             let reg_epoch = if i < 14 { 5 } else { 9 };
             registry
-                .register(test_miner(i), test_pubkey(i), MIN_STAKE, reg_epoch)
+                .register(test_miner(i), test_pubkey(i), &test_pop(i), MIN_STAKE, reg_epoch)
                 .unwrap();
         }
         // Epoche 10, Deadline 8 → nur 14 waehlbar.

@@ -46,7 +46,6 @@ fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens
         let ikm = [(s as u8 + 1) * 17; 32];
         let sk = BlsSecretKey::key_gen(&ikm).expect("BLS KeyGen");
         let da = DaStore::new(Box::new(XorParityCoder::new(4)));
-        let boundary_frac = 4;
         let shard = ShardNode::new(
             s,
             layer_start,
@@ -55,7 +54,6 @@ fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens
             has_lm_head,
             model.clone(),
             sk,
-            boundary_frac,
             da,
             max_tokens,
         );

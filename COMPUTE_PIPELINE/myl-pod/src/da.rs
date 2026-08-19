@@ -7,10 +7,19 @@
 //! Verlust eines Fragments). Die beschlossene Reed-Solomon-Variante
 //! (k=8/m=4, CONSENSUS/TOKENOMICS-Design-Entscheidung, toleriert 4
 //! verlorene Fragmente) ist eine Folge-Implementierung hinter derselben
-//! Schnittstelle.
+//! Schnittstelle — seit 2026-08-19 als [`ReedSolomonCoder`] vorhanden.
+//!
+//! **Welchen nehmen?** [`ReedSolomonCoder`]. [`XorParityCoder`] bleibt
+//! als Phase-1-Kodierung erhalten (kleiner, kein Körperrechnen), hat
+//! aber zwei Nachteile, die im Betrieb zählen: Er toleriert nur **ein**
+//! fehlendes Fragment statt vier, und er kann Fragment 0 nicht
+//! rekonstruieren, weil dort ungeschützt der Längenkopf liegt.
+//! [`ReedSolomonCoder`] codiert den Kopf mit und hat damit kein
+//! ausgezeichnetes Fragment.
 // Der Index ist die Fragmentnummer und geht in den Schluessel ein.
 #![allow(clippy::needless_range_loop)]
 
+use myl_types::erasure::{ErasureCoder as GfCoder, Fragment};
 use std::collections::BTreeMap;
 
 /// Erasure-Coding-Schnittstelle.
@@ -175,6 +184,102 @@ impl ErasureCoder for XorParityCoder {
     }
 }
 
+/// Reed-Solomon-Kodierung k=8/m=4 hinter der [`ErasureCoder`]-Schnittstelle.
+///
+/// Setzt auf [`myl_types::erasure`] auf — die Körperarithmetik gehört zu
+/// den Primitiven, nicht in diese Komponente. Toleriert den Verlust
+/// **beliebiger** `m` Fragmente.
+///
+/// **Der Längenkopf liegt in den codierten Daten, nicht in Fragment 0.**
+/// [`XorParityCoder`] stellt den Kopf ungeschützt an den Anfang von
+/// Fragment 0 und kann deshalb nicht rekonstruieren, wenn ausgerechnet
+/// dieses Fragment fehlt — eine im Modulkopf vermerkte
+/// Phase-1-Einschränkung. Hier wird die Länge dem Klartext
+/// vorangestellt und **mitcodiert**; damit gibt es kein ausgezeichnetes
+/// Fragment, und jede Teilmenge der Größe `k` genügt.
+#[derive(Debug, Clone, Copy)]
+pub struct ReedSolomonCoder {
+    coder: GfCoder,
+}
+
+impl ReedSolomonCoder {
+    /// Neuer Codierer mit `k` Daten- und `m` Paritätsfragmenten.
+    ///
+    /// **Panics:** bei ungültiger Parametrierung (`k` oder `m` gleich
+    /// null, `k + m > 255`). Die Parameter sind Konfiguration, kein
+    /// Laufzeit-Eingabewert.
+    pub fn new(k: usize, m: usize) -> Self {
+        Self {
+            coder: GfCoder::new(k, m).expect("gültige Erasure-Parameter"),
+        }
+    }
+}
+
+impl Default for ReedSolomonCoder {
+    /// k=8/m=4 — die beschlossene Variante (Design-Entscheidung 5).
+    fn default() -> Self {
+        Self {
+            coder: GfCoder::default(),
+        }
+    }
+}
+
+impl ErasureCoder for ReedSolomonCoder {
+    fn encode(&self, data: &[u8]) -> Vec<Vec<u8>> {
+        let mut mit_kopf = Vec::with_capacity(8 + data.len());
+        mit_kopf.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        mit_kopf.extend_from_slice(data);
+        self.coder
+            .encode(&mit_kopf)
+            .expect("nicht-leere Eingabe durch den Kopf garantiert")
+            .into_iter()
+            .map(|f| f.data)
+            .collect()
+    }
+
+    fn decode(&self, fragments: &[Option<Vec<u8>>]) -> Result<Vec<u8>, String> {
+        let n = self.coder.n();
+        if fragments.len() != n {
+            return Err(format!(
+                "erwartet {} Fragmente, erhalten {}",
+                n,
+                fragments.len()
+            ));
+        }
+        let vorhanden: Vec<Fragment> = fragments
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                f.as_ref().map(|d| Fragment {
+                    index: i,
+                    data: d.clone(),
+                })
+            })
+            .collect();
+        let roh = self.coder.decode(&vorhanden).map_err(|e| e.to_string())?;
+        if roh.len() < 8 {
+            return Err("rekonstruierte Daten zu kurz für den Längenkopf".to_string());
+        }
+        let laenge = u64::from_le_bytes(roh[..8].try_into().expect("8 Bytes")) as usize;
+        if laenge > roh.len() - 8 {
+            return Err(format!(
+                "Längenkopf {} übersteigt die rekonstruierten Daten ({})",
+                laenge,
+                roh.len() - 8
+            ));
+        }
+        Ok(roh[8..8 + laenge].to_vec())
+    }
+
+    fn data_fragments(&self) -> usize {
+        self.coder.k()
+    }
+
+    fn parity_fragments(&self) -> usize {
+        self.coder.m()
+    }
+}
+
 /// DA-Archiv: speichert erasure-codierte Fragmente je Segment und Shard
 /// und hält sie für die Streitfrist vor.
 pub struct DaStore {
@@ -231,6 +336,70 @@ impl DaStore {
 
 #[cfg(test)]
 mod tests {
+    use super::ReedSolomonCoder;
+
+    /// Reed-Solomon vertraegt den Verlust **beliebiger** m Fragmente —
+    /// auch Fragment 0, an dem XorParityCoder scheitert.
+    #[test]
+    fn rs_rekonstruiert_ohne_fragment_null() {
+        let coder = ReedSolomonCoder::default();
+        let daten: Vec<u8> = (0..250u8).collect();
+        let fragmente = coder.encode(&daten);
+        assert_eq!(fragmente.len(), 12);
+
+        let mut teil: Vec<Option<Vec<u8>>> = fragmente.iter().cloned().map(Some).collect();
+        for i in [0usize, 3, 7, 11] {
+            teil[i] = None;
+        }
+        assert_eq!(coder.decode(&teil).expect("decode"), daten);
+    }
+
+    #[test]
+    fn rs_traegt_jede_kombination_von_vier_ausfaellen() {
+        let coder = ReedSolomonCoder::default();
+        let daten: Vec<u8> = (0..97u8).map(|i| i.wrapping_mul(11)).collect();
+        let fragmente = coder.encode(&daten);
+        let mut geprueft = 0;
+        for maske in 0u32..(1 << 12) {
+            if maske.count_ones() != 4 {
+                continue;
+            }
+            let teil: Vec<Option<Vec<u8>>> = fragmente
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    if maske & (1 << i) != 0 {
+                        None
+                    } else {
+                        Some(f.clone())
+                    }
+                })
+                .collect();
+            assert_eq!(coder.decode(&teil).expect("decode"), daten, "Maske {:012b}", maske);
+            geprueft += 1;
+        }
+        assert_eq!(geprueft, 495);
+    }
+
+    #[test]
+    fn rs_meldet_zu_viele_ausfaelle_als_fehler() {
+        let coder = ReedSolomonCoder::default();
+        let daten: Vec<u8> = (0..64u8).collect();
+        let fragmente = coder.encode(&daten);
+        let mut teil: Vec<Option<Vec<u8>>> = fragmente.iter().cloned().map(Some).collect();
+        for i in 0..5 {
+            teil[i] = None;
+        }
+        assert!(coder.decode(&teil).is_err());
+    }
+
+    #[test]
+    fn rs_meldet_vier_paritaetsfragmente() {
+        let coder = ReedSolomonCoder::default();
+        assert_eq!(coder.data_fragments(), 8);
+        assert_eq!(coder.parity_fragments(), 4);
+    }
+
     use super::*;
 
     #[test]

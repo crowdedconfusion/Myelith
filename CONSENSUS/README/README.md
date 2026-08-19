@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.5.0 (`myl-scheduler` 0.2.11)
+> **Version:** 0.9.0 (`myl-scheduler` 0.2.11)
 > **Datum:** 2026-08-19
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -10,7 +10,10 @@
 > (`myl-consensus` v0.3.1–v0.5.0): signiertes, stimmgewichtetes BFT mit
 > VRF-rotierender Komiteewahl, Double-Signing-Beweis und seit v0.5.0
 > Rundenwechsel mit Sperrmechanik — Safety **und** Liveness, die
-> Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft.
+> Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft;
+> **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
+> 4.2 Epochenabschluss, 4.3 DA-Schicht) — **alle vier Phasen
+> abgeschlossen**.
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -64,6 +67,15 @@ myl-consensus/src/
 │                       stimmgewichtet
 ├── round_change.rs     mehrere Runden: Timeouts, Leaderwechsel,
 │                       Sperre/Entsperrung, PolkaCertificate
+├── poi.rs              PoI-Bündel-Einreichung (Prozess B):
+│                       Signierbotschaft, Pod-Mitgliedschaft,
+│                       Aggregat-Prüfung, Annahme-Registry
+├── epoch_close.rs      Epochenabschluss: bestätigte Arbeit,
+│                       Rückbuchung widerlegter Segmente,
+│                       Streitfrist
+├── da.rs               Datenverfügbarkeit: Fragment-Commitment,
+│                       Aufbewahrung über die Streitfrist,
+│                       definiertes Verhalten nach Ablauf
 ├── signing.rs          kanonische, domain-getrennte Signierbotschaften
 ├── voting_weight.rs    Stimmgewicht aus Stake und Arbeitshistorie
 ├── double_signing.rs   Erkennung + nachprüfbarer BLS-Beweis
@@ -74,6 +86,186 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-consensus v0.9.0 – 2026-08-19 (Punkt 4.3: DA-Schicht — Phase 4 vollständig)
+
+Segmentdaten werden erasure-codiert abgelegt und über die Streitfrist
+vorgehalten. Damit ist **Phase 4 abgeschlossen und der CONSENSUS-Fahrplan
+vollständig.**
+
+**Die Erasure-Mathematik liegt in `myl-types::erasure`**, nicht hier. Sie
+gehört zu den Primitiven wie Hash, Merkle, VRF und BLS; eine zweite Kopie
+in einer Komponente wäre genau der Fehler aus Fund A6.
+
+**Cauchy statt Vandermonde.** Bei einer Vandermonde-Matrix ist die
+Invertierbarkeit **jeder** k×k-Teilmatrix nicht automatisch gegeben, und
+dieses Loch äußert sich nicht als Fehler, sondern als Rekonstruktion, die
+für bestimmte Ausfallmuster stillschweigend falsche Daten liefert. Bei
+`C[i][j] = 1/(x_i ⊕ y_j)` mit disjunkten Mengen ist jede quadratische
+Teilmatrix invertierbar. Der Test fährt alle **495** Teilmengen von 8 aus
+12 durch — die Eigenschaft ist geprüft, nicht angenommen.
+
+**„Abgelaufen" ist nicht „nicht vorhanden".** Das Akzeptanzkriterium
+verlangt definiertes Verhalten nach Fristablauf, und das ist eine
+Sicherheitsanforderung: Gäbe es nur „habe ich nicht", wäre Zurückhalten
+von regulärem Ablauf nicht zu unterscheiden und damit folgenlos — man
+müsste nur behaupten, es sei alt. `DaStore::fetch` prüft die Frist
+deshalb **vor** dem Nachschlagen und antwortet `Expired`, auch wenn die
+Daten noch dort liegen. Die Antwort ist aus öffentlichen Größen
+nachrechenbar. Innerhalb der Frist bekommt ein Zurückhaltender
+`FragmentMissing` — ein Vorwurf, kein Normalzustand.
+
+Ein Nebeneffekt derselben Regel: Aufräumen ändert das Protokollverhalten
+nicht, also darf jeder Knoten zu einem anderen Zeitpunkt aufräumen, ohne
+dass die Antworten auseinanderlaufen (`aufraeumen_aendert_die_antwort_nicht`).
+
+**Der Fragmentindex geht ins Merkle-Blatt ein.** Ohne ihn wären Fragmente
+gleichen Inhalts austauschbar, und ein Speicher könnte Fragment 3 als
+Antwort auf die Anfrage nach Fragment 7 ausliefern.
+
+**Tests:** 20 neu hier, 17 in `myl-types`. Crate **212 grün**
+(202 Unit + 10 Akzeptanzmatrix), clippy sauber.
+
+### myl-consensus v0.8.0 – 2026-08-19 (Punkt 4.2: Epochenabschluss)
+
+Aus den eingereichten Ansprüchen wird die **bestätigte** Arbeit. Der
+Unterschied ist der ganze Punkt: 4.1 stellt fest, dass ein Pod eine Menge
+geschlossen behauptet hat, 4.2 stellt fest, ob sie ihm zusteht. Neues
+Modul `epoch_close.rs`.
+
+**Entwurfsgrundsatz: alles, was nicht positiv belegt ist, zählt nicht.**
+Myelith ist quelloffen — ein Angreifer kennt jede Regel dieses Moduls.
+Eine Regel, die nur schützt, solange niemand sie kennt, schützt nicht.
+Die Grundeinstellung ist Ablehnung; jede Gutschrift braucht einen
+positiven Beleg.
+
+Der wichtigste Einzelfall: **`PodAgreement::Missing` ist nicht `Match`.**
+Ein fehlendes Vergleichsergebnis führt zu null, nicht zur Gutschrift.
+Wäre es umgekehrt, hätte ein Angreifer eine billige Strategie — den
+Redundanzpartner unerreichbar machen und für die ausbleibende Aussage
+bezahlt werden. Dass ein fehlender Eintrag genauso behandelt wird wie ein
+ausdrückliches `Missing`, ist eigens getestet.
+
+Weiter: Rückbuchungen sind über die **Segment-Id** idempotent (ohne diese
+Bindung ließe sich ein ehrlicher Pod durch Wiederholung auf null
+bringen), können nicht ins Minus laufen (ein negativer Saldo wäre eine
+Gutschrift an alle anderen), und ein Urteil über einen Pod ohne Bündel
+schafft keinen Anspruch.
+
+**Die Stufe-1-Ergebnisse kommen als Abbildung, nicht als
+Rückruffunktion.** Der Abschluss muss auf jedem Knoten aus denselben
+Eingaben denselben Wert ergeben. Eine Abbildung ist ein Datum, das mit
+dem Block reisen und geprüft werden kann; eine Rückruffunktion wäre
+knotenlokales Verhalten.
+
+**Nicht entschieden:** was eine vTFE-Einheit zählt. Die offene Festlegung
+„Layer statt Shards" wird nicht implizit getroffen — `vtfe_claimed` geht
+als Zahl durch.
+
+**Tests:** 19 neu, Crate **191 grün** (181 Unit + 10 Akzeptanzmatrix),
+clippy sauber.
+
+### myl-consensus v0.7.0 – 2026-08-19 (Fund 27 geschlossen: Besitznachweis Pflicht)
+
+**Der Rogue-Key-Schutz, auf dem 3.6 und 4.1 stehen, existierte nicht.**
+`myl-types` sagte zu, Identitäts- und Subgruppen-Prüfung schützten gegen
+Rogue-Key-Angriffe auf `FastAggregateVerify`. Das ist widerlegt: zu einem
+fremden `pk_opfer` lässt sich `pk_rogue = g₁^x · pk_opfer⁻¹` bilden, der
+beide Prüfungen besteht, und danach gilt eine allein vom Angreifer
+erzeugte Signatur als Aggregat beider Schlüssel.
+
+Betroffen waren beide Aggregat-Prüfungen dieses Crates:
+
+- **`round_change.rs`** — ein Validator hätte allein ein
+  `PolkaCertificate` erzeugen, gesperrte Validatoren entsperren und damit
+  zwei Blöcke auf derselben Höhe ermöglichen können. **BFT-Safety.**
+- **`poi.rs`** — ein einzelnes Pod-Mitglied hätte die Bestätigung des
+  ganzen Pods fälschen und Arbeit beanspruchen können, die niemand
+  geleistet hat.
+
+**Geschlossen an der Wurzel, nicht an den Aufrufstellen.** `myl-types`
+v0.3.0 liefert `BlsProofOfPossession`; dieses Crate verlangt ihn dort, wo
+ein fremder Schlüssel zum ersten Mal ins Verfahren kommt:
+
+- `ValidatorRegistry::register(miner_id, pubkey, pop, stake, epoch)` —
+  neue Fehlervariante `ValidatorError::InvalidProofOfPossession`.
+- `PodMembership::new(...)` nimmt je Mitglied
+  `(MinerId, BlsPublicKey, BlsProofOfPossession)` — neue Variante
+  `PoIError::InvalidProofOfPossession { member }`. Der Nachweis wird
+  geprüft, aber nicht gespeichert: er gehört zur Aufnahme, nicht zum
+  Zustand.
+
+**Anmerkung zum Ort der Pod-Prüfung.** Sie gehört eigentlich in eine
+Miner-Registrierung — einmal beim Eintritt statt bei jeder Pod-Bildung.
+`myl-scheduler::MinerRegistration` trägt heute aber gar keinen Schlüssel,
+deshalb ist `PodMembership::new` derzeit die erste Stelle, an der ein
+fremder Miner-Schlüssel auftaucht. Im Modul vermerkt, damit die Prüfung
+mitwandert, sobald es die Registrierung gibt.
+
+**Breaking:** beide Signaturen geändert; `myl-testclient` nachgezogen.
+
+**Tests:** neu `register_verlangt_besitznachweis` und
+`mitglied_ohne_gueltigen_besitznachweis_wird_abgelehnt`; die eigentliche
+Regression liegt bei `myl-types` (`tests/rogue_key.rs`, 5 Tests). Crate
+**175 grün** (165 Unit + 10 Akzeptanzmatrix), clippy sauber.
+
+### myl-consensus v0.6.0 – 2026-08-19 (Phase 4 begonnen: PoI-Bündel-Einreichung)
+
+**Punkt 4.1.** Prozess B (Kap. 3.5.2): Ein Pod-Koordinator reicht am
+Epochenende ein `PoIBundle` ein, das die Inferenzarbeit seines Pods
+beansprucht. Neues Modul `poi.rs` mit `poi_bundle_message`,
+`PodMembership`, `verify_bundle_signature` und `PoIRegistry`.
+
+**Die tragende Regel: die Schlüsselmenge kommt aus der Zuteilung des
+Schedulers, nie aus dem eingereichten Bündel.** Das klingt
+selbstverständlich und ist der Punkt, an dem sich Aggregat-Signaturen
+still aushebeln lassen. `FastAggregateVerify` prüft ein Aggregat gegen
+eine Liste öffentlicher Schlüssel; nimmt man diese Liste aus dem
+eingereichten Objekt, prüft man nur noch „haben die, die unterschrieben
+haben, unterschrieben?". Ein Pod aus fünf Mitgliedern könnte dann mit
+der Signatur eines einzigen einreichen. `PodMembership` stammt deshalb
+aus `myl-scheduler` (Anhang A.2) und ist die maßgebliche Quelle.
+
+**Akzeptanzkriterium erfüllt.** „Ein PoI-Bündel mit fehlender oder
+falscher Signatur eines Pod-Mitglieds wird abgelehnt" —
+`fehlende_signatur_eines_mitglieds_wird_abgelehnt` fährt das für **jedes**
+Mitglied einzeln durch, dazu Tests für die Einzelsignatur statt aller
+und für die fremde Signatur anstelle eines Mitglieds.
+
+**`vtfe_claimed` ist mitsigniert.** Stünde die beanspruchte Arbeitsmenge
+nicht in der Botschaft, könnte der Koordinator sie nach dem Einsammeln
+der Signaturen hochsetzen — die Mitglieder hätten eine Menge bestätigt,
+die sie nie gesehen haben, und das Aggregat bliebe gültig.
+
+**Doppel-Sperre je `(Epoche, Pod)`** als Konsensregel, nicht als
+Aufräumhilfe: ohne sie könnte derselbe Anspruch mehrfach eingereicht und
+mehrfach geprägt werden. Eine fehlgeschlagene Prüfung hinterlässt keinen
+Zustand — sonst sperrte ein geschickt gebautes Falschbündel den ehrlichen
+Koordinator aus (`abgelehntes_buendel_hinterlaesst_keinen_zustand`).
+
+**Bewusst nicht entschieden:** ob `vtfe_claimed` inhaltlich stimmt. Das
+Modul stellt fest, dass der Pod die Menge geschlossen bestätigt hat —
+nicht, dass sie korrekt ist. Die Bestätigung ist Punkt 4.2 und hängt an
+der offenen Festlegung, **was eine vTFE-Einheit zählt** (Layer statt
+Shards). Sie wird hier nicht implizit getroffen; `vtfe_claimed` ist
+Eingabe.
+
+**⚠ Fund 27 — die Aggregat-Prüfung trägt noch nicht allein.**
+`myl-types` sagt zu, dass Identitäts- und Subgruppen-Prüfung gegen
+Rogue-Key-Angriffe auf `FastAggregateVerify` schützen. Diese Zusage ist
+falsch, und zwar nachgewiesen: ein Schlüssel `pk_rogue = g₁^x · pk_opfer⁻¹`
+besteht beide Prüfungen, und danach gilt
+`fast_aggregate_verify([pk_opfer, pk_rogue], msg, σ)` für ein σ, das der
+Angreifer allein erzeugt hat. Betroffen sind beide Aufrufstellen im
+Projekt: dieses Modul und `round_change.rs`. Heute nicht ausnutzbar, weil
+Registrierung zwei Epochen vor Gruppenbildung schließt — eine Eigenschaft
+des Zeitplans, keine kryptografische Garantie. Empfehlung:
+Proof-of-Possession bei der Registrierung. Konsensrelevant und
+komponentenübergreifend, deshalb dokumentiert und nicht nebenbei
+behoben; Details im Fahrplan-Master.
+
+**Tests:** 26 neue in `poi.rs`, Crate insgesamt **173 Tests grün**
+(163 Unit + 10 Akzeptanzmatrix), clippy mit `-D warnings` sauber.
 
 ### myl-consensus v0.5.0 – 2026-08-19 (Phase 3 abgeschlossen: Rundenwechsel)
 

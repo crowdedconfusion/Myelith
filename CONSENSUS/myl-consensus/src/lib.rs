@@ -21,6 +21,9 @@ pub mod signing;
 pub mod voting_weight;
 pub mod double_signing;
 pub mod round_change;
+pub mod poi;
+pub mod epoch_close;
+pub mod da;
 
 pub use validator::{
     Validator, ValidatorRegistry, Committee, CommitteeRole, select_committee,
@@ -44,6 +47,15 @@ pub use signing::{
     signable_bytes, propose_message, vote_message, commit_message,
     propose_pol_message,
     DST_PROPOSE, DST_VOTE, DST_COMMIT, DST_PROPOSE_POL,
+};
+pub use da::{commit_segment, DaCommitment, DaError, DaStore};
+pub use epoch_close::{
+    close_epoch, EpochClosing, EpochError, PodAgreement, RefutedSegment,
+    DEFAULT_DISPUTE_EPOCHS,
+};
+pub use poi::{
+    PoIError, PoIRegistry, PodMembership, bundle_message, poi_bundle_message,
+    verify_bundle_signature, DST_POI_BUNDLE,
 };
 pub use round_change::{
     Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,

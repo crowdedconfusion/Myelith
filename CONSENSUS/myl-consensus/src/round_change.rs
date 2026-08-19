@@ -61,6 +61,25 @@
 //! nachprüfbar. Der Aufrufer besorgt die Zeit — im Betrieb aus der
 //! Node-Uhr, im Test aus einer Zahl.
 //!
+//! ## Woran die Beweiskraft des Zertifikats hängt (Fund 27)
+//!
+//! [`PolkaCertificate`] beweist nur dann etwas, wenn ein Aggregat ohne
+//! die Signaturen **aller** aufgeführten Schlüssel ungültig ist. Das
+//! gilt nicht von selbst: Zu einem fremden `pk_opfer` lässt sich
+//! `pk_rogue = g₁^x · pk_opfer⁻¹` bilden, und eine allein vom Angreifer
+//! erzeugte Signatur gilt dann als Aggregat beider. Ein Validator mit
+//! einem solchen Schlüssel könnte allein ein Zertifikat erzeugen,
+//! gesperrte Validatoren entsperren — und damit zwei Blöcke auf
+//! derselben Höhe ermöglichen. Identitäts- und Subgruppen-Prüfung
+//! fangen das nicht ab.
+//!
+//! Getragen wird die Zertifikatsprüfung deshalb von
+//! [`crate::validator::ValidatorRegistry::register`], das je Schlüssel
+//! einen `BlsProofOfPossession` verlangt. Nur Schlüssel, deren diskreten
+//! Logarithmus jemand nachweislich kennt, kommen in die
+//! stimmberechtigte Menge. Regression:
+//! `SHARED_TYPES/myl-types/tests/rogue_key.rs`.
+//!
 //! **Konsens-Feld:** Sperrregel und Zertifikatsprüfung sind Teil des
 //! Konsensvertrags. Änderungen nur über Governance (Kap. 10.3).
 

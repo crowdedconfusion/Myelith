@@ -34,10 +34,15 @@ pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;
 pub mod vrf;
+pub mod erasure;
 
+pub use erasure::{
+    ErasureCoder, ErasureError, Fragment, DEFAULT_K, DEFAULT_M, GF_POLY,
+};
 pub use bls::{
     aggregate_signatures, aggregate_verify, fast_aggregate_verify, BlsAggregateSignature,
-    BlsError, BlsPublicKey, BlsSecretKey, BlsSignature, BLS_DST,
+    BlsError, BlsProofOfPossession, BlsPublicKey, BlsSecretKey, BlsSignature, BLS_DST,
+    BLS_POP_DST,
 };
 pub use challenge::{Challenge, ChallengeStructureError};
 pub use core_types::{segments_root, InferenceCredit, PoIBundle, Segment};

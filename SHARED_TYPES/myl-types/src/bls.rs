@@ -21,8 +21,31 @@
 //! - Alle Verifikationen laufen mit Signatur-Gruppenprüfung
 //!   (`sig_groupcheck = true`).
 //! - Öffentliche Schlüssel werden vor jeder Aggregat-Verifikation
-//!   validiert (Identitäts- und Subgruppen-Prüfung) — schützt gegen
-//!   Rogue-Key-Angriffe bei `FastAggregateVerify`.
+//!   validiert (Identitäts- und Subgruppen-Prüfung). Das schließt
+//!   Identitätspunkte und Punkte außerhalb der Untergruppe aus.
+//! - **Gegen Rogue-Key-Angriffe schützt ein Proof-of-Possession**
+//!   ([`BlsSecretKey::prove_possession`],
+//!   [`BlsPublicKey::verify_possession`]), der bei der Registrierung
+//!   eines Schlüssels zu prüfen ist. Ohne ihn ist `FastAggregateVerify`
+//!   angreifbar.
+//!
+//! ## Warum Validierung allein nicht genügt (Fund 27)
+//!
+//! Bis 2026-08-19 stand hier, die Identitäts- und Subgruppen-Prüfung
+//! schütze gegen Rogue-Key-Angriffe auf `FastAggregateVerify`. Das ist
+//! **falsch**, und es wurde nicht theoretisch bezweifelt, sondern
+//! gebrochen: Zu einem fremden `pk_opfer` lässt sich
+//! `pk_rogue = g₁^x · pk_opfer⁻¹` bilden. Dieser Punkt liegt in der
+//! richtigen Untergruppe, ist nicht die Identität und besteht damit
+//! **beide** Prüfungen. Da `pk_opfer · pk_rogue = g₁^x` gilt, verifiziert
+//! eine Signatur, die der Angreifer allein mit `x` erzeugt hat, als
+//! Aggregat beider Schlüssel — das Opfer hat nie unterschrieben.
+//!
+//! Die Prüfungen sind trotzdem richtig und bleiben; sie wehren nur ein
+//! anderes Problem ab (Kleine-Untergruppen-Angriffe). Gegen Rogue Keys
+//! hilft, dass der Angreifer den diskreten Logarithmus von `pk_rogue`
+//! nicht kennt — genau das weist der Proof-of-Possession nach. Die
+//! Regression steht in `tests/rogue_key.rs`.
 //!
 //! Quanten-Einordnung: BLS12-381 ist Shor-anfällig (Discrete-Log) und
 //! ein dokumentierter Migrationspunkt; Kandidaten sind ML-DSA/Dilithium,
@@ -48,6 +71,16 @@ pub const BLS_SIG_LEN: usize = 96;
 /// `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_` (min-pk). Teil des
 /// Konsensvertrags: Jede Änderung bricht alle bestehenden Signaturen.
 pub const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
+/// Domain-Separation-Tag der Proof-of-Possession-Suite
+/// `BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_`
+/// (draft-irtf-cfrg-bls-signature §4.2.3).
+///
+/// Muss sich von [`BLS_DST`] unterscheiden: sonst wäre eine gewöhnliche
+/// Signatur über die eigenen Schlüsselbytes ein gültiger Besitznachweis
+/// und umgekehrt ein Besitznachweis eine gültige Nachrichtensignatur.
+/// Teil des Konsensvertrags.
+pub const BLS_POP_DST: &[u8] = b"BLS_POP_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 /// Fehler der BLS-Operationen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +129,14 @@ pub struct BlsPublicKey(pub [u8; BLS_PK_LEN]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct BlsSignature(pub [u8; BLS_SIG_LEN]);
 
+/// Besitznachweis für einen öffentlichen Schlüssel (Proof-of-Possession).
+///
+/// Eigener Typ statt [`BlsSignature`], damit ein Besitznachweis nicht
+/// versehentlich als Nachrichtensignatur durchgeht — die beiden werden
+/// unter verschiedenen Domain-Tags erzeugt und geprüft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct BlsProofOfPossession(pub [u8; BLS_SIG_LEN]);
+
 /// BLS-Aggregat-Signatur (ebenfalls komprimierter G2-Punkt, 96 Bytes).
 ///
 /// Eigenständiger Typ, damit eine Einzelsignatur nicht versehentlich
@@ -106,8 +147,11 @@ pub struct BlsAggregateSignature(pub [u8; BLS_SIG_LEN]);
 
 /// Öffentlichen Schlüssel dekodieren UND validieren (Identitäts- und
 /// Subgruppen-Prüfung). Konsens-Knoten müssen fremde öffentliche
-/// Schlüssel immer validieren, bevor sie sie verwenden — insbesondere
-/// vor `FastAggregateVerify` (Rogue-Key-Schutz).
+/// Schlüssel immer validieren, bevor sie sie verwenden.
+///
+/// **Nicht** ausreichend gegen Rogue Keys — dafür ist der
+/// Proof-of-Possession bei der Registrierung zuständig
+/// ([`BlsPublicKey::verify_possession`], Fund 27 im Modulkopf).
 fn decode_validated_pk(bytes: &[u8; BLS_PK_LEN]) -> Result<PublicKey, BlsError> {
     let pk = PublicKey::from_bytes(bytes).map_err(|_| BlsError::InvalidPublicKey)?;
     pk.validate().map_err(|_| BlsError::InvalidPublicKey)?;
@@ -135,6 +179,20 @@ impl BlsSecretKey {
         let sig = sk.sign(message, BLS_DST, &[]);
         Ok(BlsSignature(sig.compress()))
     }
+
+    /// Erzeugt den Besitznachweis zum eigenen öffentlichen Schlüssel
+    /// (`PopProve`, draft-irtf-cfrg-bls-signature §3.3.2).
+    ///
+    /// Signiert die **komprimierten Bytes des eigenen öffentlichen
+    /// Schlüssels** unter [`BLS_POP_DST`]. Wer das kann, kennt den
+    /// diskreten Logarithmus seines Schlüssels — und genau das kann der
+    /// Erzeuger eines Rogue Keys nicht (Fund 27 im Modulkopf).
+    pub fn prove_possession(&self) -> Result<BlsProofOfPossession, BlsError> {
+        let sk = SecretKey::from_bytes(&self.0).map_err(|_| BlsError::InvalidSecretKey)?;
+        let pk = sk.sk_to_pk();
+        let sig = sk.sign(&pk.compress(), BLS_POP_DST, &[]);
+        Ok(BlsProofOfPossession(sig.compress()))
+    }
 }
 
 impl BlsPublicKey {
@@ -157,6 +215,29 @@ impl BlsPublicKey {
             Err(_) => return false,
         };
         sig.verify(true, message, BLS_DST, &[], &pk, true) == BLST_ERROR::BLST_SUCCESS
+    }
+
+    /// Prüft den Besitznachweis zu diesem Schlüssel (`PopVerify`,
+    /// draft-irtf-cfrg-bls-signature §3.3.3).
+    ///
+    /// **Vor jeder Aufnahme eines fremden Schlüssels in eine Menge
+    /// aufzurufen, gegen die später aggregiert verifiziert wird** —
+    /// Validator-Registrierung, Pod-Mitgliedschaft. Ohne diese Prüfung
+    /// ist [`fast_aggregate_verify`] angreifbar; die Begründung steht im
+    /// Modulkopf unter Fund 27.
+    pub fn verify_possession(&self, pop: &BlsProofOfPossession) -> bool {
+        let pk = match decode_validated_pk(&self.0) {
+            Ok(pk) => pk,
+            Err(_) => return false,
+        };
+        let sig = match Signature::from_bytes(&pop.0) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        // Die Botschaft sind die Schlüsselbytes selbst — der Nachweis
+        // bindet damit genau diesen Schlüssel und ist nicht auf einen
+        // anderen übertragbar.
+        sig.verify(true, &self.0, BLS_POP_DST, &[], &pk, true) == BLST_ERROR::BLST_SUCCESS
     }
 }
 
@@ -311,6 +392,60 @@ mod tests {
             }
         }
         assert!(pk_a.verify(msg, &sig));
+    }
+
+    // ── Proof-of-Possession (Fund 27) ───────────────────────────
+
+    #[test]
+    fn besitznachweis_gilt_fuer_den_eigenen_schluessel() {
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).expect("key_gen");
+        let pk = sk.public_key().expect("pk");
+        let pop = sk.prove_possession().expect("pop");
+        assert!(pk.verify_possession(&pop));
+    }
+
+    #[test]
+    fn besitznachweis_ist_nicht_uebertragbar() {
+        // Der Nachweis signiert die eigenen Schluesselbytes; unter einem
+        // anderen Schluessel ergibt er keinen Sinn.
+        let sk_a = BlsSecretKey::key_gen(&[3u8; 32]).expect("a");
+        let sk_b = BlsSecretKey::key_gen(&[4u8; 32]).expect("b");
+        let pk_b = sk_b.public_key().expect("pk_b");
+        let pop_a = sk_a.prove_possession().expect("pop_a");
+        assert!(!pk_b.verify_possession(&pop_a));
+    }
+
+    #[test]
+    fn nachrichtensignatur_ist_kein_besitznachweis() {
+        // Ohne getrennte Domain-Tags waere eine gewoehnliche Signatur
+        // ueber die eigenen Schluesselbytes ein gueltiger Nachweis.
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).expect("key_gen");
+        let pk = sk.public_key().expect("pk");
+        let sig = sk.sign(&pk.0).expect("sign");
+        assert!(!pk.verify_possession(&BlsProofOfPossession(sig.0)));
+    }
+
+    #[test]
+    fn besitznachweis_ist_keine_nachrichtensignatur() {
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).expect("key_gen");
+        let pk = sk.public_key().expect("pk");
+        let pop = sk.prove_possession().expect("pop");
+        assert!(!pk.verify(&pk.0, &BlsSignature(pop.0)));
+    }
+
+    #[test]
+    fn pop_dst_unterscheidet_sich_vom_signatur_dst() {
+        assert_ne!(BLS_DST, BLS_POP_DST);
+    }
+
+    #[test]
+    fn verstuemmelter_besitznachweis_wird_abgelehnt() {
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).expect("key_gen");
+        let pk = sk.public_key().expect("pk");
+        let mut pop = sk.prove_possession().expect("pop");
+        pop.0[0] ^= 0x01;
+        assert!(!pk.verify_possession(&pop));
+        assert!(!pk.verify_possession(&BlsProofOfPossession([0u8; BLS_SIG_LEN])));
     }
 
     #[test]
