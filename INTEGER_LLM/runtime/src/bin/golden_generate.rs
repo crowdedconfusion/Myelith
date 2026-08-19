@@ -62,10 +62,10 @@ fn generate_layer_vectors(model: &IntegerModel, theta_v_hash: &str, output_dir: 
 
         // Single-layer forward mit leerem KV-Cache (Position 0, nur
         // Self-Attention auf das eine Token).
-        let out_frac = if layer_idx + 1 < model.num_layers {
-            model.layers[layer_idx + 1].scales.residual_in_frac
+        let out_frac: &[u8] = if layer_idx + 1 < model.num_layers {
+            &model.layers[layer_idx + 1].scales.residual_in_frac
         } else {
-            model.final_residual_frac
+            &model.final_residual_frac
         };
 
         let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
@@ -78,12 +78,17 @@ fn generate_layer_vectors(model: &IntegerModel, theta_v_hash: &str, output_dir: 
         gv.insert("level".into(), serde_json::Value::String("layer".into()));
         gv.insert("theta_v_hash".into(), serde_json::Value::String(theta_v_hash.into()));
 
-        // Metadata
+        // Metadata. Seit Fund 20 (theta_v 0.11.0) sind residual_in_frac/
+        // out_residual_frac Arrays (eine Skala je Kanal) statt Skalare -
+        // rein informativ, wird von golden_model.rs nicht zurueckgelesen
+        // (es validiert gegen die im Artefakt selbst geladenen Skalen).
         let mut meta = serde_json::Map::new();
         meta.insert("layer_idx".into(), serde_json::Value::Number(layer_idx.into()));
         meta.insert("seq_len".into(), serde_json::Value::Number(1.into()));
-        meta.insert("residual_in_frac".into(), serde_json::Value::Number(sc.residual_in_frac.into()));
-        meta.insert("out_residual_frac".into(), serde_json::Value::Number(out_frac.into()));
+        meta.insert("residual_in_frac".into(), serde_json::Value::Array(
+            sc.residual_in_frac.iter().map(|&s| serde_json::Value::Number(s.into())).collect()));
+        meta.insert("out_residual_frac".into(), serde_json::Value::Array(
+            out_frac.iter().map(|&s| serde_json::Value::Number(s.into())).collect()));
         gv.insert("metadata".into(), serde_json::Value::Object(meta));
 
         // Inputs

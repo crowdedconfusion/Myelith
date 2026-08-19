@@ -542,6 +542,7 @@ impl Backend for SimdBackend {
     fn rmsnorm(
         &self,
         x: &[i16],
+        x_shifts: &[u8],
         gamma: &[i8],
         gamma_shifts: &[u8],
         rsqrt_lut: &[i16],
@@ -552,7 +553,7 @@ impl Backend for SimdBackend {
         out_frac: u8,
     ) {
         // Delegiert an Referenz-Kernel (Zukuenftig: AVX2 sum-of-squares).
-        let result = rmsnorm_i16(x, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        let result = rmsnorm_i16(x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
         out.copy_from_slice(&result);
     }
 
@@ -591,6 +592,7 @@ impl Backend for SimdBackend {
         v: &[Vec<i16>],
         out: &mut [Vec<i16>],
         mask: &[Vec<bool>],
+        score_mult: i64,
         score_shift: u8,
         exp_lut: &[i16],
         lut_shift: u8,
@@ -598,7 +600,7 @@ impl Backend for SimdBackend {
     ) {
         // Attention nutzt softmax_avx2 intern ueber softmax_int-Aufrufe.
         // Der Q*K^T dot-product und die V-Gewichtung delegieren an Referenz.
-        let result = attention_int(q, k, v, mask, score_shift, exp_lut, lut_shift, prob_frac);
+        let result = attention_int(q, k, v, mask, score_mult, score_shift, exp_lut, lut_shift, prob_frac);
         for (i, row) in result.iter().enumerate() {
             out[i].copy_from_slice(row);
         }
@@ -686,7 +688,7 @@ impl Backend for SimdBackend {
         silu_in_frac: u8,
         silu_lut_offset: i16,
         silu_out_frac: u8,
-        out_frac: u8,
+        out_frac: &[u8],
     ) {
         let hidden_size = x.len();
         let intermediate_size = W_gate.len() / hidden_size;

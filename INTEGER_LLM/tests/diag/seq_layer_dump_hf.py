@@ -19,11 +19,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
+sys.path.insert(0, str(REPO / "eval"))
 from src.loader import load_reference_model  # noqa: E402
+from wikitext_common import MODEL_DIR, select_sequences  # noqa: E402
 
-# Erste Tokens der ersten Mess-Sequenz (eval/wikitext_common.py,
-# select_sequences(4,128)[0]) — identisch zu seq_layer_dump.rs.
-ALL_TOKENS = [34532, 425, 10965, 465, 374, 458, 6364, 4531]
+# Erste 8 Tokens der ersten Mess-Sequenz (eval/wikitext_common.py,
+# select_sequences(4,128)[0]) — folgt INTEGER_LLM_MODEL wie die
+# Kalibrierung, damit Rust-Dump und HF-Dump garantiert dieselbe Sequenz
+# durchspielen. Fuer 0,5B und 7B bislang zufaellig identisch (dieselben
+# BPE-Merges), aber auf Zufall verlassen wollen wir uns nicht.
+ALL_TOKENS = select_sequences(4, 128, verbose=False)[0][:8]
 
 
 def summary(name, t):
@@ -41,7 +46,7 @@ def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else len(ALL_TOKENS)
     tokens = ALL_TOKENS[:n]
 
-    model, _ = load_reference_model(REPO / "models" / "Qwen2.5-0.5B")
+    model, _ = load_reference_model(MODEL_DIR)
     model.eval()
 
     input_ids = torch.tensor([tokens], device=model.device)

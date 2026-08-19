@@ -46,6 +46,42 @@ pub fn linear_w8a16(
     out
 }
 
+/// W8A16 mit Per-Kanal-Ausgangsskala (Fund 20, theta_v 0.11.0).
+///
+/// Wie `linear_w8a16`, aber `out_frac_bits` ist ein Shift JE
+/// AUSGABE-KANAL statt ein einziger fuer den ganzen Vektor. Wird fuer
+/// `o_proj` und `down_proj` gebraucht: ihre Ausgabe wird direkt in den
+/// Residualstrom addiert, und der trägt seit Fund 20 eine Skala je Kanal
+/// (Massive Activations bei Qwen2.5-7B — siehe `rmsnorm.rs`-Modulkopf).
+/// `q_proj`/`k_proj`/`v_proj`/`gate_proj`/`up_proj` bleiben bei der
+/// Skalar-Funktion, weil ihre Ausgaben NICHT in den Residualstrom
+/// zurückfliessen und keine vergleichbaren Ausreisser zeigen.
+///
+/// Bei identischem Wert in jedem Element von `out_frac_bits` ist das
+/// Ergebnis bitgleich zu `linear_w8a16` mit demselben Skalar (siehe
+/// `test_linear_w8a16_pc_uniform_matches_scalar`).
+pub fn linear_w8a16_pc(
+    x: &[i16],
+    W: &[Vec<i8>],
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<i16> {
+    assert_eq!(W.len(), w_shifts.len(), "linear_w8a16_pc: eine Skala je Ausgabe-Zeile");
+    assert_eq!(W.len(), out_frac_bits.len(), "linear_w8a16_pc: eine Ausgangsskala je Kanal (Fund 20)");
+    let mut out = Vec::with_capacity(W.len());
+
+    for (row, (&w_shift, &out_frac)) in W.iter().zip(w_shifts.iter().zip(out_frac_bits.iter())) {
+        let mut acc: i64 = 0;
+        for (w, v) in row.iter().zip(x.iter()) {
+            acc += (*w as i64) * (*v as i64);
+        }
+        let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac);
+        out.push(clamp_i16_from_i64(y));
+    }
+    out
+}
+
 /// Addiert einen quantisierten Bias auf eine int16-Aktivierungsausgabe.
 ///
 /// Der Bias liegt als int8 mit Per-Element-Skalen vor (`bias_shifts[i]`,
@@ -110,6 +146,36 @@ mod tests {
         let out = linear_w8a16(&x, &W, &[7], 5, 3);
         let expected = 32767;
         assert_eq!(out[0], expected as i16);
+    }
+
+    #[test]
+    fn test_linear_w8a16_pc_uniform_matches_scalar() {
+        // Fund 20: dasselbe out_frac_bits in jedem Kanal muss bitgleich
+        // zur Skalar-Funktion sein - Voraussetzung dafuer, dass bestehende
+        // Aufrufer (q/k/v/gate/up_proj) unangetastet bleiben duerfen.
+        let x = vec![100i16, -50, 25];
+        let W = vec![vec![64i8, -32, 16], vec![10i8, 20, -30]];
+        let w_shifts = vec![6u8, 5];
+        let skalar = linear_w8a16(&x, &W, &w_shifts, 4, 6);
+        let per_kanal = linear_w8a16_pc(&x, &W, &w_shifts, 4, &[6, 6]);
+        assert_eq!(skalar, per_kanal);
+    }
+
+    #[test]
+    fn test_linear_w8a16_pc_different_targets_per_channel() {
+        // Zwei Ausgabezeilen mit identischen Rohwerten, aber
+        // unterschiedlicher Zielskala je Kanal (das ist der eigentliche
+        // Zweck: o_proj/down_proj muessen auf die per-Kanal kalibrierte
+        // Residualskala zielen koennen, nicht nur auf eine gemeinsame).
+        let x = vec![100i16, 100];
+        let W = vec![vec![64i8, 64], vec![64i8, 64]]; // identische Zeilen
+        let w_shifts = vec![6u8, 6];
+        let out = linear_w8a16_pc(&x, &W, &w_shifts, 0, &[6, 3]);
+        // acc = 64*100 + 64*100 = 12800 fuer beide Zeilen.
+        // Zeile 0: rescale(12800, 6, 6) = 12800 (kein Shift).
+        // Zeile 1: rescale(12800, 6, 3) = 12800 >> 3 = 1600.
+        assert_eq!(out[0], 12800);
+        assert_eq!(out[1], 1600);
     }
 
     #[test]

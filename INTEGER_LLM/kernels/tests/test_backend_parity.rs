@@ -204,8 +204,9 @@ fn rmsnorm_parity_basic() {
     let mut ref_out = vec![0i16; n];
     let mut simd_out = vec![0i16; n];
 
-    ref_backend.rmsnorm(&x, &gamma, &gamma_shifts, &rsqrt_lut, 8, 8, inv_n_q20, &mut ref_out, 6);
-    simd_backend.rmsnorm(&x, &gamma, &gamma_shifts, &rsqrt_lut, 8, 8, inv_n_q20, &mut simd_out, 6);
+    let x_shifts: Vec<u8> = (0..n).map(|i| 3 + (i % 5) as u8).collect();
+    ref_backend.rmsnorm(&x, &x_shifts, &gamma, &gamma_shifts, &rsqrt_lut, 8, 8, inv_n_q20, &mut ref_out, 6);
+    simd_backend.rmsnorm(&x, &x_shifts, &gamma, &gamma_shifts, &rsqrt_lut, 8, 8, inv_n_q20, &mut simd_out, 6);
 
     assert_eq!(ref_out, simd_out, "RMSNorm: SIMD weicht von Referenz ab");
 }
@@ -236,17 +237,18 @@ fn mlp_parity_basic() {
     let mut ref_out = vec![0i16; hidden];
     let mut simd_out = vec![0i16; hidden];
 
+    let out_shifts: Vec<u8> = (0..hidden).map(|i| 2 + (i % 6) as u8).collect();
     ref_backend.mlp(
         &x, &w_gate, &w_up, &w_down, &mut ref_out,
         &gate_shifts, &up_shifts, &down_shifts,
         &silu_lut,
-        6, 8, 8, 8, 3, 1024, 6, 6,
+        6, 8, 8, 8, 3, 1024, 6, &out_shifts,
     );
     simd_backend.mlp(
         &x, &w_gate, &w_up, &w_down, &mut simd_out,
         &gate_shifts, &up_shifts, &down_shifts,
         &silu_lut,
-        6, 8, 8, 8, 3, 1024, 6, 6,
+        6, 8, 8, 8, 3, 1024, 6, &out_shifts,
     );
 
     assert_eq!(ref_out, simd_out, "MLP: SIMD weicht von Referenz ab");

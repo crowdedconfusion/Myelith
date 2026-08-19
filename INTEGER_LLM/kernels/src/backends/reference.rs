@@ -75,6 +75,7 @@ impl Backend for ReferenceBackend {
     fn rmsnorm(
         &self,
         x: &[i16],
+        x_shifts: &[u8],
         gamma: &[i8],
         gamma_shifts: &[u8],
         rsqrt_lut: &[i16],
@@ -84,7 +85,7 @@ impl Backend for ReferenceBackend {
         out: &mut [i16],
         out_frac: u8,
     ) {
-        let result = rmsnorm_i16(x, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        let result = rmsnorm_i16(x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
         out.copy_from_slice(&result);
     }
 
@@ -107,12 +108,13 @@ impl Backend for ReferenceBackend {
         v: &[Vec<i16>],
         out: &mut [Vec<i16>],
         mask: &[Vec<bool>],
+        score_mult: i64,
         score_shift: u8,
         exp_lut: &[i16],
         lut_shift: u8,
         prob_frac: u8,
     ) {
-        let result = attention_int(q, k, v, mask, score_shift, exp_lut, lut_shift, prob_frac);
+        let result = attention_int(q, k, v, mask, score_mult, score_shift, exp_lut, lut_shift, prob_frac);
         for (i, row) in result.iter().enumerate() {
             out[i].copy_from_slice(row);
         }
@@ -154,7 +156,7 @@ impl Backend for ReferenceBackend {
         silu_in_frac: u8,
         silu_lut_offset: i16,
         silu_out_frac: u8,
-        out_frac: u8,
+        out_frac: &[u8],
     ) {
         let hidden_size = x.len();
         let intermediate_size = W_gate.len() / hidden_size;

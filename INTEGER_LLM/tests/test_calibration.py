@@ -122,6 +122,87 @@ def test_scales_always_pow2_consistent_batch():
             assert entry["shift"] == 0, name
 
 
+def test_per_channel_scales_produce_shifts_array():
+    # Fund 20: ein Eintrag MIT "channel_absmax" (Residualstrom-Segment)
+    # bekommt zusaetzlich ein "shifts"-Array - eine Zweierpotenz-Skala je
+    # Kanal statt einer fuer den ganzen Tensor.
+    stats = {
+        "model.layers.4.input_layernorm.input": {
+            "absmax": 9600.0,  # = max(channel_absmax) - der Ausreisser-Kanal
+            "channel_absmax": [9600.0, 0.25, 0.5, 0.75],
+        }
+    }
+    scales = compute_scales_from_stats(stats)
+    entry = scales["model.layers.4.input_layernorm.input"]
+    assert "shifts" in entry
+    assert len(entry["shifts"]) == 4
+    # Die winzigen Kanaele bekommen deutlich feinere (groessere) Shifts als
+    # der Ausreisser-Kanal - genau der Punkt von Fund 20: sie werden NICHT
+    # auf den Ausreisser heruntergerundet.
+    assert entry["shifts"][1] > entry["shifts"][0] + 5
+    assert entry["shifts"][2] > entry["shifts"][0] + 5
+    assert entry["shifts"][3] > entry["shifts"][0] + 5
+
+
+def test_per_channel_headroom_is_applied():
+    # Fund 21: jeder Per-Kanal-Shift traegt PER_CHANNEL_HEADROOM_BITS
+    # Sicherheitsabstand gegen Clipping auf ungesehenen Sequenzen. Ohne
+    # ihn clippten bei Qwen2.5-7B 6,24 % der Kanaele um bis zu Faktor 4,53
+    # (tests/diag/per_channel_headroom.py).
+    from src.scales import PER_CHANNEL_HEADROOM_BITS
+
+    stats = {
+        "seg.input": {
+            "absmax": 100.0,
+            "channel_absmax": [100.0, 1.0, 0.01],
+        }
+    }
+    entry = compute_scales_from_stats(stats)["seg.input"]
+    assert entry["headroom_bits"] == PER_CHANNEL_HEADROOM_BITS
+    # Jeder Kanal-Shift liegt genau um den Headroom unter dem Wert, den
+    # choose_pow2_shift ohne Abstand liefern wuerde.
+    for absmax, shift in zip(stats["seg.input"]["channel_absmax"], entry["shifts"]):
+        ohne = choose_pow2_shift(absmax)
+        assert shift == max(0, ohne - PER_CHANNEL_HEADROOM_BITS), (
+            f"absmax={absmax}: shift={shift}, ohne Headroom waere {ohne}"
+        )
+
+
+def test_per_channel_headroom_trades_capacity_for_resolution():
+    # Der Headroom ist ein dokumentierter Schalter, kein Automatismus: er
+    # steht seit dem gemessenen Negativ-Ergebnis (2026-08-19) auf 0, weil
+    # der Aufloesungsverlust schwerer wog als der Clipping-Gewinn (0,5B
+    # 15,29 -> 20,98; 7B 40,68 -> 19365). Der Test haelt die MECHANIK fest,
+    # nicht einen bestimmten Wert: jedes Headroom-Bit halbiert den Shift-
+    # Exponenten und verdoppelt damit die Kapazitaet je Kanal.
+    from src.scales import PER_CHANNEL_HEADROOM_BITS
+
+    stats = {"seg.input": {"absmax": 10.0, "channel_absmax": [10.0]}}
+    entry = compute_scales_from_stats(stats)["seg.input"]
+    shift = entry["shifts"][0]
+    ohne = choose_pow2_shift(10.0)
+    assert shift == max(0, ohne - PER_CHANNEL_HEADROOM_BITS)
+
+    kapazitaet = 32767 * (2.0 ** -shift)
+    kapazitaet_ohne = 32767 * (2.0 ** -ohne)
+    erwarteter_faktor = 2.0 ** PER_CHANNEL_HEADROOM_BITS
+    assert abs(kapazitaet / kapazitaet_ohne - erwarteter_faktor) < 1e-9, (
+        f"Headroom {PER_CHANNEL_HEADROOM_BITS} Bit muesste die Kapazitaet "
+        f"um Faktor {erwarteter_faktor} erhoehen, war "
+        f"{kapazitaet / kapazitaet_ohne}"
+    )
+    # Die Kapazitaet muss den kalibrierten Wert in jedem Fall tragen.
+    assert kapazitaet >= 10.0
+
+
+def test_per_channel_scales_omitted_without_channel_absmax():
+    # Alle anderen Eintraege (kein "channel_absmax") bleiben unveraendert
+    # skalar - kein "shifts"-Feld.
+    stats = {"model.layers.0.self_attn.q_proj": {"absmax": 12.5}}
+    scales = compute_scales_from_stats(stats)
+    assert "shifts" not in scales["model.layers.0.self_attn.q_proj"]
+
+
 if __name__ == "__main__":
     test_small_absmax_gets_positive_shift()
     print("[test] Regression: kleines absmax bekommt positiven Shift: PASSED")
@@ -141,4 +222,12 @@ if __name__ == "__main__":
     print("[test] Monotonie in absmax: PASSED")
     test_scales_always_pow2_consistent_batch()
     print("[test] Batch: 200 Skalen durchgaengig Zweierpotenz-konsistent: PASSED")
+    test_per_channel_scales_produce_shifts_array()
+    print("[test] Fund 20: channel_absmax erzeugt Per-Kanal-Shifts: PASSED")
+    test_per_channel_scales_omitted_without_channel_absmax()
+    print("[test] Fund 20: skalare Eintraege bleiben ohne shifts-Feld: PASSED")
+    test_per_channel_headroom_is_applied()
+    print("[test] Fund 21: Per-Kanal-Headroom wird angewendet: PASSED")
+    test_per_channel_headroom_trades_capacity_for_resolution()
+    print("[test] Fund 21: Headroom-Mechanik (Kapazitaet je Bit): PASSED")
     print("Alle Tests bestanden.")

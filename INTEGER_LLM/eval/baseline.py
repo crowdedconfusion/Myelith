@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gleitkomma-Baseline: Qwen2.5-0.5B in BF16 auf denselben WikiText-2-
+Gleitkomma-Baseline: das gewaehlte Modell in BF16 auf denselben WikiText-2-
 Sequenzen wie der Integer-E2E-Test (Fahrplan-Punkt 12.20).
 
 Identische Messmethode (Fahrplan-Vorgabe): dieselbe Sequenz-Auswahl
@@ -27,22 +27,27 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from wikitext_common import MODEL_DIR, select_sequences
+from wikitext_common import MODEL_DIR, HF_MODEL_ID, select_sequences, ergebnis_pfad
 
 
 def main():
     n_sequences = int(os.environ.get("E2E_SEQUENCES", "4"))
     seq_len = int(os.environ.get("E2E_SEQ_LEN", "128"))
 
-    import torch
-    from transformers import AutoModelForCausalLM
+    import torch  # noqa: F401  (dtype-Wahl liegt im gemeinsamen Loader)
+
+    # Derselbe Loader wie die Kalibrierung: ohne device_map, mit harter
+    # meta-Geraet-Pruefung. Der erste 7B-Lauf zeigte, dass accelerate bei
+    # knappem Speicher still auf die Platte auslagert — eine Baseline aus
+    # halb geladenen Gewichten waere schlimmer als gar keine, weil sie
+    # plausibel aussieht (Fund beim 7B-Lauf, 2026-08-18).
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "calibrate"))
+    from src.loader import load_reference_model
 
     sequences = select_sequences(n_sequences, seq_len)
 
     print(f"[baseline] Lade HF-Modell aus {MODEL_DIR} (BF16) ...")
-    model = AutoModelForCausalLM.from_pretrained(
-        str(MODEL_DIR), dtype=torch.bfloat16, device_map="auto")
-    model.eval()
+    model, _ = load_reference_model(MODEL_DIR)
 
     n_eval = 0
     sum_logp = 0.0
@@ -70,7 +75,7 @@ def main():
 
     overall_ppl = math.exp(-sum_logp / n_eval)
     result = {
-        "model": "Qwen/Qwen2.5-0.5B (HF, BF16)",
+        "model": f"{HF_MODEL_ID} (HF, BF16)",
         "dataset": "wikitext-2-raw-v1 (Testsplit)",
         "n_sequences": len(sequences),
         "seq_len": seq_len,
@@ -80,9 +85,8 @@ def main():
         "sequences": per_seq,
     }
 
-    results_dir = Path(__file__).resolve().parent / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    out_path = results_dir / "baseline_wikitext2.json"
+    out_path = ergebnis_pfad("baseline_wikitext2")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False),
                         encoding="utf-8")
 

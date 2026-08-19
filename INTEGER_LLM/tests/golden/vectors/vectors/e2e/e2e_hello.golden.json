@@ -1,1 +1,0 @@
-{"inputs":{"prompt_tokens":{"data":[9707],"dtype":"int32","hash":"d37a012bee2fab34","shape":[1]}},"level":"e2e","metadata":{"greedy":true,"max_new_tokens":3,"seed":42},"name":"e2e_prompt_hello","outputs":{"tokens":{"data":[11,358,2776],"dtype":"int32","hash":"2197adac117f140c","shape":[3]}},"theta_v_hash":"sha256:ee90a67f5a9422455786dd60915d3fddeea2aa18a7bc9c130940cc59e3896953"}

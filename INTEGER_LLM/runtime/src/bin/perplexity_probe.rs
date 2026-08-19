@@ -11,6 +11,13 @@
 //! (Eval-Code ist kein Teil des Konsens-Vertrags).
 //!
 //! Ausgabe pro Sequenz: `<tokens> <ausgewertet> <sum_logp> <perplexity>`
+//!
+//! Mit dem dritten Argument `--per-token` wird zusaetzlich JEDE
+//! Positions-Log-Probability einzeln ausgegeben (Zeile `POS <seq> <pos>
+//! <log_softmax_target>`), fuer den positionsweisen Divergenzvergleich
+//! gegen die HF-Referenz (siehe tests/diag/perplexity_probe_hf.py) - der
+//! aggregierte Wert allein sagt nicht, WO im Satz die Integer-Inferenz
+//! von HF abweicht.
 
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
@@ -18,16 +25,17 @@ use integer_llm_runtime::loader::load_model;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: perplexity_probe <artifact_dir> <sequenzdatei>");
+        eprintln!("Usage: perplexity_probe <artifact_dir> <sequenzdatei> [--per-token]");
         std::process::exit(1);
     }
     let dir = std::path::PathBuf::from(&args[1]);
+    let per_token = args.get(3).map(|s| s == "--per-token").unwrap_or(false);
     let model = load_model(&dir).expect("Modell-Ladung fehlgeschlagen");
     let text = std::fs::read_to_string(&args[2]).expect("Sequenzdatei unlesbar");
 
     let logit_scale = 2f64.powi(-(model.config.logit_frac_bits as i32));
 
-    for line in text.lines() {
+    for (seq_idx, line) in text.lines().enumerate() {
         let ids: Vec<usize> = line
             .split_whitespace()
             .filter_map(|t| t.parse().ok())
@@ -58,6 +66,9 @@ fn main() {
                     (logits[target] as f64 * logit_scale) - z_max - lse.ln();
                 sum_logp += log_softmax_target;
                 count += 1;
+                if per_token {
+                    println!("POS {} {} {:.6}", seq_idx, pos, log_softmax_target);
+                }
             }
         }
 

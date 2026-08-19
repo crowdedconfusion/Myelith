@@ -175,6 +175,15 @@ pub struct ScaleEntry {
     pub shift: i64,
     pub scale: f64,
     pub absmax_observed: f64,
+    /// Per-Kanal-Shifts (Fund 20, theta_v 0.11.0). Nur fuer die drei
+    /// Residualstrom-Segmente (`*.input_layernorm.input`,
+    /// `*.post_attention_layernorm.input`, `model.norm.input`) gesetzt -
+    /// alle anderen Skalen bleiben Skalar. `#[serde(default)]`, damit
+    /// Artefakte vor v0.12.44 (kein Feld) weiterhin laden: `shift` allein
+    /// wird dann als uniformer Wert fuer alle Kanaele interpretiert
+    /// (bitgleich, siehe `rmsnorm.rs::test_rmsnorm_per_channel_uniform_shifts_matches_legacy`).
+    #[serde(default)]
+    pub shifts: Option<Vec<i64>>,
 }
 
 /// Alle Aktivierungsskalen eines Artefakt-Verzeichnisses, indexiert ueber den
@@ -188,6 +197,31 @@ impl LoadedScales {
     /// Rechts-Shift fuer die Reskalierung des benannten Layers/Moduls.
     pub fn shift(&self, name: &str) -> Option<u8> {
         self.scales.get(name).map(|e| e.shift as u8)
+    }
+
+    /// Per-Kanal-Shifts fuer ein Residualstrom-Segment (Fund 20). Liefert
+    /// `entry.shifts`, falls kalibriert; sonst den Skalar-`shift` uniform
+    /// auf `n` Kanaele verbreitert (bitgleiches Fallback-Verhalten fuer
+    /// Artefakte vor v0.12.44).
+    pub fn shifts_per_channel(&self, name: &str, n: usize) -> Option<Result<Vec<u8>, String>> {
+        let entry = self.scales.get(name)?;
+        if let Some(shifts) = &entry.shifts {
+            if shifts.len() != n {
+                return Some(Err(format!(
+                    "{}: {} Per-Kanal-Shifts, erwartet {}", name, shifts.len(), n
+                )));
+            }
+            let mut out = Vec::with_capacity(n);
+            for &s in shifts {
+                if !(0..=255).contains(&s) {
+                    return Some(Err(format!("{}: Shift {} liegt ausserhalb von 0..=255", name, s)));
+                }
+                out.push(s as u8);
+            }
+            Some(Ok(out))
+        } else {
+            Some(Ok(vec![entry.shift as u8; n]))
+        }
     }
 }
 
@@ -593,6 +627,14 @@ fn require_scale(scales: &LoadedScales, name: &str) -> Result<u8, String> {
     })
 }
 
+/// Wie `require_scale`, aber fuer ein Residualstrom-Segment mit
+/// Per-Kanal-Shifts (Fund 20). `n` ist `hidden_size`.
+fn require_scale_pc(scales: &LoadedScales, name: &str, n: usize) -> Result<Vec<u8>, String> {
+    scales.shifts_per_channel(name, n).ok_or_else(|| {
+        format!("Fehlende kalibrierte Aktivierungsskala in scales.json: {}", name)
+    })?
+}
+
 /// Baut ein vollstaendiges [`IntegerModel`] aus bereits geladenen Artefakten.
 ///
 /// Erwartet HF-Tensornamen, wie sie `calibrate/src/quantize.py` erzeugt (z. B.
@@ -630,8 +672,10 @@ pub fn build_model(
 
     let final_norm_gamma = require_tensor(&weights, "model.norm.weight")?.clone();
     let final_norm_frac = require_scale(&scales, "model.norm")?;
-    // Letztes Residualstrom-Segment (spec 0.5.1: Per-Segment-Skalen).
-    let final_residual_frac = require_scale(&scales, "model.norm.input")?;
+    // Letztes Residualstrom-Segment (spec 0.5.1: Per-Segment-Skalen; seit
+    // theta_v 0.11.0 / Fund 20 eine Skala je Kanal statt eine fuer das
+    // ganze Segment).
+    let final_residual_frac = require_scale_pc(&scales, "model.norm.input", dims.hidden_size)?;
 
     let mut layers = Vec::with_capacity(dims.num_layers);
     for layer_idx in 0..dims.num_layers {
@@ -678,8 +722,8 @@ pub fn build_model(
             gate_frac: require_scale(&scales, &format!("{}.mlp.gate_proj", p))?,
             up_frac: require_scale(&scales, &format!("{}.mlp.up_proj", p))?,
             down_in_frac: require_scale(&scales, &format!("{}.mlp.down_proj.input", p))?,
-            residual_in_frac: require_scale(&scales, &format!("{}.input_layernorm.input", p))?,
-            residual_mid_frac: require_scale(&scales, &format!("{}.post_attention_layernorm.input", p))?,
+            residual_in_frac: require_scale_pc(&scales, &format!("{}.input_layernorm.input", p), dims.hidden_size)?,
+            residual_mid_frac: require_scale_pc(&scales, &format!("{}.post_attention_layernorm.input", p), dims.hidden_size)?,
         };
 
         layers.push(TransformerLayer {
@@ -1001,6 +1045,76 @@ mod tests {
         let loaded = load_scales(&dir).expect("Laden erfolgreich");
         assert_eq!(loaded.shift("model.layers.0.self_attn.q_proj"), Some(3));
         assert_eq!(loaded.scales["model.layers.0.self_attn.q_proj"].absmax_observed, 5.2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_shifts_per_channel_reads_real_array() {
+        // Fund 20: ein Eintrag MIT "shifts"-Array (Residualstrom-Segment,
+        // von calibrate/src/scales.py erzeugt) muss genau dieses Array
+        // liefern, nicht den Skalar-Fallback.
+        let dir = test_dir("scales-per-channel");
+        let manifest = serde_json::json!({
+            "model.layers.4.input_layernorm.input": {
+                "shift": 1, "scale": 0.5, "absmax_observed": 9600.0,
+                "shifts": [1, 12, 12, 12]
+            },
+        });
+        write_scales(&dir, &manifest);
+
+        let loaded = load_scales(&dir).expect("Laden erfolgreich");
+        let shifts = loaded
+            .shifts_per_channel("model.layers.4.input_layernorm.input", 4)
+            .expect("Eintrag muss existieren")
+            .expect("Laden erfolgreich");
+        assert_eq!(shifts, vec![1u8, 12, 12, 12]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_shifts_per_channel_broadcasts_scalar_for_old_artifacts() {
+        // Fund 20: ein Eintrag OHNE "shifts"-Feld (Artefakte vor v0.12.44)
+        // muss den Skalar-Shift uniform auf n Kanaele verbreitern - bitgleich
+        // zur alten Skalar-Behandlung (bewiesen kernseitig in
+        // rmsnorm.rs::test_rmsnorm_per_channel_uniform_shifts_matches_legacy).
+        let dir = test_dir("scales-per-channel-fallback");
+        let manifest = serde_json::json!({
+            "model.norm.input": scale_entry(4, 0.0625, 1712.0),
+        });
+        write_scales(&dir, &manifest);
+
+        let loaded = load_scales(&dir).expect("Laden erfolgreich");
+        let shifts = loaded
+            .shifts_per_channel("model.norm.input", 5)
+            .expect("Eintrag muss existieren")
+            .expect("Laden erfolgreich");
+        assert_eq!(shifts, vec![4u8; 5]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_shifts_per_channel_rejects_length_mismatch() {
+        // Ein "shifts"-Array mit falscher Laenge (z. B. gegen die falsche
+        // hidden_size kalibriert) muss laut scheitern, nicht still
+        // out-of-bounds zugreifen oder abschneiden.
+        let dir = test_dir("scales-per-channel-mismatch");
+        let manifest = serde_json::json!({
+            "model.norm.input": {
+                "shift": 1, "scale": 0.5, "absmax_observed": 100.0,
+                "shifts": [1, 2, 3]
+            },
+        });
+        write_scales(&dir, &manifest);
+
+        let loaded = load_scales(&dir).expect("Laden erfolgreich");
+        let err = loaded
+            .shifts_per_channel("model.norm.input", 4)
+            .expect("Eintrag muss existieren")
+            .expect_err("Laengen-Mismatch muss fehlschlagen");
+        assert!(err.contains("3") && err.contains("4"), "Fehlermeldung: {}", err);
 
         fs::remove_dir_all(&dir).ok();
     }
@@ -1376,10 +1490,13 @@ mod tests {
         // inklusive der Per-Segment-Residualskalen (spec 0.5.1).
         assert_eq!(model.layers[0].scales.q_frac, 5);
         assert_eq!(model.layers[0].scales.down_in_frac, 0);
-        assert_eq!(model.layers[0].scales.residual_in_frac, 12);
-        assert_eq!(model.layers[0].scales.residual_mid_frac, 5);
+        // Fund 20: ohne "shifts"-Feld im Fixture-scales.json broadcastet der
+        // Loader den Skalar-Shift uniform auf alle Kanaele (hidden_size=4
+        // in diesem Fixture) - bitgleiches Fallback-Verhalten.
+        assert_eq!(model.layers[0].scales.residual_in_frac, vec![12u8; 4]);
+        assert_eq!(model.layers[0].scales.residual_mid_frac, vec![5u8; 4]);
         assert_eq!(model.final_norm_frac, 2);
-        assert_eq!(model.final_residual_frac, 4);
+        assert_eq!(model.final_residual_frac, vec![4u8; 4]);
         // Konfigurationswerte kommen aus der eingebetteten spec.json.
         assert_eq!(model.config.silu_lut_offset, 1024);
 

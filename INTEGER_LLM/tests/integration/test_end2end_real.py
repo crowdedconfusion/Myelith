@@ -29,7 +29,9 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
+# Artefaktverzeichnis folgt der Modellwahl (INTEGER_LLM_MODEL), damit der
+# Test dieselbe Variante prueft, die kalibriert und gemessen wurde.
+# Der Import steht weiter unten bei select_sequences.
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
@@ -40,7 +42,7 @@ PROBE = cargo_paths.binary("runtime", "perplexity_probe")
 # Gemeinsame Messsequenzen-Aufbereitung (identische Messmethode mit der
 # FP-Baseline und dem Perplexitätsvergleich, siehe eval/wikitext_common.py).
 sys.path.insert(0, str(REPO / "eval"))
-from wikitext_common import select_sequences  # noqa: E402
+from wikitext_common import ARTIFACTS_DIR as ARTIFACTS, select_sequences  # noqa: E402
 
 
 def main():

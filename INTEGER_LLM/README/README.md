@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.12.43
+> **Version:** 0.12.46
 > **Datum:** 2026-08-18
 > **Status:** 🎉 **ENTSCHEIDUNGSPUNKT 12.21 AKZEPTIERT** — Perplexität **15,59** vs. FP-Baseline 14,95 = **+4,29 %**. **v0.12.40 (GPU-Backends):** CUDA + ROCm Delegations-Stubs, Hardware-Teststrategie dokumentiert. Vorher: SIMD (AVX2+NEON), Konformitätspaket, Golden Vectors.
 
@@ -188,6 +188,134 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.12.46 – 2026-08-19
+
+**Ursachensuche 7B: Das Quantisierungsschema ist unschuldig — der Fehler
+liegt in unserer Implementierung.** Plus zwei behobene Präzisionsverluste
+und eine neue Fähigkeit.
+
+**Der Beleg, der die Suche gedreht hat.** Dasselbe
+Gewichtsquantisierungs-Schema (int8, symmetrisch, Per-Channel-Zweierpotenz),
+in PyTorch nachgebaut und auf denselben Sequenzen gemessen:
+
+| | Perplexität |
+|---|---|
+| FP-Baseline (BF16) | 8,68 |
+| **W8 per-channel in PyTorch** | **8,74 (+0,7 %)** |
+| unser Integer-Pfad | 41,42 (+377 %) |
+
+`tests/diag/w8_reference_simulation.py`. W8 trägt bei 7B praktisch
+verlustfrei — genau wie man es von einer so großzügigen Quantisierung
+erwartet. Damit gehört die Suche in den Rust-Pfad, nicht in die
+Quantisierungsstrategie, und es gibt erstmals einen verlässlichen
+Referenzmaßstab, gegen den sich jede Stufe einzeln prüfen lässt.
+
+**Fund 22: Der KV-Cache warf 2–4 Bit weg, ohne etwas dafür zu bekommen.**
+Der Cache rechnete K/V von der Per-Layer-Skala auf eine globale
+Cache-Skala (`kv_cache.frac_bits = 8`) um und beim Lesen zurück auf
+dieselbe Per-Layer-Skala. Quelle und Ziel sind identisch — Schreiben und
+Lesen betreffen immer dieselbe Ebene —, die Rundreise war also reiner
+Verlust:
+
+- 2–4 Bit Auflösung auf fast jeder Ebene beider Modelle
+  (0,5B: K median 3, V median 4; 7B: K 2, V 4)
+- hartes Clipping, wo der reale Wert die feste Kapazität von
+  32767/2⁸ = 128 überstieg — bei 7B in **Ebene 0** um Faktor 3,28
+  (K-absmax 420), also an der ersten Ebene, deren Fehler durch alle 28
+  propagiert
+
+Der Cache hält K/V jetzt in der nativen Per-Layer-Skala. θ_v 0.11.0 →
+0.12.0, `kv_cache.storage` = `per_layer_native`. **Behebt die
+7B-Perplexität nicht** (40,68 → 41,42) — der Verlust war real, aber nicht
+die gesuchte Ursache.
+
+**Fund 21: Headroom für Per-Kanal-Skalen — gemessenes Negativ-Ergebnis.**
+Die Hypothese war, dass Fund 20 zu enge Skalen wählt und deshalb auf
+ungesehenen Sequenzen clippt (7B: 6,24 % der Kanäle, bis Faktor 4,53).
+Zwei Bit Sicherheitsabstand beseitigten das Clipping wie geplant
+(→ 0,02 %, Faktor 1,13), verschlechterten die Perplexität aber **beide**
+Modelle drastisch: 0,5B 15,29 → 20,98, 7B 40,68 → **19365**. Der
+Auflösungsverlust wiegt schwerer als der Clipping-Gewinn.
+`PER_CHANNEL_HEADROOM_BITS` steht auf 0, bleibt aber als dokumentierter
+Schalter im Code. Nebenbefund mit Signalwirkung: **7B reagiert auf zwei
+Bit weniger Auflösung mit Faktor 476.**
+
+**Schichtweise Hessian-Berechnung (Nachtrag zu 12.72).** GPTQ war für
+große Modelle bislang gar nicht ausführbar (45,5 GB für alle 28 Ebenen
+gleichzeitig). `HessianCollector` nimmt jetzt einen `layer_range`;
+`gptq_group_size()` wählt die Gruppengröße nach verfügbarem RAM, der
+Kalibrierkorpus läuft je Gruppe erneut durch das Modell. Bei 0,5B ergibt
+sich weiterhin **eine** Gruppe — unverändertes Verhalten. Bei 7B vier
+Gruppen à 9 Ebenen. Gemessener Beitrag zur 7B-Perplexität: 40,68 → 40,48,
+also **wirkungslos** — aber die Fähigkeit bleibt und war nötig, um genau
+das feststellen zu können.
+
+**Acht neue Diagnosewerkzeuge**, jedes für einen konkret ausgeschlossenen
+Kandidaten: `w8_reference_simulation.py` (Schema vs. Implementierung),
+`hidden_ablation_hf.py` + `final_hidden_dump.rs` (Hidden-State vs.
+LM-Head), `perplexity_probe_hf.py` + `--per-token` (Positionsverteilung),
+`attention_score_spread.py` (exp-LUT-Domäne), `per_channel_headroom.py`
+(Clipping), `channel_dynamic_range.py` (Kanal-Dynamik),
+`positional_scale_simulation.py` (Positions-Dimension).
+
+**Sieben Kandidaten gemessen ausgeschlossen** — die vollständige Tabelle
+mit Befunden und Werkzeugen steht in `Fahrplan-v3.md`, Phase 12.70.
+### v0.12.44 – 2026-08-18
+
+**Fund 19: `1/sqrt(head_dim)` war für `head_dim = 128` um Faktor √2 falsch.**
+Erster 7B-Lauf gemessen — Kriterium verfehlt, Ursache nicht gefunden.
+
+- **Der Bug.** `attn_scale_shift = head_dim.trailing_zeros() / 2` ist
+  Ganzzahldivision und damit nur für **gerade** `log2(head_dim)` korrekt:
+
+  | head_dim | Shift | angewandt | korrekt |
+  |---|---|---|---|
+  | 64 (2⁶) | 3 | 0,125000 | 0,125000 |
+  | **128 (2⁷)** | **3** | **0,125000** | **0,088388** |
+  | 256 (2⁸) | 4 | 0,062500 | 0,062500 |
+
+  Qwen2.5-0.5B hat `head_dim = 64` und lag zufällig richtig; ab 1,5B ist 128
+  der Normalfall. **Kein Test deckte 128 ab** — genau deshalb rutschte es
+  durch. Derselbe Fehlertyp wie Fund 17.
+- **Der Fix.** Neue `fixed_point::inv_sqrt_q15()` (Q15-Reziproke, berechnet
+  über `isqrt_round(2^30 / head_dim)` — vollständig ganzzahlig, kein
+  `f64::sqrt`, das je nach libm abweichen und den Konsens brechen könnte).
+  `attention_int` nimmt jetzt `score_mult: i64` statt den Faktor im Shift zu
+  tragen; Backend-Trait und alle vier Backends nachgezogen.
+- **Bestehende Artefakte bleiben gültig, bewiesen statt behauptet.** Für
+  gerade Zweierpotenzen ist der Multiplikator selbst eine Zweierpotenz
+  (64 → 4096 = 2¹²), und `rshift_round_i64` liefert darunter dieselbe
+  Rundung **samt Round-to-nearest-even-Tie-Break**. Belege: **Golden Vectors
+  30/30** gegen die unveränderten 0,5B-Artefakte, 0,5B-Perplexität weiterhin
+  **15,59**. Deshalb **kein θ_v-Bump** — die Spezifikation forderte
+  `1/sqrt(head_dim)` bereits, die Umsetzung war fehlerhaft.
+- **`layer_probe` rechnete den Faktor gar nicht mit** und maß damit etwas
+  anderes als der Produktionspfad. Angeglichen.
+- Vier neue Tests, darunter der bitgleiche Rundlauf Shift ↔ Multiplikation
+  über Vorzeichen, Tie-Break-Fälle und Shift-Weiten.
+
+**7B-Messergebnis (Punkt 12.74–12.76): Kriterium VERFEHLT.**
+
+| | 0,5B | 7B |
+|---|---|---|
+| FP-Baseline (BF16) | 14,95 | **8,68** |
+| Integer, vor Fund 19 | 15,59 | 14,03 (+61,56 %) |
+| Integer, nach Fund 19 | 15,59 | **16,26 (+87,32 %)** |
+
+**Der korrigierte Faktor macht 7B schlechter, nicht besser.** Das ist ein
+Negativ-Ergebnis mit Aussagekraft: Fund 19 ist arithmetisch zweifelsfrei
+(2⁻³ ≠ 1/√128) und für 0,5B bitgleich, also bleibt der Fix — aber die
+dominante Fehlerquelle bei 7B ist er nicht. Geprüft und **ausgeschlossen**:
+die Skalenkette ist bei beiden Modellen praktisch gleich (q_frac ~10,
+k_frac 10–11), das exp-LUT-Raster also nicht der Unterschied.
+
+**Dass eine korrektere Attention das Ergebnis verschlechtert, heißt, dass
+etwas anderes den zu scharfen Softmax bisher kompensiert hat.** Offene
+Kandidaten: der untied LM-Head (0,5B nutzt Weight-Tying, 7B nicht), das
+ausgelassene GPTQ (auf 0,5B angewendet, bei 7B wegen 45,5 GB Hessian-Bedarf
+nicht), und die exp-LUT-Domäne [0, 64), die gegen 0,5B-Score-Differenzen
+kalibriert wurde. Nächster Schritt ist der Positionsvergleich gegen HF
+(`seq_layer_dump`) — dasselbe Werkzeug, das Fund 15/16 aufgebrochen hat.
 ### v0.12.43 – 2026-08-18
 
 **Vorbereitung der 7B-Skalierung (Phase 12.70–12.72).** Reine

@@ -28,7 +28,8 @@ pub fn dot_int(a: &[i16], b: &[i16]) -> i64 {
 
 /// Integer-Attention.
 ///
-/// `score_shift` bringt das Skalarprodukt (Skala `q_frac + k_frac`) auf die
+/// `score_mult` traegt die 1/sqrt(head_dim)-Skalierung in Q15 (Fund 19);
+/// `score_shift` bringt das Skalarprodukt (Skala `q_frac + k_frac + 15`) auf die
 /// exp-LUT-Domäne (`score_frac_bits`, typisch 8) und wird pro Layer aus den
 /// kalibrierten Q/K-Skalen abgeleitet (dynamisch, aber deterministisch).
 ///
@@ -43,6 +44,7 @@ pub fn attention_int(
     k: &[Vec<i16>],
     v: &[Vec<i16>],
     mask: &[Vec<bool>],
+    score_mult: i64,
     score_shift: u8,
     exp_lut: &[i16],
     lut_shift: u8,
@@ -58,7 +60,10 @@ pub fn attention_int(
         let mut scores = Vec::with_capacity(kv_len);
         for j in 0..kv_len {
             if mask[i][j] {
-                let s = dot_int(&q[i], &k[j]);
+                // Fund 19: 1/sqrt(head_dim) als Q15-Multiplikation statt
+                // Rechtsshift — der Shift war nur fuer gerade Zweierpotenzen
+                // korrekt (siehe fixed_point::inv_sqrt_q15).
+                let s = dot_int(&q[i], &k[j]) * score_mult;
                 scores.push(rshift_round_i64(s, score_shift) as i32);
             } else {
                 scores.push(i32::MIN);
@@ -98,7 +103,7 @@ mod tests {
         let v = vec![vec![100i16, -50], vec![100, -50]];
         let mask = vec![vec![true, false], vec![true, true]];
         let exp_lut: Vec<i16> = (0..129).map(|i| ((-(i as f64) / 256.0).exp() * 256.0).round() as i16).collect();
-        let out = attention_int(&q, &k, &v, &mask, 4, &exp_lut, 0, 8);
+        let out = attention_int(&q, &k, &v, &mask, 1 << 15, 4 + 15, &exp_lut, 0, 8);
         assert_eq!(out.len(), 2);
         assert!((out[0][0] - 100).abs() <= 1);
         assert!((out[0][1] + 50).abs() <= 1);
@@ -127,7 +132,7 @@ mod tests {
         let v = vec![vec![100i16, 0], vec![200, 0], vec![300, 0]];
         let mask = vec![vec![true, true, true]];
         let exp_lut: Vec<i16> = (0..129).map(|i| ((-(i as f64) / 256.0).exp() * 256.0).round() as i16).collect();
-        let out = attention_int(&q, &k, &v, &mask, 4, &exp_lut, 0, 8);
+        let out = attention_int(&q, &k, &v, &mask, 1 << 15, 4 + 15, &exp_lut, 0, 8);
         assert_eq!(out.len(), 1);
         // Uniforme Gewichte (1/3, 1/3, 1/3) -> Durchschnitt [200, 0].
         assert!((out[0][0] - 200).abs() <= 2, "out[0][0] = {}", out[0][0]);

@@ -27,24 +27,40 @@ pub fn inv_n_q20(n: usize) -> i64 {
 /// `out_frac_bits` (Numerik-Realitätsabgleich v0.12.20: Aktivierungen sind
 /// int16, da reale RMSNorm-Ausgaben den int8-Bereich sprengen).
 ///
+/// **Fund 20 (2026-08-18): `x_shifts` — Per-Channel-Eingangsskalen.** Ab
+/// Qwen2.5-7B tragen wenige feste Kanäle des Residualstroms an Position 0
+/// "Massive Activations" (Sun et al. 2024): absmax ~9600 gegenüber ~10 im
+/// Rest — mit EINER Skala fürs ganze Segment (wie bis v0.12.43) zwingt der
+/// Ausreißer alle 3584 Kanäle auf Schrittweite 0,5, das eigentliche Signal
+/// wird zu Brei. Seit theta_v 0.11.0 trägt der Residualstrom deshalb, wie
+/// die Gewichte seit v0.12.25, eine Skala JE KANAL.
+///
 /// Mathematik (alle Größen ganzzahlig, deterministisch):
-/// - `M = mean(x_i^2)` via `(sum * inv_n_q20) >> 20`
-///   (M ist skaleninvariant: RMS-Normalisierung kürzt die Eingangsskala).
-/// - Dynamischer gerader Index-Shift `q` (spec: rsqrt.index_normalization =
-///   "dynamic_even_shift"): kleinstes gerades q mit `(M >> q) <= LUT-Bereich`.
-///   Datenabhängig, aber deterministisch — alle Knoten leiten aus denselben
-///   Daten dasselbe q ab (Muster wie der dynamische score_shift der
-///   Attention). Verhindert Halb-Bit-Faktoren (q gerade).
-/// - `lut[idx]` mit `idx = M >> q` liefert
-///   `round(rsqrt(idx * 2^-lut_input_shift) * 2^lut_output_frac)`; das
-///   Produkt `x_i * lut` trägt damit die Skala
-///   `2^-(lut_output_frac + lut_input_shift/2 + q/2)`.
-/// - Multiplikation mit gamma (eigener Shift `gamma_shift`) und Rescale auf
-///   `out_frac_bits` als i64-Zwischenprodukt, dann Clamping auf i16.
+/// - Sei `ref = min(x_shifts)` (i. d. R. der Ausreißer-Kanal). Für die
+///   Varianzsumme werden alle `x_i²` auf diese gemeinsame Skala
+///   ausgerichtet: `sq_i = x_i² >> 2·(x_shifts[i] − ref)`. Kanäle mit
+///   höherem Shift (feinere Auflösung, kleinerer Realwert) tragen dabei
+///   weniger zur Summe bei — korrekt, denn ihr Quadrat ist bei genügend
+///   kleinerem Realwert tatsächlich vernachlässigbar gegenüber dem
+///   Ausreißer.
+/// - `M = mean(sq_i)` via `(sum * inv_n_q20) >> 20`, referenziert auf `ref`
+///   (bei uniformen Shifts identisch zur alten Definition — dann ist
+///   `ref` der gemeinsame Shift und alle `x_shifts[i] − ref = 0`, also
+///   `sq_i = x_i²` wie zuvor).
+/// - Dynamischer gerader Index-Shift `q` wie zuvor (spec:
+///   rsqrt.index_normalization = "dynamic_even_shift"), angewandt auf das
+///   `ref`-referenzierte `M`.
+/// - `lut[idx]` liefert wie zuvor `round(rsqrt(...) * 2^lut_output_frac)`.
+/// - **Ausgabe pro Kanal:** `total_frac_i = norm_frac + gamma_shifts[i] +
+///   (x_shifts[i] − ref)`. Der letzte Term kompensiert, dass `x[i]` hier
+///   in VOLLER Auflösung (nicht auf `ref` heruntergerundet) multipliziert
+///   wird — bei uniformen Shifts ist er 0 und die Formel ist bitgleich zur
+///   Vorversion (siehe `test_rmsnorm_per_channel_uniform_shifts_matches_legacy`).
 /// - eps (HF: 1e-6) rundet bei realistischen Residualskalen auf 0; der Fall
 ///   M = 0 liefert explizit Nullen (identisch zu HF: 0/sqrt(eps) = 0).
 pub fn rmsnorm_i16(
     x: &[i16],
+    x_shifts: &[u8],
     gamma: &[i8],
     gamma_shifts: &[u8],
     rsqrt_lut: &[i16],
@@ -56,11 +72,16 @@ pub fn rmsnorm_i16(
     let n = x.len();
     assert_eq!(n, gamma.len(), "rmsnorm_i16: x und gamma muessen gleich lang sein");
     assert_eq!(n, gamma_shifts.len(), "rmsnorm_i16: ein Gamma-Shift je Element (theta_v 0.7.0)");
+    assert_eq!(n, x_shifts.len(), "rmsnorm_i16: ein Eingangs-Shift je Kanal (Fund 20, theta_v 0.11.0)");
     assert!(lut_input_shift.is_multiple_of(2), "rmsnorm_i16: lut_input_shift muss gerade sein (Halb-Bit-Faktor)");
 
+    let ref_shift = *x_shifts.iter().min().expect("rmsnorm_i16: x_shifts darf nicht leer sein");
+
     let mut acc: i64 = 0;
-    for &v in x {
-        acc += (v as i64) * (v as i64);
+    for i in 0..n {
+        let align = 2 * (x_shifts[i] - ref_shift) as u32;
+        let sq = (x[i] as i64) * (x[i] as i64);
+        acc += if align == 0 { sq } else { sq >> align };
     }
     if acc == 0 {
         return vec![0i16; n];
@@ -82,7 +103,7 @@ pub fn rmsnorm_i16(
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let total_frac = norm_frac + gamma_shifts[i];
+        let total_frac = norm_frac + gamma_shifts[i] + (x_shifts[i] - ref_shift);
         let prod = (x[i] as i64) * lut_val * (gamma[i] as i64);
         out.push(clamp_i16(rescale_i64(prod, total_frac, out_frac_bits) as i32));
     }
@@ -118,7 +139,7 @@ mod tests {
     #[test]
     fn test_rmsnorm_zero_input() {
         let lut = spec_lut(1024);
-        let out = rmsnorm_i16(&[0, 0, 0], &[64, 64, 64], &[6, 6, 6], &lut, 8, 8, inv_n_q20(3), 6);
+        let out = rmsnorm_i16(&[0, 0, 0], &[0, 0, 0], &[64, 64, 64], &[6, 6, 6], &lut, 8, 8, inv_n_q20(3), 6);
         assert_eq!(out, vec![0, 0, 0]);
     }
 
@@ -127,9 +148,9 @@ mod tests {
         // Alle x gleich -> mean(x^2) = x^2 -> normalisierter Wert ±1.
         // gamma = 1.0 (shift 6 -> 64), out_frac 6 -> erwartet ±64.
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[16, 16], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
+        let out = rmsnorm_i16(&[16, 16], &[0, 0], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(out, vec![64, 64]);
-        let out_neg = rmsnorm_i16(&[-16, -16], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
+        let out_neg = rmsnorm_i16(&[-16, -16], &[0, 0], &[64, 64], &[6, 6], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(out_neg, vec![-64, -64]);
     }
 
@@ -138,7 +159,7 @@ mod tests {
         // x = 12000 -> M = 1.44e8 > 32767 -> q > 0 noetig. Ergebnis muss
         // trotzdem ±1 * gamma sein (Normalisierung), innerhalb LUT-Rundung.
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[12000, 12000], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 3);
+        let out = rmsnorm_i16(&[12000, 12000], &[0, 0], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 3);
         // ±1.0 bei frac 3 = ±8; LUT-/Indexrundung erlaubt ±1 Abweichung.
         assert!((out[0] - 8).abs() <= 1, "out[0] = {}", out[0]);
         assert!((out[1] - 8).abs() <= 1, "out[1] = {}", out[1]);
@@ -150,7 +171,7 @@ mod tests {
         // normalisiert: [16/11.3137, 0] = [1.4142, 0]; gamma 1.0 (shift 5: 32)
         // out_frac 6: [round(1.4142*64), 0] = [90 oder 91, 0]
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[16, 0], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
+        let out = rmsnorm_i16(&[16, 0], &[0, 0], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
         assert!(out[0] == 90 || out[0] == 91, "out[0] = {}", out[0]);
         assert_eq!(out[1], 0);
     }
@@ -160,8 +181,8 @@ mod tests {
         // gamma 2.0 (shift 5 -> 64) verdoppelt das Ergebnis gegenueber 1.0.
         // (i16-Ausgang: 2.0 bei frac 6 = 128, kein i8-Clamping mehr.)
         let lut = spec_lut(32768);
-        let one = rmsnorm_i16(&[16, 16], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
-        let two = rmsnorm_i16(&[16, 16], &[64, 64], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
+        let one = rmsnorm_i16(&[16, 16], &[0, 0], &[32, 32], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
+        let two = rmsnorm_i16(&[16, 16], &[0, 0], &[64, 64], &[5, 5], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(one, vec![64, 64]);
         assert_eq!(two, vec![128, 128]);
     }
@@ -172,8 +193,75 @@ mod tests {
         // gamma[0] = 32 mit Shift 5 (= 1.0), gamma[1] = 32 mit Shift 4 (= 2.0)
         // -> Element 1 wird verdoppelt.
         let lut = spec_lut(32768);
-        let out = rmsnorm_i16(&[16, 16], &[32, 32], &[5, 4], &lut, 8, 8, inv_n_q20(2), 6);
+        let out = rmsnorm_i16(&[16, 16], &[0, 0], &[32, 32], &[5, 4], &lut, 8, 8, inv_n_q20(2), 6);
         assert_eq!(out[0], 64);  // 1.0 * 1.0
         assert_eq!(out[1], 128); // 1.0 * 2.0
+    }
+
+    #[test]
+    fn test_rmsnorm_per_channel_uniform_shifts_matches_legacy() {
+        // Fund 20: jeder beliebige UNIFORME x_shifts-Wert (nicht nur 0) muss
+        // dasselbe Ergebnis liefern wie die alte Skalar-Formel - das ist die
+        // Eigenschaft, auf der die Gueltigkeit aller vor v0.12.44
+        // kalibrierten (und weiterhin per-tensor behandelten) Artefakte
+        // beruht.
+        let lut = spec_lut(32768);
+        let referenz = rmsnorm_i16(&[3000, -500, 7, 12000], &[0, 0, 0, 0],
+            &[32, 40, 20, 8], &[5, 5, 5, 5], &lut, 8, 8, inv_n_q20(4), 6);
+        for s in [1u8, 5, 9, 14] {
+            let out = rmsnorm_i16(&[3000, -500, 7, 12000], &[s, s, s, s],
+                &[32, 40, 20, 8], &[5, 5, 5, 5], &lut, 8, 8, inv_n_q20(4), 6);
+            assert_eq!(out, referenz, "uniform shift {} weicht ab", s);
+        }
+    }
+
+    #[test]
+    fn test_rmsnorm_massive_activation_outlier_normalizes_correctly() {
+        // Der reale Fall, der Fund 20 ausgeloest hat: ein Kanal (Position 0
+        // im echten Residualstrom) mit absmax ~9600 (shift 1), drei Kanaele
+        // mit absmax ~1 (shift 12, volle Aufloesung). Reale Werte:
+        // Kanal 0 = 9600*2^-1 = 4800.0, Kanal 1..3 = 0.25 / -0.5 / 0.75.
+        //
+        // n=4: mean(x^2) ~ 4800^2/4 (die drei winzigen Kanaele sind
+        // vernachlaessigbar), sqrt(mean) ~ 2400 = Kanal0/2 -> Kanal 0
+        // normalisiert auf ungefaehr ±2.0 (nicht ±1.0 - das Teilen durch n
+        // ist keine Ausreisser-Eigenschaft, nur Arithmetik).
+        let x = vec![9600i16, 1024, -2048, 3072];
+        let x_shifts = vec![1u8, 12, 12, 12];
+        let lut = spec_lut(32768);
+        let out = rmsnorm_i16(&x, &x_shifts, &[64, 64, 64, 64], &[6, 6, 6, 6],
+            &lut, 8, 8, inv_n_q20(4), 8);
+
+        let real0 = out[0] as f64 / 256.0; // out_frac_bits = 8
+        assert!((real0.abs() - 2.0).abs() < 0.1, "Kanal 0 real={}", real0);
+    }
+
+    #[test]
+    fn test_rmsnorm_per_channel_shift_representation_invariance() {
+        // Die eigentliche Korrektheitsprobe fuer Fund 20: dieselben REALEN
+        // Werte, aber auf zwei verschiedene Arten kodiert (unterschiedliche
+        // Shift-Wahl je Kanal), muessen dasselbe Ergebnis liefern. Ein Fehler
+        // in der Ausrichtung der Quadratsummen auf eine gemeinsame
+        // Referenzskala (ref_shift-Logik) wuerde hier sichtbar - anders als
+        // beim reinen "kollabiert auf 0"-Test, der nur mathematisch triviale
+        // Grosse/Klein-Verhaeltnisse zeigt, prueft dieser Test die Kernidee
+        // der Implementierung.
+        //
+        // Kodierung A: Kanal 0 real=4800 bei shift=1 (raw=9600), Kanaele
+        // 1..3 real=0.25/-0.5/0.75 bei shift=12 (raw=1024/-2048/3072).
+        // Kodierung B: DIESELBEN Realwerte, aber shift=2 fuer Kanal 0
+        // (raw=19200) und shift=10 fuer die uebrigen (raw=256/-512/768).
+        let lut = spec_lut(32768);
+        let gamma = [64i8, 64, 64, 64];
+        let gamma_shifts = [6u8, 6, 6, 6];
+
+        let out_a = rmsnorm_i16(&[9600, 1024, -2048, 3072], &[1, 12, 12, 12],
+            &gamma, &gamma_shifts, &lut, 8, 8, inv_n_q20(4), 8);
+        let out_b = rmsnorm_i16(&[19200, 256, -512, 768], &[2, 10, 10, 10],
+            &gamma, &gamma_shifts, &lut, 8, 8, inv_n_q20(4), 8);
+
+        assert_eq!(out_a, out_b,
+            "gleiche Realwerte, verschiedene Shift-Kodierung -> muss gleiches Ergebnis liefern: {:?} vs {:?}",
+            out_a, out_b);
     }
 }

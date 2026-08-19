@@ -25,7 +25,9 @@ model_config.json des Artefakts. Der Wechsel auf eine andere Groesse ist
 deshalb ein Artefaktwechsel, keine Codeaenderung.
 """
 
+import gc
 import json
+import math
 import os
 from pathlib import Path
 
@@ -100,7 +102,9 @@ def _wikitext_calibration_texts(n_sequences):
 
 def gptq_hessian_bytes(config: dict) -> int:
     """
-    RAM, den HessianCollector fuer diese Modellgroesse belegt.
+    RAM, den HessianCollector fuer ALLE Ebenen dieser Modellgroesse
+    GLEICHZEITIG belegen wuerde (siehe gptq_group_size fuer die
+    schichtweise Alternative, die tatsaechlich verwendet wird).
 
     H ist je linearer Projektion eine Gram-Matrix [in_features, in_features]
     in float32. Die sechs Projektionen mit in = hidden_size sind harmlos; die
@@ -117,6 +121,34 @@ def gptq_hessian_bytes(config: dict) -> int:
     return config["num_layers"] * (6 * h * h + i * i) * 4
 
 
+def gptq_hessian_bytes_per_layer(config: dict) -> int:
+    """RAM einer einzelnen Ebene (Baustein fuer gptq_group_size)."""
+    h = config["hidden_size"]
+    i = config["intermediate_size"]
+    return (6 * h * h + i * i) * 4
+
+
+def gptq_group_size(config: dict) -> int:
+    """
+    Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Fahrplan 12.72):
+    statt GPTQ bei zu wenig RAM ganz abzuschalten (v0.12.43-Verhalten),
+    wird nur so viel gleichzeitig gehesst, wie in zwei Drittel des
+    verfuegbaren RAM passt. Bei 0,5B ergibt sich eine einzige Gruppe (alle
+    24 Ebenen passen ohnehin, 2,5 GB) - unveraendertes Verhalten. Bei 7B
+    ergeben sich mehrere Gruppen; jede Gruppe braucht einen eigenen
+    Kalibrier-Durchlauf durch das Modell (main()::gptq_group_size-Aufrufer),
+    also mehr Rechenzeit fuer denselben Speicherrahmen.
+    """
+    num_layers = config["num_layers"]
+    per_layer = max(1, gptq_hessian_bytes_per_layer(config))
+    ram = verfuegbarer_ram()
+    if not ram:
+        return num_layers  # unbekannt -> altes Verhalten (eine Gruppe)
+    budget = ram * 2 // 3
+    group = max(1, budget // per_layer)
+    return min(group, num_layers)
+
+
 def verfuegbarer_ram() -> int:
     """Physischer Arbeitsspeicher in Bytes; 0, wenn nicht ermittelbar."""
     try:
@@ -129,31 +161,27 @@ def gptq_entscheidung(config: dict) -> tuple:
     """
     Entscheidet, ob GPTQ in diesem Lauf mitlaeuft. Rueckgabe: (bool, Grund).
 
-    INTEGER_LLM_GPTQ=0 schaltet es hart ab, =1 erzwingt es. Ohne Vorgabe
-    entscheidet der Speicherbedarf: passt der Hessian-Satz nicht in zwei
-    Drittel des RAM, laeuft der Export ohne GPTQ weiter, statt nach Stunden
-    am Speicher zu scheitern.
-
-    Das ist vertretbar, weil GPTQ auf 0.5B ein **gemessenes Negativ-Ergebnis**
-    war (v0.12.28: Perplexitaet 3242 -> 3318, also leicht schlechter). Wer es
-    auf einer grossen Variante trotzdem will, braucht die schichtweise
-    Hessian-Berechnung (sammeln, quantisieren, freigeben) - siehe Hinweis in
-    README/Fahrplan-v3.md.
+    **Nachtrag 2026-08-18 (Fahrplan 12.72):** Bis v0.12.43 schaltete diese
+    Funktion GPTQ komplett ab, wenn der Hessian-Bedarf fuer ALLE Ebenen
+    gleichzeitig zwei Drittel des RAM ueberschritt (7B: 45,5 GB). Das war
+    ein Test, ob GPTQs Fehlerkompensation die 7B-Ergebnisse verbessert -
+    ohne GPTQ liess sich das nicht pruefen. Jetzt laeuft GPTQ immer
+    (schichtweise, siehe gptq_group_size); nur INTEGER_LLM_GPTQ=0 schaltet
+    es noch hart ab, fuer schnelle Laeufe ohne Fehlerkompensation.
     """
     env = os.environ.get("INTEGER_LLM_GPTQ", "").strip()
     if env in ("0", "aus", "off", "false"):
         return False, "INTEGER_LLM_GPTQ=0"
-    bedarf = gptq_hessian_bytes(config)
-    if env in ("1", "an", "on", "true"):
-        return True, f"INTEGER_LLM_GPTQ=1, Bedarf {bedarf / 2**30:.1f} GB"
-    ram = verfuegbarer_ram()
-    if ram and bedarf > ram * 2 // 3:
-        return False, (
-            f"Hessian-Bedarf {bedarf / 2**30:.1f} GB ueberschreitet zwei Drittel "
-            f"der {ram / 2**30:.0f} GB RAM; GPTQ war auf 0.5B ohnehin ein "
-            f"Negativ-Ergebnis (v0.12.28). Erzwingen mit INTEGER_LLM_GPTQ=1"
-        )
-    return True, f"Bedarf {bedarf / 2**30:.1f} GB"
+    group_size = gptq_group_size(config)
+    num_layers = config["num_layers"]
+    num_groups = math.ceil(num_layers / group_size)
+    if num_groups == 1:
+        return True, f"eine Gruppe (alle {num_layers} Ebenen gleichzeitig)"
+    return True, (
+        f"{num_groups} Gruppen a bis zu {group_size} Ebenen (schichtweise, "
+        f"{gptq_hessian_bytes(config) / 2**30:.1f} GB fuer alle Ebenen "
+        f"gleichzeitig waeren zu viel gewesen)"
+    )
 
 
 def main():
@@ -165,19 +193,6 @@ def main():
     model_dir = local_model_dir(HF_MODEL_ID.split("/")[-1])
     print(f"[calibrate] Lade Referenzmodell aus {model_dir} ...")
     model, tokenizer = load_reference_model(model_dir)
-
-    print("[calibrate] Sammle Aktivierungsstatistiken...")
-    collector = ActivationStatsCollector()
-    collector.attach(model)
-    # GPTQ (Eskalationsstrategie 3, theta_v 0.8.0): dieselbe Vorwaerts-
-    # Passage liefert die Hessischen Matrizen (H = Summe x x^T) fuer die
-    # Fehlerkompensations-Quantisierung der linearen Projektionen.
-    hessian_collector = None
-    if use_gptq:
-        hessian_collector = HessianCollector()
-        hessian_collector.attach(model)
-    else:
-        print(f"[calibrate] GPTQ ausgelassen ({gptq_grund}).")
 
     # Kalibrierungs-Korpus: mehrere sprachlich unterschiedliche Prompts,
     # damit die Per-Layer-Aktivierungsskalen nicht von einem einzigen Satz
@@ -195,29 +210,65 @@ def main():
         "power-of-two scales; lookup tables approximate nonlinear functions "
         "such as silu, exp, rsqrt and the rotary position embeddings.",
     ]
-    for prompt in prompts:
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        with torch.no_grad():
-            _ = model(**inputs)
-
     # Breiterer WikiText-2-Korpus (Fund 14, Kandidat i): dieselbe Verteilung
     # wie die Messsequenzen, aber breit genug, damit die Per-Layer-Skalen die
     # realen Aktivierungs-Spannweiten abdecken statt still zu clampen.
     wikitext_texts = _wikitext_calibration_texts(CALIB_WIKITEXT_SEQUENCES)
     print(f"[calibrate] Breite Kalibrierbasis: {len(wikitext_texts)} "
           f"WikiText-2-Sequenzen à <= {CALIB_WIKITEXT_SEQ_LEN} Tokens ...")
-    for text in wikitext_texts:
-        inputs = tokenizer(text, return_tensors="pt", truncation=True,
-                           max_length=CALIB_WIKITEXT_SEQ_LEN).to(model.device)
-        with torch.no_grad():
-            _ = model(**inputs)
 
+    def _kalibrierkorpus_durchlaufen():
+        """Fuehrt den vollstaendigen Kalibrierkorpus einmal durch das
+        Modell. Wird fuer die Stats-Sammlung UND, bei mehreren
+        GPTQ-Gruppen (schichtweise Hessian-Berechnung), je Gruppe erneut
+        aufgerufen - deshalb als geschlossene Funktion statt Inline-Code."""
+        for prompt in prompts:
+            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+            with torch.no_grad():
+                _ = model(**inputs)
+        for text in wikitext_texts:
+            inputs = tokenizer(text, return_tensors="pt", truncation=True,
+                               max_length=CALIB_WIKITEXT_SEQ_LEN).to(model.device)
+            with torch.no_grad():
+                _ = model(**inputs)
+
+    print("[calibrate] Sammle Aktivierungsstatistiken...")
+    collector = ActivationStatsCollector()
+    collector.attach(model)
+    _kalibrierkorpus_durchlaufen()
     collector.detach()
-    hessian_collector.detach()
     stats = collector.compute()
     print(f"[calibrate] Statistiken fuer {len(stats)} Module gesammelt.")
-    print(f"[calibrate] Hessische Matrizen fuer {len(hessian_collector.hessians)} "
-          f"lineare Projektionen gesammelt.")
+
+    # GPTQ (Eskalationsstrategie 3, theta_v 0.8.0): Hessian-gestuetzte
+    # Fehlerkompensation fuer die linearen Projektionen. Schichtweise
+    # (2026-08-18, Nachtrag 12.72): der Kalibrierkorpus laeuft je Gruppe
+    # ERNEUT durch das Modell, mit Hooks nur auf dieser Gruppe - mehr
+    # Rechenzeit, aber Speicherbedarf bleibt beschraenkt statt GPTQ bei
+    # grossen Modellen ganz abzuschalten.
+    gptq_quantized = {}
+    if use_gptq:
+        group_size = gptq_group_size(config_vorab)
+        num_layers = config_vorab["num_layers"]
+        num_groups = math.ceil(num_layers / group_size)
+        print(f"[calibrate] GPTQ ({gptq_grund})...")
+        for g in range(num_groups):
+            start = g * group_size
+            end = min(start + group_size, num_layers)
+            print(f"[calibrate] GPTQ-Gruppe {g + 1}/{num_groups} "
+                  f"(Ebenen {start}-{end - 1})...")
+            hessian_collector = HessianCollector(layer_range=range(start, end))
+            hessian_collector.attach(model)
+            _kalibrierkorpus_durchlaufen()
+            hessian_collector.detach()
+            gptq_quantized.update(
+                quantize_linear_layers_gptq(model, hessian_collector.hessians))
+            del hessian_collector
+            gc.collect()
+        print(f"[calibrate] GPTQ auf {len(gptq_quantized)} lineare Projektionen "
+              "angewendet.")
+    else:
+        print(f"[calibrate] GPTQ ausgelassen ({gptq_grund}).")
 
     print("[calibrate] Berechne Zweierpotenz-Skalen...")
     scales = compute_scales_from_stats(stats)
@@ -273,31 +324,36 @@ def main():
     print(f"[calibrate] {len(quantized)} Gewichts-Tensoren quantisiert "
           "(Per-Channel RNE).")
 
-    # GPTQ (theta_v 0.8.0, Eskalationsstrategie 3): die linearen
-    # Projektionen werden mit Hessian-gestützter Fehlerkompensation
-    # nachquantisiert — das überschreibt die RNE-Einträge für exakt diese
-    # Tensoren (gleiche Schlüssel, gleiches Artefakt-Format). Reduziert den
-    # Ausgabefehler statt des Gewichtsfehlers und damit das akkumulierte
-    # Quantisierungsrauschen (Fund 14).
-    if use_gptq:
-        print("[calibrate] GPTQ: quantisiere lineare Projektionen mit "
-              "Fehlerkompensation...")
-        gptq_quantized = quantize_linear_layers_gptq(model, hessian_collector.hessians)
+    # GPTQ ueberschreibt die RNE-Eintraege fuer exakt die Tensoren, die
+    # oben schichtweise gptq-quantisiert wurden (gleiche Schluessel,
+    # gleiches Artefakt-Format). Reduziert den Ausgabefehler statt des
+    # Gewichtsfehlers und damit das akkumulierte Quantisierungsrauschen
+    # (Fund 14).
+    if gptq_quantized:
         quantized.update(gptq_quantized)
-        print(f"[calibrate] GPTQ auf {len(gptq_quantized)} lineare Projektionen "
-              "angewendet.")
+
+    # Eskalation nach Entscheidungspunkt 12.21 (spec-Ausnahme 0.6.0): der
+    # LM-Head wird als EIGENER Tensor exportiert (Weight-Tying aufgelöst),
+    # in int16 mit Per-Channel-Zweierpotenz-Skalen.
+    #
+    # Steht VOR dem Gewichtsexport, obwohl er danach geschrieben wird: er ist
+    # die letzte Stelle, die das BF16-Modell braucht. Danach kann es aus dem
+    # Speicher, und der Export laeuft ohne es. Das ist bei 0,5B gleichgueltig
+    # und bei 7B der Unterschied zwischen 26 GB Spitzenbedarf (Modell 15,2 GB
+    # + Quantisat 8,7 GB) und rund 11 GB auf einer 24-GB-Maschine.
+    print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
+    lm_head_weight = model.get_output_embeddings().weight
+    lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
+
+    del lm_head_weight, model
+    gc.collect()
+    print("[calibrate] Referenzmodell freigegeben (wird ab hier nicht mehr gebraucht).")
 
     print(f"[calibrate] Exportiere Gewichte nach {artifacts_dir}...")
     export_quantized_weights(quantized, artifacts_dir)
 
-    # Eskalation nach Entscheidungspunkt 12.21 (spec-Ausnahme 0.6.0): der
-    # LM-Head wird als EIGENER Tensor exportiert (Weight-Tying aufgelöst),
-    # in int16 mit Per-Channel-Zweierpotenz-Skalen. Muss VOR export_theta_v
-    # laufen, damit der theta_v-Gewichtshash den aktualisierten
-    # weights_manifest-Eintrag einschließt.
-    print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
-    lm_head_weight = model.get_output_embeddings().weight
-    lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
+    # Muss VOR export_theta_v laufen, damit der theta_v-Gewichtshash den
+    # aktualisierten weights_manifest-Eintrag einschliesst.
     export_lm_head(lm_head_quant, artifacts_dir)
 
     # Das Artefakt dokumentiert die LM-Head-Ausnahme im model_config.

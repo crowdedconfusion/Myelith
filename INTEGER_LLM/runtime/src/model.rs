@@ -13,9 +13,9 @@
 // verstecken, die beim Lesen des Loaders gebraucht wird.
 #![allow(clippy::type_complexity)]
 
-use integer_llm_kernels::fixed_point::{clamp_i16, rescale, rescale_i64};
+use integer_llm_kernels::fixed_point::{clamp_i16, inv_sqrt_q15, rescale, rescale_i64};
 use integer_llm_kernels::rmsnorm::rmsnorm_i16;
-use integer_llm_kernels::linear::{linear_w8a16, add_bias_i16};
+use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::attention_int;
 use integer_llm_kernels::mlp::mlp_int;
@@ -58,7 +58,7 @@ impl QTensor {
 /// `calibrate/src/stats.py`). Seit dem Numerik-Realitaetsabgleich (v0.12.20)
 /// tragen Aktivierungen int16 mit diesen Skalen; der Loader validiert die
 /// Vollstaendigkeit beim Modellbau.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LayerScales {
     /// Ausgang von input_layernorm = Eingang von q/k/v_proj.
     pub norm_attn_frac: u8,
@@ -80,11 +80,15 @@ pub struct LayerScales {
     /// (Eingang von input_layernorm). Per-Segment-Skalen seit spec 0.5.1:
     /// die Spanne des Stroms reicht von winzigen Embedding-Werten bis zu
     /// Ausreisser-Spitzen — eine globale Skala wuerde einen der beiden
-    /// Bereiche zerstoeren.
-    pub residual_in_frac: u8,
+    /// Bereiche zerstoeren. Seit Fund 20 (theta_v 0.11.0) zusaetzlich eine
+    /// Skala JE KANAL: bei Qwen2.5-7B tragen 3-4 feste Kanaele an
+    /// Position 0 "Massive Activations" (absmax ~9600 gegenueber ~10 im
+    /// Rest, Sun et al. 2024) - eine gemeinsame Skala fuers ganze Segment
+    /// wuerde jeden anderen Kanal auf Schrittweite 0,5 zwingen.
+    pub residual_in_frac: Vec<u8>,
     /// Mittleres Residualstrom-Segment zwischen erstem Residual-Add und
-    /// post_attention_layernorm.
-    pub residual_mid_frac: u8,
+    /// post_attention_layernorm. Ebenfalls Per-Kanal (Fund 20).
+    pub residual_mid_frac: Vec<u8>,
 }
 
 /// Ein Transformer-Layer.
@@ -138,8 +142,9 @@ pub struct IntegerModel {
     /// Kalibrierte Skala des finalen Norm-Ausgangs = Eingang des LM-Heads.
     pub final_norm_frac: u8,
     /// Kalibrierte Skala des letzten Residualstrom-Segments (Eingang von
-    /// model.norm; Per-Segment-Skalen seit spec 0.5.1).
-    pub final_residual_frac: u8,
+    /// model.norm; Per-Segment-Skalen seit spec 0.5.1, Per-Kanal seit
+    /// Fund 20 / theta_v 0.11.0).
+    pub final_residual_frac: Vec<u8>,
     pub layers: Vec<TransformerLayer>,
     pub cos_lut: Vec<i16>,
     pub sin_lut: Vec<i16>,
@@ -162,6 +167,15 @@ pub struct ModelConfig {
     /// Skala des KV-Cache (spec: kv_cache, frac 8). K/V werden beim
     /// Schreiben/Lesen zwischen ihrer Per-Layer-Skala und dieser Skala
     /// umgerechnet.
+    /// Historisch: bis theta_v 0.11.0 wurde der KV-Cache auf diese
+    /// GLOBALE Skala umgerechnet und beim Lesen zurueck. Seit Fund 22
+    /// (theta_v 0.12.0) haelt der Cache K/V in der nativen Per-Layer-Skala
+    /// der erzeugenden Projektion — die Umrechnung war ein reiner Verlust
+    /// (Quelle und Ziel identisch), kostete 2-4 Bit auf fast jeder Ebene
+    /// und clippte bei Qwen2.5-7B in Ebene 0 um Faktor 3,28.
+    ///
+    /// Das Feld bleibt erhalten, weil es im Artefaktformat steht und von
+    /// Diagnosen ausgegeben wird; der Inferenzpfad liest es nicht mehr.
     pub kv_cache_frac_bits: u8,
     /// Skala der Q*K-Scores NACH dem Rescale, bevor sie in die exp-LUT
     /// indizieren. Muss mit dem Kalibrierungsbereich der LUT
@@ -209,6 +223,21 @@ impl Default for ModelConfig {
     }
 }
 
+/// Realwertiges (AbsMax, first4) fuer die Diagnose-Ausgabe von
+/// `forward_token_dump` — jeder Kanal wird mit SEINEM eigenen Shift in
+/// Realwerte umgerechnet (Fund 20: bei per-Kanal-Skalen ist ein einziger
+/// gemeinsamer Shift nicht mehr aussagekraeftig).
+fn real_dump_entry(hidden: &[i16], shifts: &[u8]) -> (f64, [f64; 4]) {
+    let absmax = hidden.iter().zip(shifts.iter())
+        .map(|(v, &s)| (*v as f64).abs() * 2f64.powi(-(s as i32)))
+        .fold(0.0, f64::max);
+    let mut first4 = [0.0f64; 4];
+    for (k, (v, &s)) in hidden.iter().zip(shifts.iter()).take(4).enumerate() {
+        first4[k] = *v as f64 * 2f64.powi(-(s as i32));
+    }
+    (absmax, first4)
+}
+
 impl IntegerModel {
     /// Einzelner Forward-Schritt fuer ein Token an Position `pos`.
     /// KV-Cache wird gelesen und geschrieben.
@@ -222,22 +251,25 @@ impl IntegerModel {
 
         // 1. Embedding Lookup: Gewicht int8 mit Per-Channel-Skala der
         //    Token-Zeile (theta_v 0.7.0) -> erstes Residualstrom-Segment.
-        let first_residual_frac = self.layers[0].scales.residual_in_frac;
+        //    Seit Fund 20 (theta_v 0.11.0) traegt das Segment eine Skala
+        //    je Kanal.
+        let first_residual_frac = &self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let emb_shift = self.embedding_table.shifts[token_id];
         let mut hidden: Vec<i16> = emb
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
+            .enumerate()
+            .map(|(i, v)| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac[i])))
             .collect();
 
         // 2. Transformer Layers: jeder Layer gibt den Strom auf der Skala
         //    des Folge-Segments aus (Eingangsskala des naechsten Layers bzw.
         //    des finalen Norm-Eingangs).
         for (i, layer) in self.layers.iter().enumerate() {
-            let out_frac = if i + 1 < self.layers.len() {
-                self.layers[i + 1].scales.residual_in_frac
+            let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                &self.layers[i + 1].scales.residual_in_frac
             } else {
-                self.final_residual_frac
+                &self.final_residual_frac
             };
             hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
         }
@@ -246,6 +278,7 @@ impl IntegerModel {
         //    final-norm-Skala; LUT-gestuetzt, divisionsfrei).
         let normed = rmsnorm_i16(
             &hidden,
+            &self.final_residual_frac,
             &self.final_norm_gamma.data,
             &self.final_norm_gamma.shifts,
             &self.rsqrt_lut,
@@ -303,11 +336,12 @@ impl IntegerModel {
     /// Embedding-Lookup: liefert das erste Residualstrom-Segment auf der
     /// Eingangsskala von Layer 0 (`layers[0].scales.residual_in_frac`).
     pub fn embed_token(&self, token_id: usize) -> Vec<i16> {
-        let first_residual_frac = self.layers[0].scales.residual_in_frac;
+        let first_residual_frac = &self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let emb_shift = self.embedding_table.shifts[token_id];
         emb.iter()
-            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
+            .enumerate()
+            .map(|(i, v)| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac[i])))
             .collect()
     }
 
@@ -326,10 +360,10 @@ impl IntegerModel {
         layer_end: usize,
     ) -> Vec<i16> {
         for i in layer_start..layer_end {
-            let out_frac = if i + 1 < self.layers.len() {
-                self.layers[i + 1].scales.residual_in_frac
+            let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                &self.layers[i + 1].scales.residual_in_frac
             } else {
-                self.final_residual_frac
+                &self.final_residual_frac
             };
             hidden = self.forward_layer(&self.layers[i], &hidden, pos, cache, out_frac);
         }
@@ -342,6 +376,7 @@ impl IntegerModel {
         let cfg = &self.config;
         let normed = rmsnorm_i16(
             hidden,
+            &self.final_residual_frac,
             &self.final_norm_gamma.data,
             &self.final_norm_gamma.shifts,
             &self.rsqrt_lut,
@@ -384,7 +419,7 @@ impl IntegerModel {
         hidden: &[i16],
         pos: usize,
         cache: &mut KVCache,
-        out_residual_frac: u8,
+        out_residual_frac: &[u8],
     ) -> Vec<i16> {
         let cfg = &self.config;
         let hs = self.hidden_size;
@@ -395,6 +430,7 @@ impl IntegerModel {
         // q/k/v-Eingangsskala; Gamma mit Per-Element-Skalen, theta_v 0.7.0).
         let norm_hidden = rmsnorm_i16(
             hidden,
+            &sc.residual_in_frac,
             &layer.input_layernorm_gamma.data,
             &layer.input_layernorm_gamma.shifts,
             &self.rsqrt_lut,
@@ -449,12 +485,28 @@ impl IntegerModel {
             *kh = rotate_half_split_i16(kh, cos_row, sin_row, cfg.rope_frac_bits);
         }
 
-        // KV-Cache schreiben: Reskalierung von der Per-Layer-Skala auf die
-        // Cache-Skala (spec: kv_cache, frac 8) und zurueck beim Lesen.
+        // KV-Cache schreiben — OHNE Reskalierung (Fund 22, 2026-08-19).
+        //
+        // Bis theta_v 0.11.0 wurde hier auf eine GLOBALE Cache-Skala
+        // (spec: kv_cache.frac_bits = 8) konvertiert und beim Lesen
+        // zurueck auf dieselbe Per-Layer-Skala. Diese Rundreise
+        // k_frac -> 8 -> k_frac gewann nichts (Quelle und Ziel sind
+        // identisch, da Schreiben und Lesen dieselbe Ebene betreffen),
+        // kostete aber:
+        //   - doppelte Rundung je Position und Kopf,
+        //   - 2-4 Bit Aufloesung auf FAST JEDER Ebene beider Modelle
+        //     (0,5B: k median 3 Bit, v median 4 Bit; 7B: k 2, v 4),
+        //   - hartes Clipping, wo der reale Wert die feste Kapazitaet
+        //     von 32767/2^8 = 128 uebersteigt (7B Ebene 0: K-absmax 420,
+        //     also Faktor 3,28 abgeschnitten - und das an der ERSTEN
+        //     Ebene, deren Fehler durch alle 28 Ebenen propagiert).
+        //
+        // Der Cache haelt K/V jetzt in der nativen Per-Layer-Skala der
+        // erzeugenden Projektion. Das ist streng verlustfrei gegenueber
+        // vorher und beseitigt beide Effekte.
         for h in 0..self.num_kv_heads {
             cache.write(layer.layer_idx, h, pos,
-                self.rescale_head(&k_heads[h], sc.k_frac, cfg.kv_cache_frac_bits),
-                self.rescale_head(&v_heads[h], sc.v_frac, cfg.kv_cache_frac_bits));
+                k_heads[h].clone(), v_heads[h].clone());
         }
 
         // Attention pro Query-Head; group_size aufeinanderfolgende Query-Heads
@@ -467,13 +519,10 @@ impl IntegerModel {
             let (past_k, past_v) = cache.read(layer.layer_idx, kv_h, pos);
             let seq_len = past_k.len();
 
-            // K, V von der Cache-Skala zurueck auf ihre Per-Layer-Skalen.
-            let k_seq: Vec<Vec<i16>> = past_k.iter()
-                .map(|k| self.rescale_head(k, cfg.kv_cache_frac_bits, sc.k_frac))
-                .collect();
-            let v_seq: Vec<Vec<i16>> = past_v.iter()
-                .map(|v| self.rescale_head(v, cfg.kv_cache_frac_bits, sc.v_frac))
-                .collect();
+            // K, V liegen bereits in ihrer Per-Layer-Skala (Fund 22) —
+            // keine Reskalierung mehr noetig.
+            let k_seq: Vec<Vec<i16>> = past_k.to_vec();
+            let v_seq: Vec<Vec<i16>> = past_v.to_vec();
 
             let q_seq = vec![q_heads[h].clone()];
 
@@ -488,18 +537,25 @@ impl IntegerModel {
             //
             // Fund 17 (Attention-Skalierung): HF-Qwen2 skaliert die Scores mit
             // 1/sqrt(head_dim) (attn_weights = q·k * head_dim^-0.5). Dieser
-            // Faktor fehlte hier, die Scores waren dadurch um sqrt(head_dim)
-            // (=8 bei head_dim 64) zu groß und die Softmax viel zu scharf.
-            // 1/sqrt(head_dim) = 2^-log2(head_dim)/2, also ein zusaetzlicher
-            // Rechtsshift um log2(head_dim)/2 (bei head_dim 64 = 3).
-            let attn_scale_shift = (self.head_dim.trailing_zeros() / 2) as u16;
-            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + attn_scale_shift)
+            // Faktor fehlte urspruenglich ganz; die Softmax war dadurch um
+            // sqrt(head_dim) zu scharf.
+            //
+            // Fund 19: Die Umsetzung als reiner Rechtsshift um
+            // log2(head_dim)/2 war Ganzzahldivision und damit nur fuer
+            // GERADE Zweierpotenzen richtig. head_dim 128 (der Normalfall ab
+            // 1,5B) bekam Shift 3 statt der noetigen 3,5 — Faktor sqrt(2) zu
+            // gross. Jetzt als Q15-Multiplikation; fuer head_dim 64 ist der
+            // Multiplikator 4096 = 2^12 und das Ergebnis bitgleich zum
+            // bisherigen Verhalten (siehe fixed_point::inv_sqrt_q15).
+            let score_mult = inv_sqrt_q15(self.head_dim);
+            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + 15)
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
             let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 
             let head_out = attention_int(
                 &q_seq, &k_seq, &v_seq, &mask,
-                score_shift, &self.exp_lut, exp_lut_shift, cfg.prob_frac_bits,
+                score_mult, score_shift, &self.exp_lut, exp_lut_shift,
+                cfg.prob_frac_bits,
             );
 
             // Ergebnis in attn_out schreiben
@@ -519,19 +575,23 @@ impl IntegerModel {
 
         // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang auf der
         // Skala des mittleren Residual-Segments (vor der zweiten Norm).
-        let o_out = linear_w8a16(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, sc.residual_mid_frac);
+        // Fund 20: per-Kanal-Ziel statt Skalar, o_proj addiert direkt in
+        // den Residualstrom.
+        let o_out = linear_w8a16_pc(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, &sc.residual_mid_frac);
 
         // Residual Add 1 (int16): hidden (Eingangs-Segment-Skala) wird auf
-        // die mittere Segment-Skala umreskaliert, dann Addition.
+        // die mittere Segment-Skala umreskaliert, dann Addition. Beide
+        // Skalen sind seit Fund 20 per Kanal.
         let mut residual = vec![0i16; hs];
         for i in 0..hs {
-            let h_rescaled = clamp_i16(rescale(hidden[i] as i32, sc.residual_in_frac, sc.residual_mid_frac));
+            let h_rescaled = clamp_i16(rescale(hidden[i] as i32, sc.residual_in_frac[i], sc.residual_mid_frac[i]));
             residual[i] = clamp_i16((h_rescaled as i32) + (o_out[i] as i32));
         }
 
         // === MLP-Block ===
         let norm_residual = rmsnorm_i16(
             &residual,
+            &sc.residual_mid_frac,
             &layer.post_attention_layernorm_gamma.data,
             &layer.post_attention_layernorm_gamma.shifts,
             &self.rsqrt_lut,
@@ -543,7 +603,8 @@ impl IntegerModel {
 
         // Per-Layer-Skalen fuer alle Zwischenstufen; die SiLU-LUT arbeitet
         // in ihrer festen Domaene (silu_in_frac/Offset), Gate-Werte werden
-        // dorthin reskaliert.
+        // dorthin reskaliert. out_residual_frac ist seit Fund 20 per Kanal
+        // (down_proj addiert direkt in den Residualstrom).
         let mlp_out = mlp_int(
             &norm_residual,
             &self.to_vec_vec(&layer.gate_proj),
@@ -565,10 +626,10 @@ impl IntegerModel {
 
         // Final Residual Add: mittleres Segment wird auf die Ausgangs-
         // Segment-Skala (Eingang des Folge-Layers bzw. der finalen Norm)
-        // umreskaliert, dann Addition.
+        // umreskaliert, dann Addition. Per Kanal seit Fund 20.
         let mut out = vec![0i16; hs];
         for i in 0..hs {
-            let r_rescaled = clamp_i16(rescale(residual[i] as i32, sc.residual_mid_frac, out_residual_frac));
+            let r_rescaled = clamp_i16(rescale(residual[i] as i32, sc.residual_mid_frac[i], out_residual_frac[i]));
             out[i] = clamp_i16((r_rescaled as i32) + (mlp_out[i] as i32));
         }
 
@@ -579,41 +640,45 @@ impl IntegerModel {
     /// AbsMax und die ersten vier Werte des Residualstroms nach dem Layer
     /// zurück (inkl. der Skala des Segments). Nur für Messpfade — der
     /// Inferenzpfad bleibt unverändert.
+    ///
+    /// **Fund 20:** der Residualstrom trägt seit theta_v 0.11.0 eine Skala
+    /// je Kanal, nicht mehr eine je Segment. Ein einzelnes `frac` fürs
+    /// ganze Segment gibt es deshalb nicht mehr sinnvoll her — die
+    /// Rückgabe liefert direkt Realwerte (`f64`), pro Kanal korrekt mit
+    /// SEINEM eigenen Shift umgerechnet, statt Rohwert + einem
+    /// (potenziell falschen) gemeinsamen Shift an den Aufrufer zu geben.
     pub fn forward_token_dump(
         &self,
         token_id: usize,
         pos: usize,
         cache: &mut KVCache,
-    ) -> (Vec<i32>, Vec<(i32, [i16; 4], u8)>) {
+    ) -> (Vec<i32>, Vec<(f64, [f64; 4])>) {
         let cfg = &self.config;
 
-        let first_residual_frac = self.layers[0].scales.residual_in_frac;
+        let first_residual_frac = &self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let emb_shift = self.embedding_table.shifts[token_id];
         let mut hidden: Vec<i16> = emb
             .iter()
-            .map(|v| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac)))
+            .enumerate()
+            .map(|(i, v)| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac[i])))
             .collect();
 
         let mut dump = Vec::with_capacity(self.layers.len());
         for (i, layer) in self.layers.iter().enumerate() {
-            let out_frac = if i + 1 < self.layers.len() {
-                self.layers[i + 1].scales.residual_in_frac
+            let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                &self.layers[i + 1].scales.residual_in_frac
             } else {
-                self.final_residual_frac
+                &self.final_residual_frac
             };
             hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
-            let absmax = hidden.iter().map(|v| v.abs() as i32).max().unwrap_or(0);
-            let mut first4 = [0i16; 4];
-            for (k, v) in hidden.iter().take(4).enumerate() {
-                first4[k] = *v;
-            }
-            dump.push((absmax, first4, out_frac));
+            dump.push(real_dump_entry(&hidden, out_frac));
         }
 
         // Finale Norm + LM-Head-Logits wie im echten Pfad.
         let normed = rmsnorm_i16(
             &hidden,
+            &self.final_residual_frac,
             &self.final_norm_gamma.data,
             &self.final_norm_gamma.shifts,
             &self.rsqrt_lut,
@@ -622,12 +687,10 @@ impl IntegerModel {
             self.inv_n_q20,
             self.final_norm_frac,
         );
-        let norm_absmax = normed.iter().map(|v| v.abs() as i32).max().unwrap_or(0);
-        let mut norm_first4 = [0i16; 4];
-        for (k, v) in normed.iter().take(4).enumerate() {
-            norm_first4[k] = *v;
-        }
-        dump.push((norm_absmax, norm_first4, self.final_norm_frac));
+        // Ausgang der finalen Norm bleibt skalar (Post-Norm-Aktivierungen
+        // haben keine Massive-Activation-Ausreisser, siehe rmsnorm.rs).
+        let norm_shifts = vec![self.final_norm_frac; normed.len()];
+        dump.push(real_dump_entry(&normed, &norm_shifts));
 
         let mut logits = vec![0i32; self.vocab_size];
         if let Some(lmh) = &self.lm_head_int16 {
@@ -668,14 +731,6 @@ impl IntegerModel {
             heads.push(flat[start..end].to_vec());
         }
         heads
-    }
-
-    /// Reskaliert einen Head zwischen zwei Zweierpotenz-Skalen
-    /// (KV-Cache schreiben/lesen).
-    fn rescale_head(&self, head: &[i16], from_frac: u8, to_frac: u8) -> Vec<i16> {
-        head.iter()
-            .map(|v| clamp_i16(rescale(*v as i32, from_frac, to_frac)))
-            .collect()
     }
 
     fn to_vec_vec(&self, qt: &QTensor) -> Vec<Vec<i8>> {

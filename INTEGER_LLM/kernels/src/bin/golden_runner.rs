@@ -128,6 +128,15 @@ fn run_rmsnorm(gv: &GoldenVector) -> bool {
     // geradem Index-Shift, divisionsfrei; Gamma mit Per-Element-Skalen
     // (abwaertskompatibel: ohne gamma_shifts wird gamma_shift repliziert).
     let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
+    // Fund 20 (theta_v 0.11.0): x_shifts optional, fuer Vektoren vor
+    // v0.12.44 fehlt das Feld - Vorgabe 0 fuer alle Kanaele ist bitgleich
+    // zur alten Skalar-Behandlung (bewiesen in kernels/src/rmsnorm.rs,
+    // test_rmsnorm_per_channel_uniform_shifts_matches_legacy).
+    let x_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("x_shifts") {
+        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
+    } else {
+        vec![0u8; x.len()]
+    };
     let gamma: Vec<i8> = gv.inputs["gamma"].data.iter().map(|&v| v as i8).collect();
     let gamma_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("gamma_shifts") {
         shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
@@ -143,7 +152,7 @@ fn run_rmsnorm(gv: &GoldenVector) -> bool {
     let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
 
     let result = integer_llm_kernels::rmsnorm::rmsnorm_i16(
-        &x, &gamma, &gamma_shifts, &rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
+        &x, &x_shifts, &gamma, &gamma_shifts, &rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
     let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
 
     if result != expected {

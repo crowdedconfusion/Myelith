@@ -17,6 +17,18 @@ Integer-Inferenzpfad und sein Determinismus bleiben unberührt.
 Angewendet auf die linearen Projektionen (q/k/v/o/gate/up/down_proj).
 Embedding/Biases/Gammas bleiben bei quantize_symmetric_int8_per_channel
 (RNE), der LM-Head bleibt int16 (benannte spec-Ausnahme).
+
+**Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Fahrplan 12.72):**
+Der Hessian-Speicher waechst quadratisch mit intermediate_size (2,5 GB bei
+0,5B, 45,5 GB bei 7B fuer ALLE Ebenen gleichzeitig — siehe
+calibrate/src/main.py::gptq_hessian_bytes). Bislang schaltete das GPTQ bei
+zu wenig RAM komplett ab (v0.12.43). `HessianCollector` akzeptiert jetzt
+einen optionalen `layer_range`, sodass nur EIN Teil der Ebenen gleichzeitig
+gehesst wird — main.py::gptq_group_size() waehlt eine Gruppengroesse, die
+in den verfuegbaren Speicher passt, und main() faehrt den Kalibrierkorpus
+einmal je Gruppe erneut durch das Modell (mehr Rechenzeit, aber beschraenkter
+statt ausgeschalteter Speicherbedarf). Bei 0,5B ergibt sich weiterhin eine
+einzige Gruppe (alle Ebenen passen), also unveraendertes Verhalten.
 """
 
 import numpy as np
@@ -25,17 +37,35 @@ import torch
 from .quantize import MAX_FRAC_BITS
 
 
+def layer_index(name: str) -> int:
+    """
+    Extrahiert den Layer-Index aus einem HF-Modulnamen wie
+    "model.layers.14.self_attn.q_proj" -> 14. Wirft ValueError fuer
+    Module ohne "layers.N"-Praefix (z. B. embed_tokens, lm_head) - die
+    liegen nie in einem layer_range und werden vom Aufrufer nicht danach
+    gefragt.
+    """
+    parts = name.split(".")
+    idx = parts.index("layers")
+    return int(parts[idx + 1])
+
+
 class HessianCollector:
     """Sammelt H = Σ x·xᵀ über den Eingängen der linearen Projektionen.
 
     Dieselbe Hook-Konvention wie stats.py::ActivationStatsCollector
-    (Schlüssel = HF-Modulnamen). Akkumulation in float32 im RAM
-    (24 Ebenen ≈ 2,7 GB), jeder Batch-Beitrag wird in float64 berechnet.
+    (Schlüssel = HF-Modulnamen). Akkumulation in float32 im RAM,
+    jeder Batch-Beitrag wird in float64 berechnet.
+
+    `layer_range` (optional) beschraenkt das Hooking auf einen Ausschnitt
+    der Ebenen (schichtweise Hessian-Berechnung, siehe Modulkopf) - ohne
+    Angabe werden wie bisher alle Ebenen gehesst.
     """
 
-    def __init__(self):
+    def __init__(self, layer_range: range | None = None):
         self.hessians = {}
         self._handles = []
+        self.layer_range = layer_range
 
     @staticmethod
     def _proj_keys():
@@ -49,8 +79,8 @@ class HessianCollector:
                 return
             # Gram-Matrix in float32 auf dem Geraet des Modells (MPS/CPU);
             # float64-Matmul ist auf MPS nicht zuverlaessig. Die laufende
-            # Summe wird als float32 gehalten (~2,7 GB RAM fuer alle 168
-            # Projektionen), GPTQ selbst rechnet spaeter in float64 weiter.
+            # Summe wird als float32 gehalten, GPTQ selbst rechnet spaeter
+            # in float64 weiter.
             xf = x.detach().reshape(-1, x.shape[-1]).float()
             gram = (xf.T @ xf).detach().to("cpu").numpy()
             if name in self.hessians:
@@ -61,9 +91,17 @@ class HessianCollector:
 
     def attach(self, model):
         for name, module in model.named_modules():
-            if any(name.endswith(k) for k in self._proj_keys()):
-                self._handles.append(
-                    module.register_forward_hook(self._make_hook(name)))
+            if not any(name.endswith(k) for k in self._proj_keys()):
+                continue
+            if self.layer_range is not None:
+                try:
+                    idx = layer_index(name)
+                except ValueError:
+                    continue
+                if idx not in self.layer_range:
+                    continue
+            self._handles.append(
+                module.register_forward_hook(self._make_hook(name)))
 
     def detach(self):
         for h in self._handles:

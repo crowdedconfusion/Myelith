@@ -55,7 +55,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+4,29 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft, Backends AVX2+NEON; Skalierung auf 7B vorbereitet |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+4,29 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft, Backends AVX2+NEON. **Auf 7B verfehlt dieselbe Konfiguration das Kriterium; als Ursache ist ein Implementierungsfehler nachgewiesen — dasselbe Schema erreicht in einer Referenzimplementierung +0,7 %** |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle) | Phase 1 + 2 abgeschlossen (Golden Vectors, Fuzz-Harness, Konformitätspaket) |
 | [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1 + 2 abgeschlossen; Phase 3 mit Einschränkung — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, aber noch ohne Rundenwechsel/Timeouts |

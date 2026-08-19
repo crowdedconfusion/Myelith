@@ -54,6 +54,7 @@ pub trait Backend {
     fn rmsnorm(
         &self,
         x: &[i16],
+        x_shifts: &[u8],
         gamma: &[i8],
         gamma_shifts: &[u8],
         rsqrt_lut: &[i16],
@@ -82,6 +83,7 @@ pub trait Backend {
         v: &[Vec<i16>],
         out: &mut [Vec<i16>],
         mask: &[Vec<bool>],
+        score_mult: i64,
         score_shift: u8,
         exp_lut: &[i16],
         lut_shift: u8,
@@ -120,7 +122,7 @@ pub trait Backend {
         silu_in_frac: u8,
         silu_lut_offset: i16,
         silu_out_frac: u8,
-        out_frac: u8,
+        out_frac: &[u8],
     );
 }
 

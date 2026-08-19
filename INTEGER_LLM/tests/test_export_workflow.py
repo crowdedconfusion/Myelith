@@ -474,33 +474,72 @@ def test_artifact_model_config_omits_provenance_fields():
 def test_gptq_hessian_bedarf_waechst_quadratisch():
     """
     Der Hessian-Speicher skaliert quadratisch mit intermediate_size, nicht
-    linear mit der Parameterzahl — deshalb sprengt 7B den RAM, waehrend
-    0.5B bequem hineinpasst. Die automatische GPTQ-Abschaltung haengt an
-    dieser Rechnung; wenn sie kippt, laeuft eine Kalibrierung stundenlang
-    ins Leere.
+    linear mit der Parameterzahl — deshalb braucht 7B fuer ALLE Ebenen
+    gleichzeitig 45,5 GB, waehrend 0.5B mit 2,5 GB bequem hineinpasst.
     """
-    import os
     from src.model_configs import get_export_model_config
-    from src.main import gptq_hessian_bytes, gptq_entscheidung
+    from src.main import gptq_hessian_bytes
 
     klein = gptq_hessian_bytes(get_export_model_config("qwen2.5-0.5b"))
     gross = gptq_hessian_bytes(get_export_model_config("qwen2.5-7b"))
     assert 2.0 < klein / 2**30 < 3.0, f"0.5B: {klein / 2**30:.1f} GB"
     assert 40.0 < gross / 2**30 < 50.0, f"7B: {gross / 2**30:.1f} GB"
 
-    # Die Umgebungsvariable ueberstimmt die Heuristik in beide Richtungen.
+
+def test_gptq_entscheidung_env_override():
+    """Die Umgebungsvariable ueberstimmt die Standardentscheidung in beide
+    Richtungen; ohne sie laeuft GPTQ immer (schichtweise, siehe
+    test_gptq_group_size_...)."""
+    import os
+    from src.model_configs import get_export_model_config
+    from src.main import gptq_entscheidung
+
     alt = os.environ.get("INTEGER_LLM_GPTQ")
     try:
         os.environ["INTEGER_LLM_GPTQ"] = "0"
         an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-0.5b"))
         assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
-        os.environ["INTEGER_LLM_GPTQ"] = "1"
+        os.environ.pop("INTEGER_LLM_GPTQ")
         an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
-        assert an is True, "INTEGER_LLM_GPTQ=1 muss GPTQ erzwingen"
+        assert an is True, "ohne Vorgabe laeuft GPTQ immer (schichtweise)"
     finally:
         os.environ.pop("INTEGER_LLM_GPTQ", None)
         if alt is not None:
             os.environ["INTEGER_LLM_GPTQ"] = alt
+
+
+def test_gptq_group_size_fits_within_ram_budget():
+    """
+    Fund 20/21-Nachtrag: schichtweise Hessian-Berechnung statt Abschaltung.
+    gptq_group_size() muss so viele Ebenen waehlen, dass ihr gemeinsamer
+    Hessian-Bedarf unter zwei Dritteln des (vorgegaukelten) RAM bleibt -
+    und fuer 0.5B (das komplett in echten RAM passt) alle Ebenen auf
+    einmal waehlen, damit dort weiterhin nur EIN Kalibrier-Durchlauf noetig
+    ist.
+    """
+    from src.model_configs import get_export_model_config
+    from src.main import gptq_group_size, gptq_hessian_bytes_per_layer
+
+    cfg_05b = get_export_model_config("qwen2.5-0.5b")
+    groesse_05b = gptq_group_size(cfg_05b)
+    assert groesse_05b == cfg_05b["num_layers"], (
+        f"0.5B muss in einer Gruppe passen, war {groesse_05b} von "
+        f"{cfg_05b['num_layers']} Ebenen"
+    )
+
+    cfg_7b = get_export_model_config("qwen2.5-7b")
+    groesse_7b = gptq_group_size(cfg_7b)
+    per_layer = gptq_hessian_bytes_per_layer(cfg_7b)
+    assert groesse_7b < cfg_7b["num_layers"], (
+        "7B darf auf einer 24-GB-Maschine NICHT in einer Gruppe passen "
+        f"(waere wieder der alte 45,5-GB-Sprengsatz), war {groesse_7b}"
+    )
+    assert groesse_7b >= 1, "Gruppengroesse muss mindestens 1 Ebene sein"
+    # Die gewaehlte Gruppe darf den Speicher, den main() ihr zugesteht
+    # (zwei Drittel des tatsaechlichen RAM), nicht ueberschreiten.
+    import os
+    ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    assert groesse_7b * per_layer <= ram * 2 // 3
 
 
 def test_model_name_folgt_umgebungsvariable():
@@ -565,7 +604,11 @@ if __name__ == "__main__":
     test_artifact_model_config_omits_provenance_fields()
     print("[test] model_config.json ohne Herkunftsfelder: PASSED")
     test_gptq_hessian_bedarf_waechst_quadratisch()
-    print("[test] GPTQ-Hessian-Bedarf und Abschaltung: PASSED")
+    print("[test] GPTQ-Hessian-Bedarf waechst quadratisch: PASSED")
+    test_gptq_entscheidung_env_override()
+    print("[test] GPTQ-Entscheidung folgt der Umgebungsvariable: PASSED")
+    test_gptq_group_size_fits_within_ram_budget()
+    print("[test] GPTQ-Gruppengroesse passt in den RAM-Rahmen: PASSED")
     test_model_name_folgt_umgebungsvariable()
     print("[test] Modellwahl per INTEGER_LLM_MODEL: PASSED")
     print("[test] Alle Tests bestanden.")

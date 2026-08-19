@@ -70,6 +70,81 @@ pub fn rshift_round_i64(value: i64, shift: u8) -> i64 {
     }
 }
 
+/// Q15-Reziproke der Wurzel: `round(2^15 / sqrt(head_dim))`.
+///
+/// **Fund 19 (2026-08-18).** Die Attention skaliert die Scores mit
+/// `1/sqrt(head_dim)` (Fund 17). Umgesetzt war das als reiner Rechtsshift um
+/// `log2(head_dim) / 2` — Ganzzahldivision. Das stimmt nur, wenn
+/// `log2(head_dim)` **gerade** ist:
+///
+/// | head_dim | Shift | angewandt | korrekt   |
+/// |----------|-------|-----------|-----------|
+/// | 64  (2^6)| 3     | 0,125000  | 0,125000  |
+/// | 128 (2^7)| 3     | 0,125000  | 0,088388  | <- Faktor sqrt(2) zu gross
+/// | 256 (2^8)| 4     | 0,062500  | 0,062500  |
+///
+/// Qwen2.5-0.5B hat head_dim 64 und war deshalb zufaellig richtig; ab 1,5B
+/// ist 128 der Normalfall. Bei 7B waren die Scores durchgaengig um sqrt(2)
+/// zu gross und die Softmax entsprechend zu scharf — in jedem Kopf, jeder
+/// Ebene, jeder Position.
+///
+/// Statt eines Shifts wird jetzt mit dieser Q15-Konstanten multipliziert.
+/// **Fuer gerade Zweierpotenzen ist das Ergebnis bitgleich zum bisherigen
+/// Verhalten**, weil der Multiplikator dann selbst eine Zweierpotenz ist
+/// (head_dim 64 -> 4096 = 2^12) und `rshift_round_i64` unter einem
+/// Zweierpotenz-Faktor dieselbe Rundung samt Tie-Break liefert. Die
+/// Artefakte bestehender Modelle bleiben damit gueltig.
+///
+/// Vollstaendig ganzzahlig: keine `f64::sqrt`, sondern
+/// `isqrt_round(2^30 / head_dim)`. Fuer head_dim 64 exakt 4096, fuer 128
+/// gerundet 2896 (relativer Fehler 1,1e-4).
+#[inline]
+pub fn inv_sqrt_q15(head_dim: usize) -> i64 {
+    assert!(head_dim > 0, "inv_sqrt_q15: head_dim muss positiv sein");
+    // (2^15)^2 / head_dim = 2^30 / head_dim; die Wurzel daraus ist
+    // 2^15 / sqrt(head_dim).
+    isqrt_round((1u64 << 30) / head_dim as u64) as i64
+}
+
+/// Ganzzahlige Quadratwurzel mit Rundung zur naechsten ganzen Zahl.
+///
+/// Newton-Iteration auf u64, danach eine Rundungskorrektur: von den beiden
+/// Kandidaten `r` und `r + 1` gewinnt der, dessen Quadrat naeher an `n`
+/// liegt. Deterministisch und plattformunabhaengig — anders als
+/// `(n as f64).sqrt().round()`, das je nach libm abweichen kann und damit
+/// den Konsens brechen wuerde.
+#[inline]
+pub fn isqrt_round(n: u64) -> u64 {
+    if n == 0 {
+        return 0;
+    }
+    // Abgerundete Ganzzahlwurzel per Newton. Die Abbruchbedingung muss
+    // MONOTONIE pruefen, nicht Gleichheit zum Vorgaenger: Newton oszilliert
+    // fuer manche n dauerhaft zwischen zwei benachbarten Werten (etwa n=8:
+    // 2, 3, 2, 3, ...). Ein Vergleich "r != vorher" laeuft dann ewig.
+    let mut r = n;
+    let mut naechst = r.div_ceil(2);
+    while naechst < r {
+        r = naechst;
+        naechst = (r + n / r) / 2;
+    }
+    // r ist jetzt floor(sqrt(n)); die beiden Schleifen fangen Randfaelle ab.
+    while r > 0 && r > n / r {
+        r -= 1;
+    }
+    while (r + 1) <= n / (r + 1) {
+        r += 1;
+    }
+    // Runden: liegt n naeher an (r+1)^2 als an r^2?
+    let unten = n - r * r;
+    let oben = (r + 1) * (r + 1) - n;
+    if oben < unten {
+        r + 1
+    } else {
+        r
+    }
+}
+
 /// Rescale: von in_frac Bits nach out_frac Bits.
 #[inline(always)]
 pub fn rescale(acc: i32, in_frac: u8, out_frac: u8) -> i32 {
@@ -232,5 +307,67 @@ mod tests {
         assert_eq!(mul_i8_i32(-128, -128), 16384);
         assert_eq!(mul_i16_i64(32767, 32767), 1_073_676_289);
         assert_eq!(mul_i16_i64(-32768, -32768), 1_073_741_824);
+    }
+
+    #[test]
+    fn test_inv_sqrt_q15_gerade_zweierpotenzen_sind_exakt() {
+        // Fuer gerade log2(head_dim) ist 1/sqrt(head_dim) selbst eine
+        // Zweierpotenz. Der Multiplikator muss dann exakt 2^(15 - log2/2)
+        // sein - nur so bleibt das Ergebnis bitgleich zum frueheren
+        // Shift-Verhalten und bestehende Artefakte gueltig.
+        assert_eq!(inv_sqrt_q15(4), 1 << 14);    // 1/2
+        assert_eq!(inv_sqrt_q15(16), 1 << 13);   // 1/4
+        assert_eq!(inv_sqrt_q15(64), 1 << 12);   // 1/8   <- Qwen2.5-0.5B
+        assert_eq!(inv_sqrt_q15(256), 1 << 11);  // 1/16
+    }
+
+    #[test]
+    fn test_inv_sqrt_q15_ungerade_zweierpotenzen() {
+        // **Fund 19.** Hier lag der Fehler: der alte Shift log2(hd)/2 war
+        // Ganzzahldivision und ergab fuer head_dim 128 den Faktor 2^-3 =
+        // 0,125 statt 1/sqrt(128) = 0,0884 - um sqrt(2) zu gross. head_dim
+        // 128 ist der Normalfall ab Qwen2.5-1.5B; abgedeckt war er von
+        // keinem Test, weil 0.5B mit head_dim 64 zufaellig richtig lag.
+        assert_eq!(inv_sqrt_q15(128), 2896);  // round(32768 / sqrt(128))
+        assert_eq!(inv_sqrt_q15(512), 1448);
+        assert_eq!(inv_sqrt_q15(2), 23170);   // round(32768 / sqrt(2))
+
+        // Der alte Shift-Wert waere 2^12 = 4096 gewesen - Faktor 1,414 zu gross.
+        assert!(inv_sqrt_q15(128) < 4096);
+        let verhaeltnis = 4096_f64 / inv_sqrt_q15(128) as f64;
+        assert!((verhaeltnis - std::f64::consts::SQRT_2).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_q15_multiplikation_ist_bitgleich_zum_shift_bei_zweierpotenz() {
+        // Die Zusicherung, auf der die Gueltigkeit bestehender Artefakte
+        // beruht: ist der Multiplikator eine Zweierpotenz 2^m, liefert
+        // rshift_round_i64(x * 2^m, n + m) exakt dasselbe wie
+        // rshift_round_i64(x, n) - einschliesslich des
+        // Round-to-nearest-even-Tie-Breaks.
+        let m = 12u8; // inv_sqrt_q15(64) = 2^12
+        for x in [-100_003i64, -8, -7, -1, 0, 1, 7, 8, 9, 100_003, 1 << 30] {
+            for n in [1u8, 3, 5, 8, 16] {
+                let ueber_shift = rshift_round_i64(x, n);
+                let ueber_mult = rshift_round_i64(x * (1i64 << m), n + m);
+                assert_eq!(ueber_shift, ueber_mult, "x={} n={}", x, n);
+            }
+        }
+    }
+
+    #[test]
+    fn test_isqrt_round_deterministisch() {
+        assert_eq!(isqrt_round(0), 0);
+        assert_eq!(isqrt_round(1), 1);
+        assert_eq!(isqrt_round(2), 1);   // 1.414 -> 1
+        assert_eq!(isqrt_round(3), 2);   // 1.732 -> 2
+        assert_eq!(isqrt_round(4), 2);
+        assert_eq!(isqrt_round(8_388_608), 2896);  // 2^30 / 128
+        assert_eq!(isqrt_round(16_777_216), 4096); // 2^30 / 64, exakt
+        // Gegen die Gleitkomma-Referenz, aber ohne sie im Rechenpfad.
+        for n in [5u64, 99, 1000, 123_456, 1 << 40] {
+            let erwartet = (n as f64).sqrt().round() as u64;
+            assert_eq!(isqrt_round(n), erwartet, "n={}", n);
+        }
     }
 }

@@ -28,24 +28,36 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
-PROBE = REPO / "runtime" / "target" / "release" / "perplexity_probe"
-BASELINE_JSON = REPO / "eval" / "results" / "baseline_wikitext2.json"
-RESULTS_DIR = REPO / "eval" / "results"
 
 sys.path.insert(0, str(REPO / "eval"))
-from wikitext_common import select_sequences  # noqa: E402
+sys.path.insert(0, str(REPO / "tests"))
+from wikitext_common import (  # noqa: E402
+    ARTIFACTS_DIR as ARTIFACTS,
+    HF_MODEL_ID,
+    MODEL_NAME,
+    ergebnis_pfad,
+    select_sequences,
+)
+# Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
+# liegt das Binary nicht mehr unter runtime/target/. Der Resolver prueft
+# CARGO_TARGET_DIR, target-shared/ und den Cargo-Standardort der Reihe nach.
+from cargo_paths import binary, fehlt_hinweis  # noqa: E402
+
+PROBE = binary("runtime", "perplexity_probe")
+BASELINE_JSON = ergebnis_pfad("baseline_wikitext2")
+RESULTS_DIR = REPO / "eval" / "results"
 
 
 def main():
     acceptance_pct = float(os.environ.get("PPL_ACCEPTANCE_PCT", "5.0"))
 
     if not BASELINE_JSON.exists():
-        print(f"[ppl] FEHLT: {BASELINE_JSON} — zuerst eval/baseline.py laufen lassen.",
+        print(f"[ppl] FEHLT: {BASELINE_JSON} — zuerst eval/baseline.py laufen lassen "
+              f"(fuer dasselbe Modell: INTEGER_LLM_MODEL={MODEL_NAME}).",
               file=sys.stderr)
         sys.exit(1)
     if not PROBE.exists():
-        print(f"[ppl] FEHLT: {PROBE} — zuerst 'cargo build --release --bin perplexity_probe'.",
+        print(f"[ppl] {fehlt_hinweis('runtime', 'perplexity_probe')}",
               file=sys.stderr)
         sys.exit(1)
 
@@ -117,7 +129,7 @@ def main():
 
 | Größe | Wert |
 |---|---|
-| Modell | Qwen/Qwen2.5-0.5B (Basis-Variante) |
+| Modell | {HF_MODEL_ID} (Basis-Variante) |
 | FP-Baseline | BF16, HF-Implementierung: Perplexität {ppl_fp:.2f} |
 | Integer-Modell | {theta_v_desc}: Perplexität {ppl_int:.2f} |
 | Datensatz | WikiText-2, Testsplit; {n_sequences} Sequenzen à {seq_len} Tokens ({n_eval} ausgewertete Positionen) |
@@ -142,10 +154,10 @@ def main():
 {'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden.'}
 """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_md = RESULTS_DIR / "decision_12-21.md"
+    out_md = ergebnis_pfad("decision_12-21", ".md")
     out_md.write_text(protocol, encoding="utf-8")
 
-    out_json = RESULTS_DIR / "perplexity_comparison.json"
+    out_json = ergebnis_pfad("perplexity_comparison")
     out_json.write_text(json.dumps({
         "baseline_perplexity": ppl_fp,
         "integer_perplexity": ppl_int,

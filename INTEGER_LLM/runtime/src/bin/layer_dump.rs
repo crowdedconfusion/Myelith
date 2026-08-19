@@ -21,23 +21,18 @@ fn main() {
     let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
     let (_logits, dump) = model.forward_token_dump(token_id, pos, &mut cache);
 
-    for (i, (absmax, first4, frac)) in dump.iter().enumerate() {
-        let scale = 2f64.powi(-(*frac as i32));
-        let absmax_real = *absmax as f64 * scale;
+    // Fund 20: der Residualstrom traegt seit theta_v 0.11.0 eine Skala je
+    // Kanal - forward_token_dump liefert deshalb bereits umgerechnete
+    // Realwerte, kein gemeinsames "frac" mehr zum Selbst-Umrechnen.
+    for (i, (absmax, first4)) in dump.iter().enumerate() {
         let label = if i < model.num_layers {
             format!("layer {:2}", i)
         } else {
             "finalnorm".to_string()
         };
         println!(
-            "{}: absmax={:9.4} first4=[{:9.4}, {:9.4}, {:9.4}, {:9.4}] frac={}",
-            label,
-            absmax_real,
-            first4[0] as f64 * scale,
-            first4[1] as f64 * scale,
-            first4[2] as f64 * scale,
-            first4[3] as f64 * scale,
-            frac
+            "{}: absmax={:9.4} first4=[{:9.4}, {:9.4}, {:9.4}, {:9.4}]",
+            label, absmax, first4[0], first4[1], first4[2], first4[3]
         );
     }
 }

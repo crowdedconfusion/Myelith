@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.10.0",
+    "version": "0.12.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -15,12 +15,36 @@
     },
     "numeric": {
       "formats": {
-        "weight": { "dtype": "int8", "storage": "int8", "frac_bits": 7 },
-        "activation": { "dtype": "int16", "storage": "int16" },
-        "residual": { "dtype": "int16", "storage": "int16" },
-        "accumulator": { "dtype": "int32", "storage": "int32" },
-        "kv_cache": { "dtype": "int16", "storage": "int16", "frac_bits": 8 },
-        "lm_head": { "dtype": "int16", "storage": "int16", "scale": "per_channel", "weight_tying": false, "note": "Benannte Ausnahme (Eskalation nach Entscheidungspunkt 12.21): eigener Tensor (Weight-Tying aufgelöst) in int16, da der LM-Head bei Logit-Spannweiten von wenigen Einheiten direkt über die Token-Rangfolge entscheidet; int8-per-channel (seit 0.7.0 Standard für alle übrigen Gewichte) reicht dort nicht. Determinismus bleibt unberührt: alle Skalen sind Zweierpotenzen, alle Operationen bleiben ganzzahlig." }
+        "weight": {
+          "dtype": "int8",
+          "storage": "int8",
+          "frac_bits": 7
+        },
+        "activation": {
+          "dtype": "int16",
+          "storage": "int16"
+        },
+        "residual": {
+          "dtype": "int16",
+          "storage": "int16"
+        },
+        "accumulator": {
+          "dtype": "int32",
+          "storage": "int32"
+        },
+        "kv_cache": {
+          "dtype": "int16",
+          "storage": "per_layer_native",
+          "frac_bits": 8,
+          "note": "Fund 22 (theta_v 0.12.0): Der KV-Cache haelt K/V in der nativen Per-Layer-Skala der erzeugenden Projektion (sc.k_frac / sc.v_frac). Bis 0.11.0 wurde auf frac_bits umgerechnet und beim Lesen zurueck — eine Rundreise mit identischer Quelle und identischem Ziel, die nichts gewann, aber 2-4 Bit Aufloesung auf fast jeder Ebene kostete und bei Qwen2.5-7B in Ebene 0 um Faktor 3,28 clippte (K-absmax 420 gegen eine feste Kapazitaet von 32767/2^8 = 128). Das Feld frac_bits bleibt als historische Angabe erhalten; der Inferenzpfad liest es nicht mehr."
+        },
+        "lm_head": {
+          "dtype": "int16",
+          "storage": "int16",
+          "scale": "per_channel",
+          "weight_tying": false,
+          "note": "Benannte Ausnahme (Eskalation nach Entscheidungspunkt 12.21): eigener Tensor (Weight-Tying aufgelöst) in int16, da der LM-Head bei Logit-Spannweiten von wenigen Einheiten direkt über die Token-Rangfolge entscheidet; int8-per-channel (seit 0.7.0 Standard für alle übrigen Gewichte) reicht dort nicht. Determinismus bleibt unberührt: alle Skalen sind Zweierpotenzen, alle Operationen bleiben ganzzahlig."
+        }
       },
       "scales": {
         "mode": "power_of_two",
@@ -38,9 +62,18 @@
         "behavior": "explicit_clamp_only",
         "wrap": false,
         "saturation": {
-          "i8": [-128, 127],
-          "i16": [-32768, 32767],
-          "i32": [-2147483648, 2147483647]
+          "i8": [
+            -128,
+            127
+          ],
+          "i16": [
+            -32768,
+            32767
+          ],
+          "i32": [
+            -2147483648,
+            2147483647
+          ]
         },
         "note": "Überlauf sättigt explizit über clamp_i8/clamp_i16/clamp_i16_from_i64/clamp_i32 (kernels/src/fixed_point.rs); kein Wrap. Division durch Zweierpotenzen ist ein arithmetischer Rechtsshift mit Round-to-nearest-even; die fixierten Testvektoren sind kernels::fixed_point::division_semantics_vector und overflow_saturation_vector, die Audits stehen in tests/audit/test_division.py und test_overflow.py."
       }
@@ -48,14 +81,20 @@
     "nonlinear": {
       "rsqrt": {
         "method": "lut",
-        "input_range": [0, 32767],
+        "input_range": [
+          0,
+          32767
+        ],
         "input_shift": 8,
         "output_frac_bits": 8,
         "index_normalization": "dynamic_even_shift"
       },
       "silu": {
         "method": "lut",
-        "input_range": [-1024, 1023],
+        "input_range": [
+          -1024,
+          1023
+        ],
         "input_frac_bits": 3,
         "output_frac_bits": 6,
         "note": "Theta_v 0.9.0 (Fund-14-Folge, Eskalation Nichtlinearitäten): Eingangsraster von 0,5 auf 0,125 Einheiten verfeinert (input_frac_bits 1 -> 3), gleiche reale Domäne [-128, 127.875]. Die lineare Gewichtsquantisierung war durch GPTQ als dominante Fehlerquelle ausgeschlossen; das grobe SiLU-Eingangsraster (0,5) im dominanten MLP-Pfad ist der Top-Kandidat für die Bulk-Abweichung ab Ebene 3."
@@ -78,7 +117,10 @@
     },
     "sampling": {
       "prng": "splitmix64",
-      "seed_source": ["segment_id", "block_hash"],
+      "seed_source": [
+        "segment_id",
+        "block_hash"
+      ],
       "method": "integer_cdf",
       "tie_breaking": "lowest_index"
     },
