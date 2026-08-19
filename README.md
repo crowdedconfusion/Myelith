@@ -77,7 +77,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 | [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1 + 2 abgeschlossen; Phase 3 mit Einschränkung — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, aber noch ohne Rundenwechsel/Timeouts |
 | [TOKENOMICS](TOKENOMICS/README/README.md) | Burn-and-Mint, Verteilung | Phase 1 + 2 abgeschlossen (Credit-Preisbildung mit exp()-LUT) |
-| [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 + 2.1 abgeschlossen (Micro-Batching, Pipelining) |
+| [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 + 2.1 abgeschlossen (Micro-Batching, Pipelining). **Pipeline-Determinismus ist gegeben** (zwei unabhängige Läufe bitgleich) und das Shard-Layout seit Fund 25 über `pipeline_hash` abgesichert. **Offen:** Die Boundary-Reskalierung ist skalar, der Residualstrom seit Fund 20 per Kanal — die Phase-1-Zusicherung „bitgleich **mit Einzelknoten**" gilt deshalb nicht mehr |
 | [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Phase 1 + 2 abgeschlossen (Schiedsrunde, Slash-Logik über den Ledger) |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | Session-Kontrakte, Dual-LLM-Trennung | Planungsphase |
 | [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Planungsphase |

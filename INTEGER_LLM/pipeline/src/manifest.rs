@@ -67,7 +67,13 @@ impl PipelineManifest {
         if head_count != 1 {
             return Err(format!("Erwarte genau 1 LM-Head-Stage, habe {}", head_count));
         }
-        
+
+        // Shard-Layout gegen den deklarierten pipeline_hash pruefen
+        // (Fund 25): Die Boundary-Reskalierung ist verlustbehaftet, das
+        // Ergebnis haengt an der Lage der Stage-Grenzen. Ein Pod mit
+        // abweichendem Layout darf gar nicht erst starten.
+        manifest.verify_layout()?;
+
         Ok(manifest)
     }
     
@@ -75,6 +81,89 @@ impl PipelineManifest {
     pub fn verify_theta_v(&self, theta_v_hash: &str) -> Result<(), String> {
         if self.theta_v_hash != theta_v_hash {
             return Err("theta_v hash mismatch".to_string());
+        }
+        Ok(())
+    }
+
+    /// Kanonischer Bezeichner des SHARD-LAYOUTS.
+    ///
+    /// **Warum das konsensrelevant ist (Fund 25, 2026-08-19).** Die
+    /// Boundary-Reskalierung zwischen zwei Stages ist verlustbehaftet:
+    /// Der Residualstrom traegt seit INTEGER_LLM Fund 20 eine Skala je
+    /// Kanal, das Wire-Format zwischen Pods dagegen einen einzigen Skalar
+    /// (`boundary_frac_bits`). Jede Stage-Grenze fuegt damit einen
+    /// Rundungsschritt hinzu — und **das Ergebnis haengt davon ab, WO die
+    /// Grenzen liegen**. Zwei Pods, die dieselbe Anfrage mit
+    /// unterschiedlichem Layout rechnen (etwa 4 gegen 8 Shards), kommen
+    /// zu verschiedenen Token. Der Redundanzvergleich aus Whitepaper
+    /// Kap. 6.4 wuerde daraufhin ehrliche Knoten als fehlerhaft
+    /// markieren und slashen.
+    ///
+    /// Bis 2026-08-19 trug `pipeline_hash` deshalb ein Feld, das nie
+    /// berechnet und nie geprueft wurde (der Wert stand auf
+    /// `sha256:0000`). Diese Funktion schliesst die Luecke.
+    ///
+    /// **Was in den Hash eingeht:** ausschliesslich das, was die Zahlen
+    /// beeinflusst — die Stage-Grenzen, die Sonderrollen (Embedding,
+    /// LM-Head, Sampling) und das Boundary-Format. **Nicht** enthalten
+    /// sind Betriebsangaben wie `node_id`, `node_address` oder
+    /// `max_batch_size`: Zwei Pods duerfen auf verschiedenen Maschinen
+    /// mit verschiedenen Batch-Groessen laufen und muessen trotzdem
+    /// dasselbe Ergebnis liefern — genau das ist der Sinn der
+    /// Determinismus-Zusicherung.
+    pub fn canonical_layout_id(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut canon = String::new();
+        // Stages nach stage_id sortiert, damit die Reihenfolge in der
+        // Datei das Ergebnis nicht beeinflusst.
+        let mut stages: Vec<&StageManifest> = self.stages.iter().collect();
+        stages.sort_by_key(|s| s.stage_id);
+        for s in stages {
+            canon.push_str(&format!(
+                "{}:{}:{}:{}:{}:{}|",
+                s.stage_id, s.layer_start, s.layer_end,
+                s.has_embedding as u8, s.has_lm_head as u8, s.has_sampling as u8
+            ));
+        }
+        canon.push_str(&format!(
+            "{}:{}:{}",
+            self.boundary_dtype, self.boundary_frac_bits, self.boundary_endianness
+        ));
+        let digest = Sha256::digest(canon.as_bytes());
+        let mut hex = String::with_capacity(64);
+        for b in digest {
+            hex.push_str(&format!("{:02x}", b));
+        }
+        format!("sha256:{}", hex)
+    }
+
+    /// Prueft das deklarierte Shard-Layout gegen das tatsaechliche.
+    ///
+    /// Der Sentinel `sha256:0000` wird ausdruecklich abgelehnt: Er stand
+    /// bis 2026-08-19 in den ausgelieferten Konfigurationen und haette
+    /// sonst stillschweigend weiter durchgereicht werden koennen.
+    pub fn verify_layout(&self) -> Result<(), String> {
+        if self.pipeline_hash.trim_end_matches('0').ends_with("sha256:")
+            || self.pipeline_hash == "sha256:0000"
+        {
+            return Err(format!(
+                "pipeline_hash ist ein Platzhalter ({}). Das Shard-Layout ist \
+                 konsensrelevant (die Boundary-Reskalierung ist verlustbehaftet, \
+                 das Ergebnis haengt von der Lage der Stage-Grenzen ab). \
+                 Erwarteter Wert: {}",
+                self.pipeline_hash, self.canonical_layout_id()
+            ));
+        }
+        let tatsaechlich = self.canonical_layout_id();
+        if self.pipeline_hash != tatsaechlich {
+            return Err(format!(
+                "Shard-Layout weicht vom deklarierten pipeline_hash ab \
+                 (Manifest {}, tatsaechlich {}). Zwei Pods mit \
+                 unterschiedlichem Layout liefern verschiedene Token — der \
+                 Redundanzvergleich wuerde ehrliche Knoten als fehlerhaft \
+                 markieren.",
+                self.pipeline_hash, tatsaechlich
+            ));
         }
         Ok(())
     }
@@ -124,8 +213,8 @@ mod tests {
         let dir = std::env::temp_dir().join("myelith-pipeline-tests");
         std::fs::create_dir_all(&dir).expect("Testverzeichnis");
         let path = dir.join(format!("{}.json", name));
-        let obj = serde_json::json!({
-            "pipeline_hash": format!("{:064x}", 0xABC),
+        let mut obj = serde_json::json!({
+            "pipeline_hash": "sha256:platzhalter",
             "theta_v_hash": "abc123",
             "stages": stages,
             "boundary_dtype": "int16",
@@ -134,10 +223,32 @@ mod tests {
             "communication_protocol": "tcp-binary-custom",
             "checksum_algorithm": "crc32",
         });
+        // Fund 25: `load` prueft das Shard-Layout gegen `pipeline_hash`.
+        // Das Fixture traegt deshalb den ECHTEN Hash — ein Test, der mit
+        // einem Platzhalter arbeitete, wuerde die Pruefung umgehen, die er
+        // eigentlich voraussetzt.
+        if let Ok(vorlaeufig) = serde_json::from_value::<PipelineManifest>(obj.clone()) {
+            obj["pipeline_hash"] = serde_json::Value::String(vorlaeufig.canonical_layout_id());
+        }
         std::fs::write(&path, serde_json::to_string(&obj).unwrap()).expect("schreiben");
         let result = PipelineManifest::load(&path);
         let _ = std::fs::remove_file(&path);
         result
+    }
+
+    /// Ein gueltiges Manifest als Struct (fuer Tests, die den Ladepfad
+    /// nicht brauchen, sondern die Hash-Logik direkt pruefen).
+    fn testmanifest() -> PipelineManifest {
+        serde_json::from_value(serde_json::json!({
+            "pipeline_hash": "sha256:platzhalter",
+            "theta_v_hash": "abc123",
+            "stages": gueltige_stages(),
+            "boundary_dtype": "int16",
+            "boundary_frac_bits": 8,
+            "boundary_endianness": "little",
+            "communication_protocol": "tcp-binary-custom",
+            "checksum_algorithm": "crc32",
+        })).expect("Testmanifest")
     }
 
     fn gueltige_stages() -> Vec<serde_json::Value> {
@@ -248,5 +359,94 @@ mod tests {
         assert_eq!(m.stages.len(), 1);
         assert!(m.next_stage(0).is_none());
         assert!(m.prev_stage(0).is_none());
+    }
+
+    #[test]
+    fn test_layout_hash_ignoriert_betriebsangaben() {
+        // Fund 25: In den Layout-Hash darf NUR eingehen, was die Zahlen
+        // beeinflusst. Zwei Pods auf verschiedenen Maschinen, mit
+        // anderen Adressen und anderer Batch-Groesse, muessen als
+        // dasselbe Layout gelten — sonst wuerde der Redundanzvergleich
+        // legitime Konfigurationsunterschiede als Manipulation werten.
+        let mut a = testmanifest();
+        let hash_a = a.canonical_layout_id();
+
+        a.stages[0].node_id = "ganz-anderer-knoten".into();
+        a.stages[0].node_address = "10.0.0.99:1234".into();
+        a.stages[0].max_batch_size = 999;
+        a.stages[0].max_context_per_request = 4096;
+        assert_eq!(a.canonical_layout_id(), hash_a,
+            "Betriebsangaben duerfen den Layout-Hash nicht veraendern");
+    }
+
+    #[test]
+    fn test_layout_hash_erfasst_jede_numerisch_relevante_aenderung() {
+        // Die Gegenprobe: alles, was die Zahlen aendert, MUSS den Hash
+        // aendern. Jede dieser Abweichungen wuerde zu anderen Token
+        // fuehren; ein Pod damit darf nicht als gleichwertig gelten.
+        let basis = testmanifest();
+        let hash = basis.canonical_layout_id();
+
+        // andere Shard-Grenze
+        let mut v = testmanifest();
+        v.stages[0].layer_end = 3;
+        v.stages[1].layer_start = 3;
+        assert_ne!(v.canonical_layout_id(), hash, "Stage-Grenze");
+
+        // andere Boundary-Skala (der verlustbehaftete Schritt selbst)
+        let mut v = testmanifest();
+        v.boundary_frac_bits += 1;
+        assert_ne!(v.canonical_layout_id(), hash, "boundary_frac_bits");
+
+        // andere Sonderrolle
+        let mut v = testmanifest();
+        v.stages[1].has_sampling = !v.stages[1].has_sampling;
+        assert_ne!(v.canonical_layout_id(), hash, "has_sampling");
+
+        // anderes Wire-Format
+        let mut v = testmanifest();
+        v.boundary_endianness = "big".into();
+        assert_ne!(v.canonical_layout_id(), hash, "endianness");
+    }
+
+    #[test]
+    fn test_layout_hash_unabhaengig_von_der_reihenfolge_in_der_datei() {
+        // Die Stages werden vor dem Hashen nach stage_id sortiert: die
+        // Reihenfolge in der JSON-Datei ist eine Formatierungsfrage, keine
+        // numerische.
+        let a = testmanifest();
+        let mut b = testmanifest();
+        b.stages.reverse();
+        assert_eq!(a.canonical_layout_id(), b.canonical_layout_id());
+    }
+
+    #[test]
+    fn test_verify_layout_lehnt_platzhalter_ab() {
+        // Der Sentinel sha256:0000 stand bis 2026-08-19 in den
+        // ausgelieferten Konfigurationen und wurde nie geprueft. Er muss
+        // laut scheitern, nicht stillschweigend durchgehen.
+        let mut m = testmanifest();
+        m.pipeline_hash = "sha256:0000".into();
+        let err = m.verify_layout().expect_err("Platzhalter muss scheitern");
+        assert!(err.contains("Platzhalter"), "Fehlermeldung: {}", err);
+    }
+
+    #[test]
+    fn test_verify_layout_akzeptiert_korrekten_hash() {
+        let mut m = testmanifest();
+        m.pipeline_hash = m.canonical_layout_id();
+        assert!(m.verify_layout().is_ok());
+    }
+
+    #[test]
+    fn test_verify_layout_lehnt_abweichendes_layout_ab() {
+        // Der eigentliche Schutzfall: Ein Pod behauptet ein Layout und
+        // rechnet mit einem anderen.
+        let mut m = testmanifest();
+        m.pipeline_hash = m.canonical_layout_id();
+        m.stages[0].layer_end = 3;
+        m.stages[1].layer_start = 3;
+        let err = m.verify_layout().expect_err("abweichendes Layout muss scheitern");
+        assert!(err.contains("weicht"), "Fehlermeldung: {}", err);
     }
 }
