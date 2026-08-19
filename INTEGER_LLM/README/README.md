@@ -127,8 +127,20 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 Perplexität misst Teacher-Forcing: wie gut das Modell das jeweils nächste
 Token einer **vorgegebenen** Sequenz bewertet. Sie sagt nicht, ob freie
 Generierung brauchbaren Text liefert. `bench/qualitativ.py` liefert diesen
-zweiten, unabhängigen Beleg — acht echte Prompts, greedy, Token für Token
-gegen die BF16-Referenz desselben Modells.
+zweiten, unabhängigen Beleg — acht echte Prompts, greedy.
+
+**Er misst zwei grundverschiedene Dinge, und sie zu verwechseln wäre der
+teuerste Lesefehler:**
+
+| | Bedeutung | Zielwert |
+|---|---|---|
+| **Determinismus** | zwei unabhängige Läufe des Integer-Pfads über denselben Prompt | **muss 100 % sein** — Konsensbedingung (Whitepaper Kap. 6.2); jede Abweichung ist ein Totalausfall des Protokolls |
+| **Nähe zu BF16** | wie oft der Integer-Pfad denselben Text erzeugt wie die Gleitkomma-Referenz | **kein Zielwert** — Gütezahl der Quantisierung |
+
+Der Integer-Pfad ist eine *Quantisierung* des Float-Modells; er weicht per
+Konstruktion ab, genau deshalb hat er überhaupt einen
+Perplexitätsabstand. **8/8 Übereinstimmung mit BF16 wäre kein Erfolg,
+sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist.**
 
 ```bash
 INTEGER_LLM_MODEL=qwen2.5-7b python bench/qualitativ.py 10
@@ -141,9 +153,10 @@ Messung; ohne Angabe läuft er gegen `qwen2.5-0.5b`.
 
 | | 0,5B | 7B |
 |---|---|---|
+| **Determinismus** (Zielwert 8/8) | **8/8** ✓ | **8/8** ✓ |
 | Perplexität Integer / BF16 | 15,29 / 14,95 (+2,3 %) | 9,40 / 8,68 (+8,3 %) |
-| **Identische Generierungen** | 3/8 | **5/8** |
-| **Deckungsgleiche Token** | 65,0 % | **73,8 %** |
+| Identische Generierungen (Gütezahl) | 3/8 | 5/8 |
+| Deckungsgleiche Token (Gütezahl) | 65,0 % | 73,8 % |
 
 **7B ist qualitativ deutlich besser, obwohl sein relativer Abstand zur
 eigenen Baseline größer ist.** Das ist kein Widerspruch: 8,68 absolut ist

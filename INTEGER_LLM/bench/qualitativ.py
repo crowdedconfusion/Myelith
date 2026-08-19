@@ -10,12 +10,22 @@ nicht, ob freie Generierung brauchbaren Text liefert. Nach der Behebung
 von Fund 23/24 (7B: 41,42 -> 9,40) gehoert diese zweite Art von Beleg
 dazu, bevor man das Ergebnis als bestaetigt betrachtet.
 
-Gemessen wird je Prompt:
-  - der tatsaechlich erzeugte Text beider Pfade (greedy, gleiche Laenge)
-  - die Uebereinstimmung der Token-Sequenzen
-  - der Anteil identischer Top-1-Vorhersagen ueber die Prompt-Positionen
-    (Teacher-Forcing, unabhaengig von Fehlerfortpflanzung in der
-    Generierung)
+Zwei GRUNDVERSCHIEDENE Groessen werden gemessen — sie zu verwechseln
+waere der teuerste Fehler beim Lesen dieses Benchmarks:
+
+  1. **Determinismus (MUSS 100 % sein).** Zwei unabhaengige Laeufe des
+     Integer-Pfads ueber denselben Prompt muessen bitgleiche Token
+     liefern. Das ist die Konsensbedingung aus Whitepaper Kap. 6.2 —
+     daran haengt die gesamte Verifikationsarchitektur (Redundanz-
+     vergleich, Bisektion, Kontrollsegmente). Jede Abweichung hier ist
+     ein Totalausfall des Protokolls.
+
+  2. **Naehe zur Gleitkomma-Referenz (KEIN Zielwert).** Wie oft der
+     Integer-Pfad denselben Text erzeugt wie BF16. Der Integer-Pfad ist
+     eine QUANTISIERUNG — er weicht per Konstruktion ab, genau deshalb
+     hat er ueberhaupt einen Perplexitaetsabstand. 8/8 waere kein Ziel,
+     sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist.
+     Diese Zahl ist eine Guetezahl, keine Bedingung.
 
 Gleitkomma ist auf der Referenzseite erlaubt - Messpfad, nicht
 Inferenzpfad. Kein Teil des Auslieferungspfads.
@@ -78,9 +88,14 @@ def main():
 
     gleiche_texte = 0
     top1_treffer, top1_gesamt = 0, 0
+    determinismus_ok = 0
 
     for prompt in PROMPTS:
         prompt_ids, int_gen = integer_generierung(prompt, max_tokens)
+        # Determinismus: zweiter, unabhaengiger Prozess, gleicher Prompt.
+        _, int_gen2 = integer_generierung(prompt, max_tokens)
+        deterministisch = int_gen == int_gen2
+        determinismus_ok += deterministisch
 
         # BF16-Referenz: greedy, dieselbe Laenge, derselbe Prompt.
         ids = list(prompt_ids)
@@ -111,10 +126,15 @@ def main():
         print(f"Prompt : {prompt!r}")
         print(f"  int  : {int_text!r}")
         print(f"  bf16 : {hf_text!r}")
-        print(f"  {'IDENTISCH' if gleich else f'gleich bis Token {gleich_bis}/{len(hf_gen)}'}\n")
+        print(f"  Determinismus: {'bitgleich' if deterministisch else 'ABWEICHUNG (Protokollfehler!)'}")
+        print(f"  vs. BF16     : {'identisch' if gleich else f'gleich bis Token {gleich_bis}/{len(hf_gen)}'}\n")
 
     print("=" * 62)
-    print(f"Identische Generierungen : {gleiche_texte}/{len(PROMPTS)}")
+    print(f"DETERMINISMUS (muss 100 % sein): {determinismus_ok}/{len(PROMPTS)}"
+          + ("  ✓" if determinismus_ok == len(PROMPTS) else "  ✗ PROTOKOLLFEHLER"))
+    print()
+    print("Naehe zur Gleitkomma-Referenz (Guetezahl, kein Zielwert):")
+    print(f"  Identische Generierungen : {gleiche_texte}/{len(PROMPTS)}")
     if top1_gesamt:
         print(f"Token bis zur Abweichung : {top1_treffer}/{top1_gesamt} "
               f"({top1_treffer/top1_gesamt:.1%} deckungsgleich)")

@@ -36,16 +36,21 @@ Gleitkomma-Referenz desselben Modells gemessen:
 | Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** (Kriterium ≤5 % erfüllt) |
 | Qwen2.5-7B | 9,40 | 8,68 | +8,3 % |
 
-Dazu kommt ein zweiter, unabhängiger Beleg: In einem
-[qualitativen Benchmark](INTEGER_LLM/README/README.md#qualitativer-benchmark)
-über acht echte Prompts erzeugt der Integer-Pfad bei 7B in **fünf von acht
-Fällen eine bitidentische Ausgabe** zur Gleitkomma-Referenz, bei 73,8 %
-deckungsgleichen Token insgesamt. Perplexität misst Teacher-Forcing; dieser
-Benchmark prüft freie Generierung.
+**Die Bitgleichheit, auf die es ankommt, ist die des Integer-Pfads mit
+sich selbst** — über unabhängige Läufe, verschiedene Knoten und
+verschiedene Hardware. Das ist die Konsensbedingung (Whitepaper Kap. 6.2),
+und sie ist nachgewiesen: über unabhängige Läufe, über eine echte
+Mehrknoten-Pipeline und unter künstlicher Netzwerklast (Latenz,
+Paketverlust, Node-Neustarts).
 
-Die Bitgleichheit selbst ist über unabhängige Läufe nachgewiesen und sogar
-über eine echte Mehrknoten-Pipeline unter künstlicher Netzwerklast (Latenz,
-Paketverlust, Node-Neustarts). Details im
+Die *Nähe zur Gleitkomma-Referenz* ist davon zu trennen. Der Integer-Pfad
+ist eine Quantisierung und weicht per Konstruktion ab — genau deshalb hat
+er überhaupt einen Perplexitätsabstand. In einem
+[qualitativen Benchmark](INTEGER_LLM/README/README.md#qualitativer-benchmark)
+über acht echte Prompts erzeugt er bei 7B trotzdem in fünf von acht Fällen
+denselben Text wie BF16 (73,8 % deckungsgleiche Token). Das ist eine
+Gütezahl für die Quantisierung, kein Zielwert: 8/8 wäre kein Erfolg,
+sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist. Details im
 [Whitepaper (Kap. 6.9)](README/Whitepaper/myelith-whitepaper-v0.3.md) und in
 [INTEGER_LLM](INTEGER_LLM/README/README.md).
 
