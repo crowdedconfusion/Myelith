@@ -116,10 +116,13 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 | `theta_v/` | Der kanonische numerische Vertrag (`spec.json`). |
 | `tests/` | Unit-, Integrations-, Regressions- und Golden-Vector-Tests. Python-Tests sind eigenständige Skripte, Rust-Tests liegen inline in den Modulen. |
 | `eval/` | Qualitätsmessung: Gleitkomma-Baseline und Perplexitätsvergleich. |
-| `bench/` | Qualitativer Benchmark: echte Prompts durch den Integer-Pfad, Seite an Seite mit der BF16-Referenz (siehe [Qualitativer Benchmark](#qualitativer-benchmark)). |
-| `models/` | Quellmodell (Qwen/Qwen2.5-0.5B, nicht versioniert). |
-| `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert). |
+| `bench/` | Zwei Messungen: `run.py` misst Durchsatz je Backend und gegen die Gleitkomma-Referenz und **prüft dabei, dass alle Backends bitgleich rechnen**; `qualitativ.py` stellt echte Prompts Seite an Seite mit BF16. Zahlen und Einordnung in [`bench/README.md`](../bench/README.md). |
+| `models/` | Quellmodelle (Qwen2.5-0,5B und -7B, nicht versioniert). |
+| `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert) und die [Modellkarte](../artifacts/MODEL_CARD.md) — Verfahren, Kalibrierungsdaten, Werkzeugversionen und **was die Artefakte nicht belegen**. |
 | `scripts/` | Hilfs-Skripte: `fetch_model.sh` (Modell-Download mit fixierter Revision), `build_artifacts.sh` (Kalibrierung + Export in einem Lauf). |
+| `conformance/` | 30 eingefrorene Testvektoren mit `run.sh`. Ein fremdes Backend gilt als konform, wenn es alle 30 bitgleich reproduziert. |
+| `configs/` | Pipeline-Layouts (4, 8 und ungleichmäßig geshardet). Die Layouts liefern nachweislich identische Token. |
+| `docs/` | Ausgearbeitete Belege, u. a. der empirische Nachweis der bit-exakten Inferenz. |
 | `deploy/` | Docker-Deployment (Dockerfile, docker-compose). |
 
 ## Qualitativer Benchmark
@@ -192,6 +195,116 @@ Modell mit dem Fehlerstand vor Fund 23/24 (+377 % Perplexität) hätte hier
 unbrauchbaren Text erzeugt. Fünf von acht bitidentischen Generierungen
 gegen eine Gleitkomma-Referenz sind ein starkes qualitatives Signal.
 
+## Erste Inferenz — Schritt für Schritt
+
+Vom leeren Arbeitsverzeichnis zum ersten generierten Token. Alle Befehle
+von `INTEGER_LLM/` aus.
+
+### 1. Quellmodell holen
+
+```bash
+scripts/fetch_model.sh
+```
+
+Lädt Qwen2.5-0,5B mit **fixierter Revision**. Für ein anderes Modell
+steuert `MODEL_ID` die Auswahl (nicht `INTEGER_LLM_MODEL` — das Skript
+spricht mit HuggingFace und braucht die dortige ID):
+
+```bash
+MODEL_ID=Qwen/Qwen2.5-7B scripts/fetch_model.sh
+``` Die Fixierung ist kein
+Detail: Eine andere Revision ergibt andere Gewichte, andere Artefakte und
+einen anderen θ_v-Hash — der Vergleich mit den hier dokumentierten Zahlen
+wäre hinfällig.
+
+### 2. Kalibrier-Umgebung anlegen
+
+```bash
+python3 -m venv calibrate/.venv
+calibrate/.venv/bin/pip install -r calibrate/requirements.txt
+```
+
+Python ≥ 3.10. Die Umgebung wird **nur** für die Offline-Phase gebraucht
+— Kalibrierung, Baseline-Messung und den Gleitkomma-Vergleich im
+Benchmark. Die Inferenz selbst braucht kein Python.
+
+### 3. Artefakt erzeugen
+
+```bash
+source calibrate/.venv/bin/activate
+scripts/build_artifacts.sh
+```
+
+Das Skript ruft `python3 -m calibrate.src.main` auf — ohne aktivierte
+Umgebung greift es das System-Python und findet `torch` nicht.
+
+Quantisiert die Gewichte, berechnet die Aktivierungsskalen aus einer
+Stichprobe von WikiText-2, erzeugt die Lookup-Tabellen und schreibt alles
+nach `artifacts/qwen2.5-0.5b/`. Dauert einige Minuten und braucht rund
+0,8 GB Platz.
+
+Für ein anderes Modell:
+
+```bash
+INTEGER_LLM_MODEL=qwen2.5-7b scripts/build_artifacts.sh
+```
+
+Diese Variable steuert Kalibrierung, Messung und Benchmark — **eine**
+Entscheidung an **einer** Stelle. Zwei Mechanismen für dieselbe Wahl
+wären zwei Wahrheiten, und ein Lauf, bei dem Kalibrierung und Messung auf
+verschiedene Modelle zeigen, fällt nicht auf, sondern liefert
+stillschweigend Unsinn.
+
+### 4. Inferenz
+
+```bash
+cargo run --release --manifest-path runtime/Cargo.toml \
+    --bin integer-llm-runtime -- \
+    artifacts/qwen2.5-0.5b "Die Hauptstadt von Frankreich ist" 10
+```
+
+Ausgabe: die generierten Token und der dekodierte Text. Greedy und
+deterministisch — **derselbe Aufruf liefert immer dieselbe Ausgabe**, auf
+jeder Maschine. Das ist keine Zusicherung über die Qualität, sondern die
+Eigenschaft, auf der der Konsens beruht (Whitepaper Kap. 6.2).
+
+Zur Probe: Den Befehl zweimal ausführen und die Token vergleichen. Sie
+müssen zeichengleich sein.
+
+### 5. Nachprüfen, dass die Installation stimmt
+
+```bash
+bash conformance/run.sh
+```
+
+Fährt 30 eingefrorene Testvektoren gegen das Referenz-Backend — von
+einzelnen Kernen über ganze Layer bis zu vollständigen
+Prompt-Durchläufen. **30/30 ist die Erwartung, nicht das Ziel.** Weicht
+auch nur einer ab, rechnet dieses Backend etwas anderes als der
+dokumentierte numerische Vertrag, und alle weiteren Zahlen sind
+bedeutungslos.
+
+### 6. Optional: messen
+
+```bash
+./calibrate/.venv/bin/python eval/perplexity.py      # Qualität gegen BF16
+python3 bench/qualitativ.py                          # echte Prompts, Seite an Seite
+./calibrate/.venv/bin/python bench/run.py            # Durchsatz je Backend
+```
+
+Die erwarteten Größenordnungen stehen in der
+[Modellkarte](../artifacts/MODEL_CARD.md).
+
+### Was schiefgehen kann
+
+| Symptom | Ursache |
+|---|---|
+| `theta_v-Hash-Mismatch` | Das Artefakt wurde unter einer anderen Spezifikationsversion kalibriert. Neu erzeugen (Schritt 3) — der Loader lehnt bewusst ab, statt unter falschen Regeln zu rechnen. |
+| `Modell-Ladung fehlgeschlagen` | Artefakt fehlt oder ist unvollständig. Schritt 3 wiederholen. |
+| Konformitätsvektoren scheitern | Backend-Feature falsch gesetzt oder lokale Änderung im Rechenpfad. `--no-default-features --features reference` gegenprüfen. |
+| `python: command not found` nach venv-Aktivierung | Der venv trägt absolute Pfade; nach einem Verschieben des Repositoriums neu anlegen. |
+| `cargo run could not determine which binary` | Das Crate hat mehrere Binaries (Proben und Diagnosewerkzeuge). `--bin integer-llm-runtime` angeben. |
+
 ## Bauen und Testen
 
 Rust-Seite — jede der drei Crates wird einzeln gebaut und getestet:
@@ -258,6 +371,58 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.13.3 – 2026-08-19 (Phase 12.64–13.0: Benchmarks, Modellkarte, Anleitung)
+
+**Die letzten Punkte der Inferenz-Phase.** Neu: `bench/run.py`,
+`bench/README.md`, `artifacts/MODEL_CARD.md` und eine
+Schritt-für-Schritt-Anleitung für die erste Inferenz.
+
+**Der Durchsatz-Benchmark prüft Bitgleichheit, bevor er Zahlen zeigt.**
+`bench_probe` gibt einen `decode_hash` aus; `run.py` verlangt, dass alle
+Backends denselben liefern, und bricht sonst mit Fehlercode ab. Ein
+Backend, das schneller ist und etwas anderes rechnet, ist kein
+schnelleres Backend — es ist ein zweites Modell, und in einem Netz mit
+Bitgleichheits-Konsens wäre sein Betreiber beim Redundanzvergleich
+auffällig.
+
+**Gemessen (arm64/Darwin, Referenz-Backend):**
+
+| Modell | Artefakt | Prefill | Decode | bf16 (Decode) |
+|---|---|---|---|---|
+| 0,5B | 0,78 GB | 18,65 tok/s | 19,50 tok/s | 67,93 tok/s |
+| 7B | 8,72 GB | 0,80 tok/s | 1,42 tok/s | — |
+
+Zwei Befunde, die ich nicht in eine Fußnote schiebe:
+
+- **Der Integerpfad ist auf 0,5B rund 3,5× langsamer als bf16.** Erwartbar
+  für eine Referenzimplementierung ohne Kernel-Optimierung gegen
+  jahrelang gepflegte Kernel — aber es ist der Stand, und er gehört
+  benannt.
+- **`cpu-simd` (NEON) ist auf dieser Maschine nicht schneller**, sondern
+  minimal langsamer (18,66 gegen 19,50 tok/s). Das SIMD-Backend deckt
+  Softmax, RoPE und MLP ab; der Engpass liegt offenbar woanders. Wo,
+  wäre eine eigene Messung.
+
+**Skalierung:** Von 0,5B auf 7B wächst das Artefakt um Faktor 11,2, der
+Durchsatz fällt um Faktor 13,7 — grob linear mit leichtem Aufschlag.
+Zwei Punkte sind keine Kurve; die Zielgrößenordnung liegt weit darüber.
+`run.py` ist deshalb modellagnostisch und löst Pfade über dieselbe Quelle
+auf wie Kalibrierung und Perplexitätsmessung
+(`calibrate/src/model_configs.py`), damit es auf dem nächstgrößeren
+Dense-Modell unverändert läuft.
+
+**Die Modellkarte ist ein Formular, keine Prosa** — je Modellgröße eine
+Spalte, mit einem eigenen Abschnitt „Was diese Artefakte **nicht**
+belegen": keine heterogene Hardware (K1), keine Zielgrößenordnung (K6),
+5-%-Kriterium bei 7B offen, kein Training.
+
+**Die Anleitung ist durchgespielt worden, und das war nötig.** Drei
+Fehler darin: `cargo run` braucht `--bin integer-llm-runtime` (das Crate
+hat zwölf Binaries), `build_artifacts.sh` braucht die aktivierte
+Kalibrier-Umgebung, und `fetch_model.sh` steuert über `MODEL_ID`, nicht
+über `INTEGER_LLM_MODEL`. Eine ungetestete Anleitung ist eine Vermutung.
+
 
 ### v0.12.49 – 2026-08-19 (Boundary-Schritt entfallen, Layout-Unabhängigkeit gemessen)
 
