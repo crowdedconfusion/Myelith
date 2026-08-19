@@ -89,7 +89,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | Pod-Orchestrierung über echtes Netz | Phase 1 + 2.1 abgeschlossen (Micro-Batching, Pipelining). **Pipeline-Determinismus gegeben und wieder bitgleich mit dem Einzelknoten** — der verlustbehaftete Boundary-Schritt zwischen Stages ist entfallen (Funde 20/26), die Spur bindet damit wieder die übertragene Aktivierung |
 | [VERIFICATION](VERIFICATION/README/README.md) | Redundanzvergleich, Bisektions-Spiel | Phase 1 + 2 abgeschlossen (Schiedsrunde, Slash-Logik über den Ledger) |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | Session-Kontrakte, Dual-LLM-Trennung | Planungsphase |
-| [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Planungsphase |
+| [TRAINING](TRAINING/README/README.md) | Datenprovenienz, robuste Aggregation | Ein einziger Fahrplanpunkt: die Messung, ob das Quantisierungsschema im Rückwärtspass trägt. Der Fahrplan entsteht erst nach ihrem Ergebnis — die bisherigen 22 Punkte ruhten auf einer ungeprüften Annahme |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | Parameter-Registry, Modell-Updates | Planungsphase |
 | [ETHICS](ETHICS/README/README.md) | Ethische und rechtliche Standards, Manifest | Manifest v1.0.0 steht, Fahrplan steht, Design-Entscheidungen offen |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | Terminal-Testclient: Hardwaretests, geshardete Inferenz | Phase 1 abgeschlossen (Hardware-Erhebung, Determinismus, Shard-Lauf mit Protokollen) |

@@ -121,13 +121,18 @@ uneingeschränkt.
 vollständig, Konformitätsvektoren 30/30, Gleitkomma-Audit null Treffer.
 **θ_v unverändert** — die Einzelknoten-Inferenz war nie betroffen.
 
-**Offen, im Fahrplan vermerkt:** Fund 25 (`canonical_layout_id`) hat
-seine Begründung verloren — eine Stage-Grenze ist jetzt rechnerisch ein
-No-Op, verschiedene Layouts sollten dieselben Token liefern. Die Bindung
-bleibt vorerst als Konsistenzprüfung, blockiert aber den Entwurf
-„variable Knotenzahl je Pipeline". Dass 4-Node und 8-Node übereinstimmen,
-ist **nicht gemessen**: `configs/pipeline_8node.json` trägt einen
-veralteten `theta_v_hash`.
+**Nachtrag am selben Tag — die Layout-Frage ist gemessen.** Drei Layouts
+(4 Shards mit Grenzen 6/12/18, 8 Shards mit 3/6/9/…, und ungleichmäßig
+1/7/23) liefern dieselben Token und sind bitgleich mit dem Einzelknoten
+(`INTEGER_LLM/tests/integration/test_pipeline_layouts.py`). Damit trägt
+der Entwurf „variable Knotenzahl je Pipeline" numerisch; von seinen zwei
+Blockern ist der erste weg.
+
+**Korrektur:** Oben stand zunächst, die Layout-Bindung aus Fund 25
+blockiere diesen Entwurf. Das stimmt nicht — `verify_layout()` prüft das
+Manifest gegen sich selbst, nicht gegen andere Pods. Cross-Pod-Gleichheit
+erzwingt keine Codestelle. Die Prüfung bleibt trotzdem: Sie hat gerade
+den `sha256:0000`-Platzhalter der 8-Node-Konfiguration gefangen.
 
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)

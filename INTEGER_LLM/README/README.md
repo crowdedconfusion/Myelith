@@ -259,6 +259,53 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.12.49 – 2026-08-19 (Boundary-Schritt entfallen, Layout-Unabhängigkeit gemessen)
+
+**Der Boundary-Schritt zwischen Pipeline-Stages ist ersatzlos entfallen.**
+Er war reiner Verlust ohne Gegenwert: Die Ausgangsskala des Senders ist
+`layers[layer_end].residual_in_frac`, die Eingangsskala des Empfängers
+`layers[layer_start].residual_in_frac` — und `layer_start` des Empfängers
+**ist** `layer_end` des Senders. Beide Seiten lasen denselben Wert aus
+demselben Artefakt (erzwungen durch `theta_v_hash`) und rechneten ihn
+trotzdem über einen dritten, gröberen Skalar hin und zurück. Solange die
+Skala ein Skalar war, kostete das nur Rundung; seit Fund 20 sie je Kanal
+führt, war der Rundweg messbar verlustbehaftet.
+
+Damit ist `test_pipeline_multinode.py` wieder **bitgleich mit dem
+Einzelknoten** (vorher Divergenz ab dem sechsten Token: 2746 gegen 2694).
+Der weiche Zweig im Test ist zurück in ein hartes `assert` überführt, wie
+es der Kommentar dort vorsah.
+
+**Neu: `tests/integration/test_pipeline_layouts.py`.** Beantwortet die
+Frage, ob das Shard-Layout das Ergebnis beeinflusst — die Voraussetzung
+für den COMPUTE_PIPELINE-Entwurf „variable Knotenzahl je Pipeline".
+
+| Layout | Stage-Grenzen | Ergebnis |
+|---|---|---|
+| 4 Shards | 6 / 12 / 18 | identisch |
+| 8 Shards | 3 / 6 / 9 / 12 / 15 / 18 / 21 | identisch |
+| 4 Shards, ungleichmäßig | 1 / 7 / 23 (1, 6, 16, 1 Layer) | identisch |
+
+Alle drei sind zudem bitgleich mit dem Einzelknoten. Das ungleichmäßige
+Layout ist das eigentliche Argument: Die 8er-Grenzen sind ein Superset
+der 4er-Grenzen, eine Übereinstimmung dieser beiden allein hätte daran
+hängen können.
+
+`configs/pipeline_8node.json` war dafür zu reparieren (veralteter
+`theta_v_hash`, `pipeline_hash` stand auf `sha256:0000` — genau der
+Platzhalter, gegen den Fund 25 die Prüfung eingeführt hat);
+`configs/pipeline_uneven4node.json` ist neu.
+
+**Grenzen der Messung:** 0,5B, ein Prompt, sechs Token, drei Layouts.
+Nicht gemessen: 7B, längere Generierungen, beliebige weitere Schnitte.
+Der Befund ist stark, weil eine Stage-Grenze nach dem Wegfall des
+Boundary-Schritts rechnerisch ein No-Op ist — aber er ist eine Messung
+an Stichproben, keine Herleitung.
+
+θ_v ist **unverändert**; Konformitätsvektoren 30/30, Gleitkomma-Audit
+null Treffer. Die Einzelknoten-Inferenz war nie betroffen.
+
+
 ### v0.12.48 – 2026-08-19
 
 **Der 7B-Fehler ist gefunden: 41,42 → 9,40 (Faktor 45).** Zwei

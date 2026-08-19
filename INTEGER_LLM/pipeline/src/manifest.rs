@@ -102,33 +102,22 @@ impl PipelineManifest {
     /// eine Stage-Grenze rechnerisch ein No-Op, und verschiedene Layouts
     /// **sollten** dieselben Token liefern.
     ///
-    /// „Sollten" heisst hier: nicht gemessen. Der Test dazu waere ein
-    /// 4-Node- gegen einen 8-Node-Lauf; `configs/pipeline_8node.json`
-    /// traegt aber einen veralteten `theta_v_hash` und selbst noch
-    /// `pipeline_hash: sha256:0000`. Vermerkt im COMPUTE_PIPELINE-Fahrplan.
+    /// **Gemessen am 2026-08-19:** Drei Layouts ueber dasselbe Artefakt —
+    /// 4 Shards (Grenzen 6/12/18), 8 Shards (3/6/9/12/15/18/21) und
+    /// ungleichmaessig 4 Shards (1/7/23) — liefern dieselben Token und
+    /// sind bitgleich mit dem Einzelknoten
+    /// (`tests/integration/test_pipeline_layouts.py`). Das Layout ist
+    /// also tatsaechlich gleichgueltig.
     ///
-    /// **Warum die Bindung trotzdem bleibt:** Sie kostet nichts und faengt
-    /// Fehlkonfiguration. Aber sie ist damit eine
-    /// Konsistenzpruefung, keine Konsensnotwendigkeit mehr — und sie steht
-    /// dem Entwurf „variable Knotenzahl je Pipeline" im Weg, der genau
-    /// darauf beruht, dass redundante Pods verschiedene Layouts haben
-    /// duerfen. Ob sie gelockert wird, ist eine Entscheidung fuer
-    /// COMPUTE_PIPELINE und nicht hier zu treffen.
+    /// **Was diese Funktion trotzdem leistet — und was nicht.** Sie
+    /// prueft das Manifest **gegen sich selbst**: ob der deklarierte
+    /// `pipeline_hash` zum tatsaechlichen Layout passt. Sie erzwingt
+    /// **keine** Gleichheit zwischen zwei Pods; das war die Motivation
+    /// hinter Fund 25, aber nie seine Wirkung, und nach der Messung oben
+    /// braucht es sie auch nicht. Der Nutzen ist Fehlkonfiguration:
+    /// Genau diese Pruefung hat den `sha256:0000`-Platzhalter in
+    /// `configs/pipeline_8node.json` gefangen, der dort unbemerkt stand.
     ///
-    /// **Was in den Hash eingeht:** die Stage-Grenzen, die Sonderrollen
-    /// (Embedding, LM-Head, Sampling) und das Wire-Format. Von letzterem
-    /// sind `boundary_dtype` und `boundary_endianness` weiterhin wirksam
-    /// (die Nutzdaten sind int16, little-endian); `boundary_frac_bits`
-    /// wird seit Fund 26 **im Rechenpfad nicht mehr gelesen** und bleibt
-    /// nur im Hash, weil das Feld in `theta_v/spec.json` steht und ein
-    /// Entfernen einen theta_v-Bump samt Neuexport aller Artefakte
-    /// ausloesen wuerde. Beim naechsten ohnehin faelligen Bump gehoert es
-    /// heraus. **Nicht** enthalten
-    /// sind Betriebsangaben wie `node_id`, `node_address` oder
-    /// `max_batch_size`: Zwei Pods duerfen auf verschiedenen Maschinen
-    /// mit verschiedenen Batch-Groessen laufen und muessen trotzdem
-    /// dasselbe Ergebnis liefern — genau das ist der Sinn der
-    /// Determinismus-Zusicherung.
     pub fn canonical_layout_id(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut canon = String::new();

@@ -89,7 +89,7 @@ tests:
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | pod orchestration over a real network | Phases 1 + 2.1 complete (micro-batching, pipelining). **Pipeline determinism holds and is bit-identical with the single node again** — the lossy boundary rescaling between stages has been removed (findings 20/26), so the trace once more commits the activation that is actually transmitted |
 | [VERIFICATION](VERIFICATION/README/README.md) | redundancy comparison, bisection game | Phases 1 + 2 complete (arbitration round, slashing via the ledger) |
 | [AGENT_LAYER](AGENT_LAYER/README/README.md) | session contracts, dual-LLM separation | planning phase |
-| [TRAINING](TRAINING/README/README.md) | data provenance, robust aggregation | planning phase |
+| [TRAINING](TRAINING/README/README.md) | data provenance, robust aggregation | a single roadmap item: measuring whether the quantisation scheme carries through the backward pass. The roadmap itself follows only once that result is in — the previous 22 items all rested on an untested assumption |
 | [GOVERNANCE](GOVERNANCE/README/README.md) | parameter registry, model updates | planning phase |
 | [ETHICS](ETHICS/README/README.md) | ethical and legal standards, manifesto | manifesto v1.0.0 in place, roadmap in place, design decisions open |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | terminal test client: hardware tests, sharded inference | Phase 1 complete (hardware fingerprint, determinism, shard run with run logs) |
