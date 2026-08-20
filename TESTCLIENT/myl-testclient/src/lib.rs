@@ -38,6 +38,7 @@ pub mod banner;
 pub mod hardware;
 pub mod menu;
 pub mod logging;
+pub mod plaene;
 pub mod runs;
 pub mod spec;
 pub mod stack;

@@ -32,6 +32,16 @@ fn encode_prompt(artifact_dir: &Path, prompt: &str) -> Result<Vec<u32>, String> 
     Ok(tok.encode(prompt).iter().map(|t| *t as u32).collect())
 }
 
+/// Dekodiert Token zu Klartext, für die Anzeige.
+///
+/// Schlägt es fehl, wird das gemeldet statt abgebrochen: Der Klartext ist
+/// eine Zugabe fürs Zuschauen, der Digest bleibt der eigentliche Nachweis.
+fn decode_tokens(artifact_dir: &Path, tokens: &[u32]) -> Option<String> {
+    let path = artifact_dir.join("tokenizer.json");
+    let tok = integer_llm_runtime::tokenizer::Tokenizer::from_file(path.to_str()?).ok()?;
+    Some(tok.decode(&tokens.iter().map(|t| *t as usize).collect::<Vec<_>>()))
+}
+
 /// Artefaktverzeichnis, gegen das gemessen wird.
 ///
 /// `integer_llm_runtime::paths` löst relativ zum **Arbeitsverzeichnis**
@@ -189,6 +199,15 @@ pub fn run_determinism(log: &mut RunLog, artifact_dir: &Path, prompt: &str, step
         digests.push(d);
     }
 
+    // Klartext nur auf das Terminal. Im Protokoll stehen Token und Digest;
+    // daraus ist der Text ableitbar, und die Datei bleibt schlank.
+    if let Some(text) = decode_tokens(artifact_dir, &digests[0].2) {
+        log.nur_anzeigen("");
+        log.nur_anzeigen(format!("  Prompt:  {}", prompt));
+        log.nur_anzeigen(format!("  Antwort: {}", text.trim_end()));
+        log.nur_anzeigen("");
+    }
+
     let gleich = digests[0].0 == digests[1].0;
     if gleich {
         log.result("determinismus", &digests[0].0, "bitgleich über zwei Läufe");
@@ -214,7 +233,7 @@ pub fn run_determinism(log: &mut RunLog, artifact_dir: &Path, prompt: &str, step
 /// Der Digest deckt **alle** erzeugten Token ab, nicht nur das letzte:
 /// Ein Unterschied in Schritt 3, der sich in Schritt 7 wieder ausgleicht,
 /// wäre sonst unsichtbar.
-fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, String) {
+fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, String, Vec<u32>) {
     let mut cache =
         integer_llm_runtime::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
     let mut logits = Vec::new();
@@ -235,6 +254,7 @@ fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, St
     (
         sha256_hex(&bytes),
         format!("{} Token: {:?}", out.len(), &out[..out.len().min(8)]),
+        out,
     )
 }
 
@@ -373,9 +393,17 @@ pub fn run_shard(
     }
 
     // Gegenprobe: dasselbe Modell ungeteilt.
-    let (single_digest, single_desc) =
+    let (single_digest, single_desc, single_tokens) =
         log.timed("einzelknoten_referenz", "", || greedy_digest(&model, &ids, steps));
     log.result("einzelknoten_tokens", &single_digest, single_desc);
+
+    // Klartext nur auf das Terminal, siehe `run_determinism`.
+    if let Some(text) = decode_tokens(artifact_dir, &single_tokens) {
+        log.nur_anzeigen("");
+        log.nur_anzeigen(format!("  Prompt:  {}", prompt));
+        log.nur_anzeigen(format!("  Antwort: {}", text.trim_end()));
+        log.nur_anzeigen("");
+    }
 
     let gleich = pod_digest == single_digest;
     if gleich {

@@ -1,0 +1,19 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden — sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan wikitext2-0.5b-standard.plan determinismus
+#    oder:  myl-test  (Menü, Punkt 8)
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+
+plan_id     = wikitext2-0.5b-standard
+prompt      = " The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake"
+steps       = 32
+shards      = 4
+model       = qwen2.5-0.5b
+
+spec_sha256 = 1dc4d4ab2082cd16691bf7ffce2fc68f789b22a7c39be7e219252844b6dbca26

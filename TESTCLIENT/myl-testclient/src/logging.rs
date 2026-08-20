@@ -472,6 +472,18 @@ impl RunLog {
     }
 
     /// Kurzform für [`Event::Note`].
+    /// Nur auf das Terminal, **nicht** ins Protokoll.
+    ///
+    /// Für den erzeugten Klartext: Er hilft beim Zuschauen, gehört aber
+    /// nicht in die Protokolldatei. Verglichen werden zwischen Maschinen
+    /// Token und Digests; der Klartext ist daraus ableitbar und blähte
+    /// die Datei nur auf. Bei `--quiet` erscheint er gar nicht.
+    pub fn nur_anzeigen(&self, text: impl AsRef<str>) {
+        if self.echo {
+            println!("{}", text.as_ref());
+        }
+    }
+
     pub fn note(&mut self, text: impl Into<String>) {
         self.event(Event::Note { text: text.into() });
     }

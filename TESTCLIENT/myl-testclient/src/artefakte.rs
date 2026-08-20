@@ -289,16 +289,30 @@ fn lauf(
         .spawn()
         .map_err(|e| format!("{} nicht startbar: {}", programm.display(), e))?;
 
-    // Ausgabe durchreichen, damit ein langer Download nicht wie ein
-    // Aufhänger aussieht — dieselbe Begründung wie beim Fortschrittsbalken
-    // der Diagnoseskripte.
+    // Ausgabe durchreichen und dabei die verstrichene Zeit mitführen. Ein
+    // Download über mehrere Gigabyte oder ein erster Cargo-Bau dauert
+    // Minuten; ohne sichtbaren Fortschritt ist ein laufender Vorgang von
+    // einem hängenden nicht zu unterscheiden. Genau dieselbe Begründung
+    // wie beim Fortschrittsbalken der Diagnoseskripte.
     if let Some(out) = kind.stdout.take() {
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Write};
+        let start = std::time::Instant::now();
+        let mut zeilen = 0usize;
+        let mut fehler = std::io::stderr();
         for zeile in BufReader::new(out).lines().map_while(Result::ok) {
+            zeilen += 1;
             if !zeile.trim().is_empty() {
                 meldung(format!("  {}", zeile));
             }
+            // Der Takt geht auf stderr, damit er das Protokoll nicht füllt.
+            let s = start.elapsed().as_secs();
+            let _ = write!(fehler, "\r  … {} Schritte, {:02}:{:02} vergangen   ", zeilen, s / 60, s % 60);
+            let _ = fehler.flush();
         }
+        let s = start.elapsed().as_secs();
+        let _ = write!(fehler, "\r{:60}\r", "");
+        let _ = fehler.flush();
+        meldung(format!("  fertig nach {:02}:{:02}", s / 60, s % 60));
     }
     let status = kind.wait().map_err(|e| e.to_string())?;
     if status.success() {
@@ -461,5 +475,79 @@ pub fn repo_wurzel(start: PathBuf) -> PathBuf {
         if !p.pop() {
             return start;
         }
+    }
+}
+
+/// Stellt sicher, dass die Artefakte **eines bestimmten** Modells vorliegen.
+///
+/// Wird benutzt, wenn ein Testplan das Modell vorgibt: Dann gibt es nichts
+/// auszuwählen, nur zu beschaffen. Fehlt es, wird gefragt, ob geladen und
+/// gebaut werden soll; ohne Rückfragekanal wird nichts geladen.
+pub fn beschaffen_fuer(
+    repo: &Path,
+    modell: &str,
+    antwort: &mut Rueckfrage<'_>,
+    meldung: &mut dyn FnMut(String),
+) -> Result<PathBuf, String> {
+    let bekannt = register(repo)?;
+    let b = bekannt
+        .iter()
+        .find(|b| b.name == modell)
+        .ok_or_else(|| format!("{modell} steht nicht in scale_packs/REGISTER.json"))?;
+
+    match pruefen(repo, b) {
+        Zustand::Bereit { pfad } => {
+            meldung(format!("{modell}: Digest stimmt ({})", &b.digest[..16]));
+            return Ok(pfad);
+        }
+        Zustand::Abweichend { ist, soll, .. } => {
+            return Err(format!(
+                "{modell}: Digest weicht ab.\n  hier:           {ist}\n  \
+                 veröffentlicht: {soll}\nDas ist KEIN Hardware-Befund. Ein \
+                 Vergleichslauf mit diesem Artefakt hätte keine Aussage."
+            ));
+        }
+        Zustand::Fehlt => {}
+    }
+
+    meldung(format!("{modell}: keine Artefakte auf dieser Maschine."));
+    let Some(frage) = antwort.as_mut() else {
+        return Err(format!(
+            "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
+            bauanleitung(modell)
+        ));
+    };
+    let t = frage(&format!(
+        "{} von Hugging Face laden ({}) und Artefakte bauen? [J/n] ",
+        hf_id(modell),
+        download_groesse(modell)
+    ))
+    .unwrap_or_default()
+    .trim()
+    .to_lowercase();
+    if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
+        return Err(format!("Abgebrochen.\n{}", bauanleitung(modell)));
+    }
+
+    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(modell));
+    if gewichte.join("config.json").is_file() {
+        meldung(format!("Gewichte liegen bereits in {} — Download entfällt.", gewichte.display()));
+    } else {
+        gewichte_holen(repo, modell, meldung)?;
+    }
+    artefakte_bauen(repo, modell, meldung)?;
+
+    let bekannt = register(repo)?;
+    let b = bekannt.iter().find(|b| b.name == modell).ok_or("Register unvollständig")?;
+    match pruefen(repo, b) {
+        Zustand::Bereit { pfad } => {
+            meldung(format!("Fertig — Digest stimmt: {}", &b.digest[..16]));
+            Ok(pfad)
+        }
+        Zustand::Abweichend { ist, soll, .. } => Err(format!(
+            "Bau abgeschlossen, aber der Digest weicht ab.\n  hier:           {ist}\n  \
+             veröffentlicht: {soll}\nDas ist KEIN Hardware-Befund."
+        )),
+        Zustand::Fehlt => Err("Bau lief durch, aber es liegen keine Artefakte vor.".to_string()),
     }
 }

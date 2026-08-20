@@ -115,38 +115,63 @@ pub fn run(mut e: Einstellungen) -> bool {
          (Für Skripte: `myl-test --help` zeigt die Befehle.)\n"
     );
 
-    // Artefakte gleich beim Start klären: suchen, bei mehreren auswählen
-    // lassen, bei keinen anbieten, Gewichte zu holen und zu bauen. Das
-    // gehört vor das Menü, weil zwei seiner Punkte ohne Modell nicht
-    // laufen — und weil ein Nutzer, der den Client zum ersten Mal öffnet,
-    // sonst erst an einem Fehlschlag merkt, dass ihm etwas fehlt.
-    {
-        let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
-        let mut frage = |prompt: &str| -> Option<String> {
-            print!("  {}", prompt);
-            let _ = io::stdout().flush();
-            zeilen_lesen()
-        };
-        let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
-        match crate::artefakte::beschaffen(&repo, &mut f, &mut |t| println!("  {}", t)) {
-            Ok(p) => {
-                e.artifacts = p;
-                println!();
-            }
-            Err(fehler) => {
-                for zeile in fehler.lines() {
-                    println!("  {}", zeile);
-                }
-                println!("
-  Die Punkte 2 und 3 brauchen ein Modell und werden fehlschlagen.
-");
-            }
+    // Reihenfolge beim Start: erst Testplan, dann Artefakt.
+    //
+    // Ein Plan legt das Modell fest. Wer zuerst nach dem Artefakt fragt und
+    // danach den Plan lädt, hat entweder die falsche Frage gestellt oder
+    // muss sie zurücknehmen. Ist ein Plan gewählt, ergibt sich das Artefakt
+    // aus ihm, und es gibt nichts mehr zu fragen.
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    let mut sagen = |t: String| println!("  {}", t);
+    let plan = plan_waehlen(&repo, &mut sagen);
+
+    let mut frage = |prompt: &str| -> Option<String> {
+        print!("  {}", prompt);
+        let _ = io::stdout().flush();
+        zeilen_lesen()
+    };
+    let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
+
+    let ergebnis = match &plan {
+        Some(p) => {
+            e.uebernehmen(p);
+            println!("  Plan \"{}\" übernommen: Modell {}, {} Token, {} Shards.",
+                     p.plan_id, p.model, p.steps, p.shards);
+            crate::artefakte::beschaffen_fuer(&repo, &p.model, &mut f, &mut |t| println!("  {}", t))
         }
+        None => crate::artefakte::beschaffen(&repo, &mut f, &mut |t| println!("  {}", t)),
+    };
+
+    match ergebnis {
+        Ok(pfad) => {
+            e.artifacts = pfad;
+            println!();
+        }
+        Err(fehler) => {
+            for zeile in fehler.lines() {
+                println!("  {}", zeile);
+            }
+            println!("\n  Die Punkte 2 und 3 brauchen ein Modell und werden fehlschlagen.\n");
+        }
+    }
+
+    // Ist ein Plan gewählt und das Artefakt bereit, läuft der Durchgang
+    // sofort: Determinismus und Shard-Lauf, in dieser Reihenfolge. Wer
+    // einen Plan auswählt, will messen, nicht noch ein Menü bedienen.
+    let mut letztes_ergebnis = true;
+    if plan.is_some() && e.artifacts.exists() {
+        println!("  Plan wird ausgeführt.\n");
+        letztes_ergebnis = starte("determinismus", &e, |log| {
+            runs::run_determinism(log, &e.artifacts, &e.prompt, e.steps)
+        });
+        letztes_ergebnis &= starte("shard", &e, |log| {
+            runs::run_shard(log, &e.artifacts, &e.prompt, e.steps, e.shards)
+        });
+        println!("\n  Durchgang beendet. Das Menü steht für weitere Läufe bereit.\n");
     }
 
     let stdin = io::stdin();
     let mut zeilen = stdin.lock().lines();
-    let mut letztes_ergebnis = true;
 
     loop {
         println!("{}", MENUE);
@@ -385,6 +410,37 @@ fn zeilen_lesen() -> Option<String> {
         Ok(0) | Err(_) => None,
         Ok(_) => Some(zeile),
     }
+}
+
+/// Sucht Testpläne und lässt auswählen. `None` heißt „keiner", und dann
+/// läuft alles wie ohne Plan.
+///
+/// Steht der Ordner leer oder fehlt er, wird nicht gefragt: Eine Frage mit
+/// nur einer möglichen Antwort ist keine Frage, sondern eine Verzögerung.
+fn plan_waehlen(
+    repo: &std::path::Path,
+    meldung: &mut dyn FnMut(String),
+) -> Option<crate::spec::TestPlan> {
+    let gefunden = crate::plaene::suchen(repo, meldung);
+    if gefunden.is_empty() {
+        return None;
+    }
+
+    println!("  Testpläne in {}:", crate::plaene::ORDNER);
+    for (i, g) in gefunden.iter().enumerate() {
+        println!("   [{}] {}", i + 1, crate::plaene::zeile(g));
+    }
+    println!("   [0] keiner — Einstellungen von Hand wählen");
+    print!("\n  Auswahl [0]: ");
+    let _ = io::stdout().flush();
+
+    let eingabe = zeilen_lesen().unwrap_or_default();
+    let wahl: usize = eingabe.trim().parse().unwrap_or(0);
+    if wahl == 0 || wahl > gefunden.len() {
+        println!("  Kein Plan gewählt.\n");
+        return None;
+    }
+    Some(gefunden[wahl - 1].plan.clone())
 }
 
 #[cfg(test)]
