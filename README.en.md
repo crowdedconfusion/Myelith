@@ -19,6 +19,10 @@ out in **Whitepaper v0.3**:
 [English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) ·
 [English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
 
+Every technical term — from the bisection game to fixed-point arithmetic —
+is explained in the **[glossary](README/Glossar.md)** (in German), with
+worked examples and pointers to the corresponding implementation.
+
 ## Core thesis
 
 Integer addition is associative. If inference is executed entirely in

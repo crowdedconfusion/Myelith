@@ -170,7 +170,7 @@ fn main() {
     let head_out = attention_int(
         std::slice::from_ref(&q0), std::slice::from_ref(&k0), std::slice::from_ref(&v0),
         &[vec![true]],
-        score_mult, score_shift, &model.exp_lut, 0, cfg.prob_frac_bits,
+        score_mult, score_shift, &model.exp_lut, cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac), cfg.prob_frac_bits,
     );
     summary("S3 head_out(h0)", &head_out[0], sc.v_frac);
     // Bei Einzelposition muss head_out ~ v0 sein (softmax([x]) = 1).
@@ -201,7 +201,7 @@ fn main() {
         let q_seq = vec![q_flat[q_start..q_start + head_dim].to_vec()];
         let k_seq = vec![k_flat[kv_start..kv_start + head_dim].to_vec()];
         let v_seq = vec![v_flat[kv_start..kv_start + head_dim].to_vec()];
-        let out = attention_int(&q_seq, &k_seq, &v_seq, &[vec![true]], score_mult, score_shift, &model.exp_lut, 0, cfg.prob_frac_bits);
+        let out = attention_int(&q_seq, &k_seq, &v_seq, &[vec![true]], score_mult, score_shift, &model.exp_lut, cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac), cfg.prob_frac_bits);
         attn_out[q_start..q_start + head_dim].copy_from_slice(&out[0]);
     }
     summary("S5 attn_out(v-Skala)", &attn_out, sc.v_frac);
@@ -226,6 +226,45 @@ fn main() {
             clamp_i16(h_rescaled as i32 + *b as i32)
         }).collect();
     summary_pc("S5 residual(mid)", &residual, &sc.residual_mid_frac);
+
+    // ── q/k/v gegen Gleitkomma mit DENSELBEN Gewichten ───────────────
+    // Der Stufenvergleich gegen HF (layer_stage_compare.py) zeigt fuer
+    // v_proj 1,67 % gegen 0,17 % bei q_proj — zehnfach, bei identischem
+    // Kernel und identischem Eingang. Dieser Vergleich trennt: Er nutzt
+    // die entquantisierten Artefakt-Gewichte, misst also reine
+    // Arithmetik. Bleibt v hier auffaellig, liegt es am Kernel; faellt es
+    // auf q/k-Niveau, war es die Gewichtsquantisierung — und damit Teil
+    // des Schemas, nicht unserer Umsetzung.
+    {
+        let xn: Vec<f64> = norm_hidden
+            .iter()
+            .map(|v| *v as f64 * 2f64.powi(-(sc.norm_attn_frac as i32)))
+            .collect();
+        // q/k/v tragen Biases, die separat ueber add_bias_i16 addiert
+        // werden. Die Gleitkomma-Referenz muss sie mitrechnen — ohne sie
+        // vergleicht man W*x+b gegen W*x und misst den Bias als "Fehler"
+        // (erster Anlauf: 1347 % / 8613 %, sichtbar unmoeglich).
+        let rel_proj = |qt: &_, shifts: &[u8], bias: Option<(&[i16], &[u8])>, ganz: &[i16], frac: u8, zeilen: usize| -> f64 {
+            let s = 2f64.powi(-(frac as i32));
+            let (mut num, mut den) = (0.0f64, 0.0f64);
+            let w = to_vec_vec(qt);
+            for r in 0..zeilen {
+                let sw = 2f64.powi(-(shifts[r] as i32));
+                let mut soll: f64 = w[r].iter().zip(xn.iter()).map(|(a, b)| (*a as f64) * sw * b).sum();
+                if let Some((bd, bs)) = bias {
+                    soll += bd[r] as f64 * 2f64.powi(-(bs[r] as i32));
+                }
+                let d = ganz[r] as f64 * s - soll;
+                num += d * d;
+                den += soll * soll;
+            }
+            100.0 * (num / den.max(1e-30)).sqrt()
+        };
+        println!("Relativer L2 der Projektionen (IDENTISCHE Gewichte):");
+        println!("  q_proj : {:6.2} %", rel_proj(&layer.q_proj, &layer.q_proj.shifts, layer.q_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &q_flat, sc.q_frac, q_flat.len()));
+        println!("  k_proj : {:6.2} %", rel_proj(&layer.k_proj, &layer.k_proj.shifts, layer.k_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &k_flat, sc.k_frac, k_flat.len()));
+        println!("  v_proj : {:6.2} %", rel_proj(&layer.v_proj, &layer.v_proj.shifts, layer.v_bias.as_ref().map(|b| (b.data.as_slice(), b.shifts.as_slice())), &v_flat, sc.v_frac, v_flat.len()));
+    }
 
     // S6: MLP
     let norm_residual = rmsnorm_i16(

@@ -19,6 +19,10 @@ im **Whitepaper v0.3**:
 [English (MD)](README/Whitepaper/myelith-whitepaper-v0.3-en.md) ·
 [English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
 
+Alle Fachbegriffe — vom Bisektions-Spiel bis zur Festkomma-Arithmetik —
+sind im **[Glossar](README/Glossar.md)** erklärt, mit Beispielen und
+Verweisen auf die jeweilige Implementierung.
+
 ## Kernthese
 
 Ganzzahladdition ist assoziativ. Wird Inferenz vollständig in

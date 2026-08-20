@@ -308,7 +308,14 @@ def generate_layer_vectors(theta_v_hash: str, output_dir: Path):
     project_root = Path(__file__).parent.parent.parent
     runtime_dir = project_root / "runtime"
     artifact_dir = project_root / "artifacts" / "qwen2.5-0.5b"
-    golden_dir = output_dir.parent  # vectors/ ist das Elternverzeichnis
+    # ACHTUNG: `golden_generate` haengt selbst `vectors/` an den uebergebenen
+    # Pfad an (runtime/src/bin/golden_generate.rs). Uebergeben wird deshalb
+    # `tests/golden`, NICHT `tests/golden/vectors` — sonst landen die Vektoren
+    # in `vectors/vectors/`, waehrend `validate.py` weiter aus `vectors/layer`
+    # und `vectors/e2e` liest. Genau das ist am 2026-08-20 zum zweiten Mal
+    # passiert; das verwaiste Duplikat war sogar eingecheckt.
+    golden_dir = VECTORS_DIR.parent
+    assert golden_dir.name == "golden", f"unerwarteter Zielpfad: {golden_dir}"
 
     cmd = [
         "cargo", "run", "--bin", "golden_generate",

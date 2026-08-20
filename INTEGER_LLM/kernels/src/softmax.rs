@@ -1,6 +1,13 @@
 //! Integer-Softmax-Approximation via exp-LUT
 
-/// exp(-x) LUT-Lookup.
+/// exp(-x) LUT-Lookup. `one` ist der Wert von exp(0) **in der Skala der
+/// LUT** (`softmax.exp_lut_frac_bits`) — nicht in der Ausgangsskala der
+/// Wahrscheinlichkeiten (`prob_frac_bits`). Beide waren bis theta_v
+/// 0.15.0 zufaellig gleich (8); der Aufrufer uebergab deshalb
+/// `1 << prob_frac_bits` und es fiel nicht auf. Sobald die beiden Skalen
+/// auseinanderlaufen, bekaeme ausgerechnet das Maximum — der Eintrag mit
+/// dem groessten Gewicht — einen um den Skalenfaktor falschen Wert.
+/// `softmax_int` uebergibt daher `exp_lut[0]`.
 #[inline]
 pub fn exp_lut_lookup(x: i32, exp_lut: &[i16], lut_shift: u8, one: i32) -> i32 {
     if x <= 0 {
@@ -16,6 +23,10 @@ pub fn exp_lut_lookup(x: i32, exp_lut: &[i16], lut_shift: u8, one: i32) -> i32 {
 /// Integer-Softmax.
 pub fn softmax_int(logits: &[i32], exp_lut: &[i16], lut_shift: u8, frac_bits: u8) -> Vec<i32> {
     let one = 1i32 << frac_bits;
+    // exp(0) in LUT-Skala: der erste Eintrag ist per Konstruktion
+    // round(exp(0) * 2^exp_lut_frac_bits). Kein Rueckgriff auf `one`,
+    // das die Ausgangsskala traegt (siehe exp_lut_lookup).
+    let lut_one = *exp_lut.first().unwrap_or(&1) as i32;
     let m = *logits.iter().max().unwrap_or(&0);
 
     let mut exps = Vec::with_capacity(logits.len());
@@ -24,7 +35,7 @@ pub fn softmax_int(logits: &[i32], exp_lut: &[i16], lut_shift: u8, frac_bits: u8
         // ueberlaufen lassen; die Saettigung liefert einen grossen Diff-Wert
         // und damit exp ~ 0 (Masken-Verhalten korrekt).
         let diff = m.saturating_sub(*z);
-        exps.push(exp_lut_lookup(diff, exp_lut, lut_shift, one));
+        exps.push(exp_lut_lookup(diff, exp_lut, lut_shift, lut_one));
     }
 
     let s: i32 = exps.iter().sum();
