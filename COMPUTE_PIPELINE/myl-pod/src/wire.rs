@@ -114,6 +114,12 @@ pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
         return Err("Token-Payload muss eine gerade Anzahl i16 haben".to_string());
     }
     let mut out = Vec::with_capacity(payload.len() / 2);
+    // clippy schlaegt seit 1.98 `as_chunks::<2>()` vor, stabil erst seit
+    // Rust 1.88. Dieses Crate erklaert MSRV 1.82 (Cargo.toml).
+    // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es erst
+    // ab clippy 1.98, ein `allow` darauf ist auf aelteren Werkzeugketten
+    // selbst eine Warnung. So baut es mit beiden.
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     for pair in payload.chunks_exact(2) {
         let lo = pair[0] as u16 as u32;
         let hi = pair[1] as u16 as u32;

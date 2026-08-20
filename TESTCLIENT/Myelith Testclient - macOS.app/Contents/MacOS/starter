@@ -8,8 +8,9 @@
 # mit einer .icns darin und laesst sich versionieren wie jede andere Datei.
 set -eu
 
-# .../Repository/Myelith Testclient - macOS.app/Contents/MacOS/starter -> Repository
-WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd -P)
+# .../Repository/TESTCLIENT/Myelith Testclient - macOS.app/Contents/MacOS/starter
+# -> vier Ebenen hoch ist die Repository-Wurzel.
+WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd -P)
 STARTER="$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"
 
 if [ ! -x "$STARTER" ]; then

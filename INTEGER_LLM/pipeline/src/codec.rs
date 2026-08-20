@@ -53,6 +53,9 @@ pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
         return Err("Token-Payload muss eine gerade Anzahl i16 haben".to_string());
     }
     let mut out = Vec::with_capacity(payload.len() / 2);
+    // `as_chunks::<2>()` waere clippys Vorschlag, ist aber erst seit Rust
+    // 1.88 stabil; die Schwester-Crates erklaeren MSRV 1.82.
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     for pair in payload.chunks_exact(2) {
         let lo = pair[0] as u16 as u32;
         let hi = pair[1] as u16 as u32;
@@ -162,8 +165,10 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageMeta, Vec<i16>), String> {
         return Err("Ungerade Payload-Laenge".to_string());
     }
     
-    let tensor: Vec<i16> = payload.chunks_exact(2)
-        .map(|c| i16::from_le_bytes(c.try_into().unwrap()))
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+    let tensor: Vec<i16> = payload
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect();
     
     let meta = MessageMeta {

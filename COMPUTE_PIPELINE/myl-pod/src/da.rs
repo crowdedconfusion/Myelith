@@ -318,6 +318,12 @@ impl DaStore {
             return Err("rekonstruierte Daten haben ungerade Länge".to_string());
         }
         let mut out = Vec::with_capacity(bytes.len() / 2);
+        // clippy schlaegt seit 1.98 `as_chunks::<2>()` vor, stabil erst seit
+        // Rust 1.88. Dieses Crate erklaert MSRV 1.82 (Cargo.toml).
+        // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es erst
+        // ab clippy 1.98, ein `allow` darauf ist auf aelteren Werkzeugketten
+        // selbst eine Warnung. So baut es mit beiden.
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         for chunk in bytes.chunks_exact(2) {
             out.push(i16::from_le_bytes([chunk[0], chunk[1]]));
         }

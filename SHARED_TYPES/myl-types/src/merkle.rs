@@ -91,6 +91,14 @@ impl MerkleTree {
                 let last = *current.last().expect("nicht leer");
                 current.push(last);
             }
+            // clippy schlaegt seit 1.98 `as_chunks::<2>()` vor. Das ist erst
+            // seit Rust 1.88 stabil, dieses Crate erklaert aber MSRV 1.82
+            // (Cargo.toml). Die Zusage wiegt schwerer als der Stilhinweis:
+            // Wer mit 1.82 baut, soll bauen koennen.
+            // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es erst
+            // ab clippy 1.98, ein `allow` darauf ist auf aelteren Werkzeugketten
+            // selbst eine Warnung. So baut es mit beiden.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let next: Vec<Hash> = current
                 .chunks_exact(2)
                 .map(|pair| node_hash(&pair[0], &pair[1]))

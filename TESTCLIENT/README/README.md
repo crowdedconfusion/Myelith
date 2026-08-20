@@ -96,25 +96,30 @@ einen Test, der Feldnamen und Wertformate prüft.
 
 ## Aufruf
 
-Im Wurzelverzeichnis des Repositories liegen drei Starter. Sie tun
-dasselbe: bauen bei Bedarf, finden das Binary und reichen alle Argumente
-weiter. Welchen du nimmst, hängt nur davon ab, womit du arbeitest.
+Es gibt drei Starter. Sie tun dasselbe: bauen bei Bedarf, finden das
+Binary und reichen alle Argumente weiter. Welchen du nimmst, hängt nur
+davon ab, womit du arbeitest.
 
-| Datei | Für wen |
-|---|---|
-| `Myelith Testclient - macOS.app` | macOS, Doppelklick im Finder |
-| `Myelith Testclient - Windows (Batch).cmd` | Windows, Doppelklick im Explorer oder Aufruf aus cmd |
-| `Myelith Testclient - Linux, macOS (Shell).sh` | Terminal auf Linux und macOS |
+| Datei | Wo | Für wen |
+|---|---|---|
+| `Myelith Testclient - Linux, macOS (Shell).sh` | Wurzelverzeichnis | Terminal auf Linux und macOS |
+| `Myelith Testclient - Windows (Batch).cmd` | Wurzelverzeichnis | Windows, Doppelklick im Explorer oder Aufruf aus cmd |
+| `Myelith Testclient - macOS.app` | `TESTCLIENT/` | macOS, Doppelklick im Finder |
 
-Sie liegen im Wurzelverzeichnis, weil sie dort gefunden werden sollen.
-Alles Übrige zum Testclient steht in diesem Ordner: der Quelltext unter
-`myl-testclient/`, die Protokolle unter `myl-testclient/logs/`, und die
-Helfer für Symbol und Anwendungsmenü unter `werkzeuge/`.
+Die beiden Einzeldateien liegen im Wurzelverzeichnis, weil sie dort
+gefunden werden sollen. Das App-Bündel liegt hier, weil es technisch ein
+**Verzeichnis** ist und im Wurzelverzeichnis wie ein weiterer Projektordner
+aussähe, besonders in der Dateiansicht auf GitHub.
+
+Alles Übrige zum Testclient steht ebenfalls in diesem Ordner: der
+Quelltext unter `myl-testclient/`, die Protokolle unter
+`myl-testclient/logs/`, die Helfer für Symbol und Anwendungsmenü unter
+`werkzeuge/`.
 
 ### Der kürzeste Weg
 
-**Doppelklick.** Unter macOS auf das App-Bündel, unter Windows auf die
-`.cmd`. Es öffnet sich ein Terminalfenster mit dem Menü; jeder Punkt ist
+**Doppelklick.** Unter macOS auf das App-Bündel in `TESTCLIENT/`,
+unter Windows auf die `.cmd` im Wurzelverzeichnis. Es öffnet sich ein Terminalfenster mit dem Menü; jeder Punkt ist
 dort in zwei Zeilen erklärt, und es steht dabei, was ein Modell braucht
 und was nicht. Beim ersten Start dauert der Bau einige Minuten, danach
 wenige Sekunden.

@@ -385,6 +385,27 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
                 }
             }
 
+            // little-endian i16, ein Wert je zwei Bytes. Die Laengenpruefung
+            // stand hier bisher nicht: `chunks_exact` verwarf ein einzelnes
+            // Restbyte stillschweigend und lud ein um ein halbes Element
+            // gekuerztes Gewicht. Eine beschaedigte Datei muss auffallen.
+            if bytes.len() % 2 != 0 {
+                return Err(format!(
+                    "{}: Datei hat ungerade Byteanzahl ({}), kann keine \
+                     i16-Folge sein",
+                    name,
+                    bytes.len()
+                ));
+            }
+            // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es
+            // erst ab clippy 1.98, ein `allow` darauf ist auf aelteren
+            // Werkzeugketten selbst eine Warnung.
+            //
+            // `as_chunks::<2>()` waere der Vorschlag, ist aber erst seit Rust
+            // 1.88 stabil. Die Schwester-Crates erklaeren MSRV 1.82; dieses
+            // hier hat keine Angabe, und ein stillschweigend hoeherer Bedarf
+            // waere schlimmer als eine ausdrueckliche Ausnahme.
+            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
             let data: Vec<i16> = bytes
                 .chunks_exact(2)
                 .map(|c| i16::from_le_bytes([c[0], c[1]]))
@@ -521,6 +542,16 @@ pub fn load_luts(artifact_dir: &Path) -> Result<LoadedLuts, String> {
         }
 
         // struct-unpack "<Nh": little-endian i16, ein Wert pro zwei Bytes.
+        // Laengenpruefung und `allow`: siehe Begruendung beim Gewichtsladen.
+        if bytes.len() % 2 != 0 {
+            return Err(format!(
+                "{}: LUT-Datei hat ungerade Byteanzahl ({}), kann keine \
+                 i16-Folge sein",
+                name,
+                bytes.len()
+            ));
+        }
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
         let values: Vec<i16> = bytes
             .chunks_exact(2)
             .map(|c| i16::from_le_bytes([c[0], c[1]]))
