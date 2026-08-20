@@ -17,6 +17,11 @@ rem der erst `Set-ExecutionPolicy` recherchieren muss, fuehrt den Test
 rem seltener aus. Eine .cmd laeuft ohne Vorbedingung.
 
 setlocal
+rem Ausgabe in UTF-8. Die deutschen Texte des Clients enthalten Umlaute;
+rem die Standard-Codepage der Konsole stellt sie falsch dar. Ohne diese
+rem Zeile liest der Nutzer Kauderwelsch und haelt es fuer einen Fehler.
+chcp 65001 >nul 2>&1
+
 rem Repository-Wurzel durch Aufwaertssuche bestimmen, nicht ueber eine feste
 rem Tiefe. Die erste Fassung rechnete mit dem Wurzelverzeichnis als
 rem Ablageort und war sofort kaputt, als der Starter verschoben wurde.
@@ -35,25 +40,26 @@ goto :suche
 :gefunden
 set "MANIFEST=%WURZEL%TESTCLIENT\myl-testclient\Cargo.toml"
 
-if defined CARGO_TARGET_DIR (
-    set "BIN=%CARGO_TARGET_DIR%\release\myl-test.exe"
-) else if exist "%WURZEL%target-shared" (
-    set "BIN=%WURZEL%target-shared\release\myl-test.exe"
-) else (
-    set "BIN=%WURZEL%TESTCLIENT\myl-testclient\target\release\myl-test.exe"
-)
-
+rem cargo lenkt alle Crates ueber .cargo\config.toml nach target-shared.
+rem Auf einem frischen Klon gibt es das Verzeichnis noch nicht, deshalb
+rem wird das Binary NACH dem Bau gesucht statt vorher geraten. Die erste
+rem Fassung riet auf target\release und scheiterte genau beim ersten Lauf.
 where cargo >nul 2>&1
 if %ERRORLEVEL%==0 (
-    rem cargo prueft selbst, ob etwas zu tun ist, und ist im unveraenderten
-    rem Fall in unter einer Sekunde durch.
     echo Baue Testclient ^(beim ersten Mal dauert das einige Minuten^) ...
     cargo build --release --quiet --manifest-path "%MANIFEST%"
     if errorlevel 1 goto :ende
-) else if exist "%BIN%" (
-    echo Hinweis: cargo nicht gefunden, benutze das vorhandene Binary.
 ) else (
-    echo Fehler: Weder cargo noch ein gebautes Binary gefunden.
+    echo Hinweis: cargo nicht gefunden, suche ein vorhandenes Binary.
+)
+
+set "BIN="
+if defined CARGO_TARGET_DIR if exist "%CARGO_TARGET_DIR%\release\myl-test.exe" set "BIN=%CARGO_TARGET_DIR%\release\myl-test.exe"
+if not defined BIN if exist "%WURZEL%target-shared\release\myl-test.exe" set "BIN=%WURZEL%target-shared\release\myl-test.exe"
+if not defined BIN if exist "%WURZEL%TESTCLIENT\myl-testclient\target\release\myl-test.exe" set "BIN=%WURZEL%TESTCLIENT\myl-testclient\target\release\myl-test.exe"
+
+if not defined BIN (
+    echo Fehler: myl-test.exe nicht gefunden.
     echo.
     echo Rust installieren ^(einmalig^): https://rustup.rs
     echo Danach ein neues Fenster oeffnen und diesen Starter erneut aufrufen.
@@ -65,6 +71,9 @@ if %ERRORLEVEL%==0 (
 :ende
 rem Nur bei Doppelklick warten: dann ist der Aufrufer explorer.exe und die
 rem Konsole gehoert diesem Skript allein.
-echo %CMDCMDLINE% | find /i "%~0" >nul
+rem Doppelklick-Erkennung. Verglichen wird nur der Dateiname, nicht der
+rem volle Pfad: Der Name enthaelt Klammern, und ein voller Pfad kann
+rem Zeichen enthalten, die `find` als Muster missversteht.
+echo %CMDCMDLINE% | find /i "%~nx0" >nul
 if not errorlevel 1 pause
 endlocal

@@ -8,10 +8,14 @@
 //!
 //! ## Zwei Ausgaben je Lauf
 //!
-//! - **`<run-id>.jsonl`** — eine JSON-Zeile je Ereignis, maschinenlesbar.
+//! - **`myl-test.jsonl`**: eine JSON-Zeile je Ereignis, maschinenlesbar.
 //!   Das ist die Fassung, die zwischen Maschinen verglichen wird.
-//! - **`<run-id>.log`** — dieselben Ereignisse als Fließtext, für die
+//! - **`myl-test.log`**: dieselben Ereignisse als Fliesstext, fuer die
 //!   Fehlersuche am Terminal.
+//!
+//! Beide liegen direkt in `logs/` und werden **angehaengt**, nicht ersetzt.
+//! Jede Zeile traegt `run_id`, `command` und `settings_id`; die Zuordnung
+//! leisten also die Daten, nicht der Pfad.
 //!
 //! ## Wo die Dateien liegen
 //!
@@ -19,8 +23,9 @@
 //! logs/
 //! └── determinismus/            ← je Prüflauf ein Ordner
 //!     └── 2026-08-18_9f2c1a4b/  ← Datum + Kurzkennung der Einstellungen
-//!         ├── 143052-aarch64-macos-reference.jsonl
-//!         └── 143052-aarch64-macos-reference.log
+//!     logs/
+//!     ├── myl-test.jsonl
+//!     └── myl-test.log
 //! ```
 //!
 //! Die **Kurzkennung** ist die halbe Miete beim Vergleich zwischen
@@ -289,17 +294,30 @@ impl LogZiel {
         }
     }
 
-    /// Verzeichnis dieses Laufs: `<wurzel>/<befehl>/<datum>_<einstellungen>`.
+    /// Ablageort: schlicht `<wurzel>`, ohne Unterordner.
+    ///
+    /// Bis v0.4.0 legte jeder Lauf ein eigenes Verzeichnis
+    /// `<befehl>/<datum>_<einstellungen>/` mit zwei neuen Dateien an. Nach
+    /// wenigen Sitzungen standen dort Dutzende Ordner mit je zwei Dateien,
+    /// und wer ein Ergebnis suchte, suchte zuerst den Ordner. Jetzt gibt es
+    /// **eine** Datei je Format, an die angehängt wird; die Zuordnung
+    /// leisten die Felder `run_id`, `command` und `settings_id` in jeder
+    /// Zeile, nicht der Pfad.
     pub fn verzeichnis(&self) -> PathBuf {
-        self.wurzel
-            .join(&self.befehl)
-            .join(format!("{}_{}", self.datum, self.einstellungen))
+        self.wurzel.clone()
     }
 
-    /// Dateiname ohne Endung: `<uhrzeit>-<hardware>`.
+    /// Kennung dieses Laufs innerhalb der gemeinsamen Datei:
+    /// `<datum>-<uhrzeit>-<hardware>-<einstellungen>`.
     pub fn dateiname(&self) -> String {
-        format!("{}-{}", self.uhrzeit, self.hardware)
+        format!(
+            "{}-{}-{}-{}",
+            self.datum, self.uhrzeit, self.hardware, self.einstellungen
+        )
     }
+
+    /// Name der gemeinsamen Protokolldatei, ohne Endung.
+    pub const DATEI: &'static str = "myl-test";
 }
 
 /// Ersetzt alles, was in Dateinamen stört.
@@ -391,9 +409,10 @@ impl RunLog {
             );
         }
 
+        // Anhaengen statt Erzeugen: Alle Laeufe landen in derselben Datei.
         let open = |ext: &str| -> Option<File> {
-            let path = dir.join(format!("{}.{}", run_id, ext));
-            match File::create(&path) {
+            let path = dir.join(format!("{}.{}", LogZiel::DATEI, ext));
+            match fs::OpenOptions::new().create(true).append(true).open(&path) {
                 Ok(f) => Some(f),
                 Err(e) => {
                     eprintln!(
@@ -520,9 +539,10 @@ impl RunLog {
         self.event(Event::RunFinished { ok, millis });
         if self.echo {
             println!(
-                "\nProtokoll: {}/{}.jsonl (maschinenlesbar) und {}.log",
+                "\nProtokoll: {}/{}.jsonl (maschinenlesbar) und {}.log — Lauf {}",
                 self.dir.display(),
-                self.run_id,
+                LogZiel::DATEI,
+                LogZiel::DATEI,
                 self.run_id
             );
         }
@@ -545,12 +565,11 @@ mod tests {
         let dir = tempdir("beide");
         let mut log = RunLog::new(&dir, "probe", false);
         log.note("hallo");
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
-        let text = fs::read_to_string(lauf_dir.join(format!("{}.log", run_id))).expect("log");
+        let jsonl = fs::read_to_string(lauf_dir.join("myl-test.jsonl")).expect("jsonl");
+        let text = fs::read_to_string(lauf_dir.join("myl-test.log")).expect("log");
 
         assert!(jsonl.contains("\"kind\":\"run_started\""));
         assert!(jsonl.contains("\"kind\":\"note\""));
@@ -568,11 +587,10 @@ mod tests {
             value: "aarch64".into(),
         });
         log.result("token_hash", "abc", "42 Token");
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
+        let jsonl = fs::read_to_string(lauf_dir.join("myl-test.jsonl")).expect("jsonl");
         for line in jsonl.lines() {
             assert!(line.starts_with('{') && line.ends_with('}'), "Zeile: {}", line);
             // Ausgewogene Anfuehrungszeichen (grobe Struktursicht).
@@ -589,11 +607,10 @@ mod tests {
         let dir = tempdir("escape");
         let mut log = RunLog::new(&dir, "probe", false);
         log.note("Zeile\nmit \"Anführungszeichen\" und \\Backslash\tTab");
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).expect("jsonl");
+        let jsonl = fs::read_to_string(lauf_dir.join("myl-test.jsonl")).expect("jsonl");
         for line in jsonl.lines() {
             assert_eq!(line.lines().count(), 1, "Ereignis über mehrere Zeilen");
         }
@@ -628,10 +645,9 @@ mod tests {
         let mut log = RunLog::new(&dir, "probe", false);
         let wert = log.timed("rechnen", "", || 6 * 7);
         assert_eq!(wert, 42);
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
-        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
         assert!(jsonl.contains("\"kind\":\"step\""));
         assert!(jsonl.contains("\"name\":\"rechnen\""));
         let _ = fs::remove_dir_all(&dir);
@@ -652,22 +668,32 @@ mod tests {
     /// so sind Protokolle mehrerer Maschinen in einem Ordner
     /// unterscheidbar, ohne umbenannt zu werden.
     #[test]
-    fn ablage_nach_befehl_datum_und_einstellungen() {
+    fn alles_in_einer_datei_ohne_unterordner() {
         let dir = tempdir("ablage");
         let ziel = LogZiel::neu(&dir, "determinismus", "9f2c1a4b", "aarch64-macos-reference");
-        let pfad = ziel.verzeichnis();
 
-        assert!(pfad.ends_with(format!("{}_9f2c1a4b", ziel.datum)));
-        assert!(pfad.to_string_lossy().contains("determinismus"));
-        assert!(ziel.dateiname().ends_with("-aarch64-macos-reference"));
+        // Kein Unterordner mehr: das Ziel ist die Protokollwurzel selbst.
+        assert_eq!(ziel.verzeichnis(), dir);
+        // Die Laufkennung traegt, was frueher im Pfad stand.
+        let name = ziel.dateiname();
+        assert!(name.contains(&ziel.datum), "Datum fehlt in {name}");
+        assert!(name.contains("aarch64-macos-reference"), "Hardware fehlt in {name}");
+        assert!(name.ends_with("9f2c1a4b"), "Einstellungen fehlen in {name}");
         assert_eq!(ziel.datum.len(), 10, "Datum als JJJJ-MM-TT");
         assert_eq!(ziel.uhrzeit.len(), 6, "Uhrzeit als HHMMSS");
 
         let log = RunLog::mit_ziel(ziel, false);
         let lauf_dir = log.dir().to_path_buf();
-        let run_id = log.run_id().to_string();
         log.finish(true);
-        assert!(lauf_dir.join(format!("{}.jsonl", run_id)).exists());
+
+        assert!(lauf_dir.join("myl-test.jsonl").is_file());
+        assert!(lauf_dir.join("myl-test.log").is_file());
+        let unterordner = fs::read_dir(&lauf_dir)
+            .expect("lesbar")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .count();
+        assert_eq!(unterordner, 0, "logs/ darf keine Unterordner mehr anlegen");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -686,11 +712,14 @@ mod tests {
     /// Verschiedene Einstellungen dürfen NICHT im selben Ordner landen —
     /// sonst würden unvergleichbare Läufe vermischt.
     #[test]
-    fn andere_einstellungen_anderer_ordner() {
+    fn andere_einstellungen_andere_laufkennung() {
         let dir = tempdir("anders");
         let a = LogZiel::neu(&dir, "determinismus", "abcd1234", "hw");
         let b = LogZiel::neu(&dir, "determinismus", "99998888", "hw");
-        assert_ne!(a.verzeichnis(), b.verzeichnis());
+        // Gleiche Datei, unterscheidbare Laeufe: Die Trennung leistet jetzt
+        // die Kennung in jeder Zeile, nicht mehr der Pfad.
+        assert_eq!(a.verzeichnis(), b.verzeichnis());
+        assert_ne!(a.dateiname(), b.dateiname());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -701,9 +730,8 @@ mod tests {
         let dir = tempdir("id-im-log");
         let log = RunLog::mit_ziel(LogZiel::neu(&dir, "stack", "deadbeef", "hw"), false);
         let lauf_dir = log.dir().to_path_buf();
-        let run_id = log.run_id().to_string();
         log.finish(true);
-        let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
         assert!(jsonl.contains("einstellungen_id"));
         assert!(jsonl.contains("deadbeef"));
         let _ = fs::remove_dir_all(&dir);

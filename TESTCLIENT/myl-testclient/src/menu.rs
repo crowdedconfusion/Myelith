@@ -73,38 +73,46 @@ fn kurz(p: &std::path::Path) -> String {
     format!("…/{}", rest.display())
 }
 
+/// Das Nutzermenü: nur, was jeder Teilnehmer braucht.
+///
+/// Fünf Punkte statt zehn. Wer eine Maschine beisteuert, soll messen und
+/// das Ergebnis schicken; er soll keine Testpläne erzeugen und keine
+/// Pfade umstellen. Alles Weitere liegt eine Ebene tiefer unter [9].
 const MENUE: &str = "\
-  ── Was möchtest du prüfen? ─────────────────────────────────
+  ── Was möchtest du tun? ────────────────────────────────────
 
-   1  Hardware erheben
-      Kein Modell nötig. Der erste Schritt auf einer neuen
-      Maschine — liefert den Fingerabdruck für den Vergleich.
+   1  Testlauf starten
+      Hardware, Determinismus, Shards und Protokoll-Durchlauf
+      nacheinander. Der vollständige Bericht dieser Maschine.
 
-   2  Determinismus prüfen
-      Denselben Prompt zweimal rechnen. Der Digest muss auf
-      JEDER Maschine derselbe sein. Braucht Artefakte.
+   2  Testdatei wählen
+      Legt Prompt, Token, Shards und Modell fest. Beschafft das
+      Modell, falls es fehlt. Danach mit [1] starten.
 
-   3  Geshardete Inferenz
-      Modell über mehrere Shards fahren und gegen die
-      Einzelknoten-Runtime prüfen. Braucht Artefakte.
+   3  Anleitung lesen
 
-   4  Protokoll-Durchlauf (Stack)
-      Krypto, Epochenseed, Komiteewahl, BFT, Verifikation,
-      Ledger, Tokenomics. Kein Modell nötig, ~1 Sekunde.
-
-   5  Alles nacheinander
-      2, 3 und 4 in einem Rutsch. Für den vollen Bericht
-      einer Maschine.
-
-   6  Einstellungen ändern (Prompt, Token, Shards, Pfade)
-
-   7  Anleitung für Tests auf mehreren Maschinen
-
-   8  Testplan laden (vom Koordinator erhalten)
-
-   9  Testplan erzeugen und speichern (als Koordinator)
+   9  Entwickler-Menü
 
    0  Beenden
+";
+
+/// Das Entwickler-Menü: Einzelläufe und alles, was Vorwissen braucht.
+///
+/// Getrennt vom Nutzermenü, weil eine lange Liste den Teilnehmer bremst
+/// und die Punkte, die er versehentlich wählt, ihm nichts nützen. Wer
+/// hier hereinkommt, weiß in der Regel, was er sucht.
+const MENUE_ENTWICKLER: &str = "\
+  ── Entwickler ──────────────────────────────────────────────
+
+   1  Hardware erheben
+   2  Determinismus prüfen
+   3  Geshardete Inferenz
+   4  Protokoll-Durchlauf (Stack)
+   5  Artefakte prüfen (Digest gegen das Register)
+   6  Testplan erzeugen und speichern
+   7  Einstellungen ändern (Prompt, Token, Shards, Pfade)
+
+   0  Zurück
 ";
 
 /// Startet das Menü und kehrt mit dem Gesamtergebnis zurück.
@@ -176,7 +184,7 @@ pub fn run(mut e: Einstellungen) -> bool {
     loop {
         println!("{}", MENUE);
         e.zeigen();
-        print!("\n  Auswahl [0-9]: ");
+        print!("\n  Auswahl [0-3, 9]: ");
         let _ = io::stdout().flush();
 
         let Some(Ok(eingabe)) = zeilen.next() else {
@@ -186,19 +194,8 @@ pub fn run(mut e: Einstellungen) -> bool {
 
         println!();
         match eingabe.trim() {
-            "1" => letztes_ergebnis = starte("hardware", &e, runs::run_hardware),
-            "2" => {
-                letztes_ergebnis = starte("determinismus", &e, |log| {
-                    runs::run_determinism(log, &e.artifacts, &e.prompt, e.steps)
-                })
-            }
-            "3" => {
-                letztes_ergebnis = starte("shard", &e, |log| {
-                    runs::run_shard(log, &e.artifacts, &e.prompt, e.steps, e.shards)
-                })
-            }
-            "4" => letztes_ergebnis = starte("stack", &e, stack::run_stack),
-            "5" => {
+            "1" => {
+                let h = starte("hardware", &e, runs::run_hardware);
                 let a = starte("determinismus", &e, |log| {
                     runs::run_determinism(log, &e.artifacts, &e.prompt, e.steps)
                 });
@@ -206,18 +203,18 @@ pub fn run(mut e: Einstellungen) -> bool {
                     runs::run_shard(log, &e.artifacts, &e.prompt, e.steps, e.shards)
                 });
                 let c = starte("stack", &e, stack::run_stack);
-                letztes_ergebnis = a && b && c;
+                letztes_ergebnis = h && a && b && c;
                 println!(
-                    "\n  Gesamt: Determinismus {}, Shards {}, Stack {}",
+                    "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}",
+                    ja_nein(h),
                     ja_nein(a),
                     ja_nein(b),
                     ja_nein(c)
                 );
             }
-            "6" => einstellungen_aendern(&mut e, &mut zeilen),
-            "7" => anleitung_zeigen(),
-            "8" => plan_laden(&mut e, &mut zeilen),
-            "9" => plan_erzeugen(&e, &mut zeilen),
+            "2" => testdatei_waehlen(&mut e, &mut zeilen),
+            "3" => anleitung_zeigen(),
+            "9" => letztes_ergebnis = entwickler(&mut e, &mut zeilen, letztes_ergebnis),
             "0" | "q" | "quit" | "exit" => {
                 println!("  Fertig.");
                 return letztes_ergebnis;
@@ -237,39 +234,6 @@ fn ja_nein(b: bool) -> &'static str {
     }
 }
 
-/// Führt einen Lauf mit eigenem Protokoll aus.
-fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) -> bool {
-    let hw = hardware::Fingerprint::collect().short_id();
-    let ziel = LogZiel::neu(&e.logs, befehl, &e.einstellungen_id, &hw);
-    let mut log = RunLog::mit_ziel(ziel, true);
-    let ok = f(&mut log);
-    log.finish(ok)
-}
-
-/// Menüpunkt 8: einen erhaltenen Testplan laden.
-fn plan_laden(e: &mut Einstellungen, zeilen: &mut impl Iterator<Item = io::Result<String>>) {
-    print!("  Pfad zur Plandatei: ");
-    let _ = io::stdout().flush();
-    let Some(Ok(pfad)) = zeilen.next() else { return };
-    let pfad = pfad.trim();
-    if pfad.is_empty() {
-        return;
-    }
-    match TestPlan::load(std::path::Path::new(pfad)) {
-        Ok(plan) => {
-            println!("\n  Plan geladen: {}", plan.plan_id);
-            println!("    Prompt          {:?}", plan.prompt);
-            println!("    Token           {}", plan.steps);
-            println!("    Shards          {}", plan.shards);
-            println!("    Modell          {}", plan.model);
-            println!("    Einstellungs-ID {}", plan.short_id());
-            println!("\n  Ab jetzt laufen alle Prüfungen mit diesen Werten.");
-            e.uebernehmen(&plan);
-        }
-        Err(err) => println!("\n  {}", err),
-    }
-}
-
 /// Menüpunkt 9: einen Testplan erzeugen und verteilen.
 fn plan_erzeugen(e: &Einstellungen, zeilen: &mut impl Iterator<Item = io::Result<String>>) {
     print!("  Kennung des Durchgangs (z. B. 2026-08-18-cross-arch-01): ");
@@ -280,7 +244,12 @@ fn plan_erzeugen(e: &Einstellungen, zeilen: &mut impl Iterator<Item = io::Result
 
     let mut plan = e.als_plan();
     plan.plan_id = kennung.to_string();
-    let ziel = std::path::PathBuf::from(format!("{}.plan", kennung));
+    // In den Planordner, nicht ins Arbeitsverzeichnis: Von dort liest der
+    // Client beim Start, dort suchen die Teilnehmer.
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    let ziel = repo
+        .join(crate::plaene::ORDNER)
+        .join(format!("{}.plan", kennung));
 
     match plan.save(&ziel) {
         Ok(()) => {
@@ -443,18 +412,181 @@ fn plan_waehlen(
     Some(gefunden[wahl - 1].plan.clone())
 }
 
+/// Die Entwickler-Ebene. Kehrt mit dem letzten Ergebnis zurück.
+fn entwickler(
+    e: &mut Einstellungen,
+    zeilen: &mut impl Iterator<Item = io::Result<String>>,
+    mut letztes_ergebnis: bool,
+) -> bool {
+    loop {
+        println!("{}", MENUE_ENTWICKLER);
+        e.zeigen();
+        print!("\n  Auswahl [0-7]: ");
+        let _ = io::stdout().flush();
+
+        let Some(Ok(eingabe)) = zeilen.next() else {
+            return letztes_ergebnis;
+        };
+        println!();
+        match eingabe.trim() {
+            "1" => letztes_ergebnis = starte("hardware", e, runs::run_hardware),
+            "2" => {
+                letztes_ergebnis = starte("determinismus", e, |log| {
+                    runs::run_determinism(log, &e.artifacts, &e.prompt, e.steps)
+                })
+            }
+            "3" => {
+                letztes_ergebnis = starte("shard", e, |log| {
+                    runs::run_shard(log, &e.artifacts, &e.prompt, e.steps, e.shards)
+                })
+            }
+            "4" => letztes_ergebnis = starte("stack", e, stack::run_stack),
+            "5" => artefakte_pruefen(),
+            "6" => plan_erzeugen(e, zeilen),
+            "7" => einstellungen_aendern(e, zeilen),
+            "0" | "q" | "zurueck" | "zurück" => return letztes_ergebnis,
+            "" => {}
+            sonst => println!("  Unbekannte Auswahl: {:?}", sonst),
+        }
+    }
+}
+
+/// Führt einen Lauf mit eigenem Protokoll aus.
+fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) -> bool {
+    let hw = hardware::Fingerprint::collect().short_id();
+    let ziel = LogZiel::neu(&e.logs, befehl, &e.einstellungen_id, &hw);
+    let mut log = RunLog::mit_ziel(ziel, true);
+    let ok = f(&mut log);
+    log.finish(ok)
+}
+
+/// Prüft alle bekannten Modelle gegen den veröffentlichten Digest.
+///
+/// Ohne diese Prüfung sähe ein abweichendes Artefakt später aus wie eine
+/// gescheiterte Hardware-Bitgleichheit, und der Client berichtete das
+/// Gegenteil dessen, wofür es ihn gibt.
+fn artefakte_pruefen() {
+    use crate::artefakte::{pruefen, register, repo_wurzel, Zustand};
+    let repo = repo_wurzel(std::env::current_dir().unwrap_or_default());
+    match register(&repo) {
+        Err(e) => println!("  Register nicht lesbar: {}", e),
+        Ok(bekannt) => {
+            for b in &bekannt {
+                match pruefen(&repo, b) {
+                    Zustand::Bereit { .. } => {
+                        println!("  {} (θ_v {}): Digest stimmt, {}", b.name, b.theta_v, &b.digest[..16])
+                    }
+                    Zustand::Abweichend { ist, .. } => {
+                        println!("  {}: DIGEST WEICHT AB, hier {}", b.name, &ist[..16]);
+                        println!("     Das ist KEIN Hardware-Befund, hier liegt ein anderes Modell.");
+                    }
+                    Zustand::Fehlt => println!("  {}: keine Artefakte auf dieser Maschine.", b.name),
+                }
+            }
+        }
+    }
+}
+
+/// Testdatei wählen und anwenden, ohne sie gleich auszuführen.
+///
+/// Auswahl und Lauf sind getrennt: Punkt [2] stellt ein, Punkt [1]
+/// misst. Wer beides in einen Punkt legt, nimmt dem Nutzer die
+/// Möglichkeit, die Einstellungen vor dem Lauf noch anzusehen.
+fn testdatei_waehlen(
+    e: &mut Einstellungen,
+    zeilen: &mut impl Iterator<Item = io::Result<String>>,
+) {
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    let mut sagen = |t: String| println!("  {}", t);
+    let gefunden = crate::plaene::suchen(&repo, &mut sagen);
+    if gefunden.is_empty() {
+        println!("  Keine Testdateien in {}.", crate::plaene::ORDNER);
+        println!("  Der Koordinator schickt sie; leg sie dort ab.");
+        return;
+    }
+
+    println!("  Testdateien in {}:", crate::plaene::ORDNER);
+    for (i, g) in gefunden.iter().enumerate() {
+        println!("   [{}] {}", i + 1, crate::plaene::zeile(g));
+    }
+    println!("   [0] keine, Einstellungen behalten");
+    print!("\n  Auswahl [0]: ");
+    let _ = io::stdout().flush();
+
+    let Some(Ok(eingabe)) = zeilen.next() else { return };
+    let wahl: usize = eingabe.trim().parse().unwrap_or(0);
+    if wahl == 0 || wahl > gefunden.len() {
+        println!("  Keine Testdatei gewählt.");
+        return;
+    }
+
+    let plan = gefunden[wahl - 1].plan.clone();
+    e.uebernehmen(&plan);
+    println!(
+        "  Plan \"{}\" übernommen: Modell {}, {} Token, {} Shards.",
+        plan.plan_id, plan.model, plan.steps, plan.shards
+    );
+
+    let mut frage = |prompt: &str| -> Option<String> {
+        print!("  {}", prompt);
+        let _ = io::stdout().flush();
+        zeilen.next().and_then(|r| r.ok())
+    };
+    let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
+    match crate::artefakte::beschaffen_fuer(&repo, &plan.model, &mut f, &mut |t| println!("  {}", t)) {
+        Ok(pfad) => {
+            e.artifacts = pfad;
+            println!("\n  Bereit. Mit [1] den Testlauf starten.");
+        }
+        Err(fehler) => {
+            for zeile in fehler.lines() {
+                println!("  {}", zeile);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn menue_nennt_alle_punkte() {
-        for punkt in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] {
+    fn nutzermenue_nennt_alle_punkte() {
+        for punkt in ["1", "2", "3", "9", "0"] {
             assert!(
                 MENUE.contains(&format!("   {}  ", punkt)),
                 "Menüpunkt {} fehlt",
                 punkt
             );
+        }
+    }
+
+    /// Das Nutzermenü darf nicht wieder anwachsen: Es ist die Seite, die
+    /// ein Teilnehmer ohne Vorwissen zuerst sieht.
+    #[test]
+    fn nutzermenue_bleibt_schlank() {
+        let punkte = MENUE
+            .lines()
+            .filter(|z| z.trim_start().starts_with(char::is_numeric) && z.contains("  "))
+            .count();
+        assert!(punkte <= 5, "Nutzermenü hat {punkte} Punkte, höchstens 5 sind vorgesehen");
+    }
+
+    #[test]
+    fn entwicklermenue_nennt_alle_punkte() {
+        for punkt in ["1", "2", "3", "4", "5", "6", "7", "0"] {
+            assert!(
+                MENUE_ENTWICKLER.contains(&format!("   {}  ", punkt)),
+                "Entwicklerpunkt {} fehlt",
+                punkt
+            );
+        }
+    }
+
+    #[test]
+    fn entwicklermenue_passt_in_achtzig_spalten() {
+        for (i, z) in MENUE_ENTWICKLER.lines().enumerate() {
+            assert!(z.chars().count() <= 78, "Zeile {} zu breit", i + 1);
         }
     }
 

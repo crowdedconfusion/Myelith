@@ -451,11 +451,10 @@ mod tests {
         let dir = tempdir("hw");
         let mut log = RunLog::new(&dir, "hardware", false);
         assert!(run_hardware(&mut log));
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(true);
 
-        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
         assert!(jsonl.contains("\"kind\":\"hardware\""));
         assert!(jsonl.contains("hardware_fingerprint"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -471,11 +470,10 @@ mod tests {
         let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), "Test", 4);
         assert!(!ok);
         assert!(log.problems() > 0);
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(false);
 
-        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
         assert!(jsonl.contains("\"kind\":\"error\""));
         assert!(jsonl.contains("Artefaktverzeichnis"));
         let _ = std::fs::remove_dir_all(&dir);

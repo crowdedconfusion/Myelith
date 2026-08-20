@@ -1,7 +1,11 @@
-# Laufprotokolle sind maschinenlokal und gehören nicht ins Repository —
-# sie tragen Zeitstempel, Hardware-Fingerabdrücke und Messwerte einer
-# konkreten Maschine. Vergleichswerte, die dauerhaft gelten sollen,
-# gehören in den Fahrplan oder nach INTEGER_LLM/eval/results/.
+# Protokolle sind Laufergebnisse einer bestimmten Maschine und gehoeren
+# nicht ins Repository. Sie werden an den Koordinator geschickt, nicht
+# committet: Sonst traegt jeder Klon die Laeufe fremder Rechner mit sich
+# herum, und ein `git status` nach dem ersten Testlauf sieht aus, als
+# haette man etwas veraendert.
+#
+# Der Ordner selbst bleibt versioniert, damit der Client nicht erst ein
+# Verzeichnis anlegen muss.
 *.jsonl
 *.log
 !.gitignore

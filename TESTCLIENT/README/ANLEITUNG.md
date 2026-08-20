@@ -27,9 +27,12 @@ Doppelklick auf den Starter im Ordner `TESTCLIENT`:
 Danach fragt der Client zwei Dinge, und beide kannst du mit der
 Eingabetaste beantworten:
 
-1. **Welchen Testplan?** Liegt einer bereit, wähle ihn. Er stellt alles
+1. **Welche Testdatei?** Liegt eine bereit, wähle sie. Sie stellt alles
    ein, holt bei Bedarf das Modell und führt die Messung selbst aus.
-2. **Welches Modell?** Nur, wenn kein Plan gewählt wurde.
+2. **Welches Modell?** Nur, wenn keine Testdatei gewählt wurde.
+
+Danach öffnet sich das Menü. Ein Punkt genügt dort: **[1] Testlauf
+starten**.
 
 Fehlt das Modell, bietet der Client an, es zu holen und zu bauen. Es
 passiert nichts ohne Rückfrage, und du siehst währenddessen, wie lange
@@ -194,18 +197,34 @@ Ohne Plan läuft alles weiter wie bisher; die Kennung heißt dann
 
 ### 1.1 Einmalig einrichten
 
-Du brauchst **Rust**. Falls du es nicht hast, sagt der Starter beim
-ersten Aufruf, wie es installiert wird (eine Zeile, keine
-Administratorrechte nötig). Sonst nichts: Der Client hat außer `sha2`
-und `borsh` keine Fremd-Abhängigkeiten.
-
 ```bash
 git clone <repo-url>
 cd Repository
 ```
 
-Das Modell wird **nicht** mitgeliefert. Der Client holt es bei Bedarf
-selbst und fragt vorher.
+**Für Hardware- und Protokolltests reicht Rust.** Falls du es nicht hast,
+sagt der Starter beim ersten Aufruf, wie es installiert wird (eine Zeile,
+keine Administratorrechte nötig). Der Client selbst hat außer `sha2` und
+`borsh` keine Fremd-Abhängigkeiten.
+
+**Für Determinismus- und Shard-Tests brauchst du zusätzlich Python mit
+PyTorch.** Das Modell wird nicht mitgeliefert, der Client holt es bei
+Bedarf und baut daraus die Artefakte; dafür braucht er eine
+Python-Umgebung:
+
+```bash
+cd INTEGER_LLM/calibrate
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt      # Windows: .venv\Scripts\pip
+```
+
+Das sind rund 2 GB und dauert einige Minuten. Danach findet der Client
+die Umgebung von selbst; fehlt sie, sagt er genau diese Zeilen an. Er
+sucht auch ein System-Python, falls die Pakete dort schon liegen.
+
+Der Modelldownload selbst braucht **kein** Hugging-Face-Konto. Bei vielen
+Downloads hintereinander kann die Gegenstelle bremsen; ein gesetztes
+`HF_TOKEN` hebt die Grenze an, nötig ist es nicht.
 
 ### 1.2 Starten
 
@@ -241,16 +260,26 @@ ab, genau dafür ist die Prüfsumme da.
 
 Mit Plan: nichts, das macht der Client. Ohne Plan wählst du im Menü:
 
-| Menüpunkt | Wann | Braucht ein Modell? |
-|---|---|---|
-| **1 Hardware** | immer, als Erstes | nein |
-| **4 Stack** | immer | nein |
-| **2 Determinismus** | wenn ein Modell da ist | **ja** |
-| **3 Shards** | wenn ein Modell da ist | **ja** |
+Das Menü hat drei Punkte:
 
-**Auch ohne Modell bist du nützlich.** Punkt 1 und 4 laufen überall und
-decken die gesamte Protokollschicht ab: Kryptografie, Konsens,
-Verifikation, Ledger, Tokenomics.
+| Punkt | Was er tut |
+|---|---|
+| **1 Testlauf starten** | Hardware, Determinismus, Shards und Protokoll-Durchlauf nacheinander. Der vollständige Bericht dieser Maschine. |
+| **2 Testdatei wählen** | Übernimmt Prompt, Token, Shards und Modell aus einem Plan und beschafft das Modell, falls es fehlt. Danach mit [1] starten. |
+| **3 Anleitung lesen** | diese Seite |
+| **9 Entwickler-Menü** | Einzelläufe, Artefaktprüfung, Testpläne erzeugen, Einstellungen |
+
+**Mehr brauchst du nicht.** Wer eine Maschine beisteuert, drückt [1] und
+schickt das Protokoll. Hast du eine Testdatei bekommen, vorher [2].
+
+Alles Weitere liegt unter **[9]**, weil ein Menü mit zehn Punkten, von
+denen fünf nie gebraucht werden, den Einstieg behindert statt ihn zu
+erleichtern.
+
+**Auch ohne Modell bist du nützlich.** Der Testlauf erhebt in jedem Fall
+die Hardware, und der Protokoll-Durchlauf unter [9] [4] deckt die gesamte
+Protokollschicht ab: Kryptografie, Konsens, Verifikation, Ledger,
+Tokenomics.
 
 ### 1.4 Was du auf dem Bildschirm siehst
 
@@ -272,7 +301,13 @@ Ergebnis  determinismus   bitgleich über zwei Läufe  [886124c7f002314a]
 
 ### 1.5 Was du zurückschickst
 
-Die `.jsonl`-Dateien aus `TESTCLIENT/myl-testclient/logs/`.
+Eine einzige Datei: `TESTCLIENT/myl-testclient/logs/myl-test.jsonl`.
+
+Alle Läufe stehen darin, angehängt statt in Unterordnern verteilt. Jede
+Zeile trägt Laufkennung, Befehl und Einstellungs-Prüfsumme, die
+Zuordnung leisten also die Daten und nicht der Pfad. Daneben liegt
+`myl-test.log` mit denselben Ereignissen als Fließtext, für die
+Fehlersuche am Terminal.
 
 **Was darin steht:** Architektur, Betriebssystem, Backend, Zeiten,
 Vergleichswerte, der **Hash** deines Prompts, die erzeugten Token.
@@ -326,7 +361,8 @@ sollen vergleichbare Ergebnisse bekommen.
 
 ### 2.3 Auswerten
 
-Alle Protokolle desselben Plans liegen im gleichnamigen Ordner. Die
+Alle Läufe stehen in derselben Datei und tragen die Prüfsumme des Plans
+in jeder Zeile (`settings_id`). Die
 Teilnehmerdateien einfach dort hineinlegen:
 
 ```bash
@@ -510,7 +546,7 @@ Anhang:          <lauf-id>.jsonl
   ein Befund an der Kernthese aussieht, ist damit technisch
   ausgeschlossen.
 - **Protokoll-Ablage** nach Prüflauf, Datum und Einstellungs-Kennung.
-  Alle Teilnehmer eines Plans landen im gleichnamigen Ordner; die
+  Alle Teilnehmer eines Plans tragen dieselbe `settings_id`; die
   Zuordnungsarbeit beim Auswerten entfällt.
 - Abschnitt 2 auf das Planverfahren umgestellt, neue Gegenprobe über
   `einstellungen_id`, Meldevorlage um den Plan erweitert.

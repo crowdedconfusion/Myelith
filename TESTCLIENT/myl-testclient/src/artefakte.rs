@@ -225,8 +225,71 @@ pub fn suchen(repo: &Path) -> Vec<Gefunden> {
 
 /// Pfad zum Python der Kalibrierungs-Umgebung, falls vorhanden.
 fn venv_python(repo: &Path) -> Option<PathBuf> {
-    let p = repo.join("INTEGER_LLM/calibrate/.venv/bin/python");
-    p.is_file().then_some(p)
+    // Beide venv-Layouts: POSIX legt den Interpreter unter `bin/`, Windows
+    // unter `Scripts/`. Die erste Fassung kannte nur `bin/python` und war
+    // damit auf Windows blind.
+    for rel in [
+        "INTEGER_LLM/calibrate/.venv/bin/python",
+        "INTEGER_LLM/calibrate/.venv/bin/python3",
+        "INTEGER_LLM/calibrate/.venv/Scripts/python.exe",
+    ] {
+        let p = repo.join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Findet einen Python-Interpreter, der die Kalibrierung ausführen kann.
+///
+/// **Warum das mehr ist als ein Pfad.** Die virtuelle Umgebung
+/// `INTEGER_LLM/calibrate/.venv` ist gitignored, sie ist 861 MB groß und
+/// gehört nicht ins Repository. Auf einem frischen Klon gibt es sie also
+/// nicht. Die erste Fassung dieser Funktion suchte nur dort und meldete
+/// „.venv fehlt" — womit der gesamte Download- und Baupfad auf jeder
+/// Maschine außer der Entwicklermaschine tot war.
+///
+/// Gesucht wird deshalb in dieser Reihenfolge: die venv (beide Layouts),
+/// dann `python3` und `python` im Suchpfad. Gefunden ist nicht genug: Es
+/// wird geprüft, ob die nötigen Pakete importierbar sind, denn ein
+/// System-Python ohne `torch` scheitert erst nach dem Download.
+fn python_finden(repo: &Path) -> Result<PathBuf, String> {
+    let mut kandidaten: Vec<PathBuf> = Vec::new();
+    if let Some(p) = venv_python(repo) {
+        kandidaten.push(p);
+    }
+    // Reihenfolge mit Bedacht: Unter Windows ist `python3` haeufig nur ein
+    // Platzhalter, der den Microsoft Store oeffnet; er scheitert beim
+    // Importtest und wird deshalb uebersprungen. `py` ist der offizielle
+    // Windows-Starter und findet auch Installationen, die nicht im
+    // Suchpfad stehen.
+    kandidaten.push(PathBuf::from("python3"));
+    kandidaten.push(PathBuf::from("python"));
+    kandidaten.push(PathBuf::from("py"));
+
+    let mut gesehen = Vec::new();
+    for k in kandidaten {
+        let pruefung = std::process::Command::new(&k)
+            .args(["-c", "import torch, transformers, huggingface_hub"])
+            .current_dir(repo)
+            .output();
+        match pruefung {
+            Ok(a) if a.status.success() => return Ok(k),
+            Ok(_) => gesehen.push(format!("{} gefunden, aber Pakete fehlen", k.display())),
+            Err(_) => gesehen.push(format!("{} nicht vorhanden", k.display())),
+        }
+    }
+
+    Err(format!(
+        "Kein einsatzbereites Python gefunden.\n  {}\n\n\
+         Einmalig einrichten (rund 2 GB, dauert einige Minuten):\n\
+         \x20   cd INTEGER_LLM/calibrate\n\
+         \x20   python3 -m venv .venv\n\
+         \x20   .venv/bin/pip install -r requirements.txt      (Windows: .venv\\Scripts\\pip)\n\n\
+         Danach findet der Client sie von selbst.",
+        gesehen.join("\n  ")
+    ))
 }
 
 /// Ungefähre Downloadgröße je Modell, für die Rückfrage vor dem Zugriff.
@@ -245,11 +308,7 @@ pub fn download_groesse(modell: &str) -> &'static str {
 /// fort. Ein eigener HTTPS-Pfad im Client wäre eine zweite, schlechtere
 /// Umsetzung derselben Sache.
 pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
-    let py = venv_python(repo).ok_or_else(|| {
-        "INTEGER_LLM/calibrate/.venv fehlt — ohne die Kalibrierungs-Umgebung \
-         kann der Client weder herunterladen noch bauen."
-            .to_string()
-    })?;
+    let py = python_finden(repo)?;
     let hf = hf_id(modell);
     let ziel = repo.join("INTEGER_LLM/models").join(hf);
     meldung(format!("Lade {} nach {} …", hf, ziel.display()));
@@ -268,10 +327,12 @@ pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)
 /// deshalb dauert das Sekunden statt Minuten und ist plattformübergreifend
 /// bitgleich (siehe `INTEGER_LLM/scale_packs/README.md`).
 pub fn artefakte_bauen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
-    let py = venv_python(repo).ok_or_else(|| "INTEGER_LLM/calibrate/.venv fehlt".to_string())?;
+    let py = python_finden(repo)?;
     meldung(format!("Baue Artefakte für {modell} (Skalenpaket wird verwendet) …"));
-    std::env::set_var("INTEGER_LLM_MODEL", modell);
-    lauf(&py, &["-m", "calibrate.src.main"], &repo.join("INTEGER_LLM"), meldung)
+    // Am Kindprozess statt global: `std::env::set_var` verändert den
+    // eigenen Prozess und ist bei mehreren Threads nicht sauber definiert.
+    lauf_mit(&py, &["-m", "calibrate.src.main"], &repo.join("INTEGER_LLM"),
+             &[("INTEGER_LLM_MODEL", modell)], meldung)
 }
 
 fn lauf(
@@ -280,8 +341,22 @@ fn lauf(
     cwd: &Path,
     meldung: &mut dyn FnMut(String),
 ) -> Result<(), String> {
+    lauf_mit(programm, args, cwd, &[], meldung)
+}
+
+fn lauf_mit(
+    programm: &Path,
+    args: &[&str],
+    cwd: &Path,
+    umgebung: &[(&str, &str)],
+    meldung: &mut dyn FnMut(String),
+) -> Result<(), String> {
     use std::process::{Command, Stdio};
-    let mut kind = Command::new(programm)
+    let mut befehl = Command::new(programm);
+    for (k, v) in umgebung {
+        befehl.env(k, v);
+    }
+    let mut kind = befehl
         .args(args)
         .current_dir(cwd)
         .stdout(Stdio::piped())

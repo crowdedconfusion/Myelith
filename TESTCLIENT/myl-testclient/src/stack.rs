@@ -664,12 +664,11 @@ mod tests {
         let dir = tempdir("voll");
         let mut log = RunLog::new(&dir, "stack", false);
         let ok = run_stack(&mut log);
-        let run_id = log.run_id().to_string();
         let lauf_dir = log.dir().to_path_buf();
         log.finish(ok);
 
         assert!(ok, "Stack-Durchlauf fehlgeschlagen");
-        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", run_id))).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
         for stufe in [
             "krypto",
             "epochenseed",
@@ -703,9 +702,12 @@ mod tests {
         l1.finish(true);
         l2.finish(true);
 
+        // Beide Laeufe schreiben in dieselbe Datei; die Zeile wird ueber die
+        // Laufkennung gefunden, nicht mehr ueber den Dateinamen.
         let hole = |dir: &std::path::Path, id: &str| -> String {
-            let t = std::fs::read_to_string(dir.join(format!("{}.jsonl", id))).unwrap();
+            let t = std::fs::read_to_string(dir.join("myl-test.jsonl")).unwrap();
             t.lines()
+                .filter(|l| l.contains(id))
                 .find(|l| l.contains("stack_gesamt"))
                 .map(|l| {
                     l.split("\"digest\":\"")

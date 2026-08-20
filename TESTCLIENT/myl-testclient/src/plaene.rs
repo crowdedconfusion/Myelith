@@ -71,7 +71,7 @@ pub fn zeile(g: &Gefunden) -> String {
         p.prompt.clone()
     };
     format!(
-        "{} — {}, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"",
+        "{} · {}, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"",
         p.plan_id,
         p.model,
         p.steps,

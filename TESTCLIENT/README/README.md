@@ -53,7 +53,7 @@ logs/
 
 Die Kurzkennung ist der Hash genau der Parameter, die gleich sein
 müssen (Prompt, Token, Shards, Modell). **Alle Teilnehmer eines
-Testplans landen im gleichnamigen Ordner** — auf jeder Maschine. Wer
+Testplans tragen dieselbe Einstellungs-Prüfsumme**, auf jeder Maschine. Wer
 versehentlich andere Parameter nimmt, landet sichtbar woanders; die
 Zuordnungsarbeit beim Auswerten entfällt. Der Dateiname trägt Uhrzeit
 und Hardware-Kurzform, damit sich Protokolle mehrerer Maschinen in
@@ -347,6 +347,46 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 
 ## Changelog
 
+### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)
+
+- **Nutzermenü:** [1] Testlauf starten (Hardware, Determinismus, Shards,
+  Stack in einem Zug), [2] Testdatei wählen, [3] Anleitung, [9]
+  Entwickler-Menü. Mehr nicht.
+- **Entwickler-Menü** statt Koordinator-Menü, mit den Einzelläufen, der
+  Artefaktprüfung, dem Planerzeuger und den Einstellungen.
+- **Gestrichen:** „Testplan laden (Pfad eintippen)". Punkt [2] listet die
+  Dateien im Planordner und ersetzt das; für Skripte bleibt `--plan`.
+  Eine Auswahlmöglichkeit, die niemand nutzt, kostet trotzdem
+  Aufmerksamkeit.
+- Ein Test hält das Nutzermenü bei höchstens fünf Punkten fest. Ohne
+  solche Zusicherung wächst ein Menü über die Zeit wieder zu.
+
+### v0.5.0 – 2026-08-20 (Testpläne, zwei Menüs, ein Protokoll)
+
+- **Testplanauswahl beim Start,** vor der Modellfrage. Der Client sieht in
+  `TESTCLIENT/Testpläne/` nach, listet auf, was er findet, und lässt
+  wählen. Wird ein Plan gewählt, übernimmt er Prompt, Token, Shards und
+  Modell, beschafft das Modell bei Bedarf und führt Determinismus- und
+  Shard-Lauf selbst aus. Ein Plan mit falscher Prüfsumme wird
+  übersprungen **und gemeldet**, nicht stillschweigend geladen.
+  Beispielplan: `wikitext2-0.5b-standard.plan`.
+- **Zwei Menüs.** Das Nutzermenü hat fünf Punkte; alles, was Vorwissen
+  voraussetzt, liegt unter [9] im Koordinator-Menü. Ein Menü mit zehn
+  Punkten, von denen ein Teilnehmer fünf nie braucht, ist für ihn ein
+  Hindernis.
+- **Ein Protokoll statt vieler.** `logs/myl-test.jsonl` und
+  `logs/myl-test.log`, angehängt statt ersetzt, keine Unterordner mehr.
+  Nach wenigen Sitzungen standen dort Dutzende Ordner mit je zwei
+  Dateien, und wer ein Ergebnis suchte, suchte zuerst den Ordner. Die
+  Zuordnung leisten jetzt `run`, `command` und `settings_id` in jeder
+  Zeile.
+- **Klartext auf dem Bildschirm, nicht im Protokoll.** Nach jedem Lauf
+  erscheinen Prompt und erzeugte Antwort lesbar. In der Protokolldatei
+  stehen weiterhin nur Token und Prüfsummen; daraus ist der Text
+  ableitbar, und die Datei bleibt schlank.
+- **Fortschrittsanzeige** für Download und Bau: Schrittzahl und
+  verstrichene Zeit, auf stderr, damit das Protokoll sauber bleibt.
+
 ### v0.4.0 – 2026-08-20 (Artefakte finden, wählen, beschaffen)
 
 - **`artefakte`** (neuer Befehl): prüft für jedes bekannte Modell, ob es
@@ -387,7 +427,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   beim Einlesen verschwindet — es ist aber Teil des Prompts und
   verändert den Digest. Ein Test deckt Randleerzeichen, `=`,
   Anführungszeichen, Backslash und Zeilenumbrüche ab.
-- **Protokoll-Ablage** nach `logs/<befehl>/<datum>_<einstellungs-id>/`
+- **Protokoll-Ablage** nach `logs/<befehl>/<datum>_<einstellungs-id>/ (bis v0.4.0; seit v0.5.0 eine gemeinsame Datei)`
   mit `<uhrzeit>-<hardware>` als Dateiname. Alle Teilnehmer eines Plans
   landen im gleichnamigen Ordner. Die Einstellungs-Kennung steht auch
   **im** Protokoll, nicht nur im Pfad — Protokolle werden einzeln

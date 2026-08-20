@@ -36,15 +36,24 @@ while [ ! -f "$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml" ]; do
 done
 MANIFEST="$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml"
 
-# Ausgabeort: gemeinsames target-shared/ (siehe .cargo/config.toml), sonst
-# das crate-eigene target/.
-if [ -n "${CARGO_TARGET_DIR:-}" ]; then
-    BIN="$CARGO_TARGET_DIR/release/myl-test"
-elif [ -d "$WURZEL/target-shared" ]; then
-    BIN="$WURZEL/target-shared/release/myl-test"
-else
-    BIN="$WURZEL/TESTCLIENT/myl-testclient/target/release/myl-test"
-fi
+# Das Binary wird NACH dem Bau gesucht, nicht vorher geraten.
+#
+# `.cargo/config.toml` lenkt alle Crates nach `target-shared/`. Auf einem
+# frischen Klon gibt es dieses Verzeichnis noch nicht; die erste Fassung
+# schloss daraus auf `target/` und suchte dort, waehrend cargo nach
+# `target-shared/` baute. Der allererste Lauf schlug damit fehl, also
+# genau der Lauf, auf den es ankommt.
+binary_finden() {
+    for kandidat in \
+        "${CARGO_TARGET_DIR:-}/release/myl-test" \
+        "$WURZEL/target-shared/release/myl-test" \
+        "$WURZEL/TESTCLIENT/myl-testclient/target/release/myl-test"
+    do
+        case "$kandidat" in /release/*) continue ;; esac
+        [ -x "$kandidat" ] && { printf '%s' "$kandidat"; return 0; }
+    done
+    return 1
+}
 
 if command -v cargo >/dev/null 2>&1; then
     # `cargo build` prüft selbst, ob etwas zu tun ist, und ist im
@@ -53,7 +62,7 @@ if command -v cargo >/dev/null 2>&1; then
     # Frage.
     echo "Baue Testclient (beim ersten Mal dauert das einige Minuten) ..."
     cargo build --release --quiet --manifest-path "$MANIFEST"
-elif [ -x "$BIN" ]; then
+elif binary_finden >/dev/null; then
     echo "Hinweis: cargo nicht gefunden, benutze das vorhandene Binary." >&2
 else
     cat >&2 <<'ENDE'
@@ -68,5 +77,11 @@ aufrufen.
 ENDE
     exit 1
 fi
+
+BIN=$(binary_finden) || {
+    echo "Fehler: myl-test wurde gebaut, ist aber nicht auffindbar." >&2
+    echo "Gesucht in target-shared/release und myl-testclient/target/release." >&2
+    exit 1
+}
 
 exec "$BIN" "$@"
