@@ -452,9 +452,10 @@ mod tests {
         let mut log = RunLog::new(&dir, "hardware", false);
         assert!(run_hardware(&mut log));
         let lauf_dir = log.dir().to_path_buf();
+        let dateiname = log.dateiname().to_string();
         log.finish(true);
 
-        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         assert!(jsonl.contains("\"kind\":\"hardware\""));
         assert!(jsonl.contains("hardware_fingerprint"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -471,9 +472,10 @@ mod tests {
         assert!(!ok);
         assert!(log.problems() > 0);
         let lauf_dir = log.dir().to_path_buf();
+        let dateiname = log.dateiname().to_string();
         log.finish(false);
 
-        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         assert!(jsonl.contains("\"kind\":\"error\""));
         assert!(jsonl.contains("Artefaktverzeichnis"));
         let _ = std::fs::remove_dir_all(&dir);

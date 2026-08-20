@@ -665,10 +665,11 @@ mod tests {
         let mut log = RunLog::new(&dir, "stack", false);
         let ok = run_stack(&mut log);
         let lauf_dir = log.dir().to_path_buf();
+        let dateiname = log.dateiname().to_string();
         log.finish(ok);
 
         assert!(ok, "Stack-Durchlauf fehlgeschlagen");
-        let jsonl = std::fs::read_to_string(lauf_dir.join("myl-test.jsonl")).unwrap();
+        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         for stufe in [
             "krypto",
             "epochenseed",
@@ -698,14 +699,15 @@ mod tests {
         run_stack(&mut l1);
         run_stack(&mut l2);
         let (id1, id2) = (l1.run_id().to_string(), l2.run_id().to_string());
+        let (dateiname1, dateiname2) = (l1.dateiname().to_string(), l2.dateiname().to_string());
         let (d1, d2) = (l1.dir().to_path_buf(), l2.dir().to_path_buf());
         l1.finish(true);
         l2.finish(true);
 
-        // Beide Laeufe schreiben in dieselbe Datei; die Zeile wird ueber die
-        // Laufkennung gefunden, nicht mehr ueber den Dateinamen.
-        let hole = |dir: &std::path::Path, id: &str| -> String {
-            let t = std::fs::read_to_string(dir.join("myl-test.jsonl")).unwrap();
+        // Beide Läufe schreiben in dieselbe Datei (gleicher Einstellungen-Hash).
+        // Die Zeile wird über die Laufkennung (run_id) gefunden.
+        let hole = |dir: &std::path::Path, id: &str, dateiname: &str| -> String {
+            let t = std::fs::read_to_string(dir.join(format!("{}.jsonl", dateiname))).unwrap();
             t.lines()
                 .filter(|l| l.contains(id))
                 .find(|l| l.contains("stack_gesamt"))
@@ -720,7 +722,7 @@ mod tests {
                 })
                 .expect("stack_gesamt")
         };
-        assert_eq!(hole(&d1, &id1), hole(&d2, &id2));
+        assert_eq!(hole(&d1, &id1, &dateiname1), hole(&d2, &id2, &dateiname2));
         let _ = std::fs::remove_dir_all(&d1);
         let _ = std::fs::remove_dir_all(&d2);
     }

@@ -21,8 +21,7 @@ im **Whitepaper v0.3**:
 
 Alle Fachbegriffe, vom Bisektions-Spiel bis zur Festkomma-Arithmetik,
 sind im **[Glossar](README/Glossar.md)** erklärt, mit Beispielen und
-Verweisen auf die jeweilige Implementierung
-([English edition](README/Glossary.en.md)).
+Verweisen auf die jeweilige Implementierung.
 
 ## Kernthese
 
@@ -46,12 +45,7 @@ Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
 relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
 Bei 7B lag dieser Wert vor den Fehlersuchen bei 41,42, heute bei 1,1
 und damit **0,3 Punkte über dem theoretischen Boden des
-Quantisierungsschemas** (+0,84 %, unabhängig gemessen). Der Weg dorthin
-führte über vier Implementierungsfehler und zehn Instrumentenfehler, die
-sämtlich dokumentiert sind: Der zuletzt gefundene klemmte in der
-Residual-Addition beide Summanden einzeln auf die Zielskala und
-zerstörte damit jede Auslöschung. An einer Stelle stand −0,002, wo 61,6
-richtig gewesen wäre.*
+Quantisierungsschemas** (+0,84 %, unabhängig gemessen).
 
 **Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
 ankommt, ist die Übereinstimmung des Integer-Pfads mit sich selbst: über
