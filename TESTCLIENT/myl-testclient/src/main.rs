@@ -12,6 +12,8 @@ use myl_testclient::{
     run_stack, LogZiel, RunLog, TestPlan,
 };
 
+mod artefakte;
+
 const HILFE: &str = "\
 myl-test — Testclient für Myelith
 
@@ -27,6 +29,11 @@ BEFEHLE
                     Maschine derselbe sein.
     shard           Geshardete Inferenz über einen Pod fahren und gegen
                     die Einzelknoten-Runtime prüfen.
+    artefakte       Modelle auf dieser Maschine prüfen: sind Artefakte da,
+                    und stimmen sie mit dem veröffentlichten Digest überein?
+                    Der erste Befehl vor jedem Vergleichslauf — ohne ihn
+                    sähe ein abweichendes Artefakt wie eine gescheiterte
+                    Hardware-Bitgleichheit aus.
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
                     Braucht kein Modell.
@@ -300,6 +307,7 @@ fn main() -> ExitCode {
             args.steps,
             args.shards,
         ),
+        "artefakte" => run_artefakte(&mut log),
         "stack" => run_stack(&mut log),
         other => {
             log.error(format!("unbekannter Befehl: {}", other));
@@ -313,5 +321,80 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `artefakte` — prüft für jedes bekannte Modell, ob es auf dieser
+/// Maschine vorliegt und ob es dem veröffentlichten Digest entspricht.
+///
+/// Ein abweichender Digest ist **kein Hardware-Befund**. Er heißt, dass
+/// hier ein anderes Modell liegt als beim Vergleichspartner — und ein
+/// Bitgleichheitstest darüber wäre wertlos. Deshalb sagt die Ausgabe das
+/// ausdrücklich, statt nur „ungleich" zu melden.
+fn run_artefakte(log: &mut RunLog) -> bool {
+    use artefakte::{bauanleitung, pruefen, register, Zustand};
+
+    let repo = match std::env::current_dir() {
+        Ok(d) => repo_wurzel(d),
+        Err(e) => {
+            log.error(format!("Arbeitsverzeichnis nicht lesbar: {}", e));
+            return false;
+        }
+    };
+
+    let bekannt = match register(&repo) {
+        Ok(b) => b,
+        Err(e) => {
+            log.error(format!("Register nicht lesbar: {}", e));
+            log.note("Ohne INTEGER_LLM/scale_packs/REGISTER.json gibt es keinen");
+            log.note("Prüfanker — dieser Befehl braucht das Repository.");
+            return false;
+        }
+    };
+
+    let mut alle_bereit = true;
+    for m in &bekannt {
+        log.note(format!("{} (θ_v {}, {} Dateien)", m.name, m.theta_v, m.dateien));
+        match pruefen(&repo, m) {
+            Zustand::Bereit { pfad } => {
+                log.note(format!("  bereit — Digest stimmt: {}", &m.digest[..16]));
+                log.note(format!("  {}", pfad.display()));
+            }
+            Zustand::Abweichend { pfad, ist, soll } => {
+                alle_bereit = false;
+                log.error(format!("  Digest weicht ab in {}", pfad.display()));
+                log.error(format!("    hier:          {}", ist));
+                log.error(format!("    veröffentlicht: {}", soll));
+                log.error("  Das ist KEIN Hardware-Befund. Hier liegt ein anderes");
+                log.error("  Modell als beim Vergleichspartner; ein Bitgleichheits-");
+                log.error("  test darüber hätte keine Aussage. Artefakte neu bauen:");
+                for zeile in bauanleitung(&m.name).lines() {
+                    log.note(format!("  {}", zeile));
+                }
+            }
+            Zustand::Fehlt => {
+                alle_bereit = false;
+                log.note("  keine Artefakte auf dieser Maschine.");
+                for zeile in bauanleitung(&m.name).lines() {
+                    log.note(format!("  {}", zeile));
+                }
+            }
+        }
+    }
+    alle_bereit
+}
+
+/// Sucht von `start` aufwärts das Repository-Wurzelverzeichnis.
+/// Erkennungsmerkmal ist `INTEGER_LLM/scale_packs`; damit funktioniert der
+/// Befehl aus jedem Unterverzeichnis heraus.
+fn repo_wurzel(start: std::path::PathBuf) -> std::path::PathBuf {
+    let mut p = start.clone();
+    loop {
+        if p.join("INTEGER_LLM/scale_packs").is_dir() {
+            return p;
+        }
+        if !p.pop() {
+            return start;
+        }
     }
 }

@@ -1,0 +1,17 @@
+{
+  "theta_v": "0.17.0",
+  "dateien": [
+    "scales.json",
+    "luts.json",
+    "theta_v.json",
+    "cos.lut.bin",
+    "exp.lut.bin",
+    "rsqrt.lut.bin",
+    "silu.lut.bin",
+    "sin.lut.bin"
+  ],
+  "bytes": 556163,
+  "artefakt_digest_sha256": "a0accbdb3861e31a69e240b57578ac7101be51f4faf8c7b4849e47a5b5947d43",
+  "artefakt_dateien": 593,
+  "weights_manifest_sha256": "e0ef3424764338fec017e65bce2aa821985c8519687a447a8b57046a621c6a05"
+}

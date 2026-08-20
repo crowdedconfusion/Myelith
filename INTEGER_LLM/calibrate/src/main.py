@@ -29,6 +29,7 @@ import gc
 import json
 import math
 import os
+import shutil
 from pathlib import Path
 
 from .loader import load_reference_model
@@ -41,6 +42,7 @@ from .quantize import quantize_model_weights, quantize_symmetric_int16_per_chann
 from .gptq import HessianCollector, quantize_linear_layers_gptq
 from .export_weights import export_quantized_weights, export_lm_head
 from .model_configs import get_export_model_config, artifact_model_config
+from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
 from .paths import model_artifacts_dir, local_model_dir
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
@@ -258,13 +260,30 @@ def main():
             with torch.no_grad():
                 _ = model(**inputs)
 
-    print("[calibrate] Sammle Aktivierungsstatistiken...")
-    collector = ActivationStatsCollector()
-    collector.attach(model)
-    _kalibrierkorpus_durchlaufen()
-    collector.detach()
-    stats = collector.compute()
-    print(f"[calibrate] Statistiken fuer {len(stats)} Module gesammelt.")
+    # Skalenpaket (Fund 32): Liegt eines vor und ist GPTQ aus, entfaellt der
+    # gesamte Gleitkomma-Teil des Baus. Das ist nicht nur schneller — es ist
+    # der Grund, warum der Bau ueberhaupt plattformuebergreifend bitgleich
+    # sein kann. Die Aktivierungsstatistik ist der einzige Schritt, dessen
+    # Ergebnis von BLAS-Version und CPU abhaengt.
+    paket = paket_pfad(MODEL_NAME)
+    if paket is not None and not use_gptq:
+        print(f"[calibrate] Skalenpaket gefunden: {paket}")
+        print("[calibrate] Aktivierungsstatistik und Korpusdurchlauf entfallen — "
+              "der Bau ist damit plattformuebergreifend bitgleich.")
+        print(f"[calibrate] ({SCALE_PACK_ENV}=0 erzwingt eine vollstaendige "
+              "Neukalibrierung.)")
+        stats = None
+    else:
+        if paket is not None:
+            print("[calibrate] Skalenpaket vorhanden, aber GPTQ ist aktiv — "
+                  "GPTQ braucht die Aktivierungsstatistik, also volle Kalibrierung.")
+        print("[calibrate] Sammle Aktivierungsstatistiken...")
+        collector = ActivationStatsCollector()
+        collector.attach(model)
+        _kalibrierkorpus_durchlaufen()
+        collector.detach()
+        stats = collector.compute()
+        print(f"[calibrate] Statistiken fuer {len(stats)} Module gesammelt.")
 
     # GPTQ (Eskalationsstrategie 3, theta_v 0.8.0): Hessian-gestuetzte
     # Fehlerkompensation fuer die linearen Projektionen. Schichtweise
@@ -296,8 +315,14 @@ def main():
     else:
         print(f"[calibrate] GPTQ ausgelassen ({gptq_grund}).")
 
-    print("[calibrate] Berechne Zweierpotenz-Skalen...")
-    scales = compute_scales_from_stats(stats)
+    if stats is None:
+        scales, luts_aus_paket = skalenpaket_laden(paket)
+        print(f"[calibrate] {len(scales)} Skalen und {len(luts_aus_paket)} LUTs "
+              f"aus dem Paket uebernommen (theta_v-gebunden und hashgeprueft).")
+    else:
+        print("[calibrate] Berechne Zweierpotenz-Skalen...")
+        scales = compute_scales_from_stats(stats)
+        luts_aus_paket = None
 
     print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
     # Fahrplan 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
@@ -322,7 +347,7 @@ def main():
         head_dim=model_config["head_dim"],
         rope_theta=nl["rope"]["rope_theta"],
         frac_bits=nl["rope"]["frac_bits"])
-    luts = {
+    luts = luts_aus_paket if luts_aus_paket is not None else {
         "rsqrt": generate_rsqrt_lut(
             max_input=nl["rsqrt"]["input_range"][1],
             input_shift=nl["rsqrt"]["input_shift"],
@@ -394,11 +419,26 @@ def main():
     print(f"[calibrate] Exportiere theta_v nach {artifacts_dir}...")
     export_theta_v(scales=scales, luts=luts, output_dir=artifacts_dir)
 
+    # Tokenizer: die Datei aus dem HF-Snapshot WOERTLICH kopieren, nicht
+    # ueber `backend_tokenizer.save()` neu serialisieren (Fund 32).
+    # Die Neuserialisierung folgt dem Schema der installierten
+    # `tokenizers`-Version und ist damit nicht byte-stabil: Zwischen zwei
+    # Umgebungen unterschieden sich `pre_tokenizer`, `decoder` und `model`,
+    # obwohl die Tokenisierung fuer alle geprueften Eingaben identisch blieb.
+    # Fuer einen Cross-Hardware-Vergleich zaehlen aber die Bytes, nicht die
+    # Absicht — eine Datei, die sich je nach Bibliotheksversion aendert,
+    # gehoert nicht in ein reproduzierbares Artefakt.
     print("[calibrate] Exportiere Tokenizer...")
     tokenizer_path = artifacts_dir / "tokenizer.json"
+    quelle = Path(model_dir) / "tokenizer.json"
     try:
-        tokenizer.backend_tokenizer.save(str(tokenizer_path))
-        print(f"[calibrate] Tokenizer exportiert nach {tokenizer_path}")
+        if quelle.is_file():
+            shutil.copyfile(quelle, tokenizer_path)
+            print(f"[calibrate] Tokenizer aus {quelle} kopiert (byte-identisch)")
+        else:
+            tokenizer.backend_tokenizer.save(str(tokenizer_path))
+            print(f"[calibrate] WARNUNG: {quelle} fehlt, Tokenizer neu serialisiert "
+                  "— dieses Artefakt ist NICHT byte-reproduzierbar.")
     except Exception as e:
         print(f"[calibrate] WARNUNG: Tokenizer-Export fehlgeschlagen: {e}")
 

@@ -350,6 +350,30 @@ Abweichung) verfolgt nur diesen einen Ausreißerkanal und sagt fast
 nichts über den Rest. Deshalb misst dieses Projekt Fehler als
 **relativen L2** über den gesamten Vektor (→ [relativer L2](#relativer-l2)).
 
+### Skalenpaket
+
+Der Teil des Artefaktbaus, der **nicht** deterministisch ist — und
+deshalb versioniert statt neu gerechnet wird.
+
+Der Bau eines Artefakts aus HF-Gewichten ist auf **derselben** Maschine
+bitgleich reproduzierbar (gemessen: 593 von 593 Dateien). Über
+Maschinengrenzen hinweg ist er es nicht: Die
+→ [Kalibrierung](#kalibrierung) rechnet in Gleitkomma, und **3 von 314**
+Skaleneinträgen sitzen innerhalb von 0,01 % einer Zweierpotenz-Grenze.
+Eine andere BLAS-Version reicht, um einen umzuwerfen — und ein gekippter
+Shift ändert die Artefaktbytes, also das Modell.
+
+Der Rest ist exakt: `round(W · 2^shift)` mit ganzzahligem Shift, denn die
+Multiplikation mit einer Zweierpotenz ist in IEEE-Gleitkomma exakt.
+**Also verteilt Myelith nicht die Gewichte, sondern die Skalen** — 1,8 MB
+für beide Modelle statt 8,8 GB, und der lokale Bau wird damit
+plattformübergreifend bitgleich. Nebeneffekt: 40 Sekunden statt 20
+Minuten für das 7B-Modell.
+
+*Im Code:* `INTEGER_LLM/scale_packs/`, Lader in
+`calibrate/src/scale_pack.py`, Erzeuger in `tools/skalenpaket_bauen.py`,
+Prüfung über `myl-test artefakte`
+
 ### Kalibrierung
 
 Der Vorgang, bei dem die Skalen bestimmt werden. Man schickt echten Text

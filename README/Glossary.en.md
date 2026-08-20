@@ -335,6 +335,28 @@ per-channel scales.
 nothing about the rest. This project therefore measures error as
 **relative L2** over the whole vector (→ [relative L2](#relative-l2)).
 
+### Scale pack
+
+The part of the artifact build that is **not** deterministic — and is
+therefore versioned rather than recomputed.
+
+Building an artifact from HF weights is bit-reproducible on the **same**
+machine (measured: 593 of 593 files). Across machines it is not:
+→ [calibration](#calibration) computes in floating point, and **3 of 314**
+scale entries sit within 0.01 % of a power-of-two boundary. A different
+BLAS version is enough to flip one — and a flipped shift changes the
+artifact bytes, hence the model.
+
+The rest is exact: `round(W · 2^shift)` with an integer shift, because
+multiplying by a power of two is exact in IEEE floating point. **So
+Myelith distributes the scales, not the weights** — 1.8 MB for both models
+instead of 8.8 GB, and the local build becomes bit-identical across
+platforms. Side effect: 40 seconds instead of 20 minutes for the 7B model.
+
+*In code:* `INTEGER_LLM/scale_packs/`, loader in
+`calibrate/src/scale_pack.py`, generator in `tools/skalenpaket_bauen.py`,
+verification via `myl-test artefakte`
+
 ### Calibration
 
 The process that determines the scales. Real text (here: 64 WikiText-2
