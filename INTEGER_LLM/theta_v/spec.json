@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.16.0",
+    "version": "0.17.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -55,6 +55,11 @@
         "default": "round_to_nearest_even",
         "linear_weights": "gptq_error_feedback",
         "note": "Seit theta_v 0.8.0 (Eskalationsstrategie 3): die linearen Projektionen (q/k/v/o/gate/up/down) werden offline per GPTQ quantisiert — Hessian-gestützte Fehlerkompensation minimiert den Ausgabefehler auf dem Kalibrierkorpus statt des einzelnen Gewichtsfehlers. Alle übrigen Gewichte (Embedding, Biases, Gammas, LM-Head) bleiben Round-to-nearest-even. Das Artefakt-Format (int8, Per-Channel-Zweierpotenz-Shifts) und der deterministische Integer-Inferenzpfad ändern sich nicht."
+      },
+      "residual_add": {
+        "accumulation_scale": "min(segment_in, segment_out) je Kanal",
+        "rounding": "einmal am Ende",
+        "note": "Theta_v 0.17.0 (Fund 31, 2026-08-20): Die Residual-Addition akkumuliert auf der GROEBEREN der beiden beteiligten Segmentskalen (kleinerer Shift), summiert in i64 und reskaliert und klemmt genau EINMAL am Ende. Bis 0.16.0 wurde der eingehende Residualstrom EINZELN auf die Ausgangsskala reskaliert und geklemmt, bevor der Block-Beitrag addiert wurde. An einer Ausloeschung zerstoert das den Wert vollstaendig: beide Operanden koennen gross sein, waehrend nur ihre Summe klein ist, und die Ausgangsskala ist nach der Summe kalibriert. Gemessen an Qwen2.5-0,5B, Ebene 21, Kanal 62 (massive activation, Sun et al. 2024): wahrer Wert faellt von 1714 auf 61,56. Alt: Residualstrom 1723,2 -> roh 882304 -> clamp 32767 = 64,00; MLP-Beitrag -1653,0 -> roh -846336 -> clamp -32768 = -64,00; Summe -1 roh = -0,002. Neu: 63,998. Mittlerer Ebenenfehler an Position 0 faellt von 8,56 auf 4,96 Prozent, an allen anderen Positionen unveraendert (7,07 -> 7,05). Warum die GROEBERE Skala: linear_w8a16_pc liefert int16 - auf einer feinen Skala wuerde der Block-Beitrag selbst klemmen, bevor er addiert werden kann. Die Akkumulationsskala muss den OPERANDEN genuegen, nicht dem Ergebnis. Aufloesungsverlust ist vernachlaessigbar: 61,6 bei Schrittweite 1/16 sind rund 10 Bit."
       },
       "shift_semantics": "arithmetic_right_shift",
       "division_rounding": "round_to_nearest_even",

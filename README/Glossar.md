@@ -4,6 +4,10 @@
 nicht alles davon studiert haben, und für Coding-Agenten, die sich im
 Repository zurechtfinden müssen.**
 
+*English edition: [`README/Glossary.en.md`](Glossary.en.md). Beide
+Fassungen werden gemeinsam gepflegt; bei Abweichungen gilt die deutsche,
+sie wird zuerst aktualisiert.*
+
 ---
 
 ## Wie dieses Glossar zu lesen ist
@@ -35,7 +39,7 @@ warum bestimmte Regeln nicht verhandelbar sind. Wer nur einen Patch
 schreiben will, liest A, B, L und dann den Abschnitt zur betroffenen
 Komponente.
 
-**Stand:** θ_v 0.16.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
+**Stand:** θ_v 0.17.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
 INTEGER_LLM Fahrplanpunkt 12.77. Diese Datei wird bei jeder Änderung an
 Protokollbegriffen mitgezogen (→ [Sieben-Schritt-Doku-Kette](#sieben-schritt-doku-kette)).
 
@@ -419,7 +423,11 @@ gleich wahrscheinlichen Wörtern raten.
 
 Myelith misst nicht die absolute Perplexität, sondern den **relativen
 Anstieg** gegenüber dem Gleitkomma-Original. Das Akzeptanzkriterium
-lautet ≤ 5 %.
+lautet ≤ 5 % und ist seit θ_v 0.17.0 auf beiden Modellen erfüllt:
+0,5B **+2,11 %**, 7B **+1,14 %**. Zum Vergleich: Der Boden des
+Quantisierungsschemas selbst — alles float außer der
+→ [W8A16](#w8a16)-Quantisierung — liegt bei **+0,84 %**. Der Abstand von
+0,30 Punkten ist der gesamte verbleibende Umsetzungsverlust.
 
 *Im Code:* `INTEGER_LLM/eval/perplexity.py`
 
@@ -490,6 +498,24 @@ Das Ergebnis jeder Teiloperation wird nicht ersetzt, sondern **addiert**:
 trainierbar; für uns ist die Bedeutung eine andere: Der Residualstrom
 ist der Kanal, über den sich Quantisierungsfehler durch alle Schichten
 fortpflanzen und aufsummieren.
+
+> **Warum die Reihenfolge von Klemmen und Addieren zählt (Fund 31).**
+> Der eingehende Residualstrom und der Blockbeitrag liegen auf
+> verschiedenen Skalen. Wer den einen **erst** auf die Zielskala klemmt
+> und **dann** addiert, zerstört jede Auslöschung: Beide Operanden können
+> groß sein, während nur ihre Summe klein ist — und die Zielskala ist nach
+> der Summe kalibriert.
+>
+> Gemessen an Qwen2.5-0,5B, Ebene 21, Kanal 62 (dem Kanal mit der
+> → [massive activation](#massive-activations--ausreißerkanäle)): Der
+> wahre Wert fällt dort von 1714 auf 61,6. Die alte Fassung rechnete
+> `1723 → geklemmt 64,00` plus `−1653 → geklemmt −64,00` und kam auf
+> **−0,002**. Zwei Klemmungen, die einander aufheben.
+>
+> Seit θ_v 0.17.0 wird auf der **gröberen** der beiden Skalen in i64
+> addiert und **einmal** am Ende reskaliert und geklemmt: 63,998 statt
+> −0,002. Die Regel dahinter ist allgemein und gilt für jede
+> Festkomma-Rechnung: **breit akkumulieren, einmal runden.**
 
 ### RMSNorm
 

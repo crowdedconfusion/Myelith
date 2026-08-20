@@ -19,7 +19,18 @@
 //! „akkumuliert der Verlust gleichmaessig oder springt er" braucht es ein
 //! Bulk-Mass ueber alle Kanaele.
 //!
-//! Usage: seq_layer_dump <artifact_dir> <token_id> [<token_id> ...] [--full]
+//! **`--alle-positionen` (2026-08-20, Fahrplanpunkt 12.77).** Bisher gab
+//! diese Sonde nur die LETZTE Position aus; der Einzelpositionsfall kam
+//! aus einem anderen Binary (`layer_probe`) und wurde in einem anderen
+//! Skript ausgewertet (`layer_stage_compare.py` gegen
+//! `layer_bulk_error.py`). Die daraus abgeleitete Kernaussage — an
+//! Position 0 liegt unser Pfad bei 2,08 %, an Position 31 bei 4,53 % —
+//! vergleicht damit **zwei verschiedene Instrumente**. Nach neun
+//! Instrumentenfehlern in dieser Fehlersuche ist das die erste zu
+//! prüfende Annahme. Mit dieser Option liefert EIN Lauf alle Positionen
+//! gegen dieselbe Referenz.
+//!
+//! Usage: seq_layer_dump <artifact_dir> <token_id> [<token_id> ...] [--full] [--alle-positionen]
 
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
@@ -50,6 +61,7 @@ fn main() {
     }
     let dir = std::path::PathBuf::from(&args[1]);
     let voll = args.iter().any(|a| a == "--full");
+    let alle = args.iter().any(|a| a == "--alle-positionen");
     let tokens: Vec<usize> = args[2..]
         .iter()
         .filter(|s| !s.starts_with("--"))
@@ -63,7 +75,22 @@ fn main() {
     let mut logits = Vec::new();
     let mut dump = Vec::new();
     for (pos, &tok) in tokens.iter().enumerate() {
-        if pos == last {
+        if alle {
+            // Jede Position dumpen. Der Cache wird dabei genauso gefuellt
+            // wie im echten Pfad — `forward_token_dump` schreibt ihn mit.
+            let (l, d) = model.forward_token_dump(tok, pos, &mut cache);
+            for (i, (werte, shifts)) in d.iter().enumerate() {
+                print!("POS {} FULL {}", pos, i);
+                for (v, &s) in werte.iter().zip(shifts.iter()) {
+                    print!(" {:.6}", *v as f64 * 2f64.powi(-(s as i32)));
+                }
+                println!();
+            }
+            if pos == last {
+                logits = l;
+                dump = d;
+            }
+        } else if pos == last {
             let (l, d) = model.forward_token_dump(tok, pos, &mut cache);
             logits = l;
             dump = d;
@@ -71,6 +98,10 @@ fn main() {
             // KV-Cache für die Folgepositionen füllen.
             let _ = model.forward_token(tok, pos, &mut cache);
         }
+    }
+
+    if alle {
+        return;
     }
 
     if voll {

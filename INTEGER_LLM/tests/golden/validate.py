@@ -185,10 +185,28 @@ def main():
     backend_name = sys.argv[1]
     # Aufloesen auf absoluten Pfad: golden_runner laeuft mit cwd=kernels/
     golden_dir = Path(sys.argv[2]).resolve()
-    
+
+    # `<golden_dir>/vectors/` wird hier angehaengt — uebergeben wird also
+    # `tests/golden`, NICHT `tests/golden/vectors`. Dieselbe Konvention wie
+    # in `golden_generate`. Wer den Pfad eine Ebene zu tief uebergibt,
+    # bekam bis 2026-08-20 ein stilles "0 passed, 0 failed" mit Exit 0.
+    if golden_dir.name == VECTORS_DIRNAME:
+        golden_dir = golden_dir.parent
+        print(f"[validate] Hinweis: '{VECTORS_DIRNAME}' wird selbst angehaengt, "
+              f"nutze {golden_dir}", file=sys.stderr)
+
     report = validate_backend(backend_name, golden_dir)
     report.print_summary()
-    
+
+    # Eine Pruefung, die NICHTS findet, ist kein Erfolg — sie ist eine
+    # Nullmessung. Genau diese Verwechslung hat in dieser Fehlersuche
+    # schon einmal zu einem Falschbefund gefuehrt ("+0,00 %", weil der
+    # Patch nie gefeuert hat). Deshalb hier hart: leer heisst Fehler.
+    if report.passed + report.failed == 0:
+        print(f"[validate] FEHLER: keine Golden Vectors unter "
+              f"{golden_dir / VECTORS_DIRNAME} gefunden.", file=sys.stderr)
+        sys.exit(2)
+
     if report.failed > 0:
         sys.exit(1)
 

@@ -21,7 +21,8 @@ im **Whitepaper v0.3**:
 
 Alle Fachbegriffe — vom Bisektions-Spiel bis zur Festkomma-Arithmetik —
 sind im **[Glossar](README/Glossar.md)** erklärt, mit Beispielen und
-Verweisen auf die jeweilige Implementierung.
+Verweisen auf die jeweilige Implementierung
+([English edition](README/Glossary.en.md)).
 
 ## Kernthese
 
@@ -37,15 +38,20 @@ Gleitkomma-Referenz desselben Modells gemessen:
 
 | Modell | Integer-Perplexität | BF16-Referenz | Abstand |
 |---|---|---|---|
-| Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** — Kriterium ≤5 % erfüllt |
-| Qwen2.5-7B | **9,33** | 8,68 | +7,5 % — Ziel ≤5 %, Restweg dokumentiert |
+| Qwen2.5-0,5B | 15,27 | 14,95 | **+2,1 %** — Kriterium ≤5 % erfüllt |
+| Qwen2.5-7B | **8,78** | 8,68 | **+1,1 %** — Kriterium ≤5 % erfüllt |
 
 *Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
 Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
 relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
-Bei 7B lag dieser Wert vor den Fehlersuchen bei 41,42 — zwei
-Implementierungsfehler und eine zu grobe SiLU-Nachschlagetabelle,
-zusammen ein Faktor 44.*
+Bei 7B lag dieser Wert vor den Fehlersuchen bei 41,42 — heute bei 1,1,
+und damit **0,3 Punkte über dem theoretischen Boden des
+Quantisierungsschemas** (+0,84 %, unabhängig gemessen). Der Weg dorthin
+führte über vier Implementierungsfehler und zehn Instrumentenfehler, die
+sämtlich dokumentiert sind: Der zuletzt gefundene klemmte in der
+Residual-Addition beide Summanden einzeln auf die Zielskala und
+zerstörte damit jede Auslöschung — an einer Stelle stand −0,002, wo 61,6
+richtig gewesen wäre.*
 
 **Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
 ankommt, ist die Übereinstimmung des Integer-Pfads mit sich selbst — über

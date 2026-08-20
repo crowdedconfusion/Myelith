@@ -13,7 +13,7 @@
 // verstecken, die beim Lesen des Loaders gebraucht wird.
 #![allow(clippy::type_complexity)]
 
-use integer_llm_kernels::fixed_point::{clamp_i16, inv_sqrt_q15, rescale, rescale_i64};
+use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i16_from_i64, inv_sqrt_q15, rescale, rescale_i64};
 use integer_llm_kernels::rmsnorm::rmsnorm_i16;
 use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
@@ -562,15 +562,26 @@ impl IntegerModel {
         // Skala des mittleren Residual-Segments (vor der zweiten Norm).
         // Fund 20: per-Kanal-Ziel statt Skalar, o_proj addiert direkt in
         // den Residualstrom.
-        let o_out = linear_w8a16_pc(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, &sc.residual_mid_frac);
+        // Fund 31 (theta_v 0.17.0): Akkumulationsskala je Kanal ist die
+        // GROEBERE der beiden Segmentskalen (kleinerer Shift). Grund siehe
+        // beim zweiten Residual-Add unten — dort trat der Fehler auf.
+        let acc_attn: Vec<u8> = sc
+            .residual_in_frac
+            .iter()
+            .zip(sc.residual_mid_frac.iter())
+            .map(|(&a, &b)| a.min(b))
+            .collect();
+        let o_out = linear_w8a16_pc(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, &acc_attn);
 
-        // Residual Add 1 (int16): hidden (Eingangs-Segment-Skala) wird auf
-        // die mittere Segment-Skala umreskaliert, dann Addition. Beide
-        // Skalen sind seit Fund 20 per Kanal.
+        // Residual Add 1: beide Operanden auf der Akkumulationsskala, Summe
+        // in i64, DANN eine Reskalierung auf die mittlere Segmentskala und
+        // eine Klemmung. Vor Fund 31 wurde `hidden` einzeln auf die
+        // Zielskala geklemmt, bevor addiert wurde.
         let mut residual = vec![0i16; hs];
         for i in 0..hs {
-            let h_rescaled = clamp_i16(rescale(hidden[i] as i32, sc.residual_in_frac[i], sc.residual_mid_frac[i]));
-            residual[i] = clamp_i16((h_rescaled as i32) + (o_out[i] as i32));
+            let h = rescale_i64(hidden[i] as i64, sc.residual_in_frac[i], acc_attn[i]);
+            let summe = h + o_out[i] as i64;
+            residual[i] = clamp_i16_from_i64(rescale_i64(summe, acc_attn[i], sc.residual_mid_frac[i]));
         }
 
         // === MLP-Block ===
@@ -590,6 +601,12 @@ impl IntegerModel {
         // in ihrer festen Domaene (silu_in_frac/Offset), Gate-Werte werden
         // dorthin reskaliert. out_residual_frac ist seit Fund 20 per Kanal
         // (down_proj addiert direkt in den Residualstrom).
+        let acc_mlp: Vec<u8> = sc
+            .residual_mid_frac
+            .iter()
+            .zip(out_residual_frac.iter())
+            .map(|(&a, &b)| a.min(b))
+            .collect();
         let mlp_out = mlp_int(
             &norm_residual,
             &self.to_vec_vec(&layer.gate_proj),
@@ -606,16 +623,41 @@ impl IntegerModel {
             cfg.silu_in_frac,
             cfg.silu_lut_offset,
             cfg.silu_out_frac,
-            out_residual_frac,
+            &acc_mlp,
         );
 
-        // Final Residual Add: mittleres Segment wird auf die Ausgangs-
-        // Segment-Skala (Eingang des Folge-Layers bzw. der finalen Norm)
-        // umreskaliert, dann Addition. Per Kanal seit Fund 20.
+        // Final Residual Add — Fund 31 (2026-08-20, theta_v 0.17.0).
+        //
+        // Vorher wurde der Residualstrom EINZELN auf die Ausgangsskala
+        // geklemmt und erst dann der MLP-Beitrag addiert. An einer
+        // Ausloeschung zerstoert das den Wert vollstaendig, denn beide
+        // Operanden koennen gross sein, waehrend nur ihre SUMME klein ist —
+        // und die Ausgangsskala ist nach der Summe kalibriert.
+        //
+        // Gemessen an Qwen2.5-0,5B, Ebene 21, Kanal 62 (der Kanal mit der
+        // "massive activation", Sun et al. 2024): Der wahre Wert faellt dort
+        // von 1714 auf 61,6. Mit mid_frac 4 (+-2047,94) und out_frac 9
+        // (+-64,00) ergab die alte Fassung
+        //     Residualstrom  1723,2 -> roh 882 304 -> clamp  32 767 =  64,00
+        //     MLP-Beitrag   -1653,0 -> roh -846 336 -> clamp -32 768 = -64,00
+        //     Summe                                          -1 roh = -0,0020
+        // also -0,002 statt 61,6 — zwei Klemmungen, die einander aufheben.
+        //
+        // Jetzt: Beide Operanden liegen auf der GROEBEREN der beiden Skalen
+        // (kleinerer Shift), dort passen sie hinein; die Summe entsteht in
+        // i64 und wird EINMAL auf die Ausgangsskala reskaliert und EINMAL
+        // geklemmt. Die Aufloesung der groeberen Skala genuegt fuer das
+        // Ergebnis: 61,6 bei Schrittweite 1/16 sind rund 10 Bit.
+        //
+        // Warum `min` und nicht `max`: `linear_w8a16_pc` liefert int16. Auf
+        // einer feinen Skala wuerde der MLP-Beitrag selbst klemmen, bevor er
+        // ueberhaupt addiert werden kann. Die Akkumulationsskala muss also
+        // den OPERANDEN genuegen, nicht dem Ergebnis.
         let mut out = vec![0i16; hs];
         for i in 0..hs {
-            let r_rescaled = clamp_i16(rescale(residual[i] as i32, sc.residual_mid_frac[i], out_residual_frac[i]));
-            out[i] = clamp_i16((r_rescaled as i32) + (mlp_out[i] as i32));
+            let r = rescale_i64(residual[i] as i64, sc.residual_mid_frac[i], acc_mlp[i]);
+            let summe = r + mlp_out[i] as i64;
+            out[i] = clamp_i16_from_i64(rescale_i64(summe, acc_mlp[i], out_residual_frac[i]));
         }
 
         out

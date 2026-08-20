@@ -402,6 +402,31 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.15.0 – 2026-08-20 (θ_v 0.16.0/0.17.0: Softmax-Auflösung, Residual-Addition)
+
+**θ_v 0.17.0 — Fund 31: doppelte Klemmung in der Residual-Addition.**
+Beide Residual-Additionen klemmten den eingehenden Residualstrom
+**einzeln** auf die Ausgangsskala, bevor der Blockbeitrag addiert wurde.
+An einer Auslöschung zerstört das den Wert: Beide Operanden können groß
+sein, während nur ihre Summe klein ist — und die Ausgangsskala ist nach
+der Summe kalibriert. Gemessen an Ebene 21, Kanal 62 (der Kanal mit der
+*massive activation*): wahrer Wert 61,56, unser Wert **−0,002**. Jetzt
+wird auf der **gröberen** der beiden Skalen in i64 addiert und **einmal**
+reskaliert und geklemmt: **63,998**. Mittlerer Ebenenfehler an Position 0
+von 8,56 % auf 4,96 %; 0,5B-Perplexität **+2,49 % → +2,11 %**.
+
+**θ_v 0.16.0 — Softmax-Auflösung.** `exp_input_frac_bits` 4 → 8,
+`exp_lut_frac_bits` und `prob_frac_bits` 8 → 14. Auf 128-Token-Sequenzen
+nicht messbar, aber bei `prob_frac_bits = 8` rundet jedes Gewicht unter
+1/512 einzeln auf null: Ab etwa 512 Positionen verschwindet der gesamte
+Schwanz der Aufmerksamkeitsverteilung. Korrektheitsfix für lange Kontexte,
+nicht Optimierung.
+
+**Gehärtet:** `tests/golden/validate.py` meldete bei einem eine Ebene zu
+tiefen Pfad „0 passed, 0 failed" mit Exit 0 — eine Nullmessung als Erfolg.
+Bricht jetzt mit Exit 2 ab, wenn es keine Vektoren findet, und korrigiert
+den Pfad selbst.
+
 ### v0.14.0 – 2026-08-20 (θ_v 0.15.0: SiLU-Auflösung, GPTQ standardmäßig aus)
 
 **7B: 9,40 → 9,33** (+8,29 % → **+7,49 %** gegen die BF16-Baseline 8,68).

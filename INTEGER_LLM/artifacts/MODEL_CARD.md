@@ -39,6 +39,8 @@ ohne umgeschrieben zu werden.
 | Division | ausschließlich arithmetischer Rechtsshift | Whitepaper Kap. 6.2, Anhang B.5.4 |
 | Überlauf | `explicit_clamp_only`, `wrap = false` | `theta_v/spec.json` |
 | Nichtlinearitäten | LUT (SiLU-Eingangsraster **1/64**, Ausgang **1/256**) | θ_v 0.15.0 |
+| Softmax | exp-LUT Eingangsraster **1/256**, Ausgang **1/16384**, Wahrscheinlichkeiten **1/16384** | θ_v 0.16.0 |
+| Residual-Addition | Akkumulation auf der gröberen Segmentskala je Kanal, Summe in i64, **eine** Rundung | θ_v 0.17.0 |
 | Sampling | greedy, deterministisch; `tie_breaking = lowest_index` | `theta_v/spec.json` |
 | GPTQ | **standardmäßig aus** (`INTEGER_LLM_GPTQ=1` für die Auslieferung) | 2026-08-20, siehe §6 |
 
@@ -67,8 +69,8 @@ noch nicht behoben.
 | | 0,5B | 7B |
 |---|---|---|
 | **Determinismus** (Zielwert 8/8) | **8/8** ✓ | **8/8** ✓ |
-| Perplexität Integer / BF16 | 15,29 / 14,95 | **9,33** / 8,68 |
-| Abstand | **+2,25 %** (Kriterium ≤5 % erfüllt) | **+7,49 %** (Kriterium offen) |
+| Perplexität Integer / BF16 | 15,27 / 14,95 | **8,78** / 8,68 |
+| Abstand | **+2,11 %** (Kriterium ≤5 % erfüllt) | **+1,14 %** (Kriterium ≤5 % erfüllt) |
 | Identische Generierungen (Gütezahl) | 3/8 | 5/8 |
 | Deckungsgleiche Token (Gütezahl) | 65,0 % | 73,8 % |
 

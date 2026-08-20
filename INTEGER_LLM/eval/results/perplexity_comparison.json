@@ -1,7 +1,7 @@
 {
   "baseline_perplexity": 14.953218401528314,
-  "integer_perplexity": 15.325399561684636,
-  "delta_pct": 2.4889702682218706,
+  "integer_perplexity": 15.269232136104888,
+  "delta_pct": 2.1133492876976576,
   "acceptance_pct": 5.0,
   "accepted": true,
   "evaluated_tokens": 435,
@@ -9,26 +9,26 @@
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -324.036783,
-      "perplexity": 12.826
+      "sum_logp": -324.25384,
+      "perplexity": 12.8479
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -299.435596,
-      "perplexity": 10.5673
+      "sum_logp": -297.741393,
+      "perplexity": 10.4272
     },
     {
       "tokens": 128,
       "evaluated": 127,
-      "sum_logp": -381.57904,
-      "perplexity": 20.1773
+      "sum_logp": -381.7264,
+      "perplexity": 20.2007
     },
     {
       "tokens": 55,
       "evaluated": 54,
-      "sum_logp": -182.286107,
-      "perplexity": 29.2438
+      "sum_logp": -182.018694,
+      "perplexity": 29.0994
     }
   ]
 }

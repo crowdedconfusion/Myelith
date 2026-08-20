@@ -32,7 +32,16 @@
 //!
 //! Kein Teil des Auslieferungspfads.
 //!
-//! Usage: attn_probe <artifact_dir> <token_id> [<token_id> ...]
+//! **`--ebene N` (2026-08-20).** Bis dahin mass die Sonde ausschliesslich
+//! Ebene 0 — und genau dort existiert die *massive activation* noch nicht:
+//! Kanal 62 traegt an Ebene 0 den Wert 0,75 und erst ab Ebene 2 rund 800
+//! bis 1700 (Fund 31). Die Positionsanalyse hat gezeigt, dass der
+//! Ebenenfehler genau an **Ebene 2** von 3 % auf 7–11 % springt. Eine Sonde,
+//! die nur Ebene 0 kennt, kann darueber nichts sagen. Mit `--ebene N` laeuft
+//! der echte Pfad durch die Ebenen 0..N-1 (und fuellt dabei den KV-Cache),
+//! danach wird Ebene N isoliert vermessen.
+//!
+//! Usage: attn_probe <artifact_dir> <token_id> [<token_id> ...] [--ebene N]
 
 use integer_llm_kernels::attention::attention_int;
 use integer_llm_kernels::fixed_point::{clamp_i16, inv_sqrt_q15, rescale};
@@ -86,14 +95,22 @@ fn main() {
         std::process::exit(1);
     }
     let dir = std::path::PathBuf::from(&args[1]);
+    let ebene: usize = args
+        .iter()
+        .position(|a| a == "--ebene")
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.parse().expect("--ebene braucht eine Zahl"))
+        .unwrap_or(0);
     let tokens: Vec<usize> = args[2..]
         .iter()
+        .take_while(|s| !s.starts_with("--"))
         .map(|s| s.parse().expect("token_id"))
         .collect();
 
     let model = load_model(&dir).expect("Modell-Ladung");
     let cfg = &model.config;
-    let layer = &model.layers[0];
+    assert!(ebene < model.layers.len(), "Ebene {} existiert nicht", ebene);
+    let layer = &model.layers[ebene];
     let sc = &layer.scales;
     let hd = model.head_dim;
     let half = hd / 2;
@@ -107,18 +124,30 @@ fn main() {
     let mut vs: Vec<Vec<i16>> = Vec::new();
     let mut qs_roh: Vec<Vec<i16>> = Vec::new();
     let mut ks_roh: Vec<Vec<i16>> = Vec::new();
+    // Bei Ebene > 0 muss der Eingang aus dem ECHTEN Pfad kommen, nicht aus
+    // einer Nachbildung — genau daran ist die MLP-Sonde schon einmal
+    // gescheitert (sechster Instrumentenfehler). `forward_token_dump`
+    // liefert je Ebene den Residualstrom samt Per-Kanal-Shifts und fuellt
+    // dabei den KV-Cache wie im Auslieferungspfad.
+    let mut cache = integer_llm_runtime::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
     for (pos, &tok) in tokens.iter().enumerate() {
-        let emb = model.embedding_table.row(tok);
-        let es = model.embedding_table.shifts[tok];
-        let hidden: Vec<i16> = emb
-            .iter()
-            .zip(sc.residual_in_frac.iter())
-            .map(|(v, &z)| {
-                clamp_i16(integer_llm_kernels::fixed_point::rescale_i64(
-                    *v as i64, es, z,
-                ) as i32)
-            })
-            .collect();
+        let hidden: Vec<i16> = if ebene == 0 {
+            let emb = model.embedding_table.row(tok);
+            let es = model.embedding_table.shifts[tok];
+            emb.iter()
+                .zip(sc.residual_in_frac.iter())
+                .map(|(v, &z)| {
+                    clamp_i16(integer_llm_kernels::fixed_point::rescale_i64(
+                        *v as i64, es, z,
+                    ) as i32)
+                })
+                .collect()
+        } else {
+            let (_, dump) = model.forward_token_dump(tok, pos, &mut cache);
+            // dump[i] ist die Ausgabe von Ebene i, also der Eingang von
+            // Ebene i+1 — und traegt bereits deren residual_in_frac.
+            dump[ebene - 1].0.clone()
+        };
         let nh = integer_llm_kernels::rmsnorm::rmsnorm_i16(
             &hidden,
             &sc.residual_in_frac,
@@ -177,7 +206,7 @@ fn main() {
     }
 
     let n = tokens.len();
-    println!("Kopf 0, {} Positionen, head_dim={} (mit RoPE)", n, hd);
+    println!("Ebene {}, Kopf 0, {} Positionen, head_dim={} (mit RoPE)", ebene, n, hd);
     println!(
         "Skalen: q_frac={} k_frac={} v_frac={} attn_out_frac={} prob_frac_bits={} rope_frac={}",
         sc.q_frac, sc.k_frac, sc.v_frac, sc.attn_out_frac, cfg.prob_frac_bits, cfg.rope_frac_bits

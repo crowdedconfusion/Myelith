@@ -20,8 +20,9 @@ out in **Whitepaper v0.3**:
 [English (PDF)](README/Whitepaper/myelith-whitepaper-v0.3-en.pdf).
 
 Every technical term — from the bisection game to fixed-point arithmetic —
-is explained in the **[glossary](README/Glossar.md)** (in German), with
-worked examples and pointers to the corresponding implementation.
+is explained in the **[glossary](README/Glossary.en.md)**, with worked
+examples and pointers to the corresponding implementation
+([German edition](README/Glossar.md)).
 
 ## Core thesis
 
@@ -37,14 +38,19 @@ the floating-point reference of the same model:
 
 | Model | Integer perplexity | BF16 reference | Gap |
 |---|---|---|---|
-| Qwen2.5-0.5B | 15.29 | 14.95 | **+2.3 %** — criterion ≤5 % met |
-| Qwen2.5-7B | **9.33** | 8.68 | +7.5 % — target ≤5 %, remaining gap documented |
+| Qwen2.5-0.5B | 15.27 | 14.95 | **+2.1 %** — criterion ≤5 % met |
+| Qwen2.5-7B | **8.78** | 8.68 | **+1.1 %** — criterion ≤5 % met |
 
 *The metric is perplexity on WikiText-2 under teacher forcing, on identical
 sequences for both paths; lower is better. "Gap" is the relative premium the
 integer path pays over its own BF16 reference. On 7B that figure stood at
-41.42 before the bug hunts — two implementation errors and a lookup table
-that was too coarse, together a factor of 44.*
+41.42 before the bug hunts — today it is 1.1, which puts it **0.3 points
+above the theoretical floor of the quantisation scheme itself** (+0.84 %,
+measured independently). Getting there took four implementation errors and
+ten instrument errors, all of them documented: the last one clamped both
+summands of the residual addition individually onto the target scale and
+thereby destroyed every cancellation — at one point it produced −0.002
+where 61.6 was correct.*
 
 **Bit-identity here is not a side effect, it is the product.** What matters
 is the agreement of the integer path with itself — across independent runs,

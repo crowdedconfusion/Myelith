@@ -8,11 +8,11 @@
 |---|---|
 | Modell | Qwen/Qwen2.5-7B (Basis-Variante) |
 | FP-Baseline | BF16, HF-Implementierung: Perplexität 8.68 |
-| Integer-Modell | θ_v 0.16.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 9.37 |
+| Integer-Modell | θ_v 0.17.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 8.78 |
 | Datensatz | WikiText-2, Testsplit; 4 Sequenzen à 128 Tokens (435 ausgewertete Positionen) |
-| Relativer Anstieg | **+7.99 %** |
+| Relativer Anstieg | **+1.14 %** |
 | Akzeptanzkriterium | max. 5.0 % relativer Anstieg |
-| **Ergebnis** | **VERFEHLT** |
+| **Ergebnis** | **AKZEPTIERT** |
 
 ## Zwingende Einordnung
 
@@ -24,8 +24,8 @@
    strategie-Effekt und nicht allein der Quantisierung zuzurechnen.
 2. **0,5 Mrd. Parameter sind der ungünstigste Fall für Quantisierung.**
    Größere Modelle sind nachweislich robuster (größere Logit-Spannweiten,
-   gutmütigere Gewichtsverteilungen). Falls das Kriterium verfehlt wurde: Das ist ein Urteil über 0,5B — nicht über die Zielgrößenordnung des Whitepapers.
+   gutmütigere Gewichtsverteilungen). Das Kriterium wurde erreicht; die Übertragbarkeit auf die Zielgrößenordnung bleibt durch die grundsätzliche Robustheit größerer Modelle zusätzlich gestützt.
 
 ## Konsequenz
 
-Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden.
+Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.
