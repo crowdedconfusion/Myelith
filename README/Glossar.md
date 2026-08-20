@@ -2064,12 +2064,3 @@ fest, sondern nimmt `INTEGER_LLM/tests/cargo_paths.py`.
 | Herleitung und Begründung | [`README/Whitepaper/myelith-whitepaper-v0.3.md`](Whitepaper/myelith-whitepaper-v0.3.md) |
 | Ganzzahlige Inferenz im Detail | [`INTEGER_LLM/README/README.md`](../INTEGER_LLM/README/README.md) |
 | Der Numerik-Vertrag | [`INTEGER_LLM/theta_v/spec.json`](../INTEGER_LLM/theta_v/spec.json) |
-
-**Arbeitsintern** (nicht Teil der Veröffentlichung — nur im
-Arbeitsverzeichnis vorhanden):
-
-| Was | Wo |
-|---|---|
-| Architektur, Historie, offene Funde | `README/Intern/State-of-the-Project.md` |
-| Was als Nächstes gebaut wird | `README/Intern/Fahrplan-Master.md` |
-| Einstieg für Coding-Agenten | `AGENTS.md` |

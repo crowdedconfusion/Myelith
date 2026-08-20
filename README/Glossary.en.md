@@ -1988,12 +1988,3 @@ use `INTEGER_LLM/tests/cargo_paths.py`.
 | Integer inference in detail | [`INTEGER_LLM/README/README.md`](../INTEGER_LLM/README/README.md) |
 | The numerics contract | [`INTEGER_LLM/theta_v/spec.json`](../INTEGER_LLM/theta_v/spec.json) |
 | German edition of this glossary | [`README/Glossar.md`](Glossar.md) |
-
-**Working-internal** (not part of the publication — present only in the
-working directory):
-
-| What | Where |
-|---|---|
-| Architecture, history, open findings | `README/Intern/State-of-the-Project.md` |
-| What gets built next | `README/Intern/Fahrplan-Master.md` |
-| Entry point for coding agents | `AGENTS.md` |
