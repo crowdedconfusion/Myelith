@@ -10,11 +10,24 @@ rem Eine Stapeldatei kann selbst kein Symbol tragen; das ist eine Grenze
 rem des Formats, keine Nachlaessigkeit. Die Verknuepfung kann es.
 
 setlocal
-set "WURZEL=%~dp0..\.."
-for %%I in ("%WURZEL%") do set "WURZEL=%%~fI"
+rem Repository-Wurzel durch Aufwaertssuche statt ueber eine feste Tiefe.
+set "WURZEL=%~dp0"
+set /a TIEFE=0
+:suche
+if exist "%WURZEL%TESTCLIENT\myl-testclient\Cargo.toml" goto :gefunden
+set /a TIEFE+=1
+if %TIEFE% GTR 12 (
+    echo Fehler: Myelith-Repository oberhalb von %~dp0 nicht gefunden.
+    goto :ende
+)
+for %%I in ("%WURZEL%..") do set "WURZEL=%%~fI\"
+goto :suche
+:gefunden
 
-set "ZIEL=%WURZEL%\Myelith Testclient - Windows (Batch).cmd"
-set "SYMBOL=%WURZEL%\README\Grafiken\myelith-icon.ico"
+rem Der Starter kann in TESTCLIENT\ oder im Wurzelverzeichnis liegen.
+set "ZIEL=%WURZEL%TESTCLIENT\Myelith Testclient - Windows (Batch).cmd"
+if not exist "%ZIEL%" set "ZIEL=%WURZEL%Myelith Testclient - Windows (Batch).cmd"
+set "SYMBOL=%WURZEL%README\Grafiken\myelith-icon.ico"
 
 if not exist "%ZIEL%" (
     echo Fehler: %ZIEL% nicht gefunden.
@@ -29,7 +42,7 @@ set /p "WAHL=Auswahl [2]: "
 if "%WAHL%"=="1" (
     set "ORT=%USERPROFILE%\Desktop"
 ) else (
-    set "ORT=%WURZEL%"
+    set "ORT=%WURZEL:~0,-1%"
 )
 
 set "LNK=%ORT%\Myelith Testclient.lnk"
@@ -40,7 +53,7 @@ set "VBS=%TEMP%\myl_lnk_%RANDOM%.vbs"
 >  "%VBS%" echo Set s = CreateObject("WScript.Shell")
 >> "%VBS%" echo Set l = s.CreateShortcut("%LNK%")
 >> "%VBS%" echo l.TargetPath = "%ZIEL%"
->> "%VBS%" echo l.WorkingDirectory = "%WURZEL%"
+>> "%VBS%" echo l.WorkingDirectory = "%WURZEL:~0,-1%"
 >> "%VBS%" echo l.IconLocation = "%SYMBOL%"
 >> "%VBS%" echo l.Description = "Myelith Testclient"
 >> "%VBS%" echo l.Save

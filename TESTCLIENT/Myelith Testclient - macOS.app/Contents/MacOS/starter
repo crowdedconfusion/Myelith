@@ -8,13 +8,22 @@
 # mit einer .icns darin und laesst sich versionieren wie jede andere Datei.
 set -eu
 
-# .../Repository/TESTCLIENT/Myelith Testclient - macOS.app/Contents/MacOS/starter
-# -> vier Ebenen hoch ist die Repository-Wurzel.
-WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd -P)
-STARTER="$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"
+# Repository-Wurzel durch Aufwaertssuche, dann den Shell-Starter dort
+# suchen, wo er liegen kann: in TESTCLIENT/ oder im Wurzelverzeichnis.
+# Eine feste Tiefe waere beim naechsten Verschieben wieder kaputt.
+WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+while [ ! -f "$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml" ]; do
+    UEBER=$(dirname -- "$WURZEL")
+    [ "$UEBER" = "$WURZEL" ] && break
+    WURZEL="$UEBER"
+done
+STARTER=""
+for KANDIDAT in "$WURZEL/TESTCLIENT/Myelith Testclient - Linux, macOS (Shell).sh" "$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"; do
+    [ -x "$KANDIDAT" ] && { STARTER="$KANDIDAT"; break; }
+done
 
-if [ ! -x "$STARTER" ]; then
-    osascript -e "display alert \"Myelith Testclient\" message \"Myelith Testclient - Linux, macOS (Shell).sh nicht gefunden unter $WURZEL. Das Buendel gehoert ins Wurzelverzeichnis des Repositories.\"" >/dev/null 2>&1
+if [ -z "$STARTER" ]; then
+    osascript -e "display alert \"Myelith Testclient\" message \"Shell-Starter nicht gefunden unter $WURZEL. Das Buendel gehoert ins Wurzelverzeichnis des Repositories.\"" >/dev/null 2>&1
     exit 1
 fi
 

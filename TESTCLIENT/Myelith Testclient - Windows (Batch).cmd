@@ -17,14 +17,23 @@ rem der erst `Set-ExecutionPolicy` recherchieren muss, fuehrt den Test
 rem seltener aus. Eine .cmd laeuft ohne Vorbedingung.
 
 setlocal
+rem Repository-Wurzel durch Aufwaertssuche bestimmen, nicht ueber eine feste
+rem Tiefe. Die erste Fassung rechnete mit dem Wurzelverzeichnis als
+rem Ablageort und war sofort kaputt, als der Starter verschoben wurde.
 set "WURZEL=%~dp0"
-set "MANIFEST=%WURZEL%TESTCLIENT\myl-testclient\Cargo.toml"
-
-if not exist "%MANIFEST%" (
-    echo Fehler: %MANIFEST% nicht gefunden.
-    echo Dieser Starter gehoert ins Wurzelverzeichnis des Repositories.
+set /a TIEFE=0
+:suche
+if exist "%WURZEL%TESTCLIENT\myl-testclient\Cargo.toml" goto :gefunden
+set /a TIEFE+=1
+if %TIEFE% GTR 12 (
+    echo Fehler: TESTCLIENT\myl-testclient\Cargo.toml oberhalb von %~dp0
+    echo nicht gefunden. Dieser Starter gehoert in ein Myelith-Repository.
     goto :ende
 )
+for %%I in ("%WURZEL%..") do set "WURZEL=%%~fI\"
+goto :suche
+:gefunden
+set "MANIFEST=%WURZEL%TESTCLIENT\myl-testclient\Cargo.toml"
 
 if defined CARGO_TARGET_DIR (
     set "BIN=%CARGO_TARGET_DIR%\release\myl-test.exe"

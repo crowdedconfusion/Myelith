@@ -8,14 +8,25 @@
 
 set -eu
 
-WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
-STARTER="$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"
+# Repository-Wurzel durch Aufwaertssuche, dann den Shell-Starter dort
+# suchen, wo er liegen kann: in TESTCLIENT/ oder im Wurzelverzeichnis.
+# Eine feste Tiefe waere beim naechsten Verschieben wieder kaputt.
+WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+while [ ! -f "$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml" ]; do
+    UEBER=$(dirname -- "$WURZEL")
+    [ "$UEBER" = "$WURZEL" ] && break
+    WURZEL="$UEBER"
+done
+STARTER=""
+for KANDIDAT in "$WURZEL/TESTCLIENT/Myelith Testclient - Linux, macOS (Shell).sh" "$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"; do
+    [ -x "$KANDIDAT" ] && { STARTER="$KANDIDAT"; break; }
+done
 SYMBOL="$WURZEL/README/Grafiken/myelith-icon.png"
 ZIEL="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DATEI="$ZIEL/myelith-testclient.desktop"
 
-if [ ! -x "$STARTER" ]; then
-    echo "Fehler: $STARTER nicht gefunden oder nicht ausfuehrbar." >&2
+if [ -z "$STARTER" ]; then
+    echo "Fehler: Shell-Starter unterhalb von $WURZEL nicht gefunden." >&2
     exit 1
 fi
 

@@ -19,14 +19,22 @@
 
 set -eu
 
+# Repository-Wurzel durch Aufwaertssuche bestimmen, nicht ueber eine feste
+# Tiefe. Die erste Fassung rechnete mit dem Wurzelverzeichnis als Ablageort
+# und war sofort kaputt, als der Starter in TESTCLIENT/ verschoben wurde.
+# Ein Starter, der beim Verschieben bricht, ist ein schlechter Starter.
 WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+while [ ! -f "$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml" ]; do
+    UEBER=$(dirname -- "$WURZEL")
+    if [ "$UEBER" = "$WURZEL" ]; then
+        echo "Fehler: TESTCLIENT/myl-testclient/Cargo.toml oberhalb von" >&2
+        echo "$(dirname -- "$0") nicht gefunden." >&2
+        echo "Dieser Starter gehört in ein Myelith-Repository." >&2
+        exit 1
+    fi
+    WURZEL="$UEBER"
+done
 MANIFEST="$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml"
-
-if [ ! -f "$MANIFEST" ]; then
-    echo "Fehler: $MANIFEST nicht gefunden." >&2
-    echo "Dieser Starter gehört ins Wurzelverzeichnis des Repositories." >&2
-    exit 1
-fi
 
 # Ausgabeort: gemeinsames target-shared/ (siehe .cargo/config.toml), sonst
 # das crate-eigene target/.
