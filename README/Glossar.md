@@ -30,15 +30,6 @@ Jeder Eintrag hat dieselbe Form:
 Wo ein Begriff nur im Zusammenhang Sinn ergibt, steht der Zusammenhang
 davor. Querverweise sind → so markiert.
 
-**Für Coding-Agenten:** Die Abschnitte [A](#a-das-netzwerk-in-einem-absatz),
-[B](#b-determinismus--warum-myelith-ganzzahlig-rechnet) und
-[L](#l-arbeitsweise-des-projekts) sind die wichtigsten. A erklärt, wozu
-das Ganze da ist; B erklärt die eine Entscheidung, aus der fast alles
-andere folgt; L erklärt, wie in diesem Repository gearbeitet wird — und
-warum bestimmte Regeln nicht verhandelbar sind. Wer nur einen Patch
-schreiben will, liest A, B, L und dann den Abschnitt zur betroffenen
-Komponente.
-
 **Stand:** θ_v 0.17.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
 INTEGER_LLM Fahrplanpunkt 12.77. Diese Datei wird bei jeder Änderung an
 Protokollbegriffen mitgezogen (→ [Sieben-Schritt-Doku-Kette](#sieben-schritt-doku-kette)).

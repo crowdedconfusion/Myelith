@@ -29,14 +29,6 @@ Every entry has the same shape:
 Where a term only makes sense in context, the context comes first.
 Cross-references are marked → like this.
 
-**For coding agents:** sections [A](#a-the-network-in-one-paragraph),
-[B](#b-determinism--why-myelith-computes-in-integers) and
-[L](#l-how-this-project-works) matter most. A explains what the thing is
-for; B explains the one decision almost everything else follows from; L
-explains how work is done in this repository — and why certain rules are
-not negotiable. If you only need to write one patch, read A, B, L and
-then the section for the component you're touching.
-
 **Status:** θ_v 0.17.0 · CONSENSUS phases 1–4 · VERIFICATION phases 1–2 ·
 INTEGER_LLM roadmap item 12.77. This file is updated whenever protocol
 terminology changes (→ [seven-step documentation chain](#seven-step-documentation-chain)).
