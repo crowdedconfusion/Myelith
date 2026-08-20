@@ -228,6 +228,36 @@ Python ≥ 3.10. Die Umgebung wird **nur** für die Offline-Phase gebraucht
 — Kalibrierung, Baseline-Messung und den Gleitkomma-Vergleich im
 Benchmark. Die Inferenz selbst braucht kein Python.
 
+### GPTQ ist standardmäßig **aus**
+
+```bash
+scripts/build_artifacts.sh                      # ohne GPTQ (Vorgabe)
+INTEGER_LLM_GPTQ=1 scripts/build_artifacts.sh   # mit, für die Auslieferung
+```
+
+**GPTQ ist ein Ausschlussbeweis, keine Verbesserung.** Gemessen
+(v0.12.28): Der lineare Ausgabefehler sank um 47 % in der Synthetik,
+21–25 % der int8-Werte änderten sich — die Perplexität verbesserte sich
+**nicht** (3 242 → 3 318, also leicht schlechter). Das Ergebnis hat die
+Fehlersuche entscheidend verkürzt, weil es die lineare
+Gewichtsquantisierung als dominante Fehlerquelle ausschloss. Einen
+Nutzen im Auslieferungspfad hat es nicht.
+
+Der Preis ist erheblich: Bei 7B läuft GPTQ schichtweise in vier Gruppen
+und braucht **rund zweieinhalb Stunden** gegenüber etwa zwanzig Minuten
+ohne. Für jede Messung, bei der es um etwas anderes geht — LUT-Auflösung,
+Skalenwahl, Formatfragen —, ist das reine Rechenzeit ohne
+Erkenntnisgewinn, und es verlängert den Rückkopplungskreis einer
+Fehlersuche um den Faktor sieben.
+
+Deshalb: **aus während der Entwicklung, an für die abschließende
+Artefakt-Erstellung**, wenn alles andere feststeht.
+
+**Zwei Artefakte sind nur vergleichbar, wenn sie in dieser Einstellung
+übereinstimmen.** Ein Lauf mit GPTQ gegen einen ohne vermischt zwei
+Änderungen — der Vergleich sagt dann weder etwas über die eine noch über
+die andere.
+
 ### 3. Artefakt erzeugen
 
 ```bash
@@ -371,6 +401,70 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.14.0 – 2026-08-20 (θ_v 0.15.0: SiLU-Auflösung, GPTQ standardmäßig aus)
+
+**7B: 9,40 → 9,33** (+8,29 % → **+7,49 %** gegen die BF16-Baseline 8,68).
+0,5B unverändert bei 15,29 (+2,25 %).
+
+**Die Ursache war die SiLU-LUT, und sie wurde durch einen
+Operationsvergleich gefunden, nicht durch Perplexitätsmessung.**
+`layer_probe` vergleicht jede Stufe einer Ebene gegen eine
+Gleitkomma-Rechnung mit **identischen entquantisierten Gewichten und
+identischem Eingang** — die Differenz ist damit reine Arithmetik:
+
+| Stufe | rel. L2 |
+|---|---|
+| `gate = W_gate·x` | 0,01 % |
+| `up = W_up·x` | 0,02 % |
+| **`silu(gate)` über LUT** | **6,83 %** |
+
+Die Matrixmultiplikationen sind praktisch exakt; der gesamte MLP-Fehler
+entstand in einer Nachschlagetabelle. Zerlegt: 6,68 % aus dem
+Eingangsraster (1/8), 1,56 % aus der Ausgangsauflösung (1/64). Der
+Ausgang belegte **121 von 32 767** — 8,1 Bit lagen brach.
+
+**θ_v 0.14.0 → 0.15.0:**
+
+| Parameter | vorher | jetzt | Grenze |
+|---|---|---|---|
+| `silu.input_frac_bits` | 3 | **6** | 7 scheitert an `lut_lookup` (i16-Index) |
+| `silu.input_range` | [−1024, 1023] | **[−8192, 8191]** | reale Domäne ±128 bleibt |
+| `silu.output_frac_bits` | 6 | **8** | 9 sprengt die LUT-Einträge (65 528) |
+
+Die reale Domäne ±128 ist **nötig**, nicht großzügig: Das kalibrierte
+Gate-AbsMax reicht bis 77,0 (7B). Beide Parameter stehen jetzt auf ihrem
+implementierbaren Maximum.
+
+**GPTQ läuft standardmäßig nicht mehr mit** (`INTEGER_LLM_GPTQ=1` für die
+Auslieferung). Gemessen: **exakt neutral** — 9,40 mit und ohne, auf zwei
+Nachkommastellen identisch. Zusammen mit dem alten Befund (3 242 →
+3 318) hat GPTQ in keiner gemessenen Konfiguration je genützt, kostet
+bei 7B aber 2,5 Stunden statt 20 Minuten.
+
+**Der Vergleich war nur deshalb aussagekräftig, weil beide Läufe in der
+GPTQ-Einstellung übereinstimmten.** Die bisherige Referenz 9,40 stammte
+aus einem Lauf **mit** GPTQ; ein direkter Vergleich hätte zwei
+Änderungen vermischt. Der zusätzliche Referenzlauf (θ_v 0.14.0 ohne
+GPTQ → ebenfalls 9,40) kostete 25 Minuten und war die einzige
+Möglichkeit, den Anteil zu trennen.
+
+**Was das methodisch klärt:** Die Referenzsimulation hatte für das
+SiLU-Raster ~0 % Perplexitätswirkung vorhergesagt, der Tensorvergleich
+6,83 % Fehler. Die Messung entscheidet zugunsten des Tensorvergleichs —
+er taugt also zur **Priorisierung**, nicht nur zur Lokalisierung. Die
+Simulation bildete die Wechselwirkung mit der nachfolgenden
+Multiplikation und Reskalierung nicht ab.
+
+**Konformitätsvektoren neu erzeugt** — sie sind θ_v-gebunden und
+brachen erwartungsgemäß (6/30), was die Bindung bestätigt.
+
+**Offen:** +7,49 % gegen ein Kriterium von ≤ 5 %, es fehlen 2,49
+Prozentpunkte. Nächster Schritt in derselben, jetzt belegten Richtung:
+`integer_math::lut_lookup` auf i32-Indizes umstellen — numerisch
+folgenlos, macht `input_frac_bits = 7` erreichbar (Tensorfehler dann
+~0,42 % statt 0,84 %).
+
 
 ### v0.13.4 – 2026-08-20 (SIMD wirkt: vektorisiertes Skalarprodukt)
 

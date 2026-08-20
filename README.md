@@ -34,13 +34,14 @@ Gleitkomma-Referenz desselben Modells gemessen:
 | Modell | Integer-Perplexität | BF16-Referenz | Abstand |
 |---|---|---|---|
 | Qwen2.5-0,5B | 15,29 | 14,95 | **+2,3 %** — Kriterium ≤5 % erfüllt |
-| Qwen2.5-7B | **9,40** | 8,68 | +8,3 % — Ziel ≤5 %, Restweg dokumentiert |
+| Qwen2.5-7B | **9,33** | 8,68 | +7,5 % — Ziel ≤5 %, Restweg dokumentiert |
 
 *Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
 Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
 relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
-Bei 7B lag dieser Wert vor der letzten Fehlersuche bei 41,42 — zwei
-Implementierungsfehler, ein Faktor 45.*
+Bei 7B lag dieser Wert vor den Fehlersuchen bei 41,42 — zwei
+Implementierungsfehler und eine zu grobe SiLU-Nachschlagetabelle,
+zusammen ein Faktor 44.*
 
 **Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
 ankommt, ist die Übereinstimmung des Integer-Pfads mit sich selbst — über
@@ -81,7 +82,7 @@ Jede Komponente hat einen eigenen Ordner mit Fahrplan, Design-Entscheidungen und
 
 | Komponente | Aufgabe | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+2,3 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft. NEON-Backend **+31 % (0,5B) / +50 % (7B)** bei bitgleicher Ausgabe. **Auf 7B +8,29 % nach Behebung zweier Implementierungsfehler (vorher +377 %); Kriterium noch nicht erreicht** — der einzige offene Punkt der Komponente. Durchsatz, [Modellkarte](INTEGER_LLM/artifacts/MODEL_CARD.md) und eine durchgespielte Erstinferenz-Anleitung liegen vor |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exakte Ganzzahl-Inferenz (Rust + Python) | Kernthese auf 0,5B empirisch bestätigt (+2,3 % gegenüber der Gleitkomma-Baseline), Mehrknoten-Pipeline läuft. NEON-Backend **+31 % (0,5B) / +50 % (7B)** bei bitgleicher Ausgabe. **Auf 7B +7,49 % (vorher +377 %); Kriterium noch nicht erreicht** — der einzige offene Punkt der Komponente. Durchsatz, [Modellkarte](INTEGER_LLM/artifacts/MODEL_CARD.md) und eine durchgespielte Erstinferenz-Anleitung liegen vor |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | Kern-Datentypen, Kryptografie (VRF, BLS, Merkle, Erasure) | Phase 1 + 2 abgeschlossen (Golden Vectors, Fuzz-Harness, Konformitätspaket). BLS mit Proof-of-Possession gegen Rogue-Key-Angriffe, mit ausführbarer Regression; Erasure-Codierung über GF(2⁸) in Cauchy-Form |
 | [NETWORKING](NETWORKING/README/README.md) | P2P-Gossip, Peer-Discovery, Latenztopologie | Phase 1 + 2 abgeschlossen (Paarlatenzmessung, LatencyGraph, Geo-/AS-Diversität) |
 | [CONSENSUS](CONSENSUS/README/README.md) | Ledger, BFT, Slashing | Phase 1–3 abgeschlossen — signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, Double-Signing-Beweis und Rundenwechsel mit Sperrmechanik. **Safety und Liveness**, Akzeptanz-Testmatrix über 21 simulierte Validatoren durchlaufen. **Alle vier Phasen abgeschlossen** — dazu PoI-Bündel-Einreichung, Epochenabschluss und Datenverfügbarkeit (Reed-Solomon k=8/m=4, Aufbewahrung über die Streitfrist) |

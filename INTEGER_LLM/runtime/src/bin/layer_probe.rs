@@ -13,7 +13,30 @@ use integer_llm_kernels::rmsnorm::rmsnorm_i16;
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_runtime::loader::load_model;
 
+/// Gibt bei `--full` alle Werte in Realeinheiten aus.
+///
+/// **Warum das noetig wurde (2026-08-20):** Die Zusammenfassung zeigt
+/// AbsMax und die ersten acht Werte. AbsMax misst genau den einen
+/// Ausreisserkanal; acht von 3584 Werten sind eine Stichprobe ohne
+/// Aussagekraft ueber den Rest. Fuer den Vergleich mit der Referenz
+/// braucht es ein Bulk-Mass ueber alle Kanaele.
+fn voll(name: &str, werte: &[i16], shifts_oder_frac: Result<&[u8], u8>) {
+    if !std::env::args().any(|a| a == "--full") {
+        return;
+    }
+    print!("FULL {}", name.replace(' ', "_"));
+    for (i, v) in werte.iter().enumerate() {
+        let s = match shifts_oder_frac {
+            Ok(sh) => sh[i],
+            Err(f) => f,
+        };
+        print!(" {:.8}", *v as f64 * 2f64.powi(-(s as i32)));
+    }
+    println!();
+}
+
 fn summary(name: &str, v: &[i16], frac: u8) {
+    voll(name, v, Err(frac));
     let absmax = v.iter().map(|x| x.abs() as i32).max().unwrap_or(0);
     let head: Vec<String> = v.iter().take(8).map(|x| x.to_string()).collect();
     let real_scale = 2f64.powi(-(frac as i32));
@@ -31,6 +54,7 @@ fn summary(name: &str, v: &[i16], frac: u8) {
 /// (Fund 20, theta_v 0.11.0) - jeder Kanal wird mit SEINEM eigenen Shift
 /// in Realwerte umgerechnet, statt mit einem gemeinsamen "frac".
 fn summary_pc(name: &str, v: &[i16], shifts: &[u8]) {
+    voll(name, v, Ok(shifts));
     let real: Vec<f64> = v.iter().zip(shifts.iter())
         .map(|(x, &s)| *x as f64 * 2f64.powi(-(s as i32)))
         .collect();
@@ -216,6 +240,157 @@ fn main() {
         sc.norm_mlp_frac,
     );
     summary("S6 norm_residual", &norm_residual, sc.norm_mlp_frac);
+
+    // ── MLP-Innenleben (2026-08-20, Fahrplanpunkt 12.77) ─────────────
+    // Der operationsweise Vergleich hat den Fehler auf das MLP
+    // eingegrenzt (+2,65 pp relativer L2 in einem Schritt). Die
+    // Teilstufen werden hier mit denselben Kernel-Primitiven nachgebildet
+    // und unten gegen den echten `mlp_int`-Aufruf geprueft — sonst
+    // vermaesse sich die Sonde an ihrer eigenen Nachbildung.
+    {
+        let gate = linear_w8a16(
+            &norm_residual,
+            &to_vec_vec(&layer.gate_proj),
+            &layer.gate_proj.shifts,
+            sc.norm_mlp_frac,
+            sc.gate_frac,
+        );
+        summary("M1 gate", &gate, sc.gate_frac);
+        let up = linear_w8a16(
+            &norm_residual,
+            &to_vec_vec(&layer.up_proj),
+            &layer.up_proj.shifts,
+            sc.norm_mlp_frac,
+            sc.up_frac,
+        );
+        summary("M2 up", &up, sc.up_frac);
+
+        let mut aktiviert = Vec::with_capacity(gate.len());
+        for g in gate.iter() {
+            let d = rescale(*g as i32, sc.gate_frac, cfg.silu_in_frac);
+            aktiviert.push(integer_llm_kernels::integer_math::lut_lookup(
+                d as i16,
+                &model.silu_lut,
+                0,
+                cfg.silu_lut_offset,
+            ));
+        }
+        summary("M3 silu", &aktiviert, cfg.silu_out_frac);
+
+        let mut h = Vec::with_capacity(gate.len());
+        for (a, u) in aktiviert.iter().zip(up.iter()) {
+            h.push(integer_llm_kernels::fixed_point::clamp_i16_from_i64(
+                integer_llm_kernels::fixed_point::rescale_i64(
+                    (*a as i64) * (*u as i64),
+                    cfg.silu_out_frac + sc.up_frac,
+                    sc.down_in_frac,
+                ),
+            ));
+        }
+        summary("M4 h(silu*up)", &h, sc.down_in_frac);
+
+        // ── Gleitkomma-Gegenrechnung mit DENSELBEN Gewichten ─────────
+        // Beide Seiten benutzen die entquantisierten Artefakt-Gewichte
+        // und denselben Eingang. Die Differenz ist damit reine
+        // Arithmetik — Gewichtsquantisierung und Eingangsfehler fallen
+        // heraus. Das ist der Schnitt, den eine Gleitkomma-Referenz aus
+        // HF nicht liefern kann, weil dort andere Gewichte stehen.
+        let x_f: Vec<f64> = norm_residual
+            .iter()
+            .map(|v| *v as f64 * 2f64.powi(-(sc.norm_mlp_frac as i32)))
+            .collect();
+        let matvec = |qt: &_, shifts: &[u8], zeilen: usize| -> Vec<f64> {
+            (0..zeilen)
+                .map(|r| {
+                    let w = to_vec_vec(qt)[r].clone();
+                    let s = 2f64.powi(-(shifts[r] as i32));
+                    w.iter().zip(x_f.iter()).map(|(a, b)| (*a as f64) * s * b).sum()
+                })
+                .collect()
+        };
+        let gate_f = matvec(&layer.gate_proj, &layer.gate_proj.shifts, gate.len());
+        let up_f = matvec(&layer.up_proj, &layer.up_proj.shifts, up.len());
+        let silu_f: Vec<f64> = gate_f.iter().map(|g| g / (1.0 + (-g).exp())).collect();
+        let h_f: Vec<f64> = silu_f.iter().zip(up_f.iter()).map(|(a, b)| a * b).collect();
+
+        let rel = |ganz: &[i16], frac: u8, gleit: &[f64]| -> f64 {
+            let s = 2f64.powi(-(frac as i32));
+            let mut num = 0.0;
+            let mut den = 0.0;
+            for (v, r) in ganz.iter().zip(gleit.iter()) {
+                let d = *v as f64 * s - r;
+                num += d * d;
+                den += r * r;
+            }
+            100.0 * (num / den.max(1e-30)).sqrt()
+        };
+
+        println!("Relativer L2 gegen Gleitkomma mit DENSELBEN Gewichten:");
+        println!("  M1 gate       : {:6.2} %", rel(&gate, sc.gate_frac, &gate_f));
+        println!("  M2 up         : {:6.2} %", rel(&up, sc.up_frac, &up_f));
+        println!("  M3 silu       : {:6.2} %", rel(&aktiviert, cfg.silu_out_frac, &silu_f));
+        println!("  M4 h(silu*up) : {:6.2} %", rel(&h, sc.down_in_frac, &h_f));
+
+        // Was braechte eine feinere SiLU-Ausgangsskala? Der Kernel
+        // speichert silu(x) als round(silu(x) * 2^silu_out_frac). Die
+        // Wirkung einer anderen Skala laesst sich hier direkt ausrechnen,
+        // ohne die LUT neu zu erzeugen — das macht den theta_v-Vorschlag
+        // pruefbar, bevor irgendetwas kalibriert wird.
+        println!("Vorhersage: SiLU-Ausgangsskala variiert (heute {}):", cfg.silu_out_frac);
+        for bits in [cfg.silu_out_frac, 10, 12, 13, 14] {
+            let s = 2f64.powi(bits as i32);
+            let mut num = 0.0;
+            let mut den = 0.0;
+            let mut max_q = 0i64;
+            for r in silu_f.iter() {
+                let q = (r * s).round();
+                max_q = max_q.max(q.abs() as i64);
+                let d = q / s - r;
+                num += d * d;
+                den += r * r;
+            }
+            let passt = if max_q <= 32767 { "passt in int16" } else { "UEBERLAUF" };
+            println!(
+                "  out_frac={:2}: rel. L2 {:6.3} %   max={:6}  {}",
+                bits, 100.0 * (num / den.max(1e-30)).sqrt(), max_q, passt
+            );
+        }
+
+        // Der Eingang der LUT wird auf silu_in_frac gerastert (heute 3,
+        // also 1/8), bevor nachgeschlagen wird. Beide Raster wirken
+        // zusammen; hier getrennt ausgewiesen, damit klar ist, an
+        // welcher Schraube zu drehen ist.
+        println!("Vorhersage: SiLU-EINGANGSraster variiert (heute {}), Ausgang exakt:",
+                 cfg.silu_in_frac);
+        for bits in [cfg.silu_in_frac, 5, 6, 8] {
+            let s = 2f64.powi(bits as i32);
+            let mut num = 0.0;
+            let mut den = 0.0;
+            for g in gate_f.iter() {
+                let gq = (g * s).round() / s;
+                let r = g / (1.0 + (-g).exp());
+                let d = gq / (1.0 + (-gq).exp()) - r;
+                num += d * d;
+                den += r * r;
+            }
+            println!("  in_frac={:2} (Raster 1/{:<3}): rel. L2 {:6.3} %",
+                     bits, 1u32 << bits, 100.0 * (num / den.max(1e-30)).sqrt());
+        }
+
+        println!("Ausnutzung des int16-Bereichs (32767) je Stufe:");
+        for (name, w) in [("M1 gate", &gate), ("M2 up", &up), ("M3 silu", &aktiviert), ("M4 h", &h)] {
+            let am = w.iter().map(|x| x.abs() as i32).max().unwrap_or(0);
+            let sat = w.iter().filter(|v| v.abs() == i16::MAX).count();
+            println!(
+                "  {:<8} absmax={:6} = {:5.2} % -> {:.1} Bit ungenutzt, gesaettigt {}",
+                name,
+                am,
+                100.0 * am as f64 / 32767.0,
+                if am > 0 { (32767f64 / am as f64).log2() } else { 0.0 },
+                sat
+            );
+        }
+    }
 
     let mlp_out = mlp_int(
         &norm_residual,

@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.14.0",
+    "version": "0.15.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -92,12 +92,12 @@
       "silu": {
         "method": "lut",
         "input_range": [
-          -1024,
-          1023
+          -8192,
+          8191
         ],
-        "input_frac_bits": 3,
-        "output_frac_bits": 6,
-        "note": "Theta_v 0.9.0 (Fund-14-Folge, Eskalation Nichtlinearitäten): Eingangsraster von 0,5 auf 0,125 Einheiten verfeinert (input_frac_bits 1 -> 3), gleiche reale Domäne [-128, 127.875]. Die lineare Gewichtsquantisierung war durch GPTQ als dominante Fehlerquelle ausgeschlossen; das grobe SiLU-Eingangsraster (0,5) im dominanten MLP-Pfad ist der Top-Kandidat für die Bulk-Abweichung ab Ebene 3."
+        "input_frac_bits": 6,
+        "output_frac_bits": 8,
+        "note": "Theta_v 0.15.0 (Fahrplanpunkt 12.77): Eingangsraster von 0,125 auf 0,015625 verfeinert (input_frac_bits 3 -> 6), Ausgangsaufloesung von 1/64 auf 1/256 (output_frac_bits 6 -> 8). Reale Domaene unveraendert [-128, 127.984]; sie wird gebraucht, das kalibrierte Gate-AbsMax reicht bis 77,0 (7B). Anlass: Der operationsweise Vergleich (layer_probe, relativer L2 gegen Gleitkomma mit IDENTISCHEN Gewichten und Eingang) zeigte, dass die Matrixmultiplikationen des MLP praktisch exakt sind (0,01 % / 0,02 %), der gesamte MLP-Fehler aber in der SiLU-LUT entsteht (6,83 %) - davon 6,68 % aus dem Eingangsraster und 1,56 % aus der Ausgangsaufloesung. Der Ausgang belegte 121 von 32767, also 8,1 Bit ungenutzt. Grenzen: input_frac_bits 7 waere numerisch moeglich (Offset 16384 passt in i16), scheitert aber an integer_math::lut_lookup - dort wird der Index in i16 gerechnet, und `lut.len() as i16 - 1` laeuft bei 32768 Eintraegen ueber. output_frac_bits 9 wuerde die LUT-Eintraege sprengen (127.984 * 512 = 65528 > 32767)."
       },
       "softmax": {
         "method": "lut_exp",

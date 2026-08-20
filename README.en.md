@@ -34,12 +34,13 @@ the floating-point reference of the same model:
 | Model | Integer perplexity | BF16 reference | Gap |
 |---|---|---|---|
 | Qwen2.5-0.5B | 15.29 | 14.95 | **+2.3 %** — criterion ≤5 % met |
-| Qwen2.5-7B | **9.40** | 8.68 | +8.3 % — target ≤5 %, remaining gap documented |
+| Qwen2.5-7B | **9.33** | 8.68 | +7.5 % — target ≤5 %, remaining gap documented |
 
 *The metric is perplexity on WikiText-2 under teacher forcing, on identical
 sequences for both paths; lower is better. "Gap" is the relative premium the
 integer path pays over its own BF16 reference. On 7B that figure stood at
-41.42 before the last bug hunt — two implementation errors, a factor of 45.*
+41.42 before the bug hunts — two implementation errors and a lookup table
+that was too coarse, together a factor of 44.*
 
 **Bit-identity here is not a side effect, it is the product.** What matters
 is the agreement of the integer path with itself — across independent runs,
@@ -81,7 +82,7 @@ tests:
 
 | Component | Task | Status |
 |---|---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exact integer inference (Rust + Python) | core thesis empirically confirmed on 0.5B (+2.3 % against the floating-point baseline), multi-node pipeline running. NEON backend **+31 % (0.5B) / +50 % (7B)** at bit-identical output. **On 7B +8.3 % after fixing two implementation defects (previously +377 %); criterion not yet met** — the component's only remaining item. Throughput figures, a [model card](INTEGER_LLM/artifacts/MODEL_CARD.md), and a walked-through first-inference guide are in place |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | bit-exact integer inference (Rust + Python) | core thesis empirically confirmed on 0.5B (+2.3 % against the floating-point baseline), multi-node pipeline running. NEON backend **+31 % (0.5B) / +50 % (7B)** at bit-identical output. **On 7B +7.49 % (previously +377 %); criterion not yet met** — the component's only remaining item. Throughput figures, a [model card](INTEGER_LLM/artifacts/MODEL_CARD.md), and a walked-through first-inference guide are in place |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | core data types, cryptography (VRF, BLS, Merkle, erasure coding) | Phases 1 + 2 complete (golden vectors, fuzz harness, conformance package). BLS with proof-of-possession against rogue-key attacks, with an executable regression test; erasure coding over GF(2⁸) in Cauchy form |
 | [NETWORKING](NETWORKING/README/README.md) | P2P gossip, peer discovery, latency topology | Phases 1 + 2 complete (pairwise latency measurement, LatencyGraph, geo/AS diversity) |
 | [CONSENSUS](CONSENSUS/README/README.md) | ledger, BFT, slashing | Phases 1–3 complete — signed, stake-and-work-weighted BFT with VRF-rotating committee election, double-signing proof, and round change with locking. **Safety and liveness**, acceptance test matrix run over 21 simulated validators. **all four phases complete** — including PoI bundle submission, epoch closing, and data availability (Reed-Solomon k=8/m=4, retention across the dispute window) |

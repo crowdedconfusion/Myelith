@@ -1,0 +1,5 @@
+# Zwischengespeicherte Aktivierungs-Absmax der Diagnoselaeufe.
+# Laufdaten je Modell, kein Quelltext.
+.absmax_*.pkl
+.kvmax_*.pkl
+__pycache__/

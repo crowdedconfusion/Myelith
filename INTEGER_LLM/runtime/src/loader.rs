@@ -1573,7 +1573,23 @@ mod tests {
         assert_eq!(model.final_norm_frac, 2);
         assert_eq!(model.final_residual_frac, vec![4u8; 4]);
         // Konfigurationswerte kommen aus der eingebetteten spec.json.
-        assert_eq!(model.config.silu_lut_offset, 1024);
+        //
+        // Geprueft wird die BEZIEHUNG, nicht der Zahlenwert: Der Offset
+        // muss das negative untere Ende des SiLU-Eingangsbereichs sein.
+        // Bis 2026-08-20 stand hier `assert_eq!(.., 1024)` — der Wert von
+        // theta_v 0.14.0. Beim Sprung auf 0.15.0 (Eingangsraster 1/8 ->
+        // 1/64, Bereich [-8192, 8191]) schlug der Test fehl, obwohl der
+        // Loader korrekt arbeitete: Er las 8192, wie es sein soll.
+        // Ein festverdrahteter theta_v-Wert in einem Test bricht bei
+        // jeder Spezifikationsaenderung und sagt dabei nichts darueber,
+        // ob der Loader richtig liest.
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../theta_v/spec.json"))
+                .expect("eingebettete spec.json");
+        let bereich_min = spec["theta_v"]["nonlinear"]["silu"]["input_range"][0]
+            .as_i64()
+            .expect("silu.input_range[0]");
+        assert_eq!(model.config.silu_lut_offset as i64, -bereich_min);
 
         fs::remove_dir_all(&dir).ok();
     }

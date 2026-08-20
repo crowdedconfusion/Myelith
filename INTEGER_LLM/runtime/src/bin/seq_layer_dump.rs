@@ -9,7 +9,17 @@
 //!
 //! Kein Teil des Auslieferungspfads.
 //!
-//! Usage: seq_layer_dump <artifact_dir> <token_id> [<token_id> ...]
+//! Mit `--full` als letztem Argument werden statt der Zusammenfassung
+//! **alle** Kanalwerte je Ebene ausgegeben (`FULL <ebene> <w0> <w1> ...`).
+//!
+//! **Warum das gebraucht wird (2026-08-20):** AbsMax misst genau den
+//! einen Ausreisserkanal und schweigt ueber die uebrigen. Genau daran ist
+//! schon die v0.12.27-Diagnose haengengeblieben („Reststrom-AbsMax stimmt
+//! in allen 24 Ebenen, aber Bulk-Dimensionen weichen ab"). Fuer die Frage
+//! „akkumuliert der Verlust gleichmaessig oder springt er" braucht es ein
+//! Bulk-Mass ueber alle Kanaele.
+//!
+//! Usage: seq_layer_dump <artifact_dir> <token_id> [<token_id> ...] [--full]
 
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
@@ -39,8 +49,10 @@ fn main() {
         std::process::exit(1);
     }
     let dir = std::path::PathBuf::from(&args[1]);
+    let voll = args.iter().any(|a| a == "--full");
     let tokens: Vec<usize> = args[2..]
         .iter()
+        .filter(|s| !s.starts_with("--"))
         .map(|s| s.parse().expect("token_id muss eine Zahl sein"))
         .collect();
 
@@ -59,6 +71,17 @@ fn main() {
             // KV-Cache für die Folgepositionen füllen.
             let _ = model.forward_token(tok, pos, &mut cache);
         }
+    }
+
+    if voll {
+        for (i, (werte, shifts)) in dump.iter().enumerate() {
+            print!("FULL {}", i);
+            for (v, &s) in werte.iter().zip(shifts.iter()) {
+                print!(" {:.6}", *v as f64 * 2f64.powi(-(s as i32)));
+            }
+            println!();
+        }
+        return;
     }
 
     println!("Sequenz: {:?} (Dump an Position {})", tokens, last);

@@ -161,17 +161,43 @@ def gptq_entscheidung(config: dict) -> tuple:
     """
     Entscheidet, ob GPTQ in diesem Lauf mitlaeuft. Rueckgabe: (bool, Grund).
 
-    **Nachtrag 2026-08-18 (Fahrplan 12.72):** Bis v0.12.43 schaltete diese
-    Funktion GPTQ komplett ab, wenn der Hessian-Bedarf fuer ALLE Ebenen
-    gleichzeitig zwei Drittel des RAM ueberschritt (7B: 45,5 GB). Das war
-    ein Test, ob GPTQs Fehlerkompensation die 7B-Ergebnisse verbessert -
-    ohne GPTQ liess sich das nicht pruefen. Jetzt laeuft GPTQ immer
-    (schichtweise, siehe gptq_group_size); nur INTEGER_LLM_GPTQ=0 schaltet
-    es noch hart ab, fuer schnelle Laeufe ohne Fehlerkompensation.
+    **Standardmaessig AUS (seit 2026-08-20, Entscheidung des
+    Projektinhabers).** GPTQ ist nur noch fuer die abschliessende
+    Artefakt-Erstellung gedacht, wenn alles andere feststeht -
+    einzuschalten mit `INTEGER_LLM_GPTQ=1`.
+
+    **Warum:** GPTQ ist als **Ausschlussbeweis** dokumentiert, nicht als
+    Verbesserung. Gemessen (v0.12.28): Der lineare Ausgabefehler sank um
+    47 % in der Synthetik und 21-25 % der int8-Werte aenderten sich, aber
+    die Perplexitaet verbesserte sich **nicht** (3 242 -> 3 318, also
+    leicht schlechter). Das Ergebnis hat die Fehlersuche entscheidend
+    verkuerzt - es schloss die lineare Gewichtsquantisierung als
+    dominante Fehlerquelle aus - liefert aber keinen Nutzen im
+    Auslieferungspfad.
+
+    Der Preis ist erheblich: Bei 7B laeuft GPTQ schichtweise in vier
+    Gruppen und braucht **rund zweieinhalb Stunden**, gegenueber etwa
+    zwanzig Minuten ohne. Fuer jede Messung, bei der es um etwas anderes
+    geht (LUT-Aufloesung, Skalenwahl, Formatfragen), ist das reine
+    Rechenzeit ohne Erkenntnisgewinn - und es verlaengert den
+    Rueckkopplungskreis einer Fehlersuche um den Faktor sieben.
+
+    **Wichtig fuer Vergleiche:** Zwei Artefakte sind nur vergleichbar,
+    wenn sie in dieser Einstellung uebereinstimmen. Ein Lauf mit GPTQ
+    gegen einen ohne vermischt zwei Aenderungen.
+
+    **Historie:** Bis v0.12.43 schaltete diese Funktion GPTQ ab, wenn der
+    Hessian-Bedarf fuer alle Ebenen gleichzeitig zwei Drittel des RAM
+    ueberschritt (7B: 45,5 GB). Ab v0.12.46 lief es schichtweise und
+    damit immer. Seit 2026-08-20 ist die Voreinstellung wieder aus, nun
+    aber aus Zeitgruenden statt aus Speichergruenden.
     """
     env = os.environ.get("INTEGER_LLM_GPTQ", "").strip()
-    if env in ("0", "aus", "off", "false"):
-        return False, "INTEGER_LLM_GPTQ=0"
+    if env not in ("1", "an", "on", "true"):
+        return False, (
+            "aus (Voreinstellung; INTEGER_LLM_GPTQ=1 schaltet es fuer die "
+            "abschliessende Artefakt-Erstellung ein)"
+        )
     group_size = gptq_group_size(config)
     num_layers = config["num_layers"]
     num_groups = math.ceil(num_layers / group_size)

@@ -1,6 +1,6 @@
 # Modellkarte — Myelith Integer-Artefakte
 
-**Stand:** 2026-08-20 · **θ_v:** 0.14.0 · **Crates:** v0.13.4
+**Stand:** 2026-08-20 · **θ_v:** 0.15.0 · **Crates:** v0.14.0
 
 Diese Karte beschreibt die **quantisierten Artefakte** unter
 `artifacts/`, nicht die Basismodelle. Ein Artefakt ist das Ergebnis
@@ -38,9 +38,9 @@ ohne umgeschrieben zu werden.
 | Residualstrom | Skala **je Kanal** (seit θ_v 0.11.0) | Fund 20 |
 | Division | ausschließlich arithmetischer Rechtsshift | Whitepaper Kap. 6.2, Anhang B.5.4 |
 | Überlauf | `explicit_clamp_only`, `wrap = false` | `theta_v/spec.json` |
-| Nichtlinearitäten | LUT (SiLU-Eingangsraster 0,125) | Fund nach v0.12.29 |
+| Nichtlinearitäten | LUT (SiLU-Eingangsraster **1/64**, Ausgang **1/256**) | θ_v 0.15.0 |
 | Sampling | greedy, deterministisch; `tie_breaking = lowest_index` | `theta_v/spec.json` |
-| GPTQ | **abgeschaltet** | v0.12.43, siehe §6 |
+| GPTQ | **standardmäßig aus** (`INTEGER_LLM_GPTQ=1` für die Auslieferung) | 2026-08-20, siehe §6 |
 
 **Warum ausschließlich Zweierpotenzen:** Eine Skala, die keine
 Zweierpotenz ist, verlangt eine Division. Division ist im Integerpfad
@@ -67,8 +67,8 @@ noch nicht behoben.
 | | 0,5B | 7B |
 |---|---|---|
 | **Determinismus** (Zielwert 8/8) | **8/8** ✓ | **8/8** ✓ |
-| Perplexität Integer / BF16 | 15,29 / 14,95 | 9,40 / 8,68 |
-| Abstand | **+2,3 %** (Kriterium ≤5 % erfüllt) | +8,3 % (Kriterium offen) |
+| Perplexität Integer / BF16 | 15,29 / 14,95 | **9,33** / 8,68 |
+| Abstand | **+2,25 %** (Kriterium ≤5 % erfüllt) | **+7,49 %** (Kriterium offen) |
 | Identische Generierungen (Gütezahl) | 3/8 | 5/8 |
 | Deckungsgleiche Token (Gütezahl) | 65,0 % | 73,8 % |
 
@@ -105,8 +105,8 @@ bf16 liegt an fehlendem Blocking und der `Vec<Vec<i8>>`-Gewichtsablage
 
 | | Wert |
 |---|---|
-| θ_v (Ausführungsspezifikation) | 0.14.0 |
-| Crates (`kernels`/`runtime`/`pipeline`) | v0.13.4 |
+| θ_v (Ausführungsspezifikation) | 0.15.0 |
+| Crates (`kernels`/`runtime`/`pipeline`) | v0.14.0 |
 | Kalibrierung | `calibrate/`, Python 3.12 (uv-venv) |
 | Referenz-Framework | PyTorch 2.13.0, HuggingFace `transformers` |
 | Konformitätsvektoren | 30, eingefroren unter `conformance/vectors/` |
@@ -116,12 +116,18 @@ Loader lehnt Artefakte ab, deren Hash nicht zur geladenen Spezifikation
 passt — eine ältere Kalibrierung läuft nicht stillschweigend unter neuen
 Regeln.
 
-**GPTQ ist abgeschaltet.** Es wurde implementiert und gemessen: Der
-lineare Ausgabefehler sank um 47 % in der Synthetik, die Perplexität
-verbesserte sich **nicht** (3 242 → 3 318). Damit war die lineare
-Gewichtsquantisierung als dominante Fehlerquelle ausgeschlossen — ein
-Zwischenergebnis, das die Suche verkürzt hat, aber keinen Nutzen im
-Auslieferungspfad. Es bleibt als abschaltbarer Baustein erhalten.
+**GPTQ läuft standardmäßig nicht mit** (seit 2026-08-20). Es wurde
+implementiert und gemessen: Der lineare Ausgabefehler sank um 47 % in der
+Synthetik, die Perplexität verbesserte sich **nicht** (3 242 → 3 318).
+Damit war die lineare Gewichtsquantisierung als dominante Fehlerquelle
+ausgeschlossen — ein Zwischenergebnis, das die Suche verkürzt hat, aber
+keinen Nutzen im Auslieferungspfad.
+
+Bei 7B kostet es rund zweieinhalb Stunden gegenüber zwanzig Minuten ohne.
+Für Messläufe ist das reine Rechenzeit; eingeschaltet wird es mit
+`INTEGER_LLM_GPTQ=1` für die abschließende Artefakt-Erstellung. **Welche
+Einstellung ein Artefakt trägt, gehört zu seiner Beschreibung** — zwei
+Artefakte sind nur vergleichbar, wenn sie darin übereinstimmen.
 
 ## 7. Was diese Artefakte **nicht** belegen
 
@@ -135,7 +141,7 @@ Auslieferungspfad. Es bleibt als abschaltbarer Baustein erhalten.
   weiterer Größen ist zusätzlich durch die noch offene **Lizenzprüfung
   je Variante** blockiert (Kap. 10.1 / ETHICS G7 verlangen Apache 2.0
   oder MIT; das gilt nicht automatisch für jede Größe einer Reihe).
-- **Das 5-%-Kriterium ist bei 7B nicht erfüllt.** Es fehlen 3,3
+- **Das 5-%-Kriterium ist bei 7B nicht erfüllt.** Es fehlen 2,49
   Prozentpunkte. Eskalationspfade stehen in `README/Fahrplan-v3.md`, 4.5.
 - **Kein Training.** Diese Artefakte sind Inferenz-Artefakte. Ob das
   Quantisierungsschema im Rückwärtspass trägt, ist ungemessen und der

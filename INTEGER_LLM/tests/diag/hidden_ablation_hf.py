@@ -17,7 +17,7 @@ Verfahren: Der Integer-Hidden-State (Ausgang der finalen RMSNorm, gedumpt
 von runtime/src/bin/final_hidden_dump.rs) wird durch HFs FLOAT-LM-Head
 geschickt. Drei Perplexitaeten:
 
-    A  Integer-Hidden + Integer-LM-Head  = der echte Integer-Wert (40,5)
+    A  Integer-Hidden + Integer-LM-Head  = der echte Integer-Wert
     B  Integer-Hidden + Float-LM-Head    = wird hier gemessen
     C  Float-Hidden   + Float-LM-Head    = die FP-Baseline (8,7)
 
@@ -87,10 +87,18 @@ def main():
     print(f"[ablation] B  Integer-Hidden + Float-LM-Head : Perplexitaet {ppl_b:.2f} "
           f"({n} Positionen)")
     print(f"[ablation] Zum Vergleich:")
-    print(f"[ablation] A  Integer-Hidden + Integer-LM-Head: 40.48 (gemessen)")
+    # Der Vergleichswert war bis 2026-08-20 fest auf 40.48 verdrahtet —
+    # dem Stand VOR den Funden 23/24. Nach deren Behebung liegt der
+    # Integer-Pfad bei 9,40, und die daraus berechnete Prozentaufteilung
+    # war entsprechend unsinnig (sie meldete "98 % im LM-Head", waehrend
+    # der LM-Head tatsaechlich nichts beitraegt). Jetzt ueber die
+    # Umgebung setzbar, damit die Zahl mit dem Messstand mitwandert.
+    ppl_a = float(os.environ.get("INTEGER_PPL", "9.40"))
+    print(f"[ablation] A  Integer-Hidden + Integer-LM-Head: {ppl_a:.2f} (gemessen)")
     print(f"[ablation] C  Float-Hidden   + Float-LM-Head  :  8.68 (FP-Baseline)")
     print()
-    anteil_lm = (ppl_b and (40.48 - ppl_b) / (40.48 - 8.68)) or 0.0
+    spanne = ppl_a - 8.68
+    anteil_lm = ((ppl_a - ppl_b) / spanne) if spanne > 1e-9 else 0.0
     print(f"[ablation] Deutung: {1 - anteil_lm:.0%} des Perplexitaets-Abstands "
           f"entsteht VOR dem LM-Head (Hidden-State),")
     print(f"[ablation]          {anteil_lm:.0%} IM LM-Head.")
