@@ -1808,37 +1808,6 @@ two), finding 22 (KV cache round trip), finding 27 (rogue key without
 PoP), finding 31 (double clamping destroys the massive-activation
 channel).
 
-### Instrument errors
-
-This project's own class of error, and the most instructive:
-**the code was not wrong — the measuring tool was.**
-
-Ten of them occurred during the investigation of roadmap item 12.77. A
-selection:
-
-1. A softmax patch never fired (SDPA fuses the softmax) — the reading
-   "+0.00 %" was a **null measurement**, not a result.
-2. An ablation script had the comparison figure **hard-coded** and reported
-   "98 % of the error in the LM head" where the truth was 0 %.
-3. A "71 % jump at layer 23" compared the layer output against the
-   **post-final-norm** state — the last entry of HF's `hidden_states` is
-   not the last layer.
-4. An MLP probe fed `rmsnorm(embedding)` instead of
-   `rmsnorm(embedding + attn_out)` — a 72.3 % wrong input.
-5. A q/k/v comparison omitted the **biases** → 1347 % / 8613 %.
-6. The attention probe omitted **RoPE** → 47–151 %.
-7. The same probe passed **`lut_shift = 0`** instead of
-   `score_frac_bits − exp_input_frac`, computing `exp(−d/256)` instead of
-   `exp(−d/16)`.
-8. The reference model ran in **bfloat16**. At a value of 1704 the bf16
-   ULP is **8** — the reference cannot represent changes below that, and
-   at a cancellation `1696 − 1648 = 48` it carries ±8 of error on a result
-   of 48. **Where cancellation occurs, bf16 is unusable as a reference.**
-
-**What all of them share:** not one was found by reading code. They were
-found because a result was **physically impossible** — an attention error
-of 151 % is irreconcilable with a perplexity of +7.5 %.
-
 **The rules that follow:**
 
 - **Every probe needs a self-check** — a case with a known result.
@@ -1865,21 +1834,6 @@ perplexity comparison. Tensor comparisons against floating point with
 *identical* weights and *identical* input isolate a single operation —
 they are the sharper tool.
 
-### Seven-step documentation chain
-
-After every completed patch, in this order:
-
-1. Cargo versions
-2. Component roadmap
-3. Component README
-4. `README/Intern/Fahrplan-Master.md`
-5. `README/Intern/README.md`
-6. `README/Intern/State-of-the-Project.md`
-7. Root `README.md` (component table)
-
-If the patch touches protocol terminology, **this file** and its German
-counterpart are added.
-
 ### Integer purity check
 
 After every change to `model.rs`, `loader.rs` or `calibrate/`:
@@ -1893,21 +1847,6 @@ compute path. A single overlooked `f32` in a kernel breaks determinism and
 with it the entire verification model — and it would only surface when two
 pods on different hardware diverge.
 
-### Runtime estimates and progress bars
-
-Before any run lasting more than about a minute, state an estimate —
-**computed, not guessed**: work units × measured time per unit. The rates
-live in `INTEGER_LLM/bench/README.md` (0.5B ~24 tok/s, 7B ~2 tok/s with
-`cpu-simd`).
-
-Scripts with several work units print a progress bar
-(`INTEGER_LLM/tests/diag/fortschritt.py`), with Python output unbuffered
-(`python -u`).
-
-**Why:** without an estimate you cannot decide whether waiting is worth
-it; without a progress display a hung run is indistinguishable from a slow
-one.
-
 ### CI environment constraints
 
 GitHub CI has **no model weights** (gitignored) and **no hardware
@@ -1917,14 +1856,6 @@ when artifacts or backends are missing. Only unit tests
 
 **The real quality assurance is the local runs** with real artifacts and
 real hardware.
-
-### Commit rules
-
-- **Do not commit or push on your own.** The repository authors do that
-  after review. When something is ready: a short note plus a title
-  suggestion.
-- **Commit titles list only the changed areas/points as bullet points**,
-  without deeper description — that lives in the changelog.
 
 ### Shared build directory
 

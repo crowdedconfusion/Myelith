@@ -1884,34 +1884,6 @@ korrekt), Fund 22 (KV-Cache-Rundreise), Fund 27 (Rogue-Key ohne PoP).
 *Wo notiert:* `README/Intern/Fahrplan-Master.md`,
 `README/Intern/State-of-the-Project.md`
 
-### Instrumentenfehler
-
-Die eigene Fehlerklasse dieses Projekts, und die lehrreichste:
-**Nicht der Code war falsch, sondern das Messwerkzeug.**
-
-Im Verlauf der Fehlersuche zu Fahrplanpunkt 12.77 traten **neun** davon
-auf. Eine Auswahl:
-
-1. Ein Softmax-Patch feuerte nie (SDPA fusioniert den Softmax) — die
-   Messung „+0,00 %" war eine **Nullmessung**, kein Ergebnis.
-2. Ein Ablationsskript hatte die Vergleichszahl **hart kodiert** und
-   meldete „98 % Fehler im LM-Head", wo in Wahrheit 0 % lagen.
-3. Ein „71-%-Sprung bei Ebene 23" verglich die Ebenenausgabe mit dem
-   **post-final-norm**-Zustand — der letzte Eintrag von HFs
-   `hidden_states` ist nicht die letzte Ebene.
-4. Eine MLP-Sonde fütterte `rmsnorm(embedding)` statt
-   `rmsnorm(embedding + attn_out)` — 72,3 % falscher Eingang.
-5. Ein q/k/v-Vergleich ließ die **Biases** weg → 1347 % / 8613 %.
-6. Die Attention-Sonde ließ **RoPE** weg → 47–151 %.
-7. Dieselbe Sonde übergab **`lut_shift = 0`** statt
-   `score_frac_bits − exp_input_frac` und rechnete damit `exp(−d/256)`
-   statt `exp(−d/16)`.
-
-**Was alle neun gemeinsam haben:** Kein einziger wurde durch Codelesen
-gefunden. Gefunden wurden sie, weil ein Ergebnis **physikalisch unmöglich**
-war — ein Attention-Fehler von 151 % ist mit einer Perplexität von
-+7,5 % nicht vereinbar.
-
 **Die Regeln, die daraus folgen:**
 
 - **Jede Sonde braucht eine Selbstprüfung** — einen Fall mit bekanntem
@@ -1941,20 +1913,6 @@ Perplexitätsvergleiche. Tensor-Vergleiche gegen Gleitkomma mit
 *identischen* Gewichten und *identischem* Eingang isolieren eine einzelne
 Operation — sie sind das schärfere Werkzeug.
 
-### Sieben-Schritt-Doku-Kette
-
-Nach jedem abgeschlossenen Patch, in dieser Reihenfolge:
-
-1. Cargo-Versionen
-2. Komponenten-Fahrplan
-3. Komponenten-README
-4. `README/Intern/Fahrplan-Master.md`
-5. `README/Intern/README.md`
-6. `README/Intern/State-of-the-Project.md`
-7. Root-`README.md` (Komponenten-Tabelle)
-
-Betrifft der Patch Protokollbegriffe, kommt **diese Datei** hinzu.
-
 ### Ganzzahligkeitsprüfung
 
 Nach jeder Änderung an `model.rs`, `loader.rs` oder `calibrate/`:
@@ -1968,21 +1926,6 @@ im Rechenpfad. Ein einziges übersehenes `f32` in einem Kernel bricht den
 Determinismus und damit das gesamte Verifikationsmodell — und es würde
 erst auffallen, wenn zwei Pods mit verschiedener Hardware auseinandergehen.
 
-### Laufzeitschätzung und Fortschrittsbalken
-
-Vor jedem Lauf, der länger als etwa eine Minute dauert, eine Schätzung
-ansagen — **gerechnet, nicht geraten**: Arbeitseinheiten × gemessene Zeit
-je Einheit. Die Raten stehen in `INTEGER_LLM/bench/README.md`
-(0,5B ~24 tok/s, 7B ~2 tok/s mit `cpu-simd`).
-
-Skripte mit mehreren Arbeitseinheiten geben einen Fortschrittsbalken aus
-(`INTEGER_LLM/tests/diag/fortschritt.py`), Python-Ausgabe dabei
-ungepuffert (`python -u`).
-
-**Warum:** Ohne Schätzung ist nicht entscheidbar, ob sich Warten lohnt;
-ohne Fortschrittsanzeige ist ein hängender Lauf von einem langsamen nicht
-zu unterscheiden.
-
 ### CI-Umgebungsbeschränkungen
 
 Die GitHub-CI hat **keine Modellgewichte** (gitignored) und **keine
@@ -1992,15 +1935,6 @@ Unit-Tests (`cargo test --lib`).
 
 **Die eigentliche Qualitätssicherung sind die lokalen Läufe** mit echten
 Artefakten und echter Hardware.
-
-### Commit-Regeln
-
-- **Nicht selbstständig committen oder pushen.** Die Autoren des Repos
-  übernehmen das nach Durchsicht. Wenn etwas fertig ist: kurze Meldung
-  plus Titelvorschlag.
-- **Commit-Titel zählen nur stichpunktartig die veränderten
-  Bereiche/Punkte auf**, ohne tiefere Beschreibung — die steht ausführlich
-  im Changelog.
 
 ### Gemeinsames Build-Verzeichnis
 
