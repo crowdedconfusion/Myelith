@@ -10,7 +10,7 @@ rem Eine Stapeldatei kann selbst kein Symbol tragen; das ist eine Grenze
 rem des Formats, keine Nachlaessigkeit. Die Verknuepfung kann es.
 
 setlocal
-set "WURZEL=%~dp0.."
+set "WURZEL=%~dp0..\.."
 for %%I in ("%WURZEL%") do set "WURZEL=%%~fI"
 
 set "ZIEL=%WURZEL%\Myelith Testclient - Windows (Batch).cmd"

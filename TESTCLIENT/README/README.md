@@ -106,6 +106,11 @@ weiter. Welchen du nimmst, hängt nur davon ab, womit du arbeitest.
 | `Myelith Testclient - Windows (Batch).cmd` | Windows, Doppelklick im Explorer oder Aufruf aus cmd |
 | `Myelith Testclient - Linux, macOS (Shell).sh` | Terminal auf Linux und macOS |
 
+Sie liegen im Wurzelverzeichnis, weil sie dort gefunden werden sollen.
+Alles Übrige zum Testclient steht in diesem Ordner: der Quelltext unter
+`myl-testclient/`, die Protokolle unter `myl-testclient/logs/`, und die
+Helfer für Symbol und Anwendungsmenü unter `werkzeuge/`.
+
 ### Der kürzeste Weg
 
 **Doppelklick.** Unter macOS auf das App-Bündel, unter Windows auf die
@@ -185,10 +190,10 @@ ist jeweils eine Grenze des Formats:
   den Shell-Starter aus.
 - **Windows:** Eine Stapeldatei kann kein Symbol tragen. Eine
   Verknüpfung kann es, speichert aber absolute Pfade und wäre auf jedem
-  anderen Rechner kaputt. `werkzeuge\verknuepfung-erstellen.cmd` legt sie
+  anderen Rechner kaputt. `TESTCLIENT/werkzeuge/verknuepfung-erstellen.cmd` legt sie
   deshalb dort an, wo sie gebraucht wird.
 - **Linux:** `.desktop`-Dateien verlangen absolute Pfade in `Exec` und
-  `Icon`. `werkzeuge/desktop-eintrag-erstellen.sh` setzt sie ein und legt
+  `Icon`. `TESTCLIENT/werkzeuge/desktop-eintrag-erstellen.sh` setzt sie ein und legt
   den Eintrag unter `~/.local/share/applications/` ab.
 
 Zur Schärfe: Das M ist in der Titelgrafik rund 70 px hoch. Größere

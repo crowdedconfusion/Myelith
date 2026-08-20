@@ -8,7 +8,7 @@
 
 set -eu
 
-WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 STARTER="$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"
 SYMBOL="$WURZEL/README/Grafiken/myelith-icon.png"
 ZIEL="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
