@@ -96,7 +96,113 @@ einen Test, der Feldnamen und Wertformate prüft.
 
 ## Aufruf
 
-**Interaktiv — ohne Unterbefehl öffnet sich ein Menü:**
+Im Wurzelverzeichnis des Repositories liegen drei Starter. Sie tun
+dasselbe: bauen bei Bedarf, finden das Binary und reichen alle Argumente
+weiter. Welchen du nimmst, hängt nur davon ab, womit du arbeitest.
+
+| Datei | Für wen |
+|---|---|
+| `Myelith Testclient - macOS.app` | macOS, Doppelklick im Finder |
+| `Myelith Testclient - Windows (Batch).cmd` | Windows, Doppelklick im Explorer oder Aufruf aus cmd |
+| `Myelith Testclient - Linux, macOS (Shell).sh` | Terminal auf Linux und macOS |
+
+### Der kürzeste Weg
+
+**Doppelklick.** Unter macOS auf das App-Bündel, unter Windows auf die
+`.cmd`. Es öffnet sich ein Terminalfenster mit dem Menü; jeder Punkt ist
+dort in zwei Zeilen erklärt, und es steht dabei, was ein Modell braucht
+und was nicht. Beim ersten Start dauert der Bau einige Minuten, danach
+wenige Sekunden.
+
+Wer keine Artefakte hat, wird gefragt, ob die Gewichte von Hugging Face
+geholt und die Artefakte gebaut werden sollen. Es passiert nichts ohne
+Rückfrage.
+
+### Aus dem Terminal
+
+```bash
+./"Myelith Testclient - Linux, macOS (Shell).sh"                 # Menü
+./"Myelith Testclient - Linux, macOS (Shell).sh" artefakte       # Artefakte prüfen
+./"Myelith Testclient - Linux, macOS (Shell).sh" determinismus   # Bitgleichheit
+./"Myelith Testclient - Linux, macOS (Shell).sh" --help          # alle Befehle
+```
+
+Die Anführungszeichen sind wegen der Leerzeichen im Namen nötig; die
+Tabulator-Vervollständigung setzt sie von selbst. Wer den Client oft aus
+dem Terminal aufruft, legt sich eine Abkürzung in `~/.bashrc` oder
+`~/.zshrc` an:
+
+```bash
+alias myl-test='"/pfad/zum/Repository/Myelith Testclient - Linux, macOS (Shell).sh"'
+```
+
+Die doppelten Anführungszeichen stehen dabei **innerhalb** der einfachen.
+Ohne sie zerfiele der Pfad beim Aufruf an den Leerzeichen in mehrere
+Argumente.
+
+Der Starter funktioniert aus jedem Unterverzeichnis, weil er seine eigene
+Lage auflöst.
+
+### In welcher Reihenfolge
+
+1. **`artefakte`** zuerst. Der Befehl sagt, ob auf dieser Maschine ein
+   Modell liegt und ob es dem veröffentlichten Digest entspricht. Ohne
+   diese Prüfung sähe ein abweichendes Artefakt später aus wie eine
+   gescheiterte Bitgleichheit, und der Client berichtete das Gegenteil
+   dessen, wofür es ihn gibt.
+2. **`hardware`** braucht kein Modell und ist der erste sinnvolle Lauf
+   auf einer neuen Maschine.
+3. **`determinismus`** und **`shard`** sind die eigentlichen Tests. Beide
+   brauchen ein Modell und lösen es selbst auf.
+4. **`stack`** geht ohne Modell durch Krypto, Epochenseed, Komiteewahl,
+   BFT, Verifikation, Ledger und Tokenomics.
+
+Jeder Lauf schreibt ein Protokoll nach `TESTCLIENT/myl-testclient/logs/`,
+maschinenlesbar als `.jsonl` und lesbar als `.log`. Für einen Vergleich
+zwischen zwei Maschinen zählen diese Dateien, nicht die Bildschirmausgabe.
+
+### Voraussetzungen
+
+Rust. Fehlt es, nennt der Starter die Installationszeile und bricht ab.
+Ist cargo nicht da, aber ein gebautes Binary vorhanden, benutzt er
+dieses. Für den Artefaktbau kommt Python hinzu, das mit dem Repository
+mitgeliefert wird (`INTEGER_LLM/calibrate/.venv`).
+
+### Symbol
+
+Das Zeichen ist das **M** aus der Titelgrafik, zugeschnitten und in drei
+Formaten abgelegt: `README/Grafiken/myelith-icon.png`, `.icns` (macOS)
+und `.ico` (Windows, sechs Größen von 16 bis 256 px).
+
+Wie es an den Starter kommt, unterscheidet sich je System, und der Grund
+ist jeweils eine Grenze des Formats:
+
+- **macOS:** Das Symbol einer Datei liegt in einem erweiterten Attribut.
+  Git speichert keine erweiterten Attribute, ein so gesetztes Symbol
+  überlebt also weder `git clone` noch `git checkout`. Deshalb liegt hier
+  ein **App-Bündel** bei: ein Verzeichnis mit `.icns` darin, versionierbar
+  wie jede andere Datei. Es öffnet Terminal.app und führt darin
+  den Shell-Starter aus.
+- **Windows:** Eine Stapeldatei kann kein Symbol tragen. Eine
+  Verknüpfung kann es, speichert aber absolute Pfade und wäre auf jedem
+  anderen Rechner kaputt. `werkzeuge\verknuepfung-erstellen.cmd` legt sie
+  deshalb dort an, wo sie gebraucht wird.
+- **Linux:** `.desktop`-Dateien verlangen absolute Pfade in `Exec` und
+  `Icon`. `werkzeuge/desktop-eintrag-erstellen.sh` setzt sie ein und legt
+  den Eintrag unter `~/.local/share/applications/` ab.
+
+Zur Schärfe: Das M ist in der Titelgrafik rund 70 px hoch. Größere
+Symbolgrößen sind hochskaliert und entsprechend weich. Für eine scharfe
+Fassung bräuchte es das Zeichen als Vektor.
+
+**Warum es diese Starter gibt:** Der Client soll auf fremden Maschinen
+laufen, oft auf solchen, deren Besitzer mit Rust nichts zu tun hat. Wer
+erst herausfinden muss, in welches Verzeichnis er wechseln und welche
+Cargo-Flagge er setzen muss, führt den Test seltener aus. Genau diese
+Hürde darf ein Test nicht haben, dessen Zweck es ist, auf möglichst
+vielen verschiedenen Maschinen zu laufen.
+
+**Direkt über Cargo,** wenn ohnehin eine Rust-Umgebung eingerichtet ist:
 
 ```bash
 cd TESTCLIENT/myl-testclient

@@ -1,0 +1,16 @@
+# Windows-Stapelverarbeitung braucht CRLF. Mit LF-Zeilenenden verhaelt sich
+# `goto` in cmd.exe je nach Windows-Fassung unzuverlaessig; das faellt erst
+# auf der fremden Maschine auf, auf der der Testclient gerade laufen soll.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Shell-Starter dagegen immer LF, auch wenn sie unter Windows ausgecheckt
+# werden: Ein CR am Zeilenende macht aus dem Shebang einen ungueltigen Pfad.
+*.sh text eol=lf
+*.command text eol=lf
+
+# Symboldateien sind binaer. Ohne diese Zeilen wuerde git sie unter Windows
+# als Text behandeln und CRLF einsetzen, was sie zerstoert.
+*.ico binary
+*.icns binary
+*.png binary

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Ausfuehrbarer Teil des App-Buendels.
+#
+# Warum ein Buendel und nicht ein Symbol am Skript: Auf macOS liegt das
+# Symbol einer Datei in einem erweiterten Attribut. Git speichert keine
+# erweiterten Attribute, ein so gesetztes Symbol ueberlebt also weder
+# `git clone` noch `git checkout`. Ein Buendel dagegen ist ein Verzeichnis
+# mit einer .icns darin und laesst sich versionieren wie jede andere Datei.
+set -eu
+
+# .../Repository/Myelith Testclient - macOS.app/Contents/MacOS/starter -> Repository
+WURZEL=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd -P)
+STARTER="$WURZEL/Myelith Testclient - Linux, macOS (Shell).sh"
+
+if [ ! -x "$STARTER" ]; then
+    osascript -e "display alert \"Myelith Testclient\" message \"Myelith Testclient - Linux, macOS (Shell).sh nicht gefunden unter $WURZEL. Das Buendel gehoert ins Wurzelverzeichnis des Repositories.\"" >/dev/null 2>&1
+    exit 1
+fi
+
+# Terminal.app oeffnen und den Starter darin ausfuehren. `exec` haelt das
+# Fenster nach dem Beenden des Clients offen, damit die Ausgabe lesbar
+# bleibt; genau deshalb wird nicht einfach `open -a Terminal` benutzt.
+osascript <<ENDE >/dev/null 2>&1
+tell application "Terminal"
+    activate
+    do script "cd " & quoted form of "$WURZEL" & " && " & quoted form of "$STARTER"
+end tell
+ENDE
