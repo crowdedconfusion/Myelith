@@ -35,7 +35,6 @@ pub struct Bekannt {
     pub name: String,
     pub theta_v: String,
     pub digest: String,
-    pub dateien: usize,
 }
 
 /// Zustand eines Modells auf dieser Maschine.
@@ -54,24 +53,30 @@ fn sha256_datei(p: &Path) -> std::io::Result<String> {
     Ok(format!("{:x}", h.finalize()))
 }
 
-/// Digest über ALLE Artefaktdateien: sortierte `pfad  hash`-Zeilen, davon
-/// der SHA-256. Muss zeichengleich zu `tools/skalenpaket_bauen.py` sein —
-/// sonst prüft der Client gegen eine andere Rechnung als die, die den
-/// veröffentlichten Wert erzeugt hat.
+/// Die drei Dateien, an denen die Identität eines Artefakts hängt.
+///
+/// `theta_v.json` enthält die Hashes von `weights_manifest.json`,
+/// `scales.json` und `luts.json`; jene wiederum den Hash jeder einzelnen
+/// Gewichts- und LUT-Datei, und der Lader prüft diese Kette beim Laden.
+/// Wer diese drei trifft, hat dasselbe Modell.
+const ANKER: [&str; 3] = ["model_config.json", "theta_v.json", "tokenizer.json"];
+
+/// Digest über die Ankerkette. Muss zeichengleich zu
+/// `tools/skalenpaket_bauen.py` sein — sonst prüft der Client gegen eine
+/// andere Rechnung als die, die den veröffentlichten Wert erzeugt hat.
+///
+/// **Nicht über den Verzeichnisinhalt.** Diese Fassung gab es, und sie hat
+/// am 2026-08-20 sofort falschen Alarm ausgelöst: Ein Synchronisations-
+/// werkzeug hatte 432 inhaltsgleiche Kopien in den Artefaktordner gelegt
+/// (`theta_v 2.json` und so fort). Der Lader ignoriert solche Dateien; sie
+/// ändern das Modell nicht. Ein Anker, der bei belanglosen Streudateien
+/// anschlägt, macht den echten Befund unglaubwürdig — und der echte
+/// Befund ist der einzige Zweck. Nebenbei: über 8,7 GB zu hashen dauerte
+/// Minuten und ließ den Client beim Start stumm dastehen.
 pub fn artefakt_digest(dir: &Path) -> std::io::Result<(String, usize)> {
     let mut eintraege: Vec<(String, String)> = Vec::new();
-    let mut stapel = vec![dir.to_path_buf()];
-    while let Some(d) = stapel.pop() {
-        for e in fs::read_dir(&d)? {
-            let p = e?.path();
-            if p.is_dir() {
-                stapel.push(p);
-            } else {
-                let rel = p.strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/");
-                let h = sha256_datei(&p)?;
-                eintraege.push((rel, h));
-            }
-        }
+    for name in ANKER {
+        eintraege.push((name.to_string(), sha256_datei(&dir.join(name))?));
     }
     eintraege.sort();
     let text = eintraege
@@ -96,7 +101,7 @@ pub fn register(repo: &Path) -> Result<Vec<Bekannt>, String> {
 
     let mut out = Vec::new();
     let mut name: Option<String> = None;
-    let (mut theta, mut digest, mut dateien) = (String::new(), String::new(), 0usize);
+    let (mut theta, mut digest) = (String::new(), String::new());
     for zeile in text.lines() {
         let t = zeile.trim();
         // Modellname: einziger Schlüssel auf Einrückungsebene 2 mit "{".
@@ -106,12 +111,10 @@ pub fn register(repo: &Path) -> Result<Vec<Bekannt>, String> {
             digest = v;
         } else if let Some(v) = feld(t, "theta_v") {
             theta = v;
-        } else if let Some(v) = feld(t, "artefakt_dateien") {
-            dateien = v.parse().unwrap_or(0);
         }
         if t == "}," || t == "}" {
             if let (Some(n), false) = (name.clone(), digest.is_empty()) {
-                out.push(Bekannt { name: n, theta_v: theta.clone(), digest: digest.clone(), dateien });
+                out.push(Bekannt { name: n, theta_v: theta.clone(), digest: digest.clone() });
                 name = None;
                 digest.clear();
             }
@@ -166,5 +169,297 @@ fn hf_id(modell: &str) -> &'static str {
     match modell {
         "qwen2.5-7b" => "Qwen2.5-7B",
         _ => "Qwen2.5-0.5B",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Beschaffung: suchen, auswählen, notfalls herunterladen und bauen
+// ---------------------------------------------------------------------------
+
+/// Eingabekanal für Rückfragen: liefert die Antwort auf einen Prompt,
+/// oder `None` bei Dateiende. `Option<&mut …>` als Ganzes ist `None`,
+/// wenn der Client nicht-interaktiv läuft — dann wird nicht gefragt und
+/// folglich auch nichts heruntergeladen.
+pub type Rueckfrage<'a> = Option<&'a mut dyn FnMut(&str) -> Option<String>>;
+
+/// Ein auf dieser Maschine gefundenes Artefaktverzeichnis.
+pub struct Gefunden {
+    pub name: String,
+    pub pfad: PathBuf,
+    /// Steht das Modell im Register? Wenn nicht, ist sein Digest nicht
+    /// prüfbar — das muss vor einem Vergleichslauf gesagt werden.
+    pub im_register: bool,
+}
+
+/// Durchsucht `INTEGER_LLM/artifacts/` nach vollständigen Artefakten.
+///
+/// Gefunden wird jedes Verzeichnis mit `weights_manifest.json` — auch
+/// solche, die nicht im Register stehen. Sie werden mitgeführt und als
+/// ungeprüft markiert, statt sie zu verschweigen: Wer ein eigenes Modell
+/// gebaut hat, soll es benutzen können und dabei wissen, dass der Digest
+/// dafür keine Aussage macht.
+pub fn suchen(repo: &Path) -> Vec<Gefunden> {
+    let wurzel = repo.join("INTEGER_LLM/artifacts");
+    let bekannt = register(repo).unwrap_or_default();
+    let mut out = Vec::new();
+    let Ok(eintraege) = fs::read_dir(&wurzel) else {
+        return out;
+    };
+    let mut pfade: Vec<PathBuf> = eintraege.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    pfade.sort();
+    for p in pfade {
+        if !p.join("weights_manifest.json").is_file() {
+            continue;
+        }
+        let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+        // **Hier wird bewusst NICHT gehasht.** Ein Digest über ein
+        // 8,7-GB-Artefakt dauert Sekunden bis Minuten; das für jedes
+        // gefundene Modell zu tun, nur um eine Auswahlliste zu zeigen,
+        // ist Verschwendung — und es lässt den Client beim Start minutenlang
+        // stumm dastehen. Geprüft wird erst, was auch benutzt wird.
+        let im_register = bekannt.iter().any(|b| b.name == name);
+        out.push(Gefunden { name, pfad: p, im_register });
+    }
+    out
+}
+
+/// Pfad zum Python der Kalibrierungs-Umgebung, falls vorhanden.
+fn venv_python(repo: &Path) -> Option<PathBuf> {
+    let p = repo.join("INTEGER_LLM/calibrate/.venv/bin/python");
+    p.is_file().then_some(p)
+}
+
+/// Ungefähre Downloadgröße je Modell, für die Rückfrage vor dem Zugriff.
+pub fn download_groesse(modell: &str) -> &'static str {
+    match modell {
+        "qwen2.5-7b" => "rund 15 GB",
+        _ => "rund 1 GB",
+    }
+}
+
+/// Lädt die Gewichte von Hugging Face in `INTEGER_LLM/models/<HF-Name>`.
+///
+/// Über `huggingface_hub.snapshot_download` aus der Kalibrierungs-Umgebung:
+/// Das Paket ist als Abhängigkeit von `transformers` ohnehin vorhanden, es
+/// beherrscht geteilte Safetensors und setzt einen abgebrochenen Download
+/// fort. Ein eigener HTTPS-Pfad im Client wäre eine zweite, schlechtere
+/// Umsetzung derselben Sache.
+pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
+    let py = venv_python(repo).ok_or_else(|| {
+        "INTEGER_LLM/calibrate/.venv fehlt — ohne die Kalibrierungs-Umgebung \
+         kann der Client weder herunterladen noch bauen."
+            .to_string()
+    })?;
+    let hf = hf_id(modell);
+    let ziel = repo.join("INTEGER_LLM/models").join(hf);
+    meldung(format!("Lade {} nach {} …", hf, ziel.display()));
+
+    let skript = format!(
+        "from huggingface_hub import snapshot_download\n\
+         snapshot_download(repo_id='Qwen/{hf}', local_dir=r'{ziel}',\n\
+         \x20   allow_patterns=['*.json','*.safetensors','*.txt'])\n",
+        hf = hf,
+        ziel = ziel.display()
+    );
+    lauf(&py, &["-c", &skript], repo, meldung)
+}
+
+/// Baut die Artefakte. Nutzt das versionierte Skalenpaket automatisch —
+/// deshalb dauert das Sekunden statt Minuten und ist plattformübergreifend
+/// bitgleich (siehe `INTEGER_LLM/scale_packs/README.md`).
+pub fn artefakte_bauen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
+    let py = venv_python(repo).ok_or_else(|| "INTEGER_LLM/calibrate/.venv fehlt".to_string())?;
+    meldung(format!("Baue Artefakte für {modell} (Skalenpaket wird verwendet) …"));
+    std::env::set_var("INTEGER_LLM_MODEL", modell);
+    lauf(&py, &["-m", "calibrate.src.main"], &repo.join("INTEGER_LLM"), meldung)
+}
+
+fn lauf(
+    programm: &Path,
+    args: &[&str],
+    cwd: &Path,
+    meldung: &mut dyn FnMut(String),
+) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+    let mut kind = Command::new(programm)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{} nicht startbar: {}", programm.display(), e))?;
+
+    // Ausgabe durchreichen, damit ein langer Download nicht wie ein
+    // Aufhänger aussieht — dieselbe Begründung wie beim Fortschrittsbalken
+    // der Diagnoseskripte.
+    if let Some(out) = kind.stdout.take() {
+        use std::io::{BufRead, BufReader};
+        for zeile in BufReader::new(out).lines().map_while(Result::ok) {
+            if !zeile.trim().is_empty() {
+                meldung(format!("  {}", zeile));
+            }
+        }
+    }
+    let status = kind.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Abbruch mit {}", status))
+    }
+}
+
+/// Ermittelt das zu verwendende Artefaktverzeichnis.
+///
+/// Der Ablauf folgt dem, was ein Nutzer erwartet, der den Client zum
+/// ersten Mal startet:
+///
+/// 1. **Nichts gefunden** → Modell auswählen, Gewichte von Hugging Face
+///    holen, Artefakte bauen, Digest prüfen.
+/// 2. **Genau eines gefunden** → nehmen, aber sagen, ob der Digest passt.
+/// 3. **Mehrere gefunden** → auswählen lassen.
+///
+/// `antwort` liefert Nutzereingaben; ist es `None`, läuft der Client
+/// nicht-interaktiv. Dann wird **nicht** heruntergeladen: Ein
+/// mehrstündiger Mehr-Gigabyte-Zugriff gehört nicht in einen Skriptlauf,
+/// der ihn nicht angefordert hat. Stattdessen erscheint die Anleitung.
+pub fn beschaffen(
+    repo: &Path,
+    antwort: &mut Rueckfrage<'_>,
+    meldung: &mut dyn FnMut(String),
+) -> Result<PathBuf, String> {
+    let gefunden = suchen(repo);
+
+    if gefunden.len() == 1 {
+        let g = &gefunden[0];
+        meldung(format!("Ein Artefakt gefunden: {}", befund(g)));
+        nach_auswahl_pruefen(repo, g, meldung);
+        return Ok(g.pfad.clone());
+    }
+
+    if gefunden.len() > 1 {
+        meldung(format!("{} Artefakte auf dieser Maschine:", gefunden.len()));
+        for (i, g) in gefunden.iter().enumerate() {
+            meldung(format!("  [{}] {}", i + 1, befund(g)));
+        }
+        let Some(frage) = antwort.as_mut() else {
+            // Nicht-interaktiv: das erste geprüfte nehmen, sonst das erste.
+            let g = gefunden.iter().find(|g| g.im_register).unwrap_or(&gefunden[0]);
+            meldung(format!("Nicht-interaktiv — verwende {}", g.name));
+            return Ok(g.pfad.clone());
+        };
+        let eingabe = frage("Welches Artefakt? [1] ").unwrap_or_default();
+        let wahl = eingabe.trim().parse::<usize>().unwrap_or(1).clamp(1, gefunden.len());
+        let g = &gefunden[wahl - 1];
+        meldung(format!("Gewählt: {}", g.name));
+        nach_auswahl_pruefen(repo, g, meldung);
+        return Ok(g.pfad.clone());
+    }
+
+    // Nichts gefunden.
+    meldung("Keine Artefakte auf dieser Maschine.".to_string());
+    let bekannt = register(repo)?;
+    let Some(frage) = antwort.as_mut() else {
+        return Err(format!(
+            "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
+            bauanleitung(&bekannt[0].name)
+        ));
+    };
+
+    meldung("Verfügbare Modelle:".to_string());
+    for (i, b) in bekannt.iter().enumerate() {
+        meldung(format!(
+            "  [{}] {} — Download {}, Bau danach in Sekunden",
+            i + 1,
+            b.name,
+            download_groesse(&b.name)
+        ));
+    }
+    let eingabe = frage("Welches Modell aufsetzen? [1] ").unwrap_or_default();
+    let wahl = eingabe.trim().parse::<usize>().unwrap_or(1).clamp(1, bekannt.len());
+    let modell = bekannt[wahl - 1].name.clone();
+
+    // Rückfrage vor dem Netzzugriff: Der Download ist gross und geht an
+    // einen fremden Dienst. Automatisch heisst nicht unangekuendigt.
+    let bestaetigung = frage(&format!(
+        "{} von Hugging Face laden ({}) und Artefakte bauen? [J/n] ",
+        hf_id(&modell),
+        download_groesse(&modell)
+    ))
+    .unwrap_or_default();
+    let t = bestaetigung.trim().to_lowercase();
+    if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
+        return Err(format!("Abgebrochen.\n{}", bauanleitung(&modell)));
+    }
+
+    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(&modell));
+    if gewichte.join("config.json").is_file() {
+        meldung(format!("Gewichte liegen bereits in {} — Download entfällt.", gewichte.display()));
+    } else {
+        gewichte_holen(repo, &modell, meldung)?;
+    }
+    artefakte_bauen(repo, &modell, meldung)?;
+
+    let bekannt = register(repo)?;
+    let b = bekannt
+        .iter()
+        .find(|b| b.name == modell)
+        .ok_or_else(|| format!("{} steht nicht im Register", modell))?;
+    match pruefen(repo, b) {
+        Zustand::Bereit { pfad } => {
+            meldung(format!("Fertig — Digest stimmt: {}", &b.digest[..16]));
+            Ok(pfad)
+        }
+        Zustand::Abweichend { ist, soll, .. } => Err(format!(
+            "Bau abgeschlossen, aber der Digest weicht ab.\n  hier:           {ist}\n  \
+             veröffentlicht: {soll}\nDas ist KEIN Hardware-Befund — auf dieser Maschine \
+             entstand ein anderes Artefakt als das veröffentlichte. Ein Vergleichslauf \
+             damit hätte keine Aussage."
+        )),
+        Zustand::Fehlt => Err("Bau lief durch, aber es liegen keine Artefakte vor.".to_string()),
+    }
+}
+
+fn befund(g: &Gefunden) -> String {
+    if g.im_register {
+        g.name.clone()
+    } else {
+        format!("{} — nicht im Register, Digest nicht prüfbar", g.name)
+    }
+}
+
+/// Prüft den Digest **eines** Artefakts und meldet das Ergebnis.
+/// Wird erst nach der Auswahl aufgerufen — siehe Begründung in `suchen`.
+fn nach_auswahl_pruefen(repo: &Path, g: &Gefunden, meldung: &mut dyn FnMut(String)) {
+    if !g.im_register {
+        meldung(format!("{} steht nicht im Register — Digest nicht prüfbar.", g.name));
+        return;
+    }
+    meldung(format!("Prüfe Digest von {} …", g.name));
+    let Ok(bekannt) = register(repo) else { return };
+    let Some(b) = bekannt.iter().find(|b| b.name == g.name) else { return };
+    match artefakt_digest(&g.pfad) {
+        Ok((ist, _)) if ist == b.digest => meldung(format!("Digest stimmt: {}", &ist[..16])),
+        Ok((ist, _)) => {
+            meldung(format!("DIGEST WEICHT AB — hier {}, veröffentlicht {}", &ist[..16], &b.digest[..16]));
+            meldung("Das ist KEIN Hardware-Befund: Hier liegt ein anderes Modell.".to_string());
+        }
+        Err(e) => meldung(format!("Digest nicht berechenbar: {}", e)),
+    }
+}
+
+/// Sucht von `start` aufwärts das Repository-Wurzelverzeichnis.
+///
+/// Erkennungsmerkmal ist `INTEGER_LLM/scale_packs`; damit funktioniert der
+/// Client aus jedem Unterverzeichnis heraus und findet auch dann noch die
+/// richtige Ablage, wenn er von woanders aufgerufen wird.
+pub fn repo_wurzel(start: PathBuf) -> PathBuf {
+    let mut p = start.clone();
+    loop {
+        if p.join("INTEGER_LLM/scale_packs").is_dir() {
+            return p;
+        }
+        if !p.pop() {
+            return start;
+        }
     }
 }

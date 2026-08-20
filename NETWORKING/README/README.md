@@ -2,7 +2,7 @@
 
 > **Version:** 0.2.5
 > **Datum:** 2026-08-18
-> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.4, 2.1–2.3).
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3).
 > Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet. Phase 2: Paarlatenzmessung mit
 > EMA-Glättung, Latenz-Atteste, LatencyGraph, Geo-/AS-Diversität.

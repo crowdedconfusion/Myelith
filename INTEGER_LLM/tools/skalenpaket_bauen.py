@@ -48,15 +48,27 @@ def bauen(modell: str) -> dict:
 
     version = json.loads((ziel / "theta_v.json").read_text())["version"]
     groesse = sum((ziel / n).stat().st_size for n in dateien)
-    # **Der Pruefanker.** Ein Digest ueber ALLE Artefaktdateien, nicht nur
-    # ueber das Gewichtsmanifest: Wer aus HF-Gewichten plus diesem Paket
-    # baut, muss ihn treffen. Trifft er ihn nicht, sind die Artefakte
-    # verschieden — und ein Cross-Hardware-Bitgleichheitstest wuerde dann
-    # nicht die Hardware messen, sondern diesen Unterschied.
-    eintraege = sorted(
-        (p.relative_to(quelle).as_posix(), sha256(p))
-        for p in quelle.rglob("*") if p.is_file()
-    )
+    # **Der Pruefanker.** Digest ueber die drei Dateien, an denen die
+    # Identitaet des Modells haengt — nicht ueber den Verzeichnisinhalt.
+    #
+    # `theta_v.json` enthaelt die Hashes von `weights_manifest.json`,
+    # `scales.json` und `luts.json`; jene wiederum enthalten den Hash jeder
+    # einzelnen Gewichts- und LUT-Datei, und `loader.rs` prueft diese Kette
+    # beim Laden. Wer also `theta_v.json`, `model_config.json` und
+    # `tokenizer.json` trifft, hat dasselbe Modell.
+    #
+    # **Warum nicht ueber alle Dateien:** Diese Fassung gab es, und sie hat
+    # am 2026-08-20 sofort falschen Alarm ausgeloest. Auf der Entwickler-
+    # maschine hatte ein Synchronisationswerkzeug 432 inhaltsgleiche
+    # Kopien in den Artefaktordner gelegt ("theta_v 2.json" und so fort).
+    # Der Lader ignoriert solche Dateien; sie aendern das Modell nicht. Ein
+    # Anker, der bei belanglosen Streudateien anschlaegt, macht den echten
+    # Befund unglaubwuerdig — und der echte Befund ist der einzige Zweck.
+    anker = ("theta_v.json", "model_config.json", "tokenizer.json")
+    fehlend = [n for n in anker if not (quelle / n).is_file()]
+    if fehlend:
+        sys.exit(f"FEHLER: {quelle} unvollstaendig, es fehlt: {', '.join(fehlend)}")
+    eintraege = sorted((n, sha256(quelle / n)) for n in anker)
     digest = hashlib.sha256(
         "\n".join(f"{name}  {h}" for name, h in eintraege).encode()
     ).hexdigest()
@@ -66,13 +78,13 @@ def bauen(modell: str) -> dict:
         "dateien": dateien,
         "bytes": groesse,
         "artefakt_digest_sha256": digest,
-        "artefakt_dateien": len(eintraege),
+        "digest_ueber": list(anker),
         "weights_manifest_sha256": sha256(quelle / "weights_manifest.json"),
     }
     (ziel / "paket.json").write_text(json.dumps(eintrag, indent=2) + "\n")
     print(f"[paket] {modell}: {len(dateien)} Dateien, {groesse / 1024:.0f} KiB, "
           f"theta_v {version}")
-    print(f"        Artefakt-Digest ueber {len(eintraege)} Dateien = {digest}")
+    print(f"        Artefakt-Digest (Ankerkette) = {digest}")
     return eintrag
 
 

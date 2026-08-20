@@ -12,8 +12,6 @@ use myl_testclient::{
     run_stack, LogZiel, RunLog, TestPlan,
 };
 
-mod artefakte;
-
 const HILFE: &str = "\
 myl-test — Testclient für Myelith
 
@@ -34,6 +32,7 @@ BEFEHLE
                     Der erste Befehl vor jedem Vergleichslauf — ohne ihn
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
+
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
                     Braucht kein Modell.
@@ -54,6 +53,16 @@ OPTIONEN
     --quiet             Nur ins Protokoll schreiben, nicht aufs Terminal
                         (unterdrückt auch das Banner)
     -h, --help          Diese Hilfe
+ARTEFAKTE
+    `determinismus` und `shard` brauchen ein Modell. Ohne `--artifacts`
+    sucht der Client selbst: Findet er eines, nimmt er es; findet er
+    mehrere, fragt er; findet er keines, bietet er an, die Gewichte von
+    Hugging Face zu holen und die Artefakte zu bauen. Der Bau nutzt das
+    versionierte Skalenpaket und dauert Sekunden.
+
+    Bei `--quiet` wird nicht gefragt und deshalb auch nichts geladen —
+    ein mehrere Gigabyte großer Zugriff gehört nicht in einen Skriptlauf,
+    der ihn nicht angefordert hat.
 
     Umgebung: MYL_NO_BANNER=1 unterdrückt das Banner dauerhaft.
 
@@ -92,6 +101,10 @@ struct Args {
     steps: usize,
     shards: usize,
     artifacts: PathBuf,
+    /// Wurde `--artifacts` (oder ein Plan) ausdrücklich gesetzt? Dann wird
+    /// nicht gesucht und nichts beschafft — eine ausdrückliche Angabe hat
+    /// Vorrang vor jeder Automatik.
+    artifacts_explizit: bool,
     logs: PathBuf,
     quiet: bool,
     plan: Option<PathBuf>,
@@ -107,6 +120,7 @@ impl Args {
             steps: 8,
             shards: 4,
             artifacts: default_artifact_dir(),
+            artifacts_explizit: false,
             logs: default_log_dir(),
             quiet: false,
             plan: None,
@@ -154,6 +168,7 @@ fn parse() -> Result<Args, String> {
             }
             "--artifacts" => {
                 a.artifacts = PathBuf::from(need(i, "--artifacts")?);
+                a.artifacts_explizit = true;
                 i += 2;
             }
             "--logs" => {
@@ -161,6 +176,7 @@ fn parse() -> Result<Args, String> {
                 i += 2;
             }
             "--plan" => {
+                a.artifacts_explizit = true;
                 a.plan = Some(PathBuf::from(need(i, "--plan")?));
                 i += 2;
             }
@@ -297,6 +313,28 @@ fn main() -> ExitCode {
         echo,
     );
 
+    // Artefakte auflösen, bevor ein Lauf sie braucht. `hardware`, `stack`
+    // und `artefakte` kommen ohne Modell aus — sie werden übersprungen,
+    // damit der erste Befehl auf einer neuen Maschine keinen Download
+    // auslöst.
+    let braucht_modell = matches!(args.command.as_str(), "determinismus" | "shard");
+    if braucht_modell && !args.artifacts_explizit {
+        match myl_testclient::artefakte::beschaffen(
+            &myl_testclient::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default()),
+            &mut stdin_frage(echo).as_mut().map(|f| f as _),
+            &mut |t| log.note(t),
+        ) {
+            Ok(p) => args.artifacts = p,
+            Err(e) => {
+                for zeile in e.lines() {
+                    log.error(zeile.to_string());
+                }
+                log.finish(false);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     let ok = match args.command.as_str() {
         "hardware" => run_hardware(&mut log),
         "determinismus" => run_determinism(&mut log, &args.artifacts, &args.prompt, args.steps),
@@ -332,10 +370,10 @@ fn main() -> ExitCode {
 /// Bitgleichheitstest darüber wäre wertlos. Deshalb sagt die Ausgabe das
 /// ausdrücklich, statt nur „ungleich" zu melden.
 fn run_artefakte(log: &mut RunLog) -> bool {
-    use artefakte::{bauanleitung, pruefen, register, Zustand};
+    use myl_testclient::artefakte::{bauanleitung, pruefen, register, Zustand};
 
     let repo = match std::env::current_dir() {
-        Ok(d) => repo_wurzel(d),
+        Ok(d) => myl_testclient::artefakte::repo_wurzel(d),
         Err(e) => {
             log.error(format!("Arbeitsverzeichnis nicht lesbar: {}", e));
             return false;
@@ -354,7 +392,7 @@ fn run_artefakte(log: &mut RunLog) -> bool {
 
     let mut alle_bereit = true;
     for m in &bekannt {
-        log.note(format!("{} (θ_v {}, {} Dateien)", m.name, m.theta_v, m.dateien));
+        log.note(format!("{} (θ_v {})", m.name, m.theta_v));
         match pruefen(&repo, m) {
             Zustand::Bereit { pfad } => {
                 log.note(format!("  bereit — Digest stimmt: {}", &m.digest[..16]));
@@ -384,17 +422,25 @@ fn run_artefakte(log: &mut RunLog) -> bool {
     alle_bereit
 }
 
-/// Sucht von `start` aufwärts das Repository-Wurzelverzeichnis.
-/// Erkennungsmerkmal ist `INTEGER_LLM/scale_packs`; damit funktioniert der
-/// Befehl aus jedem Unterverzeichnis heraus.
-fn repo_wurzel(start: std::path::PathBuf) -> std::path::PathBuf {
-    let mut p = start.clone();
-    loop {
-        if p.join("INTEGER_LLM/scale_packs").is_dir() {
-            return p;
-        }
-        if !p.pop() {
-            return start;
-        }
+
+/// Eingabefunktion für `artefakte::beschaffen`.
+///
+/// `None` bei `--quiet` — dann läuft der Client nicht-interaktiv, und
+/// `beschaffen` lädt bewusst nichts herunter. Ein mehrere Gigabyte großer
+/// Zugriff auf einen fremden Dienst gehört nicht in einen Skriptlauf, der
+/// ihn nicht angefordert hat.
+fn stdin_frage(interaktiv: bool) -> Option<impl FnMut(&str) -> Option<String>> {
+    if !interaktiv {
+        return None;
     }
+    Some(|prompt: &str| {
+        use std::io::Write;
+        print!("{}", prompt);
+        let _ = std::io::stdout().flush();
+        let mut zeile = String::new();
+        match std::io::stdin().read_line(&mut zeile) {
+            Ok(0) | Err(_) => None, // EOF: wie eine leere Eingabe behandeln
+            Ok(_) => Some(zeile),
+        }
+    })
 }

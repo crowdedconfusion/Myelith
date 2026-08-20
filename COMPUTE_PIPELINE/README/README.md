@@ -2,7 +2,7 @@
 
 > **Version:** 0.2.2
 > **Datum:** 2026-08-18
-> **Status:** 🎉 **Phase 1 + 2.1 vollständig** (Punkte 1.1–1.4, 2.1):
+> **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
 > `coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität,
 > erasure-codierte DA-Archivierung, Micro-Batching-Fenster-Tuning,

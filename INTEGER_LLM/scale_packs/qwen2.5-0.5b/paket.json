@@ -11,7 +11,11 @@
     "sin.lut.bin"
   ],
   "bytes": 556163,
-  "artefakt_digest_sha256": "a0accbdb3861e31a69e240b57578ac7101be51f4faf8c7b4849e47a5b5947d43",
-  "artefakt_dateien": 593,
+  "artefakt_digest_sha256": "c42bb8a8d85bba5a76b3302298903fb5c1edfe4463c5d1d44256bef447ffd5c9",
+  "digest_ueber": [
+    "theta_v.json",
+    "model_config.json",
+    "tokenizer.json"
+  ],
   "weights_manifest_sha256": "e0ef3424764338fec017e65bce2aa821985c8519687a447a8b57046a621c6a05"
 }

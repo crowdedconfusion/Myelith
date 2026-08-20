@@ -5,7 +5,7 @@
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
-> Phase 1 + 2 ✅ vollständig (`myl-ledger` v0.1.1–v0.1.5,
+> Phase 2 ✅ abgeschlossen (`myl-ledger` v0.1.1–v0.1.5,
 > `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ✅ vollständig**
 > (`myl-consensus` v0.3.1–v0.5.0): signiertes, stimmgewichtetes BFT mit
 > VRF-rotierender Komiteewahl, Double-Signing-Beweis und seit v0.5.0

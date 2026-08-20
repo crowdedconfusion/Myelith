@@ -57,11 +57,26 @@ braucht.
 myl-test artefakte
 ```
 
-Der Testclient rechnet einen Digest über **alle** Artefaktdateien und
-vergleicht ihn mit `REGISTER.json`. Weicht er ab, sagt er ausdrücklich,
-dass dies **kein Hardware-Befund** ist — sonst sähe ein abweichendes
-Artefakt aus wie eine gescheiterte Bitgleichheit, und der Client würde das
-Gegenteil dessen berichten, wofür es ihn gibt.
+Der Testclient rechnet einen Digest über die drei Dateien, an denen die
+Identität des Modells hängt — `theta_v.json`, `model_config.json`,
+`tokenizer.json` — und vergleicht ihn mit `REGISTER.json`. `theta_v.json`
+enthält die Hashes von `weights_manifest.json`, `scales.json` und
+`luts.json`; jene wiederum den Hash **jeder** Gewichts- und LUT-Datei, und
+`loader.rs` prüft diese Kette beim Laden. Wer die drei trifft, hat
+dasselbe Modell.
+
+Weicht der Digest ab, sagt der Client ausdrücklich, dass dies **kein
+Hardware-Befund** ist — sonst sähe ein abweichendes Artefakt aus wie eine
+gescheiterte Bitgleichheit, und der Client würde das Gegenteil dessen
+berichten, wofür es ihn gibt.
+
+> **Warum nicht über den ganzen Ordner.** Diese Fassung gab es und hat
+> sofort falschen Alarm ausgelöst: Ein Synchronisationswerkzeug hatte 432
+> inhaltsgleiche Kopien in den Artefaktordner gelegt (`theta_v 2.json` und
+> so fort). Der Lader ignoriert solche Dateien; sie ändern das Modell
+> nicht. Ein Anker, der bei belanglosen Streudateien anschlägt, macht den
+> echten Befund unglaubwürdig. Nebenbei dauerte das Hashen von 8,7 GB
+> Minuten — jetzt sind es **0,4 Sekunden**.
 
 ## Paket neu erzeugen
 

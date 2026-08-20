@@ -2,7 +2,7 @@
 
 > **Version:** 0.3.1
 > **Datum:** 2026-08-18
-> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.3, 2.1–2.5):
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5):
 > Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2) mit Checker-Modul,
 > Challenge-Erzeugung, Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik.
 > 66 Tests grün.

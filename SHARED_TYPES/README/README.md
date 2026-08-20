@@ -2,7 +2,7 @@
 
 > **Version:** 0.4.0
 > **Datum:** 2026-08-19
-> **Status:** 🎉 **Phase 1 + 2 vollständig** (Punkte 1.1–1.6, 2.1–2.3):
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
 > GF(2⁸)**, ID-Newtypes, Kern-Structs

@@ -90,10 +90,10 @@ wirkungslos ist.
 
 | Modell | Backend | Prefill | Decode | bf16 (Decode) |
 |---|---|---|---|---|
-| 0,5B | reference | 18,85 tok/s | 18,58 tok/s | 66,19 tok/s |
-| 0,5B | **cpu-simd** | 23,46 tok/s | **24,26 tok/s** | — |
-| 7B | reference | 0,90 tok/s | 1,35 tok/s | nicht gemessen |
-| 7B | **cpu-simd** | 1,60 tok/s | **2,03 tok/s** | — |
+| 0,5B | reference | 19,31 tok/s | 18,24 tok/s | 66,12 tok/s |
+| 0,5B | **cpu-simd** | 24,00 tok/s | **23,23 tok/s** | — |
+| 7B | reference | 0,81 tok/s | 1,40 tok/s | 9,46 tok/s |
+| 7B | **cpu-simd** | 1,58 tok/s | **2,00 tok/s** | — |
 
 arm64 / Darwin, 2026-08-20. Details und Einordnung in
 [`bench/README.md`](../bench/README.md). `cpu-simd` ist seit dem

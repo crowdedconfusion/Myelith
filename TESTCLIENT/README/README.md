@@ -229,6 +229,33 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 
 ## Changelog
 
+### v0.4.0 – 2026-08-20 (Artefakte finden, wählen, beschaffen)
+
+- **`artefakte`** (neuer Befehl): prüft für jedes bekannte Modell, ob es
+  auf dieser Maschine liegt und ob es dem veröffentlichten Digest aus
+  `INTEGER_LLM/scale_packs/REGISTER.json` entspricht.
+- **Automatische Auflösung** für `determinismus` und `shard`: Findet der
+  Client ein Artefakt, nimmt er es; findet er mehrere, fragt er; findet
+  er keines, bietet er an, die Gewichte von Hugging Face zu holen und die
+  Artefakte über das Skalenpaket zu bauen. Im Menü läuft das beim Start.
+  Mit `--artifacts` gesetzt bleibt alles wie zuvor.
+- **Bei `--quiet` wird nicht gefragt und nichts geladen.** Ein Zugriff
+  über mehrere Gigabyte auf einen fremden Dienst gehört nicht in einen
+  Skriptlauf, der ihn nicht angefordert hat.
+- **Ein abweichender Digest wird ausdrücklich als *kein* Hardware-Befund
+  gemeldet.** Ohne diesen Satz sähe ein anderes Artefakt aus wie eine
+  gescheiterte Bitgleichheit, und der Client berichtete das Gegenteil
+  dessen, wofür es ihn gibt.
+- **Der Digest hängt an der Ankerkette,** nicht am Verzeichnisinhalt:
+  `theta_v.json` pinnt die drei Manifeste, jene jede einzelne Gewichts-
+  und LUT-Datei, und `loader.rs` prüft die Kette beim Laden. Die erste
+  Fassung hashte den ganzen Ordner, dauerte über 8,7 GB Minuten und
+  schlug bei belanglosen Streudateien Alarm.
+- **Beim Bauen aufgefallen:** Die Beschaffung stand zunächst *nach*
+  `stdin.lock()` der Menüschleife und rief `read_line()`. Der zweite
+  Lock blockiert, solange der erste gehalten wird; der Client hing
+  stumm. Sie steht jetzt davor.
+
 ### v0.3.0 – 2026-08-18 (Testplan und sortierte Ablage)
 
 - **Testplan** (`spec.rs`): Der Koordinator erzeugt eine `.plan`-Datei

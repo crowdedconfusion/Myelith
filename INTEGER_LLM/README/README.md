@@ -1,8 +1,13 @@
 # integer-llm
 
-> **Version:** 0.12.48
-> **Datum:** 2026-08-18
-> **Status:** 🎉 **7B-Bug gefunden und behoben** — Perplexität **41,42 → 9,40** (+8,29 % gegen BF16-Baseline 8,68), Faktor 45. Ursache: zwei Implementierungsfehler (Fund 23: int8-Bias sättigte still; Fund 24: Varianzsumme richtete nach unten aus). 0,5B unverändert bei 15,29 (+2,3 %).
+> **Version:** 0.15.0 (θ_v 0.17.0)
+> **Datum:** 2026-08-20
+> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
+> 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
+> Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
+> gesamte verbleibende Umsetzungsverlust beträgt damit **0,30 Punkte**.
+> Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
+> Residual-Addition.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -152,12 +157,14 @@ INTEGER_LLM_MODEL=qwen2.5-7b python bench/qualitativ.py 10
 Die Modellwahl folgt derselben Umgebungsvariablen wie Kalibrierung und
 Messung; ohne Angabe läuft er gegen `qwen2.5-0.5b`.
 
-### Ergebnis (2026-08-19, θ_v 0.14.0)
+### Ergebnis (2026-08-20, θ_v 0.17.0)
 
 | | 0,5B | 7B |
 |---|---|---|
 | **Determinismus** (Zielwert 8/8) | **8/8** ✓ | **8/8** ✓ |
-| Perplexität Integer / BF16 | 15,29 / 14,95 (+2,3 %) | 9,40 / 8,68 (+8,3 %) |
+| Perplexität Integer / BF16 | **15,27** / 14,95 (**+2,11 %**) | **8,78** / 8,68 (**+1,14 %**) |
+| Akzeptanzkriterium ≤ 5 % | erfüllt | erfüllt |
+| Boden des Schemas (W8A16, sonst float) | — | +0,84 % |
 | Identische Generierungen (Gütezahl) | 3/8 | 5/8 |
 | Deckungsgleiche Token (Gütezahl) | 65,0 % | 73,8 % |
 
@@ -402,7 +409,24 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
-### v0.15.0 – 2026-08-20 (θ_v 0.16.0/0.17.0: Softmax-Auflösung, Residual-Addition)
+### v0.15.0 – 2026-08-20 (θ_v 0.16.0/0.17.0: Softmax-Auflösung, Residual-Addition, Skalenpakete)
+
+**Das Akzeptanzkriterium ist erreicht — auf beiden Modellen.**
+
+| Modell | vorher | jetzt | Kriterium ≤ 5 % |
+|---|---|---|---|
+| Qwen2.5-0,5B | 15,29 (+2,25 %) | **15,27 (+2,11 %)** | erfüllt |
+| Qwen2.5-7B | 9,33 (+7,49 %) | **8,78 (+1,14 %)** | erfüllt |
+
+Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei **+0,84 %**;
+der verbleibende Umsetzungsverlust beträgt damit **0,30 Punkte**. Zu Beginn der
+Fehlersuche 12.77 waren es 6,65.
+
+**Vor der Meldung verifiziert**, weil die Zahl zu gut war, um sie ungeprüft zu
+übernehmen: Artefakt trägt θ_v 0.17.0, 7B erzeugt kohärenten Text, Golden
+Vectors 30/30, Konformität 30/30 auf beiden Backends, Durchsatz unverändert.
+Die stärkste Bestätigung ist die Kohärenz mit dem unabhängig gemessenen
+Schema-Boden.
 
 **θ_v 0.17.0 — Fund 31: doppelte Klemmung in der Residual-Addition.**
 Beide Residual-Additionen klemmten den eingehenden Residualstrom
@@ -413,7 +437,20 @@ der Summe kalibriert. Gemessen an Ebene 21, Kanal 62 (der Kanal mit der
 *massive activation*): wahrer Wert 61,56, unser Wert **−0,002**. Jetzt
 wird auf der **gröberen** der beiden Skalen in i64 addiert und **einmal**
 reskaliert und geklemmt: **63,998**. Mittlerer Ebenenfehler an Position 0
-von 8,56 % auf 4,96 %; 0,5B-Perplexität **+2,49 % → +2,11 %**.
+von 8,56 % auf 4,96 %; Perplexität 0,5B **+2,49 % → +2,11 %**, 7B
+**+7,99 % → +1,14 %**. Der Unterschied im Ausmaß hat einen Grund: 7B trägt
+3–4 massive Kanäle mit absmax ~9600 gegen ~10 im Rest (Faktor 960) über 28
+Ebenen, 0,5B einen mit Faktor 340 über 24 — die doppelte Klemmung schlug dort
+entsprechend häufiger und härter zu.
+
+**Skalenpakete (Fund 32).** Der Artefaktbau war nur auf derselben Maschine
+reproduzierbar: Die Aktivierungsskalen entstehen in Gleitkomma, und **3 von 314**
+Einträgen sitzen innerhalb von 0,01 % einer Zweierpotenz-Grenze. Seit
+`scale_packs/` werden Skalen und LUTs versioniert (1,8 MB für beide Modelle);
+die verbleibende Gewichtsquantisierung ist `round(W · 2^shift)` und damit exakt.
+Der Bau dauert jetzt **3 s statt ~3 min** (0,5B) und **40 s statt ~20 min** (7B).
+Geprüft wird er über `myl-test artefakte` gegen einen Digest über alle
+Artefaktdateien.
 
 **θ_v 0.16.0 — Softmax-Auflösung.** `exp_input_frac_bits` 4 → 8,
 `exp_lut_frac_bits` und `prob_frac_bits` 8 → 14. Auf 128-Token-Sequenzen

@@ -4,7 +4,7 @@
 > **Datum:** 2026-08-18
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
-> α=2/31 — Details im Fahrplan); 🎉 **Phase 1 + 2 vollständig**
+> α=2/31 — Details im Fahrplan); 🎉 **Phase 2 abgeschlossen**
 > (`myl-tokenomics` v0.1.1–v0.2.4, Akzeptanzkriterien erfüllt).
 
 Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,

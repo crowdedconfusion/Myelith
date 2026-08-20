@@ -33,6 +33,7 @@
 //! Diagnosewerkzeug darf laut, gesprächig und roh sein; ein
 //! Nutzer-Client nicht.
 
+pub mod artefakte;
 pub mod banner;
 pub mod hardware;
 pub mod menu;

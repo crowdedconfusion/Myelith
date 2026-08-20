@@ -115,6 +115,35 @@ pub fn run(mut e: Einstellungen) -> bool {
          (Für Skripte: `myl-test --help` zeigt die Befehle.)\n"
     );
 
+    // Artefakte gleich beim Start klären: suchen, bei mehreren auswählen
+    // lassen, bei keinen anbieten, Gewichte zu holen und zu bauen. Das
+    // gehört vor das Menü, weil zwei seiner Punkte ohne Modell nicht
+    // laufen — und weil ein Nutzer, der den Client zum ersten Mal öffnet,
+    // sonst erst an einem Fehlschlag merkt, dass ihm etwas fehlt.
+    {
+        let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+        let mut frage = |prompt: &str| -> Option<String> {
+            print!("  {}", prompt);
+            let _ = io::stdout().flush();
+            zeilen_lesen()
+        };
+        let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
+        match crate::artefakte::beschaffen(&repo, &mut f, &mut |t| println!("  {}", t)) {
+            Ok(p) => {
+                e.artifacts = p;
+                println!();
+            }
+            Err(fehler) => {
+                for zeile in fehler.lines() {
+                    println!("  {}", zeile);
+                }
+                println!("
+  Die Punkte 2 und 3 brauchen ein Modell und werden fehlschlagen.
+");
+            }
+        }
+    }
+
     let stdin = io::stdin();
     let mut zeilen = stdin.lock().lines();
     let mut letztes_ergebnis = true;
@@ -340,6 +369,22 @@ fn anleitung_zeigen() {
   Ausführlich: TESTCLIENT/README/ANLEITUNG.md
 "
     );
+}
+
+/// Liest eine Zeile von der Standardeingabe.
+///
+/// **Muss vor `stdin.lock()` der Menüschleife laufen.** Ein zweiter
+/// `lock()` auf dieselbe Quelle blockiert, solange der erste gehalten
+/// wird — beim ersten Versuch stand die Beschaffung nach der Sperre und
+/// der Client hing stumm. Deshalb steht sie jetzt davor, und deshalb
+/// steht dieser Satz hier: Der Fehler ist beim Lesen des Codes nicht
+/// sichtbar, nur beim Ausführen.
+fn zeilen_lesen() -> Option<String> {
+    let mut zeile = String::new();
+    match io::stdin().read_line(&mut zeile) {
+        Ok(0) | Err(_) => None,
+        Ok(_) => Some(zeile),
+    }
 }
 
 #[cfg(test)]
