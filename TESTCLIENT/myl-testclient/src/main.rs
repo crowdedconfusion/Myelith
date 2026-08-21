@@ -59,7 +59,7 @@ OPTIONEN
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
     --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: qwen2.5-0.5b)
     --out <DATEI>       Zieldatei beim Erzeugen eines Plans
-    --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/myl-testclient/logs)
+    --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/logs)
                         Bei `vergleich` das auszuwertende Verzeichnis; ohne
                         die Option wird TESTCLIENT/Vergleiche gelesen
     --name <TEXT>       Name des Teilnehmers. Steht im Protokoll und im

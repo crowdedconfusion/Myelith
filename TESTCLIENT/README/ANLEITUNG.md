@@ -1,6 +1,6 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
-**Version:** 2.1.0 · **Datum:** 2026-08-21
+**Version:** 2.2.0 · **Datum:** 2026-08-21
 
 Diese Anleitung hat zwei Hälften:
 
@@ -105,6 +105,22 @@ Pipe, in einem Skript, in einer schlichten seriellen Konsole —, zeigt er
 dieselbe Liste und wartet auf eine getippte Ziffer mit Enter. Beide Wege
 führen zum selben Ergebnis.
 
+Die Titel der Auswahlpunkte stehen fett in wechselnden Neonfarben, und
+auch das Logo trägt jedes Mal eine andere. **Das ist Schmuck und sonst
+nichts:** Kein Urteil und kein Ergebnis hängt an einer Farbe, dafür
+stehen überall Wörter. Wer schwarzweiß liest, verliert nichts.
+
+**Der Bildschirm wird vor jeder Auswahl aufgeräumt.** Oben steht das
+Logo, darunter genau das, was ansteht — nichts sonst. Nach einer Aktion
+bleibt ihre Ausgabe stehen, bis du eine Taste drückst:
+
+```
+  ── Weiter mit einer beliebigen Taste ──
+```
+
+Du bestimmst also, wie lange du das Ergebnis ansiehst. Verloren geht
+dabei nichts: Alles, was zählt, steht im Protokoll.
+
 ## A5. Der Ablauf, Schritt für Schritt
 
 ### Schritt 1: Dein Name
@@ -200,10 +216,12 @@ jeder Maschine derselbe sein. Genau das ist der ganze Test.
 
 ### Schritt 6: Protokoll zurückschicken
 
-Am Ende nennt der Client den Pfad:
+Am Ende nennt der Client den Pfad. Die Protokolle liegen in
+**`TESTCLIENT/logs/`** — auf derselben Ebene wie `Testpläne/` und
+`Vergleiche/`, also dort, wo du ohnehin schon warst:
 
 ```
-Protokoll: …/logs/anna_12a1e91e_2026-08-21_143022.jsonl (maschinenlesbar)
+Protokoll: …/TESTCLIENT/logs/anna_12a1e91e_2026-08-21_143022.jsonl
            und …_143022.log — Lauf 2026-08-21-143022-aarch64-macos-…
 ```
 
@@ -228,7 +246,7 @@ Punkt **[3] Protokolle vergleichen** fragt zuerst, *welche*:
 | Auswahl | Was verglichen wird |
 |---|---|
 | **Zugesandte Protokolle** | Was in `TESTCLIENT/Vergleiche/` liegt — der Weg des Koordinators |
-| **Eigene Läufe** | Die Protokolle dieser Maschine aus `logs/` |
+| **Eigene Läufe** | Die Protokolle dieser Maschine aus `TESTCLIENT/logs/` |
 
 Für dich als Teilnehmer ist meist die zweite Auswahl richtig. Sie ergibt
 für sich **keinen** Nachweis — dazu fehlt eine zweite Maschine —, zeigt
@@ -463,7 +481,7 @@ Dazu diese vier Sätze:
 > Leg die Datei in `TESTCLIENT/Testpläne/`.
 > Starte den Client, gib deinen Namen ein, wähle den Plan, drücke [1].
 > Rechne mit **&lt;Dauer&gt;**.
-> Schick mir die `.jsonl` aus `TESTCLIENT/myl-testclient/logs/`.
+> Schick mir die `.jsonl` aus `TESTCLIENT/logs/`.
 
 ## B4. Einsammeln und auswerten
 
@@ -682,6 +700,16 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 ---
 
 ## Changelog
+
+### v2.2.0 – 2026-08-21 (aufgeräumter Bildschirm, flachere Ablage, Farbe)
+- **Farbe:** Menütitel fett in wechselnden Neontönen, das Logo bei jedem
+  Erscheinen in einer anderen. Farbe trägt keine Aussage.
+- **Vor jeder Auswahl wird aufgeräumt:** Logo oben, darunter nur das, was
+  ansteht. Nach einer Aktion wartet der Client auf einen Tastendruck,
+  damit ihre Ausgabe gelesen werden kann, bevor sie weicht.
+- **Protokolle liegen jetzt in `TESTCLIENT/logs/`** statt zwei Ebenen
+  tiefer in `myl-testclient/logs/`. Ein Teilnehmer, der seine Datei
+  verschicken soll, hat im Quellcodeverzeichnis nichts zu suchen.
 
 ### v2.1.0 – 2026-08-21 (Vergleichsordner)
 - **`TESTCLIENT/Vergleiche/`** als Ablage der zugesandten Protokolle,

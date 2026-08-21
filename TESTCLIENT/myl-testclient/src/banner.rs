@@ -71,6 +71,90 @@ pub fn print_if(show: bool) {
     println!("{}\n", SUBTITLE);
 }
 
+/// Leert den Bildschirm und setzt das Banner an den Anfang.
+///
+/// **Warum überhaupt geleert wird.** Das Menü ist die Seite, an der ein
+/// Teilnehmer entscheidet, was als Nächstes geschieht. Steht darüber noch
+/// die Ausgabe des vorigen Laufs, muss er erst zurückscrollen, um zu
+/// sehen, wo er ist — und bei einem Testlauf über sechs Prompts sind das
+/// einige Bildschirmhöhen. Nach jeder Aktion also: aufräumen, Logo, und
+/// darunter genau die Auswahl, die ansteht.
+///
+/// **Was dabei verlorengeht, ist bedacht.** Die Ausgabe eines Laufs
+/// verschwindet mit dem nächsten Aufräumen. Sie ist nicht weg: Sie steht
+/// vollständig im Protokoll, und vor dem Aufräumen wartet der Client auf
+/// einen Tastendruck (siehe `menu::weiter`), damit sie gelesen werden
+/// kann, solange sie gebraucht wird.
+///
+/// **Nur auf einem Terminal.** Geht die Ausgabe in eine Datei oder Pipe,
+/// wird nichts geleert und nichts positioniert — Steuersequenzen in einem
+/// mitgeschnittenen Lauf wären Müll.
+pub fn bildschirm() {
+    bildschirm_mit(crate::farben::naechste());
+}
+
+/// Wie [`bildschirm`], aber mit vorgegebener Farbe für den Schriftzug.
+///
+/// Gebraucht beim Start: Dort zeichnet die Animation den Schriftzug, und
+/// unmittelbar danach wird aufgeräumt und neu gedruckt. Zöge jeder der
+/// beiden Schritte seine eigene Farbe, wäre aus dem gedachten
+/// unsichtbaren Übergang ein sichtbarer Farbwechsel geworden.
+pub fn bildschirm_mit(farbe: crossterm::style::Color) {
+    use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
+    use std::io::IsTerminal;
+
+    if std::env::var("MYL_NO_BANNER").is_ok() {
+        return;
+    }
+
+    // Ohne Terminal keine Steuerzeichen: Ein mitgeschnittener Lauf soll
+    // lesbar bleiben, und Farbcodes in einer Datei sind es nicht.
+    if !std::io::stdout().is_terminal() {
+        println!("{}", BANNER);
+        println!("{}\n", SUBTITLE);
+        return;
+    }
+
+    let mut aus = std::io::stdout();
+    let _ = crossterm::execute!(
+        aus,
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::cursor::MoveTo(0, 0)
+    );
+    for zeile in BANNER.lines() {
+        // Der Schriftzug trägt die Farbe, das Netz bleibt Hintergrund.
+        // Zwei Neontöne nebeneinander stritten um die Aufmerksamkeit, und
+        // im Vorbild ist das Netz ebenfalls zurückgenommen.
+        let (ton, stark) = if ist_schriftzug(zeile) {
+            (farbe, Attribute::Bold)
+        } else {
+            (crate::farben::BEIWERK, Attribute::NormalIntensity)
+        };
+        let _ = crossterm::queue!(
+            aus,
+            SetForegroundColor(ton),
+            SetAttribute(stark),
+            Print(zeile),
+            ResetColor,
+            SetAttribute(Attribute::Reset),
+            Print("\n")
+        );
+    }
+    let _ = crossterm::queue!(
+        aus,
+        SetForegroundColor(crate::farben::BEIWERK),
+        Print(SUBTITLE),
+        ResetColor,
+        Print("\n\n")
+    );
+    let _ = std::io::Write::flush(&mut aus);
+}
+
+/// Gehört diese Zeile zum Blockschriftzug?
+fn ist_schriftzug(zeile: &str) -> bool {
+    zeile.contains('█') || zeile.contains('╚')
+}
+
 /// Startbild mit Animation, sonst wie [`print_if`].
 ///
 /// Getrennt von `print_if`, weil nicht jeder Bannerdruck animiert gehört:
@@ -80,12 +164,16 @@ pub fn start_if(show: bool) {
     if !show || std::env::var("MYL_NO_BANNER").is_ok() {
         return;
     }
-    // Die Animation endet mit dem fertigen Schriftzug auf dem Bildschirm.
-    // Ihn danach noch einmal zu drucken, hieße ihn doppelt zu zeigen.
-    if !crate::animation::abspielen() {
-        println!("{}", BANNER);
-    }
-    println!("{}\n", SUBTITLE);
+    // Nach dem Sturm steht der Schriftzug bereits, aber an der Stelle, an
+    // der ihn die Animation gezeichnet hat, und mit ihren Farben. Ein
+    // Aufräumen und ein sauberer Neudruck bringen ihn in denselben
+    // Zustand wie bei jedem späteren Aufräumen — sichtbar ist der
+    // Übergang nicht, weil an derselben Stelle dasselbe Bild entsteht.
+    // Ohne diesen Schritt sähe das Startbild anders aus als jedes
+    // folgende, und die Namenseingabe stünde unter einem Sonderfall.
+    let farbe = crate::farben::naechste();
+    crate::animation::abspielen(farbe);
+    bildschirm_mit(farbe);
 }
 
 #[cfg(test)]

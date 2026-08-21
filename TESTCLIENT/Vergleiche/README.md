@@ -23,7 +23,7 @@ seinen Bericht nach `Berichte/`.
 
 ## Was hier **nicht** hingehört
 
-- **Eigene Läufe.** Die stehen in `myl-testclient/logs/`. Der Menüpunkt
+- **Eigene Läufe.** Die stehen in `TESTCLIENT/logs/`. Der Menüpunkt
   lässt zwischen beiden wählen; wer sie vermischt, vergleicht am Ende
   seine eigene Maschine mit sich selbst.
 - **Bestätigte Ergebnisse.** Ein erbrachter Cross-Hardware-Nachweis

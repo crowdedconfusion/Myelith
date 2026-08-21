@@ -147,29 +147,32 @@ fn menue_entwickler() -> Vec<Punkt> {
 
 /// Startet das Menü und kehrt mit dem Gesamtergebnis zurück.
 pub fn run(mut e: Einstellungen) -> bool {
+    // Erstes Bild: Animation, dann Logo und Namenseingabe, sonst nichts.
+    //
+    // Der Name steht vor allem anderen, weil er jede Protokolldatei
+    // benennt, die in dieser Sitzung entsteht — nachträglich umbenennen
+    // müsste ihn sonst der Koordinator.
     banner::start_if(true);
-    println!(
-        "  Kein Unterbefehl angegeben — interaktiver Modus.\n  \
-         (Für Skripte: `myl-test --help` zeigt die Befehle.)\n"
-    );
-
-    // Der Name steht vor allem anderen: Er benennt jede Protokolldatei,
-    // die in dieser Sitzung entsteht, und nachträglich umbenennen müsste
-    // ihn sonst der Koordinator.
     if e.teilnehmer == crate::logging::OHNE_NAME {
         e.teilnehmer = namen_erfragen();
     }
 
+    // Zweites Bild: Testplan wählen.
+    //
     // Reihenfolge beim Start: erst Testplan, dann Artefakt.
     //
     // Ein Plan legt das Modell fest. Wer zuerst nach dem Artefakt fragt und
     // danach den Plan lädt, hat entweder die falsche Frage gestellt oder
     // muss sie zurücknehmen. Ist ein Plan gewählt, ergibt sich das Artefakt
     // aus ihm, und es gibt nichts mehr zu fragen.
+    banner::bildschirm();
     let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
     let mut sagen = |t: String| println!("  {}", t);
     let plan = plan_waehlen(&repo, &mut sagen);
 
+    // Drittes Bild: Artefakt auflösen und, wenn ein Plan gewählt wurde,
+    // gleich messen.
+    banner::bildschirm();
     let mut frage = |prompt: &str| -> Option<String> { auswahl::frage(&format!("  {}", prompt)) };
     let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
 
@@ -206,7 +209,10 @@ pub fn run(mut e: Einstellungen) -> bool {
         println!("\n  Durchgang beendet. Das Menü steht für weitere Läufe bereit.\n");
     }
 
+    weiter();
+
     loop {
+        banner::bildschirm();
         e.zeigen();
         let Some(wahl) = auswahl::waehlen("Was möchtest du tun?", &menue_nutzer()) else {
             println!("\n  Fertig.");
@@ -215,10 +221,22 @@ pub fn run(mut e: Einstellungen) -> bool {
 
         println!();
         match wahl {
-            '1' => letztes_ergebnis = testlauf(&e),
-            '2' => testdatei_waehlen(&mut e),
-            '3' => letztes_ergebnis = vergleichen(&e),
-            '4' => anleitung_zeigen(),
+            '1' => {
+                letztes_ergebnis = testlauf(&e);
+                weiter();
+            }
+            '2' => {
+                testdatei_waehlen(&mut e);
+                weiter();
+            }
+            '3' => {
+                letztes_ergebnis = vergleichen(&e);
+                weiter();
+            }
+            '4' => {
+                anleitung_zeigen();
+                weiter();
+            }
             '9' => letztes_ergebnis = entwickler(&mut e, letztes_ergebnis),
             '0' => {
                 println!("  Fertig.");
@@ -226,7 +244,6 @@ pub fn run(mut e: Einstellungen) -> bool {
             }
             _ => {}
         }
-        println!();
     }
 }
 
@@ -449,6 +466,7 @@ fn plan_waehlen(
 /// Die Entwickler-Ebene. Kehrt mit dem letzten Ergebnis zurück.
 fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
     loop {
+        banner::bildschirm();
         e.zeigen();
         let Some(wahl) = auswahl::waehlen("Entwickler", &menue_entwickler()) else {
             return letztes_ergebnis;
@@ -475,6 +493,7 @@ fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
             '0' => return letztes_ergebnis,
             _ => {}
         }
+        weiter();
     }
 }
 
@@ -531,6 +550,38 @@ fn testlauf(e: &Einstellungen) -> bool {
         ja_nein(stapel)
     );
     log.finish(hardware && determinismus && shard && stapel)
+}
+
+/// Wartet auf einen Tastendruck, bevor der Bildschirm aufgeräumt wird.
+///
+/// **Der Gegenpart zum Aufräumen.** Ohne ihn verschwände die Ausgabe
+/// eines Laufs in dem Augenblick, in dem sie fertig ist — der Nutzer sähe
+/// das Ergebnis nie. Mit ihm bleibt sie stehen, solange er sie liest, und
+/// er entscheidet, wann weitergegangen wird.
+///
+/// Ohne Terminal wird nicht gewartet: Ein Skript hat niemanden, der eine
+/// Taste drückt, und würde stillstehen.
+fn weiter() {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return;
+    }
+    println!("\n  ── Weiter mit einer beliebigen Taste ──");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    if let Ok(roh) = auswahl::Rohmodus::an() {
+        loop {
+            match crossterm::event::read() {
+                Ok(crossterm::event::Event::Key(k))
+                    if k.kind == crossterm::event::KeyEventKind::Press =>
+                {
+                    break
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        drop(roh);
+    }
 }
 
 /// Menüpunkt [3]: Protokolle vergleichen.

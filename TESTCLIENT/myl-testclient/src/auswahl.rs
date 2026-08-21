@@ -29,7 +29,7 @@
 use std::io::{self, IsTerminal, Write};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::style::{Attribute, Print, SetAttribute};
+use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{cursor, execute, queue};
 
@@ -44,6 +44,14 @@ pub struct Punkt {
     pub titel: String,
     /// Erläuterung unter dem Titel. Leer lassen, wenn der Titel genügt.
     pub hinweis: String,
+    /// Farbe des Titels.
+    ///
+    /// **Beim Bau des Punkts vergeben, nicht beim Zeichnen.** Die Liste
+    /// wird bei jedem Tastendruck neu gezeichnet; eine bei jedem Bild neu
+    /// gezogene Farbe flackerte, sobald jemand die Pfeiltaste hält. So
+    /// bleibt sie über eine Auswahl hinweg stehen und wechselt erst, wenn
+    /// das Menü erneut aufgebaut wird.
+    pub farbe: Color,
 }
 
 impl Punkt {
@@ -52,6 +60,7 @@ impl Punkt {
             taste,
             titel: titel.to_string(),
             hinweis: hinweis.to_string(),
+            farbe: crate::farben::naechste(),
         }
     }
 }
@@ -203,38 +212,55 @@ fn zeichnen(
 ) -> io::Result<()> {
     // Im Rohmodus setzt `\n` den Cursor nach unten, ohne ihn an den
     // Zeilenanfang zu holen — ohne `\r` liefe die Ausgabe treppenförmig.
-    let umbruch = if markiert.is_some() { "\r\n" } else { "\n" };
+    //
+    // Dieselbe Unterscheidung entscheidet über die Farbe: `markiert` ist
+    // nur im Rohmodus gesetzt, also nur dann, wenn ein Terminal am anderen
+    // Ende hängt. Der zeilenweise Rückfallweg bleibt farblos — er bedient
+    // auch Pipes und Mitschnitte, und Steuerzeichen wären dort Müll.
+    let farbig = markiert.is_some();
+    let umbruch = if farbig { "\r\n" } else { "\n" };
 
     queue!(aus, Print(format!("{}  ── {} ──{}", umbruch, kopf, umbruch)))?;
 
     for (i, p) in punkte.iter().enumerate() {
         let ist_markiert = markiert == Some(i);
         let zeiger = if ist_markiert { "❯" } else { " " };
-        if ist_markiert {
-            queue!(aus, SetAttribute(Attribute::Reverse))?;
+
+        queue!(aus, Print(format!("  {} {}  ", zeiger, p.taste)))?;
+        if farbig {
+            queue!(aus, SetForegroundColor(p.farbe), SetAttribute(Attribute::Bold))?;
+            if ist_markiert {
+                queue!(aus, SetAttribute(Attribute::Underlined))?;
+            }
         }
-        queue!(
-            aus,
-            Print(format!("  {} {}  {}", zeiger, p.taste, p.titel))
-        )?;
-        if ist_markiert {
-            queue!(aus, SetAttribute(Attribute::Reset))?;
+        queue!(aus, Print(&p.titel))?;
+        if farbig {
+            queue!(aus, ResetColor, SetAttribute(Attribute::Reset))?;
         }
         queue!(aus, Print(umbruch))?;
 
         for zeile in p.hinweis.lines() {
-            queue!(aus, Print(format!("        {}{}", zeile, umbruch)))?;
+            if farbig {
+                queue!(aus, SetForegroundColor(crate::farben::BEIWERK))?;
+            }
+            queue!(aus, Print(format!("        {}", zeile)))?;
+            if farbig {
+                queue!(aus, ResetColor)?;
+            }
+            queue!(aus, Print(umbruch))?;
         }
     }
 
     match markiert {
-        Some(_) => queue!(
-            aus,
-            Print(format!(
-                "{}  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück{}",
-                umbruch, umbruch
-            ))
-        )?,
+        Some(_) => {
+            queue!(aus, SetForegroundColor(crate::farben::BEIWERK), Print(umbruch))?;
+            queue!(
+                aus,
+                Print("  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück"),
+                ResetColor,
+                Print(umbruch)
+            )?
+        }
         None => queue!(aus, Print(format!("{}  Auswahl: ", umbruch)))?,
     }
     Ok(())
@@ -348,6 +374,30 @@ mod tests {
                 gezeichnete_hoehe(&liste)
             );
         }
+    }
+
+    /// Im Rohmodus tragen die Titel Farbe und Fettschrift; der markierte
+    /// zusätzlich eine Unterstreichung. Ohne beides zeigten die
+    /// Pfeiltasten auf nichts.
+    #[test]
+    fn titel_sind_farbig_und_fett() {
+        let mut puffer: Vec<u8> = Vec::new();
+        zeichnen(&mut puffer, "Kopf", &punkte(), Some(1)).expect("zeichnen");
+        let text = String::from_utf8(puffer).expect("utf8");
+        assert!(text.contains("\x1b[38;5;"), "keine Farbe gesetzt");
+        assert!(text.contains("\x1b[1m"), "keine Fettschrift");
+        assert!(text.contains("\x1b[4m"), "markierter Punkt nicht unterstrichen");
+        assert!(text.contains("\x1b[0m"), "Farbe wird nicht zurückgenommen");
+    }
+
+    /// Der zeilenweise Rückfallweg bedient auch Pipes und Mitschnitte.
+    /// Dort wären Steuerzeichen Müll — er bleibt deshalb farblos.
+    #[test]
+    fn zeilenmodus_bleibt_ohne_steuerzeichen() {
+        let mut puffer: Vec<u8> = Vec::new();
+        zeichnen(&mut puffer, "Kopf", &punkte(), None).expect("zeichnen");
+        let text = String::from_utf8(puffer).expect("utf8");
+        assert!(!text.contains('\x1b'), "Steuerzeichen im Zeilenmodus: {text:?}");
     }
 
     /// Der markierte Punkt muss sich sichtbar abheben, sonst zeigen die

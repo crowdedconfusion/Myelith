@@ -55,10 +55,10 @@ const BILDDAUER: Duration = Duration::from_millis(40);
 const STURMBILDER: u32 = 45;
 
 /// Xorshift64. Reicht für einen Effekt, für nichts sonst.
-struct Zufall(u64);
+pub(crate) struct Zufall(u64);
 
 impl Zufall {
-    fn neu() -> Self {
+    pub(crate) fn neu() -> Self {
         let saat = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -66,7 +66,7 @@ impl Zufall {
         Self(saat | 1)
     }
 
-    fn naechste(&mut self) -> u64 {
+    pub(crate) fn naechste(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -75,7 +75,7 @@ impl Zufall {
 
     /// Gleichverteilt in `0..n`. `n` ist hier immer klein und fest, der
     /// Modulo-Bias ist für einen Bildschirmeffekt ohne Bedeutung.
-    fn bis(&mut self, n: usize) -> usize {
+    pub(crate) fn bis(&mut self, n: usize) -> usize {
         (self.naechste() % n.max(1) as u64) as usize
     }
 
@@ -110,7 +110,7 @@ impl Tropfen {
 /// Bildschirm steht** — der Aufrufer darf ihn dann nicht noch einmal
 /// drucken. `false` heißt übersprungen, und der Aufrufer druckt das
 /// Banner wie zuvor.
-pub fn abspielen() -> bool {
+pub fn abspielen(farbe: Color) -> bool {
     if std::env::var("MYL_NO_ANIMATION").is_ok_and(|v| v != "0") {
         return false;
     }
@@ -128,19 +128,19 @@ pub fn abspielen() -> bool {
     // Schlägt irgendetwas fehl, bleibt nur das Aufräumen wichtig: Ein
     // Terminal ohne sichtbaren Cursor oder mit gesetzter Farbe wäre ein
     // schlechterer Zustand als eine ausgefallene Animation.
-    let ergebnis = spielen(breite, hoehe);
+    let ergebnis = spielen(breite, hoehe, farbe);
     let _ = execute!(io::stdout(), ResetColor, cursor::Show);
     ergebnis.unwrap_or(false)
 }
 
-fn spielen(breite: u16, hoehe: u16) -> io::Result<bool> {
+fn spielen(breite: u16, hoehe: u16, farbe: Color) -> io::Result<bool> {
     // Rohmodus, damit ein Tastendruck sofort ankommt statt erst mit Enter.
     let _roh = crate::auswahl::Rohmodus::an()?;
     let mut aus = io::stdout();
     execute!(aus, cursor::Hide, Clear(ClearType::All))?;
 
     regen(&mut aus, breite, hoehe)?;
-    sturm(&mut aus, breite, hoehe)?;
+    sturm(&mut aus, breite, hoehe, farbe)?;
     Ok(true)
 }
 
@@ -191,7 +191,7 @@ fn schriftzug_zellen(breite: u16, hoehe: u16) -> Vec<Zelle> {
 /// **Bereits eingerastete Zellen werden in jedem Bild neu gezeichnet.**
 /// Das Rauschen wählt seine Stellen frei und träfe sie sonst wieder; die
 /// paar hundert Schreibvorgänge je Bild kosten nichts.
-fn sturm(aus: &mut impl Write, breite: u16, hoehe: u16) -> io::Result<()> {
+fn sturm(aus: &mut impl Write, breite: u16, hoehe: u16, farbe: Color) -> io::Result<()> {
     let mut z = Zufall::neu();
     let zellen = schriftzug_zellen(breite, hoehe);
     if zellen.is_empty() {
@@ -234,7 +234,7 @@ fn sturm(aus: &mut impl Write, breite: u16, hoehe: u16) -> io::Result<()> {
             queue!(
                 aus,
                 cursor::MoveTo(zelle.x, zelle.y),
-                SetForegroundColor(Color::Green),
+                SetForegroundColor(farbe),
                 SetAttribute(Attribute::Bold),
                 Print(zelle.zeichen)
             )?;
@@ -250,7 +250,7 @@ fn sturm(aus: &mut impl Write, breite: u16, hoehe: u16) -> io::Result<()> {
         queue!(
             aus,
             cursor::MoveTo(zelle.x, zelle.y),
-            SetForegroundColor(Color::Green),
+            SetForegroundColor(farbe),
             SetAttribute(Attribute::Bold),
             Print(zelle.zeichen)
         )?;
@@ -343,14 +343,14 @@ mod tests {
     #[test]
     fn ohne_terminal_wird_uebersprungen() {
         let vorher = Instant::now();
-        assert!(!abspielen());
+        assert!(!abspielen(Color::Green));
         assert!(vorher.elapsed() < Duration::from_millis(500));
     }
 
     #[test]
     fn abschaltbar_ueber_umgebungsvariable() {
         std::env::set_var("MYL_NO_ANIMATION", "1");
-        assert!(!abspielen());
+        assert!(!abspielen(Color::Green));
         std::env::remove_var("MYL_NO_ANIMATION");
     }
 

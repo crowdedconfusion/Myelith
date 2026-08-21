@@ -3,7 +3,7 @@
 > **Version:** 0.6.0
 > **Datum:** 2026-08-21
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 101 Tests grün, alle Läufe gegen die
+> und 3.1 (Modellstand im Protokoll). 108 Tests grün, alle Läufe gegen die
 > echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
@@ -177,7 +177,7 @@ davon ab, womit du arbeitest.
 | `Myelith Testclient - Linux, macOS (Shell).sh` | Terminal auf Linux und macOS |
 
 Alle drei liegen in diesem Ordner, zusammen mit dem Quelltext unter
-`myl-testclient/`, den Protokollen unter `myl-testclient/logs/` und den
+`myl-testclient/`, den Protokollen unter `logs/` und den
 Helfern für Symbol und Anwendungsmenü unter `werkzeuge/`.
 
 **Sie dürfen aber überall liegen.** Die Starter suchen die
@@ -239,7 +239,7 @@ Lage auflöst.
 4. **`stack`** geht ohne Modell durch Krypto, Epochenseed, Komiteewahl,
    BFT, Verifikation, Ledger und Tokenomics.
 
-Jeder Lauf schreibt ein Protokoll nach `TESTCLIENT/myl-testclient/logs/`,
+Jeder Lauf schreibt ein Protokoll nach `TESTCLIENT/logs/`,
 maschinenlesbar als `.jsonl` und lesbar als `.log`. Für einen Vergleich
 zwischen zwei Maschinen zählen diese Dateien, nicht die Bildschirmausgabe.
 
@@ -396,6 +396,7 @@ TESTCLIENT/
 │   ├── ANLEITUNG.md          Tests mit mehreren Beteiligten
 │   └── Fahrplan-v1.md        Phasenplan
 ├── Testpläne/                .plan-Dateien des Koordinators
+├── logs/                     eigene Laufprotokolle (gitignored)
 ├── Vergleiche/               zugesandte Protokolle (gitignored)
 │   └── Berichte/             Vergleichsberichte (gitignored)
 └── myl-testclient/
@@ -406,6 +407,7 @@ TESTCLIENT/
     │   ├── hardware.rs       Fingerabdruck (Klasse, nicht Gerät)
     │   ├── banner.rs         ASCII-Banner zum Projektbanner
     │   ├── animation.rs      Startbild: Zeichenregen, dann Logoaufbau
+    │   ├── farben.rs         Neonpalette für Schriftzug und Menütitel
     │   ├── auswahl.rs        Pfeiltastenauswahl mit zeilenweisem Rückfall
     │   ├── menu.rs           interaktives Menü
     │   ├── artefakte.rs      finden, prüfen, beschaffen, freigeben
@@ -414,8 +416,13 @@ TESTCLIENT/
     │   ├── spec.rs           Testplan (erzeugen, prüfen, laden)
     │   ├── vergleich.rs      Protokolle gegenüberstellen, urteilen, berichten
     │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
-    └── logs/                 Laufprotokolle (gitignored)
+    └── Cargo.toml
 ```
+
+Die drei Ordner, mit denen ein Teilnehmer zu tun hat — `Testpläne/`,
+`logs/`, `Vergleiche/` — liegen bewusst **neben** dem Crate, nicht darin.
+Wer sein Protokoll verschicken soll, hat in einem Quellcodeverzeichnis
+nichts zu suchen.
 
 ## Belegte Läufe (2026-08-21, aarch64/macos/reference, θ_v 0.17.0)
 
@@ -434,6 +441,20 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 
 ### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
 
+- **Farbe:** Schriftzug und Menütitel erscheinen fett in wechselnden
+  Neontönen aus einer Palette von achtzehn 256-Farben-Werten; die letzten
+  vier werden gemieden, damit in einer Menüseite keine zwei gleichfarbigen
+  Punkte nebeneinander stehen. **Farbe trägt dabei nie eine Aussage** —
+  Urteile, Fehler und Vergleichswerte stehen als Wort da. Wer Graustufen
+  sieht oder einen Mitschnitt liest, verliert nichts. Ohne Terminal wird
+  keine einzige Steuersequenz ausgegeben.
+- **Aufgeräumter Bildschirm:** Vor jeder Auswahl wird geleert, oben steht
+  das Logo, darunter nur das, was ansteht. Nach einer Aktion wartet der
+  Client auf einen Tastendruck — ohne ihn verschwände die Ausgabe eines
+  Laufs in dem Augenblick, in dem sie fertig ist.
+- **Protokolle in `TESTCLIENT/logs/`** statt `TESTCLIENT/myl-testclient/logs/`.
+  Zwei Ebenen tief in einem Quellcodeverzeichnis fand sie niemand, der
+  sie verschicken sollte.
 - **`TESTCLIENT/Vergleiche/`** als Ablage der zugesandten Protokolle,
   `Vergleiche/Berichte/` für den Bericht. Ohne `--logs` liest `vergleich`
   den ersten Ordner und schreibt in den zweiten; Menüpunkt [3] lässt
@@ -498,7 +519,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   `animation`, `banner` und `vergleich` übersetzen für
   `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
   Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
-- 53 → 101 Tests.
+- 53 → 108 Tests.
 
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)
