@@ -1,10 +1,43 @@
 name: CI
 
+# ── Wann die Prüfung überhaupt läuft ──────────────────────────────
+#
+# `paths-ignore` schaltet den **ganzen** Ablauf ab, wenn ein Commit
+# ausschließlich Dokumentation berührt. Das ist hier der wirksamste
+# Hebel, weil ein großer Teil der Commits genau das tut: READMEs,
+# Anleitungen, Grafiken.
+#
+# Belegt, dass es gefahrlos ist: Kein Test und kein Skript liest eine
+# `.md`-Datei ein (geprüft über alle Crates und `tests/`). Die beiden
+# einzigen Treffer sind ein erzeugter Dateiname und eine gedruckte
+# Zeichenkette.
+#
+# WARUM NICHT FEINER, also je Job nach berührtem Verzeichnis: Der
+# Abhängigkeitsgraph gibt es nicht her. An `myl-types` hängen **acht**
+# Crates, an `kernels` vier, und `myl-testclient` hängt an neun. Eine
+# Änderung an einer Quelldatei zieht deshalb fast immer fast alle Jobs
+# nach sich; ein Filter je Job spräche in der Praxis kaum an und wäre
+# dafür eine zweite Wahrheit über den Graphen, die beim nächsten neuen
+# `path =` in einer Cargo.toml still veraltet. Ein CI, das die falschen
+# Prüfungen auslässt, ist schlimmer als eines, das zu lange braucht.
+#
+# ACHTUNG BEI BRANCH-SCHUTZ: Ist ein Job als erforderlich eingetragen,
+# meldet er sich bei einem reinen Doku-Pull-Request gar nicht und der
+# Merge bleibt hängen. Dann entweder den Schutz auf einen Sammel-Job
+# umstellen oder auf `paths-ignore` verzichten.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'README/Grafiken/**'
+      - 'LICENSE.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'README/Grafiken/**'
+      - 'LICENSE.md'
 
 # Laufende Prüfungen für denselben Branch abbrechen, wenn ein neuer Push kommt.
 concurrency:
@@ -259,13 +292,23 @@ jobs:
   #
   # Nur Unit-Tests: Die Läufe mit Modell brauchen Artefakte, und die gibt
   # es in der CI nicht (siehe AGENTS.md).
+  #
+  # NUR WINDOWS, NICHT AUCH MACOS: Entwickelt und geprüft wird auf einem
+  # aarch64-Mac, jeder Patch läuft dort ohnehin durch Tests, clippy und
+  # die Konformitätsvektoren. Ein macOS-Job in der CI wiederholte das und
+  # verdoppelte dabei die Laufzeit dieses Jobs, denn er übersetzt die
+  # ganze Kette aus neun Crates. Windows ist die Plattform, die hier
+  # niemand von Hand prüfen kann, und genau dafür ist der Job da.
+  #
+  # Sollte die Entwicklung einmal nicht mehr auf macOS stattfinden,
+  # gehört `macos-latest` zurück in die Matrix.
   testclient-plattformen:
     name: Testclient (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest]
     steps:
       - uses: actions/checkout@v4
 
