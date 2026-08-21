@@ -1,20 +1,20 @@
 //! Protokoll-Durchlauf über alle Komponenten (`myl-test stack`).
 //!
 //! Bis v0.1.0 prüfte der Client nur INTEGER_LLM (Determinismus) und
-//! COMPUTE_PIPELINE (Sharding). **Sieben Crates fasste er nicht an** —
+//! COMPUTE_PIPELINE (Sharding). **Sieben Crates fasste er nicht an**:
 //! `myl-types`, `-ledger`, `-scheduler`, `-consensus`, `-tokenomics`,
 //! `-verifier` und `-net`. Die haben zwar Unit-Tests, aber niemand
 //! prüfte, ob sie **zusammen** funktionieren.
 //!
 //! Dieser Lauf schließt die Lücke: Er fährt die Protokollkette einmal
-//! durch — von der Kryptografie über die Epochenzuteilung, den
+//! durch: von der Kryptografie über die Epochenzuteilung, den
 //! BFT-Konsens, die Verifikation bis zur Ledger-Buchung und der
 //! Preisbildung. Jede Stufe schreibt ihren Vergleichswert ins Protokoll.
 //!
 //! ## Warum das ein anderer Test ist als die Unit-Tests
 //!
 //! Unit-Tests prüfen ein Modul gegen seine eigenen Annahmen. Dieser Lauf
-//! prüft, ob die Annahmen **zwischen** den Modulen zusammenpassen — und
+//! prüft, ob die Annahmen **zwischen** den Modulen zusammenpassen, und
 //! genau dort lagen die schwersten Funde des Audits: Der Block konnte
 //! nicht aufnehmen, was der Pod produziert (A8); der Verifier rechnete
 //! mit einem Slashing-Modell, das der Ledger nicht kennt (A9). Beides
@@ -23,7 +23,7 @@
 //!
 //! ## Was er nicht ist
 //!
-//! Kein Ersatz für die Unit-Tests und kein Netzwerktest — alles läuft
+//! Kein Ersatz für die Unit-Tests und kein Netzwerktest: alles läuft
 //! im selben Prozess. `myl-net` bleibt deshalb außen vor: Gossip über
 //! echte Sockets gehört in die NETWORKING-Testsuite, nicht in ein
 //! Diagnosewerkzeug.
@@ -72,7 +72,7 @@ impl Stufe {
     }
 }
 
-/// `myl-test stack` — die Protokollkette einmal durch.
+/// `myl-test stack`, die Protokollkette einmal durch.
 pub fn run_stack(log: &mut RunLog) -> bool {
     let fp = crate::hardware::Fingerprint::collect();
     for (k, v) in &fp.entries {
@@ -116,7 +116,7 @@ pub fn run_stack(log: &mut RunLog) -> bool {
     );
     log.note(
         "Der Gesamtwert deckt alle Stufen ab. Bei gleichem Code MUSS er \
-         auf jeder Maschine identisch sein — er enthält keine Zeitwerte \
+         auf jeder Maschine identisch sein: er enthält keine Zeitwerte \
          und keine Zufallszahlen ohne festen Seed.",
     );
 
@@ -469,7 +469,7 @@ fn stufe_block() -> Stufe {
     }));
     let h1 = block.hash();
 
-    // state_root muss in den Blockhash eingehen — sonst wäre eine
+    // state_root muss in den Blockhash eingehen: sonst wäre eine
     // falsch gebuchte Zustandsänderung nicht erkennbar.
     let mut meta2 = block.epoch_meta.clone();
     meta2.state_root = Hash::sha256(b"anderer-state");
@@ -554,7 +554,7 @@ fn stufe_ledger() -> Stufe {
         Err(e) => return Stufe::fehler("ledger", format!("burn_to_credits: {:?}", e)),
     };
 
-    // Die Slash-Entscheidung des Verifiers durch den Ledger buchen —
+    // Die Slash-Entscheidung des Verifiers durch den Ledger buchen:
     // genau die Schnittstelle, an der Fund A9 hing.
     let entscheidung = match create_slash_decision(
         VerdictOutcome::PrimaryLoses,
@@ -594,7 +594,7 @@ fn stufe_ledger() -> Stufe {
         "ledger",
         sha256_hex(nachher.as_bytes()),
         format!(
-            "{} Credits geprägt, {} geslasht, {} Kopfgeld — Verifier-Entscheidung durchgebucht",
+            "{} Credits geprägt, {} geslasht, {} Kopfgeld. Verifier-Entscheidung durchgebucht",
             credits, wirkung.slashed, wirkung.bounty
         ),
     )
@@ -657,7 +657,7 @@ mod tests {
         d
     }
 
-    /// Der Durchlauf muss ohne Artefakte und ohne Netz funktionieren —
+    /// Der Durchlauf muss ohne Artefakte und ohne Netz funktionieren:
     /// er prüft die Protokollschicht, nicht das Modell.
     #[test]
     fn stack_laeuft_ohne_artefakte_durch() {
@@ -688,7 +688,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Der Gesamtwert darf nicht von Laufzeit oder Zufall abhängen —
+    /// Der Gesamtwert darf nicht von Laufzeit oder Zufall abhängen:
     /// sonst ist er zwischen Maschinen nicht vergleichbar.
     #[test]
     fn gesamtwert_ist_ueber_laeufe_stabil() {

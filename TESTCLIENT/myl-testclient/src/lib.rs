@@ -1,4 +1,4 @@
-//! `myl-testclient` — Terminal-Testclient für Myelith.
+//! `myl-testclient`. Terminal-Testclient für Myelith.
 //!
 //! Zwei Aufgaben, die im Projekt bisher niemand bedient hat:
 //!
@@ -18,7 +18,7 @@
 //!
 //! Jeder Lauf schreibt zwei Dateien ([`logging`]): eine maschinenlesbare
 //! `.jsonl` für den Vergleich zwischen Maschinen und eine `.log` für die
-//! Fehlersuche. **Ohne Protokoll ist ein Testlauf wertlos** — er
+//! Fehlersuche. **Ohne Protokoll ist ein Testlauf wertlos**: er
 //! beantwortet dann nicht, auf welcher Hardware, mit welchem Backend und
 //! gegen welchen Modellstand gemessen wurde. Genau diese drei Angaben
 //! entscheiden bei einem Modellwechsel darüber, ob ein verändertes
@@ -28,7 +28,7 @@
 //!
 //! `CLIENT/` ist der spätere Nutzer-Client (Wallet, Inferenz-Oberfläche,
 //! Session-Kontrakte). Dieser hier ist ein **Diagnosewerkzeug für
-//! Entwickler und Miner** — er kennt keine Konten, keine Zahlungen und
+//! Entwickler und Miner**: er kennt keine Konten, keine Zahlungen und
 //! keine Netzwerkverbindung. Die Trennung ist bewusst: Ein
 //! Diagnosewerkzeug darf laut, gesprächig und roh sein; ein
 //! Nutzer-Client nicht.
@@ -61,7 +61,7 @@ pub use vergleich::run as run_vergleich;
 ///
 /// **Neben dem Crate, nicht darin.** Bis v0.6.0 lagen sie unter
 /// `TESTCLIENT/myl-testclient/logs/`, also zwei Ebenen tief in einem
-/// Quellcodeverzeichnis. Wer sie verschicken soll, sucht sie dort — und
+/// Quellcodeverzeichnis. Wer sie verschicken soll, sucht sie dort, und
 /// `myl-testclient/` ist für einen Teilnehmer, der nur eine Maschine
 /// beisteuert, ein Ordner, in dem er nichts zu suchen hat. Jetzt liegen
 /// sie neben `Testpläne/` und `Vergleiche/` auf derselben Ebene: die drei

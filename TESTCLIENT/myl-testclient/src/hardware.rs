@@ -9,21 +9,21 @@
 //! Deshalb erhebt dieses Modul für jeden Lauf, was das Ergebnis
 //! beeinflussen könnte, und schreibt es ins Protokoll:
 //!
-//! - **Architektur und Betriebssystem** — die grobe Achse.
-//! - **Zielspezifische Merkmale** (Zeigerbreite, Endianness) — falls je
+//! - **Architektur und Betriebssystem**, die grobe Achse.
+//! - **Zielspezifische Merkmale** (Zeigerbreite, Endianness): falls je
 //!   eine Big-Endian-Plattform dazukommt, ist das die erste Stelle, an
 //!   der es auffällt.
-//! - **Verfügbare Rechenkerne (SIMD-Erweiterungen)** — zur Laufzeit
+//! - **Verfügbare Rechenkerne (SIMD-Erweiterungen)**: zur Laufzeit
 //!   erkannt, nicht zur Übersetzungszeit angenommen. Ein Binary, das mit
 //!   `cpu-simd` gebaut wurde, nutzt AVX2 nur, wenn die CPU es hat; das
 //!   Protokoll muss den tatsächlichen Pfad festhalten, nicht den
 //!   möglichen.
-//! - **Aktive Backends** — welche der Kernel-Implementierungen in diesem
+//! - **Aktive Backends**: welche der Kernel-Implementierungen in diesem
 //!   Build überhaupt vorhanden sind.
 //!
 //! **Was hier bewusst nicht erhoben wird:** Seriennummern, MAC-Adressen,
 //! Hostnamen. Der Fingerabdruck beschreibt eine *Hardware-Klasse*, nicht
-//! ein *Gerät* — Testprotokolle wandern zwischen Menschen, und ein
+//! ein *Gerät*. Testprotokolle wandern zwischen Menschen, und ein
 //! Gerätebezug hätte darin nichts zu suchen.
 
 /// Ein erhobener Hardware-Fingerabdruck.
@@ -144,7 +144,7 @@ pub fn compiled_backends() -> Vec<String> {
 
 /// Das Backend, das dieser Lauf tatsächlich verwendet.
 ///
-/// Ohne das Feature `cpu-simd` ist es immer die Referenz — und das
+/// Ohne das Feature `cpu-simd` ist es immer die Referenz, und das
 /// gehört ins Protokoll, damit ein „bitgleich"-Ergebnis nicht
 /// überinterpretiert wird.
 pub fn selected_backend() -> &'static str {
@@ -225,7 +225,7 @@ mod tests {
     }
 
     /// Ohne das Feature `cpu-simd` darf kein SIMD-Backend gemeldet
-    /// werden — sonst führt das Protokoll einen Pfad, den der Lauf gar
+    /// werden: sonst führt das Protokoll einen Pfad, den der Lauf gar
     /// nicht genommen hat.
     #[cfg(not(feature = "cpu-simd"))]
     #[test]
@@ -240,7 +240,7 @@ mod tests {
     /// über Teilstrings im Gesamttext: `os=macos` enthält „mac", ist aber
     /// offensichtlich keine MAC-Adresse. Ein Teilstring-Test wäre hier
     /// nicht nur falsch-positiv, er würde auch die eigentliche Gefahr
-    /// verfehlen — ein Feld, das eine Kennung *trägt*.
+    /// verfehlen: ein Feld, das eine Kennung *trägt*.
     #[test]
     fn kein_geraetebezug_im_fingerabdruck() {
         let fp = Fingerprint::collect();

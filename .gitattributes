@@ -14,3 +14,8 @@
 *.ico binary
 *.icns binary
 *.png binary
+
+# Der ausfuehrbare Teil des macOS-Buendels traegt keine Endung. Ohne diese
+# Zeile bliebe er ungeregelt, und ein CR am Zeilenende machte aus dem
+# Shebang einen ungueltigen Pfad.
+starter text eol=lf

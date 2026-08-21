@@ -6,7 +6,7 @@
 //!
 //! ## Warum es trotzdem noch einen zweiten Weg gibt
 //!
-//! Pfeiltasten brauchen den **Rohmodus** des Terminals — die Eingabe wird
+//! Pfeiltasten brauchen den **Rohmodus** des Terminals, die Eingabe wird
 //! dann Taste für Taste geliefert statt zeilenweise. Das setzt ein echtes
 //! Terminal voraus. Fehlt es, weil die Eingabe aus einer Pipe, einer
 //! Datei oder einem Testlauf kommt, schaltet dieses Modul auf
@@ -19,7 +19,7 @@
 //! ## Der Rohmodus muss auf jedem Weg zurückgenommen werden
 //!
 //! Ein Terminal, das im Rohmodus zurückbleibt, zeigt keine Eingaben mehr
-//! an und reagiert nicht auf Strg-C — der Nutzer sieht dann nicht den
+//! an und reagiert nicht auf Strg-C, der Nutzer sieht dann nicht den
 //! Fehler, sondern eine kaputte Shell. Deshalb liegt die Rücknahme in
 //! [`Rohmodus`], einem Wächter mit `Drop`: Sie läuft bei normaler
 //! Rückkehr, bei vorzeitigem `return` und beim Abwickeln nach einer
@@ -35,7 +35,7 @@ use crossterm::{cursor, execute, queue};
 
 /// Ein Menüpunkt.
 pub struct Punkt {
-    /// Ziffer oder Buchstabe — der Zweitweg und zugleich der Rückgabewert.
+    /// Ziffer oder Buchstabe, der Zweitweg und zugleich der Rückgabewert.
     ///
     /// Der Aufrufer verzweigt weiterhin über dieses Zeichen. Damit ändert
     /// die Umstellung auf Pfeiltasten die Menülogik nicht, sondern nur die
@@ -44,11 +44,12 @@ pub struct Punkt {
     pub titel: String,
     /// Erläuterung unter dem Titel. Leer lassen, wenn der Titel genügt.
     pub hinweis: String,
-    /// Farbe des Titels.
+    /// Farbe des Titels: einer der beiden Töne, die dem Schriftzug im
+    /// Spektrum am nächsten liegen (siehe [`crate::farben::schlagwort`]).
     ///
     /// **Beim Bau des Punkts vergeben, nicht beim Zeichnen.** Die Liste
-    /// wird bei jedem Tastendruck neu gezeichnet; eine bei jedem Bild neu
-    /// gezogene Farbe flackerte, sobald jemand die Pfeiltaste hält. So
+    /// wird bei jedem Tastendruck neu gezeichnet; eine beim Zeichnen
+    /// bestimmte Farbe flackerte, sobald jemand die Pfeiltaste hält. So
     /// bleibt sie über eine Auswahl hinweg stehen und wechselt erst, wenn
     /// das Menü erneut aufgebaut wird.
     pub farbe: Color,
@@ -60,7 +61,7 @@ impl Punkt {
             taste,
             titel: titel.to_string(),
             hinweis: hinweis.to_string(),
-            farbe: crate::farben::naechste(),
+            farbe: crate::farben::schlagwort(),
         }
     }
 }
@@ -84,23 +85,62 @@ impl Drop for Rohmodus {
 
 /// Zeigt die Auswahl und liefert die Taste des gewählten Punkts.
 ///
-/// `None` heißt abgebrochen (Esc oder Eingabeende) — der Aufrufer
+/// `None` heißt abgebrochen (Esc oder Eingabeende), der Aufrufer
 /// behandelt das wie „zurück".
 pub fn waehlen(kopf: &str, punkte: &[Punkt]) -> Option<char> {
+    waehlen_mit_fuss(kopf, punkte, "")
+}
+
+/// Wie [`waehlen`], mit einem Textblock **unter** der Liste.
+///
+/// **Warum der Fuß hier durchgereicht wird und nicht einfach vorher
+/// gedruckt.** Die Liste zeichnet sich bei jedem Tastendruck neu, indem
+/// sie um ihre eigene Höhe nach oben springt und von dort abwärts löscht.
+/// Alles, was unter ihr steht, läge in diesem Bereich und verschwände
+/// beim ersten Pfeildruck. Der Fuß muss deshalb Teil der gezeichneten
+/// Liste sein und in ihre Höhe eingehen.
+///
+/// Gebraucht für die aktuellen Einstellungen: Sie gehören unter das Menü,
+/// weil zuerst die Frage kommt, was man tun will, und erst danach der
+/// Zustand, unter dem es geschieht.
+pub fn waehlen_mit_fuss(kopf: &str, punkte: &[Punkt], fuss: &str) -> Option<char> {
     if punkte.is_empty() {
         return None;
     }
     // Kein Terminal (Pipe, Datei, Test): zeilenweise lesen.
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return zeilenweise(kopf, punkte);
+        return zeilenweise(kopf, punkte, fuss);
     }
     // Rohmodus nicht verfügbar (etwa in einer Umgebung ohne Terminfo):
     // ebenfalls zurückfallen, statt den Nutzer vor einem toten Menü
     // sitzen zu lassen.
-    match interaktiv(kopf, punkte) {
+    match interaktiv(kopf, punkte, fuss) {
         Ok(wahl) => wahl,
-        Err(_) => zeilenweise(kopf, punkte),
+        Err(_) => zeilenweise(kopf, punkte, fuss),
     }
+}
+
+/// Die Breite des gezeichneten Blocks, gemessen an seiner breitesten
+/// Zeile.
+///
+/// Sie bestimmt, wie weit der Block eingerückt wird, damit er mittig unter
+/// dem Schriftzug steht. Gerechnet wird über **alles**, was gezeichnet
+/// wird: Kopf, Punkte, Hinweise, Fußzeile und der Einstellungsblock. Bliebe
+/// eines davon draußen, stünde der Block schief, sobald gerade dieses das
+/// breiteste wäre.
+fn blockbreite(kopf: &str, punkte: &[Punkt], fuss: &str) -> usize {
+    let mut breit = kopf.chars().count() + 8;
+    breit = breit.max("  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück".chars().count());
+    for p in punkte {
+        breit = breit.max(p.titel.chars().count() + 8);
+        for z in p.hinweis.lines() {
+            breit = breit.max(z.chars().count() + 8);
+        }
+    }
+    for z in fuss.lines() {
+        breit = breit.max(z.chars().count());
+    }
+    breit
 }
 
 /// Wie viele Zeilen ein Punkt belegt.
@@ -117,15 +157,24 @@ fn hoehe(p: &Punkt) -> usize {
 /// Muss mit [`zeichnen`] übereinstimmen: zwei Zeilen Kopf, die Punkte,
 /// zwei Zeilen Fußnote. Ist die Zahl zu klein, bleiben beim Neuzeichnen
 /// Reste stehen; ist sie zu groß, frisst der Cursor die Zeile darüber.
-fn gezeichnete_hoehe(punkte: &[Punkt]) -> usize {
-    2 + punkte.iter().map(hoehe).sum::<usize>() + 2
+fn gezeichnete_hoehe(punkte: &[Punkt], fuss: &str) -> usize {
+    2 + punkte.iter().map(hoehe).sum::<usize>() + 2 + fusshoehe(fuss)
 }
 
-fn interaktiv(kopf: &str, punkte: &[Punkt]) -> io::Result<Option<char>> {
-    let zeilen = gezeichnete_hoehe(punkte);
+/// Zeilen, die der Fuß belegt. Leerer Fuß belegt keine.
+fn fusshoehe(fuss: &str) -> usize {
+    if fuss.is_empty() {
+        0
+    } else {
+        fuss.lines().count() + 1
+    }
+}
+
+fn interaktiv(kopf: &str, punkte: &[Punkt], fuss: &str) -> io::Result<Option<char>> {
+    let zeilen = gezeichnete_hoehe(punkte, fuss);
 
     // Passt die Liste nicht ins Fenster, scrollt das Terminal beim
-    // Zeichnen — und `MoveToPreviousLine` landet dann auf einer anderen
+    // Zeichnen, und `MoveToPreviousLine` landet dann auf einer anderen
     // Zeile als der, an der die Liste begann. Das Ergebnis wäre ein Menü,
     // das sich bei jedem Tastendruck selbst zerlegt. In dem Fall ist die
     // zeilenweise Ausgabe nicht der schlechtere Weg, sondern der einzige,
@@ -134,7 +183,7 @@ fn interaktiv(kopf: &str, punkte: &[Punkt]) -> io::Result<Option<char>> {
     // ist nicht entscheidbar, ob das Neuzeichnen trägt.
     let passt = terminal::size().is_ok_and(|(_, h)| (h as usize) > zeilen);
     if !passt {
-        return Ok(zeilenweise(kopf, punkte));
+        return Ok(zeilenweise(kopf, punkte, fuss));
     }
 
     let _roh = Rohmodus::an()?;
@@ -153,7 +202,7 @@ fn interaktiv(kopf: &str, punkte: &[Punkt]) -> io::Result<Option<char>> {
             )?;
         }
         erste_ausgabe = false;
-        zeichnen(&mut aus, kopf, punkte, Some(markiert))?;
+        zeichnen(&mut aus, kopf, punkte, Some(markiert), fuss)?;
         aus.flush()?;
 
         let Event::Key(KeyEvent {
@@ -209,24 +258,41 @@ fn zeichnen(
     kopf: &str,
     punkte: &[Punkt],
     markiert: Option<usize>,
+    fuss: &str,
 ) -> io::Result<()> {
     // Im Rohmodus setzt `\n` den Cursor nach unten, ohne ihn an den
-    // Zeilenanfang zu holen — ohne `\r` liefe die Ausgabe treppenförmig.
+    // Zeilenanfang zu holen, ohne `\r` liefe die Ausgabe treppenförmig.
     //
     // Dieselbe Unterscheidung entscheidet über die Farbe: `markiert` ist
     // nur im Rohmodus gesetzt, also nur dann, wenn ein Terminal am anderen
-    // Ende hängt. Der zeilenweise Rückfallweg bleibt farblos — er bedient
+    // Ende hängt. Der zeilenweise Rückfallweg bleibt farblos: er bedient
     // auch Pipes und Mitschnitte, und Steuerzeichen wären dort Müll.
     let farbig = markiert.is_some();
     let umbruch = if farbig { "\r\n" } else { "\n" };
 
-    queue!(aus, Print(format!("{}  ── {} ──{}", umbruch, kopf, umbruch)))?;
+    // Die Liste steht mittig unter dem Schriftzug, aber **als Block**:
+    // Alle Zeilen bekommen denselben Einzug, ihre Ausrichtung
+    // untereinander bleibt erhalten. Zeilenweise zentriert verrutschten
+    // die Punkte gegeneinander, und die Liste wäre keine mehr.
+    //
+    // Nur im Rohmodus, also nur mit Terminal: In einer Pipe wären
+    // führende Leerzeichen Ballast.
+    let einzug = if farbig {
+        crate::banner::blockeinzug(blockbreite(kopf, punkte, fuss))
+    } else {
+        String::new()
+    };
+
+    queue!(
+        aus,
+        Print(format!("{}{}  ── {} ──{}", umbruch, einzug, kopf, umbruch))
+    )?;
 
     for (i, p) in punkte.iter().enumerate() {
         let ist_markiert = markiert == Some(i);
         let zeiger = if ist_markiert { "❯" } else { " " };
 
-        queue!(aus, Print(format!("  {} {}  ", zeiger, p.taste)))?;
+        queue!(aus, Print(format!("{}  {} {}  ", einzug, zeiger, p.taste)))?;
         if farbig {
             queue!(aus, SetForegroundColor(p.farbe), SetAttribute(Attribute::Bold))?;
             if ist_markiert {
@@ -243,7 +309,7 @@ fn zeichnen(
             if farbig {
                 queue!(aus, SetForegroundColor(crate::farben::BEIWERK))?;
             }
-            queue!(aus, Print(format!("        {}", zeile)))?;
+            queue!(aus, Print(format!("{}        {}", einzug, zeile)))?;
             if farbig {
                 queue!(aus, ResetColor)?;
             }
@@ -256,20 +322,39 @@ fn zeichnen(
             queue!(aus, SetForegroundColor(crate::farben::BEIWERK), Print(umbruch))?;
             queue!(
                 aus,
-                Print("  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück"),
+                Print(format!(
+                    "{}  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück",
+                    einzug
+                )),
                 ResetColor,
                 Print(umbruch)
             )?
         }
         None => queue!(aus, Print(format!("{}  Auswahl: ", umbruch)))?,
     }
+
+    // Der Fuß zuletzt, gedämpft: Er ist Zustand, keine Aufforderung, und
+    // soll die Auswahl darüber nicht überstrahlen.
+    if !fuss.is_empty() {
+        queue!(aus, Print(umbruch))?;
+        for zeile in fuss.lines() {
+            if farbig {
+                queue!(aus, SetForegroundColor(crate::farben::BEIWERK))?;
+            }
+            queue!(aus, Print(format!("{}{}", einzug, zeile)))?;
+            if farbig {
+                queue!(aus, ResetColor)?;
+            }
+            queue!(aus, Print(umbruch))?;
+        }
+    }
     Ok(())
 }
 
 /// Zeilenweiser Rückfallweg: Liste ausgeben, eine Ziffer lesen.
-fn zeilenweise(kopf: &str, punkte: &[Punkt]) -> Option<char> {
+fn zeilenweise(kopf: &str, punkte: &[Punkt], fuss: &str) -> Option<char> {
     let mut aus = io::stdout();
-    let _ = zeichnen(&mut aus, kopf, punkte, None);
+    let _ = zeichnen(&mut aus, kopf, punkte, None, fuss);
     let _ = aus.flush();
 
     let mut zeile = String::new();
@@ -286,9 +371,101 @@ fn zeilenweise(kopf: &str, punkte: &[Punkt]) -> Option<char> {
 /// Stellt eine Frage und liest eine Zeile.
 ///
 /// Bewusst **nicht** im Rohmodus: Ein Name oder ein Pfad wird getippt,
-/// korrigiert und mit Enter abgeschlossen — dafür ist die zeilenweise
+/// korrigiert und mit Enter abgeschlossen: dafür ist die zeilenweise
 /// Eingabe des Terminals mit ihrer Rücktaste und ihrem Verlauf besser als
 /// alles, was hier nachgebaut würde.
+/// Liest eine Zeile und unterscheidet dabei **Enter von Escape**.
+///
+/// `Some(text)` bei Enter, `None` bei Escape, Strg-D und Eingabeende.
+///
+/// **Warum nicht [`frage`].** Das liest über `read_line` im gekochten
+/// Modus, und dort kommt Escape nicht als Taste an, sondern als Zeichen in
+/// der Zeile. Ein Abbruch war deshalb nur über eine leere Eingabe zu
+/// haben, also über dieselbe Taste, die man drückt, um zu sehen, ob das
+/// Programm noch antwortet. Wer im Gespräch mit dem Modell einmal Enter
+/// tippte, um sich zu vergewissern, stand danach im Menü.
+///
+/// Deshalb eine eigene Zeile im Rohmodus: Sie sieht jede Taste einzeln.
+/// **Eine leere Eingabe tut hier nichts**, sie fragt neu.
+///
+/// Ohne Terminal fällt sie auf [`frage`] zurück; ein Skript hat keine
+/// Escape-Taste, und dort bleibt das Eingabeende der Abbruch.
+pub fn zeile_lesen(text: &str) -> Option<String> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return frage(text);
+    }
+    match roh_lesen(text) {
+        Ok(zeile) => zeile,
+        // Kein Rohmodus verfügbar: lieber die schlechtere Eingabe als gar
+        // keine.
+        Err(_) => frage(text),
+    }
+}
+
+fn roh_lesen(text: &str) -> io::Result<Option<String>> {
+    let _roh = Rohmodus::an()?;
+    let mut aus = io::stdout();
+    queue!(aus, Print(text), cursor::Show)?;
+    aus.flush()?;
+
+    let mut zeile = String::new();
+    loop {
+        let Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind,
+            ..
+        }) = event::read()?
+        else {
+            continue;
+        };
+        // Windows liefert Press und Release; ohne diese Prüfung zählt
+        // jeder Tastendruck doppelt.
+        if kind != KeyEventKind::Press {
+            continue;
+        }
+
+        match code {
+            KeyCode::Esc => {
+                queue!(aus, Print("\r\n"))?;
+                aus.flush()?;
+                return Ok(None);
+            }
+            KeyCode::Enter => {
+                queue!(aus, Print("\r\n"))?;
+                aus.flush()?;
+                return Ok(Some(zeile));
+            }
+            KeyCode::Backspace => {
+                if zeile.pop().is_some() {
+                    // Ein Zeichen zurück, überschreiben, wieder zurück.
+                    queue!(aus, Print("\u{8} \u{8}"))?;
+                    aus.flush()?;
+                }
+            }
+            // Strg-D ist in jeder Kommandozeile „fertig" und bleibt es.
+            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+                queue!(aus, Print("\r\n"))?;
+                aus.flush()?;
+                return Ok(None);
+            }
+            // Strg-C erzeugt im Rohmodus kein Signal mehr. Ohne eigene
+            // Behandlung wäre die Eingabe nicht mehr zu verlassen.
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                drop(_roh);
+                println!();
+                std::process::exit(130);
+            }
+            KeyCode::Char(c) => {
+                zeile.push(c);
+                queue!(aus, Print(c))?;
+                aus.flush()?;
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn frage(text: &str) -> Option<String> {
     print!("{}", text);
     let _ = io::stdout().flush();
@@ -311,7 +488,7 @@ mod tests {
         ]
     }
 
-    /// Ohne Punkte gibt es nichts zu wählen — und kein Terminal darf in
+    /// Ohne Punkte gibt es nichts zu wählen, und kein Terminal darf in
     /// den Rohmodus geschaltet werden, um das festzustellen.
     #[test]
     fn leere_auswahl_liefert_nichts() {
@@ -328,11 +505,11 @@ mod tests {
     }
 
     /// Die gezeichnete Liste muss jeden Punkt mit Taste und Titel
-    /// enthalten — sonst ist der Zweitweg über die Ziffer unsichtbar.
+    /// enthalten: sonst ist der Zweitweg über die Ziffer unsichtbar.
     #[test]
     fn zeichnung_nennt_taste_und_titel() {
         let mut puffer: Vec<u8> = Vec::new();
-        zeichnen(&mut puffer, "Was tun?", &punkte(), None).expect("zeichnen");
+        zeichnen(&mut puffer, "Was tun?", &punkte(), None, "").expect("zeichnen");
         let text = String::from_utf8(puffer).expect("utf8");
         assert!(text.contains("Was tun?"));
         for p in punkte() {
@@ -346,7 +523,7 @@ mod tests {
     #[test]
     fn rohmodus_zeichnung_setzt_wagenruecklauf() {
         let mut puffer: Vec<u8> = Vec::new();
-        zeichnen(&mut puffer, "Kopf", &punkte(), Some(0)).expect("zeichnen");
+        zeichnen(&mut puffer, "Kopf", &punkte(), Some(0), "").expect("zeichnen");
         let text = String::from_utf8(puffer).expect("utf8");
         assert!(text.contains("\r\n"));
         assert!(
@@ -363,16 +540,74 @@ mod tests {
     fn hoehenrechnung_passt_zur_zeichnung() {
         for liste in [punkte(), vec![Punkt::neu('1', "einzeln", "")]] {
             let mut puffer: Vec<u8> = Vec::new();
-            zeichnen(&mut puffer, "Kopf", &liste, Some(0)).expect("zeichnen");
+            zeichnen(&mut puffer, "Kopf", &liste, Some(0), "").expect("zeichnen");
             let text = String::from_utf8(puffer).expect("utf8");
             let gezeichnet = text.matches("\r\n").count();
             assert_eq!(
                 gezeichnet,
-                gezeichnete_hoehe(&liste),
+                gezeichnete_hoehe(&liste, ""),
                 "gezeichnet {} Zeilen, gerechnet {}",
                 gezeichnet,
-                gezeichnete_hoehe(&liste)
+                gezeichnete_hoehe(&liste, "")
             );
+        }
+    }
+
+    /// Der Block wird **als Ganzes** eingerückt: Alle Zeilen bekommen
+    /// denselben Einzug, ihre Ausrichtung untereinander bleibt erhalten.
+    /// Zeilenweise zentriert verrutschten die Punkte gegeneinander, und
+    /// die Liste wäre keine mehr.
+    #[test]
+    fn block_bleibt_untereinander_ausgerichtet() {
+        let p = punkte();
+        // Die Breite richtet sich nach der breitesten Zeile, und zwar über
+        // Kopf, Punkte, Hinweise und Fuß hinweg.
+        let schmal = blockbreite("Kopf", &p, "");
+        let breit = blockbreite("Kopf", &p, &"x".repeat(200));
+        assert!(breit > schmal, "der Fuß geht nicht in die Breite ein");
+        assert!(
+            blockbreite(&"K".repeat(200), &p, "") > schmal,
+            "der Kopf geht nicht in die Breite ein"
+        );
+
+        // Ein Block, der breiter ist als das Fenster, wird nicht negativ
+        // eingerückt, sondern gar nicht.
+        assert!(crate::banner::blockeinzug(100_000).is_empty());
+    }
+
+    /// Der Fuß steht unter der Liste und geht in ihre Höhe ein. Ginge er
+    /// nicht ein, spränge das Neuzeichnen beim ersten Pfeildruck auf eine
+    /// falsche Zeile und zerlegte die Liste.
+    #[test]
+    fn fuss_steht_unter_der_liste_und_zaehlt_mit() {
+        let p = punkte();
+        let fuss = "  Einstellungen:\n    Token 32\n    Shards 4";
+
+        let mut mit: Vec<u8> = Vec::new();
+        zeichnen(&mut mit, "Kopf", &p, Some(0), fuss).expect("zeichnen");
+        let text = String::from_utf8(mit).expect("utf8");
+        let liste = text.find("Testlauf starten").expect("Liste fehlt");
+        let block = text.find("Einstellungen:").expect("Fuß fehlt");
+        assert!(block > liste, "der Fuß steht über der Liste");
+
+        assert_eq!(
+            gezeichnete_hoehe(&p, fuss),
+            gezeichnete_hoehe(&p, "") + fuss.lines().count() + 1,
+            "der Fuß geht nicht in die Höhe ein"
+        );
+        assert_eq!(fusshoehe(""), 0, "ein leerer Fuß belegt Zeilen");
+    }
+
+    /// Zwei Punkte auf derselben Taste wären ein Fehler, der erst auf einer
+    /// fremden Maschine mit vielen Einträgen auffiele: Die Ziffer springt
+    /// dann zum falschen Punkt.
+    #[test]
+    fn tastenkuerzel_sind_eindeutig() {
+        let p = punkte();
+        for (i, a) in p.iter().enumerate() {
+            for b in &p[i + 1..] {
+                assert_ne!(a.taste, b.taste, "Taste {:?} zweimal vergeben", a.taste);
+            }
         }
     }
 
@@ -382,7 +617,7 @@ mod tests {
     #[test]
     fn titel_sind_farbig_und_fett() {
         let mut puffer: Vec<u8> = Vec::new();
-        zeichnen(&mut puffer, "Kopf", &punkte(), Some(1)).expect("zeichnen");
+        zeichnen(&mut puffer, "Kopf", &punkte(), Some(1), "").expect("zeichnen");
         let text = String::from_utf8(puffer).expect("utf8");
         assert!(text.contains("\x1b[38;5;"), "keine Farbe gesetzt");
         assert!(text.contains("\x1b[1m"), "keine Fettschrift");
@@ -391,11 +626,11 @@ mod tests {
     }
 
     /// Der zeilenweise Rückfallweg bedient auch Pipes und Mitschnitte.
-    /// Dort wären Steuerzeichen Müll — er bleibt deshalb farblos.
+    /// Dort wären Steuerzeichen Müll: er bleibt deshalb farblos.
     #[test]
     fn zeilenmodus_bleibt_ohne_steuerzeichen() {
         let mut puffer: Vec<u8> = Vec::new();
-        zeichnen(&mut puffer, "Kopf", &punkte(), None).expect("zeichnen");
+        zeichnen(&mut puffer, "Kopf", &punkte(), None, "").expect("zeichnen");
         let text = String::from_utf8(puffer).expect("utf8");
         assert!(!text.contains('\x1b'), "Steuerzeichen im Zeilenmodus: {text:?}");
     }
@@ -405,7 +640,7 @@ mod tests {
     #[test]
     fn markierter_punkt_ist_hervorgehoben() {
         let mut puffer: Vec<u8> = Vec::new();
-        zeichnen(&mut puffer, "Kopf", &punkte(), Some(1)).expect("zeichnen");
+        zeichnen(&mut puffer, "Kopf", &punkte(), Some(1), "").expect("zeichnen");
         let text = String::from_utf8(puffer).expect("utf8");
         assert!(text.contains('❯'), "Zeiger fehlt");
     }

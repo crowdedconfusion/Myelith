@@ -5,7 +5,7 @@
 //! `Color::Rgb` verlangt ein Terminal mit Echtfarben. Verbreitet ist das,
 //! aber nicht selbstverständlich: über SSH, in `screen`, in einer
 //! seriellen Konsole und in mancher CI fällt es auf eine Näherung zurück
-//! — und welche, entscheidet das Terminal, nicht dieses Programm. Die
+//!, und welche, entscheidet das Terminal, nicht dieses Programm. Die
 //! 256-Farben-Palette gibt es seit Jahrzehnten überall, und ihre oberen
 //! Bereiche sind genau die grellen Töne, um die es hier geht.
 //!
@@ -13,30 +13,34 @@
 //!
 //! Farbe ist Schmuck. Sie steht **nie** für eine Aussage: Kein Urteil,
 //! kein Fehler und kein Vergleichswert wird an einer Farbe erkennbar
-//! gemacht — dafür stehen Wörter da (`ABWEICHUNG`, `FEHLER`, `NACHWEIS`).
+//! gemacht: dafür stehen Wörter da (`ABWEICHUNG`, `FEHLER`, `NACHWEIS`).
 //! Wer nur Graustufen sieht, sei es aus Farbenblindheit, sei es in einem
 //! Protokollmitschnitt, verliert damit keine Information.
 //!
 //! Deshalb ist der Zufall hier unbedenklich, während er im Rechenpfad
 //! dieses Projekts nirgends etwas zu suchen hat.
 //!
-//! ## Warum die letzten vier gemerkt werden
+//! ## Ein Farbschema je Sitzung
 //!
-//! Bei achtzehn Farben zieht ein freier Zufall im Schnitt jede achtzehnte
-//! Wahl dieselbe wie zuvor — und wer das sieht, hält es für einen Fehler,
-//! nicht für Zufall. Eine einzige gemerkte Farbe genügt aber nicht: Ein
-//! Menü mit sechs Punkten holt sechs Farben nacheinander, und zwei
-//! gleiche zwei Zeilen auseinander fallen genauso auf. Gemerkt werden
-//! deshalb die letzten vier; innerhalb einer Menüseite sind damit die
-//! sichtbar benachbarten Punkte verschieden.
+//! Gewürfelt wird **einmal beim Start**, während sich das Logo aus der
+//! Spirale bildet. Danach steht das Schema: dieselbe Logofarbe und
+//! dieselben zwei Schlagwortfarben, bis der Client neu gestartet wird.
+//!
+//! Vorher wechselte die Farbe mit jedem Bildschirm. Das war unruhig und
+//! machte aus einer Eigenschaft der Sitzung eine Eigenschaft des
+//! Augenblicks: Zwei Bildschirme desselben Vorgangs sahen aus, als
+//! gehörten sie nicht zusammen. Ein Schema je Sitzung gibt dem Client ein
+//! Aussehen und behält den Reiz, dass es beim nächsten Start ein anderes
+//! ist.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 use crossterm::style::Color;
 
 /// Die Palette: grelle Töne aus der 256-Farben-Tabelle.
 ///
-/// Ausgesucht nach zwei Bedingungen — hell genug, um auf dunklem Grund zu
+/// Ausgesucht nach zwei Bedingungen: hell genug, um auf dunklem Grund zu
 /// leuchten, und untereinander unterscheidbar. Dunkelblau und Braun sind
 /// deshalb nicht dabei: Sie sind auf einem schwarzen Terminal kaum zu
 /// lesen, und ein Menüpunkt, den man nicht entziffert, ist keiner.
@@ -61,150 +65,302 @@ pub const NEON: [u8; 18] = [
     99,  // Lavendel
 ];
 
-/// Wie viele der zuletzt vergebenen Farben gemieden werden.
-const GEMERKT: usize = 4;
-/// Bits je gemerktem Index. Fünf reichen für achtzehn Farben und lassen
-/// Werte übrig (18–31), die keinem Index entsprechen — den Anfangszustand.
-const BITS: usize = 5;
-const MASKE: usize = (1 << BITS) - 1;
-/// Anfangswert: viermal ein Wert, der kein gültiger Index ist.
-const LEER: usize = {
-    let mut r = 0;
-    let mut n = 0;
-    while n < GEMERKT {
-        r = (r << BITS) | MASKE;
-        n += 1;
-    }
-    r
-};
-
-/// Die zuletzt vergebenen Farben, als Ringpuffer in einer Zahl.
+/// Mindestabstand einer Schlagwortfarbe zur Logofarbe, in Grad.
 ///
-/// Vier Fünf-Bit-Felder statt einer Sperre um eine Warteschlange: Der Wert
-/// wird beim Zeichnen gelesen und geschrieben, oft aus mehreren Stellen
-/// kurz hintereinander, und eine Sperre für einen Farbwunsch wäre
-/// Aufwand ohne Gegenwert.
-static LETZTE: AtomicUsize = AtomicUsize::new(LEER);
-
-/// Eine Neonfarbe, verschieden von der zuletzt vergebenen.
-pub fn naechste() -> Color {
-    Color::AnsiValue(NEON[naechster_index()])
-}
-
-/// Der Index dazu, mit Fortschreibung des Ringpuffers.
-fn naechster_index() -> usize {
-    let mut z = crate::animation::Zufall::neu();
-    let ring = LETZTE.load(Ordering::Relaxed);
-    let i = gezogen(ring, &mut z);
-    LETZTE.store(eingereiht(ring, i), Ordering::Relaxed);
-    i
-}
-
-/// Steht dieser Index noch im Ringpuffer?
-fn enthalten(ring: usize, i: usize) -> bool {
-    (0..GEMERKT).any(|feld| (ring >> (feld * BITS)) & MASKE == i)
-}
-
-/// Schiebt `i` in den Ringpuffer und wirft das älteste Feld heraus.
-fn eingereiht(ring: usize, i: usize) -> usize {
-    ((ring << BITS) | i) & ((1 << (GEMERKT * BITS)) - 1)
-}
-
-/// Zieht einen Index, der nicht im Ringpuffer steht.
+/// Darunter wären die beiden kaum zu unterscheiden, und der Menüpunkt
+/// verschwände optisch im Schriftzug darüber. 25 Grad sind rund vier
+/// Schritte der Palette.
+const MIN_ZU_LOGO: i32 = 25;
+/// Höchstabstand zur Logofarbe.
 ///
-/// Ohne die Merkzelle geschrieben, damit die Regel für sich prüfbar ist:
-/// `naechster_index` teilt seinen Zustand mit allem, was gleichzeitig
-/// zeichnet, und ein Test darüber prüfte die Verschränkung statt der
-/// Auswahl.
+/// Darüber liegt eine Farbe nicht mehr in der Nachbarschaft, sondern
+/// gegenüber, und das Bild fiele auseinander.
+const MAX_ZU_LOGO: i32 = 110;
+/// Mindestabstand der beiden Schlagwortfarben untereinander.
 ///
-/// Die Zahl der Versuche ist begrenzt. Sie reicht bei achtzehn Farben und
-/// vier gemerkten immer aus; die Grenze steht da, damit aus einer
-/// geänderten Palette keine Endlosschleife werden kann, sondern
-/// schlimmstenfalls eine wiederholte Farbe.
-fn gezogen(ring: usize, z: &mut crate::animation::Zufall) -> usize {
-    let mut i = z.bis(NEON.len());
-    for _ in 0..NEON.len() {
-        if !enthalten(ring, i) {
-            return i;
+/// Sie sollen sich abwechseln und dabei erkennbar verschieden sein; zwei
+/// benachbarte Grüntöne wären ein Wechsel, den niemand bemerkt.
+const MIN_UNTEREINANDER: i32 = 40;
+
+/// Das Farbschema einer Sitzung.
+struct Sitzung {
+    logo: usize,
+    /// Die beiden Schlagwortfarben, als Indizes in [`NEON`].
+    a: usize,
+    b: usize,
+}
+
+/// Einmal je Programmlauf gewürfelt.
+///
+/// `OnceLock` und nicht ein Zufall je Aufruf: Genau das ist „ein Schema je
+/// Sitzung". Der erste Zugriff geschieht beim Start, während die Animation
+/// läuft.
+static SITZUNG: OnceLock<Sitzung> = OnceLock::new();
+/// Zähler für den Wechsel zwischen den beiden Schlagwortfarben.
+static WECHSEL: AtomicUsize = AtomicUsize::new(0);
+
+fn sitzung() -> &'static Sitzung {
+    SITZUNG.get_or_init(|| {
+        let logo = crate::animation::Zufall::neu().bis(NEON.len());
+        let (a, b) = paar(logo);
+        Sitzung { logo, a, b }
+    })
+}
+
+/// Die Logofarbe dieser Sitzung.
+pub fn logo() -> Color {
+    Color::AnsiValue(NEON[sitzung().logo])
+}
+
+/// Die Farbe eines Schlagworts: abwechselnd die beiden Sitzungsfarben.
+///
+/// **Abwechselnd, nicht gemischt:** Bei zwei Farben ist der Wechsel die
+/// einzige Verteilung, in der nie zwei gleiche nebeneinander stehen.
+pub fn schlagwort() -> Color {
+    let s = sitzung();
+    let dran = if WECHSEL.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+        s.a
+    } else {
+        s.b
+    };
+    Color::AnsiValue(NEON[dran])
+}
+
+/// Die beiden Schlagwortfarben zu einer Logofarbe.
+///
+/// **Nicht die nächstliegenden.** Die erste Fassung nahm die beiden
+/// Nachbarn im Farbton, und die lagen der Logofarbe zu nahe: Ein Menütitel
+/// in fast der Farbe des Schriftzugs darüber hebt sich nicht ab, und zwei
+/// benachbarte Töne unterscheiden sich untereinander erst recht nicht.
+///
+/// Gesucht ist deshalb ein **Paar in einem Band** um die Logofarbe:
+/// weit genug weg, um sich abzuheben ([`MIN_ZU_LOGO`]), nah genug, um
+/// dazuzugehören ([`MAX_ZU_LOGO`]), und untereinander weit genug
+/// auseinander, damit der Wechsel sichtbar ist ([`MIN_UNTEREINANDER`]).
+/// Unter allen Paaren, die das erfüllen, gewinnt das mit dem kleinsten
+/// Gesamtabstand zur Logofarbe: so nah am Logo, wie die Bedingungen
+/// zulassen.
+///
+/// Gerechnet wird über den **Farbkreis**, nicht über die Reihenfolge in
+/// der Palette. Die steht zwar ungefähr nach Spektrum, aber zwischen
+/// Orange und Magenta fehlt das Rot, und ein Nachbar im Feld wäre dort ein
+/// Sprung im Bild.
+fn paar(logo: usize) -> (usize, usize) {
+    let eigen = farbton(NEON[logo]);
+    let im_band: Vec<usize> = (0..NEON.len())
+        .filter(|i| {
+            let d = abstand(eigen, farbton(NEON[*i]));
+            *i != logo && (MIN_ZU_LOGO..=MAX_ZU_LOGO).contains(&d)
+        })
+        .collect();
+
+    let mut beste: Option<(i32, usize, usize)> = None;
+    for (n, &a) in im_band.iter().enumerate() {
+        for &b in &im_band[n + 1..] {
+            if abstand(farbton(NEON[a]), farbton(NEON[b])) < MIN_UNTEREINANDER {
+                continue;
+            }
+            let summe = abstand(eigen, farbton(NEON[a])) + abstand(eigen, farbton(NEON[b]));
+            if beste.is_none_or(|(s, _, _)| summe < s) {
+                beste = Some((summe, a, b));
+            }
         }
-        // Um einen zufälligen Betrag weiterrücken statt um genau eins:
-        // Sonst folgte auf eine Wiederholung immer dieselbe Nachbarfarbe,
-        // und das Muster wäre nach kurzem Zusehen sichtbar.
-        i = (i + 1 + z.bis(NEON.len() - 1)) % NEON.len();
     }
-    i
+
+    // Für die heutige Palette gibt es zu jeder Logofarbe ein Paar; der
+    // Rückfall steht da, damit eine geänderte Palette nicht in eine Panik
+    // läuft, sondern schlimmstenfalls schlechter aussieht.
+    match beste {
+        Some((_, a, b)) => (a, b),
+        None => nachbarn(logo),
+    }
 }
 
-/// Der gedämpfte Ton für alles, was Beiwerk ist: Netzmotiv, Hinweiszeilen.
+/// Die beiden Paletteneinträge, die `index` im Farbton am nächsten liegen.
 ///
-/// Ein zweiter Neonton daneben würde mit dem ersten um Aufmerksamkeit
-/// streiten; das Netz ist Hintergrund und soll auch so aussehen.
-pub const BEIWERK: Color = Color::AnsiValue(240);
+/// **Gerechnet aus dem Farbton, nicht aus der Reihenfolge im Feld.** Die
+/// Palette steht zwar ungefähr nach Spektrum sortiert, aber „ungefähr"
+/// genügt hier nicht: Zwischen Orange und Magenta fehlt das Rot, und ein
+/// Nachbar im Feld wäre dort ein Sprung im Bild. Wird die Palette einmal
+/// umsortiert oder ergänzt, bleibt diese Rechnung richtig.
+///
+/// Der Farbton ist ein **Kreis**: Lavendel liegt neben Purpur und ebenso
+/// neben Cyan. Deshalb der kürzere der beiden Wege über 360 Grad.
+fn nachbarn(index: usize) -> (usize, usize) {
+    let eigen = farbton(NEON[index]);
+    let mut andere: Vec<(i32, usize)> = (0..NEON.len())
+        .filter(|i| *i != index)
+        .map(|i| (abstand(eigen, farbton(NEON[i])), i))
+        .collect();
+    // Nach Abstand, bei Gleichstand nach Index: Die Auswahl soll bei
+    // gleicher Palette immer dieselbe sein.
+    andere.sort_unstable();
+    (andere[0].1, andere[1].1)
+}
+
+/// Kürzerer Weg zwischen zwei Farbtönen auf dem Kreis.
+fn abstand(a: i32, b: i32) -> i32 {
+    let d = (a - b).abs();
+    d.min(360 - d)
+}
+
+/// Der Farbton eines 256-Farben-Index in Grad.
+///
+/// Die Einträge 16 bis 231 bilden einen 6×6×6-Würfel; die Kanalwerte sind
+/// 0 für die unterste Stufe und sonst `55 + 40 · Stufe`. Daraus der
+/// übliche Farbton aus Maximum, Minimum und ihrer Differenz, ganzzahlig
+/// gerechnet wie alles hier.
+fn farbton(index: u8) -> i32 {
+    let i = index as i32 - 16;
+    let stufe = |s: i32| if s == 0 { 0 } else { 55 + 40 * s };
+    let (r, g, b) = (stufe(i / 36), stufe((i / 6) % 6), stufe(i % 6));
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    if d == 0 {
+        return 0;
+    }
+    let h = if max == r {
+        60 * (g - b) / d
+    } else if max == g {
+        120 + 60 * (b - r) / d
+    } else {
+        240 + 60 * (r - g) / d
+    };
+    (h + 360) % 360
+}
+
+/// Der Ton der Netzkanten.
+///
+/// **Zurückgenommen, aber lesbar.** Die erste Fassung nahm 240, ein
+/// dunkles Grau: auf einem schwarzen Terminal war der Schriftzug damit
+/// hell und das Netz praktisch unsichtbar, und übrig blieb ein Schriftzug
+/// ohne das Motiv, um das es geht. 248 ist deutlich heller als der
+/// Hintergrund und bleibt trotzdem hinter den Knoten zurück.
+pub const KANTE: Color = Color::AnsiValue(248);
+
+/// Der gedämpfte Ton für Hinweiszeilen unter den Menütiteln.
+///
+/// Dunkler als die Netzkanten: Hier ist Zurücknehmen der Zweck, denn der
+/// Titel darüber soll zuerst gelesen werden.
+pub const BEIWERK: Color = Color::AnsiValue(244);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Innerhalb von vier aufeinanderfolgenden Ziehungen darf sich keine
-    /// Farbe wiederholen — sonst stünden in einem Menü zwei gleichfarbige
-    /// Punkte sichtbar nebeneinander.
+    /// Der Farbton ist ein Kreis: Der letzte Eintrag der Palette liegt
+    /// ebenso neben dem ersten wie neben seinem Vorgänger. Ohne diese
+    /// Rechnung bekäme Lavendel nur Nachbarn auf einer Seite.
     #[test]
-    fn keine_wiederholung_in_vier_ziehungen() {
-        let mut z = crate::animation::Zufall::neu();
-        let mut ring = LEER;
-        let mut letzte: Vec<usize> = Vec::new();
-        for runde in 0..3000 {
-            let i = gezogen(ring, &mut z);
+    fn der_farbkreis_schliesst_sich() {
+        assert_eq!(abstand(350, 10), 20, "über 360 Grad hinweg falsch gerechnet");
+        assert_eq!(abstand(10, 350), 20);
+        assert_eq!(abstand(0, 180), 180, "der weiteste Abstand ist ein halber Kreis");
+        // Cyan (51) ist reines Cyan, Gelb (226) reines Gelb.
+        assert_eq!(farbton(51), 180, "Cyan liegt nicht bei 180 Grad");
+        assert_eq!(farbton(226), 60, "Gelb liegt nicht bei 60 Grad");
+        assert_eq!(farbton(201), 300, "Magenta liegt nicht bei 300 Grad");
+    }
+
+    /// **Der Grund für die Umstellung.** Die erste Fassung nahm die beiden
+    /// nächstliegenden Töne. Die lagen der Logofarbe zu nahe: Ein Menütitel
+    /// in fast der Farbe des Schriftzugs hebt sich nicht ab, und zwei
+    /// benachbarte Töne unterscheiden sich untereinander erst recht nicht.
+    /// Beide Abstände müssen deshalb für **jede** Logofarbe eingehalten
+    /// sein.
+    #[test]
+    fn das_paar_haelt_beide_abstaende_ein() {
+        for (logo, ton) in NEON.iter().enumerate() {
+            let (a, b) = paar(logo);
+            let eigen = farbton(*ton);
+            let (ha, hb) = (farbton(NEON[a]), farbton(NEON[b]));
+
+            for (i, h) in [(a, ha), (b, hb)] {
+                assert_ne!(i, logo, "Logofarbe {ton} wählt sich selbst");
+                let d = abstand(eigen, h);
+                assert!(
+                    d >= MIN_ZU_LOGO,
+                    "Logofarbe {ton}: {} liegt nur {d}° entfernt",
+                    NEON[i]
+                );
+                assert!(
+                    d <= MAX_ZU_LOGO,
+                    "Logofarbe {ton}: {} liegt {d}° entfernt, zu weit",
+                    NEON[i]
+                );
+            }
             assert!(
-                !letzte.contains(&i),
-                "Farbe {i} wiederholt sich in Runde {runde} unter den letzten {}",
-                letzte.len()
+                abstand(ha, hb) >= MIN_UNTEREINANDER,
+                "Logofarbe {ton}: die beiden Schlagwortfarben liegen nur {}° auseinander",
+                abstand(ha, hb)
             );
-            ring = eingereiht(ring, i);
-            letzte.push(i);
-            if letzte.len() > GEMERKT {
-                letzte.remove(0);
+        }
+    }
+
+    /// Unter allen zulässigen Paaren gewinnt das mit dem kleinsten
+    /// Gesamtabstand: so nah am Logo, wie die Bedingungen zulassen.
+    #[test]
+    fn das_paar_liegt_so_nah_am_logo_wie_moeglich() {
+        for (logo, ton) in NEON.iter().enumerate() {
+            let eigen = farbton(*ton);
+            let (a, b) = paar(logo);
+            let gewaehlt = abstand(eigen, farbton(NEON[a])) + abstand(eigen, farbton(NEON[b]));
+
+            for (i, toni) in NEON.iter().enumerate() {
+                for (k, tonk) in NEON.iter().enumerate().skip(i + 1) {
+                    if i == logo || k == logo {
+                        continue;
+                    }
+                    let (hi, hk) = (farbton(*toni), farbton(*tonk));
+                    let (di, dk) = (abstand(eigen, hi), abstand(eigen, hk));
+                    let zulaessig = (MIN_ZU_LOGO..=MAX_ZU_LOGO).contains(&di)
+                        && (MIN_ZU_LOGO..=MAX_ZU_LOGO).contains(&dk)
+                        && abstand(hi, hk) >= MIN_UNTEREINANDER;
+                    if zulaessig {
+                        assert!(
+                            di + dk >= gewaehlt,
+                            "Logofarbe {ton}: ein näheres Paar wurde übergangen"
+                        );
+                    }
+                }
             }
         }
     }
 
-    /// Der Anfangszustand darf keine gültige Farbe sperren, sonst fehlten
-    /// beim ersten Menü vier Töne der Palette.
+    /// Die Schlagworte wechseln zwischen genau zwei Farben, und nie stehen
+    /// zwei gleiche nebeneinander.
     #[test]
-    fn leerer_ring_sperrt_nichts() {
-        for i in 0..NEON.len() {
-            assert!(!enthalten(LEER, i), "Index {i} ist im leeren Ring gesperrt");
-        }
+    fn schlagworte_wechseln_zwischen_den_beiden_sitzungsfarben() {
+        // Über die Sitzung, so wie der Client sie benutzt.
+        let gezogen: Vec<Color> = (0..8).map(|_| schlagwort()).collect();
+        let verschieden: std::collections::BTreeSet<_> = gezogen
+            .iter()
+            .map(|f| match f {
+                Color::AnsiValue(v) => *v,
+                _ => 0,
+            })
+            .collect();
+        assert_eq!(verschieden.len(), 2, "es sind nicht genau zwei Farben");
+        assert!(!verschieden.contains(&match logo() {
+            Color::AnsiValue(v) => v,
+            _ => 0,
+        }));
     }
 
-    /// Der Index muss in der Palette liegen; ein Fehlgriff wäre ein Absturz
-    /// beim Zeichnen.
+    /// Das Schema gilt für die ganze Sitzung: Zwei Abrufe der Logofarbe
+    /// müssen dieselbe liefern. Vorher wechselte sie mit jedem Bildschirm,
+    /// und zwei Bildschirme desselben Vorgangs sahen aus, als gehörten sie
+    /// nicht zusammen.
     #[test]
-    fn index_bleibt_in_der_palette() {
-        let mut z = crate::animation::Zufall::neu();
-        let mut ring = LEER;
-        for _ in 0..2000 {
-            let i = gezogen(ring, &mut z);
-            assert!(i < NEON.len());
-            ring = eingereiht(ring, i);
+    fn das_schema_bleibt_ueber_die_sitzung_gleich() {
+        let erste = logo();
+        for _ in 0..50 {
+            assert_eq!(logo(), erste, "die Logofarbe hat gewechselt");
         }
-        // Auch der Weg über die Merkzelle muss tragen.
-        assert!(naechster_index() < NEON.len());
-    }
-
-    /// Über viele Ziehungen soll die ganze Palette vorkommen. Bliebe ein
-    /// Teil ungenutzt, wäre der Zufall in Wahrheit keiner.
-    #[test]
-    fn die_palette_wird_ausgeschoepft() {
-        let mut z = crate::animation::Zufall::neu();
-        let mut gesehen = [false; NEON.len()];
-        let mut ring = LEER;
-        for _ in 0..4000 {
-            let i = gezogen(ring, &mut z);
-            gesehen[i] = true;
-            ring = eingereiht(ring, i);
-        }
-        assert!(gesehen.iter().all(|g| *g), "nicht alle Farben kamen vor");
+        let s = sitzung();
+        assert_eq!((s.a, s.b), paar(s.logo), "die Sitzungsfarben passen nicht zum Logo");
     }
 
     /// Die Palette darf keine Farbe doppelt führen: Zwei gleiche Einträge

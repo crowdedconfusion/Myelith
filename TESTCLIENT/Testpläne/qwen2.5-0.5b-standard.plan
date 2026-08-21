@@ -1,16 +1,16 @@
 # Myelith-Testplan
 #
 # Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
-# MÜSSEN sie unverändert verwenden — sonst weichen die Ergebnisse
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
 # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
 #
-# Aufruf:  myl-test --plan wikitext2-0.5b-standard.plan determinismus
+# Aufruf:  myl-test --plan qwen2.5-0.5b-standard.plan determinismus
 #    oder:  myl-test  (Menü, Punkt 8)
 #
 # Die Zeile spec_sha256 sichert genau das ab. Kommentare und
 # Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
 
-plan_id     = wikitext2-0.5b-standard
+plan_id     = qwen2.5-0.5b-standard
 prompt      = " The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake"
 prompt      = "The capital of France is"
 prompt      = "Die Hauptstadt von Frankreich ist"

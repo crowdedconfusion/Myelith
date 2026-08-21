@@ -1,4 +1,4 @@
-//! `myl-test` — Terminal-Testclient für Myelith.
+//! `myl-test`. Terminal-Testclient für Myelith.
 //!
 //! Argumentauswertung von Hand, ohne Fremd-Crate: Der Client soll auf
 //! einer fremden Maschine mit möglichst wenig Voraussetzungen bauen.
@@ -13,7 +13,7 @@ use myl_testclient::{
 };
 
 const HILFE: &str = "\
-myl-test — Testclient für Myelith
+myl-test. Testclient für Myelith
 
 AUFRUF
     myl-test                 ohne Befehl: interaktives Menü
@@ -21,7 +21,7 @@ AUFRUF
 
 BEFEHLE
     hardware        Hardware erheben und protokollieren. Braucht kein
-                    Modell — der erste Befehl auf einer neuen Maschine.
+                    Modell, der erste Befehl auf einer neuen Maschine.
     determinismus   Denselben Prompt zweimal rechnen und auf Bitgleichheit
                     prüfen. Der Vergleichswert im Protokoll muss auf jeder
                     Maschine derselbe sein.
@@ -29,21 +29,21 @@ BEFEHLE
                     die Einzelknoten-Runtime prüfen.
     artefakte       Modelle auf dieser Maschine prüfen: sind Artefakte da,
                     und stimmen sie mit dem veröffentlichten Digest überein?
-                    Der erste Befehl vor jedem Vergleichslauf — ohne ihn
+                    Der erste Befehl vor jedem Vergleichslauf, ohne ihn
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
 
     vergleich       Die zugesandten Protokolle aus TESTCLIENT/Vergleiche
                     gegenüberstellen und urteilen, ob sie den Cross-Hardware-
                     Nachweis tragen. Verweigert ein positives Urteil, wenn
-                    alle Protokolle von derselben Maschine stammen — das
+                    alle Protokolle von derselben Maschine stammen: das
                     wäre kein Nachweis. Schreibt einen ausführlichen Bericht
                     nach TESTCLIENT/Vergleiche/Berichte.
 
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
                     Braucht kein Modell.
-    plan            Testplan erzeugen (Koordinator) — die Datei, die an
+    plan            Testplan erzeugen (Koordinator), die Datei, die an
                     alle Teilnehmer geht. Siehe TESTPLAN unten.
     menu            Interaktives Menü (wie ohne Befehl).
 
@@ -75,7 +75,7 @@ ARTEFAKTE
     Hugging Face zu holen und die Artefakte zu bauen. Der Bau nutzt das
     versionierte Skalenpaket und dauert Sekunden.
 
-    Bei `--quiet` wird nicht gefragt und deshalb auch nichts geladen —
+    Bei `--quiet` wird nicht gefragt und deshalb auch nichts geladen:
     ein mehrere Gigabyte großer Zugriff gehört nicht in einen Skriptlauf,
     der ihn nicht angefordert hat.
 
@@ -86,7 +86,7 @@ PROTOKOLLE
         <name>_<einstellungs-id>_<datum>_<uhrzeit>.jsonl   maschinenlesbar
         <name>_<einstellungs-id>_<datum>_<uhrzeit>.log     Fließtext
 
-    Dieselben Angaben stehen auch IM Protokoll — eine Datei wird
+    Dieselben Angaben stehen auch IM Protokoll: eine Datei wird
     umbenannt, ein Feld nicht. Prompttexte werden gehasht, nicht
     gespeichert.
 
@@ -102,7 +102,7 @@ TESTPLAN
         myl-test --plan 2026-08-18-arch.plan determinismus
 
     Die Datei trägt eine Prüfsumme über Prompt, Token, Shards und
-    Modell. Wird sie verändert, verweigert der Client den Lauf — ein
+    Modell. Wird sie verändert, verweigert der Client den Lauf: ein
     Tippfehler soll nicht als Befund durchgehen.
 
 CROSS-HARDWARE-NACHWEIS
@@ -124,7 +124,7 @@ struct Args {
     shards: usize,
     artifacts: PathBuf,
     /// Wurde `--artifacts` (oder ein Plan) ausdrücklich gesetzt? Dann wird
-    /// nicht gesucht und nichts beschafft — eine ausdrückliche Angabe hat
+    /// nicht gesucht und nichts beschafft: eine ausdrückliche Angabe hat
     /// Vorrang vor jeder Automatik.
     artifacts_explizit: bool,
     logs: PathBuf,
@@ -172,7 +172,7 @@ fn parse() -> Result<Args, String> {
     let mut befehl: Option<String> = None;
     let mut prompt_gesetzt = false;
 
-    // Optionen dürfen VOR und NACH dem Befehl stehen — `myl-test --plan x
+    // Optionen dürfen VOR und NACH dem Befehl stehen: `myl-test --plan x
     // stack` ist genauso gültig wie `myl-test stack --plan x`. Der erste
     // Wert, der keine Option und kein Optionswert ist, ist der Befehl.
     let mut i = 0;
@@ -299,7 +299,7 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
     println!();
     println!("Alle Protokolle landen dann unter");
     println!(
-        "    logs/<befehl>/<datum>_{}/  —  ohne Zuordnungsarbeit vergleichbar.",
+        "    logs/<befehl>/<datum>_{}/ :  ohne Zuordnungsarbeit vergleichbar.",
         plan.short_id()
     );
     ExitCode::SUCCESS
@@ -319,7 +319,7 @@ fn main() -> ExitCode {
         }
     };
 
-    // Testplan laden, falls angegeben — er überschreibt die Optionen.
+    // Testplan laden, falls angegeben: er überschreibt die Optionen.
     let mut args = args;
     let mut einstellungen_id = "ohne-plan".to_string();
     if let Some(pfad) = args.plan.clone() {
@@ -396,7 +396,7 @@ fn main() -> ExitCode {
     );
 
     // Artefakte auflösen, bevor ein Lauf sie braucht. `hardware`, `stack`
-    // und `artefakte` kommen ohne Modell aus — sie werden übersprungen,
+    // und `artefakte` kommen ohne Modell aus: sie werden übersprungen,
     // damit der erste Befehl auf einer neuen Maschine keinen Download
     // auslöst.
     let braucht_modell = matches!(args.command.as_str(), "determinismus" | "shard");
@@ -444,11 +444,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// `artefakte` — prüft für jedes bekannte Modell, ob es auf dieser
+/// `artefakte`: prüft für jedes bekannte Modell, ob es auf dieser
 /// Maschine vorliegt und ob es dem veröffentlichten Digest entspricht.
 ///
 /// Ein abweichender Digest ist **kein Hardware-Befund**. Er heißt, dass
-/// hier ein anderes Modell liegt als beim Vergleichspartner — und ein
+/// hier ein anderes Modell liegt als beim Vergleichspartner, und ein
 /// Bitgleichheitstest darüber wäre wertlos. Deshalb sagt die Ausgabe das
 /// ausdrücklich, statt nur „ungleich" zu melden.
 fn run_artefakte(log: &mut RunLog) -> bool {
@@ -467,7 +467,7 @@ fn run_artefakte(log: &mut RunLog) -> bool {
         Err(e) => {
             log.error(format!("Register nicht lesbar: {}", e));
             log.note("Ohne INTEGER_LLM/scale_packs/REGISTER.json gibt es keinen");
-            log.note("Prüfanker — dieser Befehl braucht das Repository.");
+            log.note("Prüfanker: dieser Befehl braucht das Repository.");
             return false;
         }
     };
@@ -477,7 +477,7 @@ fn run_artefakte(log: &mut RunLog) -> bool {
         log.note(format!("{} (θ_v {})", m.name, m.theta_v));
         match pruefen(&repo, m) {
             Zustand::Bereit { pfad } => {
-                log.note(format!("  bereit — Digest stimmt: {}", &m.digest[..16]));
+                log.note(format!("  bereit. Digest stimmt: {}", &m.digest[..16]));
                 log.note(format!("  {}", pfad.display()));
             }
             Zustand::Abweichend { pfad, ist, soll } => {
@@ -507,7 +507,7 @@ fn run_artefakte(log: &mut RunLog) -> bool {
 
 /// Eingabefunktion für `artefakte::beschaffen`.
 ///
-/// `None` bei `--quiet` — dann läuft der Client nicht-interaktiv, und
+/// `None` bei `--quiet`, dann läuft der Client nicht-interaktiv, und
 /// `beschaffen` lädt bewusst nichts herunter. Ein mehrere Gigabyte großer
 /// Zugriff auf einen fremden Dienst gehört nicht in einen Skriptlauf, der
 /// ihn nicht angefordert hat.

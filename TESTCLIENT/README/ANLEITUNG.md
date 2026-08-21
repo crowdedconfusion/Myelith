@@ -1,6 +1,6 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
-**Version:** 2.2.0 · **Datum:** 2026-08-21
+**Version:** 2.6.0 · **Datum:** 2026-08-21
 
 Diese Anleitung hat zwei Hälften:
 
@@ -14,7 +14,7 @@ Diese Anleitung hat zwei Hälften:
 
 ---
 
-# Teil A — für Teilnehmer
+# Teil A: für Teilnehmer
 
 ## A1. Worum es geht, in einfachen Worten
 
@@ -67,12 +67,27 @@ Im Ordner `TESTCLIENT` liegt für jedes System ein Starter:
 | **Windows** | Doppelklick auf `Myelith Testclient - Windows (Batch).cmd` |
 | **Linux** | Im Terminal: `./"Myelith Testclient - Linux, macOS (Shell).sh"` |
 
+Beim ersten Doppelklick auf das macOS-Bündel fragt das System einmal, ob
+„sh" das Programm „Terminal" steuern darf. Erlaube das: Der Starter öffnet
+damit das Terminalfenster, in dem der Client läuft. Andere Anwendungen
+werden nicht angesprochen. Wurde die Frage versehentlich abgelehnt, steht
+sie in Systemeinstellungen, Datenschutz & Sicherheit, Automatisierung und
+lässt sich dort wieder erlauben.
+
+Das Fenster öffnet sich mittig auf dem Bildschirm, 120 Spalten breit und
+44 Zeilen hoch. Wer den Client in einem bereits offenen Terminal startet,
+behält dessen Fenster unverändert; das Banner passt sich dann der
+vorhandenen Breite an.
+
 Beim **ersten** Start baut sich der Client selbst. Das dauert einige
 Minuten; danach sind es Sekunden. Du darfst die Starter verschieben,
-kopieren oder auf den Schreibtisch legen — sie finden das Repository von
+kopieren oder auf den Schreibtisch legen: sie finden das Repository von
 selbst.
 
-Zuerst läuft ein kurzes Startbild. Ein Tastendruck überspringt es;
+Zuerst läuft ein kurzes Startbild: Zeichen fallen, eine Spirale wächst
+darin auf, bunte Artefakte strömen auf ihren Armen nach innen und setzen
+in der Mitte das Logo zusammen, während der Regen im Hintergrund
+weiterläuft; danach gleitet das Logo an seinen Platz. Ein Tastendruck überspringt es;
 `MYL_NO_ANIMATION=1` schaltet es dauerhaft ab.
 
 ## A4. Bedienung: Pfeiltasten und Enter
@@ -81,12 +96,13 @@ Zuerst läuft ein kurzes Startbild. Ein Tastendruck überspringt es;
 
 ```
   ── Was möchtest du tun? ──
-  ❯ 1  Testlauf starten
-        Hardware, Determinismus, Shards und Protokoll-Durchlauf
-        nacheinander. Der vollständige Bericht dieser Maschine.
-    2  Testdatei wählen
-    3  Protokolle vergleichen
-    4  Anleitung lesen
+  ❯ 1  Mit dem Modell sprechen
+        Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum
+        Messen: kein Protokoll, kein Vergleichswert.
+    2  Testlauf starten
+    3  Testdatei wählen
+    4  Artefakt wählen
+    5  Anleitung lesen
     9  Entwickler-Menü
     0  Beenden
 
@@ -100,18 +116,24 @@ Zuerst läuft ein kurzes Startbild. Ein Tastendruck überspringt es;
 | **Ziffer** | Direkt zu diesem Punkt springen und ihn ausführen |
 | **Esc** | Eine Ebene zurück |
 
-Läuft der Client in einer Umgebung ohne Tastatursteuerung — in einer
-Pipe, in einem Skript, in einer schlichten seriellen Konsole —, zeigt er
+Unter der Auswahl stehen die **aktuellen Einstellungen**: erst die Frage,
+was du tun willst, dann der Zustand, unter dem es geschieht. Alles steht
+mittig unter dem Logo; die Zeilen, auf die du drückst oder in die du
+tippst, sitzen am linken Rand.
+
+Läuft der Client in einer Umgebung ohne Tastatursteuerung: in einer
+Pipe, in einem Skript, in einer schlichten seriellen Konsole , zeigt er
 dieselbe Liste und wartet auf eine getippte Ziffer mit Enter. Beide Wege
 führen zum selben Ergebnis.
 
-Die Titel der Auswahlpunkte stehen fett in wechselnden Neonfarben, und
-auch das Logo trägt jedes Mal eine andere. **Das ist Schmuck und sonst
+Die Farben würfelt der Client bei jedem Start neu und behält sie dann für
+die ganze Sitzung: eine Farbe für das Logo und zwei dazu passende für die
+Menütitel. **Das ist Schmuck und sonst
 nichts:** Kein Urteil und kein Ergebnis hängt an einer Farbe, dafür
 stehen überall Wörter. Wer schwarzweiß liest, verliert nichts.
 
 **Der Bildschirm wird vor jeder Auswahl aufgeräumt.** Oben steht das
-Logo, darunter genau das, was ansteht — nichts sonst. Nach einer Aktion
+Logo, darunter genau das, was ansteht: nichts sonst. Nach einer Aktion
 bleibt ihre Ausgabe stehen, bis du eine Taste drückst:
 
 ```
@@ -123,22 +145,28 @@ dabei nichts: Alles, was zählt, steht im Protokoll.
 
 ## A5. Der Ablauf, Schritt für Schritt
 
-### Schritt 1: Dein Name
+### Schritt 1: Dein Nutzername
 
 ```
-  Unter welchem Namen sollen die Protokolle dieser Sitzung laufen?
+  Unter welchem Nutzernamen sollen die Protokolle dieser Sitzung laufen?
   Er steht im Dateinamen und im Protokoll, damit der Koordinator sie
   ohne Rückfrage zuordnen kann. Leer lassen ist erlaubt.
 
-  Name:
+  Nutzername:
 ```
 
-Ein Vorname, ein Spitzname oder eine Bezeichnung der Maschine — was dem
+Danach begrüßt dich der Client mit deinem Namen, dann kommt das Menü.
+
+Ein Vorname, ein Spitzname oder eine Bezeichnung der Maschine: was dem
 Koordinator hilft, dein Protokoll wiederzuerkennen. Lässt du das Feld
 leer, heißen deine Dateien `ohne-name`; das funktioniert, macht dem
 Koordinator aber Arbeit.
 
 ### Schritt 2: Testdatei wählen
+
+Nach dem Nutzernamen stehst du **direkt im Menü**. Die Testdatei fragt
+der Client dann ab, wenn du [2] Testlauf starten wählst; über [3] kannst
+du sie auch vorher festlegen.
 
 Hat dir der Koordinator eine Datei mit der Endung `.plan` geschickt,
 lege sie vorher in den Ordner `TESTCLIENT/Testpläne/`. Der Client listet
@@ -146,11 +174,11 @@ auf, was er dort findet:
 
 ```
   ── Testpläne in TESTCLIENT/Testpläne ──
-  ❯ 1  wikitext2-0.5b-standard · qwen2.5-0.5b, 6 Prompts, 32 Token, 4 Shards
+  ❯ 1  qwen2.5-0.5b-standard · qwen2.5-0.5b, 6 Prompts, 32 Token, 4 Shards
         Prompt: " The 2010 Haitian earthquake was a catast…" (+5 weitere)
     2  qwen2.5-7b-standard · qwen2.5-7b, 4 Prompts, 16 Token, 4 Shards
         Prompt: "The capital of France is" (+3 weitere)
-    0  keiner — Einstellungen von Hand wählen
+    0  keiner. Einstellungen von Hand wählen
 ```
 
 **Die Testdatei ist der Kern des Verfahrens.** Sie legt fest, welche
@@ -158,7 +186,7 @@ Fragen gestellt werden, wie viele Wörter geantwortet wird und welches
 Modell rechnet. Alle Beteiligten müssen dieselbe Datei verwenden, sonst
 sind die Ergebnisse nicht vergleichbar. Damit das keine Bitte bleibt,
 trägt die Datei eine Prüfsumme: **Wird sie verändert, verweigert der
-Client den Lauf.** Ändere sie also nicht — auch kein Leerzeichen.
+Client den Lauf.** Ändere sie also nicht: auch kein Leerzeichen.
 
 Wählst du einen Plan, macht der Client den Rest allein: Modell prüfen,
 bei Bedarf beschaffen, messen.
@@ -169,16 +197,69 @@ gemeinsamen Test nicht.
 
 ### Schritt 3: Modell
 
-Fehlt das Modell auf deiner Maschine, bietet der Client an, es zu holen
-und die Artefakte daraus zu bauen. **Es passiert nichts ohne Rückfrage**,
-und die Größe des Downloads steht dabei. Während es läuft, siehst du,
-wie lange es schon dauert.
+Punkt **[4] Artefakt wählen** führt **alle** Modelle auf, die der Client
+kennt, und schreibt daneben, ob sie schon hier liegen:
+
+```
+  ❯ 1  qwen2.5-0.5b, liegt bereit
+          Digest wird nach der Wahl geprüft.
+    2  qwen2.5-7b, nicht vorhanden
+          Download rund 15 GB von Hugging Face, Bau danach in Sekunden.
+```
+
+Du kannst also jederzeit ein weiteres Modell holen, auch wenn schon eines
+da ist, und ein freigegebenes zurückholen. Liegt das Modell schon auf
+deiner Maschine, übernimmt der Client es beim Start von selbst, und du
+kannst diesen Schritt überspringen. Fehlt es, bietet [4] an, die Gewichte zu
+holen und die Artefakte daraus zu bauen. **Es passiert nichts ohne
+Rückfrage**, und die Größe des Downloads steht dabei. Während es läuft,
+siehst du, wie lange es schon dauert.
 
 Liegen mehrere Modelle bereit, fragt er, welches.
 
+Der Punkt ist bewusst eigenständig: Bis v0.6.0 löste die Testdatei das
+Modell gleich mit auf, und aus einer Menüwahl wurden ungefragt bis zu
+15 GB Download. Jetzt entscheidest du, wann das geschieht.
+
+### Zwischendurch: mit dem Modell sprechen
+
+Punkt **[1]** ist der einzige, der nichts misst. Du tippst etwas, das
+Modell antwortet, höchstens 64 Token lang; eine leere Eingabe beendet
+das Gespräch. Es beantwortet die Frage, die sich jeder stellt, der seine
+Maschine hergibt: Was rechnet das Ding da eigentlich?
+
+Die Antwort erscheint **Wort für Wort**, während gerechnet wird. Bei 7B
+dauert eine Antwort über eine halbe Minute; so siehst du die ganze Zeit,
+dass es vorangeht.
+
+**Zurück ins Menü** kommst du auf drei Wegen, und der Hinweis steht in
+jeder Eingabezeile:
+
+```
+  Du [Esc = Menü]:
+```
+
+| Weg | |
+|---|---|
+| **Escape** | Die Taste, mit der man ein Menü verlässt |
+| **Strg-D** | Die Kombination, die in jeder Kommandozeile „fertig" heißt |
+| **`menu` tippen** | Auch `exit`, `q`, `zurück` und `/menu` |
+
+**Enter allein tut nichts.** Du kannst also jederzeit Enter drücken, um
+zu sehen, ob sich der Client noch meldet, ohne das Gespräch zu verlieren.
+
+**Nicht Strg-C.** Das beendet den ganzen Client, nicht das Gespräch, und
+dein Sitzungsname wäre weg.
+
+Die Auswahl ist **gierig**, ohne Sampling und ohne Zufall. Dieselbe
+Frage liefert auf demselben Modellstand dieselbe Antwort, hier wie im
+Testlauf. Genau deshalb gibt es keine Temperatur einzustellen. Ein
+Protokoll schreibt dieser Punkt nicht: Prompt und Länge bestimmst du
+frei, das wäre kein Messwert.
+
 ### Schritt 4: Der Testlauf
 
-Punkt **[1] Testlauf starten**. Das ist alles.
+Punkt **[2] Testlauf starten**. Das ist alles.
 
 Der Lauf hat vier Stufen und schreibt **ein einziges Protokoll** über
 alle vier:
@@ -217,12 +298,12 @@ jeder Maschine derselbe sein. Genau das ist der ganze Test.
 ### Schritt 6: Protokoll zurückschicken
 
 Am Ende nennt der Client den Pfad. Die Protokolle liegen in
-**`TESTCLIENT/logs/`** — auf derselben Ebene wie `Testpläne/` und
+**`TESTCLIENT/logs/`**: auf derselben Ebene wie `Testpläne/` und
 `Vergleiche/`, also dort, wo du ohnehin schon warst:
 
 ```
 Protokoll: …/TESTCLIENT/logs/anna_12a1e91e_2026-08-21_143022.jsonl
-           und …_143022.log — Lauf 2026-08-21-143022-aarch64-macos-…
+           und …_143022.log. Lauf 2026-08-21-143022-aarch64-macos-…
 ```
 
 Schicke die **`.jsonl`** an den Koordinator. Die `.log` daneben enthält
@@ -241,15 +322,16 @@ Die Datei ist reiner Text und darf unverändert weitergegeben werden.
 
 ## A6. Selbst nachsehen: Protokolle vergleichen
 
-Punkt **[3] Protokolle vergleichen** fragt zuerst, *welche*:
+Punkt **[9] Entwickler-Menü**, dort **Protokolle vergleichen**, fragt
+zuerst, *welche*:
 
 | Auswahl | Was verglichen wird |
 |---|---|
-| **Zugesandte Protokolle** | Was in `TESTCLIENT/Vergleiche/` liegt — der Weg des Koordinators |
+| **Zugesandte Protokolle** | Was in `TESTCLIENT/Vergleiche/` liegt, der Weg des Koordinators |
 | **Eigene Läufe** | Die Protokolle dieser Maschine aus `TESTCLIENT/logs/` |
 
 Für dich als Teilnehmer ist meist die zweite Auswahl richtig. Sie ergibt
-für sich **keinen** Nachweis — dazu fehlt eine zweite Maschine —, zeigt
+für sich **keinen** Nachweis: dazu fehlt eine zweite Maschine , zeigt
 aber, ob wiederholte Läufe übereinstimmen. Hast du die Dateien der
 anderen bekommen, leg sie in `TESTCLIENT/Vergleiche/` und nimm die erste
 Auswahl:
@@ -285,6 +367,12 @@ sucht auch ein System-Python, falls die Pakete dort schon liegen.
 
 ## A8. Platz wieder freigeben
 
+Im Entwickler-Menü (Punkt 9), dort Punkt „Platz freigeben". Du kannst
+einzelne Einträge löschen oder **alles auf einmal**. Beim Alles-Löschen
+fragt der Client **zweimal** nach und listet dazwischen jeden betroffenen
+Pfad auf: Artefakte sind aus dem Skalenpaket in Sekunden wieder da,
+Gewichte kosten einen erneuten Download.
+
 Entwickler-Menü **[9]**, dann **[9] Artefakte und Gewichte freigeben**.
 Der Client zeigt, was belegt ist:
 
@@ -314,7 +402,7 @@ woanders, im Entwickler-Menü unter [7] den Pfad setzen oder beim Aufruf
 `--artifacts <PFAD>` angeben.
 
 **„Der Testplan wurde verändert"**
-Die Datei wurde nach dem Erzeugen bearbeitet — auch ein zusätzliches
+Die Datei wurde nach dem Erzeugen bearbeitet: auch ein zusätzliches
 Leerzeichen zählt. Fordere die Originaldatei neu an. Kommentarzeilen mit
 `#` darfst du dagegen frei ergänzen, die gehen nicht in die Prüfsumme
 ein.
@@ -339,7 +427,7 @@ melden.
 
 ---
 
-# Teil B — für Koordinatoren
+# Teil B: für Koordinatoren
 
 ## B1. Der Kern in drei Sätzen
 
@@ -402,7 +490,7 @@ bekommen.
 **Mehrere Prompts sind kein Luxus.** Ein einzelner Prompt übt einen
 einzigen Pfad durch das Modell aus. Ein Rundungsfehler, der nur bei
 langen Sequenzen, nur bei bestimmten Zeichen oder nur in einem selten
-getroffenen Tabellenbereich auftritt, bliebe unentdeckt — und der
+getroffenen Tabellenbereich auftritt, bliebe unentdeckt, und der
 Vergleichswert sähe trotzdem beruhigend aus. Vier bis acht Prompts, die
 sich in Sprache, Länge und Art unterscheiden, sind ein guter Schnitt.
 
@@ -414,8 +502,8 @@ Determinismus        = 2 Durchgänge
 Shard-Lauf           = 2 Durchgänge (Pod und Einzelknoten)
 ```
 
-Mit den gemessenen Raten aus `INTEGER_LLM/bench/README.md` — **0,5B rund
-24 Token/s, 7B rund 2 Token/s** — plus Modellladen (0,5B ein paar
+Mit den gemessenen Raten aus `INTEGER_LLM/bench/README.md`: **0,5B rund
+24 Token/s, 7B rund 2 Token/s**: plus Modellladen (0,5B ein paar
 Sekunden, 7B rund eine Minute je Lauf).
 
 | Beispiel | Rechnung | Dauer |
@@ -430,7 +518,7 @@ entscheidbar, ob sich Warten lohnt oder ob etwas hängt.
 
 | Datei | Modell | Umfang |
 |---|---|---|
-| `wikitext2-0.5b-standard.plan` | qwen2.5-0.5b | 6 Prompts, 32 Token, 4 Shards |
+| `qwen2.5-0.5b-standard.plan` | qwen2.5-0.5b | 6 Prompts, 32 Token, 4 Shards |
 | `qwen2.5-7b-standard.plan` | qwen2.5-7b | 4 Prompts, 16 Token, 4 Shards |
 
 Beide nehmen Prompts aus dem Evidenz-Paket des Projekts (Deutsch und
@@ -454,7 +542,7 @@ spec_sha256 = 12a1e91e4fa75f6e…
 ```
 
 Reiner Text, von Hand lesbar und von Hand schreibbar. Die Prompts stehen
-in Anführungszeichen, damit ein Randleerzeichen erhalten bleibt — es ist
+in Anführungszeichen, damit ein Randleerzeichen erhalten bleibt: es ist
 Teil des Prompts und verändert das Ergebnis.
 
 **Ändert jemand eine Zeile, verweigert der Client den Lauf:**
@@ -472,7 +560,7 @@ sondern einen Fehler.
 
 ## B3. Verteilen
 
-Die `.plan`-Datei unverändert an alle Teilnehmer schicken — Chat, Mail,
+Die `.plan`-Datei unverändert an alle Teilnehmer schicken. Chat, Mail,
 Repository, egal. Sie ist reiner Text und enthält keine
 personenbezogenen Daten.
 
@@ -492,7 +580,7 @@ TESTCLIENT/Vergleiche/            ← hier die zugesandten .jsonl ablegen
 TESTCLIENT/Vergleiche/Berichte/   ← hierhin schreibt der Vergleich seinen Bericht
 ```
 
-Alle eingegangenen `.jsonl` dort hineinlegen — **nicht umbenennen**, der
+Alle eingegangenen `.jsonl` dort hineinlegen: **nicht umbenennen**, der
 Dateiname trägt bereits Teilnehmer, Einstellungs-Kennung, Datum und
 Uhrzeit. Dann:
 
@@ -506,7 +594,7 @@ Punkt [3], dort „Zugesandte Protokolle".
 **Warum ein eigener Ordner und nicht der Protokollordner des Clients:**
 Der Vergleich liest *alles*, was er an `.jsonl` findet. Lägen die
 zugesandten Läufe zwischen den eigenen, enthielte die Gruppe die eigene
-Maschine mehrfach — und ein Urteil darüber sagt etwas anderes aus, als es
+Maschine mehrfach, und ein Urteil darüber sagt etwas anderes aus, als es
 zu sagen scheint.
 
 **Warum der Bericht in einem Unterordner landet:** Läge er neben seiner
@@ -531,11 +619,11 @@ Vergleichswert gegenüber und fällt je Gruppe ein Urteil:
 
 Ein `=` heißt, alle Protokolle stimmen in diesem Wert überein; ein `≠`
 listet auf, wer was gerechnet hat. Der Befehl endet mit Exit-Code 0 nur
-dann, wenn **jede** Gruppe den Nachweis trägt — er taugt damit für die CI.
+dann, wenn **jede** Gruppe den Nachweis trägt: er taugt damit für die CI.
 
 Zusätzlich zur Bildschirmausgabe entsteht in `Vergleiche/Berichte/` ein
 ausführlicher Bericht als Markdown: `vergleich_<datum>_<uhrzeit>.md`. Er
-trägt, was auf dem Bildschirm keinen Platz hat — **vollständige** Digests
+trägt, was auf dem Bildschirm keinen Platz hat: **vollständige** Digests
 statt der Kurzform, die Dateinamen, den Artefakt-Digest je Teilnehmer und
 den Zeitpunkt des Vergleichs. Diese Datei reichst du weiter.
 
@@ -543,7 +631,7 @@ Ein **Laufprotokoll** schreibt `vergleich` dagegen nicht: Es misst nichts,
 es wertet aus.
 
 Der Berichtsordner wird nicht versioniert. Was bleiben soll, gehört nach
-`INTEGER_LLM/eval/results/` — siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
+`INTEGER_LLM/eval/results/`: siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
 
 ## B5. Die Urteile und was sie bedeuten
 
@@ -579,7 +667,7 @@ ausdrücklich:
 > darüber hätte keine Aussage.
 
 Ohne diesen Satz sähe ein abweichendes Artefakt aus wie eine
-gescheiterte Hardware-Bitgleichheit — der Client würde also das Gegenteil
+gescheiterte Hardware-Bitgleichheit, der Client würde also das Gegenteil
 dessen berichten, wofür es ihn gibt.
 
 Seit dem Skalenpaket ist der Bau plattformübergreifend bitgleich und
@@ -628,7 +716,7 @@ Nach abnehmendem Erkenntniswert:
 | **x86_64 + aarch64** | Verschiedene Befehlssätze, verschiedene Compiler-Backends. Der wichtigste Vergleich. |
 | **Referenz + AVX2** | Ob die SIMD-Kernel wirklich bit-identisch sind. Deckt die Paritätslücke aus Fund A19 mit ab. |
 | **Linux + macOS + Windows** | libm- und Toolchain-Unterschiede. Hier hätte die alte `f64::exp()`-LUT zugeschlagen (Fund A5). |
-| **Debug + Release** | Überlaufverhalten. Debug panickt, Release läuft um — genau der Unterschied aus Fund A14. |
+| **Debug + Release** | Überlaufverhalten. Debug panickt, Release läuft um: genau der Unterschied aus Fund A14. |
 | Zwei x86_64-Maschinen derselben Generation | Wenig. Nur als Rauschprüfung. |
 
 **Big-Endian** wäre der schärfste Test überhaupt, das Protokoll ist
@@ -700,6 +788,43 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 ---
 
 ## Changelog
+
+### v2.6.0 – 2026-08-21 (Spirale, Rückweg)
+- Der Regen läuft im Hintergrund weiter, während sich das Logo bildet.
+- Startbild: Die Spirale wächst nach außen, während farbige Artefakte auf
+  ihren Armen nach innen strömen und in der Mitte das Logo bilden; danach
+  gleitet es an seinen Platz.
+- Aus dem Gespräch führen Escape, Strg-D und getippte Wörter zurück; der
+  Hinweis steht in jeder Eingabezeile. Enter allein tut nichts mehr.
+- Die Antwort erscheint Wort für Wort, während gerechnet wird.
+
+### v2.5.0 – 2026-08-21 (Inferenz, Menüaufbau)
+- Die aktuellen Einstellungen stehen jetzt **unter** dem Menü.
+- Nach der Namenseingabe läuft eine geschriebene Begrüßung.
+- **Nach dem Nutzernamen geht es direkt ins Menü.** Die Testdatei fragt
+  Punkt [2] ab, wenn gemessen werden soll.
+- **Neuer Punkt [1]: Mit dem Modell sprechen.** Freie Eingabe, höchstens
+  64 Token je Antwort, kein Protokoll.
+- **Artefakt wählen** ist jetzt Punkt [4] und ein eigener Schritt. Die
+  Testdatei beschafft nichts mehr ungefragt.
+- **Protokolle vergleichen** ist ins Entwickler-Menü gewandert: Es ist die
+  Arbeit des Koordinators, nicht die des Teilnehmers.
+- Startbild: Zwischen Regen und Schriftzug sammelt sich das Gefallene
+  kreisend in der Bildmitte.
+
+### v2.4.0 – 2026-08-21 (Alles löschen, Frischklon)
+- **Alles löschen** im Entwicklermenü, mit zwei Bestätigungen.
+- Starter bauen jetzt zuverlässig auch dann, wenn sie aus einem anderen
+  Verzeichnis aufgerufen werden (Verknüpfung auf dem Schreibtisch).
+- Der Beispielplan für 0,5B heißt `qwen2.5-0.5b-standard.plan`.
+
+### v2.3.0 – 2026-08-21 (Fenster, breites Logo)
+- **Fenstergröße und Lage** setzt der Starter, nicht der Client: mittig,
+  120 x 40. Ein Programm im Terminal kann sein Fenster nicht zuverlässig
+  bewegen.
+- **Das Logo füllt die Fensterbreite.** Der Schriftzug bleibt unverzerrt
+  und steht mittig, das Netzmotiv wird für die jeweilige Breite erzeugt.
+- Hinweis zur einmaligen Berechtigungsfrage unter macOS aufgenommen.
 
 ### v2.2.0 – 2026-08-21 (aufgeräumter Bildschirm, flachere Ablage, Farbe)
 - **Farbe:** Menütitel fett in wechselnden Neontönen, das Logo bei jedem

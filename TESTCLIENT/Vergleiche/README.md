@@ -1,4 +1,4 @@
-# Vergleiche — Arbeitsfläche des Koordinators
+# Vergleiche. Arbeitsfläche des Koordinators
 
 Hier legst du die Protokolle ab, die dir die Teilnehmer geschickt haben,
 und lässt sie vergleichen:
@@ -16,7 +16,7 @@ seinen Bericht nach `Berichte/`.
    nötig und nicht erwünscht: Der Dateiname trägt Teilnehmer,
    Einstellungs-Kennung, Datum und Uhrzeit, und dieselben Angaben stehen
    noch einmal im Protokoll.
-2. `myl-test vergleich` — oder im Menü Punkt [3], dort „Zugesandte
+2. `myl-test vergleich`, oder im Menü Punkt [3], dort „Zugesandte
    Protokolle".
 3. Das Urteil steht auf dem Bildschirm, der ausführliche Bericht in
    `Berichte/`.
@@ -35,7 +35,7 @@ seinen Bericht nach `Berichte/`.
 
 Der Vergleich liest **alles**, was er an `.jsonl` findet. Läge er über
 dem eigenen Protokollverzeichnis, mischten sich die zugesandten Läufe mit
-den eigenen — und ein Urteil über eine Gruppe, in der die eigene Maschine
+den eigenen, und ein Urteil über eine Gruppe, in der die eigene Maschine
 mehrfach vertreten ist, sagt etwas anderes aus, als es zu sagen scheint.
 
 Der Bericht landet aus demselben Grund in einem **Unterordner**: Läge er

@@ -30,9 +30,86 @@ fi
 # Terminal.app oeffnen und den Starter darin ausfuehren. `exec` haelt das
 # Fenster nach dem Beenden des Clients offen, damit die Ausgabe lesbar
 # bleibt; genau deshalb wird nicht einfach `open -a Terminal` benutzt.
-osascript <<ENDE >/dev/null 2>&1
+#
+# DIESER AUFRUF STEHT FUER SICH. Alles Kosmetische kommt danach und in
+# einem eigenen Aufruf. Grund: Eine Fassung dieses Skripts holte zuerst die
+# Bildschirmgroesse beim Finder und oeffnete danach das Terminal. Wer die
+# Berechtigungsanfrage fuer den Finder ablehnte, bei dem brach das Skript
+# an dieser Stelle ab, und der Client startete nicht mehr. Ein Fenster,
+# das an der falschen Stelle steht, ist ein Schoenheitsfehler; ein Client,
+# der gar nicht startet, ist keiner.
+if ! osascript <<ENDE >/dev/null 2>&1
 tell application "Terminal"
     activate
     do script "cd " & quoted form of "$WURZEL" & " && " & quoted form of "$STARTER"
+end tell
+ENDE
+then
+    # Scheitert dieser Aufruf, fehlt in aller Regel die Erlaubnis, Terminal
+    # zu steuern. Ohne Meldung stuende der Nutzer vor einem Symbol, das auf
+    # einen Doppelklick nichts tut, und das ist der schlechteste aller
+    # Zustaende. `display alert` gehoert dem Skript selbst und braucht
+    # seinerseits keine Erlaubnis.
+    osascript -e 'display alert "Myelith Testclient" message "Das Terminal konnte nicht geoeffnet werden.\n\nmacOS erlaubt einer Anwendung nur mit Zustimmung, eine andere zu steuern. Oeffne Systemeinstellungen > Datenschutz & Sicherheit > Automatisierung, erlaube dort \"sh\" den Zugriff auf \"Terminal\" und starte erneut.\n\nAlternativ im Terminal von Hand:\n  TESTCLIENT/Myelith Testclient - Linux, macOS (Shell).sh"' >/dev/null 2>&1
+    exit 1
+fi
+
+# Groesse und Lage des Fensters, best moeglich und folgenlos bei Fehlschlag.
+#
+# KEINE ZUSAETZLICHE BERECHTIGUNG. Gesteuert wird ausschliesslich
+# Terminal.app, also genau die Anwendung, die der Aufruf darueber ohnehin
+# oeffnet. Der Finder wird nicht gefragt, System Events auch nicht.
+#
+# Die Bildschirmgroesse kommt aus AppKit, im selben Prozess: `NSScreen`
+# beantwortet die Frage ohne fremde Anwendung und damit ohne Nachfrage.
+#
+# Zwei Umwege wurden vorher verworfen:
+#   * Der Finder kennt die Bildschirmgroesse, ist aber eine fremde
+#     Anwendung. Wer die Nachfrage ablehnte, konnte den Client nicht mehr
+#     starten.
+#   * Ohne Nachfrage ginge es, indem man das Fenster absichtlich weit
+#     ausserhalb setzt und die vom System zurechtgerueckte Lage ausliest.
+#     Bei mehreren Bildschirmen liefert das die Ausdehnung ueber alle
+#     zusammen, und das Fenster landete unten rechts statt in der Mitte.
+#
+# Warum ueberhaupt hier und nicht im Client: Ein Programm, das in einem
+# Terminal laeuft, kann sein Fenster nicht zuverlaessig bewegen. Die dafuer
+# vorgesehenen Steuersequenzen sind eine xterm-Erweiterung, die Terminal.app
+# nicht kennt und andere aus Sicherheitsgruenden abschalten. Wer das Fenster
+# oeffnet, kann es einrichten, und das ist dieses Skript. Wird der Client
+# in einem bereits offenen Terminal gestartet, bleibt dessen Fenster
+# unberuehrt; dort passt sich das Banner der vorhandenen Breite an.
+#
+# 120 x 44: Das Banner fuellt 120 Spalten, und 44 Zeilen fassen Logo,
+# Einstellungen und Menue ohne Bildlauf.
+osascript <<ENDE >/dev/null 2>&1 || true
+use framework "Foundation"
+use framework "AppKit"
+use scripting additions
+
+set flaeche to current application's NSScreen's mainScreen()'s visibleFrame()
+set schirmBreite to (item 1 of item 2 of flaeche) as integer
+set schirmHoehe to (item 2 of item 2 of flaeche) as integer
+
+tell application "Terminal"
+    try
+        set number of columns of front window to 120
+        set number of rows of front window to 44
+        -- Erst die Groesse, dann die Lage: Spalten und Zeilen zu aendern
+        -- veraendert die Pixelmasse, eine vorher berechnete Lage waere
+        -- danach falsch. Die kurze Pause laesst das Fenster nachziehen.
+        delay 0.2
+
+        set masse to bounds of front window
+        set fensterBreite to (item 3 of masse) - (item 1 of masse)
+        set fensterHoehe to (item 4 of masse) - (item 2 of masse)
+
+        set links to (schirmBreite - fensterBreite) div 2
+        set oben to (schirmHoehe - fensterHoehe) div 2
+        if links < 0 then set links to 0
+        if oben < 0 then set oben to 0
+
+        set bounds of front window to {links, oben, links + fensterBreite, oben + fensterHoehe}
+    end try
 end tell
 ENDE

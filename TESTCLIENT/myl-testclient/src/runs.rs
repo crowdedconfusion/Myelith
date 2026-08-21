@@ -4,7 +4,7 @@
 //! Artefakt-Identität ins Protokoll, dann messen, dann ein
 //! **Vergleichswert (Digest)**, der zwischen Maschinen gediffed wird.
 //!
-//! Der Digest ist überall SHA-256 über eine kanonische Bytefolge — nie
+//! Der Digest ist überall SHA-256 über eine kanonische Bytefolge: nie
 //! über eine formatierte Ausgabe. Formatierung ändert sich, Bytes nicht.
 
 use std::path::Path;
@@ -45,7 +45,7 @@ fn decode_tokens(artifact_dir: &Path, tokens: &[u32]) -> Option<String> {
 /// Artefaktverzeichnis, gegen das gemessen wird.
 ///
 /// `integer_llm_runtime::paths` löst relativ zum **Arbeitsverzeichnis**
-/// auf — das passt für Läufe aus `INTEGER_LLM/`, nicht für einen Client,
+/// auf, das passt für Läufe aus `INTEGER_LLM/`, nicht für einen Client,
 /// der von überall gestartet wird. Deshalb hier absolut, ausgehend vom
 /// Ort dieses Crates. Die Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR`
 /// hat weiterhin Vorrang, damit ein Testlauf auf fremde Artefakte
@@ -100,7 +100,7 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     });
     if !dir.exists() {
         log.note(format!(
-            "Artefaktverzeichnis fehlt: {} — Modellläufe werden übersprungen",
+            "Artefaktverzeichnis fehlt: {}. Modellläufe werden übersprungen",
             dir.display()
         ));
         return;
@@ -116,7 +116,7 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     // Modellstand vor Modellmaßen: Dimensionen unterscheiden 0,5B von 7B,
     // aber zwei θ_v-Stände desselben Modells sehen darin gleich aus. Ein
     // Digest-Vergleich zwischen Modellständen ist ohne diese Werte nicht
-    // einzuordnen — bei einem θ_v-Wechsel ändern sich die Digests
+    // einzuordnen: bei einem θ_v-Wechsel ändern sich die Digests
     // zwangsläufig, und die Frage ist dann nicht „gleich oder nicht",
     // sondern „erwartet oder nicht".
     match loader::ThetaV::load_from_dir(dir) {
@@ -176,7 +176,7 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     }
 }
 
-/// `myl-test hardware` — nur erheben und protokollieren.
+/// `myl-test hardware`: nur erheben und protokollieren.
 ///
 /// Der schnellste Weg, eine fremde Maschine in den Vergleich
 /// aufzunehmen: kein Modell nötig, kein Artefakt nötig.
@@ -190,18 +190,18 @@ pub fn run_hardware(log: &mut RunLog) -> bool {
     );
     log.note(
         "Für den Cross-Hardware-Nachweis diesen Lauf auf jeder Maschine \
-         ausführen und die Fingerabdrücke vergleichen — sie MÜSSEN sich \
+         ausführen und die Fingerabdrücke vergleichen: sie MÜSSEN sich \
          unterscheiden, sonst prüft der Determinismustest nichts.",
     );
     true
 }
 
-/// `myl-test determinismus` — jeder Prompt zweimal, bitgleich?
+/// `myl-test determinismus`: jeder Prompt zweimal, bitgleich?
 ///
 /// Prüft die Kerneigenschaft aus Whitepaper Kap. 6.2 lokal: Zwei
 /// unabhängige Läufe im selben Prozess müssen bitgleiche Logits
 /// liefern. Der eigentliche Nachweis entsteht erst, wenn dieser Lauf auf
-/// **verschiedener** Hardware denselben Digest liefert — deshalb steht
+/// **verschiedener** Hardware denselben Digest liefert: deshalb steht
 /// der Fingerabdruck im selben Protokoll.
 ///
 /// ## Warum mehrere Prompts
@@ -209,7 +209,7 @@ pub fn run_hardware(log: &mut RunLog) -> bool {
 /// Ein einzelner Prompt übt einen einzigen Pfad durch das Modell aus. Ein
 /// Rundungsfehler, der nur bei langen Sequenzen, nur bei bestimmten Token
 /// oder nur in einem selten getroffenen LUT-Bereich auftritt, bleibt dann
-/// unentdeckt — und der Vergleichswert sähe trotzdem beruhigend aus. Der
+/// unentdeckt, und der Vergleichswert sähe trotzdem beruhigend aus. Der
 /// Testplan gibt deshalb eine **Reihe** von Prompts vor.
 ///
 /// Das Modell wird dafür **einmal** geladen und über alle Prompts
@@ -232,7 +232,7 @@ pub fn run_determinism(
 
     if !artifact_dir.exists() {
         log.error(format!(
-            "Artefaktverzeichnis {} fehlt — Determinismuslauf nicht möglich",
+            "Artefaktverzeichnis {} fehlt. Determinismuslauf nicht möglich",
             artifact_dir.display()
         ));
         return false;
@@ -314,7 +314,7 @@ pub fn run_determinism(
         format!("{} Prompts, je zwei Läufe", prompts.len()),
     );
     log.note(format!(
-        "Vergleichswert für andere Maschinen: {} — bei gleichem Testplan und \
+        "Vergleichswert für andere Maschinen: {}: bei gleichem Testplan und \
          gleichem θ_v MUSS er übereinstimmen, unabhängig von Architektur \
          und Backend.",
         gesamt
@@ -327,7 +327,7 @@ pub fn run_determinism(
 /// Die Reihenfolge geht ein: Dieselben Prompts in anderer Folge sind ein
 /// anderer Testplan, und der Vergleichswert muss das zeigen. Getrennt
 /// werden die Einzelwerte durch `\n`, das in einem Hexdigest nicht
-/// vorkommt — ohne Trenner ließen sich zwei Reihen konstruieren, die
+/// vorkommt, ohne Trenner ließen sich zwei Reihen konstruieren, die
 /// dieselbe Bytefolge ergeben.
 fn digest_ueber(werte: &[String]) -> String {
     sha256_hex(werte.join("\n").as_bytes())
@@ -338,6 +338,102 @@ fn digest_ueber(werte: &[String]) -> String {
 /// Der Digest deckt **alle** erzeugten Token ab, nicht nur das letzte:
 /// Ein Unterschied in Schritt 3, der sich in Schritt 7 wieder ausgleicht,
 /// wäre sonst unsichtbar.
+/// Freie Inferenz: ein Prompt hinein, der erzeugte Text heraus.
+///
+/// **Kein Protokoll, kein Digest, kein Urteil.** Alles andere in diesem
+/// Client misst; dieser Weg zeigt. Wer eine Maschine für einen
+/// Cross-Hardware-Test beisteuert, hat berechtigtes Interesse daran, was
+/// er da eigentlich rechnen lässt, und ein Modell, mit dem man einmal
+/// gesprochen hat, ist kein abstraktes Artefakt mehr. Ein Protokoll
+/// darüber wäre irreführend: Es sähe aus wie ein Messergebnis und wäre
+/// keines, denn Prompt und Tokenzahl bestimmt der Nutzer frei.
+///
+/// **Bit-exakt bleibt es trotzdem**, denn es ist derselbe Rechenweg wie in
+/// [`run_determinism`]: gierige Auswahl, kein Sampling, kein Zufall.
+/// Derselbe Prompt liefert auf derselben θ_v dieselbe Antwort, hier wie
+/// dort. Genau deshalb gibt es hier keine Temperatur einzustellen.
+pub fn antworten(
+    model: &IntegerModel,
+    artifact_dir: &Path,
+    prompt: &str,
+    steps: usize,
+    ausgabe: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let ids = encode_prompt(artifact_dir, prompt)?;
+    if ids.is_empty() {
+        return Err("Der Prompt ergibt null Token.".to_string());
+    }
+
+    // Der Tokenizer wird **einmal** geladen, nicht je Token. Bei 64 Token
+    // wären es sonst 64 Ladevorgänge, und die Ausgabe stockte im Takt der
+    // Datei statt im Takt der Rechnung.
+    let pfad = artifact_dir.join("tokenizer.json");
+    let tok = integer_llm_runtime::tokenizer::Tokenizer::from_file(
+        pfad.to_str()
+            .ok_or_else(|| format!("Tokenizer-Pfad nicht darstellbar: {}", pfad.display()))?,
+    )
+    .map_err(|e| format!("Tokenizer nicht ladbar ({}): {}", pfad.display(), e))?;
+
+    let mut cache =
+        integer_llm_runtime::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+    let mut logits = Vec::new();
+    for (pos, &t) in ids.iter().enumerate() {
+        logits = model.forward_token(t as usize, pos, &mut cache);
+    }
+
+    let mut erzeugt: Vec<usize> = Vec::with_capacity(steps);
+    let mut gezeigt = String::new();
+    let start = ids.len();
+    for schritt in 0..steps {
+        let next = model.greedy_next(&logits);
+        erzeugt.push(next);
+        logits = model.forward_token(next, start + schritt, &mut cache);
+
+        // **Den ganzen Strom neu dekodieren, nicht das einzelne Token.**
+        // Ein Token ist bei BPE oft kein vollständiges Zeichen und schon
+        // gar kein Wort; einzeln dekodiert entstünden Bruchstücke und
+        // kaputte Umlaute. Der Text wächst dagegen monoton, und was neu
+        // hinzugekommen ist, ist die Differenz zum bereits Gezeigten.
+        // 64 Dekodierungen einer kurzen Folge kosten nichts gegen die
+        // Inferenz selbst.
+        let jetzt = tok.decode(&erzeugt);
+        if let Some(neu) = jetzt.strip_prefix(gezeigt.as_str()) {
+            if !neu.is_empty() {
+                ausgabe(neu);
+            }
+            gezeigt = jetzt;
+        }
+        // Wächst der Text ausnahmsweise nicht monoton (der Dekodierer darf
+        // ein angefangenes Zeichen zurücknehmen), wird dieser Schritt
+        // übersprungen und beim nächsten nachgeholt. Lieber ein Token
+        // später als ein zerrissenes Zeichen.
+    }
+
+    let vollstaendig = tok.decode(&erzeugt);
+    if let Some(rest) = vollstaendig.strip_prefix(gezeigt.as_str()) {
+        if !rest.is_empty() {
+            ausgabe(rest);
+        }
+    }
+    Ok(vollstaendig)
+}
+
+/// Lädt das Modell einmal, damit mehrere Fragen es teilen können.
+///
+/// Getrennt vom Rechnen, weil das Laden bei 7B rund eine Minute dauert.
+/// Für jede Frage neu zu laden hieße, den Nutzer für jede Antwort eine
+/// Minute warten zu lassen; im Gespräch ist das der Unterschied zwischen
+/// benutzbar und nicht benutzbar.
+pub fn modell_laden(artifact_dir: &Path) -> Result<IntegerModel, String> {
+    if !artifact_dir.exists() {
+        return Err(format!(
+            "Artefaktverzeichnis {} fehlt.",
+            artifact_dir.display()
+        ));
+    }
+    loader::load_model(artifact_dir).map_err(|e| format!("Modell nicht ladbar: {}", e))
+}
+
 fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, String, Vec<u32>) {
     let mut cache =
         integer_llm_runtime::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
@@ -363,7 +459,7 @@ fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, St
     )
 }
 
-/// `myl-test shard` — die erste geshardete Inferenz.
+/// `myl-test shard`, die erste geshardete Inferenz.
 ///
 /// Fährt einen Pod aus `num_shards` Shards über die myl-pod-Stage-API
 /// und vergleicht das Ergebnis mit der **Einzelknoten-Runtime**. Das ist
@@ -380,7 +476,7 @@ pub fn run_shard(
 
     if !artifact_dir.exists() {
         log.error(format!(
-            "Artefaktverzeichnis {} fehlt — Shard-Lauf nicht möglich",
+            "Artefaktverzeichnis {} fehlt. Shard-Lauf nicht möglich",
             artifact_dir.display()
         ));
         return false;
@@ -404,7 +500,7 @@ pub fn run_shard(
     let num_layers = model.num_layers;
     if num_shards > num_layers {
         log.error(format!(
-            "{} Shards für {} Layer — jeder Shard braucht mindestens eine Layer",
+            "{} Shards für {} Layer: jeder Shard braucht mindestens eine Layer",
             num_shards, num_layers
         ));
         return false;
@@ -558,7 +654,7 @@ pub fn run_shard(
             });
             log.note(
                 "Ein Unterschied hier bedeutet, dass die Aufteilung selbst \
-                 das Ergebnis verändert — die Shard-Grenzen oder die \
+                 das Ergebnis verändert, die Shard-Grenzen oder die \
                  Randskalierung (boundary_frac) sind der erste Verdacht.",
             );
         }
@@ -571,7 +667,7 @@ pub fn run_shard(
             "shard_vs_einzelknoten",
             &gesamt,
             format!(
-                "{} Prompts bitgleich — Akzeptanzkriterium COMPUTE_PIPELINE Phase 1 erfüllt",
+                "{} Prompts bitgleich. Akzeptanzkriterium COMPUTE_PIPELINE Phase 1 erfüllt",
                 prompts.len()
             ),
         );
@@ -624,7 +720,7 @@ mod tests {
     }
 
     /// Ohne Artefakte darf der Client nicht abstürzen, sondern muss den
-    /// Grund protokollieren — auf einer frisch aufgesetzten Testmaschine
+    /// Grund protokollieren: auf einer frisch aufgesetzten Testmaschine
     /// ist das der Normalfall.
     #[test]
     fn fehlende_artefakte_werden_sauber_gemeldet() {
@@ -647,7 +743,7 @@ mod tests {
     /// Ohne sie ist ein abweichender Digest nicht einzuordnen: Er könnte
     /// ein Hardware-Befund sein oder schlicht ein anderer Modellstand.
     ///
-    /// Die Ankerdateien werden hier gestellt statt gemessen — der Test
+    /// Die Ankerdateien werden hier gestellt statt gemessen, der Test
     /// prüft die Protokollierung, nicht die Artefakte, und läuft deshalb
     /// auch in der CI, wo keine liegen.
     #[test]
@@ -693,7 +789,7 @@ mod tests {
         assert_ne!(digest_tokens(&[1, 2]), digest_tokens(&[1, 2, 0]));
     }
 
-    /// Der Digest muss alle Token abdecken — ein Unterschied in der
+    /// Der Digest muss alle Token abdecken: ein Unterschied in der
     /// Mitte darf nicht durch ein gleiches Endergebnis verdeckt werden.
     #[test]
     fn digest_erfasst_auch_mittlere_token() {

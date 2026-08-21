@@ -43,13 +43,31 @@ MANIFEST="$WURZEL/TESTCLIENT/myl-testclient/Cargo.toml"
 # schloss daraus auf `target/` und suchte dort, waehrend cargo nach
 # `target-shared/` baute. Der allererste Lauf schlug damit fehl, also
 # genau der Lauf, auf den es ankommt.
+# Ausgabeverzeichnis festnageln, bevor cargo aufgerufen wird.
+#
+# FUND (2026-08-21, beim Durchspielen eines frischen Klons): `.cargo/config.toml`
+# des Repositoriums setzt `target-dir = "target-shared"`, und zwar RELATIV.
+# Cargo loest diesen Pfad gegen das ARBEITSVERZEICHNIS auf, nicht gegen das
+# per --manifest-path angegebene Crate. Wer den Starter aus einem anderen
+# Verzeichnis aufruft, und das tut jeder, der ihn auf den Schreibtisch legt,
+# baut deshalb irgendwohin: ins Verzeichnis eines anderen Klons, wenn dort
+# eine solche Konfiguration liegt, sonst nach TESTCLIENT/myl-testclient/target.
+# Der Bau lief danach durch, und der Starter meldete trotzdem
+# "gebaut, aber nicht auffindbar".
+#
+# Eine gesetzte Umgebungsvariable hat Vorrang vor der Konfigurationsdatei und
+# ist absolut. Damit haengt der Ablageort am Repositorium, nicht am Zufall des
+# Arbeitsverzeichnisses. Ein von aussen gesetzter Wert bleibt unangetastet:
+# die CI setzt CARGO_TARGET_DIR=target und soll das behalten.
+: "${CARGO_TARGET_DIR:=$WURZEL/target-shared}"
+export CARGO_TARGET_DIR
+
 binary_finden() {
     for kandidat in \
-        "${CARGO_TARGET_DIR:-}/release/myl-test" \
+        "$CARGO_TARGET_DIR/release/myl-test" \
         "$WURZEL/target-shared/release/myl-test" \
         "$WURZEL/TESTCLIENT/myl-testclient/target/release/myl-test"
     do
-        case "$kandidat" in /release/*) continue ;; esac
         [ -x "$kandidat" ] && { printf '%s' "$kandidat"; return 0; }
     done
     return 1

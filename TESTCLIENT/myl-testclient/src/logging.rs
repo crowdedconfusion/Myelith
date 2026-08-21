@@ -1,4 +1,4 @@
-//! Laufprotokolle — der eigentliche Zweck dieses Clients.
+//! Laufprotokolle, der eigentliche Zweck dieses Clients.
 //!
 //! Ein Testlauf ohne Protokoll ist wertlos: Der Client existiert, um
 //! Ergebnisse **verschiedener Maschinen** und **verschiedener
@@ -29,14 +29,14 @@
 //! Datum und Uhrzeit zusammen. Jedes der vier Stücke beantwortet eine
 //! Frage, die beim Vergleich zuerst gestellt wird:
 //!
-//! - **Teilnehmer** — von wem stammt dieser Lauf? Bei einem
+//! - **Teilnehmer**: von wem stammt dieser Lauf? Bei einem
 //!   Cross-Hardware-Test schickt jeder seine Dateien an den Koordinator,
 //!   und der muss sie ohne Rückfrage zuordnen können.
-//! - **Kurzkennung** — der Hash genau der Parameter, die gleich sein
-//!   müssen (Prompt, Tokenzahl, Shards, Modell — siehe [`crate::spec`]).
+//! - **Kurzkennung**, der Hash genau der Parameter, die gleich sein
+//!   müssen (Prompt, Tokenzahl, Shards, Modell: siehe [`crate::spec`]).
 //!   Gleiche Kennung heißt vergleichbar; wer versehentlich andere
 //!   Parameter genommen hat, ist sofort am Dateinamen erkennbar.
-//! - **Datum und Uhrzeit** — trennen Wiederholungen desselben Laufs,
+//! - **Datum und Uhrzeit**: trennen Wiederholungen desselben Laufs,
 //!   ohne dass eine frühere Datei überschrieben wird.
 //!
 //! Dieselben Angaben stehen **auch im Protokoll** (`run_started` trägt
@@ -62,7 +62,7 @@
 //! [`Event::PromptAccepted`]). Ein Testprotokoll wandert erfahrungsgemäß
 //! per Copy-Paste in Tickets und Chats; ein Prompt, der dabei
 //! mitwandert, ist eine Datenschutzlücke, die niemand beabsichtigt hat.
-//! Wer den Klartext braucht, hat ihn ohnehin — er hat ihn eingegeben.
+//! Wer den Klartext braucht, hat ihn ohnehin: er hat ihn eingegeben.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -73,10 +73,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 ///
 /// Bewusst ein geschlossenes Enum statt freier Textzeilen: Ein neuer
 /// Ereignistyp erzwingt eine Entscheidung darüber, welche Felder er
-/// trägt — und damit bleibt das Format diffbar.
+/// trägt, und damit bleibt das Format diffbar.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Lauf beginnt. Trägt Befehl, Teilnehmer und Einstellungs-Kennung —
+    /// Lauf beginnt. Trägt Befehl, Teilnehmer und Einstellungs-Kennung:
     /// die drei Angaben, nach denen Protokolle beim Vergleich sortiert
     /// werden. Sie stehen bewusst in der **ersten** Zeile: Wer eine Datei
     /// aufmacht, soll nicht suchen müssen, woher sie stammt.
@@ -89,7 +89,7 @@ pub enum Event {
     Hardware { key: String, value: String },
     /// Modell-/Artefakt-Identität: θ_v-Version, Artefakt-Hashes, Dimensionen.
     Artifact { key: String, value: String },
-    /// Prompt angenommen — als Hash, nicht als Text (siehe Modul-Doku).
+    /// Prompt angenommen: als Hash, nicht als Text (siehe Modul-Doku).
     PromptAccepted { token_count: usize, prompt_sha256: String },
     /// Ein Messschritt mit Dauer.
     Step {
@@ -137,7 +137,7 @@ impl Event {
         }
     }
 
-    /// Felder in **fester Reihenfolge** — Voraussetzung für den Diff
+    /// Felder in **fester Reihenfolge**. Voraussetzung für den Diff
     /// zweier Läufe.
     fn fields(&self) -> Vec<(&'static str, String)> {
         match self {
@@ -207,7 +207,7 @@ impl Event {
                 teilnehmer,
                 einstellungen_id,
             } => format!(
-                "Lauf gestartet: {} — Teilnehmer {}, Einstellungen {}",
+                "Lauf gestartet: {}. Teilnehmer {}, Einstellungen {}",
                 command, teilnehmer, einstellungen_id
             ),
             Event::Hardware { key, value } => format!("  Hardware  {:<22} {}", key, value),
@@ -228,7 +228,7 @@ impl Event {
                 if detail.is_empty() {
                     format!("  Schritt   {:<22} {} ms", name, millis)
                 } else {
-                    format!("  Schritt   {:<22} {} ms — {}", name, millis, detail)
+                    format!("  Schritt   {:<22} {} ms: {}", name, millis, detail)
                 }
             }
             Event::Result {
@@ -280,7 +280,7 @@ pub(crate) fn json_escape(s: &str) -> String {
     out
 }
 
-/// SHA-256 als Hex — der Vergleichswert zwischen Läufen.
+/// SHA-256 als Hex, der Vergleichswert zwischen Läufen.
 pub fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
@@ -290,7 +290,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Beschreibt, wohin ein Lauf protokolliert wird.
 ///
-/// Getrennt von [`RunLog`], damit die Ablagelogik für sich testbar ist —
+/// Getrennt von [`RunLog`], damit die Ablagelogik für sich testbar ist:
 /// sie ist der Teil, der beim Vergleich zwischen Maschinen zählt.
 #[derive(Debug, Clone)]
 pub struct LogZiel {
@@ -350,7 +350,7 @@ impl LogZiel {
     /// eingegeben hat; in einen Dateinamen gehört, was auf jedem
     /// Dateisystem und in jedem Mailanhang unverändert ankommt. Die erste
     /// Fassung säuberte schon bei der Eingabe, und aus „Björn" wurde
-    /// „bj-rn" — auch im Bericht, den der Koordinator liest.
+    /// „bj-rn": auch im Bericht, den der Koordinator liest.
     pub fn dateisicher(&self) -> String {
         saeubern(&self.teilnehmer)
     }
@@ -396,8 +396,8 @@ impl LogZiel {
 /// Findet einen noch unbelegten Dateinamen, notfalls mit Zähler.
 ///
 /// Die Uhrzeit im Namen hat Sekundenauflösung. Zwei Läufe in derselben
-/// Sekunde — beim Menü ohne Weiteres möglich, etwa Hardware-Erhebung
-/// direkt nach dem Protokoll-Durchlauf — bekämen sonst denselben Namen,
+/// Sekunde: beim Menü ohne Weiteres möglich, etwa Hardware-Erhebung
+/// direkt nach dem Protokoll-Durchlauf: bekämen sonst denselben Namen,
 /// und der zweite überschriebe den ersten **stillschweigend**. Ein
 /// verlorenes Protokoll ist genau das, was dieser Client nicht tun darf.
 ///
@@ -448,7 +448,7 @@ fn saeubern(s: &str) -> String {
 ///
 /// Von Hand gerechnet statt mit einem Datums-Crate: Der Client soll
 /// ohne zusätzliche Abhängigkeiten bauen, und für die Ablage reicht
-/// eine Umrechnung aus Unix-Sekunden. UTC bewusst — Teilnehmer sitzen
+/// eine Umrechnung aus Unix-Sekunden. UTC bewusst. Teilnehmer sitzen
 /// in verschiedenen Zeitzonen, und ein Ordner je Zeitzone wäre genau
 /// die Zuordnungsarbeit, die vermieden werden soll.
 pub(crate) fn datum_und_uhrzeit() -> (String, String) {
@@ -558,7 +558,7 @@ impl RunLog {
             dir: dir.to_path_buf(),
         };
         // Teilnehmer und Einstellungs-Kurzkennung gehören ins Protokoll
-        // selbst, nicht nur in den Dateinamen — Protokolle werden einzeln
+        // selbst, nicht nur in den Dateinamen. Protokolle werden einzeln
         // weitergereicht, und eine Datei wird umbenannt, ein Feld nicht.
         log.event(Event::RunStarted {
             command: command.to_string(),
@@ -666,7 +666,7 @@ impl RunLog {
         self.event(Event::RunFinished { ok, millis });
         if self.echo {
             println!(
-                "\nProtokoll: {}/{}.jsonl (maschinenlesbar) und {}.log — Lauf {}",
+                "\nProtokoll: {}/{}.jsonl (maschinenlesbar) und {}.log. Lauf {}",
                 self.dir.display(),
                 self.dateiname,
                 self.dateiname,
@@ -729,7 +729,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Sonderzeichen in Werten dürfen die JSONL-Struktur nicht sprengen —
+    /// Sonderzeichen in Werten dürfen die JSONL-Struktur nicht sprengen:
     /// sonst ist der Vergleich zweier Läufe nicht mehr maschinell machbar.
     #[test]
     fn sonderzeichen_werden_maskiert() {
@@ -784,7 +784,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Der Client darf ohne Protokollverzeichnis nicht abstürzen — ein
+    /// Der Client darf ohne Protokollverzeichnis nicht abstürzen: ein
     /// Hardwaretest auf einer fremden Maschine soll auch dann laufen,
     /// wenn das Verzeichnis nicht schreibbar ist.
     #[test]
@@ -849,7 +849,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Verschiedene Einstellungen dürfen NICHT in dieselbe Datei schreiben —
+    /// Verschiedene Einstellungen dürfen NICHT in dieselbe Datei schreiben:
     /// sonst würden unvergleichbare Läufe vermischt.
     #[test]
     fn andere_einstellungen_andere_datei() {
@@ -862,7 +862,7 @@ mod tests {
     }
 
     /// Teilnehmer und Einstellungs-Kennung stehen auch IM Protokoll, nicht
-    /// nur im Dateinamen — Protokolle werden einzeln weitergereicht, und
+    /// nur im Dateinamen. Protokolle werden einzeln weitergereicht, und
     /// eine Datei wird umbenannt, ein Feld nicht.
     #[test]
     fn teilnehmer_und_einstellungs_id_stehen_im_protokoll() {
@@ -900,7 +900,7 @@ mod tests {
     }
 
     /// Ein leerer Name darf keinen Dateinamen erzeugen, der mit `_`
-    /// beginnt — und er soll sichtbar als fehlend erkennbar sein.
+    /// beginnt, und er soll sichtbar als fehlend erkennbar sein.
     #[test]
     fn fehlender_name_wird_ersetzt() {
         let dir = tempdir("kein-name");
@@ -911,7 +911,7 @@ mod tests {
     }
 
     /// Ein Name mit Leerzeichen, Schrägstrich oder Doppelpunkt darf keinen
-    /// kaputten Dateinamen erzeugen — er kommt aus einer Tastatureingabe.
+    /// kaputten Dateinamen erzeugen: er kommt aus einer Tastatureingabe.
     #[test]
     fn name_wird_gesaeubert() {
         let dir = tempdir("name-saeubern");
@@ -965,7 +965,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Das Datum muss ein plausibles Kalenderdatum sein — die
+    /// Das Datum muss ein plausibles Kalenderdatum sein: die
     /// Umrechnung aus Unix-Sekunden ist von Hand geschrieben.
     #[test]
     fn datum_ist_plausibel() {

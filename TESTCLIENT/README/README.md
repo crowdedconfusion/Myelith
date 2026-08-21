@@ -3,11 +3,11 @@
 > **Version:** 0.6.0
 > **Datum:** 2026-08-21
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 108 Tests grün, alle Läufe gegen die
+> und 3.1 (Modellstand im Protokoll). 142 Tests grün, alle Läufe gegen die
 > echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
-geshardete Inferenz — jeder Lauf mit einem Protokoll, das zwischen
+geshardete Inferenz: jeder Lauf mit einem Protokoll, das zwischen
 Maschinen und Modellständen vergleichbar bleibt.
 
 ## Aufgabe
@@ -22,7 +22,7 @@ Zwei Lücken, die das Projekt bisher offen hatte:
 2. **Die geshardete Inferenz war nur als Integrationstest sichtbar.**
    `myl-pod` kann einen Pod fahren, aber nur als Bibliothek. Der Client
    macht daraus einen Befehl, dessen Ausgabe man einem Dritten zeigen
-   kann — und der gegen die Einzelknoten-Runtime gegenprüft.
+   kann, und der gegen die Einzelknoten-Runtime gegenprüft.
 
 ## Der Kern: das Protokoll
 
@@ -36,7 +36,7 @@ Jeder Lauf schreibt deshalb **immer** zwei Dateien nach `logs/`:
 
 | Datei | Zweck |
 |---|---|
-| `<lauf-id>.jsonl` | Eine JSON-Zeile je Ereignis, stabile Feldnamen und Reihenfolge — die Fassung, die zwischen Maschinen gediffed wird |
+| `<lauf-id>.jsonl` | Eine JSON-Zeile je Ereignis, stabile Feldnamen und Reihenfolge, die Fassung, die zwischen Maschinen gediffed wird |
 | `<lauf-id>.log` | Dieselben Ereignisse als Fließtext, für die Fehlersuche am Terminal |
 
 **Flach in `logs/`, benannt nach Teilnehmer und Einstellungen:**
@@ -53,7 +53,7 @@ Die Kurzkennung ist der Hash genau der Parameter, die gleich sein müssen
 tragen dieselbe Einstellungs-Prüfsumme**, auf jeder Maschine. Wer
 versehentlich andere Parameter nimmt, ist am Dateinamen sofort
 erkennbar. Der Name davor beantwortet die zweite Frage des
-Koordinators — von wem stammt diese Datei.
+Koordinators: von wem stammt diese Datei.
 
 Dieselben Angaben stehen **auch im Protokoll**: `run_started` trägt
 Befehl, Teilnehmer und Einstellungs-Kennung. Der Dateiname ist eine
@@ -63,10 +63,10 @@ umbenannt, ein Feld nicht.
 **Ein Protokoll je Testlauf, nicht eines je Stufe.** Hardware,
 Determinismus, geshardete Inferenz und Protokoll-Durchlauf sind eine
 Messung. Vier Dateien wären vier Teilaussagen, die der Koordinator wieder
-zusammensetzen müsste — und beim Verschicken geht die eine verloren, die
+zusammensetzen müsste, und beim Verschicken geht die eine verloren, die
 den Befund trägt.
 
-## `vergleich` — vom Protokoll zum Urteil
+## `vergleich`: vom Protokoll zum Urteil
 
 ```bash
 myl-test vergleich
@@ -81,7 +81,7 @@ Verzeichnis. Je Gruppe ein Urteil:
 |---|---|
 | `NACHWEIS` | Fingerabdrücke verschieden, Werte gleich, Modellstand gleich |
 | `KEIN NACHWEIS (eine Maschine)` | Werte gleich, aber alles von derselben Maschine |
-| `UNVERGLEICHBAR (Modellstand)` | θ_v oder Ankerdigest weichen ab — **kein** Hardware-Befund |
+| `UNVERGLEICHBAR (Modellstand)` | θ_v oder Ankerdigest weichen ab: **kein** Hardware-Befund |
 | `ABWEICHUNG` | Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse |
 | `ZU WENIG PROTOKOLLE` | Weniger als zwei mit derselben Kennung |
 
@@ -95,7 +95,7 @@ sein Ergebnis geglaubt wird.
 Modellen *müssen* die Werte verschieden sein; das als Determinismusfehler
 zu melden wäre genau die Verwechslung, gegen die es `artefakte` gibt.
 
-Exit-Code 0 nur dann, wenn jede Gruppe den Nachweis trägt — damit taugt
+Exit-Code 0 nur dann, wenn jede Gruppe den Nachweis trägt: damit taugt
 der Befehl für die CI.
 
 **Zwei Ordner, und die Trennung ist der Punkt:**
@@ -107,18 +107,18 @@ TESTCLIENT/Vergleiche/Berichte/   Ausgabe: vergleich_<datum>_<uhrzeit>.md
 
 Der Vergleich liest **alles**, was er an `.jsonl` findet. Läge er über dem
 eigenen Protokollverzeichnis, mischten sich die zugesandten Läufe mit den
-eigenen — und ein Urteil über eine Gruppe, in der die eigene Maschine
+eigenen, und ein Urteil über eine Gruppe, in der die eigene Maschine
 mehrfach steckt, sagt etwas anderes aus, als es zu sagen scheint. Der
 Bericht landet aus demselben Grund eine Ebene tiefer: neben seiner
 Eingabe würde ihn der nächste Aufruf mitlesen.
 
-Der Bericht trägt, was auf dem Bildschirm keinen Platz hat —
+Der Bericht trägt, was auf dem Bildschirm keinen Platz hat:
 **vollständige** Digests statt der Kurzform, Dateinamen, Artefakt-Digest
 je Teilnehmer, Zeitpunkt. Er ist die Fassung, die weitergereicht wird.
 Ein **Laufprotokoll** schreibt `vergleich` dagegen nicht: Er misst nichts,
 er wertet aus.
 
-## Testplan — die Datei, die der Koordinator verteilt
+## Testplan, die Datei, die der Koordinator verteilt
 
 Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
 
@@ -140,7 +140,7 @@ langen Sequenzen oder in einem selten getroffenen LUT-Bereich auftritt,
 bliebe unentdeckt, und der Vergleichswert sähe trotzdem beruhigend aus.
 Je Prompt entsteht ein Einzelwert, darüber ein Gesamtwert.
 
-Zwei Pläne liegen bei: `wikitext2-0.5b-standard.plan` (6 Prompts) und
+Zwei Pläne liegen bei: `qwen2.5-0.5b-standard.plan` (6 Prompts) und
 `qwen2.5-7b-standard.plan` (4 Prompts, rund fünf Minuten Laufzeit).
 
 Die Datei trägt eine Prüfsumme über Prompts, Token, Shards und Modell.
@@ -149,7 +149,7 @@ statt einen abweichenden Digest zu liefern, der wie ein Befund
 aussieht. Der Prompt steht in Anführungszeichen, damit auch ein
 Randleerzeichen erhalten bleibt.
 
-Kommentarzeilen dürfen frei ergänzt werden — sie gehen nicht in die
+Kommentarzeilen dürfen frei ergänzt werden: sie gehen nicht in die
 Prüfsumme ein. `plan_id` ebenfalls nicht: Zwei Koordinatoren mit
 demselben Test unter verschiedenen Namen sollen vergleichbare
 Ergebnisse bekommen.
@@ -161,7 +161,7 @@ per Copy-Paste in Tickets und Chats; ein Prompt, der dabei mitwandert,
 ist eine Datenschutzlücke, die niemand beabsichtigt hat.
 
 **Der Fingerabdruck beschreibt eine Hardware-Klasse, kein Gerät.** Keine
-Seriennummern, keine MAC-Adressen, keine Hostnamen — abgesichert durch
+Seriennummern, keine MAC-Adressen, keine Hostnamen: abgesichert durch
 einen Test, der Feldnamen und Wertformate prüft.
 
 ## Aufruf
@@ -296,12 +296,12 @@ erst eine Hilfeseite lesen muss, führt den Test seltener aus. Das Menü
 erklärt jeden Punkt in zwei Zeilen und zeigt, was Artefakte braucht und
 was nicht.
 
-**Als Befehl — für Skripte und CI:**
+**Als Befehl: für Skripte und CI:**
 
 ```bash
 cd TESTCLIENT/myl-testclient
 
-# Hardware erheben — der erste Befehl auf einer neuen Maschine.
+# Hardware erheben, der erste Befehl auf einer neuen Maschine.
 # Braucht kein Modell und keine Artefakte.
 cargo run --bin myl-test -- hardware
 
@@ -326,7 +326,7 @@ Optionen: `--prompt`, `--steps`, `--shards`, `--artifacts`, `--logs`,
 
 | Befehl | Geprüfte Komponenten | Artefakte nötig |
 |---|---|---|
-| `hardware` | — (nur Erhebung) | nein |
+| `hardware` |: (nur Erhebung) | nein |
 | `stack` | myl-types, -scheduler, -consensus, -verifier, -ledger, -tokenomics | nein |
 | `determinismus` | INTEGER_LLM (runtime, kernels) | **ja** |
 | `shard` | COMPUTE_PIPELINE (myl-pod) + INTEGER_LLM | **ja** |
@@ -338,7 +338,7 @@ CONSENSUS Punkt 3.6). Die vollständige Abgrenzung steht in
 
 ## Anleitung für Tests mit mehreren Beteiligten
 
-**[ANLEITUNG.md](ANLEITUNG.md)** — nach Rollen getrennt: Ein Teilnehmer
+**[ANLEITUNG.md](ANLEITUNG.md)**: nach Rollen getrennt: Ein Teilnehmer
 liest Abschnitt 1 und ist fertig; der Koordinator bekommt die
 Urteilstabelle, die Ausschlussfragen bei abweichenden Digests und eine
 Meldevorlage. Enthält außerdem, welche Hardware-Kombinationen sich
@@ -346,7 +346,7 @@ lohnen und was die Tests **nicht** abdecken.
 
 Kurzfassung auch im Menü unter Punkt 7.
 
-## Cross-Hardware-Nachweis — das Verfahren
+## Cross-Hardware-Nachweis, das Verfahren
 
 ```bash
 # 1. Auf JEDER Maschine:
@@ -368,16 +368,16 @@ verschiedene Maschinen ohne gleichen Digest widerlegen die Kernthese.
 `CLIENT/` ist der spätere Nutzer-Client (Wallet, Inferenz-Oberfläche,
 Session-Kontrakte). Dieser hier ist ein **Diagnosewerkzeug für
 Entwickler und Miner**: keine Konten, keine Zahlungen, keine
-Netzwerkverbindung. Die Trennung ist bewusst — ein Diagnosewerkzeug darf
+Netzwerkverbindung. Die Trennung ist bewusst: ein Diagnosewerkzeug darf
 laut, gesprächig und roh sein; ein Nutzer-Client nicht.
 
 ## Abhängigkeiten
 
 INTEGER_LLM (`runtime`, `kernels`), COMPUTE_PIPELINE (`myl-pod`),
 SHARED_TYPES (`myl-types`), CONSENSUS (`myl-ledger`, `-scheduler`,
-`-consensus`), TOKENOMICS, VERIFICATION — der `stack`-Lauf braucht sie
+`-consensus`), TOKENOMICS, VERIFICATION, der `stack`-Lauf braucht sie
 alle. Fremd-Crates: `sha2`, `borsh` und seit v0.6.0 `crossterm` für die
-Pfeiltastenauswahl. Sonst nichts — der Client soll auf einer fremden
+Pfeiltastenauswahl. Sonst nichts, der Client soll auf einer fremden
 Maschine mit möglichst wenig Voraussetzungen bauen, und deshalb sind
 Argumentauswertung und JSON-Leser weiterhin von Hand geschrieben.
 
@@ -408,6 +408,7 @@ TESTCLIENT/
     │   ├── banner.rs         ASCII-Banner zum Projektbanner
     │   ├── animation.rs      Startbild: Zeichenregen, dann Logoaufbau
     │   ├── farben.rs         Neonpalette für Schriftzug und Menütitel
+    │   ├── banner.rs         Schriftzug und Netzmotiv je Fensterbreite
     │   ├── auswahl.rs        Pfeiltastenauswahl mit zeilenweisem Rückfall
     │   ├── menu.rs           interaktives Menü
     │   ├── artefakte.rs      finden, prüfen, beschaffen, freigeben
@@ -419,8 +420,8 @@ TESTCLIENT/
     └── Cargo.toml
 ```
 
-Die drei Ordner, mit denen ein Teilnehmer zu tun hat — `Testpläne/`,
-`logs/`, `Vergleiche/` — liegen bewusst **neben** dem Crate, nicht darin.
+Die drei Ordner, mit denen ein Teilnehmer zu tun hat: `Testpläne/`,
+`logs/`, `Vergleiche/`: liegen bewusst **neben** dem Crate, nicht darin.
 Wer sein Protokoll verschicken soll, hat in einem Quellcodeverzeichnis
 nichts zu suchen.
 
@@ -428,29 +429,212 @@ nichts zu suchen.
 
 | Lauf | Ergebnis |
 |---|---|
-| `determinismus --plan wikitext2-0.5b-standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
+| `determinismus --plan qwen2.5-0.5b-standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
 | `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
-| `vergleich` über zwei Läufe derselben Maschine | Urteil `KEIN NACHWEIS (eine Maschine)`, Exit-Code 1 — die Verweigerung greift |
+| `vergleich` über zwei Läufe derselben Maschine | Urteil `KEIN NACHWEIS (eine Maschine)`, Exit-Code 1, die Verweigerung greift |
 
 Der Shard-Lauf erfüllt damit das Akzeptanzkriterium aus
-COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
+COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
 
 ### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
 
-- **Farbe:** Schriftzug und Menütitel erscheinen fett in wechselnden
-  Neontönen aus einer Palette von achtzehn 256-Farben-Werten; die letzten
-  vier werden gemieden, damit in einer Menüseite keine zwei gleichfarbigen
-  Punkte nebeneinander stehen. **Farbe trägt dabei nie eine Aussage** —
-  Urteile, Fehler und Vergleichswerte stehen als Wort da. Wer Graustufen
-  sieht oder einen Mitschnitt liest, verliert nichts. Ohne Terminal wird
-  keine einzige Steuersequenz ausgegeben.
+- **Alles unter dem Schriftzug steht mittig**, und zwar **als Block**:
+  Menü, Einstellungen, Begrüßung, Namensabfrage und Kurzanleitung bekommen
+  je denselben Einzug, ihre Zeilen bleiben untereinander ausgerichtet.
+  Zeilenweise zentriert verrutschten die Menüpunkte gegeneinander, und die
+  Liste wäre keine mehr. Die Blockbreite richtet sich nach der breitesten
+  Zeile über Kopf, Punkte, Hinweise und Fuß hinweg; bliebe eines davon aus
+  der Rechnung, stünde der Block schief, sobald gerade dieses das breiteste
+  wäre. Die **interaktiven Zeilen** (Menüpunkte, Eingabeaufforderungen)
+  sitzen am linken Rand ihres Blocks: Zentriert stünde der Cursor je nach
+  getipptem Text an einer anderen Stelle. Ohne Terminal wird nicht
+  eingerückt, ein mitgeschnittener Lauf soll diffbar bleiben.
+- **Die Kurzanleitung in Punkt [5]** ist nach Rollen geordnet, nicht nach
+  Menüpunkten: Wer den Client startet, ist entweder Teilnehmer oder
+  Koordinator, und die beiden brauchen verschiedene Hälften. Sie räumt den
+  Bildschirm auf, bevor sie sich zeigt, und passt danach genau ins
+  Fenster. **Fund dabei:** Der erste Test rechnete nur Banner plus
+  Anleitung und übersah, dass beim Aufruf schon 42 Zeilen Menü und
+  Einstellungen dastehen; gemessen waren es 59 Zeilen in einem Fenster mit
+  44, das Logo also weggescrollt. Der Test rechnet jetzt beides, und drei
+  weitere prüfen, dass die genannten Menüpunkte zu den tatsächlichen
+  passen: Eine Anleitung, die auf den falschen Punkt zeigt, ist schlechter
+  als keine.
+- **Die aktuellen Einstellungen stehen unter dem Menü**, nicht darüber:
+  Zuerst die Frage, was man tun will, dann der Zustand, unter dem es
+  geschieht. Technisch als **Fuß** der Auswahl (`waehlen_mit_fuss`) und
+  nicht als eigener Druck davor, denn die Liste zeichnet sich bei jedem
+  Tastendruck neu, indem sie um ihre eigene Höhe nach oben springt und von
+  dort abwärts löscht. Alles, was unter ihr stünde, verschwände beim
+  ersten Pfeildruck; der Fuß muss deshalb in ihre Höhenrechnung eingehen.
+- **Begrüßung nach der Namenseingabe**, Zeichen für Zeichen geschrieben,
+  der Name in der Farbe des eben entstandenen Schriftzugs. Der Nutzername
+  ist die einzige Eingabe vor dem Menü; ohne Antwort darauf wirkt sie wie
+  ein Formularfeld. Ohne Terminal, bei `MYL_NO_ANIMATION` und auf
+  Tastendruck erscheint der Text sofort und vollständig, nicht gar nicht:
+  Er trägt eine Aussage, keine Verzierung.
+- **Nach dem Nutzernamen kommt sofort das Menü.** Bis v0.6.0 lief davor
+  erst die Planauswahl und danach die Artefaktbeschaffung. Wer den Client
+  zum ersten Mal öffnete, musste also zwei Entscheidungen treffen, die er
+  noch nicht einordnen konnte, und eine davon zog bis zu 15 GB Download
+  nach sich. Der Testplan gehört an die Stelle, an der er gebraucht wird:
+  Punkt [2] fragt ihn ab und misst dann.
+- **Nutzermenü in der Reihenfolge des Ablaufs:** [1] mit dem Modell
+  sprechen, [2] Testlauf, [3] Testdatei, [4] Artefakt, [5] Anleitung.
+  „Protokolle vergleichen" ist ins Entwicklermenü gewandert: Es ist die
+  Arbeit des Koordinators, und für einen Teilnehmer, der eine Maschine
+  beisteuert, ein Punkt, der ihm nichts nützt.
+- **[1] Mit dem Modell sprechen:** der einzige Punkt, der nicht misst.
+  Freie Eingabe, höchstens 64 Token je Antwort (0,5B rund 3 s, 7B rund
+  32 s bei den dokumentierten Raten), Modell einmal geladen statt je
+  Frage. Kein Protokoll: Prompt und Länge bestimmt der Nutzer frei, das
+  wäre kein Messwert. Gerechnet wird derselbe gierige Pfad wie im
+  Determinismuslauf, also ohne Sampling und ohne Zufall.
+
+  **Die Antwort erscheint Token für Token**, nicht am Stück. Bei 7B dauert
+  sie über eine halbe Minute; ohne laufende Ausgabe wäre in dieser Zeit
+  nicht zu unterscheiden, ob gerechnet wird oder etwas hängt. Ausgegeben
+  wird dabei die **Differenz des neu dekodierten Stroms**, nicht das
+  einzelne Token: Ein Token ist bei BPE oft kein vollständiges Zeichen,
+  einzeln dekodiert entstünden Bruchstücke und kaputte Umlaute. Gemessen:
+  67 Ausgabestücke über 3,7 Sekunden auf 0,5B.
+
+  **Zurück ins Menü führen Escape, Strg-D und getippte Wörter** (`menu`,
+  `exit`, `q`, `zurück`); der Hinweis steht in jeder Eingabezeile, denn
+  wer ein paar Fragen gestellt hat, hat den Kopf längst weggescrollt. Die
+  **leere Eingabe ist bewusst keiner mehr**: Enter tippt man auch, um zu
+  sehen, ob sich etwas aufgehängt hat, und wer sich vergewissern wollte,
+  stand danach im Menü. Dafür braucht es eine Eingabezeile im Rohmodus
+  (`auswahl::zeile_lesen`), denn `read_line` sieht Escape nicht als Taste,
+  sondern als Zeichen in der Zeile. Strg-C ist weiterhin **kein** Rückweg:
+  Es beendet den ganzen Client.
+- **[4] Artefakt wählen führt eine Liste über alle bekannten Modelle**,
+  vorhandene wie fehlende, mit dem Zustand daneben. **Fund:** Bis dahin
+  gab es zwei getrennte Wege. Lag ein Artefakt vor, wurde daraus gewählt;
+  lag keines vor, wurde aus dem Register gewählt und beschafft. Wer 0,5B
+  hatte und 7B wollte, fand deshalb **keinen Weg dorthin**: Die
+  Beschaffung stand nur hinter dem Fall „nichts vorhanden", und der trat
+  nie wieder ein. Besonders bitter nach dem Freigeben von Plattenplatz,
+  denn genau dann will jemand ein Modell zurückholen, das er eben gelöscht
+  hat. Der Zustand ist jetzt eine Eigenschaft des Eintrags, kein eigener
+  Programmzweig. Artefakte ohne Registereintrag stehen am Ende und sind
+  als ungeprüft gekennzeichnet.
+- **[4] Artefakt wählen** als eigener Schritt. Bis v0.6.0 löste die
+  Testdatei das Modell gleich mit auf, und aus einer Menüwahl wurden
+  ungefragt bis zu 15 GB Download. Übernommen wird jetzt nur noch
+  stillschweigend, was ohnehin dalliegt (`artefakte::vorhandenes`).
+- **Startbild in drei Stufen:** Regen, Einströmen, Gleiten. **Der Regen
+  hört dabei nicht auf**, er läuft im Hintergrund weiter, während sich der
+  Schriftzug bildet. Sonst entstünde das Logo auf schwarzer Fläche, und
+  aus dem Wasserfall wäre ein Vorspann geworden, der abgeschlossen ist,
+  bevor das Eigentliche beginnt. Beide Vorgänge teilen sich deshalb einen
+  Takt: Je Bild ruft der Aufbau einmal `Wasserfall::schritt` auf, und wer
+  zuletzt zeichnet, gewinnt (Reihenfolge: Regen, Arme, fliegende
+  Artefakte, angekommene Zeichen).
+
+  Das Einströmen ist **ein** Vorgang, nicht zwei. Vorher lief erst eine
+  Spirale ein und danach baute sich der Schriftzug aus Rauschen auf; die
+  Spirale hatte mit dem Schriftzug nichts zu tun und hätte fehlen können.
+  Jetzt ist sie der **Weg**, auf dem die Zeichen ankommen: Jedes Artefakt
+  gehört von Anfang an zu genau einer Stelle des Schriftzugs, trägt eine
+  eigene Neonfarbe und läuft auf einem der drei Arme nach innen. Am Ziel
+  glüht es zehn Bilder in seiner Farbe nach und nimmt dann die des
+  Schriftzugs an. Der Schriftzug ist im Entstehen also bunt und am Ende
+  einer.
+
+  **Zwei gegenläufige Bewegungen:** Die Arme wachsen mit jedem Bild weiter
+  hinaus, während auf ihnen Zeichen zur Mitte wandern. Später aufbrechende
+  Artefakte starten weiter draußen, das Bild öffnet sich also, statt zu
+  schrumpfen. Der Winkel hängt am Radius (`winkel = i * WINDUNG`), und
+  genau das macht die Kurve sichtbar: Mit zufälligen Winkeln entstünde ein
+  Strudel, aber keine Spirale.
+
+  **Kurz vor dem Ziel verlässt ein Artefakt die Bahn.** Die Arme laufen in
+  einen Punkt, der Schriftzug belegt eine Fläche; ohne diesen Übergang
+  stauten sich alle Zeichen in der Mitte und sprängen dann an ihren Platz.
+  Das Gewicht wächst quadratisch, das Artefakt bleibt also lange auf der
+  Spirale und schwenkt spät ein.
+
+  Der Schriftzug entsteht **im Mittelpunkt der Spirale** und gleitet erst
+  danach an seinen Platz oben. Entstünde er gleich oben, hätte die Spirale
+  ins Leere gearbeitet.
+
+  Gerechnet mit einer 64-Einträge-Sinustabelle in Ganzzahlen, damit der
+  Gleitkomma-Audit des Projekts keinen Treffer meldet, den erst jemand als
+  harmlos einordnen muss.
+
+  Gemessen am Bildstrom (120 x 44): Die Arme wachsen von 5,0 auf 22,4
+  Zellen Radius, im Aufbau erscheinen 21 verschiedene Farbtöne, im
+  Hintergrund laufen dabei 5267 Tropfenköpfe über die volle Fensterhöhe,
+  und der fertige Schriftzug gleitet von Zeile 21,8 auf 11,0.
+- **Alles-Löschen** im Entwicklermenü: Artefakte und Gewichte aller
+  Modelle in einem Schritt, mit **zwei** getippten Bestätigungen und einer
+  Auflistung jedes betroffenen Pfades dazwischen. Die zweite Frage ist die
+  eigentliche: Erst nach der Liste weiß man, was verschwindet.
+- **Nach jedem Tastendruck ein sauberer Bildschirm.** Das Aufräumen sitzt
+  in `menu::weiter`, nicht am Anfang der Menüschleife, damit jeder Pfad
+  gedeckt ist. Geleert wird mitsamt Rückblätterspeicher (`Clear::Purge`):
+  Wer nach oben scrollt, findet nichts mehr.
+- **Das Logo füllt die Fensterbreite.** Das Netzmotiv wird für die
+  jeweilige Breite erzeugt (`banner::fuer_breite`), der 56 Zeichen breite
+  Schriftzug bleibt unverzerrt und steht mittig. Unter der Mindestbreite
+  kommt der feste Text zurück. Auch die **Höhe** zählt: Passt das Motiv
+  nicht mitsamt Menü ins Fenster, fällt erst der untere, dann der obere
+  Netzblock weg. Ein Logo, das man wegscrollen muss, um das Menü zu sehen,
+  ist schlechter als ein kleineres Logo. Damit fiel die frühere Begründung „ein
+  Generator wäre Aufwand für ein Bild, das sich nie ändert": Es ändert
+  sich jetzt, bei jedem anderen Terminal.
+- **Fenstergröße und Lage** setzen die Starter, nicht der Client: Ein
+  Programm, das in einem Terminal läuft, kann sein Fenster nicht
+  zuverlässig bewegen. Das macOS-Bündel öffnet 120 x 40 mittig auf dem
+  Bildschirm, der Windows-Starter setzt beim Doppelklick dieselbe Größe.
+  **Ohne zusätzliche Berechtigung:** Angesprochen wird ausschließlich
+  Terminal.app, und die Fensterkosmetik steht in einem eigenen Aufruf
+  nach dem Öffnen, damit ein Fehlschlag den Start nicht verhindert.
+- **Ein Farbschema je Sitzung.** Gewürfelt wird **einmal beim Start**,
+  während sich das Logo aus der Spirale bildet: eine Logofarbe aus einer
+  Palette von achtzehn 256-Farben-Werten und dazu zwei Schlagwortfarben.
+  Danach steht das Schema bis zum nächsten Start.
+
+  Vorher wechselte die Farbe mit jedem Bildschirm. Das war unruhig und
+  machte aus einer Eigenschaft der Sitzung eine des Augenblicks: Zwei
+  Bildschirme desselben Vorgangs sahen aus, als gehörten sie nicht
+  zusammen.
+
+  **Die beiden Schlagwortfarben sind nicht die nächstliegenden.** Eine
+  frühere Fassung nahm die beiden Nachbarn im Farbton, und die lagen zu
+  nahe: Ein Menütitel in fast der Farbe des Schriftzugs hebt sich nicht
+  ab, und zwei benachbarte Töne unterscheiden sich untereinander erst
+  recht nicht. Gesucht ist deshalb ein Paar in einem **Band** um die
+  Logofarbe:
+
+  | Bedingung | |
+  |---|---|
+  | mindestens 25° von der Logofarbe | sonst verschwindet der Titel im Schriftzug darüber |
+  | höchstens 110° von der Logofarbe | darüber liegt sie gegenüber, nicht daneben |
+  | mindestens 40° untereinander | sonst ist der Wechsel nicht zu bemerken |
+
+  Unter allen zulässigen Paaren gewinnt das mit dem kleinsten
+  Gesamtabstand zur Logofarbe: so nah am Logo, wie die Bedingungen
+  zulassen. Gemessen: Lavendel bringt Himmelblau und Purpur, Cyan bringt
+  Grün und Lavendel, Rosa bringt Lavendel und Dunkelorange.
+
+  Gerechnet wird über den **Farbkreis** aus dem 6×6×6-Würfel der Palette,
+  nicht über die Reihenfolge im Feld. Die steht zwar ungefähr nach
+  Spektrum, aber zwischen Orange und Magenta fehlt das Rot, und ein
+  Nachbar im Feld wäre dort ein Sprung im Bild.
+
+  **Farbe trägt dabei nie eine Aussage.** Urteile, Fehler und
+  Vergleichswerte stehen als Wort da. Wer Graustufen sieht oder einen
+  Mitschnitt liest, verliert nichts. Ohne Terminal wird keine einzige
+  Steuersequenz ausgegeben.
 - **Aufgeräumter Bildschirm:** Vor jeder Auswahl wird geleert, oben steht
   das Logo, darunter nur das, was ansteht. Nach einer Aktion wartet der
-  Client auf einen Tastendruck — ohne ihn verschwände die Ausgabe eines
+  Client auf einen Tastendruck, ohne ihn verschwände die Ausgabe eines
   Laufs in dem Augenblick, in dem sie fertig ist.
 - **Protokolle in `TESTCLIENT/logs/`** statt `TESTCLIENT/myl-testclient/logs/`.
   Zwei Ebenen tief in einem Quellcodeverzeichnis fand sie niemand, der
@@ -489,7 +673,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   die Auswahl auf zeilenweise Eingabe zurück.
 - **Startanimation:** Zeichenregen, der sich zu einem Sturm verdichtet,
   aus dem der Schriftzug Zelle für Zelle einrastet. Kein Löschen
-  dazwischen — sonst wären es zwei Bilder nacheinander statt eines
+  dazwischen: sonst wären es zwei Bilder nacheinander statt eines
   Vorgangs. Ein Tastendruck bricht ab, `MYL_NO_ANIMATION=1` schaltet sie
   ab, ohne Terminal läuft sie gar nicht.
 - **Netzmotiv nach dem Vorbild des Projektbanners** überarbeitet: Knoten
@@ -497,7 +681,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   lange Kanten quer durchs Feld. Die alte Fassung war ein regelmäßiger
   Zickzack und las sich als Ornament, nicht als Netz.
 - **Fund am Namen:** Die Säuberung für den Dateinamen lief auch über den
-  Namen im Protokoll — aus „Björn" wurde „bj-rn", auch im Bericht des
+  Namen im Protokoll: aus „Björn" wurde „bj-rn", auch im Bericht des
   Koordinators. Jetzt trägt das Protokoll den eingegebenen Namen, und nur
   der Dateiname wird umgeschrieben; Umlaute werden dabei umschrieben
   (`Bjoern`), nicht getilgt.
@@ -505,21 +689,21 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   weil Artefakte in Sekunden aus dem Skalenpaket entstehen und die
   Gewichte einen Download über Gigabyte kosten. Der Löschpfad ist auf
   direkte Unterverzeichnisse von `INTEGER_LLM/{artifacts,models}`
-  eingegrenzt und verlangt ein getipptes „ja" — Enter allein genügt an
+  eingegrenzt und verlangt ein getipptes „ja". Enter allein genügt an
   der einen Stelle absichtlich nicht, die etwas zerstört.
 - **Fund beim Bauen:** Zwei Läufe in derselben Sekunde bekamen denselben
   Dateinamen, und der zweite überschrieb den ersten **stillschweigend**.
   Im Menü tritt der Fall regelmäßig auf. Der Name weicht jetzt auf einen
   Zähler aus.
 - **Zweiter Fund:** Die Menüschleife hielt `stdin.lock()`, während die
-  neue Auswahl im Rückfallweg `io::stdin().read_line()` aufruft — das
+  neue Auswahl im Rückfallweg `io::stdin().read_line()` aufruft: das
   wäre derselbe Stillstand gewesen wie in v0.4.0 bei der
   Artefaktbeschaffung. Alle Eingaben laufen jetzt über eine Stelle.
 - **Windows geprüft**, soweit ohne Windows-Maschine möglich: `auswahl`,
   `animation`, `banner` und `vergleich` übersetzen für
   `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
   Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
-- 53 → 108 Tests.
+- 53 → 142 Tests.
 
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)
@@ -544,7 +728,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   Modell, beschafft das Modell bei Bedarf und führt Determinismus- und
   Shard-Lauf selbst aus. Ein Plan mit falscher Prüfsumme wird
   übersprungen **und gemeldet**, nicht stillschweigend geladen.
-  Beispielplan: `wikitext2-0.5b-standard.plan`.
+  Beispielplan: `qwen2.5-0.5b-standard.plan`.
 - **Zwei Menüs.** Das Nutzermenü hat fünf Punkte; alles, was Vorwissen
   voraussetzt, liegt unter [9] im Koordinator-Menü. Ein Menü mit zehn
   Punkten, von denen ein Teilnehmer fünf nie braucht, ist für ihn ein
@@ -599,20 +783,20 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   Befund an der Kernthese aussieht.
 - **Der Prompt steht in Anführungszeichen.** Beim Bauen fiel auf, dass
   ein führendes oder abschließendes Leerzeichen im ungequoteten Format
-  beim Einlesen verschwindet — es ist aber Teil des Prompts und
+  beim Einlesen verschwindet: es ist aber Teil des Prompts und
   verändert den Digest. Ein Test deckt Randleerzeichen, `=`,
   Anführungszeichen, Backslash und Zeilenumbrüche ab.
 - **Protokoll-Ablage** nach `logs/<befehl>/<datum>_<einstellungs-id>/ (bis v0.4.0; seit v0.5.0 eine gemeinsame Datei)`
   mit `<uhrzeit>-<hardware>` als Dateiname. Alle Teilnehmer eines Plans
   landen im gleichnamigen Ordner. Die Einstellungs-Kennung steht auch
-  **im** Protokoll, nicht nur im Pfad — Protokolle werden einzeln
+  **im** Protokoll, nicht nur im Pfad. Protokolle werden einzeln
   weitergereicht.
 - Datum und Uhrzeit in UTC, von Hand aus Unix-Sekunden gerechnet (kein
   Datums-Crate). UTC bewusst: Teilnehmer sitzen in verschiedenen
   Zeitzonen, und ein Ordner je Zeitzone wäre genau die
   Zuordnungsarbeit, die vermieden werden soll.
 - Argumentauswertung akzeptiert Optionen **vor** dem Befehl
-  (`myl-test --plan x stack`) — beim ersten Praxistest landete genau
+  (`myl-test --plan x stack`): beim ersten Praxistest landete genau
   dieser Aufruf im Menü statt im Prüflauf.
 - Menüpunkte 8 (Plan laden) und 9 (Plan erzeugen).
 - 32 → 50 Tests.
@@ -623,14 +807,14 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 und Sharding (COMPUTE_PIPELINE) waren abgedeckt; `myl-types`, `-ledger`,
 `-scheduler`, `-consensus`, `-tokenomics` und `-verifier` fasste er nicht
 an. Die haben Unit-Tests, aber niemand prüfte, ob sie **zusammen**
-funktionieren — und genau dort lagen die schwersten Audit-Funde.
+funktionieren, und genau dort lagen die schwersten Audit-Funde.
 
 - **Neuer Befehl `stack`**: zehn Stufen von der Kryptografie über
   Epochenseed, Komiteewahl, BFT (mit echten Signaturen und Negativproben),
   Double-Signing, Blockstruktur, Verifikation und Ledger-Buchung bis zur
   Preisbildung. Läuft ohne Artefakte in ~1 s.
 - **Fund A20, gefunden vom neuen Stack-Lauf:** `derive_epoch_seed` nahm
-  die Epoche als Parameter entgegen, speicherte sie im `EpochSeed` — und
+  die Epoche als Parameter entgegen, speicherte sie im `EpochSeed`, und
   ließ sie **nicht in den VRF-Eingang einfließen**. Folge: Ein Seed für
   Epoche 42 galt unverändert als gültiger Seed für Epoche 99, mit
   demselben Beweis (empirisch bestätigt). Zusätzlich hätten zwei Epochen
@@ -639,12 +823,12 @@ funktionieren — und genau dort lagen die schwersten Audit-Funde.
   (`MYELITH_EPOCH_SEED_v1 ‖ block ‖ epoch`). **Konsensrelevant.**
 - **Interaktives Menü**: `myl-test` ohne Unterbefehl öffnet eine
   Ziffernauswahl mit Erklärung je Punkt, Einstellungen und
-  Kurzanleitung. Bewusst ohne TUI-Bibliothek — der Client soll über SSH
+  Kurzanleitung. Bewusst ohne TUI-Bibliothek, der Client soll über SSH
   und in einer seriellen Konsole funktionieren.
 - **ASCII-Banner** nach dem Projektbanner (Knotennetz, Schriftzug, Zeile
   und die drei Schlagworte). Unterdrückbar über `--quiet` und
   `MYL_NO_BANNER`.
-- **[ANLEITUNG.md](ANLEITUNG.md)** für Tests mit mehreren Beteiligten —
+- **[ANLEITUNG.md](ANLEITUNG.md)** für Tests mit mehreren Beteiligten:
   vorher gab es nur acht Zeilen im README.
 - 21 → 32 Tests.
 
@@ -660,6 +844,6 @@ funktionieren — und genau dort lagen die schwersten Audit-Funde.
   enthält keine Gerätekennung.
 - **Ein Fund beim Bauen:** `integer_llm_runtime::paths` löst relativ zum
   Arbeitsverzeichnis auf. Für Läufe aus `INTEGER_LLM/` passt das, für
-  einen Client, der von überall gestartet wird, nicht — der erste
+  einen Client, der von überall gestartet wird, nicht, der erste
   Determinismuslauf fand die Artefakte nicht. Der Client löst jetzt
   absolut auf; `INTEGER_LLM_ARTIFACTS_DIR` behält Vorrang.

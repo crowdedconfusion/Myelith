@@ -1,10 +1,10 @@
-//! Testplan — die Datei, die der Koordinator verteilt.
+//! Testplan, die Datei, die der Koordinator verteilt.
 //!
 //! ## Das Problem, das sie löst
 //!
 //! Der Cross-Hardware-Nachweis verlangt, dass **alle Beteiligten exakt
 //! dieselben Parameter** verwenden. Ein Leerzeichen zu viel im Prompt,
-//! eine andere Tokenzahl — und die Digests weichen ab. Das sieht dann
+//! eine andere Tokenzahl, und die Digests weichen ab. Das sieht dann
 //! aus wie ein Befund an der Kernthese, ist aber ein Tippfehler.
 //!
 //! Bisher stand in der Anleitung „nehmt exakt dieselben Werte". Das ist
@@ -21,7 +21,7 @@
 //!
 //! **Der Prompt steht in Anführungszeichen.** Das ist keine Kosmetik:
 //! Ein führendes oder abschließendes Leerzeichen ist Teil des Prompts
-//! und verändert das Ergebnis — ohne Anführungszeichen würde es beim
+//! und verändert das Ergebnis, ohne Anführungszeichen würde es beim
 //! Einlesen wegfallen und der Digest wäre ein anderer, ohne dass jemand
 //! sieht warum. `\n`, `\"` und `\\` werden maskiert.
 //!
@@ -48,13 +48,13 @@
 //!
 //! ## Die Prüfsumme
 //!
-//! `spec_sha256` deckt **genau die Felder ab, die gleich sein müssen** —
+//! `spec_sha256` deckt **genau die Felder ab, die gleich sein müssen**:
 //! nicht die Kommentare, nicht die Reihenfolge, nicht den `plan_id`.
 //! Wer den Prompt ändert, bekommt beim nächsten Lauf einen Fehler statt
 //! eines falschen Befunds. Wer einen Kommentar ergänzt, wird nicht
 //! behelligt.
 //!
-//! Derselbe Wert (gekürzt) benennt auch das Protokollverzeichnis —
+//! Derselbe Wert (gekürzt) benennt auch das Protokollverzeichnis:
 //! damit landen die Läufe aller Teilnehmer im gleichnamigen Ordner und
 //! sind ohne Zuordnungsarbeit vergleichbar.
 
@@ -81,7 +81,7 @@ fn zitieren(s: &str) -> String {
 
 /// Entfernt Anführungszeichen und Maskierungen.
 ///
-/// Ohne Anführungszeichen wird der Wert unverändert übernommen — damit
+/// Ohne Anführungszeichen wird der Wert unverändert übernommen: damit
 /// bleibt eine von Hand geschriebene Datei ohne Quotes lesbar, solange
 /// der Prompt keine Randleerzeichen hat.
 fn entzitieren(s: &str) -> String {
@@ -114,7 +114,7 @@ fn entzitieren(s: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestPlan {
     /// Freie Kennung des Durchgangs, z. B. `2026-08-18-cross-arch-01`.
-    /// Geht **nicht** in die Prüfsumme ein — sie benennt den Durchgang,
+    /// Geht **nicht** in die Prüfsumme ein: sie benennt den Durchgang,
     /// sie bestimmt ihn nicht.
     pub plan_id: String,
     /// Die Prompts, zeichengenau und in dieser Reihenfolge.
@@ -162,7 +162,7 @@ impl std::fmt::Display for PlanError {
                 "Der Testplan wurde verändert.\n     \
                  Prüfsumme in der Datei: {}\n     \
                  tatsächlicher Inhalt:   {}\n     \
-                 Verwende die Originaldatei des Koordinators — ein \
+                 Verwende die Originaldatei des Koordinators: ein \
                  geänderter Parameter erzeugt abweichende Ergebnisse, \
                  die wie ein Befund aussehen, aber keiner sind.",
                 erwartet, berechnet
@@ -213,7 +213,7 @@ impl TestPlan {
         sha256_hex(&self.canonical_bytes())
     }
 
-    /// Kurzform der Prüfsumme — benennt das Protokollverzeichnis.
+    /// Kurzform der Prüfsumme: benennt das Protokollverzeichnis.
     ///
     /// Acht Hexzeichen: kurz genug für einen Verzeichnisnamen, lang
     /// genug, dass eine zufällige Kollision zwischen den Plänen eines
@@ -230,7 +230,7 @@ impl TestPlan {
             "# Myelith-Testplan\n\
              #\n\
              # Diese Datei legt fest, womit gemessen wird. Alle Beteiligten\n\
-             # MÜSSEN sie unverändert verwenden — sonst weichen die Ergebnisse\n\
+             # MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse\n\
              # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.\n\
              #\n\
              # Aufruf:  myl-test --plan {}.plan determinismus\n\
@@ -379,7 +379,7 @@ mod tests {
         ));
     }
 
-    /// Kommentare und Leerzeilen dürfen frei ergänzt werden — sie gehen
+    /// Kommentare und Leerzeilen dürfen frei ergänzt werden: sie gehen
     /// nicht in die Prüfsumme ein.
     #[test]
     fn kommentare_stoeren_die_pruefsumme_nicht() {
@@ -419,7 +419,7 @@ mod tests {
     }
 
     /// Mehrere `prompt`-Zeilen ergeben eine Reihe in der Reihenfolge der
-    /// Datei — das ist das ganze Format.
+    /// Datei, das ist das ganze Format.
     #[test]
     fn mehrere_prompts_bleiben_in_reihenfolge() {
         let mut plan = TestPlan::vorgaben();
@@ -440,7 +440,7 @@ mod tests {
         assert_ne!(a.checksum(), b.checksum());
     }
 
-    /// Zwei Prompts dürfen nicht zu einem verschmelzen können — sonst
+    /// Zwei Prompts dürfen nicht zu einem verschmelzen können: sonst
     /// hätten verschiedene Pläne dieselbe Prüfsumme.
     #[test]
     fn prompts_verschmelzen_nicht() {
@@ -455,7 +455,7 @@ mod tests {
         assert_ne!(c.checksum(), b.checksum());
     }
 
-    /// Ein Plan aus der Zeit vor den Prompt-Reihen bleibt gültig — dort
+    /// Ein Plan aus der Zeit vor den Prompt-Reihen bleibt gültig: dort
     /// steht genau eine `prompt`-Zeile.
     #[test]
     fn plan_mit_einem_prompt_bleibt_gueltig() {
@@ -493,7 +493,7 @@ mod tests {
     }
 
     /// Prompts mit `=` dürfen nicht zerschnitten werden, und
-    /// Randleerzeichen müssen erhalten bleiben — sie sind Teil des
+    /// Randleerzeichen müssen erhalten bleiben: sie sind Teil des
     /// Prompts und verändern den Digest.
     #[test]
     fn prompt_behaelt_sonderzeichen_und_randleerzeichen() {
@@ -513,7 +513,7 @@ mod tests {
     }
 
     /// Eine von Hand ohne Anführungszeichen geschriebene Datei bleibt
-    /// lesbar — solange der Prompt keine Randleerzeichen hat.
+    /// lesbar: solange der Prompt keine Randleerzeichen hat.
     #[test]
     fn unzitierter_prompt_bleibt_lesbar() {
         let plan = TestPlan::vorgaben();
@@ -539,7 +539,7 @@ mod tests {
     }
 
     /// Zwei Beteiligte mit demselben Plan müssen dasselbe Verzeichnis
-    /// bekommen — das ist der ganze Zweck der Kurzkennung.
+    /// bekommen, das ist der ganze Zweck der Kurzkennung.
     #[test]
     fn gleicher_plan_gleiche_kurzkennung() {
         let a = TestPlan::parse(&TestPlan::vorgaben().to_file_text()).unwrap();

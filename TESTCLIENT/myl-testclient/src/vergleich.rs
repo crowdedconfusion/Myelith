@@ -11,7 +11,7 @@
 //! 2. **Das Ergebnis ist trotzdem bitgleich.**
 //!
 //! Nur beide zusammen tragen. Zwei gleiche Digests von **derselben**
-//! Maschine belegen nichts — sie zeigen, dass ein Programm zweimal
+//! Maschine belegen nichts: sie zeigen, dass ein Programm zweimal
 //! dasselbe gerechnet hat, und das ist keine Aussage über Hardware.
 //!
 //! Deshalb **verweigert** dieses Modul ein positives Urteil, wenn alle
@@ -32,7 +32,7 @@
 //! ## Warum eigener JSON-Leser
 //!
 //! Gelesen wird ein Format, das dieses Programm selbst schreibt
-//! ([`crate::logging`]) — flache Objekte, Zeichenketten und Zahlen, sonst
+//! ([`crate::logging`]): flache Objekte, Zeichenketten und Zahlen, sonst
 //! nichts. Ein JSON-Crate wäre eine Abhängigkeit für einen Umfang, den
 //! vierzig Zeilen abdecken. Der Leser ist streng: Eine Zeile, die er
 //! nicht versteht, überspringt er, statt sie zu raten.
@@ -61,7 +61,7 @@ pub struct Protokoll {
 }
 
 impl Protokoll {
-    /// Modellstand als ein Wert — die Größe, die vor jedem Digest-Vergleich
+    /// Modellstand als ein Wert, die Größe, die vor jedem Digest-Vergleich
     /// übereinstimmen muss.
     fn modellstand(&self) -> (&str, &str) {
         (&self.theta_v, &self.artefakt_digest)
@@ -88,14 +88,14 @@ pub enum Urteil {
     /// Digests gleich, Fingerabdrücke verschieden, Modellstand gleich.
     Nachweis,
     /// Digests gleich, aber alle Läufe stammen von derselben Maschine.
-    /// **Kein Nachweis** — siehe Modul-Doku.
+    /// **Kein Nachweis**: siehe Modul-Doku.
     EineMaschine,
     /// θ_v oder Artefakt-Digest weichen ab. Unvergleichbar, und
     /// ausdrücklich **kein** Hardware-Befund.
     Modellstand,
     /// Digests weichen bei gleichem Modellstand ab. Der eigentliche Befund.
     Abweichung,
-    /// Weniger als zwei Protokolle — es gibt nichts zu vergleichen.
+    /// Weniger als zwei Protokolle: es gibt nichts zu vergleichen.
     ZuWenig,
 }
 
@@ -309,7 +309,7 @@ fn urteilen(
 /// Schreibt den Bericht und liefert das Gesamturteil.
 ///
 /// `true` nur, wenn **jede** Gruppe den Nachweis trägt. Eine Gruppe, die
-/// ihn nicht trägt, zieht das Gesamturteil herunter — sonst könnte ein
+/// ihn nicht trägt, zieht das Gesamturteil herunter: sonst könnte ein
 /// gelungener Determinismuslauf einen fehlgeschlagenen Shard-Lauf decken.
 pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
     println!("  Protokolle aus {}\n", dir.display());
@@ -332,8 +332,8 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
             println!(
                 "     {:<16} {:<28} θ_v {:<8} {}",
                 p.bezeichnung(),
-                if p.hardware.is_empty() { "—" } else { &p.hardware },
-                if p.theta_v.is_empty() { "—" } else { &p.theta_v },
+                if p.hardware.is_empty() { "" } else { &p.hardware },
+                if p.theta_v.is_empty() { "" } else { &p.theta_v },
                 kurz(&p.fingerprint),
             );
         }
@@ -365,7 +365,7 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
 /// Was das Urteil bedeutet und was als Nächstes zu tun ist.
 ///
 /// Der Text ist der eigentliche Nutzen des Befehls: Ein Urteilswort ohne
-/// Folgerung lädt dazu ein, es falsch zu lesen — besonders
+/// Folgerung lädt dazu ein, es falsch zu lesen: besonders
 /// `EineMaschine`, das wie ein Erfolg aussieht, und `Modellstand`, das
 /// wie ein Fehlschlag aussieht.
 fn erlaeuterung(u: &Urteil) -> &'static str {
@@ -394,7 +394,7 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
         Urteil::ZuWenig => {
             "Für einen Vergleich braucht es mindestens zwei Protokolle mit derselben\n\
              Einstellungs-Kennung. Weichen die Kennungen ab, liefen verschiedene\n\
-             Parameter — dann ist die Eingabe zu vereinheitlichen, nicht das Ergebnis."
+             Parameter, dann ist die Eingabe zu vereinheitlichen, nicht das Ergebnis."
         }
     }
 }
@@ -418,7 +418,7 @@ pub fn vergleichsordner(repo: &Path) -> PathBuf {
 /// Ein **Unterordner** der Eingabe, nicht ihr Geschwister: Läge der
 /// Bericht neben den Protokollen, hätte der nächste Aufruf ihn als
 /// Eingabe mitgelesen. Er trägt zwar keine `.jsonl`-Endung und wäre
-/// deshalb heute unschädlich — aber das ist eine Eigenschaft des
+/// deshalb heute unschädlich, aber das ist eine Eigenschaft des
 /// Dateinamens, keine des Verfahrens, und darauf soll sich niemand
 /// verlassen müssen.
 pub fn berichtsordner(repo: &Path) -> PathBuf {
@@ -430,7 +430,7 @@ pub fn berichtsordner(repo: &Path) -> PathBuf {
 /// Markdown, weil der Bericht weitergereicht wird: an Mitwirkende, in
 /// Tickets, gelegentlich in ein `eval/results/`-Verzeichnis. Er enthält
 /// dieselben Angaben wie die Bildschirmausgabe und zusätzlich, was dort
-/// keinen Platz hat — vollständige Digests statt Kurzform, Dateinamen,
+/// keinen Platz hat: vollständige Digests statt Kurzform, Dateinamen,
 /// Zeitpunkt des Vergleichs.
 pub fn bericht_schreiben(
     ziel: &Path,
@@ -479,7 +479,7 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         if alles_gut {
             "NACHWEIS über alle Gruppen"
         } else {
-            "kein durchgehender Nachweis — siehe die Urteile je Gruppe"
+            "kein durchgehender Nachweis: siehe die Urteile je Gruppe"
         }
     );
 
@@ -517,11 +517,11 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         for (name, nach_digest) in &g.werte {
             if nach_digest.len() == 1 {
                 let digest = nach_digest.keys().next().map(String::as_str).unwrap_or("");
-                let _ = writeln!(t, "- **{}** — übereinstimmend: `{}`", name, digest);
+                let _ = writeln!(t, "- **{}**: übereinstimmend: `{}`", name, digest);
             } else {
-                let _ = writeln!(t, "- **{}** — ABWEICHUNG, {} verschiedene Werte:", name, nach_digest.len());
+                let _ = writeln!(t, "- **{}**. ABWEICHUNG, {} verschiedene Werte:", name, nach_digest.len());
                 for (digest, laeufe) in nach_digest {
-                    let _ = writeln!(t, "  - `{}` — {}", digest, laeufe.join(", "));
+                    let _ = writeln!(t, "  - `{}`: {}", digest, laeufe.join(", "));
                 }
             }
         }
@@ -541,7 +541,7 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         t,
         "Dieser Bericht hält den Stand des Quellordners zum genannten \
          Zeitpunkt fest. Ein **bestätigter** Cross-Hardware-Nachweis gehört \
-         nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3) — der \
+         nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3), der \
          Berichtsordner wird nicht versioniert."
     );
     t
@@ -549,13 +549,13 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
 
 fn leer_als_strich(s: &str) -> &str {
     if s.is_empty() {
-        "—"
+        ""
     } else {
         s
     }
 }
 
-/// `myl-test vergleich` — einlesen, gruppieren, berichten, festhalten.
+/// `myl-test vergleich`: einlesen, gruppieren, berichten, festhalten.
 pub fn run(dir: &Path, berichte: Option<&Path>) -> bool {
     let protokolle = match einlesen(dir) {
         Ok(p) => p,
@@ -573,7 +573,7 @@ pub fn run(dir: &Path, berichte: Option<&Path>) -> bool {
             Ok(pfad) => println!("  Bericht: {}", pfad.display()),
             // Ein fehlgeschlagener Bericht darf das Urteil nicht kippen:
             // Es steht bereits auf dem Bildschirm und ist damit gefällt.
-            Err(e) => eprintln!("  WARNUNG: Bericht nicht geschrieben — {}", e),
+            Err(e) => eprintln!("  WARNUNG: Bericht nicht geschrieben: {}", e),
         }
     }
     ok
@@ -582,7 +582,7 @@ pub fn run(dir: &Path, berichte: Option<&Path>) -> bool {
 /// Zerlegt eine JSONL-Zeile in ihre Felder.
 ///
 /// Gegenstück zu `logging::json_escape`. `None` bei allem, was nicht dem
-/// selbst geschriebenen Format entspricht — lieber eine Zeile auslassen
+/// selbst geschriebenen Format entspricht: lieber eine Zeile auslassen
 /// als sie falsch deuten.
 fn felder(zeile: &str) -> Option<Vec<(String, String)>> {
     let z: Vec<char> = zeile.trim().chars().collect();
@@ -755,7 +755,7 @@ mod tests {
     }
 
     /// Ein abweichender Modellstand muss **vor** dem Digest-Vergleich
-    /// erkannt werden — sonst meldet der Client einen Hardware-Befund,
+    /// erkannt werden: sonst meldet der Client einen Hardware-Befund,
     /// wo zwei verschiedene Modelle verglichen wurden.
     #[test]
     fn abweichender_modellstand_schlaegt_den_digestvergleich() {
@@ -774,7 +774,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Verschiedene Einstellungen sind verschiedene Gruppen — sie dürfen
+    /// Verschiedene Einstellungen sind verschiedene Gruppen: sie dürfen
     /// nicht gegeneinander verglichen werden.
     #[test]
     fn verschiedene_einstellungen_bleiben_getrennt() {
@@ -812,7 +812,7 @@ mod tests {
     }
 
     /// Der Leser muss genau das zurückgeben, was der Schreiber maskiert
-    /// hat — sonst weichen Digests scheinbar ab, weil ein Wert falsch
+    /// hat: sonst weichen Digests scheinbar ab, weil ein Wert falsch
     /// gelesen wurde.
     #[test]
     fn maskierte_zeichen_kommen_unveraendert_zurueck() {
@@ -853,7 +853,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Der Bericht muss das Urteil und die vollständigen Digests tragen —
+    /// Der Bericht muss das Urteil und die vollständigen Digests tragen:
     /// die Bildschirmausgabe kürzt beides, und der Bericht wird
     /// weitergereicht.
     #[test]
@@ -903,7 +903,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Ein unbeschreibbarer Berichtsordner darf das Urteil nicht kippen —
+    /// Ein unbeschreibbarer Berichtsordner darf das Urteil nicht kippen:
     /// es steht bereits auf dem Bildschirm und ist damit gefällt.
     #[test]
     fn fehlender_berichtsordner_kippt_das_urteil_nicht() {
@@ -914,7 +914,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Ohne Namen muss die Bezeichnung auf die Hardware zurückfallen —
+    /// Ohne Namen muss die Bezeichnung auf die Hardware zurückfallen:
     /// ein Bericht mit lauter „ohne-name" wäre nicht auswertbar.
     #[test]
     fn bezeichnung_faellt_auf_hardware_zurueck() {

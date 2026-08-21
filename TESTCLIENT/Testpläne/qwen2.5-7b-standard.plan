@@ -1,7 +1,7 @@
 # Myelith-Testplan
 #
 # Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
-# MÜSSEN sie unverändert verwenden — sonst weichen die Ergebnisse
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
 # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
 #
 # Aufruf:  myl-test --plan qwen2.5-7b-standard.plan determinismus
@@ -15,7 +15,7 @@
 # 64 Token, der Determinismuslauf rechnet zwei Durchgänge, der Shard-Lauf
 # noch einmal Pod und Einzelknoten. Dazu kommt das Laden des Modells,
 # etwa eine Minute je Lauf. Deshalb 16 Token statt der 32 des
-# 0,5B-Plans — der Vergleichswert hängt an der Bitgleichheit, nicht an
+# 0,5B-Plans, der Vergleichswert hängt an der Bitgleichheit, nicht an
 # der Länge der Antwort.
 #
 # PLATTENBEDARF: Die Artefakte belegen 8,1 GB, die Gewichte von

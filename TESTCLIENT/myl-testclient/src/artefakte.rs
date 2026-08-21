@@ -4,17 +4,17 @@
 //!
 //! Der Zweck dieses Clients ist der Nachweis, dass zwei verschiedene
 //! Maschinen bitgleich rechnen. Das setzt voraus, dass beide Maschinen
-//! **dasselbe Modell** rechnen — und genau das ist nicht selbstverständlich.
+//! **dasselbe Modell** rechnen, und genau das ist nicht selbstverständlich.
 //!
 //! Der Artefaktbau war bis 2026-08-20 nur auf derselben Maschine
 //! reproduzierbar (Fund 32): Die Aktivierungsskalen entstanden aus einem
 //! Gleitkomma-Durchlauf, und **3 von 314** Skaleneinträgen saßen innerhalb
-//! von 0,01 % einer Zweierpotenz-Grenze — der knappste bei 0,003 %. Eine
+//! von 0,01 % einer Zweierpotenz-Grenze, der knappste bei 0,003 %. Eine
 //! andere BLAS-Version reicht, um einen davon umzuwerfen; ein gekippter
 //! Shift ändert die Artefaktbytes, also das Modell.
 //!
 //! Ohne Digest-Prüfung sähe das im Ergebnis **wie eine gescheiterte
-//! Hardware-Bitgleichheit aus** — der Testclient würde also genau das
+//! Hardware-Bitgleichheit aus**, der Testclient würde also genau das
 //! Gegenteil dessen berichten, wofür es ihn gibt. Deshalb prüft er zuerst,
 //! ob überhaupt dasselbe Modell vorliegt, und sagt bei Abweichung klar,
 //! dass das Artefakt und nicht die Hardware das Problem ist.
@@ -22,7 +22,7 @@
 //! Seit dem Skalenpaket (`INTEGER_LLM/scale_packs/`) ist der Bau
 //! plattformübergreifend bitgleich: Die Skalen und LUTs sind versioniert,
 //! die verbleibende Gewichtsquantisierung ist `round(W · 2^shift)` und
-//! damit exakt. Die Prüfung bleibt trotzdem — eine Zusicherung, die man
+//! damit exakt. Die Prüfung bleibt trotzdem: eine Zusicherung, die man
 //! nicht nachrechnet, ist eine Hoffnung.
 
 use std::fs;
@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 /// Ein Modell, für das ein Skalenpaket veröffentlicht ist.
+#[derive(Clone)]
 pub struct Bekannt {
     pub name: String,
     pub theta_v: String,
@@ -39,7 +40,7 @@ pub struct Bekannt {
 
 /// Zustand eines Modells auf dieser Maschine.
 pub enum Zustand {
-    /// Artefakte da und Digest stimmt — bereit für einen Vergleichslauf.
+    /// Artefakte da und Digest stimmt: bereit für einen Vergleichslauf.
     Bereit { pfad: PathBuf },
     /// Artefakte da, aber Digest weicht ab. **Kein Hardware-Befund.**
     Abweichend { pfad: PathBuf, ist: String, soll: String },
@@ -62,7 +63,7 @@ fn sha256_datei(p: &Path) -> std::io::Result<String> {
 const ANKER: [&str; 3] = ["model_config.json", "theta_v.json", "tokenizer.json"];
 
 /// Digest über die Ankerkette. Muss zeichengleich zu
-/// `tools/skalenpaket_bauen.py` sein — sonst prüft der Client gegen eine
+/// `tools/skalenpaket_bauen.py` sein: sonst prüft der Client gegen eine
 /// andere Rechnung als die, die den veröffentlichten Wert erzeugt hat.
 ///
 /// **Nicht über den Verzeichnisinhalt.** Diese Fassung gab es, und sie hat
@@ -70,7 +71,7 @@ const ANKER: [&str; 3] = ["model_config.json", "theta_v.json", "tokenizer.json"]
 /// werkzeug hatte 432 inhaltsgleiche Kopien in den Artefaktordner gelegt
 /// (`theta_v 2.json` und so fort). Der Lader ignoriert solche Dateien; sie
 /// ändern das Modell nicht. Ein Anker, der bei belanglosen Streudateien
-/// anschlägt, macht den echten Befund unglaubwürdig — und der echte
+/// anschlägt, macht den echten Befund unglaubwürdig, und der echte
 /// Befund ist der einzige Zweck. Nebenbei: über 8,7 GB zu hashen dauerte
 /// Minuten und ließ den Client beim Start stumm dastehen.
 pub fn artefakt_digest(dir: &Path) -> std::io::Result<(String, usize)> {
@@ -150,7 +151,7 @@ pub fn bauanleitung(modell: &str) -> String {
     format!(
         "So entstehen die Artefakte für {m} (einmalig):\n\
          \n\
-         1. Gewichte von Hugging Face holen — sie werden NICHT mitgeliefert:\n\
+         1. Gewichte von Hugging Face holen: sie werden NICHT mitgeliefert:\n\
          \x20     huggingface-cli download Qwen/{hf} --local-dir INTEGER_LLM/models/{hf}\n\
          \n\
          2. Artefakte bauen. Das versionierte Skalenpaket unter\n\
@@ -158,7 +159,7 @@ pub fn bauanleitung(modell: &str) -> String {
          \x20     INTEGER_LLM_MODEL={m} python -m calibrate.src.main\n\
          \n\
          Der Bau dauert Sekunden statt Minuten, weil die Aktivierungsstatistik\n\
-         entfällt — und genau deshalb ist er auf jeder Maschine bitgleich.\n\
+         entfällt, und genau deshalb ist er auf jeder Maschine bitgleich.\n\
          Danach diesen Befehl erneut ausführen; der Digest wird geprüft.",
         m = modell,
         hf = hf_id(modell),
@@ -178,13 +179,13 @@ fn hf_id(modell: &str) -> &'static str {
 
 /// Eingabekanal für Rückfragen: liefert die Antwort auf einen Prompt,
 /// oder `None` bei Dateiende. `Option<&mut …>` als Ganzes ist `None`,
-/// wenn der Client nicht-interaktiv läuft — dann wird nicht gefragt und
+/// wenn der Client nicht-interaktiv läuft, dann wird nicht gefragt und
 /// folglich auch nichts heruntergeladen.
 pub type Rueckfrage<'a> = Option<&'a mut dyn FnMut(&str) -> Option<String>>;
 
 /// Kürzel für den n-ten Eintrag einer erzeugten Auswahlliste.
 ///
-/// Ziffern, dann Buchstaben — dieselbe Regel wie im Menü, damit der Weg
+/// Ziffern, dann Buchstaben: dieselbe Regel wie im Menü, damit der Weg
 /// über die Tastenkürzel überall gleich aussieht.
 fn kuerzel(i: usize) -> char {
     match i {
@@ -195,17 +196,18 @@ fn kuerzel(i: usize) -> char {
 }
 
 /// Ein auf dieser Maschine gefundenes Artefaktverzeichnis.
+#[derive(Clone)]
 pub struct Gefunden {
     pub name: String,
     pub pfad: PathBuf,
     /// Steht das Modell im Register? Wenn nicht, ist sein Digest nicht
-    /// prüfbar — das muss vor einem Vergleichslauf gesagt werden.
+    /// prüfbar, das muss vor einem Vergleichslauf gesagt werden.
     pub im_register: bool,
 }
 
 /// Durchsucht `INTEGER_LLM/artifacts/` nach vollständigen Artefakten.
 ///
-/// Gefunden wird jedes Verzeichnis mit `weights_manifest.json` — auch
+/// Gefunden wird jedes Verzeichnis mit `weights_manifest.json`: auch
 /// solche, die nicht im Register stehen. Sie werden mitgeführt und als
 /// ungeprüft markiert, statt sie zu verschweigen: Wer ein eigenes Modell
 /// gebaut hat, soll es benutzen können und dabei wissen, dass der Digest
@@ -227,7 +229,7 @@ pub fn suchen(repo: &Path) -> Vec<Gefunden> {
         // **Hier wird bewusst NICHT gehasht.** Ein Digest über ein
         // 8,7-GB-Artefakt dauert Sekunden bis Minuten; das für jedes
         // gefundene Modell zu tun, nur um eine Auswahlliste zu zeigen,
-        // ist Verschwendung — und es lässt den Client beim Start minutenlang
+        // ist Verschwendung, und es lässt den Client beim Start minutenlang
         // stumm dastehen. Geprüft wird erst, was auch benutzt wird.
         let im_register = bekannt.iter().any(|b| b.name == name);
         out.push(Gefunden { name, pfad: p, im_register });
@@ -259,7 +261,7 @@ fn venv_python(repo: &Path) -> Option<PathBuf> {
 /// `INTEGER_LLM/calibrate/.venv` ist gitignored, sie ist 861 MB groß und
 /// gehört nicht ins Repository. Auf einem frischen Klon gibt es sie also
 /// nicht. Die erste Fassung dieser Funktion suchte nur dort und meldete
-/// „.venv fehlt" — womit der gesamte Download- und Baupfad auf jeder
+/// „.venv fehlt": womit der gesamte Download- und Baupfad auf jeder
 /// Maschine außer der Entwicklermaschine tot war.
 ///
 /// Gesucht wird deshalb in dieser Reihenfolge: die venv (beide Layouts),
@@ -335,7 +337,7 @@ pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)
     lauf(&py, &["-c", &skript], repo, meldung)
 }
 
-/// Baut die Artefakte. Nutzt das versionierte Skalenpaket automatisch —
+/// Baut die Artefakte. Nutzt das versionierte Skalenpaket automatisch:
 /// deshalb dauert das Sekunden statt Minuten und ist plattformübergreifend
 /// bitgleich (siehe `INTEGER_LLM/scale_packs/README.md`).
 pub fn artefakte_bauen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
@@ -423,124 +425,145 @@ fn lauf_mit(
 /// nicht-interaktiv. Dann wird **nicht** heruntergeladen: Ein
 /// mehrstündiger Mehr-Gigabyte-Zugriff gehört nicht in einen Skriptlauf,
 /// der ihn nicht angefordert hat. Stattdessen erscheint die Anleitung.
+/// Ein Modell in der Auswahlliste, mit seinem Zustand auf dieser Maschine.
+enum Eintrag {
+    /// Artefakte liegen vor.
+    Da(Gefunden),
+    /// Im Register, aber hier nicht gebaut. Kann beschafft werden.
+    Fehlt(Bekannt),
+}
+
+impl Eintrag {
+    fn name(&self) -> &str {
+        match self {
+            Eintrag::Da(g) => &g.name,
+            Eintrag::Fehlt(b) => &b.name,
+        }
+    }
+
+    fn titel(&self) -> String {
+        match self {
+            Eintrag::Da(g) if g.im_register => format!("{}, liegt bereit", g.name),
+            Eintrag::Da(g) => format!("{}, liegt bereit, nicht im Register", g.name),
+            Eintrag::Fehlt(b) => format!("{}, nicht vorhanden", b.name),
+        }
+    }
+
+    fn hinweis(&self) -> String {
+        match self {
+            Eintrag::Da(g) if g.im_register => "Digest wird nach der Wahl geprüft.".to_string(),
+            Eintrag::Da(_) => "Digest nicht prüfbar, für Vergleichsläufe ungeeignet.".to_string(),
+            Eintrag::Fehlt(b) => format!(
+                "Download {} von Hugging Face, Bau danach in Sekunden.",
+                download_groesse(&b.name)
+            ),
+        }
+    }
+}
+
+/// Baut die Auswahlliste aus Register und tatsächlich Vorhandenem.
+///
+/// Getrennt vom Beschaffen, damit die Regel ohne Dateisystem prüfbar ist:
+/// Sie ist der eigentliche Inhalt der Behebung, und ein Test darüber soll
+/// keine Artefakte auf der Platte brauchen.
+fn liste(bekannt: &[Bekannt], gefunden: &[Gefunden]) -> Vec<Eintrag> {
+    let mut eintraege: Vec<Eintrag> = Vec::with_capacity(bekannt.len() + gefunden.len());
+    for b in bekannt {
+        match gefunden.iter().find(|g| g.name == b.name) {
+            Some(g) => eintraege.push(Eintrag::Da(g.clone())),
+            None => eintraege.push(Eintrag::Fehlt(b.clone())),
+        }
+    }
+    // Was hier liegt, aber nirgends verzeichnet ist.
+    for g in gefunden {
+        if !bekannt.iter().any(|b| b.name == g.name) {
+            eintraege.push(Eintrag::Da(g.clone()));
+        }
+    }
+    eintraege
+}
+
+/// Stellt **alle** bekannten Modelle zur Wahl, vorhandene wie fehlende.
+///
+/// **Warum eine Liste und nicht zwei Wege.** Bis v0.6.0 gab es zwei
+/// getrennte Fälle: Lag ein Artefakt vor, wurde daraus gewählt; lag keines
+/// vor, wurde aus dem Register gewählt und beschafft. Wer 0,5B hatte und
+/// 7B wollte, fand deshalb **keinen Weg dorthin**: Die Beschaffung stand
+/// nur hinter dem Fall „nichts vorhanden", und der trat nie wieder ein.
+/// Besonders bitter nach dem Freigeben von Plattenplatz, denn genau dann
+/// will jemand ein Modell zurückholen, das er eben gelöscht hat.
+///
+/// Der Zustand eines Modells ist eine **Eigenschaft des Eintrags**, kein
+/// eigener Programmzweig. Die Liste führt deshalb jedes bekannte Modell und
+/// schreibt daneben, ob es hier liegt oder erst geholt werden muss.
+///
+/// Artefakte, die auf der Platte liegen, aber nicht im Register stehen,
+/// kommen ans Ende: Sie sind benutzbar, aber ihr Digest ist nicht prüfbar,
+/// und das muss vor einem Vergleichslauf dastehen.
 pub fn beschaffen(
     repo: &Path,
     antwort: &mut Rueckfrage<'_>,
     meldung: &mut dyn FnMut(String),
 ) -> Result<PathBuf, String> {
+    let bekannt = register(repo)?;
     let gefunden = suchen(repo);
 
-    if gefunden.len() == 1 {
-        let g = &gefunden[0];
-        meldung(format!("Ein Artefakt gefunden: {}", befund(g)));
-        nach_auswahl_pruefen(repo, g, meldung);
-        return Ok(g.pfad.clone());
+    let eintraege = liste(&bekannt, &gefunden);
+    if eintraege.is_empty() {
+        return Err("Weder Artefakte noch ein Register gefunden.".to_string());
     }
 
-    if gefunden.len() > 1 {
-        if antwort.is_none() {
-            // Nicht-interaktiv: das erste geprüfte nehmen, sonst das erste.
-            let g = gefunden.iter().find(|g| g.im_register).unwrap_or(&gefunden[0]);
-            meldung(format!("Nicht-interaktiv — verwende {}", g.name));
-            return Ok(g.pfad.clone());
-        }
-        let punkte: Vec<crate::auswahl::Punkt> = gefunden
-            .iter()
-            .enumerate()
-            .map(|(i, g)| crate::auswahl::Punkt::neu(kuerzel(i), &befund(g), ""))
-            .collect();
-        let wahl = crate::auswahl::waehlen("Welches Artefakt?", &punkte)
-            .and_then(|t| punkte.iter().position(|p| p.taste == t))
-            .unwrap_or(0);
-        let g = &gefunden[wahl];
-        meldung(format!("Gewählt: {}", g.name));
-        nach_auswahl_pruefen(repo, g, meldung);
-        return Ok(g.pfad.clone());
-    }
-
-    // Nichts gefunden.
-    meldung("Keine Artefakte auf dieser Maschine.".to_string());
-    let bekannt = register(repo)?;
-    let Some(frage) = antwort.as_mut() else {
-        return Err(format!(
-            "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
-            bauanleitung(&bekannt[0].name)
-        ));
+    // Nicht-interaktiv wird nichts geholt: Ein Download von mehreren
+    // Gigabyte gehört nicht in einen Lauf, der niemanden fragen kann.
+    let Some(_) = antwort.as_mut() else {
+        let da = eintraege.iter().find_map(|e| match e {
+            Eintrag::Da(g) if g.im_register => Some(g),
+            _ => None,
+        });
+        return match da.or_else(|| {
+            eintraege.iter().find_map(|e| match e {
+                Eintrag::Da(g) => Some(g),
+                _ => None,
+            })
+        }) {
+            Some(g) => {
+                meldung(format!("Nicht-interaktiv: verwende {}", g.name));
+                Ok(g.pfad.clone())
+            }
+            None => Err(format!(
+                "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
+                bauanleitung(eintraege[0].name())
+            )),
+        };
     };
 
-    let punkte: Vec<crate::auswahl::Punkt> = bekannt
+    let punkte: Vec<crate::auswahl::Punkt> = eintraege
         .iter()
         .enumerate()
-        .map(|(i, b)| {
-            crate::auswahl::Punkt::neu(
-                kuerzel(i),
-                &b.name,
-                &format!(
-                    "Download {}, Bau danach in Sekunden",
-                    download_groesse(&b.name)
-                ),
-            )
-        })
+        .map(|(i, e)| crate::auswahl::Punkt::neu(kuerzel(i), &e.titel(), &e.hinweis()))
         .collect();
-    let wahl = crate::auswahl::waehlen("Welches Modell aufsetzen?", &punkte)
+    let Some(wahl) = crate::auswahl::waehlen("Welches Modell?", &punkte)
         .and_then(|t| punkte.iter().position(|p| p.taste == t))
-        .unwrap_or(0);
-    let modell = bekannt[wahl].name.clone();
+    else {
+        return Err("Kein Modell gewählt.".to_string());
+    };
 
-    // Rückfrage vor dem Netzzugriff: Der Download ist gross und geht an
-    // einen fremden Dienst. Automatisch heisst nicht unangekuendigt.
-    let bestaetigung = frage(&format!(
-        "{} von Hugging Face laden ({}) und Artefakte bauen? [J/n] ",
-        hf_id(&modell),
-        download_groesse(&modell)
-    ))
-    .unwrap_or_default();
-    let t = bestaetigung.trim().to_lowercase();
-    if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
-        return Err(format!("Abgebrochen.\n{}", bauanleitung(&modell)));
-    }
-
-    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(&modell));
-    if gewichte.join("config.json").is_file() {
-        meldung(format!("Gewichte liegen bereits in {} — Download entfällt.", gewichte.display()));
-    } else {
-        gewichte_holen(repo, &modell, meldung)?;
-    }
-    artefakte_bauen(repo, &modell, meldung)?;
-
-    let bekannt = register(repo)?;
-    let b = bekannt
-        .iter()
-        .find(|b| b.name == modell)
-        .ok_or_else(|| format!("{} steht nicht im Register", modell))?;
-    match pruefen(repo, b) {
-        Zustand::Bereit { pfad } => {
-            meldung(format!("Fertig — Digest stimmt: {}", &b.digest[..16]));
-            Ok(pfad)
+    match &eintraege[wahl] {
+        Eintrag::Da(g) => {
+            meldung(format!("Gewählt: {}", g.name));
+            nach_auswahl_pruefen(repo, g, meldung);
+            Ok(g.pfad.clone())
         }
-        Zustand::Abweichend { ist, soll, .. } => Err(format!(
-            "Bau abgeschlossen, aber der Digest weicht ab.\n  hier:           {ist}\n  \
-             veröffentlicht: {soll}\nDas ist KEIN Hardware-Befund — auf dieser Maschine \
-             entstand ein anderes Artefakt als das veröffentlichte. Ein Vergleichslauf \
-             damit hätte keine Aussage."
-        )),
-        Zustand::Fehlt => Err("Bau lief durch, aber es liegen keine Artefakte vor.".to_string()),
+        Eintrag::Fehlt(b) => beschaffen_fuer(repo, &b.name, antwort, meldung),
     }
 }
 
-fn befund(g: &Gefunden) -> String {
-    if g.im_register {
-        g.name.clone()
-    } else {
-        format!("{} — nicht im Register, Digest nicht prüfbar", g.name)
-    }
-}
 
 /// Prüft den Digest **eines** Artefakts und meldet das Ergebnis.
-/// Wird erst nach der Auswahl aufgerufen — siehe Begründung in `suchen`.
+/// Wird erst nach der Auswahl aufgerufen: siehe Begründung in `suchen`.
 fn nach_auswahl_pruefen(repo: &Path, g: &Gefunden, meldung: &mut dyn FnMut(String)) {
     if !g.im_register {
-        meldung(format!("{} steht nicht im Register — Digest nicht prüfbar.", g.name));
+        meldung(format!("{} steht nicht im Register. Digest nicht prüfbar.", g.name));
         return;
     }
     meldung(format!("Prüfe Digest von {} …", g.name));
@@ -549,7 +572,7 @@ fn nach_auswahl_pruefen(repo: &Path, g: &Gefunden, meldung: &mut dyn FnMut(Strin
     match artefakt_digest(&g.pfad) {
         Ok((ist, _)) if ist == b.digest => meldung(format!("Digest stimmt: {}", &ist[..16])),
         Ok((ist, _)) => {
-            meldung(format!("DIGEST WEICHT AB — hier {}, veröffentlicht {}", &ist[..16], &b.digest[..16]));
+            meldung(format!("DIGEST WEICHT AB: hier {}, veröffentlicht {}", &ist[..16], &b.digest[..16]));
             meldung("Das ist KEIN Hardware-Befund: Hier liegt ein anderes Modell.".to_string());
         }
         Err(e) => meldung(format!("Digest nicht berechenbar: {}", e)),
@@ -578,6 +601,25 @@ pub fn repo_wurzel(start: PathBuf) -> PathBuf {
 /// Wird benutzt, wenn ein Testplan das Modell vorgibt: Dann gibt es nichts
 /// auszuwählen, nur zu beschaffen. Fehlt es, wird gefragt, ob geladen und
 /// gebaut werden soll; ohne Rückfragekanal wird nichts geladen.
+/// Der Pfad zu einem **bereits gebauten** Artefakt, ohne jede Rückfrage.
+///
+/// Getrennt von [`beschaffen_fuer`], weil die beiden verschiedene Fragen
+/// beantworten: Dieses hier sagt „liegt es da?", jenes „beschaffe es".
+/// Wer nur wissen will, ob weitergearbeitet werden kann, darf dabei
+/// nichts herunterladen und nichts bauen.
+///
+/// `None` auch bei abweichendem Digest: Ein Artefakt, das nicht zum
+/// Register passt, ist für einen Vergleichslauf schlimmer als keines, denn
+/// sein Ergebnis sähe wie ein Hardware-Befund aus.
+pub fn vorhandenes(repo: &Path, modell: &str) -> Option<PathBuf> {
+    let bekannt = register(repo).ok()?;
+    let b = bekannt.iter().find(|b| b.name == modell)?;
+    match pruefen(repo, b) {
+        Zustand::Bereit { pfad } => Some(pfad),
+        _ => None,
+    }
+}
+
 pub fn beschaffen_fuer(
     repo: &Path,
     modell: &str,
@@ -626,7 +668,7 @@ pub fn beschaffen_fuer(
 
     let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(modell));
     if gewichte.join("config.json").is_file() {
-        meldung(format!("Gewichte liegen bereits in {} — Download entfällt.", gewichte.display()));
+        meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
     } else {
         gewichte_holen(repo, modell, meldung)?;
     }
@@ -636,7 +678,7 @@ pub fn beschaffen_fuer(
     let b = bekannt.iter().find(|b| b.name == modell).ok_or("Register unvollständig")?;
     match pruefen(repo, b) {
         Zustand::Bereit { pfad } => {
-            meldung(format!("Fertig — Digest stimmt: {}", &b.digest[..16]));
+            meldung(format!("Fertig. Digest stimmt: {}", &b.digest[..16]));
             Ok(pfad)
         }
         Zustand::Abweichend { ist, soll, .. } => Err(format!(
@@ -723,7 +765,7 @@ pub fn belegung(repo: &Path) -> Vec<Belegung> {
         .into_iter()
         .map(|b| b.name)
         .collect();
-    // Auch selbstgebaute Modelle, die nicht im Register stehen — sie
+    // Auch selbstgebaute Modelle, die nicht im Register stehen: sie
     // belegen denselben Platz.
     for g in suchen(repo) {
         if !namen.contains(&g.name) {
@@ -757,7 +799,7 @@ pub fn belegung(repo: &Path) -> Vec<Belegung> {
 /// **Der Wächter, nicht die Höflichkeit.** Gelöscht wird rekursiv; ein
 /// falscher Pfad wäre nicht rückgängig zu machen. Erlaubt ist deshalb
 /// ausschließlich ein **direktes Unterverzeichnis** von
-/// `INTEGER_LLM/artifacts` oder `INTEGER_LLM/models` — nicht die beiden
+/// `INTEGER_LLM/artifacts` oder `INTEGER_LLM/models`, nicht die beiden
 /// Verzeichnisse selbst, nichts darüber, nichts daneben, und nichts, das
 /// über `..` dorthin zeigt.
 fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
@@ -777,7 +819,7 @@ fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
     }
     Err(format!(
         "{} liegt nicht unterhalb von INTEGER_LLM/artifacts oder \
-         INTEGER_LLM/models — wird nicht gelöscht.",
+         INTEGER_LLM/models: wird nicht gelöscht.",
         echt.display()
     ))
 }
@@ -793,6 +835,85 @@ pub fn freigeben(repo: &Path, pfad: &Path) -> Result<u64, String> {
     let bytes = verzeichnisgroesse(pfad);
     fs::remove_dir_all(pfad).map_err(|e| format!("{} nicht löschbar: {}", pfad.display(), e))?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod auswahl_tests {
+    use super::*;
+
+    fn gefunden(name: &str, im_register: bool) -> Gefunden {
+        Gefunden {
+            name: name.to_string(),
+            pfad: PathBuf::from("/artefakte").join(name),
+            im_register,
+        }
+    }
+
+    fn bekannt(name: &str) -> Bekannt {
+        Bekannt {
+            name: name.to_string(),
+            theta_v: "0.17.0".to_string(),
+            digest: "c42bb8a8".repeat(8),
+        }
+    }
+
+    /// **Der Fund, der diese Liste erzwungen hat.** Bis v0.6.0 stand die
+    /// Beschaffung nur hinter dem Fall „kein Artefakt vorhanden". Wer 0,5B
+    /// hatte und 7B wollte, fand deshalb keinen Weg dorthin, und nach dem
+    /// Freigeben von Plattenplatz war ein gelöschtes Modell nicht mehr
+    /// zurückzuholen. Jede Auswahl muss **beides** enthalten.
+    #[test]
+    fn ein_vorhandenes_modell_verdeckt_die_fehlenden_nicht() {
+        let register = [bekannt("qwen2.5-0.5b"), bekannt("qwen2.5-7b")];
+        let auf_platte = [gefunden("qwen2.5-0.5b", true)];
+
+        let eintraege = liste(&register, &auf_platte);
+        let namen: Vec<&str> = eintraege.iter().map(|e| e.name()).collect();
+        assert_eq!(namen, vec!["qwen2.5-0.5b", "qwen2.5-7b"]);
+
+        assert!(
+            matches!(eintraege[0], Eintrag::Da(_)),
+            "das vorhandene Modell wird nicht als vorhanden geführt"
+        );
+        assert!(
+            matches!(eintraege[1], Eintrag::Fehlt(_)),
+            "das fehlende Modell steht nicht zur Beschaffung bereit"
+        );
+        assert!(
+            eintraege[1].hinweis().contains("Download"),
+            "der Hinweis nennt den Download nicht: {}",
+            eintraege[1].hinweis()
+        );
+    }
+
+    /// Artefakte, die hier liegen, aber in keinem Register stehen, gehören
+    /// ans Ende und müssen als ungeprüft erkennbar sein: Ihr Digest ist
+    /// nicht prüfbar, und ein Vergleichslauf damit hätte keine Aussage.
+    #[test]
+    fn fremde_artefakte_stehen_hinten_und_sind_gekennzeichnet() {
+        let register = [bekannt("qwen2.5-0.5b")];
+        let auf_platte = [gefunden("qwen2.5-0.5b", true), gefunden("eigenbau", false)];
+
+        let eintraege = liste(&register, &auf_platte);
+        assert_eq!(eintraege.len(), 2);
+        assert_eq!(eintraege[1].name(), "eigenbau");
+        assert!(
+            eintraege[1].titel().contains("nicht im Register"),
+            "ungeprüftes Artefakt nicht gekennzeichnet: {}",
+            eintraege[1].titel()
+        );
+        assert!(eintraege[1].hinweis().contains("nicht prüfbar"));
+    }
+
+    /// Ohne ein einziges Artefakt muss trotzdem jedes bekannte Modell zur
+    /// Wahl stehen: Genau das ist die Lage nach einem frischen Klon.
+    #[test]
+    fn frischer_klon_stellt_alle_modelle_zur_wahl() {
+        let register = [bekannt("qwen2.5-0.5b"), bekannt("qwen2.5-7b")];
+        let eintraege = liste(&register, &[]);
+        assert_eq!(eintraege.len(), 2);
+        assert!(eintraege.iter().all(|e| matches!(e, Eintrag::Fehlt(_))));
+    }
 }
 
 #[cfg(test)]
@@ -838,7 +959,7 @@ mod loeschen_tests {
         let ziel = dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b");
         assert_eq!(freigeben(&dir, &ziel).expect("gelöscht"), 2048);
         assert!(!ziel.exists());
-        // Die Gewichte bleiben unangetastet — sie sind teurer zu holen.
+        // Die Gewichte bleiben unangetastet: sie sind teurer zu holen.
         assert!(dir.join("INTEGER_LLM/models/Qwen2.5-0.5B").is_dir());
         let _ = fs::remove_dir_all(&dir);
     }
