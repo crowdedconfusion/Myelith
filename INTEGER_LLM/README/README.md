@@ -579,6 +579,50 @@ liegen die Multiplikationen überlappend in der Pipeline.
 Bitgleichheit belegt: identischer `decode_hash` über 32 Token **und**
 30/30 Konformitätsvektoren unter beiden Backends.
 
+### Der größere Hebel lag daneben: die Gewichtskopie (v0.16.0)
+
+Der Fahrplan führte als nächsten Schritt „Gewichte liegen als
+`Vec<Vec<i8>>`, also eine Heap-Allokation je Zeile". Die Lage war eine
+andere und einfacher zu beheben: Die Ablage im `QTensor` ist **flach und
+war es immer**. Sie wurde nur bei **jedem** Aufruf in die schlechtere Form
+zurückverwandelt. `model.rs::forward_layer` rief achtmal je Ebene
+`to_vec_vec()` auf, und das erzeugte über `row(idx) -> to_vec()` eine
+Heap-Allokation und eine Kopie **je Ausgabe-Zeile**:
+
+| bei Qwen2.5-0,5B, je Token | |
+|---|---|
+| kopierte Bytes | **358 MB** |
+| Heap-Allokationen | **304 128** |
+
+Die Kernel nehmen die Gewichte jetzt flach entgegen (`W: &[i8]` plus
+`in_features`) und laufen mit `chunks_exact` darüber. **Die Numerik ändert
+sich dadurch nicht:** `dot_i8_i16` bekommt dieselben Bytes in derselben
+Reihenfolge, die Zeile ist nur ein Ausschnitt statt einer Kopie.
+Bitgleichheit gilt hier per Konstruktion, nicht nur laut Messung.
+
+| Modell | Backend | vorher | nachher | Gewinn |
+|---|---|---|---|---|
+| 0,5B | reference | 19,95 tok/s | **27,17 tok/s** | +36 % |
+| 0,5B | cpu-simd | 25,14 tok/s | **38,19 tok/s** | +52 % |
+| 7B | reference | 1,48 tok/s | **2,07 tok/s** | +40 % |
+
+Gemessen mit `bench_probe` über 32 Token (7B: 8 Token), alte Fassung aus
+einem `git worktree` auf demselben Rechner. `decode_hash` in allen sechs
+Läufen identisch (0,5B `bdebcbac12ae78a9`, 7B `6dcb9528ddf257f2`), 30/30
+Konformitätsvektoren unter `reference` und `cpu-simd`, Paritätstest 6/6.
+
+**Damit ist der Gewinn größer als der der Vektorisierung selbst.** Das
+Operationsprofil hatte seinerzeit `linear_w8a16` mit 99,4 % der Laufzeit
+ausgewiesen, und das stimmte auch: Die Kopie geschah unmittelbar davor,
+im selben Aufrufausdruck, und wurde derselben Zeile zugerechnet.
+
+**Ein Fund beim Umstellen, den der Prüflauf sofort meldete:** Der
+Golden-Runner baute die Vorgabe-Skalen als `vec![weight_frac; w.len()]`.
+Flach ist `w.len()` die Elementzahl statt der Zeilenzahl, und
+`linear_w8a16_identity` fiel durch. Das war die richtige Reaktion, denn
+der Kernel prüft die Länge. Hätte er sie nicht geprüft, wäre daraus ein
+stiller Fehler geworden.
+
 **Dabei aufgefallen:** `conformance/run.sh` nahm zwar einen
 Backend-Parameter entgegen, gab ihn aus und **ignorierte ihn dann** —
 beide cargo-Aufrufe standen fest auf `--features reference`. Der
@@ -618,6 +662,10 @@ auffällig.
 |---|---|---|---|---|
 | 0,5B | 0,78 GB | 18,65 tok/s | 19,50 tok/s | 67,93 tok/s |
 | 7B | 8,72 GB | 0,80 tok/s | 1,42 tok/s | — |
+
+*Diese Tabelle ist der Stand vor v0.13.4 (SIMD) und v0.16.0
+(Gewichtskopie). Aktuell: 0,5B 38,19 tok/s mit `cpu-simd`, 7B 2,07 tok/s
+mit `reference`.*
 
 Zwei Befunde, die ich nicht in eine Fußnote schiebe:
 

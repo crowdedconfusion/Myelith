@@ -163,13 +163,10 @@ impl Backend for ReferenceBackend {
         assert_eq!(W_up.len(), intermediate_size * hidden_size);
         assert_eq!(W_down.len(), hidden_size * intermediate_size);
 
-        let gate: Vec<Vec<i8>> = W_gate.chunks(hidden_size).map(|c| c.to_vec()).collect();
-        let up: Vec<Vec<i8>> = W_up.chunks(hidden_size).map(|c| c.to_vec()).collect();
-        let down: Vec<Vec<i8>> = W_down.chunks(intermediate_size).map(|c| c.to_vec()).collect();
-
         let result = mlp_int(
             x,
-            &gate, &up, &down,
+            W_gate, W_up, W_down,
+            hidden_size, intermediate_size,
             gate_w_shifts, up_w_shifts, down_w_shifts,
             silu_lut,
             in_frac,

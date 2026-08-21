@@ -66,9 +66,16 @@ pub use vergleich::run as run_vergleich;
 /// beisteuert, ein Ordner, in dem er nichts zu suchen hat. Jetzt liegen
 /// sie neben `Testpläne/` und `Vergleiche/` auf derselben Ebene: die drei
 /// Ordner, mit denen ein Teilnehmer zu tun hat, beieinander.
+/// **Zur Laufzeit bestimmt, nicht beim Übersetzen.** Siehe
+/// [`artefakte::wurzel_zur_laufzeit`]: Ein eingebackener Pfad zeigte ins
+/// Leere, sobald das Repository verschoben oder das Binary weitergegeben
+/// wurde.
 pub fn default_log_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let gebaut = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .map(|p| p.join("logs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("logs"))
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    artefakte::wurzel_zur_laufzeit(&gebaut)
+        .join("TESTCLIENT")
+        .join("logs")
 }

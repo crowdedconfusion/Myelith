@@ -165,19 +165,34 @@ fn run_rmsnorm(gv: &GoldenVector) -> bool {
 fn run_linear(gv: &GoldenVector) -> bool {
     let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
     let w_meta = gv.metadata["W"].as_array().unwrap();
-    let w: Vec<Vec<i8>> = w_meta.iter().map(|row| {
-        row.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i8).collect()
-    }).collect();
+    // Flach, wie der Kernel sie seit v0.13.4 erwartet. Die Zeilenlänge
+    // steht in der ersten Zeile des Vektors.
+    let in_features = w_meta[0].as_array().unwrap().len();
+    let w: Vec<i8> = w_meta
+        .iter()
+        .flat_map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_i64().unwrap() as i8)
+                .collect::<Vec<i8>>()
+        })
+        .collect();
     let act_frac = gv.metadata["act_frac"].as_u64().unwrap() as u8;
     let w_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("w_shifts") {
         shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
     } else {
         let weight_frac = gv.metadata["weight_frac"].as_u64().unwrap() as u8;
-        vec![weight_frac; w.len()]
+        // **Eine Skala je Ausgabe-Zeile, nicht je Gewicht.** Vor der
+        // Umstellung auf flache Gewichte war `w.len()` die Zeilenzahl;
+        // flach ist es die Elementzahl. Der Vektor
+        // `linear_w8a16_identity` fiel damit sofort durch, und das war
+        // die richtige Reaktion: Der Kernel prüft die Länge.
+        vec![weight_frac; w_meta.len()]
     };
     let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
 
-    let result = integer_llm_kernels::linear::linear_w8a16(&x, &w, &w_shifts, act_frac, out_frac);
+    let result = integer_llm_kernels::linear::linear_w8a16(&x, &w, in_features, &w_shifts, act_frac, out_frac);
     let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
 
     if result != expected {

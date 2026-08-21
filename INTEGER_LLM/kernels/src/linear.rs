@@ -26,17 +26,39 @@ use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 /// `x` (Aktivierung, int16, Skala `act_frac_bits`), `W` (Gewicht, int8,
 /// Per-Channel-Skala je Ausgabe-Zeile `w_shifts[r]`, theta_v 0.7.0);
 /// Ausgabe int16 auf `out_frac_bits`.
+/// **`W` liegt flach**, Zeile für Zeile hintereinander, `in_features`
+/// Elemente je Zeile.
+///
+/// Bis v0.13.4 nahm dieser Kernel `&[Vec<i8>]`. Die Gewichte liegen im
+/// Artefakt und im `QTensor` aber flach; `model.rs` baute deshalb vor
+/// **jedem** Aufruf ein `Vec<Vec<i8>>` daraus, mit einer Heap-Allokation
+/// und einer Kopie je Ausgabe-Zeile. Bei Qwen2.5-0,5B waren das
+/// **358 MB und 304 128 Allokationen je Token**, denn die Umwandlung lief
+/// achtmal je Ebene und die Ebenen 24-mal je Token.
+///
+/// **Die Numerik ändert sich dadurch nicht.** `dot_i8_i16` bekommt
+/// dieselben Bytes in derselben Reihenfolge; die Zeile ist jetzt ein
+/// Ausschnitt statt einer Kopie. Bitgleichheit gilt hier per Konstruktion,
+/// nicht nur laut Messung.
 pub fn linear_w8a16(
     x: &[i16],
-    W: &[Vec<i8>],
+    W: &[i8],
+    in_features: usize,
     w_shifts: &[u8],
     act_frac_bits: u8,
     out_frac_bits: u8,
 ) -> Vec<i16> {
-    assert_eq!(W.len(), w_shifts.len(), "linear_w8a16: eine Skala je Ausgabe-Zeile");
-    let mut out = Vec::with_capacity(W.len());
+    assert_eq!(
+        W.len(),
+        in_features * w_shifts.len(),
+        "linear_w8a16: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
+        W.len(),
+        w_shifts.len(),
+        in_features
+    );
+    let mut out = Vec::with_capacity(w_shifts.len());
 
-    for (row, &w_shift) in W.iter().zip(w_shifts.iter()) {
+    for (row, &w_shift) in W.chunks_exact(in_features).zip(w_shifts.iter()) {
         // Vektorisiert, wenn `cpu-simd` aktiv ist — bitgleich zur
         // Skalarfassung, weil die i64-Akkumulation exakt und damit
         // assoziativ ist (siehe `dot.rs`-Modulkopf).
@@ -61,18 +83,34 @@ pub fn linear_w8a16(
 /// Bei identischem Wert in jedem Element von `out_frac_bits` ist das
 /// Ergebnis bitgleich zu `linear_w8a16` mit demselben Skalar (siehe
 /// `test_linear_w8a16_pc_uniform_matches_scalar`).
+/// `W` liegt flach wie bei [`linear_w8a16`], Begründung dort.
 pub fn linear_w8a16_pc(
     x: &[i16],
-    W: &[Vec<i8>],
+    W: &[i8],
+    in_features: usize,
     w_shifts: &[u8],
     act_frac_bits: u8,
     out_frac_bits: &[u8],
 ) -> Vec<i16> {
-    assert_eq!(W.len(), w_shifts.len(), "linear_w8a16_pc: eine Skala je Ausgabe-Zeile");
-    assert_eq!(W.len(), out_frac_bits.len(), "linear_w8a16_pc: eine Ausgangsskala je Kanal (Fund 20)");
-    let mut out = Vec::with_capacity(W.len());
+    assert_eq!(
+        W.len(),
+        in_features * w_shifts.len(),
+        "linear_w8a16_pc: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
+        W.len(),
+        w_shifts.len(),
+        in_features
+    );
+    assert_eq!(
+        w_shifts.len(),
+        out_frac_bits.len(),
+        "linear_w8a16_pc: eine Ausgangsskala je Kanal (Fund 20)"
+    );
+    let mut out = Vec::with_capacity(w_shifts.len());
 
-    for (row, (&w_shift, &out_frac)) in W.iter().zip(w_shifts.iter().zip(out_frac_bits.iter())) {
+    for (row, (&w_shift, &out_frac)) in W
+        .chunks_exact(in_features)
+        .zip(w_shifts.iter().zip(out_frac_bits.iter()))
+    {
         let acc = dot_i8_i16(row, x);
         let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac);
         out.push(clamp_i16_from_i64(y));
@@ -115,8 +153,9 @@ mod tests {
         // x = [1.0, -1.0] bei frac 6 = [64, -64]; Identitaets-Matrix mit
         // Per-Channel-Shift 7 (127 ~ 1.0): Ergebnis ~ [64, -64] bei frac 6.
         let x = vec![64i16, -64];
-        let W = vec![vec![127i8, 0], vec![0i8, 127]];
-        let out = linear_w8a16(&x, &W, &[7, 7], 6, 6);
+        let W: Vec<i8> = vec![127, 0, 0, 127];
+        let in_features = 2;
+        let out = linear_w8a16(&x, &W, in_features, &[7, 7], 6, 6);
         // 127/128 = 0.992 -> 64 * 127 >> 7 = 63 (RNE: 63.5 -> 64? 64*127=8128,
         // >>7 = 63 Rest 64 = half -> quotient 63 ungerade -> +1 = 64).
         assert_eq!(out, vec![64, -64]);
@@ -127,8 +166,9 @@ mod tests {
         // Zeile 0 mit Shift 7 (~1.0), Zeile 1 mit Shift 6 (~2.0):
         // dieselben Gewichte, aber Zeile 1 verdoppelt das Ergebnis.
         let x = vec![64i16];
-        let W = vec![vec![64i8], vec![64i8]];
-        let out = linear_w8a16(&x, &W, &[7, 6], 6, 6);
+        let W: Vec<i8> = vec![64, 64];
+        let in_features = 1;
+        let out = linear_w8a16(&x, &W, in_features, &[7, 6], 6, 6);
         // Zeile 0: 64*64 = 4096, rescale(4096, 13, 6) = 4096>>7 = 32
         // Zeile 1: 64*64 = 4096, rescale(4096, 12, 6) = 4096>>6 = 64
         assert_eq!(out, vec![32, 64]);
@@ -141,9 +181,10 @@ mod tests {
         // akkumulieren und korrekt reskalieren.
         let n = 896usize;
         let x = vec![32767i16; n];
-        let W = vec![vec![127i8; n]];
+        let W: Vec<i8> = vec![127i8; n];
+        let in_features = n;
         // in_frac = 5 + 7 = 12, out_frac 3: acc >> 9.
-        let out = linear_w8a16(&x, &W, &[7], 5, 3);
+        let out = linear_w8a16(&x, &W, in_features, &[7], 5, 3);
         let expected = 32767;
         assert_eq!(out[0], expected as i16);
     }
@@ -154,10 +195,11 @@ mod tests {
         // zur Skalar-Funktion sein - Voraussetzung dafuer, dass bestehende
         // Aufrufer (q/k/v/gate/up_proj) unangetastet bleiben duerfen.
         let x = vec![100i16, -50, 25];
-        let W = vec![vec![64i8, -32, 16], vec![10i8, 20, -30]];
+        let W: Vec<i8> = vec![64, -32, 16, 10, 20, -30];
+        let in_features = 3;
         let w_shifts = vec![6u8, 5];
-        let skalar = linear_w8a16(&x, &W, &w_shifts, 4, 6);
-        let per_kanal = linear_w8a16_pc(&x, &W, &w_shifts, 4, &[6, 6]);
+        let skalar = linear_w8a16(&x, &W, in_features, &w_shifts, 4, 6);
+        let per_kanal = linear_w8a16_pc(&x, &W, in_features, &w_shifts, 4, &[6, 6]);
         assert_eq!(skalar, per_kanal);
     }
 
@@ -168,9 +210,10 @@ mod tests {
         // Zweck: o_proj/down_proj muessen auf die per-Kanal kalibrierte
         // Residualskala zielen koennen, nicht nur auf eine gemeinsame).
         let x = vec![100i16, 100];
-        let W = vec![vec![64i8, 64], vec![64i8, 64]]; // identische Zeilen
+        let W: Vec<i8> = vec![64, 64, 64, 64]; // identische Zeilen
+        let in_features = 2;
         let w_shifts = vec![6u8, 6];
-        let out = linear_w8a16_pc(&x, &W, &w_shifts, 0, &[6, 3]);
+        let out = linear_w8a16_pc(&x, &W, in_features, &w_shifts, 0, &[6, 3]);
         // acc = 64*100 + 64*100 = 12800 fuer beide Zeilen.
         // Zeile 0: rescale(12800, 6, 6) = 12800 (kein Shift).
         // Zeile 1: rescale(12800, 6, 3) = 12800 >> 3 = 1600.

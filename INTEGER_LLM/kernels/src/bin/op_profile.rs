@@ -73,18 +73,15 @@ fn miss<F: FnMut()>(wiederholungen: usize, mut f: F) -> f64 {
 /// Ein linearer Layer mit `n_in` Eingängen und `n_out` Ausgängen.
 fn miss_linear(n_in: usize, n_out: usize, wdh: usize) -> f64 {
     let x: Vec<i16> = (0..n_in).map(|i| ((i % 251) as i16) - 125).collect();
-    let w: Vec<Vec<i8>> = (0..n_out)
-        .map(|r| {
-            (0..n_in)
-                .map(|c| (((r + c) % 251) as i8).wrapping_sub(125))
-                .collect()
-        })
+    // Flach, wie der Kernel sie seit v0.13.4 erwartet.
+    let w: Vec<i8> = (0..n_out)
+        .flat_map(|r| (0..n_in).map(move |c| (((r + c) % 251) as i8).wrapping_sub(125)))
         .collect();
     let w_shifts: Vec<u8> = vec![7; n_out];
     let out_frac: Vec<u8> = vec![8; n_out];
     let mut out = Vec::with_capacity(n_out);
     miss(wdh, || {
-        out = linear_w8a16_pc(&x, &w, &w_shifts, 8, &out_frac);
+        out = linear_w8a16_pc(&x, &w, n_in, &w_shifts, 8, &out_frac);
     })
 }
 

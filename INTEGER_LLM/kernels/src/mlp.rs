@@ -27,9 +27,11 @@ use crate::linear::{linear_w8a16, linear_w8a16_pc};
 #[allow(clippy::too_many_arguments)]
 pub fn mlp_int(
     x: &[i16],
-    W_gate: &[Vec<i8>],
-    W_up: &[Vec<i8>],
-    W_down: &[Vec<i8>],
+    W_gate: &[i8],
+    W_up: &[i8],
+    W_down: &[i8],
+    hidden_size: usize,
+    intermediate_size: usize,
     gate_w_shifts: &[u8],
     up_w_shifts: &[u8],
     down_w_shifts: &[u8],
@@ -43,8 +45,9 @@ pub fn mlp_int(
     silu_out_frac: u8,
     out_frac_bits: &[u8],
 ) -> Vec<i16> {
-    let gate = linear_w8a16(x, W_gate, gate_w_shifts, in_frac_bits, gate_out_frac);
-    let up = linear_w8a16(x, W_up, up_w_shifts, in_frac_bits, up_out_frac);
+    // Flache Gewichte, Begründung im Kopf von `linear_w8a16`.
+    let gate = linear_w8a16(x, W_gate, hidden_size, gate_w_shifts, in_frac_bits, gate_out_frac);
+    let up = linear_w8a16(x, W_up, hidden_size, up_w_shifts, in_frac_bits, up_out_frac);
 
     let mut h = Vec::with_capacity(gate.len());
     for (g, u) in gate.iter().zip(up.iter()) {
@@ -60,7 +63,14 @@ pub fn mlp_int(
         )));
     }
 
-    linear_w8a16_pc(&h, W_down, down_w_shifts, down_in_frac, out_frac_bits)
+    linear_w8a16_pc(
+        &h,
+        W_down,
+        intermediate_size,
+        down_w_shifts,
+        down_in_frac,
+        out_frac_bits,
+    )
 }
 
 #[cfg(test)]
@@ -82,12 +92,15 @@ mod tests {
     fn test_mlp_runs_with_per_layer_scales() {
         // Rauchtest: 2 Kanaele, intermediate 2; alle Skalen explizit.
         let x = vec![64i16, -32];
-        let w_gate = vec![vec![64i8, 0], vec![0, 64]];
-        let w_up = vec![vec![64i8, 0], vec![0, 64]];
-        let w_down = vec![vec![64i8, 32], vec![32, 64]];
+        // Flach, wie der Kernel sie seit v0.13.4 nimmt: 2x2-Matrizen.
+        let w_gate: Vec<i8> = vec![64, 0, 0, 64];
+        let w_up: Vec<i8> = vec![64, 0, 0, 64];
+        let w_down: Vec<i8> = vec![64, 32, 32, 64];
+        let (hidden, inter) = (2usize, 2usize);
         let lut = spec_silu_lut();
         let out = mlp_int(
             &x, &w_gate, &w_up, &w_down,
+            hidden, inter,
             &[6, 6], &[6, 6], &[6, 6], // Per-Channel-Gewichts-Shifts
             &lut,
             6,   // in_frac
@@ -99,6 +112,7 @@ mod tests {
         // Alle Werte muessen im i16-Bereich und deterministisch sein.
         let out2 = mlp_int(
             &x, &w_gate, &w_up, &w_down,
+            hidden, inter,
             &[6, 6], &[6, 6], &[6, 6],
             &lut,
             6, 6, 6, 6, 1, 256, 6, &[6, 6],

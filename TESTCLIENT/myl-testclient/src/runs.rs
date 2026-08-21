@@ -65,14 +65,17 @@ pub fn default_artifact_dir() -> std::path::PathBuf {
 /// Modellname des Standard-Artefakts.
 pub const DEFAULT_MODEL: &str = "qwen2.5-0.5b";
 
-/// Repository-Wurzel, ausgehend vom Ort dieses Crates
-/// (`TESTCLIENT/myl-testclient` → zwei Ebenen hoch).
+/// Repository-Wurzel, **zur Laufzeit** gesucht.
+///
+/// Der Übersetzungspfad dient nur noch als letzter Ausweg; Begründung in
+/// [`crate::artefakte::wurzel_zur_laufzeit`].
 fn repo_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let gebaut = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    crate::artefakte::wurzel_zur_laufzeit(&gebaut)
 }
 
 /// Schreibt Fingerabdruck und Artefakt-Identität ins Protokoll.

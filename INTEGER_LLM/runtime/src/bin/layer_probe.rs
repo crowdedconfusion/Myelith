@@ -145,9 +145,9 @@ fn main() {
     summary("S1 norm_hidden", &norm_hidden, sc.norm_attn_frac);
 
     // S2: Q/K/V + Bias
-    let mut q_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.q_proj), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
-    let mut k_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.k_proj), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
-    let mut v_flat = linear_w8a16(&norm_hidden, &to_vec_vec(&layer.v_proj), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
+    let mut q_flat = linear_w8a16(&norm_hidden, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
+    let mut k_flat = linear_w8a16(&norm_hidden, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
+    let mut v_flat = linear_w8a16(&norm_hidden, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
     if let Some(qb) = &layer.q_bias { add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac); }
     if let Some(kb) = &layer.k_bias { add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac); }
     if let Some(vb) = &layer.v_bias { add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac); }
@@ -217,7 +217,7 @@ fn main() {
     let out_frac = &model.final_residual_frac;
 
     // Fund 20: o_proj addiert direkt in den Residualstrom -> Per-Kanal-Ziel.
-    let o_out = linear_w8a16_pc(&attn_out, &to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, &sc.residual_mid_frac);
+    let o_out = linear_w8a16_pc(&attn_out, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, &sc.residual_mid_frac);
     summary_pc("S5 o_out", &o_out, &sc.residual_mid_frac);
 
     let residual: Vec<i16> = hidden.iter().zip(o_out.iter()).enumerate()
@@ -289,7 +289,8 @@ fn main() {
     {
         let gate = linear_w8a16(
             &norm_residual,
-            &to_vec_vec(&layer.gate_proj),
+            &layer.gate_proj.data,
+            layer.gate_proj.cols(),
             &layer.gate_proj.shifts,
             sc.norm_mlp_frac,
             sc.gate_frac,
@@ -297,7 +298,8 @@ fn main() {
         summary("M1 gate", &gate, sc.gate_frac);
         let up = linear_w8a16(
             &norm_residual,
-            &to_vec_vec(&layer.up_proj),
+            &layer.up_proj.data,
+            layer.up_proj.cols(),
             &layer.up_proj.shifts,
             sc.norm_mlp_frac,
             sc.up_frac,
@@ -433,9 +435,11 @@ fn main() {
 
     let mlp_out = mlp_int(
         &norm_residual,
-        &to_vec_vec(&layer.gate_proj),
-        &to_vec_vec(&layer.up_proj),
-        &to_vec_vec(&layer.down_proj),
+        &layer.gate_proj.data,
+        &layer.up_proj.data,
+        &layer.down_proj.data,
+        layer.gate_proj.cols(),
+        layer.down_proj.cols(),
         &layer.gate_proj.shifts,
         &layer.up_proj.shifts,
         &layer.down_proj.shifts,

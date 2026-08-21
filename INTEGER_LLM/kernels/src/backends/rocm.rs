@@ -86,8 +86,9 @@ impl Backend for RocmBackend {
     ) {
         // Delegiert an Referenz-Kernel.
         // TODO: Echter HIP-Kernel — 1:1-Port von CUDA, WarpSize 64 beachten.
-        let rows: Vec<Vec<i8>> = W.chunks(in_features).map(|c| c.to_vec()).collect();
-        let result = linear_w8a16(x, &rows, w_shifts, act_frac, out_frac);
+        // Flach durchgereicht: Der Kernel nimmt seit v0.13.4 Ausschnitte
+        // statt Kopien, und das Trait liefert die Gewichte ohnehin flach.
+        let result = linear_w8a16(x, W, in_features, w_shifts, act_frac, out_frac);
         out[..out_features].copy_from_slice(&result[..out_features]);
     }
 
@@ -190,13 +191,10 @@ impl Backend for RocmBackend {
         let hidden_size = x.len();
         let intermediate_size = W_gate.len() / hidden_size;
 
-        let gate: Vec<Vec<i8>> = W_gate.chunks(hidden_size).map(|c| c.to_vec()).collect();
-        let up: Vec<Vec<i8>> = W_up.chunks(hidden_size).map(|c| c.to_vec()).collect();
-        let down: Vec<Vec<i8>> = W_down.chunks(intermediate_size).map(|c| c.to_vec()).collect();
-
         let result = mlp_int(
             x,
-            &gate, &up, &down,
+            W_gate, W_up, W_down,
+            hidden_size, intermediate_size,
             gate_w_shifts, up_w_shifts, down_w_shifts,
             silu_lut,
             in_frac,

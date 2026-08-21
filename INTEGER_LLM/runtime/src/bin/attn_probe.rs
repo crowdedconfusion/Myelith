@@ -161,21 +161,24 @@ fn main() {
         );
         let q = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &(0..layer.q_proj.rows()).map(|r| layer.q_proj.row(r)).collect::<Vec<_>>(),
+            &layer.q_proj.data,
+            layer.q_proj.cols(),
             &layer.q_proj.shifts,
             sc.norm_attn_frac,
             sc.q_frac,
         );
         let k = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &(0..layer.k_proj.rows()).map(|r| layer.k_proj.row(r)).collect::<Vec<_>>(),
+            &layer.k_proj.data,
+            layer.k_proj.cols(),
             &layer.k_proj.shifts,
             sc.norm_attn_frac,
             sc.k_frac,
         );
         let v = integer_llm_kernels::linear::linear_w8a16(
             &nh,
-            &(0..layer.v_proj.rows()).map(|r| layer.v_proj.row(r)).collect::<Vec<_>>(),
+            &layer.v_proj.data,
+            layer.v_proj.cols(),
             &layer.v_proj.shifts,
             sc.norm_attn_frac,
             sc.v_frac,

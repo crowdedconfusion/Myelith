@@ -585,15 +585,56 @@ fn nach_auswahl_pruefen(repo: &Path, g: &Gefunden, meldung: &mut dyn FnMut(Strin
 /// Client aus jedem Unterverzeichnis heraus und findet auch dann noch die
 /// richtige Ablage, wenn er von woanders aufgerufen wird.
 pub fn repo_wurzel(start: PathBuf) -> PathBuf {
-    let mut p = start.clone();
+    let ausweich = start.clone();
+    aufwaerts_suchen(start).unwrap_or(ausweich)
+}
+
+/// Wie [`repo_wurzel`], aber `None`, wenn nichts gefunden wurde.
+///
+/// Gebraucht, wo mehrere Startpunkte nacheinander versucht werden: Ein
+/// Rückfallwert je Versuch verdeckte, dass der Versuch fehlschlug.
+pub fn aufwaerts_suchen(start: PathBuf) -> Option<PathBuf> {
+    let mut p = start;
     loop {
         if p.join("INTEGER_LLM/scale_packs").is_dir() {
-            return p;
+            return Some(p);
         }
         if !p.pop() {
-            return start;
+            return None;
         }
     }
+}
+
+/// Die Repository-Wurzel, zur **Laufzeit** bestimmt.
+///
+/// **Fund (2026-08-21):** Zwei Stellen im Client bestimmten sie über
+/// `env!("CARGO_MANIFEST_DIR")`, also über den Pfad, der beim
+/// **Übersetzen** galt. Das trägt genau so lange, wie das Repository dort
+/// liegt, wo es gebaut wurde. Es trägt nicht mehr, sobald jemand es
+/// verschiebt oder umbenennt, und es trägt erst recht nicht, wenn ein
+/// gebautes Binary an eine andere Maschine weitergegeben wird. Genau das
+/// sieht der Shell-Starter ausdrücklich vor („cargo nicht gefunden,
+/// benutze das vorhandene Binary"), es ist also kein erfundener Fall.
+///
+/// Der Fehler wäre dabei besonders unangenehm gewesen: Der Client hätte
+/// „Artefaktverzeichnis fehlt" gemeldet, während die Artefakte danebenlagen.
+///
+/// Gesucht wird in dieser Reihenfolge:
+/// 1. aufwärts vom **Arbeitsverzeichnis** (dorthin wechseln die Starter),
+/// 2. aufwärts vom **Ort des Programms** (wenn es von woanders gestartet wurde),
+/// 3. der Übersetzungspfad als letzter Ausweg.
+pub fn wurzel_zur_laufzeit(uebersetzungspfad: &Path) -> PathBuf {
+    if let Some(p) = std::env::current_dir().ok().and_then(aufwaerts_suchen) {
+        return p;
+    }
+    if let Some(p) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+        .and_then(aufwaerts_suchen)
+    {
+        return p;
+    }
+    uebersetzungspfad.to_path_buf()
 }
 
 /// Stellt sicher, dass die Artefakte **eines bestimmten** Modells vorliegen.
@@ -855,6 +896,40 @@ mod auswahl_tests {
             theta_v: "0.17.0".to_string(),
             digest: "c42bb8a8".repeat(8),
         }
+    }
+
+    /// Die Aufwärtssuche muss die Wurzel finden und außerhalb ein
+    /// ehrliches `None` liefern. Ein Rückfallwert je Versuch verdeckte,
+    /// dass der Versuch fehlschlug, und genau darauf bauen die drei
+    /// Stufen von `wurzel_zur_laufzeit` auf.
+    #[test]
+    fn aufwaertssuche_meldet_misserfolg() {
+        // Von hier aus muss die Wurzel dieses Repositoriums erreichbar
+        // sein: Der Test läuft im Crate-Verzeichnis.
+        let hier = std::env::current_dir().expect("Arbeitsverzeichnis");
+        let wurzel = aufwaerts_suchen(hier.clone()).expect("Wurzel nicht gefunden");
+        assert!(wurzel.join("INTEGER_LLM/scale_packs").is_dir());
+        assert!(hier.starts_with(&wurzel), "die Wurzel liegt nicht über uns");
+
+        // Außerhalb jedes Repositoriums gibt es nichts zu finden.
+        assert!(aufwaerts_suchen(PathBuf::from("/")).is_none());
+    }
+
+    /// **Fund (2026-08-21):** Der Protokollordner und die Artefaktwurzel
+    /// hingen am Übersetzungspfad. Ein verschobenes Repositorium oder ein
+    /// weitergegebenes Binary hätte „Artefaktverzeichnis fehlt" gemeldet,
+    /// während die Artefakte danebenlagen. Der Übersetzungspfad darf nur
+    /// noch der letzte Ausweg sein.
+    #[test]
+    fn die_wurzel_kommt_zur_laufzeit_nicht_vom_uebersetzer() {
+        let unsinn = PathBuf::from("/pfad/den/es/nicht/gibt");
+        let gefunden = wurzel_zur_laufzeit(&unsinn);
+        assert_ne!(gefunden, unsinn, "der Übersetzungspfad wurde übernommen");
+        assert!(
+            gefunden.join("INTEGER_LLM/scale_packs").is_dir(),
+            "gefundene Wurzel trägt kein Skalenpaket: {}",
+            gefunden.display()
+        );
     }
 
     /// **Der Fund, der diese Liste erzwungen hat.** Bis v0.6.0 stand die

@@ -245,6 +245,56 @@ jobs:
   # maßgebliche Prüfstufe auf — der Rust-Toolchain muss daher explizit
   # installiert und gecacht sein, statt sich auf die Runner-Vorinstallation
   # zu verlassen. test_scales.py skippt sauber, wenn Artefakte fehlen.
+  # ── Testclient auf Windows und macOS ──────────────────────────────
+  #
+  # WARUM EIGENS: Alle übrigen Jobs laufen auf Ubuntu. Der Testclient ist
+  # aber genau das Werkzeug, das auf FREMDEN Maschinen laufen soll, und
+  # die wichtigste davon ist ein Windows-PC neben unserem aarch64-Mac.
+  # Ohne diesen Job wurde er für Windows nicht einmal übersetzt, und ein
+  # Teilnehmer wäre der Erste gewesen, der es versucht.
+  #
+  # Nur der Client, nicht die ganze Kette: Er ist der einzige Teil, der
+  # bei Dritten ausgeführt wird, und ein Übersetzungsfehler in seinen
+  # Abhängigkeiten fiele hier ohnehin auf.
+  #
+  # Nur Unit-Tests: Die Läufe mit Modell brauchen Artefakte, und die gibt
+  # es in der CI nicht (siehe AGENTS.md).
+  testclient-plattformen:
+    name: Testclient (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: TESTCLIENT/myl-testclient
+
+      - name: Clippy
+        working-directory: TESTCLIENT/myl-testclient
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit-Tests
+        working-directory: TESTCLIENT/myl-testclient
+        run: cargo test --lib
+
+      # Ohne Terminal darf der Client keine Steuersequenzen ausgeben und
+      # nicht auf eine Taste warten. Beides ist auf Windows anders
+      # umgesetzt als auf Unix, deshalb wird es hier ausgeführt und nicht
+      # nur übersetzt.
+      - name: Lauf ohne Terminal
+        working-directory: TESTCLIENT/myl-testclient
+        run: cargo run --release -- --quiet --name ci stack
+
   audit:
     name: Zahlensemantik-Audit
     runs-on: ubuntu-latest

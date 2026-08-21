@@ -427,9 +427,17 @@ impl IntegerModel {
 
         // Q, K, V Projektionen: Per-Channel-Gewichtsskalen (theta_v 0.7.0),
         // Ausgang auf der jeweils kalibrierten Per-Layer-Skala.
-        let mut q_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.q_proj), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
-        let mut k_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.k_proj), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
-        let mut v_flat = linear_w8a16(&norm_hidden, &self.to_vec_vec(&layer.v_proj), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
+        // Die Gewichte liegen im `QTensor` flach und werden flach
+        // durchgereicht. Bis v0.13.4 stand hier `self.to_vec_vec(...)`,
+        // das je Aufruf eine Heap-Allokation und eine Kopie **je
+        // Ausgabe-Zeile** erzeugte: bei 0,5B zusammen 358 MB und 304 128
+        // Allokationen je Token, denn diese Umwandlung lief achtmal je
+        // Ebene und die Ebenen 24-mal je Token. Die Zahlen ändern sich
+        // dadurch nicht, `dot_i8_i16` bekommt dieselben Bytes in
+        // derselben Reihenfolge.
+        let mut q_flat = linear_w8a16(&norm_hidden, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
+        let mut k_flat = linear_w8a16(&norm_hidden, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
+        let mut v_flat = linear_w8a16(&norm_hidden, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
 
         // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche):
         // Per-Element-Skalen, Reskalierung auf die Q/K/V-Ausgabeskala und
@@ -571,7 +579,7 @@ impl IntegerModel {
             .zip(sc.residual_mid_frac.iter())
             .map(|(&a, &b)| a.min(b))
             .collect();
-        let o_out = linear_w8a16_pc(&attn_out, &self.to_vec_vec(&layer.o_proj), &layer.o_proj.shifts, sc.attn_out_frac, &acc_attn);
+        let o_out = linear_w8a16_pc(&attn_out, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, &acc_attn);
 
         // Residual Add 1: beide Operanden auf der Akkumulationsskala, Summe
         // in i64, DANN eine Reskalierung auf die mittlere Segmentskala und
@@ -609,9 +617,11 @@ impl IntegerModel {
             .collect();
         let mlp_out = mlp_int(
             &norm_residual,
-            &self.to_vec_vec(&layer.gate_proj),
-            &self.to_vec_vec(&layer.up_proj),
-            &self.to_vec_vec(&layer.down_proj),
+            &layer.gate_proj.data,
+            &layer.up_proj.data,
+            &layer.down_proj.data,
+            layer.gate_proj.cols(),
+            layer.down_proj.cols(),
             &layer.gate_proj.shifts,
             &layer.up_proj.shifts,
             &layer.down_proj.shifts,
@@ -765,13 +775,6 @@ impl IntegerModel {
         heads
     }
 
-    fn to_vec_vec(&self, qt: &QTensor) -> Vec<Vec<i8>> {
-        let mut out = Vec::with_capacity(qt.rows());
-        for r in 0..qt.rows() {
-            out.push(qt.row(r));
-        }
-        out
-    }
 
     /// Greedy Decoding fuer ein Token.
     pub fn greedy_next(&self, logits: &[i32]) -> usize {
