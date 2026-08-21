@@ -5,7 +5,7 @@
 # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
 #
 # Aufruf:  myl-test --plan qwen2.5-7b-standard.plan determinismus
-#    oder:  myl-test  (Menü, Punkt 8)
+#    oder im Menü über [3] Testdatei wählen
 #
 # Die Zeile spec_sha256 sichert genau das ab. Kommentare und
 # Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.

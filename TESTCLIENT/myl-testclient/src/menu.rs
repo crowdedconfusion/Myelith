@@ -103,7 +103,21 @@ fn kurz(p: &std::path::Path) -> String {
         return p.display().to_string();
     }
     let rest: PathBuf = teile[teile.len() - 3..].iter().collect();
-    format!("…/{}", rest.display())
+    // **Das Trennzeichen der Plattform, auch im Auslassungszeichen.**
+    //
+    // Vorher stand hier ein festes `…/`. Der Rest entsteht dagegen aus
+    // `PathBuf::collect`, und das setzt das Trennzeichen des Systems.
+    // Unter Windows kam deshalb `…/d\e\f` heraus, also beide Zeichen in
+    // einer Zeile. Gefunden hat es der Windows-Job der CI, beim ersten
+    // Lauf, den es ihn je gab.
+    //
+    // Entschieden für die Plattform und gegen einen festen Schrägstrich,
+    // weil dieser Pfad **nur angezeigt** wird (Einstellungsblock im Menü)
+    // und nie in ein Protokoll wandert. Wer unter Windows arbeitet, soll
+    // seine eigene Schreibweise lesen. Ginge er ins Protokoll, wäre die
+    // Antwort umgekehrt: Dort zählt die Vergleichbarkeit zwischen
+    // Maschinen mehr als die Gewohnheit auf einer.
+    format!("…{}{}", std::path::MAIN_SEPARATOR, rest.display())
 }
 
 /// Das Nutzermenü: nur, was jeder Teilnehmer braucht.
@@ -325,10 +339,12 @@ fn plan_erzeugen(e: &Einstellungen) {
             println!("\n  Geschrieben: {}", ziel.display());
             println!("    Einstellungs-ID {}", plan.short_id());
             println!("\n  Diese Datei unverändert an alle Teilnehmer schicken.");
-            println!("  Sie laden sie über Menüpunkt 8 oder mit");
+            println!("  Sie laden sie im Menü über [3] Testdatei wählen,");
+            println!("  über [2] Testlauf starten oder mit");
             println!("      myl-test --plan {} determinismus", ziel.display());
-            println!("\n  Alle Protokolle landen dann unter");
-            println!("      logs/<befehl>/<datum>_{}/", plan.short_id());
+            println!("\n  Ihre Protokolle tragen dann die Einstellungs-Kennung");
+            println!("      <nutzer>_{}_<datum>_<uhrzeit>.jsonl", plan.short_id());
+            println!("  und liegen in TESTCLIENT/logs.");
         }
         Err(err) => println!("\n  {}", err),
     }
@@ -1302,12 +1318,36 @@ mod tests {
         assert_eq!(kuerzel(99), ' ');
     }
 
+    /// Lange Pfade werden auf die letzten drei Glieder gekürzt, kurze
+    /// bleiben unangetastet.
+    ///
+    /// **Mit dem Trennzeichen der Plattform gebaut, nicht mit einem
+    /// festen.** Der Test stand vorher auf `"…/d/e/f"` und schlug unter
+    /// Windows fehl, weil der zusammengesetzte Rest dort Rückstriche
+    /// bekommt. Der Fehler lag im Code, nicht im Test: Die Ausgabe mischte
+    /// beide Zeichen.
     #[test]
     fn pfade_werden_gekuerzt() {
-        let lang = PathBuf::from("/a/b/c/d/e/f");
-        assert_eq!(kurz(&lang), "…/d/e/f");
-        let kurzer = PathBuf::from("a/b");
-        assert_eq!(kurz(&kurzer), "a/b");
+        let t = std::path::MAIN_SEPARATOR;
+        let lang: PathBuf = ["", "a", "b", "c", "d", "e", "f"].iter().collect();
+        assert_eq!(kurz(&lang), format!("…{t}d{t}e{t}f"));
+
+        let kurzer: PathBuf = ["a", "b"].iter().collect();
+        assert_eq!(kurz(&kurzer), format!("a{t}b"));
+    }
+
+    /// Der eigentliche Fund: In einer Zeile darf nur **ein**
+    /// Trennzeichen vorkommen. Gemischt gelesen sieht ein Pfad nach einem
+    /// Fehler aus, und auf einer fremden Maschine ist genau das die
+    /// Frage, die niemand beantworten kann.
+    #[test]
+    fn gekuerzte_pfade_mischen_keine_trennzeichen() {
+        let lang: PathBuf = ["", "a", "b", "c", "d", "e", "f"].iter().collect();
+        let text = kurz(&lang);
+        assert!(
+            !(text.contains('/') && text.contains('\\')),
+            "gemischte Trennzeichen: {text}"
+        );
     }
 
     #[test]

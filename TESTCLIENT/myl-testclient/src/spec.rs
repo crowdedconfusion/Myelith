@@ -234,7 +234,7 @@ impl TestPlan {
              # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.\n\
              #\n\
              # Aufruf:  myl-test --plan {}.plan determinismus\n\
-             #    oder:  myl-test  (Menü, Punkt 8)\n\
+             #    oder im Menü über [3] Testdatei wählen\n\
              #\n\
              # Die Zeile spec_sha256 sichert genau das ab. Kommentare und\n\
              # Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.\n\
@@ -469,6 +469,33 @@ mod tests {
     fn fehlende_pruefsumme_wird_gemeldet() {
         let text = "prompt = x\nsteps = 1\nshards = 1\nmodell = y\nmodel = y\n";
         assert_eq!(TestPlan::parse(text), Err(PlanError::PruefsummeFehlt));
+    }
+
+    /// **Zeilenenden dürfen nichts ändern.** Ein Testplan wird per Mail
+    /// und Chat weitergereicht und unter Windows möglicherweise mit CRLF
+    /// ausgecheckt oder gespeichert. Bliebe das `\r` im Wert hängen,
+    /// wiche die Prüfsumme ab, und der Client meldete „Datei verändert",
+    /// obwohl niemand etwas verändert hat. Das wäre genau der Fehlalarm,
+    /// gegen den es den Testplan gibt.
+    #[test]
+    fn crlf_aendert_weder_werte_noch_pruefsumme() {
+        // Über `serialisieren` gebaut, damit die Prüfsumme stimmt: Der
+        // Test soll die Zeilenenden prüfen, nicht die Prüfsummenrechnung.
+        let mit_lf = TestPlan::vorgaben().to_file_text();
+        let mit_crlf = mit_lf.replace('\n', "\r\n");
+
+        let a = TestPlan::parse(&mit_lf).expect("LF-Fassung");
+        let b = TestPlan::parse(&mit_crlf).expect("CRLF-Fassung");
+
+        assert_eq!(a.prompts, b.prompts, "Prompts unterscheiden sich");
+        assert_eq!(a.model, b.model);
+        assert_eq!(a.steps, b.steps);
+        assert_eq!(a.shards, b.shards);
+        assert_eq!(
+            a.canonical_bytes(),
+            b.canonical_bytes(),
+            "die Prüfsumme hinge an den Zeilenenden"
+        );
     }
 
     #[test]

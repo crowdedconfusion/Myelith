@@ -3,7 +3,7 @@
 > **Version:** 0.6.0
 > **Datum:** 2026-08-21
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 144 Tests grün, alle Läufe gegen die
+> und 3.1 (Modellstand im Protokoll). 146 Tests grün, alle Läufe gegen die
 > echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
@@ -571,6 +571,13 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
   Zellen Radius, im Aufbau erscheinen 21 verschiedene Farbtöne, im
   Hintergrund laufen dabei 5267 Tropfenköpfe über die volle Fensterhöhe,
   und der fertige Schriftzug gleitet von Zeile 21,8 auf 11,0.
+- **Windows-Funde aus dem ersten CI-Lauf:** `menu::kurz` mischte die
+  Trennzeichen (`…/d\e\f`), weil ein festes `…/` vor einem Pfad stand,
+  den `PathBuf::collect` mit dem Trennzeichen des Systems zusammensetzt.
+  Jetzt `MAIN_SEPARATOR` an beiden Stellen; ein Test prüft die Regel
+  („nur ein Trennzeichen je Zeile") statt eines festen Ergebnisses.
+  Außerdem sind `.plan`-Dateien in `.gitattributes` auf LF festgelegt, mit
+  einem Test, dass CRLF weder Werte noch Prüfsumme verändert.
 - **Die Repository-Wurzel wird zur Laufzeit gesucht, nicht beim
   Übersetzen.** **Fund:** Der Protokollordner und die Artefaktwurzel
   hingen an `env!("CARGO_MANIFEST_DIR")`, also am Pfad, der beim Bauen
@@ -713,7 +720,7 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
   `animation`, `banner` und `vergleich` übersetzen für
   `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
   Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
-- 53 → 144 Tests.
+- 53 → 146 Tests.
 
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)

@@ -19,3 +19,10 @@
 # Zeile bliebe er ungeregelt, und ein CR am Zeilenende machte aus dem
 # Shebang einen ungueltigen Pfad.
 starter text eol=lf
+
+# Testplaene muessen auf jeder Maschine byteidentisch sein: Sie sind die
+# Datei, die alle Beteiligten UNVERAENDERT verwenden. Ohne diese Zeile
+# wandelt Git for Windows sie beim Auschecken auf CRLF um. Die Pruefsumme
+# haengt zwar an den geparsten Feldern und nicht an den Bytes, ein
+# Bytevergleich zwischen zwei Teilnehmern ginge aber schief.
+*.plan text eol=lf
