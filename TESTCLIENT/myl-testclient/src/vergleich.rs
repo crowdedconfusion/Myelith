@@ -403,15 +403,180 @@ fn kurz(digest: &str) -> &str {
     &digest[..16.min(digest.len())]
 }
 
-/// `myl-test vergleich` — einlesen, gruppieren, berichten.
-pub fn run(dir: &Path) -> bool {
-    match einlesen(dir) {
-        Ok(protokolle) => berichten(dir, &gruppieren(protokolle)),
-        Err(e) => {
-            eprintln!("  {}", e);
-            false
+/// Ablage der zugesandten Teilnehmerprotokolle, relativ zur Repository-Wurzel.
+pub const ORDNER: &str = "TESTCLIENT/Vergleiche";
+/// Ablage der Vergleichsberichte.
+pub const BERICHTE: &str = "TESTCLIENT/Vergleiche/Berichte";
+
+/// Wo der Koordinator die zugesandten Protokolle ablegt.
+pub fn vergleichsordner(repo: &Path) -> PathBuf {
+    repo.join(ORDNER)
+}
+
+/// Wo die Berichte hingeschrieben werden.
+///
+/// Ein **Unterordner** der Eingabe, nicht ihr Geschwister: Läge der
+/// Bericht neben den Protokollen, hätte der nächste Aufruf ihn als
+/// Eingabe mitgelesen. Er trägt zwar keine `.jsonl`-Endung und wäre
+/// deshalb heute unschädlich — aber das ist eine Eigenschaft des
+/// Dateinamens, keine des Verfahrens, und darauf soll sich niemand
+/// verlassen müssen.
+pub fn berichtsordner(repo: &Path) -> PathBuf {
+    repo.join(BERICHTE)
+}
+
+/// Schreibt den ausführlichen Bericht und liefert seinen Pfad.
+///
+/// Markdown, weil der Bericht weitergereicht wird: an Mitwirkende, in
+/// Tickets, gelegentlich in ein `eval/results/`-Verzeichnis. Er enthält
+/// dieselben Angaben wie die Bildschirmausgabe und zusätzlich, was dort
+/// keinen Platz hat — vollständige Digests statt Kurzform, Dateinamen,
+/// Zeitpunkt des Vergleichs.
+pub fn bericht_schreiben(
+    ziel: &Path,
+    quelle: &Path,
+    gruppen: &[Gruppe],
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(ziel).map_err(|e| format!("{} nicht anlegbar: {}", ziel.display(), e))?;
+
+    let (datum, uhrzeit) = crate::logging::datum_und_uhrzeit();
+    let pfad = ziel.join(format!("vergleich_{}_{}.md", datum, uhrzeit));
+    fs::write(&pfad, bericht_text(quelle, &datum, &uhrzeit, gruppen))
+        .map_err(|e| format!("{} nicht schreibbar: {}", pfad.display(), e))?;
+    Ok(pfad)
+}
+
+/// Setzt den Berichtstext zusammen. Getrennt vom Schreiben, damit er ohne
+/// Dateisystem prüfbar ist.
+fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -> String {
+    use std::fmt::Write as _;
+    let mut t = String::new();
+
+    let _ = writeln!(t, "# Vergleichsbericht {} {}", datum, uhrzeit);
+    let _ = writeln!(t);
+    let _ = writeln!(t, "**Quelle:** `{}`  ", quelle.display());
+    let _ = writeln!(
+        t,
+        "**Protokolle:** {}  ",
+        gruppen.iter().map(|g| g.protokolle.len()).sum::<usize>()
+    );
+    let _ = writeln!(t, "**Gruppen:** {}", gruppen.len());
+    let _ = writeln!(t);
+
+    if gruppen.is_empty() {
+        let _ = writeln!(
+            t,
+            "Keine Protokolle gefunden. Erwartet werden `.jsonl`-Dateien, \
+             wie sie jeder Testlauf schreibt."
+        );
+        return t;
+    }
+
+    let alles_gut = gruppen.iter().all(|g| g.urteil.ist_nachweis());
+    let _ = writeln!(
+        t,
+        "**Gesamturteil:** {}",
+        if alles_gut {
+            "NACHWEIS über alle Gruppen"
+        } else {
+            "kein durchgehender Nachweis — siehe die Urteile je Gruppe"
+        }
+    );
+
+    for g in gruppen {
+        let _ = writeln!(t);
+        let _ = writeln!(
+            t,
+            "## {} · Einstellungen `{}`",
+            g.befehl, g.einstellungen_id
+        );
+        let _ = writeln!(t);
+        let _ = writeln!(t, "### Beteiligte Läufe");
+        let _ = writeln!(t);
+        let _ = writeln!(t, "| Teilnehmer | Hardware | θ_v | Artefakt-Digest | Fingerabdruck | Datei |");
+        let _ = writeln!(t, "|---|---|---|---|---|---|");
+        for p in &g.protokolle {
+            let _ = writeln!(
+                t,
+                "| {} | {} | {} | `{}` | `{}` | `{}` |",
+                p.bezeichnung(),
+                leer_als_strich(&p.hardware),
+                leer_als_strich(&p.theta_v),
+                kurz(&p.artefakt_digest),
+                kurz(&p.fingerprint),
+                p.datei
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            );
+        }
+
+        let _ = writeln!(t);
+        let _ = writeln!(t, "### Vergleichswerte");
+        let _ = writeln!(t);
+        for (name, nach_digest) in &g.werte {
+            if nach_digest.len() == 1 {
+                let digest = nach_digest.keys().next().map(String::as_str).unwrap_or("");
+                let _ = writeln!(t, "- **{}** — übereinstimmend: `{}`", name, digest);
+            } else {
+                let _ = writeln!(t, "- **{}** — ABWEICHUNG, {} verschiedene Werte:", name, nach_digest.len());
+                for (digest, laeufe) in nach_digest {
+                    let _ = writeln!(t, "  - `{}` — {}", digest, laeufe.join(", "));
+                }
+            }
+        }
+
+        let _ = writeln!(t);
+        let _ = writeln!(t, "### Urteil: {}", g.urteil.kurz());
+        let _ = writeln!(t);
+        for zeile in erlaeuterung(&g.urteil).lines() {
+            let _ = writeln!(t, "{}", zeile);
         }
     }
+
+    let _ = writeln!(t);
+    let _ = writeln!(t, "---");
+    let _ = writeln!(t);
+    let _ = writeln!(
+        t,
+        "Dieser Bericht hält den Stand des Quellordners zum genannten \
+         Zeitpunkt fest. Ein **bestätigter** Cross-Hardware-Nachweis gehört \
+         nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3) — der \
+         Berichtsordner wird nicht versioniert."
+    );
+    t
+}
+
+fn leer_als_strich(s: &str) -> &str {
+    if s.is_empty() {
+        "—"
+    } else {
+        s
+    }
+}
+
+/// `myl-test vergleich` — einlesen, gruppieren, berichten, festhalten.
+pub fn run(dir: &Path, berichte: Option<&Path>) -> bool {
+    let protokolle = match einlesen(dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("  {}", e);
+            return false;
+        }
+    };
+
+    let gruppen = gruppieren(protokolle);
+    let ok = berichten(dir, &gruppen);
+
+    if let Some(ziel) = berichte {
+        match bericht_schreiben(ziel, dir, &gruppen) {
+            Ok(pfad) => println!("  Bericht: {}", pfad.display()),
+            // Ein fehlgeschlagener Bericht darf das Urteil nicht kippen:
+            // Es steht bereits auf dem Bildschirm und ist damit gefällt.
+            Err(e) => eprintln!("  WARNUNG: Bericht nicht geschrieben — {}", e),
+        }
+    }
+    ok
 }
 
 /// Zerlegt eine JSONL-Zeile in ihre Felder.
@@ -628,7 +793,7 @@ mod tests {
         let dir = tempdir("bericht");
         protokoll_schreiben(&dir, "anna", "abcd1234", "aarch64", "fp-a", "0.17.0", "digest-x");
         protokoll_schreiben(&dir, "anna", "abcd1234", "aarch64", "fp-a", "0.17.0", "digest-x");
-        assert!(!run(&dir), "eine Maschine darf keinen Erfolg melden");
+        assert!(!run(&dir, None), "eine Maschine darf keinen Erfolg melden");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -637,13 +802,13 @@ mod tests {
     fn leeres_verzeichnis_meldet_sauber() {
         let dir = tempdir("leer");
         fs::create_dir_all(&dir).unwrap();
-        assert!(!run(&dir));
+        assert!(!run(&dir, None));
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn fehlendes_verzeichnis_meldet_sauber() {
-        assert!(!run(Path::new("/nicht/vorhanden/myl")));
+        assert!(!run(Path::new("/nicht/vorhanden/myl"), None));
     }
 
     /// Der Leser muss genau das zurückgeben, was der Schreiber maskiert
@@ -685,6 +850,67 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("fremd.jsonl"), "{\"kind\":\"etwas\"}\n").unwrap();
         assert!(einlesen(&dir).expect("lesbar").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Der Bericht muss das Urteil und die vollständigen Digests tragen —
+    /// die Bildschirmausgabe kürzt beides, und der Bericht wird
+    /// weitergereicht.
+    #[test]
+    fn bericht_traegt_urteil_und_volle_digests() {
+        let dir = tempdir("bericht-inhalt");
+        protokoll_schreiben(&dir, "anna", "abcd1234", "aarch64", "fp-a", "0.17.0", "digest-x");
+        protokoll_schreiben(&dir, "björn", "abcd1234", "x86-64", "fp-b", "0.17.0", "digest-x");
+        let gruppen = gruppieren(einlesen(&dir).expect("lesbar"));
+
+        let text = bericht_text(&dir, "2026-08-21", "143022", &gruppen);
+        assert!(text.contains("# Vergleichsbericht 2026-08-21 143022"), "{text}");
+        assert!(text.contains("NACHWEIS"), "{text}");
+        assert!(text.contains("anna") && text.contains("björn"), "{text}");
+        assert!(text.contains("digest-x"), "voller Digest fehlt");
+        assert!(text.contains("0.17.0"), "θ_v fehlt");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein Bericht ohne Protokolle darf nicht so aussehen, als sei nichts
+    /// zu beanstanden gewesen.
+    #[test]
+    fn leerer_bericht_sagt_es_deutlich() {
+        let text = bericht_text(Path::new("/leer"), "2026-08-21", "143022", &[]);
+        assert!(text.contains("Keine Protokolle gefunden"), "{text}");
+        assert!(!text.contains("NACHWEIS"), "leerer Bericht darf nichts belegen");
+    }
+
+    /// Der Bericht landet in seinem eigenen Ordner und wird beim nächsten
+    /// Vergleich **nicht** als Eingabe mitgelesen.
+    #[test]
+    fn bericht_wird_nicht_zur_eingabe() {
+        let dir = tempdir("bericht-ablage");
+        let berichte = dir.join("Berichte");
+        protokoll_schreiben(&dir, "anna", "abcd1234", "aarch64", "fp-a", "0.17.0", "digest-x");
+        protokoll_schreiben(&dir, "björn", "abcd1234", "x86-64", "fp-b", "0.17.0", "digest-x");
+
+        assert!(run(&dir, Some(&berichte)));
+        let geschrieben: Vec<_> = fs::read_dir(&berichte)
+            .expect("Berichtsordner")
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(geschrieben.len(), 1, "genau ein Bericht erwartet");
+
+        // Zweiter Lauf über denselben Ordner: Die Zahl der eingelesenen
+        // Protokolle darf sich nicht verändert haben.
+        assert_eq!(einlesen(&dir).expect("lesbar").len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein unbeschreibbarer Berichtsordner darf das Urteil nicht kippen —
+    /// es steht bereits auf dem Bildschirm und ist damit gefällt.
+    #[test]
+    fn fehlender_berichtsordner_kippt_das_urteil_nicht() {
+        let dir = tempdir("bericht-fehler");
+        protokoll_schreiben(&dir, "anna", "abcd1234", "aarch64", "fp-a", "0.17.0", "digest-x");
+        protokoll_schreiben(&dir, "björn", "abcd1234", "x86-64", "fp-b", "0.17.0", "digest-x");
+        assert!(run(&dir, Some(Path::new("/proc/kein-schreibzugriff/myl"))));
         let _ = fs::remove_dir_all(&dir);
     }
 

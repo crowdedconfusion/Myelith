@@ -3,7 +3,7 @@
 > **Version:** 0.6.0
 > **Datum:** 2026-08-21
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 92 Tests grün, alle Läufe gegen die
+> und 3.1 (Modellstand im Protokoll). 101 Tests grün, alle Läufe gegen die
 > echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
@@ -69,12 +69,13 @@ den Befund trägt.
 ## `vergleich` — vom Protokoll zum Urteil
 
 ```bash
-myl-test vergleich --logs <ordner>
+myl-test vergleich
 ```
 
-Liest alle `.jsonl` eines Ordners, gruppiert nach Prüflauf und
-Einstellungs-Kennung und stellt jeden Vergleichswert gegenüber. Je Gruppe
-ein Urteil:
+Liest die zugesandten Protokolle aus **`TESTCLIENT/Vergleiche/`**,
+gruppiert nach Prüflauf und Einstellungs-Kennung und stellt jeden
+Vergleichswert gegenüber. Mit `--logs <ordner>` auch über ein anderes
+Verzeichnis. Je Gruppe ein Urteil:
 
 | Urteil | Bedeutung |
 |---|---|
@@ -96,6 +97,26 @@ zu melden wäre genau die Verwechslung, gegen die es `artefakte` gibt.
 
 Exit-Code 0 nur dann, wenn jede Gruppe den Nachweis trägt — damit taugt
 der Befehl für die CI.
+
+**Zwei Ordner, und die Trennung ist der Punkt:**
+
+```text
+TESTCLIENT/Vergleiche/            Eingabe: die zugesandten .jsonl
+TESTCLIENT/Vergleiche/Berichte/   Ausgabe: vergleich_<datum>_<uhrzeit>.md
+```
+
+Der Vergleich liest **alles**, was er an `.jsonl` findet. Läge er über dem
+eigenen Protokollverzeichnis, mischten sich die zugesandten Läufe mit den
+eigenen — und ein Urteil über eine Gruppe, in der die eigene Maschine
+mehrfach steckt, sagt etwas anderes aus, als es zu sagen scheint. Der
+Bericht landet aus demselben Grund eine Ebene tiefer: neben seiner
+Eingabe würde ihn der nächste Aufruf mitlesen.
+
+Der Bericht trägt, was auf dem Bildschirm keinen Platz hat —
+**vollständige** Digests statt der Kurzform, Dateinamen, Artefakt-Digest
+je Teilnehmer, Zeitpunkt. Er ist die Fassung, die weitergereicht wird.
+Ein **Laufprotokoll** schreibt `vergleich` dagegen nicht: Er misst nichts,
+er wertet aus.
 
 ## Testplan — die Datei, die der Koordinator verteilt
 
@@ -374,6 +395,9 @@ TESTCLIENT/
 │   ├── README.md             diese Kurzübersicht
 │   ├── ANLEITUNG.md          Tests mit mehreren Beteiligten
 │   └── Fahrplan-v1.md        Phasenplan
+├── Testpläne/                .plan-Dateien des Koordinators
+├── Vergleiche/               zugesandte Protokolle (gitignored)
+│   └── Berichte/             Vergleichsberichte (gitignored)
 └── myl-testclient/
     ├── src/
     │   ├── lib.rs            Einstieg, Abgrenzung zu CLIENT
@@ -388,7 +412,7 @@ TESTCLIENT/
     │   ├── plaene.rs         Testpläne im Planordner finden
     │   ├── runs.rs           Hardware, Determinismus, Shards
     │   ├── spec.rs           Testplan (erzeugen, prüfen, laden)
-    │   ├── vergleich.rs      Protokolle gegenüberstellen und urteilen
+    │   ├── vergleich.rs      Protokolle gegenüberstellen, urteilen, berichten
     │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
     └── logs/                 Laufprotokolle (gitignored)
 ```
@@ -409,6 +433,11 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 ## Changelog
 
 ### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
+
+- **`TESTCLIENT/Vergleiche/`** als Ablage der zugesandten Protokolle,
+  `Vergleiche/Berichte/` für den Bericht. Ohne `--logs` liest `vergleich`
+  den ersten Ordner und schreibt in den zweiten; Menüpunkt [3] lässt
+  zwischen zugesandten und eigenen Protokollen wählen.
 
 - **`vergleich`** (neuer Befehl, Fahrplanpunkt 2.1): liest alle `.jsonl`
   eines Ordners, gruppiert nach Prüflauf und Einstellungs-Kennung, stellt
@@ -437,9 +466,20 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 - **Pfeiltasten und Enter** statt Ziffern (`crossterm`). Ziffern bleiben
   als zweiter Weg; ohne Terminal oder in einem zu kleinen Fenster fällt
   die Auswahl auf zeilenweise Eingabe zurück.
-- **Startanimation:** Zeichenregen, dann baut sich der Schriftzug auf.
-  Ein Tastendruck bricht ab, `MYL_NO_ANIMATION=1` schaltet sie ab, ohne
-  Terminal läuft sie gar nicht.
+- **Startanimation:** Zeichenregen, der sich zu einem Sturm verdichtet,
+  aus dem der Schriftzug Zelle für Zelle einrastet. Kein Löschen
+  dazwischen — sonst wären es zwei Bilder nacheinander statt eines
+  Vorgangs. Ein Tastendruck bricht ab, `MYL_NO_ANIMATION=1` schaltet sie
+  ab, ohne Terminal läuft sie gar nicht.
+- **Netzmotiv nach dem Vorbild des Projektbanners** überarbeitet: Knoten
+  verschiedener Größe (`◉ ● ○ ∘ ·`), Naben mit acht abgehenden Kanten,
+  lange Kanten quer durchs Feld. Die alte Fassung war ein regelmäßiger
+  Zickzack und las sich als Ornament, nicht als Netz.
+- **Fund am Namen:** Die Säuberung für den Dateinamen lief auch über den
+  Namen im Protokoll — aus „Björn" wurde „bj-rn", auch im Bericht des
+  Koordinators. Jetzt trägt das Protokoll den eingegebenen Namen, und nur
+  der Dateiname wird umgeschrieben; Umlaute werden dabei umschrieben
+  (`Bjoern`), nicht getilgt.
 - **Artefakte und Gewichte freigeben** (Entwicklerpunkt [9]). Getrennt,
   weil Artefakte in Sekunden aus dem Skalenpaket entstehen und die
   Gewichte einen Download über Gigabyte kosten. Der Löschpfad ist auf
@@ -458,7 +498,7 @@ COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
   `animation`, `banner` und `vergleich` übersetzen für
   `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
   Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
-- 53 → 92 Tests.
+- 53 → 101 Tests.
 
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)

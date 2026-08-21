@@ -33,10 +33,12 @@ BEFEHLE
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
 
-    vergleich       Protokolle eines Ordners gegenüberstellen und urteilen,
-                    ob sie den Cross-Hardware-Nachweis tragen. Verweigert ein
-                    positives Urteil, wenn alle Protokolle von derselben
-                    Maschine stammen — das wäre kein Nachweis.
+    vergleich       Die zugesandten Protokolle aus TESTCLIENT/Vergleiche
+                    gegenüberstellen und urteilen, ob sie den Cross-Hardware-
+                    Nachweis tragen. Verweigert ein positives Urteil, wenn
+                    alle Protokolle von derselben Maschine stammen — das
+                    wäre kein Nachweis. Schreibt einen ausführlichen Bericht
+                    nach TESTCLIENT/Vergleiche/Berichte.
 
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
@@ -58,7 +60,8 @@ OPTIONEN
     --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: qwen2.5-0.5b)
     --out <DATEI>       Zieldatei beim Erzeugen eines Plans
     --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/myl-testclient/logs)
-                        Zugleich das Verzeichnis, das `vergleich` auswertet
+                        Bei `vergleich` das auszuwertende Verzeichnis; ohne
+                        die Option wird TESTCLIENT/Vergleiche gelesen
     --name <TEXT>       Name des Teilnehmers. Steht im Protokoll und im
                         Dateinamen, damit der Koordinator Protokolle ohne
                         Rückfrage zuordnen kann. Im Menü wird danach gefragt
@@ -106,8 +109,8 @@ CROSS-HARDWARE-NACHWEIS
     1. Auf jeder Maschine:  myl-test artefakte
        → derselbe Modellstand, sonst sagt der Vergleich nichts aus.
     2. Auf jeder Maschine:  myl-test --name <wer> --plan <datei> determinismus
-    3. Alle .jsonl in EINEN Ordner legen, dann:
-           myl-test vergleich --logs <ordner>
+    3. Alle .jsonl nach TESTCLIENT/Vergleiche legen, dann:
+           myl-test vergleich
 
     Der Nachweis braucht zwei Aussagen: Die Maschinen sind verschieden,
     und das Ergebnis ist trotzdem gleich. `vergleich` prüft beide und
@@ -125,6 +128,9 @@ struct Args {
     /// Vorrang vor jeder Automatik.
     artifacts_explizit: bool,
     logs: PathBuf,
+    /// Wurde `--logs` ausdrücklich gesetzt? `vergleich` liest sonst den
+    /// Ordner der zugesandten Protokolle statt des eigenen Protokollorts.
+    logs_explizit: bool,
     /// Name des Teilnehmers; steht im Protokoll und im Dateinamen.
     name: String,
     /// Modell, das ein erzeugter Plan vorgibt.
@@ -147,6 +153,7 @@ impl Args {
             artifacts: default_artifact_dir(),
             artifacts_explizit: false,
             logs: default_log_dir(),
+            logs_explizit: false,
             quiet: false,
             plan: None,
             plan_id: None,
@@ -205,6 +212,7 @@ fn parse() -> Result<Args, String> {
             }
             "--logs" => {
                 a.logs = PathBuf::from(need(i, "--logs")?);
+                a.logs_explizit = true;
                 i += 2;
             }
             "--name" => {
@@ -335,14 +343,25 @@ fn main() -> ExitCode {
         return plan_erzeugen(&args);
     }
 
-    // `vergleich` schreibt **kein** Protokoll. Er wertet die vorhandenen
-    // aus, und sein Ergebnis würde als neue Datei im selben Ordner beim
-    // nächsten Aufruf wieder mit eingelesen. Was der Vergleich festhalten
-    // soll, gehört nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3),
-    // nicht neben seine Eingabe.
+    // `vergleich` schreibt **kein Laufprotokoll**, sondern einen Bericht,
+    // und der landet in einem Unterordner der Eingabe. Läge er daneben,
+    // würde der nächste Aufruf ihn mitlesen.
+    //
+    // Ohne `--logs` wird der Ordner der **zugesandten** Protokolle
+    // gelesen, nicht der eigene Protokollort: Der Befehl gehört dem
+    // Koordinator, und der vergleicht fremde Läufe, nicht seine eigenen.
     if args.command == "vergleich" {
         banner::print_if(!args.quiet);
-        return if myl_testclient::run_vergleich(&args.logs) {
+        let repo = myl_testclient::artefakte::repo_wurzel(
+            std::env::current_dir().unwrap_or_default(),
+        );
+        let quelle = if args.logs_explizit {
+            args.logs.clone()
+        } else {
+            myl_testclient::vergleich::vergleichsordner(&repo)
+        };
+        let berichte = myl_testclient::vergleich::berichtsordner(&repo);
+        return if myl_testclient::run_vergleich(&quelle, Some(&berichte)) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE

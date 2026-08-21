@@ -1,6 +1,6 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
-**Version:** 2.0.0 · **Datum:** 2026-08-21
+**Version:** 2.1.0 · **Datum:** 2026-08-21
 
 Diese Anleitung hat zwei Hälften:
 
@@ -223,9 +223,18 @@ Die Datei ist reiner Text und darf unverändert weitergegeben werden.
 
 ## A6. Selbst nachsehen: Protokolle vergleichen
 
-Punkt **[3] Protokolle vergleichen** stellt alle Protokolle im
-Protokollordner gegenüber. Legst du die Dateien der anderen Teilnehmer
-dort hinein, siehst du dasselbe Urteil wie der Koordinator:
+Punkt **[3] Protokolle vergleichen** fragt zuerst, *welche*:
+
+| Auswahl | Was verglichen wird |
+|---|---|
+| **Zugesandte Protokolle** | Was in `TESTCLIENT/Vergleiche/` liegt — der Weg des Koordinators |
+| **Eigene Läufe** | Die Protokolle dieser Maschine aus `logs/` |
+
+Für dich als Teilnehmer ist meist die zweite Auswahl richtig. Sie ergibt
+für sich **keinen** Nachweis — dazu fehlt eine zweite Maschine —, zeigt
+aber, ob wiederholte Läufe übereinstimmen. Hast du die Dateien der
+anderen bekommen, leg sie in `TESTCLIENT/Vergleiche/` und nimm die erste
+Auswahl:
 
 ```
   ── testlauf · Einstellungen 12a1e91e · 2 Protokolle ──
@@ -458,11 +467,32 @@ Dazu diese vier Sätze:
 
 ## B4. Einsammeln und auswerten
 
-Alle eingegangenen `.jsonl` in **einen** Ordner legen, dann:
+Für die eingehenden Dateien gibt es einen eigenen Ordner:
+
+```text
+TESTCLIENT/Vergleiche/            ← hier die zugesandten .jsonl ablegen
+TESTCLIENT/Vergleiche/Berichte/   ← hierhin schreibt der Vergleich seinen Bericht
+```
+
+Alle eingegangenen `.jsonl` dort hineinlegen — **nicht umbenennen**, der
+Dateiname trägt bereits Teilnehmer, Einstellungs-Kennung, Datum und
+Uhrzeit. Dann:
 
 ```bash
-myl-test vergleich --logs <ordner>
+myl-test vergleich
 ```
+
+Ohne weitere Angabe liest der Befehl genau diesen Ordner. Im Menü:
+Punkt [3], dort „Zugesandte Protokolle".
+
+**Warum ein eigener Ordner und nicht der Protokollordner des Clients:**
+Der Vergleich liest *alles*, was er an `.jsonl` findet. Lägen die
+zugesandten Läufe zwischen den eigenen, enthielte die Gruppe die eigene
+Maschine mehrfach — und ein Urteil darüber sagt etwas anderes aus, als es
+zu sagen scheint.
+
+**Warum der Bericht in einem Unterordner landet:** Läge er neben seiner
+Eingabe, würde ihn der nächste Aufruf mitlesen.
 
 Der Befehl gruppiert nach Prüflauf und Einstellungs-Kennung, stellt jeden
 Vergleichswert gegenüber und fällt je Gruppe ein Urteil:
@@ -485,9 +515,17 @@ Ein `=` heißt, alle Protokolle stimmen in diesem Wert überein; ein `≠`
 listet auf, wer was gerechnet hat. Der Befehl endet mit Exit-Code 0 nur
 dann, wenn **jede** Gruppe den Nachweis trägt — er taugt damit für die CI.
 
-`vergleich` schreibt selbst **kein** Protokoll. Es wertet die
-vorhandenen aus, und seine Ausgabe würde beim nächsten Aufruf sonst als
-Eingabe wieder mitgelesen.
+Zusätzlich zur Bildschirmausgabe entsteht in `Vergleiche/Berichte/` ein
+ausführlicher Bericht als Markdown: `vergleich_<datum>_<uhrzeit>.md`. Er
+trägt, was auf dem Bildschirm keinen Platz hat — **vollständige** Digests
+statt der Kurzform, die Dateinamen, den Artefakt-Digest je Teilnehmer und
+den Zeitpunkt des Vergleichs. Diese Datei reichst du weiter.
+
+Ein **Laufprotokoll** schreibt `vergleich` dagegen nicht: Es misst nichts,
+es wertet aus.
+
+Der Berichtsordner wird nicht versioniert. Was bleiben soll, gehört nach
+`INTEGER_LLM/eval/results/` — siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
 
 ## B5. Die Urteile und was sie bedeuten
 
@@ -644,6 +682,12 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 ---
 
 ## Changelog
+
+### v2.1.0 – 2026-08-21 (Vergleichsordner)
+- **`TESTCLIENT/Vergleiche/`** als Ablage der zugesandten Protokolle,
+  `Vergleiche/Berichte/` für den ausführlichen Bericht. `myl-test
+  vergleich` liest den ersten und schreibt in den zweiten; Menüpunkt [3]
+  lässt zwischen zugesandten und eigenen Protokollen wählen.
 
 ### v2.0.0 – 2026-08-21 (nach Rollen geteilt, für Laien geschrieben)
 - **Zwei Teile statt sieben Kapitel.** Teil A führt einen Teilnehmer ohne

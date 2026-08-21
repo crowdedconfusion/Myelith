@@ -217,7 +217,7 @@ pub fn run(mut e: Einstellungen) -> bool {
         match wahl {
             '1' => letztes_ergebnis = testlauf(&e),
             '2' => testdatei_waehlen(&mut e),
-            '3' => letztes_ergebnis = crate::vergleich::run(&e.logs),
+            '3' => letztes_ergebnis = vergleichen(&e),
             '4' => anleitung_zeigen(),
             '9' => letztes_ergebnis = entwickler(&mut e, letztes_ergebnis),
             '0' => {
@@ -531,6 +531,46 @@ fn testlauf(e: &Einstellungen) -> bool {
         ja_nein(stapel)
     );
     log.finish(hardware && determinismus && shard && stapel)
+}
+
+/// Menüpunkt [3]: Protokolle vergleichen.
+///
+/// **Zwei Quellen, und die Wahl gehört dem Nutzer.** Der Koordinator legt
+/// die zugesandten Protokolle in `TESTCLIENT/Vergleiche/`; ein Teilnehmer
+/// will dagegen die eigenen Läufe aus `logs/` gegenüberstellen. Beides in
+/// einen Topf zu werfen wäre der schlechtere Weg: Ein Urteil über eine
+/// Gruppe, in der die eigene Maschine mehrfach steckt, sagt etwas anderes
+/// aus, als es zu sagen scheint.
+///
+/// Der Bericht landet in beiden Fällen unter `Vergleiche/Berichte/`.
+fn vergleichen(e: &Einstellungen) -> bool {
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    let zugesandt = crate::vergleich::vergleichsordner(&repo);
+    let berichte = crate::vergleich::berichtsordner(&repo);
+
+    let punkte = vec![
+        Punkt::neu(
+            '1',
+            "Zugesandte Protokolle",
+            &format!(
+                "Was im Ordner {} liegt — der Weg des Koordinators.",
+                crate::vergleich::ORDNER
+            ),
+        ),
+        Punkt::neu(
+            '2',
+            "Eigene Läufe",
+            "Die Protokolle dieser Maschine. Ergibt für sich keinen\n\
+             Nachweis, zeigt aber, ob wiederholte Läufe übereinstimmen.",
+        ),
+        Punkt::neu('0', "Zurück", ""),
+    ];
+
+    match auswahl::waehlen("Welche Protokolle vergleichen?", &punkte) {
+        Some('1') => crate::vergleich::run(&zugesandt, Some(&berichte)),
+        Some('2') => crate::vergleich::run(&e.logs, Some(&berichte)),
+        _ => true,
+    }
 }
 
 /// Gibt Plattenplatz frei: Artefakte und heruntergeladene Gewichte.

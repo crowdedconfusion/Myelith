@@ -302,7 +302,8 @@ pub struct LogZiel {
     pub datum: String,
     /// Kurzkennung der Einstellungen (8 Hexzeichen) oder `ohne-plan`.
     pub einstellungen: String,
-    /// Name des Teilnehmers, gesäubert für den Dateinamen.
+    /// Name des Teilnehmers, so wie er eingegeben wurde. Geht **so** ins
+    /// Protokoll; für den Dateinamen siehe [`LogZiel::dateisicher`].
     pub teilnehmer: String,
     /// Hardware-Kurzform, für die Laufkennung.
     pub hardware: String,
@@ -327,20 +328,31 @@ impl LogZiel {
         hardware: &str,
     ) -> Self {
         let (datum, uhrzeit) = datum_und_uhrzeit();
-        let teilnehmer = saeubern(teilnehmer.trim());
+        let teilnehmer = teilnehmer.trim();
         Self {
             wurzel: wurzel.to_path_buf(),
             befehl: befehl.to_string(),
             datum,
             einstellungen: einstellungen.to_string(),
-            teilnehmer: if teilnehmer.is_empty() {
+            teilnehmer: if teilnehmer.is_empty() || saeubern(teilnehmer).is_empty() {
                 OHNE_NAME.to_string()
             } else {
-                teilnehmer
+                teilnehmer.to_string()
             },
             hardware: saeubern(hardware),
             uhrzeit,
         }
+    }
+
+    /// Der Teilnehmername in einer Form, die als Dateiname trägt.
+    ///
+    /// **Getrennt vom Namen selbst.** Ins Protokoll gehört, was jemand
+    /// eingegeben hat; in einen Dateinamen gehört, was auf jedem
+    /// Dateisystem und in jedem Mailanhang unverändert ankommt. Die erste
+    /// Fassung säuberte schon bei der Eingabe, und aus „Björn" wurde
+    /// „bj-rn" — auch im Bericht, den der Koordinator liest.
+    pub fn dateisicher(&self) -> String {
+        saeubern(&self.teilnehmer)
     }
 
     /// Ablageort: schlicht `<wurzel>`, ohne Unterordner.
@@ -373,7 +385,10 @@ impl LogZiel {
     pub fn lauf_dateiname(&self) -> String {
         format!(
             "{}_{}_{}_{}",
-            self.teilnehmer, self.einstellungen, self.datum, self.uhrzeit
+            self.dateisicher(),
+            self.einstellungen,
+            self.datum,
+            self.uhrzeit
         )
     }
 }
@@ -403,16 +418,30 @@ fn freier_dateiname(dir: &Path, basis: &str) -> String {
 }
 
 /// Ersetzt alles, was in Dateinamen stört.
+///
+/// **Umlaute werden umschrieben, nicht getilgt.** Dieser Client wird
+/// überwiegend von deutschsprachigen Teilnehmern bedient; ein „Björn",
+/// der als „bj-rn" im Auswertungsordner landet, ist für den Koordinator
+/// schlechter zuzuordnen als „bjoern". Alles Übrige jenseits von ASCII
+/// wird zum Bindestrich: Der Dateiname muss über Mailanhänge und
+/// verschiedene Dateisysteme unverändert ankommen, und dort ist ASCII die
+/// einzige verlässliche Zusicherung.
 fn saeubern(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            'ä' => out.push_str("ae"),
+            'ö' => out.push_str("oe"),
+            'ü' => out.push_str("ue"),
+            'Ä' => out.push_str("Ae"),
+            'Ö' => out.push_str("Oe"),
+            'Ü' => out.push_str("Ue"),
+            'ß' => out.push_str("ss"),
+            c if c.is_ascii_alphanumeric() || c == '-' || c == '.' => out.push(c),
+            _ => out.push('-'),
+        }
+    }
+    out
 }
 
 /// Datum und Uhrzeit als `(JJJJ-MM-TT, HHMMSS)` in UTC.
@@ -422,7 +451,7 @@ fn saeubern(s: &str) -> String {
 /// eine Umrechnung aus Unix-Sekunden. UTC bewusst — Teilnehmer sitzen
 /// in verschiedenen Zeitzonen, und ein Ordner je Zeitzone wäre genau
 /// die Zuordnungsarbeit, die vermieden werden soll.
-fn datum_und_uhrzeit() -> (String, String) {
+pub(crate) fn datum_und_uhrzeit() -> (String, String) {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -895,6 +924,32 @@ mod tests {
                 z.lauf_dateiname()
             );
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Der Name im Protokoll ist der eingegebene; nur der Dateiname wird
+    /// umgeschrieben. Umlaute werden dabei umschrieben, nicht getilgt.
+    #[test]
+    fn umlaute_ueberleben_im_namen_und_im_dateinamen() {
+        let dir = tempdir("umlaute");
+        let z = LogZiel::neu(&dir, "hardware", "Björn Müßig", "abcd1234", "hw");
+        assert_eq!(z.teilnehmer, "Björn Müßig", "Protokollname wurde verändert");
+        assert!(
+            z.lauf_dateiname().starts_with("Bjoern-Muessig_"),
+            "Dateiname: {}",
+            z.lauf_dateiname()
+        );
+        assert!(z.lauf_dateiname().is_ascii(), "Dateiname nicht ASCII");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein Name, von dem nach dem Säubern nichts übrig bliebe, darf keinen
+    /// Dateinamen erzeugen, der nur aus Bindestrichen besteht.
+    #[test]
+    fn unbrauchbarer_name_faellt_auf_ohne_name_zurueck() {
+        let dir = tempdir("unbrauchbar");
+        let z = LogZiel::neu(&dir, "hardware", "   ", "abcd1234", "hw");
+        assert_eq!(z.teilnehmer, OHNE_NAME);
         let _ = fs::remove_dir_all(&dir);
     }
 

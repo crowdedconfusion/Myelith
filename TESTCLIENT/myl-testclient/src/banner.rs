@@ -6,6 +6,26 @@
 //! steht darunter ohnehin sofort das Menü, und drei Textzeilen zwischen
 //! Schriftzug und Auswahl drängen die eigentliche Bedienung nach unten.
 //!
+//! ## Warum das Netzmotiv so aussieht
+//!
+//! Die erste Fassung war ein regelmäßiger Zickzack aus gleich großen
+//! Knoten — hübsch, aber es sah nach Ornament aus, nicht nach einem Netz.
+//! Das Vorbild trägt drei Eigenschaften, die den Unterschied machen, und
+//! alle drei sind hier nachgebildet:
+//!
+//! - **Knoten verschiedener Größe.** `◉ ● ○ ∘ ·` von der Nabe bis zum
+//!   fernen Punkt. Gleich große Knoten lesen sich als Muster, verschieden
+//!   große als Struktur.
+//! - **Naben mit auffächernden Kanten.** An `◉` und `●` gehen acht Kanten
+//!   ab (`│ ╱ ╲` in beide Richtungen). Das ist das Bildzeichen für einen
+//!   Knoten mit vielen Verbindungen, und im Original der auffälligste Zug.
+//! - **Lange Kanten, die einander kreuzen.** Sie verbinden weit entfernte
+//!   Knoten und laufen quer durchs Feld, statt nur Nachbarn zu paaren.
+//!
+//! Erzeugt wurde das Motiv auf einem Zeichenraster (Knoten setzen, Kanten
+//! ziehen, rastern) und danach fest eingetragen. Ein Generator zur
+//! Laufzeit wäre Aufwand für ein Bild, das sich nie ändert.
+//!
 //! **Breite:** 58 Zeichen im Schriftzug, das Ganze bleibt unter 80
 //! Spalten — Terminals unter 80 Zeichen sind selten, aber ein Banner,
 //! das umbricht, sieht schlimmer aus als keines.
@@ -16,11 +36,11 @@
 
 /// Der Schriftzug mit Netzmotiv, wie im Projektbanner.
 pub const BANNER: &str = r#"
-      ·           ∘────────·                    ∘
-       ╲      ╱   │         ╲            ·─────╱ ╲
-    ·───∘────╱────·──────────∘──────────╱        ·
-         ╲  ╱                 ╲        ╱   ╲    ╱
-          ∘                    ·──────∘     ∘──·
+              ·     ╱ │ ╲   ∘   ○       ∘       · ╱ │ ╲       ∘
+             ╱       ╱│╲         ╲   ╱│╲       ╱   ╱│╲       ╱
+      ●─────╱─────────◉───────────╲───●───────╱─────◉───────╱───────────◉
+           ╱         ╲│╱           ╲ ╲│╱     ╱     ╲│╱     ╱
+          ∘         ╲ │ ╱           ○       ∘     ╲ │ ╱   ·         ·
 
   ███╗   ███╗██╗   ██╗███████╗██╗     ██╗████████╗██╗  ██╗
   ████╗ ████║╚██╗ ██╔╝██╔════╝██║     ██║╚══██╔══╝██║  ██║
@@ -29,10 +49,10 @@ pub const BANNER: &str = r#"
   ██║ ╚═╝ ██║   ██║   ███████╗███████╗██║   ██║   ██║  ██║
   ╚═╝     ╚═╝   ╚═╝   ╚══════╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═╝
 
-
-    ∘──·        ╲          ·────∘         ╱        ·
-   ╱     ╲       ∘────────╱      ╲   ·───╱   ╲    ╱
-  ·       ∘─────╱          ·──────∘  ╱     ╲  ∘──·
+      ╲         ·            ╱  ╱│╲     ·             ·        ╱│╲
+     ∘─╲────○───────────────╱────◉─────────────●───────╲────────●────────◉
+        ╲                  ╱    ╲│╱                     ╲      ╲│╱
+         ·            ·   ∘                         ∘    ∘            ○
 "#;
 
 /// Untertitel des Testclients — direkt unter dem Banner.
@@ -113,6 +133,28 @@ mod tests {
             breiten.windows(2).all(|w| w[0] == w[1]),
             "ungleiche Zeilenbreiten: {:?}",
             breiten
+        );
+    }
+
+    /// Das Netzmotiv lebt von drei Eigenschaften (siehe Modul-Doku).
+    /// Ohne sie fiele es auf das Ornament zurück, das es einmal war.
+    #[test]
+    fn netzmotiv_traegt_naben_und_verschiedene_knoten() {
+        for knoten in ['◉', '●', '○', '∘', '·'] {
+            assert!(
+                BANNER.contains(knoten),
+                "Knotengröße {:?} fehlt — gleich große Knoten lesen sich als Muster",
+                knoten
+            );
+        }
+        // Eine Nabe zeigt sich an den senkrechten und schrägen Kanten,
+        // die von ihr abgehen.
+        assert!(BANNER.contains("╱│╲"), "Fächer nach oben fehlt");
+        assert!(BANNER.contains("╲│╱"), "Fächer nach unten fehlt");
+        // Lange Kanten quer durchs Feld statt Nachbarpaare.
+        assert!(
+            BANNER.lines().any(|z| z.contains("──────────")),
+            "keine lange Kante"
         );
     }
 

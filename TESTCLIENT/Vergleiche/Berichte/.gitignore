@@ -1,0 +1,7 @@
+# Vergleichsberichte, geschrieben von `myl-test vergleich`. Sie fassen
+# zusammen, was zum Zeitpunkt des Vergleichs im Ordner darueber lag, und
+# sind damit an diesen Stand gebunden — nicht an das Repository.
+#
+# Was bleiben soll, gehoert nach INTEGER_LLM/eval/results/.
+*.md
+!.gitignore

@@ -50,6 +50,9 @@ const ZEICHEN: &[char] = &[
 const REGENDAUER: Duration = Duration::from_millis(2200);
 /// Zeit je Bild. 40 ms sind 25 Bilder je Sekunde.
 const BILDDAUER: Duration = Duration::from_millis(40);
+/// Bilder, über die sich der Schriftzug aus dem Sturm zusammensetzt.
+/// 45 Bilder à 40 ms sind rund 1,8 Sekunden.
+const STURMBILDER: u32 = 45;
 
 /// Xorshift64. Reicht für einen Effekt, für nichts sonst.
 struct Zufall(u64);
@@ -137,9 +140,132 @@ fn spielen(breite: u16, hoehe: u16) -> io::Result<bool> {
     execute!(aus, cursor::Hide, Clear(ClearType::All))?;
 
     regen(&mut aus, breite, hoehe)?;
-    execute!(aus, Clear(ClearType::All))?;
-    schriftzug_aufbauen(&mut aus)?;
+    sturm(&mut aus, breite, hoehe)?;
     Ok(true)
+}
+
+/// Eine Zelle des fertigen Schriftzugs.
+struct Zelle {
+    x: u16,
+    y: u16,
+    zeichen: char,
+}
+
+/// Die Zellen, die der Schriftzug am Ende belegt.
+///
+/// Leerzeichen bleiben draußen: Sie sind kein Bild, sondern dessen
+/// Abwesenheit — und was nicht zum Schriftzug gehört, soll im Sturm
+/// verwehen statt als Lücke stehenzubleiben.
+fn schriftzug_zellen(breite: u16, hoehe: u16) -> Vec<Zelle> {
+    BANNER
+        .lines()
+        .enumerate()
+        .flat_map(|(y, zeile)| {
+            zeile.chars().enumerate().filter_map(move |(x, c)| {
+                (c != ' ' && x < breite as usize && y < hoehe as usize).then_some(Zelle {
+                    x: x as u16,
+                    y: y as u16,
+                    zeichen: c,
+                })
+            })
+        })
+        .collect()
+}
+
+/// Der Sturm: Aus dem herabgefallenen Rauschen setzt sich der Schriftzug
+/// zusammen.
+///
+/// **Warum kein Löschen zwischen Regen und Schriftzug.** Die erste
+/// Fassung machte den Bildschirm leer und baute den Schriftzug danach
+/// Zeile für Zeile auf. Das waren zwei Bilder nacheinander, und der
+/// Zusammenhang zwischen ihnen ging verloren: Die fallenden Zeichen
+/// hatten mit dem Schriftzug nichts zu tun. Hier bleibt das Rauschen
+/// stehen und wird dichter, während immer mehr Zellen des Schriftzugs
+/// **an ihrer endgültigen Stelle** einrasten. Das Bild entsteht sichtbar
+/// aus dem, was vorher herabgefallen ist.
+///
+/// **Die Reihenfolge ist gemischt, nicht zeilenweise.** Ein Aufbau von
+/// oben nach unten sähe aus wie ein Bildlauf; verstreutes Einrasten sieht
+/// aus wie Verdichtung.
+///
+/// **Bereits eingerastete Zellen werden in jedem Bild neu gezeichnet.**
+/// Das Rauschen wählt seine Stellen frei und träfe sie sonst wieder; die
+/// paar hundert Schreibvorgänge je Bild kosten nichts.
+fn sturm(aus: &mut impl Write, breite: u16, hoehe: u16) -> io::Result<()> {
+    let mut z = Zufall::neu();
+    let zellen = schriftzug_zellen(breite, hoehe);
+    if zellen.is_empty() {
+        return Ok(());
+    }
+
+    // Fisher-Yates: jede Reihenfolge gleich wahrscheinlich.
+    let mut folge: Vec<usize> = (0..zellen.len()).collect();
+    for i in (1..folge.len()).rev() {
+        folge.swap(i, z.bis(i + 1));
+    }
+
+    let flaeche = breite as usize * hoehe as usize;
+    // So viele Rauschzeichen je Bild, dass die Fläche in Bewegung bleibt,
+    // ohne dass das Zeichnen die Bildrate bestimmt.
+    let rauschen_je_bild = (flaeche / 12).clamp(40, 900);
+
+    for bild in 0..STURMBILDER {
+        if event::poll(Duration::from_millis(0))? {
+            if let Event::Key(_) = event::read()? {
+                break;
+            }
+        }
+
+        // Der Sturm lässt gegen Ende nach, damit der Schriftzug freikommt.
+        let rest = (STURMBILDER - bild) as usize;
+        for _ in 0..(rauschen_je_bild * rest / STURMBILDER as usize) {
+            queue!(
+                aus,
+                cursor::MoveTo(z.bis(breite as usize) as u16, z.bis(hoehe as usize) as u16),
+                SetForegroundColor(Color::DarkGreen),
+                SetAttribute(Attribute::NormalIntensity),
+                Print(z.zeichen())
+            )?;
+        }
+
+        let eingerastet = zellen.len() * (bild as usize + 1) / STURMBILDER as usize;
+        for &i in &folge[..eingerastet] {
+            let zelle = &zellen[i];
+            queue!(
+                aus,
+                cursor::MoveTo(zelle.x, zelle.y),
+                SetForegroundColor(Color::Green),
+                SetAttribute(Attribute::Bold),
+                Print(zelle.zeichen)
+            )?;
+        }
+
+        aus.flush()?;
+        std::thread::sleep(BILDDAUER);
+    }
+
+    // Der Sturm legt sich: alles außer dem Schriftzug verschwindet.
+    queue!(aus, Clear(ClearType::All))?;
+    for zelle in &zellen {
+        queue!(
+            aus,
+            cursor::MoveTo(zelle.x, zelle.y),
+            SetForegroundColor(Color::Green),
+            SetAttribute(Attribute::Bold),
+            Print(zelle.zeichen)
+        )?;
+    }
+
+    // Cursor unter den Schriftzug, Farben zurück — ab hier schreibt
+    // wieder gewöhnliches `println!`.
+    queue!(
+        aus,
+        cursor::MoveTo(0, BANNER.lines().count() as u16),
+        ResetColor,
+        SetAttribute(Attribute::Reset),
+        cursor::Show
+    )?;
+    aus.flush()
 }
 
 /// Der Regen: je Spalte ein Tropfen, der von oben nach unten läuft.
@@ -207,55 +333,6 @@ fn regen(aus: &mut impl Write, breite: u16, hoehe: u16) -> io::Result<()> {
     Ok(())
 }
 
-/// Baut den Schriftzug auf: je Zeile erst Rauschen, dann das Zeichen.
-///
-/// Zeilenweise von oben nach unten, damit der Aufbau dieselbe Richtung
-/// hat wie der Regen davor — es soll aussehen, als setze sich das
-/// Herabgefallene zusammen.
-fn schriftzug_aufbauen(aus: &mut impl Write) -> io::Result<()> {
-    let mut z = Zufall::neu();
-    let zeilen: Vec<&str> = BANNER.lines().collect();
-
-    for (i, zeile) in zeilen.iter().enumerate() {
-        let y = i as u16;
-        for _ in 0..2 {
-            let rauschen: String = zeile
-                .chars()
-                .map(|c| if c == ' ' { ' ' } else { z.zeichen() })
-                .collect();
-            queue!(
-                aus,
-                cursor::MoveTo(0, y),
-                SetForegroundColor(Color::DarkGreen),
-                SetAttribute(Attribute::NormalIntensity),
-                Print(&rauschen)
-            )?;
-            aus.flush()?;
-            std::thread::sleep(Duration::from_millis(14));
-        }
-        queue!(
-            aus,
-            cursor::MoveTo(0, y),
-            SetForegroundColor(Color::Green),
-            SetAttribute(Attribute::Bold),
-            Print(zeile)
-        )?;
-        aus.flush()?;
-        std::thread::sleep(Duration::from_millis(18));
-    }
-
-    // Cursor unter den Schriftzug, Farben zurück — ab hier schreibt
-    // wieder gewöhnliches `println!`.
-    queue!(
-        aus,
-        cursor::MoveTo(0, zeilen.len() as u16),
-        ResetColor,
-        SetAttribute(Attribute::Reset),
-        cursor::Show
-    )?;
-    aus.flush()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,6 +372,28 @@ mod tests {
         }
         // `bis(0)` darf nicht durch Null teilen.
         assert_eq!(z.bis(0), 0);
+    }
+
+    /// Die Zellen des Schriftzugs müssen genau die nicht-leeren Stellen
+    /// des Banners treffen — sie sind das Ziel, in das der Sturm einrastet.
+    #[test]
+    fn schriftzug_zellen_decken_das_banner_ab() {
+        let zellen = schriftzug_zellen(200, 60);
+        let erwartet: usize = BANNER.lines().map(|z| z.chars().filter(|c| *c != ' ').count()).sum();
+        assert_eq!(zellen.len(), erwartet, "Zellen und Banner weichen ab");
+        assert!(zellen.iter().any(|z| z.zeichen == '█'), "Schriftzug fehlt");
+        assert!(!zellen.iter().any(|z| z.zeichen == ' '), "Leerzeichen als Zelle");
+    }
+
+    /// In einem Fenster, das kleiner ist als das Banner, dürfen keine
+    /// Zellen außerhalb liegen — `MoveTo` würde sie sonst an den Rand
+    /// klemmen und den Schriftzug verzerren.
+    #[test]
+    fn schriftzug_zellen_bleiben_im_fenster() {
+        let (b, h) = (30u16, 8u16);
+        for zelle in schriftzug_zellen(b, h) {
+            assert!(zelle.x < b && zelle.y < h, "Zelle außerhalb: {},{}", zelle.x, zelle.y);
+        }
     }
 
     /// Ein Tropfen startet oberhalb des Bildes und fällt nach unten —
