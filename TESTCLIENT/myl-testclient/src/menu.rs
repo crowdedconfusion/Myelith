@@ -685,7 +685,7 @@ fn sprechen(e: &Einstellungen) {
         //
         // `zeile_lesen` statt `frage`, weil es Escape von Enter
         // unterscheidet: siehe `RUECKWEG`.
-        let Some(frage) = auswahl::zeile_lesen("  Du [Esc = Menü]:  ") else {
+        let Some(frage) = auswahl::zeile_lesen("  Prompt [Esc = Menü]:  ") else {
             println!("\n  Zurück im Menü.");
             return;
         };

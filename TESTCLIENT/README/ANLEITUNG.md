@@ -236,7 +236,7 @@ dass es vorangeht.
 jeder Eingabezeile:
 
 ```
-  Du [Esc = Menü]:
+  Prompt [Esc = Menü]:
 ```
 
 | Weg | |
