@@ -43,9 +43,10 @@ Gleitkomma-Referenz desselben Modells gemessen:
 *Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
 Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
 relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
-Bei 7B lag dieser Wert vor den Fehlersuchen bei 41,42, heute bei 1,1
-und damit **0,3 Punkte über dem theoretischen Boden des
-Quantisierungsschemas** (+0,84 %, unabhängig gemessen).
+Bei 7B lag dieser Wert vor den Fehlersuchen bei **+377 %**
+(Perplexität 41,42), heute bei **+1,1 %** und damit **0,3 Prozentpunkte
+über dem theoretischen Boden des Quantisierungsschemas** (+0,84 %,
+unabhängig gemessen).
 
 **Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
 ankommt, ist die Übereinstimmung des Integer-Pfads mit sich selbst: über

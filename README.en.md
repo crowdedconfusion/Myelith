@@ -43,9 +43,9 @@ the floating-point reference of the same model:
 *The metric is perplexity on WikiText-2 under teacher forcing, on identical
 sequences for both paths; lower is better. "Gap" is the relative premium the
 integer path pays over its own BF16 reference. On 7B that figure stood at
-41.42 before the bug hunts; today it is 1.1, which puts it **0.3 points
-above the theoretical floor of the quantisation scheme itself** (+0.84 %,
-measured independently).
+**+377 %** before the bug hunts (perplexity 41.42); today it is **+1.1 %**,
+which puts it **0.3 percentage points above the theoretical floor of the
+quantisation scheme itself** (+0.84 %, measured independently).
 
 **Bit-identity here is not a side effect, it is the product.** What matters
 is the agreement of the integer path with itself: across independent runs,
