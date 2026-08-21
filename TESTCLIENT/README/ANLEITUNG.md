@@ -1,409 +1,561 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
-**Version:** 1.2.0 · **Datum:** 2026-08-20
+**Version:** 2.0.0 · **Datum:** 2026-08-21
 
-Diese Anleitung richtet sich an zwei Rollen:
+Diese Anleitung hat zwei Hälften:
 
-- **Koordinator** legt die Parameter fest, sammelt die Protokolle und
-  fällt das Urteil. Eine Person.
-- **Teilnehmer** stellt eine Maschine, führt die Läufe aus und schickt
-  die Protokolle. Beliebig viele, gern unerfahren.
-
-Ein Teilnehmer muss das Projekt nicht kennen. Er braucht diese Seite und
-einen Rechner.
-
----
-
-## Der schnellste Weg, wenn du nur mitmachen willst
-
-Doppelklick auf den Starter im Ordner `TESTCLIENT`:
-
-| Dein System | Datei |
-|---|---|
-| macOS | `Myelith Testclient - macOS.app` |
-| Windows | `Myelith Testclient - Windows (Batch).cmd` |
-| Linux | `Myelith Testclient - Linux, macOS (Shell).sh` im Terminal |
-
-Danach fragt der Client zwei Dinge, und beide kannst du mit der
-Eingabetaste beantworten:
-
-1. **Welche Testdatei?** Liegt eine bereit, wähle sie. Sie stellt alles
-   ein, holt bei Bedarf das Modell und führt die Messung selbst aus.
-2. **Welches Modell?** Nur, wenn keine Testdatei gewählt wurde.
-
-Danach öffnet sich das Menü. Ein Punkt genügt dort: **[1] Testlauf
-starten**.
-
-Fehlt das Modell, bietet der Client an, es zu holen und zu bauen. Es
-passiert nichts ohne Rückfrage, und du siehst währenddessen, wie lange
-es schon läuft.
-
-Am Ende steht auf dem Bildschirm eine Zeile wie diese:
-
-```
-Ergebnis  determinismus   bitgleich über zwei Läufe  [886124c7f002314a]
-```
-
-Der Wert in eckigen Klammern ist das Ergebnis. Er muss auf jeder
-Maschine derselbe sein. **Genau das ist der ganze Test.**
-
-Die Protokolldateien unter `TESTCLIENT/myl-testclient/logs/` schickst du
-an den Koordinator. Fertig.
+- **Teil A, für Teilnehmer.** Du stellst einen Rechner zur Verfügung und
+  lässt einen Test laufen. Du musst vom Projekt nichts wissen und nichts
+  programmieren können. Teil A ist so geschrieben, dass er ohne
+  Vorkenntnisse funktioniert.
+- **Teil B, für Koordinatoren.** Du legst fest, was gemessen wird,
+  sammelst die Ergebnisse ein und fällst das Urteil. Das macht eine
+  Person, und diese Person sollte Teil B ganz lesen.
 
 ---
 
-## Was hier eigentlich gemessen wird
+# Teil A — für Teilnehmer
 
-Wer nichts mit Sprachmodellen zu tun hat, dem sagt „Bitgleichheit"
-zunächst wenig. Der Kern in einem Bild:
+## A1. Worum es geht, in einfachen Worten
 
 Ein Sprachmodell rechnet mit Zahlen. Üblicherweise mit **Kommazahlen**,
 und dabei gilt eine unangenehme Eigenheit: Rechnet man dieselbe Aufgabe
 in anderer Reihenfolge, kommt ein leicht anderes Ergebnis heraus. Nicht
 falsch, nur anders in den hintersten Stellen. Zwei ehrliche Rechner
-liefern deshalb normalerweise verschiedene Zahlen.
+liefern deshalb normalerweise **verschiedene** Zahlen.
 
 Für ein Netzwerk, in dem Fremde füreinander rechnen, ist das fatal: Man
 kann nicht unterscheiden, ob jemand betrogen hat oder ob er nur eine
 andere Grafikkarte besitzt.
 
 Myelith rechnet deshalb **nur mit ganzen Zahlen**. Bei ganzen Zahlen ist
-die Reihenfolge egal, `(3+5)+7` und `3+(5+7)` sind beide 15, auf jeder
-Maschine. Damit wird Gleichheit prüfbar: Wer abweicht, hat wirklich
+die Reihenfolge egal: `(3+5)+7` und `3+(5+7)` sind beide 15, auf jeder
+Maschine. Damit wird Gleichheit prüfbar. Wer abweicht, hat wirklich
 etwas anderes gerechnet.
 
 **Dieser Testclient prüft, ob das in der Praxis hält.** Er lässt dasselbe
-Modell dieselbe Frage beantworten und bildet aus der Antwort eine
+Modell dieselben Fragen beantworten und bildet aus den Antworten eine
 Prüfsumme. Läuft der Test auf einem Mac mit ARM-Chip und auf einem
-Windows-PC mit Intel-Chip und kommt dieselbe Prüfsumme heraus, ist der
-Nachweis erbracht.
+Windows-PC mit Intel-Chip und kommt **dieselbe** Prüfsumme heraus, ist
+der Nachweis erbracht.
 
----
+Dein Beitrag ist genau das: **eine Maschine, die anders ist als die
+anderen.**
 
-## 0. Der Kern in drei Sätzen
+## A2. Was du brauchst
 
-Der Cross-Hardware-Nachweis braucht **zwei** Aussagen, nicht eine:
+| | |
+|---|---|
+| **Immer** | Das Repository auf der Platte und [Rust](https://rustup.rs). Der Starter sagt dir beim ersten Aufruf, was fehlt. |
+| **Nur für die Modellläufe** | Python mit PyTorch, siehe [A7](#a7-python-für-die-modellläufe-einrichten). Rund 2 GB. |
+| **Plattenplatz** | 0,5B-Modell: rund 1,7 GB. 7B-Modell: rund 23 GB. Beides lässt sich hinterher wieder freigeben, siehe [A8](#a8-platz-wieder-freigeben). |
 
-1. **Die Maschinen sind verschieden.** (Hardware-Fingerabdrücke ungleich)
-2. **Das Ergebnis ist trotzdem gleich.** (Digests gleich)
+**Ohne Python bist du trotzdem nützlich.** Der Testlauf erhebt in jedem
+Fall die Hardware und fährt den Protokoll-Durchlauf; nur die beiden
+Modellstufen fallen aus. Das ist kein Makel, sondern ein gültiges
+Teilergebnis.
 
-Fehlt (1), beweist (2) nichts: zwei gleiche Ergebnisse von derselben
-Maschine sind trivial. Fehlt (2) bei erfülltem (1), ist die Kernthese
-des Projekts widerlegt, und das wäre der wichtigste Befund seit
-Bestehen des Repositoriums.
+Ein Konto bei Hugging Face brauchst du **nicht**.
 
----
+## A3. Starten
 
-## 0a. Der Testplan, die Datei, die alles zusammenhält
+Im Ordner `TESTCLIENT` liegt für jedes System ein Starter:
 
-### Wo Pläne liegen und wie sie gewählt werden
+| Dein System | Was du tust |
+|---|---|
+| **macOS** | Doppelklick auf `Myelith Testclient - macOS.app` |
+| **Windows** | Doppelklick auf `Myelith Testclient - Windows (Batch).cmd` |
+| **Linux** | Im Terminal: `./"Myelith Testclient - Linux, macOS (Shell).sh"` |
 
-Pläne liegen im Ordner `TESTCLIENT/Testpläne/` und tragen die Endung
-`.plan`. Beim Start sieht der Client dort nach, **bevor** er nach dem
-Modell fragt, und listet auf, was er gefunden hat:
+Beim **ersten** Start baut sich der Client selbst. Das dauert einige
+Minuten; danach sind es Sekunden. Du darfst die Starter verschieben,
+kopieren oder auf den Schreibtisch legen — sie finden das Repository von
+selbst.
+
+Zuerst läuft ein kurzes Startbild. Ein Tastendruck überspringt es;
+`MYL_NO_ANIMATION=1` schaltet es dauerhaft ab.
+
+## A4. Bedienung: Pfeiltasten und Enter
+
+Überall, wo der Client etwas zur Auswahl stellt, gilt dasselbe:
 
 ```
-  Testpläne in TESTCLIENT/Testpläne:
-   [1] wikitext2-0.5b-standard · qwen2.5-0.5b, 32 Token, 4 Shards, Prüfsumme 1dc4d4ab
-      Prompt: " The 2010 Haitian earthquake was a catast…"
-   [0] keiner, Einstellungen von Hand wählen
+  ── Was möchtest du tun? ──
+  ❯ 1  Testlauf starten
+        Hardware, Determinismus, Shards und Protokoll-Durchlauf
+        nacheinander. Der vollständige Bericht dieser Maschine.
+    2  Testdatei wählen
+    3  Protokolle vergleichen
+    4  Anleitung lesen
+    9  Entwickler-Menü
+    0  Beenden
 
-  Auswahl [0]:
+  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück
 ```
 
-Die Reihenfolge ist kein Zufall. Ein Plan legt das Modell fest; wer
-zuerst nach dem Modell fragt und danach den Plan lädt, hat entweder die
-falsche Frage gestellt oder muss sie zurücknehmen.
+| Taste | Wirkung |
+|---|---|
+| **↑ ↓** | Auswahl bewegen |
+| **Enter** | Ausgewähltes ausführen |
+| **Ziffer** | Direkt zu diesem Punkt springen und ihn ausführen |
+| **Esc** | Eine Ebene zurück |
 
-**Wählst du einen Plan, macht der Client den Rest allein:**
+Läuft der Client in einer Umgebung ohne Tastatursteuerung — in einer
+Pipe, in einem Skript, in einer schlichten seriellen Konsole —, zeigt er
+dieselbe Liste und wartet auf eine getippte Ziffer mit Enter. Beide Wege
+führen zum selben Ergebnis.
 
-1. Er übernimmt Prompt, Tokenzahl, Shards und Modell.
-2. Er prüft, ob das Modell auf dieser Maschine liegt, und stimmt es mit
-   dem veröffentlichten Prüfwert überein.
-3. Fehlt es, fragt er einmal nach und holt es dann von Hugging Face,
-   baut die Artefakte und prüft sie.
-4. Er führt beide Messungen aus, Determinismus und Shard-Lauf.
-5. Er zeigt die erzeugte Antwort im Klartext und die Prüfsummen.
+## A5. Der Ablauf, Schritt für Schritt
 
-Danach steht das Menü für weitere Läufe bereit.
+### Schritt 1: Dein Name
 
-**Wählst du `[0]` oder liegt kein Plan im Ordner**, läuft alles wie
-zuvor: Der Client fragt nach dem Modell, und du startest die Läufe von
-Hand aus dem Menü.
+```
+  Unter welchem Namen sollen die Protokolle dieser Sitzung laufen?
+  Er steht im Dateinamen und im Protokoll, damit der Koordinator sie
+  ohne Rückfrage zuordnen kann. Leer lassen ist erlaubt.
 
-Ein Plan mit falscher Prüfsumme wird **übersprungen und gemeldet**, nicht
-stillschweigend geladen. Eine veränderte Datei ist genau der Fall, den
-die Prüfsumme abfangen soll.
-
-### Aufbau einer Plandatei
-
-
-Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt, verteilt
-der Koordinator eine **Plandatei**. Sie legt Prompt, Tokenzahl, Shards
-und Modell fest und trägt eine Prüfsumme darüber.
-
-```text
-plan_id     = 2026-08-18-cross-arch-01
-prompt      = "Die Hauptstadt von Frankreich ist"
-steps       = 6
-shards      = 4
-model       = qwen2.5-0.5b
-
-spec_sha256 = 94be3bfc…
+  Name:
 ```
 
-**Zwei Dinge macht diese Datei:**
+Ein Vorname, ein Spitzname oder eine Bezeichnung der Maschine — was dem
+Koordinator hilft, dein Protokoll wiederzuerkennen. Lässt du das Feld
+leer, heißen deine Dateien `ohne-name`; das funktioniert, macht dem
+Koordinator aber Arbeit.
 
-1. **Sie verhindert den häufigsten Fehlalarm.** Wer den Prompt ändert,
-   bekommt beim nächsten Lauf einen Fehler und Exit-Code 3, statt
-   eines abweichenden Digests, der wie ein Befund aussieht:
+### Schritt 2: Testdatei wählen
 
-   ```
-   myl-test: Der Testplan wurde verändert.
-        Prüfsumme in der Datei: 94be3bfc…
-        tatsächlicher Inhalt:   5b6bde79…
-        Verwende die Originaldatei des Koordinators …
-   ```
+Hat dir der Koordinator eine Datei mit der Endung `.plan` geschickt,
+lege sie vorher in den Ordner `TESTCLIENT/Testpläne/`. Der Client listet
+auf, was er dort findet:
 
-   Der Prompt steht in Anführungszeichen, damit auch ein
-   Randleerzeichen erhalten bleibt. Es ist Teil des Prompts und
-   verändert das Ergebnis.
-
-2. **Sie sortiert die Protokolle.** Die ersten acht Zeichen der
-   Prüfsumme benennen das Protokollverzeichnis:
-
-   ```text
-   logs/
-   ├── determinismus/
-   │   └── 2026-08-18_94be3bfc/
-   │       ├── 081222-aarch64-macos-reference.jsonl
-   │       └── 143515-x86-64-linux-avx2.jsonl
-   └── stack/
-       └── 2026-08-18_94be3bfc/
-   ```
-
-   Alle Teilnehmer mit demselben Plan landen im **gleichnamigen
-   Ordner**, auf jeder Maschine. Wer versehentlich andere Parameter
-   nimmt, landet sichtbar woanders. Die Zuordnungsarbeit entfällt.
-   Der Dateiname trägt Uhrzeit und Hardware-Kurzform, damit sich die
-   Protokolle mehrerer Maschinen in einem Ordner nicht überschreiben.
-
-Ohne Plan läuft alles weiter wie bisher; die Kennung heißt dann
-`ohne-plan`.
-
----
-
-## 1. Für Teilnehmer, die Kurzfassung
-
-### 1.1 Einmalig einrichten
-
-```bash
-git clone <repo-url>
-cd Repository
+```
+  ── Testpläne in TESTCLIENT/Testpläne ──
+  ❯ 1  wikitext2-0.5b-standard · qwen2.5-0.5b, 6 Prompts, 32 Token, 4 Shards
+        Prompt: " The 2010 Haitian earthquake was a catast…" (+5 weitere)
+    2  qwen2.5-7b-standard · qwen2.5-7b, 4 Prompts, 16 Token, 4 Shards
+        Prompt: "The capital of France is" (+3 weitere)
+    0  keiner — Einstellungen von Hand wählen
 ```
 
-**Für Hardware- und Protokolltests reicht Rust.** Falls du es nicht hast,
-sagt der Starter beim ersten Aufruf, wie es installiert wird (eine Zeile,
-keine Administratorrechte nötig). Der Client selbst hat außer `sha2` und
-`borsh` keine Fremd-Abhängigkeiten.
+**Die Testdatei ist der Kern des Verfahrens.** Sie legt fest, welche
+Fragen gestellt werden, wie viele Wörter geantwortet wird und welches
+Modell rechnet. Alle Beteiligten müssen dieselbe Datei verwenden, sonst
+sind die Ergebnisse nicht vergleichbar. Damit das keine Bitte bleibt,
+trägt die Datei eine Prüfsumme: **Wird sie verändert, verweigert der
+Client den Lauf.** Ändere sie also nicht — auch kein Leerzeichen.
 
-**Für Determinismus- und Shard-Tests brauchst du zusätzlich Python mit
-PyTorch.** Das Modell wird nicht mitgeliefert, der Client holt es bei
-Bedarf und baut daraus die Artefakte; dafür braucht er eine
-Python-Umgebung:
+Wählst du einen Plan, macht der Client den Rest allein: Modell prüfen,
+bei Bedarf beschaffen, messen.
+
+Liegt keine Datei bereit, wähle `0`. Dann misst der Client mit
+Standardwerten. Das ist für einen ersten Versuch in Ordnung, für einen
+gemeinsamen Test nicht.
+
+### Schritt 3: Modell
+
+Fehlt das Modell auf deiner Maschine, bietet der Client an, es zu holen
+und die Artefakte daraus zu bauen. **Es passiert nichts ohne Rückfrage**,
+und die Größe des Downloads steht dabei. Während es läuft, siehst du,
+wie lange es schon dauert.
+
+Liegen mehrere Modelle bereit, fragt er, welches.
+
+### Schritt 4: Der Testlauf
+
+Punkt **[1] Testlauf starten**. Das ist alles.
+
+Der Lauf hat vier Stufen und schreibt **ein einziges Protokoll** über
+alle vier:
+
+| Stufe | Was sie tut |
+|---|---|
+| 1 Hardware | Erhebt, was für eine Maschine das ist (Architektur, System, Rechenkerne) |
+| 2 Determinismus | Rechnet jede Frage **zweimal** und prüft, ob dasselbe herauskommt |
+| 3 Geshardete Inferenz | Verteilt das Modell auf vier Teile und prüft gegen das ungeteilte |
+| 4 Protokoll-Durchlauf | Prüft die Protokollschicht, ohne Modell: Kryptografie, Konsens, Ledger |
+
+Alle vier laufen auch dann durch, wenn eine fehlschlägt: Eine
+fehlgeschlagene Modellstufe macht die Hardware-Erhebung nicht wertlos,
+sondern erst recht wichtig.
+
+### Schritt 5: Ergebnis lesen
+
+Zu jeder Frage zeigt der Client die erzeugte Antwort im Klartext:
+
+```
+  Prompt 2:  The capital of France is
+  Antwort:   Paris. It is the largest city in France and one of the most
+```
+
+**Das ist zum Zuschauen.** Bewertet wird der Text nicht. Maßgeblich sind
+die Zeilen mit dem Wort `Ergebnis`, besonders diese beiden:
+
+```
+  Ergebnis  determinismus          6 Prompts, je zwei Läufe  [fd64588fd46a7af8]
+  Ergebnis  shard_vs_einzelknoten  6 Prompts bitgleich       [3a1c…]
+```
+
+Der Wert in eckigen Klammern ist der **Vergleichswert**. Er muss auf
+jeder Maschine derselbe sein. Genau das ist der ganze Test.
+
+### Schritt 6: Protokoll zurückschicken
+
+Am Ende nennt der Client den Pfad:
+
+```
+Protokoll: …/logs/anna_12a1e91e_2026-08-21_143022.jsonl (maschinenlesbar)
+           und …_143022.log — Lauf 2026-08-21-143022-aarch64-macos-…
+```
+
+Schicke die **`.jsonl`** an den Koordinator. Die `.log` daneben enthält
+dasselbe als Fließtext und ist für dich.
+
+Der Dateiname sagt schon alles: dein Name, die Kennung der Einstellungen,
+Datum und Uhrzeit.
+
+**Was im Protokoll steht:** Architektur, Betriebssystem, Backend, welches
+Modell, Zeiten, Vergleichswerte, die erzeugten Zahlen (Token), der
+**Hash** deiner Fragen.
+**Was nicht darin steht:** der Klartext der Fragen und Antworten, dein
+Benutzername, dein Rechnername, Seriennummern, MAC-Adressen.
+
+Die Datei ist reiner Text und darf unverändert weitergegeben werden.
+
+## A6. Selbst nachsehen: Protokolle vergleichen
+
+Punkt **[3] Protokolle vergleichen** stellt alle Protokolle im
+Protokollordner gegenüber. Legst du die Dateien der anderen Teilnehmer
+dort hinein, siehst du dasselbe Urteil wie der Koordinator:
+
+```
+  ── testlauf · Einstellungen 12a1e91e · 2 Protokolle ──
+     anna             aarch64-macos-reference    θ_v 0.17.0   35613afa…
+     björn            x86-64-linux-avx2          θ_v 0.17.0   9c02fe11…
+
+     = determinismus            fd64588fd46a7af8
+     = shard_vs_einzelknoten    3a1c88b0e4d2f760
+
+     Urteil: NACHWEIS
+```
+
+Die Urteile stehen in [B5](#b5-die-urteile-und-was-sie-bedeuten).
+
+## A7. Python für die Modellläufe einrichten
+
+Nur nötig, wenn du die Stufen 2 und 3 fahren willst.
 
 ```bash
 cd INTEGER_LLM/calibrate
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt      # Windows: .venv\Scripts\pip
+.venv/bin/pip install -r requirements.txt
 ```
+
+Unter Windows heißt die letzte Zeile `.venv\Scripts\pip install -r requirements.txt`.
 
 Das sind rund 2 GB und dauert einige Minuten. Danach findet der Client
-die Umgebung von selbst; fehlt sie, sagt er genau diese Zeilen an. Er
+die Umgebung von selbst. Fehlt sie, sagt er genau diese Zeilen an; er
 sucht auch ein System-Python, falls die Pakete dort schon liegen.
 
-Der Modelldownload selbst braucht **kein** Hugging-Face-Konto. Bei vielen
-Downloads hintereinander kann die Gegenstelle bremsen; ein gesetztes
-`HF_TOKEN` hebt die Grenze an, nötig ist es nicht.
+## A8. Platz wieder freigeben
 
-### 1.2 Starten
-
-Im Ordner `TESTCLIENT`:
-
-| Dein System | Wie |
-|---|---|
-| macOS | Doppelklick auf `Myelith Testclient - macOS.app` |
-| Windows | Doppelklick auf `Myelith Testclient - Windows (Batch).cmd` |
-| Linux | `./"Myelith Testclient - Linux, macOS (Shell).sh"` im Terminal |
-
-Beim ersten Start baut sich der Client selbst; das dauert einige
-Minuten und zeigt dabei, wie lange es schon läuft. Danach sind es
-Sekunden.
-
-Die Starter finden das Repository von selbst. Du darfst sie verschieben,
-kopieren oder auf den Schreibtisch legen.
-
-**Hast du eine `.plan`-Datei bekommen?** Lege sie in
-`TESTCLIENT/Testpläne/`. Der Client bietet sie beim nächsten Start zur
-Auswahl an und führt den ganzen Durchgang allein aus.
-
-Für Skripte gibt es weiterhin den direkten Weg:
-
-```bash
-./"Myelith Testclient - Linux, macOS (Shell).sh" --plan Testpläne/cross-arch.plan determinismus
-```
-
-**Ändere die Plandatei nicht.** Der Client lehnt eine veränderte Datei
-ab, genau dafür ist die Prüfsumme da.
-
-### 1.3 Was du ausführst
-
-Mit Plan: nichts, das macht der Client. Ohne Plan wählst du im Menü:
-
-Das Menü hat drei Punkte:
-
-| Punkt | Was er tut |
-|---|---|
-| **1 Testlauf starten** | Hardware, Determinismus, Shards und Protokoll-Durchlauf nacheinander. Der vollständige Bericht dieser Maschine. |
-| **2 Testdatei wählen** | Übernimmt Prompt, Token, Shards und Modell aus einem Plan und beschafft das Modell, falls es fehlt. Danach mit [1] starten. |
-| **3 Anleitung lesen** | diese Seite |
-| **9 Entwickler-Menü** | Einzelläufe, Artefaktprüfung, Testpläne erzeugen, Einstellungen |
-
-**Mehr brauchst du nicht.** Wer eine Maschine beisteuert, drückt [1] und
-schickt das Protokoll. Hast du eine Testdatei bekommen, vorher [2].
-
-Alles Weitere liegt unter **[9]**, weil ein Menü mit zehn Punkten, von
-denen fünf nie gebraucht werden, den Einstieg behindert statt ihn zu
-erleichtern.
-
-**Auch ohne Modell bist du nützlich.** Der Testlauf erhebt in jedem Fall
-die Hardware, und der Protokoll-Durchlauf unter [9] [4] deckt die gesamte
-Protokollschicht ab: Kryptografie, Konsens, Verifikation, Ledger,
-Tokenomics.
-
-### 1.4 Was du auf dem Bildschirm siehst
-
-Nach jedem Lauf zeigt der Client den Prompt und die erzeugte Antwort im
-Klartext:
+Entwickler-Menü **[9]**, dann **[9] Artefakte und Gewichte freigeben**.
+Der Client zeigt, was belegt ist:
 
 ```
-  Prompt:   The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake
-  Antwort:  that struck the island of Hispaniola in the Caribbean Sea, killing over
-            200,000 people and causing widespread destruction. The earthquake occurred on
+  Belegt auf dieser Maschine: 24,9 GB
+
+  ❯ 1  qwen2.5-7b · Artefakte · 8,1 GB
+        Aus dem Skalenpaket in Sekunden wiederherstellbar.
+    2  qwen2.5-7b · Gewichte · 15,2 GB
+        Erneut zu holen kostet einen Download über Hugging Face.
 ```
 
-Das ist zum Zuschauen gedacht. **Bewertet wird der Klartext nicht.**
-Maßgeblich ist der Vergleichswert:
+**Artefakte und Gewichte sind verschieden teuer wiederzubeschaffen.**
+Artefakte entstehen in Sekunden neu, die Gewichte kosten einen Download
+über Gigabyte. Wer den Test später wiederholen will, gibt deshalb die
+Artefakte frei und behält die Gewichte.
 
-```
-Ergebnis  determinismus   bitgleich über zwei Läufe  [886124c7f002314a]
-```
+Vor dem Löschen musst du „ja" tippen. Enter allein genügt hier
+absichtlich nicht: Löschen ist der einzige Vorgang in diesem Client, der
+etwas zerstört.
 
-### 1.5 Was du zurückschickst
+## A9. Wenn etwas nicht klappt
 
-Eine einzige Datei: `TESTCLIENT/myl-testclient/logs/myl-test.jsonl`.
+**„Artefaktverzeichnis fehlt"**
+Erwartet wird `INTEGER_LLM/artifacts/qwen2.5-0.5b/`. Liegen die Artefakte
+woanders, im Entwickler-Menü unter [7] den Pfad setzen oder beim Aufruf
+`--artifacts <PFAD>` angeben.
 
-Alle Läufe stehen darin, angehängt statt in Unterordnern verteilt. Jede
-Zeile trägt Laufkennung, Befehl und Einstellungs-Prüfsumme, die
-Zuordnung leisten also die Daten und nicht der Pfad. Daneben liegt
-`myl-test.log` mit denselben Ereignissen als Fließtext, für die
-Fehlersuche am Terminal.
+**„Der Testplan wurde verändert"**
+Die Datei wurde nach dem Erzeugen bearbeitet — auch ein zusätzliches
+Leerzeichen zählt. Fordere die Originaldatei neu an. Kommentarzeilen mit
+`#` darfst du dagegen frei ergänzen, die gehen nicht in die Prüfsumme
+ein.
 
-**Was darin steht:** Architektur, Betriebssystem, Backend, Zeiten,
-Vergleichswerte, der **Hash** deines Prompts, die erzeugten Token.
-**Was nicht darin steht:** der Klartext der Antwort, dein Prompttext,
-dein Benutzername, dein Rechnername, Seriennummern, MAC-Adressen.
+**Der Lauf dauert sehr lange**
+Beim 7B-Modell ist das normal, rechne mit rund fünf Minuten. Läuft es
+auch beim 0,5B-Modell zäh, wurde vermutlich ein Debug-Build gestartet;
+die Starter bauen mit `--release`.
 
-Der Klartext bleibt bewusst draußen: Aus den Token ist er ableitbar, und
-die Datei bleibt schlank und gut vergleichbar.
+**Umlaute erscheinen als Kauderwelsch (Windows)**
+Der mitgelieferte Starter stellt die Konsole selbst auf UTF-8 um. Wer
+`myl-test.exe` direkt aufruft, setzt vorher `chcp 65001`.
 
-Die Dateien sind reiner Text und dürfen unverändert weitergegeben
-werden.
+**Das Menü sieht zerrissen aus**
+Das Fenster ist zu klein. Der Client erkennt das eigentlich selbst und
+schaltet auf die einfache Liste um; hilf notfalls mit einem größeren
+Fenster nach.
+
+**Zwei Läufe auf derselben Maschine ergeben verschiedene Werte**
+Das wäre schwerwiegend und kein Bedienfehler. Protokoll sichern und
+melden.
 
 ---
 
-## 2. Für Koordinatoren, das Verfahren
+# Teil B — für Koordinatoren
 
-### 2.1 Plan erzeugen und verteilen
+## B1. Der Kern in drei Sätzen
+
+Der Cross-Hardware-Nachweis braucht **zwei** Aussagen, nicht eine:
+
+1. **Die Maschinen sind verschieden.** (Hardware-Fingerabdrücke ungleich)
+2. **Das Ergebnis ist trotzdem gleich.** (Vergleichswerte gleich)
+
+Fehlt (1), beweist (2) nichts: zwei gleiche Ergebnisse von derselben
+Maschine sind trivial. Fehlt (2) bei erfülltem (1), ist die Kernthese des
+Projekts widerlegt, und das wäre der wichtigste Befund seit Bestehen des
+Repositoriums.
+
+Der `vergleich`-Befehl setzt das durch und **verweigert** ein positives
+Urteil, wenn (1) fehlt.
+
+## B2. Einen Testplan erstellen
+
+### Der schnelle Weg: im Menü
+
+Entwickler-Menü **[9]**, dann **[6] Testplan erzeugen und speichern**.
+Der Client übernimmt die aktuellen Einstellungen, fragt nach einer
+Kennung und legt die Datei gleich im Planordner ab.
+
+Vorher unter **[7] Einstellungen ändern** die Werte setzen, die im Plan
+stehen sollen.
+
+### Der genaue Weg: auf der Befehlszeile
 
 ```bash
 myl-test plan \
-  --plan-id 2026-08-18-cross-arch-01 \
+  --plan-id 2026-08-21-cross-arch-01 \
+  --model qwen2.5-0.5b \
   --prompt "Die Hauptstadt von Frankreich ist" \
-  --steps 6 --shards 4 \
-  --out cross-arch.plan
+  --prompt "The capital of France is" \
+  --prompt "In quantum mechanics, the wave function describes" \
+  --prompt "The result of 17 times 23 is" \
+  --steps 32 --shards 4 \
+  --out "TESTCLIENT/Testpläne/2026-08-21-cross-arch-01.plan"
 ```
 
-Oder im Menü über **Punkt 9**. Der Client zeigt danach die
-Einstellungs-ID und den Ordner, in dem alle Protokolle landen werden.
+**`--prompt` ist mehrfach angebbar.** Jede Angabe hängt eine Frage an die
+Reihe an, die der Lauf nacheinander abarbeitet.
 
-Die Datei `cross-arch.plan` unverändert an alle Teilnehmer schicken.
-Sie legen sie in `TESTCLIENT/Testpläne/` ab; der Client bietet sie beim
-nächsten Start zur Auswahl an und führt den Durchgang selbst aus. Ein
-Beispielplan liegt dort bereits: `wikitext2-0.5b-standard.plan`, mit dem
-0,5B-Modell und einem Prompt aus WikiText-2, dem Korpus, gegen den auch
-die Perplexität des Projekts gemessen wird.
-Chat, Mail, Repository, egal. Sie ist reiner Text und enthält keine
+### Was der Plan festlegt
+
+| Parameter | Warum es exakt gleich sein muss |
+|---|---|
+| **Prompts** (Reihenfolge zählt) | Ein anderes Zeichen → anderer Vergleichswert |
+| **`--steps`** | Bestimmt, wie viele Schritte in den Wert eingehen |
+| **`--shards`** | Bestimmt die Aufteilung in Stufe 3 |
+| **`--model`** | Ein anderes Modell → anderer Wert, völlig zu Recht |
+
+Nicht abgesichert ist `plan_id`. Zwei Koordinatoren, die denselben Test
+unter verschiedenen Namen fahren, sollen vergleichbare Ergebnisse
+bekommen.
+
+### Wie viele Prompts, wie viele Token?
+
+**Mehrere Prompts sind kein Luxus.** Ein einzelner Prompt übt einen
+einzigen Pfad durch das Modell aus. Ein Rundungsfehler, der nur bei
+langen Sequenzen, nur bei bestimmten Zeichen oder nur in einem selten
+getroffenen Tabellenbereich auftritt, bliebe unentdeckt — und der
+Vergleichswert sähe trotzdem beruhigend aus. Vier bis acht Prompts, die
+sich in Sprache, Länge und Art unterscheiden, sind ein guter Schnitt.
+
+**Die Laufzeit rechnest du vorher aus**, statt sie zu raten:
+
+```
+Token je Durchgang   = Prompts × steps
+Determinismus        = 2 Durchgänge
+Shard-Lauf           = 2 Durchgänge (Pod und Einzelknoten)
+```
+
+Mit den gemessenen Raten aus `INTEGER_LLM/bench/README.md` — **0,5B rund
+24 Token/s, 7B rund 2 Token/s** — plus Modellladen (0,5B ein paar
+Sekunden, 7B rund eine Minute je Lauf).
+
+| Beispiel | Rechnung | Dauer |
+|---|---|---|
+| 0,5B, 6 Prompts, 32 Token | 6·32·4 = 768 Token bei 24/s | rund 40 s |
+| 7B, 4 Prompts, 16 Token | 4·16·4 = 256 Token bei 2/s | rund 5 min |
+
+Sage die Zahl den Teilnehmern an. Ohne sie ist für sie nicht
+entscheidbar, ob sich Warten lohnt oder ob etwas hängt.
+
+### Die beiden mitgelieferten Pläne
+
+| Datei | Modell | Umfang |
+|---|---|---|
+| `wikitext2-0.5b-standard.plan` | qwen2.5-0.5b | 6 Prompts, 32 Token, 4 Shards |
+| `qwen2.5-7b-standard.plan` | qwen2.5-7b | 4 Prompts, 16 Token, 4 Shards |
+
+Beide nehmen Prompts aus dem Evidenz-Paket des Projekts (Deutsch und
+Englisch, Fachsprache, Arithmetik); der 0,5B-Plan beginnt zusätzlich mit
+einem Satz aus WikiText-2, dem Korpus, gegen den auch die Perplexität
+gemessen wird. Sie taugen als Vorlage und als Selbstversuch.
+
+### Aufbau der Datei
+
+```text
+# Kommentare gehen NICHT in die Prüfsumme ein.
+
+plan_id     = 2026-08-21-cross-arch-01
+prompt      = "Die Hauptstadt von Frankreich ist"
+prompt      = "The capital of France is"
+steps       = 32
+shards      = 4
+model       = qwen2.5-0.5b
+
+spec_sha256 = 12a1e91e4fa75f6e…
+```
+
+Reiner Text, von Hand lesbar und von Hand schreibbar. Die Prompts stehen
+in Anführungszeichen, damit ein Randleerzeichen erhalten bleibt — es ist
+Teil des Prompts und verändert das Ergebnis.
+
+**Ändert jemand eine Zeile, verweigert der Client den Lauf:**
+
+```
+myl-test: Der Testplan wurde verändert.
+     Prüfsumme in der Datei: 12a1e91e…
+     tatsächlicher Inhalt:   5b6bde79…
+     Verwende die Originaldatei des Koordinators …
+```
+
+Exit-Code 3. Damit ist der häufigste Fehlalarm technisch ausgeschlossen:
+Ein vertippter Prompt liefert keinen abweichenden Vergleichswert mehr,
+sondern einen Fehler.
+
+## B3. Verteilen
+
+Die `.plan`-Datei unverändert an alle Teilnehmer schicken — Chat, Mail,
+Repository, egal. Sie ist reiner Text und enthält keine
 personenbezogenen Daten.
 
-### 2.2 Was der Plan festlegt
+Dazu diese vier Sätze:
 
-| Parameter | Beispiel | Warum es exakt gleich sein muss |
-|---|---|---|
-| Prompt | `Die Hauptstadt von Frankreich ist` | Ein anderes Zeichen → anderer Digest |
-| Token (`--steps`) | `8` | Bestimmt, wie viele Schritte in den Digest eingehen |
-| θ_v / Artefaktstand | `qwen2.5-0.5b`, Stand vom … | Ein anderes Modell → anderer Digest, völlig zu Recht |
+> Leg die Datei in `TESTCLIENT/Testpläne/`.
+> Starte den Client, gib deinen Namen ein, wähle den Plan, drücke [1].
+> Rechne mit **&lt;Dauer&gt;**.
+> Schick mir die `.jsonl` aus `TESTCLIENT/myl-testclient/logs/`.
 
-Diese Werte stehen im Plan und sind durch die Prüfsumme abgesichert.
-**`plan_id` geht bewusst nicht in die Prüfsumme ein.** Zwei
-Koordinatoren, die denselben Test unter verschiedenen Namen fahren,
-sollen vergleichbare Ergebnisse bekommen.
+## B4. Einsammeln und auswerten
 
-### 2.3 Auswerten
-
-Alle Läufe stehen in derselben Datei und tragen die Prüfsumme des Plans
-in jeder Zeile (`settings_id`). Die
-Teilnehmerdateien einfach dort hineinlegen:
+Alle eingegangenen `.jsonl` in **einen** Ordner legen, dann:
 
 ```bash
-cd logs/determinismus/2026-08-18_94be3bfc/
-
-grep '"name":"hardware_fingerprint"' *.jsonl   # muss sich unterscheiden
-grep '"name":"determinismus"'        *.jsonl   # muss übereinstimmen
-grep '"key":"backend_selected"'      *.jsonl   # zur Einordnung
-grep '"key":"einstellungen_id"'      *.jsonl   # muss überall gleich sein
+myl-test vergleich --logs <ordner>
 ```
 
-Die letzte Zeile ist die Gegenprobe: Steht dort bei jemandem etwas
-anderes, hat er einen anderen Plan verwendet, und ein Vergleich
-gegenstandslos, ganz gleich was die Digests sagen.
+Der Befehl gruppiert nach Prüflauf und Einstellungs-Kennung, stellt jeden
+Vergleichswert gegenüber und fällt je Gruppe ein Urteil:
 
-### 2.4 Urteilstabelle
+```
+  ── testlauf · Einstellungen 12a1e91e · 3 Protokolle ──
+     anna             aarch64-macos-reference    θ_v 0.17.0   35613afaedb6757e
+     björn            x86-64-linux-avx2          θ_v 0.17.0   9c02fe1148ab3d05
+     carla            x86-64-windows-avx2        θ_v 0.17.0   77b1e0c9a4128f3e
 
-| Fingerabdrücke | Digests | Urteil |
+     = determinismus            fd64588fd46a7af8
+     ≠ shard_vs_einzelknoten    2 verschiedene Werte:
+         3a1c88b0e4d2f760  anna, björn
+         81ff20c4de915a03  carla
+
+     Urteil: ABWEICHUNG
+```
+
+Ein `=` heißt, alle Protokolle stimmen in diesem Wert überein; ein `≠`
+listet auf, wer was gerechnet hat. Der Befehl endet mit Exit-Code 0 nur
+dann, wenn **jede** Gruppe den Nachweis trägt — er taugt damit für die CI.
+
+`vergleich` schreibt selbst **kein** Protokoll. Es wertet die
+vorhandenen aus, und seine Ausgabe würde beim nächsten Aufruf sonst als
+Eingabe wieder mitgelesen.
+
+## B5. Die Urteile und was sie bedeuten
+
+| Urteil | Bedeutung | Was zu tun ist |
 |---|---|---|
-| verschieden | gleich | ✅ **Nachweis erbracht** für diese Architekturen und Backends |
-| **gleich** | gleich | ⚠️ **Nichts bewiesen.** Es war dieselbe Maschinenklasse. Andere Hardware besorgen. |
-| verschieden | **verschieden** | 🔴 **Befund.** Erst die drei Ausschlussfragen in 2.5 durchgehen. |
+| **NACHWEIS** | Fingerabdrücke verschieden, Werte gleich, Modellstand gleich | Festhalten, siehe [B7](#b7-ergebnis-dauerhaft-festhalten) |
+| **KEIN NACHWEIS (eine Maschine)** | Werte gleich, aber alle Protokolle von derselben Maschine | Es fehlt eine zweite Architektur, nicht ein weiterer Lauf |
+| **UNVERGLEICHBAR (Modellstand)** | θ_v oder Artefakt-Digest weichen ab | **Kein Hardware-Befund.** Erst gleichziehen, siehe [B6](#b6-modellstand-gleichziehen) |
+| **ABWEICHUNG** | Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse | Der eigentliche Befund, siehe [B8](#b8-bei-einer-abweichung) |
+| **ZU WENIG PROTOKOLLE** | Weniger als zwei mit derselben Kennung | Weichen die Kennungen ab, liefen verschiedene Parameter |
 
-### 2.5 Bei verschiedenen Digests, in dieser Reihenfolge prüfen
+Der wichtigste Fall in dieser Tabelle ist der zweite. Ein Werkzeug, das
+zwei gleiche Werte von derselben Maschine als Nachweis ausgibt, wäre
+schlimmer als gar keines, weil sein Ergebnis geglaubt wird. Deshalb ist
+diese Verweigerung ein Akzeptanzkriterium des Fahrplans und keine
+Höflichkeit.
 
-1. **Haben alle denselben Plan verwendet?**
-   `grep '"key":"einstellungen_id"' *.jsonl`; bei gleichem Plan steht
-   überall derselbe Wert, und die Protokolle liegen ohnehin im selben
-   Ordner. Zusätzlich `grep '"prompt_sha256"' *.jsonl` als Gegenprobe
-   auf den Prompt selbst.
-2. **Ist θ_v identisch?**
-   `grep '"kind":"artifact"' *.jsonl`; verschiedene Modelldimensionen
-   oder Artefaktstände erklären jeden Unterschied.
-3. **Läuft dasselbe Backend?**
-   `grep '"key":"backend_selected"' *.jsonl`; Referenz gegen
-   `cpu-simd/avx2` ist ein *gewollter* Vergleich, aber er muss trotzdem
-   bitgleich sein. Weicht er ab, ist es ein SIMD-Paritätsfehler und
-   gehört in den INTEGER_LLM-Fahrplan.
+## B6. Modellstand gleichziehen
 
-Erst wenn alle drei übereinstimmen und die Digests trotzdem abweichen,
-ist es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
+Vor jedem Vergleichslauf sollte auf **jeder** Maschine laufen:
+
+```bash
+myl-test artefakte
+```
+
+Der Befehl rechnet den Digest über die Ankerkette des Artefakts und hält
+ihn gegen den veröffentlichten Wert aus
+`INTEGER_LLM/scale_packs/REGISTER.json`. Weicht er ab, sagt er das
+ausdrücklich:
+
+> FEHLER  Digest weicht ab … Das ist KEIN Hardware-Befund. Hier liegt ein
+> anderes Modell als beim Vergleichspartner; ein Bitgleichheitstest
+> darüber hätte keine Aussage.
+
+Ohne diesen Satz sähe ein abweichendes Artefakt aus wie eine
+gescheiterte Hardware-Bitgleichheit — der Client würde also das Gegenteil
+dessen berichten, wofür es ihn gibt.
+
+Seit dem Skalenpaket ist der Bau plattformübergreifend bitgleich und
+dauert Sekunden. Ein abweichender Digest heißt deshalb in aller Regel:
+veralteter Stand, nicht kaputte Hardware.
+
+## B7. Ergebnis dauerhaft festhalten
+
+Laufprotokolle sind flüchtig, `logs/` ist gitignored. Ein bestätigter
+Cross-Hardware-Nachweis gehört nach `INTEGER_LLM/eval/results/`, mit
+Datum, beteiligten Architekturen, Backends, θ_v-Stand und den
+Vergleichswerten.
+
+## B8. Bei einer Abweichung
+
+In dieser Reihenfolge prüfen:
+
+1. **Haben alle denselben Plan verwendet?** Der `vergleich`-Befehl
+   gruppiert danach; verschiedene Kennungen ergeben verschiedene Gruppen
+   und sind sofort sichtbar. Gegenprobe auf die Prompts selbst:
+   `grep '"prompt_sha256"' *.jsonl`.
+2. **Ist der Modellstand identisch?** Steht als `θ_v` und
+   `artefakt_digest` in jedem Protokoll und in der Übersicht des
+   Vergleichs. Bei Abweichung urteilt der Befehl ohnehin
+   `UNVERGLEICHBAR`.
+3. **Läuft dasselbe Backend?** `grep '"key":"backend_selected"' *.jsonl`.
+   Referenz gegen `cpu-simd`/AVX2 ist ein **gewollter** Vergleich, aber
+   auch er muss bitgleich sein. Weicht er ab, ist es ein
+   SIMD-Paritätsfehler und gehört in den INTEGER_LLM-Fahrplan.
+
+Erst wenn alle drei übereinstimmen und die Werte trotzdem abweichen, ist
+es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
 
 - Beide vollständigen `.jsonl` sichern.
 - Fund in `INTEGER_LLM/README/Fahrplan-v3.md` eintragen.
@@ -411,16 +563,7 @@ ist es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
   Grund ist eine Gleitkomma-Operation, die in den Rechenpfad geraten ist.
   `INTEGER_LLM/tests/audit/test_no_float.py` ist der erste Griff.
 
-### 2.6 Ergebnis festhalten
-
-Laufprotokolle sind flüchtig (`logs/` ist gitignored). Ein bestätigter
-Cross-Hardware-Nachweis gehört dauerhaft nach
-`INTEGER_LLM/eval/results/`, mit Datum, beteiligten Architekturen,
-Backends, θ_v-Stand und den Digests.
-
----
-
-## 3. Welche Hardware lohnt sich
+## B9. Welche Hardware lohnt sich
 
 Nach abnehmendem Erkenntniswert:
 
@@ -429,19 +572,17 @@ Nach abnehmendem Erkenntniswert:
 | **x86_64 + aarch64** | Verschiedene Befehlssätze, verschiedene Compiler-Backends. Der wichtigste Vergleich. |
 | **Referenz + AVX2** | Ob die SIMD-Kernel wirklich bit-identisch sind. Deckt die Paritätslücke aus Fund A19 mit ab. |
 | **Linux + macOS + Windows** | libm- und Toolchain-Unterschiede. Hier hätte die alte `f64::exp()`-LUT zugeschlagen (Fund A5). |
-| **Debug + Release** | Überlaufverhalten. Debug panickt, Release läuft um, genau der Unterschied aus Fund A14. |
+| **Debug + Release** | Überlaufverhalten. Debug panickt, Release läuft um — genau der Unterschied aus Fund A14. |
 | Zwei x86_64-Maschinen derselben Generation | Wenig. Nur als Rauschprüfung. |
 
-**Big-Endian** wäre der schärfste Test überhaupt (das Protokoll ist
-durchgehend Little-Endian kodiert). Realistisch verfügbar ist das kaum;
+**Big-Endian** wäre der schärfste Test überhaupt, das Protokoll ist
+durchgehend Little-Endian kodiert. Realistisch verfügbar ist das kaum;
 falls doch, hat dieser Lauf Vorrang vor allen anderen.
 
----
+## B10. Teilnehmer ohne Modell einbinden
 
-## 4. Ohne Artefakte mitmachen
-
-Wer die Modellartefakte nicht hat, führt **Menüpunkt 1 und 4** aus. Der
-Stack-Durchlauf prüft in etwa einer Sekunde:
+Wer die Artefakte nicht hat, liefert trotzdem Stufe 1 und Stufe 4. Der
+Protokoll-Durchlauf prüft in etwa einer Sekunde:
 
 | Stufe | Was geprüft wird |
 |---|---|
@@ -457,22 +598,19 @@ Stack-Durchlauf prüft in etwa einer Sekunde:
 | `tokenomics` | EMA, Prägung, exp-LUT exakt, Preis richtungsrichtig |
 
 Der Wert `stack_gesamt` muss bei gleichem Code auf **jeder** Maschine
-identisch sein, denn er enthält keine Zeitwerte und keine Zufallszahlen ohne
+identisch sein: Er enthält keine Zeitwerte und keine Zufallszahlen ohne
 festen Seed. Weicht er ab, ist entweder der Code verschieden oder es
 liegt eine Plattformabhängigkeit vor.
 
----
-
-## 5. Was diese Tests **nicht** abdecken
+## B11. Was diese Tests **nicht** abdecken
 
 Ehrlichkeitshalber, damit niemand mehr hineinliest, als drin ist:
 
 - **Kein Netzwerkbetrieb.** Alles läuft in einem Prozess. `myl-net`
-  (Gossip, Peer-Discovery) wird nicht berührt; echte Sockets gehören
-  in die NETWORKING-Testsuite.
+  (Gossip, Peer-Discovery) wird nicht berührt; echte Sockets gehören in
+  die NETWORKING-Testsuite.
 - **Keine Liveness.** Der BFT-Durchlauf prüft Safety (Quorum,
-  Signaturen, Mitgliedschaft). Rundenwechsel und Timeouts gibt es noch
-  nicht (CONSENSUS Punkt 3.6); ein Leader-Ausfall ist nicht testbar.
+  Signaturen, Mitgliedschaft).
 - **Keine Lastprüfung.** Zeiten stehen im Protokoll, weil sie bei der
   Fehlersuche helfen. Für Durchsatzmessungen gibt es
   `runtime/src/bin/bench_probe`.
@@ -482,82 +620,53 @@ Ehrlichkeitshalber, damit niemand mehr hineinliest, als drin ist:
 - **Kein Sicherheitsaudit der Artefakte.** Ein manipuliertes Artefakt
   liefert einen anderen Digest, aber der Client sagt nicht, *warum*.
 
----
-
-## 6. Häufige Stolpersteine
-
-**„Artefaktverzeichnis fehlt"**
-Erwartet wird `INTEGER_LLM/artifacts/qwen2.5-0.5b/`. Liegen die
-Artefakte woanders: `--artifacts <PFAD>` oder Menüpunkt 6. Alternativ
-`INTEGER_LLM_ARTIFACTS_DIR` setzen.
-
-**Der Determinismuslauf dauert ewig**
-Im Debug-Build ~40 s je Durchlauf. Immer `--release` verwenden.
-
-**Das Banner zerschießt die Ausgabe**
-`MYL_NO_BANNER=1` setzen oder `--quiet` verwenden. In Skripten ohnehin
-zu empfehlen.
-
-**„Der Testplan wurde verändert"**
-Die Datei wurde nach dem Erzeugen bearbeitet. Auch ein zusätzliches
-Leerzeichen im Prompt zählt. Originaldatei vom Koordinator neu anfordern.
-Kommentarzeilen (`#`) dürfen dagegen frei ergänzt werden, sie gehen
-nicht in die Prüfsumme ein.
-
-**Zwei Läufe auf derselben Maschine ergeben verschiedene Digests**
-Das wäre schwerwiegend: Die Determinismusprüfung meldet es als
-`ABWEICHUNG`. Protokoll sichern und melden; hier liegt kein
-Bedienfehler vor.
-
-**Der Stack-Lauf schlägt fehl, obwohl nichts geändert wurde**
-Dann ist eine Annahme *zwischen* zwei Komponenten gebrochen. Die
-fehlgeschlagene Stufe steht im Protokoll mit Grund. Genau dafür gibt es
-diesen Lauf.
-
----
-
-## 7. Meldevorlage
+## B12. Meldevorlage für Teilnehmer
 
 ```
 Testplan:        <plan_id>   (Einstellungs-ID: <einstellungen_id>)
+Name im Lauf:    <teilnehmer>
 Maschine:        z. B. Apple M2 Pro / Ryzen 5950X
 Architektur:     aus dem Protokoll (arch)
 Betriebssystem:  aus dem Protokoll (os)
 Backend:         aus dem Protokoll (backend_selected)
+θ_v:             aus dem Protokoll (theta_v)
 Build:           release / debug
 
-Fingerabdruck:   <hardware_fingerprint>
+Fingerabdruck:   <fingerprint_sha256>
+Determinismus:   <determinismus>          (oder: keine Artefakte)
+Shard-Lauf:      <shard_vs_einzelknoten>  (oder: keine Artefakte)
 Stack-Gesamt:    <stack_gesamt>
-Determinismus:   <determinismus>   (oder: keine Artefakte)
-Shard-Lauf:      <shard_vs_einzelknoten>   (oder: keine Artefakte)
 
 Auffälligkeiten: <Fehler/Abweichungen aus dem Protokoll, sonst "keine">
-Anhang:          <lauf-id>.jsonl
+Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 ```
 
 ---
 
 ## Changelog
 
+### v2.0.0 – 2026-08-21 (nach Rollen geteilt, für Laien geschrieben)
+- **Zwei Teile statt sieben Kapitel.** Teil A führt einen Teilnehmer ohne
+  Vorkenntnisse vom Doppelklick bis zum verschickten Protokoll; Teil B
+  behandelt das Verfahren des Koordinators ausführlich. Die alte
+  Mischung zwang beide Rollen, den Text der jeweils anderen zu
+  überspringen.
+- **Bedienung neu beschrieben:** Pfeiltasten und Enter, Namenseingabe
+  beim Start, ein Protokoll je Testlauf statt vier.
+- **Auswertung neu:** `myl-test vergleich` ersetzt die
+  `grep`-Anleitung; die Urteilstabelle nennt jetzt die fünf Urteile des
+  Befehls samt Folgerung.
+- **Testpläne:** mehrere Prompts je Plan, Laufzeitrechnung mit Beispielen,
+  zweiter mitgelieferter Plan für das 7B-Modell.
+- **Neu aufgenommen:** Plattenbedarf und das Freigeben von Artefakten und
+  Gewichten.
+
+### v1.2.0 – 2026-08-20
+- Testplan-Auswahl beim Start, Artefaktbeschaffung, Meldevorlage.
+
 ### v1.1.0 – 2026-08-18
-- **Testplan ergänzt** (Abschnitt 0a): Die Vorgabe der Parameter ist
-  jetzt eine Datei mit Prüfsumme statt einer Bitte im Fließtext. Der
-  häufigste Fehlalarm, ein versehentlich veränderter Prompt, der wie
-  ein Befund an der Kernthese aussieht, ist damit technisch
-  ausgeschlossen.
-- **Protokoll-Ablage** nach Prüflauf, Datum und Einstellungs-Kennung.
-  Alle Teilnehmer eines Plans tragen dieselbe `settings_id`; die
-  Zuordnungsarbeit beim Auswerten entfällt.
-- Abschnitt 2 auf das Planverfahren umgestellt, neue Gegenprobe über
-  `einstellungen_id`, Meldevorlage um den Plan erweitert.
+- Abschnitt „Was hier eigentlich gemessen wird" für Leser ohne Bezug zu
+  Sprachmodellen; Stolpersteine, Urteilstabelle.
 
 ### v1.0.0 – 2026-08-18
-- Erstfassung. Vorher gab es nur acht Zeilen im README, die zwar die
-  zwei Befehle nannten, aber nicht beantworteten, wie sich mehrere
-  Beteiligte koordinieren, was bei Abweichung zu tun ist und wie ein
-  Ergebnis dauerhaft festgehalten wird.
-- Bewusst nach Rollen getrennt: Ein Teilnehmer soll Abschnitt 1 lesen
-  können und fertig sein.
-- Abschnitt 5 („Was diese Tests nicht abdecken") ist Absicht. Eine
-  Testanleitung ohne Grenzbeschreibung verleitet dazu, Ergebnisse
-  überzuinterpretieren.
+- Erstfassung, nach Rollen getrennt.

@@ -12,8 +12,13 @@
 
 plan_id     = wikitext2-0.5b-standard
 prompt      = " The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake"
+prompt      = "The capital of France is"
+prompt      = "Die Hauptstadt von Frankreich ist"
+prompt      = "In quantum mechanics, the wave function describes"
+prompt      = "In der Quantenmechanik beschreibt die Wellenfunktion"
+prompt      = "The result of 17 times 23 is"
 steps       = 32
 shards      = 4
 model       = qwen2.5-0.5b
 
-spec_sha256 = 1dc4d4ab2082cd16691bf7ffce2fc68f789b22a7c39be7e219252844b6dbca26
+spec_sha256 = 12a1e91e4fa75f6e7a4171bca108ca11cd40ecb84b05889d9409b76e9fb0b859

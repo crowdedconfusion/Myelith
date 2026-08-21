@@ -105,6 +105,54 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
         ));
         return;
     }
+    log.event(Event::Artifact {
+        key: "modell".into(),
+        value: dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    });
+
+    // Modellstand vor Modellmaßen: Dimensionen unterscheiden 0,5B von 7B,
+    // aber zwei θ_v-Stände desselben Modells sehen darin gleich aus. Ein
+    // Digest-Vergleich zwischen Modellständen ist ohne diese Werte nicht
+    // einzuordnen — bei einem θ_v-Wechsel ändern sich die Digests
+    // zwangsläufig, und die Frage ist dann nicht „gleich oder nicht",
+    // sondern „erwartet oder nicht".
+    match loader::ThetaV::load_from_dir(dir) {
+        Ok(t) => {
+            log.event(Event::Artifact {
+                key: "theta_v".into(),
+                value: t.version,
+            });
+            log.event(Event::Artifact {
+                key: "weights_hash".into(),
+                value: t.weights_hash,
+            });
+            log.event(Event::Artifact {
+                key: "scales_hash".into(),
+                value: t.scales_hash,
+            });
+            log.event(Event::Artifact {
+                key: "luts_hash".into(),
+                value: t.luts_hash,
+            });
+        }
+        Err(e) => log.note(format!("theta_v.json nicht lesbar: {}", e)),
+    }
+
+    // Der Ankerdigest ist derselbe Wert, den `artefakte` gegen das
+    // veröffentlichte Register hält. Im Protokoll beantwortet er die Frage,
+    // die bei einer Abweichung zuerst zu stellen ist: Lief der Vergleich
+    // überhaupt über dasselbe Artefakt?
+    match crate::artefakte::artefakt_digest(dir) {
+        Ok((digest, _)) => log.event(Event::Artifact {
+            key: "artefakt_digest".into(),
+            value: digest,
+        }),
+        Err(e) => log.note(format!("Ankerdigest nicht berechenbar: {}", e)),
+    }
+
     match loader::load_model_dims(dir) {
         Ok(d) => {
             log.event(Event::Artifact {
@@ -148,14 +196,38 @@ pub fn run_hardware(log: &mut RunLog) -> bool {
     true
 }
 
-/// `myl-test determinismus` — derselbe Prompt zweimal, bitgleich?
+/// `myl-test determinismus` — jeder Prompt zweimal, bitgleich?
 ///
 /// Prüft die Kerneigenschaft aus Whitepaper Kap. 6.2 lokal: Zwei
 /// unabhängige Läufe im selben Prozess müssen bitgleiche Logits
 /// liefern. Der eigentliche Nachweis entsteht erst, wenn dieser Lauf auf
 /// **verschiedener** Hardware denselben Digest liefert — deshalb steht
 /// der Fingerabdruck im selben Protokoll.
-pub fn run_determinism(log: &mut RunLog, artifact_dir: &Path, prompt: &str, steps: usize) -> bool {
+///
+/// ## Warum mehrere Prompts
+///
+/// Ein einzelner Prompt übt einen einzigen Pfad durch das Modell aus. Ein
+/// Rundungsfehler, der nur bei langen Sequenzen, nur bei bestimmten Token
+/// oder nur in einem selten getroffenen LUT-Bereich auftritt, bleibt dann
+/// unentdeckt — und der Vergleichswert sähe trotzdem beruhigend aus. Der
+/// Testplan gibt deshalb eine **Reihe** von Prompts vor.
+///
+/// Das Modell wird dafür **einmal** geladen und über alle Prompts
+/// wiederverwendet: Bei 7B dauert das Laden ein Vielfaches der Messung.
+///
+/// ## Zwei Ebenen von Vergleichswerten
+///
+/// Je Prompt entsteht `determinismus_<n>`, darüber ein Gesamtwert
+/// `determinismus` als Digest über alle Einzelwerte in ihrer Reihenfolge.
+/// Der Gesamtwert ist die Zahl, die zwischen Maschinen verglichen wird;
+/// die Einzelwerte sagen, **welcher** Prompt auseinanderläuft, wenn er
+/// abweicht.
+pub fn run_determinism(
+    log: &mut RunLog,
+    artifact_dir: &Path,
+    prompts: &[String],
+    steps: usize,
+) -> bool {
     log_context(log, Some(artifact_dir));
 
     if !artifact_dir.exists() {
@@ -163,6 +235,10 @@ pub fn run_determinism(log: &mut RunLog, artifact_dir: &Path, prompt: &str, step
             "Artefaktverzeichnis {} fehlt — Determinismuslauf nicht möglich",
             artifact_dir.display()
         ));
+        return false;
+    }
+    if prompts.is_empty() {
+        log.error("Kein Prompt angegeben");
         return false;
     }
 
@@ -174,58 +250,87 @@ pub fn run_determinism(log: &mut RunLog, artifact_dir: &Path, prompt: &str, step
         }
     };
 
-    let ids = match encode_prompt(artifact_dir, prompt) {
-        Ok(v) => v,
-        Err(e) => {
-            log.error(e);
+    let mut alle_gleich = true;
+    let mut einzelwerte: Vec<String> = Vec::with_capacity(prompts.len());
+
+    for (nr, prompt) in prompts.iter().enumerate() {
+        let nr = nr + 1;
+        let ids = match encode_prompt(artifact_dir, prompt) {
+            Ok(v) => v,
+            Err(e) => {
+                log.error(e);
+                return false;
+            }
+        };
+        log.event(Event::PromptAccepted {
+            token_count: ids.len(),
+            prompt_sha256: sha256_hex(prompt.as_bytes()),
+        });
+        if ids.is_empty() {
+            log.error(format!("Prompt {} ergibt null Token", nr));
             return false;
         }
-    };
-    log.event(Event::PromptAccepted {
-        token_count: ids.len(),
-        prompt_sha256: sha256_hex(prompt.as_bytes()),
-    });
-    if ids.is_empty() {
-        log.error("Prompt ergibt null Token");
-        return false;
+
+        let mut digests = Vec::new();
+        for lauf in 1..=2u32 {
+            let d = log.timed(&format!("prompt_{}_lauf_{}", nr, lauf), "", || {
+                greedy_digest(&model, &ids, steps)
+            });
+            log.result(&format!("prompt_{}_lauf_{}", nr, lauf), &d.0, d.1.clone());
+            digests.push(d);
+        }
+
+        // Klartext nur auf das Terminal. Im Protokoll stehen Token und
+        // Digest; daraus ist der Text ableitbar, und die Datei bleibt schlank.
+        if let Some(text) = decode_tokens(artifact_dir, &digests[0].2) {
+            log.nur_anzeigen("");
+            log.nur_anzeigen(format!("  Prompt {}:  {}", nr, prompt));
+            log.nur_anzeigen(format!("  Antwort:    {}", text.trim_end()));
+            log.nur_anzeigen("");
+        }
+
+        let gleich = digests[0].0 == digests[1].0;
+        if gleich {
+            log.result(
+                &format!("determinismus_{}", nr),
+                &digests[0].0,
+                "bitgleich über zwei Läufe",
+            );
+        } else {
+            alle_gleich = false;
+            log.event(Event::Mismatch {
+                name: format!("determinismus_{}", nr),
+                expected: digests[0].0.clone(),
+                actual: digests[1].0.clone(),
+            });
+        }
+        einzelwerte.push(digests[0].0.clone());
     }
 
-    let mut digests = Vec::new();
-    for lauf in 1..=2u32 {
-        let d = log.timed(&format!("lauf_{}", lauf), "", || {
-            greedy_digest(&model, &ids, steps)
-        });
-        log.result(&format!("lauf_{}_digest", lauf), &d.0, d.1.clone());
-        digests.push(d);
-    }
-
-    // Klartext nur auf das Terminal. Im Protokoll stehen Token und Digest;
-    // daraus ist der Text ableitbar, und die Datei bleibt schlank.
-    if let Some(text) = decode_tokens(artifact_dir, &digests[0].2) {
-        log.nur_anzeigen("");
-        log.nur_anzeigen(format!("  Prompt:  {}", prompt));
-        log.nur_anzeigen(format!("  Antwort: {}", text.trim_end()));
-        log.nur_anzeigen("");
-    }
-
-    let gleich = digests[0].0 == digests[1].0;
-    if gleich {
-        log.result("determinismus", &digests[0].0, "bitgleich über zwei Läufe");
-    } else {
-        log.event(Event::Mismatch {
-            name: "determinismus".into(),
-            expected: digests[0].0.clone(),
-            actual: digests[1].0.clone(),
-        });
-    }
-
+    let gesamt = digest_ueber(&einzelwerte);
+    log.result(
+        "determinismus",
+        &gesamt,
+        format!("{} Prompts, je zwei Läufe", prompts.len()),
+    );
     log.note(format!(
-        "Vergleichswert für andere Maschinen: {} — bei gleichem Prompt und \
+        "Vergleichswert für andere Maschinen: {} — bei gleichem Testplan und \
          gleichem θ_v MUSS er übereinstimmen, unabhängig von Architektur \
          und Backend.",
-        digests[0].0
+        gesamt
     ));
-    gleich
+    alle_gleich
+}
+
+/// Digest über eine geordnete Reihe von Digests.
+///
+/// Die Reihenfolge geht ein: Dieselben Prompts in anderer Folge sind ein
+/// anderer Testplan, und der Vergleichswert muss das zeigen. Getrennt
+/// werden die Einzelwerte durch `\n`, das in einem Hexdigest nicht
+/// vorkommt — ohne Trenner ließen sich zwei Reihen konstruieren, die
+/// dieselbe Bytefolge ergeben.
+fn digest_ueber(werte: &[String]) -> String {
+    sha256_hex(werte.join("\n").as_bytes())
 }
 
 /// Greedy-Dekodierung; liefert (Digest, Kurzbeschreibung).
@@ -267,7 +372,7 @@ fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, St
 pub fn run_shard(
     log: &mut RunLog,
     artifact_dir: &Path,
-    prompt: &str,
+    prompts: &[String],
     steps: usize,
     num_shards: usize,
 ) -> bool {
@@ -282,6 +387,10 @@ pub fn run_shard(
     }
     if num_shards == 0 {
         log.error("num_shards muss > 0 sein");
+        return false;
+    }
+    if prompts.is_empty() {
+        log.error("Kein Prompt angegeben");
         return false;
     }
 
@@ -301,22 +410,6 @@ pub fn run_shard(
         return false;
     }
 
-    let ids = match encode_prompt(artifact_dir, prompt) {
-        Ok(v) => v,
-        Err(e) => {
-            log.error(e);
-            return false;
-        }
-    };
-    log.event(Event::PromptAccepted {
-        token_count: ids.len(),
-        prompt_sha256: sha256_hex(prompt.as_bytes()),
-    });
-    if ids.is_empty() {
-        log.error("Prompt ergibt null Token");
-        return false;
-    }
-
     // Schichtgrenzen gleichmäßig verteilen; Rest auf die vorderen Shards.
     let mut boundaries = vec![0usize; num_shards + 1];
     let base = num_layers / num_shards;
@@ -329,26 +422,7 @@ pub fn run_shard(
         value: format!("{:?}", boundaries),
     });
 
-    let mut shards = Vec::with_capacity(num_shards);
     for s in 0..num_shards {
-        let sk = match BlsSecretKey::key_gen(&[(s as u8).wrapping_add(1).wrapping_mul(17); 32]) {
-            Ok(k) => k,
-            Err(e) => {
-                log.error(format!("BLS-Schlüssel für Shard {} fehlgeschlagen: {:?}", s, e));
-                return false;
-            }
-        };
-        shards.push(Arc::new(ShardNode::new(
-            s,
-            boundaries[s],
-            boundaries[s + 1],
-            s == 0,
-            s == num_shards - 1,
-            model.clone(),
-            sk,
-            DaStore::new(Box::new(ReedSolomonCoder::default())),
-            steps as u64,
-        )));
         log.event(Event::Step {
             name: format!("shard_{}_bereit", s),
             millis: 0,
@@ -362,69 +436,153 @@ pub fn run_shard(
         });
     }
 
-    let mut coordinator = Coordinator::new(
-        PodId::new([0xAA; 32]),
-        EpochId(0),
-        shards,
-        myl_pod::coordinator::DEFAULT_WINDOW_MS,
-    );
+    let mut alle_gleich = true;
+    let mut einzelwerte: Vec<String> = Vec::with_capacity(prompts.len());
 
-    let pod_out = log.timed("pod_inferenz", &format!("{} Shards", num_shards), || {
-        coordinator.run_prompt(1, &ids, steps as u64)
-    });
-    let pod_digest = digest_tokens(&pod_out);
-    log.result(
-        "pod_tokens",
-        &pod_digest,
-        format!("{} Token: {:?}", pod_out.len(), &pod_out[..pod_out.len().min(8)]),
-    );
+    for (nr, prompt) in prompts.iter().enumerate() {
+        let nr = nr + 1;
+        let ids = match encode_prompt(artifact_dir, prompt) {
+            Ok(v) => v,
+            Err(e) => {
+                log.error(e);
+                return false;
+            }
+        };
+        log.event(Event::PromptAccepted {
+            token_count: ids.len(),
+            prompt_sha256: sha256_hex(prompt.as_bytes()),
+        });
+        if ids.is_empty() {
+            log.error(format!("Prompt {} ergibt null Token", nr));
+            return false;
+        }
 
-    match coordinator.build_poi_bundle() {
-        Ok(b) => log.result(
-            "poi_bundle",
-            &sha256_hex(b.segments_root.as_bytes()),
+        // Der Pod wird je Prompt frisch aufgebaut, das Modell aber nicht
+        // neu geladen (es steckt hinter einem `Arc`). Ein wiederverwendeter
+        // Koordinator trüge Segmente und PoI-Zustand des vorigen Prompts
+        // weiter; gemessen werden soll jeder Prompt für sich.
+        let mut shards = Vec::with_capacity(num_shards);
+        for s in 0..num_shards {
+            let sk = match BlsSecretKey::key_gen(&[(s as u8).wrapping_add(1).wrapping_mul(17); 32])
+            {
+                Ok(k) => k,
+                Err(e) => {
+                    log.error(format!(
+                        "BLS-Schlüssel für Shard {} fehlgeschlagen: {:?}",
+                        s, e
+                    ));
+                    return false;
+                }
+            };
+            shards.push(Arc::new(ShardNode::new(
+                s,
+                boundaries[s],
+                boundaries[s + 1],
+                s == 0,
+                s == num_shards - 1,
+                model.clone(),
+                sk,
+                DaStore::new(Box::new(ReedSolomonCoder::default())),
+                steps as u64,
+            )));
+        }
+
+        let mut coordinator = Coordinator::new(
+            PodId::new([0xAA; 32]),
+            EpochId(0),
+            shards,
+            myl_pod::coordinator::DEFAULT_WINDOW_MS,
+        );
+
+        let pod_out = log.timed(
+            &format!("prompt_{}_pod_inferenz", nr),
+            &format!("{} Shards", num_shards),
+            || coordinator.run_prompt(nr as u64, &ids, steps as u64),
+        );
+        let pod_digest = digest_tokens(&pod_out);
+        log.result(
+            &format!("prompt_{}_pod_tokens", nr),
+            &pod_digest,
             format!(
-                "vTFE={}, Segmente={}",
-                b.vtfe_claimed,
-                coordinator.completed_segments().len()
+                "{} Token: {:?}",
+                pod_out.len(),
+                &pod_out[..pod_out.len().min(8)]
             ),
-        ),
-        Err(e) => log.note(format!("Kein PoI-Bündel: {}", e)),
+        );
+
+        match coordinator.build_poi_bundle() {
+            Ok(b) => log.result(
+                &format!("prompt_{}_poi_bundle", nr),
+                &sha256_hex(b.segments_root.as_bytes()),
+                format!(
+                    "vTFE={}, Segmente={}",
+                    b.vtfe_claimed,
+                    coordinator.completed_segments().len()
+                ),
+            ),
+            Err(e) => log.note(format!("Kein PoI-Bündel für Prompt {}: {}", nr, e)),
+        }
+
+        // Gegenprobe: dasselbe Modell ungeteilt.
+        let (single_digest, single_desc, single_tokens) = log.timed(
+            &format!("prompt_{}_einzelknoten", nr),
+            "",
+            || greedy_digest(&model, &ids, steps),
+        );
+        log.result(
+            &format!("prompt_{}_einzelknoten_tokens", nr),
+            &single_digest,
+            single_desc,
+        );
+
+        // Klartext nur auf das Terminal, siehe `run_determinism`.
+        if let Some(text) = decode_tokens(artifact_dir, &single_tokens) {
+            log.nur_anzeigen("");
+            log.nur_anzeigen(format!("  Prompt {}:  {}", nr, prompt));
+            log.nur_anzeigen(format!("  Antwort:    {}", text.trim_end()));
+            log.nur_anzeigen("");
+        }
+
+        if pod_digest == single_digest {
+            log.result(
+                &format!("shard_vs_einzelknoten_{}", nr),
+                &pod_digest,
+                "bitgleich",
+            );
+        } else {
+            alle_gleich = false;
+            log.event(Event::Mismatch {
+                name: format!("shard_vs_einzelknoten_{}", nr),
+                expected: single_digest.clone(),
+                actual: pod_digest.clone(),
+            });
+            log.note(
+                "Ein Unterschied hier bedeutet, dass die Aufteilung selbst \
+                 das Ergebnis verändert — die Shard-Grenzen oder die \
+                 Randskalierung (boundary_frac) sind der erste Verdacht.",
+            );
+        }
+        einzelwerte.push(pod_digest);
     }
 
-    // Gegenprobe: dasselbe Modell ungeteilt.
-    let (single_digest, single_desc, single_tokens) =
-        log.timed("einzelknoten_referenz", "", || greedy_digest(&model, &ids, steps));
-    log.result("einzelknoten_tokens", &single_digest, single_desc);
-
-    // Klartext nur auf das Terminal, siehe `run_determinism`.
-    if let Some(text) = decode_tokens(artifact_dir, &single_tokens) {
-        log.nur_anzeigen("");
-        log.nur_anzeigen(format!("  Prompt:  {}", prompt));
-        log.nur_anzeigen(format!("  Antwort: {}", text.trim_end()));
-        log.nur_anzeigen("");
-    }
-
-    let gleich = pod_digest == single_digest;
-    if gleich {
+    let gesamt = digest_ueber(&einzelwerte);
+    if alle_gleich {
         log.result(
             "shard_vs_einzelknoten",
-            &pod_digest,
-            "bitgleich — Akzeptanzkriterium COMPUTE_PIPELINE Phase 1 erfüllt",
+            &gesamt,
+            format!(
+                "{} Prompts bitgleich — Akzeptanzkriterium COMPUTE_PIPELINE Phase 1 erfüllt",
+                prompts.len()
+            ),
         );
     } else {
-        log.event(Event::Mismatch {
-            name: "shard_vs_einzelknoten".into(),
-            expected: single_digest,
-            actual: pod_digest,
-        });
-        log.note(
-            "Ein Unterschied hier bedeutet, dass die Aufteilung selbst \
-             das Ergebnis verändert — die Shard-Grenzen oder die \
-             Randskalierung (boundary_frac) sind der erste Verdacht.",
+        log.result(
+            "shard_vs_einzelknoten",
+            &gesamt,
+            format!("{} Prompts, mindestens einer weicht ab", prompts.len()),
         );
     }
-    gleich
+    alle_gleich
 }
 
 fn digest_tokens(tokens: &[u32]) -> String {
@@ -444,6 +602,10 @@ mod tests {
         let d = std::env::temp_dir().join(format!("myl-testclient-runs-{}", name));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    fn probe() -> Vec<String> {
+        vec!["Test".to_string()]
     }
 
     #[test]
@@ -468,7 +630,7 @@ mod tests {
     fn fehlende_artefakte_werden_sauber_gemeldet() {
         let dir = tempdir("keine-artefakte");
         let mut log = RunLog::new(&dir, "determinismus", false);
-        let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), "Test", 4);
+        let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), &probe(), 4);
         assert!(!ok);
         assert!(log.problems() > 0);
         let lauf_dir = log.dir().to_path_buf();
@@ -481,11 +643,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// θ_v-Version und Ankerdigest müssen im Protokoll stehen (Punkt 3.1).
+    /// Ohne sie ist ein abweichender Digest nicht einzuordnen: Er könnte
+    /// ein Hardware-Befund sein oder schlicht ein anderer Modellstand.
+    ///
+    /// Die Ankerdateien werden hier gestellt statt gemessen — der Test
+    /// prüft die Protokollierung, nicht die Artefakte, und läuft deshalb
+    /// auch in der CI, wo keine liegen.
+    #[test]
+    fn modellstand_steht_im_protokoll() {
+        let dir = tempdir("modellstand");
+        let artefakte = dir.join("qwen2.5-0.5b");
+        std::fs::create_dir_all(&artefakte).unwrap();
+        std::fs::write(
+            artefakte.join("theta_v.json"),
+            r#"{"version":"0.17.0","weights_hash":"aa","scales_hash":"bb","luts_hash":"cc"}"#,
+        )
+        .unwrap();
+        std::fs::write(artefakte.join("model_config.json"), "{}").unwrap();
+        std::fs::write(artefakte.join("tokenizer.json"), "{}").unwrap();
+
+        let mut log = RunLog::new(&dir, "probe", false);
+        log_context(&mut log, Some(&artefakte));
+        let lauf_dir = log.dir().to_path_buf();
+        let dateiname = log.dateiname().to_string();
+        log.finish(true);
+
+        let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
+        assert!(jsonl.contains(r#""key":"theta_v","value":"0.17.0""#), "{jsonl}");
+        assert!(jsonl.contains(r#""key":"weights_hash","value":"aa""#));
+        assert!(jsonl.contains(r#""key":"modell","value":"qwen2.5-0.5b""#));
+        assert!(jsonl.contains(r#""key":"artefakt_digest""#));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn shardlauf_lehnt_null_shards_ab() {
         let dir = tempdir("null-shards");
         let mut log = RunLog::new(&dir, "shard", false);
-        assert!(!run_shard(&mut log, Path::new("/nicht/vorhanden"), "Test", 4, 0));
+        assert!(!run_shard(&mut log, Path::new("/nicht/vorhanden"), &probe(), 4, 0));
         log.finish(false);
         let _ = std::fs::remove_dir_all(&dir);
     }

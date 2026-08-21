@@ -64,19 +64,25 @@ pub fn suchen(repo: &Path, meldung: &mut dyn FnMut(String)) -> Vec<Gefunden> {
 /// Kurzfassung eines Plans für die Auswahlliste.
 pub fn zeile(g: &Gefunden) -> String {
     let p = &g.plan;
-    let prompt = if p.prompt.chars().count() > 44 {
-        let gekuerzt: String = p.prompt.chars().take(41).collect();
-        format!("{}…", gekuerzt)
+    let erster = p.prompts.first().map(String::as_str).unwrap_or("");
+    let prompt = if erster.chars().count() > 44 {
+        format!("{}…", erster.chars().take(41).collect::<String>())
     } else {
-        p.prompt.clone()
+        erster.to_string()
+    };
+    let weitere = match p.prompts.len() {
+        0 | 1 => String::new(),
+        n => format!(" (+{} weitere)", n - 1),
     };
     format!(
-        "{} · {}, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"",
+        "{} · {}, {} Prompts, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"{}",
         p.plan_id,
         p.model,
+        p.prompts.len(),
         p.steps,
         p.shards,
         p.short_id(),
-        prompt
+        prompt,
+        weitere
     )
 }

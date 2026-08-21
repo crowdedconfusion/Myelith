@@ -8,39 +8,45 @@
 //!
 //! ## Zwei Ausgaben je Lauf
 //!
-//! - **`myl-test.jsonl`**: eine JSON-Zeile je Ereignis, maschinenlesbar.
-//!   Das ist die Fassung, die zwischen Maschinen verglichen wird.
-//! - **`myl-test.log`**: dieselben Ereignisse als Fliesstext, fuer die
-//!   Fehlersuche am Terminal.
-//!
-//! Beide liegen direkt in `logs/` und werden **angehaengt**, nicht ersetzt.
-//! Jede Zeile traegt `run_id`, `command` und `settings_id`; die Zuordnung
-//! leisten also die Daten, nicht der Pfad.
+//! - **`.jsonl`**: eine JSON-Zeile je Ereignis, maschinenlesbar. Das ist
+//!   die Fassung, die zwischen Maschinen verglichen wird und die
+//!   [`crate::vergleich`] einliest.
+//! - **`.log`**: dieselben Ereignisse als Fließtext, für die Fehlersuche
+//!   am Terminal.
 //!
 //! ## Wo die Dateien liegen
 //!
+//! Alles flach in `logs/`, eine Datei je Lauf:
+//!
 //! ```text
 //! logs/
-//! └── determinismus/            ← je Prüflauf ein Ordner
-//!     └── 2026-08-18_9f2c1a4b/  ← Datum + Kurzkennung der Einstellungen
-//!     logs/
-//!     ├── myl-test.jsonl
-//!     └── myl-test.log
+//! ├── anna_9f2c1a4b_2026-08-21_143022.jsonl
+//! ├── anna_9f2c1a4b_2026-08-21_143022.log
+//! └── bjoern_9f2c1a4b_2026-08-21_150411.jsonl
 //! ```
 //!
-//! Die **Kurzkennung** ist die halbe Miete beim Vergleich zwischen
-//! Maschinen: Sie ist der Hash genau der Parameter, die gleich sein
-//! müssen (Prompt, Tokenzahl, Shards, Modell — siehe [`crate::spec`]).
-//! Alle Teilnehmer mit demselben Testplan landen im **gleichnamigen
-//! Ordner**; wer versehentlich andere Parameter nimmt, landet sichtbar
-//! woanders. Die Zuordnungsarbeit entfällt damit ganz.
+//! Der Name setzt sich aus **Teilnehmer**, **Einstellungs-Kurzkennung**,
+//! Datum und Uhrzeit zusammen. Jedes der vier Stücke beantwortet eine
+//! Frage, die beim Vergleich zuerst gestellt wird:
 //!
-//! Der Dateiname trägt Uhrzeit und Hardware-Kurzform — damit sind auch
-//! die Protokolle mehrerer Maschinen in einem Ordner ohne Umbenennen
-//! unterscheidbar.
+//! - **Teilnehmer** — von wem stammt dieser Lauf? Bei einem
+//!   Cross-Hardware-Test schickt jeder seine Dateien an den Koordinator,
+//!   und der muss sie ohne Rückfrage zuordnen können.
+//! - **Kurzkennung** — der Hash genau der Parameter, die gleich sein
+//!   müssen (Prompt, Tokenzahl, Shards, Modell — siehe [`crate::spec`]).
+//!   Gleiche Kennung heißt vergleichbar; wer versehentlich andere
+//!   Parameter genommen hat, ist sofort am Dateinamen erkennbar.
+//! - **Datum und Uhrzeit** — trennen Wiederholungen desselben Laufs,
+//!   ohne dass eine frühere Datei überschrieben wird.
 //!
-//! Beide werden **immer** geschrieben, auch bei Abbruch. Ein Lauf, der
-//! ohne Protokoll endet, ist ein Fehler des Clients, kein Sonderfall.
+//! Dieselben Angaben stehen **auch im Protokoll** (`run_started` trägt
+//! Befehl, Teilnehmer und Einstellungs-Kennung). Der Dateiname ist eine
+//! Bequemlichkeit; die Zuordnung leisten die Daten, denn eine Datei wird
+//! umbenannt, ein Feld nicht.
+//!
+//! Beide Dateien werden **immer** geschrieben, auch bei Abbruch. Ein
+//! Lauf, der ohne Protokoll endet, ist ein Fehler des Clients, kein
+//! Sonderfall.
 //!
 //! ## Warum kein Logging-Framework
 //!
@@ -70,8 +76,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// trägt — und damit bleibt das Format diffbar.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Lauf beginnt. Trägt die Kennung des Unterbefehls.
-    RunStarted { command: String },
+    /// Lauf beginnt. Trägt Befehl, Teilnehmer und Einstellungs-Kennung —
+    /// die drei Angaben, nach denen Protokolle beim Vergleich sortiert
+    /// werden. Sie stehen bewusst in der **ersten** Zeile: Wer eine Datei
+    /// aufmacht, soll nicht suchen müssen, woher sie stammt.
+    RunStarted {
+        command: String,
+        teilnehmer: String,
+        einstellungen_id: String,
+    },
     /// Hardware-Erhebung (Architektur, Betriebssystem, Backends).
     Hardware { key: String, value: String },
     /// Modell-/Artefakt-Identität: θ_v-Version, Artefakt-Hashes, Dimensionen.
@@ -128,7 +141,15 @@ impl Event {
     /// zweier Läufe.
     fn fields(&self) -> Vec<(&'static str, String)> {
         match self {
-            Event::RunStarted { command } => vec![("command", command.clone())],
+            Event::RunStarted {
+                command,
+                teilnehmer,
+                einstellungen_id,
+            } => vec![
+                ("command", command.clone()),
+                ("teilnehmer", teilnehmer.clone()),
+                ("einstellungen_id", einstellungen_id.clone()),
+            ],
             Event::Hardware { key, value } => {
                 vec![("key", key.clone()), ("value", value.clone())]
             }
@@ -181,7 +202,14 @@ impl Event {
     /// Menschenlesbare Zeile für Terminal und `.log`.
     fn human(&self) -> String {
         match self {
-            Event::RunStarted { command } => format!("Lauf gestartet: {}", command),
+            Event::RunStarted {
+                command,
+                teilnehmer,
+                einstellungen_id,
+            } => format!(
+                "Lauf gestartet: {} — Teilnehmer {}, Einstellungen {}",
+                command, teilnehmer, einstellungen_id
+            ),
             Event::Hardware { key, value } => format!("  Hardware  {:<22} {}", key, value),
             Event::Artifact { key, value } => format!("  Artefakt  {:<22} {}", key, value),
             Event::PromptAccepted {
@@ -236,7 +264,7 @@ impl Event {
 ///
 /// Kein Fremd-Crate, weil das Format hier Teil des Vergleichsverfahrens
 /// ist und stabil bleiben muss.
-fn json_escape(s: &str) -> String {
+pub(crate) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {
@@ -274,21 +302,42 @@ pub struct LogZiel {
     pub datum: String,
     /// Kurzkennung der Einstellungen (8 Hexzeichen) oder `ohne-plan`.
     pub einstellungen: String,
-    /// Hardware-Kurzform für den Dateinamen.
+    /// Name des Teilnehmers, gesäubert für den Dateinamen.
+    pub teilnehmer: String,
+    /// Hardware-Kurzform, für die Laufkennung.
     pub hardware: String,
     /// Uhrzeit als `HHMMSS`.
     pub uhrzeit: String,
 }
 
+/// Ersatzname, wenn keiner angegeben wurde (Skriptläufe, `--quiet`).
+///
+/// Bewusst sichtbar und nicht etwa die Hardware-Kurzform: Wer eine so
+/// benannte Datei im Auswertungsordner sieht, weiß sofort, dass die
+/// Zuordnung fehlt, statt sie zu erraten.
+pub const OHNE_NAME: &str = "ohne-name";
+
 impl LogZiel {
-    /// Baut das Ziel aus Befehl und Einstellungs-Kurzkennung.
-    pub fn neu(wurzel: &Path, befehl: &str, einstellungen: &str, hardware: &str) -> Self {
+    /// Baut das Ziel aus Befehl, Teilnehmer und Einstellungs-Kurzkennung.
+    pub fn neu(
+        wurzel: &Path,
+        befehl: &str,
+        teilnehmer: &str,
+        einstellungen: &str,
+        hardware: &str,
+    ) -> Self {
         let (datum, uhrzeit) = datum_und_uhrzeit();
+        let teilnehmer = saeubern(teilnehmer.trim());
         Self {
             wurzel: wurzel.to_path_buf(),
             befehl: befehl.to_string(),
             datum,
             einstellungen: einstellungen.to_string(),
+            teilnehmer: if teilnehmer.is_empty() {
+                OHNE_NAME.to_string()
+            } else {
+                teilnehmer
+            },
             hardware: saeubern(hardware),
             uhrzeit,
         }
@@ -300,6 +349,10 @@ impl LogZiel {
     }
 
     /// Kennung dieses Laufs: `<datum>-<uhrzeit>-<hardware>-<einstellungen>`.
+    ///
+    /// Trägt die Hardware statt des Namens: Sie ist gemessen, der Name ist
+    /// eingetippt. Für die Zuordnung eines einzeln weitergereichten
+    /// Protokolls zählt die Angabe, die niemand vertippen kann.
     pub fn dateiname(&self) -> String {
         format!(
             "{}-{}-{}-{}",
@@ -307,17 +360,46 @@ impl LogZiel {
         )
     }
 
-    /// Dateiname für die Protokolldatei: `<hash>_<datum>_<uhrzeit>`.
+    /// Dateiname für die Protokolldatei:
+    /// `<teilnehmer>_<einstellungen>_<datum>_<uhrzeit>`.
     ///
-    /// Jeder Lauf bekommt eine eigene Datei, aber der Hash ist im Dateinamen
-    /// sichtbar. Das ermöglicht einfachen Vergleich: Dateien mit gleichem
-    /// Hash gehören zusammen (gleiche Einstellungen), sind aber an Datum
-    /// und Uhrzeit unterscheidbar.
+    /// Die Reihenfolge ist die des Vergleichsverfahrens: Eine alphabetische
+    /// Dateiliste gruppiert zuerst nach Teilnehmer, dann nach Einstellung,
+    /// dann chronologisch. Der Koordinator eines Cross-Hardware-Tests legt
+    /// alle eingegangenen Dateien in einen Ordner und sieht daran, wer
+    /// geliefert hat und wer mit den falschen Parametern gelaufen ist.
     ///
-    /// Beispiel: `abcd1234_2026-08-21_143022.jsonl`
+    /// Beispiel: `anna_abcd1234_2026-08-21_143022.jsonl`
     pub fn lauf_dateiname(&self) -> String {
-        format!("{}_{}_{}", self.einstellungen, self.datum, self.uhrzeit)
+        format!(
+            "{}_{}_{}_{}",
+            self.teilnehmer, self.einstellungen, self.datum, self.uhrzeit
+        )
     }
+}
+
+/// Findet einen noch unbelegten Dateinamen, notfalls mit Zähler.
+///
+/// Die Uhrzeit im Namen hat Sekundenauflösung. Zwei Läufe in derselben
+/// Sekunde — beim Menü ohne Weiteres möglich, etwa Hardware-Erhebung
+/// direkt nach dem Protokoll-Durchlauf — bekämen sonst denselben Namen,
+/// und der zweite überschriebe den ersten **stillschweigend**. Ein
+/// verlorenes Protokoll ist genau das, was dieser Client nicht tun darf.
+///
+/// Eine feinere Uhrzeit wäre die naheliegende Alternative und die
+/// schlechtere: Millisekunden im Dateinamen machen ihn schwerer lesbar,
+/// und der Fall bliebe theoretisch bestehen.
+fn freier_dateiname(dir: &Path, basis: &str) -> String {
+    if !dir.join(format!("{}.jsonl", basis)).exists() {
+        return basis.to_string();
+    }
+    for n in 2..1000 {
+        let kandidat = format!("{}-{}", basis, n);
+        if !dir.join(format!("{}.jsonl", kandidat)).exists() {
+            return kandidat;
+        }
+    }
+    basis.to_string()
 }
 
 /// Ersetzt alles, was in Dateinamen stört.
@@ -383,10 +465,16 @@ pub struct RunLog {
 }
 
 impl RunLog {
-    /// Legt ein Protokoll ohne Testplan an (Kurzkennung `ohne-plan`).
+    /// Legt ein Protokoll ohne Testplan und ohne Namen an.
     pub fn new(dir: &Path, command: &str, echo: bool) -> Self {
         Self::mit_ziel(
-            LogZiel::neu(dir, command, "ohne-plan", &crate::hardware::Fingerprint::collect().short_id()),
+            LogZiel::neu(
+                dir,
+                command,
+                OHNE_NAME,
+                "ohne-plan",
+                &crate::hardware::Fingerprint::collect().short_id(),
+            ),
             echo,
         )
     }
@@ -398,15 +486,12 @@ impl RunLog {
     /// Protokoll darf einen Hardwaretest nicht verhindern, aber es darf
     /// auch nicht unbemerkt bleiben.
     ///
-    /// Alle Läufe mit demselben Einstellungen-Hash landen in derselben
-    /// Datei. Die Unterscheidung zwischen verschiedenen Läufen (Hardware,
-    /// Zeitpunkt) erfolgt über die `run_id` in jeder JSON-Zeile.
+    /// Jeder Lauf bekommt eigene Dateien; siehe [`LogZiel::lauf_dateiname`].
     pub fn mit_ziel(ziel: LogZiel, echo: bool) -> Self {
         let command = ziel.befehl.clone();
         let run_id = ziel.dateiname();
         let dir = ziel.verzeichnis();
         let dir = &dir;
-        let dateiname = ziel.lauf_dateiname();
 
         if let Err(e) = fs::create_dir_all(dir) {
             eprintln!(
@@ -416,8 +501,8 @@ impl RunLog {
             );
         }
 
-        // Eigene Dateien je Lauf: `<hash>_<datum>_<uhrzeit>.jsonl/log`.
-        // Der Hash ist im Dateinamen sichtbar für einfachen Vergleich.
+        let dateiname = freier_dateiname(dir, &ziel.lauf_dateiname());
+
         let open = |ext: &str| -> Option<File> {
             let path = dir.join(format!("{}.{}", dateiname, ext));
             match fs::File::create(&path) {
@@ -443,14 +528,13 @@ impl RunLog {
             problems: 0,
             dir: dir.to_path_buf(),
         };
+        // Teilnehmer und Einstellungs-Kurzkennung gehören ins Protokoll
+        // selbst, nicht nur in den Dateinamen — Protokolle werden einzeln
+        // weitergereicht, und eine Datei wird umbenannt, ein Feld nicht.
         log.event(Event::RunStarted {
             command: command.to_string(),
-        });
-        // Die Einstellungs-Kurzkennung gehört ins Protokoll selbst, nicht
-        // nur in den Dateinamen — Protokolle werden einzeln weitergereicht.
-        log.event(Event::Artifact {
-            key: "einstellungen_id".into(),
-            value: ziel.einstellungen.clone(),
+            teilnehmer: ziel.teilnehmer.clone(),
+            einstellungen_id: ziel.einstellungen.clone(),
         });
         log
     }
@@ -682,13 +766,12 @@ mod tests {
         assert!(log.finish(true));
     }
 
-    /// Der Dateiname trägt Uhrzeit und Hardware, der Pfad den Befehl —
-    /// so sind Protokolle mehrerer Maschinen in einem Ordner
-    /// unterscheidbar, ohne umbenannt zu werden.
+    /// Alle Protokolle liegen flach in `logs/`; unterschieden werden sie
+    /// über den Dateinamen, nicht über Unterordner.
     #[test]
     fn alles_in_einer_datei_ohne_unterordner() {
         let dir = tempdir("ablage");
-        let ziel = LogZiel::neu(&dir, "determinismus", "9f2c1a4b", "aarch64-macos-reference");
+        let ziel = LogZiel::neu(&dir, "determinismus", "anna", "9f2c1a4b", "aarch64-macos-reference");
 
         // Kein Unterordner mehr: das Ziel ist die Protokollwurzel selbst.
         assert_eq!(ziel.verzeichnis(), dir);
@@ -716,16 +799,24 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Zwei Läufe mit derselben Einstellungs-Kennung müssen in dieselbe
-    /// Datei schreiben — das ist der Zweck der Kennung.
+    /// Zwei Teilnehmer mit denselben Einstellungen dürfen sich **nicht**
+    /// gegenseitig überschreiben, müssen aber an der gemeinsamen
+    /// Kurzkennung als vergleichbar erkennbar bleiben. Beides zusammen ist
+    /// der Zweck des Namensschemas.
     #[test]
-    fn gleiche_einstellungen_gleiche_datei() {
+    fn gleiche_einstellungen_verschiedene_teilnehmer() {
         let dir = tempdir("gleich");
-        let a = LogZiel::neu(&dir, "determinismus", "abcd1234", "aarch64-macos-reference");
-        let b = LogZiel::neu(&dir, "determinismus", "abcd1234", "x86-64-linux-avx2");
+        let a = LogZiel::neu(&dir, "determinismus", "anna", "abcd1234", "aarch64-macos-reference");
+        let b = LogZiel::neu(&dir, "determinismus", "björn", "abcd1234", "x86-64-linux-avx2");
         assert_eq!(a.verzeichnis(), b.verzeichnis());
-        assert_eq!(a.lauf_dateiname(), b.lauf_dateiname(), "Dateiname muss gleich sein");
-        assert_ne!(a.dateiname(), b.dateiname(), "run_id muss unterscheiden");
+        assert_ne!(
+            a.lauf_dateiname(),
+            b.lauf_dateiname(),
+            "verschiedene Teilnehmer dürfen sich nicht überschreiben"
+        );
+        assert!(a.lauf_dateiname().contains("abcd1234"));
+        assert!(b.lauf_dateiname().contains("abcd1234"));
+        assert!(a.lauf_dateiname().starts_with("anna_"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -734,25 +825,76 @@ mod tests {
     #[test]
     fn andere_einstellungen_andere_datei() {
         let dir = tempdir("anders");
-        let a = LogZiel::neu(&dir, "determinismus", "abcd1234", "hw");
-        let b = LogZiel::neu(&dir, "determinismus", "99998888", "hw");
+        let a = LogZiel::neu(&dir, "determinismus", "anna", "abcd1234", "hw");
+        let b = LogZiel::neu(&dir, "determinismus", "anna", "99998888", "hw");
         assert_eq!(a.verzeichnis(), b.verzeichnis());
         assert_ne!(a.lauf_dateiname(), b.lauf_dateiname());
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Die Einstellungs-Kennung steht auch IM Protokoll, nicht nur im
-    /// Dateinamen — Protokolle werden einzeln weitergereicht.
+    /// Teilnehmer und Einstellungs-Kennung stehen auch IM Protokoll, nicht
+    /// nur im Dateinamen — Protokolle werden einzeln weitergereicht, und
+    /// eine Datei wird umbenannt, ein Feld nicht.
     #[test]
-    fn einstellungs_id_steht_im_protokoll() {
+    fn teilnehmer_und_einstellungs_id_stehen_im_protokoll() {
         let dir = tempdir("id-im-log");
-        let log = RunLog::mit_ziel(LogZiel::neu(&dir, "stack", "deadbeef", "hw"), false);
+        let log = RunLog::mit_ziel(LogZiel::neu(&dir, "stack", "anna", "deadbeef", "hw"), false);
         let lauf_dir = log.dir().to_path_buf();
         let dateiname = log.dateiname().to_string();
         log.finish(true);
         let jsonl = fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
-        assert!(jsonl.contains("einstellungen_id"));
-        assert!(jsonl.contains("deadbeef"));
+        assert!(jsonl.contains(r#""einstellungen_id":"deadbeef""#), "{jsonl}");
+        assert!(jsonl.contains(r#""teilnehmer":"anna""#), "{jsonl}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Zwei Läufe in derselben Sekunde dürfen sich nicht überschreiben.
+    /// Der Fall tritt im Menü regelmäßig auf, weil `hardware` und `stack`
+    /// zusammen unter einer Sekunde bleiben.
+    #[test]
+    fn zwei_laeufe_in_derselben_sekunde_ueberschreiben_sich_nicht() {
+        let dir = tempdir("kollision");
+        let ziel = LogZiel::neu(&dir, "hardware", "anna", "abcd1234", "hw");
+
+        let a = RunLog::mit_ziel(ziel.clone(), false);
+        let name_a = a.dateiname().to_string();
+        a.finish(true);
+
+        let b = RunLog::mit_ziel(ziel, false);
+        let name_b = b.dateiname().to_string();
+        b.finish(true);
+
+        assert_ne!(name_a, name_b, "zweiter Lauf überschreibt den ersten");
+        assert!(dir.join(format!("{}.jsonl", name_a)).is_file());
+        assert!(dir.join(format!("{}.jsonl", name_b)).is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein leerer Name darf keinen Dateinamen erzeugen, der mit `_`
+    /// beginnt — und er soll sichtbar als fehlend erkennbar sein.
+    #[test]
+    fn fehlender_name_wird_ersetzt() {
+        let dir = tempdir("kein-name");
+        let z = LogZiel::neu(&dir, "hardware", "   ", "abcd1234", "hw");
+        assert_eq!(z.teilnehmer, OHNE_NAME);
+        assert!(z.lauf_dateiname().starts_with("ohne-name_"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein Name mit Leerzeichen, Schrägstrich oder Doppelpunkt darf keinen
+    /// kaputten Dateinamen erzeugen — er kommt aus einer Tastatureingabe.
+    #[test]
+    fn name_wird_gesaeubert() {
+        let dir = tempdir("name-saeubern");
+        let z = LogZiel::neu(&dir, "hardware", "Anna M/K:1", "abcd1234", "hw");
+        for zeichen in ['/', ':', ' '] {
+            assert!(
+                !z.lauf_dateiname().contains(zeichen),
+                "{:?} im Dateinamen: {}",
+                zeichen,
+                z.lauf_dateiname()
+            );
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -761,7 +903,7 @@ mod tests {
     #[test]
     fn dateiname_wird_gesaeubert() {
         let dir = tempdir("saeubern");
-        let z = LogZiel::neu(&dir, "hardware", "id", "arch/os:back end");
+        let z = LogZiel::neu(&dir, "hardware", "anna", "id", "arch/os:back end");
         assert!(!z.dateiname().contains('/'));
         assert!(!z.dateiname().contains(':'));
         assert!(!z.dateiname().contains(' '));

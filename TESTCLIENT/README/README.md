@@ -1,10 +1,10 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.3.0
-> **Datum:** 2026-08-18
-> **Status:** Phase 1 vollständig; dazu Protokoll-Durchlauf über alle
-> Komponenten, interaktives Menü und Banner (32 Tests grün, alle Läufe
-> gegen die echten Artefakte verifiziert).
+> **Version:** 0.6.0
+> **Datum:** 2026-08-21
+> **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
+> und 3.1 (Modellstand im Protokoll). 92 Tests grün, alle Läufe gegen die
+> echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
 geshardete Inferenz — jeder Lauf mit einem Protokoll, das zwischen
@@ -39,25 +39,63 @@ Jeder Lauf schreibt deshalb **immer** zwei Dateien nach `logs/`:
 | `<lauf-id>.jsonl` | Eine JSON-Zeile je Ereignis, stabile Feldnamen und Reihenfolge — die Fassung, die zwischen Maschinen gediffed wird |
 | `<lauf-id>.log` | Dieselben Ereignisse als Fließtext, für die Fehlersuche am Terminal |
 
-**Sortiert nach Prüflauf, Datum und Einstellungen:**
+**Flach in `logs/`, benannt nach Teilnehmer und Einstellungen:**
 
 ```text
 logs/
-├── determinismus/
-│   └── 2026-08-18_94be3bfc/       ← Datum + Kurzkennung der Einstellungen
-│       ├── 081222-aarch64-macos-reference.jsonl
-│       └── 143515-x86-64-linux-avx2.jsonl
-└── stack/
-    └── 2026-08-18_94be3bfc/
+├── anna_12a1e91e_2026-08-21_143022.jsonl
+├── anna_12a1e91e_2026-08-21_143022.log
+└── bjoern_12a1e91e_2026-08-21_150411.jsonl
 ```
 
-Die Kurzkennung ist der Hash genau der Parameter, die gleich sein
-müssen (Prompt, Token, Shards, Modell). **Alle Teilnehmer eines
-Testplans tragen dieselbe Einstellungs-Prüfsumme**, auf jeder Maschine. Wer
-versehentlich andere Parameter nimmt, landet sichtbar woanders; die
-Zuordnungsarbeit beim Auswerten entfällt. Der Dateiname trägt Uhrzeit
-und Hardware-Kurzform, damit sich Protokolle mehrerer Maschinen in
-einem Ordner nicht überschreiben.
+Die Kurzkennung ist der Hash genau der Parameter, die gleich sein müssen
+(Prompts, Token, Shards, Modell). **Alle Teilnehmer eines Testplans
+tragen dieselbe Einstellungs-Prüfsumme**, auf jeder Maschine. Wer
+versehentlich andere Parameter nimmt, ist am Dateinamen sofort
+erkennbar. Der Name davor beantwortet die zweite Frage des
+Koordinators — von wem stammt diese Datei.
+
+Dieselben Angaben stehen **auch im Protokoll**: `run_started` trägt
+Befehl, Teilnehmer und Einstellungs-Kennung. Der Dateiname ist eine
+Bequemlichkeit; die Zuordnung leisten die Daten, denn eine Datei wird
+umbenannt, ein Feld nicht.
+
+**Ein Protokoll je Testlauf, nicht eines je Stufe.** Hardware,
+Determinismus, geshardete Inferenz und Protokoll-Durchlauf sind eine
+Messung. Vier Dateien wären vier Teilaussagen, die der Koordinator wieder
+zusammensetzen müsste — und beim Verschicken geht die eine verloren, die
+den Befund trägt.
+
+## `vergleich` — vom Protokoll zum Urteil
+
+```bash
+myl-test vergleich --logs <ordner>
+```
+
+Liest alle `.jsonl` eines Ordners, gruppiert nach Prüflauf und
+Einstellungs-Kennung und stellt jeden Vergleichswert gegenüber. Je Gruppe
+ein Urteil:
+
+| Urteil | Bedeutung |
+|---|---|
+| `NACHWEIS` | Fingerabdrücke verschieden, Werte gleich, Modellstand gleich |
+| `KEIN NACHWEIS (eine Maschine)` | Werte gleich, aber alles von derselben Maschine |
+| `UNVERGLEICHBAR (Modellstand)` | θ_v oder Ankerdigest weichen ab — **kein** Hardware-Befund |
+| `ABWEICHUNG` | Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse |
+| `ZU WENIG PROTOKOLLE` | Weniger als zwei mit derselben Kennung |
+
+**Der Befehl verweigert den Nachweis, wenn alle Protokolle denselben
+Hardware-Fingerabdruck tragen.** Das ist ein Akzeptanzkriterium des
+Fahrplans und keine Höflichkeit: Ein Werkzeug, das zwei gleiche Werte von
+derselben Maschine als Nachweis ausgibt, wäre schlimmer als keines, weil
+sein Ergebnis geglaubt wird.
+
+**Der Modellstand wird vor den Digests geprüft.** Bei verschiedenen
+Modellen *müssen* die Werte verschieden sein; das als Determinismusfehler
+zu melden wäre genau die Verwechslung, gegen die es `artefakte` gibt.
+
+Exit-Code 0 nur dann, wenn jede Gruppe den Nachweis trägt — damit taugt
+der Befehl für die CI.
 
 ## Testplan — die Datei, die der Koordinator verteilt
 
@@ -65,15 +103,26 @@ Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
 
 ```bash
 # Koordinator:
-myl-test plan --plan-id 2026-08-18-cross-arch-01 \
-  --prompt "Die Hauptstadt von Frankreich ist" --steps 6 --shards 4 \
-  --out cross-arch.plan
+myl-test plan --plan-id 2026-08-21-cross-arch-01 --model qwen2.5-0.5b \
+  --prompt "Die Hauptstadt von Frankreich ist" \
+  --prompt "The capital of France is" \
+  --steps 32 --shards 4 \
+  --out "TESTCLIENT/Testpläne/cross-arch.plan"
 
 # Teilnehmer:
-myl-test --plan cross-arch.plan determinismus
+myl-test --name anna --plan cross-arch.plan determinismus
 ```
 
-Die Datei trägt eine Prüfsumme über Prompt, Token, Shards und Modell.
+**`--prompt` ist mehrfach angebbar.** Ein einzelner Prompt übt einen
+einzigen Pfad durch das Modell aus; ein Rundungsfehler, der nur bei
+langen Sequenzen oder in einem selten getroffenen LUT-Bereich auftritt,
+bliebe unentdeckt, und der Vergleichswert sähe trotzdem beruhigend aus.
+Je Prompt entsteht ein Einzelwert, darüber ein Gesamtwert.
+
+Zwei Pläne liegen bei: `wikitext2-0.5b-standard.plan` (6 Prompts) und
+`qwen2.5-7b-standard.plan` (4 Prompts, rund fünf Minuten Laufzeit).
+
+Die Datei trägt eine Prüfsumme über Prompts, Token, Shards und Modell.
 Wird sie verändert, **verweigert der Client den Lauf** (Exit-Code 3)
 statt einen abweichenden Digest zu liefern, der wie ein Befund
 aussieht. Der Prompt steht in Anführungszeichen, damit auch ein
@@ -84,7 +133,7 @@ Prüfsumme ein. `plan_id` ebenfalls nicht: Zwei Koordinatoren mit
 demselben Test unter verschiedenen Namen sollen vergleichbare
 Ergebnisse bekommen.
 
-Im Menü: Punkt 9 erzeugt, Punkt 8 lädt.
+Im Menü: Nutzerpunkt [2] wählt einen Plan, Entwicklerpunkt [9] [6] erzeugt einen.
 
 **Prompttexte werden gehasht, nicht gespeichert.** Testprotokolle wandern
 per Copy-Paste in Tickets und Chats; ein Prompt, der dabei mitwandert,
@@ -306,10 +355,16 @@ laut, gesprächig und roh sein; ein Nutzer-Client nicht.
 INTEGER_LLM (`runtime`, `kernels`), COMPUTE_PIPELINE (`myl-pod`),
 SHARED_TYPES (`myl-types`), CONSENSUS (`myl-ledger`, `-scheduler`,
 `-consensus`), TOKENOMICS, VERIFICATION — der `stack`-Lauf braucht sie
-alle. Keine Fremd-Crates außer `sha2` und `borsh`; der Client soll auf
-einer fremden Maschine mit möglichst wenig Voraussetzungen bauen. Die
-Argumentauswertung ist deshalb von Hand, und das Menü kommt ohne
-TUI-Bibliothek aus.
+alle. Fremd-Crates: `sha2`, `borsh` und seit v0.6.0 `crossterm` für die
+Pfeiltastenauswahl. Sonst nichts — der Client soll auf einer fremden
+Maschine mit möglichst wenig Voraussetzungen bauen, und deshalb sind
+Argumentauswertung und JSON-Leser weiterhin von Hand geschrieben.
+
+`crossterm` ist eine bewusste Ausnahme von dieser Linie (Entscheidung des
+Projektinhabers) und mit einer Bedingung verbunden: Wo kein Terminal
+vorhanden ist oder das Fenster zu klein, fällt die Auswahl auf
+zeilenweise Eingabe zurück. Ein Werkzeug, das im Skript auf eine Tastatur
+wartet, hängt still.
 
 ## Struktur
 
@@ -326,26 +381,85 @@ TESTCLIENT/
     │   ├── logging.rs        Laufprotokolle (JSONL + Text)
     │   ├── hardware.rs       Fingerabdruck (Klasse, nicht Gerät)
     │   ├── banner.rs         ASCII-Banner zum Projektbanner
+    │   ├── animation.rs      Startbild: Zeichenregen, dann Logoaufbau
+    │   ├── auswahl.rs        Pfeiltastenauswahl mit zeilenweisem Rückfall
     │   ├── menu.rs           interaktives Menü
+    │   ├── artefakte.rs      finden, prüfen, beschaffen, freigeben
+    │   ├── plaene.rs         Testpläne im Planordner finden
     │   ├── runs.rs           Hardware, Determinismus, Shards
     │   ├── spec.rs           Testplan (erzeugen, prüfen, laden)
+    │   ├── vergleich.rs      Protokolle gegenüberstellen und urteilen
     │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
     └── logs/                 Laufprotokolle (gitignored)
 ```
 
-## Belegte Läufe (2026-08-18, aarch64/macos/reference)
+## Belegte Läufe (2026-08-21, aarch64/macos/reference, θ_v 0.17.0)
 
 | Lauf | Ergebnis |
 |---|---|
-| `determinismus --steps 6` | bitgleich über zwei Läufe, Digest `977ff1b4…` |
+| `determinismus --plan wikitext2-0.5b-standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
 | `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
+| `vergleich` über zwei Läufe derselben Maschine | Urteil `KEIN NACHWEIS (eine Maschine)`, Exit-Code 1 — die Verweigerung greift |
 
 Der Shard-Lauf erfüllt damit das Akzeptanzkriterium aus
 COMPUTE_PIPELINE Phase 1 — erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
+
+- **`vergleich`** (neuer Befehl, Fahrplanpunkt 2.1): liest alle `.jsonl`
+  eines Ordners, gruppiert nach Prüflauf und Einstellungs-Kennung, stellt
+  die Vergleichswerte gegenüber und fällt ein Urteil. Damit endet der
+  Client nicht mehr bei der Messung; das Auswerten war bis hierher
+  Handarbeit mit `grep`, und die Anleitung führte vier Kommandozeilen
+  dafür auf.
+- **Der Nachweis wird verweigert, wenn alle Protokolle denselben
+  Hardware-Fingerabdruck tragen.** Akzeptanzkriterium des Fahrplans, mit
+  Test festgehalten.
+- **Modellstand im Protokoll** (Fahrplanpunkt 3.1): θ_v, Gewichts-,
+  Skalen- und LUT-Hash, Modellname und Ankerdigest. Vorher standen dort
+  nur die Modelldimensionen, und die unterscheiden zwei θ_v-Stände
+  desselben Modells nicht. `vergleich` prüft sie **vor** jedem
+  Digest-Vergleich: Bei verschiedenen Modellen müssen die Werte
+  verschieden sein, und das als Determinismusfehler zu melden wäre genau
+  die Verwechslung, gegen die es `artefakte` gibt.
+- **Ein Protokoll je Testlauf statt vier.** Hardware, Determinismus,
+  Shard-Lauf und Protokoll-Durchlauf sind eine Messung.
+- **Teilnehmername**, beim Start gefragt, im Protokoll und im Dateinamen:
+  `<name>_<einstellungs-id>_<datum>_<uhrzeit>`. Für Skripte `--name`.
+- **Testpläne tragen mehrere Prompts.** Wiederholte `prompt`-Zeilen statt
+  `prompt.1`, `prompt.2`: Ein Plan mit einem einzigen Prompt bleibt damit
+  unverändert gültig, und beim Erweitern hängt man eine Zeile an. Die
+  Reihenfolge geht in die Prüfsumme ein. Zweiter Beispielplan für 7B.
+- **Pfeiltasten und Enter** statt Ziffern (`crossterm`). Ziffern bleiben
+  als zweiter Weg; ohne Terminal oder in einem zu kleinen Fenster fällt
+  die Auswahl auf zeilenweise Eingabe zurück.
+- **Startanimation:** Zeichenregen, dann baut sich der Schriftzug auf.
+  Ein Tastendruck bricht ab, `MYL_NO_ANIMATION=1` schaltet sie ab, ohne
+  Terminal läuft sie gar nicht.
+- **Artefakte und Gewichte freigeben** (Entwicklerpunkt [9]). Getrennt,
+  weil Artefakte in Sekunden aus dem Skalenpaket entstehen und die
+  Gewichte einen Download über Gigabyte kosten. Der Löschpfad ist auf
+  direkte Unterverzeichnisse von `INTEGER_LLM/{artifacts,models}`
+  eingegrenzt und verlangt ein getipptes „ja" — Enter allein genügt an
+  der einen Stelle absichtlich nicht, die etwas zerstört.
+- **Fund beim Bauen:** Zwei Läufe in derselben Sekunde bekamen denselben
+  Dateinamen, und der zweite überschrieb den ersten **stillschweigend**.
+  Im Menü tritt der Fall regelmäßig auf. Der Name weicht jetzt auf einen
+  Zähler aus.
+- **Zweiter Fund:** Die Menüschleife hielt `stdin.lock()`, während die
+  neue Auswahl im Rückfallweg `io::stdin().read_line()` aufruft — das
+  wäre derselbe Stillstand gewesen wie in v0.4.0 bei der
+  Artefaktbeschaffung. Alle Eingaben laufen jetzt über eine Stelle.
+- **Windows geprüft**, soweit ohne Windows-Maschine möglich: `auswahl`,
+  `animation`, `banner` und `vergleich` übersetzen für
+  `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
+  Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
+- 53 → 92 Tests.
+
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)
 

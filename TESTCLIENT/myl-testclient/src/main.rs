@@ -33,6 +33,11 @@ BEFEHLE
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
 
+    vergleich       Protokolle eines Ordners gegenüberstellen und urteilen,
+                    ob sie den Cross-Hardware-Nachweis tragen. Verweigert ein
+                    positives Urteil, wenn alle Protokolle von derselben
+                    Maschine stammen — das wäre kein Nachweis.
+
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
                     Braucht kein Modell.
@@ -42,14 +47,21 @@ BEFEHLE
 
 OPTIONEN
     --prompt <TEXT>     Eingabetext (Vorgabe: \"Die Hauptstadt von Frankreich ist\")
+                        Mehrfach angebbar: jeder weitere hängt einen Prompt an
+                        die Reihe an, die der Lauf nacheinander abarbeitet
     --steps <N>         Zu erzeugende Token (Vorgabe: 8)
     --shards <N>        Anzahl Shards für `shard` (Vorgabe: 4)
     --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
                         Modell und prüft die Datei gegen ihre Prüfsumme.
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
+    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: qwen2.5-0.5b)
     --out <DATEI>       Zieldatei beim Erzeugen eines Plans
     --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/myl-testclient/logs)
+                        Zugleich das Verzeichnis, das `vergleich` auswertet
+    --name <TEXT>       Name des Teilnehmers. Steht im Protokoll und im
+                        Dateinamen, damit der Koordinator Protokolle ohne
+                        Rückfrage zuordnen kann. Im Menü wird danach gefragt
     --quiet             Nur ins Protokoll schreiben, nicht aufs Terminal
                         (unterdrückt auch das Banner)
     -h, --help          Diese Hilfe
@@ -67,9 +79,16 @@ ARTEFAKTE
     Umgebung: MYL_NO_BANNER=1 unterdrückt das Banner dauerhaft.
 
 PROTOKOLLE
-    Jeder Lauf schreibt <lauf-id>.jsonl (maschinenlesbar, für den
-    Vergleich zwischen Maschinen) und <lauf-id>.log (Fließtext).
-    Prompttexte werden gehasht, nicht gespeichert.
+    Jeder Lauf schreibt zwei Dateien flach nach logs/:
+        <name>_<einstellungs-id>_<datum>_<uhrzeit>.jsonl   maschinenlesbar
+        <name>_<einstellungs-id>_<datum>_<uhrzeit>.log     Fließtext
+
+    Dieselben Angaben stehen auch IM Protokoll — eine Datei wird
+    umbenannt, ein Feld nicht. Prompttexte werden gehasht, nicht
+    gespeichert.
+
+    Umgebung: MYL_NO_ANIMATION=1 überspringt die Startanimation,
+    MYL_NO_BANNER=1 auch das Banner.
 
 TESTPLAN
     Koordinator erzeugt und verschickt:
@@ -83,21 +102,21 @@ TESTPLAN
     Modell. Wird sie verändert, verweigert der Client den Lauf — ein
     Tippfehler soll nicht als Befund durchgehen.
 
-PROTOKOLL-ABLAGE
-    logs/<befehl>/<datum>_<einstellungs-id>/<uhrzeit>-<hardware>.jsonl
-    Alle Teilnehmer mit demselben Plan landen im gleichnamigen Ordner.
-
 CROSS-HARDWARE-NACHWEIS
-    1. Auf jeder Maschine:  myl-test hardware
-       → die Fingerabdrücke MÜSSEN sich unterscheiden.
-    2. Auf jeder Maschine:  myl-test determinismus --prompt \"...\"
-       → die Digests MÜSSEN übereinstimmen.
-    Beides zusammen ist der Nachweis; eines allein ist keiner.
+    1. Auf jeder Maschine:  myl-test artefakte
+       → derselbe Modellstand, sonst sagt der Vergleich nichts aus.
+    2. Auf jeder Maschine:  myl-test --name <wer> --plan <datei> determinismus
+    3. Alle .jsonl in EINEN Ordner legen, dann:
+           myl-test vergleich --logs <ordner>
+
+    Der Nachweis braucht zwei Aussagen: Die Maschinen sind verschieden,
+    und das Ergebnis ist trotzdem gleich. `vergleich` prüft beide und
+    verweigert das Urteil, wenn eine davon fehlt.
 ";
 
 struct Args {
     command: String,
-    prompt: String,
+    prompts: Vec<String>,
     steps: usize,
     shards: usize,
     artifacts: PathBuf,
@@ -106,6 +125,10 @@ struct Args {
     /// Vorrang vor jeder Automatik.
     artifacts_explizit: bool,
     logs: PathBuf,
+    /// Name des Teilnehmers; steht im Protokoll und im Dateinamen.
+    name: String,
+    /// Modell, das ein erzeugter Plan vorgibt.
+    model: String,
     quiet: bool,
     plan: Option<PathBuf>,
     plan_id: Option<String>,
@@ -116,7 +139,9 @@ impl Args {
     fn vorgaben() -> Self {
         Self {
             command: String::new(),
-            prompt: "Die Hauptstadt von Frankreich ist".to_string(),
+            name: myl_testclient::OHNE_NAME.to_string(),
+            model: myl_testclient::DEFAULT_MODEL.to_string(),
+            prompts: vec!["Die Hauptstadt von Frankreich ist".to_string()],
             steps: 8,
             shards: 4,
             artifacts: default_artifact_dir(),
@@ -138,6 +163,7 @@ fn parse() -> Result<Args, String> {
 
     let mut a = Args::vorgaben();
     let mut befehl: Option<String> = None;
+    let mut prompt_gesetzt = false;
 
     // Optionen dürfen VOR und NACH dem Befehl stehen — `myl-test --plan x
     // stack` ist genauso gültig wie `myl-test stack --plan x`. Der erste
@@ -150,8 +176,14 @@ fn parse() -> Result<Args, String> {
                 .ok_or_else(|| format!("{} erwartet einen Wert", name))
         };
         match raw[i].as_str() {
+            // Mehrfach angebbar: `--prompt A --prompt B` ergibt eine Reihe.
+            // Der erste Aufruf ersetzt die Vorgabe, jeder weitere hängt an.
             "--prompt" => {
-                a.prompt = need(i, "--prompt")?;
+                if !prompt_gesetzt {
+                    a.prompts.clear();
+                    prompt_gesetzt = true;
+                }
+                a.prompts.push(need(i, "--prompt")?);
                 i += 2;
             }
             "--steps" => {
@@ -173,6 +205,14 @@ fn parse() -> Result<Args, String> {
             }
             "--logs" => {
                 a.logs = PathBuf::from(need(i, "--logs")?);
+                i += 2;
+            }
+            "--name" => {
+                a.name = need(i, "--name")?;
+                i += 2;
+            }
+            "--model" => {
+                a.model = need(i, "--model")?;
                 i += 2;
             }
             "--plan" => {
@@ -220,10 +260,10 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
             .plan_id
             .clone()
             .unwrap_or_else(|| "unbenannt".to_string()),
-        prompt: args.prompt.clone(),
+        prompts: args.prompts.clone(),
         steps: args.steps,
         shards: args.shards,
-        model: myl_testclient::DEFAULT_MODEL.to_string(),
+        model: args.model.clone(),
     };
     let ziel = args
         .out
@@ -238,7 +278,9 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
     println!("Testplan geschrieben: {}", ziel.display());
     println!();
     println!("  Kennung        {}", plan.plan_id);
-    println!("  Prompt         {:?}", plan.prompt);
+    for (i, prompt) in plan.prompts.iter().enumerate() {
+        println!("  Prompt {:<8}{:?}", i + 1, prompt);
+    }
     println!("  Token          {}", plan.steps);
     println!("  Shards         {}", plan.shards);
     println!("  Modell         {}", plan.model);
@@ -278,7 +320,7 @@ fn main() -> ExitCode {
                 println!("Testplan: {} ({})", plan.plan_id, pfad.display());
                 println!("  Einstellungs-ID {}\n", plan.short_id());
                 einstellungen_id = plan.short_id();
-                args.prompt = plan.prompt;
+                args.prompts = plan.prompts;
                 args.steps = plan.steps;
                 args.shards = plan.shards;
             }
@@ -293,14 +335,29 @@ fn main() -> ExitCode {
         return plan_erzeugen(&args);
     }
 
+    // `vergleich` schreibt **kein** Protokoll. Er wertet die vorhandenen
+    // aus, und sein Ergebnis würde als neue Datei im selben Ordner beim
+    // nächsten Aufruf wieder mit eingelesen. Was der Vergleich festhalten
+    // soll, gehört nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3),
+    // nicht neben seine Eingabe.
+    if args.command == "vergleich" {
+        banner::print_if(!args.quiet);
+        return if myl_testclient::run_vergleich(&args.logs) {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
     if args.command == "menu" {
         let ok = menu::run(Einstellungen {
-            prompt: args.prompt,
+            prompts: args.prompts,
             steps: args.steps,
             shards: args.shards,
             artifacts: args.artifacts,
             logs: args.logs,
             einstellungen_id,
+            teilnehmer: args.name,
         });
         return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
@@ -309,7 +366,13 @@ fn main() -> ExitCode {
     banner::print_if(echo);
     let hardware = myl_testclient::Fingerprint::collect().short_id();
     let mut log = RunLog::mit_ziel(
-        LogZiel::neu(&args.logs, &args.command, &einstellungen_id, &hardware),
+        LogZiel::neu(
+            &args.logs,
+            &args.command,
+            &args.name,
+            &einstellungen_id,
+            &hardware,
+        ),
         echo,
     );
 
@@ -337,11 +400,11 @@ fn main() -> ExitCode {
 
     let ok = match args.command.as_str() {
         "hardware" => run_hardware(&mut log),
-        "determinismus" => run_determinism(&mut log, &args.artifacts, &args.prompt, args.steps),
+        "determinismus" => run_determinism(&mut log, &args.artifacts, &args.prompts, args.steps),
         "shard" => run_shard(
             &mut log,
             &args.artifacts,
-            &args.prompt,
+            &args.prompts,
             args.steps,
             args.shards,
         ),

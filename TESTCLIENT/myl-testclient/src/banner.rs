@@ -51,6 +51,23 @@ pub fn print_if(show: bool) {
     println!("{}\n", SUBTITLE);
 }
 
+/// Startbild mit Animation, sonst wie [`print_if`].
+///
+/// Getrennt von `print_if`, weil nicht jeder Bannerdruck animiert gehört:
+/// Die Animation läuft **einmal** beim Start des interaktiven Menüs. Wer
+/// einen Unterbefehl aufruft, will messen und nicht zusehen.
+pub fn start_if(show: bool) {
+    if !show || std::env::var("MYL_NO_BANNER").is_ok() {
+        return;
+    }
+    // Die Animation endet mit dem fertigen Schriftzug auf dem Bildschirm.
+    // Ihn danach noch einmal zu drucken, hieße ihn doppelt zu zeigen.
+    if !crate::animation::abspielen() {
+        println!("{}", BANNER);
+    }
+    println!("{}\n", SUBTITLE);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

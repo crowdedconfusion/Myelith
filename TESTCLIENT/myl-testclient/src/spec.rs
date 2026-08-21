@@ -25,9 +25,21 @@
 //! Einlesen wegfallen und der Digest wäre ein anderer, ohne dass jemand
 //! sieht warum. `\n`, `\"` und `\\` werden maskiert.
 //!
+//! **Mehrere `prompt`-Zeilen ergeben eine Reihe**, in der Reihenfolge
+//! der Datei. Ein einzelner Prompt übt einen einzigen Pfad durch das
+//! Modell aus; ein Rundungsfehler, der nur bei langen Sequenzen oder in
+//! einem selten getroffenen LUT-Bereich auftritt, bliebe unentdeckt und
+//! der Vergleichswert sähe trotzdem beruhigend aus.
+//!
+//! Wiederholte Schlüssel statt `prompt.1`, `prompt.2`: Eine Datei mit
+//! einem einzigen Prompt bleibt damit unverändert gültig, und beim
+//! Erweitern hängt man eine Zeile an, statt durchzunummerieren.
+//!
 //! ```text
 //! plan_id     = 2026-08-18-cross-arch-01
 //! prompt      = "Die Hauptstadt von Frankreich ist"
+//! prompt      = "The capital of France is"
+//! prompt      = "Es war einmal"
 //! steps       = 8
 //! shards      = 4
 //! model       = qwen2.5-0.5b
@@ -105,8 +117,12 @@ pub struct TestPlan {
     /// Geht **nicht** in die Prüfsumme ein — sie benennt den Durchgang,
     /// sie bestimmt ihn nicht.
     pub plan_id: String,
-    /// Der Prompt. Zeichengenau.
-    pub prompt: String,
+    /// Die Prompts, zeichengenau und in dieser Reihenfolge.
+    ///
+    /// Die Reihenfolge ist wirksam: Sie geht in die Prüfsumme ein und
+    /// bestimmt, in welcher Folge die Einzeldigests zum Gesamtwert
+    /// zusammengefasst werden.
+    pub prompts: Vec<String>,
     /// Zu erzeugende Token.
     pub steps: usize,
     /// Shards für den `shard`-Lauf.
@@ -167,7 +183,7 @@ impl TestPlan {
     pub fn vorgaben() -> Self {
         Self {
             plan_id: "unbenannt".to_string(),
-            prompt: "Die Hauptstadt von Frankreich ist".to_string(),
+            prompts: vec!["Die Hauptstadt von Frankreich ist".to_string()],
             steps: 8,
             shards: 4,
             model: crate::runs::DEFAULT_MODEL.to_string(),
@@ -181,7 +197,11 @@ impl TestPlan {
     /// Ergebnisse bekommen.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut s = String::new();
-        let _ = writeln!(s, "prompt={}", self.prompt);
+        // Mit Nummer, damit die Reihenfolge wirksam ist und zwei Prompts
+        // nicht zu einem verschmelzen können.
+        for (i, p) in self.prompts.iter().enumerate() {
+            let _ = writeln!(s, "prompt.{}={}", i + 1, p);
+        }
         let _ = writeln!(s, "steps={}", self.steps);
         let _ = writeln!(s, "shards={}", self.shards);
         let _ = writeln!(s, "model={}", self.model);
@@ -222,7 +242,9 @@ impl TestPlan {
             self.plan_id
         );
         let _ = writeln!(s, "plan_id     = {}", self.plan_id);
-        let _ = writeln!(s, "prompt      = {}", zitieren(&self.prompt));
+        for p in &self.prompts {
+            let _ = writeln!(s, "prompt      = {}", zitieren(p));
+        }
         let _ = writeln!(s, "steps       = {}", self.steps);
         let _ = writeln!(s, "shards      = {}", self.shards);
         let _ = writeln!(s, "model       = {}", self.model);
@@ -274,9 +296,18 @@ impl TestPlan {
                 })
         };
 
+        let prompts: Vec<String> = felder
+            .iter()
+            .filter(|(k, _)| k == "prompt")
+            .map(|(_, v)| entzitieren(v))
+            .collect();
+        if prompts.is_empty() {
+            return Err(PlanError::FeldFehlt("prompt"));
+        }
+
         let plan = Self {
             plan_id: hole("plan_id").unwrap_or_else(|| "unbenannt".to_string()),
-            prompt: entzitieren(&hole("prompt").ok_or(PlanError::FeldFehlt("prompt"))?),
+            prompts,
             steps: zahl("steps")?,
             shards: zahl("shards")?,
             model: hole("model").ok_or(PlanError::FeldFehlt("model"))?,
@@ -310,7 +341,10 @@ mod tests {
         let pfad = dir.join("test.plan");
         let plan = TestPlan {
             plan_id: "2026-08-18-cross-arch-01".into(),
-            prompt: "Die Hauptstadt von Frankreich ist".into(),
+            prompts: vec![
+                "Die Hauptstadt von Frankreich ist".into(),
+                "The capital of France is".into(),
+            ],
             steps: 8,
             shards: 4,
             model: "qwen2.5-0.5b".into(),
@@ -372,7 +406,8 @@ mod tests {
     fn wirksame_felder_aendern_die_pruefsumme() {
         let basis = TestPlan::vorgaben();
         for aendern in [
-            |p: &mut TestPlan| p.prompt = "anders".into(),
+            |p: &mut TestPlan| p.prompts = vec!["anders".into()],
+            |p: &mut TestPlan| p.prompts.push("noch einer".into()),
             |p: &mut TestPlan| p.steps = 16,
             |p: &mut TestPlan| p.shards = 8,
             |p: &mut TestPlan| p.model = "anderes-modell".into(),
@@ -381,6 +416,53 @@ mod tests {
             aendern(&mut p);
             assert_ne!(p.checksum(), basis.checksum());
         }
+    }
+
+    /// Mehrere `prompt`-Zeilen ergeben eine Reihe in der Reihenfolge der
+    /// Datei — das ist das ganze Format.
+    #[test]
+    fn mehrere_prompts_bleiben_in_reihenfolge() {
+        let mut plan = TestPlan::vorgaben();
+        plan.prompts = vec!["eins".into(), "zwei".into(), "drei".into()];
+        let zurueck = TestPlan::parse(&plan.to_file_text()).expect("gültig");
+        assert_eq!(zurueck.prompts, vec!["eins", "zwei", "drei"]);
+    }
+
+    /// Die Reihenfolge ist wirksam: Sie bestimmt, in welcher Folge die
+    /// Einzeldigests zum Gesamtwert zusammengefasst werden. Zwei Pläne mit
+    /// denselben Prompts in anderer Folge sind verschiedene Pläne.
+    #[test]
+    fn reihenfolge_der_prompts_aendert_die_pruefsumme() {
+        let mut a = TestPlan::vorgaben();
+        let mut b = TestPlan::vorgaben();
+        a.prompts = vec!["eins".into(), "zwei".into()];
+        b.prompts = vec!["zwei".into(), "eins".into()];
+        assert_ne!(a.checksum(), b.checksum());
+    }
+
+    /// Zwei Prompts dürfen nicht zu einem verschmelzen können — sonst
+    /// hätten verschiedene Pläne dieselbe Prüfsumme.
+    #[test]
+    fn prompts_verschmelzen_nicht() {
+        let mut a = TestPlan::vorgaben();
+        let mut b = TestPlan::vorgaben();
+        a.prompts = vec!["ab".into()];
+        b.prompts = vec!["a".into(), "b".into()];
+        assert_ne!(a.checksum(), b.checksum());
+
+        let mut c = TestPlan::vorgaben();
+        c.prompts = vec!["a\nb".into()];
+        assert_ne!(c.checksum(), b.checksum());
+    }
+
+    /// Ein Plan aus der Zeit vor den Prompt-Reihen bleibt gültig — dort
+    /// steht genau eine `prompt`-Zeile.
+    #[test]
+    fn plan_mit_einem_prompt_bleibt_gueltig() {
+        let mut plan = TestPlan::vorgaben();
+        plan.prompts = vec!["nur einer".into()];
+        let zurueck = TestPlan::parse(&plan.to_file_text()).expect("gültig");
+        assert_eq!(zurueck, plan);
     }
 
     #[test]
@@ -423,10 +505,10 @@ mod tests {
             "Zeile eins\nZeile zwei",
         ] {
             let mut plan = TestPlan::vorgaben();
-            plan.prompt = prompt.to_string();
+            plan.prompts = vec![prompt.to_string()];
             let zurueck = TestPlan::parse(&plan.to_file_text())
                 .unwrap_or_else(|e| panic!("Prompt {:?}: {}", prompt, e));
-            assert_eq!(zurueck.prompt, prompt, "Prompt {:?} verändert", prompt);
+            assert_eq!(zurueck.prompts, vec![prompt], "Prompt {:?} verändert", prompt);
         }
     }
 
@@ -437,13 +519,16 @@ mod tests {
         let plan = TestPlan::vorgaben();
         let text = format!(
             "prompt = {}\nsteps = {}\nshards = {}\nmodel = {}\nspec_sha256 = {}\n",
-            plan.prompt,
+            plan.prompts[0],
             plan.steps,
             plan.shards,
             plan.model,
             plan.checksum()
         );
-        assert_eq!(TestPlan::parse(&text).expect("gültig").prompt, plan.prompt);
+        assert_eq!(
+            TestPlan::parse(&text).expect("gültig").prompts,
+            plan.prompts
+        );
     }
 
     #[test]

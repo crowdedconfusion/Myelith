@@ -1,0 +1,34 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden — sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan qwen2.5-7b-standard.plan determinismus
+#    oder:  myl-test  (Menü, Punkt 8)
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+#
+# LAUFZEIT: Rechne mit rund fünf Minuten. 7B erzeugt etwa 2 Token je
+# Sekunde (bench/README.md); 4 Prompts à 16 Token ergeben je Durchgang
+# 64 Token, der Determinismuslauf rechnet zwei Durchgänge, der Shard-Lauf
+# noch einmal Pod und Einzelknoten. Dazu kommt das Laden des Modells,
+# etwa eine Minute je Lauf. Deshalb 16 Token statt der 32 des
+# 0,5B-Plans — der Vergleichswert hängt an der Bitgleichheit, nicht an
+# der Länge der Antwort.
+#
+# PLATTENBEDARF: Die Artefakte belegen 8,1 GB, die Gewichte von
+# Hugging Face weitere 15,2 GB. Beides lässt sich nach dem Lauf über das
+# Entwickler-Menü wieder freigeben.
+
+plan_id     = qwen2.5-7b-standard
+prompt      = "The capital of France is"
+prompt      = "Die Hauptstadt von Frankreich ist"
+prompt      = "In quantum mechanics, the wave function describes"
+prompt      = "The result of 17 times 23 is"
+steps       = 16
+shards      = 4
+model       = qwen2.5-7b
+
+spec_sha256 = bc11222ca38b321f1915408f8f1b030468ca42ff79f91576ef7f737d1163d417

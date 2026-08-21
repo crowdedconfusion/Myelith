@@ -33,7 +33,9 @@
 //! Diagnosewerkzeug darf laut, gesprächig und roh sein; ein
 //! Nutzer-Client nicht.
 
+pub mod animation;
 pub mod artefakte;
+pub mod auswahl;
 pub mod banner;
 pub mod hardware;
 pub mod menu;
@@ -42,12 +44,14 @@ pub mod plaene;
 pub mod runs;
 pub mod spec;
 pub mod stack;
+pub mod vergleich;
 
 pub use hardware::Fingerprint;
-pub use logging::{sha256_hex, Event, LogZiel, RunLog};
+pub use logging::{sha256_hex, Event, LogZiel, RunLog, OHNE_NAME};
 pub use runs::{default_artifact_dir, run_determinism, run_hardware, run_shard, DEFAULT_MODEL};
 pub use spec::{PlanError, TestPlan};
 pub use stack::run_stack;
+pub use vergleich::run as run_vergleich;
 
 /// Standard-Verzeichnis für Laufprotokolle.
 ///

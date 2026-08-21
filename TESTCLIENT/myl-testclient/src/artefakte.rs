@@ -182,6 +182,18 @@ fn hf_id(modell: &str) -> &'static str {
 /// folglich auch nichts heruntergeladen.
 pub type Rueckfrage<'a> = Option<&'a mut dyn FnMut(&str) -> Option<String>>;
 
+/// Kürzel für den n-ten Eintrag einer erzeugten Auswahlliste.
+///
+/// Ziffern, dann Buchstaben — dieselbe Regel wie im Menü, damit der Weg
+/// über die Tastenkürzel überall gleich aussieht.
+fn kuerzel(i: usize) -> char {
+    match i {
+        0..=8 => char::from(b'1' + i as u8),
+        9..=34 => char::from(b'a' + (i - 9) as u8),
+        _ => ' ',
+    }
+}
+
 /// Ein auf dieser Maschine gefundenes Artefaktverzeichnis.
 pub struct Gefunden {
     pub name: String,
@@ -426,19 +438,21 @@ pub fn beschaffen(
     }
 
     if gefunden.len() > 1 {
-        meldung(format!("{} Artefakte auf dieser Maschine:", gefunden.len()));
-        for (i, g) in gefunden.iter().enumerate() {
-            meldung(format!("  [{}] {}", i + 1, befund(g)));
-        }
-        let Some(frage) = antwort.as_mut() else {
+        if antwort.is_none() {
             // Nicht-interaktiv: das erste geprüfte nehmen, sonst das erste.
             let g = gefunden.iter().find(|g| g.im_register).unwrap_or(&gefunden[0]);
             meldung(format!("Nicht-interaktiv — verwende {}", g.name));
             return Ok(g.pfad.clone());
-        };
-        let eingabe = frage("Welches Artefakt? [1] ").unwrap_or_default();
-        let wahl = eingabe.trim().parse::<usize>().unwrap_or(1).clamp(1, gefunden.len());
-        let g = &gefunden[wahl - 1];
+        }
+        let punkte: Vec<crate::auswahl::Punkt> = gefunden
+            .iter()
+            .enumerate()
+            .map(|(i, g)| crate::auswahl::Punkt::neu(kuerzel(i), &befund(g), ""))
+            .collect();
+        let wahl = crate::auswahl::waehlen("Welches Artefakt?", &punkte)
+            .and_then(|t| punkte.iter().position(|p| p.taste == t))
+            .unwrap_or(0);
+        let g = &gefunden[wahl];
         meldung(format!("Gewählt: {}", g.name));
         nach_auswahl_pruefen(repo, g, meldung);
         return Ok(g.pfad.clone());
@@ -454,18 +468,24 @@ pub fn beschaffen(
         ));
     };
 
-    meldung("Verfügbare Modelle:".to_string());
-    for (i, b) in bekannt.iter().enumerate() {
-        meldung(format!(
-            "  [{}] {} — Download {}, Bau danach in Sekunden",
-            i + 1,
-            b.name,
-            download_groesse(&b.name)
-        ));
-    }
-    let eingabe = frage("Welches Modell aufsetzen? [1] ").unwrap_or_default();
-    let wahl = eingabe.trim().parse::<usize>().unwrap_or(1).clamp(1, bekannt.len());
-    let modell = bekannt[wahl - 1].name.clone();
+    let punkte: Vec<crate::auswahl::Punkt> = bekannt
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            crate::auswahl::Punkt::neu(
+                kuerzel(i),
+                &b.name,
+                &format!(
+                    "Download {}, Bau danach in Sekunden",
+                    download_groesse(&b.name)
+                ),
+            )
+        })
+        .collect();
+    let wahl = crate::auswahl::waehlen("Welches Modell aufsetzen?", &punkte)
+        .and_then(|t| punkte.iter().position(|p| p.taste == t))
+        .unwrap_or(0);
+    let modell = bekannt[wahl].name.clone();
 
     // Rückfrage vor dem Netzzugriff: Der Download ist gross und geht an
     // einen fremden Dienst. Automatisch heisst nicht unangekuendigt.
@@ -624,5 +644,244 @@ pub fn beschaffen_fuer(
              veröffentlicht: {soll}\nDas ist KEIN Hardware-Befund."
         )),
         Zustand::Fehlt => Err("Bau lief durch, aber es liegen keine Artefakte vor.".to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Freigeben: Plattenplatz zurückgewinnen
+// ---------------------------------------------------------------------------
+
+/// Was ein Modell auf dieser Maschine an Platz belegt.
+///
+/// Getrennt nach Artefakten und Gewichten, weil die beiden verschieden
+/// teuer wiederzubeschaffen sind: Artefakte entstehen aus dem Skalenpaket
+/// in Sekunden, die Gewichte kosten einen Download über Gigabyte. Wer
+/// Platz braucht und den Test wiederholen will, löscht deshalb zuerst die
+/// Artefakte und behält die Gewichte.
+pub struct Belegung {
+    pub modell: String,
+    /// Artefaktverzeichnis und seine Größe in Bytes.
+    pub artefakte: Option<(PathBuf, u64)>,
+    /// Gewichtsverzeichnis und seine Größe in Bytes.
+    pub gewichte: Option<(PathBuf, u64)>,
+}
+
+impl Belegung {
+    /// Belegt dieses Modell überhaupt Platz?
+    pub fn belegt(&self) -> bool {
+        self.artefakte.is_some() || self.gewichte.is_some()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.artefakte.as_ref().map_or(0, |(_, b)| *b) + self.gewichte.as_ref().map_or(0, |(_, b)| *b)
+    }
+}
+
+/// Größe eines Verzeichnisses in Bytes, rekursiv.
+///
+/// Symbolische Verknüpfungen werden **nicht** verfolgt: Sonst zählte ein
+/// Verweis nach außen mit, und beim Löschen liefe die Rekursion in ein
+/// Verzeichnis, das dem Nutzer gehört.
+fn verzeichnisgroesse(p: &Path) -> u64 {
+    let Ok(eintraege) = fs::read_dir(p) else {
+        return 0;
+    };
+    let mut summe = 0;
+    for e in eintraege.filter_map(|e| e.ok()) {
+        let Ok(art) = e.file_type() else { continue };
+        if art.is_symlink() {
+            continue;
+        } else if art.is_dir() {
+            summe += verzeichnisgroesse(&e.path());
+        } else if let Ok(m) = e.metadata() {
+            summe += m.len();
+        }
+    }
+    summe
+}
+
+/// Bytes als lesbare Größe.
+pub fn groesse(bytes: u64) -> String {
+    const EINHEITEN: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut wert = bytes as f64;
+    let mut i = 0;
+    while wert >= 1024.0 && i < EINHEITEN.len() - 1 {
+        wert /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{} {}", bytes, EINHEITEN[0])
+    } else {
+        format!("{:.1} {}", wert, EINHEITEN[i]).replace('.', ",")
+    }
+}
+
+/// Erhebt für jedes bekannte Modell, was auf dieser Maschine liegt.
+pub fn belegung(repo: &Path) -> Vec<Belegung> {
+    let mut namen: Vec<String> = register(repo)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    // Auch selbstgebaute Modelle, die nicht im Register stehen — sie
+    // belegen denselben Platz.
+    for g in suchen(repo) {
+        if !namen.contains(&g.name) {
+            namen.push(g.name);
+        }
+    }
+    namen.sort();
+
+    namen
+        .into_iter()
+        .map(|modell| {
+            let a = repo.join("INTEGER_LLM/artifacts").join(&modell);
+            let g = repo.join("INTEGER_LLM/models").join(hf_id(&modell));
+            Belegung {
+                artefakte: a.is_dir().then(|| {
+                    let b = verzeichnisgroesse(&a);
+                    (a, b)
+                }),
+                gewichte: g.is_dir().then(|| {
+                    let b = verzeichnisgroesse(&g);
+                    (g, b)
+                }),
+                modell,
+            }
+        })
+        .collect()
+}
+
+/// Prüft, ob ein Pfad überhaupt gelöscht werden darf.
+///
+/// **Der Wächter, nicht die Höflichkeit.** Gelöscht wird rekursiv; ein
+/// falscher Pfad wäre nicht rückgängig zu machen. Erlaubt ist deshalb
+/// ausschließlich ein **direktes Unterverzeichnis** von
+/// `INTEGER_LLM/artifacts` oder `INTEGER_LLM/models` — nicht die beiden
+/// Verzeichnisse selbst, nichts darüber, nichts daneben, und nichts, das
+/// über `..` dorthin zeigt.
+fn darf_geloescht_werden(repo: &Path, pfad: &Path) -> Result<(), String> {
+    let echt = pfad
+        .canonicalize()
+        .map_err(|e| format!("{} nicht auflösbar: {}", pfad.display(), e))?;
+    if !echt.is_dir() {
+        return Err(format!("{} ist kein Verzeichnis", echt.display()));
+    }
+    for rel in ["INTEGER_LLM/artifacts", "INTEGER_LLM/models"] {
+        let Ok(wurzel) = repo.join(rel).canonicalize() else {
+            continue;
+        };
+        if echt.parent() == Some(wurzel.as_path()) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "{} liegt nicht unterhalb von INTEGER_LLM/artifacts oder \
+         INTEGER_LLM/models — wird nicht gelöscht.",
+        echt.display()
+    ))
+}
+
+/// Löscht ein Artefakt- oder Gewichtsverzeichnis und meldet die
+/// freigegebene Größe.
+///
+/// Der Aufrufer muss vorher gefragt haben; diese Funktion fragt nicht.
+/// Sie prüft aber [`darf_geloescht_werden`] und verweigert alles, was
+/// nicht eindeutig zu diesem Repository gehört.
+pub fn freigeben(repo: &Path, pfad: &Path) -> Result<u64, String> {
+    darf_geloescht_werden(repo, pfad)?;
+    let bytes = verzeichnisgroesse(pfad);
+    fs::remove_dir_all(pfad).map_err(|e| format!("{} nicht löschbar: {}", pfad.display(), e))?;
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod loeschen_tests {
+    use super::*;
+
+    fn tempdir(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("myl-testclient-loeschen-{}", name));
+        let _ = fs::remove_dir_all(&d);
+        d
+    }
+
+    /// Baut ein Repository-Gerüst mit einem Artefakt- und einem
+    /// Gewichtsverzeichnis.
+    fn geruest(dir: &Path) {
+        let a = dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b");
+        let g = dir.join("INTEGER_LLM/models/Qwen2.5-0.5B");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&g).unwrap();
+        fs::write(a.join("weights_manifest.json"), vec![b'x'; 2048]).unwrap();
+        fs::write(g.join("model.safetensors"), vec![b'y'; 4096]).unwrap();
+    }
+
+    #[test]
+    fn belegung_findet_artefakte_und_gewichte() {
+        let dir = tempdir("belegung");
+        geruest(&dir);
+        let b = belegung(&dir);
+        let eintrag = b
+            .iter()
+            .find(|b| b.modell == "qwen2.5-0.5b")
+            .expect("Modell gefunden");
+        assert_eq!(eintrag.artefakte.as_ref().expect("Artefakte").1, 2048);
+        assert_eq!(eintrag.gewichte.as_ref().expect("Gewichte").1, 4096);
+        assert_eq!(eintrag.bytes(), 6144);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn freigeben_loescht_und_meldet_die_groesse() {
+        let dir = tempdir("freigeben");
+        geruest(&dir);
+        let ziel = dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b");
+        assert_eq!(freigeben(&dir, &ziel).expect("gelöscht"), 2048);
+        assert!(!ziel.exists());
+        // Die Gewichte bleiben unangetastet — sie sind teurer zu holen.
+        assert!(dir.join("INTEGER_LLM/models/Qwen2.5-0.5B").is_dir());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Der Wächter ist der Kern dieses Codes: Gelöscht wird rekursiv, und
+    /// ein falscher Pfad wäre nicht rückgängig zu machen.
+    #[test]
+    fn nur_modellverzeichnisse_duerfen_geloescht_werden() {
+        let dir = tempdir("waechter");
+        geruest(&dir);
+        let verboten = [
+            dir.join("INTEGER_LLM/artifacts"),
+            dir.join("INTEGER_LLM/models"),
+            dir.join("INTEGER_LLM"),
+            dir.clone(),
+            dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b/.."),
+            dir.join("INTEGER_LLM/artifacts/../../"),
+        ];
+        for p in verboten {
+            assert!(
+                freigeben(&dir, &p).is_err(),
+                "{} hätte nicht gelöscht werden dürfen",
+                p.display()
+            );
+        }
+        // Nichts davon darf etwas angerichtet haben.
+        assert!(dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b").is_dir());
+        assert!(dir.join("INTEGER_LLM/models/Qwen2.5-0.5B").is_dir());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ein_verschwundenes_verzeichnis_ist_ein_fehler_kein_absturz() {
+        let dir = tempdir("weg");
+        geruest(&dir);
+        assert!(freigeben(&dir, &dir.join("INTEGER_LLM/artifacts/gibtsnicht")).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn groessen_sind_lesbar() {
+        assert_eq!(groesse(512), "512 B");
+        assert_eq!(groesse(2048), "2,0 KB");
+        assert_eq!(groesse(8_100_000_000), "7,5 GB");
     }
 }
