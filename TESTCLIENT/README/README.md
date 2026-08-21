@@ -3,7 +3,7 @@
 > **Version:** 0.6.0
 > **Datum:** 2026-08-21
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 146 Tests grün, alle Läufe gegen die
+> und 3.1 (Modellstand im Protokoll). 148 Tests grün, alle Läufe gegen die
 > echten Artefakte verifiziert.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
@@ -571,6 +571,50 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
   Zellen Radius, im Aufbau erscheinen 21 verschiedene Farbtöne, im
   Hintergrund laufen dabei 5267 Tropfenköpfe über die volle Fensterhöhe,
   und der fertige Schriftzug gleitet von Zeile 21,8 auf 11,0.
+- **Backends sind wählbar, aber nur ehrlich.** Der Client baut jetzt
+  auch mit `--features cuda` und `--features rocm`. Er **verweigert**
+  darin jeden Messlauf, und zwar bevor er ein Artefakt sucht:
+
+  ```
+  FEHLER  Backend "cuda" hat auf dieser Übersetzung KEINEN eigenen Rechenpfad.
+  FEHLER  Ein Prüflauf darüber würde die Referenzimplementierung unter fremdem
+  FEHLER  Namen zertifizieren.
+  ```
+
+  **Der Befund dahinter (2026-08-22):** `conformance/run.sh cuda` meldete
+  auf einem Mac ohne NVIDIA-Hardware 30/30 bestanden. Die Feature-Flags
+  in `kernels/Cargo.toml` sind alle leer und schalten nur, ob
+  `backends/cuda.rs` übersetzt wird; der Rechenpfad kennt keine
+  cuda-Weiche, und `golden_runner` verwarf den Backend-Namen. Für zwei
+  geplante Testmaschinen mit NVIDIA und AMD hätte das bedeutet: beide
+  Läufe bitgleich, garantiert, weil beide dieselben CPU-Referenzkernel
+  rechnen. Das Ergebnis hätte wie der erbrachte Cross-Backend-Nachweis
+  ausgesehen.
+
+  Maßgeblich ist `kernels/src/rechenpfad.rs`. Der Client führt keine
+  eigene Liste, sondern fragt dort nach: eine zweite Wahrheit veraltete
+  beim ersten echten CUDA-Kernel still.
+
+  Das Protokoll trennt deshalb drei Angaben, die vorher zwei waren:
+
+  | Feld | Bedeutung |
+  |---|---|
+  | `backends_compiled` | wofür dieser Bau **konfiguriert** ist |
+  | `backends_rechnend` | was davon einen **eigenen Rechenpfad** hat |
+  | `backend_selected` | was in diesem Lauf **tatsächlich** gerechnet hat |
+
+  Ein Bau mit `--features cuda` führt `cuda` in der ersten Zeile und
+  `reference` in den beiden anderen. Genau dieses Auseinanderfallen ist
+  die Information.
+
+  **Kein `--backend`-Schalter.** Das Backend wird beim Übersetzen
+  gewählt, denn der Rechenpfad kennt keine Verzweigung zur Laufzeit; die
+  Weiche steht als `cfg` in `kernels/src/dot.rs`. Ein Laufzeitschalter
+  wäre eine Behauptung ohne Deckung.
+
+  Gemessen über drei Bauten derselben Quelle: ohne Feature und mit
+  `cpu-simd` läuft der Determinismuslauf durch und liefert **denselben**
+  Digest (`e19372337dab1f3d`), mit `rocm` wird er abgelehnt (Exit 1).
 - **Windows-Funde aus dem ersten CI-Lauf:** `menu::kurz` mischte die
   Trennzeichen (`…/d\e\f`), weil ein festes `…/` vor einem Pfad stand,
   den `PathBuf::collect` mit dem Trennzeichen des Systems zusammensetzt.
@@ -720,7 +764,7 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
   `animation`, `banner` und `vergleich` übersetzen für
   `x86_64-pc-windows-msvc`; die Press/Release-Verdopplung der
   Windows-Konsole ist abgefangen. Ein Lauf auf echter Hardware steht aus.
-- 53 → 146 Tests.
+- 53 → 148 Tests.
 
 
 ### v0.5.1 – 2026-08-20 (Nutzermenü auf drei Punkte)

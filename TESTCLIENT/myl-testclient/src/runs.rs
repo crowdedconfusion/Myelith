@@ -83,6 +83,24 @@ fn repo_root() -> std::path::PathBuf {
 /// Beides gehört an den **Anfang** jedes Laufs: Wer ein Protokoll
 /// aufmacht, muss zuerst wissen, worauf gemessen wurde, bevor er die
 /// Zahlen liest.
+/// Bricht einen Messlauf ab, wenn der Bau für ein Backend konfiguriert
+/// ist, das nicht rechnet.
+///
+/// Siehe [`crate::hardware::rechenpfad_pruefen`]. Aufgerufen von den
+/// Läufen mit Modell; `hardware` und `stack` sind nicht betroffen, denn
+/// sie rechnen nichts, dessen Backend eine Rolle spielte.
+fn backend_taugt(log: &mut RunLog) -> bool {
+    match crate::hardware::rechenpfad_pruefen() {
+        Ok(()) => true,
+        Err(begruendung) => {
+            for zeile in begruendung.lines() {
+                log.error(zeile.to_string());
+            }
+            false
+        }
+    }
+}
+
 fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     let fp = Fingerprint::collect();
     for (k, v) in &fp.entries {
@@ -232,6 +250,9 @@ pub fn run_determinism(
     steps: usize,
 ) -> bool {
     log_context(log, Some(artifact_dir));
+    if !backend_taugt(log) {
+        return false;
+    }
 
     if !artifact_dir.exists() {
         log.error(format!(
@@ -476,6 +497,9 @@ pub fn run_shard(
     num_shards: usize,
 ) -> bool {
     log_context(log, Some(artifact_dir));
+    if !backend_taugt(log) {
+        return false;
+    }
 
     if !artifact_dir.exists() {
         log.error(format!(

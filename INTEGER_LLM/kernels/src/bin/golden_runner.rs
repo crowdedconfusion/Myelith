@@ -93,7 +93,17 @@ fn main() {
         std::process::exit(1);
     }
     let path = &args[1];
-    let _backend_name = &args[2];
+    let backend_name = &args[2];
+
+    // **Verweigert, statt zu bestehen.** Bis 2026-08-22 stand hier
+    // `let _backend_name = ...`: Der Name wurde entgegengenommen und
+    // verworfen, und ein Lauf mit `--features cuda` zertifizierte die
+    // Referenzimplementierung unter fremdem Namen. Begründung und
+    // Wortlaut in `kernels/src/rechenpfad.rs`.
+    if !integer_llm_kernels::rechenpfad::rechnet(backend_name) {
+        eprintln!("{}", integer_llm_kernels::rechenpfad::ablehnung(backend_name));
+        std::process::exit(2);
+    }
 
     let content = std::fs::read_to_string(path).expect("Failed to read golden file");
     let gv: GoldenVector = serde_json::from_str(&content).expect("Failed to parse JSON");

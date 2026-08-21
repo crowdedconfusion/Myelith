@@ -2,16 +2,62 @@
 //!
 //! Feature-Gate: `cargo build --features cuda`
 //!
-//! Status: Delegations-Stub — alle Operationen werden an die Referenz-
-//! Kernel delegiert (numerisch identisch, nicht beschleunigt). Echte
-//! CUDA-Kernels erfordern GPU-Hardware zum Testen (bit-identisch zur
-//! Referenz, keine Tensor Cores, deterministische Summationsreihenfolge).
+//! Status: Delegations-Stub. Alle Operationen werden an die Referenz-
+//! kernel weitergereicht (numerisch identisch, nicht beschleunigt). Echte
+//! CUDA-Kernel brauchen GPU-Hardware zum Pruefen und sind deshalb hier
+//! bewusst nicht geschrieben, aus demselben Grund wie der AVX2-Pfad in
+//! `dot.rs`: Unverifizierte Numerik in einem Konsenspfad laesst einen
+//! Miner mit abweichendem Kernel slashen, ohne dass er etwas falsch
+//! gemacht hat.
 //!
-//! Determinismus-Strategie (fuer zukuenftige echte CUDA-Kernels):
-//! - Keine Tensor Cores (nicht deterministisch bei Akkumulation)
-//! - SIMT-INT8/INT16-Kernels mit fester Blockgroesse (z.B. 256 Threads)
-//! - Exakte Summationsreihenfolge im Code vorgeschrieben
-//! - Kein Warp-Shuffle; stattdessen Shared Memory + __syncthreads()
+//! **Solange hier delegiert wird, besteht kein Konformitaetslauf mit
+//! `--features cuda`**, siehe `kernels/src/rechenpfad.rs`.
+//!
+//! ## Determinismus-Vertrag fuer echte Kernel
+//!
+//! **Korrigiert am 2026-08-22.** Vorher stand hier: feste Blockgroesse,
+//! im Code vorgeschriebene Summationsreihenfolge, kein Warp-Shuffle.
+//! Drei dieser vier Auflagen sind fuer die Bitgleichheit **nicht noetig**
+//! und haetten einen GPU-Kernel ohne Gegenwert verlangsamt: Sie haetten
+//! die Reduktion serialisiert, obwohl gerade die Reduktion auf einer GPU
+//! parallel laufen soll.
+//!
+//! **Der Grund: Die Akkumulation ist exakt und damit assoziativ.**
+//! Nachgerechnet fuer die groesste Reduktionslaenge des Projekts
+//! (Qwen2.5-7B, `intermediate_size` 18944):
+//!
+//! | | |
+//! |---|---|
+//! | groesstes Einzelprodukt | 127 x 32768 = 4 161 536 |
+//! | groesste moegliche Summe | 78 836 137 984, also 2^36 |
+//! | Fassungsvermoegen i64 | 2^63 |
+//! | Sicherheitsabstand | Faktor 117 000 000 |
+//!
+//! Kein Ueberlauf, keine Rundung, keine Saettigung im Zwischenergebnis.
+//! Ganzzahlige Addition ohne Ueberlauf ist assoziativ und kommutativ,
+//! **also liefert jede Reduktionsreihenfolge dasselbe i64**. Baumreduktion,
+//! Warp-Shuffle, beliebige Blockgroessen: alles erlaubt.
+//!
+//! ### Was tatsaechlich gilt
+//!
+//! 1. **Nur Ganzzahlen, nie Gleitkomma.** Das ist die eigentliche
+//!    Auflage, und sie gilt ohne Ausnahme.
+//! 2. **Keine Tensor Cores.** Nicht weil Akkumulation dort
+//!    grundsaetzlich nichtdeterministisch waere, sondern weil ihre
+//!    Pfade in reduzierter Breite akkumulieren und Operationen
+//!    verschmelzen. Beides bricht die exakte i64-Summe.
+//! 3. **Saettigung genau einmal, ganz am Ende.** Das ist die feine
+//!    Bedingung, an der die Assoziativitaet haengt: Wuerde ein Kernel
+//!    Teilsummen klemmen, waere die Reihenfolge ploetzlich wieder
+//!    wirksam. Clamp gehoert in `rescale_i64`/`clamp_i16_from_i64` und
+//!    nirgends sonst.
+//! 4. **Keine Annahme ueber die Warp-Breite.** Nicht wegen des
+//!    Determinismus, sondern wegen der Portierbarkeit: NVIDIA 32, AMD 64.
+//!
+//! Die Assoziativitaet ist in `dot.rs` als Test festgehalten
+//! (`jede_reduktionsreihenfolge_liefert_dasselbe`), zusammen mit der
+//! Kopfrechnung zum Abstand. Faellt einer der beiden, gilt dieser
+//! Vertrag nicht mehr.
 //!
 //! Ziel-Vertrag seit theta_v 0.7.0:
 //! Gewichte int8 (Per-Channel-Skalen), Aktivierungen int16 (Per-Layer-Skalen),

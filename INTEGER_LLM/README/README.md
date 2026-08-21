@@ -579,6 +579,56 @@ liegen die Multiplikationen überlappend in der Pipeline.
 Bitgleichheit belegt: identischer `decode_hash` über 32 Token **und**
 30/30 Konformitätsvektoren unter beiden Backends.
 
+### Was ein GPU-Kernel einhalten muss, und was nicht (v0.17.0)
+
+Die Stub-Köpfe in `backends/cuda.rs` und `rocm.rs` schrieben bis
+2026-08-22 vor: feste Blockgröße, im Code vorgeschriebene
+Summationsreihenfolge, kein Warp-Shuffle. **Drei dieser vier Auflagen
+sind für die Bitgleichheit unnötig.** Sie hätten einen GPU-Kernel ohne
+Gegenwert verlangsamt, und zwar genau an der Stelle, an der eine GPU
+schnell ist: bei der parallelen Reduktion.
+
+Der Grund ist eine Eigenschaft, die das Projekt ohnehin schon nutzt:
+Die Akkumulation ist **exakt**. Nachgerechnet für die größte Reduktion
+des Projekts (Qwen2.5-7B, `intermediate_size` 18944):
+
+| | |
+|---|---|
+| größtes Einzelprodukt | 127 x 32768 = 4 161 536 |
+| größte mögliche Summe | 78 836 137 984, also 2^36 |
+| Fassungsvermögen i64 | 2^63 |
+| Sicherheitsabstand | **Faktor 117 Millionen** |
+
+Kein Überlauf, keine Rundung, keine Sättigung im Zwischenergebnis.
+Ganzzahlige Addition ohne Überlauf ist assoziativ und kommutativ, also
+liefert **jede** Reduktionsreihenfolge dasselbe i64. Baumreduktion,
+Warp-Shuffle, beliebige Blockgrößen: alles erlaubt.
+
+Was stattdessen gilt:
+
+1. **Nur Ganzzahlen, nie Gleitkomma.** Die eigentliche Auflage.
+2. **Keine Tensor Cores**, weil ihre Pfade in reduzierter Breite
+   akkumulieren und Operationen verschmelzen. Nicht, weil Akkumulation
+   dort grundsätzlich nichtdeterministisch wäre.
+3. **Sättigung genau einmal, ganz am Ende.** Daran hängt die
+   Assoziativität: Würde ein Kernel Teilsummen klemmen, wäre die
+   Reihenfolge plötzlich wieder wirksam.
+4. **Keine Annahme über die Warp-Breite** (NVIDIA 32, AMD 64). Das ist
+   Portierbarkeit, nicht Determinismus.
+
+Beides steht als Test in `dot.rs` und nicht nur als Behauptung im
+Kommentar: `jede_reduktionsreihenfolge_liefert_dasselbe` prüft vorwärts,
+rückwärts, Baumreduktion und Blockgrößen 32/64/256/1024 über Längen bis
+20 000, `die_akkumulation_kann_nicht_ueberlaufen` rechnet den
+schlimmsten Fall aus statt einen zufälligen. Fällt einer der beiden,
+gilt der Vertrag nicht mehr.
+
+**Geschrieben sind die Kernel damit nicht.** Sie brauchen GPU-Hardware
+zum Prüfen, und hier gibt es keine. Es ist dieselbe Entscheidung wie beim
+AVX2-Pfad in `dot.rs`: übersetzbar wäre er, aber nicht auf Parität
+prüfbar, und unverifizierte Numerik in einem Konsenspfad lässt einen
+Miner slashen, ohne dass er etwas falsch gemacht hat.
+
 ### Der größere Hebel lag daneben: die Gewichtskopie (v0.16.0)
 
 Der Fahrplan führte als nächsten Schritt „Gewichte liegen als

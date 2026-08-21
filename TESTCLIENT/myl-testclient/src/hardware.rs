@@ -53,6 +53,11 @@ impl Fingerprint {
             ),
             ("simd_features".into(), simd_features().join(",")),
             ("backends_compiled".into(), compiled_backends().join(",")),
+            // Getrennt von `backends_compiled`, weil beides
+            // auseinanderfallen kann und genau dann die Aussage kippt:
+            // Ein Bau mit `--features cuda` ist dafür konfiguriert und
+            // rechnet trotzdem mit der Referenz.
+            ("backends_rechnend".into(), rechnende_backends().join(",")),
             ("backend_selected".into(), selected_backend().to_string()),
         ];
 
@@ -133,20 +138,46 @@ pub fn simd_features() -> Vec<String> {
     f
 }
 
-/// Backends, die in **diesem Build** vorhanden sind.
+/// Backends, für die dieser Bau **konfiguriert** ist.
+///
+/// Das ist nicht dasselbe wie „rechnet damit": Ein Bau mit
+/// `--features cuda` führt `cuda` hier auf, während die Rechnung
+/// weiterhin die Referenzkernel machen. Genau diese Unterscheidung
+/// gehört ins Protokoll, siehe [`rechnende_backends`].
 pub fn compiled_backends() -> Vec<String> {
     let mut b = vec!["reference".to_string()];
-    if cfg!(feature = "cpu-simd") {
-        b.push("cpu-simd".to_string());
+    for (feature, name) in [
+        (cfg!(feature = "cpu-simd"), "cpu-simd"),
+        (cfg!(feature = "cuda"), "cuda"),
+        (cfg!(feature = "rocm"), "rocm"),
+    ] {
+        if feature {
+            b.push(name.to_string());
+        }
     }
     b
 }
 
+/// Backends, die auf dieser Übersetzung einen **eigenen Rechenpfad**
+/// haben.
+///
+/// Die Auskunft kommt aus `kernels::rechenpfad` und damit von dort, wo
+/// die `cfg` stehen, die den Code auswählen. Eine eigene Liste im Client
+/// wäre eine zweite Wahrheit, die beim ersten echten CUDA-Kernel still
+/// veraltet.
+pub fn rechnende_backends() -> Vec<String> {
+    integer_llm_kernels::rechenpfad::mit_rechenpfad()
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
 /// Das Backend, das dieser Lauf tatsächlich verwendet.
 ///
-/// Ohne das Feature `cpu-simd` ist es immer die Referenz, und das
-/// gehört ins Protokoll, damit ein „bitgleich"-Ergebnis nicht
-/// überinterpretiert wird.
+/// **Meldet nie mehr, als geschieht.** Ein Bau mit `--features cuda`
+/// bekommt hier `reference`, weil die Referenzkernel rechnen. Stünde
+/// stattdessen `cuda` im Protokoll, sähe ein bitgleiches Ergebnis wie ein
+/// bestandener GPU-Nachweis aus und wäre keiner.
 pub fn selected_backend() -> &'static str {
     #[cfg(feature = "cpu-simd")]
     {
@@ -172,6 +203,28 @@ pub fn selected_backend() -> &'static str {
     }
 }
 
+/// Prüft, ob dieser Bau für einen Messlauf taugt.
+///
+/// `Err(begründung)`, wenn er für ein Backend konfiguriert wurde, das
+/// nicht rechnet. **Das ist der Fall, gegen den es diese Prüfung gibt:**
+/// Wer den Client mit `--features cuda` baut, will die GPU messen. Ohne
+/// diese Sperre bekäme er ein bitgleiches Ergebnis, weil auf beiden
+/// Seiten dieselben CPU-Referenzkernel rechnen, und hielte es für den
+/// erbrachten Nachweis.
+///
+/// Es ist dieselbe Fehlerklasse wie ein abweichender Artefakt-Digest, und
+/// sie wird genauso behandelt: Der Lauf wird nicht stillschweigend
+/// anders, er wird abgelehnt und begründet.
+pub fn rechenpfad_pruefen() -> Result<(), String> {
+    for backend in ["cuda", "rocm"] {
+        let konfiguriert = compiled_backends().iter().any(|b| b == backend);
+        if konfiguriert && !integer_llm_kernels::rechenpfad::rechnet(backend) {
+            return Err(integer_llm_kernels::rechenpfad::ablehnung(backend));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +241,7 @@ mod tests {
             "parallelism",
             "simd_features",
             "backends_compiled",
+            "backends_rechnend",
             "backend_selected",
         ] {
             assert!(fp.get(key).is_some(), "Feld {} fehlt", key);
@@ -217,6 +271,50 @@ mod tests {
     #[test]
     fn simd_features_sind_nie_leer() {
         assert!(!simd_features().is_empty());
+    }
+
+    /// **Der Kern der Sperre.** Ein Bau, der für ein delegierendes
+    /// Backend konfiguriert ist, darf keinen Messlauf zulassen. Ohne das
+    /// bekäme jemand mit `--features cuda` ein bitgleiches Ergebnis,
+    /// weil auf beiden Seiten die CPU-Referenz rechnet, und hielte es für
+    /// den GPU-Nachweis.
+    #[test]
+    fn ein_bau_ohne_rechenpfad_wird_abgelehnt() {
+        let konfiguriert = compiled_backends();
+        let rechnend = rechnende_backends();
+
+        for backend in ["cuda", "rocm"] {
+            if konfiguriert.iter().any(|b| b == backend) {
+                assert!(
+                    !rechnend.iter().any(|b| b == backend),
+                    "{backend} rechnet: dann gehört dieser Test angepasst"
+                );
+                let fehler = rechenpfad_pruefen().expect_err("hätte ablehnen müssen");
+                assert!(fehler.contains("KEINEN eigenen Rechenpfad"), "{fehler}");
+                return;
+            }
+        }
+        // Ohne cuda/rocm im Bau gibt es nichts abzulehnen.
+        assert!(rechenpfad_pruefen().is_ok());
+    }
+
+    /// Konfiguriert und rechnend sind zwei verschiedene Listen. Fielen
+    /// sie zusammen, wäre die Unterscheidung im Protokoll wertlos.
+    #[test]
+    fn konfiguriert_und_rechnend_sind_getrennt_erfasst() {
+        let fp = Fingerprint::collect();
+        let konfiguriert = fp.get("backends_compiled").expect("Feld fehlt");
+        let rechnend = fp.get("backends_rechnend").expect("Feld fehlt");
+        assert!(konfiguriert.contains("reference"));
+        assert!(rechnend.contains("reference"));
+        // Das gewählte Backend muss in den rechnenden vorkommen: Es ist
+        // das, was tatsächlich läuft.
+        let gewaehlt = fp.get("backend_selected").expect("Feld fehlt");
+        let stamm = gewaehlt.split('/').next().unwrap_or(gewaehlt);
+        assert!(
+            rechnend.split(',').any(|b| b == stamm),
+            "gewählt {gewaehlt}, rechnend {rechnend}"
+        );
     }
 
     #[test]

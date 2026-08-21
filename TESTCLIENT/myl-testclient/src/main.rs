@@ -395,11 +395,27 @@ fn main() -> ExitCode {
         echo,
     );
 
+    let braucht_modell = matches!(args.command.as_str(), "determinismus" | "shard");
+
+    // **Das Backend zuerst, vor dem Artefakt.** Ein Bau, der für ein
+    // Backend ohne Rechenpfad konfiguriert ist, taugt für keinen
+    // Messlauf; das steht fest, bevor irgendein Modell gebraucht wird.
+    // Stünde die Prüfung dahinter, bekäme jemand mit `--features cuda`
+    // erst einen Download von bis zu 15 GB und danach die Ablehnung.
+    if braucht_modell {
+        if let Err(begruendung) = myl_testclient::hardware::rechenpfad_pruefen() {
+            for zeile in begruendung.lines() {
+                log.error(zeile.to_string());
+            }
+            log.finish(false);
+            return ExitCode::FAILURE;
+        }
+    }
+
     // Artefakte auflösen, bevor ein Lauf sie braucht. `hardware`, `stack`
     // und `artefakte` kommen ohne Modell aus: sie werden übersprungen,
     // damit der erste Befehl auf einer neuen Maschine keinen Download
     // auslöst.
-    let braucht_modell = matches!(args.command.as_str(), "determinismus" | "shard");
     if braucht_modell && !args.artifacts_explizit {
         match myl_testclient::artefakte::beschaffen(
             &myl_testclient::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default()),

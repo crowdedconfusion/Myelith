@@ -110,3 +110,32 @@ conformance/
 
 Die Golden Vectors und dieses Konformitätspaket unterliegen derselben
 Lizenz wie das Myelith-Projekt (PolyForm Shield License 1.0.0).
+
+## Ein Backend ohne Rechenpfad wird abgelehnt
+
+`run.sh cuda` und `run.sh rocm` enden mit Exit 2 und einer Begründung,
+statt zu bestehen.
+
+**Warum die Sperre nötig wurde (2026-08-22).** Vorher meldete
+`run.sh cuda` auf einem Mac ohne NVIDIA-Hardware 30/30 bestanden. Die
+Feature-Flags in `kernels/Cargo.toml` sind alle leer und schalten nur, ob
+`backends/cuda.rs` übersetzt wird; der Rechenpfad enthält keine
+cuda-Weiche, und `golden_runner` verwarf den Backend-Namen. Der Prüflauf
+zertifizierte also die Referenzimplementierung unter fremdem Namen, und
+das Ergebnis sah wie ein bestandener Backend-Nachweis aus.
+
+Es war derselbe Fehler, den der Kopf von `run.sh` für behoben erklärt:
+Bis 2026-08-19 wurde der Parameter nur ausgegeben und dann ignoriert. Die
+damalige Behebung reichte ihn in den Cargo-Aufruf; da er die Rechnung nie
+erreichte, blieb die Selbstzertifizierung bestehen und trug nur ein
+überzeugenderes Etikett.
+
+Maßgeblich ist jetzt `kernels/src/rechenpfad.rs`. Dort steht, welche
+Backends auf einer Übersetzung eigenen Code ausführen, und die Liste
+entsteht aus denselben `cfg`, die auch den Code auswählen. Wer echte
+CUDA-Kernel schreibt, trägt sie dort ein; erst dann besteht ein
+CUDA-Prüflauf.
+
+**Was die Sperre nicht behauptet:** Sie sagt nicht, dass ein Backend
+richtig rechnet. Dafür sind die Vektoren da. Sie verhindert nur die eine
+Aussage, die schlimmer ist als gar keine.

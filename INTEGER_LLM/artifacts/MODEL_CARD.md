@@ -165,6 +165,10 @@ python3 bench/qualitativ.py
 # Konformität — je Backend, das zertifiziert werden soll
 bash conformance/run.sh reference
 bash conformance/run.sh cpu-simd
+
+# cuda und rocm werden abgelehnt (Exit 2), solange ihre Umsetzungen an
+# die Referenzkernel delegieren: Ein bestandener Lauf wäre dort ein
+# Nachweis über die Referenz unter fremdem Namen.
 ```
 
 Die Artefakte selbst sind **nicht** eingecheckt (Größe); sie entstehen

@@ -35,6 +35,36 @@ echo "Backend: ${BACKEND}"
 echo "Vektoren: ${VECTORS_DIR}"
 echo ""
 
+# ── Hat das Backend überhaupt einen Rechenpfad? ────────────────────
+#
+# FUND (2026-08-22): `run.sh cuda` meldete auf einem Mac ohne NVIDIA-
+# Hardware 30/30 bestanden. Die Features in kernels/Cargo.toml sind alle
+# leer und schalten nur, ob backends/cuda.rs uebersetzt wird; der
+# Rechenpfad kennt keine cuda-Weiche, und golden_runner verwarf den
+# Backend-Namen. Der Prueflauf zertifizierte also die Referenz unter
+# fremdem Namen.
+#
+# Das ist derselbe Fehler, den der Kopf dieser Datei fuer behoben
+# erklaert. Die damalige Behebung reichte den Parameter in den
+# cargo-Aufruf; da er die Rechnung nie erreichte, blieb die
+# Selbstzertifizierung und trug nur ein besseres Etikett.
+#
+# Deshalb EINE Probe vorweg, mit sichtbarer Fehlerausgabe. Im Prueflauf
+# darunter geht stderr nach /dev/null, damit die Vektorliste lesbar
+# bleibt; die Ablehnung waere dort unsichtbar und der Lauf endete mit
+# 0/30 ohne Begruendung.
+PROBE="${VECTORS_DIR}/op"
+PROBE=$(ls "${PROBE}"/*.golden.json 2>/dev/null | head -1)
+if [ -n "${PROBE}" ]; then
+    if ! cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
+            --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
+            "${PROBE}" "${BACKEND}" >/dev/null; then
+        echo ""
+        echo "=== Prueflauf abgelehnt ==="
+        exit 2
+    fi
+fi
+
 # ── Op-Level: golden_runner (kernels-Crate) ────────────────────────
 echo "--- Op-Level ---"
 if [ -d "${VECTORS_DIR}/op" ]; then

@@ -163,6 +163,100 @@ mod neon {
 mod tests {
     use super::*;
 
+    /// Baumreduktion, wie eine GPU sie ausfuehrt: Nachbarn paarweise
+    /// addieren, bis einer uebrig ist.
+    fn dot_baum(w: &[i8], x: &[i16]) -> i64 {
+        let mut stufe: Vec<i64> = w
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| (*a as i64) * (*b as i64))
+            .collect();
+        while stufe.len() > 1 {
+            stufe = stufe.chunks(2).map(|p| p.iter().sum()).collect();
+        }
+        stufe.first().copied().unwrap_or(0)
+    }
+
+    /// **Der Determinismus-Vertrag der kuenftigen GPU-Kernel, als Test.**
+    ///
+    /// Die Stubs in `backends/cuda.rs` und `rocm.rs` schrieben bis
+    /// 2026-08-22 eine feste Summationsreihenfolge und ein Verbot von
+    /// Warp-Shuffles vor. Beides ist unnoetig: Die Akkumulation laeuft
+    /// exakt in i64 ohne Ueberlauf, ganzzahlige Addition ist dann
+    /// assoziativ und kommutativ, und **jede** Reduktionsreihenfolge
+    /// liefert dasselbe Ergebnis.
+    ///
+    /// Das ist keine Feinheit, sondern der Unterschied zwischen einem
+    /// GPU-Kernel, der parallel reduzieren darf, und einem, der es aus
+    /// einem Missverstaendnis heraus nicht tut.
+    ///
+    /// Faellt dieser Test, gilt der Vertrag in den Stub-Koepfen nicht
+    /// mehr, und ein GPU-Kernel braeuchte wieder eine vorgeschriebene
+    /// Reihenfolge.
+    #[test]
+    fn jede_reduktionsreihenfolge_liefert_dasselbe() {
+        // Laengen bis ueber die groesste Reduktion des Projekts hinaus
+        // (7B: intermediate_size 18944).
+        for n in [1usize, 2, 3, 7, 64, 255, 896, 4864, 18944, 20000] {
+            let w: Vec<i8> = (0..n).map(|i| (((i * 37) % 255) as i8).wrapping_sub(127)).collect();
+            let x: Vec<i16> = (0..n)
+                .map(|i| (((i * 8191) % 65535) as i32 - 32767) as i16)
+                .collect();
+
+            let vorwaerts = dot_scalar(&w, &x);
+
+            // Rueckwaerts.
+            let rw: Vec<i8> = w.iter().rev().copied().collect();
+            let rx: Vec<i16> = x.iter().rev().copied().collect();
+            assert_eq!(dot_scalar(&rw, &rx), vorwaerts, "n={n}: rueckwaerts weicht ab");
+
+            // Baumreduktion, wie auf einer GPU.
+            assert_eq!(dot_baum(&w, &x), vorwaerts, "n={n}: Baumreduktion weicht ab");
+
+            // Blockweise Teilsummen, wie bei Shared-Memory-Reduktion,
+            // fuer mehrere Blockgroessen.
+            for block in [32usize, 64, 256, 1024] {
+                let summe: i64 = w
+                    .chunks(block)
+                    .zip(x.chunks(block))
+                    .map(|(bw, bx)| dot_scalar(bw, bx))
+                    .sum();
+                assert_eq!(summe, vorwaerts, "n={n}, Block {block}: weicht ab");
+            }
+        }
+    }
+
+    /// **Die Bedingung, an der die Assoziativitaet haengt:** Die Summe
+    /// darf i64 nicht ausschoepfen. Der Test rechnet den schlimmsten Fall
+    /// aus, nicht einen zufaelligen.
+    ///
+    /// Wird die Aktivierung eines Tages breiter als i16 oder das Gewicht
+    /// breiter als i8, faellt dieser Test, und der Determinismus-Vertrag
+    /// der GPU-Kernel gehoert neu gerechnet.
+    #[test]
+    fn die_akkumulation_kann_nicht_ueberlaufen() {
+        // Groesste Betraege der beteiligten Typen.
+        let groesstes_produkt = (i8::MIN as i64).abs() * (i16::MIN as i64).abs();
+        assert_eq!(groesstes_produkt, 128 * 32768);
+
+        // Groesste Reduktionslaenge des Projekts, mit Reserve.
+        let laengste_reduktion: i64 = 1 << 16; // 65 536, gegen 18 944 bei 7B
+        let schlimmster_fall = groesstes_produkt * laengste_reduktion;
+
+        assert!(
+            schlimmster_fall < i64::MAX / 1000,
+            "Sicherheitsabstand zu i64 ist auf {} geschrumpft",
+            i64::MAX / schlimmster_fall
+        );
+
+        // Und der Vollstaendigkeit halber: Auch der Extremfall rechnet
+        // sich ohne Saettigung, statt nur rechnerisch zu passen.
+        let n = 4096;
+        let w = vec![i8::MIN; n];
+        let x = vec![i16::MIN; n];
+        assert_eq!(dot_scalar(&w, &x), (n as i64) * groesstes_produkt);
+    }
+
     /// Deterministischer PRNG — die Testsuite soll ohne
     /// Zufalls-Abhängigkeit reproduzierbar sein.
     struct Xorshift(u64);

@@ -2,15 +2,23 @@
 //!
 //! Feature-Gate: `cargo build --features rocm`
 //!
-//! Status: Delegations-Stub — alle Operationen werden an die Referenz-
-//! Kernel delegiert (numerisch identisch, nicht beschleunigt). Echte
-//! HIP-Kernels erfordern AMD-GPU-Hardware zum Testen.
+//! Status: Delegations-Stub. Alle Operationen werden an die Referenz-
+//! kernel weitergereicht (numerisch identisch, nicht beschleunigt). Echte
+//! HIP-Kernel brauchen AMD-Hardware zum Pruefen und sind deshalb hier
+//! bewusst nicht geschrieben (Begruendung wie in `cuda.rs`).
 //!
-//! Determinismus-Strategie (fuer zukuenftige echte HIP-Kernels):
-//! - 1:1-Port des CUDA-Codes nach HIP (95% syntaktisch identisch)
-//! - AMD WarpSize = 64 (vs. NVIDIA = 32) → keine Warp-Angewiesenheit
-//! - Shared Memory fuer Reductions statt Warp-Shuffle
-//! - Separate Golden-Vector-Test-Suite fuer AMD-Hardware
+//! **Solange hier delegiert wird, besteht kein Konformitaetslauf mit
+//! `--features rocm`**, siehe `kernels/src/rechenpfad.rs`.
+//!
+//! Der Determinismus-Vertrag ist derselbe wie fuer CUDA und steht dort
+//! ausformuliert. Zusaetzlich fuer HIP:
+//! - Portierung aus dem CUDA-Code, syntaktisch weitgehend gleich.
+//! - Die Warp-Breite unterscheidet sich (AMD 64, NVIDIA 32). Fuer die
+//!   Bitgleichheit ist das ohne Belang, weil die Reduktionsreihenfolge
+//!   ohnehin frei ist; fuer die Portierbarkeit heisst es, dass keine
+//!   Konstante die Warp-Breite annehmen darf.
+//! - Eigene Golden-Vector-Laeufe auf AMD-Hardware, bevor `rocm` in
+//!   `rechenpfad.rs` eingetragen wird.
 //!
 //! Ziel-Vertrag seit theta_v 0.7.0:
 //! Gewichte int8 (Per-Channel-Skalen), Aktivierungen int16 (Per-Layer-Skalen),

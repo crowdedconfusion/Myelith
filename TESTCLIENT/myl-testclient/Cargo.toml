@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Terminal-Testclient für Myelith: Hardware-Erhebung, Cross-Backend-Determinismus und geshardete Inferenz — jeder Lauf mit maschinenlesbarem Protokoll, und ein Vergleichsbefehl, der daraus ein Urteil über den Cross-Hardware-Nachweis fällt."
@@ -20,8 +20,19 @@ sha2 = "0.10"
 borsh = { version = "1.6", features = ["derive"] }
 crossterm = "0.29.0"
 
+# Das Backend wird beim ÜBERSETZEN gewählt, nicht zur Laufzeit: Der
+# Rechenpfad kennt keine Verzweigung nach Backend, die Weiche steht als
+# `cfg` in `kernels/src/dot.rs`. Ein Laufzeitschalter `--backend` wäre
+# deshalb eine Behauptung ohne Deckung.
+#
+# `cuda` und `rocm` sind aufgeführt, damit ein Bau damit möglich ist und
+# der Client ihn ERKENNT. Rechnen tun sie nicht: ihre Umsetzungen
+# delegieren an die Referenzkernel. Der Client verweigert Messläufe in
+# einem solchen Bau, siehe `hardware::rechenpfad_pruefen`.
 [features]
 cpu-simd = ["integer-llm-kernels/cpu-simd"]
+cuda = ["integer-llm-kernels/cuda"]
+rocm = ["integer-llm-kernels/rocm"]
 
 [lib]
 name = "myl_testclient"
