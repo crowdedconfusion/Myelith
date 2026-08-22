@@ -1,0 +1,3 @@
+# Python-Zwischenstaende gehoeren nicht ins Repository.
+__pycache__/
+*.pyc

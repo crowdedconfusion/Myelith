@@ -1,0 +1,46 @@
+{
+  "modell": "qwen2.5-0.5b",
+  "geraet": "mps",
+  "datum": "2026-08-22",
+  "parameter": {
+    "schritte": 200,
+    "sequenzen": 20,
+    "halte": 8,
+    "seq_len": 128,
+    "lr": 1e-05,
+    "keim": 1
+  },
+  "zusatzbits": 16,
+  "referenz": {
+    "anfang": 3.0472385585308075,
+    "ende": 2.9795045256614685
+  },
+  "arme": {
+    "Ganzzahl-Master, Rundung zur naechsten Stufe": {
+      "anfang": 3.06885227560997,
+      "ende": 4.065427988767624,
+      "abstand_prozent": 36.446444492816255,
+      "master_ganzzahlig": true,
+      "master_hash": "8491f597e9c3551b",
+      "wirksame_aktualisierungen": 27322356463,
+      "dauer_s": 62.60466504096985
+    },
+    "Ganzzahl-Master, stochastisch": {
+      "anfang": 3.0718659162521362,
+      "ende": 3.0018738508224487,
+      "abstand_prozent": 0.7507733238302129,
+      "master_ganzzahlig": true,
+      "master_hash": "1005ae18ab8c5b46",
+      "wirksame_aktualisierungen": 23953215924,
+      "dauer_s": 175.77497029304504
+    }
+  },
+  "reproduzierbar": {
+    "geraet": "cpu",
+    "hash_a": "e9b2ff22e28209f6",
+    "hash_b": "e9b2ff22e28209f6",
+    "hash_anderer_keim": "80b8e0e5413b6d5c",
+    "identisch": true,
+    "hinweis": "Auf MPS weicht schon ein Lauf ohne Zufall ab; Plattformeigenschaft, nicht Verfahren."
+  }
+}

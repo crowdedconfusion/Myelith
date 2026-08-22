@@ -1,10 +1,16 @@
 # training (`myl-train`)
 
-> **Version:** 0.0.0
-> **Datum:** 2026-08-19
-> **Status:** **Ein einziger Fahrplanpunkt** — die Referenzsimulation
-> 0.1, die klärt, ob das Quantisierungsschema im Rückwärtspass trägt.
-> Der Fahrplan für alles Weitere entsteht erst nach ihrem Ergebnis.
+> **Version:** 0.2.0
+> **Datum:** 2026-08-22
+> **Status:** **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
+> Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
+> (+0,67 % gegen die Gleitkomma-Referenz; mit Rundung zur nächsten Stufe
+> +29,9 %). Dazu 0.2: Ein Trainingsschritt **ohne Gleitkommazustand**
+> geht, mit ganzzahligem Master und zählerbasiertem Würfel, +0,75 %.
+> Protokolle:
+> [`entscheidung_0-1.md`](../tests/diag/results/entscheidung_0-1.md) und
+> [`entscheidung_0-2.md`](../tests/diag/results/entscheidung_0-2.md).
+> Der Fahrplan für alles Weitere entsteht jetzt auf dieser Grundlage.
 
 Trainings als nachrangige Arbeitsklasse, lokale Verlustblöcke,
 Datenprovenienz, robuste Aggregation, Modellwachstum.
