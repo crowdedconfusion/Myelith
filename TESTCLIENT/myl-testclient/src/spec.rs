@@ -250,7 +250,7 @@ impl TestPlan {
              # ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.\n\
              #\n\
              # Aufruf:  myl-test --plan {}.plan determinismus\n\
-             #    oder im Menü über [3] Testdatei wählen\n\
+             #    oder im Menü über [2] Testdatei wählen\n\
              #\n\
              # Die Zeile spec_sha256 sichert genau das ab. Kommentare und\n\
              # Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.\n\

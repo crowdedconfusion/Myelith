@@ -309,17 +309,48 @@ pub fn bauanleitung(repo: &Path, modell: &str) -> String {
     )
 }
 
-/// Verzeichnisname der Gewichte unter `INTEGER_LLM/models/`.
+/// Wo die Gewichte dieses Modells auf der Platte liegen.
 ///
-/// **Aus dem Katalog, nicht aus einem `match`** (2026-08-22). Hier stand
-/// `match modell { "qwen2.5-7b" => …, _ => "Qwen2.5-0.5B" }`, also ein
-/// stiller Rückfall: Ein drittes Modell im Register hätte die Gewichte
-/// von Qwen2.5-0,5B geladen und dann beim Bau einen Fehler geworfen, der
-/// nach allem aussieht außer nach der Ursache.
+/// **Getrennt vom Beschaffen, und das war ein Fund** (2026-08-22): Hier
+/// stand eine gemeinsame Funktion mit einem Rückfall auf den
+/// Modellnamen. Der Modellschlüssel (`qwen2.5-0.5b`) und der
+/// Verzeichnisname (`Qwen2.5-0.5B`) unterscheiden sich aber **nur in der
+/// Groß- und Kleinschreibung**, und auf einem Dateisystem, das die nicht
+/// unterscheidet, fiel das nicht auf. Auf macOS lief der Test durch, auf
+/// dem Linux-Runner der CI nicht. Ein Nutzer unter Linux hätte in
+/// „Artefakte und Gewichte löschen" seine Gewichte nicht aufgelistet
+/// bekommen und geglaubt, sie seien weg.
 ///
-/// Ohne Katalogeintrag gibt es deshalb **keinen Rückfall**, sondern den
-/// Modellnamen selbst: Der Bau schlägt dann fehl, und zwar sichtbar an
-/// der richtigen Stelle.
+/// Die Suche geht deshalb in drei Stufen: Katalog, dann ein Vergleich
+/// **ohne Rücksicht auf Groß- und Kleinschreibung** über die vorhandenen
+/// Verzeichnisse, dann der Modellname unverändert. Nur die erste Stufe
+/// ist eine Auskunft; die zweite ist eine Suche, und die dritte sagt
+/// ehrlich, dass nichts bekannt ist.
+fn gewichte_verzeichnis(repo: &Path, modell: &str) -> PathBuf {
+    let models = repo.join("INTEGER_LLM/models");
+    if let Some(k) = katalogeintrag(repo, modell) {
+        if !k.hf_verzeichnis.is_empty() {
+            return models.join(k.hf_verzeichnis);
+        }
+    }
+    if let Ok(eintraege) = fs::read_dir(&models) {
+        for e in eintraege.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.eq_ignore_ascii_case(modell) && e.path().is_dir() {
+                return e.path();
+            }
+        }
+    }
+    models.join(modell)
+}
+
+/// Anzeigename der Gewichte für Meldungen und Anleitungen.
+///
+/// Ohne Katalogeintrag der Modellname selbst: **kein** Rückfall auf ein
+/// anderes Modell. Vorher stand hier `_ => "Qwen2.5-0.5B"`, und ein
+/// drittes Modell hätte damit die Gewichte von Qwen2.5-0,5B geladen und
+/// wäre erst beim Bau aufgefallen, mit einer Meldung, die nach allem
+/// aussieht außer nach der Ursache.
 fn hf_id(repo: &Path, modell: &str) -> String {
     katalogeintrag(repo, modell)
         .map(|k| k.hf_verzeichnis)
@@ -481,15 +512,50 @@ pub fn download_groesse(repo: &Path, modell: &str) -> String {
 /// Umsetzung derselben Sache.
 pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
     let py = python_finden(repo)?;
-    let hf = hf_id(repo, modell);
-    let ziel = repo.join("INTEGER_LLM/models").join(&hf);
-    meldung(format!("Lade {} nach {} …", hf, ziel.display()));
+
+    // **Herkunft und Revision kommen aus dem Katalog** (2026-08-22). Hier
+    // stand `repo_id='Qwen/{hf}'`, also die Annahme, jedes Modell dieses
+    // Projekts komme von Qwen, und **ohne Revision**, also von dem, was
+    // gerade auf `main` liegt. Beides widerspricht `models/README.md`:
+    // Dort steht, dass jede Variante eine fixierte Revision braucht, ohne
+    // die der Lauf nicht reproduzierbar ist. Ein Modell, das sich
+    // zwischen zwei Teilnehmern ändert, erzeugt genau den Befund, gegen
+    // den dieses Werkzeug gebaut ist.
+    let Some(k) = katalogeintrag(repo, modell) else {
+        return Err(format!(
+            "{modell} steht nicht in INTEGER_LLM/models/KATALOG.json.\n\
+             Ohne Katalogeintrag ist weder bekannt, woher die Gewichte kommen,\n\
+             noch welche Revision gilt. Beides zu raten wäre schlimmer als\n\
+             der Abbruch: Ein Teilnehmer bekäme möglicherweise ein anderes\n\
+             Modell als der nächste, und der Vergleich meldete eine\n\
+             Abweichung, die keine ist.\n\
+             \n\
+             Eintrag ergänzen und danach `python tools/modelle_liste.py` laufen lassen."
+        ));
+    };
+    if k.hf_repo.is_empty() || k.hf_revision.is_empty() {
+        return Err(format!(
+            "Der Katalogeintrag für {modell} ist unvollständig: \
+             hf_repo={:?}, hf_revision={:?}. Beides ist Pflicht.",
+            k.hf_repo, k.hf_revision
+        ));
+    }
+
+    let ziel = repo.join("INTEGER_LLM/models").join(&k.hf_verzeichnis);
+    meldung(format!(
+        "Lade {} (Revision {}) nach {} …",
+        k.hf_repo,
+        &k.hf_revision[..k.hf_revision.len().min(12)],
+        ziel.display()
+    ));
 
     let skript = format!(
         "from huggingface_hub import snapshot_download\n\
-         snapshot_download(repo_id='Qwen/{hf}', local_dir=r'{ziel}',\n\
+         snapshot_download(repo_id='{repo_id}', revision='{revision}',\n\
+         \x20   local_dir=r'{ziel}',\n\
          \x20   allow_patterns=['*.json','*.safetensors','*.txt'])\n",
-        hf = hf,
+        repo_id = k.hf_repo,
+        revision = k.hf_revision,
         ziel = ziel.display()
     );
     lauf(&py, &["-c", &skript], repo, meldung)
@@ -885,7 +951,7 @@ pub fn beschaffen_fuer(
         return Err(format!("Abgebrochen.\n{}", bauanleitung(repo, modell)));
     }
 
-    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(repo, modell));
+    let gewichte = gewichte_verzeichnis(repo, modell);
     if gewichte.join("config.json").is_file() {
         meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
     } else {
@@ -997,7 +1063,7 @@ pub fn belegung(repo: &Path) -> Vec<Belegung> {
         .into_iter()
         .map(|modell| {
             let a = repo.join("INTEGER_LLM/artifacts").join(&modell);
-            let g = repo.join("INTEGER_LLM/models").join(hf_id(repo, &modell));
+            let g = gewichte_verzeichnis(repo, &modell);
             Belegung {
                 artefakte: a.is_dir().then(|| {
                     let b = verzeichnisgroesse(&a);
@@ -1427,6 +1493,72 @@ mod loeschen_tests {
         // Unbekanntes bleibt stehen, statt geraten zu werden.
         assert_eq!(entpacken("\\q"), "\\q");
         assert_eq!(entpacken("ohne alles"), "ohne alles");
+    }
+
+
+    /// **Der Fund vom Linux-Runner (2026-08-22).** Der Modellschlüssel
+    /// (`qwen2.5-0.5b`) und der Verzeichnisname (`Qwen2.5-0.5B`)
+    /// unterscheiden sich nur in der Groß- und Kleinschreibung. Auf einem
+    /// Dateisystem, das die nicht unterscheidet (macOS, Windows), findet
+    /// selbst ein falscher Name das Verzeichnis; auf Linux nicht. Ein
+    /// Nutzer dort hätte in „Artefakte und Gewichte löschen" seine
+    /// Gewichte nicht aufgelistet bekommen und geglaubt, sie seien weg.
+    ///
+    /// Der Test prüft die **Zeichenkette**, nicht den Zugriff, und greift
+    /// deshalb auf jedem Dateisystem.
+    #[test]
+    fn die_gewichte_werden_auch_ohne_katalog_gefunden() {
+        let dir = tempdir("gewichte-suche");
+        let g = dir.join("INTEGER_LLM/models/Qwen2.5-0.5B");
+        fs::create_dir_all(&g).unwrap();
+
+        // Ohne Katalog im Gerüst: Die Suche muss über die Schreibweise
+        // hinwegsehen und den echten Verzeichnisnamen zurückgeben.
+        let gefunden = gewichte_verzeichnis(&dir, "qwen2.5-0.5b");
+        assert_eq!(
+            gefunden.file_name().unwrap().to_string_lossy(),
+            "Qwen2.5-0.5B",
+            "die Suche liefert den Modellschlüssel statt des Verzeichnisses"
+        );
+        assert!(gefunden.is_dir());
+
+        // Ein Modell, zu dem nichts daliegt, bekommt keinen fremden Pfad
+        // untergeschoben.
+        let nichts = gewichte_verzeichnis(&dir, "gibt-es-nicht");
+        assert_eq!(nichts.file_name().unwrap().to_string_lossy(), "gibt-es-nicht");
+        assert!(!nichts.is_dir());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Ein Download ohne festgelegte Revision holt, was gerade auf `main`
+    /// liegt. `models/README.md` verlangt eine fixierte Revision, ohne die
+    /// der Lauf nicht reproduzierbar ist: Ein Modell, das sich zwischen
+    /// zwei Teilnehmern ändert, erzeugt genau den Befund, gegen den dieses
+    /// Werkzeug gebaut ist.
+    #[test]
+    fn jeder_katalogeintrag_traegt_herkunft_und_revision() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        for k in katalog(&wurzel).expect("Katalog") {
+            assert!(
+                k.hf_repo.contains('/'),
+                "{}: hf_repo ist keine Hugging-Face-Kennung: {:?}",
+                k.name,
+                k.hf_repo
+            );
+            assert_eq!(
+                k.hf_revision.len(),
+                40,
+                "{}: keine volle Git-Revision, sondern {:?}",
+                k.name,
+                k.hf_revision
+            );
+            assert!(
+                k.hf_revision.chars().all(|c| c.is_ascii_hexdigit()),
+                "{}: Revision ist kein Hexwert",
+                k.name
+            );
+        }
     }
 
 }

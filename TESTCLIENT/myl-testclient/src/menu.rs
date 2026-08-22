@@ -58,6 +58,29 @@ impl Einstellungen {
     /// der Menüauswahl gezeichnet wird und in deren Höhenrechnung eingehen
     /// muss. Gedruckt stünde er über dem Menü, und dort beantwortet er
     /// eine Frage, die noch niemand gestellt hat.
+    /// Das gewählte Modell, wie es in der Übersicht erscheint.
+    ///
+    /// Der Verzeichnisname ist der Modellschlüssel (`qwen2.5-0.5b`), also
+    /// genau das, was auch im Protokoll und im Register steht. Liegt
+    /// nichts da, wird das gesagt statt ein Pfad gezeigt, den es nicht
+    /// gibt: Ein Lauf ohne Artefakt schlägt fehl, und wer das vorher
+    /// sieht, wählt zuerst [1].
+    fn artefakt_name(&self) -> String {
+        let name = self
+            .artifacts
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if name.is_empty() {
+            return "keines gewählt  (Punkt [1])".to_string();
+        }
+        if self.artifacts.is_dir() {
+            name
+        } else {
+            format!("{}  (liegt nicht vor, Punkt [1])", name)
+        }
+    }
+
     fn als_text(&self) -> String {
         use std::fmt::Write as _;
         let mut t = String::new();
@@ -86,7 +109,12 @@ impl Einstellungen {
                 self.wiederholungen
             );
         }
-        let _ = writeln!(t, "    Artefakte   {}", kurz(&self.artifacts));
+        // **Das gewählte Artefakt, nicht der Ordner.** Hier stand
+        // „Artefakte" mit dem gekürzten Pfad, und das beantwortete die
+        // Frage nicht, die vor einem Lauf zählt: Womit wird gerechnet?
+        // Der Pfad endet zwar auf dem Modellnamen, aber gekürzt sah man
+        // ihn zwischen zwei Auslassungszeichen kaum.
+        let _ = writeln!(t, "    Artefakt    {}", self.artefakt_name());
         let _ = writeln!(t, "    Protokolle  {}", kurz(&self.logs));
         let _ = writeln!(t, "    Nutzer      {}", self.teilnehmer);
         let _ = write!(t, "    Einstellungs-ID {}", self.einstellungen_id);
@@ -132,33 +160,50 @@ fn kurz(p: &std::path::Path) -> String {
 /// Wer eine Maschine beisteuert, soll messen, vergleichen und das
 /// Ergebnis schicken; er soll keine Testpläne erzeugen und keine Pfade
 /// umstellen. Alles Weitere liegt eine Ebene tiefer unter [9].
+///
+/// **In der Reihenfolge des Ablaufs (2026-08-22).** Modell, Testdatei,
+/// Lauf: die drei Schritte, die jeder Teilnehmer in dieser Folge geht.
+/// Vorher stand das Gespräch mit dem Modell an erster und das Artefakt an
+/// vierter Stelle, also das Ergebnis vor seiner Voraussetzung: Wer [1]
+/// wählte, ohne ein Artefakt zu haben, bekam als Erstes eine
+/// Modellauswahl, die er nicht erwartet hatte.
+///
+/// **Das Gespräch steht hinter dem Lauf**, obwohl man es davor führen
+/// mag. Es ist der einzige Punkt, der **nicht misst**, und ein Menü
+/// ordnet nach Aufgabe, nicht nach Neugier. Wer es sucht, findet es; wer
+/// den Test fahren soll, stolpert nicht darüber.
+///
+/// Die vier Schritte sind durch eine Leerzeile von den drei
+/// Nebenfunktionen abgesetzt. Sieben gleichrangige Zeilen lesen sich wie
+/// sieben Möglichkeiten; vier plus drei lesen sich wie ein Weg mit
+/// Beiwerk, und das ist es auch.
 fn menue_nutzer() -> Vec<Punkt> {
     vec![
         Punkt::neu(
             '1',
-            "Mit dem Modell sprechen",
-            "Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum\n\
-             Messen: kein Protokoll, kein Vergleichswert.",
+            "Artefakt wählen",
+            "Das Modell, mit dem gerechnet wird. Beschafft es, falls es\n\
+             fehlt, und prüft den Digest gegen das Register.",
         ),
         Punkt::neu(
             '2',
+            "Testdatei wählen",
+            "Legt Prompt, Token und Shards fest. Punkt [3] fragt sie\n\
+             ohnehin ab; hier vorab, wenn du sie vorher sehen willst.",
+        ),
+        Punkt::neu(
+            '3',
             "Testlauf starten",
             "Hardware, Determinismus, Shards und Protokoll-Durchlauf\n\
              nacheinander. Der vollständige Bericht dieser Maschine.",
         ),
         Punkt::neu(
-            '3',
-            "Testdatei wählen",
-            "Legt Prompt, Token, Shards und Modell fest. Punkt [2] fragt\n\
-             sie ohnehin ab; hier vorab, wenn du sie vorher sehen willst.",
-        ),
-        Punkt::neu(
             '4',
-            "Artefakt wählen",
-            "Das Modell, mit dem gerechnet wird. Beschafft es, falls es\n\
-             fehlt, und prüft den Digest gegen das Register.",
+            "Mit dem Modell sprechen",
+            "Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum\n\
+             Messen: kein Protokoll, kein Vergleichswert.",
         ),
-        Punkt::neu('5', "Anleitung lesen", ""),
+        Punkt::neu('5', "Anleitung lesen", "").abgesetzt(),
         Punkt::neu('9', "Entwickler-Menü", ""),
         Punkt::neu('0', "Beenden", ""),
     ]
@@ -275,10 +320,14 @@ pub fn run(mut e: Einstellungen) -> bool {
         println!();
         match wahl {
             '1' => {
-                sprechen(&e);
+                artefakt_waehlen(&mut e);
                 weiter();
             }
             '2' => {
+                testdatei_waehlen(&mut e);
+                weiter();
+            }
+            '3' => {
                 // Die Planauswahl steht hier, nicht beim Start: Sie legt
                 // fest, WOMIT gemessen wird, und diese Frage stellt sich
                 // in dem Augenblick, in dem gemessen werden soll.
@@ -293,12 +342,8 @@ pub fn run(mut e: Einstellungen) -> bool {
                 letztes_ergebnis = testlauf(&mut e);
                 weiter();
             }
-            '3' => {
-                testdatei_waehlen(&mut e);
-                weiter();
-            }
             '4' => {
-                artefakt_waehlen(&mut e);
+                sprechen(&e);
                 weiter();
             }
             '5' => {
@@ -402,8 +447,8 @@ fn plan_erzeugen(e: &Einstellungen) {
             println!("\n  Geschrieben: {}", ziel.display());
             println!("    Einstellungs-ID {}", plan.short_id());
             println!("\n  Diese Datei unverändert an alle Teilnehmer schicken.");
-            println!("  Sie laden sie im Menü über [3] Testdatei wählen,");
-            println!("  über [2] Testlauf starten oder mit");
+            println!("  Sie laden sie im Menü über [2] Testdatei wählen,");
+            println!("  über [3] Testlauf starten oder mit");
             println!("      myl-test --plan {} determinismus", ziel.display());
             println!("\n  Ihre Protokolle tragen dann die Einstellungs-Kennung");
             println!("      <nutzer>_{}_<datum>_<uhrzeit>.jsonl", plan.short_id());
@@ -622,13 +667,14 @@ fn einstellungen_aendern(e: &mut Einstellungen) {
 const KURZANLEITUNG: &str = "\
   ── Kurzanleitung ─────────────────────────────────────────────
 
-  Als Teilnehmer
-    [3] Testdatei wählen, die der Koordinator geschickt hat.
-        Sie gehört nach TESTCLIENT/Testpläne/.
-    [4] Artefakt beschaffen, falls noch keines vorliegt.
-    [2] Testlauf starten: vier Stufen, ein Protokoll.
-        Danach beide Dateien aus TESTCLIENT/logs/ verschicken.
-        Prompttexte stehen nicht darin, nur deren Hash.
+  Als Teilnehmer, in dieser Reihenfolge
+    [1] Artefakt wählen. Wird beschafft, falls keines vorliegt.
+    [2] Testdatei wählen, die der Koordinator geschickt hat. Sie
+        gehört nach TESTCLIENT/Testpläne/ und gilt für jedes Modell.
+    [3] Testlauf starten: vier Stufen, ein Protokoll. Danach beide
+        Dateien aus TESTCLIENT/logs/ verschicken; Prompttexte
+        stehen nicht darin, nur deren Hash.
+    [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
 
   Als Koordinator
     [9] Entwickler, dort \"Testplan erzeugen\", .plan an alle geben.
@@ -638,7 +684,7 @@ const KURZANLEITUNG: &str = "\
 
   Ein Nachweis braucht ZWEI Aussagen: Die Maschinen sind verschieden
   UND das Ergebnis ist gleich. Gleiche Werte von derselben Maschine
-  belegen nichts, und der Vergleich verweigert dort ein Urteil.
+  belegen nichts; der Vergleich verweigert dort ein Urteil.
 
   Ausführlich: TESTCLIENT/README/ANLEITUNG.md";
 
@@ -881,7 +927,7 @@ fn sprechen(e: &Einstellungen) {
         Ok(m) => m,
         Err(fehler) => {
             println!("  {}", fehler);
-            println!("  Mit [4] ein Artefakt wählen oder beschaffen.");
+            println!("  Mit [1] ein Artefakt wählen oder beschaffen.");
             return;
         }
     };
@@ -1230,7 +1276,7 @@ fn artefakte_pruefen() {
 
 /// Testdatei wählen und anwenden, ohne sie gleich auszuführen.
 ///
-/// Auswahl und Lauf sind getrennt: Punkt [2] stellt ein, Punkt [1]
+/// Auswahl und Lauf sind getrennt: Punkt [2] stellt ein, Punkt [3]
 /// misst. Wer beides in einen Punkt legt, nimmt dem Nutzer die
 /// Möglichkeit, die Einstellungen vor dem Lauf noch anzusehen.
 fn testdatei_waehlen(e: &mut Einstellungen) {
@@ -1280,7 +1326,7 @@ fn testdatei_waehlen(e: &mut Einstellungen) {
     // weiterhin in jedem Protokoll, und `vergleich` verweigert das
     // Urteil, wenn zwei Läufe gegen verschiedene Modelle gerechnet haben.
     println!("\n  Der Plan gilt für jedes Artefakt.");
-    println!("  Mit [2] den Testlauf starten; das Modell wird davor gewählt.");
+    println!("  Mit [3] den Testlauf starten; das Modell wird davor gewählt.");
     let _ = repo;
 }
 
@@ -1379,7 +1425,7 @@ mod tests {
         };
         for (titel, zweck) in [
             ("Testdatei", "Testdatei wählen"),
-            ("Artefakt", "Artefakt beschaffen"),
+            ("Artefakt", "Artefakt wählen"),
             ("Testlauf", "Testlauf starten"),
         ] {
             let taste = taste_von(titel);
@@ -1496,10 +1542,31 @@ mod tests {
         assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '9', '0']);
 
         let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
-        assert_eq!(titel[0], "Mit dem Modell sprechen");
-        assert_eq!(titel[1], "Testlauf starten");
-        assert_eq!(titel[2], "Testdatei wählen");
-        assert_eq!(titel[3], "Artefakt wählen");
+        // Erst die Voraussetzung, dann die Vorgabe, dann die Messung.
+        // Vorher stand das Gespräch mit dem Modell an erster und das
+        // Artefakt an vierter Stelle, also das Ergebnis vor seiner
+        // Voraussetzung.
+        assert_eq!(titel[0], "Artefakt wählen");
+        assert_eq!(titel[1], "Testdatei wählen");
+        assert_eq!(titel[2], "Testlauf starten");
+        // Das Gespräch misst nichts und steht deshalb hinter dem Lauf,
+        // obwohl man es davor führen mag.
+        assert_eq!(titel[3], "Mit dem Modell sprechen");
+
+        // Die vier Schritte sind von den Nebenfunktionen abgesetzt.
+        assert!(
+            !punkte[..4].iter().any(|p| p.abstand_davor),
+            "die vier Schritte sind auseinandergerissen"
+        );
+        assert!(
+            punkte[4].abstand_davor,
+            "zwischen den Schritten und dem Beiwerk fehlt der Abstand"
+        );
+        assert!(
+            !punkte[5].abstand_davor && !punkte[6].abstand_davor,
+            "das Beiwerk ist in sich zerteilt"
+        );
+
         assert!(
             !titel.iter().any(|t| t.contains("vergleichen")),
             "Vergleichen gehört ins Entwicklermenü"

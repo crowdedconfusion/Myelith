@@ -53,6 +53,16 @@ pub struct Punkt {
     /// bleibt sie über eine Auswahl hinweg stehen und wechselt erst, wenn
     /// das Menü erneut aufgebaut wird.
     pub farbe: Color,
+    /// Eine Leerzeile **vor** diesem Punkt.
+    ///
+    /// Gruppiert eine Liste, ohne sie zu zerteilen: Der Abstand hängt am
+    /// Punkt selbst, statt als eigener, nicht wählbarer Eintrag in der
+    /// Liste zu stehen. Ein solcher Platzhalter müsste in der
+    /// Pfeilnavigation übersprungen werden, in der Ziffernwahl ignoriert
+    /// und in der Höhenrechnung mitgezählt: drei Stellen, an denen sich
+    /// ein Fehler versteckt. So ist es eine Zeile mehr beim Zeichnen und
+    /// sonst nichts.
+    pub abstand_davor: bool,
 }
 
 impl Punkt {
@@ -62,7 +72,19 @@ impl Punkt {
             titel: titel.to_string(),
             hinweis: hinweis.to_string(),
             farbe: crate::farben::schlagwort(),
+            abstand_davor: false,
         }
+    }
+
+    /// Setzt diesen Punkt mit einer Leerzeile von den vorigen ab.
+    ///
+    /// Für die Stelle, an der eine Liste von den eigentlichen Schritten zu
+    /// den Nebenfunktionen übergeht. Wer das Menü überfliegt, soll die
+    /// vier Schritte als Gruppe sehen und nicht sieben gleichrangige
+    /// Punkte.
+    pub fn abgesetzt(mut self) -> Self {
+        self.abstand_davor = true;
+        self
     }
 }
 
@@ -144,12 +166,18 @@ fn blockbreite(kopf: &str, punkte: &[Punkt], fuss: &str) -> usize {
 }
 
 /// Wie viele Zeilen ein Punkt belegt.
+///
+/// Muss die Leerzeile aus [`Punkt::abgesetzt`] mitzählen: Sonst bleiben
+/// beim Neuzeichnen Reste stehen, oder der Cursor frisst die Zeile
+/// darüber.
 fn hoehe(p: &Punkt) -> usize {
-    1 + if p.hinweis.is_empty() {
-        0
-    } else {
-        p.hinweis.lines().count()
-    }
+    usize::from(p.abstand_davor)
+        + 1
+        + if p.hinweis.is_empty() {
+            0
+        } else {
+            p.hinweis.lines().count()
+        }
 }
 
 /// Wie viele Zeilen die gezeichnete Liste insgesamt belegt.
@@ -289,6 +317,9 @@ fn zeichnen(
     )?;
 
     for (i, p) in punkte.iter().enumerate() {
+        if p.abstand_davor {
+            queue!(aus, Print(umbruch))?;
+        }
         let ist_markiert = markiert == Some(i);
         let zeiger = if ist_markiert { "❯" } else { " " };
 

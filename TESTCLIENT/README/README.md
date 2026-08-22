@@ -502,6 +502,32 @@ Einzelmessung will. Neu sortiert nach Wichtigkeit, mit **Protokolle
 vergleichen** an erster Stelle. „Artefakte und Gewichte freigeben" heißt
 jetzt „löschen": Das Wort beschreibt, was geschieht.
 
+**Das Nutzermenü folgt jetzt dem Ablauf**, nicht der gewachsenen
+Reihenfolge: [1] Artefakt wählen, [2] Testdatei wählen, [3] Testlauf
+starten, [4] Mit dem Modell sprechen. Vorher stand das Gespräch mit dem
+Modell an erster und das Artefakt an vierter Stelle, also das Ergebnis
+vor seiner Voraussetzung: Wer [1] wählte, ohne ein Artefakt zu haben,
+bekam als Erstes eine Modellauswahl, die er nicht erwartet hatte.
+
+Das Gespräch mit dem Modell steht hinter dem Lauf, obwohl man es davor
+führen mag: Es ist der einzige Punkt, der **nicht misst**, und ein Menü
+ordnet nach Aufgabe, nicht nach Neugier.
+
+**Die Einstellungsübersicht nennt das gewählte Artefakt**, nicht mehr den
+Artefaktordner. Dort stand „Artefakte" mit dem gekürzten Pfad, und das
+beantwortete die Frage nicht, die vor einem Lauf zählt: Womit wird
+gerechnet? Liegt nichts vor, steht das da, samt Verweis auf [1].
+
+Die vier Schritte sind durch eine **Leerzeile** von den drei
+Nebenfunktionen abgesetzt ([5] Anleitung, [9] Entwickler, [0] Beenden).
+Sieben gleichrangige Zeilen lesen sich wie sieben Möglichkeiten; vier
+plus drei lesen sich wie ein Weg mit Beiwerk. Der Abstand hängt am Punkt
+(`Punkt::abgesetzt`) und nicht als eigener, nicht wählbarer Eintrag in
+der Liste: Ein solcher Platzhalter müsste in der Pfeilnavigation
+übersprungen, in der Ziffernwahl ignoriert und in der Höhenrechnung
+mitgezählt werden, also an drei Stellen, an denen sich ein Fehler
+versteckt.
+
 **Testpläne sind nicht mehr an ein Modell gebunden.** Das Feld `model`
 ist entfallen, samt seiner Rolle in der Prüfsumme. Es war eine Fessel
 ohne Nutzen: Ein Plan, der nur mit 0,5B geht, muss für 7B neu geschrieben
@@ -552,6 +578,32 @@ dass sie dieselben Modelle führen, und `models/README.md` wird aus beiden
 erzeugt (`tools/modelle_liste.py`, mit `--pruefen` für die CI). Die
 Modellauswahl zeigt jetzt Parameterzahl, Herkunft, Lizenz und eine
 Einordnung, statt nur die Downloadgröße.
+
+**Fund vom Linux-Runner: Groß- und Kleinschreibung.** Der
+Modellschlüssel (`qwen2.5-0.5b`) und der Verzeichnisname der Gewichte
+(`Qwen2.5-0.5B`) unterscheiden sich **nur darin**. Solange die Zuordnung
+im Code stand, fiel das nicht auf; mit dem Katalog bekam sie einen
+Rückfall auf den Modellnamen, und der traf auf macOS und Windows
+trotzdem das richtige Verzeichnis, weil deren Dateisysteme die
+Schreibweise nicht unterscheiden. Auf dem Linux-Runner der CI nicht: Dort
+fand `belegung` die Gewichte nicht mehr, und ein Nutzer hätte in
+„Artefakte und Gewichte löschen" geglaubt, sie seien weg.
+
+Getrennt in zwei Funktionen mit verschiedenen Aufgaben: `hf_id` ist eine
+**Auskunft** und rät nicht; `gewichte_verzeichnis` ist eine **Suche** und
+vergleicht in drei Stufen, Katalog, dann ohne Rücksicht auf die
+Schreibweise über die vorhandenen Verzeichnisse, dann der Modellname
+unverändert. Der Regressionstest prüft die Zeichenkette statt des
+Zugriffs und greift deshalb auf jedem Dateisystem.
+
+**Und der Download nimmt jetzt die festgelegte Revision.** Er stand auf
+`repo_id='Qwen/{hf}'` ohne Revision, holte also, was gerade auf `main`
+liegt, und nahm nebenbei an, jedes Modell dieses Projekts komme von Qwen.
+`models/README.md` verlangt seit jeher eine fixierte Revision, ohne die
+der Lauf nicht reproduzierbar ist. Ein Modell, das sich zwischen zwei
+Teilnehmern ändert, erzeugt genau den Befund, gegen den dieses Werkzeug
+gebaut ist. Fehlt der Katalogeintrag, bricht der Download ab und nennt
+den Grund, statt zu raten.
 
 **Nebenbefund:** Der handgeschriebene JSON-Leser reichte Werte
 unverändert durch. Sobald der Katalog Text für Menschen aufnahm,

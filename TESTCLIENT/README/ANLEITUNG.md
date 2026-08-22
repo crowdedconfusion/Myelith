@@ -165,7 +165,7 @@ Koordinator aber Arbeit.
 ### Schritt 2: Testdatei wählen
 
 Nach dem Nutzernamen stehst du **direkt im Menü**. Die Testdatei fragt
-der Client dann ab, wenn du [2] Testlauf starten wählst; über [3] kannst
+der Client dann ab, wenn du [3] Testlauf starten wählst; über [2] kannst
 du sie auch vorher festlegen.
 
 Hat dir der Koordinator eine Datei mit der Endung `.plan` geschickt,
@@ -197,7 +197,7 @@ gemeinsamen Test nicht.
 
 ### Schritt 3: Modell
 
-Punkt **[4] Artefakt wählen** führt **alle** Modelle auf, die der Client
+Punkt **[1] Artefakt wählen** führt **alle** Modelle auf, die der Client
 kennt, und schreibt daneben, ob sie schon hier liegen:
 
 ```
@@ -259,7 +259,7 @@ frei, das wäre kein Messwert.
 
 ### Schritt 4: Der Testlauf
 
-Punkt **[2] Testlauf starten**. Das ist alles.
+Punkt **[3] Testlauf starten**. Das ist alles.
 
 Der Lauf hat vier Stufen und schreibt **ein einziges Protokoll** über
 alle vier:
@@ -496,7 +496,7 @@ bekommen.
 Fessel ohne Nutzen: Ein Plan, der nur mit 0,5B geht, muss für 7B neu
 geschrieben werden, und dann tragen zwei Dateien dieselben Prompts unter
 verschiedenen Prüfsummen. Der Plan legt jetzt fest, *was* gemessen wird;
-*woran*, entscheidet sich vor dem Lauf, entweder über **[4] Artefakt
+*woran*, entscheidet sich vor dem Lauf, entweder über **[1] Artefakt
 wählen** oder ungefragt, wenn genau eines vorliegt.
 
 Abgesichert bleibt es trotzdem, nur an der richtigen Stelle: Der
@@ -858,7 +858,7 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 - Die aktuellen Einstellungen stehen jetzt **unter** dem Menü.
 - Nach der Namenseingabe läuft eine geschriebene Begrüßung.
 - **Nach dem Nutzernamen geht es direkt ins Menü.** Die Testdatei fragt
-  Punkt [2] ab, wenn gemessen werden soll.
+  Punkt [3] ab, wenn gemessen werden soll.
 - **Neuer Punkt [1]: Mit dem Modell sprechen.** Freie Eingabe, höchstens
   64 Token je Antwort, kein Protokoll.
 - **Artefakt wählen** ist jetzt Punkt [4] und ein eigener Schritt. Die

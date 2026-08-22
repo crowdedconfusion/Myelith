@@ -36,9 +36,11 @@ Ein Konto bei Hugging Face brauchst du **nicht**.
    `Myelith Testclient - macOS.app` oder
    `./"Myelith Testclient - Linux, macOS (Shell).sh"`.
 3. Nutzernamen eingeben, wenn er danach fragt.
-4. **[2] Testlauf starten**. Er fragt nach der Testdatei: nimm die, die
+4. **[1] Artefakt wählen.** Liegt genau ein Modell da, überspringt der
+   Client die Frage.
+5. **[3] Testlauf starten**. Er fragt nach der Testdatei: nimm die, die
    wir mitgeschickt haben. Danach durchlaufen lassen.
-5. Die entstandene **`.jsonl`** aus `TESTCLIENT/logs/` zurückschicken.
+6. Die entstandene **`.jsonl`** aus `TESTCLIENT/logs/` zurückschicken.
    Die `.log` daneben ist dasselbe als Fließtext und ist für dich.
 
 Mehr ist es nicht. Menü mit den Pfeiltasten, Enter wählt aus.
