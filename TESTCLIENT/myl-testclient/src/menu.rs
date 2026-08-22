@@ -42,17 +42,6 @@ pub struct Einstellungen {
 }
 
 impl Einstellungen {
-    /// Baut den zu den aktuellen Werten passenden Testplan.
-    fn als_plan(&self) -> TestPlan {
-        TestPlan {
-            plan_id: "unbenannt".to_string(),
-            prompts: self.prompts.clone(),
-            steps: self.steps,
-            shards: self.shards,
-            model: crate::runs::DEFAULT_MODEL.to_string(),
-        }
-    }
-
     /// Übernimmt einen geladenen Plan.
     fn uebernehmen(&mut self, plan: &TestPlan) {
         self.prompts = plan.prompts.clone();
@@ -180,18 +169,52 @@ fn menue_nutzer() -> Vec<Punkt> {
 /// Getrennt vom Nutzermenü, weil eine lange Liste den Teilnehmer bremst
 /// und die Punkte, die er versehentlich wählt, ihm nichts nützen. Wer
 /// hier hereinkommt, weiß in der Regel, was er sucht.
+///
+/// **Ohne die vier Einzelstufen (2026-08-22).** Hardware, Determinismus,
+/// geshardete Inferenz und Protokoll-Durchlauf standen hier je einzeln.
+/// Sie sind genau die vier Stufen, die [`testlauf`] hintereinander
+/// ausführt, und im Nutzermenü über einen Punkt erreichbar. Einzeln
+/// gestartet erzeugen sie **vier getrennte Protokolle**, die der
+/// Koordinator wieder zusammensetzen müsste, und beim Verschicken geht
+/// die eine verloren, die den Befund trägt: derselbe Grund, aus dem
+/// `testlauf` überhaupt eines schreibt.
+///
+/// Für die Entwicklung bleiben sie auf der Befehlszeile erreichbar
+/// (`myl-test hardware`, `determinismus`, `shard`, `stack`). Dort ist
+/// klar, dass man eine Einzelmessung will; im Menü sah es aus wie eine
+/// Auswahl zwischen gleichwertigen Wegen.
+///
+/// Sortiert nach Wichtigkeit, nicht nach Ablauf: Wer dieses Menü öffnet,
+/// ist in der Regel Koordinator und will vergleichen.
 fn menue_entwickler() -> Vec<Punkt> {
     vec![
-        Punkt::neu('1', "Hardware erheben", ""),
-        Punkt::neu('2', "Determinismus prüfen", ""),
-        Punkt::neu('3', "Geshardete Inferenz", ""),
-        Punkt::neu('4', "Protokoll-Durchlauf (Stack)", ""),
-        Punkt::neu('5', "Artefakte prüfen (Digest gegen das Register)", ""),
-        Punkt::neu('6', "Testplan erzeugen und speichern", ""),
-        Punkt::neu('7', "Einstellungen ändern (Prompt, Token, Shards, Pfade)", ""),
-        Punkt::neu('8', "Namen ändern", ""),
-        Punkt::neu('9', "Artefakte und Gewichte freigeben (Plattenplatz)", ""),
-        Punkt::neu('v', "Protokolle vergleichen und Bericht schreiben", ""),
+        Punkt::neu(
+            '1',
+            "Protokolle vergleichen und Bericht schreiben",
+            "Die zugesandten Läufe gegenüberstellen und urteilen, ob sie\n\
+             den Cross-Hardware-Nachweis tragen. Der Punkt, für den es\n\
+             dieses Menü gibt.",
+        ),
+        Punkt::neu(
+            '2',
+            "Testplan erzeugen und speichern",
+            "Die Datei, die an alle Teilnehmer geht. Fragt die Parameter\n\
+             nacheinander ab, Prompt für Prompt.",
+        ),
+        Punkt::neu(
+            '3',
+            "Artefakte prüfen (Digest gegen das Register)",
+            "Liegt hier dasselbe Modell wie beim Vergleichspartner? Ohne\n\
+             diese Auskunft ist eine Abweichung nicht einzuordnen.",
+        ),
+        Punkt::neu('4', "Einstellungen ändern (Prompt, Token, Shards, Pfade)", ""),
+        Punkt::neu('5', "Namen ändern", ""),
+        Punkt::neu(
+            '6',
+            "Artefakte und Gewichte löschen (Plattenplatz)",
+            "Gibt bis zu 25 GB frei. Fragt zweimal und nennt dazwischen\n\
+             jeden betroffenen Pfad.",
+        ),
         Punkt::neu('0', "Zurück", ""),
     ]
 }
@@ -260,10 +283,14 @@ pub fn run(mut e: Einstellungen) -> bool {
                 // fest, WOMIT gemessen wird, und diese Frage stellt sich
                 // in dem Augenblick, in dem gemessen werden soll.
                 testdatei_waehlen(&mut e);
-                if e.artifacts.exists() {
-                    println!();
-                    letztes_ergebnis = testlauf(&e);
-                }
+                println!();
+                // **Ohne Vorbedingung `e.artifacts.exists()`.** Die stand
+                // hier, solange der Plan das Modell mitbrachte und die
+                // Einstellung schon darauf zeigte. Jetzt wählt der
+                // Testlauf das Artefakt selbst, und die Prüfung davor
+                // hätte den Lauf genau dann verhindert, wenn der Client
+                // hätte helfen können.
+                letztes_ergebnis = testlauf(&mut e);
                 weiter();
             }
             '3' => {
@@ -335,22 +362,40 @@ fn ja_nein(b: bool) -> &'static str {
 }
 
 /// Menüpunkt 9: einen Testplan erzeugen und verteilen.
+/// Der Testplan-Assistent: fragt jeden Parameter einzeln ab.
+///
+/// **Warum als Abfolge und nicht als Formular.** Der Plan ist die Datei,
+/// die an alle Teilnehmer geht; ein Tippfehler darin erzeugt Ergebnisse,
+/// die wie ein Befund aussehen und keiner sind. Wer die Werte
+/// nacheinander bestätigt, sieht jeden einzeln, und die Vorgabe steht
+/// dabei, sodass Entertaste genügt, wo nichts zu ändern ist.
+///
+/// **Kein Artefakt und kein Modell.** Der Plan legt fest, *was* gemessen
+/// wird; *woran* entscheidet sich vor dem Lauf, siehe Modulkopf von
+/// `spec.rs`. Ein Plan gilt damit für jedes Artefakt.
+///
+/// Der Dateiname kommt zum Schluss: Er ist die einzige Angabe, die man
+/// erst sinnvoll wählen kann, wenn man weiß, was in der Datei steht.
 fn plan_erzeugen(e: &Einstellungen) {
-    let Some(kennung) = auswahl::frage("  Kennung des Durchgangs (z. B. 2026-08-18-cross-arch-01): ")
-    else {
+    let mut lesen = |frage: &str| auswahl::frage(frage);
+    let Some(plan) = plan_erheben(e, &mut lesen) else {
+        println!("  Abgebrochen.");
         return;
     };
-    let kennung = kennung.trim();
-    let kennung = if kennung.is_empty() { "unbenannt" } else { kennung };
 
-    let mut plan = e.als_plan();
-    plan.plan_id = kennung.to_string();
-    // In den Planordner, nicht ins Arbeitsverzeichnis: Von dort liest der
-    // Client beim Start, dort suchen die Teilnehmer.
     let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    let name = plan.plan_id.clone();
     let ziel = repo
         .join(crate::plaene::ORDNER)
-        .join(format!("{}.plan", kennung));
+        .join(format!("{}.plan", name));
+
+    if ziel.exists() && !bestaetigt(&format!(
+        "  {} gibt es schon. Überschreiben? (ja/nein): ",
+        ziel.display()
+    )) {
+        println!("  Nichts geschrieben.");
+        return;
+    }
 
     match plan.save(&ziel) {
         Ok(()) => {
@@ -366,6 +411,145 @@ fn plan_erzeugen(e: &Einstellungen) {
         }
         Err(err) => println!("\n  {}", err),
     }
+}
+
+/// Erhebt einen vollständigen Plan, ohne etwas zu schreiben.
+///
+/// **Die Eingabe kommt von außen.** Ein Assistent, der `stdin` fest
+/// verdrahtet, ist nur von Hand prüfbar, und diese Datei geht an alle
+/// Teilnehmer: Ein Fehler darin erzeugt Ergebnisse, die wie ein Befund
+/// aussehen und keiner sind. Mit einer übergebenen Lesefunktion lässt
+/// sich der ganze Ablauf im Test durchspielen, samt Abbruch.
+///
+/// `None` heißt Abbruch: geschlossene Eingabe, kein Prompt, kein Name.
+fn plan_erheben(
+    e: &Einstellungen,
+    lesen: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<TestPlan> {
+    println!("  Ein Testplan legt fest, WAS gemessen wird.");
+    println!("  Das Modell gehört nicht dazu: Der Plan gilt für jedes Artefakt.\n");
+
+    let steps = zahl_erfragen(lesen, "Token je Prompt", e.steps)?;
+    let shards = zahl_erfragen(lesen, "Shards für den Shard-Lauf", e.shards)?;
+    let prompts = prompts_erfragen(lesen, &e.prompts)?;
+    if prompts.is_empty() {
+        println!("  Ohne Prompt gibt es nichts zu messen.");
+        return None;
+    }
+
+    println!("\n  Der Plan steht:");
+    println!("    {} Prompts, {} Token, {} Shards", prompts.len(), steps, shards);
+    for (i, p) in prompts.iter().enumerate() {
+        println!("      {}. {:?}", i + 1, gekuerzt(p));
+    }
+
+    // **Die Kennung erst hier.** Sie geht nicht in die Prüfsumme ein,
+    // benennt aber die Datei und steht in jeder Ausgabe des Vergleichs.
+    // Wer sie vorher wählen muss, benennt etwas, das er noch nicht kennt.
+    println!();
+    let name = lesen(
+        "  Wie soll die Testdatei heißen? (ohne .plan, z. B. 2026-08-22-cross-arch-01): ",
+    )?;
+    let name = dateiname_saeubern(name.trim());
+    if name.is_empty() {
+        println!("  Ohne Namen keine Datei.");
+        return None;
+    }
+
+    Some(TestPlan {
+        plan_id: name,
+        prompts,
+        steps,
+        shards,
+    })
+}
+
+/// Fragt eine Zahl mit Vorgabe ab. Leere Eingabe behält die Vorgabe.
+///
+/// `None` nur bei geschlossener Eingabe (Strg-D): Das ist ein Abbruch
+/// und keine leere Antwort, und die beiden zu verwechseln hieße, einen
+/// abgebrochenen Assistenten trotzdem eine Datei schreiben zu lassen.
+fn zahl_erfragen(
+    lesen: &mut dyn FnMut(&str) -> Option<String>,
+    was: &str,
+    vorgabe: usize,
+) -> Option<usize> {
+    loop {
+        let eingabe = lesen(&format!("  {} [{}]: ", was, vorgabe))?;
+        let eingabe = eingabe.trim();
+        if eingabe.is_empty() {
+            return Some(vorgabe);
+        }
+        match eingabe.parse::<usize>() {
+            Ok(n) if n > 0 => return Some(n),
+            Ok(_) => println!("    Muss größer als null sein."),
+            Err(_) => println!("    Das ist keine Zahl."),
+        }
+    }
+}
+
+/// Fragt die Prompts einzeln ab, mit Nachfrage nach jedem.
+///
+/// Die erste Frage bietet den ersten aktuellen Prompt als Vorgabe an;
+/// danach beginnt jede Zeile leer. **Ein einzelner Prompt übt einen
+/// einzigen Pfad durch das Modell aus**, deshalb steht die Nachfrage
+/// nach jedem und nicht nur am Anfang: Der bequeme Weg soll der sein,
+/// der mehr misst.
+fn prompts_erfragen(
+    lesen: &mut dyn FnMut(&str) -> Option<String>,
+    vorgabe: &[String],
+) -> Option<Vec<String>> {
+    let mut prompts: Vec<String> = Vec::new();
+    println!();
+    loop {
+        let nr = prompts.len() + 1;
+        let text = if nr == 1 {
+            let erster = vorgabe.first().cloned().unwrap_or_default();
+            let eingabe = lesen(&format!("  Prompt {} [{}]: ", nr, gekuerzt(&erster)))?;
+            let eingabe = eingabe.trim().to_string();
+            if eingabe.is_empty() {
+                erster
+            } else {
+                eingabe
+            }
+        } else {
+            lesen(&format!("  Prompt {}: ", nr))?.trim().to_string()
+        };
+
+        if text.is_empty() {
+            println!("    Leer, wird nicht aufgenommen.");
+        } else {
+            prompts.push(text);
+        }
+
+        let antwort = lesen(&format!(
+            "  Noch einen Prompt hinzufügen? ({} bisher) (ja/nein): ",
+            prompts.len()
+        ))?;
+        if !antwort.trim().eq_ignore_ascii_case("ja") {
+            return Some(prompts);
+        }
+    }
+}
+
+/// Macht aus einer Eingabe einen unbedenklichen Dateinamen.
+///
+/// Der Name landet als Datei auf drei Betriebssystemen und wandert per
+/// Mail. Pfadtrenner, Doppelpunkte und Anführungszeichen sind unter
+/// Windows unzulässig oder verändern die Bedeutung; ein Name, der einen
+/// Pfadtrenner enthält, schriebe die Datei woanders hin als angekündigt.
+fn dateiname_saeubern(roh: &str) -> String {
+    roh.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches(['-', '.'])
+        .to_string()
 }
 
 fn einstellungen_aendern(e: &mut Einstellungen) {
@@ -512,29 +696,17 @@ fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
         };
         println!();
         match wahl {
-            '1' => letztes_ergebnis = starte("hardware", e, runs::run_hardware),
-            '2' => {
-                letztes_ergebnis = starte("determinismus", e, |log| {
-                    runs::run_determinism(log, &e.artifacts, &e.prompts, e.steps, e.wiederholungen)
-                })
-            }
-            '3' => {
-                letztes_ergebnis = starte("shard", e, |log| {
-                    runs::run_shard(log, &e.artifacts, &e.prompts, e.steps, e.shards)
-                })
-            }
-            '4' => letztes_ergebnis = starte("stack", e, stack::run_stack),
-            '5' => artefakte_pruefen(),
-            '6' => plan_erzeugen(e),
-            '7' => einstellungen_aendern(e),
-            '8' => {
+            '1' => letztes_ergebnis = vergleichen(e),
+            '2' => plan_erzeugen(e),
+            '3' => artefakte_pruefen(),
+            '4' => einstellungen_aendern(e),
+            '5' => {
                 e.teilnehmer = namen_erfragen();
                 // Die Rückmeldung fehlt hier sonst: Beim Start gibt sie
                 // die Begrüßung, und die läuft nur dort.
                 println!("  Protokolle laufen jetzt unter {:?}.", e.teilnehmer);
             }
-            '9' => freigeben(),
-            'v' => letztes_ergebnis = vergleichen(e),
+            '6' => freigeben(),
             '0' => {
                 banner::bildschirm();
                 return letztes_ergebnis;
@@ -552,16 +724,6 @@ fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
     RunLog::mit_ziel(ziel, true)
 }
 
-/// Führt einen einzelnen Lauf mit eigenem Protokoll aus.
-///
-/// Nur für das Entwickler-Menü. Im Nutzermodus gehören die Stufen in ein
-/// gemeinsames Protokoll: siehe [`testlauf`].
-fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) -> bool {
-    let mut log = protokoll(befehl, e);
-    let ok = f(&mut log);
-    log.finish(ok)
-}
-
 /// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, vier Stufen.
 ///
 /// Hardware, Determinismus über die Einzelknoten-Runtime, geshardete
@@ -575,7 +737,17 @@ fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) 
 /// Die Stufen laufen **alle**, auch wenn eine fehlschlägt: Ein
 /// fehlgeschlagener Determinismuslauf macht die Hardware-Erhebung nicht
 /// wertlos, sondern erst recht wichtig.
-fn testlauf(e: &Einstellungen) -> bool {
+fn testlauf(e: &mut Einstellungen) -> bool {
+    // **Das Artefakt wird hier gewählt, nicht im Testplan** (2026-08-22).
+    // Der Plan legt fest, was gemessen wird; woran, entscheidet sich
+    // unmittelbar davor. Liegt genau ein Modell da, wird es ohne Frage
+    // genommen; liegen mehrere, wird gefragt; liegt keines, bietet der
+    // Client an, eines zu beschaffen. Damit gilt derselbe Plan für 0,5B
+    // und für 7B, und niemand muss zwei Dateien pflegen, die dieselben
+    // Prompts tragen.
+    artefakt_waehlen(e);
+    let e = &*e;
+
     let mut log = protokoll("testlauf", e);
 
     // Nur auf den Bildschirm, nicht ins Protokoll: Der Hinweis richtet
@@ -1089,31 +1261,27 @@ fn testdatei_waehlen(e: &mut Einstellungen) {
     let plan = gefunden[index].plan.clone();
     e.uebernehmen(&plan);
     println!(
-        "  Plan \"{}\" übernommen: Modell {}, {} Token, {} Shards.",
-        plan.plan_id, plan.model, plan.steps, plan.shards
+        "  Plan \"{}\" übernommen: {} Prompts, {} Token, {} Shards.",
+        plan.plan_id,
+        plan.prompts.len(),
+        plan.steps,
+        plan.shards
     );
 
-    // **Keine Artefaktfrage an dieser Stelle.** Bis v0.6.0 löste die
-    // Testdatei sofort das Artefakt mit auf: suchen, bei mehreren fragen,
-    // sonst Gewichte holen und bauen. Das waren zwei Entscheidungen hinter
-    // einer Menüwahl, und die zweite kam ungefragt, unter Umständen mit
-    // einem Download von 15 GB.
+    // **Der Plan sagt nicht mehr, woran gemessen wird** (2026-08-22).
+    // Bis dahin trug er ein Feld `model`, und hier wurde das passende
+    // Artefakt stillschweigend übernommen. Ein Plan, der an ein Artefakt
+    // gebunden ist, muss für jedes weitere neu geschrieben werden, und
+    // dann tragen zwei Dateien dieselben Prompts unter verschiedenen
+    // Prüfsummen.
     //
-    // Das Artefakt ist jetzt ein eigener Menüpunkt [3]. Hier wird nur noch
-    // **stillschweigend übernommen, was ohnehin daliegt**: Wer das Modell
-    // des Plans bereits gebaut hat, soll nicht danach gefragt werden, was
-    // er längst hat.
-    match crate::artefakte::vorhandenes(&repo, &plan.model) {
-        Some(pfad) => {
-            e.artifacts = pfad;
-            println!("\n  Artefakt für {} liegt bereit.", plan.model);
-            println!("  Mit [2] den Testlauf starten.");
-        }
-        None => {
-            println!("\n  Das Artefakt für {} fehlt noch.", plan.model);
-            println!("  Mit [4] beschaffen, danach mit [2] starten.");
-        }
-    }
+    // Das Artefakt entscheidet sich jetzt vor dem Lauf: über [4], oder
+    // ungefragt, wenn genau eines daliegt. Der Modellstand steht
+    // weiterhin in jedem Protokoll, und `vergleich` verweigert das
+    // Urteil, wenn zwei Läufe gegen verschiedene Modelle gerechnet haben.
+    println!("\n  Der Plan gilt für jedes Artefakt.");
+    println!("  Mit [2] den Testlauf starten; das Modell wird davor gewählt.");
+    let _ = repo;
 }
 
 #[cfg(test)]
@@ -1263,13 +1431,57 @@ mod tests {
         }
     }
 
+    /// **Der Vergleich steht oben, die Einzelstufen fehlen ganz.**
+    ///
+    /// Wer dieses Menü öffnet, ist in der Regel Koordinator und will
+    /// vergleichen; das gehört an die erste Stelle. Hardware,
+    /// Determinismus, Shards und Stack sind dagegen genau die vier
+    /// Stufen, die der Testlauf im Nutzermenü hintereinander ausführt.
+    /// Einzeln gestartet schrieben sie vier getrennte Protokolle, und
+    /// beim Verschicken geht die eine verloren, die den Befund trägt.
+    /// Auf der Befehlszeile bleiben sie erreichbar.
     #[test]
-    fn entwicklermenue_nennt_alle_punkte() {
-        let tasten: Vec<char> = menue_entwickler().iter().map(|p| p.taste).collect();
-        assert_eq!(
-            tasten,
-            vec!['1', '2', '3', '4', '5', '6', '7', '8', '9', 'v', '0']
+    fn entwicklermenue_beginnt_mit_dem_vergleich_und_kennt_keine_einzelstufen() {
+        let punkte = menue_entwickler();
+        let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '0']);
+
+        let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
+        assert!(
+            titel[0].starts_with("Protokolle vergleichen"),
+            "der Vergleich steht nicht oben: {:?}",
+            titel[0]
         );
+        for weg in ["Hardware erheben", "Determinismus prüfen", "Geshardete Inferenz", "Stack"] {
+            assert!(
+                !titel.iter().any(|t| t.contains(weg)),
+                "{weg} steht noch im Menü"
+            );
+        }
+        assert!(
+            titel.iter().any(|t| t.contains("löschen")),
+            "der Freigeben-Punkt heißt noch nicht löschen"
+        );
+        assert!(
+            !titel.iter().any(|t| t.contains("freigeben")),
+            "der alte Wortlaut steht noch da"
+        );
+    }
+
+    /// Der Dateiname eines Plans landet auf drei Betriebssystemen und
+    /// wandert per Mail. Ein Pfadtrenner darin schriebe die Datei
+    /// woanders hin, als der Assistent ankündigt.
+    #[test]
+    fn ein_dateiname_bleibt_ein_dateiname() {
+        assert_eq!(dateiname_saeubern("2026-08-22-cross-arch-01"), "2026-08-22-cross-arch-01");
+        assert_eq!(dateiname_saeubern("  mit Leerzeichen  "), "mit-Leerzeichen");
+        for boese in ["../../etc/passwd", "a/b", "a\\b", "C:pfad", "na\"me"] {
+            let sauber = dateiname_saeubern(boese);
+            for c in ['/', '\\', ':', '"'] {
+                assert!(!sauber.contains(c), "{boese:?} ergab {sauber:?}");
+            }
+            assert!(!sauber.starts_with('.'), "{boese:?} ergab {sauber:?}");
+        }
     }
 
     /// Das Nutzermenü führt vier Punkte in der Reihenfolge des Ablaufs:
@@ -1383,4 +1595,94 @@ mod tests {
         assert_eq!(ja_nein(true), "OK");
         assert_eq!(ja_nein(false), "FEHLGESCHLAGEN");
     }
+
+    fn einstellungen_probe() -> Einstellungen {
+        Einstellungen {
+            prompts: vec!["Vorgabe-Prompt".into()],
+            steps: 8,
+            shards: 4,
+            artifacts: PathBuf::from("/artefakte"),
+            logs: PathBuf::from("/logs"),
+            einstellungen_id: "ohne-plan".into(),
+            teilnehmer: "probe".into(),
+            wiederholungen: 2,
+        }
+    }
+
+    /// Gibt die Antworten der Reihe nach aus und meldet danach das Ende
+    /// der Eingabe, wie eine geschlossene Standardeingabe.
+    fn antworten(zeilen: &[&str]) -> impl FnMut(&str) -> Option<String> {
+        let mut rest: Vec<String> = zeilen.iter().rev().map(|s| s.to_string()).collect();
+        move |_frage: &str| rest.pop()
+    }
+
+    /// **Der Assistent von vorn bis hinten.** Zwei Prompts, geänderte
+    /// Token- und Shardzahl, Name am Schluss.
+    #[test]
+    fn der_assistent_erhebt_einen_vollstaendigen_plan() {
+        let mut lesen = antworten(&[
+            "16",                                  // Token
+            "2",                                   // Shards
+            "Die Hauptstadt von Frankreich ist",   // Prompt 1
+            "ja",                                  // noch einer?
+            "2 + 2 =",                             // Prompt 2
+            "nein",                                // fertig
+            "2026-08-22-cross-arch-01",            // Dateiname
+        ]);
+        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
+
+        assert_eq!(plan.steps, 16);
+        assert_eq!(plan.shards, 2);
+        assert_eq!(
+            plan.prompts,
+            vec!["Die Hauptstadt von Frankreich ist", "2 + 2 ="]
+        );
+        assert_eq!(plan.plan_id, "2026-08-22-cross-arch-01");
+    }
+
+    /// Leere Eingabe behält die Vorgabe: Wer nur die Prompts ändern will,
+    /// soll sich durch die Zahlen durchdrücken können.
+    #[test]
+    fn leere_eingabe_behaelt_die_vorgabe() {
+        let mut lesen = antworten(&["", "", "", "nein", "name"]);
+        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
+        assert_eq!(plan.steps, 8);
+        assert_eq!(plan.shards, 4);
+        assert_eq!(plan.prompts, vec!["Vorgabe-Prompt"]);
+    }
+
+    /// Eine unbrauchbare Zahl wird nachgefragt statt stillschweigend
+    /// ersetzt. Eine Null wäre ein Plan, der nichts erzeugt.
+    #[test]
+    fn unbrauchbare_zahlen_werden_nachgefragt() {
+        let mut lesen = antworten(&["null", "0", "12", "4", "p", "nein", "name"]);
+        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
+        assert_eq!(plan.steps, 12, "die dritte Eingabe war die erste brauchbare");
+        assert_eq!(plan.shards, 4);
+    }
+
+    /// **Abbruch schreibt nichts.** Geht die Eingabe zu Ende, bevor der
+    /// Name feststeht, darf kein Plan entstehen: Eine halb erhobene
+    /// Datei, die an alle Teilnehmer geht, ist schlimmer als keine.
+    #[test]
+    fn ein_abbruch_ergibt_keinen_plan() {
+        // Eingabe endet nach dem ersten Prompt.
+        let mut lesen = antworten(&["8", "4", "nur einer"]);
+        assert!(plan_erheben(&einstellungen_probe(), &mut lesen).is_none());
+
+        // Und ein leerer Name ist ebenfalls ein Abbruch.
+        let mut lesen = antworten(&["8", "4", "p", "nein", "   "]);
+        assert!(plan_erheben(&einstellungen_probe(), &mut lesen).is_none());
+    }
+
+    /// Der Plan aus dem Assistenten muss durch die Prüfsumme kommen:
+    /// Sonst lehnt der Client beim Teilnehmer die eigene Datei ab.
+    #[test]
+    fn der_erhobene_plan_ist_wieder_einlesbar() {
+        let mut lesen = antworten(&["8", "4", "eins", "ja", "zwei", "nein", "abc"]);
+        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
+        let zurueck = TestPlan::parse(&plan.to_file_text()).expect("wieder lesbar");
+        assert_eq!(zurueck, plan);
+    }
+
 }

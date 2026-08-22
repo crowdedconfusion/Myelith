@@ -1,0 +1,41 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan standard.plan determinismus
+#    oder im Menü über [3] Testdatei wählen
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+
+# WAS DIESER PLAN PRUEFT
+#
+# Der Regelfall fuer den Cross-Hardware-Nachweis. Sechs Prompts, die
+# verschiedene Wege durch das Modell nehmen: englische und deutsche
+# Prosa, ein Fachtext, eine Rechenaufgabe und eine lange Faktenzeile mit
+# Zahlen und Eigennamen. Ein einzelner Prompt uebte einen einzigen Pfad
+# aus; ein Rundungsfehler, der nur in einem selten getroffenen
+# LUT-Bereich auftritt, bliebe darin unentdeckt.
+#
+# Nicht an ein Modell gebunden: Das Artefakt wird vor dem Lauf gewaehlt.
+# Fuer langsame Modelle gibt es standard-kurz.plan.
+#
+# LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
+#   6 Prompts x 32 Token x 2 Durchgaenge = 384 Token
+#   bei rund 27 tok/s (0,5B): etwa 14 Sekunden
+#   bei rund  2 tok/s (7B):   etwa 3 Minuten
+#   Dazu der Shard-Lauf und das Laden des Modells.
+
+plan_id     = standard
+prompt      = " The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake"
+prompt      = "The capital of France is"
+prompt      = "Die Hauptstadt von Frankreich ist"
+prompt      = "In quantum mechanics, the wave function describes"
+prompt      = "In der Quantenmechanik beschreibt die Wellenfunktion"
+prompt      = "The result of 17 times 23 is"
+steps       = 32
+shards      = 4
+
+spec_sha256 = 32eafffbe8a307b9d723333c27b1c6cba98082d6af58613babda02c9b330f382

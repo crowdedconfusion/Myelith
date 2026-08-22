@@ -174,9 +174,9 @@ auf, was er dort findet:
 
 ```
   ── Testpläne in TESTCLIENT/Testpläne ──
-  ❯ 1  qwen2.5-0.5b-standard · qwen2.5-0.5b, 6 Prompts, 32 Token, 4 Shards
+  ❯ 1  standard · 6 Prompts, 32 Token, 4 Shards
         Prompt: " The 2010 Haitian earthquake was a catast…" (+5 weitere)
-    2  qwen2.5-7b-standard · qwen2.5-7b, 4 Prompts, 16 Token, 4 Shards
+    2  standard-kurz · 4 Prompts, 16 Token, 4 Shards
         Prompt: "The capital of France is" (+3 weitere)
     0  keiner. Einstellungen von Hand wählen
 ```
@@ -367,13 +367,14 @@ sucht auch ein System-Python, falls die Pakete dort schon liegen.
 
 ## A8. Platz wieder freigeben
 
-Im Entwickler-Menü (Punkt 9), dort Punkt „Platz freigeben". Du kannst
+Im Entwickler-Menü (Punkt 9), dort Punkt „Artefakte und Gewichte
+löschen". Du kannst
 einzelne Einträge löschen oder **alles auf einmal**. Beim Alles-Löschen
 fragt der Client **zweimal** nach und listet dazwischen jeden betroffenen
 Pfad auf: Artefakte sind aus dem Skalenpaket in Sekunden wieder da,
 Gewichte kosten einen erneuten Download.
 
-Entwickler-Menü **[9]**, dann **[9] Artefakte und Gewichte freigeben**.
+Entwickler-Menü **[9]**, dann **[6] Artefakte und Gewichte löschen**.
 Der Client zeigt, was belegt ist:
 
 ```
@@ -448,19 +449,26 @@ Urteil, wenn (1) fehlt.
 
 ### Der schnelle Weg: im Menü
 
-Entwickler-Menü **[9]**, dann **[6] Testplan erzeugen und speichern**.
-Der Client übernimmt die aktuellen Einstellungen, fragt nach einer
-Kennung und legt die Datei gleich im Planordner ab.
+Entwickler-Menü **[9]**, dann **[2] Testplan erzeugen und speichern**.
+Der Client fragt jeden Wert einzeln ab, in dieser Reihenfolge:
 
-Vorher unter **[7] Einstellungen ändern** die Werte setzen, die im Plan
-stehen sollen.
+1. **Token je Prompt.** Entertaste übernimmt die Vorgabe.
+2. **Shards** für den Shard-Lauf. Ebenso.
+3. **Prompt 1.** Danach die Frage, ob noch einer folgen soll; wer „ja"
+   antwortet, bekommt die nächste Zeile, und das so oft er mag.
+4. **Der Dateiname**, ganz zum Schluss. Er steht am Ende, weil man einen
+   Plan erst sinnvoll benennen kann, wenn man weiß, was darin steht.
+
+Die Datei landet im Planordner. Gibt es sie schon, wird gefragt.
+
+Ein Abbruch (Strg-D) schreibt **nichts**: Eine halb erhobene Datei, die
+an alle Teilnehmer geht, wäre schlimmer als keine.
 
 ### Der genaue Weg: auf der Befehlszeile
 
 ```bash
 myl-test plan \
   --plan-id 2026-08-21-cross-arch-01 \
-  --model qwen2.5-0.5b \
   --prompt "Die Hauptstadt von Frankreich ist" \
   --prompt "The capital of France is" \
   --prompt "In quantum mechanics, the wave function describes" \
@@ -479,11 +487,27 @@ Reihe an, die der Lauf nacheinander abarbeitet.
 | **Prompts** (Reihenfolge zählt) | Ein anderes Zeichen → anderer Vergleichswert |
 | **`--steps`** | Bestimmt, wie viele Schritte in den Wert eingehen |
 | **`--shards`** | Bestimmt die Aufteilung in Stufe 3 |
-| **`--model`** | Ein anderes Modell → anderer Wert, völlig zu Recht |
 
 Nicht abgesichert ist `plan_id`. Zwei Koordinatoren, die denselben Test
 unter verschiedenen Namen fahren, sollen vergleichbare Ergebnisse
 bekommen.
+
+**Das Modell steht seit dem 2026-08-22 nicht mehr im Plan.** Es war eine
+Fessel ohne Nutzen: Ein Plan, der nur mit 0,5B geht, muss für 7B neu
+geschrieben werden, und dann tragen zwei Dateien dieselben Prompts unter
+verschiedenen Prüfsummen. Der Plan legt jetzt fest, *was* gemessen wird;
+*woran*, entscheidet sich vor dem Lauf, entweder über **[4] Artefakt
+wählen** oder ungefragt, wenn genau eines vorliegt.
+
+Abgesichert bleibt es trotzdem, nur an der richtigen Stelle: Der
+Modellstand (θ_v und Artefakt-Digest) steht in **jedem Protokoll**, und
+`vergleich` verweigert das Urteil, wenn zwei Läufe gegen verschiedene
+Modelle gerechnet haben. Eine Datei kann man ignorieren, diese Prüfung
+nicht.
+
+Eine alte Datei mit `model`-Zeile bleibt lesbar; ihre Prüfsumme stimmt
+allerdings nicht mehr, weil das Feld aus der Rechnung entfallen ist.
+Solche Pläne sind neu zu erzeugen.
 
 ### Wie viele Prompts, wie viele Token?
 
@@ -514,17 +538,42 @@ Sekunden, 7B rund eine Minute je Lauf).
 Sage die Zahl den Teilnehmern an. Ohne sie ist für sie nicht
 entscheidbar, ob sich Warten lohnt oder ob etwas hängt.
 
-### Die beiden mitgelieferten Pläne
+### Die mitgelieferten Pläne
 
-| Datei | Modell | Umfang |
+**Keiner davon ist an ein Modell gebunden** (seit 2026-08-22). Der Plan
+legt fest, *was* gemessen wird; *woran*, entscheidet sich vor dem Lauf.
+Derselbe Plan gilt für 0,5B und für 7B, und niemand muss zwei Dateien
+pflegen, die dieselben Prompts tragen.
+
+| Datei | Umfang | Wofür |
 |---|---|---|
-| `qwen2.5-0.5b-standard.plan` | qwen2.5-0.5b | 6 Prompts, 32 Token, 4 Shards |
-| `qwen2.5-7b-standard.plan` | qwen2.5-7b | 4 Prompts, 16 Token, 4 Shards |
+| `standard.plan` | 6 Prompts, 32 Token, 4 Shards | Der Regelfall |
+| `standard-kurz.plan` | 4 Prompts, 16 Token, 4 Shards | Für langsame Modelle, etwa 7B |
+| `benchmark-1-zahlen.plan` | 7 Prompts, 24 Token, 4 Shards | Ziffern, Überträge, Einheiten |
+| `benchmark-2-sprachen.plan` | 8 Prompts, 24 Token, 4 Shards | Sieben Sprachen, drei Schriften |
+| `benchmark-3-code-kontext.plan` | 6 Prompts, 32 Token, 4 Shards | Quelltext und lange Prompts |
 
-Beide nehmen Prompts aus dem Evidenz-Paket des Projekts (Deutsch und
-Englisch, Fachsprache, Arithmetik); der 0,5B-Plan beginnt zusätzlich mit
-einem Satz aus WikiText-2, dem Korpus, gegen den auch die Perplexität
-gemessen wird. Sie taugen als Vorlage und als Selbstversuch.
+Die beiden `standard`-Pläne nehmen Prompts aus dem Evidenz-Paket des
+Projekts (Deutsch und Englisch, Fachsprache, Arithmetik); `standard.plan`
+beginnt zusätzlich mit einem Satz aus WikiText-2, dem Korpus, gegen den
+auch die Perplexität gemessen wird.
+
+Die drei `benchmark`-Pläne führen das Modell absichtlich an
+ungewöhnliche Stellen: Ziffernfolgen werden anders tokenisiert als
+Wörter, fremde Schriften liegen weit auseinander in der
+Einbettungstabelle, und lange Prompts schieben die Generierung auf hohe
+Positionen, wo RoPE-Winkel groß werden. Fund 15 (RoPE falsch) und
+Fund 16 (Attention nur auf den ersten Key) waren beide Fehler, die bei
+kurzen Prompts kaum auffielen.
+
+**Wichtig zur Einordnung:** Der Client misst **Bitgleichheit, nicht
+Genauigkeit**. Ob eine Antwort inhaltlich stimmt, beantwortet dieser
+Lauf nicht und soll er nicht; dafür gibt es die Perplexitätsmessung in
+`INTEGER_LLM/eval` gegen die Gleitkomma-Referenz. Ein „Benchmark" heißt
+hier: ein Prompt, der schwer zu rechnen ist, nicht einer, der bewertet
+wird.
+
+Jeder Plan trägt im Kopf, was er ausübt und wie lange er läuft.
 
 ### Aufbau der Datei
 
@@ -536,7 +585,6 @@ prompt      = "Die Hauptstadt von Frankreich ist"
 prompt      = "The capital of France is"
 steps       = 32
 shards      = 4
-model       = qwen2.5-0.5b
 
 spec_sha256 = 12a1e91e4fa75f6e…
 ```
@@ -824,7 +872,7 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 - **Alles löschen** im Entwicklermenü, mit zwei Bestätigungen.
 - Starter bauen jetzt zuverlässig auch dann, wenn sie aus einem anderen
   Verzeichnis aufgerufen werden (Verknüpfung auf dem Schreibtisch).
-- Der Beispielplan für 0,5B heißt `qwen2.5-0.5b-standard.plan`.
+- Der Beispielplan heißt `standard.plan`; er gilt für jedes Modell.
 
 ### v2.3.0 – 2026-08-21 (Fenster, breites Logo)
 - **Fenstergröße und Lage** setzt der Starter, nicht der Client: mittig,

@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.15.0 (θ_v 0.17.0)
-> **Datum:** 2026-08-20
+> **Version:** 0.16.0 (θ_v 0.17.0)
+> **Datum:** 2026-08-22
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -415,7 +415,56 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
-### v0.16.0 (kernels 0.18.0) – 2026-08-22 (Fund 34: ein Rechenpfad, den es nicht gibt)
+### v0.16.0 (kernels 0.18.0, runtime 0.17.0) – 2026-08-22 (drei Funde am Prüfstand)
+
+**Der Prüfstand prüfte weniger, als er behauptete, an drei Stellen.**
+Keine davon betrifft die gerechneten Zahlen; alle betreffen die Aussage
+über sie.
+
+**Fund 36 im Prüflauf: Die E2E-Vektoren verglichen Token.** Von den 30
+Konformitätsvektoren vergleichen 27 Tensoren, die drei `e2e`-Vektoren
+dagegen nur `outputs.tokens`. Ein Token ist ein Argmax über 151 936
+Zahlen. Nachgemessen an einem Artefakt, dessen Tensor um 0,0101 % der
+Bytes verschoben und dessen Hashkette konsistent nachgezogen war: Die
+Token blieben gleich, die Zahlen nicht. Neu trägt jeder E2E-Vektor
+`metadata.logits_sha256`, einen SHA-256 über die Logits jedes Schritts
+und den gewählten Token; ein Vektor ohne dieses Feld wird abgelehnt statt
+schweigend schwächer geprüft. Gegenprobe am manipulierten Modell: Der
+Prüflauf meldet jetzt „Die Token stimmen, die gerechneten Zahlen nicht".
+
+Aufschlussreich ist, **wie wenig** dieselbe Manipulation sonst bewegt:
+Alle 24 Layer-Vektoren und zwei der drei E2E-Vektoren bestehen weiter.
+Eine Verschiebung um je eins verschwindet in den Rundungsschritten,
+sofern die Aktivierungen sie nicht gerade über eine Schwelle heben. Die
+Vektoren sind Stichproben, keine Modellidentität, und das ist für ihren
+Zweck richtig: Zwei Implementierungen desselben Modells weichen
+systematisch ab, nicht zufällig.
+
+**Fund 37: Das Feld `hash` trug in zwei Vektorgruppen ein anderes
+Format.** `conformance/README.md` sagt zu, die Prüfung laufe über
+SHA-256 der gepackten Tensordaten, und für die Op-Vektoren stimmt das.
+Die Layer- und E2E-Vektoren aus `golden_generate` trugen dort einen
+`DefaultHasher`-Wert über die Rust-Repräsentation, und geprüft hat ihn
+niemand: In `golden_model` stand das Feld als toter Code. Beide Gruppen
+sind neu erzeugt, die **Zahlen darin sind unverändert** (24 von 24
+Layer-Vektoren bitgleich zur eingefrorenen Fassung), und `golden_model`
+rechnet die Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
+
+**`bench/run.py` prüfte die Bitgleichheit über alle Backends mit
+`decode_hash`**, einem Hash über die Token, erzeugt mit `DefaultHasher`.
+Zwei Schwächen in einem Wert: zu grob für die Frage, und
+`DefaultHasher` hat keinen festgelegten Algorithmus, darf sich also
+zwischen Rust-Fassungen ändern. Neu heißt der Wert `decode_digest` und
+kommt aus `generate::dekodieren_mit_digest`.
+
+**Eine Fassung, nicht drei.** Die Bytefolge des Digests steht genau
+einmal, in `runtime/src/generate.rs`. `golden_model` und
+`myl-testclient::runs::greedy_digest` rufen sie auf, statt sie
+nachzubauen; die Kopie im Testclient ist entfallen. Nachgemessen, bevor
+sie wich: beide lieferten für denselben Prompt `df54ef6c89f1a840…`. Der
+Grund für diese Sorgfalt ist Fund 34 im selben Patch.
+
+### v0.16.0-Teil: Fund 34, ein Rechenpfad, den es nicht gibt
 
 `kernels/src/rechenpfad.rs` entstand am 2026-08-22 gegen Fund 33: Ein
 Prüflauf sollte kein Backend zertifizieren, das gar nicht rechnet. Am

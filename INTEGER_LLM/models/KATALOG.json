@@ -1,0 +1,50 @@
+{
+  "_hinweis": "Kuratierte Liste der Modelle, die dieses Projekt kennt. VON HAND gepflegt: Herkunft, Revision, Lizenz und Status lassen sich aus keinem Artefakt ableiten. Die geprüften Digests stehen dagegen in scale_packs/REGISTER.json und werden ERZEUGT (tools/skalenpaket_bauen.py). Zwei Dateien, weil es zwei Arten von Wahrheit sind: hier steht, was jemand entschieden hat, dort steht, was gemessen wurde. Der Testclient liest beide und verlangt, dass sie dieselben Modelle führen. models/README.md wird aus beiden erzeugt (tools/modelle_liste.py) und nicht von Hand gepflegt.",
+  "_status_bedeutung": {
+    "verifiziert": "Artefakte gebaut, Perplexität gegen die Gleitkomma-Referenz gemessen, Akzeptanzkriterium erfüllt, Skalenpaket im Repository.",
+    "erprobt": "Artefakte gebaut und lauffähig, Qualität noch nicht gegen die Referenz gemessen.",
+    "vorgemerkt": "Lizenz geprüft und Revision festgelegt, aber noch nicht geholt oder gebaut."
+  },
+  "qwen2.5-0.5b": {
+    "anzeigename": "Qwen2.5-0,5B",
+    "hf_repo": "Qwen/Qwen2.5-0.5B",
+    "hf_verzeichnis": "Qwen2.5-0.5B",
+    "hf_revision": "060db6499f32faf8b98477b0a26969ef7d8b9987",
+    "lizenz": "Apache-2.0",
+    "lizenz_geprueft": "laut Modellkarte, ohne eigene Rechtsprüfung",
+    "parameter": "0,5 Mrd.",
+    "layer": 24,
+    "hidden_size": 896,
+    "num_heads": 14,
+    "num_kv_heads": 2,
+    "vocab_size": 151936,
+    "gewichte_bytes": 999292928,
+    "gewichte_anzeige": "rund 1 GB",
+    "artefakt_bytes": 775946240,
+    "artefakt_anzeige": "0,74 GB",
+    "status": "verifiziert",
+    "perplexitaet": "15,27 gegen BF16 14,95 (+2,11 %)",
+    "bemerkung": "Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an\ndiesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an."
+  },
+  "qwen2.5-7b": {
+    "anzeigename": "Qwen2.5-7B",
+    "hf_repo": "Qwen/Qwen2.5-7B",
+    "hf_verzeichnis": "Qwen2.5-7B",
+    "hf_revision": "d149729398750b98c0af14eb82c78cfe92750796",
+    "lizenz": "Apache-2.0",
+    "lizenz_geprueft": "laut Modellkarte, ohne eigene Rechtsprüfung",
+    "parameter": "7 Mrd.",
+    "layer": 28,
+    "hidden_size": 3584,
+    "num_heads": 28,
+    "num_kv_heads": 4,
+    "vocab_size": 152064,
+    "gewichte_bytes": 15032385536,
+    "gewichte_anzeige": "rund 14 GB",
+    "artefakt_bytes": 8697308774,
+    "artefakt_anzeige": "8,1 GB",
+    "status": "verifiziert",
+    "perplexitaet": "8,78 gegen BF16 8,68 (+1,14 %)",
+    "bemerkung": "Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6).\nRechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden.\nNur wählen, wenn 23 GB Platte frei sind."
+  }
+}

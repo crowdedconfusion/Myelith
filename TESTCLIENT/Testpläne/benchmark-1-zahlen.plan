@@ -1,0 +1,46 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan benchmark-1-zahlen.plan determinismus
+#    oder im Menü über [3] Testdatei wählen
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+
+# WAS DIESER PLAN PRUEFT
+#
+# Zahlen, Ziffern und Rechnungen. Ziffernfolgen werden anders
+# tokenisiert als Woerter, und die Rechenwege im Modell treffen die
+# Rundungsschritte des Ganzzahlpfads an anderen Stellen als Prosa:
+# Uebertraege, Zehnerpotenzen, Einheiten. Zwei Schreibweisen derselben
+# Aufgabe stehen absichtlich nebeneinander ("17 mal 23" und "17 * 23"),
+# weil sie voellig verschiedene Tokenfolgen ergeben.
+#
+# ZUR EINORDNUNG: Der Testclient misst BITGLEICHHEIT, nicht Genauigkeit.
+# Ob die Antwort stimmt, beantwortet dieser Lauf nicht und soll er nicht;
+# dafuer gibt es INTEGER_LLM/eval (Perplexitaet gegen die
+# Gleitkomma-Referenz). Hier zaehlt, dass zwei Maschinen dieselben Zahlen
+# rechnen, gerade weil diese Prompts das Modell an ungewoehnliche Stellen
+# fuehren.
+#
+# LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
+#   7 Prompts x 24 Token x 2 Durchgaenge = 336 Token
+#   bei rund 27 tok/s (0,5B): etwa 12 Sekunden
+#   bei rund  2 tok/s (7B):   etwa 3 Minuten
+#   Dazu der Shard-Lauf und das Laden des Modells.
+
+plan_id     = benchmark-1-zahlen
+prompt      = "Das Ergebnis von 17 mal 23 ist"
+prompt      = "17 * 23 = "
+prompt      = "Die Quersumme von 9876 ist"
+prompt      = "1024 als Binärzahl geschrieben ist"
+prompt      = "Ein Zug fährt 3 Stunden lang mit 87 km/h. Er legt zurück:"
+prompt      = "Die nächste Primzahl nach 89 ist"
+prompt      = "Der Umfang eines Kreises mit Radius 7 beträgt ungefähr"
+steps       = 24
+shards      = 4
+
+spec_sha256 = d77e3c9da9e93a47b6dc4ba7084472156902a652b00ad2efe9baf5a80a458341

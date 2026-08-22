@@ -302,7 +302,6 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
         prompts: args.prompts.clone(),
         steps: args.steps,
         shards: args.shards,
-        model: args.model.clone(),
     };
     let ziel = args
         .out
@@ -322,7 +321,6 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
     }
     println!("  Token          {}", plan.steps);
     println!("  Shards         {}", plan.shards);
-    println!("  Modell         {}", plan.model);
     println!("  Einstellungs-ID {}", plan.short_id());
     println!();
     println!("Diese Datei unverändert an alle Teilnehmer schicken. Sie starten damit:");
@@ -542,14 +540,14 @@ fn run_artefakte(log: &mut RunLog) -> bool {
                 log.error("  Das ist KEIN Hardware-Befund. Hier liegt ein anderes");
                 log.error("  Modell als beim Vergleichspartner; ein Bitgleichheits-");
                 log.error("  test darüber hätte keine Aussage. Artefakte neu bauen:");
-                for zeile in bauanleitung(&m.name).lines() {
+                for zeile in bauanleitung(&repo, &m.name).lines() {
                     log.note(format!("  {}", zeile));
                 }
             }
             Zustand::Fehlt => {
                 alle_bereit = false;
                 log.note("  keine Artefakte auf dieser Maschine.");
-                for zeile in bauanleitung(&m.name).lines() {
+                for zeile in bauanleitung(&repo, &m.name).lines() {
                     log.note(format!("  {}", zeile));
                 }
             }

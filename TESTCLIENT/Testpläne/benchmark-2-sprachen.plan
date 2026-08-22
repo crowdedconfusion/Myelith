@@ -1,0 +1,46 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan benchmark-2-sprachen.plan determinismus
+#    oder im Menü über [3] Testdatei wählen
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+
+# WAS DIESER PLAN PRUEFT
+#
+# Sprachen und seltene Token. Vier lateinische Schriften, dazu
+# Chinesisch, Griechisch und Kyrillisch, und ein deutsches Wort mit
+# Umlaut und Eszett. Solche Eingaben treffen weit auseinanderliegende
+# Bereiche der Einbettungstabelle und erzeugen Mehrbyte-Token; ein
+# Fehler in der Behandlung von UTF-8 oder in einem selten benutzten
+# Vokabularbereich zeigt sich hier und sonst nirgends.
+#
+# Die ersten vier Zeilen fragen dasselbe in vier Sprachen. Das ist kein
+# Zufall: Sie sollten inhaltlich uebereinstimmen und tun es numerisch
+# nicht, und genau dieser Unterschied uebt verschiedene Pfade aus.
+#
+# ZUR EINORDNUNG: gemessen wird Bitgleichheit, nicht Sprachverstaendnis.
+#
+# LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
+#   8 Prompts x 24 Token x 2 Durchgaenge = 384 Token
+#   bei rund 27 tok/s (0,5B): etwa 14 Sekunden
+#   bei rund  2 tok/s (7B):   etwa 3 Minuten
+#   Dazu der Shard-Lauf und das Laden des Modells.
+
+plan_id     = benchmark-2-sprachen
+prompt      = "Die Hauptstadt von Frankreich ist"
+prompt      = "The capital of France is"
+prompt      = "La capitale de la France est"
+prompt      = "La capital de Francia es"
+prompt      = "北京是中国的"
+prompt      = "Ελληνικά είναι μια γλώσσα που"
+prompt      = "Straßenbahnhaltestelle heißt auf Englisch"
+prompt      = "Съществителното име на руски е"
+steps       = 24
+shards      = 4
+
+spec_sha256 = 51801dc104eec37b801b6241765f79f9c0a02b328ee361adad911e1c176f64f2

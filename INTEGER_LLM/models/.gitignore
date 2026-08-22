@@ -1,4 +1,10 @@
-# Heruntergeladene Modelle nicht versionieren; Verzeichnis und Doku behalten
+# Heruntergeladene Modelle nicht versionieren; Verzeichnis und Doku behalten.
+#
+# KATALOG.json gehoert ausdruecklich dazu: Er ist die kuratierte Quelle
+# darueber, welche Modelle es gibt, woher sie kommen und unter welcher
+# Lizenz. Der Testclient liest ihn, und ohne ihn faende er die Gewichte
+# nicht. README.md wird daraus erzeugt (tools/modelle_liste.py).
 /*
 !/.gitignore
 !/README.md
+!/KATALOG.json

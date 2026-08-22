@@ -10,7 +10,7 @@ use integer_llm_runtime::loader::{load_model, spec_hash};
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::tokenizer::Tokenizer;
-use integer_llm_runtime::generate::generate;
+use integer_llm_runtime::generate::generate_mit_digest;
 use integer_llm_kernels::prng::splitmix64;
 
 use std::path::{Path, PathBuf};
@@ -129,7 +129,8 @@ fn generate_e2e_vectors(
     let max_new_tokens: usize = 3;
 
     for (name, prompt) in &prompts {
-        let tokens = generate(model, &tokenizer, prompt, max_new_tokens, seed, true);
+        let (tokens, logits_digest) =
+            generate_mit_digest(model, &tokenizer, prompt, max_new_tokens, seed, true);
 
         let token_ids: Vec<i32> = tokens.iter().map(|&t| t as i32).collect();
 
@@ -147,6 +148,16 @@ fn generate_e2e_vectors(
         meta.insert("max_new_tokens".into(), serde_json::Value::Number(max_new_tokens.into()));
         meta.insert("greedy".into(), serde_json::Value::Bool(true));
         meta.insert("seed".into(), serde_json::Value::Number(seed.into()));
+        // **Der eigentliche Prüfwert dieses Vektors** (Fund 36,
+        // 2026-08-22). `outputs.tokens` allein prüft nur, ob dieselbe
+        // Entscheidung fällt; dieser Digest prüft, ob dieselben Zahlen
+        // herauskommen. Als Metadatum und nicht als Ausgabetensor, weil
+        // die Logits aller Schritte hier 3 × 151 936 int32 wären und den
+        // Vektor um Größenordnungen aufblähten.
+        meta.insert(
+            "logits_sha256".into(),
+            serde_json::Value::String(logits_digest),
+        );
         gv.insert("metadata".into(), serde_json::Value::Object(meta));
 
         let mut inputs = serde_json::Map::new();
@@ -164,13 +175,27 @@ fn generate_e2e_vectors(
     println!("[golden_generate] {} E2E-Vektoren erzeugt.", prompts.len());
 }
 
+/// **Fund 37 (2026-08-22): Das Feld `hash` trug hier ein anderes Format
+/// als überall sonst.**
+///
+/// `golden_runner` prüft die Hashes der Op-Vektoren als SHA-256 über die
+/// little-endian gepackte Nutzlast; so erzeugt sie `tests/golden/generate.py`,
+/// und so steht der Vertrag im Kopf des Runners. Die Layer- und
+/// E2E-Vektoren aus diesem Binary trugen dagegen einen `DefaultHasher`-Wert
+/// über die Rust-Repräsentation. Geprüft hat ihn niemand: In
+/// `golden_model` steht das Feld als `#[allow(dead_code)]`.
+///
+/// Ein Feld, das aussieht wie eine Integritätssicherung, keine ist und
+/// obendrein in einem zweiten Format vorliegt, ist schlechter als kein
+/// Feld: Ein nachträglich bearbeiteter Vektor wäre unbemerkt
+/// durchgelaufen, und wer den Wert nachrechnete, bekam ein anderes
+/// Ergebnis und hätte den Fehler bei sich gesucht.
 fn tensor_json_i16(data: &[i16]) -> serde_json::Value {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    let hash = format!("{:016x}", hasher.finish());
+    let mut payload = Vec::with_capacity(data.len() * 2);
+    for &v in data {
+        payload.extend_from_slice(&v.to_le_bytes());
+    }
+    let hash = integer_llm_runtime::loader::sha256_hex(&payload);
 
     let mut map = serde_json::Map::new();
     map.insert("dtype".into(), serde_json::Value::String("int16".into()));
@@ -182,13 +207,14 @@ fn tensor_json_i16(data: &[i16]) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// SHA-256 über die little-endian gepackte Nutzlast, siehe
+/// [`tensor_json_i16`].
 fn tensor_json_i32(data: &[i32]) -> serde_json::Value {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    let hash = format!("{:016x}", hasher.finish());
+    let mut payload = Vec::with_capacity(data.len() * 4);
+    for &v in data {
+        payload.extend_from_slice(&v.to_le_bytes());
+    }
+    let hash = integer_llm_runtime::loader::sha256_hex(&payload);
 
     let mut map = serde_json::Map::new();
     map.insert("dtype".into(), serde_json::Value::String("int32".into()));

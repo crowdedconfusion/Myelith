@@ -75,9 +75,8 @@ pub fn zeile(g: &Gefunden) -> String {
         n => format!(" (+{} weitere)", n - 1),
     };
     format!(
-        "{} · {}, {} Prompts, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"{}",
+        "{} · {} Prompts, {} Token, {} Shards, Prüfsumme {}\n      Prompt: \"{}\"{}",
         p.plan_id,
-        p.model,
         p.prompts.len(),
         p.steps,
         p.shards,

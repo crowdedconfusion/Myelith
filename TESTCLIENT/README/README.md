@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.8.0
+> **Version:** 0.9.0
 > **Datum:** 2026-08-22
 > **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`),
 > 2.4 (`--repeat`) und 3.1 (Modellstand im Protokoll). 160 Tests grün, alle
@@ -165,8 +165,23 @@ langen Sequenzen oder in einem selten getroffenen LUT-Bereich auftritt,
 bliebe unentdeckt, und der Vergleichswert sähe trotzdem beruhigend aus.
 Je Prompt entsteht ein Einzelwert, darüber ein Gesamtwert.
 
-Zwei Pläne liegen bei: `qwen2.5-0.5b-standard.plan` (6 Prompts) und
-`qwen2.5-7b-standard.plan` (4 Prompts, rund fünf Minuten Laufzeit).
+**Fünf Pläne liegen bei**, keiner davon an ein Modell gebunden:
+
+| Datei | Prompts × Token | Was er ausübt |
+|---|---|---|
+| `standard.plan` | 6 × 32 | Der Regelfall: englische und deutsche Prosa, Fachtext, Rechenaufgabe, lange Faktenzeile |
+| `standard-kurz.plan` | 4 × 16 | Dasselbe kürzer, für langsame Modelle. Wer 7B testet, fängt hier an |
+| `benchmark-1-zahlen.plan` | 7 × 24 | Ziffernfolgen, Überträge, Zehnerpotenzen, Einheiten. Zwei Schreibweisen derselben Aufgabe ergeben völlig verschiedene Tokenfolgen |
+| `benchmark-2-sprachen.plan` | 8 × 24 | Vier lateinische Schriften plus Chinesisch, Griechisch, Kyrillisch, dazu Umlaut und Eszett: weit auseinanderliegende Bereiche der Einbettungstabelle und Mehrbyte-Token |
+| `benchmark-3-code-kontext.plan` | 6 × 32 | Rust, Python, JSON, SQL (Klammer-Konsistenz über viele Token) und zwei lange Prompts, die die Generierung auf hohe Positionen schieben: RoPE und KV-Cache dort, wo die Winkel groß werden |
+
+**Was diese Pläne nicht sind: Genauigkeitsmessungen.** Der Client
+vergleicht Digests, er bewertet keine Antworten. Ob ein Modell richtig
+rechnet, beantwortet `INTEGER_LLM/eval` über die Perplexität gegen die
+Gleitkomma-Referenz. Die Benchmark-Pläne führen das Modell an
+ungewöhnliche Stellen, **damit** die Bitgleichheit dort geprüft wird und
+nicht nur auf dem eingefahrenen Pfad: Fund 15 (RoPE) und Fund 16
+(Attention nur auf den ersten Key) fielen bei kurzen Prompts kaum auf.
 
 Die Datei trägt eine Prüfsumme über Prompts, Token, Shards und Modell.
 Wird sie verändert, **verweigert der Client den Lauf** (Exit-Code 3)
@@ -463,7 +478,7 @@ nicht vergleichbar.
 | Negativprobe: 0,0101 % eines Tensors verändert, Hashkette nachgezogen | alter Digest `e19372337dab1f3d` **unverändert**, neuer Digest `272f1ee8f45f2c78` → `4e34276060530427` |
 | Negativprobe: ein einzelnes Byte verändert, Kette **nicht** nachgezogen | Lauf abgelehnt, der betroffene Tensor wird benannt, Exit 1 |
 | Abbruch mit SIGINT mitten im Lauf | Protokoll lesbar, letzte Zeile gültiges JSON, kein `run_finished`; `vergleich` kennzeichnet es als unvollständig |
-| `determinismus --plan qwen2.5-0.5b-standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
+| `determinismus --plan standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
 | `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
 | `vergleich` über zwei Läufe derselben Maschine | Urteil `KEIN NACHWEIS (eine Maschine)`, Exit-Code 1, die Verweigerung greift |
@@ -473,6 +488,76 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.9.0 – 2026-08-22 (Menü, Pläne ohne Modell, Modellkatalog)
+
+**Das Entwickler-Menü führt keine Einzelstufen mehr.** Hardware,
+Determinismus, geshardete Inferenz und Protokoll-Durchlauf standen dort je
+einzeln; sie sind genau die vier Stufen, die der Testlauf im Nutzermenü
+hintereinander ausführt. Einzeln gestartet schrieben sie vier getrennte
+Protokolle, die der Koordinator wieder zusammensetzen müsste, und beim
+Verschicken geht die eine verloren, die den Befund trägt. Auf der
+Befehlszeile bleiben sie erreichbar; dort ist klar, dass man eine
+Einzelmessung will. Neu sortiert nach Wichtigkeit, mit **Protokolle
+vergleichen** an erster Stelle. „Artefakte und Gewichte freigeben" heißt
+jetzt „löschen": Das Wort beschreibt, was geschieht.
+
+**Testpläne sind nicht mehr an ein Modell gebunden.** Das Feld `model`
+ist entfallen, samt seiner Rolle in der Prüfsumme. Es war eine Fessel
+ohne Nutzen: Ein Plan, der nur mit 0,5B geht, muss für 7B neu geschrieben
+werden, und dann tragen zwei Dateien dieselben Prompts unter
+verschiedenen Prüfsummen. Der Plan legt jetzt fest, **was** gemessen
+wird; **woran**, entscheidet sich unmittelbar vor dem Lauf, entweder über
+[4] oder ungefragt, wenn genau ein Artefakt vorliegt.
+
+Abgesichert bleibt es an der Stelle, an der es wirkt: Der Modellstand
+steht in jedem Protokoll, und `vergleich` verweigert das Urteil, wenn
+zwei Läufe gegen verschiedene Modelle gerechnet haben. Eine Datei kann
+man ignorieren, diese Prüfung nicht. Alte Pläne mit `model`-Zeile bleiben
+lesbar; ihre Prüfsumme stimmt nicht mehr und sie sind neu zu erzeugen.
+
+**Der Testplan-Assistent fragt jeden Wert einzeln ab**: Token, Shards,
+dann Prompt für Prompt mit Nachfrage nach jedem, und den Dateinamen ganz
+zum Schluss. Er steht am Ende, weil man einen Plan erst sinnvoll benennen
+kann, wenn man weiß, was darin steht. Die Eingabe kommt über eine
+übergebene Lesefunktion statt aus `stdin`, damit der ganze Ablauf im Test
+durchspielbar ist, samt Abbruch: Ein Abbruch schreibt **nichts**, denn
+eine halb erhobene Datei, die an alle Teilnehmer geht, wäre schlimmer als
+keine.
+
+**Fünf Testpläne statt zwei**, keiner an ein Modell gebunden. Neben
+`standard` und `standard-kurz` drei Benchmark-Pläne, die das Modell
+absichtlich an ungewöhnliche Stellen führen: Ziffernfolgen und
+Überträge; sieben Sprachen in drei Schriften; Quelltext und lange
+Prompts, die die Generierung auf hohe Positionen schieben. Jeder Plan
+trägt im Kopf, was er ausübt und wie lange er läuft, ausgerechnet statt
+geraten. **Kein Genauigkeitsmaß:** Der Client vergleicht Digests und
+bewertet keine Antworten; ein „Benchmark" heißt hier ein Prompt, der
+schwer zu rechnen ist. Fund 15 (RoPE) und Fund 16 (Attention nur auf den
+ersten Key) fielen bei kurzen Prompts kaum auf.
+
+**Modellkatalog (`INTEGER_LLM/models/KATALOG.json`).** Die Angaben zu den
+Modellen standen an drei Stellen: als Tabelle in `models/README.md`, als
+Digest in `scale_packs/REGISTER.json` und als `match`-Ausdruck in
+`artefakte.rs`. Die dritte hatte den unangenehmsten Fehler, einen stillen
+Rückfall `_ => "Qwen2.5-0.5B"`: Ein drittes Modell hätte die Gewichte von
+Qwen2.5-0,5B geladen und wäre erst beim Bau aufgefallen, mit einer
+Meldung, die nach allem aussieht außer nach der Ursache.
+
+Jetzt gibt es **zwei** Quellen, und beide aus einem Grund: `KATALOG.json`
+ist kuratiert und trägt, was jemand entschieden hat (Herkunft, Revision,
+Lizenz, Status, Bemerkung); `REGISTER.json` ist erzeugt und trägt, was
+gemessen wurde (Digest, θ_v). Der Client liest beide, ein Test verlangt,
+dass sie dieselben Modelle führen, und `models/README.md` wird aus beiden
+erzeugt (`tools/modelle_liste.py`, mit `--pruefen` für die CI). Die
+Modellauswahl zeigt jetzt Parameterzahl, Herkunft, Lizenz und eine
+Einordnung, statt nur die Downloadgröße.
+
+**Nebenbefund:** Der handgeschriebene JSON-Leser reichte Werte
+unverändert durch. Sobald der Katalog Text für Menschen aufnahm,
+erschien ein `\n` wörtlich im Menü, und ein Anführungszeichen hätte die
+Zeile zerlegt. Er löst jetzt `\n`, `\t`, `\"` und `\\` auf und lässt
+alles andere stehen, statt es zu erraten.
 
 ### v0.8.0 – 2026-08-22 (drei Funde am Messgerät)
 
@@ -884,7 +969,7 @@ Modell. Beide Werte heißen jetzt `…_tokens` und meinen dasselbe.
   Koordinators. Jetzt trägt das Protokoll den eingegebenen Namen, und nur
   der Dateiname wird umgeschrieben; Umlaute werden dabei umschrieben
   (`Bjoern`), nicht getilgt.
-- **Artefakte und Gewichte freigeben** (Entwicklerpunkt [9]). Getrennt,
+- **Artefakte und Gewichte löschen** (Entwicklerpunkt [9]). Getrennt,
   weil Artefakte in Sekunden aus dem Skalenpaket entstehen und die
   Gewichte einen Download über Gigabyte kosten. Der Löschpfad ist auf
   direkte Unterverzeichnisse von `INTEGER_LLM/{artifacts,models}`
@@ -927,7 +1012,7 @@ Modell. Beide Werte heißen jetzt `…_tokens` und meinen dasselbe.
   Modell, beschafft das Modell bei Bedarf und führt Determinismus- und
   Shard-Lauf selbst aus. Ein Plan mit falscher Prüfsumme wird
   übersprungen **und gemeldet**, nicht stillschweigend geladen.
-  Beispielplan: `qwen2.5-0.5b-standard.plan`.
+  Beispielplan: `standard.plan`.
 - **Zwei Menüs.** Das Nutzermenü hat fünf Punkte; alles, was Vorwissen
   voraussetzt, liegt unter [9] im Koordinator-Menü. Ein Menü mit zehn
   Punkten, von denen ein Teilnehmer fünf nie braucht, ist für ihn ein

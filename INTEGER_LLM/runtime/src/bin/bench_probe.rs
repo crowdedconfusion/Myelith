@@ -14,7 +14,7 @@
 
 use std::time::Instant;
 
-use integer_llm_runtime::generate::hash_tokens;
+use integer_llm_runtime::generate::{dekodieren_mit_digest, hash_tokens};
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -74,4 +74,22 @@ fn main() {
     // Token-Hash zur Abgleichbarkeit mit anderen Evidenz-Laeufen
     // (derselbe Prompt muss dieselben Tokens ergeben).
     println!("decode_hash {}", hash_tokens(&out));
+
+    // **Der Wert, an dem die Bitgleichheit haengt** (Fund 36,
+    // 2026-08-22). `decode_hash` deckt nur die erzeugten Token ab, also
+    // eine Argmax-Entscheidung ueber `vocab_size` Zahlen. Gemessen an
+    // 0,5B: 0,1 % der Bytes eines Tensors verschoben, Token unveraendert,
+    // Zahlen verschieden. `bench/run.py` prueft die Bitgleichheit ueber
+    // alle Backends und braucht deshalb diesen Wert, nicht jenen.
+    //
+    // **In einem zweiten, ungemessenen Durchlauf**, nicht in der Schleife
+    // oben: Die Logits jedes Schritts sind bei 0,5B 151 936 mal vier
+    // Byte, und sie im gemessenen Abschnitt mitzuschreiben kostete rund
+    // drei Prozent des Durchsatzes. Ein Messwert, der von der Messung
+    // veraendert wird, ist der Zweck dieses Binaries verfehlt. Der
+    // zweite Durchlauf kostet Laufzeit, aber keine Genauigkeit.
+    let (out2, digest) = dekodieren_mit_digest(&model, &ids, decode_tokens, 42, true);
+    assert_eq!(out, out2, "zweiter Durchlauf erzeugt andere Token");
+    println!("decode_digest {}", digest);
+    println!("digest_umfang logits+token");
 }

@@ -127,10 +127,153 @@ pub fn register(repo: &Path) -> Result<Vec<Bekannt>, String> {
     Ok(out)
 }
 
+/// Ein Eintrag aus dem kuratierten Modellkatalog.
+///
+/// **Getrennt von [`Bekannt`], und das ist Absicht.** `Bekannt` kommt aus
+/// `scale_packs/REGISTER.json` und trägt, was **gemessen** wurde: Digest
+/// und θ_v-Stand. Dieser Eintrag kommt aus `models/KATALOG.json` und
+/// trägt, was jemand **entschieden** hat: Herkunft, Revision, Lizenz,
+/// Status. Aus keinem Artefakt ableitbar, und deshalb von Hand gepflegt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Katalogeintrag {
+    pub name: String,
+    pub anzeigename: String,
+    pub hf_repo: String,
+    /// Verzeichnisname unter `INTEGER_LLM/models/`.
+    pub hf_verzeichnis: String,
+    pub hf_revision: String,
+    pub lizenz: String,
+    pub parameter: String,
+    pub gewichte_anzeige: String,
+    pub artefakt_anzeige: String,
+    pub status: String,
+    pub bemerkung: String,
+}
+
+/// Liest `INTEGER_LLM/models/KATALOG.json`.
+///
+/// Bewusst ohne JSON-Crate, aus demselben Grund wie [`register`]: Der
+/// Client soll auf einer fremden Maschine mit möglichst wenig
+/// Voraussetzungen bauen. Schlüssel, die mit `_` beginnen, sind
+/// Erläuterungen für Menschen und werden übersprungen.
+pub fn katalog(repo: &Path) -> Result<Vec<Katalogeintrag>, String> {
+    let pfad = repo.join("INTEGER_LLM/models/KATALOG.json");
+    let text = fs::read_to_string(&pfad)
+        .map_err(|e| format!("{} nicht lesbar: {}", pfad.display(), e))?;
+    Ok(katalog_lesen(&text))
+}
+
+/// Der reine Teil von [`katalog`]: aus Text wird eine Liste.
+///
+/// Getrennt, damit er ohne Dateisystem prüfbar ist.
+pub fn katalog_lesen(text: &str) -> Vec<Katalogeintrag> {
+    let mut out: Vec<Katalogeintrag> = Vec::new();
+    let mut name: Option<String> = None;
+    let mut felder: Vec<(String, String)> = Vec::new();
+
+    for zeile in text.lines() {
+        let t = zeile.trim();
+        if t.ends_with("\": {") && zeile.starts_with("  \"") {
+            let neu = t.trim_start_matches('"').trim_end_matches("\": {").to_string();
+            // Kommentarblöcke wie `_status_bedeutung` sind keine Modelle.
+            name = if neu.starts_with('_') { None } else { Some(neu) };
+            felder.clear();
+            continue;
+        }
+        if name.is_some() {
+            for schluessel in [
+                "anzeigename",
+                "hf_repo",
+                "hf_verzeichnis",
+                "hf_revision",
+                "lizenz",
+                "parameter",
+                "gewichte_anzeige",
+                "artefakt_anzeige",
+                "status",
+                "bemerkung",
+            ] {
+                if let Some(v) = feld(t, schluessel) {
+                    felder.push((schluessel.to_string(), v));
+                }
+            }
+        }
+        if t == "}," || t == "}" {
+            if let Some(n) = name.take() {
+                let hole = |k: &str| -> String {
+                    felder
+                        .iter()
+                        .find(|(s, _)| s == k)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default()
+                };
+                out.push(Katalogeintrag {
+                    // Ohne Anzeigenamen ist der Eintrag unbrauchbar; dann
+                    // steht wenigstens der Schlüssel da statt einer Leere.
+                    anzeigename: {
+                        let a = hole("anzeigename");
+                        if a.is_empty() { n.clone() } else { a }
+                    },
+                    hf_repo: hole("hf_repo"),
+                    hf_verzeichnis: hole("hf_verzeichnis"),
+                    hf_revision: hole("hf_revision"),
+                    lizenz: hole("lizenz"),
+                    parameter: hole("parameter"),
+                    gewichte_anzeige: hole("gewichte_anzeige"),
+                    artefakt_anzeige: hole("artefakt_anzeige"),
+                    status: hole("status"),
+                    bemerkung: hole("bemerkung"),
+                    name: n,
+                });
+                felder.clear();
+            }
+        }
+    }
+    out
+}
+
+/// Der Katalogeintrag zu einem Modell, falls es einen gibt.
+pub fn katalogeintrag(repo: &Path, modell: &str) -> Option<Katalogeintrag> {
+    katalog(repo).ok()?.into_iter().find(|k| k.name == modell)
+}
+
 fn feld(zeile: &str, schluessel: &str) -> Option<String> {
     let praefix = format!("\"{}\": ", schluessel);
     let rest = zeile.trim().strip_prefix(&praefix)?;
-    Some(rest.trim_end_matches(',').trim_matches('"').to_string())
+    Some(entpacken(rest.trim_end_matches(',').trim_matches('"')))
+}
+
+/// Löst die JSON-Fluchtsequenzen auf, die in diesen Dateien vorkommen.
+///
+/// **Nötig geworden, als der Katalog Text für Menschen aufnahm**
+/// (2026-08-22): Ein `\n` in einer Bemerkung erschien wörtlich im Menü,
+/// weil der Leser den Wert unverändert durchreichte. Ein Anführungszeichen
+/// hätte die Zeile sogar zerlegt.
+///
+/// Bewusst nur diese vier: Der Leser ist kein JSON-Parser und soll keiner
+/// werden (siehe [`register`]). Was er nicht kennt, lässt er stehen, statt
+/// es zu erraten.
+fn entpacken(roh: &str) -> String {
+    let mut out = String::with_capacity(roh.len());
+    let mut zeichen = roh.chars();
+    while let Some(c) = zeichen.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match zeichen.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some(anderes) => {
+                out.push('\\');
+                out.push(anderes);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Prüft ein Modell auf dieser Maschine.
@@ -147,7 +290,7 @@ pub fn pruefen(repo: &Path, m: &Bekannt) -> Zustand {
 }
 
 /// Die Anleitung, die ausgegeben wird, wenn Artefakte fehlen.
-pub fn bauanleitung(modell: &str) -> String {
+pub fn bauanleitung(repo: &Path, modell: &str) -> String {
     format!(
         "So entstehen die Artefakte für {m} (einmalig):\n\
          \n\
@@ -162,15 +305,26 @@ pub fn bauanleitung(modell: &str) -> String {
          entfällt, und genau deshalb ist er auf jeder Maschine bitgleich.\n\
          Danach diesen Befehl erneut ausführen; der Digest wird geprüft.",
         m = modell,
-        hf = hf_id(modell),
+        hf = hf_id(repo, modell),
     )
 }
 
-fn hf_id(modell: &str) -> &'static str {
-    match modell {
-        "qwen2.5-7b" => "Qwen2.5-7B",
-        _ => "Qwen2.5-0.5B",
-    }
+/// Verzeichnisname der Gewichte unter `INTEGER_LLM/models/`.
+///
+/// **Aus dem Katalog, nicht aus einem `match`** (2026-08-22). Hier stand
+/// `match modell { "qwen2.5-7b" => …, _ => "Qwen2.5-0.5B" }`, also ein
+/// stiller Rückfall: Ein drittes Modell im Register hätte die Gewichte
+/// von Qwen2.5-0,5B geladen und dann beim Bau einen Fehler geworfen, der
+/// nach allem aussieht außer nach der Ursache.
+///
+/// Ohne Katalogeintrag gibt es deshalb **keinen Rückfall**, sondern den
+/// Modellnamen selbst: Der Bau schlägt dann fehl, und zwar sichtbar an
+/// der richtigen Stelle.
+fn hf_id(repo: &Path, modell: &str) -> String {
+    katalogeintrag(repo, modell)
+        .map(|k| k.hf_verzeichnis)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| modell.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -307,11 +461,15 @@ fn python_finden(repo: &Path) -> Result<PathBuf, String> {
 }
 
 /// Ungefähre Downloadgröße je Modell, für die Rückfrage vor dem Zugriff.
-pub fn download_groesse(modell: &str) -> &'static str {
-    match modell {
-        "qwen2.5-7b" => "rund 15 GB",
-        _ => "rund 1 GB",
-    }
+///
+/// Aus dem Katalog, aus demselben Grund wie [`hf_id`]. Fehlt der Eintrag,
+/// wird das ausdrücklich gesagt: Eine erfundene Zahl vor einem Download,
+/// der Stunden dauern kann, ist schlechter als ein Achselzucken.
+pub fn download_groesse(repo: &Path, modell: &str) -> String {
+    katalogeintrag(repo, modell)
+        .map(|k| k.gewichte_anzeige)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "unbekannte Größe".to_string())
 }
 
 /// Lädt die Gewichte von Hugging Face in `INTEGER_LLM/models/<HF-Name>`.
@@ -323,8 +481,8 @@ pub fn download_groesse(modell: &str) -> &'static str {
 /// Umsetzung derselben Sache.
 pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
     let py = python_finden(repo)?;
-    let hf = hf_id(modell);
-    let ziel = repo.join("INTEGER_LLM/models").join(hf);
+    let hf = hf_id(repo, modell);
+    let ziel = repo.join("INTEGER_LLM/models").join(&hf);
     meldung(format!("Lade {} nach {} …", hf, ziel.display()));
 
     let skript = format!(
@@ -449,14 +607,34 @@ impl Eintrag {
         }
     }
 
-    fn hinweis(&self) -> String {
-        match self {
+    /// Die Zeile unter dem Titel: was das Modell ist und was seine Wahl
+    /// kostet.
+    ///
+    /// **Aus dem kuratierten Katalog** (`models/KATALOG.json`), soweit er
+    /// etwas dazu sagt. Vorher stand hier nur die Downloadgröße, und die
+    /// beantwortet nicht die Frage, die vor der Wahl steht: Wofür ist
+    /// dieses Modell da, woher kommt es, unter welcher Lizenz, und ist
+    /// es schon einmal gemessen worden?
+    fn hinweis(&self, repo: &Path) -> String {
+        let k = katalogeintrag(repo, self.name());
+        let herkunft = k
+            .as_ref()
+            .filter(|k| !k.hf_repo.is_empty())
+            .map(|k| format!("{} · {} · {}", k.parameter, k.hf_repo, k.lizenz))
+            .unwrap_or_else(|| "nicht im Katalog, Herkunft unbekannt".to_string());
+
+        let zweite = match self {
             Eintrag::Da(g) if g.im_register => "Digest wird nach der Wahl geprüft.".to_string(),
             Eintrag::Da(_) => "Digest nicht prüfbar, für Vergleichsläufe ungeeignet.".to_string(),
             Eintrag::Fehlt(b) => format!(
                 "Download {} von Hugging Face, Bau danach in Sekunden.",
-                download_groesse(&b.name)
+                download_groesse(repo, &b.name)
             ),
+        };
+
+        match k.as_ref().filter(|k| !k.bemerkung.is_empty()) {
+            Some(k) => format!("{herkunft}\n{zweite}\n{}", k.bemerkung),
+            None => format!("{herkunft}\n{zweite}"),
         }
     }
 }
@@ -532,7 +710,7 @@ pub fn beschaffen(
             }
             None => Err(format!(
                 "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
-                bauanleitung(eintraege[0].name())
+                bauanleitung(repo, eintraege[0].name())
             )),
         };
     };
@@ -540,7 +718,7 @@ pub fn beschaffen(
     let punkte: Vec<crate::auswahl::Punkt> = eintraege
         .iter()
         .enumerate()
-        .map(|(i, e)| crate::auswahl::Punkt::neu(kuerzel(i), &e.titel(), &e.hinweis()))
+        .map(|(i, e)| crate::auswahl::Punkt::neu(kuerzel(i), &e.titel(), &e.hinweis(repo)))
         .collect();
     let Some(wahl) = crate::auswahl::waehlen("Welches Modell?", &punkte)
         .and_then(|t| punkte.iter().position(|p| p.taste == t))
@@ -692,22 +870,22 @@ pub fn beschaffen_fuer(
     let Some(frage) = antwort.as_mut() else {
         return Err(format!(
             "Nicht-interaktiv, deshalb wird nichts heruntergeladen.\n{}",
-            bauanleitung(modell)
+            bauanleitung(repo, modell)
         ));
     };
     let t = frage(&format!(
         "{} von Hugging Face laden ({}) und Artefakte bauen? [J/n] ",
-        hf_id(modell),
-        download_groesse(modell)
+        hf_id(repo, modell),
+        download_groesse(repo, modell)
     ))
     .unwrap_or_default()
     .trim()
     .to_lowercase();
     if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
-        return Err(format!("Abgebrochen.\n{}", bauanleitung(modell)));
+        return Err(format!("Abgebrochen.\n{}", bauanleitung(repo, modell)));
     }
 
-    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(modell));
+    let gewichte = repo.join("INTEGER_LLM/models").join(hf_id(repo, modell));
     if gewichte.join("config.json").is_file() {
         meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
     } else {
@@ -819,7 +997,7 @@ pub fn belegung(repo: &Path) -> Vec<Belegung> {
         .into_iter()
         .map(|modell| {
             let a = repo.join("INTEGER_LLM/artifacts").join(&modell);
-            let g = repo.join("INTEGER_LLM/models").join(hf_id(&modell));
+            let g = repo.join("INTEGER_LLM/models").join(hf_id(repo, &modell));
             Belegung {
                 artefakte: a.is_dir().then(|| {
                     let b = verzeichnisgroesse(&a);
@@ -955,9 +1133,9 @@ mod auswahl_tests {
             "das fehlende Modell steht nicht zur Beschaffung bereit"
         );
         assert!(
-            eintraege[1].hinweis().contains("Download"),
+            eintraege[1].hinweis(&wurzel_zur_laufzeit(&PathBuf::from("."))).contains("Download"),
             "der Hinweis nennt den Download nicht: {}",
-            eintraege[1].hinweis()
+            eintraege[1].hinweis(&wurzel_zur_laufzeit(&PathBuf::from(".")))
         );
     }
 
@@ -977,7 +1155,7 @@ mod auswahl_tests {
             "ungeprüftes Artefakt nicht gekennzeichnet: {}",
             eintraege[1].titel()
         );
-        assert!(eintraege[1].hinweis().contains("nicht prüfbar"));
+        assert!(eintraege[1].hinweis(&wurzel_zur_laufzeit(&PathBuf::from("."))).contains("nicht prüfbar"));
     }
 
     /// Ohne ein einziges Artefakt muss trotzdem jedes bekannte Modell zur
@@ -1131,6 +1309,124 @@ mod loeschen_tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+
+    /// Der Katalog wird von Hand gepflegt und vom Client gelesen. Beides
+    /// muss zusammenpassen, sonst ist er Zierat.
+    #[test]
+    fn der_katalog_liefert_die_kuratierten_angaben() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        let eintraege = katalog(&wurzel).expect("KATALOG.json lesbar");
+        assert!(eintraege.len() >= 2, "zu wenige Einträge: {eintraege:?}");
+
+        let klein = eintraege
+            .iter()
+            .find(|k| k.name == "qwen2.5-0.5b")
+            .expect("qwen2.5-0.5b fehlt im Katalog");
+        assert_eq!(klein.hf_repo, "Qwen/Qwen2.5-0.5B");
+        assert_eq!(klein.hf_verzeichnis, "Qwen2.5-0.5B");
+        assert_eq!(klein.lizenz, "Apache-2.0");
+        assert_eq!(klein.hf_revision.len(), 40, "keine volle Git-Revision");
+
+        // Jeder Eintrag muss die Angaben tragen, für die es ihn gibt.
+        for k in &eintraege {
+            for (feld, wert) in [
+                ("hf_repo", &k.hf_repo),
+                ("hf_verzeichnis", &k.hf_verzeichnis),
+                ("hf_revision", &k.hf_revision),
+                ("lizenz", &k.lizenz),
+                ("status", &k.status),
+                ("gewichte_anzeige", &k.gewichte_anzeige),
+            ] {
+                assert!(!wert.is_empty(), "{}: {} fehlt", k.name, feld);
+            }
+        }
+    }
+
+    /// **Katalog und Register müssen dieselben Modelle kennen.**
+    ///
+    /// Sie sind bewusst getrennt (kuratiert gegen gemessen), aber ein
+    /// Modell, das nur in einem von beiden steht, ist ein halber
+    /// Eintrag: Ohne Registereintrag lässt sich sein Digest nicht
+    /// prüfen, ohne Katalogeintrag weiß der Client nicht, woher die
+    /// Gewichte kommen, und lud vor dem 2026-08-22 stillschweigend die
+    /// von Qwen2.5-0,5B.
+    #[test]
+    fn katalog_und_register_kennen_dieselben_modelle() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        let mut aus_katalog: Vec<String> =
+            katalog(&wurzel).expect("Katalog").into_iter().map(|k| k.name).collect();
+        let mut aus_register: Vec<String> =
+            register(&wurzel).expect("Register").into_iter().map(|b| b.name).collect();
+        aus_katalog.sort();
+        aus_register.sort();
+        assert_eq!(
+            aus_katalog, aus_register,
+            "Katalog und Register führen verschiedene Modelle"
+        );
+    }
+
+    /// Kommentarblöcke im Katalog beginnen mit `_` und sind keine
+    /// Modelle. Ohne diese Regel stünde „_status_bedeutung" im Menü.
+    #[test]
+    fn kommentarbloecke_sind_keine_modelle() {
+        let text = r#"{
+  "_hinweis": "erklaert etwas",
+  "_status_bedeutung": {
+    "verifiziert": "gebaut und gemessen"
+  },
+  "modell-a": {
+    "anzeigename": "Modell A",
+    "hf_repo": "Wer/Modell-A",
+    "hf_verzeichnis": "Modell-A",
+    "hf_revision": "abc",
+    "lizenz": "Apache-2.0",
+    "parameter": "1 Mrd.",
+    "gewichte_anzeige": "rund 2 GB",
+    "artefakt_anzeige": "1 GB",
+    "status": "erprobt",
+    "bemerkung": "kein Kommentarblock"
+  }
+}"#;
+        let eintraege = katalog_lesen(text);
+        assert_eq!(eintraege.len(), 1, "{eintraege:?}");
+        assert_eq!(eintraege[0].name, "modell-a");
+        assert_eq!(eintraege[0].anzeigename, "Modell A");
+    }
+
+    /// **Kein stiller Rückfall auf das kleine Modell.** Hier stand ein
+    /// `match` mit `_ => "Qwen2.5-0.5B"`; ein drittes Modell hätte damit
+    /// die falschen Gewichte geladen und wäre erst beim Bau
+    /// aufgefallen, mit einer Fehlermeldung, die nach allem aussieht
+    /// außer nach der Ursache.
+    #[test]
+    fn ein_unbekanntes_modell_bekommt_keine_fremden_gewichte() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        assert_eq!(hf_id(&wurzel, "qwen2.5-7b"), "Qwen2.5-7B");
+        assert_eq!(
+            hf_id(&wurzel, "gibt-es-nicht"),
+            "gibt-es-nicht",
+            "unbekanntes Modell bekommt fremde Gewichte"
+        );
+        assert!(
+            download_groesse(&wurzel, "gibt-es-nicht").contains("unbekannt"),
+            "erfundene Größenangabe vor einem Download"
+        );
+    }
+
+
+    /// Fluchtsequenzen im Katalog müssen aufgelöst werden: Ein `\n` in
+    /// einer Bemerkung stand vorher wörtlich im Menü, und ein
+    /// Anführungszeichen hätte die Zeile zerlegt.
+    #[test]
+    fn fluchtsequenzen_werden_aufgeloest() {
+        assert_eq!(entpacken("eine\\nzweite"), "eine\nzweite");
+        assert_eq!(entpacken("er sagte \\\"hallo\\\""), "er sagte \"hallo\"");
+        assert_eq!(entpacken("C:\\\\Pfad"), "C:\\Pfad");
+        // Unbekanntes bleibt stehen, statt geraten zu werden.
+        assert_eq!(entpacken("\\q"), "\\q");
+        assert_eq!(entpacken("ohne alles"), "ohne alles");
     }
 
 }

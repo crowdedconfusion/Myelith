@@ -28,13 +28,60 @@ struct GoldenVector {
 
 #[derive(Debug, Deserialize)]
 struct TensorData {
-    #[allow(dead_code)]
     dtype: String,
     #[allow(dead_code)]
     shape: Option<Vec<usize>>,
-    #[allow(dead_code)]
     hash: String,
     data: Vec<i64>,
+}
+
+impl TensorData {
+    /// SHA-256 über die little-endian gepackte Nutzlast.
+    ///
+    /// Derselbe Vertrag wie in `tests/golden/generate.py` und
+    /// `kernels/src/bin/golden_runner.rs`. Die Layer- und E2E-Vektoren
+    /// trugen bis 2026-08-22 einen `DefaultHasher`-Wert in diesem Feld,
+    /// und niemand prüfte ihn (Fund 37).
+    fn berechneter_hash(&self) -> Option<String> {
+        let mut payload = Vec::with_capacity(self.data.len() * 4);
+        match self.dtype.as_str() {
+            "int8" => self.data.iter().for_each(|&v| payload.push(v as i8 as u8)),
+            "int16" => self
+                .data
+                .iter()
+                .for_each(|&v| payload.extend_from_slice(&(v as i16).to_le_bytes())),
+            "int32" => self
+                .data
+                .iter()
+                .for_each(|&v| payload.extend_from_slice(&(v as i32).to_le_bytes())),
+            _ => return None,
+        }
+        Some(integer_llm_runtime::loader::sha256_hex(&payload))
+    }
+}
+
+/// Prüft die deklarierten Hashes aller Ein- und Ausgabetensoren.
+///
+/// **Vor der Rechnung**, nicht danach: Ein Vektor, dessen Daten
+/// nachträglich bearbeitet wurden, ist kein Maßstab, und ein Ergebnis
+/// gegen ihn hat keine Aussage, weder im Guten noch im Schlechten.
+fn tensor_hashes_pruefen(gv: &GoldenVector) -> bool {
+    let mut ok = true;
+    for (bereich, tensoren) in [("input", &gv.inputs), ("output", &gv.outputs)] {
+        for (name, t) in tensoren.iter() {
+            let Some(berechnet) = t.berechneter_hash() else {
+                continue;
+            };
+            if berechnet != t.hash {
+                eprintln!(
+                    "  Hash-Abweichung bei {} '{}': deklariert {}, berechnet {}",
+                    bereich, name, t.hash, berechnet
+                );
+                ok = false;
+            }
+        }
+    }
+    ok
 }
 
 fn main() {
@@ -114,6 +161,11 @@ fn run_batch(model: &integer_llm_runtime::model::IntegerModel, vectors_dir: &Pat
 }
 
 fn validate(model: &integer_llm_runtime::model::IntegerModel, gv: &GoldenVector) -> bool {
+    // Integrität des Vektors, bevor er als Maßstab dient (Fund 37).
+    if !tensor_hashes_pruefen(gv) {
+        eprintln!("  Vektor {} ist nicht integer, kein Maßstab", gv.name);
+        return false;
+    }
     match gv.level.as_str() {
         "layer" => validate_layer(model, gv),
         "e2e" => validate_e2e(model, gv),
@@ -162,37 +214,55 @@ fn validate_e2e(model: &integer_llm_runtime::model::IntegerModel, gv: &GoldenVec
     let greedy = gv.metadata["greedy"].as_bool().unwrap_or(true);
     let seed = gv.metadata["seed"].as_u64().unwrap_or(42);
 
-    let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
-    let mut pos = 0usize;
-    let mut logits = vec![0i32; model.vocab_size];
-
-    // Prefill
-    for &tid in &prompt_tokens {
-        logits = model.forward_token(tid, pos, &mut cache);
-        pos += 1;
-    }
-
-    // Decode
-    let mut generated = Vec::with_capacity(max_new_tokens);
-    let mut current_seed = seed;
-    for _ in 0..max_new_tokens {
-        let next_token = if greedy {
-            model.greedy_next(&logits)
-        } else {
-            let (t, s) = model.sample_next(&logits, current_seed);
-            current_seed = s;
-            t
-        };
-        generated.push(next_token as i32);
-        logits = model.forward_token(next_token, pos, &mut cache);
-        pos += 1;
-    }
+    // Über `dekodieren_mit_digest`, nicht als eigene Schleife: Die
+    // Bytefolge des Digests ist dort festgelegt, und eine zweite Fassung
+    // hier wäre eine zweite Quelle für dieselbe Aussage (Fund 34).
+    let (erzeugt, digest) = integer_llm_runtime::generate::dekodieren_mit_digest(
+        model,
+        &prompt_tokens,
+        max_new_tokens,
+        seed,
+        greedy,
+    );
+    let generated: Vec<i32> = erzeugt.iter().map(|&t| t as i32).collect();
 
     let expected: Vec<i32> = gv.outputs["tokens"].data.iter().map(|&v| v as i32).collect();
 
     if generated != expected {
         eprintln!("  Token-Mismatch: erzeugt={:?}, erwartet={:?}", generated, expected);
         return false;
+    }
+
+    // **Der eigentliche Prüfwert** (Fund 36). Gleiche Token heißen nur,
+    // dass dieselbe Entscheidung gefallen ist; ein Argmax über
+    // `vocab_size` Zahlen ändert sich erst, wenn deren Rangfolge kippt.
+    // Gemessen an 0,5B: 0,1 % der Bytes eines Tensors verschoben, Token
+    // unverändert, Zahlen verschieden.
+    match gv.metadata.get("logits_sha256").and_then(|v| v.as_str()) {
+        Some(erwartet) => {
+            if digest != erwartet {
+                eprintln!(
+                    "  Logit-Mismatch: berechnet={}, erwartet={}",
+                    digest, erwartet
+                );
+                eprintln!(
+                    "  Die Token stimmen, die gerechneten Zahlen nicht. Genau dieser \
+                     Fall blieb vor Fund 36 unsichtbar."
+                );
+                return false;
+            }
+        }
+        None => {
+            // Kein stiller Durchlauf: Ein Vektor ohne diesen Wert prüft
+            // nur die Entscheidung, und das soll niemand für einen
+            // Bitgleichheitsnachweis halten.
+            eprintln!(
+                "  Vektor {} trägt kein metadata.logits_sha256 und prüft damit nur \
+                 die erzeugten Token (Fund 36). Neu erzeugen mit golden_generate.",
+                gv.name
+            );
+            return false;
+        }
     }
     true
 }

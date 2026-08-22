@@ -1,7 +1,7 @@
 # Konformitätspaket — INTEGER_LLM
 
-> **theta_v-Version:** 0.10.0
-> **Crate-Version:** 0.12.36
+> **theta_v-Version:** 0.17.0
+> **Crate-Version:** 0.16.0
 > **Zweck:** Eigenständiges Artefakt, gegen das fremde Implementierungen
 > sich prüfen können — ohne Kenntnis des Projektinneren.
 
@@ -12,6 +12,17 @@ Eine Implementierung ist konform, wenn sie für jeden Golden Vector in
 Die Prüfung erfolgt über SHA-256-Hashes der serialisierten Tensor-Daten
 (Feld `hash` in jedem Ein-/Ausgabe-Tensor).
 
+**Fund 37 (2026-08-22): Für Layer- und E2E-Vektoren stimmte dieser Satz
+nicht.** Sie wurden von `golden_generate` erzeugt, und das schrieb in
+`hash` einen `DefaultHasher`-Wert über die Rust-Repräsentation statt
+SHA-256 über die gepackte Nutzlast. Geprüft hat ihn niemand: In
+`golden_model` stand das Feld als toter Code. Ein Feld, das aussieht wie
+eine Integritätssicherung, keine ist und obendrein in einem zweiten
+Format vorliegt, ist schlechter als kein Feld. Beide Vektorgruppen sind
+neu erzeugt, die Zahlen darin sind unverändert (24 von 24 Layer-Vektoren
+bitgleich zur eingefrorenen Fassung), und `golden_model` rechnet die
+Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
+
 ### Drei Validierungsebenen
 
 | Ebene | Datei-Muster | Was geprüft wird |
@@ -19,6 +30,26 @@ Die Prüfung erfolgt über SHA-256-Hashes der serialisierten Tensor-Daten
 | **Op** | `vectors/op/*.golden.json` | Einzelne Kernel (RMSNorm, Linear W8A16, Softmax) |
 | **Layer** | `vectors/layer/*.golden.json` | Kompletter Transformer-Layer (RMSNorm → Attention → MLP → ResAdd) |
 | **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → 24 Layer → LM-Head → Token-Auswahl) |
+
+**E2E prüft die Zahlen, nicht die Entscheidung (seit 2026-08-22).** Ein
+E2E-Vektor trägt neben `outputs.tokens` das Metadatum
+`logits_sha256`: SHA-256 über die Logits jedes Dekodierschritts als
+`i32` little-endian, danach den gewählten Token als `u32` little-endian.
+
+Der Grund steht in Fund 36: `outputs.tokens` allein prüft ein Argmax
+über `vocab_size` Zahlen und ändert sich erst, wenn deren Rangfolge
+kippt. Gemessen an Qwen2.5-0,5B blieben die Token unverändert, während
+0,1 % der Bytes eines Tensors verschoben waren und das Modell
+nachweislich andere Zahlen rechnete. Eine Implementierung, die um
+wenige Einheiten abweicht, hätte den Prüflauf bestanden.
+
+Die Logits stehen bewusst **nicht** als Ausgabetensor im Vektor: Das
+wären bei 0,5B 3 × 151 936 int32 je Vektor. Ein Digest genügt, weil er
+für den einzigen Zweck reicht, den er hat, nämlich zwei Ausführungen zu
+vergleichen.
+
+Ein Vektor **ohne** dieses Feld wird abgelehnt und nicht schweigend
+schwächer geprüft.
 
 ### Golden-Vector-Format
 

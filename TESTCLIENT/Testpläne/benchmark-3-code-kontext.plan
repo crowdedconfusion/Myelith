@@ -1,0 +1,41 @@
+# Myelith-Testplan
+#
+# Diese Datei legt fest, womit gemessen wird. Alle Beteiligten
+# MÜSSEN sie unverändert verwenden: sonst weichen die Ergebnisse
+# ab, und das sieht aus wie ein Befund, ist aber ein Tippfehler.
+#
+# Aufruf:  myl-test --plan benchmark-3-code-kontext.plan determinismus
+#    oder im Menü über [3] Testdatei wählen
+#
+# Die Zeile spec_sha256 sichert genau das ab. Kommentare und
+# Reihenfolge gehen NICHT in die Prüfsumme ein, die Werte schon.
+
+# WAS DIESER PLAN PRUEFT
+#
+# Struktur und langer Kontext. Vier Anfaenge von Quelltext (Rust,
+# Python, JSON, SQL) verlangen ueber viele Token hinweg
+# Klammer-Konsistenz, und die beiden letzten Prompts sind absichtlich
+# lang: Sie schieben die Generierung auf hoehere Positionen und ueben
+# damit RoPE und den KV-Cache dort aus, wo die Winkel gross werden.
+# Fund 15 (RoPE falsch) und Fund 16 (Attention nur auf den ersten Key)
+# waren beide Fehler, die bei kurzen Prompts kaum auffielen.
+#
+# ZUR EINORDNUNG: gemessen wird Bitgleichheit, nicht ob der Code laeuft.
+#
+# LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
+#   6 Prompts x 32 Token x 2 Durchgaenge = 384 Token
+#   bei rund 27 tok/s (0,5B): etwa 14 Sekunden
+#   bei rund  2 tok/s (7B):   etwa 3 Minuten
+#   Dazu der Shard-Lauf und das Laden des Modells.
+
+plan_id     = benchmark-3-code-kontext
+prompt      = "fn fibonacci(n: u64) -> u64 {"
+prompt      = "def quicksort(xs):"
+prompt      = "{\"name\": \"myelith\", \"version\":"
+prompt      = "SELECT name, COUNT(*) FROM runs WHERE"
+prompt      = "Anna hat drei Katzen. Bernd hat zwei Hunde. Clara hat vier Vögel. Dora hat einen Hamster. Erik hat fünf Fische. Wer hat vier Tiere? Antwort:"
+prompt      = "Die Zahlen lauten 4, 8, 15, 16, 23 und 42. Die dritte Zahl in dieser Reihe ist"
+steps       = 32
+shards      = 4
+
+spec_sha256 = 4c449af2c4752e75be0f09b6f1e7b2e1644b0d14ad33f60b49b7b067dfe56edd

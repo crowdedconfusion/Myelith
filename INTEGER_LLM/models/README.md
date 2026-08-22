@@ -3,73 +3,70 @@
 Ablageort für das Quellmodell, aus dem die θ_v-Artefakte entstehen.
 Zweck: reproduzierbare Herkunft statt implizitem Hugging-Face-Cache.
 
-Der Inhalt wird nicht versioniert (siehe `.gitignore`); nur dieses README und
-die `.gitignore` bleiben im Repository.
+Der Inhalt wird nicht versioniert (siehe `.gitignore`); nur dieses README,
+`KATALOG.json` und die `.gitignore` bleiben im Repository.
 
-## Modelle
+> **Diese Datei wird erzeugt.** Quelle sind `models/KATALOG.json`
+> (kuratiert: Herkunft, Revision, Lizenz, Status) und
+> `scale_packs/REGISTER.json` (erzeugt: Digest, θ_v). Änderungen gehören
+> in eine der beiden Dateien, danach `python tools/modelle_liste.py`.
 
 Jede Variante braucht eine **eigene Lizenzprüfung** (Whitepaper Kap. 10.1,
-ETHICS-Grundsatz G7: Apache 2.0 oder MIT) und eine **fixierte Revision** —
+ETHICS-Grundsatz G7: Apache 2.0 oder MIT) und eine **fixierte Revision**:
 ohne beides ist der Lauf weder zulässig noch reproduzierbar. Es werden
 ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 (Scope-Entscheidung 12.15).
 
-| Modell | Revision | Lizenz | Größe | Stand |
-|---|---|---|---|---|
-| [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) | `060db6499f32faf8b98477b0a26969ef7d8b9987` | Apache-2.0 | 1,9 GB | lokal vorhanden |
-| [Qwen/Qwen2.5-7B](https://huggingface.co/Qwen/Qwen2.5-7B) | `d149729398750b98c0af14eb82c78cfe92750796` | Apache-2.0 | 15,2 GB | **noch nicht geholt** (Fahrplan 12.73) |
 
-Die 0.5B-Revision wurde am 2026-08-11 per `scripts/fetch_model.sh` neu
-geholt und aufgelöst; der ursprüngliche manuelle Download hatte keine
-dokumentierte Revision. Die 7B-Angaben stammen aus der HF-API und der
-`config.json` der Variante (geprüft am 2026-08-18, festgehalten in
-`tests/test_export_workflow.py::test_7b_config_matches_published_hf_config`).
+## Modelle
 
-**Zur Lizenzangabe:** Apache-2.0 laut Modellkarte, ohne eigene
+| Modell | Hugging Face | Revision | Lizenz | Parameter | Layer | Gewichte | Artefakt | θ_v | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| `qwen2.5-0.5b` | [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) | `060db6499f32…` | Apache-2.0 | 0,5 Mrd. | 24 | rund 1 GB | 0,74 GB | 0.17.0 | verifiziert |
+| `qwen2.5-7b` | [Qwen/Qwen2.5-7B](https://huggingface.co/Qwen/Qwen2.5-7B) | `d14972939875…` | Apache-2.0 | 7 Mrd. | 28 | rund 14 GB | 8,1 GB | 0.17.0 | verifiziert |
+
+**Status:**
+
+- **verifiziert**: Artefakte gebaut, Perplexität gegen die Gleitkomma-Referenz gemessen, Akzeptanzkriterium erfüllt, Skalenpaket im Repository.
+- **erprobt**: Artefakte gebaut und lauffähig, Qualität noch nicht gegen die Referenz gemessen.
+- **vorgemerkt**: Lizenz geprüft und Revision festgelegt, aber noch nicht geholt oder gebaut.
+
+**Gemessene Qualität** (Perplexität, WikiText-2):
+
+- `qwen2.5-0.5b`: 15,27 gegen BF16 14,95 (+2,11 %)
+- `qwen2.5-7b`: 8,78 gegen BF16 8,68 (+1,14 %)
+
+**Anmerkungen:**
+
+- `qwen2.5-0.5b`: Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an diesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an.
+- `qwen2.5-7b`: Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6). Rechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden. Nur wählen, wenn 23 GB Platte frei sind.
+
+## Woher die Gewichte kommen
+
+Der Testclient holt sie selbst, wenn er sie braucht: Menüpunkt
+**[4] Artefakt wählen** oder beim ersten Lauf, der ein Modell benötigt.
+Von Hand geht es auch:
+
+```bash
+huggingface-cli download <hf_repo> --revision <hf_revision> \
+    --local-dir INTEGER_LLM/models/<hf_verzeichnis>
+```
+
+## Wie daraus Artefakte werden
+
+```bash
+cd INTEGER_LLM
+INTEGER_LLM_MODEL=<modell> python -m calibrate.src.main
+```
+
+Der Bau nutzt das versionierte Skalenpaket aus `scale_packs/<modell>/` und
+ist damit **plattformübergreifend bitgleich**: Die Aktivierungsstatistik,
+der einzige nichtdeterministische Schritt (Fund 32), entfällt. Er dauert
+Sekunden statt Minuten.
+
+## Zur Lizenzangabe
+
+Die Spalte nennt, was die jeweilige Modellkarte angibt, ohne eigene
 Rechtsprüfung. Die Lizenzlage **quantisierter Ableitungen** ist Gegenstand
-einer separaten, nicht-technischen Klärung (siehe
-`README/Intern/State-of-the-Project.md`, Abschnitt 7).
-
-## Erwartete Struktur
-
-```
-models/
-├── .gitignore
-├── README.md
-├── Qwen2.5-0.5B/           # vollständiger HF-Snapshot, zur Laufzeit geholt
-│   ├── config.json
-│   ├── model.safetensors
-│   ├── tokenizer.json
-│   └── ...
-└── Qwen2.5-7B/             # dito; hier vier safetensors-Teile + index.json
-    ├── config.json
-    ├── model-0000{1..4}-of-00004.safetensors
-    ├── model.safetensors.index.json
-    └── ...
-```
-
-## Beschaffung
-
-Der Download erfolgt mit fixierter Revision über `scripts/fetch_model.sh`;
-der dabei ausgegebene Commit-Hash wird oben als Revision eingetragen:
-
-```bash
-MODEL_ID=Qwen/Qwen2.5-7B REVISION=d149729398750b98c0af14eb82c78cfe92750796 \
-  scripts/fetch_model.sh
-```
-
-Die Kalibrierung wählt die Variante über `INTEGER_LLM_MODEL` (Vorgabe
-`qwen2.5-0.5b`) und legt je Modell ein eigenes Artefaktverzeichnis an:
-
-```bash
-INTEGER_LLM_MODEL=qwen2.5-7b python -m calibrate.src.main
-```
-
-Die
-Kalibrierung (`calibrate/`) liest das Modell ausschließlich aus diesem
-Verzeichnis (nie aus dem impliziten Hugging-Face-Cache) und exportiert die
-θ_v-Artefakte nach `artifacts/`.
-
-## Pfad
-
-Zentrale Pfadkonstante: `MODELS_DIR` in `runtime/src/paths.rs`.
+einer separaten, nicht-technischen Klärung (`docs/01_licenses.md`) und im
+Fahrplan als offener Punkt geführt.

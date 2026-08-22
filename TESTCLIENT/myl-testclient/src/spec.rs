@@ -42,9 +42,29 @@
 //! prompt      = "Es war einmal"
 //! steps       = 8
 //! shards      = 4
-//! model       = qwen2.5-0.5b
 //! spec_sha256 = 9f2c…
 //! ```
+//!
+//! ## Kein Modell im Plan (2026-08-22)
+//!
+//! Bis dahin trug der Plan ein Feld `model` und band damit jeden
+//! Durchgang an ein Artefakt. Das war eine Fessel ohne Nutzen: Welches
+//! Modell auf einer Maschine liegt, weiß der Client selbst, und wo
+//! mehrere liegen, fragt er ohnehin. Ein Plan, der nur mit 0,5B geht,
+//! muss für 7B neu geschrieben werden, und dann tragen zwei Dateien
+//! dieselben Prompts unter verschiedenen Prüfsummen.
+//!
+//! Der Plan legt jetzt fest, **was** gemessen wird; **woran** entscheidet
+//! sich vor dem Lauf. Der Modellstand steht weiterhin in jedem Protokoll
+//! (θ_v, Artefakt-Digest), und `vergleich` verweigert das Urteil, wenn
+//! zwei Läufe gegen verschiedene Modelle gerechnet haben. Die Absicherung
+//! sitzt also dort, wo sie wirkt, statt in einer Datei, die man auch
+//! ignorieren könnte.
+//!
+//! Eine alte Datei mit `model`-Zeile bleibt **lesbar**: Das Feld wird
+//! überlesen. Ihre Prüfsumme stimmt allerdings nicht mehr, weil `model`
+//! aus der kanonischen Bytefolge entfallen ist; solche Pläne sind neu zu
+//! erzeugen.
 //!
 //! ## Die Prüfsumme
 //!
@@ -127,8 +147,6 @@ pub struct TestPlan {
     pub steps: usize,
     /// Shards für den `shard`-Lauf.
     pub shards: usize,
-    /// Modellkennung (Artefaktverzeichnis-Name).
-    pub model: String,
 }
 
 /// Fehler beim Lesen oder Prüfen eines Plans.
@@ -186,7 +204,6 @@ impl TestPlan {
             prompts: vec!["Die Hauptstadt von Frankreich ist".to_string()],
             steps: 8,
             shards: 4,
-            model: crate::runs::DEFAULT_MODEL.to_string(),
         }
     }
 
@@ -204,7 +221,6 @@ impl TestPlan {
         }
         let _ = writeln!(s, "steps={}", self.steps);
         let _ = writeln!(s, "shards={}", self.shards);
-        let _ = writeln!(s, "model={}", self.model);
         s.into_bytes()
     }
 
@@ -247,7 +263,6 @@ impl TestPlan {
         }
         let _ = writeln!(s, "steps       = {}", self.steps);
         let _ = writeln!(s, "shards      = {}", self.shards);
-        let _ = writeln!(s, "model       = {}", self.model);
         let _ = writeln!(s, "\nspec_sha256 = {}", self.checksum());
         s
     }
@@ -310,7 +325,6 @@ impl TestPlan {
             prompts,
             steps: zahl("steps")?,
             shards: zahl("shards")?,
-            model: hole("model").ok_or(PlanError::FeldFehlt("model"))?,
         };
 
         let erwartet = hole("spec_sha256").ok_or(PlanError::PruefsummeFehlt)?;
@@ -347,7 +361,6 @@ mod tests {
             ],
             steps: 8,
             shards: 4,
-            model: "qwen2.5-0.5b".into(),
         };
         plan.save(&pfad).expect("speichern");
         assert_eq!(TestPlan::load(&pfad).expect("laden"), plan);
@@ -410,7 +423,6 @@ mod tests {
             |p: &mut TestPlan| p.prompts.push("noch einer".into()),
             |p: &mut TestPlan| p.steps = 16,
             |p: &mut TestPlan| p.shards = 8,
-            |p: &mut TestPlan| p.model = "anderes-modell".into(),
         ] {
             let mut p = basis.clone();
             aendern(&mut p);
@@ -467,8 +479,43 @@ mod tests {
 
     #[test]
     fn fehlende_pruefsumme_wird_gemeldet() {
-        let text = "prompt = x\nsteps = 1\nshards = 1\nmodell = y\nmodel = y\n";
+        let text = "prompt = x\nsteps = 1\nshards = 1\n";
         assert_eq!(TestPlan::parse(text), Err(PlanError::PruefsummeFehlt));
+    }
+
+    /// **Ein Plan aus der Zeit vor dem 2026-08-22 bleibt lesbar.** Die
+    /// `model`-Zeile wird überlesen statt als unbekanntes Feld
+    /// abgelehnt: Wer eine alte Datei öffnet, soll erfahren, dass die
+    /// Prüfsumme nicht mehr passt, und nicht, dass die Datei kaputt sei.
+    /// Das sind zwei verschiedene Auskünfte, und nur die erste stimmt.
+    #[test]
+    fn eine_alte_model_zeile_wird_ueberlesen() {
+        let plan = TestPlan::vorgaben();
+        let text = format!(
+            "prompt = {}\nsteps = {}\nshards = {}\nmodel = qwen2.5-0.5b\nspec_sha256 = {}\n",
+            zitieren(&plan.prompts[0]),
+            plan.steps,
+            plan.shards,
+            plan.checksum()
+        );
+        let gelesen = TestPlan::parse(&text).expect("alte Datei bleibt lesbar");
+        assert_eq!(gelesen.prompts, plan.prompts);
+        assert_eq!(gelesen.steps, plan.steps);
+        assert_eq!(gelesen.shards, plan.shards);
+    }
+
+    /// Und die Gegenprobe: Eine alte Datei mit ihrer **alten** Prüfsumme
+    /// wird abgelehnt, weil `model` aus der kanonischen Bytefolge
+    /// entfallen ist. Sie stillschweigend zu akzeptieren hieße, zwei
+    /// verschiedene Prüfsummenverfahren nebeneinander zu führen.
+    #[test]
+    fn eine_alte_pruefsumme_wird_abgelehnt() {
+        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = qwen2.5-0.5b\n\
+                    spec_sha256 = 0000000000000000000000000000000000000000000000000000000000000000\n";
+        assert!(matches!(
+            TestPlan::parse(text),
+            Err(PlanError::PruefsummeFalsch { .. })
+        ));
     }
 
     /// **Zeilenenden dürfen nichts ändern.** Ein Testplan wird per Mail
@@ -488,7 +535,6 @@ mod tests {
         let b = TestPlan::parse(&mit_crlf).expect("CRLF-Fassung");
 
         assert_eq!(a.prompts, b.prompts, "Prompts unterscheiden sich");
-        assert_eq!(a.model, b.model);
         assert_eq!(a.steps, b.steps);
         assert_eq!(a.shards, b.shards);
         assert_eq!(
@@ -501,7 +547,7 @@ mod tests {
     #[test]
     fn fehlende_pflichtfelder_werden_gemeldet() {
         assert_eq!(
-            TestPlan::parse("steps = 1\nshards = 1\nmodel = y\n"),
+            TestPlan::parse("steps = 1\nshards = 1\n"),
             Err(PlanError::FeldFehlt("prompt"))
         );
     }
@@ -545,11 +591,10 @@ mod tests {
     fn unzitierter_prompt_bleibt_lesbar() {
         let plan = TestPlan::vorgaben();
         let text = format!(
-            "prompt = {}\nsteps = {}\nshards = {}\nmodel = {}\nspec_sha256 = {}\n",
+            "prompt = {}\nsteps = {}\nshards = {}\nspec_sha256 = {}\n",
             plan.prompts[0],
             plan.steps,
             plan.shards,
-            plan.model,
             plan.checksum()
         );
         assert_eq!(

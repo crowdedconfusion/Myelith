@@ -14,10 +14,19 @@ es einsetzt, würde beim Redundanzvergleich als fehlerhaft erscheinen und
 geslasht — oder, schlimmer, er würde ehrliche Knoten in einen Streit
 ziehen, den beide verlieren können.
 
-`bench_probe` gibt deshalb neben den Zeiten einen `decode_hash` aus. Der
-Benchmark prüft, dass **alle** Backends denselben Hash liefern, und
+`bench_probe` gibt deshalb neben den Zeiten einen `decode_digest` aus.
+Der Benchmark prüft, dass **alle** Backends denselben Wert liefern, und
 verweigert das Ergebnis, wenn nicht. Eine Tabelle mit Tokens/s, in der
 die Spalten verschiedene Ausgaben beschreiben, wäre wertlos.
+
+Der Wert deckt die **Logits jedes Schritts** ab, nicht nur die erzeugten
+Token. Bis 2026-08-22 stand hier `decode_hash`, ein Hash über die Token
+allein, und der ist für diese Frage zu grob: Ein Token ist ein Argmax
+über `vocab_size` Zahlen und ändert sich erst, wenn deren Rangfolge
+kippt. Gemessen an Qwen2.5-0,5B blieb er unverändert, während 0,1 % der
+Bytes eines Tensors verschoben waren und das Modell nachweislich andere
+Zahlen rechnete (Fund 36). Ein konsensbrechendes Backend hätte sich
+genau so verhalten können.
 
 ## Skalierung ist der eigentliche Zweck
 
@@ -244,7 +253,23 @@ def main():
             print(f"  {backend:<10} Messung fehlgeschlagen — {fehler}")
             continue
         ergebnisse[backend] = werte
-        hashes[backend] = werte.get("decode_hash")
+        # **Der starke Wert, nicht der Token-Hash** (Fund 36, 2026-08-22).
+        # `decode_hash` deckt nur die erzeugten Token ab, also eine
+        # Argmax-Entscheidung ueber vocab_size Zahlen; gemessen an 0,5B
+        # blieb er unveraendert, als 0,1 % der Bytes eines Tensors
+        # verschoben wurden und das Modell nachweislich andere Zahlen
+        # rechnete. Genau solche Abweichungen soll diese Pruefung finden.
+        #
+        # Rueckfall auf `decode_hash` nur, wenn ein altes Binary den
+        # neuen Wert nicht liefert, und dann mit sichtbarem Vermerk: eine
+        # stillschweigend schwaechere Pruefung waere schlimmer als eine
+        # fehlende.
+        stark = werte.get("decode_digest")
+        if stark is None:
+            print(f"  {backend:<10} HINWEIS: kein decode_digest, Pruefung faellt auf "
+                  f"decode_hash zurueck (nur Token, siehe Fund 36)")
+            stark = werte.get("decode_hash")
+        hashes[backend] = stark
         print(f"  {backend:<10} Prefill {werte['prefill_tokens_per_s']:8.2f} tok/s   "
               f"Decode {werte['decode_tokens_per_s']:7.2f} tok/s")
 
@@ -257,7 +282,9 @@ def main():
     print()
     eindeutig = set(hashes.values())
     if len(eindeutig) == 1:
-        print(f"Bitgleichheit über alle Backends: OK  (decode_hash {hashes[list(hashes)[0]]})")
+        print(f"Bitgleichheit über alle Backends: OK  (decode_digest {hashes[list(hashes)[0]]})")
+        print("  Der Wert deckt die Logits jedes Schritts ab, nicht nur die")
+        print("  erzeugten Token: Verglichen werden die gerechneten Zahlen.")
     else:
         print("BITGLEICHHEIT VERLETZT — die Backends rechnen Verschiedenes:")
         for b, h in hashes.items():
@@ -293,7 +320,8 @@ def main():
         "prompt": PROMPT,
         "decode_tokens": args.decode_tokens,
         "backends": ergebnisse,
-        "decode_hash": hashes[list(hashes)[0]],
+        "decode_digest": hashes[list(hashes)[0]],
+        "digest_umfang": "logits+token",
         "float_reference": fp,
     }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"\nGeschrieben: {ziel.relative_to(ROOT)}")

@@ -550,32 +550,19 @@ pub fn modell_laden(artifact_dir: &Path) -> Result<IntegerModel, String> {
 }
 
 fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, String, Vec<u32>) {
-    let mut cache =
-        integer_llm_runtime::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
-    let mut logits = Vec::new();
-    for (pos, &t) in ids.iter().enumerate() {
-        logits = model.forward_token(t as usize, pos, &mut cache);
-    }
-    let mut out: Vec<u32> = Vec::with_capacity(steps);
-    let start = ids.len();
-    // Die **Logits** gehen mit in den Digest, nicht nur die Token. Siehe
-    // den Modulkopf, Fund 36: Ein Hash über die Argmax-Ausgabe misst
-    // Token-Gleichheit, nicht Bitgleichheit.
-    let mut bytes: Vec<u8> = Vec::with_capacity(steps * (logits.len() + 1) * 4);
-    for step in 0..steps {
-        for &l in &logits {
-            bytes.extend_from_slice(&l.to_le_bytes());
-        }
-        let next = model.greedy_next(&logits);
-        out.push(next as u32);
-        bytes.extend_from_slice(&(next as u32).to_le_bytes());
-        logits = model.forward_token(next, start + step, &mut cache);
-    }
-    (
-        sha256_hex(&bytes),
-        format!("{} Token: {:?}", out.len(), &out[..out.len().min(8)]),
-        out,
-    )
+    // **Eine Fassung, nicht zwei.** Die Bytefolge des Digests steht in
+    // `runtime::generate::dekodieren_mit_digest`; hier stand bis
+    // 2026-08-22 eine eigene, und zwei Fassungen derselben Aussage sind
+    // genau die Lage, aus der Fund 34 entstand. Nachgemessen, bevor die
+    // Kopie wich: beide lieferten für denselben Prompt
+    // `df54ef6c89f1a840…`.
+    let token_ids: Vec<usize> = ids.iter().map(|&t| t as usize).collect();
+    let (out, digest) = integer_llm_runtime::generate::dekodieren_mit_digest(
+        model, &token_ids, steps, 0, true,
+    );
+    let out: Vec<u32> = out.into_iter().map(|t| t as u32).collect();
+    let beschreibung = format!("{} Token: {:?}", out.len(), &out[..out.len().min(8)]);
+    (digest, beschreibung, out)
 }
 
 /// `myl-test shard`, die erste geshardete Inferenz.

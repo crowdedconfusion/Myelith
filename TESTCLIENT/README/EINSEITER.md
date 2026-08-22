@@ -23,7 +23,7 @@ außerdem kein guter Nachweis. Deine Maschine ist ein unabhängiger Zeuge.
 | **Architektur** | **x86_64**, also ein gewöhnlicher Intel- oder AMD-Rechner. Ein Apple-Silicon-Mac hilft leider nicht: Wir haben schon einen, und zwei gleiche Maschinen beweisen nichts. Windows, Linux und Intel-Mac sind alle recht. |
 | **Rust** | Einmalig von <https://rustup.rs>. Sonst nichts. |
 | **Python mit PyTorch** | Nur für die beiden Modellstufen, rund 2 GB. Ohne geht es auch, siehe unten. |
-| **Platte** | Rund 1,7 GB für das kleine Modell. Hinterher wieder freigebbar: im Menü [9] Entwickler, dort [9] Artefakte und Gewichte freigeben. |
+| **Platte** | Rund 1,7 GB für das kleine Modell. Hinterher wieder freigebbar: im Menü [9] Entwickler, dort [6] Artefakte und Gewichte löschen. |
 | **Zeit** | Erster Start einige Minuten, weil sich der Client selbst baut. Der Lauf danach: Minuten. |
 
 Ein Konto bei Hugging Face brauchst du **nicht**.
