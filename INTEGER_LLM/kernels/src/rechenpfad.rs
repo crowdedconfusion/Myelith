@@ -27,10 +27,24 @@
 //!
 //! Ob ein Backend rechnet, entscheidet sich beim **Übersetzen**: Es hängt
 //! an Feature-Flags und an der Zielarchitektur. Zur Laufzeit ließe sich
-//! das nur erraten. Die Liste entsteht deshalb aus denselben `cfg`, die
-//! auch den Code auswählen, und steht neben ihm: Wer einen echten
-//! CUDA-Pfad schreibt, trägt ihn hier ein, und erst dann besteht ein
-//! CUDA-Prüflauf.
+//! das nur erraten. Die Liste **fragt deshalb dort nach, wo der Code
+//! ausgewählt wird**, statt die Bedingung zu wiederholen: Wer einen
+//! echten CUDA-Pfad schreibt, trägt ihn hier ein, und erst dann besteht
+//! ein CUDA-Prüflauf.
+//!
+//! ## Fund 34 (2026-08-22): Diese Datei hatte denselben Fehler
+//!
+//! Bis zu diesem Datum stand die Bedingung für `cpu-simd` hier **noch
+//! einmal**, als `any(target_arch = "x86_64", target_arch = "aarch64")`.
+//! `dot.rs` vektorisiert aber nur unter `aarch64`. Auf x86_64 meldete
+//! dieses Modul damit genau das, wogegen es geschrieben wurde: einen
+//! Rechenpfad, den es nicht gibt. Der zugehörige Test prüfte gegen
+//! dieselbe wiederholte Bedingung und konnte den Widerspruch nicht
+//! finden.
+//!
+//! Die Bedingung steht jetzt einmal, am `cfg` von `dot::gewaehlt`;
+//! `mit_rechenpfad` liest `dot::VEKTORISIERT`. Messung und Tragweite im
+//! Kopf von `dot.rs`.
 //!
 //! ## Was das Modul nicht behauptet
 //!
@@ -45,27 +59,18 @@
 /// `reference` steht immer darin: Sie ist der Pfad, gegen den alles
 /// andere geprüft wird.
 ///
-/// `cpu-simd` nur mit Feature **und** passender Architektur. Ohne die
-/// Architekturbedingung wäre die Angabe falsch: Auf einem Ziel ohne NEON
-/// und ohne AVX2 übersetzt das Feature zwar, aber `dot.rs` fällt auf die
-/// skalare Fassung zurück, und dann rechnet nichts anderes als bei
-/// `reference`.
+/// `cpu-simd` steht darin, wenn `dot.rs` auf dieser Übersetzung
+/// tatsächlich vektorisiert, und sonst nicht. **Gefragt wird dort, nicht
+/// hier** (`dot::VEKTORISIERT`): Diese Datei hatte die Bedingung eigenständig
+/// wiederholt, sie lief auseinander, und daraus wurde Fund 34. Der
+/// Modulkopf von `dot.rs` führt die Messung.
 ///
 /// `cuda` und `rocm` stehen bewusst **nicht** darin. Ihre Umsetzungen in
 /// `backends/` delegieren jede Operation an die Referenzkernel; sie sind
 /// Platzhalter mit dokumentierter Absicht, kein Rechenpfad.
 pub fn mit_rechenpfad() -> Vec<&'static str> {
-    // `cfg!` statt `#[cfg]`: Der Zweig steht dann immer im Code und wird
-    // nur zur Übersetzungszeit als wahr oder falsch ausgewertet. Mit dem
-    // Attribut verschwände der `push` ganz, und `mut` wäre ohne
-    // `cpu-simd` eine Warnung.
-    let simd = cfg!(all(
-        feature = "cpu-simd",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ));
-
     let mut vorhanden = vec!["reference"];
-    if simd {
+    if crate::dot::VEKTORISIERT {
         vorhanden.push("cpu-simd");
     }
     vorhanden
@@ -141,20 +146,36 @@ mod tests {
         }
     }
 
-    /// `cpu-simd` hängt an Feature **und** Architektur. Der Test prüft
-    /// beide Richtungen gegen dieselben Bedingungen, unter denen `dot.rs`
-    /// seine vektorisierte Fassung wählt.
+    /// **Fund 34 als Test.** Die Meldung über `cpu-simd` muss dem
+    /// folgen, was `dot.rs` wirklich tut, und nicht einer eigenen
+    /// Bedingung. Vorher stand hier `cfg!(all(feature = "cpu-simd",
+    /// any(x86_64, aarch64)))`, also eine Wiederholung der Bedingung aus
+    /// `dot.rs`, und weil dort nur `aarch64` vektorisiert, meldete
+    /// dieser Prüfstand auf x86_64 einen Rechenpfad, den es nicht gibt.
+    /// Der Test bestätigte das, weil er gegen dieselbe falsche Bedingung
+    /// prüfte wie der Code.
     #[test]
-    fn cpu_simd_haengt_an_feature_und_architektur() {
-        let erwartet = cfg!(all(
-            feature = "cpu-simd",
-            any(target_arch = "x86_64", target_arch = "aarch64")
-        ));
+    fn cpu_simd_gilt_nur_wo_dot_vektorisiert() {
         assert_eq!(
             rechnet("cpu-simd"),
-            erwartet,
+            crate::dot::VEKTORISIERT,
             "cpu-simd wird anders gemeldet, als dot.rs es auswählt"
         );
+    }
+
+    /// Der Fall, der Fund 34 war: Das Feature ist gesetzt, der
+    /// vektorisierte Pfad fehlt für dieses Ziel. Dann darf die Liste
+    /// nichts außer der Referenz enthalten.
+    #[test]
+    fn feature_ohne_vektorpfad_bleibt_ohne_eintrag() {
+        if cfg!(feature = "cpu-simd") && !crate::dot::VEKTORISIERT {
+            assert_eq!(
+                mit_rechenpfad(),
+                vec!["reference"],
+                "Feature gesetzt, aber dot.rs rechnet skalar: dann gibt es \
+                 nur einen Rechenpfad"
+            );
+        }
     }
 
     /// Ein Tippfehler im Backend-Namen darf nicht wie ein fehlender

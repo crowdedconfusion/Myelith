@@ -53,6 +53,16 @@ OPTIONEN
                         die Reihe an, die der Lauf nacheinander abarbeitet
     --steps <N>         Zu erzeugende Token (Vorgabe: 8)
     --shards <N>        Anzahl Shards für `shard` (Vorgabe: 4)
+    --repeat <N>        Läufe je Prompt im Determinismuslauf (Vorgabe: 2,
+                        Minimum 2). Höhere Werte suchen sporadische
+                        Abweichungen, die bei zwei Läufen durchrutschen:
+                        Speicherfehler, thermisches Drosseln, ein Wackler
+                        unter Last. Der Vergleichswert bleibt derselbe, es
+                        kommen nur weitere Läufe je Prompt hinzu.
+                        ACHTUNG: Alle Beteiligten müssen denselben Wert
+                        verwenden, sonst tragen ihre Protokolle
+                        verschiedene Vergleichswerte, und `vergleich`
+                        urteilt zu Recht UNVOLLSTÄNDIG.
     --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
                         Modell und prüft die Datei gegen ihre Prüfsumme.
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
@@ -136,6 +146,8 @@ struct Args {
     /// Modell, das ein erzeugter Plan vorgibt.
     model: String,
     quiet: bool,
+    /// Läufe je Prompt im Determinismuslauf (`--repeat`).
+    wiederholungen: usize,
     plan: Option<PathBuf>,
     plan_id: Option<String>,
     out: Option<PathBuf>,
@@ -150,6 +162,9 @@ impl Args {
             prompts: vec!["Die Hauptstadt von Frankreich ist".to_string()],
             steps: 8,
             shards: 4,
+            // Zwei ist der bisherige und der kleinste sinnvolle Wert:
+            // Bitgleichheit braucht zwei Ergebnisse.
+            wiederholungen: 2,
             artifacts: default_artifact_dir(),
             artifacts_explizit: false,
             logs: default_log_dir(),
@@ -197,6 +212,12 @@ fn parse() -> Result<Args, String> {
                 a.steps = need(i, "--steps")?
                     .parse()
                     .map_err(|_| "--steps erwartet eine Zahl".to_string())?;
+                i += 2;
+            }
+            "--repeat" => {
+                a.wiederholungen = need(i, "--repeat")?
+                    .parse()
+                    .map_err(|_| "--repeat erwartet eine Zahl".to_string())?;
                 i += 2;
             }
             "--shards" => {
@@ -258,6 +279,16 @@ fn parse() -> Result<Args, String> {
 
     if a.steps == 0 {
         return Err("--steps muss > 0 sein".into());
+    }
+    // Früh und mit Begründung, nicht erst im Lauf: Wer `--repeat 1`
+    // schreibt, meint „nur einmal rechnen" und hätte sonst einen
+    // Determinismuslauf gestartet, der nichts vergleicht.
+    if a.wiederholungen < 2 {
+        return Err(format!(
+            "--repeat muss >= 2 sein, angegeben: {}. Bitgleichheit braucht \
+             zwei Ergebnisse, ein einzelner Lauf vergleicht nichts.",
+            a.wiederholungen
+        ));
     }
     Ok(a)
 }
@@ -377,6 +408,7 @@ fn main() -> ExitCode {
             logs: args.logs,
             einstellungen_id,
             teilnehmer: args.name,
+            wiederholungen: args.wiederholungen,
         });
         return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
     }
@@ -435,7 +467,13 @@ fn main() -> ExitCode {
 
     let ok = match args.command.as_str() {
         "hardware" => run_hardware(&mut log),
-        "determinismus" => run_determinism(&mut log, &args.artifacts, &args.prompts, args.steps),
+        "determinismus" => run_determinism(
+            &mut log,
+            &args.artifacts,
+            &args.prompts,
+            args.steps,
+            args.wiederholungen,
+        ),
         "shard" => run_shard(
             &mut log,
             &args.artifacts,

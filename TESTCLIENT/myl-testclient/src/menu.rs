@@ -32,6 +32,13 @@ pub struct Einstellungen {
     pub einstellungen_id: String,
     /// Name des Teilnehmers. Steht im Protokoll und im Dateinamen.
     pub teilnehmer: String,
+    /// Wie oft jeder Prompt im Determinismuslauf gerechnet wird.
+    ///
+    /// Zwei ist die Vorgabe und das Minimum: Ein einzelner Lauf hat
+    /// nichts, womit er sich vergleichen ließe. Höhere Werte sind für
+    /// Langläufe gedacht und suchen sporadische Abweichungen, die bei
+    /// zwei Läufen durchrutschen (Speicherfehler, thermisches Drosseln).
+    pub wiederholungen: usize,
 }
 
 impl Einstellungen {
@@ -79,6 +86,17 @@ impl Einstellungen {
         }
         let _ = writeln!(t, "    Token       {}", self.steps);
         let _ = writeln!(t, "    Shards      {}", self.shards);
+        // Nur wenn vom Üblichen abgewichen wird. Steht die Vorgabe dort,
+        // liest sie niemand, und die Übersicht wird um eine Zeile länger,
+        // die nichts sagt. Weicht sie ab, ist es das Wichtigste in der
+        // Liste: Alle Beteiligten müssen denselben Wert verwenden.
+        if self.wiederholungen != 2 {
+            let _ = writeln!(
+                t,
+                "    Läufe je Prompt {}  (alle Beteiligten müssen denselben Wert verwenden)",
+                self.wiederholungen
+            );
+        }
         let _ = writeln!(t, "    Artefakte   {}", kurz(&self.artifacts));
         let _ = writeln!(t, "    Protokolle  {}", kurz(&self.logs));
         let _ = writeln!(t, "    Nutzer      {}", self.teilnehmer);
@@ -497,7 +515,7 @@ fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
             '1' => letztes_ergebnis = starte("hardware", e, runs::run_hardware),
             '2' => {
                 letztes_ergebnis = starte("determinismus", e, |log| {
-                    runs::run_determinism(log, &e.artifacts, &e.prompts, e.steps)
+                    runs::run_determinism(log, &e.artifacts, &e.prompts, e.steps, e.wiederholungen)
                 })
             }
             '3' => {
@@ -560,11 +578,21 @@ fn starte(befehl: &str, e: &Einstellungen, f: impl FnOnce(&mut RunLog) -> bool) 
 fn testlauf(e: &Einstellungen) -> bool {
     let mut log = protokoll("testlauf", e);
 
+    // Nur auf den Bildschirm, nicht ins Protokoll: Der Hinweis richtet
+    // sich an den Menschen davor, und er kommt VOR der ersten Stufe, weil
+    // er danach nicht mehr hilft. Ein Abbruch ist erlaubt, er kostet nur
+    // den ganzen Lauf: Ein Protokoll ohne Abschlusseintrag wird vom
+    // Vergleich als unvollständig geführt und trägt keinen Nachweis.
+    log.nur_anzeigen(
+        "  Der Lauf läuft jetzt durch. Strg-C bricht ihn ab; das Protokoll ist dann\n           unvollständig und muss wiederholt werden.\n",
+    );
+
     log.note("Stufe 1 von 4: Hardware");
     let hardware = runs::run_hardware(&mut log);
 
     log.note("Stufe 2 von 4: Determinismus (Einzelknoten)");
-    let determinismus = runs::run_determinism(&mut log, &e.artifacts, &e.prompts, e.steps);
+    let determinismus =
+        runs::run_determinism(&mut log, &e.artifacts, &e.prompts, e.steps, e.wiederholungen);
 
     log.note("Stufe 3 von 4: Geshardete Inferenz");
     let shard = runs::run_shard(&mut log, &e.artifacts, &e.prompts, e.steps, e.shards);

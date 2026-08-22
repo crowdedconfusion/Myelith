@@ -118,6 +118,16 @@ pub enum Event {
     Error { text: String },
     /// Lauf beendet.
     RunFinished { ok: bool, millis: u64 },
+    /// Lauf **nicht** regulär beendet: aufgegeben, abgebrochen, oder
+    /// mitten in einem Schritt aus dem Programm gefallen.
+    ///
+    /// Getrennt von `RunFinished { ok: false }`, und das ist der Punkt:
+    /// Ein fehlgeschlagener Lauf hat alle Schritte gemacht und einen
+    /// davon nicht bestanden. Ein abgebrochener hat die restlichen
+    /// Schritte nie versucht, und seine Vergleichswerte decken deshalb
+    /// nur einen Teil des Testplans ab. Wer beides zusammenwirft,
+    /// vergleicht am Ende ein Sechstel eines Laufs mit einem ganzen.
+    RunAborted { grund: String, millis: u64 },
 }
 
 impl Event {
@@ -134,6 +144,7 @@ impl Event {
             Event::Note { .. } => "note",
             Event::Error { .. } => "error",
             Event::RunFinished { .. } => "run_finished",
+            Event::RunAborted { .. } => "run_aborted",
         }
     }
 
@@ -196,6 +207,10 @@ impl Event {
                 ("ok", ok.to_string()),
                 ("millis", millis.to_string()),
             ],
+            Event::RunAborted { grund, millis } => vec![
+                ("grund", grund.clone()),
+                ("millis", millis.to_string()),
+            ],
         }
     }
 
@@ -255,6 +270,11 @@ impl Event {
                 "Lauf beendet: {} nach {} ms",
                 if *ok { "OK" } else { "FEHLGESCHLAGEN" },
                 millis
+            ),
+            Event::RunAborted { grund, millis } => format!(
+                "Lauf ABGEBROCHEN nach {} ms: {}. Das Protokoll ist unvollständig \
+                 und trägt keinen Vergleich.",
+                millis, grund
             ),
         }
     }
@@ -491,6 +511,43 @@ pub struct RunLog {
     /// Zahl der protokollierten Fehler und Abweichungen.
     problems: usize,
     dir: PathBuf,
+    /// Wurde [`RunLog::finish`] aufgerufen?
+    ///
+    /// Steuert den Abbruchvermerk in [`Drop`]. Ohne ihn endet ein Lauf,
+    /// der unterwegs abbricht, mit einer Datei, die wie eine ganze
+    /// aussieht: Alle Zeilen sind vollständig, denn `File` puffert nicht,
+    /// nur die letzte fehlt.
+    beendet: bool,
+}
+
+/// Hinterlässt einen Abbruchvermerk, wenn `finish` nie lief.
+///
+/// **Was das abdeckt:** Panik samt Abwicklung, frühe Rückkehr aus einem
+/// Fehlerpfad, jedes reguläre Verlassen ohne Abschluss.
+///
+/// **Was es nicht abdeckt, und warum das in Ordnung ist:** Strg-C
+/// (SIGINT), ein geschlossenes Fenster (SIGHUP) und `kill -9` beenden
+/// den Prozess, ohne dass `Drop` läuft. Ein Signalbehandler würde die
+/// ersten beiden Fälle einfangen und den dritten nicht, und er wäre eine
+/// weitere Abhängigkeit.
+///
+/// Der Schutz sitzt deshalb dort, wo er **alle** Fälle erwischt: Wer ein
+/// Protokoll liest, verlangt den Abschlusseintrag. Fehlt er, ist der Lauf
+/// unvollständig, gleich woran es lag. `vergleich::urteilen` setzt das
+/// durch, und das war nötig: Bis 2026-08-22 lieferte ein nach einem von
+/// sechs Prompts abgebrochener Lauf zusammen mit einem vollständigen ein
+/// Urteil `NACHWEIS`.
+impl Drop for RunLog {
+    fn drop(&mut self) {
+        if self.beendet {
+            return;
+        }
+        let millis = self.started.elapsed().as_millis() as u64;
+        self.event(Event::RunAborted {
+            grund: "Lauf ohne Abschluss verlassen".to_string(),
+            millis,
+        });
+    }
 }
 
 impl RunLog {
@@ -556,6 +613,7 @@ impl RunLog {
             echo,
             problems: 0,
             dir: dir.to_path_buf(),
+            beendet: false,
         };
         // Teilnehmer und Einstellungs-Kurzkennung gehören ins Protokoll
         // selbst, nicht nur in den Dateinamen. Protokolle werden einzeln
@@ -664,6 +722,9 @@ impl RunLog {
     pub fn finish(mut self, ok: bool) -> bool {
         let millis = self.started.elapsed().as_millis() as u64;
         self.event(Event::RunFinished { ok, millis });
+        // Vor jeder weiteren Zeile: `self` wird am Ende dieser Funktion
+        // fallen gelassen, und `Drop` würde sonst einen Abbruch vermerken.
+        self.beendet = true;
         if self.echo {
             println!(
                 "\nProtokoll: {}/{}.jsonl (maschinenlesbar) und {}.log. Lauf {}",

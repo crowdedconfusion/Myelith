@@ -694,9 +694,17 @@ In dieser Reihenfolge prüfen:
    Vergleichs. Bei Abweichung urteilt der Befehl ohnehin
    `UNVERGLEICHBAR`.
 3. **Läuft dasselbe Backend?** `grep '"key":"backend_selected"' *.jsonl`.
-   Referenz gegen `cpu-simd`/AVX2 ist ein **gewollter** Vergleich, aber
+   Referenz gegen `cpu-simd/neon` ist ein **gewollter** Vergleich, aber
    auch er muss bitgleich sein. Weicht er ab, ist es ein
    SIMD-Paritätsfehler und gehört in den INTEGER_LLM-Fahrplan.
+
+   **`cpu-simd` gibt es heute nur auf aarch64** (Fund 34, 2026-08-22).
+   Auf x86_64 hat `kernels/src/dot.rs` noch keine vektorisierte Fassung;
+   ein Bau mit `--features cpu-simd` würde dort die Referenzkernel unter
+   fremdem Namen protokollieren, und der Client verweigert ihn deshalb
+   mit einem Hinweis auf `cargo build --release`. Für den
+   Cross-Hardware-Nachweis ändert das nichts: Verglichen werden zwei
+   Maschinen, nicht zwei Backends.
 
 Erst wenn alle drei übereinstimmen und die Werte trotzdem abweichen, ist
 es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
@@ -714,7 +722,7 @@ Nach abnehmendem Erkenntniswert:
 | Kombination | Was sie prüft |
 |---|---|
 | **x86_64 + aarch64** | Verschiedene Befehlssätze, verschiedene Compiler-Backends. Der wichtigste Vergleich. |
-| **Referenz + AVX2** | Ob die SIMD-Kernel wirklich bit-identisch sind. Deckt die Paritätslücke aus Fund A19 mit ab. |
+| **Referenz + NEON** | Ob die SIMD-Kernel wirklich bit-identisch sind. Nur auf aarch64: Ein AVX2-Pfad existiert noch nicht (Fund A19), und seit Fund 34 behauptet der Client auch nicht mehr, es gäbe einen. |
 | **Linux + macOS + Windows** | libm- und Toolchain-Unterschiede. Hier hätte die alte `f64::exp()`-LUT zugeschlagen (Fund A5). |
 | **Debug + Release** | Überlaufverhalten. Debug panickt, Release läuft um: genau der Unterschied aus Fund A14. |
 | Zwei x86_64-Maschinen derselben Generation | Wenig. Nur als Rauschprüfung. |

@@ -45,26 +45,95 @@
 //! beim Redundanzvergleich geslasht, ohne etwas falsch gemacht zu haben.
 //! Der AVX2-Pfad ist als eigener Fahrplanpunkt vermerkt und gehört auf
 //! echte x86_64-Hardware (Kritikpunkt K1, Fund A19).
+//!
+//! ## Fund 34 (2026-08-22): Diese Auslassung war zweimal beschrieben
+//!
+//! Dass es auf x86_64 keinen vektorisierten Pfad gibt, stand hier. Zwei
+//! andere Stellen behaupteten das Gegenteil, weil sie die Bedingung
+//! wiederholten statt sie zu lesen:
+//!
+//! - `rechenpfad::mit_rechenpfad` führte `cpu-simd` unter
+//!   `any(x86_64, aarch64)` und meldete es damit auch dort, wo dieses
+//!   Modul skalar rechnet.
+//! - `myl-testclient::hardware::selected_backend` schrieb sogar
+//!   `cpu-simd/avx2` ins Protokoll, sobald `is_x86_feature_detected!`
+//!   AVX2 auf der **CPU** fand. Das ist eine Auskunft über den Prozessor,
+//!   nicht über unseren Code.
+//!
+//! **Gemessen** (dieselbe Quelle, zwei Ziele, `--features cpu-simd`,
+//! 20 000 Durchläufe über 4096 Elemente):
+//!
+//! | Ziel | `dot_scalar` | `dot_i8_i16` | Verhältnis |
+//! |---|---|---|---|
+//! | aarch64 (nativ) | 6,97 ms | 2,70 ms | **2,58×** |
+//! | x86_64 (Rosetta) | 15,26 ms | 15,20 ms | **1,00×** |
+//!
+//! Auf x86_64 ist `dot_i8_i16` nicht ähnlich schnell wie `dot_scalar`,
+//! es **ist** `dot_scalar`. Gemeldet wurde trotzdem ein zweiter
+//! Rechenpfad.
+//!
+//! **Es ist Fund 33 eine Ebene tiefer.** Dort zertifizierte ein Prüflauf
+//! ein Backend, das nur ein Etikett war; hier hätte ein Protokoll von
+//! der Partnermaschine `x86_64-…-cpu-simd/avx2` getragen, während beide
+//! Seiten denselben skalaren Code rechneten. Die Anleitung führt
+//! „Referenz + AVX2" als lohnende Kombination, und ein Koordinator hätte
+//! diesen Haken gesetzt, ohne dass je etwas anderes gelaufen wäre.
+//!
+//! **Konsequenz für den Bau:** Die Bedingung steht jetzt genau einmal,
+//! am `cfg` von `mod gewaehlt`. Alle Auskünfte über sie lesen
+//! [`VEKTORISIERT`].
+
+/// Der gewählte Pfad, in beiden Fällen an einer Stelle: Konstante und
+/// Aufruf stehen im selben Zweig und können deshalb nicht auseinander
+/// laufen.
+///
+/// **Warum das so gebaut ist, siehe Fund 34 im Modulkopf.** Vorher stand
+/// die Bedingung zweimal im Baum: hier und in `rechenpfad.rs`. Sie lief
+/// auseinander, und `cpu-simd` galt auf x86_64 als eigener Rechenpfad,
+/// während dieselbe Übersetzung skalar rechnete.
+#[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
+mod gewaehlt {
+    pub const VEKTORISIERT: bool = true;
+
+    // NEON ist auf aarch64 Teil der Basis-Architektur, keine
+    // Laufzeit-Erkennung nötig.
+    #[inline]
+    pub fn dot(w: &[i8], x: &[i16]) -> i64 {
+        unsafe { super::neon::dot_neon(w, x) }
+    }
+}
+
+#[cfg(not(all(feature = "cpu-simd", target_arch = "aarch64")))]
+mod gewaehlt {
+    pub const VEKTORISIERT: bool = false;
+
+    #[inline]
+    pub fn dot(w: &[i8], x: &[i16]) -> i64 {
+        super::dot_scalar(w, x)
+    }
+}
+
+/// Läuft auf **dieser** Übersetzung eine vektorisierte Fassung von
+/// [`dot_i8_i16`]?
+///
+/// **Die einzige Quelle für diese Aussage im ganzen Baum.**
+/// `rechenpfad::mit_rechenpfad` und der Testclient lesen sie hier aus,
+/// statt die Bedingung zu wiederholen. Wer einen AVX2-Pfad hinzufügt,
+/// ändert den `cfg` an `mod gewaehlt` und ist damit überall fertig.
+pub use gewaehlt::VEKTORISIERT;
 
 /// Skalarprodukt zweier gleich langer Folgen: `Σ w[i] · x[i]`.
 ///
-/// Akkumuliert exakt in `i64`. Ist `cpu-simd` aktiv und die Zielplattform
-/// aarch64, läuft eine vektorisierte Fassung mit identischem Ergebnis
-/// (siehe Modulkopf).
+/// Akkumuliert exakt in `i64`. Ob eine vektorisierte Fassung läuft, sagt
+/// [`VEKTORISIERT`]; das Ergebnis ist in beiden Fällen dasselbe (siehe
+/// Modulkopf).
 ///
 /// Verarbeitet werden `min(w.len(), x.len())` Elemente — dieselbe
 /// Semantik wie das `zip` der Skalarfassung, damit der Austausch nichts
 /// an den Aufrufstellen ändert.
 #[inline]
 pub fn dot_i8_i16(w: &[i8], x: &[i16]) -> i64 {
-    #[cfg(all(feature = "cpu-simd", target_arch = "aarch64"))]
-    {
-        // NEON ist auf aarch64 Teil der Basis-Architektur, keine
-        // Laufzeit-Erkennung nötig.
-        return unsafe { neon::dot_neon(w, x) };
-    }
-    #[allow(unreachable_code)]
-    dot_scalar(w, x)
+    gewaehlt::dot(w, x)
 }
 
 /// Skalare Referenzfassung — der numerische Vertrag.

@@ -8,6 +8,13 @@
 #           "reference" (default, goldener Standard), "cpu-simd",
 #           "cuda", "rocm".
 #
+# Nicht jedes davon laeuft ueberall. Der Pruefstand lehnt ein Backend ab
+# (Exit 2), das auf DIESER Uebersetzung keinen eigenen Rechenpfad hat:
+#   - "cuda"/"rocm" ueberall, solange backends/ nur delegiert (Fund 33)
+#   - "cpu-simd" auf jedem Ziel ausser aarch64, weil kernels/src/dot.rs
+#     bisher nur eine NEON-Fassung hat (Fund 34)
+# Massgeblich ist kernels/src/rechenpfad.rs, nicht diese Liste.
+#
 # Bis 2026-08-19 wurde der Parameter nur ausgegeben und dann ignoriert:
 # beide cargo-Aufrufe standen fest auf `--features reference`. Damit
 # konnte der Prüflauf ausschliesslich sich selbst zertifizieren — genau

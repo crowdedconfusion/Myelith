@@ -149,9 +149,14 @@ jobs:
         working-directory: INTEGER_LLM/kernels
         run: cargo test --lib --quiet
 
-      - name: cargo build --features cpu-simd
+      # Nicht nur bauen, sondern testen: Dieser Runner ist x86_64, und
+      # genau dort greift die Regression aus Fund 34. `dot.rs` hat noch
+      # keinen AVX2-Pfad, also muss `rechenpfad` hier `cpu-simd`
+      # weglassen, obwohl das Feature gesetzt ist. Auf der
+      # Entwicklungsmaschine (aarch64) laesst sich das nicht pruefen.
+      - name: cargo test --features cpu-simd (x86_64, Fund 34)
         working-directory: INTEGER_LLM/kernels
-        run: cargo build --features cpu-simd --quiet
+        run: cargo test --lib --features cpu-simd --quiet
 
       - name: cargo build --features cuda
         working-directory: INTEGER_LLM/kernels

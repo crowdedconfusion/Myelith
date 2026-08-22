@@ -6,6 +6,47 @@
 //!
 //! Der Digest ist überall SHA-256 über eine kanonische Bytefolge: nie
 //! über eine formatierte Ausgabe. Formatierung ändert sich, Bytes nicht.
+//!
+//! ## Fund 36 (2026-08-22): Der Digest maß Token-Gleichheit, nicht Bitgleichheit
+//!
+//! `greedy_digest` hashte bis zu diesem Datum **nur die erzeugten
+//! Token**. Ein Token ist ein Argmax, also eine Entscheidung zwischen
+//! 151 936 Zahlen: Er ändert sich erst, wenn die Rangfolge kippt. Die
+//! Zahlen selbst können vorher beliebig abweichen.
+//!
+//! **Gemessen** an Qwen2.5-0,5B, indem Bytes eines einzelnen Tensors
+//! (`layers.0.self_attn.q_proj`, 802 816 Byte) um je eins verschoben und
+//! die Hashkette bis `theta_v.json` konsistent nachgezogen wurde. Das
+//! Modell war danach jedesmal ein anderes und lud fehlerfrei:
+//!
+//! | geänderte Bytes | Anteil | Digest über Token | Digest über Logits |
+//! |---|---|---|---|
+//! | 9 | 0,0011 % | **unverändert** | verändert |
+//! | 81 | 0,0101 % | **unverändert** | verändert |
+//! | 803 | 0,1 % | **unverändert** | verändert |
+//! | 8029 | 1,0 % | verändert | verändert |
+//!
+//! In drei von vier Stufen rechnete das Modell nachweislich andere
+//! Zahlen, und der Vergleichswert meldete „bitgleich".
+//!
+//! **Warum das den Kernbeleg des Projekts betrifft:** Der
+//! Cross-Hardware-Nachweis behauptet, zwei Architekturen rechneten
+//! *dasselbe*. Geprüft wurde, ob sie *dieselbe Entscheidung treffen*.
+//! Eine Maschine mit abweichender Ganzzahlarithmetik hätte erst dann
+//! auffallen müssen, wenn die Abweichung groß genug war, ein Argmax zu
+//! kippen. Genau die kleinen Abweichungen, gegen die dieses Projekt
+//! gebaut ist, wären durchgerutscht.
+//!
+//! Der Digest deckt jetzt die **Logits jedes Schritts** ab, dazu weiter
+//! den gewählten Token. Logits sind hier `i32`: Sie zu hashen ist exakt
+//! und bleibt in der Ganzzahldisziplin, anders als bei einem
+//! Gleitkommamodell, wo dieser Weg gar nicht offenstünde.
+//!
+//! **Alte Protokolle sind damit nicht mehr vergleichbar.** Deshalb trägt
+//! jedes Protokoll den Umfang des Digests als eigenes Feld
+//! (`digest_umfang`), und `vergleich` behandelt zwei verschiedene Umfänge
+//! wie zwei verschiedene Modellstände: unvergleichbar, und ausdrücklich
+//! kein Hardware-Befund.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -101,6 +142,16 @@ fn backend_taugt(log: &mut RunLog) -> bool {
     }
 }
 
+/// Was in den Vergleichswert eines Modelllaufs eingeht.
+///
+/// Wird als Feld protokolliert und beim Vergleich geprüft. Ändert sich,
+/// was gehasht wird, ändert sich diese Zeichenkette mit: Zwei Protokolle
+/// mit verschiedenem Umfang messen verschiedene Dinge und dürfen nicht
+/// gegeneinander geurteilt werden.
+///
+/// `token` war der Stand bis Fund 36 (2026-08-22).
+pub const DIGEST_UMFANG: &str = "logits+token";
+
 fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     let fp = Fingerprint::collect();
     for (k, v) in &fp.entries {
@@ -112,6 +163,17 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     log.event(Event::Hardware {
         key: "fingerprint_sha256".into(),
         value: sha256_hex(&fp.canonical_bytes()),
+    });
+
+    // **Was der Vergleichswert überhaupt abdeckt.** Steht bei der
+    // Hardware und nicht beim Artefakt, weil es eine Eigenschaft des
+    // Messverfahrens ist und auch für Läufe ohne Modell gilt. Ohne dieses
+    // Feld ließe sich ein Protokoll von vor Fund 36 nicht von einem
+    // danach unterscheiden, und der Vergleich meldete eine Abweichung,
+    // wo nur zwei verschiedene Dinge gemessen wurden.
+    log.event(Event::Hardware {
+        key: "digest_umfang".into(),
+        value: DIGEST_UMFANG.to_string(),
     });
 
     let Some(dir) = artifact_dir else { return };
@@ -248,9 +310,24 @@ pub fn run_determinism(
     artifact_dir: &Path,
     prompts: &[String],
     steps: usize,
+    wiederholungen: usize,
 ) -> bool {
     log_context(log, Some(artifact_dir));
     if !backend_taugt(log) {
+        return false;
+    }
+
+    // **Vor der Artefaktprüfung**, wie die Backend-Sperre und aus
+    // demselben Grund: Es ist ein Argumentfehler und steht fest, bevor
+    // irgendein Modell gebraucht wird. Ein einzelner Lauf kann nichts
+    // über Bitgleichheit sagen, er hat nichts, womit er sich vergleichen
+    // ließe. Zwei ist die Vorgabe und das Minimum; mehr sind für
+    // Langläufe gedacht (Fahrplanpunkt 2.4).
+    if wiederholungen < 2 {
+        log.error(format!(
+            "Wiederholungen muss >= 2 sein, angegeben: {wiederholungen}. \
+             Ein einzelner Lauf prüft keine Bitgleichheit."
+        ));
         return false;
     }
 
@@ -265,7 +342,6 @@ pub fn run_determinism(
         log.error("Kein Prompt angegeben");
         return false;
     }
-
     let model = match log.timed("modell_laden", "", || loader::load_model(artifact_dir)) {
         Ok(m) => m,
         Err(e) => {
@@ -296,7 +372,7 @@ pub fn run_determinism(
         }
 
         let mut digests = Vec::new();
-        for lauf in 1..=2u32 {
+        for lauf in 1..=wiederholungen {
             let d = log.timed(&format!("prompt_{}_lauf_{}", nr, lauf), "", || {
                 greedy_digest(&model, &ids, steps)
             });
@@ -313,20 +389,35 @@ pub fn run_determinism(
             log.nur_anzeigen("");
         }
 
-        let gleich = digests[0].0 == digests[1].0;
-        if gleich {
-            log.result(
+        // **Gegen den ersten Lauf, nicht paarweise gegen den Vorgänger.**
+        // Ein Wackler in der Mitte einer langen Reihe fiele sonst zweimal
+        // auf und beim Zurückkehren auf den richtigen Wert gar nicht mehr.
+        match digests.iter().position(|d| d.0 != digests[0].0) {
+            None => log.result(
                 &format!("determinismus_{}", nr),
                 &digests[0].0,
-                "bitgleich über zwei Läufe",
-            );
-        } else {
-            alle_gleich = false;
-            log.event(Event::Mismatch {
-                name: format!("determinismus_{}", nr),
-                expected: digests[0].0.clone(),
-                actual: digests[1].0.clone(),
-            });
+                format!("bitgleich über {} Läufe", wiederholungen),
+            ),
+            Some(abweichend) => {
+                alle_gleich = false;
+                log.event(Event::Mismatch {
+                    name: format!("determinismus_{}", nr),
+                    expected: digests[0].0.clone(),
+                    actual: digests[abweichend].0.clone(),
+                });
+                // Die Nummer des ersten abweichenden Laufs ist die
+                // eigentliche Diagnose: Lauf 2 deutet auf einen Fehler im
+                // Code, Lauf 40 nach 39 gleichen eher auf die Maschine
+                // (Speicher, Temperatur).
+                log.error(format!(
+                    "Prompt {}: Lauf {} von {} weicht vom ersten ab. \
+                     Läufe 1 bis {} waren identisch.",
+                    nr,
+                    abweichend + 1,
+                    wiederholungen,
+                    abweichend
+                ));
+            }
         }
         einzelwerte.push(digests[0].0.clone());
     }
@@ -335,7 +426,7 @@ pub fn run_determinism(
     log.result(
         "determinismus",
         &gesamt,
-        format!("{} Prompts, je zwei Läufe", prompts.len()),
+        format!("{} Prompts, je {} Läufe", prompts.len(), wiederholungen),
     );
     log.note(format!(
         "Vergleichswert für andere Maschinen: {}: bei gleichem Testplan und \
@@ -467,14 +558,18 @@ fn greedy_digest(model: &IntegerModel, ids: &[u32], steps: usize) -> (String, St
     }
     let mut out: Vec<u32> = Vec::with_capacity(steps);
     let start = ids.len();
+    // Die **Logits** gehen mit in den Digest, nicht nur die Token. Siehe
+    // den Modulkopf, Fund 36: Ein Hash über die Argmax-Ausgabe misst
+    // Token-Gleichheit, nicht Bitgleichheit.
+    let mut bytes: Vec<u8> = Vec::with_capacity(steps * (logits.len() + 1) * 4);
     for step in 0..steps {
+        for &l in &logits {
+            bytes.extend_from_slice(&l.to_le_bytes());
+        }
         let next = model.greedy_next(&logits);
         out.push(next as u32);
+        bytes.extend_from_slice(&(next as u32).to_le_bytes());
         logits = model.forward_token(next, start + step, &mut cache);
-    }
-    let mut bytes = Vec::with_capacity(out.len() * 4);
-    for t in &out {
-        bytes.extend_from_slice(&t.to_le_bytes());
     }
     (
         sha256_hex(&bytes),
@@ -516,7 +611,6 @@ pub fn run_shard(
         log.error("Kein Prompt angegeben");
         return false;
     }
-
     let model = match log.timed("modell_laden", "", || loader::load_model(artifact_dir)) {
         Ok(m) => Arc::new(m),
         Err(e) => {
@@ -647,11 +741,22 @@ pub fn run_shard(
         }
 
         // Gegenprobe: dasselbe Modell ungeteilt.
-        let (single_digest, single_desc, single_tokens) = log.timed(
+        let (_, single_desc, single_tokens) = log.timed(
             &format!("prompt_{}_einzelknoten", nr),
             "",
             || greedy_digest(&model, &ids, steps),
         );
+        // **Token gegen Token, nicht Logits gegen Token.** Der Pod liefert
+        // über `run_prompt` nur die erzeugten Token; der Digest aus
+        // `greedy_digest` deckt seit Fund 36 zusätzlich die Logits ab und
+        // wäre hier mit nichts vergleichbar. Beide Werte heißen deshalb
+        // `…_tokens` und meinen dasselbe.
+        //
+        // **Fund 36 gilt für diesen Vergleich weiter:** Er prüft, ob die
+        // Aufteilung dieselbe Entscheidung erzeugt, nicht dieselben Zahlen.
+        // Ihn zu schärfen verlangt, dass die Stage-API die Logits
+        // herausgibt; vermerkt als offener Punkt.
+        let single_digest = digest_tokens(&single_tokens);
         log.result(
             &format!("prompt_{}_einzelknoten_tokens", nr),
             &single_digest,
@@ -753,7 +858,7 @@ mod tests {
     fn fehlende_artefakte_werden_sauber_gemeldet() {
         let dir = tempdir("keine-artefakte");
         let mut log = RunLog::new(&dir, "determinismus", false);
-        let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), &probe(), 4);
+        let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), &probe(), 4, 2);
         assert!(!ok);
         assert!(log.problems() > 0);
         let lauf_dir = log.dir().to_path_buf();
@@ -763,6 +868,36 @@ mod tests {
         let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         assert!(jsonl.contains("\"kind\":\"error\""));
         assert!(jsonl.contains("Artefaktverzeichnis"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Ein einzelner Lauf vergleicht nichts. Die Ablehnung steht im
+    /// Protokoll, nicht nur im Rückgabewert: Wer `--repeat 1` gesetzt hat,
+    /// soll den Grund in der Datei finden und nicht raten müssen, warum
+    /// der Lauf nichts geliefert hat.
+    #[test]
+    fn eine_einzige_wiederholung_wird_abgelehnt() {
+        // In einem Bau ohne gültigen Rechenpfad greift die Backend-Sperre
+        // davor, und ihre Begründung ist dann die richtige. Der Fall
+        // wurde beim Lauf der Testreihe für x86_64 mit `--features
+        // cpu-simd` sichtbar, also genau dort, wo Fund 34 sitzt.
+        if crate::hardware::rechenpfad_pruefen().is_err() {
+            return;
+        }
+        let dir = tempdir("repeat-eins");
+        let mut log = RunLog::new(&dir, "determinismus", false);
+        let ok = run_determinism(&mut log, Path::new("/nicht/vorhanden"), &probe(), 4, 1);
+        let dateiname = log.dateiname().to_string();
+        let lauf_dir = log.dir().to_path_buf();
+        log.finish(ok);
+
+        assert!(!ok, "ein einzelner Lauf darf nicht als Nachweis gelten");
+        let text = std::fs::read_to_string(lauf_dir.join(format!("{dateiname}.log")))
+            .expect("Protokoll lesbar");
+        assert!(
+            text.contains(">= 2"),
+            "Grund fehlt im Protokoll:\n{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

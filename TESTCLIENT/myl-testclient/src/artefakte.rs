@@ -1080,4 +1080,57 @@ mod loeschen_tests {
         assert_eq!(groesse(2048), "2,0 KB");
         assert_eq!(groesse(8_100_000_000), "7,5 GB");
     }
+
+    /// **Negativtest Artefaktwechsel** (Fahrplan TESTCLIENT, „Tests, die
+    /// für gehärtete Infrastruktur bestanden werden müssen").
+    ///
+    /// Ein verändertes Artefakt muss zu einem anderen Ankerdigest führen.
+    /// Ohne diese Eigenschaft prüft der ganze Vergleich nichts: Zwei
+    /// Maschinen mit verschiedenen Modellen bekämen denselben
+    /// Modellstand bescheinigt, und eine daraus folgende Abweichung
+    /// sähe wie ein Hardware-Befund aus. Genau diese Verwechslung
+    /// abzufangen, ist der Zweck des Digests.
+    #[test]
+    fn ein_veraendertes_artefakt_ergibt_einen_anderen_digest() {
+        let dir = std::env::temp_dir().join("myl-testclient-anker-negativ");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("Verzeichnis");
+        for name in ANKER {
+            fs::write(dir.join(name), format!("{{\"probe\": \"{name}\"}}")).expect("Datei");
+        }
+
+        let (vorher, anzahl) = artefakt_digest(&dir).expect("Digest");
+        assert_eq!(anzahl, ANKER.len());
+
+        // Jede einzelne Ankerdatei muss durchschlagen: Eine, die nicht
+        // eingeht, wäre eine Lücke, durch die genau ein Unterschied
+        // unsichtbar bliebe.
+        for name in ANKER {
+            let alt = fs::read_to_string(dir.join(name)).expect("lesbar");
+            fs::write(dir.join(name), format!("{alt} ")).expect("schreibbar");
+            let (nachher, _) = artefakt_digest(&dir).expect("Digest");
+            assert_ne!(
+                vorher, nachher,
+                "ein geändertes {name} ändert den Ankerdigest nicht"
+            );
+            fs::write(dir.join(name), &alt).expect("zurückschreibbar");
+        }
+
+        // Zurückgesetzt muss wieder derselbe Wert herauskommen, sonst
+        // hinge der Digest an etwas anderem als am Inhalt.
+        let (wieder, _) = artefakt_digest(&dir).expect("Digest");
+        assert_eq!(vorher, wieder, "der Digest ist nicht reproduzierbar");
+
+        // Eine fehlende Ankerdatei ist ein Fehler, kein anderer Digest:
+        // Ein Digest über ein unvollständiges Artefakt wäre eine Zahl
+        // ohne Bedeutung, und der Vergleich würde sie ernst nehmen.
+        fs::remove_file(dir.join(ANKER[0])).expect("löschbar");
+        assert!(
+            artefakt_digest(&dir).is_err(),
+            "fehlende Ankerdatei ergibt stillschweigend einen Digest"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
 }

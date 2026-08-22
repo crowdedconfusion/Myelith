@@ -8,6 +8,12 @@
 > gesamte verbleibende Umsetzungsverlust beträgt damit **0,30 Punkte**.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
 > Residual-Addition.
+>
+> **Zuletzt am Prüfstand statt am Modell (2026-08-22):** Fund 33 (ein
+> Prüflauf zertifizierte Backends, die nicht rechnen) und Fund 34 (die
+> Sperre dagegen führte `cpu-simd` auf x86_64 als Rechenpfad, wo keiner
+> existiert). Beide betreffen nicht die Zahlen, sondern die Aussage über
+> die Zahlen.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-W8A8-Basis.
@@ -408,6 +414,56 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.16.0 (kernels 0.18.0) – 2026-08-22 (Fund 34: ein Rechenpfad, den es nicht gibt)
+
+`kernels/src/rechenpfad.rs` entstand am 2026-08-22 gegen Fund 33: Ein
+Prüflauf sollte kein Backend zertifizieren, das gar nicht rechnet. Am
+selben Tag stellte sich heraus, dass das Modul denselben Fehler enthielt,
+den es verhindern sollte.
+
+Die Bedingung für `cpu-simd` stand dort **noch einmal**, als
+`any(target_arch = "x86_64", target_arch = "aarch64")`. `dot.rs`
+vektorisiert aber nur unter `aarch64`; auf x86_64 gibt es bis heute
+keinen AVX2-Pfad, das steht seit v0.13.4 im Modulkopf von `dot.rs`.
+Gemessen an derselben Quelle, für zwei Ziele übersetzt, mit
+`--features cpu-simd`, 20 000 Durchläufe über 4096 Elemente:
+
+| Ziel | `dot_scalar` | `dot_i8_i16` | Verhältnis |
+|---|---|---|---|
+| aarch64 (nativ) | 6,97 ms | 2,70 ms | **2,58×** |
+| x86_64 (Rosetta) | 15,26 ms | 15,20 ms | **1,00×** |
+
+Auf x86_64 ist `dot_i8_i16` nicht ähnlich schnell wie `dot_scalar`, es
+**ist** `dot_scalar`. Gemeldet wurde trotzdem ein zweiter Rechenpfad.
+
+**Der zugehörige Test konnte den Widerspruch nicht finden**, weil er gegen
+dieselbe wiederholte Bedingung prüfte wie der Code. Ein Test, der eine
+Zusicherung mit ihrer eigenen Formulierung vergleicht, besteht immer.
+
+Behoben, indem die Bedingung nur noch **einmal** vorkommt: am `cfg` von
+`dot::gewaehlt`, wo Konstante und Aufruf im selben Zweig stehen und
+deshalb nicht auseinanderlaufen können. `rechenpfad::mit_rechenpfad`
+liest `dot::VEKTORISIERT`. Die CI testet den Fall jetzt auf einem echten
+x86_64-Runner; auf der Entwicklungsmaschine ist er nicht prüfbar.
+
+**Tragweite außerhalb dieses Crates:** `myl-testclient` schrieb
+`cpu-simd/avx2` ins Protokoll, sobald `is_x86_feature_detected!` AVX2 auf
+der **CPU** fand, also eine Auskunft über den Prozessor statt über den
+gerechneten Code. Ein Protokoll von der geplanten Partnermaschine hätte
+diesen Namen getragen, und die Testanleitung führte „Referenz + AVX2" als
+lohnende Kombination.
+
+**Offen aus Fund 36 (TESTCLIENT v0.8.0, 2026-08-22):** Der Testclient
+hashte für den Cross-Hardware-Vergleich nur die erzeugten **Token** und
+übersah damit Rechenabweichungen, solange kein Argmax kippte. Dort ist es
+behoben. In diesem Crate betrifft dieselbe Frage zwei Stellen, und beide
+sind noch offen: die drei `e2e`-Konformitätsvektoren vergleichen
+`outputs.tokens` (die 27 Vektoren auf `op`- und `layer`-Ebene vergleichen
+Tensoren und sind nicht betroffen), und `bench/run.py` prüft die
+Bitgleichheit über alle Backends mit `generate::hash_tokens`. Der
+Konsenspfad ist geprüft und **nicht** betroffen:
+`myl-verifier::adjudicate` hasht Ausgabe-Aktivierungen.
 
 ### v0.15.0 – 2026-08-20 (θ_v 0.16.0/0.17.0: Softmax-Auflösung, Residual-Addition, Skalenpakete)
 

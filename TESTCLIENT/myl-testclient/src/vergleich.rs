@@ -58,13 +58,31 @@ pub struct Protokoll {
     pub ergebnisse: Vec<(String, String)>,
     pub abgeschlossen: bool,
     pub erfolgreich: bool,
+    /// Trägt das Protokoll einen ausdrücklichen Abbruchvermerk?
+    ///
+    /// Ergänzt `abgeschlossen`, ersetzt es nicht: Ein Abbruch durch
+    /// Strg-C hinterlässt **keinen** Vermerk, weil der Prozess ohne
+    /// `Drop` endet. Maßgeblich ist deshalb das Fehlen von
+    /// `run_finished`; der Vermerk liefert nur den Grund dazu.
+    pub abgebrochen: bool,
+    /// Was in den Vergleichswert eingeht (`runs::DIGEST_UMFANG`).
+    ///
+    /// Leer bei Protokollen von vor Fund 36. Die gab es nur als eigene
+    /// Proben, aber leer bleibt trotzdem von `logits+token` verschieden,
+    /// und genau das soll es: Sie messen nicht dasselbe.
+    pub digest_umfang: String,
 }
 
 impl Protokoll {
     /// Modellstand als ein Wert, die Größe, die vor jedem Digest-Vergleich
     /// übereinstimmen muss.
-    fn modellstand(&self) -> (&str, &str) {
-        (&self.theta_v, &self.artefakt_digest)
+    fn modellstand(&self) -> (&str, &str, &str) {
+        // Der Digest-Umfang gehört hierher und nicht in eine eigene
+        // Prüfung: Die Frage ist dieselbe, nämlich ob überhaupt dasselbe
+        // gemessen wurde. Ein anderes Modell und ein anderer Umfang sind
+        // beide **kein Hardware-Befund**, und beide werden dadurch
+        // behoben, dass man sie angleicht und neu misst.
+        (&self.theta_v, &self.artefakt_digest, &self.digest_umfang)
     }
 
     /// Bezeichnung für die Ausgabe: Name, sonst Hardware, sonst Datei.
@@ -79,6 +97,36 @@ impl Protokoll {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
+    }
+}
+
+impl Protokoll {
+    /// Hat dieser Lauf den Testplan zu Ende gebracht?
+    ///
+    /// Maßgeblich ist der Abschlusseintrag `run_finished`, **nicht** das
+    /// Fehlen eines Abbruchvermerks: Strg-C und ein geschlossenes Fenster
+    /// beenden den Prozess, ohne dass noch etwas geschrieben wird. Die
+    /// Datei sieht dann tadellos aus, jede Zeile ist vollständig, und nur
+    /// die letzte fehlt. Genau darauf wird geprüft.
+    ///
+    /// `ok=false` zählt ebenfalls als unvollständig für den Nachweis: Der
+    /// Lauf hat selbst gemeldet, dass etwas schiefging, und seine
+    /// Vergleichswerte sollen dann keinen Determinismusbeleg tragen.
+    pub fn vollstaendig(&self) -> bool {
+        self.abgeschlossen && self.erfolgreich && !self.abgebrochen
+    }
+
+    /// Kurzer Grund, warum dieses Protokoll nicht vollständig ist.
+    pub fn mangel(&self) -> Option<&'static str> {
+        if self.abgebrochen {
+            Some("abgebrochen")
+        } else if !self.abgeschlossen {
+            Some("ohne Abschluss (Strg-C, Fenster zu, Absturz)")
+        } else if !self.erfolgreich {
+            Some("mit Fehlern beendet")
+        } else {
+            None
+        }
     }
 }
 
@@ -97,6 +145,16 @@ pub enum Urteil {
     Abweichung,
     /// Weniger als zwei Protokolle: es gibt nichts zu vergleichen.
     ZuWenig,
+    /// Mindestens ein Protokoll deckt nicht denselben Testplan ab wie die
+    /// anderen: abgebrochen, oder mit einer anderen Menge an
+    /// Vergleichswerten.
+    ///
+    /// **Der gefährlichste der fünf Nicht-Nachweise**, weil er vorher
+    /// als `Nachweis` durchging: Verglichen wird je Wert nur unter den
+    /// Protokollen, die ihn **haben**. Ein Lauf, der nach dem ersten von
+    /// sechs Prompts abbrach, stimmte damit in allem überein, was er noch
+    /// erreicht hatte, und fehlte im Rest unbemerkt.
+    Unvollstaendig,
 }
 
 impl Urteil {
@@ -116,6 +174,7 @@ impl Urteil {
             Urteil::Modellstand => "UNVERGLEICHBAR (Modellstand)",
             Urteil::Abweichung => "ABWEICHUNG",
             Urteil::ZuWenig => "ZU WENIG PROTOKOLLE",
+            Urteil::Unvollstaendig => "UNVOLLSTÄNDIG (Lauf nicht zu Ende)",
         }
     }
 }
@@ -180,6 +239,7 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
                 "arch" => arch = hole("value"),
                 "os" => os = hole("value"),
                 "backend_selected" => backend = hole("value"),
+                "digest_umfang" => p.digest_umfang = hole("value"),
                 _ => {}
             },
             "artifact" => match hole("key").as_str() {
@@ -197,6 +257,7 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
                 p.abgeschlossen = true;
                 p.erfolgreich = hole("ok") == "true";
             }
+            "run_aborted" => p.abgebrochen = true,
             _ => {}
         }
     }
@@ -303,6 +364,27 @@ fn urteilen(
         return Urteil::EineMaschine;
     }
 
+    // **Erst hier, und zwar nach Abweichung.** Ein abgebrochener Lauf,
+    // dessen erreichte Werte bereits auseinandergehen, ist ein Befund und
+    // bleibt einer; ihn als „unvollständig" abzutun, hieße den wichtigsten
+    // Fall wegzuräumen. Umgekehrt darf Übereinstimmung auf einem
+    // Bruchteil des Plans nie als Nachweis durchgehen.
+    if protokolle.iter().any(|p| !p.vollstaendig()) {
+        return Urteil::Unvollstaendig;
+    }
+
+    // Gleiche Länge genügt nicht, es muss dieselbe Menge sein: Zwei Läufe
+    // mit je sechs Werten, von denen sich zwei unterscheiden, hätten in
+    // vier Werten übereingestimmt und in den beiden anderen gar nicht
+    // verglichen werden können.
+    let namen = |p: &Protokoll| -> std::collections::BTreeSet<String> {
+        p.ergebnisse.iter().map(|(n, _)| n.clone()).collect()
+    };
+    let erste = namen(&protokolle[0]);
+    if protokolle.iter().any(|p| namen(p) != erste) {
+        return Urteil::Unvollstaendig;
+    }
+
     Urteil::Nachweis
 }
 
@@ -330,19 +412,38 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
         );
         for p in &g.protokolle {
             println!(
-                "     {:<16} {:<28} θ_v {:<8} {}",
+                "     {:<16} {:<28} θ_v {:<8} {} {}",
                 p.bezeichnung(),
                 if p.hardware.is_empty() { "" } else { &p.hardware },
                 if p.theta_v.is_empty() { "" } else { &p.theta_v },
                 kurz(&p.fingerprint),
+                // Der Mangel steht in derselben Zeile wie der Lauf, nicht
+                // in einer Fußnote: Wer die Tabelle überfliegt, soll nicht
+                // erst unten erfahren, dass eine Zeile nichts wert ist.
+                match p.mangel() {
+                    Some(m) => format!("  ⚠ {} ({} Werte)", m, p.ergebnisse.len()),
+                    None => String::new(),
+                },
             );
         }
         println!();
 
         for (name, nach_digest) in &g.werte {
+            // **Wie viele Läufe haben diesen Wert überhaupt?** Ein Wert,
+            // den nur einer geliefert hat, ist mit niemandem verglichen
+            // worden. Ohne diesen Zusatz stand davor ein „=", und das
+            // liest sich wie Übereinstimmung, wo gar kein Vergleich
+            // stattgefunden hat.
+            let beitragende: usize = nach_digest.values().map(|v| v.len()).sum();
+            let anteil = if beitragende < g.protokolle.len() {
+                format!("   (nur {} von {} Läufen)", beitragende, g.protokolle.len())
+            } else {
+                String::new()
+            };
             if nach_digest.len() == 1 {
                 let digest = nach_digest.keys().next().map(String::as_str).unwrap_or("");
-                println!("     = {:<24} {}", name, kurz(digest));
+                let zeichen = if beitragende < g.protokolle.len() { "·" } else { "=" };
+                println!("     {} {:<24} {}{}", zeichen, name, kurz(digest), anteil);
             } else {
                 println!("     ≠ {:<24} {} verschiedene Werte:", name, nach_digest.len());
                 for (digest, laeufe) in nach_digest {
@@ -381,10 +482,17 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
              Architektur, nicht ein weiterer Lauf."
         }
         Urteil::Modellstand => {
-            "θ_v oder der Artefakt-Digest weichen zwischen den Läufen ab.\n\
-             Das ist KEIN Hardware-Befund. Hier wurde gegen verschiedene Modelle\n\
-             gemessen; ein Bitgleichheitstest darüber hätte keine Aussage.\n\
-             Erst `myl-test artefakte` auf allen Maschinen gleichziehen, dann erneut messen."
+            "θ_v, der Artefakt-Digest oder der Digest-Umfang weichen zwischen den\n\
+             Läufen ab. Das ist KEIN Hardware-Befund. Hier wurde gegen verschiedene\n\
+             Modelle oder mit verschiedenen Messverfahren gerechnet; ein\n\
+             Bitgleichheitstest darüber hätte keine Aussage.\n\
+             \n\
+             Bei abweichendem Modell: `myl-test artefakte` auf allen Maschinen\n\
+             gleichziehen, dann erneut messen.\n\
+             Bei abweichendem Digest-Umfang: Ein Protokoll stammt aus einer älteren\n\
+             Fassung des Clients, die nur die erzeugten Token gehasht hat und damit\n\
+             kleine Rechenabweichungen nicht sehen konnte (Fund 36). Alle Beteiligten\n\
+             auf denselben Stand bringen und neu messen."
         }
         Urteil::Abweichung => {
             "Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse.\n\
@@ -395,6 +503,18 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
             "Für einen Vergleich braucht es mindestens zwei Protokolle mit derselben\n\
              Einstellungs-Kennung. Weichen die Kennungen ab, liefen verschiedene\n\
              Parameter, dann ist die Eingabe zu vereinheitlichen, nicht das Ergebnis."
+        }
+        Urteil::Unvollstaendig => {
+            "Mindestens ein Lauf deckt nicht denselben Testplan ab wie die anderen:\n\
+             abgebrochen, mit Fehlern beendet, oder mit einer anderen Menge an\n\
+             Vergleichswerten. Oben steht bei den betroffenen Protokollen, woran es liegt.\n\
+             \n\
+             Verglichen wird je Wert nur unter den Läufen, die ihn haben. Ein Lauf, der\n\
+             nach einem von sechs Prompts endete, stimmt deshalb in allem überein, was er\n\
+             erreicht hat, und fehlt im Rest, ohne dass es auffiele. Die Übereinstimmung\n\
+             wäre echt und die Aussage trotzdem falsch.\n\
+             \n\
+             Den betroffenen Lauf wiederholen. Er kostet dieselbe Zeit wie beim ersten Mal."
         }
     }
 }
@@ -493,13 +613,25 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         let _ = writeln!(t);
         let _ = writeln!(t, "### Beteiligte Läufe");
         let _ = writeln!(t);
-        let _ = writeln!(t, "| Teilnehmer | Hardware | θ_v | Artefakt-Digest | Fingerabdruck | Datei |");
-        let _ = writeln!(t, "|---|---|---|---|---|---|");
+        // Die Spalte „Lauf" steht **vor** den Digests. Ein Bericht wird
+        // später gelesen als er entsteht, oft von jemandem, der beim Lauf
+        // nicht dabei war; dass eine Zeile aus einem abgebrochenen
+        // Durchgang stammt, gehört dann nicht ans Ende.
+        let _ = writeln!(
+            t,
+            "| Teilnehmer | Lauf | Werte | Hardware | θ_v | Artefakt-Digest | Fingerabdruck | Datei |"
+        );
+        let _ = writeln!(t, "|---|---|---|---|---|---|---|---|");
         for p in &g.protokolle {
             let _ = writeln!(
                 t,
-                "| {} | {} | {} | `{}` | `{}` | `{}` |",
+                "| {} | {} | {} | {} | {} | `{}` | `{}` | `{}` |",
                 p.bezeichnung(),
+                match p.mangel() {
+                    Some(m) => format!("**{}**", m),
+                    None => "vollständig".to_string(),
+                },
+                p.ergebnisse.len(),
                 leer_als_strich(&p.hardware),
                 leer_als_strich(&p.theta_v),
                 kurz(&p.artefakt_digest),
@@ -515,9 +647,19 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         let _ = writeln!(t, "### Vergleichswerte");
         let _ = writeln!(t);
         for (name, nach_digest) in &g.werte {
+            let beitragende: usize = nach_digest.values().map(|v| v.len()).sum();
             if nach_digest.len() == 1 {
                 let digest = nach_digest.keys().next().map(String::as_str).unwrap_or("");
-                let _ = writeln!(t, "- **{}**: übereinstimmend: `{}`", name, digest);
+                if beitragende < g.protokolle.len() {
+                    let _ = writeln!(
+                        t,
+                        "- **{}**: NICHT VERGLICHEN, nur {} von {} Läufen haben \
+                         diesen Wert: `{}`",
+                        name, beitragende, g.protokolle.len(), digest
+                    );
+                } else {
+                    let _ = writeln!(t, "- **{}**: übereinstimmend: `{}`", name, digest);
+                }
             } else {
                 let _ = writeln!(t, "- **{}**. ABWEICHUNG, {} verschiedene Werte:", name, nach_digest.len());
                 for (digest, laeufe) in nach_digest {
@@ -710,6 +852,52 @@ mod tests {
         });
         log.result("determinismus", digest, "bitgleich");
         log.finish(true);
+    }
+
+    /// Schreibt ein Protokoll mit mehreren Vergleichswerten und, je nach
+    /// `abschluss`, mit oder ohne Abschlusseintrag.
+    ///
+    /// `abschluss = false` bildet den Strg-C-Fall nach: Die Datei bleibt
+    /// vollständig bis zur letzten geschriebenen Zeile, es fehlt nur der
+    /// Abschluss. `RunLog` wird dafür mit `std::mem::forget` stehen
+    /// gelassen, weil `Drop` sonst einen Abbruchvermerk schriebe, den ein
+    /// echtes SIGINT nie hinterlässt.
+    fn lauf_mit_werten(
+        dir: &Path,
+        teilnehmer: &str,
+        arch: &str,
+        fingerprint: &str,
+        werte: &[(&str, &str)],
+        abschluss: bool,
+    ) {
+        let mut log = RunLog::mit_ziel(
+            LogZiel::neu(dir, "determinismus", teilnehmer, "abcd1234", arch),
+            false,
+        );
+        log.event(Event::Hardware {
+            key: "arch".into(),
+            value: arch.into(),
+        });
+        log.event(Event::Hardware {
+            key: "fingerprint_sha256".into(),
+            value: fingerprint.into(),
+        });
+        log.event(Event::Artifact {
+            key: "theta_v".into(),
+            value: "0.17.0".into(),
+        });
+        log.event(Event::Artifact {
+            key: "artefakt_digest".into(),
+            value: "c42bb8a8d85bba5a".into(),
+        });
+        for (name, digest) in werte {
+            log.result(name, digest, "bitgleich");
+        }
+        if abschluss {
+            log.finish(true);
+        } else {
+            std::mem::forget(log);
+        }
     }
 
     fn urteil_ueber(dir: &Path) -> Urteil {
@@ -925,4 +1113,176 @@ mod tests {
         };
         assert_eq!(p.bezeichnung(), "aarch64-macos-reference");
     }
+
+    /// **Fund 35 als Test (2026-08-22).** Ein Partner bricht nach dem
+    /// ersten von sechs Prompts ab und schickt sein Protokoll. Vorher
+    /// urteilte der Vergleich darüber `NACHWEIS`: Verglichen wurde je
+    /// Wert nur unter den Läufen, die ihn hatten, und in `prompt_0`
+    /// stimmten beide überein. Die übrigen fünf Werte kamen von einer
+    /// einzigen Maschine und wurden nie verglichen.
+    #[test]
+    fn ein_abgebrochener_lauf_traegt_keinen_nachweis() {
+        let dir = tempdir("abbruch");
+        let voll: Vec<(&str, &str)> = vec![
+            ("prompt_0", "d0"),
+            ("prompt_1", "d1"),
+            ("prompt_2", "d2"),
+            ("prompt_3", "d3"),
+            ("prompt_4", "d4"),
+            ("prompt_5", "d5"),
+        ];
+        lauf_mit_werten(&dir, "anna", "aarch64", "fp-a", &voll, true);
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &voll[..1], false);
+
+        assert_eq!(urteil_ueber(&dir), Urteil::Unvollstaendig);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Der Abbruch muss auch dann auffallen, wenn er alle Werte erreicht
+    /// hat: Ein Lauf ohne Abschlusseintrag kann mitten im Schreiben
+    /// geendet haben, und was danach gekommen wäre, weiß niemand.
+    #[test]
+    fn fehlender_abschluss_genuegt_fuer_unvollstaendig() {
+        let dir = tempdir("kein-abschluss");
+        let werte: Vec<(&str, &str)> = vec![("prompt_0", "d0"), ("prompt_1", "d1")];
+        lauf_mit_werten(&dir, "anna", "aarch64", "fp-a", &werte, true);
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &werte, false);
+
+        assert_eq!(urteil_ueber(&dir), Urteil::Unvollstaendig);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Gegenprobe: Zwei vollständige Läufe über dieselben sechs Werte
+    /// ergeben weiterhin den Nachweis. Ohne diesen Test wäre die neue
+    /// Prüfung nicht von einer Sperre gegen alles zu unterscheiden.
+    #[test]
+    fn zwei_vollstaendige_laeufe_ergeben_weiterhin_den_nachweis() {
+        let dir = tempdir("vollstaendig");
+        let werte: Vec<(&str, &str)> = vec![
+            ("prompt_0", "d0"),
+            ("prompt_1", "d1"),
+            ("prompt_2", "d2"),
+        ];
+        lauf_mit_werten(&dir, "anna", "aarch64", "fp-a", &werte, true);
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &werte, true);
+
+        assert_eq!(urteil_ueber(&dir), Urteil::Nachweis);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Eine echte Abweichung wiegt schwerer als die Unvollständigkeit.
+    /// Sonst verschwände der wichtigste Befund des Werkzeugs hinter einem
+    /// Verfahrenshinweis, sobald ein Lauf nebenbei abgebrochen ist.
+    #[test]
+    fn abweichung_geht_der_unvollstaendigkeit_vor() {
+        let dir = tempdir("abweichung-vor-abbruch");
+        lauf_mit_werten(
+            &dir,
+            "anna",
+            "aarch64",
+            "fp-a",
+            &[("prompt_0", "d0"), ("prompt_1", "d1")],
+            true,
+        );
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &[("prompt_0", "ANDERS")], false);
+
+        assert_eq!(urteil_ueber(&dir), Urteil::Abweichung);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Verschiedene Mengen an Vergleichswerten fallen auch dann auf, wenn
+    /// beide Läufe sauber abgeschlossen haben: Dann hat ein Testplan
+    /// unterwegs etwas übersprungen, und die Überschneidung allein trägt
+    /// keine Aussage.
+    #[test]
+    fn verschiedene_wertemengen_sind_unvollstaendig() {
+        let dir = tempdir("wertemengen");
+        lauf_mit_werten(
+            &dir,
+            "anna",
+            "aarch64",
+            "fp-a",
+            &[("prompt_0", "d0"), ("prompt_1", "d1")],
+            true,
+        );
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &[("prompt_0", "d0")], true);
+
+        assert_eq!(urteil_ueber(&dir), Urteil::Unvollstaendig);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Der Mangel muss im Bericht stehen, nicht nur im Urteil: Der
+    /// Bericht ist das, was aufbewahrt und weitergereicht wird.
+    #[test]
+    fn der_bericht_nennt_den_mangel() {
+        let dir = tempdir("bericht-mangel");
+        let werte: Vec<(&str, &str)> = vec![("prompt_0", "d0")];
+        lauf_mit_werten(&dir, "anna", "aarch64", "fp-a", &werte, true);
+        lauf_mit_werten(&dir, "björn", "x86-64", "fp-b", &werte, false);
+
+        let gruppen = gruppieren(einlesen(&dir).expect("lesbar"));
+        let text = bericht_text(&dir, "2026-08-22", "12:00", &gruppen);
+        assert!(
+            text.contains("ohne Abschluss"),
+            "Bericht verschweigt den Mangel:\n{text}"
+        );
+        assert!(
+            text.contains("vollständig"),
+            "Bericht kennzeichnet den heilen Lauf nicht:\n{text}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+
+    /// **Fund 36 als Test (2026-08-22).** Zwei Protokolle, deren
+    /// Vergleichswerte verschiedene Dinge abdecken, dürfen nicht
+    /// gegeneinander geurteilt werden: Die Werte müssten abweichen, und
+    /// das sähe wie ein Hardware-Befund aus.
+    #[test]
+    fn verschiedener_digest_umfang_ist_unvergleichbar() {
+        let a = Protokoll {
+            theta_v: "0.17.0".into(),
+            artefakt_digest: "c42b".into(),
+            digest_umfang: "logits+token".into(),
+            fingerprint: "fp-a".into(),
+            abgeschlossen: true,
+            erfolgreich: true,
+            ergebnisse: vec![("determinismus".into(), "d0".into())],
+            ..Default::default()
+        };
+        let b = Protokoll {
+            // Wie ein Protokoll aus der Fassung vor Fund 36: Feld fehlt.
+            digest_umfang: String::new(),
+            fingerprint: "fp-b".into(),
+            ..a.clone()
+        };
+        let protokolle = vec![a, b];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Modellstand);
+    }
+
+    /// Gegenprobe: Gleicher Umfang, sonst alles wie oben, ergibt den
+    /// Nachweis. Ohne sie wäre nicht unterscheidbar, ob die Prüfung den
+    /// Umfang beurteilt oder einfach alles ablehnt.
+    #[test]
+    fn gleicher_digest_umfang_stoert_den_nachweis_nicht() {
+        let a = Protokoll {
+            theta_v: "0.17.0".into(),
+            artefakt_digest: "c42b".into(),
+            digest_umfang: "logits+token".into(),
+            fingerprint: "fp-a".into(),
+            abgeschlossen: true,
+            erfolgreich: true,
+            ergebnisse: vec![("determinismus".into(), "d0".into())],
+            ..Default::default()
+        };
+        let b = Protokoll {
+            fingerprint: "fp-b".into(),
+            ..a.clone()
+        };
+        let protokolle = vec![a, b];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Nachweis);
+    }
+
 }

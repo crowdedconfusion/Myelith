@@ -14,10 +14,16 @@
 //!   eine Big-Endian-Plattform dazukommt, ist das die erste Stelle, an
 //!   der es auffällt.
 //! - **Verfügbare Rechenkerne (SIMD-Erweiterungen)**: zur Laufzeit
-//!   erkannt, nicht zur Übersetzungszeit angenommen. Ein Binary, das mit
-//!   `cpu-simd` gebaut wurde, nutzt AVX2 nur, wenn die CPU es hat; das
-//!   Protokoll muss den tatsächlichen Pfad festhalten, nicht den
-//!   möglichen.
+//!   erkannt, nicht zur Übersetzungszeit angenommen. Das ist eine
+//!   Auskunft über die **CPU** und steht als solche im Protokoll.
+//!
+//!   **Nicht zu verwechseln mit dem genommenen Pfad** (Fund 34): Hier
+//!   stand einmal, ein Bau mit `cpu-simd` nutze AVX2, sobald die CPU es
+//!   habe. Das stimmte nie. Ob vektorisiert gerechnet wird, entscheidet
+//!   allein `kernels/src/dot.rs`, und dort gibt es bisher nur NEON für
+//!   aarch64. `simd_features` sagt, was die Maschine könnte;
+//!   [`selected_backend`] sagt, was der Lauf getan hat. Die zweite
+//!   Auskunft aus der ersten abzuleiten, war der Fehler.
 //! - **Aktive Backends**: welche der Kernel-Implementierungen in diesem
 //!   Build überhaupt vorhanden sind.
 //!
@@ -179,26 +185,19 @@ pub fn rechnende_backends() -> Vec<String> {
 /// stattdessen `cuda` im Protokoll, sähe ein bitgleiches Ergebnis wie ein
 /// bestandener GPU-Nachweis aus und wäre keiner.
 pub fn selected_backend() -> &'static str {
-    #[cfg(feature = "cpu-simd")]
-    {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if std::is_x86_feature_detected!("avx2") {
-                return "cpu-simd/avx2";
-            }
-            return "reference";
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            return "cpu-simd/neon";
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            return "reference";
-        }
-    }
-    #[cfg(not(feature = "cpu-simd"))]
-    {
+    // **Gefragt wird der Code, nicht der Prozessor** (Fund 34).
+    // Hier stand `is_x86_feature_detected!("avx2")`, und bei einem Treffer
+    // ging `cpu-simd/avx2` ins Protokoll. Das war eine Auskunft darüber,
+    // was die CPU kann, nicht darüber, was wir rechnen: `kernels/src/dot.rs`
+    // vektorisiert bis heute nur unter aarch64. Ein Protokoll von einer
+    // x86_64-Maschine hätte `cpu-simd/avx2` getragen und dabei denselben
+    // skalaren Code ausgeführt wie ein Lauf mit `reference`.
+    if integer_llm_kernels::dot::VEKTORISIERT {
+        // Der einzige vektorisierte Pfad, den es gibt. Kommt AVX2 dazu,
+        // gehört hier eine Fallunterscheidung nach `target_arch` hin, und
+        // dann trägt sie auch etwas aus.
+        "cpu-simd/neon"
+    } else {
         "reference"
     }
 }
@@ -216,9 +215,40 @@ pub fn selected_backend() -> &'static str {
 /// sie wird genauso behandelt: Der Lauf wird nicht stillschweigend
 /// anders, er wird abgelehnt und begründet.
 pub fn rechenpfad_pruefen() -> Result<(), String> {
-    for backend in ["cuda", "rocm"] {
+    // `cpu-simd` steht seit Fund 34 in derselben Reihe wie `cuda` und
+    // `rocm`, und aus demselben Grund: Auf x86_64 gibt es noch keinen
+    // vektorisierten Pfad (`kernels/src/dot.rs`, Fahrplanpunkt AVX2 /
+    // Fund A19). Ein Messlauf aus einem solchen Bau würde die Referenz
+    // unter dem Namen `cpu-simd` protokollieren.
+    //
+    // Die Ablehnung ist hier freundlicher als bei `cuda`: Es fehlt nichts
+    // am Lauf, nur am Bau. Ohne das Feature ist derselbe Lauf ein
+    // vollwertiger Referenzlauf, und für den Cross-Hardware-Nachweis ist
+    // er genau das, was gebraucht wird.
+    for backend in ["cuda", "rocm", "cpu-simd"] {
         let konfiguriert = compiled_backends().iter().any(|b| b == backend);
         if konfiguriert && !integer_llm_kernels::rechenpfad::rechnet(backend) {
+            if backend == "cpu-simd" {
+                return Err(format!(
+                    "Dieser Bau trägt `--features cpu-simd`, aber auf {} gibt es\n\
+                     KEINEN vektorisierten Rechenpfad: kernels/src/dot.rs hat bisher\n\
+                     nur eine NEON-Fassung für aarch64, AVX2 ist offener Fahrplanpunkt\n\
+                     (Fund A19).\n\
+                     \n\
+                     Der Lauf würde die Referenzkernel unter dem Namen `cpu-simd`\n\
+                     protokollieren. Ein Vergleich `Referenz gegen cpu-simd` sähe dann\n\
+                     bestanden aus, obwohl beide Seiten denselben Code gerechnet haben.\n\
+                     \n\
+                     Abhilfe: ohne `--features cpu-simd` bauen.\n\
+                     \n\
+                     \x20\x20\x20\x20cargo build --release\n\
+                     \n\
+                     Der Lauf ist dann als `reference` vollwertig und für den\n\
+                     Cross-Hardware-Nachweis genau das Richtige: Verglichen werden\n\
+                     zwei Maschinen, nicht zwei Backends.",
+                    std::env::consts::ARCH
+                ));
+            }
             return Err(integer_llm_kernels::rechenpfad::ablehnung(backend));
         }
     }
@@ -294,8 +324,63 @@ mod tests {
                 return;
             }
         }
-        // Ohne cuda/rocm im Bau gibt es nichts abzulehnen.
-        assert!(rechenpfad_pruefen().is_ok());
+        // Ohne cuda/rocm bleibt der Fall aus Fund 34: ein Bau mit
+        // `cpu-simd` auf einem Ziel ohne vektorisierten Pfad. Er wird
+        // ebenfalls abgelehnt, mit eigenem Wortlaut, siehe den Test
+        // darunter.
+        if !konfiguriert.iter().any(|b| b == "cpu-simd")
+            || integer_llm_kernels::dot::VEKTORISIERT
+        {
+            assert!(rechenpfad_pruefen().is_ok());
+        }
+    }
+
+    /// **Fund 34 als Test.** Ein Bau mit `--features cpu-simd` auf einem
+    /// Ziel, für das `kernels/src/dot.rs` keine vektorisierte Fassung
+    /// hat, darf keinen Messlauf zulassen: Er würde die Referenzkernel
+    /// unter dem Namen `cpu-simd` protokollieren, und ein Vergleich
+    /// „Referenz gegen cpu-simd" sähe bestanden aus, obwohl beide Seiten
+    /// denselben Code gerechnet haben.
+    ///
+    /// Der Test greift heute auf x86_64 und auf jedem Ziel ohne NEON.
+    /// Sobald der AVX2-Pfad steht, greift er dort nicht mehr, und das ist
+    /// richtig so.
+    #[test]
+    fn cpu_simd_ohne_vektorpfad_wird_abgelehnt() {
+        if !cfg!(feature = "cpu-simd") || integer_llm_kernels::dot::VEKTORISIERT {
+            return;
+        }
+        let fehler = rechenpfad_pruefen().expect_err("hätte ablehnen müssen");
+        assert!(
+            fehler.contains("KEINEN vektorisierten Rechenpfad"),
+            "Ablehnung nennt den Grund nicht: {fehler}"
+        );
+        assert!(
+            fehler.contains("cargo build --release"),
+            "Ablehnung nennt die Abhilfe nicht: {fehler}"
+        );
+    }
+
+    /// Das gemeldete Backend muss dem folgen, was gerechnet wird, und
+    /// nicht dem, was die CPU könnte. Vor Fund 34 stand hier
+    /// `is_x86_feature_detected!("avx2")`, und damit ging auf jeder
+    /// halbwegs neuen x86_64-Maschine `cpu-simd/avx2` ins Protokoll,
+    /// während skalar gerechnet wurde.
+    #[test]
+    fn gemeldetes_backend_folgt_dem_rechenpfad() {
+        let gemeldet = selected_backend();
+        if integer_llm_kernels::dot::VEKTORISIERT {
+            assert_ne!(gemeldet, "reference");
+            assert!(
+                rechnende_backends().iter().any(|b| b == "cpu-simd"),
+                "vektorisiert, aber cpu-simd fehlt in der Liste"
+            );
+        } else {
+            assert_eq!(
+                gemeldet, "reference",
+                "ohne vektorisierten Pfad darf nichts anderes im Protokoll stehen"
+            );
+        }
     }
 
     /// Konfiguriert und rechnend sind zwei verschiedene Listen. Fielen

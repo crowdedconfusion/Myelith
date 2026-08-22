@@ -1,10 +1,19 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.6.0
-> **Datum:** 2026-08-21
-> **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`)
-> und 3.1 (Modellstand im Protokoll). 148 Tests grün, alle Läufe gegen die
-> echten Artefakte verifiziert.
+> **Version:** 0.8.0
+> **Datum:** 2026-08-22
+> **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`),
+> 2.4 (`--repeat`) und 3.1 (Modellstand im Protokoll). 160 Tests grün, alle
+> Läufe gegen die echten Artefakte verifiziert.
+>
+> **Drei Funde am Messgerät selbst (2026-08-22).** Sie betreffen nicht das
+> Netz, sondern das Werkzeug, mit dem es geprüft wird, und alle drei
+> hätten einen bestandenen Nachweis geliefert, den es nicht gab:
+> **Fund 34** meldete `cpu-simd` als eigenen Rechenpfad auf x86_64, wo
+> keiner existiert; **Fund 35** urteilte `NACHWEIS` über einen Lauf, der
+> nach einem von sechs Prompts abgebrochen war; **Fund 36** hashte nur die
+> erzeugten Token und übersah damit Rechenabweichungen, solange kein
+> Argmax kippte. Einzelheiten unten.
 
 Terminal-Testclient: Hardwaretests auf heterogener Hardware und
 geshardete Inferenz: jeder Lauf mit einem Protokoll, das zwischen
@@ -84,6 +93,7 @@ Verzeichnis. Je Gruppe ein Urteil:
 | `UNVERGLEICHBAR (Modellstand)` | θ_v oder Ankerdigest weichen ab: **kein** Hardware-Befund |
 | `ABWEICHUNG` | Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse |
 | `ZU WENIG PROTOKOLLE` | Weniger als zwei mit derselben Kennung |
+| `UNVOLLSTÄNDIG (Lauf nicht zu Ende)` | Ein Lauf ist abgebrochen, mit Fehlern beendet, oder deckt andere Vergleichswerte ab als die übrigen |
 
 **Der Befehl verweigert den Nachweis, wenn alle Protokolle denselben
 Hardware-Fingerabdruck tragen.** Das ist ein Akzeptanzkriterium des
@@ -93,7 +103,22 @@ sein Ergebnis geglaubt wird.
 
 **Der Modellstand wird vor den Digests geprüft.** Bei verschiedenen
 Modellen *müssen* die Werte verschieden sein; das als Determinismusfehler
-zu melden wäre genau die Verwechslung, gegen die es `artefakte` gibt.
+zu melden wäre genau die Verwechslung, gegen die es `artefakte` gibt. Zum
+Modellstand zählt seit v0.8.0 auch der **Digest-Umfang**: Zwei Protokolle,
+deren Vergleichswerte verschiedene Dinge abdecken, messen nicht dasselbe
+(Fund 36).
+
+**Unvollständige Läufe zählen nicht (Fund 35, 2026-08-22).** Verglichen
+wird je Wert nur unter den Protokollen, die ihn **haben**. Ein Lauf, der
+nach dem ersten von sechs Prompts abbrach, stimmte deshalb in allem
+überein, was er noch erreicht hatte, und fehlte im Rest unbemerkt; das
+Urteil lautete `NACHWEIS`. Maßgeblich ist jetzt der Abschlusseintrag
+`run_finished`, und nicht das Fehlen eines Abbruchvermerks: Strg-C und ein
+geschlossenes Fenster beenden den Prozess, ohne dass noch etwas
+geschrieben wird. Die Datei sieht dann tadellos aus, jede Zeile ist
+vollständig, und nur die letzte fehlt. Werte, die nicht alle Läufe tragen,
+stehen im Bericht mit `·` statt `=` und mit der Angabe, wie viele
+beigetragen haben.
 
 Exit-Code 0 nur dann, wenn jede Gruppe den Nachweis trägt: damit taugt
 der Befehl für die CI.
@@ -425,10 +450,19 @@ Die drei Ordner, mit denen ein Teilnehmer zu tun hat: `Testpläne/`,
 Wer sein Protokoll verschicken soll, hat in einem Quellcodeverzeichnis
 nichts zu suchen.
 
-## Belegte Läufe (2026-08-21, aarch64/macos/reference, θ_v 0.17.0)
+## Belegte Läufe (2026-08-22, aarch64/macos, θ_v 0.17.0)
+
+Die Werte aus den Modellläufen stammen aus dem **neuen** Digest-Umfang
+(Logits und Token, Fund 36) und sind mit den Werten früherer Fassungen
+nicht vergleichbar.
 
 | Lauf | Ergebnis |
 |---|---|
+| `determinismus --repeat 2`, `reference` gegen `cpu-simd` | derselbe Wert `272f1ee8f45f2c78`, jetzt **über die gerechneten Zahlen**, nicht nur über die erzeugten Token |
+| `determinismus --repeat 4`, 2 Prompts × 8 Token | je 4 Läufe bitgleich, 5,7 s |
+| Negativprobe: 0,0101 % eines Tensors verändert, Hashkette nachgezogen | alter Digest `e19372337dab1f3d` **unverändert**, neuer Digest `272f1ee8f45f2c78` → `4e34276060530427` |
+| Negativprobe: ein einzelnes Byte verändert, Kette **nicht** nachgezogen | Lauf abgelehnt, der betroffene Tensor wird benannt, Exit 1 |
+| Abbruch mit SIGINT mitten im Lauf | Protokoll lesbar, letzte Zeile gültiges JSON, kein `run_finished`; `vergleich` kennzeichnet es als unvollständig |
 | `determinismus --plan qwen2.5-0.5b-standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
 | `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
@@ -439,6 +473,101 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.8.0 – 2026-08-22 (drei Funde am Messgerät)
+
+Diese Fassung baut fast nichts Neues. Sie behebt drei Stellen, an denen
+das Werkzeug einen Nachweis geliefert hätte, den es nicht gab. Anlass war
+die Vorbereitung des ersten Laufs auf einer fremden Maschine: Der Lauf
+findet einmal statt, und was er misst, entscheidet sich vorher.
+
+**Fund 34: `cpu-simd` galt auf x86_64 als eigener Rechenpfad.**
+`kernels/src/dot.rs` vektorisiert nur unter aarch64; `rechenpfad.rs`
+führte `cpu-simd` dagegen unter `any(x86_64, aarch64)`, und
+`hardware::selected_backend` schrieb sogar `cpu-simd/avx2` ins Protokoll,
+sobald `is_x86_feature_detected!` AVX2 auf der **CPU** fand. Das ist eine
+Auskunft über den Prozessor, nicht über unseren Code. Gemessen an
+derselben Quelle für zwei Ziele (20 000 Durchläufe über 4096 Elemente):
+
+| Ziel | `dot_scalar` | `dot_i8_i16` | Verhältnis |
+|---|---|---|---|
+| aarch64 | 6,97 ms | 2,70 ms | **2,58×** |
+| x86_64 | 15,26 ms | 15,20 ms | **1,00×** |
+
+Es ist Fund 33 eine Ebene tiefer: Ein Protokoll von der Partnermaschine
+hätte `x86_64-…-cpu-simd/avx2` getragen, während beide Seiten denselben
+skalaren Code rechneten, und die Anleitung führte „Referenz + AVX2" als
+lohnende Kombination. Die Bedingung steht jetzt **einmal**, am `cfg` von
+`dot::gewaehlt`; alle Auskünfte lesen `dot::VEKTORISIERT`. Ein Bau mit
+`--features cpu-simd` auf einem Ziel ohne vektorisierten Pfad wird
+abgelehnt, mit dem Hinweis, dass `cargo build --release` genügt.
+
+**Fund 35: Ein abgebrochener Lauf trug den Nachweis.** Verglichen wird je
+Wert nur unter den Protokollen, die ihn haben. Ein Lauf, der nach dem
+ersten von sechs Prompts endete, stimmte damit in allem überein, was er
+erreicht hatte, und fehlte im Rest, ohne dass es auffiel: Urteil
+`NACHWEIS`. Neu ist das Urteil `UNVOLLSTÄNDIG`, geprüft wird der
+Abschlusseintrag und die Gleichheit der Wertemengen. `RunLog` hinterlässt
+zusätzlich einen Abbruchvermerk, wenn `finish` nie lief; für Strg-C und
+`kill -9` hilft nur die Leseseite, und genau dort sitzt die Prüfung.
+
+**Fund 36: Der Vergleichswert maß Token-Gleichheit, nicht
+Bitgleichheit.** `greedy_digest` hashte nur die erzeugten Token. Ein
+Token ist ein Argmax über 151 936 Zahlen und ändert sich erst, wenn die
+Rangfolge kippt. Gemessen an Qwen2.5-0,5B, Bytes eines Tensors verschoben
+und die Hashkette bis `theta_v.json` konsistent nachgezogen:
+
+| geänderte Bytes | Anteil | Digest über Token | Digest über Logits |
+|---|---|---|---|
+| 9 | 0,0011 % | **unverändert** | verändert |
+| 81 | 0,0101 % | **unverändert** | verändert |
+| 803 | 0,1 % | **unverändert** | verändert |
+| 8029 | 1,0 % | verändert | verändert |
+
+In drei von vier Stufen rechnete das Modell nachweislich andere Zahlen,
+und der Vergleichswert meldete „bitgleich". Der Digest deckt jetzt die
+**Logits** jedes Schritts ab. Sie sind `i32`, das Hashen bleibt also
+exakt und in der Ganzzahldisziplin. Alle Protokolle tragen den Umfang als
+Feld `digest_umfang`; zwei verschiedene Umfänge gelten wie zwei
+verschiedene Modellstände als unvergleichbar.
+
+**Reichweite von Fund 36, geprüft statt vermutet.** Die erste Frage war,
+ob das **Protokoll** denselben Fehler hat, ob also das Netz Miner nach
+Token statt nach Zahlen vergleicht. Nein: `myl-verifier::adjudicate`
+hasht die **Ausgabe-Aktivierungen**. Von den 30 Konformitätsvektoren
+vergleichen 27 Tensoren, nur die drei `e2e`-Vektoren vergleichen Token.
+Betroffen sind damit Messwerkzeuge, nicht das Protokoll. Offen bleiben
+die drei `e2e`-Vektoren, `hash_tokens` in `bench/run.py`, und der
+**Shard-Vergleich**: Er hält Token gegen Token, weil die Stage-API des
+Pods nur Token herausgibt, und prüft damit, ob die Aufteilung dieselbe
+Entscheidung erzeugt, nicht dieselben Zahlen. Ihn zu schärfen ist ein
+Eingriff in COMPUTE_PIPELINE und ein eigener Punkt.
+
+**Beim Beheben selbst zugefügt und beim Lauf gegen die echten Artefakte
+gefunden:** Die Umstellung brach zunächst den Shard-Vergleich, weil dort
+der Token-Digest des Pods gegen den neuen Digest des Einzelknotens
+gehalten wurde. Kein Test hat das gefangen, denn `run_shard` braucht ein
+Modell. Beide Werte heißen jetzt `…_tokens` und meinen dasselbe.
+
+**Außerdem:**
+
+- **Punkt 2.4, `--repeat N`:** Läufe je Prompt im Determinismuslauf,
+  Vorgabe und Minimum 2. Verglichen wird gegen den **ersten** Lauf, nicht
+  paarweise gegen den Vorgänger; bei einer Abweichung nennt das Protokoll
+  die Nummer des ersten abweichenden Laufs. Alle Beteiligten müssen
+  denselben Wert verwenden, sonst urteilt `vergleich` zu Recht
+  `UNVOLLSTÄNDIG`.
+- **Negativtest Artefaktwechsel** als Test: Jede einzelne Ankerdatei muss
+  durchschlagen, der Digest muss reproduzierbar sein, und eine fehlende
+  Ankerdatei ist ein Fehler statt eines anderen Digests. Am echten Modell
+  nachgemessen: Ein verändertes Gewichtsbyte ohne nachgezogene Hashkette
+  wird beim Laden abgelehnt, mit Nennung des Tensors.
+- **`EINSEITER.md`**: eine Seite zum Verschicken an einen Partner. Die
+  `ANLEITUNG.md` hat 869 Zeilen und ist dafür zu lang.
+- **Punkt 2.2 zurückgestellt statt gebaut.** Ein Backend-Vergleich
+  innerhalb einer Maschine hat auf x86_64 bis zum AVX2-Pfad keinen
+  Gegenstand (Fund 34). Ihn trotzdem zu bauen hieße, ein Werkzeug zu
+  liefern, das auf der Zielmaschine zweimal dasselbe misst.
 
 ### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
 
@@ -614,7 +743,16 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 
   Gemessen über drei Bauten derselben Quelle: ohne Feature und mit
   `cpu-simd` läuft der Determinismuslauf durch und liefert **denselben**
-  Digest (`e19372337dab1f3d`), mit `rocm` wird er abgelehnt (Exit 1).
+  Digest (`272f1ee8f45f2c78`), mit `rocm` wird er abgelehnt (Exit 1).
+  Seit Fund 36 deckt dieser Digest die **Logits** jedes Schritts ab und
+  nicht mehr nur die erzeugten Token: Die Aussage lautet damit, dass NEON
+  und die skalare Fassung dieselben Zahlen rechnen, nicht nur dieselbe
+  Entscheidung treffen. Der frühere Wert `e19372337dab1f3d` stammt aus
+  dem alten Umfang und ist mit dem neuen nicht vergleichbar; die
+  Protokolle tragen den Umfang deshalb als eigenes Feld.
+  **`cpu-simd` gilt nur auf aarch64** (Fund 34): Auf x86_64 gibt es
+  keinen vektorisierten Pfad, und der Client lehnt einen solchen Bau ab,
+  statt die Referenz unter fremdem Namen zu protokollieren.
 - **Windows-Funde aus dem ersten CI-Lauf:** `menu::kurz` mischte die
   Trennzeichen (`…/d\e\f`), weil ein festes `…/` vor einem Pfad stand,
   den `PathBuf::collect` mit dem Trennzeichen des Systems zusammensetzt.
