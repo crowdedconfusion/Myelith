@@ -513,10 +513,26 @@ Das Gespräch mit dem Modell steht hinter dem Lauf, obwohl man es davor
 führen mag: Es ist der einzige Punkt, der **nicht misst**, und ein Menü
 ordnet nach Aufgabe, nicht nach Neugier.
 
-**Die Einstellungsübersicht nennt das gewählte Artefakt**, nicht mehr den
-Artefaktordner. Dort stand „Artefakte" mit dem gekürzten Pfad, und das
-beantwortete die Frage nicht, die vor einem Lauf zählt: Womit wird
-gerechnet? Liegt nichts vor, steht das da, samt Verweis auf [1].
+**Artefakt und Testdatei sind Auswahlzustände, keine Vorgaben.** Beim
+Start steht in beiden Zeilen „nicht ausgewählt", samt Verweis auf den
+Punkt, der sie setzt. Vorher zeigte der Client auf das Vorgabemodell und
+auf die eingebauten Prompts: Das sah aus wie eine Entscheidung und war
+eine Annahme. Wer den Testlauf startete, maß dann möglicherweise etwas
+anderes als der Vergleichspartner, ohne dass ihm eine Frage gestellt
+worden wäre.
+
+**Der Testlauf fragt genau das ab, was fehlt.** Ist beides gewählt und
+steht unten in der Übersicht, läuft er sofort los. Zwei Rückfragen auf
+jeden Lauf sind bei einem Durchgang lästig und bei zehn ein Grund, den
+Client nicht mehr zu benutzen. Fehlt die Testdatei und wird keine
+gewählt, läuft der Test trotzdem, sagt aber vorher, dass er die
+Vorgabewerte nimmt und mit keiner anderen Maschine vergleichbar ist.
+
+Die Übersicht nennt das **Artefakt** beim Modellnamen statt beim Pfad,
+und die **Testdatei** beim Namen statt bei ihrer Prüfsumme: An acht
+Hexzeichen erkennt niemand seine Datei wieder. Ohne Testdatei stehen
+Prompt, Token und Shards ausdrücklich als Vorgabewerte da; mit ihr nennt
+ihre Zeile den Umfang, und die Wiederholung darunter entfällt.
 
 Die vier Schritte sind durch eine **Leerzeile** von den drei
 Nebenfunktionen abgesetzt ([5] Anleitung, [9] Entwickler, [0] Beenden).

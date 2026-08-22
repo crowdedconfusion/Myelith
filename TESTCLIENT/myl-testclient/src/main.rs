@@ -351,12 +351,16 @@ fn main() -> ExitCode {
     // Testplan laden, falls angegeben: er überschreibt die Optionen.
     let mut args = args;
     let mut einstellungen_id = "ohne-plan".to_string();
+    // Der Name der Testdatei für die Anzeige, die Kennung für das
+    // Protokoll. An acht Hexzeichen erkennt niemand seine Datei wieder.
+    let mut plan_name: Option<String> = None;
     if let Some(pfad) = args.plan.clone() {
         match TestPlan::load(&pfad) {
             Ok(plan) => {
                 println!("Testplan: {} ({})", plan.plan_id, pfad.display());
                 println!("  Einstellungs-ID {}\n", plan.short_id());
                 einstellungen_id = plan.short_id();
+                plan_name = Some(plan.plan_id.clone());
                 args.prompts = plan.prompts;
                 args.steps = plan.steps;
                 args.shards = plan.shards;
@@ -398,11 +402,18 @@ fn main() -> ExitCode {
     }
 
     if args.command == "menu" {
+        // **Voreingestellt ist nur, was ausdrücklich angegeben wurde.**
+        // Ohne `--artifacts` und ohne `--plan` startet das Menü mit
+        // „nicht ausgewählt" in beiden Zeilen, und der Testlauf fragt
+        // danach. Vorher zeigte es auf das Vorgabemodell und auf die
+        // eingebauten Prompts: Das sah aus wie eine Entscheidung und war
+        // eine Annahme.
         let ok = menu::run(Einstellungen {
             prompts: args.prompts,
             steps: args.steps,
             shards: args.shards,
-            artifacts: args.artifacts,
+            artifacts: args.artifacts_explizit.then_some(args.artifacts),
+            testdatei: plan_name,
             logs: args.logs,
             einstellungen_id,
             teilnehmer: args.name,

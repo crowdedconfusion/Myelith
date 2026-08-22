@@ -261,6 +261,11 @@ frei, das wäre kein Messwert.
 
 Punkt **[3] Testlauf starten**. Das ist alles.
 
+Der Client fragt dabei nur nach, was noch fehlt: Steht unten in den
+Einstellungen bereits ein Artefakt und eine Testdatei, läuft er sofort
+los. Beim ersten Öffnen steht dort „nicht ausgewählt", und er stellt
+beide Fragen.
+
 Der Lauf hat vier Stufen und schreibt **ein einziges Protokoll** über
 alle vier:
 

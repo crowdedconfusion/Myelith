@@ -21,11 +21,27 @@ use crate::spec::TestPlan;
 use crate::{banner, hardware, runs, stack};
 
 /// Laufeinstellungen, die im Menü verändert werden können.
+///
+/// **Artefakt und Testdatei sind Auswahlzustände, keine Vorgaben**
+/// (2026-08-22). Beim Start ist beides `None`, und die Übersicht sagt
+/// „nicht ausgewählt". Vorher zeigte der Client auf ein Artefakt, das
+/// jemand vielleicht nie gewählt hatte, und auf die eingebauten Prompts:
+/// Das sah aus wie eine Entscheidung, war aber eine Annahme. Wer den
+/// Testlauf startete, maß dann möglicherweise etwas anderes als der
+/// Vergleichspartner, ohne dass ihm eine Frage gestellt worden wäre.
+///
+/// Der Testlauf fragt genau das ab, was fehlt, und nichts weiter: Ist
+/// beides gewählt, läuft er sofort los.
 pub struct Einstellungen {
     pub prompts: Vec<String>,
     pub steps: usize,
     pub shards: usize,
-    pub artifacts: PathBuf,
+    /// Das gewählte Artefakt. `None`, solange keines gewählt wurde.
+    pub artifacts: Option<PathBuf>,
+    /// Die gewählte Testdatei (ihre Kennung). `None`, solange keine
+    /// gewählt wurde; dann laufen die eingebauten Vorgabewerte, und der
+    /// Lauf trägt die Einstellungs-Kennung `ohne-plan`.
+    pub testdatei: Option<String>,
     pub logs: PathBuf,
     /// Kurzkennung der Einstellungen: benennt das Protokollverzeichnis.
     /// `ohne-plan`, solange kein Testplan geladen wurde.
@@ -48,6 +64,10 @@ impl Einstellungen {
         self.steps = plan.steps;
         self.shards = plan.shards;
         self.einstellungen_id = plan.short_id();
+        // Der Name steht in der Übersicht, die Kennung im Protokoll. Ohne
+        // ihn stünde dort eine Prüfsumme, und niemand erkennt an acht
+        // Hexzeichen, welche Datei er gewählt hat.
+        self.testdatei = Some(plan.plan_id.clone());
     }
 }
 
@@ -66,18 +86,28 @@ impl Einstellungen {
     /// gibt: Ein Lauf ohne Artefakt schlägt fehl, und wer das vorher
     /// sieht, wählt zuerst [1].
     fn artefakt_name(&self) -> String {
-        let name = self
-            .artifacts
+        let Some(pfad) = self.artifacts.as_ref() else {
+            return "nicht ausgewählt  (Punkt [1])".to_string();
+        };
+        let name = pfad
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         if name.is_empty() {
-            return "keines gewählt  (Punkt [1])".to_string();
+            return "nicht ausgewählt  (Punkt [1])".to_string();
         }
-        if self.artifacts.is_dir() {
+        if pfad.is_dir() {
             name
         } else {
             format!("{}  (liegt nicht vor, Punkt [1])", name)
+        }
+    }
+
+    /// Die gewählte Testdatei, wie sie in der Übersicht erscheint.
+    fn testdatei_name(&self) -> String {
+        match self.testdatei.as_deref() {
+            Some(n) => format!("{}  ({} Prompts, {} Token, {} Shards)", n, self.prompts.len(), self.steps, self.shards),
+            None => "nicht ausgewählt  (Punkt [2])".to_string(),
         }
     }
 
@@ -85,6 +115,21 @@ impl Einstellungen {
         use std::fmt::Write as _;
         let mut t = String::new();
         let _ = writeln!(t, "  Aktuelle Einstellungen:");
+        // **Die beiden Auswahlen zuerst.** Sie sind das, was vor einem
+        // Lauf zu entscheiden ist; alles darunter folgt daraus oder ist
+        // Beiwerk.
+        let _ = writeln!(t, "    Artefakt    {}", self.artefakt_name());
+        let _ = writeln!(t, "    Testdatei   {}", self.testdatei_name());
+
+        // **Ohne Testdatei sind das Vorgabewerte, keine Auswahl.** Das
+        // gehört dazugeschrieben: Sonst stehen dort Prompt, Token und
+        // Shards wie eine getroffene Entscheidung, während die Zeile
+        // darüber „nicht ausgewählt" meldet. Mit Testdatei nennt deren
+        // Zeile schon Umfang und Zahlen; sie hier zu wiederholen wäre
+        // Rauschen.
+        if self.testdatei.is_none() {
+            let _ = writeln!(t, "                Bis dahin laufen die Vorgabewerte:");
+        }
         match self.prompts.as_slice() {
             [einer] => {
                 let _ = writeln!(t, "    Prompt      {:?}", gekuerzt(einer));
@@ -96,8 +141,10 @@ impl Einstellungen {
                 }
             }
         }
-        let _ = writeln!(t, "    Token       {}", self.steps);
-        let _ = writeln!(t, "    Shards      {}", self.shards);
+        if self.testdatei.is_none() {
+            let _ = writeln!(t, "    Token       {}", self.steps);
+            let _ = writeln!(t, "    Shards      {}", self.shards);
+        }
         // Nur wenn vom Üblichen abgewichen wird. Steht die Vorgabe dort,
         // liest sie niemand, und die Übersicht wird um eine Zeile länger,
         // die nichts sagt. Weicht sie ab, ist es das Wichtigste in der
@@ -109,12 +156,6 @@ impl Einstellungen {
                 self.wiederholungen
             );
         }
-        // **Das gewählte Artefakt, nicht der Ordner.** Hier stand
-        // „Artefakte" mit dem gekürzten Pfad, und das beantwortete die
-        // Frage nicht, die vor einem Lauf zählt: Womit wird gerechnet?
-        // Der Pfad endet zwar auf dem Modellnamen, aber gekürzt sah man
-        // ihn zwischen zwei Auslassungszeichen kaum.
-        let _ = writeln!(t, "    Artefakt    {}", self.artefakt_name());
         let _ = writeln!(t, "    Protokolle  {}", kurz(&self.logs));
         let _ = writeln!(t, "    Nutzer      {}", self.teilnehmer);
         let _ = write!(t, "    Einstellungs-ID {}", self.einstellungen_id);
@@ -295,12 +336,15 @@ pub fn run(mut e: Einstellungen) -> bool {
     // beim Testlauf. Das Artefakt ist ein eigener Menüpunkt.
     //
     // Übernommen wird beim Start nur, was ohnehin gebaut ist.
-    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
     banner::bildschirm();
-    if let Some(pfad) = crate::artefakte::vorhandenes(&repo, crate::runs::DEFAULT_MODEL)
-    {
-        e.artifacts = pfad;
-    }
+    // **Nichts vorauswählen.** Hier stand eine Suche nach dem
+    // Vorgabemodell, und wer den Client öffnete, sah ein Artefakt in den
+    // Einstellungen, das er nie gewählt hatte. Das sah aus wie eine
+    // Entscheidung und war eine Annahme; wer dann den Testlauf startete,
+    // maß möglicherweise gegen ein anderes Modell als der
+    // Vergleichspartner, ohne je gefragt worden zu sein.
+    //
+    // Der Testlauf fragt jetzt selbst, und zwar nur nach dem, was fehlt.
 
     let mut letztes_ergebnis = true;
 
@@ -328,17 +372,10 @@ pub fn run(mut e: Einstellungen) -> bool {
                 weiter();
             }
             '3' => {
-                // Die Planauswahl steht hier, nicht beim Start: Sie legt
-                // fest, WOMIT gemessen wird, und diese Frage stellt sich
-                // in dem Augenblick, in dem gemessen werden soll.
-                testdatei_waehlen(&mut e);
-                println!();
-                // **Ohne Vorbedingung `e.artifacts.exists()`.** Die stand
-                // hier, solange der Plan das Modell mitbrachte und die
-                // Einstellung schon darauf zeigte. Jetzt wählt der
-                // Testlauf das Artefakt selbst, und die Prüfung davor
-                // hätte den Lauf genau dann verhindert, wenn der Client
-                // hätte helfen können.
+                // Ohne vorgeschaltete Auswahl: `testlauf` fragt selbst,
+                // und zwar nur nach dem, was noch fehlt. Hier stand ein
+                // `testdatei_waehlen`, das auch dann fragte, wenn die
+                // Datei längst gewählt war.
                 letztes_ergebnis = testlauf(&mut e);
                 weiter();
             }
@@ -638,7 +675,7 @@ fn einstellungen_aendern(e: &mut Einstellungen) {
         }
         '4' => {
             if let Some(v) = nachfragen("Artefaktverzeichnis") {
-                e.artifacts = PathBuf::from(v);
+                e.artifacts = Some(PathBuf::from(v));
             }
         }
         '5' => {
@@ -784,14 +821,39 @@ fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
 /// fehlgeschlagener Determinismuslauf macht die Hardware-Erhebung nicht
 /// wertlos, sondern erst recht wichtig.
 fn testlauf(e: &mut Einstellungen) -> bool {
-    // **Das Artefakt wird hier gewählt, nicht im Testplan** (2026-08-22).
-    // Der Plan legt fest, was gemessen wird; woran, entscheidet sich
-    // unmittelbar davor. Liegt genau ein Modell da, wird es ohne Frage
-    // genommen; liegen mehrere, wird gefragt; liegt keines, bietet der
-    // Client an, eines zu beschaffen. Damit gilt derselbe Plan für 0,5B
-    // und für 7B, und niemand muss zwei Dateien pflegen, die dieselben
-    // Prompts tragen.
-    artefakt_waehlen(e);
+    // **Gefragt wird nur, was fehlt** (2026-08-22).
+    //
+    // Beides gehört vor den Lauf: das Artefakt, weil der Plan es seit
+    // dieser Fassung nicht mehr mitbringt, und die Testdatei, weil ohne
+    // sie die eingebauten Vorgabewerte laufen und das Ergebnis mit
+    // niemandem vergleichbar ist.
+    //
+    // Wer beides schon gewählt hat, sieht es unten in den Einstellungen
+    // stehen und will es nicht noch einmal bestätigen. Zwei Rückfragen
+    // auf jeden Lauf sind bei einem Durchgang lästig und bei zehn ein
+    // Grund, den Client nicht mehr zu benutzen.
+    if e.artifacts.is_none() {
+        artefakt_waehlen(e);
+        println!();
+    }
+    if e.testdatei.is_none() {
+        testdatei_waehlen(e);
+        println!();
+    }
+
+    let Some(artefakt) = e.artifacts.clone() else {
+        println!("  Ohne Artefakt kein Testlauf. Mit [1] eines wählen.");
+        return false;
+    };
+    if e.testdatei.is_none() {
+        // Kein Abbruch: Ein Lauf ohne Plan ist gültig, er ist nur mit
+        // keinem anderen vergleichbar. Das gehört gesagt, bevor jemand
+        // sein Protokoll verschickt und der Vergleich es in eine eigene
+        // Gruppe legt.
+        println!("  Keine Testdatei gewählt: Es laufen die Vorgabewerte.");
+        println!("  Das Protokoll trägt die Kennung `ohne-plan` und ist mit");
+        println!("  Läufen anderer Maschinen nicht vergleichbar.\n");
+    }
     let e = &*e;
 
     let mut log = protokoll("testlauf", e);
@@ -810,10 +872,10 @@ fn testlauf(e: &mut Einstellungen) -> bool {
 
     log.note("Stufe 2 von 4: Determinismus (Einzelknoten)");
     let determinismus =
-        runs::run_determinism(&mut log, &e.artifacts, &e.prompts, e.steps, e.wiederholungen);
+        runs::run_determinism(&mut log, &artefakt, &e.prompts, e.steps, e.wiederholungen);
 
     log.note("Stufe 3 von 4: Geshardete Inferenz");
-    let shard = runs::run_shard(&mut log, &e.artifacts, &e.prompts, e.steps, e.shards);
+    let shard = runs::run_shard(&mut log, &artefakt, &e.prompts, e.steps, e.shards);
 
     log.note("Stufe 4 von 4: Protokoll-Durchlauf");
     let stapel = stack::run_stack(&mut log);
@@ -923,7 +985,12 @@ fn ist_rueckweg(eingabe: &str) -> bool {
 /// Protokoll darüber sähe aus wie ein Messergebnis und wäre keines. Der
 /// Vergleichswert entsteht in [1] und [2], nicht hier.
 fn sprechen(e: &Einstellungen) {
-    let modell = match runs::modell_laden(&e.artifacts) {
+    let Some(artefakt) = e.artifacts.as_ref() else {
+        println!("  Noch kein Artefakt gewählt.");
+        println!("  Mit [1] eines wählen oder beschaffen.");
+        return;
+    };
+    let modell = match runs::modell_laden(artefakt) {
         Ok(m) => m,
         Err(fehler) => {
             println!("  {}", fehler);
@@ -932,7 +999,7 @@ fn sprechen(e: &Einstellungen) {
         }
     };
 
-    println!("  Modell geladen: {}", e.artifacts.display());
+    println!("  Modell geladen: {}", artefakt.display());
     println!("  Höchstens {} Token je Antwort.", ANTWORT_TOKEN);
     println!(
         "  Die Auswahl ist gierig, ohne Sampling und ohne Zufall: Dieselbe\n  \
@@ -967,8 +1034,7 @@ fn sprechen(e: &Einstellungen) {
         // Voreinstellung: Wer 7B geladen hat, soll nicht „qwen2.5-0.5b"
         // lesen. Eine falsche Beschriftung neben einer echten Antwort ist
         // schlechter als gar keine.
-        let name = e
-            .artifacts
+        let name = artefakt
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Modell".to_string());
@@ -984,7 +1050,7 @@ fn sprechen(e: &Einstellungen) {
             print!("{}", stueck);
             let _ = std::io::Write::flush(&mut std::io::stdout());
         };
-        match runs::antworten(&modell, &e.artifacts, &frage, ANTWORT_TOKEN, &mut zeigen) {
+        match runs::antworten(&modell, artefakt, &frage, ANTWORT_TOKEN, &mut zeigen) {
             Ok(_) => println!("\n  ({} s)\n", begonnen.elapsed().as_secs()),
             Err(fehler) => println!("\n  {}\n", fehler),
         }
@@ -1010,7 +1076,7 @@ fn artefakt_waehlen(e: &mut Einstellungen) {
     match crate::artefakte::beschaffen(&repo, &mut f, &mut |t| println!("  {}", t)) {
         Ok(pfad) => {
             println!("\n  Artefakt: {}", pfad.display());
-            e.artifacts = pfad;
+            e.artifacts = Some(pfad);
         }
         Err(fehler) => {
             for zeile in fehler.lines() {
@@ -1321,12 +1387,12 @@ fn testdatei_waehlen(e: &mut Einstellungen) {
     // dann tragen zwei Dateien dieselben Prompts unter verschiedenen
     // Prüfsummen.
     //
-    // Das Artefakt entscheidet sich jetzt vor dem Lauf: über [4], oder
-    // ungefragt, wenn genau eines daliegt. Der Modellstand steht
-    // weiterhin in jedem Protokoll, und `vergleich` verweigert das
+    // Das Artefakt entscheidet sich jetzt vor dem Lauf: über [1], oder
+    // beim Testlauf, falls dann noch keines gewählt ist. Der Modellstand
+    // steht weiterhin in jedem Protokoll, und `vergleich` verweigert das
     // Urteil, wenn zwei Läufe gegen verschiedene Modelle gerechnet haben.
     println!("\n  Der Plan gilt für jedes Artefakt.");
-    println!("  Mit [3] den Testlauf starten; das Modell wird davor gewählt.");
+    println!("  Mit [3] den Testlauf starten.");
     let _ = repo;
 }
 
@@ -1668,7 +1734,8 @@ mod tests {
             prompts: vec!["Vorgabe-Prompt".into()],
             steps: 8,
             shards: 4,
-            artifacts: PathBuf::from("/artefakte"),
+            artifacts: Some(PathBuf::from("/artefakte")),
+            testdatei: None,
             logs: PathBuf::from("/logs"),
             einstellungen_id: "ohne-plan".into(),
             teilnehmer: "probe".into(),
@@ -1750,6 +1817,90 @@ mod tests {
         let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
         let zurueck = TestPlan::parse(&plan.to_file_text()).expect("wieder lesbar");
         assert_eq!(zurueck, plan);
+    }
+
+
+    /// **Beim Start ist nichts vorausgewählt.** Wer den Client öffnet,
+    /// soll in den Einstellungen sehen, dass er noch zu entscheiden hat,
+    /// statt auf ein Artefakt zu blicken, das er nie gewählt hat.
+    #[test]
+    fn ohne_auswahl_steht_nicht_ausgewaehlt_da() {
+        let leer = Einstellungen {
+            artifacts: None,
+            testdatei: None,
+            ..einstellungen_probe()
+        };
+        let text = leer.als_text();
+        let zeile = |anfang: &str| {
+            text.lines()
+                .find(|z| z.trim_start().starts_with(anfang))
+                .unwrap_or_else(|| panic!("Zeile {anfang:?} fehlt in:\n{text}"))
+        };
+        assert!(
+            zeile("Artefakt").contains("nicht ausgewählt"),
+            "{}",
+            zeile("Artefakt")
+        );
+        assert!(
+            zeile("Testdatei").contains("nicht ausgewählt"),
+            "{}",
+            zeile("Testdatei")
+        );
+        // Und der Weg dorthin steht daneben: Eine Zeile, die einen Mangel
+        // meldet, ohne zu sagen, wo er behoben wird, kostet eine Suche.
+        assert!(zeile("Artefakt").contains("[1]"));
+        assert!(zeile("Testdatei").contains("[2]"));
+    }
+
+    /// Ist beides gewählt, nennt die Übersicht Namen statt Platzhalter,
+    /// und der Testlauf hat nichts mehr zu fragen.
+    #[test]
+    fn mit_auswahl_stehen_die_namen_da() {
+        let voll = Einstellungen {
+            artifacts: Some(PathBuf::from("/irgendwo/qwen2.5-0.5b")),
+            testdatei: Some("standard".into()),
+            prompts: vec!["a".into(), "b".into()],
+            steps: 32,
+            shards: 4,
+            ..einstellungen_probe()
+        };
+        let text = voll.als_text();
+        assert!(text.contains("qwen2.5-0.5b"), "{text}");
+        assert!(text.contains("standard"), "{text}");
+        assert!(
+            text.contains("2 Prompts, 32 Token, 4 Shards"),
+            "die Testdatei nennt ihren Umfang nicht:\n{text}"
+        );
+        assert!(!text.contains("nicht ausgewählt"), "{text}");
+    }
+
+    /// Ein Plan, der übernommen wird, setzt beide Anzeigen zugleich:
+    /// Name für die Übersicht, Kennung für das Protokoll. Ohne den Namen
+    /// stünde dort eine Prüfsumme, und an acht Hexzeichen erkennt niemand
+    /// seine Datei wieder.
+    #[test]
+    fn ein_uebernommener_plan_setzt_namen_und_kennung() {
+        let mut e = Einstellungen {
+            artifacts: None,
+            testdatei: None,
+            ..einstellungen_probe()
+        };
+        let plan = TestPlan {
+            plan_id: "2026-08-22-cross-arch-01".into(),
+            prompts: vec!["eins".into(), "zwei".into()],
+            steps: 16,
+            shards: 2,
+        };
+        e.uebernehmen(&plan);
+
+        assert_eq!(e.testdatei.as_deref(), Some("2026-08-22-cross-arch-01"));
+        assert_eq!(e.einstellungen_id, plan.short_id());
+        assert_eq!(e.steps, 16);
+        assert_eq!(e.shards, 2);
+        assert_eq!(e.prompts.len(), 2);
+        // Das Artefakt bleibt unberührt: Der Plan sagt seit dem
+        // 2026-08-22 nicht mehr, woran gemessen wird.
+        assert!(e.artifacts.is_none(), "der Plan hat ein Artefakt gesetzt");
     }
 
 }
