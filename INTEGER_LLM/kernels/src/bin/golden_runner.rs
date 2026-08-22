@@ -118,6 +118,12 @@ fn main() {
         "rmsnorm_basic" => run_rmsnorm(&gv),
         "linear_w8a16_identity" => run_linear(&gv),
         "softmax_basic" => run_softmax(&gv),
+        // Rückwärtspass (kernels v0.19.0). Eine fremde Umsetzung muss
+        // auch ihn bitgleich reproduzieren, sonst trägt sie kein
+        // verifizierbares Training.
+        "backward_linear" => run_backward_linear(&gv),
+        "backward_softmax" => run_backward_softmax(&gv),
+        "backward_rope" => run_backward_rope(&gv),
         _ => {
             eprintln!("Unknown golden vector: {}", gv.name);
             false
@@ -234,4 +240,66 @@ fn run_softmax(gv: &GoldenVector) -> bool {
         eprintln!("  Got:      {:?}", result);
     }
     result == expected
+}
+
+// ---------------------------------------------------------------------------
+// Rueckwaertspass
+// ---------------------------------------------------------------------------
+
+/// Hilfsfunktion: liest ein i64-Feld als Vec<i32>.
+fn als_i32(t: &TensorData) -> Vec<i32> {
+    t.data.iter().map(|&v| v as i32).collect()
+}
+
+fn run_backward_linear(gv: &GoldenVector) -> bool {
+    let g = als_i32(&gv.inputs["g"]);
+    let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
+    let w: Vec<i8> = gv.inputs["W"].data.iter().map(|&v| v as i8).collect();
+    let in_features = gv.metadata["in_features"].as_u64().unwrap() as usize;
+    let w_shifts: Vec<u8> = gv.metadata["w_shifts"].as_array().unwrap()
+        .iter().map(|v| v.as_u64().unwrap() as u8).collect();
+    let g_frac = gv.metadata["g_frac"].as_u64().unwrap() as u8;
+    let gx_frac = gv.metadata["gx_frac"].as_u64().unwrap() as u8;
+
+    let (gx, gw) = integer_llm_kernels::backward::linear_backward(
+        &g, &x, &w, in_features, &w_shifts, g_frac, gx_frac);
+
+    let gx_soll: Vec<i32> = als_i32(&gv.outputs["gx"]);
+    let gw_soll: Vec<i64> = gv.outputs["gW"].data.clone();
+    if gx != gx_soll {
+        eprintln!("  gx: erwartet {:?}, erhalten {:?}", gx_soll, gx);
+        return false;
+    }
+    if gw != gw_soll {
+        eprintln!("  gW weicht ab");
+        return false;
+    }
+    true
+}
+
+fn run_backward_softmax(gv: &GoldenVector) -> bool {
+    let g = als_i32(&gv.inputs["g"]);
+    let p = als_i32(&gv.inputs["p"]);
+    let frac = gv.metadata["frac_bits"].as_u64().unwrap() as u8;
+    let out = integer_llm_kernels::backward::softmax_backward(&g, &p, frac);
+    let soll = als_i32(&gv.outputs["gz"]);
+    if out != soll {
+        eprintln!("  erwartet {:?}, erhalten {:?}", soll, out);
+        return false;
+    }
+    true
+}
+
+fn run_backward_rope(gv: &GoldenVector) -> bool {
+    let g = als_i32(&gv.inputs["g"]);
+    let cos: Vec<i16> = gv.inputs["cos"].data.iter().map(|&v| v as i16).collect();
+    let sin: Vec<i16> = gv.inputs["sin"].data.iter().map(|&v| v as i16).collect();
+    let frac = gv.metadata["frac_bits"].as_u64().unwrap() as u8;
+    let out = integer_llm_kernels::backward::rope_backward(&g, &cos, &sin, frac);
+    let soll = als_i32(&gv.outputs["gx"]);
+    if out != soll {
+        eprintln!("  erwartet {:?}, erhalten {:?}", soll, out);
+        return false;
+    }
+    true
 }

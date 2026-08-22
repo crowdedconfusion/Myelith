@@ -1,0 +1,51 @@
+{
+  "name": "backward_softmax",
+  "level": "op",
+  "theta_v_hash": "sha256:2857db731e25dcf3018b1633c2954309658b00dcacd4b48810e0adf5a0e84609",
+  "metadata": {
+    "frac_bits": 12
+  },
+  "inputs": {
+    "g": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "d3e52d90e080d43368aa5b04019d29236181427270688e869246b542914e5091",
+      "data": [
+        2,
+        -3,
+        5,
+        1
+      ]
+    },
+    "p": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "6d9cd70b7386e7eb411506f916d575a53dfc8301a0a7430c7cfa375755d9874f",
+      "data": [
+        1024,
+        2048,
+        1024,
+        0
+      ]
+    }
+  },
+  "outputs": {
+    "gz": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "2f01cc549f539cdf570c809184d7e0aeb354fc1cfa0ba915ab4e386815306c01",
+      "data": [
+        0,
+        -2,
+        1,
+        0
+      ]
+    }
+  }
+}

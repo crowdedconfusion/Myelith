@@ -118,10 +118,15 @@ def fq_gewichte_int8(W: torch.Tensor) -> torch.Tensor:
 
     ## Warum die Rundungsart alles entscheidet
 
-    Gemessen (2026-08-22): Ein SGD-Schritt bewegt ein Gewicht um **0,03 %
-    einer Rasterstufe**. Mit Rundung zur naechsten Stufe passiert dann
+    Gemessen (2026-08-22, korrigiert): Ein SGD-Schritt bewegt ein Gewicht
+    im Median um **6,4e-6 einer Rasterstufe**, also um sechs
+    Zehnmillionstel. Mit Rundung zur naechsten Stufe passiert dann
     entweder nichts oder ein ganzer Sprung, also eine Ueberschreitung um
-    das Dreitausendfache. Das Training bricht.
+    das Hunderttausendfache. Das Training bricht.
+
+    (Eine fruehere Fassung nannte hier 0,03 %. Das war die Bewegung ueber
+    200 Schritte, nicht ueber einen; siehe tests/diag/bitbudget.py, das
+    die Groesse je Schritt und je Zeile misst.)
 
     Mit **stochastischem Runden** wird die Stufe mit einer
     Wahrscheinlichkeit gleich dem Nachkommaanteil genommen. Der

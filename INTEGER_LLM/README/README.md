@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.16.0 (θ_v 0.17.0)
+> **Version:** 0.18.0 (θ_v 0.17.0)
 > **Datum:** 2026-08-22
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -414,6 +414,107 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.18.0 (kernels 0.20.0) – 2026-08-22 (Rückwärtspass vollständig)
+
+Die drei offenen Kernel sind gebaut, die Ableitungs-LUT erzeugt, und der
+Konformitäts-Prüflauf deckt den Rückwärtspass mit ab: **33 von 33**
+Vektoren statt 30.
+
+| Neu | leitet ab |
+|---|---|
+| `rope_backward` | `rotate_half_split_i16` |
+| `attention_backward` | `attention_int`, für eine Abfrageposition |
+| `embedding_backward_akkumulieren` | den Embedding-Nachschlag |
+| `luts.py::generate_silu_grad_lut` | die SiLU-Ableitung |
+
+**RoPE braucht keine neue LUT und keinen Vorzeichenwechsel in `sin`.**
+Die Jacobi-Matrix einer Drehung ist die Drehmatrix selbst, und die ist
+orthogonal: Ihre Transponierte ist die Drehung um −θ. Nur die Vorzeichen
+in der Formel wandern. Wer stattdessen `sin` negiert **und** die Formel
+unverändert lässt, dreht in die falsche Richtung, und in einer
+Zahlenprobe sieht man das kaum; der Test dreht deshalb vorwärts und
+rückwärts und verlangt den Ausgangspunkt zurück.
+
+**Maskierte Positionen bekommen im Attention-Rückwärtspass exakt null**,
+nicht „ungefähr null" wie vorwärts. Ein Gradient auf eine Position, die
+nie gelesen wurde, wäre ein Leck über die Kausalitätsgrenze.
+
+**Der Embedding-Gradient akkumuliert, er setzt nicht.** Kommt ein Token
+in einer Sequenz mehrfach vor, muss sich sein Gradient addieren. Wer
+zuweist, behält das letzte Vorkommen; das fällt bei seltenen Token nie
+auf und bei häufigen als langsames Lernen.
+
+**Die SiLU-Ableitung bekommt eine eigene LUT.** Es liegt nahe,
+`σ(x) = silu(x)/x` aus der Vorwärts-LUT zu gewinnen; bei null ist das
+undefiniert und in der Umgebung numerisch unbrauchbar, also genau dort,
+wo die meisten Aktivierungen liegen. Nachgemessen gegen die numerische
+Ableitung der Vorwärts-LUT: Abweichung unter 0,006 über den gesamten
+Bereich. Ein Test hält fest, dass die Ableitung über eins überschwingt
+(1,10 bei x ≈ 2,36) und links negativ wird (−0,10): Wer den
+Ausgangsbereich wie bei SiLU selbst wählt, sättigt genau am Maximum.
+
+**Golden Vectors, und ein Fund an der eigenen Referenz.** Die Sollwerte
+entstehen in `tools/golden_backward.py`, einer **unabhängigen**
+Nachbildung der Kernelsemantik: Ein Vektor, den der geprüfte Code selbst
+erzeugt, prüft nichts. Der erste Lauf meldete prompt eine Abweichung von
+1 an einer Stelle. Die Klärung ergab, dass **die Referenz** falsch lag,
+nicht der Kernel: Sie rundete vom Nullpunkt weg, der Vertrag verlangt
+round-to-nearest-even auf der Zweierkomplement-Darstellung. Der Vorfall
+ist der Grund, warum es die Datei gibt; hätte der Kernel seine eigenen
+Sollwerte erzeugt, wäre die Frage nie gestellt worden.
+
+**Offen bleibt** der Nachweis, dass zwei Maschinen denselben Gradienten
+liefern. Das Werkzeug dafür steht (der Testclient), es fehlt die zweite
+Maschine, wie beim Vorwärtspfad auch.
+
+### v0.17.0 (kernels 0.19.0) – 2026-08-22 (Rückwärtspass, erster Teil)
+
+**Warum hier und nicht in TRAINING.** Die Messungen 0.1 und 0.2 haben
+gezeigt, dass das Quantisierungsschema im Rückwärtspass trägt und ein
+Trainingsschritt ohne Gleitkommazustand möglich ist. Beides nützt nichts,
+solange der **Gradient** aus einer Gleitkommarechnung kommt: Er wäre
+geräteabhängig, und zwei Miner mit demselben Segment bekämen
+verschiedene Ergebnisse. Der Redundanzvergleich meldete dann einen
+Betrug, wo nur zwei Prozessoren verschieden gerundet haben.
+
+Neu ist `kernels/src/backward.rs` mit:
+
+| Funktion | leitet ab | Stand |
+|---|---|---|
+| `quantisiere_block` / `entquantisiere_block` | Übertragungsform int8 je Block (Anhang B.6.2) | ✅ |
+| `linear_backward` | `linear_w8a16` | ✅ |
+| `softmax_backward` | `softmax_int` | ✅ |
+| `silu_backward` | die SiLU-LUT aus `mlp_int` | ✅ (Ableitungs-LUT als Parameter) |
+| `rmsnorm_backward` | `rmsnorm_i16` | ✅ |
+| `attention` | Zusammensetzung aus linear und softmax | offen |
+| `rope` | Drehung um −θ, dieselbe LUT | offen |
+| Embedding | Streuaddition | offen |
+
+**Geprüft wird gegen die numerische Ableitung des echten
+Vorwärtskernels**, nicht gegen eine nachgerechnete Formel. Eine gegen die
+Formel geprüfte Ableitung sagt nur, dass zwei Menschen dieselbe Formel
+gelesen haben; sie fällt nicht auf, wenn der Vorwärtspfad etwas anderes
+rechnet. Der zentrale Differenzenquotient auf dem echten Kernel fällt
+darauf sehr wohl auf, und genau das ist er auch:
+
+**Fund beim Bauen: Fund 24 in der Rückwärtsrichtung.** Die erste Fassung
+von `linear_backward` schob jeden Summanden einzeln nach rechts und
+addierte danach. Bei kleinen Produkten rundet jeder Summand für sich auf
+null, und die Summe ist null: Der Test gegen die numerische Ableitung
+fand ein `dL/dx` von exakt 0, wo −2 hingehörte. Dieselbe Stelle steckte
+in der Summe von `rmsnorm_backward`.
+
+Behoben wie im Vorwärtspfad: Ausrichtung gegen den **größten** Shift per
+Linksshift (dabei geht kein Bit verloren), Akkumulation in `i128`, und
+**ein einziger** Rechtsshift ganz am Ende. Es ist derselbe Fehler, den
+Fund 24 in der Quadratsumme von `rmsnorm_i16` behoben hat, und er ist mit
+zwei Gegenproben festgehalten.
+
+**Was noch fehlt für verifizierbares Training:** die drei offenen Zeilen
+oben, Golden Vectors für den Rückwärtspass, und der Nachweis, dass zwei
+Maschinen denselben Gradienten liefern. Entwurf und Begründung:
+`TRAINING/README/Konzept-Wachstum.md`.
 
 ### v0.16.0 (kernels 0.18.0, runtime 0.17.0) – 2026-08-22 (drei Funde am Prüfstand)
 

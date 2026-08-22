@@ -110,13 +110,20 @@ also unverändert.
 
 Nach 200 Schritten, Arm „nur Gewichte int8", lr 1e-5:
 
-| Schicht | Rasterstufe | mittlere Bewegung | in Stufen | int8 geändert |
+| Schicht | Rasterstufe | Bewegung über 200 Schritte | in Stufen | int8 geändert |
 |---|---|---|---|---|
-| `layers.0.mlp.down_proj` | 1,07e-3 | 3,00e-7 | **0,028 %** | 4,9 % |
-| `layers.12.self_attn.q_proj` | 9,24e-4 | 1,81e-7 | **0,020 %** | 5,8 % |
-| `layers.23.mlp.up_proj` | 9,30e-4 | 2,51e-7 | **0,027 %** | 6,0 % |
+| `layers.0.mlp.down_proj` | 1,07e-3 | 3,00e-7 | 0,028 % | 4,9 % |
+| `layers.12.self_attn.q_proj` | 9,24e-4 | 1,81e-7 | 0,020 % | 5,8 % |
+| `layers.23.mlp.up_proj` | 9,30e-4 | 2,51e-7 | 0,027 % | 6,0 % |
 
-Ein SGD-Schritt bewegt ein Gewicht um drei Zehntausendstel einer
+> **Korrektur (2026-08-22).** Die Spalte nannte ursprünglich „mittlere
+> Bewegung" und wurde als Größe **eines** Schrittes gelesen, auch von mir
+> selbst in Fahrplan und README. Sie ist die Bewegung über **200**
+> Schritte. Je Schritt sind es rund 6,4e-6 einer Rasterstufe im Median,
+> gemessen in `bitbudget.py`. Die Aussage ändert sich dadurch nicht, sie
+> wird stärker: Der Schritt ist noch kleiner als angenommen.
+
+Ein SGD-Schritt bewegt ein Gewicht um wenige Millionstel einer
 Rasterstufe. Der Körper des Modells kann sich also nicht gerichtet
 bewegen; geändert werden nur die Werte, die ohnehin an einer
 Rundungsgrenze standen, und das ist Rauschen, kein Lernen. Was als
@@ -143,9 +150,9 @@ Abstand ist damit kein Artefakt einer schlecht gewählten Lernrate.
 
 ## Die Abhilfe, gemessen
 
-Ein SGD-Schritt bewegt ein Gewicht um 0,03 % einer Rasterstufe. Mit
-Round-to-Nearest passiert dann **entweder nichts oder ein ganzer Sprung**,
-also eine Überschreitung um das Dreitausendfache. Genau dieses Bild
+Ein SGD-Schritt bewegt ein Gewicht im Median um **6,4e-6 einer
+Rasterstufe**. Mit Round-to-Nearest passiert dann **entweder nichts oder
+ein ganzer Sprung**, also eine Überschreitung um das Hunderttausendfache. Genau dieses Bild
 beschreibt Gupta et al. 2015 („Deep Learning with Limited Numerical
 Precision"): 16-Bit-Festkomma scheitert mit Rundung zur nächsten Stufe
 und funktioniert mit stochastischem Runden.

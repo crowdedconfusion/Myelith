@@ -1,0 +1,72 @@
+{
+  "name": "backward_rope",
+  "level": "op",
+  "theta_v_hash": "sha256:2857db731e25dcf3018b1633c2954309658b00dcacd4b48810e0adf5a0e84609",
+  "metadata": {
+    "frac_bits": 14
+  },
+  "inputs": {
+    "g": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "f1f0a279f63aee28d793225e402d9ae33b9a8542708e28d50606f84c0c71a1e9",
+      "data": [
+        3000,
+        -1200,
+        800,
+        2500,
+        -900,
+        1700,
+        -2200,
+        400
+      ]
+    },
+    "cos": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "436c490432ee74d12dd69995866d54cd79745a795326521ba4ac70b5a4c66267",
+      "data": [
+        15652,
+        12531,
+        7432,
+        -13126
+      ]
+    },
+    "sin": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "5e6af6460c05ab7234e7544a552256bf96b334c966eb7b6cbcd0ffe553b63be3",
+      "data": [
+        4842,
+        10555,
+        14602,
+        9805
+      ]
+    }
+  },
+  "outputs": {
+    "gx": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "0208ac8e8d1866567b1ce22b79781b5f0dae29eb5540b8e7dc08938a77ada4ce",
+      "data": [
+        2600,
+        177,
+        -1598,
+        -1763,
+        -1746,
+        2073,
+        -1711,
+        -1817
+      ]
+    }
+  }
+}

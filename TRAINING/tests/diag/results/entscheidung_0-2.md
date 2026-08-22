@@ -29,8 +29,7 @@ Vorwärtspfad   w8 = stochastisch_runden(m / 2^16), auf [-128, 127]
 Aktualisierung m ← m − round(lr · dL/dW · 2^shift · 2^16)
 ```
 
-**Warum 16 Zusatzbits, gerechnet statt geraten.** Gemessen (0.1): Ein
-SGD-Schritt beträgt 0,03 % einer int8-Rasterstufe.
+**Warum 16 Zusatzbits in dieser Simulation, und warum das zu wenig ist.**
 
 | Zusatzbits | ein Schritt in LSB | Master bis | in float32 exakt |
 |---|---|---|---|
@@ -39,10 +38,21 @@ SGD-Schritt beträgt 0,03 % einer int8-Rasterstufe.
 | **16** | **19,66** | **8 323 072** | **ja** |
 | 20 | 314,57 | 133 169 152 | nein |
 
-Unter 12 Bits wäre ein Schritt kleiner als ein LSB des Masters und
-verschwände erneut. Ab 20 Bits überschreitet der Master die 2^24, die
-float32 als ganze Zahlen exakt hält, und die Simulation würde selbst zur
-Fehlerquelle. Sechzehn liegt in der Mitte und mit Reserve.
+Ab 20 Bits überschreitet der Master die 2^24, die float32 als ganze
+Zahlen exakt hält, und die Simulation würde selbst zur Fehlerquelle.
+Sechzehn ist damit die Obergrenze **dieses Messaufbaus**.
+
+> **Korrektur (2026-08-22).** Die ursprüngliche Begründung stützte sich
+> auf „ein Schritt beträgt 0,03 % einer Rasterstufe". Das war die
+> Bewegung über 200 Schritte. `bitbudget.py` misst es je Schritt und je
+> Zeile: Median 6,4e-6, erstes Perzentil 5,7e-7. **Nötig sind damit 21
+> Bits, mit Reserve 25**, und der Master gehört nach int64.
+>
+> Bei 16 Bits ist ein Schritt im Median 0,42 LSB und wird von `round`
+> häufig verschluckt. Das Ergebnis bleibt trotzdem gut (+0,75 % über 200
+> Schritte); mit **stochastisch gerundetem Delta** wird es besser
+> (+0,73 %, 22 % mehr wirksame Aktualisierungen). Für lange Läufe ist das
+> kein Ersatz für ausreichend viele Bits.
 
 **Die Skala wird eingefroren**, damit der Master seine Bedeutung behält.
 In 0.1 gemessen: Eingefrorene Skalen ändern am Ergebnis nichts.

@@ -1,6 +1,6 @@
 # training (`myl-train`)
 
-> **Version:** 0.2.0
+> **Version:** 0.3.0
 > **Datum:** 2026-08-22
 > **Status:** **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
 > Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
@@ -10,7 +10,12 @@
 > Protokolle:
 > [`entscheidung_0-1.md`](../tests/diag/results/entscheidung_0-1.md) und
 > [`entscheidung_0-2.md`](../tests/diag/results/entscheidung_0-2.md).
-> Der Fahrplan für alles Weitere entsteht jetzt auf dieser Grundlage.
+> Das Konzept daraus steht in
+> [`Konzept-Wachstum.md`](Konzept-Wachstum.md): der Trainingsschritt,
+> seine Verifikation, die Aggregation und ein Modell, das wächst.
+> Der Fahrplan steht damit; sein erster Punkt liegt in INTEGER_LLM,
+> nicht hier: Solange Vorwärts- und Rückwärtspass in Gleitkomma
+> rechnen, ist der Gradient geräteabhängig und mit ihm jedes Δm.
 
 Trainings als nachrangige Arbeitsklasse, lokale Verlustblöcke,
 Datenprovenienz, robuste Aggregation, Modellwachstum.

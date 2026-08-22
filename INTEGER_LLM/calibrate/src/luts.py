@@ -69,6 +69,40 @@ def generate_silu_lut(input_min: int, input_max: int, input_frac_bits: int,
     return lut
 
 
+def generate_silu_grad_lut(input_min: int, input_max: int, input_frac_bits: int,
+                           output_frac_bits: int) -> List[int]:
+    """
+    Ableitung der SiLU, fuer den Rueckwaertspass (kernels/src/backward.rs).
+
+    silu'(x) = s(x) * (1 + x * (1 - s(x)))  mit  s(x) = 1/(1+exp(-x))
+
+    **Warum eine eigene LUT und nicht aus der Vorwaerts-LUT gerechnet.**
+    Es liegt nahe, s(x) = silu(x)/x zu nehmen und die Ableitung daraus zu
+    bilden. Bei x = 0 ist das undefiniert, und in der Umgebung ist es
+    numerisch unbrauchbar: Genau dort, wo die meisten Aktivierungen
+    liegen, waere die Ableitung am ungenauesten. Eine eigene Tabelle
+    kostet dieselben paar Kilobyte wie die vorhandenen.
+
+    Domaene und Frakturierung sind identisch zur Vorwaerts-LUT, damit der
+    Index im Rueckwaertspass ohne Umrechnung derselbe ist.
+
+    **Der Wertebereich ist groesser als der von SiLU selbst.** silu' hat
+    ein Ueberschwingen von rund 1,1 bei x ~ 2,4 und faellt links auf etwa
+    -0,1; wer den Ausgangsbereich wie bei SiLU waehlt, saettigt. Die
+    Funktion prueft das nicht, sie dokumentiert es: Die Wahl von
+    output_frac_bits gehoert in die spec, nicht hierher.
+    """
+    in_scale = 1 << input_frac_bits
+    out_scale = 1 << output_frac_bits
+    lut = []
+    for x in range(input_min, input_max + 1):
+        xf = x / in_scale
+        s = 1.0 / (1.0 + math.exp(-xf))
+        val = s * (1.0 + xf * (1.0 - s))
+        lut.append(int(round(val * out_scale)))
+    return lut
+
+
 def generate_exp_lut(exp_range: int, input_frac_bits: int, output_frac_bits: int) -> List[int]:
     """
     exp-LUT: Index i repraesentiert den Realwert i * 2^-input_frac_bits

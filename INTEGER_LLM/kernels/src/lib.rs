@@ -15,5 +15,6 @@ pub mod linear;
 pub mod rope;
 pub mod softmax;
 pub mod attention;
+pub mod backward;
 pub mod mlp;
 pub mod sampling;
