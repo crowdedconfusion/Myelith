@@ -28,8 +28,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
-CLI = REPO / "runtime" / "target" / "release" / "integer-llm-runtime"
-SEQ_SWEEP = REPO / "runtime" / "target" / "release" / "seq_logits_sweep"
+# Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
+# liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
+# eval/perplexity.py: prueft CARGO_TARGET_DIR, target-shared/ und den
+# Cargo-Standardort der Reihe nach.
+sys.path.insert(0, str(REPO / "tests"))
+from cargo_paths import binary, fehlt_hinweis  # noqa: E402
+
+CLI = binary("runtime", "integer-llm-runtime")
+SEQ_SWEEP = binary("runtime", "seq_logits_sweep")
 RESULTS_DIR = REPO / "eval" / "results" / "evidence"
 
 sys.path.insert(0, str(REPO / "eval"))
@@ -88,7 +95,7 @@ def sweep_integer(ids: list) -> list:
 
 def main():
     if not CLI.exists() or not SEQ_SWEEP.exists():
-        print("[quality] FEHLT: Binaries — zuerst 'cargo build --release --bins'.",
+        print(f"[quality] {fehlt_hinweis('runtime', 'integer-llm-runtime')}",
               file=sys.stderr)
         sys.exit(1)
 

@@ -28,7 +28,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
-CLI = REPO / "runtime" / "target" / "release" / "integer-llm-runtime"
+# Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
+# liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
+# eval/perplexity.py: prueft CARGO_TARGET_DIR, target-shared/ und den
+# Cargo-Standardort der Reihe nach.
+sys.path.insert(0, str(REPO / "tests"))
+from cargo_paths import binary, fehlt_hinweis  # noqa: E402
+
+CLI = binary("runtime", "integer-llm-runtime")
 RESULTS_DIR = REPO / "eval" / "results" / "evidence"
 
 PROMPTS = [
