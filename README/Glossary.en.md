@@ -31,7 +31,7 @@ Cross-references are marked → like this.
 
 **Status:** θ_v 0.17.0 · CONSENSUS phases 1–4 · VERIFICATION phases 1–2 ·
 INTEGER_LLM roadmap item 12.77. This file is updated whenever protocol
-terminology changes (→ [seven-step documentation chain](#seven-step-documentation-chain)).
+terminology changes, as part of the project's documentation chain.
 
 ---
 

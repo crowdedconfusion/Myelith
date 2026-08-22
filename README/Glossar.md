@@ -32,7 +32,7 @@ davor. Querverweise sind → so markiert.
 
 **Stand:** θ_v 0.17.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
 INTEGER_LLM Fahrplanpunkt 12.77. Diese Datei wird bei jeder Änderung an
-Protokollbegriffen mitgezogen (→ [Sieben-Schritt-Doku-Kette](#sieben-schritt-doku-kette)).
+Protokollbegriffen mitgezogen, als Teil der Doku-Kette des Projekts.
 
 ---
 
