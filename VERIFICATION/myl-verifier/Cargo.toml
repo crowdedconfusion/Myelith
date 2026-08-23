@@ -1,6 +1,6 @@
 [package]
 name = "myl-verifier"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.82"
 description = "Verifikations-Subsystem für Myelith (Whitepaper Kap. 6.4–6.9, Anhang A.4): Redundanzvergleich, Bisektions-Spiel, Kontrollsegmente. Nutzt INTEGER_LLMs Determinismus-Eigenschaft für wirtschaftliche Manipulationssicherung."

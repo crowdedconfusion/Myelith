@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.82"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -13,6 +13,13 @@ myl-types = { path = "../../SHARED_TYPES/myl-types" }
 borsh = { version = "1.6", features = ["derive"] }
 myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 sha2 = "0.10"
+
+# Nur für Tests: Der Redundanzvergleich gehört zu VERIFICATION, aber die
+# Zusage „zwei Pods mit verschiedenem Zuschnitt sind vergleichbar" lässt
+# sich nur gegen ihn belegen. Eine Nachbildung im Test wäre eine zweite
+# Quelle für dieselbe Aussage (Fund 34).
+[dev-dependencies]
+myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 
 [lib]
 name = "myl_pod"

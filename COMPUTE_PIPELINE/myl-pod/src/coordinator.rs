@@ -32,22 +32,39 @@ pub struct CompletedSegment {
     pub trace: Vec<[u8; 32]>,
     pub signatures: Vec<BlsSignature>,
     pub pod_path: Vec<MinerId>,
-    /// Zahl der in diesem Segment erzeugten Token.
+    /// Die Token-Position, die dieses Segment gerechnet hat.
     ///
-    /// Trägt die vTFE-Zuschreibung: Eine vTFE-Einheit ist 10⁻⁶ eines
-    /// Token-Forward-Äquivalents, und ohne die Token-Zahl ist die
-    /// Gutschrift eines Shards nicht auszurechnen. Bis zum 2026-08-23
-    /// stand hier nichts dergleichen, und `build_poi_bundle` beanspruchte
-    /// die **Zahl der Segmente** als vTFE.
-    pub tokens: u64,
+    /// Ein Segment ist genau ein Vorwärtspass, also genau ein
+    /// Token-Forward-Äquivalent. Die vTFE-Gutschrift folgt damit aus der
+    /// **Zahl der Segmente**; ein eigenes Feld dafür braucht es nicht
+    /// mehr.
+    ///
+    /// **Prefill zählt mit, und das ist Absicht:** Eine Prompt-Position
+    /// emittiert kein Token, rechnet aber denselben vollständigen
+    /// Vorwärtspass. Sie nicht zu vergüten hieße, geleistete Arbeit nicht
+    /// zu bezahlen.
+    pub position: u64,
 }
 
-/// Segment-Id aus der Session-Id ableiten (Anhang A.1: `h(session ‖
-/// index)`; hier vereinfacht als linksbündig mit Nullen aufgefüllte
-/// Session-Id, da Phase 1 ein Segment je Session verarbeitet).
-fn segment_id_from_session(session_id: u64) -> SegmentId {
+/// Segment-Id aus Session-Id **und Position** (Anhang A.1: `h(session ‖
+/// index)`; hier vereinfacht als zwei linksbündig eingetragene Felder).
+///
+/// **Ein Segment ist eine Position, also genau ein Vorwärtspass**
+/// (Festlegung des Projektinhabers, 2026-08-23). Bis dahin trug die
+/// Segment-Id nur die Session, ein ganzer Prompt lief also unter einer
+/// einzigen Id, und Spur wie Datenarchiv behielten davon **nur die
+/// letzte Position**: Beide wurden je Position überschrieben. Ein
+/// Angeklagter hätte die Aktivierung jeder früheren Position nicht
+/// liefern können, `adjudicate` hätte `NoResponse` gesehen, und das heißt
+/// schuldig. Ein ehrlicher Knoten wäre geslasht worden.
+///
+/// Mit einem Segment je Position entfällt die Positionsachse, statt
+/// nachgerüstet zu werden: Spur und Archiv tragen dieselbe Achse wie die
+/// Bisektion, nämlich die Layer.
+fn segment_id_from(session_id: u64, position: u64) -> SegmentId {
     let mut bytes = [0u8; 32];
     bytes[..8].copy_from_slice(&session_id.to_le_bytes());
+    bytes[8..16].copy_from_slice(&position.to_le_bytes());
     SegmentId::new(bytes)
 }
 
@@ -84,10 +101,7 @@ impl Coordinator {
     /// `prompt_tokens` ist der Prompt; `max_new_tokens` begrenzt die
     /// Generation. Die Ausgabe ist bei identischem Prompt bitgleich.
     pub fn run_prompt(&mut self, session_id: u64, prompt_tokens: &[u32], max_new_tokens: u64) -> Vec<u32> {
-        let segment_id = segment_id_from_session(session_id);
         let mut generated = Vec::new();
-        let mut trace = Vec::new();
-        let mut signatures = Vec::new();
 
         // 1) Prefill: Prompt-Tokens durch die Pipeline schicken (je Token
         //    eine Nachricht, Position 0..P-1). Das letzte Prompt-Token
@@ -97,10 +111,10 @@ impl Coordinator {
             let is_last = i + 1 == prompt_tokens.len();
             let packed = wire::pack_tokens(&[*tok]);
             let flags = if is_last { FLAG_SAMPLE } else { 0 };
+            let segment_id = segment_id_from(session_id, i as u64);
             let msg = PodMessage::token_input(segment_id, session_id, i as u64, packed, flags);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
-            trace = out_trace;
-            signatures.extend(out_sigs);
+            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs);
             if let Some(t) = token_opt {
                 generated.push(t);
             }
@@ -113,13 +127,17 @@ impl Coordinator {
         //    erzeugte Feedback wird durch die Pipeline geschickt, bis das
         //    Budget erschöpft ist oder kein Feedback mehr kommt.
         while (generated.len() as u64) < max_new_tokens {
-            let msg = match pending_feedback.take() {
+            let mut msg = match pending_feedback.take() {
                 Some(m) => m,
                 None => break,
             };
+            // Die Feedback-Nachricht trägt die Segment-Id ihres Erzeugers.
+            // Mit einem Segment je Position gehört sie auf die neue.
+            let segment_id = segment_id_from(session_id, msg.position);
+            msg.segment_id = segment_id;
+            let position = msg.position;
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
-            trace = out_trace;
-            signatures.extend(out_sigs);
+            self.segment_abschliessen(segment_id, position, out_trace, out_sigs);
             match token_opt {
                 Some(t) => generated.push(t),
                 None => break,
@@ -127,19 +145,34 @@ impl Coordinator {
             pending_feedback = feedback_opt;
         }
 
-        // 3) Segment als abgeschlossen vermerken.
+        generated
+    }
+
+    /// Vermerkt ein abgeschlossenes Segment, also einen Vorwärtspass.
+    ///
+    /// Eine leere Spur wird **nicht** aufgenommen: Sie entstünde, wenn
+    /// kein Shard gerechnet hat, und ein Segment ohne Arbeit gehört nicht
+    /// in ein PoI-Bündel.
+    fn segment_abschliessen(
+        &mut self,
+        id: SegmentId,
+        position: u64,
+        trace: Vec<[u8; 32]>,
+        signatures: Vec<BlsSignature>,
+    ) {
+        if trace.is_empty() {
+            return;
+        }
         let pod_path: Vec<MinerId> = (0..self.shards.len())
             .map(|i| MinerId::new([(i as u8) + 1; 32]))
             .collect();
         self.completed.push(CompletedSegment {
-            id: segment_id,
+            id,
+            position,
             trace,
             signatures,
             pod_path,
-            tokens: generated.len() as u64,
         });
-
-        generated
     }
 
     /// Schickt eine Nachricht durch die Shard-Pipeline und sammelt Spur,
@@ -169,13 +202,32 @@ impl Coordinator {
                     signatures.push(next.signature);
                     current = next;
                 }
-                Ok(ShardOut::Token { token, feedback, .. }) => {
+                // **Spur und Signatur auch hier übernehmen.** Der
+                // letzte Shard endet immer in einem dieser beiden Zweige;
+                // bis 2026-08-23 fielen seine Einträge deshalb unter den
+                // Tisch, und bei einem Pod aus einem Shard blieb die Spur
+                // ganz leer.
+                Ok(ShardOut::Token {
+                    token,
+                    feedback,
+                    trace: t,
+                    signature,
+                    ..
+                }) => {
+                    trace = t;
+                    signatures.push(signature);
                     token_out = Some(token);
                     feedback_out = feedback;
                     break;
                 }
-                Ok(ShardOut::Prefill) => {
-                    // Prefill-Position: kein Token, kein Feedback.
+                Ok(ShardOut::Prefill {
+                    trace: t,
+                    signature,
+                }) => {
+                    // Prefill-Position: kein Token, kein Feedback, aber
+                    // gerechnet wurde sehr wohl.
+                    trace = t;
+                    signatures.push(signature);
                     break;
                 }
                 Err(e) => {
@@ -247,10 +299,10 @@ impl Coordinator {
             return Err("Pod ohne Shards beansprucht keine Arbeit".to_string());
         };
         let profil = erster.modell_profil();
-        let tokens: u64 = self
-            .completed
-            .iter()
-            .fold(0u64, |acc, c| acc.saturating_add(c.tokens));
+        // Ein Segment ist ein Vorwärtspass, also ein
+        // Token-Forward-Äquivalent. Prefill-Positionen zählen mit: Sie
+        // emittieren kein Token, rechnen aber denselben Pass.
+        let tokens: u64 = self.completed.len() as u64;
 
         let mut summe = 0u64;
         for shard in &self.shards {

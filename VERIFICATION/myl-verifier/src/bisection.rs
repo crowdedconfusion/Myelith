@@ -1,15 +1,28 @@
 //! Interaktives Bisektionsprotokoll — Whitepaper Kap. 6.6, Anhang A.4.
 //!
-//! Binäre Eingrenzung auf die abweichende Layer-Gruppe in O(log L) Runden.
+//! Binäre Eingrenzung auf die abweichende **Layer** in O(log L) Runden.
 //! Das Protokoll identifiziert die genaue Position der Abweichung zwischen
 //! primärem und redundantem Pod.
 //!
 //! **Konsens-Feld:** Das Bisektionsprotokoll ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
 //!
+//! **Die Spur ist seit dem 2026-08-23 Layer-granular** (myl-pod v0.5.0).
+//! Vorher hatte sie einen Eintrag je **Shard**, ihre Länge hing also am
+//! Zuschnitt des Pods, und [`crate::redundancy::compare_commitments`]
+//! lehnt ungleiche Längen mit `LengthMismatch` ab. Zwei redundante Pods
+//! mussten deshalb denselben Zuschnitt tragen, und der Entwurf für
+//! variable Knotenzahl je Pipeline war blockiert.
+//!
+//! Für dieses Modul ändert sich nichts an der Rechnung: Es arbeitet auf
+//! Indizes und Hashes. Was sich ändert, ist die **Aussage des
+//! Ergebnisses**. Eingegrenzt wird jetzt die fehlerhafte Layer statt der
+//! fehlerhaften Layer-Gruppe, bei unverändertem O(log L), und die
+//! Schuldzuweisung wird entsprechend feiner.
+//!
 //! **Design:** Das Protokoll ist interaktiv — der Checker fordert in jeder
 //! Runde die Offenlegung einer Aktivierung an, der Angeklagte antwortet.
-//! Nach O(log L) Runden ist die genaue Layer-Gruppe identifiziert.
+//! Nach O(log L) Runden ist die genaue Layer identifiziert.
 
 use myl_types::hash::Hash;
 use myl_types::ids::SegmentId;
@@ -54,7 +67,7 @@ pub struct BisectionResponse {
 pub enum BisectionResult {
     /// Abweichung identifiziert (genaue Position).
     DivergenceFound {
-        /// Index der abweichenden Layer-Gruppe.
+        /// Index der abweichenden Layer.
         position: usize,
     },
     /// Keine Abweichung gefunden (Pods stimmen überein).
@@ -119,7 +132,7 @@ impl BisectionSession {
     ///
     /// **Parameter:**
     /// - `segment_id`: ID des betroffenen Segments
-    /// - `trace_len`: Länge der Spur (Anzahl Layer-Gruppen)
+    /// - `trace_len`: Länge der Spur (Anzahl Layer des Modells)
     pub fn new(segment_id: SegmentId, trace_len: usize) -> Self {
         let max_rounds = ceil_log2(trace_len) + 1;
         Self {

@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
@@ -55,6 +55,76 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### myl-pod v0.5.0 – 2026-08-23 (Spur je Layer, und zwei Funde am Weg dorthin)
+
+**Der letzte Blocker der variablen Knotenzahl ist weg.** Die Spur hatte
+einen Eintrag je **Shard**, ihre Länge hing also am Zuschnitt.
+`myl_verifier::compare_commitments` lehnt ungleiche Spurlängen mit
+`LengthMismatch` ab, und damit mussten zwei redundante Pods denselben
+Zuschnitt tragen. Genau das verbietet der Entwurf für variable
+Knotenzahl je Pipeline, dessen gemischte Paarung rund 600-mal sicherer
+ist als zwei schnelle Pipelines.
+
+Jetzt trägt die Spur einen Eintrag je **Layer**: `num_layers` Einträge,
+gleichgültig ob ein Shard rechnet oder vierundzwanzig. **Gemessen** an
+0,5B über k = 1, 2, 3, 4, 6, 8, 12 und 24: dieselbe Spur, Eintrag für
+Eintrag, und `compare_commitments` urteilt bei vier gegen acht Shards
+`Match`.
+
+Dass ein Aufruf je Layer dasselbe liefert wie ein Bereichsaufruf, ist
+nicht hergeleitet, sondern gemessen (`tests/layer_granular.rs`, drei
+Positionen, echtes Modell samt KV-Cache). **Der Dekodier-Digest hat sich
+nicht bewegt:** `272f1ee8f45f2c78` vor und nach dem Umbau, bei jedem
+Zuschnitt.
+
+**Eine Signatur je Shard, auch wenn die Spur je Layer wächst.** Die Spur
+ist der Vergleichsgegenstand und braucht Layer-Granularität; die
+Signatur ist die Zuschreibung und braucht Shard-Granularität, denn
+geslasht wird ein Shard und keine Layer.
+
+**Nebengewinn:** Die Bisektion grenzt die fehlerhafte **Layer** ein statt
+der Layer-Gruppe, bei unverändertem O(log L).
+
+### Fund 1: Spur und Datenarchiv überlebten nur die letzte Position
+
+`DaStore` war mit `(segment_id, shard_index)` verschlüsselt und kannte
+**keine Position**. `archive` wird je Token-Position aufgerufen, jede
+Position überschrieb also die vorige; am Ende lag nur die letzte im
+Archiv. Im Koordinator dasselbe eine Ebene höher: `trace = out_trace`
+ersetzte die Spur je Position, `CompletedSegment.trace` trug am Ende nur
+die letzte.
+
+**Die Wirkung ist Slashing ehrlicher Knoten.** Die Streitfrist soll dem
+Angeklagten erlauben, die Aktivierung an der strittigen Position
+offenzulegen; `adjudicate` verlangt sie ausdrücklich. Lag die Abweichung
+an irgendeiner Position außer der letzten, konnte ein **ehrlicher** Miner
+sie nicht liefern, `adjudicate` sah `NoResponse`, und das heißt schuldig.
+
+Behoben durch die Festlegung des Projektinhabers: **Ein Segment ist eine
+Position**, also genau ein Vorwärtspass. Damit entfällt die
+Positionsachse, statt nachgerüstet zu werden, und Spur, Archiv und
+Bisektion tragen dieselbe Achse, nämlich die Layer.
+
+**Folge für die Vergütung:** Prefill zählt mit. Eine Prompt-Position
+emittiert kein Token, rechnet aber denselben vollständigen Vorwärtspass.
+Aus 8 Token über 7 Prompt-Token werden 14 Segmente statt einem.
+
+### Fund 2: Die Spur des letzten Shards landete nie im Segment
+
+`ShardOut::Token` und `ShardOut::Prefill` trugen weder Spur noch
+Signatur, und der Koordinator übernahm beides ausschließlich aus
+`ShardOut::Forward`. Der **letzte** Shard endet aber immer in einem der
+beiden anderen Zweige.
+
+Der Redundanzvergleich verglich damit die Arbeit des Shards nicht, der
+die Ausgabe erzeugt, also ausgerechnet die des LM-Kopfes. Und bei einem
+Pod aus einem einzigen Shard gab es gar kein `Forward`: Die committete
+Spur war **leer**, und ein PoI-Bündel darüber hätte nichts belegt.
+
+Aufgefallen, weil die vTFE-Zuschreibung bei `k = 1` plötzlich null ergab.
+Ein Test, der eine Eigenschaft prüft, die es vorher nicht gab, hat einen
+Fehler gefunden, der vorher schon da war.
 
 ### myl-pod v0.4.0 – 2026-08-23 (der Pod beansprucht, was er gerechnet hat)
 

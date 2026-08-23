@@ -40,7 +40,7 @@ pub enum CheckResult {
     Valid,
     /// Segment weicht ab (Hash mismatch).
     Invalid {
-        /// Index der ersten abweichenden Layer-Gruppe.
+        /// Index der ersten abweichenden Layer.
         first_divergence: usize,
     },
 }

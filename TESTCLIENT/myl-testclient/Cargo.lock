@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "borsh",
  "myl-ledger",

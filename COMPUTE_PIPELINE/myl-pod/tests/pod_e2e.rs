@@ -304,11 +304,21 @@ fn beanspruchte_arbeit_haengt_nicht_am_zuschnitt() {
 
     let referenz = vtfe_bei(4);
 
-    // Sechs Token, eine vTFE-Einheit ist 10⁻⁶ eines Vorwärtspasses:
-    // die volle Gutschrift sind 6 000 000 Einheiten.
+    // **Gezählt werden Vorwärtspässe, nicht erzeugte Token.** Der Prompt
+    // hat sieben Token, also sieben Prefill-Positionen; die letzte
+    // sampelt das erste Ausgabetoken, danach folgen fünf
+    // Feedback-Positionen für die übrigen fünf. Zwölf Vorwärtspässe für
+    // sechs Token, und jeder ist ein Token-Forward-Äquivalent.
+    //
+    // Prefill kostet dieselbe Rechnung wie Decode und wird deshalb
+    // vergütet. Vor der Umstellung auf „ein Segment ist eine Position"
+    // zählte diese Prüfung sechs statt zwölf und übersah damit die Hälfte
+    // der geleisteten Arbeit.
+    let paesse = prompt_tokens.len() as u64 + MAX_NEW_TOKENS - 1;
+    let voll = paesse * 1_000_000;
     assert!(
-        (5_999_990..=6_000_000).contains(&referenz),
-        "vier Shards beanspruchen {referenz} statt rund 6 000 000"
+        (voll - 24..=voll).contains(&referenz),
+        "vier Shards beanspruchen {referenz} statt rund {voll} ({paesse} Vorwärtspässe)"
     );
 
     for k in [1usize, 2, 3, 6, 8, 12, 24] {
@@ -342,5 +352,210 @@ fn der_lm_kopf_zaehlt_beim_letzten_shard_mit() {
     assert!(
         letzter > erster * 2,
         "letzter Shard {letzter}, erster {erster}: der LM-Kopf muss durchschlagen"
+    );
+}
+
+/// **Der Punkt des ganzen Umbaus:** Die Spur hängt am Modell, nicht am
+/// Zuschnitt.
+///
+/// Vorher war sie Shard-granular, ihre Länge also gleich `k`. Zwei Pods
+/// mit verschiedenem `k` lieferten verschieden lange Spuren, und
+/// `myl_verifier::compare_commitments` lehnt das zu Recht mit
+/// `LengthMismatch` ab. Genau daran hing der Entwurf für variable
+/// Knotenzahl je Pipeline.
+#[test]
+fn die_spur_haengt_am_modell_nicht_am_zuschnitt() {
+    let dir = artifacts_dir();
+    if !dir.exists() {
+        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
+    let tokenizer =
+        Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad-UTF-8"))
+            .expect("Tokenizer-Ladung");
+    let prompt_tokens: Vec<u32> = tokenizer.encode(PROMPT).iter().map(|t| *t as u32).collect();
+    let num_layers = model.num_layers;
+
+    let spuren_bei = |k: usize| -> Vec<Vec<[u8; 32]>> {
+        let basis = num_layers / k;
+        let rest = num_layers % k;
+        let mut grenzen = vec![0usize];
+        for s in 0..k {
+            let letzte = *grenzen.last().unwrap();
+            grenzen.push(letzte + basis + usize::from(s < rest));
+        }
+        let shards: Vec<Arc<ShardNode>> = (0..k)
+            .map(|s| {
+                let sk = BlsSecretKey::key_gen(&[(s as u8 + 1).wrapping_mul(17); 32])
+                    .expect("BLS KeyGen");
+                Arc::new(ShardNode::new(
+                    s,
+                    grenzen[s],
+                    grenzen[s + 1],
+                    s == 0,
+                    s + 1 == k,
+                    model.clone(),
+                    sk,
+                    DaStore::new(Box::new(XorParityCoder::new(4))),
+                    MAX_NEW_TOKENS,
+                ))
+            })
+            .collect();
+        let mut coordinator = Coordinator::new(
+            PodId::new([0xAA; 32]),
+            EpochId(0),
+            shards,
+            myl_pod::coordinator::DEFAULT_WINDOW_MS,
+        );
+        coordinator.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
+        coordinator
+            .completed_segments()
+            .iter()
+            .map(|c| c.trace.clone())
+            .collect()
+    };
+
+    let referenz = spuren_bei(4);
+
+    // Je Segment genau `num_layers` Einträge, einer je Layer.
+    for spur in &referenz {
+        assert_eq!(
+            spur.len(),
+            num_layers,
+            "eine Spur muss so viele Einträge haben wie das Modell Layer"
+        );
+    }
+
+    // Und dieselben Einträge, gleich wie fein geschnitten wird.
+    for k in [1usize, 2, 3, 6, 8, 12, 24] {
+        assert_eq!(
+            spuren_bei(k),
+            referenz,
+            "k={k} liefert eine andere Spur als k=4"
+        );
+    }
+}
+
+/// Jede Position bekommt ihr eigenes Segment und ihr eigenes Archiv.
+///
+/// **Der Fund vom 2026-08-23:** `DaStore` war mit `(segment_id,
+/// shard_index)` verschlüsselt und kannte keine Position, `archive` wurde
+/// aber je Position aufgerufen. Jede Position überschrieb die vorige, und
+/// am Ende lag nur die letzte im Archiv. Ein Angeklagter hätte die
+/// Aktivierung jeder früheren Position nicht liefern können,
+/// `adjudicate` hätte `NoResponse` gesehen, und das heißt schuldig:
+/// **ein ehrlicher Knoten wäre geslasht worden.**
+#[test]
+fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
+    let dir = artifacts_dir();
+    if !dir.exists() {
+        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
+    let tokenizer =
+        Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad-UTF-8"))
+            .expect("Tokenizer-Ladung");
+    let prompt_tokens: Vec<u32> = tokenizer.encode(PROMPT).iter().map(|t| *t as u32).collect();
+
+    let shards = build_shards(model.clone(), MAX_NEW_TOKENS);
+    let erster = shards[0].clone();
+    let mut coordinator = Coordinator::new(
+        PodId::new([0xAA; 32]),
+        EpochId(0),
+        shards,
+        myl_pod::coordinator::DEFAULT_WINDOW_MS,
+    );
+    coordinator.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
+
+    let segmente = coordinator.completed_segments();
+
+    // Ein Vorwärtspass je Prompt-Token plus die Feedback-Positionen.
+    let erwartet = prompt_tokens.len() + MAX_NEW_TOKENS as usize - 1;
+    assert_eq!(segmente.len(), erwartet, "ein Segment je Vorwärtspass");
+
+    // Verschiedene Positionen, verschiedene Ids.
+    let ids: std::collections::BTreeSet<_> = segmente.iter().map(|c| c.id).collect();
+    assert_eq!(ids.len(), segmente.len(), "Segment-Ids müssen verschieden sein");
+
+    // **Und jede Position ist noch abrufbar, nicht nur die letzte.**
+    let erste = &segmente[0];
+    let letzte = &segmente[segmente.len() - 1];
+    let a = erster
+        .archiviert(&erste.id, 0)
+        .expect("Aktivierung der ersten Position muss archiviert sein");
+    let b = erster
+        .archiviert(&letzte.id, 0)
+        .expect("Aktivierung der letzten Position muss archiviert sein");
+    assert_ne!(
+        a, b,
+        "zwei Positionen dürfen nicht dieselbe archivierte Aktivierung tragen"
+    );
+
+    // Der archivierte Wert muss zum Spur-Eintrag passen: Genau das
+    // verlangt `adjudicate` vom Angeklagten.
+    assert_eq!(
+        myl_pod::trace::activation_hash(&a),
+        erste.trace[0],
+        "das Archiv muss liefern, was die Spur committet hat"
+    );
+}
+
+/// Zwei Pods mit **verschiedenem** Zuschnitt sind jetzt vergleichbar.
+///
+/// Das ist die Bedingung, an der der Entwurf für variable Knotenzahl
+/// hing: `compare_commitments` lehnt ungleiche Spurlängen ab.
+#[test]
+fn vier_gegen_acht_shards_sind_vergleichbar() {
+    let dir = artifacts_dir();
+    if !dir.exists() {
+        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+        return;
+    }
+    let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
+    let tokenizer =
+        Tokenizer::from_file(dir.join("tokenizer.json").to_str().expect("Pfad-UTF-8"))
+            .expect("Tokenizer-Ladung");
+    let prompt_tokens: Vec<u32> = tokenizer.encode(PROMPT).iter().map(|t| *t as u32).collect();
+    let num_layers = model.num_layers;
+
+    let erste_spur = |k: usize| -> Vec<[u8; 32]> {
+        let basis = num_layers / k;
+        let mut grenzen = vec![0usize];
+        for s in 0..k {
+            let letzte = *grenzen.last().unwrap();
+            grenzen.push(letzte + basis + usize::from(s < num_layers % k));
+        }
+        let shards: Vec<Arc<ShardNode>> = (0..k)
+            .map(|s| {
+                let sk = BlsSecretKey::key_gen(&[(s as u8 + 1).wrapping_mul(17); 32]).unwrap();
+                Arc::new(ShardNode::new(
+                    s, grenzen[s], grenzen[s + 1], s == 0, s + 1 == k,
+                    model.clone(), sk,
+                    DaStore::new(Box::new(XorParityCoder::new(4))),
+                    MAX_NEW_TOKENS,
+                ))
+            })
+            .collect();
+        let mut c = Coordinator::new(
+            PodId::new([0xAA; 32]), EpochId(0), shards,
+            myl_pod::coordinator::DEFAULT_WINDOW_MS,
+        );
+        c.run_prompt(1, &prompt_tokens, MAX_NEW_TOKENS);
+        c.completed_segments()[0].trace.clone()
+    };
+
+    let vier: Vec<myl_types::hash::Hash> =
+        erste_spur(4).iter().map(|h| myl_types::hash::Hash::from_bytes(*h)).collect();
+    let acht: Vec<myl_types::hash::Hash> =
+        erste_spur(8).iter().map(|h| myl_types::hash::Hash::from_bytes(*h)).collect();
+
+    let ergebnis = myl_verifier::redundancy::compare_commitments(&vier, &acht)
+        .expect("gleiche Spurlängen, also vergleichbar");
+    assert_eq!(
+        ergebnis,
+        myl_verifier::redundancy::CompareResult::Match,
+        "vier und acht Shards müssen dieselbe Spur erzeugen"
     );
 }

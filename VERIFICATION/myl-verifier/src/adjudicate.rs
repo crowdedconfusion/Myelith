@@ -50,7 +50,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 pub struct AdjudicationRequest {
     /// Segment-ID.
     pub segment_id: SegmentId,
-    /// Position der abweichenden Layer-Gruppe.
+    /// Position der abweichenden **Layer**.
     pub divergence_position: usize,
     /// Checker (Miner-ID).
     pub checker: MinerId,
@@ -73,7 +73,7 @@ pub struct AdjudicationRequest {
 pub struct AdjudicationResponse {
     /// Segment-ID.
     pub segment_id: SegmentId,
-    /// Position der abweichenden Layer-Gruppe.
+    /// Position der abweichenden **Layer**.
     pub divergence_position: usize,
     /// Offenlegte Aktivierung a_{j-1}.
     pub activation: Vec<u8>,
@@ -121,11 +121,11 @@ impl std::error::Error for AdjudicationError {}
 /// Shard-Forwards. Die konkrete Implementierung erfolgt durch Integration
 /// mit INTEGER_LLMs Runtime.
 pub trait ShardExecutor {
-    /// Führt einen Shard-Forward für eine Layer-Gruppe aus.
+    /// Rechnet **eine Layer** nach.
     ///
     /// **Parameter:**
     /// - `activation`: Eingabe-Aktivierung a_{j-1}
-    /// - `layer_group_index`: Index der Layer-Gruppe
+    /// - `layer_group_index`: Index der Layer im Modell
     ///
     /// **Returns:** Ausgabe-Aktivierung a_j
     fn execute_shard(

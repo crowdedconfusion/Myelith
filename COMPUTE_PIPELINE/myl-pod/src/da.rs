@@ -284,7 +284,22 @@ impl ErasureCoder for ReedSolomonCoder {
 /// und hält sie für die Streitfrist vor.
 pub struct DaStore {
     coder: Box<dyn ErasureCoder>,
-    /// (segment_id, shard_index) → Fragmente.
+    /// (segment_id, layer_index) → Fragmente.
+    ///
+    /// **Der zweite Schlüsselteil war bis 2026-08-23 der Shard-Index, und
+    /// eine Positionsachse gab es nicht.** `archive` wird je
+    /// Token-Position aufgerufen; jede Position überschrieb deshalb die
+    /// vorige, und am Ende eines Laufs lag nur noch die letzte im Archiv.
+    /// Ein Angeklagter hätte die Aktivierung jeder früheren Position
+    /// nicht liefern können, `adjudicate` hätte `NoResponse` gesehen, und
+    /// das heißt schuldig: **ein ehrlicher Knoten wäre geslasht worden,
+    /// weil das Archiv seine Arbeit nicht aufbewahrt hat.**
+    ///
+    /// Seit der Festlegung „ein Segment ist eine Position" (2026-08-23)
+    /// braucht es keine Positionsachse: Ein Segment ist genau ein
+    /// Vorwärtspass. Der zweite Schlüsselteil ist jetzt der **Layer**,
+    /// womit die Ablage dieselbe Achse trägt wie die Spur und die
+    /// Bisektion.
     store: BTreeMap<([u8; 32], u64), Vec<Vec<u8>>>,
 }
 
@@ -296,22 +311,26 @@ impl DaStore {
         }
     }
 
-    /// Archiviert die Aktivierungen eines Übergangs (Anhang A.3 Schritt 6).
-    pub fn put(&mut self, segment_id: [u8; 32], shard_index: u64, activations: &[i16]) {
+    /// Archiviert die Ausgabe-Aktivierungen **einer Layer** (Anhang A.3
+    /// Schritt 6).
+    ///
+    /// `layer_index` ist der Index im Modell, nicht im Shard: Zwei Pods
+    /// mit verschiedenem Zuschnitt archivieren dieselben Schlüssel.
+    pub fn put(&mut self, segment_id: [u8; 32], layer_index: u64, activations: &[i16]) {
         let mut bytes = Vec::with_capacity(activations.len() * 2);
         for v in activations {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
         let fragments = self.coder.encode(&bytes);
-        self.store.insert((segment_id, shard_index), fragments);
+        self.store.insert((segment_id, layer_index), fragments);
     }
 
-    /// Rekonstruiert die Aktivierungen eines Übergangs.
-    pub fn get(&self, segment_id: [u8; 32], shard_index: u64) -> Result<Vec<i16>, String> {
+    /// Rekonstruiert die Ausgabe-Aktivierungen einer Layer.
+    pub fn get(&self, segment_id: [u8; 32], layer_index: u64) -> Result<Vec<i16>, String> {
         let fragments = self
             .store
-            .get(&(segment_id, shard_index))
-            .ok_or("Segment/Shard nicht archiviert")?;
+            .get(&(segment_id, layer_index))
+            .ok_or("Segment/Layer nicht archiviert")?;
         let present: Vec<Option<Vec<u8>>> = fragments.iter().map(|f| Some(f.clone())).collect();
         let bytes = self.coder.decode(&present)?;
         if bytes.len() % 2 != 0 {
@@ -330,7 +349,7 @@ impl DaStore {
         Ok(out)
     }
 
-    /// Anzahl archivierter Übergänge (für Tests/Monitoring).
+    /// Anzahl archivierter Layer-Ausgänge (für Tests/Monitoring).
     pub fn len(&self) -> usize {
         self.store.len()
     }

@@ -37,6 +37,21 @@ use crate::trace::{activation_hash, verify_input_hash, TransitionSig, ZERO_HASH}
 use crate::wire::{unpack_tokens, PodMessage, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
 
 /// Ausgabe eines Shard-Schritts.
+///
+/// **Alle drei Fälle tragen Spur und Signatur (seit 2026-08-23).** Bis
+/// dahin trugen sie nur `Forward`, und der Koordinator übernahm die Spur
+/// ausschließlich dort. Der **letzte** Shard endet aber immer mit `Token`
+/// oder `Prefill`: Seine Spur-Einträge und seine Signatur landeten
+/// deshalb **nie** im abgeschlossenen Segment.
+///
+/// Die Wirkung war zweifach. Der Redundanzvergleich verglich die Arbeit
+/// des Shards nicht, der die Ausgabe erzeugt, also ausgerechnet die des
+/// LM-Kopfes. Und bei einem Pod aus einem einzigen Shard gab es gar kein
+/// `Forward`, die committete Spur war **leer**, und ein PoI-Bündel
+/// darüber hätte nichts belegt.
+///
+/// Aufgefallen beim Umbau auf Layer-Granularität, weil die
+/// vTFE-Zuschreibung bei `k = 1` plötzlich null ergab.
 #[derive(Debug)]
 pub enum ShardOut {
     /// Aktivierungen an den nächsten Shard weiterreichen.
@@ -47,11 +62,16 @@ pub enum ShardOut {
         position: u64,
         /// Feedback-Nachricht an Shard 0 (falls die Generation weitergeht).
         feedback: Option<PodMessage>,
+        trace: Vec<[u8; 32]>,
+        signature: myl_types::bls::BlsSignature,
     },
     /// Prefill-Position: KV-Cache wurde fortgeschrieben, aber es wird
     /// kein Token emittiert (nur die letzte Prompt-Position und
     /// Feedback-Nachrichten sampeln).
-    Prefill,
+    Prefill {
+        trace: Vec<[u8; 32]>,
+        signature: myl_types::bls::BlsSignature,
+    },
 }
 
 /// Ein Shard-Miner im Pod.
@@ -118,6 +138,22 @@ impl ShardNode {
             gen_count: Mutex::new(HashMap::new()),
             dekodier_digest: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Die archivierte Ausgabe-Aktivierung einer Layer, für Prüfer und
+    /// für den Angeklagten in der Streitfrist.
+    ///
+    /// Der Weg nach draußen ist Absicht: Ohne ihn ließe sich die
+    /// DA-Pflicht aus Anhang A.3 Schritt 6 nicht prüfen, und genau das
+    /// war der Grund, warum das Überschreiben je Position so lange
+    /// unbemerkt blieb.
+    pub fn archiviert(
+        &self,
+        segment_id: &myl_types::ids::SegmentId,
+        layer: usize,
+    ) -> Result<Vec<i16>, String> {
+        let da = self.da.lock().unwrap();
+        da.get(*segment_id.as_bytes(), layer as u64)
     }
 
     /// Dekodier-Digest einer Session: Hexwert und Zahl der Schritte.
@@ -211,22 +247,21 @@ impl ShardNode {
 
             let mut cache = self.take_cache(session_id);
             let hidden = self.model.embed_token(token);
-            let out = self.model.run_layers(
-                hidden,
-                pos,
-                &mut cache,
-                self.layer_start,
-                self.layer_end,
-            );
+            let mut trace = msg.trace.clone();
+            let out =
+                self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
             self.put_cache(session_id, cache);
 
-            // Spur fortschreiben + signieren + archivieren.
-            let out_hash = activation_hash(&out);
-            let mut trace = msg.trace.clone();
-            trace.push(out_hash);
+            // **Eine Signatur je Shard, auch wenn die Spur je Layer
+            // wächst.** Die Spur ist der Vergleichsgegenstand und braucht
+            // Layer-Granularität; die Signatur ist die Zuschreibung und
+            // braucht Shard-Granularität, denn geslasht wird ein Shard und
+            // keine Layer. Je Layer zu signieren hieße bei 28 Layern und
+            // vier Shards sieben BLS-Signaturen statt einer, ohne dass
+            // jemand die zusätzliche Aussage nutzt.
+            let out_hash = *trace.last().unwrap_or(&ZERO_HASH);
             let prev = ZERO_HASH;
             let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev, &out_hash)?;
-            self.archive(&msg.segment_id, &out);
 
             return self.finish(msg, session_id, pos as u64, out, trace, sig);
         }
@@ -250,20 +285,12 @@ impl ShardNode {
         let hidden = msg.payload.clone();
 
         let mut cache = self.take_cache(session_id);
-        let out = self.model.run_layers(
-            hidden,
-            pos,
-            &mut cache,
-            self.layer_start,
-            self.layer_end,
-        );
+        let mut trace = msg.trace.clone();
+        let out = self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
         self.put_cache(session_id, cache);
 
-        let out_hash = activation_hash(&out);
-        let mut trace = msg.trace.clone();
-        trace.push(out_hash);
+        let out_hash = *trace.last().unwrap_or(&ZERO_HASH);
         let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev_hash, &out_hash)?;
-        self.archive(&msg.segment_id, &out);
 
         self.finish(msg, session_id, pos as u64, out, trace, sig)
     }
@@ -286,10 +313,49 @@ impl ShardNode {
         t.sign(&self.bls_sk)
     }
 
-    /// Archiviert die Ausgabe-Aktivierungen (DA-Pflicht, Anhang A.3 Schritt 6).
-    fn archive(&self, segment_id: &myl_types::ids::SegmentId, activations: &[i16]) {
+    /// Archiviert die Ausgabe-Aktivierungen **einer Layer** (DA-Pflicht,
+    /// Anhang A.3 Schritt 6).
+    fn archive(&self, segment_id: &myl_types::ids::SegmentId, layer: usize, activations: &[i16]) {
         let mut da = self.da.lock().unwrap();
-        da.put(*segment_id.as_bytes(), self.shard_index as u64, activations);
+        da.put(*segment_id.as_bytes(), layer as u64, activations);
+    }
+
+    /// Rechnet den Layer-Bereich dieses Shards **Layer für Layer** und
+    /// hängt je Layer einen Spur-Eintrag an; archiviert wird ebenso.
+    ///
+    /// **Warum je Layer und nicht je Shard (2026-08-23).** Die Spur war
+    /// Shard-granular, und damit hing ihre Länge am Zuschnitt: Zwei Pods
+    /// mit verschiedenem `k` hatten verschieden lange Spuren, und
+    /// `myl_verifier::compare_commitments` lehnt das zu Recht mit
+    /// `LengthMismatch` ab. Redundante Pipelines mussten deshalb
+    /// denselben Zuschnitt haben, und der Entwurf für **variable
+    /// Knotenzahl** war blockiert.
+    ///
+    /// Je Layer ist die Spur eine Eigenschaft des **Modells** statt des
+    /// Zuschnitts: `num_layers` Einträge, gleichgültig ob ein Shard oder
+    /// vierundzwanzig rechnen. Kosten sind zusätzliche SHA-256 je Token,
+    /// gegenüber der Matrixarithmetik derselben Layer vernachlässigbar.
+    ///
+    /// **Nebengewinn:** Die Bisektion grenzt danach die fehlerhafte
+    /// **Layer** ein statt der Layer-Gruppe, bei unverändertem O(log L).
+    ///
+    /// Dass ein Aufruf je Layer dasselbe liefert wie ein Bereichsaufruf,
+    /// ist nicht hergeleitet, sondern gemessen:
+    /// `tests/layer_granular.rs`, drei Positionen, echtes Modell.
+    fn layer_fuer_layer(
+        &self,
+        mut hidden: Vec<i16>,
+        pos: usize,
+        cache: &mut KVCache,
+        segment_id: &myl_types::ids::SegmentId,
+        trace: &mut Vec<[u8; 32]>,
+    ) -> Vec<i16> {
+        for i in self.layer_start..self.layer_end {
+            hidden = self.model.run_layers(hidden, pos, cache, i, i + 1);
+            trace.push(activation_hash(&hidden));
+            self.archive(segment_id, i, &hidden);
+        }
+        hidden
     }
 
     /// Gemeinsamer Abschluss: weiterreichen (Zwischen-Shard) oder sampeln
@@ -309,7 +375,7 @@ impl ShardNode {
             // Prefill-Positionen ohne FLAG_SAMPLE schreiben nur den
             // KV-Cache fort.
             if msg.flags & FLAG_SAMPLE == 0 {
-                return Ok(ShardOut::Prefill);
+                return Ok(ShardOut::Prefill { trace, signature: sig });
             }
 
             // Norm + LM-Head + Sampling.
@@ -353,6 +419,8 @@ impl ShardNode {
                 token,
                 position,
                 feedback,
+                trace,
+                signature: sig,
             })
         } else {
             // Zwischen-Shard: Ausgang unverändert weiterreichen.

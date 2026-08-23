@@ -8,7 +8,7 @@
 
 *Lizenz: CC BY-SA 4.0. Kein Token existiert. Kommentare willkommen.*
 
-*Bis Version 0.1 wurde dieses Projekt unter dem Namen „Myelin" geführt. Die Vorversion ist unter diesem Namen mit eigener DOI archiviert; inhaltlich besteht durchgehende Kontinuität.*
+*Bis Version 0.1 wurde dieses Projekt unter dem Namen „Myelin" geführt. Die Vorversion ist unter diesem Namen mit eigener DOI archiviert; inhaltlich besteht durchgehende Kontinuität. Alle Fassungen sind über die Konzept-DOI [10.5281/zenodo.21734240](https://doi.org/10.5281/zenodo.21734240) verbunden.*
 
 ---
 
