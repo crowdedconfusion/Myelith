@@ -72,7 +72,23 @@ pub const ZERO_HASH: [u8; 32] = [0u8; 32];
 /// Hash übereinstimmt.
 pub fn verify_input_hash(activations: &[i16], trace: &[[u8; 32]]) -> bool {
     match trace.last() {
-        None => true, // Shard 0: noch kein Spur-Eintrag, Token-Eingang.
+        // **Eine leere Spur belegt nichts (Fund 41, 2026-08-23).**
+        //
+        // Bis dahin stand hier `true`, mit der Begründung „Shard 0: noch
+        // kein Spur-Eintrag, Token-Eingang". Für Shard 0 stimmt das,
+        // aber dieser Zweig wird von dort **gar nicht erreicht**: Der
+        // Token-Eingang kehrt in `ShardNode::process` vorher zurück.
+        //
+        // Erreicht wird er nur auf dem Aktivierungspfad, und dort heißt
+        // eine leere Spur: Jemand schickt Aktivierungen ohne jeden
+        // Nachweis, woher sie kommen. Die Prüfung ging **vacuously**
+        // durch, der Shard rechnete auf fremden Zahlen weiter, und bei
+        // unpassender Länge endete das in einer Panik im Kernel, also in
+        // einem Absturz, den jeder auslösen kann, der Bytes schicken
+        // darf.
+        //
+        // Gefunden vom adversarialen Test, beim ersten Lauf.
+        None => false,
         Some(expected) => activation_hash(activations) == *expected,
     }
 }
@@ -126,7 +142,10 @@ mod tests {
         // Passender Spur-Eintrag ⇒ ok.
         assert!(verify_input_hash(&akt, &[h]));
         // Leere Spur (Shard 0) ⇒ ok.
-        assert!(verify_input_hash(&akt, &[]));
+        // Fund 41: Eine leere Spur belegt nichts. Auf dem
+        // Aktivierungspfad, dem einzigen, der hier ankommt, heisst sie
+        // "ohne Nachweis geschickt".
+        assert!(!verify_input_hash(&akt, &[]));
         // Verfälschte Aktivierungen ⇒ abgelehnt.
         let mut manipuliert = akt;
         manipuliert[0] = 99;

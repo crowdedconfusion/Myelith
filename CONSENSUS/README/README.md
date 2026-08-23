@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.10.0 (`myl-scheduler` 0.2.11)
+> **Version:** 0.11.0 (`myl-scheduler` 0.2.11, `myl-ledger` 0.2.0)
 > **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -86,6 +86,77 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-consensus v0.11.0 – 2026-08-23 (adversariale Testebene, K4)
+
+`liveness.rs` prüft, dass ehrliche Validatoren zu einem Block kommen,
+also den **Erfolgsfall**. K4 verlangt den Gegenfall, und der stand
+bisher nicht da.
+
+`tests/adversarial.rs` beschreibt neun Angriffe auf das
+Polka-Zertifikat, und jeder muss scheitern:
+
+| Angriff | wird abgelehnt weil |
+|---|---|
+| dieselbe Stimme fünfzehnmal einsetzen | Unterzeichner sind streng aufsteigend, Duplikate strukturell ausgeschlossen |
+| unsortierte Unterzeichnerliste | ein Stimmensatz hat genau eine Kodierung |
+| ein Unterzeichner außerhalb des Komitees | sein Schlüssel steht nicht im `VotingSet` |
+| knapp unter dem Quorum (14 statt 15) | Stimmgewicht unter der Schwelle |
+| Block nachträglich austauschen | die Unterschrift gilt dem alten Text |
+| Zertifikat in einer anderen Runde einsetzen | Rundenbindung; sonst ließe sich ein altes Polka wiederverwenden und ein gesperrter Validator entsperren (BFT-Safety, vgl. Fund 27) |
+| erfundene Aggregatsignatur | `fast_aggregate_verify` schlägt fehl |
+| leeres Zertifikat | null Stimmen sind kein Quorum |
+| 20 000 zufällige Zertifikate | keines gilt, keines stürzt ab |
+
+**Der erste Test ist die Gegenprobe**, und er ist der wichtigste: Das
+**ehrliche** Zertifikat muss gelten. Ohne ihn wären die neun darunter
+wertlos, denn eine Prüfung, die alles ablehnt, lehnt auch jeden Angriff
+ab. Genau diese Falle hat dieses Projekt schon zweimal bezahlt
+(Fund 33, und der erste Anlauf des Pod-Fuzzers).
+
+**Die Angriffe sind nicht ausgedacht.** Wo ein Kommentar im Quelltext
+sagt „das schließt X aus", steht jetzt der Test, der X versucht.
+
+### myl-ledger v0.2.0 – 2026-08-23 (Invarianten statt Erfolgsfall, K4)
+
+Kritikpunkt K4 lautet: *„Die Tests belegen überwiegend den
+Erfolgsfall."* Für dieses Crate stimmte das. `determinism.rs` prüft, dass
+zwei Läufe derselben Folge denselben Zustand ergeben, und das ist
+richtig und wichtig, **sagt aber nichts darüber, ob der Zustand
+stimmt**: Zwei Läufe derselben falschen Rechnung sind ebenso bitgleich.
+
+Neu ist `tests/invarianten.rs` mit fünf Eigenschaften, die nach **jedem**
+Übergang gelten müssen, geprüft über Folgen, die niemand von Hand
+ausgesucht hat:
+
+1. **MYL steigt niemals.** Kein Übergang prägt; `burn_to_credits`
+   verbrennt, `apply_verdict` schlachtet und verteilt einen Teil weiter.
+   Ein Übergang, der Geld erzeugt, wäre ein Loch in der Geldmenge.
+2. **Credits sind durch verbranntes MYL gedeckt.** `Credits · Preis` darf
+   den MYL-Schwund nie übersteigen; die Abrundung geht zu Lasten des
+   Käufers, nie zu Lasten der Deckung.
+3. **Ein abgelehnter Übergang lässt den Zustand bitgleich.** Fünf Fälle,
+   die fehlschlagen müssen, jeweils gegen das State-Commitment geprüft.
+   Ein halb angewendeter Übergang wäre ein Konsensbruch, weil zwei Knoten
+   ihn an verschiedenen Stellen abbrechen könnten. **Hier wird
+   ausschließlich der Fehlschlag geprüft**, also genau das, was K4
+   vermisst.
+4. **Das Kopfgeld übersteigt nie den geschlachteten Betrag.**
+5. **Extreme Beträge laufen nicht um**, geprüft an der u64-Bereichsgrenze.
+
+**Zwei Gegenproben, weil ein grüner Test nichts beweist.** Erstens bewegt
+die Zufallsfolge echten Zustand: bei Keim 1 verschwinden 1,1 Mio. MYL und
+2707 Credits entstehen, die Übergänge werden also nicht reihenweise
+abgelehnt. Zweitens wurde ein Übergang eingebaut, der ein einziges MYL
+erzeugt; die Invariante fliegt bei Keim 1, Schritt 5 auf und nennt die
+Beträge. Danach zurückgenommen.
+
+**Kein `proptest`, kein `quickcheck`.** Beide wären bequem und beide eine
+weitere Abhängigkeit in einem Crate, das den Konsens rechnet; die Kosten
+trägt jeder, der das Repositorium baut. Ein xorshift64 in zehn Zeilen
+leistet dasselbe, solange die Folge reproduzierbar ist. Was fehlt, ist
+das automatische Verkleinern eines Gegenbeispiels; dafür nennt jeder
+Fehlschlag Keim und Schritt.
 
 ### myl-consensus v0.10.0 – 2026-08-23 (Stimmgewicht: Bezugswert und Deckel)
 

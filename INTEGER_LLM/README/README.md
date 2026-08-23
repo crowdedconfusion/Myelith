@@ -1021,6 +1021,38 @@ Wirtschaftlichkeit (Kritikpunkt K8): Ein Kostenverhältnis von 9,2× gegen
 einen zentralen Anbieter sah zu schlecht aus, um an der Numerik zu
 liegen.
 
+### Wo die Grenze liegt, und was das für große Modelle heißt
+
+Dekodieren liest je Token das **ganze** Modell und ist damit
+bandbreitenbegrenzt. Die Formatfrage ist deshalb die entscheidende:
+int8-Gewichte sind halb so viele Bytes wie bf16.
+
+| Modell | int8 | bf16 | unsere Byterate | ihre | Ausnutzung |
+|---|---|---|---|---|---|
+| 0,5B | 0,78 GB | 1,00 GB | 38 GB/s | 78 GB/s | 49 % |
+| 7B | 8,72 GB | 15,2 GB | 94 GB/s | 150 GB/s | **62 %** |
+
+**Die Obergrenze ist das Byteverhältnis**, bei 7B also 1,74×. Wir stehen
+bei 1,09×, holen davon also erst 62 %. Der Rest ist Kernel-Arbeit, kein
+Naturgesetz.
+
+**Hochrechnung auf die Zielgrößenordnung, ausdrücklich als solche.** Je
+größer das Modell, desto klarer bandbreitenbegrenzt ist das Dekodieren,
+und desto mehr zählt allein die Byterate. Beide gemessenen Punkte stützen
+das (Verhältnis 0,63 → 1,09, Ausnutzung 49 % → 62 %), aber **zwei Punkte
+sind keine Kurve**, und das gilt hier gegen die eigene These wie überall.
+
+Für GPU kommt hinzu: Das Tensor-Core-Verbot aus Kap. 6.2 kostet beim
+**Dekodieren** wenig, denn ein Token ist eine Matrix-Vektor-Rechnung und
+damit bandbreiten- statt rechenbegrenzt. Beim **Prefill** kostet es,
+denn dort steht eine Matrixmultiplikation.
+
+**Drei Vorbehalte, der dritte ist der ernsteste:** Auf GPU ist nichts
+davon gemessen. Modelle dieser Größe werden geshardet, und in keiner
+dieser Zahlen steckt ein Netz-Hop. Und verglichen wird **Batch 1 gegen
+Batch 1**, während echte Anbieter stark bündeln, was ihre Seite
+rechenbegrenzt macht und Tensor Cores wirken lässt.
+
 Zwei Befunde, die ich nicht in eine Fußnote schiebe:
 
 - **Die Parallelisierung ist bitgleich per Konstruktion.** Jede

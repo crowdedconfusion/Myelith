@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.5.0
+> **Version:** 0.6.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
@@ -55,6 +55,47 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### myl-pod v0.6.0 – 2026-08-23 (Fund 41: die Manipulationserkennung ging leer durch)
+
+Angelegt wurde eine adversariale Testebene für das Drahtformat (K4).
+**Sie fand beim ersten Lauf einen Fehler**, und zwar einen ernsten.
+
+`verify_input_hash` lieferte bei **leerer Spur** `true`, mit der
+Begründung im Code: *„Shard 0: noch kein Spur-Eintrag, Token-Eingang."*
+Für Shard 0 stimmt das, aber **dieser Zweig wird von dort gar nicht
+erreicht**: Der Token-Eingang kehrt in `process` vorher zurück. Erreicht
+wird er ausschließlich auf dem Aktivierungspfad, und dort heißt eine
+leere Spur: Jemand schickt Aktivierungen ohne jeden Nachweis, woher sie
+kommen.
+
+**Zwei Folgen, beide schlecht.** Die Manipulationserkennung, also der
+Kern von Anhang A.3 Schritt 2, ging **vacuously** durch: Ein Shard
+rechnete auf fremden Zahlen weiter. Und passte deren Länge nicht zum
+Modell, endete das in einer **Panik** im Kernel (`rmsnorm_i16` prüft per
+`assert_eq!`), also in einem Absturz, den jeder auslösen kann, der Bytes
+schicken darf. Im offenen Netz ist das ein Denial-of-Service.
+
+**Behoben zweifach**: `None => false`, denn eine leere Spur belegt
+nichts, und eine Längenprüfung vor dem Kernel, die aus der Panik ein
+`Err` macht. Ein Kernel darf nie mit einer Eingabe laufen, deren Länge
+nicht zum Modell passt.
+
+**Die neue Testebene** (`tests/adversarial.rs`, fünf Tests): zufällige
+und verstümmelte Nachrichten gegen die Deserialisierung, gekippte Bits in
+gültigen Nachrichten, abgeschnittene Nachrichten, `unpack_tokens` gegen
+jede Nutzlast, und 2000 fremde Nachrichten gegen einen echten Shard, die
+**alle** abgelehnt werden müssen.
+
+> **Auch dieser Test war zuerst wertlos, und das steht hier, weil es der
+> Punkt ist.** Der erste Anlauf zog rein zufällige Bytes, und davon
+> deserialisierte in 50 000 Versuchen **kein einziger**: Borsh liest
+> zuerst Längenfelder, und ein zufälliges u32 verlangt gleich mehrere
+> Gigabyte. Der Test prüfte also nur, dass Ablehnen nicht abstürzt, und
+> nie, was mit einer angenommenen Nachricht geschieht. Aufgefallen ist es
+> allein an der Auskunftszeile, die die Null zeigte. Jetzt wird
+> strukturiert gezogen, gültiger Kopf und zufälliger Rest, und **1156 von
+> 50 000 kommen durch**; eine Zusicherung hält das künftig fest.
 
 ### myl-pod v0.5.0 – 2026-08-23 (Spur je Layer, und zwei Funde am Weg dorthin)
 

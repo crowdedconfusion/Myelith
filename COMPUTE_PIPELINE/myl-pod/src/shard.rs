@@ -267,6 +267,23 @@ impl ShardNode {
         }
 
         // Zwischen-/End-Shard: Aktivierungen.
+        //
+        // **Länge zuerst (Fund 41).** Ein Kernel darf nie mit einer
+        // Eingabe laufen, deren Länge nicht zum Modell passt:
+        // `rmsnorm_i16` prüft das per `assert_eq!` und **panisch**, und
+        // eine Panik ist im offenen Netz ein Denial-of-Service, den jeder
+        // auslösen kann, der Bytes schicken darf. Hier wird daraus ein
+        // `Err`, also eine abgelehnte Nachricht.
+        if msg.payload.len() != self.model.hidden_size {
+            return Err(format!(
+                "Aktivierungen haben Länge {}, das Modell erwartet {} (Shard {}, \
+                 Position {})",
+                msg.payload.len(),
+                self.model.hidden_size,
+                self.shard_index,
+                pos
+            ));
+        }
         // 2. Eingangs-Hash gegen die Spur prüfen (Manipulationserkennung).
         if !verify_input_hash(&msg.payload, &msg.trace) {
             return Err(format!(
