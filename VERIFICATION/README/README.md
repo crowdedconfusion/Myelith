@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.3.1
-> **Datum:** 2026-08-18
+> **Version:** 0.3.2
+> **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5):
 > Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2) mit Checker-Modul,
 > Challenge-Erzeugung, Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik.
@@ -89,6 +89,30 @@ match decision {
 - Fehlerbehandlung (leere Spuren, Längen-Mismatch)
 
 ## Changelog
+
+### myl-verifier v0.3.2 – 2026-08-23 (die Spur ist Layer-granular geworden)
+
+**An der Rechnung dieses Crates ändert sich nichts**, an der Aussage
+seiner Ergebnisse schon. Bisektion und Redundanzvergleich arbeiten auf
+Indizes und Hashes; wie fein die Spur geschnitten ist, entscheidet
+`myl-pod`. Seit dessen v0.5.0 trägt sie einen Eintrag **je Layer** statt
+je Shard.
+
+**Was das löst:** [`redundancy::compare_commitments`] lehnt ungleiche
+Spurlängen mit `LengthMismatch` ab, und das war richtig. Solange die
+Spur Shard-granular war, hing ihre Länge aber am Zuschnitt des Pods, und
+zwei redundante Pods mussten denselben tragen. Genau daran war der
+Entwurf für **variable Knotenzahl je Pipeline** blockiert, dessen
+gemischte Paarung rund 600-mal sicherer ist als zwei schnelle Pipelines.
+
+**Was das ändert:** Die Bisektion grenzt jetzt die fehlerhafte **Layer**
+ein statt der fehlerhaften Layer-Gruppe, bei unverändertem O(log L). Die
+Schuldzuweisung wird damit feiner, ohne dass das Protokoll mehr Runden
+braucht. Die Modulköpfe und Feldkommentare sagen das jetzt auch so;
+vorher stand dort durchgehend „Layer-Gruppe".
+
+Belegt in `myl-pod`, nicht hier: vier gegen acht Shards ergibt `Match`,
+und dieselbe Spur entsteht bei k = 1 bis 24.
 
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
