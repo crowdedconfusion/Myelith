@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.2.4"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.82"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -11,6 +11,7 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
 integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 borsh = { version = "1.6", features = ["derive"] }
+myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 sha2 = "0.10"
 
 [lib]

@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.18.0 (θ_v 0.17.0)
-> **Datum:** 2026-08-22
+> **Version:** 0.19.0 (θ_v 0.17.0)
+> **Datum:** 2026-08-23
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -414,6 +414,39 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.19.0 (runtime 0.18.0) – 2026-08-23 (der Digest-Vertrag bekommt einen Ort)
+
+**Nichts an der Rechnung, alles an der Zuständigkeit.** Die Bytefolge des
+Dekodier-Digests stand als Schleife in `dekodieren_mit_digest`: je
+erzeugtem Token alle Logits als `i32` little-endian, danach der gewählte
+Token als `u32`. Solange nur der Einzelknotenlauf sie brauchte, war das
+richtig. Der geshardete Lauf braucht denselben Wert, kann diese Schleife
+aber nicht benutzen: Seine Logits entstehen verteilt, im Shard mit dem
+LM-Head, Schritt für Schritt.
+
+Neu ist deshalb `generate::DekodierDigest` mit `schritt(&logits, token)`,
+`schritte()` und `hex()`. `dekodieren_mit_digest` benutzt ihn, und
+`myl-pod` benutzt ihn ebenfalls. **Der Grund für diese Sorgfalt ist Fund
+34:** Eine zweite Fassung derselben Bytefolge wäre eine zweite Quelle für
+dieselbe Aussage, und genau daraus entstehen die Fehler, die dieses
+Projekt am teuersten bezahlt hat.
+
+Gehasht wird jetzt **strömend** statt über einen Zwischenpuffer. Der
+Puffer wäre bei 0,5B und 32 Token rund 19 MB gewesen, ohne dass ihn
+jemand liest.
+
+**Der Wert selbst hat sich nicht bewegt**, und das ist die Bedingung:
+33/33 Konformitätsvektoren bestanden, darunter die drei E2E-Vektoren, die
+seit v0.16.0 `metadata.logits_sha256` tragen und ohne dieses Feld
+abgelehnt werden. Ein geänderter Digest wäre hier kein Fortschritt,
+sondern ein Fehler.
+
+**Nachgezogen:** Der Statuskopf von `Fahrplan-v3.md` nannte noch
+15,29/+2,3 % und 7B 9,40/+8,29 %. Beide Zahlen sind seit dem 2026-08-20
+(Fund 31, θ_v 0.17.0) überholt; gültig sind **15,27/+2,11 %** und
+**8,78/+1,14 %**. Dieselbe Klasse wie die drei Stellen, die am 2026-08-22
+nachgezogen wurden.
 
 ### v0.18.0 (kernels 0.20.0) – 2026-08-22 (Rückwärtspass vollständig)
 

@@ -511,6 +511,15 @@ pub struct RunLog {
     /// Zahl der protokollierten Fehler und Abweichungen.
     problems: usize,
     dir: PathBuf,
+    /// Der zuletzt protokollierte Vergleichswert: Name und Digest.
+    ///
+    /// Jeder Messlauf endet mit seinem Gesamtwert (`determinismus`,
+    /// `shard_vs_einzelknoten`), und das ist der Wert, den ein
+    /// Vergleichspartner oder die CI meint, wenn sie „der Digest des
+    /// Laufs" sagt. Festgehalten wird er hier, weil `--erwarte` ihn nach
+    /// dem Lauf braucht und ihn sonst aus der eben geschriebenen Datei
+    /// zurücklesen müsste.
+    leitwert: Option<(String, String)>,
     /// Wurde [`RunLog::finish`] aufgerufen?
     ///
     /// Steuert den Abbruchvermerk in [`Drop`]. Ohne ihn endet ein Lauf,
@@ -613,6 +622,7 @@ impl RunLog {
             echo,
             problems: 0,
             dir: dir.to_path_buf(),
+            leitwert: None,
             beendet: false,
         };
         // Teilnehmer und Einstellungs-Kurzkennung gehören ins Protokoll
@@ -644,6 +654,16 @@ impl RunLog {
     /// Zahl der bisher protokollierten Fehler und Abweichungen.
     pub fn problems(&self) -> usize {
         self.problems
+    }
+
+    /// Der zuletzt protokollierte Vergleichswert: (Name, Digest).
+    ///
+    /// `None`, solange der Lauf keinen erzeugt hat. Das ist kein
+    /// Randfall, sondern der Normalfall bei jedem Lauf, der vorzeitig
+    /// abbricht, und `--erwarte` muss ihn als **Fehlschlag** behandeln:
+    /// „nichts gemessen" darf nie wie „stimmt überein" aussehen.
+    pub fn leitwert(&self) -> Option<(&str, &str)> {
+        self.leitwert.as_ref().map(|(n, d)| (n.as_str(), d.as_str()))
     }
 
     /// Protokolliert ein Ereignis in beide Fassungen.
@@ -699,6 +719,7 @@ impl RunLog {
 
     /// Kurzform für [`Event::Result`].
     pub fn result(&mut self, name: &str, digest: &str, value: impl Into<String>) {
+        self.leitwert = Some((name.to_string(), digest.to_string()));
         self.event(Event::Result {
             name: name.to_string(),
             digest: digest.to_string(),

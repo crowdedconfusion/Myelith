@@ -26,8 +26,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use integer_llm_runtime::generate::DekodierDigest;
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::model::IntegerModel;
+use myl_tokenomics::{ModellProfil, ShardZuschnitt};
 use myl_types::bls::{BlsPublicKey, BlsSecretKey};
 
 use crate::da::DaStore;
@@ -71,6 +73,21 @@ pub struct ShardNode {
     max_new_tokens: u64,
     /// Generierungs-Zähler je Session.
     gen_count: Mutex<HashMap<u64, u64>>,
+    /// Dekodier-Digest je Session, nur beim Shard mit dem LM-Head.
+    ///
+    /// **Warum hier und nicht im Koordinator (Fund 36, letzter Teil):**
+    /// Die Logits entstehen im letzten Shard und verlassen ihn nicht; auf
+    /// dem Draht steht nur der gewählte Token. Genau deshalb konnte der
+    /// Shard-Vergleich bisher nur Token gegen Token halten, also prüfen,
+    /// ob die Aufteilung dieselbe *Entscheidung* erzeugt, statt dieselben
+    /// *Zahlen*. Die Logits zum Koordinator zu schicken wäre die andere
+    /// Lösung und hieße rund 600 KB je Token für einen Messwert; der
+    /// Digest sind 32 Bytes.
+    ///
+    /// Der Wert folgt dem Vertrag aus
+    /// [`integer_llm_runtime::generate::DekodierDigest`] und ist damit
+    /// unmittelbar gegen den Einzelknotenlauf zu halten.
+    dekodier_digest: Mutex<HashMap<u64, DekodierDigest>>,
 }
 
 impl ShardNode {
@@ -99,11 +116,61 @@ impl ShardNode {
             da: Mutex::new(da),
             max_new_tokens,
             gen_count: Mutex::new(HashMap::new()),
+            dekodier_digest: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Dekodier-Digest einer Session: Hexwert und Zahl der Schritte.
+    ///
+    /// Nur der Shard mit dem LM-Head liefert einen Wert; alle anderen
+    /// sehen nie Logits. `None` heißt deshalb entweder „falscher Shard"
+    /// oder „diese Session hat hier nichts gesampelt", und beides ist
+    /// **kein** Befund über Bitgleichheit.
+    ///
+    /// Die Zahl der Schritte gehört zum Wert: Zwei Digests über
+    /// verschiedene viele Schritte sind schlicht verschieden und sähen
+    /// wie ein Determinismusfehler aus, was die Verwechslung aus Fund 35
+    /// eine Ebene tiefer wäre.
+    pub fn dekodier_digest(&self, session_id: u64) -> Option<(String, usize)> {
+        let d = self.dekodier_digest.lock().unwrap();
+        d.get(&session_id).map(|x| (x.hex(), x.schritte()))
     }
 
     pub fn public_key(&self) -> BlsPublicKey {
         self.bls_pk
+    }
+
+    /// Die Maße des Modells, soweit sie die Rechenarbeit bestimmen.
+    ///
+    /// `intermediate_size` steht nicht als Feld am Modell und wird
+    /// deshalb aus der Zeilenzahl von `gate_proj` gelesen; ohne Layer
+    /// gibt es keine, dann steht dort null.
+    pub fn modell_profil(&self) -> ModellProfil {
+        ModellProfil {
+            hidden_size: self.model.hidden_size as u64,
+            intermediate_size: self
+                .model
+                .layers
+                .first()
+                .map(|l| l.gate_proj.rows() as u64)
+                .unwrap_or(0),
+            num_layers: self.model.num_layers as u64,
+            vocab_size: self.model.vocab_size as u64,
+            num_heads: self.model.num_heads as u64,
+            num_kv_heads: self.model.num_kv_heads as u64,
+            head_dim: self.model.head_dim as u64,
+        }
+    }
+
+    /// Was dieser Shard vom Modell hält, in der Form, die die
+    /// vTFE-Zuschreibung erwartet.
+    pub fn zuschnitt(&self) -> ShardZuschnitt {
+        ShardZuschnitt {
+            layer_start: self.layer_start as u64,
+            layer_end: self.layer_end as u64,
+            hat_embedding: self.has_embedding,
+            hat_lm_kopf: self.has_lm_head,
+        }
     }
 
     /// KV-Cache einer Session entnehmen oder anlegen.
@@ -248,6 +315,18 @@ impl ShardNode {
             // Norm + LM-Head + Sampling.
             let logits = self.model.head_logits(&out);
             let token = self.model.greedy_next(&logits) as u32;
+
+            // Fund 36, letzter Teil: **die Zahlen** festhalten, aus denen
+            // entschieden wurde, nicht nur die Entscheidung. Ein Token ist
+            // ein Argmax über `vocab_size` Zahlen und ändert sich erst,
+            // wenn deren Rangfolge kippt; gemessen an 0,5B blieb er bei
+            // 0,1 % veränderter Modellbytes unverändert.
+            self.dekodier_digest
+                .lock()
+                .unwrap()
+                .entry(session_id)
+                .or_insert_with(DekodierDigest::neu)
+                .schritt(&logits, token);
 
             // Generierungs-Buchhaltung + Feedback.
             let mut gen = self.gen_count.lock().unwrap();

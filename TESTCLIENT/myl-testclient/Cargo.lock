@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "integer-llm-kernels",
  "serde",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -701,11 +701,12 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.2.4"
+version = "0.4.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
  "integer-llm-runtime",
+ "myl-tokenomics",
  "myl-types",
  "sha2",
 ]
@@ -721,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "myl-testclient"
-version = "0.9.0"
+version = "0.12.0"
 dependencies = [
  "borsh",
  "crossterm",
@@ -739,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.2.6"
+version = "0.3.0"
 dependencies = [
  "myl-types",
 ]

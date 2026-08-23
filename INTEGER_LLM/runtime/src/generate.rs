@@ -4,6 +4,74 @@ use crate::model::IntegerModel;
 use crate::kv_cache::KVCache;
 use crate::tokenizer::Tokenizer;
 
+/// Der Dekodier-Digest, schrittweise gebildet.
+///
+/// **Die einzige Stelle, an der die Bytefolge festgelegt ist.** Je
+/// erzeugtem Token: alle Logits als `i32` little-endian, danach der
+/// gewählte Token als `u32` little-endian.
+///
+/// Warum als eigener Typ und nicht als Schleife in
+/// [`dekodieren_mit_digest`]: Der geshardete Lauf bildet denselben Wert,
+/// aber verteilt über einen Pod, und kann die Schleife dort nicht
+/// wiederverwenden. Eine zweite Fassung der Bytefolge wäre eine zweite
+/// Quelle für dieselbe Aussage, und genau daraus entstand Fund 34.
+///
+/// Gehasht wird **strömend**. Ein Zwischenpuffer über
+/// `max_new_tokens · vocab_size · 4` Bytes wären bei 0,5B und 32 Token
+/// rund 19 MB, die niemand braucht.
+#[derive(Clone)]
+pub struct DekodierDigest {
+    hasher: sha2::Sha256,
+    schritte: usize,
+}
+
+impl Default for DekodierDigest {
+    fn default() -> Self {
+        Self::neu()
+    }
+}
+
+impl DekodierDigest {
+    pub fn neu() -> Self {
+        use sha2::Digest;
+        Self {
+            hasher: sha2::Sha256::new(),
+            schritte: 0,
+        }
+    }
+
+    /// Ein Dekodierschritt: die Logits, aus denen entschieden wurde, und
+    /// der Token, der daraus wurde.
+    ///
+    /// Die Reihenfolge ist Teil des Vertrags: erst die Zahlen, dann die
+    /// Entscheidung. Der Token allein wäre genau der Wert, der vor
+    /// Fund 36 verglichen wurde.
+    pub fn schritt(&mut self, logits: &[i32], token: u32) {
+        use sha2::Digest;
+        for &l in logits {
+            self.hasher.update(l.to_le_bytes());
+        }
+        self.hasher.update(token.to_le_bytes());
+        self.schritte += 1;
+    }
+
+    /// Zahl der bisher aufgenommenen Schritte.
+    ///
+    /// Zwei Digests sind nur vergleichbar, wenn sie gleich viele
+    /// Schritte decken; ein kürzerer Lauf ergibt sonst schlicht einen
+    /// anderen Wert und sähe wie ein Determinismusfehler aus. Dieselbe
+    /// Verwechslung wie bei Fund 35, eine Ebene tiefer.
+    pub fn schritte(&self) -> usize {
+        self.schritte
+    }
+
+    pub fn hex(&self) -> String {
+        use sha2::Digest;
+        let d = self.hasher.clone().finalize();
+        d.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+}
+
 /// Komplette Generierung von Prompt zu Token-Sequenz.
 ///
 /// Für einen **Vergleich zwischen Maschinen oder Backends** ist die
@@ -91,10 +159,11 @@ pub fn generate_mit_digest(
 
 /// Wie [`generate_mit_digest`], aber ab fertigen Prompt-Token.
 ///
-/// **Die einzige Stelle, an der die Bytefolge des Digests festgelegt
-/// ist.** Der Golden-Vector-Prüfstand arbeitet mit Token statt mit Text
-/// und braucht denselben Wert; ihn dort noch einmal zu bauen, wäre eine
+/// Der Golden-Vector-Prüfstand arbeitet mit Token statt mit Text und
+/// braucht denselben Wert; ihn dort noch einmal zu bauen, wäre eine
 /// zweite Quelle für dieselbe Aussage, und genau daraus entstand Fund 34.
+/// Die Bytefolge selbst steht in [`DekodierDigest`], weil der geshardete
+/// Lauf sie ebenfalls braucht und diese Schleife nicht benutzen kann.
 pub fn dekodieren_mit_digest(
     model: &IntegerModel,
     token_ids: &[usize],
@@ -112,13 +181,10 @@ pub fn dekodieren_mit_digest(
     }
 
     let mut out = Vec::with_capacity(max_new_tokens);
-    let mut bytes: Vec<u8> = Vec::with_capacity(max_new_tokens * (model.vocab_size + 1) * 4);
+    let mut digest = DekodierDigest::neu();
     let mut current_seed = seed;
 
     for _ in 0..max_new_tokens {
-        for &l in &logits {
-            bytes.extend_from_slice(&l.to_le_bytes());
-        }
         let next_token = if greedy {
             model.greedy_next(&logits)
         } else {
@@ -126,14 +192,13 @@ pub fn dekodieren_mit_digest(
             current_seed = s;
             t
         };
-        bytes.extend_from_slice(&(next_token as u32).to_le_bytes());
+        digest.schritt(&logits, next_token as u32);
         out.push(next_token);
         logits = model.forward_token(next_token, pos, &mut cache);
         pos += 1;
     }
 
-    let digest = crate::loader::sha256_hex(&bytes);
-    (out, digest)
+    (out, digest.hex())
 }
 
 /// Hash einer Token-Sequenz fuer deterministische Validierung.

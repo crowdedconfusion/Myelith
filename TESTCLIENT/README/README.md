@@ -1,10 +1,11 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.9.0
-> **Datum:** 2026-08-22
-> **Status:** Phase 1 vollständig, dazu Fahrplanpunkt 2.1 (`vergleich`),
-> 2.4 (`--repeat`) und 3.1 (Modellstand im Protokoll). 160 Tests grün, alle
-> Läufe gegen die echten Artefakte verifiziert.
+> **Version:** 0.12.0
+> **Datum:** 2026-08-23
+> **Status:** Phase 1 und **Phase 3 vollständig**, dazu Fahrplanpunkt 2.1
+> (`vergleich`) und 2.4 (`--repeat`). Offen bleibt in Phase 2 allein der
+> Lauf selbst, also die zweite Architektur. 196 Tests grün, alle Läufe
+> gegen die echten Artefakte verifiziert.
 >
 > **Drei Funde am Messgerät selbst (2026-08-22).** Sie betreffen nicht das
 > Netz, sondern das Werkzeug, mit dem es geprüft wird, und alle drei
@@ -489,6 +490,117 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 
 ## Changelog
 
+### v0.12.0 – 2026-08-23 (die Lizenzdatei kam nie an)
+
+Bei der Lizenzprüfung des Basismodells fiel auf, dass die Beschaffung mit
+`allow_patterns=['*.json','*.safetensors','*.txt']` lud. **Eine
+Lizenzdatei trägt keine Endung** und kam deshalb nie an.
+
+`ETHICS/Manifest.md` berief sich für Grundsatz G7 („das Basismodell muss
+frei nachnutzbar sein") ausdrücklich auf
+`INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`. Diese Datei existierte auf
+keiner Maschine, die das Modell über diesen Weg geholt hatte. Dieselbe
+Klasse wie Fund 27: eine schriftliche Zusage, die niemand nachgesehen
+hat.
+
+Es wiegt hier doppelt: Apache 2.0 §4(a) verlangt, jedem Empfänger einer
+Bearbeitung eine Kopie der Lizenz mitzugeben, und ein Partner, der die
+Gewichte für einen Testlauf holt, erfuhr sonst nie, unter welchen
+Bedingungen sie bei ihm liegen.
+
+`LICENSE*` steht jetzt in den Mustern. Beide lokal vorhandenen Modelle
+tragen die Datei; sie ist in beiden Fällen bytegleich und der
+unveränderte Apache-2.0-Text.
+
+### v0.11.0 – 2026-08-23 (Phase 3 abgeschlossen: 3.2 und 3.3)
+
+Beide Punkte beantworten dieselbe Frage von zwei Seiten. Bei einem
+θ_v-Wechsel ändern sich die Vergleichswerte **zwangsläufig**; die Frage
+ist dann nicht „gleich oder nicht", sondern **„erwartet oder nicht"**.
+
+**`--erwarte <digest>`** setzt eine Erwartung am Messlauf durch. Wer den
+neuen Wert einmal festgestellt hat, schreibt ihn in den CI-Aufruf; ab da
+meldet sich jede weitere Änderung von selbst, statt beim nächsten
+Partnerlauf aufzufallen.
+
+```bash
+myl-test --plan wikitext2-0.5b-standard.plan determinismus --erwarte aca90b797f1cf756
+```
+
+Die Kurzform vom Bildschirm genügt, denn genau die tippt jemand ab.
+Verglichen wird so weit, wie angegeben ist, und das Protokoll hält fest,
+wie weit das war: **64 Bit reichen gegen ein Versehen, nicht gegen
+jemanden, der einen passenden Digest sucht.** Für diesen Zweck ist das in
+Ordnung, denn die Erwartung steht in derselben Befehlszeile wie der Lauf.
+
+**Kein stiller Durchlauf:** Ein Lauf ohne Vergleichswert erfüllt keine
+Erwartung, sondern schlägt fehl. „Nichts gemessen" darf nie wie „stimmt
+überein" aussehen.
+
+**`modellstaende`** ist die Auswertung dazu. Sie liest denselben Ordner
+wie `vergleich` und stellt die Vergleichswerte über die Modellstände
+hinweg gegenüber:
+
+```
+     Stände:
+       [1] 0.17.0 / 97869982   Digest über logits+token
+       [2] 0.17.0 / c42bb8a8   Digest über logits+token
+       [3] 0.18.0 / c42bb8a8   Digest über logits+token
+
+     determinismus    teils gleich          51d50d1c…  aca90b79…  aca90b79…
+
+     [2] → [3]  unverändert: determinismus
+```
+
+**Interessant ist nicht, was sich geändert hat, sondern was nicht.** Ein
+Wert, der einen θ_v-Wechsel unbeschadet übersteht, hängt entweder nicht
+am Modell, oder die Änderung hat ihn nicht erreicht.
+
+Der Befehl fällt **kein Determinismusurteil** und endet mit Exit-Code 0,
+solange er lesen konnte: Zwei Modellstände sollen verschiedene Zahlen
+liefern, das ist kein Befund.
+
+**Fund an der eigenen Arbeit.** Die erste Fassung urteilte je
+Vergleichswert über **alle** Stände auf einmal. Bei drei Ständen, von
+denen zwei denselben Wert trugen, meldete sie „jeder Vergleichswert hat
+sich geändert" und verschwieg genau das Paar, nach dem der Fahrplanpunkt
+fragt. Verglichen wird jetzt je **Paar** von Ständen. Aufgefallen ist es
+beim ersten Lauf gegen echte Protokolle, nicht beim Lesen des Codes; die
+Nachstellung mit drei Ständen steht als Test.
+
+### v0.10.0 – 2026-08-23 (der Shard-Vergleich misst jetzt Zahlen)
+
+**Der letzte offene Teil von Fund 36.** `shard` hielt den Token-Digest
+des Pods gegen den Token-Digest des Einzelknotens und meldete
+`bitgleich`. Was er damit prüfte, war, ob die Aufteilung dieselbe
+**Entscheidung** erzeugt. Ein Token ist ein Argmax über 151 936 Zahlen;
+an 0,5B blieb er unverändert, während 0,1 % der Bytes eines Tensors
+verschoben waren.
+
+Der Grund war nicht Nachlässigkeit, sondern die Schnittstelle: Der Pod
+gab über `run_prompt` nur Token heraus. `myl-pod` v0.3.0 liefert jetzt
+einen `dekodier_digest` nach demselben Vertrag wie der Einzelknotenlauf,
+und der Lauf hält beide gegeneinander.
+
+**Neue Protokollwerte:** `prompt_N_pod_logits` und
+`prompt_N_einzelknoten_logits`. Der Token-Vergleich bleibt daneben
+stehen, aber als das schwächere der beiden Urteile.
+
+**Kein stiller Rückfall.** Liefert der Pod keinen Digest, oder deckt er
+weniger Schritte ab als verlangt, bricht der Lauf mit einer
+ausformulierten Begründung ab. Ein Lauf, der auf den Token-Vergleich
+zurückfällt, wäre genau der Zustand, aus dem Fund 36 kam.
+
+**Gemessen** (0,5B, `reference`): Pod und Einzelknoten liefern
+`df54ef6c89f1a840`, und zwar bei 1, 2, 3, 4, 6, 8, 12 und 24 Shards.
+
+**Gegenprobe gelaufen, nicht nur gedacht.** Mit einem einzigen um eins
+verschobenen Logit weit unterhalb des Argmax im letzten Shard bleiben
+beide Token-Digests identisch bei `f1117a59462f9919`, die Logit-Digests
+gehen auseinander, und der Lauf schlägt fehl mit dem Hinweis: *„Die Token
+stimmen, die gerechneten Zahlen nicht. Vor dem Abschluss von Fund 36
+hätte dieser Lauf `bitgleich` gemeldet."* Danach zurückgenommen.
+
 ### v0.9.0 – 2026-08-22 (Menü, Pläne ohne Modell, Modellkatalog)
 
 **Das Entwickler-Menü führt keine Einzelstufen mehr.** Hardware,
@@ -633,6 +745,12 @@ Diese Fassung baut fast nichts Neues. Sie behebt drei Stellen, an denen
 das Werkzeug einen Nachweis geliefert hätte, den es nicht gab. Anlass war
 die Vorbereitung des ersten Laufs auf einer fremden Maschine: Der Lauf
 findet einmal statt, und was er misst, entscheidet sich vorher.
+
+*Zwischen v0.6.0 und dieser Fassung stand die Crate kurzzeitig auf
+**v0.7.0** (Behebung von Fund 34 in `hardware.rs`, Commit `bc36296`). Ein
+eigener Abschnitt dafür fehlt hier, weil die Fassung nie für sich stand;
+ihr Inhalt ist unten unter Fund 34 beschrieben. Vermerkt, damit die Lücke
+in der Nummernfolge keine Frage aufwirft.*
 
 **Fund 34: `cpu-simd` galt auf x86_64 als eigener Rechenpfad.**
 `kernels/src/dot.rs` vektorisiert nur unter aarch64; `rechenpfad.rs`

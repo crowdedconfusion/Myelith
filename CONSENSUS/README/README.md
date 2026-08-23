@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.9.0 (`myl-scheduler` 0.2.11)
-> **Datum:** 2026-08-19
+> **Version:** 0.10.0 (`myl-scheduler` 0.2.11)
+> **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
@@ -86,6 +86,60 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-consensus v0.10.0 – 2026-08-23 (Stimmgewicht: Bezugswert und Deckel)
+
+**Der Arbeitsanteil des Stimmgewichts war um drei bis fünf
+Größenordnungen zu hoch bewertet.** Die Wiedervorlage vom 2026-08-18
+nannte zwei offene Punkte, beide blockiert durch dieselbe fehlende Zahl:
+*„die real erreichbare vTFE-Menge pro Epoche, die noch nicht gemessen
+ist."*
+
+Seit der Festlegung der vTFE-Zuschreibung (`myl_tokenomics::vtfe`,
+selber Tag) ist sie ausrechenbar. **`VTFE_UNIT` als Bezug entspricht dem
+Vorwärtspass eines einzigen Tokens.** An den gemessenen Durchsatzwerten
+und einer Stunden-Epoche:
+
+| Fall | Verdopplung nach | Faktor nach einer Epoche | volle Historie |
+|---|---|---|---|
+| 0,5B, ganzes Modell, 38,19 tok/s | 0,03 s | **137 484** | 1 103 345 |
+| 0,5B, Viertel-Shard | 0,14 s | 24 898 | 199 816 |
+| 7B, ganzes Modell, 2,07 tok/s | 0,48 s | 7 452 | 59 804 |
+| 7B, Viertel-Shard | 2,1 s | 1 719 | 13 799 |
+
+Der Stake hörte damit nach wenigen Sekunden Arbeit auf, Angriffskosten
+zu sein. Genau davor warnte der zweite offene Punkt der Wiedervorlage;
+die Zahlen zeigen, dass es der Normalfall ab der ersten Epoche gewesen
+wäre.
+
+**Zwei Sicherungen**, `StimmgewichtsParameter`:
+
+- `arbeitsbezug` (Vorgabe **1,7 · 10⁹**): die vTFE-Menge, die einen
+  Bonus in Höhe des Stakes wert ist. Hergeleitet aus dem Referenzfall
+  „ein Viertel von 7B, eine Stunden-Epoche, 2,07 tok/s".
+- `hoechstfaktor` (Vorgabe **10**): Das Gesamtgewicht übersteigt den
+  Stake nie um mehr als diesen Faktor.
+
+**Warum zwei und nicht eine:** Der Bezug ist parametrisch und kann
+falsch gesetzt werden, der Deckel nicht. Als Test festgehalten
+(`der_deckel_faengt_eine_fehlkalibrierung_ab`): Mit dem alten Bezugswert
+und dem neuen Deckel landet dieselbe Arbeit bei Faktor 10 statt bei 1719.
+
+Ein Knoten mit Referenzdurchsatz über die volle Historie liegt bei rund
+dem Achtfachen, also knapp unter dem Deckel. Absicht: Der Deckel soll
+erreichbar sein, aber erst oberhalb des Referenzdurchsatzes.
+
+**Konsensrelevant.** Beide Werte gehören in die Governance-Registry und
+stehen hier als Startparameter; unbrauchbare Werte fallen auf die
+Vorgabe zurück, statt eine Division durch null oder ein Gewicht von null
+zu erzeugen. Ein Gewicht von null wäre die Bootstrap-Blockade, gegen die
+die Summenform überhaupt gebaut wurde.
+
+**Zwei Tests, die die alte Kalibrierung festhielten, sind umgeschrieben.**
+`calculate_voting_weight_basic` behauptete, eine vTFE-Einheit verdopple
+das Gewicht. Das war richtig beschrieben und falsch kalibriert; der Test
+prüft jetzt den Bezugswert, und ein zweiter hält fest, dass ein einzelnes
+Token das Gewicht **nicht** mehr nennenswert bewegt.
 
 ### myl-consensus v0.9.0 – 2026-08-19 (Punkt 4.3: DA-Schicht — Phase 4 vollständig)
 

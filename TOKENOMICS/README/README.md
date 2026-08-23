@@ -1,7 +1,7 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.2.6
-> **Datum:** 2026-08-18
+> **Version:** 0.3.0
+> **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31 — Details im Fahrplan); 🎉 **Phase 2 abgeschlossen**
@@ -47,6 +47,46 @@ TOKENOMICS/
 ```
 
 ## Changelog
+
+### v0.3.0 – 2026-08-23 (Punkt 1.5: die vTFE-Gutschrift bekommt eine Regel)
+
+**Bis hierher war vTFE eine Eingabe.** `redundancy_normalized_weight`
+halbierte sie, `distribute.rs` verteilte danach, und wie ein Shard zu
+seinem Anteil kommt, stand nirgends. Solange jeder Pod dieselben vier
+oder acht gleich großen Shards hatte, fiel das nicht auf. Der Entwurf für
+variable Knotenzahl je Pipeline bricht die Annahme: Ein Knoten mit sieben
+Layern darf nicht dasselbe bekommen wie einer mit zweien.
+
+**Die Regel** steht jetzt in `src/vtfe.rs`. Ein Token-Forward-Äquivalent
+ist der vollständige Vorwärtspass eines Tokens durch das ganze Modell; ein
+Shard bekommt davon den Anteil, den er gerechnet hat, gemessen an den
+**Multiplikations-Additionen der Gewichtsmatrizen**, die ihm gehören. Alle
+Eingaben stehen in `model_config.json` und sind über `theta_v_hash`
+gebunden: Jeder Prüfer rechnet dieselbe Zahl nach, ohne den Zustand einer
+Anfrage zu kennen.
+
+**Warum nicht Layer, wie der Punkt ursprünglich hieß:** Der LM-Kopf ist
+keine Layer, rechnet aber wie viele.
+
+| Modell | eine Layer | LM-Kopf | Kopf in Layern | Anteil am Vorwärtspass |
+|---|---|---|---|---|
+| Qwen2.5-0,5B | 14,9 M MAC | 136,1 M MAC | **9,13** | 27,6 % |
+| Qwen2.5-7B | 233,0 M MAC | 545,0 M MAC | **2,34** | 7,7 % |
+
+Eine reine Layer-Regel gäbe dem letzten Shard bei 0,5B und acht Shards
+12,5 %, während er 36,6 % leistet.
+
+**Bewusst draußen:** die Attention-Scores, weil sie an der Kontextlänge
+der einzelnen Anfrage hängen und die Gutschrift damit zu einer Größe je
+Anfrage machten (benannte Näherung, lange Kontexte sind unterbezahlt);
+das Embedding, weil ein Tabellennachschlag nicht rechnet; RMSNorm, RoPE,
+SiLU und Residual-Additionen, weil sie drei Größenordnungen unter den
+Matrixprodukten derselben Layer liegen.
+
+**Die Eigenschaft, auf die es ankommt**, ist als Test festgehalten:
+Zuschnitte von 1 bis 28 Shards verteilen dieselbe Summe, bis auf die
+Abrundung. Ohne sie wäre die gemischte Paarung aus dem
+COMPUTE_PIPELINE-Entwurf ökonomisch nicht neutral.
 
 ### v0.2.6 – 2026-08-18 (Audit-Block 5, Nachtrag)
 - `exp_one` und `exp_negative` prüften gegen handgetippte Näherungen

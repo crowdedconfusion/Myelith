@@ -32,6 +32,14 @@ pub struct CompletedSegment {
     pub trace: Vec<[u8; 32]>,
     pub signatures: Vec<BlsSignature>,
     pub pod_path: Vec<MinerId>,
+    /// Zahl der in diesem Segment erzeugten Token.
+    ///
+    /// Trägt die vTFE-Zuschreibung: Eine vTFE-Einheit ist 10⁻⁶ eines
+    /// Token-Forward-Äquivalents, und ohne die Token-Zahl ist die
+    /// Gutschrift eines Shards nicht auszurechnen. Bis zum 2026-08-23
+    /// stand hier nichts dergleichen, und `build_poi_bundle` beanspruchte
+    /// die **Zahl der Segmente** als vTFE.
+    pub tokens: u64,
 }
 
 /// Segment-Id aus der Session-Id ableiten (Anhang A.1: `h(session ‖
@@ -128,6 +136,7 @@ impl Coordinator {
             trace,
             signatures,
             pod_path,
+            tokens: generated.len() as u64,
         });
 
         generated
@@ -186,8 +195,7 @@ impl Coordinator {
         }
         let ids: Vec<SegmentId> = self.completed.iter().map(|c| c.id).collect();
         let root = segments_root(&ids).map_err(|e| e.to_string())?;
-        // vTFE: Anzahl der Segmente (Platzhalter für die FLOPs-Metrik).
-        let vtfe = self.completed.len() as u64;
+        let vtfe = self.beanspruchte_vtfe()?;
         // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit).
         let all_sigs: Vec<BlsSignature> = self
             .completed
@@ -212,6 +220,63 @@ impl Coordinator {
     /// Die abgeschlossenen Segmente (für Tests/Inspektion).
     pub fn completed_segments(&self) -> &[CompletedSegment] {
         &self.completed
+    }
+
+    /// Die beanspruchte Arbeitsmenge dieser Epoche in vTFE-Einheiten.
+    ///
+    /// Summe über alle Shards der Pipeline, je Shard nach der Regel aus
+    /// [`myl_tokenomics::vtfe_gutschrift`]: Anteil an den
+    /// Multiplikations-Additionen der Gewichtsmatrizen eines vollen
+    /// Vorwärtspasses, mal der Zahl der erzeugten Token.
+    ///
+    /// **Bis zum 2026-08-23 stand hier die Zahl der Segmente**, mit dem
+    /// Kommentar „Platzhalter für die FLOPs-Metrik". Ein Bündel über
+    /// tausend Token beanspruchte damit dieselbe eine Einheit wie eines
+    /// über zwei, und ein Shard mit sieben Layern dasselbe wie einer mit
+    /// zweien. Genau davor warnt der Fahrplan: *„eine Festlegung, bevor
+    /// die erste Implementierung sie stillschweigend trifft."* Die
+    /// Implementierung hatte sie längst getroffen.
+    ///
+    /// **Die Redundanz-Normierung steckt nicht hier drin.** Sie halbiert
+    /// die Gutschrift, weil jedes Segment von r = 2 Pods gerechnet wird
+    /// (`myl_tokenomics::redundancy_normalized_weight`), und gehört an
+    /// die Stelle, die über die Pods hinwegsieht, nicht in den einzelnen
+    /// Pod.
+    pub fn beanspruchte_vtfe(&self) -> Result<u64, String> {
+        let Some(erster) = self.shards.first() else {
+            return Err("Pod ohne Shards beansprucht keine Arbeit".to_string());
+        };
+        let profil = erster.modell_profil();
+        let tokens: u64 = self
+            .completed
+            .iter()
+            .fold(0u64, |acc, c| acc.saturating_add(c.tokens));
+
+        let mut summe = 0u64;
+        for shard in &self.shards {
+            let anteil = myl_tokenomics::vtfe_gutschrift(&profil, &shard.zuschnitt(), tokens)
+                .map_err(|e| format!("Shard {}: {}", shard.shard_index, e))?;
+            summe = summe.saturating_add(anteil);
+        }
+        Ok(summe)
+    }
+
+    /// Dekodier-Digest einer Session: Hexwert und Zahl der Schritte.
+    ///
+    /// Der Wert kommt vom Shard mit dem LM-Head, weil nur dort Logits
+    /// entstehen. Er folgt dem Vertrag aus
+    /// [`integer_llm_runtime::generate::DekodierDigest`] und ist damit
+    /// **unmittelbar** gegen den Einzelknotenlauf zu halten.
+    ///
+    /// **Wofür er da ist (Fund 36, letzter Teil):** Der Vergleich
+    /// „Pod gegen Einzelknoten" hielt bis dahin Token gegen Token und
+    /// prüfte damit, ob die Aufteilung dieselbe *Entscheidung* erzeugt.
+    /// Das ist zu grob: Ein Token ist ein Argmax über `vocab_size`
+    /// Zahlen und ändert sich erst, wenn deren Rangfolge kippt. Genau
+    /// die kleinen Abweichungen, gegen die dieses Projekt gebaut ist,
+    /// wären durchgerutscht.
+    pub fn dekodier_digest(&self, session_id: u64) -> Option<(String, usize)> {
+        self.shards.last()?.dekodier_digest(session_id)
     }
 }
 

@@ -1,8 +1,15 @@
 # training (`myl-train`)
 
-> **Version:** 0.3.0
-> **Datum:** 2026-08-22
-> **Status:** **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
+> **Version:** 0.4.0
+> **Datum:** 2026-08-23
+> **Status:** **Die Komponente hat Code.** Punkt 3.1 (Datenprovenienz)
+> ist gebaut: `myl-train` v0.1.0 mit Merkle-verankerten Korpora,
+> Segmentreferenz per Beweis, gebündelten Beweisen und VRF-gesteuerter
+> Zuweisung, 23 Tests. Er stand im Fahrplan hinten, weil er inhaltlich
+> dorthin gehört, ist aber der einzige Punkt, der **technisch
+> unabhängig** vom ganzzahligen Rückwärtspass ist.
+>
+> **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
 > Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
 > (+0,67 % gegen die Gleitkomma-Referenz; mit Rundung zur nächsten Stufe
 > +29,9 %). Dazu 0.2: Ein Trainingsschritt **ohne Gleitkommazustand**
@@ -75,5 +82,58 @@ Rückwärtspass** in INTEGER_LLM, der dort noch nicht implementiert ist
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### myl-train v0.1.0 – 2026-08-23 (Punkt 3.1: Datenprovenienz)
+
+**Die erste Zeile Code dieser Komponente.** Bis hierher bestand TRAINING
+aus Fahrplan, Konzept und Diagnoseskripten; Kritikpunkt K7 führte sie
+als eine von drei Komponenten ohne Code.
+
+Gebaut ist Kap. 7.3, **Herkunft statt Inhalt**: Ein Miner, der
+vergiftete Texte einspeist, rechnet bitgleich korrekt. Der Bitvergleich
+aus Kap. 6 greift dort nicht, und eine inhaltliche Bewertung wäre genau
+der subjektive Spielraum, den das Protokoll sonst vermeidet.
+
+- **`provenienz`** — Korpora über eine Merkle-Wurzel verankern,
+  Segmente per Beweis referenzieren statt per Rohdaten, Bündel
+  zusammenhängender Segmente. Für eine nicht existierende Position gibt
+  es keinen Beweis, und zwar nicht, weil die Prüfung ihn ablehnt,
+  sondern weil er sich nicht erzeugen lässt.
+- **`zuweisung`** — welcher Pod welche Abschnitte bearbeitet, folgt aus
+  dem Epochen-Seed, nicht aus einer Wahl. Wer keine Daten fälschen kann,
+  kann sonst immer noch auswählen: Bei freier Wahl entspräche der
+  Einfluss dem Kapazitätsanteil (Anhang B.6.5).
+
+**Der Seed wird hier nicht erzeugt**, sondern als 32 Bytes
+entgegengenommen. Eine zweite Stelle, die Seeds erzeugt, wäre eine
+zweite Quelle für dieselbe Aussage; die Bindung an den finalisierten
+Block und die Epochennummer gehört genau einmal in den Scheduler
+(Fund A20). Deshalb steht `myl-scheduler` auch nicht im Manifest.
+
+**Ein Test, den es braucht:** Eine Referenz darf **nicht** gegen ihre
+eigene mitgebrachte Wurzel geprüft werden, sonst baut sich ein Angreifer
+mit selbstgewählten Daten einen gültigen Beweis. Das war Audit-Fund A11,
+eine Ebene höher.
+
+**Fund dabei: Anhang B.6.4 gibt gebündelte Beweise zu teuer an.** Wer
+alle Blätter eines vollständigen Teilbaums hat, braucht für dessen
+untere Ebenen keinen Geschwisterknoten; übertragen wird nur der Weg von
+der Teilbaumwurzel zur Baumwurzel.
+
+| Segmente | Knoten | Bytes | gerechnet | Anhang B.6.4 |
+|---|---|---|---|---|
+| 1 | 30 | 960 | 11,72 % | **11,7 %** ✅ |
+| 16 | 26 | 832 | 0,63 % | **1 %** |
+| 256 | 22 | 704 | **0,034 %** | **0,42 %** |
+
+Der Einzelbeweis stimmt genau, dort gibt es keine Bündelung. Die
+Abweichung geht in die sichere Richtung, der Anhang gibt das Verfahren
+teurer an, als es ist; falsch ist er trotzdem, für 256 Segmente um den
+Faktor 12,5. Beide Zahlenreihen stehen als Test.
+
+**Nicht gebaut:** die Ablehnungsquote für verweigerte Segmente. Sie ist
+eine Buchführung über das Verhalten eines Miners über Epochen hinweg und
+gehört zum Ledger.
+
 
 Noch keine Version veröffentlicht.

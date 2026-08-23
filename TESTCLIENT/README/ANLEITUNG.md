@@ -686,6 +686,53 @@ es wertet aus.
 Der Berichtsordner wird nicht versioniert. Was bleiben soll, gehört nach
 `INTEGER_LLM/eval/results/`: siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
 
+## B4a. Nach einem Modellwechsel: `modellstaende`
+
+`vergleich` fragt, ob zwei **Maschinen** dasselbe rechnen, und schließt
+verschiedene Modellstände aus. Nach einem θ_v-Wechsel ist der Wechsel
+aber genau der Gegenstand, und die Frage lautet nicht „gleich oder
+nicht", sondern **„erwartet oder nicht"**:
+
+```bash
+myl-test modellstaende
+```
+
+Der Befehl liest denselben Ordner wie `vergleich` und stellt die
+Vergleichswerte über die Modellstände hinweg gegenüber:
+
+```
+     Stände:
+       [1] 0.17.0 / 97869982   Digest über logits+token
+       [2] 0.17.0 / c42bb8a8   Digest über logits+token
+       [3] 0.18.0 / c42bb8a8   Digest über logits+token
+
+     determinismus    teils gleich          51d50d1c…  aca90b79…  aca90b79…
+
+     [2] → [3]  unverändert: determinismus
+```
+
+**Die interessante Zeile ist die letzte, nicht die Tabelle.** Dass sich
+Werte bei einem Modellwechsel ändern, ist der Normalfall. Ein Wert, der
+einen Wechsel *unbeschadet übersteht*, ist der Befund: Entweder hängt er
+gar nicht am Modell, oder die Änderung hat die Rechnung nicht erreicht.
+
+Verglichen wird **je Paar von Ständen**, nicht über alle auf einmal. Eine
+Zusammenfassung über alle Stände verdeckte genau diese Paare, und die
+erste Fassung dieses Befehls tat das auch: Sie meldete „alles geändert",
+während zwei Stände denselben Wert trugen.
+
+**Der Befehl fällt kein Determinismusurteil** und endet immer mit
+Exit-Code 0, solange er die Protokolle lesen konnte. Wer eine Erwartung
+durchsetzen will, gibt sie am Messlauf mit `--erwarte` an:
+
+```bash
+myl-test --plan wikitext2-0.5b-standard.plan determinismus --erwarte aca90b797f1cf756
+```
+
+Der Lauf schlägt dann fehl, sobald er einen anderen Wert erzeugt. Die
+Kurzform vom Bildschirm genügt; das Protokoll hält fest, über wie viele
+Zeichen verglichen wurde.
+
 ## B5. Die Urteile und was sie bedeuten
 
 | Urteil | Bedeutung | Was zu tun ist |

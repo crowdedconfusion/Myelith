@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.2.2
-> **Datum:** 2026-08-18
+> **Version:** 0.4.0
+> **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
 > `coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität,
@@ -55,6 +55,94 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### myl-pod v0.4.0 – 2026-08-23 (der Pod beansprucht, was er gerechnet hat)
+
+**`build_poi_bundle` beanspruchte als vTFE die Zahl der Segmente.** Im
+Code stand dazu „Platzhalter für die FLOPs-Metrik". Ein Bündel über
+tausend Token beanspruchte damit dieselbe eine Einheit wie eines über
+zwei, und ein Shard mit sieben Layern dasselbe wie einer mit zweien.
+
+Der COMPUTE_PIPELINE-Fahrplan warnte wörtlich davor, die Zuschreibung
+festzulegen, *„bevor die erste Implementierung sie stillschweigend
+trifft"*. Sie hatte sie längst getroffen.
+
+**Jetzt:** `Coordinator::beanspruchte_vtfe()` rechnet nach der Regel aus
+`myl_tokenomics::vtfe` (v0.3.0), also nach dem Anteil eines Shards an den
+Multiplikations-Additionen der Gewichtsmatrizen eines vollen
+Vorwärtspasses, mal der Zahl der erzeugten Token. `CompletedSegment`
+trägt dafür neu die Token-Zahl; ohne sie ist die Gutschrift nicht
+auszurechnen. `ShardNode::modell_profil()` und `ShardNode::zuschnitt()`
+reichen die nötigen Maße heraus.
+
+**Gemessen:** acht Token über vier Shards ergeben **7 999 999** von
+8 000 000 Einheiten; die eine fehlende ist die Abrundung, die
+ausdrücklich nach unten geht.
+
+**Als Test festgehalten ist die Eigenschaft, auf die es ankommt:**
+Zuschnitte von 1 bis 24 Shards beanspruchen dieselbe Summe
+(`beanspruchte_arbeit_haengt_nicht_am_zuschnitt`). Ohne sie wäre die
+gemischte Paarung aus dem Entwurf für variable Knotenzahl ökonomisch
+nicht neutral, und der billigere Zuschnitt setzte sich durch, ohne besser
+zu sein. Ein zweiter Test hält fest, dass der LM-Kopf beim letzten Shard
+durchschlägt: Bei gleich vielen Layern beansprucht er mehr als das
+Doppelte des ersten.
+
+**Neue Abhängigkeit:** `myl-tokenomics`. Sie hängt selbst nur an
+`myl-types`; die Richtung stimmt, denn die Regel gehört zur Ökonomie und
+nicht in die Pipeline.
+
+### myl-pod v0.3.0 – 2026-08-23 (Fund 36 abgeschlossen: der Pod gibt seine Zahlen heraus)
+
+**Der Vergleich „Pod gegen Einzelknoten" prüfte, ob die Aufteilung
+dieselbe Entscheidung erzeugt, nicht dieselben Zahlen.** Das war der
+letzte offene Teil von Fund 36 und der Grund, warum er dort ein ⚑ trug.
+`run_prompt` liefert Token; die Logits entstehen im Shard mit dem LM-Head
+und verließen ihn nie. Verglichen wurde deshalb Token gegen Token, und
+das Ergebnis hieß trotzdem „bitgleich".
+
+Wie grob das ist, steht in Fund 36 mit Zahlen: An 0,5B blieb der Token
+unverändert, während 0,1 % der Bytes eines Tensors verschoben waren. Ein
+Token ist ein Argmax über 151 936 Zahlen und kippt erst, wenn deren
+Rangfolge kippt.
+
+**Neu: `ShardNode::dekodier_digest` und `Coordinator::dekodier_digest`.**
+Der Shard mit dem LM-Head führt je Session einen Digest über **Logits und
+Token** mit, nach demselben Vertrag wie der Einzelknotenlauf
+(`integer_llm_runtime::generate::DekodierDigest`, neu in runtime v0.18.0).
+Beide Werte sind damit unmittelbar gegeneinander zu halten.
+
+**Warum im Shard und nicht im Koordinator:** Die andere Lösung wäre, die
+Logits herauszureichen. Das sind rund 600 KB je Token für einen Messwert;
+der Digest sind 32 Bytes. Gehasht wird strömend, ein Zwischenpuffer über
+den ganzen Lauf wären bei 0,5B und 32 Token rund 19 MB.
+
+**Gemessen, nicht behauptet** (0,5B, `myl-test shard`): Pod und
+Einzelknoten liefern denselben Wert `df54ef6c89f1a840`, und zwar bei 1, 2,
+3, 4, 6, 8, 12 und 24 Shards. Die Gegenprobe lief auch: Mit einem
+einzigen um eins verschobenen Logit weit unterhalb des Argmax bleiben die
+Token identisch (`f1117a59462f9919` auf beiden Seiten), der Lauf schlägt
+aber fehl und meldet ausdrücklich, dass er vor dieser Fassung „bitgleich"
+gemeldet hätte.
+
+**Der Akzeptanztest selbst trug den Fehler.**
+`tests/pod_e2e.rs::pod_deterministisch_und_bitgleich_mit_einzelknoten`
+verglich Token und hieß trotzdem so. Er hält jetzt die Digests
+gegeneinander, prüft die Schrittzahl mit und hat eine Gegenprobe
+daneben (`ein_verschobenes_logit_bewegt_den_digest`): Ein Digest, der sich
+nie bewegt, besteht jeden Gleichheitstest.
+
+**Fund 38, nebenbei und offen:** Der Fahrplan begründet die
+`pipeline_hash`-Bindung damit, dass verschiedene Shard-Layouts
+verschiedene Token lieferten. Das stimmte, solange die
+Boundary-Reskalierung existierte, und die ist seit Fund 20/26 ersatzlos
+entfallen. Acht Layouts von 1 bis 24 Shards liefern heute denselben
+Digest. Die Bindung bleibt trotzdem im Code, siehe die Begründung im
+Fahrplan.
+
+*Zur Nummer: Die Crate stand bereits auf v0.2.4, dieser Kopf nannte noch
+0.2.2. Der Sprung auf 0.3.0 zieht beides zusammen und markiert die neue
+öffentliche Schnittstelle.*
 
 ### myl-pod v0.2.4 – 2026-08-19 (Reed-Solomon hinter der bestehenden Schnittstelle)
 

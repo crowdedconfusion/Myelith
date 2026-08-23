@@ -19,28 +19,57 @@
 //! Validator mit einer vollen vTFE-Einheit abgeklungener Arbeit hat
 //! doppeltes Gewicht gegenüber einem gleich gestakten ohne Arbeit.
 //!
-//! **Status der Formel: vorläufig bestätigt (Projektinhaber,
-//! 2026-08-18) — ZUR WIEDERVORLAGE.** Sie löst die Bootstrap-Blockade,
-//! ist aber nicht als endgültige Kalibrierung gedacht. Vor dem
-//! Mainnet-Start neu zu bewerten sind mindestens:
+//! ## Wiedervorlage erledigt (2026-08-23): der Bezugswert war um drei
+//! bis fünf Größenordnungen zu klein
 //!
-//! - **Die Gewichtung zwischen den beiden Quellen.** `VTFE_UNIT` als
-//!   Bezugsgröße bedeutet: eine volle abgeklungene vTFE-Einheit
-//!   verdoppelt das Gewicht. Ob das den Anreiz richtig setzt, ist eine
-//!   ökonomische Frage, keine technische — sie hängt an der real
-//!   erreichbaren vTFE-Menge pro Epoche, die noch nicht gemessen ist.
-//! - **Die Obergrenze.** Aktuell ist der Arbeitsanteil unbeschränkt;
-//!   ein Miner mit sehr viel Arbeit kann sein Stimmgewicht beliebig weit
-//!   über seinen Stake heben. Eine Deckelung (z. B. Faktor 10) wäre zu
-//!   erwägen, sonst verliert der Stake seine Funktion als
-//!   Angriffskosten.
-//! - **Die Alternative:** Bootstrap über ein per Konfiguration gesetztes
-//!   Genesis-Komitee, danach reines Produkt `stake × Arbeit`. Das wurde
-//!   zugunsten der Summenform zurückgestellt, nicht verworfen.
+//! Die Wiedervorlage von 2026-08-18 nannte zwei offene Punkte, beide
+//! blockiert durch dieselbe fehlende Zahl: *„hängt an der real
+//! erreichbaren vTFE-Menge pro Epoche, die noch nicht gemessen ist."*
 //!
-//! Wiedervorlage-Vermerk auch in `CONSENSUS/README/Fahrplan-v1.md`
-//! (Abschnitt „Zur Wiedervorlage") und in
-//! `README/Intern/State-of-the-Project.md`, Abschnitt 7.
+//! Seit der Festlegung der vTFE-Zuschreibung (`myl_tokenomics::vtfe`,
+//! 2026-08-23) ist sie ausrechenbar. **Der alte Bezugswert `VTFE_UNIT`
+//! entspricht dem Vorwärtspass eines einzigen Tokens.** Gemessen an den
+//! echten Durchsatzwerten des Projekts und einer Stunden-Epoche
+//! (Whitepaper Kap. 3.2):
+//!
+//! | Fall | Verdopplung nach | Faktor nach einer Epoche | volle Historie |
+//! |---|---|---|---|
+//! | 0,5B, ganzes Modell, 38,19 tok/s | 0,03 s | **137 484** | 1 103 345 |
+//! | 0,5B, Viertel-Shard | 0,14 s | 24 898 | 199 816 |
+//! | 7B, ganzes Modell, 2,07 tok/s | 0,48 s | 7 452 | 59 804 |
+//! | 7B, Viertel-Shard | 2,1 s | 1 719 | 13 799 |
+//!
+//! **Der Stake hörte damit nach wenigen Sekunden Arbeit auf,
+//! Angriffskosten zu sein.** Genau davor warnte der zweite offene Punkt;
+//! die Zahlen zeigen, dass es keine ferne Sorge war, sondern der
+//! Normalfall ab der ersten Epoche.
+//!
+//! **Behoben mit zwei Sicherungen (Entscheidung Projektinhaber,
+//! 2026-08-23), und zwar bewusst mit zweien:**
+//!
+//! 1. **Der Bezugswert ist ein Governance-Parameter geworden**
+//!    ([`StimmgewichtsParameter::arbeitsbezug`]). Er steht auf der
+//!    vTFE-Menge, die ein **Referenzknoten in einer Epoche** schafft,
+//!    nicht mehr auf einem einzelnen Token. Ein Knoten mit
+//!    Referenzdurchsatz bekommt damit je Epoche einen Bonus in der
+//!    Größenordnung seines Stakes statt des Tausendfachen.
+//! 2. **Ein harter Deckel** ([`StimmgewichtsParameter::hoechstfaktor`]):
+//!    Das Gesamtgewicht übersteigt den Stake nie um mehr als diesen
+//!    Faktor.
+//!
+//! Die zweite Sicherung ist nicht überflüssig neben der ersten: Der
+//! Bezugswert ist **parametrisch** und kann falsch gesetzt werden, der
+//! Deckel nicht. Eine Fehlkalibrierung um drei Größenordnungen, wie sie
+//! hier vorlag, schlägt mit Deckel auf Faktor 10 durch statt auf Faktor
+//! 137 000.
+//!
+//! **Was bleibt:** Die Alternative — Bootstrap über ein per
+//! Konfiguration gesetztes Genesis-Komitee, danach reines Produkt
+//! `stake × Arbeit` — ist weiterhin zurückgestellt, nicht verworfen.
+//!
+//! Vermerk auch in `CONSENSUS/README/Fahrplan-v1.md` (Abschnitt „Zur
+//! Wiedervorlage") und in `README/Intern/State-of-the-Project.md`,
+//! Abschnitt 7.
 //!
 //! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
@@ -141,39 +170,141 @@ fn apply_decay(value: u64, epochs: u64) -> u64 {
 
 /// Eine vTFE-Einheit in vTFE-Kleinstbeträgen (1 vTFE = 10⁶).
 ///
-/// Bezugsgröße für den Arbeitsanteil des Stimmgewichts: eine volle
-/// abgeklungene vTFE-Einheit verdoppelt das Gewicht gegenüber dem
-/// reinen Stake.
+/// Das ist der **Vorwärtspass genau eines Tokens** durch das ganze
+/// Modell. Bis 2026-08-23 war dieser Wert zugleich die Bezugsgröße des
+/// Arbeitsanteils, ein einzelnes Token verdoppelte also das Stimmgewicht.
+/// Der Bezug steht jetzt in [`StimmgewichtsParameter::arbeitsbezug`];
+/// diese Konstante behält ihre ursprüngliche Bedeutung als Einheit.
 pub const VTFE_UNIT: u64 = 1_000_000;
 
-/// Berechnet das Stimmgewicht eines Validators.
+/// Bezugsgröße des Arbeitsanteils: die vTFE-Menge, die einen Bonus in
+/// Höhe des Stakes wert ist.
 ///
-/// **Formel:** `voting_weight = stake + (stake × decayed_work) / VTFE_UNIT`
+/// **Herleitung der Vorgabe (2026-08-23).** Referenzfall ist ein Knoten,
+/// der ein Viertel von Qwen2.5-7B hält und eine Stunden-Epoche
+/// durchläuft: 230 729 vTFE-Einheiten je Token bei gemessenen
+/// 2,07 tok/s ergeben 1 719 394 757 Einheiten je Epoche. Gerundet auf
+/// **1,7 · 10⁹**.
+///
+/// Damit gilt: Ein Knoten mit Referenzdurchsatz verdient in einer Epoche
+/// einen Bonus von etwa einem Stake. Über die volle Historie von zehn
+/// Epochen summiert sich das mit dem Abklingfaktor auf rund das
+/// Achtfache, das Gesamtgewicht liegt also knapp unter dem Deckel. **Das
+/// ist Absicht:** Der Deckel soll erreichbar sein, aber erst von einem
+/// Knoten, der dauerhaft über Referenzdurchsatz liefert.
+///
+/// Der Wert hängt an Modell und Hardware und gehört deshalb in die
+/// Governance-Registry, nicht in eine Konstante. Er steht hier als
+/// **Startparameter**.
+pub const ARBEITSBEZUG_VORGABE: u64 = 1_700_000_000;
+
+/// Höchstfaktor des Gesamtgewichts auf den Stake.
+///
+/// `voting_weight ≤ stake · HOECHSTFAKTOR_VORGABE`. Ohne diesen Deckel
+/// kann ein Knoten mit viel Arbeit sein Gewicht beliebig weit über
+/// seinen Stake heben, und der Stake verliert seine Funktion als
+/// Angriffskosten.
+///
+/// Der Wert 10 stammt aus dem Wiedervorlage-Vermerk vom 2026-08-18
+/// („z. B. Faktor 10"). Ebenfalls Governance-Parameter.
+pub const HOECHSTFAKTOR_VORGABE: u64 = 10;
+
+/// Die beiden Größen, die den Arbeitsanteil des Stimmgewichts steuern.
+///
+/// Beide sind **konsensrelevant** (Kap. 10.3): Zwei Knoten mit
+/// verschiedenen Werten kommen zu verschiedenen Komitees. Sie gehören
+/// deshalb in die Governance-Registry und werden zur Epochengrenze
+/// gewechselt, nicht mitten in einer Epoche.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StimmgewichtsParameter {
+    /// vTFE-Menge, die einen Bonus in Höhe des Stakes wert ist.
+    pub arbeitsbezug: u64,
+    /// Höchstfaktor des Gesamtgewichts auf den Stake.
+    pub hoechstfaktor: u64,
+}
+
+impl Default for StimmgewichtsParameter {
+    fn default() -> Self {
+        Self {
+            arbeitsbezug: ARBEITSBEZUG_VORGABE,
+            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
+        }
+    }
+}
+
+impl StimmgewichtsParameter {
+    /// Sind die Werte brauchbar?
+    ///
+    /// `arbeitsbezug = 0` wäre eine Division durch null, und
+    /// `hoechstfaktor = 0` gäbe jedem Validator das Gewicht null, also
+    /// genau die Bootstrap-Blockade, gegen die die Summenform gebaut
+    /// wurde.
+    pub fn ist_brauchbar(&self) -> bool {
+        self.arbeitsbezug > 0 && self.hoechstfaktor >= 1
+    }
+}
+
+/// Berechnet das Stimmgewicht eines Validators mit den Vorgabewerten.
+///
+/// **Formel:**
+/// `voting_weight = min(stake + stake · decayed_work / arbeitsbezug,
+/// stake · hoechstfaktor)`
 ///
 /// Der Stake ist die Grundlage, die nachgewiesene Arbeit multipliziert
-/// sie hoch. Siehe die Modul-Dokumentation für die Begründung, warum
-/// hier eine Summe und kein reines Produkt steht (Bootstrap-Blockade).
-///
-/// **Parameter:**
-/// - `stake`: Stake des Validators (in MYL-Kleinstbeträgen)
-/// - `history`: Historische Inferenzarbeit
-/// - `current_epoch`: Aktuelle Epoche
-///
-/// **Returns:** Stimmgewicht (u64, gesättigt statt überlaufend).
+/// sie hoch, der Deckel begrenzt sie. Siehe die Modul-Dokumentation für
+/// die Begründung, warum hier eine Summe und kein reines Produkt steht
+/// (Bootstrap-Blockade), und warum der Bezugswert seit 2026-08-23 nicht
+/// mehr ein einzelnes Token ist.
 pub fn calculate_voting_weight(
     stake: u64,
     history: &InferenceHistory,
     current_epoch: u64,
 ) -> u64 {
+    calculate_voting_weight_mit(
+        stake,
+        history,
+        current_epoch,
+        &StimmgewichtsParameter::default(),
+    )
+}
+
+/// Wie [`calculate_voting_weight`], aber mit ausdrücklichen Parametern.
+///
+/// **Parameter:**
+/// - `stake`: Stake des Validators (in MYL-Kleinstbeträgen)
+/// - `history`: Historische Inferenzarbeit
+/// - `current_epoch`: Aktuelle Epoche
+/// - `p`: Bezugswert und Deckel (Governance)
+///
+/// Unbrauchbare Parameter fallen auf die Vorgabe zurück, statt eine
+/// Division durch null oder ein Gewicht von null zu erzeugen: Ein
+/// Konsenspfad darf an einem Konfigurationsfehler nicht anhalten, und
+/// ein Gewicht von null wäre die Bootstrap-Blockade.
+///
+/// **Returns:** Stimmgewicht (u64, gesättigt statt überlaufend).
+pub fn calculate_voting_weight_mit(
+    stake: u64,
+    history: &InferenceHistory,
+    current_epoch: u64,
+    p: &StimmgewichtsParameter,
+) -> u64 {
+    let vorgabe = StimmgewichtsParameter::default();
+    let p = if p.ist_brauchbar() { p } else { &vorgabe };
+
     let decayed_work = history.decayed_weight(current_epoch);
 
     // stake ist in MYL-Kleinstbeträgen (1 MYL = 10^6),
     // decayed_work in vTFE-Kleinstbeträgen (1 vTFE = 10^6).
     // u128 für die Zwischenrechnung, Sättigung statt Überlauf.
-    let work_bonus = (stake as u128 * decayed_work as u128) / VTFE_UNIT as u128;
+    let work_bonus = (stake as u128 * decayed_work as u128) / p.arbeitsbezug as u128;
     let weight = stake as u128 + work_bonus;
 
-    u64::try_from(weight).unwrap_or(u64::MAX)
+    // **Der Deckel greift auf das Gesamtgewicht, nicht auf den Bonus.**
+    // So steht die Zusage direkt da, die er geben soll: Ein Validator
+    // wiegt nie mehr als `hoechstfaktor` Stakes.
+    let deckel = stake as u128 * p.hoechstfaktor as u128;
+
+    u64::try_from(weight.min(deckel)).unwrap_or(u64::MAX)
 }
 
 /// Vergleicht zwei Validatoren nach Stimmgewicht (für Komiteewahl).
@@ -274,29 +405,145 @@ mod tests {
         assert_eq!(weight, 2802);
     }
 
+    /// Der Bezugswert verdoppelt das Gewicht, und zwar **er** und nicht
+    /// mehr ein einzelnes Token.
     #[test]
-    fn calculate_voting_weight_basic() {
+    fn der_arbeitsbezug_verdoppelt_das_gewicht() {
         let mut history = InferenceHistory::new();
-        history.add_work(10, VTFE_UNIT); // 1 vTFE
+        history.add_work(10, ARBEITSBEZUG_VORGABE);
 
         let stake = 10_000_000; // 10 MYL
-        let weight = calculate_voting_weight(stake, &history, 10);
-
-        // stake + stake * 1 vTFE / VTFE_UNIT = stake * 2
-        assert_eq!(weight, 20_000_000);
+        assert_eq!(calculate_voting_weight(stake, &history, 10), 20_000_000);
     }
 
     #[test]
     fn calculate_voting_weight_with_decay() {
         let mut history = InferenceHistory::new();
-        history.add_work(10, VTFE_UNIT); // 1 vTFE
+        history.add_work(10, ARBEITSBEZUG_VORGABE);
 
         let stake = 10_000_000; // 10 MYL
-        let weight = calculate_voting_weight(stake, &history, 11);
+        // Arbeit klingt eine Epoche ab: Bezug × 0,95
+        assert_eq!(calculate_voting_weight(stake, &history, 11), 19_500_000);
+    }
 
-        // Arbeit klingt eine Epoche ab: 1 vTFE * 0,95
-        // weight = stake + stake * 0,95 = 19_500_000
-        assert_eq!(weight, 19_500_000);
+    /// **Der Befund vom 2026-08-23, als Test festgehalten.** Ein einzelnes
+    /// Token, also eine volle vTFE-Einheit, hob das Gewicht früher aufs
+    /// Doppelte. Jetzt bewegt es fast nichts, und das ist der Sinn der
+    /// Änderung: Der Bezug ist die Arbeit einer Epoche, nicht die eines
+    /// Tokens.
+    #[test]
+    fn ein_einzelnes_token_verdoppelt_das_gewicht_nicht_mehr() {
+        let mut history = InferenceHistory::new();
+        history.add_work(10, VTFE_UNIT); // genau ein Token
+
+        let stake = 10_000_000;
+        let weight = calculate_voting_weight(stake, &history, 10);
+        assert!(
+            weight < stake + stake / 1000,
+            "ein Token darf das Gewicht kaum bewegen, ergab aber {}",
+            weight
+        );
+    }
+
+    /// **Die gemessene Lage vor der Behebung**, nachgerechnet: Ein
+    /// Viertel-Shard von 7B bei 2,07 tok/s über eine Stunden-Epoche
+    /// ergibt rund 1,72e9 vTFE-Einheiten. Mit dem alten Bezugswert wäre
+    /// das Faktor 1719 auf den Stake gewesen.
+    #[test]
+    fn eine_epoche_referenzarbeit_bleibt_unter_dem_deckel() {
+        let mut history = InferenceHistory::new();
+        history.add_work(10, 1_719_394_757);
+
+        let stake = 10_000_000;
+        let weight = calculate_voting_weight(stake, &history, 10);
+
+        // Rund das Doppelte, nicht das 1720-Fache.
+        assert!(weight > stake * 2 - stake / 10);
+        assert!(weight < stake * 3);
+
+        // Gegenprobe gegen den alten Bezugswert.
+        let alt = StimmgewichtsParameter {
+            arbeitsbezug: VTFE_UNIT,
+            hoechstfaktor: u64::MAX,
+        };
+        let alt_weight = calculate_voting_weight_mit(stake, &history, 10, &alt);
+        assert!(alt_weight > stake * 1700);
+    }
+
+    /// **Der Deckel greift**, auch wenn der Bezugswert falsch gesetzt
+    /// wäre. Das ist der Grund für zwei Sicherungen statt einer: Der
+    /// Bezug ist parametrisch, der Deckel nicht.
+    #[test]
+    fn der_deckel_faengt_eine_fehlkalibrierung_ab() {
+        let mut history = InferenceHistory::new();
+        history.add_work(10, 1_719_394_757);
+
+        let stake = 10_000_000;
+        let falsch = StimmgewichtsParameter {
+            arbeitsbezug: VTFE_UNIT, // um drei Größenordnungen zu klein
+            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
+        };
+        let weight = calculate_voting_weight_mit(stake, &history, 10, &falsch);
+        assert_eq!(weight, stake * HOECHSTFAKTOR_VORGABE);
+    }
+
+    /// Ein Knoten mit Referenzdurchsatz über die volle Historie liegt
+    /// knapp **unter** dem Deckel. Absicht: Der Deckel soll erreichbar
+    /// sein, aber erst oberhalb des Referenzdurchsatzes.
+    #[test]
+    fn volle_historie_bei_referenzdurchsatz_liegt_knapp_unter_dem_deckel() {
+        let mut history = InferenceHistory::new();
+        for epoche in 0..MAX_HISTORY_EPOCHS as u64 {
+            history.add_work(epoche, ARBEITSBEZUG_VORGABE);
+        }
+        let stake = 10_000_000;
+        let weight = calculate_voting_weight(stake, &history, MAX_HISTORY_EPOCHS as u64 - 1);
+        let deckel = stake * HOECHSTFAKTOR_VORGABE;
+
+        assert!(weight < deckel, "{} muss unter {} liegen", weight, deckel);
+        assert!(
+            weight > deckel * 8 / 10,
+            "{} sollte nah am Deckel liegen ({})",
+            weight,
+            deckel
+        );
+    }
+
+    /// Unbrauchbare Parameter dürfen den Konsenspfad nicht anhalten und
+    /// nicht das Gewicht null erzeugen (Bootstrap-Blockade).
+    #[test]
+    fn unbrauchbare_parameter_fallen_auf_die_vorgabe_zurueck() {
+        let mut history = InferenceHistory::new();
+        history.add_work(10, ARBEITSBEZUG_VORGABE);
+        let stake = 10_000_000;
+        let erwartet = calculate_voting_weight(stake, &history, 10);
+
+        for kaputt in [
+            StimmgewichtsParameter {
+                arbeitsbezug: 0,
+                hoechstfaktor: 10,
+            },
+            StimmgewichtsParameter {
+                arbeitsbezug: ARBEITSBEZUG_VORGABE,
+                hoechstfaktor: 0,
+            },
+        ] {
+            assert!(!kaputt.ist_brauchbar());
+            assert_eq!(
+                calculate_voting_weight_mit(stake, &history, 10, &kaputt),
+                erwartet
+            );
+        }
+    }
+
+    /// Ohne Stake bleibt das Gewicht null, gleich wie viel gearbeitet
+    /// wurde: Der Arbeitsanteil ist ein Faktor auf den Stake, keine
+    /// eigene Quelle.
+    #[test]
+    fn ohne_stake_hilft_auch_arbeit_nicht() {
+        let mut history = InferenceHistory::new();
+        history.add_work(10, ARBEITSBEZUG_VORGABE * 1000);
+        assert_eq!(calculate_voting_weight(0, &history, 10), 0);
     }
 
     /// Bootstrap: ohne Arbeitshistorie muss der Stake allein zählen.

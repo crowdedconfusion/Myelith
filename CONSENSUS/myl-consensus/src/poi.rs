@@ -38,10 +38,16 @@
 //! dass der Pod die beanspruchte Menge **geschlossen bestätigt hat** —
 //! nicht, dass sie stimmt. Die Bestätigung der tatsächlich geleisteten
 //! Arbeit ist Punkt 4.2 (Epochenabschluss nach Stufe-1-Übereinstimmung,
-//! abzüglich später widerlegter Segmente) und hängt an der offenen
-//! Festlegung, **was eine vTFE-Einheit zählt** (Layer statt Shards, im
-//! Fahrplan-Master als ⚑ vermerkt). Diese Festlegung wird hier bewusst
-//! nicht implizit getroffen: `vtfe_claimed` ist Eingabe.
+//! abzüglich später widerlegter Segmente).
+//!
+//! **Was eine vTFE-Einheit zählt, ist seit dem 2026-08-23 festgelegt**
+//! (`myl_tokenomics::vtfe`): der Anteil eines Shards an den
+//! Multiplikations-Additionen der Gewichtsmatrizen eines vollen
+//! Vorwärtspasses, mal der Zahl der erzeugten Token. Die Regel folgt aus
+//! `model_config.json` und ist damit über `theta_v_hash` gebunden, also
+//! von jedem Prüfer nachrechenbar, ohne den Zustand einer Anfrage zu
+//! kennen. Für dieses Modul ändert sich nichts: `vtfe_claimed` bleibt
+//! **Eingabe**, und die Prüfung gegen die Regel gehört zu Punkt 4.2.
 //!
 //! ## Warum jedes Mitglied einen Besitznachweis braucht (Fund 27)
 //!

@@ -190,11 +190,34 @@ Nutzerzahl nicht und kann sie nicht begrenzen — Lizenzen mit
 Nutzerzahl-Obergrenzen oder geografischen Beschränkungen sind schlicht
 nicht einhaltbar.
 
-**Stand:** Das aktuell verwendete Qwen2.5-0.5B liegt unter Apache 2.0
-(`INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`). **Achtung:** Das gilt
-nicht automatisch für alle Qwen2.5-Größen — einzelne Varianten stehen
-unter abweichenden Lizenzen. Vor jedem Modellwechsel ist die Lizenz der
-konkreten Variante zu prüfen, nicht die der Familie.
+**Stand (geprüft 2026-08-23, alle sieben Größen):** Die Warnung dieses
+Punktes war berechtigt, **zwei von sieben Varianten fallen durch.**
+
+| Variante | Lizenz | |
+|---|---|---|
+| 0.5B, 1.5B, 7B, 14B, 32B | Apache 2.0 | ✅ |
+| **3B** | Qwen Research License, §2(a) „FOR NON-COMMERCIAL PURPOSES ONLY" | ❌ |
+| **72B** | Qwen License, §4: gesonderte Lizenz ab 100 Mio. monatlich aktiven Nutzern | ❌ |
+
+Die 72B-Klausel ist genau der Fall, den dieser Punkt als nicht
+einhaltbar benennt: Ein offenes Protokoll hat keine Instanz, die
+monatlich aktive Nutzer zählt, und keine, die eine Lizenz beantragen
+könnte. Vollständige Prüfung samt Methode in
+`INTEGER_LLM/docs/01_licenses.md`.
+
+**Für die Skalierungsfrage (K6) folgt daraus:** Die nächste Größe nach
+7B ist **14B**, nicht 72B.
+
+**Fund bei dieser Prüfung:** Dieser Absatz berief sich zuvor auf
+`INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`. Die Datei existierte nicht.
+Die Beschaffung lud mit `allow_patterns=['*.json','*.safetensors',
+'*.txt']`, und eine Lizenzdatei trägt keine Endung. Behoben in
+`myl-testclient` v0.11.0; sie liegt jetzt neben den Gewichten. Ein
+Grundsatz, dessen Beleg niemand nachgesehen hat, ist dieselbe Klasse wie
+Fund 27.
+
+Vor jedem Modellwechsel bleibt die Lizenz der **konkreten Variante** zu
+prüfen, nicht die der Familie.
 
 *Kategorie: Auswahlkriterium, governance-abhängig.*
 

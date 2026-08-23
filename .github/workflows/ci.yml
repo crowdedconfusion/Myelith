@@ -89,6 +89,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             COMPUTE_PIPELINE/myl-pod
+            TRAINING/myl-train
             INTEGER_LLM/kernels
             INTEGER_LLM/runtime
             INTEGER_LLM/pipeline
@@ -109,6 +110,7 @@ jobs:
             TOKENOMICS/myl-tokenomics \
             VERIFICATION/myl-verifier \
             COMPUTE_PIPELINE/myl-pod \
+            TRAINING/myl-train \
             INTEGER_LLM/kernels \
             INTEGER_LLM/runtime \
             INTEGER_LLM/pipeline \
@@ -235,6 +237,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             COMPUTE_PIPELINE/myl-pod
+            TRAINING/myl-train
             TESTCLIENT/myl-testclient
 
       - name: cargo test — SHARED_TYPES (myl-types)
@@ -270,6 +273,12 @@ jobs:
       - name: cargo test — COMPUTE_PIPELINE (myl-pod, lib only)
         working-directory: COMPUTE_PIPELINE/myl-pod
         run: cargo test --lib --quiet
+
+      # myl-train braucht weder Modell noch Netz: Die Provenienz rechnet
+      # auf Merkle-Baeumen und einem uebergebenen Seed.
+      - name: cargo test — TRAINING (myl-train)
+        working-directory: TRAINING/myl-train
+        run: cargo test --quiet
 
       # Testclient: Die Tests decken Protokollformat und Fingerabdruck ab
       # und laufen ohne Artefakte; die Modellläufe selbst brauchen welche

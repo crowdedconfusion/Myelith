@@ -28,6 +28,7 @@ pub mod exp_lut_table;
 pub mod mint;
 pub mod training;
 pub mod utilization;
+pub mod vtfe;
 
 /// Anzahl der Kleinstbeträge je MYL (1 MYL = 10⁶ Kleinstbeträge).
 pub const UNITS_PER_MYL: u64 = 1_000_000;
@@ -49,3 +50,4 @@ pub use utilization::{
     calculate_utilization, utilization_from_burns, utilization_from_f64, utilization_to_f64,
     UTILIZATION_SCALE,
 };
+pub use vtfe::{vtfe_gutschrift, vtfe_voll, ModellProfil, ShardZuschnitt, VtfeError};

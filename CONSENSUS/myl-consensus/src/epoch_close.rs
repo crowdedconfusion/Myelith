@@ -32,11 +32,16 @@
 //!
 //! ## Was hier bewusst nicht entschieden wird
 //!
-//! **Was eine vTFE-Einheit zählt.** Die offene Festlegung „vTFE zählt
-//! Layer, nicht Shards" (Fahrplan-Master, ⚑) wird hier nicht implizit
-//! getroffen. `vtfe_claimed` kommt aus dem Bündel und geht als Zahl
-//! durch; dieses Modul rechnet nur, welcher Anteil davon bestätigt ist.
-//! Ändert sich die Zählweise, ändert sich nichts an diesem Code.
+//! **Was eine vTFE-Einheit zählt.** Seit dem 2026-08-23 steht die Regel
+//! in `myl_tokenomics::vtfe`: der Anteil eines Shards an den
+//! Multiplikations-Additionen der Gewichtsmatrizen eines vollen
+//! Vorwärtspasses, mal der Zahl der erzeugten Token. Dieses Modul trifft
+//! sie weiterhin **nicht** und rechnet auch nicht damit: `vtfe_claimed`
+//! kommt aus dem Bündel und geht als Zahl durch; hier wird nur gerechnet,
+//! welcher Anteil davon bestätigt ist. Die frühere Fassung dieses
+//! Absatzes führte die Festlegung als offen; das war bis zu diesem Datum
+//! richtig. Ändert sich die Zählweise erneut, ändert sich an diesem Code
+//! nach wie vor nichts.
 //!
 //! ## Streitfrist
 //!

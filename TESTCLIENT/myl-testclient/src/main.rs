@@ -33,6 +33,11 @@ BEFEHLE
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
 
+    modellstaende   Was sich beim Wechsel von θ_v A nach B geändert hat und
+                    was nicht. Kein Determinismusurteil: Zwei Modellstände
+                    SOLLEN verschiedene Zahlen liefern. Interessant ist die
+                    Gegenrichtung, ein Wert, der einen Wechsel unbeschadet
+                    übersteht. Liest denselben Ordner wie `vergleich`.
     vergleich       Die zugesandten Protokolle aus TESTCLIENT/Vergleiche
                     gegenüberstellen und urteilen, ob sie den Cross-Hardware-
                     Nachweis tragen. Verweigert ein positives Urteil, wenn
@@ -68,6 +73,13 @@ OPTIONEN
     --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
     --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: qwen2.5-0.5b)
+    --erwarte <DIGEST>  Erwarteter Vergleichswert. Der Lauf schlägt fehl,
+                        wenn er einen anderen erzeugt. Für die CI nach
+                        einem Modellwechsel: Ab da meldet sich jede
+                        weitere Änderung von selbst. Die Kurzform vom
+                        Bildschirm genügt (16 Hexzeichen); verglichen wird
+                        so weit, wie angegeben ist, und das Protokoll hält
+                        fest, wie weit das war
     --out <DATEI>       Zieldatei beim Erzeugen eines Plans
     --logs <PFAD>       Protokollverzeichnis (Vorgabe: TESTCLIENT/logs)
                         Bei `vergleich` das auszuwertende Verzeichnis; ohne
@@ -151,6 +163,8 @@ struct Args {
     plan: Option<PathBuf>,
     plan_id: Option<String>,
     out: Option<PathBuf>,
+    /// Erwarteter Vergleichswert (`--erwarte`, Fahrplanpunkt 3.2).
+    erwartet: Option<String>,
 }
 
 impl Args {
@@ -173,6 +187,7 @@ impl Args {
             plan: None,
             plan_id: None,
             out: None,
+            erwartet: None,
         }
     }
 }
@@ -255,6 +270,10 @@ fn parse() -> Result<Args, String> {
             }
             "--out" => {
                 a.out = Some(PathBuf::from(need(i, "--out")?));
+                i += 2;
+            }
+            "--erwarte" => {
+                a.erwartet = Some(need(i, "--erwarte")?);
                 i += 2;
             }
             "--quiet" => {
@@ -383,6 +402,22 @@ fn main() -> ExitCode {
     // Ohne `--logs` wird der Ordner der **zugesandten** Protokolle
     // gelesen, nicht der eigene Protokollort: Der Befehl gehört dem
     // Koordinator, und der vergleicht fremde Läufe, nicht seine eigenen.
+    // `modellstaende` schreibt wie `vergleich` kein Laufprotokoll: Es
+    // wertet fremde Läufe aus, statt selbst zu messen.
+    if args.command == "modellstaende" {
+        let repo = myl_testclient::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+        let quelle = if args.logs_explizit {
+            args.logs.clone()
+        } else {
+            myl_testclient::vergleich::vergleichsordner(&repo)
+        };
+        return if myl_testclient::modellstaende::run(&quelle) {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
     if args.command == "vergleich" {
         banner::print_if(!args.quiet);
         let repo = myl_testclient::artefakte::repo_wurzel(
@@ -498,6 +533,15 @@ fn main() -> ExitCode {
             eprintln!("\n{}", HILFE);
             return ExitCode::from(2);
         }
+    };
+
+    // **Nach dem Lauf, vor dem Abschluss.** Die Erwartung prüft den
+    // Gesamtwert, und den gibt es erst, wenn der Lauf durch ist. Das
+    // Ergebnis geht mit `&&` ein: Ein Lauf, der bereits scheiterte, wird
+    // durch eine erfüllte Erwartung nicht gut.
+    let ok = match args.erwartet.as_deref() {
+        Some(erwartet) => myl_testclient::erwartung::protokollieren(&mut log, erwartet) && ok,
+        None => ok,
     };
 
     if log.finish(ok) {

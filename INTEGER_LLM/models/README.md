@@ -67,6 +67,20 @@ Sekunden statt Minuten.
 ## Zur Lizenzangabe
 
 Die Spalte nennt, was die jeweilige Modellkarte angibt, ohne eigene
-Rechtsprüfung. Die Lizenzlage **quantisierter Ableitungen** ist Gegenstand
-einer separaten, nicht-technischen Klärung (`docs/01_licenses.md`) und im
-Fahrplan als offener Punkt geführt.
+Rechtsprüfung.
+
+**Alle sieben Qwen2.5-Größen wurden am 2026-08-23 geprüft, zwei fallen
+durch:** 3B steht unter der Qwen Research License („FOR NON-COMMERCIAL
+PURPOSES ONLY"), 72B unter der Qwen License mit einer Lizenzpflicht ab
+100 Mio. monatlich aktiven Nutzern. Beides ist mit ETHICS-Grundsatz G7
+unvereinbar. Geeignet sind 0.5B, 1.5B, 7B, 14B und 32B; die nächste
+Größe nach 7B ist damit **14B, nicht 72B**. Vollständige Prüfung samt
+Methode in `docs/01_licenses.md`.
+
+Für die Apache-2.0-Varianten ist auch die Lage **quantisierter
+Ableitungen** geklärt: §2 erlaubt Bearbeitungen, §4(a) und §4(b) binden
+sie an eine Lizenzkopie und an die Kennzeichnung geänderter Dateien, und
+eine `NOTICE`-Datei, die §4(d) auslösen würde, enthalten die
+Qwen2.5-Repositorien nicht. Das ist eine Lesart des Lizenztextes und
+ersetzt vor einem Genesis-Block keine Prüfung durch jemanden, der dafür
+haftet.

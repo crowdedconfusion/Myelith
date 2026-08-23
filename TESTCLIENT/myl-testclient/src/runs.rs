@@ -703,15 +703,48 @@ pub fn run_shard(
             &format!("{} Shards", num_shards),
             || coordinator.run_prompt(nr as u64, &ids, steps as u64),
         );
-        let pod_digest = digest_tokens(&pod_out);
+        let pod_tokens_digest = digest_tokens(&pod_out);
         log.result(
             &format!("prompt_{}_pod_tokens", nr),
-            &pod_digest,
+            &pod_tokens_digest,
             format!(
                 "{} Token: {:?}",
                 pod_out.len(),
                 &pod_out[..pod_out.len().min(8)]
             ),
+        );
+
+        // Der Digest über die **gerechneten Zahlen**, seit dem Abschluss
+        // von Fund 36 auch aus dem Pod. Fehlt er, ist der Lauf kein
+        // Nachweis und darf auch nicht so aussehen: Ein stiller Rückfall
+        // auf den Token-Vergleich wäre genau der Zustand, aus dem Fund 36
+        // kam.
+        let pod_logits_digest = match coordinator.dekodier_digest(nr as u64) {
+            Some((d, schritte)) => {
+                if schritte != steps {
+                    log.error(format!(
+                        "Pod hat {} von {} Schritten gesampelt; ein Digest über \
+                         verschieden viele Schritte ist schlicht ein anderer Wert \
+                         und wäre hier als Determinismusfehler zu lesen",
+                        schritte, steps
+                    ));
+                    return false;
+                }
+                d
+            }
+            None => {
+                log.error(
+                    "Der Pod liefert keinen Dekodier-Digest. Ohne ihn prüft dieser \
+                     Lauf nur, ob die Aufteilung dieselbe Entscheidung erzeugt, \
+                     nicht dieselben Zahlen (Fund 36)",
+                );
+                return false;
+            }
+        };
+        log.result(
+            &format!("prompt_{}_pod_logits", nr),
+            &pod_logits_digest,
+            format!("{} Schritte über Logits und Token", steps),
         );
 
         match coordinator.build_poi_bundle() {
@@ -728,26 +761,31 @@ pub fn run_shard(
         }
 
         // Gegenprobe: dasselbe Modell ungeteilt.
-        let (_, single_desc, single_tokens) = log.timed(
+        let (single_logits_digest, single_desc, single_tokens) = log.timed(
             &format!("prompt_{}_einzelknoten", nr),
             "",
             || greedy_digest(&model, &ids, steps),
         );
-        // **Token gegen Token, nicht Logits gegen Token.** Der Pod liefert
-        // über `run_prompt` nur die erzeugten Token; der Digest aus
-        // `greedy_digest` deckt seit Fund 36 zusätzlich die Logits ab und
-        // wäre hier mit nichts vergleichbar. Beide Werte heißen deshalb
-        // `…_tokens` und meinen dasselbe.
+        // **Beide Seiten bilden denselben Wert nach demselben Vertrag**
+        // (`integer_llm_runtime::generate::DekodierDigest`): je Schritt
+        // alle Logits als i32 und danach der gewählte Token. Der Pod
+        // bildet ihn im Shard mit dem LM-Head, weil die Logits ihn nie
+        // verlassen; auf dem Draht steht nur der Token.
         //
-        // **Fund 36 gilt für diesen Vergleich weiter:** Er prüft, ob die
-        // Aufteilung dieselbe Entscheidung erzeugt, nicht dieselben Zahlen.
-        // Ihn zu schärfen verlangt, dass die Stage-API die Logits
-        // herausgibt; vermerkt als offener Punkt.
-        let single_digest = digest_tokens(&single_tokens);
+        // Bis zum Abschluss von Fund 36 stand hier Token gegen Token, und
+        // der Vergleich prüfte damit, ob die Aufteilung dieselbe
+        // **Entscheidung** erzeugt. Der Token-Vergleich bleibt daneben
+        // stehen, aber als das schwächere der beiden Urteile.
+        let single_tokens_digest = digest_tokens(&single_tokens);
         log.result(
             &format!("prompt_{}_einzelknoten_tokens", nr),
-            &single_digest,
+            &single_tokens_digest,
             single_desc,
+        );
+        log.result(
+            &format!("prompt_{}_einzelknoten_logits", nr),
+            &single_logits_digest,
+            format!("{} Schritte über Logits und Token", steps),
         );
 
         // Klartext nur auf das Terminal, siehe `run_determinism`.
@@ -758,26 +796,37 @@ pub fn run_shard(
             log.nur_anzeigen("");
         }
 
-        if pod_digest == single_digest {
+        if pod_logits_digest == single_logits_digest {
             log.result(
                 &format!("shard_vs_einzelknoten_{}", nr),
-                &pod_digest,
-                "bitgleich",
+                &pod_logits_digest,
+                "bitgleich über Logits und Token",
             );
         } else {
             alle_gleich = false;
             log.event(Event::Mismatch {
                 name: format!("shard_vs_einzelknoten_{}", nr),
-                expected: single_digest.clone(),
-                actual: pod_digest.clone(),
+                expected: single_logits_digest.clone(),
+                actual: pod_logits_digest.clone(),
             });
+            // Die Token-Gleichheit ist hier eine **Diagnose**, kein Trost:
+            // Gleiche Token bei verschiedenen Zahlen heißt, dass die
+            // Abweichung die Rangfolge noch nicht gekippt hat. Das ist
+            // genau der Fall, den dieser Vergleich vor Fund 36 nicht sehen
+            // konnte.
+            if pod_tokens_digest == single_tokens_digest {
+                log.note(
+                    "Die Token stimmen, die gerechneten Zahlen nicht. Vor dem \
+                     Abschluss von Fund 36 hätte dieser Lauf `bitgleich` gemeldet.",
+                );
+            }
             log.note(
                 "Ein Unterschied hier bedeutet, dass die Aufteilung selbst \
                  das Ergebnis verändert, die Shard-Grenzen oder die \
                  Randskalierung (boundary_frac) sind der erste Verdacht.",
             );
         }
-        einzelwerte.push(pod_digest);
+        einzelwerte.push(pod_logits_digest);
     }
 
     let gesamt = digest_ueber(&einzelwerte);
