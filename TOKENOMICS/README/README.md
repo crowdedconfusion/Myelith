@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.3.0
+> **Version:** 0.4.0
 > **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -47,6 +47,79 @@ TOKENOMICS/
 ```
 
 ## Changelog
+
+### v0.4.0 – 2026-08-23 (K8: die wirtschaftliche Frage, gerechnet)
+
+Kritikpunkt K8 lautete: *„Es gibt keine Rechnung dazu, ob verteilte
+Ganzzahl-Inferenz mit Redundanzfaktor gegen zentrale GPU-Inferenz
+preislich bestehen kann."* Jetzt gibt es sie, als Programm
+(`src/bin/oekonomie.rs`), Protokoll in `TOKENOMICS/results/`.
+
+**Warum als Programm und nicht als Tabelle:** Die Prägekurve benutzt
+`mint_amount` und `ema_update` aus diesem Crate, also die Formeln, die
+auch im Ledger laufen. Eine Nachbildung wäre eine zweite Quelle für
+dieselbe Aussage (Fund 34).
+
+#### Kosten je Token
+
+Durchsatz des Ganzzahlpfads gegen bf16, dieselbe Maschine, beide Seiten
+im selben Lauf und beide auf der CPU:
+
+| Modell | ganzzahlig | bf16 | Verhältnis | Kostenverhältnis |
+|---|---|---|---|---|
+| 0,5B | 49,17 t/s | 77,57 t/s | 0,634 | **3,2×** |
+| 7B | 10,74 t/s | 9,86 t/s | **1,089** | **1,9×** |
+
+Kostenverhältnis = `(1 / Durchsatzverhältnis) · (r + Stichprobe)` mit
+r = 2 und 1 bis 3 Prozent Kontrollsegmenten.
+
+**Bei 7B ist der Ganzzahlpfad schneller als bf16.** Der Durchsatz taugt
+damit nicht mehr als Kostentreiber; übrig bleibt im Wesentlichen die
+Redundanz, also der Preis der Verifizierbarkeit. Bei 0,5B bleibt ein
+Rückstand, weil die Matrizen zu klein sind, als dass sich das Aufteilen
+über Threads voll auszahlt.
+
+> **Diese Rechnung stand zuerst bei 3,6× und 9,2×**, und der Unterschied
+> kam nicht aus besserer Numerik. Der Integerpfad lief **einkernig**,
+> während die Vergleichsseite fünf Threads benutzte. Die Messung war
+> richtig und ihre Deutung falsch: Sie maß Quantisierungskosten **und**
+> fehlende Parallelität in einer Zahl. Behoben in kernels v0.21.0,
+> bitgleich per Konstruktion, 7B dadurch 5,2-mal schneller.
+>
+> **Das ist der eigentliche Ertrag dieser Rechnung:** Sie hat nicht nur
+> eine Zahl geliefert, sondern einen Fehler gefunden, den vier Jahre
+> Kernel-Arbeit nicht gefunden hätten, weil er nicht im Kernel lag.
+
+**Was die Rechnung nicht ist:** kein Marktpreis. Beide Seiten sind
+CPU-Messungen. Auf GPU verschiebt sich das Bild, und zwar in beide
+Richtungen: Vendor-Kernel für Gleitkomma sind hochoptimiert, und Tensor
+Cores sind für uns gesperrt, weil sie in reduzierter Breite akkumulieren.
+Eine belastbare Zahl braucht eine GPU-Messung.
+
+#### Prägekurve über 200 Epochen
+
+Simuliert mit einem Verlauf aus flachem Verbrauch, Anstieg, Einbruch und
+Erholung, Anlaufphase mit 20 % Subvention, danach Zielbetrieb.
+
+**Zwei Befunde, die so in keinem Kapitel stehen:**
+
+**Wachsende Nachfrage wirkt deflationär.** Zwischen Epoche 75 und 100
+steigt der Verbrauch, und der Umlauf **sinkt** von 4733 auf 282 MYL,
+obwohl subventioniert wird: Die EMA hinkt nach, es wird weniger geprägt
+als verbrannt.
+
+**Die Trägheit schneidet in beide Richtungen, und die zweite ist die
+unangenehme.** Beim Einbruch in Epoche 100 fällt der Verbrauch sofort,
+die Prägung folgt der EMA und fällt langsam; in 25 Epochen wächst der
+Umlauf von 282 auf 30 222 MYL.
+
+Damit ist eine Angriffsfläche benannt: Wer den Verbrauch hochtreibt und
+dann aussteigt, lässt eine Prägung zurück, die der EMA folgt. **Ob das
+lohnend ist, hängt am Preis und ist mit dieser Rechnung nicht
+beantwortet.** Das ist der nächste offene Punkt von K8.
+
+**Die Prägeobergrenze `M_max` hat in diesem Verlauf nie gegriffen.** Sie
+ist damit hier nicht geprüft, sondern nur nicht verletzt worden.
 
 ### v0.3.0 – 2026-08-23 (Punkt 1.5: die vTFE-Gutschrift bekommt eine Regel)
 

@@ -21,6 +21,80 @@
 use crate::dot::dot_i8_i16;
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 
+/// Ab wie vielen Multiplikationen (`zeilen · in_features`) sich das
+/// Aufteilen über Threads überhaupt lohnt.
+///
+/// **Gemessen, nicht geraten** (`src/bin/threads_probe.rs`). Der Start
+/// eines `thread::scope` kostet rund `12 µs + 6,3 µs je Thread`, also 25
+/// µs bei zwei und 107 µs bei fünfzehn. Unterhalb dieser Schwelle frisst
+/// der Start den Gewinn: Die 896×896-Matrizen von 0,5B brauchen
+/// einkernig 54 µs, und selbst die beste Aufteilung sparte davon nur 12.
+const PARALLEL_AB: usize = 1_500_000;
+
+/// Arbeit je Thread, in Multiplikationen.
+///
+/// **Warum die Threadzahl an der Arbeit hängt und nicht an der
+/// Kernzahl.** Der erste Versuch nahm einfach `available_parallelism`,
+/// auf der Messmaschine also 15, und brachte bei 0,5B **nichts**: Die
+/// 4864×896-Matrix braucht einkernig 289 µs, und 15 Threads kosten
+/// allein 107 µs Start. Gemessen an derselben Matrix: vier Threads
+/// **2,53×**, acht Threads 2,41×, fünfzehn Threads nur noch 1,72×.
+///
+/// Bei der größten Matrix des 7B-Modells (18944×3584) ist es umgekehrt:
+/// dort bringen 15 Threads **7,40×** gegenüber 2,83× bei vier. Eine
+/// feste Zahl ist also für eine der beiden Größen falsch.
+const ARBEIT_JE_THREAD: usize = 1_000_000;
+
+/// Obergrenze der Threadzahl, einmal ermittelt statt je Aufruf.
+fn max_threads() -> usize {
+    use std::sync::OnceLock;
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    })
+}
+
+/// Rechnet `zeilen` unabhängige Ausgabewerte, einkernig oder verteilt.
+///
+/// **Bitgleich per Konstruktion, und das ist keine Redewendung.** Jede
+/// Ausgabezeile ist ein eigenes Skalarprodukt über ihre eigene
+/// Gewichtszeile und schreibt in ihr eigenes Feld. Zwischen den Zeilen
+/// gibt es keine gemeinsame Zwischensumme, also auch keine Reihenfolge,
+/// die etwas ändern könnte. Threadzahl, Aufteilung und Schwelle sind
+/// damit reine Laufzeitentscheidungen.
+///
+/// Das ist dieselbe Eigenschaft, aus der das ganze Projekt seine
+/// Bitgleichheit zieht, nur eine Ebene höher: Dort ist es die
+/// Assoziativität der Ganzzahladdition **innerhalb** einer Zeile, hier
+/// die Unabhängigkeit **zwischen** den Zeilen.
+fn zeilen_rechnen<F>(zeilen: usize, arbeit_je_zeile: usize, f: F) -> Vec<i16>
+where
+    F: Fn(usize) -> i16 + Sync,
+{
+    let arbeit = zeilen.saturating_mul(arbeit_je_zeile);
+    let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, max_threads());
+    if arbeit < PARALLEL_AB || max_threads() < 2 || zeilen < 2 {
+        return (0..zeilen).map(&f).collect();
+    }
+
+    let mut out = vec![0i16; zeilen];
+    let je = zeilen.div_ceil(n);
+    std::thread::scope(|s| {
+        for (t, teil) in out.chunks_mut(je).enumerate() {
+            let f = &f;
+            s.spawn(move || {
+                let start = t * je;
+                for (i, ziel) in teil.iter_mut().enumerate() {
+                    *ziel = f(start + i);
+                }
+            });
+        }
+    });
+    out
+}
+
 /// W8A16 Matrix-Vektor-Multiplikation.
 ///
 /// `x` (Aktivierung, int16, Skala `act_frac_bits`), `W` (Gewicht, int8,
@@ -56,17 +130,17 @@ pub fn linear_w8a16(
         w_shifts.len(),
         in_features
     );
-    let mut out = Vec::with_capacity(w_shifts.len());
-
-    for (row, &w_shift) in W.chunks_exact(in_features).zip(w_shifts.iter()) {
-        // Vektorisiert, wenn `cpu-simd` aktiv ist — bitgleich zur
-        // Skalarfassung, weil die i64-Akkumulation exakt und damit
-        // assoziativ ist (siehe `dot.rs`-Modulkopf).
+    // Vektorisiert, wenn `cpu-simd` aktiv ist, und über Threads verteilt,
+    // wenn die Matrix groß genug ist. Beides bitgleich zur einfachsten
+    // Fassung: innerhalb der Zeile, weil die i64-Akkumulation exakt und
+    // damit assoziativ ist (`dot.rs`), zwischen den Zeilen, weil sie
+    // voneinander unabhängig sind (`zeilen_rechnen`).
+    zeilen_rechnen(w_shifts.len(), in_features, |z| {
+        let row = &W[z * in_features..(z + 1) * in_features];
         let acc = dot_i8_i16(row, x);
-        let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac_bits);
-        out.push(clamp_i16_from_i64(y));
-    }
-    out
+        let y = rescale_i64(acc, w_shifts[z] + act_frac_bits, out_frac_bits);
+        clamp_i16_from_i64(y)
+    })
 }
 
 /// W8A16 mit Per-Kanal-Ausgangsskala (Fund 20, theta_v 0.11.0).
@@ -105,17 +179,12 @@ pub fn linear_w8a16_pc(
         out_frac_bits.len(),
         "linear_w8a16_pc: eine Ausgangsskala je Kanal (Fund 20)"
     );
-    let mut out = Vec::with_capacity(w_shifts.len());
-
-    for (row, (&w_shift, &out_frac)) in W
-        .chunks_exact(in_features)
-        .zip(w_shifts.iter().zip(out_frac_bits.iter()))
-    {
+    zeilen_rechnen(w_shifts.len(), in_features, |z| {
+        let row = &W[z * in_features..(z + 1) * in_features];
         let acc = dot_i8_i16(row, x);
-        let y = rescale_i64(acc, w_shift + act_frac_bits, out_frac);
-        out.push(clamp_i16_from_i64(y));
-    }
-    out
+        let y = rescale_i64(acc, w_shifts[z] + act_frac_bits, out_frac_bits[z]);
+        clamp_i16_from_i64(y)
+    })
 }
 
 /// Addiert einen quantisierten Bias auf eine int16-Aktivierungsausgabe.

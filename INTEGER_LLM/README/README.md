@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.19.0 (θ_v 0.17.0)
+> **Version:** 0.20.0 (θ_v 0.17.0)
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -414,6 +414,52 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.20.0 (kernels 0.21.0) – 2026-08-23 (Zeilen über Threads: 7B wird 5,2-mal schneller)
+
+**Der Integerpfad lief einkernig.** Aufgefallen beim Rechnen der
+Wirtschaftlichkeit (K8): Ein Kostenverhältnis von 9,2× gegen einen
+zentralen Anbieter sah zu schlecht aus, um an der Numerik zu liegen. Die
+Prüfung ergab, dass die bf16-Vergleichsseite fünf Threads benutzt und
+unsere Seite einen, auf einer Maschine mit fünfzehn Kernen.
+
+`linear_w8a16` und `linear_w8a16_pc` verteilen ihre Zeilen jetzt über
+Threads. **Bitgleich per Konstruktion:** Jede Ausgabezeile ist ein
+eigenes Skalarprodukt und schreibt in ihr eigenes Feld; zwischen den
+Zeilen gibt es keine gemeinsame Zwischensumme und damit keine
+Reihenfolge, die etwas ändern könnte. Dieselbe Eigenschaft wie die
+Assoziativität innerhalb der Zeile, nur eine Ebene höher.
+
+| Modell | vorher | nachher | Faktor |
+|---|---|---|---|
+| 0,5B | 38,19 tok/s | **49,17** | 1,29× |
+| 7B | 2,07 tok/s | **10,74** | **5,19×** |
+
+Damit ist der Integerpfad bei 7B **schneller als bf16** auf derselben
+Maschine (Faktor 1,09), und das Kostenverhältnis aus K8 fällt von 9,2×
+auf 1,9×.
+
+**Belegt, nicht behauptet:** 33/33 Konformitätsvektoren,
+`decode_digest` bei 0,5B unverändert, bei 7B derselbe Wert aus zwei
+getrennten Prozessen und beiden Backends.
+
+**Der erste Versuch brachte bei 0,5B nichts**, und das war lehrreich. Er
+nahm `available_parallelism`, hier fünfzehn. Gemessen
+(`src/bin/threads_probe.rs`): Der Start kostet rund `12 µs + 6,3 µs je
+Thread`, bei fünfzehn also 107 µs, und die 4864×896-Matrix braucht
+einkernig nur 289 µs. Dieselbe Matrix mit vier Threads **2,53×**, mit
+acht 2,41×, mit fünfzehn nur noch 1,72×. Bei der größten Matrix des
+7B-Modells ist es genau umgekehrt: dort bringen fünfzehn Threads
+**7,40×**.
+
+Die Threadzahl folgt deshalb der Arbeitsmenge (`ARBEIT_JE_THREAD`), und
+unterhalb einer Schwelle (`PARALLEL_AB`) wird gar nicht aufgeteilt. Beide
+Konstanten sind gemessen; die Probe liegt bei und lässt sich auf jeder
+Maschine wiederholen.
+
+**Keine neue Abhängigkeit:** `std::thread::scope` genügt, ein Thread-Pool
+war nicht nötig. Ein Crate mehr im Konsenspfad wäre der falsche Preis für
+diese Ersparnis gewesen.
 
 ### v0.19.0 (runtime 0.18.0) – 2026-08-23 (der Digest-Vertrag bekommt einen Ort)
 
@@ -945,27 +991,51 @@ schnelleres Backend — es ist ein zweites Modell, und in einem Netz mit
 Bitgleichheits-Konsens wäre sein Betreiber beim Redundanzvergleich
 auffällig.
 
-**Gemessen (arm64/Darwin, Referenz-Backend):**
+**Gemessen (arm64/Darwin, `cpu-simd`, Stand v0.20.0), beide Seiten im
+selben Lauf und beide auf der CPU:**
 
-| Modell | Artefakt | Prefill | Decode | bf16 (Decode) |
+| Modell | Artefakt | Decode | bf16 (Decode) | Verhältnis |
 |---|---|---|---|---|
-| 0,5B | 0,78 GB | 18,65 tok/s | 19,50 tok/s | 67,93 tok/s |
-| 7B | 8,72 GB | 0,80 tok/s | 1,42 tok/s | — |
+| 0,5B | 0,78 GB | **49,17 tok/s** | 77,57 tok/s | 0,63 |
+| 7B | 8,72 GB | **10,74 tok/s** | 9,86 tok/s | **1,09** |
 
-*Diese Tabelle ist der Stand vor v0.13.4 (SIMD) und v0.16.0
-(Gewichtskopie). Aktuell: 0,5B 38,19 tok/s mit `cpu-simd`, 7B 2,07 tok/s
-mit `reference`.*
+**Bei 7B ist der Integerpfad damit schneller als bf16.** Das war er nicht
+immer; der Weg dorthin ging über vier Schritte, und der letzte war der
+größte:
+
+| Stand | 0,5B | 7B |
+|---|---|---|
+| v0.13.3 | 19,50 | 1,42 |
+| v0.13.4 (NEON in `dot.rs`) | 24,26 | 2,03 |
+| v0.16.0 (Gewichtskopie entfällt) | 38,19 | 2,07 |
+| **v0.21.0 (Zeilen über Threads)** | **49,17** | **10,74** |
+
+**Der letzte Schritt war kein Numerikproblem, sondern ein Messfehler in
+der Deutung.** Der Integerpfad lief einkernig, während die
+bf16-Vergleichsseite fünf Threads benutzte. Die Zahl „3,5× langsamer als
+bf16", die hier jahrelang stand, maß deshalb zwei Dinge auf einmal:
+Quantisierungskosten **und** fehlende Parallelität.
+
+Aufgefallen ist es nicht beim Optimieren, sondern beim Rechnen der
+Wirtschaftlichkeit (Kritikpunkt K8): Ein Kostenverhältnis von 9,2× gegen
+einen zentralen Anbieter sah zu schlecht aus, um an der Numerik zu
+liegen.
 
 Zwei Befunde, die ich nicht in eine Fußnote schiebe:
 
-- **Der Integerpfad ist auf 0,5B rund 3,5× langsamer als bf16.** Erwartbar
-  für eine Referenzimplementierung ohne Kernel-Optimierung gegen
-  jahrelang gepflegte Kernel — aber es ist der Stand, und er gehört
-  benannt.
-- **`cpu-simd` (NEON) ist auf dieser Maschine nicht schneller**, sondern
-  minimal langsamer (18,66 gegen 19,50 tok/s). Das SIMD-Backend deckt
-  Softmax, RoPE und MLP ab; der Engpass liegt offenbar woanders. Wo,
-  wäre eine eigene Messung.
+- **Die Parallelisierung ist bitgleich per Konstruktion.** Jede
+  Ausgabezeile ist ein eigenes Skalarprodukt und schreibt in ihr eigenes
+  Feld; zwischen den Zeilen gibt es keine gemeinsame Zwischensumme und
+  damit keine Reihenfolge, die etwas ändern könnte. Belegt: 33/33
+  Konformitätsvektoren, unveränderter `decode_digest` bei 0,5B, und bei
+  7B derselbe Wert aus zwei getrennten Prozessen und beiden Backends.
+- **Die Threadzahl hängt an der Arbeitsmenge, nicht an der Kernzahl.**
+  Der erste Versuch nahm `available_parallelism` (hier 15) und brachte
+  bei 0,5B **nichts**: Fünfzehn Threads zu starten kostet 107 µs, und die
+  4864×896-Matrix braucht einkernig 289 µs. Dieselbe Matrix mit vier
+  Threads 2,53×, mit fünfzehn nur 1,72×; bei der größten 7B-Matrix ist es
+  umgekehrt (7,40× mit fünfzehn). Beide Konstanten sind gemessen,
+  `kernels/src/bin/threads_probe.rs`.
 
 **Skalierung:** Von 0,5B auf 7B wächst das Artefakt um Faktor 11,2, der
 Durchsatz fällt um Faktor 13,7 — grob linear mit leichtem Aufschlag.

@@ -1,0 +1,114 @@
+Myelith, wirtschaftliche Ueberschlagsrechnung (K8)
+Erzeugt mit `cargo run --release --bin oekonomie`
+
+1. Kosten je Token: Netz mit Redundanz gegen zentralen Anbieter
+===============================================================
+
+Gemessener Durchsatz auf derselben Maschine (arm64/Darwin),
+beide Seiten im selben Lauf, beide auf der CPU:
+
+  Modell      vorher   ganzzahlig       bf16  Verhältnis
+  0,5B      38.19 t/s     49.17 t/s   77.57 t/s       0.634
+  7B         2.07 t/s     10.74 t/s    9.86 t/s       1.089
+
+  Die Spalte -vorher- ist der Stand vor der Zeilen-Parallelisierung
+  (kernels v0.21.0). Sie hat den Durchsatz bei 0,5B um 29 %
+  und bei 7B um das **5,2-Fache** gehoben, bei unveraendertem
+  Digest: Zeilen sind voneinander unabhaengig, die Aufteilung
+  ist bitgleich per Konstruktion.
+
+Der Redundanz-Aufschlag: r = 2 Pods je Segment, dazu
+Kontrollsegmente von 1 bis 3 Prozent des Volumens.
+
+Kostenverhältnis = (1 / Durchsatzverhältnis) · Aufschlag
+
+  Modell   bei 1 % Probe  bei 3 % Probe
+  0,5B              3.2x           3.2x
+  7B                1.8x           1.9x
+
+Was sich damit geaendert hat:
+  Bei 7B ist der Ganzzahlpfad jetzt SCHNELLER als bf16 auf derselben
+  Maschine (Faktor 1,09). Der Durchsatz ist damit kein Kostentreiber
+  mehr, und uebrig bleibt im Wesentlichen die Redundanz.
+  Bei 0,5B bleibt ein Rueckstand: Die Matrizen sind zu klein, als
+  dass sich das Aufteilen ueber Threads voll auszahlt.
+
+  Vor der Parallelisierung standen hier 3,6x (0,5B) und 9,2x (7B).
+
+Wie empfindlich das Ergebnis ist (7B, 2 % Probe):
+
+     Durchsatzverhältnis Kostenverhältnis
+                   0.219             9.2x  <- vor der Parallelisierung
+                   0.500             4.0x
+                   1.089             1.9x  <- gemessen
+                   1.500             1.3x
+                   2.000             1.0x
+
+  Selbst bei Durchsatz-Gleichstand bleiben 2.02x uebrig.
+  Das ist der Preis der Verifizierbarkeit und nicht wegzuoptimieren.
+
+Was diese Rechnung NICHT ist:
+  Kein Marktpreis. Beide Seiten sind CPU-Messungen auf einer
+  Maschine; auf GPU verschiebt sich das Bild in beide Richtungen.
+  Vendor-Kernel fuer Gleitkomma sind hochoptimiert, was gegen uns
+  spricht; Tensor Cores sind fuer uns gesperrt (sie akkumulieren in
+  reduzierter Breite), was ebenfalls gegen uns spricht. Eine
+  belastbare Zahl braucht eine GPU-Messung, und die steht aus.
+
+2. Prägekurve über 200 Epochen
+================================
+
+  Epoche   Burn (MYL)    EMA (MYL)   Mint (MYL)   Umlauf (MYL)
+       0         1000         1000         1200            200
+      25         1000         1000         1200           5200
+      50         1060         1004         1205          10145
+      75         2560         1844         2212           4733
+     100          400         2983         2983            282
+     125          550          918          918          30222
+     150         1175          950          950          29752
+     175         1800         1464         1464          22312
+     199         2400         2043         2043          13913
+
+  Epochen an der Praegeobergrenze: 0 von 200
+  (Die Obergrenze M_max hat in diesem Verlauf NIE gegriffen. Sie ist
+   damit hier auch nicht geprueft, sondern nur nicht verletzt worden.)
+
+  Was die Kurve zeigt, und es ist nicht, was man erwartet:
+
+  - Bei FLACHEM Verbrauch waechst der Umlauf um genau die
+    Subvention: 1000 verbrannt, 1200 gepraegt, +200 je Epoche.
+    Epoche 0 bis 25: der Umlauf steigt von 200 auf 5200.
+
+  - Bei STEIGENDEM Verbrauch faellt der Umlauf, obwohl subventioniert
+    wird. Zwischen Epoche 75 und 100 sinkt er von 4733 auf 282: Die
+    EMA hinkt dem Verbrauch nach, es wird also weniger gepraegt als
+    verbrannt. **Wachsende Nachfrage wirkt deflationaer**, und das
+    steht so in keinem Kapitel.
+
+  - Beim EINBRUCH in Epoche 100 kehrt sich das um: Der Verbrauch
+    faellt sofort, die Praegung folgt der EMA und faellt langsam. In
+    25 Epochen waechst der Umlauf von 282 auf 30222.
+
+  Die Traegheit schneidet also in beide Richtungen, und die zweite
+  ist die unangenehme: Wer den Verbrauch hochtreibt und dann
+  aussteigt, laesst eine Praegung zurueck, die der EMA folgt. Ob das
+  lohnend ist, haengt am Preis und ist mit dieser Rechnung NICHT
+  beantwortet. **Das ist der naechste offene Punkt von K8.**
+
+Fazit
+=====
+
+  Das Netz kostet je Token rund das 1,9-Fache (7B) bis 3,2-Fache
+  (0,5B) eines zentralen Anbieters, gemessen auf gleicher Hardware.
+  Bei 7B ist davon fast alles Redundanz, also der Preis der
+  Verifizierbarkeit; der Durchsatz taugt nicht mehr als Ausrede.
+
+  Vor der Parallelisierung standen hier 3,6x und 9,2x. Der
+  Unterschied kam nicht aus besserer Numerik, sondern daraus, dass
+  der Ganzzahlpfad einkernig lief, waehrend die Vergleichsseite
+  fuenf Kerne benutzte. Die Messung war richtig und ihre Deutung
+  falsch: Sie mass Quantisierungskosten UND fehlende Parallelitaet.
+
+  Was bleibt: Auf GPU ist nichts davon gemessen, und dort
+  verschiebt sich das Bild erneut.
+

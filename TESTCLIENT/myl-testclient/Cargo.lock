@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "myl-types",
 ]
