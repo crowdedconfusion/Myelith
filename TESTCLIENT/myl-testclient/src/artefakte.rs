@@ -549,28 +549,41 @@ pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)
         ziel.display()
     ));
 
-    // `LICENSE*` gehört in die Liste, obwohl die Datei nichts rechnet.
+    // **Pfad und Kennungen als Argumente, nicht als Quelltext.** Die
+    // frühere Fassung schrieb den Zielpfad als `r'{ziel}'` in das Skript.
+    // Auf einem Windows-Rechner, dessen Benutzername ein Apostroph
+    // enthält, etwa `C:\\Users\\O'Brien\\…`, war das erzeugte Python
+    // schlicht syntaktisch falsch, und der Teilnehmer bekam als Antwort
+    // einen `SyntaxError` statt eines Downloads. Nachgestellt und vor der
+    // Behebung reproduziert.
+    //
+    // Über `sys.argv` gibt es diese Klasse von Fehlern nicht: Das
+    // Betriebssystem reicht die Zeichenkette durch, ohne dass sie je
+    // Quelltext wird.
+    //
+    // `LICENSE*` gehört in die Muster, obwohl die Datei nichts rechnet.
     // Bis 2026-08-23 stand sie nicht drin, und weil eine Lizenzdatei keine
     // Endung trägt, kam sie nie an. `ETHICS/Manifest.md` berief sich für
     // G7 („das Basismodell muss frei nachnutzbar sein") ausdrücklich auf
-    // `INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE` — eine Datei, die auf
+    // `INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`, eine Datei, die auf
     // keiner Maschine existierte, die das Modell über diesen Weg geholt
     // hat. Dieselbe Klasse wie Fund 27: eine schriftliche Zusage ohne
-    // Deckung.
-    //
-    // Apache 2.0 §4(a) verlangt außerdem, jedem Empfänger einer Bearbeitung
-    // eine Kopie der Lizenz mitzugeben. Wer die Gewichte weiterreicht, kann
-    // das nur, wenn sie überhaupt da ist.
-    let skript = format!(
-        "from huggingface_hub import snapshot_download\n\
-         snapshot_download(repo_id='{repo_id}', revision='{revision}',\n\
-         \x20   local_dir=r'{ziel}',\n\
-         \x20   allow_patterns=['*.json','*.safetensors','*.txt','LICENSE*'])\n",
-        repo_id = k.hf_repo,
-        revision = k.hf_revision,
-        ziel = ziel.display()
-    );
-    lauf(&py, &["-c", &skript], repo, meldung)
+    // Deckung. Apache 2.0 §4(a) verlangt zudem, jedem Empfänger einer
+    // Bearbeitung eine Kopie der Lizenz mitzugeben; das geht nur, wenn sie
+    // überhaupt da ist.
+    const SKRIPT: &str = "import sys\n\
+         from huggingface_hub import snapshot_download\n\
+         snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2],\n\
+         \x20   local_dir=sys.argv[3],\n\
+         \x20   allow_patterns=['*.json','*.safetensors','*.txt','LICENSE*'])\n";
+
+    let ziel_str = ziel.to_string_lossy().into_owned();
+    lauf(
+        &py,
+        &["-c", SKRIPT, &k.hf_repo, &k.hf_revision, &ziel_str],
+        repo,
+        meldung,
+    )
 }
 
 /// Baut die Artefakte. Nutzt das versionierte Skalenpaket automatisch:

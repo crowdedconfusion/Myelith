@@ -126,10 +126,11 @@ der Teilbaumwurzel zur Baumwurzel.
 | 16 | 26 | 832 | 0,63 % | **1 %** |
 | 256 | 22 | 704 | **0,034 %** | **0,42 %** |
 
-Der Einzelbeweis stimmt genau, dort gibt es keine Bündelung. Die
-Abweichung geht in die sichere Richtung, der Anhang gibt das Verfahren
-teurer an, als es ist; falsch ist er trotzdem, für 256 Segmente um den
-Faktor 12,5. Beide Zahlenreihen stehen als Test.
+Der Einzelbeweis stimmte genau, dort gibt es keine Bündelung. Die
+Abweichung ging in die sichere Richtung, der Anhang gab das Verfahren
+teurer an, als es ist. **Das Papier ist am selben Tag korrigiert worden**
+(DE und EN, MD und PDF); die gerechneten Werte stehen zusätzlich als
+Test, damit Papier und Code nicht wieder auseinanderlaufen.
 
 **Nicht gebaut:** die Ablehnungsquote für verweigerte Segmente. Sie ist
 eine Buchführung über das Verhalten eines Miners über Epochen hinweg und

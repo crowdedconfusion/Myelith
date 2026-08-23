@@ -352,6 +352,36 @@ jobs:
         working-directory: TESTCLIENT/myl-testclient
         run: cargo run --release -- --quiet --name ci stack
 
+      # Alles, was ohne Modell und ohne Netz läuft, wird hier auch
+      # ausgeführt und nicht nur übersetzt. Der Grund steht in
+      # EINSEITER.md: Ein vollständiger Durchgang auf Windows hat noch nie
+      # stattgefunden, und je mehr davon die CI abdeckt, desto weniger
+      # bleibt für den einen Termin übrig, an dem ein Partner Zeit hat.
+      #
+      # NICHT dabei ist `artefakte`: Ohne gebaute Artefakte meldet der
+      # Befehl zu Recht Exit 1, das ist seine Aufgabe. Ein `|| true` davor
+      # würde die Aussage wegwerfen, für die es ihn gibt.
+      - name: Befehle ohne Modell
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          cargo run --release -- --help
+          cargo run --release -- --quiet plan --plan-id ci --out ci.plan
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          cargo run --release -- modellstaende --logs ci-logs
+
+      # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.
+      # Ein Werkzeug, das aus nichts einen Nachweis macht, wäre schlimmer
+      # als keines (Fund 35).
+      - name: Vergleich verweigert ohne Protokolle
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          cargo run --release -- vergleich --logs ci-logs
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "vergleich hat ein leeres Verzeichnis als Nachweis durchgehen lassen"
+            exit 1
+          }
+          exit 0
+
   audit:
     name: Zahlensemantik-Audit
     runs-on: ubuntu-latest

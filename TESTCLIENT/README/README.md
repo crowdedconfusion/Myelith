@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.12.0
+> **Version:** 0.13.0
 > **Datum:** 2026-08-23
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Fahrplanpunkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`). Offen bleibt in Phase 2 allein der
@@ -489,6 +489,41 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.13.0 – 2026-08-23 (Windows-Bereitschaft: ein Fund und mehr CI)
+
+Anlass war die Frage, ob der Partnerlauf auf einer Windows-Maschine
+starten kann. Beim Durchsehen der Kette fiel eine Stelle auf, die nur
+dort bricht.
+
+**Fund: Der Zielpfad stand als Quelltext im Python-Aufruf.**
+`beschaffen` baute das Downloadskript mit `local_dir=r'{ziel}'`. Auf
+einem Rechner, dessen Benutzername ein Apostroph enthält, etwa
+`C:\Users\O'Brien\…`, war das erzeugte Python **syntaktisch falsch**,
+und der Teilnehmer bekam einen `SyntaxError` statt eines Downloads.
+Nachgestellt und vor der Behebung reproduziert.
+
+Pfad, Repo-Kennung und Revision gehen jetzt über `sys.argv`. Damit gibt
+es diese Fehlerklasse nicht mehr: Das Betriebssystem reicht die
+Zeichenkette durch, ohne dass sie je Quelltext wird. Gegenprobe mit
+demselben Pfad gelaufen.
+
+**Warum das hier steht und nicht unter „Kleinigkeit":** Die Stelle liegt
+in genau dem Teil der Kette, den die CI **nicht** abdeckt, nämlich
+Artefaktbeschaffung, Bau und Modellauf. Dass der erste Fund beim
+Hinsehen ausgerechnet dort lag, ist die Antwort auf die Frage, wie
+belastbar dieser Teil ist.
+
+**Die Windows-CI deckt jetzt mehr ab.** Zusätzlich zu Clippy,
+Unit-Tests und dem `stack`-Lauf: `--help`, `plan` (schreibt eine Datei,
+prüft also Pfade und Prüfsumme) und `modellstaende` (liest ein
+Verzeichnis). Dazu eine **Gegenprobe**: `vergleich` muss ein leeres
+Verzeichnis ablehnen, denn ein Werkzeug, das aus nichts einen Nachweis
+macht, wäre schlimmer als keines.
+
+**Nicht in der CI: `artefakte`.** Ohne gebaute Artefakte meldet der
+Befehl zu Recht Exit 1, das ist seine Aufgabe. Ein `|| true` davor würde
+die Aussage wegwerfen, für die es ihn gibt.
 
 ### v0.12.0 – 2026-08-23 (die Lizenzdatei kam nie an)
 

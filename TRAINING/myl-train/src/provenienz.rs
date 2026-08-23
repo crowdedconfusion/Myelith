@@ -291,26 +291,27 @@ pub fn buendel_beweisknoten(tiefe: usize, segmente: u64) -> u64 {
 /// liegt der Anteil unter einem Promille, und eine Einheit, in der das
 /// Ergebnis auf null gerundet wird, misst nicht mehr, sondern verschweigt.
 ///
-/// ## Abweichung von Anhang B.6.4 (gefunden 2026-08-23)
+/// ## Anhang B.6.4, korrigiert am 2026-08-23
 ///
-/// Der Anhang nennt drei Werte. Der erste stimmt genau, die beiden
-/// anderen sind zu hoch:
+/// Der Anhang gab die gebündelten Werte zu hoch an. Sein Modell ließ sich
+/// aus seinen eigenen drei Zahlen rekonstruieren: `(tiefe − log2 n)`
+/// gemeinsame Knoten **plus einen Knoten je zusätzlichem Segment**. Der
+/// zweite Term gehört nicht dorthin; jedes Geschwister innerhalb des
+/// Bündels ist selbst ein Blatt, das bereits vorliegt.
 ///
-/// | Segmente | Knoten | Bytes | gerechnet | Anhang B.6.4 |
+/// | Segmente | Knoten | Bytes | gerechnet | Anhang alt |
 /// |---|---|---|---|---|
-/// | 1 | 30 | 960 | 11,72 % | **11,7 %** ✅ |
-/// | 16 | 26 | 832 | 0,63 % | **1 %** |
+/// | 1 | 30 | 960 | 11,72 % | 11,7 % ✅ |
+/// | 16 | 26 | 832 | 0,63 % | 1 % |
 /// | 256 | 22 | 704 | **0,034 %** | **0,42 %** |
 ///
-/// Beim Einzelbeweis gibt es keine Bündelung, dort kann sich nichts
-/// unterscheiden. Sobald gebündelt wird, hängt alles daran, wie der
-/// gemeinsame Teilbaum gezählt wird, und der Anhang zählt ihn ungünstiger
-/// als nötig.
+/// Beim Einzelbeweis ist `n − 1` gleich null, dort konnte sich der Fehler
+/// nicht zeigen. Er entstand erst mit der Bündelung, also genau dort, wo
+/// der Anhang argumentieren wollte.
 ///
-/// **Die Abweichung geht in die sichere Richtung:** Der Anhang gibt das
-/// Verfahren teurer an, als es ist. Er überschätzt keine Eigenschaft des
-/// Systems. Falsch ist er trotzdem, und für 256 Segmente um den Faktor
-/// 12,5.
+/// **Die Abweichung ging in die sichere Richtung:** Der Anhang gab das
+/// Verfahren teurer an, als es ist. Das Papier trägt jetzt die
+/// gerechneten Werte.
 pub fn buendel_overhead_zehntelpromille(tiefe: usize, segmente: u64, nutzbytes: u64) -> u64 {
     if segmente == 0 || nutzbytes == 0 {
         return 0;
@@ -462,24 +463,23 @@ mod tests {
         assert_eq!(buendel_overhead_zehntelpromille(TIEFE, 1, NUTZ), 1171);
     }
 
-    /// **Die gebündelten Werte weichen von Anhang B.6.4 ab, und zwar
-    /// nach unten.** Festgehalten als Test, damit die Abweichung nicht
-    /// wieder aus dem Blick gerät: Der Anhang gibt das Verfahren teurer
-    /// an, als es ist.
+    /// **Die gebündelten Werte, gegen die der Anhang am 2026-08-23
+    /// korrigiert wurde.** Festgehalten als Test, damit Papier und Code
+    /// nicht wieder auseinanderlaufen.
     ///
     /// Wer alle Blätter eines vollständigen Teilbaums hat, braucht für
     /// dessen untere Ebenen **keinen** Geschwisterknoten; übertragen wird
     /// nur der Weg von der Teilbaumwurzel nach oben.
     #[test]
-    fn gebuendelte_beweise_sind_guenstiger_als_im_anhang_angegeben() {
+    fn gebuendelte_beweise_stimmen_mit_dem_korrigierten_anhang() {
         const TIEFE: usize = 30;
         const NUTZ: u64 = 8192;
 
-        // 16 Segmente: 26 Knoten, 832 Byte, 0,63 % statt „ein Prozent".
+        // 16 Segmente: 26 Knoten, 832 Byte, 0,63 % (Anhang alt: 1 %).
         assert_eq!(buendel_beweisknoten(TIEFE, 16), 26);
         assert_eq!(buendel_overhead_zehntelpromille(TIEFE, 16, NUTZ), 63);
 
-        // 256 Segmente: 22 Knoten, 704 Byte, 0,034 % statt 0,42 %.
+        // 256 Segmente: 22 Knoten, 704 Byte, 0,03 % (Anhang alt: 0,42 %).
         assert_eq!(buendel_beweisknoten(TIEFE, 256), 22);
         assert_eq!(buendel_overhead_zehntelpromille(TIEFE, 256, NUTZ), 3);
     }
