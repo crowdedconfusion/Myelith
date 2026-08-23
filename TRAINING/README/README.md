@@ -1,6 +1,6 @@
 # training (`myl-train`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-23
 > **Status:** **Die Komponente hat Code.** Punkt 3.1 (Datenprovenienz)
 > ist gebaut: `myl-train` v0.1.0 mit Merkle-verankerten Korpora,
@@ -82,6 +82,76 @@ Rückwärtspass** in INTEGER_LLM, der dort noch nicht implementiert ist
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### myl-train v0.2.0 – 2026-08-23 (Wachstumsoperator, Bitbudget, Tiefenwachstum)
+
+Drei Fahrplanpunkte, alle drei ohne fremde Hardware machbar und alle drei
+unabhängig vom ganzzahligen Rückwärtspass.
+
+**1.2, der Wachstumsoperator** (`src/wachstum.rs`). Die ganzzahlige
+Aufteilung `a = ⌊m/2⌋`, `b = m − a` statt der Halbierung aus Net2Net und
+bert2BERT. `a + b = m` gilt für jede ganze Zahl, es wird nichts gerundet,
+und bei jedem ungeraden Eintrag trennt die Aufteilung die beiden Kopien
+um genau ein LSB, **ohne jeden Zufall**.
+
+Dazu die Identitätsebene für das Tiefenwachstum (Ausgabegewicht null,
+exakt darstellbar) und der Digest über Form **und** Werte.
+
+**Das Akzeptanzkriterium ist ein Digestvergleich, kein Toleranzvergleich.**
+Geprüft über alle drei Einheiten des Beispiels und über 200 zufällige
+Matrizen aus einem reproduzierbaren xorshift: Die Ausgabe vor und nach der
+Expansion ist bitgleich.
+
+**Ein Detail, an dem es hätte scheitern können:** `⌊m/2⌋` muss
+**abrunden**, auch bei negativen Zahlen. Rusts `/` trunkiert zur Null, und
+`-3 / 2 = -1` ergäbe zwar `a + b = -3`, aber ein anderes `a` als die
+Referenzsimulation mit `torch.floor`. Zwei Implementierungen desselben
+Operators müssen dasselbe liefern, sonst ist der Digestvergleich wertlos.
+Als Test festgehalten.
+
+**1.1, das Bitbudget** (`tests/diag/results/bitbudget_uebersicht.md`).
+Vier Lernraten gemessen statt einer:
+
+| Lernrate | F empfohlen | W_master | Wort |
+|---|---|---|---|
+| 1e-3 | 19 | 27 | **int32** |
+| 1e-4 | 22 | 30 | **int32** |
+| 1e-5 | 25 | 33 | int64 |
+| 1e-6 | 29 | 37 | int64 |
+
+**Die Grenze zwischen int32 und int64 liegt zwischen 1e-4 und 1e-5.** Der
+bisherige einzelne Messpunkt bei 1e-5 empfahl int64, und das stimmt dort
+und nur dort. Der Master ist die größte Datenstruktur des
+Trainingsschritts; ob er 32 oder 64 Bit breit ist, entscheidet über die
+Hälfte seines Speichers.
+
+Die Abhängigkeit ist auch herleitbar (`log2(10) = 3,32` Bit je Faktor 10)
+und stimmt mit der Messung überein: 3, 3 und 4 Bit über die drei
+Übergänge. **Die Modellgrößen-Achse bleibt bei einem Punkt**, weil 7B in
+float32 rund 30 GB bräuchte und diese Maschine 24 GB hat.
+
+**1.3, das Tiefenwachstum** (`tests/diag/tiefenwachstum_simulation.py`).
+Die Frage war, ob eine als Identität startende Ebene tot bleibt.
+
+**Sie bleibt es nicht**, und zwar ab dem ersten Schritt: Der Gradient nach
+dem Ausgabegewicht ist `aᵀ·g` und hängt nicht vom Ausgabegewicht ab.
+Über 20 Schritte bewegen sich mit stochastischem Runden 120 von 128
+Gewichten, mit Rundung zur nächsten Stufe 33.
+
+**Warum der Unterschied so groß ist**, und das ist ein eigener Befund:
+Das stochastische Runden verändert auch die *Eingangs*gewichte je
+Schritt, damit die Aktivierungen und damit, welche Einträge überhaupt
+einen Gradienten sehen. Mit Rundung zur nächsten Stufe sind die
+Aktivierungen über alle Schritte gleich, und ein Drittel der Einträge
+bekommt **nie** einen.
+
+**Fund dabei:** `Konzept-Wachstum.md` führte diese Messung seit dem
+2026-08-22 als erledigt, mit konkreten Zahlen und einem Beleg, den es
+nicht gab. Das genannte Skript misst ausschließlich Breitenwachstum, ein
+Protokoll mit diesen Zahlen existierte nirgends. Der Fahrplan hatte den
+Punkt zu Recht als „nicht gemessen" geführt. Dieselbe Klasse wie Fund 27
+und Fund 37; das Konzept trägt jetzt die gemessenen Zahlen und den
+Vermerk.
 
 ### myl-train v0.1.0 – 2026-08-23 (Punkt 3.1: Datenprovenienz)
 

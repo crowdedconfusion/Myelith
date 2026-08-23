@@ -25,6 +25,11 @@
 //!   gebündelte Beweise, Kostenrechnung gegen Anhang B.6.4.
 //! - [`zuweisung`] — VRF-gesteuerte Zuweisung von Korpusabschnitten,
 //!   damit dem Miner nicht die Auswahl bleibt (Kap. 7.3, Anhang B.6.5).
+//! - [`wachstum`] — der Wachstumsoperator (Kap. 7.5): ganzzahlige
+//!   Aufteilung statt Halbierung, Identitätsebene für das
+//!   Tiefenwachstum, Digestvergleich vor und nach. Ebenfalls unabhängig
+//!   vom Rückwärtspass, weil er auf Mastergewichten arbeitet und nicht
+//!   auf Gradienten.
 //!
 //! **Nicht enthalten:** die Ablehnungsquote für verweigerte Segmente.
 //! Sie ist eine Buchführung über das Verhalten eines Miners über Epochen
@@ -34,10 +39,15 @@
 #![deny(unsafe_code)]
 
 pub mod provenienz;
+pub mod wachstum;
 pub mod zuweisung;
 
 pub use provenienz::{
     buendel_beweisknoten, buendel_overhead_zehntelpromille, BuendelReferenz, Korpus,
     ProvenienzFehler, SegmentReferenz,
+};
+pub use wachstum::{
+    aufteilen, ausgabe_digest, breite_wachsen, tiefe_wachsen, vorwaerts, Master,
+    WachstumsFehler,
 };
 pub use zuweisung::{zuweisen, Zuweisung, ZuweisungsFehler};

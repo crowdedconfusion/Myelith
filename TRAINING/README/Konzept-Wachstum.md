@@ -217,17 +217,39 @@ Der Anschluss an `k` im Scheduler ist reine Neuverteilung
 (Sidequest 2, Abschnitt c): keine bestehende Struktur ändert sich
 rückwirkend, die Speicherkapazität wächst mit dem Netz mit.
 
-**Gemessen (2026-08-22), und die Sorge war unbegründet.** Der Verdacht
+**Gemessen (2026-08-23), und die Sorge war unbegründet.** Der Verdacht
 war, eine als Identität startende Ebene bleibe tot: Ausgabegewicht null,
 Beitrag null, Gradient null. Der Gradient nach dem Ausgabegewicht ist
 aber `aᵀ·g` und hängt **nicht** vom Ausgabegewicht ab. Ein Nullgewicht
 macht den Beitrag null, nicht den Gradienten.
 
-Nachgemessen an einer Ebene mit Residualpfad: Die Ausgabe ist bitgleich
-zur Eingabe (Funktionserhaltung), und die Ebene bewegt sich **ab dem
-ersten Schritt**. Mit Rundung zur nächsten Stufe bewegen sich 63 von 128
-Gewichten, mit stochastischem Runden alle 128. Beleg:
-`tests/diag/expansion_simulation.py` und die Probe im Protokoll.
+Nachgemessen an einer Ebene mit Residualpfad, Modellbreite 16, versteckte
+Breite 8, also 128 Gewichte im Ausgabegewicht: Die Ausgabe ist bitgleich
+zur Eingabe (Abweichung `0,00e+00`, Funktionserhaltung), und die Ebene
+bewegt sich **ab dem ersten Schritt**, in beiden Rundungsarten.
+
+| über 20 Schritte | Gradient ≠ 0 erreichbar | Gewichte bewegt |
+|---|---|---|
+| Rundung zur nächsten Stufe | 96 von 128 | **33 von 128** |
+| stochastisches Runden | 128 von 128 | **120 von 128** |
+
+**Der Unterschied ist kein Rauschen.** Das stochastische Runden verändert
+auch die *Eingangs*gewichte je Schritt, damit die Aktivierungen und damit,
+welche Einträge überhaupt einen Gradienten sehen. Mit Rundung zur nächsten
+Stufe sind die Aktivierungen über alle Schritte gleich, und ein Drittel
+der Einträge bekommt nie einen.
+
+Beleg: `tests/diag/tiefenwachstum_simulation.py`, Protokoll
+`tests/diag/results/tiefenwachstum.json`.
+
+> **Zur Herkunft dieser Zahlen.** Bis zum 2026-08-23 standen hier „63 von
+> 128" und „alle 128", mit dem Beleg „`expansion_simulation.py` und die
+> Probe im Protokoll". **Beides gab es nicht:** Jenes Skript misst
+> ausschließlich Breitenwachstum, das sagt sein eigener Kopf, und ein
+> Protokoll mit diesen Zahlen existierte im ganzen Repositorium nicht. Der
+> Fahrplan führte Punkt 1.3 zu Recht als „nicht gemessen". Dieselbe Klasse
+> wie Fund 27 und Fund 37: eine schriftliche Zusage ohne Deckung. Die
+> Richtung der Aussage hält, die Zahlen sind jetzt gemessene.
 
 ## 6. Modellversionen, Übergang und Verfall
 

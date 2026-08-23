@@ -1,0 +1,26 @@
+{
+  "frage": "Bleibt eine als Identitaet gestartete Ebene tot?",
+  "antwort": "nein",
+  "modellbreite": 16,
+  "versteckte_breite": 8,
+  "gewichte_in_w_out": 128,
+  "schritte": 20,
+  "lernrate": 1e-05,
+  "funktionserhaltend_vor_dem_ersten_schritt": true,
+  "gradient_ungleich_null_erreichbar": {
+    "Rundung zur naechsten Stufe": 96,
+    "stochastisch (Zaehlerwuerfel)": 128
+  },
+  "bewegung": {
+    "Rundung zur naechsten Stufe": {
+      "bewegt": 33,
+      "von": 128,
+      "erster_schritt": 1
+    },
+    "stochastisch (Zaehlerwuerfel)": {
+      "bewegt": 120,
+      "von": 128,
+      "erster_schritt": 1
+    }
+  }
+}

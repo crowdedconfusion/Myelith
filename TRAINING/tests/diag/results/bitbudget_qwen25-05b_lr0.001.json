@@ -1,0 +1,23 @@
+{
+  "modell": "qwen2.5-0.5b",
+  "datum": "2026-08-23",
+  "lr": 0.001,
+  "schritt_durch_rasterstufe": {
+    "median": 0.0006410484202206135,
+    "p01": 5.742336361436173e-05
+  },
+  "F": {
+    "median": 11,
+    "p01": 15,
+    "empfohlen": 19,
+    "reserve_bits": 4
+  },
+  "W_master_bits": 27,
+  "aggregation": {
+    "beitraege": 10000000,
+    "summe_max_lsb": 3360939941.40625,
+    "reserve_int32": 0.6389532941494551,
+    "reserve_int64": 2744283503.3212843,
+    "empfohlen": "int64"
+  }
+}
