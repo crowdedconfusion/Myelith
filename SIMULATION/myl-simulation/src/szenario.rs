@@ -358,3 +358,83 @@ impl Protokolllauf {
 pub fn pod_id(n: u8) -> PodId {
     PodId::new([n; 32])
 }
+
+/// Was ein Durchlauf abgedeckt hat und was nicht.
+///
+/// **Der zweite Teil ist der wichtigere.** Eine Simulation, die nur
+/// meldet, was sie geprüft hat, liest sich wie eine Abdeckung; erst die
+/// Liste der ausgelassenen Stellen sagt, was ihr grünes Ergebnis wert
+/// ist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Abdeckung {
+    /// Nähte, die gefahren wurden.
+    pub gefahren: Vec<&'static str>,
+    /// Nähte, die ausgelassen wurden, mit Grund.
+    pub ausgelassen: Vec<(&'static str, &'static str)>,
+}
+
+impl Abdeckung {
+    /// Die Abdeckung eines vollständigen Durchlaufs.
+    ///
+    /// **Fest verdrahtet und nicht gemessen**, und das ist eine
+    /// Schwäche: Wer eine Naht hinzufügt und diese Liste vergisst, hat
+    /// eine Abdeckung, die zu gut aussieht. Der Test
+    /// `die_abdeckung_nennt_jede_naht` hält die Liste gegen die
+    /// öffentlichen Nahtfunktionen.
+    pub fn vollstaendig() -> Self {
+        Self {
+            gefahren: vec![
+                "Governance → Tokenomik (S_min bestimmt den Stake)",
+                "Scheduler → Pods (Zuteilung, Redundanzpaare)",
+                "Verifikation Stufe 1 (Commitment-Vergleich)",
+                "Urteil → Slashing-Matrix → Ledger",
+                "Ledger → EMA → Prägung → Verteilung",
+                "Burn-Cap gegen den Verbrauchs-Stoß",
+            ],
+            ausgelassen: vec![
+                (
+                    "Pod → Koordinator → Konsens (echte Inferenz)",
+                    "braucht Modell-Artefakte; läuft in \
+                     myl-pod/tests/koordinator_byzantinisch.rs mit echtem Modell",
+                ),
+                (
+                    "Bisektion und Schiedsrunde",
+                    "braucht eine Spur aus echter Rechnung; die Mechanik ist in \
+                     myl-verifier/tests/adversarial.rs geprüft",
+                ),
+                (
+                    "Netzschicht (Gossip, Peer-Wahl)",
+                    "eigener Testrahmen mit tokio; die Eclipse-Messung steht in \
+                     myl-net/tests/eclipse_sybil.rs",
+                ),
+                (
+                    "BFT-Rundenwechsel und Liveness",
+                    "geprüft in myl-consensus/tests/liveness.rs über 21 Validatoren",
+                ),
+                (
+                    "Kontrollsegment-Einschleusung im Durchlauf",
+                    "die Rate ist in myl-verifier/tests/simulation.rs gemessen; \
+                     im Durchlauf fehlt der Auftragsstrom, in den eingeschleust würde",
+                ),
+                (
+                    "Cross-Hardware-Determinismus",
+                    "braucht eine zweite Architektur (K1) — der wichtigste offene \
+                     Beleg des Projekts",
+                ),
+            ],
+        }
+    }
+
+    /// Der Anteil gefahrener Nähte, in Prozent.
+    ///
+    /// **Eine Zahl mit Vorsicht:** Nähte sind nicht gleich schwer. Sechs
+    /// gefahrene gegen sechs ausgelassene sind nicht „die Hälfte
+    /// geprüft", denn unter den ausgelassenen ist die teuerste (K1).
+    pub fn anteil_prozent(&self) -> u32 {
+        let gesamt = self.gefahren.len() + self.ausgelassen.len();
+        if gesamt == 0 {
+            return 0;
+        }
+        (self.gefahren.len() * 100 / gesamt) as u32
+    }
+}

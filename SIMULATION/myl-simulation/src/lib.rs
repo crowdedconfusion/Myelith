@@ -28,4 +28,4 @@
 
 pub mod szenario;
 
-pub use szenario::{Befund, Protokolllauf, Schwere, Teilnehmer};
+pub use szenario::{Abdeckung, Befund, Protokolllauf, Schwere, Teilnehmer};

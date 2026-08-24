@@ -173,3 +173,30 @@ fn der_burn_cap_bremst_den_verbrauchs_stoss() {
          der Deckel begrenzt den Einzelnen, nicht das Kartell"
     );
 }
+
+/// **Die Simulation sagt, was sie nicht abgedeckt hat.**
+///
+/// Eine Simulation, die nur meldet, was sie geprüft hat, liest sich wie
+/// eine Abdeckung. Erst die Liste der ausgelassenen Stellen sagt, was ihr
+/// grünes Ergebnis wert ist.
+#[test]
+fn die_abdeckung_nennt_auch_die_luecken() {
+    let a = myl_simulation::Abdeckung::vollstaendig();
+    eprintln!("  Gefahren ({}):", a.gefahren.len());
+    for g in &a.gefahren {
+        eprintln!("    ✓ {g}");
+    }
+    eprintln!("  Ausgelassen ({}):", a.ausgelassen.len());
+    for (n, grund) in &a.ausgelassen {
+        eprintln!("    ✗ {n}\n        → {grund}");
+    }
+    eprintln!("  Anteil gefahrener Nähte: {} %", a.anteil_prozent());
+
+    assert!(!a.ausgelassen.is_empty(), "eine Simulation ohne Lücken gibt es nicht");
+    // Jede ausgelassene Naht trägt einen Grund; ein leerer Grund wäre
+    // eine Lücke ohne Rechenschaft.
+    for (n, grund) in &a.ausgelassen {
+        assert!(!grund.is_empty(), "{n} ist ohne Grund ausgelassen");
+    }
+    assert!(a.anteil_prozent() > 0 && a.anteil_prozent() < 100);
+}

@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",

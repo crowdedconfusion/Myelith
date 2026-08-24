@@ -32,6 +32,11 @@ on:
       - '**.md'
       - 'README/Grafiken/**'
       - 'LICENSE.md'
+  # Woechentlich, damit die langsamen Whitepaper-Simulationen auch dann
+  # laufen, wenn niemand sie anfasst: Sie brechen nicht durch fremde
+  # Aenderungen, sondern durch einen Python- oder Umgebungswechsel.
+  schedule:
+    - cron: '0 4 * * 1'
   pull_request:
     branches: [main]
     paths-ignore:
@@ -66,77 +71,6 @@ env:
 
 jobs:
   # ── Lint: rustc-Warnungen und clippy über alle Crates ────────────
-  lint:
-    name: Lint (clippy)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            SHARED_TYPES/myl-types
-            NETWORKING/myl-net
-            CONSENSUS/myl-ledger
-            CONSENSUS/myl-scheduler
-            CONSENSUS/myl-consensus
-            TOKENOMICS/myl-tokenomics
-            VERIFICATION/myl-verifier
-            GOVERNANCE/myl-governance
-            SIMULATION/myl-simulation
-            COMPUTE_PIPELINE/myl-pod
-            TRAINING/myl-train
-            INTEGER_LLM/kernels
-            INTEGER_LLM/runtime
-            INTEGER_LLM/pipeline
-            TESTCLIENT/myl-testclient
-
-      # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
-      # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
-      # Fixed-Point-Vertrag, Matrix-Namen folgen Whitepaper-Anhang B).
-      - name: cargo clippy (alle Crates)
-        run: |
-          set -e
-          for crate in \
-            SHARED_TYPES/myl-types \
-            NETWORKING/myl-net \
-            CONSENSUS/myl-ledger \
-            CONSENSUS/myl-scheduler \
-            CONSENSUS/myl-consensus \
-            TOKENOMICS/myl-tokenomics \
-            VERIFICATION/myl-verifier \
-            GOVERNANCE/myl-governance \
-            SIMULATION/myl-simulation \
-            COMPUTE_PIPELINE/myl-pod \
-            TRAINING/myl-train \
-            INTEGER_LLM/kernels \
-            INTEGER_LLM/runtime \
-            INTEGER_LLM/pipeline \
-            TESTCLIENT/myl-testclient
-          do
-            echo "── clippy: $crate"
-            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
-          done
-
-      # `simd.rs`, `cuda.rs` und `rocm.rs` werden NUR mit ihrem Feature
-      # kompiliert — ein Lauf ohne Flags sieht sie nie. Genau daran ist
-      # der Warnungs-Check aus v0.12.41 vorbeigelaufen (Fund A19).
-      - name: cargo clippy — kernels über alle Feature-Flags
-        working-directory: INTEGER_LLM/kernels
-        run: |
-          set -e
-          for feat in cpu-simd cuda rocm; do
-            echo "── clippy: kernels --features $feat"
-            cargo clippy --all-targets --features "$feat" -- -D warnings
-          done
-
-  # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
   kernels:
     name: Kernels Tests
     runs-on: ubuntu-latest
@@ -253,8 +187,22 @@ jobs:
   # Vollständig: alle acht myl-*-Crates. Fehlende Abdeckung war die
   # Ursache dafür, dass ein kaputter Testbuild in myl-scheduler
   # unentdeckt in main landen konnte.
+  # ── Ein Job fuer Clippy UND Tests derselben Crates ─────────────────
+  #
+  # Bis zum 2026-08-24 waren das zwei Jobs, `lint` und `network-crates`,
+  # ueber **denselben** Crates. Beide bauten den vollen
+  # Abhaengigkeitsbaum — libp2p, blst, borsh — und beide zahlten ihn
+  # einzeln: Die Tests selbst kosten zusammen **33 Sekunden**, die
+  # Uebersetzung Minuten.
+  #
+  # `cargo clippy` und `cargo test` erzeugen zwar verschiedene Artefakte
+  # fuer das **lokale** Crate, teilen sich aber die uebersetzten
+  # Abhaengigkeiten. In einem Job entsteht der Baum einmal.
+  #
+  # **Nichts ist entfallen**, nur zusammengelegt. Clippy laeuft zuerst:
+  # Eine Warnung soll melden, bevor Minuten in Tests gehen.
   network-crates:
-    name: Network Crates Tests
+    name: Clippy + Tests (Protokoll-Crates)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -278,6 +226,47 @@ jobs:
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
             TESTCLIENT/myl-testclient
+
+      # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
+      # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
+      # Fixed-Point-Vertrag, Matrix-Namen folgen Whitepaper-Anhang B).
+      - name: cargo clippy (alle Crates)
+        run: |
+          set -e
+          for crate in \
+            SHARED_TYPES/myl-types \
+            NETWORKING/myl-net \
+            CONSENSUS/myl-ledger \
+            CONSENSUS/myl-scheduler \
+            CONSENSUS/myl-consensus \
+            TOKENOMICS/myl-tokenomics \
+            VERIFICATION/myl-verifier \
+            GOVERNANCE/myl-governance \
+            SIMULATION/myl-simulation \
+            COMPUTE_PIPELINE/myl-pod \
+            TRAINING/myl-train \
+            INTEGER_LLM/kernels \
+            INTEGER_LLM/runtime \
+            INTEGER_LLM/pipeline \
+            TESTCLIENT/myl-testclient
+          do
+            echo "── clippy: $crate"
+            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
+          done
+
+      # `simd.rs`, `cuda.rs` und `rocm.rs` werden NUR mit ihrem Feature
+      # kompiliert — ein Lauf ohne Flags sieht sie nie. Genau daran ist
+      # der Warnungs-Check aus v0.12.41 vorbeigelaufen (Fund A19).
+      - name: cargo clippy — kernels über alle Feature-Flags
+        working-directory: INTEGER_LLM/kernels
+        run: |
+          set -e
+          for feat in cpu-simd cuda rocm; do
+            echo "── clippy: kernels --features $feat"
+            cargo clippy --all-targets --features "$feat" -- -D warnings
+          done
+
+  # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
 
       - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types
@@ -518,11 +507,36 @@ jobs:
       # Der Schritt schlaegt fehl, wenn einer von ihnen **durchlaeuft**:
       # dann ist er entweder implementiert (und gehoert aus der Liste)
       # oder er meldet seinen Zustand nicht mehr.
+      # Zwei der Simulationen machen 84 der 89 Sekunden aus
+      # (`topk_stability_sim.py` 56 s, `robustness_sim.py` 28 s). Ihre
+      # Stichprobenzahlen zu senken waere der naheliegende Weg und der
+      # falsche: `N_TRIALS = 400` und `N = 60_000` sind die Werte, mit
+      # denen die Zahlen des Anhangs entstanden sind.
+      #
+      # Sie laufen deshalb **nur, wenn sie sich geaendert haben** oder
+      # woechentlich per Zeitplan. Sie brechen nicht durch fremde
+      # Aenderungen, sondern durch eigene und durch einen Python-Wechsel;
+      # gegen das erste hilft der Diff, gegen das zweite der Zeitplan.
+      - name: Geaenderte Simulationen ermitteln
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "langsame=ja" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "${{ github.event.before }}" HEAD 2>/dev/null \
+               | grep -q 'README/Whitepaper/simulations/'; then
+            echo "langsame=ja" >> "$GITHUB_OUTPUT"
+          else
+            echo "langsame=nein" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Alle Simulationen ausfuehren
         working-directory: README/Whitepaper/simulations
+        env:
+          LANGSAME: ${{ steps.diff.outputs.langsame }}
         run: |
           set -e
           GEPLANT="latency_sim.py security_sim.py"
+          LANGSAM="topk_stability_sim.py robustness_sim.py"
           for f in *.py; do
             case " ${GEPLANT} " in
               *" ${f} "*)
@@ -534,6 +548,14 @@ jobs:
                 fi
                 echo "  GEPLANT (M1): ${f}"
                 continue
+                ;;
+            esac
+            case " ${LANGSAM} " in
+              *" ${f} "*)
+                if [ "${LANGSAME}" != "ja" ]; then
+                  echo "  UEBERSPRUNGEN (langsam, unveraendert): ${f}"
+                  continue
+                fi
                 ;;
             esac
             python3 "$f" >/dev/null
