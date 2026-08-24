@@ -34,8 +34,31 @@ pub fn ema_update(prev: u64, sample: u64) -> u64 {
 /// ergibt einen überkorrigierenden Schritt und ist für den
 /// Protokollgebrauch nicht vorgesehen; die Funktion bleibt aber total
 /// und deterministisch.
+///
+/// ## ⚑ Fund 47: „total" galt nur im Release-Build
+///
+/// Die Zusage oben stand hier von Anfang an, und zwei Dinge hielten sie
+/// nicht:
+///
+/// 1. Ein `debug_assert!` fing `num > den` ab — also **panisch im
+///    Debug-Build, still im Release-Build**. Eine Funktion, die je nach
+///    Bauprofil abstürzt oder rechnet, ist nicht total, und zwei Knoten
+///    mit verschiedenen Profilen sind sich uneins.
+/// 2. Der Abschluss `new as u64` **läuft um**. Für `num > den` kann der
+///    Schritt unter null gehen; `−200 as u64` ist ein Wert nahe 2⁶⁴, und
+///    der geht als geglättetes Burn-Volumen direkt in `mint_amount`, wo
+///    er die Prägung an die Obergrenze treibt.
+///
+/// Erreichbar ist das, weil α ein Governance-Parameter ist. Beides
+/// behoben: Der `debug_assert` ist weg, und das Ergebnis wird auf den
+/// `u64`-Bereich **beschnitten** statt umgelaufen. Ein überkorrigierender
+/// Schritt bleibt ein Parameter-Fehler, aber er endet jetzt bei 0 oder
+/// `u64::MAX` und auf jedem Bauprofil gleich.
+///
+/// Die Prüfung von α gehört in die Governance-Schicht; diese Funktion
+/// kann sie nicht ersetzen, sie kann nur aufhören, den Fehler zu
+/// verstärken.
 pub fn ema_update_with_alpha(prev: u64, sample: u64, num: u64, den: u64) -> u64 {
-    debug_assert!(den > 0 && num > 0 && num <= den, "EMA-Bruch muss in (0,1] liegen");
     if den == 0 {
         // Defensiv: ein Nenner von 0 ist ein Parameter-Fehler; das
         // Verhalten bleibt deterministisch (Zustand unverändert).
@@ -44,7 +67,7 @@ pub fn ema_update_with_alpha(prev: u64, sample: u64, num: u64, den: u64) -> u64 
     let delta = sample as i128 - prev as i128;
     let step = delta * num as i128 / den as i128;
     let new = prev as i128 + step;
-    new as u64
+    new.clamp(0, u64::MAX as i128) as u64
 }
 
 #[cfg(test)]

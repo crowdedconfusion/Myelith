@@ -14,9 +14,11 @@
 //!    Migrationspunkt dokumentiert (PQ-Noise/Hybrid-KEM, sobald
 //!    standardisiert).
 //! 2. **Latenzmessung:** Ping alle 15 s je aktivem Peer, EMA-geglättetes
-//!    RTT (α = 0,25), signiertes Attest alle 5 Minuten ins Gossip. Die
+//!    RTT (α = 1/4), signiertes Attest alle 5 Minuten ins Gossip. Die
 //!    Werte sind später Governance-Parameter; die EMA rechnet in
-//!    Ganzzahlen (Festkomma), keine Gleitkomma-Arithmetik.
+//!    Ganzzahlen (Festkomma, Mikrosekunden), keine Gleitkomma-Arithmetik.
+//!    *Diese Zusage stand hier von Anfang an und wurde bis zum
+//!    2026-08-23 nicht eingehalten, siehe Fund 44 in `latency.rs`.*
 //! 3. **Verschlüsselung: zwei Schichten.** Transport (libp2p-Noise,
 //!    Hop-für-Hop) plus verpflichtende Session-E2E (Schlüssel je
 //!    Pod/Epoche, Rotation bei Epochenwechsel, Forward Secrecy). Ein
@@ -45,7 +47,7 @@ pub use gossip::{
 };
 pub use identity::NodeIdentity;
 pub use latency::{
-    LatencyTracker, PeerLatency, PingMessage, PongMessage, EMA_ALPHA, PING_INTERVAL_SECS,
+    LatencyTracker, PeerLatency, PingMessage, PongMessage, PING_INTERVAL_SECS,
 };
 pub use node::{build_swarm, MylBehaviour};
 pub use runtime::{run_node, InboundMessage, NodeCommand, NodeEvent};

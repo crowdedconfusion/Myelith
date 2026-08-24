@@ -26,12 +26,41 @@ pub struct MintParams {
 /// Ein Nenner von 0 ist ein Parameter-Fehler; die Funktion bleibt
 /// deterministisch und prägt dann 0 (sichere Seite: nichts prägen statt
 /// überprägen).
+///
+/// ## ⚑ Fund 46: Die Verbreiterung stand eine Rechnung zu spät
+///
+/// Hier stand `(params.subsidy_den + params.subsidy_num) as u128`. Die
+/// **Addition** geschieht darin in `u64` und erst ihr Ergebnis wird
+/// verbreitert; für `den + num > u64::MAX` läuft sie über. Im Debug-Build
+/// ist das eine Panik, im Release-Build eine Prägung, die nicht der
+/// Formel entspricht: Zwei Knoten mit verschiedenen Bauprofilen kämen zu
+/// verschiedenen Geldmengen, und das ist ein Konsensbruch.
+///
+/// Der Kommentar eine Zeile darüber sagte ausdrücklich „Zwischenrechnung
+/// in `u128`, weil B̄_e · (den+num) den u64-Bereich überschreiten kann".
+/// Die Aufmerksamkeit galt der Multiplikation; die Addition davor stand
+/// im selben Ausdruck und blieb schmal.
+///
+/// Erreichbar ist der Fall, weil `subsidy_num` und `subsidy_den`
+/// Governance-Parameter sind (Kap. 10.3): Was der Typ zulässt, kann eine
+/// Abstimmung setzen. Gefunden von der adversarialen Testebene (K4).
 pub fn mint_amount(ema_burn: u64, params: &MintParams) -> u64 {
     debug_assert!(params.subsidy_den > 0, "Subventions-Nenner muss > 0 sein");
     if params.subsidy_den == 0 {
         return 0;
     }
-    let numerator = ema_burn as u128 * (params.subsidy_den + params.subsidy_num) as u128;
+    // Erst verbreitern, dann rechnen — nicht umgekehrt (Fund 46).
+    let faktor = params.subsidy_den as u128 + params.subsidy_num as u128;
+    // Auch `u128` reicht am Rand nicht: B̄_e und der Faktor erreichen je
+    // rund 1,8·10¹⁹ bzw. 3,7·10¹⁹, ihr Produkt 6,8·10³⁸ und damit mehr
+    // als u128::MAX ≈ 3,4·10³⁸.
+    //
+    // **Sättigen ist hier nicht bloß sicher, sondern exakt.** Sättigt das
+    // Produkt, so ist `u128::MAX / den ≥ 3,4·10³⁸ / 1,8·10¹⁹ ≈ 1,8·10¹⁹`
+    // und damit größer als jedes `m_max` in `u64`; der Deckel greift, und
+    // er hätte auch beim wahren, noch größeren Wert gegriffen. Das
+    // Ergebnis ist dasselbe wie bei unbeschränkter Rechnung.
+    let numerator = (ema_burn as u128).saturating_mul(faktor);
     let minted = numerator / params.subsidy_den as u128;
     let capped = minted.min(params.m_max as u128);
     capped as u64

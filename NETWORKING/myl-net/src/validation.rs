@@ -19,6 +19,32 @@
 //!    Hashes bzw. Feldgrenzen) — das ist alles, was ohne Kenntnis der
 //!    Segment-Spur bzw. des Netzzustands entscheidbar ist.
 //!
+//! ## ⚑ Fund 45: Wie viel Stufe 3 wirklich filtert
+//!
+//! Hier stand bis zum 2026-08-23 „vollständige Borsh-Strukturprüfung".
+//! Das sagt mehr, als geschieht, und die adversariale Testebene hat es
+//! gemessen: Von 20 000 verstümmelten Nachrichten kamen durch
+//!
+//! | Topic | angenommen | warum |
+//! |---|---|---|
+//! | `PoiBundles` | **20 000 von 20 000** | nur Felder fester Länge |
+//! | `Challenges` | **20 000 von 20 000** | dito, plus zwei Ungleichungen, die Zufall erfüllt |
+//! | `LatencyAttests` | 9 081 von 20 000 | enthält einen Vektor, dessen Längenkopf passen muss |
+//!
+//! **Bei einem Typ aus lauter Feldern fester Länge ist ein Borsh-Parse
+//! eine Längenprüfung.** Jede Bytefolge der richtigen Länge ist ein
+//! gültiges `PoIBundle`. Das ist kein Fehler, sondern eine Eigenschaft
+//! des Formats, aber es verschiebt die Frage: Die Verteidigung für
+//! PoI-Bündel ist die Aggregatsignatur, und die kann L0 nicht prüfen.
+//! **Solange kein [`PayloadValidator`] verdrahtet ist, verbreitet ein
+//! Knoten ein Bündel aus Zufallsbytes weiter.** Das gilt es zu wissen,
+//! bevor jemand aus „Strukturprüfung" schließt, das Netz filtere schon.
+//!
+//! Festgehalten als Tatsache in
+//! `tests/adversarial.rs::fuer_feste_typen_ist_die_borsh_pruefung_eine_laengenpruefung`:
+//! Der Test schlägt fehl, sobald jemand eine echte Prüfung ergänzt, und
+//! zwingt damit zur Aktualisierung dieser Stelle.
+//!
 //! **Blöcke und Transaktionen bleiben bewusst bei der Größenprüfung.**
 //! Ihre Typen liegen in `myl-consensus` (L1); `myl-net` ist die
 //! Netzschicht (L0) und darf nicht an die Konsensschicht hängen, sonst
@@ -111,8 +137,11 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
         });
     }
     match topic {
-        // PoI-Bündel: vollständige Borsh-Strukturprüfung gegen den
-        // myl-types-Typ (Anhang A.1).
+        // PoI-Bündel: Borsh-Parse gegen den myl-types-Typ (Anhang A.1).
+        // Da der Typ nur Felder fester Länge hat, ist das in der Sache
+        // eine Längenprüfung — siehe Fund 45 in der Moduldoku. Die
+        // inhaltliche Prüfung ist die Aggregatsignatur und gehört in
+        // einen PayloadValidator.
         GossipTopic::PoiBundles => {
             borsh::from_slice::<myl_types::PoIBundle>(data)
                 .map_err(|_| ValidationError::MalformedPayload)?;

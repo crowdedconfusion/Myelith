@@ -1,11 +1,18 @@
 # networking (`myl-net`)
 
-> **Version:** 0.2.5
-> **Datum:** 2026-08-18
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3).
+> **Version:** 0.3.0
+> **Datum:** 2026-08-23
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3),
+> dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser).
 > Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet. Phase 2: Paarlatenzmessung mit
 > EMA-Glättung, Latenz-Atteste, LatencyGraph, Geo-/AS-Diversität.
+> 37 + 14 Tests grün.
+>
+> ⚑ **Fund 44:** Die Latenz-EMA rechnete in `f64`, obwohl der Kopf des
+> Crates seit dem ersten Tag Festkomma zusagt. Der Gleitkomma-Audit
+> konnte es nicht finden, weil `myl-net` mit **keiner Datei** in seiner
+> Liste stand. Beides behoben.
 
 P2P-Gossip, latenzbasierte Topologie-Erkennung, verschlüsselte
 Aktivierungs-Streams. Referenzimplementierung von Whitepaper Kap. 3.2

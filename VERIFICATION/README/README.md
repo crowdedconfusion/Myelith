@@ -1,11 +1,17 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.3.2
+> **Version:** 0.4.0
 > **Datum:** 2026-08-23
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5):
-> Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2) mit Checker-Modul,
-> Challenge-Erzeugung, Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik.
-> 66 Tests grün.
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5), dazu
+> die adversariale Testebene aus Punkt 4.4: Redundanzvergleich (Stufe 1),
+> Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
+> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik.
+> 67 + 19 Tests grün.
+>
+> ⚑ **Die adversariale Ebene fand Fund 42:** Das Bisektions-Spiel nannte
+> systematisch die **falsche Layer** und hätte damit den Betrüger
+> freigesprochen und den ehrlichen Checker geschlachtet. Behoben in
+> v0.4.0, siehe Changelog.
 
 Verifikations-Subsystem: Redundanzvergleich, Bisektions-Spiel (Stufe 2),
 Kontrollsegmente (Stufe 3). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
@@ -83,12 +89,113 @@ match decision {
 
 ## Tests
 
-21 Tests grün (11 redundancy + 10 delivery):
-- Commitment-Hash-Vergleich (identisch, abweichend, Längen-Mismatch)
-- Auslieferungsentscheidungen (Optimistic/Confirmed × Match/Mismatch)
-- Fehlerbehandlung (leere Spuren, Längen-Mismatch)
+**67 Modultests** über alle sieben Module, dazu **19 adversariale Tests**
+in `tests/adversarial.rs` (Fahrplanpunkt 4.4, Kritikpunkt K4).
+
+Die Modultests belegen den Erfolgsfall: Commitment-Vergleich,
+Auslieferungsentscheidungen, Fehlerbehandlung, Rundenzahl der Bisektion.
+Die adversariale Ebene verlangt das Gegenteil, nämlich dass ein Angriff
+**scheitert**:
+
+| Angriff | abgewehrt, weil |
+|---|---|
+| eine andere Eingabe unterschieben, die zum erwarteten Ergebnis führt | die Offenlegung ist an `input_hash` aus der Spur gebunden (Fund A11) |
+| ein Hash, der nicht zur offengelegten Aktivierung passt | Selbstauskunft wird nachgerechnet |
+| eine Antwort aus einem anderen Streitfall wiedereinspielen | Segment-Id und Position sind gebunden |
+| gar nicht antworten | Schweigen ist kein Freispruch |
+| eine Eingabe liefern, an der die Ausführung scheitert | Fehlschlag zählt als Schuld |
+| in der falschen Runde antworten | Rundenbindung, und die Runde wird nicht verbraucht |
+| eine Offenlegung zu einer anderen Position einsetzen | `PositionMismatch` |
+| das Spiel endlos ziehen | Rundendeckel, danach `AlreadyComplete` |
+| eine unbrauchbare Spurlänge unterschieben (0, 2⁶³) | `InvalidTraceLength` statt Schuldspruch bzw. Panik |
+| eine Challenge ohne Abweichung eröffnen | `NoDivergence` |
+| eine Challenge außerhalb der Spur | `InvalidPosition` |
+| eine verkürzte Spur einreichen, um den Betrug abzuschneiden | `LengthMismatch`, kein `Match` |
+| sich selbst herausfordern, um das Kopfgeld zu kassieren | `IdenticalMiners` |
+| 20 000 zufällige Schiedsrunden | keine spricht frei, keine stürzt ab |
+| 20 000 zufällige Antwortfolgen im Spiel | keine Panik, jede endet, jede genannte Position liegt in der Spur |
+
+**Drei Gegenproben stehen davor**, denn eine Prüfung, die alles ablehnt,
+lehnt auch jeden Angriff ab: Das Spiel muss die **richtige** Layer nennen,
+wer nirgends abweicht darf nicht verurteilt werden, und die ehrliche
+Schiedsrunde muss freisprechen.
+
+Die erste dieser Gegenproben ist es, die Fund 42 gefunden hat. Sie ist
+gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
+umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### myl-verifier v0.4.0 – 2026-08-23 (adversariale Testebene, Punkt 4.4; ⚑ Fund 42 und 43)
+
+**Fahrplanpunkt 4.4 „Adversariales Fuzzing Challenge/Verdict" erfüllt**,
+und er hat sich sofort bezahlt gemacht.
+
+#### ⚑ Fund 42: Das Bisektions-Spiel nannte die falsche Layer
+
+Bei einer Spur der Länge 16 und einer echten Abweichung an Position `d`
+nannte das Spiel für **jedes** `d` von 1 bis 15 die Position `d − 1`. Nur
+`d = 0` traf zu, und das aus Versehen: dort kann die untere Grenze nicht
+mehr fallen.
+
+Ursache war eine Grenzverschiebung um eins. Bei Einigkeit an `mid` wurde
+`lower = mid` gesetzt statt `mid + 1`, obwohl `mid` als Kandidat damit
+ausgeschlossen ist; die Suche kam eine Position zu früh zum Stehen.
+
+**Die Wirkung ist die Umkehrung des Verfahrens.** Die Schiedsrunde rechnet
+die genannte Layer nach. Layer `d − 1` hat der Angeklagte korrekt
+gerechnet, sein Ergebnis stimmt, und er wird **freigesprochen**;
+anschließend verliert der Checker, der die Abweichung zu Recht gemeldet
+hat, und wird geschlachtet. Stufe 2 der Verifikationsarchitektur hätte in
+15 von 16 Fällen den Betrüger belohnt und den ehrlichen Prüfer bestraft.
+
+**Warum es niemand sah:** Die Bestandstests prüften „konvergiert nach
+O(log L) Runden" und „grenzt auf ein Intervall der Länge 1 ein". Beides
+war wahr. Dass die genannte Position die **richtige** ist, prüfte keiner.
+Das Modul hat außerdem bis heute keinen Aufrufer außerhalb des Crates,
+also fiel es auch im Betrieb nicht auf.
+
+#### ⚑ Fund 43: Die Antwort des Angeklagten war ohne Wirkung
+
+`process_response_with_comparison` entschied aus zwei Hashes, die der
+**Aufrufer** mitgab, und ließ `response.activation_hash` unbenutzt. Ein
+Checker, der beide Spuren ohnehin hat, braucht dafür kein Gegenüber; das
+Protokoll war also nicht interaktiv, und die Offenlegung des Angeklagten
+war an nichts gebunden. Dieselbe Lücke, die Fund A11 in der Schiedsrunde
+geschlossen hat, eine Ebene höher.
+
+Die zweite Fassung `process_response` bekam den erwarteten Hash zwar
+übergeben, verglich ihn in einem **leeren `if`-Block** und setzte danach
+weder `lower` noch `upper`. Sie verbrauchte nur Runden und endete
+zwangsläufig in `Incomplete`, obwohl ihre Dokumentation „aktualisiert den
+Session-Zustand" zusagte.
+
+#### Drei kleinere Funde im selben Modul
+
+- **Die leere Spur war ein Schuldspruch.** `BisectionSession::new(id, 0)`
+  lieferte sofort `DivergenceFound { position: 0 }`, also eine
+  Verurteilung ohne eine einzige Runde. Jetzt `InvalidTraceLength`.
+- **Eine absurde Spurlänge war eine Panik.** `next_power_of_two()` läuft
+  jenseits von 2⁶³ über. Jetzt abgewiesen, Obergrenze 2⁶².
+- **`(lower + upper) / 2` konnte überlaufen.** Im Debug-Build eine Panik,
+  im Release-Build eine stille Falschrechnung, und damit zwei
+  Schiedsrichter mit verschiedenen Bauprofilen bei verschiedenen Urteilen.
+  Jetzt `lower + (upper − lower) / 2`.
+- **`InProgress` ersetzt `NoDivergence` für die laufende Session.** Wer
+  das Ergebnis einer laufenden Bisektion abfragte, bekam einen Freispruch;
+  „noch nicht entschieden" und „nichts gefunden" sind zwei Aussagen.
+  `NoDivergence` bedeutet jetzt, was der Name sagt.
+
+#### Schnittstelle (breaking, ohne Aufrufer)
+
+- `BisectionSession::new` liefert `Result`
+- `BisectionResponse` trägt `position`, womit `PositionMismatch` erstmals
+  tatsächlich eintreten kann (die Variante war definiert und wurde nie
+  zurückgegeben)
+- `BisectionSession` trägt `trace_len`
+- `process_response_with_comparison` entfällt, `process_response` grenzt
+  jetzt wirklich ein
+- `BisectionResult::InProgress` neu
 
 ### myl-verifier v0.3.2 – 2026-08-23 (die Spur ist Layer-granular geworden)
 

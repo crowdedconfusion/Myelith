@@ -36,6 +36,32 @@ pub fn activation_hash(activations: &[i16]) -> [u8; 32] {
 /// Borsh-serialisiert über `(segment_id, shard_index, position,
 /// prev_hash, next_hash)`. Für Shard 0 ist `prev_hash` der Null-Hash
 /// (es gibt keinen vorherigen Spur-Eintrag).
+///
+/// # ⚑ Diese Botschaft hat als einzige im Projekt keine Domain-Separation
+///
+/// Jede andere Signaturverwendung trägt ein Präfix im Klartext
+/// (`MYELITH_BFT_VOTE_v1`, `MYELITH_POI_BUNDLE_v1` und so fort). Diese
+/// nicht: Sie beginnt mit den 32 Bytes der Segment-Id.
+///
+/// **Eine Verwechslung ist heute unmöglich, aber nicht durch Design.**
+/// Die Botschaft ist 112 Bytes lang, und keine andere Klasse ist das
+/// (59, 61, 62, 74, 101, 48). Der Schutz ist ein **Längenzufall**. Er
+/// verschwindet still, sobald jemand eine Klasse auf 112 Bytes bringt
+/// oder dieses `struct` um ein Feld ändert: Kein Test schlägt fehl, kein
+/// Kompilat bricht.
+///
+/// **Warum es zählt:** Ein Miner benutzt seinen BLS-Schlüssel sowohl
+/// hier als auch als Pod-Mitglied für PoI-Bündel. Kollidierten zwei
+/// Klassen, ließe sich eine in der einen Rolle abgegebene Signatur in
+/// der anderen einsetzen — je nach Richtung ein erschlichener
+/// Arbeitsanspruch oder ein gefälschter Rechenschritt im Streitfall.
+///
+/// **Nicht behoben, weil es das Drahtformat ändert.** Ein
+/// `DST_SHARD_TRANSITION_v1` vor den Borsh-Bytes kostet eine Zeile und
+/// ist additiv, ist aber eine Protokolländerung und gehört mit den
+/// übrigen offenen Punkten von COMPUTE_PIPELINE entschieden. Steht im
+/// Fahrplan und in `SHARED_TYPES/README/Signatur-Bedrohungsmodell.md`
+/// (Abschnitt 4.1).
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct TransitionSig {
     pub segment_id: SegmentId,

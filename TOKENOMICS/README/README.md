@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -46,7 +46,89 @@ TOKENOMICS/
         └── training.rs        Trainingsvergütungs-Obergrenze (≤ 70 %)
 ```
 
+## Tests
+
+**62 Modultests**, dazu **17 adversariale Tests** in `tests/adversarial.rs`
+(Kritikpunkt K4).
+
+Die Modultests belegen, dass die Formeln die vorgesehenen Werte liefern,
+also den Erfolgsfall. Die adversariale Ebene prüft die **Eigenschaften,
+die nach jeder Rechnung gelten müssen**, über Eingaben, die niemand
+ausgesucht hat, einschließlich der Ränder des Zahlbereichs:
+
+| Eigenschaft | warum sie zählt |
+|---|---|
+| die Verteilung gibt genau die Prägung aus | ein verschwundener Rest ist Geld, das niemand bekommt; ein doppelter ist Geld aus dem Nichts |
+| kein Empfänger bekommt mehr als seinen Schlüssel | sonst wäre „Rundungsrest" ein Kanal |
+| die Prägung übersteigt nie `M_max` | der einzige harte Deckel der Geldmenge |
+| extreme Subventionsparameter prägen nicht aus dem Nichts | ⚑ Fund 46 |
+| die proportionale Aufteilung zahlt exakt `total` aus | weder mehr noch weniger |
+| doppelte Adressen zahlen nicht doppelt | Gewichte werden zusammengeführt |
+| ein EMA-Schritt geht nie über die Stichprobe hinaus | sonst folgte die Prägung einem Wert, den niemand verbrannt hat |
+| ein α über 1 läuft nicht um | ⚑ Fund 47 |
+| der Preis läuft an keiner Eingabe um | ⚑ Fund 46, dritte Stelle |
+| `exp_approx` hält jede Eingabe aus | ein Index außerhalb der Tabelle wäre eine Panik im Konsenspfad |
+| die Trainingsvergütung bleibt unter 70 % | Kap. 5.6: sonst wäre Training attraktiver als Inferenz |
+| die Redundanz-Normierung rundet nach unten | sonst bekämen zwei Pods zusammen mehr als eine volle Gutschrift |
+| ein Zuschnitt beansprucht nie mehr als das ganze Modell | die Abrechnungsgrundlage des Netzes |
+| ein Zuschnitt außerhalb des Modells wird abgelehnt | sonst ließe sich Arbeit abrechnen, die es nicht gibt |
+
+**Warum die Ränder und nicht nur plausible Werte:** Alle Parameter dieses
+Crates sind für Governance vorgesehen (Kap. 10.3). Eine Abstimmung kann
+jeden auf jeden Wert setzen, den der Typ hergibt. „So wird das niemand
+konfigurieren" ist keine Zusicherung, sondern eine Hoffnung.
+
+**Die Gegenprobe steht dabei:** Ein vollständiger Zuschnitt muss die
+volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
+verletzt keine Obergrenze.
+
 ## Changelog
+
+### v0.5.0 – 2026-08-23 (adversariale Testebene, K4; ⚑ Funde 46 und 47)
+
+#### ⚑ Fund 46: Die Verbreiterung stand eine Rechnung zu spät, an drei Stellen
+
+Drei Funktionen rechnen ausdrücklich in `u128` bzw. `i128`, „um Überlauf
+zu vermeiden", und alle drei liefen trotzdem über, jeweils **eine
+Operation früher, als der Kommentar hinsah**:
+
+| Stelle | schmale Rechnung | Wirkung |
+|---|---|---|
+| `mint_amount` | `(den + num) as u128` — die Addition ist `u64` | Prägung entspricht nicht der Formel |
+| `update_price` | `utilization_e - utilization_target` in `i64` | Vorzeichen kippt: Überlast **senkt** den Preis |
+| `update_price` | der Abschluss `as i64` nach der `i128`-Rechnung | aus einem hohen Preis wird ein **negativer** |
+
+Der letzte ist der teuerste: Ein negativer Credit-Preis heißt, dass das
+Protokoll Nutzern Geld dafür gibt, Inferenz zu verbrauchen.
+
+In `mint_amount` reicht auch `u128` am Rand nicht (6,8·10³⁸ gegen
+u128::MAX ≈ 3,4·10³⁸). Dort wird gesättigt, und das ist **nicht bloß
+sicher, sondern exakt**: Sättigt das Produkt, greift der Deckel `M_max`,
+und er hätte auch beim wahren, größeren Wert gegriffen.
+
+Alle drei sind erreichbar, weil Subventionsrate, κ und Auslastungsziel
+Governance-Parameter sind. Im Debug-Build eine Panik, im Release-Build
+eine stille Falschrechnung, also zwei Bauprofile mit zwei Ergebnissen.
+
+#### ⚑ Fund 47: „total" galt nur im Release-Build
+
+Die Doku von `ema_update_with_alpha` sagte zu, die Funktion bleibe „total
+und deterministisch" auch für α > 1. Zwei Dinge hielten das nicht: ein
+`debug_assert!` ließ sie im Debug-Build **abstürzen** und im Release-Build
+weiterrechnen, und der Abschluss `as u64` lief um. Ein überkorrigierender
+Schritt kann unter null gehen; `−200 as u64` ist ein Wert nahe 2⁶⁴, und
+der geht als geglättetes Burn-Volumen direkt in `mint_amount`, wo er die
+Prägung an die Obergrenze treibt.
+
+Der `debug_assert` ist weg, das Ergebnis wird beschnitten. Die Prüfung von
+α gehört in die Governance-Schicht; diese Funktion kann sie nicht
+ersetzen, sie kann nur aufhören, den Fehler zu verstärken.
+
+#### Eichung
+
+Alle drei Tests sind gegen die wieder eingebauten Fehler geprüft und
+schlagen in allen drei Fällen an. Die K8-Rechnung liefert nach den
+Korrekturen unveränderte Werte (1,8× bei 7B, 3,2× bei 0,5B).
 
 ### v0.4.0 – 2026-08-23 (K8: die wirtschaftliche Frage, gerechnet)
 

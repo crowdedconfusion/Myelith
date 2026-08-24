@@ -142,21 +142,41 @@ pub fn update_price(
     utilization_e: i64,
     utilization_target: i64,
 ) -> i64 {
-    // Berechne Exponent: κ(u_e − u*)
-    let delta_util = utilization_e - utilization_target;
-    // Multiplikation: kappa * delta_util (beide mit 16 Bit Nachkommastellen)
-    // Ergebnis hat 32 Bit Nachkommastellen, aber wir brauchen 16 Bit für exp_approx
-    // Verwende i128 für Zwischenrechnung, um Überlauf zu vermeiden
-    let exponent = ((kappa as i128 * delta_util as i128) / EXP_SCALE as i128) as i64;
+    // Berechne Exponent: κ(u_e − u*).
+    //
+    // ⚑ Fund 46: Hier stand `utilization_e - utilization_target` in
+    // `i64`, und erst das Ergebnis ging nach `i128`. Die **Subtraktion**
+    // läuft für weit auseinanderliegende Werte über — im Debug-Build eine
+    // Panik, im Release-Build ein Preis-Update mit umgedrehtem
+    // Vorzeichen: Überlast würde den Preis senken statt heben. Dieselbe
+    // Form wie in `mint.rs`, und derselbe Kommentar zwei Zeilen weiter,
+    // der die Verbreiterung ausdrücklich zusagt. Erst verbreitern, dann
+    // rechnen.
+    let delta_util = utilization_e as i128 - utilization_target as i128;
+    // Multiplikation: kappa * delta_util (beide mit 16 Bit Nachkommastellen).
+    // Das Ergebnis wird auf den Tabellenbereich beschnitten, den
+    // `exp_approx` ohnehin erzwingt; die Beschneidung hier hält den
+    // Zwischenwert im i64-Bereich, statt ihn beim Cast umlaufen zu lassen.
+    let exponent_weit = (kappa as i128 * delta_util) / EXP_SCALE as i128;
+    let exponent = exponent_weit.clamp(EXP_MIN as i128, EXP_MAX as i128) as i64;
 
     // Berechne exp(κ(u_e − u*))
     let exp_factor = exp_approx(exponent);
 
-    // Multipliziere: P_e · exp(...)
-    // price_e hat 32 Bit Nachkommastellen, exp_factor hat 32 Bit Nachkommastellen
-    // Ergebnis soll 32 Bit Nachkommastellen haben
-    // Verwende i128 für Zwischenrechnung, um Überlauf zu vermeiden
-    ((price_e as i128 * exp_factor as i128) / RESULT_SCALE as i128) as i64
+    // Multipliziere: P_e · exp(...).
+    // price_e und exp_factor haben je 32 Bit Nachkommastellen, das
+    // Ergebnis soll ebenfalls 32 haben.
+    //
+    // ⚑ Fund 46, dritte Stelle: Die Zwischenrechnung lief zwar in `i128`,
+    // der **Abschluss `as i64` aber lief um**. Bei einem hohen Preis und
+    // einem Faktor über 1 überschreitet der Quotient den i64-Bereich, und
+    // aus einem sehr hohen Preis wurde ein **negativer**: Das Protokoll
+    // hätte Nutzern Geld dafür gegeben, Inferenz zu verbrauchen.
+    //
+    // Beschnitten statt umgelaufen. Ein Preis am oberen Rand ist eine
+    // wirtschaftliche Störung, ein negativer Preis ein Angriff.
+    let neu = (price_e as i128 * exp_factor as i128) / RESULT_SCALE as i128;
+    neu.clamp(0, i64::MAX as i128) as i64
 }
 
 #[cfg(test)]

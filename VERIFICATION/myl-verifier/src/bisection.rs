@@ -1,8 +1,9 @@
 //! Interaktives Bisektionsprotokoll — Whitepaper Kap. 6.6, Anhang A.4.
 //!
-//! Binäre Eingrenzung auf die abweichende **Layer** in O(log L) Runden.
-//! Das Protokoll identifiziert die genaue Position der Abweichung zwischen
-//! primärem und redundantem Pod.
+//! Binäre Eingrenzung auf die **erste abweichende Layer** in O(log L)
+//! Runden. Das Protokoll bestimmt die Position, an der der Angeklagte von
+//! der Rechnung des Checkers abweicht; die Schiedsrunde
+//! ([`crate::adjudicate`]) rechnet genau diese eine Layer nach.
 //!
 //! **Konsens-Feld:** Das Bisektionsprotokoll ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
@@ -11,25 +12,81 @@
 //! Vorher hatte sie einen Eintrag je **Shard**, ihre Länge hing also am
 //! Zuschnitt des Pods, und [`crate::redundancy::compare_commitments`]
 //! lehnt ungleiche Längen mit `LengthMismatch` ab. Zwei redundante Pods
-//! mussten deshalb denselben Zuschnitt tragen, und der Entwurf für
-//! variable Knotenzahl je Pipeline war blockiert.
+//! mussten deshalb denselben Zuschnitt tragen.
 //!
-//! Für dieses Modul ändert sich nichts an der Rechnung: Es arbeitet auf
-//! Indizes und Hashes. Was sich ändert, ist die **Aussage des
-//! Ergebnisses**. Eingegrenzt wird jetzt die fehlerhafte Layer statt der
-//! fehlerhaften Layer-Gruppe, bei unverändertem O(log L), und die
-//! Schuldzuweisung wird entsprechend feiner.
+//! ## Worauf die Bisektion beruht
 //!
-//! **Design:** Das Protokoll ist interaktiv — der Checker fordert in jeder
-//! Runde die Offenlegung einer Aktivierung an, der Angeklagte antwortet.
-//! Nach O(log L) Runden ist die genaue Layer identifiziert.
+//! Die Aktivierungen sind **verkettet**: `a_j` hängt von `a_{j-1}` ab.
+//! Weichen zwei Läufe an Layer `d` erstmals ab, weichen sie ab da an
+//! allen folgenden Positionen ab. Das Prädikat „weicht an Position `i`
+//! ab" ist damit **monoton** (erst falsch, dann wahr), und genau darauf
+//! setzt die binäre Suche auf. Ohne die Verkettung wäre das Verfahren
+//! nicht anwendbar, egal wie es implementiert ist.
+//!
+//! ## ⚑ Fund 42: Das Spiel nannte die falsche Layer (2026-08-23)
+//!
+//! Bis v0.3.2 grenzte das Protokoll auf **`d − 1`** statt auf `d` ein,
+//! und zwar systematisch: Bei einer Spur der Länge 16 und einer echten
+//! Abweichung an Position `d` nannte das Spiel für jedes `d` von 1 bis 15
+//! die Position `d − 1`. Nur `d = 0` traf zu, und das aus Versehen, weil
+//! dort die untere Grenze nicht mehr fallen kann.
+//!
+//! Die Ursache war eine Grenzverschiebung um eins: Bei einer Abweichung
+//! an `mid` wurde `upper = mid` gesetzt, womit `mid` selbst aus dem
+//! Suchintervall fiel — obwohl `mid` der gesuchte Index sein kann.
+//!
+//! **Die Wirkung ist die Umkehrung des Verfahrens.** Die Schiedsrunde
+//! rechnet die genannte Layer nach. Layer `d − 1` hat der Angeklagte
+//! korrekt gerechnet, sein Ergebnis stimmt, und er wird
+//! **freigesprochen**; anschließend verliert der Checker, der die
+//! Abweichung zu Recht gemeldet hat, und wird geschlachtet. Stufe 2 der
+//! Verifikationsarchitektur hätte also in 15 von 16 Fällen den Betrüger
+//! belohnt und den ehrlichen Prüfer bestraft.
+//!
+//! Gefunden beim Bau der adversarialen Testebene (K4), nicht durch
+//! Codelektüre: Die Bestandstests prüften „konvergiert nach O(log L)
+//! Runden" und „grenzt auf ein Intervall der Länge 1 ein", aber
+//! **keiner** prüfte, ob die genannte Position die richtige ist.
+//! `tests/adversarial.rs::das_spiel_nennt_die_richtige_layer` fährt
+//! seither jede Position jeder Spurlänge durch.
+//!
+//! ## ⚑ Fund 43: Die Antwort des Angeklagten war ohne Wirkung
+//!
+//! `process_response_with_comparison` entschied aus zwei Hashes, die der
+//! **Aufrufer** mitgab, und ließ `response.activation_hash` unbenutzt.
+//! Ein Checker, der beide Spuren ohnehin hat, braucht dafür kein
+//! Gegenüber; das Protokoll war also nicht interaktiv, und die
+//! Offenlegung des Angeklagten war an nichts gebunden. Das ist dieselbe
+//! Lücke, die Fund A11 in der Schiedsrunde geschlossen hat, eine Ebene
+//! höher.
+//!
+//! Die zweite Fassung `process_response` bekam den erwarteten Hash zwar
+//! übergeben, verglich ihn in einem **leeren `if`-Block** und setzte
+//! danach weder `lower` noch `upper`. Sie verbrauchte nur Runden und
+//! endete zwangsläufig in `Incomplete`, obwohl ihre Dokumentation
+//! „aktualisiert den Session-Zustand" zusagte.
+//!
+//! Jetzt gibt es **eine** Fassung: Sie vergleicht die offengelegte
+//! Aktivierung des Angeklagten gegen den Hash des Checkers an der
+//! angefragten Position und grenzt danach ein.
 
 use myl_types::hash::Hash;
 use myl_types::ids::SegmentId;
 
+/// Obergrenze für die Spurlänge.
+///
+/// Darüber ist `trace_len.next_power_of_two()` nicht mehr darstellbar und
+/// [`ceil_log2`] liefe über. Kein Modell hat 2⁶³ Layer; die Grenze steht
+/// hier, damit eine aus einer Nachricht übernommene Länge nicht in eine
+/// Panik führt.
+const MAX_SPURLAENGE: usize = 1usize << 62;
+
 /// Eine Bisektions-Session.
 ///
-/// Verfolgt den Zustand des Bisektionsprotokolls über mehrere Runden.
+/// **Invariante:** Die erste abweichende Position liegt in
+/// `[lower, upper)`. Anfangs ist das die ganze Spur. Bei `lower == upper`
+/// ist die Suche beendet: `lower` ist die gesuchte Position, oder gleich
+/// der Spurlänge, wenn der Angeklagte nirgends abgewichen ist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BisectionSession {
     /// ID des betroffenen Segments.
@@ -38,6 +95,8 @@ pub struct BisectionSession {
     pub lower: usize,
     /// Aktueller oberer Bound (exklusiv).
     pub upper: usize,
+    /// Länge der Spur, gegen die gespielt wird.
+    pub trace_len: usize,
     /// Anzahl der abgeschlossenen Runden.
     pub rounds: u32,
     /// Maximale Anzahl von Runden (O(log L)).
@@ -58,7 +117,13 @@ pub struct BisectionRequest {
 pub struct BisectionResponse {
     /// Runde (0-basiert).
     pub round: u32,
-    /// Offenlegte Aktivierung an der angeforderten Position.
+    /// Position, auf die sich die Antwort bezieht.
+    ///
+    /// Muss zur Anfrage passen. Ohne dieses Feld wäre eine Antwort nicht
+    /// an ihre Frage gebunden, und eine an anderer Stelle abgegriffene
+    /// Offenlegung ließe sich wiedereinspielen.
+    pub position: usize,
+    /// Offengelegte Aktivierung an der angeforderten Position.
     pub activation_hash: Hash,
 }
 
@@ -67,11 +132,18 @@ pub struct BisectionResponse {
 pub enum BisectionResult {
     /// Abweichung identifiziert (genaue Position).
     DivergenceFound {
-        /// Index der abweichenden Layer.
+        /// Index der ersten abweichenden Layer.
         position: usize,
     },
-    /// Keine Abweichung gefunden (Pods stimmen überein).
+    /// Der Angeklagte hat an keiner angefragten Position abgewichen.
     NoDivergence,
+    /// Das Spiel läuft noch.
+    ///
+    /// **Bis v0.3.2 hieß dieser Fall `NoDivergence`**, und das war
+    /// gefährlich: Wer das Ergebnis einer laufenden Session abfragte,
+    /// bekam einen Freispruch. „Noch nicht entschieden" und
+    /// „nichts gefunden" sind zwei verschiedene Aussagen.
+    InProgress,
     /// Protokoll unvollständig (maximale Runden erreicht).
     Incomplete,
 }
@@ -79,6 +151,8 @@ pub enum BisectionResult {
 /// Fehler im Bisektionsprotokoll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BisectionError {
+    /// Spurlänge null oder jenseits von [`MAX_SPURLAENGE`].
+    InvalidTraceLength { trace_len: usize },
     /// Ungültige Runde (außerhalb des erwarteten Bereichs).
     InvalidRound { expected: u32, got: u32 },
     /// Protokoll bereits abgeschlossen.
@@ -90,6 +164,9 @@ pub enum BisectionError {
 impl std::fmt::Display for BisectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidTraceLength { trace_len } => {
+                write!(f, "Unbrauchbare Spurlänge: {}", trace_len)
+            }
             Self::InvalidRound { expected, got } => {
                 write!(f, "Ungültige Runde: erwartet {}, bekommen {}", expected, got)
             }
@@ -133,51 +210,69 @@ impl BisectionSession {
     /// **Parameter:**
     /// - `segment_id`: ID des betroffenen Segments
     /// - `trace_len`: Länge der Spur (Anzahl Layer des Modells)
-    pub fn new(segment_id: SegmentId, trace_len: usize) -> Self {
-        let max_rounds = ceil_log2(trace_len) + 1;
-        Self {
+    ///
+    /// **Fehler:** `InvalidTraceLength` bei Länge 0 (eine leere Spur hat
+    /// keine Layer, die schuldig sein könnte — bis v0.3.2 lieferte die
+    /// Session dafür sofort `DivergenceFound { position: 0 }`, also eine
+    /// Verurteilung ohne eine einzige Runde) und bei Längen jenseits von
+    /// [`MAX_SPURLAENGE`], wo die Rundenzahl überliefe.
+    pub fn new(segment_id: SegmentId, trace_len: usize) -> Result<Self, BisectionError> {
+        if trace_len == 0 || trace_len > MAX_SPURLAENGE {
+            return Err(BisectionError::InvalidTraceLength { trace_len });
+        }
+        Ok(Self {
             segment_id,
             lower: 0,
             upper: trace_len,
+            trace_len,
             rounds: 0,
-            max_rounds,
-        }
+            max_rounds: Self::expected_rounds(trace_len),
+        })
     }
 
     /// Gibt die nächste Anfrage zurück (mid-Point).
     ///
-    /// **Returns:** `BisectionRequest` mit der angeforderten Position.
+    /// **Returns:** `BisectionRequest` mit der angeforderten Position,
+    /// oder `None`, wenn das Spiel abgeschlossen ist.
     pub fn next_request(&self) -> Option<BisectionRequest> {
         if self.is_complete() {
             return None;
         }
-
-        let mid = (self.lower + self.upper) / 2;
         Some(BisectionRequest {
             round: self.rounds,
-            position: mid,
+            position: self.mid(),
         })
     }
 
-    /// Verarbeitet eine Antwort und aktualisiert den Session-Zustand.
+    /// Mittelpunkt des offenen Intervalls.
+    ///
+    /// `lower + (upper − lower)/2` statt `(lower + upper)/2`: Die zweite
+    /// Form läuft für große Indizes über, und ein Überlauf wäre im
+    /// Debug-Build eine Panik und im Release-Build eine stille
+    /// Falschrechnung — zwei Schiedsrichter mit verschiedenen Bauprofilen
+    /// kämen zu verschiedenen Urteilen.
+    fn mid(&self) -> usize {
+        self.lower + (self.upper - self.lower) / 2
+    }
+
+    /// Verarbeitet die Offenlegung des Angeklagten und grenzt ein.
     ///
     /// **Parameter:**
-    /// - `response`: Antwort des Angeklagten
-    /// - `expected_hash`: Erwarteter Hash an der Position (vom Checker)
+    /// - `response`: Antwort des Angeklagten (Runde, Position, Hash)
+    /// - `checker_hash`: Hash, den der Checker an dieser Position selbst
+    ///   gerechnet hat
     ///
-    /// **Returns:** `Ok(())` bei erfolgreicher Verarbeitung.
+    /// Stimmen beide überein, hat der Angeklagte bis einschließlich
+    /// dieser Position richtig gerechnet, und die erste Abweichung liegt
+    /// **danach**. Stimmen sie nicht überein, liegt sie **hier oder
+    /// davor**.
     ///
-    /// **Fehler:** `BisectionError` wenn die Antwort ungültig ist.
+    /// **Fehler:** `AlreadyComplete`, `InvalidRound`, `PositionMismatch`.
     pub fn process_response(
         &mut self,
         response: &BisectionResponse,
-        expected_hash: &Hash,
+        checker_hash: &Hash,
     ) -> Result<(), BisectionError> {
-        // Validierung
-        if self.is_complete() {
-            return Err(BisectionError::AlreadyComplete);
-        }
-
         let request = self.next_request().ok_or(BisectionError::AlreadyComplete)?;
 
         if response.round != request.round {
@@ -187,63 +282,22 @@ impl BisectionSession {
             });
         }
 
-        if response.activation_hash != *expected_hash {
-            // Position stimmt nicht überein → Abweichung in linker Hälfte
-            // (die angeforderte Position sollte mit expected_hash übereinstimmen,
-            // wenn der Angeklagte ehrlich ist bis zu diesem Punkt)
-            // Tatsächlich: Wir vergleichen die Hashes an der mid-Position
-            // Wenn sie unterschiedlich sind, liegt die Abweichung in [lower, mid]
-            // Wenn sie gleich sind, liegt die Abweichung in [mid, upper]
-        }
-
-        // Aktualisiere Bounds basierend auf dem Vergleich
-        let _mid = (self.lower + self.upper) / 2;
-
-        // Wenn die Hashes an der mid-Position unterschiedlich sind,
-        // liegt die Abweichung in der linken Hälfte [lower, mid]
-        // Andernfalls in der rechten Hälfte [mid, upper]
-        // (Diese Logik wird in process_response_with_comparison implementiert)
-
-        self.rounds += 1;
-        Ok(())
-    }
-
-    /// Verarbeitet eine Antwort mit explizitem Hash-Vergleich.
-    ///
-    /// **Parameter:**
-    /// - `response`: Antwort des Angeklagten
-    /// - `primary_hash`: Hash des primären Pods an der Position
-    /// - `redundant_hash`: Hash des redundanten Pods an der Position
-    ///
-    /// **Returns:** `Ok(())` bei erfolgreicher Verarbeitung.
-    pub fn process_response_with_comparison(
-        &mut self,
-        response: &BisectionResponse,
-        primary_hash: &Hash,
-        redundant_hash: &Hash,
-    ) -> Result<(), BisectionError> {
-        if self.is_complete() {
-            return Err(BisectionError::AlreadyComplete);
-        }
-
-        let request = self.next_request().ok_or(BisectionError::AlreadyComplete)?;
-
-        if response.round != request.round {
-            return Err(BisectionError::InvalidRound {
-                expected: request.round,
-                got: response.round,
+        if response.position != request.position {
+            return Err(BisectionError::PositionMismatch {
+                expected: request.position,
+                got: response.position,
             });
         }
 
-        // Aktualisiere Bounds basierend auf dem Hash-Vergleich
-        let mid = (self.lower + self.upper) / 2;
-
-        if primary_hash != redundant_hash {
-            // Abweichung in linker Hälfte [lower, mid]
-            self.upper = mid;
+        if response.activation_hash == *checker_hash {
+            // Einig bis hierher: die erste Abweichung liegt danach.
+            self.lower = request.position + 1;
         } else {
-            // Abweichung in rechter Hälfte [mid, upper]
-            self.lower = mid;
+            // Uneinig an dieser Stelle: sie liegt hier oder davor.
+            // `upper = position`, nicht `position + 1` — das Intervall ist
+            // oben offen, `position` bleibt damit enthalten. Genau hier
+            // saß Fund 42.
+            self.upper = request.position;
         }
 
         self.rounds += 1;
@@ -252,23 +306,30 @@ impl BisectionSession {
 
     /// Prüft, ob das Protokoll abgeschlossen ist.
     pub fn is_complete(&self) -> bool {
-        self.rounds >= self.max_rounds || self.upper - self.lower <= 1
+        self.lower >= self.upper || self.rounds >= self.max_rounds
     }
 
     /// Gibt das Ergebnis des Protokolls zurück.
     pub fn result(&self) -> BisectionResult {
-        if self.upper - self.lower <= 1 {
-            BisectionResult::DivergenceFound {
-                position: self.lower,
+        if self.lower >= self.upper {
+            if self.lower >= self.trace_len {
+                BisectionResult::NoDivergence
+            } else {
+                BisectionResult::DivergenceFound {
+                    position: self.lower,
+                }
             }
         } else if self.rounds >= self.max_rounds {
             BisectionResult::Incomplete
         } else {
-            BisectionResult::NoDivergence
+            BisectionResult::InProgress
         }
     }
 
     /// Berechnet die erwartete Anzahl von Runden für eine gegebene Spur-Länge.
+    ///
+    /// Die binäre Suche über `[0, L)` braucht `ceil(log2(L))` Runden; die
+    /// zusätzliche Runde ist Reserve.
     pub fn expected_rounds(trace_len: usize) -> u32 {
         ceil_log2(trace_len) + 1
     }
@@ -278,167 +339,116 @@ impl BisectionSession {
 mod tests {
     use super::*;
 
+    fn sitzung(len: usize) -> BisectionSession {
+        BisectionSession::new(SegmentId::new([1u8; 32]), len).expect("gültige Spurlänge")
+    }
+
+    fn antwort(round: u32, position: usize, hash: Hash) -> BisectionResponse {
+        BisectionResponse { round, position, activation_hash: hash }
+    }
+
     #[test]
     fn session_creation() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let session = BisectionSession::new(segment_id, 16);
-
+        let session = sitzung(16);
         assert_eq!(session.lower, 0);
         assert_eq!(session.upper, 16);
         assert_eq!(session.rounds, 0);
-        assert!(session.max_rounds >= 4); // log2(16) = 4
+        assert!(session.max_rounds >= 4);
+        assert_eq!(session.result(), BisectionResult::InProgress);
     }
 
     #[test]
     fn first_request_midpoint() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let session = BisectionSession::new(segment_id, 16);
-
+        let session = sitzung(16);
         let request = session.next_request().unwrap();
         assert_eq!(request.round, 0);
-        assert_eq!(request.position, 8); // mid von [0, 16]
+        assert_eq!(request.position, 8);
     }
 
     #[test]
-    fn bisection_left_half() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 16);
-
+    fn uneinigkeit_grenzt_nach_links_ein() {
+        let mut session = sitzung(16);
         let request = session.next_request().unwrap();
-        assert_eq!(request.position, 8);
-
-        // Simuliere Abweichung in linker Hälfte
-        let response = BisectionResponse {
-            round: 0,
-            activation_hash: Hash::sha256(b"activation-8"),
-        };
-        let primary_hash = Hash::sha256(b"primary-8");
-        let redundant_hash = Hash::sha256(b"redundant-8"); // Unterschiedlich
-
+        let response = antwort(0, request.position, Hash::sha256(b"angeklagter"));
         session
-            .process_response_with_comparison(&response, &primary_hash, &redundant_hash)
+            .process_response(&response, &Hash::sha256(b"checker"))
             .unwrap();
-
         assert_eq!(session.lower, 0);
-        assert_eq!(session.upper, 8); // Linke Hälfte
+        assert_eq!(session.upper, 8);
         assert_eq!(session.rounds, 1);
     }
 
     #[test]
-    fn bisection_right_half() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 16);
-
+    fn einigkeit_grenzt_nach_rechts_ein() {
+        let mut session = sitzung(16);
         let request = session.next_request().unwrap();
-        assert_eq!(request.position, 8);
-
-        // Simuliere Abweichung in rechter Hälfte
-        let response = BisectionResponse {
-            round: 0,
-            activation_hash: Hash::sha256(b"activation-8"),
-        };
-        let primary_hash = Hash::sha256(b"same-hash");
-        let redundant_hash = Hash::sha256(b"same-hash"); // Gleich
-
-        session
-            .process_response_with_comparison(&response, &primary_hash, &redundant_hash)
-            .unwrap();
-
-        assert_eq!(session.lower, 8);
-        assert_eq!(session.upper, 16); // Rechte Hälfte
+        let h = Hash::sha256(b"gleich");
+        let response = antwort(0, request.position, h);
+        session.process_response(&response, &h).unwrap();
+        assert_eq!(session.lower, 9);
+        assert_eq!(session.upper, 16);
         assert_eq!(session.rounds, 1);
-    }
-
-    #[test]
-    fn bisection_converges() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 16);
-
-        // Simuliere mehrere Runden bis zur Konvergenz
-        while !session.is_complete() {
-            let request = session.next_request().unwrap();
-            let response = BisectionResponse {
-                round: request.round,
-                activation_hash: Hash::sha256(&[request.position as u8]),
-            };
-            let primary_hash = Hash::sha256(b"primary");
-            let redundant_hash = Hash::sha256(b"redundant"); // Immer unterschiedlich
-
-            session
-                .process_response_with_comparison(&response, &primary_hash, &redundant_hash)
-                .unwrap();
-        }
-
-        // Sollte nach O(log L) Runden konvergieren
-        assert!(session.rounds <= session.max_rounds);
-        assert_eq!(session.upper - session.lower, 1);
     }
 
     #[test]
     fn expected_rounds_calculation() {
-        assert_eq!(BisectionSession::expected_rounds(16), 5); // log2(16) = 4, +1
-        assert_eq!(BisectionSession::expected_rounds(32), 6); // log2(32) = 5, +1
-        assert_eq!(BisectionSession::expected_rounds(8), 4); // log2(8) = 3, +1
-    }
-
-    #[test]
-    fn bisection_result_found() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 2);
-
-        // Eine Runde sollte genügen
-        assert!(session.next_request().is_some());
-        let response = BisectionResponse {
-            round: 0,
-            activation_hash: Hash::sha256(b"activation"),
-        };
-        let primary_hash = Hash::sha256(b"primary");
-        let redundant_hash = Hash::sha256(b"redundant");
-
-        session
-            .process_response_with_comparison(&response, &primary_hash, &redundant_hash)
-            .unwrap();
-
-        let result = session.result();
-        assert!(matches!(result, BisectionResult::DivergenceFound { .. }));
+        assert_eq!(BisectionSession::expected_rounds(16), 5);
+        assert_eq!(BisectionSession::expected_rounds(32), 6);
+        assert_eq!(BisectionSession::expected_rounds(8), 4);
     }
 
     #[test]
     fn invalid_round_error() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 16);
-
-        let response = BisectionResponse {
-            round: 5, // Falsche Runde
-            activation_hash: Hash::sha256(b"activation"),
-        };
-        let primary_hash = Hash::sha256(b"primary");
-        let redundant_hash = Hash::sha256(b"redundant");
-
-        let result = session.process_response_with_comparison(&response, &primary_hash, &redundant_hash);
+        let mut session = sitzung(16);
+        let response = antwort(5, 8, Hash::sha256(b"a"));
         assert!(matches!(
-            result,
+            session.process_response(&response, &Hash::sha256(b"b")),
             Err(BisectionError::InvalidRound { expected: 0, got: 5 })
         ));
     }
 
     #[test]
+    fn position_mismatch_error() {
+        let mut session = sitzung(16);
+        let response = antwort(0, 3, Hash::sha256(b"a"));
+        assert!(matches!(
+            session.process_response(&response, &Hash::sha256(b"b")),
+            Err(BisectionError::PositionMismatch { expected: 8, got: 3 })
+        ));
+    }
+
+    #[test]
     fn already_complete_error() {
-        let segment_id = SegmentId::new([1u8; 32]);
-        let mut session = BisectionSession::new(segment_id, 1);
-
-        // Session ist sofort abgeschlossen (upper - lower = 1)
+        let mut session = sitzung(1);
+        // Eine Spur der Länge 1: eine Runde entscheidet.
+        let request = session.next_request().unwrap();
+        assert_eq!(request.position, 0);
+        session
+            .process_response(&antwort(0, 0, Hash::sha256(b"a")), &Hash::sha256(b"b"))
+            .unwrap();
         assert!(session.is_complete());
+        assert!(matches!(
+            session.process_response(&antwort(1, 0, Hash::sha256(b"a")), &Hash::sha256(b"b")),
+            Err(BisectionError::AlreadyComplete)
+        ));
+    }
 
-        let response = BisectionResponse {
-            round: 0,
-            activation_hash: Hash::sha256(b"activation"),
-        };
-        let primary_hash = Hash::sha256(b"primary");
-        let redundant_hash = Hash::sha256(b"redundant");
+    /// Regression zu Fund 42: Eine leere Spur ist keine Session.
+    #[test]
+    fn leere_spur_wird_abgelehnt() {
+        assert!(matches!(
+            BisectionSession::new(SegmentId::new([1u8; 32]), 0),
+            Err(BisectionError::InvalidTraceLength { trace_len: 0 })
+        ));
+    }
 
-        let result = session.process_response_with_comparison(&response, &primary_hash, &redundant_hash);
-        assert!(matches!(result, Err(BisectionError::AlreadyComplete)));
+    /// Regression zu Fund 42: Eine absurde Spurlänge darf nicht in eine
+    /// Panik in `next_power_of_two()` laufen.
+    #[test]
+    fn absurde_spurlaenge_wird_abgelehnt() {
+        for len in [MAX_SPURLAENGE + 1, usize::MAX] {
+            assert!(BisectionSession::new(SegmentId::new([1u8; 32]), len).is_err());
+        }
     }
 
     /// Regression zu Fund A18: Die Rundenzahl muss ganzzahlig und ohne

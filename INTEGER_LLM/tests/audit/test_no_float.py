@@ -119,6 +119,27 @@ CONSENSUS_PATH = [
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "slash.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
+    # NETWORKING, nachgetragen 2026-08-23 (Fund 44).
+    #
+    # Diese Liste enthielt bis dahin **keine einzige Datei aus
+    # `myl-net`**, und der Lauf meldete trotzdem "null Treffer" — über 57
+    # Dateien, was nach Vollständigkeit klang und eine Auswahl war. In
+    # `latency.rs` rechnete die Latenz-EMA in `f64`, obwohl der Kopf des
+    # Crates seit dem ersten Tag Festkomma zusagt und `config.rs` die
+    # ganzzahligen Konstanten dafür führt.
+    #
+    # `latency.rs` ist der Zulieferer des `LatencyGraph` und damit des
+    # Geo-Clusterings der Pods (`myl-scheduler/src/geo_clustering.rs`,
+    # eine Zeile höher in dieser Liste). Ein Zulieferer des Konsenspfads
+    # gehört in den Konsenspfad.
+    ROOT / "NETWORKING" / "myl-net" / "src" / "latency.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "config.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "validation.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "gossip.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "identity.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "discovery.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "node.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "runtime.rs",
 ]
 
 # Gleitkomma-Indikatoren (angewandt nach Entfernen von Kommentaren,

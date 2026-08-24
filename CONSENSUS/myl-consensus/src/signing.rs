@@ -22,6 +22,13 @@
 //! **Konsens-Feld:** Die Kodierung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3) — eine Änderung
 //! invalidiert alle zuvor erzeugten Signaturen.
+//!
+//! **Das Bedrohungsmodell aller Signaturverwendungen des Projekts** steht
+//! in `SHARED_TYPES/README/Signatur-Bedrohungsmodell.md` (Kritikpunkt K5).
+//! Wer hier ein Präfix hinzufügt oder eine Botschaft um ein Feld
+//! erweitert, muss dort die Längentabelle nachziehen: Die
+//! Kollisionsfreiheit zur Shard-Übergangssignatur beruht heute allein
+//! darauf, dass alle Botschaftslängen paarweise verschieden sind.
 
 use myl_types::hash::Hash;
 

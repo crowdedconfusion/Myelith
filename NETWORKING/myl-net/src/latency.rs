@@ -21,21 +21,17 @@ use std::time::{Duration, Instant};
 
 use libp2p::PeerId;
 
-/// EMA-Alpha für die Latenz-Glättung (Konsens-Feld).
-/// α = 0,25 bedeutet: neue Messung geht zu 25 % ein, alter Wert zu 75 %.
-/// Das filtert kurzfristige Schwankungen, reagiert aber innerhalb von
-/// ~4 Messungen (60 s) auf anhaltende Änderungen.
-pub const EMA_ALPHA: f64 = 0.25;
+use crate::config::{EMA_ALPHA_DEN, EMA_ALPHA_NUM};
 
 /// Ping-Intervall in Sekunden (Konsens-Feld).
 pub const PING_INTERVAL_SECS: u64 = 15;
 
-/// Minimale sinnvolle RTT (0 ms — untere Grenze entfernt, da CI-Tests
-/// sehr schnell sein können; in realen Netzwerken ist RTT > 0 garantiert).
-const MIN_RTT_MS: f64 = 0.0;
-
 /// Maximale sinnvolle RTT (über 10 s wird als Peer-Ausfall behandelt).
-const MAX_RTT_MS: f64 = 10_000.0;
+///
+/// Eine untere Grenze gibt es nicht: In realen Netzen ist die RTT größer
+/// als null, in der CI kann eine Antwort schneller kommen als die Uhr
+/// auflöst, und ein Mindestwert würde dort jede Messung verwerfen.
+const MAX_RTT_US: u64 = 10_000_000;
 
 /// Ping-Nachricht: enthält einen Zeitstempel und eine Nonce.
 ///
@@ -75,10 +71,44 @@ struct PendingPing {
 /// Speichert den geglätteten RTT-Wert (EMA) und die Anzahl der
 /// durchgeführten Messungen. Der geglättete Wert ist die Grundlage
 /// für den LatencyGraph (Phase 2.2).
+///
+/// ## ⚑ Fund 44: Diese EMA rechnete in `f64` (behoben 2026-08-23)
+///
+/// Der Kopf von `lib.rs` sagt seit dem ersten Tag zu: „die EMA rechnet in
+/// Ganzzahlen (Festkomma), keine Gleitkomma-Arithmetik". `config.rs`
+/// führt dafür sogar die Konstanten `EMA_ALPHA_NUM`/`EMA_ALPHA_DEN` mit
+/// der ganzzahligen Formel im Kommentar. **Gerechnet wurde trotzdem in
+/// `f64`**, und die ganzzahligen Konstanten hatten außer einem Modultest
+/// keinen Aufrufer: die richtige Fassung lag daneben und lief nicht.
+///
+/// Der Gleitkomma-Audit hätte das finden müssen und konnte es nicht:
+/// **`myl-net` steht mit keiner einzigen Datei in seiner Liste.** Der Lauf
+/// meldet „null Treffer über 57 Dateien", und die Datei mit dem Treffer
+/// war keine davon. Ein Audit sagt nur etwas über das, was es ansieht;
+/// die Zahl 57 klang nach Vollständigkeit und war eine Auswahl.
+/// Nachgetragen, siehe `INTEGER_LLM/tests/audit/test_no_float.py`.
+///
+/// **Was es nicht war:** ein Determinismusbruch. `0,25·x + 0,75·y` ist in
+/// IEEE-754 exakt festgelegt und plattformgleich, anders als das
+/// `f64::log2()` aus Fund A18. Der geglättete Wert ist außerdem eine
+/// **lokale Messung**, die als signiertes `u32`-Attest ins Netz geht
+/// (`myl_types::LatencyAttest`); zwei Knoten müssen sie nie gleich
+/// ausrechnen.
+///
+/// **Warum trotzdem jetzt:** Die Brücke von hier zum signierten Attest
+/// ist noch nicht gebaut. Danach hätte jede Änderung an der Glättung die
+/// Attestwerte verschoben, und aus einer Aufräumarbeit wäre eine
+/// Protokolländerung geworden. Der billigste Zeitpunkt ist der, an dem
+/// noch niemand darauf zeigt.
+///
+/// Gerechnet wird jetzt in **Mikrosekunden**, weil Millisekunden als
+/// Ganzzahl für Nachbarn im selben Rechenzentrum (RTT unter 1 ms) alles
+/// auf null runden würden, und genau diese Nachbarschaft ist das, was das
+/// Geo-Clustering sucht.
 #[derive(Debug, Clone)]
 pub struct PeerLatency {
-    /// Geglättete RTT in Millisekunden (EMA).
-    pub smoothed_rtt_ms: f64,
+    /// Geglättete RTT in **Mikrosekunden** (EMA, α = 1/4).
+    pub smoothed_rtt_us: u64,
     /// Anzahl der durchgeführten Messungen.
     pub measurement_count: u64,
     /// Zeitpunkt der letzten erfolgreichen Messung.
@@ -87,9 +117,9 @@ pub struct PeerLatency {
 
 impl PeerLatency {
     /// Neue Latenz-Messung mit Initialwert.
-    fn new(initial_rtt_ms: f64) -> Self {
+    fn new(initial_rtt_us: u64) -> Self {
         Self {
-            smoothed_rtt_ms: initial_rtt_ms,
+            smoothed_rtt_us: initial_rtt_us,
             measurement_count: 1,
             last_measurement: Instant::now(),
         }
@@ -97,10 +127,26 @@ impl PeerLatency {
 
     /// Aktualisiert den geglätteten RTT-Wert mit einer neuen Messung.
     ///
-    /// Formel: `smoothed_rtt = α * new_rtt + (1 - α) * old_rtt`
-    /// mit α = EMA_ALPHA (0,25).
-    fn update(&mut self, new_rtt_ms: f64) {
-        self.smoothed_rtt_ms = EMA_ALPHA * new_rtt_ms + (1.0 - EMA_ALPHA) * self.smoothed_rtt_ms;
+    /// Formel: `neu = alt + (probe − alt) · α`, mit α = `EMA_ALPHA_NUM /
+    /// EMA_ALPHA_DEN` = 1/4, gerechnet in Ganzzahlen.
+    ///
+    /// **Warum diese Form und nicht `α·probe + (1−α)·alt`:** Die zweite
+    /// rundet zweimal ab. Diese hier rundet nur die Differenz, und sie
+    /// kommt ohne Zwischenwert aus, der größer als beide Eingaben wäre.
+    ///
+    /// Die Differenz wird **vorzeichenrichtig** gebildet: Bei sinkender
+    /// Latenz ist `probe < alt`, und eine Subtraktion in `u64` liefe dort
+    /// um. Das wäre im Debug-Build eine Panik und im Release-Build eine
+    /// Latenz nahe 2⁶⁴, also genau der Wert, mit dem ein Angreifer sich
+    /// aus jedem Pod herausrechnen könnte.
+    fn update(&mut self, probe_us: u64) {
+        self.smoothed_rtt_us = if probe_us >= self.smoothed_rtt_us {
+            let d = probe_us - self.smoothed_rtt_us;
+            self.smoothed_rtt_us + d * EMA_ALPHA_NUM / EMA_ALPHA_DEN
+        } else {
+            let d = self.smoothed_rtt_us - probe_us;
+            self.smoothed_rtt_us - d * EMA_ALPHA_NUM / EMA_ALPHA_DEN
+        };
         self.measurement_count += 1;
         self.last_measurement = Instant::now();
     }
@@ -182,20 +228,22 @@ impl LatencyTracker {
         let pending = self.pending_pings.remove(&peer).unwrap();
 
         // RTT berechnen (aus der tatsächlichen Zeitdifferenz, nicht aus
-        // den Zeitstempeln — die könnten zwischen Peers divergieren)
-        let rtt = pending.sent_at.elapsed();
-        let rtt_ms = rtt.as_secs_f64() * 1000.0;
+        // den Zeitstempeln — die könnten zwischen Peers divergieren).
+        // `as_micros()` liefert u128; ein RTT jenseits von u64-Mikro-
+        // sekunden ist eine halbe Million Jahre und fällt ohnehin unter
+        // die Plausibilitätsgrenze.
+        let rtt_us = u64::try_from(pending.sent_at.elapsed().as_micros()).unwrap_or(u64::MAX);
 
         // Plausibilitätsprüfung (extreme Werte filtern)
-        if !(MIN_RTT_MS..=MAX_RTT_MS).contains(&rtt_ms) {
+        if rtt_us > MAX_RTT_US {
             return false;
         }
 
         // Latenz aktualisieren (EMA-Glättung)
         if let Some(latency) = self.peer_latencies.get_mut(&peer) {
-            latency.update(rtt_ms);
+            latency.update(rtt_us);
         } else {
-            self.peer_latencies.insert(peer, PeerLatency::new(rtt_ms));
+            self.peer_latencies.insert(peer, PeerLatency::new(rtt_us));
         }
 
         true
@@ -241,33 +289,55 @@ mod tests {
 
     #[test]
     fn ema_initial_value() {
-        let latency = PeerLatency::new(100.0);
-        assert_eq!(latency.smoothed_rtt_ms, 100.0);
+        let latency = PeerLatency::new(100_000);
+        assert_eq!(latency.smoothed_rtt_us, 100_000);
         assert_eq!(latency.measurement_count, 1);
     }
 
     #[test]
     fn ema_update_converges() {
-        let mut latency = PeerLatency::new(100.0);
-
-        // Mehrere Updates mit konstantem Wert sollten gegen diesen Wert konvergieren
-        for _ in 0..20 {
-            latency.update(50.0);
+        let mut latency = PeerLatency::new(100_000);
+        for _ in 0..40 {
+            latency.update(50_000);
         }
-
-        // Nach 20 Updates sollte der Wert nahe 50 sein (innerhalb von 1 %)
-        assert!((latency.smoothed_rtt_ms - 50.0).abs() < 0.5);
+        // **Totzone:** Ganzzahlig bleibt die EMA stehen, sobald der
+        // Abstand kleiner als `EMA_ALPHA_DEN / EMA_ALPHA_NUM` = 4 µs ist,
+        // denn dann ist `d · 1 / 4 == 0`. Sie konvergiert also nicht auf
+        // den Zielwert, sondern bis auf drei Mikrosekunden an ihn heran
+        // und bleibt dort. Dasselbe Verhalten wie bei der EMA in
+        // TOKENOMICS, wo die Totzone ebenfalls dokumentiert ist.
+        //
+        // Bei Latenzen im Millisekundenbereich sind drei Mikrosekunden
+        // belanglos. Der Test hält die Grenze fest, damit niemand später
+        // exakte Konvergenz annimmt.
+        let abstand = latency.smoothed_rtt_us.abs_diff(50_000);
+        assert!(abstand < 4, "Totzone verletzt: Abstand {abstand} µs");
     }
 
     #[test]
     fn ema_smoothing_factor() {
-        let mut latency = PeerLatency::new(100.0);
+        let mut latency = PeerLatency::new(100_000);
+        latency.update(200_000);
+        // 100 000 + (200 000 − 100 000)/4 = 125 000, exakt.
+        assert_eq!(latency.smoothed_rtt_us, 125_000);
+    }
 
-        // Ein Update mit 200 sollte den Wert zu 25 % anpassen
-        latency.update(200.0);
+    /// Bei **sinkender** Latenz wird die Differenz nach unten gebildet.
+    /// Eine Subtraktion in `u64` liefe hier um: im Debug-Build eine Panik,
+    /// im Release-Build eine Latenz nahe 2⁶⁴.
+    #[test]
+    fn ema_sinkt_ohne_umlauf() {
+        let mut latency = PeerLatency::new(200_000);
+        latency.update(100_000);
+        assert_eq!(latency.smoothed_rtt_us, 175_000);
 
-        // Erwartet: 0.25 * 200 + 0.75 * 100 = 125
-        assert!((latency.smoothed_rtt_ms - 125.0).abs() < 0.01);
+        let mut null = PeerLatency::new(0);
+        null.update(0);
+        assert_eq!(null.smoothed_rtt_us, 0);
+
+        let mut extrem = PeerLatency::new(u64::MAX);
+        extrem.update(0);
+        assert!(extrem.smoothed_rtt_us < u64::MAX);
     }
 
     #[test]
@@ -298,8 +368,8 @@ mod tests {
         // Latenz sollte jetzt vorhanden sein
         let latency = tracker.get_latency(&peer).expect("latency should exist");
         assert_eq!(latency.measurement_count, 1);
-        // RTT sollte ungefähr 0 sein (sofortige Antwort simuliert)
-        assert!(latency.smoothed_rtt_ms < 100.0);
+        // RTT sollte klein sein (sofortige Antwort simuliert)
+        assert!(latency.smoothed_rtt_us < 100_000);
     }
 
     #[test]
