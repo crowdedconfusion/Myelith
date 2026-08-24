@@ -1675,6 +1675,7 @@ dependencies = [
  "libp2p-ping",
  "libp2p-quic",
  "libp2p-relay",
+ "libp2p-request-response",
  "libp2p-swarm",
  "libp2p-tcp",
  "libp2p-upnp",
@@ -2337,8 +2338,9 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
+ "async-trait",
  "borsh",
  "futures",
  "libp2p",
@@ -2348,11 +2350,12 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "borsh",
  "libp2p",
  "myl-consensus",
+ "myl-ledger",
  "myl-net",
  "myl-types",
  "tokio",

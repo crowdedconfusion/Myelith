@@ -82,6 +82,34 @@ pub fn protokollverzeichnis() -> PathBuf {
     crate::vergleich::vergleichsordner(&repo)
 }
 
+/// Ablage der privaten Knotenschlüssel.
+pub const SCHLUESSELORDNER: &str = "TESTCLIENT/Schluessel";
+
+/// Die Schlüsseldatei eines Knotens.
+///
+/// **Über die Repository-Wurzel aufgelöst, nicht relativ.** Bis zum
+/// 2026-08-24 stand hier ein relativer Pfad, und der landete dort, wo
+/// der Client gestartet wurde: beim Doppelklick in der Wurzel des
+/// Repositoriums. Dort stand die Datei in keiner `.gitignore` und
+/// konnte in einen Commit geraten. **Wer den Schlüssel hat, kann im
+/// Netz als dieser Knoten auftreten**, das ist kein Ordnungsproblem.
+///
+/// Der Ordner schließt seinen eigenen Inhalt aus, und `*.key` steht
+/// zusätzlich in der Wurzel-`.gitignore` für den Fall, dass jemand
+/// `myl-node` von Hand startet.
+pub fn schluesseldatei(name: &str) -> PathBuf {
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    // Derselbe Schutz wie beim Protokollnamen: Der Name kommt aus einer
+    // Eingabe, und ein Schrägstrich darin schriebe in einen fremden
+    // Ordner.
+    let sicher: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let sicher = if sicher.is_empty() { "knoten".to_string() } else { sicher };
+    repo.join(SCHLUESSELORDNER).join(format!("{sicher}.key"))
+}
+
 /// Fährt einen Knoten für die angegebene Zeit und meldet den Pfad des
 /// Protokolls.
 fn fahre(konfig: KnotenKonfig, laufzeit: Duration) -> bool {
@@ -107,11 +135,38 @@ fn fahre(konfig: KnotenKonfig, laufzeit: Duration) -> bool {
         println!("  Kennung:   {}", knoten.peer_id());
         println!("  Protokoll: {}", knoten.protokollpfad().display());
 
+        // ⚑ Erst auf QUIC warten, dann ausgeben.
+        //
+        // TCP horcht schneller. Wer bei der ersten Adresse aufhört,
+        // zeigt nur die TCP-Adresse an, der Betreiber gibt genau die
+        // weiter, und das ganze Netz läuft über TCP. Der Rat, die
+        // quic-v1-Adresse zu verteilen, wäre dann unbefolgbar, weil sie
+        // nie auf dem Bildschirm stünde.
+        let hat_quic = knoten.warte_auf_quic(Duration::from_secs(8)).await;
         if knoten.warte_auf_adresse(Duration::from_secs(8)).await.is_some() {
             println!();
             println!("  Erreichbar unter:");
-            for a in knoten.adressen() {
+            // QUIC zuerst: Der Transport folgt der Adresse, die
+            // weitergegeben wird. Wer eine /tcp/-Adresse verteilt,
+            // bekommt ein reines TCP-Netz, und über UDP gelingt das
+            // Lochstanzen durch NAT deutlich zuverlässiger. Die
+            // Reihenfolge ist die Empfehlung, und der Hinweis darunter
+            // sagt sie auch aus.
+            let mut adressen = knoten.adressen();
+            adressen.sort_by_key(|a| !myl_net::ist_quic(a));
+            for a in &adressen {
                 println!("    {a}");
+            }
+            if hat_quic {
+                println!();
+                println!("  Für Läufe über das Internet die **erste** Adresse");
+                println!("  (quic-v1) weitergeben: Über UDP gelingt der Durchstich");
+                println!("  durch Heimrouter deutlich zuverlässiger als über TCP.");
+            } else {
+                println!();
+                println!("  ⚠ Keine quic-v1-Adresse gemeldet. Über TCP allein gelingt");
+                println!("    der Durchstich durch Heimrouter oft nicht. Ist UDP auf");
+                println!("    diesem Port freigegeben?");
             }
         } else {
             println!();
@@ -122,8 +177,9 @@ fn fahre(konfig: KnotenKonfig, laufzeit: Duration) -> bool {
         println!("  Läuft für {} Sekunden. Strg-C bricht ab.", laufzeit.as_secs());
         println!();
 
-        knoten.laufe_fuer(laufzeit).await;
-        knoten.aufnahme().await;
+        // Auch hier über `laufen_bis`: Wer im Menü Strg-C drückt, soll
+        // ein Protokoll bekommen, das sagt, dass er es war.
+        knoten.laufen_bis(Some(laufzeit)).await;
 
         let peers = knoten.peers().await;
         println!("  Beendet.");
@@ -170,7 +226,7 @@ pub fn anlaufstelle() -> bool {
 
     let konfig = KnotenKonfig {
         name: name.clone(),
-        schluesseldatei: PathBuf::from(format!("{name}.key")),
+        schluesseldatei: schluesseldatei(&name),
         protokollverzeichnis: protokollverzeichnis(),
         horchadressen: myl_node::konfig::standard_horchadressen(port),
         bootstrap: Vec::new(),
@@ -185,13 +241,17 @@ pub fn anlaufstelle() -> bool {
         },
         aufnahme_sekunden: 30,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
+        // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
+        // Zwei Erzeuger gabeln die Kette sofort, weil niemand
+        // entscheidet, welcher Block gilt. Das täte eine
+        // Abstimmungsrunde, und die gibt es noch nicht.
+        erzeugt_bloecke: true,
     };
 
     println!();
-    println!("  Sobald der Knoten läuft, erscheint unten eine Zeile der Form");
-    println!("    /ip4/{ip}/tcp/{port}/p2p/12D3KooW…");
-    println!("  Diese Zeile vollständig an alle Teilnehmer schicken. Sie ist");
-    println!("  die Einladung ins Netz, der Teil ab /p2p/ gehört dazu.");
+    println!("  Sobald der Knoten läuft, erscheinen unten seine Adressen.");
+    println!("  Die **erste** (quic-v1) an alle Teilnehmer schicken, vollständig,");
+    println!("  der Teil ab /p2p/ gehört dazu. Sie ist die Einladung ins Netz.");
 
     fahre(konfig, Duration::from_secs(minuten * 60))
 }
@@ -219,7 +279,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
 
     let konfig = KnotenKonfig {
         name: name.clone(),
-        schluesseldatei: PathBuf::from(format!("{name}.key")),
+        schluesseldatei: schluesseldatei(&name),
         protokollverzeichnis: protokollverzeichnis(),
         // Port 0: Das Betriebssystem sucht einen freien. Ein Teilnehmer
         // nimmt keine Verbindungen von außen an, er braucht keinen
@@ -237,6 +297,9 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         },
         aufnahme_sekunden: 30,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
+        // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
+        // rechnen die Blöcke der Anlaufstelle nach.
+        erzeugt_bloecke: false,
     };
 
     println!();
@@ -250,6 +313,37 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn der_schluessel_liegt_im_schluesselordner() {
+        // Nicht dort, wo der Client gestartet wurde: Beim Doppelklick
+        // wäre das die Wurzel des Repositoriums, und dort stand die
+        // Datei in keiner .gitignore.
+        let p = schluesseldatei("alpha");
+        assert!(
+            p.to_string_lossy().contains("TESTCLIENT/Schluessel"),
+            "Schlüssel landet außerhalb des Schlüsselordners: {}",
+            p.display()
+        );
+        assert!(p.ends_with("alpha.key"));
+    }
+
+    #[test]
+    fn ein_gefaehrlicher_knotenname_bricht_nicht_aus() {
+        // Der Name kommt aus einer Eingabe. Ein Schrägstrich darin
+        // schriebe in einen fremden Ordner.
+        let p = schluesseldatei("../../.ssh/id_rsa");
+        let text = p.to_string_lossy().to_string();
+        assert!(text.contains("TESTCLIENT/Schluessel"), "{text}");
+        assert!(!text.contains(".."), "{text}");
+        assert!(!text.contains(".ssh"), "{text}");
+    }
+
+    #[test]
+    fn ein_leerer_name_ergibt_trotzdem_einen_pfad() {
+        let p = schluesseldatei("");
+        assert!(p.ends_with("knoten.key"), "{}", p.display());
+    }
 
     #[test]
     fn eine_einladung_ohne_p2p_teil_wird_abgelehnt() {

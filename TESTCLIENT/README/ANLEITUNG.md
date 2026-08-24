@@ -901,7 +901,31 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 
 ---
 
-# Teil C: Netzlauf mit mehreren Knoten
+# Teil C: Probelauf mit mehreren Knoten
+
+> ## ⚑ Das ist **nicht** das Testnetz
+>
+> Ein Probelauf ist eine **Trockenübung des Codes**, keine
+> Inbetriebnahme der Blockchain.
+>
+> - **Der Zustand ist Wegwerfware.** Jeder Start beginnt bei null. Keine
+>   Fortsetzung, keine Wiederherstellung, keine Historie.
+> - **Die MYL sind Spielgeld.** Wer hier Guthaben sieht, besitzt nichts.
+> - **Ein Probeblock kann nie an eine echte Kette anschließen.** Er
+>   hängt an einem Startwert, der ausdrücklich für Proben gewählt wurde
+>   und im Klartext `MYELITH-PROBELAUF-KEIN-TESTNETZ` lautet.
+> - **Es stimmt niemand ab.** Genau ein Knoten baut die Blöcke.
+>
+> Wann das Testnetz beginnt, entscheidet das Projekt, nicht dieser Code.
+>
+> **Wozu der Lauf dann gut ist:** Der Durchlauf aus Punkt [3] prüft die
+> Bausteine **im selben Prozess**, zehn Stufen von der Kryptografie bis
+> zur Preisbildung. Dort liegen die Werte im Speicher nebeneinander.
+> Hier gehen dieselben Werte durch Serialisierung, Gossip,
+> Größenprüfung, Strukturprüfung und Deserialisierung, über Maschinen-
+> und Ländergrenzen. **Das ist ein anderer Weg mit anderen Fehlerarten**,
+> und die Funde dieses Projekts liegen fast alle genau dort: an Nähten,
+> nicht in Modulen.
 
 ## C0. Schnellstart: drei Rechner an drei Orten, Schritt für Schritt
 
@@ -954,14 +978,22 @@ myl-node --name anlaufstelle --rolle relais --port 4150 \
          --testverkehr 10 --aufnahme 30
 ```
 
-Der Knoten antwortet mit drei Zeilen. Die dritte ist die wichtige:
+Der Knoten nennt danach seine Adressen, die **quic-v1-Adresse zuerst**:
 
 ```
+myl-node: erreichbar unter /ip4/DEINE-IP/udp/4150/quic-v1/p2p/12D3KooW…
 myl-node: erreichbar unter /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW…
 ```
 
-**Diese Zeile vollständig kopieren und an B und C schicken.** Sie ist die
-Einladung ins Netz. Der `/p2p/12D3KooW…`-Teil gehört dazu.
+**Die erste Zeile vollständig kopieren und an B und C schicken.** Sie ist
+die Einladung ins Netz, der `/p2p/12D3KooW…`-Teil gehört dazu.
+
+**Warum die quic-v1-Adresse und nicht die TCP-Adresse:** Der Transport
+folgt der Adresse, die weitergegeben wird. Verteilst du die TCP-Adresse,
+läuft das ganze Netz über TCP, auch wenn jeder Knoten QUIC spricht. Für
+den Durchstich durch Heimrouter ist das der Unterschied zwischen
+„gelingt meistens" und „gelingt selten". Die Auswertung sagt es dir
+hinterher, aber dann ist der Lauf gelaufen.
 
 **Schritt 5: Auf B den Knoten starten.**
 
@@ -1040,12 +1072,22 @@ nur den Determinismus prüfen will, liest Teil A und ist fertig.
 
 **Was ein Netzlauf heute prüft:** dass Knoten einander finden, sich
 verbinden, Nachrichten verbreiten und einander weiterreichen, auch hinter
-einem Heimrouter.
+einem Heimrouter. **Und seit dem 2026-08-24: dass sie aus denselben
+Blöcken zum selben Zustand kommen.**
 
-**Was er nicht prüft:** den Konsens. Die Knoten produzieren **keine
-Blöcke**. Die Zustandsmaschinen dafür sind fertig, aber niemand treibt
-sie über die Zeit: Rundentakt, Mempool und Kettenzustand fehlen. Ein
-Netzlauf sagt also etwas über das **Netz**, nicht über die Einigung.
+Die Anlaufstelle baut Blöcke, die anderen schicken Transaktionen und
+rechnen die Blöcke nach. Am Ende vergleicht die Auswertung die
+**Zustandswurzeln** Höhe für Höhe. Weicht eine ab, haben zwei Maschinen
+aus denselben Daten verschiedene Zustände errechnet, und das bricht den
+Konsens genauso wie ein abweichendes Inferenzergebnis.
+
+**Was er nicht prüft: die Einigung.** Es stimmt niemand ab. **Genau ein
+Knoten baut die Blöcke**, die übrigen übernehmen. Zwei Erzeuger würden
+die Kette sofort gabeln, weil niemand entscheidet, welcher Block gilt,
+und genau das täte eine Abstimmungsrunde (BFT). Die liegt fertig in
+`myl-consensus`, ihr fehlen ein eigenes Gossip-Topic, ein Validator-Satz
+mit Stake und Signaturschlüssel je Knoten. Ein neues Topic ist eine
+Protokollentscheidung und gehört nicht nebenbei getroffen.
 
 ## C2. Was du brauchst
 
@@ -1154,9 +1196,25 @@ Der Knoten läuft die eingestellte Zeit und beendet sich dann selbst.
 Strg-C bricht vorher ab; das Protokoll bleibt trotzdem lesbar, weil jede
 Zeile sofort geschrieben wird.
 
-Danach sammelst du von **jedem** Rechner die Datei aus `logs/` ein und
-legst alle in **einen** Ordner. Am einfachsten in denselben, in dem auch
-die Determinismus-Protokolle landen: `TESTCLIENT/Vergleiche`.
+Danach sammelst du von **jedem** Rechner die Datei ein und legst alle in
+**einen** Ordner: `TESTCLIENT/Vergleiche`.
+
+**Beide Arten dürfen dort zusammenliegen.** Determinismusläufe und
+Betriebsprotokolle unterscheiden sich am Inhalt, nicht am Namen, und
+jede Auswertung erkennt ihre eigenen. Sie sagt außerdem, wie viele
+Dateien sie übergangen hat:
+
+```
+  3 Betriebsprotokoll(e), 1 andere Datei(en) übergangen (…)
+```
+
+Das ist Absicht. Wer nicht sagt, dass er Dateien liegen lässt, lässt
+offen, ob sie fehlen oder nicht dazugehören.
+
+**Was nicht mitgeschickt wird:** die Dateien aus `TESTCLIENT/Schluessel/`.
+Das sind die privaten Kennungen der Knoten. Wer sie hat, kann im Netz als
+dieser Knoten auftreten. Das Betriebsprotokoll nennt nur die
+**öffentliche** Kennung, und die darf jeder sehen.
 
 ## C6. Auswerten
 
@@ -1194,6 +1252,56 @@ Was dann kommt, sieht so aus:
 | **empf** | Empfangene Nachrichten |
 | **gesd** | Gesendete und vom Netz angenommene Nachrichten |
 
+Darunter kommt zuerst die **Abdeckung**: welche Protokollfunktion in
+diesem Lauf überhaupt ausprobiert wurde.
+
+```
+  Probelauf: welche Funktion wurde ausprobiert
+  (dies ist eine Trockenübung des Codes, nicht der Beginn der Kette)
+
+    Funktion           gesendet  gefehlt empfangen   belegt
+    blockkette                8        0        16   aus denselben Blöcken …
+    poi-buendel              10        0        20   PoI-Bündel überstehen …
+    challenge                12        0        24   Challenges überstehen …
+    transaktion              14        0        28   Transaktionen erreichen …
+```
+
+**Eine Probe, die nie lief, ist kein Erfolg.** Deshalb nennt die Tabelle
+auch die Funktionen, für die nichts vorliegt, und darunter steht dann
+ausdrücklich: „Über diese Funktionen sagt der Lauf nichts."
+
+Danach kommen vier weitere Blöcke:
+
+**Kette** nennt je Knoten die erreichte Höhe, wie viele Blöcke er selbst
+gebaut und wie viele er übernommen hat, und darunter das wichtigste
+Urteil des ganzen Berichts:
+
+```
+  ✓ Zustandswurzeln stimmen auf allen 7 vergleichbaren Höhen überein.
+```
+
+„Vergleichbar" heißt: von mindestens zwei Knoten belegt. Eine Höhe, die
+nur einer kennt, zählt nicht, sonst sähe ein Lauf, in dem niemand
+übernommen hat, wie ein bestandener Abgleich aus.
+
+Steht dort stattdessen **⚠⚠ ZUSTANDSWURZELN WEICHEN AB**, ist das der
+schwerste Befund, den dieser Lauf erzeugen kann. Schick den Bericht und
+alle Protokolle zurück.
+
+**Verbindungen nach Transport** zählt QUIC, TCP und Vermittlungen über
+ein Relais. Steht dort überall QUIC 0, hat jemand die TCP-Adresse als
+Einladung verteilt, und der interessanteste Teil der Messung hat nicht
+stattgefunden.
+
+**Lochstanzen (DCUtR)** zählt, wie oft aus einer vermittelten eine
+direkte Verbindung wurde. **Auf einer Maschine immer null**, dort gibt
+es nichts zu durchstoßen. Über getrennte Anschlüsse ist das die
+wertvollste Zahl des ganzen Berichts.
+
+**Paarlatenz** nennt die Spanne der gemessenen Laufzeiten. Ein
+Höchstwert weit über dem Kleinstwert heißt Schwankung, und die erklärt
+mehr als jeder Einzelwert. Ab Faktor zehn steht ein Hinweis daneben.
+
 **Die Nachrichtenwege sind der eigentliche Ertrag.** Jede Nachricht
 bekommt einen kurzen Fingerabdruck, und der steht sowohl beim Absender
 als auch bei jedem Empfänger im Protokoll. Damit ist „kam an, was
@@ -1225,6 +1333,38 @@ und weggeworfen. Der Grund steht daneben:
 | `transportregel` | zu groß oder strukturell kaputt |
 | `nutzlastpruefung` | ließ sich nicht als das lesen, was das Thema ankündigt |
 | `fremdes-topic` | gehört nicht zu diesem Protokoll |
+
+**Einträge der Art „block_abgelehnt".** Ein Block ist nicht in die Kette
+gekommen. Der Grund steht daneben:
+
+| Art | Bedeutung |
+|---|---|
+| `dublette` | schon übernommen. Gossip verbreitet mehrfach, völlig normal |
+| `passt-nicht-an` | schließt nicht an den eigenen letzten Block an. Bei einem Knoten, der später dazukam, der Normalfall: Er hat die früheren Blöcke nie gesehen |
+| `zustand-weicht-ab` | **der schwere Fall.** Der Block behauptet eine Zustandswurzel, die dieser Knoten aus denselben Transaktionen nicht errechnet |
+
+**„Ohne Abschlusseintrag beendet".** Dieser Knoten ist abgestürzt, hart
+abgeschossen worden, oder er läuft noch. Ein Lauf, der regulär endet
+oder mit Strg-C abgebrochen wird, schreibt einen `ende`-Eintrag mit
+Grund. Fehlt der, ist das Protokoll bis zur letzten Zeile trotzdem
+brauchbar, aber der Grund für das Ende ist unbekannt.
+
+**„Uhrversatz zwischen den Maschinen".** Die Auswertung misst ihn aus
+den Daten: Wenn A eine Verbindung zu B vermerkt und B dieselbe zu A, ist
+das ein Ereignis, zweimal notiert. Steht dort eine Warnung, hat eine
+Maschine eine falsch gestellte Uhr, und alle zeitbezogenen Hinweise sind
+mit Vorsicht zu lesen. Abhilfe: Zeitabgleich (NTP) einschalten.
+
+**Viele `passt-nicht-an` und Höhe 0.** Dieser Knoten ist später
+dazugekommen als der erste Block. **Es gibt keinen
+Nachholmechanismus:** Jeder folgende Block zeigt auf einen Vorgänger,
+den er nie gesehen hat, also lehnt er alles ab. Die Auswertung benennt
+das von selbst.
+
+Abhilfe für den nächsten Lauf: Alle Knoten starten lassen, **bevor** der
+Erzeuger beginnt. Der Erzeuger wartet inzwischen von sich aus auf den
+ersten Peer, aber wer mitten im Lauf dazukommt, hängt weiterhin fest.
+Eine Blocksynchronisierung fehlt und gehört vor ein echtes Testnetz.
 
 **Das ist die wichtigste Unterscheidung bei jeder Fehlersuche:** „nichts
 kam an" und „es kam an und wurde weggeworfen" sehen von außen gleich
@@ -1276,6 +1416,91 @@ steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
 ---
 
 ## Changelog
+
+### v2.13.0 – 2026-08-25 (Durchsicht vor dem ersten Mehrmaschinenlauf)
+
+Eine gezielte Funktionsprüfung vor den ersten Läufen über getrennte
+Maschinen, mit vier Funden.
+
+⚑ **Der Bericht schlug bei einem gesunden Lauf Alarm.** Er meldete 51
+von 78 Nachrichten als nicht angekommen, fast alle an Knoten gerichtet,
+die zu dem Zeitpunkt noch nicht liefen oder schon beendet waren. Ein
+Bericht, der bei einem gesunden Lauf Alarm schlägt, wird nicht gelesen.
+Jetzt zählt nur, wer zur Sendezeit lief: 63 von 78 im selben Lauf, und
+die restlichen sind echte Randfälle beim Ein- und Austritt.
+
+⚑ **Die erste Fassung der Nachsicht war wirkungslos.** Sie nahm eine
+Minute „gegen Uhrabweichung"; bei einem Lauf über sechzig Sekunden
+deckte das den ganzen Lauf ab. **Eine Nachsicht muss kleiner sein als
+das, was sie unterscheiden soll.** Jetzt fünf Sekunden, und der
+tatsächliche Uhrversatz wird aus den Daten gemessen und im Bericht
+genannt.
+
+Neu außerdem: Der Bericht meldet Knoten ohne Abschlusseintrag
+(abgestürzt oder noch laufend) und solche, die mit Strg-C abgebrochen
+wurden.
+
+Zwei Funde am Knoten selbst stehen in `NODE/README/README.md`, v0.5.0:
+Es wurde nur die TCP-Adresse angezeigt, und der Mempool eines
+Nicht-Erzeugers wuchs ohne Ende.
+
+### v2.12.0 – 2026-08-24 (Probelauf statt Netzlauf)
+
+**Umbenannt und neu gerahmt.** Teil C heißt jetzt Probelauf, und ganz
+oben steht in einem Kasten, was er nicht ist: das Testnetz. Der Zustand
+ist Wegwerfware, die MYL sind Spielgeld, ein Probeblock kann nie an eine
+echte Kette anschließen.
+
+Neu ist die **Abdeckungstabelle**: welche Protokollfunktion in diesem
+Lauf ausprobiert wurde, wie oft, mit wie vielen Fehlschlägen, und wie
+oft sie beim Gegenüber ankam. Eine Probe, die nie lief, ist kein Erfolg,
+und das war vorher nicht zu unterscheiden.
+
+⚑ **Der erste Probelauf deckte sofort eine Lücke auf:** Der Erzeuger
+baute acht Blöcke, bevor die anderen verbunden waren; sie wiesen alle
+acht zurück und blieben auf Höhe 0. Es gibt keinen Nachholmechanismus.
+Der Erzeuger wartet jetzt auf den ersten Peer, und die Auswertung
+benennt das Muster, wenn es doch auftritt. Die Ursache bleibt offen und
+gehört vor ein echtes Testnetz.
+
+### v2.11.0 – 2026-08-24 (echte Blöcke und Kettenabgleich)
+
+Die Anlaufstelle baut jetzt echte, verkettete Blöcke aus einem Mempool;
+die übrigen Knoten schicken Transaktionen und rechnen nach. Die
+Auswertung vergleicht die Zustandswurzeln Höhe für Höhe.
+
+Damit prüft ein Netzlauf zum ersten Mal **den Zustand**, nicht nur das
+Netz. C1 und C7 sagen dazu, was weiterhin fehlt: die Einigung. Es
+stimmt niemand ab, und genau ein Knoten erzeugt.
+
+### v2.10.0 – 2026-08-24 (Transport, Lochstanzen, Latenz)
+
+Der Bericht nennt jetzt drei Dinge mehr, die vorher fehlten:
+Verbindungen nach Transport, gelungene und gescheiterte
+Lochstanzversuche, und die Spanne der Paarlatenzen.
+
+**Der Anlass war eine Lücke in dieser Anleitung selbst.** Sie nannte das
+Lochstanzen die interessanteste Messung eines Mehrmaschinenlaufs, aber
+der Knoten schrieb DCUtR-Ereignisse nirgends mit: Die Messung wäre auch
+über getrennte Anschlüsse nicht zustande gekommen.
+
+C3 sagt jetzt außerdem, dass die **quic-v1-Adresse** weiterzugeben ist,
+nicht die TCP-Adresse. Der Transport folgt der verteilten Adresse, und
+über UDP gelingt der Durchstich durch Heimrouter deutlich
+zuverlässiger. Der erste Dreiknotenlauf lief vollständig über TCP, ohne
+dass es jemandem aufgefallen wäre.
+
+### v2.9.0 – 2026-08-24 (Schlüsselordner, gemischte Sammlung)
+
+Private Knotenschlüssel liegen jetzt in `TESTCLIENT/Schluessel/` statt
+dort, wo der Client gestartet wurde. Beim Doppelklick war das die Wurzel
+des Repositoriums, und dort stand die Datei in keiner `.gitignore`:
+**Sie konnte in einen Commit geraten.** Der Ordner schließt seinen
+Inhalt aus, `*.key` steht zusätzlich in der Wurzel-`.gitignore`, und die
+Datei bekommt auf Unix die Rechte 0600.
+
+C5 sagt jetzt, dass beide Protokollarten in denselben Ordner dürfen und
+dass jede Auswertung meldet, wie viele Dateien sie übergeht.
 
 ### v2.8.0 – 2026-08-24 (Teil C zum Durchklicken)
 

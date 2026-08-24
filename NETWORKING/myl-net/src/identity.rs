@@ -85,7 +85,32 @@ impl NodeIdentity {
             fs::create_dir_all(parent)?;
         }
         fs::write(path, self.to_bytes().map_err(|_| IdentityError::InvalidEncoding)?)?;
+        Self::nur_fuer_den_eigentuemer(path);
         Ok(())
+    }
+
+    /// Setzt die Dateirechte auf 0600, also nur lesbar für den
+    /// Eigentümer.
+    ///
+    /// **Der Schlüssel ist die Identität des Knotens.** Wer ihn liest,
+    /// kann im Netz als dieser Knoten auftreten. Auf einem gemeinsam
+    /// genutzten Rechner ist die Vorgabe der meisten Systeme, 0644, für
+    /// diese Datei zu weit.
+    ///
+    /// **Ein Fehlschlag bleibt folgenlos**, und das ist Absicht: Auf
+    /// Windows gibt es diese Rechte nicht, und ein Knoten, der deswegen
+    /// nicht startet, hat aus einer fehlenden Härtung einen Ausfall
+    /// gemacht.
+    fn nur_fuer_den_eigentuemer(path: &Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+        }
     }
 
     /// Protobuf-Kodierung des Schlüsselpaars.

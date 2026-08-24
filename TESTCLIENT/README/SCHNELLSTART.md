@@ -12,7 +12,7 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 
 | | **Test 1: Rechnung** | **Test 2: Netz** |
 |---|---|---|
-| **Frage** | Rechnen zwei Rechner dasselbe, Bit für Bit? | Finden mehrere Rechner einander über das Internet? |
+| **Frage** | Rechnen zwei Rechner dasselbe, Bit für Bit? | Halten die Protokollfunktionen, wenn die Daten über eine Leitung gehen? |
 | **Menüpunkt** | [3] Testlauf starten | [5] Am Netz teilnehmen |
 | **Brauchst du** | x86_64-Rechner, ~1,7 GB Platte, Python | nur die Adresse vom Koordinator |
 | **Dauer** | Minuten | so lange du magst, eine Stunde ist gut |
@@ -45,6 +45,10 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 - Die **`.jsonl`** aus `TESTCLIENT/logs/` zurückschicken. Die `.log`
   daneben ist dasselbe als Fließtext und ist für dich.
 
+**Beide Protokollarten dürfen in denselben Ordner.** Der Koordinator legt
+alles nach `TESTCLIENT/Vergleiche/`; jede Auswertung nimmt sich ihre
+eigenen Dateien und sagt, wie viele sie liegen lässt.
+
 **Voraussetzungen im Einzelnen:**
 
 - **x86_64**, also ein gewöhnlicher Intel- oder AMD-Rechner. Ein
@@ -57,10 +61,18 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 
 ---
 
-## Test 2: Netz (mehrere Rechner)
+## Test 2: Probelauf (mehrere Rechner)
+
+> **Das ist nicht der Start der Blockchain.** Ein Probelauf ist eine
+> Trockenübung: Der Zustand ist Wegwerfware, jeder Start beginnt bei
+> null, und die MYL darin sind Spielgeld. Geprüft wird, ob der Code
+> hält, wenn die Daten über echte Leitungen gehen.
+
 
 - Warte auf die **Adresse vom Koordinator**. Sie sieht so aus:
-  `/ip4/203.0.113.5/tcp/4150/p2p/12D3KooW…`
+  `/ip4/203.0.113.5/udp/4150/quic-v1/p2p/12D3KooW…`
+  (Er schickt die quic-v1-Adresse; über UDP kommt die Verbindung durch
+  Heimrouter zuverlässiger zustande.)
 - **[5] Am Netz teilnehmen**, dann **[1] Jetzt teilnehmen**.
 - Adresse einfügen, Namen und Laufzeit bestätigen.
 - Laufen lassen. Der Client zeigt am Ende, wo das Protokoll liegt.
@@ -68,6 +80,16 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 
 **Was du dafür nicht brauchst:** keinen offenen Port, keine
 Router-Einstellung, kein Modell, kein Python. Nur die Adresse.
+
+**Dein Schlüssel** landet in `TESTCLIENT/Schluessel/`. Er ist die
+Kennung deines Knotens: **nicht mitschicken, nicht weitergeben.** Bleibt
+er liegen, behält dein Rechner über Neustarts dieselbe Kennung, und nur
+dann lassen sich mehrere Läufe zusammenführen.
+
+**Was dabei passiert:** Der Koordinator baut Blöcke, dein Rechner
+schickt Transaktionen und rechnet die Blöcke nach. Am Ende vergleicht
+die Auswertung, ob alle beim selben Zustand gelandet sind. Du musst
+dafür nichts tun.
 
 **Dein eigenes Ergebnis ansehen:** [5], dann [2].
 

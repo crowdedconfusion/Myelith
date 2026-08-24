@@ -191,8 +191,37 @@ pub struct Gruppe {
     pub werte: Vec<(String, BTreeMap<String, Vec<String>>)>,
 }
 
+/// Das Ergebnis des Einlesens, samt dem, was liegen blieb.
+///
+/// # Warum das gezählt wird
+///
+/// Der Koordinator sammelt **beide** Arten von Protokollen an einer
+/// Stelle: Determinismusläufe und die Betriebsprotokolle eines
+/// Netzlaufs. Diese Auswertung übergeht die Netzprotokolle schon von
+/// jeher, aber **still**, und Stille ist hier die falsche Antwort. Wer
+/// nicht sagt, dass er drei Dateien liegen lässt, lässt offen, ob sie
+/// fehlen oder nicht dazugehören, und genau diese Frage stellt sich
+/// sonst jemand um zwei Uhr nachts.
+#[derive(Debug, Clone, Default)]
+pub struct Einlesung {
+    /// Die gelesenen Determinismus-Protokolle.
+    pub protokolle: Vec<Protokoll>,
+    /// Betriebsprotokolle eines Netzlaufs. Gehören in denselben Ordner
+    /// und sind kein Fehler; sie werden mit `netz` ausgewertet.
+    pub betriebsprotokolle: usize,
+    /// `.jsonl`-Dateien, die weder das eine noch das andere sind.
+    /// **Die sind einen Blick wert**: entweder beschädigt oder aus
+    /// Versehen hier gelandet.
+    pub sonstige: usize,
+}
+
 /// Liest alle `.jsonl` eines Verzeichnisses.
 pub fn einlesen(dir: &Path) -> Result<Vec<Protokoll>, String> {
+    Ok(einlesen_mit_bericht(dir)?.protokolle)
+}
+
+/// Wie [`einlesen`], meldet zusätzlich, was übergangen wurde.
+pub fn einlesen_mit_bericht(dir: &Path) -> Result<Einlesung, String> {
     let eintraege =
         fs::read_dir(dir).map_err(|e| format!("{} nicht lesbar: {}", dir.display(), e))?;
 
@@ -202,7 +231,19 @@ pub fn einlesen(dir: &Path) -> Result<Vec<Protokoll>, String> {
         .collect();
     pfade.sort();
 
-    Ok(pfade.iter().filter_map(|p| protokoll_lesen(p)).collect())
+    let mut ergebnis = Einlesung::default();
+    for p in &pfade {
+        match protokoll_lesen(p) {
+            Some(prot) => ergebnis.protokolle.push(prot),
+            // Die Unterscheidung ist der Punkt: Ein Netzprotokoll gehört
+            // hierher und wird anderswo ausgewertet, alles Übrige nicht.
+            None if crate::netz::ist_betriebsprotokoll(p) => {
+                ergebnis.betriebsprotokolle += 1
+            }
+            None => ergebnis.sonstige += 1,
+        }
+    }
+    Ok(ergebnis)
 }
 
 /// Liest ein einzelnes Protokoll. `None`, wenn die Datei keines ist.
@@ -699,13 +740,29 @@ fn leer_als_strich(s: &str) -> &str {
 
 /// `myl-test vergleich`: einlesen, gruppieren, berichten, festhalten.
 pub fn run(dir: &Path, berichte: Option<&Path>) -> bool {
-    let protokolle = match einlesen(dir) {
+    let eingelesen = match einlesen_mit_bericht(dir) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("  {}", e);
             return false;
         }
     };
+    if eingelesen.betriebsprotokolle > 0 {
+        println!(
+            "  {} Betriebsprotokoll(e) eines Netzlaufs übergangen. Sie gehören \
+             hierher und werden im Entwickler-Menü unter „Netzlauf auswerten“ \
+             betrachtet.",
+            eingelesen.betriebsprotokolle
+        );
+    }
+    if eingelesen.sonstige > 0 {
+        println!(
+            "  ⚠ {} .jsonl-Datei(en) sind weder Testlauf noch Netzprotokoll. \
+             Entweder beschädigt oder aus Versehen hier gelandet.",
+            eingelesen.sonstige
+        );
+    }
+    let protokolle = eingelesen.protokolle;
 
     let gruppen = gruppieren(protokolle);
     let ok = berichten(dir, &gruppen);
@@ -1038,6 +1095,32 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("fremd.jsonl"), "{\"kind\":\"etwas\"}\n").unwrap();
         assert!(einlesen(&dir).expect("lesbar").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **Beide Arten dürfen in denselben Ordner**, und jede Auswertung
+    /// sagt, was sie liegen lässt.
+    ///
+    /// Das ist der Punkt, an dem ein Koordinator sonst rät: Drei Dateien
+    /// weniger als erwartet, und niemand sagt, ob sie fehlen oder nicht
+    /// dazugehören.
+    #[test]
+    fn netzprotokolle_werden_erkannt_und_gezaehlt_statt_still_uebergangen() {
+        let dir = tempdir("gemischt");
+        fs::create_dir_all(&dir).unwrap();
+        // Ein Betriebsprotokoll eines Knotens.
+        fs::write(
+            dir.join("alpha-1.jsonl"),
+            "{\"folge\":1,\"zeit_ms\":1,\"knoten\":\"alpha\",\"peer\":\"p1\",\"art\":\"start\"}\n",
+        )
+        .unwrap();
+        // Etwas, das keines von beidem ist.
+        fs::write(dir.join("muell.jsonl"), "{\"kind\":\"etwas\"}\n").unwrap();
+
+        let e = einlesen_mit_bericht(&dir).expect("lesbar");
+        assert!(e.protokolle.is_empty(), "kein Determinismuslauf lag da");
+        assert_eq!(e.betriebsprotokolle, 1, "das Netzprotokoll wurde nicht erkannt");
+        assert_eq!(e.sonstige, 1, "die Müll-Datei wurde nicht getrennt gezählt");
         let _ = fs::remove_dir_all(&dir);
     }
 

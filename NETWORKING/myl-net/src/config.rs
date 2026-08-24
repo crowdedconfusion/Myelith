@@ -33,7 +33,7 @@ pub const PROTOCOL_VERSION: &str = "myelith/0.1";
 
 /// Agent-String des Identify-Protokolls (Anzeige/Diagnose, kein
 /// Konsens-Feld).
-pub const AGENT_VERSION: &str = "myl-net/0.5.0";
+pub const AGENT_VERSION: &str = "myl-net/0.6.0";
 
 /// Maximale Größe einer Gossip-Nachricht in Bytes (Schutz gegen
 /// Gossip-Spam; die Validierung in Punkt 1.4 prüft zusätzlich

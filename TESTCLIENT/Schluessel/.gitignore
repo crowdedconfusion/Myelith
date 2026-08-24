@@ -1,0 +1,9 @@
+# Hier liegen private Knotenschlüssel. Sie gehören unter keinen Umständen
+# in ein Repositorium: Wer den Schlüssel hat, kann im Netz als dieser
+# Knoten auftreten.
+#
+# Alles ignorieren, diese Datei ausgenommen: Der Ordner soll bestehen
+# bleiben, sein Inhalt nie.
+*
+!.gitignore
+!LIESMICH.md

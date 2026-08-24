@@ -50,6 +50,9 @@ NETWORKING/
         │                      Adressbereich (IPv4 /24, IPv6 /64)
         ├── scoring.rs         Gossipsub-Peer-Scoring: IP-Kolokation,
         │                      Verhaltensstrafe, Graylist-Schwellen
+        ├── anfrage.rs         Punkt-zu-Punkt-Anfragen (/myelith/anfrage/1):
+        │                      längenpräfixierter Byte-Codec, undurchsichtige
+        │                      Nutzlast, 4-MiB-Grenze für beide Richtungen
         ├── nat.rs             NAT-Überwindung: Relais-Horchadressen,
         │                      Konfigurationsprüfung, Erkennung
         │                      vermittelter und QUIC-Adressen
@@ -77,6 +80,20 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.6.0 – 2026-08-24 (Punkt 1.5: Anfragekanal)
+
+`/myelith/anfrage/1`, ein Punkt-zu-Punkt-Kanal für Nachforderungen.
+Gossip verbreitet an alle; „schick mir das noch einmal" gehört an
+**einen**.
+
+**Die Nutzlast bleibt undurchsichtig.** Der Kanal trägt Bytes und weiß
+nicht, was ein Block ist. Stünde hier ein `Blockanfrage`-Typ, wäre die
+Schichtung umgekehrt. Was die Bytes bedeuten, entscheidet die Anwendung.
+
+`InboundMessage` trägt jetzt `von`, den letzten Weiterleiter (nicht den
+Urheber). **Ohne dieses Feld war eine Nachforderung nicht
+adressierbar.**
 
 ### v0.5.0 – 2026-08-24 (Punkt 3.4: NAT-Überwindung)
 

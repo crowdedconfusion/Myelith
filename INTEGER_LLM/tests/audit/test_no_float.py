@@ -156,9 +156,13 @@ CONSENSUS_PATH = [
     # (dokumentierte Ausnahme oben, Peer-Score ist lokal statt Konsens).
     ROOT / "NETWORKING" / "myl-net" / "src" / "limits.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "nat.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "anfrage.rs",
     # NODE, aufgenommen 2026-08-24 mit dem Knoten-Binary. Die
     # Verdrahtung darf so wenig Gleitkomma enthalten wie das, was sie
     # verdrahtet, sonst wandert es genau hierher.
+    ROOT / "NODE" / "myl-node" / "src" / "kette.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "probe.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "nachschub.rs",
     ROOT / "NODE" / "myl-node" / "src" / "knoten.rs",
     ROOT / "NODE" / "myl-node" / "src" / "konfig.rs",
     ROOT / "NODE" / "myl-node" / "src" / "protokoll.rs",

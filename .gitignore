@@ -24,3 +24,11 @@ __pycache__/
 # Hinweis: Modelle (INTEGER_LLM/models/), Export-Artefakte (INTEGER_LLM/artifacts/),
 # Evaluierungs-Datensätze (INTEGER_LLM/eval/datasets/) und synthetische Test-Artefakte
 # werden über die jeweiligen lokalen .gitignore-Dateien ausgeschlossen.
+
+# Private Knotenschlüssel. Der Testclient legt sie in
+# TESTCLIENT/Schluessel/ ab, das seinen Inhalt selbst ausschließt.
+# Diese Zeile ist der zweite Riegel: `myl-node` auf der Befehlszeile
+# schreibt dorthin, wo es gestartet wurde, und darauf hat der Client
+# keinen Einfluss. Wer den Schlüssel hat, kann im Netz als dieser
+# Knoten auftreten.
+*.key

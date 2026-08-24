@@ -28,6 +28,9 @@ use myl_net::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+use crate::kette::Kette;
+use crate::nachschub::{Nachforderung, Nachlieferung};
+use crate::probe::Probe;
 use crate::konfig::{KnotenKonfig, KonfigFehler};
 use crate::protokoll::{Betriebsprotokoll, Eintrag, ProtokollFehler};
 use crate::validator::ProtokollValidator;
@@ -44,6 +47,19 @@ use crate::validator::ProtokollValidator;
 /// 16 Hexzeichen sind 64 Bit. Für die Zuordnung innerhalb eines
 /// Testlaufs ist das reichlich, und es bleibt eine Länge, die jemand
 /// von einem Bildschirm abliest.
+/// Wie lange nach der letzten neuen Horchadresse noch gewartet wird.
+///
+/// TCP horcht schneller als QUIC. Wer bei der ersten Adresse aufhört,
+/// sieht nur die TCP-Adresse, und genau das ist passiert. Eine halbe
+/// Sekunde reicht auf jeder geprüften Maschine und fällt beim Start
+/// nicht auf.
+pub const RUHE_NACH_ERSTER_ADRESSE: Duration = Duration::from_millis(500);
+
+/// Kurzform eines Hashes fürs Protokoll: 16 Hexzeichen.
+pub fn kurz(h: &myl_types::hash::Hash) -> String {
+    h.to_hex()[..16].to_string()
+}
+
 pub fn nutzlast_digest(daten: &[u8]) -> String {
     myl_types::hash::Hash::sha256(daten).to_hex()[..16].to_string()
 }
@@ -77,11 +93,33 @@ pub struct Knoten {
     kommandos: mpsc::UnboundedSender<NodeCommand>,
     ereignisse: mpsc::UnboundedReceiver<NodeEvent>,
     protokoll: Betriebsprotokoll,
+    /// Die eigene Kette: Zustand, Höhe, Mempool.
+    ///
+    /// **Jeder Knoten führt seine eigene.** Der Erzeuger baut, die
+    /// übrigen rechnen nach. Ob am Ende alle bei derselben
+    /// Zustandswurzel stehen, ist die Aussage des Laufs.
+    kette: Kette,
+    /// Kleinste, größte und Zahl der Latenzmessungen seit der letzten
+    /// Zustandsaufnahme.
+    ///
+    /// **Gesammelt statt einzeln protokolliert.** Ein Ping je Peer alle
+    /// 15 Sekunden ergäbe über eine Stunde bei drei Peers 720 Zeilen,
+    /// die einzeln nichts sagen. Interessant ist die Spanne: Ein
+    /// Höchstwert weit über dem Kleinstwert heißt Schwankung, und die
+    /// erklärt mehr als jeder Einzelwert.
+    latenz: (u64, u64, u64),
     /// Zähler des Testverkehrs. Geht in die Nutzlast ein, damit jede
     /// Nachricht einen eigenen Fingerabdruck bekommt: Zwei gleiche
     /// Nutzlasten hätten denselben, und Gossipsub verwürfe die zweite
     /// als Dublette.
     testverkehr_zaehler: u64,
+    /// Ob gerade eine Nachforderung unterwegs ist.
+    ///
+    /// **Eine zur Zeit.** Ohne diese Sperre schickt ein Neuling für
+    /// jeden abgelehnten Block eine neue Anfrage; bei einem Rückstand
+    /// von zwanzig Blöcken wären das zwanzig Anfragen für dieselbe
+    /// Lücke, und der Gegenüber bezahlt sie alle.
+    nachforderung_laeuft: bool,
     /// Die eigenen Horchadressen, wie sie gemeldet wurden.
     ///
     /// Der Knoten kennt sie beim Start noch nicht: Bei Port 0 vergibt
@@ -182,8 +220,16 @@ impl Knoten {
             ereignisse: ev_rx,
             protokoll,
             testverkehr_zaehler: 0,
+            kette: Kette::probestand(),
+            nachforderung_laeuft: false,
+            latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
         })
+    }
+
+    /// Die eigene Kette, für Tests und Diagnose.
+    pub fn kette(&self) -> &Kette {
+        &self.kette
     }
 
     /// Die eigene Peer-Id.
@@ -211,22 +257,77 @@ impl Knoten {
     }
 
     /// Wartet, bis mindestens eine Horchadresse gemeldet ist.
+    /// ⚑ **Wartet, bis die Adressen sich beruhigt haben, nicht bis die
+    /// erste da ist.**
+    ///
+    /// Die erste Fassung kehrte zurück, sobald irgendeine Adresse
+    /// vorlag. Das war die TCP-Adresse, weil TCP schneller horcht als
+    /// QUIC, und die QUIC-Adresse traf Millisekunden später ein: **also
+    /// nach der Rückkehr.** Der Betreiber bekam nur die TCP-Adresse zu
+    /// sehen, konnte also nur diese weitergeben, und damit lief das
+    /// ganze Netz über TCP.
+    ///
+    /// Das ist teuer, weil der Durchstich durch Heimrouter über UDP
+    /// deutlich zuverlässiger gelingt: Der Rat „die quic-v1-Adresse
+    /// weitergeben" stand in der Anleitung und war **unbefolgbar**, weil
+    /// sie gar nicht angezeigt wurde.
+    ///
+    /// Deshalb sammelt diese Fassung weiter, bis
+    /// [`RUHE_NACH_ERSTER_ADRESSE`] lang keine neue mehr kommt.
     pub async fn warte_auf_adresse(&mut self, frist: Duration) -> Option<libp2p::Multiaddr> {
         let ende = tokio::time::Instant::now() + frist;
+        let mut seit_letzter: Option<tokio::time::Instant> = None;
         while tokio::time::Instant::now() < ende {
-            if let Some(a) = self.adressen().into_iter().next() {
-                return Some(a);
+            let hat_welche = !self.horchadressen.is_empty();
+            if let Some(zeitpunkt) = seit_letzter {
+                if hat_welche && zeitpunkt.elapsed() >= RUHE_NACH_ERSTER_ADRESSE {
+                    break;
+                }
             }
             let rest = ende.saturating_duration_since(tokio::time::Instant::now());
-            match tokio::time::timeout(rest.min(Duration::from_millis(200)), self.ereignisse.recv())
+            match tokio::time::timeout(rest.min(Duration::from_millis(100)), self.ereignisse.recv())
                 .await
             {
-                Ok(Some(ev)) => self.vermerke(ev),
-                Ok(None) => return None,
-                Err(_) => continue,
+                Ok(Some(ev)) => {
+                    let war = self.horchadressen.len();
+                    self.vermerke(ev);
+                    if self.horchadressen.len() > war {
+                        seit_letzter = Some(tokio::time::Instant::now());
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    if hat_welche && seit_letzter.is_none() {
+                        seit_letzter = Some(tokio::time::Instant::now());
+                    }
+                    continue;
+                }
             }
         }
         self.adressen().into_iter().next()
+    }
+
+    /// Wartet, bis eine Adresse **des gewünschten Transports** vorliegt,
+    /// oder die Frist abläuft.
+    ///
+    /// Für den Betreiber der Anlaufstelle: Er soll die quic-v1-Adresse
+    /// weitergeben, also muss sie angezeigt werden.
+    pub async fn warte_auf_quic(&mut self, frist: Duration) -> bool {
+        let ende = tokio::time::Instant::now() + frist;
+        while tokio::time::Instant::now() < ende {
+            if self.adressen().iter().any(myl_net::ist_quic) {
+                return true;
+            }
+            let rest = ende.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(rest.min(Duration::from_millis(100)), self.ereignisse.recv())
+                .await
+            {
+                Ok(Some(ev)) => self.vermerke(ev),
+                Ok(None) => return false,
+                Err(_) => continue,
+            }
+        }
+        self.adressen().iter().any(myl_net::ist_quic)
     }
 
     /// Wartet, bis mindestens `n` Peers verbunden sind.
@@ -322,20 +423,43 @@ impl Knoten {
         }
     }
 
+    /// Läuft, bis die Zeit um ist oder das Abbruchsignal kommt.
+    ///
+    /// ⚑ **Beide Wege schreiben einen Abschlusseintrag.** In der ersten
+    /// Fassung behandelte nur der Weg ohne Laufzeitgrenze das
+    /// Abbruchsignal; mit `--laufzeit` starb der Prozess bei Strg-C
+    /// wortlos. Das Protokoll blieb zwar vollständig, weil jede Zeile
+    /// sofort geschrieben wird, aber es endete mitten im Betrieb, und
+    /// **„absichtlich beendet" ließ sich nicht von „abgestürzt"
+    /// unterscheiden.**
+    ///
+    /// Für einen Lauf über mehrere Maschinen ist genau das die Frage,
+    /// die als Erstes gestellt wird, wenn ein Protokoll kürzer ist als
+    /// die anderen.
+    pub async fn laufen_bis(&mut self, dauer: Option<Duration>) {
+        let grund = tokio::select! {
+            _ = tokio::signal::ctrl_c() => "Abbruchsignal",
+            _ = async {
+                match dauer {
+                    Some(d) => self.laufe_fuer(d).await,
+                    // Ohne Grenze: in Abschnitten, damit die
+                    // Zustandsaufnahmen weiterlaufen.
+                    None => loop { self.laufe_fuer(Duration::from_secs(3600)).await },
+                }
+            } => "Laufzeit abgelaufen",
+        };
+        self.aufnahme().await;
+        self.protokoll.schreibe(
+            Eintrag::neu("ende")
+                .text("grund", grund)
+                .zahl("hoehe", self.kette.hoehe() as i64)
+                .zahl("zeilen", self.protokoll.geschrieben() as i64),
+        );
+    }
+
     /// Läuft, bis das Abbruchsignal kommt.
     pub async fn laufen(&mut self) {
-        loop {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    self.aufnahme().await;
-                    self.protokoll.schreibe(
-                        Eintrag::neu("ende").text("grund", "Abbruchsignal"),
-                    );
-                    return;
-                }
-                _ = self.laufe_fuer(Duration::from_secs(3600)) => {}
-            }
-        }
+        self.laufen_bis(None).await
     }
 
     /// Schickt eine Nachricht des Testverkehrs.
@@ -350,22 +474,149 @@ impl Knoten {
     /// gleich, Gossipsub verwürfe sie als Dubletten, und die Auswertung
     /// könnte keine einzelne Nachricht verfolgen.
     pub async fn sende_testverkehr(&mut self) -> bool {
-        use myl_consensus::block::{Block, EpochMeta};
-        use myl_types::hash::Hash;
-
         self.testverkehr_zaehler += 1;
-        let kennung = format!("{}#{}", self.konfig.name, self.testverkehr_zaehler);
-        let block = Block::new(EpochMeta {
-            epoch: 0,
-            prev_block_hash: Hash::sha256(b"myelith-testverkehr"),
-            timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
-            state_root: Hash::sha256(kennung.as_bytes()),
-        });
+
+        // Die Rückgratprobe jedes Takts: Der Erzeuger baut einen Block,
+        // die übrigen schicken eine Transaktion. Ohne beides stünde die
+        // Kette still.
+        let rueckgrat = if self.konfig.erzeugt_bloecke {
+            // ⚑ **Erst bauen, wenn jemand zuhört.**
+            //
+            // Es gibt keinen Nachholmechanismus: Ein Knoten, der Block 1
+            // verpasst, hängt für den Rest des Laufs fest, weil jeder
+            // folgende Block auf einen Vorgänger zeigt, den er nie
+            // gesehen hat. Baut der Erzeuger los, bevor die anderen
+            // verbunden sind, lehnen sie danach **alles** ab.
+            //
+            // Der erste Probelauf mit drei Knoten lief genau so ins
+            // Leere: Alpha baute acht Blöcke, Beta und Gamma wiesen alle
+            // acht mit „passt nicht an" zurück und blieben auf Höhe 0.
+            //
+            // Das Warten behebt den Anlass, **nicht die Ursache**. Wer
+            // mitten im Lauf dazukommt, hängt weiterhin fest. Eine
+            // Blocksynchronisierung fehlt und gehört vor ein echtes
+            // Testnetz.
+            if self.kette.hoehe() == 0 && self.peers().await == 0 {
+                self.protokoll.schreibe(
+                    Eintrag::neu("erzeugung_wartet")
+                        .text("grund", "noch kein Peer verbunden, erster Block würde niemanden erreichen"),
+                );
+                return false;
+            }
+            let ok = self.erzeuge_block().await;
+            self.vermerke_probe(Probe::Blockkette, ok);
+            ok
+        } else {
+            let ok = self.sende_transaktion().await;
+            self.vermerke_probe(Probe::Transaktion, ok);
+            ok
+        };
+
+        // Und eine wechselnde Probe daneben. **Ohne Wechsel liefe immer
+        // dieselbe**, und die übrigen Funktionen blieben ungeprüft, ohne
+        // dass es jemandem auffiele: Der Lauf sähe grün aus.
+        let wechselnd = if self.testverkehr_zaehler % 2 == 0 {
+            Probe::PoiBuendel
+        } else {
+            Probe::Challenge
+        };
+        let ok2 = self.fuehre_probe(wechselnd).await;
+
+        rueckgrat && ok2
+    }
+
+    /// Führt eine Nachrichtenprobe aus: echtes Objekt bauen,
+    /// serialisieren, ins Netz geben, Urteil vermerken.
+    pub async fn fuehre_probe(&mut self, probe: Probe) -> bool {
+        let folge = self.testverkehr_zaehler;
+        let name = self.konfig.name.clone();
+        let (topic, daten) = match probe {
+            Probe::PoiBuendel => {
+                let Some(b) = crate::probe::probe_poi_buendel(&name, folge) else {
+                    self.vermerke_probe(probe, false);
+                    return false;
+                };
+                (GossipTopic::PoiBundles, borsh::to_vec(&b).ok())
+            }
+            Probe::Challenge => {
+                let c = crate::probe::probe_challenge(&name, folge);
+                (GossipTopic::Challenges, borsh::to_vec(&c).ok())
+            }
+            // Die übrigen ergeben sich aus dem Verhalten, nicht aus
+            // einer eigenen Nachricht.
+            _ => return true,
+        };
+        let Some(daten) = daten else {
+            self.vermerke_probe(probe, false);
+            return false;
+        };
+        let ok = self.veroeffentliche(topic, daten).await;
+        self.vermerke_probe(probe, ok);
+        ok
+    }
+
+    /// Schreibt das Urteil einer Probe ins Betriebsprotokoll.
+    ///
+    /// **Eine eigene Eintragsart**, nicht bloß ein Feld an `gesendet`:
+    /// Die Auswertung zählt danach zusammen, welche Funktion wie oft
+    /// ausprobiert wurde. Eine Probe, die nie lief, ist kein Erfolg,
+    /// und das ließe sich sonst nicht von einer bestandenen
+    /// unterscheiden.
+    fn vermerke_probe(&mut self, probe: Probe, gelungen: bool) {
+        self.protokoll.schreibe(
+            Eintrag::neu("probe")
+                .text("kennung", probe.kennung())
+                .wahr("gelungen", gelungen),
+        );
+    }
+
+    /// Baut den nächsten Block und verbreitet ihn.
+    ///
+    /// Nur der Erzeuger tut das. Er übernimmt den Block **selbst
+    /// zuerst**, das steckt in [`Kette::baue_block`]: Der Zustand wird
+    /// angewandt, bevor die Wurzel in den Block geschrieben wird.
+    pub async fn erzeuge_block(&mut self) -> bool {
+        let wartend = self.kette.wartend();
+        let block = self.kette.baue_block();
         let daten = match borsh::to_vec(&block) {
             Ok(d) => d,
             Err(_) => return false,
         };
-        self.veroeffentliche(GossipTopic::Blocks, daten).await
+        let bytes = daten.len();
+        let ok = self.veroeffentliche(GossipTopic::Blocks, daten).await;
+        self.protokoll.schreibe(
+            Eintrag::neu("block_erzeugt")
+                .zahl("hoehe", self.kette.hoehe() as i64)
+                .zahl("txs", wartend as i64)
+                .zahl("bytes", bytes as i64)
+                .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+                .text("block", kurz(&self.kette.letzter_hash()))
+                .wahr("verbreitet", ok),
+        );
+        ok
+    }
+
+    /// Schickt eine Transaktion ins Netz.
+    ///
+    /// Die Nicht-Erzeuger tun das. Ohne Transaktionen wären alle Blöcke
+    /// leer, und dann sagte die Übereinstimmung der Zustandswurzeln
+    /// nichts: Ein leerer Zustand ist überall gleich.
+    pub async fn sende_transaktion(&mut self) -> bool {
+        use myl_consensus::block::{BurnTx, Transaction};
+
+        // Ein **ausgestattetes** Testkonto, über den Knotennamen
+        // gewählt. Ein beliebiger Absender hätte kein Guthaben, der
+        // Burn scheiterte still, und der Zustand bewegte sich nie:
+        // Dann belegte die Übereinstimmung der Wurzeln nichts.
+        let tx = Transaction::Burn(BurnTx {
+            sender: crate::kette::konto_fuer(&self.konfig.name),
+            amount: 1_000 + self.testverkehr_zaehler * 100,
+        });
+        let daten = match borsh::to_vec(&tx) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        self.veroeffentliche(GossipTopic::Transactions, daten).await
     }
 
     /// Schreibt eine Zustandsaufnahme.
@@ -378,8 +629,22 @@ impl Knoten {
         let z = self.zustand().await;
         let mut eintrag = Eintrag::neu("aufnahme")
             .zahl("peers", z.peers as i64)
+            .zahl("hoehe", self.kette.hoehe() as i64)
+            .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+            .zahl("wartend", self.kette.wartend() as i64)
             .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
             .zahl("zeilen", self.protokoll.geschrieben() as i64);
+        let (kleinste, groesste, anzahl) = self.latenz;
+        eintrag = eintrag.zahl("latenz_messungen", anzahl as i64);
+        if anzahl > 0 {
+            eintrag = eintrag
+                .zahl("latenz_min_us", kleinste as i64)
+                .zahl("latenz_max_us", groesste as i64);
+        }
+        // Zurücksetzen: Jede Aufnahme beschreibt das Fenster seit der
+        // vorigen. Sonst glättete sich jede Schwankung über den ganzen
+        // Lauf weg, und genau die Schwankung ist die Auskunft.
+        self.latenz = (u64::MAX, 0, 0);
         // Ein Feld je Topic, flach. **Verbunden heißt nicht im Mesh:**
         // Ein Knoten mit Verbindungen und leerem Mesh bekommt nur
         // Ankündigungen statt Nachrichten, und ohne diese Zahlen sähe
@@ -393,6 +658,96 @@ impl Knoten {
         self.protokoll.schreibe(eintrag);
     }
 
+    /// Fordert die fehlenden Blöcke bei einem Peer nach.
+    ///
+    /// Tut nichts, wenn nichts fehlt oder bereits eine Anfrage läuft.
+    fn fordere_nach(&mut self, von: libp2p::PeerId, fremde_hoehe: u64) {
+        if self.nachforderung_laeuft {
+            return;
+        }
+        let Some(forderung) = Nachforderung::fuer_rueckstand(self.kette.hoehe(), fremde_hoehe)
+        else {
+            return;
+        };
+        let Some(bytes) = forderung.als_bytes() else {
+            return;
+        };
+        let Nachforderung::Bloecke { ab, bis } = forderung;
+        if self
+            .kommandos
+            .send(NodeCommand::Anfrage { an: von, daten: bytes })
+            .is_ok()
+        {
+            self.nachforderung_laeuft = true;
+            self.protokoll.schreibe(
+                Eintrag::neu("nachschub_angefordert")
+                    .text("bei", von.to_string())
+                    .zahl("ab", ab as i64)
+                    .zahl("bis", bis as i64)
+                    .zahl("eigene_hoehe", self.kette.hoehe() as i64),
+            );
+        }
+    }
+
+    /// Verarbeitet eine empfangene Nachricht: Blöcke in die Kette,
+    /// Transaktionen in den Mempool.
+    fn verarbeite(&mut self, m: &myl_net::InboundMessage) {
+        match m.topic {
+            GossipTopic::Blocks => {
+                use borsh::BorshDeserialize;
+                let mut rest = &m.data[..];
+                let Ok(block) = myl_consensus::block::Block::deserialize(&mut rest) else {
+                    return;
+                };
+                if !rest.is_empty() {
+                    return;
+                }
+                match self.kette.uebernimm(&block) {
+                    Ok(()) => self.protokoll.schreibe(
+                        Eintrag::neu("block_uebernommen")
+                            .zahl("hoehe", self.kette.hoehe() as i64)
+                            .zahl("txs", block.txs.len() as i64)
+                            .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
+                            .text("block", kurz(&self.kette.letzter_hash())),
+                    ),
+                    Err(grund) => {
+                        let art = match grund {
+                            crate::kette::KettenFehler::SchonBekannt => "dublette",
+                            crate::kette::KettenFehler::PasstNichtAn { .. } => "passt-nicht-an",
+                            crate::kette::KettenFehler::ZustandWeichtAb { .. } => {
+                                "zustand-weicht-ab"
+                            }
+                        };
+                        self.protokoll.schreibe(
+                            Eintrag::neu("block_abgelehnt")
+                                .zahl("eigene_hoehe", self.kette.hoehe() as i64)
+                                .zahl("fremde_hoehe", block.epoch_meta.epoch as i64)
+                                .text("art", art)
+                                .text("grund", grund.to_string()),
+                        );
+                        // Passt der Block nicht an und ist er **weiter**
+                        // als wir, fehlt uns etwas. Dann fragen wir den,
+                        // von dem der Hinweis kam: Er hat den Block, also
+                        // hat er mit hoher Wahrscheinlichkeit auch die
+                        // davor.
+                        if art == "passt-nicht-an" {
+                            self.fordere_nach(m.von, block.epoch_meta.epoch);
+                        }
+                    }
+                }
+            }
+            // Auch der Erzeuger nimmt eigene Transaktionen nicht
+            // doppelt: Gossipsub liefert eigene Nachrichten nicht an den
+            // Absender zurück.
+            GossipTopic::Transactions if self.kette.aufnehmen_roh(&m.data) => {
+                self.protokoll.schreibe(
+                    Eintrag::neu("tx_aufgenommen").zahl("wartend", self.kette.wartend() as i64),
+                );
+            }
+            _ => {}
+        }
+    }
+
     fn vermerke(&mut self, ereignis: NodeEvent) {
         let eintrag = match ereignis {
             NodeEvent::ListenAddr(addr) => {
@@ -404,13 +759,102 @@ impl Knoten {
                     .wahr("vermittelt", ist_vermittelt(&addr))
                     .wahr("quic", ist_quic(&addr))
             }
-            NodeEvent::Message(m) => Eintrag::neu("empfangen")
-                .text("topic", format!("{:?}", m.topic))
-                .text("digest", nutzlast_digest(&m.data))
-                .zahl("bytes", m.data.len() as i64),
+            NodeEvent::Message(m) => {
+                // Die Probe dazuschreiben: Die Auswertung zählt
+                // Gesendetes gegen Empfangenes je Funktion, und dafür
+                // muss beide Seiten dieselbe Kennung tragen.
+                let probe = Probe::ALLE
+                    .into_iter()
+                    .find(|p| p.topic() == Some(m.topic))
+                    .map(|p| p.kennung())
+                    .unwrap_or("sonstiges");
+                let eintrag = Eintrag::neu("empfangen")
+                    .text("topic", format!("{:?}", m.topic))
+                    .text("kennung", probe)
+                    .text("digest", nutzlast_digest(&m.data))
+                    .zahl("bytes", m.data.len() as i64);
+                self.protokoll.schreibe(eintrag);
+                // Und dann verarbeiten. Getrennt vom Empfangseintrag,
+                // damit im Protokoll steht, was ankam, auch wenn die
+                // Verarbeitung scheitert.
+                self.verarbeite(&m);
+                return;
+            }
             // Ohne diesen Eintrag ließe sich „nichts kam an" nicht von
             // „es kam an und wurde weggeworfen" unterscheiden, und das
             // ist die erste Frage jeder Fehlersuche.
+            // Die Messung, die auf einer Maschine nicht zu haben ist:
+            // Auf Loopback gibt es nichts zu durchstoßen.
+            NodeEvent::Lochstanzen { peer, gelungen, grund } => Eintrag::neu("lochstanzen")
+                .text("gegenstelle", peer.to_string())
+                .wahr("gelungen", gelungen)
+                .text("grund", grund),
+            NodeEvent::Latenz { mikrosekunden, .. } => {
+                let (kleinste, groesste, anzahl) = self.latenz;
+                self.latenz = (
+                    kleinste.min(mikrosekunden),
+                    groesste.max(mikrosekunden),
+                    anzahl + 1,
+                );
+                // Kein eigener Eintrag: Die Spanne steht in der nächsten
+                // Zustandsaufnahme. Siehe Feld `latenz`.
+                return;
+            }
+            // Jemand fragt Blöcke nach. Antworten, soweit vorhanden.
+            NodeEvent::AnfrageEingegangen { von, daten, marke } => {
+                let (antwort, anzahl) = match Nachforderung::aus_bytes(&daten) {
+                    Some(Nachforderung::Bloecke { ab, bis }) => {
+                        let bloecke = self.kette.bloecke_von_bis(ab, bis);
+                        let n = bloecke.len();
+                        if n == 0 {
+                            (Nachlieferung::Nichts, 0)
+                        } else {
+                            (Nachlieferung::Bloecke(bloecke), n)
+                        }
+                    }
+                    // Unlesbare Anfrage: trotzdem antworten. Schweigen
+                    // ließe den Fragenden auf eine Zeitüberschreitung
+                    // warten, die ihm nichts sagt.
+                    None => (Nachlieferung::Nichts, 0),
+                };
+                if let Some(bytes) = antwort.als_bytes() {
+                    let _ = self.kommandos.send(NodeCommand::Antwort { marke, daten: bytes });
+                }
+                Eintrag::neu("nachschub_geliefert")
+                    .text("an", von.to_string())
+                    .zahl("bloecke", anzahl as i64)
+            }
+            // Die nachgeforderten Blöcke sind da.
+            NodeEvent::AntwortEingegangen { von, daten } => {
+                self.nachforderung_laeuft = false;
+                let vorher = self.kette.hoehe();
+                let mut angenommen = 0usize;
+                let mut abgelehnt = 0usize;
+                if let Some(Nachlieferung::Bloecke(bloecke)) = Nachlieferung::aus_bytes(&daten) {
+                    // **Derselbe Weg wie bei verbreiteten Blöcken.**
+                    // Nachschub ist ein Transportweg, kein
+                    // Vertrauensweg: gleiche Anschlussprüfung, gleiche
+                    // Nachrechnung der Zustandswurzel.
+                    for b in bloecke {
+                        match self.kette.uebernimm(&b) {
+                            Ok(()) => angenommen += 1,
+                            Err(_) => abgelehnt += 1,
+                        }
+                    }
+                }
+                Eintrag::neu("nachschub_erhalten")
+                    .text("von", von.to_string())
+                    .zahl("angenommen", angenommen as i64)
+                    .zahl("abgelehnt", abgelehnt as i64)
+                    .zahl("hoehe_vorher", vorher as i64)
+                    .zahl("hoehe_nachher", self.kette.hoehe() as i64)
+            }
+            NodeEvent::AnfrageGescheitert { an, grund } => {
+                self.nachforderung_laeuft = false;
+                Eintrag::neu("nachschub_gescheitert")
+                    .text("an", an.to_string())
+                    .text("grund", grund)
+            }
             // Die Antwort auf „warum verbindet sich niemand zu mir".
             NodeEvent::Erreichbarkeit { addr, erreichbar, grund } => {
                 Eintrag::neu("erreichbarkeit")

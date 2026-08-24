@@ -75,6 +75,9 @@ pub struct MylBehaviour {
     /// AutoNAT-**Server**. Setzt dasselbe voraus wie der Relais-Dienst,
     /// nämlich öffentliche Erreichbarkeit, und hängt am selben Schalter.
     pub autonat_server: Toggle<autonat::v2::server::Behaviour>,
+    /// Punkt-zu-Punkt-Anfragen ([`crate::anfrage`]). Trägt undurchsichtige
+    /// Bytes: Was sie bedeuten, entscheidet die Anwendung.
+    pub anfrage: crate::anfrage::AnfrageBehaviour,
 }
 
 /// Baut den Swarm aus Identität und Konfiguration.
@@ -162,6 +165,7 @@ pub fn build_swarm(
                 autonat_server: Toggle::from(
                     dient_als_relais.then(autonat::v2::server::Behaviour::default),
                 ),
+                anfrage: crate::anfrage::baue_anfragekanal(),
             })
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))

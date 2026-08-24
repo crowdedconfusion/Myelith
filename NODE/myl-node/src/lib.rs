@@ -46,12 +46,18 @@
 
 #![deny(unsafe_code)]
 
+pub mod kette;
 pub mod knoten;
 pub mod konfig;
+pub mod nachschub;
+pub mod probe;
 pub mod protokoll;
 pub mod validator;
 
+pub use kette::{Kette, KettenFehler};
 pub use knoten::{Knoten, KnotenFehler};
 pub use konfig::{KnotenKonfig, KonfigFehler, Rolle};
+pub use nachschub::{Nachforderung, Nachlieferung};
+pub use probe::Probe;
 pub use protokoll::{Betriebsprotokoll, Eintrag, ProtokollFehler};
 pub use validator::ProtokollValidator;

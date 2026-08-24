@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."
@@ -11,6 +11,7 @@ borsh = { version = "1.6", features = ["derive"] }
 myl-net = { path = "../../NETWORKING/myl-net" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
+myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal"] }
 libp2p = { version = "0.56", features = ["tokio"] }
 

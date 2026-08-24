@@ -82,6 +82,18 @@ pub struct KnotenKonfig {
     /// In einem echten Netz gehört das aus: Ein Knoten, der
     /// bedeutungslose Blöcke einspeist, ist dort ein Störer.
     pub testverkehr_sekunden: Option<u64>,
+    /// Ob dieser Knoten Blöcke **erzeugt**.
+    ///
+    /// **Genau einer im Netz**, sonst gabelt sich die Kette sofort:
+    /// Zwei Erzeuger bauen zwei verschiedene Blöcke auf denselben
+    /// Vorgänger, und beide Seiten weisen den jeweils anderen als
+    /// „passt nicht an" zurück. Das ist kein Fehler, sondern die
+    /// Abwesenheit von BFT: Wer entscheidet, welcher gilt, ist genau
+    /// die Frage, die eine Abstimmungsrunde beantwortet, und die gibt
+    /// es hier noch nicht.
+    ///
+    /// In der üblichen Aufstellung ist es die Anlaufstelle.
+    pub erzeugt_bloecke: bool,
 }
 
 /// Fehler der Konfiguration.
@@ -139,6 +151,7 @@ impl Default for KnotenKonfig {
             nat: NatKonfig::default(),
             aufnahme_sekunden: 30,
             testverkehr_sekunden: None,
+            erzeugt_bloecke: false,
         }
     }
 }

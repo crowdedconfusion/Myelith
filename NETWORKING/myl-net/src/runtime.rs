@@ -86,6 +86,22 @@ pub enum NodeCommand {
         addr: Multiaddr,
         result: Option<oneshot::Sender<bool>>,
     },
+    /// Eine direkte Anfrage an einen Peer schicken (undurchsichtige
+    /// Bytes, siehe [`crate::anfrage`]).
+    Anfrage {
+        an: libp2p::PeerId,
+        daten: Vec<u8>,
+    },
+    /// Auf eine eingegangene Anfrage antworten.
+    ///
+    /// Die `marke` stammt aus [`NodeEvent::AnfrageEingegangen`]. Sie
+    /// steht dort statt des Antwortkanals selbst, weil der weder
+    /// kopierbar noch anzeigbar ist und deshalb nicht durch eine
+    /// Ereignis-Aufzählung passt, die beides sein soll.
+    Antwort {
+        marke: u64,
+        daten: Vec<u8>,
+    },
     /// Eine eigene Adresse als von außen erreichbar eintragen.
     ///
     /// Nötig für Relais-Knoten (Fund 56): Ihre Reservierungsantwort
@@ -116,6 +132,17 @@ pub struct InboundMessage {
     pub topic: GossipTopic,
     /// Die Roh-Nutzlast (Borsh-Bytes).
     pub data: Vec<u8>,
+    /// Von wem die Nachricht **weitergereicht** wurde.
+    ///
+    /// **Nicht der Urheber**, sondern der letzte Weiterleiter: Gossip
+    /// verbreitet über Zwischenstationen, und wer eine Nachricht
+    /// weitergibt, muss sie nicht erzeugt haben.
+    ///
+    /// Gebraucht wird das für Nachfragen: Wer merkt, dass ihm etwas
+    /// fehlt, muss **jemanden** fragen können, und der nächstliegende
+    /// ist der, von dem der Hinweis kam. Ohne dieses Feld war eine
+    /// Nachforderung nicht adressierbar.
+    pub von: libp2p::PeerId,
 }
 
 /// Ereignisse eines laufenden Nodes.
@@ -144,6 +171,53 @@ pub enum NodeEvent {
     Getrennt {
         peer: libp2p::PeerId,
         grund: String,
+    },
+    /// Eine direkte Anfrage ist eingegangen.
+    ///
+    /// Wird sie nicht mit [`NodeCommand::Antwort`] beantwortet, läuft
+    /// sie beim Fragenden in eine Zeitüberschreitung. Das ist kein
+    /// Fehler, sondern die Vorgabe: Niemand muss antworten.
+    AnfrageEingegangen {
+        von: libp2p::PeerId,
+        daten: Vec<u8>,
+        marke: u64,
+    },
+    /// Eine Antwort auf eine eigene Anfrage ist eingegangen.
+    AntwortEingegangen {
+        von: libp2p::PeerId,
+        daten: Vec<u8>,
+    },
+    /// Eine eigene Anfrage ist gescheitert.
+    AnfrageGescheitert {
+        an: libp2p::PeerId,
+        grund: String,
+    },
+    /// Ein Lochstanzversuch (DCUtR) ist abgeschlossen.
+    ///
+    /// **Das Messgerät für die teuerste offene Frage der Netzschicht.**
+    /// Zwei Knoten hinter NAT sprechen zunächst über ein Relais; DCUtR
+    /// versucht danach, eine direkte Verbindung herzustellen. Gelingt
+    /// das, ist das Relais wieder frei und sein Hebel weg.
+    ///
+    /// Ob es gelingt, hängt an der Bauart der beteiligten NATs und ist
+    /// **auf einer Maschine nicht messbar**: Auf Loopback gibt es
+    /// nichts zu durchstoßen. Ohne dieses Ereignis bliebe die Frage auch
+    /// auf getrennten Maschinen unbeantwortet, weil niemand mitschreibt,
+    /// wie oft es klappt.
+    Lochstanzen {
+        peer: libp2p::PeerId,
+        gelungen: bool,
+        grund: String,
+    },
+    /// Eine Paarlatenz wurde gemessen (Ping).
+    ///
+    /// In **Mikrosekunden als Ganzzahl**, wie die Atteste sie tragen.
+    /// Der `LatencyTracker` glättet daraus; hier steht der Rohwert, denn
+    /// für die Fehlersuche ist die Streuung interessanter als der
+    /// geglättete Verlauf.
+    Latenz {
+        peer: libp2p::PeerId,
+        mikrosekunden: u64,
     },
     /// AutoNAT hat die eigene Erreichbarkeit geprüft.
     ///
@@ -208,6 +282,14 @@ pub async fn run_node_mit(
     events: mpsc::UnboundedSender<NodeEvent>,
     validator: Arc<dyn PayloadValidator + Send + Sync>,
 ) {
+    // Offene Antwortkanäle. Sie bleiben hier, weil ein
+    // `ResponseChannel` weder kopierbar noch anzeigbar ist; nach außen
+    // geht nur eine Marke.
+    let mut offene_anfragen: std::collections::HashMap<
+        u64,
+        libp2p::request_response::ResponseChannel<Vec<u8>>,
+    > = std::collections::HashMap::new();
+    let mut naechste_marke: u64 = 0;
     loop {
         tokio::select! {
             maybe_cmd = commands.recv() => {
@@ -254,6 +336,17 @@ pub async fn run_node_mit(
                     NodeCommand::ExterneAdresse { addr } => {
                         swarm.add_external_address(addr);
                     }
+                    NodeCommand::Anfrage { an, daten } => {
+                        swarm.behaviour_mut().anfrage.send_request(&an, daten);
+                    }
+                    NodeCommand::Antwort { marke, daten } => {
+                        if let Some(kanal) = offene_anfragen.remove(&marke) {
+                            let _ = swarm
+                                .behaviour_mut()
+                                .anfrage
+                                .send_response(kanal, daten);
+                        }
+                    }
                 }
             }
             event = swarm.next() => {
@@ -261,6 +354,54 @@ pub async fn run_node_mit(
                 match event {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         let _ = events.send(NodeEvent::ListenAddr(address));
+                    }
+                    SwarmEvent::Behaviour(MylBehaviourEvent::Anfrage(ev)) => {
+                        use libp2p::request_response::{Event as RrEvent, Message as RrMsg};
+                        match ev {
+                            RrEvent::Message { peer, message, .. } => match message {
+                                RrMsg::Request { request, channel, .. } => {
+                                    naechste_marke += 1;
+                                    let marke = naechste_marke;
+                                    offene_anfragen.insert(marke, channel);
+                                    let _ = events.send(NodeEvent::AnfrageEingegangen {
+                                        von: peer,
+                                        daten: request,
+                                        marke,
+                                    });
+                                }
+                                RrMsg::Response { response, .. } => {
+                                    let _ = events.send(NodeEvent::AntwortEingegangen {
+                                        von: peer,
+                                        daten: response,
+                                    });
+                                }
+                            },
+                            RrEvent::OutboundFailure { peer, error, .. } => {
+                                let _ = events.send(NodeEvent::AnfrageGescheitert {
+                                    an: peer,
+                                    grund: error.to_string(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    SwarmEvent::Behaviour(MylBehaviourEvent::Dcutr(ev)) => {
+                        let _ = events.send(NodeEvent::Lochstanzen {
+                            peer: ev.remote_peer_id,
+                            gelungen: ev.result.is_ok(),
+                            grund: match ev.result {
+                                Ok(_) => "direkt".to_string(),
+                                Err(e) => e.to_string(),
+                            },
+                        });
+                    }
+                    SwarmEvent::Behaviour(MylBehaviourEvent::Ping(ev)) => {
+                        if let Ok(dauer) = ev.result {
+                            let _ = events.send(NodeEvent::Latenz {
+                                peer: ev.peer,
+                                mikrosekunden: dauer.as_micros().min(u64::MAX as u128) as u64,
+                            });
+                        }
                     }
                     SwarmEvent::Behaviour(MylBehaviourEvent::AutonatClient(ev)) => {
                         let _ = events.send(NodeEvent::Erreichbarkeit {
@@ -327,6 +468,7 @@ pub async fn run_node_mit(
                                 let _ = events.send(NodeEvent::Message(InboundMessage {
                                     topic,
                                     data: message.data,
+                                    von: propagation_source,
                                 }));
                             }
                             Err(grund) => {

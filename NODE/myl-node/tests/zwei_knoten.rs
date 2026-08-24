@@ -59,6 +59,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
+        erzeugt_bloecke: false,
     }
 }
 

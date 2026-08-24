@@ -30,11 +30,16 @@ myl-node — ein Myelith-Netzknoten
   --schluessel <datei>   Schlüsseldatei (Vorgabe: knoten.key)
   --protokolle <verz>    Verzeichnis für Betriebsprotokolle (Vorgabe: logs)
   --aufnahme <sek>       Abstand der Zustandsaufnahmen (Vorgabe: 30)
-  --testverkehr <sek>    getaktet eine Testnachricht senden (Vorgabe: keine).
-                         NUR FÜR TESTNETZE: strukturell gültige, inhaltlich
-                         bedeutungslose Blöcke. Ohne das belegt ein Lauf nur,
-                         dass die Knoten einander finden, nicht dass
-                         Nachrichten fließen.
+  --testverkehr <sek>    Takt des Testverkehrs (Vorgabe: keiner). Mit
+                         --erzeuger wird in diesem Takt ein Block gebaut,
+                         sonst eine Burn-Transaktion geschickt. Ohne das
+                         belegt ein Lauf nur, dass die Knoten einander
+                         finden, nicht dass Nachrichten fließen und der
+                         Zustand übereinstimmt. NUR FÜR TESTNETZE.
+  --erzeuger             dieser Knoten baut die Blöcke. GENAU EINER im Netz:
+                         zwei Erzeuger gabeln die Kette sofort, weil niemand
+                         entscheidet, welcher Block gilt (das täte BFT).
+                         Die übrigen schicken Transaktionen und rechnen nach.
   --laufzeit <sek>       nach so vielen Sekunden beenden (Vorgabe: bis Strg-C)
   --still                nicht auf den Bildschirm protokollieren
   --hilfe                diese Übersicht
@@ -100,6 +105,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 );
                 i += 2;
             }
+            "--erzeuger" => { konfig.erzeugt_bloecke = true; i += 1; }
             "--laufzeit" => {
                 laufzeit = Some(
                     wert(i)?.parse().map_err(|_| "--laufzeit erwartet eine Zahl".to_string())?,
@@ -145,19 +151,37 @@ async fn main() {
 
     // Die eigenen Adressen nennen, sobald sie feststehen. Sie sind das,
     // was die anderen Maschinen als --bootstrap brauchen.
+    // Erst auf QUIC warten, dann ausgeben: Der Betreiber soll die
+    // quic-v1-Adresse weitergeben, also muss sie dastehen.
+    let hat_quic = knoten.warte_auf_quic(Duration::from_secs(8)).await;
     if knoten.warte_auf_adresse(Duration::from_secs(5)).await.is_some() {
-        for a in knoten.adressen() {
+        // QUIC zuerst: Der Transport folgt der Adresse, die weitergegeben
+        // wird. Wer eine /tcp/-Adresse verteilt, bekommt ein reines
+        // TCP-Netz, und über UDP gelingt das Lochstanzen durch NAT
+        // deutlich zuverlässiger. Die Reihenfolge ist die Empfehlung.
+        let mut adressen = knoten.adressen();
+        adressen.sort_by_key(|a| !myl_net::ist_quic(a));
+        for a in adressen {
             eprintln!("myl-node: erreichbar unter {a}");
+        }
+        if hat_quic {
+            eprintln!("myl-node: für Läufe über das Internet die quic-v1-Adresse weitergeben");
+        } else {
+            eprintln!(
+                "myl-node: WARNUNG: keine quic-v1-Adresse gemeldet. Über TCP allein \
+                 gelingt der Durchstich durch Heimrouter oft nicht."
+            );
         }
     } else {
         eprintln!("myl-node: noch keine Horchadresse gemeldet");
     }
 
-    match args.laufzeit {
-        Some(sek) => knoten.laufe_fuer(Duration::from_secs(sek)).await,
-        None => knoten.laufen().await,
-    }
-    knoten.aufnahme().await;
+    // Ein Weg für beide Fälle: Auch mit --laufzeit muss Strg-C einen
+    // Abschlusseintrag schreiben, sonst sieht ein früh beendeter Lauf
+    // aus wie ein Absturz.
+    knoten
+        .laufen_bis(args.laufzeit.map(Duration::from_secs))
+        .await;
     eprintln!(
         "myl-node: beendet, {} Protokollzeilen in {}",
         knoten.protokollzeilen(),
