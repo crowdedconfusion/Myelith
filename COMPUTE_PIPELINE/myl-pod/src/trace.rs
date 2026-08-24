@@ -37,31 +37,36 @@ pub fn activation_hash(activations: &[i16]) -> [u8; 32] {
 /// prev_hash, next_hash)`. Für Shard 0 ist `prev_hash` der Null-Hash
 /// (es gibt keinen vorherigen Spur-Eintrag).
 ///
-/// # ⚑ Diese Botschaft hat als einzige im Projekt keine Domain-Separation
+/// # Domain-Separation und Rolle (eingeführt 2026-08-24)
 ///
-/// Jede andere Signaturverwendung trägt ein Präfix im Klartext
-/// (`MYELITH_BFT_VOTE_v1`, `MYELITH_POI_BUNDLE_v1` und so fort). Diese
-/// nicht: Sie beginnt mit den 32 Bytes der Segment-Id.
+/// Signiert wird nicht die reine Borsh-Folge, sondern
+/// `DST_SHARD_TRANSITION ‖ Rolle ‖ Borsh(TransitionSig)`.
 ///
-/// **Eine Verwechslung ist heute unmöglich, aber nicht durch Design.**
-/// Die Botschaft ist 112 Bytes lang, und keine andere Klasse ist das
-/// (59, 61, 62, 74, 101, 48). Der Schutz ist ein **Längenzufall**. Er
-/// verschwindet still, sobald jemand eine Klasse auf 112 Bytes bringt
-/// oder dieses `struct` um ein Feld ändert: Kein Test schlägt fehl, kein
-/// Kompilat bricht.
+/// **Warum ein Präfix (Bedrohungsmodell 4.1).** Bis dahin war dies die
+/// **einzige Signaturverwendung im Projekt ohne Domain-Separation**;
+/// jede andere trägt ein Präfix im Klartext (`MYELITH_BFT_VOTE_v1`,
+/// `MYELITH_POI_BUNDLE_v1` und so fort). Eine Verwechslung war unmöglich,
+/// aber nicht durch Design: Die Botschaft war 112 Bytes lang und keine
+/// andere Klasse war das (59, 61, 62, 74, 101, 48). **Der Schutz war ein
+/// Längenzufall** und wäre still verschwunden, sobald jemand eine Klasse
+/// auf 112 Bytes bringt oder dieses `struct` um ein Feld ändert: Kein
+/// Test wäre fehlgeschlagen, kein Kompilat gebrochen.
 ///
-/// **Warum es zählt:** Ein Miner benutzt seinen BLS-Schlüssel sowohl
-/// hier als auch als Pod-Mitglied für PoI-Bündel. Kollidierten zwei
-/// Klassen, ließe sich eine in der einen Rolle abgegebene Signatur in
-/// der anderen einsetzen — je nach Richtung ein erschlichener
-/// Arbeitsanspruch oder ein gefälschter Rechenschritt im Streitfall.
+/// **Warum die Rolle (Bedrohungsmodell 5.3).** Ein Miner benutzt seinen
+/// BLS-Schlüssel in mehreren Rollen: als Shard, als Pod-Mitglied für
+/// PoI-Bündel, möglicherweise als Validator. Ob eine Identität in allen
+/// Rollen dasselbe Schlüsselpaar benutzen darf, ergab sich bisher aus dem
+/// Code statt aus einer Entscheidung. Sie ist gefallen: **ein Schlüssel,
+/// aber die Rolle wird mitsigniert.** Das erreicht dasselbe wie getrennte
+/// Schlüssel, ohne die Schlüsselverwaltung zu verdreifachen, und drei
+/// Schlüssel je Teilnehmer wären drei Wege, einen zu verlieren.
 ///
-/// **Nicht behoben, weil es das Drahtformat ändert.** Ein
-/// `DST_SHARD_TRANSITION_v1` vor den Borsh-Bytes kostet eine Zeile und
-/// ist additiv, ist aber eine Protokolländerung und gehört mit den
-/// übrigen offenen Punkten von COMPUTE_PIPELINE entschieden. Steht im
-/// Fahrplan und in `SHARED_TYPES/README/Signatur-Bedrohungsmodell.md`
-/// (Abschnitt 4.1).
+/// **Warum jetzt.** Das Drahtformat des Pods hat heute keinen externen
+/// Nutzer: Es läuft nur zwischen Prozessen, die zusammen gebaut werden.
+/// Nach dem ersten Partnerlauf wäre daraus eine Protokolländerung mit
+/// Abstimmungsbedarf geworden. Dieselbe Begründung wie bei der
+/// Latenz-EMA (Fund 44): Der billigste Zeitpunkt ist der, an dem noch
+/// niemand darauf zeigt.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct TransitionSig {
     pub segment_id: SegmentId,
@@ -72,12 +77,26 @@ pub struct TransitionSig {
 }
 
 impl TransitionSig {
-    /// Serialisiert die Übergangs-Nachricht zu den zu signierenden Bytes.
-    pub fn to_sign_bytes(&self) -> Vec<u8> {
-        borsh::to_vec(self).expect("TransitionSig ist stets serialisierbar")
+    /// Die zu signierenden Bytes: `DST ‖ Rolle ‖ Borsh(self)`.
+    ///
+    /// Feste Feldbreiten in fester Reihenfolge, also präfixfrei und
+    /// eindeutig dekodierbar — dieselbe Bauart wie
+    /// `myl_consensus::signing::signable_bytes`.
+    pub fn to_sign_bytes_mit_rolle(&self, rolle: Rolle) -> Vec<u8> {
+        let borsh_bytes = borsh::to_vec(self).expect("TransitionSig ist stets serialisierbar");
+        let mut msg = Vec::with_capacity(DST_SHARD_TRANSITION.len() + 1 + borsh_bytes.len());
+        msg.extend_from_slice(DST_SHARD_TRANSITION);
+        msg.push(rolle.byte());
+        msg.extend_from_slice(&borsh_bytes);
+        msg
     }
 
-    /// Signiert den Übergang mit dem Shard-BLS-Schlüssel.
+    /// Die Bytes in der Rolle [`Rolle::Shard`], dem Normalfall.
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        self.to_sign_bytes_mit_rolle(Rolle::Shard)
+    }
+
+    /// Signiert den Übergang mit dem BLS-Schlüssel in der Rolle `Shard`.
     pub fn sign(&self, sk: &BlsSecretKey) -> Result<BlsSignature, String> {
         sk.sign(&self.to_sign_bytes()).map_err(|e| e.to_string())
     }
@@ -87,10 +106,50 @@ impl TransitionSig {
     pub fn verify(&self, pk: &BlsPublicKey, sig: &BlsSignature) -> bool {
         pk.verify(&self.to_sign_bytes(), sig)
     }
+
+    /// Verifiziert gegen eine ausdrücklich genannte Rolle.
+    pub fn verify_mit_rolle(&self, pk: &BlsPublicKey, sig: &BlsSignature, rolle: Rolle) -> bool {
+        pk.verify(&self.to_sign_bytes_mit_rolle(rolle), sig)
+    }
 }
 
 /// Null-Hash (vorheriger Spur-Eintrag für Shard 0).
 pub const ZERO_HASH: [u8; 32] = [0u8; 32];
+
+/// Domain-Separation-Präfix der Shard-Übergangssignatur.
+///
+/// Additiv wie `DST_PROPOSE_POL` in `myl-consensus`: ein eigenes Präfix
+/// statt einer Erweiterung einer bestehenden Kodierung.
+pub const DST_SHARD_TRANSITION: &[u8] = b"MYELITH_SHARD_TRANSITION_v1";
+
+/// Die Rolle, in der ein Schlüssel unterschreibt.
+///
+/// **Ein Schlüssel je Teilnehmer, aber die Rolle wird mitsigniert.** Eine
+/// in einer Rolle abgegebene Signatur gilt damit in keiner anderen, und
+/// zwar durch Konstruktion und nicht durch die Länge der Botschaft.
+///
+/// Die Kodierung ist ein einzelnes Byte in fester Zuordnung; sie ist Teil
+/// des Konsensvertrags und darf nicht umnummeriert werden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[borsh(use_discriminant = true)]
+#[repr(u8)]
+pub enum Rolle {
+    /// Rechnet eine Layer-Gruppe eines Segments.
+    Shard = 1,
+    /// Bestätigt als Mitglied ein PoI-Bündel seines Pods.
+    PodMitglied = 2,
+    /// Stimmt im BFT-Komitee ab.
+    Validator = 3,
+    /// Rechnet ein Segment als Stichprobe nach.
+    Checker = 4,
+}
+
+impl Rolle {
+    /// Das Byte, das in die Signierbotschaft geht.
+    pub fn byte(&self) -> u8 {
+        *self as u8
+    }
+}
 
 /// Prüft, dass der Hash der empfangenen Aktivierungen zum letzten
 /// Spur-Eintrag passt (Manipulationserkennung). Liefert `true`, wenn die
@@ -178,5 +237,98 @@ mod tests {
         assert!(!verify_input_hash(&manipuliert, &[h]));
         // Falscher Spur-Eintrag ⇒ abgelehnt.
         assert!(!verify_input_hash(&akt, &[[0xAAu8; 32]]));
+    }
+}
+
+#[cfg(test)]
+mod rollen_tests {
+    use super::*;
+    use myl_types::ids::SegmentId;
+
+    fn sig() -> TransitionSig {
+        TransitionSig {
+            segment_id: SegmentId::new([1u8; 32]),
+            shard_index: 3,
+            position: 7,
+            prev_hash: [2u8; 32],
+            next_hash: [3u8; 32],
+        }
+    }
+
+    /// **Die Botschaft trägt das Präfix im Klartext.**
+    ///
+    /// Der Test liest die ersten Bytes, statt nur eine Länge zu prüfen:
+    /// Ein Präfix, das da ist, aber nicht das erwartete, wäre genauso
+    /// wirkungslos wie keines.
+    #[test]
+    fn die_botschaft_beginnt_mit_dem_praefix() {
+        let bytes = sig().to_sign_bytes();
+        assert!(bytes.starts_with(DST_SHARD_TRANSITION));
+        assert_eq!(bytes[DST_SHARD_TRANSITION.len()], Rolle::Shard.byte());
+    }
+
+    /// **Keine Kollision mehr mit einer anderen Klasse, und zwar durch
+    /// Konstruktion.**
+    ///
+    /// Vorher hing das an der Länge: 112 Bytes, und keine andere Klasse
+    /// war 112 Bytes lang. Jetzt beginnt die Botschaft mit einem Präfix,
+    /// das keine andere Klasse trägt, und das gilt unabhängig davon, wie
+    /// lang sie ist. Der Test prüft es gegen die BFT-Präfixe.
+    #[test]
+    fn kein_praefix_einer_anderen_klasse_passt() {
+        let bytes = sig().to_sign_bytes();
+        for fremd in [
+            &b"MYELITH_BFT_PROPOSE_v1"[..],
+            &b"MYELITH_BFT_VOTE_v1"[..],
+            &b"MYELITH_BFT_COMMIT_v1"[..],
+            &b"MYELITH_BFT_PROPOSE_POL_v1"[..],
+            &b"MYELITH_POI_BUNDLE_v1"[..],
+        ] {
+            assert!(
+                !bytes.starts_with(fremd),
+                "die Botschaft beginnt wie eine andere Klasse"
+            );
+        }
+    }
+
+    /// **Eine Signatur in einer Rolle gilt in keiner anderen.**
+    ///
+    /// Das ist die Aussage der Rollenbindung: Ein Miner benutzt einen
+    /// Schlüssel für Shard-Arbeit, PoI-Bündel und möglicherweise
+    /// Validator-Stimmen. Ohne Rolle in der Botschaft ließe sich eine in
+    /// der einen Rolle abgegebene Signatur in der anderen einsetzen.
+    #[test]
+    fn eine_rolle_gilt_nicht_in_einer_anderen() {
+        let sk = BlsSecretKey::key_gen(&[5u8; 32]).expect("key_gen");
+        let pk = sk.public_key().expect("pk");
+        let t = sig();
+
+        let als_shard = sk.sign(&t.to_sign_bytes_mit_rolle(Rolle::Shard)).expect("sign");
+        assert!(t.verify_mit_rolle(&pk, &als_shard, Rolle::Shard));
+
+        for andere in [Rolle::PodMitglied, Rolle::Validator, Rolle::Checker] {
+            assert!(
+                !t.verify_mit_rolle(&pk, &als_shard, andere),
+                "eine Shard-Signatur darf in der Rolle {andere:?} nicht gelten"
+            );
+        }
+    }
+
+    /// Die Rollen-Bytes sind eindeutig und dürfen nicht umnummeriert
+    /// werden: Sie sind Teil des Konsensvertrags.
+    #[test]
+    fn die_rollenbytes_sind_eindeutig_und_fest() {
+        assert_eq!(Rolle::Shard.byte(), 1);
+        assert_eq!(Rolle::PodMitglied.byte(), 2);
+        assert_eq!(Rolle::Validator.byte(), 3);
+        assert_eq!(Rolle::Checker.byte(), 4);
+        let bytes: Vec<u8> = [Rolle::Shard, Rolle::PodMitglied, Rolle::Validator, Rolle::Checker]
+            .iter()
+            .map(|r| r.byte())
+            .collect();
+        let mut sortiert = bytes.clone();
+        sortiert.sort_unstable();
+        sortiert.dedup();
+        assert_eq!(sortiert.len(), bytes.len());
     }
 }

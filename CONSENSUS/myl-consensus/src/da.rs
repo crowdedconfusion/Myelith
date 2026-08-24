@@ -600,28 +600,39 @@ mod tests {
 
     // ── Streitfrist ─────────────────────────────────────────────────
 
+    /// Die Frist wird **gegen die Konstante** geprüft, nicht gegen eine
+    /// getippte Zahl.
+    ///
+    /// Bis zum 2026-08-24 stand hier die 7 als Literal, und als sich die
+    /// Konstante auf 168 korrigierte (⚑ Fund 50: 7 Epochen sind bei
+    /// Stunden-Epochen 7 Stunden, nicht 7 Tage), schlug dieser Test fehl,
+    /// ohne dass am geprüften Verhalten etwas falsch gewesen wäre.
+    /// Geprüft gehört die **Regel** „ab Epoche + Frist ist abgelaufen",
+    /// nicht der Zahlenwert der Frist.
     #[test]
-    fn frist_laeuft_nach_sieben_epochen_ab() {
+    fn frist_laeuft_nach_der_streitfrist_ab() {
         let store = DaStore::default();
-        assert_eq!(store.dispute_epochs(), 7);
-        assert!(!store.is_expired(EpochId(10), EpochId(16)));
-        assert!(store.is_expired(EpochId(10), EpochId(17)));
-        assert!(store.is_expired(EpochId(10), EpochId(99)));
+        let d = store.dispute_epochs();
+        assert_eq!(d, DEFAULT_DISPUTE_EPOCHS);
+        assert!(!store.is_expired(EpochId(10), EpochId(10 + d - 1)));
+        assert!(store.is_expired(EpochId(10), EpochId(10 + d)));
+        assert!(store.is_expired(EpochId(10), EpochId(10 + d + 1_000)));
     }
 
     #[test]
     fn abgelaufene_anfrage_bekommt_definierte_antwort() {
         // Das woertliche Akzeptanzkriterium der Phase.
         let (store, _) = store_mit_segment();
+        let nach_ablauf = EpochId(10 + DEFAULT_DISPUTE_EPOCHS);
         let err = store
-            .fetch(EpochId(10), segment(1), 3, EpochId(17))
+            .fetch(EpochId(10), segment(1), 3, nach_ablauf)
             .unwrap_err();
         assert_eq!(
             err,
             DaError::Expired {
                 epoch: 10,
-                current: 17,
-                dispute_epochs: 7
+                current: nach_ablauf.0,
+                dispute_epochs: DEFAULT_DISPUTE_EPOCHS
             }
         );
     }
@@ -633,13 +644,14 @@ mod tests {
         // aufgeraeumt hat. Sonst waere Zurueckhalten von regulaerem
         // Ablauf nicht zu unterscheiden.
         let (store, _) = store_mit_segment();
+        let nach_ablauf = EpochId(10 + DEFAULT_DISPUTE_EPOCHS);
         assert_eq!(store.len(), 1, "die Daten liegen noch im Speicher");
         assert!(matches!(
-            store.fetch(EpochId(10), segment(1), 3, EpochId(17)),
+            store.fetch(EpochId(10), segment(1), 3, nach_ablauf),
             Err(DaError::Expired { .. })
         ));
         assert!(matches!(
-            store.reconstruct(EpochId(10), segment(1), EpochId(17)),
+            store.reconstruct(EpochId(10), segment(1), nach_ablauf),
             Err(DaError::Expired { .. })
         ));
     }
@@ -647,10 +659,11 @@ mod tests {
     #[test]
     fn aufraeumen_aendert_die_antwort_nicht() {
         let (mut store, _) = store_mit_segment();
-        let vor = store.fetch(EpochId(10), segment(1), 3, EpochId(17)).unwrap_err();
-        assert_eq!(store.prune(EpochId(17)), 1);
+        let nach_ablauf = EpochId(10 + DEFAULT_DISPUTE_EPOCHS);
+        let vor = store.fetch(EpochId(10), segment(1), 3, nach_ablauf).unwrap_err();
+        assert_eq!(store.prune(nach_ablauf), 1);
         assert!(store.is_empty());
-        let nach = store.fetch(EpochId(10), segment(1), 3, EpochId(17)).unwrap_err();
+        let nach = store.fetch(EpochId(10), segment(1), 3, nach_ablauf).unwrap_err();
         assert_eq!(vor, nach, "Aufräumen darf das Verhalten nicht ändern");
     }
 
@@ -664,9 +677,12 @@ mod tests {
                     .expect("commit");
             store.store(&c, &f).expect("store");
         }
-        assert_eq!(store.prune(EpochId(20)), 1);
+        // Nach Ablauf der Frist für Epoche 10, aber noch innerhalb der
+        // für Epoche 20.
+        let jetzt = EpochId(20 + DEFAULT_DISPUTE_EPOCHS - 1);
+        assert_eq!(store.prune(jetzt), 1);
         assert_eq!(store.len(), 1);
-        assert!(store.reconstruct(EpochId(20), segment(20), EpochId(21)).is_ok());
+        assert!(store.reconstruct(EpochId(20), segment(20), jetzt).is_ok());
     }
 
     #[test]

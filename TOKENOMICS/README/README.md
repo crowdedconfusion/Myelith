@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.5.0
+> **Version:** 0.7.0
 > **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -83,6 +83,101 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.7.0 – 2026-08-24 (Phase 3 und 4 vollständig)
+
+Vier neue Module, und mit ihnen ist der TOKENOMICS-Fahrplan bis auf die
+adversariale Ebene durch.
+
+| Modul | Punkt | was es rechnet |
+|---|---|---|
+| `stake.rs` | 3.1 | erforderlicher Stake je beanspruchter Kapazität, und die Umkehrung: welche Kapazität ein Stake trägt |
+| `slashing.rs` | 3.2 | die Tabelle aus Kap. 5.5 als Datensatz, liefert `myl_ledger::SlashParams` |
+| `anlauf.rs` | 3.4, 4.1 | Stake-Bedarf je Prüfrate, kleinste ausreichende Rate, Trainingsrate |
+| `genesis.rs` | 4.2 | Verteilung der Anfangsmenge auf geprüfte Testnetz-Arbeit und Treasury |
+| `sicherheit.rs` | 3.3, 4.3 | `S_min = g/p²` und `s < c/(1−c)` |
+
+**Jede Zahl des Papiers, die diese Module betreffen, steht als Test.**
+Kap. 5.5 (S_min = 2500 Segment-Rewards), Kap. 5.7 (der Faktor 625 zwischen
+2 und 50 Prozent Prüfrate), Anhang B.1 (1250 MYL je Kapazitätseinheit, 25
+Epochen-Einkommen), B.8.1 (62 500 MYL für 50 Startminer) und B.8.2
+vollständig (250 000 / 40 000 / 10 000 / 1 600 / 400 MYL). Alle stimmen.
+
+*Eine Anmerkung zur Genauigkeit:* Kap. 5.7 sagt, der Stake-Bedarf falle bei
+50 statt 2 Prozent „auf ein Sechshundertstel". Exakt sind es (50/2)² = 625.
+Der Test prüft die exakte Zahl und hält fest, dass die Aussage des Papiers
+eine Rundung ist und keine Ungenauigkeit der Rechnung.
+
+#### Die Arbeitsteilung beim Slashing
+
+Drei Komponenten, jede mit genau einer Frage: VERIFICATION entscheidet
+**wer** verloren hat, TOKENOMICS **wie viel** das ist, CONSENSUS bucht es.
+Diese Trennung ist teuer erkauft — bis v0.2.6 hatte `myl-verifier` eine
+eigene `SlashConfig` mit festen Beträgen, ein zweites, unvereinbares Modell,
+das obendrein gar nicht buchen konnte (Fund A9). Die Matrix liefert deshalb
+**Anteile in genau der Form, die der Ledger erwartet**; es tippt niemand
+eine Zahl ab.
+
+#### ⚑ Was Kap. 5.5 offenlässt
+
+Zwei Zeilen der Tabelle nennen eine **Spanne** statt eines Wertes: „1–5 %
+(gestaffelt)" bei Nichtverfügbarkeit und „30–100 %" beim Validator. **Wonach
+gestaffelt wird, steht nirgends.**
+
+Der Entwurf setzt beide auf das **untere Ende** und erzwingt die Spanne als
+Schranke. Die Begründung ist einseitig und soll es sein: Ein zu niedriger
+Slash schwächt die Abschreckung und ist durch eine Parameteränderung
+heilbar; ein zu hoher Slash vernichtet den Einsatz eines ehrlichen
+Teilnehmers und ist es nicht. Dasselbe gilt für den Faktor der
+Trainings-Stichprobenrate, den Kap. 5.5 ebenfalls nicht beziffert. Beides
+steht als offener Punkt im Fahrplan.
+
+#### Wie „kein Vorverkauf" durchgesetzt wird
+
+Nicht durch eine Prüfung, sondern durch die **Form der Funktion**:
+`genesis_verteilung` nimmt Arbeitsnachweise und sonst nichts. Kein Parameter
+für Sonderzuteilungen, keine Liste von Ausnahmen, kein Rest, über den jemand
+verfügen könnte. Wer eine Zuteilung außerhalb der Arbeit unterbringen
+wollte, müsste die Signatur ändern, und das fällt in einem Diff auf. Eine
+Prüfung wäre die schwächere Lösung: Sie ließe den Weg offen und stellte sich
+davor.
+
+Ergänzend lehnt die Funktion eine Menge **ohne jeden Arbeitsnachweis** ab.
+Sonst fiele sie vollständig ans Treasury, und das wäre genau die Zuteilung
+außerhalb der Arbeit, die Kap. 5.7 ausschließt.
+
+#### ⚑ Ein Widerspruch, der beim Lesen von Kap. 5.7 auffiel
+
+Kap. 5.7 sagt ausdrücklich: „Es liegt nahe, ein Gesamtangebot
+festzuschreiben oder die Prägung je Epoche zu deckeln. **Beides ist hier
+nicht vorgesehen**", und B.8.3 begründet es: Ein bindender Deckel
+stabilisiert den Umlauf nicht, sondern bringt ihn zum Erliegen.
+`MintParams` trägt trotzdem ein `m_max`, und die Parameter-Registry führt
+es als änderbaren Parameter.
+
+Heute harmlos, weil der Vorgabewert `u64::MAX` ist. Die **Möglichkeit**, ihn
+scharf zu stellen, widerspricht dem Kapitel. Hängt mit Fund 48 zusammen
+(Kap. 10.3 schützt ein „Gesamtangebot", das Kap. 5.7 ausschließt) und steht
+als offener Punkt im Fahrplan.
+
+### v0.6.0 – 2026-08-24 (Punkt 3.3: die Sicherheitsbedingung als Funktion)
+
+`src/sicherheit.rs`: `S_min = g/p²` aus Kap. 5.5 und Anhang B.1,
+ganzzahlig, mit `p` als Bruch und **aufgerundet** — Abrunden ließe einen
+Stake knapp unter der Schranke durchgehen, und die Schranke ist eine
+Untergrenze.
+
+**Gegen alle drei Zahlenbeispiele des Papiers geprüft**, nicht gegen
+eines: Kap. 5.5 (p = 2 %, g = 1 → 2500 Segment-Rewards; g = 0,5 MYL →
+1250 MYL), Anhang B.8.1 (50 Startminer → 62 500 MYL) und die vollständige
+Tabelle aus B.8.2 (250 000 / 40 000 / 10 000 / 1 600 / 400 MYL bei 2, 5,
+10, 25 und 50 Prozent). Alle fünf Zeilen stimmen.
+
+**Vorgezogen aus Phase 3**, weil `myl-governance` sie für die
+Invarianten-Kopplung (GOVERNANCE 1.3) braucht. Der Fahrplan verlangt
+ausdrücklich, dass GOVERNANCE die Funktion **benutzt** statt sie ein
+zweites Mal zu schreiben; das Audit vom 2026-08-18 fand mit A7 den Fall,
+in dem dieselbe Formel an zwei Orten stand und nur eine gepflegt wurde.
 
 ### v0.5.0 – 2026-08-23 (adversariale Testebene, K4; ⚑ Funde 46 und 47)
 

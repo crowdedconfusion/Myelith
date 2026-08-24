@@ -88,6 +88,7 @@ jobs:
             CONSENSUS/myl-consensus
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
+            GOVERNANCE/myl-governance
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
             INTEGER_LLM/kernels
@@ -109,6 +110,7 @@ jobs:
             CONSENSUS/myl-consensus \
             TOKENOMICS/myl-tokenomics \
             VERIFICATION/myl-verifier \
+            GOVERNANCE/myl-governance \
             COMPUTE_PIPELINE/myl-pod \
             TRAINING/myl-train \
             INTEGER_LLM/kernels \
@@ -236,6 +238,7 @@ jobs:
             CONSENSUS/myl-consensus
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
+            GOVERNANCE/myl-governance
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
             TESTCLIENT/myl-testclient
@@ -266,6 +269,14 @@ jobs:
 
       - name: cargo test — VERIFICATION (myl-verifier)
         working-directory: VERIFICATION/myl-verifier
+        run: cargo test --quiet
+
+      # myl-governance: `tests/gleichstand.rs` prüft die Registry gegen
+      # die Konstanten der anderen Crates. Der Schritt gehört deshalb
+      # NACH die übrigen: Läuft ein Wert dort davon, soll dieser Job es
+      # melden und nicht ein späterer Betrieb.
+      - name: cargo test — GOVERNANCE (myl-governance)
+        working-directory: GOVERNANCE/myl-governance
         run: cargo test --quiet
 
       # myl-pod: nur lib — der Integrationstest fährt einen echten

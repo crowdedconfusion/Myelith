@@ -142,6 +142,39 @@ pub fn update_price(
     utilization_e: i64,
     utilization_target: i64,
 ) -> i64 {
+    update_price_mit_untergrenze(
+        price_e,
+        kappa,
+        utilization_e,
+        utilization_target,
+        PREIS_UNTERGRENZE_VORGABE,
+    )
+}
+
+/// Untergrenze des Credit-Preises (Governance-Parameter).
+///
+/// Seit Fund 46 läuft der Preis nicht mehr um, sondern wird beschnitten.
+/// **Null war dabei zulässig**, und ein Preis von null heißt kostenlose
+/// Inferenz für alle: Ein Nutzer bekäme beliebig viel Arbeit für nichts,
+/// während die Miner sie bezahlen.
+///
+/// Der Startwert ist **ein Kleinstbetrag**. Bei 32 Nachkommabits ist das
+/// praktisch null, aber strukturell nicht null; es hält die Null aus dem
+/// Weg, ohne eine wirtschaftliche Aussage zu treffen, die noch niemand
+/// belegt hat. Eine inhaltlich begründete Untergrenze, etwa aus den
+/// Realkosten, ist eine eigene Entscheidung und steht im Fahrplan.
+pub const PREIS_UNTERGRENZE_VORGABE: i64 = 1;
+
+/// Wie [`update_price`], aber mit ausdrücklicher Untergrenze.
+///
+/// Die Form, in der GOVERNANCE den Parameter durchreicht.
+pub fn update_price_mit_untergrenze(
+    price_e: i64,
+    kappa: i64,
+    utilization_e: i64,
+    utilization_target: i64,
+    untergrenze: i64,
+) -> i64 {
     // Berechne Exponent: κ(u_e − u*).
     //
     // ⚑ Fund 46: Hier stand `utilization_e - utilization_target` in
@@ -176,7 +209,7 @@ pub fn update_price(
     // Beschnitten statt umgelaufen. Ein Preis am oberen Rand ist eine
     // wirtschaftliche Störung, ein negativer Preis ein Angriff.
     let neu = (price_e as i128 * exp_factor as i128) / RESULT_SCALE as i128;
-    neu.clamp(0, i64::MAX as i128) as i64
+    neu.clamp(untergrenze as i128, i64::MAX as i128) as i64
 }
 
 #[cfg(test)]
@@ -452,5 +485,56 @@ mod tests {
         assert_eq!(EXP_LUT.len(), 2048);
         assert!(EXP_LUT[0] > 0, "exp ist überall positiv");
         assert!(EXP_LUT.windows(2).all(|w| w[0] < w[1]), "streng steigend");
+    }
+}
+
+#[cfg(test)]
+mod untergrenze_tests {
+    use super::*;
+
+    /// **Der Preis fällt nie unter die Untergrenze**, egal wie lange die
+    /// Auslastung darunter liegt.
+    ///
+    /// Ohne sie konvergiert der Preis bei dauerhafter Unterauslastung
+    /// gegen null, und null heißt kostenlose Inferenz für alle.
+    #[test]
+    fn der_preis_faellt_nie_unter_die_untergrenze() {
+        let kappa = 6_553; // 0,1
+        let ziel = 45_875; // 0,7
+        let leer = 0; // Auslastung null, der stärkste Abwärtsdruck
+
+        let mut preis = 1i64 << 32;
+        for _ in 0..10_000 {
+            preis = update_price(preis, kappa, leer, ziel);
+            assert!(
+                preis >= PREIS_UNTERGRENZE_VORGABE,
+                "Preis {preis} unter der Untergrenze"
+            );
+        }
+        // Und er ist tatsächlich dort angekommen, sonst prüfte der Test nichts.
+        assert_eq!(preis, PREIS_UNTERGRENZE_VORGABE);
+    }
+
+    /// Eine höhere Untergrenze greift entsprechend früher.
+    #[test]
+    fn eine_hoehere_untergrenze_greift_frueher() {
+        let kappa = 6_553;
+        let ziel = 45_875;
+        let grenze = 1i64 << 20;
+        let mut preis = 1i64 << 32;
+        for _ in 0..10_000 {
+            preis = update_price_mit_untergrenze(preis, kappa, 0, ziel, grenze);
+        }
+        assert_eq!(preis, grenze);
+    }
+
+    /// Nach oben ändert die Untergrenze nichts.
+    #[test]
+    fn nach_oben_aendert_die_untergrenze_nichts() {
+        let kappa = 6_553;
+        let ziel = 45_875;
+        let voll = 65_536; // Auslastung 1,0, über dem Ziel
+        let preis = 1i64 << 32;
+        assert!(update_price(preis, kappa, voll, ziel) > preis);
     }
 }

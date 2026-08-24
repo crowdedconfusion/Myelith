@@ -61,10 +61,43 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Standard-Streitfrist in Epochen.
 ///
-/// Entspricht der Design-Entscheidung „7 Tage" bei 2 s Blockzeit und
-/// einer Epochenlänge, die GOVERNANCE festlegt. Der Wert steht hier als
-/// Startparameter; maßgeblich wird die Governance-Registry.
-pub const DEFAULT_DISPUTE_EPOCHS: u64 = 7;
+/// Die Design-Entscheidung vom 2026-08-13 lautet **7 Tage**. Bei
+/// Stunden-Epochen sind das 168 Epochen.
+///
+/// # ⚑ Fund 50: Hier standen 7, und die Begründung war zirkulär
+///
+/// Bis zum 2026-08-24 stand hier `7` mit dem Kommentar „Entspricht der
+/// Design-Entscheidung ‚7 Tage' bei 2 s Blockzeit und einer
+/// Epochenlänge, die GOVERNANCE festlegt." Der Satz nennt die
+/// Epochenlänge als offen und rechnet zugleich mit ihr: `7 Epochen = 7
+/// Tage` gilt nur bei **Tages**-Epochen.
+///
+/// Der Rest des Projekts rechnet mit **Stunden**-Epochen. Anhang B.1
+/// sagt „Bei Stunden-Epochen: etwa ein Tag Einkommen als Pfand", und die
+/// Stimmgewichts-Kalibrierung vom 2026-08-23 rechnet den „Faktor nach
+/// einer Stunden-Epoche". Die Frist war damit **7 Stunden statt 7 Tagen**,
+/// ein Faktor 24.
+///
+/// **Was daran hängt:** Die Streitfrist ist die Zeit, in der ein Betrug
+/// angefochten werden kann und in der [`crate::da::DaStore`] die
+/// Fragmente vorhalten muss. Sieben Stunden sind die Zeit, die ein
+/// Checker hat, um eine Abweichung zu bemerken, das Bisektionsspiel zu
+/// führen und die Schiedsrunde zu erreichen; danach ist der Epochen-
+/// abschluss endgültig und die Daten dürfen verschwinden.
+///
+/// **Gefunden vom Gleichstands-Test der Parameter-Registry**
+/// (`myl-governance/tests/gleichstand.rs`), nicht durch Codelektüre: Der
+/// Vergleich zwischen Registry und Konstante braucht die Epochenlänge,
+/// und dabei fiel auf, dass es sie nirgends gab.
+///
+/// **Die Kosten der Korrektur gehören genannt:** Die Vorhaltung im
+/// `DaStore` dauert jetzt 24-mal so lange. Ob 7 Tage der richtige Wert
+/// sind oder ob die Design-Entscheidung angesichts dessen zu ändern ist,
+/// ist eine Abwägung zwischen Speicherkosten und Anfechtungsfenster und
+/// steht als offener Punkt im Fahrplan. Der Wert hier folgt der
+/// **Entscheidung von 2026-08-13**, weil eine Konstante, die ihrer
+/// eigenen Begründung widerspricht, in jedem Fall falsch ist.
+pub const DEFAULT_DISPUTE_EPOCHS: u64 = 168;
 
 /// Ergebnis des Stufe-1-Redundanzvergleichs für einen Pod.
 ///
@@ -539,10 +572,15 @@ mod tests {
     fn streitfrist_laeuft_ueber_epochen() {
         let reg = registry_mit(3, &[(1, 1_000)]);
         let abschluss = close_epoch(&reg, EpochId(3), &urteile(&[(1, PodAgreement::Match)]));
-        assert!(!abschluss.is_final(EpochId(3), DEFAULT_DISPUTE_EPOCHS));
-        assert!(!abschluss.is_final(EpochId(9), DEFAULT_DISPUTE_EPOCHS));
-        assert!(abschluss.is_final(EpochId(10), DEFAULT_DISPUTE_EPOCHS));
-        assert!(abschluss.is_final(EpochId(11), DEFAULT_DISPUTE_EPOCHS));
+        // Gegen die Konstante gerechnet, nicht gegen getippte Zahlen:
+        // Als sich die Frist mit Fund 50 von 7 auf 168 korrigierte,
+        // schlugen die Literale fehl, ohne dass an der geprüften Regel
+        // etwas falsch war.
+        let d = DEFAULT_DISPUTE_EPOCHS;
+        assert!(!abschluss.is_final(EpochId(3), d));
+        assert!(!abschluss.is_final(EpochId(3 + d - 1), d));
+        assert!(abschluss.is_final(EpochId(3 + d), d));
+        assert!(abschluss.is_final(EpochId(3 + d + 1), d));
     }
 
     #[test]

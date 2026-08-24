@@ -21,11 +21,16 @@
 
 #![deny(unsafe_code)]
 
+pub mod anlauf;
 pub mod distribute;
 pub mod ema;
 pub mod exp_approx;
+pub mod genesis;
 pub mod exp_lut_table;
 pub mod mint;
+pub mod sicherheit;
+pub mod slashing;
+pub mod stake;
 pub mod training;
 pub mod utilization;
 pub mod vtfe;
@@ -37,14 +42,31 @@ pub const UNITS_PER_MYL: u64 = 1_000_000;
 /// Token-Forward-Äquivalenten (symmetrisch zu [`UNITS_PER_MYL`]).
 pub const VTFE_UNITS_PER_TFE: u64 = 1_000_000;
 
+pub use anlauf::{
+    kleinste_ausreichende_rate, stufe as anlaufstufe, trainingsrate, Anlaufstufe,
+    TRAININGSRATE_FAKTOR,
+};
 pub use distribute::{
     distribute_mint, redundancy_normalized_weight, split_proportional, Distribution,
     DistributeError, SHARE_CHECKERS_BPS, SHARE_COORDINATORS_BPS, SHARE_SHARD_MINERS_BPS,
     SHARE_TREASURY_BPS, SHARE_VALIDATORS_BPS, SHARES_TOTAL_BPS,
 };
 pub use ema::{ema_update, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
-pub use exp_approx::{exp_approx, update_price};
+pub use exp_approx::{
+    exp_approx, update_price, update_price_mit_untergrenze, PREIS_UNTERGRENZE_VORGABE,
+};
+pub use genesis::{genesis_verteilung, Arbeitsnachweis, GenesisFehler, GenesisVerteilung};
 pub use mint::{mint_amount, MintParams};
+pub use sicherheit::{
+    s_min, self_dealing_grenze, self_dealing_sicher, self_dealing_sicher_konservativ,
+    stake_genuegt, SicherheitsFehler, KOSTENANTEIL_UNTEN_NENNER, KOSTENANTEIL_UNTEN_ZAEHLER,
+};
+pub use sicherheit::{burn_spielraum, BURN_DECKEL_AB, BURN_DECKEL_NENNER, BURN_DECKEL_ZAEHLER};
+pub use slashing::{
+    matrix as slashing_matrix, satz as slashing_satz, satz_gestaffelt, Akteur, Grund, Slashsatz,
+    WIEDERHOLUNGSFENSTER,
+};
+pub use stake::{erforderlicher_stake, getragene_kapazitaet, StakeAnspruch, StakeFehler};
 pub use training::{capped_training_reward, training_reward_cap, TRAINING_CAP_BPS};
 pub use utilization::{
     calculate_utilization, utilization_from_burns, utilization_from_f64, utilization_to_f64,

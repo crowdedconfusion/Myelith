@@ -180,11 +180,10 @@ pub const VTFE_UNIT: u64 = 1_000_000;
 /// Bezugsgröße des Arbeitsanteils: die vTFE-Menge, die einen Bonus in
 /// Höhe des Stakes wert ist.
 ///
-/// **Herleitung der Vorgabe (2026-08-23).** Referenzfall ist ein Knoten,
-/// der ein Viertel von Qwen2.5-7B hält und eine Stunden-Epoche
-/// durchläuft: 230 729 vTFE-Einheiten je Token bei gemessenen
-/// 2,07 tok/s ergeben 1 719 394 757 Einheiten je Epoche. Gerundet auf
-/// **1,7 · 10⁹**.
+/// **Herleitung der Vorgabe.** Referenzfall ist ein Knoten, der ein
+/// Viertel von Qwen2.5-7B hält und eine Stunden-Epoche durchläuft:
+/// 230 729 vTFE-Einheiten je Token bei **10,74 tok/s** ergeben
+/// 8 920 906 056 Einheiten je Epoche. Gerundet auf **8,9 · 10⁹**.
 ///
 /// Damit gilt: Ein Knoten mit Referenzdurchsatz verdient in einer Epoche
 /// einen Bonus von etwa einem Stake. Über die volle Historie von zehn
@@ -193,10 +192,35 @@ pub const VTFE_UNIT: u64 = 1_000_000;
 /// ist Absicht:** Der Deckel soll erreichbar sein, aber erst von einem
 /// Knoten, der dauerhaft über Referenzdurchsatz liefert.
 ///
+/// # ⚑ Fund 51: Hier stand 1,7 · 10⁹, und die Absicht war zerstört
+///
+/// Die erste Herleitung (2026-08-23) rechnete mit **2,07 tok/s**, dem
+/// Durchsatz **vor** der Zeilen-Parallelisierung (kernels v0.21.0). Die
+/// Parallelisierung hob ihn am selben Tag auf 10,74 tok/s, also um das
+/// 5,19-Fache; der Bezugswert blieb stehen.
+///
+/// | | Bonus je Epoche | über 10 Epochen | Deckel (10) |
+/// |---|---|---|---|
+/// | mit 1,7 · 10⁹ | 5,25 Stake | 42,1 | **greift immer** |
+/// | mit 8,9 · 10⁹ | 1,01 Stake | 8,12 | greift nicht |
+///
+/// Mit dem alten Wert saß **jeder** Knoten bei Referenzdurchsatz am
+/// Deckel. Der Arbeitsanteil unterschied damit nicht mehr zwischen
+/// Knoten, was seine einzige Aufgabe ist: Ein Knoten mit doppeltem
+/// Durchsatz bekam dasselbe Gewicht wie einer mit einfachem.
+///
+/// Dieselbe Klasse wie der veraltete K8-Eintrag im Fahrplan: eine Zahl,
+/// die richtig abgeleitet wurde und deren Grundlage sich am selben Tag
+/// verschoben hat. **Jeder feste Bezugswert veraltet mit der nächsten
+/// Optimierung**; ein selbstregulierender Bezug (etwa der Median des
+/// Netzes) steht als Entwurf im Fahrplan.
+///
 /// Der Wert hängt an Modell und Hardware und gehört deshalb in die
 /// Governance-Registry, nicht in eine Konstante. Er steht hier als
-/// **Startparameter**.
-pub const ARBEITSBEZUG_VORGABE: u64 = 1_700_000_000;
+/// **Startparameter** und wird von
+/// `myl-governance/tests/gleichstand.rs` gegen die Registry geprüft,
+/// damit die nächste Verschiebung sofort auffällt.
+pub const ARBEITSBEZUG_VORGABE: u64 = 8_900_000_000;
 
 /// Höchstfaktor des Gesamtgewichts auf den Stake.
 ///
@@ -445,29 +469,78 @@ mod tests {
         );
     }
 
-    /// **Die gemessene Lage vor der Behebung**, nachgerechnet: Ein
-    /// Viertel-Shard von 7B bei 2,07 tok/s über eine Stunden-Epoche
-    /// ergibt rund 1,72e9 vTFE-Einheiten. Mit dem alten Bezugswert wäre
-    /// das Faktor 1719 auf den Stake gewesen.
+    /// **Eine Epoche Referenzarbeit ergibt etwa einen Stake Bonus.**
+    ///
+    /// Das ist die Kalibrierungsaussage selbst, und sie wird **gegen die
+    /// Konstante** geprüft und nicht gegen eine getippte Zahl: Vor
+    /// Fund 51 stand hier das Literal `1_719_394_757`, und als sich der
+    /// Bezugswert korrigierte, schlug der Test fehl, obwohl an der
+    /// geprüften Regel nichts falsch war. Geprüft gehört die Regel „eine
+    /// Epoche Referenzarbeit ist einen Stake wert", nicht die Zahl.
     #[test]
-    fn eine_epoche_referenzarbeit_bleibt_unter_dem_deckel() {
+    fn eine_epoche_referenzarbeit_ist_etwa_einen_stake_wert() {
         let mut history = InferenceHistory::new();
-        history.add_work(10, 1_719_394_757);
+        history.add_work(10, ARBEITSBEZUG_VORGABE);
 
         let stake = 10_000_000;
         let weight = calculate_voting_weight(stake, &history, 10);
 
-        // Rund das Doppelte, nicht das 1720-Fache.
-        assert!(weight > stake * 2 - stake / 10);
-        assert!(weight < stake * 3);
+        // Stake plus etwa ein Stake Bonus, also rund das Doppelte.
+        assert!(weight > stake * 2 - stake / 10, "ergab {weight}");
+        assert!(weight < stake * 3, "ergab {weight}");
+    }
 
-        // Gegenprobe gegen den alten Bezugswert.
+    /// **Regression zu Fund 51: Der alte Bezugswert setzte jeden Knoten
+    /// an den Deckel.**
+    ///
+    /// `ARBEITSBEZUG_VORGABE` stand bis zum 2026-08-24 auf 1,7·10⁹, dem
+    /// Durchsatz **vor** der Zeilen-Parallelisierung. Mit dem heute
+    /// gemessenen Durchsatz liefert ein Referenzknoten 8,9·10⁹ je Epoche,
+    /// also das 5,19-Fache des alten Bezugs; über zehn Epochen sind das
+    /// 42 Stakes Bonus und damit weit über dem Deckel von 10.
+    ///
+    /// **Die Folge war nicht ein zu hohes Gewicht, sondern gar keine
+    /// Unterscheidung mehr:** Am Deckel bekommt ein Knoten mit doppeltem
+    /// Durchsatz dasselbe Gewicht wie einer mit einfachem, und der
+    /// Arbeitsanteil verliert seine einzige Aufgabe.
+    #[test]
+    fn der_alte_bezugswert_haette_jeden_knoten_an_den_deckel_gesetzt() {
+        const ALT: u64 = 1_700_000_000;
+        let stake = 10_000_000;
+        let mut history = InferenceHistory::new();
+        // Zehn Epochen Referenzarbeit nach heutiger Messung.
+        for e in 1..=10u64 {
+            history.add_work(e, ARBEITSBEZUG_VORGABE);
+        }
+
         let alt = StimmgewichtsParameter {
-            arbeitsbezug: VTFE_UNIT,
-            hoechstfaktor: u64::MAX,
+            arbeitsbezug: ALT,
+            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
         };
         let alt_weight = calculate_voting_weight_mit(stake, &history, 10, &alt);
-        assert!(alt_weight > stake * 1700);
+        assert_eq!(
+            alt_weight,
+            stake * HOECHSTFAKTOR_VORGABE,
+            "mit dem alten Bezug säße der Referenzknoten am Deckel"
+        );
+
+        // Mit dem korrigierten Bezug bleibt er darunter, und das ist der
+        // Sinn der Kalibrierung.
+        let jetzt = calculate_voting_weight(stake, &history, 10);
+        assert!(
+            jetzt < stake * HOECHSTFAKTOR_VORGABE,
+            "der Referenzknoten darf den Deckel nicht erreichen, ergab {jetzt}"
+        );
+        // Und ein Knoten mit doppelter Arbeit bekommt jetzt mehr — genau
+        // das, was am Deckel verlorenginge.
+        let mut doppelt = InferenceHistory::new();
+        for e in 1..=10u64 {
+            doppelt.add_work(e, ARBEITSBEZUG_VORGABE * 2);
+        }
+        assert!(
+            calculate_voting_weight(stake, &doppelt, 10) > jetzt,
+            "doppelte Arbeit muss mehr Gewicht ergeben"
+        );
     }
 
     /// **Der Deckel greift**, auch wenn der Bezugswert falsch gesetzt

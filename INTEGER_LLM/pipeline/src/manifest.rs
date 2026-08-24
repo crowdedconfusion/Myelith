@@ -109,14 +109,35 @@ impl PipelineManifest {
     /// (`tests/integration/test_pipeline_layouts.py`). Das Layout ist
     /// also tatsaechlich gleichgueltig.
     ///
-    /// **Was diese Funktion trotzdem leistet — und was nicht.** Sie
-    /// prueft das Manifest **gegen sich selbst**: ob der deklarierte
-    /// `pipeline_hash` zum tatsaechlichen Layout passt. Sie erzwingt
-    /// **keine** Gleichheit zwischen zwei Pods; das war die Motivation
-    /// hinter Fund 25, aber nie seine Wirkung, und nach der Messung oben
-    /// braucht es sie auch nicht. Der Nutzen ist Fehlkonfiguration:
-    /// Genau diese Pruefung hat den `sha256:0000`-Platzhalter in
-    /// `configs/pipeline_8node.json` gefangen, der dort unbemerkt stand.
+    /// **Was diese Funktion leistet — und was nicht.** Sie prueft das
+    /// Manifest **gegen sich selbst**: ob der deklarierte `pipeline_hash`
+    /// zum tatsaechlichen Layout passt. Sie erzwingt **keine** Gleichheit
+    /// zwischen zwei Pods; das war die Motivation hinter Fund 25, aber
+    /// nie seine Wirkung, und nach der Messung oben braucht es sie auch
+    /// nicht. Der Nutzen ist Fehlkonfiguration: Genau diese Pruefung hat
+    /// den `sha256:0000`-Platzhalter in `configs/pipeline_8node.json`
+    /// gefangen, der dort unbemerkt stand.
+    ///
+    /// # Entschieden am 2026-08-24 (Fund 38)
+    ///
+    /// Der `pipeline_hash` ist ein **Abrechnungs- und Nachweismerkmal**,
+    /// keine Gueltigkeitsbedingung. Er sagt, wie ein Pod zugeschnitten
+    /// war, damit sich im Streitfall nachvollziehen laesst, welcher Shard
+    /// welche Layer gerechnet hat. Er sagt **nicht**, dass zwei Pods
+    /// denselben Zuschnitt haben muessen; nach den Messungen vom
+    /// 2026-08-19 und 2026-08-23 (1 bis 24 Shards, gleicher Digest) waere
+    /// das eine Sicherung ohne Gegenstand.
+    ///
+    /// Die Fehlermeldungen trugen die alte Begruendung noch bis zum
+    /// 2026-08-24 im Wortlaut („die Boundary-Reskalierung ist
+    /// verlustbehaftet", „zwei Pods mit unterschiedlichem Layout liefern
+    /// verschiedene Token"). Ein Text, der eine widerlegte Aussage
+    /// wiederholt, traegt sie weiter, auch wenn zwanzig Zeilen darueber
+    /// steht, dass sie nicht mehr gilt: Gelesen wird im Fehlerfall die
+    /// Meldung, nicht die Moduldoku.
+    ///
+    /// **Damit ist die variable Knotenzahl je Pipeline entblockt**, siehe
+    /// COMPUTE_PIPELINE-Fahrplan.
     ///
     pub fn canonical_layout_id(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -154,10 +175,10 @@ impl PipelineManifest {
             || self.pipeline_hash == "sha256:0000"
         {
             return Err(format!(
-                "pipeline_hash ist ein Platzhalter ({}). Das Shard-Layout ist \
-                 konsensrelevant (die Boundary-Reskalierung ist verlustbehaftet, \
-                 das Ergebnis haengt von der Lage der Stage-Grenzen ab). \
-                 Erwarteter Wert: {}",
+                "pipeline_hash ist ein Platzhalter ({}). Das Feld beschreibt das \
+                 tatsaechliche Shard-Layout und wird im Streitfall gebraucht, um \
+                 nachzuvollziehen, wie ein Pod zugeschnitten war. Ein Platzhalter \
+                 beschreibt nichts. Erwarteter Wert: {}",
                 self.pipeline_hash, self.canonical_layout_id()
             ));
         }
@@ -165,10 +186,9 @@ impl PipelineManifest {
         if self.pipeline_hash != tatsaechlich {
             return Err(format!(
                 "Shard-Layout weicht vom deklarierten pipeline_hash ab \
-                 (Manifest {}, tatsaechlich {}). Zwei Pods mit \
-                 unterschiedlichem Layout liefern verschiedene Token — der \
-                 Redundanzvergleich wuerde ehrliche Knoten als fehlerhaft \
-                 markieren.",
+                 (Manifest {}, tatsaechlich {}). Das Manifest beschreibt damit \
+                 einen anderen Zuschnitt als den gefahrenen; im Streitfall waere \
+                 nicht mehr feststellbar, welcher Shard welche Layer gerechnet hat.",
                 self.pipeline_hash, tatsaechlich
             ));
         }

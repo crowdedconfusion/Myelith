@@ -140,6 +140,18 @@ CONSENSUS_PATH = [
     ROOT / "NETWORKING" / "myl-net" / "src" / "discovery.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "node.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "runtime.rs",
+    # GOVERNANCE, aufgenommen 2026-08-24 mit der ersten Zeile Code.
+    # Die Registry hält die Parameter, die in Ledger-Zustandsübergänge
+    # eingehen; ein Gleitkommawert hier wäre derselbe Konsensbruch wie
+    # einer in TOKENOMICS.
+    ROOT / "GOVERNANCE" / "myl-governance" / "src" / "registry.rs",
+    ROOT / "GOVERNANCE" / "myl-governance" / "src" / "invarianten.rs",
+    ROOT / "GOVERNANCE" / "myl-governance" / "src" / "vorschlag.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "sicherheit.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "stake.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "slashing.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "anlauf.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "genesis.rs",
 ]
 
 # Gleitkomma-Indikatoren (angewandt nach Entfernen von Kommentaren,
@@ -170,9 +182,28 @@ def strip_comments(src: str) -> str:
 
 
 def strip_strings(src: str) -> str:
-    """Entfernt String-Literale (inkl. Escapes), behält Struktur."""
-    # Einfache Handhabung: "..." mit Backslash-Escapes.
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', src)
+    """Entfernt String-Literale (inkl. Escapes), behält Struktur.
+
+    **DOTALL ist notwendig, nicht kosmetisch (2026-08-24).** Rust erlaubt
+    im String-Literal einen Zeilenumbruch mit `\` am Zeilenende:
+
+        "erster Teil, \
+         zweiter Teil"
+
+    Ohne DOTALL trifft `\\.` diesen Umbruch nicht (`.` schließt `\n`
+    aus), und `[^"\\]` schließt den Backslash aus. Der ganze String
+    blieb damit stehen und wurde als **Code** geprüft. Ein Verweis wie
+    "Kap. 10.3" in einer Fehlermeldung sah dann aus wie ein
+    Gleitkomma-Literal.
+
+    Aufgefallen bei der Aufnahme von `myl-governance` in den Konsenspfad,
+    wo zwei solche Meldungen als Treffer gemeldet wurden. Es sind nur
+    Falschmeldungen und keine übersehenen Treffer, aber sie sind
+    gefährlich: Wer sie sieht, nimmt eher die Datei aus der Liste, als das
+    Muster zu prüfen. Genau so entstand der blinde Fleck, der Fund 44
+    ermöglichte.
+    """
+    return re.sub(r'"(?:\\.|[^"\\])*"', '""', src, flags=re.DOTALL)
 
 
 def strip_test_modules(src: str) -> str:
