@@ -140,6 +140,25 @@ pub fn standard_schwellen() -> PeerScoreThresholds {
     PeerScoreThresholds::default()
 }
 
+/// Zählt die Peers, deren Bewertung unter die Gossip-Schwelle gefallen
+/// ist, die also **kein Gossip mehr bekommen**.
+///
+/// Die Rechnung steht hier und nicht in [`crate::runtime`], weil sie in
+/// `f64` läuft: Der Gleitkomma-Audit prüft `runtime.rs`, dieses Modul ist
+/// die dokumentierte Ausnahme. Nach außen geht eine **Ganzzahl**.
+///
+/// **Wofür die Zahl da ist:** Ein bewerteter Peer sieht im Protokoll
+/// aus wie ein stiller. Steht hier eine Zahl über null, während gleich-
+/// zeitig Verbindungen bestehen und nichts ankommt, ist die Ursache
+/// gefunden.
+pub fn schlechte_peers(gossipsub: &libp2p::gossipsub::Behaviour) -> usize {
+    let schwelle = standard_schwellen().gossip_threshold;
+    gossipsub
+        .all_peers()
+        .filter(|(peer, _)| gossipsub.peer_score(peer).is_some_and(|s| s < schwelle))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

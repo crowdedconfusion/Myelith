@@ -38,7 +38,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::gossip::GossipTopic;
 use crate::node::{MylBehaviour, MylBehaviourEvent};
-use crate::validation::{self, AcceptAllValidator, PayloadValidator};
+use crate::validation::{self, AcceptAllValidator, Ablehnungsgrund, PayloadValidator};
 
 /// Kommando an einen laufenden Node.
 #[derive(Debug)]
@@ -53,6 +53,16 @@ pub enum NodeCommand {
     },
     /// Anzahl der aktuell verbundenen Peers abfragen.
     PeerCount(oneshot::Sender<usize>),
+    /// Eine Zustandsaufnahme abfragen.
+    ///
+    /// Mehr als [`NodeCommand::PeerCount`], und der Unterschied ist der
+    /// Grund: **Verbunden heißt nicht im Mesh.** Gossipsub führt je
+    /// Topic eine eigene Menge von Peers, an die es Nachrichten
+    /// vollständig weitergibt; wer nur verbunden ist, bekommt
+    /// Ankündigungen. Ein Knoten mit Verbindungen und leerem Mesh
+    /// empfängt nichts, und ohne diese Zahl sähe das im Protokoll aus
+    /// wie ein stilles Netz.
+    Zustand(oneshot::Sender<Netzzustand>),
     /// Eine Adresse wählen. Über `result` kommt zurück, ob der
     /// Wählversuch **begonnen** wurde; ob er gelingt, zeigt sich erst
     /// später an der Peer-Anzahl.
@@ -83,6 +93,19 @@ pub enum NodeCommand {
     /// Antwort für den Klienten wertlos. Ein gewöhnlicher Knoten
     /// überlässt das AutoNAT.
     ExterneAdresse { addr: Multiaddr },
+}
+
+/// Der Netzzustand eines Knotens zu einem Zeitpunkt.
+#[derive(Debug, Clone, Default)]
+pub struct Netzzustand {
+    /// Verbundene Peers.
+    pub peers: usize,
+    /// Mesh-Größe je Topic, in der Reihenfolge von
+    /// [`crate::gossip::GossipTopic::ALLE`].
+    pub mesh: Vec<(GossipTopic, usize)>,
+    /// Peers unter der Gossip-Schwelle, die also kein Gossip mehr
+    /// bekommen.
+    pub schlecht_bewertet: usize,
 }
 
 /// Eine validierte, eingehende Gossip-Nachricht.
@@ -121,6 +144,30 @@ pub enum NodeEvent {
     Getrennt {
         peer: libp2p::PeerId,
         grund: String,
+    },
+    /// AutoNAT hat die eigene Erreichbarkeit geprüft.
+    ///
+    /// Ohne diese Meldung stellt der Knoten fest, ob er von außen
+    /// erreichbar ist, und sagt es niemandem. Für die Fehlersuche ist
+    /// das die Antwort auf „warum verbindet sich niemand zu mir".
+    Erreichbarkeit {
+        addr: Multiaddr,
+        erreichbar: bool,
+        grund: String,
+    },
+    /// Eine eingehende Nachricht wurde verworfen und **nicht**
+    /// weiterverbreitet.
+    ///
+    /// Ohne dieses Ereignis ist eine verworfene Nachricht stumm: Der
+    /// Knoten wüsste selbst nicht, dass er etwas weggeworfen hat, und
+    /// im Betriebsprotokoll ließe sich „nichts kam an" nicht von
+    /// „alles kam an und wurde verworfen" unterscheiden. Genau diese
+    /// Unterscheidung braucht jede Fehlersuche zuerst.
+    Verworfen {
+        /// Das Topic, falls es überhaupt eines des Protokolls war.
+        topic: Option<GossipTopic>,
+        bytes: usize,
+        grund: Ablehnungsgrund,
     },
     /// Ein Verbindungsaufbau ist gescheitert oder wurde abgewiesen.
     ///
@@ -182,6 +229,16 @@ pub async fn run_node_mit(
                     NodeCommand::PeerCount(reply) => {
                         let _ = reply.send(swarm.connected_peers().count());
                     }
+                    NodeCommand::Zustand(reply) => {
+                        let peers = swarm.connected_peers().count();
+                        let gossipsub = &swarm.behaviour().gossipsub;
+                        let mesh = GossipTopic::ALLE
+                            .iter()
+                            .map(|t| (*t, gossipsub.mesh_peers(&t.topic().hash()).count()))
+                            .collect();
+                        let schlecht_bewertet = crate::scoring::schlechte_peers(gossipsub);
+                        let _ = reply.send(Netzzustand { peers, mesh, schlecht_bewertet });
+                    }
                     NodeCommand::Dial { addr, result } => {
                         let ok = swarm.dial(addr).is_ok();
                         if let Some(tx) = result {
@@ -204,6 +261,16 @@ pub async fn run_node_mit(
                 match event {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         let _ = events.send(NodeEvent::ListenAddr(address));
+                    }
+                    SwarmEvent::Behaviour(MylBehaviourEvent::AutonatClient(ev)) => {
+                        let _ = events.send(NodeEvent::Erreichbarkeit {
+                            addr: ev.tested_addr,
+                            erreichbar: ev.result.is_ok(),
+                            grund: match ev.result {
+                                Ok(()) => "bestätigt".to_string(),
+                                Err(e) => e.to_string(),
+                            },
+                        });
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
                         let _ = events.send(NodeEvent::Verbunden {
@@ -242,7 +309,12 @@ pub async fn run_node_mit(
                             message,
                         },
                     )) => {
-                        let acceptance = validation::report_with(
+                        let urteil = validation::beurteile(
+                            &message.topic,
+                            &message.data,
+                            validator.as_ref(),
+                        );
+                        let _ = validation::report_with(
                             &mut swarm,
                             &message_id,
                             &propagation_source,
@@ -250,12 +322,19 @@ pub async fn run_node_mit(
                             &message.data,
                             validator.as_ref(),
                         );
-                        if matches!(acceptance, libp2p::gossipsub::MessageAcceptance::Accept) {
-                            if let Some(topic) = validation::topic_from_hash(&message.topic) {
+                        match urteil {
+                            Ok(topic) => {
                                 let _ = events.send(NodeEvent::Message(InboundMessage {
                                     topic,
                                     data: message.data,
                                 }));
+                            }
+                            Err(grund) => {
+                                let _ = events.send(NodeEvent::Verworfen {
+                                    topic: validation::topic_from_hash(&message.topic),
+                                    bytes: message.data.len(),
+                                    grund,
+                                });
                             }
                         }
                     }

@@ -55,6 +55,19 @@ pub enum GossipTopic {
 }
 
 impl GossipTopic {
+    /// Alle Nachrichtenklassen des Protokolls.
+    ///
+    /// Neben [`ALL_TOPICS`], das die **Namen** führt: Wer über Topics
+    /// rechnet statt über Zeichenketten, braucht die Werte. Eine neue
+    /// Variante fällt hier auf, weil der Test unten die Länge prüft.
+    pub const ALLE: [GossipTopic; 5] = [
+        Self::Blocks,
+        Self::Transactions,
+        Self::PoiBundles,
+        Self::Challenges,
+        Self::LatencyAttests,
+    ];
+
     /// Der kanonische Topic-Name (Konsens-Feld).
     pub fn name(&self) -> &'static str {
         match self {
@@ -149,6 +162,22 @@ pub fn publish<T: BorshSerialize>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn die_werte_und_die_namen_decken_sich() {
+        // Zwei Listen derselben Sache. Wächst eine, muss die andere
+        // mitwachsen, sonst rechnet die eine Hälfte des Crates über
+        // vier Topics und die andere über fünf.
+        use super::{GossipTopic, ALL_TOPICS};
+        assert_eq!(GossipTopic::ALLE.len(), ALL_TOPICS.len());
+        for t in GossipTopic::ALLE {
+            assert!(
+                ALL_TOPICS.contains(&t.name()),
+                "{:?} fehlt in ALL_TOPICS",
+                t
+            );
+        }
+    }
+
     use super::*;
     use crate::config::NetConfig;
     use crate::identity::NodeIdentity;

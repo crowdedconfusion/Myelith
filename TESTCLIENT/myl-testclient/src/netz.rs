@@ -56,6 +56,48 @@ pub struct Knotenbild {
     pub gesendet: u64,
     /// Ob eine Verbindung über ein Relais lief.
     pub vermittelt: bool,
+    /// Fingerabdrücke der gesendeten und angenommenen Nutzlasten.
+    pub gesendete_digests: BTreeSet<String>,
+    /// Fingerabdrücke der empfangenen Nutzlasten.
+    pub empfangene_digests: BTreeSet<String>,
+    /// Verworfene Nachrichten, nach Grund gezählt.
+    pub verworfen: BTreeMap<String, u64>,
+    /// Größtes Mesh über alle Topics in der letzten Zustandsaufnahme.
+    ///
+    /// **Verbunden heißt nicht im Mesh.** Ein Knoten mit Verbindungen
+    /// und leerem Mesh bekommt nur Ankündigungen statt Nachrichten.
+    /// Ohne diese Zahl sähe das aus wie ein stilles Netz.
+    pub mesh_groesse: u64,
+    /// Peers unter der Gossip-Schwelle in der letzten Aufnahme.
+    /// Ein bewerteter Peer sieht sonst aus wie ein stiller.
+    pub schlecht_bewertet: u64,
+    /// Verbundene Peers **in derselben Aufnahme** wie [`Self::mesh_groesse`].
+    ///
+    /// Getrennt von [`Self::gesehen`], und der Unterschied ist wichtig:
+    /// `gesehen` sammelt über den ganzen Lauf, das hier ist ein
+    /// Momentwert. Sie zu vergleichen wäre falsch, siehe
+    /// [`Self::stumm_im_mesh`].
+    pub peers_bei_aufnahme: u64,
+    /// Was AutoNAT über die eigene Erreichbarkeit gesagt hat.
+    pub erreichbar: Option<bool>,
+}
+
+impl Knotenbild {
+    /// Verbindungen da, Mesh leer: Der Knoten ist im Netz und bekommt
+    /// trotzdem keine Nachrichten.
+    ///
+    /// **Beide Zahlen stammen aus derselben Aufnahme**, und das ist
+    /// nicht kosmetisch. Die erste Fassung verglich [`Self::gesehen`],
+    /// eine über den ganzen Lauf gesammelte Menge, gegen die Mesh-Größe
+    /// aus der letzten Aufnahme. Beim ersten echten Dreiknotenlauf
+    /// meldete sie prompt einen stummen Knoten, der keiner war: Alpha
+    /// lief sechs Sekunden länger als die anderen, seine letzte Aufnahme
+    /// entstand also, als er allein war. **Ein Momentwert gegen eine
+    /// Sammlung ergibt einen Fehlalarm, sobald ein Knoten seine Peers
+    /// überlebt**, und das tut in jedem Lauf mindestens einer.
+    pub fn stumm_im_mesh(&self) -> bool {
+        self.peers_bei_aufnahme > 0 && self.mesh_groesse == 0
+    }
 }
 
 impl Knotenbild {
@@ -176,6 +218,13 @@ pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
         empfangen: 0,
         gesendet: 0,
         vermittelt: false,
+        gesendete_digests: BTreeSet::new(),
+        empfangene_digests: BTreeSet::new(),
+        verworfen: BTreeMap::new(),
+        mesh_groesse: 0,
+        schlecht_bewertet: 0,
+        peers_bei_aufnahme: 0,
+        erreichbar: None,
     };
     for zeile in inhalt.lines().filter(|z| !z.trim().is_empty()) {
         bild.zeilen += 1;
@@ -209,9 +258,48 @@ pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
                     bild.vermittelt = true;
                 }
             }
+            Some("aufnahme") => {
+                // Die letzte Aufnahme gewinnt: Sie beschreibt den
+                // Zustand am Ende, und der ist der aussagekräftige.
+                let mut groesstes = 0i64;
+                for stelle in zeile.match_indices("\"mesh_") {
+                    let rest = &zeile[stelle.0..];
+                    if let Some(doppelpunkt) = rest.find("\":") {
+                        let nach = &rest[doppelpunkt + 2..];
+                        let ende = nach.find(|c: char| !c.is_ascii_digit()).unwrap_or(nach.len());
+                        if let Ok(w) = nach[..ende].parse::<i64>() {
+                            groesstes = groesstes.max(w);
+                        }
+                    }
+                }
+                bild.mesh_groesse = groesstes.max(0) as u64;
+                if let Some(sb) = zahl_feld(zeile, "schlecht_bewertet") {
+                    bild.schlecht_bewertet = sb.max(0) as u64;
+                }
+                if let Some(pz) = zahl_feld(zeile, "peers") {
+                    bild.peers_bei_aufnahme = pz.max(0) as u64;
+                }
+            }
+            Some("erreichbarkeit") => {
+                bild.erreichbar = Some(wahr_feld(zeile, "erreichbar"));
+            }
             Some("abgewiesen") => bild.abgewiesen += 1,
-            Some("empfangen") => bild.empfangen += 1,
-            Some("gesendet") if wahr_feld(zeile, "angenommen") => bild.gesendet += 1,
+            Some("empfangen") => {
+                bild.empfangen += 1;
+                if let Some(d) = text_feld(zeile, "digest") {
+                    bild.empfangene_digests.insert(d);
+                }
+            }
+            Some("verworfen") => {
+                let grund = text_feld(zeile, "grund").unwrap_or_else(|| "unbekannt".into());
+                *bild.verworfen.entry(grund).or_insert(0) += 1;
+            }
+            Some("gesendet") if wahr_feld(zeile, "angenommen") => {
+                bild.gesendet += 1;
+                if let Some(d) = text_feld(zeile, "digest") {
+                    bild.gesendete_digests.insert(d);
+                }
+            }
             _ => {}
         }
     }
@@ -301,6 +389,62 @@ pub fn einseitige_sichten(bilder: &[Knotenbild]) -> Vec<(String, String)> {
     ergebnis
 }
 
+/// Der Weg einer Nachricht durch das Netz.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nachrichtenweg {
+    /// Fingerabdruck der Nutzlast.
+    pub digest: String,
+    /// Wer sie losgeschickt hat.
+    pub absender: String,
+    /// Wer sie empfangen hat.
+    pub empfaenger: Vec<String>,
+    /// Wer sie nicht empfangen hat, obwohl er zum Lauf gehört.
+    pub ohne_empfang: Vec<String>,
+}
+
+impl Nachrichtenweg {
+    /// Ob die Nachricht alle anderen Knoten erreicht hat.
+    pub fn vollstaendig(&self) -> bool {
+        self.ohne_empfang.is_empty()
+    }
+}
+
+/// Verfolgt jede gesendete Nachricht über die Protokolle hinweg.
+///
+/// **Das ist die Frage, für die der Fingerabdruck da ist:** „kam an, was
+/// losgeschickt wurde". Ohne ihn stünde in einem Protokoll „gesendet,
+/// 141 Bytes" und im anderen „empfangen, 141 Bytes", und niemand könnte
+/// sagen, ob es dieselbe Nachricht war.
+///
+/// Ganz ohne gemeinsame Uhr: Verglichen werden Fingerabdrücke, nicht
+/// Zeitpunkte.
+pub fn nachrichtenwege(bilder: &[Knotenbild]) -> Vec<Nachrichtenweg> {
+    let mut wege = Vec::new();
+    for absender in bilder {
+        for digest in &absender.gesendete_digests {
+            let mut empfaenger = Vec::new();
+            let mut ohne = Vec::new();
+            for anderer in bilder {
+                if anderer.peer == absender.peer {
+                    continue;
+                }
+                if anderer.empfangene_digests.contains(digest) {
+                    empfaenger.push(anderer.name.clone());
+                } else {
+                    ohne.push(anderer.name.clone());
+                }
+            }
+            wege.push(Nachrichtenweg {
+                digest: digest.clone(),
+                absender: absender.name.clone(),
+                empfaenger,
+                ohne_empfang: ohne,
+            });
+        }
+    }
+    wege
+}
+
 /// Schreibt den Bericht auf den Bildschirm und meldet, ob der Lauf
 /// gelungen ist.
 pub fn run(verzeichnis: &Path) -> bool {
@@ -336,6 +480,77 @@ pub fn run(verzeichnis: &Path) -> bool {
                 "      ⚠ Lücke: {} Zeilen, höchste Folge {}",
                 b.zeilen, b.hoechste_folge
             );
+        }
+    }
+
+    // Stumme Knoten zuerst: verbunden, aber ohne Mesh. Das ist die
+    // Lage, die im Protokoll am ehesten mit „das Netz war leer"
+    // verwechselt wird, und die Ursache ist eine völlig andere.
+    let stumme: Vec<&Knotenbild> = bilder.iter().filter(|b| b.stumm_im_mesh()).collect();
+    if !stumme.is_empty() {
+        println!();
+        println!("  ⚠ Verbunden, aber in keinem Mesh (bekommt nur Ankündigungen):");
+        for b in &stumme {
+            println!(
+                "    {} ({} Peer(s) verbunden, Mesh 0)",
+                b.name, b.peers_bei_aufnahme
+            );
+        }
+    }
+    let bewertet: Vec<&Knotenbild> = bilder.iter().filter(|b| b.schlecht_bewertet > 0).collect();
+    if !bewertet.is_empty() {
+        println!();
+        println!("  Peers unter der Gossip-Schwelle (bekommen kein Gossip mehr):");
+        for b in &bewertet {
+            println!("    {}: {}", b.name, b.schlecht_bewertet);
+        }
+    }
+    let unerreichbar: Vec<&Knotenbild> =
+        bilder.iter().filter(|b| b.erreichbar == Some(false)).collect();
+    if !unerreichbar.is_empty() {
+        println!();
+        println!("  Von außen nicht erreichbar (AutoNAT):");
+        for b in &unerreichbar {
+            println!("    {} — braucht ein Relais, siehe --relais", b.name);
+        }
+    }
+
+    // Verworfene Nachrichten: Sie beantworten die erste Frage
+    // jeder Fehlersuche, nämlich ob etwas ankam und weggeworfen wurde.
+    let mit_verwuerfen: Vec<&Knotenbild> =
+        bilder.iter().filter(|b| !b.verworfen.is_empty()).collect();
+    if !mit_verwuerfen.is_empty() {
+        println!();
+        println!("  Verworfene Nachrichten:");
+        for b in &mit_verwuerfen {
+            for (grund, anzahl) in &b.verworfen {
+                println!("    {}: {anzahl}× {grund}", b.name);
+            }
+        }
+    }
+
+    let wege = nachrichtenwege(&bilder);
+    if !wege.is_empty() {
+        println!();
+        println!("  Nachrichtenwege (Fingerabdruck der Nutzlast):");
+        for w in &wege {
+            if w.vollstaendig() {
+                println!(
+                    "    {} von {} → alle {} erreicht",
+                    w.digest,
+                    w.absender,
+                    w.empfaenger.len()
+                );
+            } else {
+                println!(
+                    "    {} von {} → {} erreicht, {} NICHT: {}",
+                    w.digest,
+                    w.absender,
+                    w.empfaenger.len(),
+                    w.ohne_empfang.len(),
+                    w.ohne_empfang.join(", ")
+                );
+            }
         }
     }
 
@@ -386,7 +601,10 @@ mod tests {
             name: "a".into(), peer: "p1".into(), datei: PathBuf::new(),
             zeilen: 5, hoechste_folge: 5, erste_zeit_ms: 0, letzte_zeit_ms: 1000,
             gesehen: BTreeSet::new(), abgewiesen: 0, empfangen: 0, gesendet: 0,
-            vermittelt: false,
+            vermittelt: false, gesendete_digests: BTreeSet::new(),
+            empfangene_digests: BTreeSet::new(), verworfen: BTreeMap::new(),
+            mesh_groesse: 0, schlecht_bewertet: 0, peers_bei_aufnahme: 0,
+            erreichbar: None,
         }];
         assert_eq!(beurteile(&bilder), Urteil::EinKnoten);
         assert!(!beurteile(&bilder).gelungen());
@@ -462,12 +680,20 @@ mod tests {
                 zeilen: 2, hoechste_folge: 2, erste_zeit_ms: 0, letzte_zeit_ms: 1,
                 gesehen: ["p2".to_string()].into_iter().collect(),
                 abgewiesen: 0, empfangen: 0, gesendet: 0, vermittelt: false,
+                gesendete_digests: BTreeSet::new(),
+                empfangene_digests: BTreeSet::new(), verworfen: BTreeMap::new(),
+                mesh_groesse: 1, schlecht_bewertet: 0, peers_bei_aufnahme: 1,
+                erreichbar: None,
             },
             Knotenbild {
                 name: "b".into(), peer: "p2".into(), datei: PathBuf::new(),
                 zeilen: 2, hoechste_folge: 2, erste_zeit_ms: 0, letzte_zeit_ms: 1,
                 gesehen: ["p3".to_string()].into_iter().collect(),
                 abgewiesen: 0, empfangen: 0, gesendet: 0, vermittelt: false,
+                gesendete_digests: BTreeSet::new(),
+                empfangene_digests: BTreeSet::new(), verworfen: BTreeMap::new(),
+                mesh_groesse: 1, schlecht_bewertet: 0, peers_bei_aufnahme: 1,
+                erreichbar: None,
             },
         ];
         assert_eq!(
@@ -489,6 +715,144 @@ mod tests {
         let bilder = sammle(&verz).unwrap();
         assert_eq!(bilder.len(), 1, "derselbe Knoten wurde doppelt gezählt");
         assert_eq!(bilder[0].gesehen.len(), 1, "das alte Protokoll hat gewonnen");
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn eine_nachricht_wird_ueber_die_protokolle_verfolgt() {
+        // Der Kern der Auswertung: A schickt, B empfängt, und der
+        // Fingerabdruck verbindet beide Zeilen. Ohne ihn stünde in
+        // beiden Dateien nur eine Bytezahl.
+        let verz = temp("wege");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 150, "a", "p1", "verbunden", ",\"gegenstelle\":\"p2\""),
+            zeile(3, 200, "a", "p1", "gesendet",
+                  ",\"digest\":\"abc123\",\"bytes\":141,\"angenommen\":true"),
+        ]);
+        schreibe(&verz, "b", &[
+            zeile(1, 100, "b", "p2", "start", ""),
+            zeile(2, 150, "b", "p2", "verbunden", ",\"gegenstelle\":\"p1\""),
+            zeile(3, 250, "b", "p2", "empfangen", ",\"digest\":\"abc123\",\"bytes\":141"),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        let wege = nachrichtenwege(&bilder);
+        assert_eq!(wege.len(), 1);
+        assert_eq!(wege[0].digest, "abc123");
+        assert_eq!(wege[0].absender, "a");
+        assert_eq!(wege[0].empfaenger, vec!["b".to_string()]);
+        assert!(wege[0].vollstaendig());
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn eine_nicht_angekommene_nachricht_benennt_wen_sie_nicht_erreichte() {
+        let verz = temp("fehlweg");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 150, "a", "p1", "verbunden", ",\"gegenstelle\":\"p2\""),
+            zeile(3, 200, "a", "p1", "gesendet",
+                  ",\"digest\":\"deadbeef\",\"bytes\":10,\"angenommen\":true"),
+        ]);
+        schreibe(&verz, "b", &[
+            zeile(1, 100, "b", "p2", "start", ""),
+            zeile(2, 150, "b", "p2", "verbunden", ",\"gegenstelle\":\"p1\""),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        let wege = nachrichtenwege(&bilder);
+        assert_eq!(wege.len(), 1);
+        assert!(!wege[0].vollstaendig());
+        assert_eq!(wege[0].ohne_empfang, vec!["b".to_string()]);
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn verworfene_nachrichten_werden_nach_grund_gezaehlt() {
+        // Der Unterschied zwischen „nichts kam an" und „es kam an und
+        // wurde weggeworfen" ist die erste Frage jeder Fehlersuche.
+        let verz = temp("verworfen");
+        schreibe(&verz, "b", &[
+            zeile(1, 100, "b", "p2", "start", ""),
+            zeile(2, 200, "b", "p2", "verworfen", ",\"grund\":\"nutzlastpruefung\""),
+            zeile(3, 250, "b", "p2", "verworfen", ",\"grund\":\"nutzlastpruefung\""),
+            zeile(4, 300, "b", "p2", "verworfen", ",\"grund\":\"transportregel\""),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        assert_eq!(bilder[0].verworfen.get("nutzlastpruefung"), Some(&2));
+        assert_eq!(bilder[0].verworfen.get("transportregel"), Some(&1));
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn ein_verbundener_knoten_ohne_mesh_faellt_auf() {
+        // Die Lage, die im Protokoll am ehesten mit „das Netz war leer"
+        // verwechselt wird: Verbindungen da, Mesh leer, nichts kommt an.
+        let verz = temp("stumm");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 150, "a", "p1", "verbunden", ",\"gegenstelle\":\"p2\""),
+            zeile(3, 200, "a", "p1", "aufnahme",
+                  ",\"peers\":1,\"schlecht_bewertet\":0,\"mesh_blocks\":0,\"mesh_challenges\":0"),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        assert!(bilder[0].stumm_im_mesh(), "leeres Mesh wurde nicht erkannt");
+        assert_eq!(bilder[0].peers_bei_aufnahme, 1);
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn ein_knoten_mit_mesh_gilt_nicht_als_stumm() {
+        let verz = temp("mesh");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 150, "a", "p1", "verbunden", ",\"gegenstelle\":\"p2\""),
+            zeile(3, 200, "a", "p1", "aufnahme",
+                  ",\"peers\":1,\"schlecht_bewertet\":2,\"mesh_blocks\":3,\"mesh_challenges\":0"),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        assert!(!bilder[0].stumm_im_mesh());
+        assert_eq!(bilder[0].mesh_groesse, 3, "das größte Mesh zählt");
+        assert_eq!(bilder[0].schlecht_bewertet, 2);
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn wer_seine_peers_ueberlebt_gilt_nicht_als_stumm() {
+        // Der Fehlalarm, den der erste echte Dreiknotenlauf erzeugt hat:
+        // Alpha lief länger als die anderen, seine letzte Aufnahme
+        // entstand allein. Über den Lauf gesehen hatte er zwei Peers,
+        // in dem Moment keinen. Beide Zahlen müssen aus derselben
+        // Aufnahme stammen.
+        let verz = temp("ueberlebt");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 150, "a", "p1", "verbunden", ",\"gegenstelle\":\"p2\""),
+            zeile(3, 200, "a", "p1", "aufnahme",
+                  ",\"peers\":1,\"schlecht_bewertet\":0,\"mesh_blocks\":1"),
+            zeile(4, 300, "a", "p1", "getrennt", ",\"gegenstelle\":\"p2\""),
+            zeile(5, 400, "a", "p1", "aufnahme",
+                  ",\"peers\":0,\"schlecht_bewertet\":0,\"mesh_blocks\":0"),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        assert!(!bilder[0].gesehen.is_empty(), "der Lauf kannte einen Peer");
+        assert_eq!(bilder[0].peers_bei_aufnahme, 0, "am Ende war er allein");
+        assert!(
+            !bilder[0].stumm_im_mesh(),
+            "allein am Ende ist kein stummer Knoten, sondern ein Lauf, der endet"
+        );
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn eine_fehlende_erreichbarkeit_wird_gemerkt() {
+        let verz = temp("erreichbar");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 200, "a", "p1", "erreichbarkeit",
+                  ",\"addr\":\"/ip4/1.2.3.4/tcp/4150\",\"erreichbar\":false,\"grund\":\"timeout\""),
+        ]);
+        let bilder = sammle(&verz).unwrap();
+        assert_eq!(bilder[0].erreichbar, Some(false));
         std::fs::remove_dir_all(&verz).ok();
     }
 

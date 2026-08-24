@@ -61,9 +61,13 @@ pub use nat::{
     relais_horchadresse, NatFehler, NatKonfig,
 };
 pub use node::{build_swarm, MylBehaviour};
-pub use scoring::{standard_parameter, standard_schwellen, IP_KOLOKATION_SCHWELLE};
-pub use runtime::{run_node, run_node_mit, InboundMessage, NodeCommand, NodeEvent};
+pub use scoring::{
+    schlechte_peers, standard_parameter, standard_schwellen, IP_KOLOKATION_SCHWELLE,
+};
+pub use runtime::{
+    run_node, run_node_mit, InboundMessage, Netzzustand, NodeCommand, NodeEvent,
+};
 pub use validation::{
-    report, report_with, topic_from_hash, validate_payload, AcceptAllValidator,
+    beurteile, report, report_with, Ablehnungsgrund, topic_from_hash, validate_payload, AcceptAllValidator,
     PayloadValidator, ValidationError,
 };

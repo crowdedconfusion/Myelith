@@ -40,6 +40,7 @@ pub mod banner;
 pub mod erwartung;
 pub mod farben;
 pub mod hardware;
+pub mod knoten;
 pub mod menu;
 pub mod netz;
 pub mod modellstaende;

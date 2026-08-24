@@ -219,6 +219,54 @@ impl PayloadValidator for AcceptAllValidator {
 /// Prüft nur die transportnahen Regeln. Für Blöcke und Transaktionen
 /// bleibt es dabei bei der Größenprüfung — nutze [`report_with`], sobald
 /// die Konsensschicht verfügbar ist.
+/// Warum eine Nachricht verworfen wurde.
+///
+/// Ohne diesen Grund ist eine verworfene Nachricht im Betrieb stumm,
+/// und „B hat nichts empfangen" ließe sich nicht von „B hat es
+/// weggeworfen" unterscheiden. Für die Fehlersuche ist das der
+/// Unterschied zwischen einer Netzfrage und einer Formatfrage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ablehnungsgrund {
+    /// Das Topic gehört nicht zum Protokoll.
+    FremdesTopic,
+    /// Größe oder Struktur passen nicht (Stufe 2 und 3 dieser Schicht).
+    Transportregel,
+    /// Die Nutzlastprüfung der Anwendung hat abgelehnt.
+    Nutzlastpruefung,
+}
+
+impl Ablehnungsgrund {
+    /// Kurzwort fürs Betriebsprotokoll.
+    pub fn als_text(&self) -> &'static str {
+        match self {
+            Self::FremdesTopic => "fremdes-topic",
+            Self::Transportregel => "transportregel",
+            Self::Nutzlastpruefung => "nutzlastpruefung",
+        }
+    }
+}
+
+/// Beurteilt eine Nachricht, ohne sie zu melden.
+///
+/// Getrennt von [`report_with`], damit der Grund einer Ablehnung
+/// verfügbar ist statt nur das Ergebnis.
+pub fn beurteile(
+    topic_hash: &TopicHash,
+    data: &[u8],
+    validator: &dyn PayloadValidator,
+) -> Result<GossipTopic, Ablehnungsgrund> {
+    let Some(topic) = topic_from_hash(topic_hash) else {
+        return Err(Ablehnungsgrund::FremdesTopic);
+    };
+    if validate_payload(topic, data).is_err() {
+        return Err(Ablehnungsgrund::Transportregel);
+    }
+    if !validator.validate(topic, data) {
+        return Err(Ablehnungsgrund::Nutzlastpruefung);
+    }
+    Ok(topic)
+}
+
 pub fn report(
     swarm: &mut Swarm<MylBehaviour>,
     message_id: &MessageId,
@@ -244,10 +292,7 @@ pub fn report_with(
     data: &[u8],
     validator: &dyn PayloadValidator,
 ) -> MessageAcceptance {
-    let ok = match topic_from_hash(topic_hash) {
-        Some(topic) => validate_payload(topic, data).is_ok() && validator.validate(topic, data),
-        None => false,
-    };
+    let ok = beurteile(topic_hash, data, validator).is_ok();
     swarm.behaviour_mut().gossipsub.report_message_validation_result(
         message_id,
         source,

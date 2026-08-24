@@ -71,6 +71,17 @@ pub struct KnotenKonfig {
     pub nat: NatKonfig,
     /// Abstand der Zustandsaufnahmen im Protokoll, in Sekunden.
     pub aufnahme_sekunden: u64,
+    /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
+    ///
+    /// **Nur für Testnetze.** Der Knoten schickt dann getaktet einen
+    /// strukturell gültigen, inhaltlich bedeutungslosen Block ins
+    /// Gossip. Ohne das belegt ein Mehrmaschinenlauf nur, dass die
+    /// Knoten einander **finden**, nicht dass Nachrichten **fließen**,
+    /// und das sind zwei verschiedene Aussagen.
+    ///
+    /// In einem echten Netz gehört das aus: Ein Knoten, der
+    /// bedeutungslose Blöcke einspeist, ist dort ein Störer.
+    pub testverkehr_sekunden: Option<u64>,
 }
 
 /// Fehler der Konfiguration.
@@ -127,6 +138,7 @@ impl Default for KnotenKonfig {
             rolle: Rolle::Teilnehmer,
             nat: NatKonfig::default(),
             aufnahme_sekunden: 30,
+            testverkehr_sekunden: None,
         }
     }
 }

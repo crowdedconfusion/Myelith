@@ -30,6 +30,11 @@ myl-node — ein Myelith-Netzknoten
   --schluessel <datei>   Schlüsseldatei (Vorgabe: knoten.key)
   --protokolle <verz>    Verzeichnis für Betriebsprotokolle (Vorgabe: logs)
   --aufnahme <sek>       Abstand der Zustandsaufnahmen (Vorgabe: 30)
+  --testverkehr <sek>    getaktet eine Testnachricht senden (Vorgabe: keine).
+                         NUR FÜR TESTNETZE: strukturell gültige, inhaltlich
+                         bedeutungslose Blöcke. Ohne das belegt ein Lauf nur,
+                         dass die Knoten einander finden, nicht dass
+                         Nachrichten fließen.
   --laufzeit <sek>       nach so vielen Sekunden beenden (Vorgabe: bis Strg-C)
   --still                nicht auf den Bildschirm protokollieren
   --hilfe                diese Übersicht
@@ -87,6 +92,12 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 konfig.aufnahme_sekunden = wert(i)?
                     .parse()
                     .map_err(|_| "--aufnahme erwartet eine Zahl".to_string())?;
+                i += 2;
+            }
+            "--testverkehr" => {
+                konfig.testverkehr_sekunden = Some(
+                    wert(i)?.parse().map_err(|_| "--testverkehr erwartet eine Zahl".to_string())?,
+                );
                 i += 2;
             }
             "--laufzeit" => {

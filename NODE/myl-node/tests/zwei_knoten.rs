@@ -56,6 +56,9 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         rolle: Rolle::Teilnehmer,
         nat: Default::default(),
         aufnahme_sekunden: 1,
+        // Kein Testverkehr: Die Tests hier schicken gezielt, damit
+        // sichtbar bleibt, welche Nachricht wessen ist.
+        testverkehr_sekunden: None,
     }
 }
 

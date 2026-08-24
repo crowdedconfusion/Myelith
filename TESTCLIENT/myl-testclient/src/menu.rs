@@ -244,7 +244,15 @@ fn menue_nutzer() -> Vec<Punkt> {
             "Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum\n\
              Messen: kein Protokoll, kein Vergleichswert.",
         ),
-        Punkt::neu('5', "Anleitung lesen", "").abgesetzt(),
+        Punkt::neu(
+            '5',
+            "Am Netz teilnehmen (Knoten betreiben)",
+            "Ein zweiter, eigenständiger Test: Finden mehrere Rechner an\n\
+             verschiedenen Orten einander über das Internet? Braucht nur\n\
+             die Adresse vom Koordinator, keinen offenen Port.",
+        )
+        .abgesetzt(),
+        Punkt::neu('6', "Anleitung lesen", ""),
         Punkt::neu('9', "Entwickler-Menü", ""),
         Punkt::neu('0', "Beenden", ""),
     ]
@@ -300,6 +308,22 @@ fn menue_entwickler() -> Vec<Punkt> {
             "Artefakte und Gewichte löschen (Plattenplatz)",
             "Gibt bis zu 25 GB frei. Fragt zweimal und nennt dazwischen\n\
              jeden betroffenen Pfad.",
+        ),
+        Punkt::neu(
+            '7',
+            "Knoten als Anlaufstelle betreiben (Portweiterleitung nötig)",
+            "Die Maschine, über die alle anderen ins Netz kommen. Setzt\n\
+             eine öffentlich erreichbare Adresse voraus und vermittelt\n\
+             Verbindungen für Teilnehmer hinter einem Router.",
+        ),
+        Punkt::neu(
+            '8',
+            "Netzlauf auswerten (Betriebsprotokolle mehrerer Knoten)",
+            "Eine andere Frage als Punkt 1: nicht ob zwei Maschinen\n\
+             dasselbe rechnen, sondern ob mehrere Knoten einander\n\
+             gesehen haben und ob die Nachrichten angekommen sind.\n\
+             Kommt nach Punkt 7, weil erst gelaufen wird und dann\n\
+             ausgewertet.",
         ),
         Punkt::neu('0', "Zurück", ""),
     ]
@@ -384,6 +408,10 @@ pub fn run(mut e: Einstellungen) -> bool {
                 weiter();
             }
             '5' => {
+                letztes_ergebnis = netz_teilnehmen(&e);
+                weiter();
+            }
+            '6' => {
                 anleitung_zeigen();
                 weiter();
             }
@@ -708,10 +736,10 @@ const KURZANLEITUNG: &str = "\
     [1] Artefakt wählen. Wird beschafft, falls keines vorliegt.
     [2] Testdatei wählen, die der Koordinator geschickt hat. Sie
         gehört nach TESTCLIENT/Testpläne/ und gilt für jedes Modell.
-    [3] Testlauf starten: vier Stufen, ein Protokoll. Danach beide
-        Dateien aus TESTCLIENT/logs/ verschicken; Prompttexte
-        stehen nicht darin, nur deren Hash.
+    [3] Testlauf starten: vier Stufen, ein Protokoll. Danach die
+        Dateien aus TESTCLIENT/logs/ verschicken.
     [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
+    [5] Am Netz teilnehmen: der zweite Test, Rechner statt Rechnung.
 
   Als Koordinator
     [9] Entwickler, dort \"Testplan erzeugen\", .plan an alle geben.
@@ -790,6 +818,14 @@ fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
                 println!("  Protokolle laufen jetzt unter {:?}.", e.teilnehmer);
             }
             '6' => freigeben(),
+            '8' => letztes_ergebnis = netzlauf_auswerten(),
+            '7' => {
+                letztes_ergebnis = crate::knoten::anlaufstelle();
+                println!();
+                println!("  Enter für zurück ins Menü.");
+                let mut _w = String::new();
+                let _ = std::io::stdin().read_line(&mut _w);
+            }
             '0' => {
                 banner::bildschirm();
                 return letztes_ergebnis;
@@ -1097,6 +1133,107 @@ fn artefakt_waehlen(e: &mut Einstellungen) {
 /// aus, als es zu sagen scheint.
 ///
 /// Der Bericht landet in beiden Fällen unter `Vergleiche/Berichte/`.
+/// Nutzermenü Punkt 5: am Netz teilnehmen.
+///
+/// Ein Untermenü, weil hier drei verschiedene Dinge gefragt sein können:
+/// mitmachen, das eigene Ergebnis ansehen, oder erst einmal nachlesen,
+/// worum es überhaupt geht. Alles in einen Punkt zu legen hieße, jemanden
+/// nach einer Adresse zu fragen, bevor er weiß, wofür.
+fn netz_teilnehmen(e: &Einstellungen) -> bool {
+    let punkte = vec![
+        Punkt::neu(
+            '1',
+            "Jetzt teilnehmen",
+            "Fragt nach der Adresse vom Koordinator und läuft dann. Am\n\
+             Ende liegt ein Protokoll bereit, das zurückgeschickt wird.",
+        ),
+        Punkt::neu(
+            '2',
+            "Mein letztes Protokoll ansehen",
+            "Wertet aus, was hier liegt. Bei nur einem Knoten sagt das\n\
+             über das Netz nichts, zeigt aber, ob der eigene Lauf sauber\n\
+             war.",
+        ),
+        Punkt::neu(
+            '3',
+            "Worum geht es hier? (Anleitung, Teil C)",
+            "",
+        )
+        .abgesetzt(),
+        Punkt::neu('0', "Zurück", ""),
+    ];
+    let mut ergebnis = false;
+    loop {
+        banner::bildschirm();
+        println!("  Am Netz teilnehmen");
+        println!();
+        println!("  Das ist ein anderer Test als der Testlauf aus Punkt 3.");
+        println!("  Dort geht es um: rechnen zwei Maschinen dasselbe.");
+        println!("  Hier geht es um: finden mehrere Rechner einander.");
+        println!();
+        let Some(wahl) = auswahl::waehlen("Am Netz teilnehmen", &punkte) else {
+            return ergebnis;
+        };
+        println!();
+        match wahl {
+            '1' => {
+                ergebnis = crate::knoten::teilnehmer(&e.teilnehmer);
+                println!();
+                println!("  Enter für zurück.");
+                let mut _w = String::new();
+                let _ = std::io::stdin().read_line(&mut _w);
+            }
+            '2' => {
+                ergebnis = crate::netz::run(&crate::knoten::protokollverzeichnis());
+                println!();
+                println!("  Enter für zurück.");
+                let mut _w = String::new();
+                let _ = std::io::stdin().read_line(&mut _w);
+            }
+            '3' => {
+                anleitung_zeigen();
+                weiter();
+            }
+            '0' => return ergebnis,
+            _ => {}
+        }
+    }
+}
+
+/// Punkt 7: die Betriebsprotokolle eines Mehrknotenlaufs auswerten.
+///
+/// Getrennt von [`vergleichen`], weil es eine andere Frage beantwortet.
+/// Beides in einen Punkt zu legen hieße, zwei Urteile zu vermischen, von
+/// denen jedes für sich eine Aussage ist: „rechnen zwei Maschinen
+/// dasselbe" und „haben mehrere Knoten einander gesehen".
+fn netzlauf_auswerten() -> bool {
+    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
+    // Vorgabe ist derselbe Sammelordner wie beim Vergleich: Wer
+    // Protokolle von mehreren Maschinen einsammelt, legt sie an eine
+    // Stelle, nicht an zwei.
+    let vorgabe = crate::vergleich::vergleichsordner(&repo);
+    println!("  Verzeichnis mit den Betriebsprotokollen (.jsonl).");
+    println!("  Enter übernimmt: {}", vorgabe.display());
+    print!("  > ");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let mut eingabe = String::new();
+    let _ = std::io::stdin().read_line(&mut eingabe);
+    let eingabe = eingabe.trim();
+    let ordner = if eingabe.is_empty() {
+        vorgabe
+    } else {
+        std::path::PathBuf::from(eingabe)
+    };
+    println!();
+    let ok = crate::netz::run(&ordner);
+    println!();
+    println!("  Enter für zurück ins Menü.");
+    let mut _weiter = String::new();
+    let _ = std::io::stdin().read_line(&mut _weiter);
+    ok
+}
+
 fn vergleichen(e: &mut Einstellungen) -> bool {
     let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
     let zugesandt = crate::vergleich::vergleichsordner(&repo);
@@ -1511,7 +1648,7 @@ mod tests {
     #[test]
     fn nutzermenue_nennt_alle_punkte() {
         let tasten: Vec<char> = menue_nutzer().iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '9', '0']);
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
     }
 
     /// Das Nutzermenü darf nicht wieder anwachsen: Es ist die Seite, die
@@ -1524,9 +1661,18 @@ mod tests {
             .iter()
             .filter(|p| p.taste != '0' && p.taste != '9')
             .count();
+        // Die Grenze stand bei 5 und liegt seit dem 2026-08-24 bei 6.
+        // **Das ist eine Entscheidung, keine Aufweichung:** Der
+        // Netzlauf ist ein eigenständiger zweiter Test und gehört
+        // deshalb ins Nutzermenü, nicht hinter das Entwicklermenü.
+        // Wer ihn dort verstecken wollte, verlangte von Teilnehmern
+        // einen Umweg über ein Menü, das nicht für sie gedacht ist.
+        //
+        // Sechs bleibt die Grenze. Der nächste Punkt, der hierher will,
+        // muss einen bestehenden ersetzen.
         assert!(
-            aufgaben <= 5,
-            "Nutzermenü hat {aufgaben} Aufgaben, höchstens 5 sind vorgesehen"
+            aufgaben <= 6,
+            "Nutzermenü hat {aufgaben} Aufgaben, höchstens 6 sind vorgesehen"
         );
     }
 
@@ -1556,13 +1702,24 @@ mod tests {
     fn entwicklermenue_beginnt_mit_dem_vergleich_und_kennt_keine_einzelstufen() {
         let punkte = menue_entwickler();
         let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '0']);
+        // 7 kam am 2026-08-24 dazu: die Auswertung eines Netzlaufs. Sie
+        // steht bewusst NICHT oben, obwohl sie neu ist: Der Vergleich
+        // bleibt der Punkt, für den es dieses Menü gibt.
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '7', '8', '0']);
 
         let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
         assert!(
             titel[0].starts_with("Protokolle vergleichen"),
             "der Vergleich steht nicht oben: {:?}",
             titel[0]
+        );
+        assert!(
+            titel.iter().any(|t| t.starts_with("Netzlauf auswerten")),
+            "die Netzlauf-Auswertung fehlt im Menü: {titel:?}"
+        );
+        assert!(
+            titel.iter().any(|t| t.starts_with("Knoten als Anlaufstelle")),
+            "die Anlaufstelle fehlt im Menü: {titel:?}"
         );
         for weg in ["Hardware erheben", "Determinismus prüfen", "Geshardete Inferenz", "Stack"] {
             assert!(
@@ -1605,7 +1762,7 @@ mod tests {
     fn nutzermenue_fuehrt_die_schritte_in_der_reihenfolge_des_ablaufs() {
         let punkte = menue_nutzer();
         let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '9', '0']);
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
 
         let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
         // Erst die Voraussetzung, dann die Vorgabe, dann die Messung.

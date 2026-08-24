@@ -1,5 +1,11 @@
 # Anleitung: Tests mit mehreren Beteiligten und heterogener Hardware
 
+> **Teil A und B** behandeln den Determinismus-Nachweis: Rechnen zwei
+> Maschinen dasselbe Ergebnis, Bit für Bit.
+> **Teil C** behandelt den Netzlauf: Finden mehrere Rechner einander
+> über das Internet, und kommen die Nachrichten an. Zwei getrennte
+> Nachweise, die einander nicht brauchen.
+
 **Version:** 2.6.0 · **Datum:** 2026-08-21
 
 Diese Anleitung hat zwei Hälften:
@@ -895,7 +901,408 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 
 ---
 
+# Teil C: Netzlauf mit mehreren Knoten
+
+## C0. Schnellstart: drei Rechner an drei Orten, Schritt für Schritt
+
+Wer nur wissen will, was zu tun ist, folgt dieser Liste. Die Begründungen
+stehen danach in C1 bis C10.
+
+**Rollen vorab:** Eine der drei Maschinen ist die **Anlaufstelle**. Sie
+muss aus dem Internet erreichbar sein: ein kleiner Mietserver, oder ein
+Anschluss, an dem jemand eine Portweiterleitung einrichten kann. Die
+beiden anderen dürfen an ganz gewöhnlichen Heimanschlüssen stehen.
+
+Nennen wir sie **A** (Anlaufstelle), **B** und **C**.
+
+---
+
+**Schritt 1: Auf allen drei Maschinen den Testclient starten.**
+
+Wer den Client schon für den Determinismus-Test benutzt hat, ist hier
+fertig: **Der Knoten steckt darin.** Es gibt kein zweites Programm zu
+bauen und keinen Pfad zu suchen.
+
+Für Server ohne Bildschirm gibt es den Knoten auch einzeln:
+
+```
+cargo build --release --manifest-path NODE/myl-node/Cargo.toml
+```
+
+Beides braucht kein Modell, keine Gewichte und kein Python.
+
+**Schritt 2: Auf A den Port öffnen.**
+
+Port 4150, **für TCP und für UDP**. Der Knoten spricht beides, und je
+nach Gegenüber wird das eine oder das andere gebraucht. Bei einem
+Mietserver ist das eine Firewall-Regel, zu Hause eine Portweiterleitung
+im Router.
+
+**Schritt 3: Auf A die öffentliche Adresse herausfinden.**
+
+```
+curl -4 https://ifconfig.me
+```
+
+Die Zahl, die dabei herauskommt, heißt im Folgenden `DEINE-IP`.
+
+**Schritt 4: Auf A den Knoten starten.**
+
+```
+myl-node --name anlaufstelle --rolle relais --port 4150 \
+         --oeffentlich /ip4/DEINE-IP/tcp/4150 \
+         --testverkehr 10 --aufnahme 30
+```
+
+Der Knoten antwortet mit drei Zeilen. Die dritte ist die wichtige:
+
+```
+myl-node: erreichbar unter /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW…
+```
+
+**Diese Zeile vollständig kopieren und an B und C schicken.** Sie ist die
+Einladung ins Netz. Der `/p2p/12D3KooW…`-Teil gehört dazu.
+
+**Schritt 5: Auf B den Knoten starten.**
+
+```
+myl-node --name maschine-b --port 4150 \
+         --bootstrap /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW… \
+         --relais /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW… \
+         --testverkehr 10 --aufnahme 30
+```
+
+Zweimal dieselbe Adresse, und das ist kein Versehen: `--bootstrap` sagt
+„dort finde ich das Netz", `--relais` sagt „dorthin soll man mich
+erreichen können, wenn mein Router niemanden durchlässt".
+
+**Schritt 6: Auf C dasselbe**, nur mit `--name maschine-c`.
+
+**Die Namen müssen verschieden sein.** Sie benennen die Protokolldatei
+und ordnen sie später zu.
+
+**Schritt 7: Nachsehen, ob es geklappt hat.**
+
+Auf B und C erscheint innerhalb weniger Sekunden eine Zeile mit
+`"art":"verbunden"`. Kommt sie nicht, weiter bei C8.
+
+**Schritt 8: Laufen lassen.**
+
+Eine Stunde ist ein guter erster Wert. Beenden mit Strg-C, oder von
+vornherein `--laufzeit 3600` anhängen.
+
+**Schritt 9: Die drei Protokolle einsammeln.**
+
+Auf jeder Maschine liegt eine Datei in `logs/`. Alle drei in **einen**
+Ordner kopieren, am besten `TESTCLIENT/Vergleiche`.
+
+**Schritt 10: Auswerten.**
+
+Testclient starten, Entwickler-Menü, Punkt **8**. Teilnehmer sehen ihren
+eigenen Lauf unter Punkt 5, Untermenü Punkt 2. Oder direkt:
+
+```
+myl-test netz --logs TESTCLIENT/Vergleiche
+```
+
+Was dabei herauskommen soll, steht in C6.
+
+---
+
+**Wenn keine Maschine öffentlich erreichbar ist:** Dann geht es nicht.
+Irgendwo muss der erste Kontakt stattfinden, und wenn kein Rechner
+Verbindungen annehmen kann, gibt es keine Stelle dafür. Ein kleiner
+Mietserver für ein paar Euro im Monat reicht aus, er muss nichts können
+außer erreichbar sein.
+
+## C0a. Die Menüpfade auf einen Blick
+
+| Wer | Wo | Was |
+|---|---|---|
+| Koordinator | [9] Entwickler → **[7]** | Knoten als Anlaufstelle betreiben |
+| Teilnehmer | Hauptmenü → **[5]** → [1] | Am Netz teilnehmen |
+| Teilnehmer | Hauptmenü → **[5]** → [2] | eigenen Lauf ansehen |
+| Koordinator | [9] Entwickler → **[8]** | Netzlauf auswerten |
+
+Der Knoten steckt **im Testclient**. Es gibt kein zweites Programm zu
+bauen. `myl-node` als eigenständiges Programm bleibt daneben bestehen,
+für Server ohne Bildschirm.
+
+## C1. Worum es hier geht, und worum nicht
+
+Teil A und B beantworten **eine** Frage: Rechnen zwei verschiedene
+Maschinen dasselbe Ergebnis, Bit für Bit. Teil C beantwortet eine
+andere: **Finden mehrere Rechner einander über das Internet, und kommen
+die Nachrichten an.**
+
+Das sind zwei getrennte Nachweise, und sie brauchen einander nicht. Wer
+nur den Determinismus prüfen will, liest Teil A und ist fertig.
+
+**Was ein Netzlauf heute prüft:** dass Knoten einander finden, sich
+verbinden, Nachrichten verbreiten und einander weiterreichen, auch hinter
+einem Heimrouter.
+
+**Was er nicht prüft:** den Konsens. Die Knoten produzieren **keine
+Blöcke**. Die Zustandsmaschinen dafür sind fertig, aber niemand treibt
+sie über die Zeit: Rundentakt, Mempool und Kettenzustand fehlen. Ein
+Netzlauf sagt also etwas über das **Netz**, nicht über die Einigung.
+
+## C2. Was du brauchst
+
+- Zwei bis vier Rechner. Sie dürfen an verschiedenen Orten stehen, das
+  ist der Sinn der Sache.
+- **Mindestens einer davon muss von außen erreichbar sein.** Ein
+  Wurzelserver, ein kleiner Mietserver, oder ein Anschluss mit
+  eingerichteter Portweiterleitung. Die übrigen dürfen hinter einem
+  ganz gewöhnlichen Heimrouter stehen, dafür gibt es die
+  Relais-Vermittlung.
+- Das Programm `myl-node` auf jedem Rechner.
+
+Kein Modell, keine Gewichte, kein Python. Ein Netzlauf braucht nichts
+davon.
+
+## C3. Den ersten Knoten starten (der erreichbare)
+
+Auf dem Rechner mit öffentlicher Adresse: Testclient starten,
+**[9] Entwickler-Menü**, dort **[7] Knoten als Anlaufstelle betreiben**.
+
+Er fragt der Reihe nach:
+
+| Frage | Was einzutragen ist |
+|---|---|
+| Name dieser Maschine | frei wählbar, benennt das Protokoll |
+| Öffentliche IP-Adresse | die Zahl aus `curl -4 https://ifconfig.me` |
+| Port | 4150, oder ein anderer freigegebener |
+| Laufzeit in Minuten | 60 ist ein guter erster Wert |
+| Testnachricht alle wie viele Sekunden | 10, oder 0 für keine |
+
+Enter übernimmt jeweils den Wert in eckigen Klammern.
+
+Für einen Server ohne Bildschirm geht dasselbe direkt:
+
+```
+myl-node --name relais --rolle relais --port 4150 \
+         --oeffentlich /ip4/DEINE.OEFFENTLICHE.IP/tcp/4150 \
+         --testverkehr 10
+```
+
+`--oeffentlich` ist bei `--rolle relais` **Pflicht**, und der Knoten
+startet ohne sie gar nicht erst. Der Grund steckt in der Sache: Ein
+Relais schreibt seine eigene Adresse in die Antwort an die Knoten, die
+es vermittelt. Kennt es sie nicht, nimmt es Anfragen an und antwortet
+ins Leere. Alles läuft, nur niemand kommt an. Deshalb ist es lieber ein
+Fehler beim Start.
+
+Beim Start nennt der Knoten drei Dinge:
+
+```
+myl-node: Peer-Id 12D3KooW…
+myl-node: Protokoll logs/relais-1787590434078.jsonl
+myl-node: erreichbar unter /ip4/…/tcp/4150/p2p/12D3KooW…
+```
+
+**Die letzte Zeile ist das, was die anderen brauchen.** Schick sie
+weiter.
+
+## C4. Die übrigen Knoten starten
+
+Auf jedem weiteren Rechner: Testclient starten, im Hauptmenü
+**[5] Am Netz teilnehmen**, dann im Untermenü **[1] Jetzt teilnehmen**.
+
+Er fragt:
+
+| Frage | Was einzutragen ist |
+|---|---|
+| Adresse vom Koordinator | die Zeile aus C3, vollständig, mit `/p2p/…` |
+| Dein Name für das Protokoll | frei wählbar, je Rechner verschieden |
+| Laufzeit in Minuten | dasselbe wie bei der Anlaufstelle |
+| Testnachricht alle wie viele Sekunden | dasselbe wie dort |
+
+**Mehr ist nicht nötig.** Kein Port, keine Router-Einstellung, kein
+Modell, kein Python. Der Client trägt die Adresse selbst zweimal ein:
+einmal als Einstiegspunkt, einmal als Relais. Sitzt der Rechner hinter
+einem Heimrouter, besorgt er sich dort eine Adresse, unter der andere
+ihn erreichen, obwohl der Router nichts durchlässt.
+
+**Die Adresse wird sofort geprüft.** Fehlt der `/p2p/…`-Teil, sagt der
+Client es dir, bevor irgendetwas startet. Das ist der häufigste
+Abtippfehler, und ohne diesen Teil kann keine Verbindung zustande
+kommen.
+
+Für einen Rechner ohne Bildschirm:
+
+```
+myl-node --name alpha --port 4150 \
+         --bootstrap /ip4/…/tcp/4150/p2p/12D3KooW… \
+         --relais /ip4/…/tcp/4150/p2p/12D3KooW… \
+         --testverkehr 10
+```
+
+**Was `--testverkehr 10` tut:** Der Knoten schickt alle zehn Sekunden
+eine Testnachricht ins Netz. Ohne das belegt der Lauf nur, dass die
+Knoten einander **finden**, nicht dass Nachrichten **fließen**, und das
+sind zwei verschiedene Aussagen. Für ein echtes Netz gehört die Angabe
+weg: Dort wäre ein Knoten, der bedeutungslose Nachrichten einspeist, ein
+Störer.
+
+**Der Name muss je Rechner verschieden sein.** Er benennt die
+Protokolldatei und ordnet sie später zu.
+
+## C5. Laufen lassen und einsammeln
+
+Der Knoten läuft die eingestellte Zeit und beendet sich dann selbst.
+Strg-C bricht vorher ab; das Protokoll bleibt trotzdem lesbar, weil jede
+Zeile sofort geschrieben wird.
+
+Danach sammelst du von **jedem** Rechner die Datei aus `logs/` ein und
+legst alle in **einen** Ordner. Am einfachsten in denselben, in dem auch
+die Determinismus-Protokolle landen: `TESTCLIENT/Vergleiche`.
+
+## C6. Auswerten
+
+Im Entwickler-Menü: Punkt **8**, „Netzlauf auswerten". Oder auf der
+Befehlszeile:
+
+```
+myl-test netz --logs TESTCLIENT/Vergleiche
+```
+
+Was dann kommt, sieht so aus:
+
+```
+  Knoten        Zeilen Dauer s    sah  abgew   empf  gesd
+  gamma             25      20      1      0      9     4
+  beta              25      20      1      0      9     4
+  alpha             29      26      2      0      8     5
+
+  Nachrichtenwege (Fingerabdruck der Nutzlast):
+    381da344664206f8 von gamma → alle 2 erreicht
+    547a30893d474de6 von beta  → alle 2 erreicht
+    …
+
+  Urteil: alle Knoten verbunden, alle Protokolle vollständig
+```
+
+## C7. Die Spalten und was sie bedeuten
+
+| Spalte | Bedeutung |
+|---|---|
+| **Zeilen** | Einträge im Protokoll. Fehlt eine Nummer, meldet die Auswertung eine Lücke |
+| **Dauer s** | Wie lange der Knoten lief, nach seiner eigenen Uhr |
+| **sah** | Wie viele andere Knoten er gesehen hat. **0 ist das Alarmzeichen** |
+| **abgew** | Abgewiesene Verbindungsversuche. Über null ist nicht automatisch schlecht: Der Knoten hat Verbindungsgrenzen, und dass sie greifen, gehört sichtbar zu sein |
+| **empf** | Empfangene Nachrichten |
+| **gesd** | Gesendete und vom Netz angenommene Nachrichten |
+
+**Die Nachrichtenwege sind der eigentliche Ertrag.** Jede Nachricht
+bekommt einen kurzen Fingerabdruck, und der steht sowohl beim Absender
+als auch bei jedem Empfänger im Protokoll. Damit ist „kam an, was
+losgeschickt wurde" keine Vermutung, sondern eine Textsuche, und zwar
+**ohne dass die Uhren der Rechner übereinstimmen müssen**.
+
+Deshalb urteilt die Auswertung auch bewusst **nicht** über Zeitpunkte:
+Die Zeitstempel stammen von verschiedenen Maschinen und weichen
+voneinander ab. Ein Werkzeug, das daraus eine Reihenfolge ableitet,
+täuscht eine Genauigkeit vor, die es nicht gibt.
+
+## C8. Wenn etwas nicht klappt
+
+**„sah 0" bei einem Knoten.** Er hat niemanden erreicht. Der Reihe nach:
+Stimmt die Bootstrap-Adresse buchstabengenau, inklusive des
+`/p2p/12D3KooW…`-Teils? Läuft der erreichbare Knoten noch? Ist der Port
+in der Firewall offen, und zwar **für TCP und UDP**? Der Knoten spricht
+beides.
+
+**Kein Eintrag „relais_reservierung", obwohl `--relais` angegeben war.**
+Das Relais hat die Anfrage nicht bestätigt. Fast immer fehlt ihm
+`--oeffentlich`, siehe C3.
+
+**Einträge der Art „verworfen".** Der Knoten hat Nachrichten bekommen
+und weggeworfen. Der Grund steht daneben:
+
+| Grund | Bedeutung |
+|---|---|
+| `transportregel` | zu groß oder strukturell kaputt |
+| `nutzlastpruefung` | ließ sich nicht als das lesen, was das Thema ankündigt |
+| `fremdes-topic` | gehört nicht zu diesem Protokoll |
+
+**Das ist die wichtigste Unterscheidung bei jeder Fehlersuche:** „nichts
+kam an" und „es kam an und wurde weggeworfen" sehen von außen gleich
+aus und haben völlig verschiedene Ursachen.
+
+**Eine Lücke in der Folge.** Zwischen zwei Zeilen fehlt eine Nummer.
+Entweder ist die Datei beim Kopieren beschädigt worden, oder der Knoten
+ist mitten im Schreiben gestorben. In beiden Fällen trägt der Rest des
+Urteils weniger weit, und die Auswertung sagt das dazu.
+
+**„nur ein Knoten".** Es lag nur eine Datei im Ordner, oder alle Dateien
+stammen vom selben Knoten. Über ein Netz sagt das nichts, genauso wenig
+wie zwei gleiche Vergleichswerte von derselben Maschine über
+Determinismus etwas sagen.
+
+## C9. Was im Protokoll steht
+
+Eine Zeile JSON je Ereignis, sofort auf die Platte geschrieben. Das ist
+Absicht und kostet Geschwindigkeit: **Der interessanteste Zeitpunkt ist
+der letzte vor einem Absturz**, und ein gepuffertes Protokoll verliert
+genau die Zeilen, wegen derer man es liest.
+
+Jede Zeile trägt `folge` (lückenlos), `zeit_ms`, `knoten` und `peer`.
+Die letzten beiden sorgen dafür, dass eine eingesammelte Datei sich
+selbst zuordnet, auch wenn jemand sie umbenannt hat.
+
+Die Arten im Überblick: `start`, `horcht`, `horchadresse`, `bootstrap`,
+`relais_reservierung`, `eigene_adresse`, `verbunden`, `getrennt`,
+`abgewiesen`, `gesendet`, `empfangen`, `verworfen`, `aufnahme`, `ende`.
+
+`aufnahme` ist die regelmäßige Zustandsmeldung. Sie ist der Gegenpol zu
+den Ereignissen: Die sagen, **was** passiert ist, sie sagt, **wie es
+steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
+„zwanzig Minuten lief nichts" unterscheiden.
+
+## C10. Was dieser Lauf **nicht** abdeckt
+
+- **Keinen Konsens.** Siehe C1.
+- **Kein Lochstanzen zwischen zwei Heimanschlüssen.** Zwei Knoten
+  hinter NAT können heute über das Relais miteinander sprechen. Ob sie
+  danach eine direkte Verbindung aufbauen können, ist ungeprüft: Das
+  lässt sich nur auf getrennten Anschlüssen messen, nicht auf einem
+  Rechner. **Das ist die interessanteste Messung, die euer erster echter
+  Mehrmaschinenlauf liefern kann**, und zwar getrennt nach TCP und QUIC.
+- **Keine Aussage über Geschwindigkeit.** Die Auswertung zählt, sie misst
+  keine Laufzeiten über Maschinengrenzen, weil die Uhren dafür nicht
+  genau genug übereinstimmen.
+
+---
+
 ## Changelog
+
+### v2.8.0 – 2026-08-24 (Teil C zum Durchklicken)
+
+Teil C beschreibt jetzt durchgehend den Weg über das Menü; die
+Befehlszeile steht nur noch als Alternative für Server ohne Bildschirm
+daneben. Neu C0a mit allen vier Menüpfaden auf einen Blick, und für C3
+und C4 je eine Tabelle, welche Frage welche Antwort will.
+
+Der Grund für die Umstellung: Der Knoten steckt seitdem **im
+Testclient**. Ein Partner baut ein Programm und klickt, statt zwei zu
+bauen und Adressen von Hand zusammenzusetzen.
+
+`EINSEITER.md` heißt jetzt `SCHNELLSTART.md` und ist auf Stichpunkte
+umgestellt, weil er inzwischen **zwei** Tests beschreibt und die Zahl im
+alten Namen nicht mehr stimmte.
+
+### v2.7.0 – 2026-08-24 (Teil C: Netzlauf mit mehreren Knoten)
+
+Neuer Teil C für Läufe mit `myl-node` über mehrere Maschinen, und
+Menüpunkt 7 „Netzlauf auswerten". Beantwortet eine andere Frage als der
+Vergleich: nicht ob zwei Maschinen dasselbe rechnen, sondern ob mehrere
+Knoten einander gesehen haben und ob die Nachrichten angekommen sind.
+
+Der Abschnitt sagt ausdrücklich, was ein Netzlauf **nicht** prüft: Die
+Knoten produzieren keine Blöcke, und das Lochstanzen zwischen zwei
+Heimanschlüssen ist ungeprüft, weil es sich auf einem Rechner nicht
+messen lässt.
 
 ### v2.6.0 – 2026-08-21 (Spirale, Rückweg)
 - Der Regen läuft im Hintergrund weiter, während sich das Logo bildet.

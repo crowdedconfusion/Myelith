@@ -32,6 +32,22 @@ use crate::konfig::{KnotenKonfig, KonfigFehler};
 use crate::protokoll::{Betriebsprotokoll, Eintrag, ProtokollFehler};
 use crate::validator::ProtokollValidator;
 
+/// Kurzer Fingerabdruck einer Nutzlast: die ersten 16 Hexzeichen des
+/// SHA-256.
+///
+/// **Das ist der Faden, an dem sich zwei Protokolle zusammennähen
+/// lassen.** Ohne ihn steht in Alphas Datei „gesendet, 141 Bytes" und in
+/// Betas „empfangen, 141 Bytes", und niemand kann sagen, ob es dieselbe
+/// Nachricht war. Mit ihm ist die Frage „kam an, was losgeschickt
+/// wurde" eine Textsuche.
+///
+/// 16 Hexzeichen sind 64 Bit. Für die Zuordnung innerhalb eines
+/// Testlaufs ist das reichlich, und es bleibt eine Länge, die jemand
+/// von einem Bildschirm abliest.
+pub fn nutzlast_digest(daten: &[u8]) -> String {
+    myl_types::hash::Hash::sha256(daten).to_hex()[..16].to_string()
+}
+
 /// Fehler beim Start oder Betrieb eines Knotens.
 #[derive(Debug)]
 pub enum KnotenFehler {
@@ -61,6 +77,11 @@ pub struct Knoten {
     kommandos: mpsc::UnboundedSender<NodeCommand>,
     ereignisse: mpsc::UnboundedReceiver<NodeEvent>,
     protokoll: Betriebsprotokoll,
+    /// Zähler des Testverkehrs. Geht in die Nutzlast ein, damit jede
+    /// Nachricht einen eigenen Fingerabdruck bekommt: Zwei gleiche
+    /// Nutzlasten hätten denselben, und Gossipsub verwürfe die zweite
+    /// als Dublette.
+    testverkehr_zaehler: u64,
     /// Die eigenen Horchadressen, wie sie gemeldet wurden.
     ///
     /// Der Knoten kennt sie beim Start noch nicht: Bei Port 0 vergibt
@@ -160,6 +181,7 @@ impl Knoten {
             kommandos: cmd_tx,
             ereignisse: ev_rx,
             protokoll,
+            testverkehr_zaehler: 0,
             horchadressen: Vec::new(),
         })
     }
@@ -219,6 +241,15 @@ impl Knoten {
         }
     }
 
+    /// Der Netzzustand: Peers, Mesh je Topic, schlecht bewertete Peers.
+    pub async fn zustand(&self) -> myl_net::Netzzustand {
+        let (tx, rx) = oneshot::channel();
+        if self.kommandos.send(NodeCommand::Zustand(tx)).is_err() {
+            return Default::default();
+        }
+        rx.await.unwrap_or_default()
+    }
+
     /// Anzahl verbundener Peers.
     pub async fn peers(&self) -> usize {
         let (tx, rx) = oneshot::channel();
@@ -231,6 +262,7 @@ impl Knoten {
     /// Veröffentlicht eine Nutzlast und protokolliert das Ergebnis.
     pub async fn veroeffentliche(&mut self, topic: GossipTopic, daten: Vec<u8>) -> bool {
         let laenge = daten.len();
+        let digest = nutzlast_digest(&daten);
         let (tx, rx) = oneshot::channel();
         if self
             .kommandos
@@ -243,6 +275,7 @@ impl Knoten {
         self.protokoll.schreibe(
             Eintrag::neu("gesendet")
                 .text("topic", format!("{:?}", topic))
+                .text("digest", digest)
                 .zahl("bytes", laenge as i64)
                 .wahr("angenommen", ok),
         );
@@ -255,8 +288,10 @@ impl Knoten {
     /// feste Zeit fahren können, ohne auf ein Abbruchsignal zu warten.
     pub async fn laufe_fuer(&mut self, dauer: Duration) {
         let ende = tokio::time::Instant::now() + dauer;
-        let mut naechste_aufnahme = tokio::time::Instant::now()
-            + Duration::from_secs(self.konfig.aufnahme_sekunden.max(1));
+        let takt = Duration::from_secs(self.konfig.aufnahme_sekunden.max(1));
+        let mut naechste_aufnahme = tokio::time::Instant::now() + takt;
+        let sendetakt = self.konfig.testverkehr_sekunden.map(|s| Duration::from_secs(s.max(1)));
+        let mut naechster_versand = sendetakt.map(|t| tokio::time::Instant::now() + t);
         loop {
             let jetzt = tokio::time::Instant::now();
             if jetzt >= ende {
@@ -264,13 +299,21 @@ impl Knoten {
             }
             if jetzt >= naechste_aufnahme {
                 self.aufnahme().await;
-                naechste_aufnahme =
-                    jetzt + Duration::from_secs(self.konfig.aufnahme_sekunden.max(1));
+                naechste_aufnahme = jetzt + takt;
             }
-            let rest = ende
+            if let (Some(faellig), Some(t)) = (naechster_versand, sendetakt) {
+                if jetzt >= faellig {
+                    self.sende_testverkehr().await;
+                    naechster_versand = Some(jetzt + t);
+                }
+            }
+            let mut rest = ende
                 .saturating_duration_since(jetzt)
-                .min(naechste_aufnahme.saturating_duration_since(jetzt))
-                .max(Duration::from_millis(1));
+                .min(naechste_aufnahme.saturating_duration_since(jetzt));
+            if let Some(faellig) = naechster_versand {
+                rest = rest.min(faellig.saturating_duration_since(jetzt));
+            }
+            let rest = rest.max(Duration::from_millis(1));
             match tokio::time::timeout(rest, self.ereignisse.recv()).await {
                 Ok(Some(ev)) => self.vermerke(ev),
                 Ok(None) => return,
@@ -295,6 +338,36 @@ impl Knoten {
         }
     }
 
+    /// Schickt eine Nachricht des Testverkehrs.
+    ///
+    /// Die Nutzlast ist ein **strukturell gültiger** Block: Sie muss
+    /// durch die eigene Nutzlastprüfung kommen, sonst prüfte der
+    /// Testverkehr nur, dass der Validator arbeitet. Inhaltlich ist sie
+    /// bedeutungslos, und der Knoten produziert damit keine Kette.
+    ///
+    /// Knotenname und Zähler gehen in den Zustands-Hash ein, damit jede
+    /// Nachricht einen eigenen Fingerabdruck hat. Ohne das wären alle
+    /// gleich, Gossipsub verwürfe sie als Dubletten, und die Auswertung
+    /// könnte keine einzelne Nachricht verfolgen.
+    pub async fn sende_testverkehr(&mut self) -> bool {
+        use myl_consensus::block::{Block, EpochMeta};
+        use myl_types::hash::Hash;
+
+        self.testverkehr_zaehler += 1;
+        let kennung = format!("{}#{}", self.konfig.name, self.testverkehr_zaehler);
+        let block = Block::new(EpochMeta {
+            epoch: 0,
+            prev_block_hash: Hash::sha256(b"myelith-testverkehr"),
+            timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
+            state_root: Hash::sha256(kennung.as_bytes()),
+        });
+        let daten = match borsh::to_vec(&block) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        self.veroeffentliche(GossipTopic::Blocks, daten).await
+    }
+
     /// Schreibt eine Zustandsaufnahme.
     ///
     /// Die regelmäßige Aufnahme ist der Gegenpol zu den Ereignissen:
@@ -302,12 +375,22 @@ impl Knoten {
     /// es steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht
     /// von „zwanzig Minuten lief nichts" unterscheiden.
     pub async fn aufnahme(&mut self) {
-        let peers = self.peers().await;
-        self.protokoll.schreibe(
-            Eintrag::neu("aufnahme")
-                .zahl("peers", peers as i64)
-                .zahl("zeilen", self.protokoll.geschrieben() as i64),
-        );
+        let z = self.zustand().await;
+        let mut eintrag = Eintrag::neu("aufnahme")
+            .zahl("peers", z.peers as i64)
+            .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
+            .zahl("zeilen", self.protokoll.geschrieben() as i64);
+        // Ein Feld je Topic, flach. **Verbunden heißt nicht im Mesh:**
+        // Ein Knoten mit Verbindungen und leerem Mesh bekommt nur
+        // Ankündigungen statt Nachrichten, und ohne diese Zahlen sähe
+        // das im Protokoll aus wie ein stilles Netz.
+        for (topic, groesse) in &z.mesh {
+            eintrag = eintrag.zahl(
+                &format!("mesh_{}", format!("{:?}", topic).to_lowercase()),
+                *groesse as i64,
+            );
+        }
+        self.protokoll.schreibe(eintrag);
     }
 
     fn vermerke(&mut self, ereignis: NodeEvent) {
@@ -323,7 +406,25 @@ impl Knoten {
             }
             NodeEvent::Message(m) => Eintrag::neu("empfangen")
                 .text("topic", format!("{:?}", m.topic))
+                .text("digest", nutzlast_digest(&m.data))
                 .zahl("bytes", m.data.len() as i64),
+            // Ohne diesen Eintrag ließe sich „nichts kam an" nicht von
+            // „es kam an und wurde weggeworfen" unterscheiden, und das
+            // ist die erste Frage jeder Fehlersuche.
+            // Die Antwort auf „warum verbindet sich niemand zu mir".
+            NodeEvent::Erreichbarkeit { addr, erreichbar, grund } => {
+                Eintrag::neu("erreichbarkeit")
+                    .text("addr", addr.to_string())
+                    .wahr("erreichbar", erreichbar)
+                    .text("grund", grund)
+            }
+            NodeEvent::Verworfen { topic, bytes, grund } => Eintrag::neu("verworfen")
+                .text(
+                    "topic",
+                    topic.map(|t| format!("{:?}", t)).unwrap_or_else(|| "fremd".to_string()),
+                )
+                .zahl("bytes", bytes as i64)
+                .text("grund", grund.als_text()),
             NodeEvent::Verbunden { peer, addr, eingehend } => Eintrag::neu("verbunden")
                 .text("gegenstelle", peer.to_string())
                 .text("addr", addr.to_string())

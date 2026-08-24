@@ -868,12 +868,12 @@ Modell. Beide Werte heißen jetzt `…_tokens` und meinen dasselbe.
   Ankerdatei ist ein Fehler statt eines anderen Digests. Am echten Modell
   nachgemessen: Ein verändertes Gewichtsbyte ohne nachgezogene Hashkette
   wird beim Laden abgelehnt, mit Nennung des Tensors.
-- **`EINSEITER.md`**: eine Seite zum Verschicken an einen Partner. Die
-  `ANLEITUNG.md` hat 869 Zeilen und ist dafür zu lang.
-- **Punkt 2.2 zurückgestellt statt gebaut.** Ein Backend-Vergleich
-  innerhalb einer Maschine hat auf x86_64 bis zum AVX2-Pfad keinen
-  Gegenstand (Fund 34). Ihn trotzdem zu bauen hieße, ein Werkzeug zu
-  liefern, das auf der Zielmaschine zweimal dasselbe misst.
+- **`SCHNELLSTART.md`**: die Seite zum Verschicken an einen Partner
+  (hieß bis zum 2026-08-24 `EINSEITER.md`, umbenannt, weil sie inzwischen
+  **zwei** Tests beschreibt und die Zahl im Namen nicht mehr stimmte).
+  Stichpunkte statt Fließtext, alles über das Menü, keine Befehlszeile:
+  Test 1 ist die Rechnung (Determinismus), Test 2 das Netz. Die
+  ausführliche Fassung ist `ANLEITUNG.md`, Teil A und Teil C.
 
 ### v0.6.0 – 2026-08-21 (vom Protokoll zum Urteil)
 

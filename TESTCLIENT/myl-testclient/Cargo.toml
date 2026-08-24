@@ -16,6 +16,12 @@ myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
 myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
+# Der Knoten ist eine Bibliothek, keine fremde Datei: Der Testclient
+# startet ihn im eigenen Prozess. Ein Partner soll EIN Programm bauen
+# und starten, nicht zwei und dazwischen einen Pfad suchen.
+myl-node = { path = "../../NODE/myl-node" }
+myl-net = { path = "../../NETWORKING/myl-net" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
 sha2 = "0.10"
 borsh = { version = "1.6", features = ["derive"] }
 crossterm = "0.29.0"
