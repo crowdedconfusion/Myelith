@@ -35,8 +35,11 @@ pub mod discovery;
 pub mod gossip;
 pub mod identity;
 pub mod latency;
+pub mod limits;
+pub mod nat;
 pub mod node;
 pub mod runtime;
+pub mod scoring;
 pub mod validation;
 
 pub use config::NetConfig;
@@ -49,8 +52,17 @@ pub use identity::NodeIdentity;
 pub use latency::{
     LatencyTracker, PeerLatency, PingMessage, PongMessage, PING_INTERVAL_SECS,
 };
+pub use limits::{
+    adressbereich, standard_grenzen, Adressbereich, Adressvielfalt, BereichVoll,
+    MAX_AUSGEHEND, MAX_EINGEHEND, MAX_GESAMT, MAX_JE_ADRESSBEREICH, MAX_JE_PEER,
+};
+pub use nat::{
+    alle_horchadressen, eigene_adressen, ist_quic, ist_vermittelt, pruefe as nat_pruefen,
+    relais_horchadresse, NatFehler, NatKonfig,
+};
 pub use node::{build_swarm, MylBehaviour};
-pub use runtime::{run_node, InboundMessage, NodeCommand, NodeEvent};
+pub use scoring::{standard_parameter, standard_schwellen, IP_KOLOKATION_SCHWELLE};
+pub use runtime::{run_node, run_node_mit, InboundMessage, NodeCommand, NodeEvent};
 pub use validation::{
     report, report_with, topic_from_hash, validate_payload, AcceptAllValidator,
     PayloadValidator, ValidationError,

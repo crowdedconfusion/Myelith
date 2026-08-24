@@ -1,30 +1,64 @@
 //! Eclipse- und Sybil-Verhalten der Peer-Discovery (Punkt 4.3).
 //!
-//! # Was diese Datei ist, und was sie ausdrücklich nicht ist
+//! # Vorgeschichte: erst gemessen, dann gebaut
 //!
-//! Sie ist **eine Messung, kein Nachweis von Resistenz.** Der Fahrplan
-//! nennt den Punkt „Eclipse-/Sybil-Resistenz-Tests der Peer-Discovery",
-//! und ein Test, der Resistenz behauptet, müsste sie zuerst
-//! implementiert finden. Sie ist es nicht:
+//! Diese Datei entstand am 2026-08-24 als **Messung ohne Verteidigung**.
+//! Der Fahrplan nannte den Punkt „Eclipse-/Sybil-Resistenz-Tests", und
+//! ein Test, der Resistenz behauptet, müsste sie zuerst implementiert
+//! finden. Sie war es nicht: kein `connection_limits`, kein
+//! `with_peer_score`, keine Schranke je Adressbereich. Zwanzig Sybils
+//! verbanden sich mit demselben Opfer, alle zwanzig wurden angenommen
+//! (**Fund 53**).
 //!
-//! `build_swarm` kombiniert Gossipsub, Kademlia, Identify und Ping.
-//! **Es gibt keine Verbindungsgrenze, kein Peer-Scoring und keine
-//! Diversitätsregel in der Peer-Wahl.** Kein `connection_limits`, kein
-//! `with_peer_score`, keine Schranke je ASN oder Adressbereich.
+//! Seitdem gibt es [`myl_net::limits`] und [`myl_net::scoring`]. Diese
+//! Datei prüft jetzt, was die Verteidigung leistet, und weiterhin
+//! ausdrücklich **nicht mehr als das**.
 //!
-//! Diese Datei hält deshalb fest, **was der Stack heute leistet und was
-//! nicht**, und zwar gemessen statt behauptet. Das Ergebnis steht im
-//! Fahrplan als Anforderungsliste; der Punkt bleibt offen.
+//! # Was die Verteidigung zusagt, und was nicht
 //!
-//! ## Warum das die ehrlichere Arbeit ist
+//! Die Messung hat damals gesagt, worauf eine Gegenmaßnahme zielen muss:
+//! nicht „Sybils abwehren", das ist bei kostenlosen Identitäten
+//! aussichtslos, sondern **mindestens eine ehrliche Verbindung
+//! garantieren**. Der Angriff gelingt genau dann, wenn er *alle*
+//! Verbindungen stellt.
 //!
-//! Ein grüner Test namens `eclipse_resistenz` über einem Stack ohne
-//! Verbindungsgrenze wäre genau die Sorte Häkchen, gegen die dieses
-//! Projekt seine Regeln geschrieben hat (K3): implementiert wirkt, was
-//! nur getestet aussieht.
+//! Genau das wird hier geprüft, und zwar als Kette:
+//!
+//! 1. Eingehende Verbindungen sind gedeckelt.
+//! 2. Das **ausgehende** Budget bleibt auch unter voller eingehender
+//!    Flut frei.
+//! 3. Der Knoten kann dieses Budget benutzen, also während der Flut
+//!    einen Peer eigener Wahl anwählen.
+//!
+//! **Was daraus nicht folgt:** dass er *richtig* wählt. Wer wählt,
+//! braucht Adressen, und die kommen aus der Bootstrap-Liste und aus
+//! Kademlia. Kontrolliert ein Angreifer beide, nützt das freie Budget
+//! nichts. Die Verteidigung reduziert den Eclipse-Angriff auf die
+//! Bedingung „die Bootstrap-Liste enthält mindestens einen ehrlichen
+//! Knoten". Das ist ein Fortschritt gegenüber „beliebig viele werden
+//! angenommen" und keine Resistenz.
+//!
+//! # Warum die Grenzen hier klein konfiguriert werden
+//!
+//! Die Vorgabewerte sind 48 eingehende und 16 ausgehende Verbindungen.
+//! Sie mit echten Knoten auszureizen hieße, 64 Prozesse zu starten, und
+//! der Test prüfte am Ende die Zahl statt den Mechanismus. Die Tests
+//! setzen deshalb kleine Grenzen und prüfen, **dass** gedeckelt wird.
+//! **Dass die Vorgabewerte die richtigen sind**, prüfen die Unit-Tests
+//! in `src/limits.rs` gegen ihre Herleitung.
+//!
+//! # Loopback
+//!
+//! Alle Knoten hier laufen auf `127.0.0.1`, und Loopback ist sowohl von
+//! der Adressbereichsgrenze als auch von der Kolokationsbewertung
+//! ausgenommen (Begründung in beiden Modulen). Die Zahlengrenzen greifen
+//! trotzdem, sie zählen Verbindungen, nicht Herkunft. Die
+//! Bereichszählung selbst ist in `src/limits.rs` gegen echte Adressen
+//! geprüft, was über Loopback grundsätzlich nicht ginge.
 
 use std::time::Duration;
 
+use libp2p::connection_limits::ConnectionLimits;
 use myl_net::{
     build_swarm, run_node, subscribe_all, GossipTopic, NetConfig, NodeCommand, NodeEvent,
     NodeIdentity,
@@ -40,9 +74,13 @@ struct Node {
 
 impl Node {
     async fn start(dial: Option<libp2p::Multiaddr>) -> Node {
+        Node::start_mit(NetConfig::default(), dial).await
+    }
+
+    async fn start_mit(config: NetConfig, dial: Option<libp2p::Multiaddr>) -> Node {
         let identity = NodeIdentity::generate();
         let peer_id = identity.peer_id();
-        let mut swarm = build_swarm(&identity, &NetConfig::default()).expect("Swarm");
+        let mut swarm = build_swarm(&identity, &config).expect("Swarm");
         subscribe_all(&mut swarm).expect("Topics");
         swarm
             .listen_on("/ip4/127.0.0.1/tcp/0".parse().expect("Multiaddr"))
@@ -54,9 +92,8 @@ impl Node {
         let (ev_tx, mut ev_rx) = mpsc::unbounded_channel();
         tokio::spawn(run_node(swarm, cmd_rx, ev_tx));
         let listen_addr = loop {
-            match ev_rx.recv().await.expect("Event-Kanal") {
-                NodeEvent::ListenAddr(a) => break a.with_p2p(peer_id).expect("p2p"),
-                NodeEvent::Message(_) => {}
+            if let NodeEvent::ListenAddr(a) = ev_rx.recv().await.expect("Event-Kanal") {
+                break a.with_p2p(peer_id).expect("p2p");
             }
         };
         Node { peer_id, commands: cmd_tx, events: ev_rx, listen_addr }
@@ -68,6 +105,16 @@ impl Node {
             .send(NodeCommand::PeerCount(tx))
             .expect("Kommando");
         rx.await.unwrap_or(0)
+    }
+
+    /// Wählt eine Adresse aus dem laufenden Knoten heraus. Rückgabe: ob
+    /// der Wählversuch begonnen wurde.
+    async fn dial(&self, addr: libp2p::Multiaddr) -> bool {
+        let (tx, rx) = oneshot::channel();
+        self.commands
+            .send(NodeCommand::Dial { addr, result: Some(tx) })
+            .expect("Kommando");
+        rx.await.unwrap_or(false)
     }
 
     async fn publish(&self, topic: GossipTopic, data: Vec<u8>) -> bool {
@@ -87,8 +134,14 @@ impl Node {
             }
             match tokio::time::timeout(rest, self.events.recv()).await {
                 Ok(Some(NodeEvent::Message(m))) => return Some(m.data),
-                Ok(Some(NodeEvent::ListenAddr(_))) => continue,
-                _ => return None,
+                // Alles andere weiterlaufen lassen. Ein `_ => return None`
+                // stand hier, bis `NodeEvent` um die Verbindungsereignisse
+                // wuchs: Danach brach der Wartelauf bei der ersten
+                // Verbindungsmeldung ab, und der Test schlug fehl, obwohl
+                // die Nachricht unterwegs war. Ein Catch-all, der abbricht,
+                // ist eine Wette darauf, dass die Aufzählung nie wächst.
+                Ok(Some(_)) => continue,
+                Ok(None) | Err(_) => return None,
             }
         }
     }
@@ -103,106 +156,178 @@ impl Node {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
+
+    /// Wartet, bis die Peer-Anzahl sich `ruhe` lang nicht mehr ändert.
+    /// Für Deckelungstests: Dort ist die Frage nicht „erreicht er n",
+    /// sondern „wo bleibt er stehen".
+    async fn warte_auf_ruhe(&self, ruhe: Duration, frist: Duration) -> usize {
+        let bis = tokio::time::Instant::now() + frist;
+        let mut letzte = self.peer_count().await;
+        let mut seit = tokio::time::Instant::now();
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let jetzt = self.peer_count().await;
+            if jetzt != letzte {
+                letzte = jetzt;
+                seit = tokio::time::Instant::now();
+            } else if seit.elapsed() >= ruhe {
+                return jetzt;
+            }
+            if tokio::time::Instant::now() >= bis {
+                return jetzt;
+            }
+        }
+    }
+}
+
+/// Konfiguration mit kleinen, gut sichtbaren Grenzen.
+fn config_mit_grenzen(eingehend: u32, ausgehend: u32) -> NetConfig {
+    NetConfig {
+        grenzen: ConnectionLimits::default()
+            .with_max_established_incoming(Some(eingehend))
+            .with_max_established_outgoing(Some(ausgehend))
+            .with_max_established(Some(eingehend + ausgehend))
+            .with_max_established_per_peer(Some(myl_net::MAX_JE_PEER)),
+        ..NetConfig::default()
+    }
 }
 
 // ---------------------------------------------------------------------
-// Was der Stack heute leistet
+// Was ohne Verbindungsgrenze schon hielt
 // ---------------------------------------------------------------------
 
-/// **Was hält: Eine Sybil-Identität kann keine fremde Nachricht
-/// fälschen.**
+/// **Eine Sybil-Identität kann keine fremde Nachricht fälschen.**
 ///
 /// Gossipsub läuft mit `MessageAuthenticity::Signed` und
 /// `ValidationMode::Strict`: Jede Nachricht trägt die Signatur ihres
 /// Absenders, und eine Nachricht ohne gültige Signatur wird auf
 /// Protokollebene verworfen.
 ///
-/// **Das ist die eine Sybil-Eigenschaft, die tatsächlich implementiert
-/// ist**, und sie ist nicht klein: Beliebig viele Identitäten zu
-/// erzeugen ist billig, aber keine davon kann im Namen einer anderen
-/// sprechen. Ein Angreifer kann fluten, nicht fälschen.
+/// Das war schon vor Fund 53 die eine Sybil-Eigenschaft, die tatsächlich
+/// implementiert war, und sie ist nicht klein: Beliebig viele
+/// Identitäten zu erzeugen ist billig, aber keine davon kann im Namen
+/// einer anderen sprechen. Ein Angreifer kann fluten, nicht fälschen.
 #[tokio::test]
 async fn eine_sybil_identitaet_kann_keine_fremde_nachricht_faelschen() {
     let ehrlich = Node::start(None).await;
     let mut opfer = Node::start(Some(ehrlich.listen_addr.clone())).await;
     opfer.warte_auf_peers(1, Duration::from_secs(5)).await;
 
-    // Der ehrliche Knoten publiziert; das Opfer empfängt.
     let nutzlast = b"ehrliche Nachricht".to_vec();
     assert!(ehrlich.publish(GossipTopic::Blocks, nutzlast.clone()).await);
     let empfangen = opfer.empfange(Duration::from_secs(5)).await;
     assert_eq!(empfangen.as_deref(), Some(&nutzlast[..]));
 
-    // Die Peer-Id des Absenders ist die des ehrlichen Knotens, nicht die
-    // eines beliebigen Behaupters: Gossipsub prüft die Signatur, bevor es
-    // die Nachricht hochreicht.
     assert_ne!(ehrlich.peer_id, opfer.peer_id);
 }
 
 // ---------------------------------------------------------------------
-// Was nicht hält
+// Fund 53: die Verteidigung
 // ---------------------------------------------------------------------
 
-/// **⚑ Fund 53: Ein Knoten nimmt beliebig viele Verbindungen an.**
+/// **⚑ Fund 53, Schritt 1: Eingehende Verbindungen sind gedeckelt.**
 ///
-/// Gemessen: Zwanzig Sybil-Identitäten verbinden sich mit demselben
-/// Opfer, und **alle zwanzig werden angenommen**. Es gibt keine
-/// Verbindungsgrenze, weder insgesamt noch je Adressbereich.
+/// Zwölf Sybils, Grenze vier. Der Vorgänger dieses Tests hielt fest,
+/// dass **alle zwanzig** Sybils angenommen wurden, und war grün. Die
+/// Umkehrung ist der Beleg, dass die Grenze wirkt.
 ///
-/// **Warum das der Kern eines Eclipse-Angriffs ist:** Wer beliebig viele
-/// Verbindungen aufbauen darf, füllt die Peer-Menge des Opfers mit
-/// eigenen Knoten. Danach entscheidet er, welche Nachrichten das Opfer
-/// sieht — nicht durch Fälschung, sondern durch Auswahl. Für ein
-/// Protokoll, dessen Sicherheit an der Beobachtung fremder Segmente
-/// hängt (Stufe 1 und 2 der Verifikation), ist das die teuerste Lücke der
-/// Netzschicht.
-///
-/// **Der Test behauptet keine Resistenz. Er misst ihr Fehlen**, damit die
-/// Anforderung eine Zahl hat und nicht eine Ahnung. Schlägt er eines
-/// Tages fehl, hat jemand eine Verbindungsgrenze eingebaut, und dann
-/// gehört diese Doku nachgezogen.
+/// Geprüft wird das Ergebnis nach Ruhe, nicht nach Frist: Die Frage ist
+/// nicht „erreicht er zwölf", sondern „wo bleibt er stehen".
 #[tokio::test]
-async fn fund_53_ein_knoten_nimmt_beliebig_viele_verbindungen_an() {
-    let opfer = Node::start(None).await;
+async fn fund_53_eingehende_verbindungen_sind_gedeckelt() {
+    const GRENZE: u32 = 4;
+    const SYBILS: usize = 12;
+
+    let opfer = Node::start_mit(config_mit_grenzen(GRENZE, 2), None).await;
     let mut sybils = Vec::new();
-    const N: usize = 20;
-    for _ in 0..N {
+    for _ in 0..SYBILS {
         sybils.push(Node::start(Some(opfer.listen_addr.clone())).await);
     }
 
-    let angenommen = opfer.warte_auf_peers(N, Duration::from_secs(20)).await;
+    let angenommen = opfer
+        .warte_auf_ruhe(Duration::from_secs(2), Duration::from_secs(30))
+        .await;
     assert_eq!(
-        angenommen, N,
-        "erwartet war, dass alle {N} Sybils angenommen werden; \
-         werden es weniger, gibt es jetzt eine Verbindungsgrenze"
+        angenommen, GRENZE as usize,
+        "erwartet waren genau {GRENZE} angenommene von {SYBILS} Sybils; \
+         {angenommen} heißt, die Grenze greift nicht wie ausgelegt"
     );
-    assert_eq!(sybils.len(), N);
+    assert_eq!(sybils.len(), SYBILS);
 }
 
-/// **Was trotzdem hält: Eine einzige ehrliche Verbindung genügt.**
+/// **⚑ Fund 53, Schritt 2: Das ausgehende Budget bleibt unter Flut frei.**
 ///
-/// Ein umzingeltes Opfer empfängt weiter, solange **eine** ehrliche
-/// Verbindung besteht. Das ist keine Eclipse-Resistenz, sondern ihre
-/// Grenze: Der Angriff gelingt genau dann, wenn er **alle** Verbindungen
-/// stellt.
+/// Das ist die eigentliche Zusage der Verteidigung, und sie ist der
+/// Grund, warum eingehende und ausgehende Verbindungen getrennte Budgets
+/// haben statt eines gemeinsamen Deckels.
 ///
-/// Die Messung sagt damit, worauf eine Gegenmaßnahme zielen muss: nicht
-/// „Sybils abwehren", sondern **mindestens eine ehrliche Verbindung
-/// garantieren** — über feste Bootstrap-Knoten, Diversität nach
-/// Adressbereich, oder eine reservierte Zahl ausgehender Verbindungen.
+/// Ablauf: Das Opfer wird bis an seine eingehende Grenze geflutet.
+/// **Danach** wählt es einen ehrlichen Knoten an, aus dem laufenden
+/// Prozess heraus, nicht beim Start. Die Verbindung muss zustande
+/// kommen, obwohl eingehend nichts mehr frei ist.
+///
+/// Ein gemeinsamer Deckel hätte hier versagt: Die Sybils hätten ihn
+/// gefüllt, und der Wählversuch wäre an der Gesamtgrenze gescheitert.
 #[tokio::test]
-async fn eine_einzige_ehrliche_verbindung_genuegt() {
+async fn fund_53_das_ausgehende_budget_bleibt_unter_flut_frei() {
+    const EINGEHEND: u32 = 4;
+    const AUSGEHEND: u32 = 2;
+    const SYBILS: usize = 10;
+
+    let opfer = Node::start_mit(config_mit_grenzen(EINGEHEND, AUSGEHEND), None).await;
+    let ehrlich = Node::start(None).await;
+
+    // Erst fluten, bis eingehend nichts mehr geht.
+    let mut sybils = Vec::new();
+    for _ in 0..SYBILS {
+        sybils.push(Node::start(Some(opfer.listen_addr.clone())).await);
+    }
+    let voll = opfer
+        .warte_auf_ruhe(Duration::from_secs(2), Duration::from_secs(30))
+        .await;
+    assert_eq!(voll, EINGEHEND as usize, "die Flut hat die Grenze nicht erreicht");
+
+    // Jetzt selbst wählen. Genau das muss weiterhin möglich sein.
+    assert!(
+        opfer.dial(ehrlich.listen_addr.clone()).await,
+        "der Wählversuch wurde nicht einmal begonnen"
+    );
+    let nachher = opfer
+        .warte_auf_peers(EINGEHEND as usize + 1, Duration::from_secs(15))
+        .await;
+    assert_eq!(
+        nachher,
+        EINGEHEND as usize + 1,
+        "das Opfer konnte trotz freiem ausgehendem Budget keine Verbindung \
+         eigener Wahl aufbauen: {nachher} Peers statt {}",
+        EINGEHEND + 1
+    );
+    assert_eq!(sybils.len(), SYBILS);
+}
+
+/// **⚑ Fund 53, Schritt 3: Über die selbst gewählte Verbindung kommt
+/// auch etwas an.**
+///
+/// Ein freier Verbindungsplatz nützt nichts, wenn die Nachricht dann am
+/// Peer-Scoring hängen bleibt. Dieser Test schließt die Kette: Das Opfer
+/// ist umzingelt, wählt selbst, und empfängt darüber.
+///
+/// **Dieser Test hat Fund 54 gefunden.** Der erste Entwurf des Scorings
+/// setzte die Kolokationsschwelle auf 4. Elf Knoten auf `127.0.0.1`
+/// ergaben damit einen Score von −245 bei einer Graylist-Schwelle von
+/// −80: Die Härtung hatte den ehrlichen Knoten mit stummgeschaltet.
+/// Begründung und Rechnung stehen im Kopf von `src/scoring.rs`.
+#[tokio::test]
+async fn eine_ehrliche_verbindung_bleibt_erreichbar() {
     let ehrlich = Node::start(None).await;
     let mut opfer = Node::start(Some(ehrlich.listen_addr.clone())).await;
 
-    // Zehn Sybils drängen sich dazu.
     let mut sybils = Vec::new();
     for _ in 0..10 {
         sybils.push(Node::start(Some(opfer.listen_addr.clone())).await);
     }
     opfer.warte_auf_peers(11, Duration::from_secs(20)).await;
 
-    // Trotz Übermacht kommt die ehrliche Nachricht an.
     let nutzlast = b"trotz Umzingelung".to_vec();
     let mut ankam = false;
     for _ in 0..5 {
@@ -215,6 +340,35 @@ async fn eine_einzige_ehrliche_verbindung_genuegt() {
             break;
         }
     }
-    assert!(ankam, "eine ehrliche Verbindung muss genügen");
+    assert!(
+        ankam,
+        "eine ehrliche Verbindung muss genügen; schlägt das fehl, hat die \
+         Härtung den Ehrlichen mit getroffen (vgl. Fund 54)"
+    );
     assert_eq!(sybils.len(), 10);
+}
+
+/// **Ein einzelner Peer kann keine Verbindungen horten.**
+///
+/// Ohne Grenze je Peer-Id könnte eine einzige Identität den eingehenden
+/// Deckel allein füllen. Zwei Verbindungen sind erlaubt (gleichzeitiges
+/// beidseitiges Wählen ist in libp2p normal), mehr nicht.
+#[tokio::test]
+async fn ein_einzelner_peer_bekommt_hoechstens_zwei_verbindungen() {
+    let opfer = Node::start_mit(config_mit_grenzen(8, 2), None).await;
+    let angreifer = Node::start(None).await;
+
+    // Derselbe Peer wählt fünfmal dieselbe Adresse.
+    for _ in 0..5 {
+        angreifer.dial(opfer.listen_addr.clone()).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    let ruhig = opfer
+        .warte_auf_ruhe(Duration::from_secs(2), Duration::from_secs(20))
+        .await;
+
+    // `peer_count` zählt Peers, nicht Verbindungen: Der Angreifer bleibt
+    // ein Peer. Die Aussage ist, dass er nicht mehrere Plätze belegt und
+    // das Opfer nicht überlastet.
+    assert_eq!(ruhig, 1, "ein Angreifer, ein Peer, egal wie oft er wählt");
 }

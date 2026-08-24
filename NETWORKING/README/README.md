@@ -41,8 +41,18 @@ NETWORKING/
         │                      als Festkomma, Attest 5 min, Größenlimits)
         ├── identity.rs        Node-Identität: Ed25519-Keypair, PeerId,
         │                      Datei-Persistenz (load_or_create)
-        ├── node.rs            Swarm-Aufbau: Gossipsub + Kademlia + Identify
-        │                      + Ping über TCP/Noise/Yamux
+        ├── node.rs            Swarm-Aufbau: Verbindungsgrenzen +
+        │                      Adressvielfalt + Gossipsub (mit Peer-Scoring)
+        │                      + Kademlia + Identify + Ping über
+        │                      TCP/Noise/Yamux
+        ├── limits.rs          Verbindungsgrenzen (Fund 53): getrennte
+        │                      Budgets ein-/ausgehend, je Peer, je
+        │                      Adressbereich (IPv4 /24, IPv6 /64)
+        ├── scoring.rs         Gossipsub-Peer-Scoring: IP-Kolokation,
+        │                      Verhaltensstrafe, Graylist-Schwellen
+        ├── nat.rs             NAT-Überwindung: Relais-Horchadressen,
+        │                      Konfigurationsprüfung, Erkennung
+        │                      vermittelter und QUIC-Adressen
         ├── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
         │                      anwählen, Kademlia-Bootstrap (/myelith/kad/1)
         ├── gossip.rs          Gossip-Topics (Blöcke, Transaktionen,
@@ -52,16 +62,110 @@ NETWORKING/
         │                      Größenlimits je Topic, Borsh-Strukturprüfung,
         │                      Accept/Reject an Gossipsub
         └── runtime.rs         Node-Event-Loop: Kommandos (Publish,
-                               PeerCount), Ereignisse (Listen-Adresse,
-                               validierte Nachrichten)
+                               PeerCount, Dial), Ereignisse (Listen-Adresse,
+                               validierte Nachrichten); run_node_mit()
+                               reicht den PayloadValidator herein
 └── tests/
-    └── testnet.rs             Akzeptanztests: 20-Node-Voll-Konnektivität
-                               < 5 s, adversarialer Nicht-Weiterverbreitungs-
-                               Test
+    ├── testnet.rs             Akzeptanztests: 20-Node-Voll-Konnektivität
+    │                          < 5 s, adversarialer Nicht-Weiterverbreitungs-
+    │                          Test
+    ├── adversarial.rs         Fuzzing der Gossip-Parser (14 Tests)
+    ├── eclipse_sybil.rs       Verbindungsgrenzen gegen Flut, freies
+    │                          ausgehendes Budget (5 Tests)
+    └── nat.rs                 Relais-Pfad: Knoten ohne wählbare Adresse
+                               wird über das Relais erreicht (5 Tests)
 ```
 
 ## Changelog
 
+### v0.5.0 – 2026-08-24 (Punkt 3.4: NAT-Überwindung)
+
+AutoNAT v2, Circuit Relay v2, DCUtR und **QUIC** als zweiter Transport.
+Vorher sprach der Stack nur TCP ohne NAT-Behandlung: Ein Knoten hinter
+einem Heimrouter konnte hinaus wählen, aber niemand konnte ihn
+anwählen.
+
+**Warum QUIC dazugehört:** Lochstanzen über TCP („simultaneous open")
+scheitert an vielen verbreiteten NAT-Bauarten; über UDP gelingt es
+verlässlich. TCP allein wäre ein Stack, der DCUtR enthält und bei dem
+das Lochstanzen trotzdem oft scheitert.
+
+**Warum das mehr ist als Bequemlichkeit:** Ein Netz, in dem nur
+öffentlich erreichbare Knoten mitmachen können, ist kleiner und in
+wenigen Händen. Die Kollusionsrechnung aus Anhang B.2 hängt daran, dass
+β klein bleibt; wer Heimanschlüsse ausschließt, treibt β nach oben.
+
+⚑ **Fund 56: Ein Relais ohne eigene Adresse ist keins.** Erster Entwurf:
+ein Schalter `dient_als_relais: bool`. Das Relais nahm Reservierungen
+**an** und antwortete **ohne Adressen** (`NoAddressesInReservation`), weil
+es nur Adress-*Kandidaten* hatte und keine bestätigten. Seitdem verlangt
+`NatKonfig` für den Relais-Dienst eine öffentliche Adresse, und
+`nat::pruefe()` weist sonst beim Start ab. Alles lief, nur niemand kam
+an.
+
+**Neu in der Laufzeit:** `NodeCommand::Listen` (Relais-Reservierung im
+Betrieb, denn erst AutoNAT sagt, ob eine gebraucht wird) und
+`NodeCommand::ExterneAdresse`.
+
+**Nicht geprüft, ausdrücklich:** das Lochstanzen selbst. Es braucht zwei
+echte NATs; auf Loopback gibt es nichts zu durchstoßen. Erste Messung
+des Mehrmaschinenlaufs, getrennt nach TCP und QUIC.
+
+**Gemessen:** 94 Tests grün (68 Unit, 14 adversarial, 5 Eclipse/Sybil,
+5 NAT, 2 Testnetz).
+
+### v0.4.0 – 2026-08-24 (Punkt 4.3: Verbindungsgrenze und Peer-Diversität)
+
+Schließt **Fund 53**. Neu: `src/limits.rs` und `src/scoring.rs`;
+`node.rs` nimmt beide Behaviours **vor** Gossipsub und Kademlia auf,
+damit eine abgelehnte Verbindung abgelehnt ist, bevor jemand Zustand für
+sie anlegt.
+
+**Der Mechanismus in einem Satz:** Eingehende und ausgehende
+Verbindungen bekommen **getrennte Budgets** (48 und 16, Gesamtgrenze die
+Summe). Weil eingehende eigenständig gedeckelt sind, kann eine Flut die
+ausgehenden Plätze nicht aufzehren, und der Knoten kann jederzeit
+Gegenstellen eigener Wahl anwählen.
+
+**Was das nicht ist:** Der Angriff wird auf eine Bedingung reduziert,
+nicht beseitigt. Die Zusage lautet „der Knoten darf wählen", nicht „er
+wählt richtig". Kontrolliert ein Angreifer auch die Bootstrap-Liste,
+nützt das freie Budget nichts. Steht so im Kopf von `limits.rs` und in
+`tests/eclipse_sybil.rs`.
+
+Dazu die Adressbereichsgrenze (IPv4 /24, IPv6 /64, vier eingehende je
+Bereich): Das Füllen der 48 Plätze braucht damit 12 verschiedene
+Bereiche statt 20 Prozesse auf einer Maschine. **Eine Kostenverschiebung,
+keine Sperre**, und so ist sie dokumentiert.
+
+⚑ **Fund 54: Eine strengere Schwelle war schlechter, nicht besser.** Der
+erste Entwurf setzte die IP-Kolokationsschwelle des Peer-Scorings auf 4,
+„gleichgezogen" mit der Adressbereichsgrenze. Der Integrationstest hat es
+binnen einer Minute widerlegt: Elf Knoten auf `127.0.0.1` ergeben einen
+Score von −245 bei einer Graylist-Schwelle von −80, **die Härtung hatte
+den ehrlichen Knoten mit stummgeschaltet**. Beim Nachrechnen zeigte sich,
+dass die Zahl zusätzlich wirkungslos war: Die Kolokation zählt
+Identitäten je Einzeladresse, und dort deckelt die Adressbereichsgrenze
+bereits schärfer. Übernommen wurde die Vorgabe der Bibliothek (10) plus
+eine Ausnahme für Loopback. Rechnung und Tabelle im Kopf von
+`src/scoring.rs`.
+
+⚑ **Fund 55: Der dokumentierte Weg für die Nutzlastprüfung war nicht
+erreichbar.** `validation::report_with()` nimmt einen `PayloadValidator`
+entgegen, und drei Stellen der Doku sagten seit dem 2026-08-18, die
+Node-Verdrahtung reiche ihn herein. **`run_node` hatte dafür keinen
+Parameter** und rief die Fassung mit `AcceptAllValidator`. Aufgefallen
+beim Schreiben der Knoten-Verdrahtung, nicht im Betrieb: `myl-net` hatte
+bis dahin keinen einzigen Abnehmer im Repositorium, und eine Naht, die
+niemand belastet, hält alles aus. Behoben mit `run_node_mit()`.
+
+Ebenfalls neu: `NodeCommand::Dial`. Ein freies ausgehendes Budget nützt
+nur, wenn jemand es benutzen kann; ohne Dial-Kommando konnte ein
+laufender Knoten nach dem Start keine Verbindung mehr aufbauen.
+
+**Gemessen:** 79 Tests grün (58 Unit, 14 adversarial, 5 eclipse/sybil,
+2 testnet). Die 20-Knoten-Voll-Konnektivität bleibt bei 3,97 s, das
+Peer-Scoring kostet sie nichts.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 

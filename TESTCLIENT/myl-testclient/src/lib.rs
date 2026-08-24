@@ -41,6 +41,7 @@ pub mod erwartung;
 pub mod farben;
 pub mod hardware;
 pub mod menu;
+pub mod netz;
 pub mod modellstaende;
 pub mod logging;
 pub mod plaene;
@@ -54,6 +55,7 @@ pub use logging::{sha256_hex, Event, LogZiel, RunLog, OHNE_NAME};
 pub use runs::{default_artifact_dir, run_determinism, run_hardware, run_shard, DEFAULT_MODEL};
 pub use spec::{PlanError, TestPlan};
 pub use stack::run_stack;
+pub use netz::{beurteile, sammle, Knotenbild, Urteil};
 pub use vergleich::run as run_vergleich;
 
 /// Standard-Verzeichnis für Laufprotokolle: `TESTCLIENT/logs/`.

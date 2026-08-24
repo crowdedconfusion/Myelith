@@ -8,6 +8,11 @@
 
 use std::time::Duration;
 
+use libp2p::connection_limits::ConnectionLimits;
+
+use crate::limits::{standard_grenzen, MAX_JE_ADRESSBEREICH};
+use crate::nat::NatKonfig;
+
 /// Ping-Intervall je aktivem Peer (Design-Entscheidung 2026-08-13: 15 s).
 pub const PING_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -28,7 +33,7 @@ pub const PROTOCOL_VERSION: &str = "myelith/0.1";
 
 /// Agent-String des Identify-Protokolls (Anzeige/Diagnose, kein
 /// Konsens-Feld).
-pub const AGENT_VERSION: &str = "myl-net/0.1.1";
+pub const AGENT_VERSION: &str = "myl-net/0.5.0";
 
 /// Maximale Größe einer Gossip-Nachricht in Bytes (Schutz gegen
 /// Gossip-Spam; die Validierung in Punkt 1.4 prüft zusätzlich
@@ -48,6 +53,19 @@ pub struct NetConfig {
     pub ping_interval: Duration,
     /// Attest-Intervall (Standard: [`LATENCY_ATTEST_INTERVAL`]).
     pub latency_attest_interval: Duration,
+    /// Verbindungsgrenzen gegen Eclipse-Fluten (Fund 53). Standard:
+    /// [`crate::limits::standard_grenzen`]. Die Herleitung der Zahlen
+    /// steht im Kopf von [`crate::limits`].
+    pub grenzen: ConnectionLimits,
+    /// Eingehende Verbindungen je Adressbereich, IPv4 /24 und IPv6 /64
+    /// (Standard: [`crate::limits::MAX_JE_ADRESSBEREICH`]). Tests, die
+    /// den Mechanismus statt der Zahl prüfen, setzen hier eine kleine
+    /// Grenze.
+    pub adressbereich_grenze: usize,
+    /// NAT-Überwindung: ob der Knoten als Relais dient und über welche
+    /// Relais er erreichbar sein will (Vorgabe: keines von beidem, ein
+    /// Knoten mit öffentlicher Adresse braucht nichts davon).
+    pub nat: NatKonfig,
 }
 
 impl Default for NetConfig {
@@ -57,6 +75,9 @@ impl Default for NetConfig {
             bootstrap_peers: Vec::new(),
             ping_interval: PING_INTERVAL,
             latency_attest_interval: LATENCY_ATTEST_INTERVAL,
+            grenzen: standard_grenzen(),
+            adressbereich_grenze: MAX_JE_ADRESSBEREICH,
+            nat: NatKonfig::default(),
         }
     }
 }
@@ -80,5 +101,20 @@ mod tests {
         assert_eq!(cfg.ping_interval, Duration::from_secs(15));
         assert_eq!(cfg.latency_attest_interval, Duration::from_secs(300));
         assert!(cfg.bootstrap_peers.is_empty());
+        assert_eq!(cfg.adressbereich_grenze, MAX_JE_ADRESSBEREICH);
+    }
+
+    #[test]
+    fn die_vorgabe_bringt_verbindungsgrenzen_mit() {
+        // Ein Knoten mit Vorgabe-Konfiguration muss gegen Fund 53
+        // geschützt sein, ohne dass jemand daran denken muss. Wäre das
+        // Feld leer, hinge der Schutz daran, dass die Verdrahtung ihn
+        // setzt, und genau solche Nähte reißen.
+        let cfg = NetConfig::default();
+        let text = format!("{:?}", cfg.grenzen);
+        assert!(
+            text.contains(&crate::limits::MAX_EINGEHEND.to_string()),
+            "Vorgabe-Grenzen ohne eingehendes Limit: {text}"
+        );
     }
 }

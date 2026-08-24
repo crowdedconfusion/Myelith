@@ -10,28 +10,71 @@
 //!   beim Verbindungsaufbau.
 //! - **Ping** — Grundlage der Paarlatenzmessung (Phase 2); das
 //!   Intervall ist der entschiedene Parameter (15 s).
+//! - **Verbindungsgrenzen** ([`crate::limits`], Punkt 4.3): Deckel je
+//!   Peer, je Richtung und insgesamt. Schließt Fund 53.
+//! - **Adressvielfalt** ([`crate::limits::Adressvielfalt`]): eingehende
+//!   Verbindungen je IPv4-/24 bzw. IPv6-/64.
 //!
-//! Transport: TCP mit Noise-Verschlüsselung und Yamux-Multiplexing.
+//! **Reihenfolge der Felder ist bedeutsam.** Der `NetworkBehaviour`-
+//! Ableiter fragt die Behaviours in Feldreihenfolge, ob eine Verbindung
+//! angenommen wird. Die beiden Grenzen stehen deshalb **vorn**: Eine
+//! abgelehnte Verbindung soll abgelehnt sein, bevor Gossipsub oder
+//! Kademlia Zustand für sie anlegen.
+//!
+//! - **Relais-Client, DCUtR, AutoNAT** ([`crate::nat`], Punkt 3.4):
+//!   Erreichbarkeit hinter NAT. Die Server-Rollen (Relais, AutoNAT)
+//!   sind `Toggle` und nur aktiv, wenn der Knoten sich dazu erklärt.
+//!
+//! Transport: TCP **und QUIC**, beide mit Noise bzw. TLS. QUIC ist
+//! nicht Beiwerk: Lochstanzen über TCP („simultaneous open") scheitert
+//! an vielen verbreiteten NAT-Bauarten, über UDP gelingt es zuverlässig.
+//! Begründung im Kopf von [`crate::nat`]. Yamux multiplext den
+//! TCP-Pfad; QUIC bringt Streams selbst mit.
 //! Quantum-Vermerk: Noise/X25519 ist Shor-anfällig (Hop-für-Hop-Schutz);
 //! der Inhaltsschutz liegt auf der verpflichtenden Session-E2E-Schicht
 //! (Phase 3), beide als Migrationspunkte dokumentiert.
 
 use std::time::Duration;
 
+use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{gossipsub, identify, kad, noise, ping, tcp, yamux, StreamProtocol, Swarm, SwarmBuilder};
+use libp2p::{
+    autonat, connection_limits, dcutr, gossipsub, identify, kad, noise, ping, relay, tcp, yamux,
+    StreamProtocol, Swarm, SwarmBuilder,
+};
 
 use crate::config::{NetConfig, AGENT_VERSION, MAX_GOSSIP_MESSAGE_BYTES, PROTOCOL_VERSION};
 use crate::discovery::KAD_PROTOCOL;
 use crate::identity::NodeIdentity;
+use crate::limits::Adressvielfalt;
+use crate::scoring;
 
 /// Kombiniertes Verhalten eines Myelith-Nodes.
 #[derive(NetworkBehaviour)]
 pub struct MylBehaviour {
+    /// Zahlengrenzen: je Peer, je Richtung, insgesamt (Fund 53).
+    pub grenzen: connection_limits::Behaviour,
+    /// Herkunftsgrenze: eingehende Verbindungen je Adressbereich.
+    pub adressvielfalt: Adressvielfalt,
     pub gossipsub: gossipsub::Behaviour,
     pub kad: kad::Behaviour<kad::store::MemoryStore>,
     pub identify: identify::Behaviour,
     pub ping: ping::Behaviour,
+    /// Relais-**Client**: über ein fremdes Relais erreichbar werden.
+    /// Immer aktiv, denn ein Knoten weiß beim Start noch nicht, ob er
+    /// hinter NAT sitzt.
+    pub relay_client: relay::client::Behaviour,
+    /// Lochstanzen auf einer vermittelten Verbindung. Immer aktiv: Jede
+    /// direkt gemachte Verbindung nimmt dem Relais seinen Hebel.
+    pub dcutr: dcutr::Behaviour,
+    /// AutoNAT-**Client**: die eigene Erreichbarkeit feststellen.
+    pub autonat_client: autonat::v2::client::Behaviour,
+    /// Relais-**Server**. Nur wenn der Knoten sich dazu erklärt: Ein
+    /// Relais bezahlt fremden Verkehr mit eigener Bandbreite.
+    pub relay_server: Toggle<relay::Behaviour>,
+    /// AutoNAT-**Server**. Setzt dasselbe voraus wie der Relais-Dienst,
+    /// nämlich öffentliche Erreichbarkeit, und hängt am selben Schalter.
+    pub autonat_server: Toggle<autonat::v2::server::Behaviour>,
 }
 
 /// Baut den Swarm aus Identität und Konfiguration.
@@ -56,11 +99,18 @@ pub fn build_swarm(
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()
         .map_err(|e| format!("Gossipsub-Konfiguration fehlgeschlagen: {}", e))?;
-    let gossipsub = gossipsub::Behaviour::new(
+    let mut gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(identity.keypair().clone()),
         gossipsub_config,
     )
     .map_err(|e| format!("Gossipsub-Verhalten fehlgeschlagen: {}", e))?;
+
+    // Peer-Scoring (Punkt 4.3): begrenzt, was eine Verbindung dem
+    // Angreifer nützt, nachdem `connection_limits` begrenzt hat, wie
+    // viele er bekommt. Begründung der Werte in `crate::scoring`.
+    gossipsub
+        .with_peer_score(scoring::standard_parameter(), scoring::standard_schwellen())
+        .map_err(|e| format!("Gossipsub-Peer-Scoring fehlgeschlagen: {}", e))?;
 
     // Kademlia unter eigenem Protokoll-Namen (Protokoll-Isolation,
     // kein Mitsprechen in fremden Kademlia-Netzen auf demselben Port).
@@ -78,12 +128,10 @@ pub fn build_swarm(
 
     let ping = ping::Behaviour::new(ping::Config::new().with_interval(config.ping_interval));
 
-    let behaviour = MylBehaviour {
-        gossipsub,
-        kad,
-        identify,
-        ping,
-    };
+    let grenzen = connection_limits::Behaviour::new(config.grenzen.clone());
+    let adressvielfalt = Adressvielfalt::mit_grenze(config.adressbereich_grenze);
+    let peer_id = identity.peer_id();
+    let dient_als_relais = config.nat.dient_als_relais;
 
     let swarm = SwarmBuilder::with_existing_identity(identity.keypair().clone())
         .with_tokio()
@@ -92,7 +140,30 @@ pub fn build_swarm(
             noise::Config::new,
             yamux::Config::default,
         )?
-        .with_behaviour(|_| Ok(behaviour))?
+        .with_quic()
+        // Der Relais-Client kommt aus dem Builder, weil er einen eigenen
+        // Transport mitbringt: Über ihn laufen die vermittelten
+        // Verbindungen.
+        .with_relay_client(noise::Config::new, yamux::Config::default)?
+        .with_behaviour(|_key, relay_client| {
+            Ok(MylBehaviour {
+                grenzen,
+                adressvielfalt,
+                gossipsub,
+                kad,
+                identify,
+                ping,
+                relay_client,
+                dcutr: dcutr::Behaviour::new(peer_id),
+                autonat_client: autonat::v2::client::Behaviour::default(),
+                relay_server: Toggle::from(
+                    dient_als_relais.then(|| relay::Behaviour::new(peer_id, relay::Config::default())),
+                ),
+                autonat_server: Toggle::from(
+                    dient_als_relais.then(autonat::v2::server::Behaviour::default),
+                ),
+            })
+        })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
 

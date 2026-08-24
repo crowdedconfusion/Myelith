@@ -44,6 +44,14 @@ BEFEHLE
                     alle Protokolle von derselben Maschine stammen: das
                     wäre kein Nachweis. Schreibt einen ausführlichen Bericht
                     nach TESTCLIENT/Vergleiche/Berichte.
+    netz            Die Betriebsprotokolle eines Mehrknotenlaufs auswerten
+                    (--logs <verzeichnis>). Beantwortet eine andere Frage als
+                    `vergleich`: nicht „rechnen zwei Maschinen dasselbe“,
+                    sondern „haben mehrere Knoten einander gesehen“.
+                    Prüft Gegenseitigkeit der Sichten und Lücken in den
+                    Folgenummern. Urteilt bewusst NICHT über die Uhr: Die
+                    Zeitstempel stammen von verschiedenen Maschinen und sind
+                    nicht verlässlich synchron.
 
     stack           Protokoll-Durchlauf über Krypto, Epochenseed,
                     Komiteewahl, BFT, Verifikation, Ledger und Tokenomics.
@@ -430,6 +438,23 @@ fn main() -> ExitCode {
         };
         let berichte = myl_testclient::vergleich::berichtsordner(&repo);
         return if myl_testclient::run_vergleich(&quelle, Some(&berichte)) {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
+    // `netz`: Betriebsprotokolle eines Mehrknotenlaufs auswerten.
+    //
+    // Getrennt von `vergleich`, weil es eine andere Frage beantwortet.
+    // `vergleich` fragt „rechnen zwei Maschinen dasselbe", `netz` fragt
+    // „haben mehrere Knoten einander gesehen". Beides in einen Befehl zu
+    // legen hieße, zwei Urteile zu vermischen, von denen jedes für sich
+    // eine Aussage ist.
+    if args.command == "netz" {
+        banner::print_if(!args.quiet);
+        let quelle = args.logs.clone();
+        return if myl_testclient::netz::run(&quelle) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE

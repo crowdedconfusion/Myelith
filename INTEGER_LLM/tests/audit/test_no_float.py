@@ -41,6 +41,14 @@ Dokumentiert erlaubte Zonen (kein Heiß-/Konsenspfad):
   - myl-net (Netzschicht: die EMA-Latenzglättung ist Eingangsgröße für
     Attest-Erzeugung, nicht selbst Konsens-Feld — die Atteste tragen
     ganzzahlige Millisekunden)
+  - myl-net/src/scoring.rs (Gossipsub-Peer-Scoring, 2026-08-24). Die
+    Bewertung rechnet in f64, und das ist Absicht: Der Peer-Score hängt
+    an lokalen Beobachtungen und Ankunftszeiten. Zwei ehrliche Knoten
+    muessen hier zu VERSCHIEDENEN Ergebnissen kommen duerfen; eine
+    Ganzzahlfassung wuerde Bitgleichheit suggerieren, wo keine erwuenscht
+    ist. Kein Wert aus dem Modul geht in Block, Attest oder Ledger ein.
+    Die Zahlengrenzen daneben (myl-net/src/limits.rs) sind ganzzahlig
+    und werden geprueft.
 
 Akzeptanzkriterium: null Gleitkomma-Treffer in beiden Pfaden.
 """
@@ -143,6 +151,18 @@ CONSENSUS_PATH = [
     ROOT / "NETWORKING" / "myl-net" / "src" / "discovery.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "node.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "runtime.rs",
+    # 2026-08-24: Die Verbindungsgrenzen sind reine Ganzzahlen und
+    # gehoeren geprueft. `scoring.rs` daneben steht bewusst NICHT hier
+    # (dokumentierte Ausnahme oben, Peer-Score ist lokal statt Konsens).
+    ROOT / "NETWORKING" / "myl-net" / "src" / "limits.rs",
+    ROOT / "NETWORKING" / "myl-net" / "src" / "nat.rs",
+    # NODE, aufgenommen 2026-08-24 mit dem Knoten-Binary. Die
+    # Verdrahtung darf so wenig Gleitkomma enthalten wie das, was sie
+    # verdrahtet, sonst wandert es genau hierher.
+    ROOT / "NODE" / "myl-node" / "src" / "knoten.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "konfig.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "protokoll.rs",
+    ROOT / "NODE" / "myl-node" / "src" / "validator.rs",
     # GOVERNANCE, aufgenommen 2026-08-24 mit der ersten Zeile Code.
     # Die Registry hält die Parameter, die in Ledger-Zustandsübergänge
     # eingehen; ein Gleitkommawert hier wäre derselbe Konsensbruch wie

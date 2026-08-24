@@ -28,7 +28,7 @@ dass sie hier steht.
 | A6 | Self-Dealing in der Subventionsphase | ✅ | `s < c/(1−c)` gegen das untere Bandende, Fund 49 |
 | A7 | Verbrauchs-Stoß mit Ausstieg | ✅ | Burn-Cap je Adresse, gemessen |
 | A8 | Parametervorschlag, der Invarianten bricht | ✅ | Registry prüft **vor** der Abstimmung |
-| A9 | **Eclipse: Umzingelung eines Knotens** | ❌ | **Fund 53**, gemessen: keine Verbindungsgrenze |
+| A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
 | A10 | **Latenzwerte fälschen** | ❌ | Attest-Signatur wird von niemandem geprüft |
 | A11 | **Kontrollsegmente erkennen** | ❌ | Ununterscheidbarkeit ist offene Messfrage |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
@@ -99,28 +99,54 @@ sein.
 
 ## 3. Offen, mit gemessener Lücke
 
-### ⚑ A9 Eclipse (Fund 53) — die teuerste Lücke der Netzschicht
+### A9 Eclipse (Fund 53) — geschlossen, mit benannter Restbedingung
 
-**Gemessen:** Zwanzig Sybil-Identitäten verbinden sich mit demselben
-Opfer, **alle zwanzig werden angenommen**. `build_swarm` hat kein
-`connection_limits`, kein Peer-Scoring, keine Diversitätsregel.
+**War gemessen (2026-08-24, früh):** Zwanzig Sybil-Identitäten verbinden
+sich mit demselben Opfer, **alle zwanzig werden angenommen**.
+`build_swarm` hatte kein `connection_limits`, kein Peer-Scoring, keine
+Diversitätsregel.
 
-**Warum das teuer ist:** Wer beliebig viele Verbindungen aufbauen darf,
+**Warum das teuer war:** Wer beliebig viele Verbindungen aufbauen darf,
 füllt die Peer-Menge des Opfers und entscheidet danach, **welche
-Nachrichten es sieht** — nicht durch Fälschung, sondern durch Auswahl.
+Nachrichten es sieht**, nicht durch Fälschung, sondern durch Auswahl.
 Die Sicherheit dieses Protokolls hängt daran, dass Checker fremde
 Segmente **beobachten**; wer die Beobachtung steuert, steuert die
 Verifikation.
 
-**Was hält:** Eine Sybil kann keine fremde Nachricht fälschen (Gossipsub
-`Signed` + `Strict`) — fluten ja, fälschen nein. Und eine einzige ehrliche
-Verbindung genügt, damit das Opfer weiter empfängt. Damit ist die
-Anforderung präzise: nicht „Sybils abwehren", sondern **mindestens eine
-ehrliche Verbindung garantieren**.
+**Behoben (2026-08-24, myl-net v0.4.0):** `src/limits.rs` und
+`src/scoring.rs`. Der Kern ist eine Trennung: Eingehende Verbindungen,
+die der Angreifer wählt, sind bei 48 gedeckelt; ausgehende, die der
+Knoten selbst wählt, haben ein eigenes Budget von 16, und die
+Gesamtgrenze ist die Summe. **Eine Flut kann die ausgehenden Plätze
+deshalb nicht aufzehren.** Dazu vier eingehende je Adressbereich
+(IPv4 /24, IPv6 /64) und Gossipsub-Peer-Scoring mit Graylist.
 
-**Nötig:** `libp2p::connection_limits`, Gossipsub-Peer-Scoring, eine
-reservierte Zahl ausgehender Verbindungen zu Bootstrap-Knoten, eine
-Schranke je Adressbereich.
+Belegt in `tests/eclipse_sybil.rs` als Kette: eingehend gedeckelt,
+ausgehendes Budget unter Flut frei, und über die selbst gewählte
+Verbindung kommt auch etwas an.
+
+**⚠️ Die Restbedingung, ausdrücklich:** Garantiert ist, dass der Knoten
+**wählen darf**, nicht dass er **richtig wählt**. Adressen kommen aus der
+Bootstrap-Liste und aus Kademlia. **Der Eclipse-Angriff reduziert sich
+damit auf die Bedingung: Die Bootstrap-Liste enthält mindestens einen
+ehrlichen Knoten.** Wer sie stellt, umgeht die Verteidigung. Deshalb
+steht A9 hier auf ⚠️ und nicht auf ✅.
+
+**Zwei Funde dabei:**
+
+- **Fund 54:** Die erste Fassung setzte die IP-Kolokationsschwelle auf 4
+  und schaltete damit den ehrlichen Knoten mit stumm (−245 bei Graylist
+  −80). Die Zahl war zusätzlich wirkungslos, weil die
+  Adressbereichsgrenze bereits schärfer bindet. Eine Härtung, die
+  niemand durchgerechnet hat, ist eine Vermutung mit Vorzeichen.
+- **Fund 55:** Der dokumentierte Weg für die Nutzlastprüfung
+  (`report_with`) war über `run_node` nicht erreichbar. Behoben mit
+  `run_node_mit()`.
+
+**Weiterhin offen:** Diversität je **ASN** statt je Adressbereich. Ein
+Angreifer mit einem großen Provider bekommt viele /24. Die Metadaten
+liegen in `myl-types/node_metadata.rs`; es fehlt eine vertrauenswürdige
+Quelle für die Zuordnung.
 
 ### ⚑ A10 Latenzwerte fälschen
 
@@ -214,12 +240,14 @@ Stoß-Fall als eigener Test daneben.
 
 Nach Schadenshebel, nicht nach Aufwand:
 
-1. **A9 Verbindungsgrenze** (Fund 53). Wer die Beobachtung steuert,
-   steuert die Verifikation. Der Aufwand ist klein:
-   `libp2p::connection_limits` ist eine Behaviour-Zeile, das Peer-Scoring
-   eine Konfiguration.
+1. ~~**A9 Verbindungsgrenze** (Fund 53)~~ — erledigt am 2026-08-24.
+   Nachtrag zur damaligen Aufwandsschätzung „der Aufwand ist klein,
+   `connection_limits` ist eine Behaviour-Zeile": Das stimmte für die
+   Zeile und nicht für die Aufgabe. Die Arbeit steckte im Herleiten der
+   Zahlen und im Ausrechnen, wen sie treffen, und genau dort lag Fund 54.
 2. **A10 Attest-Signatur prüfen.** Sie ist der Hebel auf β_lokal und
-   damit auf A12. Entsteht ohnehin mit dem Knoten-Binary.
+   damit auf A12. Entsteht ohnehin mit dem Knoten-Binary, und der Weg
+   dafür ist seit Fund 55 offen (`run_node_mit`).
 3. **A11 statistische Analyse.** Ohne sie trägt A1 im Fall „Angreifer
    hält beide Pods" nicht.
 4. **A13 externes Review.** Vor dem Mainnet, nicht danach.

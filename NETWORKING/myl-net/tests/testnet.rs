@@ -45,11 +45,10 @@ impl TestNode {
 
         // Auf die erste Listen-Adresse warten.
         let listen_addr = loop {
-            match ev_rx.recv().await.expect("Event-Kanal") {
-                NodeEvent::ListenAddr(addr) => {
-                    break addr.with_p2p(peer_id).expect("p2p-Anhang")
-                }
-                NodeEvent::Message(_) => {}
+            // Verbindungs- und Nachrichtenereignisse interessieren hier
+            // nicht: Dieser Test wartet auf die Horchadresse.
+            if let NodeEvent::ListenAddr(addr) = ev_rx.recv().await.expect("Event-Kanal") {
+                break addr.with_p2p(peer_id).expect("p2p-Anhang");
             }
         };
         TestNode {

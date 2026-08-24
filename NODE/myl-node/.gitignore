@@ -1,0 +1,5 @@
+# Betriebsprotokolle und Schlüssel eines Testlaufs gehören nicht ins
+# Repositorium: Die Protokolle sind Messdaten, die Schlüssel sind
+# Identitäten.
+logs/
+*.key
