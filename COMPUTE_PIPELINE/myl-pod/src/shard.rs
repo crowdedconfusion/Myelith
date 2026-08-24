@@ -30,7 +30,7 @@ use integer_llm_runtime::generate::DekodierDigest;
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::model::IntegerModel;
 use myl_tokenomics::{ModellProfil, ShardZuschnitt};
-use myl_types::bls::{BlsPublicKey, BlsSecretKey};
+use myl_types::bls::{BlsPublicKey, BlsSecretKey, BlsSignature};
 
 use crate::da::DaStore;
 use crate::trace::{activation_hash, verify_input_hash, TransitionSig, ZERO_HASH};
@@ -170,6 +170,64 @@ impl ShardNode {
     pub fn dekodier_digest(&self, session_id: u64) -> Option<(String, usize)> {
         let d = self.dekodier_digest.lock().unwrap();
         d.get(&session_id).map(|x| (x.hex(), x.schritte()))
+    }
+
+    /// Unterschreibt die Botschaft eines **fertigen** PoI-Bündels als
+    /// Pod-Mitglied (⚑ Fund 52).
+    ///
+    /// # Warum ein Mitglied prüft, bevor es unterschreibt
+    ///
+    /// Eine Unterschrift, die ohne Prüfung gegeben wird, ist **keine
+    /// Zustimmung**, sondern eine Anwesenheitsnotiz. Kap. 5.5 belegt
+    /// falsche PoI-Aggregation mit 100 % Slash des Koordinators, und das
+    /// setzt voraus, dass die Mitglieder etwas anderes bezeugen als
+    /// „ich war dabei".
+    ///
+    /// Geprüft wird deshalb der **Anspruch**: `vtfe_claimed` muss zu der
+    /// Segmentzahl passen, die dieses Mitglied selbst gesehen hat, und
+    /// zwar mit derselben Regel, die der Koordinator anwendet
+    /// ([`myl_tokenomics::vtfe_gutschrift`]). Weicht sie ab, wird nicht
+    /// unterschrieben.
+    ///
+    /// **Was ein Mitglied lokal nicht prüfen kann**, gehört genannt: die
+    /// Merkle-Wurzel über die Segmentmenge. Es kennt seine eigenen
+    /// Segmente, aber nicht zwingend die Reihenfolge, in der der
+    /// Koordinator sie eingetragen hat, und eine Wurzel ist ohne die
+    /// vollständige Liste nicht nachrechenbar. Der Koordinator liefert
+    /// sie deshalb mit; die Prüfung ist dann eine über gelieferte Daten
+    /// und nicht über eigene. **Das ist eine schwächere Aussage**, und
+    /// sie steht hier, damit niemand die Unterschrift für mehr hält, als
+    /// sie ist.
+    ///
+    /// **Domain-Separation:** Die Botschaft trägt `DST_POI_BUNDLE` und
+    /// ist damit von der Übergangssignatur getrennt, die
+    /// `DST_SHARD_TRANSITION` trägt. Ein eigenes Rollenbyte wie in
+    /// [`crate::trace::Rolle`] braucht es hier nicht: Wo eine Klasse ihre
+    /// eigene DST hat, ist die Rolle darin schon enthalten.
+    pub fn signiere_buendel(
+        &self,
+        botschaft: &[u8],
+        vtfe_claimed: u64,
+        segmente: u64,
+        pod_zuschnitte: &[myl_tokenomics::ShardZuschnitt],
+    ) -> Result<BlsSignature, String> {
+        let profil = self.modell_profil();
+        let mut erwartet = 0u64;
+        for z in pod_zuschnitte {
+            let anteil = myl_tokenomics::vtfe_gutschrift(&profil, z, segmente)
+                .map_err(|e| format!("Zuschnitt unbrauchbar: {}", e))?;
+            erwartet = erwartet.saturating_add(anteil);
+        }
+        if vtfe_claimed != erwartet {
+            return Err(format!(
+                "Shard {} unterschreibt nicht: beansprucht sind {} vTFE, nachgerechnet {} \
+                 für {} Segmente",
+                self.shard_index, vtfe_claimed, erwartet, segmente
+            ));
+        }
+        self.bls_sk
+            .sign(botschaft)
+            .map_err(|e| format!("Shard {}: {}", self.shard_index, e))
     }
 
     pub fn public_key(&self) -> BlsPublicKey {

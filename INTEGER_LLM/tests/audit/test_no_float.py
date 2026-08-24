@@ -121,6 +121,7 @@ CONSENSUS_PATH = [
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "kontrollsegmente.rs",
     ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "standby.rs",
+    ROOT / "SIMULATION" / "myl-simulation" / "src" / "szenario.rs",
     # NETWORKING, nachgetragen 2026-08-23 (Fund 44).
     #
     # Diese Liste enthielt bis dahin **keine einzige Datei aus

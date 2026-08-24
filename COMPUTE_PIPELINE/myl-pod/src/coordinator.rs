@@ -241,6 +241,45 @@ impl Coordinator {
 
     /// Baut ein PoI-Bündel aus den abgeschlossenen Segmenten dieser
     /// Epoche (Anhang A.1, Kap. 4.4).
+    ///
+    /// # ⚑ Fund 52: Das Aggregat ist **keine** Bündelsignatur
+    ///
+    /// Aggregiert werden die **Übergangs-Signaturen** der Segmente, also
+    /// Unterschriften über `DST_SHARD_TRANSITION ‖ Rolle ‖
+    /// Borsh(TransitionSig)`. `myl_consensus::verify_bundle_signature`
+    /// prüft dagegen gegen `bundle_message(bundle)`, also über
+    /// `DST_POI_BUNDLE ‖ epoch ‖ pod ‖ segments_root ‖ vtfe_claimed`.
+    ///
+    /// **Zwei verschiedene Botschaften.** Ein Bündel aus dieser Funktion
+    /// verifiziert deshalb nie — nicht weil es falsch wäre, sondern weil
+    /// die beiden Seiten über verschiedene Dinge reden.
+    ///
+    /// **Die Richtung war die gute:** Es wurde abgelehnt, nicht
+    /// angenommen. Niemand bekam Vergütung, die ihm nicht zusteht — und
+    /// niemand sonst auch, denn der Pfad war nicht ungeprüft, sondern
+    /// unbenutzbar.
+    ///
+    /// # Geschlossen am 2026-08-24 durch [`Self::build_signed_poi_bundle`]
+    ///
+    /// Was fehlte, war ein Protokollschritt und keine Zeile Code: Die
+    /// Mitglieder sehen das **fertige** Bündel und unterschreiben seine
+    /// Botschaft; erst dann gibt es ein Aggregat, das gegen die
+    /// Mitgliedermenge gilt. Der Koordinator kann das nicht allein, denn
+    /// sonst wäre die Zustimmung der Mitglieder eine Fiktion — und genau
+    /// gegen diese Fiktion ist die Signatur da (Kap. 5.5: 100 % Slash bei
+    /// falscher Aggregation).
+    ///
+    /// **Diese Funktion bleibt trotzdem, und sie bleibt so.** Sie baut den
+    /// Inhalt; die Signaturrunde setzt darauf auf. Wer nur den Inhalt
+    /// braucht (Inspektion, Tests, ein Koordinator, der noch sammelt),
+    /// bekommt ihn ohne die Runde. **Ihr Ergebnis ist aber nicht
+    /// einreichbar**, und der Name sagt das nicht; deshalb steht es hier.
+    ///
+    /// **Warum es niemandem aufgefallen ist:** `myl-pod` hing bis zum
+    /// 2026-08-24 nicht an `myl-consensus` und umgekehrt. Beide Seiten
+    /// sind für sich getestet; die Naht dazwischen hat nie jemand
+    /// zusammengesteckt. Festgehalten in
+    /// `tests/koordinator_byzantinisch.rs`.
     pub fn build_poi_bundle(&self) -> Result<PoIBundle, String> {
         if self.completed.is_empty() {
             return Err("keine abgeschlossenen Segmente".to_string());
@@ -266,6 +305,72 @@ impl Coordinator {
             segments_root: root,
             vtfe_claimed: vtfe,
             aggregate_sig: agg,
+        })
+    }
+
+    /// Die Botschaft, die die Pod-Mitglieder unterschreiben müssen,
+    /// damit aus [`Self::build_poi_bundle`] ein einreichbares Bündel wird
+    /// (⚑ Fund 52).
+    ///
+    /// Sie wird hier **nicht** nachgebaut, sondern aus dem Bündel
+    /// abgeleitet, wie es die Gegenseite tut. Eine zweite Fassung der
+    /// Kodierung wäre genau die Art Dublette, an der sich das Projekt
+    /// schon mehrfach verbrannt hat: Sie liefe irgendwann auseinander,
+    /// und der Streit wäre nicht entscheidbar.
+    ///
+    /// Die Kodierung steht in `myl_consensus::poi::poi_bundle_message`
+    /// und lautet `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
+    /// u64_le(vtfe_claimed)`.
+    pub fn signierbotschaft(bundle: &PoIBundle) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(21 + 8 + 32 + 32 + 8);
+        msg.extend_from_slice(b"MYELITH_POI_BUNDLE_v1");
+        msg.extend_from_slice(&bundle.epoch.0.to_le_bytes());
+        msg.extend_from_slice(bundle.pod.as_bytes());
+        msg.extend_from_slice(bundle.segments_root.as_bytes());
+        msg.extend_from_slice(&bundle.vtfe_claimed.to_le_bytes());
+        msg
+    }
+
+    /// Baut ein PoI-Bündel **und lässt es von den Mitgliedern
+    /// unterschreiben** (⚑ Fund 52).
+    ///
+    /// Das ist die Runde, die [`Self::build_poi_bundle`] fehlte: Erst
+    /// steht das Bündel, dann sehen es die Mitglieder, dann
+    /// unterschreiben sie **seine** Botschaft, und erst dann aggregiert
+    /// der Koordinator. Das Ergebnis verifiziert gegen
+    /// `myl_consensus::verify_bundle_signature`.
+    ///
+    /// **Die Reihenfolge ist die ganze Sicherheit.** Würde der
+    /// Koordinator zuerst sammeln und danach das Bündel bauen, könnte er
+    /// `vtfe_claimed` nachträglich erhöhen; die Unterschriften lägen dann
+    /// über einer Botschaft, die niemand gesehen hat. Genau davor schützt
+    /// es, dass die Botschaft das fertige Bündel abbildet.
+    ///
+    /// **Jedes Mitglied prüft vor der Unterschrift**, ob der Anspruch zu
+    /// der Segmentzahl passt, die es selbst gesehen hat
+    /// ([`ShardNode::signiere_buendel`]). Verweigert eines, gibt es kein
+    /// Bündel: Ein Aggregat gilt gegen **alle** Mitglieder, nicht gegen
+    /// eine Mehrheit, und ein unvollständiges wäre wertlos.
+    pub fn build_signed_poi_bundle(&self) -> Result<PoIBundle, String> {
+        let bundle = self.build_poi_bundle()?;
+        let botschaft = Self::signierbotschaft(&bundle);
+        let segmente = self.completed.len() as u64;
+        let zuschnitte: Vec<myl_tokenomics::ShardZuschnitt> =
+            self.shards.iter().map(|s| s.zuschnitt()).collect();
+
+        let mut sigs = Vec::with_capacity(self.shards.len());
+        for shard in &self.shards {
+            sigs.push(shard.signiere_buendel(
+                &botschaft,
+                bundle.vtfe_claimed,
+                segmente,
+                &zuschnitte,
+            )?);
+        }
+        let agg = aggregate_signatures(&sigs).map_err(|e| e.to_string())?;
+        Ok(PoIBundle {
+            aggregate_sig: BlsSignature(agg.0),
+            ..bundle
         })
     }
 

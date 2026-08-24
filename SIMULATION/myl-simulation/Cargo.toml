@@ -1,0 +1,21 @@
+[package]
+name = "myl-simulation"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Protokollsimulation über alle Schichten: der Weg eines Segments von der Berechnung im Pod über PoI-Einreichung, Konsens und Epochenabschluss bis zur Buchung im Ledger, samt Angreiferszenarien."
+license = "PolyForm Shield License 1.0.0"
+
+[dependencies]
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
+myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
+myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
+myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
+myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
+myl-governance = { path = "../../GOVERNANCE/myl-governance" }
+myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
+
+[lib]
+name = "myl_simulation"
+path = "src/lib.rs"

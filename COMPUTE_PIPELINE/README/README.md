@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.7.0
+> **Version:** 0.9.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
@@ -55,6 +55,89 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.9.0 – 2026-08-24 (⚑ Fund 52 geschlossen: der Vergütungspfad ist durchgängig)
+
+`build_signed_poi_bundle` schließt die Naht: **erst steht das Bündel,
+dann sehen es die Mitglieder, dann unterschreiben sie seine Botschaft,
+dann aggregiert der Koordinator.**
+
+**Die Reihenfolge ist die ganze Sicherheit.** Würde der Koordinator
+zuerst sammeln und danach das Bündel bauen, könnte er `vtfe_claimed`
+nachträglich erhöhen; die Unterschriften lägen über einer Botschaft, die
+niemand gesehen hat.
+
+#### Ein Mitglied prüft, bevor es unterschreibt
+
+Eine Unterschrift, die ohne Prüfung gegeben wird, ist **keine
+Zustimmung**, sondern eine Anwesenheitsnotiz. Kap. 5.5 belegt falsche
+PoI-Aggregation mit 100 % Slash des Koordinators, und das setzt voraus,
+dass die Mitglieder etwas anderes bezeugen als „ich war dabei".
+
+`ShardNode::signiere_buendel` rechnet deshalb den Anspruch nach: Passt
+`vtfe_claimed` zu der Segmentzahl, die dieses Mitglied gesehen hat, mit
+derselben Regel, die der Koordinator anwendet? Weicht sie ab, wird nicht
+unterschrieben, und dann gibt es kein Bündel: Ein Aggregat gilt gegen
+**alle** Mitglieder, nicht gegen eine Mehrheit.
+
+**Was ein Mitglied lokal nicht prüfen kann, steht dabei:** die
+Merkle-Wurzel über die Segmentmenge. Es kennt seine eigenen Segmente,
+aber eine Wurzel ist ohne die vollständige Liste nicht nachrechenbar; der
+Koordinator liefert sie mit, und die Prüfung ist dann eine über
+gelieferte Daten und nicht über eigene. Eine schwächere Aussage, und sie
+steht im Code, damit niemand die Unterschrift für mehr hält, als sie ist.
+
+#### Belegt gegen das echte Modell
+
+Der Test fährt einen Vier-Shard-Pod gegen die INTEGER_LLM-Runtime: Das
+**unsignierte** Bündel wird von `myl_consensus::verify_bundle_signature`
+abgelehnt, das **signierte** gilt, und ein nachträglich erhöhter Anspruch
+fällt wieder durch. Ohne Artefakte überspringt er sich.
+
+*Zur Domain-Separation:* Die Bündelbotschaft trägt `DST_POI_BUNDLE` und
+ist damit von der Übergangssignatur mit `DST_SHARD_TRANSITION` getrennt.
+Ein eigenes Rollenbyte wie in `trace::Rolle` braucht es hier nicht: **Wo
+eine Klasse ihre eigene DST hat, ist die Rolle darin schon enthalten.**
+
+### v0.8.0 – 2026-08-24 (Punkt 4.3: der byzantinische Koordinator, und ⚑ Fund 52)
+
+Der Koordinator ist die einzige Stelle im Pod, die **für alle spricht**.
+`tests/koordinator_byzantinisch.rs` wehrt fünf Angriffe ab, die
+Gegenprobe steht davor.
+
+#### ⚑ Fund 52: Der Pod baut ein Bündel, das der Konsens nicht prüfen kann
+
+`build_poi_bundle` aggregiert die **Übergangs-Signaturen** der Segmente
+(`DST_SHARD_TRANSITION ‖ Rolle ‖ Borsh(TransitionSig)`).
+`myl_consensus::verify_bundle_signature` prüft gegen die
+**Bündelbotschaft** (`DST_POI_BUNDLE ‖ epoch ‖ pod ‖ segments_root ‖
+vtfe_claimed`). **Zwei verschiedene Botschaften; ein Bündel aus dem Pod
+verifiziert nie.**
+
+**Die Richtung ist die gute:** abgelehnt statt angenommen, niemand bekäme
+Vergütung, die ihm nicht zusteht. Es heißt aber auch, dass **überhaupt
+niemand** Vergütung bekommt — der PoI-Pfad ist nicht ungeprüft, er ist
+unbenutzbar.
+
+**Was fehlt, ist ein Protokollschritt, keine Zeile Code.** Die Mitglieder
+müssen das **fertige** Bündel sehen und seine Botschaft unterschreiben;
+erst dann gibt es ein Aggregat, das gegen die Mitgliedermenge gilt. Der
+Koordinator kann das nicht allein, sonst wäre die Zustimmung der
+Mitglieder eine Fiktion, und genau gegen diese Fiktion ist die Signatur
+da (Kap. 5.5: 100 % Slash bei falscher Aggregation).
+`Coordinator::signierbotschaft` liefert die Botschaft; die Runde steht im
+Fahrplan.
+
+**Warum es niemandem aufgefallen ist:** `myl-pod` hing bis heute nicht an
+`myl-consensus` und umgekehrt. Beide Seiten sind für sich getestet, die
+Naht dazwischen hat nie jemand zusammengesteckt. Genau der Fall, für den
+die Härtungsschleife geschrieben wurde.
+
+*Nebenbei:* Die Signierbotschaft steht jetzt an zwei Orten, weil `myl-pod`
+nicht an `myl-consensus` hängen soll. **Deshalb prüft ein Test über 1000
+zufällige Bündel, dass beide Kodierungen bitgleich sind** — eine Dublette
+ohne diesen Test liefe irgendwann auseinander, und dann wäre der Streit
+nicht mehr entscheidbar.
 
 ### v0.7.0 – 2026-08-24 (Phase 3: Ausfallsicherung und Epochen-Übergang)
 

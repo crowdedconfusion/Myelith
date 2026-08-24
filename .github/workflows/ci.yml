@@ -89,6 +89,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             GOVERNANCE/myl-governance
+            SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
             INTEGER_LLM/kernels
@@ -111,6 +112,7 @@ jobs:
             TOKENOMICS/myl-tokenomics \
             VERIFICATION/myl-verifier \
             GOVERNANCE/myl-governance \
+            SIMULATION/myl-simulation \
             COMPUTE_PIPELINE/myl-pod \
             TRAINING/myl-train \
             INTEGER_LLM/kernels \
@@ -169,6 +171,39 @@ jobs:
       - name: cargo build --features rocm
         working-directory: INTEGER_LLM/kernels
         run: cargo build --features rocm --quiet
+
+      # ── Was hierher gehoert, weil es dieselbe Uebersetzung braucht ──
+      #
+      # `test_division.py` und `test_overflow.py` rufen
+      # `cargo test -p integer-llm-kernels` in genau diesem Workspace auf,
+      # und `conformance/run.sh` baut `golden_runner` daraus. Bis zum
+      # 2026-08-24 standen alle drei in einem eigenen Audit-Job, der die
+      # Kernels **ein zweites Mal** uebersetzte: derselbe Build, zweimal
+      # bezahlt, und der Job lief ueber drei Minuten.
+      #
+      # Hier ist die Uebersetzung bereits warm. Die beiden Python-Audits
+      # kosten zusammen 0,12 s, der Konformitaetslauf 1,3 s.
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit — Divisionssemantik und Ueberlauf (cargo-gebunden)
+        working-directory: INTEGER_LLM
+        run: |
+          python3 tests/audit/test_division.py
+          python3 tests/audit/test_overflow.py
+
+      # Der Bit-Exaktheits-Anker des Projekts. Ohne Artefakte bleiben die
+      # sechs Op-Level-Vektoren; Layer und E2E brauchen kalibrierte
+      # Modell-Artefakte, run.sh ueberspringt sie und meldet 6/6.
+      #
+      # **Nur 6 von 33.** Was hier gruen ist, deckt den Kernel ab, nicht
+      # das ganze Modell. Der volle Lauf gehoert auf eine Maschine mit
+      # Artefakten.
+      - name: Konformitaet — Op-Level-Golden-Vektoren (ohne Artefakte)
+        working-directory: INTEGER_LLM/conformance
+        run: ./run.sh reference
 
   # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
   runtime:
@@ -239,6 +274,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             GOVERNANCE/myl-governance
+            SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
             TESTCLIENT/myl-testclient
@@ -279,6 +315,17 @@ jobs:
         working-directory: GOVERNANCE/myl-governance
         run: cargo test --quiet
 
+      # Die Protokollsimulation haengt an allen Crates und keines an ihr.
+      # Sie prueft die **Naehte**, und dort sassen die schwersten Funde
+      # dieses Projekts (41, 44, 50, 51, 52) — jeder von ihnen in seiner
+      # Komponente korrekt.
+      #
+      # Der Schritt steht deshalb ganz am Ende: Was hier faellt, ist
+      # nichts, was eine einzelne Komponente haette melden koennen.
+      - name: cargo test — SIMULATION (myl-simulation)
+        working-directory: SIMULATION/myl-simulation
+        run: cargo test --quiet
+
       # myl-pod: lib + adversariale Ebene. `pod_e2e.rs` und
       # `layer_granular.rs` bleiben draussen — sie fahren einen echten
       # 4-Node-Pod gegen die INTEGER_LLM-Runtime (~2 min, braucht
@@ -295,6 +342,7 @@ jobs:
         run: |
           cargo test --lib --quiet
           cargo test --test adversarial --quiet
+          cargo test --test koordinator_byzantinisch --quiet
 
       # myl-train braucht weder Modell noch Netz: Die Provenienz rechnet
       # auf Merkle-Baeumen und einem uebergebenen Seed.
@@ -404,60 +452,73 @@ jobs:
           }
           exit 0
 
+  # ── Zahlensemantik: reines Python, keine Uebersetzung ──────────────
+  #
+  # Bis zum 2026-08-24 hing an diesem Job eine Rust-Toolchain und ein
+  # cargo-Cache, weil zwei der vier Skripte `cargo test` aufrufen. Sie
+  # uebersetzten damit die Kernels ein **zweites Mal** — derselbe Build
+  # wie im `kernels`-Job, zweimal bezahlt, und der Job lief ueber drei
+  # Minuten fuer 0,2 Sekunden Rechnung.
+  #
+  # Die beiden cargo-gebundenen Skripte und der Konformitaetslauf stehen
+  # jetzt im `kernels`-Job, wo die Uebersetzung ohnehin warm ist. Was
+  # hier bleibt, braucht kein Rust und laeuft in unter einer Sekunde.
+  #
+  # **Nichts ist entfallen**, nur verschoben.
   audit:
     name: Zahlensemantik-Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Python
+        uses: actions/setup-python@v5
         with:
-          workspaces: INTEGER_LLM/kernels
+          python-version: "3.12"
+
+      - name: Audit — Gleitkomma und Skalen
+        working-directory: INTEGER_LLM
+        run: |
+          python3 tests/audit/test_no_float.py
+          python3 tests/audit/test_scales.py
+
+  # ── Whitepaper-Simulationen: eigener Job, damit sie parallel laufen ─
+  #
+  # Sie belegen die Zahlen aus Anhang B.9; laeuft eines der Programme
+  # nicht mehr, zitiert das Papier etwas, das es nicht gibt.
+  #
+  # **Eigener Job statt eines Schrittes im Audit**, weil zwei der
+  # Simulationen zusammen 84 der 89 Sekunden ausmachen
+  # (`topk_stability_sim.py` 56 s, `robustness_sim.py` 28 s). Ihre
+  # Stichprobenzahlen zu senken waere der naheliegende Weg und der
+  # falsche: `N_TRIALS = 400` und `N = 60_000` sind die Werte, mit denen
+  # die Zahlen des Anhangs entstanden sind. Wer sie senkt, hat andere
+  # Zahlen und dieselbe Laufzeit im naechsten Anhang.
+  #
+  # Ein eigener Job kostet dagegen keine Wanduhrzeit: Er laeuft parallel
+  # zu den Crate-Tests, die ohnehin laenger brauchen.
+  #
+  # Geprueft wird nur, dass die Programme **laufen**, nicht dass sie
+  # dieselben Zahlen liefern: Sie drucken, sie behaupten nicht. Das ist
+  # die schwaechere Aussage und die einzige, die heute moeglich ist; ein
+  # Golden-File je Simulation stuende im Fahrplan.
+  simulationen:
+    name: Whitepaper-Simulationen (Anhang B.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Audit-Tests
-        working-directory: INTEGER_LLM
-        run: |
-          python3 tests/audit/test_no_float.py
-          python3 tests/audit/test_scales.py
-          python3 tests/audit/test_division.py
-          python3 tests/audit/test_overflow.py
-
-      # Der Konformitaetslauf ist der Bit-Exaktheits-Anker des Projekts,
-      # und er lief bis zum 2026-08-24 in keiner CI. Ohne Artefakte
-      # bleiben die Op-Level-Vektoren: sechs Stueck, 1,3 Sekunden.
-      #
-      # **Nur 6 von 33.** Die Layer- und E2E-Vektoren brauchen kalibrierte
-      # Modell-Artefakte, die hier nicht liegen; run.sh ueberspringt sie
-      # und meldet 6/6. Das ist ehrlich, aber es heisst: Was hier gruen
-      # ist, deckt den Kernel ab, nicht das ganze Modell. Der volle Lauf
-      # gehoert auf eine Maschine mit Artefakten.
-      - name: Konformitaet — Op-Level-Golden-Vektoren (ohne Artefakte)
-        working-directory: INTEGER_LLM/conformance
-        run: ./run.sh reference
-
-      # Die Programme aus Whitepaper-Anhang B.9. Sie belegen die Zahlen
-      # des Anhangs; laeuft eines nicht mehr, zitiert das Papier ein
-      # Programm, das es nicht gibt.
-      #
-      # `latency_sim.py` und `security_sim.py` sind **dokumentierte Stubs
-      # fuer Meilenstein M1** und beenden sich mit Exit 1 und einer
-      # Begruendung. Sie stehen ausdruecklich in der Ausnahmeliste, damit
-      # niemand sie fuer kaputt haelt und niemand sie stillschweigend
-      # fuer erledigt.
-      #
-      # Geprueft wird nur, dass sie **laufen**, nicht dass sie dieselben
-      # Zahlen liefern: Sie drucken, sie behaupten nicht. Das ist die
-      # schwaechere Aussage und die einzige, die hier heute moeglich ist.
-      - name: Whitepaper-Simulationen (Anhang B.9)
+      # `latency_sim.py` und `security_sim.py` sind dokumentierte Stubs
+      # fuer Meilenstein M1 und beenden sich mit Exit 1 und Begruendung.
+      # Der Schritt schlaegt fehl, wenn einer von ihnen **durchlaeuft**:
+      # dann ist er entweder implementiert (und gehoert aus der Liste)
+      # oder er meldet seinen Zustand nicht mehr.
+      - name: Alle Simulationen ausfuehren
         working-directory: README/Whitepaper/simulations
         run: |
           set -e
