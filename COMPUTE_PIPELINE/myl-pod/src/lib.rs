@@ -37,11 +37,15 @@
 pub mod wire;
 pub mod trace;
 pub mod shard;
+pub mod standby;
 pub mod da;
 pub mod coordinator;
 pub mod micro_batch;
 
 pub use da::{DaStore, ErasureCoder, XorParityCoder};
+pub use standby::{
+    BesetzungFehler, PodBesetzung, RebuildAnlass, RebuildAuftrag, Uebernahme, RESERVE_PLAETZE,
+};
 pub use trace::{
     activation_hash, verify_input_hash, Rolle, TransitionSig, DST_SHARD_TRANSITION, ZERO_HASH,
 };

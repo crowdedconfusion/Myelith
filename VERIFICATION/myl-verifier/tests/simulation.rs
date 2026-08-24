@@ -436,3 +436,102 @@ fn die_erneuerung_verdraengt_die_aeltesten() {
     let b: Vec<_> = zweiter.segmente().cloned().collect();
     assert_eq!(a, b);
 }
+
+// ---------------------------------------------------------------------
+// 4.3: Liveness der Standby-Übernahme gegen Kap. 6.8
+// ---------------------------------------------------------------------
+
+/// **Kap. 6.8 macht eine quantitative Liveness-Zusage**, und hier wird
+/// sie gemessen statt geglaubt:
+///
+/// > „Fällt ein Shard-Miner aus, übernimmt der Standby-Miner des Pods
+/// > (k+2 Mitglieder, 2 in Reserve); Session-Verlust **nur bei mehr als
+/// > zwei gleichzeitigen Ausfällen** im selben Pod."
+///
+/// Zwei Aussagen stecken darin, und beide müssen geprüft werden:
+/// **bis zu zwei überstehen die Session** und **drei nicht**. Eine
+/// Implementierung, die bei drei Ausfällen stillschweigend weiterliefe,
+/// verspräche eine Redundanz, die es nicht gibt; eine, die schon bei
+/// einem aufgäbe, hielte die Zusage ebenfalls nicht.
+///
+/// Gemessen über alle Ausfallmuster bis zur Podgröße, nicht über eine
+/// ausgesuchte Folge.
+#[test]
+fn liveness_kap_6_8_zwei_ausfaelle_ja_drei_nein() {
+    use myl_pod::standby::{PodBesetzung, Uebernahme, RESERVE_PLAETZE};
+
+    fn miner(b: u64) -> MinerId {
+        let mut x = [0u8; 32];
+        x[..8].copy_from_slice(&b.to_le_bytes());
+        MinerId::new(x)
+    }
+
+    for k in 2..=8usize {
+        let liste: Vec<MinerId> = (1..=(k + RESERVE_PLAETZE) as u64).map(miner).collect();
+
+        for anzahl_ausfaelle in 0..=(RESERVE_PLAETZE + 2) {
+            let mut pod = PodBesetzung::neu(k, &liste, EpochId(1)).expect("Besetzung");
+            let mut verloren = false;
+            for i in 0..anzahl_ausfaelle {
+                let position = i % k;
+                match pod.ausfall(position, 100, 0, 6) {
+                    Uebernahme::Uebernommen { rebuild, .. } => {
+                        // Jede Übernahme zieht einen Rebuild nach sich,
+                        // und der ist nie leer, wenn die Session schon
+                        // läuft.
+                        assert!(!rebuild.ist_leer(), "k = {k}: Rebuild ohne Arbeit");
+                    }
+                    Uebernahme::SessionVerloren { .. } => verloren = true,
+                    Uebernahme::BereitsAusgefallen { .. } => {}
+                }
+                if verloren {
+                    break;
+                }
+            }
+
+            if anzahl_ausfaelle <= RESERVE_PLAETZE {
+                assert!(
+                    !verloren && pod.fahrbar(),
+                    "k = {k}, {anzahl_ausfaelle} Ausfälle: die Session muss überstehen"
+                );
+            } else {
+                assert!(
+                    verloren,
+                    "k = {k}, {anzahl_ausfaelle} Ausfälle: die Session muss verloren sein"
+                );
+            }
+        }
+    }
+}
+
+/// **Die Kosten der Übernahme**, damit die Zusage nicht auf dem Papier
+/// gilt und im Betrieb unbezahlbar ist.
+///
+/// Ein Rebuild kostet einen Prefill über alle bisherigen Positionen,
+/// also `Position · Layer`. An Position 10 000 einer langen Sitzung ist
+/// das die Arbeit von 10 000 Token für diesen Shard — mehr, als der
+/// Shard seit Sitzungsbeginn geleistet hat, wäre es nicht.
+///
+/// Der Test hält die Größenordnung fest, damit sichtbar bleibt, dass
+/// „Standby übernimmt" nicht kostenlos ist.
+#[test]
+fn die_uebernahme_kostet_einen_prefill() {
+    use myl_pod::standby::{PodBesetzung, Uebernahme};
+
+    fn miner(b: u64) -> MinerId {
+        let mut x = [0u8; 32];
+        x[..8].copy_from_slice(&b.to_le_bytes());
+        MinerId::new(x)
+    }
+    let liste: Vec<MinerId> = (1..=6u64).map(miner).collect();
+
+    for position in [1u64, 100, 10_000] {
+        let mut pod = PodBesetzung::neu(4, &liste, EpochId(1)).unwrap();
+        match pod.ausfall(0, position, 0, 6) {
+            Uebernahme::Uebernommen { rebuild, .. } => {
+                assert_eq!(rebuild.arbeit(), position as u128 * 6);
+            }
+            andere => panic!("musste übernommen werden: {andere:?}"),
+        }
+    }
+}

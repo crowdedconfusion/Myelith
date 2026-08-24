@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.6.0
+> **Version:** 0.7.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
@@ -55,6 +55,53 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.7.0 – 2026-08-24 (Phase 3: Ausfallsicherung und Epochen-Übergang)
+
+`src/standby.rs`: Standby-Übernahme (3.1) und KV-Cache-Rebuild bei
+Ausfall oder Epochenwechsel (3.2).
+
+**Kap. 6.8 macht eine quantitative Zusage**, und beide Hälften werden
+geprüft: bis zu zwei gleichzeitige Ausfälle übersteht die Session, **drei
+nicht**. Die zweite Hälfte ist die, die man vergisst; eine
+Implementierung, die bei drei stillschweigend weiterliefe, verspräche
+eine Redundanz, die es nicht gibt.
+
+**Warum die Übernahme nicht „einen anderen Miner nehmen" ist:** Der
+Standby hat keinen KV-Cache und muss ihn **bitgleich** nachbauen, sonst
+weicht die Spur ab dem Übernahmezeitpunkt ab und der Redundanzvergleich
+meldet einen ehrlichen Pod als fehlerhaft.
+
+**Bitgleich ist hier billig zu haben, und das ist kein Zufall:** Die
+Rechnung ist ganzzahlig und damit reihenfolgeunabhängig, ein Prefill über
+dieselben Token liefert denselben Cache, unabhängig von Maschine und
+Parallelisierung. **In einem Gleitkomma-System wäre der Cache-Rebuild ein
+Bruch der Sitzung.** Das ist eine Folge der Grundentscheidung des
+Projekts, die im Whitepaper so nicht steht.
+
+`RebuildAnlass` hat **genau zwei Werte**, und der Typ ist die
+Durchsetzung von Kap. 4.2 („nur bei Ausfall oder Epochenwechsel
+ausgelöst"): Ein dritter Grund ließe sich nicht eintragen, ohne dass
+jemand ihn benennt. Der Epochenwechsel liefert Rebuild-Aufträge **nur für
+gewechselte Positionen**; wer bleibt, behält seinen Cache.
+
+#### Zwei Fallen, die der Bau sichtbar gemacht hat
+
+- **Eine doppelt gemeldete Ausfallmeldung darf keine zweite Reserve
+  verbrauchen.** Im Netz sind doppelte Meldungen der Normalfall.
+  Verbrauchte jede einen Platz, wäre die Zusage „zwei Ausfälle" in
+  Wahrheit „eine Meldung", und ein Angreifer, der dieselbe Meldung
+  dreimal schickt, verlöre die Session ohne jeden Ausfall.
+- **Ein Miner darf nicht zweimal im Pod stehen.** Sonst wäre sein Ausfall
+  zwei gleichzeitige, und die Zusage rechnete mit einer Redundanz, die es
+  nicht gibt.
+
+#### ⚠️ Punkt 3.3 trägt kein volles Häkchen
+
+Die Schnittstelle steht, die **Verdrahtung nicht**: Es gibt keine Stelle,
+die den Scheduler befragt und das Ergebnis einspeist, weil es **kein
+Knoten-Binary gibt**, das `myl-scheduler` und `myl-pod` zusammenführt.
+Dieselbe Lücke wie bei K1.
 
 ### myl-pod v0.6.0 – 2026-08-23 (Fund 41: die Manipulationserkennung ging leer durch)
 

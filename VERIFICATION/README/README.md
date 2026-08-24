@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.5.0
+> **Version:** 0.6.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5), dazu
 > die adversariale Testebene aus Punkt 4.4: Redundanzvergleich (Stufe 1),
@@ -125,6 +125,27 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### myl-verifier v0.6.0 – 2026-08-24 (Punkt 4.3: Liveness gemessen)
+
+Kap. 6.8 macht eine **quantitative** Liveness-Zusage: „Session-Verlust
+nur bei mehr als zwei gleichzeitigen Ausfällen im selben Pod." Zwei
+Aussagen stecken darin, und `tests/simulation.rs` prüft **beide**: bis zu
+zwei überstehen die Session, **drei nicht**. Gemessen über alle
+Ausfallmuster bis zur Podgröße, nicht über eine ausgesuchte Folge.
+
+Dazu die Kostenseite: Ein Rebuild kostet `Position · Layer`, an Position
+10 000 also die Arbeit von 10 000 Token für diesen Shard. „Standby
+übernimmt" ist nicht kostenlos, und der Test hält die Größenordnung fest,
+damit die Zusage nicht auf dem Papier gilt und im Betrieb unbezahlbar
+ist.
+
+*Zur Abhängigkeit:* `myl-pod` steht als **Dev-Abhängigkeit** in der
+`Cargo.toml`, nicht als normale. Es hängt seinerseits an `myl-verifier`;
+als normale Abhängigkeit wäre das ein Zyklus, für Dev-Abhängigkeiten
+erlaubt Cargo ihn, weil sie nicht in den Bibliotheksbau eingehen. Die
+Standby-Übernahme wohnt in `myl-pod`, die Zusage, die sie einhalten muss,
+steht in Kap. 6.8 und damit in dieser Komponente.
 
 ### myl-verifier v0.5.0 – 2026-08-24 (Kontrollsegmente, und die Simulationen gegen das Papier)
 

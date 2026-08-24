@@ -1,6 +1,6 @@
 [package]
 name = "myl-verifier"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Verifikations-Subsystem für Myelith (Whitepaper Kap. 6.4–6.9, Anhang A.4): Redundanzvergleich, Bisektions-Spiel, Kontrollsegmente. Nutzt INTEGER_LLMs Determinismus-Eigenschaft für wirtschaftliche Manipulationssicherung."
@@ -18,3 +18,13 @@ name = "myl_verifier"
 path = "src/lib.rs"
 
 [dev-dependencies]
+# **Dev-Abhängigkeit, nicht normale.** `myl-pod` hängt seinerseits an
+# `myl-verifier` (es benutzt `compare_commitments`); als normale
+# Abhängigkeit wäre das ein Zyklus, den Cargo ablehnt. Für
+# Dev-Abhängigkeiten ist der Zyklus erlaubt, weil sie nicht in den
+# Bibliotheksbau eingehen.
+#
+# Gebraucht wird sie für den Liveness-Test aus Punkt 4.3: Die
+# Standby-Übernahme wohnt in `myl-pod`, die Zusage, die sie einhalten
+# muss, steht in Kap. 6.8 und damit in dieser Komponente.
+myl-pod = { path = "../../COMPUTE_PIPELINE/myl-pod" }
