@@ -214,6 +214,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-scheduler"
+version = "0.2.11"
+dependencies = [
+ "borsh",
+ "myl-types",
+ "sha2",
+]
+
+[[package]]
 name = "myl-types"
 version = "0.4.0"
 dependencies = [
@@ -227,10 +236,11 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "borsh",
  "myl-ledger",
+ "myl-scheduler",
  "myl-types",
  "sha2",
 ]

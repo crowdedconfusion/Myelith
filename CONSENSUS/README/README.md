@@ -173,10 +173,15 @@ und einer Stunden-Epoche:
 
 | Fall | Verdopplung nach | Faktor nach einer Epoche | volle Historie |
 |---|---|---|---|
-| 0,5B, ganzes Modell, 38,19 tok/s | 0,03 s | **137 484** | 1 103 345 |
-| 0,5B, Viertel-Shard | 0,14 s | 24 898 | 199 816 |
-| 7B, ganzes Modell, 2,07 tok/s | 0,48 s | 7 452 | 59 804 |
-| 7B, Viertel-Shard | 2,1 s | 1 719 | 13 799 |
+| 0,5B, ganzes Modell, 49,17 tok/s | 0,020 s | **177 012** | 1 420 568 |
+| 0,5B, Viertel-Shard | 0,081 s | 44 253 | 355 142 |
+| 7B, ganzes Modell, 10,74 tok/s | 0,093 s | 38 664 | 310 289 |
+| 7B, Viertel-Shard | 0,404 s | 8 921 | 71 593 |
+
+*Durchsatzwerte vom 2026-08-24, nach der Zeilen-Parallelisierung. Die
+erste Fassung dieser Tabelle rechnete mit 38,19 und 2,07 tok/s und blieb
+stehen, als sich der Durchsatz verschob; gefunden von der Härtungsschleife
+(Fund 51).*
 
 Der Stake hörte damit nach wenigen Sekunden Arbeit auf, Angriffskosten
 zu sein. Genau davor warnte der zweite offene Punkt der Wiedervorlage;
@@ -187,7 +192,7 @@ wäre.
 
 - `arbeitsbezug` (Vorgabe **1,7 · 10⁹**): die vTFE-Menge, die einen
   Bonus in Höhe des Stakes wert ist. Hergeleitet aus dem Referenzfall
-  „ein Viertel von 7B, eine Stunden-Epoche, 2,07 tok/s".
+  „ein Viertel von 7B, eine Stunden-Epoche, 10,74 tok/s"; die erste Herleitung rechnete mit 2,07 tok/s, dem Durchsatz vor der Zeilen-Parallelisierung (Fund 51).
 - `hoechstfaktor` (Vorgabe **10**): Das Gesamtgewicht übersteigt den
   Stake nie um mehr als diesen Faktor.
 

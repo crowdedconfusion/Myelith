@@ -593,8 +593,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-scheduler"
+version = "0.2.11"
+dependencies = [
+ "borsh",
+ "myl-types",
+ "sha2",
+]
+
+[[package]]
 name = "myl-tokenomics"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "myl-ledger",
  "myl-types",
@@ -618,6 +627,7 @@ version = "0.4.0"
 dependencies = [
  "borsh",
  "myl-ledger",
+ "myl-scheduler",
  "myl-types",
  "sha2",
 ]

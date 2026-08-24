@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.7.0
+> **Version:** 0.8.0
 > **Datum:** 2026-08-23
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -83,6 +83,26 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.8.0 – 2026-08-24 (die entschiedenen Punkte umgesetzt)
+
+- **`self_dealing_sicher_konservativ`** prüft gegen das **untere** Ende
+  des Bandes aus Anhang B.4 (c = 0,6 ⇒ s < 1,5) und nimmt kein `c` mehr
+  entgegen. Damit ist Fund 49 geschlossen: Die Zwei-Schritte-Lücke hat
+  keinen ersten Schritt mehr.
+- **`satz_gestaffelt`** staffelt die beiden Spannen aus Kap. 5.5 nach
+  Wiederholung innerhalb von zehn Epochen: Nichtverfügbarkeit 1/3/5 %,
+  Validator 30/65/100 %. Das Fenster ist so lang wie die Arbeitshistorie
+  des Stimmgewichts, weil beide dieselbe Frage beantworten.
+- **`burn_spielraum`** ist der Burn-Cap je Adresse, den Kap. 5.6 seit v0.1
+  als Gegenmittel gegen Self-Dealing nennt und den niemand implementiert
+  hatte: ein Zwanzigstel des geglätteten Burns, wirksam ab 1000 MYL. Er
+  beantwortet die offene K8-Frage nicht, er **begrenzt** sie: Eine
+  einzelne Adresse kann den geglätteten Burn nicht mehr im Alleingang
+  bewegen, und wer den Stoß trotzdem will, braucht zwanzig Adressen mit je
+  eigener Deckung.
+- **`update_price_mit_untergrenze`** beschneidet den Preis gegen eine
+  Untergrenze statt gegen null. Null hieße kostenlose Inferenz für alle.
 
 ### v0.7.0 – 2026-08-24 (Phase 3 und 4 vollständig)
 

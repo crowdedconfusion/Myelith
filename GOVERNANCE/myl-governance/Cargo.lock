@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "myl-ledger",
  "myl-types",

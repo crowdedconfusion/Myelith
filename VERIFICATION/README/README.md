@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5), dazu
 > die adversariale Testebene aus Punkt 4.4: Redundanzvergleich (Stufe 1),
@@ -125,6 +125,65 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### myl-verifier v0.5.0 – 2026-08-24 (Kontrollsegmente, und die Simulationen gegen das Papier)
+
+#### Phase 3: Kontrollsegmente (Kap. 6.7)
+
+`src/kontrollsegmente.rs`: Vorrat, Einschleusungsplan mit Anteil γ,
+Erneuerung aus geprüften Echtsegmenten, Prüfung gegen das Soll. γ steht
+als Governance-Parameter in der Registry.
+
+Der Mechanismus ist der **einzige der Architektur, der gegen den
+einmaligen Eingriff wirkt**: Stufe 1 und 2 setzen beide voraus, dass der
+Zwillings-Pod ehrlich rechnet oder der Angreifer wiederholt auffällt.
+
+⚑ **Was das Modul nicht leistet, und es gehört vor den Haken gesagt.**
+Kap. 6.7 nennt die **Ununterscheidbarkeit** als erste
+Konstruktionsanforderung. Das ist eine **Eigenschaft der Daten, nicht des
+Codes**: Kein Datentyp erzwingt, dass ein Prompt im Timing-, Längen- und
+Kontextprofil unauffällig ist. Das Whitepaper führt es selbst als offene
+Messfrage (Kap. 11, Punkt 5). **Punkt 3.2 trägt deshalb kein volles
+Häkchen**, sondern „Mechanik ✅, Ununterscheidbarkeit ❌". Erkennt ein
+Miner Kontrollsegmente an statistischen Merkmalen, trägt auch der Rest
+dieser Phase nichts.
+
+⚑ **Die Sicherheitsbedingung der Einschleusung** kann im Code ebenfalls
+nicht erzwungen werden: Der Seed gehört dem Gateway und darf erst nach
+Auslieferung offengelegt werden. Wer ihn vorher kennt, weiß, welche
+Aufträge Kontrollen sind, und manipuliert genau die anderen.
+
+#### Phase 4.1 und 4.2: die Simulationen
+
+**Sie rechnen die Formeln nicht nach, sie messen an den echten
+Zuteilungsfunktionen.** `β^{2k}` in einem Test noch einmal auszurechnen
+belegt nichts außer der Rechenfähigkeit des Testrahmens. Die Formeln des
+Papiers unterstellen unabhängige, gleichverteilte Ziehungen; die
+Implementierung zieht nicht so, denn Pods entstehen aus Geo-Clustern und
+die Redundanzpaarung verlangt disjunkte, zonendiverse Pods. Anhang B.2
+nennt diese Frage selbst und verschiebt sie auf Meilenstein M1.
+
+| Simulation | Papier | gemessen |
+|---|---|---|
+| Kollusion, β = 50 %, k = 4, 10 000 Zuteilungen | β^2k = 3,906 · 10⁻³ | **3,900 · 10⁻³** |
+| Soundness, 200 000 Segmente | Produkt der Einzelraten 0,96040 | **0,96045**, Abweichung 0,01 % |
+
+Beide Aussagen des Papiers halten gegen die Implementierung. Bei β = 20 %
+liegt die erwartete Ereigniszahl bei 0,026 und ist mit dieser Stichprobe
+nicht messbar; 0 von 10 000 belegt dort nichts, und das steht so im Test.
+
+*Nebenbefund zur Soundness:* Auch bei **demselben** Seed für Stichprobe
+und Einschleusung bleibt die Abweichung bei 0,00 %, weil die beiden
+Verfahren verschieden ziehen (Lotterie gegen Sortierschlüssel). Die
+Betriebsregel verschiedener Seeds bleibt richtig, hängt dann aber nicht an
+der Unabhängigkeit, sondern daran, dass ein gemeinsamer Seed beide Mengen
+auf einmal verrät.
+
+⚑ **Beim Bau aufgefallen:** `myl_scheduler::assign_redundant_pods` gibt
+einen **leeren Vektor** zurück, wenn für die Miner keine `NodeMetadata`
+vorliegen. Fail-closed und damit die richtige Richtung, aber **still**:
+nicht zu unterscheiden von „keine Segmente angefragt". Vermerkt im
+Fahrplan.
 
 ### myl-verifier v0.4.0 – 2026-08-23 (adversariale Testebene, Punkt 4.4; ⚑ Fund 42 und 43)
 

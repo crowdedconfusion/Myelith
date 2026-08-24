@@ -21,6 +21,7 @@ pub mod redundancy;
 pub mod delivery;
 pub mod checker;
 pub mod challenge;
+pub mod kontrollsegmente;
 pub mod bisection;
 pub mod slash;
 pub mod adjudicate;
@@ -33,6 +34,9 @@ pub use delivery::{
 };
 pub use checker::{
     check_segment, CheckError, CheckResult, SegmentAuditor,
+};
+pub use kontrollsegmente::{
+    einschleusungsplan, Kontrollergebnis, Kontrollsegment, KontrollsegmentVorrat, VorratFehler,
 };
 pub use challenge::{
     create_challenge, find_first_divergence, challenge_hash, Challenge, ChallengeError,

@@ -119,6 +119,7 @@ CONSENSUS_PATH = [
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "slash.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "kontrollsegmente.rs",
     # NETWORKING, nachgetragen 2026-08-23 (Fund 44).
     #
     # Diese Liste enthielt bis dahin **keine einzige Datei aus
