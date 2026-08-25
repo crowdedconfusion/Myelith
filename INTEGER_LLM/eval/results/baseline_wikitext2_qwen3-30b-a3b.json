@@ -1,0 +1,35 @@
+{
+  "model": "Qwen/Qwen3-30B-A3B (HF, BF16)",
+  "dataset": "wikitext-2-raw-v1 (Testsplit)",
+  "n_sequences": 4,
+  "seq_len": 128,
+  "evaluated_tokens": 435,
+  "sum_logp": -1022.1248931884766,
+  "perplexity": 10.48255448892767,
+  "sequences": [
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -290.5408935546875,
+      "perplexity": 9.852483656782422
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -234.18353271484375,
+      "perplexity": 6.321552486093188
+    },
+    {
+      "tokens": 128,
+      "evaluated": 127,
+      "sum_logp": -324.6839904785156,
+      "perplexity": 12.89148291493619
+    },
+    {
+      "tokens": 55,
+      "evaluated": 54,
+      "sum_logp": -172.7164764404297,
+      "perplexity": 24.49461426373386
+    }
+  ]
+}

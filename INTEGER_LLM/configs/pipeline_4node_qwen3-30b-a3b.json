@@ -1,11 +1,11 @@
 {
-  "pipeline_hash": "sha256:fe38b9053143830609ee33a5385a78577aeba55c4b45b47dfd403e322a363e9b",
-  "theta_v_hash": "sha256:8a81ade6bcc5d59723d83698058d6cda1cb40b36124cb5a29a2e831ecf093e25",
+  "pipeline_hash": "sha256:8dcc87faf015941f471b139f57e4b1ccac22c48f6d0858f280643e763adcb5f0",
+  "theta_v_hash": "sha256:99d61faadcc4855485b07d980e2e5be52a369b7db189540e51e4469800b4d65c",
   "stages": [
     {
       "stage_id": 0,
       "layer_start": 0,
-      "layer_end": 6,
+      "layer_end": 12,
       "has_embedding": true,
       "has_lm_head": false,
       "has_sampling": false,
@@ -20,8 +20,8 @@
     },
     {
       "stage_id": 1,
-      "layer_start": 6,
-      "layer_end": 12,
+      "layer_start": 12,
+      "layer_end": 24,
       "has_embedding": false,
       "has_lm_head": false,
       "has_sampling": false,
@@ -36,8 +36,8 @@
     },
     {
       "stage_id": 2,
-      "layer_start": 12,
-      "layer_end": 18,
+      "layer_start": 24,
+      "layer_end": 36,
       "has_embedding": false,
       "has_lm_head": false,
       "has_sampling": false,
@@ -52,8 +52,8 @@
     },
     {
       "stage_id": 3,
-      "layer_start": 18,
-      "layer_end": 24,
+      "layer_start": 36,
+      "layer_end": 48,
       "has_embedding": false,
       "has_lm_head": true,
       "has_sampling": true,

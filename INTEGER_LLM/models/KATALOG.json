@@ -64,8 +64,8 @@
     "gewichte_anzeige": "rund 7,5 GB",
     "artefakt_bytes": 4814843342,
     "artefakt_anzeige": "4,5 GB",
-    "status": "erprobt",
-    "perplexitaet": "noch nicht gegen die bf16-Referenz gemessen",
+    "status": "verifiziert",
+    "perplexitaet": "19,95 gegen BF16 19,63 (+1,64 %)",
     "bemerkung": "Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm.\nDrei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war:\nQK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases,\nund head_dim 128 bei hidden_size/num_heads = 80 (Fund 59).\nStatus 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist\nbitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen."
   },
   "qwen3-30b-a3b": {
@@ -85,8 +85,8 @@
     "gewichte_anzeige": "rund 57 GB",
     "artefakt_bytes": 31198977198,
     "artefakt_anzeige": "29.1 GB",
-    "status": "erprobt",
-    "perplexitaet": "noch nicht gegen die bf16-Referenz gemessen",
-    "bemerkung": "Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer,\nTop-8, alle 48 Layer sind MoE (mlp_only_layers ist leer).\nKalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell\n56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden\neingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom.\nArtefakt: 18 868 Tensoren in 37 747 Dateien.\nBelegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet\n' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei\nunabhaengige Laeufe gleich.\nStatus 'erprobt', nicht 'verifiziert': Der Perplexitaetsabstand gegen die\nbf16-Referenz ist offen."
+    "status": "verifiziert",
+    "perplexitaet": "10,42 gegen BF16 10,48 (-0,59 %). Das Vorzeichen ist kein Beleg fuer Ueberlegenheit: Zwei der vier Sequenzen sind besser, zwei schlechter, und der Standardfehler des Mittels betraegt 1,66 %. Bei 435 Positionen ist kein Unterschied auflösbar; das Kriterium (<= 5 %) ist mit weitem Abstand erfuellt",
+    "bemerkung": "Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer,\nTop-8, alle 48 Layer sind MoE (mlp_only_layers ist leer).\nKalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell\n56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden\neingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom.\nArtefakt: 18 868 Tensoren in 37 747 Dateien.\nBelegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet\n' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei\nunabhaengige Laeufe gleich.\nPerplexitaet am 2026-08-25 gemessen; Einordnung siehe dort und im\nFahrplan. Nach Gesamtparametern setzt das Modell die Reihe fort, in der\nder Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %,\n7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht.\nWelche der beiden Groessen massgeblich ist, ist offen."
   }
 }

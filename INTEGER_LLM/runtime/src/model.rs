@@ -182,6 +182,29 @@ pub struct LayerScales {
 }
 
 /// Ein Transformer-Layer.
+/// Was der Router einer MoE-Layer für **eine** Position entschieden hat.
+///
+/// Nur für Messungen erhoben, nie im Regelbetrieb: `forward_layer` nimmt
+/// den Sammler als `Option` entgegen und rührt ihn sonst nicht an.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routingbefund {
+    pub layer: usize,
+    /// Die gewählten Experten, in Auswahlreihenfolge.
+    pub experten: Vec<u16>,
+    /// Wie viele **nicht** gewählte Experten denselben Logit tragen wie
+    /// der zuletzt gewählte. Null heißt: Die Auswahl war eindeutig, ganz
+    /// ohne Tie-Break. Siehe `kernels::moe::randgleichstaende`.
+    pub randgleichstaende: usize,
+    /// Dasselbe, aber über die **Wahrscheinlichkeiten** statt über die
+    /// Logits gezählt.
+    ///
+    /// Die Vergleichszahl zur Festlegung in `kernels::moe`: Ausgewählt
+    /// wird über die Logits, weil der Weg über die exp-Tabelle
+    /// Gleichstände erzeugt, die es vorher nicht gab. Wie viele, sagt
+    /// erst diese Zahl.
+    pub randgleichstaende_wahrscheinlichkeit: usize,
+}
+
 /// Der Feedforward-Teil einer Layer.
 ///
 /// **Warum ein Enum und nicht drei Tensoren plus ein optionales
@@ -390,6 +413,60 @@ impl Default for ModelConfig {
 }
 
 impl IntegerModel {
+    /// Wie [`IntegerModel::forward_token`], aber sammelt je MoE-Layer die
+    /// Routing-Entscheidung.
+    ///
+    /// **Für Messungen, nicht für den Betrieb.** Sie rechnet dasselbe wie
+    /// `forward_token`, kostet aber je MoE-Layer einen zweiten Durchgang
+    /// über die Router-Logits, um die Gleichstände an der Auswahlgrenze
+    /// zu zählen. Bei einem dichten Modell bleibt die Liste leer.
+    ///
+    /// Der Grund für den eigenen Einstieg statt eines Schalters am
+    /// Modell: Ein Zähler im Modell müsste `Sync` sein, weil `myl-pod`
+    /// die Shards als `Arc` über Threads teilt (Fund A17). Ein
+    /// durchgereichter Sammler braucht das nicht.
+    pub fn forward_token_mit_routing(
+        &self,
+        token_id: usize,
+        pos: usize,
+        cache: &mut KVCache,
+    ) -> (Vec<i32>, Vec<Routingbefund>) {
+        let cfg = &self.config;
+        let first_residual_frac = &self.layers[0].scales.residual_in_frac;
+        let emb = self.embedding_table.row(token_id);
+        let emb_shift = self.embedding_table.shifts[token_id];
+        let mut hidden: Vec<i16> = emb
+            .iter()
+            .enumerate()
+            .map(|(i, v)| clamp_i16(rescale(*v as i32, emb_shift, first_residual_frac[i])))
+            .collect();
+
+        let mut befunde = Vec::new();
+        for (i, layer) in self.layers.iter().enumerate() {
+            let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                &self.layers[i + 1].scales.residual_in_frac
+            } else {
+                &self.final_residual_frac
+            };
+            hidden = self.forward_layer(
+                layer, &hidden, pos, cache, out_frac, Some(&mut befunde),
+            );
+        }
+
+        let normed = rmsnorm_i16(
+            &hidden,
+            &self.final_residual_frac,
+            &self.final_norm_gamma.data,
+            &self.final_norm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+        );
+        (self.head_logits(&normed), befunde)
+    }
+
     /// Einzelner Forward-Schritt fuer ein Token an Position `pos`.
     /// KV-Cache wird gelesen und geschrieben.
     pub fn forward_token(
@@ -422,7 +499,7 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None);
         }
 
         // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
@@ -516,7 +593,7 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(&self.layers[i], &hidden, pos, cache, out_frac);
+            hidden = self.forward_layer(&self.layers[i], &hidden, pos, cache, out_frac, None);
         }
         hidden
     }
@@ -571,6 +648,7 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
         out_residual_frac: &[u8],
+        befunde: Option<&mut Vec<Routingbefund>>,
     ) -> Vec<i16> {
         let cfg = &self.config;
         let hs = self.hidden_size;
@@ -842,7 +920,7 @@ impl IntegerModel {
                 self.mlp_vorwaerts(mlp, &norm_residual, sc, cfg, &acc_mlp)
             }
             Feedforward::Moe(moe) => {
-                self.moe_vorwaerts(moe, &norm_residual, sc, cfg, &acc_mlp)
+                self.moe_vorwaerts(moe, &norm_residual, sc, cfg, &acc_mlp, befunde, layer.layer_idx)
             }
         };
 
@@ -923,7 +1001,7 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac);
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None);
             dump.push((hidden.clone(), out_frac.to_vec()));
         }
 
@@ -1022,6 +1100,7 @@ impl IntegerModel {
     /// davon ab, welche anderen Token im Batch lagen. Zwei redundante
     /// Pods batchen verschieden, und der Redundanzvergleich meldete zwei
     /// ehrliche Pods als abweichend.
+    #[allow(clippy::too_many_arguments)]
     fn moe_vorwaerts(
         &self,
         moe: &MoeLayer,
@@ -1029,6 +1108,8 @@ impl IntegerModel {
         sc: &LayerScales,
         cfg: &ModelConfig,
         acc: &[u8],
+        befunde: Option<&mut Vec<Routingbefund>>,
+        layer_idx: usize,
     ) -> Vec<i16> {
         // Router-Logits. Die Projektion laeuft wie jede andere; ihre
         // Ausgangsskala ist kalibriert wie die der uebrigen Projektionen.
@@ -1053,6 +1134,28 @@ impl IntegerModel {
             cfg.prob_frac_bits,
             moe.norm_topk_prob,
         );
+
+        // Nur wenn jemand misst. Im Regelbetrieb ist das ein
+        // Option-Test je MoE-Layer, sonst nichts; `randgleichstaende`
+        // laeuft ein zweites Mal ueber die Logits und hat im heissen
+        // Pfad nichts zu suchen.
+        if let Some(sammler) = befunde {
+            let ueber_wahrscheinlichkeit = integer_llm_kernels::softmax::softmax_int(
+                &logits,
+                &self.exp_lut,
+                exp_lut_shift,
+                cfg.prob_frac_bits,
+            );
+            sammler.push(Routingbefund {
+                layer: layer_idx,
+                experten: routing.experten.clone(),
+                randgleichstaende: integer_llm_kernels::moe::randgleichstaende(&logits, moe.top_k),
+                randgleichstaende_wahrscheinlichkeit:
+                    integer_llm_kernels::moe::randgleichstaende(
+                        &ueber_wahrscheinlichkeit, moe.top_k,
+                    ),
+            });
+        }
 
         // Die gewaehlten Experten rechnen. Alle schreiben auf dieselbe
         // Ausgangsskala `acc`, denn sie addieren in denselben

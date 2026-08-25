@@ -17,12 +17,44 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
         eprintln!("Usage: {} <artifact_dir> <prompt> [max_tokens]", args[0]);
+        eprintln!("       {} <artifact_dir> --prompts <datei> [max_tokens]", args[0]);
         std::process::exit(1);
     }
 
     let artifact_dir = PathBuf::from(&args[1]);
-    let prompt = &args[2];
-    let max_tokens: usize = match args.get(3) {
+
+    // ⚑ **Mehrere Prompts in einem Prozess** (2026-08-25).
+    //
+    // Bis heute nahm dieses Binary genau einen Prompt entgegen, und
+    // `bench/qualitativ.py` startete es je Prompt neu. Das war richtig,
+    // solange Laden drei Sekunden kostete. **Bei Qwen3-30B-A3B sind es
+    // rund zwei Minuten**, und der Benchmark braucht acht Prompts mal
+    // zwei Laeufe: sechzehn Ladevorgaenge, also gut eine halbe Stunde
+    // ausschliesslich fuer das Lesen derselben 29 GiB.
+    //
+    // Mit `--prompts <datei>` (eine Zeile je Prompt) laedt das Binary
+    // einmal und generiert fuer jede Zeile. Die Ausgabe je Prompt ist
+    // dieselbe wie im Einzelfall, damit vorhandene Auswertungen sie
+    // unveraendert lesen koennen.
+    let mehrfach = args[2] == "--prompts";
+    let prompts: Vec<String> = if mehrfach {
+        let datei = args.get(3).ok_or("--prompts braucht eine Datei")?;
+        let inhalt = std::fs::read_to_string(datei)
+            .map_err(|e| format!("Promptdatei {datei} nicht lesbar: {e}"))?;
+        let zeilen: Vec<String> = inhalt
+            .lines()
+            .map(|z| z.trim_end().to_string())
+            .filter(|z| !z.is_empty())
+            .collect();
+        if zeilen.is_empty() {
+            return Err(format!("Promptdatei {datei} enthaelt keine Zeile"));
+        }
+        zeilen
+    } else {
+        vec![args[2].clone()]
+    };
+    let token_arg = if mehrfach { args.get(4) } else { args.get(3) };
+    let max_tokens: usize = match token_arg {
         Some(s) => s.parse().map_err(|_| {
             format!("max_tokens muss eine positive Ganzzahl sein, erhalten: '{}'", s)
         })?,
@@ -66,17 +98,22 @@ fn run() -> Result<(), String> {
     })?;
     let seed = 42u64;
 
-    // Prompt-Token-IDs ausgeben: nuetzlich fuer Bitexaktheits-Abgleiche mit
-    // der HF-Referenz (identische Tokenisierung ist Voraussetzung dafuer,
-    // dass Numerik-Vergleiche ueberhaupt vergleichbare Eingaben sehen).
-    println!("[runtime] Prompt-Tokens: {:?}", tokenizer.encode(prompt));
-    println!("[runtime] Prompt: {}", prompt);
-    println!("[runtime] Generiere bis zu {} Token (greedy)...", max_tokens);
+    for prompt in &prompts {
+        // Prompt-Token-IDs ausgeben: nuetzlich fuer Bitexaktheits-Abgleiche
+        // mit der HF-Referenz (identische Tokenisierung ist Voraussetzung
+        // dafuer, dass Numerik-Vergleiche vergleichbare Eingaben sehen).
+        println!("[runtime] Prompt-Tokens: {:?}", tokenizer.encode(prompt));
+        println!("[runtime] Prompt: {}", prompt);
+        println!("[runtime] Generiere bis zu {} Token (greedy)...", max_tokens);
 
-    let tokens = generate(&model, &tokenizer, prompt, max_tokens, seed, true);
+        let tokens = generate(&model, &tokenizer, prompt, max_tokens, seed, true);
 
-    println!("[runtime] Generierte Token: {:?}", tokens);
-    println!("[runtime] Token-Hash: {}", integer_llm_runtime::generate::hash_tokens(&tokens));
+        println!("[runtime] Generierte Token: {:?}", tokens);
+        println!(
+            "[runtime] Token-Hash: {}",
+            integer_llm_runtime::generate::hash_tokens(&tokens)
+        );
+    }
 
     Ok(())
 }

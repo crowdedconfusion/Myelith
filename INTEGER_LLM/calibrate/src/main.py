@@ -33,16 +33,30 @@ import shutil
 import sys
 from pathlib import Path
 
-from .loader import load_reference_model
-from .stats import ActivationStatsCollector
+# ⚑ **Nur leichte Importe im Modulkopf** (2026-08-25).
+#
+# `.loader`, `.stats`, `.quantize`, `.gptq` und `.export_weights` ziehen
+# torch, transformers oder numpy nach. Sie werden **ausschliesslich
+# innerhalb von `main()`** benutzt und stehen deshalb dort.
+#
+# **Der Anlass war ein CI-Fehlschlag.** `test_export_workflow.py` holt
+# aus diesem Modul drei reine Rechenfunktionen (`gptq_hessian_bytes`,
+# `gptq_group_size`, `gptq_entscheidung`), die nichts als `os` und
+# `math` brauchen. Der Import zog trotzdem die ganze Kette mit und
+# scheiterte an `ModuleNotFoundError: No module named 'transformers'`.
+#
+# Die naheliegende Behebung waere gewesen, transformers in der CI zu
+# installieren. Das haette den Fehler zugedeckt: Eine Arithmetik-Funktion
+# soll ohne ein Zwei-Gigabyte-Paket importierbar sein, und dass sie es
+# nicht war, ist die eigentliche Kopplung.
+#
+# **Was das kostet:** Ein fehlendes torch faellt jetzt erst beim Aufruf
+# von `main()` auf statt beim Import. Fuer den einzigen echten Nutzer
+# dieses Moduls, den Kalibrierungslauf, ist das derselbe Augenblick.
 from .scales import compute_scales_from_stats
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                    generate_rope_luts, load_nonlinear_spec)
 from .export import export_theta_v
-from .quantize import (quantisiere_gewichte_strom,
-                       quantize_symmetric_int16_per_channel)
-from .gptq import HessianCollector, quantize_linear_layers_gptq
-from .export_weights import export_quantized_weights, export_lm_head
 from .model_configs import get_export_model_config, artifact_model_config
 from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
 from .paths import model_artifacts_dir, local_model_dir
@@ -224,6 +238,15 @@ from fortschritt import Fortschritt  # noqa: E402
 
 
 def main():
+
+    # Schwere Abhaengigkeiten, siehe Modulkopf: erst hier, damit dieses
+    # Modul ohne torch, transformers und numpy importierbar bleibt.
+    from .loader import load_reference_model
+    from .stats import ActivationStatsCollector
+    from .quantize import (quantisiere_gewichte_strom,
+                           quantize_symmetric_int16_per_channel)
+    from .gptq import HessianCollector, quantize_linear_layers_gptq
+    from .export_weights import export_quantized_weights, export_lm_head
     config_vorab = get_export_model_config(MODEL_NAME)
     use_gptq, gptq_grund = gptq_entscheidung(config_vorab)
     print(f"[calibrate] Modell: {MODEL_NAME} ({HF_MODEL_ID}), "

@@ -25,8 +25,24 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent.parent
-ARTIFACTS = ROOT / "artifacts" / "qwen2.5-0.5b"
-CONFIG = ROOT / "configs" / "pipeline_4node.json"
+
+# ⚑ **Modell und Konfiguration sind waehlbar** (2026-08-25).
+#
+# Vorher stand hier ein fester Modellname, und damit war der einzige
+# Mehrknotenlauf des Projekts ausschliesslich an einem **dichten** Modell
+# geprueft. Genau diese Pruefung ist aber die Zusage, auf die sich ein
+# Mixture-of-Experts-Modell stuetzt: Die Pod-Kette soll unveraendert
+# bleiben, weil jeder Knoten alle Experten SEINER Layer haelt.
+#
+#   MYL_MODELL=qwen3-30b-a3b \
+#   MYL_PIPELINE_CONFIG=configs/pipeline_4node_qwen3-30b-a3b.json \
+#   python3 tests/integration/test_pipeline_multinode.py
+import os as _os
+_MODELL = _os.environ.get("MYL_MODELL", "qwen2.5-0.5b")
+ARTIFACTS = ROOT / "artifacts" / _MODELL
+CONFIG = ROOT / _os.environ.get(
+    "MYL_PIPELINE_CONFIG", "configs/pipeline_4node.json"
+)
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
@@ -42,9 +58,28 @@ REQUEST_ID = 1
 FLAG_STARTS_GENERATION = 0x1
 FLAG_TOKEN_INPUT = 0x4
 
-# Kanonischer theta_v-Hash aus configs/pipeline_4node.json, trunkiert
-# auf die ersten 16 Hex-Ziffern (u64 im Nachrichten-Header).
-THETA_U64 = int("16f0e49c0ee8c719", 16)
+# Kanonischer theta_v-Hash, trunkiert auf die ersten 16 Hex-Ziffern
+# (u64 im Nachrichten-Header).
+#
+# ⚑ **Aus der Konfiguration gelesen, nicht abgeschrieben** (2026-08-25).
+# Hier stand `int("16f0e49c0ee8c719", 16)` mit dem Kommentar „aus
+# configs/pipeline_4node.json" - eine **Kopie, keine Ableitung**. Als
+# theta_v auf 0.15.0 und 0.16.0 wechselte, wurde der Wert falsch, und
+# Stage 0 verwarf jede Nachricht stillschweigend: Der Test meldete
+# „Nur 0/6 Tokens" und nannte den Grund nicht.
+#
+# **Der Fehler war doppelt verdeckt.** Davor scheiterten die Knoten schon
+# am Start, weil auch der `theta_v_hash` der Konfiguration veraltet war.
+# Erst nachdem der behoben war, kam dieser zweite zum Vorschein. Und
+# gemerkt hat es niemand, weil dieser Test **in keinem CI-Job laeuft**:
+# Er braucht Artefakte, und die hat die CI nicht.
+def _theta_u64(pfad):
+    import json
+    hash_str = json.load(open(pfad, encoding="utf-8"))["theta_v_hash"]
+    return int(hash_str.removeprefix("sha256:")[:16], 16)
+
+
+THETA_U64 = _theta_u64(CONFIG)
 
 
 def find_free_port():
@@ -123,7 +158,31 @@ class NodeProc:
         for line in self.proc.stdout:
             self.lines.append(line.rstrip())
 
-    def wait_started(self, timeout=60):
+    def wait_started(self, timeout=None):
+        """Wartet, bis der Knoten seine Ereignisschleife meldet.
+
+        ⚑ **Die Frist folgt der Artefaktgroesse** (2026-08-25). Vorher
+        stand hier eine feste Minute. Das war richtig, solange das
+        Artefakt 0,74 GB gross war und in Sekunden geladen wurde; bei
+        Qwen3-30B-A3B sind es **29 GiB**, und allein die
+        SHA-256-Pruefung jeder Gewichtsdatei dauert laenger als die
+        Frist. Der erste Mehrknotenlauf mit MoE scheiterte genau daran,
+        und zwar mit einer Meldung, die nach einem Pipeline-Fehler
+        aussah statt nach einem zu knappen Zeitfenster.
+
+        Dieselbe Klasse wie die uebrigen Groessenordnungsfunde dieses
+        Tages: eine Konstante, die fuer eine Groessenordnung kalibriert
+        war und bei der naechsten nicht mehr traegt.
+
+        Zwanzig Sekunden je Gigabyte, mindestens eine Minute. Bei 0,74 GB
+        bleibt es praktisch bei der alten Frist, bei 29 GiB sind es rund
+        zehn Minuten.
+        """
+        if timeout is None:
+            groesse_gib = sum(
+                f.stat().st_size for f in ARTIFACTS.glob("*.bin")
+            ) / 2**30 if ARTIFACTS.exists() else 1.0
+            timeout = max(60.0, 20.0 * groesse_gib)
         deadline = time.time() + timeout
         while time.time() < deadline:
             if any("Event-Loop gestartet" in l for l in self.lines):
@@ -133,7 +192,10 @@ class NodeProc:
                     f"Node früh beendet: {self.proc.stderr.read()[-2000:]}"
                 )
             time.sleep(0.2)
-        raise TimeoutError(f"Node startete nicht in {timeout} s")
+        raise TimeoutError(
+            f"Node startete nicht in {timeout:.0f} s "
+            f"(Artefakt {ARTIFACTS.name}). Letzte Ausgaben: {self.lines[-5:]}"
+        )
 
     def token_lines(self):
         return [l for l in self.lines if l.startswith("[token]")]
@@ -187,6 +249,12 @@ def collect_tokens(node, count, timeout=300):
                 f"Finale Stage früh beendet: {node.proc.stderr.read()[-2000:]}"
             )
         time.sleep(0.2)
+    if len(tokens) < count:
+        # Die Zeile "Nur 0/6 Tokens" allein ist nutzlos: Sie sagt nicht,
+        # ob die Nachricht ankam, ob eine Stage stillschweigend nichts tat
+        # oder ob nur die Frist zu kurz war. Die letzten Ausgabezeilen der
+        # finalen Stage beantworten das in den meisten Faellen.
+        print(f"[test] Letzte Ausgaben der finalen Stage: {node.lines[-12:]}")
     assert len(tokens) >= count, (
         f"Nur {len(tokens)}/{count} Tokens in {timeout} s: {sorted(tokens.items())}"
     )

@@ -29,15 +29,27 @@ use myl_pod::wire::{self, PodMessage};
 use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
 
+/// Das Artefaktverzeichnis, standardmäßig Qwen2.5-0,5B.
+///
+/// ⚑ **Über `MYL_POD_MODELL` wählbar** (2026-08-25). Vorher stand hier
+/// ein fester Modellname, und die Zuschnittsinvarianz war damit
+/// ausschließlich an einem **dichten** Modell geprüft. Genau diese
+/// Eigenschaft ist aber die Zusage, auf die sich ein
+/// Mixture-of-Experts-Modell stützen muss: Ein Knoten hält alle Experten
+/// seiner Layer, und wenn der Zuschnitt das Ergebnis änderte, wäre der
+/// ganze Entwurf hinfällig.
+///
+/// Beispiel: `MYL_POD_MODELL=qwen3-30b-a3b cargo test --test pod_e2e`
 fn artifacts_dir() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "qwen2.5-0.5b".to_string());
     let mut p = PathBuf::from(manifest);
-    // COMPUTE_PIPELINE/myl-pod → INTEGER_LLM/artifacts/qwen2.5-0.5b
+    // COMPUTE_PIPELINE/myl-pod → INTEGER_LLM/artifacts/<modell>
     p.push("..");
     p.push("..");
     p.push("INTEGER_LLM");
     p.push("artifacts");
-    p.push("qwen2.5-0.5b");
+    p.push(modell);
     p
 }
 
