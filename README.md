@@ -33,7 +33,7 @@ Crates, rund 1200 Tests und ein laufender Knoten** geworden.
 
 | | |
 |---|---|
-| **Kernthese belegt** | Ganzzahl-Inferenz kostet **+1,1 % Perplexität bei 7B**, Kriterium war ≤ 5 % |
+| **Kernthese belegt** | Ganzzahl-Inferenz kostet **+1,1 % Perplexität bei 7B**, Kriterium war ≤ 5 %, und läuft auch Korrekt durch ein **MoE Modell mit 30B Parametern** |
 | **Und sie ist schnell** | Bei 7B ist der Integerpfad **schneller als bf16** auf derselben Maschine |
 | **Netz läuft** | Knoten finden einander über QUIC, arbeiten hinter Heimroutern, bauen Blöcke, holen Nachzügler auf |
 | **Zustand konvergiert** | Drei Prozesse, dreizehn Blöcke, **identische Zustandswurzeln auf jeder Höhe** |
@@ -57,14 +57,16 @@ Gleitkomma-Referenz desselben Modells gemessen:
 | Modell | Integer-Perplexität | BF16-Referenz | Abstand |
 |---|---|---|---|
 | Qwen2.5-0,5B | 15,27 | 14,95 | **+2,1 %**, Kriterium ≤5 % erfüllt |
+| Qwen3-4B | 19,95 | 19,63 | **+1,6 %**, Kriterium ≤5 % erfüllt |
 | Qwen2.5-7B | **8,78** | 8,68 | **+1,1 %**, Kriterium ≤5 % erfüllt |
+| Qwen3-30B-A3B (MoE) | 10,42 | 10,48 | **kein messbarer Abstand** Kriterium erfüllt |
 
 *Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
 Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
 relative Aufschlag des Integer-Pfads auf seine eigene BF16-Referenz.
 Bei 7B lag dieser Wert vor den Fehlersuchen bei **+377 %**
 (Perplexität 41,42), heute bei **+1,1 %** und damit **0,3 Prozentpunkte
-über dem theoretischen Boden des Quantisierungsschemas** (+0,84 %,
+über dem theoretischen Floor des Quantisierungsschemas** (+0,84 %,
 unabhängig gemessen).
 
 **Bitgleichheit ist hier kein Nebeneffekt, sondern das Produkt.** Worauf es
@@ -109,7 +111,7 @@ Design-Entscheidungen und Tests. Die Kurzfassung hier:
 
 | Komponente | Was sie leistet |
 |---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **Die Kernthese, gemessen.** Ganzzahl-Inferenz zu **+1,14 % bei 7B** (Kriterium ≤ 5 %), nur 0,3 Punkte über dem theoretischen Floor des Quantisierungsschemas. Durchsatz zuletzt **+419 % bei 7B** durch Zeilen-Parallelisierung: Der Integerpfad ist damit **schneller als bf16**. Das [Skalenpaket](INTEGER_LLM/scale_packs/README.md) macht den Artefaktbau plattformübergreifend bitgleich, 1,8 MB statt 8,8 GB, 40 Sekunden statt 20 Minuten |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **Die Kernthese, gemessen.** Ganzzahl-Inferenz zu **+1,14 % bei 7B** (Kriterium ≤ 5 %), nur 0,3 Punkte über dem theoretischen Floor des Quantisierungsschemas. **Seit dem 25. August auch für ein 30B MoE Modell** (128 Experten je Layer), wo kein messbarer Abstand mehr erkennbar ist. Durchsatz zuletzt **+419 % bei 7B** durch Zeilen-Parallelisierung: Der Integerpfad ist damit **schneller als bf16**. Das [Skalenpaket](INTEGER_LLM/scale_packs/README.md) macht den Artefaktbau plattformübergreifend bitgleich, 1,8 MB statt 8,8 GB, 40 Sekunden statt 20 Minuten |
 | [NODE](NODE/README/README.md) | **Das Binary, das das Protokoll ausführt.** Neu seit dem 24. August. Findet Gegenstellen über TCP und QUIC, arbeitet hinter Netzwerk-Routern über Relais, baut verkettete Blöcke aus einem Mempool, lässt Nachzügler in Millisekunden aufholen, prüft Signaturen und schreibt ein auswertbares Betriebsprotokoll. Belegt an echten Prozessen |
 | [NETWORKING](NETWORKING/README/README.md) | **L0 steht.** Gossip, Kademlia, Latenztopologie, NAT-Überwindung mit AutoNAT, Relais, DCUtR und QUIC. Verbindungsgrenzen mit **getrennten Budgets**, sodass eine Sybil-Flut die selbst gewählten Plätze nicht aufzehren kann. Punkt-zu-Punkt-Kanal für Nachforderungen, mit undurchsichtiger Nutzlast: Die Netzschicht weiß nicht, was ein Block ist, und soll es nicht wissen |
 | [CONSENSUS](CONSENSUS/README/README.md) | **Alle vier Phasen abgeschlossen.** Signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, Double-Signing-Beweis und Rundenwechsel, also Safety **und** Liveness, geprüft an 21 simulierten Validatoren. Dazu PoI-Bündel, Epochenabschluss, Datenverfügbarkeit über Reed-Solomon. Der Ledger trägt Invarianten-Tests über zufällige Übergangsfolgen |

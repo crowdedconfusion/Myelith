@@ -37,7 +37,7 @@ some 1,200 tests, and a running node.**
 
 | | |
 |---|---|
-| **Core thesis proven** | Integer inference costs **+1.1 % perplexity at 7B**; the bar was ≤ 5 % |
+| **Core thesis proven** | Integer inference costs **+1.1 % perplexity at 7B**; the bar was ≤ 5 %, and it succeeds also at **MoE Model with 30B** |
 | **And it is fast** | At 7B the integer path is **faster than bf16** on the same machine |
 | **The network runs** | Nodes find each other over QUIC, work behind home routers, build blocks, let latecomers catch up |
 | **State converges** | Three processes, thirteen blocks, **identical state roots at every height** |
@@ -61,7 +61,9 @@ the floating-point reference of the same model:
 | Model | Integer perplexity | BF16 reference | Gap |
 |---|---|---|---|
 | Qwen2.5-0.5B | 15.27 | 14.95 | **+2.1 %**, criterion ≤5 % met |
+| Qwen3-4B | 19.95 | 19.63 | **+1.6 %**, criterion ≤5 % met |
 | Qwen2.5-7B | **8.78** | 8.68 | **+1.1 %**, criterion ≤5 % met |
+| Qwen3-30B-A3B (MoE) | 10.42 | 10.48 | **no measurable gap**, criterion met |
 
 *The metric is perplexity on WikiText-2 under teacher forcing, on identical
 sequences for both paths; lower is better. "Gap" is the relative premium the
@@ -110,7 +112,7 @@ tests. The short version here:
 
 | Component | What it delivers |
 |---|---|
-| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **The core thesis, measured.** Integer inference at **+1.14 % at 7B** (bar: ≤ 5 %), only 0.3 points above the theoretical floor of the quantisation scheme. Throughput most recently **+419 % at 7B** through row parallelisation, which makes the integer path **faster than bf16**. The [scale pack](INTEGER_LLM/scale_packs/README.md) makes artefact builds bit-identical across platforms: 1.8 MB instead of 8.8 GB, 40 seconds instead of 20 minutes |
+| [INTEGER_LLM](INTEGER_LLM/README/README.md) | **The core thesis, measured.** Integer inference at **+1.14 % at 7B** (bar: ≤ 5 %), only 0.3 points above the theoretical floor of the quantisation scheme. **Since 25 August succeeded for an MoE Model with 30B as well** (128 experts per layer), where no measurable gap remains. Throughput most recently **+419 % at 7B** through row parallelisation, which makes the integer path **faster than bf16**. The [scale pack](INTEGER_LLM/scale_packs/README.md) makes artefact builds bit-identical across platforms: 1.8 MB instead of 8.8 GB, 40 seconds instead of 20 minutes |
 | [NODE](NODE/README/README.md) | **The binary that runs the protocol.** New since 24 August. Finds peers over TCP and QUIC, works behind network routers via relays, builds chained blocks from a mempool, lets latecomers catch up in milliseconds, verifies signatures, and writes an operations log you can actually evaluate. Demonstrated with real processes |
 | [NETWORKING](NETWORKING/README/README.md) | **L0 is in place.** Gossip, Kademlia, latency topology, NAT traversal with AutoNAT, relays, DCUtR, and QUIC. Connection limits with **separate budgets**, so a sybil flood cannot consume the self-chosen slots. Point-to-point channel for re-requests, with an opaque payload: the network layer does not know what a block is, and must not |
 | [CONSENSUS](CONSENSUS/README/README.md) | **All four phases complete.** Signed, weight-based BFT with VRF-rotating committee selection, double-signing proofs, and round changes: safety **and** liveness, verified against 21 simulated validators. Plus PoI bundles, epoch closing, and data availability via Reed-Solomon. The ledger carries invariant tests over random transition sequences |
