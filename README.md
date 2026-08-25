@@ -59,7 +59,7 @@ Gleitkomma-Referenz desselben Modells gemessen:
 | Qwen2.5-0,5B | 15,27 | 14,95 | **+2,1 %**, Kriterium ≤5 % erfüllt |
 | Qwen3-4B | 19,95 | 19,63 | **+1,6 %**, Kriterium ≤5 % erfüllt |
 | Qwen2.5-7B | **8,78** | 8,68 | **+1,1 %**, Kriterium ≤5 % erfüllt |
-| Qwen3-30B-A3B (MoE) | 10,42 | 10,48 | **kein messbarer Abstand** Kriterium erfüllt |
+| Qwen3-30B-A3B (MoE) | 10,42 | 10,48 | **kein messbarer Abstand**, Kriterium erfüllt |
 
 *Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für beide
 Pfade auf identischen Sequenzen; niedriger ist besser. „Abstand" ist der
@@ -167,4 +167,4 @@ Entscheidung und keine Folge davon, dass der Code läuft.
 [PolyForm Shield License 1.0.0](LICENSE.md). Nutzung, Veränderung und
 kommerzielle Teilnahme am Myelith-Netzwerk (Mining, Validierung, Gateways,
 Clients) sind erlaubt; ein konkurrierendes Netzwerk oder Produkt auf Basis
-des Codes zu betreiben ist es nicht. 
+des Codes zu betreiben ist es nicht.
