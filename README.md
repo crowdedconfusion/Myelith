@@ -37,7 +37,7 @@ Crates, rund 1200 Tests und ein laufender Knoten** geworden.
 | **Und sie ist schnell** | Bei 7B ist der Integerpfad **schneller als bf16** auf derselben Maschine |
 | **Netz läuft** | Knoten finden einander über QUIC, arbeiten hinter Heimroutern, bauen Blöcke, holen Nachzügler auf |
 | **Zustand konvergiert** | Drei Prozesse, dreizehn Blöcke, **identische Zustandswurzeln auf jeder Höhe** |
-| **Sicherheit** | 13 Angriffsklassen geprüft: **8 abgewehrt, 4 mit benannter Restbedingung, 0 offen** |
+| **Sicherheit** | 13 Angriffsklassen geprüft: **8 abgewehrt, 4 mit benannter Restbedingung** |
 | **Kosten** | **1,9× gegenüber einem zentralen Anbieter bei 7B**, und davon ist fast alles Redundanz |
 
 ---

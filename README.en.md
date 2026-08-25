@@ -41,7 +41,7 @@ some 1,200 tests, and a running node.**
 | **And it is fast** | At 7B the integer path is **faster than bf16** on the same machine |
 | **The network runs** | Nodes find each other over QUIC, work behind home routers, build blocks, let latecomers catch up |
 | **State converges** | Three processes, thirteen blocks, **identical state roots at every height** |
-| **Security** | 13 attack classes reviewed: **8 defended, 4 with a named residual condition, 0 open** |
+| **Security** | 13 attack classes reviewed: **8 defended, 4 with a named residual condition** |
 | **Cost** | **1.9× a centralized provider at 7B**, and nearly all of that is redundancy |
 
 ---
