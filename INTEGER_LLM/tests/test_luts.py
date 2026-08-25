@@ -25,23 +25,70 @@ def silu_ref(x):
 
 
 def test_load_nonlinear_spec_structure():
+    """Die **Regeln** der Spec, nicht ihre Zahlen.
+
+    ⚑ **Hier standen bis zum 2026-08-25 getippte Werte**, und zwar die
+    von theta_v 0.14.0: silu-Eingangsbereich [-1024, 1023],
+    `exp_lut_frac_bits` 8. Die Spec steht seit 0.15.0 und 0.16.0 auf
+    [-8192, 8191] und 14, beides aus benannten Gruenden (SiLU-Raster
+    verfeinert, weil der ganze MLP-Fehler dort entstand;
+    Softmax-Aufloesung angehoben, weil bei 512 Positionen das
+    Schwanzgewicht auf null rundete).
+
+    **Der Test war seitdem rot und ist niemandem aufgefallen**, weil die
+    CI nur die vier Audit-Skripte startet. Dieselbe Klasse wie Fund 44.
+
+    Und er war doppelt wertlos: Ein Test, der prueft, dass in der Spec
+    steht, was in der Spec steht, ist eine Tautologie. Er faellt bei
+    **jeder** richtigen Aenderung um und erzeugt Druck, sie
+    zurueckzunehmen - genau das, was AGENTS.md unter „Tests gegen
+    Literale" beschreibt.
+
+    Geprueft wird jetzt, was gelten **muss**, damit die LUTs ueberhaupt
+    funktionieren. Die Grenzen stehen in den `note`-Feldern der Spec
+    selbst; sie sind hier ausgerechnet statt abgeschrieben.
+    """
     nl = load_nonlinear_spec()
     for key in ("rsqrt", "silu", "softmax", "rope"):
-        assert key in nl, f"spec.json-Abchnitt 'nonlinear' ohne '{key}'"
-    assert nl["rsqrt"]["input_range"] == [0, 32767]
-    assert nl["rsqrt"]["input_shift"] == 8
-    assert nl["rsqrt"]["output_frac_bits"] == 8
+        assert key in nl, f"spec.json-Abschnitt 'nonlinear' ohne '{key}'"
+
+    # rsqrt: die Indexnormierung ist eine Festlegung, kein Messwert, und
+    # `rmsnorm_i16` verlangt einen geraden Shift (Halb-Bit-Faktor).
     assert nl["rsqrt"]["index_normalization"] == "dynamic_even_shift"
-    assert nl["silu"]["input_range"] == [-1024, 1023]
-    assert nl["silu"]["input_frac_bits"] == 3
-    assert nl["silu"]["output_frac_bits"] == 6
-    assert nl["softmax"]["exp_lut_range"] == 1024
-    assert nl["softmax"]["exp_input_frac_bits"] == 4
-    assert nl["softmax"]["exp_lut_frac_bits"] == 8
-    assert nl["rope"]["max_seq_len"] == 2048
-    assert nl["rope"]["frac_bits"] == 8
-    assert nl["rope"]["rope_theta"] == 1000000.0
-    assert nl["rope"]["pairing"] == "half_split"
+    assert nl["rsqrt"]["input_shift"] % 2 == 0, "Halb-Bit-Faktor braucht geraden Shift"
+    assert nl["rsqrt"]["input_range"][0] == 0, "rsqrt ist auf nichtnegativen Werten definiert"
+
+    # silu: Der Eingangsbereich muss zum Raster passen, sonst deckt die
+    # LUT eine andere reale Domaene ab als die Runtime annimmt.
+    silu = nl["silu"]
+    lo, hi = silu["input_range"]
+    assert hi + 1 == -lo, f"silu-Bereich muss symmetrisch sein, ist [{lo}, {hi}]"
+    assert (hi + 1) % 2 == 0
+    # Der Index wird in integer_math::lut_lookup als i16 gerechnet;
+    # `lut.len() as i16 - 1` laeuft ab 32768 Eintraegen ueber.
+    assert hi - lo + 1 <= 32767, "silu-LUT sprengt den i16-Index"
+    # Groesster Ausgabewert = silu(hi_real) ~ hi_real; er muss in i16
+    # passen, sonst saettigen die LUT-Eintraege selbst.
+    hi_real = hi / (2 ** silu["input_frac_bits"])
+    assert hi_real * (2 ** silu["output_frac_bits"]) <= 32767, (
+        f"silu-LUT-Eintraege sprengen i16: {hi_real} * 2^{silu['output_frac_bits']}"
+    )
+
+    # softmax: exp(0) ist der groesste Eintrag und muss in i16 passen.
+    sm = nl["softmax"]
+    assert 2 ** sm["exp_lut_frac_bits"] <= 32767, (
+        f"exp(0) = 2^{sm['exp_lut_frac_bits']} sprengt die i16-LUT"
+    )
+    # Die Tabelle deckt den Eingangsbereich beim gewaehlten Raster ab.
+    assert sm["exp_lut_range"] >= 2 ** sm["exp_input_frac_bits"], (
+        "exp-LUT kuerzer als ein einziger Einheitsschritt des Eingangsrasters"
+    )
+
+    # rope: Die Paarung ist eine Protokollfestlegung (Fund 15), und die
+    # LUT-Zeilenzahl haengt an max_seq_len.
+    assert nl["rope"]["pairing"] == "half_split", "Fund 15: Qwen2-Schema"
+    assert nl["rope"]["max_seq_len"] > 0
+    assert nl["rope"]["rope_theta"] > 1.0
 
 
 def test_rsqrt_lut_input_shift_semantics():
@@ -148,10 +195,29 @@ def test_spec_driven_generation_lengths():
                                   head_dim=head_dim,
                                   rope_theta=nl["rope"]["rope_theta"],
                                   frac_bits=nl["rope"]["frac_bits"])
+    # ⚑ **Aus der Spec gerechnet, nicht getippt** (2026-08-25). Hier
+    # standen 32768 / 2048 / 1025, die Laengen von theta_v 0.14.0. Seit
+    # 0.15.0 ist die silu-LUT 16384 Eintraege lang und seit 0.16.0 die
+    # exp-LUT 16385. Der Test war rot und niemandem aufgefallen, weil die
+    # CI ihn nicht startet.
+    #
+    # Eine getippte Laenge prueft nur, dass sich die Spec nicht geaendert
+    # hat. Geprueft gehoert, dass der **Erzeuger der Spec folgt**: Genau
+    # das faengt einen Erzeuger, der einen Eintrag zu wenig oder zu viel
+    # anlegt, und genau das ist der Fehler, der die Runtime am Rand der
+    # Domaene ins Leere greifen liesse.
     rope_len = nl["rope"]["max_seq_len"] * (head_dim // 2)
-    assert len(rsqrt) == 32768
-    assert len(silu) == 2048
-    assert len(exp) == 1025
+    silu_len = nl["silu"]["input_range"][1] - nl["silu"]["input_range"][0] + 1
+    assert len(rsqrt) == nl["rsqrt"]["input_range"][1] + 1, (
+        f"rsqrt: {len(rsqrt)} Eintraege, Spec sagt "
+        f"{nl['rsqrt']['input_range'][1] + 1}"
+    )
+    assert len(silu) == silu_len, f"silu: {len(silu)} Eintraege, Spec sagt {silu_len}"
+    # exp deckt [0, exp_lut_range] **einschliesslich** ab, daher +1.
+    assert len(exp) == nl["softmax"]["exp_lut_range"] + 1, (
+        f"exp: {len(exp)} Eintraege, Spec sagt "
+        f"{nl['softmax']['exp_lut_range'] + 1}"
+    )
     assert len(sin) == rope_len and len(cos) == rope_len
     # Alle Werte muessen in int16 passen (LUT-Format der Runtime).
     for lut in (rsqrt, silu, exp, sin, cos):
@@ -160,7 +226,7 @@ def test_spec_driven_generation_lengths():
 
 if __name__ == "__main__":
     test_load_nonlinear_spec_structure()
-    print("[test] spec.json-nonlinear-Abschnitt hat erwartete Struktur (0.5.0): PASSED")
+    print("[test] spec.json-nonlinear-Abschnitt haelt seine eigenen Regeln: PASSED")
     test_rsqrt_lut_input_shift_semantics()
     print("[test] rsqrt-LUT input_shift-Semantik (x * 2^-8): PASSED")
     test_rsqrt_lut_input_shift_zero_entspricht_alter_skala()

@@ -24,6 +24,8 @@ ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 |---|---|---|---|---|---|---|---|---|---|
 | `qwen2.5-0.5b` | [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) | `060db6499f32…` | Apache-2.0 | 0,5 Mrd. | 24 | rund 1 GB | 0,74 GB | 0.17.0 | verifiziert |
 | `qwen2.5-7b` | [Qwen/Qwen2.5-7B](https://huggingface.co/Qwen/Qwen2.5-7B) | `d14972939875…` | Apache-2.0 | 7 Mrd. | 28 | rund 14 GB | 8,1 GB | 0.17.0 | verifiziert |
+| `qwen3-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | `ad44e777bcd1…` | Apache-2.0 | 30,5 Mrd. gesamt, 3,04 Mrd. aktiv je Token | 48 | rund 57 GB | 29.1 GB | 0.17.0 | erprobt |
+| `qwen3-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | `1cfa9a720891…` | Apache-2.0 | 4 Mrd. | 36 | rund 7,5 GB | 4,5 GB | 0.17.0 | erprobt |
 
 **Status:**
 
@@ -35,11 +37,15 @@ ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 
 - `qwen2.5-0.5b`: 15,27 gegen BF16 14,95 (+2,11 %)
 - `qwen2.5-7b`: 8,78 gegen BF16 8,68 (+1,14 %)
+- `qwen3-30b-a3b`: noch nicht gegen die bf16-Referenz gemessen
+- `qwen3-4b`: noch nicht gegen die bf16-Referenz gemessen
 
 **Anmerkungen:**
 
 - `qwen2.5-0.5b`: Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an diesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an.
 - `qwen2.5-7b`: Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6). Rechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden. Nur wählen, wenn 23 GB Platte frei sind.
+- `qwen3-30b-a3b`: Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer, Top-8, alle 48 Layer sind MoE (mlp_only_layers ist leer). Kalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell 56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden eingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom. Artefakt: 18 868 Tensoren in 37 747 Dateien. Belegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet ' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei unabhaengige Laeufe gleich. Status 'erprobt', nicht 'verifiziert': Der Perplexitaetsabstand gegen die bf16-Referenz ist offen.
+- `qwen3-4b`: Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm. Drei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war: QK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases, und head_dim 128 bei hidden_size/num_heads = 80 (Fund 59). Status 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist bitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen.
 
 ## Woher die Gewichte kommen
 

@@ -487,9 +487,25 @@ def test_gptq_hessian_bedarf_waechst_quadratisch():
 
 
 def test_gptq_entscheidung_env_override():
-    """Die Umgebungsvariable ueberstimmt die Standardentscheidung in beide
-    Richtungen; ohne sie laeuft GPTQ immer (schichtweise, siehe
-    test_gptq_group_size_...)."""
+    """Die Umgebungsvariable schaltet GPTQ **ein**; ohne sie ist es aus.
+
+    ⚑ **Hier stand bis zum 2026-08-25 das Gegenteil**: „ohne Vorgabe
+    laeuft GPTQ immer". Am 2026-08-20 hat der Projektinhaber das
+    Gegenteil festgelegt, und `gptq_entscheidung` setzt es seitdem um.
+    Der Test war seit diesem Tag rot.
+
+    **Dass es fuenf Tage niemandem auffiel, liegt an der CI:** Sie
+    startet von den Python-Testdateien nur die vier Audit-Skripte. Eine
+    Pruefung, die nicht laeuft, meldet nichts - dieselbe Klasse wie
+    Fund 44 und wie `moe.rs`, das nicht in der Audit-Liste stand.
+
+    **Die Begruendung der Festlegung** steht im Docstring von
+    `gptq_entscheidung` und ist der Grund, warum der Test der
+    Festlegung folgt und nicht umgekehrt: GPTQ ist als
+    Ausschlussbeweis dokumentiert, nicht als Verbesserung. Gemessen
+    verbesserte es die Perplexitaet **nicht** (3 242 -> 3 318), kostet
+    bei 7B aber zweieinhalb Stunden statt zwanzig Minuten.
+    """
     import os
     from src.model_configs import get_export_model_config
     from src.main import gptq_entscheidung
@@ -499,9 +515,20 @@ def test_gptq_entscheidung_env_override():
         os.environ["INTEGER_LLM_GPTQ"] = "0"
         an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-0.5b"))
         assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
+
+        os.environ["INTEGER_LLM_GPTQ"] = "1"
+        an, grund = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
+        assert an is True, f"INTEGER_LLM_GPTQ=1 muss GPTQ einschalten, Grund: {grund}"
+
         os.environ.pop("INTEGER_LLM_GPTQ")
-        an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
-        assert an is True, "ohne Vorgabe laeuft GPTQ immer (schichtweise)"
+        an, grund = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
+        assert an is False, (
+            "ohne Vorgabe ist GPTQ aus (Festlegung vom 2026-08-20), "
+            f"Grund: {grund}"
+        )
+        assert "INTEGER_LLM_GPTQ=1" in grund, (
+            "die Begruendung muss sagen, womit man es einschaltet: " + grund
+        )
     finally:
         os.environ.pop("INTEGER_LLM_GPTQ", None)
         if alt is not None:

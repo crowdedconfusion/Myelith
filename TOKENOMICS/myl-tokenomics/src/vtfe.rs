@@ -77,6 +77,17 @@ use crate::VTFE_UNITS_PER_TFE;
 pub struct ModellProfil {
     pub hidden_size: u64,
     pub intermediate_size: u64,
+    /// Zahl der Experten je Layer. **`0` heißt: dichtes Modell**, dann
+    /// sind die beiden folgenden Felder bedeutungslos und
+    /// [`ModellProfil::macs_je_layer`] rechnet wie zuvor.
+    pub num_experts: u64,
+    /// Wie viele Experten je Token feuern. Eine Konstante aus der
+    /// Modellkonfiguration, **keine Größe je Anfrage**, und genau daran
+    /// hängt, dass die Zuschreibung ohne Anfragezustand nachrechenbar
+    /// bleibt.
+    pub num_experts_per_tok: u64,
+    /// Breite eines einzelnen Experten (`moe_intermediate_size`).
+    pub moe_intermediate_size: u64,
     pub num_layers: u64,
     pub vocab_size: u64,
     pub num_heads: u64,
@@ -91,9 +102,41 @@ impl ModellProfil {
     /// Sieben Matrizen: q, k, v, o aus der Attention, gate, up, down aus
     /// dem MLP. Bei Grouped-Query-Attention sind k und v schmaler als q,
     /// deshalb `num_kv_heads` statt `num_heads` (bei 0,5B ein Faktor 7).
+    ///
+    /// ## ⚑ Fund 60 (2026-08-25): Die Regel war dicht gerechnet
+    ///
+    /// Bis heute stand hier `gate = h·i`, `up = h·i`, `down = i·h`, also
+    /// die volle Breite der MLP, plus **kein Router**. Bei einem
+    /// Expertengemisch rechnet je Token `top_k` Experten der Breite
+    /// `moe_intermediate_size`, dazu die Router-Projektion.
+    ///
+    /// **Wo es tatsächlich bricht, ist nicht die Zahl, sondern ihre
+    /// Herkunft.** `myl-pod::modell_profil` liest `intermediate_size` aus
+    /// `gate_proj.rows()` der ersten Layer, und eine MoE-Layer hat kein
+    /// `gate_proj`; sie hat 128 Experten, die je eines haben. Wer dort
+    /// den ersten Experten nimmt, bekommt 768 statt 6144 und spricht dem
+    /// Shard **ein Achtel** seiner Arbeit zu.
+    ///
+    /// ⚑ **Und ein Zufall, auf den sich niemand verlassen darf:** Bei
+    /// Qwen3-30B-A3B ist `intermediate_size` 6144 und
+    /// `top_k · moe_intermediate_size` = 8 · 768 = **ebenfalls 6144**.
+    /// Die dichte Formel träfe hier also bis auf den Router-Term
+    /// zufällig zu. Das ist eine Eigenschaft dieser einen Konfiguration
+    /// und keine Regel; `test_der_zufall_bei_qwen3_30b_ist_keine_regel`
+    /// hält beides fest, damit niemand die Übereinstimmung für die
+    /// Rechtfertigung hält.
+    ///
+    /// Gefunden beim Bau des MoE-Modellpfads, an der Naht zwischen
+    /// COMPUTE_PIPELINE und TOKENOMICS.
+    ///
+    /// **Was sich nicht ändert, und das ist der Punkt:** Die Zuschreibung
+    /// bleibt **ohne Anfragezustand nachrechenbar**. `top_k` ist eine
+    /// Konstante aus `model_config.json`, kein Wert je Anfrage. Welche
+    /// Experten feuern, hängt am Token; **wie viele**, hängt es nicht.
+    /// Ohne diese Eigenschaft wäre MoE mit der Festlegung vom 2026-08-23
+    /// unvereinbar gewesen.
     pub fn macs_je_layer(&self) -> u128 {
         let h = self.hidden_size as u128;
-        let i = self.intermediate_size as u128;
         let q_out = self.num_heads as u128 * self.head_dim as u128;
         let kv_out = self.num_kv_heads as u128 * self.head_dim as u128;
 
@@ -101,10 +144,18 @@ impl ModellProfil {
         let k = h * kv_out;
         let v = h * kv_out;
         let o = q_out * h;
-        let gate = h * i;
-        let up = h * i;
-        let down = i * h;
-        q + k + v + o + gate + up + down
+
+        let ffn = if self.num_experts > 0 {
+            let mi = self.moe_intermediate_size as u128;
+            let router = h * self.num_experts as u128;
+            let je_experte = 3 * h * mi;
+            router + self.num_experts_per_tok as u128 * je_experte
+        } else {
+            let i = self.intermediate_size as u128;
+            3 * h * i
+        };
+
+        q + k + v + o + ffn
     }
 
     /// Multiplikations-Additionen des LM-Kopfes für ein Token.
@@ -218,6 +269,125 @@ pub fn vtfe_voll(tokens: u64) -> u64 {
 }
 
 #[cfg(test)]
+mod moe_tests {
+    use super::*;
+
+    /// Qwen3-30B-A3B, gegen die echte `config.json` (Revision `ad44e777`).
+    fn qwen3_30b_a3b() -> ModellProfil {
+        ModellProfil {
+            hidden_size: 2048,
+            intermediate_size: 6144,
+            num_experts: 128,
+            num_experts_per_tok: 8,
+            moe_intermediate_size: 768,
+            num_layers: 48,
+            vocab_size: 151_936,
+            num_heads: 32,
+            num_kv_heads: 4,
+            head_dim: 128,
+        }
+    }
+
+    #[test]
+    fn moe_arbeit_je_layer_von_hand_nachgerechnet() {
+        let p = qwen3_30b_a3b();
+        // q 2048·4096, k 2048·512, v 2048·512, o 4096·2048
+        let attn: u128 = 8_388_608 + 1_048_576 + 1_048_576 + 8_388_608;
+        // Router 2048·128, dann 8 Experten à 3·2048·768
+        let ffn: u128 = 262_144 + 8 * 3 * 2048 * 768;
+        assert_eq!(p.macs_je_layer(), attn + ffn);
+    }
+
+    /// ⚑ **Der Zufall, den niemand für eine Regel halten darf.**
+    ///
+    /// Bei dieser Konfiguration gilt `top_k · moe_intermediate_size ==
+    /// intermediate_size`, also 8 · 768 == 6144. Die dichte Formel liegt
+    /// damit **bis auf den Router-Term** richtig. Das ist eine
+    /// Eigenschaft dieses Modells, keine Eigenschaft von MoE.
+    #[test]
+    fn test_der_zufall_bei_qwen3_30b_ist_keine_regel() {
+        let p = qwen3_30b_a3b();
+        assert_eq!(
+            p.num_experts_per_tok * p.moe_intermediate_size,
+            p.intermediate_size,
+            "Voraussetzung des Tests: bei diesem Modell fallen beide zusammen"
+        );
+
+        // Dieselbe Konfiguration, aber als dicht gelesen.
+        let dicht = ModellProfil { num_experts: 0, ..p };
+        let unterschied = p.macs_je_layer() - dicht.macs_je_layer();
+        assert_eq!(
+            unterschied,
+            2048 * 128,
+            "genau der Router-Term, mehr trennt die beiden hier nicht"
+        );
+
+        // Und ein Modell, bei dem der Zufall nicht gilt: halb so viele
+        // gefeuerte Experten bei gleicher Breite. Die dichte Formel
+        // ueberschaetzt dann um mehr als ein Drittel.
+        let anders = ModellProfil { num_experts_per_tok: 4, ..p };
+        assert!(
+            dicht.macs_je_layer() * 100 > anders.macs_je_layer() * 140,
+            "ohne den Zufall ueberschaetzt die dichte Formel deutlich: {} gegen {}",
+            dicht.macs_je_layer(),
+            anders.macs_je_layer()
+        );
+    }
+
+    /// Ein Achtel statt des Ganzen: was passiert, wenn jemand
+    /// `intermediate_size` aus **einem einzelnen Experten** liest, also
+    /// aus `gate_proj.rows()` des ersten Experten.
+    ///
+    /// Das ist keine ausgedachte Fehlbedienung: Genau so liest
+    /// `myl-pod::modell_profil` heute die Zahl, und bei einer MoE-Layer
+    /// ist der erste Experte das Naechstliegende, was dort steht.
+    #[test]
+    fn ein_experte_als_intermediate_size_unterschlaegt_sieben_achtel() {
+        let p = qwen3_30b_a3b();
+        let falsch = ModellProfil {
+            num_experts: 0,
+            intermediate_size: p.moe_intermediate_size,
+            ..p
+        };
+        let attn: u128 = 8_388_608 + 1_048_576 + 1_048_576 + 8_388_608;
+        let ein_experte: u128 = 3 * 2048 * 768;
+
+        assert_eq!(
+            falsch.macs_je_layer(),
+            attn + ein_experte,
+            "die falsche Lesart rechnet genau einen Experten"
+        );
+        assert_eq!(
+            p.macs_je_layer() - attn - 2048 * 128,
+            8 * ein_experte,
+            "richtig sind acht, plus der Router"
+        );
+    }
+
+    #[test]
+    fn dichte_modelle_rechnen_unveraendert() {
+        // Qwen2.5-0,5B, wie bisher.
+        let p = ModellProfil {
+            hidden_size: 896,
+            intermediate_size: 4864,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            moe_intermediate_size: 0,
+            num_layers: 24,
+            vocab_size: 151_936,
+            num_heads: 14,
+            num_kv_heads: 2,
+            head_dim: 64,
+        };
+        let q_out: u128 = 14 * 64;
+        let kv_out: u128 = 2 * 64;
+        let erwartet = 896 * q_out + 896 * kv_out + 896 * kv_out + q_out * 896
+            + 3 * 896 * 4864;
+        assert_eq!(p.macs_je_layer(), erwartet);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -225,6 +395,9 @@ mod tests {
         ModellProfil {
             hidden_size: 896,
             intermediate_size: 4864,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            moe_intermediate_size: 0,
             num_layers: 24,
             vocab_size: 151_936,
             num_heads: 14,
@@ -237,6 +410,9 @@ mod tests {
         ModellProfil {
             hidden_size: 3584,
             intermediate_size: 18_944,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            moe_intermediate_size: 0,
             num_layers: 28,
             vocab_size: 152_064,
             num_heads: 28,
@@ -424,6 +600,9 @@ mod tests {
         let leer = ModellProfil {
             hidden_size: 0,
             intermediate_size: 0,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            moe_intermediate_size: 0,
             num_layers: 0,
             vocab_size: 0,
             num_heads: 0,

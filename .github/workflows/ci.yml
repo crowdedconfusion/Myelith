@@ -471,6 +471,79 @@ jobs:
           python3 tests/audit/test_no_float.py
           python3 tests/audit/test_scales.py
 
+      # ⚑ **Diese sechs liefen bis zum 2026-08-25 in keinem Job.**
+      #
+      # Von den dreizehn Python-Testdateien startete die CI nur die vier
+      # Audit-Skripte. Zwei der uebrigen waren rot, und zwar seit Tagen:
+      # `test_luts.py` prueft die LUT-Laengen und stand noch auf den
+      # Werten von theta_v 0.14.0 (die Spec ist bei 0.15.0/0.16.0),
+      # `test_export_workflow.py` verlangte, dass GPTQ ohne Vorgabe
+      # laeuft (am 2026-08-20 wurde das Gegenteil festgelegt).
+      #
+      # Dieselbe Klasse wie **Fund 44**, wo der Audit NETWORKING nicht
+      # ansah und trotzdem „null Treffer" meldete, und wie `moe.rs`, das
+      # als Rechenpfad-Datei nicht in der Audit-Liste stand: **Eine
+      # Pruefung, die nicht laeuft, meldet nichts.**
+      #
+      # Diese sechs brauchen keine Fremdbibliothek und kosten zusammen
+      # unter einer Sekunde. Die vier, die torch brauchen, laufen im
+      # eigenen Job `kalibrierung-python`, damit dieser hier schnell
+      # bleibt - er wurde am 2026-08-24 bewusst von ueber drei Minuten
+      # auf unter eine Sekunde gebracht.
+      - name: Einheitentests ohne Fremdbibliotheken
+        working-directory: INTEGER_LLM
+        run: |
+          python3 tests/audit/test_division.py
+          python3 tests/audit/test_overflow.py
+          python3 tests/test_calibration.py
+          python3 tests/test_fixed_point.py
+          python3 tests/test_kernels.py
+          python3 tests/test_luts.py
+          python3 tests/test_rmsnorm.py
+          python3 tests/test_rope.py
+
+  # ── Kalibrierungs-Tests mit torch: eigener Job ────────────────────
+  #
+  # Vier Testdateien haengen an torch: `test_activation_stats.py`,
+  # `test_gptq.py`, `test_export_workflow.py` und
+  # `test_moe_entschmelzen.py`. Sie decken den Quantisierer, den
+  # Statistik-Sammler, GPTQ und den Exportweg ab, also den Pfad, auf dem
+  # aus Gleitkomma-Gewichten ein konsensrelevantes Artefakt wird.
+  #
+  # **Eigener Job statt eines Schrittes im Audit**, weil die
+  # torch-Installation ein bis zwei Minuten kostet und der Audit-Job am
+  # 2026-08-24 ausdruecklich auf unter eine Sekunde gebracht wurde. Hier
+  # laeuft sie parallel und haelt nichts auf.
+  #
+  # **Nur die CPU-Fassung**: Diese Tests rechnen mit kleinen Tensoren und
+  # brauchen weder CUDA noch Modellgewichte. Das vollstaendige
+  # `requirements.txt` waere ueberfluessig, es zieht transformers,
+  # datasets und accelerate mit.
+  kalibrierung-python:
+    name: Kalibrierung — Python-Einheitentests (torch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: torch (nur CPU) und numpy
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python3 -m pip install numpy
+
+      - name: Einheitentests des Kalibrierungswegs
+        working-directory: INTEGER_LLM
+        run: |
+          python3 tests/test_activation_stats.py
+          python3 tests/test_gptq.py
+          python3 tests/test_export_workflow.py
+          python3 tests/test_moe_entschmelzen.py
+
   # ── Whitepaper-Simulationen: eigener Job, damit sie parallel laufen ─
   #
   # Sie belegen die Zahlen aus Anhang B.9; laeuft eines der Programme

@@ -40,5 +40,47 @@
     ],
     "theta_v": "0.17.0",
     "weights_manifest_sha256": "63d1e700b1915f6aa0d2a9eee7ba55e76fc2682fa839158abb1a1f271c7adce1"
+  },
+  "qwen3-30b-a3b": {
+    "artefakt_digest_sha256": "95ba3107028ec17bfdafa316df2066b179185fadd814003f8cc7dd7645117f8a",
+    "bytes": 1323009,
+    "dateien": [
+      "scales.json",
+      "luts.json",
+      "theta_v.json",
+      "cos.lut.bin",
+      "exp.lut.bin",
+      "rsqrt.lut.bin",
+      "silu.lut.bin",
+      "sin.lut.bin"
+    ],
+    "digest_ueber": [
+      "theta_v.json",
+      "model_config.json",
+      "tokenizer.json"
+    ],
+    "theta_v": "0.17.0",
+    "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
+  },
+  "qwen3-4b": {
+    "artefakt_digest_sha256": "a28ac6edeb88d28262ad7b8e600ca71d7d26a1a60232bd5f60e1f14286105b82",
+    "bytes": 1262198,
+    "dateien": [
+      "scales.json",
+      "luts.json",
+      "theta_v.json",
+      "cos.lut.bin",
+      "exp.lut.bin",
+      "rsqrt.lut.bin",
+      "silu.lut.bin",
+      "sin.lut.bin"
+    ],
+    "digest_ueber": [
+      "theta_v.json",
+      "model_config.json",
+      "tokenizer.json"
+    ],
+    "theta_v": "0.17.0",
+    "weights_manifest_sha256": "4437d872387dc80a820f5373e501089fe4d7a4e91d73a3ce6e015fa5e935baff"
   }
 }

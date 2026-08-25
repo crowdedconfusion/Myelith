@@ -239,15 +239,40 @@ impl ShardNode {
     /// `intermediate_size` steht nicht als Feld am Modell und wird
     /// deshalb aus der Zeilenzahl von `gate_proj` gelesen; ohne Layer
     /// gibt es keine, dann steht dort null.
+    ///
+    /// ⚑ **Fund 60 (2026-08-25): Bei einer MoE-Layer gibt es kein
+    /// `gate_proj`.** Sie hat einen Router und N Experten, die je eines
+    /// haben. Wer hier den ersten Experten nähme, bekäme
+    /// `moe_intermediate_size` statt `intermediate_size` und spräche dem
+    /// Shard bei Qwen3-30B-A3B **ein Achtel** seiner Arbeit zu. Deshalb
+    /// liest dieser Zweig die MoE-Größen als das, was sie sind, und
+    /// `macs_je_layer` rechnet damit `top_k` Experten plus Router statt
+    /// einer breiten MLP.
     pub fn modell_profil(&self) -> ModellProfil {
+        use integer_llm_runtime::model::Feedforward;
+        let erste = self.model.layers.first();
+        let (intermediate_size, num_experts, num_experts_per_tok, moe_intermediate_size) =
+            match erste.map(|l| &l.ffn) {
+                Some(Feedforward::Dense(mlp)) => (mlp.gate_proj.rows() as u64, 0, 0, 0),
+                Some(Feedforward::Moe(moe)) => (
+                    // Bei MoE ist `intermediate_size` für die Rechnung
+                    // bedeutungslos; `macs_je_layer` benutzt es dann nicht.
+                    0,
+                    moe.experts.len() as u64,
+                    moe.top_k as u64,
+                    moe.experts
+                        .first()
+                        .map(|e| e.gate_proj.rows() as u64)
+                        .unwrap_or(0),
+                ),
+                None => (0, 0, 0, 0),
+            };
         ModellProfil {
             hidden_size: self.model.hidden_size as u64,
-            intermediate_size: self
-                .model
-                .layers
-                .first()
-                .map(|l| l.gate_proj.rows() as u64)
-                .unwrap_or(0),
+            intermediate_size,
+            num_experts,
+            num_experts_per_tok,
+            moe_intermediate_size,
             num_layers: self.model.num_layers as u64,
             vocab_size: self.model.vocab_size as u64,
             num_heads: self.model.num_heads as u64,

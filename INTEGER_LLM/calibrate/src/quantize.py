@@ -191,6 +191,89 @@ def quantize_symmetric_int16_per_channel(tensor: torch.Tensor) -> dict:
     }
 
 
+def entschmelze_experten(name, param):
+    """Zerlegt **verschmolzene** Expertentensoren in je einen Tensor pro
+    Experte. Alles andere reicht sie unveraendert durch.
+
+    ## Der Fund, der diese Funktion erzwungen hat (2026-08-25)
+
+    Die `model.safetensors.index.json` von Qwen3-30B-A3B fuehrt 128
+    Experten je Layer als je drei eigene, **zweidimensionale** Tensoren.
+    **transformers 5.15 laedt sie nicht so.** Es stapelt sie:
+
+        model.layers.0.mlp.experts.gate_up_proj   [128, 1536, 2048]
+        model.layers.0.mlp.experts.down_proj      [128, 2048,  768]
+
+    Ohne diese Funktion liefe `quantize_symmetric_int8_per_channel` auf
+    einen **dreidimensionalen** Tensor. Sie stuerzt dabei nicht ab: Ihr
+    `absmax` laeuft ueber `dim=tuple(range(1, t.dim()))`, bei 3D also
+    ueber die Achsen 1 und 2, und liefert **eine Skala je Experte** statt
+    einer je Zeile.
+
+    **Das ist genau die Per-Tensor-Skala, die theta_v 0.7.0 abgeschafft
+    hat**, weil sie bei Projektionsmatrizen 10 bis 17 Prozent der
+    Eintraege zerstoerte. Kein Fehler, nur schlechtere Zahlen, und damit
+    dieselbe Fehlerklasse wie die Funde 15 bis 17.
+
+    ## Die Anordnung ist nachgesehen, nicht geschlossen
+
+    Aus `Qwen3MoeExperts.forward` folgt, dass `chunk(2, dim=-1)` die
+    Ausgabe der verschmolzenen Projektion in gate und up teilt. Das ist
+    eine Herleitung. Nachgesehen am 2026-08-25, gegen die echten Tensoren
+    auf der Platte:
+
+        gate_up_proj[0][:768]  == experts.0.gate_proj.weight    True
+        gate_up_proj[0][768:]  == experts.0.up_proj.weight      True
+        down_proj[0]           == experts.0.down_proj.weight    True
+
+    Reine Verkettung, keine Verschachtelung, keine Transposition. Das
+    Entschmelzen ist damit **exaktes Schneiden** und kein Umrechnen.
+
+    ## Warum aus dem Speicher und nicht aus den safetensors
+
+    Beides waere moeglich, und die Namen kaemen bei beiden aus derselben
+    Quelle. Aus dem Speicher zu schneiden hat den Vorzug, dass es **keinen
+    zweiten Lesepfad** gibt: Eine Datei zweimal auf verschiedenen Wegen zu
+    lesen ist eine Stelle, an der zwei Wahrheiten entstehen koennen, und
+    die Gleichheit oben ist gemessen.
+
+    Ergebnis: Der Per-Zeilen-Quantisierer bleibt unveraendert, das
+    Artefakt traegt durchgehend zweidimensionale Tensoren, und die Namen
+    sind genau die der `index.json` und die, die
+    `runtime/src/loader.rs` erwartet.
+    """
+    if ".mlp.experts." not in f".{name}." and not name.endswith(("mlp.experts.gate_up_proj",
+                                                                "mlp.experts.down_proj")):
+        return [(name, param)]
+    if param.dim() != 3:
+        # Eine transformers-Fassung mit einzelnen Expertenmodulen liefert
+        # hier bereits 2D-Tensoren unter den richtigen Namen.
+        return [(name, param)]
+
+    if name.endswith("mlp.experts.gate_up_proj"):
+        praefix = name[: -len(".experts.gate_up_proj")]
+        breite = param.shape[1] // 2
+        if param.shape[1] != 2 * breite:
+            raise ValueError(
+                f"{name}: Achse 1 hat {param.shape[1]} Zeilen und ist nicht "
+                "durch zwei teilbar; erwartet wird gate und up verkettet."
+            )
+        stuecke = []
+        for e in range(param.shape[0]):
+            stuecke.append((f"{praefix}.experts.{e}.gate_proj.weight", param[e][:breite]))
+            stuecke.append((f"{praefix}.experts.{e}.up_proj.weight", param[e][breite:]))
+        return stuecke
+
+    if name.endswith("mlp.experts.down_proj"):
+        praefix = name[: -len(".experts.down_proj")]
+        return [
+            (f"{praefix}.experts.{e}.down_proj.weight", param[e])
+            for e in range(param.shape[0])
+        ]
+
+    return [(name, param)]
+
+
 def quantize_model_weights(model) -> Dict[str, dict]:
     """
     Quantisiert alle relevanten Gewichte eines HF-Modells per-channel
@@ -207,20 +290,66 @@ def quantize_model_weights(model) -> Dict[str, dict]:
 
     Returns: Dict[tensor_name -> {int8|int16, shifts, shape}]
     """
-    quantized = {}
+    return dict(quantisiere_gewichte_strom(model))
+
+
+def quantisiere_gewichte_strom(model):
+    """Wie [`quantize_model_weights`], aber als **Strom**: liefert ein
+    Paar `(name, quantisat)` nach dem anderen und haelt nie mehr als
+    einen Tensor.
+
+    ## ⚑ Der Fund, der diese Fassung erzwungen hat (2026-08-25)
+
+    Die Kalibrierung von Qwen3-30B-A3B lief 1,5 Stunden durch den Korpus,
+    sammelte 722 Modulstatistiken und wurde dann bei
+    „Quantisiere Modell-Gewichte" vom Betriebssystem **abgeschossen**
+    (Exit 137, SIGKILL).
+
+    **Nicht am Modell.** Die Gewichte sind eingeblendet und damit
+    verdraengbar; der Vorwaertspass ueberlebt das. Abgeschossen wurde der
+    Lauf am **Ergebnis**: `quantize_model_weights` baut das vollstaendige
+    Quantisat im Speicher, bevor die erste Datei geschrieben wird. Bei
+    30,5 Milliarden Parametern sind das ueber 30 GB int8 gegen 24 GiB
+    Arbeitsspeicher.
+
+    Der Kopf von `main.py` rechnet diese Spitze fuer 7B sogar vor:
+    „26 GB Spitzenbedarf (Modell 15,2 GB + Quantisat 8,7 GB)". Dort ging
+    sie noch auf. Der Entwurf war also nicht unbedacht, er war auf eine
+    Groessenordnung ausgelegt, die ueberschritten wurde.
+
+    **Als Strom haengt die Spitze am groessten Einzeltensor**, nicht am
+    Modell: bei Qwen3-30B-A3B ist das die Einbettung mit 311 Millionen
+    Werten, also rund 1,2 GB fuer die float32-Zwischenrechnung und 311 MB
+    fuer das Ergebnis. Das ist unabhaengig von der Modellgroesse, solange
+    kein einzelner Tensor waechst.
+
+    **Die Ausgabe ist dieselbe.** Das Manifest wird mit `sort_keys=True`
+    geschrieben, die Reihenfolge der Paare spielt also keine Rolle, und
+    je Tensor entstehen dieselben Bytes. Fuer 0,5B und 7B aendert sich
+    nichts.
+    """
     target_keys = [
         "embed_tokens", "lm_head",
         "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
         "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj",
         "input_layernorm", "post_attention_layernorm", "norm",
+        # Qwen3: QK-Norm-Gammas, je head_dim lang. Sie wuerden ueber das
+        # Teilwort "norm" ohnehin mitgenommen, und genau deshalb stehen sie
+        # hier: Eine Abdeckung, die an einer Teilwort-Uebereinstimmung
+        # haengt, faellt beim naechsten Umbenennen still weg.
+        "self_attn.q_norm", "self_attn.k_norm",
+        # Mixture-of-Experts (Qwen3-MoE, 2026-08-25). Die Experten heissen
+        # mlp.experts.<N>.{gate,up,down}_proj und treffen die Schluessel
+        # "mlp.gate_proj" usw. NICHT: dazwischen steht "experts.<N>".
+        # Der Router heisst mlp.gate und endet nicht auf gate_proj.
+        "mlp.experts.", "mlp.gate.",
     ]
 
     for name, param in model.named_parameters():
         if not any(key in name for key in target_keys):
             continue
-        if name.endswith(".bias"):
-            quantized[name] = quantize_bias_int16_per_element(param)
-        else:
-            quantized[name] = quantize_symmetric_int8_per_channel(param)
-
-    return quantized
+        for einzelname, einzeltensor in entschmelze_experten(name, param):
+            if einzelname.endswith(".bias"):
+                yield einzelname, quantize_bias_int16_per_element(einzeltensor)
+            else:
+                yield einzelname, quantize_symmetric_int8_per_channel(einzeltensor)

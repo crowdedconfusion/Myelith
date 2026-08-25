@@ -160,6 +160,71 @@ pub fn rmsnorm_i16(
     out
 }
 
+/// QK-Norm: RMSNorm je Attention-Kopf, wie Qwen3 sie vor RoPE anwendet.
+///
+/// **Es ist keine neue Rechnung.** QK-Norm ist RMSNorm über `head_dim`
+/// statt über `hidden_size`, mit einem Gamma der Länge `head_dim`, das
+/// sich **alle Köpfe teilen**. [`rmsnorm_i16`] ist bereits allgemein
+/// genug; diese Funktion legt nur fest, worüber normiert wird. Das ist
+/// die ganze Zutat, die Qwen3 gegenüber Qwen2.5 im Attention-Zweig
+/// braucht, und sie war der einzige Struktur-Blocker des Modellwechsels.
+///
+/// ⚑ **Kopfweise, nicht über den flachen Vektor.** Der Unterschied ist
+/// nicht kosmetisch: Über `num_heads · head_dim` normiert, ginge die
+/// Varianz **aller** Köpfe in **jeden** Kopf ein. Ein Kopf mit großen
+/// Werten drückte alle anderen herunter, und zwar abhängig davon, was
+/// die anderen Köpfe gerade enthalten. Das Ergebnis für Kopf 0 hinge
+/// dann an Kopf 7. Der Test
+/// `ein_kopf_aendert_die_anderen_nicht` hält genau das fest.
+///
+/// **Zur Eingangsskala.** `q_flat` und `k_flat` tragen eine Skala je
+/// Layer (`q_frac`/`k_frac`), keine je Kanal. Das ist der Unterschied
+/// zum Residualstrom, der seit Fund 20 eine Skala je Kanal braucht, und
+/// er ist hier richtig: Die „Massive Activations" sind eine Eigenschaft
+/// des Residualstroms, nicht der projizierten Q/K.
+///
+/// **Offen und hier vermerkt statt verschwiegen:** QK-Norm existiert in
+/// Qwen3 gerade deshalb, weil die Attention-Logits ohne sie davonlaufen.
+/// Ob die projizierten Q/K bei diesem Modell weiterhin mit **einer**
+/// Skala je Layer auskommen, ist eine Messfrage und beim ersten
+/// Qwen3-Artefakt zu prüfen. Fällt die Antwort negativ aus, nimmt diese
+/// Funktion `x_shifts` je Kanal entgegen, ohne dass sich sonst etwas
+/// ändert: [`rmsnorm_i16`] kann es bereits.
+#[allow(clippy::too_many_arguments)]
+pub fn qk_norm_heads(
+    heads: &mut [Vec<i16>],
+    x_frac: u8,
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    out_frac_bits: u8,
+) {
+    let head_dim = gamma.len();
+    // Hängt nur an head_dim, also einmal statt je Kopf.
+    let inv_n = inv_n_q20(head_dim);
+    let x_shifts = vec![x_frac; head_dim];
+    for kopf in heads.iter_mut() {
+        debug_assert_eq!(
+            kopf.len(),
+            head_dim,
+            "qk_norm_heads: jeder Kopf traegt head_dim Elemente"
+        );
+        *kopf = rmsnorm_i16(
+            kopf,
+            &x_shifts,
+            gamma,
+            gamma_shifts,
+            rsqrt_lut,
+            lut_input_shift,
+            lut_output_frac,
+            inv_n,
+            out_frac_bits,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +242,100 @@ mod tests {
             }
         }
         lut
+    }
+
+    // -----------------------------------------------------------------
+    // QK-Norm (Qwen3)
+    // -----------------------------------------------------------------
+
+    fn qk_gamma(head_dim: usize) -> (Vec<i8>, Vec<u8>) {
+        // gamma = 1.0 in der Skala 2^6.
+        (vec![64i8; head_dim], vec![6u8; head_dim])
+    }
+
+    /// ⚑ **Der Test, gegen den `qk_norm_heads` geschrieben ist.** Wer
+    /// über den flachen Vektor normiert statt kopfweise, besteht jeden
+    /// anderen Test dieser Datei und faellt hier durch: Kopf 0 aendert
+    /// sich dann, obwohl nur Kopf 1 angefasst wurde.
+    #[test]
+    fn ein_kopf_aendert_die_anderen_nicht() {
+        let lut = spec_lut(1024);
+        let (gamma, gshift) = qk_gamma(4);
+
+        // Kopf 1 unterscheidet sich in der **Richtung**, nicht nur im
+        // Betrag: RMSNorm ist skaleninvariant, zwei konstante Vektoren
+        // verschiedener Groesse kaemen identisch heraus und der zweite
+        // Vergleich unten pruefte nichts.
+        let mut a = vec![vec![10i16, 20, 30, 40], vec![5i16, 5, 5, 5]];
+        let mut b = vec![vec![10i16, 20, 30, 40], vec![3000i16, 100, 7, -50]];
+
+        qk_norm_heads(&mut a, 6, &gamma, &gshift, &lut, 8, 8, 6);
+        qk_norm_heads(&mut b, 6, &gamma, &gshift, &lut, 8, 8, 6);
+
+        assert_eq!(
+            a[0], b[0],
+            "Kopf 0 darf nicht davon abhaengen, was in Kopf 1 steht"
+        );
+        assert_ne!(a[1], b[1], "Kopf 1 selbst muss sich sehr wohl unterscheiden");
+    }
+
+    /// Gegenprobe zur Gegenprobe: Ueber den flachen Vektor normiert,
+    /// waere Kopf 0 tatsaechlich betroffen. Ohne diesen Nachweis
+    /// koennte der Test darueber eine Eigenschaft pruefen, die ohnehin
+    /// gilt.
+    #[test]
+    fn ueber_den_flachen_vektor_waere_kopf_null_betroffen() {
+        let lut = spec_lut(1024);
+        let flach_a = [10i16, 20, 30, 40, 5, 5, 5, 5];
+        let flach_b = [10i16, 20, 30, 40, 3000, 3000, 3000, 3000];
+        let shifts = vec![6u8; 8];
+        let gamma = vec![64i8; 8];
+        let gshift = vec![6u8; 8];
+
+        let out_a = rmsnorm_i16(&flach_a, &shifts, &gamma, &gshift, &lut, 8, 8, inv_n_q20(8), 6);
+        let out_b = rmsnorm_i16(&flach_b, &shifts, &gamma, &gshift, &lut, 8, 8, inv_n_q20(8), 6);
+
+        assert_ne!(
+            out_a[..4],
+            out_b[..4],
+            "genau dieser Unterschied ist der Fehler, den qk_norm_heads vermeidet"
+        );
+    }
+
+    #[test]
+    fn qk_norm_normiert_jeden_kopf_auf_dieselbe_groesse() {
+        let lut = spec_lut(1024);
+        let (gamma, gshift) = qk_gamma(4);
+        // Zwei Koepfe, gleiche Richtung, um den Faktor 100 verschieden.
+        let mut heads = vec![vec![1i16, 1, 1, 1], vec![100i16, 100, 100, 100]];
+        qk_norm_heads(&mut heads, 6, &gamma, &gshift, &lut, 8, 8, 6);
+        assert_eq!(
+            heads[0], heads[1],
+            "RMSNorm ist skaleninvariant: beide Koepfe muessen gleich herauskommen"
+        );
+    }
+
+    #[test]
+    fn qk_norm_laesst_den_nullkopf_null() {
+        let lut = spec_lut(1024);
+        let (gamma, gshift) = qk_gamma(4);
+        let mut heads = vec![vec![0i16; 4]];
+        qk_norm_heads(&mut heads, 6, &gamma, &gshift, &lut, 8, 8, 6);
+        assert_eq!(heads[0], vec![0i16; 4]);
+    }
+
+    #[test]
+    fn qk_norm_ist_wiederholbar() {
+        let lut = spec_lut(1024);
+        let (gamma, gshift) = qk_gamma(8);
+        let vorlage: Vec<Vec<i16>> = (0..3)
+            .map(|h| (0..8).map(|i| ((h * 8 + i) as i16) * 37 - 100).collect())
+            .collect();
+        let mut a = vorlage.clone();
+        let mut b = vorlage;
+        qk_norm_heads(&mut a, 5, &gamma, &gshift, &lut, 8, 8, 6);
+        qk_norm_heads(&mut b, 5, &gamma, &gshift, &lut, 8, 8, 6);
+        assert_eq!(a, b);
     }
 
     #[test]

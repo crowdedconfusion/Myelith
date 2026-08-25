@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-runtime"
-version = "0.18.0"
+version = "0.20.0"
 edition = "2021"
 
 [[bin]]
@@ -23,4 +23,8 @@ integer-llm-kernels = { path = "../kernels" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+# Speicherabbilder statt Heap-Kopien der Gewichte (Fund 62). Ein
+# 29-GiB-Artefakt passt nicht in 24 GiB Heap; als Dateiabbild sind die
+# Seiten sauber und verdraengbar statt auslagerungspflichtig.
+memmap2 = "0.9"
 tokenizers = "0.21"

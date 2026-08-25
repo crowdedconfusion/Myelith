@@ -44,6 +44,13 @@ MODEL_CONFIGS = {
         # Runtime verlangt bei true die zugehoerigen Bias-Tensoren im
         # Artefakt (ausserplanmaessiger Patch v0.12.19).
         "attention_bias": True,
+        # Qwen2.5 kennt kein QK-Norm; erst Qwen3 normiert Q und K je Kopf
+        # vor RoPE. Ausdrueckliches False statt Weglassen, aus demselben
+        # Grund wie bei attention_bias: lautes Scheitern statt stiller
+        # Abweichung vom Referenzmodell.
+        "qk_norm": False,
+        # Dichtes Modell, kein Expertengemisch.
+        "num_experts": 0,
         "verified": "models/Qwen2.5-0.5B/config.json",
         "hf_model_id": "Qwen/Qwen2.5-0.5B",
     },
@@ -76,8 +83,97 @@ MODEL_CONFIGS = {
         "max_context": 2048,
         "tie_word_embeddings": False,
         "attention_bias": True,
+        "qk_norm": False,
+        # Dichtes Modell, kein Expertengemisch.
+        "num_experts": 0,
         "verified": "huggingface.co/Qwen/Qwen2.5-7B@d1497293",
         "hf_model_id": "Qwen/Qwen2.5-7B",
+    },
+    # Verifiziert gegen den lokalen Snapshot models/Qwen3-4B/config.json,
+    # Revision 1cfa9a7208912126459214e8b04321603b3df60c, Lizenz Apache-2.0
+    # (LICENSE liegt neben den Gewichten, ETHICS G7).
+    #
+    # **Drei Unterschiede zu Qwen2.5, und nur einer davon war bekannt:**
+    #
+    #   qk_norm         False -> True   Q und K werden je Kopf ueber
+    #                                   head_dim RMS-normiert, VOR RoPE.
+    #                                   Der einzige Unterschied, den die
+    #                                   Modellagnostik-Analyse benannt
+    #                                   hatte.
+    #
+    #   attention_bias  True -> False   Qwen3 hat ueberhaupt keine
+    #                                   Bias-Tensoren; die index.json der
+    #                                   Variante fuehrt keinen einzigen.
+    #
+    #   head_dim        entkoppelt      2560 / 32 = 80, head_dim ist aber
+    #                                   128. Bei 0,5B (896 = 14x64) und 7B
+    #                                   (3584 = 28x128) fielen beide Zahlen
+    #                                   zusammen, und der Rust-Loader hatte
+    #                                   die Gleichheit als harte Bedingung
+    #                                   eingebaut. Siehe Fund 59.
+    #
+    # tie_word_embeddings bleibt True wie bei 0,5B: kein eigenes
+    # lm_head.weight im Export.
+    "qwen3-4b": {
+        "family": "qwen3",
+        "variant": "4b",
+        "num_layers": 36,
+        "hidden_size": 2560,
+        "intermediate_size": 9728,
+        "num_heads": 32,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "vocab_size": 151936,
+        # Wie bei 0,5B und 7B bewusst 2048 statt der 40960 der Modellkarte:
+        # max_context bestimmt die Zeilenzahl der RoPE-LUTs und damit die
+        # Artefaktgroesse, und 2048 haelt die Messung vergleichbar.
+        "max_context": 2048,
+        "tie_word_embeddings": True,
+        "attention_bias": False,
+        "qk_norm": True,
+        # Dichtes Modell, kein Expertengemisch.
+        "num_experts": 0,
+        "verified": "models/Qwen3-4B/config.json@1cfa9a72",
+        "hf_model_id": "Qwen/Qwen3-4B",
+    },
+    # Verifiziert gegen den lokalen Snapshot
+    # models/Qwen3-30B-A3B/config.json, Revision
+    # ad44e777bcd18fa416d9da3bd8f70d33ebb85d39, Lizenz Apache-2.0.
+    # Tensornamen zusaetzlich gegen die echte
+    # model.safetensors.index.json gehalten: je Layer mlp.gate.weight
+    # plus 384 Experten-Tensoren (128 x gate/up/down), 18 867 insgesamt.
+    #
+    # **Das erste Mixture-of-Experts-Modell des Projekts.** Alle 48 Layer
+    # sind MoE (mlp_only_layers ist leer, decoder_sparse_step 1).
+    #
+    # tie_word_embeddings ist hier False, anders als bei Qwen3-4B: Das
+    # Modell traegt ein eigenes lm_head.weight.
+    #
+    # intermediate_size 6144 steht in der config, wird aber bei
+    # decoder_sparse_step 1 von keiner Layer benutzt. Es bleibt
+    # eingetragen, weil es in der echten config steht; die Rechenarbeit
+    # bemisst sich an moe_intermediate_size mal num_experts_per_tok.
+    "qwen3-30b-a3b": {
+        "family": "qwen3-moe",
+        "variant": "30b-a3b",
+        "num_layers": 48,
+        "hidden_size": 2048,
+        "intermediate_size": 6144,
+        "num_heads": 32,
+        "num_kv_heads": 4,
+        "head_dim": 128,
+        "vocab_size": 151936,
+        "max_context": 2048,
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "qk_norm": True,
+        "num_experts": 128,
+        "num_experts_per_tok": 8,
+        "moe_intermediate_size": 768,
+        "norm_topk_prob": True,
+        "mlp_only_layers": [],
+        "verified": "models/Qwen3-30B-A3B/config.json@ad44e777",
+        "hf_model_id": "Qwen/Qwen3-30B-A3B",
     },
     "qwen2.5-1.5b-instruct": {
         "num_layers": 28,
@@ -147,7 +243,17 @@ def get_model_config(name: str) -> dict:
 _REQUIRED_EXPORT_FIELDS = (
     "family", "variant", "num_layers", "hidden_size", "intermediate_size",
     "num_heads", "num_kv_heads", "head_dim", "vocab_size", "max_context",
-    "tie_word_embeddings", "attention_bias", "verified", "hf_model_id",
+    "tie_word_embeddings", "attention_bias", "qk_norm", "num_experts",
+    "verified", "hf_model_id",
+)
+
+# Felder, die zusaetzlich Pflicht werden, sobald "num_experts" > 0 ist.
+# Sie stehen nicht in _REQUIRED_EXPORT_FIELDS, weil ein dichtes Modell
+# sie nicht hat und ein leeres Feld dort nichts aussagt; als bedingte
+# Pflicht sagen sie etwas.
+_REQUIRED_MOE_FIELDS = (
+    "num_experts_per_tok", "moe_intermediate_size", "norm_topk_prob",
+    "mlp_only_layers",
 )
 
 
@@ -167,6 +273,12 @@ def get_export_model_config(name: str) -> dict:
     """
     config = get_model_config(name)
     missing = [f for f in _REQUIRED_EXPORT_FIELDS if f not in config]
+    if not missing and config.get("num_experts", 0) > 0:
+        # Bedingte Pflicht: Ein MoE-Eintrag ohne top_k oder ohne
+        # Expertenbreite ist nicht exportfaehig, und der Rust-Loader
+        # koennte den Fehler nicht bemerken - er saehe nur eine Null und
+        # baute eine Layer ohne Experten.
+        missing = [f for f in _REQUIRED_MOE_FIELDS if f not in config]
     if missing:
         raise ValueError(
             f"Modell '{name}' fehlen fuer den Export noetige, verifizierte Felder: {missing}. "

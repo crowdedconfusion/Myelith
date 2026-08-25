@@ -69,6 +69,7 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "rope.rs",
     REPO / "kernels" / "src" / "attention.rs",
     REPO / "kernels" / "src" / "mlp.rs",
+    REPO / "kernels" / "src" / "moe.rs",
     REPO / "kernels" / "src" / "softmax.rs",
     REPO / "kernels" / "src" / "backend.rs",
     REPO / "kernels" / "src" / "integer_math.rs",

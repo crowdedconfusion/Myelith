@@ -280,6 +280,23 @@ fn main() {
     );
     summary("S6 norm_residual", &norm_residual, sc.norm_mlp_frac);
 
+    // Diese Sonde bildet den **dichten** Feedforward-Pfad nach. Bei einer
+    // MoE-Layer haette sie keine gate/up/down-Matrizen, sondern einen
+    // Router und N Experten, und eine Nachbildung, die sich den ersten
+    // Experten herausgreift, vermaesse etwas anderes als der echte Pfad.
+    // Lieber laut aussteigen als still das Falsche messen.
+    let mlp = match &layer.ffn {
+        integer_llm_runtime::model::Feedforward::Dense(m) => m,
+        integer_llm_runtime::model::Feedforward::Moe(_) => {
+            eprintln!(
+                "[layer_probe] Ebene {} ist eine MoE-Ebene. Diese Sonde bildet nur den \
+                 dichten Pfad nach und hat fuer Router und Experten keine Entsprechung.",
+                layer.layer_idx
+            );
+            std::process::exit(2);
+        }
+    };
+
     // ── MLP-Innenleben (2026-08-20, Fahrplanpunkt 12.77) ─────────────
     // Der operationsweise Vergleich hat den Fehler auf das MLP
     // eingegrenzt (+2,65 pp relativer L2 in einem Schritt). Die
@@ -289,18 +306,18 @@ fn main() {
     {
         let gate = linear_w8a16(
             &norm_residual,
-            &layer.gate_proj.data,
-            layer.gate_proj.cols(),
-            &layer.gate_proj.shifts,
+            &mlp.gate_proj.data,
+            mlp.gate_proj.cols(),
+            &mlp.gate_proj.shifts,
             sc.norm_mlp_frac,
             sc.gate_frac,
         );
         summary("M1 gate", &gate, sc.gate_frac);
         let up = linear_w8a16(
             &norm_residual,
-            &layer.up_proj.data,
-            layer.up_proj.cols(),
-            &layer.up_proj.shifts,
+            &mlp.up_proj.data,
+            mlp.up_proj.cols(),
+            &mlp.up_proj.shifts,
             sc.norm_mlp_frac,
             sc.up_frac,
         );
@@ -349,8 +366,8 @@ fn main() {
                 })
                 .collect()
         };
-        let gate_f = matvec(&layer.gate_proj, &layer.gate_proj.shifts, gate.len());
-        let up_f = matvec(&layer.up_proj, &layer.up_proj.shifts, up.len());
+        let gate_f = matvec(&mlp.gate_proj, &mlp.gate_proj.shifts, gate.len());
+        let up_f = matvec(&mlp.up_proj, &mlp.up_proj.shifts, up.len());
         let silu_f: Vec<f64> = gate_f.iter().map(|g| g / (1.0 + (-g).exp())).collect();
         let h_f: Vec<f64> = silu_f.iter().zip(up_f.iter()).map(|(a, b)| a * b).collect();
 
@@ -435,14 +452,14 @@ fn main() {
 
     let mlp_out = mlp_int(
         &norm_residual,
-        &layer.gate_proj.data,
-        &layer.up_proj.data,
-        &layer.down_proj.data,
-        layer.gate_proj.cols(),
-        layer.down_proj.cols(),
-        &layer.gate_proj.shifts,
-        &layer.up_proj.shifts,
-        &layer.down_proj.shifts,
+        &mlp.gate_proj.data,
+        &mlp.up_proj.data,
+        &mlp.down_proj.data,
+        mlp.gate_proj.cols(),
+        mlp.down_proj.cols(),
+        &mlp.gate_proj.shifts,
+        &mlp.up_proj.shifts,
+        &mlp.down_proj.shifts,
         &model.silu_lut,
         sc.norm_mlp_frac,
         sc.gate_frac,

@@ -4,7 +4,10 @@ use std::path::Path;
 use std::collections::HashMap;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use crate::model::{IntegerModel, LayerScales, ModelConfig, QTensor, TransformerLayer};
+use crate::model::{
+    DenseMlp, Feedforward, IntegerModel, LayerScales, ModelConfig, MoeLayer, QTensor, QkNorm,
+    TransformerLayer,
+};
 
 /// Zur Kompilierzeit eingebettete Ausfuehrungsspezifikation (Kap. 6.5 des
 /// Whitepapers: Teil von theta_v, damit konsensrelevant). Bewusst per
@@ -279,6 +282,41 @@ pub struct ModelDims {
     /// (ausserplanmaessiger Patch v0.12.19, Beschluss mit dem Projektinhaber:
     /// explizit per model_config wie `num_kv_heads`/`tie_word_embeddings`).
     pub attention_bias: bool,
+    /// Ob Q und K je Kopf RMS-normiert werden, **vor** RoPE (HF-Feld
+    /// `q_norm`/`k_norm` je Layer; Qwen3: ja, Qwen2.5: nein).
+    ///
+    /// **`serde(default)` und damit `false`, wenn das Feld fehlt.** Alle
+    /// Artefakte, die vor dem 2026-08-25 gebaut wurden, sind Qwen2.5 und
+    /// haben kein QK-Norm; sie tragen das Feld nicht und sollen weiter
+    /// laden. Ein neues Pflichtfeld haette sie ungueltig gemacht und einen
+    /// 7B-Neubau von zwanzig Minuten erzwungen, ohne dass sich an ihnen
+    /// etwas aendert.
+    ///
+    /// Fuer **neue** Artefakte ist das Feld dagegen Pflicht: Die
+    /// Kalibrierung fuehrt es in `_REQUIRED_EXPORT_FIELDS` und verweigert
+    /// den Export ohne. Die Nachsicht gilt also dem Bestand, nicht dem
+    /// Neubau.
+    #[serde(default)]
+    pub qk_norm: bool,
+    /// Zahl der Experten je MoE-Layer. **`0` heißt: dieses Modell hat
+    /// kein MoE**, und dann sind die drei folgenden Felder bedeutungslos.
+    #[serde(default)]
+    pub num_experts: usize,
+    /// Wie viele Experten je Token feuern (`num_experts_per_tok`).
+    #[serde(default)]
+    pub num_experts_per_tok: usize,
+    /// Breite eines einzelnen Experten. Deutlich kleiner als
+    /// `intermediate_size`: bei Qwen3-30B-A3B 768 gegen 6144.
+    #[serde(default)]
+    pub moe_intermediate_size: usize,
+    /// Ob die Gewichte der gewählten Experten auf eins normiert werden.
+    #[serde(default)]
+    pub norm_topk_prob: bool,
+    /// Layer, die trotz MoE-Modell **dicht** bleiben. Bei
+    /// Qwen3-30B-A3B leer, aber das Feld existiert, und ein Modell mit
+    /// gemischten Layern darf daran nicht scheitern.
+    #[serde(default)]
+    pub mlp_only_layers: Vec<usize>,
 }
 
 /// Laedt und validiert die Modell-Dimensionen aus `model_config.json`.
@@ -298,10 +336,28 @@ pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
     {
         return Err("model_config.json: alle Modell-Dimensionen muessen > 0 sein".to_string());
     }
-    if dims.hidden_size != dims.num_heads * dims.head_dim {
+    // ⚑ **Fund 59 (2026-08-25): `hidden_size == num_heads * head_dim` gilt
+    // nicht allgemein.** Hier stand genau diese Gleichung als harte
+    // Ablehnung. Bei Qwen2.5-0,5B (896 = 14·64) und Qwen2.5-7B
+    // (3584 = 28·128) trifft sie zu, und mit zwei Modellen sah sie wie
+    // eine Modelleigenschaft aus. **Qwen3-4B hat `hidden_size` 2560 und
+    // `num_heads · head_dim` = 32·128 = 4096** (gegen die echte
+    // `config.json` geprueft, nicht aus einer Modellkarte).
+    //
+    // Die Architektur entkoppelt beides: Q/K/V projizieren nach
+    // `n·head_dim`, `o_proj` bildet von dort auf `hidden_size` zurueck.
+    // Eine Beziehung zwischen den beiden Zahlen verlangt niemand.
+    //
+    // **Ersetzt statt geloescht.** Die Gleichung schuetzte tatsaechlich
+    // etwas, naemlich eine vertippte Konfiguration; ohne Ersatz waere die
+    // Behebung eine Regression. An ihre Stelle treten die Formpruefungen
+    // der Projektionsmatrizen je Layer
+    // ([`pruefe_projektionsformen`]) — dieselbe Schutzwirkung, aber
+    // gegen die Groessen, auf die es wirklich ankommt.
+    if !dims.head_dim.is_multiple_of(2) {
         return Err(format!(
-            "model_config.json: hidden_size ({}) != num_heads ({}) * head_dim ({})",
-            dims.hidden_size, dims.num_heads, dims.head_dim
+            "model_config.json: head_dim ({}) muss gerade sein (RoPE paart je zwei Elemente ueber den Half-Split)",
+            dims.head_dim
         ));
     }
     if !dims.num_heads.is_multiple_of(dims.num_kv_heads) {
@@ -432,18 +488,51 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
             return Err(format!("{}: leere shape im Manifest", name));
         }
 
-        let bytes = std::fs::read(artifact_dir.join(&entry.file))
-            .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+        // ⚑ **Fund 62 (2026-08-25): Abbild statt Heap-Kopie.**
+        //
+        // Hier stand `std::fs::read`, also eine Kopie jeder Gewichtsdatei
+        // in den Heap. Für 0,74 GB und 8,1 GB trägt das. Das Artefakt von
+        // Qwen3-30B-A3B ist **29 GiB** gegen 24 GiB Arbeitsspeicher, und
+        // der Versuch zeigte das schlechteste denkbare Verhalten: Während
+        // der Prozess las, schrieb das System seinen Heap in die
+        // Auslagerung. RSS fiel von 8,9 auf 1,9 GiB, der Swap wuchs von
+        // 2,9 auf 4,1 GB. Von der Platte lesen und sofort wieder auf die
+        // Platte schreiben.
+        //
+        // Als Abbild sind dieselben Bytes **saubere, dateigestützte
+        // Seiten**: Das System verwirft sie unter Druck und liest sie bei
+        // Bedarf neu, statt sie auszulagern. Für ein Expertengemisch ist
+        // das mehr als eine Notlösung, denn bei Top-8 von 128 rührt ein
+        // Token nur ein Sechzehntel der Expertengewichte an.
+        //
+        // Gemessen: 18 873 Abbildungen in einem Prozess sind auf dieser
+        // Maschine unproblematisch (Deskriptorgrenze 1 048 576).
+        let pfad = artifact_dir.join(&entry.file);
+        let datei = std::fs::File::open(&pfad)
+            .map_err(|e| format!("Fehler beim Oeffnen von {}: {}", entry.file, e))?;
+        // SICHERHEIT: `Mmap::map` ist unsicher, weil ein Fremdprozess die
+        // Datei unter dem Abbild ändern könnte. Hier liegt sie im
+        // Artefaktverzeichnis, wird ausschließlich lesend geöffnet, und
+        // ihr Inhalt ist unmittelbar danach über SHA-256 gegen das
+        // Manifest geprüft. Eine Änderung nach dieser Prüfung wäre
+        // dieselbe Klasse von Angriff wie eine Änderung an einer
+        // eingelesenen Datei zwischen Lesen und Verwenden.
+        let abbild = unsafe { memmap2::Mmap::map(&datei) }
+            .map_err(|e| format!("Fehler beim Abbilden von {}: {}", entry.file, e))?;
 
         let expected_len: usize = entry.shape.iter().product();
-        if bytes.len() != expected_len {
+        if abbild.len() != expected_len {
             return Err(format!(
                 "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes",
-                name, bytes.len(), entry.file, entry.shape, expected_len
+                name, abbild.len(), entry.file, entry.shape, expected_len
             ));
         }
 
-        let digest = sha256_hex(&bytes);
+        // **Die Prüfsumme liest jedes Byte, und das ist in Ordnung.**
+        // Sie bindet das Artefakt an θ_v; ohne sie fiele der Anker weg.
+        // Anders als eine Heap-Kopie bleibt danach nichts belegt: Die
+        // berührten Seiten sind sauber und werden bei Bedarf verworfen.
+        let digest = sha256_hex(&abbild);
         if digest != entry.hash {
             return Err(format!(
                 "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
@@ -485,7 +574,7 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         };
 
         let tensor = QTensor {
-            data: bytes.into_iter().map(|b| b as i8).collect(),
+            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Abbild(abbild)),
             shape: entry.shape,
             shifts,
         };
@@ -608,6 +697,91 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Laedt ein komplettes Modell aus dem Artefakt-Verzeichnis: theta_v-Manifest,
 /// Modell-Dimensionen, Gewichte, Aktivierungsskalen und Lookup-Tabellen.
+/// Prüft die Formen der vier Attention-Projektionen gegen die
+/// Modell-Dimensionen.
+///
+/// **Warum das eine eigene Prüfung ist (Fund 59, 2026-08-25):** Bis heute
+/// stand in `load_model_dims` die Bedingung
+/// `hidden_size == num_heads * head_dim`. Sie galt für die beiden bis
+/// dahin gebauten Modelle und ist trotzdem falsch: Die Architektur
+/// entkoppelt beide Größen, Qwen3-4B hat 2560 gegen 32·128 = 4096.
+///
+/// Die Gleichung schützte aber etwas Echtes, nämlich vertippte
+/// Konfigurationen. Diese Funktion übernimmt diesen Schutz und macht ihn
+/// schärfer: Sie prüft nicht eine Beziehung zwischen zwei Zahlen,
+/// sondern die vier Formen, mit denen der Forward-Pass rechnet.
+///
+/// ```text
+///     q_proj : [num_heads    · head_dim, hidden_size]
+///     k_proj : [num_kv_heads · head_dim, hidden_size]
+///     v_proj : [num_kv_heads · head_dim, hidden_size]
+///     o_proj : [hidden_size,             num_heads · head_dim]
+/// ```
+fn pruefe_projektionsformen(
+    p: &str,
+    dims: &ModelDims,
+    q: &QTensor,
+    k: &QTensor,
+    v: &QTensor,
+    o: &QTensor,
+) -> Result<(), String> {
+    let q_len = dims.num_heads * dims.head_dim;
+    let kv_len = dims.num_kv_heads * dims.head_dim;
+
+    let pruefe = |name: &str, t: &QTensor, zeilen: usize, spalten: usize| -> Result<(), String> {
+        if t.shape.len() != 2 {
+            return Err(format!(
+                "{}.self_attn.{}.weight: shape {:?} ist nicht zweidimensional",
+                p, name, t.shape
+            ));
+        }
+        if t.shape[0] != zeilen || t.shape[1] != spalten {
+            return Err(format!(
+                "{}.self_attn.{}.weight: shape {:?}, erwartet [{}, {}] \
+                 (num_heads {}, num_kv_heads {}, head_dim {}, hidden_size {})",
+                p, name, t.shape, zeilen, spalten,
+                dims.num_heads, dims.num_kv_heads, dims.head_dim, dims.hidden_size
+            ));
+        }
+        Ok(())
+    };
+
+    pruefe("q_proj", q, q_len, dims.hidden_size)?;
+    pruefe("k_proj", k, kv_len, dims.hidden_size)?;
+    pruefe("v_proj", v, kv_len, dims.hidden_size)?;
+    pruefe("o_proj", o, dims.hidden_size, q_len)?;
+    Ok(())
+}
+
+/// Namensschema der MoE-Tensoren im Artefakt.
+///
+/// ✅ **Gegen die echte `model.safetensors.index.json` von
+/// `Qwen/Qwen3-30B-A3B` geprueft** (Revision `ad44e777`, lokal unter
+/// `models/Qwen3-30B-A3B/`, 2026-08-25). Die Datei fuehrt je Layer
+/// `mlp.gate.weight` und 384 Experten-Tensoren, also 128 Experten mal
+/// gate/up/down, nummeriert von 0 bis 127.
+///
+/// Die Konstanten stehen hier zusammen, damit eine Berichtigung eine
+/// Zeile ist und nicht eine Suche. `model_configs.py` folgt derselben
+/// Regel: Was nicht gegen die echte Datei geprueft ist, wird nicht
+/// exportiert.
+///
+/// **Nebenbefund aus derselben Datei:** Das Modell hat **18 867
+/// Tensoren**. Der Export schreibt je Tensor eine Datei plus eine
+/// Shift-Datei, das Artefaktverzeichnis traegt also rund **37 700
+/// Dateien** statt der 593 bei 0,5B. Fuer die stroemende Ladung ist das
+/// die guenstige Form (nur lesen, was feuert); fuer Werkzeuge, die das
+/// Verzeichnis auflisten, ist es eine Groessenordnung mehr.
+const ROUTER_SUFFIX: &str = "mlp.gate.weight";
+/// Wie [`ROUTER_SUFFIX`], aber ohne `.weight`, denn Aktivierungsskalen
+/// tragen den Modulnamen und nicht den Tensornamen.
+const ROUTER_SUFFIX_OHNE_WEIGHT: &str = "mlp.gate";
+
+/// Praefix eines Experten-Tensors, also alles vor der Expertennummer.
+fn p_experte(layer_praefix: &str) -> String {
+    format!("{}.mlp.experts.", layer_praefix)
+}
+
 pub fn load_model(artifact_dir: &Path) -> Result<IntegerModel, String> {
     let theta_v = ThetaV::load_from_dir(artifact_dir)?;
     theta_v.verify_version_against_spec()?;
@@ -745,6 +919,19 @@ pub fn build_model(
     for layer_idx in 0..dims.num_layers {
         let p = format!("model.layers.{}", layer_idx);
 
+        // Fund 59: Diese Pruefung traegt, was frueher die Gleichung
+        // `hidden_size == num_heads * head_dim` trug. Sie prueft die
+        // Formen, die der Forward-Pass tatsaechlich voraussetzt, statt
+        // eine Beziehung, die nur zufaellig fuer zwei Modelle galt.
+        pruefe_projektionsformen(
+            &p,
+            &dims,
+            require_tensor(&weights, &format!("{}.self_attn.q_proj.weight", p))?,
+            require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?,
+            require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?,
+            require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?,
+        )?;
+
         // Attention-Biases: nur bei `attention_bias: true` erwartet, dann
         // aber zwingend (lautes Scheitern statt stiller Abweichung vom
         // Referenzmodell). Bias-Laengen muessen zu den Projektions-Ausgaben
@@ -783,6 +970,67 @@ pub fn build_model(
             (None, None, None)
         };
 
+        // QK-Norm (Qwen3): beide Gammas und beide Ausgangsskalen, oder
+        // keines von vieren. Der Typ `QkNorm` laesst nichts Halbes zu.
+        let qk_norm = if dims.qk_norm {
+            let q_gamma =
+                require_tensor(&weights, &format!("{}.self_attn.q_norm.weight", p))?.clone();
+            let k_gamma =
+                require_tensor(&weights, &format!("{}.self_attn.k_norm.weight", p))?.clone();
+            // Beide Gammas sind je `head_dim` lang und werden von allen
+            // Koepfen geteilt. Eine falsche Laenge hier waere im
+            // Forward-Pass eine stille Fehlnormierung, kein Fehler.
+            for (bez, g) in [("q_norm", &q_gamma), ("k_norm", &k_gamma)] {
+                if g.data.len() != dims.head_dim {
+                    return Err(format!(
+                        "{}.self_attn.{}.weight: {} Elemente, erwartet head_dim ({})",
+                        p, bez, g.data.len(), dims.head_dim
+                    ));
+                }
+            }
+            Some(QkNorm {
+                q_gamma,
+                k_gamma,
+                q_out_frac: require_scale(&scales, &format!("{}.self_attn.q_norm", p))?,
+                k_out_frac: require_scale(&scales, &format!("{}.self_attn.k_norm", p))?,
+            })
+        } else {
+            None
+        };
+
+        // Feedforward: dicht oder Expertengemisch.
+        //
+        // `num_experts == 0` heisst kein MoE. Eine Layer in
+        // `mlp_only_layers` bleibt auch in einem MoE-Modell dicht; bei
+        // Qwen3-30B-A3B ist die Liste leer, aber sie existiert.
+        let ist_moe = dims.num_experts > 0 && !dims.mlp_only_layers.contains(&layer_idx);
+        let ffn = if ist_moe {
+            let mut experts = Vec::with_capacity(dims.num_experts);
+            for e in 0..dims.num_experts {
+                experts.push(DenseMlp {
+                    gate_proj: require_tensor(
+                        &weights, &format!("{}{}.gate_proj.weight", p_experte(&p), e))?.clone(),
+                    up_proj: require_tensor(
+                        &weights, &format!("{}{}.up_proj.weight", p_experte(&p), e))?.clone(),
+                    down_proj: require_tensor(
+                        &weights, &format!("{}{}.down_proj.weight", p_experte(&p), e))?.clone(),
+                });
+            }
+            Feedforward::Moe(MoeLayer {
+                router: require_tensor(&weights, &format!("{}.{}", p, ROUTER_SUFFIX))?.clone(),
+                router_frac: require_scale(&scales, &format!("{}.{}", p, ROUTER_SUFFIX_OHNE_WEIGHT))?,
+                experts,
+                top_k: dims.num_experts_per_tok,
+                norm_topk_prob: dims.norm_topk_prob,
+            })
+        } else {
+            Feedforward::Dense(DenseMlp {
+                gate_proj: require_tensor(&weights, &format!("{}.mlp.gate_proj.weight", p))?.clone(),
+                up_proj: require_tensor(&weights, &format!("{}.mlp.up_proj.weight", p))?.clone(),
+                down_proj: require_tensor(&weights, &format!("{}.mlp.down_proj.weight", p))?.clone(),
+            })
+        };
+
         // Kalibrierte Per-Layer-Aktivierungsskalen (vollstaendig Pflicht,
         // v0.12.20) plus Per-Segment-Skalen des Residualstroms (spec 0.5.1,
         // v0.12.21). Schluessel-Konvention identisch zu
@@ -809,12 +1057,11 @@ pub fn build_model(
             k_proj: require_tensor(&weights, &format!("{}.self_attn.k_proj.weight", p))?.clone(),
             v_proj: require_tensor(&weights, &format!("{}.self_attn.v_proj.weight", p))?.clone(),
             o_proj: require_tensor(&weights, &format!("{}.self_attn.o_proj.weight", p))?.clone(),
-            gate_proj: require_tensor(&weights, &format!("{}.mlp.gate_proj.weight", p))?.clone(),
-            up_proj: require_tensor(&weights, &format!("{}.mlp.up_proj.weight", p))?.clone(),
-            down_proj: require_tensor(&weights, &format!("{}.mlp.down_proj.weight", p))?.clone(),
+            ffn,
             q_bias,
             k_bias,
             v_bias,
+            qk_norm,
             scales: layer_scales,
         });
     }
@@ -915,7 +1162,7 @@ mod tests {
 
         let loaded = load_weights(&dir).expect("Laden erfolgreich");
         let tensor = &loaded.weights["t_a"].tensor;
-        assert_eq!(tensor.data, vec![-128i8, -1, 0, 1, 127, 64]);
+        assert_eq!(&tensor.data[..], &[-128i8, -1, 0, 1, 127, 64]);
         assert_eq!(tensor.shape, vec![2, 3]);
         // Ohne shifts_file wird der uniforme Manifest-Shift je Zeile repliziert.
         assert_eq!(tensor.shifts, vec![2, 2]);
@@ -1287,16 +1534,95 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// ⚑ **Fund 59 (2026-08-25).** Hier stand bis heute das Gegenteil:
+    /// Der Test verlangte, dass `hidden_size != num_heads * head_dim`
+    /// **abgelehnt** wird. Die Bedingung galt fuer Qwen2.5-0,5B
+    /// (896 = 14·64) und Qwen2.5-7B (3584 = 28·128) und sah mit zwei
+    /// Modellen wie eine Modelleigenschaft aus.
+    ///
+    /// **Qwen3-4B hat hidden_size 2560 gegen 32·128 = 4096** (gegen die
+    /// echte `config.json` geprueft). Die Architektur entkoppelt beide
+    /// Groessen; `o_proj` bildet von `num_heads·head_dim` auf
+    /// `hidden_size` zurueck. Der Test hielt damit einen Fehler fest,
+    /// nicht eine Eigenschaft, und haette jeden Qwen3-Wechsel als
+    /// „Regression" gemeldet.
     #[test]
-    fn test_load_model_dims_rejects_hidden_size_mismatch() {
-        let dir = test_dir("dims-badhidden");
-        // hidden_size=9, aber num_heads*head_dim = 4*2 = 8
-        write_model_config(&dir, &model_dims_json(4, 2, 9, 2, true, true));
+    fn entkoppeltes_head_dim_wird_angenommen() {
+        let dir = test_dir("dims-entkoppelt");
+        // Die Verhaeltnisse von Qwen3-4B, verkleinert:
+        // hidden_size 10, num_heads 4, head_dim 4 -> 16 != 10.
+        write_model_config(&dir, &model_dims_json(4, 2, 10, 4, true, false));
 
-        let err = load_model_dims(&dir).expect_err("hidden_size-Mismatch muss fehlschlagen");
-        assert!(err.contains("hidden_size"), "Fehlermeldung: {}", err);
+        let dims = load_model_dims(&dir)
+            .expect("entkoppeltes head_dim ist zulaessig, siehe Qwen3");
+        assert_eq!(dims.hidden_size, 10);
+        assert_eq!(dims.num_heads * dims.head_dim, 16);
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Was an die Stelle der falschen Pruefung getreten ist: RoPE paart
+    /// je zwei Elemente ueber den Half-Split, ein ungerades `head_dim`
+    /// waere nicht rotierbar.
+    #[test]
+    fn ungerades_head_dim_wird_abgelehnt() {
+        let dir = test_dir("dims-ungerade");
+        write_model_config(&dir, &model_dims_json(4, 2, 10, 3, true, false));
+
+        let err = load_model_dims(&dir).expect_err("ungerades head_dim muss fehlschlagen");
+        assert!(err.contains("head_dim"), "Fehlermeldung: {}", err);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Der eigentliche Ersatz fuer die geloeschte Pruefung: die Formen
+    /// der vier Projektionen. **Gegenprobe dazu:** Ohne
+    /// `pruefe_projektionsformen` bliebe eine vertippte Konfiguration
+    /// unbemerkt, bis der Forward-Pass ueber den Rand liefe.
+    #[test]
+    fn falsche_projektionsform_wird_erkannt() {
+        let dims = ModelDims {
+            family: "test".to_string(),
+            variant: "entkoppelt".to_string(),
+            intermediate_size: 20,
+            num_layers: 1,
+            hidden_size: 10,
+            num_heads: 4,
+            num_kv_heads: 2,
+            head_dim: 4,
+            vocab_size: 8,
+            max_context: 16,
+            tie_word_embeddings: true,
+            attention_bias: false,
+            qk_norm: false,
+            num_experts: 0,
+            num_experts_per_tok: 0,
+            moe_intermediate_size: 0,
+            norm_topk_prob: false,
+            mlp_only_layers: Vec::new(),
+        };
+        let t = |zeilen: usize, spalten: usize| QTensor {
+            data: std::sync::Arc::new(vec![0i8; zeilen * spalten].into()),
+            shape: vec![zeilen, spalten],
+            shifts: vec![0u8; zeilen],
+        };
+        // Richtig: q [16,10], k/v [8,10], o [10,16].
+        assert!(pruefe_projektionsformen(
+            "model.layers.0", &dims, &t(16, 10), &t(8, 10), &t(8, 10), &t(10, 16)
+        ).is_ok());
+
+        // q_proj mit hidden_size statt num_heads*head_dim: genau der
+        // Fehler, den die alte Gleichung erzwungen haette.
+        let err = pruefe_projektionsformen(
+            "model.layers.0", &dims, &t(10, 10), &t(8, 10), &t(8, 10), &t(10, 16)
+        ).expect_err("falsche q_proj-Form muss auffallen");
+        assert!(err.contains("q_proj"), "Fehlermeldung: {}", err);
+
+        // o_proj in der falschen Richtung.
+        let err = pruefe_projektionsformen(
+            "model.layers.0", &dims, &t(16, 10), &t(8, 10), &t(8, 10), &t(16, 10)
+        ).expect_err("vertauschte o_proj-Form muss auffallen");
+        assert!(err.contains("o_proj"), "Fehlermeldung: {}", err);
     }
 
     #[test]
@@ -1359,6 +1685,20 @@ mod tests {
     /// derselben GQA-Asymmetrie (num_heads != num_kv_heads) wie das echte
     /// Qwen2.5-0.5B-Modell.
     fn write_full_fixture(dir: &Path, tie_word_embeddings: bool, attention_bias: bool) {
+        write_full_fixture_mit(dir, tie_word_embeddings, attention_bias, None);
+    }
+
+    /// Wie [`write_full_fixture`], aber wahlweise mit Expertengemisch.
+    ///
+    /// `moe` ist `(Expertenzahl, top_k, Expertenbreite)`. Damit laesst
+    /// sich der MoE-Ladepfad pruefen, ohne ein 57-GiB-Modell zu
+    /// beschaffen: Die Formen sind dieselben, nur die Zahlen sind klein.
+    fn write_full_fixture_mit(
+        dir: &Path,
+        tie_word_embeddings: bool,
+        attention_bias: bool,
+        moe: Option<(usize, usize, usize)>,
+    ) {
         let hidden = 4usize;
         let heads = 2usize;
         let kv_heads = 1usize;
@@ -1379,6 +1719,11 @@ mod tests {
             "max_context": 8,
             "tie_word_embeddings": tie_word_embeddings,
             "attention_bias": attention_bias,
+            "num_experts": moe.map(|m| m.0).unwrap_or(0),
+            "num_experts_per_tok": moe.map(|m| m.1).unwrap_or(0),
+            "moe_intermediate_size": moe.map(|m| m.2).unwrap_or(0),
+            "norm_topk_prob": moe.is_some(),
+            "mlp_only_layers": Vec::<usize>::new(),
         }));
 
         // Vollstaendige Per-Layer-Aktivierungsskalen (seit v0.12.20 Pflicht:
@@ -1400,6 +1745,13 @@ mod tests {
             "model.norm": scale_entry(2, 0.25, 120.0),
             "model.norm.input": scale_entry(4, 0.0625, 80.0),
         });
+        let mut scales = scales;
+        if moe.is_some() {
+            // Die Router-Projektion braucht eine eigene Skala; die
+            // Experten teilen sich die Layer-Skalen gate/up/down, die
+            // oben schon stehen (siehe stats.py::_sammelschluessel).
+            scales["model.layers.0.mlp.gate"] = scale_entry(4, 0.0625, 12.0);
+        }
         write_scales(dir, &scales);
 
         // Gewichte
@@ -1432,9 +1784,27 @@ mod tests {
         put("model.layers.0.self_attn.k_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.v_proj.weight", vec![kv_heads * head_dim, hidden]);
         put("model.layers.0.self_attn.o_proj.weight", vec![hidden, heads * head_dim]);
-        put("model.layers.0.mlp.gate_proj.weight", vec![inter, hidden]);
-        put("model.layers.0.mlp.up_proj.weight", vec![inter, hidden]);
-        put("model.layers.0.mlp.down_proj.weight", vec![hidden, inter]);
+        match moe {
+            None => {
+                put("model.layers.0.mlp.gate_proj.weight", vec![inter, hidden]);
+                put("model.layers.0.mlp.up_proj.weight", vec![inter, hidden]);
+                put("model.layers.0.mlp.down_proj.weight", vec![hidden, inter]);
+            }
+            Some((experten, _top_k, breite)) => {
+                // Namen wie in der echten index.json von Qwen3-30B-A3B,
+                // dort nachgesehen: mlp.gate.weight als Router, dann
+                // mlp.experts.<N>.{gate,up,down}_proj.weight.
+                put("model.layers.0.mlp.gate.weight", vec![experten, hidden]);
+                for e in 0..experten {
+                    put(&format!("model.layers.0.mlp.experts.{e}.gate_proj.weight"),
+                        vec![breite, hidden]);
+                    put(&format!("model.layers.0.mlp.experts.{e}.up_proj.weight"),
+                        vec![breite, hidden]);
+                    put(&format!("model.layers.0.mlp.experts.{e}.down_proj.weight"),
+                        vec![hidden, breite]);
+                }
+            }
+        }
 
         if attention_bias {
             // Qwen2.5-Format: Bias je q/k/v_proj, Laenge = Ausgabe-Dimension
@@ -1499,6 +1869,90 @@ mod tests {
         write_theta_v(dir);
     }
 
+    // --- Mixture-of-Experts (2026-08-25) ---
+
+    /// Ein MoE-Artefakt laedt, und der Loader baut `Feedforward::Moe`
+    /// mit allen Experten und der Router-Skala.
+    ///
+    /// **Der Test ersetzt keinen Lauf gegen das echte Modell**, aber er
+    /// prueft genau die Stellen, an denen ein 57-GiB-Lauf sonst nach
+    /// einer halben Stunde scheiterte: Namensschema, Expertenzahl,
+    /// Formen, Router-Skala.
+    #[test]
+    fn ein_moe_artefakt_laedt_mit_allen_experten() {
+        let dir = test_dir("moe-laden");
+        write_full_fixture_mit(&dir, true, false, Some((6, 2, 3)));
+
+        let model = load_model(&dir).expect("MoE-Artefakt muss laden");
+        match &model.layers[0].ffn {
+            crate::model::Feedforward::Moe(moe) => {
+                assert_eq!(moe.experts.len(), 6, "alle sechs Experten geladen");
+                assert_eq!(moe.top_k, 2);
+                assert!(moe.norm_topk_prob);
+                assert_eq!(moe.router.shape, vec![6, 4], "Router ist [experten, hidden]");
+                assert_eq!(moe.experts[0].gate_proj.shape, vec![3, 4]);
+                assert_eq!(moe.experts[5].down_proj.shape, vec![4, 3]);
+                assert_eq!(moe.router_frac, 4, "die eigene Skala des Routers");
+            }
+            crate::model::Feedforward::Dense(_) => {
+                panic!("bei num_experts > 0 muss der Loader eine MoE-Layer bauen")
+            }
+        }
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Gegenprobe:** Dasselbe Fixture ohne `moe` ergibt eine dichte
+    /// Layer. Ohne diesen Vergleich pruefte der Test oben nur, dass
+    /// irgendetwas geladen wurde.
+    #[test]
+    fn ohne_experten_bleibt_die_layer_dicht() {
+        let dir = test_dir("moe-dicht");
+        write_full_fixture_mit(&dir, true, false, None);
+
+        let model = load_model(&dir).expect("dichtes Artefakt muss laden");
+        assert!(
+            matches!(&model.layers[0].ffn, crate::model::Feedforward::Dense(_)),
+            "bei num_experts = 0 darf keine MoE-Layer entstehen"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Ein fehlender Experte faellt beim Laden auf und nicht erst im
+    /// Forward-Pass. **Bei 128 Experten je Layer und 48 Layern ist das
+    /// der Unterschied zwischen einer Fehlermeldung und einer halben
+    /// Stunde Rechenzeit fuer nichts.**
+    #[test]
+    fn ein_fehlender_experte_faellt_beim_laden_auf() {
+        let dir = test_dir("moe-luecke");
+        write_full_fixture_mit(&dir, true, false, Some((6, 2, 3)));
+
+        // Den Manifest-Eintrag des letzten Experten entfernen.
+        let pfad = dir.join("weights_manifest.json");
+        let text = fs::read_to_string(&pfad).expect("Manifest lesen");
+        let mut manifest: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&text).expect("Manifest parsen");
+        manifest
+            .remove("model_layers_0_mlp_experts_5_up_proj_weight")
+            .expect("Eintrag muss es geben");
+        fs::write(&pfad, serde_json::to_string(&manifest).unwrap()).expect("Manifest schreiben");
+        write_theta_v(&dir);
+
+        // `IntegerModel` traegt kein Debug (die Gewichte waeren
+        // unlesbar), deshalb von Hand statt ueber expect_err.
+        let err = match load_model(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("fehlender Experte muss auffallen"),
+        };
+        assert!(
+            err.contains("experts.5.up_proj"),
+            "die Fehlermeldung muss sagen, welcher Experte fehlt: {err}"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
     /// Schreibt theta_v.json mit der aktuellen spec-Version und echten
     /// Hashes der bereits vorhandenen weights_manifest.json/scales.json/
     /// luts.json - passend zu `ThetaV::verify()` und
@@ -1536,7 +1990,7 @@ mod tests {
 
         // Weight Tying: lm_head muss exakt der Embedding-Tabelle entsprechen,
         // obwohl kein eigenes lm_head.weight im Artefakt lag.
-        assert_eq!(model.lm_head.data, model.embedding_table.data);
+        assert_eq!(&model.lm_head.data[..], &model.embedding_table.data[..]);
         assert_eq!(model.lm_head.shape, model.embedding_table.shape);
 
         // GQA-Asymmetrie muss sich in den geladenen Tensorformen widerspiegeln:

@@ -28,7 +28,14 @@ def export_quantized_weights(quantized: Dict[str, dict], output_dir: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = {}
 
-    for name, meta in quantized.items():
+    # `quantized` darf ein Woerterbuch **oder** ein Strom von Paaren sein.
+    # Der Strom haelt nie mehr als einen Tensor und ist der Grund, warum
+    # Qwen3-30B-A3B ueberhaupt exportierbar ist; das Woerterbuch bleibt
+    # fuer die Tests und die kleinen Modelle. Die geschriebenen Bytes sind
+    # in beiden Faellen dieselben, und das Manifest wird ohnehin sortiert.
+    eintraege = quantized.items() if hasattr(quantized, "items") else quantized
+
+    for name, meta in eintraege:
         safe_name = name.replace(".", "_")
         bin_path = output_dir / f"{safe_name}.bin"
         shifts_path = output_dir / f"{safe_name}_shifts.bin"
@@ -107,7 +114,9 @@ def export_quantized_weights(quantized: Dict[str, dict], output_dir: Path):
                 f"{entry['shifts_file']} (Tensor '{safe_name}')."
             )
 
-    print(f"[export_weights] {len(quantized)} Tensoren exportiert nach {output_dir}")
+    # `len(manifest)` statt `len(quantized)`: Ein Strom ist an dieser
+    # Stelle bereits verbraucht und hat ohnehin keine Laenge.
+    print(f"[export_weights] {len(manifest)} Tensoren exportiert nach {output_dir}")
     return manifest
 
 

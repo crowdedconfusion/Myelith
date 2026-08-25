@@ -56,6 +56,9 @@ fn qwen05b() -> ModellProfil {
     ModellProfil {
         hidden_size: 896,
         intermediate_size: 4864,
+        num_experts: 0,
+        num_experts_per_tok: 0,
+        moe_intermediate_size: 0,
         num_layers: 24,
         vocab_size: 151_936,
         num_heads: 14,
@@ -484,6 +487,9 @@ fn ein_modell_ohne_arbeit_wird_abgelehnt() {
     let leer = ModellProfil {
         hidden_size: 0,
         intermediate_size: 0,
+        num_experts: 0,
+        num_experts_per_tok: 0,
+        moe_intermediate_size: 0,
         num_layers: 0,
         vocab_size: 0,
         num_heads: 0,

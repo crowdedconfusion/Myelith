@@ -14,7 +14,8 @@
 #![allow(clippy::type_complexity)]
 
 use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i16_from_i64, inv_sqrt_q15, rescale, rescale_i64};
-use integer_llm_kernels::rmsnorm::rmsnorm_i16;
+use integer_llm_kernels::moe::{mische_experten, route_top_k};
+use integer_llm_kernels::rmsnorm::{qk_norm_heads, rmsnorm_i16};
 use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::attention_int;
@@ -23,10 +24,90 @@ use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
 
+/// Die Bytes eines quantisierten Tensors: im Heap oder als Abbild der
+/// Artefaktdatei.
+///
+/// ## ⚑ Fund 62 (2026-08-25): Ein 29-GiB-Artefakt gehört nicht in den Heap
+///
+/// Der Loader las jede Gewichtsdatei mit `std::fs::read` in einen `Vec`.
+/// Für Qwen2.5-0,5B (0,74 GB) und 7B (8,1 GB) trägt das. Das Artefakt von
+/// Qwen3-30B-A3B ist **29 GiB** gegen 24 GiB Arbeitsspeicher, und der
+/// Versuch zeigte das schlechteste denkbare Verhalten: Während der
+/// Prozess las, schrieb das Betriebssystem seinen Heap in die
+/// Auslagerung, RSS fiel von 8,9 auf 1,9 GiB, während der Swap von 2,9
+/// auf 4,1 GB wuchs. **Von der Platte lesen und sofort wieder auf die
+/// Platte schreiben**, und zwar mit echten Schreibzugriffen auf die SSD.
+///
+/// **Der Unterschied ist die Art der Seite, nicht ihre Zahl.** Eine
+/// anonyme Heap-Seite muss ausgelagert, also geschrieben werden. Eine
+/// dateigestützte Seite ist sauber: Das System verwirft sie und liest
+/// sie bei Bedarf neu. Dieselbe Datenmenge, aber ohne Schreiblast und
+/// ohne Auslagerungsdruck.
+///
+/// **Für ein Expertengemisch ist es mehr als eine Notlösung.** Bei
+/// Top-8 von 128 rührt ein Token nur ein Sechzehntel der
+/// Expertengewichte an. Die übrigen bleiben ungelesen auf der Platte,
+/// statt Speicher zu belegen, den sie nie brauchen. Der Zuschnitt
+/// „jeder Knoten hält alle Experten seiner Layer" wird damit erst
+/// bezahlbar.
+pub enum Gewichtsdaten {
+    /// Im Heap, wie bisher. Für kleine Tensoren und für Tests.
+    Speicher(Vec<i8>),
+    /// Abbild der Artefaktdatei.
+    Abbild(memmap2::Mmap),
+}
+
+impl std::ops::Deref for Gewichtsdaten {
+    type Target = [i8];
+
+    fn deref(&self) -> &[i8] {
+        match self {
+            Gewichtsdaten::Speicher(v) => v,
+            Gewichtsdaten::Abbild(abbild) => {
+                // SICHERHEIT: `i8` und `u8` haben dieselbe Größe und
+                // dieselbe Ausrichtung, und jedes Bitmuster ist für
+                // beide gültig. Der Zeiger stammt aus einem gültigen
+                // Abbild, das mindestens so lange lebt wie die
+                // zurückgegebene Referenz (beide hängen an `self`).
+                // Geschrieben wird nie: Das Abbild ist nur lesend
+                // geöffnet.
+                unsafe {
+                    std::slice::from_raw_parts(
+                        abbild.as_ptr() as *const i8,
+                        abbild.len(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+impl From<Vec<i8>> for Gewichtsdaten {
+    fn from(v: Vec<i8>) -> Self {
+        Gewichtsdaten::Speicher(v)
+    }
+}
+
+impl std::fmt::Debug for Gewichtsdaten {
+    /// Zeigt Herkunft und Länge, **nicht die Bytes**. Ein Tensor mit
+    /// drei Millionen Einträgen im Fehlertext ist keine Hilfe.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let art = match self {
+            Gewichtsdaten::Speicher(_) => "Speicher",
+            Gewichtsdaten::Abbild(_) => "Abbild",
+        };
+        write!(f, "Gewichtsdaten::{art}({} Byte)", self.len())
+    }
+}
+
 /// Quantisierungs-Metadaten fuer einen Tensor.
 #[derive(Debug, Clone)]
 pub struct QTensor {
-    pub data: Vec<i8>,      // flat, row-major
+    /// Hinter `Arc`, damit `QTensor` klonbar bleibt: Ein Abbild lässt
+    /// sich nicht kopieren, und der Loader reicht denselben Tensor an
+    /// mehrere Stellen weiter. Der `Arc` kostet einen Zähler, nicht die
+    /// Daten.
+    pub data: std::sync::Arc<Gewichtsdaten>,      // flat, row-major
     pub shape: Vec<usize>,
     /// Zweierpotenz-Shift je Zeile (theta_v 0.7.0: Per-Channel-Skalen;
     /// bei 1D-Tensoren wie Biases/Gammas je Element). Ältere Artefakte mit
@@ -35,6 +116,15 @@ pub struct QTensor {
 }
 
 impl QTensor {
+    /// Aus Bytes im Heap. Für Tests und für kleine Tensoren.
+    pub fn aus_speicher(data: Vec<i8>, shape: Vec<usize>, shifts: Vec<u8>) -> Self {
+        QTensor {
+            data: std::sync::Arc::new(Gewichtsdaten::Speicher(data)),
+            shape,
+            shifts,
+        }
+    }
+
     pub fn n_elements(&self) -> usize {
         self.shape.iter().product()
     }
@@ -92,6 +182,59 @@ pub struct LayerScales {
 }
 
 /// Ein Transformer-Layer.
+/// Der Feedforward-Teil einer Layer.
+///
+/// **Warum ein Enum und nicht drei Tensoren plus ein optionales
+/// Expertengemisch.** Ein Modell kann beides mischen: Qwen3 kennt das
+/// Feld `mlp_only_layers`, mit dem einzelne Layer dicht bleiben, während
+/// der Rest Experten hat. Bei Qwen3-30B-A3B ist die Liste leer, aber sie
+/// existiert, und ein Typ, der den Mischfall nicht ausdrücken kann,
+/// müsste beim ersten Modell mit gemischten Layern umgebaut werden.
+///
+/// Vor allem: Zwei `Option`-Felder ließen den Zustand „beides" und den
+/// Zustand „keines" zu. Beides wäre ein Ladefehler, den erst der
+/// Forward-Pass bemerkt.
+pub enum Feedforward {
+    /// Gate, Up, Down wie in Qwen2.5 und in jeder dichten Layer.
+    Dense(DenseMlp),
+    /// Ein Router und `num_experts` Experten, von denen je Token genau
+    /// `top_k` rechnen.
+    Moe(MoeLayer),
+}
+
+/// Die drei Matrizen einer Feedforward-Einheit.
+///
+/// Ein **Experte** eines MoE ist strukturell dasselbe wie eine dichte
+/// MLP, nur schmaler (`moe_intermediate_size` statt
+/// `intermediate_size`). Deshalb derselbe Typ: Eine eigene Struktur mit
+/// denselben drei Feldern wäre eine zweite Wahrheit, die beim nächsten
+/// Formatwechsel auseinanderliefe.
+pub struct DenseMlp {
+    pub gate_proj: QTensor,
+    pub up_proj: QTensor,
+    pub down_proj: QTensor,
+}
+
+/// Ein Expertengemisch: Router plus Experten.
+pub struct MoeLayer {
+    /// Router-Projektion, `[num_experts, hidden_size]`. Liefert je
+    /// Experte einen Logit.
+    pub router: QTensor,
+    /// Kalibrierte Ausgangsskala der Router-Projektion.
+    pub router_frac: u8,
+    /// Alle Experten dieser Layer. **Alle liegen vor, es rechnen `top_k`.**
+    /// Das ist der Zuschnitt, der die Pod-Kette unverändert lässt: Ein
+    /// Knoten hält alle Experten seiner Layer, und weil je Layer und
+    /// Token exakt `top_k` feuern, ist seine Arbeitsmenge eine Konstante
+    /// aus der Modellkonfiguration statt einer Größe je Anfrage.
+    pub experts: Vec<DenseMlp>,
+    /// Wie viele Experten je Token feuern (`num_experts_per_tok`).
+    pub top_k: usize,
+    /// Ob die Gewichte der gewählten Experten auf eins normiert werden
+    /// (`norm_topk_prob`).
+    pub norm_topk_prob: bool,
+}
+
 pub struct TransformerLayer {
     pub layer_idx: usize,
     /// Gamma der input_layernorm als QTensor: `data` + eigener kalibrierter
@@ -102,9 +245,8 @@ pub struct TransformerLayer {
     pub k_proj: QTensor,
     pub v_proj: QTensor,
     pub o_proj: QTensor,
-    pub gate_proj: QTensor,
-    pub up_proj: QTensor,
-    pub down_proj: QTensor,
+    /// Der Feedforward-Teil: eine dichte MLP oder ein Expertengemisch.
+    pub ffn: Feedforward,
     /// Q/K/V-Attention-Biases (Qwen2.5 besitzt sie an q/k/v_proj). `None`
     /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
     /// model_config.json); sonst je ein Bias-Tensor mit eigener Skala,
@@ -112,8 +254,32 @@ pub struct TransformerLayer {
     pub q_bias: Option<crate::loader::BiasTensor>,
     pub k_bias: Option<crate::loader::BiasTensor>,
     pub v_bias: Option<crate::loader::BiasTensor>,
+    /// QK-Norm (Qwen3). `None` bei Modellen ohne (`qk_norm: false`).
+    pub qk_norm: Option<QkNorm>,
     /// Kalibrierte Per-Layer-Aktivierungsskalen.
     pub scales: LayerScales,
+}
+
+/// QK-Norm einer Layer: die beiden Gammas und ihre Ausgangsskalen.
+///
+/// **Warum ein eigener Typ und nicht vier Felder.** Vier `Option`-Felder
+/// koennten halb besetzt sein: Gamma ohne Skala, oder Q ohne K. Beides
+/// waere ein Ladefehler, den erst der Forward-Pass bemerkt, und dort
+/// bemerkt er ihn als falsche Zahlen und nicht als Fehler. Als ein Typ
+/// gibt es entweder alles oder nichts, und der Loader muss die
+/// Vollstaendigkeit nicht pruefen, weil sie sich nicht ausdruecken laesst.
+/// Dieselbe Ueberlegung wie bei `RebuildAnlass` in `myl-pod`.
+pub struct QkNorm {
+    /// Gamma fuer die Query-Normierung, Laenge `head_dim`. Alle Koepfe
+    /// teilen sich dasselbe Gamma.
+    pub q_gamma: QTensor,
+    /// Gamma fuer die Key-Normierung, Laenge `head_dim`.
+    pub k_gamma: QTensor,
+    /// Ausgangsskala der Query-Normierung. Sie loest `q_frac` als
+    /// Eingangsskala von RoPE und Attention ab.
+    pub q_out_frac: u8,
+    /// Ausgangsskala der Key-Normierung.
+    pub k_out_frac: u8,
 }
 
 /// Das komplette Modell.
@@ -459,6 +625,45 @@ impl IntegerModel {
         let mut k_heads = self.split_heads(&k_flat, self.num_kv_heads);
         let v_heads = self.split_heads(&v_flat, self.num_kv_heads);
 
+        // QK-Norm (Qwen3): RMSNorm je Kopf ueber head_dim, **vor** RoPE.
+        //
+        // Die Reihenfolge ist nicht verhandelbar. RoPE dreht ein Paar
+        // (x_j, x_{j+half}) um einen positionsabhaengigen Winkel; eine
+        // Normierung danach wuerde ueber gedrehte Werte mitteln und das
+        // Ergebnis von der Position abhaengig machen, obwohl die Norm es
+        // nicht sein soll. Das Referenzmodell normiert vorher, und die
+        // Reihenfolge ist Teil des Ausfuehrungsprofils.
+        //
+        // Die Ausgangsskala wechselt hier von `q_frac`/`k_frac` auf die
+        // kalibrierte Norm-Ausgangsskala; RoPE selbst ist skaleninvariant
+        // und reicht sie unveraendert weiter.
+        let (q_akt_frac, k_akt_frac) = match &layer.qk_norm {
+            Some(qkn) => {
+                qk_norm_heads(
+                    &mut q_heads,
+                    sc.q_frac,
+                    &qkn.q_gamma.data,
+                    &qkn.q_gamma.shifts,
+                    &self.rsqrt_lut,
+                    cfg.rsqrt_input_shift,
+                    cfg.rsqrt_output_frac,
+                    qkn.q_out_frac,
+                );
+                qk_norm_heads(
+                    &mut k_heads,
+                    sc.k_frac,
+                    &qkn.k_gamma.data,
+                    &qkn.k_gamma.shifts,
+                    &self.rsqrt_lut,
+                    cfg.rsqrt_input_shift,
+                    cfg.rsqrt_output_frac,
+                    qkn.k_out_frac,
+                );
+                (qkn.q_out_frac, qkn.k_out_frac)
+            }
+            None => (sc.q_frac, sc.k_frac),
+        };
+
         // RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-RoPE mit
         // half-split-Paarung. Die cos/sin-LUTs sind flach row-major
         // [max_seq_len, head_dim/2]; je Position wird die Zeile
@@ -506,7 +711,16 @@ impl IntegerModel {
         // teilen sich denselben KV-Head (Standard-GQA-Gruppierung, wie in
         // HF's repeat_kv: Head h liest KV-Head h / group_size).
         let group_size = self.num_heads / self.num_kv_heads;
-        let mut attn_out = vec![0i16; hs];
+        // ⚑ **Fund 59, zweite Stelle.** Hier stand `vec![0i16; hs]`, also
+        // `hidden_size`. Geschrieben wird bis `num_heads · head_dim`, und
+        // solange beide Zahlen zusammenfielen (Qwen2.5-0,5B und -7B), war
+        // das dasselbe. Bei Qwen3-4B sind es 2560 gegen 4096, und der
+        // erste Lauf brach hier ab: „len is 2560 but the index is 2560".
+        //
+        // `o_proj` bildet von `num_heads · head_dim` auf `hidden_size`
+        // zurück, das ist die Stelle, an der die Breite wechselt, nicht
+        // diese hier.
+        let mut attn_out = vec![0i16; self.num_heads * self.head_dim];
         for h in 0..self.num_heads {
             let kv_h = h / group_size;
             let (past_k, past_v) = cache.read(layer.layer_idx, kv_h, pos);
@@ -522,8 +736,16 @@ impl IntegerModel {
             // Causal mask: nur letzte Position attendet auf alle vorherigen
             let mask = vec![vec![true; seq_len]];
 
-            // Q liegt bei sc.q_frac, K bei sc.k_frac; der rohe Skalarproduktwert
-            // traegt q_frac + k_frac Nachkommabits. score_shift bringt ihn auf
+            // Q liegt bei `q_akt_frac`, K bei `k_akt_frac`; der rohe
+            // Skalarproduktwert traegt deren Summe an Nachkommabits.
+            //
+            // **Ohne QK-Norm sind das sc.q_frac und sc.k_frac, mit QK-Norm
+            // die Ausgangsskalen der Normierung.** Die Unterscheidung ist
+            // der Grund, warum die beiden Werte oben als eigene Variablen
+            // entstehen und nicht hier aus `sc` gelesen werden: Ein
+            // vergessenes `sc.q_frac` an dieser Stelle waere kein
+            // Uebersetzungsfehler, sondern eine um Zweierpotenzen
+            // verschobene Softmax. score_shift bringt ihn auf
             // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
             // dort in die Eingangsskala der exp-LUT (spec 0.5.2: Domaene
             // [0, 64) statt [0, 0.5) — gemessene Score-Differenzen bis ~28).
@@ -541,7 +763,7 @@ impl IntegerModel {
             // Multiplikator 4096 = 2^12 und das Ergebnis bitgleich zum
             // bisherigen Verhalten (siehe fixed_point::inv_sqrt_q15).
             let score_mult = inv_sqrt_q15(self.head_dim);
-            let score_shift = (sc.q_frac as u16 + sc.k_frac as u16 + 15)
+            let score_shift = (q_akt_frac as u16 + k_akt_frac as u16 + 15)
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
             let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 
@@ -615,26 +837,14 @@ impl IntegerModel {
             .zip(out_residual_frac.iter())
             .map(|(&a, &b)| a.min(b))
             .collect();
-        let mlp_out = mlp_int(
-            &norm_residual,
-            &layer.gate_proj.data,
-            &layer.up_proj.data,
-            &layer.down_proj.data,
-            layer.gate_proj.cols(),
-            layer.down_proj.cols(),
-            &layer.gate_proj.shifts,
-            &layer.up_proj.shifts,
-            &layer.down_proj.shifts,
-            &self.silu_lut,
-            sc.norm_mlp_frac,
-            sc.gate_frac,
-            sc.up_frac,
-            sc.down_in_frac,
-            cfg.silu_in_frac,
-            cfg.silu_lut_offset,
-            cfg.silu_out_frac,
-            &acc_mlp,
-        );
+        let mlp_out = match &layer.ffn {
+            Feedforward::Dense(mlp) => {
+                self.mlp_vorwaerts(mlp, &norm_residual, sc, cfg, &acc_mlp)
+            }
+            Feedforward::Moe(moe) => {
+                self.moe_vorwaerts(moe, &norm_residual, sc, cfg, &acc_mlp)
+            }
+        };
 
         // Final Residual Add — Fund 31 (2026-08-20, theta_v 0.17.0).
         //
@@ -765,6 +975,98 @@ impl IntegerModel {
 
     /// Teilt einen flachen Q/K/V-Vektor in `n` Heads zu je `head_dim` auf.
     /// `n` ist `num_heads` fuer Q, bei GQA `num_kv_heads` fuer K/V.
+    /// Eine dichte Feedforward-Einheit. Auch der einzelne Experte eines
+    /// MoE laeuft hier durch: Er ist dieselbe Rechnung auf schmaleren
+    /// Matrizen.
+    fn mlp_vorwaerts(
+        &self,
+        mlp: &DenseMlp,
+        x: &[i16],
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+    ) -> Vec<i16> {
+        mlp_int(
+            x,
+            &mlp.gate_proj.data,
+            &mlp.up_proj.data,
+            &mlp.down_proj.data,
+            mlp.gate_proj.cols(),
+            mlp.down_proj.cols(),
+            &mlp.gate_proj.shifts,
+            &mlp.up_proj.shifts,
+            &mlp.down_proj.shifts,
+            &self.silu_lut,
+            sc.norm_mlp_frac,
+            sc.gate_frac,
+            sc.up_frac,
+            sc.down_in_frac,
+            cfg.silu_in_frac,
+            cfg.silu_lut_offset,
+            cfg.silu_out_frac,
+            acc,
+        )
+    }
+
+    /// Ein Expertengemisch: Router befragen, `top_k` Experten rechnen,
+    /// Ergebnisse gewichtet mischen.
+    ///
+    /// **Die Arbeitsmenge ist konstant.** Es feuern immer genau `top_k`
+    /// Experten, nie mehr und nie weniger; welche, haengt am Token, wie
+    /// viele nicht. Daran haengt, dass die vTFE-Zuschreibung ohne
+    /// Anfragezustand nachrechenbar bleibt.
+    ///
+    /// ⚑ **Kein Token-Dropping.** Es gibt hier keine Kapazitaetsgrenze,
+    /// und das ist Absicht: Verwirft eine Implementierung Token, wenn ein
+    /// Experte im Batch ueberlaeuft, haengt das Ergebnis an Position *i*
+    /// davon ab, welche anderen Token im Batch lagen. Zwei redundante
+    /// Pods batchen verschieden, und der Redundanzvergleich meldete zwei
+    /// ehrliche Pods als abweichend.
+    fn moe_vorwaerts(
+        &self,
+        moe: &MoeLayer,
+        x: &[i16],
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+    ) -> Vec<i16> {
+        // Router-Logits. Die Projektion laeuft wie jede andere; ihre
+        // Ausgangsskala ist kalibriert wie die der uebrigen Projektionen.
+        let logits_i16 = linear_w8a16(
+            x,
+            &moe.router.data,
+            moe.router.cols(),
+            &moe.router.shifts,
+            sc.norm_mlp_frac,
+            moe.router_frac,
+        );
+        let logits: Vec<i32> = logits_i16.iter().map(|l| *l as i32).collect();
+
+        // Von der Router-Skala in die Eingangsskala der exp-Tabelle,
+        // dieselbe Uebersetzung wie bei den Attention-Scores.
+        let exp_lut_shift = moe.router_frac.saturating_sub(cfg.exp_input_frac);
+        let routing = route_top_k(
+            &logits,
+            moe.top_k,
+            &self.exp_lut,
+            exp_lut_shift,
+            cfg.prob_frac_bits,
+            moe.norm_topk_prob,
+        );
+
+        // Die gewaehlten Experten rechnen. Alle schreiben auf dieselbe
+        // Ausgangsskala `acc`, denn sie addieren in denselben
+        // Residualstrom; deshalb mischt `mische_experten` ohne
+        // Umskalierung.
+        let ausgaben: Vec<Vec<i16>> = routing
+            .experten
+            .iter()
+            .map(|e| self.mlp_vorwaerts(&moe.experts[*e as usize], x, sc, cfg, acc))
+            .collect();
+
+        mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits)
+    }
+
     fn split_heads(&self, flat: &[i16], n: usize) -> Vec<Vec<i16>> {
         let mut heads = Vec::with_capacity(n);
         for h in 0..n {

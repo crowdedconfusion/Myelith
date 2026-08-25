@@ -30,6 +30,7 @@ import json
 import math
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from .loader import load_reference_model
@@ -38,7 +39,8 @@ from .scales import compute_scales_from_stats
 from .luts import (generate_rsqrt_lut, generate_silu_lut, generate_exp_lut,
                    generate_rope_luts, load_nonlinear_spec)
 from .export import export_theta_v
-from .quantize import quantize_model_weights, quantize_symmetric_int16_per_channel
+from .quantize import (quantisiere_gewichte_strom,
+                       quantize_symmetric_int16_per_channel)
 from .gptq import HessianCollector, quantize_linear_layers_gptq
 from .export_weights import export_quantized_weights, export_lm_head
 from .model_configs import get_export_model_config, artifact_model_config
@@ -212,6 +214,15 @@ def gptq_entscheidung(config: dict) -> tuple:
     )
 
 
+# Fortschrittsbalken aus tests/diag: bewusst ohne Fremdbibliothek, siehe
+# dortigen Modulkopf. Der Pfad wird zur Laufzeit ergaenzt, weil calibrate
+# und tests getrennte Baeume sind.
+_DIAG = Path(__file__).resolve().parent.parent.parent / "tests" / "diag"
+if str(_DIAG) not in sys.path:
+    sys.path.insert(0, str(_DIAG))
+from fortschritt import Fortschritt  # noqa: E402
+
+
 def main():
     config_vorab = get_export_model_config(MODEL_NAME)
     use_gptq, gptq_grund = gptq_entscheidung(config_vorab)
@@ -249,16 +260,36 @@ def main():
         """Fuehrt den vollstaendigen Kalibrierkorpus einmal durch das
         Modell. Wird fuer die Stats-Sammlung UND, bei mehreren
         GPTQ-Gruppen (schichtweise Hessian-Berechnung), je Gruppe erneut
-        aufgerufen - deshalb als geschlossene Funktion statt Inline-Code."""
-        for prompt in prompts:
-            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-            with torch.no_grad():
-                _ = model(**inputs)
-        for text in wikitext_texts:
-            inputs = tokenizer(text, return_tensors="pt", truncation=True,
-                               max_length=CALIB_WIKITEXT_SEQ_LEN).to(model.device)
-            with torch.no_grad():
-                _ = model(**inputs)
+        aufgerufen - deshalb als geschlossene Funktion statt Inline-Code.
+
+        **Eine Sequenz je Vorwaertspass, mit Absicht.** Ein Batch waere
+        schneller, brauchte aber Padding, und die Pad-Positionen gingen
+        in die Aktivierungsstatistik ein. Die Skalen haengen an einem
+        Absmax; ein einziger Pad-Ausreisser verschoebe sie, und zwei
+        Artefakte waeren nicht mehr vergleichbar. Der Preis ist die
+        Ein- und Ausgabe: Bei einem eingeblendeten Modell, das groesser
+        ist als der Arbeitsspeicher, liest **jeder** Pass praktisch alle
+        Gewichte. Bei Qwen3-30B-A3B sind das 56,9 GiB mal rund siebzig.
+
+        **Fortschrittsbalken (2026-08-25).** Vorher gab diese Schleife
+        nichts aus. Bei 0,5B fiel das nicht auf, bei einem Lauf ueber
+        Stunden ist ein haengender von einem langsamen nicht zu
+        unterscheiden - genau der Fall, fuer den AGENTS.md den Balken
+        verlangt. Ungepufferte Ausgabe noetig (`python -u`).
+        """
+        einheiten = len(prompts) + len(wikitext_texts)
+        with Fortschritt(einheiten, "[calibrate] Korpus") as f:
+            for prompt in prompts:
+                inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+                with torch.no_grad():
+                    _ = model(**inputs)
+                f.schritt()
+            for text in wikitext_texts:
+                inputs = tokenizer(text, return_tensors="pt", truncation=True,
+                                   max_length=CALIB_WIKITEXT_SEQ_LEN).to(model.device)
+                with torch.no_grad():
+                    _ = model(**inputs)
+                f.schritt()
 
     # Skalenpaket (Fund 32): Liegt eines vor und ist GPTQ aus, entfaellt der
     # gesamte Gleitkomma-Teil des Baus. Das ist nicht nur schneller — es ist
@@ -370,18 +401,28 @@ def main():
     # Reihenfolge ist bindend, nicht austauschbar: Gewichte zuerst, dann
     # theta_v.json zuletzt - export_theta_v() hasht weights_manifest.json und
     # braucht die Datei deshalb bereits auf der Platte (siehe export.py).
-    print("[calibrate] Quantisiere Modell-Gewichte...")
-    quantized = quantize_model_weights(model)
-    print(f"[calibrate] {len(quantized)} Gewichts-Tensoren quantisiert "
-          "(Per-Channel RNE).")
-
+    # ⚑ **Quantisieren und Exportieren laufen im Strom** (2026-08-25).
+    #
+    # Bis heute stand hier `quantized = quantize_model_weights(model)`,
+    # also das vollstaendige Quantisat im Speicher, bevor die erste Datei
+    # geschrieben wurde. Bei Qwen3-30B-A3B sind das ueber 30 GB int8
+    # gegen 24 GiB Arbeitsspeicher: Der erste Lauf wurde nach 1,5 Stunden
+    # Korpusdurchlauf mit **SIGKILL** beendet, genau an dieser Zeile.
+    #
+    # Die Spitze haengt jetzt am groessten Einzeltensor statt am Modell.
+    # Das ist die Stelle, an der das Stroemen wirklich gebraucht wird -
+    # **nicht** beim Laden des Modells, denn dessen Gewichte sind
+    # eingeblendet und damit verdraengbar.
+    #
     # GPTQ ueberschreibt die RNE-Eintraege fuer exakt die Tensoren, die
     # oben schichtweise gptq-quantisiert wurden (gleiche Schluessel,
     # gleiches Artefakt-Format). Reduziert den Ausgabefehler statt des
     # Gewichtsfehlers und damit das akkumulierte Quantisierungsrauschen
-    # (Fund 14).
-    if gptq_quantized:
-        quantized.update(gptq_quantized)
+    # (Fund 14). Im Strom wird je Tensor nachgesehen statt am Ende
+    # ueberschrieben; das Ergebnis ist dasselbe.
+    def _gewichtsstrom():
+        for name, quant in quantisiere_gewichte_strom(model):
+            yield name, (gptq_quantized.get(name, quant) if gptq_quantized else quant)
 
     # Eskalation nach Entscheidungspunkt 12.21 (spec-Ausnahme 0.6.0): der
     # LM-Head wird als EIGENER Tensor exportiert (Weight-Tying aufgelöst),
@@ -392,6 +433,9 @@ def main():
     # Speicher, und der Export laeuft ohne es. Das ist bei 0,5B gleichgueltig
     # und bei 7B der Unterschied zwischen 26 GB Spitzenbedarf (Modell 15,2 GB
     # + Quantisat 8,7 GB) und rund 11 GB auf einer 24-GB-Maschine.
+    print(f"[calibrate] Quantisiere und exportiere Gewichte nach {artifacts_dir} ...")
+    export_quantized_weights(_gewichtsstrom(), artifacts_dir)
+
     print("[calibrate] Quantisiere LM-Head (int16, per-channel)...")
     lm_head_weight = model.get_output_embeddings().weight
     lm_head_quant = quantize_symmetric_int16_per_channel(lm_head_weight)
@@ -399,9 +443,6 @@ def main():
     del lm_head_weight, model
     gc.collect()
     print("[calibrate] Referenzmodell freigegeben (wird ab hier nicht mehr gebraucht).")
-
-    print(f"[calibrate] Exportiere Gewichte nach {artifacts_dir}...")
-    export_quantized_weights(quantized, artifacts_dir)
 
     # Muss VOR export_theta_v laufen, damit der theta_v-Gewichtshash den
     # aktualisierten weights_manifest-Eintrag einschliesst.

@@ -1435,27 +1435,75 @@ mod loeschen_tests {
         }
     }
 
-    /// **Katalog und Register müssen dieselben Modelle kennen.**
+    /// **Katalog und Register müssen dieselben Modelle kennen, außer den
+    /// vorgemerkten.**
     ///
     /// Sie sind bewusst getrennt (kuratiert gegen gemessen), aber ein
-    /// Modell, das nur in einem von beiden steht, ist ein halber
-    /// Eintrag: Ohne Registereintrag lässt sich sein Digest nicht
+    /// **baubares** Modell, das nur in einem von beiden steht, ist ein
+    /// halber Eintrag: Ohne Registereintrag lässt sich sein Digest nicht
     /// prüfen, ohne Katalogeintrag weiß der Client nicht, woher die
     /// Gewichte kommen, und lud vor dem 2026-08-22 stillschweigend die
     /// von Qwen2.5-0,5B.
+    ///
+    /// ⚑ **Ausnahme für `vorgemerkt`, ergänzt am 2026-08-25.** Der
+    /// Katalog führt diesen Status selbst und beschreibt ihn als
+    /// „Lizenz geprüft und Revision festgelegt, aber noch nicht geholt
+    /// oder gebaut". Ein solches Modell **kann** keinen Registereintrag
+    /// haben, denn ein Register trägt Digests gebauter Artefakte. Der
+    /// Test verlangte ihn trotzdem und machte damit einen Status
+    /// unbenutzbar, den dieselbe Datei definiert.
+    ///
+    /// Aufgefallen bei Qwen3-30B-A3B: Lizenz geprüft (Apache 2.0),
+    /// Revision festgelegt, Tensornamen gegen die echte `index.json`
+    /// gehalten, Gewichte bewusst nicht geholt (56,9 GiB gegen 24 GiB
+    /// Arbeitsspeicher). Genau der Fall, für den es den Status gibt.
+    ///
+    /// **Die Schutzwirkung bleibt:** Ein vorgemerktes Modell ist für den
+    /// Client nicht wählbar, also kann er dafür auch nichts Falsches
+    /// laden. Der zweite Test unten hält fest, dass die Ausnahme nicht
+    /// zum Schlupfloch wird.
     #[test]
     fn katalog_und_register_kennen_dieselben_modelle() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
-        let mut aus_katalog: Vec<String> =
-            katalog(&wurzel).expect("Katalog").into_iter().map(|k| k.name).collect();
+        let mut aus_katalog: Vec<String> = katalog(&wurzel)
+            .expect("Katalog")
+            .into_iter()
+            .filter(|k| k.status != "vorgemerkt")
+            .map(|k| k.name)
+            .collect();
         let mut aus_register: Vec<String> =
             register(&wurzel).expect("Register").into_iter().map(|b| b.name).collect();
         aus_katalog.sort();
         aus_register.sort();
         assert_eq!(
             aus_katalog, aus_register,
-            "Katalog und Register führen verschiedene Modelle"
+            "Katalog und Register führen verschiedene baubare Modelle"
         );
+    }
+
+    /// **Gegenprobe zur Ausnahme oben.** Ein vorgemerktes Modell darf
+    /// keinen Registereintrag haben; hätte es einen, wäre es gebaut und
+    /// der Status falsch. Ohne diese Prüfung wäre `vorgemerkt` ein
+    /// Schlupfloch, mit dem sich ein gebautes Modell der Digest-Prüfung
+    /// entziehen ließe.
+    #[test]
+    fn vorgemerkte_modelle_stehen_nicht_im_register() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        let vorgemerkt: Vec<String> = katalog(&wurzel)
+            .expect("Katalog")
+            .into_iter()
+            .filter(|k| k.status == "vorgemerkt")
+            .map(|k| k.name)
+            .collect();
+        let im_register: Vec<String> =
+            register(&wurzel).expect("Register").into_iter().map(|b| b.name).collect();
+        for name in &vorgemerkt {
+            assert!(
+                !im_register.contains(name),
+                "{name} ist als vorgemerkt geführt, steht aber im Register: \
+                 dann ist es gebaut und der Status gehört auf 'erprobt'"
+            );
+        }
     }
 
     /// Kommentarblöcke im Katalog beginnen mit `_` und sind keine

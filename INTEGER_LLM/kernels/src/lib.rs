@@ -17,4 +17,5 @@ pub mod softmax;
 pub mod attention;
 pub mod backward;
 pub mod mlp;
+pub mod moe;
 pub mod sampling;
