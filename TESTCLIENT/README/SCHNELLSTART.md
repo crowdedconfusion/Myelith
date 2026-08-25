@@ -29,7 +29,8 @@ Enter wählt. Es gibt keine Befehle zu tippen.
   - macOS: `Myelith Testclient - macOS.app`
   - Linux: `./"Myelith Testclient - Linux, macOS (Shell).sh"`
 - Erster Start dauert einige Minuten, der Client baut sich selbst.
-- Nutzernamen eingeben, wenn er fragt.
+- Nutzernamen eingeben, wenn er fragt. (Als Koordinator: **`admin`**
+  eingeben, sonst fehlt das Entwickler-Menü.)
 
 **Kein Konto bei Hugging Face nötig.**
 

@@ -218,8 +218,8 @@ fn kurz(p: &std::path::Path) -> String {
 /// Nebenfunktionen abgesetzt. Sieben gleichrangige Zeilen lesen sich wie
 /// sieben Möglichkeiten; vier plus drei lesen sich wie ein Weg mit
 /// Beiwerk, und das ist es auch.
-fn menue_nutzer() -> Vec<Punkt> {
-    vec![
+fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
+    let mut punkte = vec![
         Punkt::neu(
             '1',
             "Artefakt wählen",
@@ -253,9 +253,17 @@ fn menue_nutzer() -> Vec<Punkt> {
         )
         .abgesetzt(),
         Punkt::neu('6', "Anleitung lesen", ""),
-        Punkt::neu('9', "Entwickler-Menü", ""),
-        Punkt::neu('0', "Beenden", ""),
-    ]
+    ];
+    // Der Zugang zum Entwickler-Menü hängt am Namen (siehe
+    // [`ist_entwickler`]). Er wird **nicht ausgegraut, sondern
+    // weggelassen**: Ein sichtbarer, gesperrter Punkt sagt „hier gibt es
+    // etwas, das du nicht darfst", und das ist die schlechtere Auskunft
+    // als gar keine.
+    if entwickler {
+        punkte.push(Punkt::neu('9', "Entwickler-Menü", ""));
+    }
+    punkte.push(Punkt::neu('0', "Beenden", ""));
+    punkte
 }
 
 /// Das Entwickler-Menü: Einzelläufe und alles, was Vorwissen braucht.
@@ -343,6 +351,11 @@ pub fn run(mut e: Einstellungen) -> bool {
     if e.teilnehmer == crate::logging::OHNE_NAME {
         e.teilnehmer = namen_erfragen();
     }
+    // **Einmal beim Start entschieden, nicht bei jedem Menüaufbau.**
+    // Wer sich später im Entwickler-Menü umbenennt, soll sich nicht
+    // selbst aussperren und beim Zurückkommen vor einem Menü stehen, in
+    // dem der Weg zurück fehlt.
+    let entwickler = ist_entwickler(&e.teilnehmer);
     // Aufräumen, Logo stehen lassen, dann die Begrüßung darunter. Die
     // Eingabezeile mit dem getippten Namen hat ihren Zweck erfüllt und
     // stünde sonst über der Antwort darauf.
@@ -379,7 +392,11 @@ pub fn run(mut e: Einstellungen) -> bool {
         // sich bei jedem Tastendruck neu zeichnet und dabei alles unter
         // sich löscht (siehe `auswahl::waehlen_mit_fuss`).
         let Some(wahl) =
-            auswahl::waehlen_mit_fuss("Was möchtest du tun?", &menue_nutzer(), &e.als_text())
+            auswahl::waehlen_mit_fuss(
+                "Was möchtest du tun?",
+                &menue_nutzer(entwickler),
+                &e.als_text(),
+            )
         else {
             println!("\n  Fertig.");
             return letztes_ergebnis;
@@ -417,7 +434,12 @@ pub fn run(mut e: Einstellungen) -> bool {
             }
             // Das Entwicklermenü räumt beim Verlassen selbst auf; ein
             // `weiter()` hier verlangte einen Tastendruck für nichts.
-            '9' => letztes_ergebnis = entwickler(&mut e, letztes_ergebnis),
+            //
+            // Die Bedingung steht hier **noch einmal**, obwohl der Punkt
+            // ohne sie gar nicht angezeigt wird. Wer die Taste blind
+            // drückt, soll nicht hineinfallen, nur weil die Anzeige und
+            // die Verzweigung zwei verschiedene Stellen sind.
+            '9' if entwickler => letztes_ergebnis = entwickler_menue(&mut e, letztes_ergebnis),
             '0' => {
                 println!("  Fertig.");
                 return letztes_ergebnis;
@@ -435,6 +457,28 @@ pub fn run(mut e: Einstellungen) -> bool {
 /// geraten. Ein aus der Umgebung übernommener Benutzername wäre bequemer
 /// und zugleich eine Personenangabe, die niemand angeordnet hat, und
 /// Protokolle wandern per Copy-Paste in Tickets.
+/// Ob dieser Name das Entwickler-Menü freischaltet.
+///
+/// # Warum das Menü überhaupt verborgen ist
+///
+/// Das Entwickler-Menü enthält Punkte, die ein Teilnehmer nicht braucht
+/// und mit denen er sich schaden kann: Artefakte löschen, Testpläne
+/// erzeugen, einen Knoten als Anlaufstelle betreiben. Ein Menü, das
+/// alles zeigt, lädt zum Ausprobieren ein, und ein Teilnehmer, der aus
+/// Versehen 25 GB löscht, hat einen schlechten ersten Eindruck.
+///
+/// **Es ist kein Schutz, sondern eine Aufräumhilfe.** Wer den Namen
+/// kennt, kommt hinein, und der Name steht hier im Quelltext. Gegen
+/// jemanden, der etwas anrichten will, hilft das nicht; gegen einen
+/// vollen Bildschirm mit Punkten, die niemanden angehen, schon.
+///
+/// Groß- und Kleinschreibung ist gleichgültig: `Admin`, `admin` und
+/// `ADMIN` öffnen dasselbe, und `AdMiN` ebenfalls, weil eine
+/// Unterscheidung dort nur Verdruss stiftete.
+pub fn ist_entwickler(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case("admin")
+}
+
 fn namen_erfragen() -> String {
     // Der Text steht als Block mittig unter dem Schriftzug, die
     // Eingabezeile am linken Rand dieses Blocks. Nur so bleibt sie dort,
@@ -741,7 +785,7 @@ const KURZANLEITUNG: &str = "\
     [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
     [5] Am Netz teilnehmen: der zweite Test, Rechner statt Rechnung.
 
-  Als Koordinator
+  Als Koordinator (Menü [9], sichtbar nach Anmeldung als admin)
     [9] Entwickler, dort \"Testplan erzeugen\", .plan an alle geben.
         Zugesandte Protokolle nach TESTCLIENT/Vergleiche/ legen,
         dann [9], \"Protokolle vergleichen\". Der ausführliche
@@ -796,7 +840,7 @@ fn plan_punkte(gefunden: &[crate::plaene::Gefunden], abbruch: &str) -> Vec<Punkt
 
 
 /// Die Entwickler-Ebene. Kehrt mit dem letzten Ergebnis zurück.
-fn entwickler(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
+fn entwickler_menue(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
     banner::bildschirm();
     loop {
         let Some(wahl) =
@@ -1618,7 +1662,7 @@ mod tests {
     /// zeigt, ist schlechter als keine.
     #[test]
     fn kurzanleitung_nennt_die_richtigen_menuepunkte() {
-        let punkte = menue_nutzer();
+        let punkte = menue_nutzer(true);
         let taste_von = |titel: &str| {
             punkte
                 .iter()
@@ -1647,7 +1691,7 @@ mod tests {
 
     #[test]
     fn nutzermenue_nennt_alle_punkte() {
-        let tasten: Vec<char> = menue_nutzer().iter().map(|p| p.taste).collect();
+        let tasten: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
         assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
     }
 
@@ -1657,7 +1701,7 @@ mod tests {
     /// hinaus, keine Aufgaben.
     #[test]
     fn nutzermenue_bleibt_schlank() {
-        let aufgaben = menue_nutzer()
+        let aufgaben = menue_nutzer(true)
             .iter()
             .filter(|p| p.taste != '0' && p.taste != '9')
             .count();
@@ -1680,12 +1724,63 @@ mod tests {
     /// welchen Punkt sie auslöst.
     #[test]
     fn tasten_sind_eindeutig() {
-        for menue in [menue_nutzer(), menue_entwickler()] {
+        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
             let mut tasten: Vec<char> = menue.iter().map(|p| p.taste).collect();
             let vorher = tasten.len();
             tasten.sort_unstable();
             tasten.dedup();
             assert_eq!(tasten.len(), vorher, "doppelte Taste im Menü");
+        }
+    }
+
+    /// **Das Entwickler-Menü ist nur nach Anmeldung als admin sichtbar.**
+    ///
+    /// Kein Schutz, sondern eine Aufräumhilfe: Der Name steht im
+    /// Quelltext. Es hält den Bildschirm eines Teilnehmers frei von
+    /// Punkten, die ihn nichts angehen und mit denen er sich schaden
+    /// kann.
+    #[test]
+    fn das_entwicklermenue_haengt_am_namen() {
+        assert!(ist_entwickler("admin"));
+        assert!(ist_entwickler("Admin"));
+        assert!(ist_entwickler("ADMIN"));
+        assert!(ist_entwickler("AdMiN"), "Groß- und Kleinschreibung darf nicht zählen");
+        assert!(ist_entwickler("  admin  "), "Leerzeichen am Rand dürfen nicht stören");
+
+        assert!(!ist_entwickler("anna"));
+        assert!(!ist_entwickler(""));
+        assert!(!ist_entwickler("administrator"), "nur der genaue Name öffnet");
+        assert!(!ist_entwickler("admin2"));
+    }
+
+    #[test]
+    fn ohne_anmeldung_fehlt_der_punkt_neun_ganz() {
+        // **Weggelassen, nicht ausgegraut.** Ein sichtbarer, gesperrter
+        // Punkt sagt „hier gibt es etwas, das du nicht darfst", und das
+        // ist die schlechtere Auskunft als gar keine.
+        let tasten: Vec<char> = menue_nutzer(false).iter().map(|p| p.taste).collect();
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '0']);
+        assert!(!tasten.contains(&'9'));
+    }
+
+    #[test]
+    fn mit_anmeldung_steht_der_punkt_neun_vor_dem_beenden() {
+        // Die Reihenfolge zählt: „Beenden" bleibt der letzte Eintrag,
+        // sonst wandert der Ausgang beim Anmelden an eine andere Stelle.
+        let tasten: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
+        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
+        assert_eq!(*tasten.last().unwrap(), '0');
+    }
+
+    #[test]
+    fn beide_fassungen_zeigen_dieselben_aufgaben() {
+        // Der Unterschied ist genau ein Punkt. Wüchse er, hätte jemand
+        // einem Teilnehmer stillschweigend etwas weggenommen.
+        let ohne: Vec<char> = menue_nutzer(false).iter().map(|p| p.taste).collect();
+        let mit: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
+        assert_eq!(mit.len(), ohne.len() + 1);
+        for t in &ohne {
+            assert!(mit.contains(t), "Punkt {t} fehlt in der Entwicklerfassung");
         }
     }
 
@@ -1760,7 +1855,7 @@ mod tests {
     /// der ihm nichts nützt.
     #[test]
     fn nutzermenue_fuehrt_die_schritte_in_der_reihenfolge_des_ablaufs() {
-        let punkte = menue_nutzer();
+        let punkte = menue_nutzer(true);
         let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
         assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
 
@@ -1805,7 +1900,7 @@ mod tests {
     /// sonst bei einer Aktion, die er nicht gemeint hat.
     #[test]
     fn kein_menue_vergibt_eine_taste_doppelt() {
-        for menue in [menue_nutzer(), menue_entwickler()] {
+        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
             let mut tasten: Vec<char> = menue.iter().map(|p| p.taste).collect();
             let vorher = tasten.len();
             tasten.sort_unstable();
@@ -1818,7 +1913,7 @@ mod tests {
     /// Titel bricht in 80 Spalten um und zerreißt die Liste.
     #[test]
     fn menuepunkte_passen_in_achtzig_spalten() {
-        for menue in [menue_nutzer(), menue_entwickler()] {
+        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
             for p in menue {
                 assert!(
                     p.titel.chars().count() + 8 <= 78,

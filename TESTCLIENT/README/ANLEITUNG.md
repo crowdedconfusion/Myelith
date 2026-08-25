@@ -102,18 +102,28 @@ weiterläuft; danach gleitet das Logo an seinen Platz. Ein Tastendruck überspri
 
 ```
   ── Was möchtest du tun? ──
-  ❯ 1  Mit dem Modell sprechen
-        Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum
-        Messen: kein Protokoll, kein Vergleichswert.
-    2  Testlauf starten
-    3  Testdatei wählen
-    4  Artefakt wählen
-    5  Anleitung lesen
-    9  Entwickler-Menü
+  ❯ 1  Artefakt wählen
+        Welches Modell gerechnet wird. Liegt nur eines da, überspringt
+        der Client die Frage.
+    2  Testdatei wählen
+    3  Testlauf starten
+    4  Mit dem Modell sprechen
+    5  Am Netz teilnehmen (Knoten betreiben)
+
+    6  Anleitung lesen
     0  Beenden
 
   ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück
 ```
+
+**Wo ist Punkt 9?** Das Entwickler-Menü erscheint nur, wenn beim
+Nutzernamen **`admin`** eingegeben wurde (Groß- und Kleinschreibung
+gleichgültig). Es enthält Punkte, die ein Teilnehmer nicht braucht und
+mit denen er sich schaden kann, etwa das Löschen der Artefakte.
+
+Das ist **kein Schutz, sondern eine Aufräumhilfe**: Der Name steht im
+Quelltext, wer ihn kennt, kommt hinein. Er hält nur den Bildschirm frei
+von Punkten, die niemanden angehen.
 
 | Taste | Wirkung |
 |---|---|
@@ -333,7 +343,8 @@ Die Datei ist reiner Text und darf unverändert weitergegeben werden.
 
 ## A6. Selbst nachsehen: Protokolle vergleichen
 
-Punkt **[9] Entwickler-Menü**, dort **Protokolle vergleichen**, fragt
+Punkt **[9] Entwickler-Menü** (erscheint nach Anmeldung als `admin`),
+dort **Protokolle vergleichen**, fragt
 zuerst, *welche*:
 
 | Auswahl | Was verglichen wird |
@@ -1052,6 +1063,7 @@ außer erreichbar sein.
 | Wer | Wo | Was |
 |---|---|---|
 | Koordinator | [9] Entwickler → **[7]** | Knoten als Anlaufstelle betreiben |
+| | | *[9] erscheint nach Anmeldung als `admin`* |
 | Teilnehmer | Hauptmenü → **[5]** → [1] | Am Netz teilnehmen |
 | Teilnehmer | Hauptmenü → **[5]** → [2] | eigenen Lauf ansehen |
 | Koordinator | [9] Entwickler → **[8]** | Netzlauf auswerten |
