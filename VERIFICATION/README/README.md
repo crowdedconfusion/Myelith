@@ -126,6 +126,47 @@ umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
 
+### v0.7.0 – 2026-08-25 (A11: Ununterscheidbarkeit gemessen)
+
+`src/unterscheider.rs` baut den Angriff auf Kontrollsegmente, statt ihn
+zu beschreiben. Kap. 6.7 verlangt Ununterscheidbarkeit als **erste**
+Konstruktionsanforderung, und `kontrollsegmente.rs` sagt selbst, dass es
+sie nicht erfüllen kann: Sie ist eine Eigenschaft der Daten.
+
+**Was sich trotzdem messen ließ:** ob die **Einschleusung** eine Spur
+hinterlässt, unabhängig vom Inhalt der Prompts.
+
+⚑ **Fund 58: Ein zu kleiner Vorrat verrät sich vollständig.** Der Vorrat
+ist endlich, der Auftragsstrom nicht. Wird öfter eingeschleust, als der
+Vorrat verschiedene Segmente hält, wiederholen sich Ids. **Echte Arbeit
+wiederholt sich nie**, also ist jedes zweite Auftreten ein Beweis, kein
+Verdacht. Bei γ = 2 % über 100 000 Aufträge:
+
+| Vorrat | erkannte Kontrollen | Fehlalarme |
+|---|---|---|
+| 64 | **96,8 %** | 0 |
+| 256 | 87,2 % | 0 |
+| 1024 | 48,8 % | 0 |
+| 2048 | 0 % | 0 |
+
+**Null Fehlalarme ist der schlimmste Teil:** Der Angreifer geht kein
+Risiko ein. Er rechnet die erkannten Kontrollen ehrlich und manipuliert
+den Rest.
+
+**Was den Fund schärft:** γ ist ein Governance-Parameter, die
+Vorratsgröße ist keiner. Die einzigen je geschriebenen Werte stehen in
+Tests: 10 und 100. Bei γ = 2 % trägt 100 genau 5 000 Aufträge. **Die
+Zahl, an der die Wirksamkeit hängt, war nirgends festgelegt.**
+
+Behoben, soweit Code das kann: `KontrollsegmentVorrat::reicht_fuer` und
+`::reichweite` machen die Bedingung am Aufrufort prüfbar. Wer γ erhöht,
+muss den Vorrat mitwachsen lassen, sonst macht eine schärfere Kontrolle
+den Mechanismus schwächer.
+
+**Offen bleibt** das Prompt-Profil (Länge, Timing, Kontext). Dafür
+braucht es echte Verteilungen aus dem Betrieb.
+
+
 ### myl-verifier v0.6.0 – 2026-08-24 (Punkt 4.3: Liveness gemessen)
 
 Kap. 6.8 macht eine **quantitative** Liveness-Zusage: „Session-Verlust

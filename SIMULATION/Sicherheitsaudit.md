@@ -29,8 +29,8 @@ dass sie hier steht.
 | A7 | Verbrauchs-Stoß mit Ausstieg | ✅ | Burn-Cap je Adresse, gemessen |
 | A8 | Parametervorschlag, der Invarianten bricht | ✅ | Registry prüft **vor** der Abstimmung |
 | A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
-| A10 | **Latenzwerte fälschen** | ❌ | Attest-Signatur wird von niemandem geprüft |
-| A11 | **Kontrollsegmente erkennen** | ❌ | Ununterscheidbarkeit ist offene Messfrage |
+| A10 | **Latenzwerte fälschen** | ⚠️ | Signatur wird **geprüft** (2026-08-25); Schlüsselherkunft im Probelauf ableitbar |
+| A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** gemessen und behebbar; Prompt-Profil bleibt offen |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
 
@@ -148,35 +148,102 @@ Angreifer mit einem großen Provider bekommt viele /24. Die Metadaten
 liegen in `myl-types/node_metadata.rs`; es fehlt eine vertrauenswürdige
 Quelle für die Zuordnung.
 
-### ⚑ A10 Latenzwerte fälschen
+### A10 Latenzwerte fälschen — Prüfung vorhanden, Schlüsselherkunft offen
 
-`myl_types::LatencyAttest` trägt ein `signature`-Feld, das **im ganzen
-Projekt niemand verifiziert**, und niemand erzeugt ein Attest. Die
-Latenzwerte gehen ins Geo-Clustering der Pods.
+**War:** `myl_types::LatencyAttest` trug ein `signature`-Feld, das **im
+ganzen Projekt niemand verifizierte**, und niemand erzeugte ein Attest.
 
-**Wirkung:** Wer sie frei setzen kann, sucht sich seine Pod-Nachbarn aus,
-und das ist die Vorstufe zur Kollusion (A12). Ein ungeprüftes
-Signaturfeld ist dabei **gefährlicher als gar keines**, weil ein Leser es
-für einen Schutz hält.
+**Warum das schlimmer war als ein fehlendes Feld:** Ein ungeprüftes
+Signaturfeld ist gefährlicher als gar keines, weil ein Leser es für
+einen Schutz hält. Die Latenzwerte gehen ins Geo-Clustering der Pods;
+wer sie frei setzen kann, sucht sich seine Pod-Nachbarn aus, und das ist
+die Vorstufe zur Kollusion beider Pods (A12).
 
-**Nötig:** `PayloadValidator` verdrahten — die Stelle entsteht ohnehin,
-sobald `myl-net` und `myl-consensus` in einem Prozess zusammenkommen.
+**Behoben (2026-08-25):**
 
-### ⚑ A11 Kontrollsegmente erkennen
+- `LatencyAttest::sign` und `::verify` in `myl-types`, 7 Tests. Sie
+  fehlten schlicht: Es gab `signable_bytes()`, aber nichts, was damit
+  signierte oder prüfte.
+- `myl_node::Validatorsatz` ordnet Kennung zu Schlüssel und liefert den
+  **Grund** einer Ablehnung, nicht nur ein Nein.
+- `ProtokollValidator` prüft Atteste. Dort stand vorher `_ => true`.
+- Der Knoten **erzeugt** Atteste aus seinen tatsächlich gemessenen
+  Latenzen, nicht aus erfundenen Zahlen.
+
+**Live belegt, drei Knoten:** Alpha und Beta kennen einander und nehmen
+gegenseitig an; ein dritter, der in keiner Liste steht, bekommt alle
+seine Atteste verworfen und verwirft selbst alle fremden.
+
+**⚠️ Warum nicht ✅:** Im Probelauf werden die Schlüssel aus den
+Teilnehmernamen abgeleitet, die der Koordinator ohnehin verteilt. **Wer
+die Namen kennt, kann die Schlüssel ableiten** und damit in fremdem
+Namen signieren. Für eine Trockenübung ist das hinnehmbar, für ein
+echtes Netz nicht.
+
+Die Trennlinie liegt **nicht im Prüfcode**, sondern in der Herkunft der
+Schlüssel: Dieselbe Prüffunktion arbeitet unverändert gegen echte
+Schlüssel, sobald die Validator-Registrierung zu Genesis steht, mit
+Besitznachweis (Fund 27). Das ist dieselbe Voraussetzung, die auch die
+BFT-Runden brauchen.
+
+### ⚑ A11 Kontrollsegmente erkennen — eine Spur gemessen und geschlossen
 
 Kap. 6.7 verlangt Ununterscheidbarkeit als **erste**
 Konstruktionsanforderung. Die Mechanik steht seit myl-verifier v0.5.0;
 die Ununterscheidbarkeit ist eine **Eigenschaft der Daten, nicht des
-Codes**, und das Whitepaper führt sie selbst als offene Messfrage
-(Kap. 11, Punkt 5).
+Codes**, und das Whitepaper führt sie als offene Messfrage (Kap. 11,
+Punkt 5).
 
-**Wirkung, wenn sie fehlt:** Erkennt ein Miner Kontrollsegmente an
-Timing, Länge oder Kontextprofil, ist der einzige Schutz gegen den
-einmaligen Eingriff wirkungslos, und mit ihm A1 für den Fall, dass der
-Angreifer beide Pods hält.
+**Was sich trotzdem messen ließ**, und das war der Ertrag vom
+2026-08-25: ob die **Einschleusung selbst** eine Spur hinterlässt,
+unabhängig vom Inhalt der Prompts. `myl-verifier/src/unterscheider.rs`
+baut den Angriff, statt ihn zu beschreiben.
 
-**Nötig:** die statistische Analyse aus den Akzeptanzkriterien von
-VERIFICATION Phase 3.
+⚑ **Fund 58: Ein zu kleiner Vorrat verrät sich vollständig.**
+
+Der Vorrat ist endlich, der Auftragsstrom nicht. Wird öfter
+eingeschleust, als der Vorrat verschiedene Segmente hält, wiederholen
+sich Ids. **Echte Arbeit wiederholt sich nie**, also ist jedes zweite
+Auftreten einer Id ein Beweis, kein Verdacht. Ein Miner braucht dafür
+keine Statistik, keine Schwellenwerte und keine Annahme über Prompts,
+nur ein Gedächtnis.
+
+Gemessen bei γ = 2 % über 100 000 Aufträge:
+
+| Vorrat | erkannte Kontrollen | Fehlalarme |
+|---|---|---|
+| 64 | **96,8 %** | 0 |
+| 256 | 87,2 % | 0 |
+| 1024 | 48,8 % | 0 |
+| 2048 | 0 % | 0 |
+
+**Null Fehlalarme ist der schlimmste Teil.** Der Angreifer geht kein
+Risiko ein: Er rechnet die erkannten Kontrollen ehrlich und manipuliert
+den Rest. Der Mechanismus, der als einziger gegen den **einmaligen**
+Eingriff wirkt, wäre damit wirkungslos, und mit ihm A1 für den Fall,
+dass der Angreifer beide Pods hält.
+
+**Was den Fund schärft: γ ist ein Governance-Parameter, die
+Vorratsgröße ist keiner.** Die einzigen je geschriebenen Werte stehen in
+Tests: 10 und 100. Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000
+Aufträge. **Die Zahl, an der die Wirksamkeit hängt, war nirgends
+festgelegt.**
+
+**Behoben, soweit es Code kann:** `KontrollsegmentVorrat::reicht_fuer`
+und `::reichweite` machen die Bedingung am Aufrufort prüfbar. Der
+Zusammenhang, der dabei zu kennen ist: **Wer γ erhöht, muss den Vorrat
+mitwachsen lassen**, sonst macht eine schärfere Kontrolle den
+Mechanismus schwächer statt stärker.
+
+**⚠️ Warum nicht ✅:** Geschlossen ist genau **eine** Spur, die der
+Mechanik. Länge, Timing und Kontextprofil der Prompts bleiben
+ungemessen; dafür braucht es echte Prompt-Verteilungen, und die
+entstehen erst im Betrieb. Das bleibt die offene Messfrage aus Kap. 11
+Punkt 5.
+
+**Offen als Protokollentscheidung:** die Vorratsgröße als
+Governance-Parameter neben γ, mit einer Invariante, die beide
+aneinander bindet.
 
 ---
 
@@ -245,11 +312,22 @@ Nach Schadenshebel, nicht nach Aufwand:
    `connection_limits` ist eine Behaviour-Zeile": Das stimmte für die
    Zeile und nicht für die Aufgabe. Die Arbeit steckte im Herleiten der
    Zahlen und im Ausrechnen, wen sie treffen, und genau dort lag Fund 54.
-2. **A10 Attest-Signatur prüfen.** Sie ist der Hebel auf β_lokal und
-   damit auf A12. Entsteht ohnehin mit dem Knoten-Binary, und der Weg
-   dafür ist seit Fund 55 offen (`run_node_mit`).
-3. **A11 statistische Analyse.** Ohne sie trägt A1 im Fall „Angreifer
-   hält beide Pods" nicht.
+2. ~~**A10 Attest-Signatur prüfen**~~ — erledigt am 2026-08-25. Die
+   Vermutung „entsteht ohnehin mit dem Knoten-Binary" stimmte für die
+   **Stelle**, nicht für die Sache: Der `PayloadValidator` war da, aber
+   `LatencyAttest` hatte weder `sign` noch `verify`. Die Prüfung, für
+   die alles vorbereitet schien, brauchte erst ihre Primitive.
+   **Offen bleibt die Schlüsselherkunft**, und die hängt an derselben
+   Validator-Registrierung wie die BFT-Runden.
+3. ~~**A11 statistische Analyse**~~ — teilweise erledigt am 2026-08-25.
+   Die Spur der **Mechanik** ist gemessen und behebbar (Fund 58); die
+   Spur der **Daten** (Länge, Timing, Kontextprofil) braucht echte
+   Prompt-Verteilungen aus dem Betrieb.
+
+   Nachtrag zur damaligen Einordnung „offene Messfrage": Das stimmte
+   für den Teil, an den alle gedacht hatten, und verdeckte den Teil, der
+   schon heute messbar war. **Eine als offen abgelegte Frage wird nicht
+   mehr gestellt**, und genau deshalb lag der Fund über Monate offen.
 4. **A13 externes Review.** Vor dem Mainnet, nicht danach.
 
 **Was ausdrücklich nicht auf dieser Liste steht:** ein weiterer

@@ -60,6 +60,8 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
+        // Ein Probelauf mit Attest-Prüfung: beide Knoten kennen einander.
+        teilnehmer: vec!["alpha".into(), "beta".into()],
     }
 }
 
@@ -205,7 +207,7 @@ async fn ein_echter_block_kommt_an_unsinn_nicht() {
     // Und Unsinn hinterher, auf demselben Topic.
     let unsinn = vec![0xABu8; 64];
     assert!(
-        !ProtokollValidator.validate(GossipTopic::Blocks, &unsinn),
+        !ProtokollValidator::default().validate(GossipTopic::Blocks, &unsinn),
         "die Nutzlastprüfung hält diesen Unsinn für einen Block, \
          damit prüft dieser Test nichts"
     );

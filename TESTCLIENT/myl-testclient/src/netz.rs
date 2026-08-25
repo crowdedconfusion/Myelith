@@ -130,6 +130,18 @@ pub struct Knotenbild {
     /// Zwei Knoten notieren dieselbe Verbindung; der Unterschied ihrer
     /// Zeitstempel ist der Uhrversatz. Siehe [`uhrversatz_ms`].
     pub verbindungszeit: BTreeMap<String, i64>,
+    /// Angenommene und verworfene Latenz-Atteste (Sicherheitsaudit A10).
+    ///
+    /// **Beide Zahlen zusammen sind die Aussage.** Nur angenommene
+    /// hieße, dass nie eine Fälschung vorkam; nur verworfene, dass
+    /// niemand ein gültiges schickt. Der Prüfpfad ist erst dann belegt,
+    /// wenn beides vorkommt oder wenigstens das erste.
+    pub atteste_angenommen: u64,
+    pub atteste_verworfen: u64,
+    /// Bekannte Aussteller im Validatorsatz dieses Knotens.
+    /// **Null heißt: Der Knoten kann kein Attest prüfen** und verwirft
+    /// alle, meist wegen einer fehlenden Teilnehmerliste.
+    pub bekannte_aussteller: u64,
     /// Wie der Lauf endete, falls er ordentlich endete.
     ///
     /// **`None` heißt: abgestürzt, hart abgeschossen, oder läuft noch.**
@@ -331,6 +343,9 @@ pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
         proben: BTreeMap::new(),
         proben_empfangen: BTreeMap::new(),
         verbindungszeit: BTreeMap::new(),
+        atteste_angenommen: 0,
+        atteste_verworfen: 0,
+        bekannte_aussteller: 0,
         ende: None,
     };
     for zeile in inhalt.lines().filter(|z| !z.trim().is_empty()) {
@@ -455,6 +470,13 @@ pub fn lies_protokoll(pfad: &Path) -> Result<Knotenbild, String> {
                 }
                 if let Some(k) = text_feld(zeile, "kennung") {
                     *bild.proben_empfangen.entry(k).or_insert(0) += 1;
+                }
+            }
+            Some("attest_angenommen") => bild.atteste_angenommen += 1,
+            Some("attest_verworfen") => bild.atteste_verworfen += 1,
+            Some("validatorsatz") => {
+                if let Some(n) = zahl_feld(zeile, "bekannte_aussteller") {
+                    bild.bekannte_aussteller = n.max(0) as u64;
                 }
             }
             Some("ende") => {
@@ -981,6 +1003,34 @@ pub fn run(verzeichnis: &Path) -> bool {
         );
     }
 
+    // Latenz-Atteste: Sicherheitsaudit A10. Bis zum 2026-08-25 prüfte
+    // die Signatur niemand, und ein ungeprüftes Signaturfeld ist
+    // gefährlicher als gar keines, weil ein Leser es für einen Schutz
+    // hält.
+    let attest_gesamt: u64 = bilder
+        .iter()
+        .map(|b| b.atteste_angenommen + b.atteste_verworfen)
+        .sum();
+    let ohne_satz: Vec<&Knotenbild> =
+        bilder.iter().filter(|b| b.bekannte_aussteller == 0).collect();
+    if attest_gesamt > 0 || !ohne_satz.is_empty() {
+        println!();
+        println!("  Latenz-Atteste (Signaturprüfung, Audit A10):");
+        for b in &bilder {
+            println!(
+                "    {:<14} {:>3} angenommen, {:>3} verworfen, {} bekannte Aussteller",
+                b.name, b.atteste_angenommen, b.atteste_verworfen, b.bekannte_aussteller
+            );
+        }
+        if !ohne_satz.is_empty() {
+            println!();
+            println!("    ⚠ Diese Knoten kennen keinen Aussteller und verwerfen deshalb");
+            println!("      JEDES Attest: {}",
+                ohne_satz.iter().map(|b| b.name.as_str()).collect::<Vec<_>>().join(", "));
+            println!("      Fast immer eine fehlende Teilnehmerliste, kein Angriff.");
+        }
+    }
+
     // Der Kettenabgleich als Nächstes: Er ist die schwerwiegendste Aussage
     // des Berichts. Alles andere betrifft das Netz, dies betrifft den
     // Zustand.
@@ -1189,7 +1239,8 @@ mod tests {
             bloecke_erzeugt: 0, bloecke_uebernommen: 0,
             bloecke_abgelehnt: BTreeMap::new(), proben: BTreeMap::new(),
             proben_empfangen: BTreeMap::new(),
-            verbindungszeit: BTreeMap::new(), ende: None,
+            verbindungszeit: BTreeMap::new(), atteste_angenommen: 0,
+            atteste_verworfen: 0, bekannte_aussteller: 0, ende: None,
         }];
         assert_eq!(beurteile(&bilder), Urteil::EinKnoten);
         assert!(!beurteile(&bilder).gelungen());
@@ -1274,7 +1325,8 @@ mod tests {
                 bloecke_erzeugt: 0, bloecke_uebernommen: 0,
                 bloecke_abgelehnt: BTreeMap::new(), proben: BTreeMap::new(),
                 proben_empfangen: BTreeMap::new(),
-                verbindungszeit: BTreeMap::new(), ende: None,
+                verbindungszeit: BTreeMap::new(), atteste_angenommen: 0,
+                atteste_verworfen: 0, bekannte_aussteller: 0, ende: None,
             },
             Knotenbild {
                 name: "b".into(), peer: "p2".into(), datei: PathBuf::new(),
@@ -1290,7 +1342,8 @@ mod tests {
                 bloecke_erzeugt: 0, bloecke_uebernommen: 0,
                 bloecke_abgelehnt: BTreeMap::new(), proben: BTreeMap::new(),
                 proben_empfangen: BTreeMap::new(),
-                verbindungszeit: BTreeMap::new(), ende: None,
+                verbindungszeit: BTreeMap::new(), atteste_angenommen: 0,
+                atteste_verworfen: 0, bekannte_aussteller: 0, ende: None,
             },
         ];
         assert_eq!(
@@ -1491,6 +1544,36 @@ mod tests {
         assert_eq!(wege.len(), 1);
         assert!(!wege[0].vollstaendig(), "die echte Verfehlung wurde verschluckt");
         assert_eq!(wege[0].ohne_empfang, vec!["b".to_string()]);
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn attestpruefungen_werden_gezaehlt() {
+        // A10: Erst wenn beide Zahlen dastehen, ist der Prüfpfad belegt.
+        let verz = temp("attest");
+        schreibe(&verz, "a", &[
+            zeile(1, 100, "a", "p1", "start", ""),
+            zeile(2, 110, "a", "p1", "validatorsatz",
+                  ",\"bekannte_aussteller\":3,\"atteste_pruefbar\":true"),
+            zeile(3, 200, "a", "p1", "attest_angenommen", ",\"bytes\":176"),
+            zeile(4, 210, "a", "p1", "attest_angenommen", ",\"bytes\":176"),
+            zeile(5, 220, "a", "p1", "attest_verworfen",
+                  ",\"bytes\":176,\"grund\":\"nutzlastpruefung\""),
+        ]);
+        let b = &sammle(&verz).unwrap()[0];
+        assert_eq!(b.atteste_angenommen, 2);
+        assert_eq!(b.atteste_verworfen, 1);
+        assert_eq!(b.bekannte_aussteller, 3);
+        std::fs::remove_dir_all(&verz).ok();
+    }
+
+    #[test]
+    fn ein_knoten_ohne_validatorsatz_faellt_auf() {
+        // Er verwirft jedes Attest, und das ist fast immer eine
+        // fehlende Teilnehmerliste, kein Angriff.
+        let verz = temp("kein-satz");
+        schreibe(&verz, "a", &[zeile(1, 100, "a", "p1", "start", "")]);
+        assert_eq!(sammle(&verz).unwrap()[0].bekannte_aussteller, 0);
         std::fs::remove_dir_all(&verz).ok();
     }
 

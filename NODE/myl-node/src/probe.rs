@@ -69,17 +69,21 @@ pub enum Probe {
     Challenge,
     /// Transaktionen erreichen den Erzeuger und landen in Blöcken.
     Transaktion,
+    /// Latenz-Atteste werden signiert erzeugt und beim Empfänger gegen
+    /// den Validatorsatz geprüft (Sicherheitsaudit A10).
+    Latenzattest,
 }
 
 impl Probe {
     /// Alle Proben in der Reihenfolge, in der sie aufeinander aufbauen.
-    pub const ALLE: [Probe; 6] = [
+    pub const ALLE: [Probe; 7] = [
         Probe::Netz,
         Probe::Nachrichtenfluss,
         Probe::Blockkette,
         Probe::PoiBuendel,
         Probe::Challenge,
         Probe::Transaktion,
+        Probe::Latenzattest,
     ];
 
     /// Kurzname fürs Protokoll und für die Auswertung. Stabil halten:
@@ -92,6 +96,7 @@ impl Probe {
             Probe::PoiBuendel => "poi-buendel",
             Probe::Challenge => "challenge",
             Probe::Transaktion => "transaktion",
+            Probe::Latenzattest => "latenzattest",
         }
     }
 
@@ -104,6 +109,7 @@ impl Probe {
             Probe::PoiBuendel => "PoI-Bündel überstehen Serialisierung und Gossip",
             Probe::Challenge => "Challenges überstehen den Weg und bleiben gültig",
             Probe::Transaktion => "Transaktionen erreichen den Erzeuger und landen in Blöcken",
+            Probe::Latenzattest => "Latenz-Atteste werden signiert und die Signatur geprüft (A10)",
         }
     }
 
@@ -116,6 +122,7 @@ impl Probe {
             Probe::PoiBuendel => Some(GossipTopic::PoiBundles),
             Probe::Challenge => Some(GossipTopic::Challenges),
             Probe::Transaktion => Some(GossipTopic::Transactions),
+            Probe::Latenzattest => Some(GossipTopic::LatencyAttests),
         }
     }
 
@@ -204,6 +211,45 @@ pub fn probe_challenge(absender: &str, folge: u64) -> Challenge {
     }
 }
 
+/// Erzeugt ein **signiertes** Latenz-Attest für die Probe.
+///
+/// # ⚑ Warum das die Probe zu A10 ist
+///
+/// Bis zum 2026-08-25 erzeugte niemand ein Attest, und niemand prüfte
+/// die Signatur. Diese Probe schickt eines mit echter Signatur ins
+/// Netz; der Empfänger prüft es gegen den Validatorsatz und verwirft
+/// es, wenn etwas nicht stimmt.
+///
+/// **Die Latenzen sind die tatsächlich gemessenen**, nicht erfundene.
+/// Ein Attest mit ausgedachten Werten prüfte nur die Signatur, nicht den
+/// Weg, den ein echtes nimmt.
+pub fn probe_attest(
+    name: &str,
+    latenzen: &[(libp2p::PeerId, u32)],
+) -> Option<myl_types::LatencyAttest> {
+    use myl_types::latency_attest::{BlsSignatureBytes, PeerIdBytes};
+
+    let sk = crate::validatorsatz::probe_schluessel(name)?;
+    let issuer = crate::validatorsatz::probe_kennung(name)?;
+    let mut werte = Vec::new();
+    for (peer, rtt) in latenzen {
+        // Die PeerId auf 32 Bytes bringen: Ihre Rohform ist ein
+        // Multihash veränderlicher Länge, das Attest-Feld ist fest.
+        let h = Hash::sha256(&peer.to_bytes());
+        let mut roh = [0u8; 32];
+        roh.copy_from_slice(h.as_bytes());
+        werte.push((PeerIdBytes(roh), *rtt));
+    }
+    let mut a = myl_types::LatencyAttest {
+        issuer,
+        timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
+        latencies: werte,
+        signature: BlsSignatureBytes([0u8; 96]),
+    };
+    a.sign(&sk).ok()?;
+    Some(a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +311,36 @@ mod tests {
         );
         let zurueck: Challenge = borsh::from_slice(&bytes).expect("Rücklesen");
         assert_eq!(zurueck, c);
+    }
+
+    /// **A10: Das Probe-Attest ist echt signiert und wird anerkannt.**
+    #[test]
+    fn ein_probe_attest_besteht_die_pruefung_des_empfaengers() {
+        let satz = crate::validatorsatz::Validatorsatz::aus_namen(&["alpha"]);
+        let a = probe_attest("alpha", &[(libp2p::PeerId::random(), 25)]).expect("Attest");
+        assert!(
+            satz.pruefe(&a).ist_gueltig(),
+            "das eigene Probe-Attest wurde abgewiesen"
+        );
+        // Und es übersteht den Weg durchs Netz.
+        let bytes = borsh::to_vec(&a).expect("Serialisierung");
+        assert!(myl_net::validate_payload(GossipTopic::LatencyAttests, &bytes).is_ok());
+    }
+
+    #[test]
+    fn ein_probe_attest_eines_fremden_wird_abgewiesen() {
+        let satz = crate::validatorsatz::Validatorsatz::aus_namen(&["alpha"]);
+        let a = probe_attest("eindringling", &[(libp2p::PeerId::random(), 25)]).expect("Attest");
+        assert!(!satz.pruefe(&a).ist_gueltig());
+    }
+
+    #[test]
+    fn ein_attest_ohne_latenzen_ist_gueltig() {
+        // Ein Knoten ohne Peers hat nichts zu berichten. Das ist kein
+        // Fehler, und ein Attest darüber muss trotzdem tragen.
+        let satz = crate::validatorsatz::Validatorsatz::aus_namen(&["alpha"]);
+        let a = probe_attest("alpha", &[]).expect("Attest");
+        assert!(satz.pruefe(&a).ist_gueltig());
     }
 
     #[test]

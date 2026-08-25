@@ -54,6 +54,39 @@ fn frage_zahl(text: &str, vorgabe: u64) -> u64 {
     }
 }
 
+/// Fragt die Teilnehmerliste ab.
+///
+/// # ⚑ Wozu die gebraucht wird
+///
+/// Latenz-Atteste tragen eine Signatur, und geprüft werden kann sie nur
+/// gegen den Schlüssel des Ausstellers. Ein Attest nennt seinen
+/// Aussteller als Kennung, nicht als Schlüssel; die Zuordnung entsteht
+/// im Probelauf aus den Namen, die der Koordinator ohnehin verteilt.
+///
+/// **Fehlt ein Name, werden dessen Atteste verworfen** und das
+/// Protokoll sagt es genau so. Ohne Liste werden alle verworfen: Das
+/// ist der sichere Vorgabefall, denn ungeprüfte Atteste durchzulassen
+/// wäre schlechter als gar keine (Sicherheitsaudit A10).
+pub fn frage_teilnehmer(eigener: &str) -> Vec<String> {
+    println!();
+    println!("  Namen ALLER Teilnehmer, durch Komma getrennt.");
+    println!("  Sie stehen in der Einladung des Koordinators. Beispiel:");
+    println!("    anlaufstelle, maschine-b, maschine-c");
+    println!("  Ohne Angabe werden Latenz-Atteste nicht geprüft und verworfen.");
+    let roh = frage("Teilnehmer", eigener);
+    let mut namen: Vec<String> = roh
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    // Der eigene Name gehört immer dazu: Ein Knoten, der seine eigenen
+    // Atteste nicht anerkennt, wäre schwer zu erklären.
+    if !namen.iter().any(|n| n == eigener) {
+        namen.push(eigener.to_string());
+    }
+    namen
+}
+
 /// Prüft eine Einladungsadresse, bevor der Knoten damit startet.
 ///
 /// Der häufigste Fehler beim Abtippen ist der fehlende `/p2p/…`-Teil,
@@ -223,6 +256,7 @@ pub fn anlaufstelle() -> bool {
     let port = frage_zahl("Port", 4150) as u16;
     let minuten = frage_zahl("Laufzeit in Minuten", 60);
     let takt = frage_zahl("Testnachricht alle wie viele Sekunden (0 = keine)", 10);
+    let teilnehmer = frage_teilnehmer(&name);
 
     let konfig = KnotenKonfig {
         name: name.clone(),
@@ -246,6 +280,7 @@ pub fn anlaufstelle() -> bool {
         // entscheidet, welcher Block gilt. Das täte eine
         // Abstimmungsrunde, und die gibt es noch nicht.
         erzeugt_bloecke: true,
+        teilnehmer,
     };
 
     println!();
@@ -276,6 +311,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
     let name = frage("Dein Name für das Protokoll", name_vorgabe);
     let minuten = frage_zahl("Laufzeit in Minuten", 60);
     let takt = frage_zahl("Testnachricht alle wie viele Sekunden (0 = keine)", 10);
+    let teilnehmer = frage_teilnehmer(&name);
 
     let konfig = KnotenKonfig {
         name: name.clone(),
@@ -300,6 +336,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,
+        teilnehmer,
     };
 
     println!();
@@ -313,6 +350,15 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eine_teilnehmerliste_ergibt_einen_pruefbaren_satz() {
+        // Der Zweck: Ohne Liste wird jedes Attest verworfen, mit Liste
+        // werden die eigenen anerkannt (Sicherheitsaudit A10).
+        let satz = myl_node::Validatorsatz::aus_namen(&["alpha", "beta"]);
+        assert_eq!(satz.anzahl(), 2);
+        assert_eq!(myl_node::Validatorsatz::leer().anzahl(), 0);
+    }
 
     #[test]
     fn der_schluessel_liegt_im_schluesselordner() {

@@ -39,6 +39,40 @@
 //!    Schutz gegen einen Miner, der Kontrollsegmente an ihrer Länge
 //!    erkennt.
 //!
+//!    ## ⚑ Fund 58: Ein zu kleiner Vorrat verrät sich von selbst
+//!
+//!    Gemessen am 2026-08-25 in [`crate::unterscheider`], und das
+//!    Ergebnis betrifft nicht die Prompts, sondern die **Mechanik**:
+//!
+//!    Der Vorrat ist endlich, der Auftragsstrom nicht. Wird öfter
+//!    eingeschleust, als der Vorrat verschiedene Segmente hält,
+//!    **wiederholen sich Ids**. Echte Arbeit wiederholt sich nie. Also
+//!    ist jedes zweite Auftreten einer Id ein **Beweis**, kein
+//!    Verdacht, und ein Miner braucht dafür nur ein Gedächtnis.
+//!
+//!    Bei γ = 2 % über 100 000 Aufträge:
+//!
+//!    | Vorrat | erkannte Kontrollen | Fehlalarme |
+//!    |---|---|---|
+//!    | 64 | **96,8 %** | 0 |
+//!    | 256 | 87,2 % | 0 |
+//!    | 1024 | 48,8 % | 0 |
+//!    | 2048 | 0 % | 0 |
+//!
+//!    **Null Fehlalarme heißt: Der Angreifer geht kein Risiko ein.** Er
+//!    rechnet die erkannten Kontrollen ehrlich und manipuliert den Rest.
+//!
+//!    **γ ist ein Governance-Parameter, die Vorratsgröße ist keiner.**
+//!    Die einzigen je geschriebenen Werte stehen in Tests: 10 und 100.
+//!    Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000 Aufträge.
+//!
+//!    Die Bedingung ist einfach und steht als [`reicht_fuer`] bereit:
+//!    **Der Vorrat muss mindestens so viele Segmente halten, wie über
+//!    die Lebensdauer eines Seeds eingeschleust wird.** Das ist eine
+//!    notwendige, keine hinreichende Bedingung: Sie beseitigt genau
+//!    diese eine, sichere Spur, nicht die Unterscheidung an Länge,
+//!    Timing oder Inhalt.
+//!
 //! 2. **Vorratserneuerung** — erfüllt durch [`KontrollsegmentVorrat::erneuern`]:
 //!    Übernahme abgeschlossener, per Stufe 2 vollständig geprüfter
 //!    Echtsegmente, mit Verdrängung der ältesten.
@@ -200,6 +234,33 @@ impl KontrollsegmentVorrat {
     }
 
     /// Zahl der vorrätigen Segmente.
+    /// Ob dieser Vorrat für `auftraege` Aufträge bei Rate γ reicht,
+    /// **ohne dass sich eine Id wiederholt** (Fund 58).
+    ///
+    /// Wiederholt sich eine, ist sie für einen Miner mit Gedächtnis ein
+    /// Beweis, dass es sich um eine Kontrolle handelt, und der
+    /// Mechanismus verliert genau dort seine Wirkung.
+    ///
+    /// **Notwendig, nicht hinreichend:** Auch ein ausreichender Vorrat
+    /// schützt nicht gegen Unterscheidung an Länge, Timing oder Inhalt.
+    pub fn reicht_fuer(&self, auftraege: usize, gamma_zaehler: u64, gamma_nenner: u64) -> bool {
+        if gamma_nenner == 0 {
+            return true;
+        }
+        let noetig =
+            ((auftraege as u128 * gamma_zaehler as u128).div_ceil(gamma_nenner as u128)) as usize;
+        self.hoechstzahl >= noetig
+    }
+
+    /// Wie viele Aufträge dieser Vorrat bei Rate γ trägt, bevor sich die
+    /// erste Id wiederholt.
+    pub fn reichweite(&self, gamma_zaehler: u64, gamma_nenner: u64) -> usize {
+        if gamma_zaehler == 0 {
+            return usize::MAX;
+        }
+        ((self.hoechstzahl as u128 * gamma_nenner as u128) / gamma_zaehler as u128) as usize
+    }
+
     pub fn len(&self) -> usize {
         self.segmente.len()
     }
@@ -265,4 +326,50 @@ pub fn einschleusungsplan(
     let mut positionen: Vec<usize> = mit_schluessel.into_iter().take(anzahl).map(|(_, i)| i).collect();
     positionen.sort_unstable();
     Ok(positionen)
+}
+
+#[cfg(test)]
+mod fund_58 {
+    use super::*;
+
+    /// **Die Werte, die im Projekt stehen, reichen nicht.**
+    ///
+    /// Die einzigen je geschriebenen Vorratsgrößen sind 10 und 100, und
+    /// beide stehen in Tests. Bei γ = 2 % trägt 100 genau 5 000
+    /// Aufträge; danach wiederholt sich jede eingeschleuste Id, und ein
+    /// Miner mit Gedächtnis erkennt sie **sicher**.
+    #[test]
+    fn ein_vorrat_von_hundert_traegt_fuenftausend_auftraege() {
+        let v = KontrollsegmentVorrat::neu(100);
+        assert_eq!(v.reichweite(2, 100), 5_000);
+        assert!(v.reicht_fuer(5_000, 2, 100));
+        assert!(
+            !v.reicht_fuer(5_001, 2, 100),
+            "ein Vorrat von 100 dürfte nicht für mehr als 5000 Aufträge gelten"
+        );
+    }
+
+    #[test]
+    fn ein_ausreichender_vorrat_wird_als_solcher_erkannt() {
+        let v = KontrollsegmentVorrat::neu(2_000);
+        assert!(v.reicht_fuer(100_000, 2, 100));
+        assert_eq!(v.reichweite(2, 100), 100_000);
+    }
+
+    #[test]
+    fn ohne_einschleusung_reicht_jeder_vorrat() {
+        let v = KontrollsegmentVorrat::neu(1);
+        assert!(v.reicht_fuer(usize::MAX, 0, 100));
+        assert_eq!(v.reichweite(0, 100), usize::MAX);
+    }
+
+    #[test]
+    fn eine_hoehere_rate_verlangt_einen_groesseren_vorrat() {
+        // Der Zusammenhang, den jemand kennen muss, der γ erhöht: Die
+        // Vorratsgröße muss mitwachsen, sonst macht eine schärfere
+        // Kontrolle den Mechanismus schwächer statt stärker.
+        let v = KontrollsegmentVorrat::neu(1_000);
+        assert!(v.reicht_fuer(100_000, 1, 100), "bei 1 % reicht er");
+        assert!(!v.reicht_fuer(100_000, 2, 100), "bei 2 % nicht mehr");
+    }
 }

@@ -69,9 +69,42 @@ use borsh::BorshDeserialize;
 use myl_consensus::block::{Block, Transaction};
 use myl_net::{GossipTopic, PayloadValidator};
 
+use crate::validatorsatz::{Attesturteil, Validatorsatz};
+
 /// Die Nutzlastprüfung des Knotens.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ProtokollValidator;
+///
+/// Trägt den [`Validatorsatz`], gegen den Latenz-Atteste geprüft
+/// werden. **Ohne ihn wäre A10 offen**, siehe unten.
+#[derive(Debug, Default, Clone)]
+pub struct ProtokollValidator {
+    validatoren: Validatorsatz,
+}
+
+impl ProtokollValidator {
+    /// Mit einem Validatorsatz für die Attest-Prüfung.
+    pub fn mit(validatoren: Validatorsatz) -> Self {
+        Self { validatoren }
+    }
+
+    /// Der Validatorsatz, für Diagnose.
+    pub fn validatoren(&self) -> &Validatorsatz {
+        &self.validatoren
+    }
+
+    /// Prüft ein Attest und gibt das Urteil zurück.
+    ///
+    /// Getrennt von [`PayloadValidator::validate`], weil der Grund fürs
+    /// Protokoll gebraucht wird: „unbekannter Aussteller" und „falsche
+    /// Signatur" haben verschiedene Ursachen, und die erste ist im
+    /// Probelauf fast immer ein vergessener Name.
+    pub fn beurteile_attest(&self, data: &[u8]) -> Attesturteil {
+        let mut rest = data;
+        match myl_types::LatencyAttest::deserialize(&mut rest) {
+            Ok(a) if rest.is_empty() => self.validatoren.pruefe(&a),
+            _ => Attesturteil::StrukturFalsch,
+        }
+    }
+}
 
 /// Liest einen Typ aus Bytes und verlangt, dass **nichts übrig bleibt**.
 ///
@@ -92,8 +125,18 @@ impl PayloadValidator for ProtokollValidator {
         match topic {
             GossipTopic::Blocks => liest_sich_vollstaendig_als::<Block>(data),
             GossipTopic::Transactions => liest_sich_vollstaendig_als::<Transaction>(data),
-            // Die übrigen Topics prüft `myl-net` bereits strukturell;
-            // hier nichts zu ergänzen, solange kein Kettenzustand da ist.
+            // ⚑ **A10: Latenz-Atteste werden geprüft.**
+            //
+            // Bis zum 2026-08-25 stand hier `_ => true`, und damit lief
+            // ein Attest mit beliebiger Signatur durch. Das Feld gab es
+            // seit dem ersten Entwurf, geprüft hat es nie jemand.
+            //
+            // Die Latenzwerte gehen ins Geo-Clustering der Pods. Wer sie
+            // frei setzen kann, sucht sich seine Pod-Nachbarn aus, und
+            // das ist die Vorstufe zur Kollusion beider Pods (A12).
+            GossipTopic::LatencyAttests => self.beurteile_attest(data).ist_gueltig(),
+            // Die übrigen prüft `myl-net` strukturell; hier nichts zu
+            // ergänzen, solange kein Kettenzustand da ist.
             _ => true,
         }
     }
@@ -124,13 +167,13 @@ mod tests {
     #[test]
     fn ein_echter_block_kommt_durch() {
         let daten = borsh::to_vec(&beispielblock()).unwrap();
-        assert!(ProtokollValidator.validate(GossipTopic::Blocks, &daten));
+        assert!(ProtokollValidator::default().validate(GossipTopic::Blocks, &daten));
     }
 
     #[test]
     fn zufallsbytes_werden_abgelehnt() {
-        assert!(!ProtokollValidator.validate(GossipTopic::Blocks, &[0xAB; 64]));
-        assert!(!ProtokollValidator.validate(GossipTopic::Blocks, &[]));
+        assert!(!ProtokollValidator::default().validate(GossipTopic::Blocks, &[0xAB; 64]));
+        assert!(!ProtokollValidator::default().validate(GossipTopic::Blocks, &[]));
     }
 
     #[test]
@@ -140,7 +183,7 @@ mod tests {
         let mut daten = borsh::to_vec(&beispielblock()).unwrap();
         daten.push(0);
         assert!(
-            !ProtokollValidator.validate(GossipTopic::Blocks, &daten),
+            !ProtokollValidator::default().validate(GossipTopic::Blocks, &daten),
             "ein Anhängsel hinter einem gültigen Block kam durch"
         );
     }
@@ -152,9 +195,9 @@ mod tests {
             amount: 100,
         });
         let daten = borsh::to_vec(&tx).unwrap();
-        assert!(ProtokollValidator.validate(GossipTopic::Transactions, &daten));
+        assert!(ProtokollValidator::default().validate(GossipTopic::Transactions, &daten));
         assert!(
-            !ProtokollValidator.validate(GossipTopic::Blocks, &daten),
+            !ProtokollValidator::default().validate(GossipTopic::Blocks, &daten),
             "eine Transaktion las sich als Block"
         );
     }
@@ -179,7 +222,7 @@ mod tests {
             let mut kaputt = gut.clone();
             let pos = (zustand as usize) % kaputt.len();
             kaputt[pos] ^= ((zustand >> 32) as u8) | 1;
-            if ProtokollValidator.validate(GossipTopic::Blocks, &kaputt) {
+            if ProtokollValidator::default().validate(GossipTopic::Blocks, &kaputt) {
                 durch += 1;
             }
         }
@@ -207,7 +250,47 @@ mod tests {
     fn fremde_topics_bleiben_unberuehrt() {
         // Der Knoten darf hier nicht strenger sein als myl-net, sonst
         // verwirft er, was die Netzschicht bereits geprüft hat.
-        assert!(ProtokollValidator.validate(GossipTopic::PoiBundles, &[0xFF; 32]));
-        assert!(ProtokollValidator.validate(GossipTopic::Challenges, &[]));
+        let v = ProtokollValidator::default();
+        assert!(v.validate(GossipTopic::PoiBundles, &[0xFF; 32]));
+        assert!(v.validate(GossipTopic::Challenges, &[]));
+    }
+
+    /// **A10: Ein gültiges Attest kommt durch, ein gefälschtes nicht.**
+    #[test]
+    fn a10_atteste_werden_gegen_den_validatorsatz_geprueft() {
+        use myl_types::latency_attest::{BlsSignatureBytes, PeerIdBytes};
+        use myl_types::LatencyAttest;
+
+        let v = ProtokollValidator::mit(Validatorsatz::aus_namen(&["alpha"]));
+        let mut a = LatencyAttest {
+            issuer: crate::validatorsatz::probe_kennung("alpha").unwrap(),
+            timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
+            latencies: vec![(PeerIdBytes([3u8; 32]), 30)],
+            signature: BlsSignatureBytes([0u8; 96]),
+        };
+        // Unsigniert: durchgefallen.
+        assert!(
+            !v.validate(GossipTopic::LatencyAttests, &borsh::to_vec(&a).unwrap()),
+            "ein unsigniertes Attest kam durch"
+        );
+
+        a.sign(&crate::validatorsatz::probe_schluessel("alpha").unwrap()).unwrap();
+        assert!(
+            v.validate(GossipTopic::LatencyAttests, &borsh::to_vec(&a).unwrap()),
+            "das eigene, gültig signierte Attest wurde abgewiesen"
+        );
+
+        // Latenzwert gefälscht: durchgefallen.
+        a.latencies[0].1 = 1;
+        assert!(!v.validate(GossipTopic::LatencyAttests, &borsh::to_vec(&a).unwrap()));
+    }
+
+    #[test]
+    fn a10_ohne_validatorsatz_kommt_kein_attest_durch() {
+        // Der Vorgabezustand: Wer niemanden kennt, kann nichts prüfen
+        // und darf nichts annehmen.
+        let v = ProtokollValidator::default();
+        assert_eq!(v.validatoren().anzahl(), 0);
+        assert!(!v.validate(GossipTopic::LatencyAttests, &[0xAB; 40]));
     }
 }

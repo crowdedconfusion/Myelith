@@ -145,6 +145,8 @@ NODE/
         ├── konfig.rs         Konfiguration, prüft sich beim Start selbst
         ├── protokoll.rs      Betriebsprotokoll (JSONL)
         ├── validator.rs      Nutzlastprüfung Blöcke/Transaktionen (L1)
+        ├── validatorsatz.rs  wer darf attestieren: Kennung → Schlüssel,
+        │                     Urteil mit Grund (Audit A10)
         ├── nachschub.rs      Blocknachforderung: Bereich, Deckelung,
         │                     Nachlieferung
         ├── knoten.rs         Start, Ereignisschleife, Zustandsaufnahme
@@ -155,6 +157,39 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.6.0 – 2026-08-25 (A10: Latenz-Atteste werden geprüft)
+
+`src/validatorsatz.rs` ordnet Kennung zu Schlüssel und liefert den
+**Grund** einer Ablehnung. `ProtokollValidator` prüft damit Atteste;
+dort stand vorher `_ => true`. Der Knoten **erzeugt** Atteste aus seinen
+tatsächlich gemessenen Latenzen, nicht aus erfundenen Zahlen.
+
+**Warum das ein Fund war und nicht nur eine Lücke:** Das Feld
+`signature` stand seit dem ersten Entwurf im Typ, und niemand hat es je
+gesetzt oder geprüft. Der Sicherheitsaudit sagt scharf, warum das
+schlimmer ist als ein fehlendes Feld: **Ein ungeprüftes Signaturfeld ist
+gefährlicher als gar keines, weil ein Leser es für einen Schutz hält.**
+
+⚑ **Die Vermutung, das entstehe nebenbei mit dem Binary, war falsch.**
+Der Audit hatte notiert, die Stelle entstehe ohnehin, sobald `myl-net`
+und `myl-consensus` in einem Prozess zusammenkommen. Die **Stelle** war
+da, die **Sache** nicht: `LatencyAttest` hatte weder `sign` noch
+`verify`. Die Prüfung, für die alles vorbereitet schien, brauchte erst
+ihre Primitive.
+
+**Live belegt, drei Knoten:** Alpha und Beta kennen einander und nehmen
+gegenseitig an; ein dritter, der in keiner Liste steht, bekommt alle
+Atteste verworfen und verwirft selbst alle fremden. Der Verwerfungs-
+eintrag nennt den wahrscheinlichsten Grund, damit niemand nach einem
+Angriff sucht, wo eine Kommandozeile unvollständig war.
+
+**⚠️ Was offen bleibt: die Schlüsselherkunft.** Im Probelauf werden die
+Schlüssel aus den Teilnehmernamen abgeleitet. Wer die Namen kennt, kann
+in fremdem Namen signieren. Die Trennlinie liegt **nicht im Prüfcode**:
+Dieselbe Funktion arbeitet unverändert gegen echte Schlüssel, sobald die
+Validator-Registrierung zu Genesis steht. Das ist dieselbe
+Voraussetzung, die auch die BFT-Runden brauchen.
 
 ### v0.5.0 – 2026-08-25 (Durchsicht vor dem ersten Mehrmaschinenlauf)
 

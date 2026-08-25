@@ -36,6 +36,12 @@ myl-node — ein Myelith-Netzknoten
                          belegt ein Lauf nur, dass die Knoten einander
                          finden, nicht dass Nachrichten fließen und der
                          Zustand übereinstimmt. NUR FÜR TESTNETZE.
+  --teilnehmer <name>    Name eines Teilnehmers, mehrfach anzugeben. Daraus
+                         entsteht der Satz, gegen den Latenz-Atteste geprüft
+                         werden (Audit A10). FEHLT EIN NAME, werden dessen
+                         Atteste als unbekannter Aussteller verworfen. Ohne
+                         Angabe werden alle Atteste verworfen: Ungeprüfte
+                         durchzulassen wäre schlechter.
   --erzeuger             dieser Knoten baut die Blöcke. GENAU EINER im Netz:
                          zwei Erzeuger gabeln die Kette sofort, weil niemand
                          entscheidet, welcher Block gilt (das täte BFT).
@@ -105,6 +111,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 );
                 i += 2;
             }
+            "--teilnehmer" => { konfig.teilnehmer.push(wert(i)?); i += 2; }
             "--erzeuger" => { konfig.erzeugt_bloecke = true; i += 1; }
             "--laufzeit" => {
                 laufzeit = Some(
@@ -118,6 +125,11 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     }
 
     konfig.horchadressen = if horche.is_empty() { standard_horchadressen(port) } else { horche };
+    // Der eigene Name gehört immer dazu: Ein Knoten, der seine eigenen
+    // Atteste nicht anerkennt, wäre schwer zu erklären.
+    if !konfig.teilnehmer.is_empty() && !konfig.teilnehmer.contains(&konfig.name) {
+        konfig.teilnehmer.push(konfig.name.clone());
+    }
     // Die Schlüsseldatei bekommt den Knotennamen, sonst teilen sich
     // zwei Knoten im selben Verzeichnis eine Identität und damit eine
     // Peer-Id. Das ist beim lokalen Mehrknotenlauf der Normalfall.

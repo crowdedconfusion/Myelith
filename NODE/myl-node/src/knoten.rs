@@ -113,6 +113,12 @@ pub struct Knoten {
     /// Nutzlasten hätten denselben, und Gossipsub verwürfe die zweite
     /// als Dublette.
     testverkehr_zaehler: u64,
+    /// Zuletzt gemessene Laufzeit je Peer, in Millisekunden.
+    ///
+    /// Grundlage des eigenen Latenz-Attests (A10). Getrennt von der
+    /// Spanne in [`Self::latenz`]: Die ist eine Kennzahl fürs
+    /// Protokoll, das hier ist der Inhalt, den andere weiterverwenden.
+    latenz_je_peer: std::collections::BTreeMap<libp2p::PeerId, u32>,
     /// Ob gerade eine Nachforderung unterwegs ist.
     ///
     /// **Eine zur Zeit.** Ohne diese Sperre schickt ein Neuling für
@@ -211,7 +217,21 @@ impl Knoten {
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (ev_tx, ev_rx) = mpsc::unbounded_channel();
-        tokio::spawn(run_node_mit(swarm, cmd_rx, ev_tx, Arc::new(ProtokollValidator)));
+        // ⚑ A10: Der Validatorsatz kommt aus der Teilnehmerliste. Ohne
+        // sie ist er leer, und dann wird jedes Attest abgewiesen. Das
+        // ist der sichere Vorgabefall.
+        let validatoren = crate::validatorsatz::Validatorsatz::aus_namen(&konfig.teilnehmer);
+        protokoll.schreibe(
+            Eintrag::neu("validatorsatz")
+                .zahl("bekannte_aussteller", validatoren.anzahl() as i64)
+                .wahr("atteste_pruefbar", validatoren.anzahl() > 0),
+        );
+        tokio::spawn(run_node_mit(
+            swarm,
+            cmd_rx,
+            ev_tx,
+            Arc::new(ProtokollValidator::mit(validatoren)),
+        ));
 
         Ok(Self {
             konfig,
@@ -222,6 +242,7 @@ impl Knoten {
             testverkehr_zaehler: 0,
             kette: Kette::probestand(),
             nachforderung_laeuft: false,
+            latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
         })
@@ -515,10 +536,10 @@ impl Knoten {
         // Und eine wechselnde Probe daneben. **Ohne Wechsel liefe immer
         // dieselbe**, und die übrigen Funktionen blieben ungeprüft, ohne
         // dass es jemandem auffiele: Der Lauf sähe grün aus.
-        let wechselnd = if self.testverkehr_zaehler % 2 == 0 {
-            Probe::PoiBuendel
-        } else {
-            Probe::Challenge
+        let wechselnd = match self.testverkehr_zaehler % 3 {
+            0 => Probe::PoiBuendel,
+            1 => Probe::Challenge,
+            _ => Probe::Latenzattest,
         };
         let ok2 = self.fuehre_probe(wechselnd).await;
 
@@ -541,6 +562,21 @@ impl Knoten {
             Probe::Challenge => {
                 let c = crate::probe::probe_challenge(&name, folge);
                 (GossipTopic::Challenges, borsh::to_vec(&c).ok())
+            }
+            Probe::Latenzattest => {
+                // Die tatsächlich gemessenen Werte, nicht erfundene: Ein
+                // Attest mit ausgedachten Zahlen prüfte nur die
+                // Signatur, nicht den Weg, den ein echtes nimmt.
+                let latenzen: Vec<(libp2p::PeerId, u32)> = self
+                    .latenz_je_peer
+                    .iter()
+                    .map(|(p, ms)| (*p, *ms))
+                    .collect();
+                let Some(a) = crate::probe::probe_attest(&name, &latenzen) else {
+                    self.vermerke_probe(probe, false);
+                    return false;
+                };
+                (GossipTopic::LatencyAttests, borsh::to_vec(&a).ok())
             }
             // Die übrigen ergeben sich aus dem Verhalten, nicht aus
             // einer eigenen Nachricht.
@@ -739,6 +775,19 @@ impl Knoten {
             // Auch der Erzeuger nimmt eigene Transaktionen nicht
             // doppelt: Gossipsub liefert eigene Nachrichten nicht an den
             // Absender zurück.
+            // ⚑ A10: Der Empfänger sagt, warum ein Attest nicht trug.
+            //
+            // `myl-net` verwirft ungültige bereits vor dieser Stelle;
+            // was hier ankommt, hat die Prüfung bestanden. Der Eintrag
+            // hält fest, dass sie stattgefunden hat, denn genau das war
+            // bis zum 2026-08-25 nicht der Fall.
+            GossipTopic::LatencyAttests => {
+                self.protokoll.schreibe(
+                    Eintrag::neu("attest_angenommen")
+                        .zahl("bytes", m.data.len() as i64)
+                        .text("von", m.von.to_string()),
+                );
+            }
             GossipTopic::Transactions if self.kette.aufnehmen_roh(&m.data) => {
                 self.protokoll.schreibe(
                     Eintrag::neu("tx_aufgenommen").zahl("wartend", self.kette.wartend() as i64),
@@ -789,7 +838,12 @@ impl Knoten {
                 .text("gegenstelle", peer.to_string())
                 .wahr("gelungen", gelungen)
                 .text("grund", grund),
-            NodeEvent::Latenz { mikrosekunden, .. } => {
+            NodeEvent::Latenz { peer, mikrosekunden } => {
+                // Für das eigene Attest: Millisekunden, wie der
+                // Attest-Typ sie trägt, aufgerundet damit ein sehr
+                // schneller Peer nicht als 0 erscheint.
+                self.latenz_je_peer
+                    .insert(peer, mikrosekunden.div_ceil(1000).min(u32::MAX as u64) as u32);
                 let (kleinste, groesste, anzahl) = self.latenz;
                 self.latenz = (
                     kleinste.min(mikrosekunden),
@@ -861,6 +915,18 @@ impl Knoten {
                     .text("addr", addr.to_string())
                     .wahr("erreichbar", erreichbar)
                     .text("grund", grund)
+            }
+            NodeEvent::Verworfen { topic: Some(GossipTopic::LatencyAttests), bytes, grund } => {
+                // Der häufigste Grund im Probelauf ist ein vergessener
+                // Name in --teilnehmer, nicht ein Angriff. Das gehört
+                // dazugesagt, sonst sucht jemand am falschen Ort.
+                Eintrag::neu("attest_verworfen")
+                    .zahl("bytes", bytes as i64)
+                    .text("grund", grund.als_text())
+                    .text(
+                        "hinweis",
+                        "bei nutzlastpruefung: fehlt der Aussteller in --teilnehmer?",
+                    )
             }
             NodeEvent::Verworfen { topic, bytes, grund } => Eintrag::neu("verworfen")
                 .text(

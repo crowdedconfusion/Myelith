@@ -83,6 +83,50 @@ impl LatencyAttest {
         bytes
     }
 
+    /// Signiert das Attest mit dem eigenen Schlüssel.
+    ///
+    /// Setzt [`Self::signature`] auf die Signatur über
+    /// [`Self::signable_bytes`].
+    ///
+    /// # ⚑ A10: Bis zum 2026-08-25 gab es weder Signieren noch Prüfen
+    ///
+    /// Das Feld `signature` stand hier seit dem ersten Entwurf, und
+    /// **niemand hat es je gesetzt oder geprüft**. Der Sicherheitsaudit
+    /// führt das als A10 und sagt scharf, warum das schlimmer ist als
+    /// ein fehlendes Feld: **Ein ungeprüftes Signaturfeld ist
+    /// gefährlicher als gar keines, weil ein Leser es für einen Schutz
+    /// hält.**
+    ///
+    /// Die Latenzwerte gehen ins Geo-Clustering der Pods. Wer sie frei
+    /// setzen kann, sucht sich seine Pod-Nachbarn aus, und das ist die
+    /// Vorstufe zur Kollusion beider Pods (A12).
+    pub fn sign(&mut self, sk: &crate::bls::BlsSecretKey) -> Result<(), crate::bls::BlsError> {
+        let sig = sk.sign(&self.signable_bytes())?;
+        self.signature = BlsSignatureBytes(sig.0);
+        Ok(())
+    }
+
+    /// Prüft die Signatur gegen den öffentlichen Schlüssel des
+    /// Ausstellers.
+    ///
+    /// **Der Aufrufer muss den Schlüssel dem Aussteller zuordnen**, und
+    /// das kann dieser Typ nicht: Er trägt eine `MinerId`, keinen
+    /// Schlüssel. Die Zuordnung leistet die Validator-Registry, und
+    /// genau deshalb war A10 nicht zu schließen, solange niemand beide
+    /// Seiten in einem Prozess hatte.
+    ///
+    /// Gibt `false` bei jeder Unstimmigkeit: unlesbare Signatur,
+    /// falscher Schlüssel, veränderter Inhalt. **Kein `Result`**, weil
+    /// der Aufrufer in allen Fällen dasselbe tut, nämlich verwerfen,
+    /// und eine Unterscheidung nur zu einer Verzweigung verführte, die
+    /// niemand braucht.
+    pub fn verify(&self, pubkey: &crate::bls::BlsPublicKey) -> bool {
+        // `BlsSignature` ist ein Tupel über die Rohbytes; die
+        // Gültigkeit prüft `verify` selbst und meldet sie als `false`.
+        let sig = crate::bls::BlsSignature(self.signature.0);
+        pubkey.verify(&self.signable_bytes(), &sig)
+    }
+
     /// Validiert die Struktur des Attests (ohne Signaturprüfung).
     ///
     /// Prüft:
@@ -371,5 +415,103 @@ mod tests {
         // Cleanup mit 1 Stunde max_age
         graph.cleanup_stale_entries(3600 * 1000); // 1 Stunde
         assert_eq!(graph.node_count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod a10_tests {
+    use super::*;
+    use crate::bls::BlsSecretKey;
+    use crate::ids::MinerId;
+
+    fn schluessel(saat: u8) -> BlsSecretKey {
+        BlsSecretKey::key_gen(&[saat; 32]).expect("KeyGen")
+    }
+
+    fn attest(saat: u8) -> LatencyAttest {
+        LatencyAttest {
+            issuer: MinerId::new([saat; 32]),
+            timestamp_ms: 1_700_000_000_000,
+            latencies: vec![(PeerIdBytes([9u8; 32]), 42), (PeerIdBytes([7u8; 32]), 17)],
+            signature: BlsSignatureBytes([0u8; 96]),
+        }
+    }
+
+    /// **A10: Ein signiertes Attest wird als echt erkannt.**
+    #[test]
+    fn ein_signiertes_attest_ueberlebt_die_pruefung() {
+        let sk = schluessel(3);
+        let pk = sk.public_key().expect("PubKey");
+        let mut a = attest(3);
+        a.sign(&sk).expect("Signieren");
+        assert!(a.verify(&pk), "die eigene Signatur wurde nicht anerkannt");
+    }
+
+    /// **A10: Ein unsigniertes Attest fällt durch.**
+    ///
+    /// Der Zustand, in dem das Feld seit dem ersten Entwurf war: gesetzt
+    /// auf Nullbytes, von niemandem geprüft. **Ein ungeprüftes
+    /// Signaturfeld ist gefährlicher als gar keines.**
+    #[test]
+    fn ein_unsigniertes_attest_faellt_durch() {
+        let pk = schluessel(3).public_key().expect("PubKey");
+        assert!(!attest(3).verify(&pk), "Nullbytes galten als Signatur");
+    }
+
+    /// **A10: Ein fremder Schlüssel passt nicht.**
+    ///
+    /// Der eigentliche Angriff: Wer die Latenzwerte frei setzen kann,
+    /// sucht sich seine Pod-Nachbarn aus.
+    #[test]
+    fn ein_fremder_schluessel_passt_nicht() {
+        let sk = schluessel(3);
+        let fremd = schluessel(4).public_key().expect("PubKey");
+        let mut a = attest(3);
+        a.sign(&sk).expect("Signieren");
+        assert!(!a.verify(&fremd), "ein fremder Schlüssel wurde anerkannt");
+    }
+
+    /// **A10: Veränderte Latenzwerte machen die Signatur ungültig.**
+    #[test]
+    fn veraenderte_latenzen_brechen_die_signatur() {
+        let sk = schluessel(5);
+        let pk = sk.public_key().expect("PubKey");
+        let mut a = attest(5);
+        a.sign(&sk).expect("Signieren");
+        assert!(a.verify(&pk));
+
+        a.latencies[0].1 = 1; // „ich bin ganz nah dran"
+        assert!(!a.verify(&pk), "veränderte Latenz blieb unbemerkt");
+    }
+
+    #[test]
+    fn ein_veraenderter_aussteller_bricht_die_signatur() {
+        let sk = schluessel(6);
+        let pk = sk.public_key().expect("PubKey");
+        let mut a = attest(6);
+        a.sign(&sk).expect("Signieren");
+        a.issuer = MinerId::new([99u8; 32]);
+        assert!(!a.verify(&pk), "ein fremder Aussteller blieb unbemerkt");
+    }
+
+    #[test]
+    fn die_reihenfolge_der_latenzen_aendert_die_signatur_nicht() {
+        // `signable_bytes` sortiert. Ohne das hinge die Gültigkeit an
+        // der Reihenfolge, in der ein Knoten seine Peers durchläuft, und
+        // die ist nicht garantiert.
+        let sk = schluessel(7);
+        let pk = sk.public_key().expect("PubKey");
+        let mut a = attest(7);
+        a.sign(&sk).expect("Signieren");
+        a.latencies.reverse();
+        assert!(a.verify(&pk), "die Sortierung in signable_bytes greift nicht");
+    }
+
+    #[test]
+    fn unsinnige_signaturbytes_stuerzen_nicht_ab() {
+        let pk = schluessel(8).public_key().expect("PubKey");
+        let mut a = attest(8);
+        a.signature = BlsSignatureBytes([0xFF; 96]);
+        assert!(!a.verify(&pk));
     }
 }

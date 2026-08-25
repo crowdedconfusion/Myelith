@@ -75,6 +75,8 @@ eigenen Dateien und sagt, wie viele sie liegen lässt.
   Heimrouter zuverlässiger zustande.)
 - **[5] Am Netz teilnehmen**, dann **[1] Jetzt teilnehmen**.
 - Adresse einfügen, Namen und Laufzeit bestätigen.
+- **Teilnehmerliste eingeben**, die der Koordinator mitgeschickt hat.
+  Ohne sie werden die Latenz-Atteste der anderen verworfen.
 - Laufen lassen. Der Client zeigt am Ende, wo das Protokoll liegt.
 - Die Datei aus `TESTCLIENT/Vergleiche/` zurückschicken.
 

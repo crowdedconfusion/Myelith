@@ -94,6 +94,18 @@ pub struct KnotenKonfig {
     ///
     /// In der üblichen Aufstellung ist es die Anlaufstelle.
     pub erzeugt_bloecke: bool,
+    /// Die Namen aller Teilnehmer des Probelaufs.
+    ///
+    /// Daraus entsteht der Validatorsatz, gegen den Latenz-Atteste
+    /// geprüft werden (A10). **Fehlt ein Name, werden dessen Atteste
+    /// mit „unbekannter Aussteller" abgewiesen**, und das Protokoll
+    /// sagt es genau so: Der häufigste Fall ist eine unvollständige
+    /// Liste, nicht ein Angriff.
+    ///
+    /// Ist die Liste leer, prüft der Knoten Atteste gegen einen leeren
+    /// Satz und weist damit alle ab. Das ist der sichere Vorgabefall:
+    /// Ungeprüfte Atteste durchzulassen hieße, A10 offen zu halten.
+    pub teilnehmer: Vec<String>,
 }
 
 /// Fehler der Konfiguration.
@@ -152,6 +164,7 @@ impl Default for KnotenKonfig {
             aufnahme_sekunden: 30,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
+            teilnehmer: Vec::new(),
         }
     }
 }

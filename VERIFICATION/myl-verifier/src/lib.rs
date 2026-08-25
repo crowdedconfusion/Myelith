@@ -23,6 +23,7 @@ pub mod checker;
 pub mod challenge;
 pub mod kontrollsegmente;
 pub mod bisection;
+pub mod unterscheider;
 pub mod slash;
 pub mod adjudicate;
 
@@ -40,6 +41,10 @@ pub use kontrollsegmente::{
 };
 pub use challenge::{
     create_challenge, find_first_divergence, challenge_hash, Challenge, ChallengeError,
+};
+pub use unterscheider::{
+    haeufigkeiten, messe_wiederholung, noetiger_vorrat, reichweite, Unterscheidungsergebnis,
+    Wiederholungsunterscheider,
 };
 pub use bisection::{
     BisectionSession, BisectionRequest, BisectionResponse, BisectionResult, BisectionError,

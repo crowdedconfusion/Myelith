@@ -1117,8 +1117,19 @@ Er fragt der Reihe nach:
 | Port | 4150, oder ein anderer freigegebener |
 | Laufzeit in Minuten | 60 ist ein guter erster Wert |
 | Testnachricht alle wie viele Sekunden | 10, oder 0 für keine |
+| Teilnehmer | die Namen **aller** Maschinen, durch Komma getrennt |
 
 Enter übernimmt jeweils den Wert in eckigen Klammern.
+
+**Die Teilnehmerliste ist nicht optional.** Latenz-Atteste tragen eine
+Signatur, und prüfen lässt sie sich nur gegen den Schlüssel des
+Ausstellers. Die Zuordnung entsteht aus den Namen. Fehlt einer, werden
+dessen Atteste verworfen; fehlt die Liste ganz, werden alle verworfen.
+Das ist Absicht: Ungeprüfte Atteste durchzulassen wäre schlechter, weil
+ein ungeprüftes Signaturfeld für einen Schutz gehalten wird, der es
+nicht ist.
+
+**Die Namen an alle Teilnehmer mitschicken**, zusammen mit der Adresse.
 
 Für einen Server ohne Bildschirm geht dasselbe direkt:
 
@@ -1159,6 +1170,7 @@ Er fragt:
 | Dein Name für das Protokoll | frei wählbar, je Rechner verschieden |
 | Laufzeit in Minuten | dasselbe wie bei der Anlaufstelle |
 | Testnachricht alle wie viele Sekunden | dasselbe wie dort |
+| Teilnehmer | die Namen aller Maschinen, wie der Koordinator sie geschickt hat |
 
 **Mehr ist nicht nötig.** Kein Port, keine Router-Einstellung, kein
 Modell, kein Python. Der Client trägt die Adresse selbst zweimal ein:
@@ -1334,6 +1346,15 @@ und weggeworfen. Der Grund steht daneben:
 | `nutzlastpruefung` | ließ sich nicht als das lesen, was das Thema ankündigt |
 | `fremdes-topic` | gehört nicht zu diesem Protokoll |
 
+**Einträge der Art „attest_verworfen".** Ein Latenz-Attest hat die
+Signaturprüfung nicht bestanden. Steht dabei `nutzlastpruefung`, ist
+fast immer ein Name in der Teilnehmerliste vergessen worden, kein
+Angriff. Der Eintrag sagt das auch dazu.
+
+**„Diese Knoten kennen keinen Aussteller".** Dort fehlt die
+Teilnehmerliste ganz. Solche Knoten verwerfen jedes Attest, und der Teil
+des Laufs, der A10 prüfen sollte, findet nicht statt.
+
 **Einträge der Art „block_abgelehnt".** Ein Block ist nicht in die Kette
 gekommen. Der Grund steht daneben:
 
@@ -1416,6 +1437,17 @@ steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
 ---
 
 ## Changelog
+
+### v2.14.0 – 2026-08-25 (Teilnehmerliste, Attest-Prüfung)
+
+C3 und C4 fragen jetzt nach der **Teilnehmerliste**. Sie ist nicht
+optional: Latenz-Atteste tragen eine Signatur, und prüfen lässt sie sich
+nur gegen den Schlüssel des Ausstellers, dessen Zuordnung aus den Namen
+entsteht (Sicherheitsaudit A10). Ohne Liste wird jedes Attest verworfen.
+
+C8 erklärt die beiden neuen Meldungen: `attest_verworfen` und „kennt
+keinen Aussteller". Beide sind fast immer eine unvollständige
+Teilnehmerliste, kein Angriff, und der Bericht sagt das dazu.
 
 ### v2.13.0 – 2026-08-25 (Durchsicht vor dem ersten Mehrmaschinenlauf)
 
