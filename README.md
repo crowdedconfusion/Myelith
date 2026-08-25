@@ -7,8 +7,8 @@ Netzwerk sichert, betreibt ein großes agentisches Sprachmodell. Kein verbrannte
 
 **Zum Größenverhältnis:** Bitcoin verbraucht nach dem
 [Cambridge-Index](https://ccaf.io/cbnsi/cbeci) rund **150 Terawattstunden
-Strom im Jahr**, mehr als die Niederlande insgesamt, und das Ergebnis
-dieser Arbeit ist eine unnütze Zahl, die außerhalb der Blockchain niemand gebrauchen kann. Myelith setzt diese Energie in Inferenz um, die jemand bestellt und bezahlt!
+Strom im Jahr**, mehr als die Niederlande insgesamt. Und das Ergebnis
+dieser Arbeit: eine unnütze Zahl, die außerhalb der Blockchain niemand gebrauchen kann. Myelith setzt diese Energie in Inferenz um, die jemand bestellt und bezahlt!
 
 Der native Coin MYL schließt den Kreislauf: Nutzer verbrennen ihn gegen
 Inferenz-Credits und Miner erhalten neu geprägte MYL im Verhältnis zur
