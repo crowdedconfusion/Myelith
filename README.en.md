@@ -169,4 +169,4 @@ decision, not a consequence of the code running.
 [PolyForm Shield License 1.0.0](LICENSE.md). Using, modifying, and
 commercially participating in the Myelith network (mining, validation,
 gateways, clients) is permitted; operating a competing network or product
-based on the code is not.
+based on the code is not. 
