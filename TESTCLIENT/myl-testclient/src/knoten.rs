@@ -284,6 +284,7 @@ pub fn anlaufstelle() -> bool {
         // Kein Mitstimmen: Der Testclient fährt keine BFT-Runden.
         // Dafür bräuchte er eine Genesis-Datei mit dem Validator-Satz,
         // und die entsteht nicht nebenbei aus einer Einladung.
+        kettendatei: None,
         genesisdatei: None,
         konsensschluesseldatei: None,
     };
@@ -342,6 +343,7 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,
         teilnehmer,
+        kettendatei: None,
         genesisdatei: None,
         konsensschluesseldatei: None,
     };

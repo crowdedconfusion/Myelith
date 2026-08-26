@@ -54,6 +54,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         ],
         bootstrap,
         rolle: Rolle::Teilnehmer,
+        kettendatei: None,
         genesisdatei: None,
         konsensschluesseldatei: None,
         nat: Default::default(),

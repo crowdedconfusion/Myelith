@@ -193,6 +193,21 @@ pub struct Kette {
     /// vertretbar; ein echtes Netz legt sie auf die Platte, und das
     /// steht als offener Punkt im Fahrplan.
     verlauf: std::collections::BTreeMap<u64, Block>,
+    /// Das Blockprotokoll auf der Platte, falls eines geführt wird.
+    ///
+    /// ⚑ **Der Speicher gehört hierher und nicht zum Aufrufer.** Die
+    /// Zusage lautet „jeder Block, der in die Kette kommt, steht auch in
+    /// der Datei". Läge das Schreiben beim Aufrufer, wäre sie an drei
+    /// Aufrufstellen verteilt, und die vierte, die jemand später
+    /// hinzufügt, vergäße es. Hier kann sie es nicht.
+    speicher: Option<crate::speicher::Kettenspeicher>,
+    /// Wie oft das Schreiben fehlschlug.
+    ///
+    /// **Ein Schreibfehler macht den Block nicht ungültig**, also wird
+    /// er angenommen. Er macht aber die Datei unvollständig, und das
+    /// darf nicht still bleiben: Der Zähler geht in jede
+    /// Zustandsaufnahme.
+    schreibfehler: u64,
 }
 
 impl Kette {
@@ -217,11 +232,55 @@ impl Kette {
         }
         Self {
             hoehe: 0,
-            letzter_hash: Hash::sha256(b"myelith-testkette-genesis"),
+            // Nicht das Literal wiederholen: Zwei Stellen mit derselben
+            // Zeichenkette laufen irgendwann auseinander, und dann
+            // lehnte die Kettendatei ihre eigene Kette ab.
+            letzter_hash: Self::startwert(),
             zustand,
             mempool: Vec::new(),
             bekannt: std::collections::HashSet::new(),
             verlauf: std::collections::BTreeMap::new(),
+            speicher: None,
+            schreibfehler: 0,
+        }
+    }
+
+    /// Der Startwert dieser Kette.
+    ///
+    /// Bindet eine Kettendatei an ihr Netz: Eine Datei mit anderem
+    /// Startwert wird abgewiesen, statt eine fremde Historie als eigene
+    /// auszugeben.
+    pub fn startwert() -> Hash {
+        Hash::sha256(b"myelith-testkette-genesis")
+    }
+
+    /// Hängt ein Blockprotokoll an diese Kette.
+    ///
+    /// Ab jetzt wird jeder aufgenommene Block geschrieben. **Blöcke, die
+    /// vorher schon in der Kette waren, werden nicht nachgetragen**: Der
+    /// vorgesehene Weg ist, den Speicher vor dem ersten Block zu setzen
+    /// und die Datei danach nachzuspielen.
+    pub fn speicher_setzen(&mut self, speicher: crate::speicher::Kettenspeicher) {
+        self.speicher = Some(speicher);
+    }
+
+    /// Wie oft das Schreiben fehlschlug.
+    pub fn schreibfehler(&self) -> u64 {
+        self.schreibfehler
+    }
+
+    /// Wie viele Blöcke die Datei führt, falls eine geführt wird.
+    pub fn gespeicherte_bloecke(&self) -> Option<u64> {
+        self.speicher.as_ref().map(|s| s.bloecke())
+    }
+
+    /// Schreibt einen Block, falls ein Speicher da ist.
+    fn schreibe(&mut self, block: &Block) {
+        let Some(s) = self.speicher.as_mut() else {
+            return;
+        };
+        if s.anhaengen(block).is_err() {
+            self.schreibfehler += 1;
         }
     }
 
@@ -365,6 +424,7 @@ impl Kette {
         self.letzter_hash = block.hash();
         self.bekannt.insert(self.letzter_hash);
         self.verlauf.insert(epoch, block.clone());
+        self.schreibe(&block);
         block
     }
 
@@ -416,6 +476,7 @@ impl Kette {
         // Knoten baute, sobald er je Erzeuger würde, einen Block aus
         // tausenden längst verarbeiteter Transaktionen.**
         self.streiche_verarbeitete(&block.txs);
+        self.schreibe(block);
         Ok(())
     }
 }
@@ -762,5 +823,28 @@ mod tests {
         mit_anhang.push(0);
         assert!(!k.aufnehmen_roh(&mit_anhang));
         assert_eq!(k.wartend(), 1);
+    }
+}
+
+#[cfg(test)]
+mod speicherbindung {
+    use super::*;
+
+    #[test]
+    fn der_startwert_ist_der_erste_letzte_hash() {
+        // Die Kettendatei bindet sich an diesen Wert. Wichen die beiden
+        // Stellen auseinander, lehnte eine frische Datei ihre eigene
+        // Kette ab, und der Knoten begänne nach jedem Neustart bei null,
+        // ohne dass jemand es merkte.
+        assert_eq!(Kette::probestand().letzter_hash(), Kette::startwert());
+    }
+
+    #[test]
+    fn ohne_speicher_zaehlt_nichts_und_es_faellt_nichts_aus() {
+        let mut k = Kette::probestand();
+        assert_eq!(k.gespeicherte_bloecke(), None);
+        let _ = k.baue_block();
+        assert_eq!(k.schreibfehler(), 0);
+        assert_eq!(k.gespeicherte_bloecke(), None);
     }
 }

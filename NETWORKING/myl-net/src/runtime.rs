@@ -33,7 +33,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use libp2p::gossipsub;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{Multiaddr, Swarm};
+use libp2p::{Multiaddr, PeerId, Swarm};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::gossip::GossipTopic;
@@ -109,6 +109,28 @@ pub enum NodeCommand {
     /// Antwort für den Klienten wertlos. Ein gewöhnlicher Knoten
     /// überlässt das AutoNAT.
     ExterneAdresse { addr: Multiaddr },
+    /// Eine Gegenstelle sperren oder entsperren.
+    ///
+    /// **Eine Sperre wirkt auf die Peer-Id, nicht auf die Adresse.** Das
+    /// ist der Unterschied, der zählt: `identify` und `kad` verteilen
+    /// die Horchadressen weiter, also führt jede adressgebundene Trennung
+    /// nur dazu, dass die Gegenstelle über einen anderen Weg
+    /// wiederkommt. Eine bestehende Verbindung wird geschlossen, neue
+    /// werden in beiden Richtungen abgewiesen.
+    ///
+    /// **Wozu:** im Betrieb, um eine als böswillig erkannte Gegenstelle
+    /// loszuwerden; im Test, um eine Partition herzustellen, die sich
+    /// nicht umgehen lässt.
+    Sperren {
+        peer: PeerId,
+        /// `true` sperrt, `false` hebt die Sperre auf.
+        gesperrt: bool,
+        /// Rückmeldung, sobald die Sperre gesetzt ist. **Nicht
+        /// überflüssig:** Ohne sie schickt ein Test die Sperre los und
+        /// prüft im selben Atemzug, ob sie wirkt, und misst dann eine
+        /// Warteschlange statt einer Sperre.
+        result: Option<oneshot::Sender<bool>>,
+    },
 }
 
 /// Der Netzzustand eines Knotens zu einem Zeitpunkt.
@@ -335,6 +357,21 @@ pub async fn run_node_mit(
                     }
                     NodeCommand::ExterneAdresse { addr } => {
                         swarm.add_external_address(addr);
+                    }
+                    NodeCommand::Sperren {
+                        peer,
+                        gesperrt,
+                        result,
+                    } => {
+                        let sperre = &mut swarm.behaviour_mut().sperrliste;
+                        if gesperrt {
+                            sperre.block_peer(peer);
+                        } else {
+                            sperre.unblock_peer(peer);
+                        }
+                        if let Some(tx) = result {
+                            let _ = tx.send(true);
+                        }
                     }
                     NodeCommand::Anfrage { an, daten } => {
                         swarm.behaviour_mut().anfrage.send_request(&an, daten);

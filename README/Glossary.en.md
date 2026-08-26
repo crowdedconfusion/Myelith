@@ -1036,7 +1036,21 @@ saturation). Reason: in an asynchronous network the timeout must
 eventually exceed the actual message latency, otherwise the network
 changes rounds forever without ever finishing.
 
-*In code:* `round_change.rs::TimeoutConfig`
+**Settled 26 August 2026: a fixed base, not derived from measured
+latencies.** Deriving it from latency sounds cleverer and is the worse
+choice: latency values come from
+→ [attestations](#latencygraph-and-latency-attestations), and a timeout
+reading from that surface hands an attacker a lever on liveness.
+
+⚑ **A node that races ahead alone does not come back** (measured 26
+August 2026). One whose deadline expired before the others had even begun
+their round advanced on its own and ended five rounds ahead of the
+network. Safety held, the others committed the same block. It does not
+return: nothing tells it that the earlier round has long since been
+decided. That needs state sync and depends on chain persistence.
+
+*In code:* `round_change.rs::TimeoutConfig`, driven by
+`NODE/myl-node/src/konsens.rs::Konsensrunde::takt`
 
 ### GST (global stabilization time)
 

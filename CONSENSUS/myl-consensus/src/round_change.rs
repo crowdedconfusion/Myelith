@@ -190,7 +190,7 @@ pub struct Lock {
 /// BLS-Aggregat. Alle haben dieselbe Botschaft signiert
 /// ([`crate::signing::vote_message`]), also greift
 /// `FastAggregateVerify`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub struct PolkaCertificate {
     /// Runde, aus der die Votes stammen.
     pub round: Round,
@@ -588,7 +588,32 @@ impl RoundDriver {
         now_ms: u64,
     ) -> Result<(), RoundError> {
         self.may_vote_for(&propose.block_hash, pol)?;
-        self.bft.receive_propose(propose)?;
+        // ⚑ **Fund 66 (2026-08-26): Die Signatur deckte die
+        // `valid_round` nicht ab.**
+        //
+        // Bis hierher rief diese Stelle `bft.receive_propose`, und das
+        // prüft die Signatur immer gegen [`crate::signing::propose_message`],
+        // also **ohne** die Runde des mitgelieferten Zertifikats.
+        // [`crate::signing::DST_PROPOSE_POL`] und `propose_pol_message`
+        // existieren seit v0.5.0 genau für diesen Fall, sind in ihrem
+        // Doc-Kommentar als notwendig begründet, und **wurden von
+        // nirgends aufgerufen**.
+        //
+        // Dieselbe Klasse wie Audit-Punkt A10: Ein Schutz, den ein
+        // Leser für vorhanden hält, weil er dasteht.
+        //
+        // **Was ohne die Bindung möglich war:** Ein Abhörer nimmt einen
+        // ehrlichen Propose für Block B und hängt ein **anderes**
+        // gültiges Zertifikat für denselben Block an. Beides prüft
+        // durch, denn `cert.verify` steht für sich und die Signatur
+        // deckt das Zertifikat nicht. Zwei Nachrichten mit derselben
+        // Aussage, verschiedenen Nachrichten-Ids und beide gültig; der
+        // Leader kann für keine von beiden zur Verantwortung gezogen
+        // werden, und das trifft den Double-Signing-Beweis.
+        match pol {
+            Some(cert) => self.bft.receive_propose_mit_polka(propose, cert.round)?,
+            None => self.bft.receive_propose(propose)?,
+        }
 
         if let Some(cert) = pol {
             if self.lock.map(|l| l.block_hash) != Some(cert.block_hash) {
@@ -752,6 +777,30 @@ mod tests {
             block_hash: hash,
             leader: test_miner(leader_byte),
             signature: sk.sign(&propose_message(round, &hash)).unwrap(),
+        }
+    }
+
+    /// Ein Vorschlag, der ein Zertifikat aus `valid_round` mitbringt.
+    ///
+    /// ⚑ **Fund 66:** Die Signatur muss über
+    /// [`crate::signing::propose_pol_message`] gehen, sonst deckt sie die
+    /// Runde des Zertifikats nicht ab. Bis zum 2026-08-26 gab es diesen
+    /// Helfer nicht, und der einzige Test, der den Zertifikatspfad
+    /// benutzte, signierte mit `propose_message` — **und kam durch**.
+    fn signed_propose_pol(
+        round: Round,
+        hash: Hash,
+        leader_byte: u8,
+        valid_round: Round,
+    ) -> Propose {
+        let (sk, _) = keypair(leader_byte);
+        Propose {
+            round,
+            block_hash: hash,
+            leader: test_miner(leader_byte),
+            signature: sk
+                .sign(&crate::signing::propose_pol_message(round, &hash, valid_round))
+                .unwrap(),
         }
     }
 
@@ -1124,7 +1173,7 @@ mod tests {
         assert_eq!(d.round(), 2);
 
         let cert = polka(1, b, 4);
-        d.receive_propose(&signed_propose(2, b, 2), Some(&cert), t)
+        d.receive_propose(&signed_propose_pol(2, b, 2, cert.round), Some(&cert), t)
             .unwrap();
         // Entsperrt heisst umgesetzt, nicht entfernt.
         assert_eq!(

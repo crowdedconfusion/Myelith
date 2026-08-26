@@ -44,7 +44,23 @@ use myl_node::konfig::{KnotenKonfig, Rolle};
 use myl_node::schluessel::Konsensschluessel;
 use myl_node::Knoten;
 use myl_net::GossipTopic;
+use myl_consensus::round_change::TimeoutConfig;
 use myl_types::hash::Hash;
+
+/// Fristen für die Tests.
+///
+/// **Großzügiger als die Vorgabe**, damit ein Rundenwechsel nicht
+/// deshalb auftritt, weil der Testrahmen die Knoten reihum fährt statt
+/// nebenläufig. Wo ein Wechsel gemessen werden soll, setzt der Test
+/// eigene, knappe Fristen.
+fn timeouts() -> TimeoutConfig {
+    TimeoutConfig {
+        propose_ms: 30_000,
+        vote_ms: 30_000,
+        commit_ms: 30_000,
+        delta_ms: 5_000,
+    }
+}
 
 /// Die fünf Teilnehmer und ihr Stake in MYL-Kleinstbeträgen.
 ///
@@ -92,6 +108,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         horchadressen: vec!["/ip4/127.0.0.1/tcp/0".to_string()],
         bootstrap,
         rolle: Rolle::Teilnehmer,
+        kettendatei: None,
         genesisdatei: None,
         konsensschluesseldatei: None,
         nat: Default::default(),
@@ -187,7 +204,7 @@ async fn fuenf_knoten_commiten_denselben_block() {
     for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
         let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
         knoten[i]
-            .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+            .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
             .await
             .expect("Runde beginnen");
     }
@@ -256,7 +273,7 @@ async fn jeder_knoten_zaehlt_auch_sein_eigenes_gewicht() {
     for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
         let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
         knoten[i]
-            .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+            .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
             .await
             .expect("Runde beginnen");
     }
@@ -299,7 +316,7 @@ async fn das_protokoll_traegt_gewicht_und_schwelle() {
     for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
         let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
         knoten[i]
-            .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+            .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
             .await
             .expect("Runde beginnen");
     }
@@ -381,7 +398,7 @@ async fn ein_vorzeitiger_propose_geht_nicht_verloren() {
     // **Nur** der Leader beginnt und veröffentlicht.
     let schluessel = Konsensschluessel::probe(TEILNEHMER[leader_index].0).expect("Schlüssel");
     knoten[leader_index]
-        .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+        .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
         .await
         .expect("Runde des Leaders");
 
@@ -398,7 +415,7 @@ async fn ein_vorzeitiger_propose_geht_nicht_verloren() {
         }
         let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
         knoten[i]
-            .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+            .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
             .await
             .expect("Runde beginnen");
     }
@@ -456,7 +473,7 @@ async fn keine_protokollzeile_hat_einen_schluessel_zweimal() {
     for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
         let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
         knoten[i]
-            .beginne_konsensrunde(&g, schluessel, 0, vorschlag)
+            .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts())
             .await
             .expect("Runde beginnen");
     }
@@ -504,6 +521,117 @@ async fn keine_protokollzeile_hat_einen_schluessel_zweimal() {
     }
     assert!(zeilen > 20, "nur {zeilen} Protokollzeilen geprüft");
     println!("[Messung] {zeilen} Protokollzeilen auf doppelte Schlüssel geprüft");
+
+    std::fs::remove_dir_all(&verzeichnis).ok();
+}
+
+/// ⚑ **Der Rundenwechsel über echte Sockets.**
+///
+/// Der Leader von Runde 0 startet zwar als Netzknoten, **beginnt aber
+/// keine Konsensrunde**. Er ist damit für den Konsens ausgefallen,
+/// während sein Gossip weiterläuft: genau der Fall, den ein
+/// abgestürzter Validator erzeugt.
+///
+/// Ohne Rundenwechsel wartet das Netz ewig auf einen Vorschlag, der nie
+/// kommt. Mit ihm übernimmt der Leader von Runde 1.
+///
+/// **Die Fristen sind hier knapp gesetzt** (1,2 s), damit der Test nicht
+/// minutenlang läuft. Die Vorgabe im Betrieb ist eine Sekunde plus eine
+/// halbe je Runde.
+#[tokio::test]
+async fn ein_ausgefallener_leader_haelt_das_netz_nicht_auf() {
+    let verzeichnis = arbeitsverzeichnis("ausfall");
+    let g = genesis();
+    let mut knoten = starte_netz(&verzeichnis).await;
+    let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
+    assert!(mesh.iter().all(|n| *n >= 1), "kein Mesh: {mesh:?}");
+
+    let leader = myl_consensus::select_leader(0, &g.kennungen()).expect("Leader");
+    let leader_index = TEILNEHMER
+        .iter()
+        .position(|(n, _)| Konsensschluessel::probe(n).expect("Schlüssel").kennung() == leader)
+        .expect("Leader unter den Teilnehmern");
+    println!(
+        "[test] Leader von Runde 0 ist {} und fällt aus",
+        TEILNEHMER[leader_index].0
+    );
+
+    let knappe_fristen = TimeoutConfig {
+        propose_ms: 1_200,
+        vote_ms: 1_200,
+        commit_ms: 1_200,
+        delta_ms: 600,
+    };
+    let vorschlag = Hash::sha256(b"ausfalltest");
+
+    // Alle **außer** dem Leader von Runde 0 beginnen.
+    for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
+        if i == leader_index {
+            continue;
+        }
+        let schluessel = Konsensschluessel::probe(name).expect("Schlüssel");
+        knoten[i]
+            .beginne_konsensrunde(&g, schluessel, vorschlag, knappe_fristen)
+            .await
+            .expect("Runde beginnen");
+    }
+
+    // Genug Zeit für: Frist verfällt, neuer Leader schlägt vor, alle
+    // stimmen und commiten.
+    for _ in 0..60 {
+        reihum(&mut knoten, 1, Duration::from_millis(150)).await;
+        let fertig = knoten
+            .iter()
+            .enumerate()
+            .filter(|(i, k)| {
+                *i != leader_index && k.konsens().map(|r| r.ist_commitet()).unwrap_or(false)
+            })
+            .count();
+        if fertig == TEILNEHMER.len() - 1 {
+            break;
+        }
+    }
+
+    for (i, (name, _)) in TEILNEHMER.iter().enumerate() {
+        if i == leader_index {
+            assert!(
+                knoten[i].konsens().is_none(),
+                "{name} sollte gar keine Runde fahren"
+            );
+            continue;
+        }
+        let r = knoten[i].konsens().expect("laufende Runde");
+        println!(
+            "[{name}] runde={} wechsel={} commitet={}",
+            r.runde(),
+            r.wechsel(),
+            r.ist_commitet()
+        );
+        assert!(
+            r.wechsel() >= 1,
+            "{name} hat die Runde nicht gewechselt, obwohl der Leader ausfiel"
+        );
+        assert!(
+            r.ist_commitet(),
+            "{name} hat nicht commitet. Ohne Rundenwechsel wartet hier das ganze \
+             Netz auf einen Vorschlag, der nie kommt"
+        );
+        assert_eq!(r.commiteter_block(), Some(vorschlag), "{name}");
+    }
+
+    // Und das Protokoll muss den Wechsel benennen, mit dem Gewicht: Ein
+    // Wechsel bei 0 Stimmen heißt „kein Vorschlag kam an", ein Wechsel
+    // dicht unter der Schwelle heißt etwas ganz anderes.
+    let beobachter = (leader_index + 1) % TEILNEHMER.len();
+    let text = std::fs::read_to_string(knoten[beobachter].protokollpfad()).expect("Protokoll");
+    assert!(
+        text.contains("\"konsens_rundenwechsel\""),
+        "der Rundenwechsel steht nicht im Protokoll"
+    );
+    assert!(
+        text.contains("\"neuer_leader\"") && text.contains("\"stimmgewicht\""),
+        "der Wechsel nennt nicht, wer übernimmt und mit welchem Gewicht"
+    );
 
     std::fs::remove_dir_all(&verzeichnis).ok();
 }

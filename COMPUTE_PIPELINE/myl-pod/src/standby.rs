@@ -304,6 +304,20 @@ impl PodBesetzung {
     pub fn epoche(&self) -> EpochId {
         self.epoche
     }
+
+    /// Zahl der Shard-Positionen, also `k`.
+    pub fn positionen(&self) -> usize {
+        self.belegung.len()
+    }
+
+    /// Die Belegung je Position, `None` für ausgefallen und nicht
+    /// nachbesetzt.
+    ///
+    /// Für Diagnose und für Prüfungen, die belegen sollen, dass ein
+    /// **gescheiterter** Epochenwechsel die Besetzung unberührt lässt.
+    pub fn belegung(&self) -> &[Option<MinerId>] {
+        &self.belegung
+    }
 }
 
 #[cfg(test)]

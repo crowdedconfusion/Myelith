@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.9.0
+> **Version:** 0.11.0
 > **Datum:** 2026-08-23
 > **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
 > `shard_loop` mit Spur-Hashes und Manipulationserkennung,
@@ -55,6 +55,37 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.11.0 – 2026-08-26 (Punkt 3.3: der Scheduler ist verdrahtet)
+
+`src/zuteilung.rs` schließt die Lücke, die der Fahrplan seit dem
+2026-08-24 als „Schnittstelle ✅, Verdrahtung ❌" führte. `plane_epoche`
+geht vom **geprüften** Epochenseed über Filter, Clusterbildung und
+Pod-Zuteilung; `epochenwechsel_aus_zuteilung` speist das Ergebnis in die
+`PodBesetzung`.
+
+⚑ **Warum das keine Fleißarbeit war: die beiden Seiten passen nicht
+zusammen.** `assign_shards` legt **mehrere** Miner in jeden Shard
+(gemessen: sechs Miner auf vier Shards ergeben `[2,2,1,1]`), während
+Kap. 6.8 und das Glossar von **einem** Miner je Shard-Position plus zwei
+in Reserve sprechen. Zwei von drei Beschreibungen sagen dasselbe, der
+Code des Schedulers etwas anderes. Solange niemand die Seiten
+zusammensteckte, konnte das nicht auffallen: Jede ist für sich stimmig
+und vollständig getestet.
+
+✅ **Entschieden am selben Tag (D3): der Code richtet sich nach dem
+Papier.** `myl-scheduler` v0.3.0 liefert Pods mit `k` Positionen zu je
+einem Miner und zwei in Reserve. Damit ist `zuteilung.rs` eine
+**Übersetzung** statt einer Brücke: Die Reihenfolge, die
+`PodBesetzung::neu` erwartet, ist genau `Pod::mitglieder`.
+
+Was in keinen vollständigen Pod passt, steht in `Zuteilung::ohne_pod`;
+`ist_besetzbar` prüft **vor** dem Wechsel statt mitten in der Sitzung.
+
+**Der Seed wird geprüft, nicht geglaubt.** `plane_epoche` verifiziert den
+VRF-Beweis selbst und verlangt, dass die Epoche des Seeds passt. Wer den
+Seed frei wählt, wählt seine eigenen Pod-Nachbarn; ein gültiger Seed der
+vorigen Epoche hielte die alte Zuteilung fest.
 
 ### v0.9.0 – 2026-08-24 (⚑ Fund 52 geschlossen: der Vergütungspfad ist durchgängig)
 

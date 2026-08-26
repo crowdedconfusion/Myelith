@@ -86,12 +86,36 @@ pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
 ///
 /// **Hergeleitet, nicht geraten.** Die größte heute definierte Nachricht
 /// ist ein Propose: Enum-Marke (1) + Runde (8) + Block-Hash (32) +
-/// Miner-Id (32) + BLS-Signatur (96) = **169 Bytes**. Ein späterer
-/// Rundenwechsel mit Polka-Zertifikat trägt eine Aggregatsignatur (96)
-/// und eine Teilnahme-Bitmaske (16 bei 128 Validatoren), bleibt also
-/// unter 512. Die 8 KiB sind rund das Fünfzigfache davon: weit genug,
-/// dass diese Grenze keinen Entwurf einschränkt, und eng genug, dass
-/// eine Flut den Angreifer Bandbreite kostet.
+/// Miner-Id (32) + BLS-Signatur (96) = **169 Bytes**, gemessen in
+/// `myl_consensus::bft::groessenmessung`.
+///
+/// *Hier stand am 2026-08-26 zunächst, ein späterer Rundenwechsel mit
+/// Polka-Zertifikat trage „eine Teilnahme-Bitmaske (16 bei 128
+/// Validatoren)" und bleibe „unter 512". **Das war aus einer Annahme
+/// gerechnet statt aus dem Typ.** `myl_consensus::round_change::
+/// PolkaCertificate` führt keine Bitmaske, sondern die Unterzeichner
+/// einzeln als `Vec<MinerId>`, also 32 Bytes je Stimme. Die Schlussfolgerung
+/// hält, die Zwischenrechnung nicht.*
+///
+/// Aus dem Typ gerechnet (Borsh: Runde 8 + Hash 32 + Längenkopf 4 +
+/// 32 je Unterzeichner + Aggregat 96), dazu ein Propose:
+///
+/// | Unterzeichner | Propose + Zertifikat | Anteil an 8 KiB |
+/// |---|---|---|
+/// | 5 (Probenetz) | 469 B | 6 % |
+/// | 21 (`COMMITTEE_SIZE`) | 981 B | 12 % |
+/// | 128 | 4405 B | 54 % |
+///
+/// Die 8 KiB tragen also auch das größte plausible Komitee, mit knapp
+/// dem Doppelten an Luft. Weit genug, dass diese Grenze keinen Entwurf
+/// einschränkt, und eng genug, dass eine Flut den Angreifer Bandbreite
+/// kostet.
+///
+/// ⚑ **Wer den Rundenwechsel anschließt, rechnet diese Tabelle nach.**
+/// Bei mehr als 128 Unterzeichnern reicht die Grenze nicht mehr, und
+/// dann ist die Bitmaske die richtige Antwort, nicht ein größeres Limit:
+/// Die Unterzeichnerliste ist redundant, sobald der Validator-Satz
+/// bekannt ist.
 ///
 /// Die Strukturprüfung erfolgt über einen [`PayloadValidator`], weil die
 /// Typen in `myl-consensus` (L1) liegen. Siehe Modul-Doku.

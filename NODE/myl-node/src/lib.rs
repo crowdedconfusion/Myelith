@@ -55,6 +55,7 @@ pub mod nachschub;
 pub mod probe;
 pub mod protokoll;
 pub mod schluessel;
+pub mod speicher;
 pub mod validator;
 pub mod validatorsatz;
 
@@ -67,5 +68,6 @@ pub use nachschub::{Nachforderung, Nachlieferung};
 pub use probe::Probe;
 pub use protokoll::{Betriebsprotokoll, Eintrag, ProtokollFehler};
 pub use schluessel::{Herkunft, Konsensschluessel, SchluesselFehler};
+pub use speicher::{Kettenspeicher, SpeicherFehler, Wiederanlauf};
 pub use validator::ProtokollValidator;
 pub use validatorsatz::{Attesturteil, Validatorsatz};

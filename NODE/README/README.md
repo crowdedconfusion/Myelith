@@ -1,9 +1,9 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** myl-node v0.7.0
+> **Version:** myl-node v0.9.0
 > **Datum:** 2026-08-26
-> **Status:** Netzknoten lauffähig, Blockproduktion und **BFT-Runden über
-> das Netz** (ohne Rundenwechsel)
+> **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
+> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel
 
 ## Aufgabe
 
@@ -79,14 +79,53 @@ Bei gleichen Gewichten wären Kopfzählung und Gewichtszählung numerisch
 dasselbe, und Fund A3 (der Zustandsautomat zählte Nachrichten statt
 Gewicht) liefe grün durch.
 
-**Ist nicht: ausfallsicher.** Es gibt **keinen Rundenwechsel**. Fällt der
-Leader aus, hängt die Runde. `myl-consensus::round_change` hat Sperrregel
-und Polka-Zertifikat fertig; sie anzuschließen braucht eine Uhr, also
-einen Timeout, also eine Entscheidung über GST.
+**Ist seit dem 26. August auch: ausfallsicher gegen einen ausgefallenen
+Leader.** Läuft die Frist ab, wechselt der Knoten die Runde, und der
+nächste Leader schlägt vor. Wer nach einem Stimmen-Quorum gesperrt ist,
+schlägt den gesperrten Block vor und bringt sein **Polka-Zertifikat**
+mit, damit die anderen ihre Sperre gefahrlos lösen können.
+
+**Gemessen an fünf echten Prozessen:** Der Leader von Runde 0 mit
+`kill -9` beendet, die übrigen vier wechseln auf Runde 1 und commiten
+denselben Block.
+
+**Die Frist ist fest und wächst je Runde**, sie wird **nicht** aus
+gemessenen Latenzen abgeleitet. Die Latenzwerte kommen aus Attesten, und
+ein Timeout, der von dieser Fläche liest, gäbe einem Angreifer einen
+Hebel auf die Liveness (Audit A10, A12).
+
+⚑ **Wer allein vorauseilt, kommt nicht zurück** (Fund 67). Ein Knoten,
+dessen Frist ablief, bevor die anderen ihre Runde begonnen hatten, steht
+danach dauerhaft vor dem Netz. Die Safety hält, seine eigene Liveness
+nicht. Zurück hilft nur ein Zustandsabgleich, und der hängt an der
+Kettenpersistenz. **In der Praxis:** Knoten dicht beieinander starten
+oder `--bft-frist` über den Startversatz legen.
 
 **Ist nicht: Blockinhalt im Konsens.** Der Propose trägt einen
 Block-*Hash*, nicht den Block. Was er bezeichnet, entscheidet die Kette,
 und deren Persistenz ist ein eigener offener Punkt.
+
+**Ist seit dem 26. August auch: neustartfähig.** Mit `--kette <datei>`
+führt der Knoten ein anhängendes Blockprotokoll. Beim Start spielt er es
+nach und **rechnet dabei jede Zustandswurzel neu**, durch dieselbe
+`Kette::uebernimm`, durch die auch Gossip-Blöcke gehen.
+
+**Gespeichert werden nur die Blöcke.** Höhe, letzter Hash und Zustand
+folgen daraus. Ein abgeleiteter Wert, den man zusätzlich ablegt, ist eine
+zweite Wahrheit, und sobald die beiden auseinanderlaufen, glaubt der
+Knoten der falschen.
+
+**Der Mempool überlebt bewusst nicht.** Wartende Transaktionen sind
+unbestätigt und kommen über den Gossip wieder; sie aufzuheben hieße, nach
+einem Tag Stillstand alte Transaktionen einzuspeisen, deren Absender
+längst andere geschickt hat.
+
+**Belegt an zwei laufenden Knoten:** Der Erzeuger wurde abgeräumt und aus
+seiner Datei neu aufgebaut, während der zweite durchlief. Beide standen
+danach bei derselben Zustandswurzel. **Der Vergleich gegen den
+durchlaufenden Knoten ist der Kern**; ein Vergleich gegen die eigene
+letzte Zustandsaufnahme wäre wertlos, weil sie Sekunden und Blöcke vor
+dem Abbruch liegt.
 
 ⚑ **Ein Block kennt seine eigene Höhe nicht.** `Block` trägt `epoch`,
 `prev_block_hash`, `timestamp_ms` und `state_root`, aber kein Höhenfeld.
@@ -111,6 +150,10 @@ myl-node --name alpha --genesiszeile 250000000
 
 # Die Zeilen einsammeln, Datei bauen, dann starten
 myl-node --name alpha --port 4150 --genesis genesis.txt
+
+# Über ein WAN mit ungleichen Startzeiten: die Frist über den
+# Startversatz legen (Fund 67)
+myl-node --name alpha --port 4150 --genesis genesis.txt --bft-frist 30000
 ```
 
 Die Genesis-Datei nennt den Netznamen und je eine Zeile
@@ -197,21 +240,83 @@ NODE/
         ├── schluessel.rs     BLS-Konsensschlüssel, getrennt von der
         │                     Netzidentität; Dateirechte 0600 (12 Tests)
         ├── konsens.rs        eine BFT-Runde aus Sicht eines Knotens:
-        │                     wann er selbst etwas sagen muss (16 Tests)
+        │                     wann er selbst etwas sagen muss, samt
+        │                     Rundenwechsel und Zertifikat (22 Tests)
         ├── nachschub.rs      Blocknachforderung: Bereich, Deckelung,
         │                     Nachlieferung
+        ├── speicher.rs       Blockprotokoll auf der Platte: anhängend,
+        │                     abbruchfest, an die eigene Kette gebunden
+        │                     (11 Tests)
         ├── knoten.rs         Start, Ereignisschleife, Zustandsaufnahme
         └── main.rs           Kommandozeile
     └── tests/
         ├── zwei_knoten.rs    zwei Knoten, echte Sockets, Protokoll
         │                     zurückgelesen (5 Tests)
-        └── bft_ueber_das_netz.rs
-                              fünf Knoten, eine Runde, ein Block;
-                              Vorlauf-Puffer und Protokollformat
-                              (5 Tests)
+        ├── bft_ueber_das_netz.rs
+        │                     fünf Knoten, eine Runde, ein Block;
+        │                     Vorlauf-Puffer, Rundenwechsel und
+        │                     Protokollformat (6 Tests)
+        └── neustart.rs       Wiederanlauf aus der Kettendatei, Abbruch
+                              mitten im Schreiben, Vergleich gegen einen
+                              durchlaufenden Knoten (6 Tests)
 ```
 
 ## Changelog
+
+### v0.9.0 – 2026-08-26 (die Kette überlebt den Neustart)
+
+- **`speicher.rs` (neu):** ein anhängendes Blockprotokoll. Kopf mit
+  Magie, Formatfassung und **Startwert**, der die Datei an ihre Kette
+  bindet: Eine Datei aus einem anderen Netz wird abgewiesen, statt eine
+  fremde Historie als eigene auszugeben. Je Satz Länge, Nutzlast und
+  Prüfsumme.
+- **Der Speicher gehört der Kette, nicht dem Aufrufer.** Die Zusage
+  lautet „jeder Block, der in die Kette kommt, steht auch in der Datei".
+  Läge das Schreiben beim Aufrufer, wäre sie auf drei Aufrufstellen
+  verteilt, und die vierte, die jemand später hinzufügt, vergäße es.
+- **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen.** Ein Test
+  verfälscht einen gespeicherten Block mit **gültiger Prüfsumme**: Der
+  Speicher lässt ihn durch, die Kette nicht.
+- ⚑ **Was `flush` zusichert, steht als Tabelle im Modulkopf.** `kill -9`
+  des Prozesses überlebt das Protokoll, ein Stromausfall vielleicht
+  nicht. Kein `fsync` je Block; für ein echtes Netz ist das eine offene
+  Entscheidung, keine Empfehlung.
+- **Neu auf der Kommandozeile:** `--kette <datei>`. Ohne sie beginnt
+  jeder Start bei null, und der Knoten sagt das beim Hochfahren.
+- **Ein doppeltes Literal beseitigt:** Der Startwert der Probekette stand
+  zweimal da. Wären die beiden Stellen auseinandergelaufen, hätte eine
+  frische Datei ihre eigene Kette abgelehnt, und der Knoten begänne nach
+  jedem Neustart bei null, ohne dass es jemandem auffiele.
+- **Ein veralteter Kommentar nachgezogen:** In `sende_testverkehr` stand
+  „Eine Blocksynchronisierung fehlt und gehört vor ein echtes Testnetz."
+  Sie gibt es seit v0.4.0 (`nachschub.rs`).
+
+### v0.8.0 – 2026-08-26 (Rundenwechsel)
+
+- **`konsens.rs` fährt jetzt `RoundDriver` statt `BftState`.** Damit
+  kommen Uhr, Sperre und Rundenwechsel dazu. Der Knoten hält eine
+  **monotone** Uhr (`Instant`), nicht die Wanduhr: Ein NTP-Sprung
+  rückwärts verlängerte sonst eine laufende Frist, ein Sprung vorwärts
+  ließe sie zu früh feuern, und eine grundlos gewechselte Runde sieht im
+  Protokoll aus wie ein ausgefallener Leader.
+- **Der Ereignistakt begrenzt seine Wartezeit auf die Konsensfrist.**
+  Ohne das schliefe der Knoten bis zur nächsten Zustandsaufnahme, also
+  bis zu 30 Sekunden, und ein ausgefallener Leader hielte die Runde so
+  lange auf, obwohl die Frist längst abgelaufen wäre.
+- **Der Leader sammelt die vollständigen Stimmen**, weil `BftState` sie
+  nur als `MinerId → Hash` führt und ein Polka-Zertifikat ihr Aggregat
+  ist.
+- **Neu auf der Kommandozeile:** `--bft-frist`, `--bft-zuwachs`. Ein
+  Zuwachs von null wird angenommen, aber gewarnt: sicher, möglicherweise
+  dauerhaft blockiert.
+- ⚑ **Fund 67: Wer allein vorauseilt, kommt nicht zurück.** Gemessen
+  über fünf Prozesse. Der erste Knoten hatte nach 1 ms ein volles Mesh
+  und begann seine Runde; die anderen vier begannen ihre erst 522 ms
+  später. Seine Vote-Frist (500 ms) lief vorher ab, er wechselte **mit
+  Stimmgewicht 0** auf Runde 1 und stand am Ende bei Runde 5, während
+  die vier Runde 0 längst commitet hatten. **Ein volles Gossip-Mesh
+  heißt nicht, dass die Gegenstellen mitstimmen.** Als Test festgehalten,
+  nicht behoben: Der Rückweg braucht einen Zustandsabgleich.
 
 ### v0.7.0 – 2026-08-26 (BFT-Runden über das Netz)
 

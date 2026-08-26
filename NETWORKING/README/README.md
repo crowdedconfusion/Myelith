@@ -1,6 +1,6 @@
 # networking (`myl-net`)
 
-> **Version:** 0.7.0
+> **Version:** 0.8.0
 > **Datum:** 2026-08-26
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3),
 > dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser).
@@ -81,6 +81,50 @@ NETWORKING/
 
 ## Changelog
 
+### v0.8.0 – 2026-08-26 (Chaos-Tests und die Sperrliste, Punkt 4.1)
+
+**Neu: `NodeCommand::Sperren`.** Eine Sperre wirkt auf die **Peer-Id**,
+nicht auf die Adresse. Im Betrieb, um eine als böswillig erkannte
+Gegenstelle loszuwerden; im Test, um eine Partition herzustellen, die
+sich nicht umgehen lässt.
+
+**Warum keine Adresstrennung und kein Proxy:** `identify` und `kad`
+verteilen die echten Horchadressen weiter. Ein Proxy zwischen zwei Knoten
+wäre nach kurzer Zeit umgangen, und ein Test, der die Umgehung nicht
+bemerkt, misst nichts und meldet Erfolg. Ein eigener Test weist deshalb
+nach, dass die Sperre einen **neuen Wählversuch über dieselbe Adresse**
+überlebt.
+
+**`tests/chaos.rs`, sechs Tests:** Partition und Heilung, ein
+Kontrolllauf ohne Sperre, Sperre gegen neuen Wählversuch, Wiedereinstieg
+mit neuer Identität, vier Trennungen hintereinander, ein hängender
+Knoten.
+
+**Die Tests fahren echte Knoten über Kommandos**, nicht am Swarm vorbei.
+Ein Test, der `behaviour_mut()` benutzt, prüft libp2p; einer, der
+Kommandos schickt, prüft den Weg, den ein Knoten im Betrieb nimmt, und
+genau dort saßen die Funde 55 bis 57.
+
+⚑ **Was diese Datei ausdrücklich nicht misst: IP-Paketverlust.** Das
+Akzeptanzkriterium von Phase 4 verlangt „funktionsfähig bei 10 %
+zufälligem Paketverlust". Echter Paketverlust entsteht unter der
+Transportschicht und braucht `tc netem` (Linux, root). Verbindungen
+abzuschneiden und das Ergebnis „10 % Paketverlust" zu nennen wäre eine
+Überbehauptung, **und eine Überbehauptung in einem Härtungstest ist
+schlimmer als eine Lücke: Sie wird geglaubt.** Die Messung steht in
+`README/Intern/Hardware-Tests.md` und gehört auf gemietete Maschinen.
+
+**Zu jedem Störlauf gehört ein Kontrolllauf.** `partitionslauf(true)`
+und `partitionslauf(false)` sind derselbe Code mit einem Flag
+Unterschied und liefern (0, 1) gegen (1, 1). Ohne das Paar bewiese der
+Partitionstest nur, dass in diesem Aufbau nichts ankommt.
+
+### v0.7.1 – 2026-08-26 (eine Herleitung korrigiert)
+
+Nur Dokumentation: Die Begründung der 8-KiB-Grenze rechnete mit einer
+Teilnahme-Bitmaske, die es im Typ nicht gibt. Zahlen jetzt gemessen,
+siehe unten.
+
 ### v0.7.0 – 2026-08-26 (sechstes Topic: die BFT-Runden selbst)
 
 `/myelith/consensus/1` trägt Propose, Vote und Commit.
@@ -97,9 +141,17 @@ Stimmen flutet, trifft die Blockverbreitung mit.
 angehören und dieselbe Zustellung brauchen: Wer die Votes bekommt, aber
 die Commits nicht, hängt.
 
-**Größengrenze 8 KiB, hergeleitet:** Die größte definierte Nachricht ist
-ein Propose mit 169 Bytes; ein späterer Rundenwechsel mit
-Polka-Zertifikat bleibt unter 512. Die Strukturprüfung liegt beim
+**Größengrenze 8 KiB, gemessen:** Ein Propose ist 169 Bytes, ein Propose
+mit Polka-Zertifikat 469 Bytes bei fünf Unterzeichnern, 981 bei 21 und
+4405 bei 128.
+
+*Hier stand zunächst „bleibt unter 512", gerechnet mit einer
+Teilnahme-Bitmaske. `PolkaCertificate` führt aber keine Bitmaske, sondern
+die Unterzeichner einzeln als `Vec<MinerId>`, also 32 Bytes je Stimme.
+Die Schlussfolgerung hielt, die Zwischenrechnung nicht; die Zahlen sind
+jetzt ein Test in `myl_consensus::bft`.*
+
+Die Strukturprüfung liegt beim
 `PayloadValidator` des Knotens, weil die Typen in `myl-consensus` (L1)
 liegen; die Netzschicht darf nicht daran hängen.
 

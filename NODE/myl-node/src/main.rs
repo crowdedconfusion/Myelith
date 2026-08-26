@@ -42,6 +42,13 @@ myl-node — ein Myelith-Netzknoten
                          Atteste als unbekannter Aussteller verworfen. Ohne
                          Angabe werden alle Atteste verworfen: Ungeprüfte
                          durchzulassen wäre schlechter.
+  --kette <datei>        Blockprotokoll der Kette. Ohne diese Angabe
+                         beginnt JEDER START BEI NULL. Mit ihr spielt der
+                         Knoten die Datei beim Start nach und rechnet dabei
+                         jede Zustandswurzel neu; ein abgebrochener letzter
+                         Satz wird verworfen und die Datei gekürzt.
+                         Gespeichert werden nur die Blöcke: Höhe, Zustand
+                         und letzter Hash folgen daraus.
   --genesis <datei>      Genesis-Datei mit dem Validator-Satz. Nur damit
                          stimmt dieser Knoten bei BFT-Runden mit; ohne sie
                          hört er zu und rechnet nach. Der Knoten muss mit
@@ -57,6 +64,15 @@ myl-node — ein Myelith-Netzknoten
                          einer Datei. WER DEN NAMEN KENNT, KENNT DEN
                          SCHLUESSEL. Nur für Probeläufe; die Herkunft steht
                          danach in jeder Protokollzeile.
+  --bft-frist <ms>       Basis-Frist einer BFT-Phase (Vorgabe: 1000 für den
+                         Vorschlag, 500 für Stimmen und Commits). Läuft sie
+                         ab, wechselt der Knoten die Runde. Der Vorgabewert
+                         ist aus der 2-Sekunden-Blockzeit hergeleitet und
+                         gegen KEIN echtes Netz geprüft.
+  --bft-zuwachs <ms>     Zuwachs der Frist je Runde (Vorgabe: 500). NULL
+                         heißt: sicher, aber möglicherweise dauerhaft
+                         blockiert, denn erst der Zuwachs überschreitet
+                         irgendwann jede reale Nachrichtenlaufzeit.
   --genesiszeile <stake> die eigene Zeile für die Genesis-Datei ausgeben
                          und beenden. Erzeugt den Konsensschlüssel, falls
                          er noch nicht existiert. Damit niemand 288 Zeichen
@@ -84,6 +100,8 @@ struct Argumente {
     probeschluessel: bool,
     /// Nur die eigene Genesis-Zeile ausgeben, mit diesem Stake.
     genesiszeile: Option<u64>,
+    /// Fristen der BFT-Runden.
+    timeouts: myl_consensus::round_change::TimeoutConfig,
 }
 
 fn lies_argumente() -> Result<Option<Argumente>, String> {
@@ -100,6 +118,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut auf_bildschirm = true;
     let mut probeschluessel = false;
     let mut genesiszeile: Option<u64> = None;
+    let mut bft_frist: Option<u64> = None;
+    let mut bft_zuwachs: Option<u64> = None;
 
     let mut i = 0;
     while i < roh.len() {
@@ -125,6 +145,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             "--oeffentlich" => { konfig.nat.oeffentliche_adressen.push(wert(i)?); i += 2; }
             "--relais" => { konfig.nat.relais.push(wert(i)?); i += 2; }
             "--schluessel" => { konfig.schluesseldatei = PathBuf::from(wert(i)?); i += 2; }
+            "--kette" => { konfig.kettendatei = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
             "--aufnahme" => {
                 konfig.aufnahme_sekunden = wert(i)?
@@ -145,6 +166,18 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--probe-konsensschluessel" => { probeschluessel = true; i += 1; }
+            "--bft-frist" => {
+                bft_frist = Some(
+                    wert(i)?.parse().map_err(|_| "--bft-frist erwartet eine Zahl".to_string())?,
+                );
+                i += 2;
+            }
+            "--bft-zuwachs" => {
+                bft_zuwachs = Some(
+                    wert(i)?.parse().map_err(|_| "--bft-zuwachs erwartet eine Zahl".to_string())?,
+                );
+                i += 2;
+            }
             "--genesiszeile" => {
                 genesiszeile = Some(
                     wert(i)?
@@ -197,7 +230,28 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 .to_string(),
         );
     }
-    Ok(Some(Argumente { konfig, laufzeit, auf_bildschirm, probeschluessel, genesiszeile }))
+    let mut timeouts = myl_consensus::round_change::TimeoutConfig::default();
+    if let Some(ms) = bft_frist {
+        // Eine Basis von null hieße: jede Runde verfällt sofort, das Netz
+        // wechselt endlos und kommt nie zu einem Block.
+        if ms == 0 {
+            return Err("--bft-frist 0: jede Runde verfiele sofort".to_string());
+        }
+        timeouts.propose_ms = ms;
+        timeouts.vote_ms = ms;
+        timeouts.commit_ms = ms;
+    }
+    if let Some(ms) = bft_zuwachs {
+        timeouts.delta_ms = ms;
+    }
+    Ok(Some(Argumente {
+        konfig,
+        laufzeit,
+        auf_bildschirm,
+        probeschluessel,
+        genesiszeile,
+        timeouts,
+    }))
 }
 
 #[tokio::main]
@@ -236,7 +290,9 @@ async fn main() {
     let genesisdatei = args.konfig.genesisdatei.clone();
     let konsensschluessel = args.konfig.konsensschluesseldatei.clone();
     let name = args.konfig.name.clone();
+    let kettendatei = args.konfig.kettendatei.clone();
     let probe = args.probeschluessel;
+    let timeouts = args.timeouts;
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -247,6 +303,15 @@ async fn main() {
     };
 
     eprintln!("myl-node: Peer-Id {}", knoten.peer_id());
+    if kettendatei.is_some() {
+        eprintln!(
+            "myl-node: Kette bei Höhe {} ({} Blöcke in der Datei)",
+            knoten.kette().hoehe(),
+            knoten.kette().gespeicherte_bloecke().unwrap_or(0)
+        );
+    } else {
+        eprintln!("myl-node: keine Kettendatei, dieser Start beginnt bei null");
+    }
     eprintln!("myl-node: Protokoll {}", knoten.protokollpfad().display());
 
     // Die eigenen Adressen nennen, sobald sie feststehen. Sie sind das,
@@ -283,7 +348,9 @@ async fn main() {
     // der sofort proposet, redet ins Leere und die Runde hängt, ohne
     // dass jemand etwas falsch gemacht hätte.
     if let Some(pfad) = genesisdatei.clone() {
-        if let Err(e) = starte_konsens(&mut knoten, &pfad, &name, konsensschluessel, probe).await {
+        if let Err(e) =
+            starte_konsens(&mut knoten, &pfad, &name, konsensschluessel, probe, timeouts).await
+        {
             eprintln!("myl-node: Konsens nicht gestartet: {e}");
             std::process::exit(1);
         }
@@ -315,6 +382,7 @@ async fn starte_konsens(
     name: &str,
     schluesseldatei: Option<PathBuf>,
     probe: bool,
+    timeouts: myl_consensus::round_change::TimeoutConfig,
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(genesisdatei)
         .map_err(|e| format!("{}: {e}", genesisdatei.display()))?;
@@ -354,17 +422,29 @@ async fn starte_konsens(
         );
     }
 
-    let runde = 0u64;
+    // Der Vorschlag hängt am Netz, nicht an der Runde: Ein Leader
+    // schlägt in jeder Runde denselben Block vor, solange keine Sperre
+    // etwas anderes vorschreibt. Zwei Netze haben nie denselben.
     let mut roh = Vec::with_capacity(40);
     roh.extend_from_slice(g.hash().as_bytes());
-    roh.extend_from_slice(&runde.to_le_bytes());
+    roh.extend_from_slice(b"runde-0");
     let vorschlag = myl_types::hash::Hash::sha256(&roh);
 
+    if !timeouts.is_live() {
+        eprintln!(
+            "myl-node: WARNUNG: --bft-zuwachs 0. Das Verfahren bleibt sicher, kann \
+             aber dauerhaft blockieren: Erst der Zuwachs überschreitet irgendwann \
+             jede reale Nachrichtenlaufzeit."
+        );
+    }
     knoten
-        .beginne_konsensrunde(&g, schluessel, runde, vorschlag)
+        .beginne_konsensrunde(&g, schluessel, vorschlag, timeouts)
         .await
         .map_err(|e| e.to_string())?;
-    eprintln!("myl-node: BFT-Runde {runde} begonnen, Mesh {mesh}");
+    eprintln!(
+        "myl-node: BFT-Runde 0 begonnen, Mesh {mesh}, Frist {} ms mit {} ms Zuwachs je Runde",
+        timeouts.propose_ms, timeouts.delta_ms
+    );
     Ok(())
 }
 

@@ -117,7 +117,11 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
     use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
     (0..anzahl)
         .map(|p| {
-            let miners: Vec<MinerRegistration> = (0..k)
+            // ⚑ **k+2 Mitglieder, nicht k** (Entscheidung D3, 2026-08-26).
+            // Vorher entstanden hier Pods ohne Reserve; das fiel nicht
+            // auf, weil dieser Test die Reserve nie ansah.
+            let mitglieder = myl_scheduler::shard_assignment::pod_groesse(k as u32);
+            let miners: Vec<MinerRegistration> = (0..mitglieder)
                 .map(|i| {
                     let id = (p as u64) * 1000 + i as u64;
                     let mut b = [0u8; 32];
@@ -133,7 +137,8 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
                 miners,
                 max_internal_latency: 10,
             };
-            assign_shards(&cluster, k as u32, p, s)
+            assign_shards(&cluster.miners, k as u32, p, s)
+                .expect("k+2 Mitglieder ergeben einen vollständigen Pod")
         })
         .collect()
 }
@@ -154,8 +159,11 @@ fn metadaten(
     let mut m = std::collections::HashMap::new();
     for p in pods {
         let region = regionen[(p.pod_index as usize) % regionen.len()];
-        for sh in &p.shards {
-            for miner in &sh.miners {
+        // **Auch die Reserve braucht Metadaten.** Seit D3 hat ein Pod
+        // eine getrennte Reserve, und `pods_are_disjoint` zählt sie mit;
+        // ohne Region fiele die Zonendiversität still aus.
+        for miner in p.mitglieder() {
+            {
                 m.insert(
                     miner.miner_id,
                     NodeMetadata {
@@ -197,10 +205,11 @@ fn kollusionsrate_gegen_anhang_b2() {
             let s = seed(lauf);
             let alle_pods = pods_bauen(pods, k, &s);
             // Miner zufällig als kolludierend markieren.
+            // Die Reserve zählt mit: Ein kolludierender Reservemiter
+            // übernimmt bei einem Ausfall und rechnet dann mit.
             let boese: std::collections::BTreeSet<MinerId> = alle_pods
                 .iter()
-                .flat_map(|p| p.shards.iter())
-                .flat_map(|sh| sh.miners.iter())
+                .flat_map(|p| p.mitglieder())
                 .filter(|_| rng.u64() % 100 < beta_prozent)
                 .map(|m| m.miner_id)
                 .collect();
@@ -213,10 +222,13 @@ fn kollusionsrate_gegen_anhang_b2() {
                         .iter()
                         .find(|p| p.pod_index == *pi)
                         .map(|p| {
+                            // Ein Pod kolludiert, wenn **alle** seine
+                            // Shard-Positionen kolludieren. Die Reserve
+                            // sitzt nicht in der Pipeline, solange
+                            // niemand ausfällt.
                             p.shards
                                 .iter()
-                                .flat_map(|sh| sh.miners.iter())
-                                .all(|m| boese.contains(&m.miner_id))
+                                .all(|sh| boese.contains(&sh.miner.miner_id))
                         })
                         .unwrap_or(false)
                 });

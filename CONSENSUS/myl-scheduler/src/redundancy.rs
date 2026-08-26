@@ -40,27 +40,25 @@ fn pod_region(pod: &Pod, metadata: &HashMap<MinerId, NodeMetadata>) -> Option<Ge
     // Nimm den ersten Miner im ersten Shard
     pod.shards
         .first()
-        .and_then(|shard| shard.miners.first())
-        .and_then(|miner| metadata.get(&miner.miner_id))
+        .and_then(|shard| metadata.get(&shard.miner.miner_id))
         .map(|meta| meta.region)
 }
 
-/// Prüft, ob zwei Pods disjunkt sind (keine gemeinsamen Miner).
+/// Prüft, ob zwei Pods disjunkt sind (keine gemeinsamen Mitglieder).
+///
+/// ⚑ **Die Reserve zählt mit, seit es sie gibt (2026-08-26).** Bis zur
+/// Entscheidung D3 hatte ein Pod keine getrennte Reserve, und diese
+/// Prüfung sah zwangsläufig alle Mitglieder. Seither wäre eine Prüfung,
+/// die nur die Shard-Positionen vergleicht, unvollständig:
+///
+/// **Stünde dieselbe Maschine in der Reserve beider Pods eines
+/// Redundanzpaars**, übernähme sie bei einem Ausfall auf **beiden**
+/// Seiten. Der Redundanzvergleich verglände dann zwei Ergebnisse
+/// derselben Maschine, und Stufe 1 der Verifikation wäre eine
+/// Selbstbestätigung. Genau davor soll die Disjunktheit schützen.
 fn pods_are_disjoint(pod_a: &Pod, pod_b: &Pod) -> bool {
-    let miners_a: HashSet<MinerId> = pod_a
-        .shards
-        .iter()
-        .flat_map(|s| s.miners.iter())
-        .map(|m| m.miner_id)
-        .collect();
-
-    let miners_b: HashSet<MinerId> = pod_b
-        .shards
-        .iter()
-        .flat_map(|s| s.miners.iter())
-        .map(|m| m.miner_id)
-        .collect();
-
+    let miners_a: HashSet<MinerId> = pod_a.mitglieder().map(|m| m.miner_id).collect();
+    let miners_b: HashSet<MinerId> = pod_b.mitglieder().map(|m| m.miner_id).collect();
     miners_a.is_disjoint(&miners_b)
 }
 
@@ -156,14 +154,27 @@ mod tests {
         }
     }
 
+    /// Ein Pod mit je einem Miner auf jeder Position, ohne Reserve.
     fn test_pod(pod_index: u32, miner_bytes: &[u8]) -> Pod {
         Pod {
             pod_index,
-            shards: vec![Shard {
-                shard_index: 0,
-                miners: miner_bytes.iter().map(|&b| test_registration(b)).collect(),
-            }],
+            shards: miner_bytes
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| Shard {
+                    shard_index: i as u32,
+                    miner: test_registration(b),
+                })
+                .collect(),
+            reserve: vec![],
         }
+    }
+
+    /// Ein Pod mit Positionen **und** Reserve.
+    fn test_pod_mit_reserve(pod_index: u32, positionen: &[u8], reserve: &[u8]) -> Pod {
+        let mut pod = test_pod(pod_index, positionen);
+        pod.reserve = reserve.iter().map(|&b| test_registration(b)).collect();
+        pod
     }
 
     fn test_metadata(miner_byte: u8, region: GeoRegion) -> (MinerId, NodeMetadata) {
@@ -190,6 +201,38 @@ mod tests {
         let pod_a = test_pod(0, &[1, 2]);
         let pod_b = test_pod(1, &[2, 3]); // Miner 2 ist in beiden
 
+        assert!(!pods_are_disjoint(&pod_a, &pod_b));
+    }
+
+    /// ⚑ **Eine geteilte Reserve macht zwei Pods nicht disjunkt.**
+    ///
+    /// Stünde dieselbe Maschine in der Reserve beider Pods eines
+    /// Redundanzpaars, übernähme sie bei einem Ausfall auf **beiden**
+    /// Seiten. Der Redundanzvergleich verglände dann zwei Ergebnisse
+    /// derselben Maschine, und Stufe 1 der Verifikation wäre eine
+    /// Selbstbestätigung.
+    ///
+    /// Diese Prüfung konnte es vor der Entscheidung D3 nicht geben: Ein
+    /// Pod hatte keine getrennte Reserve.
+    #[test]
+    fn eine_geteilte_reserve_bricht_die_disjunktheit() {
+        let pod_a = test_pod_mit_reserve(0, &[1, 2], &[9, 10]);
+        let pod_b = test_pod_mit_reserve(1, &[3, 4], &[9, 11]);
+        assert!(
+            !pods_are_disjoint(&pod_a, &pod_b),
+            "zwei Pods mit gemeinsamem Reservemitglied galten als disjunkt"
+        );
+        // Gegenprobe: getrennte Reserven sind disjunkt.
+        let pod_c = test_pod_mit_reserve(2, &[5, 6], &[12, 13]);
+        assert!(pods_are_disjoint(&pod_a, &pod_c));
+    }
+
+    /// Und die andere Richtung: ein Positionsmiter des einen darf nicht
+    /// in der Reserve des anderen stehen.
+    #[test]
+    fn ein_positionsminer_in_fremder_reserve_bricht_die_disjunktheit() {
+        let pod_a = test_pod_mit_reserve(0, &[1, 2], &[9, 10]);
+        let pod_b = test_pod_mit_reserve(1, &[3, 4], &[1, 11]);
         assert!(!pods_are_disjoint(&pod_a, &pod_b));
     }
 

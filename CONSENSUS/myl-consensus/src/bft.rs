@@ -33,7 +33,8 @@
 //! **Konsens-Feld:** Das BFT-Protokoll ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
 
-use crate::signing::{commit_message, propose_message, vote_message};
+use crate::round_change::PolkaCertificate;
+use crate::signing::{commit_message, propose_message, propose_pol_message, vote_message};
 use crate::validator::VotingSet;
 use borsh::{BorshDeserialize, BorshSerialize};
 use myl_types::bls::BlsSignature;
@@ -130,6 +131,22 @@ pub enum Konsensnachricht {
     Propose(Propose),
     Vote(Vote),
     Commit(Commit),
+    /// Ein Vorschlag, der ein Polka-Zertifikat mitbringt.
+    ///
+    /// Ein Leader, der einen in einer früheren Runde gesperrten Block
+    /// erneut vorschlägt, muss belegen, dass die Sperre gefahrlos
+    /// gelöst werden kann. Das Zertifikat ist dieser Beleg.
+    ///
+    /// **Eine vierte Marke statt eines Feldes an [`Propose`]**, und das
+    /// aus demselben Grund, aus dem [`crate::signing::DST_PROPOSE_POL`]
+    /// ein eigenes Präfix bekam statt einer Erweiterung: Der Zusatz ist
+    /// **additiv**. Die Kodierung des einfachen Propose bleibt Byte für
+    /// Byte dieselbe, und keine zuvor erzeugte Signatur wird ungültig.
+    ///
+    /// Die Signatur eines solchen Vorschlags geht über
+    /// [`crate::signing::propose_pol_message`], deckt also die Runde des
+    /// Zertifikats mit ab (⚑ Fund 66).
+    ProposeMitPolka(Propose, PolkaCertificate),
 }
 
 impl Konsensnachricht {
@@ -139,7 +156,7 @@ impl Konsensnachricht {
     /// verwerfen, **ohne** sie erst dem Zustandsautomaten vorzulegen.
     pub fn runde(&self) -> Round {
         match self {
-            Self::Propose(p) => p.round,
+            Self::Propose(p) | Self::ProposeMitPolka(p, _) => p.round,
             Self::Vote(v) => v.round,
             Self::Commit(c) => c.round,
         }
@@ -152,7 +169,7 @@ impl Konsensnachricht {
     /// nachzuschlagen, gegen den sie verifiziert.
     pub fn absender(&self) -> MinerId {
         match self {
-            Self::Propose(p) => p.leader,
+            Self::Propose(p) | Self::ProposeMitPolka(p, _) => p.leader,
             Self::Vote(v) => v.voter,
             Self::Commit(c) => c.committer,
         }
@@ -162,6 +179,7 @@ impl Konsensnachricht {
     pub fn art(&self) -> &'static str {
         match self {
             Self::Propose(_) => "propose",
+            Self::ProposeMitPolka(_, _) => "propose-mit-polka",
             Self::Vote(_) => "vote",
             Self::Commit(_) => "commit",
         }
@@ -277,30 +295,68 @@ impl BftState {
     ///
     /// Prüft Runde, Leader-Identität, Duplikat und Signatur.
     pub fn receive_propose(&mut self, propose: &Propose) -> Result<(), BftError> {
-        if propose.round != self.round {
-            return Err(BftError::WrongRound {
-                expected: self.round,
-                got: propose.round,
-            });
-        }
-
-        if propose.leader != self.leader {
-            return Err(BftError::WrongLeader);
-        }
-
-        if self.proposed_block.is_some() {
-            return Err(BftError::DuplicateMessage);
-        }
-
+        self.pruefe_vorschlagsrahmen(propose)?;
         self.verify_signature(
             &propose.leader,
             &propose_message(propose.round, &propose.block_hash),
             &propose.signature,
         )?;
 
+        self.uebernimm_vorschlag(propose);
+        Ok(())
+    }
+
+    /// Wie [`Self::receive_propose`], aber für einen Vorschlag mit
+    /// Polka-Zertifikat.
+    ///
+    /// Der Unterschied ist **nur** die Botschaft, gegen die geprüft
+    /// wird: [`crate::signing::propose_pol_message`] bindet zusätzlich
+    /// `valid_round`, also die Runde, aus der das Zertifikat stammt.
+    ///
+    /// ⚑ **Fund 66:** Ohne diese Bindung deckt die Signatur das
+    /// Zertifikat nicht ab. Ein Abhörer könnte an einen ehrlichen
+    /// Vorschlag ein anderes gültiges Zertifikat für denselben Block
+    /// hängen, und beide Fassungen prüften durch. Der Domain-Trenner
+    /// dafür stand seit v0.5.0 bereit und wurde von nichts aufgerufen.
+    ///
+    /// Prüft **das Zertifikat selbst nicht** — das tut
+    /// [`crate::round_change::RoundDriver::may_vote_for`], die dafür die
+    /// Sperre kennt.
+    pub fn receive_propose_mit_polka(
+        &mut self,
+        propose: &Propose,
+        valid_round: Round,
+    ) -> Result<(), BftError> {
+        self.pruefe_vorschlagsrahmen(propose)?;
+        self.verify_signature(
+            &propose.leader,
+            &propose_pol_message(propose.round, &propose.block_hash, valid_round),
+            &propose.signature,
+        )?;
+        self.uebernimm_vorschlag(propose);
+        Ok(())
+    }
+
+    /// Runde, Leader und Duplikat, ohne die Signatur.
+    fn pruefe_vorschlagsrahmen(&self, propose: &Propose) -> Result<(), BftError> {
+        if propose.round != self.round {
+            return Err(BftError::WrongRound {
+                expected: self.round,
+                got: propose.round,
+            });
+        }
+        if propose.leader != self.leader {
+            return Err(BftError::WrongLeader);
+        }
+        if self.proposed_block.is_some() {
+            return Err(BftError::DuplicateMessage);
+        }
+        Ok(())
+    }
+
+    fn uebernimm_vorschlag(&mut self, propose: &Propose) {
         self.proposed_block = Some(propose.block_hash);
         self.status = RoundStatus::CollectingVotes;
-        Ok(())
     }
 
     /// Verarbeitet eine Vote-Nachricht.
@@ -916,6 +972,65 @@ mod tests {
         assert_eq!(select_leader(u64::MAX, &[]), None);
     }
 
+    // ── ⚑ Fund 66: die Signatur deckt die valid_round ──────────────
+
+    fn pol_propose(round: Round, hash: Hash, leader_byte: u8, valid_round: Round) -> Propose {
+        let (sk, _) = keypair(leader_byte);
+        Propose {
+            round,
+            block_hash: hash,
+            leader: test_miner(leader_byte),
+            signature: sk
+                .sign(&crate::signing::propose_pol_message(round, &hash, valid_round))
+                .unwrap(),
+        }
+    }
+
+    /// **Der Angriff, gegen den `DST_PROPOSE_POL` gerichtet ist.**
+    ///
+    /// Ein einfacher Vorschlag darf nicht als Vorschlag mit Zertifikat
+    /// durchgehen. Sonst könnte ein Abhörer an einen ehrlichen Propose
+    /// ein beliebiges gültiges Zertifikat hängen, und beide Fassungen
+    /// prüften durch.
+    #[test]
+    fn fund_66_ein_einfacher_vorschlag_gilt_nicht_mit_zertifikat() {
+        let h = test_hash(9);
+        let einfach = signed_propose(1, h, 0);
+        let mut z = fresh_state(5);
+        assert_eq!(
+            z.receive_propose_mit_polka(&einfach, 3),
+            Err(BftError::InvalidSignature)
+        );
+    }
+
+    /// Und die Gegenrichtung: ein Vorschlag mit Zertifikatsbindung gilt
+    /// nicht als einfacher.
+    #[test]
+    fn fund_66_ein_vorschlag_mit_zertifikat_gilt_nicht_ohne() {
+        let h = test_hash(9);
+        let mit = pol_propose(1, h, 0, 3);
+        let mut z = fresh_state(5);
+        assert_eq!(z.receive_propose(&mit), Err(BftError::InvalidSignature));
+    }
+
+    /// **Die eigentliche Bindung:** Wer die `valid_round` hochsetzt, muss
+    /// neu signieren. Genau das war ohne diesen Pfad nicht der Fall.
+    #[test]
+    fn fund_66_eine_veraenderte_valid_round_bricht_die_signatur() {
+        let h = test_hash(9);
+        let mit = pol_propose(1, h, 0, 3);
+        let mut z = fresh_state(5);
+        assert_eq!(
+            z.receive_propose_mit_polka(&mit, 4),
+            Err(BftError::InvalidSignature),
+            "eine hochgesetzte valid_round kam durch"
+        );
+        // Mit der richtigen Zahl geht es durch. Ohne diese Gegenprobe
+        // wäre auch ein Pfad grün, der jeden Vorschlag ablehnt.
+        assert!(z.receive_propose_mit_polka(&mit, 3).is_ok());
+        assert_eq!(z.proposed_block, Some(h));
+    }
+
     // ── Konsensnachricht: die Form auf der Leitung ──────────────────
 
     fn drei_nachrichten() -> Vec<Konsensnachricht> {
@@ -1014,5 +1129,108 @@ mod tests {
             "keine einzige verstümmelte Nachricht wurde abgelehnt: dann prüft \
              nicht einmal die Enum-Marke"
         );
+    }
+}
+
+#[cfg(test)]
+mod groessenmessung {
+    use super::*;
+    use myl_types::bls::BlsSecretKey;
+
+    /// Wie groß eine Konsensnachricht auf der Leitung wirklich ist.
+    ///
+    /// Die Zahl steht als Herleitung in
+    /// `myl_net::validation::MAX_CONSENSUS_BYTES`. Eine Grenze, deren
+    /// Herleitung niemand nachrechnet, ist eine geratene Grenze.
+    /// Wie groß ein Vorschlag **mit** Zertifikat wird.
+    ///
+    /// Die Zahlen stehen als Herleitung in
+    /// `myl_net::validation::MAX_CONSENSUS_BYTES`. Reißt dieser Test die
+    /// Grenze, ist die Antwort **nicht** ein größeres Limit, sondern eine
+    /// Teilnahme-Bitmaske statt der Unterzeichnerliste: Die Liste ist
+    /// redundant, sobald der Validator-Satz bekannt ist.
+    #[test]
+    fn ein_vorschlag_mit_zertifikat_passt_in_die_topic_grenze() {
+        use crate::round_change::PolkaCertificate;
+        use myl_types::bls::BlsAggregateSignature;
+        const GRENZE: usize = 8 * 1024;
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).unwrap();
+        let h = Hash::sha256(b"b");
+        for (n, erwartet) in [(5usize, 469usize), (21, 981), (128, 4405)] {
+            let zert = PolkaCertificate {
+                round: 6,
+                block_hash: h,
+                voters: (0..n).map(|i| MinerId::new([i as u8; 32])).collect(),
+                aggregate: BlsAggregateSignature([0u8; 96]),
+            };
+            let n_bytes = Konsensnachricht::ProposeMitPolka(
+                Propose {
+                    round: 7,
+                    block_hash: h,
+                    leader: MinerId::new([1u8; 32]),
+                    signature: sk.sign(b"x").unwrap(),
+                },
+                zert,
+            );
+            let gross = borsh::to_vec(&n_bytes).unwrap().len();
+            println!("[Messung] Propose + Zertifikat mit {n} Unterzeichnern: {gross} Bytes");
+            assert_eq!(gross, erwartet, "bei {n} Unterzeichnern");
+            assert!(
+                gross < GRENZE,
+                "{gross} Bytes reißen die Topic-Grenze von {GRENZE}"
+            );
+        }
+    }
+
+    #[test]
+    fn ein_vorschlag_mit_zertifikat_ueberlebt_die_leitung() {
+        use crate::round_change::PolkaCertificate;
+        use myl_types::bls::BlsAggregateSignature;
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).unwrap();
+        let h = Hash::sha256(b"b");
+        let n = Konsensnachricht::ProposeMitPolka(
+            Propose {
+                round: 7,
+                block_hash: h,
+                leader: MinerId::new([1u8; 32]),
+                signature: sk.sign(b"x").unwrap(),
+            },
+            PolkaCertificate {
+                round: 6,
+                block_hash: h,
+                voters: vec![MinerId::new([1u8; 32]), MinerId::new([2u8; 32])],
+                aggregate: BlsAggregateSignature([7u8; 96]),
+            },
+        );
+        let bytes = borsh::to_vec(&n).unwrap();
+        assert_eq!(bytes[0], 3, "die vierte Marke ist additiv, also Nummer 3");
+        assert_eq!(borsh::from_slice::<Konsensnachricht>(&bytes).unwrap(), n);
+        assert_eq!(n.art(), "propose-mit-polka");
+        assert_eq!(n.runde(), 7);
+        assert_eq!(n.absender(), MinerId::new([1u8; 32]));
+    }
+
+    #[test]
+    fn eine_konsensnachricht_ist_169_bytes_gross() {
+        let sk = BlsSecretKey::key_gen(&[3u8; 32]).unwrap();
+        let h = Hash::sha256(b"b");
+        let p = Konsensnachricht::Propose(Propose {
+            round: 7,
+            block_hash: h,
+            leader: MinerId::new([1u8; 32]),
+            signature: sk.sign(b"x").unwrap(),
+        });
+        let n = borsh::to_vec(&p).unwrap().len();
+        println!("[Messung] Propose auf der Leitung: {n} Bytes");
+        // 1 Enum-Marke + 8 Runde + 32 Hash + 32 Miner-Id + 96 Signatur.
+        assert_eq!(n, 169);
+        // Alle drei Arten sind gleich groß: dieselben Felder.
+        let v = Konsensnachricht::Vote(Vote {
+            round: 7,
+            block_hash: h,
+            voter: MinerId::new([1u8; 32]),
+            signature: sk.sign(b"x").unwrap(),
+        });
+        assert_eq!(borsh::to_vec(&v).unwrap().len(), n);
     }
 }

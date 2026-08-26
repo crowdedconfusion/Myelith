@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.12.0 (`myl-scheduler` 0.2.11, `myl-ledger` 0.2.0)
+> **Version:** 0.13.0 (`myl-scheduler` 0.3.0, `myl-ledger` 0.2.0)
 > **Datum:** 2026-08-26
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -86,6 +86,92 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-scheduler v0.3.0 – 2026-08-26 (⚑ Entscheidung D3: ein Miner je Shard)
+
+`assign_shards` legte bis dahin **mehrere** Miner in jeden Shard
+(gemessen: sechs Miner auf vier Shards ergaben `[2, 2, 1, 1]`). Das
+widersprach drei anderen Stellen:
+
+| Quelle | Aussage |
+|---|---|
+| Anhang A.2 | `cfg: &ShardConfig, // k Shards, **Pod-Größe k+2**` |
+| Kap. 6.8, `myl_pod::PodBesetzung` | ein Miner je Position, dazu zwei in Reserve |
+| `README/Glossar.md`, Eintrag *Shard* | „den ein **einzelner** Miner im Speicher hält" |
+
+**Jede Seite war für sich stimmig und vollständig getestet.** Genau
+deshalb konnte der Widerspruch bestehen: Niemand rechnete ihn nach, weil
+niemand beide Seiten zugleich brauchte. Aufgefallen beim Verdrahten von
+COMPUTE_PIPELINE 3.3.
+
+**Entschieden am 2026-08-26:** Der Code richtet sich nach dem Papier.
+`Shard` trägt **einen** Miner, `Pod` bekommt ein Feld `reserve`, und
+`assign_pods` liefert eine [`Zuteilung`] aus Pods **und** den Minern, die
+in keinen vollständigen Pod passten.
+
+**Ein Cluster liefert so viele Pods, wie hineinpassen.** Zwölf Miner bei
+`k = 4` ergeben zwei Pods, nicht einen überfüllten: Mehr Miner heißt mehr
+Kapazität, nicht mehr Belegung je Position. Das ist die Lesart von
+Anhang A.2 Schritt 2 („Pods so bilden") und Schritt 3 („Fisher-Yates
+**innerhalb** des Pods").
+
+⚑ **Zwei Dinge fielen dabei zusätzlich auf.**
+
+**Erstens: `pods_are_disjoint` sah die Reserve nicht.** Die Prüfung war
+vollständig, solange ein Pod keine getrennte Reserve hatte; seit D3 wäre
+sie es nicht mehr. **Stünde dieselbe Maschine in der Reserve beider Pods
+eines Redundanzpaars**, übernähme sie bei einem Ausfall auf beiden Seiten,
+und Stufe 1 der Verifikation verglände zwei Ergebnisse derselben
+Maschine. Behoben über `Pod::mitglieder`, zwei Regressionstests.
+
+**Zweitens: der Shuffle-Seed war je Pod derselbe.**
+`deterministic_shuffle` erzeugt zu einem Seed und einer Länge immer
+dieselbe Permutation; mit dem blanken Epochenseed landete das dritte
+Mitglied jedes gleich großen Pods auf derselben Shard-Position. Wer seine
+Stellung in der Clusterreihenfolge beeinflussen kann, wüsste damit seine
+Position im Voraus, und die Shard-Zuweisung soll gerade **nicht**
+vorhersagbar sein (Kap. 4.3). Jetzt `sha256("MYELITH_POD_SHUFFLE_v1" ‖
+seed ‖ pod_index)`.
+
+**Das Whitepaper braucht keine Änderung:** Der Code kommt zu ihm, nicht
+umgekehrt.
+
+### myl-consensus v0.13.0 – 2026-08-26 (das Zertifikat reist mit)
+
+`PolkaCertificate` bekommt Borsh-Ableitungen und `Konsensnachricht` eine
+vierte Marke `ProposeMitPolka`. **Additiv:** Die Kodierung des einfachen
+Propose bleibt Byte für Byte dieselbe, und keine zuvor erzeugte Signatur
+wird ungültig. Dieselbe Begründung, aus der `DST_PROPOSE_POL` seinerzeit
+ein eigenes Präfix bekam statt einer Erweiterung.
+
+⚑ **Fund 66: Die Signatur deckte die `valid_round` nicht ab.**
+`DST_PROPOSE_POL` und `propose_pol_message` existieren seit v0.5.0, sind
+in ihrem Doc-Kommentar als notwendig begründet, und **wurden von nichts
+aufgerufen**. `RoundDriver::receive_propose` nahm das Zertifikat entgegen
+und ließ die Signatur weiterhin gegen `propose_message` prüfen.
+
+**Was möglich war:** Ein Abhörer nimmt einen ehrlichen Propose für Block
+B und hängt ein **anderes** gültiges Zertifikat für denselben Block an.
+Beides prüft durch, denn `cert.verify` steht für sich und die Signatur
+deckt das Zertifikat nicht. Zwei Nachrichten mit derselben Aussage,
+verschiedenen Nachrichten-Ids und beide gültig; der Leader kann für keine
+von beiden zur Verantwortung gezogen werden, und das trifft den
+Double-Signing-Beweis.
+
+**Dieselbe Klasse wie Audit-Punkt A10:** ein Schutz, den ein Leser für
+vorhanden hält, weil er dasteht.
+
+**Der Beleg lag im eigenen Test.** Der einzige bestehende Test, der den
+Zertifikatspfad benutzte, signierte mit `propose_message` und kam durch.
+Er schlug nach der Behebung fehl, und genau das war der Nachweis.
+
+Behoben mit `BftState::receive_propose_mit_polka`; drei Tests halten
+beide Richtungen und die veränderte `valid_round` fest.
+
+**Die Größe ist jetzt gemessen statt gerechnet:** Propose 169 Bytes,
+Propose mit Zertifikat 469 (5 Unterzeichner), 981 (21) und 4405 (128).
+Die Topic-Grenze von 8 KiB trägt damit auch das größte plausible
+Komitee.
 
 ### myl-consensus v0.12.0 – 2026-08-26 (die Form auf der Leitung)
 

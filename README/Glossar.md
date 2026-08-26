@@ -1081,7 +1081,22 @@ Sättigung). Grund: Bei asynchronem Netz muss der Timeout irgendwann die
 tatsächliche Nachrichtenlaufzeit übersteigen, sonst wechselt das Netz
 ewig die Runde, ohne je fertig zu werden.
 
-*Im Code:* `round_change.rs::TimeoutConfig`
+**Entschieden am 2026-08-26: feste Basis, nicht aus Latenzen
+abgeleitet.** Die Ableitung aus gemessenen Latenzen klingt klüger und ist
+die schlechtere Wahl: Die Latenzwerte kommen aus
+→ [Attesten](#latencygraph-und-latenz-atteste), und ein Timeout, der von
+dieser Fläche liest, gibt einem Angreifer einen Hebel auf die Liveness.
+
+⚑ **Wer allein vorauseilt, kommt nicht zurück** (2026-08-26 gemessen).
+Ein Knoten, dessen Frist ablief, bevor die anderen ihre Runde überhaupt
+begonnen hatten, wechselte allein weiter und stand am Ende fünf Runden
+vor dem Netz. Die Safety hielt, die anderen commiteten denselben Block.
+Zurück kommt er nicht: Nichts sagt ihm, dass die frühere Runde längst
+entschieden hat. Das braucht einen Zustandsabgleich und hängt an der
+Kettenpersistenz.
+
+*Im Code:* `round_change.rs::TimeoutConfig`, gefahren von
+`NODE/myl-node/src/konsens.rs::Konsensrunde::takt`
 
 ### GST (Global Stabilization Time)
 

@@ -41,6 +41,7 @@ pub mod standby;
 pub mod da;
 pub mod coordinator;
 pub mod micro_batch;
+pub mod zuteilung;
 
 pub use da::{DaStore, ErasureCoder, XorParityCoder};
 pub use standby::{
@@ -50,6 +51,10 @@ pub use trace::{
     activation_hash, verify_input_hash, Rolle, TransitionSig, DST_SHARD_TRANSITION, ZERO_HASH,
 };
 pub use wire::{PodMessage, MAGIC, FLAG_ABORT, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
+pub use zuteilung::{
+    besetzungsreihenfolge, epochenwechsel_aus_zuteilung, ist_besetzbar, plane_epoche,
+    pod_aus_zuteilung, Planparameter, ZuteilungFehler,
+};
 pub use micro_batch::{
     InferenceRequest, MicroBatch, MicroBatchCollector, PipelineStage, PipelineTracker,
     DEFAULT_WINDOW_MS, MAX_BATCH_SIZE,

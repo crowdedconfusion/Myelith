@@ -1,6 +1,6 @@
 [package]
 name = "myl-net"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.82"
 description = "L0-Netzwerkschicht für Myelith (Whitepaper Kap. 3.2): P2P-Gossip (Blöcke, Transaktionen, PoI-Bündel, Challenges), Paarlatenzmessung und LatencyGraph (Grundlage der Pod-Bildung), Ende-zu-Ende-verschlüsselte Aktivierungs-Streams. Auf rust-libp2p, mit verpflichtender Session-E2E-Verschlüsselung (Kap. 9.2)."

@@ -156,9 +156,17 @@ impl Protokolllauf {
         use myl_scheduler::shard_assignment::assign_shards;
 
         let k = 2u32;
-        let je_pod = k as usize;
+        // ⚑ **Ein Pod hat k+2 Mitglieder, nicht k** (Entscheidung D3,
+        // 2026-08-26). Hier stand `je_pod = k`, und damit entstanden
+        // Pods ohne Reserve. Das fiel nicht auf, weil dieser Test die
+        // Reserve nie ansah; seit `assign_shards` vollständige Pods
+        // verlangt, fällt es auf.
+        let je_pod = myl_scheduler::shard_assignment::pod_groesse(k);
         let seed = [7u8; 32];
         let mut pods = Vec::new();
+        // Getrennt gezählt und danach gemeldet: Innerhalb der Schleife
+        // liegt eine unveränderliche Ausleihe auf `self.teilnehmer`.
+        let mut unvollstaendig = 0usize;
         for (i, gruppe) in self.teilnehmer.chunks(je_pod).enumerate() {
             if gruppe.len() < je_pod {
                 break;
@@ -175,7 +183,21 @@ impl Protokolllauf {
                 miners,
                 max_internal_latency: 10,
             };
-            pods.push(assign_shards(&cluster, k, i as u32, &seed));
+            if let Some(pod) = assign_shards(&cluster.miners, k, i as u32, &seed) {
+                pods.push(pod);
+            } else {
+                unvollstaendig += 1;
+            }
+        }
+
+        if unvollstaendig > 0 {
+            self.melde(
+                Schwere::Luecke,
+                "Scheduler → Pods",
+                "eine Gruppe ergab keinen vollständigen Pod",
+                "ein Pod braucht k+2 Mitglieder; mit weniger blieben Positionen \
+                 unbesetzt und die Pipeline liefe ins Leere",
+            );
         }
 
         if pods.len() < 2 {

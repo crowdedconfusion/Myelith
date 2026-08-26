@@ -36,6 +36,7 @@
 
 use std::time::Duration;
 
+use libp2p::allow_block_list;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p::{
@@ -52,6 +53,23 @@ use crate::scoring;
 /// Kombiniertes Verhalten eines Myelith-Nodes.
 #[derive(NetworkBehaviour)]
 pub struct MylBehaviour {
+    /// Gesperrte Gegenstellen.
+    ///
+    /// **Steht als Erstes**, und das ist keine Ordnungsfrage: Ein
+    /// `NetworkBehaviour` aus mehreren Teilen fragt sie der Reihe nach,
+    /// und wer eine Verbindung ablehnen soll, muss vor denen stehen, die
+    /// sie annehmen wollen.
+    ///
+    /// **Wozu:** Eine Sperre trennt zwei Knoten **unabhängig von der
+    /// Adresse**. Genau das braucht ein Partitionstest, denn `identify`
+    /// und `kad` verteilen die echten Horchadressen weiter; ein Proxy
+    /// dazwischen wäre umgehbar, und ein Test, der die Umgehung nicht
+    /// bemerkt, misst nichts.
+    ///
+    /// Für den Betrieb ist es dieselbe Sache aus dem anderen Blickwinkel:
+    /// Wer eine Gegenstelle als böswillig erkannt hat, will sie
+    /// loswerden, und nicht nur ihre gerade benutzte Adresse.
+    pub sperrliste: allow_block_list::Behaviour<allow_block_list::BlockedPeers>,
     /// Zahlengrenzen: je Peer, je Richtung, insgesamt (Fund 53).
     pub grenzen: connection_limits::Behaviour,
     /// Herkunftsgrenze: eingehende Verbindungen je Adressbereich.
@@ -150,6 +168,7 @@ pub fn build_swarm(
         .with_relay_client(noise::Config::new, yamux::Config::default)?
         .with_behaviour(|_key, relay_client| {
             Ok(MylBehaviour {
+                sperrliste: allow_block_list::Behaviour::default(),
                 grenzen,
                 adressvielfalt,
                 gossipsub,

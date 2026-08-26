@@ -67,6 +67,12 @@ pub struct KnotenKonfig {
     pub bootstrap: Vec<String>,
     /// Die Rolle.
     pub rolle: Rolle,
+    /// Datei für das Blockprotokoll der Kette.
+    ///
+    /// Ohne sie beginnt jeder Start bei null. **Das ist die Vorgabe**,
+    /// solange die Kette Wegwerfware ist; wer über Neustarts hinweg
+    /// weiterrechnen will, gibt einen Pfad an.
+    pub kettendatei: Option<PathBuf>,
     /// Genesis-Datei mit dem Validator-Satz.
     ///
     /// Ohne sie stimmt der Knoten nicht mit: Er nimmt am Netz teil,
@@ -172,6 +178,7 @@ impl Default for KnotenKonfig {
             horchadressen: standard_horchadressen(4150),
             bootstrap: Vec::new(),
             rolle: Rolle::Teilnehmer,
+            kettendatei: None,
             genesisdatei: None,
             konsensschluesseldatei: None,
             nat: NatKonfig::default(),

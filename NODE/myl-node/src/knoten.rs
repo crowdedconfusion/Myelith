@@ -82,6 +82,13 @@ pub enum KnotenFehler {
     Protokoll(ProtokollFehler),
     Identitaet(String),
     Netz(String),
+    /// Die Kettendatei ließ sich nicht öffnen oder gehört zu einer
+    /// anderen Kette.
+    ///
+    /// **Ein Startfehler, kein Hinweis.** Stillschweigend bei null zu
+    /// beginnen hieße, eine vorhandene Historie zu übergehen, und das
+    /// fiele erst auf, wenn jemand die Höhen vergleicht.
+    Kette(String),
 }
 
 impl std::fmt::Display for KnotenFehler {
@@ -90,6 +97,7 @@ impl std::fmt::Display for KnotenFehler {
             Self::Konfig(e) => write!(f, "Konfiguration: {}", e),
             Self::Protokoll(e) => write!(f, "Betriebsprotokoll: {}", e),
             Self::Identitaet(e) => write!(f, "Identität: {}", e),
+            Self::Kette(e) => write!(f, "Kette: {}", e),
             Self::Netz(e) => write!(f, "Netz: {}", e),
         }
     }
@@ -149,6 +157,18 @@ pub struct Knoten {
     /// Normalfall**, nicht die Ausnahme: Stimmberechtigt ist, wer in der
     /// Genesis-Datei steht, und das sind wenige.
     konsens: Option<Konsensrunde>,
+    /// Startzeitpunkt, als **monotone** Uhr für die BFT-Fristen.
+    ///
+    /// ⚑ **Nicht die Wanduhr**, obwohl das Betriebsprotokoll sie
+    /// benutzt. Die Wanduhr springt: NTP korrigiert, und ein Sprung
+    /// rückwärts verlängert eine laufende Frist, ein Sprung vorwärts
+    /// lässt sie zu früh feuern. Für BFT ist das keine Safety-Frage,
+    /// wohl aber eine Liveness-Frage, und eine Runde, die grundlos
+    /// wechselt, sieht im Protokoll aus wie ein ausgefallener Leader.
+    ///
+    /// `Instant` kann nicht rückwärts laufen. Die Fristen zählen
+    /// deshalb Millisekunden seit dem Start dieses Prozesses.
+    gestartet: std::time::Instant,
     /// Konsensnachrichten, die ankamen, **bevor** die eigene Runde
     /// begann.
     ///
@@ -300,6 +320,72 @@ impl Knoten {
             Arc::new(ProtokollValidator::mit(validatoren)),
         ));
 
+        // ⚑ **Der Wiederanlauf ist ein Nachrechnen, kein Einlesen.**
+        //
+        // Die Blöcke aus der Datei gehen durch dieselbe
+        // `Kette::uebernimm`, durch die auch Gossip-Blöcke gehen: Jeder
+        // Vorgänger-Hash und jede Zustandswurzel wird neu geprüft. Ein
+        // zweiter Ladepfad mit eigenen Regeln wäre die Stelle, an der
+        // eine manipulierte Datei durchkäme.
+        //
+        // Und der Zustand wird **nicht** gespeichert, sondern
+        // hergeleitet. Ein abgeleiteter Wert, den man zusätzlich
+        // ablegt, ist eine zweite Wahrheit.
+        let mut kette = Kette::probestand();
+        if let Some(pfad) = konfig.kettendatei.clone() {
+            match crate::speicher::Kettenspeicher::oeffnen(&pfad, Kette::startwert()) {
+                Ok((speicher, anlauf)) => {
+                    let vorhanden = anlauf.bloecke.len();
+                    let mut uebernommen = 0usize;
+                    let mut abgelehnt = 0usize;
+                    let mut erster_grund = String::new();
+                    for b in &anlauf.bloecke {
+                        match kette.uebernimm(b) {
+                            Ok(()) => uebernommen += 1,
+                            Err(e) => {
+                                abgelehnt += 1;
+                                if erster_grund.is_empty() {
+                                    erster_grund = e.to_string();
+                                }
+                            }
+                        }
+                    }
+                    // Erst **nach** dem Nachspielen anhängen, sonst
+                    // schriebe der Wiederanlauf jeden Block ein zweites
+                    // Mal in dieselbe Datei.
+                    kette.speicher_setzen(speicher);
+                    let mut eintrag = Eintrag::neu("kette_geladen")
+                        .text("datei", pfad.display().to_string())
+                        .wahr("neu", anlauf.neu)
+                        .zahl("in_datei", vorhanden as i64)
+                        .zahl("uebernommen", uebernommen as i64)
+                        .zahl("abgelehnt", abgelehnt as i64)
+                        // Ein abgebrochener letzter Satz heißt: der
+                        // Knoten wurde mitten im Schreiben abgeräumt.
+                        // Genau das will der Chaos-Test wissen.
+                        .zahl("abgeschnitten_bytes", anlauf.abgeschnitten as i64)
+                        .zahl("hoehe", kette.hoehe() as i64)
+                        .text("zustandswurzel", kurz(&kette.zustandswurzel()));
+                    if !erster_grund.is_empty() {
+                        eintrag = eintrag.text("erster_grund", erster_grund);
+                    }
+                    protokoll.schreibe(eintrag);
+                }
+                Err(e) => {
+                    // Eine unlesbare Kettendatei ist ein Startfehler.
+                    // Stillschweigend bei null zu beginnen hieße, eine
+                    // vorhandene Historie zu übergehen, und das fiele
+                    // erst auf, wenn jemand die Höhen vergleicht.
+                    protokoll.schreibe(
+                        Eintrag::neu("kette_nicht_geladen")
+                            .text("datei", pfad.display().to_string())
+                            .text("grund", e.to_string()),
+                    );
+                    return Err(KnotenFehler::Kette(e.to_string()));
+                }
+            }
+        }
+
         Ok(Self {
             konfig,
             peer_id,
@@ -307,12 +393,13 @@ impl Knoten {
             ereignisse: ev_rx,
             protokoll,
             testverkehr_zaehler: 0,
-            kette: Kette::probestand(),
+            kette,
             nachforderung_laeuft: false,
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
             konsens: None,
+            gestartet: std::time::Instant::now(),
             konsens_ausgang: Vec::new(),
             konsens_vorlauf: std::collections::VecDeque::new(),
             konsens_vorlauf_verworfen: 0,
@@ -386,12 +473,14 @@ impl Knoten {
         &mut self,
         genesis: &crate::genesis::Genesis,
         schluessel: crate::schluessel::Konsensschluessel,
-        runde: u64,
         vorschlag: myl_types::hash::Hash,
+        timeouts: myl_consensus::round_change::TimeoutConfig,
     ) -> Result<(), crate::konsens::KonsensFehler> {
         let herkunft = schluessel.herkunft();
+        let jetzt = self.uhr_ms();
         let (laufende, raus) =
-            Konsensrunde::beginnen(genesis, schluessel, runde, vorschlag)?;
+            Konsensrunde::beginnen(genesis, schluessel, vorschlag, jetzt, timeouts)?;
+        let runde = laufende.runde();
         self.protokoll.schreibe(
             Eintrag::neu("konsens_runde_beginnt")
                 .zahl("runde", runde as i64)
@@ -401,7 +490,12 @@ impl Knoten {
                 .text("leader", kurz_id(&laufende.leader()))
                 .wahr("ich_bin_leader", laufende.leader() == laufende.ich())
                 .text("schluesselherkunft", herkunft.als_text())
-                .wahr("schluessel_geheim", herkunft.ist_geheim()),
+                .wahr("schluessel_geheim", herkunft.ist_geheim())
+                .zahl("timeout_propose_ms", timeouts.propose_ms as i64)
+                .zahl("timeout_delta_ms", timeouts.delta_ms as i64)
+                // Ohne Zuwachs ist das Verfahren sicher, aber
+                // möglicherweise dauerhaft blockiert.
+                .wahr("liveness_moeglich", timeouts.is_live()),
         );
         self.konsens = Some(laufende);
         for n in raus {
@@ -431,6 +525,56 @@ impl Knoten {
     /// Die laufende Runde, für Tests und Diagnose.
     pub fn konsens(&self) -> Option<&Konsensrunde> {
         self.konsens.as_ref()
+    }
+
+    /// Millisekunden seit dem Start dieses Prozesses.
+    ///
+    /// Die Uhr der BFT-Fristen. Siehe [`Self::gestartet`], warum nicht
+    /// die Wanduhr.
+    pub fn uhr_ms(&self) -> u64 {
+        self.gestartet.elapsed().as_millis() as u64
+    }
+
+    /// Prüft die Frist der laufenden Runde und wechselt gegebenenfalls.
+    ///
+    /// Wird vom Ereignisschleifen-Takt gerufen. Gibt zurück, ob
+    /// gewechselt wurde.
+    pub async fn konsens_takt(&mut self) -> bool {
+        let jetzt = self.uhr_ms();
+        let Some(runde) = self.konsens.as_mut() else {
+            return false;
+        };
+        if runde.ist_commitet() {
+            return false;
+        }
+        let (wechsel, raus) = runde.takt(jetzt);
+        let Some(myl_consensus::round_change::RoundChange::Advanced { from, to, leader }) = wechsel
+        else {
+            return false;
+        };
+        let (stimmen, commits, schwelle) = self.konsens.as_ref().map(|r| r.gewichte()).unwrap();
+        let sperre = self.konsens.as_ref().and_then(|r| r.sperre());
+        let mut eintrag = Eintrag::neu("konsens_rundenwechsel")
+            .zahl("von", from as i64)
+            .zahl("nach", to as i64)
+            .text("neuer_leader", kurz_id(&leader))
+            .wahr("ich_bin_leader", self.konsens.as_ref().map(|r| r.ich()) == Some(leader))
+            // Warum die Frist verfiel, steht im Gewicht: Ein Wechsel bei
+            // 0 Stimmen heißt „kein Vorschlag kam an", ein Wechsel bei
+            // fast erreichter Schwelle heißt etwas ganz anderes.
+            .zahl("stimmgewicht", stimmen as i64)
+            .zahl("commitgewicht", commits as i64)
+            .zahl("schwelle", schwelle as i64);
+        if let Some(l) = sperre {
+            eintrag = eintrag
+                .text("gesperrt_auf", kurz(&l.block_hash))
+                .zahl("sperrrunde", l.round as i64);
+        }
+        self.protokoll.schreibe(eintrag);
+        for n in raus {
+            self.sende_konsens(&n).await;
+        }
+        true
     }
 
     /// Schickt hinaus, was die Nachrichtenbehandlung angesammelt hat.
@@ -466,6 +610,7 @@ impl Knoten {
         &mut self,
         daten: &[u8],
     ) -> Vec<myl_consensus::bft::Konsensnachricht> {
+        let jetzt = self.uhr_ms();
         let Some(runde) = self.konsens.as_mut() else {
             // Noch keine eigene Runde: aufheben statt wegwerfen
             // (⚑ Fund 63, siehe `konsens_vorlauf`).
@@ -480,7 +625,7 @@ impl Knoten {
             }
             return Vec::new();
         };
-        let (urteil, raus) = runde.empfange_bytes(daten);
+        let (urteil, raus) = runde.empfange_bytes(daten, jetzt);
         let (stimmen, commits, schwelle) = runde.gewichte();
         let commitet = runde.ist_commitet();
         // ⚑ **Gewicht, nicht Köpfe.** Ein Protokoll, das „3 von 5
@@ -688,11 +833,26 @@ impl Knoten {
                     naechster_versand = Some(jetzt + t);
                 }
             }
+            // Der BFT-Takt. Prüft selbst, ob die Frist verfallen ist,
+            // und wechselt gegebenenfalls die Runde.
+            self.konsens_takt().await;
+
             let mut rest = ende
                 .saturating_duration_since(jetzt)
                 .min(naechste_aufnahme.saturating_duration_since(jetzt));
             if let Some(faellig) = naechster_versand {
                 rest = rest.min(faellig.saturating_duration_since(jetzt));
+            }
+            // ⚑ **Die Wartezeit darf die Konsensfrist nicht überspringen.**
+            // Ohne diese Zeile schliefe der Knoten bis zur nächsten
+            // Zustandsaufnahme, also bis zu 30 Sekunden, und ein
+            // ausgefallener Leader hielte die Runde so lange auf, obwohl
+            // die Frist längst abgelaufen wäre.
+            if let Some(k) = self.konsens.as_ref() {
+                if !k.ist_commitet() {
+                    let verbleibend = k.frist_ms().saturating_sub(self.uhr_ms());
+                    rest = rest.min(Duration::from_millis(verbleibend));
+                }
             }
             let rest = rest.max(Duration::from_millis(1));
             match tokio::time::timeout(rest, self.ereignisse.recv()).await {
@@ -775,10 +935,18 @@ impl Knoten {
             // Leere: Alpha baute acht Blöcke, Beta und Gamma wiesen alle
             // acht mit „passt nicht an" zurück und blieben auf Höhe 0.
             //
-            // Das Warten behebt den Anlass, **nicht die Ursache**. Wer
-            // mitten im Lauf dazukommt, hängt weiterhin fest. Eine
-            // Blocksynchronisierung fehlt und gehört vor ein echtes
-            // Testnetz.
+            // Das Warten behebt den Anlass, nicht die Ursache. Die
+            // Ursache ist seit v0.4.0 behoben: `crate::nachschub` holt
+            // fehlende Blöcke nach, sobald ein Block „passt nicht an"
+            // meldet und weiter ist als die eigene Höhe.
+            //
+            // *Hier stand bis zum 2026-08-26 „Eine Blocksynchronisierung
+            // fehlt und gehört vor ein echtes Testnetz." Das war seit dem
+            // 2026-08-24 überholt.*
+            //
+            // Das Warten bleibt trotzdem: Es erspart dem Netz eine Runde
+            // aus Ablehnungen und Nachforderungen, die niemand braucht,
+            // wenn man eine Sekunde wartet.
             if self.kette.hoehe() == 0 && self.peers().await == 0 {
                 self.protokoll.schreibe(
                     Eintrag::neu("erzeugung_wartet")
@@ -935,7 +1103,13 @@ impl Knoten {
             // ⚑ Fund 63: Ohne diese beiden Zahlen wäre der Vorlauf
             // dieselbe Stille wie vorher, nur an anderer Stelle.
             .zahl("konsens_vorlauf", self.konsens_vorlauf.len() as i64)
-            .zahl("konsens_vorlauf_verworfen", self.konsens_vorlauf_verworfen as i64);
+            .zahl("konsens_vorlauf_verworfen", self.konsens_vorlauf_verworfen as i64)
+            // Ein Schreibfehler macht den Block nicht ungültig, wohl
+            // aber die Datei unvollständig. Das darf nicht still bleiben.
+            .zahl("kette_schreibfehler", self.kette.schreibfehler() as i64);
+        if let Some(n) = self.kette.gespeicherte_bloecke() {
+            eintrag = eintrag.zahl("kette_gespeichert", n as i64);
+        }
         let (kleinste, groesste, anzahl) = self.latenz;
         eintrag = eintrag.zahl("latenz_messungen", anzahl as i64);
         if anzahl > 0 {
