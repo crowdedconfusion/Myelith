@@ -119,7 +119,7 @@ pub fn kleinste_ausreichende_rate(
 /// **Der Faktor ist eine Festlegung dieses Entwurfs und steht in keinem
 /// Kapitel.** Er ist so gewählt, dass er die Zielrate von 2 % auf 10 %
 /// hebt, also in die Größenordnung, die Anhang B.8.2 für die Anlaufphase
-/// durchrechnet. Er gehört bestätigt und steht im Fahrplan.
+/// durchrechnet. Er gehört bestätigt und ist ein offener Punkt.
 pub const TRAININGSRATE_FAKTOR: u64 = 5;
 
 /// Trainingsrate = `min(Faktor · p, 1)`.

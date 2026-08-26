@@ -1,4 +1,4 @@
-# Bitbudget je Modellgröße und Lernrate (Fahrplanpunkt 1.1)
+# Bitbudget je Modellgröße und Lernrate (Punkt 1.1)
 
 **Datum:** 2026-08-23
 **Erzeugt mit:** `tests/diag/bitbudget.py --lr <wert>`, je Lauf rund 4 s
@@ -62,7 +62,7 @@ nicht, und das steht jetzt fest statt zu gelten.
 
 ## Was nicht gemessen ist: die Modellgröße
 
-Der Fahrplanpunkt verlangt F **je Modellgröße und Lernrate**. Die
+Der Punkt verlangt F **je Modellgröße und Lernrate**. Die
 Lernraten-Achse ist vollständig, die Modellgrößen-Achse hat einen
 einzigen Punkt.
 

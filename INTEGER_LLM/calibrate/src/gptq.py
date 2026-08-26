@@ -1,5 +1,5 @@
 """
-GPTQ-Quantisierung (Eskalationsstrategie 3, Fahrplan „Eskalationsstrategien").
+GPTQ-Quantisierung (Eskalationsstrategie 3, Abschnitt „Eskalationsstrategien").
 
 Round-to-Nearest minimiert den GEWICHTSfehler je Eintrag; der Perplexität
 ist aber der AUSGABEFEHLER der Schicht relevant, und der akkumuliert über
@@ -18,7 +18,7 @@ Angewendet auf die linearen Projektionen (q/k/v/o/gate/up/down_proj).
 Embedding/Biases/Gammas bleiben bei quantize_symmetric_int8_per_channel
 (RNE), der LM-Head bleibt int16 (benannte spec-Ausnahme).
 
-**Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Fahrplan 12.72):**
+**Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Punkt 12.72):**
 Der Hessian-Speicher waechst quadratisch mit intermediate_size (2,5 GB bei
 0,5B, 45,5 GB bei 7B fuer ALLE Ebenen gleichzeitig — siehe
 calibrate/src/main.py::gptq_hessian_bytes). Bislang schaltete das GPTQ bei

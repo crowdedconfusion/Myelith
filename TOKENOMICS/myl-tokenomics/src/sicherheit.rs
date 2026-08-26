@@ -19,7 +19,7 @@
 //!
 //! GOVERNANCE braucht sie, um Parametervorschläge zu prüfen (Punkt 1.3):
 //! Wer `p` senkt oder `g` hebt, ohne den Stake anzuheben, verletzt die
-//! Bedingung. Der Fahrplan von TOKENOMICS verlangt sie deshalb
+//! Bedingung. TOKENOMICS verlangt sie deshalb
 //! ausdrücklich als Funktion, die von GOVERNANCE **benutzt** wird, statt
 //! sie dort ein zweites Mal zu schreiben.
 //!

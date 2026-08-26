@@ -1,9 +1,10 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** myl-node v0.9.0
+> **Version:** 0.9.0
 > **Datum:** 2026-08-26
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
-> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel
+> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
+> **158 Tests grün.**
 
 ## Aufgabe
 

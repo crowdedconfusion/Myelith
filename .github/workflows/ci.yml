@@ -383,8 +383,10 @@ jobs:
   # bei Dritten ausgeführt wird, und ein Übersetzungsfehler in seinen
   # Abhängigkeiten fiele hier ohnehin auf.
   #
-  # Nur Unit-Tests: Die Läufe mit Modell brauchen Artefakte, und die gibt
-  # es in der CI nicht (siehe AGENTS.md).
+  # Nur Unit-Tests: Die Läufe mit Modell brauchen Artefakte, und die
+  # liegen nicht im Repositorium. Sie entstehen aus einem
+  # Kalibrierungslauf gegen die Gewichte des Referenzmodells und sind
+  # mehrere Gigabyte groß.
   #
   # NUR WINDOWS, NICHT AUCH MACOS: Entwickelt und geprüft wird auf einem
   # aarch64-Mac, jeder Patch läuft dort ohnehin durch Tests, clippy und
@@ -583,7 +585,7 @@ jobs:
   # Geprueft wird nur, dass die Programme **laufen**, nicht dass sie
   # dieselben Zahlen liefern: Sie drucken, sie behaupten nicht. Das ist
   # die schwaechere Aussage und die einzige, die heute moeglich ist; ein
-  # Golden-File je Simulation stuende im Fahrplan.
+  # Golden-File je Simulation waere der naechste Schritt.
   simulationen:
     name: Whitepaper-Simulationen (Anhang B.9)
     runs-on: ubuntu-latest

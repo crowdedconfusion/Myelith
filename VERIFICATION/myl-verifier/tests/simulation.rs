@@ -150,7 +150,7 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
 /// Paar dann übersprungen wird. Das ist fail-closed und damit die
 /// richtige Richtung, aber es ist **still**: Der Rückgabewert ist ein
 /// leerer Vektor, und der sieht genauso aus wie „keine Segmente
-/// angefragt". Vermerkt im Fahrplan.
+/// angefragt". Offener Punkt.
 fn metadaten(
     pods: &[Pod],
 ) -> std::collections::HashMap<MinerId, myl_types::node_metadata::NodeMetadata> {

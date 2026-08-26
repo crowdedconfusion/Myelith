@@ -1,13 +1,21 @@
 # training (`myl-train`)
 
-> **Version:** 0.5.0
-> **Datum:** 2026-08-23
-> **Status:** **Die Komponente hat Code.** Punkt 3.1 (Datenprovenienz)
-> ist gebaut: `myl-train` v0.1.0 mit Merkle-verankerten Korpora,
-> Segmentreferenz per Beweis, gebündelten Beweisen und VRF-gesteuerter
-> Zuweisung, 23 Tests. Er stand im Fahrplan hinten, weil er inhaltlich
-> dorthin gehört, ist aber der einzige Punkt, der **technisch
-> unabhängig** vom ganzzahligen Rückwärtspass ist.
+> **Version:** 0.2.0
+> **Datum:** 2026-08-26
+> **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
+> gebaut, und beide sind genau die, die **nicht** am ganzzahligen
+> Rückwärtspass hängen:
+>
+> - **Datenprovenienz** (v0.1.0): Merkle-verankerte Korpora,
+>   Segmentreferenz per Beweis, gebündelte Beweise, VRF-gesteuerte
+>   Zuweisung. Steht in der Planung hinten, weil er inhaltlich dorthin
+>   gehört, ist aber technisch unabhängig.
+> - **Wachstumsoperator, Bitbudget und Tiefenwachstum** (v0.2.0):
+>   ganzzahlige Aufteilung, Identitätsebene, Digestvergleich vor und
+>   nach.
+>
+> Alles Übrige aus Kap. 7 bleibt Entwurf und wartet auf den
+> ganzzahligen Rückwärtspass in INTEGER_LLM.
 >
 > **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
 > Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
@@ -20,7 +28,7 @@
 > Das Konzept daraus steht in
 > [`Konzept-Wachstum.md`](Konzept-Wachstum.md): der Trainingsschritt,
 > seine Verifikation, die Aggregation und ein Modell, das wächst.
-> Der Fahrplan steht damit; sein erster Punkt liegt in INTEGER_LLM,
+> Die Planung steht damit; ihr erster Punkt liegt in INTEGER_LLM,
 > nicht hier: Solange Vorwärts- und Rückwärtspass in Gleitkomma
 > rechnen, ist der Gradient geräteabhängig und mit ihm jedes Δm.
 
@@ -45,10 +53,10 @@ einen **größeren** Dynamikbereich als Aktivierungen — und über die
 Trainingsschritte hinweg einen wandernden. Ob die Block-Skalierung aus
 Anhang B.6.2 das trägt, ist offen.
 
-Der Fahrplan hatte 22 Punkte in vier Phasen, die alle darauf ruhten. Am
-2026-08-19 wurde er auf die Messung zurückgeschnitten, die das
-entscheidet. Die alte Planung steht im Fahrplan als Vorüberlegung ohne
-Statusmarken — sie geht nicht verloren, wird aber nach dem Ergebnis neu
+Die Planung hatte 22 Punkte in vier Phasen, die alle darauf ruhten. Am
+2026-08-19 wurde sie auf die Messung zurückgeschnitten, die das
+entscheidet. Die alte Fassung bleibt als Vorüberlegung erhalten, ohne
+Statusmarken: Sie geht nicht verloren, wird aber nach dem Ergebnis neu
 geschnitten, möglicherweise anders.
 
 **Die Methode ist erprobt:** In der 7B-Fehlersuche haben zwei
@@ -85,7 +93,7 @@ Entsteht mit der Implementierung.
 
 ### myl-train v0.2.0 – 2026-08-23 (Wachstumsoperator, Bitbudget, Tiefenwachstum)
 
-Drei Fahrplanpunkte, alle drei ohne fremde Hardware machbar und alle drei
+Drei Punkte, alle drei ohne fremde Hardware machbar und alle drei
 unabhängig vom ganzzahligen Rückwärtspass.
 
 **1.2, der Wachstumsoperator** (`src/wachstum.rs`). Die ganzzahlige
@@ -148,15 +156,15 @@ bekommt **nie** einen.
 **Fund dabei:** `Konzept-Wachstum.md` führte diese Messung seit dem
 2026-08-22 als erledigt, mit konkreten Zahlen und einem Beleg, den es
 nicht gab. Das genannte Skript misst ausschließlich Breitenwachstum, ein
-Protokoll mit diesen Zahlen existierte nirgends. Der Fahrplan hatte den
-Punkt zu Recht als „nicht gemessen" geführt. Dieselbe Klasse wie Fund 27
+Protokoll mit diesen Zahlen existierte nirgends. Der Punkt war zu Recht
+als „nicht gemessen" geführt. Dieselbe Klasse wie Fund 27
 und Fund 37; das Konzept trägt jetzt die gemessenen Zahlen und den
 Vermerk.
 
 ### myl-train v0.1.0 – 2026-08-23 (Punkt 3.1: Datenprovenienz)
 
 **Die erste Zeile Code dieser Komponente.** Bis hierher bestand TRAINING
-aus Fahrplan, Konzept und Diagnoseskripten; Kritikpunkt K7 führte sie
+aus Planung, Konzept und Diagnoseskripten; Kritikpunkt K7 führte sie
 als eine von drei Komponenten ohne Code.
 
 Gebaut ist Kap. 7.3, **Herkunft statt Inhalt**: Ein Miner, der

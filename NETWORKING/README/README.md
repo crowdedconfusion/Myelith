@@ -2,12 +2,19 @@
 
 > **Version:** 0.8.0
 > **Datum:** 2026-08-26
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3),
-> dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser).
-> Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
-> werden nicht weiterverbreitet. Phase 2: Paarlatenzmessung mit
-> EMA-Glättung, Latenz-Atteste, LatencyGraph, Geo-/AS-Diversität.
-> 37 + 14 Tests grün.
+> **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3), dazu
+> Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
+> (Verbindungsgrenzen und Peer-Diversität), Punkt 3.4 (NAT-Überwindung)
+> und seit dem 26. August Punkt 4.1 (Chaos-Tests, **außer**
+> IP-Paketverlust).
+>
+> Phase 1: 20-Knoten-Vollkonnektivität unter 5 s, ungültige Nachrichten
+> werden nicht weiterverbreitet, sechs Gossip-Topics, Anfragekanal.
+> Phase 2: Paarlatenzmessung mit EMA-Glättung, Latenz-Atteste,
+> LatencyGraph, Geo- und AS-Diversität. **107 Tests grün.**
+>
+> **Offen:** Phase 3 (verschlüsselte Shard-Kanäle), Punkt 4.4 (Lasttest
+> bei Zielnetzgröße) und der IP-Paketverlust aus 4.1.
 >
 > ⚑ **Fund 44:** Die Latenz-EMA rechnete in `f64`, obwohl der Kopf des
 > Crates seit dem ersten Tag Festkomma zusagt. Der Gleitkomma-Audit
@@ -33,7 +40,7 @@ Nur SHARED_TYPES (Nachrichtenformate); parallel zu INTEGER_LLM möglich.
 
 ```
 NETWORKING/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-net/                  die L0-Netzwerk-Crate (Bibliothek)
     └── src/
         ├── lib.rs             Crate-Wurzel: #![deny(unsafe_code)], Design-Doku
@@ -41,10 +48,10 @@ NETWORKING/
         │                      als Festkomma, Attest 5 min, Größenlimits)
         ├── identity.rs        Node-Identität: Ed25519-Keypair, PeerId,
         │                      Datei-Persistenz (load_or_create)
-        ├── node.rs            Swarm-Aufbau: Verbindungsgrenzen +
-        │                      Adressvielfalt + Gossipsub (mit Peer-Scoring)
-        │                      + Kademlia + Identify + Ping über
-        │                      TCP/Noise/Yamux
+        ├── node.rs            Swarm-Aufbau: Sperrliste, Verbindungsgrenzen,
+        │                      Adressvielfalt, Gossipsub mit Peer-Scoring,
+        │                      Kademlia, Identify, Ping, Relais und AutoNAT
+        │                      über TCP und QUIC
         ├── limits.rs          Verbindungsgrenzen (Fund 53): getrennte
         │                      Budgets ein-/ausgehend, je Peer, je
         │                      Adressbereich (IPv4 /24, IPv6 /64)
@@ -58,25 +65,34 @@ NETWORKING/
         │                      vermittelter und QUIC-Adressen
         ├── discovery.rs       Peer-Discovery: Bootstrap-Peers parsen und
         │                      anwählen, Kademlia-Bootstrap (/myelith/kad/1)
-        ├── gossip.rs          Gossip-Topics (Blöcke, Transaktionen,
-        │                      PoI-Bündel, Challenges, Latenz-Atteste),
-        │                      Subscribe/Publish mit Borsh-Payloads
+        ├── latency.rs         Paarlatenzen: EMA in Festkomma, Atteste,
+        │                      LatencyGraph für die Pod-Bildung
+        ├── gossip.rs          die sechs Gossip-Topics (Blöcke,
+        │                      Transaktionen, PoI-Bündel, Challenges,
+        │                      Latenz-Atteste, Konsensnachrichten),
+        │                      Subscribe und Publish mit Borsh-Nutzlast
         ├── validation.rs      Nachrichtenvalidierung vor Weiterverbreitung:
         │                      Größenlimits je Topic, Borsh-Strukturprüfung,
         │                      Accept/Reject an Gossipsub
-        └── runtime.rs         Node-Event-Loop: Kommandos (Publish,
-                               PeerCount, Dial), Ereignisse (Listen-Adresse,
-                               validierte Nachrichten); run_node_mit()
-                               reicht den PayloadValidator herein
-└── tests/
-    ├── testnet.rs             Akzeptanztests: 20-Node-Voll-Konnektivität
-    │                          < 5 s, adversarialer Nicht-Weiterverbreitungs-
-    │                          Test
-    ├── adversarial.rs         Fuzzing der Gossip-Parser (14 Tests)
-    ├── eclipse_sybil.rs       Verbindungsgrenzen gegen Flut, freies
-    │                          ausgehendes Budget (5 Tests)
-    └── nat.rs                 Relais-Pfad: Knoten ohne wählbare Adresse
-                               wird über das Relais erreicht (5 Tests)
+        └── runtime.rs         Ereignisschleife des Knotens: Kommandos
+                               (Publish, PeerCount, Zustand, Dial, Listen,
+                               Anfrage, Sperren), Ereignisse (Horchadresse,
+                               validierte Nachrichten, Latenz,
+                               Erreichbarkeit); `run_node_mit` reicht den
+                               PayloadValidator herein
+    └── tests/
+        ├── testnet.rs         Akzeptanztests: 20 Knoten voll verbunden
+        │                      unter 5 s, ungültige Nachrichten werden
+        │                      nicht weiterverbreitet (2 Tests)
+        ├── adversarial.rs     Fuzzing der Gossip-Parser (14 Tests)
+        ├── eclipse_sybil.rs   Verbindungsgrenzen gegen Flut, freies
+        │                      ausgehendes Budget (5 Tests)
+        ├── nat.rs             Relais-Pfad: ein Knoten ohne wählbare
+        │                      Adresse wird über das Relais erreicht
+        │                      (5 Tests)
+        └── chaos.rs           Partition und Heilung, Sperre gegen neuen
+                               Wählversuch, Wiedereinstieg, hängender
+                               Knoten, je mit Kontrolllauf (6 Tests)
 ```
 
 ## Changelog
@@ -111,8 +127,9 @@ zufälligem Paketverlust". Echter Paketverlust entsteht unter der
 Transportschicht und braucht `tc netem` (Linux, root). Verbindungen
 abzuschneiden und das Ergebnis „10 % Paketverlust" zu nennen wäre eine
 Überbehauptung, **und eine Überbehauptung in einem Härtungstest ist
-schlimmer als eine Lücke: Sie wird geglaubt.** Die Messung steht in
-`README/Intern/Hardware-Tests.md` und gehört auf gemietete Maschinen.
+schlimmer als eine Lücke: Sie wird geglaubt.** Diese Messung gehört auf
+Maschinen, auf denen sich der Netzstapel des Betriebssystems
+konfigurieren lässt, und nicht in diese Testsuite.
 
 **Zu jedem Störlauf gehört ein Kontrolllauf.** `partitionslauf(true)`
 und `partitionslauf(false)` sind derselbe Code mit einem Flag
@@ -265,7 +282,8 @@ Peer-Scoring kostet sie nichts.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter
@@ -346,7 +364,7 @@ Behoben:
   Warnungen.
 
 ### v0.1.3 – 2026-08-13 (Punkt 1.3)
-- Gossip-Topic-Struktur: fünf Topics mit versioniertem Namensschema
+- Gossip-Topic-Struktur: zunächst fünf Topics mit versioniertem Namensschema
   (`/myelith/blocks/1`, `/myelith/transactions/1`, `/myelith/poi-bundles/1`,
   `/myelith/challenges/1`, `/myelith/latency-attests/1`) — Konsens-Feld,
   Änderung nur über Governance; das Latenz-Topic wird ab Phase 2 genutzt.

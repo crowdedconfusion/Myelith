@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Der Boden des Schemas: W8 UND A16 gemeinsam, alles andere float.
 
-**Die Frage (2026-08-20, Fahrplanpunkt 12.77).** Bei 7B liegt der
+**Die Frage (2026-08-20, Punkt 12.77).** Bei 7B liegt der
 Integer-Pfad bei 9,40 gegen eine BF16-Baseline von 8,68, also +8,29 %;
 das Kriterium verlangt ≤ 5 %. Bevor eine Eskalation gewählt wird, muss
 feststehen, **wieviel überhaupt zu holen ist**.
@@ -25,7 +25,7 @@ sein als die Summe.
   verbleibenden ~0,6 Punkte sind **Implementierungsverlust**
   (LUT-Auflösung, Shift-Rundung, Skalen-Granularität). Dann ist 12.77
   eine Fehlersuche, keine Schema-Frage — und die Eskalationen 4–7 aus
-  dem Fahrplan wären am falschen Ende angesetzt.
+  der Phasenplanung waeren am falschen Ende angesetzt.
 - **Nahe 9,3–9,4** → Wir sind am Boden dessen, was W8A16 hergibt. Dann
   hilft kein Feilen an der Umsetzung, sondern nur ein besseres Schema
   (Ausreißerbehandlung: FSBR oder Hadamard).

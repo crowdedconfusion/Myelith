@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Überlaufverhalten-Audit (Fahrplan-Punkt 12.25).
+Überlaufverhalten-Audit (Punkt 12.25).
 
 Eigenständiges Skript nach Projektkonvention (kein pytest). Das
 Überlaufverhalten ist in spec.json festgelegt und wird hier geprüft:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests fuer den Export-Workflow (Fahrplan-Punkte 12.14/12.15): calibrate/src/export.py,
+Tests fuer den Export-Workflow (Punkte 12.14 und 12.15): calibrate/src/export.py,
 calibrate/src/export_weights.py, calibrate/src/paths.py, calibrate/src/model_configs.py.
 
 Bewusst ohne torch/numpy-Abhaengigkeit (nicht in jeder Umgebung installiert,

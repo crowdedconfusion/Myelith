@@ -2,7 +2,7 @@
 Modell-Konfigurationen fuer verschiedene Qwen2.5-Groessen.
 Ermoeglicht einfachen Austausch: 0.5B -> 72B.
 
-WICHTIG (Fund aus Fahrplan-Punkt 12.10/12.14): Exportfaehig sind nur die
+WICHTIG (Fund aus Punkt 12.10/12.14): Exportfaehig sind nur die
 Eintraege, deren Felder gegen die *echte* HF-config.json der jeweiligen
 Variante geprueft wurden - erkennbar am Feld "verified". Die uebrigen
 Eintraege sind Groessenangaben aus den Modellkarten und tragen bewusst
@@ -12,8 +12,7 @@ weist sie deshalb laut zurueck.
 Der Grund: runtime/src/loader.rs::ModelDims verlangt beide Felder zwingend
 (GQA-Gruppierung, Weight-Tying). Ein Export mit geratenen Werten wuerde
 falsche Attention-Berechnung oder ein fehlendes lm_head.weight erzeugen -
-und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen. Siehe Hinweis zu
-12.10 in INTEGER_LLM/README/Fahrplan-v3.md.
+und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen.
 
 Verifizierte Varianten:
   qwen2.5-0.5b  models/Qwen2.5-0.5B/config.json (lokaler Snapshot)

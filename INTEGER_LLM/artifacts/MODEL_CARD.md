@@ -143,11 +143,14 @@ Artefakte sind nur vergleichbar, wenn sie darin übereinstimmen.
   weiterer Größen ist zusätzlich durch die noch offene **Lizenzprüfung
   je Variante** blockiert (Kap. 10.1 / ETHICS G7 verlangen Apache 2.0
   oder MIT; das gilt nicht automatisch für jede Größe einer Reihe).
-- **Das 5-%-Kriterium ist bei 7B nicht erfüllt.** Es fehlen 2,49
-  Prozentpunkte. Eskalationspfade stehen in `README/Fahrplan-v3.md`, 4.5.
+- **Das 5-%-Kriterium ist auf allen vermessenen Modellen erfüllt**
+  (Stand 2026-08-26): 0,5B **+2,11 %**, Qwen3-4B **+1,64 %**, 7B
+  **+1,14 %**, Qwen3-30B-A3B **kein messbarer Abstand**. *Hier stand bis
+  zum 2026-08-26 „bei 7B nicht erfüllt, es fehlen 2,49 Prozentpunkte";
+  das war seit dem 2026-08-20 überholt.*
 - **Kein Training.** Diese Artefakte sind Inferenz-Artefakte. Ob das
   Quantisierungsschema im Rückwärtspass trägt, ist ungemessen und der
-  einzige offene Fahrplanpunkt von TRAINING.
+  einzige offene Punkt von TRAINING.
 
 ## 8. Reproduktion
 

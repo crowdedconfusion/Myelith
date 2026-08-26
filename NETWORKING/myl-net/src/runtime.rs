@@ -11,7 +11,7 @@
 //!
 //! [`crate::validation::report_with`] nimmt einen
 //! [`PayloadValidator`] entgegen, und die Moduldoku dort, die
-//! Fahrplandatei und `README/README.md` sagen seit dem 2026-08-18
+//! Die Planung und `README/README.md` sagen seit dem 2026-08-18
 //! übereinstimmend, „die Node-Verdrahtung reicht ihn herein".
 //!
 //! **`run_node` hatte dafür keinen Parameter.** Es rief

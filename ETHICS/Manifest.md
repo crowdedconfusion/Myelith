@@ -3,7 +3,7 @@
 **Version:** 1.0.0
 **Datum:** 2026-08-18
 **Geltung:** Für alle Komponenten dieses Repositoriums. Bei Konflikt mit
-einem Komponenten-Fahrplan gilt dieses Dokument; Abweichungen sind zu
+einer Komponentenplanung gilt dieses Dokument; Abweichungen sind zu
 begründen und hier zu vermerken.
 
 ---
@@ -134,7 +134,7 @@ Abstimmung gestellt. **Das ist eine Selbstbindung der Governance-Regeln,
 nicht des Codes** — sie muss in der Parameter-Registry (GOVERNANCE)
 verankert werden, um Bestand zu haben.
 
-*Kategorie: governance-abhängig. Verankerung: GOVERNANCE-Fahrplan.*
+*Kategorie: governance-abhängig. Verankerung: Komponente GOVERNANCE.*
 
 ### G4 — Nachvollziehbarkeit statt Vertrauen
 
@@ -276,7 +276,7 @@ Manifest missverstanden.
    „Herauslöschen" einzelner Inhalte aus Gewichten ist nach heutigem
    Stand nicht verlässlich möglich. Das steht in Spannung zu
    DSGVO Art. 17 und ist als **ungelöst** zu behandeln, nicht als
-   gelöst zu behaupten (siehe Fahrplan, Phase 2).
+   gelöst zu behaupten (Phase 2).
 4. **Keine Zusicherung, dass das Modell gut entscheidet.** Es kann der
    Fall eintreten, dass alle Beteiligten korrekt handelten, das
    Protokoll fehlerfrei arbeitete und dennoch Schaden entstand
@@ -290,9 +290,8 @@ Manifest missverstanden.
 
 ## 5. Die vier ungelösten Spannungen
 
-Ehrlich benannt, nicht wegdefiniert. Der Fahrplan
-([`README/Fahrplan-v1.md`](README/Fahrplan-v1.md)) arbeitet sie ab,
-soweit sie technisch adressierbar sind.
+Ehrlich benannt, nicht wegdefiniert. Soweit sie technisch adressierbar
+sind, werden sie abgearbeitet; wo nicht, steht hier, warum.
 
 ### T1 — Zensurresistenz gegen Rechtsdurchsetzung
 

@@ -37,7 +37,7 @@ def spec_version() -> str:
     """
     Liest die theta_v-Version aus theta_v/spec.json - derselben Datei, die
     runtime/src/loader.rs zur Kompilierzeit per include_str! einbettet und
-    gegen die ThetaV::verify_version_against_spec() prueft (Fahrplan-Punkt
+    gegen die ThetaV::verify_version_against_spec() prueft (Punkt
     12.13). Ein hier exportiertes Artefakt muss dieselbe Version tragen wie
     die spec.json, gegen die der Loader zum Zeitpunkt des Exports gebaut ist,
     sonst schlaegt das Laden mit einem klaren Versions-Mismatch fehl.

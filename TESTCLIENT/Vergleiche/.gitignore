@@ -4,7 +4,7 @@
 # mit sich herum.
 #
 # Ein bestaetigter Cross-Hardware-Nachweis wird nicht hier aufbewahrt,
-# sondern nach INTEGER_LLM/eval/results/ uebernommen (Fahrplanpunkt 2.3).
+# sondern nach INTEGER_LLM/eval/results/ uebernommen (Punkt 2.3).
 # Dieser Ordner ist Arbeitsflaeche, kein Archiv.
 #
 # Der Ordner selbst bleibt versioniert, damit der Client ihn vorfindet.

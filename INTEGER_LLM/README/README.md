@@ -488,11 +488,10 @@ seit v0.16.0 `metadata.logits_sha256` tragen und ohne dieses Feld
 abgelehnt werden. Ein geänderter Digest wäre hier kein Fortschritt,
 sondern ein Fehler.
 
-**Nachgezogen:** Der Statuskopf von `Fahrplan-v3.md` nannte noch
-15,29/+2,3 % und 7B 9,40/+8,29 %. Beide Zahlen sind seit dem 2026-08-20
-(Fund 31, θ_v 0.17.0) überholt; gültig sind **15,27/+2,11 %** und
-**8,78/+1,14 %**. Dieselbe Klasse wie die drei Stellen, die am 2026-08-22
-nachgezogen wurden.
+**Nachgezogen:** An anderer Stelle standen noch 15,29/+2,3 % und
+9,40/+8,29 %. Beide Zahlen sind seit dem 2026-08-20 (Fund 31, θ_v 0.17.0)
+überholt; gültig sind **15,27/+2,11 %** und **8,78/+1,14 %**. Dieselbe
+Klasse wie die drei Stellen, die am 2026-08-22 nachgezogen wurden.
 
 ### v0.18.0 (kernels 0.20.0) – 2026-08-22 (Rückwärtspass vollständig)
 
@@ -916,7 +915,7 @@ Miner slashen, ohne dass er etwas falsch gemacht hat.
 
 ### Der größere Hebel lag daneben: die Gewichtskopie (v0.16.0)
 
-Der Fahrplan führte als nächsten Schritt „Gewichte liegen als
+Als nächster Schritt war notiert: „Gewichte liegen als
 `Vec<Vec<i8>>`, also eine Heap-Allokation je Zeile". Die Lage war eine
 andere und einfacher zu beheben: Die Ablage im `QTensor` ist **flach und
 war es immer**. Sie wurde nur bei **jedem** Aufruf in die schlechtere Form
@@ -1271,8 +1270,9 @@ LM-Head), `perplexity_probe_hf.py` + `--per-token` (Positionsverteilung),
 (Clipping), `channel_dynamic_range.py` (Kanal-Dynamik),
 `positional_scale_simulation.py` (Positions-Dimension).
 
-**Sieben Kandidaten gemessen ausgeschlossen** — die vollständige Tabelle
-mit Befunden und Werkzeugen steht in `Fahrplan-v3.md`, Phase 12.70.
+**Sieben Kandidaten gemessen ausgeschlossen.** Die Werkzeuge dafür
+liegen unter `INTEGER_LLM/tests/diag/`; jedes trägt seinen Befund im
+Kopf.
 ### v0.12.44 – 2026-08-18
 
 **Fund 19: `1/sqrt(head_dim)` war für `head_dim = 128` um Faktor √2 falsch.**
@@ -1376,8 +1376,9 @@ sie deshalb nie gesehen.
   Paritätstests waren trotzdem grün, weil die Delegation an die Referenz
   per Konstruktion bit-identisch ist. Modulkopf korrigiert; der Kernel
   bleibt mit `#[allow(dead_code)]` und einer ehrlichen Notiz stehen.
-  **Bewusst nicht angebunden** — das braucht einen Paritätslauf auf
-  echter x86_64-Hardware (AGENTS.md).
+  **Bewusst nicht angebunden:** Das braucht einen Paritätslauf auf
+  echter x86_64-Hardware, und unverifizierte Numerik gehört nicht in
+  einen Konsenspfad.
 - Toter `shift_v` in `rshift_round_avx2` entfernt (der Shift selbst nutzt
   korrekt `_mm_set_epi32`; die Variable war Rest eines früheren Versuchs).
 - `unreachable`-Warnungen im NEON-Pfad beseitigt: der Referenz-Fallback

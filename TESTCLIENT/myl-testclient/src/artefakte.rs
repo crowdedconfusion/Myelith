@@ -1350,7 +1350,7 @@ mod loeschen_tests {
         assert_eq!(groesse(8_100_000_000), "7,5 GB");
     }
 
-    /// **Negativtest Artefaktwechsel** (Fahrplan TESTCLIENT, „Tests, die
+    /// **Negativtest Artefaktwechsel** (TESTCLIENT, „Tests, die
     /// für gehärtete Infrastruktur bestanden werden müssen").
     ///
     /// Ein verändertes Artefakt muss zu einem anderen Ankerdigest führen.

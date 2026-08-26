@@ -1,7 +1,7 @@
 //! Die Slashing-Matrix als Datensatz (Punkt 3.2, Whitepaper Kap. 5.5).
 //!
 //! Kap. 5.5 gibt eine Tabelle aus Akteur, Grund und Höhe vor. Der
-//! Fahrplan verlangt sie „als Konfigurationsdatensatz, nicht
+//! Verlangt ist sie „als Konfigurationsdatensatz, nicht
 //! Hartkodierung", und das Akzeptanzkriterium nennt den Grund:
 //! **ein einziger Ort der Wahrheit**.
 //!

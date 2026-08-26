@@ -297,7 +297,7 @@ fn main() {
         }
     };
 
-    // ── MLP-Innenleben (2026-08-20, Fahrplanpunkt 12.77) ─────────────
+    // ── MLP-Innenleben (2026-08-20, Punkt 12.77) ─────────────
     // Der operationsweise Vergleich hat den Fehler auf das MLP
     // eingegrenzt (+2,65 pp relativer L2 in einem Schritt). Die
     // Teilstufen werden hier mit denselben Kernel-Primitiven nachgebildet

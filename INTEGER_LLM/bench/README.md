@@ -13,7 +13,7 @@ Der **einzige** Zielwert in diesem Verzeichnis ist der Determinismus:
 Wiederholte Läufe müssen bitgleich sein, und alle Backends müssen
 dasselbe rechnen. Alles andere sind Kennzahlen, keine Kriterien.
 
-## `run.py` — Durchsatz (Fahrplan 12.64/12.65)
+## `run.py` — Durchsatz (Punkte 12.64 und 12.65)
 
 ```bash
 python3 bench/run.py --backends reference,cpu-simd --no-fp

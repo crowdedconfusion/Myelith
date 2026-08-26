@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests fuer calibrate/src/luts.py (Fahrplan-Punkt 12.17, aktualisiert fuer
+Tests fuer calibrate/src/luts.py (Punkt 12.17, aktualisiert fuer
 theta_v 0.5.0 / v0.12.20): LUT-Generierung ausschliesslich aus den
 Parametern von theta_v/spec.json, inkl. der input_shift-Semantik der
 rsqrt-LUT (Index x repraesentiert x * 2^-input_shift) und der getrennten
@@ -41,8 +41,8 @@ def test_load_nonlinear_spec_structure():
     Und er war doppelt wertlos: Ein Test, der prueft, dass in der Spec
     steht, was in der Spec steht, ist eine Tautologie. Er faellt bei
     **jeder** richtigen Aenderung um und erzeugt Druck, sie
-    zurueckzunehmen - genau das, was AGENTS.md unter „Tests gegen
-    Literale" beschreibt.
+    zurueckzunehmen. Ein Test gegen ein Literal prueft nicht die Regel,
+    sondern den Wert, und wird damit zur Bremse statt zur Sicherung.
 
     Geprueft wird jetzt, was gelten **muss**, damit die LUTs ueberhaupt
     funktionieren. Die Grenzen stehen in den `note`-Feldern der Spec

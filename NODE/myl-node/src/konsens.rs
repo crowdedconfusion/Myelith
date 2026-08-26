@@ -37,8 +37,8 @@
 //! ⚑ **Was an den Vorgabewerten begründet und nicht gemessen ist:**
 //! `propose_ms = 1000` stammt aus „Hälfte der 2-Sekunden-Blockzeit",
 //! nicht aus beobachteter Verbreitung. Auf Loopback kam der Propose in
-//! unter 1 ms an. Was er über ein echtes WAN braucht, ist offen und
-//! steht als Messung in `README/Intern/Hardware-Tests.md`.
+//! unter 1 ms an. **Was er über ein echtes Weitverkehrsnetz braucht,
+//! ist offen** und lässt sich hier nicht messen.
 //!
 //! # ⚑ Die eigene Nachricht muss in den eigenen Automaten
 //!
@@ -925,8 +925,8 @@ mod tests {
     /// dieser Kommentar nachgezogen statt der Erwartung.
     ///
     /// **Bis dahin gilt in der Praxis:** Knoten dicht beieinander
-    /// starten, oder `--bft-frist` über den Startversatz legen. Steht so
-    /// in `README/Intern/Hardware-Tests.md`.
+    /// starten, oder `--bft-frist` über den erwarteten Startversatz
+    /// legen.
     #[test]
     fn fund_67_wer_allein_vorauseilt_bleibt_zurueck() {
         let g = probenetz();

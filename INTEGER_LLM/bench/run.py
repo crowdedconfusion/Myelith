@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Durchsatzmessung je Backend und Operation (Fahrplan 12.64/12.65).
+"""Durchsatzmessung je Backend und Operation (Punkte 12.64 und 12.65).
 
 Misst Prefill- und Decode-Durchsatz für jedes verfügbare Backend und
 vergleicht sie gegen die Gleitkomma-Referenz derselben Maschine.

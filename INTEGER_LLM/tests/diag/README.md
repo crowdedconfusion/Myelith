@@ -10,7 +10,7 @@ Die Sammlung sieht nach Ballast aus: 34 Dateien, viele davon aus einer
 Frage entstanden, die längst beantwortet ist. Sie bleibt trotzdem, und
 zwar aus drei Gründen.
 
-**Ein Fund ohne sein Instrument ist schwer nachzuprüfen.** Der Fahrplan
+**Ein Fund ohne sein Instrument ist schwer nachzuprüfen.** Der Changelog
 hält fest, *was* gemessen wurde; diese Dateien halten fest, *womit*. Wer
 eine Zahl anzweifelt, kann sie damit reproduzieren.
 

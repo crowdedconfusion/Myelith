@@ -3,7 +3,7 @@ Generiert Lookup-Tables fuer Nichtlinearitaeten.
 Float ist hier erlaubt (Offline-Phase).
 
 Alle Parameter (Ranges, input_shift, frac_bits) kommen ausschliesslich aus
-theta_v/spec.json (Abschnitt "nonlinear") — Fahrplan-Punkt 12.17: die
+theta_v/spec.json (Abschnitt "nonlinear") — Punkt 12.17: die
 spec.json ist die Single Source of Truth des numerischen Vertrags, die
 Generatoren duerfen keine eigenen, davon abweichenden Konstanten tragen.
 """

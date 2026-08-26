@@ -43,7 +43,7 @@
 //! einen Konsenspfad zu geben, ist die eine Sache, die dieses Projekt
 //! sich nicht leisten kann — ein Miner mit abweichendem Kernel wird
 //! beim Redundanzvergleich geslasht, ohne etwas falsch gemacht zu haben.
-//! Der AVX2-Pfad ist als eigener Fahrplanpunkt vermerkt und gehört auf
+//! Der AVX2-Pfad ist als eigener Punkt vermerkt und gehört auf
 //! echte x86_64-Hardware (Kritikpunkt K1, Fund A19).
 //!
 //! ## Fund 34 (2026-08-22): Diese Auslassung war zweimal beschrieben

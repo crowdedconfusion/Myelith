@@ -3,7 +3,7 @@
 //! # Was dieser Knoten heute ist
 //!
 //! Ein **Netzknoten**: Er findet Gegenstellen, verbreitet und empfängt
-//! die fünf Protokoll-Topics, misst Latenzen, hält seine
+//! alle Protokoll-Topics, misst Latenzen, hält seine
 //! Verbindungsgrenzen ein und schreibt alles mit.
 //!
 //! **Er produziert keine Blöcke.** Das ist keine Auslassung, sondern der

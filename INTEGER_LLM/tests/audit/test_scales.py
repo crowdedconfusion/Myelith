@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Skalen-Audit: alle Aktivierungs-/Gewichts-Skalen sind Zweierpotenzen
-(Fahrplan-Punkt 12.23).
+(Punkt 12.23).
 
 Eigenständiges Skript nach Projektkonvention (kein pytest). Die
 Determinismus-Garantie der Ganzzahl-Inferenz hängt daran, dass jede

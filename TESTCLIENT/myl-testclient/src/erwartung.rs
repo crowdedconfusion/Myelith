@@ -1,5 +1,5 @@
 //! `--erwarte <digest>`: der Lauf schlägt fehl, wenn er etwas anderes
-//! rechnet als angegeben (Fahrplanpunkt 3.2).
+//! rechnet als angegeben (Punkt 3.2).
 //!
 //! **Wofür das da ist.** Bei einem θ_v-Wechsel ändern sich die
 //! Vergleichswerte **zwangsläufig**. Die Frage ist dann nicht „gleich

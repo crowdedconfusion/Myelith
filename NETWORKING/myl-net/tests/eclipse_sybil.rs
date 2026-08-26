@@ -3,7 +3,7 @@
 //! # Vorgeschichte: erst gemessen, dann gebaut
 //!
 //! Diese Datei entstand am 2026-08-24 als **Messung ohne Verteidigung**.
-//! Der Fahrplan nannte den Punkt „Eclipse-/Sybil-Resistenz-Tests", und
+//! Der Punkt heißt „Eclipse-/Sybil-Resistenz-Tests", und
 //! ein Test, der Resistenz behauptet, müsste sie zuerst implementiert
 //! finden. Sie war es nicht: kein `connection_limits`, kein
 //! `with_peer_score`, keine Schranke je Adressbereich. Zwanzig Sybils

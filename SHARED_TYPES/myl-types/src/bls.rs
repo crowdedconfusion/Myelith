@@ -49,7 +49,7 @@
 //!
 //! Quanten-Einordnung: BLS12-381 ist Shor-anfällig (Discrete-Log) und
 //! ein dokumentierter Migrationspunkt; Kandidaten sind ML-DSA/Dilithium,
-//! SPHINCS+ oder Hybrid-Varianten (GOVERNANCE-Fahrplan,
+//! SPHINCS+ oder Hybrid-Varianten (GOVERNANCE,
 //! Design-Entscheidung 4: Krypto-Agilität).
 //!
 //! Die Kurvenarithmetik kommt aus dem `blst`-Crate (die

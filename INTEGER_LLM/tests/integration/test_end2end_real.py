@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 End-to-End-Test mit echten Gewichten auf WikiText-2-Sequenzen
-(Fahrplan-Punkt 12.19).
+(Punkt 12.19).
 
 Eigenstaendiges Skript nach Projektkonvention (kein pytest). Laeuft in
 drei Stufen:

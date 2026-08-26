@@ -1,11 +1,18 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.8.0
-> **Datum:** 2026-08-23
+> **Version:** 0.9.0
+> **Datum:** 2026-08-26
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
-> α=2/31 — Details im Fahrplan); 🎉 **Phase 2 abgeschlossen**
-> (`myl-tokenomics` v0.1.1–v0.2.4, Akzeptanzkriterien erfüllt).
+> α=2/31); 🎉 **Phasen 1 bis 4 abgeschlossen**, Phase 5 offen
+> (Auslastungsboden und Subventionsplan).
+> **141 Tests grün** (121 Modultests, 17 adversariale, 3 Akzeptanz).
+>
+> Gebaut sind damit: Prägefunktion und EMA, Verteilung nach Kap. 5.3, die
+> vTFE-Zuschreibungsregel, ganzzahliges `exp()` und Credit-Preisbildung,
+> Stake-Hinterlegung und Slashing-Matrix, die Sicherheitsbedingung
+> S_min als Prüffunktion, Anlaufphase, Genesis-Verteilungsmechanik und
+> der Self-Dealing-Schutz.
 
 Prägefunktion, Burn-and-Mint-Kreislauf, Credit-Preisbildung,
 Staking/Slashing-Matrix, Ausgabestruktur und Genesis. Referenzimplementierung
@@ -32,7 +39,7 @@ fertige BFT-Blockproduktion ist dafür noch nicht vorausgesetzt.
 
 ```
 TOKENOMICS/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-tokenomics/           Tokenomik-Berechnungen (Kap. 5)
     └── src/
         ├── lib.rs             Fixed-Point-Grundregeln, Einheiten-Skalierungen
@@ -84,6 +91,38 @@ verletzt keine Obergrenze.
 
 ## Changelog
 
+### v0.9.0 – 2026-08-25 (⚑ Fund 60: der MoE-Term in der Gewichtsarbeit)
+
+Nachgetragen am 2026-08-26: Der Eintrag fehlte, obwohl die Version schon
+in `Cargo.toml` stand.
+
+⚑ **Fund 60, an derselben Naht wie Fund 51: zwischen COMPUTE_PIPELINE und
+TOKENOMICS.** `ModellProfil::macs_je_layer` rechnete die volle
+MLP-Breite und **keinen Router**. Bei einem Expertengemisch rechnet je
+Token aber nur `top_k` Experten der Breite `moe_intermediate_size`.
+
+**Der eigentliche Bruch war nicht die Zahl, sondern ihre Herkunft.**
+`myl-pod::modell_profil` liest `intermediate_size` aus
+`gate_proj.rows()` der ersten Layer. Eine MoE-Layer hat kein `gate_proj`,
+sie hat 128 Experten mit je einem. Wer dort den ersten nimmt, bekommt bei
+Qwen3-30B-A3B **768 statt 6144** und spricht dem Shard ein Achtel seiner
+Arbeit zu.
+
+**Behoben:** `ModellProfil` trägt `num_experts`, `num_experts_per_tok`
+und `moe_intermediate_size`; `num_experts == 0` heißt dicht, dann rechnet
+die Funktion wie zuvor.
+
+⚑ **Ein Zufall, den ein Test festhält.** Bei Qwen3-30B-A3B gilt
+`top_k · moe_intermediate_size = 8 · 768 = 6144 = intermediate_size`. Die
+dichte Formel träfe dort bis auf den Router-Term **zufällig** zu.
+`test_der_zufall_bei_qwen3_30b_ist_keine_regel` hält beides fest: dass
+die Zahlen hier zusammenfallen, und dass sie es bei anderem `top_k`
+deutlich nicht tun.
+
+**Was sich nicht ändert:** Die Zuschreibung bleibt ohne Anfragezustand
+nachrechenbar. Genau darauf kommt es an, denn eine Vergütungsregel, die
+den Zustand der einzelnen Anfrage braucht, kann kein Zweiter nachprüfen.
+
 ### v0.8.0 – 2026-08-24 (die entschiedenen Punkte umgesetzt)
 
 - **`self_dealing_sicher_konservativ`** prüft gegen das **untere** Ende
@@ -106,7 +145,7 @@ verletzt keine Obergrenze.
 
 ### v0.7.0 – 2026-08-24 (Phase 3 und 4 vollständig)
 
-Vier neue Module, und mit ihnen ist der TOKENOMICS-Fahrplan bis auf die
+Vier neue Module, und mit ihnen ist TOKENOMICS bis auf die
 adversariale Ebene durch.
 
 | Modul | Punkt | was es rechnet |
@@ -150,7 +189,7 @@ Slash schwächt die Abschreckung und ist durch eine Parameteränderung
 heilbar; ein zu hoher Slash vernichtet den Einsatz eines ehrlichen
 Teilnehmers und ist es nicht. Dasselbe gilt für den Faktor der
 Trainings-Stichprobenrate, den Kap. 5.5 ebenfalls nicht beziffert. Beides
-steht als offener Punkt im Fahrplan.
+ist ein offener Punkt.
 
 #### Wie „kein Vorverkauf" durchgesetzt wird
 
@@ -177,8 +216,8 @@ es als änderbaren Parameter.
 
 Heute harmlos, weil der Vorgabewert `u64::MAX` ist. Die **Möglichkeit**, ihn
 scharf zu stellen, widerspricht dem Kapitel. Hängt mit Fund 48 zusammen
-(Kap. 10.3 schützt ein „Gesamtangebot", das Kap. 5.7 ausschließt) und steht
-als offener Punkt im Fahrplan.
+(Kap. 10.3 schützt ein „Gesamtangebot", das Kap. 5.7 ausschließt) und ist
+ein offener Punkt.
 
 ### v0.6.0 – 2026-08-24 (Punkt 3.3: die Sicherheitsbedingung als Funktion)
 
@@ -194,8 +233,8 @@ Tabelle aus B.8.2 (250 000 / 40 000 / 10 000 / 1 600 / 400 MYL bei 2, 5,
 10, 25 und 50 Prozent). Alle fünf Zeilen stimmen.
 
 **Vorgezogen aus Phase 3**, weil `myl-governance` sie für die
-Invarianten-Kopplung (GOVERNANCE 1.3) braucht. Der Fahrplan verlangt
-ausdrücklich, dass GOVERNANCE die Funktion **benutzt** statt sie ein
+Invarianten-Kopplung (GOVERNANCE 1.3) braucht. Ausdrücklich verlangt
+ist, dass GOVERNANCE die Funktion **benutzt** statt sie ein
 zweites Mal zu schreiben; das Audit vom 2026-08-18 fand mit A7 den Fall,
 in dem dieselbe Formel an zwei Orten stand und nur eine gepflegt wurde.
 
@@ -374,7 +413,8 @@ COMPUTE_PIPELINE-Entwurf ökonomisch nicht neutral.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter

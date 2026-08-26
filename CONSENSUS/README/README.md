@@ -4,7 +4,7 @@
 > **Datum:** 2026-08-26
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
-> Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
+> Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
 > Phase 2 ✅ abgeschlossen (`myl-ledger` v0.1.1–v0.1.5,
 > `myl-scheduler` v0.2.1–v0.2.9); **Phase 3 ✅ vollständig**
 > (`myl-consensus` v0.3.1–v0.5.0): signiertes, stimmgewichtetes BFT mit
@@ -12,8 +12,15 @@
 > Rundenwechsel mit Sperrmechanik — Safety **und** Liveness, die
 > Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft;
 > **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
-> 4.2 Epochenabschluss, 4.3 DA-Schicht) — **alle vier Phasen
+> 4.2 Epochenabschluss, 4.3 DA-Schicht): **alle vier Phasen
 > abgeschlossen**.
+> **335 Tests grün** (240 `myl-consensus`, 67 `myl-scheduler`,
+> 28 `myl-ledger`).
+>
+> **Seit dem 26. August laufen die BFT-Runden über ein echtes Netz.**
+> Die Verdrahtung liegt in der Komponente NODE; hier kam die Form auf
+> der Leitung dazu (`Konsensnachricht`) und die Bindung der
+> Zertifikatsrunde an die Signatur des Vorschlags.
 
 BFT-Blockproduktion, Proof-of-Inference-Aggregation, Staking/Slashing,
 Ledger-Zustandsübergänge, deterministischer Epochen-Scheduler.
@@ -39,7 +46,7 @@ Detail (siehe TOKENOMICS) — bildet aber deren gemeinsame Grundlage
 
 ```
 CONSENSUS/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-ledger/               L1-Ledger (Anhang A.5)
     ├── src/
     │   ├── lib.rs             Konsens-Grundregeln (reine Funktionen,
@@ -330,7 +337,7 @@ Token das Gewicht **nicht** mehr nennenswert bewegt.
 ### myl-consensus v0.9.0 – 2026-08-19 (Punkt 4.3: DA-Schicht — Phase 4 vollständig)
 
 Segmentdaten werden erasure-codiert abgelegt und über die Streitfrist
-vorgehalten. Damit ist **Phase 4 abgeschlossen und der CONSENSUS-Fahrplan
+vorgehalten. Damit ist **Phase 4 abgeschlossen und CONSENSUS
 vollständig.**
 
 **Die Erasure-Mathematik liegt in `myl-types::erasure`**, nicht hier. Sie
@@ -502,7 +509,9 @@ Registrierung zwei Epochen vor Gruppenbildung schließt — eine Eigenschaft
 des Zeitplans, keine kryptografische Garantie. Empfehlung:
 Proof-of-Possession bei der Registrierung. Konsensrelevant und
 komponentenübergreifend, deshalb dokumentiert und nicht nebenbei
-behoben; Details im Fahrplan-Master.
+behoben. Umgesetzt am 2026-08-18 in `myl-types`: `BlsSecretKey::
+prove_possession` und `BlsPublicKey::verify_possession`, verlangt von
+`ValidatorRegistry::register`.
 
 **Tests:** 26 neue in `poi.rs`, Crate insgesamt **173 Tests grün**
 (163 Unit + 10 Akzeptanzmatrix), clippy mit `-D warnings` sauber.
@@ -560,7 +569,7 @@ Aggregat-Verifikation nicht als DoS-Fläche vorn steht.
 
 **Tests:** 34 neue Unit-Tests in `round_change.rs`, 3 in `signing.rs`,
 dazu die Akzeptanz-Testmatrix `tests/liveness.rs` mit 21 simulierten
-Validatoren (Fahrplan verlangt ≥ 20) — Leader-Ausfall über drei Runden,
+Validatoren (verlangt sind ≥ 20) — Leader-Ausfall über drei Runden,
 wachsende Fristen, Sperre gegen konkurrierenden Block, byzantinische
 Minderheit unter f < 1/3 (600 von 1401 nötigem Quorumgewicht),
 Partition unter GST (nichts commitet) und über GST (alle commiten
@@ -572,7 +581,7 @@ clippy mit `-D warnings` sauber.
 innerhalb einer Epoche ab. Ein Zertifikat wird gegen die übergebene
 stimmberechtigte Menge geprüft; über eine Epochengrenze hinweg müsste
 die Menge der Ursprungsepoche mitgeführt werden. Dokumentiert, nicht
-implementiert — bislang kein Fahrplanpunkt.
+implementiert, bislang ohne eigenen Punkt.
 
 ### myl-scheduler v0.2.11 – 2026-08-18 (Fund A20: Epoche geht in den VRF-Seed)
 
@@ -606,7 +615,8 @@ und Verifikation nutzen dieselbe Bytefolge. Regressionstest
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter

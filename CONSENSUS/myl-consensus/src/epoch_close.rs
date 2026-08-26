@@ -46,7 +46,7 @@
 //! ## Streitfrist
 //!
 //! Der Abschluss ist zunächst **vorläufig**. Die Streitfrist beträgt
-//! 7 Tage (Design-Entscheidung 4 des CONSENSUS-Fahrplans, als
+//! 7 Tage (Design-Entscheidung 4 des CONSENSUS, als
 //! Epochenzahl parametriert); innerhalb dieser Frist kann ein
 //! Schiedsspruch Segmente widerlegen und Arbeit zurückbuchen
 //! ([`EpochClosing::apply_clawback`]). Erst
@@ -94,7 +94,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `DaStore` dauert jetzt 24-mal so lange. Ob 7 Tage der richtige Wert
 /// sind oder ob die Design-Entscheidung angesichts dessen zu ändern ist,
 /// ist eine Abwägung zwischen Speicherkosten und Anfechtungsfenster und
-/// steht als offener Punkt im Fahrplan. Der Wert hier folgt der
+/// ist ein offener Punkt. Der Wert hier folgt der
 /// **Entscheidung von 2026-08-13**, weil eine Konstante, die ihrer
 /// eigenen Begründung widerspricht, in jedem Fall falsch ist.
 pub const DEFAULT_DISPUTE_EPOCHS: u64 = 168;

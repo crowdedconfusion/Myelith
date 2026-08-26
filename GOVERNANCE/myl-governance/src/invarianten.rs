@@ -344,7 +344,7 @@ fn mindeststake(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
         .expect("S ist eine Ganzzahl");
 
     // Die Formel steht in myl-tokenomics und wird hier **benutzt**, nicht
-    // wiederholt (Fahrplan TOKENOMICS 3.3).
+    // wiederholt (TOKENOMICS 3.3).
     let noetig = s_min(g, pz, pn).map_err(|e| InvariantenBruch {
         invariante: Invariante::MindestStake,
         parameter: Parameter::Stichprobenrate,

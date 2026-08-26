@@ -1,7 +1,7 @@
 //! Phase-1-Akzeptanztest: 4-Node-Pod mit deterministischer Token-Ausgabe
 //! und Manipulationserkennung.
 //!
-//! Akzeptanzkriterien (COMPUTE_PIPELINE-Fahrplan Phase 1):
+//! Akzeptanzkriterien (COMPUTE_PIPELINE Phase 1):
 //! 1. Der 4-Node-Pod liefert bei wiederholtem identischem Prompt eine
 //!    **bitgleiche** Token-Sequenz (Determinismus).
 //! 2. Die Pod-Ausgabe ist **bitgleich mit der Einzelknoten-Runtime**

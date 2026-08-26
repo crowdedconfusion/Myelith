@@ -4,7 +4,7 @@ Evidenz-Lauf 3: Durchsatz-Benchmark der Integer-Inferenz.
 
 Misst Prefill- und Decode-Durchsatz (Tokens/s) des Referenz-Backends
 (reine Skalar-Implementierung, noch ohne SIMD/CUDA/ROCm — die Backends
-folgen laut Fahrplan 12.35–12.55 bewusst nachgelagert). Die Zeitmessung
+folgen in den Phasen 12.35 bis 12.55 bewusst nachgelagert). Die Zeitmessung
 läuft in der Rust-Probe selbst (runtime/src/bin/bench_probe.rs), also
 ohne Modellladezeit und ohne Python-Overhead.
 

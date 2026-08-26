@@ -1,10 +1,14 @@
 # governance (`myl-governance`)
 
 > **Version:** 0.1.0
-> **Datum:** 2026-08-24
+> **Datum:** 2026-08-26
 > **Status:** **Phase 1 abgeschlossen** (Punkte 1.1–1.3): Parameter-Registry
 > mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
-> Invarianten-Kopplung. 21 Tests grün.
+> Invarianten-Kopplung. **28 Tests grün** (17 Akzeptanz, 11 Gleichstand).
+>
+> **Was fehlt, ist die Abstimmungsmechanik selbst** (Phasen 2 und 3).
+> Heute prüft die Registry, ob ein Vorschlag zulässig **wäre**; wer über
+> ihn abstimmt und wie ausgezählt wird, ist nicht gebaut.
 >
 > ⚑ **Fund 50 beim ersten Gleichstands-Test:** Die Streitfrist stand auf
 > 7 Epochen mit dem Kommentar „entspricht 7 Tagen". Unter den
@@ -38,7 +42,7 @@ sind dort implementiert — GOVERNANCE ändert sie, TOKENOMICS führt sie aus).
 
 ```
 GOVERNANCE/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-governance/
     ├── Cargo.toml
     ├── src/
@@ -153,8 +157,8 @@ Epochenlänge und Konstante.
 **Korrigiert auf 168 Epochen**, der Entscheidung von 2026-08-13 folgend.
 **Die Kosten gehören genannt:** Die Vorhaltung im `DaStore` dauert damit
 24-mal so lange. Ob 7 Tage der richtige Wert sind, ist eine Abwägung
-zwischen Speicherkosten und Anfechtungsfenster und steht als offener Punkt
-im Fahrplan.
+zwischen Speicherkosten und Anfechtungsfenster und ist ein offener
+Punkt.
 
 Nebenbei: Vier Tests im `DaStore` und einer im Epochenabschluss prüften
 die Frist gegen **getippte Zahlen** statt gegen die Konstante und schlugen
@@ -179,8 +183,8 @@ Eine Obergrenze für `c` (0,8, das obere Ende des Bandes) begrenzt den
 Schaden auf `s < 4`, **schließt die Lücke aber nicht**. Was sie schlösse,
 ist eine Entscheidung, die dieses Modul nicht treffen kann: `c` gehört
 gemessen statt abgestimmt, oder `s` gehört gegen das **untere** Ende des
-Bandes geprüft (c = 0,6 ⇒ s < 1,5). Steht im Fahrplan; als Tatsache
-festgehalten in `tests/akzeptanz.rs`.
+Bandes geprüft (c = 0,6 ⇒ s < 1,5). Offen; als Tatsache festgehalten in
+`tests/akzeptanz.rs`.
 
 #### ⚑ Fund 48: „Gesamtangebot" ist ein Verfassungsrang ohne Gegenstand
 
@@ -191,11 +195,10 @@ sich aus Prägung minus Verbrennung, und Anhang B.8.3 rechnet ausdrücklich
 durch, was ein Emissionsdeckel bewirkt, mit dem Ergebnis „Ein Deckel wirkt
 damit nicht als Knappheitsgarantie, sondern als Kapazitätsbremse". Der
 einzige Deckel des Protokolls ist `M_max` je Epoche, und der steht im
-Fahrplan dieser Komponente als **änderbarer** Parameter.
+dieser Komponente als **änderbarer** Parameter geführt.
 
 Umgesetzt als die einzige Lesart, die etwas Durchsetzbares ergibt: „Es
 gibt keine andere Quelle von MYL als die Prägung gegen verifizierte
-Arbeit." Die Entscheidung gehört dem Projektinhaber und steht im
-Fahrplan.
+Arbeit." Die endgültige Entscheidung gehört dem Projektinhaber.
 
 Noch keine Version veröffentlicht.

@@ -1,5 +1,5 @@
 //! `modellstaende`: was sich beim Wechsel von θ_v A nach B geändert hat
-//! (Fahrplanpunkt 3.3).
+//! (Punkt 3.3).
 //!
 //! **Die andere Frage.** `vergleich` fragt: Rechnen zwei *Maschinen*
 //! dasselbe? Dort sind verschiedene Modellstände ein Ausschlussgrund,
@@ -478,7 +478,7 @@ mod tests {
     /// **Der Fall, der die erste Fassung dieses Moduls widerlegt hat.**
     /// Drei Stände, zwei davon mit demselben Wert: Die erste Fassung
     /// urteilte über alle Stände auf einmal, meldete „geändert" und
-    /// verschwieg damit genau das Paar, nach dem der Fahrplanpunkt fragt.
+    /// verschwieg damit genau das Paar, nach dem die Prüfung fragt.
     /// Aufgefallen beim ersten Lauf gegen echte Protokolle, nicht im Test.
     #[test]
     fn zwei_von_drei_staenden_mit_gleichem_wert_werden_genannt() {

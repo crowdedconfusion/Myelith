@@ -1,6 +1,6 @@
 //! Akzeptanz-Testmatrix Phase 3 — Safety und Liveness unter f < 1/3.
 //!
-//! Der Fahrplan (CONSENSUS, Phase 3) verlangt wörtlich: „Safety und
+//! Das Akzeptanzkriterium der Phase 3 verlangt wörtlich: „Safety und
 //! Liveness unter f < 1/3 byzantinischen Stimmen in einem Netz von ≥ 20
 //! simulierten Validatoren (Standard-BFT-Testmatrix: Leader-Ausfall,
 //! Netzwerkpartition unter/über GST, verzögerte Nachrichten)."
@@ -32,7 +32,7 @@ use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
 use std::collections::BTreeMap;
 
-/// Komiteegröße der Matrix — über der Fahrplan-Forderung von ≥ 20.
+/// Komiteegröße der Matrix — über der Forderung von ≥ 20.
 const N: u8 = 21;
 
 /// Stimmgewicht je Validator (alle gleich, damit „Knotenzahl" und

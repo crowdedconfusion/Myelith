@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Tiefenwachstum: bleibt eine als Identitaet gestartete Ebene tot?
-(Fahrplanpunkt 1.3, Kap. 7.5)
+(Punkt 1.3, Kap. 7.5)
 
 ## Die Frage
 
@@ -27,8 +27,8 @@ erledigt, mit konkreten Zahlen ("63 von 128", "alle 128") und dem Beleg
 
 **Beides gab es nicht.** `expansion_simulation.py` misst ausschliesslich
 Breitenwachstum, das sagt sein eigener Kopf; ein Protokoll mit diesen
-Zahlen existiert im ganzen Repositorium nicht. Der Fahrplan fuehrte 1.3
-zu Recht als "nicht gemessen".
+Zahlen existiert im ganzen Repositorium nicht. Punkt 1.3 war zu Recht
+als "nicht gemessen" gefuehrt.
 
 Dieselbe Klasse wie Fund 27 und Fund 37: eine schriftliche Zusage ohne
 Deckung. Diese Datei stellt die Deckung her.

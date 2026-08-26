@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(clamp_i8(50), 50);
     }
 
-    /// Fixierter Divisionssemantik-Vektor (Fahrplan-Punkt 12.24).
+    /// Fixierter Divisionssemantik-Vektor (Punkt 12.24).
     ///
     /// Division durch Zweierpotenzen ist als arithmetischer Rechtsshift
     /// mit Round-to-nearest-even festgelegt (spec.json:
@@ -294,7 +294,7 @@ mod tests {
         }
     }
 
-    /// Fixierter Überlauf-/Sättigungsvektor (Fahrplan-Punkt 12.25).
+    /// Fixierter Überlauf-/Sättigungsvektor (Punkt 12.25).
     ///
     /// Überlaufverhalten ist Sättigung (spec.json: `overflow =
     /// explicit_clamp_only`, kein Wrap). Dieser Vektor fixiert die

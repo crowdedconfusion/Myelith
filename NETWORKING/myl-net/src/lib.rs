@@ -6,8 +6,7 @@
 //! Ende-zu-Ende-verschlüsselte Kanäle für Nutzer↔Gateway↔Pipeline und
 //! zwischen den Shards eines Pods (Kap. 9.2).
 //!
-//! Design-Entscheidungen (2026-08-13, dokumentiert in
-//! `NETWORKING/README/Fahrplan-v1.md`):
+//! Design-Entscheidungen (2026-08-13):
 //!
 //! 1. **P2P-Stack: rust-libp2p** — Gossipsub, Kademlia-DHT, Noise-
 //!    Transport. Quantum-Vermerk: Noise/X25519 ist Shor-anfällig und als

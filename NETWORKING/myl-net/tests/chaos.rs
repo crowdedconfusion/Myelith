@@ -10,8 +10,9 @@
 //! wäre eine Überbehauptung, und eine Überbehauptung in einem
 //! Härtungstest ist schlimmer als eine Lücke: Sie wird geglaubt.
 //!
-//! Diese Messung steht deshalb in `README/Intern/Hardware-Tests.md` und
-//! gehört auf gemietete Maschinen.
+//! Diese Messung gehört deshalb auf Maschinen, auf denen sich der
+//! Netzstapel des Betriebssystems konfigurieren lässt, und nicht in
+//! diese Testsuite.
 //!
 //! **Was hier gemessen wird, ist die Schicht darüber:** Trennung,
 //! Partition, Heilung, ein hängender Knoten und der Wiedereinstieg. Das

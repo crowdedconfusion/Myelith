@@ -191,7 +191,7 @@ pub struct Kette {
     /// könnte ein Knoten einem Neuling nicht helfen, und der Rückstand
     /// wäre endgültig. Für einen Probelauf im Speicher zu halten ist
     /// vertretbar; ein echtes Netz legt sie auf die Platte, und das
-    /// steht als offener Punkt im Fahrplan.
+    /// ist ein offener Punkt.
     verlauf: std::collections::BTreeMap<u64, Block>,
     /// Das Blockprotokoll auf der Platte, falls eines geführt wird.
     ///

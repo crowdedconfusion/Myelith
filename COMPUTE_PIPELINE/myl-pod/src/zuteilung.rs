@@ -5,8 +5,8 @@
 //! `myl-scheduler` rechnet aus, **wer** in welchen Pod gehört;
 //! [`crate::standby::PodBesetzung`] führt, **wer gerade wo sitzt**. Bis
 //! zum 2026-08-26 gab es keine Stelle, die das eine ins andere
-//! überführte; der Fahrplan hielt das als „Schnittstelle ✅,
-//! Verdrahtung ❌" fest.
+//! überführte: Die Schnittstelle stand auf beiden Seiten, die
+//! Verdrahtung dazwischen fehlte.
 //!
 //! [`plane_epoche`] geht vom **geprüften** Epochenseed über Filter,
 //! Clusterbildung und Pod-Zuteilung; [`epochenwechsel_aus_zuteilung`]

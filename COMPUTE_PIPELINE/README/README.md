@@ -1,12 +1,17 @@
 # compute-pipeline (`myl-pod`)
 
 > **Version:** 0.11.0
-> **Datum:** 2026-08-23
-> **Status:** 🎉 **Phase 2.1 abgeschlossen** (Punkte 1.1–1.4, 2.1):
-> `shard_loop` mit Spur-Hashes und Manipulationserkennung,
-> `coordinator_loop` mit Micro-Batching, KV-Cache-Session-Affinität,
-> erasure-codierte DA-Archivierung, Micro-Batching-Fenster-Tuning,
-> Pipeline-Tracker für überlappende Batch-Verarbeitung.
+> **Datum:** 2026-08-26
+> **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
+> (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
+> Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
+> KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
+> Ausfallsicherung mit Standby-Übernahme, Epochenübergang und seit dem
+> 26. August die **Verdrahtung mit dem Epochen-Scheduler**.
+> **81 Tests grün.**
+>
+> **Offen:** die Ersatzsuche des Koordinators (3.4 bis 3.6) und der
+> Pod-Lauf über getrennte Hosts.
 
 Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
 Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
@@ -37,28 +42,37 @@ Netzwerk-Ebene mit echter Miner-Rotation, Redundanz und Epochen-Wechsel.
 
 ```
 COMPUTE_PIPELINE/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-pod/                  das Pod-Crate (Bibliothek + Node-Binary)
     ├── src/
     │   ├── lib.rs             Crate-Wurzel: #![deny(unsafe_code)], Module
-    │   ├── wire.rs            Wire-Protokoll zwischen Shards (Borsh, Flags)
-    │   ├── trace.rs           Spur-Hashes + Übergangs-Signaturen (BLS)
-    │   ├── shard.rs           shard_loop: Eingangs-Prüfung, Forward,
+    │   ├── wire.rs            Drahtformat zwischen Shards (Borsh, Flags)
+    │   ├── trace.rs           Spur-Hashes und Übergangssignaturen (BLS)
+    │   ├── shard.rs           shard_loop: Eingangsprüfung, Forward,
     │   │                      Signieren, Session-Affinität, DA-Archiv
     │   ├── da.rs              DA-Archivierung (ErasureCoder, XOR-Parität)
+    │   ├── micro_batch.rs     Micro-Batching-Fenster und Pipeline-Tracker
+    │   ├── standby.rs         Besetzung eines Pods: k Positionen, zwei in
+    │   │                      Reserve, Übernahme und Epochenwechsel
+    │   ├── zuteilung.rs       vom geprüften Epochenseed zur Besetzung:
+    │   │                      die Verbindung zum Epochen-Scheduler
     │   ├── coordinator.rs     coordinator_loop: Micro-Batching, Dispatch,
     │   │                      PoI-Bündel-Aggregation
     │   └── main.rs            myl-pod-node-CLI
     └── tests/
-        └── pod_e2e.rs         Akzeptanztest: Determinismus + Bitgleich +
-                               Manipulationserkennung
+        ├── pod_e2e.rs         Akzeptanztest: Determinismus, Bitgleichheit,
+        │                      Manipulationserkennung
+        ├── adversarial.rs     böswillige Nachbarn und verstümmelte Spuren
+        ├── layer_granular.rs  variable Knotenzahl, Zuschnittsinvarianz
+        └── koordinator_byzantinisch.rs
+                               ein Koordinator, der falsch aggregiert
 ```
 
 ## Changelog
 
 ### v0.11.0 – 2026-08-26 (Punkt 3.3: der Scheduler ist verdrahtet)
 
-`src/zuteilung.rs` schließt die Lücke, die der Fahrplan seit dem
+`src/zuteilung.rs` schließt die Lücke, die seit dem
 2026-08-24 als „Schnittstelle ✅, Verdrahtung ❌" führte. `plane_epoche`
 geht vom **geprüften** Epochenseed über Filter, Clusterbildung und
 Pod-Zuteilung; `epochenwechsel_aus_zuteilung` speist das Ergebnis in die
@@ -156,8 +170,8 @@ erst dann gibt es ein Aggregat, das gegen die Mitgliedermenge gilt. Der
 Koordinator kann das nicht allein, sonst wäre die Zustimmung der
 Mitglieder eine Fiktion, und genau gegen diese Fiktion ist die Signatur
 da (Kap. 5.5: 100 % Slash bei falscher Aggregation).
-`Coordinator::signierbotschaft` liefert die Botschaft; die Runde steht im
-Fahrplan.
+`Coordinator::signierbotschaft` liefert die Botschaft; die
+Signaturrunde darüber ist ein offener Punkt.
 
 **Warum es niemandem aufgefallen ist:** `myl-pod` hing bis heute nicht an
 `myl-consensus` und umgekehrt. Beide Seiten sind für sich getestet, die
@@ -335,7 +349,7 @@ Code stand dazu „Platzhalter für die FLOPs-Metrik". Ein Bündel über
 tausend Token beanspruchte damit dieselbe eine Einheit wie eines über
 zwei, und ein Shard mit sieben Layern dasselbe wie einer mit zweien.
 
-Der COMPUTE_PIPELINE-Fahrplan warnte wörtlich davor, die Zuschreibung
+Ausdrücklich vermerkt war die Warnung davor, die Zuschreibung
 festzulegen, *„bevor die erste Implementierung sie stillschweigend
 trifft"*. Sie hatte sie längst getroffen.
 
@@ -404,13 +418,13 @@ gegeneinander, prüft die Schrittzahl mit und hat eine Gegenprobe
 daneben (`ein_verschobenes_logit_bewegt_den_digest`): Ein Digest, der sich
 nie bewegt, besteht jeden Gleichheitstest.
 
-**Fund 38, nebenbei und offen:** Der Fahrplan begründet die
-`pipeline_hash`-Bindung damit, dass verschiedene Shard-Layouts
-verschiedene Token lieferten. Das stimmte, solange die
-Boundary-Reskalierung existierte, und die ist seit Fund 20/26 ersatzlos
-entfallen. Acht Layouts von 1 bis 24 Shards liefern heute denselben
-Digest. Die Bindung bleibt trotzdem im Code, siehe die Begründung im
-Fahrplan.
+**Fund 38, nebenbei und offen:** Die `pipeline_hash`-Bindung wurde
+damit begründet, dass verschiedene Shard-Layouts verschiedene Token
+lieferten. Das stimmte, solange die Boundary-Reskalierung existierte, und
+die ist seit Fund 20/26 ersatzlos entfallen. Acht Layouts von 1 bis 24
+Shards liefern heute denselben Digest. Die Bindung bleibt trotzdem im
+Code: Sie kostet nichts, und wer sie entfernt, muss die Zuschnitts-
+invarianz erst für jedes künftige Modell neu belegen.
 
 *Zur Nummer: Die Crate stand bereits auf v0.2.4, dieser Kopf nannte noch
 0.2.2. Der Sprung auf 0.3.0 zieht beides zusammen und markiert die neue
@@ -497,7 +511,8 @@ den `sha256:0000`-Platzhalter der 8-Node-Konfiguration gefangen.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter

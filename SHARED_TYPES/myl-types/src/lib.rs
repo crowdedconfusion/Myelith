@@ -4,8 +4,7 @@
 //! Myelith-Komponente importiert diese Typen, statt sie neu zu
 //! definieren.
 //!
-//! Festgelegte Protokoll-Parameter (Design-Entscheidungen vom 2026-08-12,
-//! dokumentiert in `SHARED_TYPES/README/Fahrplan-v1.md`):
+//! Festgelegte Protokoll-Parameter (Design-Entscheidungen vom 2026-08-12):
 //!
 //! - **Hash:** SHA-256 — ein Hash für das gesamte Protokoll
 //!   (konsistent mit den θ_v-/Artefakt-Hashes in INTEGER_LLM).

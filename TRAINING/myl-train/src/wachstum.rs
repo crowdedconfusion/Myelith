@@ -1,5 +1,5 @@
 //! Wachstumsoperator: ein Modell wächst, ohne dabei schlechter zu werden
-//! (Whitepaper Kap. 7.5, Fahrplanpunkt 1.2).
+//! (Whitepaper Kap. 7.5, Punkt 1.2).
 //!
 //! ## Warum ganzzahlig besser ist als in Gleitkomma
 //!
@@ -311,7 +311,7 @@ mod tests {
         assert_ne!(aufteilen(-3).0, -3 / 2);
     }
 
-    /// **Das Akzeptanzkriterium des Fahrplanpunkts.** Bitgleich, geprüft
+    /// **Das Akzeptanzkriterium des Punkts.** Bitgleich, geprüft
     /// über einen Digest, nicht über eine Toleranz.
     #[test]
     fn breitenwachstum_ist_exakt_funktionserhaltend() {

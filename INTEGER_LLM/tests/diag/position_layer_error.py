@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ebenenfehler ueber ALLE Positionen — ein Instrument, eine Referenz.
 
-**Warum es diese Messung gibt (2026-08-20, Fahrplanpunkt 12.77).**
+**Warum es diese Messung gibt (2026-08-20, Punkt 12.77).**
 Die Kernaussage der bisherigen Eingrenzung lautete: an Position 0 liegt
 unser Pfad auf Schema-Niveau (2,08 %), ab Position 1 beim Doppelten
 (4,53 %). Diese beiden Zahlen stammen aber aus **verschiedenen

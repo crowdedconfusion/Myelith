@@ -139,7 +139,7 @@ ranges, not over the hash of the whole, because anyone who verifies and
 then deletes would pass every hash check. Paid from the treasury, not
 from the mint.
 *Status:* draft, no crate. Chap. 3.3 knows six roles and this is not one
-of them; the entry for it sits in `README/Intern/Whitepaper-Änderung.md`.
+of them; it is queued for the next revision of the paper.
 *In the draft:* `STORAGE/README/README.md`
 
 **Gateway** — accepts user requests, routes them to pods, returns the
@@ -719,8 +719,8 @@ attribution therefore stays recomputable without request state.
 **Status: the integer path carries it.** Qwen3-30B-A3B runs as an
 artefact, bit-identical across four independent pipeline processes and the
 single node, with no measurable gap in → [perplexity](#perplexity). The
-published whitepaper v0.3 stays untouched; the proposed wording for
-chap. 10.1 sits in `README/Intern/Whitepaper-Änderung.md`.
+published whitepaper v0.3 stays untouched; chap. 10.1 will be brought
+into line in the next revision.
 
 **The canonical tie-break.** Two experts can receive the same router
 value. Who wins then has to be fixed, otherwise two honest nodes diverge,
@@ -747,7 +747,7 @@ true range systematically. Understated scales saturate in production.
 
 *In code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 probe `runtime/src/bin/router_probe.rs`
-*In the roadmap:* `INTEGER_LLM/README/Fahrplan-v3.md`, phase 12.81
+*Measured in:* `INTEGER_LLM/eval/results/`, model `qwen3-30b-a3b`
 
 ### KV cache
 
@@ -1901,12 +1901,10 @@ were omitted, inserted or reordered.
 This section is aimed mainly at coding agents. It explains not *what* is
 being built but *how* — and why the rules are what they are.
 
-> **A note on the references in this section.** The binding version of
-> these rules lives in `AGENTS.md` and
-> `README/Intern/State-of-the-Project.md` (section 8). Both are
-> **working-internal and not part of the publication** — if you only have
-> the public repository in front of you, you will not find them. This
-> section is therefore written to be complete without them.
+> **A note.** This section describes how the project works in a way that
+> stands on its own. The rules are not an end in themselves: every one of
+> them grew out of a concrete mistake, and the mistake is named alongside
+> it.
 
 ### Open-source threat model
 

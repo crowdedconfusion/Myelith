@@ -1,13 +1,14 @@
 # shared-types (`myl-types`)
 
 > **Version:** 0.4.0
-> **Datum:** 2026-08-19
+> **Datum:** 2026-08-26
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
+> **129 Tests grün.**
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -27,7 +28,7 @@ Keine — SHARED_TYPES ist die Basiskomponente des Protokolls.
 
 ```
 SHARED_TYPES/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-types/                das Protokoll-Crate (Bibliothek, kein Binary)
     └── src/
         ├── lib.rs             Crate-Wurzel: #![deny(unsafe_code)], Design-Doku
@@ -130,7 +131,8 @@ Registrierungsbedingung. 89 → 95 Unit-Tests, dazu 5 Regressionstests.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter

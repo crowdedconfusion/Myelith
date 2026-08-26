@@ -1,4 +1,4 @@
-//! Protokolle mehrerer Maschinen gegenüberstellen (Fahrplanpunkt 2.1).
+//! Protokolle mehrerer Maschinen gegenüberstellen (Punkt 2.1).
 //!
 //! Das ist die Stelle, an der der Client seinen Zweck einlöst. Alles
 //! davor erzeugt Protokolle; hier wird aus ihnen ein Urteil.
@@ -16,7 +16,7 @@
 //!
 //! Deshalb **verweigert** dieses Modul ein positives Urteil, wenn alle
 //! Protokolle denselben Hardware-Fingerabdruck tragen ([`Urteil::EineMaschine`]).
-//! Das ist ein Akzeptanzkriterium des Fahrplans und keine Höflichkeit:
+//! Das ist ein Akzeptanzkriterium und keine Höflichkeit:
 //! Ein Werkzeug, das einen Nachweis vortäuscht, ist schlimmer als keines,
 //! weil sein Ergebnis geglaubt wird.
 //!
@@ -724,7 +724,7 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         t,
         "Dieser Bericht hält den Stand des Quellordners zum genannten \
          Zeitpunkt fest. Ein **bestätigter** Cross-Hardware-Nachweis gehört \
-         nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3), der \
+         nach `INTEGER_LLM/eval/results/` (Punkt 2.3), der \
          Berichtsordner wird nicht versioniert."
     );
     t
@@ -974,7 +974,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Das Akzeptanzkriterium des Fahrplans: Zwei Läufe von derselben
+    /// Das Akzeptanzkriterium: Zwei Läufe von derselben
     /// Maschine dürfen **kein** positives Urteil ergeben, auch wenn die
     /// Digests übereinstimmen.
     #[test]

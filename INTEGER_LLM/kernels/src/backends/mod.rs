@@ -2,7 +2,7 @@
 //!
 //! # Entschieden am 2026-08-24: Das Trait bleibt, ungenutzt
 //!
-//! Der Fahrplan führte diese Schicht als offenen Punkt mit der
+//! Diese Schicht war lange ein offener Punkt mit der
 //! Feststellung, `model.rs` importiere die Kernel direkt und
 //! `SimdBackend` werde ausschließlich im Paritätstest instanziiert,
 //! „dasselbe Muster wie Fund A7 (totes Stimmgewicht) und Fund 25".
@@ -27,7 +27,7 @@
 //! von `cuda.rs`.** Sie stützte sich darauf, dass `SimdBackend` nur im
 //! Paritätstest vorkommt, und übersah, was die beiden GPU-Dateien
 //! enthalten. 1375 Zeilen zu löschen, davon der Determinismus-Vertrag,
-//! wäre der teuerste Weg gewesen, eine Zeile Fahrplan abzuhaken.
+//! wäre der teuerste Weg gewesen, eine Zeile der Planung abzuhaken.
 //!
 //! **Anzubinden ist das Trait, sobald ein Backend zur Laufzeit wählbar
 //! sein muss** (GPU neben CPU auf derselben Maschine). Bis dahin ist die

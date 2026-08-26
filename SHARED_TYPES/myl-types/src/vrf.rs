@@ -18,7 +18,7 @@
 //! `VrfOutput.algorithm` trägt das Versionsfeld; ein späterer Tausch
 //! (Kandidat: deterministisches ML-DSA-basiertes Signatur-Hash-VRF,
 //! FIPS 204 §5.2) bekommt eine neue Versionsnummer, ohne die
-//! Blockstruktur zu brechen (siehe GOVERNANCE-Fahrplan,
+//! Blockstruktur zu brechen (siehe GOVERNANCE,
 //! Design-Entscheidung 4: Krypto-Agilität).
 
 use borsh::{BorshDeserialize, BorshSerialize};

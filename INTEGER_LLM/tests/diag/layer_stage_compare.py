@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Operationsweiser Vergleich einer Ebene: wo entsteht der Fehler?
 
-**Warum diese Messung (2026-08-20, Fahrplanpunkt 12.77).** Der Reihe
+**Warum diese Messung (2026-08-20, Punkt 12.77).** Der Reihe
 nach wurden ausgeschlossen: das Quantisierungsschema (+1,38 %), die
 Residualstrom-Breite, der KV-Cache, das Score-Raster, die
 Softmax-Ausgabe, RoPE und der LM-Head — alle ±0 %. Nur die rsqrt-LUT

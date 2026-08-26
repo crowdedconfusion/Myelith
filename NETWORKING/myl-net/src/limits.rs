@@ -1,4 +1,4 @@
-//! Verbindungsgrenzen und Adressvielfalt (Fahrplanpunkt 4.3, Fund 53).
+//! Verbindungsgrenzen und Adressvielfalt (Punkt 4.3, Fund 53).
 //!
 //! Dieses Modul schließt die Lücke, die `tests/eclipse_sybil.rs` am
 //! 2026-08-24 gemessen hat: Zwanzig Sybil-Identitäten verbanden sich mit

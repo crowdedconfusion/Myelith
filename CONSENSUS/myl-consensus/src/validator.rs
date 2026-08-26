@@ -12,7 +12,7 @@
 //!
 //! Bis v0.3.6 wählte diese Datei stattdessen deterministisch die 28
 //! Validatoren mit dem höchsten Stake — ohne VRF-Rotation und ohne
-//! Arbeitshistorie, obwohl der Fahrplan-Punkt 3.1 „VRF-Rotation" und
+//! Arbeitshistorie, obwohl der Punkt 3.1 „VRF-Rotation" und
 //! Punkt 3.4 „Stimmgewichts-Kopplung" als erledigt führte. Das war eine
 //! feste Rangliste: dieselben 21 Adressen in jeder Epoche, und die
 //! Kernaussage des Whitepapers („nützliche Arbeit sichert den Konsens")

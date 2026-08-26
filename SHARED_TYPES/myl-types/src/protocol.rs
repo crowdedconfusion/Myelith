@@ -4,7 +4,7 @@
 //!
 //! Änderungen an diesen Festlegungen sind konsensrelevant und nach
 //! Whitepaper Kap. 10.3 nur über den Governance-Prozess möglich
-//! (für die Post-Quantum-Migration siehe GOVERNANCE-Fahrplan,
+//! (für die Post-Quantum-Migration siehe GOVERNANCE,
 //! Design-Entscheidung 4: Krypto-Agilität).
 
 /// Hash-Algorithmus des gesamten Protokolls.

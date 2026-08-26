@@ -32,7 +32,7 @@ rundet.
 
 ## Der Fund am Messgerät selbst
 
-Der Fahrplan nennt als Kriterium den **Verlustverlauf**. Danach gemessen
+Als Kriterium ist der **Verlustverlauf** genannt. Danach gemessen
 fiel das Ganzzahlschema von 2,54 auf 0,25, also weit unter die Referenz,
 und die erste Fassung der Auswertung meldete **„trägt"**.
 
@@ -47,7 +47,7 @@ das eine Aussage trifft, die es nicht deckt.
 
 ## Messung 1: Dynamikbereich der Gradienten
 
-Die Zahl, die laut Fahrplan über die Eskalation entscheidet, erhoben über
+Die Zahl, die über die Eskalation entscheidet, erhoben über
 alle 168 linearen Schichten und 200 Schritte:
 
 | | Bits |
@@ -118,7 +118,7 @@ Nach 200 Schritten, Arm „nur Gewichte int8", lr 1e-5:
 
 > **Korrektur (2026-08-22).** Die Spalte nannte ursprünglich „mittlere
 > Bewegung" und wurde als Größe **eines** Schrittes gelesen, auch von mir
-> selbst in Fahrplan und README. Sie ist die Bewegung über **200**
+> selbst in Planung und README. Sie ist die Bewegung über **200**
 > Schritte. Je Schritt sind es rund 6,4e-6 einer Rasterstufe im Median,
 > gemessen in `bitbudget.py`. Die Aussage ändert sich dadurch nicht, sie
 > wird stärker: Der Schritt ist noch kleiner als angenommen.
@@ -209,7 +209,7 @@ RNG-Zustand sein, sondern eine Funktion aus (Ebene, Schritt, Index) über
 Maschine gleich, und damit Teil der nachrechenbaren Spezifikation statt
 eine Quelle von Abweichung.
 
-## Konsequenz für den Fahrplan
+## Konsequenz für die weitere Planung
 
 **Punkt 0.1 ist beantwortet, und die Antwort ist ein Ja mit einer
 Bedingung.** Die Annahme aus Whitepaper Kap. 7 trägt: Der Rückwärtspass

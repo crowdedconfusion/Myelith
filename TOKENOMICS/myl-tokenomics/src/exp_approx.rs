@@ -162,7 +162,7 @@ pub fn update_price(
 /// praktisch null, aber strukturell nicht null; es hält die Null aus dem
 /// Weg, ohne eine wirtschaftliche Aussage zu treffen, die noch niemand
 /// belegt hat. Eine inhaltlich begründete Untergrenze, etwa aus den
-/// Realkosten, ist eine eigene Entscheidung und steht im Fahrplan.
+/// Realkosten, ist eine eigene Entscheidung und ist offen.
 pub const PREIS_UNTERGRENZE_VORGABE: i64 = 1;
 
 /// Wie [`update_price`], aber mit ausdrücklicher Untergrenze.

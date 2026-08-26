@@ -178,7 +178,7 @@ Borsh-Bytes. Additiv wie `DST_PROPOSE_POL`, kostet eine Zeile.
 **Bewusst nicht in diesem Zug gemacht**, weil es das Drahtformat des Pods
 ändert und damit eine Protokolländerung ist, die zusammen mit den anderen
 offenen Punkten von COMPUTE_PIPELINE entschieden gehört. Bis dahin steht
-sie hier und im Fahrplan.
+sie hier.
 
 ### 4.2 Latenz-Atteste tragen eine Signatur, die niemand prüft
 

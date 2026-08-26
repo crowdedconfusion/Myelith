@@ -106,7 +106,7 @@ Wachstumsoperator.
 
 ## Komponenten
 
-Jede Komponente hat einen eigenen Ordner mit Fahrplan,
+Jede Komponente hat einen eigenen Ordner mit
 Design-Entscheidungen und Tests. Die Kurzfassung hier:
 
 | Komponente | Was sie leistet |
@@ -116,7 +116,7 @@ Design-Entscheidungen und Tests. Die Kurzfassung hier:
 | [NETWORKING](NETWORKING/README/README.md) | **L0 steht.** Gossip, Kademlia, Latenztopologie, NAT-Überwindung mit AutoNAT, Relais, DCUtR und QUIC. Verbindungsgrenzen mit **getrennten Budgets**, sodass eine Sybil-Flut die selbst gewählten Plätze nicht aufzehren kann. Punkt-zu-Punkt-Kanal für Nachforderungen, mit undurchsichtiger Nutzlast: Die Netzschicht weiß nicht, was ein Block ist, und soll es nicht wissen |
 | [CONSENSUS](CONSENSUS/README/README.md) | **Alle vier Phasen abgeschlossen.** Signiertes, stimmgewichtetes BFT mit VRF-rotierender Komiteewahl, Double-Signing-Beweis und Rundenwechsel, also Safety **und** Liveness, geprüft an 21 simulierten Validatoren. Dazu PoI-Bündel, Epochenabschluss, Datenverfügbarkeit über Reed-Solomon. Der Ledger trägt Invarianten-Tests über zufällige Übergangsfolgen |
 | [VERIFICATION](VERIFICATION/README/README.md) | **Drei Stufen gegen Betrug.** Redundanzvergleich, Bisektion in O(log L), Kontrollsegmente gegen den einmaligen Eingriff. Die beiden Sicherheitsargumente des Whitepapers sind **an der Implementierung gemessen** statt nachgerechnet: Die Kollusionsschranke trifft auf drei Stellen genau, die behauptete Unabhängigkeit hält mit 0,01 % Abweichung |
-| [TOKENOMICS](TOKENOMICS/README/README.md) | **Fahrplan vollständig.** Prägung, Verteilung, Credit-Preisbildung, Stake nach beanspruchter Kapazität, gestaffeltes Slashing, Anlaufphase, Genesis-Verteilung. Vollständig ganzzahlig. „Kein Vorverkauf" wird nicht geprüft, sondern **durch die Arbeitsweise der Funktion durchgesetzt**: Sie nimmt Arbeitsnachweise und sonst nichts. Jede Zahl des Papiers steht als Test |
+| [TOKENOMICS](TOKENOMICS/README/README.md) | **Planung vollständig.** Prägung, Verteilung, Credit-Preisbildung, Stake nach beanspruchter Kapazität, gestaffeltes Slashing, Anlaufphase, Genesis-Verteilung. Vollständig ganzzahlig. „Kein Vorverkauf" wird nicht geprüft, sondern **durch die Arbeitsweise der Funktion durchgesetzt**: Sie nimmt Arbeitsnachweise und sonst nichts. Jede Zahl des Papiers steht als Test |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | **Pods rechnen bitgleich.** 1 bis 24 Shards liefern denselben Digest über Logits und Token wie der Einzelknoten. Ausfallsicherung mit Standby-Übernahme und bitgleichem KV-Cache-Rebuild, was nur ganzzahlig überhaupt möglich ist. Der Vergütungspfad ist seit v0.9.0 durchgängig |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | **Das Fundament.** VRF, BLS mit Proof-of-Possession, Merkle, Erasure-Codierung über GF(2⁸), geprüft über **alle 495** Teilmengen von 8 aus 12. Das [Bedrohungsmodell aller sieben Signaturverwendungen](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) liegt schriftlich vor, zur Vorbereitung des externen Kryptografie- Audits |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | **Das Werkzeug für die nächsten Tests.** Ein Programm, ein Menü, zwei Tests: Rechnet dein Rechner dasselbe wie unserer, und finden mehrere Rechner einander über das Internet? `vergleich` **verweigert** ein positives Urteil, wenn alle Protokolle von derselben Maschine stammen. |

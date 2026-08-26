@@ -3,7 +3,7 @@
 //! Misst die reine Inferenzzeit (ohne Modell- und Tokenizer-Ladung) auf
 //! dem Referenz-Backend: zuerst Prefill ueber den Prompt, dann
 //! greedy-Decode von N Tokens. Dient der Einordnung des Durchsatzes und
-//! spaeter dem Vergleich der SIMD-/CUDA-/ROCm-Backends (Fahrplan
+//! spaeter dem Vergleich der SIMD-/CUDA-/ROCm-Backends (Punkte
 //! 12.64–12.66). Kein Teil des Auslieferungspfads.
 //!
 //! Die Zeitmessung und ihre Ausgabe laufen in f64 — das ist der MESSPFAD,

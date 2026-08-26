@@ -2,7 +2,7 @@
 """
 Unit-Tests fuer calibrate/src/scales.py::choose_pow2_shift.
 
-Regressionstest fuer den Numerik-Fix nach Fahrplan-Punkt 12.10: die Funktion
+Regressionstest fuer den Numerik-Fix nach Punkt 12.10: die Funktion
 berechnete zuvor den Skalierungs-Shift nur fuer den Fall absmax > max_int und
 lieferte sonst unbedingt shift=0 - fuer reale Aktivierungs-/Gewichtsgroessen
 (absmax typischerweise deutlich unter 1) bedeutete das praktisch durchgaengige
@@ -97,7 +97,7 @@ def test_monotonic_in_absmax():
 
 
 def test_scales_always_pow2_consistent_batch():
-    # Fahrplan 12.16 (Akzeptanzkriterium „ausschließlich Zweierpotenzen"):
+    # Punkt 12.16 (Akzeptanzkriterium „ausschließlich Zweierpotenzen"):
     # ueber einen weiten Bereich realistischer absmax-Werte muss jeder
     # Eintrag shift in [0, MAX_FRAC_BITS] tragen und scale == 2^-shift sein.
     # Deterministischer Pseudozufall (LCG), keine numpy-Abhaengigkeit.

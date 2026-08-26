@@ -1,10 +1,10 @@
 //! `myl-train` — Trainingsschicht (Whitepaper Kap. 7).
 //!
 //! **Was heute drin ist: die Datenprovenienz (Kap. 7.3).** Sie steht
-//! hier vor allem anderen, obwohl der Fahrplan sie als Punkt 3.1 führt,
-//! aus einem einzigen Grund: Sie ist **technisch unabhängig** vom
-//! ganzzahligen Rückwärtspass. Alles Übrige aus Kap. 7 hängt an Punkt V
-//! des Fahrplans, dem ganzzahligen Vorwärts- und Rückwärtspass in der
+//! hier vor allem anderen, obwohl sie als Punkt 3.1 geführt wird, aus
+//! einem einzigen Grund: Sie ist **technisch unabhängig** vom
+//! ganzzahligen Rückwärtspass. Alles Übrige aus Kap. 7 hängt an Punkt V,
+//! dem ganzzahligen Vorwärts- und Rückwärtspass in der
 //! Trainingsschleife. Solange der Gradient aus einer Gleitkommarechnung
 //! kommt, ist er geräteabhängig und mit ihm jedes Δm; die
 //! Verifikationskette hinge in der Luft.

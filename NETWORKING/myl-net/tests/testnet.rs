@@ -1,6 +1,6 @@
 //! Testnetz-Integrationstests (Phase 1, Punkt 1.4).
 //!
-//! Akzeptanzkriterien aus dem Fahrplan:
+//! Akzeptanzkriterien der Phase 1:
 //! - Ein Testnetz aus ≥ 20 lokalen Nodes erreicht Voll-Konnektivität
 //!   über Gossip in < 5 s (jede Node empfängt eine publizierte
 //!   Nachricht innerhalb der Frist).

@@ -38,12 +38,13 @@
 //! durch, was ein Emissionsdeckel bewirkt, mit dem Ergebnis: „Ein Deckel
 //! wirkt damit nicht als Knappheitsgarantie, sondern als
 //! Kapazitätsbremse." Der einzige Deckel, den das Protokoll kennt, ist
-//! `M_max` je Epoche, und der steht im Fahrplan dieser Komponente als
+//! `M_max` je Epoche, und der steht in dieser Komponente als
 //! **änderbarer** Parameter.
 //!
 //! Es gibt also drei mögliche Lesarten, und keine ist im Papier belegt:
-//! (a) „Gesamtangebot" meint `M_max` — dann widerspricht Kap. 10.3 dem
-//! Fahrplan; (b) es meint „die Regel, dass der Umlauf aus Burn-and-Mint
+//! (a) „Gesamtangebot" meint `M_max`, dann widerspricht Kap. 10.3 dem
+//! Rest des Papiers; (b) es meint „die Regel, dass der Umlauf aus
+//! Burn-and-Mint
 //! folgt" — dann ist es dasselbe wie der zweite Punkt; (c) es ist ein
 //! Rest aus einem früheren Entwurf mit fester Obergrenze.
 //!
@@ -52,7 +53,7 @@
 //! Es gibt keine andere Quelle von MYL als die Prägung gegen
 //! verifizierte Arbeit. Das ist die einzige Lesart, die etwas
 //! Durchsetzbares ergibt. **Die Entscheidung gehört dem Projektinhaber**
-//! und steht im Fahrplan; ändert sie sich, ändert sich diese Zeile.
+//! ist festgelegt; ändert sie sich, ändert sich diese Zeile.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -68,7 +69,7 @@ pub enum Aenderbarkeit {
     /// Ein Vorschlag dazu wird von [`crate::pruefe_vorschlag`]
     /// zurückgewiesen, **bevor** er zur Abstimmung kommt. Kap. 10.3
     /// verlangt das nicht ausdrücklich; die Design-Entscheidung 2 des
-    /// Komponenten-Fahrplans tut es, mit der Begründung, dass eine rein
+    /// dieser Komponente tut es, mit der Begründung, dass eine rein
     /// prozessuale Regel nur so stark ist wie die Disziplin der
     /// Beteiligten.
     Verfassungsrang,
@@ -195,8 +196,8 @@ pub enum Parameter {
     /// null, strukturell nicht null.
     ///
     /// Eine **inhaltlich** begründete Untergrenze, etwa aus den
-    /// Realkosten, ist eine wirtschaftliche Entscheidung und steht im
-    /// Fahrplan; dieser Parameter hält nur die Null aus dem Weg.
+    /// Realkosten, ist eine wirtschaftliche Entscheidung und offen;
+    /// dieser Parameter hält nur die Null aus dem Weg.
     PreisUntergrenze,
     /// Stichprobenrate für **Trainingssegmente** (Kap. 5.5).
     ///

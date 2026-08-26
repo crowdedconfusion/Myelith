@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gleitkomma-Audit des Inferenzpfads (Fahrplan-Punkt 12.22).
+Gleitkomma-Audit des Inferenzpfads (Punkt 12.22).
 
 Eigenständiges Skript nach Projektkonvention (kein pytest). Die
 Kerneigenschaft des Projekts — vollständig ganzzahlige Inferenz ohne

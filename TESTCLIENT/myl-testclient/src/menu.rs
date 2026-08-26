@@ -893,7 +893,7 @@ fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
 /// Inferenz und der Protokoll-Durchlauf gehören zu **einer** Messung.
 /// Vier getrennte Protokolldateien wären vier Teilaussagen, die der
 /// Koordinator erst wieder zusammensetzen müsste, und beim Verschicken
-/// geht die eine verloren, die den Befund trägt. Der Fahrplan sagt es
+/// geht die eine verloren, die den Befund trägt. Die Regel sagt es
 /// kürzer: Ein Testlauf ohne Protokoll ist wertlos, und ein Testlauf mit
 /// vier Protokollen ist einer zuviel.
 ///

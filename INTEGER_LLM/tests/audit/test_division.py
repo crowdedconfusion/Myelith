@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Divisionssemantik-Audit (Fahrplan-Punkt 12.24).
+Divisionssemantik-Audit (Punkt 12.24).
 
 Eigenständiges Skript nach Projektkonvention (kein pytest). Division
 durch Zweierpotenzen ist im Myelith-Ganzzahlmodell ein arithmetischer

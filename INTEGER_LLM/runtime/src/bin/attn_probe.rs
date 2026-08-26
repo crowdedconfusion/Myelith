@@ -1,6 +1,6 @@
 //! Attention über MEHRERE Positionen: wo entsteht der Mehrpositionsfehler?
 //!
-//! **Anlass (2026-08-20, Fahrplanpunkt 12.77).** Die Stufenanalyse in
+//! **Anlass (2026-08-20, Punkt 12.77).** Die Stufenanalyse in
 //! `layer_probe` lief an Position 0 mit leerem KV-Cache — und fand dort
 //! jede Operation arithmetisch exakt (q/k/v 0,02 %, gate/up 0,01 %).
 //! Gegen das Schema gemessen liegt unser Pfad an Position 0 tatsächlich

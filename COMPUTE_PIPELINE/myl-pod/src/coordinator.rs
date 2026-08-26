@@ -390,7 +390,7 @@ impl Coordinator {
     /// Kommentar „Platzhalter für die FLOPs-Metrik". Ein Bündel über
     /// tausend Token beanspruchte damit dieselbe eine Einheit wie eines
     /// über zwei, und ein Shard mit sieben Layern dasselbe wie einer mit
-    /// zweien. Genau davor warnt der Fahrplan: *„eine Festlegung, bevor
+    /// zweien. Genau davor warnt die Regel: *„eine Festlegung, bevor
     /// die erste Implementierung sie stillschweigend trifft."* Die
     /// Implementierung hatte sie längst getroffen.
     ///

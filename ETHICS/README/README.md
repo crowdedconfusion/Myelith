@@ -2,7 +2,7 @@
 
 > **Version:** 1.0.0
 > **Datum:** 2026-08-18
-> **Status:** Manifest v1.0.0 steht; Fahrplan v1.0.0 steht,
+> **Status:** Manifest v1.0.0 steht,
 > Design-Entscheidungen offen. Keine Phase begonnen.
 
 Ethische und rechtliche Standards für alle Komponenten — als
@@ -52,8 +52,7 @@ ETHICS/
 │                             Mechanismus, sechs Selbstbindungen,
 │                             vier ungelöste Spannungen
 └── README/
-    ├── README.md             diese Kurzübersicht
-    └── Fahrplan-v1.md        Phasenplan mit Akzeptanzkriterien
+    └── README.md             diese Kurzübersicht
 ```
 
 Phase 1 legt zusätzlich an:
@@ -77,7 +76,7 @@ ETHICS/
 ## Changelog
 
 ### v1.0.0 – 2026-08-18
-- Komponente angelegt. `Manifest.md` v1.0.0 und `Fahrplan-v1.md` v1.0.0.
+- Komponente angelegt, `Manifest.md` v1.0.0.
 - Aufbau bewusst als Grenzziehung: Was ist protokoll-durchsetzbar, was
   governance-abhängig, was nicht kontrollierbar. Erst danach Zusagen.
 - **Ein konkreter Fund beim Anlegen:** Whitepaper Kap. 10.1 verlangt für
@@ -88,4 +87,4 @@ ETHICS/
   nicht für die Modellfamilie: einzelne Qwen2.5-Größen stehen unter
   abweichenden Lizenzen. Die Prüfung muss variantenscharf erfolgen,
   nicht familienweit. Vermerkt in `INTEGER_LLM/docs/01_licenses.md` und
-  im Fahrplan Punkt 1.3.
+  unter Punkt 1.3.

@@ -322,7 +322,7 @@ pub fn run_determinism(
     // irgendein Modell gebraucht wird. Ein einzelner Lauf kann nichts
     // über Bitgleichheit sagen, er hat nichts, womit er sich vergleichen
     // ließe. Zwei ist die Vorgabe und das Minimum; mehr sind für
-    // Langläufe gedacht (Fahrplanpunkt 2.4).
+    // Langläufe gedacht (Punkt 2.4).
     if wiederholungen < 2 {
         log.error(format!(
             "Wiederholungen muss >= 2 sein, angegeben: {wiederholungen}. \

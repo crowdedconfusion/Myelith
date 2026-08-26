@@ -107,8 +107,8 @@ registry, **TRAINING** with data provenance and the growth operator.
 
 ## Components
 
-Every component has its own folder with a roadmap, design decisions, and
-tests. The short version here:
+Every component has its own folder with design decisions and tests.
+The short version here:
 
 | Component | What it delivers |
 |---|---|
@@ -117,7 +117,7 @@ tests. The short version here:
 | [NETWORKING](NETWORKING/README/README.md) | **L0 is in place.** Gossip, Kademlia, latency topology, NAT traversal with AutoNAT, relays, DCUtR, and QUIC. Connection limits with **separate budgets**, so a sybil flood cannot consume the self-chosen slots. Point-to-point channel for re-requests, with an opaque payload: the network layer does not know what a block is, and must not |
 | [CONSENSUS](CONSENSUS/README/README.md) | **All four phases complete.** Signed, weight-based BFT with VRF-rotating committee selection, double-signing proofs, and round changes: safety **and** liveness, verified against 21 simulated validators. Plus PoI bundles, epoch closing, and data availability via Reed-Solomon. The ledger carries invariant tests over random transition sequences |
 | [VERIFICATION](VERIFICATION/README/README.md) | **Three tiers against cheating.** Redundancy comparison, bisection in O(log L), control segments against the one-shot attack. The whitepaper's two security arguments are **measured against the implementation** rather than recomputed: the collusion bound matches to three digits, the claimed independence holds within 0.01 % |
-| [TOKENOMICS](TOKENOMICS/README/README.md) | **Roadmap complete.** Minting, distribution, credit pricing, stake by claimed capacity, tiered slashing, ramp-up phase, genesis distribution. Fully integer. "No pre-sale" is not checked but **enforced by how the function works**: it takes proofs of work and nothing else. Every number in the paper exists as a test |
+| [TOKENOMICS](TOKENOMICS/README/README.md) | **Planning complete.** Minting, distribution, credit pricing, stake by claimed capacity, tiered slashing, ramp-up phase, genesis distribution. Fully integer. "No pre-sale" is not checked but **enforced by how the function works**: it takes proofs of work and nothing else. Every number in the paper exists as a test |
 | [COMPUTE_PIPELINE](COMPUTE_PIPELINE/README/README.md) | **Pods compute bit-identically.** 1 to 24 shards yield the same digest over logits and tokens as a single node. Failover with standby takeover and bit-identical KV cache rebuild, which is only possible at all in integer arithmetic. The compensation path has been end to end since v0.9.0 |
 | [SHARED_TYPES](SHARED_TYPES/README/README.md) | **The foundation.** VRF, BLS with proof-of-possession, Merkle, erasure coding over GF(2⁸), verified across **all 495** subsets of 8 from 12. The [threat model for all seven signature uses](SHARED_TYPES/README/Signatur-Bedrohungsmodell.md) is written up, in preparation for the external cryptography audit |
 | [TESTCLIENT](TESTCLIENT/README/README.md) | **The tool for the tests ahead.** One program, one menu, two tests: does your machine compute what ours does, and do several machines find each other over the internet? `vergleich` **refuses** a positive verdict when all logs come from the same machine. |

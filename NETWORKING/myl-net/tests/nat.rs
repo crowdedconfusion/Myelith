@@ -18,7 +18,7 @@
 //! wird, würde über die Wirklichkeit nichts aussagen. Das ist der
 //! Grund, warum QUIC im Stack ist: Über TCP scheitert Lochstanzen an
 //! vielen NAT-Bauarten, und **das zeigt sich erst auf getrennten
-//! Maschinen**. Vermerkt im Fahrplan als das, was der erste echte
+//! Maschinen**. Vermerkt als das, was der erste echte
 //! Mehrmaschinenlauf zu messen hat.
 
 use std::time::Duration;

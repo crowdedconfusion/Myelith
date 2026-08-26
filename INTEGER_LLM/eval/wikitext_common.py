@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Gemeinsame WikiText-2-Aufbereitung für die Qualitätsmessung
-(Fahrplan-Punkte 12.19–12.21).
+(Punkte 12.19 bis 12.21).
 
 Diese Modul ist die EINZIGE Quelle der Messsequenzen: Integer-E2E-Test
 (tests/integration/test_end2end_real.py), Gleitkomma-Baseline
 (eval/baseline.py) und Perplexitätsvergleich (eval/perplexity.py) verwenden
 dieselbe Auswahl, denselben Tokenizer und dieselbe Sequenzlänge — nur so
 ist der Perplexitätsvergleich am Entscheidungspunkt 12.21 aussagekräftig
-(„identische Messmethode", Fahrplan 12.20).
+(„identische Messmethode", Punkt 12.20).
 """
 
 import os
@@ -46,7 +46,7 @@ def ergebnis_pfad(basis: str, endung: str = ".json") -> Path:
     """Pfad einer Ergebnisdatei, je Modell getrennt.
 
     0.5B behaelt die historischen Dateinamen (baseline_wikitext2.json),
-    weil sie in Fahrplan, Whitepaper-Vorarbeit und Changelog zitiert sind.
+    weil sie in Whitepaper-Vorarbeit und Changelog zitiert sind.
     """
     return REPO / "eval" / "results" / f"{basis}{_SUFFIX}{endung}"
 

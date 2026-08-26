@@ -280,10 +280,10 @@ mod avx2 {
     /// an die Referenz per Konstruktion bit-identisch ist.
     ///
     /// Bewusst **nicht** in diesem Audit angebunden: Das Anbinden
-    /// braucht einen Paritaetslauf auf echter x86_64-Hardware
-    /// (AGENTS.md: SIMD-Paritaet wird nur lokal auf Entwicklermaschinen
-    /// mit passender Hardware validiert, nie in CI). Vermerkt im
-    /// INTEGER_LLM-Fahrplan als offener Punkt.
+    /// braucht einen Paritaetslauf auf echter x86_64-Hardware. Ein
+    /// SIMD-Pfad wird nur dort geprueft, wo er auch laeuft, nie in der
+    /// CI: Uebersetzbar heisst nicht ausfuehrbar, und unverifizierte
+    /// Numerik gehoert nicht in einen Konsenspfad.
     ///
     /// Sicherheit: Caller muss sicherstellen, dass AVX2 verfuegbar ist.
     #[allow(dead_code)]

@@ -217,7 +217,7 @@ pub fn selected_backend() -> &'static str {
 pub fn rechenpfad_pruefen() -> Result<(), String> {
     // `cpu-simd` steht seit Fund 34 in derselben Reihe wie `cuda` und
     // `rocm`, und aus demselben Grund: Auf x86_64 gibt es noch keinen
-    // vektorisierten Pfad (`kernels/src/dot.rs`, Fahrplanpunkt AVX2 /
+    // vektorisierten Pfad (`kernels/src/dot.rs`, Punkt AVX2 /
     // Fund A19). Ein Messlauf aus einem solchen Bau würde die Referenz
     // unter dem Namen `cpu-simd` protokollieren.
     //
@@ -232,7 +232,7 @@ pub fn rechenpfad_pruefen() -> Result<(), String> {
                 return Err(format!(
                     "Dieser Bau trägt `--features cpu-simd`, aber auf {} gibt es\n\
                      KEINEN vektorisierten Rechenpfad: kernels/src/dot.rs hat bisher\n\
-                     nur eine NEON-Fassung für aarch64, AVX2 ist offener Fahrplanpunkt\n\
+                     nur eine NEON-Fassung für aarch64, AVX2 ist offener Punkt\n\
                      (Fund A19).\n\
                      \n\
                      Der Lauf würde die Referenzkernel unter dem Namen `cpu-simd`\n\

@@ -20,7 +20,7 @@
 //! die Liveness herstellen sollte.
 //!
 //! Die Regel, die das verhindert (Tendermint-Sperrmechanik, hier als
-//! Eigenbau nach der Design-Entscheidung 1 des Fahrplans):
+//! Eigenbau nach Design-Entscheidung 1 dieser Komponente):
 //!
 //! 1. **Sperren.** Wer in Runde r ein Quorum an Votes für Block A sieht,
 //!    sperrt sich auf `(A, r)`. Das ist derselbe Moment, in dem A
@@ -93,7 +93,7 @@ use myl_types::ids::MinerId;
 /// Standard-Timeout für die Propose-Phase in Millisekunden.
 ///
 /// Abgeleitet aus dem Blockzeit-Zielwert von 2 s (Design-Entscheidung 2
-/// des CONSENSUS-Fahrplans): die Propose-Phase bekommt die Hälfte, Vote
+/// des CONSENSUS): die Propose-Phase bekommt die Hälfte, Vote
 /// und Commit je ein Viertel. Governance-Parameter.
 pub const DEFAULT_TIMEOUT_PROPOSE_MS: u64 = 1_000;
 

@@ -73,10 +73,6 @@
 //! Konfiguration gesetztes Genesis-Komitee, danach reines Produkt
 //! `stake × Arbeit` — ist weiterhin zurückgestellt, nicht verworfen.
 //!
-//! Vermerk auch in `CONSENSUS/README/Fahrplan-v1.md` (Abschnitt „Zur
-//! Wiedervorlage") und in `README/Intern/State-of-the-Project.md`,
-//! Abschnitt 7.
-//!
 //! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des Konsensvertrags.
 //! Änderungen nur über Governance (Kap. 10.3).
 
@@ -215,11 +211,11 @@ pub const VTFE_UNIT: u64 = 1_000_000;
 /// Knoten, was seine einzige Aufgabe ist: Ein Knoten mit doppeltem
 /// Durchsatz bekam dasselbe Gewicht wie einer mit einfachem.
 ///
-/// Dieselbe Klasse wie der veraltete K8-Eintrag im Fahrplan: eine Zahl,
+/// Dieselbe Klasse wie der veraltete K8-Eintrag: eine Zahl,
 /// die richtig abgeleitet wurde und deren Grundlage sich am selben Tag
 /// verschoben hat. **Jeder feste Bezugswert veraltet mit der nächsten
 /// Optimierung**; ein selbstregulierender Bezug (etwa der Median des
-/// Netzes) steht als Entwurf im Fahrplan.
+/// Netzes) liegt als Entwurf vor.
 ///
 /// Der Wert hängt an Modell und Hardware und gehört deshalb in die
 /// Governance-Registry, nicht in eine Konstante. Er steht hier als

@@ -4,7 +4,7 @@ TRAINING 0.1: Traegt das Quantisierungsschema im RUECKWAERTSPASS?
 
 Whitepaper Kap. 7 setzt voraus, dass die ganzzahlige Ausfuehrung aus
 Kap. 6 unveraendert auf den Rueckwaertspass uebertraegt. Das ist eine
-ANNAHME, keine Messung, und sie traegt den gesamten TRAINING-Fahrplan:
+ANNAHME, keine Messung, und sie traegt die gesamte Komponente TRAINING:
 Ohne bit-exakten ganzzahligen Rueckwaertspass gibt es keine
 verifizierbare Trainingsarbeit, ohne die keine Verguetung, ohne die kein
 Modellwachstum.
@@ -44,9 +44,9 @@ gezwungen:
     Aktivierungen int16, Zweierpotenz-Skala je Kanal (wie theta_v 0.11.0)
     Gradienten    int8, Zweierpotenz-Skala je BLOCK (Anhang B.6.2, NITI)
 
-## Abweichung von der Fahrplanvorgabe, ausdruecklich
+## Abweichung von der Vorgabe, ausdruecklich
 
-Der Fahrplan nennt als Referenz "BF16, unveraendertes Training". Gemessen
+Als Referenz vorgegeben war "BF16, unveraendertes Training". Gemessen
 wird hier in float32. Grund: Ein Trainingslauf in bf16 bringt seine
 eigene Rundung mit, und die waere ein zweiter Einflussfaktor neben dem,
 der untersucht werden soll. Die Referenz soll so sauber wie moeglich
@@ -216,8 +216,8 @@ def fq_gradient_block(g: torch.Tensor, blockgroesse: int, bits: int = 8):
 
     # **Die Zerlegung, die ueber die Eskalation entscheidet.**
     #
-    # Der Fahrplan verlangt, die Reihenfolge der Kandidaten aus dieser
-    # Messung abzuleiten und nicht zu vermuten. Die Frage lautet: Liegt
+    # Die Reihenfolge der Kandidaten gehoert aus dieser Messung
+    # abgeleitet und nicht vermutet. Die Frage lautet: Liegt
     # die Spanne ZWISCHEN den Bloecken oder INNERHALB eines Blocks?
     #
     #   zwischen  -> eine feinere Skalengranularitaet (je Kanal statt je
@@ -278,8 +278,8 @@ class QuantLinearFn(torch.autograd.Function):
     def forward(ctx, x, W, b, stat, name, blockgroesse, bits, teile):
         # `teile` schaltet die drei Quantisierungen einzeln. Ohne diese
         # Trennung liesse sich nur feststellen, DASS das Verfahren nicht
-        # traegt, nicht WORAN es liegt, und der Fahrplan verlangt die
-        # Eskalationsreihenfolge aus der Messung statt aus der Vermutung.
+        # traegt, nicht WORAN es liegt, und die Eskalationsreihenfolge
+        # gehoert aus der Messung statt aus der Vermutung.
         xq = fq_aktivierung_int16(x) if "a" in teile else x
         Wq = fq_gewichte_int8(W) if "w" in teile else W
         ctx.save_for_backward(xq, Wq)
@@ -357,7 +357,7 @@ def bewerten(model, halte, geraet: str) -> float:
     """Mittlerer Verlust auf Sequenzen, die nie trainiert wurden.
 
     **Die eigentliche Messgroesse**, und das war ein Fund (2026-08-22):
-    Gemessen wurde zuerst der TRAININGSverlust, wie der Fahrplan es
+    Gemessen wurde zuerst der TRAININGSverlust, wie die Vorgabe es
     vorgab. Der quantisierte Arm fiel darin von 2,54 auf 0,25, also weit
     unter die Referenz, und die Auswertung meldete "traegt". Auf
     zurueckgehaltenem Text stieg sein Verlust im selben Lauf von 2,81 auf
@@ -527,7 +527,7 @@ def main():
 
     # ---- Eskalationsprobe: dieselbe Rechnung mit breiteren Gradienten ----
     #
-    # Der Fahrplan verlangt, die Reihenfolge der Eskalationskandidaten aus
+    # Die Reihenfolge der Eskalationskandidaten gehoert aus
     # der Dynamikbereichsmessung abzuleiten. Wenn die Spanne INNERHALB
     # eines Blocks liegt, hilft keine feinere Skalengranularitaet, sondern
     # nur mehr Bits. Diese Probe prueft genau das, statt es zu behaupten.
@@ -628,7 +628,7 @@ def main():
     # Saettigung kann bei Skalen aus dem Block-Absmax strukturell kaum
     # auftreten: Der Shift wird ja so gewaehlt, dass der groesste Wert
     # gerade hineinpasst. Uebrig bleibt der Rundungsrand. Die Zahl steht
-    # trotzdem da, weil der Fahrplan sie verlangt und weil ein Wert
+    # trotzdem da, weil die Vorgabe sie verlangt und weil ein Wert
     # ueber null hiesse, dass die Skalenwahl nicht taete, was sie soll.
     print(f"  Saettigung int8:  Median {statistics.median(saettigungen)*100:.4f} %, "
           f"Max {max(saettigungen)*100:.4f} %  (strukturell nahe null, siehe Bericht)")

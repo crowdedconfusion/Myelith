@@ -763,7 +763,7 @@ Zeichen verglichen wurde.
 Der wichtigste Fall in dieser Tabelle ist der zweite. Ein Werkzeug, das
 zwei gleiche Werte von derselben Maschine als Nachweis ausgibt, wäre
 schlimmer als gar keines, weil sein Ergebnis geglaubt wird. Deshalb ist
-diese Verweigerung ein Akzeptanzkriterium des Fahrplans und keine
+diese Verweigerung ein Akzeptanzkriterium und keine
 Höflichkeit.
 
 ## B6. Modellstand gleichziehen
@@ -813,7 +813,7 @@ In dieser Reihenfolge prüfen:
 3. **Läuft dasselbe Backend?** `grep '"key":"backend_selected"' *.jsonl`.
    Referenz gegen `cpu-simd/neon` ist ein **gewollter** Vergleich, aber
    auch er muss bitgleich sein. Weicht er ab, ist es ein
-   SIMD-Paritätsfehler und gehört in den INTEGER_LLM-Fahrplan.
+   SIMD-Paritätsfehler und gehört in den INTEGER_LLM.
 
    **`cpu-simd` gibt es heute nur auf aarch64** (Fund 34, 2026-08-22).
    Auf x86_64 hat `kernels/src/dot.rs` noch keine vektorisierte Fassung;
@@ -827,7 +827,8 @@ Erst wenn alle drei übereinstimmen und die Werte trotzdem abweichen, ist
 es ein Befund an der Kernthese aus Whitepaper Kap. 6.2. Dann:
 
 - Beide vollständigen `.jsonl` sichern.
-- Fund in `INTEGER_LLM/README/Fahrplan-v3.md` eintragen.
+- Den Befund schriftlich festhalten: welche Maschinen, welche
+  Architekturen, welcher Modellstand, welche Werte auseinanderliefen.
 - **Nicht** vorschnell auf die Hardware schieben. Der wahrscheinlichste
   Grund ist eine Gleitkomma-Operation, die in den Rechenpfad geraten ist.
   `INTEGER_LLM/tests/audit/test_no_float.py` ist der erste Griff.

@@ -171,7 +171,7 @@ struct Args {
     plan: Option<PathBuf>,
     plan_id: Option<String>,
     out: Option<PathBuf>,
-    /// Erwarteter Vergleichswert (`--erwarte`, Fahrplanpunkt 3.2).
+    /// Erwarteter Vergleichswert (`--erwarte`, Punkt 3.2).
     erwartet: Option<String>,
 }
 

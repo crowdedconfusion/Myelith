@@ -6,7 +6,7 @@
 //! Original vollständig rekonstruieren.
 //!
 //! Startparameter des Projekts: `k = 8`, `m = 4` (Design-Entscheidung 5
-//! des CONSENSUS-Fahrplans, später Governance-Parameter). Ein Pod darf
+//! des CONSENSUS, später Governance-Parameter). Ein Pod darf
 //! damit ein Drittel seiner Fragmente verlieren, ohne dass die
 //! Bisektions-Anfrage eines Streitfalls ins Leere läuft.
 //!

@@ -1,10 +1,10 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.13.0
-> **Datum:** 2026-08-23
-> **Status:** Phase 1 und **Phase 3 vollständig**, dazu Fahrplanpunkt 2.1
+> **Version:** 0.14.2
+> **Datum:** 2026-08-26
+> **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`). Offen bleibt in Phase 2 allein der
-> Lauf selbst, also die zweite Architektur. 196 Tests grün, alle Läufe
+> Lauf selbst, also die zweite Architektur. 240 Tests grün, alle Läufe
 > gegen die echten Artefakte verifiziert.
 >
 > **Drei Funde am Messgerät selbst (2026-08-22).** Sie betreffen nicht das
@@ -98,7 +98,7 @@ Verzeichnis. Je Gruppe ein Urteil:
 
 **Der Befehl verweigert den Nachweis, wenn alle Protokolle denselben
 Hardware-Fingerabdruck tragen.** Das ist ein Akzeptanzkriterium des
-Fahrplans und keine Höflichkeit: Ein Werkzeug, das zwei gleiche Werte von
+Akzeptanzkriterium und keine Höflichkeit: Ein Werkzeug, das zwei gleiche Werte von
 derselben Maschine als Nachweis ausgibt, wäre schlimmer als keines, weil
 sein Ergebnis geglaubt wird.
 
@@ -434,8 +434,8 @@ wartet, hängt still.
 TESTCLIENT/
 ├── README/
 │   ├── README.md             diese Kurzübersicht
-│   ├── ANLEITUNG.md          Tests mit mehreren Beteiligten
-│   └── Fahrplan-v1.md        Phasenplan
+│   ├── SCHNELLSTART.md       eine Seite, für den ersten Lauf
+│   └── ANLEITUNG.md          Tests mit mehreren Beteiligten
 ├── Testpläne/                .plan-Dateien des Koordinators
 ├── logs/                     eigene Laufprotokolle (gitignored)
 ├── Vergleiche/               zugesandte Protokolle (gitignored)
@@ -598,7 +598,7 @@ liefern, das ist kein Befund.
 **Fund an der eigenen Arbeit.** Die erste Fassung urteilte je
 Vergleichswert über **alle** Stände auf einmal. Bei drei Ständen, von
 denen zwei denselben Wert trugen, meldete sie „jeder Vergleichswert hat
-sich geändert" und verschwieg genau das Paar, nach dem der Fahrplanpunkt
+sich geändert" und verschwieg genau das Paar, nach dem die Prüfung
 fragt. Verglichen wird jetzt je **Paar** von Ständen. Aufgefallen ist es
 beim ersten Lauf gegen echte Protokolle, nicht beim Lesen des Codes; die
 Nachstellung mit drei Ständen steht als Test.
@@ -1149,16 +1149,16 @@ Modell. Beide Werte heißen jetzt `…_tokens` und meinen dasselbe.
   den ersten Ordner und schreibt in den zweiten; Menüpunkt [3] lässt
   zwischen zugesandten und eigenen Protokollen wählen.
 
-- **`vergleich`** (neuer Befehl, Fahrplanpunkt 2.1): liest alle `.jsonl`
+- **`vergleich`** (neuer Befehl, Punkt 2.1): liest alle `.jsonl`
   eines Ordners, gruppiert nach Prüflauf und Einstellungs-Kennung, stellt
   die Vergleichswerte gegenüber und fällt ein Urteil. Damit endet der
   Client nicht mehr bei der Messung; das Auswerten war bis hierher
   Handarbeit mit `grep`, und die Anleitung führte vier Kommandozeilen
   dafür auf.
 - **Der Nachweis wird verweigert, wenn alle Protokolle denselben
-  Hardware-Fingerabdruck tragen.** Akzeptanzkriterium des Fahrplans, mit
+  Hardware-Fingerabdruck tragen.** Akzeptanzkriterium, mit
   Test festgehalten.
-- **Modellstand im Protokoll** (Fahrplanpunkt 3.1): θ_v, Gewichts-,
+- **Modellstand im Protokoll** (Punkt 3.1): θ_v, Gewichts-,
   Skalen- und LUT-Hash, Modellname und Ankerdigest. Vorher standen dort
   nur die Modelldimensionen, und die unterscheiden zwei θ_v-Stände
   desselben Modells nicht. `vergleich` prüft sie **vor** jedem

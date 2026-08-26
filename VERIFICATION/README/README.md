@@ -1,12 +1,19 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.6.0
-> **Datum:** 2026-08-23
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.3, 2.1–2.5), dazu
-> die adversariale Testebene aus Punkt 4.4: Redundanzvergleich (Stufe 1),
-> Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
-> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik.
-> 67 + 19 Tests grün.
+> **Version:** 0.7.1
+> **Datum:** 2026-08-26
+> **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
+> 2.1–2.5, 3.1–3.4), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
+> 4.3 offen): Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2)
+> mit Checker-Modul, Challenge-Erzeugung, Bisektionsprotokoll,
+> On-Chain-Schiedsrunde, Slash-Logik, Kontrollsegmente und die
+> Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
+> **109 Tests grün** (79 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
+>
+> ⚑ **Punkt 3.2 trägt ein ⚠ und keinen Haken.** Die Einschleusung ist
+> gebaut, die **Ununterscheidbarkeit** aber ist eine Eigenschaft der
+> Daten und nicht des Codes; sie braucht ein Prompt-Profil aus echtem
+> Betrieb.
 >
 > ⚑ **Die adversariale Ebene fand Fund 42:** Das Bisektions-Spiel nannte
 > systematisch die **falsche Layer** und hätte damit den Betrüger
@@ -39,7 +46,7 @@ wirtschaftlich unattraktiv gemacht wird.
 
 ```
 VERIFICATION/
-├── README/                   diese Kurzübersicht + Fahrplan
+├── README/                   diese Kurzübersicht
 └── myl-verifier/             das Verifikations-Crate (Bibliothek)
     ├── Cargo.toml
     └── src/
@@ -90,7 +97,7 @@ match decision {
 ## Tests
 
 **67 Modultests** über alle sieben Module, dazu **19 adversariale Tests**
-in `tests/adversarial.rs` (Fahrplanpunkt 4.4, Kritikpunkt K4).
+in `tests/adversarial.rs` (Punkt 4.4, Kritikpunkt K4).
 
 Die Modultests belegen den Erfolgsfall: Commitment-Vergleich,
 Auslieferungsentscheidungen, Fehlerbehandlung, Rundenzahl der Bisektion.
@@ -244,12 +251,11 @@ auf einmal verrät.
 ⚑ **Beim Bau aufgefallen:** `myl_scheduler::assign_redundant_pods` gibt
 einen **leeren Vektor** zurück, wenn für die Miner keine `NodeMetadata`
 vorliegen. Fail-closed und damit die richtige Richtung, aber **still**:
-nicht zu unterscheiden von „keine Segmente angefragt". Vermerkt im
-Fahrplan.
+nicht zu unterscheiden von „keine Segmente angefragt". Offener Punkt.
 
 ### myl-verifier v0.4.0 – 2026-08-23 (adversariale Testebene, Punkt 4.4; ⚑ Fund 42 und 43)
 
-**Fahrplanpunkt 4.4 „Adversariales Fuzzing Challenge/Verdict" erfüllt**,
+**Punkt 4.4 „Adversariales Fuzzing Challenge/Verdict" erfüllt**,
 und er hat sich sofort bezahlt gemacht.
 
 #### ⚑ Fund 42: Das Bisektions-Spiel nannte die falsche Layer
@@ -345,7 +351,8 @@ und dieselbe Spur entsteht bei k = 1 bis 24.
 
 ### Audit-Block 5 – 2026-08-18 (Warnungsfreiheit, Tests, Float-Audit)
 
-Repository-weiter Block; die Einzelheiten stehen im jeweiligen Fahrplan.
+Repository-weiter Block; die Einzelheiten stehen im Changelog der
+jeweiligen Komponente.
 
 - **Fund A17 behoben:** 111 Compiler-Warnungen → **0** über alle elf
   Crates. Dabei kamen drei echte Lücken zum Vorschein, die sich hinter

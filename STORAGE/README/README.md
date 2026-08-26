@@ -64,12 +64,12 @@ Rotationsschritt kurz unter die Schranke, und bei Tausenden Teilen ist
 
 Kap. 3.3 kennt sechs Rollen, **Store ist keine davon**. Sidequest 2
 beschreibt Bootstrapping und Dauerhaftigkeit als Lücke, ohne sie zu
-schließen. Beides gehört in
-`README/Intern/Whitepaper-Änderung.md` und damit in v0.4; das
-veröffentlichte v0.3 bleibt unangetastet.
+schließen. Beides ist für die nächste Fassung des Papiers vorgemerkt;
+das veröffentlichte v0.3 bleibt unangetastet.
 
-## Weiterlesen
+## Stand
 
-Der [Fahrplan](Fahrplan-v1.md) führt die sechs offenen
-Design-Entscheidungen mit Optionen und Empfehlung, dann vier Phasen mit
-Akzeptanzkriterien und fünf Härtungstests.
+Entwurf. Die sechs Design-Entscheidungen aus dem Abschnitt oben sind
+offen, und ohne sie gibt es kein Crate: Wer Speicherung baut, bevor
+Redundanzform, Rotationsperiode und Nachweisverfahren feststehen, baut
+sie zweimal.

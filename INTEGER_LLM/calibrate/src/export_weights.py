@@ -17,7 +17,7 @@ def export_quantized_weights(quantized: Dict[str, dict], output_dir: Path):
     liegen in einer eigenen Datei `<name>_shifts.bin` (raw int8).
 
     Prüfungen vor und nach dem Schreiben, damit Manifest und Dateien nie
-    divergieren (Akzeptanzkriterium Fahrplan 12.15: alle .bin-Dateien haben
+    divergieren (Akzeptanzkriterium Punkt 12.15: alle .bin-Dateien haben
     korrekte SHA-256-Eintraege im Manifest):
     - dtype muss int8 sein (falls das Array einen dtype traegt),
     - Byte-Laenge muss exakt dem Produkt der shape entsprechen,

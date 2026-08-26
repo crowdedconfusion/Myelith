@@ -1,5 +1,5 @@
 //! Was die Netzschicht aushalten muss, wenn ihr jemand Unsinn schickt
-//! (K4, Fahrplanpunkt 4.2 „Fuzzing Wire-Protocol-Parser").
+//! (K4, Punkt 4.2 „Fuzzing Wire-Protocol-Parser").
 //!
 //! Die Netzschicht ist die einzige Komponente, in die **jeder** ohne
 //! Vorbedingung hineinschreiben kann. Für Konsens braucht man Stake, für

@@ -35,7 +35,7 @@ Tensoren auf der Platte gemessen:
     down_proj[0]           == experts.0.down_proj.weight    True
 
 Diese Messung braucht 57 GiB Gewichte und laeuft deshalb nicht hier,
-sondern steht als Beleg im Fahrplan.
+sondern ist als Beleg festgehalten.
 
 Kein pytest-Bedarf, eigenstaendiges Skript nach Projektkonvention.
 """

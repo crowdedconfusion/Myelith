@@ -1,4 +1,4 @@
-//! Gossipsub-Peer-Scoring (Fahrplanpunkt 4.3, Fund 53).
+//! Gossipsub-Peer-Scoring (Punkt 4.3, Fund 53).
 //!
 //! Die zweite Hälfte der Eclipse-Verteidigung. [`crate::limits`] begrenzt,
 //! **wie viele** Verbindungen jemand aufbauen darf; das Scoring begrenzt,
@@ -52,7 +52,7 @@
 //! Diese Parameter gehören gegen echten Verkehr eingestellt, nicht gegen
 //! eine Vermutung. Solange es keine Messung aus einem laufenden Netz
 //! gibt, ist „aus" die ehrliche Einstellung. Vermerkt als offener Punkt
-//! im Fahrplan (Punkt 4.4, Lasttest bei Zielnetzgröße).
+//! offen (Punkt 4.4, Lasttest bei Zielnetzgröße).
 //!
 //! ## ⚑ Fund 54: Eine strengere Schwelle war schlechter, nicht besser
 //!

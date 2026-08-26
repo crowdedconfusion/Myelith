@@ -19,7 +19,7 @@
 //! „akkumuliert der Verlust gleichmaessig oder springt er" braucht es ein
 //! Bulk-Mass ueber alle Kanaele.
 //!
-//! **`--alle-positionen` (2026-08-20, Fahrplanpunkt 12.77).** Bisher gab
+//! **`--alle-positionen` (2026-08-20, Punkt 12.77).** Bisher gab
 //! diese Sonde nur die LETZTE Position aus; der Einzelpositionsfall kam
 //! aus einem anderen Binary (`layer_probe`) und wurde in einem anderen
 //! Skript ausgewertet (`layer_stage_compare.py` gegen

@@ -27,7 +27,7 @@ seinen Bericht nach `Berichte/`.
   lässt zwischen beiden wählen; wer sie vermischt, vergleicht am Ende
   seine eigene Maschine mit sich selbst.
 - **Bestätigte Ergebnisse.** Ein erbrachter Cross-Hardware-Nachweis
-  gehört nach `INTEGER_LLM/eval/results/` (Fahrplanpunkt 2.3). Dieser
+  gehört nach `INTEGER_LLM/eval/results/` (Punkt 2.3). Dieser
   Ordner ist Arbeitsfläche und wird nicht versioniert; was hier liegt,
   ist beim nächsten Klon weg.
 

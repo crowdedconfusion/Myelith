@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Perplexitätsvergleich: Integer-Modell vs. Gleitkomma-Baseline
-(Fahrplan-Punkt 12.21 — der Entscheidungspunkt).
+(Punkt 12.21 — der Entscheidungspunkt).
 
 Methodik:
   1. Messparameter (Anzahl Sequenzen, Sequenzlänge) werden aus dem
@@ -11,11 +11,11 @@ Methodik:
   2. Die Integer-Perplexität wird mit der Perplexitäts-Probe der Runtime
      gemessen (Teacher-Forcing, identische Messmethode wie 12.19).
   3. Relatives Delta = (ppl_integer - ppl_fp) / ppl_fp wird gegen das
-     Akzeptanzkriterium geprüft (Standard: max. 5 % Anstieg, Vorschlag des
-     Fahrplans; das Kriterium ist konsensrelevant und kann über
-     PPL_ACCEPTANCE_PCT gesetzt werden).
+     Akzeptanzkriterium geprueft (Standard: max. 5 % Anstieg; das
+     Kriterium ist konsensrelevant und kann ueber PPL_ACCEPTANCE_PCT
+     gesetzt werden).
   4. Ein Ergebnisprotokoll wird geschrieben: eval/results/decision_12-21.md
-     — es enthält zwingend die zwei Mess-Hinweise aus dem Fahrplan
+     — es enthält zwingend die zwei Mess-Hinweise
      (Decodierstrategie, 0,5B-als-ungünstigster-Fall).
 """
 

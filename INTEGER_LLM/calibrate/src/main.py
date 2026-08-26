@@ -148,7 +148,7 @@ def gptq_hessian_bytes_per_layer(config: dict) -> int:
 
 def gptq_group_size(config: dict) -> int:
     """
-    Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Fahrplan 12.72):
+    Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Punkt 12.72):
     statt GPTQ bei zu wenig RAM ganz abzuschalten (v0.12.43-Verhalten),
     wird nur so viel gleichzeitig gehesst, wie in zwei Drittel des
     verfuegbaren RAM passt. Bei 0,5B ergibt sich eine einzige Gruppe (alle
@@ -296,9 +296,10 @@ def main():
 
         **Fortschrittsbalken (2026-08-25).** Vorher gab diese Schleife
         nichts aus. Bei 0,5B fiel das nicht auf, bei einem Lauf ueber
-        Stunden ist ein haengender von einem langsamen nicht zu
-        unterscheiden - genau der Fall, fuer den AGENTS.md den Balken
-        verlangt. Ungepufferte Ausgabe noetig (`python -u`).
+        Stunden ist ein haengender Lauf von einem langsamen nicht zu
+        unterscheiden. Deshalb bekommt jeder Lauf, der laenger als etwa
+        eine Minute dauert, einen Balken. Ungepufferte Ausgabe noetig
+        (`python -u`), sonst erscheint er erst am Ende.
         """
         einheiten = len(prompts) + len(wikitext_texts)
         with Fortschritt(einheiten, "[calibrate] Korpus") as f:
@@ -379,7 +380,7 @@ def main():
         luts_aus_paket = None
 
     print("[calibrate] Generiere LUTs (Parameter aus theta_v/spec.json)...")
-    # Fahrplan 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
+    # Punkt 12.17: alle LUT-Parameter kommen aus dem "nonlinear"-Abschnitt
     # der spec.json (Single Source of Truth), keine hartkodierten Duplikate.
     # Kopplung (Numerik-Realitaetsabgleich v0.12.20): Die SiLU-LUT arbeitet
     # in einer festen Eingangsskala (ihre frac_bits = 6); die Runtime

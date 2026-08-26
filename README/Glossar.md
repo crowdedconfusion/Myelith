@@ -31,7 +31,7 @@ Wo ein Begriff nur im Zusammenhang Sinn ergibt, steht der Zusammenhang
 davor. Querverweise sind → so markiert.
 
 **Stand:** θ_v 0.17.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
-INTEGER_LLM Fahrplanpunkt 12.81 · NODE: BFT-Runden über das Netz ·
+INTEGER_LLM Phase 12.81 · NODE: BFT-Runden über das Netz ·
 STORAGE Phase 0 (Entwurf). Diese Datei
 wird bei jeder Änderung an Protokollbegriffen mitgezogen, als Teil der
 Doku-Kette des Projekts.
@@ -142,8 +142,7 @@ zufälligen Byte-Bereichen, nicht über den Hash des Ganzen, denn wer prüft
 und danach löscht, bestünde jede Hash-Prüfung. Bezahlt wird aus dem
 Treasury, nicht aus der Prägung.
 *Stand:* Entwurf, kein Crate. Kap. 3.3 kennt sechs Rollen, diese ist
-keine davon; der Eintrag dafür liegt in
-`README/Intern/Whitepaper-Änderung.md`.
+keine davon; sie ist für die nächste Fassung des Papiers vorgemerkt.
 *Im Entwurf:* `STORAGE/README/README.md`
 
 **Gateway** — Nimmt Nutzeranfragen entgegen, routet sie zu Pods, liefert
@@ -746,8 +745,8 @@ ohne Anfragezustand nachrechenbar.
 **Stand: Der Ganzzahlpfad trägt es.** Qwen3-30B-A3B läuft als Artefakt,
 über vier eigenständige Pipeline-Prozesse bitgleich mit dem Einzelknoten,
 ohne messbaren Abstand in der → [Perplexität](#perplexität). Das
-veröffentlichte Whitepaper v0.3 bleibt unangetastet; der Textvorschlag
-für Kap. 10.1 liegt in `README/Intern/Whitepaper-Änderung.md`.
+veröffentlichte Whitepaper v0.3 bleibt unangetastet; Kap. 10.1 wird in
+der nächsten Fassung nachgezogen.
 
 **Der kanonische Tie-Break.** Zwei Experten können denselben Router-Wert
 bekommen. Wer dann gewinnt, muss festgelegt sein, sonst laufen zwei
@@ -778,7 +777,7 @@ Skalen sättigen im Betrieb.
 
 *Im Code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 Sonde `runtime/src/bin/router_probe.rs`
-*Im Fahrplan:* `INTEGER_LLM/README/Fahrplan-v3.md`, Phase 12.81
+*Gemessen in:* `INTEGER_LLM/eval/results/`, Modell `qwen3-30b-a3b`
 
 ### KV-Cache
 
@@ -1686,7 +1685,7 @@ Nachfrage.
 > *k* Experten, nicht die volle Expertenbreite (→ Fund 60).
 >
 > **⚑ Offen bleibt die Stufe darüber:** Der Epochenabschluss nimmt die
-> vTFE-Menge weiterhin als Eingabe entgegen. Notiert im Fahrplan-Master.
+> vTFE-Menge weiterhin als Eingabe entgegen.
 
 ### Inferenz-Credit (IC)
 
@@ -1793,7 +1792,7 @@ und alle Halter verwässern würde.
 ## J. Training
 
 Der Trainingspfad ist **entworfen, aber noch nicht implementiert**. Der
-TRAINING-Fahrplan hat aktuell genau einen Punkt: eine
+TRAINING hat aktuell genau einen offenen Punkt: eine
 Referenzsimulation des Rückwärtspasses. Die Begriffe stehen hier, weil
 sie im Whitepaper hergeleitet sind und die Entwurfsentscheidungen
 festliegen.
@@ -1980,12 +1979,10 @@ Dieser Abschnitt richtet sich vor allem an Coding-Agenten. Er erklärt
 nicht, *was* gebaut wird, sondern *wie* — und warum die Regeln so sind,
 wie sie sind.
 
-> **Hinweis zu den Verweisen in diesem Abschnitt.** Die verbindliche
-> Fassung dieser Regeln steht in `AGENTS.md` und
-> `README/Intern/State-of-the-Project.md` (Abschnitt 8). Beide sind
-> **arbeitsintern und nicht Teil der Veröffentlichung** — wer nur das
-> öffentliche Repository vor sich hat, findet sie nicht. Dieser Abschnitt
-> ist deshalb so geschrieben, dass er auch ohne sie vollständig ist.
+> **Hinweis.** Dieser Abschnitt beschreibt die Arbeitsweise so, dass er
+> für sich steht. Die Regeln sind nicht Selbstzweck: Jede einzelne ist
+> aus einem konkreten Fehler entstanden, und der Fehler steht jeweils
+> dabei.
 
 ### Open-Source-Bedrohungsmodell
 
@@ -2089,8 +2086,9 @@ Beispiele: Fund 15 (RoPE-Schema falsch — dominante Fehlerquelle),
 Fund 19 (1/√head_dim als Shift war nur für gerade Zweierpotenzen
 korrekt), Fund 22 (KV-Cache-Rundreise), Fund 27 (Rogue-Key ohne PoP).
 
-*Wo notiert:* `README/Intern/Fahrplan-Master.md`,
-`README/Intern/State-of-the-Project.md`
+*Wo sie stehen:* Jeder Fund lebt an der Stelle, die er betrifft. Im
+Modulkopf des Codes, den er verändert hat, im Changelog der Komponente,
+und wo er mehrere Komponenten berührt, in beiden.
 
 **Die Regeln, die daraus folgen:**
 

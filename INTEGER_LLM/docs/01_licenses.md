@@ -97,8 +97,8 @@ zulässig, solange §4(a) und §4(b) eingehalten werden. Das Skalenpaket
 sondern eigene Messwerte, und berührt die Frage deshalb ohnehin nicht.
 
 *Das ist eine Lesart des Lizenztextes, keine Rechtsberatung. Vor einem
-Genesis-Block gehört sie von jemandem geprüft, der dafür haftet;
-`ETHICS/Fahrplan-v1.md` führt das unter „Rechtliche Einordnung".*
+Genesis-Block gehört sie von jemandem geprüft, der dafür haftet. Die
+Komponente ETHICS führt die rechtliche Einordnung als offenen Punkt.*
 
 ## Fund bei dieser Prüfung: die Lizenzdatei kam nie an
 

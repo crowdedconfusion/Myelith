@@ -155,7 +155,7 @@ eine Trainingsbibliothek, denn es bestimmt das Ergebnis. Es muss
 zählerbasiert sein, damit es nachrechenbar bleibt, und der Keim gehört zu
 den Konsensdaten.
 
-**Für den Fahrplan:** Der nächste Punkt ist nicht mehr die
+**Für die weitere Planung:** Der nächste Punkt ist nicht mehr die
 Trainingsseite, sondern der ganzzahlige Vorwärts- und Rückwärtspass in
 INTEGER_LLM. Solange die Matrixmultiplikation float ist, ist der
 Trainingsschritt zwar exakt, aber sein Eingang nicht.

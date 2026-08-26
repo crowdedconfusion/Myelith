@@ -12,7 +12,7 @@ Prueft:
 5. Unvollstaendige oder manipulierte Artefakte werden abgelehnt, nicht
    stillschweigend geladen
 
-Bis Fahrplan-Punkt 12.10 nutzte dieser Test ein leeres Artefakt-Verzeichnis,
+Bis Punkt 12.10 nutzte dieser Test ein leeres Artefakt-Verzeichnis,
 das der Loader mit Dummy-Gewichten auffuellte. Seit 12.10 laedt load_model()
 ausschliesslich vollstaendige, echte Artefakte (siehe runtime/src/loader.rs);
 ein leeres Verzeichnis schlaegt seither korrekt fehl. Dieser Test baut daher

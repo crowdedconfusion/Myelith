@@ -24,7 +24,7 @@ struct GoldenVector {
     /// θ_v-Hash des erzeugenden Modells. **Noch nicht geprueft** — die
     /// Gegenprobe braucht die eingebettete `spec.json` aus der Runtime,
     /// die dieses Binary nicht kennt (kernels haengt nicht an runtime).
-    /// Vermerkt im INTEGER_LLM-Fahrplan als offener Punkt.
+    /// Vermerkt im INTEGER_LLM als offener Punkt.
     #[allow(dead_code)]
     theta_v_hash: String,
     metadata: serde_json::Value,

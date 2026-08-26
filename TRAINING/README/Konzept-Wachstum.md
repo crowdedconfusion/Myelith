@@ -3,7 +3,7 @@
 > **Stand:** 2026-08-22 · **Grundlage:** die Messungen 0.1 und 0.2
 > (`tests/diag/results/entscheidung_0-1.md`, `entscheidung_0-2.md`)
 >
-> Dieses Dokument ist der Entwurf, aus dem der TRAINING-Fahrplan
+> Dieses Dokument ist der Entwurf, aus dem die Planung von TRAINING
 > entsteht. Es steht auf Messungen, nicht auf Annahmen; wo es das nicht
 > tut, steht es dabei.
 
@@ -247,7 +247,7 @@ Beleg: `tests/diag/tiefenwachstum_simulation.py`, Protokoll
 > Probe im Protokoll". **Beides gab es nicht:** Jenes Skript misst
 > ausschließlich Breitenwachstum, das sagt sein eigener Kopf, und ein
 > Protokoll mit diesen Zahlen existierte im ganzen Repositorium nicht. Der
-> Fahrplan führte Punkt 1.3 zu Recht als „nicht gemessen". Dieselbe Klasse
+> Punkt 1.3 war zu Recht als „nicht gemessen" geführt. Dieselbe Klasse
 > wie Fund 27 und Fund 37: eine schriftliche Zusage ohne Deckung. Die
 > Richtung der Aussage hält, die Zahlen sind jetzt gemessene.
 
@@ -255,7 +255,7 @@ Beleg: `tests/diag/tiefenwachstum_simulation.py`, Protokoll
 
 Damit sind zwei offene Sidequests entscheidbar.
 
-**θ_v+1 ist eine reproduzierbare Funktion von θ_v** (Fahrplanpunkt 4.3):
+**θ_v+1 ist eine reproduzierbare Funktion von θ_v** (Punkt 4.3):
 
 ```
 θ_v+1 = f(θ_v, Wachstumsoperator, Σ Δm, keim, Aggregationsregel)

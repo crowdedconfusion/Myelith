@@ -137,7 +137,7 @@ impl PipelineManifest {
     /// Meldung, nicht die Moduldoku.
     ///
     /// **Damit ist die variable Knotenzahl je Pipeline entblockt**, siehe
-    /// COMPUTE_PIPELINE-Fahrplan.
+    /// COMPUTE_PIPELINE.
     ///
     pub fn canonical_layout_id(&self) -> String {
         use sha2::{Digest, Sha256};
