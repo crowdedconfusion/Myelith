@@ -66,6 +66,7 @@
 //! Prüfung ergänzt**, und zwingt damit zur Aktualisierung dieser Stelle.
 
 use borsh::BorshDeserialize;
+use myl_consensus::bft::Konsensnachricht;
 use myl_consensus::block::{Block, Transaction};
 use myl_net::{GossipTopic, PayloadValidator};
 
@@ -135,6 +136,26 @@ impl PayloadValidator for ProtokollValidator {
             // frei setzen kann, sucht sich seine Pod-Nachbarn aus, und
             // das ist die Vorstufe zur Kollusion beider Pods (A12).
             GossipTopic::LatencyAttests => self.beurteile_attest(data).ist_gueltig(),
+            // Konsensnachrichten: Form ja, Gültigkeit nein.
+            //
+            // ⚑ **Und die Form leistet fast nichts**, weil alle Felder
+            // feste Breite haben (gemessen in
+            // `myl_consensus::bft::tests`: 99 % der verstümmelten
+            // Nachrichten kommen durch). Der Nutzen liegt woanders: Sie
+            // erzwingt „kein Anhängsel", und ein Anhängsel ist ein
+            // Kanal, weil es die Nachrichten-Id ändert, ohne den Inhalt
+            // zu ändern.
+            //
+            // **Die eigentliche Prüfung ist hier, anders als bei
+            // PoI-Bündeln (Fund 45), erreichbar:** Runde,
+            // Mitgliedschaft, Duplikat und BLS-Signatur prüft
+            // `myl_consensus::bft::BftState`, und der Knoten ruft ihn
+            // über `crate::konsens::Konsensrunde` auch auf. Hier wäre
+            // sie nicht zu haben: Dieser Validator kennt die laufende
+            // Runde nicht und dürfte sie nicht kennen, denn er läuft im
+            // Netzfaden, und ein `Reject` aus geratener Unkenntnis
+            // bestrafte ehrliche Absender im Gossipsub-Scoring.
+            GossipTopic::Consensus => liest_sich_vollstaendig_als::<Konsensnachricht>(data),
             // Die übrigen prüft `myl-net` strukturell; hier nichts zu
             // ergänzen, solange kein Kettenzustand da ist.
             _ => true,
@@ -253,6 +274,42 @@ mod tests {
         let v = ProtokollValidator::default();
         assert!(v.validate(GossipTopic::PoiBundles, &[0xFF; 32]));
         assert!(v.validate(GossipTopic::Challenges, &[]));
+    }
+
+    #[test]
+    fn eine_konsensnachricht_kommt_durch_ein_anhaengsel_nicht() {
+        use myl_consensus::bft::Vote;
+        use myl_types::bls::BlsSecretKey;
+        let sk = BlsSecretKey::key_gen(&[7u8; 32]).unwrap();
+        let h = Hash::sha256(b"block");
+        let n = Konsensnachricht::Vote(Vote {
+            round: 3,
+            block_hash: h,
+            voter: myl_types::ids::MinerId::new([1u8; 32]),
+            signature: sk.sign(b"egal").unwrap(),
+        });
+        let v = ProtokollValidator::default();
+        let mut daten = borsh::to_vec(&n).unwrap();
+        assert!(v.validate(GossipTopic::Consensus, &daten));
+
+        // Ein Anhängsel ändert die Nachrichten-Id, nicht den Inhalt:
+        // dieselbe Stimme liefe beliebig oft durchs Netz.
+        daten.push(0);
+        assert!(
+            !v.validate(GossipTopic::Consensus, &daten),
+            "ein Anhängsel hinter einer gültigen Stimme kam durch"
+        );
+        assert!(!v.validate(GossipTopic::Consensus, &[]));
+    }
+
+    #[test]
+    fn ein_block_wird_nicht_als_konsensnachricht_gelesen() {
+        let daten = borsh::to_vec(&beispielblock()).unwrap();
+        let v = ProtokollValidator::default();
+        assert!(
+            !v.validate(GossipTopic::Consensus, &daten),
+            "ein Block las sich als Konsensnachricht"
+        );
     }
 
     /// **A10: Ein gültiges Attest kommt durch, ein gefälschtes nicht.**

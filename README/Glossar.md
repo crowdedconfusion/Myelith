@@ -31,8 +31,10 @@ Wo ein Begriff nur im Zusammenhang Sinn ergibt, steht der Zusammenhang
 davor. Querverweise sind → so markiert.
 
 **Stand:** θ_v 0.17.0 · CONSENSUS Phase 1–4 · VERIFICATION Phase 1–2 ·
-INTEGER_LLM Fahrplanpunkt 12.77. Diese Datei wird bei jeder Änderung an
-Protokollbegriffen mitgezogen, als Teil der Doku-Kette des Projekts.
+INTEGER_LLM Fahrplanpunkt 12.81 · NODE: BFT-Runden über das Netz ·
+STORAGE Phase 0 (Entwurf). Diese Datei
+wird bei jeder Änderung an Protokollbegriffen mitgezogen, als Teil der
+Doku-Kette des Projekts.
 
 ---
 
@@ -84,7 +86,8 @@ die Nachfrage und Kapazität ins Gleichgewicht bringt
 
 ### Schichtenmodell
 
-Vier Ebenen, jede mit einem eigenen Verzeichnis im Repository.
+Vier Ebenen, jede mit einem eigenen Verzeichnis im Repository, dazu eine
+Komponente, die quer dazu liegt.
 
 | Ebene | Aufgabe | Komponenten |
 |---|---|---|
@@ -92,11 +95,18 @@ Vier Ebenen, jede mit einem eigenen Verzeichnis im Repository.
 | **L2 — Compute Layer** | Modell-Shards, Pods, Pipeline, KV-Cache | `COMPUTE_PIPELINE/`, `INTEGER_LLM/` |
 | **L1 — Consensus Layer** | BFT-Konsens, PoI-Aggregation, Staking, Ledger | `CONSENSUS/`, `TOKENOMICS/`, `VERIFICATION/` |
 | **L0 — Networking Layer** | P2P-Gossip, Latenzmessung, verschlüsselte Kanäle | `NETWORKING/` |
+| **Querschnitt: Verfügbarkeit** | Artefakte und Wissensdatenbank vorhalten, ausliefern, nachweisen | `STORAGE/` (Entwurf) |
 
 **Die Kernentscheidung:** Der Konsens läuft *nicht* auf den
 Inferenz-Ergebnissen, sondern auf kompakten Arbeitsnachweisen, die der
 Compute Layer produziert. Dadurch bleibt die Blockzeit (1–2 s) unabhängig
 davon, wie lange eine Inferenz dauert.
+
+**Warum STORAGE quer liegt:** Jede Ebene braucht etwas, das sie nicht
+selbst erzeugt, nämlich Skalenpakete, Shard-Gewichte, Tabellen und
+künftig die Wissensdatenbank. Die Anreize sind dort andere als überall
+sonst, weil Speicherung keinen Burn erzeugt und deshalb nicht aus der
+Prägung bezahlt werden kann (→ [Store](#netzwerk-rollen)).
 
 *Im Whitepaper:* Kap. 3.2
 
@@ -124,6 +134,17 @@ nach und meldet Abweichungen. Verdient Kopfgeld aus geslashtem Stake.
 Der Name „Fisherman" stammt aus Polkadot: jemand, der im Netz nach
 Betrug fischt.
 *Im Code:* `VERIFICATION/myl-verifier/src/checker.rs`
+
+**Store** — Hält vor, was das Netz zum Rechnen braucht, aber nicht selbst
+erzeugt: Skalenpakete, Shard-Gewichte, Nachschlagetabellen und künftig
+die Wissensdatenbank. Der Nachweis läuft über Challenge-Response auf
+zufälligen Byte-Bereichen, nicht über den Hash des Ganzen, denn wer prüft
+und danach löscht, bestünde jede Hash-Prüfung. Bezahlt wird aus dem
+Treasury, nicht aus der Prägung.
+*Stand:* Entwurf, kein Crate. Kap. 3.3 kennt sechs Rollen, diese ist
+keine davon; der Eintrag dafür liegt in
+`README/Intern/Whitepaper-Änderung.md`.
+*Im Entwurf:* `STORAGE/README/README.md`
 
 **Gateway** — Nimmt Nutzeranfragen entgegen, routet sie zu Pods, liefert
 den Antwortstrom zurück. Bei → [externen Werkzeugen](#deterministische-vs-externe-werkzeuge)
@@ -438,11 +459,25 @@ gleich wahrscheinlichen Wörtern raten.
 
 Myelith misst nicht die absolute Perplexität, sondern den **relativen
 Anstieg** gegenüber dem Gleitkomma-Original. Das Akzeptanzkriterium
-lautet ≤ 5 % und ist seit θ_v 0.17.0 auf beiden Modellen erfüllt:
-0,5B **+2,11 %**, 7B **+1,14 %**. Zum Vergleich: Der Boden des
-Quantisierungsschemas selbst — alles float außer der
-→ [W8A16](#w8a16)-Quantisierung — liegt bei **+0,84 %**. Der Abstand von
-0,30 Punkten ist der gesamte verbleibende Umsetzungsverlust.
+lautet ≤ 5 % und ist auf allen vier vermessenen Modellen erfüllt:
+
+| Modell | Parameter | Abstand |
+|---|---|---|
+| Qwen2.5-0,5B | 0,5 Mrd. | +2,11 % |
+| Qwen3-4B | 4,0 Mrd. | +1,64 % |
+| Qwen2.5-7B | 7,6 Mrd. | +1,14 % |
+| Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30,5 Mrd. | **kein messbarer Abstand** |
+
+Zum Vergleich: Der Boden des Quantisierungsschemas selbst, also alles
+float außer der → [W8A16](#w8a16)-Quantisierung, liegt bei **+0,84 %**.
+Der Abstand von 0,30 Punkten bei 7B ist der gesamte verbleibende
+Umsetzungsverlust.
+
+**„Kein messbarer Abstand" heißt nicht „besser".** Der Punktschätzer beim
+MoE liegt bei −0,59 %, der Standardfehler über die vier Sequenzen aber bei
+1,66 %, und zwei der vier Sequenzen sind schlechter als die Referenz. Bei
+435 gewerteten Positionen ist ein Unterschied dieser Größe nicht
+auflösbar (→ [Die 1-%-Regel](#die-1--regel)).
 
 *Im Code:* `INTEGER_LLM/eval/perplexity.py`
 
@@ -548,6 +583,23 @@ Die Wurzel ist das ganzzahlige Problem — sie wird über eine
 
 *Im Code:* `kernels/src/rmsnorm.rs::rmsnorm_i16`
 
+### QK-Norm
+
+Qwen3 normalisiert Query und Key **je Kopf** mit einer eigenen RMSNorm
+über `head_dim`, bevor → [RoPE](#rope-rotary-position-embedding) dreht.
+Qwen2.5 tut das nicht. Für die Ganzzahlrechnung ist das sogar günstig:
+Die Beträge, die in das Skalarprodukt gehen, sind danach beschränkt.
+
+*Warum es einen eigenen Eintrag verdient:* Die Normalisierung läuft über
+den **Kopf**, nicht über den ganzen Vektor. Wer sie versehentlich über
+`hidden_size` rechnet, bekommt ein Modell, das plausibel aussieht und
+falsche Zahlen liefert, weil dann jeder Kopf den quadratischen Mittelwert
+aller anderen mitträgt. Zwei Tests halten beides fest: dass ein Kopf die
+anderen nicht verändert, und dass er es über den flachen Vektor sehr wohl
+täte.
+
+*Im Code:* `kernels/src/rmsnorm.rs::qk_norm_heads`
+
 ### Attention (Aufmerksamkeit)
 
 Der Mechanismus, mit dem jede Position im Text auf frühere Positionen
@@ -584,7 +636,21 @@ Key/Value-Köpfe; mehrere Query-Köpfe teilen sich einen KV-Kopf. Das
 spart Speicher im → [KV-Cache](#kv-cache). Qwen2.5-0.5B: 14 Query-Köpfe,
 2 KV-Köpfe.
 
-*Im Code:* `runtime/src/model.rs`, `split_heads` + `group_size`
+**Entkoppelte `head_dim` (Qwen3).** Bei Qwen2.5 gilt
+`hidden_size = num_heads · head_dim`. Qwen3 löst das: Qwen3-4B hat
+`hidden_size` 2560, aber 32 Köpfe à 128, also 4096. Der Attention-Ausgang
+ist damit **breiter als der Residualstrom**, und erst `o_proj` bringt ihn
+zurück.
+
+*Warum das hier steht:* Die Annahme steckte an zwei Stellen im Code
+(→ Fund 59). Der Ladeprüfer lehnte solche Modelle ab, und ein Test
+verlangte die Ablehnung ausdrücklich, hielt also einen Fehler fest statt
+einer Eigenschaft. Nach dem Beheben brach der erste Qwen3-Lauf an der
+zweiten Stelle ab: Der Puffer für den Attention-Ausgang war auf
+`hidden_size` bemessen. **Ein benannter Fehler ist kein behobener.**
+
+*Im Code:* `runtime/src/model.rs`, `split_heads` + `group_size`,
+`loader.rs::pruefe_projektionsformen`
 
 ### RoPE (Rotary Position Embedding)
 
@@ -651,7 +717,68 @@ Matrixmultiplikationen des MLP praktisch exakt sind (0,01 %), der
 Anheben der LUT-Auflösung in θ_v 0.15.0 war einer der beiden großen
 Fortschritte des Projekts.
 
+Bei Qwen3-30B-A3B steht an dieser Stelle nicht **ein** MLP, sondern 128
+davon (→ [MoE](#moe-mixture-of-experts)).
+
 *Im Code:* `kernels/src/mlp.rs::mlp_int`
+
+### MoE (Mixture of Experts)
+
+Statt eines MLP-Blocks je Layer hält das Modell viele, die **Experten**.
+Ein kleines lineares Netz, der **Router** (auch *Gate*), bewertet den
+Eingang und wählt daraus die besten *k* aus; nur die rechnen, ihre
+Ausgaben werden gewichtet gemischt. Dadurch wächst die Parameterzahl,
+ohne dass die Rechenarbeit je Token mitwächst.
+
+> *Beispiel.* Qwen3-30B-A3B hat 128 Experten in jeder seiner 48 Layer und
+> wählt **Top-8**. Von 30,5 Mrd. Parametern sind je Token **3,0 Mrd.**
+> aktiv, also 10 %.
+
+**Warum das für Myelith heikel ist.** Kap. 10.1 des Whitepapers schließt
+MoE aus, weil „der Datenpfad je Token variiert". Der Einwand trifft die
+**expertenparallele** Verteilung, bei der Experten auf verschiedenen
+Knoten liegen. Hält dagegen jeder Knoten alle Experten seiner Layer,
+bleibt die Pod-Kette unverändert, und je Layer feuern **exakt k**
+Experten, also eine Konstante aus der Modellkonfiguration. Damit bleibt
+auch die → [vTFE](#vtfe-verifizierte-token-forward-äquivalente)-Zuschreibung
+ohne Anfragezustand nachrechenbar.
+
+**Stand: Der Ganzzahlpfad trägt es.** Qwen3-30B-A3B läuft als Artefakt,
+über vier eigenständige Pipeline-Prozesse bitgleich mit dem Einzelknoten,
+ohne messbaren Abstand in der → [Perplexität](#perplexität). Das
+veröffentlichte Whitepaper v0.3 bleibt unangetastet; der Textvorschlag
+für Kap. 10.1 liegt in `README/Intern/Whitepaper-Änderung.md`.
+
+**Der kanonische Tie-Break.** Zwei Experten können denselben Router-Wert
+bekommen. Wer dann gewinnt, muss festgelegt sein, sonst laufen zwei
+ehrliche Knoten auseinander, und zwar nicht wegen der Arithmetik, sondern
+wegen einer Sortierreihenfolge. Myelith legt fest: **ausgewählt wird über
+die Logits, und bei Gleichstand gewinnt der kleinere Expertenindex**,
+ohne zu sortieren.
+
+Gemessen über 2448 Routing-Entscheidungen (Messpunkt 12.81c): Über die
+Logits hängen **0,45 %** der Entscheidungen an dieser Regel, bei 48 Layern
+also etwa alle 4,6 Token. Über die Wahrscheinlichkeiten wären es
+**3,96 %**, das 8,8-fache, weil die exp-Tabelle einen ganzen
+Eingangsbereich auf denselben Ausgangswert abbildet und damit
+Gleichstände **erzeugt**, die es vorher nicht gab. Die Regel ist damit
+tragend, nicht vorsorglich.
+
+**⚑ Token-Dropping bleibt verboten.** Manche MoE-Implementierungen geben
+jedem Experten eine Kapazität und verwerfen überzählige Token. Dann hängt
+das Ergebnis an Position *i* davon ab, welche anderen Token im selben
+Batch lagen, und zwei redundante Pods batchen verschieden. Dieselbe
+Klasse wie Fund 39.
+
+**Kalibrierung braucht mehr Text.** Bei Top-8 von 128 sieht jeder Experte
+nur ein Sechzehntel der Token, die eine dichte MLP sähe. Die
+Aktivierungsskalen sind Absmax-Schätzer, und ein Absmax aus zu wenigen
+Beobachtungen unterschätzt den wahren Bereich systematisch. Unterschätzte
+Skalen sättigen im Betrieb.
+
+*Im Code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
+Sonde `runtime/src/bin/router_probe.rs`
+*Im Fahrplan:* `INTEGER_LLM/README/Fahrplan-v3.md`, Phase 12.81
 
 ### KV-Cache
 
@@ -987,6 +1114,50 @@ rotiert deterministisch.
 
 *Im Code:* `validator.rs` — `COMMITTEE_SIZE = 21`, `ARBITER_COUNT = 7`
 
+### Genesis-Datei und Validator-Satz
+
+Wer zu Beginn abstimmen darf, und mit welchem Gewicht. Eine Textdatei
+mit dem Netznamen und je einer Zeile aus **öffentlichem BLS-Schlüssel**,
+**Besitznachweis** (→ [PoP](#rogue-key-angriff-und-proof-of-possession))
+und **Stake**.
+
+> *Beispiel.* Das Probenetz führt fünf Validatoren mit 250, 230, 200,
+> 120 und 100 MYL. Summe 900, → [Quorum](#quorum-und-die-23-schwelle)
+> also 600 000 001.
+
+**Nicht über das Netz entdeckt**, und das ist der Punkt: Wer sich selbst
+ankündigen darf, kündigt sich fünfzehnmal an. Genau dieser Fehler steckte
+einmal im BFT-Zustandsautomaten, der Nachrichten statt Gewicht zählte.
+
+**Die Kennung steht nicht in der Datei**, sie wird als `sha256(pubkey)`
+abgeleitet. Eine Datei mit Kennung *und* Schlüssel hätte zwei Quellen für
+dieselbe Wahrheit, und die widersprechen sich irgendwann.
+
+**Der Hash liegt auf dem Inhalt, nicht auf der Datei.** Nach Kennung
+sortiert und kanonisch kodiert, damit eine umsortierte Zeile oder ein
+anderer Kommentar nichts ändert. Dieselbe Unterscheidung wie in Kap. 6.2:
+Der Inhalt ist verbindlich, die Kodierung nicht.
+
+⚑ **Kein Validator darf ein Drittel oder mehr halten**, sonst hat das
+Netz keine → [BFT](#bft-byzantine-fault-tolerance)-Safety, sondern einen
+Einzelnen mit Vetorecht. Daraus folgt eine Mindestzahl: **vier**. Drei
+Werte, die alle unter einem Drittel ihrer Summe liegen, können diese
+Summe nicht ergeben.
+
+*Im Code:* `NODE/myl-node/src/genesis.rs`
+
+### Konsensschlüssel
+
+Der BLS-Schlüssel, mit dem ein Knoten seine Stimme signiert.
+**Getrennt vom Netzschlüssel**, der die Peer-Identität trägt.
+
+*Warum getrennt:* Ein gemeinsames Geheimnis wäre eines weniger zu
+verwalten und kompromittierte bei einem Leck beide Ebenen zugleich.
+Außerdem darf die Netzidentität wechseln, ohne dass die Stimme wechselt:
+Ein Knoten, der umzieht, bleibt derselbe Validator.
+
+*Im Code:* `NODE/myl-node/src/schluessel.rs`
+
 ### Stimmgewicht (Voting Weight)
 
 Die Kopplung, die aus einem gewöhnlichen Proof-of-Stake-System ein
@@ -1021,8 +1192,19 @@ Kette von Übergängen nachrechnen und exakt denselben Zustand erhalten.
 Die Art, wie sich Nachrichten im P2P-Netz verbreiten: Jeder Knoten gibt
 weiter, was er bekommt. Myelith nutzt **libp2p Gossipsub** mit getrennten
 Topics je Nachrichtenklasse (Blöcke, Transaktionen, PoI-Bündel,
-Challenges, Latenz-Atteste), damit große PoI-Bündel den Block-Gossip
-nicht ausbremsen.
+Challenges, Latenz-Atteste, Konsensnachrichten), damit große PoI-Bündel
+den Block-Gossip nicht ausbremsen.
+
+**Die Topic-Namen sind Konsens-Felder.** Zwei Knoten mit verschieden
+geschriebenen Namen tauschen keine Nachricht aus, ohne dass irgendwo ein
+Fehler erschiene: Sie sehen einander als still. Ein Topic hinzuzufügen
+ist deshalb eine Protokollentscheidung.
+
+*Warum die BFT-Runden ein eigenes Topic haben (seit 2026-08-26):* Eine
+Stimme ist 169 Bytes, rundengebunden und nach der Runde wertlos; ein
+Block ist groß, selten und dauerhaft. In einem gemeinsamen Topic teilten
+sie Mesh, Bandbreite und **Bewertung**, und wer mit Stimmen flutet,
+träfe die Blockverbreitung mit.
 
 **Validierung vor Weiterverbreitung:** Gossipsub läuft im Modus
 `validate_messages()` — eine Nachricht wird erst weitergegeben, wenn der
@@ -1049,6 +1231,10 @@ den ein einzelner Miner im Speicher hält.
 
 > *Beispiel.* Ein 28-Layer-Modell auf 4 Shards: Miner A hält Layer 0–6,
 > B 7–13, C 14–20, D 21–27. Keiner von ihnen hat das ganze Modell.
+
+Bei einem → [MoE](#moe-mixture-of-experts) hält ein Shard **alle Experten
+seiner Layer**, nicht einzelne Experten über Knoten verteilt. Genau diese
+Festlegung hält die Pod-Kette unverändert.
 
 *Im Code:* `COMPUTE_PIPELINE/myl-pod/src/shard.rs`,
 `INTEGER_LLM/runtime/src/model.rs::run_layers`
@@ -1474,11 +1660,18 @@ Nachfrage.
 
 *Im Code:* `VTFE_UNITS_PER_TFE = 1_000_000`
 
-> **⚑ Offener Punkt:** vTFE muss **Layer** zählen, nicht Shards. Ein
-> Shard ist eine Verpackungseinheit und je nach Pod-Größe verschieden
-> groß; Layer sind die tatsächliche Arbeit. Solange nach Shards gezählt
-> wird, wäre ein Pod mit wenigen großen Shards gegenüber einem mit vielen
-> kleinen benachteiligt. Notiert im Fahrplan-Master.
+> **Nicht nach Shards, und auch nicht nach Layern** (festgelegt am
+> 2026-08-23). Ein Shard ist eine Verpackungseinheit und je nach Pod-Größe
+> verschieden groß. Layer wären näher dran, greifen aber zu kurz: Der
+> LM-Kopf ist keine Layer, rechnet aber wie **9,13** davon bei 0,5B, und
+> eine reine Layer-Regel spräche dem letzten Shard bei acht Shards 12,5 %
+> zu, während er 36,6 % leistet. Gezählt werden deshalb die
+> Multiplikations-Additionen der Gewichtsmatrizen, die einem Shard
+> gehören. Bei einem → [MoE](#moe-mixture-of-experts) sind das Router plus
+> *k* Experten, nicht die volle Expertenbreite (→ Fund 60).
+>
+> **⚑ Offen bleibt die Stufe darüber:** Der Epochenabschluss nimmt die
+> vTFE-Menge weiterhin als Eingabe entgegen. Notiert im Fahrplan-Master.
 
 ### Inferenz-Credit (IC)
 
@@ -1972,10 +2165,12 @@ fest, sondern nimmt `INTEGER_LLM/tests/cargo_paths.py`.
 | **L0–L3** | Netzwerk-/Konsens-/Compute-/Agent-Schicht | [A](#schichtenmodell) |
 | **LUT** | Lookup Table | [C](#lut-lookup-table-nachschlagetabelle) |
 | **MLP** | Multi-Layer Perceptron (Feed-Forward-Block) | [D](#mlp--feed-forward-und-silu) |
+| **MoE** | Mixture of Experts | [D](#moe-mixture-of-experts) |
 | **MYL** | Der native Coin | [I](#myl) |
 | **PoI** | Proof of Inference | [—](#poi-proof-of-inference) |
 | **PoP** | Proof of Possession | [E](#rogue-key-angriff-und-proof-of-possession) |
 | **PRNG** | Pseudo-Random Number Generator | [D](#sampling) |
+| **QK-Norm** | RMSNorm auf Query und Key, je Kopf | [D](#qk-norm) |
 | **RMSNorm** | Root Mean Square Normalization | [D](#rmsnorm) |
 | **RoPE** | Rotary Position Embedding | [D](#rope-rotary-position-embedding) |
 | **RTT** | Round-Trip Time | [G](#latencygraph-und-latenz-atteste) |

@@ -91,6 +91,35 @@ pub struct Eintrag {
     felder: Vec<(String, Wert)>,
 }
 
+/// Namen, die jede Zeile ohnehin trägt.
+///
+/// ⚑ **Fund 64:** `konsens_gesendet` schrieb `.text("art", …)` und
+/// erzeugte damit eine Zeile mit **zwei** `art`-Feldern. Solche Zeilen
+/// sind kein Fehler für den Schreiber und keiner für den Leser, der
+/// zufällig das richtige nimmt: `json.loads` behält in Python das
+/// letzte, andere Leser das erste. Eine Auswertung über mehrere
+/// Maschinen zählte dann je nach Werkzeug verschiedene Dinge, ohne dass
+/// irgendwo etwas fehlschlägt.
+pub const RESERVIERTE_FELDNAMEN: [&str; 5] = ["folge", "zeit_ms", "knoten", "peer", "art"];
+
+/// Bricht im Debug-Bau ab, wenn ein Feldname eine feste Spalte
+/// überschreibt.
+///
+/// **`debug_assert` und nicht `assert`:** Ein Knoten im Betrieb darf
+/// nicht wegen einer Protokollzeile sterben. Im Test bricht es ab, und
+/// dort entsteht der Fehler auch. Zusätzlich prüft
+/// `tests/bft_ueber_das_netz.rs` die geschriebenen Zeilen auf doppelte
+/// Schlüssel, damit die Prüfung auch im Freigabebau greift.
+fn pruefe_feldname(name: &str) {
+    debug_assert!(
+        !RESERVIERTE_FELDNAMEN.contains(&name),
+        "Feldname {name:?} überschreibt eine feste Spalte der Protokollzeile. \
+         Jede Zeile trägt {RESERVIERTE_FELDNAMEN:?} bereits; ein zweites Feld \
+         gleichen Namens ergibt eine Zeile, die je nach Leser verschieden \
+         gelesen wird"
+    );
+}
+
 impl Eintrag {
     /// Neuer Eintrag einer Art. Die Art ist der Filterschlüssel für die
     /// spätere Auswertung, also kurz und stabil zu halten.
@@ -99,16 +128,19 @@ impl Eintrag {
     }
 
     pub fn text(mut self, name: &str, wert: impl Into<String>) -> Self {
+        pruefe_feldname(name);
         self.felder.push((name.to_string(), Wert::Text(wert.into())));
         self
     }
 
     pub fn zahl(mut self, name: &str, wert: i64) -> Self {
+        pruefe_feldname(name);
         self.felder.push((name.to_string(), Wert::Zahl(wert)));
         self
     }
 
     pub fn wahr(mut self, name: &str, wert: bool) -> Self {
+        pruefe_feldname(name);
         self.felder.push((name.to_string(), Wert::Wahr(wert)));
         self
     }

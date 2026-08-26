@@ -29,6 +29,7 @@ use myl_net::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::kette::Kette;
+use crate::konsens::Konsensrunde;
 use crate::nachschub::{Nachforderung, Nachlieferung};
 use crate::probe::Probe;
 use crate::konfig::{KnotenKonfig, KonfigFehler};
@@ -58,6 +59,16 @@ pub const RUHE_NACH_ERSTER_ADRESSE: Duration = Duration::from_millis(500);
 /// Kurzform eines Hashes fürs Protokoll: 16 Hexzeichen.
 pub fn kurz(h: &myl_types::hash::Hash) -> String {
     h.to_hex()[..16].to_string()
+}
+
+/// Kurzform einer Miner-Kennung fürs Protokoll.
+///
+/// Eigene Funktion statt `kurz(&hash)`, weil eine Kennung kein Hash ist,
+/// auch wenn sie aus einem entsteht. Wer beide durch dieselbe Funktion
+/// schickt, verwechselt sie irgendwann in einer Protokollzeile.
+pub fn kurz_id(id: &myl_types::ids::MinerId) -> String {
+    let b = id.as_bytes();
+    format!("{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3])
 }
 
 pub fn nutzlast_digest(daten: &[u8]) -> String {
@@ -132,6 +143,62 @@ pub struct Knoten {
     /// das Betriebssystem, bei einer Relais-Reservierung das Relais.
     /// Wer die Adresse weitergeben will, muss warten können.
     horchadressen: Vec<libp2p::Multiaddr>,
+    /// Die laufende BFT-Runde, falls dieser Knoten mitstimmt.
+    ///
+    /// `None` bei einem Knoten, der nur zuhört. **Das ist der
+    /// Normalfall**, nicht die Ausnahme: Stimmberechtigt ist, wer in der
+    /// Genesis-Datei steht, und das sind wenige.
+    konsens: Option<Konsensrunde>,
+    /// Konsensnachrichten, die ankamen, **bevor** die eigene Runde
+    /// begann.
+    ///
+    /// # ⚑ Fund 63: 417 Millisekunden, und die Runde war tot
+    ///
+    /// Im ersten Lauf über fünf Prozesse (2026-08-26) veröffentlichte
+    /// der Leader seinen Propose 4 ms nach dem Start seiner Runde. Bei
+    /// allen vier anderen **kam er an**, im selben Millisekundenfenster.
+    /// Ihre eigene Runde begann 417 ms später, weil jeder erst auf sein
+    /// Mesh wartete. In dieser Lücke war `self.konsens` noch `None`, und
+    /// die Nachricht wurde verworfen, **ohne eine Protokollzeile**.
+    /// Danach wartete das ganze Netz auf einen Propose, den es längst
+    /// bekommen hatte.
+    ///
+    /// **Der Modultest konnte das nicht sehen.** Dort beginnen alle
+    /// Knoten ihre Runde, bevor die erste Nachricht fließt, weil eine
+    /// Schlange serialisiert, was ein Netz parallel macht. Die Form des
+    /// Tests hat den Defekt verdeckt.
+    ///
+    /// **Warum ein Puffer und nicht „einfach früher starten":** Weil es
+    /// keinen gemeinsamen Zeitpunkt gibt. Knoten starten, wann ihre
+    /// Betreiber sie starten. Ein Puffer macht aus einem Wettlauf eine
+    /// Reihenfolge.
+    ///
+    /// **Warum beschränkt:** Ein unbeschränkter Vorlauf ist ein
+    /// Speicherangriff, den jeder Fremde auslösen kann, indem er einem
+    /// Knoten ohne Runde Nachrichten schickt. Bei
+    /// [`Self::MAX_VORLAUF`] Einträgen à 169 Bytes sind das rund 11 KB,
+    /// und der älteste weicht.
+    ///
+    /// **Was das nicht ersetzt:** einen Rundenwechsel. Kommt eine
+    /// Nachricht mehr als eine Runde zu früh, hilft kein Puffer, sondern
+    /// nur ein Leader, der seinen Propose wiederholt. Das ist der
+    /// nächste Punkt.
+    konsens_vorlauf: std::collections::VecDeque<Vec<u8>>,
+    /// Wie viele Nachrichten der Vorlauf schon verworfen hat.
+    ///
+    /// Geht in die Zustandsaufnahme. **Ohne diese Zahl wäre der Puffer
+    /// dieselbe Stille wie vorher**, nur an einer anderen Stelle.
+    konsens_vorlauf_verworfen: u64,
+    /// Konsensnachrichten, die noch hinaus müssen.
+    ///
+    /// ⚑ **Ein Puffer und kein sofortiges Senden**, weil die
+    /// Nachrichtenbehandlung synchron ist und das Senden nicht. Ein
+    /// synchrones `Publish` ohne Rückmeldung wäre der bequemere Weg,
+    /// verschenkte aber genau die Auskunft, die hier zählt: Ob
+    /// Gossipsub die Nachricht **angenommen** hat. Ein abgelehntes
+    /// „noch kein Mesh" sieht im Protokoll sonst aus wie eine
+    /// verschickte Stimme, und die Runde hängt scheinbar grundlos.
+    konsens_ausgang: Vec<myl_consensus::bft::Konsensnachricht>,
 }
 
 impl Knoten {
@@ -245,7 +312,199 @@ impl Knoten {
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
+            konsens: None,
+            konsens_ausgang: Vec::new(),
+            konsens_vorlauf: std::collections::VecDeque::new(),
+            konsens_vorlauf_verworfen: 0,
         })
+    }
+
+    /// Höchstzahl der Nachrichten, die vor dem Rundenbeginn aufgehoben
+    /// werden.
+    ///
+    /// **Hergeleitet:** Eine Runde erzeugt je Validator höchstens drei
+    /// Nachrichten (Propose, Vote, Commit). 64 trägt damit ein Komitee
+    /// von 21 Producern vollständig, also die Größe aus
+    /// `myl_consensus::validator::COMMITTEE_SIZE`, und noch etwas
+    /// Doppeltes aus dem Gossip.
+    pub const MAX_VORLAUF: usize = 64;
+
+    /// Wartet, bis das Mesh eines Topics eine Mindestgröße hat.
+    ///
+    /// ⚑ **Verbunden heißt nicht im Mesh.** Gossipsub führt je Topic
+    /// eine eigene Menge von Peers, an die es Nachrichten vollständig
+    /// weitergibt. Wer vor dem Mesh publiziert, bekommt „zu wenige
+    /// Peers" zurück, und die Nachricht ist weg. Beim Propose eines
+    /// Leaders wäre das das Ende der Runde, und im Protokoll sähe es
+    /// aus, als hätte niemand geantwortet.
+    ///
+    /// Gibt die erreichte Mesh-Größe zurück, auch wenn die Frist
+    /// abläuft: Die Zahl gehört ins Protokoll, damit „es lief nicht an"
+    /// von „es lief an und niemand antwortete" unterscheidbar bleibt.
+    pub async fn warte_auf_mesh(
+        &mut self,
+        topic: GossipTopic,
+        mindestens: usize,
+        frist: Duration,
+    ) -> usize {
+        let ende = tokio::time::Instant::now() + frist;
+        let groesse;
+        loop {
+            let z = self.zustand().await;
+            let jetzt = z
+                .mesh
+                .iter()
+                .find(|(t, _)| *t == topic)
+                .map(|(_, n)| *n)
+                .unwrap_or(0);
+            if jetzt >= mindestens || tokio::time::Instant::now() >= ende {
+                groesse = jetzt;
+                break;
+            }
+            self.laufe_fuer(Duration::from_millis(200)).await;
+        }
+        self.protokoll.schreibe(
+            Eintrag::neu("mesh_erreicht")
+                .text("topic", format!("{:?}", topic))
+                .zahl("groesse", groesse as i64)
+                .zahl("mindestens", mindestens as i64)
+                .wahr("erreicht", groesse >= mindestens),
+        );
+        groesse
+    }
+
+    /// Beginnt eine BFT-Runde und schickt hinaus, was sofort hinaus muss.
+    ///
+    /// Der Knoten muss in der Genesis-Datei stehen, sonst
+    /// [`KonsensFehler::NichtStimmberechtigt`].
+    ///
+    /// ⚑ **Die Herkunft des Schlüssels landet im Protokoll.** Ein
+    /// Probeschlüssel ist aus dem Teilnehmernamen ableitbar; wer damit
+    /// ins Netz geht, soll es nicht nur wissen, sondern es soll
+    /// nachträglich aus dem Protokoll hervorgehen.
+    pub async fn beginne_konsensrunde(
+        &mut self,
+        genesis: &crate::genesis::Genesis,
+        schluessel: crate::schluessel::Konsensschluessel,
+        runde: u64,
+        vorschlag: myl_types::hash::Hash,
+    ) -> Result<(), crate::konsens::KonsensFehler> {
+        let herkunft = schluessel.herkunft();
+        let (laufende, raus) =
+            Konsensrunde::beginnen(genesis, schluessel, runde, vorschlag)?;
+        self.protokoll.schreibe(
+            Eintrag::neu("konsens_runde_beginnt")
+                .zahl("runde", runde as i64)
+                .text("genesis", kurz(&genesis.hash()))
+                .text("netz", genesis.netz.clone())
+                .zahl("validatoren", genesis.validatoren.len() as i64)
+                .text("leader", kurz_id(&laufende.leader()))
+                .wahr("ich_bin_leader", laufende.leader() == laufende.ich())
+                .text("schluesselherkunft", herkunft.als_text())
+                .wahr("schluessel_geheim", herkunft.ist_geheim()),
+        );
+        self.konsens = Some(laufende);
+        for n in raus {
+            self.sende_konsens(&n).await;
+        }
+
+        // ⚑ Fund 63: Was ankam, bevor es diese Runde gab, jetzt
+        // nachreichen. Der Zustandsautomat verwirft selbst, was nicht
+        // passt (falsche Runde, Duplikat), also ist das Nachreichen
+        // ungefährlich.
+        let vorlauf: Vec<Vec<u8>> = self.konsens_vorlauf.drain(..).collect();
+        if !vorlauf.is_empty() {
+            self.protokoll.schreibe(
+                Eintrag::neu("konsens_vorlauf_nachgereicht")
+                    .zahl("nachrichten", vorlauf.len() as i64)
+                    .zahl("verworfen", self.konsens_vorlauf_verworfen as i64),
+            );
+            for daten in vorlauf {
+                let folge = self.nimm_konsens_an(&daten);
+                self.konsens_ausgang.extend(folge);
+            }
+            self.leere_konsensausgang().await;
+        }
+        Ok(())
+    }
+
+    /// Die laufende Runde, für Tests und Diagnose.
+    pub fn konsens(&self) -> Option<&Konsensrunde> {
+        self.konsens.as_ref()
+    }
+
+    /// Schickt hinaus, was die Nachrichtenbehandlung angesammelt hat.
+    ///
+    /// Wiederholt, solange etwas nachkommt: Eine Stimme kann einen
+    /// Commit auslösen, und der muss in derselben Runde hinaus.
+    async fn leere_konsensausgang(&mut self) {
+        while !self.konsens_ausgang.is_empty() {
+            let stapel = std::mem::take(&mut self.konsens_ausgang);
+            for n in stapel {
+                self.sende_konsens(&n).await;
+            }
+        }
+    }
+
+    async fn sende_konsens(&mut self, n: &myl_consensus::bft::Konsensnachricht) {
+        let Ok(bytes) = borsh::to_vec(n) else { return };
+        let art = n.art();
+        let runde = n.runde();
+        self.veroeffentliche(GossipTopic::Consensus, bytes).await;
+        self.protokoll.schreibe(
+            Eintrag::neu("konsens_gesendet")
+                .text("nachricht", art)
+                .zahl("runde", runde as i64),
+        );
+    }
+
+    /// Nimmt eine Konsensnachricht von der Leitung an.
+    ///
+    /// Gibt die Folgenachrichten zurück, statt sie selbst zu senden:
+    /// [`Self::verarbeite`] ist synchron, das Senden ist es nicht.
+    fn nimm_konsens_an(
+        &mut self,
+        daten: &[u8],
+    ) -> Vec<myl_consensus::bft::Konsensnachricht> {
+        let Some(runde) = self.konsens.as_mut() else {
+            // Noch keine eigene Runde: aufheben statt wegwerfen
+            // (⚑ Fund 63, siehe `konsens_vorlauf`).
+            //
+            // Ein Knoten ohne Stimmrecht sammelt hier ebenfalls, und das
+            // ist hinnehmbar: Der Puffer ist beschränkt, und ein reiner
+            // Zuhörer verliert dadurch nichts als ein paar Kilobyte.
+            self.konsens_vorlauf.push_back(daten.to_vec());
+            while self.konsens_vorlauf.len() > Self::MAX_VORLAUF {
+                self.konsens_vorlauf.pop_front();
+                self.konsens_vorlauf_verworfen += 1;
+            }
+            return Vec::new();
+        };
+        let (urteil, raus) = runde.empfange_bytes(daten);
+        let (stimmen, commits, schwelle) = runde.gewichte();
+        let commitet = runde.ist_commitet();
+        // ⚑ **Gewicht, nicht Köpfe.** Ein Protokoll, das „3 von 5
+        // Stimmen" meldet, verdeckt genau den Unterschied, für den die
+        // Genesis-Verteilung gebaut wurde.
+        self.protokoll.schreibe(
+            Eintrag::neu("konsens_empfangen")
+                .text("urteil", urteil.als_text())
+                .wahr("harmlos", urteil.ist_harmlos())
+                .zahl("stimmgewicht", stimmen as i64)
+                .zahl("commitgewicht", commits as i64)
+                .zahl("schwelle", schwelle as i64)
+                .wahr("commitet", commitet),
+        );
+        if commitet {
+            if let Some(block) = self.konsens.as_ref().and_then(|r| r.commiteter_block()) {
+                self.protokoll.schreibe(
+                    Eintrag::neu("konsens_commitet")
+                        .zahl("runde", self.konsens.as_ref().map(|r| r.runde()).unwrap_or(0) as i64)
+                        .text("block", kurz(&block)),
+                );
+            }
+        }
+        raus
     }
 
     /// Die eigene Kette, für Tests und Diagnose.
@@ -437,7 +696,10 @@ impl Knoten {
             }
             let rest = rest.max(Duration::from_millis(1));
             match tokio::time::timeout(rest, self.ereignisse.recv()).await {
-                Ok(Some(ev)) => self.vermerke(ev),
+                Ok(Some(ev)) => {
+                    self.vermerke(ev);
+                    self.leere_konsensausgang().await;
+                }
                 Ok(None) => return,
                 Err(_) => continue,
             }
@@ -669,7 +931,11 @@ impl Knoten {
             .text("zustandswurzel", kurz(&self.kette.zustandswurzel()))
             .zahl("wartend", self.kette.wartend() as i64)
             .zahl("schlecht_bewertet", z.schlecht_bewertet as i64)
-            .zahl("zeilen", self.protokoll.geschrieben() as i64);
+            .zahl("zeilen", self.protokoll.geschrieben() as i64)
+            // ⚑ Fund 63: Ohne diese beiden Zahlen wäre der Vorlauf
+            // dieselbe Stille wie vorher, nur an anderer Stelle.
+            .zahl("konsens_vorlauf", self.konsens_vorlauf.len() as i64)
+            .zahl("konsens_vorlauf_verworfen", self.konsens_vorlauf_verworfen as i64);
         let (kleinste, groesste, anzahl) = self.latenz;
         eintrag = eintrag.zahl("latenz_messungen", anzahl as i64);
         if anzahl > 0 {
@@ -747,7 +1013,14 @@ impl Knoten {
                             .text("block", kurz(&self.kette.letzter_hash())),
                     ),
                     Err(grund) => {
-                        let art = match grund {
+                        // ⚑ Fund 64: Dieses Feld hieß bis zum 2026-08-26
+                        // `art` und stand damit **ein zweites Mal** in
+                        // einer Zeile, die `art` schon als feste Spalte
+                        // trägt. Der Leser in `tests/zwei_knoten.rs`
+                        // filtert nach `z.art == "..."` und hätte je nach
+                        // Reihenfolge `block_abgelehnt` oder
+                        // `passt-nicht-an` gesehen.
+                        let ablehnungsart = match grund {
                             crate::kette::KettenFehler::SchonBekannt => "dublette",
                             crate::kette::KettenFehler::PasstNichtAn { .. } => "passt-nicht-an",
                             crate::kette::KettenFehler::ZustandWeichtAb { .. } => {
@@ -758,7 +1031,7 @@ impl Knoten {
                             Eintrag::neu("block_abgelehnt")
                                 .zahl("eigene_hoehe", self.kette.hoehe() as i64)
                                 .zahl("fremde_hoehe", block.epoch_meta.epoch as i64)
-                                .text("art", art)
+                                .text("ablehnungsart", ablehnungsart)
                                 .text("grund", grund.to_string()),
                         );
                         // Passt der Block nicht an und ist er **weiter**
@@ -766,7 +1039,7 @@ impl Knoten {
                         // von dem der Hinweis kam: Er hat den Block, also
                         // hat er mit hoher Wahrscheinlichkeit auch die
                         // davor.
-                        if art == "passt-nicht-an" {
+                        if ablehnungsart == "passt-nicht-an" {
                             self.fordere_nach(m.von, block.epoch_meta.epoch);
                         }
                     }
@@ -787,6 +1060,10 @@ impl Knoten {
                         .zahl("bytes", m.data.len() as i64)
                         .text("von", m.von.to_string()),
                 );
+            }
+            GossipTopic::Consensus => {
+                let raus = self.nimm_konsens_an(&m.data);
+                self.konsens_ausgang.extend(raus);
             }
             GossipTopic::Transactions if self.kette.aufnehmen_roh(&m.data) => {
                 self.protokoll.schreibe(

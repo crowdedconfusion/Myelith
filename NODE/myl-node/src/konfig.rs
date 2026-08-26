@@ -67,6 +67,18 @@ pub struct KnotenKonfig {
     pub bootstrap: Vec<String>,
     /// Die Rolle.
     pub rolle: Rolle,
+    /// Genesis-Datei mit dem Validator-Satz.
+    ///
+    /// Ohne sie stimmt der Knoten nicht mit: Er nimmt am Netz teil,
+    /// hört zu und rechnet nach, aber er fährt keine BFT-Runde. **Das
+    /// ist der Normalfall**, denn stimmberechtigt sind wenige.
+    pub genesisdatei: Option<PathBuf>,
+    /// Datei mit dem geheimen BLS-Konsensschlüssel.
+    ///
+    /// Getrennt von [`Self::schluesseldatei`], die die **Netzidentität**
+    /// trägt. Zwei Geheimnisse, damit ein Leck nicht beide Ebenen
+    /// zugleich trifft; siehe `crate::schluessel`.
+    pub konsensschluesseldatei: Option<PathBuf>,
     /// NAT-Einstellungen (Relais, eigene öffentliche Adressen).
     pub nat: NatKonfig,
     /// Abstand der Zustandsaufnahmen im Protokoll, in Sekunden.
@@ -160,6 +172,8 @@ impl Default for KnotenKonfig {
             horchadressen: standard_horchadressen(4150),
             bootstrap: Vec::new(),
             rolle: Rolle::Teilnehmer,
+            genesisdatei: None,
+            konsensschluesseldatei: None,
             nat: NatKonfig::default(),
             aufnahme_sekunden: 30,
             testverkehr_sekunden: None,

@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."
@@ -8,6 +8,7 @@ license = "PolyForm Shield License 1.0.0"
 
 [dependencies]
 borsh = { version = "1.6", features = ["derive"] }
+getrandom = "0.3"
 myl-net = { path = "../../NETWORKING/myl-net" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }

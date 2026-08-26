@@ -42,6 +42,27 @@ myl-node — ein Myelith-Netzknoten
                          Atteste als unbekannter Aussteller verworfen. Ohne
                          Angabe werden alle Atteste verworfen: Ungeprüfte
                          durchzulassen wäre schlechter.
+  --genesis <datei>      Genesis-Datei mit dem Validator-Satz. Nur damit
+                         stimmt dieser Knoten bei BFT-Runden mit; ohne sie
+                         hört er zu und rechnet nach. Der Knoten muss mit
+                         seinem Konsensschlüssel darin stehen.
+  --konsensschluessel <datei>
+                         geheimer BLS-Schlüssel für die Stimme (Vorgabe:
+                         <name>.konsens.key). GETRENNT von --schluessel,
+                         der die Netzidentität trägt: Ein Leck darf nicht
+                         beide Ebenen zugleich treffen. Fehlt die Datei,
+                         wird eine mit Rechten 0600 angelegt.
+  --probe-konsensschluessel
+                         Konsensschlüssel aus --name ableiten statt aus
+                         einer Datei. WER DEN NAMEN KENNT, KENNT DEN
+                         SCHLUESSEL. Nur für Probeläufe; die Herkunft steht
+                         danach in jeder Protokollzeile.
+  --genesiszeile <stake> die eigene Zeile für die Genesis-Datei ausgeben
+                         und beenden. Erzeugt den Konsensschlüssel, falls
+                         er noch nicht existiert. Damit niemand 288 Zeichen
+                         Hex von Hand abschreibt: Jeder Betreiber ruft das
+                         einmal auf, schickt die Zeile, und jemand setzt
+                         die Datei daraus zusammen.
   --erzeuger             dieser Knoten baut die Blöcke. GENAU EINER im Netz:
                          zwei Erzeuger gabeln die Kette sofort, weil niemand
                          entscheidet, welcher Block gilt (das täte BFT).
@@ -59,6 +80,10 @@ struct Argumente {
     konfig: KnotenKonfig,
     laufzeit: Option<u64>,
     auf_bildschirm: bool,
+    /// Konsensschlüssel aus dem Namen ableiten statt aus einer Datei.
+    probeschluessel: bool,
+    /// Nur die eigene Genesis-Zeile ausgeben, mit diesem Stake.
+    genesiszeile: Option<u64>,
 }
 
 fn lies_argumente() -> Result<Option<Argumente>, String> {
@@ -73,6 +98,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut horche: Vec<String> = Vec::new();
     let mut laufzeit = None;
     let mut auf_bildschirm = true;
+    let mut probeschluessel = false;
+    let mut genesiszeile: Option<u64> = None;
 
     let mut i = 0;
     while i < roh.len() {
@@ -112,6 +139,20 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--teilnehmer" => { konfig.teilnehmer.push(wert(i)?); i += 2; }
+            "--genesis" => { konfig.genesisdatei = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--konsensschluessel" => {
+                konfig.konsensschluesseldatei = Some(PathBuf::from(wert(i)?));
+                i += 2;
+            }
+            "--probe-konsensschluessel" => { probeschluessel = true; i += 1; }
+            "--genesiszeile" => {
+                genesiszeile = Some(
+                    wert(i)?
+                        .parse()
+                        .map_err(|_| "--genesiszeile erwartet einen Stake als Zahl".to_string())?,
+                );
+                i += 2;
+            }
             "--erzeuger" => { konfig.erzeugt_bloecke = true; i += 1; }
             "--laufzeit" => {
                 laufzeit = Some(
@@ -136,7 +177,27 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     if konfig.schluesseldatei.as_os_str() == "knoten.key" {
         konfig.schluesseldatei = PathBuf::from(format!("{}.key", konfig.name));
     }
-    Ok(Some(Argumente { konfig, laufzeit, auf_bildschirm }))
+    // Aus demselben Grund bekommt auch der Konsensschlüssel den Namen.
+    if konfig.genesisdatei.is_some()
+        && konfig.konsensschluesseldatei.is_none()
+        && !probeschluessel
+    {
+        konfig.konsensschluesseldatei =
+            Some(PathBuf::from(format!("{}.konsens.key", konfig.name)));
+    }
+    // Für --genesiszeile gilt dieselbe Vorgabe wie fürs Mitstimmen.
+    if genesiszeile.is_some() && konfig.konsensschluesseldatei.is_none() && !probeschluessel {
+        konfig.konsensschluesseldatei =
+            Some(PathBuf::from(format!("{}.konsens.key", konfig.name)));
+    }
+    if probeschluessel && konfig.genesisdatei.is_none() && genesiszeile.is_none() {
+        return Err(
+            "--probe-konsensschluessel ohne --genesis: ohne Validator-Satz \
+             gibt es nichts zu stimmen"
+                .to_string(),
+        );
+    }
+    Ok(Some(Argumente { konfig, laufzeit, auf_bildschirm, probeschluessel, genesiszeile }))
 }
 
 #[tokio::main]
@@ -149,6 +210,33 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    // ⚑ **Vor dem Start des Netzes.** Wer nur seine Genesis-Zeile
+    // braucht, soll dafür kein Netz aufmachen und keine Ports belegen.
+    if let Some(stake) = args.genesiszeile {
+        match eigene_genesiszeile(
+            &args.konfig.name,
+            args.konfig.konsensschluesseldatei.clone(),
+            args.probeschluessel,
+            stake,
+        ) {
+            Ok(zeile) => {
+                println!("{zeile}");
+                return;
+            }
+            Err(e) => {
+                eprintln!("myl-node: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Vor dem Start festhalten, was danach gebraucht wird: `starten`
+    // nimmt die Konfiguration mit.
+    let genesisdatei = args.konfig.genesisdatei.clone();
+    let konsensschluessel = args.konfig.konsensschluesseldatei.clone();
+    let name = args.konfig.name.clone();
+    let probe = args.probeschluessel;
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -188,6 +276,19 @@ async fn main() {
         eprintln!("myl-node: noch keine Horchadresse gemeldet");
     }
 
+    // Wenn eine Genesis-Datei da ist: mitstimmen.
+    //
+    // ⚑ **Erst hier, nicht beim Start.** Der Propose des Leaders muss
+    // durch ein Mesh, und das steht beim Start noch nicht. Ein Knoten,
+    // der sofort proposet, redet ins Leere und die Runde hängt, ohne
+    // dass jemand etwas falsch gemacht hätte.
+    if let Some(pfad) = genesisdatei.clone() {
+        if let Err(e) = starte_konsens(&mut knoten, &pfad, &name, konsensschluessel, probe).await {
+            eprintln!("myl-node: Konsens nicht gestartet: {e}");
+            std::process::exit(1);
+        }
+    }
+
     // Ein Weg für beide Fälle: Auch mit --laufzeit muss Strg-C einen
     // Abschlusseintrag schreiben, sonst sieht ein früh beendeter Lauf
     // aus wie ein Absturz.
@@ -199,4 +300,101 @@ async fn main() {
         knoten.protokollzeilen(),
         knoten.protokollpfad().display()
     );
+}
+
+/// Lädt Genesis und Konsensschlüssel und beginnt Runde 0.
+///
+/// **Der Vorschlag ist aus dem Netz abgeleitet**, nämlich
+/// `sha256(genesis_hash ‖ runde)`. Das ist ein Platzhalter für einen
+/// echten Block, aber kein beliebiger: Er hängt am Netz, sodass zwei
+/// Netze nie denselben Vorschlag haben, und er ist von jedem Knoten
+/// nachrechenbar.
+async fn starte_konsens(
+    knoten: &mut Knoten,
+    genesisdatei: &std::path::Path,
+    name: &str,
+    schluesseldatei: Option<PathBuf>,
+    probe: bool,
+) -> Result<(), String> {
+    let text = std::fs::read_to_string(genesisdatei)
+        .map_err(|e| format!("{}: {e}", genesisdatei.display()))?;
+    let g = myl_node::genesis::Genesis::aus_text(&text)
+        .map_err(|e| format!("{}: {e}", genesisdatei.display()))?;
+
+    let schluessel = if probe {
+        eprintln!(
+            "myl-node: WARNUNG: Konsensschlüssel aus dem Namen {name:?} abgeleitet. \
+             Wer den Namen kennt, kann in diesem Namen stimmen. Nur für Probeläufe."
+        );
+        myl_node::schluessel::Konsensschluessel::probe(name).map_err(|e| e.to_string())?
+    } else {
+        let pfad = schluesseldatei
+            .ok_or_else(|| "kein Konsensschlüssel angegeben".to_string())?;
+        myl_node::schluessel::Konsensschluessel::aus_datei(&pfad)
+            .map_err(|e| e.to_string())?
+    };
+
+    eprintln!(
+        "myl-node: Genesis {} ({}), {} Validatoren, Gesamtstake {}",
+        myl_node::knoten::kurz(&g.hash()),
+        g.netz,
+        g.validatoren.len(),
+        g.gesamtstake()
+    );
+
+    // Auf das Mesh warten, sonst geht der Propose ins Leere.
+    let mesh = knoten
+        .warte_auf_mesh(myl_net::GossipTopic::Consensus, 1, Duration::from_secs(60))
+        .await;
+    if mesh == 0 {
+        return Err(
+            "kein Mesh auf /myelith/consensus/1 nach 60 s. Ohne Mesh nimmt Gossipsub \
+             keine Nachricht an, und die Runde begänne im Leeren"
+                .to_string(),
+        );
+    }
+
+    let runde = 0u64;
+    let mut roh = Vec::with_capacity(40);
+    roh.extend_from_slice(g.hash().as_bytes());
+    roh.extend_from_slice(&runde.to_le_bytes());
+    let vorschlag = myl_types::hash::Hash::sha256(&roh);
+
+    knoten
+        .beginne_konsensrunde(&g, schluessel, runde, vorschlag)
+        .await
+        .map_err(|e| e.to_string())?;
+    eprintln!("myl-node: BFT-Runde {runde} begonnen, Mesh {mesh}");
+    Ok(())
+}
+
+/// Baut die eigene Zeile für die Genesis-Datei.
+///
+/// Legt die Schlüsseldatei an, falls sie fehlt: Wer seine Zeile
+/// erzeugt, legt damit seine Stimme fest, und die muss von da an
+/// dieselbe bleiben.
+fn eigene_genesiszeile(
+    name: &str,
+    schluesseldatei: Option<PathBuf>,
+    probe: bool,
+    stake: u64,
+) -> Result<String, String> {
+    let k = if probe {
+        eprintln!(
+            "myl-node: WARNUNG: Zeile aus einem Probeschlüssel. Wer den Namen \
+             {name:?} kennt, kann in diesem Namen stimmen."
+        );
+        myl_node::schluessel::Konsensschluessel::probe(name).map_err(|e| e.to_string())?
+    } else {
+        let pfad = schluesseldatei.ok_or_else(|| "kein Konsensschlüssel angegeben".to_string())?;
+        let k = myl_node::schluessel::Konsensschluessel::aus_datei(&pfad)
+            .map_err(|e| e.to_string())?;
+        eprintln!(
+            "myl-node: Konsensschlüssel {} ({})",
+            pfad.display(),
+            k.herkunft().als_text()
+        );
+        k
+    };
+    k.genesiszeile(stake).map_err(|e| e.to_string())
 }

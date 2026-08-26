@@ -95,10 +95,16 @@ use libp2p::{Multiaddr, PeerId};
 /// Ausgehende Verbindungen, die der Knoten selbst aufbaut.
 ///
 /// **Herleitung:** Gossipsub hält je Topic ein Mesh von bis zu
-/// `mesh_n_high = 12` Peers. Weil `subscribe_all` alle fünf Topics
-/// abonniert und Peers in mehreren Meshes zugleich stehen, ist 12 die
-/// Untergrenze für ein volles Mesh, nicht 5 mal 12. Dazu vier Plätze
-/// Luft für Fluktuation und Bootstrap: **16**.
+/// `mesh_n_high = 12` Peers. Weil `subscribe_all` **alle**
+/// Protokoll-Topics abonniert und derselbe Peer in mehreren Meshes
+/// zugleich steht, ist 12 die Untergrenze für ein volles Mesh, und zwar
+/// **unabhängig von der Anzahl der Topics** — nicht 12 je Topic. Dazu
+/// vier Plätze Luft für Fluktuation und Bootstrap: **16**.
+///
+/// *Hier stand bis zum 2026-08-26 „alle fünf Topics" und „nicht 5 mal
+/// 12". Die Zahl war eine Kopie und wurde beim sechsten Topic
+/// (`Consensus`) falsch. Sie geht in die Herleitung gar nicht ein, also
+/// steht sie jetzt nicht mehr da.*
 pub const MAX_AUSGEHEND: u32 = 16;
 
 /// Eingehende Verbindungen, die andere zum Knoten aufbauen.

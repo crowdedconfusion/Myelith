@@ -30,8 +30,10 @@ Where a term only makes sense in context, the context comes first.
 Cross-references are marked → like this.
 
 **Status:** θ_v 0.17.0 · CONSENSUS phases 1–4 · VERIFICATION phases 1–2 ·
-INTEGER_LLM roadmap item 12.77. This file is updated whenever protocol
-terminology changes, as part of the project's documentation chain.
+INTEGER_LLM roadmap item 12.81 · NODE: BFT rounds over the network ·
+STORAGE phase 0 (draft). This file is
+updated whenever protocol terminology changes, as part of the project's
+documentation chain.
 
 ---
 
@@ -82,7 +84,8 @@ against capacity (→ [burn-and-mint](#burn-and-mint)).
 
 ### Layer model
 
-Four layers, each with its own directory in the repository.
+Four layers, each with its own directory in the repository, plus one
+component that cuts across them.
 
 | Layer | Purpose | Components |
 |---|---|---|
@@ -90,11 +93,18 @@ Four layers, each with its own directory in the repository.
 | **L2 — compute layer** | Model shards, pods, pipeline, KV cache | `COMPUTE_PIPELINE/`, `INTEGER_LLM/` |
 | **L1 — consensus layer** | BFT consensus, PoI aggregation, staking, ledger | `CONSENSUS/`, `TOKENOMICS/`, `VERIFICATION/` |
 | **L0 — networking layer** | P2P gossip, latency measurement, encrypted channels | `NETWORKING/` |
+| **Cross-cutting: availability** | Holding, serving and proving artefacts and the knowledge base | `STORAGE/` (draft) |
 
 **The core decision:** consensus does *not* run on the inference results
 themselves, but on compact proofs of work produced by the compute layer.
 Block time (1–2 s) therefore stays independent of how long an inference
 takes.
+
+**Why STORAGE cuts across:** every layer needs something it does not
+produce itself, namely scale packs, shard weights, tables and, in future,
+the knowledge base. The incentives there differ from everywhere else,
+because storage generates no burn and therefore cannot be paid from the
+mint (→ [Store](#network-roles)).
 
 *In the whitepaper:* chap. 3.2
 
@@ -121,6 +131,16 @@ CPU and good connectivity.
 reports deviations. Earns a bounty from slashed stake. The name comes
 from Polkadot: someone fishing the network for fraud.
 *In code:* `VERIFICATION/myl-verifier/src/checker.rs`
+
+**Store** — holds what the network needs in order to compute but does not
+produce itself: scale packs, shard weights, lookup tables and, in future,
+the knowledge base. The proof runs as challenge-response over random byte
+ranges, not over the hash of the whole, because anyone who verifies and
+then deletes would pass every hash check. Paid from the treasury, not
+from the mint.
+*Status:* draft, no crate. Chap. 3.3 knows six roles and this is not one
+of them; the entry for it sits in `README/Intern/Whitepaper-Änderung.md`.
+*In the draft:* `STORAGE/README/README.md`
 
 **Gateway** — accepts user requests, routes them to pods, returns the
 response stream. For → [external tools](#deterministic-vs-external-tools)
@@ -423,11 +443,25 @@ words.
 
 Myelith does not measure absolute perplexity but the **relative increase**
 against the floating-point original. The acceptance criterion is ≤ 5 % and
-has been met on both models since θ_v 0.17.0: 0.5B **+2.11 %**, 7B
-**+1.14 %**. For comparison, the floor of the quantisation scheme itself —
-everything in float except the → [W8A16](#w8a16) quantisation — sits at
-**+0.84 %**. The 0.30-point gap is the entire remaining implementation
-loss.
+is met on all four models measured so far:
+
+| Model | Parameters | Gap |
+|---|---|---|
+| Qwen2.5-0.5B | 0.5 bn | +2.11 % |
+| Qwen3-4B | 4.0 bn | +1.64 % |
+| Qwen2.5-7B | 7.6 bn | +1.14 % |
+| Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30.5 bn | **no measurable gap** |
+
+For comparison, the floor of the quantisation scheme itself, that is,
+everything in float except the → [W8A16](#w8a16) quantisation, sits at
+**+0.84 %**. The 0.30-point gap at 7B is the entire remaining
+implementation loss.
+
+**"No measurable gap" does not mean "better".** The point estimate for the
+MoE is −0.59 %, but the standard error across the four sequences is
+1.66 %, and two of those four are worse than the reference. At 435 scored
+positions a difference of that size cannot be resolved
+(→ [the 1 % rule](#the-1--rule)).
 
 *In code:* `INTEGER_LLM/eval/perplexity.py`
 
@@ -529,6 +563,22 @@ The square root is the integer problem — it is solved with an
 
 *In code:* `kernels/src/rmsnorm.rs::rmsnorm_i16`
 
+### QK-Norm
+
+Qwen3 normalises query and key **per head** with a separate RMSNorm over
+`head_dim`, before → [RoPE](#rope-rotary-position-embedding) rotates them.
+Qwen2.5 does not. For integer arithmetic this is a gift: the magnitudes
+entering the dot product are bounded afterwards.
+
+*Why it deserves its own entry:* the normalisation runs over the **head**,
+not over the whole vector. Compute it over `hidden_size` by accident and
+you get a model that looks plausible and returns wrong numbers, because
+every head then carries the root mean square of all the others. Two tests
+pin both halves down: that one head does not change the others, and that
+over the flat vector it very much would.
+
+*In code:* `kernels/src/rmsnorm.rs::qk_norm_heads`
+
 ### Attention
 
 The mechanism by which each position in the text reaches back to earlier
@@ -562,7 +612,21 @@ working on a slice of the vector and learning different relations.
 key/value heads; several query heads share one KV head. This saves memory
 in the → [KV cache](#kv-cache). Qwen2.5-0.5B: 14 query heads, 2 KV heads.
 
-*In code:* `runtime/src/model.rs`, `split_heads` + `group_size`
+**Decoupled `head_dim` (Qwen3).** In Qwen2.5,
+`hidden_size = num_heads · head_dim`. Qwen3 breaks that link: Qwen3-4B has
+`hidden_size` 2560 but 32 heads of 128, so 4096. The attention output is
+therefore **wider than the residual stream**, and only `o_proj` brings it
+back.
+
+*Why this is here:* the assumption sat in two places in the code
+(→ finding 59). The loader rejected such models, and a test demanded the
+rejection outright, so it pinned down a bug rather than a property. After
+the fix the first Qwen3 run broke at the second place: the buffer for the
+attention output was sized to `hidden_size`. **A named bug is not a fixed
+one.**
+
+*In code:* `runtime/src/model.rs`, `split_heads` + `group_size`,
+`loader.rs::pruefe_projektionsformen`
 
 ### RoPE (rotary position embedding)
 
@@ -627,7 +691,63 @@ MLP's matrix multiplications to be practically exact (0.01 %), while the
 **entire** MLP error arose in the SiLU LUT (6.83 %). Raising the LUT
 resolution in θ_v 0.15.0 was one of the project's two big steps forward.
 
+In Qwen3-30B-A3B this slot holds not **one** MLP but 128 of them
+(→ [MoE](#moe-mixture-of-experts)).
+
 *In code:* `kernels/src/mlp.rs::mlp_int`
+
+### MoE (mixture of experts)
+
+Instead of one MLP block per layer, the model holds many, the **experts**.
+A small linear network, the **router** (also *gate*), scores the input and
+picks the best *k*; only those compute, and their outputs are mixed with
+weights. The parameter count grows without the compute per token growing
+with it.
+
+> *Example.* Qwen3-30B-A3B has 128 experts in each of its 48 layers and
+> picks **top-8**. Of 30.5 bn parameters, **3.0 bn** are active per token,
+> that is 10 %.
+
+**Why this is delicate for Myelith.** Chap. 10.1 of the whitepaper rules
+MoE out because "the data path varies per token". That objection hits
+**expert-parallel** placement, where experts live on different nodes. If
+instead every node holds all experts of its layers, the pod chain is
+unchanged, and per layer **exactly k** experts fire, a constant taken from
+the model configuration. The → [vTFE](#vtfe-verified-token-forward-equivalents)
+attribution therefore stays recomputable without request state.
+
+**Status: the integer path carries it.** Qwen3-30B-A3B runs as an
+artefact, bit-identical across four independent pipeline processes and the
+single node, with no measurable gap in → [perplexity](#perplexity). The
+published whitepaper v0.3 stays untouched; the proposed wording for
+chap. 10.1 sits in `README/Intern/Whitepaper-Änderung.md`.
+
+**The canonical tie-break.** Two experts can receive the same router
+value. Who wins then has to be fixed, otherwise two honest nodes diverge,
+not over arithmetic but over a sort order. Myelith fixes it: **selection
+happens over the logits, and on a tie the lower expert index wins**,
+without sorting.
+
+Measured over 2448 routing decisions (measurement 12.81c): over the
+logits, **0.45 %** of decisions hang on this rule, which at 48 layers is
+roughly every 4.6 tokens. Over the probabilities it would be **3.96 %**,
+8.8 times as many, because the exp table maps a whole input range onto the
+same output value and therefore **creates** ties that did not exist
+before. The rule is load-bearing, not precautionary.
+
+**⚑ Token dropping stays forbidden.** Some MoE implementations give each
+expert a capacity and discard surplus tokens. The result at position *i*
+then depends on which other tokens shared the batch, and two redundant
+pods batch differently. Same class as finding 39.
+
+**Calibration needs more text.** At top-8 of 128, each expert sees only a
+sixteenth of the tokens a dense MLP would see. Activation scales are
+absmax estimators, and an absmax from too few observations understates the
+true range systematically. Understated scales saturate in production.
+
+*In code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
+probe `runtime/src/bin/router_probe.rs`
+*In the roadmap:* `INTEGER_LLM/README/Fahrplan-v3.md`, phase 12.81
 
 ### KV cache
 
@@ -947,6 +1067,50 @@ deterministically.
 
 *In code:* `validator.rs` — `COMMITTEE_SIZE = 21`, `ARBITER_COUNT = 7`
 
+### Genesis file and validator set
+
+Who may vote at the start, and with what weight. A text file naming the
+network, then one line per validator holding a **BLS public key**, a
+**proof of possession**
+(→ [PoP](#rogue-key-attack-and-proof-of-possession)) and a **stake**.
+
+> *Example.* The trial network lists five validators with 250, 230, 200,
+> 120 and 100 MYL. Total 900, so the
+> → [quorum](#quorum-and-the-23-threshold) is 600,000,001.
+
+**Not discovered over the network**, and that is the point: whoever may
+announce themselves announces themselves fifteen times. That exact bug
+once sat in the BFT state machine, which counted messages instead of
+weight.
+
+**The identifier is not in the file**, it is derived as
+`sha256(pubkey)`. A file carrying both identifier and key would hold two
+sources for one truth, and those eventually disagree.
+
+**The hash is over the content, not the file.** Sorted by identifier and
+canonically encoded, so reordering a line or changing a comment changes
+nothing. The same distinction chapter 6.2 draws for execution: the
+content binds, the encoding does not.
+
+⚑ **No validator may hold a third or more**, otherwise the network has no
+→ [BFT](#bft-byzantine-fault-tolerance) safety but a single party with a
+veto. A minimum follows: **four**. Three values each below a third of
+their sum cannot add up to that sum.
+
+*In code:* `NODE/myl-node/src/genesis.rs`
+
+### Consensus key
+
+The BLS key a node signs its votes with. **Separate from the network
+key** that carries its peer identity.
+
+*Why separate:* one shared secret would be one less to manage and would
+compromise both layers at once if it leaked. Also, the network identity
+may change without the vote changing: a node that moves stays the same
+validator.
+
+*In code:* `NODE/myl-node/src/schluessel.rs`
+
 ### Voting weight
 
 The coupling that turns an ordinary proof-of-stake system into a Myelith
@@ -982,7 +1146,19 @@ state.
 How messages spread in the P2P network: every node forwards what it
 receives. Myelith uses **libp2p gossipsub** with separate topics per
 message class (blocks, transactions, PoI bundles, challenges, latency
-attestations), so that large PoI bundles do not slow down block gossip.
+attestations, consensus messages), so that large PoI bundles do not slow
+down block gossip.
+
+**Topic names are consensus fields.** Two nodes spelling them
+differently exchange no message at all, and nothing anywhere reports an
+error: each simply sees the other as silent. Adding a topic is therefore
+a protocol decision.
+
+*Why the BFT rounds got their own topic (since 26 August 2026):* a vote
+is 169 bytes, bound to its round and worthless afterwards; a block is
+large, rare and permanent. Sharing a topic would mean sharing mesh,
+bandwidth and **scoring**, so flooding with votes would hit block
+propagation too.
 
 **Validation before forwarding:** gossipsub runs in `validate_messages()`
 mode — a message is only forwarded once the node has checked and accepted
@@ -1008,6 +1184,10 @@ a single miner.
 
 > *Example.* A 28-layer model on 4 shards: miner A holds layers 0–6,
 > B 7–13, C 14–20, D 21–27. None of them has the whole model.
+
+With a → [MoE](#moe-mixture-of-experts), a shard holds **all experts of
+its layers**, not individual experts spread across nodes. That commitment
+is exactly what keeps the pod chain unchanged.
 
 *In code:* `COMPUTE_PIPELINE/myl-pod/src/shard.rs`,
 `INTEGER_LLM/runtime/src/model.rs::run_layers`
@@ -1419,11 +1599,17 @@ MYL price mediates between supply and demand.
 
 *In code:* `VTFE_UNITS_PER_TFE = 1_000_000`
 
-> **⚑ Open item:** vTFE must count **layers**, not shards. A shard is a
-> packaging unit and varies in size with pod configuration; layers are the
-> actual work. As long as counting is by shard, a pod with few large
-> shards would be penalised against one with many small ones. Noted in the
-> master roadmap.
+> **Not by shards, and not by layers either** (settled 2026-08-23). A
+> shard is a packaging unit and varies in size with pod configuration.
+> Layers come closer but fall short: the LM head is not a layer yet
+> computes like **9.13** of them at 0.5B, and a pure layer rule would give
+> the last shard 12.5 % out of eight shards while it does 36.6 % of the
+> work. What is counted instead are the multiply-accumulates of the weight
+> matrices a shard owns. With a → [MoE](#moe-mixture-of-experts) that means
+> router plus *k* experts, not the full expert width (→ finding 60).
+>
+> **⚑ What stays open is the level above:** epoch close still takes the
+> vTFE amount as an input. Noted in the master roadmap.
 
 ### Inference credit (IC)
 
@@ -1892,10 +2078,12 @@ use `INTEGER_LLM/tests/cargo_paths.py`.
 | **L0–L3** | Networking / consensus / compute / agent layer | [A](#layer-model) |
 | **LUT** | Lookup table | [C](#lut-lookup-table) |
 | **MLP** | Multi-layer perceptron (feed-forward block) | [D](#mlp--feed-forward-and-silu) |
+| **MoE** | Mixture of experts | [D](#moe-mixture-of-experts) |
 | **MYL** | The native coin | [I](#myl) |
 | **PoI** | Proof of inference | [—](#poi-proof-of-inference) |
 | **PoP** | Proof of possession | [E](#rogue-key-attack-and-proof-of-possession) |
 | **PRNG** | Pseudo-random number generator | [D](#sampling) |
+| **QK-Norm** | RMSNorm on query and key, per head | [D](#qk-norm) |
 | **RMSNorm** | Root mean square normalization | [D](#rmsnorm) |
 | **RoPE** | Rotary position embedding | [D](#rope-rotary-position-embedding) |
 | **RTT** | Round-trip time | [G](#latencygraph-and-latency-attestations) |

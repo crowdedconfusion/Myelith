@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.11.0 (`myl-scheduler` 0.2.11, `myl-ledger` 0.2.0)
-> **Datum:** 2026-08-23
+> **Version:** 0.12.0 (`myl-scheduler` 0.2.11, `myl-ledger` 0.2.0)
+> **Datum:** 2026-08-26
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4 — Details im Fahrplan);
@@ -86,6 +86,30 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-consensus v0.12.0 – 2026-08-26 (die Form auf der Leitung)
+
+`Konsensnachricht` fasst Propose, Vote und Commit zu einem Typ zusammen,
+den ein Gossip-Topic tragen kann, und `Propose`/`Vote`/`Commit`
+bekommen Borsh-Ableitungen. Damit ist der Zustandsautomat aus `bft.rs`
+zum ersten Mal über ein Netz erreichbar; die Verdrahtung liegt in
+`NODE/myl-node`.
+
+**Was der Typ zusätzlich kann:** `runde()` und `absender()`, damit ein
+Knoten eine Nachricht der falschen Runde verwerfen kann, **ohne** sie
+erst dem Zustandsautomaten vorzulegen.
+
+⚑ **Was der Borsh-Parse hier leistet, ist gemessen: fast nichts.** Von
+20 000 verstümmelten Nachrichten kommen **99 %** durch, weil alle Felder
+feste Breite haben (Runde 8, Hash 32, Miner-Id 32, Signatur 96). Das ist
+dieselbe Eigenschaft wie in Fund 45 und Fund 57.
+
+**Der Unterschied zu Fund 45 ist, dass die eigentliche Prüfung hier
+erreichbar ist.** Bei PoI-Bündeln blieb die Aggregatsignatur ungeprüft,
+weil niemand sie prüfte. Hier prüfen `receive_propose`, `receive_vote`
+und `receive_commit` jede Nachricht gegen Runde, Mitgliedschaft,
+Duplikat und BLS-Signatur, und der Knoten ruft sie auch auf. Der Parse
+ist die Eingangstür, nicht die Prüfung.
 
 ### myl-consensus v0.11.0 – 2026-08-23 (adversariale Testebene, K4)
 

@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.3.0
-> **Datum:** 2026-08-23
+> **Version:** 0.7.0
+> **Datum:** 2026-08-26
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.4, 2.1–2.3),
 > dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser).
 > Phase 1: 20-Node-Voll-Konnektivität < 5 s, ungültige Nachrichten
@@ -80,6 +80,33 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.7.0 – 2026-08-26 (sechstes Topic: die BFT-Runden selbst)
+
+`/myelith/consensus/1` trägt Propose, Vote und Commit.
+
+**Getrennt von `/myelith/blocks/1`, und das ist eine Entscheidung, keine
+Ergänzung** (Projektinhaber, 2026-08-25). Beide Klassen tragen
+Konsensverkehr, verhalten sich aber entgegengesetzt: Ein Block ist groß,
+selten und für jeden interessant; eine Stimme ist 169 Bytes,
+rundengebunden und nach der Runde wertlos. In einem gemeinsamen Topic
+teilen sie Mesh, Bandbreite und **Bewertung**, und wer das Topic mit
+Stimmen flutet, trifft die Blockverbreitung mit.
+
+**Ein Topic für alle drei Nachrichtenarten**, weil sie derselben Runde
+angehören und dieselbe Zustellung brauchen: Wer die Votes bekommt, aber
+die Commits nicht, hängt.
+
+**Größengrenze 8 KiB, hergeleitet:** Die größte definierte Nachricht ist
+ein Propose mit 169 Bytes; ein späterer Rundenwechsel mit
+Polka-Zertifikat bleibt unter 512. Die Strukturprüfung liegt beim
+`PayloadValidator` des Knotens, weil die Typen in `myl-consensus` (L1)
+liegen; die Netzschicht darf nicht daran hängen.
+
+⚑ **Eine kopierte Zahl in `limits.rs` behoben.** Die Herleitung von
+`MAX_AUSGEHEND` sprach von „alle fünf Topics" und „nicht 5 mal 12". Die
+Zahl geht in die Herleitung gar nicht ein, war aber beim sechsten Topic
+falsch. Jetzt steht sie nicht mehr da.
 
 ### v0.6.0 – 2026-08-24 (Punkt 1.5: Anfragekanal)
 

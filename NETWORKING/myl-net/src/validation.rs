@@ -82,6 +82,20 @@ pub const MAX_POI_BUNDLES_BYTES: usize = 512 * 1024;
 pub const MAX_CHALLENGES_BYTES: usize = 64 * 1024;
 /// Maximale Größe eines Latenz-Attests.
 pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
+/// Maximale Größe einer BFT-Konsensnachricht.
+///
+/// **Hergeleitet, nicht geraten.** Die größte heute definierte Nachricht
+/// ist ein Propose: Enum-Marke (1) + Runde (8) + Block-Hash (32) +
+/// Miner-Id (32) + BLS-Signatur (96) = **169 Bytes**. Ein späterer
+/// Rundenwechsel mit Polka-Zertifikat trägt eine Aggregatsignatur (96)
+/// und eine Teilnahme-Bitmaske (16 bei 128 Validatoren), bleibt also
+/// unter 512. Die 8 KiB sind rund das Fünfzigfache davon: weit genug,
+/// dass diese Grenze keinen Entwurf einschränkt, und eng genug, dass
+/// eine Flut den Angreifer Bandbreite kostet.
+///
+/// Die Strukturprüfung erfolgt über einen [`PayloadValidator`], weil die
+/// Typen in `myl-consensus` (L1) liegen. Siehe Modul-Doku.
+pub const MAX_CONSENSUS_BYTES: usize = 8 * 1024;
 
 /// Fehler der Inhalts-Validierung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +138,7 @@ pub fn max_payload_bytes(topic: GossipTopic) -> usize {
         GossipTopic::PoiBundles => MAX_POI_BUNDLES_BYTES,
         GossipTopic::Challenges => MAX_CHALLENGES_BYTES,
         GossipTopic::LatencyAttests => MAX_LATENCY_ATTESTS_BYTES,
+        GossipTopic::Consensus => MAX_CONSENSUS_BYTES,
     }
 }
 
@@ -167,11 +182,12 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
                 .validate_structure()
                 .map_err(|_| ValidationError::MalformedPayload)?;
         }
-        // Blöcke und Transaktionen: Ihre Typen liegen in myl-consensus
-        // (L1). Die Netzschicht (L0) darf nicht daran hängen — die
-        // vollständige Prüfung kommt über einen PayloadValidator von der
-        // Node-Verdrahtung. Bewusste Entscheidung, keine Auslassung.
-        GossipTopic::Blocks | GossipTopic::Transactions => {}
+        // Blöcke, Transaktionen und Konsensnachrichten: Ihre Typen
+        // liegen in myl-consensus (L1). Die Netzschicht (L0) darf nicht
+        // daran hängen — die vollständige Prüfung kommt über einen
+        // PayloadValidator von der Node-Verdrahtung. Bewusste
+        // Entscheidung, keine Auslassung.
+        GossipTopic::Blocks | GossipTopic::Transactions | GossipTopic::Consensus => {}
     }
     Ok(())
 }

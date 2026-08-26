@@ -225,6 +225,7 @@ jobs:
             SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
+            NODE/myl-node
             TESTCLIENT/myl-testclient
 
       # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
@@ -248,6 +249,7 @@ jobs:
             INTEGER_LLM/kernels \
             INTEGER_LLM/runtime \
             INTEGER_LLM/pipeline \
+            NODE/myl-node \
             TESTCLIENT/myl-testclient
           do
             echo "── clippy: $crate"
@@ -337,6 +339,24 @@ jobs:
       # auf Merkle-Baeumen und einem uebergebenen Seed.
       - name: cargo test — TRAINING (myl-train)
         working-directory: TRAINING/myl-train
+        run: cargo test --quiet
+
+      # ⚑ **Fund 65 (2026-08-26): NODE lief in keinem CI-Job.**
+      #
+      # Das Crate mit 132 Tests, darunter fünf Knoten in echten
+      # Prozessen über libp2p, stand weder in der Cache-Liste noch bei
+      # Clippy noch bei den Tests. Und es ist ausgerechnet das Crate,
+      # das laut eigenem Modulkopf **die Nähte belastet**: Die Funde 55
+      # bis 57 wurden dort sichtbar, nicht in den Bibliotheken.
+      #
+      # Dieselbe Klasse wie Fund 44 (der Audit sah NETWORKING nicht) und
+      # wie die fünf stillen Prüfungen vom 2026-08-25. Eine Prüfung, die
+      # nicht läuft, ist keine Prüfung.
+      #
+      # Der Schritt steht **vor** dem Testclient, weil dieser auf dem
+      # Knoten aufsetzt: Bricht die Verdrahtung, soll es hier auffallen.
+      - name: cargo test — NODE (myl-node)
+        working-directory: NODE/myl-node
         run: cargo test --quiet
 
       # Testclient: Die Tests decken Protokollformat und Fingerabdruck ab

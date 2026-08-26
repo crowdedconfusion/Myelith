@@ -31,7 +31,7 @@ pub use validator::{
     ARBITER_COUNT, COMMITTEE_SIZE, MIN_STAKE,
 };
 pub use bft::{
-    BftState, Propose, Vote, Commit, Round, RoundStatus, BftError, select_leader,
+    BftState, Konsensnachricht, Propose, Vote, Commit, Round, RoundStatus, BftError, select_leader,
 };
 pub use block::{Block, BurnTx, EpochMeta, Transaction};
 // Die Protokolltypen des Blockinhalts kommen aus den kanonischen Crates

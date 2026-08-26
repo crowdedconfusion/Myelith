@@ -34,14 +34,28 @@ pub const TOPIC_CHALLENGES: &str = "/myelith/challenges/1";
 /// Topic für signierte Latenz-Atteste (Phase 2, Grundlage des
 /// LatencyGraph für die Pod-Bildung).
 pub const TOPIC_LATENCY_ATTESTS: &str = "/myelith/latency-attests/1";
+/// Topic für die BFT-Runden selbst: Propose, Vote, Commit.
+///
+/// **Getrennt von [`TOPIC_BLOCKS`], und das ist eine Entscheidung, keine
+/// Ergänzung** (Projektinhaber, 2026-08-25). Beide Klassen tragen
+/// Konsensverkehr, aber sie verhalten sich entgegengesetzt: Ein Block
+/// ist groß, selten und für jeden interessant; eine Stimme ist 170 Bytes,
+/// rundengebunden und nach der Runde wertlos. In einem gemeinsamen Topic
+/// teilen sie Mesh, Bandbreite und **Bewertung** — wer das Topic mit
+/// Stimmen flutet, trifft die Blockverbreitung mit, und ein Knoten, der
+/// wegen Stimmenverhaltens aus dem Mesh fliegt, bekommt auch keine
+/// Blöcke mehr. Zwei Topics kosten ein sechstes Mesh und trennen dafür
+/// die beiden Fehlerfälle.
+pub const TOPIC_CONSENSUS: &str = "/myelith/consensus/1";
 
 /// Alle Protokoll-Topics in kanonischer Reihenfolge.
-pub const ALL_TOPICS: [&str; 5] = [
+pub const ALL_TOPICS: [&str; 6] = [
     TOPIC_BLOCKS,
     TOPIC_TRANSACTIONS,
     TOPIC_POI_BUNDLES,
     TOPIC_CHALLENGES,
     TOPIC_LATENCY_ATTESTS,
+    TOPIC_CONSENSUS,
 ];
 
 /// Die Nachrichtenklassen des Protokolls (ein Wert je Topic).
@@ -52,6 +66,8 @@ pub enum GossipTopic {
     PoiBundles,
     Challenges,
     LatencyAttests,
+    /// Propose, Vote und Commit einer BFT-Runde.
+    Consensus,
 }
 
 impl GossipTopic {
@@ -60,12 +76,13 @@ impl GossipTopic {
     /// Neben [`ALL_TOPICS`], das die **Namen** führt: Wer über Topics
     /// rechnet statt über Zeichenketten, braucht die Werte. Eine neue
     /// Variante fällt hier auf, weil der Test unten die Länge prüft.
-    pub const ALLE: [GossipTopic; 5] = [
+    pub const ALLE: [GossipTopic; 6] = [
         Self::Blocks,
         Self::Transactions,
         Self::PoiBundles,
         Self::Challenges,
         Self::LatencyAttests,
+        Self::Consensus,
     ];
 
     /// Der kanonische Topic-Name (Konsens-Feld).
@@ -76,17 +93,19 @@ impl GossipTopic {
             Self::PoiBundles => TOPIC_POI_BUNDLES,
             Self::Challenges => TOPIC_CHALLENGES,
             Self::LatencyAttests => TOPIC_LATENCY_ATTESTS,
+            Self::Consensus => TOPIC_CONSENSUS,
         }
     }
 
     /// Alle Topic-Varianten in kanonischer Reihenfolge.
-    pub fn all() -> [GossipTopic; 5] {
+    pub fn all() -> [GossipTopic; 6] {
         [
             Self::Blocks,
             Self::Transactions,
             Self::PoiBundles,
             Self::Challenges,
             Self::LatencyAttests,
+            Self::Consensus,
         ]
     }
 
@@ -197,6 +216,7 @@ mod tests {
         assert_eq!(GossipTopic::PoiBundles.name(), "/myelith/poi-bundles/1");
         assert_eq!(GossipTopic::Challenges.name(), "/myelith/challenges/1");
         assert_eq!(GossipTopic::LatencyAttests.name(), "/myelith/latency-attests/1");
+        assert_eq!(GossipTopic::Consensus.name(), "/myelith/consensus/1");
         assert_eq!(ALL_TOPICS.len(), GossipTopic::all().len());
     }
 

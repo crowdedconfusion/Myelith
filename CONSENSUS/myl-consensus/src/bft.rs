@@ -35,6 +35,7 @@
 
 use crate::signing::{commit_message, propose_message, vote_message};
 use crate::validator::VotingSet;
+use borsh::{BorshDeserialize, BorshSerialize};
 use myl_types::bls::BlsSignature;
 use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
@@ -57,7 +58,7 @@ pub enum RoundStatus {
 }
 
 /// Eine Propose-Nachricht vom Leader.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Propose {
     /// Runde.
     pub round: Round,
@@ -70,7 +71,7 @@ pub struct Propose {
 }
 
 /// Eine Vote-Nachricht von einem Validator.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Vote {
     /// Runde.
     pub round: Round,
@@ -83,7 +84,7 @@ pub struct Vote {
 }
 
 /// Eine Commit-Nachricht von einem Validator.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Commit {
     /// Runde.
     pub round: Round,
@@ -93,6 +94,78 @@ pub struct Commit {
     pub committer: MinerId,
     /// BLS-Signatur des Committers über [`crate::signing::commit_message`].
     pub signature: BlsSignature,
+}
+
+/// Eine BFT-Nachricht, wie sie über das Netz geht.
+///
+/// # Warum es diesen Typ gibt
+///
+/// Propose, Vote und Commit reisen über **ein** Gossip-Topic
+/// (`/myelith/consensus/1`, definiert in `myl-net`, außerhalb dieses
+/// Crates). Ein Topic
+/// trägt eine Nutzlastklasse, also braucht es einen Typ, der alle drei
+/// umfasst und beim Lesen sagt, welcher davon ankam.
+///
+/// **Ein Topic und nicht drei**, weil die drei Nachrichtenarten
+/// derselben Runde angehören und dieselbe Zustellung brauchen: Wer die
+/// Votes bekommt, aber die Commits nicht, hängt. Drei Meshes, die
+/// auseinanderlaufen können, wären drei Wege, dieselbe Runde
+/// steckenzubleiben.
+///
+/// # ⚑ Was der Borsh-Parse hier leistet, und was nicht
+///
+/// **Fast nichts**, und das ist dieselbe Eigenschaft wie in Fund 45 und
+/// Fund 57: Alle Felder haben feste Breite (Runde 8, Hash 32, Miner-Id
+/// 32, Signatur 96), also ist jede Bytefolge der richtigen Länge mit
+/// gültiger Enum-Marke eine lesbare Nachricht.
+///
+/// **Der Unterschied zu Fund 45 ist, dass die eigentliche Prüfung hier
+/// erreichbar ist.** Bei PoI-Bündeln blieb die Aggregatsignatur
+/// ungeprüft, weil niemand sie prüfte. Hier prüfen
+/// [`BftState::receive_propose`], [`BftState::receive_vote`] und
+/// [`BftState::receive_commit`] jede Nachricht gegen Runde,
+/// Mitgliedschaft, Duplikat und BLS-Signatur, bevor sie zählt. Der Parse ist die Eingangstür, nicht die Prüfung.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum Konsensnachricht {
+    Propose(Propose),
+    Vote(Vote),
+    Commit(Commit),
+}
+
+impl Konsensnachricht {
+    /// Die Runde, zu der diese Nachricht gehört.
+    ///
+    /// Erlaubt es dem Aufrufer, eine Nachricht der falschen Runde zu
+    /// verwerfen, **ohne** sie erst dem Zustandsautomaten vorzulegen.
+    pub fn runde(&self) -> Round {
+        match self {
+            Self::Propose(p) => p.round,
+            Self::Vote(v) => v.round,
+            Self::Commit(c) => c.round,
+        }
+    }
+
+    /// Der Absender.
+    ///
+    /// Nicht Teil der Signierbotschaft (siehe [`crate::signing`]), aber
+    /// Teil der Nachricht: Die Prüfung braucht ihn, um den Schlüssel
+    /// nachzuschlagen, gegen den sie verifiziert.
+    pub fn absender(&self) -> MinerId {
+        match self {
+            Self::Propose(p) => p.leader,
+            Self::Vote(v) => v.voter,
+            Self::Commit(c) => c.committer,
+        }
+    }
+
+    /// Für Protokollzeilen: welche Art Nachricht war das.
+    pub fn art(&self) -> &'static str {
+        match self {
+            Self::Propose(_) => "propose",
+            Self::Vote(_) => "vote",
+            Self::Commit(_) => "commit",
+        }
+    }
 }
 
 /// BFT-Zustand für eine Runde.
@@ -841,5 +914,105 @@ mod tests {
     fn select_leader_bei_leerer_liste() {
         assert_eq!(select_leader(0, &[]), None);
         assert_eq!(select_leader(u64::MAX, &[]), None);
+    }
+
+    // ── Konsensnachricht: die Form auf der Leitung ──────────────────
+
+    fn drei_nachrichten() -> Vec<Konsensnachricht> {
+        let h = test_hash(9);
+        vec![
+            Konsensnachricht::Propose(signed_propose(7, h, 0)),
+            Konsensnachricht::Vote(signed_vote(7, h, 1)),
+            Konsensnachricht::Commit(signed_commit(7, h, 2)),
+        ]
+    }
+
+    #[test]
+    fn eine_konsensnachricht_ueberlebt_die_leitung() {
+        for n in drei_nachrichten() {
+            let bytes = borsh::to_vec(&n).expect("serialisieren");
+            let zurueck: Konsensnachricht =
+                borsh::from_slice(&bytes).expect("lesen");
+            assert_eq!(n, zurueck, "{} kam verändert zurück", n.art());
+        }
+    }
+
+    #[test]
+    fn die_drei_arten_sind_auf_der_leitung_unterscheidbar() {
+        // Ohne diese Trennung wäre eine Vote als Commit lesbar, und der
+        // Commit-Threshold ließe sich mit fremden Votes erreichen. Die
+        // Signierbotschaften trennen das bereits (siehe crate::signing);
+        // hier geht es um die Kodierung davor.
+        let h = test_hash(9);
+        let v = borsh::to_vec(&Konsensnachricht::Vote(signed_vote(7, h, 1))).unwrap();
+        let c = borsh::to_vec(&Konsensnachricht::Commit(signed_commit(7, h, 1))).unwrap();
+        assert_ne!(v, c);
+        assert_eq!(v.len(), c.len(), "gleiche Länge, verschiedene Marke");
+        assert_eq!(v[0], 1, "Vote trägt Enum-Marke 1");
+        assert_eq!(c[0], 2, "Commit trägt Enum-Marke 2");
+    }
+
+    #[test]
+    fn runde_und_absender_kommen_ohne_zustandsautomat_heraus() {
+        // Der Knoten muss eine Nachricht der falschen Runde verwerfen
+        // können, ohne sie erst dem Zustandsautomaten vorzulegen.
+        for (n, erwartet) in drei_nachrichten().into_iter().zip([0u8, 1, 2]) {
+            assert_eq!(n.runde(), 7);
+            assert_eq!(n.absender(), test_miner(erwartet));
+        }
+    }
+
+    #[test]
+    fn ein_anhaengsel_hinter_einer_nachricht_wird_abgelehnt() {
+        // Ein Anhängsel ändert die Nachrichten-Id, nicht den Inhalt:
+        // dieselbe Stimme liefe beliebig oft durchs Netz und zählte im
+        // Gossipsub-Scoring als neuer Verkehr.
+        let mut bytes =
+            borsh::to_vec(&Konsensnachricht::Vote(signed_vote(7, test_hash(9), 1))).unwrap();
+        bytes.push(0);
+        assert!(
+            borsh::from_slice::<Konsensnachricht>(&bytes).is_err(),
+            "ein Anhängsel hinter einer gültigen Nachricht kam durch"
+        );
+    }
+
+    /// ⚑ **Der Parse ist fast nur eine Längenprüfung** (Fund 45, Fund 57).
+    ///
+    /// Gemessen statt behauptet. Der Unterschied zu Fund 45 ist nicht die
+    /// Zahl, sondern dass die eigentliche Prüfung hier **erreichbar** ist:
+    /// [`BftState::receive_vote`] prüft Runde, Mitgliedschaft, Duplikat
+    /// und Signatur. Der Parse ist die Eingangstür, nicht die Prüfung.
+    #[test]
+    fn der_parse_einer_konsensnachricht_ist_fast_nur_eine_laengenpruefung() {
+        let gut =
+            borsh::to_vec(&Konsensnachricht::Vote(signed_vote(7, test_hash(9), 1))).unwrap();
+        let mut zustand: u64 = 0x9E3779B97F4A7C15;
+        let mut durch = 0usize;
+        const VERSUCHE: usize = 20_000;
+        for _ in 0..VERSUCHE {
+            zustand ^= zustand << 13;
+            zustand ^= zustand >> 7;
+            zustand ^= zustand << 17;
+            let mut kaputt = gut.clone();
+            let pos = (zustand as usize) % kaputt.len();
+            kaputt[pos] ^= 1u8 << ((zustand >> 32) % 8);
+            if borsh::from_slice::<Konsensnachricht>(&kaputt).is_ok() {
+                durch += 1;
+            }
+        }
+        let anteil = durch * 100 / VERSUCHE;
+        println!("[Messung] {durch} von {VERSUCHE} verstümmelten Nachrichten kamen durch ({anteil} %)");
+        assert!(
+            anteil > 90,
+            "nur {anteil} % kamen durch. Wenn der Parse inzwischen mehr abfängt, \
+             hat jemand eine echte Prüfung ergänzt; dann gehört der Modulkopf von \
+             Konsensnachricht nachgezogen, statt diesen Test anzupassen"
+        );
+        // Gegenprobe: ganz zahnlos ist er nicht. Die Enum-Marke trägt.
+        assert!(
+            durch < VERSUCHE,
+            "keine einzige verstümmelte Nachricht wurde abgelehnt: dann prüft \
+             nicht einmal die Enum-Marke"
+        );
     }
 }

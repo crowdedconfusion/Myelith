@@ -1,8 +1,9 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** myl-node v0.1.0
-> **Datum:** 2026-08-24
-> **Status:** Netzknoten lauffähig, keine Blockproduktion
+> **Version:** myl-node v0.7.0
+> **Datum:** 2026-08-26
+> **Status:** Netzknoten lauffähig, Blockproduktion und **BFT-Runden über
+> das Netz** (ohne Rundenwechsel)
 
 ## Aufgabe
 
@@ -41,7 +42,7 @@ Eine Naht, die niemand belastet, hält alles aus.
 ## Was der Knoten heute ist, und was nicht
 
 **Ist:** ein Netzknoten. Er findet Gegenstellen über Bootstrap und
-Kademlia, verbreitet und empfängt die fünf Protokoll-Topics, misst
+Kademlia, verbreitet und empfängt die sechs Protokoll-Topics, misst
 Latenzen, hält seine Verbindungsgrenzen ein, arbeitet hinter NAT über
 Relais, und schreibt alles mit.
 
@@ -59,13 +60,33 @@ Determinismus-Test für die Inferenz stellt. Weicht eine Wurzel ab, ist
 irgendwo im Ledger-Pfad etwas nicht deterministisch, und das bricht den
 Konsens genauso wie ein abweichendes Inferenzergebnis.
 
-**Ist nicht: BFT.** Es stimmt niemand ab. **Genau ein Knoten erzeugt**
-(`--erzeuger`), die übrigen übernehmen. Zwei Erzeuger gabeln die Kette
-sofort, weil niemand entscheidet, welcher Block gilt, und genau das täte
-eine Abstimmungsrunde. `myl-consensus::bft` hat sie fertig; ihr fehlen
-ein eigenes Gossip-Topic, ein Validator-Satz mit Stake und BLS-Schlüssel
-je Knoten. **Ein neues Topic ist eine Protokollentscheidung** und gehört
-nicht nebenbei getroffen.
+**Ist seit dem 2026-08-26 auch: BFT.** Die Knoten stimmen ab. Propose,
+Vote und Commit laufen über ein eigenes Gossip-Topic
+(`/myelith/consensus/1`), der Validator-Satz kommt aus einer
+**Genesis-Datei**, und jeder Knoten signiert mit einem BLS-Schlüssel, der
+von seiner Netzidentität getrennt ist.
+
+**Gemessen, nicht behauptet:** Fünf eigenständige Betriebssystemprozesse
+über libp2p/QUIC, alle fünf commiteten denselben Block, mit vollem
+Stimmgewicht 900 000 000 von 900 000 000 gegen eine Schwelle von
+600 000 001.
+
+**Das Stimmgewicht ist ungleich, und das ist Absicht.** Die
+Genesis-Verteilung des Probenetzes (250/230/200/120/100 MYL) ist so
+gebaut, dass drei von fünf Köpfen das Quorum je nach Auswahl verfehlen
+(420), es **exakt** treffen (600, reicht nicht) oder erreichen (680).
+Bei gleichen Gewichten wären Kopfzählung und Gewichtszählung numerisch
+dasselbe, und Fund A3 (der Zustandsautomat zählte Nachrichten statt
+Gewicht) liefe grün durch.
+
+**Ist nicht: ausfallsicher.** Es gibt **keinen Rundenwechsel**. Fällt der
+Leader aus, hängt die Runde. `myl-consensus::round_change` hat Sperrregel
+und Polka-Zertifikat fertig; sie anzuschließen braucht eine Uhr, also
+einen Timeout, also eine Entscheidung über GST.
+
+**Ist nicht: Blockinhalt im Konsens.** Der Propose trägt einen
+Block-*Hash*, nicht den Block. Was er bezeichnet, entscheidet die Kette,
+und deren Persistenz ist ein eigener offener Punkt.
 
 ⚑ **Ein Block kennt seine eigene Höhe nicht.** `Block` trägt `epoch`,
 `prev_block_hash`, `timestamp_ms` und `state_root`, aber kein Höhenfeld.
@@ -81,6 +102,28 @@ myl-node --name alpha --port 4150
 myl-node --name beta  --port 4151 --bootstrap /ip4/…/tcp/4150/p2p/12D3Koo…
 myl-node --name relais --rolle relais --oeffentlich /ip4/203.0.113.5/tcp/4150
 ```
+
+**Mitstimmen bei BFT-Runden:**
+
+```
+# Einmal je Betreiber: die eigene Zeile für die Genesis-Datei erzeugen
+myl-node --name alpha --genesiszeile 250000000
+
+# Die Zeilen einsammeln, Datei bauen, dann starten
+myl-node --name alpha --port 4150 --genesis genesis.txt
+```
+
+Die Genesis-Datei nennt den Netznamen und je eine Zeile
+`validator <pubkey-hex> <pop-hex> <stake>`. Die **Kennung wird aus dem
+Schlüssel abgeleitet**, nicht aufgeschrieben: Zwei Quellen für dieselbe
+Wahrheit widersprechen sich irgendwann. Der Hash der Datei liegt auf dem
+**Inhalt**, nicht auf den Bytes, also ändert eine umsortierte Zeile
+nichts.
+
+⚑ **Mindestens vier Validatoren.** Die Datei lehnt jeden Satz ab, in dem
+einer ein Drittel oder mehr hält, denn ein solches Netz hat keine
+BFT-Safety. Daraus folgt eine Mindestzahl: Drei Werte unter je einem
+Drittel ergeben nie ihre eigene Summe.
 
 `--hilfe` nennt alle Angaben. Der Knoten horcht auf **TCP und QUIC**:
 QUIC ist der Pfad, auf dem Lochstanzen zuverlässig ist, TCP der, der
@@ -144,19 +187,76 @@ NODE/
         ├── lib.rs            Crate-Wurzel
         ├── konfig.rs         Konfiguration, prüft sich beim Start selbst
         ├── protokoll.rs      Betriebsprotokoll (JSONL)
-        ├── validator.rs      Nutzlastprüfung Blöcke/Transaktionen (L1)
+        ├── validator.rs      Nutzlastprüfung Blöcke/Transaktionen/
+        │                     Konsensnachrichten (L1)
         ├── validatorsatz.rs  wer darf attestieren: Kennung → Schlüssel,
         │                     Urteil mit Grund (Audit A10)
+        ├── genesis.rs        Validator-Satz zu Genesis: Datei, Hash auf
+        │                     dem Inhalt, Besitznachweis, Ein-Drittel-
+        │                     Schranke (23 Tests)
+        ├── schluessel.rs     BLS-Konsensschlüssel, getrennt von der
+        │                     Netzidentität; Dateirechte 0600 (12 Tests)
+        ├── konsens.rs        eine BFT-Runde aus Sicht eines Knotens:
+        │                     wann er selbst etwas sagen muss (16 Tests)
         ├── nachschub.rs      Blocknachforderung: Bereich, Deckelung,
         │                     Nachlieferung
         ├── knoten.rs         Start, Ereignisschleife, Zustandsaufnahme
         └── main.rs           Kommandozeile
     └── tests/
-        └── zwei_knoten.rs    zwei Knoten, echte Sockets, Protokoll
-                              zurückgelesen (5 Tests)
+        ├── zwei_knoten.rs    zwei Knoten, echte Sockets, Protokoll
+        │                     zurückgelesen (5 Tests)
+        └── bft_ueber_das_netz.rs
+                              fünf Knoten, eine Runde, ein Block;
+                              Vorlauf-Puffer und Protokollformat
+                              (5 Tests)
 ```
 
 ## Changelog
+
+### v0.7.0 – 2026-08-26 (BFT-Runden über das Netz)
+
+- **`genesis.rs` (neu):** Der Validator-Satz kommt aus einer Datei, nicht
+  aus dem Netz. Wer sich selbst ankündigen darf, kündigt sich fünfzehnmal
+  an; genau dieser Fehler steckte bis v0.3.6 in `myl-consensus::bft`
+  (Fund A3). Der Hash liegt auf dem **Inhalt**, nach Kennung sortiert,
+  nicht auf den Dateibytes: dieselbe Unterscheidung wie in Kap. 6.2.
+  Besitznachweis je Schlüssel (Fund 27), Ein-Drittel-Schranke als
+  Startfehler. 23 Tests.
+- **`schluessel.rs` (neu):** BLS-Konsensschlüssel, **getrennt** von der
+  Netzidentität. Ein gemeinsames Geheimnis wäre eines weniger zu
+  verwalten und kompromittierte bei einem Leck beide Ebenen. Datei mit
+  Rechten 0600; eine für Gruppe oder Welt lesbare Datei wird **nicht**
+  gelesen. Der Probeschlüssel bleibt, aber als eigener Aufruf mit
+  eigener Herkunft, die in jeder Startzeile steht. 12 Tests.
+- **`konsens.rs` (neu):** Wann ein Knoten selbst etwas sagen muss.
+  `BftState` prüft und zählt, aber erzeugt nichts, weil ihm der
+  Schlüssel fehlt. 16 Tests, darunter drei Teilmengen gleicher Kopfzahl
+  mit drei verschiedenen Urteilen.
+- **Kommandozeile:** `--genesis`, `--konsensschluessel`,
+  `--probe-konsensschluessel`, `--genesiszeile`. Ohne den letzten müsste
+  jeder Betreiber 288 Zeichen Hex von Hand abschreiben, und ein Weg, den
+  niemand geht, ist kein Weg (Fund 55).
+- ⚑ **Fund 63: 417 Millisekunden, und die Runde war tot.** Im ersten
+  Lauf über fünf Prozesse kam der Propose des Leaders bei allen vier
+  anderen an, **4 ms** nach dem Absenden. Ihre eigene Runde begann
+  **417 ms** später, weil jeder erst auf sein Gossip-Mesh wartete. In
+  dieser Lücke war `self.konsens` noch `None`, und die Nachricht wurde
+  verworfen, **ohne Protokollzeile**. Danach wartete das ganze Netz auf
+  einen Propose, den es längst hatte. Behoben mit einem beschränkten
+  Vorlauf-Puffer, der beim Rundenbeginn nachreicht. **Der Modultest
+  konnte das nicht sehen:** Eine Nachrichtenschlange serialisiert, was
+  ein Netz parallel macht.
+- ⚑ **Fund 64: zwei Felder namens `art` in einer Protokollzeile.**
+  `block_abgelehnt` schrieb seit dem 2026-08-24 ein zweites `art`-Feld,
+  `konsens_gesendet` tat es ihm nach. Solche Zeilen schlagen nirgends
+  fehl: Ein Leser nimmt das erste, ein anderer das letzte. Der Leser in
+  `tests/zwei_knoten.rs` filtert nach `z.art` und hätte je nach
+  Reihenfolge etwas anderes gesehen. Behoben, plus `debug_assert` auf
+  reservierte Feldnamen und ein Test über die geschriebenen Zeilen.
+- ⚑ **Fund 65: dieses Crate lief in keinem CI-Job.** Weder Cache noch
+  Clippy noch Tests. 132 Tests, keiner davon in der CI, und das
+  ausgerechnet in dem Crate, das laut eigenem Modulkopf **die Nähte
+  belastet**: Die Funde 55 bis 57 wurden hier sichtbar. Aufgenommen.
 
 ### v0.6.0 – 2026-08-25 (A10: Latenz-Atteste werden geprüft)
 
