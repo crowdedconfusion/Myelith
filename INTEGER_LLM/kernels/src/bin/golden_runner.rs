@@ -1,90 +1,18 @@
 //! Prueflauf eines Golden Vectors gegen die Kernel-Implementierung.
 //!
-//! Neben dem Ergebnisvergleich wird der im Vektor deklarierte
-//! Tensor-Hash geprueft. Die Felder `hash` und `theta_v_hash` waren
-//! bis v0.12.40 zwar eingelesen, aber nie ausgewertet (Compiler-Warnung
-//! „never read" als Hinweis) — ein Vektor, dessen Daten nachtraeglich
-//! bearbeitet wurden, ohne den Hash mitzuziehen, waere unbemerkt
-//! durchgelaufen. Hash-Vertrag laut `tests/golden/generate.py`:
-//! SHA-256 ueber die Little-Endian-gepackte Nutzlast.
+//! Duenner Starter ueber `integer_llm_kernels::konformitaet`, wo die
+//! eigentliche Pruefung liegt (Vektor-Integritaet zuerst, dann die
+//! bitgenaue Rechnung). Beides war bis v0.22.0 in diesem Binary
+//! gefangen und damit fuer andere Werkzeuge unerreichbar — der
+//! Testclient haette fuer einen Konformitaetslauf ein zweites Programm
+//! starten muessen, statt die Bibliothek zu benutzen.
+//!
+//! Exit-Codes: 0 = bestanden, 1 = fehlgeschlagen oder unbrauchbarer
+//! Vektor, 2 = Backend ohne eigenen Rechenpfad abgelehnt. Die letzte
+//! Zeile ist immer `PASS: <name>` oder `FAIL: <name>`; darauf greift
+//! der Konformitaetslauf mit `grep "^PASS:"` zu.
 
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-
-#[derive(Debug, Deserialize)]
-struct GoldenVector {
-    name: String,
-    /// Ebene des Vektors (`op`, `layer`, `e2e`) — Teil des
-    /// Vektorformats, hier nicht ausgewertet. Das Feld bleibt, damit
-    /// ein unvollstaendiger Vektor beim Parsen auffaellt statt still
-    /// durchzugehen.
-    #[allow(dead_code)]
-    level: String,
-    /// θ_v-Hash des erzeugenden Modells. **Noch nicht geprueft** — die
-    /// Gegenprobe braucht die eingebettete `spec.json` aus der Runtime,
-    /// die dieses Binary nicht kennt (kernels haengt nicht an runtime).
-    /// Vermerkt im INTEGER_LLM als offener Punkt.
-    #[allow(dead_code)]
-    theta_v_hash: String,
-    metadata: serde_json::Value,
-    inputs: HashMap<String, TensorData>,
-    outputs: HashMap<String, TensorData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TensorData {
-    dtype: String,
-    /// Tensorform — Teil des Formats; die Kernel arbeiten auf flachen
-    /// Vektoren und leiten die Form aus den Metadaten ab.
-    #[allow(dead_code)]
-    shape: Option<Vec<usize>>,
-    hash: String,
-    data: Vec<i64>,
-}
-
-/// SHA-256 ueber die Little-Endian-gepackte Nutzlast — identisch zu
-/// `GoldenVectorBuilder._hash_tensor` in `tests/golden/generate.py`.
-fn hash_tensor(data: &[i64], dtype: &str) -> String {
-    let mut payload: Vec<u8> = Vec::with_capacity(data.len() * 4);
-    match dtype {
-        "int8" => data.iter().for_each(|&v| payload.push(v as i8 as u8)),
-        "int16" => data
-            .iter()
-            .for_each(|&v| payload.extend_from_slice(&(v as i16).to_le_bytes())),
-        "int32" => data
-            .iter()
-            .for_each(|&v| payload.extend_from_slice(&(v as i32).to_le_bytes())),
-        other => {
-            eprintln!("  Unbekannter dtype '{}': Hash-Pruefung uebersprungen", other);
-            return String::new();
-        }
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(&payload);
-    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// Prueft die deklarierten Hashes aller Ein- und Ausgabetensoren.
-fn verify_tensor_hashes(gv: &GoldenVector) -> bool {
-    let mut ok = true;
-    for (bereich, tensors) in [("input", &gv.inputs), ("output", &gv.outputs)] {
-        for (name, t) in tensors.iter() {
-            let computed = hash_tensor(&t.data, &t.dtype);
-            if computed.is_empty() {
-                continue; // dtype nicht gepackt darstellbar
-            }
-            if computed != t.hash {
-                eprintln!(
-                    "  Hash-Abweichung bei {} '{}': deklariert {}, berechnet {}",
-                    bereich, name, t.hash, computed
-                );
-                ok = false;
-            }
-        }
-    }
-    ok
-}
+use integer_llm_kernels::{konformitaet, rechenpfad};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -92,7 +20,7 @@ fn main() {
         eprintln!("Usage: golden_runner <golden.json> <backend_name>");
         std::process::exit(1);
     }
-    let path = &args[1];
+    let path = std::path::Path::new(&args[1]);
     let backend_name = &args[2];
 
     // **Verweigert, statt zu bestehen.** Bis 2026-08-22 stand hier
@@ -100,206 +28,31 @@ fn main() {
     // verworfen, und ein Lauf mit `--features cuda` zertifizierte die
     // Referenzimplementierung unter fremdem Namen. Begründung und
     // Wortlaut in `kernels/src/rechenpfad.rs`.
-    if !integer_llm_kernels::rechenpfad::rechnet(backend_name) {
-        eprintln!("{}", integer_llm_kernels::rechenpfad::ablehnung(backend_name));
+    if !rechenpfad::rechnet(backend_name) {
+        eprintln!("{}", rechenpfad::ablehnung(backend_name));
         std::process::exit(2);
     }
 
-    let content = std::fs::read_to_string(path).expect("Failed to read golden file");
-    let gv: GoldenVector = serde_json::from_str(&content).expect("Failed to parse JSON");
-
-    // Integritaet des Vektors selbst, bevor er als Massstab dient.
-    if !verify_tensor_hashes(&gv) {
-        println!("FAIL: {} (Hash-Pruefung des Vektors)", gv.name);
-        std::process::exit(1);
-    }
-
-    let passed = match gv.name.as_str() {
-        "rmsnorm_basic" => run_rmsnorm(&gv),
-        "linear_w8a16_identity" => run_linear(&gv),
-        "softmax_basic" => run_softmax(&gv),
-        // Rückwärtspass (kernels v0.19.0). Eine fremde Umsetzung muss
-        // auch ihn bitgleich reproduzieren, sonst trägt sie kein
-        // verifizierbares Training.
-        "backward_linear" => run_backward_linear(&gv),
-        "backward_softmax" => run_backward_softmax(&gv),
-        "backward_rope" => run_backward_rope(&gv),
-        _ => {
-            eprintln!("Unknown golden vector: {}", gv.name);
-            false
+    let gv = match konformitaet::vektor_lesen(path) {
+        Ok(gv) => gv,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
         }
     };
+    let ergebnis = konformitaet::op_vektor_pruefen(&gv);
 
-    if passed {
-        println!("PASS: {}", gv.name);
+    for grund in &ergebnis.gruende {
+        eprintln!("  {}", grund);
+    }
+    if ergebnis.bestanden {
+        println!("PASS: {}", ergebnis.name);
         std::process::exit(0);
+    }
+    if ergebnis.integer_verletzt {
+        println!("FAIL: {} (Hash-Pruefung des Vektors)", ergebnis.name);
     } else {
-        println!("FAIL: {}", gv.name);
-        std::process::exit(1);
+        println!("FAIL: {}", ergebnis.name);
     }
-}
-
-fn run_rmsnorm(gv: &GoldenVector) -> bool {
-    // theta_v 0.7.0: int16-Eingang, LUT-gestuetztes rsqrt mit dynamischem
-    // geradem Index-Shift, divisionsfrei; Gamma mit Per-Element-Skalen
-    // (abwaertskompatibel: ohne gamma_shifts wird gamma_shift repliziert).
-    let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
-    // Fund 20 (theta_v 0.11.0): x_shifts optional, fuer Vektoren vor
-    // v0.12.44 fehlt das Feld - Vorgabe 0 fuer alle Kanaele ist bitgleich
-    // zur alten Skalar-Behandlung (bewiesen in kernels/src/rmsnorm.rs,
-    // test_rmsnorm_per_channel_uniform_shifts_matches_legacy).
-    let x_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("x_shifts") {
-        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
-    } else {
-        vec![0u8; x.len()]
-    };
-    let gamma: Vec<i8> = gv.inputs["gamma"].data.iter().map(|&v| v as i8).collect();
-    let gamma_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("gamma_shifts") {
-        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
-    } else {
-        let gamma_shift = gv.metadata["gamma_shift"].as_u64().unwrap() as u8;
-        vec![gamma_shift; gamma.len()]
-    };
-    let rsqrt_lut: Vec<i16> = gv.metadata["rsqrt_lut"].as_array().unwrap()
-        .iter().map(|v| v.as_i64().unwrap() as i16).collect();
-    let lut_input_shift = gv.metadata["lut_input_shift"].as_u64().unwrap() as u8;
-    let lut_output_frac = gv.metadata["lut_output_frac"].as_u64().unwrap() as u8;
-    let inv_n_q20 = gv.metadata["inv_n_q20"].as_i64().unwrap();
-    let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
-
-    let result = integer_llm_kernels::rmsnorm::rmsnorm_i16(
-        &x, &x_shifts, &gamma, &gamma_shifts, &rsqrt_lut, lut_input_shift, lut_output_frac, inv_n_q20, out_frac);
-    let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
-
-    if result != expected {
-        eprintln!("  Expected: {:?}", expected);
-        eprintln!("  Got:      {:?}", result);
-    }
-    result == expected
-}
-
-fn run_linear(gv: &GoldenVector) -> bool {
-    let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
-    let w_meta = gv.metadata["W"].as_array().unwrap();
-    // Flach, wie der Kernel sie seit v0.13.4 erwartet. Die Zeilenlänge
-    // steht in der ersten Zeile des Vektors.
-    let in_features = w_meta[0].as_array().unwrap().len();
-    let w: Vec<i8> = w_meta
-        .iter()
-        .flat_map(|row| {
-            row.as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_i64().unwrap() as i8)
-                .collect::<Vec<i8>>()
-        })
-        .collect();
-    let act_frac = gv.metadata["act_frac"].as_u64().unwrap() as u8;
-    let w_shifts: Vec<u8> = if let Some(shifts) = gv.metadata.get("w_shifts") {
-        shifts.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect()
-    } else {
-        let weight_frac = gv.metadata["weight_frac"].as_u64().unwrap() as u8;
-        // **Eine Skala je Ausgabe-Zeile, nicht je Gewicht.** Vor der
-        // Umstellung auf flache Gewichte war `w.len()` die Zeilenzahl;
-        // flach ist es die Elementzahl. Der Vektor
-        // `linear_w8a16_identity` fiel damit sofort durch, und das war
-        // die richtige Reaktion: Der Kernel prüft die Länge.
-        vec![weight_frac; w_meta.len()]
-    };
-    let out_frac = gv.metadata["out_frac"].as_u64().unwrap() as u8;
-
-    let result = integer_llm_kernels::linear::linear_w8a16(&x, &w, in_features, &w_shifts, act_frac, out_frac);
-    let expected: Vec<i16> = gv.outputs["y"].data.iter().map(|&v| v as i16).collect();
-
-    if result != expected {
-        eprintln!("  Expected: {:?}", expected);
-        eprintln!("  Got:      {:?}", result);
-    }
-    result == expected
-}
-
-fn run_softmax(gv: &GoldenVector) -> bool {
-    let logits: Vec<i32> = gv.inputs["logits"].data.iter().map(|&v| v as i32).collect();
-    let lut_shift = gv.metadata["lut_shift"].as_u64().unwrap() as u8;
-    let frac_bits = gv.metadata["frac_bits"].as_u64().unwrap() as u8;
-
-    let exp_lut: Vec<i16> = if let Some(lut) = gv.metadata.get("exp_lut") {
-        lut.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i16).collect()
-    } else {
-        (0..128).map(|i| {
-            let val = (-(i as f64) / 256.0f64).exp() * 256.0;
-            val.round() as i16
-        }).collect()
-    };
-
-    let result = integer_llm_kernels::softmax::softmax_int(&logits, &exp_lut, lut_shift, frac_bits);
-    let expected: Vec<i32> = gv.outputs["probs"].data.iter().map(|&v| v as i32).collect();
-
-    if result != expected {
-        eprintln!("  Expected: {:?}", expected);
-        eprintln!("  Got:      {:?}", result);
-    }
-    result == expected
-}
-
-// ---------------------------------------------------------------------------
-// Rueckwaertspass
-// ---------------------------------------------------------------------------
-
-/// Hilfsfunktion: liest ein i64-Feld als Vec<i32>.
-fn als_i32(t: &TensorData) -> Vec<i32> {
-    t.data.iter().map(|&v| v as i32).collect()
-}
-
-fn run_backward_linear(gv: &GoldenVector) -> bool {
-    let g = als_i32(&gv.inputs["g"]);
-    let x: Vec<i16> = gv.inputs["x"].data.iter().map(|&v| v as i16).collect();
-    let w: Vec<i8> = gv.inputs["W"].data.iter().map(|&v| v as i8).collect();
-    let in_features = gv.metadata["in_features"].as_u64().unwrap() as usize;
-    let w_shifts: Vec<u8> = gv.metadata["w_shifts"].as_array().unwrap()
-        .iter().map(|v| v.as_u64().unwrap() as u8).collect();
-    let g_frac = gv.metadata["g_frac"].as_u64().unwrap() as u8;
-    let gx_frac = gv.metadata["gx_frac"].as_u64().unwrap() as u8;
-
-    let (gx, gw) = integer_llm_kernels::backward::linear_backward(
-        &g, &x, &w, in_features, &w_shifts, g_frac, gx_frac);
-
-    let gx_soll: Vec<i32> = als_i32(&gv.outputs["gx"]);
-    let gw_soll: Vec<i64> = gv.outputs["gW"].data.clone();
-    if gx != gx_soll {
-        eprintln!("  gx: erwartet {:?}, erhalten {:?}", gx_soll, gx);
-        return false;
-    }
-    if gw != gw_soll {
-        eprintln!("  gW weicht ab");
-        return false;
-    }
-    true
-}
-
-fn run_backward_softmax(gv: &GoldenVector) -> bool {
-    let g = als_i32(&gv.inputs["g"]);
-    let p = als_i32(&gv.inputs["p"]);
-    let frac = gv.metadata["frac_bits"].as_u64().unwrap() as u8;
-    let out = integer_llm_kernels::backward::softmax_backward(&g, &p, frac);
-    let soll = als_i32(&gv.outputs["gz"]);
-    if out != soll {
-        eprintln!("  erwartet {:?}, erhalten {:?}", soll, out);
-        return false;
-    }
-    true
-}
-
-fn run_backward_rope(gv: &GoldenVector) -> bool {
-    let g = als_i32(&gv.inputs["g"]);
-    let cos: Vec<i16> = gv.inputs["cos"].data.iter().map(|&v| v as i16).collect();
-    let sin: Vec<i16> = gv.inputs["sin"].data.iter().map(|&v| v as i16).collect();
-    let frac = gv.metadata["frac_bits"].as_u64().unwrap() as u8;
-    let out = integer_llm_kernels::backward::rope_backward(&g, &cos, &sin, frac);
-    let soll = als_i32(&gv.outputs["gx"]);
-    if out != soll {
-        eprintln!("  erwartet {:?}, erhalten {:?}", soll, out);
-        return false;
-    }
-    true
+    std::process::exit(1);
 }

@@ -145,12 +145,12 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
 
 /// Metadaten für `anzahl` Pods, Regionen rotierend über drei.
 ///
-/// **Ohne Metadaten weist `assign_redundant_pods` gar nichts zu**, weil
-/// die Zonendiversität mangels Region nicht feststellbar ist und das
-/// Paar dann übersprungen wird. Das ist fail-closed und damit die
-/// richtige Richtung, aber es ist **still**: Der Rückgabewert ist ein
-/// leerer Vektor, und der sieht genauso aus wie „keine Segmente
-/// angefragt". Offener Punkt.
+/// **Ohne Metadaten weist `assign_redundant_pods` nichts zu**, weil die
+/// Zonendiversität mangels Region nicht feststellbar ist und das Paar
+/// dann übersprungen wird. Das ist fail-closed und damit die richtige
+/// Richtung; seit der Aufteilung des Rückgabewerts nennt das Ergebnis
+/// den Grund ausdrücklich, statt ihn in einer leeren Liste zu
+/// verschweigen.
 fn metadaten(
     pods: &[Pod],
 ) -> std::collections::HashMap<MinerId, myl_types::node_metadata::NodeMetadata> {
@@ -215,7 +215,8 @@ fn kollusionsrate_gegen_anhang_b2() {
                 .collect();
 
             let metadata = metadaten(&alle_pods);
-            let zuteilungen = assign_redundant_pods(segmente, &alle_pods, &metadata, &s);
+            let zuteilungen = assign_redundant_pods(segmente, &alle_pods, &metadata, &s)
+                .expect("acht Pods über drei Regionen bilden Paare");
             for z in &zuteilungen {
                 let beide_boese = [z.primary_pod_index, z.redundant_pod_index].iter().all(|pi| {
                     alle_pods

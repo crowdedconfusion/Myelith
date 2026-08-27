@@ -173,6 +173,12 @@ from typing import Dict, List, Any
 # wobei <level> "op", "layer" oder "e2e" entspricht (siehe GoldenVector.level).
 VECTORS_DIR = Path(__file__).parent / "vectors"
 
+# Die Layer- und E2E-Vektoren werden mit diesem Artefakt erzeugt
+# (generate_layer_vectors). Das Manifest verzeichnet die Bindung, damit
+# ein Prüfer vor dem Lauf entscheiden kann, ob sein Artefakt zu den
+# Vektoren passt — statt es zu raten oder blind zu laden.
+MANIFEST_MODELL = "qwen2.5-0.5b"
+
 
 class GoldenVector:
     def __init__(self, name: str, level: str, theta_v_hash: str):
@@ -307,7 +313,7 @@ def generate_layer_vectors(theta_v_hash: str, output_dir: Path):
     import subprocess
     project_root = Path(__file__).parent.parent.parent
     runtime_dir = project_root / "runtime"
-    artifact_dir = project_root / "artifacts" / "qwen2.5-0.5b"
+    artifact_dir = project_root / "artifacts" / MANIFEST_MODELL
     # ACHTUNG: `golden_generate` haengt selbst `vectors/` an den uebergebenen
     # Pfad an (runtime/src/bin/golden_generate.rs). Uebergeben wird deshalb
     # `tests/golden`, NICHT `tests/golden/vectors` — sonst landen die Vektoren
@@ -387,7 +393,32 @@ def main():
     generate_layer_vectors(theta_v_hash, VECTORS_DIR / "layer")
     generate_e2e_vectors(theta_v_hash, VECTORS_DIR / "e2e")
 
+    schreibe_manifest(theta_v_hash)
+
     print("[golden] Alle Golden Vectors erzeugt.")
+
+
+def schreibe_manifest(theta_v_hash: str) -> None:
+    """Verzeichnet, zu welchem Artefakt die Layer-/E2E-Vektoren gehören.
+
+    Der Prüfer liest das Manifest, bevor er die Vektoren gegen ein
+    Artefakt laufen lässt: Passt das gewählte Artefakt nicht zum
+    verzeichneten Modell, sind die Vektoren kein Maßstab für es, und der
+    Lauf wird übersprungen statt blind geladen. Ohne diese Zeile stünde
+    die Bindung nur im Erzeugerskript — und damit nirgends, wo ein
+    Prüfer sie sieht.
+    """
+    manifest = {
+        "modell": MANIFEST_MODELL,
+        "theta_v_hash": theta_v_hash,
+    }
+    text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    # Einmal neben die erzeugten Vektoren …
+    VECTORS_DIR.joinpath("manifest.json").write_text(text, encoding="utf-8")
+    # … und einmal dorthin, wo der Konformitätslauf die Vektoren liest.
+    conformance = Path(__file__).parent.parent.parent / "conformance" / "vectors"
+    if conformance.is_dir():
+        conformance.joinpath("manifest.json").write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

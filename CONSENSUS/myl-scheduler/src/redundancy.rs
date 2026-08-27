@@ -62,6 +62,23 @@ fn pods_are_disjoint(pod_a: &Pod, pod_b: &Pod) -> bool {
     miners_a.is_disjoint(&miners_b)
 }
 
+/// Warum eine Redundanzzuteilung nicht zustande kam.
+///
+/// **Vor dieser Aufteilung bekam der Aufrufer eine leere Liste** und
+/// konnte nicht unterscheiden, woran es lag. Die beiden Fälle sind aber
+/// verschiedene Befunde: Im ersten fehlen Cluster, im zweiten Streuung —
+/// und die Gegenmaßnahmen sind es auch. Ein Ergebnis, das seinen Grund
+/// verschweigt, zwingt jeden Aufrufer, ihn selbst zu raten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZuweisungsHindernis {
+    /// Weniger als zwei Pods vorhanden: Es gibt nichts, woraus ein Paar
+    /// werden könnte.
+    ZuWenigPods { pods: usize },
+    /// Pods sind vorhanden, aber kein einziges Paar ist disjunkt und
+    /// zonendivers zugleich.
+    KeinGueltigesPaar { pods: usize },
+}
+
 /// Weist Segmente redundanten Pods zu (zonendivers und disjunkt).
 ///
 /// **Algorithmus (Anhang A.2, Schritt 5):**
@@ -78,23 +95,30 @@ fn pods_are_disjoint(pod_a: &Pod, pod_b: &Pod) -> bool {
 /// - `metadata`: Geo-/AS-Metadaten für alle Miner (aus NETWORKING)
 /// - `seed`: Epochenseed (aus Phase 2.1) für deterministische Auswahl
 ///
-/// **Returns:** Liste von SegmentAssignment, eine pro Segment
-///
-/// **Fehler:** Wenn nicht genügend zonendiverse, disjunkte Pod-Paare vorhanden sind,
-/// werden so viele Segmente wie möglich zugewiesen (der Rest bleibt unbehandelt).
+/// **Returns:** `Ok` mit einer Zuweisung pro Segment — bei null
+/// Segmenten eine leere Liste, das ist kein Fehler. `Err` nennt den
+/// Grund, wenn kein einziges gültiges Paar möglich ist; ein teilweises
+/// Ergebnis gibt es nicht, denn ein Segment ohne Redundanzpartner wäre
+/// ein Versprechen, das der Vertrag nicht hält.
 pub fn assign_redundant_pods(
     num_segments: u32,
     pods: &[Pod],
     metadata: &HashMap<MinerId, NodeMetadata>,
     seed: &[u8; 32],
-) -> Vec<SegmentAssignment> {
+) -> Result<Vec<SegmentAssignment>, ZuweisungsHindernis> {
+    // Null Segmente brauchen keine Paare: Wer nichts verlangt, bekommt
+    // nichts, und das ist kein Scheitern. Vor dieser Prüfung stünde hier
+    // ein Hindernis über fehlende Paare, das niemanden interessiert.
+    if num_segments == 0 {
+        return Ok(vec![]);
+    }
     if pods.len() < 2 {
-        return vec![];
+        return Err(ZuweisungsHindernis::ZuWenigPods { pods: pods.len() });
     }
 
     // Finde alle gültigen Pod-Paare (disjunkt + zonendivers)
     let mut valid_pairs: Vec<(u32, u32)> = vec![];
-    
+
     for i in 0..pods.len() {
         for j in (i + 1)..pods.len() {
             // Prüfe Disjunktheit
@@ -115,7 +139,7 @@ pub fn assign_redundant_pods(
     }
 
     if valid_pairs.is_empty() {
-        return vec![];
+        return Err(ZuweisungsHindernis::KeinGueltigesPaar { pods: pods.len() });
     }
 
     // Shuffle die Paare mit dem Seed (deterministisch)
@@ -124,7 +148,7 @@ pub fn assign_redundant_pods(
 
     // Weise Segmente zu (rotierend über die Paare)
     let mut assignments = Vec::with_capacity(num_segments as usize);
-    
+
     for seg_idx in 0..num_segments {
         let pair_idx = (seg_idx as usize) % shuffled_pairs.len();
         let (primary, redundant) = shuffled_pairs[pair_idx];
@@ -136,7 +160,7 @@ pub fn assign_redundant_pods(
         });
     }
 
-    assignments
+    Ok(assignments)
 }
 
 
@@ -251,7 +275,8 @@ mod tests {
         
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(2, &pods, &metadata, &seed);
+        let assignments = assign_redundant_pods(2, &pods, &metadata, &seed)
+            .expect("zwei zonendiverse Pods bilden ein Paar");
 
         assert_eq!(assignments.len(), 2);
         // Beide Segmente sollten dasselbe Pod-Paar zugewiesen bekommen
@@ -259,25 +284,26 @@ mod tests {
         assert_eq!(assignments[0].redundant_pod_index, assignments[1].redundant_pod_index);
     }
 
+    /// **Der Befund, der in der leeren Liste verschwand.** Zwei Pods in
+    /// derselben Region bilden kein Redundanzpaar; der Aufrufer muss das
+    /// als Grund sehen, nicht als bloßes „nichts zugeteilt".
     #[test]
     fn assign_redundant_pods_same_region_rejected() {
         let pods = vec![
             test_pod(0, &[1, 2]),
             test_pod(1, &[3, 4]),
         ];
-        
+
         let mut metadata = HashMap::new();
         let (id1, meta1) = test_metadata(1, GeoRegion::Europe);
         let (id3, meta3) = test_metadata(3, GeoRegion::Europe); // Gleiche Region!
         metadata.insert(id1, meta1);
         metadata.insert(id3, meta3);
-        
+
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(2, &pods, &metadata, &seed);
-
-        // Keine Zuweisungen, da beide Pods in derselben Region sind
-        assert!(assignments.is_empty());
+        let hinder = assign_redundant_pods(2, &pods, &metadata, &seed).unwrap_err();
+        assert_eq!(hinder, ZuweisungsHindernis::KeinGueltigesPaar { pods: 2 });
     }
 
     #[test]
@@ -286,19 +312,19 @@ mod tests {
             test_pod(0, &[1, 2]),
             test_pod(1, &[2, 3]), // Miner 2 ist in beiden
         ];
-        
+
         let mut metadata = HashMap::new();
         let (id1, meta1) = test_metadata(1, GeoRegion::Europe);
         let (id2, meta2) = test_metadata(2, GeoRegion::NorthAmerica);
         metadata.insert(id1, meta1);
         metadata.insert(id2, meta2);
-        
+
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(2, &pods, &metadata, &seed);
-
-        // Keine Zuweisungen, da die Pods überlappende Miner haben
-        assert!(assignments.is_empty());
+        // Keine Zuweisungen, da die Pods überlappende Miner haben.
+        // Auch das ist der Paar-Mangel, nicht der Pod-Mangel.
+        let hinder = assign_redundant_pods(2, &pods, &metadata, &seed).unwrap_err();
+        assert_eq!(hinder, ZuweisungsHindernis::KeinGueltigesPaar { pods: 2 });
     }
 
     #[test]
@@ -308,7 +334,7 @@ mod tests {
             test_pod(1, &[3, 4]),
             test_pod(2, &[5, 6]),
         ];
-        
+
         let mut metadata = HashMap::new();
         let (id1, meta1) = test_metadata(1, GeoRegion::Europe);
         let (id3, meta3) = test_metadata(3, GeoRegion::NorthAmerica);
@@ -316,11 +342,13 @@ mod tests {
         metadata.insert(id1, meta1);
         metadata.insert(id3, meta3);
         metadata.insert(id5, meta5);
-        
+
         let seed = [42u8; 32];
 
-        let assignments1 = assign_redundant_pods(5, &pods, &metadata, &seed);
-        let assignments2 = assign_redundant_pods(5, &pods, &metadata, &seed);
+        let assignments1 = assign_redundant_pods(5, &pods, &metadata, &seed)
+            .expect("drei zonendiverse Pods bilden Paare");
+        let assignments2 = assign_redundant_pods(5, &pods, &metadata, &seed)
+            .expect("drei zonendiverse Pods bilden Paare");
 
         assert_eq!(assignments1, assignments2);
     }
@@ -328,13 +356,36 @@ mod tests {
     #[test]
     fn assign_redundant_pods_too_few_pods() {
         let pods = vec![test_pod(0, &[1, 2])]; // Nur ein Pod
-        
+
         let metadata = HashMap::new();
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(2, &pods, &metadata, &seed);
+        let hinder = assign_redundant_pods(2, &pods, &metadata, &seed).unwrap_err();
+        assert_eq!(hinder, ZuweisungsHindernis::ZuWenigPods { pods: 1 });
+    }
 
-        assert!(assignments.is_empty());
+    /// **Die Gegenprobe zur Aufteilung:** Die beiden Hindernisse sind
+    /// unterscheidbar, und zwar in beiden Richtungen. Vor dieser Änderung
+    /// gab es in beiden Fällen dieselbe leere Liste; ein Test, der nur
+    /// `is_empty()` prüfte, hätte die Aufteilung nicht erzwingen können.
+    #[test]
+    fn die_beiden_hindernisse_sind_unterscheidbar() {
+        let seed = [0u8; 32];
+        let leer = HashMap::new();
+
+        // Ein Pod: zu wenig, um ein Paar zu bilden.
+        let eins = vec![test_pod(0, &[1, 2])];
+        assert_eq!(
+            assign_redundant_pods(1, &eins, &leer, &seed).unwrap_err(),
+            ZuweisungsHindernis::ZuWenigPods { pods: 1 }
+        );
+
+        // Zwei Pods, aber ohne Metadaten keine Region, also kein Paar.
+        let zwei = vec![test_pod(0, &[1, 2]), test_pod(1, &[3, 4])];
+        assert_eq!(
+            assign_redundant_pods(1, &zwei, &leer, &seed).unwrap_err(),
+            ZuweisungsHindernis::KeinGueltigesPaar { pods: 2 }
+        );
     }
 
     #[test]
@@ -343,12 +394,14 @@ mod tests {
             test_pod(0, &[1, 2]),
             test_pod(1, &[3, 4]),
         ];
-        
+
         let metadata = HashMap::new();
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(0, &pods, &metadata, &seed);
-
+        // Null Segmente verlangen, und nichts bekommen, ist kein Fehler:
+        // Die Paarsuche bleibt einem erspart, der nichts braucht.
+        let assignments = assign_redundant_pods(0, &pods, &metadata, &seed)
+            .expect("null Segmente sind erfüllbar");
         assert!(assignments.is_empty());
     }
 
@@ -358,16 +411,17 @@ mod tests {
             test_pod(0, &[1, 2]),
             test_pod(1, &[3, 4]),
         ];
-        
+
         let mut metadata = HashMap::new();
         let (id1, meta1) = test_metadata(1, GeoRegion::Europe);
         let (id3, meta3) = test_metadata(3, GeoRegion::NorthAmerica);
         metadata.insert(id1, meta1);
         metadata.insert(id3, meta3);
-        
+
         let seed = [0u8; 32];
 
-        let assignments = assign_redundant_pods(3, &pods, &metadata, &seed);
+        let assignments = assign_redundant_pods(3, &pods, &metadata, &seed)
+            .expect("zwei zonendiverse Pods bilden ein Paar");
 
         for (idx, assignment) in assignments.iter().enumerate() {
             assert_eq!(assignment.segment_index, idx as u32);

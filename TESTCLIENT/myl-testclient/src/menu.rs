@@ -218,6 +218,103 @@ fn kurz(p: &std::path::Path) -> String {
 /// Nebenfunktionen abgesetzt. Sieben gleichrangige Zeilen lesen sich wie
 /// sieben Möglichkeiten; vier plus drei lesen sich wie ein Weg mit
 /// Beiwerk, und das ist es auch.
+/// Die Stufen des Sammellaufs, in der Reihenfolge, in der sie laufen.
+///
+/// Je Eintrag ein **kurzer** Name für den Bildschirm und ein
+/// **vollständiger** für die Protokollzeile. Der kurze steht im Menü, wo
+/// die Zeile schmal ist; der vollständige im Protokoll, wo später jemand
+/// lesen muss, was gemeint war.
+///
+/// ⚑ **Eine Quelle, weil drei getippte Fassungen auseinandergelaufen
+/// sind.** Als die Konformität am 2026-08-27 fünfte Stufe wurde, zog nur
+/// die Protokollzeile nach. Der Menüpunkt [3] versprach dem Teilnehmer
+/// weiter vier Stufen, und die Kurzanleitung ebenfalls: Wer dem Menü
+/// folgte, hielt die fünfte für einen Fehler. Der Zusammenhang ist
+/// seither **hergestellt statt geprüft** — die Beschreibung des
+/// Menüpunkts entsteht aus dieser Liste, und [`stufe`] greift auf sie zu,
+/// sodass eine sechste Stufe ohne Eintrag beim ersten Lauf auffällt.
+pub(crate) const STUFEN: [(&str, &str); 5] = [
+    ("Hardware", "Hardware"),
+    ("Determinismus", "Determinismus (Einzelknoten)"),
+    ("Shards", "Geshardete Inferenz"),
+    ("Protokoll-Durchlauf", "Protokoll-Durchlauf"),
+    ("Konformität", "Konformität"),
+];
+
+/// Die Protokollzeile einer Stufe: `Stufe 3 von 5: Geshardete Inferenz`.
+///
+/// **Zählt ab eins**, weil die Zeile für Menschen ist. Ein Aufruf
+/// jenseits der Liste bricht ab, und das ist Absicht: Eine Stufe, die
+/// niemand in [`STUFEN`] eingetragen hat, fehlt auch im Menü und in der
+/// Kurzanleitung. Lieber beim ersten Lauf laut als still im Text.
+fn stufe(nr: usize) -> String {
+    let (_, lang) = STUFEN[nr - 1];
+    format!("Stufe {} von {}: {}", nr, STUFEN.len(), lang)
+}
+
+/// Die Kurznamen als Aufzählung: „A, B, C und D".
+fn stufen_aufzaehlung() -> String {
+    let kurz: Vec<&str> = STUFEN.iter().map(|(k, _)| *k).collect();
+    match kurz.split_last() {
+        Some((letzte, davor)) if !davor.is_empty() => {
+            format!("{} und {}", davor.join(", "), letzte)
+        }
+        _ => kurz.join(", "),
+    }
+}
+
+/// Bricht einen Fließtext auf eine feste Breite um, an Leerzeichen.
+///
+/// **Nötig, seit die Beschreibung von [3] erzeugt wird.** Die anderen
+/// Menütexte tragen ihre Umbrüche im Quelltext; ein erzeugter hat keine,
+/// und eine Stufe mehr schöbe die Zeile über den Rand. Ein Wort, das
+/// allein schon zu lang ist, bleibt stehen: Abschneiden verstümmelt
+/// einen Namen, ein Überstand ist nur hässlich.
+fn umbrechen(text: &str, breite: usize) -> String {
+    let mut zeilen: Vec<String> = Vec::new();
+    let mut aktuell = String::new();
+    for wort in text.split_whitespace() {
+        if aktuell.is_empty() {
+            aktuell.push_str(wort);
+        } else if aktuell.chars().count() + 1 + wort.chars().count() <= breite {
+            aktuell.push(' ');
+            aktuell.push_str(wort);
+        } else {
+            zeilen.push(std::mem::take(&mut aktuell));
+            aktuell.push_str(wort);
+        }
+    }
+    if !aktuell.is_empty() {
+        zeilen.push(aktuell);
+    }
+    zeilen.join("\n")
+}
+
+/// Breite der Menübeschreibungen, an den fest getippten abgelesen.
+const HINWEIS_BREITE: usize = 62;
+
+/// Das deutsche Zahlwort für die Stufenzahl.
+///
+/// Nur für die Kurzanleitung, die als fester Text auf den Bildschirm
+/// gerechnet ist und deshalb nicht erzeugt wird. Ein Test verbindet
+/// beide: Er verlangt, dass dort dieses Wort steht. Deshalb `cfg(test)`
+/// — im Programm selbst gibt es keinen Aufrufer, und ein toter wäre
+/// unter `-D warnings` ein Baufehler.
+#[cfg(test)]
+fn stufen_zahlwort() -> &'static str {
+    match STUFEN.len() {
+        1 => "eine",
+        2 => "zwei",
+        3 => "drei",
+        4 => "vier",
+        5 => "fünf",
+        6 => "sechs",
+        7 => "sieben",
+        8 => "acht",
+        _ => "mehrere",
+    }
+}
+
 fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
     let mut punkte = vec![
         Punkt::neu(
@@ -235,8 +332,13 @@ fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
         Punkt::neu(
             '3',
             "Testlauf starten",
-            "Hardware, Determinismus, Shards und Protokoll-Durchlauf\n\
-             nacheinander. Der vollständige Bericht dieser Maschine.",
+            &umbrechen(
+                &format!(
+                    "{}. Der vollständige Bericht dieser Maschine.",
+                    stufen_aufzaehlung()
+                ),
+                HINWEIS_BREITE,
+            ),
         ),
         Punkt::neu(
             '4',
@@ -272,19 +374,25 @@ fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
 /// und die Punkte, die er versehentlich wählt, ihm nichts nützen. Wer
 /// hier hereinkommt, weiß in der Regel, was er sucht.
 ///
-/// **Ohne die vier Einzelstufen (2026-08-22).** Hardware, Determinismus,
+/// **Ohne die Einzelstufen (2026-08-22).** Hardware, Determinismus,
 /// geshardete Inferenz und Protokoll-Durchlauf standen hier je einzeln.
-/// Sie sind genau die vier Stufen, die [`testlauf`] hintereinander
-/// ausführt, und im Nutzermenü über einen Punkt erreichbar. Einzeln
-/// gestartet erzeugen sie **vier getrennte Protokolle**, die der
-/// Koordinator wieder zusammensetzen müsste, und beim Verschicken geht
-/// die eine verloren, die den Befund trägt: derselbe Grund, aus dem
-/// `testlauf` überhaupt eines schreibt.
+/// Sie sind Stufen, die [`testlauf`] hintereinander ausführt, und im
+/// Nutzermenü über einen Punkt erreichbar. Einzeln gestartet erzeugen
+/// sie **je ein eigenes Protokoll**, die der Koordinator wieder
+/// zusammensetzen müsste, und beim Verschicken geht das eine verloren,
+/// das den Befund trägt: derselbe Grund, aus dem `testlauf` überhaupt
+/// eines schreibt.
 ///
 /// Für die Entwicklung bleiben sie auf der Befehlszeile erreichbar
-/// (`myl-test hardware`, `determinismus`, `shard`, `stack`). Dort ist
-/// klar, dass man eine Einzelmessung will; im Menü sah es aus wie eine
-/// Auswahl zwischen gleichwertigen Wegen.
+/// (`myl-test hardware`, `determinismus`, `shard`, `stack`,
+/// `konformitaet`). Dort ist klar, dass man eine Einzelmessung will; im
+/// Menü sah es aus wie eine Auswahl zwischen gleichwertigen Wegen.
+///
+/// *(Hier stand bis zum 2026-08-27 „die vier Einzelstufen" und „vier
+/// getrennte Protokolle". Seit dem Konformitätslauf sind es fünf
+/// Stufen; eine feste Zahl in einem Modulkopf veraltet mit der
+/// nächsten Stufe wieder, die Aussage über die getrennten Protokolle
+/// nicht.)*
 ///
 /// Sortiert nach Wichtigkeit, nicht nach Ablauf: Wer dieses Menü öffnet,
 /// ist in der Regel Koordinator und will vergleichen.
@@ -780,7 +888,7 @@ const KURZANLEITUNG: &str = "\
     [1] Artefakt wählen. Wird beschafft, falls keines vorliegt.
     [2] Testdatei wählen, die der Koordinator geschickt hat. Sie
         gehört nach TESTCLIENT/Testpläne/ und gilt für jedes Modell.
-    [3] Testlauf starten: vier Stufen, ein Protokoll. Danach die
+    [3] Testlauf starten: fünf Stufen, ein Protokoll. Danach die
         Dateien aus TESTCLIENT/logs/ verschicken.
     [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
     [5] Am Netz teilnehmen: der zweite Test, Rechner statt Rechnung.
@@ -887,15 +995,15 @@ fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
     RunLog::mit_ziel(ziel, true)
 }
 
-/// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, vier Stufen.
+/// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, fünf Stufen.
 ///
 /// Hardware, Determinismus über die Einzelknoten-Runtime, geshardete
-/// Inferenz und der Protokoll-Durchlauf gehören zu **einer** Messung.
-/// Vier getrennte Protokolldateien wären vier Teilaussagen, die der
-/// Koordinator erst wieder zusammensetzen müsste, und beim Verschicken
-/// geht die eine verloren, die den Befund trägt. Die Regel sagt es
-/// kürzer: Ein Testlauf ohne Protokoll ist wertlos, und ein Testlauf mit
-/// vier Protokollen ist einer zuviel.
+/// Inferenz, der Protokoll-Durchlauf und die Konformität gehören zu
+/// **einer** Messung. Fünf getrennte Protokolldateien wären fünf
+/// Teilaussagen, die der Koordinator erst wieder zusammensetzen müsste,
+/// und beim Verschicken geht die eine verloren, die den Befund trägt.
+/// Die Regel sagt es kürzer: Ein Testlauf ohne Protokoll ist wertlos,
+/// und ein Testlauf mit fünf Protokollen ist einer zuviel.
 ///
 /// Die Stufen laufen **alle**, auch wenn eine fehlschlägt: Ein
 /// fehlgeschlagener Determinismuslauf macht die Hardware-Erhebung nicht
@@ -947,27 +1055,34 @@ fn testlauf(e: &mut Einstellungen) -> bool {
         "  Der Lauf läuft jetzt durch. Strg-C bricht ihn ab; das Protokoll ist dann\n           unvollständig und muss wiederholt werden.\n",
     );
 
-    log.note("Stufe 1 von 4: Hardware");
+    log.note(stufe(1));
     let hardware = runs::run_hardware(&mut log);
 
-    log.note("Stufe 2 von 4: Determinismus (Einzelknoten)");
+    log.note(stufe(2));
     let determinismus =
         runs::run_determinism(&mut log, &artefakt, &e.prompts, e.steps, e.wiederholungen);
 
-    log.note("Stufe 3 von 4: Geshardete Inferenz");
+    log.note(stufe(3));
     let shard = runs::run_shard(&mut log, &artefakt, &e.prompts, e.steps, e.shards);
 
-    log.note("Stufe 4 von 4: Protokoll-Durchlauf");
+    log.note(stufe(4));
     let stapel = stack::run_stack(&mut log);
 
+    // Die Konformität läuft gegen dasselbe Artefakt wie der Rest des
+    // Laufs: Passt es nicht zu den Layer-/E2E-Vektoren, überspringt sie
+    // diese Stufe mit Begründung, statt blind zu laden.
+    log.note(stufe(5));
+    let konformitaet = crate::konformitaet::laufen(&mut log, Some(&artefakt));
+
     println!(
-        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}",
+        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}, Konformität {}",
         ja_nein(hardware),
         ja_nein(determinismus),
         ja_nein(shard),
-        ja_nein(stapel)
+        ja_nein(stapel),
+        ja_nein(konformitaet)
     );
-    log.finish(hardware && determinismus && shard && stapel)
+    log.finish(hardware && determinismus && shard && stapel && konformitaet)
 }
 
 /// Wartet auf einen Tastendruck und räumt danach den Bildschirm auf.
@@ -1687,6 +1802,61 @@ mod tests {
             KURZANLEITUNG.contains("[9] Entwickler"),
             "Verweis auf das Entwicklermenü fehlt"
         );
+    }
+
+    /// Die Kurzanleitung nennt die **Zahl** der Stufen, das Menü ihre
+    /// Namen. Beides muss zu [`STUFEN`] passen.
+    ///
+    /// **Warum ein Test und keine Erzeugung:** Die Kurzanleitung ist auf
+    /// die Bildschirmhöhe gerechnet und steht als fester Text da. Sie
+    /// aus der Liste zu bauen, hieße die Zeilenumbrüche zu erzeugen, und
+    /// dann prüfte kein Test mehr, ob sie noch auf den Schirm passt.
+    ///
+    /// **Die Gegenprobe ist belegt:** Vor dem 2026-08-27 stand dort
+    /// „vier Stufen", während der Lauf schon fünf hatte. Dieser Test
+    /// wäre fehlgeschlagen.
+    #[test]
+    fn kurzanleitung_nennt_die_stufenzahl() {
+        let erwartet = format!("{} Stufen", stufen_zahlwort());
+        assert!(
+            KURZANLEITUNG.contains(&erwartet),
+            "Kurzanleitung nennt nicht {erwartet:?}; STUFEN hat {} Einträge",
+            STUFEN.len()
+        );
+    }
+
+    /// Der Menüpunkt [3] zählt die Stufen auf, die der Lauf ausführt.
+    ///
+    /// Er entsteht aus [`STUFEN`], der Test hält die **Wirkung** fest:
+    /// Jeder Kurzname steht wirklich in der Beschreibung, die der
+    /// Teilnehmer liest. Eine Aufzählung, die einen Eintrag verschluckt,
+    /// fiele sonst nicht auf.
+    #[test]
+    fn menuepunkt_testlauf_nennt_jede_stufe() {
+        let punkte = menue_nutzer(false);
+        let p = punkte
+            .iter()
+            .find(|p| p.titel.contains("Testlauf"))
+            .expect("Menüpunkt Testlauf fehlt");
+        for (kurz, _) in STUFEN {
+            assert!(
+                p.hinweis.contains(kurz),
+                "Beschreibung von [{}] nennt die Stufe {kurz:?} nicht: {:?}",
+                p.taste,
+                p.hinweis
+            );
+        }
+    }
+
+    /// Eine Stufe ohne Eintrag in [`STUFEN`] fällt beim ersten Lauf auf.
+    ///
+    /// Das ist die Gegenprobe zur Vereinheitlichung: Wer eine sechste
+    /// Stufe in `testlauf` einbaut und die Liste vergisst, bekommt keinen
+    /// stillen Text mit falscher Zahl, sondern einen Abbruch.
+    #[test]
+    #[should_panic]
+    fn stufe_ausserhalb_der_liste_bricht_ab() {
+        let _ = stufe(STUFEN.len() + 1);
     }
 
     #[test]

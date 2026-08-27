@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.20.0 (θ_v 0.17.0)
-> **Datum:** 2026-08-23
+> **Version:** 0.21.0 (θ_v 0.17.0; kernels 0.23.0, runtime 0.22.0, pipeline 0.14.0)
+> **Datum:** 2026-08-27
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -16,7 +16,8 @@
 > die Zahlen.
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
-Qwen-W8A8-Basis.
+Qwen-Basis, **W8A16**: Gewichte int8 mit Per-Channel-Zweierpotenzskalen,
+Aktivierungen int16, Akkumulator int32, Residualstrom int16.
 
 ## Ziel
 
@@ -25,8 +26,15 @@ Deterministische Integer-Inferenz ohne Gleitkommaoperationen im Rechenpfad
 Pipeline-Parallelismus auf heterogenen Hardware-Knoten (NVIDIA, AMD, CPU).
 Die Ganzzahlarithmetik ist die Voraussetzung für bitgleiche Ausführung über
 unabhängige Knoten hinweg — die Grundlage des Myelith-Verifikationsmodells
-(Whitepaper Kap. 6.2). Referenzmodell ist Qwen2.5-0.5B (W8A8: Gewichte und
-Aktivierungen als int8, Akkumulator int32).
+(Whitepaper Kap. 6.2). Referenzmodell ist Qwen2.5-0.5B (**W8A16**: Gewichte
+int8, Aktivierungen und Residualstrom int16, Akkumulator int32); verifiziert
+sind daneben Qwen3-4B, Qwen2.5-7B und Qwen3-30B-A3B.
+
+*(Hier stand bis zum 2026-08-27 „W8A8: Gewichte und Aktivierungen als int8".
+Das galt bis θ_v 0.15.0. Mit θ_v 0.16.0 sind Aktivierungen und Residualstrom
+auf int16 gewechselt, weil Messungen am echten Modell Residual-Spitzen von
+±1576 zeigten, wo das int8-Format ±0,5 vorsah. Der verbindliche Vertrag steht
+in `theta_v/spec.json` unter `numeric.formats`.)*
 
 ## Modell-Austauschbarkeit & Skalierbarkeit (Design-Prinzip)
 
@@ -120,7 +128,7 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 
 | Verzeichnis | Zweck |
 |---|---|
-| `kernels/` | Rechenkerne (RMSNorm, W8A8-Linear, RoPE, Softmax, Attention, MLP, Sampling) mit austauschbaren Backends über ein `Backend`-Trait. Implementiert ist das `reference`-Backend; `cpu-simd`, `cuda` und `rocm` sind als Features vorbereitet. |
+| `kernels/` | Rechenkerne (RMSNorm inkl. QK-Norm, W8A16-Linear, RoPE, Softmax, Attention, MLP, MoE-Router, Sampling) mit austauschbaren Backends über ein `Backend`-Trait. Implementiert ist das `reference`-Backend; `cpu-simd`, `cuda` und `rocm` sind als Features vorbereitet. |
 | `runtime/` | Modell-Loader, Transformer-Forward-Pass, KV-Cache, Tokenizer, Generierungs-Loop und CLI (`integer-llm-runtime`). |
 | `pipeline/` | Mehrknoten-Orchestrierung (Stage-Runtime; der Betrieb über ein echtes Netz folgt in einer späteren Phase). |
 | `calibrate/` | Python-Offline-Phase: lädt das HF-Referenzmodell, quantisiert Gewichte, berechnet Aktivierungsskalen, erzeugt Lookup-Tabellen und exportiert die θ_v-Artefakte. |
@@ -414,6 +422,40 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.21.0 (kernels 0.23.0, runtime 0.22.0) – 2026-08-27 (Die Konformitätsprüfung wird eine Bibliothek)
+
+**Außerplanmäßig, aus dem Bedarf des Testclients.** Die Prüfung der
+Golden Vectors steckte vollständig in den beiden Binaries
+`kernels/src/bin/golden_runner.rs` und `runtime/src/bin/golden_model.rs`.
+Aufrufen konnte sie damit nur, wer die Binaries baut und ihren Pfad
+kennt; ein Werkzeug, das einen Konformitätslauf protokollieren will,
+hätte ein zweites Programm starten und dessen Terminalausgabe lesen
+müssen. Die Logik liegt jetzt in `kernels/src/konformitaet.rs` und
+`runtime/src/konformitaet.rs`, die Binaries sind dünne Starter darüber
+geblieben: **eine Quelle, keine zweite Wahrheit.** `conformance/run.sh`
+läuft unverändert weiter und meldet dieselben 33/33.
+
+**Ein Gleitkomma-Rückfall ist dabei entfallen.** Ein Vektor ohne
+exp-LUT in seinen Metadaten fiel im alten `golden_runner` auf eine
+`f64`-Nachbildung zurück. Das war gegen die Ganzzahldisziplin, und es
+stand ausgerechnet in einer Datei, die das Gleitkomma-Audit
+ausdrücklich **nicht** ansieht (Offline-Werkzeuge sind ausgenommen).
+Solche Vektoren schlagen jetzt begründet fehl; alle Vektoren des
+Repositoriums tragen die LUT.
+
+⚑ **Und damit der Rückfall nicht zurückkommt, stehen die beiden neuen
+Module jetzt im Gleitkomma-Audit** (`tests/audit/test_no_float.py`,
+Heißpfad 21 → 23 Dateien). Dieselbe Lücke wie bei `moe.rs`, das als
+Rechenpfad-Datei ebenfalls nicht in der Liste stand: **Eine Prüfung,
+die eine Datei nicht ansieht, meldet über sie nichts.** Gegenprobe
+gefahren — ein eingebautes `f64` wird gefunden und benannt.
+
+**Ein Manifest bei den Vektoren** (`conformance/vectors/manifest.json`)
+nennt Modell und θ_v-Hash, gegen die die Layer- und E2E-Vektoren
+erzeugt wurden. Ohne diese Angabe liefe ein fremdes Artefakt blind
+dagegen: Es „bestünde" nie und „verfehlte" immer, und beides wäre keine
+Aussage über den Bau.
 
 ### v0.20.0 (kernels 0.21.0) – 2026-08-23 (Zeilen über Threads: 7B wird 5,2-mal schneller)
 

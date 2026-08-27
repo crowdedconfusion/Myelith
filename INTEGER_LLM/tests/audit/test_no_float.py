@@ -83,6 +83,18 @@ HOT_PATH = [
     REPO / "runtime" / "src" / "model.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
+    # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
+    #
+    # Vorher lag sie in kernels/src/bin/golden_runner.rs, und das ist als
+    # Offline-Werkzeug ausgenommen. Dort steckte eine f64-Nachbildung der
+    # exp-LUT als Rueckfall fuer Vektoren ohne LUT-Metadaten — genau die
+    # Art Gleitkomma, gegen die dieses Skript geschrieben ist, nur an
+    # einer Stelle, die es nicht ansah. Der Rueckfall ist beim Umzug
+    # entfallen; damit er nicht zurueckkommt, stehen die beiden Module
+    # jetzt hier. Dieselbe Luecke wie bei moe.rs, das als
+    # Rechenpfad-Datei ebenfalls nicht in dieser Liste stand.
+    REPO / "kernels" / "src" / "konformitaet.rs",
+    REPO / "runtime" / "src" / "konformitaet.rs",
 ]
 
 # Konsenspfad der Netzwerkkomponenten. Dieselbe Anforderung wie oben:

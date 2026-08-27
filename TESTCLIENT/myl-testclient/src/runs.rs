@@ -129,8 +129,10 @@ fn repo_root() -> std::path::PathBuf {
 ///
 /// Siehe [`crate::hardware::rechenpfad_pruefen`]. Aufgerufen von den
 /// Läufen mit Modell; `hardware` und `stack` sind nicht betroffen, denn
-/// sie rechnen nichts, dessen Backend eine Rolle spielte.
-fn backend_taugt(log: &mut RunLog) -> bool {
+/// sie rechnen nichts, dessen Backend eine Rolle spielte. Der
+/// Konformitätslauf ruft dieselbe Sperre: Er zertifiziert ein Backend,
+/// und ein delegierendes darf er nicht zertifizieren.
+pub(crate) fn backend_taugt(log: &mut RunLog) -> bool {
     match crate::hardware::rechenpfad_pruefen() {
         Ok(()) => true,
         Err(begruendung) => {
@@ -152,7 +154,7 @@ fn backend_taugt(log: &mut RunLog) -> bool {
 /// `token` war der Stand bis Fund 36 (2026-08-22).
 pub const DIGEST_UMFANG: &str = "logits+token";
 
-fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
+pub(crate) fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
     let fp = Fingerprint::collect();
     for (k, v) in &fp.entries {
         log.event(Event::Hardware {
@@ -175,6 +177,19 @@ fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
         key: "digest_umfang".into(),
         value: DIGEST_UMFANG.to_string(),
     });
+
+    // Die beschreibenden Angaben zur Maschine (CPU-Modell, Speicher,
+    // Virtualisierung, GPU). Sie gehören in den Beleg, damit ein
+    // veröffentlichter Nachweis sagt, WELCHE Maschine gemessen hat — aber
+    // sie stehen bewusst NICHT im Fingerabdruck: Zwei baugleiche
+    // Mietkisten tragen dieselbe Beschreibung, und der Nachweis verlangt
+    // verschiedene Fingerabdrücke.
+    for (k, v) in &fp.beschreibung {
+        log.event(Event::Hardware {
+            key: k.clone(),
+            value: v.clone(),
+        });
+    }
 
     let Some(dir) = artifact_dir else { return };
     log.event(Event::Artifact {

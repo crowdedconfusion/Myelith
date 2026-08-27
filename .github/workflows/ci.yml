@@ -434,10 +434,14 @@ jobs:
         run: cargo run --release -- --quiet --name ci stack
 
       # Alles, was ohne Modell und ohne Netz läuft, wird hier auch
-      # ausgeführt und nicht nur übersetzt. Der Grund steht in
-      # EINSEITER.md: Ein vollständiger Durchgang auf Windows hat noch nie
-      # stattgefunden, und je mehr davon die CI abdeckt, desto weniger
-      # bleibt für den einen Termin übrig, an dem ein Partner Zeit hat.
+      # ausgeführt und nicht nur übersetzt. Der Grund: Ein vollständiger
+      # Durchgang auf Windows hat noch nie stattgefunden, und je mehr
+      # davon die CI abdeckt, desto weniger bleibt für den einen Termin
+      # übrig, an dem ein Partner Zeit hat.
+      #
+      # (Hier stand bis zum 2026-08-27 ein Verweis auf EINSEITER.md. Die
+      # Datei heißt seit dem 2026-08-24 SCHNELLSTART.md; der Verweis zeigte
+      # ins Leere.)
       #
       # NICHT dabei ist `artefakte`: Ohne gebaute Artefakte meldet der
       # Befehl zu Recht Exit 1, das ist seine Aufgabe. Ein `|| true` davor
@@ -449,6 +453,30 @@ jobs:
           cargo run --release -- --quiet plan --plan-id ci --out ci.plan
           New-Item -ItemType Directory -Force ci-logs | Out-Null
           cargo run --release -- modellstaende --logs ci-logs
+
+      # Der Konformitaetslauf ohne Artefakt: die sechs Operations-Vektoren
+      # brauchen kein Modell. Er gehoert hierher und nicht zu den uebrigen
+      # Befehlen, weil sein Gesamtwert eine Aussage traegt: Er muss auf
+      # jeder Maschine derselbe sein. Ein Windows-Bau, der hier einen
+      # anderen Wert erzeugt, waere ein Befund ueber die Kernthese, kein
+      # Werkzeugfehler, und faellt so vor dem Partnertermin auf statt an ihm.
+      #
+      # Eigenes Verzeichnis, nicht ci-logs: Der naechste Schritt prueft,
+      # dass `vergleich` ein LEERES Verzeichnis ablehnt. Laege hier ein
+      # Protokoll, pruefte er stattdessen die Verweigerung bei einer
+      # einzigen Maschine — auch richtig, aber eine andere Aussage, und
+      # die urspruengliche waere still verlorengegangen.
+      - name: Konformitaet ohne Artefakt
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          New-Item -ItemType Directory -Force ci-konf | Out-Null
+          cargo run --release -- --name ci --logs ci-konf konformitaet
+          $zeile = Select-String -Path ci-konf\*.jsonl -Pattern '894d8357ae92b5c1'
+          if (-not $zeile) {
+            Write-Error "Konformitaetswert weicht ab: erwartet 894d8357ae92b5c1"
+            exit 1
+          }
+          exit 0
 
       # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.
       # Ein Werkzeug, das aus nichts einen Nachweis macht, wäre schlimmer

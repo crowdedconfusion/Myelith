@@ -1,11 +1,16 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.14.2
-> **Datum:** 2026-08-26
+> **Version:** 0.16.0
+> **Datum:** 2026-08-27
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
-> (`vergleich`) und 2.4 (`--repeat`). Offen bleibt in Phase 2 allein der
-> Lauf selbst, also die zweite Architektur. 240 Tests grün, alle Läufe
-> gegen die echten Artefakte verifiziert.
+> (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
+> Fremdmaschinen-Automatik, 4.1 der Konformitätslauf als fünfte Stufe,
+> 4.2 die Maschinenbeschreibung im Protokoll). Offen bleibt in Phase 2
+> allein der Lauf selbst, also die zweite Architektur. 265 Tests grün,
+> alle Läufe gegen die echten Artefakte verifiziert. Der
+> Fremdmaschinen-Test ist auf einem nachgebauten frischen Klon gefahren
+> (aarch64/macOS); Windows und der Weg über Modellbeschaffung und
+> Artefaktbau stehen weiter aus.
 >
 > **Drei Funde am Messgerät selbst (2026-08-22).** Sie betreffen nicht das
 > Netz, sondern das Werkzeug, mit dem es geprüft wird, und alle drei
@@ -275,9 +280,13 @@ Lage auflöst.
    dessen, wofür es ihn gibt.
 2. **`hardware`** braucht kein Modell und ist der erste sinnvolle Lauf
    auf einer neuen Maschine.
-3. **`determinismus`** und **`shard`** sind die eigentlichen Tests. Beide
+3. **`konformitaet`** prüft die Golden Vectors gegen diesen Bau, also ob
+   er bitgleich mit der Referenz rechnet. Die Operations-Vektoren laufen
+   immer; die Layer- und E2E-Vektoren nur gegen das Artefakt, mit dem sie
+   erzeugt wurden. Lädt nichts herunter.
+4. **`determinismus`** und **`shard`** sind die eigentlichen Tests. Beide
    brauchen ein Modell und lösen es selbst auf.
-4. **`stack`** geht ohne Modell durch Krypto, Epochenseed, Komiteewahl,
+5. **`stack`** geht ohne Modell durch Krypto, Epochenseed, Komiteewahl,
    BFT, Verifikation, Ledger und Tokenomics.
 
 Jeder Lauf schreibt ein Protokoll nach `TESTCLIENT/logs/`,
@@ -286,10 +295,13 @@ zwischen zwei Maschinen zählen diese Dateien, nicht die Bildschirmausgabe.
 
 ### Voraussetzungen
 
-Rust. Fehlt es, nennt der Starter die Installationszeile und bricht ab.
-Ist cargo nicht da, aber ein gebautes Binary vorhanden, benutzt er
-dieses. Für den Artefaktbau kommt Python hinzu, das mit dem Repository
-mitgeliefert wird (`INTEGER_LLM/calibrate/.venv`).
+Das Repository auf der Platte; alles Weitere richtet sich nach Rückfrage
+selbst ein. Fehlt Rust, fragt der Starter und installiert es (Windows
+einschließlich der C++-Werkzeugkette); ist cargo nicht da, aber ein
+gebautes Binary vorhanden, benutzt er dieses. Fehlt für den Artefaktbau
+ein einsatzbereites Python, fragt der Client und legt die virtuelle
+Umgebung samt Paketen selbst an. Wer beides ablehnt, bekommt die
+Handgriffe von Hand genannt.
 
 ### Symbol
 
@@ -369,12 +381,18 @@ Optionen: `--prompt`, `--steps`, `--shards`, `--artifacts`, `--logs`,
 |---|---|---|
 | `hardware` |: (nur Erhebung) | nein |
 | `stack` | myl-types, -scheduler, -consensus, -verifier, -ledger, -tokenomics | nein |
+| `konformitaet` | INTEGER_LLM (kernels, runtime) über die Golden Vectors | teilweise: Operations-Vektoren nie, Layer/E2E nur mit passendem |
 | `determinismus` | INTEGER_LLM (runtime, kernels) | **ja** |
 | `shard` | COMPUTE_PIPELINE (myl-pod) + INTEGER_LLM | **ja** |
 
 **Nicht abgedeckt:** `myl-net` (Gossip über echte Sockets gehört in die
-NETWORKING-Testsuite) und BFT-Liveness (Rundenwechsel fehlt noch,
-CONSENSUS Punkt 3.6). Die vollständige Abgrenzung steht in
+NETWORKING-Testsuite) und die BFT-Runden selbst: Der Client stimmt nicht
+mit, aus der bewussten Grenze heraus, die der Changelog unter v0.14.1
+beschreibt. Rundenwechsel und Kettenpersistenz sind im Knotenbetrieb mit
+`myl-node` belegt (fünf eigenständige Prozesse, Leaderausfall,
+Neustart); offen ist daran nur das Nachholen der Konsensrunde für einen
+Knoten, der allein vorauseilt — seine Blöcke holt er nach, seine Runde
+nicht. Die vollständige Abgrenzung steht in
 [ANLEITUNG.md](ANLEITUNG.md), Abschnitt 5.
 
 ## Anleitung für Tests mit mehreren Beteiligten
@@ -489,6 +507,179 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.16.0 – 2026-08-27 (Konformitätslauf und Maschinenbeschreibung)
+
+**Der Konformitätslauf ist im Client (Punkt 4.1).** Fünfte Stufe des
+Sammellaufs und eigener Unterbefehl `konformitaet`: Er prüft die Golden
+Vectors gegen diesen Bau und schreibt wie jeder Lauf eine `.jsonl`, eine
+Zeile je Vektor plus Gesamtwert. Die Prüflogik ist aus den beiden
+Golden-Binaries in die INTEGER_LLM-Bibliotheken gewandert (`kernels`
+und `runtime` tragen sie jetzt, die Binaries sind dünne Starter
+geblieben); der Client ruft die Bibliotheken, statt ein zweites
+Programm zu starten.
+
+**Die Vektoren wissen jetzt, wofür sie gelten.** Ein Manifest bei den
+Vektoren nennt das Modell, mit dem die Layer- und E2E-Vektoren erzeugt
+wurden; läuft ein anderes Artefakt dagegen, werden diese Stufen
+übersprungen — ausdrücklich und mit Begründung im Protokoll, nicht
+still. Ohne Artefakt laufen die sechs Operations-Vektoren, und das
+bleibt ein gültiges Protokoll: Der Vergleichswert trägt den Umfang
+(`op` oder `op+layer+e2e`), und `vergleich` behandelt zwei verschiedene
+Umfänge wie zwei verschiedene Modellstände — unvergleichbar, kein
+Hardware-Befund.
+
+**Das Protokoll nennt die Maschine (Punkt 4.2).** CPU-Modell,
+Speichergröße, Virtualisierung und bei GPU-Bauten der Kartenname stehen
+jetzt im Protokoll. **Nicht im Fingerabdruck:** Zwei baugleiche
+Mietmaschinen müssen denselben Fingerabdruck tragen, sonst hielte der
+Vergleich zwei gleiche Architekturen für zwei verschiedene und gäbe ein
+Urteil, das nichts belegt. Ein Test hält die Bytegleichheit der
+kanonischen Fingerabdruck-Bytes fest.
+
+**Eine Gleitkomma-Falle weniger.** Ein Vektor ohne die exp-LUT in den
+Metadaten fiel bisher in eine `f64`-Nachbildung zurück; das war gegen
+die Ganzzahldisziplin. Solche Vektoren schlagen jetzt begründet fehl;
+alle Vektoren des Repositoriums tragen die LUT.
+
+⚑ **Fund 68: Das Menü versprach vier Stufen, der Lauf hatte fünf.** Die
+Zahl stand dreimal getippt da — in der Protokollzeile je Stufe, in der
+Beschreibung des Menüpunkts [3] und in der Kurzanleitung. Nachgezogen
+wurde nur die erste. Wer dem Menü folgte, bekam eine fünfte Stufe, die
+niemand angekündigt hatte; für jemanden, der das Werkzeug zum ersten Mal
+auf einer fremden Maschine startet, sieht das aus wie ein Fehler. Die
+Stufenliste ist jetzt **eine** Quelle: Die Beschreibung des Menüpunkts
+entsteht daraus, die Protokollzeile greift darauf zu, und eine sechste
+Stufe ohne Eintrag bricht beim ersten Lauf ab, statt still eine falsche
+Zahl zu behaupten. Die Kurzanleitung bleibt fester Text, weil sie auf die
+Bildschirmhöhe gerechnet ist und ein Test genau das prüft; ein zweiter
+verbindet ihre Zahl mit der Liste. **Die Gegenprobe ist gefahren:** Mit
+dem alten Wortlaut schlägt er fehl.
+
+⚑ **Fund 69: Die Bauanleitung für die Artefakte war nicht ausführbar.**
+Wer die automatische Beschaffung ablehnt oder wessen Lauf scheitert,
+bekommt eine Anleitung aus zwei Befehlen — und die beiden brauchen
+**verschiedene Arbeitsverzeichnisse**, ohne dass eines dastand. Der
+Download legt nach `INTEGER_LLM/models/…` ab, gilt also von der Wurzel
+aus; der Bau ruft ein Python-Paket auf, das unterhalb von `INTEGER_LLM`
+liegt. Aus der Wurzel ausgeführt endet er in `No module named calibrate`,
+nachgestellt und vor der Behebung reproduziert. **Dazu die Schreibweise:**
+`VAR=wert befehl` ist eine Eigenheit der Unix-Shell; `cmd` verlangt `set`
+in einer eigenen Zeile, PowerShell `$env:VAR`. Das wiegt hier schwerer
+als anderswo, weil eine nicht gesetzte Variable **nicht auffällt**: Die
+Kalibrierung nimmt dann das Vorgabemodell, läuft durch, und der
+Teilnehmer hat ein anderes Artefakt gebaut als das, das er messen wollte.
+Ein Fehler, der wie ein Erfolg aussieht. Die Anleitung nennt jetzt je
+Schritt das Verzeichnis und die Schreibweise des laufenden Systems;
+Verzeichnis, Variablenname und Modulpfad stehen als Konstanten, die
+Aufruf und Anleitung teilen. Zwei Tests prüfen beide Fassungen, auch die
+Windows-Fassung, die auf der Entwicklermaschine sonst niemand zu Gesicht
+bekäme.
+
+**Der Konformitätslauf läuft jetzt auch in der CI unter Windows.** Ohne
+Artefakt, also die sechs Operations-Vektoren, und geprüft wird der
+Gesamtwert selbst gegen `894d8357ae92b5c1`. Der Grund ist nicht
+Vollständigkeit: Ein Windows-Bau, der hier einen anderen Wert erzeugt,
+wäre ein Befund über die Kernthese und kein Werkzeugfehler, und er fällt
+so **vor** dem Partnertermin auf statt an ihm. Der Lauf schreibt in ein
+eigenes Verzeichnis, weil der Schritt daneben prüft, dass `vergleich` ein
+**leeres** Verzeichnis ablehnt; läge dort ein Protokoll, prüfte er
+stattdessen die Verweigerung bei einer einzigen Maschine, und die
+ursprüngliche Aussage wäre still verlorengegangen.
+
+**Der Fremdmaschinen-Test ist gefahren, wenn auch noch auf derselben
+Architektur.** Ein Verzeichnis mit genau den Dateien, die ein frischer
+Klon mitbringt — 582 Stück, ohne Ausgabeverzeichnis, ohne Modelle, ohne
+Artefakte, ohne Python-Umgebung —, gebaut und gestartet über den Starter:
+Der Bau läuft durch, der Protokoll-Durchlauf liefert 10 von 10 Stufen mit
+dem bekannten Gesamtwert `a9af743fba0e77dc`, `konformitaet` ohne Artefakt
+6 von 6 mit `894d8357ae92b5c1`, `artefakte` meldet zu Recht Exit 1,
+`vergleich` verweigert bei einer Maschine das Urteil, und das Menü läuft
+auch ohne Terminal. **Was damit nicht belegt ist:** derselbe Durchgang
+unter Windows und der Weg über Modellbeschaffung und Artefaktbau. Beides
+braucht eine fremde Maschine oder einen Download, und beides steht noch
+aus.
+
+### v0.15.0 – 2026-08-27 (Fremdmaschinen-Automatik)
+
+**Eine frische Maschine richtet sich selbst ein.** Der erste Start auf
+einem Rechner ohne Rust und ohne Python verlangte bisher zwei Sätze von
+Handgriffen; beide übernimmt jetzt das Werkzeug selbst, nach Rückfrage
+und mit sichtbarem Fortschritt, und nichts davon läuft still ab.
+
+**Die Starter installieren Rust.** Fehlt `cargo`, fragt der Starter, ob
+er es holen soll. Unter Windows lädt er `rustup-init.exe` passend zur
+Prozessorarchitektur und installiert ins Benutzerprofil, ohne
+Administratorrechte; danach fragt er dasselbe für die Microsoft
+C++-Werkzeugkette, ohne die der Übersetzer nicht binden kann, und holt
+sie über winget. Unter Unix läuft der rustup-Installer über curl. Wer
+ablehnt, bekommt die Handgriffe von Hand genannt. Ein Fenster ohne
+Eingabekanal installiert nichts: nicht fragen heißt hier nicht
+installieren.
+
+**Der Client richtet Python ein.** Die Kalibrierpakete waren bisher der
+zweite Satz Handgriffe: `python3 -m venv .venv`, dann `pip install -r
+requirements.txt`. Fehlt ein einsatzbereites Python, fragt der Client
+jetzt und tut beides selbst; unter Windows ohne Python bietet er zuerst
+die winget-Installation an. Die Entscheidung darüber, welcher Weg
+gegangen wird, steht als reine Funktion im Code und ist getestet:
+einsatzbereit hat Vorrang, dann die Reparatur des Vorhandenen, dann der
+Windows-Weg, sonst die Anleitung.
+
+**Ein Fund an der eigenen Kette.** Die Funktion, die fremde Prozesse
+startet und ihre Ausgabe durchreicht, las den stderr-Strom nie. Die
+Leitung ist rund 64 KB groß; pip und der Download schreiben
+Fortschrittszeilen dorthin, und ohne Leser blockierte der Kindprozess,
+sobald sie voll war — nach einigen Minuten, also genau dann, wenn
+niemand mehr damit rechnet. Ein Nebenfaden leert den Strom jetzt, und
+bei einem Fehlschlag nennt die Meldung seine letzten Zeilen.
+
+### v0.14.2 – 2026-08-26 (der Client reicht die Ketten-Ablage durch)
+
+Der Knoten kann seine Kette jetzt als Datei führen und nach einem
+Abbruch oder Neustart dort wieder ansetzen. Die Konfiguration dafür
+trägt ein neues Feld, und der Client reicht es durch: als `None`, aus
+demselben Grund wie bei Genesis-Datei und Konsensschlüssel in der
+Fassung davor. Ein Kettenlauf aus dem Menü ist ein Probenetz für
+Stunden; was er baut, bleibt im Speicher und endet mit dem Programm.
+Die Ablage auf Platte gehört dem Knotenbetrieb auf Servern, der seine
+Kette über Tage behalten will.
+
+### v0.14.1 – 2026-08-26 (BFT-Runden über das Netz — der Client stimmt nicht mit)
+
+Die Knoten führen jetzt Abstimmungsrunden über ein eigenes Gossip-Topic,
+mit dem Validator-Satz aus einer hashgebundenen Genesis-Datei und einem
+Konsensschlüssel, der getrennt von der Netzidentität liegt. Die
+Knoten-Konfiguration bekam dafür zwei neue Felder, und der Client reicht
+sie durch: beide als `None`.
+
+Das ist eine bewusste Grenze, kein Versehen: Der Testclient fährt keine
+BFT-Runden. Eine Genesis-Datei mit Validator-Satz und ein
+Konsensschlüssel mit Besitznachweis entstehen nicht nebenbei aus einer
+Einladungsadresse, und ein Menü, das danach fragt, ohne sie erklären zu
+können, wäre eine Hürde mehr für den Teilnehmerlauf, für den der Client
+da ist. Wer die Runden sehen will, betreibt `myl-node` direkt; der
+Client bleibt der Einstieg, der Knoten die Vollform.
+
+### v0.14.0 – 2026-08-25 (der Katalog führt vorgemerkte Modelle)
+
+Zwei weitere Basismodelle stehen im Modellkatalog, mit geprüfter Lizenz
+und festgelegter Revision — aber noch nicht im Register, weil ihre
+Gewichte nicht geholt und ihre Artefakte nicht gebaut sind. Der
+Katalog führt dafür den Status „vorgemerkt".
+
+Die Konsistenzprüfung zwischen Katalog und Register verlangte trotzdem
+für **jedes** Katalogmodell einen Registereintrag und machte genau
+diesen Status unbenutzbar: Ein Register trägt Digests gebauter
+Artefakte; ein Modell, das bewusst nicht gebaut ist, **kann** dort
+nicht stehen. Die Prüfung nimmt vorgemerkte Modelle jetzt aus, und eine
+Gegenprobe hält das Schlupfloch zu: Ein vorgemerktes Modell, das im
+Register stünde, wäre gebaut, und sein Status wäre falsch. Ohne die
+Gegenprobe könnte sich ein gebautes Modell mit dem Status der
+Digest-Prüfung entziehen.
+
+Für den Client ändert sich nichts Sichtbares: Vorgemerkte Modelle sind
+nicht wählbar, denn ohne Registereintrag ist ihr Digest nicht prüfbar.
 
 ### v0.13.0 – 2026-08-23 (Windows-Bereitschaft: ein Fund und mehr CI)
 

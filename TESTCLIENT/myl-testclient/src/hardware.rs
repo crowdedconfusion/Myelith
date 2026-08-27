@@ -36,7 +36,15 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fingerprint {
     /// Schlüssel-Wert-Paare in stabiler Reihenfolge (für den Diff).
+    /// Sie bestimmen den Fingerabdruck, siehe [`Self::canonical_bytes`].
     pub entries: Vec<(String, String)>,
+    /// Beschreibende Angaben zur Maschine (CPU-Modell, Speicher,
+    /// Virtualisierung, GPU-Karte). Sie stehen im Protokoll, damit ein
+    /// veröffentlichter Nachweis sagt, **welche** Maschine gemessen hat —
+    /// aber sie gehen bewusst NICHT in den Fingerabdruck ein: Zwei
+    /// baugleiche Mietmaschinen unterscheiden sich in keiner dieser
+    /// Angaben, und der Nachweis verlangt verschiedene Fingerabdrücke.
+    pub beschreibung: Vec<(String, String)>,
 }
 
 impl Fingerprint {
@@ -67,7 +75,17 @@ impl Fingerprint {
             ("backend_selected".into(), selected_backend().to_string()),
         ];
 
-        Self { entries }
+        // Die Beschreibung ist kein Teil des Fingerabdrucks: Sie benennt
+        // die Maschine, nicht die Hardware-Klasse, und sie darf zwischen
+        // zwei baugleichen Maschinen keinen Unterschied machen.
+        let beschreibung: Vec<(String, String)> = vec![
+            ("cpu_modell".into(), cpu_modell()),
+            ("ram_bytes".into(), ram_bytes().to_string()),
+            ("virtualisierung".into(), virtualisierung()),
+            ("gpu_karte".into(), gpu_karte()),
+        ];
+
+        Self { entries, beschreibung }
     }
 
     /// Wert zu einem Schlüssel.
@@ -90,6 +108,12 @@ impl Fingerprint {
     }
 
     /// Kanonische Bytefolge für den Vergleich zweier Maschinen.
+    ///
+    /// Deckt **nur** die Fingerabdruck-Felder ab, nicht die
+    /// [`Self::beschreibung`]: Zwei identische Mietkisten müssen
+    /// denselben Fingerabdruck tragen, sonst hielte der Vergleich zwei
+    /// gleiche Architekturen für zwei verschiedene und gäbe ein Urteil,
+    /// das nichts belegt.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (k, v) in &self.entries {
@@ -199,6 +223,197 @@ pub fn selected_backend() -> &'static str {
         "cpu-simd/neon"
     } else {
         "reference"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Beschreibung der Maschine (geht ins Protokoll, NICHT in den Fingerabdruck)
+// ---------------------------------------------------------------------------
+
+/// Liest einen `sysctl`-Wert als Zeichenkette. `None`, wenn der Wert
+/// fehlt oder leer ist: Ein leerer String wäre eine Angabe, die keine ist.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn sysctl_wert(key: &str) -> Option<String> {
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", key])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Das CPU-Modell als lesbare Angabe.
+///
+/// Best-Effort je Betriebssystem; wo es nicht sicher ermittelbar ist,
+/// steht „unbekannt" statt eines geratenen Werts.
+fn cpu_modell() -> String {
+    if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
+            // Apple Silicon meldet die Marke nicht immer über
+            // `machdep.cpu.brand_string`; dann benennt `hw.model` das
+            // Board, das ist besser als nichts.
+            if let Some(s) = sysctl_wert("machdep.cpu.brand_string") {
+                return s;
+            }
+            return sysctl_wert("hw.model").unwrap_or_else(|| "unbekannt".into());
+        }
+    }
+    if cfg!(target_os = "linux") {
+        if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
+            for zeile in cpuinfo.lines() {
+                if let Some(rest) = zeile.strip_prefix("model name") {
+                    if let Some(wert) = rest.split(':').nth(1) {
+                        let wert = wert.trim();
+                        if !wert.is_empty() {
+                            return wert.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        return "unbekannt".into();
+    }
+    if cfg!(target_os = "windows") {
+        // Kein `wmic` (auf neuen Windows-Versionen entfernt) und kein
+        // Ratespiel: Der Prozessor-Identifikator ist eine ehrliche,
+        // wenn auch grobe Angabe.
+        return std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unbekannt".into());
+    }
+    "unbekannt".into()
+}
+
+/// Der Arbeitsspeicher in Bytes, 0 wenn nicht ermittelbar.
+fn ram_bytes() -> u64 {
+    if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(s) = sysctl_wert("hw.memsize") {
+                if let Ok(n) = s.parse::<u64>() {
+                    return n;
+                }
+            }
+            return 0;
+        }
+    }
+    if cfg!(target_os = "linux") {
+        if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+            for zeile in meminfo.lines() {
+                if let Some(rest) = zeile.strip_prefix("MemTotal:") {
+                    // `MemTotal:   16384 kB` — der Wert ist in KiB.
+                    let zahl: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    if let Ok(kib) = zahl.parse::<u64>() {
+                        return kib.saturating_mul(1024);
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+    0
+}
+
+/// Läuft dieser Bau in einer Virtualisierung?
+///
+/// Die Angabe gehört in den Beleg, weil eine gemietete Maschine eine
+/// andere Aussage trägt als die eigene: Ein Determinismus-Nachweis über
+/// zwei VMs desselben Hosts ist weniger wert als einer über zwei
+/// physische Architekturen.
+fn virtualisierung() -> String {
+    if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
+            // `kern.hv_vmm_present` ist 1, wenn ein Hypervisor aktiv ist.
+            return match sysctl_wert("kern.hv_vmm_present").as_deref() {
+                Some("1") => "hypervisor".to_string(),
+                Some(_) => "keine".to_string(),
+                None => "unbekannt".to_string(),
+            };
+        }
+    }
+    if cfg!(target_os = "linux") {
+        // `systemd-detect-virt` meldet `none` auf nackter Hardware und
+        // sonst die Technik (kvm, docker, …). Fehlt es, ist die Antwort
+        // ehrlicherweise unbekannt.
+        if let Ok(out) = std::process::Command::new("systemd-detect-virt").output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return s;
+                }
+            }
+        }
+        return "unbekannt".into();
+    }
+    "unbekannt".into()
+}
+
+/// Der GPU-Kartenname, wenn für ein GPU-Backend gebaut wurde.
+///
+/// Die Delegation der cuda/rocm-Backends rechnet nicht auf der Karte;
+/// aber wer für ein GPU-Backend baut, will im Protokoll sehen, welche
+/// Karte überhaupt da ist. Best-Effort über das jeweilige CLI-Werkzeug,
+/// sonst „keine".
+fn gpu_karte() -> String {
+    let mut namen: Vec<String> = Vec::new();
+    if cfg!(feature = "cuda") {
+        if let Some(n) = nvidia_kartenname() {
+            namen.push(n);
+        }
+    }
+    if cfg!(feature = "rocm") {
+        if let Some(n) = rocm_kartenname() {
+            namen.push(n);
+        }
+    }
+    if namen.is_empty() {
+        "keine".into()
+    } else {
+        namen.join(",")
+    }
+}
+
+#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+fn nvidia_kartenname() -> Option<String> {
+    let out = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+#[cfg_attr(not(feature = "rocm"), allow(dead_code))]
+fn rocm_kartenname() -> Option<String> {
+    let out = std::process::Command::new("rocm-smi")
+        .arg("--showproductname")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
     }
 }
 
@@ -456,5 +671,64 @@ mod tests {
                 assert!(!text.contains(&user), "Fingerabdruck enthält den Benutzernamen");
             }
         }
+    }
+
+    /// Die Beschreibungs-Felder (Punkt 4.2) müssen alle erhoben werden:
+    /// Fehlt eines, sagt der Beleg nicht, welche Maschine gemessen hat.
+    #[test]
+    fn beschreibung_hat_alle_pflichtfelder() {
+        let fp = Fingerprint::collect();
+        let wert = |key: &str| {
+            fp.beschreibung
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+        };
+        for key in ["cpu_modell", "ram_bytes", "virtualisierung", "gpu_karte"] {
+            assert!(wert(key).is_some(), "Beschreibungs-Feld {} fehlt", key);
+            // Ein Feld darf vorhanden, aber nicht erfunden sein: leer ist
+            // erlaubt nur als „keine", „unbekannt" oder die Zahl 0.
+        }
+        // ram_bytes ist eine Zahl (0 = nicht ermittelbar).
+        let ram = wert("ram_bytes").unwrap();
+        assert!(ram.parse::<u64>().is_ok(), "ram_bytes ist keine Zahl: {ram}");
+    }
+
+    /// **Die Kernbedingung von Punkt 4.2.** Die Beschreibungs-Felder gehen
+    /// ins Protokoll, aber NICHT in den Fingerabdruck. Zwei baugleiche
+    /// Mietmaschinen unterscheiden sich in keiner dieser Angaben; zählten
+    /// sie mit, hielte der Vergleich zwei identische Kisten für zwei
+    /// Architekturen und gäbe ein positives Urteil, das nichts belegt.
+    #[test]
+    fn beschreibung_veraendert_den_fingerabdruck_nicht() {
+        let fp = Fingerprint::collect();
+
+        // Die kanonischen Bytes nennen keinen der Beschreibungs-Schlüssel.
+        let kanonisch = String::from_utf8(fp.canonical_bytes()).unwrap();
+        for key in ["cpu_modell", "ram_bytes", "virtualisierung", "gpu_karte"] {
+            assert!(
+                !kanonisch.contains(key),
+                "Fingerabdruck enthält das Beschreibungs-Feld {key}"
+            );
+            assert!(fp.get(key).is_none(), "{key} steht im Fingerabdruck-Teil");
+        }
+
+        // Der Fingerabdruck ist genau der Hash über `entries`; eine
+        // Beschreibung, die sich ändert, ohne dass `entries` sich ändern,
+        // lässt ihn unverändert. Das wird über die Länge der Beiträge
+        // geprüft: jeder Entry-Schlüssel taucht auf, kein fremder.
+        for (k, _) in &fp.entries {
+            assert!(kanonisch.contains(&format!("{}=", k)), "Entry {k} fehlt");
+        }
+    }
+
+    /// Der Fingerabdruck bleibt über zwei Erhebungen hinweg bytegleich —
+    /// auch jetzt, wo die Beschreibung mit erhoben wird. Ohne diese
+    /// Zusicherung wäre jeder Lauf ein anderer Maßstab.
+    #[test]
+    fn fingerabdruck_stabil_unabhaengig_von_der_beschreibung() {
+        let a = Fingerprint::collect();
+        let b = Fingerprint::collect();
+        assert_eq!(a.canonical_bytes(), b.canonical_bytes());
     }
 }

@@ -71,18 +71,31 @@ pub struct Protokoll {
     /// Proben, aber leer bleibt trotzdem von `logits+token` verschieden,
     /// und genau das soll es: Sie messen nicht dasselbe.
     pub digest_umfang: String,
+    /// Welche Stufen der Konformitätslauf geprüft hat
+    /// (`konformitaet::UMFANG_OP` oder `…_VOLL`).
+    ///
+    /// Leer bei Protokollen ohne Konformitätslauf. Zwei verschiedene
+    /// Umfänge sind unvergleichbar, aus demselben Grund wie zwei
+    /// verschiedene Modellstände: Es wurde nicht dasselbe gemessen.
+    pub konformitaet_umfang: String,
 }
 
 impl Protokoll {
     /// Modellstand als ein Wert, die Größe, die vor jedem Digest-Vergleich
     /// übereinstimmen muss.
-    fn modellstand(&self) -> (&str, &str, &str) {
+    fn modellstand(&self) -> (&str, &str, &str, &str) {
         // Der Digest-Umfang gehört hierher und nicht in eine eigene
         // Prüfung: Die Frage ist dieselbe, nämlich ob überhaupt dasselbe
         // gemessen wurde. Ein anderes Modell und ein anderer Umfang sind
         // beide **kein Hardware-Befund**, und beide werden dadurch
-        // behoben, dass man sie angleicht und neu misst.
-        (&self.theta_v, &self.artefakt_digest, &self.digest_umfang)
+        // behoben, dass man sie angleicht und neu misst. Der
+        // Konformitäts-Umfang gehört aus derselben Begründung dazu.
+        (
+            &self.theta_v,
+            &self.artefakt_digest,
+            &self.digest_umfang,
+            &self.konformitaet_umfang,
+        )
     }
 
     /// Bezeichnung für die Ausgabe: Name, sonst Hardware, sonst Datei.
@@ -281,6 +294,7 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
                 "os" => os = hole("value"),
                 "backend_selected" => backend = hole("value"),
                 "digest_umfang" => p.digest_umfang = hole("value"),
+                "konformitaet_umfang" => p.konformitaet_umfang = hole("value"),
                 _ => {}
             },
             "artifact" => match hole("key").as_str() {
@@ -523,17 +537,21 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
              Architektur, nicht ein weiterer Lauf."
         }
         Urteil::Modellstand => {
-            "θ_v, der Artefakt-Digest oder der Digest-Umfang weichen zwischen den\n\
-             Läufen ab. Das ist KEIN Hardware-Befund. Hier wurde gegen verschiedene\n\
-             Modelle oder mit verschiedenen Messverfahren gerechnet; ein\n\
-             Bitgleichheitstest darüber hätte keine Aussage.\n\
+            "θ_v, der Artefakt-Digest, der Digest-Umfang oder der\n\
+             Konformitäts-Umfang weichen zwischen den Läufen ab. Das ist KEIN\n\
+             Hardware-Befund. Hier wurde gegen verschiedene Modelle oder mit\n\
+             verschiedenen Messverfahren gerechnet; ein Bitgleichheitstest darüber\n\
+             hätte keine Aussage.\n\
              \n\
              Bei abweichendem Modell: `myl-test artefakte` auf allen Maschinen\n\
              gleichziehen, dann erneut messen.\n\
              Bei abweichendem Digest-Umfang: Ein Protokoll stammt aus einer älteren\n\
              Fassung des Clients, die nur die erzeugten Token gehasht hat und damit\n\
              kleine Rechenabweichungen nicht sehen konnte (Fund 36). Alle Beteiligten\n\
-             auf denselben Stand bringen und neu messen."
+             auf denselben Stand bringen und neu messen.\n\
+             Bei abweichendem Konformitäts-Umfang: Ein Lauf hat nur die\n\
+             Operations-Vektoren geprüft (ohne passendes Artefakt), der andere auch\n\
+             Layer und E2E. Beide Seiten mit demselben Artefakt laufen lassen."
         }
         Urteil::Abweichung => {
             "Gleicher Modellstand, gleiche Eingabe, verschiedene Ergebnisse.\n\
@@ -1368,4 +1386,76 @@ mod tests {
         assert_eq!(urteilen(&protokolle, &werte), Urteil::Nachweis);
     }
 
+    /// Zwei Konformitätsläufe mit verschiedenen Umfängen haben nicht
+    /// dasselbe gemessen: der eine nur die Operations-Vektoren, der andere
+    /// auch Layer und E2E. Sie dürfen nicht gegeneinander geurteilt werden.
+    #[test]
+    fn verschiedener_konformitaets_umfang_ist_unvergleichbar() {
+        let a = Protokoll {
+            theta_v: "0.17.0".into(),
+            artefakt_digest: "c42b".into(),
+            digest_umfang: "logits+token".into(),
+            konformitaet_umfang: "op+layer+e2e".into(),
+            fingerprint: "fp-a".into(),
+            abgeschlossen: true,
+            erfolgreich: true,
+            ergebnisse: vec![("konformitaet".into(), "k0".into())],
+            ..Default::default()
+        };
+        let b = Protokoll {
+            konformitaet_umfang: "op".into(),
+            fingerprint: "fp-b".into(),
+            ..a.clone()
+        };
+        let protokolle = vec![a, b];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Modellstand);
+    }
+
+    /// Gegenprobe: Gleicher Konformitäts-Umfang, sonst alles wie oben,
+    /// ergibt den Nachweis.
+    #[test]
+    fn gleicher_konformitaets_umfang_stoert_den_nachweis_nicht() {
+        let a = Protokoll {
+            theta_v: "0.17.0".into(),
+            artefakt_digest: "c42b".into(),
+            digest_umfang: "logits+token".into(),
+            konformitaet_umfang: "op+layer+e2e".into(),
+            fingerprint: "fp-a".into(),
+            abgeschlossen: true,
+            erfolgreich: true,
+            ergebnisse: vec![("konformitaet".into(), "k0".into())],
+            ..Default::default()
+        };
+        let b = Protokoll {
+            fingerprint: "fp-b".into(),
+            ..a.clone()
+        };
+        let protokolle = vec![a, b];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Nachweis);
+    }
+
+    /// Der Leser muss den `konformitaet_umfang` aus der Hardware-Zeile
+    /// ziehen: ohne ihn fiele der Vergleich auf „beide leer" zurück und
+    /// sähe Läufe als vergleichbar, die es nicht sind.
+    #[test]
+    fn konformitaets_umfang_wird_eingelesen() {
+        let dir = tempdir("konf-umfang-lesen");
+        let mut log = RunLog::mit_ziel(
+            LogZiel::neu(&dir, "konformitaet", "anna", "abcd1234", "aarch64"),
+            false,
+        );
+        log.event(Event::Hardware {
+            key: "konformitaet_umfang".into(),
+            value: "op".into(),
+        });
+        log.result("konformitaet", "k0", "6/6");
+        let datei = dir.join(format!("{}.jsonl", log.dateiname()));
+        log.finish(true);
+
+        let p = protokoll_lesen(&datei).expect("Protokoll");
+        assert_eq!(p.konformitaet_umfang, "op");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

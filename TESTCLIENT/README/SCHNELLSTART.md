@@ -14,7 +14,7 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 |---|---|---|
 | **Frage** | Rechnen zwei Rechner dasselbe, Bit für Bit? | Halten die Protokollfunktionen, wenn die Daten über eine Leitung gehen? |
 | **Menüpunkt** | [3] Testlauf starten | [5] Am Netz teilnehmen |
-| **Brauchst du** | x86_64-Rechner, ~1,7 GB Platte, Python | nur die Adresse vom Koordinator |
+| **Brauchst du** | x86_64-Rechner, ~1,7 GB Platte | nur die Adresse vom Koordinator |
 | **Dauer** | Minuten | so lange du magst, eine Stunde ist gut |
 | **Ergebnis** | eine `.jsonl` aus `TESTCLIENT/logs/` | eine `.jsonl` aus `TESTCLIENT/Vergleiche/` |
 
@@ -22,15 +22,22 @@ Enter wählt. Es gibt keine Befehle zu tippen.
 
 ## Einmalig einrichten
 
-- Rust installieren: <https://rustup.rs>. Sonst nichts.
 - Repository klonen, Adresse steht in der Mail.
 - Im Ordner `TESTCLIENT` den Starter doppelklicken:
   - Windows: `Myelith Testclient - Windows (Batch).cmd`
   - macOS: `Myelith Testclient - macOS.app`
   - Linux: `./"Myelith Testclient - Linux, macOS (Shell).sh"`
+- **Fehlt Rust, fragt der Starter, ob er es installieren soll.** Mit
+  Enter bestätigst du, und er tut es selbst; unter Windows fragt er
+  danach dasselbe für die C++-Werkzeugkette. Wer es lieber von Hand
+  macht: <https://rustup.rs>.
 - Erster Start dauert einige Minuten, der Client baut sich selbst.
 - Nutzernamen eingeben, wenn er fragt. (Als Koordinator: **`admin`**
   eingeben, sonst fehlt das Entwickler-Menü.)
+
+**Python richtet der Client auf Wunsch selbst ein**, wenn ein Modelllauf
+es braucht (eine Frage, rund 2 GB, mit Fortschrittsanzeige). Ohne Python
+fallen nur die Modellstufen aus, der Rest läuft.
 
 **Kein Konto bei Hugging Face nötig.**
 
@@ -101,9 +108,10 @@ dafür nichts tun.
 ## Drei Dinge, die wir vorher sagen wollen
 
 - **Ohne Python bist du trotzdem nützlich.** Der Lauf erhebt in jedem
-  Fall die Hardware und fährt den Protokoll-Durchlauf über Kryptografie,
-  Konsens und Ledger. Nur die beiden Modellstufen fallen aus. Das ist
-  ein gültiges Teilergebnis, kein Fehlschlag.
+  Fall die Hardware, fährt den Protokoll-Durchlauf über Kryptografie,
+  Konsens und Ledger und prüft die Konformität, soweit sie ohne Modell
+  geht (sechs von dreiunddreißig Vektoren). Nur die beiden Modellstufen
+  fallen aus. Das ist ein gültiges Teilergebnis, kein Fehlschlag.
 - **Wenn etwas schiefgeht, ist das ein Ergebnis.** Der Client ist auf
   Windows noch nie von einem Menschen vollständig durchgespielt worden.
   Findest du einen Fehler, hast du genau das geliefert, wofür der Test
@@ -116,10 +124,11 @@ dafür nichts tun.
 
 ## Was im Protokoll steht, und was nicht
 
-**Drin:** Architektur, Betriebssystem, Backend, welches Modell, Zeiten,
-die Vergleichswerte, die erzeugten Zahlen, ein **Hash** der Fragen. Beim
-Netztest zusätzlich: mit wem dein Rechner gesprochen hat und ob
-Nachrichten ankamen.
+**Drin:** Architektur, Betriebssystem, Backend, CPU-Modell,
+Speichergröße, ob der Rechner virtualisiert ist, welches Modell, Zeiten,
+die Vergleichswerte (einschließlich der Konformität), die erzeugten
+Zahlen, ein **Hash** der Fragen. Beim Netztest zusätzlich: mit wem dein
+Rechner gesprochen hat und ob Nachrichten ankamen.
 
 **Nicht drin:** der Klartext der Fragen und Antworten, dein
 Benutzername, dein Rechnername, Seriennummern, MAC-Adressen.

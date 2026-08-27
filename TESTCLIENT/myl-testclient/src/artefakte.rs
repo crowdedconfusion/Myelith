@@ -289,23 +289,91 @@ pub fn pruefen(repo: &Path, m: &Bekannt) -> Zustand {
     }
 }
 
+/// Der Name der Umgebungsvariablen, über die das Modell gewählt wird.
+///
+/// **Eine Quelle für Aufruf und Anleitung.** [`artefakte_bauen`] setzt
+/// sie, [`bauanleitung`] nennt sie. Standen sie getrennt da, konnte die
+/// eine umbenannt werden und die andere weiter das alte Wort nennen —
+/// und wer der Anleitung folgt, baut dann still das Vorgabemodell statt
+/// des gewünschten.
+const MODELL_UMGEBUNG: &str = "INTEGER_LLM_MODEL";
+
+/// Das Python-Modul, das die Artefakte baut. Siehe [`MODELL_UMGEBUNG`].
+const KALIBRIER_MODUL: &str = "calibrate.src.main";
+
+/// Das Verzeichnis, aus dem [`KALIBRIER_MODUL`] aufgerufen werden muss.
+///
+/// `calibrate` ist ein Paket **unterhalb** von `INTEGER_LLM`, nicht
+/// unterhalb der Repositoriumswurzel. Ein `python -m calibrate.src.main`
+/// aus der Wurzel scheitert mit `No module named calibrate`.
+const KALIBRIER_VERZEICHNIS: &str = "INTEGER_LLM";
+
 /// Die Anleitung, die ausgegeben wird, wenn Artefakte fehlen.
+///
+/// ⚑ **Sie nennt das Arbeitsverzeichnis je Schritt, und zwar seit dem
+/// 2026-08-27.** Vorher standen beide Befehle ohne Verzeichnis
+/// untereinander, und sie brauchen **verschiedene**: Der Download legt
+/// nach `INTEGER_LLM/models/…` ab, gilt also von der Wurzel aus; der Bau
+/// ruft ein Paket auf, das unterhalb von `INTEGER_LLM` liegt. Wer die
+/// zweite Zeile aus der Wurzel ausführte, bekam `No module named
+/// calibrate` und keinen Hinweis, was daran falsch war.
+///
+/// ⚑ **Und sie nennt die Schreibweise des laufenden Systems.**
+/// `VAR=wert befehl` ist eine Eigenheit der Unix-Shell. Unter Windows
+/// gibt es sie nicht: `cmd` verlangt `set` in einer eigenen Zeile,
+/// PowerShell `$env:VAR`. Besonders unangenehm ist dabei, dass ein
+/// falsch gesetzter Wert **nicht** auffällt — die Kalibrierung nimmt
+/// dann das Vorgabemodell, läuft durch, und der Teilnehmer hat ein
+/// anderes Artefakt gebaut als das, das er messen wollte. Ein Fehler,
+/// der wie ein Erfolg aussieht, ist genau die Sorte, gegen die dieser
+/// Client gebaut ist.
 pub fn bauanleitung(repo: &Path, modell: &str) -> String {
+    bauanleitung_fuer(repo, modell, cfg!(windows))
+}
+
+/// [`bauanleitung`], mit dem System als Parameter statt als Bauprofil.
+///
+/// Getrennt, damit **beide** Fassungen auf jeder Maschine prüfbar sind:
+/// Der Windows-Text ist derjenige, den hier niemand zu Gesicht bekommt,
+/// und wäre sonst der einzige ungetestete.
+fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
+    let bauschritt = if windows {
+        format!(
+            "\x20     cd {v}\n\
+             \x20     cmd:        set {u}={m} && python -m {k}\n\
+             \x20     PowerShell: $env:{u}=\"{m}\"; python -m {k}",
+            v = KALIBRIER_VERZEICHNIS,
+            u = MODELL_UMGEBUNG,
+            m = modell,
+            k = KALIBRIER_MODUL,
+        )
+    } else {
+        format!(
+            "\x20     cd {v}\n\
+             \x20     {u}={m} python -m {k}",
+            v = KALIBRIER_VERZEICHNIS,
+            u = MODELL_UMGEBUNG,
+            m = modell,
+            k = KALIBRIER_MODUL,
+        )
+    };
     format!(
         "So entstehen die Artefakte für {m} (einmalig):\n\
          \n\
-         1. Gewichte von Hugging Face holen: sie werden NICHT mitgeliefert:\n\
+         1. Gewichte von Hugging Face holen: sie werden NICHT mitgeliefert.\n\
+         \x20  Im Wurzelverzeichnis des Repositoriums:\n\
          \x20     huggingface-cli download Qwen/{hf} --local-dir INTEGER_LLM/models/{hf}\n\
          \n\
          2. Artefakte bauen. Das versionierte Skalenpaket unter\n\
          \x20  INTEGER_LLM/scale_packs/{m}/ wird automatisch verwendet:\n\
-         \x20     INTEGER_LLM_MODEL={m} python -m calibrate.src.main\n\
+         {bau}\n\
          \n\
          Der Bau dauert Sekunden statt Minuten, weil die Aktivierungsstatistik\n\
          entfällt, und genau deshalb ist er auf jeder Maschine bitgleich.\n\
          Danach diesen Befehl erneut ausführen; der Digest wird geprüft.",
         m = modell,
         hf = hf_id(repo, modell),
+        bau = bauschritt,
     )
 }
 
@@ -440,55 +508,281 @@ fn venv_python(repo: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Findet einen Python-Interpreter, der die Kalibrierung ausführen kann.
+/// Was die Python-Suche auf dieser Maschine ergeben hat, bevor etwas
+/// eingerichtet wird.
 ///
 /// **Warum das mehr ist als ein Pfad.** Die virtuelle Umgebung
 /// `INTEGER_LLM/calibrate/.venv` ist gitignored, sie ist 861 MB groß und
 /// gehört nicht ins Repository. Auf einem frischen Klon gibt es sie also
-/// nicht. Die erste Fassung dieser Funktion suchte nur dort und meldete
-/// „.venv fehlt": womit der gesamte Download- und Baupfad auf jeder
-/// Maschine außer der Entwicklermaschine tot war.
+/// nicht. Die erste Fassung der Suche fand nur sie und meldete „.venv
+/// fehlt": womit der gesamte Download- und Baupfad auf jeder Maschine
+/// außer der Entwicklermaschine tot war.
 ///
 /// Gesucht wird deshalb in dieser Reihenfolge: die venv (beide Layouts),
-/// dann `python3` und `python` im Suchpfad. Gefunden ist nicht genug: Es
-/// wird geprüft, ob die nötigen Pakete importierbar sind, denn ein
-/// System-Python ohne `torch` scheitert erst nach dem Download.
-fn python_finden(repo: &Path) -> Result<PathBuf, String> {
+/// dann `python3`, `python` und `py` im Suchpfad. Gefunden ist nicht
+/// genug: Ein Interpreter, der die Pakete nicht importieren kann,
+/// scheitert erst nach dem Download von mehreren Gigabyte.
+///
+/// Getrennt vom Einrichten ([`python_sicherstellen`]), damit die
+/// Entscheidung über den nächsten Schritt ohne Prozessstarts prüfbar ist.
+struct PythonLage {
+    /// Interpreter, der die Kalibrierpakete bereits importieren kann.
+    bereit: Option<PathBuf>,
+    /// Interpreter, die laufen, denen aber die Pakete fehlen.
+    nackt: Vec<PathBuf>,
+    /// Je geprüftem Kandidaten eine Zeile, für die Fehlermeldung.
+    hinweise: Vec<String>,
+}
+
+fn python_lage(repo: &Path) -> PythonLage {
     let mut kandidaten: Vec<PathBuf> = Vec::new();
     if let Some(p) = venv_python(repo) {
         kandidaten.push(p);
     }
     // Reihenfolge mit Bedacht: Unter Windows ist `python3` haeufig nur ein
-    // Platzhalter, der den Microsoft Store oeffnet; er scheitert beim
-    // Importtest und wird deshalb uebersprungen. `py` ist der offizielle
-    // Windows-Starter und findet auch Installationen, die nicht im
-    // Suchpfad stehen.
+    // Platzhalter, der den Microsoft Store oeffnet; er scheitert schon am
+    // Python-Test und steht deshalb nicht zur Einrichtung bereit. `py`
+    // ist der offizielle Windows-Starter und findet auch Installationen,
+    // die nicht im Suchpfad stehen.
     kandidaten.push(PathBuf::from("python3"));
     kandidaten.push(PathBuf::from("python"));
     kandidaten.push(PathBuf::from("py"));
 
-    let mut gesehen = Vec::new();
+    let mut lage = PythonLage { bereit: None, nackt: Vec::new(), hinweise: Vec::new() };
     for k in kandidaten {
-        let pruefung = std::process::Command::new(&k)
+        // Zwei Stufen: zuerst „ist das überhaupt Python", dann „hat es
+        // die Pakete". Der Store-Platzhalter unter Windows beantwortet
+        // schon die erste Frage mit einem Fehler und würde sonst als
+        // nackter Interpreter geführt, den es nicht gibt.
+        let laeuft = std::process::Command::new(&k)
+            .args(["-c", "import sys"])
+            .current_dir(repo)
+            .output();
+        let Ok(l) = laeuft else {
+            lage.hinweise.push(format!("{} nicht vorhanden", k.display()));
+            continue;
+        };
+        if !l.status.success() {
+            lage.hinweise.push(format!("{} gefunden, aber kein Python", k.display()));
+            continue;
+        }
+        let pakete = std::process::Command::new(&k)
             .args(["-c", "import torch, transformers, huggingface_hub"])
             .current_dir(repo)
             .output();
-        match pruefung {
-            Ok(a) if a.status.success() => return Ok(k),
-            Ok(_) => gesehen.push(format!("{} gefunden, aber Pakete fehlen", k.display())),
-            Err(_) => gesehen.push(format!("{} nicht vorhanden", k.display())),
+        match pakete {
+            Ok(p) if p.status.success() => {
+                lage.bereit = Some(k.clone());
+                // Ein bereiter Interpreter genügt. Jeder weitere Importtest
+                // kostet Sekunden; die Lage der übrigen Kandidaten ist dann
+                // nur noch Teil einer Fehlermeldung, die es nicht gibt.
+                break;
+            }
+            _ => {
+                if !lage.nackt.contains(&k) {
+                    lage.nackt.push(k.clone());
+                }
+                lage.hinweise
+                    .push(format!("{} gefunden, aber Pakete fehlen", k.display()));
+            }
         }
     }
+    lage
+}
 
-    Err(format!(
+/// Der nächste Schritt der Python-Einrichtung, ohne Nebenwirkung.
+enum PythonPlan {
+    /// Ein Interpreter kann die Pakete bereits importieren.
+    Bereit,
+    /// Ein Interpreter ist da; ihm fehlt die Umgebung. venv und pip.
+    VenvEinrichten,
+    /// Kein Interpreter; unter Windows kann winget einen installieren.
+    WingetInstallieren,
+    /// Kein automatischer Weg: Anleitung ausgeben.
+    Anleitung,
+}
+
+fn python_plan(lage: &PythonLage, ist_windows: bool, winget_verfuegbar: bool) -> PythonPlan {
+    if lage.bereit.is_some() {
+        return PythonPlan::Bereit;
+    }
+    if !lage.nackt.is_empty() {
+        return PythonPlan::VenvEinrichten;
+    }
+    if ist_windows && winget_verfuegbar {
+        return PythonPlan::WingetInstallieren;
+    }
+    PythonPlan::Anleitung
+}
+
+fn winget_verfuegbar() -> bool {
+    std::process::Command::new("winget")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Wo Windows ein frisch installiertes Python ablegt.
+///
+/// Rein und ohne Dateisystem-Zugriff prüfbar: Die Pfade sind bekannt,
+/// nur ihre Reihenfolge zählt. Per-user zuerst, denn dort landet die
+/// winget-Installation standardmäßig.
+fn windows_python_kandidaten(local_app_data: &Path, program_files: &Path) -> Vec<PathBuf> {
+    // Die Fassung, die über winget installiert wird, zuerst.
+    let fassungen = ["Python312", "Python313", "Python311"];
+    let mut out: Vec<PathBuf> = fassungen
+        .iter()
+        .map(|v| local_app_data.join("Programs").join("Python").join(v).join("python.exe"))
+        .collect();
+    out.extend(fassungen.iter().map(|v| program_files.join(v).join("python.exe")));
+    out
+}
+
+fn python_nach_windows_installation() -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    let pf = std::env::var_os("ProgramFiles").map(PathBuf::from)?;
+    windows_python_kandidaten(&local, &pf).into_iter().find(|p| p.is_file())
+}
+
+/// Die Anleitung für die Einrichtung von Hand, wenn der Client sie nicht
+/// selbst übernimmt (nicht-interaktiv, abgelehnt oder kein automatischer
+/// Weg).
+fn anleitung_python(lage: &PythonLage) -> String {
+    format!(
         "Kein einsatzbereites Python gefunden.\n  {}\n\n\
          Einmalig einrichten (rund 2 GB, dauert einige Minuten):\n\
          \x20   cd INTEGER_LLM/calibrate\n\
          \x20   python3 -m venv .venv\n\
          \x20   .venv/bin/pip install -r requirements.txt      (Windows: .venv\\Scripts\\pip)\n\n\
          Danach findet der Client sie von selbst.",
-        gesehen.join("\n  ")
+        lage.hinweise.join("\n  ")
+    )
+}
+
+/// Stellt ein einsatzbereites Python her: nach Rückfrage, mit sichtbarem
+/// Fortschritt, und ohne etwas still zu installieren.
+///
+/// **Warum das der Client tut und nicht die Anleitung.** Die Handgriffe
+/// dafür standen seit jeher in der Fehlermeldung; auf einer fremden
+/// Maschine tippt sie jemand ab, der das Projekt nicht kennt. Ein
+/// Vertipper kostet einen Download von zwei Gigabyte, der erst danach
+/// auffällt. Der Client kennt die Befehle fehlerfrei, fragt vorher und
+/// zeigt den Fortschritt.
+pub fn python_sicherstellen(
+    repo: &Path,
+    antwort: &mut Rueckfrage<'_>,
+    meldung: &mut dyn FnMut(String),
+) -> Result<PathBuf, String> {
+    let lage = python_lage(repo);
+    if let Some(p) = &lage.bereit {
+        return Ok(p.clone());
+    }
+    // Nicht-interaktiv wird nichts installiert: Ein Zwei-Gigabyte-Zugriff
+    // gehört nicht in einen Lauf, der niemanden fragen kann. Dasselbe
+    // Prinzip wie beim Download der Gewichte.
+    let Some(frage) = antwort.as_mut() else {
+        return Err(anleitung_python(&lage));
+    };
+
+    match python_plan(&lage, cfg!(windows), winget_verfuegbar()) {
+        PythonPlan::Bereit => unreachable!("bereits oben abgefangen"),
+        PythonPlan::VenvEinrichten => {
+            let interpreter = lage.nackt[0].clone();
+            let t = frage(&format!(
+                "{} ist vorhanden, aber die Kalibrierpakete fehlen.\n\
+                 Die Umgebung jetzt einrichten? Das lädt rund 2 GB (PyTorch)\n\
+                 herunter und dauert einige Minuten. [J/n] ",
+                interpreter.display()
+            ))
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
+            if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
+                return Err(anleitung_python(&lage));
+            }
+            umgebung_einrichten(repo, &interpreter, meldung)?;
+        }
+        PythonPlan::WingetInstallieren => {
+            let t = frage(
+                "Python ist nicht installiert.\n\
+                 Jetzt über winget installieren (Python 3.12, rund 100 MB)? [J/n] ",
+            )
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
+            if !(t.is_empty() || t == "j" || t == "ja" || t == "y" || t == "yes") {
+                return Err(anleitung_python(&lage));
+            }
+            meldung("Installiere Python über winget …".to_string());
+            lauf(
+                Path::new("winget"),
+                &[
+                    "install", "-e", "--id", "Python.Python.3.12", "--silent",
+                    "--accept-source-agreements", "--accept-package-agreements",
+                ],
+                repo,
+                meldung,
+            )?;
+            let interpreter = python_nach_windows_installation().ok_or_else(|| {
+                "winget lief durch, aber es ist kein Python auffindbar.\n\
+                 Bitte ein neues Fenster öffnen und den Client neu starten:\n\
+                 Die Pfadänderung der Installation gilt erst dort."
+                    .to_string()
+            })?;
+            umgebung_einrichten(repo, &interpreter, meldung)?;
+        }
+        PythonPlan::Anleitung => return Err(anleitung_python(&lage)),
+    }
+
+    let neu = python_lage(repo);
+    if let Some(p) = neu.bereit {
+        return Ok(p);
+    }
+    Err(format!(
+        "Die Einrichtung lief durch, aber es ist weiterhin kein\n\
+         einsatzbereites Python auffindbar.\n{}",
+        anleitung_python(&neu)
     ))
+}
+
+/// Legt die virtuelle Umgebung an und installiert die Kalibrierpakete.
+///
+/// Eine halbe Umgebung von einem früheren Versuch wird nicht verworfen:
+/// Liegt der venv-Interpreter schon da, beginnt der Lauf direkt bei pip.
+fn umgebung_einrichten(
+    repo: &Path,
+    interpreter: &Path,
+    meldung: &mut dyn FnMut(String),
+) -> Result<(), String> {
+    let calibrate = repo.join("INTEGER_LLM/calibrate");
+    if venv_python(repo).is_none() {
+        meldung(format!(
+            "Lege virtuelle Umgebung unter {} an …",
+            calibrate.join(".venv").display()
+        ));
+        let status = std::process::Command::new(interpreter)
+            .args(["-m", "venv", ".venv"])
+            .current_dir(&calibrate)
+            .status()
+            .map_err(|e| format!("{} nicht startbar: {}", interpreter.display(), e))?;
+        if !status.success() {
+            return Err(
+                "Die virtuelle Umgebung ließ sich nicht anlegen.\n\
+                 Unter Debian/Ubuntu fehlt dafür oft ein Paket:\n  \
+                 sudo apt-get install -y python3-venv"
+                    .to_string(),
+            );
+        }
+    }
+    let Some(py) = venv_python(repo) else {
+        return Err(format!(
+            "Die Umgebung unter {} wurde angelegt, aber der Interpreter fehlt.",
+            calibrate.join(".venv").display()
+        ));
+    };
+    meldung("Installiere die Kalibrierpakete (rund 2 GB, einige Minuten) …".to_string());
+    lauf(&py, &["-m", "pip", "install", "-r", "requirements.txt"], &calibrate, meldung)
 }
 
 /// Ungefähre Downloadgröße je Modell, für die Rückfrage vor dem Zugriff.
@@ -510,8 +804,13 @@ pub fn download_groesse(repo: &Path, modell: &str) -> String {
 /// beherrscht geteilte Safetensors und setzt einen abgebrochenen Download
 /// fort. Ein eigener HTTPS-Pfad im Client wäre eine zweite, schlechtere
 /// Umsetzung derselben Sache.
-pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
-    let py = python_finden(repo)?;
+pub fn gewichte_holen(
+    repo: &Path,
+    modell: &str,
+    antwort: &mut Rueckfrage<'_>,
+    meldung: &mut dyn FnMut(String),
+) -> Result<(), String> {
+    let py = python_sicherstellen(repo, antwort, meldung)?;
 
     // **Herkunft und Revision kommen aus dem Katalog** (2026-08-22). Hier
     // stand `repo_id='Qwen/{hf}'`, also die Annahme, jedes Modell dieses
@@ -589,13 +888,23 @@ pub fn gewichte_holen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)
 /// Baut die Artefakte. Nutzt das versionierte Skalenpaket automatisch:
 /// deshalb dauert das Sekunden statt Minuten und ist plattformübergreifend
 /// bitgleich (siehe `INTEGER_LLM/scale_packs/README.md`).
-pub fn artefakte_bauen(repo: &Path, modell: &str, meldung: &mut dyn FnMut(String)) -> Result<(), String> {
-    let py = python_finden(repo)?;
+pub fn artefakte_bauen(
+    repo: &Path,
+    modell: &str,
+    antwort: &mut Rueckfrage<'_>,
+    meldung: &mut dyn FnMut(String),
+) -> Result<(), String> {
+    let py = python_sicherstellen(repo, antwort, meldung)?;
     meldung(format!("Baue Artefakte für {modell} (Skalenpaket wird verwendet) …"));
     // Am Kindprozess statt global: `std::env::set_var` verändert den
     // eigenen Prozess und ist bei mehreren Threads nicht sauber definiert.
-    lauf_mit(&py, &["-m", "calibrate.src.main"], &repo.join("INTEGER_LLM"),
-             &[("INTEGER_LLM_MODEL", modell)], meldung)
+    lauf_mit(
+        &py,
+        &["-m", KALIBRIER_MODUL],
+        &repo.join(KALIBRIER_VERZEICHNIS),
+        &[(MODELL_UMGEBUNG, modell)],
+        meldung,
+    )
 }
 
 fn lauf(
@@ -627,6 +936,29 @@ fn lauf_mit(
         .spawn()
         .map_err(|e| format!("{} nicht startbar: {}", programm.display(), e))?;
 
+    // stderr in einem Nebenfaden leeren. Die Leitung ist rund 64 KB groß;
+    // pip und huggingface_hub schreiben Fortschrittszeilen dorthin, und
+    // ohne Leser blockierte der Kindprozess, sobald sie voll ist — nach
+    // einigen Minuten, also genau dann, wenn niemand mehr damit rechnet.
+    // Gesammelt wird mit Grenze: Bei einem Fehlschlag interessieren die
+    // letzten Zeilen, nicht alle.
+    let stderr_faden = kind.stderr.take().map(|s| {
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            let mut zeilen: Vec<String> = Vec::new();
+            for z in BufReader::new(s).lines().map_while(Result::ok) {
+                if z.trim().is_empty() {
+                    continue;
+                }
+                zeilen.push(z);
+                if zeilen.len() > 2000 {
+                    zeilen.drain(..1000);
+                }
+            }
+            zeilen
+        })
+    });
+
     // Ausgabe durchreichen und dabei die verstrichene Zeit mitführen. Ein
     // Download über mehrere Gigabyte oder ein erster Cargo-Bau dauert
     // Minuten; ohne sichtbaren Fortschritt ist ein laufender Vorgang von
@@ -653,10 +985,17 @@ fn lauf_mit(
         meldung(format!("  fertig nach {:02}:{:02}", s / 60, s % 60));
     }
     let status = kind.wait().map_err(|e| e.to_string())?;
+    let stderr_zeilen = stderr_faden.map(|f| f.join().unwrap_or_default()).unwrap_or_default();
     if status.success() {
         Ok(())
     } else {
-        Err(format!("Abbruch mit {}", status))
+        let schwanz: Vec<&String> = stderr_zeilen.iter().rev().take(10).collect();
+        if schwanz.is_empty() {
+            Err(format!("Abbruch mit {}", status))
+        } else {
+            let tail: Vec<String> = schwanz.into_iter().rev().cloned().collect();
+            Err(format!("Abbruch mit {}\nLetzte Meldungen:\n  {}", status, tail.join("\n  ")))
+        }
     }
 }
 
@@ -980,9 +1319,9 @@ pub fn beschaffen_fuer(
     if gewichte.join("config.json").is_file() {
         meldung(format!("Gewichte liegen bereits in {}. Download entfällt.", gewichte.display()));
     } else {
-        gewichte_holen(repo, modell, meldung)?;
+        gewichte_holen(repo, modell, antwort, meldung)?;
     }
-    artefakte_bauen(repo, modell, meldung)?;
+    artefakte_bauen(repo, modell, antwort, meldung)?;
 
     let bekannt = register(repo)?;
     let b = bekannt.iter().find(|b| b.name == modell).ok_or("Register unvollständig")?;
@@ -1145,6 +1484,70 @@ pub fn freigeben(repo: &Path, pfad: &Path) -> Result<u64, String> {
     let bytes = verzeichnisgroesse(pfad);
     fs::remove_dir_all(pfad).map_err(|e| format!("{} nicht löschbar: {}", pfad.display(), e))?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod python_tests {
+    use super::*;
+
+    fn lage(bereit: bool, nackt: usize) -> PythonLage {
+        PythonLage {
+            bereit: bereit.then(|| PathBuf::from("/py")),
+            nackt: (0..nackt).map(|i| PathBuf::from(format!("/nackt{i}"))).collect(),
+            hinweise: Vec::new(),
+        }
+    }
+
+    /// Die Entscheidungstabelle der Einrichtung: Einsatzbereites hat
+    /// Vorrang, dann die Reparatur des Vorhandenen, dann der Windows-Weg;
+    /// alles andere bekommt die Anleitung.
+    #[test]
+    fn plan_bereit_hat_vorrang() {
+        assert!(matches!(python_plan(&lage(true, 2), true, true), PythonPlan::Bereit));
+    }
+
+    /// Ein nackter Interpreter wird auf jedem System eingerichtet, nicht
+    /// nur unter Windows: Die Umgebung fehlt ihm überall gleich.
+    #[test]
+    fn plan_nackter_interpreter_richtet_umgebung_ein() {
+        assert!(matches!(
+            python_plan(&lage(false, 1), false, false),
+            PythonPlan::VenvEinrichten
+        ));
+        assert!(matches!(
+            python_plan(&lage(false, 1), true, false),
+            PythonPlan::VenvEinrichten
+        ));
+    }
+
+    /// Ohne Interpreter bleibt der Automatikweg Windows mit winget.
+    /// Jedes andere Los ist die Anleitung: etwas zu installieren, was der
+    /// Client nicht überblickt, wäre ein Eingriff ohne Netz.
+    #[test]
+    fn plan_installation_nur_auf_windows_mit_winget() {
+        assert!(matches!(
+            python_plan(&lage(false, 0), true, true),
+            PythonPlan::WingetInstallieren
+        ));
+        assert!(matches!(python_plan(&lage(false, 0), true, false), PythonPlan::Anleitung));
+        assert!(matches!(python_plan(&lage(false, 0), false, true), PythonPlan::Anleitung));
+        assert!(matches!(python_plan(&lage(false, 0), false, false), PythonPlan::Anleitung));
+    }
+
+    /// Per-user vor Maschinen-Installation: Die winget-Installation landet
+    /// standardmäßig im Benutzerprofil, und dort sucht der Client zuerst.
+    /// Die Fassung, die der Client installiert, steht vor den übrigen.
+    #[test]
+    fn windows_pfade_per_user_und_installierte_fassung_zuerst() {
+        let p = windows_python_kandidaten(Path::new("L"), Path::new("P"));
+        assert_eq!(p.len(), 6);
+        assert_eq!(p[0], PathBuf::from("L/Programs/Python/Python312/python.exe"));
+        assert!(p.iter().any(|k| k == &PathBuf::from("P/Python312/python.exe")));
+        // Die Benutzerpfade kommen vor den Maschinenpfaden.
+        let benutzer = p.iter().position(|k| k.starts_with("L")).unwrap();
+        let maschine = p.iter().position(|k| k.starts_with("P")).unwrap();
+        assert!(benutzer < maschine);
+    }
 }
 
 #[cfg(test)]
@@ -1609,6 +2012,63 @@ mod loeschen_tests {
     /// der Lauf nicht reproduzierbar ist: Ein Modell, das sich zwischen
     /// zwei Teilnehmern ändert, erzeugt genau den Befund, gegen den dieses
     /// Werkzeug gebaut ist.
+    /// Die Bauanleitung nennt Verzeichnis, Umgebungsvariable und Modul
+    /// genau so, wie der Client sie selbst benutzt.
+    ///
+    /// **Warum das eine Prüfung wert ist:** Wer die Anleitung liest, hat
+    /// den automatischen Weg abgelehnt oder er ist gescheitert. Sie ist
+    /// dann die einzige Auskunft, die er bekommt. Eine Anleitung, die
+    /// einen anderen Namen nennt als der Code benutzt, schickt ihn in
+    /// einen Fehler, den er nicht einordnen kann — und im schlimmsten
+    /// Fall in einen **stillen**: Eine nicht gesetzte Variable baut das
+    /// Vorgabemodell, ohne sich zu beschweren.
+    #[test]
+    fn bauanleitung_nennt_verzeichnis_variable_und_modul() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        for windows in [false, true] {
+            let text = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", windows);
+            for teil in [KALIBRIER_VERZEICHNIS, MODELL_UMGEBUNG, KALIBRIER_MODUL] {
+                assert!(
+                    text.contains(teil),
+                    "windows={windows}: Anleitung nennt {teil:?} nicht:\n{text}"
+                );
+            }
+            assert!(
+                text.contains(&format!("cd {}", KALIBRIER_VERZEICHNIS)),
+                "windows={windows}: Anleitung nennt das Arbeitsverzeichnis nicht"
+            );
+        }
+    }
+
+    /// Unter Windows darf die Unix-Schreibweise `VAR=wert befehl` nicht
+    /// dastehen: `cmd` und PowerShell kennen sie nicht.
+    ///
+    /// **Gegenprobe im selben Test:** Auf Unix muss sie dastehen. Ein
+    /// Test, der nur die eine Hälfte prüft, bestünde auch dann, wenn die
+    /// Anleitung überall dieselbe wäre.
+    #[test]
+    fn bauanleitung_folgt_der_schreibweise_des_systems() {
+        let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
+        let unix_form = format!("{}=qwen2.5-0.5b python", MODELL_UMGEBUNG);
+
+        let unix = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", false);
+        assert!(unix.contains(&unix_form), "Unix-Anleitung ohne Unix-Schreibweise:\n{unix}");
+
+        let win = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", true);
+        assert!(
+            !win.contains(&unix_form),
+            "Windows-Anleitung enthält die Unix-Schreibweise:\n{win}"
+        );
+        assert!(
+            win.contains(&format!("set {}=qwen2.5-0.5b", MODELL_UMGEBUNG)),
+            "Windows-Anleitung nennt den cmd-Weg nicht:\n{win}"
+        );
+        assert!(
+            win.contains(&format!("$env:{}=", MODELL_UMGEBUNG)),
+            "Windows-Anleitung nennt den PowerShell-Weg nicht:\n{win}"
+        );
+    }
+
     #[test]
     fn jeder_katalogeintrag_traegt_herkunft_und_revision() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));

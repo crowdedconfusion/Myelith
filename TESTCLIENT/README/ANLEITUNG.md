@@ -6,7 +6,7 @@
 > über das Internet, und kommen die Nachrichten an. Zwei getrennte
 > Nachweise, die einander nicht brauchen.
 
-**Version:** 2.6.0 · **Datum:** 2026-08-21
+**Version:** 2.16.0 · **Datum:** 2026-08-27
 
 Diese Anleitung hat zwei Hälften:
 
@@ -52,9 +52,26 @@ anderen.**
 
 | | |
 |---|---|
-| **Immer** | Das Repository auf der Platte und [Rust](https://rustup.rs). Der Starter sagt dir beim ersten Aufruf, was fehlt. |
-| **Nur für die Modellläufe** | Python mit PyTorch, siehe [A7](#a7-python-für-die-modellläufe-einrichten). Rund 2 GB. |
+| **Immer** | Das Repository auf der Platte. Alles Weitere richtet der Starter auf Wunsch selbst ein, siehe unten. |
+| **Nur für die Modellläufe** | Python mit den Kalibrierpaketen, siehe [A7](#a7-python-für-die-modellläufe-einrichten). Rund 2 GB. |
 | **Plattenplatz** | 0,5B-Modell: rund 1,7 GB. 7B-Modell: rund 23 GB. Beides lässt sich hinterher wieder freigeben, siehe [A8](#a8-platz-wieder-freigeben). |
+
+**Fehlt Rust, fragt der Starter, ob er es installieren soll** (Enter =
+ja, `n` = nein). Er lädt dann rustup herunter und installiert es in dein
+Benutzerprofil, ohne Administratorrechte; unter Windows zusätzlich,
+wieder nach Rückfrage, die Microsoft C++-Werkzeugkette, die der
+Übersetzer zum Binden braucht. Auf einer frischen Maschine bist du damit
+nach zwei bestätigten Fragen so weit. Wer ablehnt oder bei wem der
+automatische Weg scheitert, bekommt die Handgriffe genannt und kann sie
+selbst ausführen.
+
+**Python richtet der Client auf Wunsch selbst ein**, sobald ein
+Modelllauf es braucht: Er legt die virtuelle Umgebung an und installiert
+die Pakete, mit Fortschrittsanzeige. Unter Windows ohne Python bietet er
+zuerst die Installation über winget an. Auch hier gilt: nichts davon
+läuft still ab, jeder Schritt fragt vorher. Die Handgriffe stehen
+weiterhin in [A7](#a7-python-für-die-modellläufe-einrichten), falls du
+sie selbst tun willst.
 
 **Ohne Python bist du trotzdem nützlich.** Der Testlauf erhebt in jedem
 Fall die Hardware und fährt den Protokoll-Durchlauf; nur die beiden
@@ -282,8 +299,8 @@ Einstellungen bereits ein Artefakt und eine Testdatei, läuft er sofort
 los. Beim ersten Öffnen steht dort „nicht ausgewählt", und er stellt
 beide Fragen.
 
-Der Lauf hat vier Stufen und schreibt **ein einziges Protokoll** über
-alle vier:
+Der Lauf hat fünf Stufen und schreibt **ein einziges Protokoll** über
+alle fünf:
 
 | Stufe | Was sie tut |
 |---|---|
@@ -291,8 +308,9 @@ alle vier:
 | 2 Determinismus | Rechnet jede Frage **zweimal** und prüft, ob dasselbe herauskommt |
 | 3 Geshardete Inferenz | Verteilt das Modell auf vier Teile und prüft gegen das ungeteilte |
 | 4 Protokoll-Durchlauf | Prüft die Protokollschicht, ohne Modell: Kryptografie, Konsens, Ledger |
+| 5 Konformität | Prüft die Golden Vectors gegen diesen Bau: rechnet er bitgleich mit der Referenz? Ohne passendes Artefakt laufen nur die Operations-Vektoren |
 
-Alle vier laufen auch dann durch, wenn eine fehlschlägt: Eine
+Alle fünf laufen auch dann durch, wenn eine fehlschlägt: Eine
 fehlgeschlagene Modellstufe macht die Hardware-Erhebung nicht wertlos,
 sondern erst recht wichtig.
 
@@ -373,7 +391,19 @@ Die Urteile stehen in [B5](#b5-die-urteile-und-was-sie-bedeuten).
 
 ## A7. Python für die Modellläufe einrichten
 
-Nur nötig, wenn du die Stufen 2 und 3 fahren willst.
+Nur nötig, wenn du die Modellstufen des Testlaufs fahren willst.
+
+**Der Normalfall: Du musst nichts tun.** Sobald ein Modelllauf ein
+Python braucht, das noch nicht einsatzbereit ist, fragt der Client, ob
+er die Umgebung selbst einrichten soll. Sagst du ja, legt er die
+virtuelle Umgebung unter `INTEGER_LLM/calibrate/.venv` an und
+installiert die Kalibrierpakete; du siehst den Fortschritt und am Ende
+die Meldung, dass es fertig ist. Das sind rund 2 GB und dauert einige
+Minuten. Unter Windows ohne Python fragt er zuerst, ob er Python über
+winget installieren soll.
+
+**Von Hand**, falls du das lieber selbst tust oder der automatische Weg
+scheitert:
 
 ```bash
 cd INTEGER_LLM/calibrate
@@ -383,9 +413,8 @@ python3 -m venv .venv
 
 Unter Windows heißt die letzte Zeile `.venv\Scripts\pip install -r requirements.txt`.
 
-Das sind rund 2 GB und dauert einige Minuten. Danach findet der Client
-die Umgebung von selbst. Fehlt sie, sagt er genau diese Zeilen an; er
-sucht auch ein System-Python, falls die Pakete dort schon liegen.
+Danach findet der Client die Umgebung von selbst. Er sucht auch ein
+System-Python, falls die Pakete dort schon liegen.
 
 ## A8. Platz wieder freigeben
 
@@ -851,8 +880,10 @@ falls doch, hat dieser Lauf Vorrang vor allen anderen.
 
 ## B10. Teilnehmer ohne Modell einbinden
 
-Wer die Artefakte nicht hat, liefert trotzdem Stufe 1 und Stufe 4. Der
-Protokoll-Durchlauf prüft in etwa einer Sekunde:
+Wer die Artefakte nicht hat, liefert trotzdem Stufe 1, Stufe 4 und die
+Operations-Vektoren der Stufe 5: Die Konformität der Grundbausteine
+braucht kein Modell, nur den Bau. Der Protokoll-Durchlauf prüft in etwa
+einer Sekunde:
 
 | Stufe | Was geprüft wird |
 |---|---|
@@ -926,7 +957,12 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 > - **Ein Probeblock kann nie an eine echte Kette anschließen.** Er
 >   hängt an einem Startwert, der ausdrücklich für Proben gewählt wurde
 >   und im Klartext `MYELITH-PROBELAUF-KEIN-TESTNETZ` lautet.
-> - **Es stimmt niemand ab.** Genau ein Knoten baut die Blöcke.
+> - **Abgestimmt wird nur, wenn jemand es einrichtet.** Aus dem Menü
+>   bauen die Knoten Blöcke ohne Abstimmungsrunden. Echte BFT-Runden
+>   mit Propose, Vote und Commit fährt `myl-node` mit einer
+>   Genesis-Datei, siehe [C1](#c1-was-der-netzlauf-misst-und-was-nicht).
+>   Ein Probenetz mit Abstimmung braucht deshalb ein paar Handgriffe
+>   mehr als einer ohne.
 >
 > Wann das Testnetz beginnt, entscheidet das Projekt, nicht dieser Code.
 >
@@ -986,7 +1022,7 @@ Die Zahl, die dabei herauskommt, heißt im Folgenden `DEINE-IP`.
 
 ```
 myl-node --name anlaufstelle --rolle relais --port 4150 \
-         --oeffentlich /ip4/DEINE-IP/tcp/4150 \
+         --oeffentlich /ip4/DEINE-IP/udp/4150/quic-v1 \
          --testverkehr 10 --aufnahme 30
 ```
 
@@ -1011,8 +1047,8 @@ hinterher, aber dann ist der Lauf gelaufen.
 
 ```
 myl-node --name maschine-b --port 4150 \
-         --bootstrap /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW… \
-         --relais /ip4/DEINE-IP/tcp/4150/p2p/12D3KooW… \
+         --bootstrap /ip4/DEINE-IP/udp/4150/quic-v1/p2p/12D3KooW… \
+         --relais /ip4/DEINE-IP/udp/4150/quic-v1/p2p/12D3KooW… \
          --testverkehr 10 --aufnahme 30
 ```
 
@@ -1094,13 +1130,31 @@ rechnen die Blöcke nach. Am Ende vergleicht die Auswertung die
 aus denselben Daten verschiedene Zustände errechnet, und das bricht den
 Konsens genauso wie ein abweichendes Inferenzergebnis.
 
-**Was er nicht prüft: die Einigung.** Es stimmt niemand ab. **Genau ein
-Knoten baut die Blöcke**, die übrigen übernehmen. Zwei Erzeuger würden
-die Kette sofort gabeln, weil niemand entscheidet, welcher Block gilt,
-und genau das täte eine Abstimmungsrunde (BFT). Die liegt fertig in
-`myl-consensus`, ihr fehlen ein eigenes Gossip-Topic, ein Validator-Satz
-mit Stake und Signaturschlüssel je Knoten. Ein neues Topic ist eine
-Protokollentscheidung und gehört nicht nebenbei getroffen.
+**Was der Lauf aus dem Menü nicht prüft: die Einigung.** Die Menü-Knoten
+stimmen nicht ab; **genau ein Knoten baut die Blöcke**, die übrigen
+übernehmen. Zwei Erzeuger würden die Kette sofort gabeln, und genau
+davor schützt eine Abstimmungsrunde, indem sie entscheidet, welcher
+Block gilt.
+
+**Die Einigung selbst gibt es seit dem 2026-08-26, über `myl-node`:**
+Propose, Vote und Commit laufen über ein eigenes Gossip-Topic, der
+Validator-Satz kommt aus einer hashgebundenen Genesis-Datei, und der
+Konsensschlüssel liegt getrennt von der Netzidentität. Belegt ist das an
+fünf eigenständigen Prozessen: alle commiten denselben Block mit vollem
+Stimmgewicht; fällt der Leader aus, geht es in der nächsten Runde
+weiter; nach einem Neustart kommt die Kette von der Platte zurück. Das
+ist Serverbetrieb mit Genesis-Datei und nicht der Menüpfad; die
+Befehlszeile dafür steht in
+[C0](#c0-schnellstart-drei-rechner-an-drei-orten-schritt-für-schritt)
+und bei den `myl-node`-Beispielen in C3.
+
+**Was daran noch fehlt, und es ist der wichtigste offene Punkt am
+Knoten:** das Nachholen der **Konsensrunde**. Blöcke holt ein
+zurückgefallener Knoten nach, seine Runde nicht: Er wartet in Runde n
+auf Stimmen, während das Netz schon in Runde n+2 ist und ihn nicht mehr
+sieht. Wer einen Lauf mit Abstimmung plant, startet die Knoten deshalb
+möglichst dicht beieinander — ein unglücklicher Startversatz lässt einen
+Knoten dauerhaft aussetzen.
 
 ## C2. Was du brauchst
 
@@ -1389,16 +1443,17 @@ das ein Ereignis, zweimal notiert. Steht dort eine Warnung, hat eine
 Maschine eine falsch gestellte Uhr, und alle zeitbezogenen Hinweise sind
 mit Vorsicht zu lesen. Abhilfe: Zeitabgleich (NTP) einschalten.
 
-**Viele `passt-nicht-an` und Höhe 0.** Dieser Knoten ist später
-dazugekommen als der erste Block. **Es gibt keinen
-Nachholmechanismus:** Jeder folgende Block zeigt auf einen Vorgänger,
-den er nie gesehen hat, also lehnt er alles ab. Die Auswertung benennt
-das von selbst.
+**Viele `passt-nicht-an` beim Start, danach ruhiger Betrieb.** Dieser
+Knoten ist später dazugekommen als der erste Block. Das wächst sich
+aus: Spätstarter holen fehlende Blöcke nach und rechnen sie nach,
+sobald sie Verbindungen haben; die Auswertung meldet den späten Start
+trotzdem, und der erste Teil des Protokolls trägt ihn zurecht.
 
-Abhilfe für den nächsten Lauf: Alle Knoten starten lassen, **bevor** der
-Erzeuger beginnt. Der Erzeuger wartet inzwischen von sich aus auf den
-ersten Peer, aber wer mitten im Lauf dazukommt, hängt weiterhin fest.
-Eine Blocksynchronisierung fehlt und gehört vor ein echtes Testnetz.
+Anders liegt der Fall, wenn ein Knoten **allein vorausläuft**: Er baut
+Blöcke, für die sich niemand interessiert, und holt später zwar die
+Blöcke des Netzes nach, seine **Konsensrunde** aber nicht — er wartet in
+einer alten Runde auf Stimmen, die nicht mehr kommen. Für Läufe mit
+Abstimmung deshalb alle Knoten möglichst dicht beieinander starten.
 
 **Das ist die wichtigste Unterscheidung bei jeder Fehlersuche:** „nichts
 kam an" und „es kam an und wurde weggeworfen" sehen von außen gleich
@@ -1436,7 +1491,9 @@ steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
 
 ## C10. Was dieser Lauf **nicht** abdeckt
 
-- **Keinen Konsens.** Siehe C1.
+- **Keinen Konsens im Menüpfad.** Die Menü-Knoten stimmen nicht ab; die
+  Abstimmungsrunden mit Genesis-Datei gehören zum `myl-node`-Betrieb,
+  siehe [C1](#c1-worum-es-hier-geht-und-worum-nicht).
 - **Kein Lochstanzen zwischen zwei Heimanschlüssen.** Zwei Knoten
   hinter NAT können heute über das Relais miteinander sprechen. Ob sie
   danach eine direkte Verbindung aufbauen können, ist ungeprüft: Das
@@ -1450,6 +1507,60 @@ steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
 ---
 
 ## Changelog
+
+### v2.16.0 – 2026-08-27 (Konformität ist die fünfte Stufe; das Protokoll nennt die Maschine)
+
+**Der Konformitätslauf gehört jetzt zum Testlauf.** Er prüft die Golden
+Vectors gegen diesen Bau: die sechs Operations-Vektoren immer, die
+Layer- und E2E-Vektoren nur, wenn das gewählte Artefakt zu ihnen passt —
+die Vektoren tragen ein Manifest, das sagt, mit welchem Modell sie
+erzeugt wurden. Ein abweichendes Artefakt ist kein Fehler; die Stufen
+werden übersprungen, ausdrücklich und mit Begründung im Protokoll.
+A5 nennt die fünfte Stufe, B10 sagt, dass auch Teilnehmer ohne Modell
+die Operations-Vektoren liefern.
+
+**Das Protokoll nennt die Maschine.** CPU-Modell, Speichergröße und ob
+der Rechner virtualisiert ist, stehen jetzt im Protokoll, bei GPU-Bauten
+zusätzlich der Kartenname. **Nicht im Fingerabdruck:** Zwei baugleiche
+Mietmaschinen müssen denselben Fingerabdruck tragen, sonst hielte der
+Vergleich zwei gleiche Architekturen für zwei verschiedene. Ein
+veröffentlichter Nachweis sagt damit auch, **welche** Maschine gemessen
+hat — nicht nur welche Klasse.
+
+**Der Vergleich behandelt verschiedene Konformitäts-Umfänge wie
+verschiedene Modellstände.** Ein Lauf mit nur Operations-Vektoren und
+einer mit allen dreiunddreißig haben nicht dasselbe gemessen; sie dürfen
+nicht gegeneinander geurteilt werden, und der Bericht sagt das.
+
+### v2.15.0 – 2026-08-27 (Voraussetzungen richten sich selbst ein; Teil C auf dem Stand des Knotens)
+
+**Eine frische Maschine braucht keine Handgriffe mehr für Rust und
+Python.** Fehlt Rust, fragt der Starter, ob er es installieren soll, und
+tut es nach Bestätigung selbst (Windows einschließlich der
+C++-Werkzeugkette, beides ohne Administratorrechte, wo es geht). Fehlt
+ein einsatzbereites Python, fragt der Client und richtet die Umgebung
+selbst ein; unter Windows ohne Python bietet er zuerst winget an. A2 und
+A7 sind danach neu geschrieben: Die Handgriffe von Hand stehen weiterhin
+da, sind aber nicht mehr der Normalfall. Nichts davon läuft still ab;
+jeder Schritt fragt vorher.
+
+**Teil C ist auf den Stand des Knotens vom 2026-08-26 gebracht.** Die
+Aussagen „es stimmt niemand ab" und „es gibt keinen Nachholmechanismus"
+stimmten so nicht mehr: Blöcke holen Spätstarter nach, und
+Abstimmungsrunden mit Propose, Vote und Commit laufen über `myl-node`
+mit Genesis-Datei — Rundenwechsel bei Leaderausfall und Kettenpersistenz
+über einen Neustart eingeschlossen. Was offen bleibt, ist das Nachholen
+der Konsensrunde für einen Knoten, der allein vorauseilt; C1 nennt es
+als den wichtigsten offenen Punkt am Knoten, und die Warnung davor steht
+jetzt auch bei der Fehlersuche in C8. Der Kasten oben in Teil C sagt
+entsprechend nicht mehr „es stimmt niemand ab", sondern wann abgestimmt
+wird und wann nicht.
+
+**Die C0-Befehle geben jetzt die quic-v1-Adresse weiter.** Die Beispiele
+standen auf TCP, während der Text daneben erklärte, warum quic-v1 die
+richtige Adresse ist. Wer den Beispielen folgte, bekam ein reines
+TCP-Netz; der Durchstich durch Heimrouter gelingt über QUIC
+zuverlässiger.
 
 ### v2.14.0 – 2026-08-25 (Teilnehmerliste, Attest-Prüfung)
 

@@ -32,6 +32,12 @@ BEFEHLE
                     Der erste Befehl vor jedem Vergleichslauf, ohne ihn
                     sähe ein abweichendes Artefakt wie eine gescheiterte
                     Hardware-Bitgleichheit aus.
+    konformitaet    Die Golden Vectors gegen diesen Bau prüfen: bitgleich?
+                    Die Operations-Vektoren laufen immer und brauchen kein
+                    Modell; die Layer- und E2E-Vektoren laufen nur gegen
+                    das Artefakt, mit dem sie erzeugt wurden. Schreibt wie
+                    jeder Lauf eine .jsonl, eine Zeile je Vektor plus
+                    Gesamtwert, den `vergleich` mitliest.
 
     modellstaende   Was sich beim Wechsel von θ_v A nach B geändert hat und
                     was nicht. Kein Determinismusurteil: Zwei Modellstände
@@ -104,6 +110,11 @@ ARTEFAKTE
     mehrere, fragt er; findet er keines, bietet er an, die Gewichte von
     Hugging Face zu holen und die Artefakte zu bauen. Der Bau nutzt das
     versionierte Skalenpaket und dauert Sekunden.
+
+    `konformitaet` lädt nichts: Ohne `--artifacts` läuft nur die
+    Operations-Stufe. Die Layer- und E2E-Vektoren laufen nur gegen das
+    ausdrücklich übergebene Artefakt, und auch nur dann, wenn es das
+    Modell ist, mit dem sie erzeugt wurden.
 
     Bei `--quiet` wird nicht gefragt und deshalb auch nichts geladen:
     ein mehrere Gigabyte großer Zugriff gehört nicht in einen Skriptlauf,
@@ -552,6 +563,14 @@ fn main() -> ExitCode {
         ),
         "artefakte" => run_artefakte(&mut log),
         "stack" => run_stack(&mut log),
+        // `konformitaet` lädt nichts selbst herunter: Ohne ausdrückliches
+        // `--artifacts` läuft nur die Operations-Stufe. Ein Download wäre
+        // ein stiller Zugriff, den dieser Lauf nicht braucht, um seine
+        // erste Aussage zu machen.
+        "konformitaet" => myl_testclient::konformitaet::laufen(
+            &mut log,
+            args.artifacts_explizit.then_some(args.artifacts.as_path()),
+        ),
         other => {
             log.error(format!("unbekannter Befehl: {}", other));
             log.finish(false);

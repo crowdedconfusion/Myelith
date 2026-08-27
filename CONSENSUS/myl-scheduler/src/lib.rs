@@ -33,7 +33,7 @@ pub use geo_clustering::{form_clusters, LatencyMatrix, MinerCluster};
 pub use miner_filter::{
     filter_miners, HardwareClass, MinerRegistration,
 };
-pub use redundancy::{assign_redundant_pods, SegmentAssignment};
+pub use redundancy::{assign_redundant_pods, SegmentAssignment, ZuweisungsHindernis};
 pub use sampling::{sample_segments, SamplingResult};
 pub use shard_assignment::{
     assign_pods, assign_shards, pod_groesse, Pod, Shard, Zuteilung, RESERVE_JE_POD,
