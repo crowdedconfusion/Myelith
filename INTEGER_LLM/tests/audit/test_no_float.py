@@ -200,6 +200,14 @@ CONSENSUS_PATH = [
     ROOT / "GOVERNANCE" / "myl-governance" / "src" / "registry.rs",
     ROOT / "GOVERNANCE" / "myl-governance" / "src" / "invarianten.rs",
     ROOT / "GOVERNANCE" / "myl-governance" / "src" / "vorschlag.rs",
+    # 2026-08-28 mit der Abstimmung. Quoren, Mehrheiten und
+    # Beteiligungen sind Anteile, und Anteile sind die Stelle, an der
+    # Gleitkomma am naechsten liegt. Hier sind es Promille, also
+    # Ganzzahlen, und die Datei steht in der Liste, damit das so
+    # bleibt: Ein Stimmgewicht, das je Knoten anders rundet, ist ein
+    # Konsensbruch.
+    ROOT / "GOVERNANCE" / "myl-governance" / "src" / "abstimmung.rs",
+    ROOT / "GOVERNANCE" / "myl-governance" / "src" / "modell.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "sicherheit.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "stake.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "slashing.rs",

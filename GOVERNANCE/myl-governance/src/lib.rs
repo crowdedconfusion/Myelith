@@ -45,6 +45,8 @@
 #![deny(unsafe_code)]
 
 pub mod invarianten;
+pub mod abstimmung;
+pub mod modell;
 pub mod registry;
 pub mod vorschlag;
 

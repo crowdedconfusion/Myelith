@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-26
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -8,7 +8,7 @@
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **129 Tests grün.**
+> **133 Tests grün.**
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -48,6 +48,42 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.5.0 – 2026-08-28 (⚑ Fund 74: `Hash` bekommt eine Ordnung)
+
+`Hash` leitete `Clone, Copy, Eq` ab und hatte einen
+Konstantzeit-Vergleich, aber **kein `Ord`**. Damit ließ sich eine
+`BTreeSet<Hash>` anlegen und niemals füllen: Ein leeres `BTreeSet`
+braucht keine Ordnung, ein `insert` schon.
+
+**Aufgefallen ist es in GOVERNANCE**, drei Wochen nachdem der Typ
+gebraucht wurde. Die Kernel-Whitelist aus Kap. 10.3 steht dort seit
+Punkt 1.1 als `Wert::Hashmenge(BTreeSet<Hash>)`, mit dem Vorgabewert
+„leere Menge, bis zum Genesis-Manifest". Der Parameter hatte Typ,
+Vorgabewert und Dokumentation und war nicht befüllbar. **Der Kommentar
+nannte sogar den Schritt, an dem es brechen würde**, und niemand hat
+nachgesehen, ob es dann geht.
+
+Die ID-Typen aus `ids.rs` leiten `Ord` seit jeher ab; dass ausgerechnet
+`Hash` es nicht tat, war kein Entwurf, sondern eine Lücke.
+
+**Warum die Ordnung nicht in Konstantzeit läuft, und warum das richtig
+ist:** `PartialEq` vergleicht bewusst in Konstantzeit. Eine Ordnung kann
+das nicht, denn sie bricht beim ersten unterschiedlichen Byte ab, und
+genau daraus besteht ein Größenvergleich. Dieselbe Abwägung, die in
+derselben Datei schon für `std::hash::Hash` getroffen ist: Sortieren
+und Nachschlagen sind keine Geheimnisoperationen. Wer wissen will, ob
+zwei Hashes gleich sind, nimmt `==`.
+
+**Was zusammenpassen muss:** `cmp` gibt genau dann `Equal` zurück, wenn
+`eq` wahr ist. Liefen die beiden auseinander, verhielte sich jede
+`BTreeMap` mit Hash-Schlüssel undefiniert und fände Einträge nicht, die
+sie enthält. Ein Test hält es fest, ein weiterer die Stabilität der
+Reihenfolge über Läufe: Eine Menge, deren Reihenfolge wechselt, ergibt
+verschiedene Wurzeln für denselben Inhalt.
+
+Vier neue Tests, eine Gegenprobe (eine Ordnung, die immer `Equal`
+meldet, macht alle drei rot).
 
 ### v0.4.0 – 2026-08-19 (Erasure-Codierung als Primitive)
 

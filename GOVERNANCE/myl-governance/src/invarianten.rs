@@ -165,6 +165,28 @@ pub enum Invariante {
     /// sichere Spur. Gegen Unterscheidung an Länge, Timing oder Inhalt
     /// hilft sie nicht; das bleibt die offene Messfrage aus Kap. 11.
     VorratTraegtEinschleusung,
+    /// **Eine Minderheit kann nie gewinnen, und eine leere Abstimmung
+    /// nie entscheiden** (Kap. 10.2, Design-Entscheidung 1).
+    ///
+    /// # ⚑ Der Parameter, der über sich selbst abstimmt
+    ///
+    /// [`Parameter::Abstimmungsmehrheit`] ist änderbar und entscheidet
+    /// über Änderungen. Ohne Untergrenze genügten **zwei**
+    /// Abstimmungen, um die Governance einer Minderheit zu übergeben:
+    /// erst die Schwelle auf null, dann alles Übrige. Die zweite
+    /// Abstimmung bräuchte keine Mehrheit mehr, weil die erste sie
+    /// abgeschafft hat.
+    ///
+    /// Das ist dieselbe Bauart wie der Verfassungsrang, nur eine Stufe
+    /// tiefer: Dort ist ein Parameter gar nicht änderbar, hier ist er
+    /// änderbar, aber nicht bis zur Wirkungslosigkeit. Eine Schwelle
+    /// von 500 Promille heißt „mehr als die Hälfte", und darunter geht
+    /// es nicht.
+    ///
+    /// Ebenso: Ein Quorum von null ließe eine Abstimmung ohne einen
+    /// einzigen Teilnehmer gelten, und ein Fenster von null Epochen
+    /// schlösse sie, bevor jemand stimmen kann.
+    AbstimmungBleibtBindend,
 }
 
 impl Invariante {
@@ -185,6 +207,7 @@ impl Invariante {
             Self::TrainingsrateNichtUnterInferenzrate => "Kap. 5.5",
             Self::PreisUntergrenzePositiv => "strukturell, Fund 46",
             Self::VorratTraegtEinschleusung => "Kap. 6.7, Fund 58",
+            Self::AbstimmungBleibtBindend => "Kap. 10.2, strukturell",
         }
     }
 }
@@ -227,6 +250,7 @@ pub fn pruefe_invarianten(reg: &ParameterRegistry) -> Result<(), InvariantenBruc
     praegedeckel(reg)?;
     trainingsrate(reg)?;
     kontrollsegmentvorrat(reg)?;
+    abstimmung_bleibt_bindend(reg)?;
     Ok(())
 }
 
@@ -537,6 +561,81 @@ fn kontrollsegmentvorrat(reg: &ParameterRegistry) -> Result<(), InvariantenBruch
                  Fehlalarm (Fund 58)",
                 vorrat, fenster, gz, gn, noetig
             ),
+        });
+    }
+    Ok(())
+}
+
+/// Die Abstimmung darf sich nicht selbst abschaffen.
+///
+/// Drei Untergrenzen, alle strukturell und keine davon Politik:
+///
+/// - **Mehrheit ≥ 500 Promille.** Darunter gewänne eine Minderheit.
+/// - **Quorum ≥ 1 Promille.** Bei null entschiede eine Abstimmung, an
+///   der niemand teilgenommen hat.
+/// - **Fenster ≥ 1 Epoche.** Bei null schlösse sie, bevor jemand
+///   stimmen kann.
+///
+/// **Was hier ausdrücklich nicht geprüft wird**, sind die Werte selbst.
+/// Ob das Quorum bei 100 oder bei 400 Promille liegt, ist eine
+/// Abwägung zwischen Handlungsfähigkeit und Legitimität, und die trifft
+/// niemand in einer Invariante. Geprüft wird allein, dass das Verfahren
+/// ein Verfahren bleibt.
+fn abstimmung_bleibt_bindend(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
+    let ganzzahl = |p: Parameter| reg.wert(p).als_ganzzahl().unwrap_or(0);
+
+    let mehrheit = ganzzahl(Parameter::Abstimmungsmehrheit);
+    if mehrheit < crate::abstimmung::MEHRHEIT_UNTERGRENZE {
+        return Err(InvariantenBruch {
+            invariante: Invariante::AbstimmungBleibtBindend,
+            parameter: Parameter::Abstimmungsmehrheit,
+            begruendung: format!(
+                "{mehrheit} Promille lägen unter der Hälfte: eine Minderheit könnte \
+                 beschließen, und der erste Beschluss wäre die Abschaffung des Restes \
+                 (Untergrenze {} Promille)",
+                crate::abstimmung::MEHRHEIT_UNTERGRENZE
+            ),
+        });
+    }
+    if mehrheit > 1_000 {
+        return Err(InvariantenBruch {
+            invariante: Invariante::AbstimmungBleibtBindend,
+            parameter: Parameter::Abstimmungsmehrheit,
+            begruendung: format!(
+                "{mehrheit} Promille sind mehr als alle Stimmen: kein Vorschlag \
+                 könnte je angenommen werden"
+            ),
+        });
+    }
+
+    let quorum = ganzzahl(Parameter::Abstimmungsquorum);
+    if quorum == 0 {
+        return Err(InvariantenBruch {
+            invariante: Invariante::AbstimmungBleibtBindend,
+            parameter: Parameter::Abstimmungsquorum,
+            begruendung: "ein Quorum von null ließe eine Abstimmung gelten, an der \
+                          niemand teilgenommen hat"
+                .to_string(),
+        });
+    }
+    if quorum > 1_000 {
+        return Err(InvariantenBruch {
+            invariante: Invariante::AbstimmungBleibtBindend,
+            parameter: Parameter::Abstimmungsquorum,
+            begruendung: format!(
+                "{quorum} Promille verlangen mehr Beteiligung, als es Stimmkraft gibt"
+            ),
+        });
+    }
+
+    let fenster = ganzzahl(Parameter::Abstimmungsfenster);
+    if fenster == 0 {
+        return Err(InvariantenBruch {
+            invariante: Invariante::AbstimmungBleibtBindend,
+            parameter: Parameter::Abstimmungsfenster,
+            begruendung: "ein Fenster von null Epochen schlösse die Abstimmung, \
+                          bevor jemand stimmen kann"
+                .to_string(),
         });
     }
     Ok(())

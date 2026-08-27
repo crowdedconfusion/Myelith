@@ -69,7 +69,7 @@ fn jeder_parameter_hat_einen_wert() {
     for p in Parameter::alle() {
         let _ = reg.wert(p); // paniert, falls er fehlt
     }
-    assert_eq!(Parameter::alle().len(), 29);
+    assert_eq!(Parameter::alle().len(), 32);
 }
 
 // ---------------------------------------------------------------------
@@ -632,4 +632,112 @@ fn eine_preisuntergrenze_von_null_wird_abgelehnt() {
         }
         andere => panic!("null muss scheitern, bekommen: {andere:?}"),
     }
+}
+
+// ---------------------------------------------------------------------
+// Akzeptanzkriterium Phase 2: die Abstimmung schafft sich nicht selbst ab
+// ---------------------------------------------------------------------
+
+/// **Der Parameter, der über sich selbst abstimmt.**
+///
+/// `Abstimmungsmehrheit` ist änderbar und entscheidet über Änderungen.
+/// Ohne Untergrenze genügten zwei Abstimmungen, um die Governance einer
+/// Minderheit zu übergeben: erst die Schwelle auf null, dann alles
+/// Übrige, und die zweite Abstimmung bräuchte keine Mehrheit mehr.
+#[test]
+fn die_mehrheitsschwelle_kann_nicht_unter_die_haelfte_gesenkt_werden() {
+    let reg = ParameterRegistry::vorgabe();
+    for schwelle in [0u64, 1, 100, 499] {
+        let ergebnis = pruefe_vorschlag(
+            &reg,
+            &ParameterVorschlag {
+                parameter: Parameter::Abstimmungsmehrheit,
+                neuer_wert: Wert::Ganzzahl(schwelle),
+            },
+        );
+        assert!(
+            matches!(ergebnis, Err(VorschlagFehler::Invariante(_))),
+            "eine Schwelle von {schwelle} Promille wurde zugelassen"
+        );
+    }
+    // Gegenprobe: Änderbar bleibt sie, nur nicht bis zur
+    // Wirkungslosigkeit. Ohne diese Hälfte hieße der Nachweis oben
+    // vielleicht nur, dass gar nichts durchgeht.
+    for schwelle in [500u64, 667, 1_000] {
+        assert!(
+            pruefe_vorschlag(
+                &reg,
+                &ParameterVorschlag {
+                    parameter: Parameter::Abstimmungsmehrheit,
+                    neuer_wert: Wert::Ganzzahl(schwelle),
+                },
+            )
+            .is_ok(),
+            "eine Schwelle von {schwelle} Promille wurde abgelehnt"
+        );
+    }
+}
+
+/// Eine Schwelle über allen Stimmen wäre eine verkleidete Sperre.
+#[test]
+fn eine_unerreichbare_mehrheitsschwelle_wird_zurueckgewiesen() {
+    let reg = ParameterRegistry::vorgabe();
+    let ergebnis = pruefe_vorschlag(
+        &reg,
+        &ParameterVorschlag {
+            parameter: Parameter::Abstimmungsmehrheit,
+            neuer_wert: Wert::Ganzzahl(1_001),
+        },
+    );
+    assert!(matches!(ergebnis, Err(VorschlagFehler::Invariante(_))));
+}
+
+/// Ein Quorum von null ließe eine Abstimmung gelten, an der niemand
+/// teilgenommen hat.
+#[test]
+fn ein_quorum_von_null_wird_zurueckgewiesen() {
+    let reg = ParameterRegistry::vorgabe();
+    assert!(matches!(
+        pruefe_vorschlag(
+            &reg,
+            &ParameterVorschlag {
+                parameter: Parameter::Abstimmungsquorum,
+                neuer_wert: Wert::Ganzzahl(0),
+            },
+        ),
+        Err(VorschlagFehler::Invariante(_))
+    ));
+    assert!(pruefe_vorschlag(
+        &reg,
+        &ParameterVorschlag {
+            parameter: Parameter::Abstimmungsquorum,
+            neuer_wert: Wert::Ganzzahl(1),
+        },
+    )
+    .is_ok());
+}
+
+/// Ein Fenster von null Epochen schlösse die Abstimmung, bevor jemand
+/// stimmen kann.
+#[test]
+fn ein_abstimmungsfenster_von_null_wird_zurueckgewiesen() {
+    let reg = ParameterRegistry::vorgabe();
+    assert!(matches!(
+        pruefe_vorschlag(
+            &reg,
+            &ParameterVorschlag {
+                parameter: Parameter::Abstimmungsfenster,
+                neuer_wert: Wert::Ganzzahl(0),
+            },
+        ),
+        Err(VorschlagFehler::Invariante(_))
+    ));
+    assert!(pruefe_vorschlag(
+        &reg,
+        &ParameterVorschlag {
+            parameter: Parameter::Abstimmungsfenster,
+            neuer_wert: Wert::Ganzzahl(1),
+        },
+    )
+    .is_ok());
 }

@@ -398,3 +398,49 @@ fn bloecke_je_epoche_stimmen_mit_epochenlaenge_und_blockzeit() {
     assert_eq!(myl_consensus::epoche_fuer_hoehe(gerechnet - 1), 0);
     assert_eq!(myl_consensus::epoche_fuer_hoehe(gerechnet), 1);
 }
+
+/// **Die Stimmgewichtsparameter, aus einer Quelle** (Phase 2).
+///
+/// Das Akzeptanzkriterium verlangt, dass GOVERNANCE und CONSENSUS für
+/// dieselben Eingaben dasselbe Gewicht liefern. Die Formel wird
+/// gerufen, nicht abgeschrieben; hier wird geprüft, dass auch ihre
+/// **Parameter** aus einer Quelle kommen.
+///
+/// Ohne diesen Test könnten die beiden Zahlen auseinanderlaufen, ohne
+/// dass ein einziger Aufruf falsch aussieht: Die Formel stimmte, die
+/// Eingaben nicht.
+#[test]
+fn die_stimmgewichtsparameter_der_registry_sind_die_von_consensus() {
+    let aus_der_registry =
+        myl_governance::abstimmung::stimmgewichts_parameter(&ParameterRegistry::vorgabe());
+    let aus_consensus = myl_consensus::voting_weight::StimmgewichtsParameter::default();
+    assert_eq!(aus_der_registry.arbeitsbezug, aus_consensus.arbeitsbezug);
+    assert_eq!(aus_der_registry.hoechstfaktor, aus_consensus.hoechstfaktor);
+    assert!(aus_der_registry.ist_brauchbar());
+}
+
+/// Die Entwurfswerte der Abstimmung halten ihre eigene Untergrenze ein.
+///
+/// Ein Vorgabewert, den die Invariante beim ersten Vorschlag
+/// zurückwiese, wäre ein Startzustand, aus dem heraus nichts geht.
+#[test]
+fn die_abstimmungsvorgaben_halten_ihre_eigene_untergrenze() {
+    use myl_governance::abstimmung::{
+        FENSTER_VORGABE, MEHRHEIT_UNTERGRENZE, MEHRHEIT_VORGABE, QUORUM_VORGABE,
+    };
+    // Als const-Block, dem Muster aus `myl-net/src/anfrage.rs` folgend:
+    // Wer einen Vorgabewert unter seine eigene Untergrenze setzt,
+    // bekommt einen Übersetzungsfehler statt eines roten Tests.
+    const {
+        assert!(
+            MEHRHEIT_VORGABE >= MEHRHEIT_UNTERGRENZE,
+            "die Vorgabe läge unter der Untergrenze, die sie selbst hält"
+        )
+    };
+    const { assert!(MEHRHEIT_VORGABE <= 1_000) };
+    const { assert!(QUORUM_VORGABE >= 1 && QUORUM_VORGABE <= 1_000) };
+    const { assert!(FENSTER_VORGABE >= 1) };
+    // Und der Startzustand selbst geht durch die Invariantenprüfung.
+    myl_governance::invarianten::pruefe_invarianten(&ParameterRegistry::vorgabe())
+        .expect("die Vorgabe verletzt ihre eigene Invariante");
+}

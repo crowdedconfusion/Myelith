@@ -1,15 +1,19 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.2.1
-> **Datum:** 2026-08-27
-> **Status:** **Phase 1 abgeschlossen** (Punkte 1.1–1.4): Parameter-Registry
-> mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
-> Invarianten-Kopplung, seit v0.2.0 auch die Kontrollsegment-Schranke aus
-> Fund 58. **38 Tests grün** (22 Akzeptanz, 16 Gleichstand).
+> **Version:** 0.3.0
+> **Datum:** 2026-08-28
+> **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
+> Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
+> Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
+> Invarianten-Kopplung, die Kontrollsegment-Schranke aus Fund 58, die
+> Abstimmungsmechanik und das Modellmanifest.
+> **74 Tests grün** (30 Modultests, 26 Akzeptanz, 18 Gleichstand).
 >
-> **Was fehlt, ist die Abstimmungsmechanik selbst** (Phasen 2 und 3).
-> Heute prüft die Registry, ob ein Vorschlag zulässig **wäre**; wer über
-> ihn abstimmt und wie ausgezählt wird, ist nicht gebaut.
+> **Was fehlt:** die Punkte 3.2 (Shadow-Phase) und 3.3 (koordinierter
+> Rollout). Beide brauchen laufende Pods, die zwei Modellversionen
+> gleichzeitig fahren; das ist Arbeit in COMPUTE_PIPELINE und
+> INTEGER_LLM und ohne Betrieb nicht messbar. Ein Häkchen dafür wäre
+> eine Behauptung.
 >
 > ⚑ **Fund 50 beim ersten Gleichstands-Test:** Die Streitfrist stand auf
 > 7 Epochen mit dem Kommentar „entspricht 7 Tagen". Unter den
@@ -130,6 +134,80 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.3.0 – 2026-08-28 (Phase 2 und die Hälfte von Phase 3)
+
+**Die Abstimmungsmechanik** (`src/abstimmung.rs`, Punkte 2.1 bis 2.3)
+und **das Modellmanifest** (`src/modell.rs`, Punkte 3.1 und 3.4).
+
+Kap. 10.2 legt das Stimmgewicht fest und schweigt zum Verfahren. Das
+war der Blocker für Punkt 2.2, und er ist keiner mehr: Quorum,
+Mehrheitsschwelle und Abstimmungsfenster stehen als
+Governance-Parameter. Die Mechanik ist gebaut, die Zahlen bleiben
+entscheidbar, und wer sie später festlegt, ändert keine Zeile Code.
+
+⚑ **Der Parameter, der über sich selbst abstimmt.**
+`Abstimmungsmehrheit` ist änderbar und entscheidet über Änderungen.
+Ohne Untergrenze genügten **zwei** Abstimmungen, um die Governance
+einer Minderheit zu übergeben: erst die Schwelle auf null, dann alles
+Übrige, und die zweite Abstimmung bräuchte keine Mehrheit mehr, weil
+die erste sie abgeschafft hat. Die Invariante `AbstimmungBleibtBindend`
+hält deshalb drei strukturelle Untergrenzen: Mehrheit mindestens 500
+Promille, Quorum mindestens 1 Promille, Fenster mindestens 1 Epoche.
+**Welche Werte richtig sind, prüft sie ausdrücklich nicht** — das ist
+Politik, und Politik gehört nicht in eine Invariante.
+
+Derselbe Gedanke wie der Verfassungsrang, eine Stufe tiefer: Dort ist
+ein Parameter gar nicht änderbar, hier ist er änderbar, aber nicht bis
+zur Wirkungslosigkeit.
+
+**Die Formel wird gerufen, nicht abgeschrieben.** `abstimmung::gewicht`
+ruft `myl_consensus::calculate_voting_weight_mit`; ein Gleichstandstest
+hält zusätzlich Arbeitsbezug und Höchstfaktor mit CONSENSUS zusammen.
+Ohne ihn könnten die Eingaben auseinanderlaufen, ohne dass ein einziger
+Aufruf falsch aussieht.
+
+**Drei Entwurfsentscheidungen, jede mit einem Test:** Das Gewicht steht
+bei der **Eröffnung** fest, nicht bei der Auszählung, sonst verschöbe
+die zerfallende Arbeitshistorie jedes Gewicht während des Fensters. Das
+Quorum misst gegen **alle** Berechtigten, nicht gegen die abgegebenen
+Stimmen. Enthaltungen zählen zum Quorum, **nicht** zur Mehrheit: Wer
+sich enthält, nimmt teil und stimmt nicht zu.
+
+⚑ **Der angenommene Vorschlag wird beim Anwenden ein zweites Mal
+geprüft.** Bei der Eröffnung galt die Registry von damals. Zwei
+Vorschläge, jeder für sich zulässig, können zusammen eine Invariante
+brechen; der Fall steht als Test da, mit den Kontrollsegment-Parametern
+aus Fund 58. Die zweite Prüfung entscheidet die Reihenfolge.
+
+**Das Modellmanifest ist ein Rezept, keine Beschreibung.** Kap. 10.1
+verlangt es wörtlich: „sodass jeder Teilnehmer die Ableitung
+nachvollziehen kann". Herkunft (Quelle, festgenagelte Revision, Lizenz,
+Gewichts-Digest), Ableitung (Werkzeug, Werkzeugversion,
+Kalibrierdaten-Digest, θ_v), und der Digest, den der Nachbau haben
+muss. Genesis und Update benutzen dieselbe Struktur; ein Update, das
+weniger nachweisen müsste, wäre der bequeme Weg an der Anforderung
+vorbei.
+
+⚑ **Woran ein Rezept still scheitert:** an einer fehlenden Revision.
+Ein Modellname ohne Commit heißt „was gerade dort liegt". Ein Manifest
+mit leerem Feld sieht vollständig aus und ist es nicht; der Fehler
+fällt erst auf, wenn jemand Jahre später nachbaut und einen anderen
+Digest bekommt.
+
+⚑ **Fund 74: Die Kernel-Whitelist war nicht befüllbar.**
+`Wert::Hashmenge(BTreeSet<Hash>)` steht seit Punkt 1.1 in der Registry,
+mit Vorgabewert „leere Menge, bis zum Genesis-Manifest". Genau bis
+dahin fiel nichts auf: Ein leeres `BTreeSet` braucht kein `Ord`, ein
+`insert` schon, und `myl_types::Hash` hatte keines. Der Parameter stand
+mit Typ, Vorgabewert und Dokumentation da und ließ sich nicht füllen.
+**Der Kommentar am Vorgabewert nannte den Schritt, an dem es brechen
+würde**, und niemand hat nachgesehen, ob es dann geht. Behoben in
+`myl-types` v0.5.0.
+
+**Gemessen:** 74 Tests grün (30 Modultests, 26 Akzeptanz, 18
+Gleichstand). Einundzwanzig Gegenproben: für jede Zusage die zugehörige
+Zeile gebrochen, jedes Mal rot beim Test mit der Eigenschaft im Namen.
 
 ### v0.2.1 – 2026-08-27 (die drei Zehn-Epochen-Fenster, Blöcke je Epoche)
 

@@ -104,6 +104,48 @@ impl PartialEq for Hash {
     }
 }
 
+/// Ordnung für `BTreeMap` und `BTreeSet`: lexikographisch über die
+/// Bytes.
+///
+/// # ⚑ Fund 74: Ohne sie war eine `BTreeSet<Hash>` nicht befüllbar
+///
+/// GOVERNANCE führt die Kernel-Whitelist (Kap. 10.3) als
+/// `Wert::Hashmenge(BTreeSet<Hash>)`. Der Vorgabewert ist die leere
+/// Menge, „bis zum Genesis-Manifest", und **genau bis dahin fiel es
+/// nicht auf**: Ein leeres `BTreeSet` braucht kein `Ord`, ein
+/// `insert` schon. Der Parameter stand mit Typ, Vorgabewert und
+/// Dokumentation da und ließ sich nicht füllen; aufgefallen ist es
+/// erst, als das Genesis-Manifest gebaut wurde und der erste Kernel
+/// hineinsollte.
+///
+/// Die ID-Typen in [`crate::ids`] leiten `Ord` seit jeher ab. Dass
+/// ausgerechnet `Hash` es nicht tat, war kein Entwurf, sondern eine
+/// Lücke.
+///
+/// # Warum das nicht in Konstantzeit läuft, und warum das richtig ist
+///
+/// [`PartialEq`] vergleicht bewusst in Konstantzeit. Eine **Ordnung**
+/// kann das nicht: Sie bricht beim ersten unterschiedlichen Byte ab,
+/// und genau daraus besteht ein Größenvergleich. Dieselbe Abwägung wie
+/// bei `std::hash::Hash` darunter, und dieselbe Begründung: Sortieren
+/// und Nachschlagen sind keine Geheimnisoperationen. Wer zwei Hashes
+/// vergleicht, um zu erfahren, ob sie gleich sind, nimmt `==`.
+///
+/// **Was zusammenpassen muss:** `cmp` gibt genau dann `Equal` zurück,
+/// wenn `eq` wahr ist. Beide vergleichen dieselben Bytes, nur mit
+/// verschiedenem Zeitverhalten; ein Test unten hält das fest.
+impl Ord for Hash {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl PartialOrd for Hash {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// `std::hash::Hash` für die Nutzung in HashMap/HashSet — unabhängig
 /// vom Konstantzeit-Vergleich (Lookups sind nicht sicherheitsrelevant).
 impl std::hash::Hash for Hash {
@@ -221,5 +263,62 @@ mod tests {
         let h = Hash::from_bytes(raw);
         assert_eq!(h.as_bytes(), &raw);
         assert_eq!(h.to_hex(), Hash::from_bytes(raw).to_hex());
+    }
+}
+
+#[cfg(test)]
+mod ordnung {
+    use super::*;
+
+    #[test]
+    fn die_ordnung_stimmt_mit_der_gleichheit_ueberein() {
+        // `cmp == Equal` genau dann, wenn `eq`. Liefen die beiden
+        // auseinander, verhielte sich jede `BTreeMap` mit Hash-Schlüssel
+        // undefiniert: Sie fände Einträge nicht, die sie enthält.
+        let a = Hash::sha256(b"a");
+        let b = Hash::sha256(b"b");
+        assert_eq!(a.cmp(&a), std::cmp::Ordering::Equal);
+        assert!(a == a);
+        assert_ne!(a.cmp(&b), std::cmp::Ordering::Equal);
+        assert!(a != b);
+    }
+
+    #[test]
+    fn die_ordnung_ist_lexikographisch_ueber_die_bytes() {
+        let klein = Hash([0u8; HASH_LEN]);
+        let mut mittel_roh = [0u8; HASH_LEN];
+        mittel_roh[0] = 1;
+        let mittel = Hash(mittel_roh);
+        let gross = Hash([255u8; HASH_LEN]);
+        assert!(klein < mittel);
+        assert!(mittel < gross);
+    }
+
+    #[test]
+    fn eine_hashmenge_laesst_sich_befuellen() {
+        // ⚑ Fund 74, als Test: Genau das ging vorher nicht, und der
+        // Fehler wäre erst beim Übersetzen der ersten Aufrufstelle
+        // aufgefallen.
+        let mut menge = std::collections::BTreeSet::new();
+        menge.insert(Hash::sha256(b"linear_w8a16"));
+        menge.insert(Hash::sha256(b"silu_lut"));
+        menge.insert(Hash::sha256(b"linear_w8a16"));
+        assert_eq!(menge.len(), 2, "die Menge entdoppelt nicht");
+        assert!(menge.contains(&Hash::sha256(b"silu_lut")));
+    }
+
+    #[test]
+    fn die_reihenfolge_ist_ueber_laeufe_stabil() {
+        // Der Grund, warum es eine `BTreeSet` und keine `HashSet` ist:
+        // Eine Menge, deren Reihenfolge sich zwischen Läufen ändert,
+        // ergibt verschiedene Wurzeln für denselben Inhalt.
+        let bauen = || {
+            let mut m = std::collections::BTreeSet::new();
+            for wort in [b"c".as_slice(), b"a", b"b"] {
+                m.insert(Hash::sha256(wort));
+            }
+            m.into_iter().collect::<Vec<_>>()
+        };
+        assert_eq!(bauen(), bauen());
     }
 }

@@ -262,6 +262,30 @@ pub enum Parameter {
     Arbeitsbezug,
     /// Höchstfaktor des Stimmgewichts auf den Stake.
     Hoechstfaktor,
+    /// Anteil der Gesamtstimmkraft, der sich beteiligen muss, damit
+    /// eine Abstimmung überhaupt zählt (Promille).
+    ///
+    /// Ohne Quorum entscheidet, wer gerade wach ist. Mit einem zu hohen
+    /// blockiert Abwesenheit jede Änderung; das ist die Abwägung, und
+    /// die Zahl gehört deshalb hierher und nicht in den Quelltext.
+    Abstimmungsquorum,
+    /// Anteil der abgegebenen Ja- und Nein-Stimmen, der für einen
+    /// Vorschlag stimmen muss (Promille).
+    ///
+    /// # ⚑ Dieser Parameter kann sich selbst ändern
+    ///
+    /// Er ist änderbar, und er entscheidet über Änderungen. Ohne
+    /// Untergrenze könnte eine knappe Mehrheit ihn auf null setzen und
+    /// danach alles beschließen, wofür sie sonst keine Mehrheit hätte,
+    /// **einschließlich der Rücknahme jeder anderen Grenze**. Zwei
+    /// Abstimmungen, und die Governance gehört einer Minderheit.
+    ///
+    /// [`crate::invarianten::Invariante::AbstimmungBleibtBindend`] hält
+    /// ihn deshalb bei mindestens 500 Promille. Änderbar bleibt er,
+    /// aber nicht unter die Hälfte: Eine Minderheit kann nie gewinnen.
+    Abstimmungsmehrheit,
+    /// Zahl der Epochen, die eine Abstimmung offen steht.
+    Abstimmungsfenster,
     /// Länge einer Epoche in Sekunden.
     ///
     /// **⚑ Fund 50: Dieser Parameter fehlte, und das war teuer.** Er
@@ -325,7 +349,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 29] {
+    pub fn alle() -> [Parameter; 32] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -343,6 +367,9 @@ impl Parameter {
             Redundanzfaktor,
             Shardzahl,
             Komiteegroesse,
+            Abstimmungsquorum,
+            Abstimmungsmehrheit,
+            Abstimmungsfenster,
             Blockzeit,
             GeglaetteterBurn,
             PreisUntergrenze,
@@ -395,6 +422,9 @@ impl Parameter {
             Redundanzfaktor => "Redundanzfaktor r",
             Shardzahl => "Shardzahl k",
             Komiteegroesse => "Komiteegröße",
+            Abstimmungsquorum => "Abstimmungsquorum",
+            Abstimmungsmehrheit => "Abstimmungsmehrheit",
+            Abstimmungsfenster => "Abstimmungsfenster",
             Blockzeit => "Blockzeit",
             Epochenlaenge => "Epochenlänge",
             GeglaetteterBurn => "geglätteter Burn B_e",
@@ -496,6 +526,19 @@ impl ParameterRegistry {
         werte.insert(Shardzahl, Wert::Ganzzahl(8));
         // Design-Entscheidung 2026-08-13: 21 Validatoren.
         werte.insert(Komiteegroesse, Wert::Ganzzahl(21));
+        // ⚑ Entwurfswerte, keine getroffene Entscheidung: Kap. 10.2
+        // legt das Stimmgewicht fest, aber nicht das Verfahren
+        // (Design-Entscheidung 1, offen). Die Invariante hält die
+        // strukturelle Grenze, diese drei Zahlen sind Politik.
+        werte.insert(Abstimmungsquorum, Wert::Ganzzahl(crate::abstimmung::QUORUM_VORGABE));
+        werte.insert(
+            Abstimmungsmehrheit,
+            Wert::Ganzzahl(crate::abstimmung::MEHRHEIT_VORGABE),
+        );
+        werte.insert(
+            Abstimmungsfenster,
+            Wert::Ganzzahl(crate::abstimmung::FENSTER_VORGABE),
+        );
         // Design-Entscheidung 2026-08-13: 2 s.
         werte.insert(Blockzeit, Wert::Ganzzahl(2_000));
         // Anhang B.1 und die Stimmgewichts-Kalibrierung: eine Stunde.
