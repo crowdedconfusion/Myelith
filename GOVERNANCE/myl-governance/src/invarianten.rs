@@ -144,6 +144,27 @@ pub enum Invariante {
     ///
     /// Null hieße kostenlose Inferenz für alle.
     PreisUntergrenzePositiv,
+    /// **Belegt, Kap. 6.7 und ⚑ Fund 58:** Der Kontrollsegment-Vorrat
+    /// trägt das Beobachtungsfenster bei Rate γ.
+    ///
+    /// Formal: `Vorrat ≥ ⌈Fenster · γ⌉`. Darunter wiederholt sich
+    /// mindestens eine Segment-Id innerhalb des Fensters, und echte
+    /// Arbeit wiederholt sich nie — das zweite Auftreten ist damit ein
+    /// **Beweis**, kein Verdacht.
+    ///
+    /// **Warum das eine Invariante ist und keine Empfehlung:** Ein
+    /// Vorrat unter der Schranke hebt die Kontrollsegmente nicht ab,
+    /// sondern **um**. Der Angreifer erkennt die Kontrollen sicher und
+    /// ohne Fehlalarm, rechnet genau die ehrlich und manipuliert den
+    /// Rest. Damit ist γ zu erhöhen, ohne den Vorrat mitzuziehen, ein
+    /// Vorschlag, der die Prüfung *schärfer* aussehen lässt und sie
+    /// *abschaltet* — genau die Art Zug, gegen die diese Schicht gebaut
+    /// ist.
+    ///
+    /// **Notwendig, nicht hinreichend.** Sie beseitigt diese eine,
+    /// sichere Spur. Gegen Unterscheidung an Länge, Timing oder Inhalt
+    /// hilft sie nicht; das bleibt die offene Messfrage aus Kap. 11.
+    VorratTraegtEinschleusung,
 }
 
 impl Invariante {
@@ -163,6 +184,7 @@ impl Invariante {
             Self::PraegedeckelNichtBindend => "Kap. 5.7, Anhang B.8.3",
             Self::TrainingsrateNichtUnterInferenzrate => "Kap. 5.5",
             Self::PreisUntergrenzePositiv => "strukturell, Fund 46",
+            Self::VorratTraegtEinschleusung => "Kap. 6.7, Fund 58",
         }
     }
 }
@@ -204,6 +226,7 @@ pub fn pruefe_invarianten(reg: &ParameterRegistry) -> Result<(), InvariantenBruc
     trainingsverguetung(reg)?;
     praegedeckel(reg)?;
     trainingsrate(reg)?;
+    kontrollsegmentvorrat(reg)?;
     Ok(())
 }
 
@@ -469,6 +492,50 @@ fn trainingsrate(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
                 "Trainingsrate {}/{} liegt unter der Inferenzrate {}/{}; der größere \
                  Schaden wäre damit schlechter geschützt als der kleinere (Kap. 5.5)",
                 tz, tn, pz, pn
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// `Vorrat ≥ ⌈Fenster · γ⌉` (Kap. 6.7, ⚑ Fund 58).
+///
+/// **Die Formel steht in `myl-verifier` und wird hier benutzt**, nicht
+/// wiederholt — dieselbe Arbeitsteilung wie bei `S_min` und der
+/// Self-Dealing-Grenze. Dieses Modul entscheidet, *dass* die Bedingung
+/// gilt; wie sie lautet, steht dort, wo der Mechanismus steht, und wo
+/// die Messung sie erzeugt hat.
+///
+/// **Geprüft wird nach den strukturellen Bedingungen**, also nachdem
+/// `γ ≤ 1` feststeht. Die Rechnung sättigt trotzdem, statt sich darauf
+/// zu verlassen: Eine Schranke, die bei einer Eingabe außerhalb ihres
+/// Bereichs eine *kleine* Zahl liefert, ist genau dort wirkungslos, wo
+/// sie greifen müsste.
+fn kontrollsegmentvorrat(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
+    let (gz, gn) = reg
+        .wert(Parameter::Kontrollsegmentanteil)
+        .als_bruch()
+        .expect("gamma ist ein Bruch");
+    let fenster = reg
+        .wert(Parameter::Kontrollsegmentfenster)
+        .als_ganzzahl()
+        .expect("Fenster ist eine Ganzzahl");
+    let vorrat = reg
+        .wert(Parameter::Kontrollsegmentvorrat)
+        .als_ganzzahl()
+        .expect("Vorrat ist eine Ganzzahl");
+
+    let noetig = myl_verifier::noetiger_vorrat(fenster, gz, gn);
+    if vorrat < noetig {
+        return Err(InvariantenBruch {
+            invariante: Invariante::VorratTraegtEinschleusung,
+            parameter: Parameter::Kontrollsegmentvorrat,
+            begruendung: format!(
+                "Vorrat {} trägt {} Aufträge bei gamma = {}/{} nicht; nötig sind {}. \
+                 Darunter wiederholen sich Segment-Ids, und echte Arbeit wiederholt sich \
+                 nie: Ein Miner mit Gedächtnis erkennt die Kontrollen dann sicher und ohne \
+                 Fehlalarm (Fund 58)",
+                vorrat, fenster, gz, gn, noetig
             ),
         });
     }

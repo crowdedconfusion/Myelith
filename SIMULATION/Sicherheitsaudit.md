@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-24
+**Stand:** 2026-08-27
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -30,7 +30,7 @@ dass sie hier steht.
 | A8 | Parametervorschlag, der Invarianten bricht | ✅ | Registry prüft **vor** der Abstimmung |
 | A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
 | A10 | **Latenzwerte fälschen** | ⚠️ | Signatur wird **geprüft** (2026-08-25); Schlüsselherkunft im Probelauf ableitbar |
-| A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** gemessen und behebbar; Prompt-Profil bleibt offen |
+| A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** gemessen und am 2026-08-27 geschlossen (Vorrat als Parameter mit Schranke); Prompt-Profil bleibt offen |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
 
@@ -223,27 +223,39 @@ den Rest. Der Mechanismus, der als einziger gegen den **einmaligen**
 Eingriff wirkt, wäre damit wirkungslos, und mit ihm A1 für den Fall,
 dass der Angreifer beide Pods hält.
 
-**Was den Fund schärft: γ ist ein Governance-Parameter, die
-Vorratsgröße ist keiner.** Die einzigen je geschriebenen Werte stehen in
+**Was den Fund schärfte: γ war ein Governance-Parameter, die
+Vorratsgröße keiner.** Die einzigen je geschriebenen Werte standen in
 Tests: 10 und 100. Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000
 Aufträge. **Die Zahl, an der die Wirksamkeit hängt, war nirgends
 festgelegt.**
 
-**Behoben, soweit es Code kann:** `KontrollsegmentVorrat::reicht_fuer`
-und `::reichweite` machen die Bedingung am Aufrufort prüfbar. Der
-Zusammenhang, der dabei zu kennen ist: **Wer γ erhöht, muss den Vorrat
-mitwachsen lassen**, sonst macht eine schärfere Kontrolle den
-Mechanismus schwächer statt stärker.
+**Geschlossen am 2026-08-27.** Vorratsgröße und Beobachtungsfenster sind
+Governance-Parameter, und eine Invariante bindet beide an γ:
+`Vorrat ≥ ⌈Fenster · γ⌉`, geprüft am **Vorschlag** statt nach der
+Abstimmung. Der Wert ist abstimmbar, das Unterschreiten der Schranke
+nicht — dieselbe Bauart wie beim Mindest-Stake.
 
-**⚠️ Warum nicht ✅:** Geschlossen ist genau **eine** Spur, die der
-Mechanik. Länge, Timing und Kontextprofil der Prompts bleiben
+⚑ **Der Zug, gegen den die Invariante gebaut ist, sieht wie eine
+Verschärfung aus:** γ von 2 auf 4 Prozent heben, ohne den Vorrat
+mitzuziehen. Das verdoppelt die Einschleusungen bei gleichem Vorrat und
+halbiert die Reichweite. Vorher wäre er zulässig gewesen. **Das ist die
+übertragbare Lehre:** Ein Parameter, der eine Schutzwirkung verstärkt,
+kann eine andere aufzehren, und wer nur den geänderten ansieht, sieht es
+nicht.
+
+**Das Beobachtungsfenster musste ein eigener Parameter werden.** „Der
+Vorrat muss größer sein als die Zahl der Einschleusungen" ist für einen
+unbegrenzten Auftragsstrom von **keinem** endlichen Vorrat erfüllbar;
+erst ein Fenster macht die Bedingung entscheidbar, und wer es senkt,
+senkt die Schranke.
+
+**⚠️ Warum weiterhin nicht ✅:** Geschlossen ist genau **eine** Spur, die
+der Mechanik. Länge, Timing und Kontextprofil der Prompts bleiben
 ungemessen; dafür braucht es echte Prompt-Verteilungen, und die
 entstehen erst im Betrieb. Das bleibt die offene Messfrage aus Kap. 11
-Punkt 5.
-
-**Offen als Protokollentscheidung:** die Vorratsgröße als
-Governance-Parameter neben γ, mit einer Invariante, die beide
-aneinander bindet.
+Punkt 5. **Und der Anfangswert ist vorläufig:** 2 048 ist der gemessene
+Wert, 100 000 die Stromlänge der Messung; die Auftragsrate des Netzes
+ist ungemessen.
 
 ---
 
@@ -319,9 +331,11 @@ Nach Schadenshebel, nicht nach Aufwand:
    die alles vorbereitet schien, brauchte erst ihre Primitive.
    **Offen bleibt die Schlüsselherkunft**, und die hängt an derselben
    Validator-Registrierung wie die BFT-Runden.
-3. ~~**A11 statistische Analyse**~~ — teilweise erledigt am 2026-08-25.
-   Die Spur der **Mechanik** ist gemessen und behebbar (Fund 58); die
-   Spur der **Daten** (Länge, Timing, Kontextprofil) braucht echte
+3. ~~**A11 statistische Analyse**~~ — teilweise erledigt am 2026-08-25,
+   die Behebung am 2026-08-27. Die Spur der **Mechanik** ist gemessen
+   und geschlossen (Fund 58: Vorratsgröße und Beobachtungsfenster als
+   Governance-Parameter mit einer Invariante, die beide an γ bindet);
+   die Spur der **Daten** (Länge, Timing, Kontextprofil) braucht echte
    Prompt-Verteilungen aus dem Betrieb.
 
    Nachtrag zur damaligen Einordnung „offene Messfrage": Das stimmte

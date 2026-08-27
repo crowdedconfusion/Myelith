@@ -154,6 +154,47 @@ pub enum Parameter {
     PreisSensitivitaet,
     /// Anteil `γ` eingeschleuster Kontrollsegmente (Kap. 6.7).
     Kontrollsegmentanteil,
+    /// Größe des Vorrats an Kontrollsegmenten (⚑ Fund 58).
+    ///
+    /// **Eine Sicherheitsschranke, keine Puffergröße.** Der Vorrat ist
+    /// endlich, der Auftragsstrom nicht; wird öfter eingeschleust, als
+    /// der Vorrat verschiedene Segmente hält, wiederholen sich
+    /// Segment-Ids. Echte Arbeit wiederholt sich nie, also ist jedes
+    /// zweite Auftreten kein Verdacht, sondern ein **Beweis**, und ein
+    /// Miner braucht dafür nur ein Gedächtnis. Gemessen am 2026-08-25:
+    /// Bei γ = 2 % über 100 000 Aufträge erkennt er bei einem Vorrat von
+    /// 64 rund **96,8 %** der Kontrollen, **ohne einen einzigen
+    /// Fehlalarm** — er rechnet genau die ehrlich und manipuliert den
+    /// Rest.
+    ///
+    /// **Warum das hier steht und nicht als Konstante im Quelltext:**
+    /// Die Schranke ist γ × Auftragsrate × Beobachtungsfenster, und alle
+    /// drei Größen bewegen sich im Betrieb. Eine Zahl, die sich mit dem
+    /// Netz ändern muss, aber nur mit einer neuen Version änderbar ist,
+    /// wird irgendwann falsch und bleibt es.
+    ///
+    /// Der Wert ist **änderbar**, das Unterschreiten der Schranke nicht:
+    /// [`crate::Invariante::VorratTraegtEinschleusung`] weist jeden
+    /// Vorschlag darunter zurück, bevor abgestimmt wird. Dieselbe
+    /// Bauart wie `S_min`.
+    Kontrollsegmentvorrat,
+    /// Beobachtungsfenster des Wiederholungsunterscheiders, in Aufträgen
+    /// (⚑ Fund 58).
+    ///
+    /// Über wie viele Aufträge hinweg dem Angreifer unterstellt wird,
+    /// dass er Segment-Ids vergleichen kann. **Eine Annahme über den
+    /// Angreifer, keine Messung:** Ein Gedächtnis kostet ihn nur
+    /// Speicher, 100 000 Ids sind 3,2 MB. Die Zahl sagt deshalb nicht,
+    /// was er kann, sondern wogegen das Protokoll sich zu schützen
+    /// verpflichtet.
+    ///
+    /// **Ohne sie ist die Schranke nicht hinschreibbar.** „Der Vorrat
+    /// muss größer sein als die Zahl der Einschleusungen" ist für einen
+    /// unbegrenzten Auftragsstrom von keinem endlichen Vorrat
+    /// erfüllbar; erst ein Fenster macht die Bedingung entscheidbar.
+    /// Wer es senkt, senkt die Schranke — deshalb ist es ein Parameter
+    /// mit Fundstelle und kein Rechenhilfsmittel.
+    Kontrollsegmentfenster,
     /// Obergrenze der Trainingsvergütung als Anteil der Inferenzvergütung
     /// (Kap. 5.6, Entwurf: 70 %).
     TrainingsverguetungsAnteil,
@@ -273,7 +314,18 @@ pub enum Parameter {
 
 impl Parameter {
     /// Alle Parameter, in fester Reihenfolge.
-    pub fn alle() -> [Parameter; 27] {
+    ///
+    /// **Ein neuer Parameter darf mitten hinein.** `Parameter` leitet
+    /// `Ord` aus der Deklarationsreihenfolge ab, und die
+    /// [`ParameterRegistry`] hält ihre Werte in einer `BTreeMap`; eine
+    /// eingeschobene Variante verschiebt damit die Sortierung. Das ist
+    /// hier folgenlos, und der Grund gehört aufgeschrieben, damit ihn
+    /// niemand neu prüfen muss: Der Typ wird **nirgends serialisiert**
+    /// (keine Borsh-, keine Serde-Ableitung), es gibt **keinen
+    /// kanonischen Hash** über die Registry, und jede Prüfung läuft
+    /// über diese Liste statt über die Kartenreihenfolge. Käme eines
+    /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
+    pub fn alle() -> [Parameter; 29] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -283,6 +335,8 @@ impl Parameter {
             Streitfrist,
             PreisSensitivitaet,
             Kontrollsegmentanteil,
+            Kontrollsegmentvorrat,
+            Kontrollsegmentfenster,
             TrainingsverguetungsAnteil,
             PraegeObergrenze,
             EmaGlaettung,
@@ -333,6 +387,8 @@ impl Parameter {
             Streitfrist => "Streitfrist",
             PreisSensitivitaet => "Preis-Sensitivität kappa",
             Kontrollsegmentanteil => "Kontrollsegmentanteil gamma",
+            Kontrollsegmentvorrat => "Kontrollsegment-Vorrat",
+            Kontrollsegmentfenster => "Kontrollsegment-Beobachtungsfenster",
             TrainingsverguetungsAnteil => "Trainingsvergütungs-Anteil",
             PraegeObergrenze => "Präge-Obergrenze M_max",
             EmaGlaettung => "EMA-Glättung alpha",
@@ -417,6 +473,17 @@ impl ParameterRegistry {
         werte.insert(PreisSensitivitaet, Wert::Bruch { zaehler: 1, nenner: 10 });
         // Kap. 6.7: 1 bis 3 % des Volumens; Entwurf 2 %.
         werte.insert(Kontrollsegmentanteil, Wert::Bruch { zaehler: 2, nenner: 100 });
+        // Fund 58: der gemessene Vorrat ohne erkannte Kontrolle und das
+        // Fenster, über das gemessen wurde. Beide stehen in
+        // `myl-verifier`, damit sie nicht zweimal dastehen.
+        werte.insert(
+            Kontrollsegmentvorrat,
+            Wert::Ganzzahl(myl_verifier::VORRAT_VORGABE),
+        );
+        werte.insert(
+            Kontrollsegmentfenster,
+            Wert::Ganzzahl(myl_verifier::BEOBACHTUNGSFENSTER_VORGABE),
+        );
         // Kap. 5.6: höchstens 70 % (myl-tokenomics: TRAINING_CAP_BPS).
         werte.insert(TrainingsverguetungsAnteil, Wert::Bruch { zaehler: 7_000, nenner: 10_000 });
         // Anhang B.8.3: ohne bindenden Deckel im Entwurf.

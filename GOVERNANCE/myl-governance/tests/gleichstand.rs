@@ -217,3 +217,73 @@ fn die_trainingsrate_liegt_ueber_der_inferenzrate() {
     assert!((tz as u128) * (pn as u128) > (pz as u128) * (tn as u128));
     assert_eq!((tz, tn), (10, 100), "Entwurf: 10 %");
 }
+
+/// **Der Kontrollsegment-Vorrat und sein Fenster, gegen `myl-verifier`**
+/// (⚑ Fund 58).
+///
+/// Beide Zahlen stammen aus der Messung vom 2026-08-25 und stehen dort,
+/// wo der Mechanismus steht. Liefe die Registry davon, stünde in der
+/// Governance eine Schranke, die mit der gemessenen nichts mehr zu tun
+/// hat — und niemand könnte sagen, welche der beiden gilt.
+#[test]
+fn kontrollsegmentvorrat_und_fenster_stimmen_mit_verification() {
+    let reg = ParameterRegistry::vorgabe();
+    assert_eq!(
+        zahl(&reg, Parameter::Kontrollsegmentvorrat),
+        myl_verifier::VORRAT_VORGABE
+    );
+    assert_eq!(
+        zahl(&reg, Parameter::Kontrollsegmentfenster),
+        myl_verifier::BEOBACHTUNGSFENSTER_VORGABE
+    );
+}
+
+/// **Die Vorratsprüfung der Registry ist genau die Formel aus
+/// VERIFICATION**, nicht eine zweite Fassung davon.
+///
+/// Geprüft über 400 Vorratsgrößen rund um die Schranke: Die Registry
+/// muss **genau dann** ablehnen, wenn `noetiger_vorrat` mehr verlangt,
+/// als der Vorschlag bietet. Liefe eine der beiden Seiten davon, fiele
+/// es hier auf — dasselbe Muster wie bei der Self-Dealing-Grenze.
+#[test]
+fn die_registry_prueft_genau_die_formel_aus_verification() {
+    use myl_governance::registry::Wert;
+    use myl_governance::{pruefe_vorschlag, ParameterVorschlag, VorschlagFehler};
+
+    let basis = ParameterRegistry::vorgabe();
+    let fenster = zahl(&basis, Parameter::Kontrollsegmentfenster);
+    let (gz, gn) = bruch(&basis, Parameter::Kontrollsegmentanteil);
+    let noetig = myl_verifier::noetiger_vorrat(fenster, gz, gn);
+
+    let mut abgelehnt = 0usize;
+    let mut angenommen = 0usize;
+    for delta in 0..400u64 {
+        for vorrat in [noetig.saturating_sub(delta), noetig + delta] {
+            let ergebnis = pruefe_vorschlag(
+                &basis,
+                &ParameterVorschlag {
+                    parameter: Parameter::Kontrollsegmentvorrat,
+                    neuer_wert: Wert::Ganzzahl(vorrat),
+                },
+            );
+            if vorrat >= noetig {
+                assert!(
+                    ergebnis.is_ok(),
+                    "Vorrat {vorrat} deckt die nötigen {noetig}, wurde aber abgelehnt: {ergebnis:?}"
+                );
+                angenommen += 1;
+            } else {
+                assert!(
+                    matches!(ergebnis, Err(VorschlagFehler::Invariante(_))),
+                    "Vorrat {vorrat} liegt unter den nötigen {noetig}, wurde aber angenommen"
+                );
+                abgelehnt += 1;
+            }
+        }
+    }
+    // **Beide Seiten müssen vorkommen.** Ein Test, in dem nichts
+    // abgelehnt oder nichts angenommen wird, prüft die Grenze nicht,
+    // sondern nur eine Richtung.
+    assert!(abgelehnt > 100, "nur {abgelehnt} Ablehnungen");
+    assert!(angenommen > 100, "nur {angenommen} Annahmen");
+}

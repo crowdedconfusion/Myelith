@@ -38,6 +38,7 @@ pub use checker::{
 };
 pub use kontrollsegmente::{
     einschleusungsplan, Kontrollergebnis, Kontrollsegment, KontrollsegmentVorrat, VorratFehler,
+    BEOBACHTUNGSFENSTER_VORGABE, VORRAT_VORGABE,
 };
 pub use challenge::{
     create_challenge, find_first_divergence, challenge_hash, Challenge, ChallengeError,

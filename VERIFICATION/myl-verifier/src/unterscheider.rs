@@ -212,20 +212,34 @@ fn echt_id(seed: &[u8; 32], i: usize) -> SegmentId {
 /// **Eine notwendige, keine hinreichende Bedingung.** Auch ein großer
 /// Vorrat schützt nicht gegen Unterscheidung an Länge, Timing oder
 /// Inhalt; er beseitigt nur diese eine, sichere Spur.
-pub fn noetiger_vorrat(auftraege: usize, gamma_zaehler: u64, gamma_nenner: u64) -> usize {
+/// **In `u64` und nicht in `usize`.** Der Wert wandert in die
+/// Parameter-Registry der Governance, und die rechnet durchgehend in
+/// `u64`; eine Umrechnung an der Grenze wäre genau die Stelle, an der
+/// auf einer 32-Bit-Maschine eine Sicherheitsschranke stillschweigend
+/// abgeschnitten würde.
+pub fn noetiger_vorrat(auftraege: u64, gamma_zaehler: u64, gamma_nenner: u64) -> u64 {
     if gamma_nenner == 0 {
         return 0;
     }
-    ((auftraege as u128 * gamma_zaehler as u128).div_ceil(gamma_nenner as u128)) as usize
+    let n = (auftraege as u128 * gamma_zaehler as u128).div_ceil(gamma_nenner as u128);
+    // Gesättigt statt abgeschnitten: Ein Fenster nahe `u64::MAX` mit
+    // γ > 1 ergäbe sonst eine **kleine** Zahl, und die Schranke wäre
+    // gerade dort wirkungslos, wo sie am nötigsten ist. γ > 1 lehnt die
+    // Governance ohnehin ab; darauf verlassen sich soll sich diese
+    // Funktion nicht.
+    n.min(u64::MAX as u128) as u64
 }
 
 /// Wie viele Aufträge ein Vorrat trägt, bevor sich die erste Id
 /// wiederholt.
-pub fn reichweite(vorrat: usize, gamma_zaehler: u64, gamma_nenner: u64) -> usize {
+///
+/// Die Umkehrung von [`noetiger_vorrat`]; in `u64` aus demselben Grund.
+pub fn reichweite(vorrat: u64, gamma_zaehler: u64, gamma_nenner: u64) -> u64 {
     if gamma_zaehler == 0 {
-        return usize::MAX;
+        return u64::MAX;
     }
-    ((vorrat as u128 * gamma_nenner as u128) / gamma_zaehler as u128) as usize
+    let n = (vorrat as u128 * gamma_nenner as u128) / gamma_zaehler as u128;
+    n.min(u64::MAX as u128) as u64
 }
 
 /// Zählt, wie oft jede Id im Strom vorkommt. Für Diagnose.
@@ -278,7 +292,7 @@ mod tests {
     fn ein_grosser_vorrat_hinterlaesst_keine_wiederholung() {
         // Vorrat >= Zahl der Einschleusungen: keine Id kommt zweimal.
         let auftraege = 20_000;
-        let noetig = noetiger_vorrat(auftraege, 2, 100);
+        let noetig = noetiger_vorrat(auftraege as u64, 2, 100) as usize;
         let e = messe_wiederholung(noetig, auftraege, 2, 100, &SEED);
         assert_eq!(
             e.erkannt, 0,
@@ -313,6 +327,21 @@ mod tests {
         assert_eq!(noetiger_vorrat(10_000, 5, 100), 500);
         assert_eq!(noetiger_vorrat(100_000, 1, 100), 1_000);
         assert_eq!(noetiger_vorrat(0, 1, 100), 0);
+    }
+
+    /// **Kein stiller Überlauf an den Rändern.**
+    ///
+    /// Die Governance prüft γ ≤ 1, bevor sie diese Schranke auswertet.
+    /// Verließe sich die Rechnung darauf, ergäbe ein Fenster nahe
+    /// `u64::MAX` mit γ > 1 nach dem Abschneiden eine **kleine** Zahl —
+    /// die Schranke wäre gerade dort wirkungslos, wo sie greifen müsste.
+    #[test]
+    fn die_schranke_saettigt_statt_abzuschneiden() {
+        assert_eq!(noetiger_vorrat(u64::MAX, 1, 1), u64::MAX);
+        assert_eq!(noetiger_vorrat(u64::MAX, 2, 1), u64::MAX);
+        assert_eq!(reichweite(u64::MAX, 1, 2), u64::MAX);
+        // Und ohne Einschleusung trägt jeder Vorrat alles.
+        assert_eq!(reichweite(1, 0, 100), u64::MAX);
     }
 
     #[test]

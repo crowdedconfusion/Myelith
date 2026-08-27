@@ -1,14 +1,15 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.7.1
-> **Datum:** 2026-08-26
+> **Version:** 0.8.0
+> **Datum:** 2026-08-27
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
-> 2.1–2.5, 3.1–3.4), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
-> 4.3 offen): Redundanzvergleich (Stufe 1), Bisektions-Spiel (Stufe 2)
-> mit Checker-Modul, Challenge-Erzeugung, Bisektionsprotokoll,
-> On-Chain-Schiedsrunde, Slash-Logik, Kontrollsegmente und die
+> 2.1–2.5, 3.1–3.5), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
+> 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
+> Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
+> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik,
+> Kontrollsegmente samt der Vorratsschranke aus Fund 58 und die
 > Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
-> **109 Tests grün** (79 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
+> **113 Tests grün** (83 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
 >
 > ⚑ **Punkt 3.2 trägt ein ⚠ und keinen Haken.** Die Einschleusung ist
 > gebaut, die **Ununterscheidbarkeit** aber ist eine Eigenschaft der
@@ -133,6 +134,35 @@ umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
 
+### v0.8.0 – 2026-08-27 (Punkt 3.5: die Vorratsgröße wird ein Parameter)
+
+Der offene Punkt aus Fund 58 ist geschlossen, gemeinsam mit
+`myl-governance` v0.2.0: Vorratsgröße und Beobachtungsfenster stehen dort
+als Parameter, eine Invariante bindet beide an γ. Einzelheiten oben bei
+Fund 58.
+
+⚑ **Dabei fiel eine zweite Fassung derselben Formel auf.**
+`KontrollsegmentVorrat::reicht_fuer` rechnete die Schranke
+ausgeschrieben nach, statt `noetiger_vorrat` zu rufen: zwei Fassungen
+einer Sicherheitsschranke im selben Crate, von denen eine hätte
+davonlaufen können, ohne dass ein Test es bemerkt. Genau das Muster, das
+`gleichstand.rs` in GOVERNANCE zwischen Crates verhindert — hier lag es
+innerhalb eines. Zusammengeführt, mit einer Gegenprobe über den ganzen
+Bereich: Genau der nötige Vorrat reicht, einer weniger nicht.
+
+**`noetiger_vorrat` und `reichweite` rechnen jetzt in `u64`** statt in
+`usize`. Der Wert wandert in die Parameter-Registry, und die rechnet in
+`u64`; eine Umrechnung an der Grenze wäre die Stelle, an der auf einer
+32-Bit-Maschine eine Sicherheitsschranke stillschweigend abgeschnitten
+würde. Beide Funktionen sättigen jetzt, statt abzuschneiden — eine
+Schranke, die bei einer Eingabe außerhalb ihres Bereichs eine *kleine*
+Zahl liefert, wäre gerade dort wirkungslos, wo sie greifen müsste.
+
+**Neu: `KontrollsegmentVorrat::fuer_fenster`.** Der bisherige Weg nahm
+jede Zahl an, und die einzigen je geschriebenen waren 10 und 100. Wer
+hier hereinkommt, muss sich über das Fenster äußern und bekommt die
+Größe ausgerechnet.
+
 ### v0.7.0 – 2026-08-25 (A11: Ununterscheidbarkeit gemessen)
 
 `src/unterscheider.rs` baut den Angriff auf Kontrollsegmente, statt ihn
@@ -160,17 +190,36 @@ Verdacht. Bei γ = 2 % über 100 000 Aufträge:
 Risiko ein. Er rechnet die erkannten Kontrollen ehrlich und manipuliert
 den Rest.
 
-**Was den Fund schärft:** γ ist ein Governance-Parameter, die
-Vorratsgröße ist keiner. Die einzigen je geschriebenen Werte stehen in
+**Was den Fund schärfte:** γ war ein Governance-Parameter, die
+Vorratsgröße keiner. Die einzigen je geschriebenen Werte standen in
 Tests: 10 und 100. Bei γ = 2 % trägt 100 genau 5 000 Aufträge. **Die
 Zahl, an der die Wirksamkeit hängt, war nirgends festgelegt.**
 
-Behoben, soweit Code das kann: `KontrollsegmentVorrat::reicht_fuer` und
-`::reichweite` machen die Bedingung am Aufrufort prüfbar. Wer γ erhöht,
-muss den Vorrat mitwachsen lassen, sonst macht eine schärfere Kontrolle
-den Mechanismus schwächer.
+**Geschlossen am 2026-08-27 (v0.8.0, Punkt 3.5).** Vorratsgröße und
+Beobachtungsfenster sind jetzt Governance-Parameter, und eine Invariante
+bindet beide an γ: `Vorrat ≥ ⌈Fenster · γ⌉`, geprüft am **Vorschlag**
+statt nach der Abstimmung. Der Wert ist abstimmbar, das Unterschreiten
+der Schranke nicht — dieselbe Bauart wie `S_min`.
 
-**Offen bleibt** das Prompt-Profil (Länge, Timing, Kontext). Dafür
+⚑ **Der gefährliche Vorschlag sieht aus wie eine Verschärfung:** γ von 2
+auf 4 Prozent heben, ohne den Vorrat mitzuziehen. Das verdoppelt die
+Einschleusungen bei gleichem Vorrat und halbiert die Reichweite. Vorher
+wäre er zulässig gewesen.
+
+**Warum das Fenster ein eigener Parameter ist:** „Der Vorrat muss größer
+sein als die Zahl der Einschleusungen" ist für einen unbegrenzten
+Auftragsstrom von **keinem** endlichen Vorrat erfüllbar. Erst ein
+Fenster macht die Bedingung entscheidbar, und wer es senkt, senkt die
+Schranke.
+
+**Der Anfangswert ist vorläufig:** 2 048 ist der gemessene Wert der
+Tabelle oben, 100 000 die Stromlänge, über die gemessen wurde. Was
+fehlt, ist die **Auftragsrate des Netzes** — erst mit ihr ließe sich
+sagen, wie lange ein Fenster dieser Größe in Sekunden ist.
+
+**Offen bleibt** das Prompt-Profil (Länge, Timing, Kontext). Die
+Schranke beseitigt **eine** sichere Spur, die der Mechanik; gegen
+Unterscheidung an Länge, Timing oder Inhalt hilft sie nicht. Dafür
 braucht es echte Verteilungen aus dem Betrieb.
 
 

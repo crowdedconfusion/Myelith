@@ -62,16 +62,39 @@
 //!    **Null Fehlalarme heißt: Der Angreifer geht kein Risiko ein.** Er
 //!    rechnet die erkannten Kontrollen ehrlich und manipuliert den Rest.
 //!
-//!    **γ ist ein Governance-Parameter, die Vorratsgröße ist keiner.**
-//!    Die einzigen je geschriebenen Werte stehen in Tests: 10 und 100.
-//!    Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000 Aufträge.
-//!
-//!    Die Bedingung ist einfach und steht als [`reicht_fuer`] bereit:
-//!    **Der Vorrat muss mindestens so viele Segmente halten, wie über
-//!    die Lebensdauer eines Seeds eingeschleust wird.** Das ist eine
+//!    Die Bedingung ist einfach und steht als
+//!    [`KontrollsegmentVorrat::reicht_fuer`] bereit: **Der Vorrat muss
+//!    mindestens so viele Segmente halten, wie über das
+//!    Beobachtungsfenster eingeschleust wird.** Das ist eine
 //!    notwendige, keine hinreichende Bedingung: Sie beseitigt genau
 //!    diese eine, sichere Spur, nicht die Unterscheidung an Länge,
 //!    Timing oder Inhalt.
+//!
+//!    ### Seit dem 2026-08-27 ist die Vorratsgröße ein Governance-Parameter
+//!
+//!    Bis dahin stand hier: „γ ist ein Governance-Parameter, die
+//!    Vorratsgröße ist keiner. Die einzigen je geschriebenen Werte
+//!    stehen in Tests: 10 und 100." Beides galt, und beides war der
+//!    Befund: Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000
+//!    Aufträge.
+//!
+//!    Jetzt führt `myl-governance` **zwei** Parameter — die
+//!    Vorratsgröße und das Beobachtungsfenster — und eine Invariante,
+//!    die beide an γ bindet: `Vorrat ≥ ⌈Fenster · γ⌉`. Die Formel
+//!    dafür ist [`crate::unterscheider::noetiger_vorrat`]; die
+//!    Governance benutzt sie, statt sie zu wiederholen.
+//!
+//!    ⚑ **Der Zug, gegen den die Invariante gebaut ist, ist der, der
+//!    harmlos aussieht:** γ erhöhen, ohne den Vorrat mitzuziehen. Das
+//!    liest sich wie eine schärfere Kontrolle und ist ihre
+//!    Abschaltung, denn eine höhere Rate erschöpft einen gleich großen
+//!    Vorrat schneller.
+//!
+//!    **Der Anfangswert bleibt vorläufig.** [`VORRAT_VORGABE`] ist der
+//!    gemessene Wert aus Fund 58, [`BEOBACHTUNGSFENSTER_VORGABE`] die
+//!    Stromlänge, über die gemessen wurde. Was fehlt, ist die
+//!    **Auftragsrate des Netzes**: Erst mit ihr ließe sich sagen, wie
+//!    lange ein Fenster dieser Größe in Sekunden ist.
 //!
 //! 2. **Vorratserneuerung** — erfüllt durch [`KontrollsegmentVorrat::erneuern`]:
 //!    Übernahme abgeschlossener, per Stufe 2 vollständig geprüfter
@@ -79,7 +102,10 @@
 //!
 //! 3. **Kostenehrlichkeit** — γ ist ein Governance-Parameter
 //!    (`myl_governance::Parameter::Kontrollsegmentanteil`) und geht als
-//!    Overhead in die Kostenrechnung ein.
+//!    Overhead in die Kostenrechnung ein. Seit dem 2026-08-27 gilt
+//!    dasselbe für die Vorratsgröße und ihr Beobachtungsfenster; die
+//!    Vorberechnung des Vorrats ist Rechenzeit, seine Vorhaltung
+//!    Speicher, und beides wächst mit γ.
 //!
 //! ## Die Sicherheitsbedingung der Einschleusung
 //!
@@ -98,6 +124,38 @@ use std::collections::BTreeMap;
 
 use myl_types::hash::Hash;
 use myl_types::ids::{EpochId, SegmentId};
+
+/// Das Beobachtungsfenster des Wiederholungsunterscheiders, in Aufträgen.
+///
+/// **Eine Annahme über den Angreifer, keine Messung.** Ein Gedächtnis
+/// kostet ihn nichts als Speicher: 100 000 Segment-Ids sind 3,2 MB, und
+/// eine Menge nachzuschlagen ist konstant teuer. Die Zahl sagt deshalb
+/// nicht, was er kann, sondern **wogegen das Protokoll sich zu schützen
+/// verpflichtet**. Sie ist zugleich die Stromlänge, über die Fund 58
+/// gemessen wurde, also die einzige, für die eine Zahl vorliegt.
+///
+/// ⚑ **Sie ersetzt keine Messung der Auftragsrate.** Wie viele Aufträge
+/// das Netz je Zeiteinheit trägt, ist unbekannt; erst damit ließe sich
+/// sagen, wie lange ein Fenster dieser Größe in Sekunden ist. Bis dahin
+/// ist der Wert eine Setzung, und er gehört genau deshalb in die
+/// Governance und nicht in eine Konstante des Rechenpfads.
+pub const BEOBACHTUNGSFENSTER_VORGABE: u64 = 100_000;
+
+/// Die Vorgabegröße des Vorrats.
+///
+/// Der kleinste in der Messung zu Fund 58 geprüfte Wert, bei dem der
+/// Wiederholungsunterscheider über 100 000 Aufträge bei γ = 2 % **keine
+/// einzige** Kontrolle erkennt (64 → 96,8 %, 256 → 87,2 %,
+/// 1024 → 48,8 %, 2048 → 0 %). Die rechnerische Schranke liegt bei
+/// [`noetiger_vorrat`]`(100_000, 2, 100)` = 2 000; die 2 048 sind der
+/// gemessene Wert und lassen etwas Luft.
+///
+/// **Der Vorrat ist eine Sicherheitsschranke, keine Puffergröße.** Wer
+/// ihn zu klein wählt, hebt die Stichprobenprüfung nicht ab, sondern
+/// **um**: Ein Miner mit Gedächtnis erkennt die Kontrollen, rechnet
+/// genau die ehrlich und manipuliert den Rest — ohne einen einzigen
+/// Fehlalarm einzugehen.
+pub const VORRAT_VORGABE: u64 = 2_048;
 
 /// Ein Segment mit bekanntem Soll-Ergebnis.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +227,23 @@ impl KontrollsegmentVorrat {
             segmente: BTreeMap::new(),
             hoechstzahl,
         }
+    }
+
+    /// Ein Vorrat, dessen Größe aus Fenster und γ **folgt** statt geraten
+    /// zu werden.
+    ///
+    /// **Warum es diesen Weg gibt:** [`Self::neu`] nimmt jede Zahl an,
+    /// und die einzigen je geschriebenen waren 10 und 100 — beide aus
+    /// Tests, beide weit unter jeder tragfähigen Schranke (Fund 58). Wer
+    /// hier hereinkommt, kann die Größe nicht mehr versehentlich zu
+    /// klein wählen; er muss sich dazu über das Fenster äußern.
+    ///
+    /// Mindestens ein Segment, auch bei γ = 0: Ein leerer Vorrat ist
+    /// kein kleiner Vorrat, sondern gar keine Kontrolle.
+    pub fn fuer_fenster(fenster: u64, gamma_zaehler: u64, gamma_nenner: u64) -> Self {
+        let noetig = crate::unterscheider::noetiger_vorrat(fenster, gamma_zaehler, gamma_nenner);
+        let groesse = noetig.max(1).min(usize::MAX as u64) as usize;
+        Self::neu(groesse)
     }
 
     /// Nimmt ein Segment mit bekanntem Soll-Ergebnis auf.
@@ -243,22 +318,34 @@ impl KontrollsegmentVorrat {
     ///
     /// **Notwendig, nicht hinreichend:** Auch ein ausreichender Vorrat
     /// schützt nicht gegen Unterscheidung an Länge, Timing oder Inhalt.
+    /// ⚑ **Die Formel steht in [`crate::unterscheider::noetiger_vorrat`]
+    /// und wird hier benutzt, nicht wiederholt.** Bis zum 2026-08-27
+    /// stand sie an beiden Orten ausgeschrieben — zwei Fassungen
+    /// derselben Sicherheitsschranke, von denen eine hätte
+    /// davonlaufen können, ohne dass ein Test es bemerkt. Dieselbe
+    /// Arbeitsteilung wie zwischen `myl-governance` und
+    /// `myl_tokenomics::s_min`.
     pub fn reicht_fuer(&self, auftraege: usize, gamma_zaehler: u64, gamma_nenner: u64) -> bool {
         if gamma_nenner == 0 {
             return true;
         }
-        let noetig =
-            ((auftraege as u128 * gamma_zaehler as u128).div_ceil(gamma_nenner as u128)) as usize;
-        self.hoechstzahl >= noetig
+        let noetig = crate::unterscheider::noetiger_vorrat(
+            auftraege as u64,
+            gamma_zaehler,
+            gamma_nenner,
+        );
+        self.hoechstzahl as u64 >= noetig
     }
 
     /// Wie viele Aufträge dieser Vorrat bei Rate γ trägt, bevor sich die
-    /// erste Id wiederholt.
+    /// erste Id wiederholt. Siehe [`Self::reicht_fuer`] zur Formel.
     pub fn reichweite(&self, gamma_zaehler: u64, gamma_nenner: u64) -> usize {
-        if gamma_zaehler == 0 {
-            return usize::MAX;
-        }
-        ((self.hoechstzahl as u128 * gamma_nenner as u128) / gamma_zaehler as u128) as usize
+        let n = crate::unterscheider::reichweite(
+            self.hoechstzahl as u64,
+            gamma_zaehler,
+            gamma_nenner,
+        );
+        n.min(usize::MAX as u64) as usize
     }
 
     pub fn len(&self) -> usize {
@@ -347,6 +434,71 @@ mod fund_58 {
             !v.reicht_fuer(5_001, 2, 100),
             "ein Vorrat von 100 dürfte nicht für mehr als 5000 Aufträge gelten"
         );
+    }
+
+    /// **Die Vorgabewerte erfüllen ihre eigene Schranke.**
+    ///
+    /// Stünde hier ein Vorrat unter der Schranke, wäre die
+    /// Governance-Invariante schon vor der ersten Abstimmung verletzt,
+    /// und jeder Ablehnungstest darüber hätte den falschen Grund.
+    #[test]
+    fn die_vorgabewerte_tragen_ihr_eigenes_fenster() {
+        let v = KontrollsegmentVorrat::neu(VORRAT_VORGABE as usize);
+        assert!(
+            v.reicht_fuer(BEOBACHTUNGSFENSTER_VORGABE as usize, 2, 100),
+            "der Vorgabevorrat {} trägt das Vorgabefenster {} bei γ = 2 % nicht",
+            VORRAT_VORGABE,
+            BEOBACHTUNGSFENSTER_VORGABE
+        );
+        // **Und er liegt über der Schranke, nicht auf ihr.** Geprüft
+        // wird die Regel, nicht die Zahl: Bei den heutigen Vorgaben
+        // sind es 2 048 gegen 2 000, aber ein Test gegen die getippte
+        // 2 000 schlüge bei jeder richtigen Änderung des Fensters fehl
+        // und erzeugte Druck, sie zurückzunehmen.
+        let schranke =
+            crate::unterscheider::noetiger_vorrat(BEOBACHTUNGSFENSTER_VORGABE, 2, 100);
+        assert!(
+            VORRAT_VORGABE > schranke,
+            "der Vorgabevorrat {VORRAT_VORGABE} liegt auf oder unter der Schranke {schranke}; \
+             ohne Luft ist jede Erhöhung des Fensters sofort ein Bruch"
+        );
+    }
+
+    /// [`KontrollsegmentVorrat::fuer_fenster`] leitet die Größe ab,
+    /// statt sie raten zu lassen.
+    #[test]
+    fn fuer_fenster_waehlt_die_groesse_selbst() {
+        let v = KontrollsegmentVorrat::fuer_fenster(100_000, 2, 100);
+        assert!(v.reicht_fuer(100_000, 2, 100));
+        assert_eq!(v.reichweite(2, 100), 100_000);
+        // Auch ohne Einschleusung bleibt ein Segment übrig: Ein leerer
+        // Vorrat ist keine kleine Kontrolle, sondern gar keine.
+        let ohne = KontrollsegmentVorrat::fuer_fenster(100_000, 0, 100);
+        assert!(ohne.reicht_fuer(100_000, 0, 100));
+    }
+
+    /// **Gegenprobe zur Zusammenführung:** Die Methode und die freie
+    /// Funktion sind dieselbe Rechnung, über den ganzen Bereich, in dem
+    /// beide auswertbar sind.
+    #[test]
+    fn methode_und_freie_funktion_sind_dieselbe_rechnung() {
+        for auftraege in [0usize, 1, 999, 10_000, 100_000, 1_000_000] {
+            for (gz, gn) in [(0u64, 100u64), (1, 100), (2, 100), (3, 100), (1, 1)] {
+                let noetig = crate::unterscheider::noetiger_vorrat(auftraege as u64, gz, gn);
+                let knapp = KontrollsegmentVorrat::neu(noetig as usize);
+                assert!(
+                    knapp.reicht_fuer(auftraege, gz, gn),
+                    "genau der nötige Vorrat {noetig} muss reichen ({auftraege}, {gz}/{gn})"
+                );
+                if noetig > 0 {
+                    let zu_klein = KontrollsegmentVorrat::neu(noetig as usize - 1);
+                    assert!(
+                        !zu_klein.reicht_fuer(auftraege, gz, gn),
+                        "einer weniger als {noetig} darf nicht reichen ({auftraege}, {gz}/{gn})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

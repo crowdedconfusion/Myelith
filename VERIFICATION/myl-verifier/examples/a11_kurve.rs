@@ -4,7 +4,7 @@ fn main() {
         let e = myl_verifier::messe_wiederholung(vorrat, 100_000, 2, 100, &[7u8; 32]);
         println!("  {:>12} | {:>20} | {:>3}.{} %",
             vorrat,
-            myl_verifier::reichweite(vorrat, 2, 100),
+            myl_verifier::reichweite(vorrat as u64, 2, 100),
             e.erkannt_promille() / 10, e.erkannt_promille() % 10);
     }
     println!("  nötiger Vorrat für 100k Aufträge bei γ=2%: {}",

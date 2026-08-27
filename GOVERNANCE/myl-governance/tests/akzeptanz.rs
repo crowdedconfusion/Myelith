@@ -69,7 +69,7 @@ fn jeder_parameter_hat_einen_wert() {
     for p in Parameter::alle() {
         let _ = reg.wert(p); // paniert, falls er fehlt
     }
-    assert_eq!(Parameter::alle().len(), 27);
+    assert_eq!(Parameter::alle().len(), 29);
 }
 
 // ---------------------------------------------------------------------
@@ -418,6 +418,142 @@ fn kein_angenommener_vorschlag_verletzt_je_eine_invariante() {
         angenommen > 500,
         "nur {angenommen} von 50.000 kamen durch; die Zusicherung darüber \
          prüft dann fast nichts"
+    );
+}
+
+// ---------------------------------------------------------------------
+// ⚑ Fund 58: der Kontrollsegment-Vorrat
+// ---------------------------------------------------------------------
+
+/// **Ein Vorrat unter der Schranke wird abgelehnt.**
+///
+/// Er hebt die Kontrollsegmente nicht ab, sondern **um**: Ein Miner mit
+/// Gedächtnis erkennt die Kontrollen sicher, rechnet genau die ehrlich
+/// und manipuliert den Rest. Gemessen bei γ = 2 % über 100 000
+/// Aufträge: Vorrat 64 → 96,8 % erkannt, null Fehlalarme.
+#[test]
+fn ein_zu_kleiner_kontrollsegmentvorrat_wird_abgelehnt() {
+    let reg = ParameterRegistry::vorgabe();
+    match pruefe_vorschlag(
+        &reg,
+        &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(64)),
+    ) {
+        Err(VorschlagFehler::Invariante(b)) => {
+            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung);
+            assert_eq!(b.parameter, Parameter::Kontrollsegmentvorrat);
+        }
+        andere => panic!("ein Vorrat von 64 muss scheitern, bekommen: {andere:?}"),
+    }
+}
+
+/// **Genau auf der Schranke ist er zulässig, einer darunter nicht.**
+///
+/// Die Gegenprobe zur Ablehnung: Eine Prüfung, die jeden kleineren Wert
+/// ablehnt, könnte auch alles ablehnen. Der Sprung genau an der
+/// gerechneten Stelle zeigt, dass sie die Schranke prüft und nicht
+/// irgendeine.
+#[test]
+fn die_schranke_liegt_genau_dort_wo_die_rechnung_sie_erwartet() {
+    let reg = ParameterRegistry::vorgabe();
+    let fenster = reg
+        .wert(Parameter::Kontrollsegmentfenster)
+        .als_ganzzahl()
+        .expect("Ganzzahl");
+    let (gz, gn) = reg
+        .wert(Parameter::Kontrollsegmentanteil)
+        .als_bruch()
+        .expect("Bruch");
+    let noetig = myl_verifier::noetiger_vorrat(fenster, gz, gn);
+
+    assert!(
+        pruefe_vorschlag(
+            &reg,
+            &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(noetig))
+        )
+        .is_ok(),
+        "genau der nötige Vorrat {noetig} muss zulässig sein"
+    );
+    assert!(
+        matches!(
+            pruefe_vorschlag(
+                &reg,
+                &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(noetig - 1))
+            ),
+            Err(VorschlagFehler::Invariante(_))
+        ),
+        "einer weniger als {noetig} darf nicht durchgehen"
+    );
+}
+
+/// **⚑ Der Zug, gegen den diese Invariante gebaut ist: γ heben, ohne
+/// den Vorrat mitzuziehen.**
+///
+/// Er sieht aus, als schärfe er die Kontrolle, und schaltet sie ab. Bei
+/// γ = 2 % trägt der Vorgabevorrat das Fenster; bei γ = 4 % bräuchte es
+/// den doppelten. Ohne diese Prüfung wäre der Vorschlag zulässig, und
+/// das Ergebnis wäre eine Stichprobenprüfung, die jeder Miner erkennt.
+#[test]
+fn gamma_erhoehen_ohne_den_vorrat_mitzuziehen_wird_abgelehnt() {
+    let reg = ParameterRegistry::vorgabe();
+    match pruefe_vorschlag(&reg, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(4, 100))) {
+        Err(VorschlagFehler::Invariante(b)) => {
+            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung)
+        }
+        andere => panic!("gamma = 4 % ohne größeren Vorrat muss scheitern, bekommen: {andere:?}"),
+    }
+
+    // **Und mit mitgezogenem Vorrat geht derselbe Zug durch.** Ohne
+    // diese Hälfte prüfte der Test nur, dass irgendetwas abgelehnt wird.
+    let groesser = pruefe_vorschlag(
+        &reg,
+        &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(4_096)),
+    )
+    .expect("ein größerer Vorrat ist zulässig");
+    assert!(
+        pruefe_vorschlag(&groesser, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(4, 100)))
+            .is_ok(),
+        "mit verdoppeltem Vorrat muss gamma = 4 % zulässig sein"
+    );
+}
+
+/// **Ein größeres Fenster verlangt einen größeren Vorrat.**
+///
+/// Das Fenster ist die Annahme über das Gedächtnis des Angreifers. Wer
+/// sie anhebt, ohne den Vorrat mitzuziehen, verschiebt die Schranke
+/// unter den geltenden Wert — derselbe Zug wie bei γ, nur an der
+/// anderen Größe.
+#[test]
+fn ein_groesseres_fenster_ohne_groesseren_vorrat_wird_abgelehnt() {
+    let reg = ParameterRegistry::vorgabe();
+    match pruefe_vorschlag(
+        &reg,
+        &vorschlag(Parameter::Kontrollsegmentfenster, Wert::Ganzzahl(1_000_000)),
+    ) {
+        Err(VorschlagFehler::Invariante(b)) => {
+            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung)
+        }
+        andere => panic!("ein zehnfaches Fenster muss scheitern, bekommen: {andere:?}"),
+    }
+}
+
+/// **Ohne Einschleusung greift die Schranke nicht.**
+///
+/// Bei γ = 0 wird nichts eingeschleust, also wiederholt sich nichts.
+/// Eine Invariante, die auch dann einen Vorrat verlangte, verböte einen
+/// zulässigen Zustand — und eine Schranke, die mehr verbietet als ihre
+/// Begründung trägt, ist eine heimliche Festlegung.
+#[test]
+fn ohne_einschleusung_verlangt_die_schranke_keinen_vorrat() {
+    let reg = ParameterRegistry::vorgabe();
+    let ohne_gamma = pruefe_vorschlag(&reg, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(0, 100)))
+        .expect("gamma = 0 ist zulässig");
+    assert!(
+        pruefe_vorschlag(
+            &ohne_gamma,
+            &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(0))
+        )
+        .is_ok(),
+        "ohne Einschleusung darf der Vorrat leer sein"
     );
 }
 

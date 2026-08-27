@@ -1,6 +1,6 @@
 [package]
 name = "myl-governance"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Parameter-Governance für Myelith (Whitepaper Kap. 10.3): Registry aller Governance-Parameter mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs und Prüfung der Sicherheitsinvarianten aus Anhang B bereits am Vorschlag."
@@ -10,6 +10,11 @@ license = "PolyForm Shield License 1.0.0"
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
+# Für die Kontrollsegment-Schranke aus Fund 58: Die Formel steht dort, wo
+# der Mechanismus steht, und wird hier **benutzt** statt wiederholt —
+# dieselbe Arbeitsteilung wie bei `myl_tokenomics::s_min`. Kein Zyklus:
+# `myl-verifier` kennt diese Komponente nicht.
+myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 
 [lib]
 name = "myl_governance"
