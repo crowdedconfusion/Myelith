@@ -166,11 +166,12 @@ impl PayloadValidator for ProtokollValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_consensus::block::{BurnTx, EpochMeta};
+    use myl_consensus::block::{BurnTx, BlockHeader};
     use myl_types::hash::Hash;
 
     fn beispielblock() -> Block {
-        let mut b = Block::new(EpochMeta {
+        let mut b = Block::new(BlockHeader {
+            height: 5_400,
             epoch: 3,
             prev_block_hash: Hash::sha256(b"vorgaenger"),
             timestamp_ms: 1_700_000_000_000,

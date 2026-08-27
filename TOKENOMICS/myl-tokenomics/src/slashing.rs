@@ -14,6 +14,12 @@
 //! | VERIFICATION | **Wer** hat verloren? | `myl_verifier::slash` |
 //! | TOKENOMICS | **Wie viel** ist das? | dieses Modul |
 //! | CONSENSUS | Wie wird es **gebucht**? | `myl_ledger::apply_verdict` |
+//! | CONSENSUS | **Wie oft schon?** | `myl_ledger::AccountState::verstoesse` |
+//!
+//! Die vierte Zeile ist seit dem 2026-08-27 dazugekommen, und sie steht
+//! bei CONSENSUS und nicht hier: Die Vorgeschichte ist **Zustand**, und
+//! Zustand gehört in den Ledger. Dieses Modul liest sie und rechnet
+//! daraus einen Satz; es führt sie nicht.
 //!
 //! Diese Trennung ist teuer erkauft. Bis v0.2.6 hatte `myl-verifier` eine
 //! eigene `SlashConfig` mit **festen Beträgen** (1 MYL Slash, 0,5 MYL
@@ -54,12 +60,30 @@
 //! Teilnehmers und ist es nicht. Wer einmal ausfällt, hatte vielleicht
 //! eine schlechte Nacht; wer dreimal ausfällt, hat ein anderes Problem.
 //!
-//! **Was das voraussetzt:** einen Zähler je Miner im Ledger-Zustand. Der
-//! ist ein Konsensfeld; bis er existiert, nimmt [`satz_gestaffelt`] die
-//! Zahl der Vorverstöße als Eingabe entgegen, und der Aufrufer
-//! verantwortet sie.
+//! **Was das voraussetzte, ist seit dem 2026-08-27 da:** ein Zähler je
+//! Konto im Ledger-Zustand (`myl_ledger::AccountState::verstoesse`). Bis
+//! dahin nahm [`satz_gestaffelt`] die Zahl der Vorverstöße als Eingabe
+//! entgegen und der Aufrufer verantwortete sie — und **niemand füllte
+//! sie**. Die Staffelung stand damit als Tabelle mit drei Stufen da, von
+//! denen immer die erste galt.
+//!
+//! Der Weg mit Vorgeschichte heißt [`urteil_buchen_gestaffelt`]. Er
+//! liest, bestimmt, bucht und vermerkt — **in dieser Reihenfolge**, und
+//! das ist keine Bequemlichkeit: Der Satz hängt an der Vorgeschichte
+//! *vor* dem Urteil, und das Buchen verändert genau diese
+//! Vorgeschichte. Wer die Aufrufe von Hand setzt, kann sie vertauschen,
+//! und der Fehler ist still — es wird geschlachtet, nur eine Stufe zu
+//! hoch.
+//!
+//! [`satz_gestaffelt`] bleibt daneben bestehen, für Aufrufer ohne
+//! Ledger: die Simulation, der Protokoll-Durchlauf des Testclients und
+//! jede Rechnung, die einen Satz braucht, ohne zu buchen.
 
-use myl_ledger::transitions::SlashParams;
+use myl_ledger::state::LedgerState;
+use myl_ledger::transitions::{
+    SlashParams, TransitionError, Verdict, VerdictEffect, VerdictOutcome,
+};
+use myl_types::ids::Address;
 
 /// Wer geschlachtet wird (Kap. 5.5, Spalte „Akteur").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -143,13 +167,27 @@ impl Slashsatz {
 
 /// Fenster, in dem Verstöße als Wiederholung zählen (in Epochen).
 ///
-/// Zehn Epochen, dieselbe Länge wie die Arbeitshistorie des
+/// ⚑ **Kein eigener Wert mehr, sondern der des Ledgers**
+/// ([`myl_ledger::VERSTOSS_FENSTER`], seit dem 2026-08-27). Bis dahin
+/// stand hier eine eigene `10`, und die Vorgeschichte war eine Eingabe,
+/// die der Aufrufer verantwortete. Seit der Ledger sie führt, sind es
+/// zwei Seiten derselben Sache: Er **bewahrt** so viele Epochen auf, hier
+/// wird über so viele **gestaffelt**. Zwei Zahlen dafür wären die
+/// gefährlichere Bauart, weil die Abweichung leise ist — läge das
+/// Staffelungsfenster über der Aufbewahrung, läse die Staffelung eine
+/// Vorgeschichte, die es nicht mehr gibt, und der Zähler stünde einfach
+/// niedriger. Niemand bekäme eine Fehlermeldung.
+///
+/// Zehn Epochen sind zugleich die Länge der Arbeitshistorie des
 /// Stimmgewichts (`myl_consensus::voting_weight::MAX_HISTORY_EPOCHS`).
-/// **Dieselbe Länge ist kein Zufall, sondern die Absicht:** Beide
+/// **Diese Gleichheit ist Absicht, aber keine Kopplung:** Beide
 /// beantworten dieselbe Frage, nämlich wie lange das Verhalten eines
 /// Teilnehmers nachwirkt, und zwei verschiedene Antworten darauf wären
-/// schwer zu begründen.
-pub const WIEDERHOLUNGSFENSTER: u64 = 10;
+/// schwer zu begründen. Sie stehen trotzdem als getrennte Konstanten, weil
+/// eine spätere Entscheidung sie auseinanderziehen dürfen soll; ein Test
+/// in `myl-governance` hält sie zusammen, damit ein Auseinanderlaufen
+/// eine Entscheidung ist und kein Versehen.
+pub const WIEDERHOLUNGSFENSTER: u64 = myl_ledger::VERSTOSS_FENSTER;
 
 /// Kopfgeldanteil `b` am geschlachteten Betrag (Anhang B.3: b = 30 %).
 ///
@@ -261,6 +299,99 @@ pub fn satz_gestaffelt(akteur: Akteur, grund: Grund, vorverstoesse: u64) -> Opti
     })
 }
 
+/// Der gestaffelte Satz für einen Schuldigen, **mit der Vorgeschichte
+/// aus dem Ledger** statt aus der Hand des Aufrufers.
+///
+/// **Das ist der Weg, den es seit dem 2026-08-27 gibt.**
+/// [`satz_gestaffelt`] nimmt die Zahl der Vorverstöße entgegen und
+/// verlässt sich darauf, dass der Aufrufer sie richtig ermittelt. Solange
+/// niemand sie führte, war das die einzige Möglichkeit; jetzt führt der
+/// Ledger sie, und der Aufrufer soll sie nicht mehr selbst
+/// zusammensuchen müssen.
+///
+/// **Vor dem Buchen aufrufen.** [`myl_ledger::apply_verdict`] vermerkt
+/// den Verstoß; danach gelesen stünde die Vorgeschichte um eins zu hoch,
+/// und der erste Ausfall würde zum zweiten Satz geschlachtet. Wer beides
+/// in der richtigen Reihenfolge will, nimmt [`urteil_buchen_gestaffelt`]
+/// und muss sich die Frage gar nicht stellen.
+pub fn satz_aus_ledger(
+    state: &LedgerState,
+    schuldig: &Address,
+    akteur: Akteur,
+    grund: Grund,
+) -> Option<Slashsatz> {
+    let vor = state.verstoesse_im_fenster(schuldig, WIEDERHOLUNGSFENSTER);
+    satz_gestaffelt(akteur, grund, vor)
+}
+
+/// Bucht ein Urteil mit dem **gestaffelten** Satz: Vorgeschichte lesen,
+/// Satz bestimmen, buchen, Verstoß vermerken — in dieser Reihenfolge.
+///
+/// ⚑ **Warum es diese Funktion gibt, obwohl sie nur zwei andere
+/// aufruft.** Die Reihenfolge ist die ganze Schwierigkeit: Der Satz
+/// hängt an der Vorgeschichte **vor** dem Urteil, und das Buchen
+/// verändert genau diese Vorgeschichte. Wer die beiden Aufrufe von Hand
+/// setzt, kann sie vertauschen, und der Fehler ist still — es wird
+/// geschlachtet, nur eine Stufe zu hoch. Hier ist die Reihenfolge
+/// festgelegt und kann nicht vertauscht werden.
+///
+/// **Die Arbeitsteilung bleibt.** VERIFICATION entscheidet, **wer**
+/// verloren hat (der `verdict` kommt von dort), dieses Modul, **wie
+/// viel**, und `myl-ledger`, **wie gebucht** wird. Diese Funktion
+/// entscheidet nichts davon; sie setzt die drei nur in die einzige
+/// Reihenfolge, in der sie zusammenpassen. Sie steht in TOKENOMICS, weil
+/// das die Schicht ist, die beide Seiten schon kennt.
+///
+/// **Returns:** die Wirkung der Buchung und den angewandten Satz. Der
+/// Satz gehört ins Ergebnis, weil sonst niemand belegen kann, welche
+/// Stufe galt: Aus dem geschlachteten Betrag allein ist sie nicht
+/// zurückzurechnen, wenn der Stake dazwischen wächst.
+pub fn urteil_buchen_gestaffelt(
+    state: &mut LedgerState,
+    verdict: &Verdict,
+    akteur: Akteur,
+    grund: Grund,
+) -> Result<(VerdictEffect, Slashsatz), SlashBuchungFehler> {
+    let schuldig = match verdict.outcome {
+        VerdictOutcome::SlashMiner => verdict.miner,
+        VerdictOutcome::SlashChecker => verdict.checker,
+    };
+    let satz = satz_aus_ledger(state, &schuldig, akteur, grund)
+        .ok_or(SlashBuchungFehler::KeinSatz { akteur, grund })?;
+    let wirkung = myl_ledger::apply_verdict(state, verdict, &satz.als_ledger_parameter())
+        .map_err(SlashBuchungFehler::Uebergang)?;
+    Ok((wirkung, satz))
+}
+
+/// Warum eine gestaffelte Buchung nicht zustande kam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlashBuchungFehler {
+    /// Die Matrix aus Kap. 5.5 kennt dieses Paar nicht.
+    ///
+    /// **Kein Vorgabewert an dieser Stelle.** Ein „dann eben null" wäre
+    /// ein Vergehen ohne Folge, ein „dann eben alles" eine erfundene
+    /// Slash-Regel. Beides gehört nicht in eine Matrix, die Zeile für
+    /// Zeile aus dem Papier stammt.
+    KeinSatz { akteur: Akteur, grund: Grund },
+    /// Der Ledger hat den Übergang abgelehnt.
+    Uebergang(TransitionError),
+}
+
+impl std::fmt::Display for SlashBuchungFehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::KeinSatz { akteur, grund } => write!(
+                f,
+                "Kap. 5.5 kennt keine Zeile für {:?} mit Grund {:?}",
+                akteur, grund
+            ),
+            Self::Uebergang(e) => write!(f, "der Ledger hat abgelehnt: {:?}", e),
+        }
+    }
+}
+
+impl std::error::Error for SlashBuchungFehler {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +400,173 @@ mod tests {
     ///
     /// Eine Zeile zu viel wäre eine erfundene Slash-Regel; eine zu wenig
     /// wäre ein Vergehen ohne Folge.
+    fn adresse(b: u8) -> Address {
+        Address::new([b; 32])
+    }
+
+    fn urteil(schuldig_ist_miner: bool) -> Verdict {
+        Verdict {
+            segment_id: myl_types::ids::SegmentId::new([9u8; 32]),
+            miner: adresse(1),
+            checker: adresse(2),
+            outcome: if schuldig_ist_miner {
+                VerdictOutcome::SlashMiner
+            } else {
+                VerdictOutcome::SlashChecker
+            },
+        }
+    }
+
+    /// **Die Staffelung beisst: erst 1 %, dann 3 %, dann 5 %.**
+    ///
+    /// Der eigentliche Beleg dieses Punktes. Vorher nahm
+    /// `satz_gestaffelt` die Vorverstoesse als Eingabe entgegen, und
+    /// niemand fuellte sie — die Staffelung war eine Absichtserklaerung
+    /// mit drei Stufen, von denen immer die erste galt.
+    #[test]
+    fn drei_urteile_hintereinander_steigen_die_stufen_hoch() {
+        let mut state = LedgerState::genesis(10);
+        state.epoch = myl_types::ids::EpochId(3);
+        let mut gesehen = Vec::new();
+        for _ in 0..4 {
+            // Stake jedesmal neu setzen, damit der Betrag nicht am
+            // Restbestand haengt, sondern am Satz.
+            state.account_mut(&adresse(1)).staked = 1_000_000;
+            let (wirkung, satz) = urteil_buchen_gestaffelt(
+                &mut state,
+                &urteil(true),
+                Akteur::ShardMiner,
+                Grund::Nichtverfuegbarkeit,
+            )
+            .expect("Buchung");
+            gesehen.push((satz.anteil_bps(), wirkung.slashed, wirkung.vorverstoesse));
+        }
+        assert_eq!(
+            gesehen,
+            vec![
+                (100, 10_000, 0),
+                (300, 30_000, 1),
+                (500, 50_000, 2),
+                (500, 50_000, 3),
+            ],
+            "die Staffelung greift nicht: {gesehen:?}"
+        );
+    }
+
+    /// **Die Gegenprobe: ohne Vorgeschichte bleibt es beim ersten Satz.**
+    ///
+    /// Ein Test, der nur die steigenden Stufen prueft, bestuende auch
+    /// dann, wenn jedes Urteil den Satz erhoehte — etwa weil irgendetwas
+    /// anderes mitzaehlt. Hier faellt jedes Urteil in eine eigene, weit
+    /// auseinanderliegende Epoche; die Vorgeschichte ist damit jedesmal
+    /// leer, und der Satz muss der erste bleiben.
+    #[test]
+    fn ausserhalb_des_fensters_beginnt_die_staffelung_von_vorn() {
+        let mut state = LedgerState::genesis(10);
+        for runde in 0..4u64 {
+            state.epoch = myl_types::ids::EpochId(runde * (WIEDERHOLUNGSFENSTER + 5));
+            state.account_mut(&adresse(1)).staked = 1_000_000;
+            let (wirkung, satz) = urteil_buchen_gestaffelt(
+                &mut state,
+                &urteil(true),
+                Akteur::ShardMiner,
+                Grund::Nichtverfuegbarkeit,
+            )
+            .expect("Buchung");
+            assert_eq!(wirkung.vorverstoesse, 0, "Runde {runde} sah eine Vorgeschichte");
+            assert_eq!(satz.anteil_bps(), 100, "Runde {runde} traf nicht den ersten Satz");
+        }
+    }
+
+    /// **Die Reihenfolge ist die ganze Schwierigkeit.**
+    ///
+    /// Wer nach dem Buchen liest, bekommt einen um eins zu hohen Stand
+    /// und schlaegt den naechsten Satz zu frueh auf. Der Test stellt
+    /// beide Reihenfolgen nebeneinander und haelt fest, dass sie
+    /// verschiedene Saetze ergeben — das ist der Grund, warum es
+    /// [`urteil_buchen_gestaffelt`] gibt.
+    #[test]
+    fn vor_dem_buchen_gelesen_ergibt_einen_anderen_satz_als_danach() {
+        let mut state = LedgerState::genesis(10);
+        state.account_mut(&adresse(1)).staked = 1_000_000;
+
+        let davor =
+            satz_aus_ledger(&state, &adresse(1), Akteur::ShardMiner, Grund::Nichtverfuegbarkeit)
+                .expect("Satz");
+        let _ = urteil_buchen_gestaffelt(
+            &mut state,
+            &urteil(true),
+            Akteur::ShardMiner,
+            Grund::Nichtverfuegbarkeit,
+        )
+        .expect("Buchung");
+        let danach =
+            satz_aus_ledger(&state, &adresse(1), Akteur::ShardMiner, Grund::Nichtverfuegbarkeit)
+                .expect("Satz");
+
+        assert_eq!(davor.anteil_bps(), 100);
+        assert_eq!(danach.anteil_bps(), 300);
+        assert_ne!(
+            davor.anteil_bps(),
+            danach.anteil_bps(),
+            "waeren beide gleich, waere die Reihenfolge gleichgueltig und dieser Test sinnlos"
+        );
+    }
+
+    /// Der geschlachtete Checker bekommt seine eigene Vorgeschichte,
+    /// nicht die des Miners.
+    #[test]
+    fn die_vorgeschichte_haengt_am_schuldigen_nicht_am_urteil() {
+        let mut state = LedgerState::genesis(10);
+        state.account_mut(&adresse(2)).staked = 1_000_000;
+
+        // Zweimal den Miner schlachten.
+        for _ in 0..2 {
+            state.account_mut(&adresse(1)).staked = 1_000_000;
+            urteil_buchen_gestaffelt(
+                &mut state,
+                &urteil(true),
+                Akteur::ShardMiner,
+                Grund::Nichtverfuegbarkeit,
+            )
+            .expect("Buchung");
+        }
+        // Der Checker ist trotzdem beim ersten Satz.
+        let (_, satz) = urteil_buchen_gestaffelt(
+            &mut state,
+            &urteil(false),
+            Akteur::ShardMiner,
+            Grund::Nichtverfuegbarkeit,
+        )
+        .expect("Buchung");
+        assert_eq!(satz.anteil_bps(), 100, "die Vorgeschichte des Miners hat abgefaerbt");
+    }
+
+    /// Ein Paar ohne Zeile in Kap. 5.5 wird abgelehnt statt geraten.
+    #[test]
+    fn ein_unbekanntes_paar_bekommt_keinen_vorgabesatz() {
+        let mut state = LedgerState::genesis(10);
+        state.account_mut(&adresse(1)).staked = 1_000;
+        let fehler = urteil_buchen_gestaffelt(
+            &mut state,
+            &urteil(true),
+            Akteur::Checker,
+            Grund::Nichtverfuegbarkeit,
+        )
+        .expect_err("Kap. 5.5 kennt dieses Paar nicht");
+        assert!(matches!(fehler, SlashBuchungFehler::KeinSatz { .. }));
+        // Und nichts wurde gebucht.
+        assert_eq!(state.account(&adresse(1)).staked, 1_000);
+        assert_eq!(state.verstoesse_im_fenster(&adresse(1), WIEDERHOLUNGSFENSTER), 0);
+    }
+
+    /// Das Staffelungsfenster **ist** das Aufbewahrungsfenster des
+    /// Ledgers, nicht eine zweite Zahl daneben.
+    #[test]
+    fn das_fenster_ist_das_des_ledgers() {
+        assert_eq!(WIEDERHOLUNGSFENSTER, myl_ledger::VERSTOSS_FENSTER);
+    }
+
     #[test]
     fn matrix_deckt_kapitel_5_5() {
         let m = matrix();

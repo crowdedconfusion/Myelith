@@ -173,7 +173,7 @@ async fn zwei_knoten_finden_einander_und_protokollieren_es() {
 /// eine, die alles verwirft, sehen von einer Seite gleich aus.
 #[tokio::test]
 async fn ein_echter_block_kommt_an_unsinn_nicht() {
-    use myl_consensus::block::{Block, EpochMeta};
+    use myl_consensus::block::{Block, BlockHeader};
     use myl_types::hash::Hash;
 
     let verz = arbeitsverzeichnis("block");
@@ -188,8 +188,9 @@ async fn ein_echter_block_kommt_an_unsinn_nicht() {
     beta.warte_auf_peers(1, Duration::from_secs(20)).await;
     alpha.warte_auf_peers(1, Duration::from_secs(10)).await;
 
-    let block = Block::new(EpochMeta {
-        epoch: 1,
+    let block = Block::new(BlockHeader {
+        height: 1,
+        epoch: 0,
         prev_block_hash: Hash::sha256(b"genesis"),
         timestamp_ms: 1_700_000_000_000,
         state_root: Hash::sha256(b"zustand"),

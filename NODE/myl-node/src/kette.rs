@@ -53,22 +53,26 @@
 //! abweichendes Inferenzergebnis. **Ohne diesen Lauf wäre das erst im
 //! echten Netz aufgefallen.**
 //!
-//! # ⚑ Ein Block kennt seine eigene Höhe nicht
+//! # ⚑ Höhe und Epoche sind zwei Dinge (seit 2026-08-27)
 //!
-//! [`Block`] trägt `epoch`, `prev_block_hash`, `timestamp_ms` und
-//! `state_root`, aber **kein Höhenfeld**. Die Kette hängt allein am
-//! Vorgänger-Hash.
+//! [`BlockHeader`] trägt beide: `height` ist die Stellung in der Kette
+//! und wächst um genau eins je Block, `epoch` ist die Epoche und folgt
+//! aus der Höhe ([`epoche_fuer_hoehe`]). Bei 1 800 Blöcken je Epoche
+//! sind das eine Stunde Blockzeit und 1 800 Höhen.
 //!
-//! Für diesen Aufbau heißt das: Die Höhe führt jeder Knoten selbst, und
-//! ein Block, der außer der Reihe eintrifft, lässt sich nur über seinen
-//! Vorgänger einordnen, nicht über eine Nummer. Das ist keine
-//! Schwäche des Formats, sondern eine Eigenschaft, die man kennen muss,
-//! bevor man Synchronisierung baut: **Ein Knoten, der einen Block
-//! verpasst, kann die Lücke nicht benennen**, er merkt nur, dass der
-//! nächste nicht anschließt.
+//! **Bis dahin war es ein Feld für beides.** Die Probekette schrieb ihre
+//! Höhe in `epoch`, und das trug, solange eine Epoche ein Block war.
+//! Jede Frist „je Epoche" bedeutete damit in Wahrheit „je Block": Der
+//! Verfall von Credits nach einer Epoche war der Verfall nach einem
+//! Block, und die Streitfrist von 168 Epochen wären 168 Blöcke gewesen,
+//! also gut fünf Minuten statt sieben Tagen.
+//!
+//! Beide Felder werden beim Übernehmen geprüft: die Höhe gegen die
+//! eigene, die Epoche gegen die Umrechnung. Ein mitgeführter Wert, den
+//! niemand nachrechnet, ist ein Feld, das jeder setzen darf.
 
 use borsh::BorshDeserialize;
-use myl_consensus::block::{Block, EpochMeta, Transaction};
+use myl_consensus::block::{epoche_fuer_hoehe, Block, BlockHeader, Transaction};
 use myl_ledger::state::LedgerState;
 use myl_ledger::transitions::burn_to_credits;
 use myl_types::hash::Hash;
@@ -152,6 +156,21 @@ pub enum KettenFehler {
     /// errechnet. Irgendwo im Ledger-Pfad ist etwas nicht
     /// deterministisch.
     ZustandWeichtAb { erwartet: Hash, errechnet: Hash },
+    /// **Die Höhe im Kopf passt nicht zur Kette.**
+    ///
+    /// Der Vorgängerhash bindet die Kette schon; diese Prüfung hält das
+    /// Höhenfeld ehrlich. Ein Block, der anschließt und eine falsche
+    /// Höhe nennt, wäre sonst gültig und schickte jeden Nachzügler in
+    /// die Irre, denn an der Höhe zählt er seine Lücke ab.
+    HoeheWeichtAb { erwartet: u64, bekommen: u64 },
+    /// **Die Epoche im Kopf folgt nicht aus der Höhe.**
+    ///
+    /// Die Epoche ist eine Funktion der Höhe
+    /// (`myl_consensus::block::epoche_fuer_hoehe`). Sie steht trotzdem
+    /// im Kopf, damit ein Block für sich lesbar bleibt — geprüft wird
+    /// sie, weil an ihr der Verfall von Credits und das Fenster der
+    /// Verstoßhistorie hängen.
+    EpocheWeichtAb { erwartet: u64, bekommen: u64 },
 }
 
 impl std::fmt::Display for KettenFehler {
@@ -169,6 +188,14 @@ impl std::fmt::Display for KettenFehler {
                 "Zustandswurzel weicht ab: Block sagt {}, errechnet {}",
                 &erwartet.to_hex()[..16],
                 &errechnet.to_hex()[..16]
+            ),
+            Self::HoeheWeichtAb { erwartet, bekommen } => write!(
+                f,
+                "Höhe weicht ab: erwartet {erwartet}, Block sagt {bekommen}"
+            ),
+            Self::EpocheWeichtAb { erwartet, bekommen } => write!(
+                f,
+                "Epoche folgt nicht aus der Höhe: erwartet {erwartet}, Block sagt {bekommen}"
             ),
         }
     }
@@ -388,6 +415,15 @@ impl Kette {
     /// abgebrochen**: Eine Burn-Transaktion ohne Deckung ist kein Grund,
     /// den Block zu verwerfen, und beide Seiten überspringen sie gleich.
     fn anwenden(zustand: &mut LedgerState, txs: &[Transaction], epoch: u64) {
+        // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
+        // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
+        // benutzte die Epoche nur, um den Verfall auszurechnen, und
+        // niemand setzte `zustand.epoch`. Damit lief jede Prüfung, die
+        // an der laufenden Epoche hängt, gegen 0 — der Verfall von
+        // Credits ebenso wie das Fenster der Verstoßhistorie.
+        //
+        // Sie steht **vor** dem Anwenden, weil die Übergänge sie lesen.
+        zustand.epoch = EpochId(epoch);
         for tx in txs {
             match tx {
                 Transaction::Burn(b) => {
@@ -406,11 +442,13 @@ impl Kette {
     /// dasselbe und vergleichen.
     pub fn baue_block(&mut self) -> Block {
         let txs: Vec<Transaction> = std::mem::take(&mut self.mempool);
-        let epoch = self.hoehe + 1;
+        let hoehe = self.hoehe + 1;
+        let epoch = epoche_fuer_hoehe(hoehe);
 
         Self::anwenden(&mut self.zustand, &txs, epoch);
 
-        let mut block = Block::new(EpochMeta {
+        let mut block = Block::new(BlockHeader {
+            height: hoehe,
             epoch,
             prev_block_hash: self.letzter_hash,
             timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
@@ -420,10 +458,10 @@ impl Kette {
             block.add_transaction(tx);
         }
 
-        self.hoehe = epoch;
+        self.hoehe = hoehe;
         self.letzter_hash = block.hash();
         self.bekannt.insert(self.letzter_hash);
-        self.verlauf.insert(epoch, block.clone());
+        self.verlauf.insert(hoehe, block.clone());
         self.schreibe(&block);
         block
     }
@@ -438,10 +476,33 @@ impl Kette {
         if self.bekannt.contains(&hash) {
             return Err(KettenFehler::SchonBekannt);
         }
-        if block.epoch_meta.prev_block_hash != self.letzter_hash {
+        if block.header.prev_block_hash != self.letzter_hash {
             return Err(KettenFehler::PasstNichtAn {
                 erwartet: self.letzter_hash,
-                bekommen: block.epoch_meta.prev_block_hash,
+                bekommen: block.header.prev_block_hash,
+            });
+        }
+        // **Die Höhe wächst um genau eins.** Der Vorgängerhash bindet
+        // die Kette schon; die Höhe zusätzlich zu prüfen kostet nichts
+        // und hält ein Feld ehrlich, an dem die Nachlieferung ihre
+        // Lücke abzählt. Ein Kopf mit falscher Höhe wäre sonst ein
+        // gültiger Block, der einen Nachzügler in die Irre schickt.
+        let erwartete_hoehe = self.hoehe + 1;
+        if block.header.height != erwartete_hoehe {
+            return Err(KettenFehler::HoeheWeichtAb {
+                erwartet: erwartete_hoehe,
+                bekommen: block.header.height,
+            });
+        }
+        // **Und die Epoche folgt aus der Höhe.** Sie steht mit im Kopf,
+        // damit ein Block für sich lesbar bleibt; geprüft wird sie
+        // trotzdem, sonst wäre sie ein Feld, das jeder setzen darf und
+        // niemand nachrechnet — und daran hängen Verfall und Fristen.
+        let erwartete_epoche = epoche_fuer_hoehe(block.header.height);
+        if block.header.epoch != erwartete_epoche {
+            return Err(KettenFehler::EpocheWeichtAb {
+                erwartet: erwartete_epoche,
+                bekommen: block.header.epoch,
             });
         }
 
@@ -449,20 +510,20 @@ impl Kette {
         // eigene Zustand unberührt. Ein Knoten, der einem abweichenden
         // Block folgt, hätte den Befund verschluckt.
         let mut versuch = self.zustand.clone();
-        Self::anwenden(&mut versuch, &block.txs, block.epoch_meta.epoch);
+        Self::anwenden(&mut versuch, &block.txs, block.header.epoch);
         let errechnet = versuch.commitment();
-        if errechnet != block.epoch_meta.state_root {
+        if errechnet != block.header.state_root {
             return Err(KettenFehler::ZustandWeichtAb {
-                erwartet: block.epoch_meta.state_root,
+                erwartet: block.header.state_root,
                 errechnet,
             });
         }
 
         self.zustand = versuch;
-        self.hoehe = block.epoch_meta.epoch;
+        self.hoehe = block.header.height;
         self.letzter_hash = hash;
         self.bekannt.insert(hash);
-        self.verlauf.insert(block.epoch_meta.epoch, block.clone());
+        self.verlauf.insert(block.header.height, block.clone());
         // ⚑ Was der Block enthält, wartet nicht mehr.
         //
         // Ohne diese Zeile wächst der Mempool eines Knotens, der selbst
@@ -547,6 +608,111 @@ mod tests {
         );
     }
 
+    // --- Höhe und Epoche ------------------------------------------
+
+    /// **Die Höhe wächst je Block, die Epoche nicht.**
+    ///
+    /// Der Kern von Punkt 7. Bis zum 2026-08-27 war beides dasselbe
+    /// Feld; ein Block war eine Epoche, und jede Frist „je Epoche"
+    /// bedeutete in Wahrheit „je Block".
+    #[test]
+    fn die_hoehe_waechst_je_block_die_epoche_nicht() {
+        let mut k = Kette::probestand();
+        for erwartet in 1..=5u64 {
+            let b = k.baue_block();
+            assert_eq!(b.header.height, erwartet, "die Höhe zählt nicht mit");
+            assert_eq!(b.header.epoch, 0, "die Epoche ist mitgewandert");
+            assert_eq!(k.hoehe(), erwartet);
+        }
+    }
+
+    /// **Und an der Epochengrenze springt sie, genau einmal.**
+    ///
+    /// Ein Test, der nur die ersten Blöcke ansieht, bestünde auch dann,
+    /// wenn die Epoche **nie** wechselte — und eine Epoche, die nie
+    /// wechselt, ist dieselbe Doppelbelegung mit umgekehrtem Vorzeichen.
+    #[test]
+    fn an_der_epochengrenze_springt_die_epoche() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut k = Kette::probestand();
+        let mut wechsel = 0usize;
+        let mut vorige = 0u64;
+        for _ in 0..(BLOECKE_JE_EPOCHE + 2) {
+            let b = k.baue_block();
+            if b.header.epoch != vorige {
+                wechsel += 1;
+                assert_eq!(
+                    b.header.height, BLOECKE_JE_EPOCHE,
+                    "der Wechsel liegt nicht auf der Grenze"
+                );
+                vorige = b.header.epoch;
+            }
+        }
+        assert_eq!(wechsel, 1, "die Epoche wechselte {wechsel}-mal statt einmal");
+        assert_eq!(vorige, 1);
+    }
+
+    /// **Die Epoche des Ledger-Zustands wandert mit.**
+    ///
+    /// Sie stand bis zum 2026-08-27 auf 0 und blieb dort: `anwenden`
+    /// benutzte die Epoche nur zum Rechnen des Verfalls und setzte sie
+    /// nie. Jede Prüfung, die an der laufenden Epoche hängt — der
+    /// Verfall von Credits, das Fenster der Verstoßhistorie —, lief
+    /// damit gegen null.
+    #[test]
+    fn die_epoche_des_zustands_wandert_mit() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut k = Kette::probestand();
+        assert_eq!(k.zustand().epoch.0, 0);
+        for _ in 0..BLOECKE_JE_EPOCHE {
+            let _ = k.baue_block();
+        }
+        assert_eq!(
+            k.zustand().epoch.0,
+            1,
+            "der Zustand kennt die Epoche des Blocks nicht"
+        );
+    }
+
+    /// Ein Block mit falscher Höhe wird abgelehnt, auch wenn er sonst
+    /// anschließt.
+    #[test]
+    fn eine_falsche_hoehe_wird_abgelehnt() {
+        let mut erzeuger = Kette::probestand();
+        let mut folger = Kette::probestand();
+        let mut block = erzeuger.baue_block();
+        block.header.height = 7;
+        assert!(matches!(
+            folger.uebernimm(&block),
+            Err(KettenFehler::HoeheWeichtAb { erwartet: 1, bekommen: 7 })
+        ));
+        // Und der Zustand blieb unberührt.
+        assert_eq!(folger.hoehe(), 0);
+    }
+
+    /// Eine Epoche, die nicht aus der Höhe folgt, wird abgelehnt.
+    ///
+    /// **Die Gegenprobe steht daneben:** Derselbe Block mit der
+    /// richtigen Epoche geht durch. Ein Test, der nur ablehnt, bestünde
+    /// auch dann, wenn gar nichts mehr angenommen würde.
+    #[test]
+    fn eine_epoche_die_nicht_aus_der_hoehe_folgt_wird_abgelehnt() {
+        let mut erzeuger = Kette::probestand();
+        let mut folger = Kette::probestand();
+        let block = erzeuger.baue_block();
+
+        let mut gefaelscht = block.clone();
+        gefaelscht.header.epoch = 9;
+        assert!(matches!(
+            folger.uebernimm(&gefaelscht),
+            Err(KettenFehler::EpocheWeichtAb { erwartet: 0, bekommen: 9 })
+        ));
+        assert_eq!(folger.hoehe(), 0);
+
+        folger.uebernimm(&block).expect("der echte Block muss durchgehen");
+        assert_eq!(folger.hoehe(), 1);
+    }
+
     /// Zwei Ketten aus demselben Genesis sind gleich.
     #[test]
     fn zwei_frische_ketten_stimmen_ueberein() {
@@ -623,7 +789,7 @@ mod tests {
         let mut block = erzeuger.baue_block();
 
         // Jemand fälscht die Wurzel.
-        block.epoch_meta.state_root = Hash::sha256(b"etwas anderes");
+        block.header.state_root = Hash::sha256(b"etwas anderes");
 
         let vorher = folger.zustandswurzel();
         let fehler = folger.uebernimm(&block).expect_err("muss auffallen");
@@ -703,7 +869,7 @@ mod tests {
         erzeuger.aufnehmen(burn(1, 900));
         let _ = erzeuger.baue_block();
         let mut geliefert = erzeuger.bloecke_von_bis(1, 1);
-        geliefert[0].epoch_meta.state_root = Hash::sha256(b"untergeschoben");
+        geliefert[0].header.state_root = Hash::sha256(b"untergeschoben");
 
         let mut neuling = Kette::probestand();
         let fehler = neuling.uebernimm(&geliefert[0]).expect_err("muss auffallen");

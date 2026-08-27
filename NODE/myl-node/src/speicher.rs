@@ -90,7 +90,14 @@ pub const MAGIE: &[u8; 8] = b"MYLKETTE";
 ///
 /// Wird hochgezählt, sobald sich die Kodierung ändert. Eine Datei mit
 /// unbekannter Fassung wird **abgewiesen**, nicht geraten.
-pub const FASSUNG: u16 = 1;
+pub const FASSUNG: u16 = 2;
+// ⚑ Von 1 auf 2 am 2026-08-27: Der Blockkopf trägt seither ein
+// **Höhenfeld**, und damit ändert sich die Borsh-Kodierung jedes Satzes.
+// Eine Datei der alten Fassung würde beim Lesen nicht scheitern, sondern
+// **falsch geparst** — die Höhe des einen Blocks wäre die Epoche des
+// anderen. Genau dafür steht die Zahl im Kopf: Ein Wiederanlauf gegen
+// ein altes Protokoll bricht mit einer Meldung ab, statt eine Kette zu
+// erfinden.
 
 /// Länge des Kopfes: Magie (8) + Fassung (2) + Startwert (32).
 pub const KOPF_BYTES: u64 = 8 + 2 + 32;
@@ -376,7 +383,7 @@ impl Kettenspeicher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_consensus::block::{BurnTx, EpochMeta, Transaction};
+    use myl_consensus::block::{BurnTx, BlockHeader, Transaction};
     use myl_types::ids::Address;
 
     fn tempdir(name: &str) -> PathBuf {
@@ -398,8 +405,9 @@ mod tests {
     }
 
     fn block(hoehe: u64) -> Block {
-        let mut b = Block::new(EpochMeta {
-            epoch: hoehe,
+        let mut b = Block::new(BlockHeader {
+            height: hoehe,
+            epoch: myl_consensus::block::epoche_fuer_hoehe(hoehe),
             prev_block_hash: Hash::sha256(&hoehe.to_le_bytes()),
             timestamp_ms: 1_700_000_000_000 + hoehe,
             state_root: Hash::sha256(b"zustand"),

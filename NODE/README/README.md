@@ -1,10 +1,15 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.9.0
-> **Datum:** 2026-08-26
+> **Version:** 0.10.0
+> **Datum:** 2026-08-27
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
-> **158 Tests grün.**
+> **163 Tests grün.**
+>
+> ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
+> Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
+> trug, solange eine Epoche ein Block war. Jede Frist „je Epoche"
+> bedeutete damit in Wahrheit „je Block".
 
 ## Aufgabe
 
@@ -263,6 +268,40 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.10.0 – 2026-08-27 (Höhe und Epoche sind zwei Dinge)
+
+⚑ **Die Probekette benutzte das Epochenfeld als Blockhöhe.** Das trägt,
+solange eine Epoche ein Block ist, und bricht, sobald es das nicht mehr
+ist — und es war nicht folgenlos, sondern **still falsch**: Jede Frist
+„je Epoche" bedeutete in Wahrheit „je Block". Credits verfielen nach
+einem Block statt nach einer Stunde; die Streitfrist von 168 Epochen
+wären 168 Blöcke gewesen, also gut fünf Minuten statt sieben Tagen.
+
+Der Blockkopf trägt jetzt beides (`myl-consensus` v0.14.0): `height`
+wächst um genau eins je Block, `epoch` folgt aus der Höhe. Beim
+Übernehmen wird beides geprüft — die Höhe gegen die eigene, die Epoche
+gegen die Umrechnung. Zwei neue Ablehnungsgründe, `hoehe-weicht-ab` und
+`epoche-weicht-ab`, mit eigenen Marken im Betriebsprotokoll: Sie sind
+Befunde über den Absender und keine Anschlussprobleme, und wer sie unter
+`passt-nicht-an` führte, löste damit auch noch eine Nachforderung aus.
+
+⚑ **Und die Epoche des Ledger-Zustands stand auf null und blieb dort.**
+`anwenden` benutzte die Epoche nur zum Rechnen des Verfalls und setzte
+`zustand.epoch` nie. Jede Prüfung, die an der laufenden Epoche hängt,
+lief damit gegen null. Sie wandert jetzt mit; ein Test baut 1 800 Blöcke
+und verlangt, dass der Zustand danach Epoche 1 kennt.
+
+**Die Nachforderung hängt jetzt an `height`.** Der Modulkopf von
+`nachschub.rs` hat dieselbe Aussage in zwei Fassungen getragen und beide
+Male danebengelegen — einmal „die Lücke ist nicht benennbar", einmal
+„sie ist über `epoch` benennbar". Beide Male, weil dasselbe Feld zwei
+Bedeutungen hatte.
+
+**Die Formatfassung der Kettendatei steigt von 1 auf 2.** Ein Höhenfeld
+ändert die Borsh-Kodierung jedes Satzes; eine Datei der alten Fassung
+würde nicht scheitern, sondern **falsch geparst**. Genau dafür steht die
+Zahl im Kopf.
 
 ### v0.9.0 – 2026-08-26 (die Kette überlebt den Neustart)
 

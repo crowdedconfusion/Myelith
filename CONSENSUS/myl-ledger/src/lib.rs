@@ -27,7 +27,7 @@
 pub mod state;
 pub mod transitions;
 
-pub use state::{AccountState, LedgerState};
+pub use state::{AccountState, LedgerState, Verstoss, VERSTOSS_FENSTER};
 pub use transitions::{
     apply_verdict, burn_to_credits, credit_spend, SlashParams, TransitionError, Verdict,
     VerdictEffect, VerdictOutcome,

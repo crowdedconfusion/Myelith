@@ -1,11 +1,11 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.2.0
+> **Version:** 0.2.1
 > **Datum:** 2026-08-27
 > **Status:** **Phase 1 abgeschlossen** (Punkte 1.1–1.4): Parameter-Registry
 > mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
 > Invarianten-Kopplung, seit v0.2.0 auch die Kontrollsegment-Schranke aus
-> Fund 58. **35 Tests grün** (22 Akzeptanz, 13 Gleichstand).
+> Fund 58. **38 Tests grün** (22 Akzeptanz, 16 Gleichstand).
 >
 > **Was fehlt, ist die Abstimmungsmechanik selbst** (Phasen 2 und 3).
 > Heute prüft die Registry, ob ein Vorschlag zulässig **wäre**; wer über
@@ -130,6 +130,35 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.2.1 – 2026-08-27 (die drei Zehn-Epochen-Fenster, Blöcke je Epoche)
+
+Kein Bibliotheksbau, zwei Tests. Mit dem Verstoß-Zähler im Ledger gibt
+es **drei** Konstanten von zehn Epochen, und sie liegen in drei Crates:
+die Aufbewahrung der Verstoßhistorie (`myl-ledger`), das
+Staffelungsfenster der Slashing-Matrix (`myl-tokenomics`, seither
+dieselbe Konstante) und die Arbeitshistorie des Stimmgewichts
+(`myl-consensus`).
+
+**Die dritte ist absichtlich gleich, aber nicht gekoppelt:** Alle drei
+beantworten dieselbe Frage — wie lange das Verhalten eines Teilnehmers
+nachwirkt —, und zwei verschiedene Antworten darauf wären schwer zu
+begründen. Sie stehen trotzdem getrennt, damit eine spätere Entscheidung
+sie auseinanderziehen darf. Der Test macht daraus eine Entscheidung
+statt eines Versehens.
+
+**Warum hier:** `myl-tokenomics` kennt `myl-consensus` nicht und
+umgekehrt. Diese Komponente kennt beide; sie ist der einzige Ort, an dem
+die drei nebeneinanderliegen. Genau dafür gibt es `gleichstand.rs`.
+
+**Dazu ein vierter Gleichstand:** `myl_consensus::BLOECKE_JE_EPOCHE`
+gegen `Epochenlaenge` und `Blockzeit` (3600 s / 2 s = 1800). Die
+Konstante ordnet jede Blockhöhe einer Epoche zu und geht damit in die
+**Blockprüfung** ein; sie steht deshalb dort und nicht als Abfrage
+dieser Registry — eine Blockprüfung, die einen abstimmbaren Wert liest,
+macht die Gültigkeit eines Blocks von einem Zustand abhängig, der sich
+ändern kann, während der Block schon in der Kette steht. Der Test ist
+die Verbindung, dieselbe Bauart wie bei der Streitfrist.
 
 ### v0.2.0 – 2026-08-27 (Punkt 1.4: die Kontrollsegment-Schranke, ⚑ Fund 58)
 

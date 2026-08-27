@@ -1,6 +1,6 @@
 [package]
 name = "myl-governance"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.82"
 description = "Parameter-Governance für Myelith (Whitepaper Kap. 10.3): Registry aller Governance-Parameter mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs und Prüfung der Sicherheitsinvarianten aus Anhang B bereits am Vorschlag."
@@ -15,6 +15,13 @@ myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
 # dieselbe Arbeitsteilung wie bei `myl_tokenomics::s_min`. Kein Zyklus:
 # `myl-verifier` kennt diese Komponente nicht.
 myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
+
+[dev-dependencies]
+# Nur für `tests/gleichstand.rs`: Die drei Zehn-Epochen-Fenster
+# (Aufbewahrung im Ledger, Staffelung in TOKENOMICS, Arbeitshistorie in
+# CONSENSUS) liegen nur hier nebeneinander. Als Bibliothek braucht diese
+# Komponente den Ledger nicht — sie prüft Parameter, sie bucht nicht.
+myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 
 [lib]
 name = "myl_governance"

@@ -258,7 +258,7 @@ fn ein_veraenderter_block_faellt_beim_nachspielen_durch() {
     let (_, anlauf) = Kettenspeicher::oeffnen(&p, Kette::startwert()).unwrap();
     assert_eq!(anlauf.bloecke.len(), 3);
     let mut geaendert = anlauf.bloecke[1].clone();
-    geaendert.epoch_meta.prev_block_hash = Hash::sha256(b"etwas anderes");
+    geaendert.header.prev_block_hash = Hash::sha256(b"etwas anderes");
 
     // Die Datei neu schreiben, mit korrekten Prüfsummen.
     std::fs::remove_file(&p).unwrap();

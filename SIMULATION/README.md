@@ -1,7 +1,7 @@
 # Protokollsimulation und Sicherheitsaudit
 
-> **Version:** `myl-simulation` 0.1.1
-> **Datum:** 2026-08-26
+> **Version:** `myl-simulation` 0.1.2
+> **Datum:** 2026-08-27
 > **Status:** Ein Szenario läuft (Segmentweg über alle Schichten) mit
 > Abdeckungsbericht. `latency_sim.py` und `security_sim.py` aus M1 sind
 > noch Platzhalter.
@@ -18,3 +18,11 @@ nicht zusammen.
 
 Die Simulation liegt bewusst **außerhalb** der Komponenten-Crates: Sie
 darf an alle hängen, und keine hängt an ihr.
+
+⚑ **Was das am 27. August gekostet hätte, wenn niemand hingesehen
+hätte:** Die Naht „Urteil → Ledger" buchte mit einer getippten `0` als
+Vorgeschichte. Eine Naht, deren Zweck das Zusammenspiel dreier
+Komponenten ist, hätte damit auch dann grün gemeldet, wenn niemand
+Verstöße gezählt hätte. Sie fährt jetzt über
+`urteil_buchen_gestaffelt` und prüft, dass ein gebuchtes Urteil auch
+zählt — **eine Naht, die ihre eigenen Eingaben erfindet, prüft nichts.**

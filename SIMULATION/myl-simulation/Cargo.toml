@@ -1,6 +1,6 @@
 [package]
 name = "myl-simulation"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.82"
 description = "Protokollsimulation über alle Schichten: der Weg eines Segments von der Berechnung im Pod über PoI-Einreichung, Konsens und Epochenabschluss bis zur Buchung im Ledger, samt Angreiferszenarien."

@@ -106,6 +106,18 @@ pub struct VerdictEffect {
     pub slashed: u64,
     /// Ausgezahltes Kopfgeld.
     pub bounty: u64,
+    /// Verstöße des Schuldigen **vor** diesem Urteil, innerhalb von
+    /// [`crate::state::VERSTOSS_FENSTER`] Epochen.
+    ///
+    /// **Der Stand, gegen den der Satz gilt**, nicht der danach. Die
+    /// Staffelung der Slashing-Matrix zählt Vorverstöße: `0` ist der
+    /// erste Verstoß. Wer den Wert nach dem Buchen abfragte, bekäme
+    /// einen zu hohen und schlüge den nächsten Satz zu früh auf.
+    ///
+    /// Er steht hier, damit der Aufrufer belegen kann, welcher Satz zu
+    /// gelten hatte — der Übergang selbst prüft das nicht, er bekommt
+    /// die Anteile fertig.
+    pub vorverstoesse: u64,
 }
 
 /// `apply_verdict(v) → Stake slashen, Kopfgeld auszahlen, vTFE
@@ -117,6 +129,18 @@ pub struct VerdictEffect {
 /// unverteilt (faktisch verbrannt). Die vTFE-Rückbuchung des Segments
 /// erfolgt beim Epochenabschluss (Phase 4); dieser Übergang liefert die
 /// dafür nötigen Beträge im [`VerdictEffect`].
+///
+/// ⚑ **Er vermerkt außerdem einen Verstoß beim Schuldigen** (seit dem
+/// 2026-08-27). Das ist die Vorgeschichte, aus der die Slashing-Matrix
+/// ihre Staffelung zieht; sie steht im Konsenszustand, weil zwei Knoten
+/// mit verschiedenen Vorgeschichten verschieden hoch schlachten und
+/// damit auseinanderlaufen.
+///
+/// **Die Anteile bleiben Eingabe.** Dieser Übergang entscheidet nicht,
+/// wie hoch geschlachtet wird — das tut `myl-tokenomics`, und
+/// `myl_tokenomics::slashing::satz_aus_ledger` liest die Vorgeschichte
+/// dafür aus genau diesem Zustand. Die Arbeitsteilung „wer / wie viel /
+/// wie gebucht" bleibt unberührt.
 pub fn apply_verdict(
     state: &mut LedgerState,
     verdict: &Verdict,
@@ -156,10 +180,21 @@ pub fn apply_verdict(
         .checked_add(bounty)
         .ok_or(TransitionError::Overflow)?;
 
+    // Vorgeschichte **vor** dem Vermerk, damit der Aufrufer im Ergebnis
+    // sieht, gegen welchen Stand der Satz gegolten hat. Danach zu lesen
+    // wäre um eins zu hoch.
+    let vorverstoesse = state.verstoesse_im_fenster(&guilty, crate::state::VERSTOSS_FENSTER);
+
     // Änderungsphase.
     state.account_mut(&guilty).staked = staked - slashed;
     state.account_mut(&innocent).balance = innocent_balance + bounty;
-    Ok(VerdictEffect { slashed, bounty })
+    // **Der Vermerk gehört hierher und nirgendwo sonst.** Ein Urteil,
+    // das gebucht wird, ohne gezählt zu werden, macht die Staffelung zu
+    // einer Absichtserklärung: Der nächste Verstoß wäre wieder der
+    // erste. Weil er im selben Übergang steht, kann er nicht vergessen
+    // werden.
+    state.verstoss_vermerken(&guilty);
+    Ok(VerdictEffect { slashed, bounty, vorverstoesse })
 }
 
 /// `burn(addr, syn) → mint_credits(addr, syn / preis_e)` (Anhang A.5).
@@ -279,6 +314,7 @@ pub fn credit_spend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::VERSTOSS_FENSTER;
     use myl_types::ids::EpochId;
 
     fn adresse(byte: u8) -> Address {
@@ -387,7 +423,7 @@ mod tests {
         let effect =
             apply_verdict(&mut state, &verdict(VerdictOutcome::SlashMiner), &standard_params())
                 .expect("Verdict");
-        assert_eq!(effect, VerdictEffect { slashed: 500, bounty: 500 });
+        assert_eq!(effect, VerdictEffect { slashed: 500, bounty: 500, vorverstoesse: 0 });
         assert_eq!(state.account(&adresse(1)).staked, 500);
         assert_eq!(state.account(&adresse(2)).balance, davor_checker + 500);
     }
@@ -399,7 +435,7 @@ mod tests {
         let effect =
             apply_verdict(&mut state, &verdict(VerdictOutcome::SlashChecker), &standard_params())
                 .expect("Verdict");
-        assert_eq!(effect, VerdictEffect { slashed: 400, bounty: 400 });
+        assert_eq!(effect, VerdictEffect { slashed: 400, bounty: 400, vorverstoesse: 0 });
         assert_eq!(state.account(&adresse(2)).staked, 400);
         assert_eq!(state.account(&adresse(1)).balance, 400);
     }
@@ -418,10 +454,108 @@ mod tests {
         let effect =
             apply_verdict(&mut state, &verdict(VerdictOutcome::SlashMiner), &params)
                 .expect("Verdict");
-        assert_eq!(effect, VerdictEffect { slashed: 1_000, bounty: 500 });
+        assert_eq!(effect, VerdictEffect { slashed: 1_000, bounty: 500, vorverstoesse: 0 });
         assert_eq!(state.account(&adresse(1)).staked, 0);
         assert_eq!(state.account(&adresse(2)).balance, 500);
         // Die übrigen 500 sind nirgends gutgeschrieben (faktisch verbrannt).
+    }
+
+    /// **Gebucht heisst gezaehlt, und zwar beim Schuldigen.**
+    ///
+    /// Wuerde der Unschuldige mitgezaehlt, waere ein erfolgreicher
+    /// Checker nach drei gewonnenen Anfechtungen ein Wiederholungstaeter
+    /// — die Staffelung traefe genau den, der sie ausgeloest hat.
+    #[test]
+    fn ein_gebuchtes_urteil_zaehlt_beim_schuldigen() {
+        let mut state = LedgerState::genesis(10);
+        state.account_mut(&adresse(1)).staked = 1_000;
+        state.epoch = EpochId(4);
+
+        let effekt =
+            apply_verdict(&mut state, &verdict(VerdictOutcome::SlashMiner), &standard_params())
+                .expect("Verdict");
+        assert_eq!(effekt.vorverstoesse, 0, "der erste Verstoss hat keine Vorgeschichte");
+        assert_eq!(state.verstoesse_im_fenster(&adresse(1), VERSTOSS_FENSTER), 1);
+        assert_eq!(
+            state.verstoesse_im_fenster(&adresse(2), VERSTOSS_FENSTER),
+            0,
+            "der Unschuldige wurde mitgezaehlt"
+        );
+    }
+
+    /// `vorverstoesse` ist der Stand **vor** dem Urteil.
+    ///
+    /// Der Satz der Slashing-Matrix haengt daran: `0` ist der erste
+    /// Verstoss. Waere es der Stand danach, begaenne die Staffelung eine
+    /// Stufe zu hoch, und der erste Ausfall waere schon der zweite.
+    #[test]
+    fn vorverstoesse_zaehlt_den_stand_vor_dem_urteil() {
+        let mut state = LedgerState::genesis(10);
+        state.epoch = EpochId(2);
+        let params = SlashParams {
+            slash_fraction_num: 1,
+            slash_fraction_den: 100,
+            bounty_fraction_num: 0,
+            bounty_fraction_den: 1,
+        };
+        for erwartet in 0..4u64 {
+            state.account_mut(&adresse(1)).staked = 1_000_000;
+            let effekt =
+                apply_verdict(&mut state, &verdict(VerdictOutcome::SlashMiner), &params)
+                    .expect("Verdict");
+            assert_eq!(
+                effekt.vorverstoesse, erwartet,
+                "beim {}. Urteil wurden {} Vorverstoesse gemeldet",
+                erwartet + 1,
+                effekt.vorverstoesse
+            );
+        }
+    }
+
+    /// **Ein abgelehntes Urteil zaehlt nicht.**
+    ///
+    /// Sonst waere „ohne Deckung anklagen" ein Weg, die Vorgeschichte
+    /// eines anderen zu fuellen, ohne dass je etwas geschlachtet wurde.
+    /// Die Pruefphase liegt deshalb vollstaendig vor der Aenderungsphase,
+    /// und der Vermerk gehoert zur Aenderungsphase.
+    #[test]
+    fn ein_abgelehntes_urteil_zaehlt_nicht() {
+        let mut state = LedgerState::genesis(10);
+        state.epoch = EpochId(7);
+        // Kein Stake: der Uebergang scheitert.
+        assert!(apply_verdict(
+            &mut state,
+            &verdict(VerdictOutcome::SlashMiner),
+            &standard_params()
+        )
+        .is_err());
+        assert_eq!(state.verstoesse_im_fenster(&adresse(1), VERSTOSS_FENSTER), 0);
+
+        // Und mit unbrauchbaren Anteilen ebenso wenig.
+        state.account_mut(&adresse(1)).staked = 1_000;
+        let kaputt = SlashParams {
+            slash_fraction_num: 2,
+            slash_fraction_den: 1,
+            bounty_fraction_num: 1,
+            bounty_fraction_den: 1,
+        };
+        assert!(apply_verdict(&mut state, &verdict(VerdictOutcome::SlashMiner), &kaputt).is_err());
+        assert_eq!(state.verstoesse_im_fenster(&adresse(1), VERSTOSS_FENSTER), 0);
+    }
+
+    /// Ein geschlachteter Checker ist ebenso ein Wiederholungstaeter.
+    #[test]
+    fn auch_der_geschlachtete_checker_wird_gezaehlt() {
+        let mut state = LedgerState::genesis(10);
+        state.account_mut(&adresse(2)).staked = 1_000;
+        let _ = apply_verdict(
+            &mut state,
+            &verdict(VerdictOutcome::SlashChecker),
+            &standard_params(),
+        )
+        .expect("Verdict");
+        assert_eq!(state.verstoesse_im_fenster(&adresse(2), VERSTOSS_FENSTER), 1);
+        assert_eq!(state.verstoesse_im_fenster(&adresse(1), VERSTOSS_FENSTER), 0);
     }
 
     #[test]

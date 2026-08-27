@@ -11,20 +11,21 @@
 //! war vier Sekunden früher da, baute acht Blöcke, und die beiden
 //! anderen wiesen alle acht mit „passt nicht an" zurück.
 //!
-//! # ⚑ Korrektur einer früheren Aussage
+//! # ⚑ Woran ein Knoten seine Lücke abzählt (Stand 2026-08-27)
 //!
-//! In der ersten Fassung stand, ein Knoten könne die Lücke **nicht
-//! benennen**, weil `Block` kein Höhenfeld trägt. Das war falsch: Die
-//! Probekette schreibt die Höhe in `epoch_meta.epoch`, also weiß ein
-//! Knoten auf Höhe 0 beim Empfang von Epoche 8 genau, dass ihm 1 bis 7
-//! fehlen.
+//! **Am Höhenfeld des Blockkopfs**, und das gibt es seit dem
+//! 2026-08-27. Ein Knoten auf Höhe 0, der Höhe 8 empfängt, weiß damit
+//! genau, dass ihm 1 bis 7 fehlen.
 //!
-//! Was stimmt, und der Unterschied ist wichtig: Der **Protokolltyp**
-//! `Block` hat kein eigenes Höhenfeld; `epoch` bedeutet dort eine
-//! Epoche, nicht eine Blockhöhe. Für die Probekette wurden beide
-//! gleichgesetzt. Bevor daraus ein echtes Netz wird, gehört diese
-//! Doppelbelegung aufgelöst, sonst hängt die Synchronisierung an einer
-//! Bedeutung, die das Feld nicht hat.
+//! Zwei frühere Fassungen dieses Absatzes standen daneben, und beide
+//! Male aus demselben Grund: Der Protokolltyp trug **kein** Höhenfeld,
+//! die Probekette schrieb ihre Höhe in `epoch`, und dieselbe Zahl
+//! bedeutete je nach Leser eine Höhe oder eine Epoche. Die erste
+//! Fassung schloss daraus, die Lücke sei nicht benennbar; die zweite
+//! benannte sie richtig und über ein Feld, dessen Bedeutung eine andere
+//! war. **Aufgelöst ist die Doppelbelegung jetzt:** `height` zählt
+//! Blöcke, `epoch` folgt aus der Höhe, und die Nachforderung hängt an
+//! `height`.
 //!
 //! # Die Regel, die dieses Modul nicht bricht
 //!

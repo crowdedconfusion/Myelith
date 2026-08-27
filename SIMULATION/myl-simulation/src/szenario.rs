@@ -254,10 +254,8 @@ impl Protokolllauf {
         schuldiger: &Teilnehmer,
         checker: &Teilnehmer,
     ) -> Option<myl_ledger::VerdictEffect> {
-        use myl_tokenomics::slashing::{satz_gestaffelt, Akteur, Grund};
+        use myl_tokenomics::slashing::{urteil_buchen_gestaffelt, Akteur, Grund};
 
-        let satz = satz_gestaffelt(Akteur::ShardMiner, Grund::FalschesErgebnis, 0)?;
-        let params = satz.als_ledger_parameter();
         let verdict = myl_ledger::Verdict {
             segment_id: SegmentId::new([3u8; 32]),
             miner: schuldiger.adresse,
@@ -265,8 +263,22 @@ impl Protokolllauf {
             outcome: myl_ledger::VerdictOutcome::SlashMiner,
         };
         let vorher = self.ledger.account(&schuldiger.adresse).staked;
-        match myl_ledger::apply_verdict(&mut self.ledger, &verdict, &params) {
-            Ok(effekt) => {
+        let vorverstoesse_vorher = self
+            .ledger
+            .verstoesse_im_fenster(&schuldiger.adresse, myl_tokenomics::WIEDERHOLUNGSFENSTER);
+        // **Über den Weg, der die Reihenfolge festlegt** (seit
+        // 2026-08-27). Vorher stand hier `satz_gestaffelt(…, 0)`: eine
+        // getippte Null als Vorgeschichte, in einer Naht, deren Zweck
+        // gerade das Zusammenspiel dreier Komponenten ist. Die
+        // Staffelung wäre damit auch dann grün gewesen, wenn niemand
+        // gezählt hätte.
+        match urteil_buchen_gestaffelt(
+            &mut self.ledger,
+            &verdict,
+            Akteur::ShardMiner,
+            Grund::FalschesErgebnis,
+        ) {
+            Ok((effekt, _satz)) => {
                 let nachher = self.ledger.account(&schuldiger.adresse).staked;
                 if effekt.slashed == 0 {
                     self.melde(
@@ -282,6 +294,35 @@ impl Protokolllauf {
                         "Urteil → Ledger",
                         &format!("Stake {vorher} → {nachher}, geschlachtet {}", effekt.slashed),
                         "die Buchung stimmt nicht mit dem Effekt überein",
+                    );
+                }
+                // **Gebucht heißt gezählt.** Ohne diese Prüfung liefe
+                // die Naht auch dann durch, wenn der Verstoß-Zähler
+                // stehen bliebe, und die Slashing-Staffelung wäre wieder
+                // eine Tabelle, von der immer die erste Zeile gilt.
+                let nachher_verstoesse = self
+                    .ledger
+                    .verstoesse_im_fenster(&schuldiger.adresse, myl_tokenomics::WIEDERHOLUNGSFENSTER);
+                if nachher_verstoesse != vorverstoesse_vorher + 1 {
+                    self.melde(
+                        Schwere::Schwer,
+                        "Urteil → Ledger",
+                        &format!(
+                            "Verstöße {vorverstoesse_vorher} → {nachher_verstoesse} statt +1"
+                        ),
+                        "ein gebuchtes Urteil, das nicht zählt, macht die Staffelung wirkungslos",
+                    );
+                }
+                if effekt.vorverstoesse != vorverstoesse_vorher {
+                    self.melde(
+                        Schwere::Schwer,
+                        "Urteil → Ledger",
+                        &format!(
+                            "gemeldete Vorverstöße {} statt {vorverstoesse_vorher}",
+                            effekt.vorverstoesse
+                        ),
+                        "der Satz gilt gegen den Stand VOR dem Urteil; ein zu hoher \
+                         Stand schlägt die nächste Stufe zu früh auf",
                     );
                 }
                 Some(effekt)

@@ -1,12 +1,19 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.9.0
-> **Datum:** 2026-08-26
+> **Version:** 0.10.0
+> **Datum:** 2026-08-27
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 4 abgeschlossen**, Phase 5 offen
 > (Auslastungsboden und Subventionsplan).
-> **141 Tests grün** (121 Modultests, 17 adversariale, 3 Akzeptanz).
+> **147 Tests grün** (127 Modultests, 17 adversariale, 3 Akzeptanz).
+>
+> **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
+> dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
+> galt: Die Zahl der Vorverstöße war eine Eingabe, und niemand füllte
+> sie. Der Ledger führt sie jetzt, und `urteil_buchen_gestaffelt` setzt
+> Lesen, Bestimmen, Buchen und Vermerken in die einzige Reihenfolge, in
+> der sie zusammenpassen.
 >
 > Gebaut sind damit: Prägefunktion und EMA, Verteilung nach Kap. 5.3, die
 > vTFE-Zuschreibungsregel, ganzzahliges `exp()` und Credit-Preisbildung,
@@ -90,6 +97,47 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.10.0 – 2026-08-27 (die Staffelung bekommt ihre Vorgeschichte)
+
+**Die Staffelung aus Kap. 5.5 war bis dahin eine Absichtserklärung.**
+`satz_gestaffelt` kannte drei Stufen (1/3/5 % bei Nichtverfügbarkeit,
+30/65/100 % beim Validator) und nahm die Zahl der Vorverstöße als
+Eingabe entgegen. **Gefüllt hat sie niemand:** Die einzigen Aufrufer
+gaben eine getippte `0` mit. Es galt immer die erste Stufe, und ein
+Miner, der dauerhaft ausfällt, wurde behandelt wie einer mit einer
+schlechten Nacht.
+
+Der Ledger führt die Vorgeschichte jetzt (`myl-ledger` v0.3.0). Neu
+hier:
+
+- **`satz_aus_ledger`** — der gestaffelte Satz mit der Vorgeschichte aus
+  dem Zustand statt aus der Hand des Aufrufers.
+- **`urteil_buchen_gestaffelt`** — lesen, bestimmen, buchen, vermerken,
+  in dieser Reihenfolge.
+
+⚑ **Warum die zweite Funktion nötig ist, obwohl sie nur zwei andere
+aufruft:** Der Satz hängt an der Vorgeschichte **vor** dem Urteil, und
+das Buchen verändert genau diese Vorgeschichte. Wer die Aufrufe von Hand
+setzt, kann sie vertauschen, und der Fehler ist **still** — es wird
+geschlachtet, nur eine Stufe zu hoch. Ein Test stellt beide Reihenfolgen
+nebeneinander und hält fest, dass sie verschiedene Sätze ergeben; wären
+sie gleich, wäre die Reihenfolge gleichgültig und die Funktion
+überflüssig.
+
+**`WIEDERHOLUNGSFENSTER` ist keine eigene Zahl mehr**, sondern
+`myl_ledger::VERSTOSS_FENSTER`. Zwei Zahlen dafür wären die gefährlichere
+Bauart, weil die Abweichung leise ist: Läge das Staffelungsfenster über
+der Aufbewahrung, läse die Staffelung eine Vorgeschichte, die es nicht
+mehr gibt, und der Zähler stünde einfach niedriger. Niemand bekäme eine
+Fehlermeldung.
+
+**Belegt mit vier Tests, davon zwei Gegenproben:** Drei Urteile
+hintereinander ergeben 1/3/5 %; drei Urteile in weit auseinanderliegenden
+Epochen ergeben dreimal 1 % (sonst prüfte der erste Test nur, dass
+*irgendetwas* den Satz erhöht); der geschlachtete Checker bekommt seine
+eigene Vorgeschichte und nicht die des Miners; ein Paar ohne Zeile in
+Kap. 5.5 wird abgelehnt statt geraten.
 
 ### v0.9.0 – 2026-08-25 (⚑ Fund 60: der MoE-Term in der Gewichtsarbeit)
 

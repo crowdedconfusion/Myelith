@@ -6,6 +6,39 @@ use myl_types::Hash;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+/// Wie viele Epochen weit die Verstoßhistorie eines Kontos zurückreicht.
+///
+/// **Eine Aufbewahrungsfrist, keine Politik.** Sie begrenzt, wie viel
+/// Zustand ein Konto tragen kann: Nach jedem Vermerk stehen höchstens so
+/// viele Einträge in [`AccountState::verstoesse`], wie hier Epochen
+/// genannt sind. Ohne diese Grenze wüchse der Konsenszustand mit jedem
+/// Urteil weiter, und zwar dauerhaft.
+///
+/// ⚑ **Wer daran dreht, dreht zugleich an der Slashing-Staffelung.**
+/// `myl_tokenomics::WIEDERHOLUNGSFENSTER` **ist** diese Konstante und
+/// keine zweite daneben; eine Staffelung über ein längeres Fenster als
+/// die Aufbewahrung würde eine Vorgeschichte lesen, die es nicht mehr
+/// gibt, und das fiele niemandem auf — der Zähler stünde einfach
+/// niedriger. Dieselbe Klasse wie γ und der Kontrollsegment-Vorrat: Ein
+/// Wert, der eine Schutzwirkung verstärkt, kann eine andere aufzehren.
+pub const VERSTOSS_FENSTER: u64 = 10;
+
+/// Ein Eintrag der Verstoßhistorie: wie oft ein Konto in **einer**
+/// Epoche geschlachtet wurde.
+///
+/// **Je Epoche ein Eintrag, nicht je Verstoß.** Ein Konto, das in
+/// derselben Epoche zehnmal auffällt, trägt einen Eintrag mit `anzahl =
+/// 10` statt zehn Einträgen. Sonst hinge die Größe des Konsenszustands
+/// daran, wie oft jemand auffällt, und das ist genau die Größe, die ein
+/// Angreifer selbst bestimmt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Verstoss {
+    /// Die Epoche, in der die Verstöße gebucht wurden.
+    pub epoche: EpochId,
+    /// Wie viele es in dieser Epoche waren.
+    pub anzahl: u32,
+}
+
 /// Zustand eines Kontos (Adresse).
 ///
 /// - `balance`: verfügbare MYL-Kleinstbeträge
@@ -13,11 +46,20 @@ use std::collections::BTreeMap;
 /// - `credits`: noch nicht verbrauchte Inferenz-Credits (vTFE),
 ///   aufsteigend nach Verfalls-Epoche geordnet (Ausgabereihenfolge:
 ///   zuerst verfallende Credits, siehe `credit_spend`).
+/// - `verstoesse`: Verstoßhistorie, aufsteigend nach Epoche, gekürzt auf
+///   [`VERSTOSS_FENSTER`] (siehe [`LedgerState::verstoesse_im_fenster`]).
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct AccountState {
     pub balance: u64,
     pub staked: u64,
     pub credits: Vec<myl_types::InferenceCredit>,
+    /// Wann dieses Konto geschlachtet wurde, je Epoche gezählt.
+    ///
+    /// **Ein Konsensfeld.** Es geht in [`LedgerState::commitment`] ein,
+    /// weil die Slashing-Staffelung daraus folgt: Zwei Knoten, die
+    /// verschiedene Vorgeschichten führen, schlachten verschieden hoch
+    /// und kommen zu verschiedenen Zuständen.
+    pub verstoesse: Vec<Verstoss>,
 }
 
 impl AccountState {
@@ -27,6 +69,7 @@ impl AccountState {
             balance: 0,
             staked: 0,
             credits: Vec::new(),
+            verstoesse: Vec::new(),
         }
     }
 }
@@ -65,6 +108,67 @@ impl LedgerState {
     /// Konto zur Veränderung lesen bzw. anlegen.
     pub fn account_mut(&mut self, addr: &Address) -> &mut AccountState {
         self.accounts.entry(*addr).or_insert_with(AccountState::empty)
+    }
+
+    /// Wie oft dieses Konto innerhalb der letzten `fenster` Epochen
+    /// geschlachtet wurde, die laufende eingeschlossen.
+    ///
+    /// **Rein lesend und ohne Kürzung.** Der Aufruf verändert nichts,
+    /// auch nicht die Historie: Würde er dabei alte Einträge wegräumen,
+    /// hinge der Zustand daran, **wer wann gelesen hat**, und zwei
+    /// Knoten mit unterschiedlicher Lesereihenfolge kämen zu
+    /// verschiedenen Verpflichtungen. Gekürzt wird ausschließlich beim
+    /// Vermerken, also in einem Übergang. Dasselbe Muster wie bei den
+    /// verfallenen Credits in `credit_spend`.
+    ///
+    /// `fenster = 0` ergibt null: kein Fenster, keine Vorgeschichte.
+    /// Ein Fenster, das über die Epoche 0 hinausreicht, wird bei 0
+    /// abgeschnitten statt umzulaufen.
+    pub fn verstoesse_im_fenster(&self, addr: &Address, fenster: u64) -> u64 {
+        if fenster == 0 {
+            return 0;
+        }
+        let ab = EpochId(self.epoch.0.saturating_sub(fenster.saturating_sub(1)));
+        self.accounts
+            .get(addr)
+            .map(|k| {
+                k.verstoesse
+                    .iter()
+                    .filter(|v| v.epoche >= ab && v.epoche <= self.epoch)
+                    .fold(0u64, |summe, v| summe.saturating_add(v.anzahl as u64))
+            })
+            .unwrap_or(0)
+    }
+
+    /// Vermerkt einen Verstoß in der laufenden Epoche und kürzt die
+    /// Historie auf [`VERSTOSS_FENSTER`].
+    ///
+    /// **Nicht öffentlich, und das ist die Zusage.** Der einzige Weg,
+    /// einen Verstoß in den Zustand zu bekommen, führt über ein
+    /// gebuchtes Urteil ([`crate::transitions::apply_verdict`]). Wäre
+    /// das Vermerken von außen aufrufbar, gäbe es zwei Wege zu
+    /// derselben Tatsache — einen, der schlachtet und zählt, und einen,
+    /// der nur zählt. Genau daraus entstehen Zähler, die von dem
+    /// abweichen, was tatsächlich geschehen ist.
+    ///
+    /// **Gekürzt wird vor dem Zählen**, damit die Länge der Historie
+    /// nach jedem Vermerk höchstens [`VERSTOSS_FENSTER`] Einträge
+    /// beträgt, unabhängig davon, wie lange das Konto ruhig war.
+    pub(crate) fn verstoss_vermerken(&mut self, addr: &Address) {
+        let jetzt = self.epoch;
+        let ab = EpochId(jetzt.0.saturating_sub(VERSTOSS_FENSTER.saturating_sub(1)));
+        let konto = self.account_mut(addr);
+        konto.verstoesse.retain(|v| v.epoche >= ab && v.epoche <= jetzt);
+        match konto.verstoesse.iter_mut().find(|v| v.epoche == jetzt) {
+            Some(v) => v.anzahl = v.anzahl.saturating_add(1),
+            None => {
+                konto.verstoesse.push(Verstoss { epoche: jetzt, anzahl: 1 });
+                // Aufsteigend nach Epoche: Die Ordnung ist
+                // Konsens-Eigenschaft wie die der Konten, denn sie geht
+                // in die Serialisierung und damit in das Commitment ein.
+                konto.verstoesse.sort_by_key(|v| v.epoche.0);
+            }
+        }
     }
 
     /// Kanonische Zustands-Verpflichtung: SHA-256 über die
@@ -115,6 +219,138 @@ mod tests {
 
         b.account_mut(&adresse(1)).balance = 11;
         assert_ne!(a.commitment(), b.commitment());
+    }
+
+    // --- Verstoßhistorie ---------------------------------------------
+
+    /// Gezählt wird, was im Fenster liegt, und nur das.
+    #[test]
+    fn nur_verstoesse_im_fenster_zaehlen() {
+        let mut state = LedgerState::genesis(100);
+        let a = adresse(1);
+
+        state.epoch = EpochId(1);
+        state.verstoss_vermerken(&a);
+        state.epoch = EpochId(5);
+        state.verstoss_vermerken(&a);
+        state.verstoss_vermerken(&a);
+
+        // Fenster 10 ab Epoche 5 reicht bis Epoche 0: alle drei zaehlen.
+        assert_eq!(state.verstoesse_im_fenster(&a, VERSTOSS_FENSTER), 3);
+        // Fenster 5 ab Epoche 5 reicht bis Epoche 1: ebenfalls alle drei.
+        assert_eq!(state.verstoesse_im_fenster(&a, 5), 3);
+        // Fenster 2 ab Epoche 5 reicht bis Epoche 4: nur die beiden aus 5.
+        assert_eq!(state.verstoesse_im_fenster(&a, 2), 2);
+        // Kein Fenster, keine Vorgeschichte.
+        assert_eq!(state.verstoesse_im_fenster(&a, 0), 0);
+        // Ein unbeteiligtes Konto hat keine.
+        assert_eq!(state.verstoesse_im_fenster(&adresse(2), VERSTOSS_FENSTER), 0);
+    }
+
+    /// **Ein Fenster ueber die Epoche 0 hinaus laeuft nicht um.**
+    ///
+    /// Ohne die saettigende Subtraktion ergaebe `0 - 9` die Untergrenze
+    /// `u64::MAX`, und die Bedingung `epoche >= ab` waere fuer **keinen**
+    /// Eintrag erfuellt: Die Vorgeschichte waere in den ersten Epochen des
+    /// Netzes leer, und die Staffelung damit abgeschaltet, genau in der
+    /// Zeit, in der sie am ehesten gebraucht wird.
+    #[test]
+    fn ein_fenster_vor_der_ersten_epoche_laeuft_nicht_um() {
+        let mut state = LedgerState::genesis(100);
+        let a = adresse(1);
+        state.epoch = EpochId(0);
+        state.verstoss_vermerken(&a);
+        assert_eq!(state.verstoesse_im_fenster(&a, VERSTOSS_FENSTER), 1);
+        assert_eq!(state.verstoesse_im_fenster(&a, u64::MAX), 1);
+    }
+
+    /// **Die Historie waechst nicht ueber das Fenster hinaus.**
+    ///
+    /// Sonst haenge die Groesse des Konsenszustands daran, wie oft jemand
+    /// auffaellt, und das ist eine Groesse, die ein Angreifer selbst
+    /// bestimmt.
+    #[test]
+    fn die_historie_bleibt_auf_das_fenster_begrenzt() {
+        let mut state = LedgerState::genesis(100);
+        let a = adresse(1);
+        for e in 0..200u64 {
+            state.epoch = EpochId(e);
+            // Mehrfach je Epoche: Der zweite Vermerk darf keinen zweiten
+            // Eintrag erzeugen.
+            state.verstoss_vermerken(&a);
+            state.verstoss_vermerken(&a);
+            assert!(
+                state.account(&a).verstoesse.len() as u64 <= VERSTOSS_FENSTER,
+                "nach Epoche {e} stehen {} Eintraege",
+                state.account(&a).verstoesse.len()
+            );
+        }
+        // Und gezaehlt wird trotzdem richtig: zwei je Epoche ueber das Fenster.
+        assert_eq!(
+            state.verstoesse_im_fenster(&a, VERSTOSS_FENSTER),
+            2 * VERSTOSS_FENSTER
+        );
+    }
+
+    /// **Lesen veraendert nichts, auch nicht die Historie.**
+    ///
+    /// Raeumte das Lesen alte Eintraege weg, hinge der Zustand daran, wer
+    /// wann gelesen hat, und zwei Knoten mit verschiedener
+    /// Lesereihenfolge kaemen zu verschiedenen Verpflichtungen. Das ist
+    /// der Grund, warum ausschliesslich der Uebergang kuerzt.
+    #[test]
+    fn lesen_veraendert_die_verpflichtung_nicht() {
+        let mut state = LedgerState::genesis(100);
+        let a = adresse(1);
+        state.epoch = EpochId(3);
+        state.verstoss_vermerken(&a);
+        state.epoch = EpochId(80); // weit ausserhalb des Fensters
+
+        let vorher = state.commitment();
+        for fenster in [0u64, 1, VERSTOSS_FENSTER, u64::MAX] {
+            let _ = state.verstoesse_im_fenster(&a, fenster);
+        }
+        assert_eq!(vorher, state.commitment(), "das Lesen hat den Zustand bewegt");
+        // Der alte Eintrag liegt noch da und zaehlt trotzdem nicht mehr.
+        assert_eq!(state.account(&a).verstoesse.len(), 1);
+        assert_eq!(state.verstoesse_im_fenster(&a, VERSTOSS_FENSTER), 0);
+    }
+
+    /// **Die Historie ist Konsensfeld, nicht Beiwerk.**
+    ///
+    /// Zwei Zustaende, die sich nur in ihr unterscheiden, muessen
+    /// verschiedene Verpflichtungen tragen — sonst koennten zwei Knoten
+    /// mit verschiedenen Vorgeschichten denselben Block bestaetigen und
+    /// beim naechsten Urteil verschieden hoch schlachten.
+    #[test]
+    fn die_historie_geht_in_die_verpflichtung_ein() {
+        let mut ohne = LedgerState::genesis(100);
+        ohne.account_mut(&adresse(1)).staked = 10;
+        let mut mit = ohne.clone();
+        assert_eq!(ohne.commitment(), mit.commitment());
+        mit.verstoss_vermerken(&adresse(1));
+        assert_ne!(
+            ohne.commitment(),
+            mit.commitment(),
+            "ein vermerkter Verstoss blieb ohne Wirkung auf die Verpflichtung"
+        );
+    }
+
+    /// Die Reihenfolge der Eintraege haengt nicht an der Reihenfolge der
+    /// Epochen, in denen vermerkt wurde.
+    #[test]
+    fn die_historie_ist_nach_epoche_geordnet() {
+        let mut state = LedgerState::genesis(100);
+        let a = adresse(1);
+        for e in [5u64, 2, 7, 1] {
+            state.epoch = EpochId(e);
+            state.verstoss_vermerken(&a);
+        }
+        let epochen: Vec<u64> =
+            state.account(&a).verstoesse.iter().map(|v| v.epoche.0).collect();
+        let mut sortiert = epochen.clone();
+        sortiert.sort_unstable();
+        assert_eq!(epochen, sortiert, "die Historie steht nicht aufsteigend");
     }
 
     #[test]

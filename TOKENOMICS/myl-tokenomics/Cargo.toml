@@ -1,6 +1,6 @@
 [package]
 name = "myl-tokenomics"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Tokenomik-Berechnungen für Myelith (Whitepaper Kap. 5): Prägefunktion, Verteilung, Credit-Preisbildung, Staking/Slashing-Matrix. Durchgehend Fixed-Point-Ganzzahl-Arithmetik (Brüche als Zähler/Nenner-Paare) — jede Formel ist ein Ledger-Zustandsübergang und muss auf jedem Node bitgleich nachrechenbar sein."

@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.16.0
+> **Version:** 0.17.0
 > **Datum:** 2026-08-27
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -499,7 +499,7 @@ nicht vergleichbar.
 | Abbruch mit SIGINT mitten im Lauf | Protokoll lesbar, letzte Zeile gültiges JSON, kein `run_finished`; `vergleich` kennzeichnet es als unvollständig |
 | `determinismus --plan standard` | 6 Prompts × 32 Token, je zwei Läufe **bitgleich**, Gesamtwert `fd64588fd46a7af8…`, 29 s |
 | `shard --shards 4 --steps 4` | Pod (Layer 0–6/6–12/12–18/18–24) **bitgleich** zur Einzelknoten-Runtime, Digest `6541c129…` |
-| `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `a9af743f…` |
+| `stack` | 10 von 10 Stufen bestanden in 54 ms, Gesamtwert `8c74519a…` (bis zum 2026-08-27 `a9af743f…`; der Wert hängt am Code, nicht an der Maschine) |
 | `vergleich` über zwei Läufe derselben Maschine | Urteil `KEIN NACHWEIS (eine Maschine)`, Exit-Code 1, die Verweigerung greift |
 
 Der Shard-Lauf erfüllt damit das Akzeptanzkriterium aus
@@ -507,6 +507,25 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.17.0 – 2026-08-27 (der Protokoll-Durchlauf prüft die Slashing-Staffelung)
+
+⚑ **Der Gesamtwert des Protokoll-Durchlaufs ändert sich mit dieser
+Fassung**, von `a9af743fba0e77dc` auf `8c74519a11dceae5`. Das ist kein
+Befund über eine Maschine, sondern über den Code, und es sind **zwei**
+Ursachen: Der Ledger führt seit `myl-ledger` v0.3.0 eine Verstoßhistorie
+je Konto, die in die Zustandsverpflichtung eingeht, und der Blockkopf
+trägt seit `myl-consensus` v0.14.0 ein Höhenfeld, das die Blockkodierung
+von 137 auf 145 Byte bringt.
+**Wer Protokolle über diese Fassung hinweg vergleicht, vergleicht zwei
+Codestände** — `vergleich` meldet das als Befund, und zu Recht.
+
+**Die Stufe prüft dafür mehr.** Sie belegt jetzt drei Dinge, die vorher
+niemand prüfte: dass ein gebuchtes Urteil beim Schuldigen **gezählt**
+wird, dass der gemeldete Stand der Stand **vor** dem Urteil ist, und dass
+die Staffelung aus Kap. 5.5 über drei Urteile 1/3/5 % ergibt. Vorher galt
+immer die erste Stufe, weil die Zahl der Vorverstöße eine Eingabe war,
+die niemand füllte.
 
 ### v0.16.0 – 2026-08-27 (Konformitätslauf und Maschinenbeschreibung)
 
@@ -592,7 +611,7 @@ Architektur.** Ein Verzeichnis mit genau den Dateien, die ein frischer
 Klon mitbringt — 582 Stück, ohne Ausgabeverzeichnis, ohne Modelle, ohne
 Artefakte, ohne Python-Umgebung —, gebaut und gestartet über den Starter:
 Der Bau läuft durch, der Protokoll-Durchlauf liefert 10 von 10 Stufen mit
-dem bekannten Gesamtwert `a9af743fba0e77dc`, `konformitaet` ohne Artefakt
+dem damals bekannten Gesamtwert `a9af743fba0e77dc`, `konformitaet` ohne Artefakt
 6 von 6 mit `894d8357ae92b5c1`, `artefakte` meldet zu Recht Exit 1,
 `vergleich` verweigert bei einer Maschine das Urteil, und das Menü läuft
 auch ohne Terminal. **Was damit nicht belegt ist:** derselbe Durchgang

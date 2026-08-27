@@ -38,10 +38,64 @@ use myl_types::core_types::PoIBundle;
 use myl_types::hash::Hash;
 use myl_types::ids::{Address, MinerId};
 
-/// Epochen-Metadaten im Block.
+/// Wie viele Blöcke auf eine Epoche gehen.
+///
+/// **Abgeleitet, nicht gesetzt:** Epochenlänge geteilt durch Blockzeit,
+/// also 3600 s / 2 s. Beide sind Governance-Parameter
+/// (`myl_governance::Parameter::{Epochenlaenge, Blockzeit}`), und ein
+/// Test dort hält diese Zahl gegen sie.
+///
+/// ⚑ **Der Wert steht hier als Konstante und nicht als Abfrage der
+/// Registry**, und das ist Absicht: Die Zuordnung Höhe → Epoche geht in
+/// die Blockprüfung ein, und eine Blockprüfung, die einen abstimmbaren
+/// Wert liest, macht die Gültigkeit eines Blocks von einem Zustand
+/// abhängig, der sich ändern kann, während der Block schon in der Kette
+/// steht. Wer die Epochenlänge ändern will, ändert damit einen
+/// Konsensvertrag und nicht einen Parameter.
+pub const BLOECKE_JE_EPOCHE: u64 = 1_800;
+
+/// Die Epoche, zu der eine Blockhöhe gehört.
+///
+/// **Die Epoche folgt aus der Höhe, nicht aus der Uhr.** Eine
+/// Zuordnung über Zeitstempel wäre nicht deterministisch: Zwei ehrliche
+/// Knoten mit leicht verschiedenen Uhren ordneten denselben Block
+/// verschiedenen Epochen zu, und damit fiele die Zustandswurzel
+/// auseinander. Die Höhe ist die einzige Größe, über die sich alle
+/// einig sind, bevor sie sich einig sein müssen.
+///
+/// **Was das kostet, gehört dazugesagt:** Stehen die Blöcke still,
+/// stehen auch die Epochen still. Prägung, EMA und Fristen hängen dann
+/// am Fortschritt der Kette und nicht an der Wanduhr. Für ein
+/// Protokoll, dessen Arbeit ohnehin in Blöcken abgerechnet wird, ist das
+/// die richtige Richtung; für eine Frist, die in Sekunden gedacht ist,
+/// ist es eine Näherung, die man kennen muss.
+pub fn epoche_fuer_hoehe(hoehe: u64) -> u64 {
+    hoehe / BLOECKE_JE_EPOCHE
+}
+
+/// Der Kopf eines Blocks.
+///
+/// ⚑ **Hieß bis zum 2026-08-27 `BlockHeader`, und der Name war der
+/// Fehler.** Er trug kein Höhenfeld, und die Probekette hat deshalb die
+/// Höhe in `epoch` geschrieben — eine Doppelbelegung, die trägt, solange
+/// eine Epoche ein Block ist, und bricht, sobald es das nicht mehr ist.
+/// Ein Kopf, der die Höhe führt, heißt nicht nach der Epoche.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct EpochMeta {
+pub struct BlockHeader {
+    /// Blockhöhe: die Stellung in der Kette, um genau eins wachsend.
+    ///
+    /// **Der Genesis-Block hat Höhe 0.** Die Höhe ist die Größe, an der
+    /// ein Nachzügler seine Lücke abzählt, und sie ist die einzige, die
+    /// das darf: Sie wächst um eins je Block, ohne Ausnahme.
+    pub height: u64,
     /// Epochennummer.
+    ///
+    /// **Folgt aus der Höhe** ([`epoche_fuer_hoehe`]) und wird beim
+    /// Übernehmen dagegen geprüft. Sie steht trotzdem im Kopf, damit ein
+    /// Block für sich lesbar bleibt — wer ihn aus dem Speicher holt,
+    /// soll nicht erst die Umrechnung kennen müssen. Ein mitgeführter
+    /// Wert, der geprüft wird, ist keine zweite Wahrheit, sondern eine
+    /// Prüfsumme; einer, der es nicht wird, ist eine Einladung.
     pub epoch: u64,
     /// Vorheriger Block-Hash.
     pub prev_block_hash: Hash,
@@ -83,7 +137,7 @@ pub enum Transaction {
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct Block {
     /// Epochen-Metadaten.
-    pub epoch_meta: EpochMeta,
+    pub header: BlockHeader,
     /// Transaktionen.
     pub txs: Vec<Transaction>,
     /// PoI-Bündel (Anhang A.1 — je Epoche und Pod eines).
@@ -97,9 +151,9 @@ pub struct Block {
 
 impl Block {
     /// Erstellt einen neuen, leeren Block.
-    pub fn new(epoch_meta: EpochMeta) -> Self {
+    pub fn new(header: BlockHeader) -> Self {
         Self {
-            epoch_meta,
+            header,
             txs: Vec::new(),
             poi_bundles: Vec::new(),
             challenges: Vec::new(),
@@ -180,8 +234,10 @@ mod tests {
         Hash::sha256(&[byte])
     }
 
-    fn test_meta() -> EpochMeta {
-        EpochMeta {
+    fn test_meta() -> BlockHeader {
+        BlockHeader {
+            // Höhe und Epoche passen zueinander: 42 · 1800.
+            height: 42 * BLOECKE_JE_EPOCHE,
             epoch: 42,
             prev_block_hash: test_hash(0),
             timestamp_ms: 1_700_000_000_000,
@@ -223,7 +279,7 @@ mod tests {
     #[test]
     fn block_creation() {
         let block = Block::new(test_meta());
-        assert_eq!(block.epoch_meta.epoch, 42);
+        assert_eq!(block.header.epoch, 42);
         assert_eq!(block.total_entries(), 0);
     }
 

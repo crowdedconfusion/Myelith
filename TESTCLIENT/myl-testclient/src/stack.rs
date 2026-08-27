@@ -29,7 +29,7 @@
 //! Diagnosewerkzeug.
 
 use myl_consensus::bft::{BftState, Commit, Propose, Vote};
-use myl_consensus::block::{Block, BurnTx, EpochMeta, Transaction};
+use myl_consensus::block::{Block, BurnTx, BlockHeader, Transaction};
 use myl_consensus::signing::{commit_message, propose_message, vote_message};
 use myl_consensus::validator::{select_committee, ValidatorRegistry, VotingSet};
 use myl_consensus::{DoubleSignProof, SignedBlocksRegistry};
@@ -456,7 +456,8 @@ fn stufe_double_signing() -> Stufe {
 // ── Stufe 7: Block mit kanonischen Typen (myl-consensus) ────────────
 
 fn stufe_block() -> Stufe {
-    let meta = EpochMeta {
+    let meta = BlockHeader {
+        height: 75_600,
         epoch: 42,
         prev_block_hash: Hash::sha256(b"prev"),
         timestamp_ms: 1_700_000_000_000,
@@ -471,12 +472,41 @@ fn stufe_block() -> Stufe {
 
     // state_root muss in den Blockhash eingehen: sonst wäre eine
     // falsch gebuchte Zustandsänderung nicht erkennbar.
-    let mut meta2 = block.epoch_meta.clone();
+    let mut meta2 = block.header.clone();
     meta2.state_root = Hash::sha256(b"anderer-state");
     let block2 = Block::new(meta2);
     if block2.hash() == h1 {
         return Stufe::fehler("block", "state_root geht nicht in den Blockhash ein");
     }
+    // **Höhe und Epoche sind zwei Dinge** (seit 2026-08-27). Der Kopf
+    // trägt beide, und die Epoche folgt aus der Höhe. Ohne diese Prüfung
+    // liefe der Durchlauf auch dann durch, wenn beide wieder dasselbe
+    // wären — und dann bedeutete jede Frist „je Epoche" in Wahrheit
+    // „je Block".
+    let gerechnet = myl_consensus::epoche_fuer_hoehe(block.header.height);
+    if gerechnet != block.header.epoch {
+        return Stufe::fehler(
+            "block",
+            format!(
+                "Höhe {} gehört zu Epoche {gerechnet}, der Kopf sagt {}",
+                block.header.height, block.header.epoch
+            ),
+        );
+    }
+    // Und die Grenze liegt, wo sie liegen soll: Der nächste Block
+    // gehört noch zur selben Epoche, der um eine Epochenlänge höhere
+    // zur nächsten. Ein Test nur auf Gleichheit bestünde auch dann,
+    // wenn jede Höhe ihre eigene Epoche wäre — die alte Doppelbelegung.
+    let h = block.header.height;
+    if myl_consensus::epoche_fuer_hoehe(h + 1) != block.header.epoch {
+        return Stufe::fehler("block", "schon der nächste Block liegt in einer neuen Epoche");
+    }
+    if myl_consensus::epoche_fuer_hoehe(h + myl_consensus::BLOECKE_JE_EPOCHE)
+        != block.header.epoch + 1
+    {
+        return Stufe::fehler("block", "eine Epochenlänge weiter ist nicht die nächste Epoche");
+    }
+
     let bytes = match borsh_roundtrip(&block) {
         Ok(b) => b,
         Err(e) => return Stufe::fehler("block", e),
@@ -484,7 +514,15 @@ fn stufe_block() -> Stufe {
     Stufe::ok(
         "block",
         sha256_hex(h1.as_bytes()),
-        format!("{} Einträge, Borsh-Rundtrip {} Bytes, state_root wirksam", block.total_entries(), bytes),
+        format!(
+            "{} Einträge, Borsh-Rundtrip {} Bytes, state_root wirksam, \
+             Höhe {} in Epoche {} ({} Blöcke je Epoche)",
+            block.total_entries(),
+            bytes,
+            block.header.height,
+            block.header.epoch,
+            myl_consensus::BLOECKE_JE_EPOCHE
+        ),
     )
 }
 
@@ -586,6 +624,55 @@ fn stufe_ledger() -> Stufe {
             format!("erwartete 30 % Slash, bekam {}", wirkung.slashed),
         );
     }
+    // **Die Vorgeschichte, die daraus entsteht** (seit 2026-08-27). Ein
+    // gebuchtes Urteil zählt beim Schuldigen; das ist die Grundlage der
+    // Slashing-Staffelung. Ohne diese Prüfung liefe der Durchlauf auch
+    // dann durch, wenn der Zähler stehen bliebe, und die Staffelung wäre
+    // wieder eine Tabelle, von der immer die erste Zeile gilt.
+    if wirkung.vorverstoesse != 0 {
+        return Stufe::fehler(
+            "ledger",
+            format!("erster Verstoß mit {} Vorverstößen", wirkung.vorverstoesse),
+        );
+    }
+    let vermerkt = state.verstoesse_im_fenster(&schuldig, myl_tokenomics::WIEDERHOLUNGSFENSTER);
+    if vermerkt != 1 {
+        return Stufe::fehler(
+            "ledger",
+            format!("das gebuchte Urteil wurde {} mal vermerkt statt einmal", vermerkt),
+        );
+    }
+
+    // Und die Staffelung greift: drei Urteile, drei Stufen. Gefahren wird
+    // sie über den Weg, der die Reihenfolge festlegt — der Satz hängt an
+    // der Vorgeschichte VOR dem Urteil, und das Buchen verändert genau
+    // diese Vorgeschichte.
+    //
+    // **Auf einem eigenen Konto**, damit der Verlauf die Tabelle aus
+    // Kap. 5.5 zeigt (1/3/5 %) und nicht bei der zweiten Stufe beginnt:
+    // Der Schuldige oben trägt bereits einen Verstoß.
+    let wiederholer = Address::new([3u8; 32]);
+    let mut stufen = Vec::new();
+    for _ in 0..3 {
+        state.account_mut(&wiederholer).staked = 100_000_000;
+        let (_, satz) = match myl_tokenomics::slashing::urteil_buchen_gestaffelt(
+            &mut state,
+            &entscheidung.to_ledger_verdict(wiederholer, unschuldig),
+            myl_tokenomics::slashing::Akteur::ShardMiner,
+            myl_tokenomics::slashing::Grund::Nichtverfuegbarkeit,
+        ) {
+            Ok(w) => w,
+            Err(e) => return Stufe::fehler("ledger", format!("Staffelung: {}", e)),
+        };
+        stufen.push(satz.anteil_bps());
+    }
+    if stufen != vec![100, 300, 500] {
+        return Stufe::fehler(
+            "ledger",
+            format!("Kap. 5.5 nennt 1/3/5 %, gestaffelt; bekommen {stufen:?} Basispunkte"),
+        );
+    }
+
     let nachher = state.commitment();
     if vorher == nachher {
         return Stufe::fehler("ledger", "Zustandsänderung ohne Commitment-Änderung");
@@ -594,7 +681,8 @@ fn stufe_ledger() -> Stufe {
         "ledger",
         sha256_hex(nachher.as_bytes()),
         format!(
-            "{} Credits geprägt, {} geslasht, {} Kopfgeld. Verifier-Entscheidung durchgebucht",
+            "{} Credits geprägt, {} geslasht, {} Kopfgeld. Verifier-Entscheidung durchgebucht, \
+             Verstoß vermerkt, Staffelung 1/3/5 % über drei Urteile",
             credits, wirkung.slashed, wirkung.bounty
         ),
     )

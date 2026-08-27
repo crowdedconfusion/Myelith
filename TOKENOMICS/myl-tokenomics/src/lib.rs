@@ -63,7 +63,8 @@ pub use sicherheit::{
 };
 pub use sicherheit::{burn_spielraum, BURN_DECKEL_AB, BURN_DECKEL_NENNER, BURN_DECKEL_ZAEHLER};
 pub use slashing::{
-    matrix as slashing_matrix, satz as slashing_satz, satz_gestaffelt, Akteur, Grund, Slashsatz,
+    matrix as slashing_matrix, satz as slashing_satz, satz_aus_ledger, satz_gestaffelt,
+    urteil_buchen_gestaffelt, Akteur, Grund, SlashBuchungFehler, Slashsatz,
     WIEDERHOLUNGSFENSTER,
 };
 pub use stake::{erforderlicher_stake, getragene_kapazitaet, StakeAnspruch, StakeFehler};

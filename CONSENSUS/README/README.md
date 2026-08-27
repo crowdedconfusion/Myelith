@@ -1,7 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.13.0 (`myl-scheduler` 0.3.0, `myl-ledger` 0.2.0)
-> **Datum:** 2026-08-26
+> **Version:** 0.16.0 (`myl-consensus` 0.14.0, `myl-scheduler` 0.4.0,
+> `myl-ledger` 0.3.0)
+> **Datum:** 2026-08-27
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -14,8 +15,18 @@
 > **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
 > 4.2 Epochenabschluss, 4.3 DA-Schicht): **alle vier Phasen
 > abgeschlossen**.
-> **335 Tests grün** (240 `myl-consensus`, 67 `myl-scheduler`,
-> 28 `myl-ledger`).
+> **346 Tests grün** (240 `myl-consensus`, 68 `myl-scheduler`,
+> 38 `myl-ledger`).
+>
+> ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
+> dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
+> ihre Höhe deshalb in `epoch` — eine Doppelbelegung, an der jede Frist
+> „je Epoche" in Wahrheit „je Block" bedeutete.
+>
+> **Seit dem 27. August führt der Ledger eine Verstoßhistorie je Konto**
+> (`myl-ledger` v0.3.0). Sie ist Konsensfeld und die Voraussetzung der
+> Slashing-Staffelung aus Kap. 5.5: Wer wiederholt auffällt, verliert
+> mehr.
 >
 > **Seit dem 26. August laufen die BFT-Runden über ein echtes Netz.**
 > Die Verdrahtung liegt in der Komponente NODE; hier kam die Form auf
@@ -93,6 +104,100 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### myl-consensus v0.14.0 – 2026-08-27 (Höhe und Epoche im Blockkopf)
+
+**`EpochMeta` heißt `BlockHeader` und trägt ein Höhenfeld.** Der alte
+Name war der Fehler: Ein Kopf ohne Höhe zwingt jeden, der eine Höhe
+braucht, sich eine zu suchen — und die Probekette fand sie im
+Epochenfeld. Das trägt, solange eine Epoche ein Block ist, und ist
+still falsch, sobald es das nicht mehr ist. Jede Frist „je Epoche"
+bedeutete damit „je Block".
+
+- `height` — die Stellung in der Kette, um genau eins wachsend.
+- `epoch` — folgt aus der Höhe (`epoche_fuer_hoehe`), steht trotzdem im
+  Kopf, damit ein Block für sich lesbar bleibt, und wird beim Übernehmen
+  dagegen geprüft. Ein mitgeführter Wert, den niemand nachrechnet, ist
+  ein Feld, das jeder setzen darf.
+
+**`BLOECKE_JE_EPOCHE = 1800`**, also Epochenlänge durch Blockzeit
+(3600 s / 2 s). Beide sind Governance-Parameter, und ein Test in
+`myl-governance` hält die Konstante gegen sie — dieselbe Bauart wie bei
+der Streitfrist (⚑ Fund 50).
+
+⚑ **Warum die Zahl trotzdem eine Konstante ist und keine Abfrage der
+Registry:** Die Zuordnung Höhe → Epoche geht in die **Blockprüfung**
+ein. Eine Blockprüfung, die einen abstimmbaren Wert liest, macht die
+Gültigkeit eines Blocks von einem Zustand abhängig, der sich ändern
+kann, während der Block schon in der Kette steht. Wer die Epochenlänge
+ändern will, ändert damit einen Konsensvertrag, keinen Parameter.
+
+⚑ **Und warum die Epoche aus der Höhe folgt und nicht aus der Uhr:**
+Eine Zuordnung über Zeitstempel wäre nicht deterministisch. Zwei
+ehrliche Knoten mit leicht verschiedenen Uhren ordneten denselben Block
+verschiedenen Epochen zu, und damit fiele die Zustandswurzel
+auseinander. **Was das kostet, gehört dazugesagt:** Stehen die Blöcke
+still, stehen auch die Epochen still — Prägung, EMA und Fristen hängen
+am Fortschritt der Kette und nicht an der Wanduhr.
+
+### myl-ledger v0.3.0 – 2026-08-27 (Verstoßhistorie je Konto)
+
+**Ein neues Konsensfeld.** `AccountState` trägt eine Verstoßhistorie:
+wann dieses Konto geschlachtet wurde, je Epoche gezählt. Sie geht in
+`commitment()` ein, denn zwei Knoten mit verschiedenen Vorgeschichten
+schlachten beim nächsten Urteil verschieden hoch und laufen damit
+auseinander.
+
+**`apply_verdict` vermerkt den Verstoß selbst**, beim Schuldigen und im
+selben Übergang. Ein Urteil, das gebucht wird, ohne gezählt zu werden,
+macht die Staffelung zu einer Absichtserklärung — der nächste Verstoß
+wäre wieder der erste. Weil der Vermerk im Übergang steht, kann er nicht
+vergessen werden; ein **abgelehntes** Urteil zählt dagegen nicht, sonst
+wäre „ohne Deckung anklagen" ein Weg, die Vorgeschichte eines anderen zu
+füllen.
+
+**`VerdictEffect` nennt jetzt `vorverstoesse`**, den Stand **vor** dem
+Urteil. Der Satz der Slashing-Matrix hängt daran: `0` ist der erste
+Verstoß. Wer den Wert nach dem Buchen abfragte, bekäme einen zu hohen und
+schlüge die nächste Stufe zu früh auf.
+
+**Drei Eigenschaften, die zusammengehören und je einen Test haben:**
+
+- **Die Historie wächst nicht.** Gekürzt wird beim Vermerken auf
+  `VERSTOSS_FENSTER` Epochen; nach jedem Vermerk stehen höchstens so
+  viele Einträge da. Ohne diese Grenze hinge die Größe des
+  Konsenszustands daran, wie oft jemand auffällt — eine Größe, die ein
+  Angreifer selbst bestimmt.
+- **Lesen verändert nichts.** `verstoesse_im_fenster` räumt nicht auf.
+  Täte es das, hinge der Zustand daran, **wer wann gelesen hat**, und
+  zwei Knoten mit verschiedener Lesereihenfolge kämen zu verschiedenen
+  Verpflichtungen. Gekürzt wird ausschließlich im Übergang, dasselbe
+  Muster wie bei den verfallenen Credits.
+- **Ein Fenster über die Epoche 0 hinaus läuft nicht um.** Ohne
+  sättigende Subtraktion wäre die Untergrenze `u64::MAX` und die
+  Vorgeschichte in den ersten Epochen des Netzes leer — die Staffelung
+  wäre genau dann abgeschaltet, wenn sie am ehesten gebraucht wird.
+
+⚑ **Das Zustandsformat ändert sich damit.** Ein Ledger-Commitment aus
+der Zeit davor stimmt nicht mehr mit einem von heute überein. Das ist
+folgenlos, solange keine Kette daran hängt, die nicht neu gerechnet
+werden kann: Der Probelauf ist Wegwerfware, und `myl-node` speichert
+Blöcke und rechnet jede Zustandswurzel beim Wiederanlauf neu.
+
+### myl-scheduler v0.4.0 – 2026-08-27 (`assign_redundant_pods` nennt den Grund)
+
+*Nachgetragen am 2026-08-27: Der Eintrag fehlte, obwohl die Änderung am
+selben Tag committet wurde. Die Kopfzeile dieser Datei führte weiter
+`myl-scheduler 0.3.0`.*
+
+Die Funktion gab bei fehlenden Metadaten einen **leeren Vektor** zurück,
+und der sah aus wie „nichts angefragt". Jetzt liefert sie ein `Result`:
+`ZuWenigPods` (weniger als zwei Cluster) oder `KeinGueltigesPaar`
+(Cluster vorhanden, aber kein Paar disjunkt und zonendivers zugleich).
+Fail-closed bleibt die Richtung, nur nennt sie den Grund — die beiden
+Fälle sind verschiedene Befunde, und die Gegenmaßnahmen sind es auch.
+**Null Segmente bleiben `Ok` mit leerer Liste:** Wer nichts verlangt,
+bekommt nichts, und das ist kein Scheitern.
 
 ### myl-scheduler v0.3.0 – 2026-08-26 (⚑ Entscheidung D3: ein Miner je Shard)
 

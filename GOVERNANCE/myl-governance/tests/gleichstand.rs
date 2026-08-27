@@ -287,3 +287,114 @@ fn die_registry_prueft_genau_die_formel_aus_verification() {
     assert!(abgelehnt > 100, "nur {abgelehnt} Ablehnungen");
     assert!(angenommen > 100, "nur {angenommen} Annahmen");
 }
+
+/// **Drei Fenster von zehn Epochen, und nur eines davon ist gebunden.**
+///
+/// - `myl_ledger::VERSTOSS_FENSTER` — wie lange der Ledger die
+///   Verstoßhistorie **aufbewahrt**.
+/// - `myl_tokenomics::WIEDERHOLUNGSFENSTER` — über wie lange die
+///   Slashing-Matrix **staffelt**. Das ist dieselbe Konstante, nicht
+///   eine zweite: Eine Staffelung über ein längeres Fenster als die
+///   Aufbewahrung läse eine Vorgeschichte, die es nicht mehr gibt, und
+///   der Zähler stünde einfach niedriger. Der Test hält es trotzdem
+///   fest, denn eine Zuweisung kann jemand auflösen.
+/// - `myl_consensus::voting_weight::MAX_HISTORY_EPOCHS` — wie lange die
+///   Arbeitshistorie des Stimmgewichts zurückreicht. **Diese Gleichheit
+///   ist Absicht, aber keine Kopplung:** Beide beantworten dieselbe
+///   Frage, nämlich wie lange das Verhalten eines Teilnehmers nachwirkt.
+///   Sie stehen als getrennte Konstanten, damit eine spätere
+///   Entscheidung sie auseinanderziehen darf — dieser Test macht daraus
+///   eine Entscheidung statt eines Versehens.
+///
+/// **Warum der Test hier steht:** `myl-tokenomics` kennt `myl-consensus`
+/// nicht und umgekehrt. Diese Komponente kennt beide; sie ist der
+/// einzige Ort, an dem die drei nebeneinanderliegen.
+#[test]
+fn die_drei_zehn_epochen_fenster_stimmen_ueberein() {
+    assert_eq!(
+        myl_tokenomics::WIEDERHOLUNGSFENSTER,
+        myl_ledger::VERSTOSS_FENSTER,
+        "Staffelung und Aufbewahrung der Verstoßhistorie liefen auseinander"
+    );
+    assert_eq!(
+        myl_consensus::voting_weight::MAX_HISTORY_EPOCHS as u64,
+        myl_ledger::VERSTOSS_FENSTER,
+        "die Arbeitshistorie des Stimmgewichts und die Verstoßhistorie sind \
+         verschieden lang; das darf sein, aber dann als Entscheidung mit \
+         Begründung und nicht als stille Abweichung"
+    );
+}
+
+/// Die Staffelung der Slashing-Matrix greift auf dem Zustand, den der
+/// Ledger führt — nicht auf einer Zahl, die ein Aufrufer mitbringt.
+///
+/// **Der Gleichstand, um den es hier geht**, ist der zwischen der
+/// Tabelle in Kap. 5.5 (1/3/5 %) und dem, was am Ende gebucht wird.
+#[test]
+fn die_staffelung_greift_auf_dem_ledger_zustand() {
+    use myl_ledger::state::LedgerState;
+    use myl_ledger::transitions::{Verdict, VerdictOutcome};
+    use myl_tokenomics::slashing::{urteil_buchen_gestaffelt, Akteur, Grund};
+    use myl_types::ids::{Address, SegmentId};
+
+    let mut state = LedgerState::genesis(10);
+    let verdict = Verdict {
+        segment_id: SegmentId::new([9u8; 32]),
+        miner: Address::new([1u8; 32]),
+        checker: Address::new([2u8; 32]),
+        outcome: VerdictOutcome::SlashMiner,
+    };
+    let mut bps = Vec::new();
+    for _ in 0..3 {
+        state.account_mut(&Address::new([1u8; 32])).staked = 1_000_000;
+        let (_, satz) = urteil_buchen_gestaffelt(
+            &mut state,
+            &verdict,
+            Akteur::ShardMiner,
+            Grund::Nichtverfuegbarkeit,
+        )
+        .expect("Buchung");
+        bps.push(satz.anteil_bps());
+    }
+    assert_eq!(bps, vec![100, 300, 500], "Kap. 5.5 nennt 1 bis 5 %, gestaffelt");
+}
+
+/// **Blöcke je Epoche, gegen Epochenlänge und Blockzeit.**
+///
+/// `myl_consensus::BLOECKE_JE_EPOCHE` ordnet jede Blockhöhe einer
+/// Epoche zu und geht damit in die **Blockprüfung** ein. Sie steht dort
+/// als Konstante und nicht als Abfrage dieser Registry, und das ist
+/// Absicht: Eine Blockprüfung, die einen abstimmbaren Wert liest, macht
+/// die Gültigkeit eines Blocks von einem Zustand abhängig, der sich
+/// ändern kann, während der Block schon in der Kette steht.
+///
+/// **Damit stehen zwei Wahrheiten nebeneinander**, und dieser Test ist
+/// die Verbindung: Wer `Epochenlaenge` oder `Blockzeit` bewegt, ohne die
+/// Konstante nachzuziehen, bekommt hier einen Fehlschlag statt einer
+/// Epoche, die eine andere Länge hat, als die Governance glaubt. Genau
+/// dieselbe Bauart wie bei der Streitfrist (⚑ Fund 50).
+#[test]
+fn bloecke_je_epoche_stimmen_mit_epochenlaenge_und_blockzeit() {
+    let reg = ParameterRegistry::vorgabe();
+    let epoche_s = zahl(&reg, Parameter::Epochenlaenge);
+    let blockzeit_ms = zahl(&reg, Parameter::Blockzeit);
+    assert!(blockzeit_ms > 0, "eine Blockzeit von null ergäbe keine Kette");
+    let gerechnet = epoche_s * 1_000 / blockzeit_ms;
+    assert_eq!(
+        gerechnet,
+        myl_consensus::BLOECKE_JE_EPOCHE,
+        "Epochenlänge {epoche_s} s bei Blockzeit {blockzeit_ms} ms sind {gerechnet} Blöcke, \
+         die Konstante sagt {}",
+        myl_consensus::BLOECKE_JE_EPOCHE
+    );
+    assert_eq!(
+        epoche_s * 1_000 % blockzeit_ms,
+        0,
+        "die Epoche ist kein Vielfaches der Blockzeit; dann liegt die Epochengrenze \
+         zwischen zwei Blöcken und die Zuordnung ist nicht mehr eindeutig"
+    );
+    // Und die Umrechnung trifft die Grenze auch wirklich.
+    assert_eq!(myl_consensus::epoche_fuer_hoehe(0), 0);
+    assert_eq!(myl_consensus::epoche_fuer_hoehe(gerechnet - 1), 0);
+    assert_eq!(myl_consensus::epoche_fuer_hoehe(gerechnet), 1);
+}

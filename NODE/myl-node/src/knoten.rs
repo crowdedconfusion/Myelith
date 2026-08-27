@@ -1200,11 +1200,19 @@ impl Knoten {
                             crate::kette::KettenFehler::ZustandWeichtAb { .. } => {
                                 "zustand-weicht-ab"
                             }
+                            // **Eigene Marken, kein Sammelposten.** Eine
+                            // falsche Höhe und eine falsche Epoche sind
+                            // Befunde über den Absender, keine
+                            // Anschlussprobleme; wer sie unter
+                            // „passt-nicht-an" führte, löste damit auch
+                            // noch eine Nachforderung aus.
+                            crate::kette::KettenFehler::HoeheWeichtAb { .. } => "hoehe-weicht-ab",
+                            crate::kette::KettenFehler::EpocheWeichtAb { .. } => "epoche-weicht-ab",
                         };
                         self.protokoll.schreibe(
                             Eintrag::neu("block_abgelehnt")
                                 .zahl("eigene_hoehe", self.kette.hoehe() as i64)
-                                .zahl("fremde_hoehe", block.epoch_meta.epoch as i64)
+                                .zahl("fremde_hoehe", block.header.height as i64)
                                 .text("ablehnungsart", ablehnungsart)
                                 .text("grund", grund.to_string()),
                         );
@@ -1214,7 +1222,7 @@ impl Knoten {
                         // hat er mit hoher Wahrscheinlichkeit auch die
                         // davor.
                         if ablehnungsart == "passt-nicht-an" {
-                            self.fordere_nach(m.von, block.epoch_meta.epoch);
+                            self.fordere_nach(m.von, block.header.height);
                         }
                     }
                 }
