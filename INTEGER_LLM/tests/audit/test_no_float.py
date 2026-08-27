@@ -142,6 +142,12 @@ CONSENSUS_PATH = [
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "kontrollsegmente.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "unterscheider.rs",
+    # 2026-08-27 mit dem Messgeraet fuer die Ununterscheidbarkeit.
+    # Es misst Verteilungen und ist genau deshalb der Ort, an dem
+    # Gleitkomma am naechsten liegt: p-Werte, Abstaende, Anteile.
+    # Alles davon ist hier ein Bruch zweier Ganzzahlen, und die Datei
+    # steht in der Liste, damit das so bleibt.
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "unterscheidbarkeit.rs",
     ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "standby.rs",
     ROOT / "SIMULATION" / "myl-simulation" / "src" / "szenario.rs",
     # NETWORKING, nachgetragen 2026-08-23 (Fund 44).
@@ -171,6 +177,12 @@ CONSENSUS_PATH = [
     ROOT / "NETWORKING" / "myl-net" / "src" / "limits.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "nat.rs",
     ROOT / "NETWORKING" / "myl-net" / "src" / "anfrage.rs",
+    # 2026-08-27 mit der Sitzungsschicht (Punkte 3.1 bis 3.3). Zaehler,
+    # Laengen und Nonces sind ganzzahlig; ein Gleitkommawert im Nonce
+    # oder in einer Groessengrenze waere kein Rundungsfehler, sondern
+    # eine Nonce-Wiederholung. Aufgenommen mit der ersten Zeile, nicht
+    # spaeter: Fund 44 entstand genau aus dem "spaeter".
+    ROOT / "NETWORKING" / "myl-net" / "src" / "sitzung.rs",
     # NODE, aufgenommen 2026-08-24 mit dem Knoten-Binary. Die
     # Verdrahtung darf so wenig Gleitkomma enthalten wie das, was sie
     # verdrahtet, sonst wandert es genau hierher.

@@ -9,8 +9,8 @@ dieses Projekts.
 abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
-**Der wichtigste Satz vorweg:** Von den dreizehn Angriffsklassen unten
-sind **acht abgewehrt und belegt**, **drei offen mit gemessener Lücke**
+**Der wichtigste Satz vorweg:** Von den vierzehn Angriffsklassen unten
+sind **neun abgewehrt und belegt**, **drei offen mit gemessener Lücke**
 und **zwei ungeprüft**. Keine der Lücken ist neu entdeckt worden, ohne
 dass sie hier steht.
 
@@ -30,9 +30,10 @@ dass sie hier steht.
 | A8 | Parametervorschlag, der Invarianten bricht | ✅ | Registry prüft **vor** der Abstimmung |
 | A9 | **Eclipse: Umzingelung eines Knotens** | ⚠️ | **Fund 53 geschlossen** (2026-08-24); Restbedingung: ehrlicher Bootstrap-Knoten |
 | A10 | **Latenzwerte fälschen** | ⚠️ | Signatur wird **geprüft** (2026-08-25); Schlüsselherkunft im Probelauf ableitbar |
-| A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** gemessen und am 2026-08-27 geschlossen (Vorrat als Parameter mit Schranke); Prompt-Profil bleibt offen |
+| A11 | **Kontrollsegmente erkennen** | ⚠️ | **Fund 58** geschlossen (Vorrat als Parameter mit Schranke), **Fund 72** als Nullergebnis mit Beweis; Prompt-Profil bleibt offen, das Messgerät dafür steht seit 2026-08-27 |
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
+| A14 | **Ein Gateway liest den Inhalt mit** | ✅ | Sitzungs-E2E seit `myl-net` v0.9.0, über echte Verbindungen gemessen; **Verkehrsdaten bleiben sichtbar**, und das Schema selbst fällt unter A13 |
 
 ---
 
@@ -94,6 +95,72 @@ war nicht implementiert.** Jetzt ist er es. Gemessen bei einer EMA von
 Deckung erreichen denselben Stoß. Der Deckel macht daraus eine
 **Kapitalfrage statt einer Sybil-Frage** — die MYL müssen wirklich da
 sein.
+
+---
+
+### A14 Ein Gateway liest den Inhalt mit
+
+**Die Klasse stand bis zum 2026-08-27 nicht in diesem Dokument**, obwohl
+seine Grundlage Kap. 9.2 ausdrücklich einschließt und Kap. 9.2 die
+kompromittierten Gateways ausdrücklich nennt. Nachgetragen mit dem
+Schritt, der sie schließt: Ein Audit, das seine eigene Grundlage nur zur
+Hälfte abbildet, zählt richtig und deckt zu wenig ab.
+
+**Der Angriff:** Nutzer und erster Shard sprechen über ein Gateway. Mit
+Transportverschlüsselung allein sind das zwei Noise-Verbindungen mit
+Klartext dazwischen. Das Gateway rechnet nicht, es leitet weiter, und
+genau deshalb liefe dort der Verkehr vieler Nutzer zusammen: der
+Sammelpunkt, den Kap. 9.2 ausschließen will.
+
+**Abgewehrt seit `myl-net` v0.9.0.** Sitzungsschlüssel je Epoche und
+Pod, Ende zu Ende zwischen den beiden wirklichen Gesprächspartnern. Der
+Klartextkopf trägt, was zum Weiterleiten nötig ist, und geht vollständig
+in die Authentisierung ein: Das Gateway darf lesen, was es zum Leiten
+braucht, und nichts davon ändern.
+
+**Gemessen (`tests/sitzung.rs`):** Drei Knoten, ein wirklich
+weiterleitendes Gateway, das annimmt, weitergibt, zurückgibt und
+unterwegs zu öffnen versucht. Es scheitert, der Shard öffnet, und der
+Klartext steht nachweislich nicht in den Bytes, die über das Gateway
+gehen. Die Gegenprobe steht im selben Test: Der erlaubte Fall gelingt,
+sonst hieße „niemand konnte lesen" nur „es kam nichts an".
+
+⚑ **Die Abwehr hing zwischenzeitlich an der falschen Identität.** Der
+Punkt, gegen den verschlüsselt wird, wird angekündigt und beglaubigt;
+die erste Fassung beglaubigte ihn mit der Netzidentität. Der Pod-Pfad
+nennt aber `MinerId`s, und die Zuordnung dorthin gibt es nicht. Seitdem
+unterschreibt der Konsensschlüssel, und weil die `MinerId` der Hash
+eben dieses Schlüssels ist, braucht die Prüfung nichts weiter. **Ohne
+diese Berichtigung wäre die ganze Abwehr dieser Klasse nur scheinbar
+gewesen**, und zwar mit grünen Tests daneben.
+
+⚑ **Was dabei sichtbar bleibt, und es ist nicht nichts:** Der
+Klartextkopf nennt Epoche, Pod, Absender, Empfänger und Zähler, und die
+Länge einer Nachricht steht ohnehin auf dem Draht. Ein Gateway lernt
+daraus die Pod-Zusammensetzung, wer mit wem spricht und wie viel. Es
+lernt **nicht**, was gesprochen wird.
+
+Das Whitepaper verspricht an dieser Stelle auch nichts anderes: Kap. 9.2
+spricht von Prompt-Inhalt und Aktivierungswerten. Verkehrsdatenschutz
+wäre eine eigene Aufgabe mit eigenen Kosten (Füllverkehr, feste
+Nachrichtengrößen, Umwege), und er stünde in Spannung zu einer
+Pod-Bildung, die auf gemessener Latenz beruht. **Hier steht er als
+benannte Grenze, nicht als offene Lücke:** Niemand hat ihn zugesagt.
+
+⚑ **Das Schema selbst ist ungeprüft, und das gehört hierher und nicht
+in eine Fußnote.** A13 sagt „nie extern geprüft" über die
+Krypto-Primitiven; seit dem 2026-08-27 gibt es zusätzlich ein eigenes
+Schema aus X25519, HKDF und ChaCha20-Poly1305, und niemand von außen hat
+es angesehen. Die Bausteine sind Standard, die **Zusammensetzung** ist
+es nicht, und Fehler in Verschlüsselungsschemata sitzen erfahrungsgemäß
+in der Zusammensetzung. Die neunzehn Gegenproben zeigen, dass die
+gebauten Prüfungen greifen; sie zeigen nicht, dass die richtigen
+Prüfungen gebaut wurden.
+
+**Und was ausdrücklich nicht abgewehrt ist:** die beteiligten
+Shard-Miner selbst. Ihre Aufgabe ist die Verarbeitung des Inhalts. Kap.
+9.3 zieht daraus die Risikoklasse C („ungeeignet"), und daran ändert
+diese Fassung nichts.
 
 ---
 
@@ -229,6 +296,40 @@ Tests: 10 und 100. Bei γ = 2 % trägt ein Vorrat von 100 genau 5 000
 Aufträge. **Die Zahl, an der die Wirksamkeit hängt, war nirgends
 festgelegt.**
 
+⚑ **Fund 72 (2026-08-27): Die zweite vermutete Spur gibt es nicht.**
+
+Der Einschleusungsplan zieht **ohne Zurücklegen**: Ein Strom von `n`
+Aufträgen enthält genau `⌈n·γ⌉` Kontrollen statt einer schwankenden
+Zahl. γ ist ein Governance-Parameter und damit öffentlich, `n` sieht ein
+Miner am Strom, also kennt er das Kontingent. Hätte er so viele
+Kontrollen erkannt, wie hineinpassen, wäre jeder weitere Auftrag mit
+Sicherheit echt, und auf einem sicher echten Auftrag kostet Betrug
+nichts. Das sah nach einem Verstärker für Fund 58 aus.
+
+**Gemessen: null.** Über jeden Vorrat von 1 bis 4 096, bei γ = 2 % und
+100 000 Aufträgen, wurde das Kontingent nie erschöpft.
+
+**Und die Null hat einen Grund, kein Glück.** Die Wiederholung erkennt
+ein Segment frühestens beim **zweiten** Auftreten; von `v`
+Vorratssegmenten bleiben die ersten `min(v, k)` Auftreten unerkannt.
+Damit gilt `verdächtig ≤ k − min(v, k) < k` für jeden Vorrat `v ≥ 1`.
+Die gemessenen Zahlen sind exakt `2 000 − Vorrat`, also der Satz mit
+Gleichheit. Erschöpfen ließe sich das Kontingent nur mit einem
+Unterscheider, der **jede** Kontrolle erkennt, und wer den hat, braucht
+das Kontingent nicht.
+
+**Folgerung: kein Umbau.** Unabhängiges Ziehen je Position würde ein
+Loch schließen, das es nicht gibt, und dafür die exakte Einhaltung von γ
+je Strom aufgeben, an der die Kostenbuchhaltung hängt.
+
+**Was seit dem 2026-08-27 zusätzlich existiert: das Messgerät** für die
+eigentliche, inhaltliche Ununterscheidbarkeit
+(`myl-verifier/src/unterscheidbarkeit.rs`, Punkt 3.6). Ein
+Vertauschungstest auf ganzzahligen Merkmalen, der kein Nein ohne seine
+Trennschärfe herausgibt. **Das ist kein Beleg, sondern die
+Voraussetzung dafür, später einen zu bekommen**: Länge, Timing und
+Kontextprofil brauchen echten Verkehr, und A11 bleibt deshalb auf ⚠.
+
 **Geschlossen am 2026-08-27.** Vorratsgröße und Beobachtungsfenster sind
 Governance-Parameter, und eine Invariante bindet beide an γ:
 `Vorrat ≥ ⌈Fenster · γ⌉`, geprüft am **Vorschlag** statt nach der
@@ -345,5 +446,5 @@ Nach Schadenshebel, nicht nach Aufwand:
 4. **A13 externes Review.** Vor dem Mainnet, nicht danach.
 
 **Was ausdrücklich nicht auf dieser Liste steht:** ein weiterer
-Testdurchlauf derselben Art. Die acht abgewehrten Klassen sind belegt;
+Testdurchlauf derselben Art. Die neun abgewehrten Klassen sind belegt;
 mehr Tests derselben Machart erhöhen die Zahl, nicht die Sicherheit.

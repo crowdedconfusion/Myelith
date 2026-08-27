@@ -178,6 +178,172 @@ pub fn messe_wiederholung(
     }
 }
 
+/// Was die **Kontingentgrenze** einem Miner zusätzlich verrät.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kontingentergebnis {
+    /// Länge des betrachteten Auftragsstroms.
+    pub auftraege: usize,
+    /// Wie viele davon Kontrollsegmente waren.
+    pub kontrollen: usize,
+    /// Wie viele Kontrollen der Strom nach der Formel des Plans
+    /// enthält. Das ist die Zahl, die ein Miner selbst ausrechnen kann.
+    pub kontingent: usize,
+    /// Wie viele Aufträge der Miner für Kontrollen hielt.
+    pub verdaechtig: usize,
+    /// Wie viele davon in Wahrheit echt waren.
+    pub fehlalarme: usize,
+    /// Wie viele Aufträge **sicher als echt** galten, weil das
+    /// Kontingent des Stroms erschöpft war.
+    pub sicher_echt: usize,
+    /// Wie viele dieser Aufträge in Wahrheit Kontrollen waren.
+    ///
+    /// Muss null sein. Ist es das nicht, ist die Überlegung hinter der
+    /// Kontingentgrenze falsch, und das wäre der interessantere Befund.
+    pub sicher_echt_falsch: usize,
+    /// Wie viele echte Aufträge es insgesamt gab.
+    pub echte: usize,
+}
+
+impl Kontingentergebnis {
+    /// Anteil der echten Aufträge, die sicher als echt erkannt wurden,
+    /// in Promille.
+    ///
+    /// Das ist die Zahl, die zählt: Auf einem Auftrag, von dem ein Miner
+    /// **weiß**, dass er keine Kontrolle ist, kostet Betrug ihn nichts
+    /// mehr, jedenfalls nicht über diesen Mechanismus.
+    pub fn sicher_echt_promille(&self) -> u64 {
+        if self.echte == 0 {
+            return 0;
+        }
+        (self.sicher_echt as u64 * 1_000) / self.echte as u64
+    }
+}
+
+/// Misst, wie viel die **feste Zahl** von Kontrollen je Strom verrät.
+///
+/// # ⚑ Der Einschleusungsplan zieht ohne Zurücklegen
+///
+/// [`crate::kontrollsegmente::einschleusungsplan`] wählt aus `n`
+/// Positionen **genau** `⌈n·γ⌉` aus. Ein echter Bernoulli-Prozess würde
+/// je Auftrag unabhängig mit Wahrscheinlichkeit γ ziehen, und dann
+/// schwankte die Zahl. Hier schwankt sie nicht.
+///
+/// γ ist ein Governance-Parameter und damit öffentlich, `n` sieht ein
+/// Miner am Strom. **Also kennt er das Kontingent.** Hat er so viele
+/// Kontrollen erkannt, wie hineinpassen, ist jeder weitere Auftrag des
+/// Stroms mit Sicherheit echt: kein Verdacht, kein Schwellenwert, ein
+/// Beweis.
+///
+/// # ⚑ Fund 72: Das Kontingent wird nie erschöpft, und das hat einen Grund
+///
+/// Gemessen wurde, ob die Kontingentgrenze ein eigenes Loch ist oder
+/// ein bestehendes vertieft. Sie tut **weder das eine noch das
+/// andere**, und die Null in der Messung ist kein glücklicher Zufall,
+/// sondern folgt aus der Bauart des Unterscheiders:
+///
+/// **Die Wiederholung erkennt ein Segment frühestens beim zweiten
+/// Auftreten.** Von `v` verschiedenen Vorratssegmenten bleiben die
+/// ersten `min(v, k)` Auftreten also unerkannt, und damit gilt
+/// zwangsläufig
+///
+/// ```text
+/// verdächtig ≤ k − min(v, k) < k = Kontingent
+/// ```
+///
+/// für jeden Vorrat `v ≥ 1`. Erschöpfen ließe sich das Kontingent nur
+/// mit einem Unterscheider, der **jede** Kontrolle erkennt, und wer den
+/// hat, braucht das Kontingent nicht mehr.
+///
+/// Gemessen bei γ = 2 % über 100 000 Aufträge, Kontingent 2 000:
+///
+/// | Vorrat | verdächtig | sicher echt |
+/// |---|---|---|
+/// | 64 | 1 936 | 0 |
+/// | 256 | 1 744 | 0 |
+/// | 1 024 | 976 | 0 |
+/// | 2 048 | 0 | 0 |
+///
+/// Die verdächtigen Zahlen sind exakt `2 000 − Vorrat`, also der Satz
+/// oben mit Gleichheit.
+///
+/// **Folgerung: `einschleusungsplan` bleibt, wie er ist.** Der
+/// naheliegende Umbau wäre, je Position unabhängig mit
+/// Wahrscheinlichkeit γ zu ziehen statt genau `⌈n·γ⌉` von `n`; dann
+/// gäbe es kein Kontingent zu erschöpfen. Er würde ein Loch schließen,
+/// das es nicht gibt, und dafür die exakte Einhaltung von γ je Strom
+/// aufgeben, an der die Kostenbuchhaltung aus Punkt 3.4 hängt.
+///
+/// **Ein Nullergebnis mit Begründung ist mehr wert als eines ohne.**
+/// Ohne den Satz stünde hier eine Messung, die für die geprüften fünf
+/// Vorratsgrößen null ergab, und niemand wüsste, ob die sechste anders
+/// ausfällt.
+pub fn messe_kontingent(
+    vorrat: usize,
+    auftraege: usize,
+    gamma_zaehler: u64,
+    gamma_nenner: u64,
+    seed: &[u8; 32],
+) -> Kontingentergebnis {
+    let positionen = crate::kontrollsegmente::einschleusungsplan(
+        auftraege,
+        gamma_zaehler,
+        gamma_nenner,
+        seed,
+    )
+    .unwrap_or_default();
+    let ist_kontrolle: HashSet<usize> = positionen.iter().copied().collect();
+    // Was der Miner ausrechnen kann: dieselbe Formel wie der Plan.
+    let kontingent = positionen.len();
+
+    let mut unterscheider = Wiederholungsunterscheider::neu();
+    // ⚑ Gezählt wird, was der **Miner** zählt, nicht was ein Orakel
+    // wüsste: jede Meldung, ob sie stimmt oder nicht. Ein Angreifer
+    // kennt `ist_kontrolle` nicht. Dass die Zahl trotzdem der Wahrheit
+    // entspricht, liegt an den null Fehlalarmen der Wiederholung, und
+    // genau das prüft `fehlalarme` unten mit.
+    let mut verdaechtig = 0usize;
+    let mut fehlalarme = 0usize;
+    let mut sicher_echt = 0usize;
+    let mut sicher_echt_falsch = 0usize;
+    let mut kontrollzaehler = 0usize;
+
+    for i in 0..auftraege {
+        // Vor der Meldung: Ist das Kontingent schon voll, steht die
+        // Antwort für diesen Auftrag bereits fest.
+        if verdaechtig >= kontingent {
+            sicher_echt += 1;
+            if ist_kontrolle.contains(&i) {
+                sicher_echt_falsch += 1;
+            }
+        }
+
+        let id = if ist_kontrolle.contains(&i) {
+            let n = kontrollzaehler % vorrat.max(1);
+            kontrollzaehler += 1;
+            kontroll_id(seed, n)
+        } else {
+            echt_id(seed, i)
+        };
+        if unterscheider.melde(&id) {
+            verdaechtig += 1;
+            if !ist_kontrolle.contains(&i) {
+                fehlalarme += 1;
+            }
+        }
+    }
+
+    Kontingentergebnis {
+        auftraege,
+        kontrollen: positionen.len(),
+        kontingent,
+        verdaechtig,
+        fehlalarme,
+        sicher_echt,
+        sicher_echt_falsch,
+        echte: auftraege - positionen.len(),
+    }
+}
+
 /// Die Id des `n`-ten Kontrollsegments im Vorrat.
 fn kontroll_id(seed: &[u8; 32], n: usize) -> SegmentId {
     let mut daten = Vec::with_capacity(48);
@@ -361,6 +527,93 @@ mod tests {
         let e: Vec<SegmentId> = (0..500).map(|i| echt_id(&SEED, i)).collect();
         for id in &k {
             assert!(!e.contains(id), "Id-Raum überlappt");
+        }
+    }
+}
+
+#[cfg(test)]
+mod fund_72 {
+    use super::*;
+
+    /// **Das Kontingent wird nie erschöpft.**
+    ///
+    /// Über den ganzen Bereich von einem Vorrat, der nichts trägt, bis
+    /// zu einem, der reichlich trägt.
+    #[test]
+    fn kein_auftrag_gilt_je_sicher_als_echt() {
+        for vorrat in [1usize, 8, 64, 256, 1_024, 2_048, 4_096] {
+            let k = messe_kontingent(vorrat, 20_000, 2, 100, &[3u8; 32]);
+            assert_eq!(
+                k.sicher_echt, 0,
+                "Vorrat {vorrat}: das Kontingent war erschöpft"
+            );
+            assert_eq!(k.sicher_echt_falsch, 0);
+        }
+    }
+
+    /// Der Satz aus dem Modulkopf, an Zahlen geprüft:
+    /// `verdächtig ≤ Kontingent − min(Vorrat, Kontingent)`.
+    ///
+    /// Das ist die Aussage, die das Nullergebnis über die geprüften
+    /// Vorratsgrößen hinaus trägt.
+    #[test]
+    fn die_verdachtszahl_bleibt_um_den_vorrat_unter_dem_kontingent() {
+        for vorrat in [1usize, 8, 64, 256, 1_024, 2_048] {
+            let k = messe_kontingent(vorrat, 20_000, 2, 100, &[3u8; 32]);
+            let schranke = k.kontingent - vorrat.min(k.kontingent);
+            assert!(
+                k.verdaechtig <= schranke,
+                "Vorrat {vorrat}: {} verdächtig, Schranke {schranke}",
+                k.verdaechtig
+            );
+            assert!(
+                k.verdaechtig < k.kontingent,
+                "Vorrat {vorrat}: das Kontingent wurde erreicht"
+            );
+        }
+    }
+
+    /// Bei ausreichendem Vorrat ist die Schranke straff: Der Miner
+    /// erkennt genau `Kontingent − Vorrat`, keinen mehr.
+    ///
+    /// Ohne diese Gegenprobe hieße die Ungleichung oben auch dann
+    /// „erfüllt", wenn der Unterscheider gar nichts fände.
+    #[test]
+    fn die_schranke_wird_erreicht_solange_der_vorrat_umlaeuft() {
+        for vorrat in [64usize, 256, 1_024] {
+            let k = messe_kontingent(vorrat, 100_000, 2, 100, &[7u8; 32]);
+            assert_eq!(
+                k.verdaechtig,
+                k.kontingent - vorrat,
+                "Vorrat {vorrat}: die Schranke ist nicht straff"
+            );
+        }
+    }
+
+    /// Null Fehlalarme, und darauf beruht die ganze Rechnung.
+    ///
+    /// Gezählt wird, was der Miner für eine Kontrolle hält. Dass diese
+    /// Zahl der Wahrheit entspricht, gilt nur, weil die Wiederholung
+    /// nie danebengreift: Echte Arbeit wiederholt sich nicht.
+    #[test]
+    fn die_wiederholung_meldet_keine_fehlalarme() {
+        for vorrat in [8usize, 64, 1_024] {
+            let k = messe_kontingent(vorrat, 20_000, 2, 100, &[3u8; 32]);
+            assert_eq!(k.fehlalarme, 0, "Vorrat {vorrat}");
+        }
+    }
+
+    /// Das Kontingent ist genau die Zahl der Kontrollen im Strom.
+    ///
+    /// Ein Miner rechnet es aus `n` und γ aus, beides ist ihm bekannt.
+    /// Ginge die Zahl auseinander, wäre die ganze Überlegung hinfällig,
+    /// weil der Miner dann gar nicht wüsste, wann Schluss ist.
+    #[test]
+    fn das_kontingent_ist_die_zahl_der_kontrollen() {
+        for (gz, gn) in [(2u64, 100u64), (1, 20), (5, 100)] {
+            let k = messe_kontingent(512, 20_000, gz, gn, &[3u8; 32]);
+            assert_eq!(k.kontingent, k.kontrollen);
+            assert_eq!(k.echte + k.kontrollen, k.auftraege);
         }
     }
 }

@@ -1,20 +1,22 @@
 # networking (`myl-net`)
 
-> **Version:** 0.8.0
-> **Datum:** 2026-08-26
-> **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3), dazu
-> Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
-> (Verbindungsgrenzen und Peer-Diversität), Punkt 3.4 (NAT-Überwindung)
-> und seit dem 26. August Punkt 4.1 (Chaos-Tests, **außer**
-> IP-Paketverlust).
+> **Version:** 0.9.0
+> **Datum:** 2026-08-27
+> **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
+> **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
+> (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
+> Punkt 4.1 (Chaos-Tests, **außer** IP-Paketverlust).
 >
 > Phase 1: 20-Knoten-Vollkonnektivität unter 5 s, ungültige Nachrichten
 > werden nicht weiterverbreitet, sechs Gossip-Topics, Anfragekanal.
 > Phase 2: Paarlatenzmessung mit EMA-Glättung, Latenz-Atteste,
-> LatencyGraph, Geo- und AS-Diversität. **107 Tests grün.**
+> LatencyGraph, Geo- und AS-Diversität. Phase 3: verschlüsselte
+> Sitzungen zwischen Shard-Minern und über Gateways hinweg, mit
+> Schlüsselrotation je Epoche. **155 Tests grün.**
 >
-> **Offen:** Phase 3 (verschlüsselte Shard-Kanäle), Punkt 4.4 (Lasttest
-> bei Zielnetzgröße) und der IP-Paketverlust aus 4.1.
+> **Offen:** das **unabhängige kryptographische Review** des
+> Sitzungsschemas, Punkt 4.4 (Lasttest bei Zielnetzgröße) und der
+> IP-Paketverlust aus 4.1.
 >
 > ⚑ **Fund 44:** Die Latenz-EMA rechnete in `f64`, obwohl der Kopf des
 > Crates seit dem ersten Tag Festkomma zusagt. Der Gleitkomma-Audit
@@ -57,6 +59,12 @@ NETWORKING/
         │                      Adressbereich (IPv4 /24, IPv6 /64)
         ├── scoring.rs         Gossipsub-Peer-Scoring: IP-Kolokation,
         │                      Verhaltensstrafe, Graylist-Schwellen
+        ├── sitzung.rs         Ende-zu-Ende-verschlüsselte Sitzungen
+        │                      (Punkte 3.1–3.3): X25519 je Epoche, HKDF mit
+        │                      Epoche und Pod im Salz, ChaCha20-Poly1305,
+        │                      ein Schlüssel je Richtung, Zähler als Nonce,
+        │                      Rotation vernichtet Schlüssel und Kanäle;
+        │                      Epochenpunkte mit dem Konsensschlüssel beglaubigt
         ├── anfrage.rs         Punkt-zu-Punkt-Anfragen (/myelith/anfrage/1):
         │                      längenpräfixierter Byte-Codec, undurchsichtige
         │                      Nutzlast, 4-MiB-Grenze für beide Richtungen
@@ -90,12 +98,193 @@ NETWORKING/
         ├── nat.rs             Relais-Pfad: ein Knoten ohne wählbare
         │                      Adresse wird über das Relais erreicht
         │                      (5 Tests)
-        └── chaos.rs           Partition und Heilung, Sperre gegen neuen
-                               Wählversuch, Wiedereinstieg, hängender
-                               Knoten, je mit Kontrolllauf (6 Tests)
+        ├── chaos.rs           Partition und Heilung, Sperre gegen neuen
+        │                      Wählversuch, Wiedereinstieg, hängender
+        │                      Knoten, je mit Kontrolllauf (6 Tests)
+        └── sitzung.rs         Sitzungen über echte Verbindungen: Shard zu
+                               Shard, weiterleitendes Gateway ohne
+                               Lesezugriff, Rotation, Wiedereinspielung,
+                               untergeschobener Epochenpunkt (5 Tests)
 ```
 
 ## Changelog
+
+### v0.9.0 – 2026-08-27 (Punkte 3.1 bis 3.3: verschlüsselte Sitzungen)
+
+⚑ **Umgesetzt heißt hier nicht abgenommen.** Ein
+Verschlüsselungsschema, das nur die Augen gesehen haben, die es
+geschrieben haben, ist ungeprüft. Ein unabhängiges kryptographisches
+Review steht aus und ist die Bedingung, unter der diese Phase als
+abgeschlossen gelten darf.
+
+Die drei Punkte kamen in einem Schritt, weil sie
+dasselbe Verfahren sind: Ein Kanal ohne Rotation hat kein
+Vorwärtsgeheimnis, eine Rotation ohne Kanal hat nichts zu rotieren, und
+die Gateway-Strecke ist derselbe Kanal mit einem Dritten dazwischen.
+
+**Warum das nicht der Transport erledigt.** libp2p verschlüsselt jede
+Verbindung mit Noise, und für zwei Knoten, die direkt miteinander
+sprechen, wäre damit alles gesagt. Zwei Gründe stehen dagegen.
+
+Der erste ist das Gateway. Nutzer und erster Shard sprechen nicht
+direkt, sondern über eines. Mit Transportverschlüsselung allein sind das
+zwei Verbindungen mit Klartext dazwischen, also genau der Sammelpunkt,
+den Kap. 9.2 des Whitepapers ausschließt. Entfallen tut er nur, wenn das
+Gateway den Inhalt nicht lesen kann.
+
+Der zweite ist die Herkunft der Zusage. Eine Eigenschaft, die aus dem
+Transport kommt, muss jeder neue Transport neu verdienen: TCP, QUIC,
+Relais, morgen etwas anderes, und eine Konfiguration entscheidet
+darüber. Hier hängt die Verschlüsselung an der Nutzlast, nicht am Weg.
+
+**Das Verfahren.** X25519 je Epoche, HKDF-SHA256 mit Epoche und Pod im
+Salz, ChaCha20-Poly1305, ein eigener Schlüssel je Richtung, der
+Sendezähler als Nonce. Kein Handschlag: Beide Seiten kennen den
+angekündigten Punkt der Gegenseite aus der Pod-Zuteilung und rechnen
+denselben Schlüssel aus. Jeder Shard-Übergang kostet Latenz, und eine
+Umlaufzeit vor der ersten Aktivierung wäre Latenz ohne Gegenwert.
+
+**Der Epochenschlüssel wird gezogen, nicht abgeleitet.** Ihn aus einer
+Langzeitsaat und der Epochennummer zu berechnen wäre bequem, hieße aber:
+Wer die Saat bekommt, bekommt jede vergangene Epoche mit. Vorwärts-
+geheimnis heißt, dass das Geheimnis nirgends mehr herleitbar ist. Der
+Preis gehört dazu und wird nicht verschwiegen: Ein Knoten, der neu
+startet, hat einen neuen Schlüssel und muss ihn ankündigen, bevor er
+wieder empfangen kann.
+
+**Der Zähler wohnt beim Schlüssel.** ChaCha20-Poly1305 verträgt keine
+zweite Nachricht mit demselben Nonce unter demselben Schlüssel, und bei
+Wiederholung fällt nicht nur die Vertraulichkeit, sondern auch die
+Authentisierung. Ein zurückgesetzter Zähler bei stehendem Schlüssel wäre
+deshalb kein Schönheitsfehler. Zähler und Schlüssel liegen darum im
+selben Wert: Es gibt keinen Weg, den einen zurückzusetzen, ohne den
+anderen neu zu bauen. Die Regel ist nicht dokumentiert, sie ist gebaut.
+
+**⚑ Der beglaubigte Schlüsselaustausch gehört dazu, sonst trägt nichts
+davon.** Alles oben rechnet gegen den Punkt, den die Gegenstelle
+angekündigt hat. Wer einen eigenen unterschieben kann, führt beide
+Seiten in eine Sitzung mit sich selbst, liest mit und reicht weiter, und
+kein einziges Tag geht dabei daneben. Verschlüsselung ohne beglaubigten
+Schlüsselaustausch ist keine halbe Sicherheit, sie ist gar keine.
+
+`Epochenankuendigung` trägt den Punkt deshalb mit einer Unterschrift des
+**Konsensschlüssels** (BLS) über Trennzeichenkette, Epoche, öffentlichen
+Schlüssel und Punkt. Geprüft wird gegen den Endpunkt, mit dem gesprochen
+werden soll, und **gegen sonst nichts**: Weil `MinerId` und `Address`
+beide `sha256(pubkey)` sind, ist der Endpunkt der Hash des
+unterschreibenden Schlüssels. Die Frage „gehört dieser Punkt zu dieser
+Gegenstelle?" ist damit vollständig in der Netzschicht beantwortbar,
+ohne Register und ohne Zuordnungstabelle.
+
+⚑ **Der erste Entwurf unterschrieb mit der Netzidentität, und das war
+prüfbar und trotzdem unbrauchbar.** Der Pod-Pfad nennt `MinerId`s; eine
+Unterschrift der `PeerId` beantwortet eine andere Frage, und **die
+Zuordnung von `PeerId` zu `MinerId` gibt es im Protokoll nirgends**. Die
+Prüfung war echt, sie prüfte nur das Falsche, und aufgefallen ist es
+erst beim Nachsehen, wie die Pod-Zuteilung ihre Mitglieder benennt.
+Ausgeliefert war diese Fassung nie.
+
+Die Epoche ist mitunterschrieben und wird zusätzlich verglichen: Ohne
+die Unterschrift ließe sich eine echte Ankündigung aus Epoche 9 auf 10
+umdatieren, der Vergleich wäre zufrieden, und der alte Punkt gälte in
+der neuen Epoche. Der Schlüssel wird vor dem Hashen als Gruppenpunkt
+geprüft, denn auch ein ungültiger Schlüssel hat einen Hash.
+
+Das Feld ist privat, und `pruefe` ist der einzige Weg heraus. Ein
+öffentliches Feld daneben wäre eine Abkürzung, die irgendwann jemand
+nimmt, und sie sähe an der Aufrufstelle harmlos aus.
+
+Ein Gleichstandstest in NODE (`tests/gleichstand.rs`) hält die
+Ableitung des Endpunkts mit der `MinerId` der Genesis-Datei zusammen.
+Die beiden Stellen können einander wegen der Schichtung nicht sehen,
+und liefen sie auseinander, passte keine einzige Ankündigung mehr,
+während jede Meldung nach einem Angriff aussähe.
+
+**Der Klartextkopf ist lesbar und trotzdem nicht änderbar.** Ein Gateway
+braucht Empfänger und Epoche zum Weiterleiten und sieht beides. Der Kopf
+geht vollständig als authentisierte Daten ins AEAD ein: ein geändertes
+Byte, und das Tag stimmt nicht mehr.
+
+**Rotation ohne Schonfrist.** Nachrichten der alten Epoche, die nach der
+Rotation eintreffen, sind verloren. Eine Schonfrist von einer Epoche
+würde sie retten und das Vorwärtsgeheimnis um genau diese Epoche
+verschieben.
+
+⚑ **Verkraftbar ist der Verlust aus einem anderen Grund, als zuerst
+dastand.** Die erste Begründung lautete, eine Sitzung über die
+Epochengrenze verliere ohnehin ihre Gegenstelle, weil die
+Pod-Zusammensetzung am selben Punkt wechsele. Das stimmt nicht: Ein Pod
+tauscht am Epochenwechsel nur die Positionen, deren Miner sich wirklich
+ändert, alle anderen laufen mit ihrem Zwischenstand weiter. Tragfähig
+ist stattdessen, dass der Verlust die Nachrichten eines Augenblicks je
+Stunde betrifft und **sichtbar** ist: Wer eine alte Nachricht bekommt,
+erhält einen benannten Fehler und nicht stillschweigend nichts. Die
+Wiederholung gehört damit dorthin, wo die Sequenz geführt wird, und
+nicht in einen aufgeweichten Schlüsselplan. **Sie ist noch nicht
+gebaut.**
+
+**Keine neue Abhängigkeit.** `chacha20poly1305`, `hkdf`, `x25519-dalek`,
+`sha2` und `zeroize` lagen bereits im Lock, weil libp2p sie für Noise
+mitbringt; der Paketzähler steht vor und nach diesem Schritt auf 362.
+
+**Der Aktivierungstransport bekommt kein eigenes Protokoll**, sondern
+reist über `/myelith/anfrage/1`. Anders als bei Gossip gibt es hier kein
+geteiltes Mesh und kein gemeinsames Peer-Scoring, das ein Vielredner
+vergiften könnte: `request-response` öffnet je Anfrage einen eigenen
+Substream.
+
+⚑ **Fund 71: drei Tests, grün aus dem falschen Grund.** Sie waren nach
+der Schlüsselableitung benannt und prüften in Wahrheit den Kopfvergleich
+des Empfängers, weil der vor der Entschlüsselung greift. Sie wären auch
+dann grün geblieben, wenn Epoche und Pod gar nicht ins Salz eingegangen
+wären, also genau in dem Fall, den sie ausschließen sollten. Seitdem
+vergleicht ein eigener Test die Ableitung selbst, und die drei heißen
+nach dem, was sie prüfen.
+
+⚑ **Fund 73: ein Test, der nur meistens grün war.**
+`ein_mitschnitt_ueberlebt_die_rotation_nicht` schob den antwortenden
+Knoten mit `tokio::spawn` in eine Aufgabe und ließ ihn am Ende fallen.
+Sein Kommandokanal schloss, `run_node` fuhr herunter, und die eben erst
+abgeschickte Antwort ging mit: „Connection was closed before a response
+was received".
+
+**Der Fehler war zwei Tests weiter schon einmal behoben worden**, dort
+durch Zurückgeben des Knotens aus der Aufgabe. Behoben wurde die
+Stelle, nicht das Muster, und das Muster stand nebenan weiter.
+
+**Gefunden hat ihn der Gesamtdurchlauf, nicht die Testdatei.** Seriell
+mit `--test-threads=1` lief sie fünfzehnmal grün; parallel, wie `cargo
+test` es von sich aus tut, fiel sie. Ein Fehler, der nur unter Last
+auftritt, ist genau der, den ein einzelner Lauf nicht findet.
+
+Behoben wurde diesmal das Muster: Beide Knoten bleiben dem Test
+gehören, gearbeitet wird mit `tokio::join!` über zwei geliehene
+Verweise, und es gibt keine Stelle mehr, an der ein Knoten zu früh
+fallen kann. **Gemessen:** mit dem alten Muster 2 von 15 Läufen rot, mit
+dem neuen 0 von 15.
+
+**Ein Test, der nur meistens grün ist, ist schlimmer als keiner.** Er
+bringt jemandem bei, noch einmal zu starten.
+
+**Gemessen:** 155 Tests grün (118 Unit, davon 43 in `sitzung.rs`, dazu
+37 über Integrationstests), plus drei Gleichstandstests in NODE. `tests/sitzung.rs` fährt echte Knoten: eine
+Aktivierung von Shard zu Shard, ein weiterleitendes Gateway, das
+annimmt, weitergibt, zurückgibt und beim Öffnen scheitert, ein
+Mitschnitt, der die Rotation nicht überlebt, eine Wiedereinspielung über
+den echten Draht, und ein Gateway, das dem Nutzer seinen eigenen
+Epochenpunkt als den des Shards unterschiebt. Zu jedem Ausschluss steht der erlaubte Fall im
+selben Test: „Niemand konnte lesen" beweist nichts, solange nicht
+feststeht, dass etwas zu lesen war.
+
+Zwanzig Gegenproben: Für jede Zusage wurde die zugehörige Zeile
+gebrochen und nachgesehen, welcher Test rot wird. Jedes Mal war es der
+Test, der die Eigenschaft im Namen führt.
+
+**Was diese Schicht nicht leistet, und das steht auch im Modulkopf:**
+Sie schützt nicht vor den beteiligten Shard-Minern. Deren Aufgabe ist
+die Verarbeitung des Inhalts. Kap. 9.2 sagt das ausdrücklich, Kap. 9.3
+zieht daraus die Risikoklasse C. Diese Fassung verschiebt die Grenze
+nicht, sie hält sie ein.
 
 ### v0.8.0 – 2026-08-26 (Chaos-Tests und die Sperrliste, Punkt 4.1)
 

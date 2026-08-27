@@ -1,20 +1,21 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.8.0
+> **Version:** 0.9.0
 > **Datum:** 2026-08-27
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
-> 2.1–2.5, 3.1–3.5), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
+> 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
 > Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
 > Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik,
 > Kontrollsegmente samt der Vorratsschranke aus Fund 58 und die
 > Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
-> **113 Tests grün** (83 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
+> **135 Tests grün** (105 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
 >
-> ⚑ **Punkt 3.2 trägt ein ⚠ und keinen Haken.** Die Einschleusung ist
-> gebaut, die **Ununterscheidbarkeit** aber ist eine Eigenschaft der
-> Daten und nicht des Codes; sie braucht ein Prompt-Profil aus echtem
-> Betrieb.
+> ⚑ **Punkt 3.2 trägt weiterhin ein ⚠ und keinen Haken, aber aus einem
+> anderen Grund als bisher.** Die Ununterscheidbarkeit ist eine
+> Eigenschaft der Daten und braucht ein Prompt-Profil aus echtem
+> Betrieb. Was seit v0.9.0 nicht mehr fehlt, ist das **Messgerät**
+> (Punkt 3.6): Es fehlt der Verkehr, nicht das Verfahren.
 >
 > ⚑ **Die adversariale Ebene fand Fund 42:** Das Bisektions-Spiel nannte
 > systematisch die **falsche Layer** und hätte damit den Betrüger
@@ -133,6 +134,90 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.9.0 – 2026-08-27 (Punkt 3.6: das Messgerät für die Ununterscheidbarkeit)
+
+`src/unterscheidbarkeit.rs`. Ein Zweistichprobentest auf ganzzahligen
+Merkmalen, durchgehend ohne Gleitkomma: totaler Variationsabstand über
+einem Fächerraster als Teststatistik, Signifikanz aus einem
+**Vertauschungstest**, p-Wert als Bruch zweier Ganzzahlen.
+
+**Warum ein Vertauschungstest und kein χ².** Ein χ²- oder KS-Test bringt
+Tabellen kritischer Werte und Verteilungsannahmen mit, die für
+Prompt-Längen niemand geprüft hat, und beide rechnen in Gleitkomma. Der
+Vertauschungstest ist exakt für die Daten, die er bekommt, braucht keine
+Tabelle, und gemischt wird mit dem vorhandenen `SeedRng`: Derselbe Seed
+ergibt denselben p-Wert, ein Messwert ist also nachrechenbar.
+
+⚑ **Der Fallstrick sitzt im Akzeptanzkriterium der Phase selbst.** Es
+lautet „statistische Analyse zeigt **keinen signifikanten
+Unterschied**", und so formuliert ist es von einem schlechten Test
+**leichter** zu erfüllen als von einem guten: Ein Raster mit einem
+einzigen Fach findet nie etwas und meldet immer Erfolg. „Kein
+Unterschied gefunden" ist keine Aussage, solange nicht danebensteht, was
+dieser Aufbau überhaupt hätte finden können.
+
+Deshalb gibt es hier keinen Weg zu einem Nein ohne die Trennschärfe:
+`Befund::KeinNachweis` trägt `erkennbar_ab` im Wert, und
+`traegt_die_aussage()` bleibt falsch, solange dort nichts steht. Wer das
+Ergebnis weiterreicht, reicht seine Grenze mit. Dieselbe Bauart wie an
+anderen Stellen des Projekts: Die Regel steht nicht im Kommentar,
+sondern im Typ.
+
+**Geeicht, nicht behauptet.** Zwei Messungen halten das Gerät fest: Unter
+gleicher Verteilung schlägt es selten an (Fehlalarmrate im erwarteten
+Bereich), und eine deutliche Verschiebung findet es zuverlässig. Ohne
+die zweite hieße die erste nur „schlägt nie an". Die Eichverteilung ist
+eine gleichverteilte Modellgröße und wird ausdrücklich als Annahme
+genannt; was die Eichung liefert, ist eine Eigenschaft **des Geräts**,
+nämlich wie viele Proben es für eine Abweichung gegebener Größe braucht.
+Genau diese Zahl braucht man im Betrieb, **bevor** man misst.
+
+⚑ **Fund 72: Die Kontingentgrenze verrät nichts, und das folgt aus einem
+Satz.** `einschleusungsplan` zieht ohne Zurücklegen, also enthält ein
+Strom von `n` Aufträgen **genau** `⌈n·γ⌉` Kontrollen statt einer
+schwankenden Zahl. γ ist ein Governance-Parameter und damit öffentlich,
+`n` sieht ein Miner am Strom: Er kennt das Kontingent. Hätte er so viele
+Kontrollen erkannt, wie hineinpassen, wäre jeder weitere Auftrag mit
+Sicherheit echt, und auf einem sicher echten Auftrag kostet Betrug
+nichts.
+
+Gemessen (`messe_kontingent`, γ = 2 %, 100 000 Aufträge, Kontingent
+2 000): **null** sicher echte Aufträge, über jeden geprüften Vorrat von
+1 bis 4 096.
+
+Die Null ist kein Zufall. Die Wiederholung erkennt ein Segment
+frühestens beim **zweiten** Auftreten, also bleiben von `v`
+Vorratssegmenten die ersten `min(v, k)` Auftreten unerkannt, und damit
+gilt `verdächtig ≤ k − min(v, k) < k` für jeden Vorrat `v ≥ 1`. Die
+gemessenen Zahlen sind exakt `2 000 − Vorrat`, also der Satz mit
+Gleichheit.
+
+**Folgerung: `einschleusungsplan` bleibt, wie er ist.** Der naheliegende
+Umbau wäre, je Position unabhängig mit Wahrscheinlichkeit γ zu ziehen;
+er würde ein Loch schließen, das es nicht gibt, und dafür die exakte
+Einhaltung von γ je Strom aufgeben, an der die Kostenbuchhaltung aus
+Punkt 3.4 hängt. Erschöpfen ließe sich das Kontingent nur mit einem
+Unterscheider, der **jede** Kontrolle erkennt, und wer den hat, braucht
+das Kontingent nicht mehr.
+
+**Ein Nullergebnis mit Begründung ist mehr wert als eines ohne.** Ohne
+den Satz stünde hier eine Messung über fünf Vorratsgrößen, und niemand
+wüsste, ob die sechste anders ausfällt.
+
+**Gemessen:** 135 Tests grün (105 Modultests, davon 17 zum Messgerät und
+5 zu Fund 72, dazu 19 adversariale, 9 Simulation, 2 Doku-Tests). Acht
+Gegenproben: Abstand auf null, Raster immer brauchbar, p-Wert ohne die
+beobachtete Anordnung, Etiketten ungemischt, Trennschärfe unterschlagen,
+blindes Nein als Aussage, Kontingent auf null, Kontingent um den Vorrat
+gesenkt. Jedes Mal rot, jedes Mal beim Test mit der Eigenschaft im
+Namen. `examples/a11_kurve.rs` druckt beide Kurven.
+
+**Was weiterhin fehlt und wofür dieses Modul nicht steht:** die Messung
+selbst. Sie braucht echte Prompt-Längen, echte Zwischenankunftszeiten
+und echte Kontextprofile, und die entstehen erst im Betrieb. Punkt 3.2
+trägt deshalb weiterhin kein volles Häkchen, und das Messgerät ist kein
+Beleg, sondern die Voraussetzung dafür, später einen zu bekommen.
 
 ### v0.8.0 – 2026-08-27 (Punkt 3.5: die Vorratsgröße wird ein Parameter)
 

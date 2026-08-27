@@ -1,10 +1,10 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.10.0
+> **Version:** 0.10.1
 > **Datum:** 2026-08-27
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
-> **163 Tests grün.**
+> **166 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -268,6 +268,31 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.10.1 – 2026-08-27 (Gleichstand mit der Netzschicht)
+
+Nur Tests, kein Verhalten. `tests/gleichstand.rs` hält zwei Ableitungen
+zusammen, die einander wegen der Schichtung nicht sehen können:
+`GenesisValidator::kennung` bildet aus dem BLS-Schlüssel eines
+Validators seine `MinerId`, `myl_net::endpunkt_aus_schluessel` bildet
+aus demselben Schlüssel den Endpunkt einer verschlüsselten Sitzung.
+`myl-net` ist L0 und darf die Genesis-Datei nicht kennen; der Preis
+dafür ist eine Doppelrechnung.
+
+⚑ **Was ohne diesen Test auseinanderliefe, und wie es aussähe.** Die
+Sitzungsschicht prüft eine Epochenankündigung, indem sie den Endpunkt
+aus dem mitgeführten Schlüssel ableitet und mit dem vergleicht, den der
+Pod-Pfad nennt. Rechnen beide Seiten verschieden, passt **keine
+einzige** Ankündigung mehr, und jede Meldung lautet „gehört zu einem
+anderen Endpunkt". Das liest sich wie ein Angriff, und niemand käme
+darauf, dass beide Seiten für sich recht haben. Ein Fehler, der wie ein
+Angriff aussieht, kostet beim Suchen ein Vielfaches.
+
+Drei Tests: die Gleichheit über vier Saaten, die Gegenprobe (zwei
+verschiedene Schlüssel geben zwei verschiedene Endpunkte, sonst hieße
+„gleich" auch bei einer konstanten Rückgabe gleich), und der Weg wie im
+Betrieb: Ankündigung prüfen gegen die `MinerId` aus der Genesis-Datei,
+und ein anderer Validator kommt darüber nicht herein.
 
 ### v0.10.0 – 2026-08-27 (Höhe und Epoche sind zwei Dinge)
 
