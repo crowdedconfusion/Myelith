@@ -249,6 +249,277 @@ pub fn softmax_backward(g: &[Grad], p: &[Grad], frac_bits: u8) -> Vec<Grad> {
 }
 
 // ---------------------------------------------------------------------------
+// Expertengemisch (MoE)
+// ---------------------------------------------------------------------------
+
+/// Was ein Rückwärtsschritt durch ein Expertengemisch liefert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoeGradienten {
+    /// `dL/dAusgabe` je **gewähltem** Experten, in derselben Reihenfolge
+    /// wie `experten` im Vorwärtspass.
+    pub je_ausgabe: Vec<Vec<Grad>>,
+    /// `dL/dLogit` über **alle** Experten der Layer.
+    ///
+    /// ⚑ **Nicht gewählte Experten tragen hier exakt null**, und das ist
+    /// keine Näherung, sondern folgt aus dem Routing: Bei
+    /// `norm_topk_prob` läuft der Softmax nur über die gewählten Logits,
+    /// die übrigen kommen in der Ausgabe gar nicht vor. Ein Logit, der
+    /// die Ausgabe nicht berührt, hat die Ableitung null.
+    ///
+    /// **Skala:** `g_frac + logit_zusatz_bits`, siehe [`moe_backward`].
+    pub logits: Vec<Grad>,
+}
+
+/// Rückwärtspass durch die Mischung eines Expertengemischs.
+///
+/// **Der Vorwärtspass, auf den sich das bezieht** (siehe
+/// `crate::moe::mische_experten`):
+///
+/// ```text
+/// y = ( Σ_i  w_i · a_i ) >> gewicht_frac_bits
+/// ```
+///
+/// mit `w_i` den Mischgewichten der gewählten Experten und `a_i` deren
+/// Ausgaben. Daraus:
+///
+/// ```text
+/// dL/da_i = ( g · w_i ) >> gewicht_frac_bits
+/// dL/dw_i = Σ_j g_j · a_ij
+/// ```
+///
+/// Der zweite Gradient geht anschließend durch den Softmax über die
+/// gewählten Logits ([`softmax_backward`]) und wird auf die volle
+/// Logit-Reihe verteilt.
+///
+/// **Skalen.** `g` trägt `g_frac`, `gewichte` tragen
+/// `gewicht_frac_bits`, `ausgaben` tragen `aus_frac`. `dL/da_i` kommt
+/// wieder auf `g_frac` heraus. `dL/dw_i` entsteht auf
+/// `g_frac + aus_frac` und wird um `aus_frac` zurückgeschoben, damit es
+/// mit `g` vergleichbar ist, wie [`softmax_backward`] es erwartet.
+///
+/// ## ⚑ Fund 79: Ein gesättigter Router kann sich nie wieder ändern
+///
+/// **Der Ganzzahl-Softmax sättigt, und Sättigung ist ein absorbierender
+/// Zustand.** Bei genügend Abstand zwischen zwei Logits liefert
+/// `softmax_int` die Gewichte `(1 << frac, 0)` statt „fast alles" und
+/// „fast nichts". Gemessen am Testaufbau dieses Moduls genügt dafür ein
+/// Abstand von 80 Einheiten bei `frac = 8`.
+///
+/// **Dann ist der Gradient jedes Logits exakt null, und zwar aus
+/// Rechengründen, nicht durch Rundung:**
+///
+/// ```text
+/// out_i = ( (g_i − Σ_j g_j p_j / 2^frac) · p_i ) >> frac
+/// ```
+///
+/// - Für einen Verlierer ist `p_i = 0`, also ist der Faktor null.
+/// - Für den Gewinner ist `p_0 = 2^frac`, also `Σ_j g_j p_j / 2^frac =
+///   g_0`, also ist die **Klammer** null.
+///
+/// ⚑ **Beide Wege führen auf null, und damit steht der Router still.**
+/// Ein Router, der einmal sicher genug war, bleibt es für immer: Sein
+/// Gradient verschwindet, bevor er ihn ändern könnte. **In Gleitkomma
+/// gibt es diesen Zustand nicht**, dort ist ein Softmax bei endlichen
+/// Logits nie exakt 0 oder 1. Er entsteht erst durch die Ganzzahltabelle
+/// und ist damit ein Preis dieses Projekts, keine Eigenschaft von MoE.
+///
+/// **Auch ohne Sättigung ist der Gradient klein.** Er trägt den Faktor
+/// `p_i · (1 − p_i)`; je entschiedener die Wahl, desto kleiner. Auf der
+/// Skala des Aktivierungsgradienten rundet er dann auf null, bevor er
+/// wirkt. Deshalb nimmt diese Funktion `logit_zusatz_bits`: Der
+/// Logit-Gradient wird um so viele Bit **feiner** geführt und kommt auf
+/// `g_frac + logit_zusatz_bits` heraus. Gegen die Sättigung hilft das
+/// nicht, gegen die Rundung schon.
+///
+/// **Was daraus folgt, und es ist ein offener Entwurfspunkt:** Ein
+/// Lastausgleich ist hier keine Verbesserung, sondern eine
+/// Voraussetzung. Er muss verhindern, dass ein Router sättigt. Die
+/// üblichen Verfahren tun das über einen Hilfsverlust mit
+/// Batch-Statistiken und über Rauschen im Router; beides scheidet aus
+/// (siehe unten). Solange kein Ersatz steht, ist Training auf einem
+/// Expertengemisch **möglich, aber nicht stabil**, und dieser Satz
+/// gehört zu jedem Ergebnis dazu.
+///
+/// ⚑ **Was hier bewusst nicht passiert: eine Lastausgleichs-Korrektur.**
+/// Die gängigen Verfahren addieren einen Hilfsverlust über
+/// Batch-Statistiken und oft Rauschen im Router. Beides scheidet aus:
+/// Rauschen ist nicht deterministisch, und eine Größe über den Batch
+/// machte das Ergebnis an Position *i* davon abhängig, welche anderen
+/// Token zufällig danebenlagen. Das ist dieselbe Klasse wie das für den
+/// Vorwärtspfad bereits verbotene Token-Dropping.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_backward(
+    g: &[Grad],
+    experten: &[u16],
+    gewichte: &[i32],
+    ausgaben: &[Vec<i16>],
+    anzahl_experten: usize,
+    gewicht_frac_bits: u8,
+    aus_frac: u8,
+    logit_zusatz_bits: u8,
+) -> MoeGradienten {
+    assert!(
+        logit_zusatz_bits <= aus_frac,
+        "moe_backward: logit_zusatz_bits {} ueber aus_frac {}, der Zwischenwert waere ungeschoben (Fund 79)",
+        logit_zusatz_bits,
+        aus_frac
+    );
+    assert_eq!(
+        experten.len(),
+        gewichte.len(),
+        "moe_backward: je gewaehltem Experten genau ein Gewicht"
+    );
+    assert_eq!(
+        experten.len(),
+        ausgaben.len(),
+        "moe_backward: je gewaehltem Experten genau eine Ausgabe"
+    );
+
+    // dL/da_i: das eigene Mischgewicht skaliert den eingehenden Gradienten.
+    let je_ausgabe: Vec<Vec<Grad>> = gewichte
+        .iter()
+        .map(|w| {
+            g.iter()
+                .map(|gi| clamp_i32(rshift_round_i64((*gi as i64) * (*w as i64), gewicht_frac_bits)))
+                .collect()
+        })
+        .collect();
+
+    // dL/dw_i: das Skalarprodukt aus eingehendem Gradienten und
+    // Expertenausgabe. In i64 summiert und **einmal** geschoben, nicht
+    // je Summand (Fund 24).
+    let d_gewichte: Vec<Grad> = ausgaben
+        .iter()
+        .map(|a| {
+            assert_eq!(a.len(), g.len(), "moe_backward: Ausgabe passt nicht zu g");
+            let mut summe: i64 = 0;
+            for (gi, ai) in g.iter().zip(a.iter()) {
+                summe += (*gi as i64) * (*ai as i64);
+            }
+            // Weniger weit schieben heißt feiner führen: Das Ergebnis
+            // trägt `g_frac + logit_zusatz_bits` statt `g_frac`.
+            clamp_i32(rshift_round_i64(summe, aus_frac - logit_zusatz_bits))
+        })
+        .collect();
+
+    // Durch den Softmax über die **gewählten** Logits.
+    let d_gewaehlte = softmax_backward(&d_gewichte, gewichte, gewicht_frac_bits);
+
+    // Auf die volle Reihe verteilen. Alles, was nicht gewählt wurde,
+    // bleibt null.
+    let mut logits = vec![0 as Grad; anzahl_experten];
+    for (e, d) in experten.iter().zip(d_gewaehlte.iter()) {
+        let i = *e as usize;
+        assert!(i < anzahl_experten, "moe_backward: Expertenindex ausserhalb");
+        logits[i] = *d;
+    }
+
+    MoeGradienten { je_ausgabe, logits }
+}
+
+/// Gradient einer Spreizungsstrafe auf die Router-Logits.
+///
+/// ## ⚑ Was sie behebt (Fund 79)
+///
+/// Der Ganzzahl-Softmax sättigt ab einem Logit-Abstand von
+/// [`crate::moe::saettigungsabstand`], und ein gesättigter Router hat
+/// überall den Gradienten null. Er kann sich dann nie wieder ändern.
+///
+/// **Diese Strafe hat genau dort ihren größten Wert, wo der
+/// Softmax-Gradient verschwunden ist**, und das ist ihre entscheidende
+/// Eigenschaft: Sie liest die **Logit-Abstände**, nicht die
+/// quantisierten Gewichte. Ob `p_i` auf null gerundet wurde, ist ihr
+/// gleichgültig; sie sieht, dass `z_i` zu weit unten liegt, und schiebt
+/// es zurück.
+///
+/// ```text
+/// ueberschuss_i = max(0, (z_max − z_i) − schwelle)
+/// dz_i          = + (ueberschuss_i >> daempfung)        für die Verlierer
+/// dz_max        = − Σ_i (ueberschuss_i >> daempfung)    als Gegenbuchung
+/// ```
+///
+/// ⚑ **Die Summe ist exakt null.** Die Strafe verschiebt den
+/// Logit-Mittelwert nicht, sie staucht nur die Spreizung. Ohne diese
+/// Eigenschaft zöge sie das Routing langsam in eine Richtung, und
+/// niemand sähe es. Es gibt dafür einen Test.
+///
+/// **Sie greift nur, wenn sie muss.** Liegen alle gewählten Logits
+/// innerhalb der Schwelle, ist der Rückgabewert **exakt null** an jeder
+/// Stelle, und das Training verläuft, als gäbe es sie nicht. Ein
+/// gesunder Router wird nicht verbogen.
+///
+/// ## Warum keines der üblichen Verfahren
+///
+/// - **Hilfsverlust über Batch-Statistiken** (Switch Transformer,
+///   GShard): Das Ergebnis an Position *i* hinge davon ab, welche
+///   anderen Token zufällig danebenlagen. Dieselbe Klasse wie das für
+///   den Vorwärtspfad bereits verbotene Token-Dropping.
+/// - **Rauschen im Router**: nicht deterministisch, und ohne
+///   Determinismus keine Redundanzprüfung.
+/// - **`z`-Verlust** (ST-MoE): Sein Gradient ist zwar je Token lokal und
+///   damit brauchbar, aber er staucht **alle** Logits gegen null,
+///   gleichgültig ob der Router gesund ist. Er braucht außerdem
+///   `logsumexp`, also einen Logarithmus im Ganzzahlpfad. Die
+///   Spreizungsstrafe erreicht dasselbe Ziel mit weniger Eingriff und
+///   ohne neue Primitive.
+///
+/// **Was sie nicht leistet:** Lastausgleich. Ein Experte, der über viele
+/// Token nie gewählt wird, bleibt untrainiert, und das ist eine Aussage
+/// über die Segmentfolge und nicht über ein Token. Sie steht weiter
+/// offen.
+///
+/// ## Skalen
+///
+/// Rückgabe in **Logit-Einheiten**, also derselben Skala wie `logits`.
+/// [`moe_backward`] liefert seinen Logit-Gradienten dagegen auf
+/// `g_frac + logit_zusatz_bits`. **Der Aufrufer bringt beide auf eine
+/// Skala, bevor er sie addiert**; hier steht es, weil es sonst niemandem
+/// auffiele.
+pub fn router_spreizung(
+    logits: &[i32],
+    experten: &[u16],
+    schwelle: i32,
+    daempfung: u8,
+) -> Vec<Grad> {
+    let mut d = vec![0 as Grad; logits.len()];
+    if experten.is_empty() {
+        return d;
+    }
+    assert!(schwelle >= 0, "router_spreizung: negative Schwelle");
+
+    // Das Maximum über die **gewählten** Logits. Nicht über alle: Ein
+    // nicht gewählter Experte kann beliebig tief liegen, das ist der
+    // Sinn von Top-k, und ihn hochzuziehen wäre Lastausgleich und nicht
+    // Sättigungsschutz.
+    let mut hoechster = experten[0] as usize;
+    for e in experten.iter() {
+        let i = *e as usize;
+        assert!(i < logits.len(), "router_spreizung: Index ausserhalb");
+        if logits[i] > logits[hoechster] {
+            hoechster = i;
+        }
+    }
+
+    let mut gegenbuchung: i64 = 0;
+    for e in experten.iter() {
+        let i = *e as usize;
+        if i == hoechster {
+            continue;
+        }
+        let abstand = (logits[hoechster] as i64) - (logits[i] as i64);
+        let ueberschuss = abstand - schwelle as i64;
+        if ueberschuss <= 0 {
+            continue;
+        }
+        let schub = ueberschuss >> daempfung;
+        d[i] = clamp_i32(schub);
+        gegenbuchung += d[i] as i64;
+    }
+    d[hoechster] = clamp_i32(-gegenbuchung);
+    d
+}
+
+// ---------------------------------------------------------------------------
 // SiLU
 // ---------------------------------------------------------------------------
 
@@ -634,6 +905,452 @@ mod tests {
         assert!(
             ausgeloescht > 50,
             "erwartet: der Ausreißer löscht den Rest aus, gemessen {ausgeloescht}"
+        );
+    }
+
+    // ---- Expertengemisch ---------------------------------------------
+
+    /// Die Bausteine eines kleinen Gemischs: vier Experten, Top-2.
+    fn gemisch() -> (Vec<i32>, Vec<Vec<i16>>, usize, usize, u8) {
+        let logits: Vec<i32> = vec![120, 40, 200, 80];
+        let ausgaben: Vec<Vec<i16>> = vec![
+            vec![10, -20, 30],
+            vec![-5, 15, -25],
+            vec![40, 40, -40],
+            vec![1, 2, 3],
+        ];
+        (logits, ausgaben, 4, 2, 8)
+    }
+
+    /// Ein Gemisch mit **eng beieinander liegenden** Logits, das nicht
+    /// sättigt. Der Abstand ist mit Absicht klein: Genau dort lebt der
+    /// Router-Gradient noch.
+    fn gemisch_eng() -> (Vec<i32>, Vec<Vec<i16>>, usize, usize, u8) {
+        let logits: Vec<i32> = vec![100, 40, 104, 80];
+        let ausgaben: Vec<Vec<i16>> = vec![
+            vec![10, -20, 30],
+            vec![-5, 15, -25],
+            vec![40, 40, -40],
+            vec![1, 2, 3],
+        ];
+        (logits, ausgaben, 4, 2, 8)
+    }
+
+    /// Routet und mischt wie der Vorwärtspfad, mit derselben Tabelle.
+    fn vorwaerts(
+        logits: &[i32],
+        alle_ausgaben: &[Vec<i16>],
+        k: usize,
+        frac: u8,
+    ) -> (Vec<u16>, Vec<i32>, Vec<Vec<i16>>, Vec<i16>) {
+        let lut = crate::moe::tests_exp_lut();
+        let routing = crate::moe::route_top_k(logits, k, &lut, 0, frac, true);
+        let gewaehlt: Vec<Vec<i16>> = routing
+            .experten
+            .iter()
+            .map(|e| alle_ausgaben[*e as usize].clone())
+            .collect();
+        let y = crate::moe::mische_experten(&gewaehlt, &routing.gewichte, frac);
+        (routing.experten, routing.gewichte, gewaehlt, y)
+    }
+
+    /// ⚑ **Der Satz, um den es bei Expertengemischen geht: Ein nicht
+    /// gewählter Experte bekommt exakt null.**
+    ///
+    /// Nicht „fast null" und nicht „vernachlässigbar". Bei
+    /// `norm_topk_prob` läuft der Softmax nur über die gewählten Logits;
+    /// die übrigen kommen in der Ausgabe nicht vor und haben deshalb die
+    /// Ableitung null. Das ist die Grundlage dafür, dass ein
+    /// hinzugefügter Experte mit minimalem Logit **tot** wäre, und
+    /// deshalb steht der Satz als Test da und nicht als Behauptung.
+    #[test]
+    fn nicht_gewaehlte_experten_bekommen_exakt_null() {
+        // Der enge Aufbau, weil der weite sättigt und dann **alle**
+        // Gradienten null sind; die Gegenprobe unten könnte sonst nicht
+        // greifen. Die Sättigung selbst prüft der Test darunter.
+        let (logits, alle, n, k, frac) = gemisch_eng();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let g: Vec<Grad> = vec![7, -3, 11];
+
+        let grad = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+
+        assert_eq!(grad.logits.len(), n);
+        for i in 0..n {
+            if experten.contains(&(i as u16)) {
+                continue;
+            }
+            assert_eq!(
+                grad.logits[i], 0,
+                "Experte {i} wurde nicht gewaehlt und bekam trotzdem einen Gradienten"
+            );
+        }
+        // Gegenprobe: Die gewählten bekommen nicht alle null, sonst
+        // bewiese der Test oben, dass der Rückwärtspass nichts tut.
+        assert!(
+            experten.iter().any(|e| grad.logits[*e as usize] != 0),
+            "kein einziger gewaehlter Experte bekam einen Gradienten"
+        );
+    }
+
+    /// ⚑ **Das Akzeptanzkriterium für Training auf einem
+    /// Expertengemisch:** Zwei redundante Miner, die dasselbe Segment
+    /// rechnen, liefern **bitgleiche** Gradienten, Routing-Entscheidung
+    /// eingeschlossen.
+    ///
+    /// Der Test fährt den ganzen Weg zweimal, einschließlich Routing,
+    /// und vergleicht byteweise. Ohne die Routing-Entscheidung im
+    /// Vergleich bewiese er zu wenig: Zwei Läufe könnten verschiedene
+    /// Experten wählen und danach zufällig ähnliche Zahlen liefern.
+    #[test]
+    fn zwei_laeufe_liefern_bitgleiche_gradienten() {
+        let (logits, alle, n, k, frac) = gemisch();
+        let g: Vec<Grad> = vec![7, -3, 11];
+        let lauf = || {
+            let (experten, gewichte, gewaehlt, y) = vorwaerts(&logits, &alle, k, frac);
+            let grad = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+            (experten, gewichte, y, grad)
+        };
+        assert_eq!(lauf(), lauf());
+    }
+
+    /// Gegen die numerische Ableitung des echten Mischkernels.
+    ///
+    /// Abgeleitet wird nach der **Ausgabe eines gewählten Experten**,
+    /// denn das ist die Stelle, an der die Gradienten in die Experten
+    /// zurücklaufen.
+    #[test]
+    fn der_gradient_je_ausgabe_trifft_die_numerische_ableitung() {
+        let (logits, alle, n, k, frac) = gemisch();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let c: Vec<Grad> = vec![3, -5, 2];
+
+        let grad = moe_backward(&c, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+
+        // Verlust als Σ y_i · c_i, abgeleitet nach der Ausgabe des
+        // ersten gewählten Experten.
+        let verlust = |a0: &[i16]| -> f64 {
+            let mut ausgaben = gewaehlt.clone();
+            ausgaben[0] = a0.to_vec();
+            let y = crate::moe::mische_experten(&ausgaben, &gewichte, frac);
+            y.iter().zip(c.iter()).map(|(a, b)| *a as f64 * *b as f64).sum()
+        };
+
+        for (j, gj) in grad.je_ausgabe[0].iter().enumerate() {
+            let num = numerisch(&gewaehlt[0], j, 16, verlust);
+            let ana = *gj as f64;
+            let abweichung = (num - ana).abs();
+            let bezug = num.abs().max(ana.abs()).max(1.0);
+            assert!(
+                abweichung <= 2.0 || abweichung / bezug < 0.25,
+                "Kanal {j}: numerisch {num:.2}, analytisch {ana:.2}"
+            );
+        }
+    }
+
+    /// Das Mischgewicht skaliert den Gradienten: Wer mehr Gewicht
+    /// bekommt, bekommt mehr Gradient. Ohne diese Kopplung liefe das
+    /// Routing im Rückwärtspass leer mit.
+    #[test]
+    fn ein_groesseres_mischgewicht_gibt_mehr_gradient() {
+        let (logits, alle, n, k, frac) = gemisch();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let g: Vec<Grad> = vec![1000, 1000, 1000];
+        let grad = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+
+        // Der erste gewählte Experte hat das größte Logit und damit das
+        // größte Gewicht.
+        assert!(gewichte[0] > gewichte[1], "Aufbau des Tests stimmt nicht");
+        assert!(
+            grad.je_ausgabe[0][0].abs() > grad.je_ausgabe[1][0].abs(),
+            "das groessere Gewicht gab nicht mehr Gradient"
+        );
+    }
+
+    /// ⚑ **Fund 79, Teil 1: Sättigung ist ein absorbierender Zustand.**
+    ///
+    /// Bei einem Logit-Abstand von 80 liefert der Ganzzahl-Softmax die
+    /// Gewichte `(256, 0)`, und dann ist der Gradient **jedes** Logits
+    /// exakt null, auch der des Gewinners. Der Router steht still und
+    /// kann sich nie wieder ändern. Zusatzbits helfen dagegen nicht,
+    /// und der Test hält genau das fest.
+    #[test]
+    fn ein_gesaettigter_router_hat_ueberall_gradient_null() {
+        let (logits, alle, n, k, frac) = gemisch();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let g: Vec<Grad> = vec![7, -3, 11];
+
+        assert_eq!(
+            gewichte,
+            vec![1 << frac, 0],
+            "der Aufbau saettigt nicht mehr, dann prueft dieser Test etwas anderes"
+        );
+
+        for zusatz in [0u8, 3, 6] {
+            let grad = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, zusatz);
+            assert!(
+                grad.logits.iter().all(|d| *d == 0),
+                "bei Saettigung kam mit {zusatz} Zusatzbits doch ein Gradient an: {:?}",
+                grad.logits
+            );
+        }
+    }
+
+    /// ⚑ **Fund 79, Teil 2: Ohne Sättigung entscheidet die Skala.**
+    ///
+    /// Beim engen Aufbau lebt der Gradient noch, ist aber klein. Ohne
+    /// Zusatzbits rundet er auf null, mit ihnen nicht. Das ist die
+    /// Hälfte des Fundes, gegen die sich etwas tun lässt.
+    #[test]
+    fn ohne_zusatzbits_rundet_der_router_gradient_auf_null() {
+        let (logits, alle, n, k, frac) = gemisch_eng();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let g: Vec<Grad> = vec![7, -3, 11];
+
+        assert!(
+            gewichte[1] > 0,
+            "der enge Aufbau saettigt doch: {gewichte:?}"
+        );
+
+        let ohne = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 0);
+        let mit = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+
+        assert!(
+            mit.logits.iter().any(|d| *d != 0),
+            "auch mit Zusatzbits kam nichts an: {:?}",
+            mit.logits
+        );
+        // Und die Gegenprobe: Ohne Zusatzbits ist es weniger, nicht mehr.
+        let summe = |v: &[Grad]| v.iter().map(|d| d.unsigned_abs() as u64).sum::<u64>();
+        assert!(
+            summe(&ohne.logits) < summe(&mit.logits),
+            "ohne Zusatzbits kam nicht weniger an: {:?} gegen {:?}",
+            ohne.logits,
+            mit.logits
+        );
+    }
+
+    // ---- Fund 79: die Spreizungsstrafe -------------------------------
+
+    /// ⚑ **Die hergeleitete Schwelle gegen die gemessene Sättigung.**
+    ///
+    /// `saettigungsabstand` rechnet `(frac + 1) · ln2 · 2^exp_input`.
+    /// Der Test glaubt der Formel nicht, sondern sucht mit dem echten
+    /// `softmax_int` den Abstand, ab dem das kleinere Gewicht auf null
+    /// fällt, und vergleicht. Ohne diesen Vergleich wäre die Schwelle
+    /// eine hübsche Herleitung ohne Deckung.
+    #[test]
+    fn die_hergeleitete_schwelle_trifft_die_gemessene_saettigung() {
+        // Eine Tabelle mit den **echten** Parametern des Projekts:
+        // exp_input_frac_bits = 8, exp_lut_frac_bits = 14. Die
+        // Spielzeugtabelle des Moduls hat eine zu kleine Domäne; an ihr
+        // gemessen träfe der Test die Tabellenkante und nicht die
+        // Rundung.
+        let exp_in = 8u8;
+        let lut_frac = 14u8;
+        let lut: Vec<i16> = (0..4096)
+            .map(|i| {
+                let x = i as f64 / (1u32 << exp_in) as f64;
+                ((1u32 << lut_frac) as f64 * (-x).exp()).round() as i16
+            })
+            .collect();
+
+        for frac in [8u8, 14u8] {
+            let gemessen = (1..4000)
+                .find(|abstand| {
+                    let w = crate::softmax::softmax_int(&[*abstand, 0], &lut, 0, frac);
+                    w[1] == 0
+                })
+                .expect("irgendwann saettigt es");
+            let hergeleitet = crate::moe::saettigungsabstand(frac, exp_in);
+
+            // Die Formel rechnet mit dem stetigen exp, die Tabelle
+            // rastert. Erwartet wird deshalb eine Übereinstimmung auf
+            // zehn Prozent, nicht auf die Einheit.
+            let abweichung = (gemessen - hergeleitet).abs() as f64;
+            let bezug = hergeleitet as f64;
+            assert!(
+                abweichung / bezug < 0.10,
+                "frac {frac}: gemessen {gemessen}, hergeleitet {hergeleitet}"
+            );
+        }
+    }
+
+    /// ⚑ Der Vergleich, der die Einordnung trägt: Gleitkomma hat
+    /// denselben Zustand, nur viel später.
+    ///
+    /// Ohne diese Zahl liest sich Fund 79 so, als sei Router-Kollaps ein
+    /// Erzeugnis des Ganzzahlpfads. Er ist es nicht; die Tabelle macht
+    /// ihn nur um eine Größenordnung leichter erreichbar.
+    #[test]
+    fn der_ganzzahlpfad_saettigt_frueher_als_gleitkomma() {
+        // In nats: (frac + 1) · ln2 für den Ganzzahlpfad.
+        let nats = |frac: u8| (frac as f64 + 1.0) * std::f64::consts::LN_2;
+        assert!((nats(14) - 10.4).abs() < 0.1, "prob_frac_bits 14 liegt bei 10,4 nats");
+
+        // f32 verliert das kleinere Gewicht erst, wenn es unter die
+        // kleinste subnormale Zahl faellt.
+        let f32_grenze = (1.0f64 / f32::MIN_POSITIVE as f64).ln();
+        assert!(f32_grenze > 80.0, "f32 sollte weit spaeter saettigen");
+        assert!(
+            f32_grenze / nats(14) > 8.0,
+            "der Abstand zwischen Ganzzahl und f32 ist kleiner als gedacht: {:.0}",
+            f32_grenze / nats(14)
+        );
+    }
+
+    /// Ein gesunder Router wird **exakt** nicht angefasst.
+    ///
+    /// Nicht „kaum" und nicht „wenig": null an jeder Stelle. Eine Strafe,
+    /// die im Normalfall etwas tut, verschiebt das Modell dauerhaft, und
+    /// niemand sähe woran.
+    #[test]
+    fn ein_gesunder_router_bleibt_exakt_unberuehrt() {
+        let (logits, alle, _, k, frac) = gemisch_eng();
+        let (experten, _, _, _) = vorwaerts(&logits, &alle, k, frac);
+        let d = router_spreizung(&logits, &experten, 100, 0);
+        assert!(
+            d.iter().all(|x| *x == 0),
+            "der gesunde Router wurde verbogen: {d:?}"
+        );
+    }
+
+    /// ⚑ **Die Strafe verschiebt den Logit-Mittelwert nicht.**
+    ///
+    /// Sie staucht die Spreizung und sonst nichts. Ohne diese
+    /// Eigenschaft zöge sie das Routing über viele Schritte in eine
+    /// Richtung, ohne dass es jemandem auffiele.
+    #[test]
+    fn die_strafe_summiert_sich_zu_null() {
+        for schwelle in [0i32, 10, 40] {
+            let logits: Vec<i32> = vec![300, 40, 100, 80];
+            let experten: Vec<u16> = vec![0, 2, 3];
+            let d = router_spreizung(&logits, &experten, schwelle, 0);
+            let summe: i64 = d.iter().map(|x| *x as i64).sum();
+            assert_eq!(summe, 0, "Schwelle {schwelle}: Summe {summe} statt null");
+        }
+    }
+
+    /// ⚑ **Der Nachweis, um den es geht: Die Strafe wirkt genau dort, wo
+    /// der Softmax-Gradient verschwunden ist.**
+    ///
+    /// Derselbe gesättigte Aufbau, zwei Rückwärtswege. Der über den
+    /// Softmax liefert überall null; die Spreizungsstrafe liefert einen
+    /// Schub. Sie liest die Logit-Abstände und nicht die quantisierten
+    /// Gewichte, und deshalb ist ihr die Sättigung gleichgültig.
+    #[test]
+    fn die_strafe_wirkt_wo_der_softmax_gradient_null_ist() {
+        let (logits, alle, n, k, frac) = gemisch();
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        assert_eq!(gewichte, vec![1 << frac, 0], "der Aufbau saettigt nicht mehr");
+
+        let g: Vec<Grad> = vec![7, -3, 11];
+        let ueber_softmax = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+        assert!(
+            ueber_softmax.logits.iter().all(|d| *d == 0),
+            "der Softmax-Weg liefert doch etwas: {:?}",
+            ueber_softmax.logits
+        );
+
+        let strafe = router_spreizung(&logits, &experten, 20, 0);
+        assert!(
+            strafe.iter().any(|d| *d != 0),
+            "die Strafe liefert nichts, dann hilft sie auch nicht: {strafe:?}"
+        );
+        // Und sie zeigt in die richtige Richtung: Der Verlierer wird
+        // hochgeschoben, der Gewinner heruntergezogen.
+        assert!(strafe[experten[1] as usize] > 0, "der Verlierer wird nicht hochgeschoben");
+        assert!(strafe[experten[0] as usize] < 0, "der Gewinner wird nicht heruntergezogen");
+    }
+
+    /// ⚑ **Der Ausstieg aus dem absorbierenden Zustand, als Lauf.**
+    ///
+    /// Ein gesättigter Router bekommt nur die Spreizungsstrafe, Schritt
+    /// für Schritt, ohne jeden anderen Gradienten. Nach endlich vielen
+    /// Schritten sättigt er nicht mehr, und der Softmax-Gradient lebt
+    /// wieder. **Das ist die Stabilisierung, und sie ist damit kein
+    /// Argument, sondern ein Lauf.**
+    #[test]
+    fn wiederholte_strafe_fuehrt_aus_der_saettigung_heraus() {
+        let (start, alle, n, k, frac) = gemisch();
+        let mut logits = start.clone();
+        let (experten, gewichte, _, _) = vorwaerts(&logits, &alle, k, frac);
+        assert_eq!(gewichte, vec![1 << frac, 0], "der Aufbau saettigt nicht");
+
+        let g: Vec<Grad> = vec![7, -3, 11];
+        let schwelle = 20;
+        let mut schritte = 0;
+        let mut befreit = false;
+        for _ in 0..200 {
+            let d = router_spreizung(&logits, &experten, schwelle, 2);
+            if d.iter().all(|x| *x == 0) {
+                break;
+            }
+            for (z, dz) in logits.iter_mut().zip(d.iter()) {
+                *z += *dz;
+            }
+            schritte += 1;
+            let (_, w, _, _) = vorwaerts(&logits, &alle, k, frac);
+            if w.iter().all(|x| *x > 0) {
+                befreit = true;
+                break;
+            }
+        }
+        assert!(
+            befreit,
+            "nach {schritte} Schritten saettigt es immer noch: {logits:?}"
+        );
+
+        // Und der Beleg, dass es wirklich der Ausstieg ist: Jetzt kommt
+        // wieder ein Gradient durch, wo vorher null stand.
+        let (e2, w2, a2, _) = vorwaerts(&logits, &alle, k, frac);
+        let jetzt = moe_backward(&g, &e2, &w2, &a2, n, frac, 6, 6);
+        assert!(
+            jetzt.logits.iter().any(|d| *d != 0),
+            "der Router ist frei und liefert trotzdem nichts: {:?}",
+            jetzt.logits
+        );
+    }
+
+    /// Zwei Läufe, dasselbe Ergebnis. Ohne das wäre die Strafe kein
+    /// zulässiger Teil eines verifizierbaren Trainingsschritts.
+    #[test]
+    fn die_strafe_ist_deterministisch() {
+        let logits: Vec<i32> = vec![300, 40, 100, 80];
+        let experten: Vec<u16> = vec![0, 2, 3];
+        assert_eq!(
+            router_spreizung(&logits, &experten, 20, 1),
+            router_spreizung(&logits, &experten, 20, 1)
+        );
+    }
+
+    /// ⚑ Ein Experte, der mit minimalem Logit eingehängt wird, ist tot.
+    ///
+    /// Das ist der Grund, warum Expertenwachstum **nicht** dasselbe ist
+    /// wie Breitenwachstum. Der Weg über das minimale Logit ist der
+    /// einzige exakt funktionserhaltende, und er erkauft die Erhaltung
+    /// damit, dass der neue Experte nie einen Gradienten sieht. Der Test
+    /// hält das fest, damit ein späterer Entwurf sich daran messen muss.
+    #[test]
+    fn ein_neuer_experte_mit_minimalem_logit_bleibt_ohne_gradient() {
+        let (mut logits, mut alle, _, k, frac) = gemisch();
+        // Der neue Experte: eine Kopie des ersten, mit dem kleinsten
+        // Logit der Reihe.
+        let kleinstes = *logits.iter().min().expect("nicht leer");
+        logits.push(kleinstes - 1);
+        alle.push(alle[0].clone());
+        let n = logits.len();
+
+        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        assert!(
+            !experten.contains(&((n - 1) as u16)),
+            "der neue Experte wurde gewaehlt, der Test prueft dann etwas anderes"
+        );
+        let g: Vec<Grad> = vec![7, -3, 11];
+        let grad = moe_backward(&g, &experten, &gewichte, &gewaehlt, n, frac, 6, 6);
+        assert_eq!(
+            grad.logits[n - 1],
+            0,
+            "der neue Experte bekam einen Gradienten, dann waere er nicht tot"
         );
     }
 

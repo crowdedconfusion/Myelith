@@ -1,6 +1,6 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.3.0
+> **Version:** 0.4.0
 > **Datum:** 2026-08-28
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
@@ -134,6 +134,46 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.4.0 – 2026-08-28 (der Parameter `Signaturstufe`)
+
+**Der Schalter für den Wechsel des Signaturverfahrens steht als
+Parameter in der Registry** (33 statt 32), Vorgabewert „nur klassisch".
+
+⚑ **Drei Stufen, nicht zwei, und die Folge ist einbahnig.** Ein Sprung
+von „nur klassisch" auf „nur quantensicher" machte jeden Validator
+ungültig, der seinen zweiten Schlüssel noch nicht veröffentlicht hat,
+und hielte damit die Kette an. Ein Rückschritt öffnete das gebrochene
+Verfahren wieder, und zwar genau dann, wenn jemand es gebrochen hat:
+**Der Rückweg wäre der Angriff.** Erlaubt ist deshalb genau ein Schritt
+nach vorn.
+
+```text
+NurKlassisch  →  Beide  →  NurQuantensicher
+```
+
+**Das Fenster `Beide` ist die verwundbarste Stellung**, und das ist
+unvermeidlich. Es gehört so kurz wie möglich gehalten, und der Schritt
+danach hängt **nicht an einer Frist, sondern an einer Bedingung**: dass
+alle Validatoren bereit sind.
+
+⚑ **Die Reihenfolgeregel ist keine Invariante, und das ist Absicht.**
+Alle drei Stufen sind **gültige Zustände**; verboten ist nicht die
+Stellung, sondern der Weg dorthin. Eine Invariante prüft einen Zustand
+und könnte das gar nicht sehen. Die Prüfung sitzt deshalb in
+`pruefe_vorschlag`, wo beide Seiten des Übergangs vorliegen, und hat
+einen eigenen Fehlerfall statt sich unter die Invarianten zu mischen.
+
+⚑ **Und eine zweite Bedingung prüft die Registry ausdrücklich nicht:**
+ob alle Validatoren bereit sind. Die Registry kennt Parameter und keine
+Validatoren; die Prüfung liegt in CONSENSUS
+(`validator::alle_bereit_fuer`). Das ist dieselbe Trennung wie beim
+Stimmgewicht, das ebenfalls von dort kommt.
+
+**Sieben Gegenproben**, darunter: Der Sprung über das Fenster wird
+abgelehnt, alle drei Rückwege werden abgelehnt, Stillstand gilt nicht
+als Übergang, und ein anderer Parameter läuft nicht versehentlich durch
+diese Prüfung.
 
 ### v0.3.0 – 2026-08-28 (Phase 2 und die Hälfte von Phase 3)
 

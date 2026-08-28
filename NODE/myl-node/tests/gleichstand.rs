@@ -87,7 +87,8 @@ fn eine_ankuendigung_wird_gegen_die_genesis_kennung_geprueft() {
     assert_eq!(
         ankuendigung
             .pruefe(aus_dem_pod_pfad, myl_types::ids::EpochId(9))
-            .expect("prüfen"),
+            .expect("prüfen")
+            .punkt,
         epochenschluessel.punkt()
     );
 

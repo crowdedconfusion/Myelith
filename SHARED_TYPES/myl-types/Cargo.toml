@@ -1,8 +1,8 @@
 [package]
 name = "myl-types"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 description = "Protokollweite Kern-Datentypen und Primitiven für Myelith (Referenzimplementierung von Whitepaper Anhang A.1): Hash-/Merkle-Primitiven, VRF- und BLS-Signatur-Schnittstellen, Segment/PoIBundle/InferenceCredit. Deterministische Borsh-Serialisierung, SHA-256 über das gesamte Protokoll."
 license = "PolyForm Shield License 1.0.0"
 

@@ -29,6 +29,7 @@ pub mod hash;
 pub mod ids;
 pub mod latency_attest;
 pub mod merkle;
+pub mod pq;
 pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;

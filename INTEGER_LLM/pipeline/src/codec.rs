@@ -54,7 +54,7 @@ pub fn unpack_tokens(payload: &[i16]) -> Result<Vec<u32>, String> {
     }
     let mut out = Vec::with_capacity(payload.len() / 2);
     // `as_chunks::<2>()` waere clippys Vorschlag, ist aber erst seit Rust
-    // 1.88 stabil; die Schwester-Crates erklaeren MSRV 1.82.
+    // 1.88 stabil; die Schwester-Crates erklaeren MSRV 1.85.
     #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
     for pair in payload.chunks_exact(2) {
         let lo = pair[0] as u16 as u32;

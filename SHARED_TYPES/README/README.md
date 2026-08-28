@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.6.0
+> **Version:** 0.7.0
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -48,6 +48,48 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.7.0 – 2026-08-28 (der Schalter für den Verfahrenswechsel)
+
+**Neu: `pq`.** Das Format für einen Wechsel des Signaturverfahrens, und
+der Schalter dazu. **Nicht das Verfahren selbst**: Welches es einmal
+wird, ist offen, und ein Verfahren einzubauen, das später gegen ein
+anderes getauscht wird, wäre Arbeit gegen die eigene Annahme.
+
+**Warum das jetzt kommt, obwohl der Wechsel nicht ansteht.** Ein
+Schalter funktioniert nur, wenn alle Validatoren ihren neuen Schlüssel
+**vorher** veröffentlicht haben. Solange der Validator-Satz kein Feld
+dafür hat, kann niemand anfangen. Vor dem Genesis-Block ist das Feld
+eine Zeile, danach eine Kettenmigration. **Dieselbe Klasse wie Fund 77:**
+eine Lücke im Konsensformat, deren Behebung mit jedem Betriebstag teurer
+wird, ohne dass jemand etwas falsch macht.
+
+⚑ **Drei Stufen, nicht zwei, und die Folge ist einbahnig.** Ein Sprung
+von „nur klassisch" auf „nur quantensicher" machte jeden Validator
+ungültig, der seinen zweiten Schlüssel noch nicht veröffentlicht hat,
+und hielte damit die Kette an. Ein Rückschritt öffnete das gebrochene
+Verfahren wieder, und zwar genau dann, wenn jemand es gebrochen hat:
+**Der Rückweg wäre der Angriff.** Erlaubt ist deshalb genau ein Schritt
+nach vorn.
+
+```text
+NurKlassisch  →  Beide  →  NurQuantensicher
+```
+
+**Das Fenster `Beide` ist die verwundbarste Stellung**, und das ist
+unvermeidlich. Es gehört so kurz wie möglich gehalten, und der Schritt
+danach hängt **nicht an einer Frist, sondern an einer Bedingung**: dass
+alle Validatoren bereit sind.
+
+**Und der Grund, warum der Wechsel nicht ansteht, steht als Zahl im
+Code:** `Signaturverfahren::signatur_len`. BLS12-381 aggregiert beliebig
+viele Signaturen auf 96 Byte. ML-DSA-65 aggregiert nicht: 21 Validatoren
+sind 69 489 Byte, in jedem Rundenwechsel. Ein Test hält beide Zahlen
+fest, damit ein späterer Zusatz eines aggregierbaren Verfahrens auffällt.
+
+**Acht Tests**, darunter die volle Übergangstabelle: Von neun Paaren
+sind genau zwei erlaubt. Ein Test über drei Beispiele ließe offen, ob
+der Rückweg wirklich zu ist.
 
 ### v0.6.0 – 2026-08-28 (⚑ Fund 77: Die Merkle-Wurzel bestimmt jetzt die Blattfolge)
 

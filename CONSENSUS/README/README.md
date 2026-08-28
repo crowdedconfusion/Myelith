@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.16.0 (`myl-consensus` 0.14.0, `myl-scheduler` 0.4.0,
+> **Version:** 0.17.0 (`myl-consensus` 0.15.0, `myl-scheduler` 0.4.0,
 > `myl-ledger` 0.3.0)
 > **Datum:** 2026-08-27
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -104,6 +104,35 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.17.0 (`myl-consensus` 0.15.0) – 2026-08-28 (der zweite Schlüssel je Validator)
+
+**`Validator` trägt ein Feld für einen quantensicheren Schlüssel**,
+heute `None` und nur `None`, denn ein zweites Verfahren gibt es nicht.
+
+**Warum es trotzdem jetzt kommt:** Ein Schalter für den Wechsel des
+Signaturverfahrens funktioniert nur, wenn alle Validatoren ihren neuen
+Schlüssel **vorher** veröffentlicht haben. Solange das Feld fehlt, kann
+niemand anfangen. Vor dem Genesis-Block ist es eine Zeile, danach eine
+Kettenmigration.
+
+⚑ **`alle_bereit_fuer` ist scharf: alle, nicht die meisten.** Ein
+einziger Validator ohne zweiten Schlüssel verliert mit dem Schritt auf
+„nur quantensicher" seine Stimme, und ein Netz, das sich seiner
+Validatoren nach Gutdünken entledigt, ist kein Konsens mehr. Der Schritt
+wartet, bis der letzte bereit ist, oder das Netz entfernt ihn vorher auf
+dem geordneten Weg. `noch_nicht_bereit` nennt die Knoten beim Namen,
+denn ein „nein" ohne Namen hilft niemandem.
+
+**Diese Prüfung liegt hier und nicht in der Governance-Registry**, und
+das ist eine Schnittstelle: Die Registry kennt Parameter, nicht
+Validatoren. Dieselbe Trennung wie beim Stimmgewicht, das umgekehrt von
+hier nach GOVERNANCE geht.
+
+**Vier Gegenproben**, darunter: Ein Schlüssel des **klassischen**
+Verfahrens im Post-Quantum-Feld macht niemanden bereit. Ohne diese
+Prüfung ließe sich der Schalter mit einem BLS-Schlüssel im falschen Feld
+umlegen.
 
 ### myl-consensus v0.14.0 – 2026-08-27 (Höhe und Epoche im Blockkopf)
 

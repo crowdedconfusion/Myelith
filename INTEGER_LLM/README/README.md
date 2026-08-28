@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.22.0 (θ_v 0.17.0; kernels 0.24.0, runtime 0.22.0, pipeline 0.14.0)
+> **Version:** 0.25.0 (θ_v 0.17.0; kernels 0.27.0, runtime 0.22.0, pipeline 0.14.0)
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -422,6 +422,224 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.25.0 (kernels 0.27.0) – 2026-08-28 (die letzten beiden MoE-Punkte, und sie hatten dieselbe Lösung)
+
+**Der zweite absorbierende Zustand, und er ist stiller als der erste.**
+Ein Experte, dessen Logit so weit unter den übrigen liegt, dass er nie
+in die Top-k kommt, wird nie gerechnet, bekommt nie einen Gradienten und
+ändert sich nie. **Er ist tot, ohne dass irgendeine Zahl davon
+abweicht.**
+
+⚑ **Beim Nachdenken über die beiden offenen Punkte stellte sich heraus,
+dass sie dieselbe Lösung haben.** Expertenwachstum scheiterte daran, dass
+der einzige exakt funktionserhaltende Weg einen toten Experten hinterlässt.
+Lastausgleich scheiterte daran, dass die üblichen Verfahren über den
+Batch mitteln. **Ein Hungerzähler löst beides**, denn ein neu
+eingehängter Experte ist nichts anderes als ein Experte, der lange nicht
+gewählt wurde.
+
+### `Expertenwacht`: zählen statt mitteln
+
+⚑ **Der Unterschied, auf den es ankommt:** Die Batch-Zusammensetzung
+wählt der Miner, sie ist willkürlich, und zwei ehrliche Miner können
+verschieden batchen. Die **Segmentfolge** legt das Protokoll fest, und
+zwei redundante Miner sehen dieselbe in derselben Reihenfolge. Ein
+Zähler über die Segmentfolge ist damit so deterministisch wie die
+Gewichte selbst und gehört wie sie in den Trainingszustand.
+
+Wer zu lange nicht gewählt wurde, bekommt einen Schub nach oben; die
+Gegenbuchung verteilt sich auf die übrigen nach der Hausregel „abrunden,
+Rest an einen benannten Empfänger". **Die Summe ist exakt null**, der
+Logit-Mittelwert bleibt, wo er war.
+
+**Zwei Randfälle mit Test:** Hungert niemand, ist der Schub überall null.
+Hungern **alle**, ebenfalls, denn dann gäbe es niemanden zum
+Gegenbuchen und die Summe wäre nicht mehr null.
+
+### `experte_einhaengen`: exakt funktionserhaltend, und nicht mehr tot
+
+Der neue Experte bekommt ein Logit unter allen anderen und wird deshalb
+nie gewählt. Dieselben gewählten Experten, dieselben Gewichte, dieselben
+Bytes: **die Ausgabe ändert sich um exakt nichts.**
+
+⚑ **Und genau deshalb war dieser Weg bis heute wertlos.** Wer nie
+gewählt wird, bekommt nie einen Gradienten und bleibt für immer eine
+tote Kopie. Erst der Hungerzähler holt ihn zurück. Der Test fährt das
+durch, **mit Gegenprobe**: Ohne die Wacht bleibt derselbe Experte über
+500 Schritte draußen. Ohne diese zweite Hälfte bewiese der erste Teil
+nur, dass irgendwann irgendetwas passiert.
+
+**Warum der Aufteilungstrick der dichten Schichten hier nicht trägt:**
+Dort ist die Ausgabe eine Summe über **alle** Einheiten, halbierte
+Kopien summieren sich also zum Original. Beim Routing ist sie eine Summe
+über die **ausgewählten**, und zwei Kopien mit gleichem Logit verdrängen
+einen dritten aus der Top-k.
+
+### Damit ist die Trainingsseite des Expertengemischs vollständig
+
+Rückwärtspass durch Router und Experten, Sättigungsschutz,
+Expertenwachstum, Lastausgleich. Alle vier ganzzahlig, alle vier
+deterministisch, alle vier ohne Rauschen und ohne Batch-Statistik.
+**Der Vorwärtspfad ist unberührt geblieben**, θ_v steht weiter auf
+0.17.0, und die Inferenz rechnet bitgleich wie vorher.
+
+### v0.24.0 (kernels 0.26.0) – 2026-08-28 (Fund 79 stabilisiert: der Router kommt aus der Sättigung heraus)
+
+**Die Spreizungsstrafe schließt den absorbierenden Zustand.** Sie liest
+die **Logit-Abstände** statt der quantisierten Gewichte, und darin liegt
+ihre entscheidende Eigenschaft: **Sie hat ihren größten Wert genau dort,
+wo der Softmax-Gradient verschwunden ist.** Ob `p_i` auf null gerundet
+wurde, ist ihr gleichgültig; sie sieht, dass `z_i` zu weit unten liegt,
+und schiebt es zurück.
+
+```text
+ueberschuss_i = max(0, (z_max − z_i) − schwelle)
+dz_i          = + (ueberschuss_i >> daempfung)     für die Verlierer
+dz_max        = − Σ_i (ueberschuss_i >> daempfung) als Gegenbuchung
+```
+
+**Drei Eigenschaften, jede mit einem Test:**
+
+- ⚑ **Ein gesunder Router bleibt exakt unberührt.** Nicht „kaum",
+  sondern null an jeder Stelle. Eine Strafe, die im Normalfall etwas
+  tut, verschiebt das Modell dauerhaft, und niemand sähe woran.
+- ⚑ **Die Summe ist exakt null.** Sie staucht die Spreizung und
+  verschiebt den Logit-Mittelwert nicht. Ohne das zöge sie das Routing
+  über viele Schritte in eine Richtung.
+- ⚑ **Der Ausstieg ist ein Lauf, kein Argument.** Ein gesättigter Router
+  bekommt nur die Strafe, Schritt für Schritt, ohne jeden anderen
+  Gradienten. Nach endlich vielen Schritten sättigt er nicht mehr, und
+  der Softmax-Gradient lebt wieder. Der Test fährt genau das.
+
+### Die Schwelle ist hergeleitet, nicht geraten
+
+`saettigungsabstand(prob_frac_bits, exp_input_frac_bits)` rechnet
+`(frac + 1) · ln2 · 2^exp_input`. Sättigung tritt ein, wenn
+`p_min < 2^-(frac+1)`. **Und ein Test glaubt der Formel nicht:** Er baut
+eine Tabelle mit den echten Parametern des Projekts
+(`exp_input_frac_bits = 8`, `exp_lut_frac_bits = 14`), sucht mit dem
+echten `softmax_int` den Abstand, ab dem das kleinere Gewicht auf null
+fällt, und vergleicht auf zehn Prozent.
+
+| Aufbau | Abstand bis zur Sättigung |
+|---|---|
+| `prob_frac_bits = 8` | 6,24 nats |
+| `prob_frac_bits = 14` (θ_v 0.16.0) | **10,40 nats** |
+| `f32` | 104 nats |
+| `f64` | 745 nats |
+
+⚑ **Berichtigung zur vorigen Fassung:** Dort stand, es gebe diesen
+Zustand in Gleitkomma nicht. Das war zu stark. Es gibt ihn auch dort,
+nur rund **zehnmal später als im Ganzzahlpfad**. Router-Kollaps ist ein
+bekanntes Problem von Expertengemischen; die Tabelle macht ihn nur
+leichter erreichbar.
+
+**Dieselbe Mechanik hat das Projekt schon einmal getroffen:** Fund 29
+hob `prob_frac_bits` in der Attention von 8 auf 14, weil jede Position
+unter `1/512` einzeln auf null rundete und die Aufmerksamkeit auf die
+Spitzenposition kollabierte. Der Router hatte dieselbe Krankheit an
+anderer Stelle, und diesmal reicht die Auflösung allein nicht: Bei 128
+Experten und Top-8 sind zehn nats kein Randfall.
+
+### Warum keines der üblichen Verfahren
+
+- **Hilfsverlust über Batch-Statistiken** (Switch Transformer, GShard):
+  Das Ergebnis an Position *i* hinge davon ab, welche anderen Token
+  zufällig danebenlagen. Dieselbe Klasse wie das für den Vorwärtspfad
+  bereits verbotene Token-Dropping.
+- **Rauschen im Router:** nicht deterministisch, und ohne Determinismus
+  keine Redundanzprüfung.
+- **`z`-Verlust** (ST-MoE): Sein Gradient ist je Token lokal und damit
+  grundsätzlich brauchbar, aber er staucht **alle** Logits gegen null,
+  gleichgültig ob der Router gesund ist, und er braucht `logsumexp`,
+  also einen Logarithmus im Ganzzahlpfad. Die Spreizungsstrafe erreicht
+  dasselbe Ziel mit weniger Eingriff und ohne neue Primitive.
+
+### Was ausdrücklich offen bleibt
+
+**Lastausgleich.** Ein Experte, der über viele Token nie gewählt wird,
+bleibt untrainiert. Das ist eine Aussage über die **Segmentfolge** und
+nicht über ein Token, und die Spreizungsstrafe kann sie nicht treffen:
+Sie schaut nur auf die gewählten Logits. Ein Ausgleich über die Zeit
+statt über den Batch bliebe deterministisch und wäre der nächste
+Schritt.
+
+**Und der Vorwärtspfad ist unberührt.** Die Strafe wirkt nur im
+Trainingsschritt; die Inferenz rechnet bitgleich wie vorher, θ_v bleibt
+0.17.0. Ein importiertes Modell mit bereits gesättigten Routern lässt
+sich damit trotzdem befreien, denn die Strafe hängt nicht an den
+Gewichten, sondern an den Abständen.
+
+### v0.23.0 (kernels 0.25.0) – 2026-08-28 (Rückwärtspass durch das Expertengemisch, und Fund 79)
+
+**`moe_backward` schließt die letzte Lücke im Rückwärtspass**, die noch
+offen war: Bis hierher kannte er lineare Schichten, Softmax, SiLU,
+RMSNorm, RoPE, Attention und Einbettungen, aber **kein Wort von
+Experten** (null Vorkommen in `backward.rs`). Er verteilt jetzt den
+eingehenden Gradienten auf die gewählten Experten, führt ihn durch den
+Softmax über deren Logits zurück und legt ihn auf die volle Logit-Reihe.
+
+**Was damit belegt ist:** Zwei redundante Miner, die dasselbe
+Trainingssegment auf demselben Expertengemisch rechnen, liefern
+**bitgleiche Gradienten, Routing-Entscheidung eingeschlossen**. Der Test
+fährt den ganzen Weg zweimal und vergleicht byteweise; ohne die
+Routing-Entscheidung im Vergleich bewiese er zu wenig.
+
+⚑ **Nicht gewählte Experten bekommen exakt null**, und das ist keine
+Näherung: Bei `norm_topk_prob` läuft der Softmax nur über die gewählten
+Logits, die übrigen berühren die Ausgabe nicht. Damit ist auch die Frage
+nach dem Expertenwachstum beantwortet, und die Antwort ist unbequem: Ein
+neuer Experte, der mit minimalem Logit eingehängt wird, ist exakt
+funktionserhaltend **und tot**. Steht als Test da, nicht als Behauptung.
+
+### ⚑ Fund 79: Ein gesättigter Router kann sich nie wieder ändern
+
+**Der Ganzzahl-Softmax sättigt, und Sättigung ist ein absorbierender
+Zustand.** Bei einem Logit-Abstand von 80 Einheiten liefert
+`softmax_int` bei `frac = 8` die Gewichte `(256, 0)` statt „fast alles"
+und „fast nichts". Dann ist der Gradient **jedes** Logits exakt null:
+
+- Für einen Verlierer ist `p_i = 0`, der Faktor ist null.
+- Für den Gewinner ist `p_0 = 2^frac`, also wird die Klammer
+  `g_0 − Σ_j g_j p_j / 2^frac` null.
+
+**Beide Wege führen auf null.** Ein Router, der einmal sicher genug war,
+bleibt es für immer: Sein Gradient verschwindet, bevor er ihn ändern
+könnte.
+
+⚑ **Und Gleitkomma hat denselben Zustand, nur viel später.** Die
+Schwelle ist `(frac + 1) · ln2`: bei `prob_frac_bits = 14` sind das
+**10,4 nats**, bei `f32` **104**, bei `f64` rund **745**. Der
+Ganzzahlpfad kollabiert also rund zehnmal früher als `f32`.
+Router-Kollaps ist ein bekanntes Problem von Expertengemischen und
+**kein Erzeugnis dieses Projekts**; die Tabelle macht ihn nur um
+Größenordnungen leichter erreichbar. In der ersten Fassung dieses
+Absatzes stand „in Gleitkomma gibt es diesen Zustand nicht", und das war
+zu stark.
+
+**Die zweite Hälfte des Fundes lässt sich beheben, die erste nicht.**
+Auch ohne Sättigung ist der Logit-Gradient klein, er trägt den Faktor
+`p·(1−p)`; auf der Skala des Aktivierungsgradienten rundet er auf null,
+bevor er wirkt (gemessen: ±0,25 bei Gewichten (250, 6)). `moe_backward`
+nimmt deshalb `logit_zusatz_bits` und führt den Router-Gradienten um so
+viele Bit feiner. **Gegen die Sättigung hilft das nicht.**
+
+**Was daraus folgt:** Ein Lastausgleich ist bei einem Expertengemisch im
+Ganzzahlpfad keine Verbesserung, sondern eine **Voraussetzung**. Er muss
+verhindern, dass ein Router sättigt. Die üblichen Verfahren tun das über
+einen Hilfsverlust mit Batch-Statistiken und über Rauschen im Router;
+Rauschen ist nicht deterministisch, und eine Größe über den Batch machte
+das Ergebnis an Position *i* davon abhängig, welche anderen Token
+zufällig danebenlagen. **Solange kein Ersatz steht, ist Training auf
+einem Expertengemisch möglich, aber nicht stabil**, und dieser Satz
+gehört zu jedem Ergebnis dazu.
+
+**Sieben neue Tests**, darunter die Bitgleichheit über zwei Läufe, der
+Vergleich gegen die numerische Ableitung des echten Mischkernels, die
+Sättigung mit null Gradient bei 0, 3 und 6 Zusatzbits, und die
+Gegenprobe, dass ohne Sättigung die Zusatzbits wirklich mehr
+durchlassen.
 
 ### v0.22.0 (kernels 0.24.0) – 2026-08-28 (Fund 75: die Schiebeweiten hatten Grenzen, und sie standen nirgends)
 

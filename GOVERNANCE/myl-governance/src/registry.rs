@@ -286,6 +286,20 @@ pub enum Parameter {
     Abstimmungsmehrheit,
     /// Zahl der Epochen, die eine Abstimmung offen steht.
     Abstimmungsfenster,
+    /// ⚑ **Welche Signaturverfahren gerade gelten** (0, 1 oder 2).
+    ///
+    /// Der Schalter für den Wechsel auf ein quantensicheres Verfahren.
+    /// Drei Stufen und nicht zwei, weil ein Sprung von „nur klassisch"
+    /// auf „nur quantensicher" jeden Validator ungültig machte, der
+    /// seinen zweiten Schlüssel noch nicht veröffentlicht hat, und damit
+    /// die Kette anhielte. Die Folge ist einbahnig: Ein Rückschritt
+    /// öffnete das gebrochene Verfahren wieder, und genau dann, wenn
+    /// jemand es gebrochen hat.
+    ///
+    /// **Änderbar, aber nur um einen Schritt nach vorn.** Die zweite
+    /// Bedingung, dass alle Validatoren bereit sind, prüft der Konsens:
+    /// Die Registry kennt Parameter, nicht Validatoren.
+    Signaturstufe,
     /// Länge einer Epoche in Sekunden.
     ///
     /// **⚑ Fund 50: Dieser Parameter fehlte, und das war teuer.** Er
@@ -349,7 +363,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 32] {
+    pub fn alle() -> [Parameter; 33] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -384,6 +398,7 @@ impl Parameter {
             GesamtangebotFestgelegtDurchBurnAndMint,
             BurnAndMintPrinzip,
             DeterminismusPflicht,
+            Signaturstufe,
         ]
     }
 
@@ -425,6 +440,7 @@ impl Parameter {
             Abstimmungsquorum => "Abstimmungsquorum",
             Abstimmungsmehrheit => "Abstimmungsmehrheit",
             Abstimmungsfenster => "Abstimmungsfenster",
+            Signaturstufe => "Signaturstufe",
             Blockzeit => "Blockzeit",
             Epochenlaenge => "Epochenlänge",
             GeglaetteterBurn => "geglätteter Burn B_e",
@@ -538,6 +554,13 @@ impl ParameterRegistry {
         werte.insert(
             Abstimmungsfenster,
             Wert::Ganzzahl(crate::abstimmung::FENSTER_VORGABE),
+        );
+        // Heute gilt nur BLS12-381, und es gibt kein zweites Verfahren.
+        // Der Parameter steht trotzdem, damit der Schalter eine Stellung
+        // hat und die Invariante etwas zu bewachen.
+        werte.insert(
+            Signaturstufe,
+            Wert::Ganzzahl(myl_types::pq::Signaturstufe::NurKlassisch.zahl()),
         );
         // Design-Entscheidung 2026-08-13: 2 s.
         werte.insert(Blockzeit, Wert::Ganzzahl(2_000));

@@ -276,6 +276,215 @@ pub fn mische_experten(
         .collect()
 }
 
+/// Der Trainingszustand, der einen hungernden Experten am Leben hält.
+///
+/// ## ⚑ Der zweite absorbierende Zustand
+///
+/// [`saettigungsabstand`] beschreibt den ersten: Ein **gewählter**
+/// Experte, dessen Gewicht auf null rundet, bekommt keinen Gradienten
+/// mehr. Dagegen hilft die Spreizungsstrafe.
+///
+/// **Der zweite ist stiller.** Ein Experte, dessen Logit so weit unter
+/// den übrigen liegt, dass er nie in die Top-k kommt, wird nie
+/// gerechnet, bekommt nie einen Gradienten und ändert sich nie. Er ist
+/// tot, ohne dass irgendeine Zahl davon abweicht. **Bei 128 Experten und
+/// Top-8 ist das kein Randfall**, sondern der Normalzustand für 120 von
+/// ihnen je Token; tot ist er erst, wenn es über **viele** Token so
+/// bleibt.
+///
+/// ## Warum das hier ohne Batch-Statistik geht
+///
+/// Der übliche Lastausgleich mittelt über den Batch, und genau das ist
+/// hier verboten: Das Ergebnis an Position *i* hinge davon ab, welche
+/// anderen Token zufällig danebenlagen. **Diese Wacht mittelt nicht über
+/// den Batch, sondern zählt über die Segmentfolge**, und das ist ein
+/// Unterschied ums Ganze:
+///
+/// - Die Batch-Zusammensetzung wählt der Miner. Sie ist willkürlich,
+///   und zwei ehrliche Miner können verschieden batchen.
+/// - Die **Segmentfolge** legt das Protokoll fest. Zwei redundante
+///   Miner sehen dieselbe, in derselben Reihenfolge.
+///
+/// Der Zähler ist damit so deterministisch wie die Gewichte selbst und
+/// gehört wie sie in den Trainingszustand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Expertenwacht {
+    /// Segmente seit der letzten Wahl, je Experte.
+    seit: Vec<u32>,
+    /// Ab wie vielen Segmenten ohne Wahl geschoben wird.
+    geduld: u32,
+}
+
+impl Expertenwacht {
+    /// Neu, mit allen Zählern auf null.
+    pub fn neu(anzahl_experten: usize, geduld: u32) -> Self {
+        Self {
+            seit: vec![0; anzahl_experten],
+            geduld,
+        }
+    }
+
+    /// Die Zähler je Experte, für Protokoll und Prüfung.
+    pub fn seit(&self) -> &[u32] {
+        &self.seit
+    }
+
+    /// Ein Segment ist gerechnet: Die gewählten fangen von vorn an, die
+    /// übrigen zählen weiter.
+    pub fn segment(&mut self, experten: &[u16]) {
+        for s in self.seit.iter_mut() {
+            *s = s.saturating_add(1);
+        }
+        for e in experten.iter() {
+            let i = *e as usize;
+            assert!(i < self.seit.len(), "Expertenwacht: Index ausserhalb");
+            self.seit[i] = 0;
+        }
+    }
+
+    /// Wie viele Experten gerade hungern.
+    pub fn hungernde(&self) -> usize {
+        self.seit.iter().filter(|s| **s > self.geduld).count()
+    }
+
+    /// Der Schub auf die Router-Logits, in Logit-Einheiten.
+    ///
+    /// Hungernde Experten bekommen `staerke`, und die Gegenbuchung
+    /// verteilt sich auf die **übrigen**, nach der Hausregel: abrunden,
+    /// den Rest an den zuletzt gewählten. Damit ist die Summe **exakt
+    /// null** und der Logit-Mittelwert bleibt, wo er war.
+    ///
+    /// ⚑ **Hungern alle oder keiner, ist der Schub überall null.** Im
+    /// ersten Fall gäbe es niemanden zum Gegenbuchen, im zweiten nichts
+    /// zu tun. Beides ist richtig und beides hat einen Test.
+    pub fn schub(&self, staerke: i32) -> Vec<i32> {
+        let n = self.seit.len();
+        let mut d = vec![0i32; n];
+        if staerke <= 0 {
+            return d;
+        }
+        let hungernd: Vec<usize> = (0..n).filter(|i| self.seit[*i] > self.geduld).collect();
+        if hungernd.is_empty() || hungernd.len() == n {
+            return d;
+        }
+        let satt: Vec<usize> = (0..n).filter(|i| self.seit[*i] <= self.geduld).collect();
+
+        let gesamt = (hungernd.len() as i64) * (staerke as i64);
+        for i in hungernd.iter() {
+            d[*i] = staerke;
+        }
+        // Abrunden je Sattem, der Rest an den zuletzt gewählten. Bei
+        // Gleichstand der kleinste Index, damit es deterministisch ist.
+        let je = gesamt / (satt.len() as i64);
+        let mut rest = gesamt - je * (satt.len() as i64);
+        let empfaenger = *satt
+            .iter()
+            .min_by_key(|i| (self.seit[**i], **i))
+            .expect("nicht leer");
+        for i in satt.iter() {
+            let mut ab = je;
+            if *i == empfaenger {
+                ab += rest;
+                rest = 0;
+            }
+            d[*i] = -(ab as i32);
+        }
+        d
+    }
+}
+
+/// Hängt einen Experten ein, ohne die Ausgabe zu ändern.
+///
+/// ## ⚑ Warum das nicht dasselbe ist wie Breitenwachstum
+///
+/// Der Wachstumsoperator für dichte Schichten teilt eine Zeile in `a`
+/// und `b` mit `a + b = m` und bricht die Symmetrie über das letzte Bit.
+/// **Beim Routing trägt das nicht**: Dort ist die Ausgabe eine Summe
+/// über die **ausgewählten** Experten, nicht über alle, und zwei Kopien
+/// mit gleichem Logit verdrängen einen dritten aus der Top-k.
+///
+/// **Der einzige exakt funktionserhaltende Weg ist der hier**: Der neue
+/// Experte bekommt ein Logit unter allen anderen und wird deshalb nie
+/// gewählt. Die Ausgabe ändert sich um **exakt nichts**.
+///
+/// ⚑ **Und genau deshalb war er bis zur [`Expertenwacht`] wertlos:** Wer
+/// nie gewählt wird, bekommt nie einen Gradienten und bleibt für immer
+/// eine tote Kopie. Erst der Hungerzähler holt ihn zurück, und damit ist
+/// aus einer unlösbaren Aufgabe eine gelöste geworden. Der Test
+/// `ein_neuer_experte_wird_von_der_wacht_zurueckgeholt` fährt das durch.
+///
+/// **Gibt den Index des neuen Experten zurück.** Die Gewichte des
+/// Vorbilds kopiert der Aufrufer; diese Funktion kennt nur die Logits.
+pub fn experte_einhaengen(router_logits: &mut Vec<i32>) -> usize {
+    let kleinstes = router_logits.iter().copied().min().unwrap_or(0);
+    router_logits.push(kleinstes.saturating_sub(1));
+    router_logits.len() - 1
+}
+
+/// `ln 2` in Q8, also `round(0,6931 · 256)`.
+///
+/// Eingefroren, weil daraus eine Schranke des Konsensvertrags folgt und
+/// eine zur Laufzeit gerechnete Konstante plattformabhängig wäre.
+pub const LN2_Q8: i64 = 177;
+
+/// Ab welchem Logit-Abstand der Ganzzahl-Softmax sättigt, in
+/// Eingangseinheiten der exp-Tabelle.
+///
+/// ## ⚑ Warum es diese Funktion gibt (Fund 79)
+///
+/// `softmax_int` gibt Gewichte auf `1 << prob_frac_bits` aus. Das
+/// kleinste darstellbare Gewicht ungleich null ist `1`; alles unter der
+/// halben Stufe rundet auf **null**. Zwei Logits mit genügend Abstand
+/// ergeben deshalb nicht „fast alles" und „fast nichts", sondern
+/// `(1 << frac, 0)`.
+///
+/// **Und an dieser Stelle steht der Router still**, denn dann ist der
+/// Gradient jedes Logits exakt null: für den Verlierer, weil `p_i = 0`
+/// ist, und für den Gewinner, weil `p_0 = 2^frac` die Klammer
+/// `g_0 − Σ_j g_j p_j / 2^frac` zu null macht.
+///
+/// **Die Schranke, hergeleitet statt geraten:** Sättigung tritt ein, wenn
+/// `p_min < 2^-(frac+1)`, also ab einem Abstand von
+/// `(frac + 1) · ln 2` nats. In Eingangseinheiten der Tabelle mal
+/// `2^exp_input_frac_bits`.
+///
+/// | Aufbau | Abstand |
+/// |---|---|
+/// | `prob_frac_bits = 8` | 6,24 nats |
+/// | `prob_frac_bits = 14` (θ_v 0.16.0) | 10,40 nats |
+/// | `f32` zum Vergleich | 104 nats |
+/// | `f64` zum Vergleich | 745 nats |
+///
+/// ⚑ **Der Ganzzahlpfad kollabiert damit rund zehnmal früher als `f32`
+/// und siebzigmal früher als `f64`.** Router-Kollaps ist ein bekanntes
+/// Problem von Expertengemischen und **kein Erzeugnis dieses Projekts**;
+/// die Ganzzahltabelle macht ihn nur um Größenordnungen leichter
+/// erreichbar. Wer diese Zahl liest, soll den Unterschied sehen und
+/// nicht den Eindruck bekommen, Gleitkomma sei immun.
+///
+/// **Dieselbe Mechanik hat das Projekt schon einmal getroffen**, in der
+/// Attention: Fund 29 hob `prob_frac_bits` von 8 auf 14, weil jede
+/// Position unter `1/512` einzeln auf null rundete und die
+/// Aufmerksamkeit auf die Spitzenposition kollabierte. Der Router hat
+/// dieselbe Krankheit an anderer Stelle.
+pub fn saettigungsabstand(prob_frac_bits: u8, exp_input_frac_bits: u8) -> i32 {
+    // (frac + 1) · ln2 · 2^exp_input_frac, alles in Q8 gerechnet und
+    // am Ende einmal geschoben.
+    let nats_q8 = (prob_frac_bits as i64 + 1) * LN2_Q8;
+    let skaliert = nats_q8 << exp_input_frac_bits;
+    (skaliert >> 8) as i32
+}
+
+/// Eine kleine exp-Tabelle für Tests, geteilt mit `backward.rs`.
+///
+/// Sie liegt hier und nicht dort, weil sie zum Routing gehört: Wer die
+/// Tabelle ändert, ändert die Mischgewichte, und dann sollen die Tests
+/// beider Module gemeinsam anschlagen.
+#[cfg(test)]
+pub(crate) fn tests_exp_lut() -> Vec<i16> {
+    tests::EXP_LUT.to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,7 +495,7 @@ mod tests {
     /// entfernt `#[cfg(test)]`-Module zwar, aber eine Testhilfe, die
     /// ohne Gleitkomma auskommt, muss die Ausnahme gar nicht erst
     /// beanspruchen.
-    const EXP_LUT: [i16; 65] = [
+    pub(super) const EXP_LUT: [i16; 65] = [
         256, 240, 226, 212, 199, 187, 176, 165, 155, 146, 137, 129, 121, 114,
         107, 100, 94, 88, 83, 78, 73, 69, 65, 61, 57, 54, 50, 47, 44, 42, 39,
         37, 35, 33, 31, 29, 27, 25, 24, 22, 21, 20, 19, 17, 16, 15, 14, 14, 13,
@@ -296,6 +505,152 @@ mod tests {
 
     fn route(logits: &[i32], k: usize, normieren: bool) -> Routing {
         route_top_k(logits, k, &EXP_LUT, 0, FRAC, normieren)
+    }
+
+    // ---- Expertenwacht und Wachstum ---------------------------------
+
+    /// Ein eingehängter Experte ändert die Ausgabe **exakt** nicht.
+    ///
+    /// Nicht „kaum": Dieselben gewählten Experten, dieselben Gewichte,
+    /// dieselben Bytes. Das ist das Akzeptanzkriterium für
+    /// funktionserhaltendes Wachstum.
+    #[test]
+    fn ein_eingehaengter_experte_aendert_die_ausgabe_exakt_nicht() {
+        let mut logits: Vec<i32> = vec![120, 40, 200, 80];
+        let ausgaben: Vec<Vec<i16>> = (0..4).map(|i| vec![i * 10, -i * 5, i + 1]).collect();
+        let k = 2;
+
+        let vorher = route(&logits, k, true);
+        let y_vorher = mische_experten(
+            &vorher.experten.iter().map(|e| ausgaben[*e as usize].clone()).collect::<Vec<_>>(),
+            &vorher.gewichte,
+            FRAC,
+        );
+
+        let neu = experte_einhaengen(&mut logits);
+        let mut ausgaben2 = ausgaben.clone();
+        ausgaben2.push(ausgaben[0].clone()); // eine Kopie als Vorbild
+        assert_eq!(neu, 4);
+
+        let nachher = route(&logits, k, true);
+        let y_nachher = mische_experten(
+            &nachher.experten.iter().map(|e| ausgaben2[*e as usize].clone()).collect::<Vec<_>>(),
+            &nachher.gewichte,
+            FRAC,
+        );
+
+        assert_eq!(vorher.experten, nachher.experten, "die Wahl hat sich geaendert");
+        assert_eq!(vorher.gewichte, nachher.gewichte, "die Gewichte haben sich geaendert");
+        assert_eq!(y_vorher, y_nachher, "die Ausgabe hat sich geaendert");
+        assert!(!nachher.experten.contains(&(neu as u16)), "der Neue wurde gewaehlt");
+    }
+
+    /// ⚑ **Der Nachweis, der Punkt 5.3 schließt: Die Wacht holt den
+    /// neuen Experten zurück.**
+    ///
+    /// Eingehängt ist er exakt funktionserhaltend und damit tot. Der
+    /// Hungerzähler zieht ihn Segment für Segment hoch, bis er zum
+    /// ersten Mal gewählt wird. **Damit ist Expertenwachstum keine
+    /// unlösbare Aufgabe mehr, sondern ein Lauf**, und der Test fährt
+    /// ihn.
+    #[test]
+    fn ein_neuer_experte_wird_von_der_wacht_zurueckgeholt() {
+        let mut logits: Vec<i32> = vec![120, 40, 200, 80];
+        let neu = experte_einhaengen(&mut logits);
+        let k = 2;
+
+        let mut wacht = Expertenwacht::neu(logits.len(), 3);
+        let mut gewaehlt_in = None;
+        for schritt in 0..500 {
+            let r = route(&logits, k, true);
+            wacht.segment(&r.experten);
+            if r.experten.contains(&(neu as u16)) {
+                gewaehlt_in = Some(schritt);
+                break;
+            }
+            let schub = wacht.schub(2);
+            for (z, dz) in logits.iter_mut().zip(schub.iter()) {
+                *z += *dz;
+            }
+        }
+        assert!(
+            gewaehlt_in.is_some(),
+            "der neue Experte wurde nie gewaehlt: {logits:?}"
+        );
+
+        // Gegenprobe: Ohne die Wacht bleibt er für immer draußen.
+        let mut ohne: Vec<i32> = vec![120, 40, 200, 80];
+        let neu2 = experte_einhaengen(&mut ohne);
+        for _ in 0..500 {
+            let r = route(&ohne, k, true);
+            assert!(
+                !r.experten.contains(&(neu2 as u16)),
+                "ohne Wacht wurde er doch gewaehlt, dann beweist der Test oben nichts"
+            );
+        }
+    }
+
+    /// ⚑ Der Schub summiert sich exakt zu null: Er verteilt um und
+    /// verschiebt den Logit-Mittelwert nicht.
+    #[test]
+    fn der_schub_summiert_sich_zu_null() {
+        for (n, hungrig, staerke) in [(4usize, 1usize, 5i32), (8, 3, 7), (16, 5, 3)] {
+            let mut wacht = Expertenwacht::neu(n, 2);
+            // Die ersten `n - hungrig` bleiben satt, die übrigen hungern.
+            for _ in 0..10 {
+                let gewaehlt: Vec<u16> = (0..(n - hungrig) as u16).collect();
+                wacht.segment(&gewaehlt);
+            }
+            assert_eq!(wacht.hungernde(), hungrig, "der Aufbau stimmt nicht");
+            let d = wacht.schub(staerke);
+            let summe: i64 = d.iter().map(|x| *x as i64).sum();
+            assert_eq!(summe, 0, "n={n}: Summe {summe} statt null");
+            assert!(d.iter().any(|x| *x > 0), "niemand wurde hochgeschoben");
+        }
+    }
+
+    /// Randfälle: Hungert niemand oder hungern alle, ist der Schub
+    /// überall null. Ohne den zweiten Fall gäbe es niemanden zum
+    /// Gegenbuchen, und die Summe wäre nicht mehr null.
+    #[test]
+    fn ohne_hunger_und_bei_hunger_aller_ist_der_schub_null() {
+        let mut satt = Expertenwacht::neu(4, 2);
+        satt.segment(&[0, 1, 2, 3]);
+        assert!(satt.schub(5).iter().all(|x| *x == 0), "ohne Hunger geschoben");
+
+        let mut alle = Expertenwacht::neu(4, 2);
+        for _ in 0..10 {
+            alle.segment(&[]);
+        }
+        assert_eq!(alle.hungernde(), 4, "es hungern nicht alle");
+        assert!(alle.schub(5).iter().all(|x| *x == 0), "bei Hunger aller geschoben");
+    }
+
+    /// Die Wacht zählt über die Segmentfolge, nicht über einen Batch:
+    /// Wer gewählt wird, fängt bei null an, alle anderen zählen weiter.
+    #[test]
+    fn die_wacht_zaehlt_ueber_die_segmentfolge() {
+        let mut w = Expertenwacht::neu(3, 100);
+        w.segment(&[0]);
+        assert_eq!(w.seit(), &[0, 1, 1]);
+        w.segment(&[1]);
+        assert_eq!(w.seit(), &[1, 0, 2]);
+        w.segment(&[0, 1]);
+        assert_eq!(w.seit(), &[0, 0, 3]);
+    }
+
+    /// Zwei Läufe, dasselbe Ergebnis. Ohne das wäre die Wacht kein
+    /// zulässiger Teil eines verifizierbaren Trainingsschritts.
+    #[test]
+    fn die_wacht_ist_deterministisch() {
+        let lauf = || {
+            let mut w = Expertenwacht::neu(6, 2);
+            for i in 0..20u16 {
+                w.segment(&[i % 3]);
+            }
+            (w.seit().to_vec(), w.schub(4))
+        };
+        assert_eq!(lauf(), lauf());
     }
 
     #[test]

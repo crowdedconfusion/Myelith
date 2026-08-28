@@ -458,7 +458,7 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
             // Werkzeugketten selbst eine Warnung.
             //
             // `as_chunks::<2>()` waere der Vorschlag, ist aber erst seit Rust
-            // 1.88 stabil. Die Schwester-Crates erklaeren MSRV 1.82; dieses
+            // 1.88 stabil. Die Schwester-Crates erklaeren MSRV 1.85; dieses
             // hier hat keine Angabe, und ein stillschweigend hoeherer Bedarf
             // waere schlimmer als eine ausdrueckliche Ausnahme.
             #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]

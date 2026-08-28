@@ -196,9 +196,9 @@ impl MerkleTree {
                 current.push(last);
             }
             // clippy schlaegt seit 1.98 `as_chunks::<2>()` vor. Das ist erst
-            // seit Rust 1.88 stabil, dieses Crate erklaert aber MSRV 1.82
+            // seit Rust 1.88 stabil, dieses Crate erklaert aber MSRV 1.85
             // (Cargo.toml). Die Zusage wiegt schwerer als der Stilhinweis:
-            // Wer mit 1.82 baut, soll bauen koennen.
+            // Wer mit 1.85 baut, soll bauen koennen.
             // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es erst
             // ab clippy 1.98, ein `allow` darauf ist auf aelteren Werkzeugketten
             // selbst eine Warnung. So baut es mit beiden.

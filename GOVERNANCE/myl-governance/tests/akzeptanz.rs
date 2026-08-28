@@ -69,7 +69,7 @@ fn jeder_parameter_hat_einen_wert() {
     for p in Parameter::alle() {
         let _ = reg.wert(p); // paniert, falls er fehlt
     }
-    assert_eq!(Parameter::alle().len(), 32);
+    assert_eq!(Parameter::alle().len(), 33);
 }
 
 // ---------------------------------------------------------------------

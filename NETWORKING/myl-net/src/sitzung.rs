@@ -105,6 +105,9 @@ use hkdf::Hkdf;
 use myl_types::bls::{BlsPublicKey, BlsSecretKey, BlsSignature, BLS_PK_LEN};
 use myl_types::ids::{EpochId, PodId};
 use sha2::{Digest, Sha256};
+use ml_kem::array::Array;
+use ml_kem::kem::{Decapsulate, Encapsulate, FromSeed, KeyExport};
+use ml_kem::{DecapsulationKey768, EncapsulationKey768, MlKem768};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
@@ -115,6 +118,15 @@ pub const SITZUNG_KENNUNG: &str = "myelith-sitzung-1";
 
 /// Länge eines abgeleiteten Sitzungsschlüssels.
 pub const SCHLUESSEL_LEN: usize = 32;
+
+/// Länge eines Kapselpunkts: der öffentliche ML-KEM-768-Schlüssel.
+pub const KAPSELPUNKT_LEN: usize = 1184;
+
+/// Länge einer Kapsel: das ML-KEM-768-Chiffrat.
+pub const KAPSEL_LEN: usize = 1088;
+
+/// Trenner für die Ableitung der KEM-Saat aus der Sitzungssaat.
+const KEM_SAAT_INFO: &[u8] = b"myelith-sitzung-kem-saat-v1";
 
 /// Länge des Poly1305-Tags, das `encrypt` an den Geheimtext hängt.
 pub const TAG_LEN: usize = 16;
@@ -237,11 +249,195 @@ impl fmt::Display for Herkunft {
 /// die Bytes dieses Werts ab. Kopien, die der Allokator, ein
 /// Speicherauszug oder die Auslagerungsdatei angelegt hat, deckt es
 /// nicht.
+/// Der öffentliche ML-KEM-768-Schlüssel einer Epoche.
+///
+/// Das Gegenstück zum [`Epochenpunkt`], für den zweiten Zweig des
+/// hybriden Austauschs. Er wird zusammen mit dem Epochenpunkt
+/// angekündigt und mit derselben Signatur gedeckt.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Kapselpunkt(Box<[u8; KAPSELPUNKT_LEN]>);
+
+impl Kapselpunkt {
+    /// Aus rohen Bytes, ohne Prüfung der inneren Struktur.
+    ///
+    /// ⚑ **Eine Strukturprüfung gibt es bei ML-KEM praktisch nicht**, und
+    /// das ist kein Mangel dieser Umsetzung: Fast jede Bytefolge der
+    /// richtigen Länge kodiert einen gültigen Schlüssel. Ein
+    /// verfälschter Kapselpunkt fällt deshalb nicht hier auf, sondern
+    /// erst am Tag der ersten Nachricht, weil beide Seiten dann
+    /// verschiedene Geheimnisse ableiten. Das ist dieselbe Wirkung wie
+    /// bei einem verfälschten Chiffrat und die richtige.
+    pub fn aus_bytes(roh: [u8; KAPSELPUNKT_LEN]) -> Self {
+        Self(Box::new(roh))
+    }
+
+    /// Die rohen Bytes.
+    pub fn bytes(&self) -> &[u8; KAPSELPUNKT_LEN] {
+        &self.0
+    }
+
+    fn schluessel(&self) -> Result<EncapsulationKey768, SitzungsFehler> {
+        let feld = Array::try_from(&self.0[..]).map_err(|_| SitzungsFehler::SchluesselUngueltig)?;
+        EncapsulationKey768::new(&feld).map_err(|_| SitzungsFehler::SchluesselUngueltig)
+    }
+}
+
+impl borsh::BorshSerialize for Kapselpunkt {
+    /// Roh, ohne Längenpräfix: Die Länge ist eine Konstante des
+    /// Verfahrens und keine Angabe des Absenders.
+    fn serialize<W: borsh::io::Write>(&self, writer: &mut W) -> borsh::io::Result<()> {
+        writer.write_all(&self.0[..])
+    }
+}
+
+impl borsh::BorshDeserialize for Kapselpunkt {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
+        let mut roh = Box::new([0u8; KAPSELPUNKT_LEN]);
+        reader.read_exact(&mut roh[..])?;
+        Ok(Self(roh))
+    }
+}
+
+impl fmt::Debug for Kapselpunkt {
+    /// Gekürzt: 1184 Bytes im Protokoll helfen niemandem.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Kapselpunkt({:02x}{:02x}..{:02x}{:02x})",
+            self.0[0], self.0[1], self.0[KAPSELPUNKT_LEN - 2], self.0[KAPSELPUNKT_LEN - 1]
+        )
+    }
+}
+
+/// Die beiden öffentlichen Punkte einer Gegenstelle für eine Epoche.
+///
+/// Ergebnis einer geprüften [`Epochenankuendigung`]. Beide Punkte
+/// zusammen, weil beide von derselben Signatur gedeckt sind und keiner
+/// allein einen Kanal trägt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Gegenpunkte {
+    /// Der X25519-Punkt.
+    pub punkt: Epochenpunkt,
+    /// Der ML-KEM-Punkt.
+    pub kapselpunkt: Kapselpunkt,
+}
+
+/// Das Chiffrat, das eine Senderichtung eröffnet.
+///
+/// ⚑ **Hier endet die Nicht-Interaktivität des alten Entwurfs, und das
+/// ist keine Umsetzungsschwäche, sondern die Natur eines KEM.** Zwei
+/// Diffie-Hellman-Punkte ergeben von selbst ein gemeinsames Geheimnis;
+/// niemand muss etwas schicken. Ein KEM hat eine Richtung: Der Sender
+/// kapselt gegen den Schlüssel des Empfängers, und das dabei entstehende
+/// Chiffrat **muss übertragen werden**, sonst kann der Empfänger nichts
+/// ableiten.
+///
+/// Jede Seite kapselt für ihre **eigene Senderichtung**. Die Kapsel ist
+/// öffentlich; sie zu lesen nützt niemandem, sie zu verändern führt beim
+/// Empfänger auf einen anderen Schlüssel und damit auf einen
+/// fehlschlagenden Tag. **Sie braucht deshalb keine eigene Signatur.**
+#[derive(Clone, PartialEq, Eq)]
+pub struct Kapsel {
+    epoche: EpochId,
+    pod: PodId,
+    von: Endpunkt,
+    an: Endpunkt,
+    chiffrat: Box<[u8; KAPSEL_LEN]>,
+}
+
+impl Kapsel {
+    /// Die Epoche, für die sie gilt.
+    pub fn epoche(&self) -> EpochId {
+        self.epoche
+    }
+
+    /// Der Pod.
+    pub fn pod(&self) -> PodId {
+        self.pod
+    }
+
+    /// Der Absender.
+    pub fn von(&self) -> Endpunkt {
+        self.von
+    }
+
+    /// Der Empfänger.
+    pub fn an(&self) -> Endpunkt {
+        self.an
+    }
+
+    /// Das rohe Chiffrat.
+    pub fn chiffrat(&self) -> &[u8; KAPSEL_LEN] {
+        &self.chiffrat
+    }
+
+    /// Auf die Leitung: `epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
+    pub fn zu_bytes(&self) -> Vec<u8> {
+        let mut roh = Vec::with_capacity(8 + 32 + 32 + 32 + KAPSEL_LEN);
+        roh.extend_from_slice(&self.epoche.0.to_le_bytes());
+        roh.extend_from_slice(self.pod.as_bytes());
+        roh.extend_from_slice(self.von.bytes());
+        roh.extend_from_slice(self.an.bytes());
+        roh.extend_from_slice(&self.chiffrat[..]);
+        roh
+    }
+
+    /// Von der Leitung.
+    pub fn aus_bytes(roh: &[u8]) -> Result<Self, SitzungsFehler> {
+        const KOPF: usize = 8 + 32 + 32 + 32;
+        if roh.len() != KOPF + KAPSEL_LEN {
+            return Err(SitzungsFehler::UnleserlicherRahmen);
+        }
+        let mut acht = [0u8; 8];
+        acht.copy_from_slice(&roh[0..8]);
+        let mut pod = [0u8; 32];
+        pod.copy_from_slice(&roh[8..40]);
+        let mut von = [0u8; 32];
+        von.copy_from_slice(&roh[40..72]);
+        let mut an = [0u8; 32];
+        an.copy_from_slice(&roh[72..104]);
+        let mut chiffrat = Box::new([0u8; KAPSEL_LEN]);
+        chiffrat.copy_from_slice(&roh[KOPF..]);
+        Ok(Self {
+            epoche: EpochId(u64::from_le_bytes(acht)),
+            pod: PodId::new(pod),
+            von: Endpunkt::aus_bytes(von),
+            an: Endpunkt::aus_bytes(an),
+            chiffrat,
+        })
+    }
+}
+
+impl fmt::Debug for Kapsel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Kapsel")
+            .field("epoche", &self.epoche)
+            .field("pod", &self.pod)
+            .field("von", &self.von)
+            .field("an", &self.an)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct Epochenschluessel {
     epoche: EpochId,
     geheim: StaticSecret,
     oeffentlich: Epochenpunkt,
+    kem_geheim: DecapsulationKey768,
+    kem_oeffentlich: Kapselpunkt,
     herkunft: Herkunft,
+}
+
+/// Ein ML-KEM-768-Paar aus einer 64-Byte-Saat.
+///
+/// Deterministisch: dieselbe Saat ergibt dasselbe Paar. Das ist die
+/// Voraussetzung dafür, dass ein Probelauf reproduzierbar bleibt.
+fn kem_paar(saat: &[u8; 64]) -> (DecapsulationKey768, Kapselpunkt) {
+    let (dk, ek) = MlKem768::from_seed(&Array(*saat));
+    let bytes = ek.to_bytes();
+    let mut roh = [0u8; KAPSELPUNKT_LEN];
+    roh.copy_from_slice(&bytes[..]);
+    (dk, Kapselpunkt(Box::new(roh)))
 }
 
 impl fmt::Debug for Epochenschluessel {
@@ -260,10 +456,15 @@ impl Epochenschluessel {
     pub fn ziehe(epoche: EpochId) -> Self {
         let geheim = StaticSecret::random_from_rng(rand_core::OsRng);
         let oeffentlich = Epochenpunkt(PublicKey::from(&geheim).to_bytes());
+        let mut kem_saat = Zeroizing::new([0u8; 64]);
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, kem_saat.as_mut());
+        let (kem_geheim, kem_oeffentlich) = kem_paar(&kem_saat);
         Self {
             epoche,
             geheim,
             oeffentlich,
+            kem_geheim,
+            kem_oeffentlich,
             herkunft: Herkunft::Gezogen,
         }
     }
@@ -275,12 +476,28 @@ impl Epochenschluessel {
     pub fn probe(epoche: EpochId, saat: [u8; 32]) -> Self {
         let geheim = StaticSecret::from(saat);
         let oeffentlich = Epochenpunkt(PublicKey::from(&geheim).to_bytes());
+        // Die KEM-Saat wird aus derselben Saat abgeleitet, damit ein
+        // Probelauf **eine** Zahl braucht und nicht zwei. Getrennt
+        // gehalten sind die beiden Zweige trotzdem, denn HKDF mit
+        // eigenem `info` gibt aus derselben Quelle unabhängige Ausgaben.
+        let hk = Hkdf::<Sha256>::new(None, &saat);
+        let mut kem_saat = Zeroizing::new([0u8; 64]);
+        hk.expand(KEM_SAAT_INFO, kem_saat.as_mut())
+            .expect("64 Bytes liegen weit unter der HKDF-Grenze");
+        let (kem_geheim, kem_oeffentlich) = kem_paar(&kem_saat);
         Self {
             epoche,
             geheim,
             oeffentlich,
+            kem_geheim,
+            kem_oeffentlich,
             herkunft: Herkunft::Probelauf,
         }
+    }
+
+    /// Der öffentliche ML-KEM-Punkt dieser Epoche.
+    pub fn kapselpunkt(&self) -> Kapselpunkt {
+        self.kem_oeffentlich.clone()
     }
 
     /// Die Epoche, für die dieser Schlüssel gilt.
@@ -397,6 +614,12 @@ pub enum SitzungsFehler {
     EndpunktPasstNicht { erwartet: Endpunkt, bekommen: Endpunkt },
     /// Der mitgeführte Konsensschlüssel ist kein gültiger Gruppenpunkt.
     SchluesselUngueltig,
+    /// Es soll geöffnet werden, aber die Kapsel der Gegenstelle fehlt
+    /// noch. Kein Angriff, sondern eine Reihenfolge: Der
+    /// Empfangsschlüssel entsteht erst aus ihrem Chiffrat.
+    EmpfangNochNichtBereit,
+    /// Eine Kapsel gehört nicht zu diesem Kanal.
+    KapselPasstNicht,
     /// Die Identität konnte nicht signieren.
     SignierenGescheitert,
 }
@@ -461,6 +684,13 @@ impl fmt::Display for SitzungsFehler {
                 f,
                 "Ankündigung gehört zu Endpunkt {bekommen}, erwartet wird {erwartet}"
             ),
+            SitzungsFehler::EmpfangNochNichtBereit => write!(
+                f,
+                "Empfangsrichtung noch nicht bereit: die Kapsel der Gegenstelle fehlt"
+            ),
+            SitzungsFehler::KapselPasstNicht => {
+                write!(f, "die Kapsel gehört nicht zu diesem Kanal")
+            }
             SitzungsFehler::SchluesselUngueltig => write!(
                 f,
                 "der mitgeführte Konsensschlüssel ist kein gültiger Gruppenpunkt"
@@ -533,6 +763,7 @@ pub fn endpunkt_aus_schluessel(pubkey: &BlsPublicKey) -> Endpunkt {
 pub struct Epochenankuendigung {
     epoche: EpochId,
     punkt: Epochenpunkt,
+    kapselpunkt: Kapselpunkt,
     pubkey: BlsPublicKey,
     signatur: BlsSignature,
 }
@@ -542,12 +773,19 @@ pub struct Epochenankuendigung {
 /// Aufbau: `DST ‖ u64_le(epoche) ‖ pubkey ‖ punkt`. Der eigene
 /// öffentliche Schlüssel steht mit darin, damit die Nachricht ohne
 /// Nebenwissen eindeutig ist.
-fn ankuendigungsbytes(epoche: EpochId, pubkey: &BlsPublicKey, punkt: &Epochenpunkt) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32);
+fn ankuendigungsbytes(
+    epoche: EpochId,
+    pubkey: &BlsPublicKey,
+    punkt: &Epochenpunkt,
+    kapselpunkt: &Kapselpunkt,
+) -> Vec<u8> {
+    let mut msg =
+        Vec::with_capacity(DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN);
     msg.extend_from_slice(DST_EPOCHENPUNKT);
     msg.extend_from_slice(&epoche.0.to_le_bytes());
     msg.extend_from_slice(&pubkey.0);
     msg.extend_from_slice(punkt.bytes());
+    msg.extend_from_slice(kapselpunkt.bytes());
     msg
 }
 
@@ -562,13 +800,15 @@ impl Epochenankuendigung {
             .public_key()
             .map_err(|_| SitzungsFehler::SignierenGescheitert)?;
         let punkt = schluessel.punkt();
-        let bytes = ankuendigungsbytes(schluessel.epoche(), &pubkey, &punkt);
+        let kapselpunkt = schluessel.kapselpunkt();
+        let bytes = ankuendigungsbytes(schluessel.epoche(), &pubkey, &punkt, &kapselpunkt);
         let signatur = konsens
             .sign(&bytes)
             .map_err(|_| SitzungsFehler::SignierenGescheitert)?;
         Ok(Self {
             epoche: schluessel.epoche(),
             punkt,
+            kapselpunkt,
             pubkey,
             signatur,
         })
@@ -602,7 +842,7 @@ impl Epochenankuendigung {
         &self,
         erwarteter: Endpunkt,
         erwartete_epoche: EpochId,
-    ) -> Result<Epochenpunkt, SitzungsFehler> {
+    ) -> Result<Gegenpunkte, SitzungsFehler> {
         if self.epoche != erwartete_epoche {
             // Vor allem anderen: Eine gültig unterschriebene Ankündigung
             // aus einer alten Epoche ist echt und trotzdem falsch, und
@@ -625,11 +865,14 @@ impl Epochenankuendigung {
                 bekommen,
             });
         }
-        let bytes = ankuendigungsbytes(self.epoche, &self.pubkey, &self.punkt);
+        let bytes = ankuendigungsbytes(self.epoche, &self.pubkey, &self.punkt, &self.kapselpunkt);
         if !self.pubkey.verify(&bytes, &self.signatur) {
             return Err(SitzungsFehler::SignaturStimmtNicht);
         }
-        Ok(self.punkt)
+        Ok(Gegenpunkte {
+            punkt: self.punkt,
+            kapselpunkt: self.kapselpunkt.clone(),
+        })
     }
 }
 
@@ -655,6 +898,7 @@ fn salz(epoche: EpochId, pod: &PodId) -> [u8; 32] {
 fn richtungsschluessel(
     geheim: &StaticSecret,
     gegenstelle: &Epochenpunkt,
+    kem_geheimnis: &[u8; SCHLUESSEL_LEN],
     epoche: EpochId,
     pod: &PodId,
     von: &Endpunkt,
@@ -673,7 +917,23 @@ fn richtungsschluessel(
     info.extend_from_slice(von.bytes());
     info.extend_from_slice(an.bytes());
 
-    let hk = Hkdf::<Sha256>::new(Some(&salz(epoche, pod)), gemeinsam.as_bytes());
+    // ⚑ **Beide Geheimnisse in einen Eingang, und die Reihenfolge ist
+    // Teil des Vertrags.** Der hybride Schutz beruht darauf, dass ein
+    // Angreifer **beide** Zweige brechen muss: das klassische
+    // Diffie-Hellman gegen einen Quantenrechner und ML-KEM gegen die
+    // Gitterannahme. HKDF über die Verkettung leistet genau das, denn
+    // das Ergebnis bleibt ununterscheidbar von zufällig, solange auch
+    // nur einer der beiden Eingänge es ist.
+    //
+    // Der KEM-Zweig ist **nicht beidseitig beisteuernd**: Wer kapselt,
+    // wählt die Zufälligkeit allein. Das ist unbedenklich, weil der
+    // Diffie-Hellman-Zweig es ist und beide in dieselbe Ableitung
+    // gehen. Genau darum steht hier ein Hybrid und kein Ersatz.
+    let mut eingang = Zeroizing::new([0u8; 2 * SCHLUESSEL_LEN]);
+    eingang[..SCHLUESSEL_LEN].copy_from_slice(gemeinsam.as_bytes());
+    eingang[SCHLUESSEL_LEN..].copy_from_slice(kem_geheimnis);
+
+    let hk = Hkdf::<Sha256>::new(Some(&salz(epoche, pod)), eingang.as_ref());
     let mut schluessel = Zeroizing::new([0u8; SCHLUESSEL_LEN]);
     hk.expand(&info, schluessel.as_mut())
         .expect("32 Bytes liegen weit unter der HKDF-Grenze");
@@ -703,7 +963,18 @@ pub struct Kanal {
     ich: Endpunkt,
     gegenstelle: Endpunkt,
     sende_schluessel: Zeroizing<[u8; SCHLUESSEL_LEN]>,
-    empfange_schluessel: Zeroizing<[u8; SCHLUESSEL_LEN]>,
+    /// ⚑ **Erst da, wenn ihre Kapsel angekommen ist.** Der alte Entwurf
+    /// leitete beide Richtungen aus zwei veröffentlichten Punkten ab und
+    /// brauchte keinen Handschlag. Mit dem KEM-Zweig geht das nicht
+    /// mehr: Die Gegenstelle kapselt für ihre Senderichtung, und ohne
+    /// ihr Chiffrat gibt es hier nichts abzuleiten.
+    empfange_schluessel: Option<Zeroizing<[u8; SCHLUESSEL_LEN]>>,
+    /// Der eigene X25519-Zweig, aufbewahrt für den Augenblick, in dem
+    /// ihre Kapsel eintrifft.
+    eigenes_geheim: StaticSecret,
+    gegenpunkte: Gegenpunkte,
+    /// Was gesendet werden muss, damit die Gegenstelle lesen kann.
+    eigene_kapsel: Kapsel,
     sende_zaehler: u64,
     empfangen_bis: Option<u64>,
 }
@@ -736,7 +1007,7 @@ impl Kanal {
     /// Vorwärtsgeheimnis, es entsteht erst mit der Rotation.
     pub fn neu(
         eigener: &Epochenschluessel,
-        gegenstelle_punkt: &Epochenpunkt,
+        gegenpunkte: &Gegenpunkte,
         pod: PodId,
         ich: Endpunkt,
         gegenstelle: Endpunkt,
@@ -745,21 +1016,24 @@ impl Kanal {
             return Err(SitzungsFehler::EndpunkteGleich { endpunkt: ich });
         }
         let epoche = eigener.epoche;
+
+        // Für die **eigene Senderichtung** wird gegen ihren Kapselpunkt
+        // gekapselt. Das Chiffrat gehört anschließend auf die Leitung;
+        // ohne es kann die Gegenstelle nichts lesen.
+        let (chiffrat, geheimnis) = gegenpunkte.kapselpunkt.schluessel()?.encapsulate();
+        let mut kem_sende = Zeroizing::new([0u8; SCHLUESSEL_LEN]);
+        kem_sende.copy_from_slice(&geheimnis[..]);
+        let mut roh = Box::new([0u8; KAPSEL_LEN]);
+        roh.copy_from_slice(&chiffrat[..]);
+
         let sende_schluessel = richtungsschluessel(
             &eigener.geheim,
-            gegenstelle_punkt,
+            &gegenpunkte.punkt,
+            &kem_sende,
             epoche,
             &pod,
             &ich,
             &gegenstelle,
-        )?;
-        let empfange_schluessel = richtungsschluessel(
-            &eigener.geheim,
-            gegenstelle_punkt,
-            epoche,
-            &pod,
-            &gegenstelle,
-            &ich,
         )?;
         Ok(Self {
             epoche,
@@ -767,10 +1041,75 @@ impl Kanal {
             ich,
             gegenstelle,
             sende_schluessel,
-            empfange_schluessel,
+            empfange_schluessel: None,
+            eigenes_geheim: eigener.geheim.clone(),
+            gegenpunkte: gegenpunkte.clone(),
+            eigene_kapsel: Kapsel {
+                epoche,
+                pod,
+                von: ich,
+                an: gegenstelle,
+                chiffrat: roh,
+            },
             sende_zaehler: 0,
             empfangen_bis: None,
         })
+    }
+
+    /// Die eigene Kapsel, die zur Gegenstelle muss.
+    ///
+    /// Sie ist öffentlich und braucht keine eigene Signatur: Wer sie
+    /// verändert, führt die Gegenstelle auf einen anderen Schlüssel, und
+    /// der Tag der ersten Nachricht schlägt fehl. Wer sie mitliest,
+    /// gewinnt nichts, denn das Geheimnis steckt nicht darin.
+    pub fn eigene_kapsel(&self) -> &Kapsel {
+        &self.eigene_kapsel
+    }
+
+    /// Ist die Empfangsrichtung schon nutzbar?
+    pub fn empfangsbereit(&self) -> bool {
+        self.empfange_schluessel.is_some()
+    }
+
+    /// Nimmt die Kapsel der Gegenstelle an und schließt damit die
+    /// Empfangsrichtung.
+    ///
+    /// Mehrfach aufgerufen mit derselben Kapsel ist das unschädlich; mit
+    /// einer **anderen** Kapsel wird abgelehnt, sobald der Schlüssel
+    /// steht. Sonst könnte ein Angreifer den Empfangsschlüssel eines
+    /// laufenden Kanals austauschen und damit alles bisher Gelesene
+    /// entwerten.
+    pub fn nimm_kapsel(
+        &mut self,
+        eigener: &Epochenschluessel,
+        kapsel: &Kapsel,
+    ) -> Result<(), SitzungsFehler> {
+        if kapsel.epoche != self.epoche
+            || kapsel.pod != self.pod
+            || kapsel.von != self.gegenstelle
+            || kapsel.an != self.ich
+        {
+            return Err(SitzungsFehler::KapselPasstNicht);
+        }
+        if self.empfange_schluessel.is_some() {
+            return Ok(());
+        }
+        let feld = Array::try_from(&kapsel.chiffrat[..])
+            .map_err(|_| SitzungsFehler::UnleserlicherRahmen)?;
+        let roh = eigener.kem_geheim.decapsulate(&feld);
+        let mut geheimnis = Zeroizing::new([0u8; SCHLUESSEL_LEN]);
+        geheimnis.copy_from_slice(&roh[..]);
+        let schluessel = richtungsschluessel(
+            &self.eigenes_geheim,
+            &self.gegenpunkte.punkt,
+            &geheimnis,
+            self.epoche,
+            &self.pod,
+            &self.gegenstelle,
+            &self.ich,
+        )?;
+        self.empfange_schluessel = Some(schluessel);
+        Ok(())
     }
 
     /// Die Epoche dieses Kanals.
@@ -852,8 +1191,19 @@ impl Kanal {
             }
         }
 
+        // ⚑ **Die Bereitschaft wird zuletzt geprüft, und die Reihenfolge
+        // ist Absicht.** Eine Nachricht aus der falschen Epoche oder dem
+        // falschen Pod ist falsch, gleich ob der Empfangsschlüssel schon
+        // steht; wer zuerst auf die Bereitschaft prüft, meldet dafür
+        // „Kapsel fehlt" und verdeckt den eigentlichen Grund. Alle
+        // Prüfungen davor kommen ohne Schlüssel aus.
+        let empfange_schluessel = self
+            .empfange_schluessel
+            .as_ref()
+            .ok_or(SitzungsFehler::EmpfangNochNichtBereit)?;
+
         let aad = borsh::to_vec(kopf).expect("Kopf ist borsh-serialisierbar");
-        let chiffre = ChaCha20Poly1305::new(Key::from_slice(self.empfange_schluessel.as_ref()));
+        let chiffre = ChaCha20Poly1305::new(Key::from_slice(empfange_schluessel.as_ref()));
         let klartext = chiffre
             .decrypt(
                 &nonce(kopf.zaehler),
@@ -934,17 +1284,37 @@ impl Sitzungen {
         &mut self,
         pod: PodId,
         gegenstelle: Endpunkt,
-        gegenstelle_punkt: &Epochenpunkt,
+        gegenpunkte: &Gegenpunkte,
     ) -> Result<&mut Kanal, SitzungsFehler> {
         let schluessel = (pod, gegenstelle);
         if !self.kanaele.contains_key(&schluessel) {
-            let kanal = Kanal::neu(&self.eigener, gegenstelle_punkt, pod, self.ich, gegenstelle)?;
+            let kanal = Kanal::neu(&self.eigener, gegenpunkte, pod, self.ich, gegenstelle)?;
             self.kanaele.insert(schluessel, kanal);
         }
         Ok(self
             .kanaele
             .get_mut(&schluessel)
             .expect("gerade eingefügt oder schon vorhanden"))
+    }
+
+    /// Nimmt eine eingegangene Kapsel an und schließt damit die
+    /// Empfangsrichtung des betroffenen Kanals.
+    ///
+    /// **Der Kanal muss schon bestehen.** Wer eine Kapsel bekommt, ohne
+    /// selbst einen Kanal geöffnet zu haben, hat noch keinen
+    /// Kapselpunkt der Gegenstelle geprüft und dürfte ihr also gar nicht
+    /// glauben. Die Reihenfolge ist deshalb Absicht: erst die geprüfte
+    /// Ankündigung, dann der Kanal, dann die Kapsel.
+    pub fn nimm_kapsel(&mut self, kapsel: &Kapsel) -> Result<(), SitzungsFehler> {
+        if kapsel.epoche != self.epoche {
+            return Err(SitzungsFehler::KapselPasstNicht);
+        }
+        let schluessel = (kapsel.pod, kapsel.von);
+        let kanal = self
+            .kanaele
+            .get_mut(&schluessel)
+            .ok_or(SitzungsFehler::KapselPasstNicht)?;
+        kanal.nimm_kapsel(&self.eigener, kapsel)
     }
 
     /// Rotiert auf die nächste Epoche (Punkt 3.3).
@@ -1012,25 +1382,41 @@ mod tests {
 
     /// Zwei Knoten mit festen Saaten, damit ein Fehlschlag reproduzierbar
     /// ist. Beide Kanäle stehen im selben Pod und derselben Epoche.
+    /// Die eigenen beiden Punkte, wie sie eine geprüfte Ankündigung
+    /// liefern würde. Nur für Tests: Im Betrieb kommt das Paar
+    /// ausschließlich aus [`Epochenankuendigung::pruefe`], weil erst die
+    /// Signatur es an einen Endpunkt bindet.
+    fn punkte(s: &Epochenschluessel) -> Gegenpunkte {
+        Gegenpunkte {
+            punkt: s.punkt(),
+            kapselpunkt: s.kapselpunkt(),
+        }
+    }
+
     fn paar(epoche: u64) -> (Kanal, Kanal) {
         let a_schluessel = Epochenschluessel::probe(EpochId(epoche), [1u8; 32]);
         let b_schluessel = Epochenschluessel::probe(EpochId(epoche), [2u8; 32]);
-        let a = Kanal::neu(
+        let mut a = Kanal::neu(
             &a_schluessel,
-            &b_schluessel.punkt(),
+            &punkte(&b_schluessel),
             pod(7),
             endpunkt(0xaa),
             endpunkt(0xbb),
         )
         .expect("Kanal A");
-        let b = Kanal::neu(
+        let mut b = Kanal::neu(
             &b_schluessel,
-            &a_schluessel.punkt(),
+            &punkte(&a_schluessel),
             pod(7),
             endpunkt(0xbb),
             endpunkt(0xaa),
         )
         .expect("Kanal B");
+        // Der Handschlag: jede Seite gibt ihre Kapsel an die andere.
+        let a_kapsel = a.eigene_kapsel().clone();
+        let b_kapsel = b.eigene_kapsel().clone();
+        b.nimm_kapsel(&b_schluessel, &a_kapsel).expect("Kapsel A→B");
+        a.nimm_kapsel(&a_schluessel, &b_kapsel).expect("Kapsel B→A");
         (a, b)
     }
 
@@ -1124,7 +1510,7 @@ mod tests {
         let schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let ergebnis = Kanal::neu(
             &schluessel,
-            &schluessel.punkt(),
+            &punkte(&schluessel),
             pod(1),
             endpunkt(5),
             endpunkt(5),
@@ -1142,12 +1528,183 @@ mod tests {
         let schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let ergebnis = Kanal::neu(
             &schluessel,
-            &Epochenpunkt::aus_bytes([0u8; 32]),
+            &Gegenpunkte {
+                punkt: Epochenpunkt::aus_bytes([0u8; 32]),
+                kapselpunkt: schluessel.kapselpunkt(),
+            },
             pod(1),
             endpunkt(1),
             endpunkt(2),
         );
         assert!(matches!(ergebnis, Err(SitzungsFehler::PunktOhneBeitrag)));
+    }
+
+    /// ⚑ Gegenproben zum hybriden Austausch (Post-Quantum).
+    mod hybrid {
+        use super::*;
+
+        /// Die Grundaussage: Nach dem Kapseltausch lesen beide Seiten.
+        #[test]
+        fn der_handschlag_macht_beide_richtungen_lesbar() {
+            let (mut a, mut b) = paar(1);
+            let hin = a.versiegle(b"von A nach B").expect("versiegeln");
+            assert_eq!(b.oeffne(&hin).expect("öffnen"), b"von A nach B");
+            let zurueck = b.versiegle(b"von B nach A").expect("versiegeln");
+            assert_eq!(a.oeffne(&zurueck).expect("öffnen"), b"von B nach A");
+        }
+
+        /// ⚑ **Ohne Kapsel ist nichts zu lesen, und das ist der
+        /// sichtbarste Unterschied zum alten Entwurf.** Vorher genügten
+        /// zwei veröffentlichte Punkte für beide Richtungen.
+        #[test]
+        fn ohne_kapsel_ist_nichts_zu_lesen() {
+            let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+            let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+            let mut a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb))
+                .expect("Kanal A");
+            let mut b = Kanal::neu(&b_s, &punkte(&a_s), pod(7), endpunkt(0xbb), endpunkt(0xaa))
+                .expect("Kanal B");
+            assert!(!b.empfangsbereit());
+            let hin = a.versiegle(b"zu frueh").expect("versiegeln");
+            assert!(matches!(
+                b.oeffne(&hin),
+                Err(SitzungsFehler::EmpfangNochNichtBereit)
+            ));
+            // Und mit der Kapsel geht dieselbe Nachricht auf.
+            let a_kapsel = a.eigene_kapsel().clone();
+            b.nimm_kapsel(&b_s, &a_kapsel).expect("Kapsel");
+            assert!(b.empfangsbereit());
+            assert_eq!(b.oeffne(&hin).expect("öffnen"), b"zu frueh");
+        }
+
+        /// Eine Kapsel aus einem anderen Kanal wird abgelehnt, statt
+        /// still einen falschen Schlüssel zu setzen.
+        #[test]
+        fn eine_fremde_kapsel_wird_abgelehnt() {
+            let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+            let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+            let mut b = Kanal::neu(&b_s, &punkte(&a_s), pod(7), endpunkt(0xbb), endpunkt(0xaa))
+                .expect("Kanal B");
+            let a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb))
+                .expect("Kanal A");
+            let echt = a.eigene_kapsel().clone();
+
+            for (feld, kaputt) in [
+                ("Epoche", Kapsel { epoche: EpochId(2), ..echt.clone() }),
+                ("Pod", Kapsel { pod: pod(8), ..echt.clone() }),
+                ("Absender", Kapsel { von: endpunkt(0xcc), ..echt.clone() }),
+                ("Empfänger", Kapsel { an: endpunkt(0xcc), ..echt.clone() }),
+            ] {
+                assert!(
+                    matches!(
+                        b.nimm_kapsel(&b_s, &kaputt),
+                        Err(SitzungsFehler::KapselPasstNicht)
+                    ),
+                    "falsches Feld {} wurde angenommen",
+                    feld
+                );
+            }
+            // Gegenprobe: die echte geht durch.
+            b.nimm_kapsel(&b_s, &echt).expect("die echte Kapsel");
+        }
+
+        /// ⚑ Ein verfälschtes Chiffrat bricht nicht laut, sondern führt
+        /// auf einen anderen Schlüssel. Der Fehlschlag kommt am Tag, und
+        /// das ist die richtige Stelle: ML-KEM lehnt ungültige Chiffrate
+        /// nicht sichtbar ab, sondern liefert einen pseudozufälligen
+        /// Wert (implizite Zurückweisung).
+        #[test]
+        fn eine_verfaelschte_kapsel_fuehrt_auf_einen_anderen_schluessel() {
+            let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+            let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+            let mut a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb))
+                .expect("Kanal A");
+            let mut b = Kanal::neu(&b_s, &punkte(&a_s), pod(7), endpunkt(0xbb), endpunkt(0xaa))
+                .expect("Kanal B");
+            let mut kapsel = a.eigene_kapsel().clone();
+            kapsel.chiffrat[0] ^= 0xff;
+            b.nimm_kapsel(&b_s, &kapsel)
+                .expect("wird angenommen, denn die Fälschung ist nicht erkennbar");
+            let hin = a.versiegle(b"Inhalt").expect("versiegeln");
+            assert!(matches!(b.oeffne(&hin), Err(SitzungsFehler::TagStimmtNicht)));
+        }
+
+        /// ⚑ **Der Kapselpunkt hängt an der Signatur.** Ohne diese
+        /// Bindung könnte ein Angreifer den Post-Quantum-Zweig durch
+        /// einen eigenen Schlüssel ersetzen und ihn damit abschalten,
+        /// ohne die Signatur zu brechen. Der Test tauscht genau das aus.
+        #[test]
+        fn ein_getauschter_kapselpunkt_bricht_die_signatur() {
+            let sk = konsens(1);
+            let mein_endpunkt = endpunkt_aus_schluessel(&sk.public_key().unwrap());
+            let echt = Epochenschluessel::probe(EpochId(9), [1u8; 32]);
+            let fremd = Epochenschluessel::probe(EpochId(9), [7u8; 32]);
+            let ankuendigung = Epochenankuendigung::neu(&sk, &echt).expect("ankündigen");
+            assert!(ankuendigung.pruefe(mein_endpunkt, EpochId(9)).is_ok());
+
+            let getauscht = Epochenankuendigung {
+                kapselpunkt: fremd.kapselpunkt(),
+                ..ankuendigung.clone()
+            };
+            assert!(matches!(
+                getauscht.pruefe(mein_endpunkt, EpochId(9)),
+                Err(SitzungsFehler::SignaturStimmtNicht)
+            ));
+        }
+
+        /// ⚑ Der KEM-Zweig wirkt wirklich auf den Schlüssel: gleiche
+        /// Diffie-Hellman-Seite, anderes KEM-Geheimnis, anderer
+        /// Schlüssel. Ohne diesen Test könnte der zweite Eingang
+        /// versehentlich verworfen werden, und alles bliebe grün.
+        #[test]
+        fn der_kem_zweig_geht_in_den_schluessel_ein() {
+            let a = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+            let punkt = Epochenschluessel::probe(EpochId(1), [2u8; 32]).punkt();
+            let mit = |kem: &[u8; SCHLUESSEL_LEN]| {
+                richtungsschluessel(
+                    &a.geheim,
+                    &punkt,
+                    kem,
+                    EpochId(1),
+                    &pod(7),
+                    &endpunkt(0xaa),
+                    &endpunkt(0xbb),
+                )
+                .expect("ableiten")
+                .to_vec()
+            };
+            assert_ne!(mit(&[0u8; SCHLUESSEL_LEN]), mit(&[1u8; SCHLUESSEL_LEN]));
+            assert_eq!(mit(&[5u8; SCHLUESSEL_LEN]), mit(&[5u8; SCHLUESSEL_LEN]));
+        }
+
+        /// Die Saat bestimmt auch den KEM-Schlüssel, sonst wäre ein
+        /// Probelauf nicht reproduzierbar.
+        #[test]
+        fn dieselbe_saat_ergibt_denselben_kapselpunkt() {
+            let a = Epochenschluessel::probe(EpochId(1), [42u8; 32]);
+            let b = Epochenschluessel::probe(EpochId(1), [42u8; 32]);
+            assert_eq!(a.kapselpunkt(), b.kapselpunkt());
+            let c = Epochenschluessel::probe(EpochId(1), [43u8; 32]);
+            assert_ne!(a.kapselpunkt(), c.kapselpunkt());
+        }
+
+        /// Die Kapsel überlebt die Leitung.
+        #[test]
+        fn die_kapsel_ueberlebt_die_serialisierung() {
+            let a_s = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+            let b_s = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+            let a = Kanal::neu(&a_s, &punkte(&b_s), pod(7), endpunkt(0xaa), endpunkt(0xbb))
+                .expect("Kanal A");
+            let roh = a.eigene_kapsel().zu_bytes();
+            assert_eq!(roh.len(), 8 + 32 + 32 + 32 + KAPSEL_LEN);
+            let zurueck = Kapsel::aus_bytes(&roh).expect("lesen");
+            assert_eq!(&zurueck, a.eigene_kapsel());
+            // Ein Byte zu wenig wird abgelehnt, statt still zu raten.
+            assert!(matches!(
+                Kapsel::aus_bytes(&roh[..roh.len() - 1]),
+                Err(SitzungsFehler::UnleserlicherRahmen)
+            ));
+        }
     }
 
     #[test]
@@ -1156,17 +1713,31 @@ mod tests {
         // bekommt aus dem Geheimtext weder Prompt noch Aktivierung.
         let (mut a, _) = paar(1);
         let versiegelt = a.versiegle(b"Prompt und Aktivierung").expect("versiegeln");
+        let a_kapsel = a.eigene_kapsel().clone();
 
         let c_schluessel = Epochenschluessel::probe(EpochId(1), [9u8; 32]);
         let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let mut c = Kanal::neu(
             &c_schluessel,
-            &a_schluessel.punkt(),
+            &punkte(&a_schluessel),
             pod(7),
             endpunkt(0xbb),
             endpunkt(0xaa),
         )
         .expect("Kanal C");
+
+        // ⚑ **C bekommt sogar die Kapsel**, die A für B erzeugt hat, und
+        // das ist der Punkt dieses Tests. Ohne sie scheiterte C schon an
+        // `EmpfangNochNichtBereit`, und der Test bewiese nur, dass ein
+        // Lauscher nichts hat. Mit ihr beweist er, dass ihm auch das
+        // Mitgehörte nichts nützt: A hat gegen **Bs** Kapselpunkt
+        // gekapselt, C entkapselt mit **seinem** Schlüssel und bekommt
+        // ein anderes Geheimnis. ML-KEM lehnt dabei nicht sichtbar ab,
+        // sondern liefert einen pseudozufälligen Wert; der Fehlschlag
+        // kommt erst am Tag, und genau so soll es sein.
+        c.nimm_kapsel(&c_schluessel, &a_kapsel)
+            .expect("die Kapsel ist an C adressiert und wird angenommen");
+        assert!(c.empfangsbereit(), "C hält sich für empfangsbereit");
         assert!(matches!(
             c.oeffne(&versiegelt),
             Err(SitzungsFehler::TagStimmtNicht)
@@ -1273,7 +1844,7 @@ mod tests {
         let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
         let mut a = Kanal::neu(
             &a_schluessel,
-            &b_schluessel.punkt(),
+            &punkte(&b_schluessel),
             pod(7),
             endpunkt(0xaa),
             endpunkt(0xbb),
@@ -1281,7 +1852,7 @@ mod tests {
         .expect("Kanal A");
         let mut b_anderer_pod = Kanal::neu(
             &b_schluessel,
-            &a_schluessel.punkt(),
+            &punkte(&a_schluessel),
             pod(8),
             endpunkt(0xbb),
             endpunkt(0xaa),
@@ -1303,7 +1874,7 @@ mod tests {
         let b_neu = Epochenschluessel::probe(EpochId(2), [2u8; 32]);
         let mut a = Kanal::neu(
             &a_schluessel,
-            &b_alt.punkt(),
+            &punkte(&b_alt),
             pod(7),
             endpunkt(0xaa),
             endpunkt(0xbb),
@@ -1312,7 +1883,7 @@ mod tests {
         let a_neu = Epochenschluessel::probe(EpochId(2), [1u8; 32]);
         let mut b = Kanal::neu(
             &b_neu,
-            &a_neu.punkt(),
+            &punkte(&a_neu),
             pod(7),
             endpunkt(0xbb),
             endpunkt(0xaa),
@@ -1361,7 +1932,10 @@ mod tests {
         assert_eq!(ankuendigung.behaupteter_endpunkt(), mein_endpunkt);
         assert_eq!(
             ankuendigung.pruefe(mein_endpunkt, EpochId(9)).expect("prüfen"),
-            schluessel.punkt()
+            Gegenpunkte {
+                punkt: schluessel.punkt(),
+                kapselpunkt: schluessel.kapselpunkt(),
+            }
         );
     }
 
@@ -1438,9 +2012,11 @@ mod tests {
         // Gruppenpunkt ist, hat trotzdem einen Hash, und der könnte
         // passen.
         let kaputt = BlsPublicKey([0u8; BLS_PK_LEN]);
+        let s = Epochenschluessel::probe(EpochId(9), [1u8; 32]);
         let ankuendigung = Epochenankuendigung {
             epoche: EpochId(9),
-            punkt: Epochenschluessel::probe(EpochId(9), [1u8; 32]).punkt(),
+            punkt: s.punkt(),
+            kapselpunkt: s.kapselpunkt(),
             pubkey: kaputt,
             signatur: BlsSignature([0u8; 96]),
         };
@@ -1492,7 +2068,8 @@ mod tests {
         let sk = konsens(1);
         let pubkey = sk.public_key().unwrap();
         let mein_endpunkt = endpunkt_aus_schluessel(&pubkey);
-        let punkt = Epochenschluessel::probe(EpochId(9), [1u8; 32]).punkt();
+        let schluessel = Epochenschluessel::probe(EpochId(9), [1u8; 32]);
+        let punkt = schluessel.punkt();
 
         let mut ohne_kennung = Vec::new();
         ohne_kennung.extend_from_slice(&EpochId(9).0.to_le_bytes());
@@ -1502,6 +2079,7 @@ mod tests {
         let gefaelscht = Epochenankuendigung {
             epoche: EpochId(9),
             punkt,
+            kapselpunkt: schluessel.kapselpunkt(),
             pubkey,
             signatur: sk.sign(&ohne_kennung).expect("signieren"),
         };
@@ -1512,10 +2090,21 @@ mod tests {
         // Aufbau festgenagelt, wie `DST_POI_BUNDLE` es in CONSENSUS
         // vormacht: Wer ein Feld einschiebt, bekommt hier einen roten
         // Test statt einer stillen Formatänderung.
-        let msg = ankuendigungsbytes(EpochId(9), &pubkey, &punkt);
+        let kapselpunkt = schluessel.kapselpunkt();
+        let msg = ankuendigungsbytes(EpochId(9), &pubkey, &punkt, &kapselpunkt);
         assert!(msg.starts_with(DST_EPOCHENPUNKT));
-        assert_eq!(msg.len(), DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32);
-        assert_eq!(&msg[msg.len() - 32..], punkt.bytes());
+        assert_eq!(
+            msg.len(),
+            DST_EPOCHENPUNKT.len() + 8 + BLS_PK_LEN + 32 + KAPSELPUNKT_LEN
+        );
+        // ⚑ Der Kapselpunkt steht **hinten und mit drin**: Ohne ihn wäre
+        // der zweite Zweig des Austauschs ungedeckt, und ein Angreifer
+        // könnte ihn austauschen, ohne die Signatur zu brechen.
+        assert_eq!(&msg[msg.len() - KAPSELPUNKT_LEN..], &kapselpunkt.bytes()[..]);
+        assert_eq!(
+            &msg[msg.len() - KAPSELPUNKT_LEN - 32..msg.len() - KAPSELPUNKT_LEN],
+            punkt.bytes()
+        );
     }
 
     #[test]
@@ -1529,7 +2118,10 @@ mod tests {
         assert_eq!(zurueck, ankuendigung);
         assert_eq!(
             zurueck.pruefe(mein_endpunkt, EpochId(9)).expect("prüfen"),
-            schluessel.punkt()
+            Gegenpunkte {
+                punkt: schluessel.punkt(),
+                kapselpunkt: schluessel.kapselpunkt(),
+            }
         );
     }
 
@@ -1550,10 +2142,15 @@ mod tests {
         // Hier wird deshalb die Ableitung selbst verglichen.
         let a = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let punkt = Epochenschluessel::probe(EpochId(1), [2u8; 32]).punkt();
+        // Ein fester KEM-Zweig, damit dieser Test die **Trennung nach
+        // Epoche, Pod und Richtung** prüft und nicht die Zufälligkeit
+        // der Kapselung.
+        let kem = [9u8; SCHLUESSEL_LEN];
         let ableiten = |epoche, pod_nr, von, an| {
             richtungsschluessel(
                 &a.geheim,
                 &punkt,
+                &kem,
                 EpochId(epoche),
                 &pod(pod_nr),
                 &endpunkt(von),
@@ -1616,9 +2213,18 @@ mod tests {
         // Knoten, die aneinander vorbei verschlüsseln.
         let a = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let b = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        // ⚑ **Seit dem hybriden Austausch genügt der eigene
+        // Diffie-Hellman-Zweig dafür nicht mehr.** Der KEM-Zweig kommt
+        // aus der Kapsel der Gegenstelle; er ist hier fest gesetzt,
+        // damit der Test genau die Aussage prüft, die er im Namen führt:
+        // dass der **Diffie-Hellman-Teil** von beiden Seiten dasselbe
+        // ergibt. Dass der KEM-Teil zusammenpasst, prüft
+        // `der_handschlag_macht_beide_richtungen_lesbar`.
+        let kem = [5u8; SCHLUESSEL_LEN];
         let bei_a = richtungsschluessel(
             &a.geheim,
             &b.punkt(),
+            &kem,
             EpochId(1),
             &pod(7),
             &endpunkt(0xaa),
@@ -1628,6 +2234,7 @@ mod tests {
         let bei_b = richtungsschluessel(
             &b.geheim,
             &a.punkt(),
+            &kem,
             EpochId(1),
             &pod(7),
             &endpunkt(0xaa),
@@ -1643,18 +2250,21 @@ mod tests {
         // Epoche e ist in e+1 nicht mehr zu öffnen.
         let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
         let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
-        let a_punkt = a_schluessel.punkt();
+        let a_punkt = punkte(&a_schluessel);
         let mut a = Kanal::neu(
             &a_schluessel,
-            &b_schluessel.punkt(),
+            &punkte(&b_schluessel),
             pod(7),
             endpunkt(0xaa),
             endpunkt(0xbb),
         )
         .expect("Kanal A");
         let mitschnitt = a.versiegle(b"Inhalt aus Epoche 1").expect("versiegeln");
+        let a_kapsel = a.eigene_kapsel().clone();
 
         let mut b = Sitzungen::neu(endpunkt(0xbb), b_schluessel);
+        b.kanal(pod(7), endpunkt(0xaa), &a_punkt).expect("Kanal");
+        b.nimm_kapsel(&a_kapsel).expect("Kapsel");
         assert!(b
             .kanal(pod(7), endpunkt(0xaa), &a_punkt)
             .expect("Kanal")
@@ -1678,7 +2288,7 @@ mod tests {
         // Den Epochenschlüssel allein zu ersetzen genügte nicht: Die
         // abgeleiteten Richtungsschlüssel liegen in den Kanälen.
         let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
-        let fremd = Epochenschluessel::probe(EpochId(1), [1u8; 32]).punkt();
+        let fremd = punkte(&Epochenschluessel::probe(EpochId(1), [1u8; 32]));
         let mut b = Sitzungen::neu(endpunkt(0xbb), b_schluessel);
         b.kanal(pod(7), endpunkt(0xaa), &fremd).expect("Kanal");
         b.kanal(pod(8), endpunkt(0xcc), &fremd).expect("Kanal");
@@ -1695,7 +2305,7 @@ mod tests {
         // Sonst begänne der Sendezähler bei jedem Aufruf wieder bei
         // null, und der zweite Aufruf wiederholte den ersten Nonce.
         let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
-        let fremd = Epochenschluessel::probe(EpochId(1), [1u8; 32]).punkt();
+        let fremd = punkte(&Epochenschluessel::probe(EpochId(1), [1u8; 32]));
         let mut b = Sitzungen::neu(endpunkt(0xbb), b_schluessel);
         b.kanal(pod(7), endpunkt(0xaa), &fremd)
             .expect("Kanal")

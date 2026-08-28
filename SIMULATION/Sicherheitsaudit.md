@@ -463,6 +463,18 @@ erhöht.
 
 ### A13 Die Krypto-Primitiven
 
+⚑ **Nachtrag 2026-08-28, Quantenrechner:** Der Sitzungsaustausch ist
+seit `myl-net` v0.10.0 hybrid (X25519 plus ML-KEM-768); aufgezeichneter
+Verkehr ist damit auch gegen späteres Brechen geschützt. **Die
+Signaturen sind es nicht**, und der Grund ist die Aggregation: Ein
+Polka-Zertifikat ist 96 Byte unabhängig von der Validatorenzahl, mit
+ML-DSA wären es bei 21 Validatoren rund 51 KB je Rundenwechsel, und ein
+aggregierbares Post-Quantum-Verfahren ist nicht standardisiert.
+
+**Die Reihenfolge ist begründet:** Eine 2040 gebrochene Signatur ist
+wertlos, der Block ist längst final. Ein 2026 aufgezeichneter Prompt,
+2040 entschlüsselt, ist es nicht.
+
 Dass `myl-types` gegen die RFC-9381-Testvektoren stimmt, ist geprüft.
 Dass die **Verwendung** trägt, war bis zum 2026-08-23
 Eigenbau-Beurteilung; seither gibt es ein schriftliches Bedrohungsmodell

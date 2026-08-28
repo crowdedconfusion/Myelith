@@ -22,6 +22,7 @@
 //! Änderungen nur über Governance (Kap. 10.3).
 
 use crate::voting_weight::{calculate_voting_weight, InferenceHistory};
+use myl_types::pq::{PqPublicKey, Signaturstufe};
 use myl_types::bls::{BlsProofOfPossession, BlsPublicKey};
 use myl_types::ids::MinerId;
 use myl_types::seed_rng::weighted_sample_without_replacement;
@@ -59,6 +60,20 @@ pub struct Validator {
     pub registration_epoch: u64,
     /// Historische Inferenzarbeit je Epoche (für die Stimmgewichts-Kopplung).
     pub history: InferenceHistory,
+    /// ⚑ **Der zweite Schlüssel, für den Wechsel des
+    /// Signaturverfahrens.**
+    ///
+    /// `None`, solange der Validator keinen veröffentlicht hat. Das ist
+    /// heute der Normalfall und der einzige mögliche, denn es gibt noch
+    /// kein zweites Verfahren.
+    ///
+    /// **Das Feld steht trotzdem schon hier, und der Grund ist eine
+    /// Frist:** Ein Schalter für den Verfahrenswechsel funktioniert nur,
+    /// wenn alle Validatoren ihren neuen Schlüssel **vorher**
+    /// veröffentlicht haben. Solange das Feld fehlt, kann niemand
+    /// anfangen. Vor dem Genesis-Block ist es eine Zeile, danach eine
+    /// Kettenmigration.
+    pub pq_pubkey: Option<PqPublicKey>,
 }
 
 impl Validator {
@@ -66,6 +81,48 @@ impl Validator {
     pub fn voting_weight(&self, current_epoch: u64) -> u64 {
         calculate_voting_weight(self.stake, &self.history, current_epoch)
     }
+}
+
+/// Sind alle Validatoren für den Wechsel des Signaturverfahrens bereit?
+///
+/// ⚑ **Diese Prüfung gehört hierher und nicht in die
+/// Governance-Registry**, und der Grund ist eine Schnittstelle: Die
+/// Registry kennt Parameter, nicht Validatoren. Wer entscheidet, ob der
+/// Schritt nach `NurQuantensicher` fallen darf, muss den Validator-Satz
+/// sehen.
+///
+/// **Die Bedingung ist scharf: alle, nicht die meisten.** Ein einziger
+/// Validator ohne zweiten Schlüssel verliert mit dem Schritt seine
+/// Stimme, und ein Netz, das sich seiner Validatoren nach Gutdünken
+/// entledigt, ist kein Konsens mehr. Der Schritt wartet, bis der letzte
+/// bereit ist, oder das Netz entfernt ihn vorher auf dem geordneten Weg.
+pub fn alle_bereit_fuer(validatoren: &[Validator], stufe: Signaturstufe) -> bool {
+    match stufe {
+        // Für die ersten beiden Stufen braucht es nichts: Das klassische
+        // Verfahren gilt weiter, und niemand verliert seine Stimme.
+        Signaturstufe::NurKlassisch | Signaturstufe::Beide => true,
+        Signaturstufe::NurQuantensicher => validatoren.iter().all(|v| {
+            v.pq_pubkey
+                .as_ref()
+                .is_some_and(|k| k.verfahren().ist_quantensicher())
+        }),
+    }
+}
+
+/// Wer noch keinen quantensicheren Schlüssel veröffentlicht hat.
+///
+/// Für die Meldung an die Betreiber: Ein „nein" ohne Namen hilft
+/// niemandem, und der Schritt hängt genau an diesen Knoten.
+pub fn noch_nicht_bereit(validatoren: &[Validator]) -> Vec<MinerId> {
+    validatoren
+        .iter()
+        .filter(|v| {
+            !v.pq_pubkey
+                .as_ref()
+                .is_some_and(|k| k.verfahren().ist_quantensicher())
+        })
+        .map(|v| v.miner_id)
+        .collect()
 }
 
 /// Fehler bei der Validator-Operation.
@@ -184,6 +241,7 @@ impl ValidatorRegistry {
             stake,
             registration_epoch: current_epoch,
             history: InferenceHistory::new(),
+            pq_pubkey: None,
         };
 
         self.validators.insert(miner_id, validator);
@@ -452,6 +510,75 @@ impl VotingSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use myl_types::pq::Signaturverfahren;
+
+    fn val(byte: u8, pq: bool) -> Validator {
+        Validator {
+            miner_id: MinerId::new([byte; 32]),
+            pubkey: BlsPublicKey([byte; 48]),
+            stake: 1_000_000,
+            registration_epoch: 0,
+            history: InferenceHistory::default(),
+            pq_pubkey: pq.then(|| {
+                PqPublicKey::neu(Signaturverfahren::MlDsa65, vec![byte; 1952])
+                    .expect("Schlüssel")
+            }),
+        }
+    }
+
+    /// ⚑ **Alle, nicht die meisten.** Ein einziger Validator ohne
+    /// zweiten Schlüssel verliert mit dem Schritt seine Stimme.
+    #[test]
+    fn ein_einziger_unvorbereiteter_haelt_den_schritt_auf() {
+        let bereit: Vec<Validator> = (0..5).map(|i| val(i, true)).collect();
+        assert!(alle_bereit_fuer(&bereit, Signaturstufe::NurQuantensicher));
+
+        let mut gemischt = bereit.clone();
+        gemischt.push(val(9, false));
+        assert!(
+            !alle_bereit_fuer(&gemischt, Signaturstufe::NurQuantensicher),
+            "der Schritt ginge trotz eines unvorbereiteten Validators durch"
+        );
+        assert_eq!(
+            noch_nicht_bereit(&gemischt),
+            vec![MinerId::new([9u8; 32])],
+            "die Meldung nennt nicht den richtigen Knoten"
+        );
+    }
+
+    /// Die ersten beiden Stufen verlangen nichts: Das klassische
+    /// Verfahren gilt weiter, niemand verliert seine Stimme.
+    #[test]
+    fn die_ersten_beiden_stufen_verlangen_keine_bereitschaft() {
+        let keiner: Vec<Validator> = (0..3).map(|i| val(i, false)).collect();
+        assert!(alle_bereit_fuer(&keiner, Signaturstufe::NurKlassisch));
+        assert!(alle_bereit_fuer(&keiner, Signaturstufe::Beide));
+        assert!(!alle_bereit_fuer(&keiner, Signaturstufe::NurQuantensicher));
+    }
+
+    /// ⚑ Ein Schlüssel des **klassischen** Verfahrens im
+    /// Post-Quantum-Feld macht niemanden bereit.
+    ///
+    /// Ohne diese Prüfung genügte irgendein Schlüssel, und der Schalter
+    /// ließe sich mit einem BLS-Schlüssel im falschen Feld umlegen.
+    #[test]
+    fn ein_klassischer_schluessel_im_pq_feld_macht_nicht_bereit() {
+        let mut v = val(1, false);
+        v.pq_pubkey =
+            Some(PqPublicKey::neu(Signaturverfahren::Bls12_381, vec![1; 48]).expect("Schlüssel"));
+        assert!(!alle_bereit_fuer(&[v], Signaturstufe::NurQuantensicher));
+    }
+
+    /// Ohne Validatoren ist die Bedingung leer erfüllt. Der Fall gehört
+    /// benannt, weil „alle" über einer leeren Menge wahr ist und das
+    /// hier auch richtig ist: Ein Netz ohne Validatoren hat andere
+    /// Probleme.
+    #[test]
+    fn ohne_validatoren_ist_die_bedingung_leer_erfuellt() {
+        assert!(alle_bereit_fuer(&[], Signaturstufe::NurQuantensicher));
+        assert!(noch_nicht_bereit(&[]).is_empty());
+    }
     use myl_types::bls::BlsSecretKey;
 
     fn test_miner(byte: u8) -> MinerId {

@@ -338,7 +338,7 @@ impl DaStore {
         }
         let mut out = Vec::with_capacity(bytes.len() / 2);
         // clippy schlaegt seit 1.98 `as_chunks::<2>()` vor, stabil erst seit
-        // Rust 1.88. Dieses Crate erklaert MSRV 1.82 (Cargo.toml).
+        // Rust 1.88. Dieses Crate erklaert MSRV 1.85 (Cargo.toml).
         // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es erst
         // ab clippy 1.98, ein `allow` darauf ist auf aelteren Werkzeugketten
         // selbst eine Warnung. So baut es mit beiden.

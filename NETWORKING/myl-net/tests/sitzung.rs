@@ -31,7 +31,7 @@ use std::time::Duration;
 use myl_net::{
     build_swarm, endpunkt_aus_schluessel, run_node, subscribe_all, Endpunkt,
     Epochenankuendigung, Epochenschluessel, NetConfig, NodeCommand, NodeEvent, NodeIdentity,
-    SitzungsFehler, Sitzungen, Versiegelt,
+    Kanal, SitzungsFehler, Sitzungen, Versiegelt,
 };
 use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
@@ -215,6 +215,46 @@ where
     ergebnis
 }
 
+/// Der Rahmen auf dem Draht: Kapsel, dann versiegelte Nachricht.
+///
+/// ⚑ **Seit dem hybriden Austausch reicht die versiegelte Nachricht
+/// allein nicht mehr.** Der KEM-Zweig hat eine Richtung: Der Absender
+/// kapselt gegen den Kapselpunkt des Empfängers, und ohne das dabei
+/// entstehende Chiffrat kann der Empfänger seinen Empfangsschlüssel gar
+/// nicht bilden. Die Kapsel ist festlanger, der Rahmen braucht deshalb
+/// keine Längenangabe.
+///
+/// Sie wird jeder Nachricht vorangestellt und nicht nur der ersten. Das
+/// ist im Test die einfachere Wahrheit und kostet 1088 Byte; im Betrieb
+/// gehört sie einmal je Richtung gesendet.
+const KAPSELRAHMEN: usize = 8 + 32 + 32 + 32 + myl_net::KAPSEL_LEN;
+
+fn auf_den_draht(kanal: &mut Kanal, klartext: &[u8]) -> Vec<u8> {
+    let mut roh = kanal.eigene_kapsel().zu_bytes();
+    let versiegelt = kanal.versiegle(klartext).expect("versiegeln");
+    roh.extend_from_slice(&versiegelt.zu_bytes());
+    roh
+}
+
+/// Nur der versiegelte Teil, für Prüfungen auf den Klartext.
+fn geheimteil(roh: &[u8]) -> &[u8] {
+    &roh[KAPSELRAHMEN..]
+}
+
+/// Gegenstück zu [`auf_den_draht`]: Kapsel annehmen, dann öffnen.
+fn vom_draht(
+    sitzungen: &mut Sitzungen,
+    gegenstelle: Endpunkt,
+    punkte: &myl_net::Gegenpunkte,
+    roh: &[u8],
+) -> Result<Vec<u8>, SitzungsFehler> {
+    let kapsel = myl_net::Kapsel::aus_bytes(&roh[..KAPSELRAHMEN])?;
+    sitzungen.kanal(pod(), gegenstelle, punkte)?;
+    sitzungen.nimm_kapsel(&kapsel)?;
+    let nachricht = Versiegelt::aus_bytes(geheimteil(roh)).expect("Rahmen");
+    sitzungen.kanal(pod(), gegenstelle, punkte)?.oeffne(&nachricht)
+}
+
 fn enthaelt(heuhaufen: &[u8], nadel: &[u8]) -> bool {
     heuhaufen.windows(nadel.len()).any(|f| f == nadel)
 }
@@ -247,48 +287,40 @@ async fn eine_aktivierung_geht_verschluesselt_von_shard_zu_shard() {
 
     // Aktivierungen sind ganzzahlig; hier steht ein Ausschnitt daraus.
     let aktivierung: Vec<u8> = (0u16..512).flat_map(|w| w.to_le_bytes()).collect();
-    let versiegelt = a_sitzungen
-        .kanal(pod(), miner(2), &b_punkt)
-        .expect("Kanal")
-        .versiegle(&aktivierung)
-        .expect("versiegeln");
-    let auf_dem_draht = versiegelt.zu_bytes();
+    let auf_dem_draht = auf_den_draht(
+        a_sitzungen
+            .kanal(pod(), miner(2), &b_punkt)
+            .expect("Kanal"),
+        &aktivierung,
+    );
 
     // Die Gegenprobe zum Nachweis: Der Klartext ist wirklich vorhanden
-    // und wirklich nicht in den Bytes.
+    // und wirklich nicht in den Bytes. Geprüft wird der versiegelte
+    // Teil; die Kapsel davor ist öffentlich und enthält ihn nicht.
     assert!(
-        !enthaelt(&auf_dem_draht, &aktivierung),
+        !enthaelt(geheimteil(&auf_dem_draht), &aktivierung),
         "die Aktivierung steht im Klartext auf dem Draht"
     );
 
     let (antwort_bytes, bei_b_angekommen) = tokio::join!(
         frage_einmal(&mut a, b_peer, auf_dem_draht),
         antworte_einmal(&mut b, |daten| {
-            let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-            let klartext = b_sitzungen
-                .kanal(pod(), miner(1), &a_punkt)
-                .expect("Kanal")
-                .oeffne(&nachricht)
-                .expect("öffnen");
+            let klartext = vom_draht(&mut b_sitzungen, miner(1), &a_punkt, &daten)
+                    .expect("öffnen");
             // Die Rückrichtung im selben Kanal: eigener Schlüssel,
             // eigener Zähler.
-            let antwort = b_sitzungen
-                .kanal(pod(), miner(1), &a_punkt)
-                .expect("Kanal")
-                .versiegle(b"Aktivierung angenommen")
-                .expect("versiegeln");
-            (antwort.zu_bytes(), klartext)
+            let antwort = auf_den_draht(
+                b_sitzungen.kanal(pod(), miner(1), &a_punkt).expect("Kanal"),
+                b"Aktivierung angenommen",
+            );
+            (antwort, klartext)
         })
     );
 
     assert_eq!(bei_b_angekommen, aktivierung, "die Aktivierung kam verändert an");
 
-    let antwort = Versiegelt::aus_bytes(&antwort_bytes).expect("Rahmen");
-    let klartext = a_sitzungen
-        .kanal(pod(), miner(2), &b_punkt)
-        .expect("Kanal")
-        .oeffne(&antwort)
-        .expect("öffnen");
+    let klartext = vom_draht(&mut a_sitzungen, miner(2), &b_punkt, &antwort_bytes)
+            .expect("öffnen");
     assert_eq!(klartext, b"Aktivierung angenommen");
 }
 
@@ -317,6 +349,7 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
         .expect("ankündigen")
         .pruefe(miner(1), EpochId(9))
         .expect("prüfen");
+    let nutzer_punkt_fuers_gateway = nutzer_punkt.clone();
     let shard_punkt = Epochenankuendigung::neu(&konsens(3), &shard_schluessel)
         .expect("ankündigen")
         .pruefe(miner(3), EpochId(9))
@@ -327,12 +360,11 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
 
     let mut nutzer_sitzungen = Sitzungen::neu(nutzer_endpunkt, nutzer_schluessel);
     let prompt = b"Was ist die Hauptstadt von Norwegen?".to_vec();
-    let versiegelt = nutzer_sitzungen
-        .kanal(pod(), shard_endpunkt, &shard_punkt)
-        .expect("Kanal")
-        .versiegle(&prompt)
-        .expect("versiegeln");
-    let auf_dem_draht = versiegelt.zu_bytes();
+    let versiegelt = auf_den_draht(
+            nutzer_sitzungen.kanal(pod(), shard_endpunkt, &shard_punkt).expect("Kanal"),
+            &prompt,
+        );
+    let auf_dem_draht = versiegelt;
 
     let shard_peer = shard.peer_id;
     let gateway_peer = gateway.peer_id;
@@ -343,7 +375,7 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
         gateway.warte_auf_peers(1).await;
         let (vom_nutzer, marke) = gateway.naechste_anfrage().await;
 
-        let nachricht = Versiegelt::aus_bytes(&vom_nutzer).expect("Rahmen");
+        let nachricht = Versiegelt::aus_bytes(geheimteil(&vom_nutzer)).expect("Rahmen");
         // Was das Gateway zum Weiterleiten braucht, sieht es: Empfänger
         // und Epoche stehen im Klartextkopf.
         assert_eq!(nachricht.kopf.an, shard_endpunkt);
@@ -352,13 +384,35 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
         // Was es nicht darf, kann es nicht: Mit seinem eigenen
         // Epochenschlüssel und dem angekündigten Punkt des Nutzers baut
         // es einen Kanal und scheitert.
+        //
+        // ⚑ **Und es bekommt sogar die Kapsel**, die der Nutzer für den
+        // Shard erzeugt hat. Ohne sie scheiterte es schon an der
+        // fehlenden Empfangsrichtung, und der Nachweis hieße nur „das
+        // Gateway hatte nichts". Mit ihr heißt er, was er soll: Das
+        // Mitgehörte nützt ihm nichts, weil gegen den Kapselpunkt des
+        // Shards gekapselt wurde und nicht gegen seinen.
         let mut versuch = Sitzungen::neu(shard_endpunkt, gateway_schluessel);
-        let ergebnis = versuch
-            .kanal(pod(), nutzer_endpunkt, &nutzer_punkt)
-            .expect("Kanal")
-            .oeffne(&nachricht);
+        versuch
+            .kanal(pod(), nutzer_endpunkt, &nutzer_punkt_fuers_gateway)
+            .expect("Kanal");
+        let ergebnis = match myl_net::Kapsel::aus_bytes(&vom_nutzer[..KAPSELRAHMEN]) {
+            Ok(kapsel) => match versuch.nimm_kapsel(&kapsel) {
+                // Die Kapsel ist an den Shard adressiert, nicht an das
+                // Gateway: Sie wird abgelehnt, bevor es überhaupt
+                // entkapseln kann.
+                Err(fehler) => Err(fehler),
+                Ok(()) => versuch
+                    .kanal(pod(), nutzer_endpunkt, &nutzer_punkt_fuers_gateway)
+                    .expect("Kanal")
+                    .oeffne(&nachricht),
+            },
+            Err(fehler) => Err(fehler),
+        };
         assert!(
-            matches!(ergebnis, Err(SitzungsFehler::TagStimmtNicht)),
+            matches!(
+                ergebnis,
+                Err(SitzungsFehler::KapselPasstNicht) | Err(SitzungsFehler::TagStimmtNicht)
+            ),
             "das Gateway konnte lesen: {ergebnis:?}"
         );
         assert!(
@@ -375,22 +429,18 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
         (gateway, vom_nutzer)
     });
 
+    let nutzer_punkt2 = nutzer_punkt.clone();
     let mut shard_sitzungen = Sitzungen::neu(shard_endpunkt, shard_schluessel);
     let (antwort_bytes, beim_shard) = tokio::join!(
         frage_einmal(&mut nutzer, gateway_peer, auf_dem_draht.clone()),
         antworte_einmal(&mut shard, |daten| {
-            let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-            let klartext = shard_sitzungen
-                .kanal(pod(), nutzer_endpunkt, &nutzer_punkt)
-                .expect("Kanal")
-                .oeffne(&nachricht)
-                .expect("öffnen");
-            let antwort = shard_sitzungen
-                .kanal(pod(), nutzer_endpunkt, &nutzer_punkt)
-                .expect("Kanal")
-                .versiegle(b"Oslo")
-                .expect("versiegeln");
-            (antwort.zu_bytes(), klartext)
+            let klartext = vom_draht(&mut shard_sitzungen, nutzer_endpunkt, &nutzer_punkt2, &daten)
+                    .expect("öffnen");
+            let antwort = auf_den_draht(
+                    shard_sitzungen.kanal(pod(), nutzer_endpunkt, &nutzer_punkt).expect("Kanal"),
+                    b"Oslo",
+                );
+            (antwort, klartext)
         })
     );
     let (_gateway, durchgereicht) = gateway_arbeit.await.expect("Gateway");
@@ -403,12 +453,8 @@ async fn ein_weiterleitendes_gateway_kann_nicht_mitlesen() {
         "das Gateway hat die Bytes verändert"
     );
 
-    let antwort = Versiegelt::aus_bytes(&antwort_bytes).expect("Rahmen");
-    let klartext = nutzer_sitzungen
-        .kanal(pod(), shard_endpunkt, &shard_punkt)
-        .expect("Kanal")
-        .oeffne(&antwort)
-        .expect("öffnen");
+    let klartext = vom_draht(&mut nutzer_sitzungen, shard_endpunkt, &shard_punkt, &antwort_bytes)
+            .expect("öffnen");
     assert_eq!(klartext, b"Oslo");
 }
 
@@ -434,23 +480,19 @@ async fn ein_mitschnitt_ueberlebt_die_rotation_nicht() {
     let mut a_sitzungen = Sitzungen::neu(miner(1), a_alt);
     let mut b_sitzungen = Sitzungen::neu(miner(2), b_alt);
 
-    let mitschnitt = a_sitzungen
-        .kanal(pod(), miner(2), &b_punkt_alt)
-        .expect("Kanal")
-        .versiegle(b"Inhalt aus Epoche 9")
-        .expect("versiegeln")
-        .zu_bytes();
+    let mitschnitt = auf_den_draht(
+        a_sitzungen
+            .kanal(pod(), miner(2), &b_punkt_alt)
+            .expect("Kanal"),
+        b"Inhalt aus Epoche 9",
+    );
 
     // Erst der erlaubte Fall: In Epoche 9 geht die Nachricht auf.
     let (_, klartext) = tokio::join!(
         frage_einmal(&mut a, b_peer, mitschnitt.clone()),
         antworte_einmal(&mut b, |daten| {
-            let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-            let klartext = b_sitzungen
-                .kanal(pod(), miner(1), &a_punkt_alt)
-                .expect("Kanal")
-                .oeffne(&nachricht)
-                .expect("öffnen");
+            let klartext = vom_draht(&mut b_sitzungen, miner(1), &a_punkt_alt, &daten)
+                    .expect("öffnen");
             (b"angekommen".to_vec(), klartext)
         })
     );
@@ -474,37 +516,35 @@ async fn ein_mitschnitt_ueberlebt_die_rotation_nicht() {
     let (_, ergebnis) = tokio::join!(
         frage_einmal(&mut a, b_peer, mitschnitt),
         antworte_einmal(&mut b, |daten| {
-            let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-            let ergebnis = b_sitzungen
-                .kanal(pod(), miner(1), &a_punkt_neu)
-                .expect("Kanal")
-                .oeffne(&nachricht);
+            // Der Mitschnitt trägt die Kapsel aus Epoche 9. Sie wird
+            // gar nicht erst angenommen, denn `nimm_kapsel` prüft die
+            // Epoche; der Fehlschlag kommt also schon vor dem Öffnen.
+            let ergebnis = vom_draht(&mut b_sitzungen, miner(1), &a_punkt_neu, &daten);
             (b"gesehen".to_vec(), ergebnis)
         })
     );
     assert!(
-        matches!(ergebnis, Err(SitzungsFehler::EpocheVorbei { .. })),
+        matches!(
+            ergebnis,
+            Err(SitzungsFehler::EpocheVorbei { .. }) | Err(SitzungsFehler::KapselPasstNicht)
+        ),
         "der Mitschnitt aus Epoche 9 ging in Epoche 10 noch auf: {ergebnis:?}"
     );
 
     // Und die Gegenprobe: In der neuen Epoche trägt der Kanal weiter.
     // Ohne sie hieße „geht nicht mehr auf" vielleicht „geht gar nicht
     // mehr".
-    let frisch = a_sitzungen
-        .kanal(pod(), miner(2), &b_punkt_neu)
-        .expect("Kanal")
-        .versiegle(b"Inhalt aus Epoche 10")
-        .expect("versiegeln")
-        .zu_bytes();
+    let frisch = auf_den_draht(
+        a_sitzungen
+            .kanal(pod(), miner(2), &b_punkt_neu)
+            .expect("Kanal"),
+        b"Inhalt aus Epoche 10",
+    );
     let (_, klartext) = tokio::join!(
         frage_einmal(&mut a, b_peer, frisch),
         antworte_einmal(&mut b, |daten| {
-            let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-            let klartext = b_sitzungen
-                .kanal(pod(), miner(1), &a_punkt_neu)
-                .expect("Kanal")
-                .oeffne(&nachricht)
-                .expect("öffnen");
+            let klartext = vom_draht(&mut b_sitzungen, miner(1), &a_punkt_neu, &daten)
+                    .expect("öffnen");
             (b"angekommen".to_vec(), klartext)
         })
     );
@@ -532,19 +572,13 @@ async fn eine_wiedereingespielte_nachricht_wird_ueber_den_draht_abgewiesen() {
     let mut a_sitzungen = Sitzungen::neu(miner(1), a_schluessel);
     let mut b_sitzungen = Sitzungen::neu(miner(2), b_schluessel);
 
-    let einmal = a_sitzungen
-        .kanal(pod(), miner(2), &b_punkt)
-        .expect("Kanal")
-        .versiegle(b"nur einmal gueltig")
-        .expect("versiegeln")
-        .zu_bytes();
+    let einmal = auf_den_draht(
+        a_sitzungen.kanal(pod(), miner(2), &b_punkt).expect("Kanal"),
+        b"nur einmal gueltig",
+    );
 
     let oeffne = |sitzungen: &mut Sitzungen, daten: Vec<u8>| {
-        let nachricht = Versiegelt::aus_bytes(&daten).expect("Rahmen");
-        sitzungen
-            .kanal(pod(), miner(1), &a_punkt)
-            .expect("Kanal")
-            .oeffne(&nachricht)
+        vom_draht(sitzungen, miner(1), &a_punkt, &daten)
             .map(|k| String::from_utf8_lossy(&k).into_owned())
     };
 
@@ -607,7 +641,7 @@ async fn ein_untergeschobener_epochenpunkt_faellt_beim_nutzer_auf() {
     // Gegenprobe: Die echte Ankündigung geht durch. Sonst hieße der
     // Nachweis oben nur, dass gar nichts durchkommt.
     assert_eq!(
-        echte.pruefe(miner(3), EpochId(9)).expect("prüfen"),
+        echte.pruefe(miner(3), EpochId(9)).expect("prüfen").punkt,
         shard_schluessel.punkt()
     );
 

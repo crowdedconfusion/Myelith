@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.9.0
-> **Datum:** 2026-08-27
+> **Version:** 0.10.0
+> **Datum:** 2026-08-28
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -108,6 +108,108 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.10.0 – 2026-08-28 (der Schlüsselaustausch wird hybrid, und der Entwurf verliert eine Eigenschaft)
+
+**Der Sitzungsschlüssel entsteht jetzt aus zwei Geheimnissen: X25519 wie
+bisher und zusätzlich ML-KEM-768 (FIPS 203).** Beide gehen verkettet in
+dieselbe HKDF-Ableitung. Ein Angreifer muss **beide** Zweige brechen,
+den klassischen mit einem Quantenrechner und den anderen gegen die
+Gitterannahme.
+
+⚑ **Warum die Signaturen nicht mitkommen, und das ist kein Versehen.**
+Ein Polka-Zertifikat ist heute **96 Byte**, unabhängig von der
+Validatorenzahl, weil BLS aggregiert. ML-DSA kann das nicht: 21
+Validatoren mal 2 420 Byte sind rund **51 KB**, in jedem Rundenwechsel.
+Ein aggregierbares Post-Quantum-Signaturverfahren ist nicht
+standardisiert. Ein Umstieg wäre kein Bibliothekstausch, sondern ein
+Neuentwurf der Konsens-Nachrichtenschicht.
+
+⚑ **Und die Dringlichkeit liegt ohnehin woanders.** Eine Signatur, die
+2040 gebrochen wird, ist wertlos: Der Block ist längst final. „Heute
+aufzeichnen, später entschlüsseln" trifft die **Vertraulichkeit**, und
+die steckt genau hier. Deshalb kommt dieser Teil zuerst und die
+Signaturen später.
+
+### Was der Entwurf dabei verliert
+
+**Der bisherige Austausch war nicht-interaktiv.** Jeder Miner kündigte je
+Epoche einen signierten Punkt an, und zwei beliebige Miner leiteten
+daraus **ohne Handschlag** einen gemeinsamen Schlüssel ab. Das geht mit
+einem KEM nicht: Ein KEM ist keine Gruppenoperation, sondern hat eine
+Richtung. Der Sender kapselt gegen den Schlüssel des Empfängers, und das
+dabei entstehende **Chiffrat muss übertragen werden**.
+
+Daraus folgt eine neue Nachricht, die `Kapsel` (1 088 Byte), und ein
+neuer Zustand im Kanal: Die **Senderichtung** steht sofort, die
+**Empfangsrichtung** erst, wenn die Kapsel der Gegenstelle da ist. Wer zu
+früh öffnet, bekommt `EmpfangNochNichtBereit` statt eines falschen
+Schlüssels.
+
+**Jede Seite kapselt für ihre eigene Senderichtung.** Damit bleibt die
+Trennung nach Richtung erhalten, die vorher allein aus dem
+HKDF-`info`-Feld kam, und sie wird stärker: Die beiden Richtungen teilen
+jetzt kein Geheimnis mehr.
+
+### Drei Eigenschaften, die dabei wichtig sind
+
+- ⚑ **Die Kapsel braucht keine Signatur.** Wer sie verändert, führt den
+  Empfänger auf einen anderen Schlüssel, und der Tag der ersten
+  Nachricht schlägt fehl. Wer sie mitliest, gewinnt nichts.
+- ⚑ **Eine gelogene Blattzahl gibt es hier nicht, aber eine gelogene
+  Zugehörigkeit schon**, und sie wird geprüft: Eine Kapsel aus fremder
+  Epoche, fremdem Pod oder mit fremdem Absender wird abgewiesen, statt
+  still einen Schlüssel zu setzen.
+- ⚑ **Der Kapselpunkt hängt an der Signatur der Ankündigung.** Ohne diese
+  Bindung könnte ein Angreifer den Post-Quantum-Zweig durch einen
+  eigenen Schlüssel ersetzen und ihn damit **abschalten**, ohne die
+  Signatur zu brechen. Beim Bauen ist genau das einmal
+  durchgerutscht: Die Funktion nahm den Kapselpunkt entgegen und
+  unterschrieb ihn nicht. Gefunden hat es der Übersetzer über eine
+  unbenutzte Variable, nicht ein Test.
+
+### Der KEM-Zweig ist nicht beidseitig beisteuernd, und das ist in Ordnung
+
+Wer kapselt, wählt die Zufälligkeit allein; der Empfänger steuert nichts
+bei. Bei Diffie-Hellman ist das anders, und `was_contributory` prüft es
+dort weiterhin. Für den Hybrid genügt es, dass **einer** der beiden
+Zweige beidseitig ist: Die Ableitung bleibt ununterscheidbar von
+zufällig, solange auch nur ein Eingang es ist. Genau deshalb steht hier
+ein Hybrid und kein Ersatz.
+
+**Der Probelauf bleibt reproduzierbar.** Die KEM-Saat wird per HKDF aus
+derselben 32-Byte-Saat abgeleitet wie der X25519-Schlüssel; dieselbe Saat
+ergibt denselben Kapselpunkt. **Die Kapselung selbst ist frische
+Zufälligkeit, und das ist kein Determinismusbruch:** Sie wird übertragen,
+nicht abgeleitet, und beide Seiten kommen darüber auf denselben
+Schlüssel.
+
+### Zwei Tests sind dabei stärker geworden
+
+Der Lauscher-Test und der Gateway-Test scheiterten nach der Umstellung
+zunächst **früher** als vorher, an der fehlenden Empfangsrichtung. Das
+wäre ein schwächerer Nachweis gewesen: Er hieße nur, dass ein Lauscher
+nichts hat. Beide bekommen jetzt **die Kapsel** und scheitern trotzdem,
+weil gegen den Kapselpunkt des richtigen Empfängers gekapselt wurde. Das
+ist die Aussage, um die es geht.
+
+⚑ **Die Bereitschaftsprüfung steht bewusst zuletzt.** Eine Nachricht aus
+der falschen Epoche oder dem falschen Pod ist falsch, gleich ob der
+Empfangsschlüssel schon steht; wer zuerst auf die Bereitschaft prüft,
+meldet dafür „Kapsel fehlt" und verdeckt den eigentlichen Grund. Vier
+Bestandstests haben genau das gezeigt.
+
+### Kosten
+
+`ml-kem` 0.3 (RustCrypto, Apache-2.0 oder MIT, reines Rust). ⚑ **Sie
+verlangt Rust 1.85, das Projekt erklärte bisher 1.82.** Angehoben sind
+**alle** Crates, nicht nur die drei betroffenen: Zwei Zahlen in einem
+Repositorium sind eine Stelle mehr, die veralten kann, und der
+Unterschied schützte niemanden. Kein LTS-System liefert 1.82 (Debian 12
+hat 1.63); wer dieses Projekt baut, braucht ohnehin `rustup`. Ankündigung plus
+1 184 Byte, erste Nachricht je Richtung plus 1 088 Byte, beides weit
+unter der Nachrichtengrenze von 4 MB. **Acht neue Gegenproben**, darunter
+der Test, dass ein getauschter Kapselpunkt die Signatur bricht.
 
 ### v0.9.0 – 2026-08-27 (Punkte 3.1 bis 3.3: verschlüsselte Sitzungen)
 

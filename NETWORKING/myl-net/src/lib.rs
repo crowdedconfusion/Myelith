@@ -70,7 +70,8 @@ pub use scoring::{
 };
 pub use sitzung::{
     endpunkt_aus_schluessel, Endpunkt, Epochenankuendigung, Epochenpunkt, Epochenschluessel,
-    Herkunft, Kanal, Kopf, Sitzungen, SitzungsFehler, Versiegelt, DST_EPOCHENPUNKT, KOPF_BYTES,
+    Gegenpunkte, Herkunft, Kanal, Kapsel, Kapselpunkt, Kopf, Sitzungen, SitzungsFehler, Versiegelt,
+    DST_EPOCHENPUNKT, KAPSELPUNKT_LEN, KAPSEL_LEN, KOPF_BYTES,
     MAX_KLARTEXT_BYTES, SCHLUESSEL_LEN, SITZUNG_KENNUNG, TAG_LEN,
 };
 pub use runtime::{

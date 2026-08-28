@@ -1,8 +1,8 @@
 [package]
 name = "myl-net"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 description = "L0-Netzwerkschicht für Myelith (Whitepaper Kap. 3.2): P2P-Gossip (Blöcke, Transaktionen, PoI-Bündel, Challenges), Paarlatenzmessung und LatencyGraph (Grundlage der Pod-Bildung), Ende-zu-Ende-verschlüsselte Aktivierungs-Streams. Auf rust-libp2p, mit verpflichtender Session-E2E-Verschlüsselung (Kap. 9.2)."
 license = "PolyForm Shield License 1.0.0"
 
@@ -12,6 +12,7 @@ borsh = "1.6"
 chacha20poly1305 = "0.10"
 futures = "0.3"
 hkdf = "0.12"
+ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 libp2p = { version = "0.56", features = ["tokio", "gossipsub", "kad", "noise", "tcp", "quic", "yamux", "identify", "ping", "macros", "autonat", "relay", "dcutr", "request-response"] }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 rand_core = { version = "0.6", features = ["getrandom"] }
