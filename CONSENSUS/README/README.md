@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.17.0 (`myl-consensus` 0.15.0, `myl-scheduler` 0.4.0,
-> `myl-ledger` 0.3.0)
-> **Datum:** 2026-08-27
+> **Version:** 0.18.0 (`myl-consensus` 0.15.0, `myl-scheduler` 0.4.0,
+> `myl-ledger` 0.4.0)
+> **Datum:** 2026-08-28
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -13,10 +13,13 @@
 > Rundenwechsel mit Sperrmechanik — Safety **und** Liveness, die
 > Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft;
 > **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
-> 4.2 Epochenabschluss, 4.3 DA-Schicht): **alle vier Phasen
-> abgeschlossen**.
-> **346 Tests grün** (240 `myl-consensus`, 68 `myl-scheduler`,
-> 38 `myl-ledger`).
+> 4.2 Epochenabschluss, 4.3 DA-Schicht).
+> ⚑ **Phase 1 ist seit dem 2026-08-28 nicht mehr vollständig:**
+> Session-Kontrakte stehen jetzt im Ledger, und dabei fiel auf, dass es
+> **keine MYL-Überweisung von Konto zu Konto gibt** — Kap. 8.2 setzt sie
+> voraus.
+> **361 Tests grün** (244 `myl-consensus`, 68 `myl-scheduler`,
+> 49 `myl-ledger`; die Zeile führte `myl-consensus` bis heute mit 240).
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -104,6 +107,52 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.18.0 (`myl-ledger` 0.4.0) – 2026-08-28 (der Kontrakt wird durchgesetzt)
+
+**Session-Kontrakte stehen im Ledger-Zustand** und gehen in die
+Zustandsverpflichtung ein (Whitepaper Kap. 8.2). Vier Übergänge:
+eröffnen, widerrufen, unter dem Kontrakt Credits ausgeben, nach Frist
+aufräumen.
+
+⚑ **Das ist die Stelle, an der ein Kontrakt etwas bedeutet.** Ein
+Client, der die Grenzen selbst prüft, prüft sie freiwillig; hier prüft
+sie jeder Knoten, bevor er den Zustand fortschreibt. Der Kontrakt liegt
+deshalb **im Zustand** und wird nicht von irgendwem vorgelegt: Genau
+darin besteht der Unterschied zwischen „vom Konsens durchgesetzt" und
+„vom Client behauptet".
+
+**Belastet wird das Konto des Inhabers**, nicht das des Agenten. Der
+Agent ist ein Schlüssel mit einer Vollmacht.
+
+⚑ **Der Verbrauchszähler wächst erst, wenn die Credits geflossen sind.**
+Ein Budget, das an einer fehlgeschlagenen Ausgabe schrumpfte, wäre über
+wiederholte Fehlschläge leerzuräumen. Ein Test hält das fest: Der
+Kontrakt erlaubt 1000, das Konto trägt 50, und nach dem Fehlschlag steht
+der Zähler weiter auf null.
+
+**Der Widerruf steht nicht im Whitepaper und gehört trotzdem hierher.**
+Ohne ihn ist das Zeitfenster das einzige Mittel gegen einen Agenten, der
+sich falsch verhält, und dieses Mittel heißt warten. Nur der Inhaber,
+und zweimal widerrufen ist kein Fehler: Zwei Blöcke mit demselben
+Widerruf dürfen nicht dazu führen, dass der zweite ungültig wird.
+
+⚑ **Eine Aufbewahrungsfrist für Sessions**, aus demselben Grund wie das
+Verstoßfenster und aus einem dringenderen: Kontrakte legt jeder Nutzer
+selbst an. Ohne Frist wüchse der Konsenszustand mit jedem jemals
+eröffneten Kontrakt, und die Größe hinge an einer Eingabe, die ein
+Angreifer bestimmt. **Aufgeräumt wird in einem Übergang, nicht beim
+Lesen** — sonst hinge der Zustand daran, wer wann gelesen hat.
+
+### ⚑ Und eine Lücke, die dabei zum Vorschein kam
+
+Das Ledger kennt `apply_verdict`, `burn_to_credits` und `credit_spend`.
+**Eine Überweisung von Konto zu Konto gibt es nicht.** Kap. 8.2 setzt
+sie voraus, sowohl für das MYL-Budget als auch für die Empfängerliste.
+Solange sie fehlt, lehnt der Kontrakt jedes MYL-Vorhaben ab, statt es
+durchzulassen.
+
+**11 neue Tests**, `myl-ledger` zusammen 49.
 
 ### v0.17.0 (`myl-consensus` 0.15.0) – 2026-08-28 (der zweite Schlüssel je Validator)
 

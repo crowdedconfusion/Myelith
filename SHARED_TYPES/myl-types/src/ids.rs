@@ -152,6 +152,17 @@ define_id_type!(
     ActivationHash
 );
 
+define_id_type!(
+    /// Adresse eines Session-Kontrakts: Hash über Trennzeichen und
+    /// kanonische Kodierung des Kontrakts (Whitepaper Kap. 8.2, siehe
+    /// [`crate::sitzung`]).
+    ///
+    /// Eigener Typ und kein nackter [`crate::hash::Hash`], weil eine
+    /// Sitzungsadresse und ein Eingabe-Commitment beide 32 Bytes haben
+    /// und eine Verwechslung im Konsenspfad nicht auffiele.
+    SitzungId
+);
+
 /// Epochen-Identität: fortlaufender Zähler (kein Hash).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,

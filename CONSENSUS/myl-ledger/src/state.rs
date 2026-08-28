@@ -1,7 +1,8 @@
 //! Kontenmodell und Ledger-Zustand (Punkt 1.1).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use myl_types::ids::{Address, EpochId};
+use myl_types::ids::{Address, EpochId, SitzungId};
+use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand};
 use myl_types::Hash;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -22,6 +23,39 @@ use std::collections::BTreeMap;
 /// niedriger. Dieselbe Klasse wie γ und der Kontrollsegment-Vorrat: Ein
 /// Wert, der eine Schutzwirkung verstärkt, kann eine andere aufzehren.
 pub const VERSTOSS_FENSTER: u64 = 10;
+
+/// Wie viele Epochen nach ihrem Ende eine Session noch im Zustand
+/// steht.
+///
+/// ⚑ **Eine Aufbewahrungsfrist aus demselben Grund wie
+/// [`VERSTOSS_FENSTER`], und zwar ein dringenderer.** Session-Kontrakte
+/// legt jeder Nutzer selbst an; ohne Frist wüchse der Konsenszustand
+/// mit jedem jemals eröffneten Kontrakt weiter, und die Größe hinge an
+/// einer Eingabe, die ein Angreifer bestimmt.
+///
+/// **Aufgeräumt wird in einem Übergang, nicht nebenbei**
+/// ([`crate::transitions::sitzung_aufraeumen`]): Ein Aufräumen beim
+/// Lesen machte den Zustand davon abhängig, **wer wann gelesen hat**,
+/// und zwei Knoten mit verschiedener Lesereihenfolge kämen zu
+/// verschiedenen Verpflichtungen. Dieselbe Lehre wie bei
+/// [`LedgerState::verstoesse_im_fenster`].
+pub const SITZUNG_NACHFRIST: u64 = 100;
+
+/// Eine Agenten-Session im Zustand: der unveränderliche Kontrakt und
+/// was unter ihm schon verbraucht ist (Whitepaper Kap. 8.2).
+///
+/// **Der Kontrakt liegt hier, obwohl seine Adresse der Schlüssel ist**,
+/// und nicht etwa nur der Verbrauch. Ein Knoten muss die Grenzen prüfen
+/// können, ohne sie von irgendwem gezeigt zu bekommen; genau darin
+/// besteht der Unterschied zwischen „vom Konsens durchgesetzt" und „vom
+/// Client behauptet".
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Sitzung {
+    /// Die Grenzen, wie der Inhaber sie gesetzt hat.
+    pub kontrakt: Sitzungskontrakt,
+    /// Was davon verbraucht ist.
+    pub zustand: Sitzungszustand,
+}
 
 /// Ein Eintrag der Verstoßhistorie: wie oft ein Konto in **einer**
 /// Epoche geschlachtet wurde.
@@ -87,6 +121,9 @@ pub struct LedgerState {
     pub credit_price: u64,
     /// Konten, deterministisch nach Adresse geordnet.
     pub accounts: BTreeMap<Address, AccountState>,
+    /// Offene Agenten-Sessions, deterministisch nach Kontraktadresse
+    /// geordnet (Whitepaper Kap. 8.2).
+    pub sitzungen: BTreeMap<SitzungId, Sitzung>,
 }
 
 impl LedgerState {
@@ -96,6 +133,7 @@ impl LedgerState {
             epoch: EpochId(0),
             credit_price,
             accounts: BTreeMap::new(),
+            sitzungen: BTreeMap::new(),
         }
     }
 
@@ -103,6 +141,11 @@ impl LedgerState {
     /// verändernd; `account_mut` für Übergänge).
     pub fn account(&self, addr: &Address) -> AccountState {
         self.accounts.get(addr).cloned().unwrap_or_else(AccountState::empty)
+    }
+
+    /// Eine Session lesen, ohne sie anzulegen.
+    pub fn sitzung(&self, adresse: &SitzungId) -> Option<&Sitzung> {
+        self.sitzungen.get(adresse)
     }
 
     /// Konto zur Veränderung lesen bzw. anlegen.

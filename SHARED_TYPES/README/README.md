@@ -1,14 +1,15 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.7.0
+> **Version:** 0.8.0
 > **Datum:** 2026-08-28
-> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
+> **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **133 Tests grün.**
+> **168 Tests grün.** (Die Zeile stand bis heute auf 133 und zählte
+> damit nur einen Teil der Testbinaries.)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -48,6 +49,76 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.8.0 – 2026-08-28 (der Session-Kontrakt, und warum er keine Sprache ist)
+
+`sitzung.rs`: die vier Grenzen aus Whitepaper Kap. 8.2 als Typ.
+Gesamtbudget, Einzeltransaktionslimit, Empfängerliste, Zeitfenster,
+dazu die Betragsschwelle für bestätigte Auslieferung.
+
+### ⚑ Warum eine Struktur und keine Sprache
+
+Die naheliegende Frage lautet „eigenes DSL oder Erweiterung der
+Transaktionstypen". Beide Antworten sind falsch, und zwar aus demselben
+Grund: **Ein Kontrakt ist kein Programm, sondern ein Sprengradius.** Was
+der Agent tun *soll*, steht im Prompt. Was im schlimmsten Fall geschehen
+kann, steht im Kontrakt. Sobald man Bedingungen schreiben kann,
+schreiben Leute Ziele hinein.
+
+Dazu drei technische Gründe: Ein Parser im Konsenspfad ist eine
+Angriffsfläche und ein Auswerter eine zweite; ein Auswerter braucht ein
+Kostenmodell, das dieses Protokoll nicht hat; und ⚑ **eine Sprache, die
+den Inhalt lesen kann, risse auf, was Kap. 8.3 strukturell schließt**,
+weil „erlaube, wenn im Verwendungszweck 'Rechnung' steht" fremden Text
+zum Steuerfluss macht.
+
+**Neue Grenzenarten kommen deshalb über Governance**, so wie jeder
+andere Protokollparameter, und nicht über eine Nutzereingabe.
+
+### Der unveränderliche Teil und der veränderliche
+
+Die Adresse ist der Hash der Kodierung, also ist der Kontrakt
+unveränderlich. Der Verbrauch liegt als eigener Zustand darunter; stünde
+er im Kontrakt, änderte sich die Adresse bei jeder Ausgabe.
+
+⚑ **Die Empfängerliste steht in Normalform**, aufsteigend und
+duplikatfrei, und der Konstruktor sortiert sie **nicht** still, sondern
+lehnt ab. Ohne Normalform hätte dieselbe Menge je nach Reihenfolge zwei
+Adressen, und das ist dieselbe Injektivitätsfrage wie beim Merkle-Baum.
+Still zu sortieren wäre die schlechtere Antwort: Eine Liste, die die
+Bibliothek verändert hat, ist nicht mehr die, die der Nutzer gesehen
+hat.
+
+### ⚑ Was diese Konstruktion nicht leistet, und das gehört hierher
+
+Kap. 8.2 verlangt, dass die Grenzen für den Agenten **nicht lesbar und
+nicht änderbar** sind. **Die beiden sind nicht gleich stark, und nur
+eines ist eine Sicherheitseigenschaft.** Eine Ablehnung kostet nichts,
+also lässt sich das Einzellimit in etwa zwanzig abgelehnten Versuchen
+abtasten und die Empfängerliste durch Aufzählen. **Geheimhaltung der
+Zahl ist damit nahezu wertlos; Unveränderlichkeit trägt alles.**
+
+Gebaut ist trotzdem beides. `Befund::fuer_agenten` gibt genau ein Bit
+heraus, denn der Fehlerkanal ist der Weg, über den die Zahlen sonst
+ohnehin durchsickerten. Aber **der Akzeptanztest prüft
+Unveränderlichkeit**: Ein Agent kann keinen Kontrakt ändern, er kann nur
+einen anderen bauen, und ein anderer hat eine andere Adresse.
+
+### Zwei kleinere Entscheidungen mit Begründung
+
+**Zeit in Epochen, nicht in Sekunden.** Eine Wanduhr im Konsenspfad
+existiert nicht; zwei Knoten mit verschiedenen Uhren kämen zu
+verschiedenen Zuständen.
+
+**MYL-Grenzen stehen schon im Typ**, obwohl das Ledger keine
+MYL-Überweisung kennt, denn ein später ergänztes Feld änderte jede
+Kontraktadresse. ⚑ **Eine Grenze, die niemand durchsetzt, lehnt ab; sie
+lässt nicht durch.** Ein Feld ohne Durchsetzung liest sich sonst als
+Zusicherung.
+
+Dazu ein siebter Newtype, `SitzungId`: Eine Sitzungsadresse und ein
+Eingabe-Commitment haben beide 32 Bytes, und eine Verwechslung im
+Konsenspfad fiele nicht auf. **22 neue Tests**, zusammen 168.
 
 ### v0.7.0 – 2026-08-28 (der Schalter für den Verfahrenswechsel)
 

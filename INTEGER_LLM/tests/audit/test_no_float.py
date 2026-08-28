@@ -17,7 +17,7 @@ Ansatz (statische Quell-Analyse, deterministisch und CI-fähig):
      float-Literale, float-Methoden wie .exp()/.sqrt()) wird gemeldet.
   4. Fund im Heißpfad => Test failt.
 
-Geprüft werden ZWEI Pfade:
+Geprüft werden ZWEI Pfade und, seit dem 2026-08-28, die Liste selbst:
   A. **Inferenz-Heißpfad** (kernels, runtime) — die Ganzzahligkeit der
      Inferenz, Kernthese des Projekts (Kap. 6.2).
   B. **Konsenspfad** (myl-types, myl-ledger, myl-scheduler,
@@ -27,6 +27,14 @@ Geprüft werden ZWEI Pfade:
      eines in der Inferenz; bis v0.2.9 war dieser Pfad ungeprüft, und
      genau dort lagen zwei reale Funde (die zur Laufzeit mit
      `f64::exp()` gebaute Preis-LUT und die `f64`-Sampling-Rate).
+
+  C. **Die Vollständigkeit der Liste** (`pruefe_vollstaendigkeit`). Eine
+     von Hand gepflegte Dateiliste hört leise auf, vollständig zu sein:
+     Eine neue Datei wird nicht geprüft, der Lauf meldet trotzdem „null
+     Treffer", und das klingt nach Vollständigkeit. So entstand Fund 44,
+     und am 2026-08-28 fiel auf, dass `erasure.rs` und `pq.rs` seit
+     ihrer Entstehung fehlten. Für `myl-types` und `myl-ledger` gilt
+     deshalb: jede Datei ist gelistet oder trägt eine Begründung.
 
 Dokumentiert erlaubte Zonen (kein Heiß-/Konsenspfad):
   - #[cfg(test)]-Module (Test-Fixtures, z. B. LUT-Erzeugung in
@@ -113,6 +121,21 @@ CONSENSUS_PATH = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "vrf.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "latency_attest.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "node_metadata.rs",
+    # 2026-08-28 nachgetragen, und drei auf einmal: `erasure.rs` und
+    # `pq.rs` fehlten seit ihrer Entstehung, `sitzung.rs` kam heute
+    # dazu. Siehe die Vollstaendigkeitspruefung weiter unten, die genau
+    # das kuenftig laut macht.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "erasure.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "pq.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "protocol.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "sitzung.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lib.rs",
+    # Der Generator der Konformitaetsvektoren gehoert dazu, obwohl er
+    # nicht laeuft, wenn das Netz laeuft: Er **erzeugt die Referenz**,
+    # gegen die sich fremde Implementierungen pruefen. Gleitkomma hier
+    # verdurbe die Vektoren, nicht nur einen Lauf.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "bin" / "generate_golden_vectors.rs",
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "lib.rs",
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "state.rs",
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "transitions.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
@@ -335,11 +358,81 @@ def audit_group(label: str, paths) -> int:
     return total
 
 
+# Crates, in denen **jede** Datei zum Konsenspfad gehoert.
+#
+# ⚑ **Warum diese Pruefung existiert (2026-08-28).** `CONSENSUS_PATH` ist
+# eine von Hand gepflegte Liste, und eine solche Liste hoert leise auf,
+# vollstaendig zu sein: Eine neue Datei wird nicht geprueft, der Lauf
+# meldet trotzdem "null Treffer", und das klingt nach Vollstaendigkeit.
+# Genau so entstand **Fund 44** (kein einziges `myl-net` in der Liste,
+# waehrend `latency.rs` in `f64` rechnete).
+#
+# Am 2026-08-28 war es wieder so weit: `erasure.rs` und `pq.rs` standen
+# seit ihrer Entstehung nicht darin. Aufgefallen ist es nur, weil
+# jemand aus einem anderen Grund hinsah.
+#
+# **Fuer diese beiden Crates gilt die Regel ohne Ausnahme:** In
+# `myl-types` ist jeder Typ Protokoll, in `myl-ledger` jede Datei ein
+# Zustandsuebergang. Wer hier eine Datei anlegt, muss sie eintragen,
+# sonst schlaegt der Lauf fehl. Fuer die uebrigen Crates (NETWORKING,
+# VERIFICATION und so weiter) gilt das **nicht**, dort sind Auswahl und
+# Begruendung je Datei noetig; diese Pruefung deckt sie deshalb nicht ab
+# und behauptet es auch nicht.
+VOLLSTAENDIG_ZU_PRUEFEN = [
+    ROOT / "SHARED_TYPES" / "myl-types" / "src",
+    ROOT / "CONSENSUS" / "myl-ledger" / "src",
+]
+
+# Dateien aus den obigen Verzeichnissen, die bewusst **nicht** geprueft
+# werden, je mit Begruendung.
+#
+# ⚑ **Diese Liste ist leer, und der Weg hierher ist der Sinn.** Wer eine
+# Datei nicht pruefen lassen will, muss sie hier eintragen und
+# hinschreiben, warum. Ohne diesen Weg waere die naheliegende Reaktion
+# auf eine unbequeme Meldung, das ganze Verzeichnis aus
+# `VOLLSTAENDIG_ZU_PRUEFEN` zu nehmen, und damit fiele die Pruefung
+# still weg. Dieselbe Ueberlegung wie bei `strip_strings`: Eine
+# Falschmeldung verleitet dazu, die Pruefung zu entschaerfen statt die
+# Ursache anzusehen.
+BEWUSST_DRAUSSEN: dict = {}
+
+
+def pruefe_vollstaendigkeit() -> int:
+    """Meldet Dateien, die in einem Konsens-Crate liegen und fehlen.
+
+    Gegenprobe zur Liste selbst: Sie faengt nicht Gleitkomma, sondern
+    das Vergessen.
+    """
+    gelistet = {p.resolve() for p in CONSENSUS_PATH}
+    fehlend = []
+    for verzeichnis in VOLLSTAENDIG_ZU_PRUEFEN:
+        if not verzeichnis.is_dir():
+            print(f"[no-float] FEHLT (Verzeichnis): {verzeichnis}")
+            return 1
+        for datei in sorted(verzeichnis.rglob("*.rs")):
+            if datei.resolve() in gelistet:
+                continue
+            if datei.resolve() in {k.resolve() for k in BEWUSST_DRAUSSEN}:
+                continue
+            fehlend.append(datei)
+    print(f"[no-float] Vollstaendigkeit: {len(VOLLSTAENDIG_ZU_PRUEFEN)} Verzeichnisse")
+    for datei in fehlend:
+        print(f"[no-float] NICHT GELISTET: {datei}")
+    return len(fehlend)
+
+
 def main():
     print("[no-float] Gleitkomma-Audit (Inferenz- und Konsenspfad)")
 
     total = audit_group("Inferenz-Heißpfad", HOT_PATH)
     total += audit_group("Konsenspfad", CONSENSUS_PATH)
+    ungelistet = pruefe_vollstaendigkeit()
+    if ungelistet:
+        print(
+            f"[no-float] FEHLGESCHLAGEN: {ungelistet} Datei(en) in einem "
+            "Konsens-Crate stehen nicht in CONSENSUS_PATH"
+        )
+        sys.exit(1)
 
     if total == 0:
         print("[no-float] PASSED: null Gleitkomma-Treffer in Inferenz- und Konsenspfad")

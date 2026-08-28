@@ -5,10 +5,11 @@
 //! (Übergänge prüfen zuerst und ändern erst dann).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use myl_types::ids::{Address, EpochId, SegmentId};
+use myl_types::ids::{Address, EpochId, SegmentId, SitzungId};
+use myl_types::sitzung::{pruefe, Befund, Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
 use myl_types::InferenceCredit;
 
-use crate::state::LedgerState;
+use crate::state::{LedgerState, Sitzung, SITZUNG_NACHFRIST};
 
 /// Fehler eines Zustandsübergangs. Übergänge sind atomar: Tritt ein
 /// Fehler auf, wurde der Zustand nicht verändert.
@@ -28,6 +29,23 @@ pub enum TransitionError {
     /// Übergangs-Parameter sind ungültig (z. B. Bruch mit Nenner 0
     /// oder Zähler größer als Nenner).
     InvalidParameters,
+    /// Unter dieser Adresse steht keine Session.
+    SitzungUnbekannt,
+    /// Unter dieser Adresse steht schon eine.
+    SitzungExistiert,
+    /// Der Kontrakt ist abgelaufen, bevor er eröffnet wurde.
+    SitzungAbgelaufen,
+    /// Nur der Inhaber darf widerrufen, nicht der Agent.
+    NichtDerInhaber,
+    /// Der Kontrakt lässt dieses Vorhaben nicht zu (Whitepaper
+    /// Kap. 8.2).
+    ///
+    /// ⚑ **Der Befund ist der reiche**, mit Zahlen, für den Knoten und
+    /// den Client des Inhabers. Was der Agent erfährt, ist
+    /// [`myl_types::sitzung::Befund::fuer_agenten`], und das ist ein
+    /// Bit. Wer diesen Fehler unbesehen an den Agenten durchreicht,
+    /// hebt die Anforderung aus Kap. 8.2 auf.
+    KontraktVerbietet(Befund),
 }
 
 impl std::fmt::Display for TransitionError {
@@ -47,6 +65,11 @@ impl std::fmt::Display for TransitionError {
             Self::NoStake => write!(f, "Konto hat keinen Stake"),
             Self::Overflow => write!(f, "Buchung würde den Wertebereich überschreiten"),
             Self::InvalidParameters => write!(f, "Übergangs-Parameter sind ungültig"),
+            Self::SitzungUnbekannt => write!(f, "keine Session unter dieser Adresse"),
+            Self::SitzungExistiert => write!(f, "unter dieser Adresse steht schon eine Session"),
+            Self::SitzungAbgelaufen => write!(f, "Kontrakt ist bereits abgelaufen"),
+            Self::NichtDerInhaber => write!(f, "nur der Inhaber darf widerrufen"),
+            Self::KontraktVerbietet(b) => write!(f, "Session-Kontrakt: {b}"),
         }
     }
 }
@@ -309,6 +332,129 @@ pub fn credit_spend(
         }
     }
     Ok(())
+}
+
+/// Eröffnet eine Agenten-Session (Whitepaper Kap. 8.2).
+///
+/// Der Kontrakt wird unter seiner eigenen Adresse abgelegt. **Er wird
+/// hier nicht mehr geprüft**, weil [`Sitzungskontrakt::neu`] die
+/// Normalform bereits erzwungen hat und ein Kontrakt, der es an dieser
+/// Stelle noch einmal versuchte, ohnehin eine andere Adresse hätte.
+///
+/// **Kein Betrag wird reserviert.** Das Budget ist eine Obergrenze und
+/// keine Hinterlegung; ob der Inhaber die Credits hat, entscheidet sich
+/// beim Ausgeben.
+///
+/// **Ein bereits abgelaufener Kontrakt wird abgelehnt**, statt als
+/// unbrauchbarer Eintrag Zustand zu belegen.
+pub fn sitzung_eroeffnen(
+    state: &mut LedgerState,
+    kontrakt: Sitzungskontrakt,
+) -> Result<SitzungId, TransitionError> {
+    let adresse = kontrakt.adresse();
+    if state.sitzungen.contains_key(&adresse) {
+        return Err(TransitionError::SitzungExistiert);
+    }
+    if kontrakt.gueltig_bis.0 < state.epoch.0 {
+        return Err(TransitionError::SitzungAbgelaufen);
+    }
+    state
+        .sitzungen
+        .insert(adresse, Sitzung { kontrakt, zustand: Sitzungszustand::neu() });
+    Ok(adresse)
+}
+
+/// Beendet eine Session vorzeitig. Nur der Inhaber.
+///
+/// ⚑ **Der Widerruf steht nicht im Whitepaper**, und er gehört
+/// trotzdem hierher: Ohne ihn ist das Zeitfenster das einzige Mittel
+/// gegen einen Agenten, der sich falsch verhält, und dieses Mittel
+/// heißt warten.
+///
+/// **Wiederholter Widerruf ist kein Fehler.** Zwei Blöcke, die
+/// denselben Widerruf tragen, dürfen nicht dazu führen, dass der zweite
+/// ungültig wird; und ein Übergang, der ausschließlich Rechte entzieht,
+/// schadet auch beim zweiten Mal nicht.
+pub fn sitzung_widerrufen(
+    state: &mut LedgerState,
+    adresse: &SitzungId,
+    wer: &Address,
+) -> Result<(), TransitionError> {
+    let sitzung = state
+        .sitzungen
+        .get_mut(adresse)
+        .ok_or(TransitionError::SitzungUnbekannt)?;
+    if sitzung.kontrakt.inhaber != *wer {
+        return Err(TransitionError::NichtDerInhaber);
+    }
+    sitzung.zustand.widerrufen = true;
+    Ok(())
+}
+
+/// Gibt unter einem Session-Kontrakt Inferenz-Credits aus
+/// (Whitepaper Kap. 8.2, Durchsetzung beim Ausführen).
+///
+/// ⚑ **Das ist die Stelle, an der der Kontrakt etwas bedeutet.** Ein
+/// Client, der die Grenzen selbst prüft, prüft sie freiwillig; hier
+/// prüft sie jeder Knoten, bevor er den Zustand fortschreibt.
+///
+/// **Belastet wird das Konto des Inhabers**, nicht das des Agenten. Der
+/// Agent ist ein Schlüssel mit einer Vollmacht, kein Kontoinhaber.
+///
+/// **Erst prüfen, dann ändern**, und der Verbrauchszähler wächst erst,
+/// wenn die Credits wirklich geflossen sind: Ein Kontrakt, dessen
+/// Budget an einer fehlgeschlagenen Ausgabe schrumpfte, wäre über
+/// wiederholte Fehlschläge leerzuräumen.
+pub fn sitzung_credit_spend(
+    state: &mut LedgerState,
+    vorhaben: &Vorhaben,
+) -> Result<(), TransitionError> {
+    // Prüfphase.
+    let (inhaber, befund, neu_verbraucht) = {
+        let sitzung = state
+            .sitzungen
+            .get(&vorhaben.sitzung)
+            .ok_or(TransitionError::SitzungUnbekannt)?;
+        let befund = pruefe(&sitzung.kontrakt, &sitzung.zustand, state.epoch, vorhaben);
+        let neu = sitzung
+            .zustand
+            .verbraucht_credits
+            .checked_add(vorhaben.betrag)
+            .ok_or(TransitionError::Overflow)?;
+        (sitzung.kontrakt.inhaber, befund, neu)
+    };
+    if !befund.erlaubt() {
+        return Err(TransitionError::KontraktVerbietet(befund));
+    }
+    debug_assert_eq!(
+        vorhaben.waehrung,
+        Waehrung::Credits,
+        "pruefe lässt heute nur Credits durch"
+    );
+
+    // Änderungsphase.
+    credit_spend(state, &inhaber, vorhaben.betrag)?;
+    let sitzung = state
+        .sitzungen
+        .get_mut(&vorhaben.sitzung)
+        .expect("in der Prüfphase war sie da, und credit_spend rührt sie nicht an");
+    sitzung.zustand.verbraucht_credits = neu_verbraucht;
+    Ok(())
+}
+
+/// Räumt Sessions weg, deren Fenster länger als
+/// [`SITZUNG_NACHFRIST`] Epochen zurückliegt, und liefert deren Anzahl.
+///
+/// **Ein Übergang und kein Nebenher.** Würde beim Lesen aufgeräumt,
+/// hinge der Zustand daran, wer wann gelesen hat; dieselbe Lehre wie
+/// bei der Verstoßhistorie.
+pub fn sitzung_aufraeumen(state: &mut LedgerState) -> usize {
+    let jetzt = state.epoch.0;
+    let vorher = state.sitzungen.len();
+    state
+        .sitzungen
+        .retain(|_, s| jetzt <= s.kontrakt.gueltig_bis.0.saturating_add(SITZUNG_NACHFRIST));
+    vorher - state.sitzungen.len()
 }
 
 #[cfg(test)]
@@ -698,5 +844,254 @@ mod tests {
         assert_eq!(credits[0].expiry, EpochId(20));
         assert_eq!(credits[1].vtfe, 10);
         assert_eq!(credits[2].vtfe, 10);
+    }
+
+    // ---- Session-Kontrakte (Whitepaper Kap. 8.2) ----
+
+    fn grenzen(budget: u64, einzel: u64, schwelle: u64) -> myl_types::sitzung::Grenzen {
+        myl_types::sitzung::Grenzen {
+            budget,
+            einzellimit: einzel,
+            schwelle,
+            zeugenleiter: Vec::new(),
+        }
+    }
+
+    /// Inhaber 1, Agent 2, 1000 Credits Budget, 300 je Vorgang, keine
+    /// Bestätigungsschwelle, Empfänger 10, Epochen 0 bis 100.
+    fn kontrakt() -> Sitzungskontrakt {
+        Sitzungskontrakt::neu(
+            adresse(1),
+            adresse(2),
+            grenzen(1_000, 300, u64::MAX),
+            myl_types::sitzung::Grenzen::gesperrt(),
+            vec![adresse(10)],
+            EpochId(0),
+            EpochId(100),
+        )
+        .expect("gültiger Kontrakt")
+    }
+
+    fn vorhaben(sitzung: SitzungId, betrag: u64) -> Vorhaben {
+        Vorhaben {
+            sitzung,
+            handelnder: adresse(2),
+            waehrung: Waehrung::Credits,
+            betrag,
+            empfaenger: adresse(10),
+            bestaetigt_ausgeliefert: false,
+        }
+    }
+
+    /// Zustand mit Credits beim Inhaber und einer offenen Session.
+    fn state_mit_sitzung(credits: u64) -> (LedgerState, SitzungId) {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).credits.push(InferenceCredit {
+            owner: adresse(1),
+            vtfe: credits,
+            expiry: EpochId(1_000),
+        });
+        let id = sitzung_eroeffnen(&mut state, kontrakt()).expect("eröffnen");
+        (state, id)
+    }
+
+    #[test]
+    fn eine_session_bucht_vom_konto_des_inhabers() {
+        let (mut state, id) = state_mit_sitzung(500);
+        sitzung_credit_spend(&mut state, &vorhaben(id, 200)).expect("erlaubt");
+
+        // Die Credits kommen vom Inhaber, nicht vom Agenten.
+        assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 300);
+        assert!(state.account(&adresse(2)).credits.is_empty());
+        assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_credits, 200);
+    }
+
+    #[test]
+    fn eine_session_kann_nicht_zweimal_unter_derselben_adresse_stehen() {
+        let (mut state, _) = state_mit_sitzung(500);
+        assert_eq!(
+            sitzung_eroeffnen(&mut state, kontrakt()),
+            Err(TransitionError::SitzungExistiert)
+        );
+    }
+
+    #[test]
+    fn ein_abgelaufener_kontrakt_wird_gar_nicht_erst_eroeffnet() {
+        let mut state = LedgerState::genesis(1);
+        state.epoch = EpochId(101);
+        assert_eq!(
+            sitzung_eroeffnen(&mut state, kontrakt()),
+            Err(TransitionError::SitzungAbgelaufen)
+        );
+        assert!(state.sitzungen.is_empty());
+    }
+
+    /// ⚑ **Der zentrale Test der Phase.** Der Agent darf zahlen, aber
+    /// nur innerhalb der Grenzen, und er kann die Grenzen nicht
+    /// bewegen: Ein Kontrakt mit anderen Zahlen ist ein anderer
+    /// Kontrakt und steht unter einer anderen Adresse.
+    #[test]
+    fn ein_agent_kommt_ueber_die_grenzen_nicht_hinaus() {
+        let (mut state, id) = state_mit_sitzung(10_000);
+
+        // Über dem Einzellimit.
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 301)),
+            Err(TransitionError::KontraktVerbietet(
+                Befund::EinzellimitUeberschritten { limit: 300 }
+            ))
+        );
+        // An einen Empfänger, der nicht gelistet ist.
+        let woanders = Vorhaben { empfaenger: adresse(99), ..vorhaben(id, 100) };
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &woanders),
+            Err(TransitionError::KontraktVerbietet(Befund::EmpfaengerNichtGelistet))
+        );
+        // Unter fremdem Schlüssel.
+        let fremd = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &fremd),
+            Err(TransitionError::KontraktVerbietet(Befund::FalscherHandelnder))
+        );
+
+        // Und der Zustand ist durch all das unberührt geblieben.
+        assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 10_000);
+        assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_credits, 0);
+
+        // Das Budget ist nach vier vollen Vorgängen erschöpft, obwohl
+        // das Konto noch reichlich Credits trägt.
+        for _ in 0..3 {
+            sitzung_credit_spend(&mut state, &vorhaben(id, 300)).expect("erlaubt");
+        }
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 300)),
+            Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 100 }))
+        );
+        sitzung_credit_spend(&mut state, &vorhaben(id, 100)).expect("die letzten 100");
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 1)),
+            Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 0 }))
+        );
+        assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 9_000);
+    }
+
+    /// ⚑ Gegenprobe: Ein Kontrakt mit weiteren Grenzen ist kein
+    /// geweiteter Kontrakt, sondern ein zweiter. Er kann eröffnet
+    /// werden, aber er greift nicht auf die Session zu, unter der der
+    /// Agent schon läuft.
+    #[test]
+    fn ein_zweiter_kontrakt_weitet_den_ersten_nicht() {
+        let (mut state, id) = state_mit_sitzung(10_000);
+        let weit = Sitzungskontrakt::neu(
+            adresse(1),
+            adresse(2),
+            grenzen(1_000_000, 1_000_000, u64::MAX),
+            myl_types::sitzung::Grenzen::gesperrt(),
+            vec![adresse(10)],
+            EpochId(0),
+            EpochId(100),
+        )
+        .expect("gültig");
+        let id2 = sitzung_eroeffnen(&mut state, weit).expect("eröffnen");
+        assert_ne!(id, id2);
+
+        // Unter der alten Adresse gelten weiter die alten Grenzen.
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 5_000)),
+            Err(TransitionError::KontraktVerbietet(
+                Befund::EinzellimitUeberschritten { limit: 300 }
+            ))
+        );
+        // Und der zweite Kontrakt braucht seine eigene Adresse im
+        // Vorhaben; die alte zu nennen hilft nicht.
+        assert_eq!(state.sitzung(&id).expect("da").kontrakt.credits.budget, 1_000);
+    }
+
+    #[test]
+    fn nur_der_inhaber_widerruft_und_zweimal_schadet_nicht() {
+        let (mut state, id) = state_mit_sitzung(500);
+        assert_eq!(
+            sitzung_widerrufen(&mut state, &id, &adresse(2)),
+            Err(TransitionError::NichtDerInhaber)
+        );
+        sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("Inhaber");
+        sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("nochmal, und das ist kein Fehler");
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 10)),
+            Err(TransitionError::KontraktVerbietet(Befund::Widerrufen))
+        );
+        assert_eq!(
+            sitzung_widerrufen(&mut state, &SitzungId::new([7u8; 32]), &adresse(1)),
+            Err(TransitionError::SitzungUnbekannt)
+        );
+    }
+
+    /// Der Kontrakt erlaubt 1000, das Konto trägt nur 50. Der Kontrakt
+    /// ist eine Obergrenze und keine Deckungszusage.
+    #[test]
+    fn ein_erlaubtes_vorhaben_scheitert_trotzdem_an_leeren_credits() {
+        let (mut state, id) = state_mit_sitzung(50);
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(id, 100)),
+            Err(TransitionError::InsufficientCredits { available: 50, required: 100 })
+        );
+        // ⚑ Und das Budget ist dabei **nicht** geschrumpft: Sonst wäre
+        // ein Kontrakt über wiederholte Fehlschläge leerzuräumen.
+        assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_credits, 0);
+    }
+
+    #[test]
+    fn eine_unbekannte_sitzung_zahlt_nicht() {
+        let mut state = LedgerState::genesis(1);
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &vorhaben(SitzungId::new([9u8; 32]), 1)),
+            Err(TransitionError::SitzungUnbekannt)
+        );
+    }
+
+    #[test]
+    fn myl_wird_abgelehnt_solange_es_keinen_uebergang_gibt() {
+        let (mut state, id) = state_mit_sitzung(500);
+        let v = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(id, 10) };
+        assert_eq!(
+            sitzung_credit_spend(&mut state, &v),
+            Err(TransitionError::KontraktVerbietet(Befund::WaehrungNichtDurchgesetzt {
+                waehrung: Waehrung::Myl
+            }))
+        );
+    }
+
+    #[test]
+    fn aufgeraeumt_wird_erst_nach_der_nachfrist() {
+        let (mut state, id) = state_mit_sitzung(500);
+        state.epoch = EpochId(100 + SITZUNG_NACHFRIST);
+        assert_eq!(sitzung_aufraeumen(&mut state), 0);
+        assert!(state.sitzung(&id).is_some());
+
+        state.epoch = EpochId(100 + SITZUNG_NACHFRIST + 1);
+        assert_eq!(sitzung_aufraeumen(&mut state), 1);
+        assert!(state.sitzung(&id).is_none());
+        assert_eq!(sitzung_aufraeumen(&mut state), 0);
+    }
+
+    /// Sessions gehen in die Zustandsverpflichtung ein — sonst könnten
+    /// zwei Knoten verschiedene Grenzen führen und trotzdem denselben
+    /// Zustand behaupten.
+    #[test]
+    fn sitzungen_gehen_in_das_commitment_ein() {
+        let (mit, _) = state_mit_sitzung(500);
+        let mut ohne = LedgerState::genesis(1);
+        ohne.account_mut(&adresse(1)).credits.push(InferenceCredit {
+            owner: adresse(1),
+            vtfe: 500,
+            expiry: EpochId(1_000),
+        });
+        assert_ne!(mit.commitment(), ohne.commitment());
+
+        // Und der Verbrauch zählt mit.
+        let mut nachher = mit.clone();
+        let id = *nachher.sitzungen.keys().next().expect("eine");
+        sitzung_credit_spend(&mut nachher, &vorhaben(id, 10)).expect("erlaubt");
+        assert_ne!(mit.commitment(), nachher.commitment());
     }
 }

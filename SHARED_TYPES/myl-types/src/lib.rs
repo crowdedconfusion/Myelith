@@ -33,6 +33,7 @@ pub mod pq;
 pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;
+pub mod sitzung;
 pub mod vrf;
 pub mod erasure;
 
@@ -49,7 +50,7 @@ pub use core_types::{segments_root, InferenceCredit, PoIBundle, Segment};
 pub use hash::Hash;
 pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,
-    ID_LEN,
+    SitzungId, ID_LEN,
 };
 pub use latency_attest::{
     BlsSignatureBytes, LatencyAttest, LatencyAttestError, LatencyGraph, PeerIdBytes,
@@ -57,4 +58,8 @@ pub use latency_attest::{
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
 pub use node_metadata::{Asn, DiversityChecker, GeoRegion, NodeMetadata, NodeMetadataError};
 pub use seed_rng::{deterministic_shuffle, weighted_sample_without_replacement, SeedRng};
+pub use sitzung::{
+    pruefe, Agentenbefund, Befund, Grenzen, KontraktFehler, Sitzungskontrakt, Sitzungszustand,
+    Vorhaben, Waehrung, Zeugenstufe, DST_SITZUNGSKONTRAKT, MAX_EMPFAENGER, MAX_ZEUGENSTUFEN,
+};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

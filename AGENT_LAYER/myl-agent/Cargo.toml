@@ -1,0 +1,15 @@
+[package]
+name = "myl-agent"
+version = "0.5.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Agent Layer für Myelith (Whitepaper Kap. 8): Skill- und Werkzeug-Manifeste mit Herkunftsstufe, damit einem Segment anzusehen ist, ob es nachrechenbar oder nur bezeugt ist."
+license = "PolyForm Shield License 1.0.0"
+
+[dependencies]
+borsh = { version = "1.6", features = ["derive"] }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+
+[lib]
+name = "myl_agent"
+path = "src/lib.rs"

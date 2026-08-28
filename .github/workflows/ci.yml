@@ -222,6 +222,7 @@ jobs:
             TOKENOMICS/myl-tokenomics
             VERIFICATION/myl-verifier
             GOVERNANCE/myl-governance
+            AGENT_LAYER/myl-agent
             SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
@@ -243,6 +244,7 @@ jobs:
             TOKENOMICS/myl-tokenomics \
             VERIFICATION/myl-verifier \
             GOVERNANCE/myl-governance \
+            AGENT_LAYER/myl-agent \
             SIMULATION/myl-simulation \
             COMPUTE_PIPELINE/myl-pod \
             TRAINING/myl-train \

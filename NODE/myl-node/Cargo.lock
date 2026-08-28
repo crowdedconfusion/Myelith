@@ -2142,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "blst",
  "borsh",
