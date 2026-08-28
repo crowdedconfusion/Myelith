@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.10.1
+> **Version:** 0.11.0
 > **Datum:** 2026-08-27
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
@@ -268,6 +268,33 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.11.0 – 2026-08-28 (der Testverkehr ist unterschrieben, und die Kette wendet fünf Anweisungen an)
+
+Der Knoten wendet die neuen Transaktionen an: Burn, Überweisung,
+Session eröffnen, widerrufen und ausgeben.
+
+⚑ **Die Unterschrift wird beim Anwenden geprüft, nicht beim Aufnehmen
+in den Mempool.** Ein Block kommt über Gossip und sieht den Mempool nie;
+läge die Prüfung dort, könnte ein Leader eine unsignierte Anweisung in
+einen Block schreiben, und die ehrlichen Knoten wendeten sie an.
+**Erzeuger und Übernehmer überspringen dasselbe**, weil beide dieselbe
+Funktion durchlaufen.
+
+⚑ **Ein Probekonto hat jetzt einen Schlüssel.** Vorher war es nur eine
+Zeichenkette, aus der eine Adresse gehasht wurde, und in seinem Namen
+konnte jeder anweisen. Jetzt folgt die Adresse aus dem Schlüssel, wie
+jede Adresse im Protokoll.
+
+⚑ **Und der Testverkehr zählt seine Nummer hoch.** Ohne das wäre jede
+dieser Transaktionen eine Wiedereinspielung ihrer Vorgängerin und würde
+verworfen; der Zustand bewegte sich nicht, und die Übereinstimmung der
+Zustandswurzeln belegte wieder nichts. **Dieselbe Falle wie beim
+fehlenden Guthaben, nur eine Ebene weiter.**
+
+**Vier neue Tests**, darunter die Gegenprobe zu Fund 85: Eine gefälschte
+Unterschrift bewegt nichts, und ein fremder Schlüssel belastet sein
+eigenes Konto statt des angegriffenen. Zusammen 170.
 
 ### v0.10.1 – 2026-08-27 (Gleichstand mit der Netzschicht)
 

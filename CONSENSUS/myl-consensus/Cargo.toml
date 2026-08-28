@@ -1,6 +1,6 @@
 [package]
 name = "myl-consensus"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 rust-version = "1.85"
 description = "BFT-Konsens für Myelith (Whitepaper Kap. 3.5, Anhang A.2): Validator-Registrierung, Stake-basierte Komiteewahl, BFT-Blockproduktion (Propose/Vote/Commit), Stimmgewichts-Kopplung, Double-Signing-Erkennung. Design-Entscheidung: malachite-consensus hinter Trait-Grenze, Eigenbau als Fallback."
@@ -17,3 +17,15 @@ name = "myl_consensus"
 path = "src/lib.rs"
 
 [dev-dependencies]
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`
+# und `overflow-checks` bleiben an. ⚑ `--release` waere die falsche
+# Antwort, weil es beide abschaltet.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 2

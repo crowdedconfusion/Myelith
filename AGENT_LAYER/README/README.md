@@ -2,12 +2,10 @@
 
 > **Version:** 0.5.0
 > **Datum:** 2026-08-28
-> **Status:** Manifeste, Herkunftsstufe und Registratur stehen; der
-> **Session-Kontrakt** ebenfalls, samt Durchsetzung im Ledger für
-> Credits. 36 Tests. ⚑ **Was jetzt fehlt, ist eine MYL-Überweisung im
-> Ledger** — die Transaktion, die der Kontrakt begrenzen soll, gibt es
-> für MYL noch nicht. Die architektonische Trennung wartet auf eine
-> Entscheidung.
+> **Status:** Manifeste, Herkunftsstufe, Registratur und der
+> **Session-Kontrakt** stehen, letzterer mit Durchsetzung im Ledger für
+> Credits **und** MYL. 36 Tests. Die architektonische Trennung gegen
+> eingeschleuste Anweisungen wartet auf eine Entscheidung.
 
 Session-Kontrakte, Schadensbegrenzung, Dual-LLM-Trennung gegen
 eingeschleuste Anweisungen, Segmentketten-Verifikation, Agentengedächtnis.

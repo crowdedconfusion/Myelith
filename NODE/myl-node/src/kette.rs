@@ -72,9 +72,12 @@
 //! niemand nachrechnet, ist ein Feld, das jeder setzen darf.
 
 use borsh::BorshDeserialize;
-use myl_consensus::block::{epoche_fuer_hoehe, Block, BlockHeader, Transaction};
+use myl_consensus::block::{epoche_fuer_hoehe, Anweisung, Block, BlockHeader, Transaktion};
 use myl_ledger::state::LedgerState;
-use myl_ledger::transitions::burn_to_credits;
+use myl_ledger::transitions::{
+    burn_to_credits, nonce_verbrauchen, sitzung_ausgeben, sitzung_eroeffnen, sitzung_widerrufen,
+    transfer,
+};
 use myl_types::hash::Hash;
 use myl_types::ids::{Address, EpochId};
 
@@ -122,11 +125,33 @@ pub const PROBE_STARTWERT: &[u8] =
 /// Knotennamen. Sonst sähe der Genesis-Zustand auf jeder Maschine
 /// anders aus, und der Lauf meldete einen Determinismusfehler, bevor
 /// irgendetwas passiert ist.
+/// Der Schlüssel eines Probekontos.
+///
+/// ⚑ **Seit dem 2026-08-28 hat ein Probekonto einen Schlüssel**, denn
+/// eine Transaktion muss unterschrieben sein (Fund 85). Vorher war ein
+/// Konto nur eine Zeichenkette, und jeder konnte in seinem Namen
+/// anweisen.
+///
+/// Aus einem festen Startwert abgeleitet, damit alle Knoten dieselben
+/// Konten sehen: Ein zufälliger Schlüssel machte zwei Läufe
+/// unvergleichbar.
+pub fn probeschluessel(nummer: u8) -> myl_types::bls::BlsSecretKey {
+    let saat = Hash::sha256(
+        format!("myelith-probekonto-{}", nummer % PROBEKONTEN).as_bytes(),
+    );
+    myl_types::bls::BlsSecretKey::key_gen(saat.as_bytes())
+        .expect("32 Byte Startwert sind für key_gen immer gültig")
+}
+
+/// Die Adresse eines Probekontos: `SHA-256` über seinen Schlüssel.
+///
+/// **Abgeleitet und nicht gewürfelt**, wie jede Adresse im Protokoll.
+/// Nur so passt sie zu der Unterschrift, die ihr Inhaber leisten kann.
 pub fn probekonto(nummer: u8) -> Address {
-    let h = Hash::sha256(format!("myelith-probekonto-{}", nummer % PROBEKONTEN).as_bytes());
-    let mut roh = [0u8; 32];
-    roh.copy_from_slice(h.as_bytes());
-    Address::new(roh)
+    let pk = probeschluessel(nummer)
+        .public_key()
+        .expect("aus einem gültigen Schlüssel folgt ein gültiger Punkt");
+    Address::new(Hash::sha256(&pk.0).0)
 }
 
 /// Das Testkonto, das ein Knoten dieses Namens benutzt.
@@ -136,6 +161,16 @@ pub fn probekonto(nummer: u8) -> Address {
 pub fn konto_fuer(name: &str) -> Address {
     let h = Hash::sha256(name.as_bytes());
     probekonto(h.as_bytes()[0])
+}
+
+/// Der Schlüssel zu [`konto_fuer`].
+///
+/// Getrennte Funktion und kein zweites Ableiten: Wer hier etwas ändert,
+/// ändert es für Adresse und Schlüssel zugleich, und die beiden können
+/// nicht auseinanderlaufen.
+pub fn schluessel_fuer(name: &str) -> myl_types::bls::BlsSecretKey {
+    let h = Hash::sha256(name.as_bytes());
+    probeschluessel(h.as_bytes()[0])
 }
 
 /// Was beim Übernehmen eines Blocks schiefgehen kann.
@@ -208,7 +243,7 @@ pub struct Kette {
     hoehe: u64,
     letzter_hash: Hash,
     zustand: LedgerState,
-    mempool: Vec<Transaction>,
+    mempool: Vec<Transaktion>,
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
     /// Gossip nicht zweimal angewandt werden.
     bekannt: std::collections::HashSet<Hash>,
@@ -337,7 +372,7 @@ impl Kette {
     /// **Je Vorkommen eines**, nicht alle gleichen auf einmal:
     /// Dieselbe Transaktion zweimal eingereicht ist zweimal eingereicht,
     /// und wenn ein Block sie einmal enthält, wartet die andere weiter.
-    fn streiche_verarbeitete(&mut self, verarbeitet: &[Transaction]) {
+    fn streiche_verarbeitete(&mut self, verarbeitet: &[Transaktion]) {
         if self.mempool.is_empty() || verarbeitet.is_empty() {
             return;
         }
@@ -387,14 +422,14 @@ impl Kette {
     /// Ohne Prüfung: Ob sie durchgeht, entscheidet sich beim Anwenden.
     /// Eine Vorprüfung hier bräuchte den Zustand **zum Zeitpunkt der
     /// Aufnahme**, und der ist nicht der beim Anwenden.
-    pub fn aufnehmen(&mut self, tx: Transaction) {
+    pub fn aufnehmen(&mut self, tx: Transaktion) {
         self.mempool.push(tx);
     }
 
     /// Liest eine Transaktion aus Gossip-Bytes und nimmt sie auf.
     pub fn aufnehmen_roh(&mut self, daten: &[u8]) -> bool {
         let mut rest = daten;
-        match Transaction::deserialize(&mut rest) {
+        match Transaktion::deserialize(&mut rest) {
             Ok(tx) if rest.is_empty() => {
                 self.aufnehmen(tx);
                 true
@@ -414,7 +449,7 @@ impl Kette {
     /// Gescheiterte Transaktionen werden **übersprungen, nicht
     /// abgebrochen**: Eine Burn-Transaktion ohne Deckung ist kein Grund,
     /// den Block zu verwerfen, und beide Seiten überspringen sie gleich.
-    fn anwenden(zustand: &mut LedgerState, txs: &[Transaction], epoch: u64) {
+    fn anwenden(zustand: &mut LedgerState, txs: &[Transaktion], epoch: u64) {
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -424,12 +459,50 @@ impl Kette {
         //
         // Sie steht **vor** dem Anwenden, weil die Übergänge sie lesen.
         zustand.epoch = EpochId(epoch);
+        let netz = Self::startwert();
         for tx in txs {
-            match tx {
-                Transaction::Burn(b) => {
+            // ⚑ **Die Unterschrift wird hier geprüft und nicht erst bei
+            // der Aufnahme in den Mempool** (2026-08-28, Fund 85). Ein
+            // Block kommt über Gossip und sieht den Mempool nie; läge
+            // die Prüfung dort, könnte ein Leader eine unsignierte
+            // Anweisung in einen Block schreiben, und die ehrlichen
+            // Knoten wendeten sie an.
+            //
+            // **Erzeuger und Übernehmer überspringen dasselbe**, weil
+            // beide dieselbe Funktion durchlaufen.
+            let Ok(geprueft) = tx.clone().pruefe(&netz) else {
+                continue;
+            };
+            let absender = geprueft.inhalt().absender_adresse();
+
+            // ⚑ **Die Nummer wird auch dann verbraucht, wenn die
+            // Anweisung danach scheitert.** Sonst wäre eine ungedeckte
+            // Überweisung unverändert gültig und beliebig oft
+            // einreichbar.
+            if nonce_verbrauchen(zustand, &absender, geprueft.inhalt().nonce).is_err() {
+                continue;
+            }
+
+            // Gescheiterte Anweisungen werden übersprungen, nicht
+            // abgebrochen: Eine Überweisung ohne Deckung ist kein Grund,
+            // den Block zu verwerfen.
+            match &geprueft.inhalt().anweisung {
+                Anweisung::Burn { betrag } => {
                     // Verfall eine Epoche später: eine Festlegung dieser
                     // Testkette, damit beide Seiten dieselbe rechnen.
-                    let _ = burn_to_credits(zustand, &b.sender, b.amount, EpochId(epoch + 1));
+                    let _ = burn_to_credits(zustand, &absender, *betrag, EpochId(epoch + 1));
+                }
+                Anweisung::Ueberweisung { nach, betrag } => {
+                    let _ = transfer(zustand, &absender, nach, *betrag);
+                }
+                Anweisung::SitzungEroeffnen { kontrakt } => {
+                    let _ = sitzung_eroeffnen(zustand, &absender, kontrakt.clone());
+                }
+                Anweisung::SitzungWiderrufen { sitzung } => {
+                    let _ = sitzung_widerrufen(zustand, sitzung, &absender);
+                }
+                Anweisung::SitzungAusgeben { vorhaben } => {
+                    let _ = sitzung_ausgeben(zustand, &absender, vorhaben);
                 }
             }
         }
@@ -441,7 +514,7 @@ impl Kette {
     /// entstandene Zustandswurzel in den Block. Die Empfänger rechnen
     /// dasselbe und vergleichen.
     pub fn baue_block(&mut self) -> Block {
-        let txs: Vec<Transaction> = std::mem::take(&mut self.mempool);
+        let txs: Vec<Transaktion> = std::mem::take(&mut self.mempool);
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
@@ -551,16 +624,181 @@ impl Default for Kette {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_consensus::block::BurnTx;
+    use myl_consensus::block::Anweisung;
 
     /// Ein **wirksamer** Burn: Absender ist ein ausgestattetes
     /// Testkonto. Ein Burn von einem leeren Konto scheitert still, und
     /// ein Test damit belegte nichts.
-    fn burn(wer: u8, betrag: u64) -> Transaction {
-        Transaction::Burn(BurnTx {
-            sender: probekonto(wer),
-            amount: betrag,
-        })
+    ///
+    /// ⚑ **Und er ist unterschrieben** (2026-08-28). Ohne Unterschrift
+    /// verwirft `anwenden` ihn, der Zustand bewegte sich nicht, und der
+    /// Test belegte wieder nichts — dieselbe Falle wie beim fehlenden
+    /// Guthaben, nur eine Ebene weiter.
+    fn burn_nr(wer: u8, betrag: u64, nonce: u64) -> Transaktion {
+        Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(wer),
+            nonce,
+            Anweisung::Burn { betrag },
+        )
+        .expect("signieren")
+    }
+
+    fn burn(wer: u8, betrag: u64) -> Transaktion {
+        burn_nr(wer, betrag, 0)
+    }
+
+    /// ⚑ **Die Gegenprobe zu Fund 85: Eine Anweisung ohne gültige
+    /// Unterschrift wirkt nicht.**
+    ///
+    /// Bis zum 2026-08-28 trug eine Transaktion keine Unterschrift, und
+    /// jeder konnte im Namen jedes Kontos anweisen. Bei `Burn` war das
+    /// Sachbeschädigung, bei einer Überweisung wäre es Diebstahl
+    /// gewesen.
+    #[test]
+    fn eine_gefaelschte_unterschrift_bewegt_nichts() {
+        let mut k = Kette::probestand();
+        let vorher = k.zustandswurzel();
+
+        let mut tx = burn(0, 5_000);
+        tx.signatur = myl_types::bls::BlsSignature([7u8; 96]);
+        k.aufnehmen(tx);
+        let _ = k.baue_block();
+        assert_eq!(k.zustandswurzel(), vorher, "eine Fälschung darf nichts bewegen");
+
+        // Und der Schlüssel eines anderen Kontos hilft auch nicht: Die
+        // Adresse folgt aus dem Schlüssel, also belastet er sein eigenes
+        // Konto und nicht das fremde.
+        let echt = burn(1, 5_000);
+        let konto_eins_vorher = k.zustand().account(&probekonto(1)).balance;
+        let konto_null_vorher = k.zustand().account(&probekonto(0)).balance;
+        k.aufnehmen(echt);
+        let _ = k.baue_block();
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, konto_null_vorher);
+        assert!(k.zustand().account(&probekonto(1)).balance < konto_eins_vorher);
+    }
+
+    /// ⚑ Dieselbe Transaktion zweimal wirkt einmal.
+    #[test]
+    fn eine_wiedereingespielte_transaktion_wirkt_nicht_zweimal() {
+        let mut k = Kette::probestand();
+        let tx = burn(2, 3_000);
+
+        k.aufnehmen(tx.clone());
+        let _ = k.baue_block();
+        let nach_dem_ersten = k.zustand().account(&probekonto(2)).balance;
+        assert_eq!(k.zustand().account(&probekonto(2)).nonce, 1);
+
+        k.aufnehmen(tx);
+        let _ = k.baue_block();
+        assert_eq!(
+            k.zustand().account(&probekonto(2)).balance,
+            nach_dem_ersten,
+            "dieselben Bytes ein zweites Mal duerfen nichts bewirken"
+        );
+        assert_eq!(k.zustand().account(&probekonto(2)).nonce, 1);
+
+        // Mit der naechsten Nummer geht es weiter.
+        k.aufnehmen(burn_nr(2, 3_000, 1));
+        let _ = k.baue_block();
+        assert!(k.zustand().account(&probekonto(2)).balance < nach_dem_ersten);
+    }
+
+    /// ⚑ Eine Ueberweisung ueber einen Block: Fund 83 geschlossen.
+    #[test]
+    fn eine_ueberweisung_kommt_ueber_einen_block_an() {
+        use myl_consensus::block::Anweisung;
+        let mut k = Kette::probestand();
+        let von = probekonto(3);
+        let nach = probekonto(4);
+        let (v0, n0) = (
+            k.zustand().account(&von).balance,
+            k.zustand().account(&nach).balance,
+        );
+
+        let tx = Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(3),
+            0,
+            Anweisung::Ueberweisung { nach, betrag: 2_500 },
+        )
+        .expect("signieren");
+        k.aufnehmen(tx);
+        let _ = k.baue_block();
+
+        assert_eq!(k.zustand().account(&von).balance, v0 - 2_500);
+        assert_eq!(k.zustand().account(&nach).balance, n0 + 2_500);
+    }
+
+    /// ⚑ Eine Session ueber Bloecke: eroeffnen, ausgeben, widerrufen.
+    /// **Der Kontrakt begrenzt, und zwar auf der Kette.**
+    #[test]
+    fn eine_session_wirkt_und_begrenzt_ueber_bloecke() {
+        use myl_consensus::block::Anweisung;
+        use myl_types::sitzung::{Grenzen, Sitzungskontrakt, Vorhaben, Waehrung};
+
+        let mut k = Kette::probestand();
+        let inhaber = probekonto(6);
+        let agent = probekonto(7);
+        let empfaenger = probekonto(0);
+
+        let kontrakt = Sitzungskontrakt::neu(
+            inhaber,
+            agent,
+            Grenzen::gesperrt(),
+            Grenzen { budget: 5_000, einzellimit: 2_000, schwelle: u64::MAX, zeugenleiter: Vec::new() },
+            vec![empfaenger],
+            EpochId(0),
+            EpochId(u64::MAX),
+        )
+        .expect("gueltiger Kontrakt");
+        let id = kontrakt.adresse();
+
+        let sig = |n: u8, nonce: u64, a: Anweisung| {
+            Transaktion::signiere(&Kette::startwert(), &probeschluessel(n), nonce, a)
+                .expect("signieren")
+        };
+
+        k.aufnehmen(sig(6, 0, Anweisung::SitzungEroeffnen { kontrakt }));
+        let _ = k.baue_block();
+        assert!(k.zustand().sitzung(&id).is_some(), "die Session steht im Zustand");
+
+        let zahlung = |betrag: u64| Vorhaben {
+            sitzung: id,
+            handelnder: agent,
+            waehrung: Waehrung::Myl,
+            betrag,
+            empfaenger,
+            bestaetigt_ausgeliefert: false,
+        };
+        let empf_vorher = k.zustand().account(&empfaenger).balance;
+        let inh_vorher = k.zustand().account(&inhaber).balance;
+
+        // Ueber dem Einzellimit: wirkungslos.
+        k.aufnehmen(sig(7, 0, Anweisung::SitzungAusgeben { vorhaben: zahlung(3_000) }));
+        let _ = k.baue_block();
+        assert_eq!(k.zustand().account(&empfaenger).balance, empf_vorher);
+
+        // Darunter: es fliesst, und zwar vom Konto des Inhabers.
+        k.aufnehmen(sig(7, 1, Anweisung::SitzungAusgeben { vorhaben: zahlung(1_500) }));
+        let _ = k.baue_block();
+        assert_eq!(k.zustand().account(&empfaenger).balance, empf_vorher + 1_500);
+        assert_eq!(k.zustand().account(&inhaber).balance, inh_vorher - 1_500);
+
+        // Der Agent kann nicht widerrufen, der Inhaber schon.
+        k.aufnehmen(sig(7, 2, Anweisung::SitzungWiderrufen { sitzung: id }));
+        let _ = k.baue_block();
+        assert!(!k.zustand().sitzung(&id).expect("da").zustand.widerrufen);
+
+        k.aufnehmen(sig(6, 1, Anweisung::SitzungWiderrufen { sitzung: id }));
+        let _ = k.baue_block();
+        assert!(k.zustand().sitzung(&id).expect("da").zustand.widerrufen);
+
+        // Und danach fliesst nichts mehr.
+        let nach_widerruf = k.zustand().account(&empfaenger).balance;
+        k.aufnehmen(sig(7, 3, Anweisung::SitzungAusgeben { vorhaben: zahlung(100) }));
+        let _ = k.baue_block();
+        assert_eq!(k.zustand().account(&empfaenger).balance, nach_widerruf);
     }
 
     /// **Der Zustand ändert sich, wenn Transaktionen wirken.**
@@ -574,10 +812,7 @@ mod tests {
     fn ein_wirksamer_burn_veraendert_die_zustandswurzel() {
         let mut k = Kette::probestand();
         let vorher = k.zustandswurzel();
-        k.aufnehmen(Transaction::Burn(BurnTx {
-            sender: probekonto(0),
-            amount: 5_000,
-        }));
+        k.aufnehmen(burn(0, 5_000));
         let _ = k.baue_block();
         assert_ne!(
             k.zustandswurzel(),

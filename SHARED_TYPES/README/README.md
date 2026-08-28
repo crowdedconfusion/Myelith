@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.8.0
+> **Version:** 0.9.0
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -49,6 +49,21 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.9.0 – 2026-08-28 (beide Währungen gelten)
+
+`Waehrung::durchgesetzt` und `Befund::WaehrungNichtDurchgesetzt` sind
+wieder verschwunden, und das ist die gute Nachricht: Sie standen da, weil
+es im Ledger keine MYL-Überweisung gab und **eine Grenze, die niemand
+durchsetzt, ablehnen muss statt durchzulassen**. Seit es die Überweisung
+gibt, wäre die Variante unerreichbarer Code, und unerreichbarer Code, der
+eine Zusicherung behauptet, ist genau das, was diese Wache verhindern
+sollte.
+
+Dazu das **Testprofil**: `opt-level = 2`, aber `debug-assertions` und
+`overflow-checks` bleiben an, und `tests/profil.rs` belegt das zur
+Laufzeit. ⚑ **`--release` wäre die naheliegende und falsche Antwort
+gewesen**, weil es die Überlaufprüfung abschaltet.
 
 ### v0.8.0 – 2026-08-28 (der Session-Kontrakt, und warum er keine Sprache ist)
 

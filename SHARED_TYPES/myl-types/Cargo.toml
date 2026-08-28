@@ -1,6 +1,6 @@
 [package]
 name = "myl-types"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Protokollweite Kern-Datentypen und Primitiven für Myelith (Referenzimplementierung von Whitepaper Anhang A.1): Hash-/Merkle-Primitiven, VRF- und BLS-Signatur-Schnittstellen, Segment/PoIBundle/InferenceCredit. Deterministische Borsh-Serialisierung, SHA-256 über das gesamte Protokoll."
@@ -21,3 +21,36 @@ serde_json = "1.0"
 [lib]
 name = "myl_types"
 path = "src/lib.rs"
+
+# Testprofil: optimiert, aber ohne eine einzige Pruefung weniger
+# (2026-08-28).
+#
+# ⚑ **Der Anlass war eine falsche Diagnose.** Die Testzahl wuchs auf
+# 1876, und die naheliegende Erklaerung fuer lange CI-Laeufe war "zu
+# viele Tests". Gemessen ist es umgekehrt: **1798 Tests brauchen 69
+# Sekunden, 23 Tests brauchen 319.** Die teuren sind die
+# Ende-zu-Ende-Laeufe durch die Ganzzahl-Inferenz, und die sind
+# rechengebunden, nicht wartend.
+#
+# **Ein rechengebundener Ganzzahl-Kern im unoptimierten Bau ist etwa
+# zwanzigmal langsamer als noetig.** `pod_e2e` fiel von 161,9 auf 8,7
+# Sekunden, `myl-pod` insgesamt von 256 auf 13, `integer-llm-runtime`
+# von 60,5 auf 2,8.
+#
+# ⚑ **`--release` waere die falsche Antwort gewesen**, denn es schaltet
+# `debug-assertions` und damit die Ueberlaufpruefung ab. Genau die
+# tragen hier etwas: Die dokumentierten Vorbedingungen des
+# Ganzzahlpfades stehen als `debug_assert!` (Fund 75), und ein
+# stillschweigend umlaufender `i32` waere in einem Konsenspfad das
+# Schlimmste, was passieren kann. Beide Zeilen unten sind deshalb keine
+# Redundanz, sondern der Punkt: **optimiert wird der Code, nicht die
+# Sorgfalt.**
+#
+# Belegt in `SHARED_TYPES/myl-types/tests/profil.rs`.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 2

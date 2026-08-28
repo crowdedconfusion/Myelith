@@ -21,3 +21,15 @@ serde_json = "1.0"
 sha2 = "0.10"
 
 [dev-dependencies]
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`
+# und `overflow-checks` bleiben an. ⚑ `--release` waere die falsche
+# Antwort, weil es beide abschaltet.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 2

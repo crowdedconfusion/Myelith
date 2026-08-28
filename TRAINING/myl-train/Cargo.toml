@@ -12,3 +12,15 @@ myl-types = { path = "../../SHARED_TYPES/myl-types" }
 [lib]
 name = "myl_train"
 path = "src/lib.rs"
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`
+# und `overflow-checks` bleiben an. ⚑ `--release` waere die falsche
+# Antwort, weil es beide abschaltet.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 2

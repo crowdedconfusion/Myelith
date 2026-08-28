@@ -67,7 +67,7 @@
 
 use borsh::BorshDeserialize;
 use myl_consensus::bft::Konsensnachricht;
-use myl_consensus::block::{Block, Transaction};
+use myl_consensus::block::{Block, Transaktion};
 use myl_net::{GossipTopic, PayloadValidator};
 
 use crate::validatorsatz::{Attesturteil, Validatorsatz};
@@ -125,7 +125,7 @@ impl PayloadValidator for ProtokollValidator {
     fn validate(&self, topic: GossipTopic, data: &[u8]) -> bool {
         match topic {
             GossipTopic::Blocks => liest_sich_vollstaendig_als::<Block>(data),
-            GossipTopic::Transactions => liest_sich_vollstaendig_als::<Transaction>(data),
+            GossipTopic::Transactions => liest_sich_vollstaendig_als::<Transaktion>(data),
             // ⚑ **A10: Latenz-Atteste werden geprüft.**
             //
             // Bis zum 2026-08-25 stand hier `_ => true`, und damit lief
@@ -166,7 +166,17 @@ impl PayloadValidator for ProtokollValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_consensus::block::{BurnTx, BlockHeader};
+    use myl_consensus::block::{Anweisung, BlockHeader};
+
+    fn burn(n: u8, betrag: u64) -> Transaktion {
+        Transaktion::signiere(
+            &Hash::sha256(b"myelith-testkette-genesis"),
+            &myl_types::bls::BlsSecretKey::key_gen(&[n; 32]).expect("Schlüssel"),
+            0,
+            Anweisung::Burn { betrag },
+        )
+        .expect("signieren")
+    }
     use myl_types::hash::Hash;
 
     fn beispielblock() -> Block {
@@ -179,10 +189,7 @@ mod tests {
         });
         // Ein Block mit Inhalt: Die Vektoren sind der Grund, warum der
         // Borsh-Parse hier mehr leistet als eine Längenprüfung (Fund 45).
-        b.txs.push(Transaction::Burn(BurnTx {
-            sender: myl_types::ids::Address::new([4u8; 32]),
-            amount: 1_000,
-        }));
+        b.txs.push(burn(4, 1_000));
         b
     }
 
@@ -212,10 +219,7 @@ mod tests {
 
     #[test]
     fn eine_transaktion_wird_nicht_als_block_gelesen() {
-        let tx = Transaction::Burn(BurnTx {
-            sender: myl_types::ids::Address::new([4u8; 32]),
-            amount: 100,
-        });
+        let tx = burn(4, 100);
         let daten = borsh::to_vec(&tx).unwrap();
         assert!(ProtokollValidator::default().validate(GossipTopic::Transactions, &daten));
         assert!(

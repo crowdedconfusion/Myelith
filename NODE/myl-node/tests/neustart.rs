@@ -46,14 +46,33 @@ fn arbeitsverzeichnis(marke: &str) -> PathBuf {
     p
 }
 
+
+/// Ein unterschriebener Burn, dessen Nummer aus dem Zustand kommt.
+///
+/// ⚑ **So, wie ein echter Client es täte** (2026-08-28). Eine feste
+/// Null ginge nur beim ersten Mal durch: Die Nummer eines Kontos wächst
+/// mit jeder angewandten Anweisung, und eine wiederholte wird verworfen.
+/// Der Zustand hier ist der nach dem letzten gebauten Block, und genau
+/// den sieht auch das Anwenden.
+fn burn(k: &Kette, konto: u8, betrag: u64) -> myl_consensus::block::Transaktion {
+    use myl_consensus::block::{Anweisung, Transaktion};
+    use myl_node::kette::{probekonto, probeschluessel};
+
+    let nonce = k.zustand().account(&probekonto(konto)).nonce;
+    Transaktion::signiere(
+        &Kette::startwert(),
+        &probeschluessel(konto),
+        nonce,
+        Anweisung::Burn { betrag },
+    )
+    .expect("signieren")
+}
+
 /// Baut eine Kette mit Speicher und `n` Blöcken voller Transaktionen.
 ///
 /// Gibt Höhe, letzten Hash und Zustandswurzel zurück, also genau das,
 /// was der Neustart wiederherstellen muss.
 fn kette_fuellen(pfad: &std::path::Path, n: u64) -> (u64, Hash, Hash) {
-    use myl_consensus::block::{BurnTx, Transaction};
-    use myl_node::kette::probekonto;
-
     let (speicher, anlauf) =
         Kettenspeicher::oeffnen(pfad, Kette::startwert()).expect("Speicher öffnen");
     assert!(anlauf.bloecke.is_empty(), "das Verzeichnis war nicht frisch");
@@ -63,10 +82,7 @@ fn kette_fuellen(pfad: &std::path::Path, n: u64) -> (u64, Hash, Hash) {
     for i in 0..n {
         // Echte Transaktionen, sonst bliebe der Zustand unverändert und
         // die übereinstimmende Wurzel belegte nichts.
-        k.aufnehmen(Transaction::Burn(BurnTx {
-            sender: probekonto((i % 8) as u8),
-            amount: 1_000 + i,
-        }));
+        k.aufnehmen(burn(&k, (i % 8) as u8, 1_000 + i));
         let _ = k.baue_block();
     }
     (k.hoehe(), k.letzter_hash(), k.zustandswurzel())
@@ -118,8 +134,6 @@ fn der_mempool_ueberlebt_den_neustart_bewusst_nicht() {
     // Gossip wieder. Sie aufzuheben hieße, nach einem Tag Stillstand
     // alte Transaktionen einzuspeisen, deren Absender längst andere
     // geschickt hat.
-    use myl_consensus::block::{BurnTx, Transaction};
-    use myl_node::kette::probekonto;
 
     let d = arbeitsverzeichnis("mempool");
     let p = d.join("kette.log");
@@ -127,16 +141,10 @@ fn der_mempool_ueberlebt_den_neustart_bewusst_nicht() {
         let (speicher, _) = Kettenspeicher::oeffnen(&p, Kette::startwert()).unwrap();
         let mut k = Kette::probestand();
         k.speicher_setzen(speicher);
-        k.aufnehmen(Transaction::Burn(BurnTx {
-            sender: probekonto(0),
-            amount: 5,
-        }));
+        k.aufnehmen(burn(&k, 0, 5));
         let _ = k.baue_block();
         // Diese hier landet in keinem Block mehr.
-        k.aufnehmen(Transaction::Burn(BurnTx {
-            sender: probekonto(1),
-            amount: 7,
-        }));
+        k.aufnehmen(burn(&k, 1, 7));
         assert_eq!(k.wartend(), 1);
     }
     let (k, _, _) = kette_nachspielen(&p);
@@ -152,8 +160,6 @@ fn der_mempool_ueberlebt_den_neustart_bewusst_nicht() {
 /// **vollständigen** Block weiterrechnen.
 #[test]
 fn ein_abbruch_mitten_im_schreiben_kostet_hoechstens_den_letzten_block() {
-    use myl_consensus::block::{BurnTx, Transaction};
-    use myl_node::kette::probekonto;
 
     let d = arbeitsverzeichnis("abbruch");
     let p = d.join("kette.log");
@@ -164,16 +170,10 @@ fn ein_abbruch_mitten_im_schreiben_kostet_hoechstens_den_letzten_block() {
     // Einen halben fünften Satz anhängen: Längenkopf plus halbe Nutzlast.
     let mut hilfs = Kette::probestand();
     for i in 0..4u64 {
-        hilfs.aufnehmen(Transaction::Burn(BurnTx {
-            sender: probekonto((i % 8) as u8),
-            amount: 1_000 + i,
-        }));
+        hilfs.aufnehmen(burn(&hilfs, (i % 8) as u8, 1_000 + i));
         let _ = hilfs.baue_block();
     }
-    hilfs.aufnehmen(Transaction::Burn(BurnTx {
-        sender: probekonto(4),
-        amount: 4_711,
-    }));
+    hilfs.aufnehmen(burn(&hilfs, 4, 4_711));
     let fuenfter = hilfs.baue_block();
     let nutz = borsh::to_vec(&fuenfter).unwrap();
     {
@@ -206,8 +206,6 @@ fn ein_abbruch_mitten_im_schreiben_kostet_hoechstens_den_letzten_block() {
 /// danach kam, und das fiele erst beim dritten Start auf.
 #[test]
 fn nach_einem_abbruch_waechst_die_kette_normal_weiter() {
-    use myl_consensus::block::{BurnTx, Transaction};
-    use myl_node::kette::probekonto;
 
     let d = arbeitsverzeichnis("weiter");
     let p = d.join("kette.log");
@@ -223,10 +221,7 @@ fn nach_einem_abbruch_waechst_die_kette_normal_weiter() {
         assert_eq!(uebernommen, 3);
         assert_eq!(abgeschnitten, 6);
         for i in 0..2u64 {
-            k.aufnehmen(Transaction::Burn(BurnTx {
-                sender: probekonto(5),
-                amount: 77 + i,
-            }));
+            k.aufnehmen(burn(&k, 5, 77 + i));
             let _ = k.baue_block();
         }
         assert_eq!(k.hoehe(), 5);

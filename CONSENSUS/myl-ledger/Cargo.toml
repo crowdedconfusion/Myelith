@@ -1,6 +1,6 @@
 [package]
 name = "myl-ledger"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.85"
 description = "L1-Ledger für Myelith (Whitepaper Anhang A.5): Kontenmodell und deterministische Zustandsübergänge (burn→mint_credits, apply_verdict, credit_spend). Reine Funktionen (State, Tx) → State, BTreeMap-Ordnung, Borsh-kanonisch — Voraussetzung für bitgleichen Replay über Nodes."
@@ -17,3 +17,15 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 borsh = "1.6"
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`
+# und `overflow-checks` bleiben an. ⚑ `--release` waere die falsche
+# Antwort, weil es beide abschaltet.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+opt-level = 2

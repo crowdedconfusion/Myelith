@@ -72,28 +72,6 @@ pub enum Waehrung {
     Myl,
 }
 
-impl Waehrung {
-    /// Setzt das Ledger diese Währung heute wirklich durch?
-    ///
-    /// ⚑ **Credits ja, MYL nein.** Für Credits gibt es einen
-    /// Ledger-Übergang (`credit_spend`); eine MYL-Überweisung existiert
-    /// im Ledger nicht. Der Kontrakt trägt die MYL-Grenzen trotzdem
-    /// schon, weil ein späteres Feld jede Kontraktadresse ändern würde.
-    ///
-    /// **Eine Grenze, die niemand durchsetzt, lehnt ab; sie lässt nicht
-    /// durch.** Ein Feld ohne Durchsetzung liest sich sonst als
-    /// Zusicherung, und genau so entstehen die Funde, die niemand
-    /// sucht.
-    ///
-    /// Ein `match` und keine Liste: Wer eine Währung hinzufügt, muss
-    /// hier entscheiden.
-    pub fn durchgesetzt(self) -> bool {
-        match self {
-            Self::Credits => true,
-            Self::Myl => false,
-        }
-    }
-}
 
 /// Höchstzahl der Sprossen einer Zeugenleiter.
 pub const MAX_ZEUGENSTUFEN: usize = 8;
@@ -442,16 +420,6 @@ pub enum Befund {
         /// Ab welchem Betrag.
         schwelle: u64,
     },
-    /// ⚑ Diese Währung ist im Ledger noch nicht durchgesetzt.
-    ///
-    /// Der Kontrakt trägt die MYL-Grenzen bereits, das Ledger kennt
-    /// aber noch keine MYL-Überweisung. **Eine Grenze, die niemand
-    /// durchsetzt, lehnt ab; sie lässt nicht durch.** Diese Variante
-    /// verschwindet, sobald der Übergang existiert.
-    WaehrungNichtDurchgesetzt {
-        /// Welche.
-        waehrung: Waehrung,
-    },
 }
 
 /// Was der Agent erfährt.
@@ -505,9 +473,6 @@ impl std::fmt::Display for Befund {
             Self::BestaetigungNoetig { schwelle } => {
                 write!(f, "ab {schwelle} nur mit bestätigter Auslieferung")
             }
-            Self::WaehrungNichtDurchgesetzt { waehrung } => {
-                write!(f, "{waehrung:?} ist im Ledger nicht durchgesetzt")
-            }
         }
     }
 }
@@ -534,9 +499,6 @@ pub fn pruefe(
     }
     if vorhaben.handelnder != kontrakt.agent {
         return Befund::FalscherHandelnder;
-    }
-    if !vorhaben.waehrung.durchgesetzt() {
-        return Befund::WaehrungNichtDurchgesetzt { waehrung: vorhaben.waehrung };
     }
     if zustand.widerrufen {
         return Befund::Widerrufen;
@@ -893,21 +855,32 @@ mod tests {
         );
     }
 
-    /// ⚑ MYL-Grenzen stehen im Kontrakt, das Ledger kennt aber keine
-    /// MYL-Überweisung. **Der Kontrakt lehnt ab, statt durchzulassen.**
-    /// Fällt dieser Test, weil `durchgesetzt` jetzt `true` liefert, ist
-    /// das der richtige Zeitpunkt, die Durchsetzung zu prüfen.
+    /// ⚑ Beide Währungen gelten, und sie haben **getrennte** Grenzen.
+    /// Bis zum 2026-08-28 wies der Kontrakt jedes MYL-Vorhaben ab, weil
+    /// es im Ledger keine Überweisung gab (Fund 83).
     #[test]
-    fn myl_ist_noch_nicht_durchgesetzt_und_wird_deshalb_abgelehnt() {
-        let k = kontrakt();
-        assert!(Waehrung::Credits.durchgesetzt());
-        assert!(!Waehrung::Myl.durchgesetzt());
+    fn myl_und_credits_haben_getrennte_grenzen() {
+        let k = kontrakt(); // Credits 1000/300/250, MYL 500/100/50
+        let z = Sitzungszustand::neu();
 
-        let v = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(&k, 10) };
+        // 200 in MYL liegt über dem dortigen Einzellimit von 100.
+        let v = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(&k, 200) };
         assert_eq!(
-            pruefe(&k, &Sitzungszustand::neu(), EpochId(7), &v),
-            Befund::WaehrungNichtDurchgesetzt { waehrung: Waehrung::Myl }
+            pruefe(&k, &z, EpochId(7), &v),
+            Befund::EinzellimitUeberschritten { limit: 100 }
         );
+        // Dieselben 200 gehen in Credits durch: Einzellimit 300, und
+        // die Schwelle von 250 ist nicht erreicht.
+        assert_eq!(pruefe(&k, &z, EpochId(7), &vorhaben(&k, 200)), Befund::Erlaubt);
+
+        // Und der Verbrauch zählt je Währung getrennt.
+        let verbraucht = Sitzungszustand { verbraucht_myl: 450, ..Sitzungszustand::neu() };
+        let klein = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(&k, 60) };
+        assert_eq!(
+            pruefe(&k, &verbraucht, EpochId(7), &klein),
+            Befund::BudgetErschoepft { rest: 50 }
+        );
+        assert_eq!(pruefe(&k, &verbraucht, EpochId(7), &vorhaben(&k, 60)), Befund::Erlaubt);
     }
 
     /// ⚑ **Der Fehlerkanal ist der Weg, über den die Grenzen sonst
@@ -927,7 +900,6 @@ mod tests {
             Befund::EinzellimitUeberschritten { limit: 300 },
             Befund::BudgetErschoepft { rest: 42 },
             Befund::BestaetigungNoetig { schwelle: 250 },
-            Befund::WaehrungNichtDurchgesetzt { waehrung: Waehrung::Myl },
         ];
         for b in alle {
             let erwartet = if b == Befund::Erlaubt {

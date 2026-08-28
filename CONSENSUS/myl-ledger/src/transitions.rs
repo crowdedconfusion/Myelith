@@ -35,8 +35,32 @@ pub enum TransitionError {
     SitzungExistiert,
     /// Der Kontrakt ist abgelaufen, bevor er eröffnet wurde.
     SitzungAbgelaufen,
-    /// Nur der Inhaber darf widerrufen, nicht der Agent.
+    /// Nur der Inhaber darf widerrufen oder eröffnen, nicht der Agent.
     NichtDerInhaber,
+    /// ⚑ Der Einreicher ist nicht der Agent des Vorhabens.
+    ///
+    /// `myl_types::sitzung::pruefe` prüft, ob der **im Vorhaben
+    /// genannte** Handelnde der Agent des Kontrakts ist. Wer das
+    /// Vorhaben eingereicht hat, weiß es nicht. Ohne diese zweite
+    /// Prüfung könnte jeder ein Vorhaben hinschreiben, in dem der echte
+    /// Agent als Handelnder steht, und unter fremdem Kontrakt zahlen.
+    NichtDerHandelnde,
+    /// ⚑ Eine Überweisung an sich selbst.
+    ///
+    /// Sie bewegt nichts und ist deshalb sinnlos, aber sie wird nicht
+    /// aus Ordnungsliebe abgewiesen: **Der naheliegende Weg, eine
+    /// Überweisung zu schreiben, ist „vom Absender abziehen, beim
+    /// Empfänger addieren", und bei gleichem Konto verdoppelt das den
+    /// Betrag**, wenn der Absenderstand vorher gelesen wurde. Ein
+    /// abgewiesener Sonderfall kann nicht falsch gerechnet werden.
+    SelbstUeberweisung,
+    /// Die Transaktionsnummer passt nicht zum Konto.
+    FalscheNonce {
+        /// Was das Konto erwartet.
+        erwartet: u64,
+        /// Was in der Transaktion stand.
+        hatte: u64,
+    },
     /// Der Kontrakt lässt dieses Vorhaben nicht zu (Whitepaper
     /// Kap. 8.2).
     ///
@@ -68,7 +92,14 @@ impl std::fmt::Display for TransitionError {
             Self::SitzungUnbekannt => write!(f, "keine Session unter dieser Adresse"),
             Self::SitzungExistiert => write!(f, "unter dieser Adresse steht schon eine Session"),
             Self::SitzungAbgelaufen => write!(f, "Kontrakt ist bereits abgelaufen"),
-            Self::NichtDerInhaber => write!(f, "nur der Inhaber darf widerrufen"),
+            Self::NichtDerInhaber => write!(f, "nur der Inhaber darf eröffnen und widerrufen"),
+            Self::NichtDerHandelnde => {
+                write!(f, "Einreicher ist nicht der Handelnde des Vorhabens")
+            }
+            Self::SelbstUeberweisung => write!(f, "Überweisung an das eigene Konto"),
+            Self::FalscheNonce { erwartet, hatte } => {
+                write!(f, "Transaktionsnummer {hatte}, erwartet {erwartet}")
+            }
             Self::KontraktVerbietet(b) => write!(f, "Session-Kontrakt: {b}"),
         }
     }
@@ -334,6 +365,78 @@ pub fn credit_spend(
     Ok(())
 }
 
+/// Überweist MYL-Kleinstbeträge von einem Konto auf ein anderes.
+///
+/// ⚑ **Bis zum 2026-08-28 gab es diesen Übergang nicht** (Fund 83),
+/// obwohl Whitepaper Kap. 8.2 ihn voraussetzt: Ein Session-Kontrakt
+/// begrenzt Zahlungen, und ohne Zahlung ist die Grenze gegenstandslos.
+///
+/// **Gestaktes MYL ist nicht verfügbar.** Nur `balance` wird bewegt;
+/// wer überweisen will, was er hinterlegt hat, muss es erst lösen.
+///
+/// **Die Überweisung an sich selbst wird abgewiesen**, siehe
+/// [`TransitionError::SelbstUeberweisung`].
+///
+/// **Erst prüfen, dann ändern.** Ein Überlauf auf der Empfängerseite
+/// wird vor jeder Buchung erkannt, sonst wäre beim Fehlschlag Geld
+/// abgezogen und nicht angekommen.
+pub fn transfer(
+    state: &mut LedgerState,
+    von: &Address,
+    nach: &Address,
+    betrag: u64,
+) -> Result<(), TransitionError> {
+    if betrag == 0 {
+        return Err(TransitionError::ZeroAmount);
+    }
+    if von == nach {
+        return Err(TransitionError::SelbstUeberweisung);
+    }
+
+    // Prüfphase.
+    let absender = state.account(von);
+    if absender.balance < betrag {
+        return Err(TransitionError::InsufficientBalance {
+            available: absender.balance,
+            required: betrag,
+        });
+    }
+    let empfaenger_neu = state
+        .account(nach)
+        .balance
+        .checked_add(betrag)
+        .ok_or(TransitionError::Overflow)?;
+
+    // Änderungsphase.
+    state.account_mut(von).balance -= betrag;
+    state.account_mut(nach).balance = empfaenger_neu;
+    Ok(())
+}
+
+/// Prüft und verbraucht die Transaktionsnummer eines Kontos.
+///
+/// ⚑ **Verbraucht wird sie auch dann, wenn die Anweisung danach
+/// scheitert.** Sonst wäre eine Transaktion, die an fehlender Deckung
+/// scheitert, unverändert gültig und beliebig oft einreichbar. Der
+/// Aufrufer ruft dies deshalb **vor** der Anweisung und wertet deren
+/// Ergebnis getrennt aus.
+///
+/// Nur der Kontoinhaber kann eine gültige Unterschrift leisten, also
+/// kann auch nur er die eigene Nummer verbrauchen.
+pub fn nonce_verbrauchen(
+    state: &mut LedgerState,
+    konto: &Address,
+    nonce: u64,
+) -> Result<(), TransitionError> {
+    let erwartet = state.account(konto).nonce;
+    if nonce != erwartet {
+        return Err(TransitionError::FalscheNonce { erwartet, hatte: nonce });
+    }
+    let neu = erwartet.checked_add(1).ok_or(TransitionError::Overflow)?;
+    state.account_mut(konto).nonce = neu;
+    Ok(())
+}
+
 /// Eröffnet eine Agenten-Session (Whitepaper Kap. 8.2).
 ///
 /// Der Kontrakt wird unter seiner eigenen Adresse abgelegt. **Er wird
@@ -347,10 +450,20 @@ pub fn credit_spend(
 ///
 /// **Ein bereits abgelaufener Kontrakt wird abgelehnt**, statt als
 /// unbrauchbarer Eintrag Zustand zu belegen.
+///
+/// ⚑ **`wer` ist der Einreicher, und er muss der Inhaber sein.** Ohne
+/// diese Prüfung eröffnete jeder eine Session, die ein fremdes Konto
+/// belastet: Der Kontrakt nennt den Inhaber selbst, und
+/// [`sitzung_ausgeben`] bucht bei ihm. Die Prüfung steht hier und nicht
+/// im Aufrufer, damit kein zweiter Aufrufer sie vergessen kann.
 pub fn sitzung_eroeffnen(
     state: &mut LedgerState,
+    wer: &Address,
     kontrakt: Sitzungskontrakt,
 ) -> Result<SitzungId, TransitionError> {
+    if kontrakt.inhaber != *wer {
+        return Err(TransitionError::NichtDerInhaber);
+    }
     let adresse = kontrakt.adresse();
     if state.sitzungen.contains_key(&adresse) {
         return Err(TransitionError::SitzungExistiert);
@@ -391,7 +504,7 @@ pub fn sitzung_widerrufen(
     Ok(())
 }
 
-/// Gibt unter einem Session-Kontrakt Inferenz-Credits aus
+/// Gibt unter einem Session-Kontrakt aus, in Credits oder in MYL
 /// (Whitepaper Kap. 8.2, Durchsetzung beim Ausführen).
 ///
 /// ⚑ **Das ist die Stelle, an der der Kontrakt etwas bedeutet.** Ein
@@ -402,13 +515,31 @@ pub fn sitzung_widerrufen(
 /// Agent ist ein Schlüssel mit einer Vollmacht, kein Kontoinhaber.
 ///
 /// **Erst prüfen, dann ändern**, und der Verbrauchszähler wächst erst,
-/// wenn die Credits wirklich geflossen sind: Ein Kontrakt, dessen
-/// Budget an einer fehlgeschlagenen Ausgabe schrumpfte, wäre über
-/// wiederholte Fehlschläge leerzuräumen.
-pub fn sitzung_credit_spend(
+/// wenn wirklich etwas geflossen ist: Ein Kontrakt, dessen Budget an
+/// einer fehlgeschlagenen Ausgabe schrumpfte, wäre über wiederholte
+/// Fehlschläge leerzuräumen.
+///
+/// ⚑ **Die beiden Währungen sind hier nicht symmetrisch, und das ist
+/// kein Versehen.** MYL wechselt den Besitzer: Der Empfänger aus dem
+/// Vorhaben bekommt sie gutgeschrieben. **Credits werden verbraucht und
+/// nicht übertragen** — sie sind ein Anrecht auf Inferenzarbeit, kein
+/// Zahlungsmittel, und `credit_spend` löscht sie ersatzlos. Die
+/// Empfängerliste gilt trotzdem für beide: Bei MYL sagt sie, wohin
+/// gezahlt werden darf, bei Credits, wessen Dienst bezogen werden darf.
+///
+/// ⚑ **`wer` ist der Einreicher, und er muss der Handelnde sein.**
+/// `pruefe` vergleicht den *im Vorhaben genannten* Handelnden mit dem
+/// Agenten des Kontrakts; wer das Vorhaben tatsächlich eingereicht hat,
+/// steht dort nicht. Ohne diesen Vergleich schriebe ein Fremder den
+/// echten Agenten ins Feld und zahlte unter dessen Kontrakt.
+pub fn sitzung_ausgeben(
     state: &mut LedgerState,
+    wer: &Address,
     vorhaben: &Vorhaben,
 ) -> Result<(), TransitionError> {
+    if vorhaben.handelnder != *wer {
+        return Err(TransitionError::NichtDerHandelnde);
+    }
     // Prüfphase.
     let (inhaber, befund, neu_verbraucht) = {
         let sitzung = state
@@ -418,7 +549,7 @@ pub fn sitzung_credit_spend(
         let befund = pruefe(&sitzung.kontrakt, &sitzung.zustand, state.epoch, vorhaben);
         let neu = sitzung
             .zustand
-            .verbraucht_credits
+            .verbraucht(vorhaben.waehrung)
             .checked_add(vorhaben.betrag)
             .ok_or(TransitionError::Overflow)?;
         (sitzung.kontrakt.inhaber, befund, neu)
@@ -426,19 +557,20 @@ pub fn sitzung_credit_spend(
     if !befund.erlaubt() {
         return Err(TransitionError::KontraktVerbietet(befund));
     }
-    debug_assert_eq!(
-        vorhaben.waehrung,
-        Waehrung::Credits,
-        "pruefe lässt heute nur Credits durch"
-    );
 
     // Änderungsphase.
-    credit_spend(state, &inhaber, vorhaben.betrag)?;
+    match vorhaben.waehrung {
+        Waehrung::Credits => credit_spend(state, &inhaber, vorhaben.betrag)?,
+        Waehrung::Myl => transfer(state, &inhaber, &vorhaben.empfaenger, vorhaben.betrag)?,
+    }
     let sitzung = state
         .sitzungen
         .get_mut(&vorhaben.sitzung)
-        .expect("in der Prüfphase war sie da, und credit_spend rührt sie nicht an");
-    sitzung.zustand.verbraucht_credits = neu_verbraucht;
+        .expect("in der Prüfphase war sie da, und keiner der Übergänge rührt sie an");
+    match vorhaben.waehrung {
+        Waehrung::Credits => sitzung.zustand.verbraucht_credits = neu_verbraucht,
+        Waehrung::Myl => sitzung.zustand.verbraucht_myl = neu_verbraucht,
+    }
     Ok(())
 }
 
@@ -891,14 +1023,14 @@ mod tests {
             vtfe: credits,
             expiry: EpochId(1_000),
         });
-        let id = sitzung_eroeffnen(&mut state, kontrakt()).expect("eröffnen");
+        let id = sitzung_eroeffnen(&mut state, &adresse(1), kontrakt()).expect("eröffnen");
         (state, id)
     }
 
     #[test]
     fn eine_session_bucht_vom_konto_des_inhabers() {
         let (mut state, id) = state_mit_sitzung(500);
-        sitzung_credit_spend(&mut state, &vorhaben(id, 200)).expect("erlaubt");
+        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 200)).expect("erlaubt");
 
         // Die Credits kommen vom Inhaber, nicht vom Agenten.
         assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 300);
@@ -910,7 +1042,7 @@ mod tests {
     fn eine_session_kann_nicht_zweimal_unter_derselben_adresse_stehen() {
         let (mut state, _) = state_mit_sitzung(500);
         assert_eq!(
-            sitzung_eroeffnen(&mut state, kontrakt()),
+            sitzung_eroeffnen(&mut state, &adresse(1), kontrakt()),
             Err(TransitionError::SitzungExistiert)
         );
     }
@@ -920,7 +1052,7 @@ mod tests {
         let mut state = LedgerState::genesis(1);
         state.epoch = EpochId(101);
         assert_eq!(
-            sitzung_eroeffnen(&mut state, kontrakt()),
+            sitzung_eroeffnen(&mut state, &adresse(1), kontrakt()),
             Err(TransitionError::SitzungAbgelaufen)
         );
         assert!(state.sitzungen.is_empty());
@@ -936,7 +1068,7 @@ mod tests {
 
         // Über dem Einzellimit.
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 301)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 301)),
             Err(TransitionError::KontraktVerbietet(
                 Befund::EinzellimitUeberschritten { limit: 300 }
             ))
@@ -944,14 +1076,47 @@ mod tests {
         // An einen Empfänger, der nicht gelistet ist.
         let woanders = Vorhaben { empfaenger: adresse(99), ..vorhaben(id, 100) };
         assert_eq!(
-            sitzung_credit_spend(&mut state, &woanders),
+            sitzung_ausgeben(&mut state, &adresse(2), &woanders),
             Err(TransitionError::KontraktVerbietet(Befund::EmpfaengerNichtGelistet))
         );
-        // Unter fremdem Schlüssel.
-        let fremd = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
+        // ⚑ Drei Wege, unter fremdem Namen zu handeln, und alle drei
+        // sind zu. Erstens: Der Agent reicht ein Vorhaben ein, das
+        // jemand anderen als Handelnden nennt.
+        let fremder_name = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
         assert_eq!(
-            sitzung_credit_spend(&mut state, &fremd),
+            sitzung_ausgeben(&mut state, &adresse(2), &fremder_name),
+            Err(TransitionError::NichtDerHandelnde)
+        );
+        // Zweitens, und das ist die Luecke, die der Einreicher-Vergleich
+        // schliesst: Ein Fremder schreibt den **echten** Agenten ins
+        // Feld. Der Kontrakt allein saehe daran nichts.
+        assert_eq!(
+            sitzung_ausgeben(&mut state, &adresse(3), &vorhaben(id, 100)),
+            Err(TransitionError::NichtDerHandelnde)
+        );
+        // Drittens: Einreicher und Feld stimmen ueberein, nur ist der
+        // Genannte nicht der Agent dieses Kontrakts.
+        let konsequent = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
+        assert_eq!(
+            sitzung_ausgeben(&mut state, &adresse(3), &konsequent),
             Err(TransitionError::KontraktVerbietet(Befund::FalscherHandelnder))
+        );
+
+        // Und der Inhaber kann keine Session eroeffnen, die ein fremdes
+        // Konto belastet.
+        let auf_fremde_rechnung = Sitzungskontrakt::neu(
+            adresse(1),
+            adresse(9),
+            grenzen(1_000, 300, u64::MAX),
+            myl_types::sitzung::Grenzen::gesperrt(),
+            vec![adresse(10)],
+            EpochId(0),
+            EpochId(100),
+        )
+        .expect("gueltig");
+        assert_eq!(
+            sitzung_eroeffnen(&mut state, &adresse(9), auf_fremde_rechnung),
+            Err(TransitionError::NichtDerInhaber)
         );
 
         // Und der Zustand ist durch all das unberührt geblieben.
@@ -961,15 +1126,15 @@ mod tests {
         // Das Budget ist nach vier vollen Vorgängen erschöpft, obwohl
         // das Konto noch reichlich Credits trägt.
         for _ in 0..3 {
-            sitzung_credit_spend(&mut state, &vorhaben(id, 300)).expect("erlaubt");
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 300)).expect("erlaubt");
         }
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 300)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 300)),
             Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 100 }))
         );
-        sitzung_credit_spend(&mut state, &vorhaben(id, 100)).expect("die letzten 100");
+        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 100)).expect("die letzten 100");
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 1)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 1)),
             Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 0 }))
         );
         assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 9_000);
@@ -992,12 +1157,12 @@ mod tests {
             EpochId(100),
         )
         .expect("gültig");
-        let id2 = sitzung_eroeffnen(&mut state, weit).expect("eröffnen");
+        let id2 = sitzung_eroeffnen(&mut state, &adresse(1), weit).expect("eröffnen");
         assert_ne!(id, id2);
 
         // Unter der alten Adresse gelten weiter die alten Grenzen.
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 5_000)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 5_000)),
             Err(TransitionError::KontraktVerbietet(
                 Befund::EinzellimitUeberschritten { limit: 300 }
             ))
@@ -1017,7 +1182,7 @@ mod tests {
         sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("Inhaber");
         sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("nochmal, und das ist kein Fehler");
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 10)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 10)),
             Err(TransitionError::KontraktVerbietet(Befund::Widerrufen))
         );
         assert_eq!(
@@ -1032,7 +1197,7 @@ mod tests {
     fn ein_erlaubtes_vorhaben_scheitert_trotzdem_an_leeren_credits() {
         let (mut state, id) = state_mit_sitzung(50);
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(id, 100)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 100)),
             Err(TransitionError::InsufficientCredits { available: 50, required: 100 })
         );
         // ⚑ Und das Budget ist dabei **nicht** geschrumpft: Sonst wäre
@@ -1044,20 +1209,135 @@ mod tests {
     fn eine_unbekannte_sitzung_zahlt_nicht() {
         let mut state = LedgerState::genesis(1);
         assert_eq!(
-            sitzung_credit_spend(&mut state, &vorhaben(SitzungId::new([9u8; 32]), 1)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(SitzungId::new([9u8; 32]), 1)),
             Err(TransitionError::SitzungUnbekannt)
         );
     }
 
+    // ---- Ueberweisung (Fund 83, seit 2026-08-28) ----
+
     #[test]
-    fn myl_wird_abgelehnt_solange_es_keinen_uebergang_gibt() {
-        let (mut state, id) = state_mit_sitzung(500);
-        let v = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(id, 10) };
+    fn eine_ueberweisung_bewegt_und_erzeugt_nichts() {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).balance = 1_000;
+        state.account_mut(&adresse(2)).balance = 5;
+
+        transfer(&mut state, &adresse(1), &adresse(2), 400).expect("gedeckt");
+        assert_eq!(state.account(&adresse(1)).balance, 600);
+        assert_eq!(state.account(&adresse(2)).balance, 405);
+
+        // Die Summe ist erhalten: Kein Uebergang praegt hier MYL.
+        let summe: u64 = state.accounts.values().map(|k| k.balance).sum();
+        assert_eq!(summe, 1_005);
+    }
+
+    /// ⚑ Der Sonderfall, der still Geld erzeugte, wenn man ihn nicht
+    /// abweist: erst lesen, dann beim Empfaenger addieren, dann beim
+    /// Absender schreiben. Bei gleichem Konto verdoppelt das.
+    #[test]
+    fn eine_ueberweisung_an_sich_selbst_wird_abgewiesen() {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).balance = 100;
         assert_eq!(
-            sitzung_credit_spend(&mut state, &v),
-            Err(TransitionError::KontraktVerbietet(Befund::WaehrungNichtDurchgesetzt {
-                waehrung: Waehrung::Myl
-            }))
+            transfer(&mut state, &adresse(1), &adresse(1), 40),
+            Err(TransitionError::SelbstUeberweisung)
+        );
+        assert_eq!(state.account(&adresse(1)).balance, 100);
+    }
+
+    #[test]
+    fn eine_ungedeckte_ueberweisung_aendert_nichts() {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).balance = 100;
+        state.account_mut(&adresse(1)).staked = 900; // gestaktes zaehlt nicht
+        assert_eq!(
+            transfer(&mut state, &adresse(1), &adresse(2), 500),
+            Err(TransitionError::InsufficientBalance { available: 100, required: 500 })
+        );
+        assert_eq!(state.account(&adresse(1)).balance, 100);
+        assert!(!state.accounts.contains_key(&adresse(2)));
+
+        assert_eq!(
+            transfer(&mut state, &adresse(1), &adresse(2), 0),
+            Err(TransitionError::ZeroAmount)
+        );
+    }
+
+    /// Der Ueberlauf wird **vor** jeder Buchung erkannt, sonst waere
+    /// beim Fehlschlag Geld abgezogen und nicht angekommen.
+    #[test]
+    fn ein_ueberlauf_beim_empfaenger_nimmt_nichts_weg() {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).balance = 10;
+        state.account_mut(&adresse(2)).balance = u64::MAX;
+        assert_eq!(
+            transfer(&mut state, &adresse(1), &adresse(2), 10),
+            Err(TransitionError::Overflow)
+        );
+        assert_eq!(state.account(&adresse(1)).balance, 10);
+        assert_eq!(state.account(&adresse(2)).balance, u64::MAX);
+    }
+
+    /// ⚑ Die Transaktionsnummer wird auch dann verbraucht, wenn die
+    /// Anweisung danach scheitert. Sonst waere eine ungedeckte
+    /// Ueberweisung unveraendert gueltig und beliebig oft einreichbar.
+    #[test]
+    fn die_nonce_geht_streng_der_reihe_nach() {
+        let mut state = LedgerState::genesis(1);
+        assert_eq!(state.account(&adresse(1)).nonce, 0);
+
+        assert_eq!(
+            nonce_verbrauchen(&mut state, &adresse(1), 1),
+            Err(TransitionError::FalscheNonce { erwartet: 0, hatte: 1 })
+        );
+        nonce_verbrauchen(&mut state, &adresse(1), 0).expect("die erste");
+        assert_eq!(state.account(&adresse(1)).nonce, 1);
+        assert_eq!(
+            nonce_verbrauchen(&mut state, &adresse(1), 0),
+            Err(TransitionError::FalscheNonce { erwartet: 1, hatte: 0 }),
+            "dieselbe Nummer darf nicht zweimal gelten"
+        );
+        nonce_verbrauchen(&mut state, &adresse(1), 1).expect("die zweite");
+        assert_eq!(state.account(&adresse(1)).nonce, 2);
+
+        // Konten zaehlen getrennt.
+        assert_eq!(state.account(&adresse(2)).nonce, 0);
+        nonce_verbrauchen(&mut state, &adresse(2), 0).expect("fremdes Konto faengt bei 0 an");
+    }
+
+    /// ⚑ Unter einem Kontrakt zahlt der Inhaber, und der Empfaenger
+    /// bekommt es wirklich gutgeschrieben. Bis zum 2026-08-28 wies der
+    /// Kontrakt jedes MYL-Vorhaben ab, weil es keine Ueberweisung gab.
+    #[test]
+    fn eine_session_zahlt_myl_an_den_gelisteten_empfaenger() {
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).balance = 10_000;
+        let k = Sitzungskontrakt::neu(
+            adresse(1),
+            adresse(2),
+            myl_types::sitzung::Grenzen::gesperrt(),
+            grenzen(1_000, 300, u64::MAX),
+            vec![adresse(10)],
+            EpochId(0),
+            EpochId(100),
+        )
+        .expect("gueltig");
+        let id = sitzung_eroeffnen(&mut state, &adresse(1), k).expect("eroeffnen");
+
+        let zahlung =
+            Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(id, 250) };
+        sitzung_ausgeben(&mut state, &adresse(2), &zahlung).expect("erlaubt");
+        assert_eq!(state.account(&adresse(1)).balance, 9_750);
+        assert_eq!(state.account(&adresse(10)).balance, 250);
+        assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_myl, 250);
+        assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_credits, 0);
+
+        // Credits sind unter diesem Kontrakt gesperrt.
+        assert_eq!(
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 1)),
+            Err(TransitionError::KontraktVerbietet(
+                Befund::EinzellimitUeberschritten { limit: 0 }
+            ))
         );
     }
 
@@ -1091,7 +1371,7 @@ mod tests {
         // Und der Verbrauch zählt mit.
         let mut nachher = mit.clone();
         let id = *nachher.sitzungen.keys().next().expect("eine");
-        sitzung_credit_spend(&mut nachher, &vorhaben(id, 10)).expect("erlaubt");
+        sitzung_ausgeben(&mut nachher, &adresse(2), &vorhaben(id, 10)).expect("erlaubt");
         assert_ne!(mit.commitment(), nachher.commitment());
     }
 }

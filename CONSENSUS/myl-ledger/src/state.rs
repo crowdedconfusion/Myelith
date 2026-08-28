@@ -85,6 +85,20 @@ pub struct Verstoss {
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct AccountState {
     pub balance: u64,
+    /// Zähler gegen Wiedereinspielung: die nächste gültige
+    /// Transaktionsnummer dieses Kontos.
+    ///
+    /// ⚑ **Ohne ihn ist jede unterschriebene Transaktion beliebig oft
+    /// gültig.** Wer eine Überweisung einmal im Netz sieht, kann
+    /// dieselben Bytes erneut einreichen, und sie sind weiterhin korrekt
+    /// unterschrieben. Der Zähler macht aus „diese Anweisung stammt von
+    /// mir" ein „diese Anweisung stammt von mir und gilt genau einmal".
+    ///
+    /// **Strenge Gleichheit, keine Lücken.** `tx.nonce == konto.nonce`
+    /// oder die Transaktion gilt nicht. Eine Fensterlogik erlaubte
+    /// Umordnung, und zwei Knoten mit verschiedener Reihenfolge kämen zu
+    /// verschiedenen Zuständen.
+    pub nonce: u64,
     pub staked: u64,
     pub credits: Vec<myl_types::InferenceCredit>,
     /// Wann dieses Konto geschlachtet wurde, je Epoche gezählt.
@@ -101,6 +115,7 @@ impl AccountState {
     pub fn empty() -> Self {
         Self {
             balance: 0,
+            nonce: 0,
             staked: 0,
             credits: Vec::new(),
             verstoesse: Vec::new(),

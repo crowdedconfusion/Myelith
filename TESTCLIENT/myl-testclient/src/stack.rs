@@ -29,7 +29,7 @@
 //! Diagnosewerkzeug.
 
 use myl_consensus::bft::{BftState, Commit, Propose, Vote};
-use myl_consensus::block::{Block, BurnTx, BlockHeader, Transaction};
+use myl_consensus::block::{Anweisung, Block, BlockHeader, Transaktion};
 use myl_consensus::signing::{commit_message, propose_message, vote_message};
 use myl_consensus::validator::{select_committee, ValidatorRegistry, VotingSet};
 use myl_consensus::{DoubleSignProof, SignedBlocksRegistry};
@@ -464,10 +464,26 @@ fn stufe_block() -> Stufe {
         state_root: Hash::sha256(b"state"),
     };
     let mut block = Block::new(meta);
-    block.add_transaction(Transaction::Burn(BurnTx {
-        sender: Address::new([1u8; 32]),
-        amount: 5_000_000,
-    }));
+    // ⚑ **Unterschrieben, seit es Unterschriften gibt** (2026-08-28).
+    // Eine Transaktion nennt ihren Absender nicht mehr als Feld; er
+    // folgt aus dem Schlüssel, mit dem sie unterschrieben wurde.
+    let schluessel = match myl_types::bls::BlsSecretKey::key_gen(&[1u8; 32]) {
+        Ok(s) => s,
+        Err(_) => return Stufe::fehler("block", "Schlüsselerzeugung schlug fehl"),
+    };
+    let tx = match Transaktion::signiere(
+        &Hash::sha256(b"myelith-testkette-genesis"),
+        &schluessel,
+        0,
+        Anweisung::Burn { betrag: 5_000_000 },
+    ) {
+        Ok(t) => t,
+        Err(_) => return Stufe::fehler("block", "Signieren schlug fehl"),
+    };
+    if tx.clone().pruefe(&Hash::sha256(b"myelith-testkette-genesis")).is_err() {
+        return Stufe::fehler("block", "die eigene Unterschrift wurde nicht anerkannt");
+    }
+    block.add_transaction(tx);
     let h1 = block.hash();
 
     // state_root muss in den Blockhash eingehen: sonst wäre eine

@@ -29,7 +29,7 @@ pub mod transitions;
 
 pub use state::{AccountState, LedgerState, Sitzung, Verstoss, SITZUNG_NACHFRIST, VERSTOSS_FENSTER};
 pub use transitions::{
-    apply_verdict, burn_to_credits, credit_spend, sitzung_aufraeumen, sitzung_credit_spend,
-    sitzung_eroeffnen, sitzung_widerrufen, SlashParams, TransitionError, Verdict, VerdictEffect,
+    apply_verdict, burn_to_credits, credit_spend, nonce_verbrauchen, sitzung_aufraeumen, sitzung_ausgeben,
+    sitzung_eroeffnen, sitzung_widerrufen, transfer, SlashParams, TransitionError, Verdict, VerdictEffect,
     VerdictOutcome,
 };

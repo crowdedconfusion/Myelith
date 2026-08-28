@@ -34,7 +34,8 @@ pub use bft::{
     BftState, Konsensnachricht, Propose, Vote, Commit, Round, RoundStatus, BftError, select_leader,
 };
 pub use block::{
-    epoche_fuer_hoehe, Block, BlockHeader, BurnTx, Transaction, BLOECKE_JE_EPOCHE,
+    epoche_fuer_hoehe, transaktionsbytes, Anweisung, Block, BlockHeader, GepruefteTransaktion,
+    Transaktion, TransaktionsFehler, BLOECKE_JE_EPOCHE, DST_TRANSAKTION,
 };
 // Die Protokolltypen des Blockinhalts kommen aus den kanonischen Crates
 // (Fund A8) — hier nur re-exportiert, nicht neu definiert.

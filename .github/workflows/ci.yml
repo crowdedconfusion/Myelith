@@ -201,8 +201,18 @@ jobs:
   #
   # **Nichts ist entfallen**, nur zusammengelegt. Clippy laeuft zuerst:
   # Eine Warnung soll melden, bevor Minuten in Tests gehen.
-  network-crates:
-    name: Clippy + Tests (Protokoll-Crates)
+  # ── Clippy und Tests laufen getrennt und damit gleichzeitig ──────
+  #
+  # ⚑ **Warum zwei Jobs (2026-08-28).** Bis heute liefen beide
+  # hintereinander in einem Job, und das kostet doppelt: `cargo clippy`
+  # baut mit `clippy-driver` als Compiler und legt **eigene**
+  # Fingerabdrücke an, `cargo test` baut danach alles noch einmal mit
+  # dem echten rustc. Die beiden teilen kein einziges Artefakt.
+  #
+  # Nacheinander ist die Wanduhr die **Summe**, nebeneinander das
+  # **Maximum**. Geprüft wird dasselbe wie vorher, Zeile für Zeile.
+  clippy-crates:
+    name: Clippy (alle Crates)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -228,6 +238,13 @@ jobs:
             TRAINING/myl-train
             NODE/myl-node
             TESTCLIENT/myl-testclient
+            # ⚑ Diese drei fehlten bis zum 2026-08-28, obwohl die
+            # Clippy-Schleife darunter sie seit jeher übersetzt: Sie
+            # bauten in jedem Lauf von vorn, und `kernels` sogar
+            # viermal, einmal je Feature-Flag.
+            INTEGER_LLM/kernels
+            INTEGER_LLM/runtime
+            INTEGER_LLM/pipeline
 
       # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
       # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
@@ -270,7 +287,40 @@ jobs:
             cargo clippy --all-targets --features "$feat" -- -D warnings
           done
 
-  # ── Kernels: Unit-Tests + SIMD/GPU Compile-Check ────────────────
+  # ── Tests der Protokoll-Crates ──────────────────────────────────
+  #
+  # **Ein Job und keine Matrix, und das ist gemessen.** Alle Crates
+  # bauen nach `target-shared` (siehe `.cargo/config.toml`), teilen sich
+  # also die übersetzten Abhängigkeiten. Eine Matrix über die Crates
+  # zerschnitte genau das: Jeder Zweig übersetzte `myl-types`, `blst`
+  # und den Rest noch einmal.
+  tests-crates:
+    name: Tests (Protokoll-Crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            SHARED_TYPES/myl-types
+            NETWORKING/myl-net
+            CONSENSUS/myl-ledger
+            CONSENSUS/myl-scheduler
+            CONSENSUS/myl-consensus
+            TOKENOMICS/myl-tokenomics
+            VERIFICATION/myl-verifier
+            GOVERNANCE/myl-governance
+            AGENT_LAYER/myl-agent
+            SIMULATION/myl-simulation
+            COMPUTE_PIPELINE/myl-pod
+            TRAINING/myl-train
+            NODE/myl-node
+            TESTCLIENT/myl-testclient
 
       - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types
@@ -321,8 +371,15 @@ jobs:
 
       # myl-pod: lib + adversariale Ebene. `pod_e2e.rs` und
       # `layer_granular.rs` bleiben draussen — sie fahren einen echten
-      # 4-Node-Pod gegen die INTEGER_LLM-Runtime (~2 min, braucht
-      # Artefakte, die hier nicht liegen).
+      # 4-Node-Pod gegen die INTEGER_LLM-Runtime und brauchen Artefakte,
+      # die hier nicht liegen.
+      #
+      # ⚑ **Der Grund ist ausschliesslich das fehlende Modell.** Bis zum
+      # 2026-08-28 stand hier zusaetzlich "~2 min", und das stimmte,
+      # solange die Tests unoptimiert liefen. Mit dem Testprofil sind es
+      # 8,7 Sekunden. **Laufzeit ist kein Argument mehr, sie aussen vor
+      # zu lassen**; sobald Artefakte in der CI liegen, gehoeren sie
+      # hinein.
       #
       # `tests/adversarial.rs` gehoert dagegen hierher und stand bis zum
       # 2026-08-24 faelschlich mit draussen: Vier seiner fuenf Tests
@@ -522,6 +579,14 @@ jobs:
         run: |
           python3 tests/audit/test_no_float.py
           python3 tests/audit/test_scales.py
+
+      # ⚑ Bewacht eine Zeile in siebzehn `Cargo.toml`: Tests bauen
+      # optimiert, aber `debug-assertions` und `overflow-checks` bleiben
+      # an. Wer die CI mit `--release` beschleunigt, schaltet die
+      # Ueberlaufpruefung ab, und das faellt sonst niemandem auf.
+      - name: Audit — Testprofil
+        working-directory: INTEGER_LLM
+        run: python3 tests/audit/test_profile.py
 
       # ⚑ **Diese sechs liefen bis zum 2026-08-25 in keinem Job.**
       #

@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.17.1
+> **Version:** 0.17.2
 > **Datum:** 2026-08-28
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -507,6 +507,13 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.17.2 – 2026-08-28 (Stufe 7 unterschreibt)
+
+Der Blockdurchlauf legt keine nackte Transaktion mehr in den Block: Er
+unterschreibt sie und prüft die eigene Unterschrift nach. **Kein neuer
+Prüfschritt, sondern derselbe an einem Typ, der jetzt einen Absender
+kennt.**
 
 ### v0.17.1 – 2026-08-28 (der Gesamtwert ändert sich, ohne dass hier eine Zeile anders ist)
 

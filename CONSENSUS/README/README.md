@@ -14,12 +14,12 @@
 > Akzeptanz-Testmatrix über 21 simulierte Validatoren läuft;
 > **Phase 4 ✅ vollständig** (4.1 PoI-Bündel-Einreichung,
 > 4.2 Epochenabschluss, 4.3 DA-Schicht).
-> ⚑ **Phase 1 ist seit dem 2026-08-28 nicht mehr vollständig:**
-> Session-Kontrakte stehen jetzt im Ledger, und dabei fiel auf, dass es
-> **keine MYL-Überweisung von Konto zu Konto gibt** — Kap. 8.2 setzt sie
-> voraus.
-> **361 Tests grün** (244 `myl-consensus`, 68 `myl-scheduler`,
-> 49 `myl-ledger`; die Zeile führte `myl-consensus` bis heute mit 240).
+> ⚑ **Phase 1 hatte am 2026-08-28 zwei Lücken und hat jetzt keine
+> mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
+> unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
+> Konto.
+> **368 Tests grün** (246 `myl-consensus`, 68 `myl-scheduler`,
+> 54 `myl-ledger`).
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -107,6 +107,69 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.19.0 (`myl-consensus` 0.16.0, `myl-ledger` 0.5.0) – 2026-08-28 (eine Transaktion hat jetzt einen Absender)
+
+### ⚑ Fund 85: Eine Transaktion trug keine Unterschrift
+
+`Transaction::Burn(BurnTx { sender, amount })` nannte den Absender als
+**Feld**, und nichts verglich ihn mit dem, der die Transaktion
+eingereicht hatte. Jeder konnte im Namen jedes Kontos anweisen.
+
+**Warum es niemandem auffiel:** Es gab genau eine Anweisung, und die
+*zerstört* Geld. Ein fremder Burn ist Sachbeschädigung, kein Diebstahl,
+und ein Testnetz ohne Wert merkt den Unterschied nicht. ⚑ **Eine
+Überweisung darauf zu setzen, hätte daraus Diebstahl gemacht**, und zwar
+still: Der Code hätte sich nicht geändert, nur die Anweisung daneben.
+
+**Jetzt:** `Transaktion { absender, nonce, anweisung, signatur }`. Der
+Absender ist der **öffentliche Schlüssel**, das belastete Konto folgt
+daraus als `SHA-256`. Es gibt kein Absenderfeld mehr, das sich abweichend
+füllen ließe.
+
+**Die Kennung der Kette steht in den unterschriebenen Bytes und nicht in
+der Transaktion.** Eine Transaktion für Kette A scheitert damit auf Kette
+B an der Prüfung, ohne dass 32 Bytes durch jedes Netz wandern. Ohne die
+Bindung wäre jede Testnetz-Überweisung auf dem Hauptnetz gültig.
+
+**Eine Nummer je Konto gegen Wiedereinspielung**, streng aufsteigend ohne
+Lücken. Eine Fensterlogik erlaubte Umordnung, und zwei Knoten mit
+verschiedener Reihenfolge kämen zu verschiedenen Zuständen. ⚑ **Sie wird
+auch dann verbraucht, wenn die Anweisung danach scheitert** — sonst wäre
+eine ungedeckte Überweisung unverändert gültig und beliebig oft
+einreichbar.
+
+### Wo die Unterschrift geprüft wird, und warum nicht woanders
+
+**Beim Anwenden, nicht bei der Aufnahme in den Mempool.** Ein Block kommt
+über Gossip und sieht den Mempool nie; läge die Prüfung dort, könnte ein
+Leader eine unsignierte Anweisung in einen Block schreiben, und die
+ehrlichen Knoten wendeten sie an. Erzeuger und Übernehmer durchlaufen
+dieselbe Funktion und überspringen deshalb dasselbe.
+
+### Die Überweisung (Fund 83)
+
+`transfer` bewegt nur `balance`, nicht gestaktes MYL. ⚑ **Die Überweisung
+an sich selbst wird abgewiesen**, und nicht aus Ordnungsliebe: Der
+naheliegende Weg, eine Überweisung zu schreiben, ist „vom Absender
+abziehen, beim Empfänger addieren", und bei gleichem Konto verdoppelt das
+den Betrag, wenn der Absenderstand vorher gelesen wurde. **Ein
+abgewiesener Sonderfall kann nicht falsch gerechnet werden.**
+
+### ⚑ Und zwei Löcher, die erst beim Verdrahten sichtbar wurden
+
+Nichts band `kontrakt.inhaber` an den, der die Eröffnung einreicht, und
+nichts band `vorhaben.handelnder` an den, der die Ausgabe einreicht.
+`pruefe` vergleicht den *im Vorhaben genannten* Handelnden mit dem
+Agenten des Kontrakts; wer ihn wirklich geschickt hat, steht dort nicht.
+**Ein Fremder hätte den echten Agenten ins Feld geschrieben und unter
+dessen Kontrakt gezahlt.**
+
+Beide Prüfungen stehen jetzt **im Übergang** und nicht im Aufrufer, damit
+kein zweiter Aufrufer sie vergessen kann. Ein Test führt alle drei Wege
+vor, auf denen jemand unter fremdem Namen handeln wollte.
+
+**19 neue Tests**, `myl-ledger` 54 und `myl-consensus` 246.
 
 ### v0.18.0 (`myl-ledger` 0.4.0) – 2026-08-28 (der Kontrakt wird durchgesetzt)
 

@@ -33,6 +33,9 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use myl_ledger::transitions::Verdict;
+use myl_types::bls::{BlsPublicKey, BlsSignature};
+use myl_types::ids::SitzungId;
+use myl_types::sitzung::{Sitzungskontrakt, Vorhaben};
 use myl_types::challenge::Challenge;
 use myl_types::core_types::PoIBundle;
 use myl_types::hash::Hash;
@@ -113,24 +116,157 @@ pub struct BlockHeader {
     pub state_root: Hash,
 }
 
-/// Eine Burn-Transaktion (MYL → Credits).
+/// Trennzeichen für die Transaktionsunterschrift.
+pub const DST_TRANSAKTION: &[u8] = b"MYELITH_TRANSAKTION_v1";
+
+/// Was eine Transaktion anweist.
+///
+/// ⚑ **Kein Absenderfeld.** Wer die Anweisung erteilt, steht in
+/// [`Transaktion::absender`] und wird aus dem Schlüssel abgeleitet, mit
+/// dem unterschrieben wurde. Ein zusätzliches Feld „Absender" ließe sich
+/// abweichend füllen, und dann unterschriebe A für B.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct BurnTx {
-    /// Absender-Adresse.
-    ///
-    /// `Address`, nicht `MinerId`: Der Ledger führt Konten unter
-    /// Adressen (`Address = SHA-256(komprimierter BLS-Public-Key)`),
-    /// und wer MYL verbrennt, muss kein Miner sein.
-    pub sender: Address,
-    /// Betrag in MYL-Kleinstbeträgen.
-    pub amount: u64,
+pub enum Anweisung {
+    /// MYL verbrennen und dafür Inferenz-Credits erhalten (Kap. 5).
+    Burn {
+        /// Betrag in MYL-Kleinstbeträgen.
+        betrag: u64,
+    },
+    /// MYL an ein anderes Konto überweisen.
+    Ueberweisung {
+        /// Empfängerkonto.
+        nach: Address,
+        /// Betrag in MYL-Kleinstbeträgen.
+        betrag: u64,
+    },
+    /// Einen Session-Kontrakt eröffnen (Kap. 8.2).
+    SitzungEroeffnen {
+        /// Die Grenzen.
+        kontrakt: Sitzungskontrakt,
+    },
+    /// Eine Session vorzeitig beenden. Nur der Inhaber.
+    SitzungWiderrufen {
+        /// Welche.
+        sitzung: SitzungId,
+    },
+    /// Unter einer Session ausgeben. Nur der Agent.
+    SitzungAusgeben {
+        /// Was.
+        vorhaben: Vorhaben,
+    },
 }
 
-/// Transaktionstypen im Block.
+/// Die Bytes, über die der Absender unterschreibt.
+///
+/// ⚑ **Die Kennung der Kette steht mit darin und nicht in der
+/// Transaktion.** Eine Transaktion, die für Kette A unterschrieben
+/// wurde, scheitert damit auf Kette B an der Prüfung, ohne dass 32
+/// zusätzliche Bytes durch jedes Netz wandern. Ohne diese Bindung wäre
+/// jede Testnetz-Überweisung auf dem Hauptnetz gültig.
+///
+/// **Und die Nummer steht mit darin**, sonst wäre dieselbe Unterschrift
+/// beliebig oft einlösbar.
+pub fn transaktionsbytes(
+    netz: &Hash,
+    absender: &BlsPublicKey,
+    nonce: u64,
+    anweisung: &Anweisung,
+) -> Vec<u8> {
+    let kodiert = borsh::to_vec(anweisung).expect("Anweisung ist stets serialisierbar");
+    let mut msg = Vec::with_capacity(DST_TRANSAKTION.len() + 32 + 48 + 8 + kodiert.len());
+    msg.extend_from_slice(DST_TRANSAKTION);
+    msg.extend_from_slice(netz.as_bytes());
+    msg.extend_from_slice(&absender.0);
+    msg.extend_from_slice(&nonce.to_le_bytes());
+    msg.extend_from_slice(&kodiert);
+    msg
+}
+
+/// Warum eine Transaktion nicht gilt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransaktionsFehler {
+    /// Die Unterschrift passt nicht zu Schlüssel, Kette, Nummer oder
+    /// Anweisung.
+    SignaturStimmtNicht,
+    /// Der öffentliche Schlüssel ist kein gültiger Gruppenpunkt.
+    SchluesselUngueltig,
+}
+
+impl std::fmt::Display for TransaktionsFehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignaturStimmtNicht => write!(f, "Unterschrift stimmt nicht"),
+            Self::SchluesselUngueltig => write!(f, "Schlüssel ist kein gültiger Gruppenpunkt"),
+        }
+    }
+}
+
+impl std::error::Error for TransaktionsFehler {}
+
+/// Eine unterschriebene Anweisung an das Ledger.
+///
+/// ⚑ **Bis zum 2026-08-28 trug eine Transaktion keine Unterschrift**
+/// (Fund 85). Es gab nur `Burn`, und ein fremder Burn zerstört nur das
+/// Geld des Opfers, statt es zu nehmen; das machte die Lücke unauffällig
+/// und nicht harmlos. **Mit einer Überweisung wäre daraus Diebstahl
+/// geworden:** Jeder hätte jedes Konto leeren können, indem er die
+/// Anweisung einfach hinschreibt.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub enum Transaction {
-    /// Burn-Transaktion (MYL → Credits).
-    Burn(BurnTx),
+pub struct Transaktion {
+    /// Wer anweist, als öffentlicher Schlüssel.
+    pub absender: BlsPublicKey,
+    /// Fortlaufende Nummer dieses Kontos, gegen Wiedereinspielung.
+    pub nonce: u64,
+    /// Was getan werden soll.
+    pub anweisung: Anweisung,
+    /// Unterschrift über [`transaktionsbytes`].
+    pub signatur: BlsSignature,
+}
+
+impl Transaktion {
+    /// Das Konto, das belastet wird: `SHA-256` über den Schlüssel.
+    ///
+    /// **Abgeleitet und nicht angegeben** — siehe [`Anweisung`].
+    pub fn absender_adresse(&self) -> Address {
+        Address::new(Hash::sha256(&self.absender.0).0)
+    }
+
+    /// Unterschreibt eine Anweisung.
+    pub fn signiere(
+        netz: &Hash,
+        schluessel: &myl_types::bls::BlsSecretKey,
+        nonce: u64,
+        anweisung: Anweisung,
+    ) -> Result<Self, myl_types::bls::BlsError> {
+        let absender = schluessel.public_key()?;
+        let signatur = schluessel.sign(&transaktionsbytes(netz, &absender, nonce, &anweisung))?;
+        Ok(Self { absender, nonce, anweisung, signatur })
+    }
+
+    /// Prüft die Unterschrift gegen diese Kette.
+    pub fn pruefe(self, netz: &Hash) -> Result<GepruefteTransaktion, TransaktionsFehler> {
+        let bytes = transaktionsbytes(netz, &self.absender, self.nonce, &self.anweisung);
+        if !self.absender.verify(&bytes, &self.signatur) {
+            return Err(TransaktionsFehler::SignaturStimmtNicht);
+        }
+        Ok(GepruefteTransaktion(self))
+    }
+}
+
+/// Eine Transaktion, deren Unterschrift geprüft wurde.
+///
+/// ⚑ **Es gibt keinen anderen Weg hierher als [`Transaktion::pruefe`].**
+/// Dasselbe Muster wie bei der Gateway-Attestierung: Eine ungeprüfte
+/// Transaktion sieht aus wie eine geprüfte, und ein Aufrufer, der es
+/// vergisst, merkt nichts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GepruefteTransaktion(Transaktion);
+
+impl GepruefteTransaktion {
+    /// Die zugrunde liegende Transaktion.
+    pub fn inhalt(&self) -> &Transaktion {
+        &self.0
+    }
 }
 
 /// Ein Block im Myelith-Netzwerk.
@@ -138,8 +274,8 @@ pub enum Transaction {
 pub struct Block {
     /// Epochen-Metadaten.
     pub header: BlockHeader,
-    /// Transaktionen.
-    pub txs: Vec<Transaction>,
+    /// Transaktionen, jede mit Unterschrift und Nummer.
+    pub txs: Vec<Transaktion>,
     /// PoI-Bündel (Anhang A.1 — je Epoche und Pod eines).
     pub poi_bundles: Vec<PoIBundle>,
     /// Challenges (Anhang A.4).
@@ -162,7 +298,7 @@ impl Block {
     }
 
     /// Fügt eine Transaktion hinzu.
-    pub fn add_transaction(&mut self, tx: Transaction) {
+    pub fn add_transaction(&mut self, tx: Transaktion) {
         self.txs.push(tx);
     }
 
@@ -283,13 +419,63 @@ mod tests {
         assert_eq!(block.total_entries(), 0);
     }
 
+    fn netz() -> Hash {
+        Hash::sha256(b"Testkette")
+    }
+
+    fn schluessel(n: u8) -> myl_types::bls::BlsSecretKey {
+        myl_types::bls::BlsSecretKey::key_gen(&[n; 32]).expect("Schlüsselerzeugung")
+    }
+
+    fn burn(n: u8, betrag: u64) -> Transaktion {
+        Transaktion::signiere(&netz(), &schluessel(n), 0, Anweisung::Burn { betrag })
+            .expect("signieren")
+    }
+
+    #[test]
+    fn eine_unterschrift_bindet_kette_nummer_und_anweisung() {
+        let tx = burn(1, 1_000);
+        assert!(tx.clone().pruefe(&netz()).is_ok());
+
+        // Fremde Kette.
+        assert_eq!(
+            tx.clone().pruefe(&Hash::sha256(b"andere Kette")),
+            Err(TransaktionsFehler::SignaturStimmtNicht)
+        );
+        // Andere Nummer.
+        let mut umnummeriert = tx.clone();
+        umnummeriert.nonce = 1;
+        assert_eq!(
+            umnummeriert.pruefe(&netz()),
+            Err(TransaktionsFehler::SignaturStimmtNicht)
+        );
+        // Anderer Betrag.
+        let mut erhoeht = tx.clone();
+        erhoeht.anweisung = Anweisung::Burn { betrag: 2_000 };
+        assert_eq!(erhoeht.pruefe(&netz()), Err(TransaktionsFehler::SignaturStimmtNicht));
+        // Fremder Schlüssel davorgesetzt.
+        let mut untergeschoben = tx.clone();
+        untergeschoben.absender = schluessel(2).public_key().expect("Schlüssel");
+        assert_eq!(
+            untergeschoben.pruefe(&netz()),
+            Err(TransaktionsFehler::SignaturStimmtNicht)
+        );
+    }
+
+    /// ⚑ Die Adresse wird aus dem Schlüssel gerechnet und steht nicht
+    /// daneben. Sonst unterschriebe A und belastete B.
+    #[test]
+    fn die_adresse_folgt_aus_dem_schluessel() {
+        let tx = burn(7, 1);
+        let pk = schluessel(7).public_key().expect("Schlüssel");
+        assert_eq!(tx.absender_adresse(), Address::new(Hash::sha256(&pk.0).0));
+        assert_ne!(tx.absender_adresse(), burn(8, 1).absender_adresse());
+    }
+
     #[test]
     fn block_nimmt_kanonische_typen_auf() {
         let mut block = Block::new(test_meta());
-        block.add_transaction(Transaction::Burn(BurnTx {
-            sender: Address::new([5u8; 32]),
-            amount: 1000,
-        }));
+        block.add_transaction(burn(1, 1_000));
         block.add_poi_bundle(test_bundle());
         block.add_challenge(test_challenge());
         block.add_verdict(test_verdict());

@@ -1068,16 +1068,31 @@ impl Knoten {
     /// leer, und dann sagte die Übereinstimmung der Zustandswurzeln
     /// nichts: Ein leerer Zustand ist überall gleich.
     pub async fn sende_transaktion(&mut self) -> bool {
-        use myl_consensus::block::{BurnTx, Transaction};
+        use myl_consensus::block::{Anweisung, Transaktion};
 
         // Ein **ausgestattetes** Testkonto, über den Knotennamen
         // gewählt. Ein beliebiger Absender hätte kein Guthaben, der
         // Burn scheiterte still, und der Zustand bewegte sich nie:
         // Dann belegte die Übereinstimmung der Wurzeln nichts.
-        let tx = Transaction::Burn(BurnTx {
-            sender: crate::kette::konto_fuer(&self.konfig.name),
-            amount: 1_000 + self.testverkehr_zaehler * 100,
-        });
+        //
+        // ⚑ **Die Nummer zählt hoch und wird mit unterschrieben**
+        // (2026-08-28). Ohne sie wäre jede dieser Transaktionen ein
+        // Wiedereinspielung ihrer Vorgängerin und würde beim Anwenden
+        // verworfen; der Zustand bewegte sich wieder nicht, und der
+        // Testverkehr belegte wieder nichts.
+        let schluessel = crate::kette::schluessel_fuer(&self.konfig.name);
+        let anweisung = Anweisung::Burn {
+            betrag: 1_000 + self.testverkehr_zaehler * 100,
+        };
+        let tx = match Transaktion::signiere(
+            &crate::kette::Kette::startwert(),
+            &schluessel,
+            self.testverkehr_zaehler,
+            anweisung,
+        ) {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
         let daten = match borsh::to_vec(&tx) {
             Ok(d) => d,
             Err(_) => return false,

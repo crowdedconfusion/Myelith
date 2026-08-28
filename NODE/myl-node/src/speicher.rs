@@ -383,8 +383,7 @@ impl Kettenspeicher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use myl_consensus::block::{BurnTx, BlockHeader, Transaction};
-    use myl_types::ids::Address;
+    use myl_consensus::block::{Anweisung, BlockHeader, Transaktion};
 
     fn tempdir(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!(
@@ -412,10 +411,15 @@ mod tests {
             timestamp_ms: 1_700_000_000_000 + hoehe,
             state_root: Hash::sha256(b"zustand"),
         });
-        b.txs.push(Transaction::Burn(BurnTx {
-            sender: Address::new([hoehe as u8; 32]),
-            amount: 1_000 + hoehe,
-        }));
+        b.txs.push(
+            Transaktion::signiere(
+                &Hash::sha256(b"myelith-testkette-genesis"),
+                &myl_types::bls::BlsSecretKey::key_gen(&[hoehe as u8; 32]).expect("Schlüssel"),
+                0,
+                Anweisung::Burn { betrag: 1_000 + hoehe },
+            )
+            .expect("signieren"),
+        );
         b
     }
 
