@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.5.0
-> **Datum:** 2026-08-26
+> **Version:** 0.6.0
+> **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.6, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -48,6 +48,97 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.6.0 – 2026-08-28 (⚑ Fund 77: Die Merkle-Wurzel bestimmt jetzt die Blattfolge)
+
+⚑ **Änderung am Konsensvertrag: jede Merkle-Wurzel ist eine andere.**
+Der Baum füllte eine Ebene mit ungerader Knotenzahl auf, indem er den
+letzten Knoten mit sich selbst paarte, im Bitcoin-Stil, und erbte damit
+den Fehler des Vorbilds (CVE-2012-2459): Die Abbildung von Blattfolgen
+auf Wurzeln war **nicht injektiv**.
+
+Gemessen, und die Kollisionsfamilie ist größer als der bekannte
+Einzelfall:
+
+| Blattzahl | kollidierte mit |
+|---|---|
+| 3, 5, 7, 9, … (ungerade ab 3) | derselben Folge plus wiederholtem letzten Blatt |
+| 6, 14, 22, … (`n ≡ 2 mod 4`, ab 6) | derselben Folge plus den letzten **zwei** Blättern |
+| 1, 2, 4, 8, … | nichts davon |
+
+**Die Wurzel bindet jetzt die Blattzahl:**
+`SHA-256(0x02 || u64_le(n) || innere Wurzel)`. Der innere Aufbau samt
+Duplikationsregel ist unverändert geblieben.
+
+**Der Beweis in einem Satz:** Aus gleicher Wurzel folgt gleiches Urbild,
+also gleiche Blattzahl und gleiche innere Wurzel; bei fester Blattzahl
+liegt die Baumform fest, und über die Domain-Separation bestimmt jeder
+Knoten seine beiden Kinder eindeutig.
+
+**Warum diese Behebung und nicht eine andere.** Drei Wege standen offen:
+die Blattzahl binden, beim Auffüllen einen Fremdwert paaren, oder die
+ungerade Ebene unverändert hochziehen. Der dritte wirkt am sparsamsten,
+weil er kein zusätzliches Feld braucht, ⚑ **hat den Bedarf aber nur
+verdeckt**: Beweise bekommen dort je nach Index verschiedene Längen, und
+ein Prüfer kann die Ebenen nicht ablaufen, ohne die Blattzahl zu kennen.
+Der gewählte Weg ist der einzige, dessen Argument in einen Satz passt,
+und er lässt den inneren Aufbau unberührt.
+
+**`MerkleProof` führt `leaf_count` mit.** ⚑ Der Wert muss aus keiner
+vertrauenswürdigen Quelle stammen: Er geht in die Wurzelberechnung ein,
+eine falsche Zahl ergibt eine andere Wurzel, und der Vergleich
+scheitert. Ein Angreifer kann darüber nicht lügen, sondern nur
+scheitern. Belegt in `eine_gefaelschte_blattzahl_im_beweis_scheitert`
+über sechs erfundene Blattzahlen.
+
+**Für die Verwender ändert sich kein Code.** Die Blattzahl steckt in der
+Wurzel, nicht in einer zusätzlichen Angabe der Aufrufer. `PoIBundle`
+braucht deshalb kein Feld für die Segmentzahl, obwohl genau dessen
+Fehlen den Fund scharf gemacht hätte: Eine Aggregatsignatur über
+`segments_root` bindet die Zahl seither mit. Kein einziges der sechzehn
+Crates musste angepasst werden.
+
+**Was sich ändert, sind Werte:**
+
+- **Alle vier eingefrorenen Prüfvektoren** (`conformance/vectors/merkle.json`)
+  sind neu erzeugt, und **ein fünfter ist dazugekommen**:
+  `four_leaves_last_repeated`. Er ist der einzige, den eine Umsetzung im
+  Bitcoin-Stil nicht trifft, denn ohne die Bindung trüge er dieselbe
+  Wurzel wie `three_leaves`. Wer nach diesen Vektoren implementiert und
+  die Blattzahl vergisst, fällt hier durch und nur hier. Die Prüfung
+  vergleicht zusätzlich beide Wurzeln miteinander, denn die Aussage
+  steht **zwischen** zwei Vektoren und in keinem einzelnen.
+- **Der Gesamtwert des Protokoll-Durchlaufs im Testclient** ändert sich
+  von `8c74519a11dceae5` auf `d02dcacb6aa37026`. Gemessen, nicht
+  angenommen: Mit der alten Konstruktion liefert derselbe Lauf weiterhin
+  `8c74519a11dceae5`, und geändert hat sich allein die Krypto-Stufe
+  (`d2347febaedfebe9` auf `504713ed640fe164`).
+
+**Warum jetzt und nicht später.** Die Behebung verschiebt jede
+bestehende Wurzel. Heute entsteht jede Wurzel im System zur Laufzeit
+neu, es gibt keinen Genesis-Block und keine gespeicherte Kette;
+betroffen waren fünf Prüfvektoren und ein Fingerabdruck. θ_v, Artefakte
+und Modelle sind nicht betroffen, denn θ_v ist über `theta_v_hash`
+gebunden und läuft durch keinen Merkle-Baum. Nach dem Genesis-Block wäre
+dieselbe Änderung eine Kettenmigration gewesen.
+
+⚑ **Was daran über den Fund hinaus lehrreich ist.** Die
+Duplikationsregel **war getestet**, und die Domain-Separation ist sauber
+und mit dem richtigen Argument begründet (`0x00` für Blätter, `0x01` für
+Knoten, gegen Second-Preimage). Geprüft wurde, dass die Regel tut, was
+sie soll. Nicht geprüft wurde, was daraus **folgt**. Der neue Test fährt
+deshalb die Nachbarschaft jeder Blattzahl von 1 bis 12 ab, statt einen
+Einzelfall zu behaupten, und daneben steht die Gegenprobe
+`ohne_die_blattzahl_waeren_die_wurzeln_gleich`: Sie hält fest, dass die
+inneren Wurzeln weiterhin zusammenfallen und allein das Präfix sie
+trennt. Ohne sie hinge die Behebung an einer Behauptung, denn ein grüner
+Injektivitätstest bewiese nicht, dass die Bindung die Ursache ist.
+
+**Dieselbe Überlegung stand schon an anderer Stelle im Projekt:**
+`myl-governance::modell::Modellmanifest::wurzel` setzt vor jedes Feld
+ein Längenpräfix, damit `("ab", "c")` und `("a", "bc")` nicht dieselben
+Bytes ergeben. Der Merkle-Baum ist älter als diese Einsicht und hat sie
+jetzt nachgeholt.
 
 ### v0.5.0 – 2026-08-28 (⚑ Fund 74: `Hash` bekommt eine Ordnung)
 

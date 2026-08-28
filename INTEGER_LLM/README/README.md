@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.21.0 (θ_v 0.17.0; kernels 0.23.0, runtime 0.22.0, pipeline 0.14.0)
-> **Datum:** 2026-08-27
+> **Version:** 0.22.0 (θ_v 0.17.0; kernels 0.24.0, runtime 0.22.0, pipeline 0.14.0)
+> **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -422,6 +422,95 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.22.0 (kernels 0.24.0) – 2026-08-28 (Fund 75: die Schiebeweiten hatten Grenzen, und sie standen nirgends)
+
+**Kein Fehler, sondern ein Vertrag, den niemand aufgeschrieben hatte.**
+Die Rundungs- und Reskalierungsfunktionen in `fixed_point.rs` sind nicht
+für jede Schiebeweite total: `rshift_round` rechnet `(1 << shift) - 1`,
+und dieser Ausdruck läuft über, sobald `1 << shift` das Vorzeichenbit
+trifft. Die Grenzen liegen bei 30, 62 und 126 Bit je nach Typ, für
+`rescale` bei einem Abstand von −31 bis 30. Keine davon stand irgendwo,
+keine wurde geprüft.
+
+⚑ **Der Fehlerfall ist im ausgelieferten Bauprofil still.** Im
+Debug-Bau bricht die Überlaufprüfung laut ab. Im Release-Bau gibt es sie
+nicht: `rshift_round(1000, 32)` liefert dort **1001 statt 0**, weil Rust
+die Schiebeweite auf fünf Bit maskiert und die Rundung anschließend
+aufaddiert. Ein falscher Wert im Ganzzahlpfad ist ein Konsensbruch, und
+er fällt nirgends auf.
+
+⚑ **Der schlimmste Fall bricht in keinem der beiden Bauprofile ab.**
+`sqrt_q(i32::MAX, 33)` liefert `0`. Der Linksschieber lässt die oberen
+Bits fallen, ohne dass die Überlaufprüfung anspringt, denn sie prüft die
+Schiebe*weite*, nicht den Wert. Zwischen `frac_bits` 33 und 63 liegt ein
+Bereich, in dem eine Wurzelfunktion still Null zurückgibt.
+
+**Kein Aufrufer verletzte eine der Grenzen.** Die im Projekt
+vorkommenden `frac_bits` liegen zwischen 3 und 16, und alle 121
+Kernel-Tests sowie die 55 Runtime-Tests laufen mit den neuen Prüfungen
+unverändert durch, einschließlich des Konformitätslaufs gegen ein echtes
+Artefakt. Deshalb steht hier auch keine Verhaltensänderung: Die
+Prüfungen sind `debug_assert!` und im Release-Bau nicht vorhanden, die
+Ausgabe bleibt bitgleich.
+
+**Zwei Funktionen hatten weder Test noch Aufrufer.** `sqrt_q` und
+`rsqrt_q` in `integer_math.rs` werden von nichts im Repositorium
+gerufen; das Modul hatte **null Tests**. Im Betrieb genutzt werden
+`fixed_point::inv_sqrt_q15` und `isqrt_round`, es gab also drei
+Ganzzahlwurzeln in einem Crate, von denen zwei tot waren. Entfernt
+werden sie nicht, das Löschen öffentlicher Schnittstellen ist eine
+Entscheidung; sie bekommen Vorbedingung, Prüfung und Test, solange sie
+öffentlich sind.
+
+⚑ **Ein Modulkopf versprach mehr, als der Code hielt.** `mlp.rs` sagt,
+große Beträge „saturieren deterministisch am LUT-Rand". Gesättigt wird
+aber erst **in** `lut_lookup`; davor steht ein ungesichertes
+`g_dom as i16`, das abschneidet statt zu sättigen. Aus einem sehr großen
+positiven Gate-Wert würde damit ein negativer Index, der mitten in der
+Tabelle landet und völlig gültig aussieht. Es trägt heute, weil die
+kalibrierten `gate_proj`-Skalen über alle vier Modelle zwischen 7 und 13
+liegen und `silu.input_frac_bits` bei 6, der Reskalierer also immer
+verkleinert.
+
+⚑ **Die erste Fassung der Prüfung dafür war zu streng, und die
+Bestandstests haben sie gefangen.** Geprüft wurde
+`gate_out_frac >= silu_in_frac`. Das ist **hinreichend, nicht
+notwendig**: Ein kleiner Gate-Wert mit mäßigem Linksschieber passt
+ebenso in `i16`, und genau so arbeiten die synthetischen
+Prüfvorrichtungen des Laders (`gate_out_frac` 4 gegen `silu_in_frac` 6).
+Zwei Ladertests fielen sofort durch, obwohl an ihnen nichts falsch ist.
+Geprüft wird jetzt die **notwendige** Bedingung, nämlich der Wert
+selbst: der reskalierte Gate-Wert muss in `i16` liegen. Eine zu enge
+Prüfung erzeugt Druck, sie wegzunehmen, statt den Fehler zu finden, und
+ist damit dieselbe Falle wie ein Test, der ein Literal statt der Regel
+prüft.
+
+⚑ **Beim Schreiben der Gegenprobe fiel der Rest davon auf: Sättigen auf
+`i16` rettet nicht.** Der Wert wird danach noch um den LUT-Offset
+verschoben, und `32767 + 256` verlässt `i16` erneut. Damit ist auch der
+Schutz in `backward.rs` (`clamp_i16_sat`, mit der ausdrücklichen
+Begründung, der Index dürfe nicht wrappen) unvollständig. Die einzige
+richtige Sättigung ist die **in die LUT-Domäne**, auf
+`[-offset, len − 1 − offset]`. Wer das je behebt, behebt es an beiden
+Stellen; ein `clamp` im Rechenpfad müsste in allen vier Backends gleich
+eingebaut werden, sonst bricht die Bitgleichheit.
+
+⚑ **Fund 78 nebenbei, in der Pipeline:** Zwei Testfunktionen in
+`manifest.rs` teilten sich denselben festen Temp-Ordner
+(`myelith-pipeline-tests`, ohne Prozesskennung) und löschten ihn beim
+Betreten. Zwei gleichzeitige Testläufe räumen einander damit ab. Der
+Rest des Projekts hängt `std::process::id()` an; hier fehlte es.
+Behoben, zusammen mit neun gleichartigen Stellen im Testclient.
+
+**Neu: 20 Tests** (9 in `fixed_point.rs`, 9 in `integer_math.rs`, 2 in
+`mlp.rs`). Je Grenze zwei, und der Aufbau ist Absicht: einer zeigt, dass
+der letzte zulässige Wert durchgeht, der andere, dass der erste
+unzulässige abbricht. Nur eine Richtung zu prüfen hieße, eine zu enge
+Schranke nicht zu bemerken. Dazu prüft
+`rshift_round_rundet_zur_geraden_zahl_auch_negativ` die Rundungsregel
+über den Bereich −600 bis 600 für acht Schiebeweiten gegen eine
+unabhängig in `i64` gerechnete Referenz, statt an vier getippten Paaren.
 
 ### v0.21.0 (kernels 0.23.0, runtime 0.22.0) – 2026-08-27 (Die Konformitätsprüfung wird eine Bibliothek)
 

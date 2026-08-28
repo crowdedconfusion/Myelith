@@ -740,7 +740,7 @@ mod tests {
     use super::*;
 
     fn tempdir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("myl-testclient-stack-{}", name));
+        let d = std::env::temp_dir().join(format!("myl-testclient-stack-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }

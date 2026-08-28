@@ -86,6 +86,33 @@ fn generate_merkle_vectors(output_dir: &Path) {
     let proof3 = tree3.proof(1).unwrap();
     vectors.push(merkle_vector_json("three_leaves", &leaves3, &tree3, &proof3, 1));
 
+    // ⚑ Vier Blätter, das letzte wiederholt (Fund 77). Dieser Vektor
+    // steht hier, weil er der einzige ist, den eine Umsetzung im
+    // Bitcoin-Stil **nicht** trifft: Ohne die Bindung der Blattzahl
+    // hätte er dieselbe Wurzel wie `three_leaves`. Wer nach diesen
+    // Vektoren implementiert und die Blattzahl vergisst, fällt hier
+    // durch und nur hier.
+    let leaves4 = vec![
+        b"leaf-0".as_slice(),
+        b"leaf-1".as_slice(),
+        b"leaf-2".as_slice(),
+        b"leaf-2".as_slice(),
+    ];
+    let tree4 = MerkleTree::new(&leaves4).unwrap();
+    let proof4 = tree4.proof(3).unwrap();
+    assert_ne!(
+        tree3.root(),
+        tree4.root(),
+        "Fund 77: three_leaves und four_leaves_last_repeated muessen sich unterscheiden"
+    );
+    vectors.push(merkle_vector_json(
+        "four_leaves_last_repeated",
+        &leaves4,
+        &tree4,
+        &proof4,
+        3,
+    ));
+
     // Acht Blätter (vollständiger Binärbaum)
     let leaves8: Vec<Vec<u8>> = (0..8).map(|i| format!("leaf-{}", i).into_bytes()).collect();
     let leaves8_refs: Vec<&[u8]> = leaves8.iter().map(|v| v.as_slice()).collect();
@@ -116,9 +143,10 @@ fn merkle_vector_json(
         .collect();
 
     format!(
-        r#"{{"name":"{}","leaves":[{}],"root":"{}","proof_index":{},"proof_siblings":[{}]}}"#,
+        r#"{{"name":"{}","leaves":[{}],"leaf_count":{},"root":"{}","proof_index":{},"proof_siblings":[{}]}}"#,
         name,
         leaves_json.join(","),
+        proof.leaf_count,
         tree.root().to_hex(),
         leaf_index,
         siblings_json.join(",")

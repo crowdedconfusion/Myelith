@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.17.0
-> **Datum:** 2026-08-27
+> **Version:** 0.17.1
+> **Datum:** 2026-08-28
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
 > Fremdmaschinen-Automatik, 4.1 der Konformitätslauf als fünfte Stufe,
@@ -507,6 +507,47 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.17.1 – 2026-08-28 (der Gesamtwert ändert sich, ohne dass hier eine Zeile anders ist)
+
+⚑ **Der Gesamtwert des Protokoll-Durchlaufs geht von `8c74519a11dceae5`
+auf `d02dcacb6aa37026`, und diesmal liegt die Ursache vollständig
+außerhalb dieses Crates.** `myl-types` v0.6.0 bindet die Blattzahl in
+die Merkle-Wurzel (Fund 77), und die erste Stufe des Durchlaufs baut
+einen Merkle-Baum über vier Blätter. Kein Testclient-Code ist geändert.
+
+**Belegt statt angenommen:** Mit der alten `merkle.rs` liefert derselbe
+Lauf auf derselben Maschine weiterhin `8c74519a11dceae5`; geändert hat
+sich allein die Krypto-Stufe, von `d2347febaedfebe9` auf
+`504713ed640fe164`. Die übrigen neun Stufenwerte sind gleich geblieben.
+
+**Wer Protokolle über diese Fassung hinweg vergleicht, vergleicht zwei
+Codestände**, und `vergleich` meldet das als Befund. Das ist dasselbe
+Verhalten wie bei v0.17.0 und aus demselben Grund richtig.
+
+⚑ **Und es ist der Beleg dafür, wofür dieser Wert da ist.** Eine
+Änderung an einer Konsens-Primitive in einem anderen Crate wird hier
+sichtbar, ohne dass jemand daran gedacht hätte, sie hier einzutragen.
+Ein Fingerabdruck, der nur die eigene Komponente abdeckt, hätte
+geschwiegen.
+
+⚑ **Fund 78, aufgefallen beim Absichern dieser Fassung: Neun
+Test-Hilfsfunktionen bauten feste Temp-Pfade.** `tempdir()` setzte
+`$TMPDIR/myl-testclient-<name>` zusammen, ohne Prozesskennung, und
+löschte das Verzeichnis beim Betreten. **Zwei gleichzeitige Testläufe
+räumen einander damit ab**, und das Ergebnis sind rote Tests ohne
+Codefehler. Genau das ist hier passiert: neun Fehlschläge, keiner davon
+echt.
+
+**Der Rest des Projekts machte es längst richtig.** `myl-node`,
+`myl-net` und die INTEGER_LLM-Runtime hängen `std::process::id()` an;
+nur `netz.rs` tat es hier, die übrigen neun nicht. Es war also keine
+unbekannte Regel, sondern eine ungleich angewandte.
+
+**Behoben an allen neun Stellen, mit Gegenprobe:** zwei gleichzeitige
+Läufe derselben Suite, beide 265/265. Ohne die Behebung fallen dabei
+neun Tests. **Ein Fehlschlag ohne Fehler ist teurer als er aussieht**,
+denn er lehrt, rote Tests zu deuten statt ihnen zu glauben.
 
 ### v0.17.0 – 2026-08-27 (der Protokoll-Durchlauf prüft die Slashing-Staffelung)
 

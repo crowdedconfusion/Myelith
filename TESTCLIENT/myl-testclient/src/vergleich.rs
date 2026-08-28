@@ -890,7 +890,7 @@ mod tests {
     use crate::logging::{Event, LogZiel, RunLog};
 
     fn tempdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("myl-testclient-vergleich-{}", name));
+        let d = std::env::temp_dir().join(format!("myl-testclient-vergleich-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&d);
         d
     }

@@ -24,6 +24,54 @@ use crate::linear::{linear_w8a16, linear_w8a16_pc};
 /// Offset `silu_lut_offset` = -input_min der spec): Gate-Werte werden vor
 /// dem Lookup in diese Domäne reskaliert; große Betragswerte saturieren
 /// deterministisch am LUT-Rand.
+///
+/// ⚑ **Fund 75: Der letzte Satz gilt unter einer Vorbedingung, die bis
+/// zum 2026-08-28 nirgends stand.** Saturiert wird erst **in**
+/// [`crate::integer_math::lut_lookup`]. Davor steht hier ein
+/// ungesichertes `g_dom as i16`, und ein `i32`, der nicht in `i16`
+/// passt, wird davon **abgeschnitten statt gesättigt** — aus einem zu
+/// großen positiven Gate-Wert wird dann ein negativer Index, und die
+/// LUT liefert deterministisch den falschen Wert statt deterministisch
+/// den Randwert.
+///
+/// **Die Vorbedingung ist eine Aussage über den Wert, nicht über die
+/// Skalen: `g_dom` muss in `i16` passen.** Geprüft wird deshalb der
+/// Wert.
+///
+/// ⚑ **Der erste Anlauf prüfte `gate_out_frac >= silu_in_frac`, und das
+/// war falsch.** Die Bedingung ist **hinreichend**, nicht notwendig:
+/// Nur dann verkleinert der Reskalierer garantiert. Ein kleiner
+/// Gate-Wert mit mäßigem Linksschieber passt aber ebenso, und genau so
+/// arbeiten die synthetischen Prüfvorrichtungen des Laders
+/// (`gate_out_frac` 4 gegen `silu_in_frac` 6). Sie fielen sofort durch,
+/// obwohl an ihnen nichts falsch ist. **Eine zu enge Prüfung erzeugt
+/// Druck, sie wegzunehmen, statt den Fehler zu finden** — dieselbe
+/// Falle wie ein Test, der ein Literal statt der Regel prüft.
+///
+/// **Beide Bedingungen sind trotzdem wissenswert:**
+///
+/// - *notwendig und hinreichend:* `g_dom` liegt in `i16`. Das wird
+///   geprüft.
+/// - *hinreichend, und das, was die Kalibrierung liefert:*
+///   `gate_out_frac >= silu_in_frac`. Über alle vier Modelle liegen die
+///   `gate_proj`-Skalen zwischen 7 und 13, `silu.input_frac_bits` bei 6.
+///   Solange das so bleibt, kann der Wert den Bereich gar nicht
+///   verlassen, denn `*g` ist schon ein `i16` und der Reskalierer
+///   verkleinert.
+///
+/// ⚑ **Dieselbe Stelle ist in `backward.rs` anders gelöst**, und dort
+/// steht die Begründung dabei: `silu_backward` sättigt den Eingang
+/// ausdrücklich mit `clamp_i16_sat`, „der LUT-Index darf nicht
+/// wrappen". Zwei Lesarten derselben Frage im selben Crate, von denen
+/// eine geschützt ist und eine nicht.
+///
+/// **Warum hier trotzdem nur geprüft und nicht geklemmt wird:** Ein
+/// `clamp` an dieser Stelle liefe je Element in der innersten Schleife
+/// und müsste in **allen vier Backends** gleich eingebaut werden
+/// (`reference`, `simd`, `cuda`, `rocm`), sonst bricht die
+/// Bitgleichheit. Das ist eine Entscheidung über den Rechenpfad und
+/// kein Nebenbei-Fix. Die Prüfung hält die Annahme fest, bis sie
+/// getroffen ist.
 #[allow(clippy::too_many_arguments)]
 pub fn mlp_int(
     x: &[i16],
@@ -54,6 +102,13 @@ pub fn mlp_int(
         // Gate in die feste LUT-Domäne reskalieren, Lookup, dann Produkt mit
         // up auf die kalibrierte down-Eingangsskala bringen.
         let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
+        debug_assert!(
+            g_dom >= i16::MIN as i32 && g_dom <= i16::MAX as i32,
+            "mlp_int: reskalierter Gate-Wert {} verlaesst i16 und wuerde abgeschnitten statt gesaettigt (Fund 75); gate_out_frac {}, silu_in_frac {}",
+            g_dom,
+            gate_out_frac,
+            silu_in_frac
+        );
         let activated = lut_lookup(g_dom as i16, silu_lut, 0, silu_lut_offset);
         let prod = (activated as i64) * (*u as i64);
         h.push(clamp_i16_from_i64(rescale_i64(
@@ -118,5 +173,78 @@ mod tests {
             6, 6, 6, 6, 1, 256, 6, &[6, 6],
         );
         assert_eq!(out, out2);
+    }
+
+    /// ⚑ Gegenprobe zu Fund 75: Die Prüfung fängt genau den Fall,
+    /// gegen den sie geschrieben ist.
+    ///
+    /// **Nicht eine ungünstige Skalenrelation reicht dafür, sondern ein
+    /// Wert, der `i16` wirklich verlässt.** Ein früherer Entwurf dieses
+    /// Tests setzte nur `gate_out_frac` unter `silu_in_frac` und prüfte
+    /// damit eine hinreichende statt der notwendigen Bedingung; die
+    /// Prüfvorrichtungen des Laders fielen dadurch zu Unrecht durch.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "verlaesst i16")]
+    fn ein_gate_wert_ausserhalb_von_i16_bricht_ab() {
+        // Gewichte am Rand und ein Linksschieber um 5 Bit: der
+        // Zwischenwert wird groß genug, um i16 zu verlassen.
+        let x = vec![32_767i16, 32_767];
+        let w: Vec<i8> = vec![127, 127, 127, 127];
+        let lut = spec_silu_lut();
+        let _ = mlp_int(
+            &x, &w, &w, &w, 2, 2,
+            &[0, 0], &[6, 6], &[6, 6],
+            &lut,
+            6, 1, 6, 6, 6, 256, 6, &[6, 6],
+        );
+    }
+
+    /// ⚑ Und das ist, was ohne die Prüfung geschähe, in zwei Stufen.
+    ///
+    /// **Stufe 1, der Cast:** Aus einem sehr großen **positiven**
+    /// Gate-Wert wird ein **negativer** Zwischenwert, und der landet als
+    /// völlig anderer, aber vollkommen gültig aussehender Index in der
+    /// Tabelle. Er stürzt nicht ab und fällt in keinem Test auf.
+    ///
+    /// ⚑ **Stufe 2, und die ist beim Schreiben dieses Tests
+    /// aufgefallen: Sättigen auf `i16` rettet nicht.** Der Wert wird
+    /// danach noch um `silu_lut_offset` verschoben, und `32767 + 256`
+    /// verlässt `i16` erneut. Die einzige richtige Sättigung ist die
+    /// **in die LUT-Domäne**, also auf `[-offset, len-1-offset]`.
+    ///
+    /// **Damit ist auch der Schutz in `backward.rs` unvollständig:**
+    /// `clamp_i16_sat` sättigt dort auf `i16`, und der Offset kommt
+    /// danach. Wer den Fall je behebt, behebt ihn an beiden Stellen und
+    /// in der LUT-Domäne, nicht in `i16`.
+    #[test]
+    fn der_ungesicherte_cast_macht_aus_gross_positiv_klein_negativ() {
+        // Ein Gate-Wert am oberen i16-Rand, Domäne von frac 1 auf frac 6.
+        let g_dom = crate::fixed_point::rescale(32_767, 1, 6);
+        assert_eq!(g_dom, 32_767 << 5, "der Reskalierer vergrößert wie erwartet");
+
+        // Stufe 1: der Cast, wie er im Kernel steht.
+        let abgeschnitten = g_dom as i16;
+        assert_eq!(abgeschnitten, -32, "aus +1 048 544 wird -32");
+
+        // Mit dem Offset ergibt das einen Index mitten in der Tabelle,
+        // statt am oberen Rand, wo er hingehörte.
+        let index_falsch = (abgeschnitten as i32 + 256).clamp(0, 511);
+        assert_eq!(index_falsch, 224);
+
+        // Stufe 2: Sättigen auf i16 hilft nicht, die Addition danach
+        // verlässt den Typ erneut. In i32 gerechnet ist zu sehen, wohin
+        // sie liefe.
+        let gesaettigt_i16 = crate::fixed_point::clamp_i16(g_dom);
+        assert_eq!(gesaettigt_i16, 32_767);
+        assert!(
+            gesaettigt_i16 as i32 + 256 > i16::MAX as i32,
+            "32767 + 256 passt nicht mehr in i16"
+        );
+
+        // Richtig ist die Sättigung in der LUT-Domäne.
+        let index_richtig = (g_dom + 256).clamp(0, 511);
+        assert_eq!(index_richtig, 511, "gesättigt gehörte er an den oberen Rand");
+        assert_ne!(index_falsch, index_richtig);
     }
 }

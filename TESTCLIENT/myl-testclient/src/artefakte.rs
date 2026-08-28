@@ -1668,7 +1668,7 @@ mod loeschen_tests {
     use super::*;
 
     fn tempdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("myl-testclient-loeschen-{}", name));
+        let d = std::env::temp_dir().join(format!("myl-testclient-loeschen-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&d);
         d
     }
@@ -1764,7 +1764,7 @@ mod loeschen_tests {
     /// abzufangen, ist der Zweck des Digests.
     #[test]
     fn ein_veraendertes_artefakt_ergibt_einen_anderen_digest() {
-        let dir = std::env::temp_dir().join("myl-testclient-anker-negativ");
+        let dir = std::env::temp_dir().join(format!("myl-testclient-anker-negativ-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("Verzeichnis");
         for name in ANKER {

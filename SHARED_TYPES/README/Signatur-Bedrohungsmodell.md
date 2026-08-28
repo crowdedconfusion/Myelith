@@ -1,6 +1,6 @@
 # Bedrohungsmodell je Signaturverwendung
 
-**Stand:** 2026-08-23
+**Stand:** 2026-08-28
 **Anlass:** Kritikpunkt K5 aus dem Review vom 2026-08-18
 
 > „Dass `myl-types` gegen die RFC-9381-Testvektoren stimmt, ist geprüft.
@@ -99,6 +99,12 @@ Scheduler-Zuteilung, nicht eine vom Koordinator mitgelieferte Liste.
 Sonst bestimmte der Angreifer, gegen welche Schlüssel geprüft wird.
 
 **Doppel-Sperre je `(Epoche, Pod)`:** Ein Bündel gilt einmal.
+
+⚑ **Bis zum 2026-08-28 mit einer Einschränkung, siehe 4.4:** Die
+Merkle-Wurzel bestimmte die Segmentfolge **nicht eindeutig**, es passte
+also mehr als eine Folge auf dieselbe Signatur. Seit `myl-types` v0.6.0
+bindet die Wurzel die Segmentzahl mit, und die Aussage oben gilt ohne
+Vorbehalt.
 
 ### 3.3 Besitznachweis (6) — der Fund 27
 
@@ -210,10 +216,61 @@ einen Stelle und keine Regel, die etwas erzwingt.
 
 ---
 
+### 4.4 ✅ Die Merkle-Wurzel bestimmt die Segmentfolge (Fund 77, behoben)
+
+**War der Fall bis zum 2026-08-28.** Der Merkle-Baum füllte eine Ebene
+mit ungerader Knotenzahl auf, indem er den letzten Knoten mit sich
+selbst paarte (Bitcoin-Stil), und erbte damit CVE-2012-2459: Bei
+ungerader Blattzahl ab 3 hatten `[l₁ … lₙ]` und `[l₁ … lₙ, lₙ]`
+dieselbe Wurzel.
+
+**Für dieses Dokument war das erheblich.** Die Signierbotschaft des
+PoI-Bündels ist `DST ‖ epoch ‖ pod ‖ segments_root ‖ vtfe_claimed`, und
+sie führt **kein Feld für die Segmentzahl**. Eine Aggregatsignatur der
+Pod-Mitglieder über ein Bündel von `n` Segmenten war damit zugleich eine
+gültige Signatur über ein Bündel von `n+1` Segmenten mit wiederholtem
+letzten. Die Mitglieder hätten etwas anderem zugestimmt, als sie gesehen
+haben.
+
+**Das war genau die Lücke, gegen die `vtfe_claimed` in Abschnitt 3.2
+aufgenommen wurde**, eine Ebene tiefer: Dort war es die beanspruchte
+Arbeitsmenge, hier die Menge der Segmente.
+
+**Behoben mit `myl-types` v0.6.0.** Die Wurzel bindet die Blattzahl:
+`SHA-256(0x02 ‖ u64_le(n) ‖ innere Wurzel)`. ⚑ **Und die Behebung
+brauchte kein neues Feld in `PoIBundle`**, denn die Segmentzahl steckt
+seither in `segments_root` selbst. Die Aggregatsignatur bindet sie mit,
+ohne dass die Botschaft länger wird.
+
+**Warum der Zeitpunkt zählte.** Die Änderung verschiebt jede bestehende
+Wurzel. Zum Zeitpunkt der Behebung gab es keinen Genesis-Block und keine
+gespeicherte Kette; betroffen waren fünf Prüfvektoren und ein
+Fingerabdruck des Testclients. Nach dem Genesis-Block wäre dieselbe
+Änderung eine Kettenmigration gewesen. Es war der letzte billige
+Zeitpunkt, und er war Zufall.
+
+**Was ausdrücklich nicht betroffen war:** die Domain-Separation. Sie ist
+sauber (`0x00` für Blätter, `0x01` für Knoten) und mit dem richtigen
+Argument begründet; der Fund lag nicht dort. Und der Baum in `da.rs`
+über die Erasure-Fragmente war nie betroffen, weil `k` und `m` im selben
+Commitment stehen und die Blattzahl damit binden. **Diese Stelle hatte
+also von Anfang an das Richtige getan**, ohne dass jemand die Regel
+daraus verallgemeinert hätte.
+
+---
+
 ## 5. Was ein externer Prüfer zuerst ansehen sollte
 
 Nach Schadenshebel geordnet:
 
+0. ✅ ~~**`merkle.rs` und die Frage, was eine Wurzel eigentlich
+   festlegt**~~ (4.4, Fund 77) — behoben am 2026-08-28, am Tag des
+   Fundes. Der Punkt stand hier vor allen anderen, weil seine
+   Behebungskosten als einziger mit jedem Betriebstag gestiegen wären.
+   **Was ein Prüfer stattdessen ansehen sollte:** ob die Bindung der
+   Blattzahl überall greift, wo eine Wurzel veröffentlicht oder
+   signiert wird, und ob der später geplante Merkle-Aufbau über
+   Berechnungsspuren sie mitnimmt.
 1. **`poi.rs` und `round_change.rs`** — die beiden Aufrufstellen von
    `fast_aggregate_verify`. Beide waren von Fund 27 betroffen, an beiden
    hängt Geld beziehungsweise BFT-Safety.

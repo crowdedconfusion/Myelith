@@ -237,7 +237,7 @@ mod tests {
 
     /// Schreibt ein Manifest in eine temporaere Datei und laedt es.
     fn load_json(name: &str, stages: Vec<serde_json::Value>) -> Result<PipelineManifest, String> {
-        let dir = std::env::temp_dir().join("myelith-pipeline-tests");
+        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("Testverzeichnis");
         let path = dir.join(format!("{}.json", name));
         let mut obj = serde_json::json!({
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn kaputtes_json_meldet_fehler() {
-        let dir = std::env::temp_dir().join("myelith-pipeline-tests");
+        let dir = std::env::temp_dir().join(format!("myelith-pipeline-tests-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("kaputt.json");
         std::fs::write(&path, "{ kein json").unwrap();

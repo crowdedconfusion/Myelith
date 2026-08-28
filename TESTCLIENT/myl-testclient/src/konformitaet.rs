@@ -390,7 +390,7 @@ mod tests {
     /// Feldern nicht stoßen und an fehlenden nicht raten.
     #[test]
     fn manifest_lesen_trennt_bekannt_von_unbekannt() {
-        let dir = std::env::temp_dir().join("myl-testclient-manifest");
+        let dir = std::env::temp_dir().join(format!("myl-testclient-manifest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

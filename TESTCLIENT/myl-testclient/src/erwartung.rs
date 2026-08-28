@@ -242,7 +242,7 @@ mod tests {
     /// Gesamtwert des Laufs, nicht der eines einzelnen Prompts.
     #[test]
     fn geprueft_wird_gegen_den_gesamtwert() {
-        let dir = std::env::temp_dir().join("myl-testclient-erwartung");
+        let dir = std::env::temp_dir().join(format!("myl-testclient-erwartung-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut log = crate::logging::RunLog::new(&dir, "probe", false);
         log.result("prompt_1", "aaaaaaaaaaaaaaaa1111", "erster Prompt");

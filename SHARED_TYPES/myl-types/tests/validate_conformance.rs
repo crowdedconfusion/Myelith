@@ -22,6 +22,8 @@ struct HashVector {
 struct MerkleVector {
     name: String,
     leaves: Vec<String>,
+    /// Blattzahl, die in die Wurzel eingeht (Fund 77).
+    leaf_count: u64,
     root: String,
     proof_index: usize,
     proof_siblings: Vec<String>,
@@ -90,7 +92,38 @@ fn validate_merkle_vectors() {
                 v.name
             );
         }
+
+        // Fund 77: Die Blattzahl gehoert zum Vektor, weil sie in die
+        // Wurzel eingeht. Eine Drittimplementierung, die sie weglaesst,
+        // rechnet eine andere Wurzel.
+        assert_eq!(
+            proof.leaf_count, v.leaf_count,
+            "Leaf count mismatch for vector '{}'",
+            v.name
+        );
+        assert_eq!(
+            v.leaf_count as usize,
+            v.leaves.len(),
+            "Vector '{}' widerspricht sich selbst",
+            v.name
+        );
     }
+
+    // ⚑ Fund 77 als eigene Zusicherung ueber die Vektoren hinweg: Eine
+    // Umsetzung im Bitcoin-Stil erzeugt fuer diese beiden Folgen
+    // dieselbe Wurzel. Wer die Vektoren einzeln prueft, merkt das nicht;
+    // die Aussage steht zwischen zwei Vektoren, nicht in einem.
+    let hole = |name: &str| -> &MerkleVector {
+        vectors
+            .iter()
+            .find(|v| v.name == name)
+            .unwrap_or_else(|| panic!("Vektor '{}' fehlt", name))
+    };
+    assert_ne!(
+        hole("three_leaves").root,
+        hole("four_leaves_last_repeated").root,
+        "Fund 77: verschiedene Blattfolgen mit gleicher Wurzel"
+    );
 
     println!("✓ Validated {} merkle vectors", vectors.len());
 }

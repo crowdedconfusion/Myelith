@@ -1,6 +1,42 @@
 //! Fixed-Point-Helfer
-//! 
+//!
 //! Alle Operationen sind deterministisch und plattformunabhaengig.
+//!
+//! ## ⚑ Fund 75: Die Schiebeweiten haben Grenzen, und sie standen nirgends
+//!
+//! Die Rundungsfunktionen dieses Moduls sind **nicht** fuer jede
+//! Schiebeweite total. `rshift_round` rechnet `(1 << shift) - 1`, und
+//! dieser Ausdruck laeuft ueber, sobald `1 << shift` das Vorzeichenbit
+//! trifft. Die Grenzen sind je Typ verschieden und liegen zwei bis drei
+//! Bit unter der Typbreite:
+//!
+//! | Funktion | zulaessige Schiebeweite | was darueber passiert |
+//! |---|---|---|
+//! | `rshift_round` | `0..=30` | `(1i32 << 31) - 1` laeuft ueber |
+//! | `rshift_round_i64` | `0..=62` | dasselbe eine Typbreite hoeher |
+//! | `rshift_round_i128` | `0..=126` | dasselbe noch eine hoeher |
+//! | `rescale` | Abstand `-31..=30` | beide Zweige, siehe dort |
+//! | `rescale_i64` | Abstand `-63..=62` | beide Zweige, siehe dort |
+//!
+//! **Bis zum 2026-08-28 stand keine dieser Grenzen irgendwo**, und
+//! keine wurde geprueft. Kein Aufrufer verletzte sie: Die im Projekt
+//! vorkommenden `frac_bits` liegen zwischen 3 und 16. Es war also kein
+//! Fehler, sondern ein Vertrag, den niemand aufgeschrieben hatte.
+//!
+//! ⚑ **Warum das trotzdem zaehlt: Der Fehlerfall ist im ausgelieferten
+//! Bauprofil still.** Im Debug-Bau bricht die Ueberlaufpruefung laut ab
+//! (`attempt to subtract with overflow`). Im Release-Bau gibt es diese
+//! Pruefung nicht: `rshift_round(1000, 32)` liefert dort `1001` statt
+//! `0`, weil Rust die Schiebeweite auf fuenf Bit maskiert (`32` wirkt
+//! wie `0`) und die Rundung anschliessend aufaddiert. Ein falscher Wert
+//! im Ganzzahlpfad ist ein Konsensbruch, und er faellt nirgends auf.
+//!
+//! **Was daraus folgt und hier steht:** je Funktion eine benannte
+//! Vorbedingung, ein `debug_assert!` an der Stelle, und je Grenze ein
+//! Test, der sie ueberschreitet. Die Pruefung ist bewusst `debug_assert`
+//! und nicht `assert`: Diese Funktionen laufen je Element in der
+//! innersten Schleife, und die Testlaeufe des Projekts sind
+//! Debug-Laeufe.
 
 /// Clamp auf i8-Bereich.
 #[inline(always)]
@@ -35,8 +71,17 @@ pub fn clamp_i32(x: i64) -> i32 {
 }
 
 /// Round-to-nearest-even Rechts-Shift.
+///
+/// **Vorbedingung: `shift <= 30`** (Fund 75). Bei `shift == 31` laeuft
+/// `(1i32 << 31) - 1` ueber, ab `32` der Shift selbst. Im Release-Bau
+/// bricht nichts ab, das Ergebnis ist dann still falsch.
 #[inline(always)]
 pub fn rshift_round(value: i32, shift: u8) -> i32 {
+    debug_assert!(
+        shift <= 30,
+        "rshift_round: shift {} ueber der Grenze 30 (Fund 75)",
+        shift
+    );
     if shift == 0 {
         return value;
     }
@@ -53,8 +98,16 @@ pub fn rshift_round(value: i32, shift: u8) -> i32 {
 }
 
 /// Round-to-nearest-even Rechts-Shift (i64, fuer Zwischenprodukte).
+///
+/// **Vorbedingung: `shift <= 62`** (Fund 75), dieselbe Grenze wie bei
+/// [`rshift_round`], eine Typbreite hoeher.
 #[inline(always)]
 pub fn rshift_round_i64(value: i64, shift: u8) -> i64 {
+    debug_assert!(
+        shift <= 62,
+        "rshift_round_i64: shift {} ueber der Grenze 62 (Fund 75)",
+        shift
+    );
     if shift == 0 {
         return value;
     }
@@ -151,8 +204,16 @@ pub fn isqrt_round(n: u64) -> u64 {
 /// Fund 24 laeuft die RMSNorm-Ausgabe ueber i128, weil der dortige
 /// Linksshift in i64 haette ueberlaufen koennen (spec:
 /// overflow.behavior = "explicit_clamp_only", wrap = false).
+///
+/// **Vorbedingung: `shift <= 126`** (Fund 75), dieselbe Grenze wie bei
+/// [`rshift_round`], zwei Typbreiten hoeher.
 #[inline(always)]
 pub fn rshift_round_i128(value: i128, shift: u32) -> i128 {
+    debug_assert!(
+        shift <= 126,
+        "rshift_round_i128: shift {} ueber der Grenze 126 (Fund 75)",
+        shift
+    );
     if shift == 0 {
         return value;
     }
@@ -169,8 +230,37 @@ pub fn rshift_round_i128(value: i128, shift: u32) -> i128 {
 }
 
 /// Rescale: von in_frac Bits nach out_frac Bits.
+///
+/// **Drei Vorbedingungen, alle drei ungeprueft bis Fund 75:**
+///
+/// 1. **`in_frac <= 127` und `out_frac <= 127`.** Die Differenz wird in
+///    `i8` gerechnet; ein `u8`-Wert ab 128 wird dabei negativ, und die
+///    Funktion schiebt dann in die falsche Richtung. Das ist der
+///    stillste der drei Faelle, denn er bricht nicht einmal im
+///    Debug-Bau ab.
+/// 2. **`in_frac - out_frac <= 30`** im Rechtsschiebe-Zweig, geerbt von
+///    [`rshift_round`].
+/// 3. **`out_frac - in_frac <= 31`** im Linksschiebe-Zweig, sonst ist
+///    die Schiebeweite fuer `i32` zu gross.
+///
+/// **Nicht geprueft wird der Wertueberlauf des Linksschiebens selbst:**
+/// `acc << n` kann Bits herausschieben, ohne dass etwas abbricht. Das
+/// widerspricht `overflow.behavior = "explicit_clamp_only"` und liegt in
+/// der Verantwortung des Aufrufers, der weiss, wie gross `acc` werden
+/// kann. Hier steht es, damit die Luecke benannt ist.
 #[inline(always)]
 pub fn rescale(acc: i32, in_frac: u8, out_frac: u8) -> i32 {
+    debug_assert!(
+        in_frac <= 127 && out_frac <= 127,
+        "rescale: in_frac {} / out_frac {} ab 128 dreht die Differenz das Vorzeichen (Fund 75)",
+        in_frac,
+        out_frac
+    );
+    debug_assert!(
+        (in_frac as i16 - out_frac as i16) <= 30 && (out_frac as i16 - in_frac as i16) <= 31,
+        "rescale: Abstand {} ausserhalb -31..=30 (Fund 75)",
+        in_frac as i16 - out_frac as i16
+    );
     let shift = in_frac as i8 - out_frac as i8;
     if shift >= 0 {
         rshift_round(acc, shift as u8)
@@ -180,8 +270,23 @@ pub fn rescale(acc: i32, in_frac: u8, out_frac: u8) -> i32 {
 }
 
 /// Rescale fuer i64-Zwischenprodukte (z. B. RMSNorm-Tripelprodukt).
+///
+/// **Dieselben drei Vorbedingungen wie [`rescale`]**, mit den Grenzen
+/// des breiteren Typs: `in_frac <= 127`, `out_frac <= 127`, und der
+/// Abstand `in_frac - out_frac` liegt in `-63..=62`.
 #[inline(always)]
 pub fn rescale_i64(acc: i64, in_frac: u8, out_frac: u8) -> i64 {
+    debug_assert!(
+        in_frac <= 127 && out_frac <= 127,
+        "rescale_i64: in_frac {} / out_frac {} ab 128 dreht die Differenz das Vorzeichen (Fund 75)",
+        in_frac,
+        out_frac
+    );
+    debug_assert!(
+        (in_frac as i16 - out_frac as i16) <= 62 && (out_frac as i16 - in_frac as i16) <= 63,
+        "rescale_i64: Abstand {} ausserhalb -63..=62 (Fund 75)",
+        in_frac as i16 - out_frac as i16
+    );
     let shift = in_frac as i8 - out_frac as i8;
     if shift >= 0 {
         rshift_round_i64(acc, shift as u8)
@@ -391,6 +496,110 @@ mod tests {
         for n in [5u64, 99, 1000, 123_456, 1 << 40] {
             let erwartet = (n as f64).sqrt().round() as u64;
             assert_eq!(isqrt_round(n), erwartet, "n={}", n);
+        }
+    }
+
+    /// ⚑ Gegenproben zu Fund 75: die Schiebeweiten-Grenzen.
+    ///
+    /// Je Grenze zwei Tests, und der Aufbau ist Absicht: einer zeigt,
+    /// dass der letzte zulaessige Wert **durchgeht**, der andere, dass
+    /// der erste unzulaessige **abbricht**. Nur eine Richtung zu pruefen
+    /// hiesse, eine zu enge Schranke nicht zu bemerken.
+    mod fund_75 {
+        use super::*;
+
+        #[test]
+        fn die_letzte_zulaessige_schiebeweite_geht_durch() {
+            assert_eq!(rshift_round(1000, 30), 0);
+            assert_eq!(rshift_round_i64(1000, 62), 0);
+            assert_eq!(rshift_round_i128(1000, 126), 0);
+            // rescale an beiden Enden des zulaessigen Abstands.
+            assert_eq!(rescale(1024, 30, 0), 0);
+            assert_eq!(rescale(1, 0, 31), 1i32 << 31 >> 31 << 31); // = i32::MIN, Linksschieber
+            assert_eq!(rescale_i64(1024, 62, 0), 0);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "ueber der Grenze 30")]
+        fn rshift_round_bei_31_bricht_ab() {
+            let _ = rshift_round(1000, 31);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "ueber der Grenze 62")]
+        fn rshift_round_i64_bei_63_bricht_ab() {
+            let _ = rshift_round_i64(1000, 63);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "ueber der Grenze 126")]
+        fn rshift_round_i128_bei_127_bricht_ab() {
+            let _ = rshift_round_i128(1000, 127);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "Abstand 31 ausserhalb")]
+        fn rescale_rechts_ueber_der_grenze_bricht_ab() {
+            let _ = rescale(1024, 31, 0);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "Abstand -32 ausserhalb")]
+        fn rescale_links_ueber_der_grenze_bricht_ab() {
+            let _ = rescale(1, 0, 32);
+        }
+
+        /// ⚑ Der stillste der drei Faelle: Ein `u8` ab 128 wird beim
+        /// Weg nach `i8` negativ, und `rescale` schiebt dann in die
+        /// **falsche Richtung**, ohne dass irgendetwas abbricht.
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "ab 128 dreht die Differenz das Vorzeichen")]
+        fn rescale_mit_frac_bits_ab_128_bricht_ab() {
+            let _ = rescale(1024, 128, 0);
+        }
+
+        #[test]
+        #[cfg(debug_assertions)]
+        #[should_panic(expected = "ab 128 dreht die Differenz das Vorzeichen")]
+        fn rescale_i64_mit_frac_bits_ab_128_bricht_ab() {
+            let _ = rescale_i64(1024, 0, 200);
+        }
+
+        /// Die Rundungsregel selbst, ueber den ganzen Bereich statt an
+        /// vier getippten Paaren: kaufmaennisch zur **geraden** Zahl,
+        /// auch fuer negative Werte. Die Referenz wird in `i64`
+        /// gerechnet, damit sie nicht denselben Weg nimmt wie das
+        /// Gemessene.
+        #[test]
+        fn rshift_round_rundet_zur_geraden_zahl_auch_negativ() {
+            for shift in 1u8..=8 {
+                let teiler = 1i64 << shift;
+                for value in -600i32..=600 {
+                    let v = value as i64;
+                    // Referenz: round-half-to-even von v / 2^shift.
+                    let unten = v.div_euclid(teiler);
+                    let rest = v.rem_euclid(teiler);
+                    let doppelt = rest * 2;
+                    let erwartet = if doppelt > teiler || (doppelt == teiler && unten % 2 != 0) {
+                        unten + 1
+                    } else {
+                        unten
+                    };
+                    assert_eq!(
+                        rshift_round(value, shift) as i64,
+                        erwartet,
+                        "value={} shift={}",
+                        value,
+                        shift
+                    );
+                }
+            }
         }
     }
 }

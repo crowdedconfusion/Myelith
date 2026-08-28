@@ -1,6 +1,6 @@
 # Sicherheitsaudit
 
-**Stand:** 2026-08-27
+**Stand:** 2026-08-28
 **Grundlage:** die Angreiferklassen aus Whitepaper Kap. 5.6 und 9.2, die
 Sicherheitsargumente aus Kap. 6.8 und Anhang B, sowie die Funde 41 bis 53
 dieses Projekts.
@@ -9,10 +9,23 @@ dieses Projekts.
 abgewehrt werden, welche gemessen offen sind und welche niemand geprüft
 hat. Es ist **kein externes Review** (K5, K9) und ersetzt keines.
 
-**Der wichtigste Satz vorweg:** Von den vierzehn Angriffsklassen unten
-sind **neun abgewehrt und belegt**, **drei offen mit gemessener Lücke**
+**Der wichtigste Satz vorweg:** Von den fünfzehn Angriffsklassen unten
+sind **zehn abgewehrt und belegt**, **drei offen mit gemessener Lücke**
 und **zwei ungeprüft**. Keine der Lücken ist neu entdeckt worden, ohne
 dass sie hier steht.
+
+⚑ **Neu und am selben Tag geschlossen: A15 (2026-08-28).** Die erste
+Klasse dieses Dokuments, die nicht aus einem Angriffsmodell kam, sondern
+aus einer Codelektüre: Der Merkle-Baum war nicht injektiv, zwei
+verschiedene Blattfolgen konnten dieselbe Wurzel tragen. Sie stand einen
+halben Tag als latent und ist behoben.
+
+⚑ **Der Grund für die Eile steht in der Klasse selbst und gilt über sie
+hinaus:** Es war der einzige Punkt dieses Dokuments, dessen
+Behebungskosten mit jedem Betriebstag gestiegen wären, ohne dass jemand
+etwas falsch macht. Eine Änderung an einer Commitment-Konstruktion
+kostet vor dem Genesis-Block fünf Prüfvektoren und danach eine
+Kettenmigration.
 
 ---
 
@@ -34,6 +47,7 @@ dass sie hier steht.
 | A12 | Kollusion beider Pods | ⚠️ | Schranke gemessen (β^2k trifft), Gegenmaßnahme unbelegt |
 | A13 | Angriff auf die Krypto-Primitiven | ❓ | nie extern geprüft (K5) |
 | A14 | **Ein Gateway liest den Inhalt mit** | ✅ | Sitzungs-E2E seit `myl-net` v0.9.0, über echte Verbindungen gemessen; **Verkehrsdaten bleiben sichtbar**, und das Schema selbst fällt unter A13 |
+| A15 | **Zwei Blattfolgen, eine Merkle-Wurzel** | ✅ | **Fund 77** (2026-08-28), gemessen und am selben Tag behoben: die Wurzel bindet die Blattzahl (`myl-types` v0.6.0) |
 
 ---
 
@@ -161,6 +175,70 @@ Prüfungen gebaut wurden.
 Shard-Miner selbst. Ihre Aufgabe ist die Verarbeitung des Inhalts. Kap.
 9.3 zieht daraus die Risikoklasse C („ungeeignet"), und daran ändert
 diese Fassung nichts.
+
+### A15 Zwei Blattfolgen, eine Merkle-Wurzel (Fund 77)
+
+**War der Fall bis zum 2026-08-28.** Der Merkle-Baum füllte eine Ebene
+mit ungerader Knotenzahl auf, indem er den letzten Knoten mit sich
+selbst paarte, im Bitcoin-Stil, und erbte damit den Fehler des Vorbilds
+(CVE-2012-2459). Die Abbildung von Blattfolgen auf Wurzeln war **nicht
+injektiv**, und die Kollisionsfamilie war größer als der bekannte
+Einzelfall:
+
+| Blattzahl | kollidierte mit |
+|---|---|
+| 3, 5, 7, 9, … (ungerade ab 3) | derselben Folge plus wiederholtem letzten Blatt |
+| 6, 14, 22, … (`n ≡ 2 mod 4`, ab 6) | derselben Folge plus den letzten **zwei** Blättern |
+| 1, 2, 4, 8, … | nichts davon |
+
+**Wo es scharf gewesen wäre.** Das PoI-Bündel führt kein Feld für die
+Segmentzahl; die Signierbotschaft ist
+`epoch ‖ pod ‖ segments_root ‖ vtfe_claimed`. Eine Aggregatsignatur über
+`n` Segmente galt damit zugleich für `n+1` Segmente mit wiederholtem
+letzten. Ein Angreifer gewann daraus **nichts**, weil `vtfe_claimed`
+eigenständig signiert ist und nichts eine Mitgliedschaft gegen
+`segments_root` prüfte. Es wäre in dem Augenblick scharf geworden, in
+dem ein Streitverfahren oder eine Kontrollsegment-Prüfung einen
+Merkle-Beweis dagegen laufen lässt.
+
+**Behoben am Tag des Fundes** (`myl-types` v0.6.0): Die Wurzel ist
+seither `SHA-256(0x02 ‖ u64_le(n) ‖ innere Wurzel)`. Der innere Aufbau
+samt Duplikationsregel ist unverändert; gebunden wird nur die Blattzahl.
+
+**Der Beweis in einem Satz:** Aus gleicher Wurzel folgt gleiches Urbild,
+also gleiche Blattzahl und gleiche innere Wurzel; bei fester Blattzahl
+liegt die Baumform fest, und über die Domain-Separation bestimmt jeder
+Knoten seine beiden Kinder eindeutig.
+
+**Belegt durch:** einen Test, der die Nachbarschaft jeder Blattzahl von
+1 bis 12 abfährt (Verlängerung um ein und um zwei Blätter, keine trägt
+dieselbe Wurzel); eine Gegenprobe, die festhält, dass die **inneren**
+Wurzeln weiterhin zusammenfallen und allein das Präfix sie trennt; einen
+Test über sechs erfundene Blattzahlen im Beweis, die alle scheitern; und
+einen fünften Konformitätsvektor `four_leaves_last_repeated`, den eine
+Umsetzung im Bitcoin-Stil als einzigen nicht trifft.
+
+⚑ **Die Gegenprobe ist hier wichtiger als der Haupttest.** Ein grüner
+Injektivitätstest allein bewiese nicht, dass die Bindung die Ursache
+ist; er wäre auch grün, wenn sich nebenbei die Auffüllregel geändert
+hätte. Deshalb steht die alte Kollision ausdrücklich im Testcode.
+
+**Gemessene Folgen:** fünf neu erzeugte Konformitätsvektoren und ein
+geänderter Gesamtwert des Protokoll-Durchlaufs, von `8c74519a11dceae5`
+auf `d02dcacb6aa37026`. Die Ursache ist belegt statt angenommen: Mit der
+alten Konstruktion liefert derselbe Lauf weiterhin den alten Wert, und
+geändert hat sich allein die Krypto-Stufe. **Kein Crate musste angepasst
+werden**, weil alle Wurzeln zur Laufzeit neu entstehen.
+
+⚑ **Was daran über den Fund hinaus lehrreich ist.** Die
+Duplikationsregel **war getestet**, und die Domain-Separation ist sauber
+und mit dem richtigen Argument begründet. Geprüft wurde, dass die Regel
+tut, was sie soll. Nicht geprüft wurde, was daraus **folgt**. Das ist
+Fehlerklasse 3 dieses Projekts in einer Sicherheitsprimitive: ein Test,
+dessen Form den Defekt verdeckt, weil er die richtige Frage nicht
+stellt. Und der Baum in `da.rs` band die Blattzahl über `k` und `m` von
+Anfang an mit, also hatte eine Stelle das Richtige getan, ohne dass
+jemand die Regel daraus verallgemeinert hätte.
 
 ---
 
@@ -360,6 +438,8 @@ ist ungemessen.
 
 ---
 
+---
+
 ## 4. Teilweise belegt
 
 ### A12 Kollusion beider Pods
@@ -419,6 +499,17 @@ Stoß-Fall als eigener Test daneben.
 ## 7. Woran zuerst zu arbeiten wäre
 
 Nach Schadenshebel, nicht nach Aufwand:
+
+0. ✅ ~~**A15 entscheiden, bevor der Spur-Merkle gebaut wird**~~
+   (Fund 77) — entschieden und behoben am 2026-08-28, am Tag des Fundes.
+   Der Punkt stand hier vor allen anderen, nicht weil er schadete,
+   sondern weil er **billig zu beheben war, solange keine Wurzel zählt,
+   und teuer geworden wäre, sobald eine zählt**. ⚑ **Das Muster gilt
+   über diesen Fall hinaus und gehört auf diese Liste:** Fehler in
+   Commitment-Konstruktionen sind die einzige Klasse, deren
+   Behebungskosten mit der Zeit steigen, ohne dass jemand etwas falsch
+   macht. Wer eine findet, behebt sie sofort oder begründet, warum
+   nicht.
 
 1. ~~**A9 Verbindungsgrenze** (Fund 53)~~ — erledigt am 2026-08-24.
    Nachtrag zur damaligen Aufwandsschätzung „der Aufwand ist klein,
