@@ -247,6 +247,18 @@ pub struct Sitzungskontrakt {
     pub gueltig_ab: EpochId,
     /// Letzte Epoche, in der die Session gilt (Kap. 8.2, Punkt 4).
     pub gueltig_bis: EpochId,
+    /// Höchstzahl der Schritte, die ein Agent unter diesem Kontrakt tun
+    /// darf (Kap. 8.4, Abbruchbedingungen).
+    ///
+    /// ⚑ **Nicht dasselbe wie das Budget, obwohl beides begrenzt.** Das
+    /// Budget begrenzt, was ausgegeben wird; die Schrittzahl begrenzt,
+    /// wie lange gearbeitet wird. Ein Agent, der in einer Schleife
+    /// nachschlägt, ohne je zu zahlen, verbraucht kein Budget und läuft
+    /// trotzdem endlos.
+    ///
+    /// Null heißt: kein Schritt erlaubt. Wie überall hier ist die
+    /// sperrende Zahl die sichere.
+    pub max_schritte: u32,
 }
 
 impl Sitzungskontrakt {
@@ -265,6 +277,7 @@ impl Sitzungskontrakt {
         empfaenger: Vec<Address>,
         gueltig_ab: EpochId,
         gueltig_bis: EpochId,
+        max_schritte: u32,
     ) -> Result<Self, KontraktFehler> {
         if empfaenger.len() > MAX_EMPFAENGER {
             return Err(KontraktFehler::ZuVieleEmpfaenger { hatte: empfaenger.len() });
@@ -283,7 +296,16 @@ impl Sitzungskontrakt {
         }
         credits.pruefe_leiter()?;
         myl.pruefe_leiter()?;
-        Ok(Self { inhaber, agent, credits, myl, empfaenger, gueltig_ab, gueltig_bis })
+        Ok(Self {
+            inhaber,
+            agent,
+            credits,
+            myl,
+            empfaenger,
+            gueltig_ab,
+            gueltig_bis,
+            max_schritte,
+        })
     }
 
     /// Die Adresse: Hash über Trennzeichen und kanonische Kodierung.
@@ -564,7 +586,7 @@ mod tests {
             grenzen(500, 100, 50),
             vec![adr(10), adr(20)],
             EpochId(5),
-            EpochId(9),
+            EpochId(9),16,
         )
         .expect("gültiger Kontrakt")
     }
@@ -600,7 +622,7 @@ mod tests {
             grenzen(500, 100, 50),
             vec![adr(10), adr(20)],
             EpochId(5),
-            EpochId(9),
+            EpochId(9),16,
         )
         .expect("gültig");
         assert_ne!(a.adresse(), mehr.adresse());
@@ -630,7 +652,7 @@ mod tests {
             grenzen(100_000, 100_000, u64::MAX),
             vec![adr(10), adr(20), adr(99)],
             EpochId(0),
-            EpochId(u64::MAX),
+            EpochId(u64::MAX),16,
         )
         .expect("gültig, nur eben nicht der Kontrakt des Inhabers");
 
@@ -669,6 +691,7 @@ mod tests {
             empfaenger: vec![adr(10), adr(20)],
             gueltig_ab: EpochId(5),
             gueltig_bis: EpochId(9),
+            max_schritte: 16,
         };
         let vertauscht = Sitzungskontrakt {
             empfaenger: vec![adr(20), adr(10)],
@@ -684,7 +707,7 @@ mod tests {
             Grenzen::gesperrt(),
             vec![adr(20), adr(10)],
             EpochId(5),
-            EpochId(9),
+            EpochId(9),16,
         );
         assert_eq!(gebaut, Err(KontraktFehler::EmpfaengerNichtSortiert));
     }
@@ -699,7 +722,7 @@ mod tests {
                 Grenzen::gesperrt(),
                 liste,
                 EpochId(0),
-                EpochId(1),
+                EpochId(1),16,
             )
         };
         assert_eq!(bauen(vec![adr(9), adr(3)]), Err(KontraktFehler::EmpfaengerNichtSortiert));
@@ -729,7 +752,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(9),
-            EpochId(8),
+            EpochId(8),16,
         );
         assert_eq!(k, Err(KontraktFehler::FensterVerkehrt { ab: EpochId(9), bis: EpochId(8) }));
 
@@ -741,7 +764,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(9),
-            EpochId(9),
+            EpochId(9),16,
         )
         .is_ok());
     }
@@ -755,7 +778,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(0),
-            EpochId(10),
+            EpochId(10),16,
         )
         .expect("gültig");
         assert!(!k.zahlt_an(&adr(10)));
@@ -955,7 +978,7 @@ mod tests {
             Grenzen::gesperrt(),
             vec![adr(10)],
             EpochId(0),
-            EpochId(10),
+            EpochId(10),16,
         )
         .expect("gültig");
 
@@ -992,7 +1015,7 @@ mod tests {
                 Grenzen::gesperrt(),
                 Vec::new(),
                 EpochId(0),
-                EpochId(1),
+                EpochId(1),16,
             )
         };
         assert!(bauen(&[(0, 1), (10, 3)]).is_ok());
@@ -1023,7 +1046,7 @@ mod tests {
                 Grenzen::gesperrt(),
                 vec![adr(10)],
                 EpochId(0),
-                EpochId(10),
+                EpochId(10),16,
             )
             .expect("gültig")
         };

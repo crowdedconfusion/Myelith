@@ -11,7 +11,9 @@
 //! keine Laufzeit ist.
 
 pub mod beobachtung;
+pub mod kette;
 pub mod manifest;
+pub mod plan;
 pub mod registratur;
 pub mod sitzung;
 
@@ -20,5 +22,10 @@ pub use manifest::{
     DST_SKILLMANIFEST, DST_WERKZEUGMANIFEST,
 };
 pub use beobachtung::{beobachte, Attestierung, Beobachtung, BeobachtungsFehler, GepruefteAttestierung, DST_ATTESTIERUNG};
+pub use kette::{
+    anker, ende, erster_unterschied, kettenwert, plan_passt, pruefe_kette, Ende, Kettenbefund,
+    Kettenfehler, Kettenglied, DST_KETTENANKER, DST_KETTENGLIED,
+};
+pub use plan::{Plan, Planfehler, Quelle, Schritt, Truebung, MAX_ARGUMENTE, MAX_SCHRITTE};
 pub use registratur::{Aufruf, Aufrufbefund, Benutzt, Registratur, Segmentstufe};
 pub use sitzung::{darf_verwendet_werden, verlangte_zeugen, Verwendbar};

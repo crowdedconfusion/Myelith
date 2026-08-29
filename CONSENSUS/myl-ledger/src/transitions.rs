@@ -999,7 +999,7 @@ mod tests {
             myl_types::sitzung::Grenzen::gesperrt(),
             vec![adresse(10)],
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gültiger Kontrakt")
     }
@@ -1111,7 +1111,7 @@ mod tests {
             myl_types::sitzung::Grenzen::gesperrt(),
             vec![adresse(10)],
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gueltig");
         assert_eq!(
@@ -1154,7 +1154,7 @@ mod tests {
             myl_types::sitzung::Grenzen::gesperrt(),
             vec![adresse(10)],
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gültig");
         let id2 = sitzung_eroeffnen(&mut state, &adresse(1), weit).expect("eröffnen");
@@ -1319,7 +1319,7 @@ mod tests {
             grenzen(1_000, 300, u64::MAX),
             vec![adresse(10)],
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gueltig");
         let id = sitzung_eroeffnen(&mut state, &adresse(1), k).expect("eroeffnen");

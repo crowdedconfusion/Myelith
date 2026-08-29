@@ -749,7 +749,7 @@ mod tests {
             Grenzen { budget: 5_000, einzellimit: 2_000, schwelle: u64::MAX, zeugenleiter: Vec::new() },
             vec![empfaenger],
             EpochId(0),
-            EpochId(u64::MAX),
+            EpochId(u64::MAX),16,
         )
         .expect("gueltiger Kontrakt");
         let id = kontrakt.adresse();

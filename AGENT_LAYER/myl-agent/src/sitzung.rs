@@ -159,7 +159,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gültiger Kontrakt")
     }
@@ -218,7 +218,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(0),
-            EpochId(100),
+            EpochId(100),16,
         )
         .expect("gültig");
         assert_ne!(streng.adresse(), mild.adresse());
@@ -248,7 +248,7 @@ mod tests {
             Grenzen::gesperrt(),
             Vec::new(),
             EpochId(0),
-            EpochId(1),
+            EpochId(1),16,
         )
         .expect("gültig");
         let anfrage = Hash::sha256(b"nichts");

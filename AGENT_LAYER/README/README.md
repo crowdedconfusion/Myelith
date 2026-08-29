@@ -1,11 +1,12 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.5.0
+> **Version:** 0.7.0
 > **Datum:** 2026-08-28
-> **Status:** Manifeste, Herkunftsstufe, Registratur und der
-> **Session-Kontrakt** stehen, letzterer mit Durchsetzung im Ledger für
-> Credits **und** MYL. 36 Tests. Die architektonische Trennung gegen
-> eingeschleuste Anweisungen wartet auf eine Entscheidung.
+> **Status:** Manifeste, Herkunftsstufe, Registratur, der
+> **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
+> v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
+> Zusicherung mehr, sondern eine Laufzeit:** Nichts führt einen Plan
+> aus.
 
 Session-Kontrakte, Schadensbegrenzung, Dual-LLM-Trennung gegen
 eingeschleuste Anweisungen, Segmentketten-Verifikation, Agentengedächtnis.
@@ -39,8 +40,148 @@ Kap. 8.2).
 - `src/sitzung.rs` — die Naht zwischen Kontrakt und Bezeugung: wie viele
   Zeugen dieser Betrag verlangt, und ob ein externes Ergebnis damit
   benutzbar ist.
+- `src/plan.rs` — was ein Agent tun wird, festgelegt bevor er anfängt.
+- `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.7.0 – 2026-08-29 (die Kette, und ein Loch in der Zusage von gestern)
+
+**Punkte 4.1 und 4.2, Whitepaper Kap. 8.4.** Jeder Agentenschritt ist
+ein eigenes Segment; damit auch der *Ablauf* nachprüfbar bleibt, hängt
+jeder Schritt am Ausgabe-Commitment seines Vorgängers.
+
+### ⚑ Zuerst ein Loch in der Zusage von gestern
+
+Punkt 3.1 sagt: „Die Folge der Aufrufe stand fest, bevor der erste
+geschah." **Das lässt sich von außen nur glauben, solange niemand
+belegen kann, wann sie feststand.** Wer den Plan hinterher passend zu
+dem baut, was geschehen ist, erfüllt jede Prüfung an ihm.
+
+Der Plan hat deshalb jetzt eine **Adresse**, und die geht in den Anker
+der Kette ein. Ein nachträglich geänderter Plan bricht damit die ganze
+Kette. Aufgefallen ist das beim Bauen von 4.1, nicht beim Bauen von 3.1.
+
+### ⚑ Eine Kette allein belegt zu wenig
+
+Eine Folge von Gliedern, die sauber aneinanderhängen, ist **in sich**
+stimmig, und das heißt nicht, dass sie richtig ist. Wer einen Schritt
+auslässt und danach neu knüpft, bekommt wieder eine in sich stimmige
+Kette, nur eine kürzere.
+
+**Geprüft wird deshalb gegen den Plan.** Er sagt, wie viele Schritte es
+sind und welches Werkzeug an welcher Stelle läuft; beides geht in jeden
+Faltungsschritt ein. Damit fallen die drei Fälle aus Kap. 8.4
+auseinander: **ausgelassen** und **eingefügt** an der Länge,
+**vertauscht** am Wert, weil die Stelle mitgehasht wird.
+
+**Der Anker bindet an Session und Plan**, beides und nicht eines von
+beidem: Ohne die Session ließe sich eine Kette unter einen anderen
+Kontrakt mit anderen Grenzen legen.
+
+### Wo eine Kette bricht, sagt dieses Modul nicht
+
+Der Wert stimmt oder nicht; welcher Schritt schuld ist, findet die
+Bisektion in VERIFICATION, die es dafür schon gibt. **Eine zweite Suche
+daneben wäre eine zweite Quelle für dieselbe Aussage.** Wer zwei Ketten
+hat, kommt billiger davon: `erster_unterschied` nennt die Stelle sofort,
+und das ist der Redundanzvergleich aus Kap. 6.4 eine Ebene höher.
+
+### Die Abbruchbedingungen, und eine, die keine ist
+
+Der Kontrakt trägt jetzt eine **Höchstzahl der Schritte**. ⚑ **Sie ist
+nicht dasselbe wie das Budget, obwohl beides begrenzt:** Das Budget
+begrenzt, was ausgegeben wird, die Schrittzahl, wie lange gearbeitet
+wird. Ein Agent, der in einer Schleife nachschlägt, ohne je zu zahlen,
+verbraucht kein Budget und liefe endlos.
+
+Geprüft wird **vor dem ersten Schritt**, nicht nach dem letzten: Ein zu
+langer Plan liefe sonst zur Hälfte und bräche dann ab; bezahlt wäre die
+Hälfte, erreicht nichts.
+
+⚑ **„Zielerreichung" steht in Kap. 8.4 und ist nicht maschinell
+entscheidbar.** Ob ein Auftrag erfüllt ist, beurteilt ein Mensch; eine
+Maschine sieht nur, dass der *Plan* zu Ende ist. Genau das heißt
+`Ende::Vollstaendig`, und es heißt nicht „gelungen". Die Unterscheidung
+hier zu verwischen hieße, dem Konsens eine Beurteilung zuzuschreiben,
+die er nicht leisten kann.
+
+**Acht neue Tests**, zusammen 52.
+
+### v0.6.0 – 2026-08-29 (die Trennung liegt im Typ, nicht in der Ausführungsumgebung)
+
+**Punkt 3.1, Whitepaper Kap. 8.3.** Das Kapitel verlangt wörtlich, dass
+abgerufene Daten den Kontrollfluss nicht beeinflussen können,
+**strukturell statt filterbasiert**.
+
+### ⚑ Die Frage bot zwei Antworten an, und beide waren am Thema vorbei
+
+Zur Wahl standen zwei Modellinstanzen auf getrennten Pods oder ein
+erzwungener Kontextwechsel in einer Session. **Beide beschreiben, wo das
+Modell läuft, und die Anforderung handelt nicht davon.** Sie ist eine
+Aussage über Datenfluss. Zwei Pods geben davon nichts, wenn der planende
+Teil den abgerufenen Text als Zeichenkette zugestellt bekommt; und ein
+„erzwungener Kontextwechsel" ist eine Zusage über den Prompt-Bau, also
+genau die filterbasierte Absicherung, die das Kapitel ausschließt.
+
+### Der Plan ist eine Datenstruktur, kein Text
+
+Ein Plan nennt Schritte, jeder Schritt ein Werkzeug und seine Argumente.
+Ein Argument ist ein Wert aus dem Auftrag oder die Ausgabe eines
+**früheren** Schritts.
+
+⚑ **Die Zusicherung folgt aus dem, was der Typ nicht kann:** keine
+Verzweigung, keine Schleife, keine Werkzeugwahl zur Laufzeit. Damit
+steht die Folge der Werkzeugaufrufe fest, **bevor der erste Aufruf
+geschieht**. Zwei Läufe, die sich nur in abgerufenen Inhalten
+unterscheiden, rufen dieselben Werkzeuge in derselben Reihenfolge auf.
+
+**Das ist keine Prüfung, sondern eine Abwesenheit.** Eine Prüfung kann
+man vergessen; ein Konstrukt, das es nicht gibt, kann man nicht
+benutzen. Deshalb nimmt `werkzeugfolge` auch keine Eingaben entgegen:
+Könnte sie es, wäre die Zusage eine Behauptung über ihren Rumpf statt
+über ihre Signatur.
+
+⚑ **Und der Test kann das nur vorführen, nicht belegen.** Getragen wird
+es davon, dass die Schrittliste privat ist und keine Schnittstelle zum
+Erweitern existiert; das Fehlen einer Schnittstelle lässt sich zur
+Laufzeit nicht prüfen. Wer die Datei liest, prüft mit, dass unterhalb
+kein `push` hinzugekommen ist.
+
+### ⚑ Eine Regel, die zu streng gewesen wäre
+
+Naheliegend war: Ein abgerufener Wert nie an eine sicherheitsrelevante
+Stelle, also weder Empfänger noch Betrag. **Das hätte die Aufgabe
+verboten und nicht den Angriff.** „Finde den günstigsten Flug und buche
+ihn" liefert Flugnummer und Preis aus einem Werkzeug; beide sind
+Argumente einer Buchung.
+
+Ein getrübter Wert darf deshalb in ein Werkzeugargument fließen. Er darf
+nicht bestimmen, **welches** Werkzeug läuft, **ob** es läuft und **wie
+oft**. Empfänger und Betrag deckt der Session-Kontrakt, und der wird vom
+Konsens durchgesetzt. **Die Trübung sperrt den Kontrollfluss, der
+Kontrakt den Schaden**; sie zu vermengen machte den Agenten unbrauchbar,
+ohne die Zusage zu stärken.
+
+### Trübung ist keine neue Achse
+
+Sie folgt aus dem Werkzeugmanifest, das seit v0.1.0 dasteht: extern oder
+nicht nachrechenbar heißt getrübt, und Trübung erbt sich über Argumente
+weiter. Ein unbekanntes Werkzeug gilt als getrübt, denn **wer nicht
+weiß, was es tut, weiß auch nicht, dass es rechnet.** Ein zweites
+Etikett wäre eine zweite Quelle für dieselbe Aussage gewesen.
+
+### Der Preis, und er steht hier statt in einer Fußnote
+
+Ein gerader Plan kann **nicht auf ein Ergebnis reagieren**. „Wenn der
+Preis unter 500 liegt, buche" ist nicht ausdrückbar. Für die Sicherheit
+ist das kein Verlust, denn die Obergrenze steht im Kontrakt; für die
+Ergebnisqualität ist es einer. Der Ausweg wäre, den Planer erneut laufen
+zu lassen, und dabei liefe der abgerufene Inhalt in seinen Kontext
+zurück. **Das ist eine eigene Entscheidung und keine Lücke, die man
+nebenbei schließt.**
+
+**Acht neue Tests**, zusammen 44.
 
 ### v0.5.0 – 2026-08-28 (der Kontrakt, und die Zahl aus Design 1 bekommt einen Ort)
 

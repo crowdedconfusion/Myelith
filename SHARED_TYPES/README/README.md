@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.9.0
+> **Version:** 0.10.0
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -49,6 +49,18 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.10.0 – 2026-08-29 (der Kontrakt begrenzt auch die Arbeit)
+
+`Sitzungskontrakt` trägt eine **Höchstzahl der Schritte** (Kap. 8.4).
+⚑ **Sie ist nicht dasselbe wie das Budget, obwohl beides begrenzt:** Das
+Budget begrenzt, was ausgegeben wird, die Schrittzahl, wie lange
+gearbeitet wird. Ein Agent, der in einer Schleife nachschlägt, ohne je
+zu zahlen, verbraucht kein Budget und liefe endlos.
+
+**Das Feld kommt jetzt und nicht später**, weil die Adresse eines
+Kontrakts der Hash seiner Felder ist: Ein nachgereichtes Feld änderte
+jede bestehende Kontraktadresse.
 
 ### v0.9.0 – 2026-08-28 (beide Währungen gelten)
 
