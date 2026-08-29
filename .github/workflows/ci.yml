@@ -201,18 +201,28 @@ jobs:
   #
   # **Nichts ist entfallen**, nur zusammengelegt. Clippy laeuft zuerst:
   # Eine Warnung soll melden, bevor Minuten in Tests gehen.
-  # ── Clippy und Tests laufen getrennt und damit gleichzeitig ──────
+  # ── Clippy und Tests in EINEM Job ────────────────────────────────
   #
-  # ⚑ **Warum zwei Jobs (2026-08-28).** Bis heute liefen beide
-  # hintereinander in einem Job, und das kostet doppelt: `cargo clippy`
-  # baut mit `clippy-driver` als Compiler und legt **eigene**
-  # Fingerabdrücke an, `cargo test` baut danach alles noch einmal mit
-  # dem echten rustc. Die beiden teilen kein einziges Artefakt.
+  # ⚑ **Am 2026-08-28 waren es zwei, und das war ein Fehler
+  # (zurückgenommen am 2026-08-29).** Die Überlegung stimmte für sich:
+  # `cargo clippy` baut Abhängigkeiten nur bis zur Metadatenstufe,
+  # `cargo test` braucht erzeugten Code, die beiden teilen also fast
+  # nichts, und nebeneinander wäre die Wanduhr das Maximum statt der
+  # Summe.
   #
-  # Nacheinander ist die Wanduhr die **Summe**, nebeneinander das
-  # **Maximum**. Geprüft wird dasselbe wie vorher, Zeile für Zeile.
-  clippy-crates:
-    name: Clippy (alle Crates)
+  # **Sie übersah den Cache.** GitHub deckelt ihn **pro Repositorium auf
+  # 10 GB**, und ein Rust-Cache über vierzehn Crates liegt im
+  # Gigabyte-Bereich. Ein zweiter Job heißt ein zweiter solcher Cache;
+  # zusammen mit den übrigen Jobs reißt das den Deckel, die ältesten
+  # Einträge fliegen heraus, und dann baut **jeder** Job kalt. Genau das
+  # war zu beobachten: Nicht ein Job wurde langsamer, sondern beide.
+  #
+  # **Die Lehre gehört zu den anderen dieses Projekts:** Eine Rechnung
+  # über die Wanduhr eines einzelnen Jobs ist keine Rechnung über die
+  # CI. Der geteilte Zustand zwischen den Jobs ist der Cache, und er ist
+  # knapp.
+  network-crates:
+    name: Clippy + Tests (Protokoll-Crates)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -287,40 +297,11 @@ jobs:
             cargo clippy --all-targets --features "$feat" -- -D warnings
           done
 
-  # ── Tests der Protokoll-Crates ──────────────────────────────────
-  #
-  # **Ein Job und keine Matrix, und das ist gemessen.** Alle Crates
-  # bauen nach `target-shared` (siehe `.cargo/config.toml`), teilen sich
-  # also die übersetzten Abhängigkeiten. Eine Matrix über die Crates
-  # zerschnitte genau das: Jeder Zweig übersetzte `myl-types`, `blst`
-  # und den Rest noch einmal.
-  tests-crates:
-    name: Tests (Protokoll-Crates)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            SHARED_TYPES/myl-types
-            NETWORKING/myl-net
-            CONSENSUS/myl-ledger
-            CONSENSUS/myl-scheduler
-            CONSENSUS/myl-consensus
-            TOKENOMICS/myl-tokenomics
-            VERIFICATION/myl-verifier
-            GOVERNANCE/myl-governance
-            AGENT_LAYER/myl-agent
-            SIMULATION/myl-simulation
-            COMPUTE_PIPELINE/myl-pod
-            TRAINING/myl-train
-            NODE/myl-node
-            TESTCLIENT/myl-testclient
+  # **Und erst recht keine Matrix über die Crates.** Alle bauen nach
+  # `target-shared` (siehe `.cargo/config.toml`) und teilen sich damit
+  # übersetzte Abhängigkeiten. Ein Matrixzweig je Crate zerschnitte das
+  # und vervielfachte obendrein den Cache-Bedarf, also genau den Fehler
+  # von oben, nur schlimmer.
 
       - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types

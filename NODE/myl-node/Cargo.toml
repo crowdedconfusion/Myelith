@@ -32,6 +32,33 @@ path = "src/main.rs"
 opt-level = 2
 debug-assertions = true
 overflow-checks = true
+# ⚑ **Weniger Debug-Info, keine Pruefung weniger** (2026-08-29). Volle
+# Debug-Info kostete gemessen **26 Prozent Rechenzeit je Bau** und
+# **40 Prozent Platz** (`myl-node`: 346 auf 256 Sekunden CPU, 2,5 auf
+# 1,5 GB). Der Platz zaehlt doppelt, weil der CI-Cache pro Repositorium
+# auf 10 GB gedeckelt ist und ein voller Deckel jeden Job kalt bauen
+# laesst.
+#
+# `line-tables-only` behaelt **Datei und Zeile** in jedem Backtrace, und
+# das ist, was man liest. Verloren geht nur das Inspizieren von
+# Variablen im Debugger; wer das braucht, setzt lokal `debug = true`.
+debug = "line-tables-only"
 
-[profile.dev.package."*"]
+[profile.dev]
+debug = "line-tables-only"
+
+# ⚑ **Nur die beiden rechnenden Kerne, nicht alle Abhaengigkeiten**
+# (2026-08-29). `[profile.dev.package."*"]` stand hier einen Tag lang und
+# war zu breit: Es uebersetzte auch `tokio`, `libp2p` und `blst`
+# optimiert und kostete damit **40 Prozent mehr Rechenzeit je Bau**
+# (gemessen an `myl-node`: 481 statt 344 Sekunden CPU). Auf einem
+# Zwei-Kern-Runner schlaegt das voll auf die Wanduhr durch.
+#
+# Langsam waren die Tests aber nur dort, wo **ganzzahlig gerechnet**
+# wird, und das sind diese beiden Crates. Sie sind klein; die grossen
+# Abhaengigkeiten bauen wieder unoptimiert.
+[profile.dev.package.integer-llm-kernels]
+opt-level = 2
+
+[profile.dev.package.integer-llm-runtime]
 opt-level = 2
