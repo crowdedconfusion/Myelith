@@ -9,6 +9,7 @@ pub mod dot;
 pub mod fixed_point;
 pub mod integer_math;
 pub mod konformitaet;
+pub mod optimierer;
 pub mod prng;
 pub mod rechenpfad;
 pub mod rmsnorm;

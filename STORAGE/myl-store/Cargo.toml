@@ -1,0 +1,31 @@
+[package]
+name = "myl-store"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Speicher- und Verfügbarkeitsschicht für Myelith: Inhaltsadressierung über Klartext-Hashes, Manifest je Gegenstand, versionierte Wurzel der Wissensdatenbank (κ_v) und Erasure-Kodierung über die bestehende Reed-Solomon-Schicht."
+license = "PolyForm Shield License 1.0.0"
+
+[dependencies]
+borsh = { version = "1.6", features = ["derive"] }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+# ⚑ **Weniger Debug-Info, keine Pruefung weniger** (2026-08-29). Volle
+# Debug-Info kostete gemessen **26 Prozent Rechenzeit je Bau** und
+# **40 Prozent Platz**. `line-tables-only` behaelt Datei und Zeile in
+# jedem Backtrace; verloren geht nur das Inspizieren von Variablen im
+# Debugger.
+debug = "line-tables-only"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package.integer-llm-kernels]
+opt-level = 2
+
+[profile.dev.package.integer-llm-runtime]
+opt-level = 2

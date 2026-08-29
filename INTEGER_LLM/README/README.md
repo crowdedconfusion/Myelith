@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.25.0 (θ_v 0.17.0; kernels 0.27.0, runtime 0.22.0, pipeline 0.14.0)
+> **Version:** 0.26.0 (θ_v 0.17.0; kernels 0.28.0, runtime 0.22.0, pipeline 0.14.0)
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -422,6 +422,75 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.26.0 (kernels 0.28.0) – 2026-08-29 (der Trainingsschritt, und der Würfel ist eine Funktion)
+
+**Der Optimiererschritt in Ganzzahlen** (`optimierer.rs`), also das
+Stück, das die Messung vom 22. August ausdrücklich verlangt hatte und
+das bis heute nur in Python vorlag.
+
+### ⚑ Warum stochastisch gerundet wird
+
+Ein SGD-Schritt bewegt ein Gewicht im Median um **6,4e-6 einer
+Rasterstufe**. Wer zur nächsten Stufe rundet, bekommt entweder **nichts**
+oder einen **ganzen Sprung**, und beides ist falsch: Die kleinen
+Bewegungen, aus denen Lernen besteht, verschwinden. Gemessen an
+Qwen2.5-0,5B: **+29,9 %** mit Rundung zur nächsten Stufe, **+0,67 %**
+mit stochastischem Runden. **Eine einzige geänderte Zeile dreht das
+Ergebnis**, also steht sie mit dieser Begründung da.
+
+### ⚑ Der Würfel ist eine Funktion, kein Zustand
+
+Naheliegend wäre ein Zufallsgenerator, der über die Gewichte läuft. Das
+wäre hier aus zwei Gründen falsch, und beide betreffen das Protokoll:
+
+1. **Ein Zustand hängt an der Reihenfolge.** Wer die Gewichte anders
+   durchläuft, bekommt andere Zahlen und andere Gewichte. **Zwei
+   ehrliche Miner mit verschiedener Aufteilung kämen zu verschiedenen
+   Ergebnissen**, und der Redundanzvergleich meldete beide als
+   fehlerhaft.
+2. **Ein Zustand müsste übertragen werden** und wäre damit Teil des
+   Konsensvertrags.
+
+Der Würfel ist deshalb eine reine Funktion aus **(Ebene, Schritt,
+Index)**. Das ist derselbe Gedanke wie die Assoziativität der
+Ganzzahladdition, auf die das ganze Projekt gebaut ist: **Kein Ergebnis
+darf von der Reihenfolge abhängen.**
+
+⚑ **Und daraus folgte eine Schnittstellenänderung, die beim Testen
+auffiel.** Der erste Entwurf leitete den Index aus der Position im
+übergebenen Stück ab. Dann bekäme dasselbe Gewicht je nach Zuschnitt
+einen anderen Wurf — **und ein Netz, das Arbeit aufteilt, teilt Ebenen
+auf.** Der Schritt nimmt jetzt einen Index-Versatz; ein Test führt vor,
+dass vier Stücke in umgekehrter Reihenfolge dasselbe ergeben wie ein
+Zug, **und dass es ohne den Versatz abwiche.**
+
+### ⚑ Fund 92: Vier Kernel-Dateien standen in keiner Prüfliste
+
+Beim Eintragen der neuen Datei fiel auf, dass `backward.rs`, `dot.rs`,
+`rechenpfad.rs` und `konformitaet.rs` nicht im Gleitkomma-Audit standen.
+**`backward.rs` ist der ganze Rückwärtspass**, also genau der Pfad,
+dessen Ganzzahligkeit die Trainingsthese trägt, und der Lauf meldete
+trotzdem „null Treffer".
+
+**Dritter Fall derselben Klasse** nach Fund 44 und Fund 84. Behoben
+nicht durch vier Zeilen, sondern durch die Ausweitung der
+Vollständigkeitsprüfung auf `kernels/src` und `runtime/src`.
+
+⚑ **Dabei kam eine begründete Ausnahme zutage statt einer Lücke:**
+`loader.rs` hält `f64`, aber ausschließlich um zu prüfen, ob die im
+Artefakt angegebene `scale` zu ihrem `shift` passt. Gerechnet wird mit
+`shift`. **Die Datei steht jetzt als benannte Ausnahme da statt zu
+fehlen** — eine ungelistete Datei ist unsichtbar, eine gelistete
+Ausnahme ist bestreitbar.
+
+**Und dahinter steckt ein Befund, der nicht dort zu beheben ist:**
+`scale` ist aus `shift` ableitbar, also **eine zweite Quelle für
+dieselbe Aussage**, und genau deshalb muss der Loader beide
+gegeneinander prüfen. Es zu entfernen hieße, das Artefaktformat zu
+ändern und alle Artefakte neu zu bauen.
+
+**Acht neue Tests.**
 
 ### v0.25.0 (kernels 0.27.0) – 2026-08-28 (die letzten beiden MoE-Punkte, und sie hatten dieselbe Lösung)
 

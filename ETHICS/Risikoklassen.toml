@@ -1,0 +1,55 @@
+# Risikoklassen für Nutzer (Whitepaper Kap. 9.3, Punkt 1.4)
+#
+# ⚑ **Eine Quelle, kein Nacherzählen.** CLIENT und AGENT_LAYER binden
+# diese Datei ein, statt den Text abzuschreiben. Der Grund steht im
+# Manifest: Eine Warnung, die an drei Stellen steht, steht irgendwann in
+# drei Fassungen da, und die mildeste wird die gelesene.
+#
+# ⚑ Und sie ist bewusst **nicht** beschönigend formuliert. Klasse C
+# heißt „ungeeignet", nicht „mit Vorsicht": Wer Gesundheitsdaten durch
+# ein Netz fremder Rechner schickt, soll das nicht für eine
+# Abwägungsfrage halten.
+
+fassung = "1.0.0"
+quelle = "Whitepaper Kap. 9.3"
+
+[[klasse]]
+kennung = "A"
+name = "Öffentlich"
+beispiele = [
+  "öffentliche Dokumente",
+  "Recherche",
+  "Code aus offenen Repositorien",
+  "kreative Arbeit",
+]
+eignung = "geeignet"
+begruendung = "Kein Vertraulichkeitsverlust, weil der Inhalt ohnehin öffentlich ist."
+
+[[klasse]]
+kennung = "B"
+name = "Intern, geringe Sensitivität"
+beispiele = [
+  "interne Notizen",
+  "unkritische Geschäftsvorgänge",
+]
+eignung = "bedingt geeignet"
+begruendung = """
+Die Pod-Zusammensetzung wechselt je Epoche, und eine Session zerfällt in \
+Segmente. Ein einzelner Miner sieht typischerweise nur Bruchstücke. \
+Das dämpft das Risiko, es beseitigt es nicht."""
+
+[[klasse]]
+kennung = "C"
+name = "Vertraulich"
+beispiele = [
+  "personenbezogene Daten",
+  "Gesundheitsdaten",
+  "Finanzdaten",
+  "Geschäftsgeheimnisse",
+  "Rechtsberatung",
+]
+eignung = "ungeeignet"
+begruendung = """
+Nicht verwenden, solange keine hardwaregestützte Vertraulichkeit besteht. \
+Verschlüsselung schützt den Transport, nicht die Berechnung: Wer rechnet, \
+sieht, womit er rechnet."""

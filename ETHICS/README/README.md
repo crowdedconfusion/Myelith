@@ -1,9 +1,11 @@
 # ethics
 
-> **Version:** 1.0.0
+> **Version:** 1.1.0
 > **Datum:** 2026-08-18
-> **Status:** Manifest v1.0.0 steht,
-> Design-Entscheidungen offen. Keine Phase begonnen.
+> **Status:** Manifest v1.0.0 steht, **Phase 1 abgeschlossen**: aus den
+> Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
+> prüfen kann. Die Design-Entscheidungen bleiben offen, und Phase 2
+> braucht eine Kanzlei, keine Arbeit.
 
 Ethische und rechtliche Standards für alle Komponenten — als
 prüfbare Anforderungen, nicht als Absichtserklärung.
@@ -74,6 +76,32 @@ ETHICS/
   nennt, was ihn trägt — oder ist als Absichtserklärung markiert.
 
 ## Changelog
+
+### v1.1.0 – 2026-08-29 (Phase 1: aus Zusagen werden Dateien)
+
+Fünf Artefakte, drei davon als Skript im CI:
+
+- **`werkzeuge/modellkarte.py`** erzeugt `Modellkarte.md` aus
+  `theta_v/spec.json` und `eval/results/`. ⚑ **Erzeugt, nicht
+  geschrieben**, denn eine von Hand gepflegte Karte ist so aktuell wie
+  die Erinnerung dessen, der sie zuletzt anfasste. `--pruefe` meldet,
+  wenn die abgelegte nicht mehr die erzeugte ist.
+- **`vorlagen/korpus-aufnahmeantrag.json`** und
+  **`werkzeuge/pruefe_antrag.py`** für die vier Pflichtangaben aus G3.
+  Die leere Vorlage fällt durch, und der CI-Schritt prüft genau das.
+- **`werkzeuge/lizenzprobe.py`** liest den Lizenz**text**, nicht den
+  Dateinamen, und kennt drei Sperrmuster. Vier lokale Modelle, alle
+  Apache 2.0.
+- **`Risikoklassen.toml`** als **eine** Quelle für Kap. 9.3. ⚑ Eine
+  Warnung, die an drei Stellen steht, steht irgendwann in drei
+  Fassungen da, und die mildeste wird die gelesene.
+- **`checklists/README.md`** sagt bei jedem Punkt dazu, **ob eine
+  Maschine ihn prüfen kann**. Drei können es, der Rest nicht.
+
+⚑ **Was keine der Prüfungen leistet, und es steht in jeder von ihnen:**
+Sie prüfen Vollständigkeit und Form, nicht Wahrheit. Ob eine
+Merkle-Wurzel stimmt oder ein Filter wirklich lief, sieht kein Skript.
+Sie sorgen dafür, dass jemand es hingeschrieben hat und dafür einsteht.
 
 ### v1.0.0 – 2026-08-18
 - Komponente angelegt, `Manifest.md` v1.0.0.

@@ -1,6 +1,6 @@
 # networking (`myl-net`)
 
-> **Version:** 0.10.0
+> **Version:** 0.10.1
 > **Datum:** 2026-08-28
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,43 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.10.1 – 2026-08-29 (⚑ Fund 94: ein Test wartete auf etwas Verlorenes)
+
+`ungueltige_nachrichten_werden_nicht_weiterverbreitet` schlug in der CI
+fehl: Die gültige Kontrollnachricht erreichte C nicht.
+
+### ⚑ Die Ursache war nicht Langsamkeit, und das ändert die Behebung
+
+`publish_bundle_retry` wartet, bis **Gossipsub den Publish annimmt**,
+und dafür genügt B **ein** Mesh-Peer, nämlich A. **Über A's Mesh sagt
+das nichts.** Ist C dort noch nicht drin, nimmt A die Nachricht an, hat
+niemanden zum Weiterreichen, und **die Nachricht ist weg**: Gossipsub
+sendet nicht nach.
+
+⚑ **Deshalb hätte eine längere Frist nichts geholfen.** Der Lauf
+verbrauchte die vollen fünfzehn Sekunden, weil nichts mehr kommen
+konnte, nicht weil noch etwas unterwegs war. **Ein Test, der auf etwas
+Verlorenes wartet, wartet immer vergeblich**, und wer daraufhin die
+Frist erhöht, macht den Lauf langsamer statt grüner.
+
+**Behoben, indem der Test auf das wartet, was er wirklich braucht:** A
+muss **beide** im Mesh für dieses Topic haben, bevor B publiziert. Die
+Zahl steht in `Netzzustand.mesh` und war schon da; sie wurde nur nicht
+benutzt.
+
+⚑ **Und die Wartezeit macht den eigentlichen Prüfschritt erst
+aussagekräftig.** Der Test behauptet, eine ungültige Nachricht erreiche
+C nicht. Ohne stehendes Mesh hätte diese Stille auch daher rühren
+können, dass noch kein Weg bestand — **die Behauptung wäre aus dem
+falschen Grund wahr gewesen.**
+
+Der Lauf dauert jetzt 3,9 statt 15 Sekunden; zehn Wiederholungen grün.
+
+**Nicht angefasst:** `zwanzig_nodes_erhalten_die_nachricht` wartet
+ebenfalls nur auf Verbindungen statt auf Meshes. Er ist grün, und ein
+grüner Test auf Verdacht umzubauen ist geraten, nicht begründet. Die
+Bauart ist hiermit benannt.
 
 ### v0.10.0 – 2026-08-28 (der Schlüsselaustausch wird hybrid, und der Entwurf verliert eine Eigenschaft)
 

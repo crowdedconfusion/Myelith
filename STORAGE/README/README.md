@@ -1,8 +1,12 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** Entwurf, kein Crate
+> **Version:** 0.1.0
 > **Datum:** 2026-08-25
-> **Status:** Phase 0, Design. Sechs Design-Entscheidungen offen.
+> **Status:** ⚑ **Die erste Zeile Code** (`myl-store` v0.1.0, 10
+> Tests). Fünf der sechs Entwurfsfragen sind entschieden, eine
+> ausdrücklich nicht: Ob ein Gegenstand vervielfältigt oder
+> erasure-kodiert wird, ist Latenz gegen Platz, und **beide Zahlen
+> fehlen**, solange es keinen echten Abrufverkehr gibt.
 
 ## Aufgabe
 
@@ -69,7 +73,24 @@ das veröffentlichte v0.3 bleibt unangetastet.
 
 ## Stand
 
-Entwurf. Die sechs Design-Entscheidungen aus dem Abschnitt oben sind
-offen, und ohne sie gibt es kein Crate: Wer Speicherung baut, bevor
-Redundanzform, Rotationsperiode und Nachweisverfahren feststehen, baut
-sie zweimal.
+**Phase 1 steht** (`myl-store` v0.1.0). Wie beim Agent Layer entsteht
+zuerst kein Speicher, sondern ein **Format**: was ein Gegenstand ist,
+wie er in Teile zerfällt, was in seinem Manifest steht.
+
+⚑ **Gehasht wird der Klartext, nicht das Komprimat.** Zwei
+zstd-Fassungen komprimieren dieselben Bytes verschieden; wer den Hash
+des Komprimats verankert, macht den Kompressor zum Konsensvertrag, und
+ein Bibliotheksupdate wird zum Betrugsvorwurf. **Der Preis:** Ein
+Verfügbarkeitsnachweis muss dann über den Klartext fragen, der Halter
+entpackt also zum Antworten.
+
+⚑ **Und eine Frage wurde ausdrücklich nicht entschieden.** Ob ein
+Gegenstand vervielfältigt oder erasure-kodiert wird, ist Latenz gegen
+Platz: Wer etwas **ganz** liest, holt es von acht Gegenstellen schneller
+als von einer; wer in kleinen Stücken liest, zahlt acht Abrufe je
+Stelle. **Beide Zahlen fehlen**, solange es keinen echten Abrufverkehr
+gibt. Statt zu raten, ist die Wahl je Gegenstandsart einstellbar; die
+Zahlen dahinter stehen als Test, nicht als Behauptung.
+
+Was noch fehlt: Zuteilung und Rotation, der Verfügbarkeitsnachweis und
+der Abruf.

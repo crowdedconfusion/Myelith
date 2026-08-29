@@ -243,6 +243,7 @@ jobs:
             VERIFICATION/myl-verifier
             GOVERNANCE/myl-governance
             AGENT_LAYER/myl-agent
+            STORAGE/myl-store
             SIMULATION/myl-simulation
             COMPUTE_PIPELINE/myl-pod
             TRAINING/myl-train
@@ -272,6 +273,7 @@ jobs:
             VERIFICATION/myl-verifier \
             GOVERNANCE/myl-governance \
             AGENT_LAYER/myl-agent \
+            STORAGE/myl-store \
             SIMULATION/myl-simulation \
             COMPUTE_PIPELINE/myl-pod \
             TRAINING/myl-train \
@@ -346,6 +348,12 @@ jobs:
       #
       # Der Schritt steht deshalb ganz am Ende: Was hier faellt, ist
       # nichts, was eine einzelne Komponente haette melden koennen.
+      # myl-store: Inhaltsadressierung und κ_v, ohne Netz und ohne
+      # Artefakte. Läuft in Millisekunden.
+      - name: cargo test — STORAGE (myl-store)
+        working-directory: STORAGE/myl-store
+        run: cargo test --quiet
+
       - name: cargo test — SIMULATION (myl-simulation)
         working-directory: SIMULATION/myl-simulation
         run: cargo test --quiet
@@ -568,6 +576,25 @@ jobs:
       - name: Audit — Testprofil
         working-directory: INTEGER_LLM
         run: python3 tests/audit/test_profile.py
+
+      # ⚑ Die drei ETHICS-Prüfungen aus Punkt 1.1 bis 1.3. Sie brauchen
+      # kein Rust und laufen in unter einer Sekunde.
+      #
+      # `lizenzprobe.py` prüft nur, was lokal liegt; in der CI liegt kein
+      # Modell, also meldet sie „nichts zu prüfen" und geht durch. **Das
+      # ist kein Beleg für eine saubere Modellfamilie**, sondern die
+      # ehrliche Aussage über einen leeren Ordner. Belegt wird sie beim
+      # Kalibrierungslauf auf der Maschine, die die Modelle hält.
+      - name: ETHICS — Lizenz, Modellkarte, Aufnahmeantrag
+        run: |
+          set -e
+          python3 ETHICS/werkzeuge/lizenzprobe.py
+          python3 ETHICS/werkzeuge/modellkarte.py --pruefe
+          python3 ETHICS/werkzeuge/pruefe_antrag.py \
+            ETHICS/vorlagen/korpus-aufnahmeantrag.json && {
+              echo "FEHLER: die leere Vorlage darf nicht als vollstaendig gelten"
+              exit 1
+            } || echo "ok: die leere Vorlage faellt durch, wie sie soll"
 
       # ⚑ **Diese sechs liefen bis zum 2026-08-25 in keinem Job.**
       #

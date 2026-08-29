@@ -83,6 +83,21 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "integer_math.rs",
     REPO / "kernels" / "src" / "prng.rs",
     REPO / "kernels" / "src" / "sampling.rs",
+    # 2026-08-29 nachgetragen, und ⚑ **`backward.rs` ist die schwerste
+    # Luecke, die dieses Skript je hatte**: der ganze Rueckwaertspass,
+    # also genau der Pfad, dessen Ganzzahligkeit die Trainingsthese
+    # traegt. Er stand seit seiner Entstehung nicht in dieser Liste, und
+    # der Lauf meldete trotzdem "null Treffer".
+    #
+    # Dieselbe Klasse wie Fund 84 und Fund 44, jetzt zum dritten Mal.
+    # Die Vollstaendigkeitspruefung unten deckt seit heute auch
+    # `kernels/src` und `runtime/src` ab; ohne sie waere es wieder nur
+    # aufgefallen, weil jemand aus anderem Grund hinsah.
+    REPO / "kernels" / "src" / "backward.rs",
+    REPO / "kernels" / "src" / "optimierer.rs",
+    REPO / "kernels" / "src" / "dot.rs",
+    REPO / "kernels" / "src" / "rechenpfad.rs",
+    REPO / "kernels" / "src" / "konformitaet.rs",
     REPO / "kernels" / "src" / "backends" / "mod.rs",
     REPO / "kernels" / "src" / "backends" / "reference.rs",
     REPO / "kernels" / "src" / "backends" / "simd.rs",
@@ -91,6 +106,10 @@ HOT_PATH = [
     REPO / "runtime" / "src" / "model.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
+    REPO / "runtime" / "src" / "lib.rs",
+    REPO / "runtime" / "src" / "main.rs",
+    REPO / "runtime" / "src" / "paths.rs",
+    REPO / "runtime" / "src" / "tokenizer.rs",
     # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
     #
     # Vorher lag sie in kernels/src/bin/golden_runner.rs, und das ist als
@@ -381,6 +400,12 @@ def audit_group(label: str, paths) -> int:
 VOLLSTAENDIG_ZU_PRUEFEN = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src",
     ROOT / "CONSENSUS" / "myl-ledger" / "src",
+    # 2026-08-29 dazugekommen, nachdem hier vier Dateien fehlten,
+    # darunter der ganze Rueckwaertspass. In diesen beiden
+    # Verzeichnissen ist jede Datei Heisspfad; die einzige Ausnahme ist
+    # `bin/`, siehe BEWUSST_DRAUSSEN.
+    REPO / "kernels" / "src",
+    REPO / "runtime" / "src",
 ]
 
 # Dateien aus den obigen Verzeichnissen, die bewusst **nicht** geprueft
@@ -394,7 +419,43 @@ VOLLSTAENDIG_ZU_PRUEFEN = [
 # still weg. Dieselbe Ueberlegung wie bei `strip_strings`: Eine
 # Falschmeldung verleitet dazu, die Pruefung zu entschaerfen statt die
 # Ursache anzusehen.
-BEWUSST_DRAUSSEN: dict = {}
+BEWUSST_DRAUSSEN: dict = {
+    # ⚑ **Die einzige Ausnahme, und sie ist eng.** `loader.rs` haelt an
+    # vier Stellen `f64`, und zwar ausschliesslich, um zu **pruefen**,
+    # ob die im Artefakt angegebene `scale` zu ihrem `shift` passt
+    # (`scale == 2^-shift`). Gerechnet wird mit `shift`, einer Ganzzahl;
+    # die `f64` verlaesst die Pruefung nicht.
+    #
+    # **Warum die Datei trotzdem hier steht statt einfach zu fehlen:**
+    # Eine ungelistete Datei ist unsichtbar, eine gelistete Ausnahme ist
+    # bestreitbar. Wer spaeter eine Gleitkommazahl in den Rechenpfad
+    # dieser Datei traegt, faellt hier nicht auf — **also gehoert diese
+    # Zeile bei jeder Aenderung an `loader.rs` mitgelesen.**
+    #
+    # ⚑ **Und dahinter steckt ein Befund, der nicht hier zu beheben
+    # ist:** `scale` ist aus `shift` ableitbar. Ein ableitbares Feld im
+    # Artefakt ist eine zweite Quelle fuer dieselbe Aussage, und genau
+    # deshalb muss der Loader die beiden gegeneinander pruefen. Es zu
+    # entfernen hiesse, das Artefaktformat zu aendern und alle Artefakte
+    # neu zu bauen; als eigener Punkt vermerkt.
+    REPO
+    / "runtime"
+    / "src"
+    / "loader.rs": "f64 nur zur Konsistenzpruefung von scale gegen shift, nie im Rechenpfad",
+}
+
+# Verzeichnisnamen, deren Inhalt bewusst nicht geprueft wird.
+#
+# ⚑ **`bin/` sind Offline-Werkzeuge**: Sie erzeugen Referenzvektoren,
+# vermessen und schuetten Zwischenstaende aus, und keines von ihnen
+# laeuft, waehrend das Netz laeuft.
+#
+# **Die Ausnahme ist nicht gratis.** Bis zum 2026-08-27 steckte in
+# `kernels/src/bin/golden_runner.rs` eine f64-Nachbildung der exp-LUT
+# als Rueckfall, und sie fiel nur auf, weil die Pruefliste beim Umzug
+# von Hand durchgesehen wurde. **Wer hier ein Werkzeug ablegt, das doch
+# im Betrieb laeuft, hat es der Pruefung entzogen, ohne es zu merken.**
+BEWUSST_DRAUSSEN_ORDNER = {"bin"}
 
 
 def pruefe_vollstaendigkeit() -> int:
@@ -403,7 +464,11 @@ def pruefe_vollstaendigkeit() -> int:
     Gegenprobe zur Liste selbst: Sie faengt nicht Gleitkomma, sondern
     das Vergessen.
     """
-    gelistet = {p.resolve() for p in CONSENSUS_PATH}
+    # ⚑ Gegen **beide** Listen, nicht nur gegen den Konsenspfad. Der
+    # erste Entwurf verglich nur mit CONSENSUS_PATH und meldete daraufhin
+    # jede Heisspfad-Datei als fehlend: eine Pruefung, die 47 Treffer
+    # meldet, liest niemand.
+    gelistet = {p.resolve() for p in CONSENSUS_PATH} | {p.resolve() for p in HOT_PATH}
     fehlend = []
     for verzeichnis in VOLLSTAENDIG_ZU_PRUEFEN:
         if not verzeichnis.is_dir():
@@ -413,6 +478,8 @@ def pruefe_vollstaendigkeit() -> int:
             if datei.resolve() in gelistet:
                 continue
             if datei.resolve() in {k.resolve() for k in BEWUSST_DRAUSSEN}:
+                continue
+            if BEWUSST_DRAUSSEN_ORDNER & set(datei.parts):
                 continue
             fehlend.append(datei)
     print(f"[no-float] Vollstaendigkeit: {len(VOLLSTAENDIG_ZU_PRUEFEN)} Verzeichnisse")

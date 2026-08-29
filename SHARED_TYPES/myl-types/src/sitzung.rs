@@ -102,6 +102,21 @@ pub struct Grenzen {
     pub budget: u64,
     /// Höchstbetrag je Einzelvorgang, unabhängig vom Restbudget
     /// (Kap. 8.2, Punkt 2).
+    ///
+    /// ⚑ **„Einzelvorgang" heißt je Währung etwas anderes, und das ist
+    /// kein Zufall, sondern folgt aus der Abrechnung** (2026-08-29):
+    ///
+    /// - Für [`Waehrung::Myl`] ist es das Einzeltransaktionslimit aus
+    ///   Kap. 8.2: eine Zahlung, eine Prüfung.
+    /// - Für [`Waehrung::Credits`] ist es **die Obergrenze je Epoche**.
+    ///   Ein Inferenzauftrag verbraucht ein Segment je Token-Position,
+    ///   also hunderte je Antwort, und **ein Ledger-Übergang je Token
+    ///   ist unmöglich**. Der Verbrauch wird deshalb je Epoche
+    ///   aufsummiert und einmal gebucht, so wie das PoI-Bündel die
+    ///   Arbeit einer Epoche zusammenfasst.
+    ///
+    /// Wer die beiden verwechselt, setzt für Credits eine Grenze, die
+    /// er als „je Anfrage" gemeint hat, und bekommt „je Epoche".
     pub einzellimit: u64,
     /// Ab diesem Betrag ist bestätigte Auslieferung nötig (Kap. 8.2,
     /// letzter Absatz, Anschluss an Kap. 6.4). `u64::MAX` schaltet die

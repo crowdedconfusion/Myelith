@@ -104,6 +104,43 @@ impl TestNode {
         rx.await.expect("Ergebnis-Kanal")
     }
 
+    /// Die Mesh-Größe dieses Knotens für ein Topic.
+    async fn mesh_groesse(&self, topic: GossipTopic) -> usize {
+        let (tx, rx) = oneshot::channel();
+        self.commands
+            .send(NodeCommand::Zustand(tx))
+            .expect("Kommando-Kanal");
+        let zustand = rx.await.expect("Ergebnis-Kanal");
+        zustand
+            .mesh
+            .iter()
+            .find(|(t, _)| *t == topic)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+
+    /// Wartet, bis das Mesh dieses Knotens für `topic` mindestens `n`
+    /// Peers hat.
+    ///
+    /// ⚑ **Der Unterschied zu `wait_peers` ist der ganze Punkt.** Eine
+    /// bestehende Verbindung heißt nicht, dass Gossipsub den Peer für
+    /// dieses Topic ins Mesh aufgenommen hat, und **weitergereicht wird
+    /// nur ans Mesh**. Ein Zwischen-Knoten mit zwei Verbindungen und
+    /// einem Mesh-Eintrag nimmt eine Nachricht an und hat niemanden,
+    /// dem er sie gibt.
+    async fn wait_mesh(&self, topic: GossipTopic, n: usize, frist: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + frist;
+        loop {
+            if self.mesh_groesse(topic).await >= n {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     /// Wartet, bis mindestens `n` Peers verbunden sind.
     async fn wait_peers(&self, n: usize, frist: Duration) {
         let deadline = tokio::time::Instant::now() + frist;
@@ -175,8 +212,31 @@ async fn ungueltige_nachrichten_werden_nicht_weiterverbreitet() {
     let mut node_c = TestNode::start(Some(node_a.listen_addr.clone())).await;
     // B und C sind nur mit A verbunden (kein Bootstrap untereinander).
 
-    // 1) Kontrolle: gültige Nachricht B → A → C (mit Wiederholungen,
-    // bis Verbindung und Mesh stehen).
+    // ⚑ **Erst warten, bis A beide im Mesh hat, dann publizieren.**
+    //
+    // Der Test schlug am 2026-08-29 in der CI fehl, und die Ursache war
+    // nicht Langsamkeit: `publish_bundle_retry` wartet, bis **Gossipsub
+    // den Publish annimmt**, und dafür genügt B **ein** Mesh-Peer,
+    // nämlich A. Über A's Mesh sagt das nichts. Ist C dort noch nicht
+    // drin, nimmt A die Nachricht an, hat niemanden zum Weiterreichen,
+    // und **die Nachricht ist weg** — Gossipsub sendet nicht nach.
+    //
+    // ⚑ **Deshalb hätte eine längere Frist nichts geholfen.** Der Lauf
+    // verbrauchte die vollen 15 Sekunden, weil nichts mehr kommen
+    // konnte, nicht weil es noch unterwegs war. Ein Test, der auf etwas
+    // Verlorenes wartet, wartet immer vergeblich.
+    //
+    // **Und die Wartezeit macht zugleich Schritt 2 erst aussagekräftig:**
+    // Ohne sie könnte dessen Stille daher rühren, dass das Mesh noch
+    // nicht stand, statt daher, dass A verworfen hat.
+    assert!(
+        node_a
+            .wait_mesh(GossipTopic::PoiBundles, 2, Duration::from_secs(30))
+            .await,
+        "A muss B und C im Mesh haben, sonst kann er nichts weiterreichen"
+    );
+
+    // 1) Kontrolle: gültige Nachricht B → A → C.
     let gueltig_1 = beispiel_bundle(1);
     assert!(
         node_b
