@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.20.0 (`myl-consensus` 0.17.0, `myl-scheduler` 0.4.0,
+> **Version:** 0.20.1 (`myl-consensus` 0.17.1, `myl-scheduler` 0.4.0,
 > `myl-ledger` 0.5.0)
 > **Datum:** 2026-08-29
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -107,6 +107,18 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.20.1 (`myl-consensus` 0.17.1) – 2026-08-29 (eine Abschrift weniger)
+
+`Transaktion::absender_adresse` rechnete `sha256(pubkey)` selbst. Diese
+Regel stand am 29. August in sechs Dateien ausgeschrieben, jede für sich
+richtig; sie steht jetzt einmal in `myl_types` und wird hier gerufen.
+Der Schaden einer solchen Verdopplung entsteht beim Ändern, nicht beim
+Schreiben (SHARED_TYPES v0.11.0).
+
+Der Gegentest im selben Modul rechnet sie weiterhin von Hand, und das
+mit Absicht: Ein Test, der über denselben Helfer rechnet, den er prüfen
+soll, prüft sich selbst.
 
 ### v0.20.0 (`myl-consensus` 0.17.0) – 2026-08-29 (ein Quorumsbeleg gilt ohne Rücksicht auf die Runde)
 

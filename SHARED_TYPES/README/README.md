@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.10.0
+> **Version:** 0.11.0
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -8,7 +8,7 @@
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **168 Tests grün.** (Die Zeile stand bis heute auf 133 und zählte
+> **177 Tests grün.** (Die Zeile stand bis heute auf 133 und zählte
 > damit nur einen Teil der Testbinaries.)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
@@ -49,6 +49,42 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.11.0 – 2026-08-29 (der Signaturvertrag zieht dorthin, wo geurteilt wird)
+
+### ⚑ Ein Beleg nützt nur dem, der ihn lesen kann
+
+`TransitionSig` lag in `myl-pod`: die Unterschrift, mit der ein Shard
+jeden Rechenschritt bezeugt, den er ausführt. Gebraucht wird sie aber
+nicht dort, wo sie entsteht, sondern dort, wo geurteilt wird, und
+`myl-verifier` hängt nicht an `myl-pod` und soll es auch nicht, daran
+hinge die ganze Inferenz-Laufzeit.
+
+Die Folge war, dass die Unterschriften erzeugt, eingesammelt, aggregiert
+und **von niemandem geprüft** wurden. Sie stehen jetzt als
+`myl_types::uebergang` in der gemeinsamen Kiste, samt Präfix,
+Rollenbyte und Feldreihenfolge; `myl-pod` reicht sie weiter durch, also
+ändert sich für seine Nutzer nichts. Eine Nachbildung auf der
+Richterseite wäre eine zweite Quelle für dieselbe Wahrheit gewesen, und
+die beiden hätten sich beim ersten Formatwechsel getrennt.
+
+### ⚑ `sha256(pubkey)` stand an sechs Stellen
+
+`MinerId` und `Address` sind laut ihrer eigenen Beschreibung
+`SHA-256(komprimierter BLS-Public-Key)`. Ausgeschrieben war diese Regel
+am 29. August in sechs Dateien, jede für sich richtig.
+
+Der Schaden einer solchen Verdopplung entsteht nicht beim Schreiben,
+sondern beim Ändern: Wer die Regel an fünf Stellen nachzieht und die
+sechste übersieht, bekommt zwei Kennungen für denselben Schlüssel, und
+der Fehler zeigt sich als „unbekannter Aussteller" irgendwo weit weg von
+seiner Ursache. Jetzt gibt es `Address::aus_schluessel` und
+`MinerId::aus_schluessel`, und die fünf Abschriften im Produktivcode
+sind fort.
+
+**Die drei Abschriften in Tests bleiben stehen**, und zwar mit Absicht:
+Ein Test, der die Ableitung über denselben Helfer rechnet, den er prüfen
+soll, prüft sich selbst.
 
 ### v0.10.0 – 2026-08-29 (der Kontrakt begrenzt auch die Arbeit)
 

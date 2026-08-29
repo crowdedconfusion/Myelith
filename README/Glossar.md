@@ -1509,6 +1509,35 @@ fällig.
 
 *Im Code:* `VERIFICATION/myl-verifier/src/adjudicate.rs`
 
+### Schuldbeleg und Übergangs-Signatur
+
+Jeder Shard unterschreibt jeden Übergang, den er rechnet: Segment,
+Shard-Index, Token-Position, Eingangs-Hash, Ausgangs-Hash, dazu ein
+Präfix und ein Rollenbyte. Diese Unterschrift ist **keine
+Eingabeprüfung**, dafür ist der Spur-Hash da, den der Empfänger gegen
+die erhaltenen Aktivierungen hält. Sie ist die **Zuschreibung**: der
+Beleg, dass genau dieser Miner genau diesen Schritt erzeugt hat.
+
+Gebraucht wird sie deshalb nicht dort, wo sie entsteht, sondern dort, wo
+geurteilt wird. Ein Schuldspruch gegen den primären Pod verlangt seit
+dem 29. August einen **Schuldbeleg**: den unterschriebenen Übergang, den
+öffentlichen Schlüssel und die Signatur. Die Kennung wird aus dem
+Schlüssel abgeleitet und nicht mitgeführt.
+
+**Was er nicht belegt:** dass die strittige Layer in der Zuständigkeit
+des Unterzeichners lag. Die Signatur ist je Shard, die Bisektion zeigt
+auf eine Layer, und die Zuordnung dazwischen führt die Signatur nicht
+mit. Was er leistet: Geschlachtet werden kann nur, wer an diesem Segment
+unter eigenem Schlüssel gearbeitet hat.
+
+**Die Gegenrichtung ist offen.** Verliert der Herausforderer, wird er
+für eine falsche Beschuldigung geschlachtet; der Beleg dafür wäre eine
+unterschriebene Anfechtung, und eine Anfechtung trägt heute keine
+Signatur.
+
+*Im Code:* `SHARED_TYPES/myl-types/src/uebergang.rs`,
+`VERIFICATION/myl-verifier/src/slash.rs`
+
 ### Slashing
 
 Der Einzug von hinterlegtem Stake als Strafe.

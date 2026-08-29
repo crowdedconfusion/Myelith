@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.11.0
+> **Version:** 0.12.0
 > **Datum:** 2026-08-26
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -8,7 +8,7 @@
 > KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
 > Ausfallsicherung mit Standby-Übernahme, Epochenübergang und seit dem
 > 26. August die **Verdrahtung mit dem Epochen-Scheduler**.
-> **81 Tests grün.**
+> **76 Tests grün.**
 >
 > **Offen:** die Ersatzsuche des Koordinators (3.4 bis 3.6) und der
 > Pod-Lauf über getrennte Hosts.
@@ -69,6 +69,28 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.12.0 – 2026-08-29 (der Übergangsvertrag zieht in die gemeinsame Kiste)
+
+`TransitionSig`, `Rolle` und `DST_SHARD_TRANSITION` stehen jetzt in
+`myl_types::uebergang`. Der Grund liegt außerhalb dieses Crates: Die
+Unterschrift eines Shards unter seinen Rechenschritt wird nicht dort
+gebraucht, wo sie entsteht, sondern bei der Schiedsstelle, und
+`myl-verifier` hängt nicht an `myl-pod` und soll es auch nicht, daran
+hinge die ganze Inferenz-Laufzeit. Die Folge war, dass die
+Unterschriften erzeugt, eingesammelt, aggregiert und von niemandem
+geprüft wurden.
+
+Für Nutzer dieses Crates ändert sich nichts: `myl_pod::trace` reicht die
+drei Namen weiter durch, und dies bleibt die Stelle, an der sie benutzt
+werden. Fünf Tests sind mit dem Vertrag umgezogen, deshalb steht hier
+76 statt 81.
+
+⚑ **`PodMessage.signature` prüft weiterhin niemand beim Empfang**, und
+das ist richtig so: Der Empfänger prüft die Aktivierungen gegen den
+Spur-Hash, das ist die Manipulationserkennung. Die Signatur ist die
+Zuschreibung für den Streitfall, und geprüft wird sie dort, wo
+zugeschrieben wird (VERIFICATION v0.11.0).
 
 ### v0.11.0 – 2026-08-26 (Punkt 3.3: der Scheduler ist verdrahtet)
 

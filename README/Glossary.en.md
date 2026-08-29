@@ -1452,6 +1452,34 @@ operation.
 
 *In code:* `VERIFICATION/myl-verifier/src/adjudicate.rs`
 
+### Guilt proof and transition signature
+
+Every shard signs every transition it computes: segment, shard index,
+token position, input hash, output hash, plus a prefix and a role byte.
+That signature is **not** an input check, the trace hash is, which the
+receiver holds against the activations it got. It is the
+**attribution**: proof that this particular miner produced this
+particular step.
+
+It is therefore needed not where it is created but where judgment
+happens. Since 29 August a guilty verdict against the primary pod
+requires a **guilt proof**: the signed transition, the public key and
+the signature. The identifier is derived from the key rather than
+carried alongside it.
+
+**What it does not prove:** that the disputed layer fell within the
+signer's range. The signature is per shard, bisection points at a layer,
+and the mapping between them is not carried in the signature. What it
+does achieve: only someone who worked on this segment under their own
+key can be slashed.
+
+**The reverse direction is open.** When the challenger loses, they are
+slashed for a false accusation; the proof for that would be a signed
+challenge, and a challenge carries no signature today.
+
+*In code:* `SHARED_TYPES/myl-types/src/uebergang.rs`,
+`VERIFICATION/myl-verifier/src/slash.rs`
+
 ### Slashing
 
 Confiscation of deposited stake as a penalty.

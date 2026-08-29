@@ -148,6 +148,11 @@ CONSENSUS_PATH = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "pq.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "protocol.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "sitzung.rs",
+    # 2026-08-29: Der Uebergangs-Signaturvertrag zog aus `myl-pod`
+    # hierher, damit die Schiedsstelle ihn lesen kann. Die
+    # Vollstaendigkeitspruefung hat ihn beim ersten Lauf gemeldet, statt
+    # dass er ein Jahr lang ungeprueft mitgelaufen waere.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "uebergang.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lib.rs",
     # Der Generator der Konformitaetsvektoren gehoert dazu, obwohl er
     # nicht laeuft, wenn das Netz laeuft: Er **erzeugt die Referenz**,

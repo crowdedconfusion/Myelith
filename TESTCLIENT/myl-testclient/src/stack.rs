@@ -41,7 +41,9 @@ use myl_types::hash::Hash;
 use myl_types::ids::{Address, EpochId, MinerId, SegmentId};
 use myl_types::merkle::MerkleTree;
 use myl_types::vrf::VrfSecretKey;
-use myl_verifier::{compare_commitments, create_slash_decision, CompareResult, VerdictOutcome};
+use myl_verifier::{
+    compare_commitments, create_slash_decision, CompareResult, Schuldbeleg, VerdictOutcome,
+};
 
 use crate::logging::{sha256_hex, Event, RunLog};
 
@@ -554,6 +556,36 @@ fn borsh_roundtrip(block: &Block) -> Result<usize, String> {
 
 // ── Stufe 8: Verifikation (myl-verifier) ────────────────────────────
 
+/// Ein unterschriebener Übergang samt Schlüssel, wie ihn ein Shard
+/// erzeugt.
+///
+/// ⚑ Seit dem 2026-08-29 braucht ein Schuldspruch gegen den primären Pod
+/// diesen Beleg. Der Durchstich baut ihn deshalb wie im Betrieb: Der
+/// Schlüssel unterschreibt den Übergang, und die Kennung wird aus dem
+/// Schlüssel abgeleitet. Eine ausgedachte Kennung ohne Schlüssel kommt
+/// hier nicht mehr durch, und das ist der Sinn der Sache.
+fn schuldbeleg(byte: u8, segment: SegmentId) -> Result<(MinerId, Schuldbeleg), String> {
+    let sk = myl_types::bls::BlsSecretKey::key_gen(&[byte; 32])
+        .map_err(|e| format!("Schlüssel: {:?}", e))?;
+    let pk = sk.public_key().map_err(|e| format!("Punkt: {:?}", e))?;
+    let uebergang = myl_types::uebergang::TransitionSig {
+        segment_id: segment,
+        shard_index: 0,
+        position: 0,
+        prev_hash: [0u8; 32],
+        next_hash: [7u8; 32],
+    };
+    let signatur = uebergang.sign(&sk)?;
+    Ok((
+        MinerId::aus_schluessel(&pk),
+        Schuldbeleg {
+            uebergang,
+            schluessel: pk,
+            signatur,
+        },
+    ))
+}
+
 fn stufe_verifikation() -> Stufe {
     let gleich: Vec<Hash> = (0..8u8).map(|i| Hash::sha256(&[i])).collect();
     match compare_commitments(&gleich, &gleich) {
@@ -571,17 +603,23 @@ fn stufe_verifikation() -> Stufe {
         return Stufe::fehler("verifikation", format!("Abweichung an Position {} statt 5", pos));
     }
 
+    let segment = SegmentId::new([1u8; 32]);
+    let (schuldiger, beleg) = match schuldbeleg(1, segment) {
+        Ok(p) => p,
+        Err(e) => return Stufe::fehler("verifikation", format!("Beleg: {}", e)),
+    };
     let entscheidung = match create_slash_decision(
         VerdictOutcome::PrimaryLoses,
-        SegmentId::new([1u8; 32]),
-        MinerId::new([1u8; 32]),
+        segment,
+        schuldiger,
         MinerId::new([2u8; 32]),
         Some(pos),
+        Some(&beleg),
     ) {
         Ok(d) => d,
         Err(e) => return Stufe::fehler("verifikation", format!("Slash-Entscheidung: {:?}", e)),
     };
-    if entscheidung.slashed_miner != MinerId::new([1u8; 32]) {
+    if entscheidung.slashed_miner != schuldiger {
         return Stufe::fehler("verifikation", "falscher Miner geslasht");
     }
     Stufe::ok(
@@ -610,12 +648,18 @@ fn stufe_ledger() -> Stufe {
 
     // Die Slash-Entscheidung des Verifiers durch den Ledger buchen:
     // genau die Schnittstelle, an der Fund A9 hing.
+    let segment = SegmentId::new([9u8; 32]);
+    let (schuldiger, beleg) = match schuldbeleg(1, segment) {
+        Ok(p) => p,
+        Err(e) => return Stufe::fehler("ledger", format!("Beleg: {}", e)),
+    };
     let entscheidung = match create_slash_decision(
         VerdictOutcome::PrimaryLoses,
-        SegmentId::new([9u8; 32]),
-        MinerId::new([1u8; 32]),
+        segment,
+        schuldiger,
         MinerId::new([2u8; 32]),
         Some(3),
+        Some(&beleg),
     ) {
         Ok(d) => d,
         Err(e) => return Stufe::fehler("ledger", format!("Slash-Entscheidung: {:?}", e)),

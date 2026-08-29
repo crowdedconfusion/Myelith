@@ -30,6 +30,37 @@ fn miner(b: u8) -> MinerId {
     MinerId::new([b; 32])
 }
 
+fn geheim(b: u8) -> myl_types::bls::BlsSecretKey {
+    myl_types::bls::BlsSecretKey::key_gen(&[b.wrapping_add(1); 32]).expect("Schlüssel")
+}
+
+/// Eine Kennung mit einem Schlüssel dahinter.
+///
+/// ⚑ Seit dem 2026-08-29 braucht ein Schuldspruch gegen den primären Pod
+/// einen unterschriebenen Übergang. `miner(b)` hat keinen Schlüssel und
+/// kann deshalb keinen liefern; das ist keine Testhürde, sondern die
+/// Eigenschaft selbst.
+fn kennung(b: u8) -> MinerId {
+    MinerId::aus_schluessel(&geheim(b).public_key().expect("Punkt"))
+}
+
+fn beleg_fuer(b: u8, seg: SegmentId) -> myl_verifier::Schuldbeleg {
+    let sk = geheim(b);
+    let uebergang = myl_types::uebergang::TransitionSig {
+        segment_id: seg,
+        shard_index: 0,
+        position: 0,
+        prev_hash: [0u8; 32],
+        next_hash: [7u8; 32],
+    };
+    let signatur = uebergang.sign(&sk).expect("signieren");
+    myl_verifier::Schuldbeleg {
+        uebergang,
+        schluessel: sk.public_key().expect("Punkt"),
+        signatur,
+    }
+}
+
 /// xorshift64, reproduzierbar und ohne Abhängigkeit. Ein Test, der bei
 /// jedem Lauf andere Zahlen zieht, meldet einen Fehler einmal und danach
 /// nie wieder.
@@ -528,7 +559,14 @@ fn eine_verkuerzte_spur_gilt_nicht_als_uebereinstimmung() {
 fn niemand_fordert_sich_selbst_heraus() {
     for outcome in [VerdictOutcome::PrimaryLoses, VerdictOutcome::RedundantLoses] {
         assert!(matches!(
-            create_slash_decision(outcome, segment(1), miner(7), miner(7), Some(3)),
+            create_slash_decision(
+                outcome,
+                segment(1),
+                miner(7),
+                miner(7),
+                Some(3),
+                Some(&beleg_fuer(7, segment(1))),
+            ),
             Err(SlashError::IdenticalMiners)
         ));
     }
@@ -546,16 +584,25 @@ fn geschlachteter_und_belohnter_sind_nie_dieselbe_partei() {
         } else {
             VerdictOutcome::RedundantLoses
         };
-        match create_slash_decision(outcome, segment(1), miner(a), miner(b), None) {
+        let beleg = beleg_fuer(a, segment(1));
+        match create_slash_decision(
+            outcome,
+            segment(1),
+            kennung(a),
+            kennung(b),
+            None,
+            Some(&beleg),
+        ) {
             Ok(d) => {
                 assert_ne!(d.slashed_miner, d.rewarded_miner);
                 let verlierer = match outcome {
-                    VerdictOutcome::PrimaryLoses => miner(a),
-                    VerdictOutcome::RedundantLoses => miner(b),
+                    VerdictOutcome::PrimaryLoses => kennung(a),
+                    VerdictOutcome::RedundantLoses => kennung(b),
                 };
                 assert_eq!(d.slashed_miner, verlierer);
             }
             Err(SlashError::IdenticalMiners) => assert_eq!(a, b),
+            Err(e) => panic!("unerwarteter Fehler bei ({a}, {b}): {e}"),
         }
     }
 }

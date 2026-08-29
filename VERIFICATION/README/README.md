@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.10.0
+> **Version:** 0.11.0
 > **Datum:** 2026-08-27
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -9,7 +9,7 @@
 > Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik,
 > Kontrollsegmente samt der Vorratsschranke aus Fund 58 und die
 > Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
-> **135 Tests grün** (105 Modultests, 19 adversariale, 9 Simulation, 2 Doku-Tests).
+> **144 Tests grün** (111 Modultests, 19 adversariale, 9 Simulation, 3 Bisektion, 2 Doku-Tests).
 >
 > ⚑ **Punkt 3.2 trägt weiterhin ein ⚠ und keinen Haken, aber aus einem
 > anderen Grund als bisher.** Die Ununterscheidbarkeit ist eine
@@ -134,6 +134,64 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.11.0 – 2026-08-29 (⚑ Fund 96: ein Schuldspruch ohne Beleg)
+
+### Wer die Funktion rief, bestimmte, wen es trifft
+
+`create_slash_decision` nahm den zu schlachtenden Miner als
+**Aufrufparameter** entgegen. Nichts band ihn an die strittige Arbeit.
+Dieselbe Gestalt hatte Fund 85 auf der Ledger-Seite: eine Anweisung, die
+den Absender nannte, ohne ihn zu belegen.
+
+Der Beleg lag dabei die ganze Zeit vor. Jeder Shard unterschreibt jeden
+Übergang, den er rechnet. Diese Unterschriften wurden erzeugt,
+eingesammelt, zu einem Aggregat verrechnet und von niemandem geprüft.
+Sie sind keine Eingabeprüfung, dafür ist der Spur-Hash da; sie sind die
+**Zuschreibung**, und Zuschreibung ist genau das, was eine
+Slash-Entscheidung braucht.
+
+Seitdem verlangt ein Schuldspruch gegen den primären Pod einen
+`Schuldbeleg`: den unterschriebenen Übergang, den öffentlichen Schlüssel
+und die Signatur. Geprüft wird in dieser Reihenfolge, billig vor teuer:
+gehört der Beleg zu diesem Segment, gehört er zu diesem Miner, geht die
+Unterschrift auf. Die Kennung wird aus dem Schlüssel **abgeleitet** und
+nicht mitgeführt.
+
+### Was der Beleg belegt, und was nicht
+
+**Belegt:** Der Inhaber dieses Schlüssels hat für dieses Segment einen
+Übergang unterschrieben, in der Rolle Shard und in keiner anderen.
+Geschlachtet werden kann damit nur noch, wer an diesem Segment unter
+eigenem Schlüssel gearbeitet hat; vorher konnte jeder benannt werden.
+
+**Belegt nicht:** dass gerade die strittige Layer in seinem
+Zuständigkeitsbereich lag. Die Signatur ist je Shard und Token-Position,
+die Bisektion zeigt auf eine Layer-Position, und die Zuordnung steht in
+der Layer-Spanne des Shards, die die Signatur nicht mitführt. Beides
+gleichzusetzen wäre eine erfundene Prüfung, und eine erfundene Prüfung
+ist schlimmer als keine, weil ein Leser sie für einen Schutz hält.
+
+### ⚑ Die andere Richtung bleibt offen, und das steht auch so da
+
+Verliert der **Herausforderer**, wird er dafür geschlachtet, dass er
+falsch beschuldigt hat. Der Beleg dafür wäre eine unterschriebene
+Herausforderung, und `myl_types::Challenge` trägt heute keine Signatur:
+Sie nennt beide Miner als Felder, wie es hier zuvor die Parameter taten.
+
+Für die eine Richtung liegt der Beleg seit Monaten vor und wurde nur
+nicht befragt; für die andere gibt es ihn nicht. Die vorhandene Prüfung
+zurückzuhalten, bis die fehlende gebaut ist, ließe eine Tür offen, die
+man heute schließen kann. Sich für die zweite Richtung einen Beleg
+auszudenken, der nichts belegt, wäre schlimmer als sie zu benennen.
+
+### Sechs Prüfungen, jede gegengeprobt
+
+Ohne Beleg, Beleg eines Fremden, Beleg aus einem anderen Segment,
+nachträglich veränderter Inhalt, Unterschrift aus einer anderen Rolle,
+und die Ableitung der Kennung aus dem Schlüssel. Mit abgeschalteter
+Prüfung fallen fünf davon; der aufgezeichnete Zustand vorher ist genau
+der, in dem alle sechs durchgingen.
 
 ### v0.10.0 – 2026-08-29 (Fund 42 bekommt seinen Generator, drei Jahre zu spät)
 

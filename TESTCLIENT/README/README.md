@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.17.2
+> **Version:** 0.17.3
 > **Datum:** 2026-08-28
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -507,6 +507,18 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.17.3 – 2026-08-29 (der Durchstich baut den Schuldbeleg wie im Betrieb)
+
+Stufe 8 und Stufe 9 wiesen die Schuld einer ausgedachten Kennung zu:
+32 Bytes ohne Schlüssel dahinter. Seit VERIFICATION v0.11.0 verlangt ein
+Schuldspruch gegen den primären Pod einen unterschriebenen Übergang, und
+eine Kennung ohne Schlüssel kann keinen liefern.
+
+Beide Stufen erzeugen den Beleg jetzt so, wie ein Shard ihn erzeugt: Der
+Schlüssel unterschreibt den Übergang, die Kennung wird aus dem Schlüssel
+abgeleitet. Damit prüft der Durchstich den Weg, den die Sache im Betrieb
+nimmt, statt einen, den es dort nicht gibt.
 
 ### v0.17.2 – 2026-08-28 (Stufe 7 unterschreibt)
 

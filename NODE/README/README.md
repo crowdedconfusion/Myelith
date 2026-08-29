@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.13.0
+> **Version:** 0.13.1
 > **Datum:** 2026-08-29
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
@@ -277,6 +277,16 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.13.1 – 2026-08-29 (drei Abschriften weniger)
+
+`Kette::probekonto`, `GenesisValidator::kennung`,
+`Konsensschluessel::kennung` und `probe_kennung` rechneten die Ableitung
+`sha256(pubkey)` jeweils selbst aus. Sie steht jetzt einmal in
+`myl_types` und wird hier gerufen (SHARED_TYPES v0.11.0). An der
+abgeleiteten Kennung ändert sich nichts, geprüft von den Gegentests in
+`genesis.rs` und `validatorsatz.rs`, die die Regel weiterhin von Hand
+nachrechnen.
 
 ### v0.13.0 – 2026-08-29 (⚑ Fund 67 geschlossen: der Rückweg für den, der vorauseilt)
 

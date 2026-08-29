@@ -246,10 +246,7 @@ impl Konsensschluessel {
 
     /// Die Kennung: `sha256(pubkey)`, wie in [`crate::genesis`].
     pub fn kennung(&self) -> MinerId {
-        let h = Hash::sha256(&self.oeffentlich.0);
-        let mut roh = [0u8; 32];
-        roh.copy_from_slice(h.as_bytes());
-        MinerId::new(roh)
+        MinerId::aus_schluessel(&self.oeffentlich)
     }
 
     /// Woher dieser Schlüssel stammt.

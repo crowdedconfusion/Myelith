@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."

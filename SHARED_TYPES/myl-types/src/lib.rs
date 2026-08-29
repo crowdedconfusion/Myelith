@@ -34,6 +34,7 @@ pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;
 pub mod sitzung;
+pub mod uebergang;
 pub mod vrf;
 pub mod erasure;
 
@@ -62,4 +63,5 @@ pub use sitzung::{
     pruefe, Agentenbefund, Befund, Grenzen, KontraktFehler, Sitzungskontrakt, Sitzungszustand,
     Vorhaben, Waehrung, Zeugenstufe, DST_SITZUNGSKONTRAKT, MAX_EMPFAENGER, MAX_ZEUGENSTUFEN,
 };
+pub use uebergang::{Rolle, TransitionSig, DST_SHARD_TRANSITION};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

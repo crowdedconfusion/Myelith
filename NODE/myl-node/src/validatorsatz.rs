@@ -70,10 +70,7 @@ pub fn probe_schluessel(name: &str) -> Option<BlsSecretKey> {
 /// kann.
 pub fn probe_kennung(name: &str) -> Option<MinerId> {
     let pk = probe_schluessel(name)?.public_key().ok()?;
-    let h = Hash::sha256(&pk.0);
-    let mut roh = [0u8; 32];
-    roh.copy_from_slice(h.as_bytes());
-    Some(MinerId::new(roh))
+    Some(MinerId::aus_schluessel(&pk))
 }
 
 /// Wer im Probelauf attestieren darf.

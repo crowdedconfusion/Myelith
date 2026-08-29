@@ -70,6 +70,24 @@ macro_rules! define_id_type {
                 Self(bytes)
             }
 
+            /// Aus einem öffentlichen BLS-Schlüssel: `SHA-256(pubkey)`.
+            ///
+            /// ⚑ **Die eine Stelle, an der diese Ableitung steht.** Sie
+            /// war am 2026-08-29 in sechs Dateien ausgeschrieben, und
+            /// jede war für sich richtig. Der Schaden einer solchen
+            /// Verdopplung entsteht nicht beim Schreiben, sondern beim
+            /// Ändern: Wer die Regel an fünf Stellen nachzieht und die
+            /// sechste übersieht, bekommt zwei Kennungen für denselben
+            /// Schlüssel, und der Fehler zeigt sich als „unbekannter
+            /// Aussteller" irgendwo weit weg von seiner Ursache.
+            ///
+            /// Die Kennung wird **abgeleitet und nicht aufgeschrieben**:
+            /// Zwei Quellen für dieselbe Wahrheit widersprechen sich
+            /// irgendwann.
+            pub fn aus_schluessel(pk: &crate::bls::BlsPublicKey) -> Self {
+                Self(crate::hash::Hash::sha256(&pk.0).0)
+            }
+
             /// Die rohen 32 Bytes.
             pub fn as_bytes(&self) -> &[u8; ID_LEN] {
                 &self.0

@@ -228,7 +228,7 @@ impl Transaktion {
     ///
     /// **Abgeleitet und nicht angegeben** — siehe [`Anweisung`].
     pub fn absender_adresse(&self) -> Address {
-        Address::new(Hash::sha256(&self.absender.0).0)
+        Address::aus_schluessel(&self.absender)
     }
 
     /// Unterschreibt eine Anweisung.

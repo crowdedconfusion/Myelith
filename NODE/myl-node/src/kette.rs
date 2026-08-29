@@ -151,7 +151,7 @@ pub fn probekonto(nummer: u8) -> Address {
     let pk = probeschluessel(nummer)
         .public_key()
         .expect("aus einem gültigen Schlüssel folgt ein gültiger Punkt");
-    Address::new(Hash::sha256(&pk.0).0)
+    Address::aus_schluessel(&pk)
 }
 
 /// Das Testkonto, das ein Knoten dieses Namens benutzt.

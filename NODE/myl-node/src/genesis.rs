@@ -88,10 +88,7 @@ impl GenesisValidator {
     ///
     /// Abgeleitet und nicht aufgeschrieben, siehe Modulkopf.
     pub fn kennung(&self) -> MinerId {
-        let h = Hash::sha256(&self.pubkey.0);
-        let mut roh = [0u8; 32];
-        roh.copy_from_slice(h.as_bytes());
-        MinerId::new(roh)
+        MinerId::aus_schluessel(&self.pubkey)
     }
 }
 
