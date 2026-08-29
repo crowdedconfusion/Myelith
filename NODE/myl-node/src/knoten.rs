@@ -642,10 +642,18 @@ impl Knoten {
         );
         if commitet {
             if let Some(block) = self.konsens.as_ref().and_then(|r| r.commiteter_block()) {
+                let uebernommen = self
+                    .konsens
+                    .as_ref()
+                    .map(|r| r.durch_beleg_commitet())
+                    .unwrap_or(false);
                 self.protokoll.schreibe(
                     Eintrag::neu("konsens_commitet")
                         .zahl("runde", self.konsens.as_ref().map(|r| r.runde()).unwrap_or(0) as i64)
-                        .text("block", kurz(&block)),
+                        .text("block", kurz(&block))
+                        // ⚑ Fund 67: „hat mitgezählt" und „wurde
+                        // zurückgeholt" sehen ohne dieses Feld gleich aus.
+                        .wahr("uebernommen", uebernommen),
                 );
             }
         }

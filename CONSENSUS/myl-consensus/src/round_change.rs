@@ -84,7 +84,7 @@
 //! Konsensvertrags. Änderungen nur über Governance (Kap. 10.3).
 
 use crate::bft::{BftError, BftState, Commit, Propose, Round, RoundStatus, Vote, select_leader};
-use crate::signing::vote_message;
+use crate::signing::{commit_message, vote_message};
 use crate::validator::VotingSet;
 use myl_types::bls::{BlsAggregateSignature, BlsSignature, aggregate_signatures, fast_aggregate_verify};
 use myl_types::hash::Hash;
@@ -247,13 +247,6 @@ impl PolkaCertificate {
         })
     }
 
-    /// Summe der Stimmgewichte der Unterzeichner in dieser Menge.
-    fn weight_in(&self, voting_set: &VotingSet) -> u64 {
-        self.voters
-            .iter()
-            .fold(0u64, |acc, m| acc.saturating_add(voting_set.weight(m)))
-    }
-
     /// Prüft das Zertifikat gegen eine stimmberechtigte Menge.
     ///
     /// Geprüft wird in dieser Reihenfolge (billig vor teuer, wie in
@@ -272,30 +265,172 @@ impl PolkaCertificate {
     /// Epoche statt, deshalb genügt das. Wer das Zertifikat über eine
     /// Epochengrenze trägt, muss die Menge der Ursprungsepoche mitführen.
     pub fn verify(&self, voting_set: &VotingSet) -> Result<(), RoundError> {
-        if self.voters.is_empty() {
-            return Err(RoundError::EmptyCertificate);
+        pruefe_aggregat(
+            &self.voters,
+            voting_set,
+            &vote_message(self.round, &self.block_hash),
+            &self.aggregate,
+        )
+    }
+}
+
+/// Der gemeinsame Prüfkern beider Zertifikatsarten.
+///
+/// **Warum eine Funktion und nicht zweimal derselbe Ablauf:** Ein
+/// Zertifikat ist genau so viel wert wie seine schwächste Prüfung. Zwei
+/// Abschriften desselben Ablaufs driften auseinander, sobald eine von
+/// beiden nachgebessert wird, und die Lücke säße dann in der Art, die
+/// gerade niemand ansieht. Hier ist der Ablauf einmal da, also gilt für
+/// Polka und Commit dieselbe Strenge.
+///
+/// Die Reihenfolge ist billig vor teuer, wie in [`crate::bft`]: Die
+/// Aggregat-Verifikation ist die teuerste Operation und darf nicht als
+/// DoS-Fläche vorn stehen.
+///
+/// 1. nicht leer,
+/// 2. Unterzeichner streng aufsteigend (kanonisch, duplikatfrei),
+/// 3. alle Unterzeichner stimmberechtigt,
+/// 4. Summe der Gewichte erreicht das Quorum,
+/// 5. Aggregat-Signatur gültig über `botschaft`.
+fn pruefe_aggregat(
+    unterzeichner: &[MinerId],
+    voting_set: &VotingSet,
+    botschaft: &[u8],
+    aggregat: &BlsAggregateSignature,
+) -> Result<(), RoundError> {
+    if unterzeichner.is_empty() {
+        return Err(RoundError::EmptyCertificate);
+    }
+    if unterzeichner.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(RoundError::NonCanonicalCertificate);
+    }
+
+    let mut pubkeys = Vec::with_capacity(unterzeichner.len());
+    for wer in unterzeichner {
+        let pk = voting_set
+            .pubkey(wer)
+            .ok_or(RoundError::CertificateSignerNotInCommittee)?;
+        pubkeys.push(*pk);
+    }
+
+    let gewicht = unterzeichner
+        .iter()
+        .fold(0u64, |acc, m| acc.saturating_add(voting_set.weight(m)));
+    if gewicht < voting_set.quorum_threshold() {
+        return Err(RoundError::CertificateBelowQuorum);
+    }
+
+    if !fast_aggregate_verify(&pubkeys, botschaft, aggregat) {
+        return Err(RoundError::InvalidSignature);
+    }
+    Ok(())
+}
+
+/// Nachweis, dass in einer Runde ein Quorum einen Block **commitet** hat.
+///
+/// # Wozu, wenn es [`PolkaCertificate`] schon gibt
+///
+/// Ein Polka belegt, dass ein Quorum *gestimmt* hat. Das reicht, um eine
+/// Sperre zu lösen, aber nicht, um eine Entscheidung zu belegen. Ein
+/// Commit-Quorum ist die Entscheidung selbst.
+///
+/// # ⚑ Warum es das braucht (Fund 67)
+///
+/// [`BftState::receive_commit`] verwirft jede Nachricht aus einer anderen
+/// Runde. Das ist richtig für einzelne Nachrichten und falsch für den
+/// Beleg: Ein Knoten, dessen Frist ablief, bevor die anderen ihre Runde
+/// begonnen hatten, steht danach vor dem Netz. Die vier anderen commiten
+/// in Runde 0, er sitzt in Runde 5 und **verwirft genau die Nachrichten,
+/// die belegen, dass er der Irrende ist**. Safety hält, seine Liveness
+/// nicht, und zurück kommt er von allein nie.
+///
+/// Die Rundennummer ist ein örtliches Mittel gegen Stillstand, ein
+/// Quorumsbeleg ist eine Tatsache über das Netz. Deshalb gilt dieses
+/// Zertifikat **unabhängig von der Runde des Empfängers**: Wer es prüft
+/// und für gültig befindet, übernimmt die Entscheidung, in welcher Runde
+/// er auch immer steht ([`RoundDriver::apply_commitzertifikat`]).
+///
+/// Das ist keine Sonderlösung dieses Netzes, sondern die übliche: In
+/// Tendermint trägt der commitete Block seine Commit-Signaturen mit sich
+/// und wird über die Blocksynchronisation unabhängig vom Zustand des
+/// Konsens-Reaktors übernommen; in QBFT stehen die Commit-Siegel im
+/// Blockkopf; in HotStuff ist ein Quorum-Zertifikat für sich genommen
+/// gültig, ohne dass der Empfänger in der passenden Sicht säße.
+///
+/// **Es zieht keine Sperre nach.** Ein Commit-Quorum schließt ein
+/// Vote-Quorum für denselben Block ein, die Sperre wäre also zulässig,
+/// aber überflüssig: Wer die Entscheidung übernimmt, hat nichts mehr zu
+/// verteidigen, wogegen eine Sperre schützte.
+#[derive(Debug, Clone, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
+pub struct Commitzertifikat {
+    /// Runde, aus der die Commits stammen.
+    pub round: Round,
+    /// Block, der commitet wurde.
+    pub block_hash: Hash,
+    /// Unterzeichner, **streng aufsteigend** nach `MinerId`.
+    ///
+    /// Dieselbe Ordnung und derselbe Grund wie bei
+    /// [`PolkaCertificate::voters`]: kanonische Kodierung, und Duplikate
+    /// sind strukturell ausgeschlossen.
+    pub committers: Vec<MinerId>,
+    /// Aggregierte BLS-Signatur aller Unterzeichner.
+    pub aggregate: BlsAggregateSignature,
+}
+
+impl Commitzertifikat {
+    /// Baut ein Zertifikat aus eingesammelten Commits.
+    ///
+    /// Wie [`PolkaCertificate::from_votes`], mit denselben Grenzen: Die
+    /// Signaturen werden hier **nicht** geprüft und **nicht** gewichtet.
+    /// Das ist der Bauhelfer für einen Knoten, der die Commits bereits
+    /// durch [`BftState::receive_commit`] geschickt hat. Geprüft wird
+    /// beim Empfänger, in [`Self::verify`].
+    pub fn from_commits(commits: &[Commit]) -> Result<Self, RoundError> {
+        let first = commits.first().ok_or(RoundError::EmptyCertificate)?;
+        let round = first.round;
+        let block_hash = first.block_hash;
+
+        let mut pairs: Vec<(MinerId, BlsSignature)> = Vec::with_capacity(commits.len());
+        for commit in commits {
+            if commit.round != round || commit.block_hash != block_hash {
+                return Err(RoundError::InconsistentCertificate);
+            }
+            pairs.push((commit.committer, commit.signature));
         }
-        if self.voters.windows(2).any(|w| w[0] >= w[1]) {
+        pairs.sort_by_key(|(m, _)| *m);
+        if pairs.windows(2).any(|w| w[0].0 == w[1].0) {
             return Err(RoundError::NonCanonicalCertificate);
         }
 
-        let mut pubkeys = Vec::with_capacity(self.voters.len());
-        for voter in &self.voters {
-            let pk = voting_set
-                .pubkey(voter)
-                .ok_or(RoundError::CertificateSignerNotInCommittee)?;
-            pubkeys.push(*pk);
-        }
+        let sigs: Vec<BlsSignature> = pairs.iter().map(|(_, s)| *s).collect();
+        let aggregate = aggregate_signatures(&sigs).map_err(|_| RoundError::InvalidSignature)?;
 
-        if self.weight_in(voting_set) < voting_set.quorum_threshold() {
-            return Err(RoundError::CertificateBelowQuorum);
-        }
+        Ok(Self {
+            round,
+            block_hash,
+            committers: pairs.into_iter().map(|(m, _)| m).collect(),
+            aggregate,
+        })
+    }
 
-        let msg = vote_message(self.round, &self.block_hash);
-        if !fast_aggregate_verify(&pubkeys, &msg, &self.aggregate) {
-            return Err(RoundError::InvalidSignature);
-        }
-        Ok(())
+    /// Prüft das Zertifikat gegen eine stimmberechtigte Menge.
+    ///
+    /// Derselbe Kern wie [`PolkaCertificate::verify`], nur über
+    /// [`commit_message`] statt [`vote_message`]. Die beiden
+    /// Signierbotschaften haben verschiedene Präfixe, ein Polka lässt
+    /// sich also nicht als Commit-Beleg ausgeben und umgekehrt.
+    ///
+    /// **Grenze:** Geprüft wird gegen die übergebene Menge, das
+    /// Zertifikat trägt seine Epoche nicht mit sich. Wer es über eine
+    /// Epochengrenze trägt, muss die Menge der Ursprungsepoche
+    /// mitführen.
+    pub fn verify(&self, voting_set: &VotingSet) -> Result<(), RoundError> {
+        pruefe_aggregat(
+            &self.committers,
+            voting_set,
+            &commit_message(self.round, &self.block_hash),
+            &self.aggregate,
+        )
     }
 }
 
@@ -363,6 +498,15 @@ pub enum RoundError {
     NoProducers,
     /// Ein Producer gehört nicht zur stimmberechtigten Menge.
     ProducerNotInCommittee,
+    /// Ein gültiges Commit-Zertifikat belegt einen **anderen** Block, als
+    /// dieser Knoten bereits commitet hat.
+    ///
+    /// ⚑ **Kein Empfangsfehler, sondern ein Sicherheitsbefund.** Zwei
+    /// Quoren für zwei Blöcke derselben Höhe kann es unter der
+    /// Mehrheitsannahme nicht geben. Wer das sieht, sieht, dass die
+    /// Annahme gebrochen ist, und muss es vermerken statt es zu
+    /// verwerfen.
+    ConflictingCommit,
 }
 
 impl From<BftError> for RoundError {
@@ -413,6 +557,10 @@ impl std::fmt::Display for RoundError {
             Self::ProducerNotInCommittee => {
                 write!(f, "Producer gehört nicht zur stimmberechtigten Menge")
             }
+            Self::ConflictingCommit => write!(
+                f,
+                "Zwei Quoren für zwei Blöcke derselben Höhe — die Mehrheitsannahme ist gebrochen"
+            ),
         }
     }
 }
@@ -685,6 +833,54 @@ impl RoundDriver {
         }
     }
 
+    /// Übernimmt ein geprüftes Commit-Zertifikat, **gleich aus welcher
+    /// Runde**.
+    ///
+    /// ⚑ Der Rückweg aus Fund 67. Ein Knoten, der allein vorauseilt,
+    /// verwirft über [`BftState::receive_commit`] jeden einzelnen Commit
+    /// der Runde, die das Netz längst entschieden hat. Ein Zertifikat
+    /// dagegen belegt das Quorum in einer Nachricht, und ein Quorumsbeleg
+    /// gilt ohne Rücksicht auf die eigene Rundennummer.
+    ///
+    /// **Warum das nicht rückwärts gehen heißt.** Der Knoten springt
+    /// nicht in die alte Runde zurück; er nimmt ihr Ergebnis an. Eine
+    /// Runde zurückzusetzen wäre angreifbar, denn dann zöge altes
+    /// Nachrichtenmaterial einen Knoten beliebig weit nach hinten. Eine
+    /// Entscheidung anzunehmen ist es nicht: Sie ist durch ein Quorum
+    /// gedeckt, und ein zweites Quorum für einen anderen Block derselben
+    /// Höhe gibt es unter der Mehrheitsannahme nicht.
+    ///
+    /// **Returns:** `true`, wenn die Übernahme den Zustand geändert hat,
+    /// `false`, wenn dieser Knoten denselben Block schon commitet hatte.
+    ///
+    /// **Fehler:** [`RoundError::InvalidSignature`] und die übrigen
+    /// Zertifikatsfehler aus [`Commitzertifikat::verify`]; dazu
+    /// [`RoundError::ConflictingCommit`], wenn dieser Knoten bereits
+    /// einen **anderen** Block commitet hatte. Das ist keine
+    /// Empfangsstörung, sondern die Beobachtung zweier Quoren für zwei
+    /// Blöcke, also der Bruch der Mehrheitsannahme. Der Aufrufer muss
+    /// das laut vermerken und darf es nicht wegwerfen.
+    pub fn apply_commitzertifikat(&mut self, zert: &Commitzertifikat) -> Result<bool, RoundError> {
+        // **Billig vor teuer, und hier zählt es doppelt.** Wer denselben
+        // Block längst commitet hat, braucht den Beleg nicht und prüft
+        // ihn deshalb auch nicht. Ohne diese Zeile kostete jedes
+        // eintreffende Zertifikat eine Aggregat-Verifikation, auch das
+        // hundertste über dieselbe Entscheidung.
+        if self.bft.committed_block() == Some(zert.block_hash) {
+            return Ok(false);
+        }
+        // Ab hier wird geprüft, und zwar **vor** jedem Urteil über einen
+        // Widerspruch: Ein ungeprüftes Zertifikat als Gabelung zu melden
+        // hieße, dass jeder Beliebige mit erfundenen Bytes einen
+        // Sicherheitsalarm auslösen kann.
+        zert.verify(&self.voting_set)?;
+        if self.bft.is_committed() {
+            return Err(RoundError::ConflictingCommit);
+        }
+        self.bft.uebernimm_commit(zert.block_hash);
+        Ok(true)
+    }
+
     /// Prüft die Frist und wechselt bei Ablauf die Runde.
     ///
     /// Der Aufrufer ruft das periodisch mit der aktuellen Zeit auf. Es
@@ -828,6 +1024,12 @@ mod tests {
     fn polka(round: Round, hash: Hash, count: u8) -> PolkaCertificate {
         let votes: Vec<Vote> = (0..count).map(|i| signed_vote(round, hash, i)).collect();
         PolkaCertificate::from_votes(&votes).expect("Zertifikat")
+    }
+
+    /// Commit-Zertifikat aus `count` Commits für `hash` in `round`.
+    fn commitzert(round: Round, hash: Hash, count: u8) -> Commitzertifikat {
+        let commits: Vec<Commit> = (0..count).map(|i| signed_commit(round, hash, i)).collect();
+        Commitzertifikat::from_commits(&commits).expect("Zertifikat")
     }
 
     fn driver(n: u8) -> RoundDriver {
@@ -1388,4 +1590,169 @@ mod tests {
         };
         assert_eq!(lauf(), lauf());
     }
+    // ── Commit-Zertifikat (⚑ Fund 67) ───────────────────────────────
+
+    #[test]
+    fn commitzertifikat_mit_quorum_gilt() {
+        let vs = voting_set(4, 100);
+        assert_eq!(commitzert(3, test_hash(9), 3).verify(&vs), Ok(()));
+    }
+
+    #[test]
+    fn commitzertifikat_unter_quorum_gilt_nicht() {
+        let vs = voting_set(4, 100);
+        // Zwei von vier sind nicht mehr als zwei Drittel.
+        assert_eq!(
+            commitzert(3, test_hash(9), 2).verify(&vs),
+            Err(RoundError::CertificateBelowQuorum)
+        );
+    }
+
+    /// ⚑ **Ein Polka ist kein Commit-Beleg.**
+    ///
+    /// Beide Zertifikate haben dieselbe Gestalt: Runde, Block,
+    /// Unterzeichnerliste, Aggregat. Ohne getrennte Präfixe in der
+    /// Signierbotschaft ließe sich das eine als das andere ausgeben, und
+    /// ein Vote-Quorum, das nur „wir könnten" heißt, stünde plötzlich für
+    /// „wir haben entschieden". Der Test setzt das Aggregat eines echten
+    /// Polka in ein Commit-Zertifikat um und erwartet, dass es auffliegt.
+    #[test]
+    fn ein_polka_geht_nicht_als_commit_beleg_durch() {
+        let vs = voting_set(4, 100);
+        let p = polka(3, test_hash(9), 3);
+        assert_eq!(p.verify(&vs), Ok(()), "der Polka selbst ist gültig");
+
+        let getarnt = Commitzertifikat {
+            round: p.round,
+            block_hash: p.block_hash,
+            committers: p.voters.clone(),
+            aggregate: p.aggregate,
+        };
+        assert_eq!(getarnt.verify(&vs), Err(RoundError::InvalidSignature));
+    }
+
+    #[test]
+    fn commitzertifikat_mit_doppeltem_unterzeichner_gilt_nicht() {
+        let vs = voting_set(4, 100);
+        let mut z = commitzert(3, test_hash(9), 3);
+        z.committers[1] = z.committers[0];
+        assert_eq!(z.verify(&vs), Err(RoundError::NonCanonicalCertificate));
+    }
+
+    #[test]
+    fn commitzertifikat_von_fremden_gilt_nicht() {
+        // Der Beleg entsteht unter vier Schlüsseln, geprüft wird gegen
+        // eine Menge, die nur drei davon kennt.
+        let vs = voting_set(3, 100);
+        assert_eq!(
+            commitzert(3, test_hash(9), 4).verify(&vs),
+            Err(RoundError::CertificateSignerNotInCommittee)
+        );
+    }
+
+    #[test]
+    fn commitzertifikat_aus_uneinheitlichen_commits_entsteht_nicht() {
+        let commits = vec![
+            signed_commit(3, test_hash(9), 0),
+            signed_commit(3, test_hash(8), 1),
+        ];
+        assert_eq!(
+            Commitzertifikat::from_commits(&commits).unwrap_err(),
+            RoundError::InconsistentCertificate
+        );
+        assert_eq!(
+            Commitzertifikat::from_commits(&[]).unwrap_err(),
+            RoundError::EmptyCertificate
+        );
+    }
+
+    /// ⚑ **Der Rückweg aus Fund 67, auf der Ebene des Treibers.**
+    ///
+    /// Der Treiber steht in Runde 7 und hat dort nichts erreicht. Der
+    /// Beleg stammt aus Runde 0. Ein einzelner Commit aus Runde 0 würde
+    /// hier mit `WrongRound` abprallen; der Beleg gilt.
+    #[test]
+    fn ein_beleg_aus_einer_alten_runde_holt_den_treiber_zurueck() {
+        let mut d = driver(4);
+        for _ in 0..7 {
+            d.advance_round(0).expect("Wechsel");
+        }
+        assert_eq!(d.round(), 7);
+        assert!(!d.is_committed());
+
+        // Zum Vergleich: die einzelne Nachricht prallt ab.
+        assert_eq!(
+            d.receive_commit(&signed_commit(0, test_hash(9), 1), 0),
+            Err(RoundError::Bft(BftError::WrongRound {
+                expected: 7,
+                got: 0
+            }))
+        );
+
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 3)), Ok(true));
+        assert!(d.is_committed());
+        assert_eq!(d.committed_block(), Some(test_hash(9)));
+        // Die Rundennummer bleibt, wo sie war: Übernommen wird die
+        // Entscheidung, nicht die Runde.
+        assert_eq!(d.round(), 7);
+    }
+
+    #[test]
+    fn ein_zweiter_beleg_ueber_dieselbe_entscheidung_aendert_nichts() {
+        let mut d = driver(4);
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 3)), Ok(true));
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 4)), Ok(false));
+        assert!(d.is_committed());
+    }
+
+    /// ⚑ **Der billige Weg wird auch wirklich genommen.**
+    ///
+    /// Ein Beleg über die schon getroffene Entscheidung darf keine
+    /// Aggregat-Verifikation kosten, sonst zahlt jeder Knoten für jede
+    /// überzählige Kopie. Nachgewiesen mit einem Beleg, dessen Aggregat
+    /// **kaputt** ist: Käme er bis zur Prüfung, wäre das Ergebnis
+    /// `InvalidSignature` statt `Ok(false)`.
+    #[test]
+    fn ein_ueberzaehliger_beleg_wird_nicht_geprueft() {
+        let mut d = driver(4);
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 3)), Ok(true));
+
+        let mut kaputt = commitzert(0, test_hash(9), 3);
+        kaputt.aggregate = polka(0, test_hash(9), 3).aggregate;
+        assert_eq!(d.apply_commitzertifikat(&kaputt), Ok(false));
+    }
+
+    /// ⚑ **Zwei Quoren für zwei Blöcke sind ein Sicherheitsbefund.**
+    ///
+    /// Das kann unter der Mehrheitsannahme nicht vorkommen. Wenn es
+    /// vorkommt, ist die Annahme gebrochen, und der Aufrufer muss es
+    /// erfahren, statt dass die Nachricht still verschwindet.
+    #[test]
+    fn zwei_belege_fuer_zwei_bloecke_melden_die_gabelung() {
+        let mut d = driver(4);
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 3)), Ok(true));
+        assert_eq!(
+            d.apply_commitzertifikat(&commitzert(1, test_hash(8), 3)),
+            Err(RoundError::ConflictingCommit)
+        );
+        // Der eigene Stand bleibt, wo er war: Ein Widerspruch ist ein
+        // Befund, kein Grund, die eigene Entscheidung umzuwerfen.
+        assert_eq!(d.committed_block(), Some(test_hash(9)));
+    }
+
+    /// Und ein **erfundener** Widerspruch löst keinen Alarm aus.
+    #[test]
+    fn ein_ungeprueftes_zertifikat_loest_keinen_gabelungsalarm_aus() {
+        let mut d = driver(4);
+        assert_eq!(d.apply_commitzertifikat(&commitzert(0, test_hash(9), 3)), Ok(true));
+
+        let mut erfunden = commitzert(1, test_hash(8), 3);
+        erfunden.aggregate = polka(1, test_hash(8), 3).aggregate;
+        assert_eq!(
+            d.apply_commitzertifikat(&erfunden),
+            Err(RoundError::InvalidSignature),
+            "ein erfundener Beleg darf nicht als Gabelung gemeldet werden"
+        );
+    }
+
 }

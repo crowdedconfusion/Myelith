@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.19.0 (`myl-consensus` 0.16.0, `myl-scheduler` 0.4.0,
+> **Version:** 0.20.0 (`myl-consensus` 0.17.0, `myl-scheduler` 0.4.0,
 > `myl-ledger` 0.5.0)
 > **Datum:** 2026-08-29
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -18,7 +18,7 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **368 Tests grün** (246 `myl-consensus`, 68 `myl-scheduler`,
+> **380 Tests grün** (258 `myl-consensus`, 68 `myl-scheduler`,
 > 54 `myl-ledger`).
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
@@ -107,6 +107,102 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.20.0 (`myl-consensus` 0.17.0) – 2026-08-29 (ein Quorumsbeleg gilt ohne Rücksicht auf die Runde)
+
+### ⚑ Fund 67 geschlossen: Wer allein vorauseilt, kommt jetzt zurück
+
+Ein Knoten, dessen Frist ablief, bevor die anderen ihre Runde begonnen
+hatten, stand danach dauerhaft vor dem Netz. Aufgezeichnet am 26. August
+über fünf Prozesse: Der erste hatte nach 1 ms ein volles Mesh und begann
+Runde 0, die anderen vier begannen ihre erst 522 ms später, seine
+Vote-Frist von 500 ms lief vorher ab. Er stand am Ende bei Runde 5,
+während die vier Runde 0 längst commitet hatten.
+
+**Der Grund lag eine Ebene tiefer, als er aussah.** `receive_propose`,
+`receive_vote` und `receive_commit` verwerfen jede Nachricht aus einer
+anderen Runde. Für einzelne Nachrichten ist das richtig. Für den
+Vorausgeeilten heißt es: **Er verwirft genau die Nachrichten, die
+belegen, dass er der Irrende ist.**
+
+**Was hier zuvor als Lösung stand, trug nicht.** Notiert war, der
+Rückweg hänge an der Kettenpersistenz. Beim Nachlesen fiel auf, dass ein
+Commit bis heute keinen Block in die Kette legt und auch keinen
+veröffentlicht, er schreibt eine Protokollzeile. Über die Kette wäre
+nichts zurückgekommen, gleich wie lange man wartete.
+
+**Gebaut ist stattdessen ein `Commitzertifikat`:** Runde, Block,
+Unterzeichner in strenger Ordnung, BLS-Aggregat über
+`commit_message`. Es belegt eine Entscheidung und ist deshalb **nicht an
+die Runde des Empfängers gebunden**: Die Rundennummer ist ein örtliches
+Mittel gegen Stillstand, ein Quorumsbeleg ist eine Tatsache über das
+Netz. `RoundDriver::apply_commitzertifikat` übernimmt ihn aus jeder
+Runde. Der Knoten springt dabei **nicht** in die alte Runde zurück, er
+nimmt ihr Ergebnis an: Eine Runde zurückzusetzen wäre angreifbar, denn
+dann zöge altes Nachrichtenmaterial einen Knoten beliebig weit nach
+hinten.
+
+Das ist nicht eigens erfunden, sondern der übliche Weg: In Tendermint
+trägt der commitete Block seine Commit-Signaturen mit sich und wird über
+die Blocksynchronisation unabhängig vom Konsens-Reaktor übernommen, in
+QBFT stehen die Commit-Siegel im Blockkopf, in HotStuff gilt ein
+Quorum-Zertifikat für sich, ohne dass der Empfänger in der passenden
+Sicht säße.
+
+**Der Beleg geht nur hinaus, wenn ihn jemand braucht.** Der
+naheliegende Weg, ihn nach jedem Commit zu veröffentlichen, kostet bei
+`n` Validatoren `n` Nachrichten je Entscheidung, immer, auch wenn alle
+dieselben Commits ohnehin gesehen haben. Stattdessen ist die Abweisung
+`WrongRound` das Signal: Wer in einer fremden Runde steht, sendet
+Nachrichten dieser Runde und gibt sich damit selbst zu erkennen. Im
+Normalbetrieb kostet der Rückweg nichts. Bedient wird nur, wer
+stimmberechtigt ist, und jeder genau einmal, sonst löst ein Beliebiger
+mit erfundenen Bytes den Versand aus, so oft er will: Die Rundenprüfung
+steht im Automaten **vor** der Signaturprüfung, ist also billig zu
+erreichen.
+
+### ⚑ Zwei Quoren für zwei Blöcke sind ein Befund, keine Störung
+
+`RoundError::ConflictingCommit` ist eigens dafür da. Wer bereits einen
+anderen Block commitet hat und einen gültigen Beleg für einen zweiten
+sieht, sieht den Bruch der Mehrheitsannahme. Unter einem Sammelposten
+gebucht wäre das unauffindbar; im Betriebsprotokoll des Knotens heißt
+diese Zeile `gabelung` und gilt ausdrücklich nicht als harmlos.
+
+Geprüft wird **vor** dem Urteil über den Widerspruch, sonst löst jeder
+mit erfundenen Bytes einen Sicherheitsalarm aus. Umgekehrt wird ein
+Beleg über die **schon getroffene** Entscheidung gar nicht erst geprüft,
+sonst kostete jede überzählige Kopie eine Aggregat-Verifikation. Beide
+Reihenfolgen sind eigens getestet, eine davon mit einem absichtlich
+kaputten Aggregat, das durchgehen **muss**.
+
+### Der Prüfkern liegt jetzt einmal da
+
+`PolkaCertificate::verify` und `Commitzertifikat::verify` teilen sich
+`pruefe_aggregat`. Ein Zertifikat ist so viel wert wie seine schwächste
+Prüfung; zwei Abschriften desselben Ablaufs driften auseinander, sobald
+eine nachgebessert wird, und die Lücke säße dann in der Art, die gerade
+niemand ansieht. Dass ein Polka sich nicht als Commit-Beleg ausgeben
+lässt, hängt allein an den getrennten Präfixen der Signierbotschaft und
+ist als eigener Test festgehalten.
+
+### Kleinigkeiten
+
+- `Konsensnachricht::Commitzertifikat` ist die **fünfte** Marke, hinten
+  angehängt: Die Kodierung der vier bisherigen bleibt Byte für Byte
+  dieselbe, keine erzeugte Signatur wird ungültig.
+- `Konsensnachricht::absender()` gibt jetzt `Option<MinerId>` zurück. Ein
+  Aggregat hat keinen Absender, es hat Unterzeichner. Einen davon
+  herauszugreifen ergäbe eine zweite, erfundene Auskunft neben der wahren
+  Liste.
+- `Konsensnachricht::runde()` trägt eine Warnung: Für den Beleg ist das
+  die Runde, die er **bezeugt**, nicht eine, in der der Empfänger stehen
+  müsste. Wer danach filtert, wirft die Nachricht weg, die den
+  Vorausgeeilten zurückholt.
+- Größe auf der Leitung gemessen, nicht geschätzt: 301 B bei 5, 813 B bei
+  21, 4237 B bei 128 Unterzeichnern. Die Herleitung von
+  `MAX_CONSENSUS_BYTES` verlangt das von jedem, der eine Nachricht
+  anschließt.
 
 ### v0.19.0 (`myl-consensus` 0.16.0, `myl-ledger` 0.5.0) – 2026-08-28 (eine Transaktion hat jetzt einen Absender)
 

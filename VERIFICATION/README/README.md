@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.9.0
+> **Version:** 0.10.0
 > **Datum:** 2026-08-27
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -134,6 +134,33 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.10.0 – 2026-08-29 (Fund 42 bekommt seinen Generator, drei Jahre zu spät)
+
+**Die Bisektion wird jetzt erschöpfend geprüft:** für **jede**
+Spurlänge bis 64 und **jede** erste Abweichung darin nennt das Spiel
+genau diese Position. 2 080 Spiele, Millisekunden.
+
+⚑ **Genau das hat bei Fund 42 gefehlt.** Damals waren drei Tests grün,
+sie hießen „konvergiert nach O(log L) Runden" und „grenzt auf ein
+Intervall der Länge 1 ein", und **keiner prüfte, ob die genannte
+Position die richtige ist.** Das Verfahren belohnte in fünfzehn von
+sechzehn Fällen den Betrüger. Festgehalten wurde damals, ein Generator
+hätte es in Sekunden gezeigt; er existierte nur nicht.
+
+⚑ **Dazu die andere Hälfte, ohne die der erste Test erfüllbar wäre,
+indem man immer schuldig sagt:** Wer nirgends abweicht, wird für keine
+Spurlänge verurteilt.
+
+⚑ **Erschöpfend, wo der Raum es zulässt, und erst dann ein Generator.**
+Die Frage nach `proptest` war im Projekt zweimal verschieden
+beantwortet worden: einmal ablehnend wegen der Abhängigkeit, einmal
+befürwortend wegen der verkleinerten Gegenbeispiele. **Aufgelöst durch
+eine dritte Möglichkeit, die beide übersahen:** Für einen großen Teil
+dieser Aussagen ist der Eingaberaum klein genug, um ihn **ganz**
+abzugehen. Ein erschöpfender Test ist stärker als jeder Zufallstest,
+braucht keine Abhängigkeit, und ein Gegenbeispiel muss man nicht
+verkleinern, wenn man ohnehin bei den kleinsten anfängt.
 
 ### v0.9.0 – 2026-08-27 (Punkt 3.6: das Messgerät für die Ununterscheidbarkeit)
 

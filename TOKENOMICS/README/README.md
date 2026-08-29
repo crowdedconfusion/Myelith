@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.10.0
+> **Version:** 0.11.0
 > **Datum:** 2026-08-27
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,33 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.11.0 – 2026-08-29 (die Summe stimmt jetzt nachweislich immer)
+
+`die_summe_stimmt_immer_exakt` hieß der Test, der **eine** Summe prüfte.
+⚑ **Bei Geld ist das die teuerste Stelle für diese Schwäche:** Ein
+Verfahren, das in einem von tausend Fällen eine Einheit verliert oder
+erfindet, fällt an keinem getippten Beispiel auf und bricht trotzdem die
+Invariante „die Prägung wird vollständig verteilt".
+
+Jetzt **erschöpfend** über alle Prägungen bis 100 000, dazu 200 000
+gestreute über den ganzen `u64`-Bereich und die Ränder. Für
+`split_proportional` ein deterministischer Generator mit Dubletten,
+Nullgewichten und Beträgen unterhalb der Empfängerzahl.
+
+⚑ **Und der Test zählt mit, wie oft der interessante Fall vorkam.** Ein
+Test, der nur glatte Teilungen sieht, prüft die Restverteilung nie und
+meldet trotzdem grün.
+
+⚑ **Erschöpfend, wo der Raum es zulässt, und erst dann ein Generator.**
+Die Frage nach `proptest` war im Projekt zweimal verschieden
+beantwortet worden: einmal ablehnend wegen der Abhängigkeit, einmal
+befürwortend wegen der verkleinerten Gegenbeispiele. **Aufgelöst durch
+eine dritte Möglichkeit, die beide übersahen:** Für einen großen Teil
+dieser Aussagen ist der Eingaberaum klein genug, um ihn **ganz**
+abzugehen. Ein erschöpfender Test ist stärker als jeder Zufallstest,
+braucht keine Abhängigkeit, und ein Gegenbeispiel muss man nicht
+verkleinern, wenn man ohnehin bei den kleinsten anfängt.
 
 ### v0.10.0 – 2026-08-27 (die Staffelung bekommt ihre Vorgeschichte)
 

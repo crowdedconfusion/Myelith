@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.11.0"
+version = "0.13.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."
@@ -11,6 +11,10 @@ borsh = { version = "1.6", features = ["derive"] }
 getrandom = "0.3"
 myl-net = { path = "../../NETWORKING/myl-net" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# ⚑ Nur für das Konformitätstor: Der Knoten prüft beim Start, ob seine
+# Maschine die eingefrorenen Op-Vektoren trifft. Ein Knoten, der anders
+# rechnet, ist kein langsamer, sondern ein schädlicher.
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels" }
 myl-consensus = { path = "../../CONSENSUS/myl-consensus" }
 myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal"] }

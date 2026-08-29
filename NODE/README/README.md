@@ -1,10 +1,10 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.11.0
-> **Datum:** 2026-08-27
+> **Version:** 0.13.0
+> **Datum:** 2026-08-29
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
-> **166 Tests grün.**
+> **176 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -100,12 +100,21 @@ gemessenen Latenzen abgeleitet. Die Latenzwerte kommen aus Attesten, und
 ein Timeout, der von dieser Fläche liest, gäbe einem Angreifer einen
 Hebel auf die Liveness (Audit A10, A12).
 
-⚑ **Wer allein vorauseilt, kommt nicht zurück** (Fund 67). Ein Knoten,
-dessen Frist ablief, bevor die anderen ihre Runde begonnen hatten, steht
-danach dauerhaft vor dem Netz. Die Safety hält, seine eigene Liveness
-nicht. Zurück hilft nur ein Zustandsabgleich, und der hängt an der
-Kettenpersistenz. **In der Praxis:** Knoten dicht beieinander starten
-oder `--bft-frist` über den Startversatz legen.
+⚑ **Wer allein vorauseilt, kommt seit dem 29. August zurück** (Fund 67).
+Ein Knoten, dessen Frist ablief, bevor die anderen ihre Runde begonnen
+hatten, stand danach dauerhaft vor dem Netz: Er verwarf jede Nachricht
+aus einer fremden Runde, also gerade die, die belegten, dass er der
+Irrende war. Die Safety hielt, seine eigene Liveness nicht.
+
+Der Rückweg ist ein **Commit-Zertifikat**, der Beleg eines Quorums, und
+er gilt ohne Rücksicht darauf, in welcher Runde der Empfänger steht.
+Angefordert wird er nicht: Wer außer Takt ist, gibt sich durch seine
+eigenen Nachrichten zu erkennen, und die Gegenseite antwortet darauf mit
+dem Beleg, jedem genau einmal. Im Normalbetrieb kostet das nichts.
+
+**In der Praxis weiterhin sinnvoll:** Knoten dicht beieinander starten
+oder `--bft-frist` über den Startversatz legen. Der Ausgleich holt einen
+Knoten zurück, er ersetzt nicht die Runde, die er verpasst hat.
 
 **Ist nicht: Blockinhalt im Konsens.** Der Propose trägt einen
 Block-*Hash*, nicht den Block. Was er bezeichnet, entscheidet die Kette,
@@ -158,7 +167,7 @@ myl-node --name alpha --genesiszeile 250000000
 myl-node --name alpha --port 4150 --genesis genesis.txt
 
 # Über ein WAN mit ungleichen Startzeiten: die Frist über den
-# Startversatz legen (Fund 67)
+# Startversatz legen, damit niemand die erste Runde verpasst (Fund 67)
 myl-node --name alpha --port 4150 --genesis genesis.txt --bft-frist 30000
 ```
 
@@ -268,6 +277,105 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.13.0 – 2026-08-29 (⚑ Fund 67 geschlossen: der Rückweg für den, der vorauseilt)
+
+Der aufgezeichnete Vorfall vom 26. August: Ein Knoten hatte nach 1 ms ein
+volles Mesh und begann Runde 0, die anderen vier begannen ihre erst
+522 ms später, seine Vote-Frist von 500 ms lief vorher ab. Er stand am
+Ende bei Runde 5, während die vier Runde 0 längst commitet hatten, und
+von allein kam er nicht zurück.
+
+**Hier stand, der Rückweg hänge an der Kettenpersistenz.** Das war
+falsch, und es fiel erst beim Nachlesen auf: Ein Commit legt bis heute
+keinen Block in die Kette und veröffentlicht auch keinen, er schreibt
+eine Protokollzeile. Über die Kette wäre nichts zurückgekommen. Der
+Rückweg geht über einen Quorumsbeleg, der unabhängig von der Runde des
+Empfängers gilt, und er ist in CONSENSUS v0.20.0 beschrieben.
+
+Was der Knoten dazu beiträgt:
+
+- **`Konsensrunde` sammelt jetzt auch Commits**, nicht nur Stimmen, und
+  baut daraus den Beleg, sobald das Quorum steht. Aus demselben Grund wie
+  bei den Stimmen: Der Automat speichert Commits ohne Signatur, ein
+  Zertifikat ist aber ihr Aggregat. Beim Rundenwechsel werden die
+  gesammelten Commits verworfen, der fertige Beleg **nicht**: Er bezeugt
+  eine Entscheidung, keine Runde.
+- **`hilf_beim_aufholen`** antwortet einem Absender, dessen Nachricht mit
+  `WrongRound` abprallt, mit dem Beleg der eigenen Entscheidung. Drei
+  Bedingungen, jede mit Grund: nur bei falscher Runde, nur mit eigenem
+  Beleg, nur an Stimmberechtigte und an jeden genau einmal.
+- **`konsens_commitet` trägt ein Feld `uebernommen`.** Ohne das sähen
+  „lief mit" und „musste zurückgeholt werden" im Betriebsprotokoll gleich
+  aus, und genau dieser Unterschied ist es, den man nach einem Vorfall
+  wie dem vom 26. August sucht.
+- **`gabelung`** ist eine eigene Marke im Urteil, kein Sammelposten, und
+  gilt nicht als harmlos. Sie ist der einzige Befund dieser Liste, der
+  nicht über den Absender spricht, sondern über das Netz.
+
+Der Test, der den Defekt festhielt, war eigens so geschrieben, dass er
+umschlägt, sobald jemand den Ausgleich baut. Er läuft jetzt den vollen
+Weg: Der Vorausgeeilte dreht bis Runde 5, in der er wieder Leader ist,
+und gibt sich durch seinen Vorschlag zu erkennen; die Gegenseite
+antwortet mit dem Beleg; er übernimmt die Entscheidung und landet auf
+demselben Block. Zweimal gegengeprobt, einmal ohne den Sendeweg, einmal
+ohne die Übernahme, beide Male schlägt er fehl.
+
+### v0.12.0 – 2026-08-29 (das Tor: wer anders rechnet, kommt nicht ins Netz)
+
+Der Knoten fährt vor dem Netz die Op-Konformitätsvektoren und startet
+nicht, wenn seine Maschine abweicht.
+
+### ⚑ Warum das vor dem Netz steht und nicht daneben
+
+Die ganze Zusage des Protokolls ist, dass zwei beliebige Rechner
+dasselbe Ergebnis bekommen. **Ein Knoten, dessen Maschine anders
+rechnet, ist kein langsamer, sondern ein schädlicher:** Er liefert
+abweichende Segmente, wird dafür geschlachtet, und bis dahin
+verschmutzt er den Auftragsstrom.
+
+Prüfen ließ sich das schon, mit dem Testclient. **Das ist freiwillig und
+getrennt vom Betrieb**, passiert also beim ersten Mal und danach nie
+wieder, und niemand merkt es, wenn unter dem Knoten eine Bibliothek
+ausgetauscht wird.
+
+### ⚑ Fehlend ist etwas anderes als falsch
+
+Ein **falscher** Vektor heißt: Diese Maschine rechnet anders. Ein
+**fehlendes** Verzeichnis heißt: Wir wissen es nicht. Beides hält den
+Start an, aber unter verschiedenem Namen, und die Meldung sagt welchen.
+
+**Wer ohne Vektoren starten will, sagt es ausdrücklich**
+(`--ohne-konformitaet`). Dann steht „übersprungen" in der Kommandozeile
+und im Protokoll, **und das ist etwas ganz anderes als „bestanden"** —
+ein eigener Wert, kein Sonderfall des guten.
+
+### ⚑ Der Vorgabepfad sucht an zwei Orten, und das ist kein Komfort
+
+Im Repositorium arbeitet man vom Wurzelverzeichnis, ein Betreiber
+entpackt ein Archiv und startet darin. **Ein Vorgabepfad, der nur den
+ersten Fall trifft, macht das Tor für genau die Leute unbrauchbar, für
+die es gedacht ist** — und sie greifen dann zu `--ohne-konformitaet`,
+womit die Prüfung praktisch abgeschafft wäre.
+
+### Was das Tor nicht belegt
+
+Es fährt die **Op-Vektoren**: einzelne Kernel gegen eingefrorene
+Sollwerte, ohne Modell, in Millisekunden. Layer- und
+Ende-zu-Ende-Vektoren verlangen Artefakte in Gigabyte-Größe; ein Start,
+der davon abhinge, wäre für die meisten kein Start. ⚑ **Das Tor belegt
+also, dass die Kernel übereinstimmen, nicht dass die ganze Kette es
+tut.**
+
+⚑ **Und die Gegenprobe kostete zwei Anläufe.** Der erste verfälschte
+blind die erste `1` im Vektor, die in einem Feld stand, das die Prüfung
+nicht ansieht; der zweite tauschte Ziffern in einem Wert, der keine der
+getauschten enthielt. **Eine Gegenprobe, die nichts verändert, belegt
+nichts** und hätte hier ein Tor als wirksam ausgewiesen, das es nicht
+ist. Jetzt wird der Erwartungswert ersetzt, und der Test prüft vorher,
+dass sich der Text wirklich geändert hat.
+
+**Sechs neue Tests.**
 
 ### v0.11.0 – 2026-08-28 (der Testverkehr ist unterschrieben, und die Kette wendet fünf Anweisungen an)
 

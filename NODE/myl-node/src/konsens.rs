@@ -16,7 +16,9 @@
 //! | Ein gültiger Propose liegt vor | Vote, genau einmal je Runde |
 //! | Das Vote-Quorum steht | Commit, genau einmal je Runde |
 //! | Die Frist ist abgelaufen | nächste Runde, neuer Leader |
-//! | Das Commit-Quorum steht | fertig |
+//! | Das Commit-Quorum steht | fertig, und der Beleg liegt bereit |
+//! | Jemand sendet aus einer fremden Runde | ihm den Beleg schicken |
+//! | Ein gültiger Beleg trifft ein | die Entscheidung übernehmen |
 //!
 //! # Der Timeout: feste Basis mit Zuwachs, nicht aus Latenzen abgeleitet
 //!
@@ -70,7 +72,7 @@ use myl_consensus::bft::{
     BftError, Commit, Konsensnachricht, Propose, Round, RoundStatus, Vote,
 };
 use myl_consensus::round_change::{
-    Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,
+    Commitzertifikat, Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,
 };
 use myl_consensus::signing::{commit_message, propose_message, propose_pol_message, vote_message};
 use myl_types::hash::Hash;
@@ -153,6 +155,11 @@ impl Urteil {
             Self::Abgelehnt(RoundError::CertificateRoundNotUsable { .. }) => {
                 "zertifikat-runde-unbrauchbar"
             }
+            // ⚑ Eigene Marke, kein Sammelposten. Das hier ist der
+            // einzige Befund in dieser Liste, der nicht über den
+            // Absender spricht, sondern über das Netz: Zwei Quoren für
+            // zwei Blöcke. Unter „abgelehnt" gebucht wäre er unauffindbar.
+            Self::Abgelehnt(RoundError::ConflictingCommit) => "gabelung",
             Self::Abgelehnt(_) => "abgelehnt",
             Self::Unlesbar => "unlesbar",
         }
@@ -201,6 +208,19 @@ pub struct Konsensrunde {
     stimmen: Vec<Vote>,
     /// Das jüngste Zertifikat, das dieser Knoten gesehen oder gebaut hat.
     zertifikat: Option<PolkaCertificate>,
+    /// Vollständige Commits der laufenden Runde, für den Zertifikatsbau.
+    ///
+    /// Aus demselben Grund wie [`Self::stimmen`]: Der Automat speichert
+    /// Commits ohne Signatur, ein Zertifikat ist aber ihr Aggregat.
+    commits: Vec<Commit>,
+    /// Der Beleg der eigenen Entscheidung, sobald das Commit-Quorum steht.
+    commitzertifikat: Option<Commitzertifikat>,
+    /// Wem der Beleg schon geschickt wurde.
+    ///
+    /// ⚑ **Genau einmal je Gegenstelle**, sonst wird aus der Hilfe eine
+    /// Schleife: Wer aus einer fremden Runde sendet, tut das mehrfach,
+    /// und jede seiner Nachrichten löste sonst einen neuen Beleg aus.
+    beantwortet: std::collections::BTreeSet<MinerId>,
     /// Wie oft die Runde gewechselt hat, fürs Protokoll.
     wechsel: u64,
 }
@@ -241,6 +261,9 @@ impl Konsensrunde {
             commitet_in: None,
             stimmen: Vec::new(),
             zertifikat: None,
+            commits: Vec::new(),
+            commitzertifikat: None,
+            beantwortet: std::collections::BTreeSet::new(),
             wechsel: 0,
         };
         let raus = runde.folgenachrichten(jetzt_ms)?;
@@ -282,15 +305,84 @@ impl Konsensrunde {
                 }
                 r
             }
-            Konsensnachricht::Commit(c) => self.treiber.receive_commit(c, jetzt_ms),
+            Konsensnachricht::Commit(c) => {
+                let r = self.treiber.receive_commit(c, jetzt_ms);
+                if r.is_ok() {
+                    self.merke_commit(c.clone());
+                }
+                r
+            }
+            // ⚑ Der Rückweg aus Fund 67. Ein Beleg gilt ohne Rücksicht
+            // auf die eigene Runde; deshalb steht er hier neben den
+            // rundengebundenen Marken und nicht unter ihnen.
+            Konsensnachricht::Commitzertifikat(z) => {
+                self.treiber.apply_commitzertifikat(z).map(|_| ())
+            }
         };
         match ergebnis {
             Ok(()) => {
                 let raus = self.folgenachrichten(jetzt_ms).unwrap_or_default();
                 (Urteil::Angenommen, raus)
             }
-            Err(e) => (Urteil::Abgelehnt(e), Vec::new()),
+            Err(e) => {
+                let raus = self.hilf_beim_aufholen(n, &e);
+                (Urteil::Abgelehnt(e), raus)
+            }
         }
+    }
+
+    /// Antwortet einem Absender, der erkennbar in einer anderen Runde
+    /// steht, mit dem Beleg der eigenen Entscheidung.
+    ///
+    /// # ⚑ Warum der Beleg nicht einfach mitgesendet wird (Fund 67)
+    ///
+    /// Der naheliegende Weg wäre, dass jeder Knoten sein
+    /// Commit-Zertifikat nach dem Commit ins Netz legt. Das kostet bei
+    /// `n` Validatoren `n` Nachrichten je Entscheidung, jede mit der
+    /// Unterzeichnerliste darin, und zwar **immer**, auch wenn niemand
+    /// sie braucht: Im Normalfall haben alle dieselben Commits ohnehin
+    /// gesehen.
+    ///
+    /// Hier geht der Beleg nur dann hinaus, wenn sich jemand als außer
+    /// Takt zu erkennen gibt, und das tut er von selbst: Wer in einer
+    /// anderen Runde steht, sendet Nachrichten dieser Runde, und der
+    /// Automat weist sie mit
+    /// [`BftError::WrongRound`](myl_consensus::bft::BftError::WrongRound)
+    /// ab. Diese Abweisung ist das Signal. Im Normalbetrieb kostet der
+    /// Rückweg damit nichts.
+    ///
+    /// **Drei Bedingungen, und jede hat einen Grund:**
+    ///
+    /// 1. Es muss eine falsche Runde sein. Jede andere Ablehnung sagt
+    ///    nichts über den Takt des Absenders.
+    /// 2. Dieser Knoten muss selbst einen Beleg haben. Ohne eigene
+    ///    Entscheidung ist nicht gesagt, wer von beiden zurückliegt.
+    /// 3. Der Absender muss stimmberechtigt sein und wird **einmal**
+    ///    bedient. Sonst löst jeder Beliebige mit erfundenen Bytes den
+    ///    Versand aus, so oft er will: Die Rundenprüfung steht im
+    ///    Automaten vor der Signaturprüfung, ist also billig zu
+    ///    erreichen.
+    fn hilf_beim_aufholen(
+        &mut self,
+        n: &Konsensnachricht,
+        fehler: &RoundError,
+    ) -> Vec<Konsensnachricht> {
+        if !matches!(fehler, RoundError::Bft(BftError::WrongRound { .. })) {
+            return Vec::new();
+        }
+        let Some(zert) = self.commitzertifikat.clone() else {
+            return Vec::new();
+        };
+        let Some(wer) = n.absender() else {
+            return Vec::new();
+        };
+        if !self.treiber.state().voting_set().contains(&wer) {
+            return Vec::new();
+        }
+        if !self.beantwortet.insert(wer) {
+            return Vec::new();
+        }
+        vec![Konsensnachricht::Commitzertifikat(zert)]
     }
 
     /// Der Takt: prüft die Frist und wechselt gegebenenfalls die Runde.
@@ -305,6 +397,9 @@ impl Konsensrunde {
                 // **nicht**: Es ist der Beleg, den der nächste Leader
                 // braucht, und überlebt den Wechsel.
                 self.stimmen.clear();
+                // Wie die Stimmen, und aus demselben Grund. Der fertige
+                // Beleg bleibt: Er bezeugt eine Entscheidung, keine Runde.
+                self.commits.clear();
                 self.wechsel += 1;
                 let raus = self.folgenachrichten(jetzt_ms).unwrap_or_default();
                 (Some(RoundChange::Advanced { from, to, leader }), raus)
@@ -334,6 +429,44 @@ impl Konsensrunde {
                 self.merke_zertifikat(zert);
             }
         }
+    }
+
+    /// Nimmt einen Commit in die Sammlung auf und baut daraus den Beleg,
+    /// sobald das Quorum steht.
+    ///
+    /// Spiegelbild von [`Self::merke_stimme`], mit einem Unterschied:
+    /// Der Beleg wird **nicht** verworfen, wenn die Runde wechselt. Eine
+    /// Entscheidung überlebt jeden Rundenwechsel, sonst wäre sie keine.
+    fn merke_commit(&mut self, c: Commit) {
+        if c.round != self.treiber.round() {
+            return;
+        }
+        self.commits.push(c);
+        if self.treiber.state().commit_weight() >= self.treiber.state().threshold() {
+            if let Ok(zert) = Commitzertifikat::from_commits(&self.commits) {
+                self.commitzertifikat = Some(zert);
+            }
+        }
+    }
+
+    /// Der Beleg der eigenen Entscheidung, falls dieser Knoten einen hat.
+    pub fn commitzertifikat(&self) -> Option<&Commitzertifikat> {
+        self.commitzertifikat.as_ref()
+    }
+
+    /// Hat dieser Knoten die Entscheidung **übernommen**, statt sie
+    /// selbst gezählt zu haben?
+    ///
+    /// ⚑ Für das Betriebsprotokoll, und dort ist es der Unterschied
+    /// zwischen „lief mit" und „musste zurückgeholt werden" (Fund 67).
+    /// Beides endet in derselben Zeile `konsens_commitet`, und ohne
+    /// dieses Feld wäre der zweite Fall im Nachhinein nicht mehr von
+    /// dem ersten zu unterscheiden.
+    ///
+    /// Wer selbst commitet hat, hat es in der laufenden Runde getan: Ein
+    /// commiteter Automat wechselt die Runde nicht mehr.
+    pub fn durch_beleg_commitet(&self) -> bool {
+        self.ist_commitet() && self.commitet_in != Some(self.runde())
     }
 
     fn merke_zertifikat(&mut self, zert: PolkaCertificate) {
@@ -407,6 +540,7 @@ impl Konsensrunde {
                     signature: self.schluessel.signiere(&commit_message(runde, &hash))?,
                 };
                 if self.treiber.receive_commit(&commit, jetzt_ms).is_ok() {
+                    self.merke_commit(commit.clone());
                     self.commitet_in = Some(runde);
                     raus.push(Konsensnachricht::Commit(commit));
                 }
@@ -641,6 +775,31 @@ mod tests {
 
         fn runde(&self, name: &str) -> &Konsensrunde {
             &self.knoten.iter().find(|(n, _)| *n == name).expect("Knoten").1
+        }
+
+        fn index(&self, name: &str) -> usize {
+            self.knoten
+                .iter()
+                .position(|(n, _)| *n == name)
+                .expect("Knoten")
+        }
+
+        /// Gibt eine Nachricht von außen herein und gibt zurück, was
+        /// daraufhin hinaus müsste. Zwei Netze lassen sich damit
+        /// verbinden, ohne sie zu einem zu machen.
+        fn von_aussen(&mut self, name: &str, n: &Konsensnachricht) -> Vec<Konsensnachricht> {
+            let i = self.index(name);
+            let uhr = self.uhr;
+            self.knoten[i].1.empfange(n, uhr).1
+        }
+
+        /// Lässt **einen** Knoten takten und liefert seine Nachrichten
+        /// aus, statt sie zuzustellen.
+        fn takt_von(&mut self, name: &str, ms: u64) -> Vec<Konsensnachricht> {
+            self.uhr += ms;
+            let i = self.index(name);
+            let uhr = self.uhr;
+            self.knoten[i].1.takt(uhr).1
         }
     }
 
@@ -912,23 +1071,38 @@ mod tests {
     /// kommt nicht zurück, denn nichts sagt ihm, dass Runde 0 längst
     /// entschieden ist.
     ///
-    /// **Warum die naheliegende Regel hier nicht hilft.** Der übliche
+    /// **Warum die naheliegende Regel hier nicht half.** Der übliche
     /// Ausgleich ist, auf Nachrichten aus einer **höheren** Runde zu
     /// springen, sobald mehr als ein Drittel des Gewichts von dort
     /// kommt. Alpha ist aber nicht zurück, sondern **voraus**. Es
-    /// bräuchte den umgekehrten Weg: den Beleg, dass eine frühere Runde
-    /// entschieden hat, also ein Commit-Zertifikat. Das ist
-    /// Zustandsabgleich und hängt an der Kettenpersistenz.
+    /// braucht den umgekehrten Weg: den Beleg, dass eine frühere Runde
+    /// entschieden hat.
     ///
-    /// **Dieser Test hält den Defekt fest, er behebt ihn nicht.**
-    /// Schlägt er fehl, hat jemand den Ausgleich gebaut, und dann gehört
-    /// dieser Kommentar nachgezogen statt der Erwartung.
+    /// # Der Ausgleich, seit dem 2026-08-29
     ///
-    /// **Bis dahin gilt in der Praxis:** Knoten dicht beieinander
-    /// starten, oder `--bft-frist` über den erwarteten Startversatz
-    /// legen.
+    /// Gebaut als [`Commitzertifikat`], und **nicht** über die Kette,
+    /// wie hier zuvor vermutet stand. Der Umweg über die Kette scheiterte
+    /// an einer Tatsache, die erst beim Nachlesen auffiel: Ein Commit
+    /// legt bis heute keinen Block in die Kette und veröffentlicht auch
+    /// keinen, er schreibt eine Protokollzeile. Über die Kette wäre also
+    /// nichts zurückgekommen.
+    ///
+    /// Der Beleg dagegen steht für sich. Alpha braucht dafür weder eine
+    /// Kette noch die Runde der anderen, nur die stimmberechtigte Menge,
+    /// die es aus der Genesis-Datei ohnehin hat.
+    ///
+    /// **Der Weg im Test ist der Weg im Betrieb**, in beide Richtungen:
+    /// Alpha gibt sich durch seinen Vorschlag aus Runde 5 selbst zu
+    /// erkennen, die Gegenseite antwortet mit dem Beleg, Alpha übernimmt
+    /// die Entscheidung. Niemand reicht ihm etwas an, das er im Betrieb
+    /// nicht bekäme.
+    ///
+    /// **Was der Ausgleich nicht heilt:** Alpha hat in Runde 0 nicht
+    /// mitgestimmt und bekommt für sie keine Belohnung. Zurück heißt
+    /// hier, wieder mitzulaufen, nicht, das Versäumte gutgeschrieben zu
+    /// bekommen.
     #[test]
-    fn fund_67_wer_allein_vorauseilt_bleibt_zurueck() {
+    fn fund_67_wer_allein_vorauseilt_kommt_mit_dem_beleg_zurueck() {
         let g = probenetz();
         let t = TimeoutConfig {
             propose_ms: 1_000,
@@ -963,15 +1137,70 @@ mod tests {
         spaete.vorspulen(1_001);
         assert_eq!(spaete.fertig(), 4, "die vier kommen ohne den Vorläufer durch");
 
-        // ⚑ Und der Vorläufer bleibt draußen. Das ist der Defekt.
-        assert!(
-            !vorlaeufer.runde(leader).ist_commitet(),
-            "der Vorläufer hat commitet: dann gibt es einen Ausgleich, und \
-             Fund 67 gehört im Doc-Kommentar nachgezogen"
+        // Bis hierher ist es der aufgezeichnete Vorfall: Der Vorläufer
+        // steht draußen, und von allein kommt er nicht zurück.
+        assert!(!vorlaeufer.runde(leader).ist_commitet());
+
+        // ── Der Rückweg ────────────────────────────────────────────
+        //
+        // Der Vorläufer dreht weiter, bis er wieder Leader ist. Bei
+        // fünf Producern ist das Runde 5, und genau dort stand er im
+        // Vorfall. Erst dann sendet er wieder etwas, und erst dadurch
+        // gibt er sich als außer Takt zu erkennen.
+        let mut alphas_vorschlag = None;
+        for _ in 0..20 {
+            let raus = vorlaeufer.takt_von(leader, 2_000);
+            if let Some(n) = raus.into_iter().find(|n| {
+                matches!(
+                    n,
+                    Konsensnachricht::Propose(_) | Konsensnachricht::ProposeMitPolka(_, _)
+                )
+            }) {
+                alphas_vorschlag = Some(n);
+                break;
+            }
+        }
+        let alphas_vorschlag = alphas_vorschlag.expect("der Vorläufer schlägt wieder vor");
+        assert_eq!(
+            vorlaeufer.runde(leader).runde(),
+            5,
+            "im Vorfall stand der Vorläufer bei Runde 5"
         );
+
+        // Ein Knoten der Gegenseite hört ihn. Für seinen Automaten ist
+        // das eine Nachricht der falschen Runde, und genau daran erkennt
+        // er, dass der Absender Hilfe braucht.
+        let antwort = spaete.von_aussen(uebrige[0], &alphas_vorschlag);
+        let beleg = antwort
+            .iter()
+            .find(|n| matches!(n, Konsensnachricht::Commitzertifikat(_)))
+            .expect("die Gegenseite antwortet mit dem Beleg");
+
+        // ⚑ Und damit kommt er zurück.
+        let (urteil, _) = {
+            let i = vorlaeufer.index(leader);
+            let uhr = vorlaeufer.uhr;
+            vorlaeufer.knoten[i].1.empfange(beleg, uhr)
+        };
+        assert!(urteil.ist_angenommen(), "der Beleg wurde abgewiesen: {urteil:?}");
         assert!(
-            vorlaeufer.runde(leader).runde() > 0,
-            "der Vorläufer steht wieder bei Runde 0: dann gibt es einen Ausgleich"
+            vorlaeufer.runde(leader).ist_commitet(),
+            "der Vorläufer ist nicht zurückgekommen"
+        );
+        assert_eq!(
+            vorlaeufer.runde(leader).commiteter_block(),
+            spaete.runde(uebrige[0]).commiteter_block(),
+            "zurückgekommen, aber auf einen anderen Block"
+        );
+
+        // Ein zweiter Beleg über dieselbe Entscheidung ändert nichts und
+        // kostet auch nichts: Die Gegenseite hilft jedem genau einmal.
+        let nochmal = spaete.von_aussen(uebrige[0], &alphas_vorschlag);
+        assert!(
+            !nochmal
+                .iter()
+                .any(|n| matches!(n, Konsensnachricht::Commitzertifikat(_))),
+            "die Gegenseite schickt den Beleg ein zweites Mal"
         );
     }
 

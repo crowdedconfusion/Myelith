@@ -1028,6 +1028,36 @@ repeatedly and fake a quorum.
 
 *In code:* `CONSENSUS/myl-consensus/src/round_change.rs`
 
+### Commit certificate
+
+Proof that a quorum **committed** a block, that is, the decision itself.
+A polka certificate, by contrast, only proves that a quorum *voted*;
+enough to release a lock, not enough to prove a decision.
+
+What sets it apart from every other consensus message: a commit
+certificate is valid **regardless of the round its recipient is in**. A
+round number is a local device against stalling, a quorum proof is a fact
+about the network.
+
+Why that is needed: a node whose deadline expired before the others had
+started their round ends up ahead of the network and discards every
+message from a foreign round, precisely the ones proving that it is the
+one out of step. Without a proof that holds outside the rounds it would
+never come back. The usual rule, jumping to a **higher** round, does not
+help it: it is ahead, not behind.
+
+The same idea appears elsewhere under other names: in Tendermint the
+committed block carries its commit signatures and is adopted through
+block sync, in QBFT the commit seals sit in the block header, in HotStuff
+the proof is called a quorum certificate.
+
+**Hardening:** the same strict ordering of signers as for the polka
+certificate, plus a distinct prefix in the signing message. Without it a
+vote quorum could be passed off as a decision, a "we could" as a "we
+did".
+
+*In code:* `CONSENSUS/myl-consensus/src/round_change.rs`
+
 ### Timeout and round change
 
 If the leader does not deliver, the protocol must move on. The timeout

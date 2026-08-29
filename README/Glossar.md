@@ -1072,6 +1072,37 @@ Validator mehrfach eintragen und ein Quorum vortäuschen.
 
 *Im Code:* `CONSENSUS/myl-consensus/src/round_change.rs`
 
+### Commit-Zertifikat
+
+Der Beleg, dass ein Quorum einen Block **commitet** hat, also die
+Entscheidung selbst. Ein Polka-Zertifikat belegt demgegenüber nur, dass
+ein Quorum *gestimmt* hat; das reicht, um eine Sperre zu lösen, nicht
+aber, um eine Entscheidung zu belegen.
+
+Der Unterschied zu allen anderen Konsensnachrichten: Ein Commit-Zertifikat
+gilt **unabhängig von der Runde, in der der Empfänger steht**. Die
+Rundennummer ist ein örtliches Mittel gegen Stillstand, ein Quorumsbeleg
+ist eine Tatsache über das Netz.
+
+Wozu das nötig ist: Ein Knoten, dessen Frist ablief, bevor die anderen
+ihre Runde begonnen hatten, steht danach vor dem Netz und verwirft jede
+Nachricht aus einer fremden Runde, also gerade die, die belegen, dass er
+der Irrende ist. Ohne einen Beleg, der außerhalb der Runden gilt, käme er
+nie zurück. Die übliche Regel, auf eine **höhere** Runde zu springen,
+hilft ihm nicht: Er ist voraus, nicht zurück.
+
+Derselbe Gedanke steht anderswo unter anderem Namen: In Tendermint trägt
+der commitete Block seine Commit-Signaturen mit sich und wird über die
+Blocksynchronisation übernommen, in QBFT stehen die Commit-Siegel im
+Blockkopf, in HotStuff heißt der Beleg Quorum-Zertifikat.
+
+**Härtung:** Dieselbe strenge Ordnung der Unterzeichner wie beim
+Polka-Zertifikat, dazu ein eigenes Präfix in der Signierbotschaft. Ohne
+das ließe sich ein Vote-Quorum als Entscheidung ausgeben, also ein „wir
+könnten" als ein „wir haben".
+
+*Im Code:* `CONSENSUS/myl-consensus/src/round_change.rs`
+
 ### Timeout und Rundenwechsel
 
 Wenn der Leader nicht liefert, muss weitergeschaltet werden. Der Timeout

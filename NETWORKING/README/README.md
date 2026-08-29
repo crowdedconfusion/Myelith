@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.10.1
-> **Datum:** 2026-08-28
+> **Version:** 0.10.2
+> **Datum:** 2026-08-29
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -12,7 +12,7 @@
 > Phase 2: Paarlatenzmessung mit EMA-Glättung, Latenz-Atteste,
 > LatencyGraph, Geo- und AS-Diversität. Phase 3: verschlüsselte
 > Sitzungen zwischen Shard-Minern und über Gateways hinweg, mit
-> Schlüsselrotation je Epoche. **155 Tests grün.**
+> Schlüsselrotation je Epoche. **163 Tests grün.**
 >
 > **Offen:** das **unabhängige kryptographische Review** des
 > Sitzungsschemas, Punkt 4.4 (Lasttest bei Zielnetzgröße) und der
@@ -108,6 +108,23 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.10.2 – 2026-08-29 (die Größentabelle nachgerechnet)
+
+Die Herleitung von `MAX_CONSENSUS_BYTES` verlangt von jedem, der eine
+Nachricht an das Konsens-Topic anschließt, dass er die Tabelle
+nachrechnet. Mit dem Commit-Zertifikat (⚑ Fund 67, CONSENSUS v0.20.0)
+ist eine dazugekommen. Gemessen statt geschätzt: 301 B bei 5, 813 B bei
+21, 4237 B bei 128 Unterzeichnern. Es trägt dieselbe Unterzeichnerliste
+wie ein Polka, aber keinen Vorschlag davor, bleibt also stets die
+kleinere der beiden, und die 8 KiB stehen unverändert.
+
+Die Strukturprüfung der Netzschicht musste nichts lernen: Sie liest die
+Nutzlast vollständig als `Konsensnachricht` zurück, und eine hinten
+angehängte Marke geht darin von selbst auf.
+
+Die Testzahl im Kopf lag bei 155 und stimmte nicht mehr; nachgezählt sind
+es 163.
 
 ### v0.10.1 – 2026-08-29 (⚑ Fund 94: ein Test wartete auf etwas Verlorenes)
 

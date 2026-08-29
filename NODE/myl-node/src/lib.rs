@@ -49,6 +49,7 @@
 pub mod genesis;
 pub mod kette;
 pub mod knoten;
+pub mod konformitaetstor;
 pub mod konfig;
 pub mod konsens;
 pub mod nachschub;

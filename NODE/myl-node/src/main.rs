@@ -73,6 +73,16 @@ myl-node — ein Myelith-Netzknoten
                          heißt: sicher, aber möglicherweise dauerhaft
                          blockiert, denn erst der Zuwachs überschreitet
                          irgendwann jede reale Nachrichtenlaufzeit.
+  --konformitaet <pfad>  Verzeichnis der Op-Vektoren (Vorgabe:
+                         INTEGER_LLM/conformance/vectors/op). Der Knoten
+                         fährt sie VOR dem Netz und startet nicht, wenn
+                         seine Maschine anders rechnet.
+  --ohne-konformitaet    ohne diese Prüfung starten. AUSDRÜCKLICH und
+                         nicht stillschweigend: Ein Knoten, der anders
+                         rechnet, liefert abweichende Segmente, wird
+                         geschlachtet und verschmutzt bis dahin den
+                         Auftragsstrom. Wer den Schalter setzt, sieht ihn
+                         in der Kommandozeile und im Protokoll.
   --genesiszeile <stake> die eigene Zeile für die Genesis-Datei ausgeben
                          und beenden. Erzeugt den Konsensschlüssel, falls
                          er noch nicht existiert. Damit niemand 288 Zeichen
@@ -102,6 +112,10 @@ struct Argumente {
     genesiszeile: Option<u64>,
     /// Fristen der BFT-Runden.
     timeouts: myl_consensus::round_change::TimeoutConfig,
+    /// Wo die Op-Vektoren liegen.
+    konformitaetspfad: std::path::PathBuf,
+    /// Ausdrücklich ohne Konformitätsprüfung starten.
+    ohne_konformitaet: bool,
 }
 
 fn lies_argumente() -> Result<Option<Argumente>, String> {
@@ -116,6 +130,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
     let mut horche: Vec<String> = Vec::new();
     let mut laufzeit = None;
     let mut auf_bildschirm = true;
+    let mut konformitaetspfad = myl_node::konformitaetstor::vorgabepfad();
+    let mut ohne_konformitaet = false;
     let mut probeschluessel = false;
     let mut genesiszeile: Option<u64> = None;
     let mut bft_frist: Option<u64> = None;
@@ -194,6 +210,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--still" => { auf_bildschirm = false; i += 1; }
+            "--konformitaet" => { konformitaetspfad = PathBuf::from(wert(i)?); i += 2; }
+            "--ohne-konformitaet" => { ohne_konformitaet = true; i += 1; }
             unbekannt => return Err(format!("unbekannte Angabe: {unbekannt} (--hilfe)")),
         }
     }
@@ -248,6 +266,8 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
         konfig,
         laufzeit,
         auf_bildschirm,
+        konformitaetspfad,
+        ohne_konformitaet,
         probeschluessel,
         genesiszeile,
         timeouts,
@@ -283,6 +303,53 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    // ⚑ **Das Tor, und es steht vor dem Netz.**
+    //
+    // Die ganze Zusage des Protokolls ist, dass zwei beliebige Rechner
+    // dasselbe Ergebnis bekommen. Ein Knoten, dessen Maschine anders
+    // rechnet, ist kein langsamer, sondern ein **schädlicher**: Er
+    // liefert abweichende Segmente, wird dafür geschlachtet, und bis
+    // dahin verschmutzt er den Auftragsstrom.
+    //
+    // **Nach `--genesiszeile`**, weil das keinen Betrieb aufnimmt und
+    // niemandem schadet, aber **vor allem, was ans Netz geht.**
+    let torbefund = if args.ohne_konformitaet {
+        myl_node::konformitaetstor::Torbefund::Uebersprungen
+    } else {
+        myl_node::konformitaetstor::pruefe(&args.konformitaetspfad)
+    };
+    if args.auf_bildschirm {
+        eprintln!("myl-node: {}", torbefund.zeile());
+    }
+    if !torbefund.darf_starten() {
+        use myl_node::konformitaetstor::Torbefund;
+        match &torbefund {
+            Torbefund::Abweichung { fehler, vektoren } => {
+                eprintln!(
+                    "myl-node: {} von {vektoren} Konformitaetsvektoren weichen ab. \
+                     Diese Maschine rechnet anders als das Netz.",
+                    fehler.len()
+                );
+                for f in fehler {
+                    eprintln!("myl-node:   {f}");
+                }
+            }
+            Torbefund::Keine { pfad } => {
+                eprintln!(
+                    "myl-node: keine Konformitaetsvektoren unter {}. Ohne sie ist \
+                     nicht feststellbar, ob diese Maschine wie das Netz rechnet.",
+                    pfad.display()
+                );
+                eprintln!(
+                    "myl-node: mit --konformitaet <pfad> den Ort angeben oder mit \
+                     --ohne-konformitaet ausdruecklich darauf verzichten."
+                );
+            }
+            _ => {}
+        }
+        std::process::exit(3);
     }
 
     // Vor dem Start festhalten, was danach gebraucht wird: `starten`

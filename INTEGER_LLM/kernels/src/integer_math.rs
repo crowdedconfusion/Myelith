@@ -47,12 +47,30 @@ use crate::fixed_point::clamp_i16;
 /// ist still falsch: `sqrt_q(i32::MAX, 33)` liefert `0`. Ab `64` bricht
 /// der Shift ab.
 ///
+/// ⚑ **Zweite Vorbedingung, gefunden am 2026-08-29 (Fund 95):
+/// `x <= (2^31-1)^2 >> frac_bits`.** Darueber passt die Wurzel nicht
+/// mehr in `i32`, und die Funktion liefert **still `i32::MAX`** statt
+/// des richtigen Werts. Bei `frac_bits = 32` liegt die Grenze schon bei
+/// `1_073_741_823`, also weit unterhalb von `i32::MAX`.
+///
+/// **Fund 75 hat acht Vorbedingungen des Ganzzahlpfades aufgeschrieben
+/// und diese uebersehen**, weil sie durch Lesen gesucht wurden. Gefunden
+/// hat sie ein Generator im ersten Lauf: `sqrt_q(1_764_347_202, 32)`
+/// liefert `2_147_483_647`, und die richtige Antwort waere rund
+/// `2_753_000_000` gewesen.
+///
 /// **Kein Aufrufer im Repositorium.** Siehe den Modulkopf.
 #[inline]
 pub fn sqrt_q(x: i32, frac_bits: u8) -> i32 {
     debug_assert!(
         frac_bits <= 32,
         "sqrt_q: frac_bits {} ueber der Grenze 32, das Ergebnis waere still falsch (Fund 75)",
+        frac_bits
+    );
+    debug_assert!(
+        (x as i64) <= (((i32::MAX as i64) * (i32::MAX as i64)) >> frac_bits),
+        "sqrt_q: x {} zu gross fuer frac_bits {}, das Ergebnis saettigt still bei i32::MAX (Fund 95)",
+        x,
         frac_bits
     );
     if x <= 0 { return 0; }

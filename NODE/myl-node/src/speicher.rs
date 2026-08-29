@@ -32,7 +32,10 @@
 //! Neustart zu retten, hieße mit einer Frist weiterzumachen, die
 //! inzwischen abgelaufen ist. Was ein neu gestarteter Knoten braucht,
 //! ist der **Abgleich** mit dem Netz, nicht die Konserve seines eigenen
-//! alten Zustands (⚑ Fund 67, offener Punkt).
+//! alten Zustands. Diesen Abgleich gibt es seit dem 2026-08-29: Ein
+//! Commit-Zertifikat belegt eine Entscheidung unabhängig von der Runde,
+//! in der der Empfänger steht (⚑ Fund 67, siehe
+//! `myl_consensus::round_change::Commitzertifikat`).
 //!
 //! # Das Format
 //!

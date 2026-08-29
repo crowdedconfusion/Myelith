@@ -63,7 +63,7 @@ pub use poi::{
     verify_bundle_signature, DST_POI_BUNDLE,
 };
 pub use round_change::{
-    Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,
+    Commitzertifikat, Lock, PolkaCertificate, RoundChange, RoundDriver, RoundError, TimeoutConfig,
     DEFAULT_TIMEOUT_COMMIT_MS, DEFAULT_TIMEOUT_DELTA_MS, DEFAULT_TIMEOUT_PROPOSE_MS,
     DEFAULT_TIMEOUT_VOTE_MS,
 };

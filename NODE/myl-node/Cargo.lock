@@ -1397,6 +1397,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "integer-llm-kernels"
+version = "0.28.1"
+dependencies = [
+ "itertools 0.13.0",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1414,6 +1424,15 @@ name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
+
+[[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -2132,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2151,7 +2170,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.10.0"
+version = "0.10.2"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2170,10 +2189,11 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "borsh",
  "getrandom 0.3.4",
+ "integer-llm-kernels",
  "libp2p",
  "myl-consensus",
  "myl-ledger",
@@ -2562,7 +2582,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -2972,6 +2992,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.4",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.151"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -3988,3 +4021,9 @@ dependencies = [
  "quote",
  "syn 3.0.4",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"

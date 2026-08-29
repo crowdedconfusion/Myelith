@@ -100,11 +100,16 @@ pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
 /// Aus dem Typ gerechnet (Borsh: Runde 8 + Hash 32 + Längenkopf 4 +
 /// 32 je Unterzeichner + Aggregat 96), dazu ein Propose:
 ///
-/// | Unterzeichner | Propose + Zertifikat | Anteil an 8 KiB |
-/// |---|---|---|
-/// | 5 (Probenetz) | 469 B | 6 % |
-/// | 21 (`COMMITTEE_SIZE`) | 981 B | 12 % |
-/// | 128 | 4405 B | 54 % |
+/// | Unterzeichner | Propose + Zertifikat | Commit-Zertifikat | Anteil an 8 KiB |
+/// |---|---|---|---|
+/// | 5 (Probenetz) | 469 B | 301 B | 6 % |
+/// | 21 (`COMMITTEE_SIZE`) | 981 B | 813 B | 12 % |
+/// | 128 | 4405 B | 4237 B | 54 % |
+///
+/// Beide Spalten sind gemessen, nicht gerechnet: in
+/// `myl_consensus::bft::groessenmessung`. Das Commit-Zertifikat (⚑ Fund
+/// 67) trägt dieselbe Unterzeichnerliste wie ein Polka, aber keinen
+/// Vorschlag davor, bleibt also stets die kleinere der beiden.
 ///
 /// Die 8 KiB tragen also auch das größte plausible Komitee, mit knapp
 /// dem Doppelten an Luft. Weit genug, dass diese Grenze keinen Entwurf

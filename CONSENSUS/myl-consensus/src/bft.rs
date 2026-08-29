@@ -147,6 +147,19 @@ pub enum Konsensnachricht {
     /// [`crate::signing::propose_pol_message`], deckt also die Runde des
     /// Zertifikats mit ab (⚑ Fund 66).
     ProposeMitPolka(Propose, PolkaCertificate),
+    /// Der Beleg, dass ein Quorum einen Block commitet hat.
+    ///
+    /// ⚑ **Die fünfte Marke, und wieder additiv** (Fund 67): hinten
+    /// angehängt, also bleibt die Kodierung der vier bisherigen Marken
+    /// Byte für Byte dieselbe und keine erzeugte Signatur wird ungültig.
+    ///
+    /// Anders als die vier anderen ist diese Nachricht **nicht an die
+    /// Runde des Empfängers gebunden**. Sie ist der einzige Weg zurück
+    /// für einen Knoten, der allein vorauseilt: Seine Runde stimmt mit
+    /// niemandem überein, also verwirft er jede einzelne Commit-Nachricht
+    /// des Netzes, aber der Beleg gilt für sich. Siehe
+    /// [`crate::round_change::Commitzertifikat`].
+    Commitzertifikat(crate::round_change::Commitzertifikat),
 }
 
 impl Konsensnachricht {
@@ -154,24 +167,40 @@ impl Konsensnachricht {
     ///
     /// Erlaubt es dem Aufrufer, eine Nachricht der falschen Runde zu
     /// verwerfen, **ohne** sie erst dem Zustandsautomaten vorzulegen.
+    ///
+    /// ⚑ **Mit einer Ausnahme, und sie ist der Sinn der Sache.** Für
+    /// [`Self::Commitzertifikat`] ist das hier die Runde, die der Beleg
+    /// *bezeugt*, nicht eine Runde, in der der Empfänger stehen müsste.
+    /// Wer danach filtert, wirft genau die Nachricht weg, die einen
+    /// vorausgeeilten Knoten zurückholt (Fund 67). Prüfen lässt sich das
+    /// nicht im Typ; deshalb steht es hier.
     pub fn runde(&self) -> Round {
         match self {
             Self::Propose(p) | Self::ProposeMitPolka(p, _) => p.round,
             Self::Vote(v) => v.round,
             Self::Commit(c) => c.round,
+            Self::Commitzertifikat(z) => z.round,
         }
     }
 
-    /// Der Absender.
+    /// Der Absender, falls es einen einzelnen gibt.
     ///
     /// Nicht Teil der Signierbotschaft (siehe [`crate::signing`]), aber
     /// Teil der Nachricht: Die Prüfung braucht ihn, um den Schlüssel
     /// nachzuschlagen, gegen den sie verifiziert.
-    pub fn absender(&self) -> MinerId {
+    ///
+    /// ⚑ **`None` für [`Self::Commitzertifikat`]**, denn ein Aggregat hat
+    /// keinen Absender, es hat Unterzeichner. Einen davon
+    /// herauszugreifen, etwa den kleinsten, ergäbe eine zweite,
+    /// erfundene Auskunft neben der wahren Liste, und der erste Leser,
+    /// der sie für die ganze Wahrheit hält, prüft gegen einen einzelnen
+    /// Schlüssel, wo ein Quorum zu prüfen wäre.
+    pub fn absender(&self) -> Option<MinerId> {
         match self {
-            Self::Propose(p) | Self::ProposeMitPolka(p, _) => p.leader,
-            Self::Vote(v) => v.voter,
-            Self::Commit(c) => c.committer,
+            Self::Propose(p) | Self::ProposeMitPolka(p, _) => Some(p.leader),
+            Self::Vote(v) => Some(v.voter),
+            Self::Commit(c) => Some(c.committer),
+            Self::Commitzertifikat(_) => None,
         }
     }
 
@@ -182,6 +211,7 @@ impl Konsensnachricht {
             Self::ProposeMitPolka(_, _) => "propose-mit-polka",
             Self::Vote(_) => "vote",
             Self::Commit(_) => "commit",
+            Self::Commitzertifikat(_) => "commit-zertifikat",
         }
     }
 }
@@ -464,6 +494,27 @@ impl BftState {
     /// Prüft, ob die Runde abgeschlossen ist (Block commitet).
     pub fn is_committed(&self) -> bool {
         self.status == RoundStatus::Committed
+    }
+
+    /// Übernimmt eine anderswo belegte Entscheidung.
+    ///
+    /// ⚑ **Der einzige Weg, auf dem dieser Automat commitet, ohne selbst
+    /// gezählt zu haben** (Fund 67). Er ist absichtlich `pub(crate)`: Der
+    /// Beleg wird in
+    /// [`crate::round_change::RoundDriver::apply_commitzertifikat`]
+    /// geprüft, und nur dort. Wäre er öffentlich, könnte ein Aufrufer
+    /// eine Runde für commitet erklären, ohne je ein Quorum gesehen zu
+    /// haben, und das Verfahren verlöre seine Safety-Garantie an eine
+    /// einzige unbedachte Zeile.
+    ///
+    /// `proposed_block` wird mitgesetzt, denn für den übernehmenden
+    /// Knoten **ist** das Zertifikat der Vorschlag: Er hat den Propose
+    /// der belegten Runde nie gesehen und wird ihn nie sehen, weil
+    /// Gossipsub nicht nachliefert. Ohne diese Zeile stünde die Runde auf
+    /// `Committed`, und [`Self::committed_block`] gäbe `None` zurück.
+    pub(crate) fn uebernimm_commit(&mut self, block_hash: Hash) {
+        self.proposed_block = Some(block_hash);
+        self.status = RoundStatus::Committed;
     }
 
     /// Gibt den commiteten Block-Hash zurück (falls vorhanden).
@@ -1073,7 +1124,7 @@ mod tests {
         // können, ohne sie erst dem Zustandsautomaten vorzulegen.
         for (n, erwartet) in drei_nachrichten().into_iter().zip([0u8, 1, 2]) {
             assert_eq!(n.runde(), 7);
-            assert_eq!(n.absender(), test_miner(erwartet));
+            assert_eq!(n.absender(), Some(test_miner(erwartet)));
         }
     }
 
@@ -1182,6 +1233,42 @@ mod groessenmessung {
         }
     }
 
+    /// Wie groß ein **Commit-Zertifikat** auf der Leitung wird.
+    ///
+    /// ⚑ Nachgerechnet, weil die Herleitung von
+    /// `myl_net::validation::MAX_CONSENSUS_BYTES` es von jedem verlangt,
+    /// der eine Nachricht anschließt (Fund 67). Es ist die zweitgrößte
+    /// Nachricht des Protokolls: dieselbe Unterzeichnerliste wie ein
+    /// Polka, aber ohne den Vorschlag davor.
+    ///
+    /// Reißt dieser Test die Grenze, ist die Antwort **nicht** ein
+    /// größeres Limit, sondern eine Teilnahme-Bitmaske statt der
+    /// Unterzeichnerliste.
+    #[test]
+    fn ein_commit_zertifikat_passt_in_die_topic_grenze() {
+        use crate::round_change::Commitzertifikat;
+        use myl_types::bls::BlsAggregateSignature;
+        const GRENZE: usize = 8 * 1024;
+        let h = Hash::sha256(b"b");
+        for (n, erwartet) in [(5usize, 301usize), (21, 813), (128, 4237)] {
+            let zert = Commitzertifikat {
+                round: 6,
+                block_hash: h,
+                committers: (0..n).map(|i| MinerId::new([i as u8; 32])).collect(),
+                aggregate: BlsAggregateSignature([0u8; 96]),
+            };
+            let gross = borsh::to_vec(&Konsensnachricht::Commitzertifikat(zert))
+                .unwrap()
+                .len();
+            println!("[Messung] Commit-Zertifikat mit {n} Unterzeichnern: {gross} Bytes");
+            assert_eq!(gross, erwartet, "bei {n} Unterzeichnern");
+            assert!(
+                gross < GRENZE,
+                "{gross} Bytes reißen die Topic-Grenze von {GRENZE}"
+            );
+        }
+    }
+
     #[test]
     fn ein_vorschlag_mit_zertifikat_ueberlebt_die_leitung() {
         use crate::round_change::PolkaCertificate;
@@ -1207,7 +1294,7 @@ mod groessenmessung {
         assert_eq!(borsh::from_slice::<Konsensnachricht>(&bytes).unwrap(), n);
         assert_eq!(n.art(), "propose-mit-polka");
         assert_eq!(n.runde(), 7);
-        assert_eq!(n.absender(), MinerId::new([1u8; 32]));
+        assert_eq!(n.absender(), Some(MinerId::new([1u8; 32])));
     }
 
     #[test]

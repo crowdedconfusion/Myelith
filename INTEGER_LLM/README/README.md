@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.26.0 (θ_v 0.17.0; kernels 0.28.0, runtime 0.22.0, pipeline 0.14.0)
+> **Version:** 0.26.1 (θ_v 0.17.0; kernels 0.28.1, runtime 0.22.0, pipeline 0.14.0)
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -422,6 +422,28 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.26.1 (kernels 0.28.1) – 2026-08-29 (⚑ Fund 95: sqrt_q sättigt still, und Fund 75 hat es übersehen)
+
+Eigenschaftstests für `rshift_round` und `sqrt_q`, erschöpfend um null,
+an jeder Rundungsgrenze und über den ganzen Wertebereich.
+
+⚑ **Der erste Lauf fand eine Vorbedingung, die Fund 75 übersehen
+hatte.** `sqrt_q` liefert still `i32::MAX`, sobald die Wurzel nicht mehr
+in `i32` passt: `sqrt_q(1_764_347_202, 32)` ergibt `2_147_483_647`,
+richtig wären rund `2_753_000_000`. Bei `frac_bits = 32` liegt die
+Grenze schon bei `1_073_741_823`.
+
+**Fund 75 hat acht Vorbedingungen des Ganzzahlpfades aufgeschrieben und
+diese nicht gefunden**, weil sie durch **Lesen** gesucht wurden. Ein
+Generator fand sie im ersten Lauf. Jetzt als `debug_assert!`
+dokumentiert, mit Gegenprobe.
+
+⚑ **Und der erste Fehlschlag traf den Maßstab, nicht die Sache.** Meine
+Referenz für `rshift_round` behandelte `shift == 0` falsch und hätte
+jede ungerade Zahl gehoben. **Wer das nicht prüft, „behebt" einen
+richtigen Code** — der zweithäufigste Weg, mit einem Eigenschaftstest
+Schaden anzurichten.
 
 ### v0.26.0 (kernels 0.28.0) – 2026-08-29 (der Trainingsschritt, und der Würfel ist eine Funktion)
 
