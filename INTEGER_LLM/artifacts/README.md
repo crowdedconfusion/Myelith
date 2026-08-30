@@ -46,5 +46,5 @@ und nicht heruntergeladen.
 Zentrale Pfadkonstante ist `ARTIFACTS_DIR` in `runtime/src/paths.rs`
 (Python-Spiegelbild: `calibrate/src/paths.py`); calibrate, runtime und
 pipeline verwenden denselben Ablageort. Der Pfad ist über die
-Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR` überschreibbar (wichtig für
-Container-Deployment, siehe `deploy/docker-compose.yml`).
+Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR` überschreibbar, damit die
+Gewichte nicht neben dem Binary liegen müssen.

@@ -38,12 +38,10 @@ pub mod wire;
 pub mod trace;
 pub mod shard;
 pub mod standby;
-pub mod da;
 pub mod coordinator;
 pub mod micro_batch;
 pub mod zuteilung;
 
-pub use da::{DaStore, ErasureCoder, XorParityCoder};
 pub use standby::{
     BesetzungFehler, PodBesetzung, RebuildAnlass, RebuildAuftrag, Uebernahme, RESERVE_PLAETZE,
 };

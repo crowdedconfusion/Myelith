@@ -354,13 +354,13 @@ pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
     // der Projektionsmatrizen je Layer
     // ([`pruefe_projektionsformen`]) — dieselbe Schutzwirkung, aber
     // gegen die Groessen, auf die es wirklich ankommt.
-    if !dims.head_dim.is_multiple_of(2) {
+    if dims.head_dim % 2 != 0 {
         return Err(format!(
             "model_config.json: head_dim ({}) muss gerade sein (RoPE paart je zwei Elemente ueber den Half-Split)",
             dims.head_dim
         ));
     }
-    if !dims.num_heads.is_multiple_of(dims.num_kv_heads) {
+    if dims.num_heads % dims.num_kv_heads != 0 {
         return Err(format!(
             "model_config.json: num_heads ({}) ist kein Vielfaches von num_kv_heads ({}) (GQA-Gruppierung nicht moeglich)",
             dims.num_heads, dims.num_kv_heads

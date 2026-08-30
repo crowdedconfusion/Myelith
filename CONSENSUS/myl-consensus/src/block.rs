@@ -400,6 +400,9 @@ mod tests {
             primary_hash: test_hash(1),
             redundant_hash: test_hash(2),
             timestamp_ms: 1_700_000_000_000,
+            // Unsigniert: Dieser Test prueft die Struktur- und
+            // Groessenpruefung, nicht die Unterschrift (Fund 96).
+            signature: myl_types::bls::BlsSignature([0u8; 96]),
         }
     }
 

@@ -22,6 +22,22 @@ use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
 use myl_types::{segments_root, BlsSecretKey, Challenge, Hash, LatencyAttest, PoIBundle};
 use myl_types::latency_attest::{BlsSignatureBytes, PeerIdBytes};
 
+/// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
+/// Spurwurzel.
+///
+/// ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+/// mehr die bloße Id. Für diese Tests ist der Inhalt der Spur
+/// gleichgültig, ihre Anwesenheit nicht.
+fn zeugnisse(ids: &[SegmentId]) -> Vec<myl_types::Segmentzeugnis> {
+    ids.iter()
+        .map(|id| myl_types::Segmentzeugnis {
+            id: *id,
+            spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("Wurzel"),
+        })
+        .collect()
+}
+
+
 /// SplitMix64, reproduzierbar und ohne Abhängigkeit. Ein Test, der bei
 /// jedem Lauf andere Zahlen zieht, meldet einen Fehler einmal und danach
 /// nie wieder.
@@ -51,6 +67,9 @@ fn gueltige_challenge() -> Challenge {
         primary_hash: Hash::sha256(b"primaer"),
         redundant_hash: Hash::sha256(b"redundant"),
         timestamp_ms: 1_000,
+        // Unsigniert: Dieser Test prueft die Struktur- und
+        // Groessenpruefung, nicht die Unterschrift (Fund 96).
+        signature: myl_types::bls::BlsSignature([0u8; 96]),
     }
 }
 
@@ -69,7 +88,7 @@ fn gueltiges_bundle() -> PoIBundle {
     PoIBundle {
         epoch: EpochId(2),
         pod: PodId::new([4u8; 32]),
-        segments_root: segments_root(&segments).expect("Merkle-Wurzel"),
+        segments_root: segments_root(&zeugnisse(&segments)).expect("Merkle-Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: sk.sign(b"poi").expect("sign"),
     }

@@ -211,6 +211,30 @@ impl PodMembership {
     pub fn pubkeys(&self) -> Vec<BlsPublicKey> {
         self.members.iter().map(|(_, pk)| *pk).collect()
     }
+
+    /// Der Schlüssel eines einzelnen Mitglieds.
+    ///
+    /// # ⚑ Wozu, wenn es [`Self::pubkeys`] schon gibt (2026-08-30)
+    ///
+    /// Für die Aggregat-Prüfung braucht es alle Schlüssel; für einen
+    /// **einzelnen** Beleg braucht es einen. Der Fall ist der
+    /// Anfechtungsbeleg: Wer einen Herausforderer schlachten will, muss
+    /// dessen Unterschrift prüfen, und dafür dessen Schlüssel finden.
+    ///
+    /// **Bis hierher galt das als offener Punkt** („es fehlt eine
+    /// Registrierung Miner zu Schlüssel"). Für den Streitpfad fehlt sie
+    /// nicht: Ein Herausforderer ist Mitglied des redundanten Pods, und
+    /// diese Zuteilung führt die Schlüssel ihrer Mitglieder ohnehin
+    /// mit. Eine zweite, globale Registrierung wäre eine zweite Quelle
+    /// für dieselbe Zuordnung.
+    ///
+    /// **Was damit nicht gelöst ist:** die Prüfung im Gossip-Pfad. Dort
+    /// kennt der Knoten die Pod-Zuteilung eines fremden Segments nicht
+    /// und darf sie nicht raten; deshalb geht dort ein unbekannter
+    /// Absender weiterhin durch, und geurteilt wird erst hier.
+    pub fn pubkey(&self, wer: &MinerId) -> Option<&BlsPublicKey> {
+        self.members.iter().find(|(m, _)| m == wer).map(|(_, pk)| pk)
+    }
 }
 
 /// Fehler bei der Einreichung eines PoI-Bündels.
@@ -581,6 +605,13 @@ mod tests {
         let m = membership(5, 3);
         let b = gueltiges_bundle(5, 3, 1_000);
         assert!(verify_bundle_signature(&b, &m).is_ok());
+        // ⚑ Und der Einzelzugriff, den der Anfechtungsbeleg braucht.
+        let erstes = m.members()[0].0;
+        assert!(m.pubkey(&erstes).is_some(), "ein Mitglied muss auffindbar sein");
+        assert!(
+            m.pubkey(&MinerId::new([200u8; 32])).is_none(),
+            "ein Fremder darf nicht auffindbar sein"
+        );
     }
 
     #[test]

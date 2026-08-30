@@ -1,6 +1,6 @@
 # networking (`myl-net`)
 
-> **Version:** 0.10.2
+> **Version:** 0.11.2
 > **Datum:** 2026-08-29
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,38 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.11.2 – 2026-08-30 (die Bündelwurzel bezeugt jetzt auch das Ergebnis)
+
+`segments_root` nimmt seit SHARED_TYPES v0.13.0 Zeugnisse entgegen,
+`Id ‖ Spurwurzel` statt der bloßen Id (Fund 100). Für die Netzschicht
+ändert sich nichts an der Prüfung, wohl aber an den Beispielbündeln
+ihrer Tests: Sie bauen jetzt Zeugnisse, sonst prüften sie einen Weg, den
+es nicht mehr gibt.
+
+### v0.11.1 – 2026-08-29 (die Größe einer Anfechtung nachgerechnet)
+
+Eine Anfechtung trägt seit SHARED_TYPES v0.12.0 eine Unterschrift und
+wuchs damit von 176 auf **272 Bytes**. Aus dem Typ gerechnet, alle
+Felder haben feste Breite. Die Grenze bleibt bei 64 KiB, also beim
+240-fachen: eng genug, dass eine Flut Bandbreite kostet, weit genug,
+dass sie keinen Entwurf einschränkt. Die Herleitung steht jetzt bei der
+Konstante, wie bei `MAX_CONSENSUS_BYTES` auch.
+
+### v0.11.0 – 2026-08-29 (die Mindestfassung stand da und war falsch)
+
+`rust-version` nannte `1.85`. Dieses Crate baut dort nicht: Über libp2p
+hängt die `icu_*`-Kette (via url/idna, verlangt 1.86) und `time`
+(verlangt 1.88). ⚑ **Aufgefallen ist es nie, weil nichts es prüfte:**
+Alle CI-Jobs bauen mit `stable`, derzeit 1.97, und clippy prüft die
+Angabe nur gegen die eigene Kiste, nicht gegen die Abhängigkeiten.
+
+Gemessen gegen echte Toolchains mit `--locked`, nicht geschätzt: 1.85
+und 1.86 scheitern, 1.88 trägt. Die Angabe lautet jetzt `1.88`, mit der
+Herleitung daneben, und ein CI-Job fährt sie.
+
+Das ist keine Verschärfung, sondern eine Berichtigung: Der Code brauchte
+1.88 schon vorher, es stand nur etwas anderes da.
 
 ### v0.10.2 – 2026-08-29 (die Größentabelle nachgerechnet)
 

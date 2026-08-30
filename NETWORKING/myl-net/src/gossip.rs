@@ -240,6 +240,21 @@ mod tests {
         }
     }
 
+    /// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
+    /// Spurwurzel.
+    ///
+    /// ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+    /// mehr die bloße Id. Für diesen Test ist der Inhalt der Spur
+    /// gleichgültig, ihre Anwesenheit nicht.
+    fn zeugnisse(ids: &[SegmentId]) -> Vec<myl_types::Segmentzeugnis> {
+        ids.iter()
+            .map(|id| myl_types::Segmentzeugnis {
+                id: *id,
+                spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("Wurzel"),
+            })
+            .collect()
+    }
+
     /// Baut ein Beispiel-PoI-Bündel aus myl-types-Bausteinen.
     fn beispiel_bundle() -> PoIBundle {
         let sk = BlsSecretKey::key_gen(&[0x7au8; 32]).expect("KeyGen");
@@ -248,7 +263,7 @@ mod tests {
         PoIBundle {
             epoch: EpochId(7),
             pod: PodId::new([9u8; 32]),
-            segments_root: segments_root(&ids).expect("Wurzel"),
+            segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: 123_456,
             aggregate_sig: sig,
         }

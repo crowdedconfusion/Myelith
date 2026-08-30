@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.11.0
+> **Version:** 0.14.0
 > **Datum:** 2026-08-27
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -134,6 +134,141 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.14.0 – 2026-08-30 (die Bindung wird verlangt, nicht mehr angeboten)
+
+`zusicherung_ist_belegt` war da und geprüft; **gerufen hat sie niemand.**
+Der Doc-Kommentar trug es dem Aufrufer auf. Genau so entstehen die
+Felder, die niemand prüft, und diese Sitzung hat drei davon gefunden.
+
+`adjudicate` prüft die Bindung jetzt selbst, und zwar **vor** allem
+anderen: Die Anfrage bringt die Spurwurzel des Segments und zwei
+Merkle-Beweise mit, für die Eingabe an Stelle `j` und die Zusicherung an
+Stelle `j+1` derselben Kette. Ohne tragende Beweise fällt kein Urteil,
+weder so noch so.
+
+### ⚑ Und die Stelle gehört zur Aussage
+
+`zusicherung_ist_belegt` nahm eine `position` entgegen und warf sie mit
+`let _ = position;` weg. Ein Merkle-Beweis belegt „dieses Blatt steht an
+Index `leaf_index`"; wer den Index nicht vergleicht, belegt nur
+„irgendwo in dieser Spur", und dann darf ein Ankläger den Eintrag einer
+**anderen** Layer als Zusicherung für die strittige ausgeben.
+
+Ein Test führt es vor: Der Beweis der Eingabe, an die Stelle der
+Zusicherung gesetzt, ist in sich stimmig und geht ohne den
+Indexvergleich durch.
+
+**Was jetzt noch von außen kommt, ist ein einziger Wert:** die
+Spurwurzel, und die stammt aus dem angenommenen PoI-Bündel, wo sie die
+Aggregat-Signatur der Pod-Mitglieder deckt. Steht so im Feld.
+
+### v0.13.0 – 2026-08-30 (⚑ Fund 101 und E10: das Urteil und die Beweislast)
+
+### Das Urteil fiel gegen die Behauptung des Anklägers
+
+`expected_hash` trug laut eigener Doku „den erwarteten Hash der Ausgabe
+**vom Checker**", und das Urteil verglich die Nachrechnung damit. Wer
+dort eine beliebige dritte Zahl eintrug, machte aus einem **ehrlichen**
+Angeklagten einen schuldigen: Die Nachrechnung stimmte mit seiner wahren
+Ausgabe überein, aber eben nicht mit der Behauptung des Anklägers.
+
+Die Frage der Schiedsrunde lautet nicht „hatte der Ankläger recht",
+sondern **„hat der Angeklagte gerechnet, was er zugesichert hat"**.
+Verglichen wird jetzt gegen `zugesichert`, seine eigene Aussage, und der
+Ankläger kommt im Urteil gar nicht mehr vor.
+
+### ⚑ E10: Der Ankläger legt die strittige Aktivierung vor
+
+Die Bisektion endet an der **ersten** Abweichung. Das heißt per
+Definition, dass sich beide Seiten bei `j-1` einig sind, Bit für Bit, und
+`a_(j-1)` ist genau die Eingabe, über die gestritten wird. **Der Ankläger
+hat sie ohnehin**, denn er hat das Segment gerade nachgerechnet, das ist
+die Anfechtung.
+
+Damit bewahrt der Angeklagte **nichts** mehr auf. Vorher waren es 65 bis
+260 GiB je Knoten; jetzt bleibt nur die Spur, 2 bis 8 GiB, und die ist
+kein zusätzlicher Speicher, sondern der Arbeitsnachweis selbst.
+
+**Lügen hilft nicht:** Der Wert ist über `input_hash` an `trace[j-1]`
+gebunden, und das ist ein Eintrag, den der Angeklagte selbst zugesichert
+hat.
+
+Dieselbe Bauart tragen die optimistischen Rollups: In Arbitrum
+bisektieren beide Seiten bis auf einen Schritt und legen dann einen
+one-step proof vor, dessen Vorzustand gegen den gemeinsam bezeugten Hash
+geprüft wird; niemand hält die ganze Ausführungsspur vor. Truebit macht
+es im Verifikationsspiel genauso.
+
+### Was dabei entfällt, und warum das gut ist
+
+`AdjudicationResponse` gibt es nicht mehr, und mit ihr `NoResponse` und
+`Offen`: **Niemand antwortet mehr.** Die Anfrage ist vollständig, das
+Komitee rechnet und urteilt in einem Zug. Damit verliert auch kein
+ehrlicher Knoten mehr seinen Stake, nur weil er gerade nicht erreichbar
+war.
+
+Die Antwortfrist ist zur **Bisektion** gewandert, wo sie hingehört: Die
+ist wirklich wechselseitig, beide Seiten müssen Spur-Einträge liefern.
+
+Neu ist `Untauglich`: Eine Eingabe, die nicht zur Zusicherung hasht, oder
+eine, an der die Ausführung scheitert, sagt seit E10 etwas über den
+**Ankläger** aus und nichts über den Angeklagten. Als Schuldspruch
+gebucht ließe sie jeden verurteilen, der eine kaputte Anfrage geschickt
+bekommt.
+
+### ⚑ Und eine Bindung, die noch niemand zieht
+
+`zusicherung_ist_belegt` prüft einen Merkle-Pfad von der Zusicherung zur
+Spurwurzel des Segments. Ohne ihn wandert der Fehler aus Fund 101 nur
+ein Feld weiter: Vorher stand die Behauptung des Anklägers in
+`expected_hash`, danach stünde sie in `zugesichert`.
+
+Die Funktion ist da und geprüft, **verdrahtet ist sie nicht**, denn die
+Schiedsrunde hat überhaupt noch keinen Aufrufer im Betrieb. Wer sie
+anschließt, muss den Pfad verlangen. Steht so im Doc-Kommentar.
+
+### v0.12.0 – 2026-08-29 (die Antwortfrist, und die zweite Hälfte von Fund 96)
+
+### ⚑ Es gab keine Antwortfrist, und das war keine fehlende Einstellung
+
+`adjudicate` nahm `None` als Antwort entgegen und gab **sofort**
+`NoResponse` zurück, also schuldig. Nichts zwang einen Aufrufer, auch
+nur eine Sekunde zu warten: Ein einziger Aufruf unmittelbar nach der
+Anfrage verurteilte. Das war eine Verurteilung ohne Wartezeit.
+
+Seitdem trägt die Anfrage die Epoche, in der sie gestellt wurde, und die
+Frist rechnet sich daraus. **In Epochen und nicht in Millisekunden**,
+aus demselben Grund wie bei der Streitfrist: Eine Frist, über die zwei
+Parteien streiten können, ist keine. Die Epochennummer kommt aus dem
+Konsens, jeder rechnet dieselbe, und niemand kann sich hinter seiner Uhr
+verstecken.
+
+**Eine Epoche, hergeleitet und nicht gewählt:** Die Antwort verlangt im
+schlimmsten Fall, dass der Angeklagte die Folge neu rechnet, denn eine
+Position hängt über den KV-Cache an allen vorherigen. Bei 2048 Token
+Kontext und dem gemessenen Durchsatz des Referenzmodells sind das rund
+191 Sekunden. Der ungünstigste Fall lässt knapp eine volle Epoche, also
+das 18-fache. Bei einer Streitfrist von 168 Epochen kostet das weniger
+als ein Prozent des Fensters.
+
+Neu ist die Marke `Offen`: **kein Urteil**. Vorher gab es sie nicht, und
+wer ohne Antwort fragte, bekam „schuldig" für einen Angeklagten, der
+gerade erst gefragt worden war.
+
+### ⚑ Fund 96, zweite Hälfte: der Herausforderer bindet sich jetzt
+
+Ein Schuldspruch gegen den Herausforderer verlangt einen
+`Anfechtungsbeleg`: seine unterschriebene Anfechtung samt Schlüssel.
+Damit sind **beide** Richtungen belegt.
+
+Und die Gelegenheit für eine bessere Form: Statt Ausgang und Beleg
+getrennt entgegenzunehmen, trägt `Nachweis` den Ausgang **in sich**. Es
+gibt keinen Weg mehr, nach einem Schuldspruch zu fragen, ohne den Beleg
+mitzubringen, der zu ihm gehört, und keinen, bei dem beide
+auseinanderfallen. `SlashError::BelegFehlt` ist damit entfallen: Der
+Fehler ist nicht mehr abweisbar, sondern nicht mehr hinschreibbar. Ein
+abgewiesener Fehlgebrauch ist gut, ein unmöglicher besser.
 
 ### v0.11.0 – 2026-08-29 (⚑ Fund 96: ein Schuldspruch ohne Beleg)
 

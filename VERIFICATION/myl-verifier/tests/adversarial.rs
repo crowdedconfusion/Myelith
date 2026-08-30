@@ -17,11 +17,12 @@
 
 use myl_verifier::{
     adjudicate, compare_commitments, create_challenge, create_slash_decision, AdjudicationRequest,
-    AdjudicationResponse, AdjudicationResult, BisectionError, BisectionResponse, BisectionResult,
-    BisectionSession, ChallengeError, CompareResult, ShardExecutor, SlashError, VerdictOutcome,
+    AdjudicationResult, BisectionError, BisectionResponse, BisectionResult,
+    BisectionSession, ChallengeError, CompareResult, Nachweis, ShardExecutor, SlashError,
+    VerdictOutcome,
 };
 use myl_types::hash::Hash;
-use myl_types::ids::{MinerId, SegmentId};
+use myl_types::ids::{EpochId, MinerId, SegmentId};
 
 fn segment(b: u8) -> SegmentId {
     SegmentId::new([b; 32])
@@ -42,6 +43,26 @@ fn geheim(b: u8) -> myl_types::bls::BlsSecretKey {
 /// Eigenschaft selbst.
 fn kennung(b: u8) -> MinerId {
     MinerId::aus_schluessel(&geheim(b).public_key().expect("Punkt"))
+}
+
+fn anfechtungsbeleg_fuer(b: u8, seg: SegmentId) -> myl_verifier::Anfechtungsbeleg {
+    let sk = geheim(b);
+    let pk = sk.public_key().expect("Punkt");
+    let mut c = myl_types::Challenge {
+        segment_id: seg,
+        first_divergence: 3,
+        primary_miner: kennung(1),
+        redundant_miner: MinerId::aus_schluessel(&pk),
+        primary_hash: Hash::sha256(b"a"),
+        redundant_hash: Hash::sha256(b"b"),
+        timestamp_ms: 1_700_000_000_000,
+        signature: myl_types::bls::BlsSignature([0u8; 96]),
+    };
+    c.signiere(&sk).expect("signieren");
+    myl_verifier::Anfechtungsbeleg {
+        anfechtung: c,
+        schluessel: pk,
+    }
 }
 
 fn beleg_fuer(b: u8, seg: SegmentId) -> myl_verifier::Schuldbeleg {
@@ -153,36 +174,7 @@ fn ohne_abweichung_kein_schuldspruch() {
     }
 }
 
-/// **Gegenprobe 3: Die ehrliche Schiedsrunde spricht frei.**
-#[test]
-fn die_ehrliche_schiedsrunde_spricht_frei() {
-    let eingabe = b"aktivierung-j-minus-1".to_vec();
-    let ausgabe = b"aktivierung-j".to_vec();
-    let anfrage = AdjudicationRequest {
-        segment_id: segment(1),
-        divergence_position: 7,
-        checker: miner(2),
-        accused: miner(3),
-        input_hash: Hash::sha256(&eingabe),
-        expected_hash: Hash::sha256(&ausgabe),
-    };
-    let antwort = AdjudicationResponse {
-        segment_id: segment(1),
-        divergence_position: 7,
-        activation_hash: Hash::sha256(&eingabe),
-        activation: eingabe,
-    };
-    assert_eq!(
-        adjudicate(&anfrage, Some(&antwort), &FesterExecutor(ausgabe)),
-        AdjudicationResult::Innocent
-    );
-}
-
-// ---------------------------------------------------------------------
-// Angriffe auf die Schiedsrunde
-// ---------------------------------------------------------------------
-
-/// Ein Executor, der immer dasselbe liefert, egal was er bekommt.
+/// Ein Executor, der stets dieselbe Ausgabe liefert.
 struct FesterExecutor(Vec<u8>);
 impl ShardExecutor for FesterExecutor {
     fn execute_shard(&self, _a: &[u8], _i: usize) -> Result<Vec<u8>, myl_verifier::AdjudicationError> {
@@ -198,154 +190,94 @@ impl ShardExecutor for KaputterExecutor {
     }
 }
 
-/// **Angriff: eine andere Eingabe unterschieben, die zufällig zum
-/// erwarteten Ergebnis führt** (Regression zu Fund A11).
-///
-/// Der Angeklagte legt eine Aktivierung offen, die **nicht** die
-/// committete ist, und sein Rechenweg liefert darauf trotzdem das
-/// erwartete Ergebnis. `FesterExecutor` modelliert genau diesen Fall im
-/// Extrem: Er liefert das Erwartete für **jede** Eingabe.
-///
-/// Ohne die Bindung an `request.input_hash` wäre das ein Freispruch, und
-/// zwar für jeden Angeklagten, der eine solche Eingabe findet.
-#[test]
-fn eine_andere_eingabe_rettet_den_angeklagten_nicht() {
-    let committet = b"die-committete-aktivierung".to_vec();
-    let untergeschoben = b"etwas-ganz-anderes".to_vec();
-    let ausgabe = b"das-erwartete-ergebnis".to_vec();
-
-    let anfrage = AdjudicationRequest {
+/// Eine vollständige Anfrage samt Beweisen, wie der Ankläger sie stellen
+/// muss.
+fn anfrage(eingabe: &[u8], zugesichert: Hash) -> AdjudicationRequest {
+    use myl_types::merkle::MerkleTree;
+    const J: usize = 7;
+    let eingang = Hash::sha256(eingabe);
+    let mut kette: Vec<Hash> = (0..12u8).map(|i| Hash::sha256(&[i])).collect();
+    kette[J] = eingang;
+    kette[J + 1] = zugesichert;
+    let refs: Vec<&[u8]> = kette.iter().map(|h| h.as_bytes().as_slice()).collect();
+    let baum = MerkleTree::new(&refs).expect("Baum");
+    AdjudicationRequest {
         segment_id: segment(1),
-        divergence_position: 7,
+        divergence_position: J,
         checker: miner(2),
         accused: miner(3),
-        input_hash: Hash::sha256(&committet),
-        expected_hash: Hash::sha256(&ausgabe),
-    };
-    // In sich völlig konsistent: der Hash passt zur offengelegten Eingabe.
-    let antwort = AdjudicationResponse {
-        segment_id: segment(1),
-        divergence_position: 7,
-        activation_hash: Hash::sha256(&untergeschoben),
-        activation: untergeschoben,
-    };
-
-    assert_eq!(
-        adjudicate(&anfrage, Some(&antwort), &FesterExecutor(ausgabe)),
-        AdjudicationResult::Guilty,
-        "die Offenlegung muss an das Commitment gebunden sein"
-    );
+        input_hash: eingang,
+        zugesichert,
+        aktivierung: eingabe.to_vec(),
+        spurwurzel: myl_types::ids::MerkleRoot::new(baum.root().0),
+        beweis_eingabe: baum.proof(J).expect("Beweis"),
+        beweis_zusicherung: baum.proof(J + 1).expect("Beweis"),
+        gestellt_in: EpochId(5),
+    }
 }
 
-/// **Angriff: ein Hash, der nicht zur offengelegten Aktivierung passt.**
+/// **Gegenprobe 3: Die ehrliche Schiedsrunde spricht frei.**
 #[test]
-fn eine_luegende_selbstauskunft_wird_verurteilt() {
-    let committet = b"aktivierung".to_vec();
-    let anfrage = AdjudicationRequest {
-        segment_id: segment(1),
-        divergence_position: 3,
-        checker: miner(2),
-        accused: miner(3),
-        input_hash: Hash::sha256(&committet),
-        expected_hash: Hash::sha256(b"egal"),
-    };
-    let antwort = AdjudicationResponse {
-        segment_id: segment(1),
-        divergence_position: 3,
-        activation: b"etwas-anderes".to_vec(),
-        activation_hash: Hash::sha256(&committet), // passt nicht zum Inhalt
-    };
+fn die_ehrliche_schiedsrunde_spricht_frei() {
+    let ausgabe = b"aktivierung-j".to_vec();
+    let a = anfrage(b"aktivierung-j-minus-1", Hash::sha256(&ausgabe));
     assert_eq!(
-        adjudicate(&anfrage, Some(&antwort), &FesterExecutor(b"egal".to_vec())),
-        AdjudicationResult::Guilty
-    );
-}
-
-/// **Angriff: eine gültige Antwort aus einem anderen Streitfall
-/// wiedereinspielen.**
-#[test]
-fn eine_antwort_aus_einem_anderen_streit_gilt_nicht() {
-    let eingabe = b"aktivierung".to_vec();
-    let ausgabe = b"ergebnis".to_vec();
-    let anfrage = AdjudicationRequest {
-        segment_id: segment(1),
-        divergence_position: 7,
-        checker: miner(2),
-        accused: miner(3),
-        input_hash: Hash::sha256(&eingabe),
-        expected_hash: Hash::sha256(&ausgabe),
-    };
-
-    // Falsches Segment.
-    let fremd = AdjudicationResponse {
-        segment_id: segment(9),
-        divergence_position: 7,
-        activation_hash: Hash::sha256(&eingabe),
-        activation: eingabe.clone(),
-    };
-    assert_eq!(
-        adjudicate(&anfrage, Some(&fremd), &FesterExecutor(ausgabe.clone())),
-        AdjudicationResult::Guilty
-    );
-
-    // Falsche Position: sonst ließe sich die Offenlegung einer anderen,
-    // korrekt gerechneten Layer für die strittige einsetzen.
-    let verschoben = AdjudicationResponse {
-        segment_id: segment(1),
-        divergence_position: 6,
-        activation_hash: Hash::sha256(&eingabe),
-        activation: eingabe,
-    };
-    assert_eq!(
-        adjudicate(&anfrage, Some(&verschoben), &FesterExecutor(ausgabe)),
-        AdjudicationResult::Guilty
-    );
-}
-
-/// **Angriff: gar nicht antworten.**
-///
-/// Schweigen darf kein Freispruch sein, sonst ist es die beste Strategie
-/// jedes Betrügers.
-#[test]
-fn schweigen_ist_kein_freispruch() {
-    let anfrage = AdjudicationRequest {
-        segment_id: segment(1),
-        divergence_position: 7,
-        checker: miner(2),
-        accused: miner(3),
-        input_hash: Hash::sha256(b"a"),
-        expected_hash: Hash::sha256(b"b"),
-    };
-    assert_ne!(
-        adjudicate(&anfrage, None, &FesterExecutor(b"b".to_vec())),
+        adjudicate(&a, &FesterExecutor(ausgabe)),
         AdjudicationResult::Innocent
+    );
+}
+
+/// **Angriff: eine andere Eingabe unterschieben.**
+///
+/// ⚑ Seit E10 kommt die Eingabe vom **Ankläger**, der Angriff ist also
+/// seiner. Er scheitert an derselben Bindung wie vorher: Der Wert muss
+/// zu `input_hash` hashen, und das ist die Zusicherung des
+/// **Angeklagten** bei `j-1`. Neu ist nur das Ergebnis: **untauglich**
+/// statt schuldig, denn eine falsche Eingabe sagt etwas über den aus,
+/// der sie geschickt hat.
+#[test]
+fn eine_untergeschobene_eingabe_verurteilt_niemanden() {
+    let mut a = anfrage(b"echt", Hash::sha256(b"egal"));
+    a.aktivierung = b"untergeschoben".to_vec();
+    assert_eq!(
+        adjudicate(&a, &FesterExecutor(b"egal".to_vec())),
+        AdjudicationResult::Untauglich
+    );
+}
+
+/// ⚑ **Angriff: eine erfundene Zusicherung** (Fund 101).
+///
+/// Vorher hieß dieses Feld `expected_hash` und trug den Wert des
+/// Anklägers; das Urteil verglich damit. Wer dort etwas Drittes
+/// eintrug, verurteilte einen ehrlichen Angeklagten. Jetzt ist es
+/// dessen **eigene** Zusicherung, und der Ankläger kommt im Urteil
+/// nicht mehr vor.
+#[test]
+fn dieselbe_rechnung_zwei_zusicherungen_zwei_urteile() {
+    let ausgabe = b"wahrheit".to_vec();
+    let ehrlich = anfrage(b"eingabe", Hash::sha256(&ausgabe));
+    assert_eq!(
+        adjudicate(&ehrlich, &FesterExecutor(ausgabe.clone())),
+        AdjudicationResult::Innocent
+    );
+    let gebrochen = anfrage(b"eingabe", Hash::sha256(b"etwas anderes"));
+    assert_eq!(
+        adjudicate(&gebrochen, &FesterExecutor(ausgabe)),
+        AdjudicationResult::Guilty
     );
 }
 
 /// **Angriff: eine Eingabe liefern, an der die Ausführung scheitert.**
 ///
-/// Wer eine Aktivierung offenlegt, die den Rechenweg zum Absturz bringt,
-/// darf daraus keinen Vorteil ziehen.
+/// ⚑ Vorher ein Schuldspruch, und das war richtig, solange der
+/// Angeklagte die Eingabe lieferte. Seit sie vom Ankläger kommt, träfe
+/// dieselbe Regel den Falschen.
 #[test]
-fn ein_gescheiterter_rechenweg_ist_kein_freispruch() {
-    let eingabe = b"aktivierung".to_vec();
-    let anfrage = AdjudicationRequest {
-        segment_id: segment(1),
-        divergence_position: 7,
-        checker: miner(2),
-        accused: miner(3),
-        input_hash: Hash::sha256(&eingabe),
-        expected_hash: Hash::sha256(b"ergebnis"),
-    };
-    let antwort = AdjudicationResponse {
-        segment_id: segment(1),
-        divergence_position: 7,
-        activation_hash: Hash::sha256(&eingabe),
-        activation: eingabe,
-    };
+fn ein_gescheiterter_rechenweg_verurteilt_niemanden() {
+    let a = anfrage(b"eingabe", Hash::sha256(b"egal"));
     assert_eq!(
-        adjudicate(&anfrage, Some(&antwort), &KaputterExecutor),
-        AdjudicationResult::Guilty
+        adjudicate(&a, &KaputterExecutor),
+        AdjudicationResult::Untauglich
     );
 }
 
@@ -355,22 +287,15 @@ fn zufaellige_schiedsrunden_sprechen_nie_frei() {
     let mut w = Wuerfel::neu(0xA11);
     for _ in 0..20_000 {
         let aktivierung: Vec<u8> = (0..(w.bis(40))).map(|_| w.bis(256) as u8).collect();
-        let anfrage = AdjudicationRequest {
-            segment_id: segment(w.bis(4) as u8),
-            divergence_position: w.bis(64) as usize,
-            checker: miner(w.bis(8) as u8),
-            accused: miner(w.bis(8) as u8),
-            input_hash: Hash::sha256(&w.naechste().to_le_bytes()),
-            expected_hash: Hash::sha256(&w.naechste().to_le_bytes()),
-        };
-        let antwort = AdjudicationResponse {
-            segment_id: segment(w.bis(4) as u8),
-            divergence_position: w.bis(64) as usize,
-            activation_hash: Hash::sha256(&w.naechste().to_le_bytes()),
-            activation: aktivierung,
-        };
+        // Stimmige Beweise, zufällige Werte: Der Test soll die
+        // Urteilslogik treffen und nicht schon an der Bindung
+        // scheitern, sonst prüfte er nur, dass `Untauglich` != `Innocent`.
+        let mut a = anfrage(&aktivierung, Hash::sha256(&w.naechste().to_le_bytes()));
+        a.segment_id = segment(w.bis(4) as u8);
+        a.checker = miner(w.bis(8) as u8);
+        a.accused = miner(w.bis(8) as u8);
         assert_ne!(
-            adjudicate(&anfrage, Some(&antwort), &FesterExecutor(b"x".to_vec())),
+            adjudicate(&a, &FesterExecutor(b"x".to_vec())),
             AdjudicationResult::Innocent,
             "ein zufälliger Streitfall darf nie zum Freispruch führen"
         );
@@ -557,16 +482,14 @@ fn eine_verkuerzte_spur_gilt_nicht_als_uebereinstimmung() {
 /// Fall etwas, das das Protokoll anbieten sollte.
 #[test]
 fn niemand_fordert_sich_selbst_heraus() {
-    for outcome in [VerdictOutcome::PrimaryLoses, VerdictOutcome::RedundantLoses] {
+    let schuld = beleg_fuer(7, segment(1));
+    let anfechtung = anfechtungsbeleg_fuer(7, segment(1));
+    for nachweis in [
+        Nachweis::PrimaerHatGerechnet(&schuld),
+        Nachweis::HerausfordererHatAngefochten(&anfechtung),
+    ] {
         assert!(matches!(
-            create_slash_decision(
-                outcome,
-                segment(1),
-                miner(7),
-                miner(7),
-                Some(3),
-                Some(&beleg_fuer(7, segment(1))),
-            ),
+            create_slash_decision(&nachweis, segment(1), miner(7), miner(7), Some(3)),
             Err(SlashError::IdenticalMiners)
         ));
     }
@@ -584,15 +507,20 @@ fn geschlachteter_und_belohnter_sind_nie_dieselbe_partei() {
         } else {
             VerdictOutcome::RedundantLoses
         };
-        let beleg = beleg_fuer(a, segment(1));
-        match create_slash_decision(
-            outcome,
-            segment(1),
-            kennung(a),
-            kennung(b),
-            None,
-            Some(&beleg),
-        ) {
+        // ⚑ Der Beleg gehoert zu der Seite, die verliert: Beim
+        // Herausforderer ist das seine unterschriebene Anfechtung, beim
+        // primaeren Pod sein unterschriebener Uebergang. Ein Nachweis,
+        // der zur anderen Seite gehoerte, ist seit dem 2026-08-29 nicht
+        // mehr hinschreibbar.
+        let schuld = beleg_fuer(a, segment(1));
+        let anfechtung = anfechtungsbeleg_fuer(b, segment(1));
+        let nachweis = match outcome {
+            VerdictOutcome::PrimaryLoses => Nachweis::PrimaerHatGerechnet(&schuld),
+            VerdictOutcome::RedundantLoses => {
+                Nachweis::HerausfordererHatAngefochten(&anfechtung)
+            }
+        };
+        match create_slash_decision(&nachweis, segment(1), kennung(a), kennung(b), None) {
             Ok(d) => {
                 assert_ne!(d.slashed_miner, d.rewarded_miner);
                 let verlierer = match outcome {

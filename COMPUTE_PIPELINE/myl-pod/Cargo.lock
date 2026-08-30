@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.28.1"
+version = "0.28.2"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.17.1"
+version = "0.17.2"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.12.0"
+version = "0.16.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "blst",
  "borsh",
@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.11.0"
+version = "0.14.0"
 dependencies = [
  "borsh",
  "myl-ledger",

@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.26.1 (θ_v 0.17.0; kernels 0.28.1, runtime 0.22.0, pipeline 0.14.0)
+> **Version:** 0.27.0 (θ_v 0.17.0; kernels 0.28.2, runtime 0.22.1, pipeline 0.15.0)
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -142,7 +142,6 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 | `conformance/` | 30 eingefrorene Testvektoren mit `run.sh`. Ein fremdes Backend gilt als konform, wenn es alle 30 bitgleich reproduziert. |
 | `configs/` | Pipeline-Layouts (4, 8 und ungleichmäßig geshardet). Die Layouts liefern nachweislich identische Token. |
 | `docs/` | Ausgearbeitete Belege, u. a. der empirische Nachweis der bit-exakten Inferenz. |
-| `deploy/` | Docker-Deployment (Dockerfile, docker-compose). |
 
 ## Qualitativer Benchmark
 
@@ -422,6 +421,8 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.27.0 (kernels 0.28.2, runtime 0.22.1, pipeline 0.15.0) – 2026-08-29 (⚑ Fund 80: `deploy/` entfernt, die Mindestfassung geprüft)
 
 ### v0.26.1 (kernels 0.28.1) – 2026-08-29 (⚑ Fund 95: sqrt_q sättigt still, und Fund 75 hat es übersehen)
 

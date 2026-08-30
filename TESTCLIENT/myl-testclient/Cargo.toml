@@ -1,8 +1,13 @@
 [package]
 name = "myl-testclient"
-version = "0.17.3"
+version = "0.19.1"
 edition = "2021"
-rust-version = "1.85"
+# ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
+# nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
+# (via url/idna) und `time`. `icu` verlangt 1.86, `time` verlangt 1.88.
+# Gemessen am 2026-08-29 gegen echte Toolchains mit `--locked`, nicht
+# geschaetzt: 1.85 und 1.86 scheitern, 1.88 traegt.
+rust-version = "1.88"
 description = "Terminal-Testclient für Myelith: Hardware-Erhebung, Cross-Backend-Determinismus und geshardete Inferenz — jeder Lauf mit maschinenlesbarem Protokoll, und ein Vergleichsbefehl, der daraus ein Urteil über den Cross-Hardware-Nachweis fällt."
 license = "PolyForm Shield License 1.0.0"
 

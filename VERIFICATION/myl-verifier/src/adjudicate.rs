@@ -42,7 +42,7 @@
 //! Änderungen nur über Governance (Kap. 10.3).
 
 use myl_types::hash::Hash;
-use myl_types::ids::{MinerId, SegmentId};
+use myl_types::ids::{EpochId, MinerId, SegmentId};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 /// Eine Schiedsrunden-Anfrage.
@@ -64,21 +64,83 @@ pub struct AdjudicationRequest {
     /// Angeklagte könnte eine beliebige Eingabe liefern, die unter
     /// seiner Ausführung zufällig den erwarteten Ausgabe-Hash ergibt.
     pub input_hash: Hash,
-    /// Erwarteter Hash der Ausgabe a_j an der Position (vom Checker).
-    pub expected_hash: Hash,
-}
-
-/// Eine Schiedsrunden-Antwort (Offenlegung der Aktivierung).
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct AdjudicationResponse {
-    /// Segment-ID.
-    pub segment_id: SegmentId,
-    /// Position der abweichenden **Layer**.
-    pub divergence_position: usize,
-    /// Offenlegte Aktivierung a_{j-1}.
-    pub activation: Vec<u8>,
-    /// Hash der offenlegten Aktivierung.
-    pub activation_hash: Hash,
+    /// Der Hash, den der **Angeklagte** für a_j zugesichert hat, also
+    /// sein `trace[divergence_position]`.
+    ///
+    /// # ⚑ Warum nicht mehr der Wert des Checkers (Fund 101, 2026-08-30)
+    ///
+    /// Hier stand `expected_hash`, „erwarteter Hash der Ausgabe (vom
+    /// Checker)", und das Urteil verglich die Nachrechnung damit. Wer
+    /// dort eine beliebige dritte Zahl eintrug, machte aus einem
+    /// **ehrlichen** Angeklagten einen schuldigen: Die Nachrechnung
+    /// stimmte mit seiner wahren Ausgabe überein, aber eben nicht mit
+    /// der Behauptung des Anklägers.
+    ///
+    /// Die Frage der Schiedsrunde lautet nicht „hatte der Ankläger
+    /// recht", sondern **„hat der Angeklagte gerechnet, was er
+    /// zugesichert hat"**. Verglichen wird deshalb gegen seine eigene
+    /// Zusicherung, und der Ankläger kommt im Urteil gar nicht mehr vor.
+    ///
+    /// **Gebunden ist dieser Wert über die Bündelwurzel:** Er ist ein
+    /// Blatt der Spurwurzel des Segments, und die steht seit Fund 100
+    /// in `segments_root`. Der Beweis dafür ist ein Merkle-Pfad, den
+    /// vorlegt, wer sich darauf beruft; siehe
+    /// [`zusicherung_ist_belegt`].
+    pub zugesichert: Hash,
+    /// Die offengelegte Eingabe-Aktivierung a_{j-1}, **vom Ankläger**.
+    ///
+    /// # ⚑ Warum der Ankläger sie liefert und nicht der Angeklagte (E10)
+    ///
+    /// Die Bisektion endet an der **ersten** Abweichung. Das heißt per
+    /// Definition, dass sich beide Seiten bei `j-1` einig sind, Bit für
+    /// Bit. **Der Ankläger hat den strittigen Wert also ohnehin**, denn
+    /// er hat das Segment gerade nachgerechnet, das ist die Anfechtung.
+    ///
+    /// Damit muss der Angeklagte **nichts aufbewahren**. Vorher hielt
+    /// jeder Shard je Segment eine Aktivierung vor, über die Streitfrist
+    /// zwischen 65 und 260 GiB je Knoten; für niedrigschwellige
+    /// Teilhabe zu viel.
+    ///
+    /// **Lügen hilft nicht:** Der Wert ist über `input_hash` an
+    /// `trace[j-1]` gebunden, und das ist ein Eintrag, den der
+    /// **Angeklagte selbst** zugesichert hat. Ein untergeschobener Wert
+    /// fällt beim Hashvergleich durch.
+    ///
+    /// Dieselbe Bauart tragen die optimistischen Rollups: Nach der
+    /// Bisektion auf einen Schritt legt der Anfechtende den Vorzustand
+    /// vor, geprüft gegen den gemeinsam bezeugten Hash. Niemand hält die
+    /// ganze Ausführungsspur vor; gehalten werden Zusicherungen, und die
+    /// Bytes bringt der mit, der gewinnen will.
+    pub aktivierung: Vec<u8>,
+    /// Die Spurwurzel des Segments, wie der Pod sie im Bündel bezeugt
+    /// hat.
+    ///
+    /// ⚑ **Der einzige Wert dieser Anfrage, den [`adjudicate`] nicht
+    /// selbst prüfen kann.** Er stammt aus dem angenommenen PoI-Bündel,
+    /// und dort deckt ihn die Aggregat-Signatur der Pod-Mitglieder. Der
+    /// Aufrufer muss ihn von dort nehmen und nicht aus der Anfrage
+    /// glauben; alles Weitere hängt dann daran und wird hier geprüft.
+    pub spurwurzel: myl_types::ids::MerkleRoot,
+    /// Beweis, dass [`Self::input_hash`] in der bezeugten Kette an der
+    /// Stelle `divergence_position` steht, also die **Eingabe** der
+    /// strittigen Layer ist.
+    pub beweis_eingabe: myl_types::MerkleProof,
+    /// Beweis, dass [`Self::zugesichert`] an der Stelle
+    /// `divergence_position + 1` steht, also die **Ausgabe** derselben
+    /// Layer.
+    ///
+    /// Die Kette ist `[Eingang] ++ Spur` (Fund 102): `kette[j]` ist die
+    /// Eingabe der Layer `j`, `kette[j+1]` ihre Ausgabe. Ein Index, und
+    /// beide Werte hängen an derselben Wurzel.
+    pub beweis_zusicherung: myl_types::MerkleProof,
+    /// Epoche, in der die Anfrage gestellt wurde.
+    ///
+    /// ⚑ Die Frist rechnet sich daraus, und zwar **von jedem
+    /// Beteiligten gleich**: `gestellt_in + ANTWORTFRIST_EPOCHEN` ist
+    /// eine Zahl, keine Behauptung über eine Uhr. Ohne dieses Feld gäbe
+    /// es keinen Bezugspunkt, und die Frist wäre wieder das, was sie
+    /// vorher war: das Ermessen dessen, der fragt.
+    pub gestellt_in: EpochId,
 }
 
 /// Ergebnis der Schiedsrunde.
@@ -86,10 +148,24 @@ pub struct AdjudicationResponse {
 pub enum AdjudicationResult {
     /// Angeklagter ist unschuldig (Hash stimmt überein).
     Innocent,
-    /// Angeklagter ist schuldig (Hash weicht ab).
+    /// Angeklagter ist schuldig: Die Nachrechnung weicht von seiner
+    /// eigenen Zusicherung ab.
     Guilty,
-    /// Angeklagter hat nicht geantwortet (Timeout).
-    NoResponse,
+    /// Die Anfrage taugt nicht, es fällt **kein Urteil**.
+    ///
+    /// ⚑ **Der Unterschied zu einem Schuldspruch ist der ganze Punkt.**
+    /// Seit E10 legt der **Ankläger** die Aktivierung vor. Eine, die
+    /// nicht zur Zusicherung bei `j-1` hasht, oder eine, an der die
+    /// Ausführung scheitert, sagt etwas über den Ankläger aus und nichts
+    /// über den Angeklagten. Wer das als „schuldig" buchte, ließe jeden
+    /// verurteilen, der eine kaputte Anfrage geschickt bekommt.
+    ///
+    /// Hier standen bis zum 2026-08-30 `NoResponse` und `Offen`. Beide
+    /// sind entfallen, weil niemand mehr antwortet: Die Anfrage ist
+    /// vollständig, das Komitee rechnet und urteilt in einem Zug. Damit
+    /// verliert auch kein ehrlicher Knoten mehr seinen Stake, nur weil
+    /// er gerade nicht erreichbar war.
+    Untauglich,
 }
 
 /// Fehler bei der Schiedsrunde.
@@ -135,63 +211,141 @@ pub trait ShardExecutor {
     ) -> Result<Vec<u8>, AdjudicationError>;
 }
 
+/// Prüft, dass eine Zusicherung wirklich in der Spur des Angeklagten
+/// steht.
+///
+/// # ⚑ Wozu, wenn [`adjudicate`] doch dagegen urteilt (Fund 100/101)
+///
+/// Gegen die Zusicherung zu urteilen ist nur dann etwas wert, wenn sie
+/// **die des Angeklagten** ist. Sonst wandert der Fehler nur von einem
+/// Feld ins andere: Vorher stand die Behauptung des Anklägers in
+/// `expected_hash`, danach stünde sie in `zugesichert`.
+///
+/// Der Beweis ist ein Merkle-Pfad in der Spurwurzel des Segments, und
+/// die Spurwurzel steht seit Fund 100 in der Bündelwurzel, die der Pod
+/// unterschrieben eingereicht hat. Wer sich auf eine Zusicherung
+/// beruft, legt den Pfad vor; wer ihn nicht vorlegt, hat nichts gesagt.
+///
+/// **Was diese Funktion nicht leistet:** Sie prüft den Pfad gegen die
+/// übergebene Spurwurzel. Dass diese Wurzel zum eingereichten Bündel
+/// gehört, ist eine zweite Frage und hängt an der Bündelwurzel und der
+/// Kette; sie gehört dorthin, wo das Bündel liegt, und nicht hierher.
+pub fn zusicherung_ist_belegt(
+    spurwurzel: &myl_types::ids::MerkleRoot,
+    position: usize,
+    zugesichert: &Hash,
+    beweis: &myl_types::MerkleProof,
+) -> bool {
+    // ⚑ **Die Stelle gehört zur Aussage.** Ein Merkle-Beweis belegt
+    // „dieses Blatt steht an Index `leaf_index`". Wer den Index nicht
+    // vergleicht, belegt nur „irgendwo in dieser Spur", und dann darf
+    // ein Ankläger den Eintrag einer **anderen** Layer als Zusicherung
+    // für die strittige ausgeben.
+    //
+    // Der erste Entwurf dieser Funktion nahm `position` entgegen und
+    // warf sie mit `let _ = position;` weg. Beim kritischen Nachlesen
+    // gefunden, nicht beim Schreiben.
+    if beweis.leaf_index != position as u64 {
+        return false;
+    }
+    beweis.verify_hashed(
+        &Hash(*spurwurzel.as_bytes()),
+        &myl_types::leaf_hash(zugesichert.as_bytes()),
+    )
+}
+
 /// Führt die Schiedsrunde durch.
 ///
 /// **Parameter:**
-/// - `request`: Schiedsrunden-Anfrage
-/// - `response`: Schiedsrunden-Antwort (None wenn keine Antwort)
-/// - `executor`: Shard-Executor für den Forward-Pass
+/// - `request`: die Anfrage, samt der vom Ankläger offengelegten
+///   Aktivierung
+/// - `executor`: Shard-Executor für den Forward-Pass **einer** Layer
 ///
-/// **Returns:** `AdjudicationResult` mit dem Ergebnis der Schiedsrunde.
+/// # ⚑ Warum niemand mehr antwortet (E10, 2026-08-30)
+///
+/// Bis dahin legte der **Angeklagte** die Aktivierung offen, und blieb
+/// er stumm, hieß das schuldig. Zwei Dinge waren daran falsch. Erstens
+/// musste er dafür je Segment eine Aktivierung aufbewahren, über die
+/// Streitfrist zwischen 65 und 260 GiB je Knoten. Zweitens verlor ein
+/// **ehrlicher** Knoten mit einem Ausfall seinen Stake.
+///
+/// Beides fällt weg, weil der Ankläger den Wert ohnehin hat: Die
+/// Bisektion endet an der ersten Abweichung, bei `j-1` sind sich beide
+/// einig. Der Angeklagte wird gar nicht mehr gefragt; das Komitee
+/// rechnet die eine Layer nach und hält das Ergebnis gegen seine
+/// Zusicherung.
+///
+/// **Die Prüfkette, billig vor teuer:**
+///
+/// 1. Der offengelegte Wert hasht zu `input_hash`, also zu dem, was der
+///    Angeklagte bei `j-1` zugesichert hat. Ein untergeschobener Wert
+///    fällt hier durch.
+/// 2. Die Layer wird nachgerechnet.
+/// 3. Das Ergebnis wird gegen `zugesichert` gehalten, also gegen die
+///    eigene Aussage des Angeklagten (Fund 101).
+///
+/// **Was der Aufrufer leisten muss:** `input_hash` und `zugesichert`
+/// gegen die Spurwurzel des Segments belegen, siehe
+/// [`zusicherung_ist_belegt`]. Ohne das urteilt diese Funktion über
+/// zwei Zahlen, die der Ankläger sich ausgedacht hat.
 pub fn adjudicate(
     request: &AdjudicationRequest,
-    response: Option<&AdjudicationResponse>,
     executor: &dyn ShardExecutor,
 ) -> AdjudicationResult {
-    // Keine Antwort = schuldig (Timeout)
-    let response = match response {
-        Some(r) => r,
-        None => return AdjudicationResult::NoResponse,
-    };
-
-    // Validierung: Segment-ID und Position müssen übereinstimmen
-    if response.segment_id != request.segment_id {
-        return AdjudicationResult::Guilty;
+    // ⚑ **Zuerst die Bindung, dann alles andere.** Ohne sie urteilte
+    // diese Funktion über zwei Zahlen, die der Ankläger sich ausgedacht
+    // hat, und der Fehler aus Fund 101 wäre nur ein Feld weitergewandert.
+    //
+    // Hier stand bis zum 2026-08-30 nur ein Doc-Kommentar, der es dem
+    // Aufrufer auftrug. Genau so entstehen die Felder, die niemand
+    // prüft; diese Sitzung hat drei davon gefunden.
+    let j = request.divergence_position;
+    if !zusicherung_ist_belegt(
+        &request.spurwurzel,
+        j,
+        &request.input_hash,
+        &request.beweis_eingabe,
+    ) {
+        return AdjudicationResult::Untauglich;
+    }
+    if !zusicherung_ist_belegt(
+        &request.spurwurzel,
+        j + 1,
+        &request.zugesichert,
+        &request.beweis_zusicherung,
+    ) {
+        return AdjudicationResult::Untauglich;
     }
 
-    if response.divergence_position != request.divergence_position {
-        return AdjudicationResult::Guilty;
+    // Der offengelegte Wert muss der zugesicherte Eingang sein.
+    if Hash::sha256(&request.aktivierung) != request.input_hash {
+        return AdjudicationResult::Untauglich;
     }
 
-    // Die offengelegte Aktivierung muss zum mitgelieferten Hash passen …
-    let computed_activation_hash = Hash::sha256(&response.activation);
-    if computed_activation_hash != response.activation_hash {
-        return AdjudicationResult::Guilty;
-    }
-
-    // … und dieser Hash muss der in der Spur committete sein. Ohne
-    // diesen zweiten Vergleich wäre die Prüfung tautologisch: beide
-    // Werte stammten aus derselben Antwort (Fund A11).
-    if computed_activation_hash != request.input_hash {
-        return AdjudicationResult::Guilty;
-    }
 
     // Shard-Forward durchführen
-    match executor.execute_shard(&response.activation, request.divergence_position) {
+    match executor.execute_shard(&request.aktivierung, request.divergence_position) {
         Ok(output_activation) => {
             // Hash der Ausgabe-Aktivierung berechnen
             let output_hash = Hash::sha256(&output_activation);
 
-            // Hash-Vergleich: Wenn der Hash übereinstimmt, ist der Angeklagte unschuldig
-            if output_hash == request.expected_hash {
+            // ⚑ Gegen die **Zusicherung des Angeklagten**, nicht gegen
+            // die Behauptung des Anklägers (Fund 101). Wer gerechnet
+            // hat, was er zugesichert hat, ist unschuldig, gleich was
+            // ein Dritter darüber sagt.
+            if output_hash == request.zugesichert {
                 AdjudicationResult::Innocent
             } else {
                 AdjudicationResult::Guilty
             }
         }
         Err(_) => {
-            // Shard-Forward fehlgeschlagen = schuldig
-            AdjudicationResult::Guilty
+            // ⚑ Fehlgeschlagene Ausführung ist **kein** Schuldspruch
+            // mehr. Vorher legte der Angeklagte die Eingabe vor, und wer
+            // eine lieferte, an der die Rechnung abstürzt, sollte daraus
+            // keinen Vorteil ziehen. Jetzt legt der **Ankläger** sie vor,
+            // und dieselbe Regel verurteilte den Falschen.
+            AdjudicationResult::Untauglich
         }
     }
 }
@@ -220,6 +374,24 @@ impl ShardExecutor for MockShardExecutor {
     }
 }
 
+/// Ein Executor, dessen Ausführung scheitert.
+///
+/// Für die Frage, was passiert, wenn die vom Ankläger gelieferte
+/// Eingabe die Rechnung sprengt.
+#[cfg(test)]
+struct KaputterExecutor;
+
+#[cfg(test)]
+impl ShardExecutor for KaputterExecutor {
+    fn execute_shard(
+        &self,
+        _activation: &[u8],
+        _layer_group_index: usize,
+    ) -> Result<Vec<u8>, AdjudicationError> {
+        Err(AdjudicationError::HashMismatch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,272 +408,155 @@ mod tests {
         Hash::sha256(&[byte])
     }
 
-    #[test]
-    fn adjudicate_innocent() {
-        let activation = vec![1, 2, 3];
-        let activation_hash = Hash::sha256(&activation);
-        let output = vec![4, 5, 6];
-        let output_hash = Hash::sha256(&output);
-
-        let request = AdjudicationRequest {
+    /// Eine vollständige Anfrage samt Beweisen, wie der Ankläger sie
+    /// seit dem 2026-08-30 stellen muss.
+    ///
+    /// Die Kette ist `[Eingang] ++ Spur`: An Stelle `j` steht die
+    /// Eingabe der strittigen Layer, an `j+1` ihre Ausgabe.
+    fn anfrage(eingabe: &[u8], zugesichert: Hash) -> AdjudicationRequest {
+        use myl_types::merkle::MerkleTree;
+        const J: usize = 5;
+        let eingang = Hash::sha256(eingabe);
+        // Eine Kette, in der die beiden Werte an den richtigen Stellen
+        // stehen; der Rest ist beliebig.
+        let mut kette: Vec<Hash> = (0..9u8).map(|i| Hash::sha256(&[i])).collect();
+        kette[J] = eingang;
+        kette[J + 1] = zugesichert;
+        let refs: Vec<&[u8]> = kette.iter().map(|h| h.as_bytes().as_slice()).collect();
+        let baum = MerkleTree::new(&refs).expect("Baum");
+        AdjudicationRequest {
             segment_id: test_segment_id(1),
-            divergence_position: 5,
+            divergence_position: J,
             checker: test_miner(2),
             accused: test_miner(3),
-            input_hash: activation_hash,
-            expected_hash: output_hash,
-        };
-
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation,
-            activation_hash,
-        };
-
-        let executor = MockShardExecutor::new(output);
-        let result = adjudicate(&request, Some(&response), &executor);
-
-        assert_eq!(result, AdjudicationResult::Innocent);
+            input_hash: eingang,
+            zugesichert,
+            aktivierung: eingabe.to_vec(),
+            spurwurzel: myl_types::ids::MerkleRoot::new(baum.root().0),
+            beweis_eingabe: baum.proof(J).expect("Beweis"),
+            beweis_zusicherung: baum.proof(J + 1).expect("Beweis"),
+            gestellt_in: EpochId(5),
+        }
     }
 
+    /// ⚑ **Ohne Beweis kein Urteil** (der eigentliche Punkt).
+    ///
+    /// Hier stand bis zum 2026-08-30 nur ein Doc-Kommentar, der die
+    /// Bindung dem Aufrufer auftrug. Jetzt prüft `adjudicate` sie
+    /// selbst, und eine Anfrage ohne tragenden Beweis führt zu keinem
+    /// Urteil, weder so noch so.
     #[test]
-    fn adjudicate_guilty_hash_mismatch() {
-        let activation = vec![1, 2, 3];
-        let activation_hash = Hash::sha256(&activation);
-        let output = vec![4, 5, 6];
-        let wrong_output_hash = test_hash(99); // Falscher Hash
+    fn eine_anfrage_ohne_tragenden_beweis_urteilt_nicht() {
+        let executor = MockShardExecutor::new(vec![9, 9]);
+        let gut = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
+        assert_eq!(adjudicate(&gut, &executor), AdjudicationResult::Innocent);
 
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: activation_hash,
-            expected_hash: wrong_output_hash,
-        };
+        // Eine andere Wurzel: die Beweise passen nicht mehr.
+        let mut fremd = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
+        fremd.spurwurzel = myl_types::ids::MerkleRoot::new([7u8; 32]);
+        assert_eq!(adjudicate(&fremd, &executor), AdjudicationResult::Untauglich);
 
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation,
-            activation_hash,
-        };
-
-        let executor = MockShardExecutor::new(output);
-        let result = adjudicate(&request, Some(&response), &executor);
-
-        assert_eq!(result, AdjudicationResult::Guilty);
-    }
-
-    #[test]
-    fn adjudicate_guilty_segment_mismatch() {
-        let activation = vec![1, 2, 3];
-        let activation_hash = Hash::sha256(&activation);
-        let output = vec![4, 5, 6];
-        let output_hash = Hash::sha256(&output);
-
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: activation_hash,
-            expected_hash: output_hash,
-        };
-
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(2), // Falsche Segment-ID
-            divergence_position: 5,
-            activation,
-            activation_hash,
-        };
-
-        let executor = MockShardExecutor::new(output);
-        let result = adjudicate(&request, Some(&response), &executor);
-
-        assert_eq!(result, AdjudicationResult::Guilty);
-    }
-
-    #[test]
-    fn adjudicate_guilty_position_mismatch() {
-        let activation = vec![1, 2, 3];
-        let activation_hash = Hash::sha256(&activation);
-        let output = vec![4, 5, 6];
-        let output_hash = Hash::sha256(&output);
-
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: activation_hash,
-            expected_hash: output_hash,
-        };
-
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 6, // Falsche Position
-            activation,
-            activation_hash,
-        };
-
-        let executor = MockShardExecutor::new(output);
-        let result = adjudicate(&request, Some(&response), &executor);
-
-        assert_eq!(result, AdjudicationResult::Guilty);
-    }
-
-    /// Der Kern von Fund A11: Ein Angeklagter, der eine **andere** als
-    /// die committete Eingabe offenlegt, muss schuldig sein — auch dann,
-    /// wenn seine Ausführung darauf genau den erwarteten Ausgabe-Hash
-    /// liefert. Vorher wurde er freigesprochen, weil die Eingabe nur
-    /// gegen den selbst mitgelieferten Hash geprüft wurde.
-    #[test]
-    fn untergeschobene_eingabe_wird_nicht_freigesprochen() {
-        let committete_eingabe = vec![1, 2, 3];
-        let untergeschobene_eingabe = vec![9, 9, 9];
-        let ausgabe = vec![4, 5, 6];
-
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            // Die Spur schreibt DIESE Eingabe fest.
-            input_hash: Hash::sha256(&committete_eingabe),
-            expected_hash: Hash::sha256(&ausgabe),
-        };
-
-        // Der Angeklagte legt eine andere Eingabe offen — in sich
-        // konsistent gehasht, also fuer die alte Pruefung einwandfrei.
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation: untergeschobene_eingabe.clone(),
-            activation_hash: Hash::sha256(&untergeschobene_eingabe),
-        };
-
-        // Und der Executor liefert darauf exakt den erwarteten Hash.
-        let executor = MockShardExecutor::new(ausgabe);
-
+        // ⚑ Und der Beweis der falschen Stelle: Ohne den Indexvergleich
+        // ginge er durch, denn er ist in sich stimmig.
+        let mut verschoben = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
+        verschoben.beweis_zusicherung = verschoben.beweis_eingabe.clone();
         assert_eq!(
-            adjudicate(&request, Some(&response), &executor),
-            AdjudicationResult::Guilty,
-            "eine nicht-committete Eingabe darf nie zum Freispruch führen"
+            adjudicate(&verschoben, &executor),
+            AdjudicationResult::Untauglich
         );
     }
 
-    /// Die Gegenprobe: Mit der committeten Eingabe und korrekter
-    /// Ausführung bleibt der Freispruch möglich.
+    /// Wer gerechnet hat, was er zugesichert hat, ist unschuldig.
     #[test]
-    fn committete_eingabe_erlaubt_freispruch() {
-        let eingabe = vec![1, 2, 3];
-        let ausgabe = vec![4, 5, 6];
+    fn wer_seine_zusicherung_haelt_ist_unschuldig() {
+        let executor = MockShardExecutor::new(vec![9, 9]);
+        let a = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
+        assert_eq!(adjudicate(&a, &executor), AdjudicationResult::Innocent);
+    }
 
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: Hash::sha256(&eingabe),
-            expected_hash: Hash::sha256(&ausgabe),
-        };
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation: eingabe.clone(),
-            activation_hash: Hash::sha256(&eingabe),
-        };
+    /// ⚑ **Fund 101: Geurteilt wird gegen die eigene Zusicherung.**
+    ///
+    /// Hier hieß das Feld `expected_hash` und trug den Wert **des
+    /// Anklägers**; das Urteil verglich die Nachrechnung damit. Wer dort
+    /// eine dritte Zahl eintrug, verurteilte den, der genau das
+    /// gerechnet hatte, was er zugesichert hatte.
+    ///
+    /// Der Test führt beide Seiten vor: Dieselbe Nachrechnung, einmal
+    /// gegen die eingehaltene und einmal gegen eine gebrochene
+    /// Zusicherung.
+    #[test]
+    fn wer_seine_zusicherung_bricht_ist_schuldig() {
+        let executor = MockShardExecutor::new(vec![9, 9]);
+        let a = anfrage(&[1, 2], Hash::sha256(b"etwas anderes"));
+        assert_eq!(adjudicate(&a, &executor), AdjudicationResult::Guilty);
+    }
 
+    /// ⚑ **Eine untergeschobene Eingabe fällt durch, und zwar als
+    /// untauglich, nicht als Schuldspruch.**
+    ///
+    /// Sie ist an `input_hash` gebunden, also an das, was der
+    /// **Angeklagte** bei `j-1` zugesichert hat. Der Ankläger kann
+    /// deshalb nichts unterschieben. Und weil die Eingabe seit E10 von
+    /// ihm kommt, sagt eine falsche etwas über ihn aus und nichts über
+    /// den Angeklagten: Sie darf niemanden verurteilen.
+    #[test]
+    fn eine_untergeschobene_eingabe_verurteilt_niemanden() {
+        let executor = MockShardExecutor::new(vec![9, 9]);
+        let mut a = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
+        a.aktivierung = vec![7, 7]; // hasht nicht mehr zu input_hash
+        assert_eq!(adjudicate(&a, &executor), AdjudicationResult::Untauglich);
+    }
+
+    /// Und ebenso eine Eingabe, an der die Ausführung scheitert.
+    ///
+    /// ⚑ Vorher war das ein Schuldspruch, und das war richtig, solange
+    /// der **Angeklagte** die Eingabe lieferte. Seit sie vom Ankläger
+    /// kommt, träfe dieselbe Regel den Falschen.
+    #[test]
+    fn eine_eingabe_die_die_ausfuehrung_sprengt_verurteilt_niemanden() {
+        let a = anfrage(&[1, 2], Hash::sha256(&[9u8, 9]));
         assert_eq!(
-            adjudicate(&request, Some(&response), &MockShardExecutor::new(ausgabe)),
-            AdjudicationResult::Innocent
+            adjudicate(&a, &KaputterExecutor),
+            AdjudicationResult::Untauglich
         );
     }
 
-    /// Eine in sich inkonsistente Antwort (Hash passt nicht zur
-    /// Aktivierung) bleibt ebenfalls schuldig.
+    /// ⚑ **Die Zusicherung muss belegt sein, sonst wandert der Fehler
+    /// nur ein Feld weiter** (Fund 100).
     #[test]
-    fn inkonsistente_antwort_bleibt_schuldig() {
-        let eingabe = vec![1, 2, 3];
-        let ausgabe = vec![4, 5, 6];
+    fn eine_zusicherung_ohne_beleg_traegt_nicht() {
+        use myl_types::merkle::MerkleTree;
+        let spur: Vec<Hash> = (0..7u8).map(|i| Hash::sha256(&[i])).collect();
+        let refs: Vec<&[u8]> = spur.iter().map(|h| h.as_bytes().as_slice()).collect();
+        let baum = MerkleTree::new(&refs).expect("Baum");
+        let wurzel = myl_types::ids::MerkleRoot::new(baum.root().0);
+        let beweis = baum.proof(4).expect("Beweis");
 
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: Hash::sha256(&eingabe),
-            expected_hash: Hash::sha256(&ausgabe),
-        };
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation: eingabe,
-            activation_hash: test_hash(200), // passt zu nichts
-        };
-
-        assert_eq!(
-            adjudicate(&request, Some(&response), &MockShardExecutor::new(ausgabe)),
-            AdjudicationResult::Guilty
+        assert!(
+            zusicherung_ist_belegt(&wurzel, 4, &spur[4], &beweis),
+            "der echte Eintrag an seiner Stelle muss durchgehen"
         );
-    }
-
-    #[test]
-    fn adjudicate_no_response() {
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: test_hash(2),
-            expected_hash: test_hash(1),
-        };
-
-        let executor = MockShardExecutor::new(vec![]);
-        let result = adjudicate(&request, None, &executor);
-
-        assert_eq!(result, AdjudicationResult::NoResponse);
+        assert!(
+            !zusicherung_ist_belegt(&wurzel, 4, &spur[5], &beweis),
+            "ein anderer Eintrag an derselben Stelle nicht"
+        );
+        assert!(
+            !zusicherung_ist_belegt(&wurzel, 4, &Hash::sha256(b"erfunden"), &beweis),
+            "eine erfundene Zusicherung schon gar nicht"
+        );
     }
 
     #[test]
     fn adjudication_request_borsh_roundtrip() {
-        let request = AdjudicationRequest {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            checker: test_miner(2),
-            accused: test_miner(3),
-            input_hash: test_hash(2),
-            expected_hash: test_hash(1),
-        };
-
-        let bytes = borsh::to_vec(&request).unwrap();
-        let decoded: AdjudicationRequest = borsh::from_slice(&bytes).unwrap();
-
-        assert_eq!(request, decoded);
-    }
-
-    #[test]
-    fn adjudication_response_borsh_roundtrip() {
-        let response = AdjudicationResponse {
-            segment_id: test_segment_id(1),
-            divergence_position: 5,
-            activation: vec![1, 2, 3],
-            activation_hash: test_hash(1),
-        };
-
-        let bytes = borsh::to_vec(&response).unwrap();
-        let decoded: AdjudicationResponse = borsh::from_slice(&bytes).unwrap();
-
-        assert_eq!(response, decoded);
+        let a = anfrage(&[1, 2, 3], test_hash(1));
+        let bytes = borsh::to_vec(&a).expect("Serialisierung");
+        let zurueck: AdjudicationRequest = borsh::from_slice(&bytes).expect("Rücklesen");
+        assert_eq!(zurueck, a);
     }
 
     #[test]
     fn adjudication_result_variants() {
-        assert_eq!(AdjudicationResult::Innocent, AdjudicationResult::Innocent);
-        assert_eq!(AdjudicationResult::Guilty, AdjudicationResult::Guilty);
-        assert_eq!(AdjudicationResult::NoResponse, AdjudicationResult::NoResponse);
         assert_ne!(AdjudicationResult::Innocent, AdjudicationResult::Guilty);
+        assert_ne!(AdjudicationResult::Guilty, AdjudicationResult::Untauglich);
     }
 }

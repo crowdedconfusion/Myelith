@@ -70,6 +70,94 @@ env:
   CARGO_TARGET_DIR: target
 
 jobs:
+  # ── Die erklärte Mindestfassung, wirklich benutzt ─────────────────
+  #
+  # ⚑ **Fund 80 in seiner ehrlichen Form.** Der Anlass war ein
+  # Dockerfile, das `rust:1.79` festnagelte, während jedes `Cargo.toml`
+  # 1.85 verlangte. Beim Nachrechnen kam zweierlei heraus: Der Bau hätte
+  # ohnehin nie funktioniert, **und die Mindestfassung wurde von nichts
+  # geprüft.** Alle anderen Jobs bauen mit `stable`, derzeit 1.97; ob die
+  # angegebene Untergrenze noch trägt, sagte niemand.
+  #
+  # Sie trug nicht. Drei netzseitige Crates gaben 1.85 an und bauen dort
+  # nicht: über libp2p hängt die `icu_*`-Kette (verlangt 1.86) und `time`
+  # (verlangt 1.88). Die Angabe stand da und war falsch, ein Jahr lang.
+  #
+  # **`--locked` ist Teil der Aussage, nicht Bequemlichkeit.** Ohne die
+  # Sperre löst Cargo neu auf und prüft eine andere Abhängigkeitsmenge
+  # als die festgeschriebene; die gemessene Zahl gälte dann für nichts.
+  #
+  # `cargo check` und nicht `cargo test`: Die Frage ist, ob der Code auf
+  # der angegebenen Fassung übersetzt, nicht ob er ein zweites Mal
+  # durchläuft.
+  msrv:
+    name: Mindestfassung ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["1.85", "1.88"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust ${{ matrix.version }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.version }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ matrix.version }}
+
+      # ⚑ Zuerst die Angabe selbst, und zwar vollständig: Jedes Crate
+      # muss eine Mindestfassung nennen, und jede genannte muss von
+      # dieser Matrix abgedeckt sein. Ohne den zweiten Teil überspringt
+      # der Job ein Crate mit einer dritten Fassung stillschweigend, und
+      # dann prüft niemand es, ohne dass es auffällt.
+      #
+      # Ein Crate ohne Angabe wird von clippy auch nicht gegen die
+      # Mindestfassung geprüft. Genau so kamen sechs Aufrufe von
+      # `is_multiple_of` (stabil erst seit 1.87) in drei Crates hinein,
+      # die keine Angabe hatten.
+      - name: Jede Angabe ist vorhanden und abgedeckt
+        run: |
+          set -euo pipefail
+          abgedeckt="1.85 1.88"
+          fehler=0
+          for manifest in */*/Cargo.toml; do
+            fassung=$(grep -m1 '^rust-version' "$manifest" | cut -d'"' -f2 || true)
+            if [ -z "$fassung" ]; then
+              echo "FEHLER: $manifest nennt keine rust-version"
+              fehler=1
+            elif ! echo " $abgedeckt " | grep -q " $fassung "; then
+              echo "FEHLER: $manifest nennt $fassung, die Matrix deckt nur $abgedeckt ab"
+              fehler=1
+            fi
+          done
+          exit $fehler
+
+      # Jedes Crate einzeln, denn es gibt kein Workspace: Die Crates sind
+      # bewusst eigenständige Cargo-Projekte.
+      - name: cargo check über die Crates dieser Fassung
+        run: |
+          set -euo pipefail
+          gefunden=0
+          for manifest in */*/Cargo.toml; do
+            fassung=$(grep -m1 '^rust-version' "$manifest" | cut -d'"' -f2)
+            [ "$fassung" = "${{ matrix.version }}" ] || continue
+            gefunden=$((gefunden + 1))
+            echo "── $manifest"
+            cargo check --manifest-path "$manifest" --all-targets --locked --quiet
+          done
+          # Eine Matrixzeile ohne ein einziges Crate wäre ein grüner Job,
+          # der nichts geprüft hat.
+          if [ "$gefunden" -eq 0 ]; then
+            echo "FEHLER: kein Crate nennt ${{ matrix.version }} — Matrixzeile ohne Gegenstand"
+            exit 1
+          fi
+          echo "$gefunden Crate(s) auf ${{ matrix.version }} geprüft"
+
   # ── Lint: rustc-Warnungen und clippy über alle Crates ────────────
   kernels:
     name: Kernels Tests
@@ -414,6 +502,32 @@ jobs:
         working-directory: TESTCLIENT/myl-testclient
         run: cargo test --quiet
 
+      # ⚑ **Die Kernthese, auf Linux geprüft** (Punkt 30, 2026-08-29).
+      #
+      # Der Konformitätswert muss auf jeder Maschine derselbe sein; das
+      # ist die Zusage, auf der das ganze Protokoll steht. Geprüft wurde
+      # er bis heute **nur im Windows-Job**. Auf Linux, der Plattform,
+      # auf der die meisten Knoten laufen werden, prüfte ihn niemand.
+      #
+      # Hier und nicht in einem eigenen Job, weil der Testclient in
+      # diesem Job ohnehin schon übersetzt ist. Und ohne `--release`,
+      # weil der Wert profilunabhängig ist: am 2026-08-29 auf
+      # aarch64/macOS in beiden Profilen gemessen, derselbe Wert.
+      # Ein Unterschied zwischen den Profilen wäre selbst ein Befund.
+      - name: Konformitaetswert (Linux)
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          set -e
+          mkdir -p ci-konf
+          cargo run --quiet -- --name ci --logs ci-konf konformitaet
+          if ! grep -q '894d8357ae92b5c1' ci-konf/*.jsonl; then
+            echo "Konformitaetswert weicht ab: erwartet 894d8357ae92b5c1"
+            echo "Gefunden:"
+            grep -o '"gesamt":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
+            exit 1
+          fi
+          echo "Konformitaetswert stimmt mit Windows und macOS ueberein"
+
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
   # test_division.py und test_overflow.py rufen `cargo test` als
   # maßgebliche Prüfstufe auf — der Rust-Toolchain muss daher explizit
@@ -437,11 +551,25 @@ jobs:
   # mehrere Gigabyte groß.
   #
   # NUR WINDOWS, NICHT AUCH MACOS: Entwickelt und geprüft wird auf einem
-  # aarch64-Mac, jeder Patch läuft dort ohnehin durch Tests, clippy und
-  # die Konformitätsvektoren. Ein macOS-Job in der CI wiederholte das und
+  # aarch64-Mac, jeder Patch läuft dort durch Tests, clippy und die
+  # Konformitätsvektoren. Ein macOS-Job in der CI wiederholte das und
   # verdoppelte dabei die Laufzeit dieses Jobs, denn er übersetzt die
-  # ganze Kette aus neun Crates. Windows ist die Plattform, die hier
-  # niemand von Hand prüfen kann, und genau dafür ist der Job da.
+  # ganze Kette aus neun Crates; auf privaten Repositorien werden
+  # macOS-Minuten zudem zehnfach abgerechnet. Windows ist die Plattform,
+  # die hier niemand von Hand prüfen kann, und genau dafür ist der Job da.
+  #
+  # ⚑ **Am 2026-08-29 stellte sich heraus, dass die Begründung auf einer
+  # Seite hohl war** (Punkt 30). „Jeder Patch läuft dort durch die
+  # Konformitätsvektoren" beschrieb eine Gewohnheit, keine Prüfung: Der
+  # Lauf stand in keiner Schleife, die jemand ausführen musste. Und
+  # schlimmer: Der Konformitätswert wurde **nur hier auf Windows**
+  # geprüft, auf Linux von niemandem, obwohl dort die meisten Knoten
+  # laufen werden.
+  #
+  # Beides ist behoben: Der Wert wird jetzt im Ubuntu-Job geprüft (siehe
+  # `Konformitaetswert (Linux)`), und der Lauf gehört zur festen
+  # Prüfschleife vor jedem Patch. Damit steht die These auf zwei
+  # Plattformen in der CI und auf der dritten bei jedem Patch.
   #
   # Sollte die Entwicklung einmal nicht mehr auf macOS stattfinden,
   # gehört `macos-latest` zurück in die Matrix.
@@ -576,6 +704,15 @@ jobs:
       - name: Audit — Testprofil
         working-directory: INTEGER_LLM
         run: python3 tests/audit/test_profile.py
+
+      # ⚑ Die Streitlast-Rechnung holt Frist und Erasure-Parameter aus
+      # den Konstanten, also benutzt sie sie. Die Modellmaße kann sie
+      # nicht benutzen: Sie stehen unter INTEGER_LLM/artifacts, und
+      # GOVERNANCE darf dort nicht anhängen. Die unvermeidliche
+      # Verdopplung wird deshalb bewacht.
+      - name: Audit — Streitlast-Modelltabelle
+        working-directory: INTEGER_LLM
+        run: python3 tests/audit/test_streitlast.py
 
       # ⚑ Die drei ETHICS-Prüfungen aus Punkt 1.1 bis 1.3. Sie brauchen
       # kein Rust und laufen in unter einer Sekunde.

@@ -205,7 +205,6 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
         false,
         model,
         sk,
-        myl_pod::da::DaStore::new(Box::new(myl_pod::da::XorParityCoder::new(4))),
         8,
     );
 

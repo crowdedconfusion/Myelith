@@ -17,6 +17,22 @@ use myl_types::ids::{EpochId, PodId, SegmentId};
 use myl_types::{segments_root, BlsSecretKey, PoIBundle};
 use tokio::sync::{mpsc, oneshot};
 
+/// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
+/// Spurwurzel.
+///
+/// ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+/// mehr die bloße Id. Für diese Tests ist der Inhalt der Spur
+/// gleichgültig, ihre Anwesenheit nicht.
+fn zeugnisse(ids: &[SegmentId]) -> Vec<myl_types::Segmentzeugnis> {
+    ids.iter()
+        .map(|id| myl_types::Segmentzeugnis {
+            id: *id,
+            spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("Wurzel"),
+        })
+        .collect()
+}
+
+
 /// Ein laufender Test-Node (Swarm läuft in einem eigenen Tokio-Task).
 struct TestNode {
     peer_id: libp2p::PeerId,
@@ -195,7 +211,7 @@ fn beispiel_bundle(epoch: u64) -> PoIBundle {
     PoIBundle {
         epoch: EpochId(epoch),
         pod: PodId::new([7u8; 32]),
-        segments_root: segments_root(&ids).expect("Wurzel"),
+        segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 99,
         aggregate_sig: sig,
     }

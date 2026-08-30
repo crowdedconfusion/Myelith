@@ -30,6 +30,35 @@ pub const DEFAULT_WINDOW_MS: u64 = 250;
 pub struct CompletedSegment {
     pub id: SegmentId,
     pub trace: Vec<[u8; 32]>,
+    /// Commitment auf die **Eingabe** des Segments.
+    ///
+    /// # ⚑ Warum es das braucht (Fund 102, 2026-08-30)
+    ///
+    /// Die Schiedsrunde bindet die strittige Eingabe an
+    /// `trace[j-1]`, also an die Ausgabe der Layer davor. **Bei `j = 0`
+    /// gibt es keine Layer davor.** Dort ist die Eingabe des Segments
+    /// gemeint, und die stand nirgends: `myl_types::Segment` führt ein
+    /// `input_commitment`, aber diesen Typ erzeugt niemand.
+    ///
+    /// Seit E10 legt der **Ankläger** die strittige Eingabe vor. An der
+    /// ersten Layer prüfte die Schiedsrunde damit `hash(eingabe)` gegen
+    /// einen Hash, den derselbe Ankläger daneben schreibt: eine
+    /// tautologische Prüfung, und genau der Fehler, den Fund A11 an
+    /// anderer Stelle schon einmal hatte.
+    ///
+    /// Der Wert ist der Hash der Token-Nutzlast, also klein und von
+    /// jedem nachrechenbar, der die Anfrage kennt.
+    pub eingangs_commitment: [u8; 32],
+    /// Die Merkle-Wurzel über [`Self::zusicherungen`].
+    ///
+    /// ⚑ **Fund 100:** Bis zum 2026-08-30 ging in die Bündelwurzel nur
+    /// die `SegmentId`, und die ist `(Sitzung, Position)` mit Nullen
+    /// aufgefüllt. Das Bündel beanspruchte damit Arbeit, **ohne zu
+    /// sagen, was gerechnet wurde**; die Spur lag nur örtlich hier und
+    /// war an nichts gebunden. Die Schiedsrunde hatte deshalb kein
+    /// „behauptet", gegen das sie hätte prüfen können, nur zwei einander
+    /// widersprechende Aussagen.
+    pub spurwurzel: myl_types::MerkleRoot,
     pub signatures: Vec<BlsSignature>,
     pub pod_path: Vec<MinerId>,
     /// Die Token-Position, die dieses Segment gerechnet hat.
@@ -45,6 +74,68 @@ pub struct CompletedSegment {
     /// zu bezahlen.
     pub position: u64,
 }
+
+impl CompletedSegment {
+    /// Die Kette der Zusicherungen: `[Eingang] ++ Spur`.
+    ///
+    /// ⚑ **Der erste Eintrag ist der Grund, warum es diese Methode
+    /// gibt** (Fund 102). `kette()[j]` ist die **Eingabe** der Layer `j`,
+    /// `kette()[j+1]` ihre Ausgabe. Damit ist auch die Eingabe der
+    /// **ersten** Layer beweisbar; ohne den Eintrag hinge sie an nichts,
+    /// und die Schiedsrunde prüfte dort einen Hash des Anklägers gegen
+    /// einen zweiten Hash desselben Anklägers.
+    ///
+    /// Die Wurzel über diese Kette ist [`Self::spurwurzel`].
+    pub fn kette(&self) -> Vec<[u8; 32]> {
+        let mut k = Vec::with_capacity(self.trace.len() + 1);
+        k.push(self.eingangs_commitment);
+        k.extend_from_slice(&self.trace);
+        k
+    }
+
+    /// Der Beleg in der Form, die das Protokoll dafür vorsieht.
+    ///
+    /// # ⚑ Warum es diese Umrechnung gibt und keinen zweiten Typ
+    ///
+    /// `myl_types::Segment` beschreibt seit dem 2026-08-13 genau diesen
+    /// Beleg (Anhang A.1), und die Gateway-Planung setzt ihn voraus.
+    /// Erzeugt hat ihn bis zum 2026-08-30 **niemand**: Was der Pod wirklich
+    /// festhielt, war [`CompletedSegment`], und die beiden führten
+    /// verschiedene Felder.
+    ///
+    /// Zwei Typen für dieselbe Sache sind eine zweite Quelle, und diese
+    /// hier hat schon Schaden angerichtet: `Segment` trägt ein
+    /// `input_commitment`, `CompletedSegment` hatte keines, und genau
+    /// daraus entstand Fund 102, die tautologische Prüfung an der ersten
+    /// Layer.
+    ///
+    /// Deshalb keine zweite Aufzeichnung, sondern eine **Projektion**:
+    /// Was hier steht, folgt aus dem, was der Pod ohnehin hat.
+    ///
+    /// `model_version` ist der einzige Wert von außen, denn er gehört
+    /// zum Modell und nicht zum Segment.
+    pub fn zu_segment(&self, model_version: myl_types::ids::MerkleRoot) -> myl_types::Segment {
+        myl_types::Segment {
+            id: self.id,
+            input_commitment: myl_types::hash::Hash(self.eingangs_commitment),
+            model_version,
+            pod_path: self.pod_path.clone(),
+            // Die Ausgabe des Segments ist der letzte Spur-Eintrag.
+            // `trace` ist beim Abschluss nie leer, das prüft
+            // `segment_abschliessen`.
+            output_commitment: myl_types::hash::Hash(
+                *self.trace.last().expect("ein abgeschlossenes Segment hat eine Spur"),
+            ),
+            trace: self
+                .trace
+                .iter()
+                .map(|h| myl_types::ids::ActivationHash::new(*h))
+                .collect(),
+            signatures: self.signatures.clone(),
+        }
+    }
+}
+
 
 /// Segment-Id aus Session-Id **und Position** (Anhang A.1: `h(session ‖
 /// index)`; hier vereinfacht als zwei linksbündig eingetragene Felder).
@@ -112,9 +203,12 @@ impl Coordinator {
             let packed = wire::pack_tokens(&[*tok]);
             let flags = if is_last { FLAG_SAMPLE } else { 0 };
             let segment_id = segment_id_from(session_id, i as u64);
+            // Das Commitment auf die Eingabe, bevor sie verschickt wird
+            // (Fund 102): die Nutzlast dieser Nachricht.
+            let eingang = crate::trace::activation_hash(&packed);
             let msg = PodMessage::token_input(segment_id, session_id, i as u64, packed, flags);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
-            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs);
+            self.segment_abschliessen(segment_id, i as u64, out_trace, out_sigs, eingang);
             if let Some(t) = token_opt {
                 generated.push(t);
             }
@@ -136,8 +230,9 @@ impl Coordinator {
             let segment_id = segment_id_from(session_id, msg.position);
             msg.segment_id = segment_id;
             let position = msg.position;
+            let eingang = crate::trace::activation_hash(&msg.payload);
             let (out_trace, out_sigs, token_opt, feedback_opt) = self.pump(&msg);
-            self.segment_abschliessen(segment_id, position, out_trace, out_sigs);
+            self.segment_abschliessen(segment_id, position, out_trace, out_sigs, eingang);
             match token_opt {
                 Some(t) => generated.push(t),
                 None => break,
@@ -159,6 +254,7 @@ impl Coordinator {
         position: u64,
         trace: Vec<[u8; 32]>,
         signatures: Vec<BlsSignature>,
+        eingangs_commitment: [u8; 32],
     ) {
         if trace.is_empty() {
             return;
@@ -166,10 +262,28 @@ impl Coordinator {
         let pod_path: Vec<MinerId> = (0..self.shards.len())
             .map(|i| MinerId::new([(i as u8) + 1; 32]))
             .collect();
+        // ⚑ Die Kette ist `[Eingang] ++ Spur`, und damit ist die Eingabe
+        // **jeder** Layer beweisbar, auch die der ersten (Fund 102):
+        // `kette[j]` ist die Eingabe der Layer `j`, `kette[j+1]` ihre
+        // Ausgabe. Ohne den ersten Eintrag hinge die erste Layer an
+        // nichts.
+        let mut kette = Vec::with_capacity(trace.len() + 1);
+        kette.push(eingangs_commitment);
+        kette.extend_from_slice(&trace);
+
+        // Die Wurzel jetzt und nicht erst beim Bündeln: Sie ist die
+        // Zusicherung über das Ergebnis, und eine Zusicherung, die erst
+        // später entsteht, ist eine, die man sich noch überlegen kann.
+        let spurwurzel = match myl_types::spurwurzel(&kette) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
         self.completed.push(CompletedSegment {
             id,
             position,
             trace,
+            eingangs_commitment,
+            spurwurzel,
             signatures,
             pod_path,
         });
@@ -284,8 +398,15 @@ impl Coordinator {
         if self.completed.is_empty() {
             return Err("keine abgeschlossenen Segmente".to_string());
         }
-        let ids: Vec<SegmentId> = self.completed.iter().map(|c| c.id).collect();
-        let root = segments_root(&ids).map_err(|e| e.to_string())?;
+        let zeugnisse: Vec<myl_types::Segmentzeugnis> = self
+            .completed
+            .iter()
+            .map(|c| myl_types::Segmentzeugnis {
+                id: c.id,
+                spurwurzel: c.spurwurzel,
+            })
+            .collect();
+        let root = segments_root(&zeugnisse).map_err(|e| e.to_string())?;
         let vtfe = self.beanspruchte_vtfe()?;
         // Aggregat über die Übergangs-Signaturen (alle dieselbe Arbeit).
         let all_sigs: Vec<BlsSignature> = self

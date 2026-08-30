@@ -150,7 +150,18 @@ pub fn probe_poi_buendel(absender: &str, folge: u64) -> Option<PoIBundle> {
             SegmentId::new(roh)
         })
         .collect();
-    let wurzel = segments_root(&ids).ok()?;
+    // ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+    // mehr die bloße Id: Ein Bündel, das nur Positionen aufzählt, sagt
+    // nicht, **was** gerechnet wurde. Die Probe baut deshalb auch eine
+    // Spur, damit sie den Weg prüft, den ein echtes Bündel nimmt.
+    let zeugnisse: Vec<myl_types::Segmentzeugnis> = ids
+        .iter()
+        .map(|id| myl_types::Segmentzeugnis {
+            id: *id,
+            spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("eine Spur ist nicht leer"),
+        })
+        .collect();
+    let wurzel = segments_root(&zeugnisse).ok()?;
 
     let mut ikm = [0u8; 32];
     ikm.copy_from_slice(saat.as_bytes());
@@ -178,12 +189,22 @@ pub fn probe_poi_buendel(absender: &str, folge: u64) -> Option<PoIBundle> {
     })
 }
 
-/// Erzeugt eine **strukturell gültige** Challenge für die Probe.
+/// Erzeugt eine **strukturell gültige und unterschriebene** Challenge
+/// für die Probe.
 ///
 /// Verschiedene Miner und verschiedene Hashes: Genau das prüft die
 /// Netzschicht, und eine Probe, die daran scheiterte, prüfte den Weg
 /// nicht, sondern die eigene Nachlässigkeit.
-pub fn probe_challenge(absender: &str, folge: u64) -> Challenge {
+///
+/// ⚑ **Und seit dem 2026-08-29 unterschrieben** (Fund 96). Der
+/// Herausforderer ist der Absender selbst, seine Kennung wird aus dem
+/// Probeschlüssel abgeleitet. Eine Probe mit erfundenem
+/// Herausforderer und ohne Unterschrift prüfte den Weg nicht, den eine
+/// echte Anfechtung nimmt, sondern einen, den es nicht mehr gibt.
+///
+/// `None`, wenn der Absender keinen Probeschlüssel hat: Dann ist keine
+/// Anfechtung erzeugbar, und das ist ehrlicher als eine unsignierte.
+pub fn probe_challenge(absender: &str, folge: u64) -> Option<Challenge> {
     let saat = Hash::sha256(format!("{absender}#{folge}").as_bytes());
     /// Hasht die Saat mit einem Zusatz. Getrennte Zusätze ergeben
     /// getrennte Werte, und genau das verlangt die Netzprüfung von
@@ -200,15 +221,23 @@ pub fn probe_challenge(absender: &str, folge: u64) -> Challenge {
     let mut redundant = [0u8; 32];
     redundant.copy_from_slice(abgeleitet(&saat, b"r").as_bytes());
 
-    Challenge {
+    let _ = redundant;
+    let sk = crate::validatorsatz::probe_schluessel(absender)?;
+    let pk = sk.public_key().ok()?;
+    let mut c = Challenge {
         segment_id: SegmentId::new(seg),
         first_divergence: (folge % 32) as usize,
         primary_miner: MinerId::new(primaer),
-        redundant_miner: MinerId::new(redundant),
+        // Der Herausforderer ist der Absender, sonst trägt die
+        // Unterschrift nicht.
+        redundant_miner: MinerId::aus_schluessel(&pk),
         primary_hash: abgeleitet(&saat, b"ph"),
         redundant_hash: abgeleitet(&saat, b"rh"),
         timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
-    }
+        signature: myl_types::bls::BlsSignature([0u8; 96]),
+    };
+    c.signiere(&sk).ok()?;
+    Some(c)
 }
 
 /// Erzeugt ein **signiertes** Latenz-Attest für die Probe.
@@ -301,8 +330,18 @@ mod tests {
         // Verschiedene Miner, verschiedene Hashes: Genau das prüft die
         // Netzschicht. Eine Probe, die daran scheiterte, prüfte den Weg
         // nicht, sondern die eigene Nachlässigkeit.
-        let c = probe_challenge("beta", 7);
+        let c = probe_challenge("beta", 7).expect("beta hat einen Probeschlüssel");
         assert_ne!(c.primary_miner, c.redundant_miner);
+        // ⚑ Und sie ist unterschrieben, sonst prüfte die Probe einen
+        // Weg, den eine echte Anfechtung nicht mehr nimmt (Fund 96).
+        let pk = crate::validatorsatz::probe_schluessel("beta")
+            .expect("Schlüssel")
+            .public_key()
+            .expect("Punkt");
+        assert!(
+            c.ist_vom_herausforderer(&pk),
+            "die Probe-Challenge trägt keine tragende Unterschrift"
+        );
         assert_ne!(c.primary_hash, c.redundant_hash);
         let bytes = borsh::to_vec(&c).expect("Serialisierung");
         assert!(

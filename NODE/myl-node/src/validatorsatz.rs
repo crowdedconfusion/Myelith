@@ -135,6 +135,31 @@ impl Validatorsatz {
         }
         Attesturteil::Gueltig
     }
+
+    /// Prüft eine Anfechtung.
+    ///
+    /// ⚑ **Ohne diese Prüfung wäre die Unterschrift ein Feld, das
+    /// niemand ansieht**, und genau das war Fund 96. Eine Anfechtung
+    /// verursacht dem Angeklagten Kosten: Er muss antworten, und nach
+    /// der Umstellung des Beweisarchivs auf Nachrechnen heißt das, eine
+    /// ganze Folge neu zu rechnen. Wer das auslösen kann, ohne sich zu
+    /// binden, hat einen Hebel zum Schikanieren ohne Einsatz.
+    ///
+    /// Dieselben Urteilsgründe wie beim Attest, und aus demselben
+    /// Grund: „unbekannter Aussteller" und „falsche Signatur" haben
+    /// verschiedene Ursachen.
+    pub fn pruefe_anfechtung(&self, c: &myl_types::Challenge) -> Attesturteil {
+        let Some(pk) = self.schluessel.get(&c.redundant_miner) else {
+            return Attesturteil::UnbekannterAussteller;
+        };
+        if !c.ist_vom_herausforderer(pk) {
+            return Attesturteil::SignaturFalsch;
+        }
+        if c.validate_structure().is_err() {
+            return Attesturteil::StrukturFalsch;
+        }
+        Attesturteil::Gueltig
+    }
 }
 
 /// Das Urteil über ein Attest.

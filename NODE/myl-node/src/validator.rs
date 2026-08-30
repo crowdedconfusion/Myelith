@@ -105,6 +105,15 @@ impl ProtokollValidator {
             _ => Attesturteil::StrukturFalsch,
         }
     }
+
+    /// Dasselbe für eine Anfechtung (Fund 96).
+    pub fn beurteile_anfechtung(&self, data: &[u8]) -> Attesturteil {
+        let mut rest = data;
+        match myl_types::Challenge::deserialize(&mut rest) {
+            Ok(c) if rest.is_empty() => self.validatoren.pruefe_anfechtung(&c),
+            _ => Attesturteil::StrukturFalsch,
+        }
+    }
 }
 
 /// Liest einen Typ aus Bytes und verlangt, dass **nichts übrig bleibt**.
@@ -136,6 +145,41 @@ impl PayloadValidator for ProtokollValidator {
             // frei setzen kann, sucht sich seine Pod-Nachbarn aus, und
             // das ist die Vorstufe zur Kollusion beider Pods (A12).
             GossipTopic::LatencyAttests => self.beurteile_attest(data).ist_gueltig(),
+            // ⚑ **Fund 96: Anfechtungen werden geprüft, aber nur, wenn
+            // der Herausforderer bekannt ist.**
+            //
+            // Hier fiel eine Anfechtung bis zum 2026-08-29 unter
+            // `_ => true`, und bis dahin trug sie auch gar keine
+            // Unterschrift. Beides zusammen hieß: Jeder konnte im Namen
+            // jedes Miners anfechten. Das kostet den Angeklagten etwas,
+            // denn er muss antworten.
+            //
+            // **Der Unterschied zum Latenz-Attest, und er ist wichtig:**
+            // Ein Attest kommt von einem Validator, und die
+            // Validatorenliste ist genau die Menge, gegen die hier
+            // geprüft wird. Ein Herausforderer ist dagegen ein **Miner**
+            // des redundanten Pods, und der muss in dieser Liste nicht
+            // stehen. Wer ihn deshalb abwiese, verwürfe aus **geratener
+            // Unkenntnis**, und im Gossipsub-Scoring trifft das den
+            // ehrlichen Absender, nicht den Angreifer; dieselbe
+            // Überlegung, aus der Konsensnachrichten hier nur
+            // strukturell geprüft werden.
+            //
+            // Also: unbekannter Herausforderer geht durch, falsche
+            // Unterschrift eines **bekannten** nicht. Eine Anfechtung,
+            // deren Absender niemand zuordnen kann, führt trotzdem zu
+            // nichts: Die Slash-Entscheidung verlangt einen
+            // `Anfechtungsbeleg`, und der braucht den Schlüssel.
+            //
+            // ⚑ **Die Zuordnung Miner zu Schlüssel gehört in eine
+            // Registrierung, die es noch nicht gibt.** Solange die
+            // Teilnehmerliste die einzige Quelle ist, prüft dieser
+            // Zweig im echten Netz nur die Validatoren unter den
+            // Herausforderern.
+            GossipTopic::Challenges => !matches!(
+                self.beurteile_anfechtung(data),
+                Attesturteil::SignaturFalsch | Attesturteil::StrukturFalsch
+            ),
             // Konsensnachrichten: Form ja, Gültigkeit nein.
             //
             // ⚑ **Und die Form leistet fast nichts**, weil alle Felder
@@ -278,7 +322,71 @@ mod tests {
         // verwirft er, was die Netzschicht bereits geprüft hat.
         let v = ProtokollValidator::default();
         assert!(v.validate(GossipTopic::PoiBundles, &[0xFF; 32]));
-        assert!(v.validate(GossipTopic::Challenges, &[]));
+    }
+
+    /// ⚑ **Ein unbekannter Herausforderer wird nicht abgewiesen**
+    /// (Fund 96).
+    ///
+    /// Hier stand bis zum 2026-08-29 `validate(Challenges, &[]) == true`,
+    /// und das galt nur, weil es den Zweig gar nicht gab. Jetzt gibt es
+    /// ihn, und die Regel dahinter ist eine andere geworden: Ein
+    /// Herausforderer ist ein Miner des redundanten Pods und muss in der
+    /// Teilnehmerliste nicht stehen. Wer ihn deshalb abwiese, verwürfe
+    /// aus geratener Unkenntnis, und das trifft im Gossipsub-Scoring den
+    /// Ehrlichen.
+    #[test]
+    fn eine_anfechtung_eines_unbekannten_geht_durch() {
+        // Leerer Validatorsatz: niemand ist bekannt.
+        let v = ProtokollValidator::default();
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[7u8; 32]).expect("Schlüssel");
+        let pk = sk.public_key().expect("Punkt");
+        let mut c = myl_types::Challenge {
+            segment_id: myl_types::ids::SegmentId::new([1u8; 32]),
+            first_divergence: 3,
+            primary_miner: myl_types::ids::MinerId::new([1u8; 32]),
+            redundant_miner: myl_types::ids::MinerId::aus_schluessel(&pk),
+            primary_hash: Hash::sha256(b"a"),
+            redundant_hash: Hash::sha256(b"b"),
+            timestamp_ms: 1_700_000_000_000,
+            signature: myl_types::bls::BlsSignature([0u8; 96]),
+        };
+        c.signiere(&sk).expect("signieren");
+        assert!(v.validate(GossipTopic::Challenges, &borsh::to_vec(&c).unwrap()));
+    }
+
+    /// ⚑ **Ein bekannter Herausforderer mit falscher Unterschrift
+    /// dagegen schon.** Das ist keine Unkenntnis, sondern ein Befund.
+    #[test]
+    fn eine_anfechtung_eines_bekannten_mit_falscher_unterschrift_wird_abgewiesen() {
+        let satz = crate::validatorsatz::Validatorsatz::aus_namen(&["alpha"]);
+        let v = ProtokollValidator::mit(satz);
+        let pk = crate::validatorsatz::probe_schluessel("alpha")
+            .expect("Schlüssel")
+            .public_key()
+            .expect("Punkt");
+        let c = myl_types::Challenge {
+            segment_id: myl_types::ids::SegmentId::new([1u8; 32]),
+            first_divergence: 3,
+            primary_miner: myl_types::ids::MinerId::new([1u8; 32]),
+            redundant_miner: myl_types::ids::MinerId::aus_schluessel(&pk),
+            primary_hash: Hash::sha256(b"a"),
+            redundant_hash: Hash::sha256(b"b"),
+            timestamp_ms: 1_700_000_000_000,
+            // Nicht unterschrieben, obwohl der Aussteller bekannt ist.
+            signature: myl_types::bls::BlsSignature([0u8; 96]),
+        };
+        assert!(!v.validate(GossipTopic::Challenges, &borsh::to_vec(&c).unwrap()));
+    }
+
+    /// Und eine echte, unterschriebene Anfechtung eines bekannten
+    /// Herausforderers kommt durch. Gegenprobe zum Test darüber: Ohne
+    /// sie prüfte er nur, dass irgendetwas abgewiesen wird.
+    #[test]
+    fn eine_unterschriebene_anfechtung_eines_bekannten_kommt_durch() {
+        let satz = crate::validatorsatz::Validatorsatz::aus_namen(&["alpha"]);
+        let v = ProtokollValidator::mit(satz);
+        let c = crate::probe::probe_challenge("alpha", 3).expect("Probe-Anfechtung");
+        assert!(v.validate(GossipTopic::Challenges, &borsh::to_vec(&c).unwrap()));
     }
 
     #[test]

@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use myl_pod::coordinator::Coordinator;
-use myl_pod::da::{DaStore, XorParityCoder};
 use myl_pod::shard::ShardNode;
 use myl_pod::wire::pack_tokens;
 
@@ -65,7 +64,6 @@ fn main() {
         let has_lm_head = s == 3;
         let ikm = [(s as u8 + 1) * 17; 32];
         let sk = BlsSecretKey::key_gen(&ikm).expect("BLS KeyGen");
-        let da = DaStore::new(Box::new(XorParityCoder::new(4)));
         let shard = ShardNode::new(
             s,
             layer_start,
@@ -74,7 +72,6 @@ fn main() {
             has_lm_head,
             model.clone(),
             sk,
-            da,
             max_tokens,
         );
         println!(

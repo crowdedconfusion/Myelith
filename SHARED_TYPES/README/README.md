@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.11.0
+> **Version:** 0.13.0
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -49,6 +49,62 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.13.0 – 2026-08-30 (⚑ Fund 100: das Bündel bezeugte nicht, was gerechnet wurde)
+
+`segments_root` war eine Merkle-Wurzel über die bloßen Segment-Ids, und
+eine `SegmentId` ist `(Sitzungsnummer, Position)` mit Nullen aufgefüllt.
+Sie bindet **nichts**: weder die Spur noch Ein- oder Ausgabe.
+
+**Damit beanspruchte ein PoI-Bündel Arbeit, ohne zu sagen, was gerechnet
+wurde.** Ein Pod konnte Paare `(Sitzung, Position)` aufzählen und dafür
+vergütet werden; die Spur lag nur örtlich beim Koordinator und war an
+nichts gebunden.
+
+Der ganze Streitpfad hing daran. Die Schiedsrunde will feststellen, ob
+der Angeklagte **das** gerechnet hat, was er behauptet hat. Ohne
+Zusicherung gibt es kein „behauptet", nur zwei einander widersprechende
+Aussagen und keinen Grund, einer zu glauben.
+
+Das Blatt ist jetzt `Id ‖ Spurwurzel`, und `spurwurzel` baut eine Wurzel
+mit **einem Blatt je Spur-Eintrag**, damit sich ein einzelner beweisen
+lässt: Die Schiedsrunde streitet über eine Layer, nicht über ein Segment.
+
+Drei Tests, darunter der entscheidende: **Dieselben Ids mit anderer Spur
+müssen eine andere Wurzel ergeben.** Vorher taten sie es nicht.
+
+### v0.12.0 – 2026-08-29 (⚑ Fund 96, zweite Hälfte: eine Anfechtung bindet jetzt den, der sie stellt)
+
+`Challenge` nannte `primary_miner` und `redundant_miner` als **Felder**,
+und nichts band einen davon an denjenigen, der die Anfechtung
+einreichte. Dieselbe Gestalt wie Fund 85 im Ledger und wie die
+Slash-Entscheidung: Wer anzeigt, bestimmte, wen er anzeigt und in wessen
+Namen.
+
+**Das zählt, weil eine Anfechtung Kosten verursacht.** Der Angeklagte
+muss antworten, und nach der beschlossenen Umstellung des
+Beweisarchivs auf Nachrechnen heißt das, eine ganze Folge neu zu
+rechnen. Ohne Bindung wäre das ein Hebel zum Schikanieren, den jeder
+ohne Einsatz ziehen kann.
+
+Die Anfechtung trägt jetzt eine BLS-Signatur über
+`DST_CHALLENGE ‖ Rolle ‖ Borsh(Felder ohne Signatur)`, in der Rolle
+`Checker` und in keiner anderen. `ist_vom_herausforderer` prüft
+Unterschrift **und** Zuordnung in einem Schritt: Eine gültige
+Unterschrift unter einer Anfechtung, die einen anderen nennt, belegt
+nur, dass irgendjemand unterschrieben hat. Getrennte Prüfungen könnten
+getrennt vergessen werden.
+
+Sechs Tests, darunter: jede Feldänderung bricht die Unterschrift, eine
+Unterschrift aus einer anderen Rolle gilt nicht, und die Botschaft
+beginnt mit dem Präfix im Klartext, an den Bytes geprüft und nicht an
+einer Länge.
+
+**Das Format ändert sich damit**, von 176 auf 272 Bytes. Der billigste
+Zeitpunkt dafür ist der, an dem noch niemand darauf zeigt; nach dem
+ersten Partnerlauf wäre es eine Protokolländerung mit
+Abstimmungsbedarf. Dieselbe Begründung wie bei der Latenz-EMA (Fund 44)
+und beim Übergangs-Präfix.
 
 ### v0.11.0 – 2026-08-29 (der Signaturvertrag zieht dorthin, wo geurteilt wird)
 

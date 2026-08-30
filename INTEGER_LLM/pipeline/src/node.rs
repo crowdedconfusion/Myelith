@@ -60,7 +60,16 @@ fn read_full_message(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
 pub struct Node {
     pub node_id: String,
     pub bind_address: String,
-    pub upstream: Option<String>,
+    // ⚑ Hier stand bis zum 2026-08-29 ein `upstream: Option<String>`.
+    // Es wurde gesetzt, von der CLI durchgereicht, in der
+    // Benutzungszeile beworben und **an keiner Stelle gelesen**;
+    // `downstream` daneben wird an drei gelesen. Die Pipeline fliesst
+    // vorwaerts, der Rueckweg der autoregressiven Schleife laeuft ueber
+    // `feedback_address` von der letzten Stufe zu Stufe 0. Fuer eine
+    // Adresse stromaufwaerts gibt es also keinen Verwender und keinen
+    // Bedarf. Ein Knopf, der sich drehen laesst und nichts tut, ist
+    // schlimmer als keiner: Wer ihn setzt, glaubt, etwas eingestellt zu
+    // haben.
     pub downstream: Option<String>,
     /// Feedback-Adresse der finalen Stage → Stage 0 (autoregressive
     /// Schleife). Nur für die finale Stage gesetzt.
@@ -73,7 +82,6 @@ impl Node {
         Node {
             node_id: node_id.to_string(),
             bind_address: bind_address.to_string(),
-            upstream: None,
             downstream: None,
             feedback_address: None,
             runtime: None,

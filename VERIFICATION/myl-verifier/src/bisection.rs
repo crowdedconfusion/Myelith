@@ -81,6 +81,36 @@ use myl_types::ids::SegmentId;
 /// Panik führt.
 const MAX_SPURLAENGE: usize = 1usize << 62;
 
+/// Wie lange eine Seite Zeit hat, auf eine Bisektionsanfrage zu
+/// antworten, gemessen in Epochen.
+///
+/// # ⚑ Warum die Frist hier steht und nicht bei der Schiedsrunde
+///
+/// Sie stand dort, bis am 2026-08-30 auffiel, dass die Schiedsrunde gar
+/// keine Antwort mehr braucht: Der Ankläger legt die Aktivierung
+/// gleich mit der Anfrage vor. **Die Bisektion dagegen ist wirklich
+/// wechselseitig**: Sie fragt nach Spur-Einträgen, und beide Seiten
+/// müssen liefern. Hier kann jemand stillstehen, also gehört die Frist
+/// hierher.
+///
+/// # Warum in Epochen und nicht in Millisekunden
+///
+/// Dieselbe Begründung wie bei der Streitfrist in
+/// `myl_consensus::da`: Eine Frist, über die zwei Parteien streiten
+/// können, ist keine. Die Epochennummer kommt aus dem Konsens, jeder
+/// rechnet dieselbe, und niemand kann sich hinter seiner Uhr
+/// verstecken.
+///
+/// # Warum genau eine Epoche
+///
+/// Verlangt wird ein **Spur-Eintrag**, kein Rechenwerk: Beide Seiten
+/// haben ihre Spur, das ist die kleine Größe, die sie über die
+/// Streitfrist vorhalten. Eine Epoche (3600 s) ist dafür reichlich und
+/// kostet bei 168 Epochen Streitfrist unter einem Prozent des
+/// Fensters. Bei rund `log2(Spurlänge)` Runden bleibt der Streit auch
+/// bei langen Spuren weit innerhalb der Frist.
+pub const ANTWORTFRIST_EPOCHEN: u64 = 1;
+
 /// Eine Bisektions-Session.
 ///
 /// **Invariante:** Die erste abweichende Position liegt in

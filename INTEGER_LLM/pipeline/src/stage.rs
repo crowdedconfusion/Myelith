@@ -181,7 +181,7 @@ impl StageRuntime {
         tensor: &[i16],
     ) -> Result<StageOutput, String> {
         let hs = self.model.hidden_size;
-        if !tensor.len().is_multiple_of(hs) {
+        if tensor.len() % hs != 0 {
             return Err(format!(
                 "Stage {}: Payload-Länge {} ist kein Vielfaches von hidden_size {}",
                 self.manifest.stage_id,

@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.20.1 (`myl-consensus` 0.17.1, `myl-scheduler` 0.4.0,
+> **Version:** 0.20.2 (`myl-consensus` 0.17.2, `myl-scheduler` 0.4.0,
 > `myl-ledger` 0.5.0)
 > **Datum:** 2026-08-29
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -107,6 +107,26 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.20.2 (`myl-consensus` 0.17.2) – 2026-08-30 (die Registrierung, die es schon gab)
+
+Als offener Punkt stand notiert: „es fehlt eine Registrierung Miner zu
+Schlüssel", ohne die die Anfechtungsprüfung im echten Netz nur
+Validatoren erfasst.
+
+⚑ **Für den Streitpfad fehlt sie nicht.** Ein Herausforderer ist
+Mitglied des redundanten Pods, und `PodMembership` führt die Schlüssel
+ihrer Mitglieder ohnehin mit. Was fehlte, war ein Zugriff auf einen
+**einzelnen**: `pubkeys()` liefert alle für die Aggregat-Prüfung, ein
+Anfechtungsbeleg braucht einen. `pubkey(&MinerId)` schließt das.
+
+Eine zweite, globale Registrierung wäre eine zweite Quelle für dieselbe
+Zuordnung gewesen.
+
+**Was damit nicht gelöst ist**, und das steht auch so im Code: die
+Prüfung im Gossip-Pfad. Dort kennt der Knoten die Pod-Zuteilung eines
+fremden Segments nicht und darf sie nicht raten; ein unbekannter
+Absender geht weiterhin durch, und geurteilt wird erst beim Schlachten.
 
 ### v0.20.1 (`myl-consensus` 0.17.1) – 2026-08-29 (eine Abschrift weniger)
 

@@ -49,6 +49,7 @@
 use myl_ledger::transitions::{Verdict as LedgerVerdict, VerdictOutcome as LedgerOutcome};
 use myl_types::bls::{BlsPublicKey, BlsSignature};
 use myl_types::ids::{Address, MinerId, SegmentId};
+use myl_types::challenge::Challenge;
 use myl_types::uebergang::{Rolle, TransitionSig};
 
 /// Ergebnis der Schiedsrunde (wer hat gewonnen/verloren).
@@ -142,16 +143,74 @@ impl Schuldbeleg {
     }
 }
 
+/// Der Beleg, dass ein bestimmter Miner die Anfechtung eingereicht hat.
+///
+/// # ⚑ Die zweite Hälfte von Fund 96 (2026-08-29)
+///
+/// Verliert der Herausforderer, wird er dafür geschlachtet, dass er
+/// **falsch beschuldigt** hat. Belegt war das bis dahin nicht: Die
+/// Anfechtung nannte beide Miner als Felder, und nichts band einen
+/// davon an denjenigen, der sie einreichte. Wer schlachtete,
+/// bestimmte, wen es trifft, genau wie auf der anderen Seite.
+///
+/// Seit `myl-types` v0.12.0 trägt eine Anfechtung eine Unterschrift in
+/// der Rolle `Checker`, und die Kennung des Unterzeichners wird aus dem
+/// Schlüssel abgeleitet. Dieser Beleg führt beides zusammen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Anfechtungsbeleg {
+    /// Die unterschriebene Anfechtung.
+    pub anfechtung: Challenge,
+    /// Der öffentliche Schlüssel des Herausforderers.
+    pub schluessel: BlsPublicKey,
+}
+
+impl Anfechtungsbeleg {
+    /// Prüft Unterschrift und Zuordnung in einem.
+    pub fn ist_gueltig(&self) -> bool {
+        self.anfechtung.ist_vom_herausforderer(&self.schluessel)
+    }
+}
+
+/// Der Nachweis, auf den eine Slash-Entscheidung gestützt wird.
+///
+/// # ⚑ Warum eine Marke und nicht zwei Option-Parameter
+///
+/// Bis zum 2026-08-29 nahm [`create_slash_decision`] den Ausgang und
+/// den Beleg getrennt entgegen. Zwei `Option`, von denen je nach
+/// Ausgang genau eines Pflicht ist, sind eine Einladung: Wer beide
+/// weglässt, bekommt eine Entscheidung, die auf nichts steht, und der
+/// Aufrufer merkt es nicht.
+///
+/// Hier trägt der Nachweis den Ausgang **in sich**. Es gibt keinen Weg
+/// mehr, nach einem Schuldspruch zu fragen, ohne den Beleg
+/// mitzubringen, der zu ihm gehört, und keinen, bei dem Ausgang und
+/// Beleg auseinanderfallen. Nicht abgewiesen, sondern nicht
+/// hinschreibbar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Nachweis<'a> {
+    /// Der primäre Pod verliert: Er hat den strittigen Schritt selbst
+    /// unterschrieben.
+    PrimaerHatGerechnet(&'a Schuldbeleg),
+    /// Der Herausforderer verliert: Er hat die Anfechtung selbst
+    /// unterschrieben.
+    HerausfordererHatAngefochten(&'a Anfechtungsbeleg),
+}
+
+impl Nachweis<'_> {
+    /// Welchen Ausgang dieser Nachweis stützt.
+    pub fn ausgang(&self) -> VerdictOutcome {
+        match self {
+            Self::PrimaerHatGerechnet(_) => VerdictOutcome::PrimaryLoses,
+            Self::HerausfordererHatAngefochten(_) => VerdictOutcome::RedundantLoses,
+        }
+    }
+}
+
 /// Fehler bei der Slash-Entscheidung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlashError {
     /// Miner-IDs sind identisch (kein sinnvoller Slash).
     IdenticalMiners,
-    /// Für den Schuldspruch fehlt der Beleg.
-    ///
-    /// ⚑ Kein Formfehler: Ohne Beleg ist die Beschuldigung eine
-    /// Behauptung des Aufrufers.
-    BelegFehlt,
     /// Die Signatur des Belegs geht nicht auf.
     BelegUngueltig,
     /// Der Beleg gehört zu einem anderen Unterzeichner als dem
@@ -165,10 +224,6 @@ impl std::fmt::Display for SlashError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::IdenticalMiners => write!(f, "Miner-IDs sind identisch"),
-            Self::BelegFehlt => write!(
-                f,
-                "kein Beleg: die Beschuldigung ist eine Behauptung des Aufrufers"
-            ),
             Self::BelegUngueltig => write!(f, "die Signatur des Belegs geht nicht auf"),
             Self::BelegAnderenUnterzeichners => {
                 write!(f, "der Beleg gehört einem anderen Unterzeichner")
@@ -255,34 +310,50 @@ impl SlashDecision {
 /// Beleg auszudenken, der nichts belegt, wäre schlimmer als sie offen zu
 /// benennen.
 pub fn create_slash_decision(
-    outcome: VerdictOutcome,
+    nachweis: &Nachweis,
     segment_id: SegmentId,
     primary_miner: MinerId,
     redundant_miner: MinerId,
     divergence_position: Option<usize>,
-    beleg: Option<&Schuldbeleg>,
 ) -> Result<SlashDecision, SlashError> {
     if primary_miner == redundant_miner {
         return Err(SlashError::IdenticalMiners);
     }
 
-    if outcome == VerdictOutcome::PrimaryLoses {
-        let beleg = beleg.ok_or(SlashError::BelegFehlt)?;
-        // Billig vor teuer: Zuordnung erst, Kryptografie zuletzt. Eine
-        // Signaturprüfung als erste Hürde wäre eine Rechenlast, die
-        // jeder mit einem falsch adressierten Beleg auslösen kann.
-        if beleg.uebergang.segment_id != segment_id {
-            return Err(SlashError::BelegAnderenSegments);
+    // Billig vor teuer, in beiden Zweigen: Zuordnung erst, Kryptografie
+    // zuletzt. Eine Signaturprüfung als erste Hürde wäre eine
+    // Rechenlast, die jeder mit einem falsch adressierten Beleg
+    // auslösen kann.
+    match nachweis {
+        Nachweis::PrimaerHatGerechnet(beleg) => {
+            if beleg.uebergang.segment_id != segment_id {
+                return Err(SlashError::BelegAnderenSegments);
+            }
+            if beleg.unterzeichner() != primary_miner {
+                return Err(SlashError::BelegAnderenUnterzeichners);
+            }
+            if !beleg.ist_gueltig() {
+                return Err(SlashError::BelegUngueltig);
+            }
         }
-        if beleg.unterzeichner() != primary_miner {
-            return Err(SlashError::BelegAnderenUnterzeichners);
-        }
-        if !beleg.ist_gueltig() {
-            return Err(SlashError::BelegUngueltig);
+        Nachweis::HerausfordererHatAngefochten(beleg) => {
+            if beleg.anfechtung.segment_id != segment_id {
+                return Err(SlashError::BelegAnderenSegments);
+            }
+            // Der Unterzeichner muss der Herausforderer dieser
+            // Entscheidung sein, nicht irgendein Herausforderer.
+            if beleg.anfechtung.redundant_miner != redundant_miner {
+                return Err(SlashError::BelegAnderenUnterzeichners);
+            }
+            // `ist_gueltig` prüft Unterschrift **und** Zuordnung des
+            // Unterzeichners zur genannten Kennung in einem Schritt.
+            if !beleg.ist_gueltig() {
+                return Err(SlashError::BelegUngueltig);
+            }
         }
     }
 
-    let (slashed_miner, rewarded_miner, reason) = match outcome {
+    let (slashed_miner, rewarded_miner, reason) = match nachweis.ausgang() {
         VerdictOutcome::PrimaryLoses => (
             primary_miner,
             redundant_miner,
@@ -324,6 +395,27 @@ mod tests {
         MinerId::aus_schluessel(&geheim(b).public_key().expect("Punkt"))
     }
 
+    /// Eine Anfechtung, die der genannte Herausforderer unterschrieben hat.
+    fn anfechtungsbeleg_fuer(b: u8, seg: SegmentId) -> Anfechtungsbeleg {
+        let sk = geheim(b);
+        let pk = sk.public_key().expect("Punkt");
+        let mut c = Challenge {
+            segment_id: seg,
+            first_divergence: 3,
+            primary_miner: kennung(1),
+            redundant_miner: MinerId::aus_schluessel(&pk),
+            primary_hash: myl_types::hash::Hash::sha256(b"a"),
+            redundant_hash: myl_types::hash::Hash::sha256(b"b"),
+            timestamp_ms: 1_700_000_000_000,
+            signature: BlsSignature([0u8; 96]),
+        };
+        c.signiere(&sk).expect("signieren");
+        Anfechtungsbeleg {
+            anfechtung: c,
+            schluessel: pk,
+        }
+    }
+
     fn beleg_fuer(b: u8, seg: SegmentId) -> Schuldbeleg {
         let sk = geheim(b);
         let uebergang = TransitionSig {
@@ -352,12 +444,11 @@ mod tests {
     #[test]
     fn primaerer_pod_verliert() {
         let d = create_slash_decision(
-            VerdictOutcome::PrimaryLoses,
+            &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, segment())),
             segment(),
             kennung(1),
             kennung(2),
             Some(7),
-            Some(&beleg_fuer(1, segment())),
         )
         .unwrap();
 
@@ -373,30 +464,84 @@ mod tests {
 
     #[test]
     fn redundanter_pod_verliert() {
+        // ⚑ `kennung(2)` und nicht `miner(2)`: Wer geschlachtet werden
+        // soll, muss unterschrieben haben, und unterschreiben kann nur,
+        // wer einen Schlüssel hat.
         let d = create_slash_decision(
-            VerdictOutcome::RedundantLoses,
+            &Nachweis::HerausfordererHatAngefochten(&anfechtungsbeleg_fuer(2, segment())),
             segment(),
-            miner(1),
-            miner(2),
-            None,
+            kennung(1),
+            kennung(2),
             None,
         )
         .unwrap();
 
-        assert_eq!(d.slashed_miner, miner(2));
-        assert_eq!(d.rewarded_miner, miner(1));
+        assert_eq!(d.slashed_miner, kennung(2));
+        assert_eq!(d.rewarded_miner, kennung(1));
         assert_eq!(d.reason, SlashReason::RedundantFault);
+    }
+
+    /// ⚑ **Die Gegenrichtung von Fund 96, und sie ist der Kern.**
+    ///
+    /// Eine Anfechtung, die einen anderen Herausforderer nennt als den,
+    /// der sie unterschrieben hat, darf niemanden schlachten. Vorher gab
+    /// es diese Prüfung nicht, weil es die Unterschrift nicht gab: Wer
+    /// schlachtete, bestimmte, wen es trifft.
+    #[test]
+    fn eine_fremde_anfechtung_schlachtet_den_herausforderer_nicht() {
+        assert_eq!(
+            create_slash_decision(
+                &Nachweis::HerausfordererHatAngefochten(&anfechtungsbeleg_fuer(3, segment())),
+                segment(),
+                kennung(1),
+                kennung(2),
+                None,
+            ),
+            Err(SlashError::BelegAnderenUnterzeichners)
+        );
+    }
+
+    /// Und eine Anfechtung ohne gültige Unterschrift ebenso wenig.
+    #[test]
+    fn eine_unsignierte_anfechtung_schlachtet_niemanden() {
+        let mut b = anfechtungsbeleg_fuer(2, segment());
+        b.anfechtung.signature = BlsSignature([0u8; 96]);
+        assert_eq!(
+            create_slash_decision(
+                &Nachweis::HerausfordererHatAngefochten(&b),
+                segment(),
+                kennung(1),
+                kennung(2),
+                None,
+            ),
+            Err(SlashError::BelegUngueltig)
+        );
+    }
+
+    /// Eine Anfechtung zu einem anderen Segment gilt hier nicht.
+    #[test]
+    fn eine_anfechtung_zu_anderem_segment_gilt_nicht() {
+        let anderes = SegmentId::new([9u8; 32]);
+        assert_eq!(
+            create_slash_decision(
+                &Nachweis::HerausfordererHatAngefochten(&anfechtungsbeleg_fuer(2, anderes)),
+                segment(),
+                kennung(1),
+                kennung(2),
+                None,
+            ),
+            Err(SlashError::BelegAnderenSegments)
+        );
     }
 
     #[test]
     fn identische_miner_werden_abgelehnt() {
         assert_eq!(
             create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
+                &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, segment())),
                 segment(),
                 miner(1),
                 miner(1),
-                None,
                 None,
             ),
             Err(SlashError::IdenticalMiners)
@@ -409,12 +554,11 @@ mod tests {
     #[test]
     fn entscheidung_wird_vom_ledger_gebucht() {
         let d = create_slash_decision(
-            VerdictOutcome::PrimaryLoses,
+            &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, segment())),
             segment(),
             kennung(1),
             kennung(2),
             Some(3),
-            Some(&beleg_fuer(1, segment())),
         )
         .unwrap();
 
@@ -443,12 +587,11 @@ mod tests {
     #[test]
     fn slash_skaliert_mit_dem_stake() {
         let d = create_slash_decision(
-            VerdictOutcome::PrimaryLoses,
+            &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, segment())),
             segment(),
             kennung(1),
             kennung(2),
             None,
-            Some(&beleg_fuer(1, segment())),
         )
         .unwrap();
         let params = SlashParams {
@@ -477,20 +620,30 @@ mod tests {
 
     /// ⚑ **Ohne Beleg kein Schuldspruch.**
     ///
-    /// Das ist der ganze Punkt: Bis zum 2026-08-29 kam genau dieser
-    /// Aufruf durch, und der Aufrufer bestimmte allein, wen es trifft.
+    /// Das war der ganze Punkt: Bis zum 2026-08-29 kam ein Aufruf ohne
+    /// jeden Beleg durch, und der Aufrufer bestimmte allein, wen es
+    /// trifft.
+    ///
+    /// ⚑ **Es gibt keinen Test mehr dafür, und das ist die Verbesserung:**
+    /// Ein Aufruf ohne Beleg lässt sich nicht mehr hinschreiben.
+    /// [`Nachweis`] ist Pflichtparameter und trägt den Ausgang in sich;
+    /// `SlashError::BelegFehlt` gab es nur so lange, wie der Beleg
+    /// weglassbar war. Ein abgewiesener Fehlgebrauch ist gut, ein
+    /// unmöglicher besser.
+    ///
+    /// Was bleibt, ist die Zuordnung: Der Ausgang folgt aus dem Beleg
+    /// und kann ihm nicht widersprechen.
     #[test]
-    fn ohne_beleg_wird_niemand_geschlachtet() {
+    fn der_ausgang_folgt_dem_beleg() {
+        let schuld = beleg_fuer(1, segment());
+        let anfechtung = anfechtungsbeleg_fuer(2, segment());
         assert_eq!(
-            create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
-                segment(),
-                kennung(1),
-                kennung(2),
-                Some(7),
-                None,
-            ),
-            Err(SlashError::BelegFehlt)
+            Nachweis::PrimaerHatGerechnet(&schuld).ausgang(),
+            VerdictOutcome::PrimaryLoses
+        );
+        assert_eq!(
+            Nachweis::HerausfordererHatAngefochten(&anfechtung).ausgang(),
+            VerdictOutcome::RedundantLoses
         );
     }
 
@@ -502,12 +655,11 @@ mod tests {
     fn ein_fremder_beleg_belastet_nicht() {
         assert_eq!(
             create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
+                &Nachweis::PrimaerHatGerechnet(&beleg_fuer(2, segment())),
                 segment(),
                 kennung(1),
                 kennung(2),
                 Some(7),
-                Some(&beleg_fuer(2, segment())),
             ),
             Err(SlashError::BelegAnderenUnterzeichners)
         );
@@ -522,12 +674,11 @@ mod tests {
         let anderes = SegmentId::new([9u8; 32]);
         assert_eq!(
             create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
+                &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, anderes)),
                 segment(),
                 kennung(1),
                 kennung(2),
                 Some(7),
-                Some(&beleg_fuer(1, anderes)),
             ),
             Err(SlashError::BelegAnderenSegments)
         );
@@ -541,12 +692,11 @@ mod tests {
         b.uebergang.next_hash = [8u8; 32];
         assert_eq!(
             create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
+                &Nachweis::PrimaerHatGerechnet(&b),
                 segment(),
                 kennung(1),
                 kennung(2),
                 Some(7),
-                Some(&b),
             ),
             Err(SlashError::BelegUngueltig)
         );
@@ -577,12 +727,11 @@ mod tests {
         };
         assert_eq!(
             create_slash_decision(
-                VerdictOutcome::PrimaryLoses,
+                &Nachweis::PrimaerHatGerechnet(&b),
                 segment(),
                 kennung(1),
                 kennung(2),
                 Some(7),
-                Some(&b),
             ),
             Err(SlashError::BelegUngueltig)
         );
@@ -603,12 +752,11 @@ mod tests {
     #[test]
     fn ledger_verdict_traegt_die_segment_id() {
         let d = create_slash_decision(
-            VerdictOutcome::PrimaryLoses,
+            &Nachweis::PrimaerHatGerechnet(&beleg_fuer(1, segment())),
             segment(),
             kennung(1),
             kennung(2),
             None,
-            Some(&beleg_fuer(1, segment())),
         )
         .unwrap();
         let v = d.to_ledger_verdict(addr(1), addr(2));

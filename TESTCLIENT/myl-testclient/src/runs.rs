@@ -54,7 +54,6 @@ use std::sync::Arc;
 use integer_llm_runtime::loader;
 use integer_llm_runtime::model::IntegerModel;
 use myl_pod::coordinator::Coordinator;
-use myl_pod::da::{DaStore, ReedSolomonCoder};
 use myl_pod::shard::ShardNode;
 use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
@@ -701,7 +700,6 @@ pub fn run_shard(
                 s == num_shards - 1,
                 model.clone(),
                 sk,
-                DaStore::new(Box::new(ReedSolomonCoder::default())),
                 steps as u64,
             )));
         }

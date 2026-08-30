@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "blst",
  "borsh",

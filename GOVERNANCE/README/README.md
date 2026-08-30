@@ -1,13 +1,13 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.4.0
+> **Version:** 0.5.2
 > **Datum:** 2026-08-28
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
 > Invarianten-Kopplung, die Kontrollsegment-Schranke aus Fund 58, die
 > Abstimmungsmechanik und das Modellmanifest.
-> **74 Tests grün** (30 Modultests, 26 Akzeptanz, 18 Gleichstand).
+> **87 Tests grün** (37 Modultests, 6 Streitlast, 26 Akzeptanz, 18 Gleichstand).
 >
 > **Was fehlt:** die Punkte 3.2 (Shadow-Phase) und 3.3 (koordinierter
 > Rollout). Beide brauchen laufende Pods, die zwei Modellversionen
@@ -134,6 +134,166 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.5.2 – 2026-08-30 (die dritte Stufe: 2 bis 8 GiB)
+
+Die Rechnung kennt jetzt drei Stufen je Shard und Segment: jede
+Layer-Ausgabe (73 KiB), nur der Eingang (10 KiB), nur die Spur (336 B).
+
+⚑ **Der Sprung zur dritten Stufe kommt nicht vom Sparen, sondern von der
+Beweislast.** Die Bisektion endet an der ersten Abweichung, also sind
+sich beide Seiten bei `j-1` einig, und der Ankläger hat den strittigen
+Wert ohnehin. Er bringt ihn mit; der Angeklagte wird gar nicht mehr
+gefragt (E10, VERIFICATION v0.13.0).
+
+**Aus 455 GiB bis 1,8 TiB je Knoten werden 2 bis 8 GiB.** Und die Spur
+ist kein zusätzlicher Speicher: Sie ist der Arbeitsnachweis, den es
+ohnehin gibt.
+
+### v0.5.1 – 2026-08-29 (die eigene Zahl berichtigt: Faktor 7, nicht 224)
+
+Die Rechnung nannte „nur die Spur, Faktor 224" und setzte dabei voraus,
+dass ein Shard aus den Token nachrechnen kann. ⚑ **Er kann es nicht.**
+Er hält `layer_start..layer_end` und sonst nichts; die vorderen Layer
+liegen bei anderen Shards. Aufgefallen ist es beim Umsetzen, nicht beim
+Rechnen: Die Annahme stand nie da, sie war nur nicht nachgeprüft.
+
+Was ein Shard **allein** nachrechnen kann, beginnt bei seiner
+eingehenden Aktivierung, und die muss bleiben. Der Faktor ist damit die
+Zahl der Layer je Shard, also 7 bei 28 Layern auf vier Shards: Aus
+455 GiB bis 1,8 TiB je Knoten werden **65 bis 260 GiB**, nicht 8,1 GiB.
+
+Das Programm rechnet die neuen Zahlen, zwei Tests halten sie fest, und
+die Herleitung steht bei der Funktion. Der nächste Hebel wäre
+gemeinsames Nachrechnen im Pod (dann hielte nur Shard 0 die Token, rund
+99 MiB), zum Preis, dass die Antwort eines Angeklagten an seinen
+Nachbarn hinge.
+
+### v0.5.0 – 2026-08-29 (die Speicherlast der Streitfrist, gerechnet statt geschätzt)
+
+### Die Abwägung war eine halbe
+
+Die Streitfrist steht seit dem 2026-08-13 auf sieben Tagen, und die
+Begründung ist gut: Sieben Stunden sind knapp, wenn ein Checker nicht
+rund um die Uhr läuft, und ein Angreifer legte seine Segmente in die
+Nacht des Zielmarktes. Was fehlte, war die andere Seite: **Was kostet
+das an Speicher?** Solange die Zahl niemand kennt, ist „sieben Tage sind
+es wert" keine Abwägung, sondern eine Behauptung. Dasselbe galt für den
+Gegenvorschlag einer zweistufigen Frist.
+
+`cargo run --bin streitlast` rechnet es aus. Archiviert wird je Paar
+(Segment, Layer) die Ausgabe-Aktivierung als `i16`, erasure-codiert; ein
+Segment ist ein Vorwärtspass, also eine Token-Position. Weder Gewichte
+noch KV-Cache gehen ein: Die Gewichte hat jeder Shard ohnehin, der
+KV-Cache ist Betriebszustand und kein Beweismittel.
+
+| Modell | je Segment | je Pod, 168 Epochen | je Knoten |
+|---|---|---|---|
+| Qwen2.5-0,5B | 63 KiB | 1,7 TiB | 0,4 bis 1,7 TiB |
+| Qwen2.5-7B | 294 KiB | 1,8 TiB | 0,4 bis 1,8 TiB |
+
+### Der Befund: zu viel für eine gewöhnliche Maschine
+
+**Ein Knoten trägt zwischen 0,4 und 1,8 TiB, allein für das
+Beweisarchiv**, und zwar zusätzlich zur Modellgröße. Für ein
+Rechenzentrum ist das nichts. Für dieses Netz ist es der falsche
+Maßstab: Wer niedrigschwellige Teilhabe will, kann nicht 455 GiB
+verlangen, bevor überhaupt gerechnet wird.
+
+### ⚑ Der starke Hebel ist nicht die Frist, sondern das Nachrechnen
+
+Die Frist zu kürzen wirkt linear und kostet die Begründung, aus der die
+sieben Tage stammen. Der eigentliche Hebel liegt woanders: **Das Archiv
+hält die Aktivierungen vor, und die sind ableitbar.**
+
+Bei bitgenauer Ganzzahl-Inferenz ist jeder Vorwärtspass exakt
+nachrechenbar. Derselbe Eingang ergibt stets denselben Ausgang, also
+muss nur der Eingang bleiben.
+
+⚑ **Hier stand zuerst „nur die Spur, Faktor 224", und das war falsch.**
+Es setzte voraus, dass ein Shard aus den Token nachrechnen kann. Er kann
+es nicht: Er hält `layer_start..layer_end` und sonst nichts, die
+vorderen Layer liegen bei anderen. Was er **allein** nachrechnen kann,
+beginnt bei seiner **eingehenden** Aktivierung, und die muss bleiben.
+
+| je Segment und Shard | | je Knoten, 168 Epochen |
+|---|---|---|
+| jede Layer-Ausgabe (vorher) | 73 KiB | 455 GiB bis 1,8 TiB |
+| nur der Eingang, Rest nachgerechnet | 10 KiB | **65 bis 260 GiB** |
+
+**Faktor 7**, nämlich die Zahl der Layer je Shard. Umgesetzt in
+COMPUTE_PIPELINE v0.13.0.
+
+**Warum nicht noch weniger.** Rechnete der Pod **gemeinsam** nach, müsste
+nur Shard 0 die Token halten, rund 99 MiB über die ganze Frist. Dann
+hinge die Antwort eines Angeklagten aber an der Mitwirkung seiner
+Nachbarn, und „Schweigen heißt Schuld" träfe den, dessen Nachbar
+schweigt. Die eingehende Aktivierung ist die Grenze dessen, was ein
+Shard eigenständig beantworten kann, und diese Eigenständigkeit ist die
+Voraussetzung dafür, dass die Frist fair ist. Der gemeinsame Weg bleibt
+als eigener Punkt.
+
+⚑ **Was dabei verloren geht, und das ist der eigentliche Streitpunkt:**
+Heute liegen die Fragmente erasure-codiert im Pod, die Gegenseite bekommt
+die Daten also auch dann, wenn der Angeklagte gerade nicht erreichbar
+ist. Rechnet nur er nach, heißt Schweigen Schuld, und ein ehrlicher
+Knoten mit einem Ausfall verliert seinen Stake. Ob das hinnehmbar ist,
+hängt an der Antwortfrist: Bei sieben Tagen ist ein Knoten, der die
+ganze Zeit stumm bleibt, ohnehin kein laufender Knoten. Die Schiedsrunde
+hat heute keine fest verdrahtete Frist, sie wäre also zu setzen.
+
+### Die Entscheidung: nachrechnen
+
+⚑ **Der Vorteil des Aufbewahrens besteht nicht.** Er setzt voraus, dass
+die Fragmente im Pod verteilt liegen. Nachgeprüft: Der Speicher ist ein
+lokales Verzeichnis im Shard, `put` legt alle zwölf Fragmente dort ab,
+und es gibt **kein Gossip-Topic für Fragmente**. Ein Fragment verlässt
+seinen Knoten nie. Ist er erreichbar, kann er ebenso gut nachrechnen;
+ist er weg, versagen beide Wege gleich. Die Erasure-Kodierung kostet in
+dieser Verdrahtung das Anderthalbfache und trägt gegen lokale
+Beschädigung, nicht gegen Unerreichbarkeit.
+
+**Und das Nachrechnen macht die verteilte Datenverfügbarkeit erst
+baubar:** 8,1 GiB je Pod lassen sich verteilen, 455 GiB nicht. Es ist
+kein Rückzug von diesem Entwurf, sondern seine Voraussetzung.
+
+**Was es kostet, und das gehört zur Entscheidung:** Das Nachrechnen geht
+über den ganzen Vorlauf, denn eine Position hängt über den KV-Cache an
+allen vorherigen. Die Antwortfrist der Schiedsrunde gab es dafür nicht;
+sie ist seitdem gesetzt (VERIFICATION v0.12.0) und beträgt eine Epoche,
+also das 18-fache der Referenzrechnung. Und Schweigen heißt weiterhin
+Schuld, auch für einen ehrlichen Knoten mit einem Ausfall; bei sieben
+Tagen Frist ist ein durchgehend stummer Knoten allerdings ohnehin kein
+laufender Knoten.
+
+**Die zweistufige Frist ist verworfen:** Sie bräuchte mehr Mechanik und
+brächte weniger als das Nachrechnen.
+
+⚑ **Die Spanne ist keine Ungenauigkeit, sondern eine Annahme, die
+offengelegt gehört.** Der gemessene Durchsatz stammt von einem Knoten
+mit dem ganzen Modell. In einem Pod hält jeder Shard ein Viertel der
+Layer, die Stufen laufen überlappend, und der Pod schafft im besten Fall
+das Vierfache. Dann vervierfacht sich die Zahl der Segmente, und die
+Ersparnis aus der Aufteilung ist wieder aufgezehrt. Ohne diese Schranke
+läse sich die untere Zahl wie eine Zusage.
+
+**Was die Rechnung nicht sagt**, und das steht auch so im Programm: was
+die Bandbreite kostet, wenn ein Angeklagter sein Archiv ausliefern muss,
+und was passiert, wenn ein Knoten mehrere Pods gleichzeitig bedient.
+Beides ist eine eigene Rechnung.
+
+### Herkunft der Zahlen
+
+Frist aus `myl_consensus::DEFAULT_DISPUTE_EPOCHS`, Erasure-Parameter aus
+`myl_types::erasure`, beide **benutzt statt wiederholt**: Als sich die
+Frist mit Fund 50 von 7 auf 168 Epochen korrigierte, hätte eine getippte
+Zahl still weitergerechnet. Ein Test hält beides gegen die Konstanten.
+
+Die Modellmaße lassen sich nicht so holen, sie stehen unter
+`INTEGER_LLM/artifacts/`, und diese Komponente darf dort nicht anhängen.
+Die unvermeidliche Verdopplung ist deshalb bewacht:
+`tests/audit/test_streitlast.py` liest beide Seiten und vergleicht sie,
+zwei Gegenproben, in der CI.
 
 ### v0.4.0 – 2026-08-28 (der Parameter `Signaturstufe`)
 

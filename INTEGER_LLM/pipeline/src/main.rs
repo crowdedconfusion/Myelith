@@ -19,7 +19,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 5 {
-        eprintln!("Usage: {} --config <manifest.json> --stage <id> --bind <addr> --artifacts <dir> [--upstream <addr>] [--downstream <addr>] [--feedback <addr>] [--max-tokens <n>]",
+        eprintln!("Usage: {} --config <manifest.json> --stage <id> --bind <addr> --artifacts <dir> [--downstream <addr>] [--feedback <addr>] [--max-tokens <n>]",
                   args[0]);
         std::process::exit(1);
     }
@@ -27,7 +27,6 @@ fn main() {
     let mut config_path = None;
     let mut stage_id = None;
     let mut bind_addr = None;
-    let mut upstream = None;
     let mut downstream = None;
     let mut feedback = None;
     let mut artifacts = None;
@@ -39,7 +38,6 @@ fn main() {
             "--config" => { config_path = Some(args[i + 1].clone()); i += 2; }
             "--stage" => { stage_id = Some(args[i + 1].parse::<usize>().unwrap()); i += 2; }
             "--bind" => { bind_addr = Some(args[i + 1].clone()); i += 2; }
-            "--upstream" => { upstream = Some(args[i + 1].clone()); i += 2; }
             "--downstream" => { downstream = Some(args[i + 1].clone()); i += 2; }
             "--feedback" => { feedback = Some(args[i + 1].clone()); i += 2; }
             "--artifacts" => { artifacts = Some(args[i + 1].clone()); i += 2; }
@@ -93,9 +91,6 @@ fn main() {
 
     let mut node = Node::new(&format!("node-stage-{}", stage_id), &bind_addr);
     node.attach_runtime(runtime);
-    if let Some(up) = upstream {
-        node.upstream = Some(up);
-    }
     if let Some(down) = downstream {
         node.downstream = Some(down);
     }

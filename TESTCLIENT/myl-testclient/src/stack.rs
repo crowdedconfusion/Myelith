@@ -42,7 +42,7 @@ use myl_types::ids::{Address, EpochId, MinerId, SegmentId};
 use myl_types::merkle::MerkleTree;
 use myl_types::vrf::VrfSecretKey;
 use myl_verifier::{
-    compare_commitments, create_slash_decision, CompareResult, Schuldbeleg, VerdictOutcome,
+    compare_commitments, create_slash_decision, CompareResult, Nachweis, Schuldbeleg,
 };
 
 use crate::logging::{sha256_hex, Event, RunLog};
@@ -609,12 +609,11 @@ fn stufe_verifikation() -> Stufe {
         Err(e) => return Stufe::fehler("verifikation", format!("Beleg: {}", e)),
     };
     let entscheidung = match create_slash_decision(
-        VerdictOutcome::PrimaryLoses,
+        &Nachweis::PrimaerHatGerechnet(&beleg),
         segment,
         schuldiger,
         MinerId::new([2u8; 32]),
         Some(pos),
-        Some(&beleg),
     ) {
         Ok(d) => d,
         Err(e) => return Stufe::fehler("verifikation", format!("Slash-Entscheidung: {:?}", e)),
@@ -654,12 +653,11 @@ fn stufe_ledger() -> Stufe {
         Err(e) => return Stufe::fehler("ledger", format!("Beleg: {}", e)),
     };
     let entscheidung = match create_slash_decision(
-        VerdictOutcome::PrimaryLoses,
+        &Nachweis::PrimaerHatGerechnet(&beleg),
         segment,
         schuldiger,
         MinerId::new([2u8; 32]),
         Some(3),
-        Some(&beleg),
     ) {
         Ok(d) => d,
         Err(e) => return Stufe::fehler("ledger", format!("Slash-Entscheidung: {:?}", e)),

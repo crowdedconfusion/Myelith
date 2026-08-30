@@ -15,6 +15,22 @@ use myl_types::bls::{aggregate_signatures, BlsSecretKey, BlsSignature};
 use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
 use myl_types::{segments_root, PoIBundle};
 
+/// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
+/// Spurwurzel.
+///
+/// ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+/// mehr die bloße Id. Für diese Tests ist der Inhalt der Spur
+/// gleichgültig, ihre Anwesenheit nicht.
+fn zeugnisse(ids: &[SegmentId]) -> Vec<myl_types::Segmentzeugnis> {
+    ids.iter()
+        .map(|id| myl_types::Segmentzeugnis {
+            id: *id,
+            spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("Wurzel"),
+        })
+        .collect()
+}
+
+
 fn miner(b: u8) -> MinerId {
     MinerId::new([b; 32])
 }
@@ -41,7 +57,7 @@ fn membership(epoch: EpochId, pod: PodId) -> PodMembership {
 /// Ein Bündel, das die Mitglieder **korrekt** unterschrieben haben.
 fn ehrliches_buendel(epoch: EpochId, pod: PodId, vtfe: u64) -> PoIBundle {
     let ids = [segment(9), segment(10)];
-    let root = segments_root(&ids).expect("Wurzel");
+    let root = segments_root(&zeugnisse(&ids)).expect("Wurzel");
     let vorlage = PoIBundle {
         epoch,
         pod,
@@ -122,7 +138,7 @@ fn eine_veraenderte_segmentmenge_wird_abgelehnt() {
         vec![segment(10), segment(9)],               // umsortiert
     ] {
         let manipuliert = PoIBundle {
-            segments_root: segments_root(&ids).expect("Wurzel"),
+            segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             ..ehrlich.clone()
         };
         assert_eq!(
@@ -163,7 +179,7 @@ fn ein_allein_unterschriebenes_buendel_wird_abgelehnt() {
     let vorlage = PoIBundle {
         epoch: e,
         pod: p,
-        segments_root: segments_root(&ids).expect("Wurzel"),
+        segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
     };
@@ -236,7 +252,7 @@ fn fund_52_die_uebergangssignaturen_verifizieren_das_buendel_nicht() {
     let vorlage = PoIBundle {
         epoch: e,
         pod: p,
-        segments_root: segments_root(&ids).expect("Wurzel"),
+        segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
     };
@@ -298,7 +314,7 @@ fn die_signierbotschaft_des_pods_ist_die_des_konsenses() {
         let b = PoIBundle {
             epoch: EpochId(w % 10_000),
             pod: PodId::new([((w >> 16) & 0xff) as u8; 32]),
-            segments_root: segments_root(&ids).expect("Wurzel"),
+            segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: w,
             aggregate_sig: BlsSignature([0u8; 96]),
         };
@@ -358,7 +374,6 @@ fn fund_52_das_unterschriebene_buendel_verifiziert() {
                 i == k - 1,
                 model.clone(),
                 sk((i + 1) as u8),
-                myl_pod::da::DaStore::new(Box::new(myl_pod::da::XorParityCoder::new(4))),
                 8,
             ))
         })
@@ -451,7 +466,6 @@ fn ein_mitglied_unterschreibt_keinen_falschen_anspruch() {
         false,
         model,
         sk(1),
-        myl_pod::da::DaStore::new(Box::new(myl_pod::da::XorParityCoder::new(4))),
         8,
     );
     let zuschnitte = vec![shard.zuschnitt()];

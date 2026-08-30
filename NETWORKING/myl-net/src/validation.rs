@@ -79,6 +79,16 @@ pub const MAX_TRANSACTIONS_BYTES: usize = 64 * 1024;
 /// Maximale Größe eines PoI-Bündels.
 pub const MAX_POI_BUNDLES_BYTES: usize = 512 * 1024;
 /// Maximale Größe einer Challenge-Nachricht.
+///
+/// **Aus dem Typ gerechnet:** Segment 32 + Position 8 + zwei Kennungen
+/// je 32 + zwei Hashes je 32 + Zeitstempel 8 + BLS-Signatur 96 = **272
+/// Bytes**. Alle Felder haben feste Breite, eine Anfechtung wächst also
+/// nicht.
+///
+/// ⚑ Sie wuchs am 2026-08-29 von 176 auf 272 Bytes, weil sie seitdem
+/// eine Unterschrift trägt (Fund 96). Die Grenze bleibt bei 64 KiB, also
+/// bei dem 240-fachen: eng genug, dass eine Flut Bandbreite kostet, weit
+/// genug, dass sie keinen Entwurf einschränkt.
 pub const MAX_CHALLENGES_BYTES: usize = 64 * 1024;
 /// Maximale Größe eines Latenz-Attests.
 pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
@@ -357,6 +367,21 @@ pub fn report_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
+    /// Spurwurzel.
+    ///
+    /// ⚑ Seit Fund 100 bezeugt die Bündelwurzel `Id ‖ Spurwurzel`, nicht
+    /// mehr die bloße Id. Für diese Tests ist der Inhalt der Spur
+    /// gleichgültig, ihre Anwesenheit nicht.
+    fn zeugnisse(ids: &[SegmentId]) -> Vec<myl_types::Segmentzeugnis> {
+        ids.iter()
+            .map(|id| myl_types::Segmentzeugnis {
+                id: *id,
+                spurwurzel: myl_types::spurwurzel(&[*id.as_bytes()]).expect("Wurzel"),
+            })
+            .collect()
+    }
     use libp2p::gossipsub::IdentTopic;
     use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
     use myl_types::{segments_root, BlsSecretKey, Challenge, Hash, PoIBundle};
@@ -370,6 +395,9 @@ mod tests {
             primary_hash: Hash::sha256(b"a"),
             redundant_hash: Hash::sha256(b"b"),
             timestamp_ms: 1_700_000_000_000,
+            // Unsigniert: Dieser Test prueft die Struktur- und
+            // Groessenpruefung, nicht die Unterschrift (Fund 96).
+            signature: myl_types::bls::BlsSignature([0u8; 96]),
         }
     }
 
@@ -380,7 +408,7 @@ mod tests {
         let bundle = PoIBundle {
             epoch: EpochId(1),
             pod: PodId::new([4u8; 32]),
-            segments_root: segments_root(&ids).expect("Wurzel"),
+            segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: 42,
             aggregate_sig: sig,
         };

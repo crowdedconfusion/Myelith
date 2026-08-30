@@ -1,0 +1,204 @@
+# Gebaute Binaries je Plattform, damit Mitmachen kein Rust braucht.
+#
+# # ⚑ Warum es das gibt
+#
+# Heute klont ein Teilnehmer das Repositorium und übersetzt selbst; der
+# Starter bietet an, Rust zu installieren, wenn es fehlt. Das ist eine
+# Hürde vor genau dem Test, der ohne Hürde stattfinden soll: Rechnen
+# zwei fremde Maschinen dasselbe?
+#
+# # ⚑ Was diesen Job von einem gewöhnlichen Release-Job unterscheidet
+#
+# **Jedes Binary belegt vor der Veröffentlichung, dass es richtig
+# rechnet.** Der Konformitätslauf läuft mit dem **gebauten Binary** auf
+# dem Runner, der es gebaut hat, und sein Gesamtwert muss der bekannte
+# sein. Ein Binary, das anders rechnet, ist kein langsames, sondern ein
+# schädliches: Es liefert Segmente, die von den redundanten abweichen.
+#
+# Gemessen am 2026-08-29, und deshalb steht die Prüfung hier: Ein auf
+# aarch64/macOS quergebautes x86_64-Binary lieferte denselben Wert wie
+# das native. Zwei Architekturen, ein Wert.
+#
+# # Was dieser Job NICHT leistet
+#
+# - **Keine musl-Ziele.** Die Linux-Binaries binden gegen die glibc des
+#   Runners; auf einer älteren Verteilung starten sie nicht. Wer das
+#   braucht, baut selbst oder wir nehmen musl auf, sobald jemand es
+#   meldet. Eine Zusage, die niemand geprüft hat, wäre schlimmer als die
+#   fehlende.
+# - **Kein Modell.** Die Artefakte sind mehrere Gigabyte groß und
+#   entstehen aus einem Kalibrierungslauf; sie gehören nicht in ein
+#   Release.
+# - **Keine Signatur der Binaries.** Es gibt Prüfsummen, und die sagen
+#   nur, dass die Datei unverändert ankam, nicht von wem sie stammt.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # ⚑ Die `.cargo/config.toml` des Repositoriums legt `target-shared`
+  # als Ausgabeverzeichnis fest, damit die 18 eigenständigen Crates ihre
+  # gemeinsamen Abhängigkeiten nicht 18-mal übersetzen. Hier wird der
+  # Pfad ausdrücklich gesetzt, weil die Schritte unten ihn benennen und
+  # eine stille Änderung an der Konfiguration sie sonst ins Leere
+  # zeigen ließe.
+  CARGO_TARGET_DIR: target
+
+jobs:
+  bauen:
+    name: ${{ matrix.ziel }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # ⚑ Ein fehlendes Runner-Label darf nicht die übrigen Ziele
+      # mitreißen. Es fällt dann sichtbar aus, statt das ganze Release
+      # zu verhindern.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ziel: x86_64-unknown-linux-gnu
+            eigen: true
+          - os: ubuntu-24.04-arm
+            ziel: aarch64-unknown-linux-gnu
+            eigen: true
+          - os: windows-latest
+            ziel: x86_64-pc-windows-msvc
+            eigen: true
+            endung: .exe
+          - os: macos-latest
+            ziel: aarch64-apple-darwin
+            eigen: true
+          # ⚑ `eigen: false`: Der macOS-Runner ist arm64 und führt ein
+          # x86_64-Binary ohne Rosetta nicht aus. Dieses eine Ziel kann
+          # sich deshalb nicht selbst prüfen, und das steht hier, statt
+          # dass der Schritt still übersprungen aussieht wie ein
+          # bestandener.
+          - os: macos-latest
+            ziel: x86_64-apple-darwin
+            eigen: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.ziel }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.ziel }}
+
+      - name: Testclient bauen
+        shell: bash
+        working-directory: TESTCLIENT/myl-testclient
+        run: cargo build --release --locked --target ${{ matrix.ziel }}
+
+      - name: Knoten bauen
+        shell: bash
+        working-directory: NODE/myl-node
+        run: cargo build --release --locked --target ${{ matrix.ziel }}
+
+      # ⚑ Der Kern dieses Workflows. Nicht der Bau belegt etwas, sondern
+      # dieser Lauf: Das **gebaute** Binary rechnet die sechs
+      # Operations-Vektoren, und der Gesamtwert muss der bekannte sein.
+      # Er braucht kein Modell.
+      - name: Konformitaet des gebauten Binaries
+        if: matrix.eigen
+        shell: bash
+        run: |
+          set -e
+          BIN="TESTCLIENT/myl-testclient/target/${{ matrix.ziel }}/release/myl-test${{ matrix.endung }}"
+          mkdir -p release-konf
+          "$BIN" --name release --logs release-konf konformitaet
+          if ! grep -q '894d8357ae92b5c1' release-konf/*.jsonl; then
+            echo "FEHLER: dieses Binary rechnet anders als das Netz."
+            echo "Erwartet 894d8357ae92b5c1, gefunden:"
+            grep -o '"gesamt":"[^"]*"' release-konf/*.jsonl || cat release-konf/*.jsonl
+            exit 1
+          fi
+          echo "Konformitaet belegt fuer ${{ matrix.ziel }}"
+
+      - name: Ungeprueftes Ziel benennen
+        if: ${{ !matrix.eigen }}
+        shell: bash
+        run: |
+          echo "::warning title=Ungeprueft::${{ matrix.ziel }} wurde gebaut, aber nicht"
+          echo "ausgefuehrt: Der Runner kann dieses Binary nicht starten. Der"
+          echo "Konformitaetswert dieses Ziels ist damit unbelegt."
+
+      - name: Einsammeln
+        shell: bash
+        run: |
+          set -e
+          mkdir -p ausgabe
+          cp "TESTCLIENT/myl-testclient/target/${{ matrix.ziel }}/release/myl-test${{ matrix.endung }}" \
+             "ausgabe/myl-test-${{ matrix.ziel }}${{ matrix.endung }}"
+          cp "NODE/myl-node/target/${{ matrix.ziel }}/release/myl-node${{ matrix.endung }}" \
+             "ausgabe/myl-node-${{ matrix.ziel }}${{ matrix.endung }}"
+          # Ein Ziel, das sich nicht selbst pruefen konnte, wird als
+          # solches ausgeliefert und nicht stillschweigend gleichgestellt.
+          if [ "${{ matrix.eigen }}" != "true" ]; then
+            echo "Dieses Ziel wurde gebaut, aber nicht ausgefuehrt:" > "ausgabe/UNGEPRUEFT-${{ matrix.ziel }}.txt"
+            echo "der Runner kann es nicht starten." >> "ausgabe/UNGEPRUEFT-${{ matrix.ziel }}.txt"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.ziel }}
+          path: ausgabe/*
+
+  veroeffentlichen:
+    name: Veroeffentlichen
+    needs: bauen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: eingang
+
+      - name: Pruefsummen
+        run: |
+          set -e
+          mkdir -p release
+          find eingang -type f -exec cp {} release/ \;
+          cd release
+          # `sha256sum` gibt es auf Ubuntu; die Ausweichzeile deckt
+          # Umgebungen ohne coreutils ab.
+          if command -v sha256sum >/dev/null; then
+            sha256sum * > PRUEFSUMMEN.txt
+          else
+            shasum -a 256 * > PRUEFSUMMEN.txt
+          fi
+          cat PRUEFSUMMEN.txt
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          MARKE="${GITHUB_REF_NAME}"
+          gh release create "$MARKE" release/* \
+            --title "$MARKE" \
+            --notes "Gebaute Binaries für Testclient (\`myl-test\`) und Knoten (\`myl-node\`).
+
+          **Jedes Binary hat vor der Veröffentlichung belegt, dass es richtig rechnet:**
+          Der Konformitätslauf der sechs Operations-Vektoren lief mit genau diesem
+          Binary auf dem Rechner, der es gebaut hat, und ergab den bekannten Wert.
+          Ausnahme ist \`x86_64-apple-darwin\`; der macOS-Runner ist arm64 und kann
+          dieses Binary nicht starten. Es liegt eine Datei \`UNGEPRUEFT-*.txt\` dabei.
+
+          **Die Linux-Binaries binden gegen die glibc des Runners.** Auf einer
+          älteren Verteilung starten sie nicht; dort weiterhin selbst übersetzen.
+
+          Prüfsummen in \`PRUEFSUMMEN.txt\`. Sie belegen, dass die Datei unverändert
+          ankam, nicht von wem sie stammt."

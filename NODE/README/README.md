@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.13.1
+> **Version:** 0.15.1
 > **Datum:** 2026-08-29
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
@@ -277,6 +277,55 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.15.1 – 2026-08-30 (die Probe baut ein Bündel, das etwas bezeugt)
+
+`probe_poi_buendel` zählte Segment-Ids auf und bildete daraus die
+Bündelwurzel. Seit Fund 100 bezeugt die Wurzel `Id ‖ Spurwurzel`, also
+baut die Probe jetzt auch eine Spur. Ein Bündel, das nur Positionen
+aufzählt, prüfte den Weg nicht, den ein echtes nimmt.
+
+### v0.15.0 – 2026-08-29 (⚑ Fund 96: Anfechtungen werden geprüft, aber nur, wo geprüft werden kann)
+
+Eine Anfechtung fiel im `ProtokollValidator` unter `_ => true`, und bis
+zum selben Tag trug sie auch gar keine Unterschrift. Beides zusammen
+hieß: Jeder konnte im Namen jedes Miners anfechten. Das kostet den
+Angeklagten etwas, denn er muss antworten.
+
+Seitdem prüft der Knoten sie, und die Probe-Anfechtung wird
+unterschrieben: Der Herausforderer ist der Absender, seine Kennung wird
+aus dem Probeschlüssel abgeleitet. Eine Probe mit erfundenem
+Herausforderer prüfte den Weg nicht, den eine echte Anfechtung nimmt,
+sondern einen, den es nicht mehr gibt.
+
+### ⚑ Der Unterschied zum Latenz-Attest, und er hätte beinahe gefehlt
+
+Ein Attest kommt von einem **Validator**, und die Validatorenliste ist
+genau die Menge, gegen die geprüft wird. Ein Herausforderer ist dagegen
+ein **Miner** des redundanten Pods, und der muss dort nicht stehen. Wer
+ihn deshalb abwiese, verwürfe aus **geratener Unkenntnis**, und im
+Gossipsub-Scoring trifft das den ehrlichen Absender, nicht den
+Angreifer. Dieselbe Überlegung, aus der Konsensnachrichten hier nur
+strukturell geprüft werden.
+
+Also: unbekannter Herausforderer geht durch, falsche Unterschrift eines
+**bekannten** nicht. Eine Anfechtung, deren Absender niemand zuordnen
+kann, führt trotzdem zu nichts, denn die Slash-Entscheidung verlangt den
+Schlüssel.
+
+⚑ **Die Zuordnung Miner zu Schlüssel gehört in eine Registrierung, die
+es noch nicht gibt.** Solange die Teilnehmerliste die einzige Quelle
+ist, prüft dieser Zweig im echten Netz nur die Validatoren unter den
+Herausforderern. Steht so im Code.
+
+### v0.14.0 – 2026-08-29 (die Mindestfassung berichtigt)
+
+`rust-version` nannte `1.85` und war falsch: Über libp2p hängen `icu_*`
+(1.86) und `time` (1.88). Gemessen gegen echte Toolchains mit
+`--locked`, jetzt `1.88`, und ein CI-Job fährt sie. Keine Verschärfung,
+sondern eine Berichtigung: Der Code brauchte es schon vorher.
+
+Siehe NETWORKING v0.11.0 für die Herleitung.
 
 ### v0.13.1 – 2026-08-29 (drei Abschriften weniger)
 

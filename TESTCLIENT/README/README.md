@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.17.3
+> **Version:** 0.19.1
 > **Datum:** 2026-08-28
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -507,6 +507,82 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.19.1 – 2026-08-30 (der Durchstich baut Pods ohne Archiv)
+
+`ShardNode` nimmt seit COMPUTE_PIPELINE v0.14.0 keinen `DaStore` mehr
+entgegen: Der Shard archiviert nichts, die strittige Aktivierung bringt
+im Streitfall der Ankläger mit. Stufe 7 des Durchstichs zieht mit.
+
+### v0.19.0 – 2026-08-29 (gebaute Binaries, und jedes belegt vor der Auslieferung, dass es richtig rechnet)
+
+Wer heute mitmachen will, klont das Repositorium und übersetzt selbst;
+der Starter bietet an, Rust zu installieren, wenn es fehlt. Das ist eine
+Hürde vor genau dem Test, der ohne Hürde stattfinden soll.
+
+Ein Release-Workflow baut jetzt `myl-test` und `myl-node` für fünf
+Ziele: Linux x86_64 und aarch64, Windows x86_64, macOS arm64 und x86_64.
+Ausgelöst durch eine Marke `v*` oder von Hand.
+
+### ⚑ Was ihn von einem gewöhnlichen Release-Job unterscheidet
+
+**Jedes Binary belegt vor der Veröffentlichung, dass es richtig
+rechnet.** Der Konformitätslauf der sechs Operations-Vektoren läuft mit
+genau diesem Binary auf dem Rechner, der es gebaut hat; weicht der
+Gesamtwert ab, bricht das Release ab. Ein Binary, das anders rechnet,
+ist kein langsames, sondern ein schädliches: Es liefert Segmente, die
+von den redundanten abweichen, wird geschlachtet, und bis dahin hat es
+den Auftragsstrom verschmutzt.
+
+Dass diese Prüfung durchgehen kann, ist gemessen und nicht gehofft: Ein
+auf aarch64/macOS **quergebautes** x86_64-Binary lieferte denselben Wert
+wie das native. Zwei Architekturen, ein Wert.
+
+### Drei Grenzen, ausdrücklich
+
+- **`x86_64-apple-darwin` prüft sich nicht selbst.** Der macOS-Runner
+  ist arm64 und startet dieses Binary ohne Rosetta nicht. Es wird
+  gebaut und ausgeliefert, aber mit einer Datei `UNGEPRUEFT-*.txt`
+  daneben, statt es stillschweigend den geprüften gleichzustellen.
+- **Die Linux-Binaries binden gegen die glibc des Runners.** Auf einer
+  älteren Verteilung starten sie nicht. Eine musl-Zusage, die niemand
+  geprüft hat, wäre schlimmer als die fehlende.
+- **Prüfsummen sind keine Signaturen.** Sie belegen, dass die Datei
+  unverändert ankam, nicht von wem sie stammt.
+
+Jeder Befehl des Workflows wurde einzeln lokal ausgeführt, bevor er
+hineingeschrieben wurde, samt Gegenprobe: Mit verfälschtem Wert bricht
+der Lauf ab. **Der Workflow selbst ist damit trotzdem ungeprüft**, bis
+er das erste Mal läuft; das lässt sich örtlich nicht nachstellen.
+
+### v0.18.0 – 2026-08-29 (die Mindestfassung berichtigt)
+
+`rust-version` nannte `1.85` und war falsch, aus demselben Grund wie in
+NETWORKING v0.11.0: die libp2p-Kette. Gemessen, jetzt `1.88`.
+
+⚑ **Für dieses Crate zählt das mehr als für die anderen**, denn es ist
+das Stück, das ein Teilnehmer als Erstes übersetzt. Eine falsche Angabe
+schickt ihn mit einer Toolchain los, die nicht baut, und der Fehler
+zeigt sich als Wand aus Meldungen über fremde Pakete.
+
+### ⚑ Der Konformitätswert wurde nur auf Windows geprüft
+
+Er muss auf jeder Maschine derselbe sein; das ist die Zusage, auf der
+das ganze Protokoll steht. Geprüft hat ihn bis heute allein der
+Windows-Lauf der CI. **Auf Linux, wo die meisten Knoten laufen werden,
+prüfte ihn niemand.**
+
+Der Ubuntu-Lauf prüft ihn jetzt mit, und zwar ohne eigenen
+Release-Bau: Der Wert ist profilunabhängig, am 29. August auf
+aarch64/macOS in beiden Profilen gemessen und identisch. Ein
+Unterschied zwischen den Profilen wäre selbst ein Befund.
+
+Dass macOS keinen eigenen Runner hat, war damit begründet, dass „jeder
+Patch dort ohnehin durch die Konformitätsvektoren läuft". Das
+beschrieb eine Gewohnheit, keine Prüfung: Der Lauf stand in keiner
+Schleife, die jemand ausführen musste. Er steht jetzt in einer. Damit
+liegt die These auf zwei Plattformen in der CI und auf der dritten bei
+jedem Patch.
 
 ### v0.17.3 – 2026-08-29 (der Durchstich baut den Schuldbeleg wie im Betrieb)
 

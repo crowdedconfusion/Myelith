@@ -998,7 +998,10 @@ impl Knoten {
                 (GossipTopic::PoiBundles, borsh::to_vec(&b).ok())
             }
             Probe::Challenge => {
-                let c = crate::probe::probe_challenge(&name, folge);
+                let Some(c) = crate::probe::probe_challenge(&name, folge) else {
+                    self.vermerke_probe(probe, false);
+                    return false;
+                };
                 (GossipTopic::Challenges, borsh::to_vec(&c).ok())
             }
             Probe::Latenzattest => {

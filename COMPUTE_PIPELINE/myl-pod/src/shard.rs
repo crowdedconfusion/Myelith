@@ -32,7 +32,6 @@ use integer_llm_runtime::model::IntegerModel;
 use myl_tokenomics::{ModellProfil, ShardZuschnitt};
 use myl_types::bls::{BlsPublicKey, BlsSecretKey, BlsSignature};
 
-use crate::da::DaStore;
 use crate::trace::{activation_hash, verify_input_hash, TransitionSig, ZERO_HASH};
 use crate::wire::{unpack_tokens, PodMessage, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
 
@@ -87,7 +86,6 @@ pub struct ShardNode {
     /// KV-Cache je Session (Session-Affinität, Kap. 4.2).
     caches: Mutex<HashMap<u64, KVCache>>,
     /// DA-Archiv für die Streitfrist.
-    da: Mutex<DaStore>,
     /// Gemeinsame Boundary-Skala auf dem Draht.
     /// Budget an zu generierenden Tokens je Request.
     max_new_tokens: u64,
@@ -119,7 +117,6 @@ impl ShardNode {
         has_lm_head: bool,
         model: Arc<IntegerModel>,
         bls_sk: BlsSecretKey,
-        da: DaStore,
         max_new_tokens: u64,
     ) -> Self {
         let bls_pk = bls_sk.public_key().expect("BLS Public Key");
@@ -133,27 +130,10 @@ impl ShardNode {
             bls_sk,
             bls_pk,
             caches: Mutex::new(HashMap::new()),
-            da: Mutex::new(da),
             max_new_tokens,
             gen_count: Mutex::new(HashMap::new()),
             dekodier_digest: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Die archivierte Ausgabe-Aktivierung einer Layer, für Prüfer und
-    /// für den Angeklagten in der Streitfrist.
-    ///
-    /// Der Weg nach draußen ist Absicht: Ohne ihn ließe sich die
-    /// DA-Pflicht aus Anhang A.3 Schritt 6 nicht prüfen, und genau das
-    /// war der Grund, warum das Überschreiben je Position so lange
-    /// unbemerkt blieb.
-    pub fn archiviert(
-        &self,
-        segment_id: &myl_types::ids::SegmentId,
-        layer: usize,
-    ) -> Result<Vec<i16>, String> {
-        let da = self.da.lock().unwrap();
-        da.get(*segment_id.as_bytes(), layer as u64)
     }
 
     /// Dekodier-Digest einer Session: Hexwert und Zahl der Schritte.
@@ -415,10 +395,15 @@ impl ShardNode {
 
     /// Archiviert die Ausgabe-Aktivierungen **einer Layer** (DA-Pflicht,
     /// Anhang A.3 Schritt 6).
-    fn archive(&self, segment_id: &myl_types::ids::SegmentId, layer: usize, activations: &[i16]) {
-        let mut da = self.da.lock().unwrap();
-        da.put(*segment_id.as_bytes(), layer as u64, activations);
+    /// Ein leerer KV-Cache für den Layer-Bereich dieses Shards.
+    ///
+    /// Für die Nachrechnung von vorn: Wer bei Position 0 beginnt, hat
+    /// keinen Vorlauf, und wer bei Position `t` beginnt, baut ihn damit
+    /// über die Positionen 0 bis `t-1` auf.
+    pub fn frischer_cache(&self) -> KVCache {
+        KVCache::for_range(self.layer_start, self.layer_end, self.model.num_kv_heads)
     }
+
 
     /// Rechnet den Layer-Bereich dieses Shards **Layer für Layer** und
     /// hängt je Layer einen Spur-Eintrag an; archiviert wird ebenso.
@@ -450,10 +435,25 @@ impl ShardNode {
         segment_id: &myl_types::ids::SegmentId,
         trace: &mut Vec<[u8; 32]>,
     ) -> Vec<i16> {
+        // ⚑ **Hier wird nichts mehr archiviert** (E10, 2026-08-30).
+        //
+        // Bis zum selben Tag lag hier erst jede Layer-Ausgabe, dann der
+        // Eingang; über die Streitfrist zwischen 65 GiB und 1,8 TiB je
+        // Knoten, zusätzlich zur Modellgröße.
+        //
+        // Nötig war das, weil der **Angeklagte** im Streitfall die
+        // Eingabe offenlegen musste. Das tut jetzt der **Ankläger**: Die
+        // Bisektion endet an der ersten Abweichung, bei `j-1` sind sich
+        // beide einig, und er hat den Wert ohnehin, weil er das Segment
+        // gerade nachgerechnet hat.
+        //
+        // Was bleibt, ist die **Spur**, und die entsteht ohnehin hier:
+        // 32 Byte je Layer statt 7 KiB je Eingang, und sie ist die
+        // Zusicherung, gegen die geurteilt wird.
+        let _ = segment_id;
         for i in self.layer_start..self.layer_end {
             hidden = self.model.run_layers(hidden, pos, cache, i, i + 1);
             trace.push(activation_hash(&hidden));
-            self.archive(segment_id, i, &hidden);
         }
         hidden
     }
@@ -565,6 +565,11 @@ mod tests {
     /// ist der Arc wertlos — vorher blockierte ein
     /// `Box<dyn ErasureCoder>` ohne Schranken die gesamte
     /// Nebenlaeufigkeit, ohne dass es auffiel.
+    ///
+    /// Diese Box gibt es seit E10 (2026-08-30) nicht mehr, der Shard
+    /// archiviert nichts. **Der Test bleibt trotzdem**: Er bewacht die
+    /// Eigenschaft, nicht das damalige Gegenbeispiel, und die naechste
+    /// Box ohne Schranken faellt genauso auf.
     #[test]
     fn shardnode_ist_ueber_threads_teilbar() {
         fn ist_send<T: Send>() {}

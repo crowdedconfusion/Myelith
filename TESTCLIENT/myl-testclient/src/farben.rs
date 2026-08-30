@@ -118,7 +118,12 @@ pub fn logo() -> Color {
 /// einzige Verteilung, in der nie zwei gleiche nebeneinander stehen.
 pub fn schlagwort() -> Color {
     let s = sitzung();
-    let dran = if WECHSEL.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+    // ⚑ `is_multiple_of` ist erst seit Rust 1.87 stabil. Dieses Crate
+    // erklärt 1.88 (siehe `Cargo.toml`: die libp2p-Kette verlangt es),
+    // also ist der Aufruf hier zulässig; in den Crates mit 1.85 wäre er
+    // es nicht. Die zwei Stufen wirken in beide Richtungen, und clippy
+    // richtet sich nach der angegebenen Fassung.
+    let dran = if WECHSEL.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
         s.a
     } else {
         s.b

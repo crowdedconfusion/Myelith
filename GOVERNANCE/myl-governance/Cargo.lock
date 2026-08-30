@@ -206,7 +206,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "myl-consensus"
-version = "0.17.1"
+version = "0.17.2"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.4.0"
+version = "0.5.2"
 dependencies = [
  "myl-consensus",
  "myl-ledger",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "blst",
  "borsh",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.11.0"
+version = "0.14.0"
 dependencies = [
  "borsh",
  "myl-ledger",

@@ -23,7 +23,6 @@ use integer_llm_runtime::generate::dekodieren_mit_digest;
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::tokenizer::Tokenizer;
 use myl_pod::coordinator::Coordinator;
-use myl_pod::da::{DaStore, XorParityCoder};
 use myl_pod::shard::{ShardNode, ShardOut};
 use myl_pod::wire::{self, PodMessage};
 use myl_types::bls::BlsSecretKey;
@@ -64,7 +63,6 @@ fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens
         let has_lm_head = s == 3;
         let ikm = [(s as u8 + 1) * 17; 32];
         let sk = BlsSecretKey::key_gen(&ikm).expect("BLS KeyGen");
-        let da = DaStore::new(Box::new(XorParityCoder::new(4)));
         let shard = ShardNode::new(
             s,
             layer_start,
@@ -73,7 +71,6 @@ fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens
             has_lm_head,
             model.clone(),
             sk,
-            da,
             max_tokens,
         );
         shards.push(Arc::new(shard));
@@ -299,7 +296,6 @@ fn beanspruchte_arbeit_haengt_nicht_am_zuschnitt() {
                     s + 1 == k,
                     model.clone(),
                     sk,
-                    DaStore::new(Box::new(XorParityCoder::new(4))),
                     MAX_NEW_TOKENS,
                 ))
             })
@@ -409,7 +405,6 @@ fn die_spur_haengt_am_modell_nicht_am_zuschnitt() {
                     s + 1 == k,
                     model.clone(),
                     sk,
-                    DaStore::new(Box::new(XorParityCoder::new(4))),
                     MAX_NEW_TOKENS,
                 ))
             })
@@ -472,7 +467,6 @@ fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
     let prompt_tokens: Vec<u32> = tokenizer.encode(PROMPT).iter().map(|t| *t as u32).collect();
 
     let shards = build_shards(model.clone(), MAX_NEW_TOKENS);
-    let erster = shards[0].clone();
     let mut coordinator = Coordinator::new(
         PodId::new([0xAA; 32]),
         EpochId(0),
@@ -491,27 +485,71 @@ fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
     let ids: std::collections::BTreeSet<_> = segmente.iter().map(|c| c.id).collect();
     assert_eq!(ids.len(), segmente.len(), "Segment-Ids müssen verschieden sein");
 
-    // **Und jede Position ist noch abrufbar, nicht nur die letzte.**
+    // ⚑ **Und jede Position hat eine eigene Spur** (E10, 2026-08-30).
+    //
+    // Hier stand bis zum 2026-08-29 eine Prüfung auf das **Archiv**:
+    // Jede Position musste ihre Aktivierung noch abrufbar haben. Seit
+    // E10 archiviert der Shard nichts mehr, denn die strittige Eingabe
+    // bringt im Streitfall der **Ankläger** mit, der das Segment gerade
+    // nachgerechnet hat.
+    //
+    // Was bleibt und was hier geprüft wird, ist die **Spur**: Sie ist
+    // die Zusicherung, gegen die geurteilt wird, sie ist je Position
+    // eine andere, und sie ist mit 32 Byte je Layer klein genug, um über
+    // die Streitfrist zu bleiben.
     let erste = &segmente[0];
     let letzte = &segmente[segmente.len() - 1];
-    let a = erster
-        .archiviert(&erste.id, 0)
-        .expect("Aktivierung der ersten Position muss archiviert sein");
-    let b = erster
-        .archiviert(&letzte.id, 0)
-        .expect("Aktivierung der letzten Position muss archiviert sein");
     assert_ne!(
-        a, b,
-        "zwei Positionen dürfen nicht dieselbe archivierte Aktivierung tragen"
+        erste.trace, letzte.trace,
+        "zwei Positionen dürfen nicht dieselbe Spur tragen"
+    );
+    assert_ne!(
+        erste.spurwurzel, letzte.spurwurzel,
+        "und damit auch nicht dieselbe Zusicherung"
     );
 
-    // Der archivierte Wert muss zum Spur-Eintrag passen: Genau das
-    // verlangt `adjudicate` vom Angeklagten.
+    // ⚑ Die Zusicherung muss zur Kette passen, sonst bezeugt das Bündel
+    // etwas anderes als das, was gerechnet wurde (Fund 100).
     assert_eq!(
-        myl_pod::trace::activation_hash(&a),
-        erste.trace[0],
-        "das Archiv muss liefern, was die Spur committet hat"
+        erste.spurwurzel,
+        myl_types::spurwurzel(&erste.kette()).expect("Wurzel"),
+        "die Zusicherung muss die Wurzel über die eigene Kette sein"
     );
+
+    // ⚑ **Und die Kette beginnt beim Eingang** (Fund 102). Ohne diesen
+    // ersten Eintrag hinge die Eingabe der **ersten** Layer an nichts,
+    // und die Schiedsrunde prüfte dort einen Hash des Anklägers gegen
+    // einen zweiten Hash desselben Anklägers.
+    assert_eq!(erste.kette().len(), erste.trace.len() + 1);
+    assert_eq!(erste.kette()[0], erste.eingangs_commitment);
+    assert_eq!(erste.kette()[1], erste.trace[0]);
+    assert_ne!(
+        erste.eingangs_commitment, erste.trace[0],
+        "Eingang und erste Ausgabe dürfen nicht derselbe Wert sein"
+    );
+    assert_ne!(
+        erste.eingangs_commitment, letzte.eingangs_commitment,
+        "zwei Positionen haben verschiedene Eingaben"
+    );
+
+    // ⚑ **Der Protokoll-Beleg ist eine Projektion, keine zweite
+    // Aufzeichnung.** `myl_types::Segment` beschreibt ihn seit dem
+    // 2026-08-13, erzeugt hat ihn bis zum 2026-08-30 niemand, und die
+    // beiden führten verschiedene Felder: Genau daraus entstand
+    // Fund 102.
+    let modell = myl_types::ids::MerkleRoot::new([3u8; 32]);
+    let beleg = erste.zu_segment(modell);
+    assert_eq!(beleg.id, erste.id);
+    assert_eq!(beleg.model_version, modell);
+    assert_eq!(beleg.input_commitment.0, erste.eingangs_commitment);
+    assert_eq!(
+        beleg.output_commitment.0,
+        *erste.trace.last().unwrap(),
+        "die Ausgabe des Segments ist der letzte Spur-Eintrag"
+    );
+    assert_eq!(beleg.trace.len(), erste.trace.len());
+    assert_eq!(beleg.pod_path, erste.pod_path);
+
 }
 
 /// Zwei Pods mit **verschiedenem** Zuschnitt sind jetzt vergleichbar.
@@ -545,7 +583,6 @@ fn vier_gegen_acht_shards_sind_vergleichbar() {
                 Arc::new(ShardNode::new(
                     s, grenzen[s], grenzen[s + 1], s == 0, s + 1 == k,
                     model.clone(), sk,
-                    DaStore::new(Box::new(XorParityCoder::new(4))),
                     MAX_NEW_TOKENS,
                 ))
             })

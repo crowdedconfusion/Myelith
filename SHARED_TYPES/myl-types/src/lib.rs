@@ -46,8 +46,8 @@ pub use bls::{
     BlsError, BlsProofOfPossession, BlsPublicKey, BlsSecretKey, BlsSignature, BLS_DST,
     BLS_POP_DST,
 };
-pub use challenge::{Challenge, ChallengeStructureError};
-pub use core_types::{segments_root, InferenceCredit, PoIBundle, Segment};
+pub use challenge::{Challenge, ChallengeStructureError, DST_CHALLENGE};
+pub use core_types::{segments_root, spurwurzel, InferenceCredit, PoIBundle, Segment, Segmentzeugnis};
 pub use hash::Hash;
 pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,

@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.12.0
+> **Version:** 0.16.0
 > **Datum:** 2026-08-26
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -69,6 +69,124 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.16.0 – 2026-08-30 (der Protokoll-Beleg ist jetzt eine Projektion)
+
+`myl_types::Segment` beschreibt den Segment-Beleg seit dem 2026-08-13
+(Anhang A.1), und die Gateway-Planung setzt ihn voraus. **Erzeugt hat
+ihn niemand.** Was der Pod wirklich festhielt, war `CompletedSegment`, und
+die beiden führten verschiedene Felder.
+
+Zwei Typen für dieselbe Sache sind eine zweite Quelle, und diese hier
+hat schon Schaden angerichtet: `Segment` trägt ein `input_commitment`,
+`CompletedSegment` hatte keines, und **genau daraus entstand Fund 102**,
+die tautologische Prüfung an der ersten Layer.
+
+`CompletedSegment::zu_segment` erzeugt den Beleg jetzt aus dem, was der
+Pod ohnehin hat: keine zweite Aufzeichnung, sondern eine Projektion.
+`model_version` ist der einzige Wert von außen, denn er gehört zum
+Modell und nicht zum Segment.
+
+### v0.15.0 – 2026-08-30 (⚑ Fund 102: die erste Layer hing an nichts)
+
+Beim kritischen Nachlesen der eigenen Änderung gefunden, nicht beim
+Bauen. Die Schiedsrunde bindet die strittige Eingabe an `trace[j-1]`,
+also an die Ausgabe der Layer davor. **Bei `j = 0` gibt es keine Layer
+davor.** Gemeint ist dort die Eingabe des Segments, und die stand
+nirgends: `myl_types::Segment` führt ein `input_commitment`, aber diesen
+Typ erzeugt niemand.
+
+Seit E10 legt der **Ankläger** die strittige Eingabe vor. An der ersten
+Layer prüfte die Schiedsrunde damit `hash(eingabe)` gegen einen Hash,
+den derselbe Ankläger daneben schreibt: **eine tautologische Prüfung**,
+und genau der Fehler, den Fund A11 an anderer Stelle schon einmal hatte.
+
+`CompletedSegment` trägt jetzt ein `eingangs_commitment`, den Hash der
+Token-Nutzlast, und die bezeugte Kette ist `[Eingang] ++ Spur`. Damit ist
+`kette()[j]` die Eingabe der Layer `j` und `kette()[j+1]` ihre Ausgabe:
+**jede** Layer ist beweisbar, auch die erste.
+
+### Toter Code, den E10 hinterlassen hat
+
+`src/da.rs` ist entfernt, 478 Zeilen. `DaStore`, `ErasureCoder` und die
+beiden Kodierer waren nach E10 von niemandem mehr benutzt; die
+Erasure-Kodierung des Protokolls sitzt ohnehin in `myl_types::erasure`.
+Der Send/Sync-Test aus Fund A17 bleibt: Er bewacht die Eigenschaft, nicht
+das damalige Gegenbeispiel.
+
+### v0.14.0 – 2026-08-30 (E10: der Shard archiviert nichts mehr)
+
+Zuvor legte er die eingehende Aktivierung je Segment ab, 65 bis 260 GiB
+je Knoten über die Streitfrist. **Auch das war zu viel**, und die Lösung
+lag nicht im Sparen, sondern in der Beweislast: Der **Ankläger** bringt
+die strittige Aktivierung mit, denn die Bisektion endet an der ersten
+Abweichung, bei `j-1` sind sich beide einig, und er hat das Segment
+gerade nachgerechnet.
+
+`DaStore` ist damit aus `ShardNode` verschwunden, samt Feld,
+Konstruktor-Parameter und Mutex im heißen Pfad. Was bleibt, ist die
+**Spur**: 32 Byte je Layer, und sie ist kein zusätzlicher Speicher,
+sondern der Arbeitsnachweis, den es ohnehin gibt. **2 bis 8 GiB je
+Knoten.**
+
+### ⚑ Und die Spur bezeugt jetzt auch etwas (Fund 100)
+
+`CompletedSegment` trägt eine `spurwurzel`, und sie geht in die
+Bündelwurzel ein. Vorher stand dort nur die `SegmentId`, also
+`(Sitzung, Position)`: Das Bündel beanspruchte Arbeit, **ohne zu sagen,
+was gerechnet wurde**.
+
+Die Wurzel entsteht beim Abschluss des Segments und nicht erst beim
+Bündeln: Eine Zusicherung, die später entsteht, ist eine, die man sich
+noch überlegen kann.
+
+Der E2E-Test prüft jetzt die Spur statt des Archivs: Sie ist je Position
+eine andere, und die Zusicherung ist wirklich die Wurzel über die eigene
+Spur.
+
+### v0.13.0 – 2026-08-29 (E9: das Archiv hält den Eingang, die Ausgaben werden nachgerechnet)
+
+Bis dahin legte jeder Shard die Ausgabe **jeder** seiner Layer ab. Bei
+28 Layern auf vier Shards sind das sieben Vektoren je Segment statt
+einem, und über die Streitfrist zwischen **455 GiB und 1,8 TiB je
+Knoten**, zusätzlich zur Modellgröße. Für ein Rechenzentrum ist das
+nichts, für niedrigschwellige Teilhabe zu viel.
+
+**Die Layer-Ausgaben sind ableitbar, die eingehende Aktivierung nicht.**
+Bei bitgenauer Ganzzahl-Inferenz ergibt derselbe Eingang stets dieselben
+Ausgänge; wer `a_{start-1}` hat, rechnet jede Ausgabe seines Bereichs
+noch einmal, Bit für Bit. Der Eingang selbst kommt vom vorigen Shard und
+ist von diesem Knoten aus nicht herstellbar.
+
+| je Segment und Shard | | je Knoten, 168 Epochen |
+|---|---|---|
+| jede Layer-Ausgabe (vorher) | 73 KiB | 455 GiB bis 1,8 TiB |
+| nur der Eingang | 10 KiB | **65 bis 260 GiB** |
+
+### ⚑ Warum nicht noch weniger, etwa nur die Token
+
+Ein Shard hält `layer_start..layer_end` und sonst nichts. Aus den Token
+nachrechnen könnte nur der Pod **gemeinsam**. Dann hinge die Antwort
+eines Angeklagten an der Mitwirkung seiner Nachbarn, und „Schweigen
+heißt Schuld" träfe den, dessen Nachbar schweigt.
+
+Die eingehende Aktivierung ist genau die Grenze dessen, was ein Shard
+**allein** beantworten kann, und diese Eigenständigkeit ist die
+Voraussetzung dafür, dass die Antwortfrist fair ist.
+
+⚑ **Das berichtigt zugleich eine eigene Zahl.** Der Vorschlag, der zu
+dieser Umstellung führte, nannte Faktor 224 und setzte dabei voraus,
+dass ein Shard aus den Token nachrechnen kann. Er kann es nicht. Der
+Faktor ist die Zahl der Layer je Shard, also 7.
+
+### Der Test fordert die Nachrechnung, statt sie vorauszusetzen
+
+Er prüfte bisher, dass der archivierte Wert selbst der von der Spur
+committete ist. Jetzt prüft er, dass der Eingang es **nicht** ist, dass
+die **nachgerechnete** Ausgabe es ist, und dass ein Shard eine fremde
+Layer **nicht** beantwortet. Dass beim Nachrechnen Bit für Bit dasselbe
+herauskommt, ist keine Nebensache: Ein Archiv, dessen Nachrechnung
+abwiche, ließe jeden ehrlichen Knoten als schuldig dastehen.
 
 ### v0.12.0 – 2026-08-29 (der Übergangsvertrag zieht in die gemeinsame Kiste)
 

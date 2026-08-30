@@ -58,11 +58,64 @@ pub struct InferenceCredit {
     pub expiry: EpochId,
 }
 
-/// Merkle-Wurzel über eine Folge von Segment-Ids — die
-/// `segments_root`-Konstruktion aus `PoIBundle` (Blätter = die rohen
-/// 32-Byte-Ids, in Bundel-Reihenfolge).
-pub fn segments_root(ids: &[SegmentId]) -> Result<MerkleRoot, MerkleError> {
-    let refs: Vec<&[u8]> = ids.iter().map(|id| id.as_ref()).collect();
+/// Merkle-Wurzel über die **Spur** eines Segments.
+///
+/// Ein Blatt je Spur-Eintrag, damit sich ein **einzelner** Eintrag
+/// beweisen lässt, ohne die ganze Spur zu zeigen. Genau das braucht die
+/// Schiedsrunde: Sie streitet über eine Layer, nicht über ein Segment.
+pub fn spurwurzel(spur: &[[u8; 32]]) -> Result<MerkleRoot, MerkleError> {
+    let refs: Vec<&[u8]> = spur.iter().map(|h| h.as_slice()).collect();
+    let tree = MerkleTree::new(&refs)?;
+    Ok(MerkleRoot::new(tree.root().0))
+}
+
+/// Was ein Pod je Segment bezeugt: die Kennung **und** das Ergebnis.
+///
+/// # ⚑ Warum das Ergebnis dazugehört (Fund 100, 2026-08-30)
+///
+/// `segments_root` war bis dahin eine Wurzel über die bloßen
+/// Segment-Ids, und eine `SegmentId` ist `(Sitzungsnummer, Position)`
+/// mit Nullen aufgefüllt. Sie bindet **nichts**: weder die Spur noch
+/// Ein- oder Ausgabe.
+///
+/// Damit beanspruchte ein PoI-Bündel Arbeit, **ohne zu sagen, was
+/// gerechnet wurde**. Ein Pod konnte `n` Paare `(Sitzung, Position)`
+/// aufzählen und dafür vergütet werden; die Spur lag nur örtlich beim
+/// Koordinator und war an nichts gebunden.
+///
+/// Der ganze Streitpfad hing daran: Die Schiedsrunde will feststellen,
+/// ob der Angeklagte **das** gerechnet hat, was er behauptet hat. Ohne
+/// eine Zusicherung gibt es kein „behauptet", nur zwei einander
+/// widersprechende Aussagen und keinen Grund, einer zu glauben.
+///
+/// Das Blatt ist jetzt `Id ‖ Spurwurzel`. Ein Beweis, dass der
+/// Angeklagte für Segment `s` die Spur mit Wurzel `w` bezeugt hat, ist
+/// damit ein Merkle-Pfad in dieser Wurzel; ein Beweis über einen
+/// **einzelnen** Spur-Eintrag ein zweiter innerhalb von `w`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Segmentzeugnis {
+    /// Die Kennung des Segments.
+    pub id: SegmentId,
+    /// Die Wurzel über seine Spur ([`spurwurzel`]).
+    pub spurwurzel: MerkleRoot,
+}
+
+/// Merkle-Wurzel über die Segmente einer Epoche, die
+/// `segments_root`-Konstruktion aus [`PoIBundle`].
+///
+/// Blätter sind `Id ‖ Spurwurzel` in Bündel-Reihenfolge. Siehe
+/// [`Segmentzeugnis`] dazu, warum die Spurwurzel dazugehört.
+pub fn segments_root(zeugnisse: &[Segmentzeugnis]) -> Result<MerkleRoot, MerkleError> {
+    let blaetter: Vec<Vec<u8>> = zeugnisse
+        .iter()
+        .map(|z| {
+            let mut b = Vec::with_capacity(64);
+            b.extend_from_slice(z.id.as_ref());
+            b.extend_from_slice(z.spurwurzel.as_ref());
+            b
+        })
+        .collect();
+    let refs: Vec<&[u8]> = blaetter.iter().map(|b| b.as_slice()).collect();
     let tree = MerkleTree::new(&refs)?;
     Ok(MerkleRoot::new(tree.root().0))
 }
@@ -167,23 +220,73 @@ mod tests {
         assert_eq!(to_vec(&a).expect("ser"), to_vec(&b).expect("ser"));
     }
 
-    #[test]
-    fn segments_root_stimmt_mit_merkle_baum_ueberein() {
-        let ids: Vec<SegmentId> = (0..5u8)
+    fn zeugnisse(n: u8) -> Vec<Segmentzeugnis> {
+        (0..n)
             .map(|i| {
                 let mut bytes = [0u8; 32];
                 bytes[0] = i;
-                SegmentId::new(bytes)
+                Segmentzeugnis {
+                    id: SegmentId::new(bytes),
+                    spurwurzel: spurwurzel(&[[i; 32], [i.wrapping_add(1); 32]]).expect("Wurzel"),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn segments_root_stimmt_mit_merkle_baum_ueberein() {
+        let z = zeugnisse(5);
+        let root = segments_root(&z).expect("Wurzel");
+        // Manuell über den Merkle-Baum mit denselben Blättern.
+        let blaetter: Vec<Vec<u8>> = z
+            .iter()
+            .map(|e| {
+                let mut b = e.id.as_ref().to_vec();
+                b.extend_from_slice(e.spurwurzel.as_ref());
+                b
             })
             .collect();
-        let root = segments_root(&ids).expect("Wurzel");
-        // Manuell über den Merkle-Baum mit denselben Blättern.
-        let refs: Vec<&[u8]> = ids.iter().map(|id| id.as_ref()).collect();
+        let refs: Vec<&[u8]> = blaetter.iter().map(|b| b.as_slice()).collect();
         let tree = MerkleTree::new(&refs).expect("Baum");
         assert_eq!(root, MerkleRoot::new(tree.root().0));
         // Mitgliedschaftsbeweis für ein Blatt muss verifizieren.
         let proof = tree.proof(2).expect("Beweis");
-        assert!(proof.verify_hashed(&tree.root(), &crate::merkle::leaf_hash(ids[2].as_ref())));
+        assert!(proof.verify_hashed(&tree.root(), &crate::merkle::leaf_hash(&blaetter[2])));
+    }
+
+    /// ⚑ **Der Kern von Fund 100: Die Wurzel muss sich ändern, wenn sich
+    /// die Spur ändert.**
+    ///
+    /// Vorher war sie eine Wurzel über bloße Ids, und eine Id ist
+    /// `(Sitzung, Position)`. Zwei Pods, die dieselben Positionen
+    /// rechnen und **verschiedene Ergebnisse** bekommen, hatten damit
+    /// dieselbe Wurzel: Das Bündel beanspruchte Arbeit, ohne zu sagen,
+    /// was gerechnet wurde.
+    #[test]
+    fn eine_andere_spur_ergibt_eine_andere_wurzel() {
+        let mut a = zeugnisse(3);
+        let wurzel_a = segments_root(&a).expect("Wurzel");
+        // Dieselben Ids, eine andere Spur.
+        a[1].spurwurzel = spurwurzel(&[[99u8; 32]]).expect("Wurzel");
+        let wurzel_b = segments_root(&a).expect("Wurzel");
+        assert_ne!(
+            wurzel_a, wurzel_b,
+            "die Bündelwurzel bezeugt das Ergebnis nicht"
+        );
+    }
+
+    /// Und die Spurwurzel selbst trägt jeden einzelnen Eintrag: Genau
+    /// das braucht die Schiedsrunde, die über **eine** Layer streitet.
+    #[test]
+    fn ein_einzelner_spureintrag_ist_beweisbar() {
+        let spur: Vec<[u8; 32]> = (0..7u8).map(|i| [i; 32]).collect();
+        let refs: Vec<&[u8]> = spur.iter().map(|h| h.as_slice()).collect();
+        let tree = MerkleTree::new(&refs).expect("Baum");
+        assert_eq!(spurwurzel(&spur).expect("Wurzel"), MerkleRoot::new(tree.root().0));
+        let proof = tree.proof(4).expect("Beweis");
+        assert!(proof.verify_hashed(&tree.root(), &crate::merkle::leaf_hash(&spur[4])));
+        // Ein anderer Eintrag passt nicht an diese Stelle.
+        assert!(!proof.verify_hashed(&tree.root(), &crate::merkle::leaf_hash(&spur[5])));
     }
 
     #[test]
