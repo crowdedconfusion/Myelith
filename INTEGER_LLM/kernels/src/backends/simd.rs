@@ -171,6 +171,46 @@ mod avx2 {
         probs
     }
 
+    /// Acht `i32` zu acht `i16` **mit Sättigung**, rein mit AVX2.
+    ///
+    /// # ⚑ Fund 103: Hier stand `_mm256_cvtepi32_epi16`, und das war
+    /// zweifach falsch (2026-08-30)
+    ///
+    /// **Erstens ein Absturz.** Der Befehl ist `VPMOVDW` und verlangt
+    /// **AVX512VL**, die Funktion darum herum verlangt nur AVX2, und die
+    /// Auswahl prüft `is_x86_feature_detected!("avx2")`. Auf jeder CPU
+    /// mit AVX2 **ohne** AVX-512 ist das eine ungültige Anweisung: alle
+    /// AMD Zen 1 bis 3, alle Intel vor Skylake-X und alle Intel-
+    /// Endkundenmodelle seit Alder Lake. Also auf den gewöhnlichen
+    /// Rechnern, die dieses Netz gerade einladen will.
+    ///
+    /// **Zweitens eine Abweichung.** `VPMOVDW` **schneidet ab**, die
+    /// Referenz `rotate_half_split_i16` benutzt `clamp_i16`, also
+    /// **Sättigung**. Sobald ein Zwischenwert den i16-Bereich verließ,
+    /// rechneten Skalarpfad und SIMD-Pfad verschieden, und die
+    /// Bitgleichheit ist die Zusage, auf der das ganze Protokoll steht.
+    ///
+    /// **Warum es nie auffiel:** Der CI-Runner hat AVX-512, dort läuft
+    /// der Befehl; die Entwicklungsmaschine ist aarch64, dort läuft der
+    /// Pfad gar nicht. Gefunden hat es der MSRV-Job bei seinem **ersten
+    /// Lauf**, weil `_mm256_cvtepi32_epi16` erst seit Rust 1.89 stabil
+    /// ist und die Mindestfassung seit demselben Tag angegeben wird.
+    ///
+    /// # Was stattdessen passiert
+    ///
+    /// `_mm256_packs_epi32(r, r)` sättigt paarweise je 128-Bit-Spur, was
+    /// die Reihenfolge durcheinanderbringt; die beiden Spuren werden
+    /// deshalb einzeln entnommen und ihre unteren 64 Bit
+    /// zusammengesetzt. Alle drei Befehle sind AVX2 beziehungsweise
+    /// SSE2 und lange stabil.
+    #[target_feature(enable = "avx2")]
+    unsafe fn saettige_i32_zu_i16(r: __m256i) -> __m128i {
+        let gepackt = _mm256_packs_epi32(r, r);
+        let untere = _mm256_castsi256_si128(gepackt);
+        let obere = _mm256_extracti128_si256::<1>(gepackt);
+        _mm_unpacklo_epi64(untere, obere)
+    }
+
     /// AVX2 RoPE: rotate_half_split mit SIMD-Intrinsics.
     /// Verarbeitet 8 Paare (i32) parallel pro AVX2-Register.
     ///
@@ -214,8 +254,8 @@ mod avx2 {
             let r1 = rshift_round_avx2(add, frac_bits);
 
             // i32 -> i16 mit Saettigung und zurueck speichern
-            let packed0 = _mm256_cvtepi32_epi16(r0);
-            let packed1 = _mm256_cvtepi32_epi16(r1);
+            let packed0 = saettige_i32_zu_i16(r0);
+            let packed1 = saettige_i32_zu_i16(r1);
             _mm_storeu_si128(out.as_mut_ptr().add(base) as *mut __m128i, packed0);
             _mm_storeu_si128(out.as_mut_ptr().add(base + half) as *mut __m128i, packed1);
         }
@@ -706,5 +746,51 @@ impl Backend for SimdBackend {
             out_frac,
         );
         out.copy_from_slice(&result);
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod avx2_gleichheit {
+    use crate::rope::rotate_half_split_i16;
+
+    /// ⚑ **Fund 103: Der AVX2-Pfad schnitt ab, wo die Referenz sättigt.**
+    ///
+    /// An dieser Stelle stand `_mm256_cvtepi32_epi16` (`VPMOVDW`), und
+    /// der **schneidet ab**; `rotate_half_split_i16` benutzt dagegen
+    /// `clamp_i16`, also Sättigung. Sobald ein Zwischenwert den
+    /// i16-Bereich verließ, rechneten beide Pfade verschieden, und die
+    /// Bitgleichheit ist die Zusage, auf der das ganze Protokoll steht.
+    ///
+    /// **Der Test wählt die Werte so, dass es überläuft.** Mit kleinen
+    /// Zahlen wäre er wertlos: Dann stimmen Abschneiden und Sättigen
+    /// überein, und genau deshalb ist es nie aufgefallen.
+    ///
+    /// Ohne AVX2 (etwa unter einer Emulation) wird übersprungen, und
+    /// zwar laut: Ein stiller Übersprung sähe aus wie ein bestandener
+    /// Test.
+    #[test]
+    fn avx2_rope_rechnet_wie_die_referenz_auch_im_ueberlauf() {
+        if !std::is_x86_feature_detected!("avx2") {
+            eprintln!("[uebersprungen] kein AVX2 auf dieser Maschine");
+            return;
+        }
+        // 16 Werte, also genau ein AVX2-Block je Hälfte plus nichts.
+        // Große Beträge, damit x0*cos - x1*sin den i16-Bereich sprengt.
+        let vec: Vec<i16> = (0..16).map(|i| if i % 2 == 0 { 32000 } else { -32000 }).collect();
+        let cos_row: Vec<i16> = vec![30000; 8];
+        let sin_row: Vec<i16> = vec![-30000; 8];
+        let frac_bits = 8u8;
+
+        let erwartet = rotate_half_split_i16(&vec, &cos_row, &sin_row, frac_bits);
+        let gemessen =
+            unsafe { super::avx2::rotate_half_split_avx2(&vec, &cos_row, &sin_row, frac_bits) };
+
+        // Gegenprobe zur Gegenprobe: Der Fall muss wirklich überlaufen,
+        // sonst prüft der Test nur den harmlosen Bereich.
+        assert!(
+            erwartet.iter().any(|&v| v == i16::MAX || v == i16::MIN),
+            "die Werte laufen nicht über: dann sagt dieser Test nichts"
+        );
+        assert_eq!(gemessen, erwartet, "AVX2 weicht von der Referenz ab");
     }
 }

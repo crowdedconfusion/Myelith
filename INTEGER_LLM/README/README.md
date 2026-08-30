@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.27.0 (θ_v 0.17.0; kernels 0.28.2, runtime 0.22.1, pipeline 0.15.0)
+> **Version:** 0.28.0 (θ_v 0.17.0; kernels 0.29.0, runtime 0.22.1, pipeline 0.15.0)
 > **Datum:** 2026-08-28
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -421,6 +421,45 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.28.0 (kernels 0.29.0) – 2026-08-30 (⚑ Fund 103: der AVX2-Pfad stürzt auf den meisten x86-CPUs ab)
+
+`rotate_half_split_avx2` ist mit `#[target_feature(enable = "avx2")]`
+ausgezeichnet, und die Auswahl prüft `is_x86_feature_detected!("avx2")`.
+Darin stand `_mm256_cvtepi32_epi16`, also `VPMOVDW`, und der verlangt
+**AVX512VL**.
+
+**Auf jeder CPU mit AVX2 ohne AVX-512 ist das eine ungültige
+Anweisung**: alle AMD Zen 1 bis 3, alle Intel vor Skylake-X und alle
+Intel-Endkundenmodelle seit Alder Lake. Also auf den gewöhnlichen
+Rechnern, die dieses Netz gerade einladen will.
+
+### Und derselbe Befehl war zugleich die falsche Rechnung
+
+`VPMOVDW` **schneidet ab**. Die Referenz `rotate_half_split_i16` benutzt
+`clamp_i16`, also **Sättigung**. Sobald ein Zwischenwert den i16-Bereich
+verließ, rechneten Skalarpfad und SIMD-Pfad verschieden, und die
+Bitgleichheit ist die Zusage, auf der das ganze Protokoll steht.
+
+Ersetzt durch `_mm256_packs_epi32` samt Spurentnahme, alles AVX2
+beziehungsweise SSE2. Die Reihenfolge der Spuren ist vorher symbolisch
+nachgerechnet worden, weil sich x86-SIMD auf der aarch64-Maschine nicht
+ausführen lässt; übersetzt und gegen die Mindestfassung geprüft wurde
+über `--target x86_64-apple-darwin`.
+
+### ⚑ Warum es nie auffiel, und was es gefunden hat
+
+Der CI-Runner hat AVX-512, dort läuft der Befehl. Die
+Entwicklungsmaschine ist aarch64, dort läuft der Pfad gar nicht.
+Gefunden hat es der **MSRV-Job bei seinem allerersten Lauf**, weil
+`_mm256_cvtepi32_epi16` erst seit Rust 1.89 stabil ist und die
+Mindestfassung seit demselben Tag überhaupt angegeben wird. Ein
+Werkzeug, das eine Versionsangabe prüft, hat einen Absturz gefunden.
+
+Ein neuer Test hält den Fall fest, und er wählt die Werte so, dass sie
+**überlaufen**: Mit kleinen Zahlen stimmen Abschneiden und Sättigen
+überein, und genau deshalb ist es jahrelang durchgegangen. Er prüft
+zuerst, dass der Überlauf wirklich eintritt, sonst sagte er nichts.
 
 ### v0.27.0 (kernels 0.28.2, runtime 0.22.1, pipeline 0.15.0) – 2026-08-29 (⚑ Fund 80: `deploy/` entfernt, die Mindestfassung geprüft)
 
