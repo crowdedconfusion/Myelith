@@ -20,6 +20,47 @@
 //! Ein Werkzeug, das einen Nachweis vortäuscht, ist schlimmer als keines,
 //! weil sein Ergebnis geglaubt wird.
 //!
+//! ## ⚑ Fund 105 (2026-08-30): Genau das tat es
+//!
+//! Der Absatz darüber stand seit dem ersten Tag hier, und die Prüfung
+//! dazu war gebaut. Sie fragte nur das Falsche. Der Fingerabdruck lief
+//! über **alle** erhobenen Felder, und darunter waren drei, die nicht die
+//! Maschine beschreiben, sondern den **Bau**: `backends_compiled`,
+//! `backends_rechnend`, `backend_selected`.
+//!
+//! Damit genügte ein zweiter `cargo build`:
+//!
+//! ```text
+//! myl-test --name ref-bau konformitaet          # ohne Feature
+//! cargo build --release --features cpu-simd
+//! myl-test --name simd-bau konformitaet         # dieselbe CPU
+//! myl-test vergleich
+//!
+//!    ref-bau    aarch64-macos-reference       894d8357ae92b5c1
+//!    simd-bau   aarch64-macos-cpu-simd/neon   894d8357ae92b5c1
+//!    Urteil: NACHWEIS
+//!    Das ist der Cross-Hardware-Determinismus-Nachweis für diese Einstellung.
+//! ```
+//!
+//! Ein Laptop, zwei Übersetzungen, und das Werkzeug bescheinigt eine
+//! Aussage über Hardware. Nachgestellt am 2026-08-30, genau so.
+//!
+//! **Behoben durch eine Trennung, nicht durch eine weitere Prüfung.** Der
+//! Fingerabdruck deckt seither nur `hardware::MASCHINENFELDER` ab; die
+//! drei Bau-Felder bilden einen eigenen Wert. Damit zerfällt die Frage in
+//! die zwei Fragen, die sie immer war:
+//!
+//! | Maschinen | Rechenpfade | Urteil |
+//! |---|---|---|
+//! | ≥ 2 | beliebig | [`Urteil::Nachweis`], der Cross-Hardware-Beleg |
+//! | 1 | ≥ 2 | [`Urteil::Rechenpfad`], der Backend-Vergleich (TESTCLIENT 2.2) |
+//! | 1 | 1 | [`Urteil::EineMaschine`], kein Beleg |
+//!
+//! Die mittlere Zeile ist kein Trostpreis: „Referenz und SIMD rechnen
+//! bitgleich" ist eine Aussage, die das Projekt braucht. Sie ist nur eine
+//! **andere** als „zwei Maschinen rechnen bitgleich", und die
+//! Verwechslung war der Fehler.
+//!
 //! ## Was zuerst geprüft wird
 //!
 //! Vor jedem Digest-Vergleich steht der **Modellstand**. Weichen θ_v oder
@@ -49,7 +90,17 @@ pub struct Protokoll {
     pub befehl: String,
     pub teilnehmer: String,
     pub einstellungen_id: String,
+    /// Fingerabdruck der **Maschine**. Er allein trägt den Nachweis.
     pub fingerprint: String,
+    /// Fingerabdruck des **Rechenpfads**, also des Baus.
+    ///
+    /// Leer bei Protokollen von vor dem 2026-08-30; dort steckte er im
+    /// Maschinen-Fingerabdruck mit drin, und genau das war Fund 105.
+    /// `fingerabdruck_schema` fängt diesen Fall ab.
+    pub rechenpfad: String,
+    /// Wie der Fingerabdruck gebildet wurde
+    /// (`hardware::FINGERABDRUCK_SCHEMA`). Leer bei älteren Protokollen.
+    pub schema: String,
     /// Architektur, Betriebssystem und Backend als Kurzform, für die Anzeige.
     pub hardware: String,
     pub theta_v: String,
@@ -146,11 +197,34 @@ impl Protokoll {
 /// Das Urteil über eine Gruppe vergleichbarer Läufe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Urteil {
-    /// Digests gleich, Fingerabdrücke verschieden, Modellstand gleich.
+    /// Digests gleich, Maschinen-Fingerabdrücke verschieden, Modellstand
+    /// gleich.
     Nachweis,
-    /// Digests gleich, aber alle Läufe stammen von derselben Maschine.
-    /// **Kein Nachweis**: siehe Modul-Doku.
+    /// Digests gleich, **eine** Maschine, aber zwei Rechenpfade.
+    ///
+    /// Das ist TESTCLIENT 2.2, der Backend-Vergleich innerhalb einer
+    /// Maschine, und er ist ein echtes Ergebnis: Referenz und `cpu-simd`
+    /// rechnen bitgleich. Er ist nur **nicht** der
+    /// Cross-Hardware-Nachweis, und [`Urteil::ist_nachweis`] bleibt
+    /// deshalb `false`.
+    ///
+    /// ⚑ Bis zum 2026-08-30 fiel genau dieser Fall unter
+    /// [`Urteil::Nachweis`], weil der Bau im Fingerabdruck steckte
+    /// (Fund 105). Ein zweiter Bau auf demselben Rechner reichte für ein
+    /// Urteil, das eine Aussage über Hardware traf.
+    Rechenpfad,
+    /// Digests gleich, aber alle Läufe stammen von derselben Maschine
+    /// **und** demselben Rechenpfad. **Kein Nachweis**: siehe Modul-Doku.
     EineMaschine,
+    /// Die Protokolle sind nach verschiedenen Verfahren gebildet, oder
+    /// eines nennt sein Verfahren nicht.
+    ///
+    /// Unvergleichbar, und zwar **bevor** irgendetwas verglichen wird:
+    /// Zwei `fingerprint_sha256` aus verschiedenen Client-Fassungen
+    /// decken verschiedene Feldmengen ab. Sie unterscheiden sich dann
+    /// auch auf derselben Maschine, und ein Urteil daraus wäre Fund 105
+    /// über den Umweg zweier Fassungen.
+    Fingerabdruckschema,
     /// θ_v oder Artefakt-Digest weichen ab. Unvergleichbar, und
     /// ausdrücklich **kein** Hardware-Befund.
     Modellstand,
@@ -183,7 +257,9 @@ impl Urteil {
     pub fn kurz(&self) -> &'static str {
         match self {
             Urteil::Nachweis => "NACHWEIS",
+            Urteil::Rechenpfad => "RECHENPFAD-NACHWEIS (eine Maschine, zwei Pfade)",
             Urteil::EineMaschine => "KEIN NACHWEIS (eine Maschine)",
+            Urteil::Fingerabdruckschema => "UNVERGLEICHBAR (Fingerabdruck-Verfahren)",
             Urteil::Modellstand => "UNVERGLEICHBAR (Modellstand)",
             Urteil::Abweichung => "ABWEICHUNG",
             Urteil::ZuWenig => "ZU WENIG PROTOKOLLE",
@@ -290,6 +366,8 @@ pub fn protokoll_lesen(datei: &Path) -> Option<Protokoll> {
             }
             "hardware" => match hole("key").as_str() {
                 "fingerprint_sha256" => p.fingerprint = hole("value"),
+                "rechenpfad_sha256" => p.rechenpfad = hole("value"),
+                "fingerabdruck_schema" => p.schema = hole("value"),
                 "arch" => arch = hole("value"),
                 "os" => os = hole("value"),
                 "backend_selected" => backend = hole("value"),
@@ -393,6 +471,29 @@ fn urteilen(
         return Urteil::ZuWenig;
     }
 
+    // ⚑ **Das Verfahren zuerst, vor allem anderen** (Fund 105,
+    // 2026-08-30). Ein `fingerprint_sha256` aus einer älteren
+    // Client-Fassung deckt eine andere Feldmenge ab als einer von heute.
+    // Beide sind 64 Hexzeichen lang, beide sehen richtig aus, und auf
+    // derselben Maschine sind sie verschieden. Wer sie gegeneinander
+    // hält, bekommt „zwei Maschinen" gemeldet und hat eine.
+    let schemata: std::collections::BTreeSet<&str> =
+        protokolle.iter().map(|p| p.schema.as_str()).collect();
+    if schemata.len() > 1 || schemata.contains("") {
+        return Urteil::Fingerabdruckschema;
+    }
+    // **Die Marke verspricht beide Werte.** Ein Protokoll, das sie trägt
+    // und trotzdem einen davon nicht hat, ist von Hand verändert oder
+    // beschädigt. Ohne diese Zeile könnte `maschinen` leer sein, und das
+    // Urteil hieße dann „eine Maschine, zwei Pfade", ohne dass auch nur
+    // eine Maschine benannt wäre.
+    if protokolle
+        .iter()
+        .any(|p| p.fingerprint.is_empty() || p.rechenpfad.is_empty())
+    {
+        return Urteil::Fingerabdruckschema;
+    }
+
     // Modellstand zuerst: Bei verschiedenen Modellen sagt ein
     // Digest-Vergleich nichts, weder im Guten noch im Schlechten.
     let erster = protokolle[0].modellstand();
@@ -409,13 +510,19 @@ fn urteilen(
         return Urteil::Abweichung;
     }
 
-    // Gleiche Digests von einer einzigen Maschine sind kein Nachweis.
-    let verschiedene: std::collections::BTreeSet<&str> = protokolle
+    // Gleiche Digests von einer einzigen Maschine auf einem einzigen
+    // Rechenpfad sind kein Nachweis, und zwar von keiner Art.
+    let maschinen: std::collections::BTreeSet<&str> = protokolle
         .iter()
         .map(|p| p.fingerprint.as_str())
         .filter(|f| !f.is_empty())
         .collect();
-    if verschiedene.len() < 2 {
+    let pfade: std::collections::BTreeSet<&str> = protokolle
+        .iter()
+        .map(|p| p.rechenpfad.as_str())
+        .filter(|f| !f.is_empty())
+        .collect();
+    if maschinen.len() < 2 && pfade.len() < 2 {
         return Urteil::EineMaschine;
     }
 
@@ -440,7 +547,16 @@ fn urteilen(
         return Urteil::Unvollstaendig;
     }
 
-    Urteil::Nachweis
+    // **Erst hier trennen sich die beiden Aussagen.** Zwei Maschinen
+    // tragen den Cross-Hardware-Nachweis. Eine Maschine mit zwei
+    // Rechenpfaden trägt ihn nicht, aber sie trägt etwas anderes, das
+    // ebenfalls gebraucht wird: dass Referenz und SIMD bitgleich
+    // rechnen. Bis zum 2026-08-30 war beides dasselbe Urteil.
+    if maschinen.len() >= 2 {
+        Urteil::Nachweis
+    } else {
+        Urteil::Rechenpfad
+    }
 }
 
 /// Schreibt den Bericht und liefert das Gesamturteil.
@@ -467,11 +583,17 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
         );
         for p in &g.protokolle {
             println!(
-                "     {:<16} {:<28} θ_v {:<8} {} {}",
+                "     {:<16} {:<28} θ_v {:<8} M {} P {} {}",
                 p.bezeichnung(),
                 if p.hardware.is_empty() { "" } else { &p.hardware },
                 if p.theta_v.is_empty() { "" } else { &p.theta_v },
+                // **Beide Fingerabdrücke, getrennt beschriftet.** Das
+                // Urteil hängt seit dem 2026-08-30 an zwei Werten, und wer
+                // nur einen sieht, kann „Nachweis" nicht von
+                // „Rechenpfad-Nachweis" unterscheiden. M wie Maschine,
+                // P wie Pfad.
                 kurz(&p.fingerprint),
+                kurz(&p.rechenpfad),
                 // Der Mangel steht in derselben Zeile wie der Lauf, nicht
                 // in einer Fußnote: Wer die Tabelle überfliegt, soll nicht
                 // erst unten erfahren, dass eine Zeile nichts wert ist.
@@ -511,6 +633,15 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
         for zeile in erlaeuterung(&g.urteil).lines() {
             println!("     {}", zeile);
         }
+        // Die Einengung steht direkt unter dem Befund und nicht im
+        // Bericht allein: Wer auf einer Mietmaschine sitzt, liest den
+        // Bildschirm und nicht die Datei.
+        if g.urteil == Urteil::Abweichung {
+            println!();
+            for zeile in abweichungs_hinweis(g).lines() {
+                println!("     {}", zeile);
+            }
+        }
         println!();
 
         alles_gut &= g.urteil.ist_nachweis();
@@ -527,11 +658,38 @@ pub fn berichten(dir: &Path, gruppen: &[Gruppe]) -> bool {
 fn erlaeuterung(u: &Urteil) -> &'static str {
     match u {
         Urteil::Nachweis => {
-            "Die Fingerabdrücke unterscheiden sich, die Vergleichswerte stimmen überein.\n\
-             Das ist der Cross-Hardware-Determinismus-Nachweis für diese Einstellung."
+            "Die MASCHINEN-Fingerabdrücke unterscheiden sich, die Vergleichswerte\n\
+             stimmen überein. Das ist der Cross-Hardware-Determinismus-Nachweis für\n\
+             diese Einstellung."
+        }
+        Urteil::Rechenpfad => {
+            "Eine Maschine, zwei Rechenpfade, gleiche Vergleichswerte. Referenz und\n\
+             SIMD-Bau rechnen bitgleich; das ist der Backend-Vergleich und ein\n\
+             eigenständiges Ergebnis.\n\
+             \n\
+             Es ist NICHT der Cross-Hardware-Nachweis: Alle Läufe stammen von\n\
+             derselben CPU. Was hier belegt ist, ist die Gleichheit zweier\n\
+             Codepfade, nicht die Gleichheit zweier Maschinen. Dafür fehlt weiterhin\n\
+             eine zweite Architektur.\n\
+             \n\
+             Bis zum 2026-08-30 meldete dieser Fall „NACHWEIS\", weil der Bau in den\n\
+             Fingerabdruck einging. Ein zweiter `cargo build` genügte für ein Urteil\n\
+             über Hardware."
+        }
+        Urteil::Fingerabdruckschema => {
+            "Die Protokolle bilden ihren Fingerabdruck nach verschiedenen Verfahren,\n\
+             oder eines nennt sein Verfahren nicht. Sie sind unvergleichbar, und zwar\n\
+             bevor irgendein Wert angesehen wird.\n\
+             \n\
+             Zwei Fingerabdrücke aus verschiedenen Client-Fassungen decken\n\
+             verschiedene Feldmengen ab. Sie unterscheiden sich dann auch auf\n\
+             derselben Maschine, und der Vergleich meldete „zwei Maschinen\", wo eine\n\
+             steht. Alle Beteiligten auf denselben Client-Stand bringen und neu\n\
+             messen."
         }
         Urteil::EineMaschine => {
-            "Alle Protokolle tragen denselben Hardware-Fingerabdruck.\n\
+            "Alle Protokolle tragen denselben Maschinen-Fingerabdruck UND denselben\n\
+             Rechenpfad.\n\
              Gleiche Werte belegen hier nichts: Sie zeigen, dass dasselbe Programm auf\n\
              derselben Maschine zweimal dasselbe gerechnet hat. Es fehlt eine zweite\n\
              Architektur, nicht ein weiterer Lauf."
@@ -576,6 +734,109 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
              Den betroffenen Lauf wiederholen. Er kostet dieselbe Zeit wie beim ersten Mal."
         }
     }
+}
+
+/// Grenzt eine Abweichung ein, aus dem, was schon im Protokoll steht.
+///
+/// # Wozu
+///
+/// `Urteil::Abweichung` ist der wichtigste Befund dieses Werkzeugs und
+/// zugleich der unbrauchbarste Satz: „die Vergleichswerte gehen
+/// auseinander" sagt nicht, **wo**. Auf einer Mietmaschine, die
+/// stündlich abgerechnet wird, ist das der Unterschied zwischen einem
+/// Befund und einem verlorenen Nachmittag.
+///
+/// # Warum das ohne einen zweiten Lauf geht
+///
+/// Der Sammellauf trägt seit dem 2026-08-27 den Konformitätslauf als
+/// fünfte Stufe, und dessen Wert steht als eigener Vergleichswert im
+/// selben Protokoll. Damit liegt die Einengung bereits vor:
+///
+/// - Weichen **die Konformitätsvektoren** ab, sitzt der Unterschied
+///   unterhalb des Modells, in den Kerneln selbst.
+/// - Stimmen sie überein und weicht nur der Modelllauf ab, rechnen die
+///   Kernel gleich, und der Unterschied liegt darüber: Artefakt, Laden,
+///   Zuschnitt, Abtastung.
+///
+/// Das ist keine Vermutung, sondern eine Fallunterscheidung über zwei
+/// Werte, die beide schon gemessen wurden.
+pub fn abweichungs_hinweis(g: &Gruppe) -> String {
+    let geteilt = |name: &str| -> bool {
+        g.werte
+            .iter()
+            .any(|(n, nach_digest)| n == name && nach_digest.len() > 1)
+    };
+    let vorhanden = |name: &str| -> bool { g.werte.iter().any(|(n, _)| n == name) };
+
+    let abweichende: Vec<&str> = g
+        .werte
+        .iter()
+        .filter(|(_, nach_digest)| nach_digest.len() > 1)
+        .map(|(n, _)| n.as_str())
+        .collect();
+
+    // Zeilenliste statt Zeilenfortsetzung im Literal: Der Text steht
+    // links am Rand und traegt die Einrueckung des Quelltexts nicht mit
+    // in die Ausgabe.
+    let mut zeilen: Vec<String> = vec![format!(
+        "Auseinander gehen: {}.",
+        if abweichende.is_empty() {
+            "nichts".to_string()
+        } else {
+            abweichende.join(", ")
+        }
+    )];
+
+    let konf = crate::konformitaet::WERT;
+    if !vorhanden(konf) {
+        zeilen.extend([
+            String::new(),
+            "Diese Protokolle tragen keinen Konformitätswert, deshalb lässt sich die".into(),
+            "Abweichung hier nicht weiter eingrenzen. Ein Sammellauf (`myl-test` ohne".into(),
+            "Unterbefehl) führt die Konformitätsvektoren als fünfte Stufe mit; damit".into(),
+            "trennt der nächste Vergleich Kernel von Modell.".into(),
+        ]);
+        return zeilen.join("\n");
+    }
+
+    if geteilt(konf) {
+        zeilen.extend([
+            String::new(),
+            "Die Konformitätsvektoren selbst weichen ab. Der Unterschied sitzt damit".into(),
+            "UNTERHALB des Modells, in den Kerneln: eine feste Eingabe, ein fester".into(),
+            "erwarteter Wert, und zwei Maschinen rechnen verschieden.".into(),
+            String::new(),
+            "Nächster Schritt: `myl-test konformitaet` auf beiden Maschinen. Der Lauf".into(),
+            "schreibt eine Protokollzeile JE VEKTOR und benennt damit die Operation.".into(),
+        ]);
+        // Der Umfang entscheidet, wie fein die Einengung ausfällt.
+        let nur_op = g
+            .protokolle
+            .iter()
+            .all(|p| p.konformitaet_umfang == crate::konformitaet::UMFANG_OP);
+        if nur_op {
+            zeilen.extend([
+                String::new(),
+                "Beide Läufe hatten nur die Operations-Vektoren (kein Artefakt gewählt)."
+                    .into(),
+                "Mit Artefakt kommen Layer- und E2E-Vektoren dazu, und die grenzen von der"
+                    .into(),
+                "Operation auf die Schicht ein.".into(),
+            ]);
+        }
+        return zeilen.join("\n");
+    }
+
+    zeilen.extend([
+        String::new(),
+        "Die Konformitätsvektoren stimmen überein. Die Kernel rechnen auf beiden".into(),
+        "Maschinen bitgleich; der Unterschied liegt DARÜBER: Artefakt, Laden des".into(),
+        "Modells, Zuschnitt der Shards oder Abtastung.".into(),
+        String::new(),
+        "Nächster Schritt: `myl-test artefakte` auf beiden Maschinen. Weicht schon der".into(),
+        "Artefakt-Digest ab, ist es kein Hardware-Befund, sondern ein anderes Modell.".into(),
+    ]);
+    zeilen.join("\n")
 }
 
 fn kurz(digest: &str) -> &str {
@@ -678,13 +939,13 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         // Durchgang stammt, gehört dann nicht ans Ende.
         let _ = writeln!(
             t,
-            "| Teilnehmer | Lauf | Werte | Hardware | θ_v | Artefakt-Digest | Fingerabdruck | Datei |"
+            "| Teilnehmer | Lauf | Werte | Hardware | θ_v | Artefakt-Digest | Maschine | Rechenpfad | Datei |"
         );
-        let _ = writeln!(t, "|---|---|---|---|---|---|---|---|");
+        let _ = writeln!(t, "|---|---|---|---|---|---|---|---|---|");
         for p in &g.protokolle {
             let _ = writeln!(
                 t,
-                "| {} | {} | {} | {} | {} | `{}` | `{}` | `{}` |",
+                "| {} | {} | {} | {} | {} | `{}` | `{}` | `{}` | `{}` |",
                 p.bezeichnung(),
                 match p.mangel() {
                     Some(m) => format!("**{}**", m),
@@ -695,6 +956,7 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
                 leer_als_strich(&p.theta_v),
                 kurz(&p.artefakt_digest),
                 kurz(&p.fingerprint),
+                kurz(&p.rechenpfad),
                 p.datei
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -732,6 +994,14 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         let _ = writeln!(t);
         for zeile in erlaeuterung(&g.urteil).lines() {
             let _ = writeln!(t, "{}", zeile);
+        }
+        if g.urteil == Urteil::Abweichung {
+            let _ = writeln!(t);
+            let _ = writeln!(t, "#### Wo die Abweichung sitzt");
+            let _ = writeln!(t);
+            for zeile in abweichungs_hinweis(g).lines() {
+                let _ = writeln!(t, "{}", zeile);
+            }
         }
     }
 
@@ -917,6 +1187,17 @@ mod tests {
             key: "fingerprint_sha256".into(),
             value: fingerprint.into(),
         });
+        // Die Proben stellen Protokolle des heutigen Clients nach: Ohne
+        // die Schema-Marke fielen sie alle unter
+        // `Urteil::Fingerabdruckschema`, und zwar zu Recht.
+        log.event(Event::Hardware {
+            key: "fingerabdruck_schema".into(),
+            value: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+        });
+        log.event(Event::Hardware {
+            key: "rechenpfad_sha256".into(),
+            value: "pfad-referenz".into(),
+        });
         log.event(Event::Artifact {
             key: "theta_v".into(),
             value: theta_v.into(),
@@ -956,6 +1237,17 @@ mod tests {
         log.event(Event::Hardware {
             key: "fingerprint_sha256".into(),
             value: fingerprint.into(),
+        });
+        // Die Proben stellen Protokolle des heutigen Clients nach: Ohne
+        // die Schema-Marke fielen sie alle unter
+        // `Urteil::Fingerabdruckschema`, und zwar zu Recht.
+        log.event(Event::Hardware {
+            key: "fingerabdruck_schema".into(),
+            value: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+        });
+        log.event(Event::Hardware {
+            key: "rechenpfad_sha256".into(),
+            value: "pfad-referenz".into(),
         });
         log.event(Event::Artifact {
             key: "theta_v".into(),
@@ -1210,6 +1502,8 @@ mod tests {
         let p = Protokoll {
             teilnehmer: crate::logging::OHNE_NAME.to_string(),
             hardware: "aarch64-macos-reference".to_string(),
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            rechenpfad: "pfad-referenz".into(),
             ..Default::default()
         };
         assert_eq!(p.bezeichnung(), "aarch64-macos-reference");
@@ -1349,6 +1643,8 @@ mod tests {
             abgeschlossen: true,
             erfolgreich: true,
             ergebnisse: vec![("determinismus".into(), "d0".into())],
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            rechenpfad: "pfad-referenz".into(),
             ..Default::default()
         };
         let b = Protokoll {
@@ -1375,6 +1671,8 @@ mod tests {
             abgeschlossen: true,
             erfolgreich: true,
             ergebnisse: vec![("determinismus".into(), "d0".into())],
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            rechenpfad: "pfad-referenz".into(),
             ..Default::default()
         };
         let b = Protokoll {
@@ -1400,6 +1698,8 @@ mod tests {
             abgeschlossen: true,
             erfolgreich: true,
             ergebnisse: vec![("konformitaet".into(), "k0".into())],
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            rechenpfad: "pfad-referenz".into(),
             ..Default::default()
         };
         let b = Protokoll {
@@ -1425,6 +1725,8 @@ mod tests {
             abgeschlossen: true,
             erfolgreich: true,
             ergebnisse: vec![("konformitaet".into(), "k0".into())],
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            rechenpfad: "pfad-referenz".into(),
             ..Default::default()
         };
         let b = Protokoll {
@@ -1457,5 +1759,175 @@ mod tests {
         let p = protokoll_lesen(&datei).expect("Protokoll");
         assert_eq!(p.konformitaet_umfang, "op");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── Fund 105: Maschine und Rechenpfad sind zwei Fragen ──────────
+
+    /// Ein Grundgerüst für die vier Proben darunter: vollständiger Lauf,
+    /// ein Vergleichswert, heutiges Schema.
+    fn lauf(maschine: &str, pfad: &str) -> Protokoll {
+        Protokoll {
+            theta_v: "0.17.0".into(),
+            artefakt_digest: "c42b".into(),
+            digest_umfang: "logits+token".into(),
+            fingerprint: maschine.into(),
+            rechenpfad: pfad.into(),
+            schema: crate::hardware::FINGERABDRUCK_SCHEMA.into(),
+            abgeschlossen: true,
+            erfolgreich: true,
+            ergebnisse: vec![("determinismus".into(), "d0".into())],
+            ..Default::default()
+        }
+    }
+
+    /// ⚑ **Fund 105 in einem Satz.** Zwei Bauten auf einer Maschine sind
+    /// kein Cross-Hardware-Nachweis.
+    ///
+    /// Bis zum 2026-08-30 kam hier `Urteil::Nachweis` heraus, weil der
+    /// Bau in den Fingerabdruck einging. Nachgestellt wurde es mit dem
+    /// echten Client: ein MacBook, `cargo build` mit und ohne
+    /// `--features cpu-simd`, gleicher Konformitätswert, Urteil
+    /// „NACHWEIS".
+    #[test]
+    fn zwei_bauten_einer_maschine_sind_kein_cross_hardware_nachweis() {
+        let protokolle = vec![lauf("gleiche-cpu", "pfad-referenz"), lauf("gleiche-cpu", "pfad-simd")];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Rechenpfad);
+    }
+
+    /// Und der Rechenpfad-Nachweis darf den Rückgabewert nicht auf Erfolg
+    /// setzen: `myl-test vergleich` meldet mit seinem Exit-Code genau eine
+    /// Aussage, nämlich den Cross-Hardware-Nachweis.
+    #[test]
+    fn der_rechenpfad_nachweis_ist_kein_nachweis() {
+        assert!(!Urteil::Rechenpfad.ist_nachweis());
+        assert!(Urteil::Nachweis.ist_nachweis());
+    }
+
+    /// Gegenprobe: Zwei Maschinen bleiben der Nachweis, auch wenn sie
+    /// zusätzlich verschiedene Rechenpfade fahren. Ohne sie wäre nicht
+    /// unterscheidbar, ob die neue Prüfung die Maschinen beurteilt oder
+    /// jeden Pfadunterschied abwertet.
+    #[test]
+    fn zwei_maschinen_bleiben_der_nachweis_auch_mit_zwei_pfaden() {
+        let protokolle = vec![lauf("cpu-a", "pfad-referenz"), lauf("cpu-b", "pfad-simd")];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Nachweis);
+    }
+
+    /// Eine Maschine, ein Pfad, zwei Läufe: unverändert kein Nachweis.
+    #[test]
+    fn eine_maschine_ein_pfad_bleibt_kein_nachweis() {
+        let protokolle = vec![lauf("gleiche-cpu", "pfad-referenz"), lauf("gleiche-cpu", "pfad-referenz")];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::EineMaschine);
+    }
+
+    /// Ein Protokoll ohne Schema-Marke stammt aus einer Fassung, deren
+    /// Fingerabdruck eine andere Feldmenge abdeckte. Es ist unvergleichbar,
+    /// und **das Schweigen darüber wäre Fund 105 über zwei Fassungen**.
+    #[test]
+    fn ein_protokoll_ohne_schema_ist_unvergleichbar() {
+        let mut alt = lauf("cpu-b", "pfad-referenz");
+        alt.schema = String::new();
+        let protokolle = vec![lauf("cpu-a", "pfad-referenz"), alt];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Fingerabdruckschema);
+    }
+
+    /// Die Marke verspricht beide Fingerabdrücke. Fehlt einer trotzdem,
+    /// ist das Protokoll beschädigt, und ein Urteil darüber wäre
+    /// erfunden.
+    #[test]
+    fn marke_ohne_fingerabdruck_ist_unvergleichbar() {
+        let mut beschaedigt = lauf("cpu-b", "pfad-referenz");
+        beschaedigt.fingerprint = String::new();
+        let protokolle = vec![lauf("cpu-a", "pfad-referenz"), beschaedigt];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Fingerabdruckschema);
+    }
+
+    /// Und ebenso, wenn beide eine Marke tragen, aber verschiedene.
+    #[test]
+    fn verschiedene_schemata_sind_unvergleichbar() {
+        let mut kuenftig = lauf("cpu-b", "pfad-referenz");
+        kuenftig.schema = "maschine/2".into();
+        let protokolle = vec![lauf("cpu-a", "pfad-referenz"), kuenftig];
+        let werte = werte_sammeln(&protokolle);
+        assert_eq!(urteilen(&protokolle, &werte), Urteil::Fingerabdruckschema);
+    }
+
+    // ── Punkt 2: die Abweichung eingrenzen ──────────────────────────
+
+    /// Wie [`lauf`], aber mit frei gesetzten Vergleichswerten.
+    fn lauf_mit(maschine: &str, werte: &[(&str, &str)], umfang: &str) -> Protokoll {
+        Protokoll {
+            konformitaet_umfang: umfang.into(),
+            ergebnisse: werte
+                .iter()
+                .map(|(n, d)| (n.to_string(), d.to_string()))
+                .collect(),
+            ..lauf(maschine, "pfad-referenz")
+        }
+    }
+
+    fn hinweis(protokolle: Vec<Protokoll>) -> String {
+        let gruppen = gruppieren(protokolle);
+        assert_eq!(gruppen.len(), 1, "die Probe braucht genau eine Gruppe");
+        assert_eq!(gruppen[0].urteil, Urteil::Abweichung);
+        abweichungs_hinweis(&gruppen[0])
+    }
+
+    /// Weichen schon die Konformitätsvektoren ab, sitzt der Unterschied
+    /// in den Kerneln. Das ist die Einengung, die einen bezahlten
+    /// Nachmittag rettet.
+    #[test]
+    fn abweichende_konformitaet_zeigt_unter_das_modell() {
+        let t = hinweis(vec![
+            lauf_mit("cpu-a", &[("konformitaet", "k0"), ("determinismus", "d0")], "op"),
+            lauf_mit("cpu-b", &[("konformitaet", "k1"), ("determinismus", "d1")], "op"),
+        ]);
+        assert!(t.contains("UNTERHALB"), "{t}");
+        assert!(t.contains("myl-test konformitaet"), "{t}");
+        // Beide liefen ohne Artefakt: der Hinweis sagt, was fehlt.
+        assert!(t.contains("Layer- und E2E-Vektoren"), "{t}");
+    }
+
+    /// Stimmen die Vektoren überein und weicht nur der Modelllauf ab,
+    /// rechnen die Kernel gleich. Dann ist es kein Kernel-Befund, und der
+    /// Hinweis muss in die andere Richtung zeigen.
+    #[test]
+    fn gleiche_konformitaet_zeigt_ueber_das_modell() {
+        let t = hinweis(vec![
+            lauf_mit("cpu-a", &[("konformitaet", "k0"), ("determinismus", "d0")], "op"),
+            lauf_mit("cpu-b", &[("konformitaet", "k0"), ("determinismus", "d1")], "op"),
+        ]);
+        assert!(t.contains("DARÜBER"), "{t}");
+        assert!(t.contains("myl-test artefakte"), "{t}");
+        assert!(!t.contains("UNTERHALB"), "{t}");
+    }
+
+    /// Ohne Konformitätswert lässt sich nichts eingrenzen, und **genau
+    /// das gehört gesagt**. Ein Hinweis, der so täte, als wüsste er es,
+    /// wäre schlimmer als keiner.
+    #[test]
+    fn ohne_konformitaetswert_sagt_der_hinweis_das() {
+        let t = hinweis(vec![
+            lauf_mit("cpu-a", &[("determinismus", "d0")], ""),
+            lauf_mit("cpu-b", &[("determinismus", "d1")], ""),
+        ]);
+        assert!(t.contains("keinen Konformitätswert"), "{t}");
+        assert!(t.contains("fünfte Stufe"), "{t}");
+    }
+
+    /// Der Hinweis nennt die abweichenden Werte beim Namen. Ohne das
+    /// müsste man sie aus der Tabelle darüber zusammensuchen.
+    #[test]
+    fn der_hinweis_nennt_die_abweichenden_werte() {
+        let t = hinweis(vec![
+            lauf_mit("cpu-a", &[("konformitaet", "k0"), ("determinismus", "d0")], "op"),
+            lauf_mit("cpu-b", &[("konformitaet", "k0"), ("determinismus", "d1")], "op"),
+        ]);
+        assert!(t.contains("Auseinander gehen: determinismus"), "{t}");
     }
 }

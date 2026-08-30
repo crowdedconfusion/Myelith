@@ -173,18 +173,41 @@ jobs:
         with:
           workspaces: INTEGER_LLM/kernels
 
-      - name: cargo test (Unit-Tests)
+      # ⛑ Fund 104 (2026-08-30): Hier stand `--lib`, und zwar in jedem
+      # kernels-Schritt. `--lib` fuehrt die Unit-Tests im Modulbaum aus
+      # und **laesst tests/ vollstaendig aus**. Das Crate hat zwei
+      # Dateien dort, und es sind nicht die unwichtigsten:
+      #
+      #   tests/test_backend_parity.rs  nennt sich im eigenen Kopf "die
+      #       normative Garantie dafuer, dass kein Backend jemals
+      #       numerisch von der Referenz abweicht".
+      #   tests/allaussagen.rs          die Eigenschaftstests, 2026-08-29
+      #       neu geschrieben, mit erschoepfendem Durchgang.
+      #
+      # Beide liefen in keinem Job dieser Datei. Die Paritaetspruefung
+      # ist genau die, die den AVX512VL-Befehl unter der AVX2-Weiche
+      # (Fund 103) auf einer Maschine ohne AVX-512 zum Absturz gebracht
+      # haette. Sie war da, sie war richtig, und sie wurde nie gerufen.
+      #
+      # Auch die beiden Python-Audits fuehren in die Irre: Sie rufen
+      # `cargo test -p integer-llm-kernels --lib <name>` und decken
+      # tests/ deshalb ebenfalls nicht ab.
+      - name: cargo test (Unit- und Integrationstests)
         working-directory: INTEGER_LLM/kernels
-        run: cargo test --lib --quiet
+        run: cargo test --quiet
 
       # Nicht nur bauen, sondern testen: Dieser Runner ist x86_64, und
       # genau dort greift die Regression aus Fund 34. `dot.rs` hat noch
       # keinen AVX2-Pfad, also muss `rechenpfad` hier `cpu-simd`
       # weglassen, obwohl das Feature gesetzt ist. Auf der
       # Entwicklungsmaschine (aarch64) laesst sich das nicht pruefen.
-      - name: cargo test --features cpu-simd (x86_64, Fund 34)
+      #
+      # ⛑ Und ohne `--lib` ist dies der einzige Ort, an dem
+      # `test_backend_parity.rs` ueberhaupt ein zweites Backend
+      # vorfindet: Die Datei ist `#![cfg(feature = "cpu-simd")]`.
+      - name: cargo test --features cpu-simd (x86_64, Fund 34 und 104)
         working-directory: INTEGER_LLM/kernels
-        run: cargo test --lib --features cpu-simd --quiet
+        run: cargo test --features cpu-simd --quiet
 
       - name: cargo build --features cuda
         working-directory: INTEGER_LLM/kernels

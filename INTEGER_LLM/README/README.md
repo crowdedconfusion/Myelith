@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.28.0 (θ_v 0.17.0; kernels 0.29.0, runtime 0.22.1, pipeline 0.15.0)
-> **Datum:** 2026-08-28
+> **Version:** 0.28.1 (θ_v 0.17.0; kernels 0.29.1, runtime 0.22.1, pipeline 0.15.0)
+> **Datum:** 2026-08-30
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -422,7 +422,56 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ## Changelog
 
+### v0.28.1 (kernels 0.29.1) – 2026-08-30 (⚑ Fund 104: der Paritätstest lief in keinem CI-Job)
+
+⚑ **Fund 104.** Alle kernels-Schritte der CI riefen `cargo test --lib`,
+und `--lib` lässt `tests/` vollständig aus. Betroffen waren beide
+Dateien dort, und es sind nicht die unwichtigsten:
+
+| Datei | Was sie leistet |
+|---|---|
+| `tests/test_backend_parity.rs` | nennt sich im eigenen Kopf „die normative Garantie dafür, dass kein Backend jemals numerisch von der Referenz abweicht" |
+| `tests/allaussagen.rs` | die Eigenschaftstests vom 2026-08-29, mit erschöpfendem Durchgang |
+
+**Die Paritätsprüfung ist genau die, die Fund 103 gefunden hätte.** Sie
+war geschrieben, sie war richtig, und sie wurde nie gerufen. Behoben
+durch Weglassen von `--lib` in beiden Schritten. Eine Nachbarschaftsprobe
+über alle Crates mit `tests/` ergab genau einen weiteren Fall,
+`myl-pod`, und der ist **ausdrücklich und begründet** ausgenommen
+(`layer_granular.rs` und `pod_e2e.rs` brauchen Artefakte).
+
+⛑ **Und sie hätte die Rechenabweichung trotzdem nicht gesehen.**
+`rope_parity_basic` rechnet mit `q = 100` und `k = 50`; nach dem
+Rechtsshift liegt jedes Zwischenergebnis weit im i16-Bereich, und dort
+stimmen Abschneiden und Sättigen überein. Neu ist deshalb
+`rope_parity_saettigung`, das die Werte so wählt, dass es überläuft, und
+**zuerst prüft, dass sein eigener Fall wirklich sättigt**. Gegenprobe:
+`vqmovn_s32` versuchsweise durch `vmovn_s32` ersetzt, dann fällt genau
+dieser eine Test und die sechs alten bleiben grün.
+
+⛑ **Zwei weitere Berichtigungen an derselben Datei.** Ihr Kopf behauptete,
+auf ARM64 werde „der Fallback-Pfad (der identisch zur Referenz ist)"
+geprüft; tatsächlich liefert `SimdBackend::detect()` dort NEON. Und
+sechsmal stand `None => return` ohne Ausgabe: Auf einer x86_64-Maschine
+ohne AVX2 lief die Datei vollständig durch und meldete sechs bestandene
+Tests, ohne eine einzige Zusicherung zu prüfen. **Ein stiller Übersprung
+sieht aus wie ein bestandener Test.**
+
+⛑ **Berichtigung zur Reichweite von Fund 103.** Der Eintrag darunter
+sagt, der AVX2-Pfad stürze „auf den meisten x86-CPUs" ab, und lässt
+offen, wen es trifft. Genauer: `backends/simd.rs` ist über das
+`Backend`-Trait erreichbar, und das ruft im Rechenpfad **niemand**;
+`runtime/src/model.rs` importiert die Referenzkernel direkt. Getroffen
+hätte es also `test_backend_parity.rs` auf einer Maschine ohne AVX-512,
+nicht einen laufenden Miner. Der Fehler war echt, seine Reichweite war
+kleiner als gemeldet.
+
 ### v0.28.0 (kernels 0.29.0) – 2026-08-30 (⚑ Fund 103: der AVX2-Pfad stürzt auf den meisten x86-CPUs ab)
+
+> ⛑ **Zur Reichweite berichtigt am 2026-08-30, siehe v0.28.1:** Der Pfad
+> liegt hinter dem ungenutzten `Backend`-Trait. Betroffen war der
+> Paritätstest, nicht der Rechenpfad eines Knotens.
+
 
 `rotate_half_split_avx2` ist mit `#[target_feature(enable = "avx2")]`
 ausgezeichnet, und die Auswahl prüft `is_x86_feature_detected!("avx2")`.

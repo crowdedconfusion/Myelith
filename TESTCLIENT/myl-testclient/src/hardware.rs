@@ -107,24 +107,99 @@ impl Fingerprint {
         )
     }
 
-    /// Kanonische Bytefolge für den Vergleich zweier Maschinen.
+    /// Kanonische Bytefolge für den Vergleich zweier **Maschinen**.
     ///
-    /// Deckt **nur** die Fingerabdruck-Felder ab, nicht die
-    /// [`Self::beschreibung`]: Zwei identische Mietkisten müssen
+    /// Deckt **nur** die Felder aus [`MASCHINENFELDER`] ab. Nicht die
+    /// [`Self::beschreibung`], denn zwei identische Mietkisten müssen
     /// denselben Fingerabdruck tragen, sonst hielte der Vergleich zwei
     /// gleiche Architekturen für zwei verschiedene und gäbe ein Urteil,
-    /// das nichts belegt.
+    /// das nichts belegt. **Und seit dem 2026-08-30 auch nicht die
+    /// Felder aus [`RECHENPFADFELDER`]**, siehe dort.
     pub fn canonical_bytes(&self) -> Vec<u8> {
+        self.bytes_ueber(&MASCHINENFELDER)
+    }
+
+    /// Kanonische Bytefolge des **Rechenpfads**, also des Baus.
+    ///
+    /// Getrennt vom Maschinen-Fingerabdruck, weil beide verschiedene
+    /// Fragen beantworten: „Ist das eine andere Maschine?" und „Ist das
+    /// ein anderer Rechenweg?". Der Cross-Hardware-Nachweis hängt an der
+    /// ersten, der Backend-Vergleich innerhalb einer Maschine an der
+    /// zweiten.
+    pub fn rechenpfad_bytes(&self) -> Vec<u8> {
+        self.bytes_ueber(&RECHENPFADFELDER)
+    }
+
+    fn bytes_ueber(&self, felder: &[&str]) -> Vec<u8> {
         let mut out = Vec::new();
-        for (k, v) in &self.entries {
-            out.extend_from_slice(k.as_bytes());
+        // Über die Feldliste laufen, nicht über `entries`: Die Reihenfolge
+        // soll an der Liste hängen und nicht daran, in welcher Reihenfolge
+        // `collect` die Werte erhebt.
+        for feld in felder {
+            let Some(wert) = self.get(feld) else { continue };
+            out.extend_from_slice(feld.as_bytes());
             out.push(b'=');
-            out.extend_from_slice(v.as_bytes());
+            out.extend_from_slice(wert.as_bytes());
             out.push(b'\n');
         }
         out
     }
 }
+
+/// Die Felder, die die **Maschine** beschreiben. Nur sie tragen den
+/// Cross-Hardware-Nachweis.
+///
+/// ⚑ **Fund 105 (2026-08-30): Der Nachweis ließ sich auf einer einzigen
+/// Maschine erzeugen.** Bis zu diesem Tag lief `canonical_bytes` über
+/// **alle** Einträge, also auch über `backends_compiled`,
+/// `backends_rechnend` und `backend_selected`. Die beschreiben aber den
+/// **Bau**, nicht die Maschine. Wer denselben Client ein zweites Mal mit
+/// `--features cpu-simd` übersetzte und den Lauf wiederholte, bekam einen
+/// zweiten Fingerabdruck, gleiche Vergleichswerte, und `vergleich`
+/// urteilte:
+///
+/// > Urteil: NACHWEIS
+/// > Die Fingerabdrücke unterscheiden sich, die Vergleichswerte stimmen
+/// > überein. Das ist der Cross-Hardware-Determinismus-Nachweis für diese
+/// > Einstellung.
+///
+/// Gemessen am 2026-08-30 auf einem einzigen MacBook, zwei Bauten,
+/// dieselbe CPU. Der Modulkopf von `vergleich` nennt genau das die
+/// gefährlichste Eigenschaft, die dieses Werkzeug haben kann: „Ein
+/// Werkzeug, das einen Nachweis vortäuscht, ist schlimmer als keines,
+/// weil sein Ergebnis geglaubt wird."
+pub const MASCHINENFELDER: [&str; 7] = [
+    "arch",
+    "os",
+    "family",
+    "pointer_width",
+    "endianness",
+    "parallelism",
+    "simd_features",
+];
+
+/// Die Felder, die den **Bau** beschreiben.
+///
+/// Ein Unterschied hier ist ein echter Befund, aber ein anderer: Zwei
+/// Rechenpfade auf **derselben** Maschine, die bitgleich rechnen, sind
+/// der Backend-Vergleich (TESTCLIENT 2.2) und nicht der
+/// Cross-Hardware-Nachweis. `vergleich` unterscheidet beides seit dem
+/// 2026-08-30 im Urteil.
+pub const RECHENPFADFELDER: [&str; 3] = [
+    "backends_compiled",
+    "backends_rechnend",
+    "backend_selected",
+];
+
+/// Kennzeichnet, **wie** der Fingerabdruck gebildet wurde.
+///
+/// Steht im Protokoll und wird vor jedem Urteil verglichen. Ohne diese
+/// Marke wäre ein Protokoll von vor dem 2026-08-30 von einem danach nicht
+/// zu unterscheiden: Beide tragen ein Feld `fingerprint_sha256`, aber es
+/// deckt verschiedene Mengen ab, und derselbe Rechner ergäbe zwei
+/// verschiedene Werte. Genau daraus entstünde wieder Fund 105, nur über
+/// zwei Client-Fassungen statt über zwei Bauten.
+pub const FINGERABDRUCK_SCHEMA: &str = "maschine/1";
 
 fn endianness() -> &'static str {
     if cfg!(target_endian = "little") {
@@ -518,6 +593,66 @@ mod tests {
         assert!(!simd_features().is_empty());
     }
 
+    /// **Jedes erhobene Feld gehört in genau eine der beiden Listen.**
+    ///
+    /// Ohne diese Probe fiele ein künftig ergänztes Feld stillschweigend
+    /// aus beiden Fingerabdrücken heraus: `canonical_bytes` liefe über
+    /// die Liste, das neue Feld stünde nicht darin, und niemand merkte
+    /// es. Genau umgekehrt entstand Fund 105, nämlich dadurch, dass
+    /// `canonical_bytes` über **alle** Felder lief und dabei drei
+    /// mitnahm, die nicht die Maschine beschreiben.
+    #[test]
+    fn jedes_feld_ist_einer_seite_zugeordnet() {
+        let fp = Fingerprint::collect();
+        for (k, _) in &fp.entries {
+            let maschine = MASCHINENFELDER.contains(&k.as_str());
+            let rechenpfad = RECHENPFADFELDER.contains(&k.as_str());
+            assert!(
+                maschine ^ rechenpfad,
+                "Feld {k:?} steht in {} Listen, es muss in genau einer stehen",
+                u8::from(maschine) + u8::from(rechenpfad)
+            );
+        }
+        // Und umgekehrt: keine Liste nennt ein Feld, das es nicht gibt.
+        for feld in MASCHINENFELDER.iter().chain(RECHENPFADFELDER.iter()) {
+            assert!(
+                fp.entries.iter().any(|(k, _)| k == feld),
+                "Liste nennt {feld:?}, erhoben wird es nicht"
+            );
+        }
+    }
+
+    /// ⚑ **Fund 105 in einem Test.** Der Maschinen-Fingerabdruck darf
+    /// sich nicht ändern, wenn sich nur der Bau ändert.
+    ///
+    /// Nachgestellt wird das über die Felder selbst: Zwei Erhebungen
+    /// derselben Maschine, bei denen die Rechenpfad-Felder verschiedene
+    /// Werte tragen, müssen dieselbe kanonische Bytefolge ergeben. Ein
+    /// zweiter Bau mit `--features cpu-simd` ändert genau diese drei
+    /// Felder und sonst nichts.
+    #[test]
+    fn ein_zweiter_bau_ist_keine_zweite_maschine() {
+        let mut a = Fingerprint::collect();
+        let vorher = a.canonical_bytes();
+
+        for (k, v) in a.entries.iter_mut() {
+            if RECHENPFADFELDER.contains(&k.as_str()) {
+                *v = format!("{v}-anders");
+            }
+        }
+
+        assert_eq!(
+            vorher,
+            a.canonical_bytes(),
+            "der Maschinen-Fingerabdruck hängt am Bau: das ist Fund 105"
+        );
+        assert_ne!(
+            Fingerprint::collect().rechenpfad_bytes(),
+            a.rechenpfad_bytes(),
+            "der Rechenpfad-Fingerabdruck merkt den anderen Bau nicht"
+        );
+    }
+
     /// **Der Kern der Sperre.** Ein Bau, der für ein delegierendes
     /// Backend konfiguriert ist, darf keinen Messlauf zulassen. Ohne das
     /// bekäme jemand mit `--features cuda` ein bitgleiches Ergebnis,
@@ -713,12 +848,30 @@ mod tests {
             assert!(fp.get(key).is_none(), "{key} steht im Fingerabdruck-Teil");
         }
 
-        // Der Fingerabdruck ist genau der Hash über `entries`; eine
-        // Beschreibung, die sich ändert, ohne dass `entries` sich ändern,
-        // lässt ihn unverändert. Das wird über die Länge der Beiträge
-        // geprüft: jeder Entry-Schlüssel taucht auf, kein fremder.
-        for (k, _) in &fp.entries {
-            assert!(kanonisch.contains(&format!("{}=", k)), "Entry {k} fehlt");
+        // Der Rechenpfad-Teil darf sie ebenso wenig nennen.
+        let pfad = String::from_utf8(fp.rechenpfad_bytes()).unwrap();
+        for key in ["cpu_modell", "ram_bytes", "virtualisierung", "gpu_karte"] {
+            assert!(
+                !pfad.contains(key),
+                "Rechenpfad enthält das Beschreibungs-Feld {key}"
+            );
+        }
+
+        // Hier stand bis zum 2026-08-30: „jeder Entry-Schlüssel taucht
+        // auf, kein fremder". Das galt, solange `canonical_bytes` über
+        // alle Einträge lief, und genau das war Fund 105. Geprüft wird
+        // jetzt die Zuordnung: Der Maschinen-Teil nennt die
+        // Maschinenfelder und nur sie, der Rechenpfad-Teil die anderen.
+        for feld in MASCHINENFELDER {
+            assert!(kanonisch.contains(&format!("{feld}=")), "{feld} fehlt");
+            assert!(!pfad.contains(&format!("{feld}=")), "{feld} doppelt");
+        }
+        for feld in RECHENPFADFELDER {
+            assert!(pfad.contains(&format!("{feld}=")), "{feld} fehlt");
+            assert!(
+                !kanonisch.contains(&format!("{feld}=")),
+                "{feld} zählt zur Maschine: das ist Fund 105"
+            );
         }
     }
 

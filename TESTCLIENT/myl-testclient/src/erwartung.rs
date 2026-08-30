@@ -141,6 +141,17 @@ pub fn protokollieren(log: &mut crate::logging::RunLog, erwartet: &str) -> bool 
                  einen solchen Wechsel ist sie ein Befund über diese Maschine oder \
                  diesen Bau.",
             );
+            // **Wo als Nächstes zu suchen ist**, und zwar hier auf der
+            // Maschine, auf der es auffiel. Dieselbe Fallunterscheidung
+            // trifft `vergleich` beim Koordinator; sie braucht keinen
+            // zweiten Lauf, sondern nur den zweiten Wert.
+            log.note(
+                "Zum Eingrenzen: `myl-test konformitaet` auf dieser Maschine. Weicht \
+                 auch der Konformitätswert ab, sitzt der Unterschied in den Kerneln, \
+                 und die Protokollzeile je Vektor benennt die Operation. Stimmt er, \
+                 rechnen die Kernel richtig, und der Unterschied liegt darüber: \
+                 Artefakt, Laden, Zuschnitt oder Abtastung.",
+            );
         }
         Befund::OhneWert => {
             log.error(

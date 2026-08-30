@@ -1,12 +1,14 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.19.1
-> **Datum:** 2026-08-28
+> **Version:** 0.20.0
+> **Datum:** 2026-08-30
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
-> (`vergleich`) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
+> (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
+> dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
 > Fremdmaschinen-Automatik, 4.1 der Konformitätslauf als fünfte Stufe,
 > 4.2 die Maschinenbeschreibung im Protokoll). Offen bleibt in Phase 2
-> allein der Lauf selbst, also die zweite Architektur. 265 Tests grün,
+> der Lauf selbst, also die zweite Architektur, und 2.3 (bestätigte
+> Ergebnisse ablegen). 278 Tests grün,
 > alle Läufe gegen die echten Artefakte verifiziert. Der
 > Fremdmaschinen-Test ist auf einem nachgebauten frischen Klon gefahren
 > (aarch64/macOS); Windows und der Weg über Modellbeschaffung und
@@ -507,6 +509,73 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.20.0 – 2026-08-30 (⚑ Fund 105: der Nachweis ließ sich auf einer einzigen Maschine erzeugen)
+
+⚑ **Fund 105, und er gehört in dieselbe Familie wie 34, 35 und 36:** ein
+Werkzeug, das einen bestandenen Nachweis liefert, den es nicht gibt.
+
+`canonical_bytes` lief über **alle** erhobenen Felder, und drei davon
+beschreiben nicht die Maschine, sondern den **Bau**:
+`backends_compiled`, `backends_rechnend`, `backend_selected`. Damit
+genügte ein zweiter `cargo build`:
+
+```
+myl-test --name ref-bau konformitaet          # ohne Feature
+cargo build --release --features cpu-simd
+myl-test --name simd-bau konformitaet         # dieselbe CPU
+myl-test vergleich
+
+   ref-bau    aarch64-macos-reference       894d8357ae92b5c1
+   simd-bau   aarch64-macos-cpu-simd/neon   894d8357ae92b5c1
+   Urteil: NACHWEIS
+   Das ist der Cross-Hardware-Determinismus-Nachweis für diese Einstellung.
+```
+
+Ein Laptop, zwei Übersetzungen, und das Werkzeug bescheinigt eine Aussage
+über Hardware. **Genau so nachgestellt am 2026-08-30**, mit dem echten
+Client, nicht am Modell.
+
+**Behoben durch eine Trennung, nicht durch eine weitere Prüfung.** Der
+Fingerabdruck deckt seither nur die Maschinenfelder ab; die drei
+Bau-Felder bilden einen eigenen Wert `rechenpfad_sha256`. Damit zerfällt
+die Frage in die zwei, die sie immer war:
+
+| Maschinen | Rechenpfade | Urteil |
+|---|---|---|
+| ≥ 2 | beliebig | `NACHWEIS`, der Cross-Hardware-Beleg |
+| 1 | ≥ 2 | `RECHENPFAD-NACHWEIS`, der Backend-Vergleich |
+| 1 | 1 | `KEIN NACHWEIS (eine Maschine)` |
+
+✅ **Damit ist Punkt 2.2 erledigt**, und zwar als Nebenwirkung: Der
+Backend-Vergleich innerhalb einer Maschine brauchte kein neues
+Unterkommando, sondern genau diese Unterscheidung. Zurückgestellt war er
+mit der Begründung, auf x86_64 gebe es bis zum AVX2-Pfad kein zweites
+Backend; auf aarch64 gibt es NEON, und dort trägt der Vergleich heute.
+Gemessen: gleicher Konformitätswert `894d8357ae92b5c1` über beide Bauten,
+Urteil `RECHENPFAD-NACHWEIS`.
+
+⚑ **Eine Schema-Marke hält zwei Client-Fassungen auseinander.** Ein
+`fingerprint_sha256` von vor dem 2026-08-30 deckt eine andere Feldmenge
+ab: gleich lang, gleich aussehend, auf derselben Maschine verschieden.
+Ohne Marke entstünde Fund 105 ein zweites Mal, nur über zwei Fassungen
+statt über zwei Bauten. Protokolle ohne Marke bekommen jetzt
+`UNVERGLEICHBAR (Fingerabdruck-Verfahren)` statt eines Urteils.
+
+**Und die Abweichung wird eingegrenzt, ohne einen zweiten Lauf.** Bisher
+sagte `ABWEICHUNG` nur, dass die Werte auseinandergehen. Der Sammellauf
+trägt den Konformitätswert als eigenen Vergleichswert im selben
+Protokoll, und daraus folgt die Einengung unmittelbar:
+
+- Weichen **die Konformitätsvektoren** ab, sitzt der Unterschied
+  unterhalb des Modells, in den Kerneln. Nächster Schritt:
+  `myl-test konformitaet`, eine Protokollzeile je Vektor.
+- Stimmen sie überein, rechnen die Kernel gleich, und der Unterschied
+  liegt darüber: Artefakt, Laden, Zuschnitt, Abtastung.
+- Fehlt der Wert ganz, sagt der Hinweis genau das, statt zu raten.
+
+Dieselbe Fallunterscheidung steht jetzt auch hinter einer verfehlten
+`--erwarte`, also auf der Maschine, auf der es auffiel. 278 Tests grün.
 
 ### v0.19.1 – 2026-08-30 (der Durchstich baut Pods ohne Archiv)
 

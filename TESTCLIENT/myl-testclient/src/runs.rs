@@ -166,6 +166,27 @@ pub(crate) fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
         value: sha256_hex(&fp.canonical_bytes()),
     });
 
+    // ⚑ **Fund 105 (2026-08-30).** Der Fingerabdruck deckt seit diesem Tag
+    // nur noch die Maschine ab; der Bau steht daneben. Beides gehört ins
+    // Protokoll, denn beide Fragen sind berechtigt, nur eben verschieden:
+    // „Ist das eine andere Maschine?" trägt den Cross-Hardware-Nachweis,
+    // „Ist das ein anderer Rechenweg?" den Backend-Vergleich.
+    log.event(Event::Hardware {
+        key: "rechenpfad_sha256".into(),
+        value: sha256_hex(&fp.rechenpfad_bytes()),
+    });
+
+    // **Die Marke ist nicht schmückend.** Ein Protokoll von vor dem
+    // 2026-08-30 trägt dasselbe Feld `fingerprint_sha256`, das aber eine
+    // andere Feldmenge abdeckt. Ohne diese Marke ergäbe derselbe Rechner
+    // vor und nach der Änderung zwei verschiedene Werte, und daraus
+    // entstünde Fund 105 ein zweites Mal, diesmal über zwei
+    // Client-Fassungen statt über zwei Bauten.
+    log.event(Event::Hardware {
+        key: "fingerabdruck_schema".into(),
+        value: crate::hardware::FINGERABDRUCK_SCHEMA.to_string(),
+    });
+
     // **Was der Vergleichswert überhaupt abdeckt.** Steht bei der
     // Hardware und nicht beim Artefakt, weil es eine Eigenschaft des
     // Messverfahrens ist und auch für Läufe ohne Modell gilt. Ohne dieses
