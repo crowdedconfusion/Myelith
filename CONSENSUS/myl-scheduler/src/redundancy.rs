@@ -34,7 +34,8 @@
 //! Gegen einen Angreifer leistet sie nichts, und dieser Absatz steht
 //! hier, damit niemand sie für mehr hält. Die Gegenmaßnahme muss an
 //! einer **gemessenen** oder **kostenpflichtigen** Größe hängen, nicht
-//! an einer erklärten; das ist Punkt 13 des Fahrplans.
+//! an einer erklärten. Eine erklärte Angabe kostet nichts, deshalb wählt
+//! ein Angreifer sie frei; das ist noch zu entscheiden und nicht hier.
 
 use myl_types::seed_rng::deterministic_shuffle;
 use std::collections::{HashMap, HashSet};

@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.18.0
+> **Version:** 0.19.0
 > **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -8,9 +8,9 @@
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **225 Tests grün** über sieben Testbinaries. (Die Zeile stand heute
+> **226 Tests grün** über sieben Testbinaries. (Die Zeile stand heute
 > früh auf 133 und zählte damit nur die Lib; 177 war der Stand vor den
-> fünf Zugängen dieses Tages.)
+> Zugängen dieses Tages.)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -50,6 +50,28 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.19.0 – 2026-08-31 (⚑ Fund 108: die Unterschrift belegt den Absender, nicht den Inhalt)
+
+Keine Verhaltensänderung, eine berichtigte Zusage. `node_metadata.rs`
+las sich, als belege es etwas über den Standort eines Knotens. **Region
+und ASN erklärt jeder Knoten über sich selbst**, und
+`validate_structure` prüft davon allein den Zeitstempel; der Name sagt
+„Struktur", und genau so weit reicht die Aussage.
+
+Damit ist jede Diversitätsprüfung auf diesen Feldern eine Prüfung gegen
+die Angabe des Geprüften. **Drei Maschinen in einem Schrank, die drei
+Regionen und drei AS eintragen, bestehen sie.** Ein Test hält das jetzt
+fest, damit niemand den Mechanismus später für mehr hält, als er ist.
+
+**Was er trotzdem leistet:** Er hält versehentliche Bündelung fern, also
+den ehrlichen Betreiber, der nicht aufpasst. Gegen einen Angreifer
+leistet er nichts.
+
+⚑ **Woran eine belastbare Prüfung hängen müsste:** an einer
+**gemessenen** Größe oder an einer, die **Geld kostet**. Der Latenzgraph
+liegt bereits vor und wird für die Clusterbildung benutzt. Eine erklärte
+Angabe kostet nichts, deshalb wählt ein Angreifer sie frei.
 
 ### v0.18.0 – 2026-08-31 (die Treasury, ein Konto ohne Schlüssel)
 

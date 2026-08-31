@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.25.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.4.0,
+> **Version:** 0.26.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.5.0,
 > `myl-ledger` 0.9.0)
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -18,7 +18,7 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **406 Tests grün** (269 `myl-consensus`, 68 `myl-scheduler`,
+> **412 Tests grün** (269 `myl-consensus`, 74 `myl-scheduler`,
 > 69 `myl-ledger`), über alle Testbinaries gezählt.
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
@@ -107,6 +107,32 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.26.0 (`myl-scheduler` 0.5.0) – 2026-08-31 (⚑ Fund 108: der Vertreter vertrat niemanden)
+
+`pod_region` nahm die Region des **ersten** Miners als die des ganzen
+Pods, mit dem Kommentar „in der Praxis sollten alle Miner in einem Pod
+aus derselben Region kommen, da sie im selben Cluster sind".
+
+⚑ **Das Cluster garantiert das nicht.** Die Clusterbildung arbeitet mit
+**gemessener Latenz** und liest `region` an keiner Stelle; die Datei
+erwähnt den Typ nicht einmal. Zwei Maschinen können zwanzig
+Millisekunden auseinanderliegen und verschiedene Regionen angeben, und
+dann trug der Pod das Etikett irgendeines Mitglieds.
+
+**Jetzt gilt eine Region nur, wenn alle Mitglieder mit bekannten
+Metadaten dieselbe nennen**, die Reserve eingeschlossen: Sie übernimmt
+bei einem Ausfall und steht dann in derselben Zone wie die Position, die
+sie ersetzt. Sind sie uneins, ist die Ausfallzone **unbekannt**, und das
+ist etwas anderes als vielfältig. Sechs Tests, eine Gegenprobe, die auf
+vieren zugleich beißt.
+
+⚑ **Und die größere Hälfte von Fund 108 bleibt offen:** Die Region ist
+eine Selbstauskunft, die niemand prüft. Wer beide Pods eines
+Redundanzpaars im selben Rechenzentrum betreibt, trägt zwei Regionen ein
+und besteht die Prüfung. **Damit ist der Redundanzvergleich in genau der
+Lage, vor der `pods_are_disjoint` eine Ebene tiefer schützt.** Der
+Modulkopf sagt das jetzt, statt Resilienz zu versprechen.
 
 ### v0.25.0 (`myl-ledger` 0.9.0) – 2026-08-31 (die eine Stelle, an der MYL entsteht)
 
