@@ -696,7 +696,7 @@ In Qwen3-30B-A3B this slot holds not **one** MLP but 128 of them
 
 *In code:* `kernels/src/mlp.rs::mlp_int`
 
-### MoE (mixture of experts)
+### MoE (Mixture of Experts)
 
 Instead of one MLP block per layer, the model holds many, the **experts**.
 A small linear network, the **router** (also *gate*), scores the input and
@@ -2148,7 +2148,7 @@ use `INTEGER_LLM/tests/cargo_paths.py`.
 | **L0–L3** | Networking / consensus / compute / agent layer | [A](#layer-model) |
 | **LUT** | Lookup table | [C](#lut-lookup-table) |
 | **MLP** | Multi-layer perceptron (feed-forward block) | [D](#mlp--feed-forward-and-silu) |
-| **MoE** | Mixture of experts | [D](#moe-mixture-of-experts) |
+| **MoE** | Mixture of Experts | [D](#moe-mixture-of-experts) |
 | **MYL** | The native coin | [I](#myl) |
 | **PoI** | Proof of inference | [—](#poi-proof-of-inference) |
 | **PoP** | Proof of possession | [E](#rogue-key-attack-and-proof-of-possession) |

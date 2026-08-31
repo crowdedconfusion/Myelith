@@ -612,7 +612,7 @@ auch die Perplexität gemessen wird.
 Die drei `benchmark`-Pläne führen das Modell absichtlich an
 ungewöhnliche Stellen: Ziffernfolgen werden anders tokenisiert als
 Wörter, fremde Schriften liegen weit auseinander in der
-Einbettungstabelle, und lange Prompts schieben die Generierung auf hohe
+Embedding-Tabelle, und lange Prompts schieben die Generierung auf hohe
 Positionen, wo RoPE-Winkel groß werden. Fund 15 (RoPE falsch) und
 Fund 16 (Attention nur auf den ersten Key) waren beide Fehler, die bei
 kurzen Prompts kaum auffielen.

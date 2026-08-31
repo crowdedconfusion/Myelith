@@ -501,6 +501,25 @@ impl VotingSet {
         u64::try_from(t).unwrap_or(u64::MAX)
     }
 
+    /// Die Schranke, ab der **mindestens ein Ehrlicher** dabei ist.
+    ///
+    /// Mehr als ein Drittel des Stimmgewichts kann nicht vollständig aus
+    /// byzantinischen Händen kommen, denn das Modell erlaubt ihnen
+    /// höchstens ein Drittel. Wer diese Schranke erreicht, hat also von
+    /// wenigstens einem ehrlichen Knoten gehört, und dessen Aussage über
+    /// die laufende Runde ist wahr.
+    ///
+    /// **Sie ist strikt**, wie [`Self::quorum_threshold`]: Genau ein
+    /// Drittel reicht nicht. Bei 900 Gesamtgewicht liegt sie bei 301,
+    /// nicht bei 300.
+    ///
+    /// Gebraucht wird sie für den Rundensprung eines Knotens, der
+    /// zurückgefallen ist (Punkt 23, Fund 67).
+    pub fn drittel_schranke(&self) -> u64 {
+        let t = self.total_weight as u128 / 3 + 1;
+        u64::try_from(t).unwrap_or(u64::MAX)
+    }
+
     /// Mitglieder in kanonischer Reihenfolge (nach MinerId).
     pub fn members(&self) -> impl Iterator<Item = (&MinerId, &VotingMember)> {
         self.members.iter()

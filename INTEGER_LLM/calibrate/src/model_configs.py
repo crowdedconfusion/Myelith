@@ -48,7 +48,7 @@ MODEL_CONFIGS = {
         # Grund wie bei attention_bias: lautes Scheitern statt stiller
         # Abweichung vom Referenzmodell.
         "qk_norm": False,
-        # Dichtes Modell, kein Expertengemisch.
+        # Dichtes Modell, kein Mixture-of-Experts-Modell.
         "num_experts": 0,
         "verified": "models/Qwen2.5-0.5B/config.json",
         "hf_model_id": "Qwen/Qwen2.5-0.5B",
@@ -83,7 +83,7 @@ MODEL_CONFIGS = {
         "tie_word_embeddings": False,
         "attention_bias": True,
         "qk_norm": False,
-        # Dichtes Modell, kein Expertengemisch.
+        # Dichtes Modell, kein Mixture-of-Experts-Modell.
         "num_experts": 0,
         "verified": "huggingface.co/Qwen/Qwen2.5-7B@d1497293",
         "hf_model_id": "Qwen/Qwen2.5-7B",
@@ -130,7 +130,7 @@ MODEL_CONFIGS = {
         "tie_word_embeddings": True,
         "attention_bias": False,
         "qk_norm": True,
-        # Dichtes Modell, kein Expertengemisch.
+        # Dichtes Modell, kein Mixture-of-Experts-Modell.
         "num_experts": 0,
         "verified": "models/Qwen3-4B/config.json@1cfa9a72",
         "hf_model_id": "Qwen/Qwen3-4B",

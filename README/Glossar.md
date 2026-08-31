@@ -1870,7 +1870,7 @@ assoziativ, der Determinismus-Ansatz aus
 
 ### Das Überlaufproblem
 
-Ganzzahlige Rückpropagierung stößt auf eine Grenze: Die Fehlerterme
+Ganzzahlige Backpropagation stößt auf eine Grenze: Die Fehlerterme
 **wachsen mit jeder rückwärts durchlaufenen Schicht** und sprengen bei
 8-Bit-Gewichten schon nach wenigen Schichten den 32-Bit-Bereich. Zwei
 Verfahren lösen das.
@@ -1891,7 +1891,7 @@ auf die Shard-Grenzen, entfällt der Rückwärtspass über die Pipeline
 vollständig: kein zusätzlicher Netzverkehr, und die Verifikation bleibt
 lokal — ein Shard-Paar prüft seinen eigenen Gradienten.
 
-Der Preis ist eine gegenüber globaler Rückpropagierung schlechtere
+Der Preis ist eine gegenüber globaler Backpropagation schlechtere
 Lösung; wie groß der Abstand bei Sprachmodellen ausfällt, ist offen.
 
 ### Datenprovenienz
@@ -2001,7 +2001,7 @@ identischen Text.
 Was verifiziert wird, ist die *Verarbeitung* der Antwort, nicht ihre
 Richtigkeit.
 
-### Prompt Injection und das Dual-LLM-Muster
+### Prompt-Injection und das Dual-LLM-Muster
 
 Verarbeitet ein Agent fremde Inhalte, können diese Anweisungen enthalten,
 die sich als Nutzerauftrag ausgeben. Das Problem ist bekannt und

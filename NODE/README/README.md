@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.15.1
-> **Datum:** 2026-08-29
+> **Version:** 0.16.0
+> **Datum:** 2026-08-30
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
 > **176 Tests grün.**
@@ -277,6 +277,42 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.16.0 – 2026-08-30 (beide Richtungen aus Fund 67 treffen sich an einer Stelle)
+
+Der Knoten springt auf eine höhere Runde, sobald mehr als ein Drittel
+des Stimmgewichts von dort geprüft eingegangen ist. Das ist die zweite
+Hälfte des Zustandsabgleichs: Bisher konnte nur der zurückgeholt werden,
+der **voraus** war.
+
+**Beide Wege treffen sich im selben Zweig**, und das ist kein Zufall:
+Beide zeigen sich als `WrongRound`. Wer voraus ist, bekommt von uns das
+Commit-Zertifikat; wer zurück ist, springt selbst. Sie schließen
+einander aus, ohne dass es geprüft werden müsste, denn das Helfen
+verlangt ein eigenes Zertifikat, und wer commitet hat, springt nicht
+mehr.
+
+Neues Urteil `gesprungen` im Protokoll, mit alter und neuer Runde. Es
+steht neben `falsche-runde`, und der Unterschied ist der Befund: Eine
+verirrte Nachricht der alten Runde ist der Normalfall, ein Sprung ist
+ein Ereignis.
+
+⛑ **Das Aufräumen nach einem Rundenwechsel stand nur im Fristweg.**
+Stimmen und Commits der alten Runde werden verworfen, das Zertifikat
+bleibt. Wäre der Sprung daran vorbeigelaufen, hätte der Knoten aus
+Stimmen der alten Runde ein Zertifikat gebaut, das keine Runde mehr
+bezeugt. Beide Wege benutzen jetzt denselben Rumpf, und ein Test hält
+fest, dass der Sprung die alten Stimmen wegwirft.
+
+**Gemessen an den Stakes des Probenetzes:** 250, 230, 200, 120 und 100
+Millionen ergeben 900, die Schranke liegt bei 300 000 001. Alpha allein
+trägt 250 Millionen und bewegt nichts; mit beta sind es 480, und erst
+dann springt es. Der Test zeigt beide Hälften, sonst bliebe offen, ob
+die Schranke wirkt oder ob jede fremde Runde genügt.
+
+**Was der Sprung nicht heilt:** Wer auf Runde 5 springt, hat deren
+Vorschlag verpasst und wartet bis zur Frist auf Runde 6. Das ist
+trotzdem der kürzere Weg, denn er überspringt jede Frist dazwischen.
 
 ### v0.15.1 – 2026-08-30 (die Probe baut ein Bündel, das etwas bezeugt)
 

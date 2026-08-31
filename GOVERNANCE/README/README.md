@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.5.2
-> **Datum:** 2026-08-28
+> **Version:** 0.6.0
+> **Datum:** 2026-08-30
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,56 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.6.0 – 2026-08-30 (die Platz-Seite von D3, und eine Kopplung, die es nicht gibt)
+
+`speicherlast.rs`, 8 Tests. Ob die Wissensdatenbank vervielfältigt oder
+erasure-kodiert wird, ist in STORAGE ausdrücklich **nicht** entschieden,
+und die Begründung nennt zwei fehlende Zahlen: Latenz gegen Platz. Die
+Latenz braucht Verkehr und wartet; **der Platz nicht.**
+
+Gerechnet wird, was ein Knoten trägt: seine Arbeitskopie (bei
+Qwen3-30B-A3B 7,2 GiB je Shard) und seinen Anteil an der
+Wissensdatenbank. Der zweite Teil ist der, der wächst.
+
+⚑ **Der eigentliche Befund ist nicht die Größe, sondern die fehlende
+Kopplung.**
+
+```text
+Last je Knoten = W · f / N
+```
+
+Der Satz „umso mehr Knoten, umso mehr Wissen" liest sich wie eine
+Zusicherung, dass die Last je Knoten gleich bleibt. **Das täte sie nur,
+wenn W mit N wüchse.** W wächst aber mit der Nutzung, N mit dem Ertrag,
+und die beiden bindet heute nichts aneinander. Wächst W ohne N, steigt
+die Last unbegrenzt, und ab einer Grenze gehen Knoten: Dann fällt N, und
+die Last der Verbliebenen steigt weiter. **Eine Rückkopplung in die
+falsche Richtung.**
+
+| Wissen | 100 Knoten | 1 000 | 10 000 |
+|---|---|---|---|
+| 1 TiB | 71,6 GiB | 7,1 GiB | 0,7 GiB |
+| 100 TiB | 7 168 GiB | 716,7 GiB | 71,6 GiB |
+| 1 PiB | 73 400 GiB | 7 340 GiB | 734 GiB |
+
+*(sieben Kopien; mit Erasure k=8/m=6 jeweils ein Viertel davon)*
+
+**Der Faktor ist der größere Hebel als die Knotenzahl:** Bei 1 TiB
+Budget je Knoten und 1 000 Knoten trägt das Netz 142 TiB mit Kopien und
+571 TiB mit Erasure. Vierfach, ohne einen einzigen zusätzlichen Knoten.
+
+**Woraus die Kopplung entstehen muss**, und beides fehlt: ein
+Speicherentgelt (die Marktseite, verzögert und nur wirksam bei
+richtigem Satz) und eine **Kapazitätsschranke** (die harte Seite, die
+die Zusage voraussetzt). ⚑ **Damit ist der Schalter, mit dem ein Miner
+Hardware zu- und abschaltet, nicht Bequemlichkeit, sondern die Eingabe,
+aus der sich ergibt, wie groß die Wissensdatenbank werden darf.**
+
+⛑ **Zwei Zellen der Tabelle logen zuerst durch Rundung**: ein Artefakt
+von 740 MiB stand als `0 GiB`, und 1 428 TiB als `1 PiB`. In einer
+Tabelle über Speicherbedarf ist eine Null, die keine ist, die teuerste
+Art von Rundung.
 
 ### v0.5.2 – 2026-08-30 (die dritte Stufe: 2 bis 8 GiB)
 

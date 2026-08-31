@@ -1,0 +1,99 @@
+{
+  "_zweck": "Ausschlusskatalog: was das Netz nicht lernt und nicht bedient. Eine Quelle; Antrag, Gateways und Client binden sie ein, statt den Text abzuschreiben. Eine Regel, die an drei Stellen steht, steht irgendwann in drei Fassungen da, und die mildeste wird die angewandte.",
+  "_warum_json": "Aus demselben Grund wie beim Aufnahmeantrag: tomllib gibt es erst ab Python 3.11, die Arbeitsumgebung faehrt 3.9, die CI 3.12. Eine Pruefung, die nur in der CI laeuft, laesst sich vor dem Einreichen nicht ausfuehren. Der Verlust sind die Kommentare, und er wird ausgeglichen, indem die Begruendungen als _-Felder hier stehen.",
+  "_verhaeltnis_zu_g1_und_g2": "G1 sagt, das Protokoll urteile ueber nachrechenbare Tatsachen und nicht ueber Inhalte, und begruendet das scharf: 'Wer entscheidet, welcher Text schaedlich ist, entscheidet auch, welcher Text unbequem ist.' Dieser Katalog hebt das nicht auf und darf es nicht. Er sitzt an der Stelle, die G2 selbst benennt: 'Diese Frage verlagert sich damit vollstaendig auf die Aufnahme eines Korpus in die kanonische Liste, und das ist ein Governance-Akt, kein technischer.' Ein Governance-Akt darf Ablehnungsgruende haben; das Protokoll bekommt dadurch keinen Ermessensspielraum, es rechnet weiter, was ihm gegeben wird.",
+  "_warum_jede_klasse_eine_abgrenzung_braucht": "'Waffen' als Stichwort verschluckt Geschichte, Chemie, Metallurgie, Ruestungskontrolle und den halben Journalismus. Eine Klasse ohne Abgrenzung ist nicht objektiv entscheidbar und verstoesst damit gegen G1, auch wenn ihre Absicht gut ist. Der Massstab ist Befaehigung, nicht Thema: ausgeschlossen ist, was jemanden in die Lage versetzt, der es vorher nicht war. Ueber ein Thema zu schreiben, zu forschen, zu berichten oder zu unterrichten faellt nicht darunter. Der Pruefer verlangt die Abgrenzung; eine Klasse ohne sie faellt durch.",
+  "_was_er_nicht_leistet": "Bei der Aufnahme greift er, bei der Abfrage nicht. Die Aufnahme in die Wissensdatenbank ist ein Governance-Akt mit Abstimmung; dort ist der Katalog ein Ablehnungsgrund und wirksam. Eine Abfrage dagegen kann das Protokoll nicht am Inhalt erkennen, G1 sagt das ausdruecklich. Der Katalog bindet deshalb Betreiber von Gateways und Clients, nicht den Konsens. Und da das Basismodell nach G7 frei nachnutzbar sein muss, kann es ohnehin jeder lokal ausfuehren. Die ehrliche Aussage lautet: Dieses Netz bedient es nicht und lernt es nicht. Sie lautet nicht: es ist unmoeglich. Wer das zweite behauptet, macht denselben Fehler, den G6 fuer die Vertraulichkeit vermeidet.",
+  "fassung": "1.0.0",
+  "quelle": "ETHICS Manifest G9",
+  "klasse": [
+    {
+      "kennung": "X1",
+      "name": "Massenvernichtungswaffen",
+      "beispiele": [
+        "Synthesewege fuer biologische Kampfstoffe oder deren Vorprodukte",
+        "Anreicherung, Waffenfaehigmachung oder Zuendmechanik von Nuklearmaterial",
+        "Herstellung chemischer Kampfstoffe und ihrer Vorstufen",
+        "Ausbringung, Stabilisierung und Traegersysteme fuer solche Stoffe"
+      ],
+      "abgrenzung": [
+        "Geschichte der Waffenprogramme und ihrer Folgen",
+        "Ruestungskontrolle, Nichtverbreitung, Verifikationsregime",
+        "Epidemiologie, Toxikologie und Strahlenschutz",
+        "Chemie, Biologie und Kernphysik als Lehrstoff",
+        "Berichterstattung und Zeitzeugnisse"
+      ],
+      "bei_aufnahme": true,
+      "bei_abfrage": true
+    },
+    {
+      "kennung": "X2",
+      "name": "Konventionelle Waffen und Sprengstoff",
+      "beispiele": [
+        "Bauanleitungen fuer unkonventionelle Spreng- und Brandvorrichtungen",
+        "Umbau halbautomatischer zu vollautomatischen Waffen",
+        "Fertigung nicht rueckverfolgbarer Schusswaffen und ihrer Kernteile",
+        "Umgehung von Sicherungen an Waffen und Munition"
+      ],
+      "abgrenzung": [
+        "Militaer- und Technikgeschichte",
+        "Ballistik und Werkstoffkunde als Wissenschaft",
+        "Waffen-, Jagd- und Sportrecht",
+        "Sicherheits- und Verteidigungspolitik",
+        "Museums- und Sammlungsdokumentation"
+      ],
+      "bei_aufnahme": true,
+      "bei_abfrage": true
+    },
+    {
+      "kennung": "X3",
+      "name": "Angriffswerkzeuge gegen fremde Systeme",
+      "beispiele": [
+        "Lauffaehige Schadsoftware und Baukaesten dafuer",
+        "Exploits gegen Systeme ohne Erlaubnis des Betreibers",
+        "Werkzeuge zur unbefugten Massenerhebung von Zugangsdaten",
+        "Anleitungen gegen Steuerungstechnik kritischer Infrastruktur"
+      ],
+      "abgrenzung": [
+        "Sicherheitsforschung mit Offenlegung an den Hersteller",
+        "Verteidigungswerkzeuge, Haertung, Erkennung, Forensik",
+        "Lehrmaterial und Wettbewerbsaufgaben in abgeschlossenen Umgebungen",
+        "Pruefauftraege mit nachweisbarer Beauftragung"
+      ],
+      "bei_aufnahme": true,
+      "bei_abfrage": true
+    },
+    {
+      "kennung": "X4",
+      "name": "Missbrauchsdarstellungen und Verfolgung von Personen",
+      "beispiele": [
+        "Sexualisierte Darstellungen Minderjaehriger, in jeder Form",
+        "Zusammenstellungen zur Verfolgung, Bedrohung oder Blossstellung Einzelner",
+        "Umgehung von Schutzmassnahmen gegen Nachstellung"
+      ],
+      "abgrenzung": [
+        "Opferschutz, Beratung und Praevention",
+        "Rechtsprechung, Strafverfolgung und Rechtswissenschaft",
+        "Investigative Berichterstattung ueber Amtstraeger in ihrer Funktion"
+      ],
+      "bei_aufnahme": true,
+      "bei_abfrage": true
+    },
+    {
+      "kennung": "X5",
+      "name": "Taeuschung ueber die Person",
+      "beispiele": [
+        "Nachbildung realer Personen oder Einrichtungen zur Taeuschung",
+        "Faelschung von Ausweisen, Zeugnissen und amtlichen Belegen",
+        "Vorlagen fuer Betrug im Namen Dritter"
+      ],
+      "abgrenzung": [
+        "Satire und Parodie, als solche erkennbar",
+        "Schauspiel, Synchronisation und Literatur mit Einwilligung",
+        "Forschung ueber Desinformation und ihre Erkennung"
+      ],
+      "bei_aufnahme": true,
+      "bei_abfrage": true
+    }
+  ]
+}

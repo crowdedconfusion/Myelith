@@ -1,12 +1,27 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.1.0
-> **Datum:** 2026-08-25
-> **Status:** ⚑ **Die erste Zeile Code** (`myl-store` v0.1.0, 10
-> Tests). Fünf der sechs Entwurfsfragen sind entschieden, eine
-> ausdrücklich nicht: Ob ein Gegenstand vervielfältigt oder
-> erasure-kodiert wird, ist Latenz gegen Platz, und **beide Zahlen
+> **Version:** 0.3.0
+> **Datum:** 2026-08-30
+> **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
+> **Speicherentgelt** stehen (`myl-store` v0.3.0, 29 Tests). Fünf der sechs Entwurfsfragen sind
+> entschieden, eine ausdrücklich nicht: Ob ein Gegenstand vervielfältigt
+> oder erasure-kodiert wird, ist Latenz gegen Platz, und **beide Zahlen
 > fehlen**, solange es keinen echten Abrufverkehr gibt.
+>
+> ⚑ **Das Entgelt wird unabhängig vom Mining ausgezahlt** (Festlegung
+> des Projektinhabers, 2026-08-30). Ein Knoten kann Wissen halten, ohne
+> eine Token-Position zu rechnen. Drei Klassen: Protokollkritisches und
+> **Netzwerkwissen** trägt die Allgemeinheit und beides verfällt nie,
+> eine private Einlage zahlt ihr Einleger in Byte-Epochen und sie
+> verfällt. **Ohne Nachweis wird nichts abgebucht und nichts
+> ausgezahlt.**
+>
+> ⚑ **Fund 106 (2026-08-30): Der entworfene Nachweis belegte keine
+> Speicherung.** Er verlangte Blatt und Merkle-Pfad, und die Blätter
+> dieses Baums **sind** die Teil-Hashes: Wer nur sie hält, antwortet für
+> immer richtig, bei 30 GB mit 0,87 MiB statt 30 GB. Die Antwort trägt
+> jetzt den Teil selbst. Das ist die Voraussetzung für jedes
+> Speicherentgelt, denn bezahlt werden darf nur, was bewiesen ist.
 
 ## Aufgabe
 

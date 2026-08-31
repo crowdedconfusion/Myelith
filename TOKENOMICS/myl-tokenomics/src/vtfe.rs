@@ -107,7 +107,7 @@ impl ModellProfil {
     ///
     /// Bis heute stand hier `gate = h·i`, `up = h·i`, `down = i·h`, also
     /// die volle Breite der MLP, plus **kein Router**. Bei einem
-    /// Expertengemisch rechnet je Token `top_k` Experten der Breite
+    /// Mixture-of-Experts-Modell rechnet je Token `top_k` Experten der Breite
     /// `moe_intermediate_size`, dazu die Router-Projektion.
     ///
     /// **Wo es tatsächlich bricht, ist nicht die Zahl, sondern ihre

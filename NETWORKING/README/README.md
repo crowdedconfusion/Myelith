@@ -166,7 +166,7 @@ fehl: Die gültige Kontrollnachricht erreichte C nicht.
 ### ⚑ Die Ursache war nicht Langsamkeit, und das ändert die Behebung
 
 `publish_bundle_retry` wartet, bis **Gossipsub den Publish annimmt**,
-und dafür genügt B **ein** Mesh-Peer, nämlich A. **Über A's Mesh sagt
+und dafür genügt B **ein** Mesh-Peer, nämlich A. **Über das Mesh von A sagt
 das nichts.** Ist C dort noch nicht drin, nimmt A die Nachricht an, hat
 niemanden zum Weiterreichen, und **die Nachricht ist weg**: Gossipsub
 sendet nicht nach.

@@ -180,7 +180,7 @@ Je Prompt entsteht ein Einzelwert, darüber ein Gesamtwert.
 | `standard.plan` | 6 × 32 | Der Regelfall: englische und deutsche Prosa, Fachtext, Rechenaufgabe, lange Faktenzeile |
 | `standard-kurz.plan` | 4 × 16 | Dasselbe kürzer, für langsame Modelle. Wer 7B testet, fängt hier an |
 | `benchmark-1-zahlen.plan` | 7 × 24 | Ziffernfolgen, Überträge, Zehnerpotenzen, Einheiten. Zwei Schreibweisen derselben Aufgabe ergeben völlig verschiedene Tokenfolgen |
-| `benchmark-2-sprachen.plan` | 8 × 24 | Vier lateinische Schriften plus Chinesisch, Griechisch, Kyrillisch, dazu Umlaut und Eszett: weit auseinanderliegende Bereiche der Einbettungstabelle und Mehrbyte-Token |
+| `benchmark-2-sprachen.plan` | 8 × 24 | Vier lateinische Schriften plus Chinesisch, Griechisch, Kyrillisch, dazu Umlaut und Eszett: weit auseinanderliegende Bereiche der Embedding-Tabelle und Mehrbyte-Token |
 | `benchmark-3-code-kontext.plan` | 6 × 32 | Rust, Python, JSON, SQL (Klammer-Konsistenz über viele Token) und zwei lange Prompts, die die Generierung auf hohe Positionen schieben: RoPE und KV-Cache dort, wo die Winkel groß werden |
 
 **Was diese Pläne nicht sind: Genauigkeitsmessungen.** Der Client

@@ -656,7 +656,7 @@ Kopien summieren sich also zum Original. Beim Routing ist sie eine Summe
 über die **ausgewählten**, und zwei Kopien mit gleichem Logit verdrängen
 einen dritten aus der Top-k.
 
-### Damit ist die Trainingsseite des Expertengemischs vollständig
+### Damit ist die Trainingsseite des Mixture-of-Experts-Modells vollständig
 
 Rückwärtspass durch Router und Experten, Sättigungsschutz,
 Expertenwachstum, Lastausgleich. Alle vier ganzzahlig, alle vier
@@ -712,7 +712,7 @@ fällt, und vergleicht auf zehn Prozent.
 ⚑ **Berichtigung zur vorigen Fassung:** Dort stand, es gebe diesen
 Zustand in Gleitkomma nicht. Das war zu stark. Es gibt ihn auch dort,
 nur rund **zehnmal später als im Ganzzahlpfad**. Router-Kollaps ist ein
-bekanntes Problem von Expertengemischen; die Tabelle macht ihn nur
+bekanntes Problem von Mixture-of-Experts-Modellen; die Tabelle macht ihn nur
 leichter erreichbar.
 
 **Dieselbe Mechanik hat das Projekt schon einmal getroffen:** Fund 29
@@ -751,17 +751,17 @@ Trainingsschritt; die Inferenz rechnet bitgleich wie vorher, θ_v bleibt
 sich damit trotzdem befreien, denn die Strafe hängt nicht an den
 Gewichten, sondern an den Abständen.
 
-### v0.23.0 (kernels 0.25.0) – 2026-08-28 (Rückwärtspass durch das Expertengemisch, und Fund 79)
+### v0.23.0 (kernels 0.25.0) – 2026-08-28 (Rückwärtspass durch das Mixture-of-Experts-Modell, und Fund 79)
 
 **`moe_backward` schließt die letzte Lücke im Rückwärtspass**, die noch
 offen war: Bis hierher kannte er lineare Schichten, Softmax, SiLU,
-RMSNorm, RoPE, Attention und Einbettungen, aber **kein Wort von
+RMSNorm, RoPE, Attention und Embeddings, aber **kein Wort von
 Experten** (null Vorkommen in `backward.rs`). Er verteilt jetzt den
 eingehenden Gradienten auf die gewählten Experten, führt ihn durch den
 Softmax über deren Logits zurück und legt ihn auf die volle Logit-Reihe.
 
 **Was damit belegt ist:** Zwei redundante Miner, die dasselbe
-Trainingssegment auf demselben Expertengemisch rechnen, liefern
+Trainingssegment auf demselben Mixture-of-Experts-Modell rechnen, liefern
 **bitgleiche Gradienten, Routing-Entscheidung eingeschlossen**. Der Test
 fährt den ganzen Weg zweimal und vergleicht byteweise; ohne die
 Routing-Entscheidung im Vergleich bewiese er zu wenig.
@@ -792,7 +792,7 @@ könnte.
 Schwelle ist `(frac + 1) · ln2`: bei `prob_frac_bits = 14` sind das
 **10,4 nats**, bei `f32` **104**, bei `f64` rund **745**. Der
 Ganzzahlpfad kollabiert also rund zehnmal früher als `f32`.
-Router-Kollaps ist ein bekanntes Problem von Expertengemischen und
+Router-Kollaps ist ein bekanntes Problem von Mixture-of-Experts-Modellen und
 **kein Erzeugnis dieses Projekts**; die Tabelle macht ihn nur um
 Größenordnungen leichter erreichbar. In der ersten Fassung dieses
 Absatzes stand „in Gleitkomma gibt es diesen Zustand nicht", und das war
@@ -805,14 +805,14 @@ bevor er wirkt (gemessen: ±0,25 bei Gewichten (250, 6)). `moe_backward`
 nimmt deshalb `logit_zusatz_bits` und führt den Router-Gradienten um so
 viele Bit feiner. **Gegen die Sättigung hilft das nicht.**
 
-**Was daraus folgt:** Ein Lastausgleich ist bei einem Expertengemisch im
+**Was daraus folgt:** Ein Lastausgleich ist bei einem Mixture-of-Experts-Modell im
 Ganzzahlpfad keine Verbesserung, sondern eine **Voraussetzung**. Er muss
 verhindern, dass ein Router sättigt. Die üblichen Verfahren tun das über
 einen Hilfsverlust mit Batch-Statistiken und über Rauschen im Router;
 Rauschen ist nicht deterministisch, und eine Größe über den Batch machte
 das Ergebnis an Position *i* davon abhängig, welche anderen Token
 zufällig danebenlagen. **Solange kein Ersatz steht, ist Training auf
-einem Expertengemisch möglich, aber nicht stabil**, und dieser Satz
+einem Mixture-of-Experts-Modell möglich, aber nicht stabil**, und dieser Satz
 gehört zu jedem Ergebnis dazu.
 
 **Sieben neue Tests**, darunter die Bitgleichheit über zwei Läufe, der
@@ -2125,7 +2125,7 @@ sie deshalb nie gesehen.
   die dominante Fehlerquelle.
 - **Neue Lokalisierung (Seq-Dump-Vergleich Position 0/1/7):** Position 0
   (Einzeltoken, RoPE = Identität) zeigt Ebenen 0–22 in AbsMax übereinstimmend;
-  schon Position 1 (2 Tokens) weicht ab Ebene 5 ab, Position 7 ab Ebene 15 —
+  schon Position 1 (2 Token) weicht ab Ebene 5 ab, Position 7 ab Ebene 15 —
   die Divergenz wächst mit der Position. Da RoPE an Position 0 trivial ist
   und ab Position 1 tatsächlich rotiert, rückt der Mehrpositions-Pfad
   (RoPE/KV-Cache/positionsabhängige Attention) in den Fokus — er war durch
@@ -2193,7 +2193,7 @@ sie deshalb nie gesehen.
   `model.norm.input` 2,2× über Skala = der finale Residualstrom vor dem
   LM-Head), weitere 185 waren knapp (<1,5×).
 - **Abhilfe:** `calibrate/src/main.py` kalibriert jetzt zusätzlich auf einer
-  breiten Stichprobe von 64 WikiText-2-Sequenzen à ≤128 Tokens aus derselben
+  breiten Stichprobe von 64 WikiText-2-Sequenzen à ≤128 Token aus derselben
   Verteilung (die vier konkreten Mess-Sequenzen werden ausgespart, keine
   Benchmark-Überpassung). Neukalibrierung: **0 von 314 Modulen clampen**,
   schlechtester Headroom jetzt 1,01×.
@@ -2299,7 +2299,7 @@ sie deshalb nie gesehen.
   (Score-Differenzen bis ~28) auf Wahrscheinlichkeit 0 setzte; neuer
   spec-Parameter `exp_input_frac_bits` (Eingang frac 4, Ausgang frac 8),
   `lut_shift` der Attention wird daraus abgeleitet
-- Fund 9 (Qualität): Generierung kollabiert nach 1–2 Tokens in
+- Fund 9 (Qualität): Generierung kollabiert nach 1–2 Token in
   Repetitions-Loops; Teacher-Forcing-Ränge mehrheitlich 10³–10⁴; Ursache ist
   die Logit-Verzerrung durch die int8-Quantisierung der Embedding-Tabelle
   (= geteilter LM-Head) — Eskalationspfade am Entscheidungspunkt 12.21
@@ -2560,7 +2560,7 @@ sie deshalb nie gesehen.
 - Bugfixes (mit v0.12.2 mitgeführt): Compile-Fehler in Kernels (`LinearScale`-Import in `backend.rs`, i8/i16-Mismatch in `mlp.rs`), `128i8`-Überlauf im `linear.rs`-Test, `[100i16, …]`-Literal + struct-Header-Format + CRC32-Berechnung + Socket-Connect im Multinode-Test, fehlender `subprocess`-Import + relativer Golden-Pfad in `validate.py`, Einrückungsfehler + W=128→127 im Op-Golden-Vektor in `generate.py`, Literal-Newline in `test_end2end.py`
 
 ### v0.12.1 – 2026-08-09
-- Golden-Vector-Runner Binary (`golden_runner`) für Op-Level-Validierung (RMSNorm, Linear, Softmax)
+- Golden-Vector-Runner-Binary (`golden_runner`) für Op-Level-Validierung (RMSNorm, Linear, Softmax)
 - `validate.py`: Subprozess-Aufruf von `golden_runner` mit numerischem Hash-Vergleich Input/Output
 - `test_kernels.py`: Rust↔Python-Bridging via `cargo test --features <backend>` + stdout-Parsing
 - `test_cross_node.py`: Fehlerausgabe bei Golden-Vector-Failures, `List`-Import fix

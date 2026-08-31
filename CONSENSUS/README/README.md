@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.20.2 (`myl-consensus` 0.17.2, `myl-scheduler` 0.4.0,
+> **Version:** 0.21.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.4.0,
 > `myl-ledger` 0.5.0)
-> **Datum:** 2026-08-29
+> **Datum:** 2026-08-30
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,66 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.21.0 (`myl-consensus` 0.18.0) – 2026-08-30 (wer zurückfällt, kommt zurück)
+
+**Die zweite Richtung aus Fund 67.** `apply_commitzertifikat` holt seit
+dem 2026-08-29 einen Knoten zurück, der **voraus** ist. Neu ist
+`merke_hoehere_runde` für den häufigeren Fall: Ein Knoten hängt in Runde
+2, während die anderen in Runde 5 sind, weil er später startete, kurz
+die Verbindung verlor oder hinter einem langsamen Mesh sitzt.
+
+Ohne die Regel holt er nur über die eigene Uhr auf, Runde für Runde, und
+jede Frist ist um den Zuwachs länger als die vorige. Über ein WAN mit
+echten Latenzen ist das der Unterschied zwischen einem Knoten, der
+zurückkommt, und einem, der zusieht.
+
+**Die Schranke ist ein Drittel des Stimmgewichts**, neu als
+`VotingSet::drittel_schranke`. Mehr als ein Drittel kann nicht
+vollständig byzantinisch sein; wer sie aus **einer** Runde
+zusammenbekommt, hat von mindestens einem Ehrlichen gehört. Ein Quorum
+zu verlangen wäre zu streng, denn der Zurückgefallene hört naturgemäß
+nur einen Teil. Die Schranke ist **strikt**: Bei 900 Gesamtgewicht liegt
+sie bei 301, nicht bei 300.
+
+⚑ **Erst prüfen, dann zählen, und das ist die ganze Sicherheit dieser
+Regel.** `BftState::receive_vote` lehnt eine fremde Runde ab, **bevor**
+es die Signatur prüft; dort ist das richtig, es spart eine Paarung je
+verirrter Nachricht. Wer die abgelehnten Nachrichten aber ungeprüft
+zählte, hätte eine Liveness-Lücke gegen eine andere getauscht: **Ein
+einzelner Byzantiner dürfte sich als beliebig viele Absender ausgeben
+und jeden ehrlichen Knoten in jede Runde treiben, die er sich ausdenkt.**
+Deshalb prüft `merke_hoehere_runde` die Unterschrift selbst, vor dem
+Vermerk. Eine Gegenprobe hält es fest: Ohne die Prüfung fällt genau der
+Test, der vier Stimmen mit fremden Absendernamen und einer Unterschrift
+schickt.
+
+**Die Sperre überlebt den Sprung**, wie sie den Wechsel über die Frist
+überlebt. Ohne das wäre aus einer Liveness-Regel ein Sicherheitsloch
+geworden, und auch dafür steht ein Test.
+
+⚑ **Gezählt wird je Absender, nicht je Runde, und der erste Entwurf
+machte es umgekehrt.** Er war in zwei Punkten schlechter, und beide
+fielen erst beim Nachdenken über den Speicher auf:
+
+- **Er wuchs unbegrenzt.** Die Signaturprüfung hält Fremde draußen,
+  **nicht Mitglieder**. Ein einziger stimmberechtigter Byzantiner kann
+  gültig unterschriebene Stimmen für beliebig viele Runden schicken; je
+  Runde ein Eintrag heißt beliebig viele Einträge. Mit dem Absender als
+  Schlüssel ist die Karte durch die stimmberechtigte Menge begrenzt, und
+  Fluten hebt nur den eigenen Eintrag.
+- **Er zählte zu wenig.** Wer für Runde 5 unterschreibt, hat Runde 4
+  hinter sich. Zwei Knoten in Runde 4 und zwei in Runde 5 sind vier
+  Knoten in Runde **mindestens 4**; je Runde getrennt gezählt blieben es
+  zweimal zwei, und der Sprung unterblieb, obwohl Runde 4 belegt war.
+
+Gezählt werden nur Vote und Commit: Ein Propose kommt je Runde von genau
+einem Leader und trägt nie genug Gewicht, ein Commit-Zertifikat hat
+seinen eigenen Weg. `RoundChange` bekommt zwei Marken, `Vorgemerkt` mit
+Zwischenstand und Schranke sowie `Unerheblich`. **Der Zwischenstand
+gehört ins Protokoll**, nicht nur der Sprung: Wer über echtes WAN misst
+und einen hängenden Knoten sieht, will wissen, ob dessen Zähler steht
+oder wächst.
 
 ### v0.20.2 (`myl-consensus` 0.17.2) – 2026-08-30 (die Registrierung, die es schon gab)
 

@@ -173,7 +173,7 @@ in `Cargo.toml` stand.
 
 ⚑ **Fund 60, an derselben Naht wie Fund 51: zwischen COMPUTE_PIPELINE und
 TOKENOMICS.** `ModellProfil::macs_je_layer` rechnete die volle
-MLP-Breite und **keinen Router**. Bei einem Expertengemisch rechnet je
+MLP-Breite und **keinen Router**. Bei einem Mixture-of-Experts-Modell rechnet je
 Token aber nur `top_k` Experten der Breite `moe_intermediate_size`.
 
 **Der eigentliche Bruch war nicht die Zahl, sondern ihre Herkunft.**

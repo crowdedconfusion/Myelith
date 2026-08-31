@@ -20,7 +20,7 @@
 | Ist eine Expansion exakt funktionserhaltend? | **ja**, bitgleich, Abweichung 0,00e+00 | Abschnitt 5 |
 | Wird die Symmetrie der Kopien gebrochen? | **ja**, zweifach, davon einmal ohne Zufall | Abschnitt 5 |
 | Bleibt eine Identitätsebene beim Tiefenwachstum tot? | **nein**, sie bewegt sich ab Schritt 0 | Abschnitt 5.3 |
-| Ist der Vorwärtspfad schon ganzzahlig? | **ja, vollständig**, samt Einbettung und LM-Kopf | Abschnitt 3 |
+| Ist der Vorwärtspfad schon ganzzahlig? | **ja, vollständig**, samt Embedding und LM-Kopf | Abschnitt 3 |
 | Wie groß ist die Lücke zum Rückwärtspass? | zwei Kernel, eine LUT, **kein neuer Operationstyp** | Abschnitt 3 |
 | Wie breit müssen Master und Akkumulator sein? | F = 25, beides **int64** (für 0,5B bei lr 1e-5) | Abschnitt 2, 4 |
 
@@ -97,7 +97,7 @@ feststeht, und dieser eine Schritt wird von einem Arbiter nachgerechnet.
 **Wie weit die Bedingung erfüllt ist, nachgesehen statt geschätzt.**
 
 Der **Vorwärtspfad ist bereits vollständig ganzzahlig**, einschließlich
-Einbettung (int8 je Token-Zeile), aller Ebenen, der finalen Normierung
+Embedding (int8 je Token-Zeile), aller Ebenen, der finalen Normierung
 und des LM-Kopfs (`runtime/src/model.rs::forward_token`, belegt durch
 30/30 Konformitätsvektoren). Eine frühere Fassung dieses Abschnitts
 behauptete das Gegenteil; sie beschrieb die **Simulation**, in der

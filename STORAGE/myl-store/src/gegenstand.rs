@@ -13,8 +13,17 @@ use myl_types::merkle::{MerkleError, MerkleTree};
 /// einander.
 ///
 /// Ein Mebibyte: groß genug, dass die Zahl der Teile bei
-/// Gigabyte-Gegenständen beherrschbar bleibt, klein genug, dass ein
-/// Verfügbarkeitsnachweis nicht ein Mebibyte Antwort erzeugt.
+/// Gigabyte-Gegenständen beherrschbar bleibt, klein genug, dass eine
+/// Antwort im Verfügbarkeitsnachweis tragbar bleibt.
+///
+/// ⛑ **Hier stand bis zum 2026-08-30 das Gegenteil der Absicht:** „klein
+/// genug, dass ein Verfügbarkeitsnachweis nicht ein Mebibyte Antwort
+/// erzeugt". Der Satz beschreibt einen Nachweis, der ohne die Nutzdaten
+/// auskommt, und ein solcher belegt keine Speicherung: Die Blätter des
+/// Baums **sind** die Teil-Hashes, wer sie hält, antwortet für immer
+/// richtig. Das ist Fund 106, siehe [`crate::nachweis`]. Die Antwort
+/// trägt seither den Teil selbst, und ein Mebibyte ist genau die Größe,
+/// die das tragbar macht.
 pub const TEILGROESSE: usize = 1024 * 1024;
 
 /// Höchstzahl der Teile eines Gegenstands.
@@ -37,9 +46,25 @@ pub enum Gegenstandsart {
     Skalenpaket,
     /// Ein Stück der Wissensdatenbank. **In kleinen Stücken gelesen**,
     /// mitten in einem Inferenzschritt.
+    ///
+    /// Eine **Einlage**: Sie hat einen Einleger, der für sie zahlt, und
+    /// sie verfällt, wenn niemand mehr zahlt. Siehe
+    /// [`crate::entgelt`].
     Wissensstueck,
     /// Sonstiges, das gehalten werden muss.
     Sonstiges,
+    /// ⚑ **Netzwerkwissen: die Bibliothek, die immer verfügbar sein
+    /// muss** (Festlegung des Projektinhabers, 2026-08-30).
+    ///
+    /// Kein privater Einlagerungsvorgang, sondern der gemeinsame
+    /// Bestand: Er wird abgefragt **und speist das Training des
+    /// Modells**. Deshalb hat er keinen Einleger, der ihn bezahlt, und
+    /// deshalb darf er nicht verfallen.
+    ///
+    /// **Angehängt und nicht eingefügt**, damit die Marken der übrigen
+    /// Arten ihre Borsh-Nummer behalten: Ein Manifest von gestern muss
+    /// heute dasselbe bedeuten.
+    Netzwerkwissen,
 }
 
 /// Wie ein Gegenstand vervielfältigt wird.

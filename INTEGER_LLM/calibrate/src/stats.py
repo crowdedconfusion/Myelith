@@ -124,7 +124,7 @@ class ActivationStatsCollector:
         return hook
 
     def _make_moe_hook(self, layer_praefix):
-        """Statistik fuer ein **verschmolzenes** Expertengemisch.
+        """Statistik fuer ein **verschmolzenes** Mixture-of-Experts-Modell.
 
         ## Warum es diesen Hook ueberhaupt braucht
 
@@ -276,7 +276,7 @@ class ActivationStatsCollector:
         # Qwen3 (theta_v-Erweiterung 2026-08-25). Bei Qwen2.5 existieren
         # diese Module nicht, die Schleife trifft sie dann schlicht nie.
         qk_norm_keys = ("self_attn.q_norm", "self_attn.k_norm")
-        # Die Router-Projektion eines Expertengemischs heisst "mlp.gate"
+        # Die Router-Projektion eines Mixture-of-Experts-Modells heisst "mlp.gate"
         # und endet damit NICHT auf "gate_proj". Ohne eigenen Schluessel
         # bekaeme sie keinen Hook und der Loader faende keine Skala.
         router_keys = ("mlp.gate",)
@@ -306,7 +306,7 @@ class ActivationStatsCollector:
                 h = module.register_forward_hook(self._make_hook(name))
                 self._handles.append(h)
             elif name.endswith(".mlp.experts") and hasattr(module, "gate_up_proj"):
-                # Verschmolzenes Expertengemisch (transformers 5.x).
+                # Verschmolzenes Mixture-of-Experts-Modell (transformers 5.x).
                 # `hasattr` statt Namenspruefung allein: Eine Fassung mit
                 # einzelnen Expertenmodulen traegt hier kein gate_up_proj,
                 # und dann greifen die proj_keys oben wie bei jedem

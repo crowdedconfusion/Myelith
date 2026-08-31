@@ -26,25 +26,43 @@
 //! Verfügbarkeitsnachweis muss dann über den **Klartext** fragen, also
 //! entpackt der Halter zum Antworten. Das kostet Rechenzeit bei ihm.
 //!
-//! ## ⚑ Und der Nachweis fragt nach einem Blatt, nicht nach Bytes
+//! ## ⚑ Der Nachweis fragt nach einem Teil, und zwar nach seinen Bytes
 //!
 //! Ein Hash über den ganzen Teil belegt **Empfang, nicht Speicherung**:
 //! Wer ihn einmal gesehen hat, wiederholt ihn für immer. Gefragt wird
-//! deshalb nach einem zufälligen **Blattindex**, geantwortet mit Blatt
-//! und Merkle-Pfad. **Der Fragende braucht nur die Wurzel**, und die
-//! steht im Manifest; hielte er die Daten, wäre der ganze Nachweis
-//! sinnlos.
+//! deshalb nach einem zufälligen **Teilindex**, und geantwortet wird mit
+//! dem **Teil selbst** samt Merkle-Pfad. **Der Fragende braucht nur die
+//! Wurzel**, und die steht im Manifest; hielte er die Daten, wäre der
+//! ganze Nachweis sinnlos.
+//!
+//! ⛑ **Hier stand bis zum 2026-08-30 „geantwortet mit Blatt und
+//! Merkle-Pfad", und das war zu wenig** (Fund 106). Die Blätter dieses
+//! Baums **sind** die Teil-Hashes. Wer nur sie hält, baut jeden Pfad und
+//! beantwortet jede Stichprobe fehlerfrei, ohne ein Byte Nutzdaten: bei
+//! 30 GB sind das 0,87 MiB statt 30 GB, Faktor 32 767. Das Argument gegen
+//! den Hash über den ganzen Teil gilt gegen den Blatt-Hash genauso, es
+//! war nur einen Schritt zu früh stehengeblieben. Einzelheiten und
+//! Gegenprobe in [`nachweis`].
 //!
 //! Der Baum liegt in `myl-types` und bindet seit Fund 77 die Blattzahl
 //! mit, ist also injektiv.
 
 #![deny(unsafe_code)]
 
+pub mod entgelt;
 pub mod gegenstand;
 pub mod kappa;
+pub mod nachweis;
 
 pub use gegenstand::{
     teile_bilden, Gegenstandsart, Manifest, ManifestFehler, Redundanzform, Teil, MAX_TEILE,
     TEILGROESSE,
 };
+pub use entgelt::{
+    abrechnen, darf_fallengelassen_werden, verbrauch_je_epoche, Abrechnung, Finanzierung,
+    Speicherguthaben,
+};
 pub use kappa::{Kappa, KappaFehler, Uebergang};
+pub use nachweis::{
+    erwartete_laenge, pruefe, Antwort, NachweisFehler, Stichprobe, DST_SPEICHER_STICHPROBE,
+};

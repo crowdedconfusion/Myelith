@@ -249,10 +249,10 @@ pub fn softmax_backward(g: &[Grad], p: &[Grad], frac_bits: u8) -> Vec<Grad> {
 }
 
 // ---------------------------------------------------------------------------
-// Expertengemisch (MoE)
+// Mixture-of-Experts-Modell
 // ---------------------------------------------------------------------------
 
-/// Was ein Rückwärtsschritt durch ein Expertengemisch liefert.
+/// Was ein Rückwärtsschritt durch ein Mixture-of-Experts-Modell liefert.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoeGradienten {
     /// `dL/dAusgabe` je **gewähltem** Experten, in derselben Reihenfolge
@@ -270,7 +270,7 @@ pub struct MoeGradienten {
     pub logits: Vec<Grad>,
 }
 
-/// Rückwärtspass durch die Mischung eines Expertengemischs.
+/// Rückwärtspass durch die Mischung eines Mixture-of-Experts-Modells.
 ///
 /// **Der Vorwärtspass, auf den sich das bezieht** (siehe
 /// `crate::moe::mische_experten`):
@@ -337,7 +337,7 @@ pub struct MoeGradienten {
 /// üblichen Verfahren tun das über einen Hilfsverlust mit
 /// Batch-Statistiken und über Rauschen im Router; beides scheidet aus
 /// (siehe unten). Solange kein Ersatz steht, ist Training auf einem
-/// Expertengemisch **möglich, aber nicht stabil**, und dieser Satz
+/// Mixture-of-Experts-Modell **möglich, aber nicht stabil**, und dieser Satz
 /// gehört zu jedem Ergebnis dazu.
 ///
 /// ⚑ **Was hier bewusst nicht passiert: eine Lastausgleichs-Korrektur.**
@@ -908,7 +908,7 @@ mod tests {
         );
     }
 
-    // ---- Expertengemisch ---------------------------------------------
+    // ---- Mixture-of-Experts-Modell ----------------------------------
 
     /// Die Bausteine eines kleinen Gemischs: vier Experten, Top-2.
     fn gemisch() -> (Vec<i32>, Vec<Vec<i16>>, usize, usize, u8) {
@@ -954,7 +954,7 @@ mod tests {
         (routing.experten, routing.gewichte, gewaehlt, y)
     }
 
-    /// ⚑ **Der Satz, um den es bei Expertengemischen geht: Ein nicht
+    /// ⚑ **Der Satz, um den es bei Mixture-of-Experts-Modellen geht: Ein nicht
     /// gewählter Experte bekommt exakt null.**
     ///
     /// Nicht „fast null" und nicht „vernachlässigbar". Bei
@@ -993,7 +993,7 @@ mod tests {
     }
 
     /// ⚑ **Das Akzeptanzkriterium für Training auf einem
-    /// Expertengemisch:** Zwei redundante Miner, die dasselbe Segment
+    /// Mixture-of-Experts-Modell:** Zwei redundante Miner, die dasselbe Segment
     /// rechnen, liefern **bitgleiche** Gradienten, Routing-Entscheidung
     /// eingeschlossen.
     ///

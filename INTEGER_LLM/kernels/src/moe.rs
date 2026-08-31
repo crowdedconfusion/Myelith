@@ -457,7 +457,7 @@ pub const LN2_Q8: i64 = 177;
 ///
 /// ⚑ **Der Ganzzahlpfad kollabiert damit rund zehnmal früher als `f32`
 /// und siebzigmal früher als `f64`.** Router-Kollaps ist ein bekanntes
-/// Problem von Expertengemischen und **kein Erzeugnis dieses Projekts**;
+/// Problem von Mixture-of-Experts-Modellen und **kein Erzeugnis dieses Projekts**;
 /// die Ganzzahltabelle macht ihn nur um Größenordnungen leichter
 /// erreichbar. Wer diese Zahl liest, soll den Unterschied sehen und
 /// nicht den Eindruck bekommen, Gleitkomma sei immun.

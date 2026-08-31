@@ -501,7 +501,7 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
         //
         // Als Abbild sind dieselben Bytes **saubere, dateigestützte
         // Seiten**: Das System verwirft sie unter Druck und liest sie bei
-        // Bedarf neu, statt sie auszulagern. Für ein Expertengemisch ist
+        // Bedarf neu, statt sie auszulagern. Für ein Mixture-of-Experts-Modell ist
         // das mehr als eine Notlösung, denn bei Top-8 von 128 rührt ein
         // Token nur ein Sechzehntel der Expertengewichte an.
         //
@@ -998,7 +998,7 @@ pub fn build_model(
             None
         };
 
-        // Feedforward: dicht oder Expertengemisch.
+        // Feedforward: dicht oder Mixture-of-Experts-Modell.
         //
         // `num_experts == 0` heisst kein MoE. Eine Layer in
         // `mlp_only_layers` bleibt auch in einem MoE-Modell dicht; bei
@@ -1688,7 +1688,7 @@ mod tests {
         write_full_fixture_mit(dir, tie_word_embeddings, attention_bias, None);
     }
 
-    /// Wie [`write_full_fixture`], aber wahlweise mit Expertengemisch.
+    /// Wie [`write_full_fixture`], aber wahlweise mit Mixture-of-Experts-Modell.
     ///
     /// `moe` ist `(Expertenzahl, top_k, Expertenbreite)`. Damit laesst
     /// sich der MoE-Ladepfad pruefen, ohne ein 57-GiB-Modell zu

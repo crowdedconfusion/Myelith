@@ -83,12 +83,16 @@
 //! **Konsens-Feld:** Sperrregel und Zertifikatsprüfung sind Teil des
 //! Konsensvertrags. Änderungen nur über Governance (Kap. 10.3).
 
-use crate::bft::{BftError, BftState, Commit, Propose, Round, RoundStatus, Vote, select_leader};
+use crate::bft::{
+    BftError, BftState, Commit, Konsensnachricht, Propose, Round, RoundStatus, Vote,
+    select_leader,
+};
 use crate::signing::{commit_message, vote_message};
 use crate::validator::VotingSet;
 use myl_types::bls::{BlsAggregateSignature, BlsSignature, aggregate_signatures, fast_aggregate_verify};
 use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
+use std::collections::BTreeMap;
 
 /// Standard-Timeout für die Propose-Phase in Millisekunden.
 ///
@@ -434,7 +438,7 @@ impl Commitzertifikat {
     }
 }
 
-/// Ergebnis eines Timeout-Aufrufs.
+/// Ergebnis eines Timeout-Aufrufs oder eines Rundenbelegs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoundChange {
     /// Die Frist läuft noch; es bleibt `remaining_ms` übrig.
@@ -451,8 +455,25 @@ pub enum RoundChange {
         /// Leader der neuen Runde.
         leader: MinerId,
     },
-    /// Es gibt nichts mehr zu tun — der Block ist commitet.
+    /// Es gibt nichts mehr zu tun, der Block ist commitet.
     AlreadyCommitted,
+    /// Der Beleg ist vermerkt, die Drittel-Schranke aber noch nicht
+    /// erreicht.
+    ///
+    /// **Der Zwischenstand gehört ins Protokoll**, nicht nur der Sprung.
+    /// Wer über echtes WAN misst und einen hängenden Knoten sieht, will
+    /// wissen, ob dessen Zähler steht oder wächst; „nichts geschehen"
+    /// und „197 von 301" sind zwei verschiedene Befunde.
+    Vorgemerkt {
+        /// Die belegte höhere Runde.
+        runde: Round,
+        /// Gewicht der bisher geprüften Absender aus dieser Runde.
+        gewicht: u64,
+        /// Ab hier wird gesprungen.
+        schranke: u64,
+    },
+    /// Die Nachricht sagt nichts über eine höhere Runde.
+    Unerheblich,
 }
 
 /// Fehler beim Rundenwechsel und bei der Sperrprüfung.
@@ -588,6 +609,29 @@ pub struct RoundDriver {
     /// Status, für den `deadline_ms` gesetzt wurde — daran wird erkannt,
     /// dass eine Phase gewechselt hat und die Frist neu zu setzen ist.
     deadline_for: RoundStatus,
+    /// Je Absender die **höchste** Runde, aus der eine geprüfte
+    /// Nachricht vorlag.
+    ///
+    /// ⚑ **Nicht umgekehrt, und beides hat einen Grund.** Der erste
+    /// Entwurf führte je Runde die Absender. Er war in zwei Punkten
+    /// schlechter:
+    ///
+    /// - **Er wuchs unbegrenzt.** Ein einziger stimmberechtigter
+    ///   Byzantiner kann gültig unterschriebene Stimmen für beliebig
+    ///   viele Runden schicken; jede legte einen Eintrag an. Die
+    ///   Signaturprüfung hält Fremde draußen, nicht Mitglieder. Hier
+    ///   ist der Schlüssel der Absender, also ist die Karte durch die
+    ///   Größe der stimmberechtigten Menge begrenzt, und Fluten hebt nur
+    ///   den eigenen Eintrag.
+    /// - **Er zählte zu wenig.** Zwei Knoten in Runde 4 und zwei in
+    ///   Runde 5 sind vier Knoten in Runde **mindestens 4**. Je Runde
+    ///   getrennt gezählt blieben es zweimal zwei, und der Sprung
+    ///   unterblieb, obwohl Runde 4 belegt war.
+    ///
+    /// Eine Unterschrift unter eine Stimme der Runde 7 bezeugt, dass
+    /// ihr Urheber in Runde 7 stand, und damit auch, dass er jede
+    /// niedrigere hinter sich hat.
+    hoechste_runde_je_absender: BTreeMap<MinerId, Round>,
 }
 
 impl RoundDriver {
@@ -632,6 +676,7 @@ impl RoundDriver {
             timeouts,
             deadline_ms,
             deadline_for: RoundStatus::WaitingPropose,
+            hoechste_runde_je_absender: BTreeMap::new(),
         })
     }
 
@@ -907,18 +952,192 @@ impl RoundDriver {
     /// Die Sperre bleibt bestehen; Votes, Commits und Vorschlag der alten
     /// Runde werden verworfen.
     pub fn advance_round(&mut self, now_ms: u64) -> Result<RoundChange, RoundError> {
-        let from = self.bft.round;
-        let to = from.saturating_add(1);
-        let leader = select_leader(to, &self.producers).ok_or(RoundError::NoProducers)?;
+        self.springe_auf(self.bft.round.saturating_add(1), now_ms)
+    }
 
-        self.bft = BftState::new(to, leader, self.voting_set.clone())?;
+    /// Vermerkt eine Nachricht aus einer **höheren** Runde und springt
+    /// dorthin, sobald mehr als ein Drittel des Gewichts von dort kommt.
+    ///
+    /// # Die zweite Richtung aus Fund 67
+    ///
+    /// [`Self::apply_commitzertifikat`] holt einen Knoten zurück, der
+    /// **voraus** ist. Diese Methode holt einen, der **zurückgefallen**
+    /// ist, und das ist der häufigere Fall: Wer später startet, kurz die
+    /// Verbindung verliert oder hinter einem langsamen Mesh sitzt, steht
+    /// in Runde 2, während die anderen in Runde 5 sind.
+    ///
+    /// Ohne sie holt er nur über die eigene Uhr auf, Runde für Runde,
+    /// und jede Frist ist um den Zuwachs länger als die vorige. Über ein
+    /// WAN mit echten Latenzen ist das der Unterschied zwischen einem
+    /// Knoten, der zurückkommt, und einem, der zusieht.
+    ///
+    /// # Warum ein Drittel genügt
+    ///
+    /// Mehr als ein Drittel des Stimmgewichts kann nicht vollständig
+    /// byzantinisch sein. Wer diese Schranke zusammenbekommt, hat von
+    /// mindestens einem ehrlichen Knoten gehört, und dass der dort
+    /// steht, ist wahr. Ein Quorum zu verlangen wäre zu streng: Der
+    /// Zurückgefallene hört naturgemäß nur einen Teil.
+    ///
+    /// **Gezählt wird „Runde mindestens r", nicht „Runde genau r".**
+    /// Eine Unterschrift unter eine Stimme der Runde 7 bezeugt auch,
+    /// dass ihr Urheber jede niedrigere hinter sich hat. Zwei Knoten in
+    /// Runde 4 und zwei in Runde 5 sind deshalb vier Knoten in Runde
+    /// mindestens 4, und Runde 4 ist belegt. Der erste Entwurf zählte je
+    /// Runde getrennt, kam auf zweimal zwei und sprang nicht.
+    ///
+    /// # ⚑ Erst prüfen, dann zählen
+    ///
+    /// **Die Reihenfolge ist die ganze Sicherheit dieser Regel.**
+    /// [`BftState::receive_vote`] lehnt eine fremde Runde ab, **bevor**
+    /// es die Signatur prüft; das ist dort richtig, spart es doch eine
+    /// Paarung je verirrter Nachricht. Wer die abgelehnten Nachrichten
+    /// aber ungeprüft zählte, hätte eine Liveness-Lücke gegen eine
+    /// andere getauscht: Ein einzelner Byzantiner dürfte sich als
+    /// beliebig viele Absender ausgeben und jeden ehrlichen Knoten in
+    /// jede Runde treiben, die er sich ausdenkt. Deshalb prüft diese
+    /// Methode die Unterschrift selbst, und zwar vor dem Vermerk.
+    ///
+    /// # Nur Vote und Commit
+    ///
+    /// Ein Propose kommt je Runde von genau einem Leader und trägt
+    /// deshalb nie genug Gewicht; ein Commit-Zertifikat hat seinen
+    /// eigenen Weg. Gezählt werden die beiden Marken, von denen es viele
+    /// gibt. Alles andere gibt [`RoundChange::Unerheblich`].
+    ///
+    /// # Der Sprung ist nicht begrenzt, und das ist Absicht
+    ///
+    /// Vor dieser Regel wuchs die Runde nur um eins je Frist; jetzt ist
+    /// jede Runde in einem Schritt erreichbar. Eine Schranke dagegen
+    /// wäre falsch: Wer lange fehlte, muss weit springen dürfen, und
+    /// **jede belegte Runde ist von mindestens einem Ehrlichen bezeugt.**
+    /// Wer beliebig hohe Runden erzwingen will, braucht dafür ein
+    /// Drittel des Gewichts, und damit steht der Konsens ohnehin still.
+    /// Die Fristrechnung sättigt (`saturating_mul`), es gibt also keinen
+    /// Überlauf, sondern im Grenzfall eine Runde ohne Frist.
+    ///
+    /// # Was das kostet
+    ///
+    /// Eine Paarung je verirrter Vote oder Commit. Der Automat sparte
+    /// sie sich, indem er die Runde zuerst prüfte; dieser Weg holt sie
+    /// nach, weil er ohne sie nichts wert wäre. Nach einem
+    /// Rundenwechsel trudeln solche Nachrichten regelmäßig ein, das ist
+    /// der Normalfall und kein Angriff. **Wer die Kosten als Hebel
+    /// benutzen will, muss stimmberechtigt sein**, denn ein Fremder
+    /// scheitert schon an `pubkey`, und dann ist die Ratenbegrenzung der
+    /// Netzschicht der richtige Ort, nicht diese Methode.
+    ///
+    /// # Die Sperre bleibt
+    ///
+    /// Der Sprung ist ein Rundenwechsel wie jeder andere und rührt
+    /// [`Self::lock`] nicht an. Entsperrt wird weiterhin nur über ein
+    /// Zertifikat. Ohne das wäre die Regel ein Sicherheitsloch statt
+    /// eines Liveness-Gewinns.
+    pub fn merke_hoehere_runde(
+        &mut self,
+        n: &Konsensnachricht,
+        now_ms: u64,
+    ) -> Result<RoundChange, RoundError> {
+        if self.bft.is_committed() {
+            return Ok(RoundChange::AlreadyCommitted);
+        }
+        let runde = n.runde();
+        if runde <= self.bft.round {
+            return Ok(RoundChange::Unerheblich);
+        }
+
+        let (absender, botschaft, signatur) = match n {
+            Konsensnachricht::Vote(v) => {
+                (v.voter, vote_message(v.round, &v.block_hash), &v.signature)
+            }
+            Konsensnachricht::Commit(c) => (
+                c.committer,
+                commit_message(c.round, &c.block_hash),
+                &c.signature,
+            ),
+            _ => return Ok(RoundChange::Unerheblich),
+        };
+
+        // ⚑ Erst prüfen, dann zählen. Siehe Kopf.
+        let pubkey = self
+            .voting_set
+            .pubkey(&absender)
+            .ok_or(RoundError::Bft(BftError::NotInCommittee))?;
+        if !pubkey.verify(&botschaft, signatur) {
+            return Err(RoundError::Bft(BftError::InvalidSignature));
+        }
+
+        let eintrag = self
+            .hoechste_runde_je_absender
+            .entry(absender)
+            .or_insert(0);
+        *eintrag = (*eintrag).max(runde);
+
+        // **Absteigend nach Runde, dann aufsummieren.** Das Gewicht, das
+        // eine Runde `r` belegt, ist die Summe über alle Absender mit
+        // höchster Runde `>= r`; sie wächst also monoton, während `r`
+        // fällt. Wer absteigend summiert, trifft die **höchste** Runde,
+        // für die es reicht, beim ersten Erreichen der Schranke. Auf
+        // eine niedrigere zu springen hieße, gleich darauf erneut zu
+        // springen.
+        let schranke = self.voting_set.drittel_schranke();
+        let mut paare: Vec<(Round, u64)> = self
+            .hoechste_runde_je_absender
+            .iter()
+            .filter(|(_, r)| **r > self.bft.round)
+            .map(|(m, r)| (*r, self.voting_set.weight(m)))
+            .collect();
+        paare.sort_unstable_by_key(|(r, _)| std::cmp::Reverse(*r));
+
+        let mut summe: u64 = 0;
+        let mut ziel = None;
+        for (r, g) in &paare {
+            summe = summe.saturating_add(*g);
+            if summe >= schranke {
+                ziel = Some(*r);
+                break;
+            }
+        }
+
+        match ziel {
+            Some(z) => self.springe_auf(z, now_ms),
+            None => Ok(RoundChange::Vorgemerkt {
+                // Das ist bewusst die Summe **aller** Absender über der
+                // eigenen Runde, also das Höchste, was aus dem heutigen
+                // Wissen überhaupt erreichbar wäre. Wer über echtes WAN
+                // einen hängenden Knoten beobachtet, will genau diesen
+                // Abstand sehen.
+                runde: paare.first().map_or(runde, |(r, _)| *r),
+                gewicht: summe,
+                schranke,
+            }),
+        }
+    }
+
+    /// Wechselt auf eine bestimmte Runde.
+    ///
+    /// Gemeinsamer Rumpf von [`Self::advance_round`] (Ziel: die nächste)
+    /// und [`Self::merke_hoehere_runde`] (Ziel: die belegte). **Die
+    /// Sperre bleibt bestehen**, Votes, Commits und Vorschlag der alten
+    /// Runde werden verworfen.
+    fn springe_auf(&mut self, ziel: Round, now_ms: u64) -> Result<RoundChange, RoundError> {
+        let from = self.bft.round;
+        let leader = select_leader(ziel, &self.producers).ok_or(RoundError::NoProducers)?;
+
+        self.bft = BftState::new(ziel, leader, self.voting_set.clone())?;
         self.deadline_for = RoundStatus::WaitingPropose;
         self.deadline_ms = now_ms.saturating_add(
             self.timeouts
-                .for_status(RoundStatus::WaitingPropose, to),
+                .for_status(RoundStatus::WaitingPropose, ziel),
         );
+        // Belege bis einschließlich der erreichten Runde sind erledigt.
+        self.hoechste_runde_je_absender.retain(|_, r| *r > ziel);
 
-        Ok(RoundChange::Advanced { from, to, leader })
+        Ok(RoundChange::Advanced {
+            from,
+            to: ziel,
+            leader,
+        })
     }
 
     /// Setzt die Frist neu, wenn die Phase gewechselt hat.
@@ -1297,6 +1516,250 @@ mod tests {
                 round: 0
             })
         );
+    }
+
+    // ── Punkt 23, zweite Hälfte: der Sprung nach vorn ───────────────
+
+    /// Neun Validatoren zu je 100: Gesamtgewicht 900, Schranke 301.
+    /// **Drei sind genau ein Drittel und reichen nicht**, der vierte
+    /// kippt es.
+    #[test]
+    fn mehr_als_ein_drittel_laesst_den_zurueckgefallenen_springen() {
+        let mut d = driver(9);
+        let h = test_hash(7);
+        assert_eq!(d.round(), 0);
+
+        for i in 0..3u8 {
+            let r = d
+                .merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(5, h, i)), 1_000)
+                .expect("echte Stimme");
+            assert_eq!(
+                r,
+                RoundChange::Vorgemerkt {
+                    runde: 5,
+                    gewicht: 100 * u64::from(i + 1),
+                    schranke: 301,
+                }
+            );
+        }
+        assert_eq!(d.round(), 0, "genau ein Drittel darf nicht reichen");
+
+        let r = d
+            .merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(5, h, 3)), 1_000)
+            .expect("echte Stimme");
+        assert_eq!(
+            r,
+            RoundChange::Advanced {
+                from: 0,
+                to: 5,
+                leader: select_leader(5, &producers(9)).unwrap(),
+            }
+        );
+        assert_eq!(d.round(), 5);
+    }
+
+    /// ⚑ **Die Gegenprobe, und sie ist der Grund für die Reihenfolge.**
+    ///
+    /// `BftState::receive_vote` lehnt eine fremde Runde ab, bevor es die
+    /// Signatur prüft. Wer die abgelehnten Nachrichten ungeprüft zählte,
+    /// gäbe einem einzelnen Byzantiner die Macht, jeden ehrlichen Knoten
+    /// in jede Runde zu treiben: Er müsste nur vier Stimmen mit fremden
+    /// Absendernamen und seiner eigenen Unterschrift schicken.
+    ///
+    /// Hier ist genau das nachgestellt. Es darf nichts bewirken.
+    #[test]
+    fn eine_gefaelschte_unterschrift_treibt_die_runde_nicht() {
+        let mut d = driver(9);
+        let h = test_hash(7);
+        let echt = signed_vote(5, h, 0);
+
+        // Vier echte Stimmen würden springen lassen (400 > 301).
+        for i in 0..4u8 {
+            let gefaelscht = Vote {
+                voter: test_miner(i),
+                ..echt.clone()
+            };
+            let r = d.merke_hoehere_runde(&Konsensnachricht::Vote(gefaelscht), 1_000);
+            if i == 0 {
+                r.expect("die eine echte Stimme gilt");
+            } else {
+                assert_eq!(
+                    r.unwrap_err(),
+                    RoundError::Bft(BftError::InvalidSignature),
+                    "fremder Absender mit fremder Unterschrift muss auffallen"
+                );
+            }
+        }
+        assert_eq!(
+            d.round(),
+            0,
+            "ein einzelner Byzantiner hat die Runde getrieben"
+        );
+    }
+
+    /// Ein Absender, der zweimal schickt, zählt einmal. Sonst käme
+    /// derselbe Knoten allein über die Schranke.
+    #[test]
+    fn derselbe_absender_zaehlt_nur_einmal() {
+        let mut d = driver(9);
+        let h = test_hash(7);
+        for _ in 0..5 {
+            d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(5, h, 0)), 1_000)
+                .expect("echte Stimme");
+        }
+        assert_eq!(d.round(), 0);
+    }
+
+    /// ⛑ **Hier stand das Gegenteil, und es war falsch.**
+    ///
+    /// Der erste Entwurf zählte je Runde getrennt; dieser Test hielt
+    /// fest, dass zwei Belege aus Runde 4 und zwei aus Runde 5 nichts
+    /// bewirken. **Das unterzählt.** Wer für Runde 5 unterschreibt, hat
+    /// Runde 4 hinter sich; vier Knoten in Runde mindestens 4 sind ein
+    /// Beleg für Runde 4, und der Sprung dorthin ist richtig.
+    ///
+    /// Gesprungen wird auf **4**, nicht auf 5: Für 5 stehen nur 200 von
+    /// 900, und die Schranke liegt bei 301.
+    #[test]
+    fn belege_verschiedener_runden_belegen_die_niedrigere() {
+        let mut d = driver(9);
+        let h = test_hash(7);
+        for i in 0..2u8 {
+            d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(4, h, i)), 1_000)
+                .expect("echte Stimme");
+        }
+        // Der dritte steht in Runde 5 und belegt damit auch Runde 4.
+        d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(5, h, 2)), 1_000)
+            .expect("echte Stimme");
+        assert_eq!(d.round(), 0, "300 von 900 sind genau ein Drittel");
+
+        d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(5, h, 3)), 1_000)
+            .expect("echte Stimme");
+        assert_eq!(d.round(), 4, "vier Knoten stehen in Runde mindestens 4");
+    }
+
+    /// ⚑ **Ein flutender Stimmberechtigter darf den Speicher nicht
+    /// treiben.**
+    ///
+    /// Die Signaturprüfung hält Fremde draußen, **nicht Mitglieder**.
+    /// Der erste Entwurf legte je Runde einen Eintrag an; ein einzelner
+    /// Byzantiner hätte mit gültigen Unterschriften für eine Million
+    /// Runden eine Million Einträge erzeugt. Der Schlüssel ist deshalb
+    /// der Absender: Die Karte ist durch die stimmberechtigte Menge
+    /// begrenzt, und Fluten hebt nur den eigenen Eintrag.
+    #[test]
+    fn ein_flutender_absender_belegt_nur_seinen_eigenen_eintrag() {
+        let mut d = driver(9);
+        let h = test_hash(7);
+        for runde in 1..500u64 {
+            d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(runde, h, 0)), 1_000)
+                .expect("echte Stimme");
+        }
+        assert_eq!(
+            d.hoechste_runde_je_absender.len(),
+            1,
+            "je Absender ein Eintrag, sonst wächst die Karte mit den Runden"
+        );
+        assert_eq!(d.round(), 0, "einer allein trägt kein Drittel");
+    }
+
+    /// Springt es, dann auf die **höchste** belegte Runde. Auf die
+    /// niedrigere zu springen hieße, gleich darauf erneut zu springen.
+    #[test]
+    fn der_sprung_geht_auf_die_hoechste_belegte_runde() {
+        let mut d = driver(4);
+        let h = test_hash(7);
+        // Vier zu je 100: Schranke 134, zwei Absender genügen.
+        for i in 0..2u8 {
+            d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(3, h, i)), 1_000)
+                .expect("echte Stimme");
+        }
+        assert_eq!(d.round(), 3);
+        for i in 0..2u8 {
+            d.merke_hoehere_runde(&Konsensnachricht::Commit(signed_commit(9, h, i)), 2_000)
+                .expect("echter Commit");
+        }
+        assert_eq!(d.round(), 9);
+    }
+
+    /// ⚑ **Die Sperre überlebt den Sprung**, genau wie den Wechsel über
+    /// die Frist. Täte sie es nicht, wäre aus einer Liveness-Regel ein
+    /// Sicherheitsloch geworden.
+    #[test]
+    fn die_sperre_ueberlebt_den_sprung() {
+        let mut d = driver(4);
+        let h = test_hash(1);
+        d.receive_propose(&signed_propose(0, h, 0), None, 0).unwrap();
+        for i in 0..3 {
+            d.receive_vote(&signed_vote(0, h, i), 0).unwrap();
+        }
+        let vorher = d.lock().expect("Sperre steht");
+
+        for i in 0..2u8 {
+            d.merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(6, test_hash(2), i)), 1_000)
+                .expect("echte Stimme");
+        }
+        assert_eq!(d.round(), 6);
+        assert_eq!(d.lock(), Some(vorher), "der Sprung hat entsperrt");
+    }
+
+    /// Die eigene und jede niedrigere Runde sagen nichts über einen
+    /// Rückstand.
+    #[test]
+    fn die_eigene_runde_ist_unerheblich() {
+        let mut d = driver(4);
+        let h = test_hash(7);
+        let r = d
+            .merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(0, h, 0)), 1_000)
+            .expect("gültige Nachricht");
+        assert_eq!(r, RoundChange::Unerheblich);
+        assert_eq!(d.round(), 0);
+    }
+
+    /// Ein Propose trägt nie genug Gewicht, es gibt je Runde nur einen.
+    #[test]
+    fn ein_propose_zaehlt_nicht_mit() {
+        let mut d = driver(4);
+        let h = test_hash(7);
+        let r = d
+            .merke_hoehere_runde(&Konsensnachricht::Propose(signed_propose(5, h, 1)), 1_000)
+            .expect("gültige Nachricht");
+        assert_eq!(r, RoundChange::Unerheblich);
+    }
+
+    /// Wer commitet hat, springt nicht mehr. Seine Runde ist entschieden,
+    /// und ein Sprung würfe die Entscheidung weg.
+    #[test]
+    fn nach_dem_commit_wird_nicht_mehr_gesprungen() {
+        let mut d = driver(4);
+        let h = test_hash(1);
+        d.receive_propose(&signed_propose(0, h, 0), None, 0).unwrap();
+        for i in 0..3 {
+            d.receive_vote(&signed_vote(0, h, i), 0).unwrap();
+        }
+        for i in 0..3 {
+            d.receive_commit(&signed_commit(0, h, i), 0).unwrap();
+        }
+        assert!(d.is_committed());
+
+        for i in 0..3u8 {
+            let r = d
+                .merke_hoehere_runde(&Konsensnachricht::Vote(signed_vote(7, h, i)), 1_000)
+                .expect("gültige Nachricht");
+            assert_eq!(r, RoundChange::AlreadyCommitted);
+        }
+        assert_eq!(d.round(), 0);
+    }
+
+    /// Genau ein Drittel reicht nicht, und das ist keine Kleinigkeit:
+    /// Bei genau einem Drittel könnten alle Absender byzantinisch sein.
+    #[test]
+    fn drittel_schranke_ist_strikt() {
+        assert_eq!(voting_set(9, 100).drittel_schranke(), 301);
+        assert_eq!(voting_set(3, 100).drittel_schranke(), 101);
+        // Nicht teilbar: 100/3 = 33, die kleinste ganze Zahl darüber
+        // ist 34.
+        assert_eq!(voting_set(1, 100).drittel_schranke(), 34);
     }
 
     #[test]

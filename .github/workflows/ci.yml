@@ -745,11 +745,19 @@ jobs:
       # ist kein Beleg für eine saubere Modellfamilie**, sondern die
       # ehrliche Aussage über einen leeren Ordner. Belegt wird sie beim
       # Kalibrierungslauf auf der Maschine, die die Modelle hält.
-      - name: ETHICS — Lizenz, Modellkarte, Aufnahmeantrag
+      - name: ETHICS — Lizenz, Modellkarte, Ausschlusskatalog, Aufnahmeantrag
         run: |
           set -e
           python3 ETHICS/werkzeuge/lizenzprobe.py
           python3 ETHICS/werkzeuge/modellkarte.py --pruefe
+          python3 ETHICS/werkzeuge/ausschlussprobe.py
+          # ⛑ **Beide Richtungen, seit dem 2026-08-31.** Bis dahin stand
+          # hier nur, dass die leere Vorlage durchfaellt. Eine Pruefung,
+          # die alles ablehnt, besteht diesen Test ebenfalls; dass ein
+          # vollstaendiger Antrag durchkommt, hat niemand geprueft.
+          python3 ETHICS/werkzeuge/pruefe_antrag.py \
+            ETHICS/vorlagen/korpus-aufnahmeantrag-beispiel.json
+          echo "ok: der vollstaendige Beispielantrag kommt durch"
           python3 ETHICS/werkzeuge/pruefe_antrag.py \
             ETHICS/vorlagen/korpus-aufnahmeantrag.json && {
               echo "FEHLER: die leere Vorlage darf nicht als vollstaendig gelten"

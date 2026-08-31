@@ -30,7 +30,7 @@ Mensch vor dem Haken beantworten muss.**
 |---|---|---|
 | Sind alle benutzten Modelle und Bibliotheken lizenzgeprüft? | G7 | ✅ `lizenzprobe.py` |
 | Behauptet die Komponente irgendwo eine Vertraulichkeit, die das Protokoll nicht leistet? | G6, Kap. 9.3 | ❌ Mensch |
-| Steht in ihrer Dokumentation, was sie **nicht** leistet? | Manifest Abschnitt 4 | ❌ Mensch |
+| Steht in ihrer Dokumentation, was sie **nicht** leistet? | Manifest, Abschnitt 4 | ❌ Mensch |
 | Sind neue Governance-Parameter mit Rang und Fundstelle eingetragen? | S1–S5 | ✅ `myl-governance` |
 
 ## Zusätzlich je Komponente

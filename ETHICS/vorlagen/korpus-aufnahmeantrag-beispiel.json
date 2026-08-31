@@ -1,18 +1,18 @@
 {
-  "_zweck": "Korpus-Aufnahmeantrag nach Manifest G3. Ohne die vier Pflichtangaben unvollständig und nicht abstimmungsfähig.",
-  "_nicht_gefragt": "Der Inhalt. Grundsatz G1 verbietet die inhaltliche Bewertung; geprüft wird die Herkunft, nicht die Meinung. Wer hier ein Feld für Qualität oder Angemessenheit ergänzt, hebt G1 auf.",
+  "_zweck": "Positivprobe fuer pruefe_antrag.py, KEIN echter Antrag. Die leere Vorlage muss durchfallen, dieser hier muss durchkommen. Ohne beide Richtungen belegt eine gruene CI nur, dass die Pruefung alles ablehnt.",
+  "_nicht_gefragt": "Der Inhalt. Grundsatz G2 verbietet die inhaltliche Bewertung; geprueft wird die Herkunft, nicht die Meinung.",
   "korpus": {
-    "name": "",
-    "fassung": "",
-    "antragsteller": "",
-    "datum": ""
+    "name": "Beispielkorpus (Positivprobe)",
+    "fassung": "1.0.0",
+    "antragsteller": "Pruefvorlage, kein Antragsteller",
+    "datum": "2026-08-31"
   },
   "_pflicht_1": "Herkunft und Rechtsgrundlage je Bestandteil. Bei Web-Daten gehören Erhebungsmethode und der Umgang mit maschinenlesbaren Nutzungsvorbehalten dazu (§ 44b Abs. 3 UrhG, Art. 4 Abs. 3 DSM-RL).",
   "herkunft": [
     {
-      "bestandteil": "",
-      "quelle": "",
-      "rechtsgrundlage": "",
+      "bestandteil": "Gemeinfreie Texte",
+      "quelle": "Projekt Gutenberg",
+      "rechtsgrundlage": "gemeinfrei",
       "erhebungsmethode": "",
       "nutzungsvorbehalt": ""
     }
@@ -22,50 +22,52 @@
     {
       "was": "X1",
       "_klasse": "Massenvernichtungswaffen",
-      "werkzeug": "",
-      "werkzeugversion": "",
+      "werkzeug": "probefilter",
+      "werkzeugversion": "0.1.0",
       "ausgeschlossen": 0
     },
     {
       "was": "X2",
       "_klasse": "Konventionelle Waffen und Sprengstoff",
-      "werkzeug": "",
-      "werkzeugversion": "",
+      "werkzeug": "probefilter",
+      "werkzeugversion": "0.1.0",
       "ausgeschlossen": 0
     },
     {
       "was": "X3",
       "_klasse": "Angriffswerkzeuge gegen fremde Systeme",
-      "werkzeug": "",
-      "werkzeugversion": "",
+      "werkzeug": "probefilter",
+      "werkzeugversion": "0.1.0",
       "ausgeschlossen": 0
     },
     {
       "was": "X4",
       "_klasse": "Missbrauchsdarstellungen und Verfolgung von Personen",
-      "werkzeug": "",
-      "werkzeugversion": "",
+      "werkzeug": "probefilter",
+      "werkzeugversion": "0.1.0",
       "ausgeschlossen": 0
     },
     {
       "was": "X5",
       "_klasse": "Taeuschung ueber die Person",
-      "werkzeug": "",
-      "werkzeugversion": "",
+      "werkzeug": "probefilter",
+      "werkzeugversion": "0.1.0",
       "ausgeschlossen": 0
     }
   ],
   "_pflicht_3": "Personenbezug: ob, in welchem Umfang, auf welcher Rechtsgrundlage.",
   "personenbezug": {
     "enthalten": false,
-    "umfang": "",
-    "rechtsgrundlage": ""
+    "umfang": "keiner",
+    "rechtsgrundlage": "entfaellt"
   },
   "_pflicht_4": "Reproduzierbarkeit. Der Prüfstein: Ein Dritter muss den Korpus aus den Quellen nachbauen und dieselbe Wurzel bekommen. Eine Wurzel, die niemand nachrechnen kann, ist wertlos.",
   "reproduzierbarkeit": {
-    "merkle_wurzel": "",
-    "erzeugungsskript": "",
-    "werkzeugversionen": [],
-    "nachgebaut_von": ""
+    "merkle_wurzel": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "erzeugungsskript": "bau.py",
+    "werkzeugversionen": [
+      "python 3.12"
+    ],
+    "nachgebaut_von": "Dritter"
   }
 }

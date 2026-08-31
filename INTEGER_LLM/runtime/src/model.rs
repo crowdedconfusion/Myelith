@@ -44,7 +44,7 @@ use crate::loader::{ThetaV, LoadedScales};
 /// sie bei Bedarf neu. Dieselbe Datenmenge, aber ohne Schreiblast und
 /// ohne Auslagerungsdruck.
 ///
-/// **Für ein Expertengemisch ist es mehr als eine Notlösung.** Bei
+/// **Für ein Mixture-of-Experts-Modell ist es mehr als eine Notlösung.** Bei
 /// Top-8 von 128 rührt ein Token nur ein Sechzehntel der
 /// Expertengewichte an. Die übrigen bleiben ungelesen auf der Platte,
 /// statt Speicher zu belegen, den sie nie brauchen. Der Zuschnitt
@@ -208,7 +208,7 @@ pub struct Routingbefund {
 /// Der Feedforward-Teil einer Layer.
 ///
 /// **Warum ein Enum und nicht drei Tensoren plus ein optionales
-/// Expertengemisch.** Ein Modell kann beides mischen: Qwen3 kennt das
+/// Mixture-of-Experts-Modell.** Ein Modell kann beides mischen: Qwen3 kennt das
 /// Feld `mlp_only_layers`, mit dem einzelne Layer dicht bleiben, während
 /// der Rest Experten hat. Bei Qwen3-30B-A3B ist die Liste leer, aber sie
 /// existiert, und ein Typ, der den Mischfall nicht ausdrücken kann,
@@ -238,7 +238,7 @@ pub struct DenseMlp {
     pub down_proj: QTensor,
 }
 
-/// Ein Expertengemisch: Router plus Experten.
+/// Ein Mixture-of-Experts-Modell: Router plus Experten.
 pub struct MoeLayer {
     /// Router-Projektion, `[num_experts, hidden_size]`. Liefert je
     /// Experte einen Logit.
@@ -268,7 +268,7 @@ pub struct TransformerLayer {
     pub k_proj: QTensor,
     pub v_proj: QTensor,
     pub o_proj: QTensor,
-    /// Der Feedforward-Teil: eine dichte MLP oder ein Expertengemisch.
+    /// Der Feedforward-Teil: eine dichte MLP oder ein Mixture-of-Experts-Modell.
     pub ffn: Feedforward,
     /// Q/K/V-Attention-Biases (Qwen2.5 besitzt sie an q/k/v_proj). `None`
     /// bei Modellen ohne Attention-Biases (`attention_bias: false` in
@@ -1086,7 +1086,7 @@ impl IntegerModel {
         )
     }
 
-    /// Ein Expertengemisch: Router befragen, `top_k` Experten rechnen,
+    /// Ein Mixture-of-Experts-Modell: Router befragen, `top_k` Experten rechnen,
     /// Ergebnisse gewichtet mischen.
     ///
     /// **Die Arbeitsmenge ist konstant.** Es feuern immer genau `top_k`

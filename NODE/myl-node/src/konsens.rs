@@ -135,6 +135,15 @@ pub enum Urteil {
     Angenommen,
     /// Vom Automaten abgelehnt, mit Grund.
     Abgelehnt(RoundError),
+    /// Die Nachricht selbst gilt nicht, hat aber einen **Rundensprung**
+    /// ausgelöst: Aus ihrer Runde kam mehr als ein Drittel des Gewichts,
+    /// also steht dort mindestens ein Ehrlicher (Punkt 23, Fund 67).
+    Gesprungen {
+        /// Runde, in der dieser Knoten festsaß.
+        von: Round,
+        /// Runde, auf die er gesprungen ist.
+        auf: Round,
+    },
     /// Die Bytes ließen sich nicht als Konsensnachricht lesen.
     Unlesbar,
 }
@@ -143,6 +152,7 @@ impl Urteil {
     pub fn als_text(&self) -> &'static str {
         match self {
             Self::Angenommen => "angenommen",
+            Self::Gesprungen { .. } => "gesprungen",
             Self::Abgelehnt(RoundError::Bft(BftError::WrongRound { .. })) => "falsche-runde",
             Self::Abgelehnt(RoundError::Bft(BftError::DuplicateMessage)) => "doppelt",
             Self::Abgelehnt(RoundError::Bft(BftError::WrongLeader)) => "falscher-leader",
@@ -325,8 +335,32 @@ impl Konsensrunde {
                 (Urteil::Angenommen, raus)
             }
             Err(e) => {
-                let raus = self.hilf_beim_aufholen(n, &e);
-                (Urteil::Abgelehnt(e), raus)
+                // ⚑ **Beide Richtungen aus Fund 67 treffen sich hier**,
+                // und das ist kein Zufall: Beide zeigen sich als
+                // `WrongRound`. Wer voraus ist, bekommt von uns den
+                // Beleg; wer zurück ist, springt selbst.
+                //
+                // Sie schließen einander aus, ohne dass es geprüft
+                // werden müsste: `hilf_beim_aufholen` verlangt ein
+                // eigenes Commit-Zertifikat, und wer commitet hat,
+                // bekommt von `merke_hoehere_runde` nur noch
+                // `AlreadyCommitted`.
+                //
+                // **Die Nachricht selbst gilt auch nach dem Sprung
+                // nicht.** Sie noch einmal einzuspeisen wäre möglich und
+                // ist bewusst unterlassen: Der Absender sendet weiter,
+                // und ein Wiedereintritt in denselben Aufruf ist der
+                // Anfang von Schleifen, die niemand mehr überblickt.
+                match self.treiber.merke_hoehere_runde(n, jetzt_ms) {
+                    Ok(RoundChange::Advanced { from, to, .. }) => {
+                        let raus = self.nach_dem_wechsel(jetzt_ms);
+                        (Urteil::Gesprungen { von: from, auf: to }, raus)
+                    }
+                    _ => {
+                        let raus = self.hilf_beim_aufholen(n, &e);
+                        (Urteil::Abgelehnt(e), raus)
+                    }
+                }
             }
         }
     }
@@ -393,20 +427,31 @@ impl Konsensrunde {
     pub fn takt(&mut self, jetzt_ms: u64) -> (Option<RoundChange>, Vec<Konsensnachricht>) {
         match self.treiber.on_timeout(jetzt_ms) {
             Ok(RoundChange::Advanced { from, to, leader }) => {
-                // Die Stimmen gehören zur alten Runde. Das Zertifikat
-                // **nicht**: Es ist der Beleg, den der nächste Leader
-                // braucht, und überlebt den Wechsel.
-                self.stimmen.clear();
-                // Wie die Stimmen, und aus demselben Grund. Der fertige
-                // Beleg bleibt: Er bezeugt eine Entscheidung, keine Runde.
-                self.commits.clear();
-                self.wechsel += 1;
-                let raus = self.folgenachrichten(jetzt_ms).unwrap_or_default();
+                let raus = self.nach_dem_wechsel(jetzt_ms);
                 (Some(RoundChange::Advanced { from, to, leader }), raus)
             }
             Ok(_) => (None, Vec::new()),
             Err(_) => (None, Vec::new()),
         }
+    }
+
+    /// Räumt auf, was zur alten Runde gehörte, und lässt vorschlagen.
+    ///
+    /// **Gemeinsamer Rumpf beider Wege in eine neue Runde**: über die
+    /// Frist ([`Self::takt`]) und über den Beleg einer höheren Runde
+    /// ([`Self::nachricht`]). Sie standen bis zum 2026-08-30 nur an
+    /// einer Stelle, und der zweite Weg wäre sonst mit den Stimmen der
+    /// alten Runde weitergelaufen.
+    fn nach_dem_wechsel(&mut self, jetzt_ms: u64) -> Vec<Konsensnachricht> {
+        // Die Stimmen gehören zur alten Runde. Das Zertifikat
+        // **nicht**: Es ist der Beleg, den der nächste Leader
+        // braucht, und überlebt den Wechsel.
+        self.stimmen.clear();
+        // Wie die Stimmen, und aus demselben Grund. Der fertige
+        // Beleg bleibt: Er bezeugt eine Entscheidung, keine Runde.
+        self.commits.clear();
+        self.wechsel += 1;
+        self.folgenachrichten(jetzt_ms).unwrap_or_default()
     }
 
     /// Wann die laufende Frist abläuft, in Millisekunden derselben Uhr.
@@ -1402,6 +1447,102 @@ mod tests {
         assert_eq!(zweites.als_text(), "doppelt");
         assert!(zweites.ist_harmlos());
         assert!(folge.is_empty(), "ein Duplikat löste eine zweite Stimme aus");
+    }
+
+    /// ⚑ **Punkt 23, die andere Richtung: Wer zurückfällt, kommt zurück.**
+    ///
+    /// Der Beleg oben zeigt den Knoten, der **voraus** ist; er bekommt
+    /// das Commit-Zertifikat. Hier steht der häufigere Fall: Ein Knoten
+    /// hängt in Runde 0 fest, während die anderen längst in Runde 5
+    /// sind. Ohne diese Regel holt er nur über die eigene Uhr auf, Runde
+    /// für Runde, und jede Frist ist um den Zuwachs länger als die
+    /// vorige.
+    ///
+    /// **Die Stakes des Probenetzes sind hier das Messinstrument.**
+    /// 250, 230, 200, 120 und 100 Millionen ergeben 900; die Schranke
+    /// liegt bei 300 000 001. Alpha allein trägt 250 Millionen und
+    /// bewegt nichts. Mit beta sind es 480, und erst dann springt es.
+    /// **Der Test zeigt beide Hälften**, sonst bliebe offen, ob die
+    /// Schranke wirkt oder ob jede fremde Runde genügt.
+    #[test]
+    fn wer_zurueckgefallen_ist_springt_auf_die_belegte_runde() {
+        let g = probenetz();
+        let k = Konsensschluessel::probe("gamma").expect("Schlüssel");
+        let (mut r, _) =
+            Konsensrunde::beginnen(&g, k, vorschlag(), 0, weite_fristen()).expect("Runde");
+        assert_eq!(r.runde(), 0);
+        let h = vorschlag();
+
+        let stimme = |name: &'static str| -> Konsensnachricht {
+            let s = Konsensschluessel::probe(name).expect("Schlüssel");
+            Konsensnachricht::Vote(Vote {
+                round: 5,
+                block_hash: h,
+                voter: s.kennung(),
+                signature: s.signiere(&vote_message(5, &h)).expect("Signatur"),
+            })
+        };
+
+        // 250 von 900 Millionen: unter der Schranke.
+        let (urteil, _) = r.empfange(&stimme("alpha"), 0);
+        assert_eq!(urteil.als_text(), "falsche-runde");
+        assert_eq!(r.runde(), 0, "ein Viertel des Gewichts hat gereicht");
+
+        // 480 von 900 Millionen: darüber.
+        let (urteil, _) = r.empfange(&stimme("beta"), 0);
+        assert_eq!(urteil.als_text(), "gesprungen");
+        assert_eq!(r.runde(), 5);
+        assert_eq!(r.wechsel(), 1, "der Sprung zählt als Wechsel");
+    }
+
+    /// ⚑ **Der Sprung räumt auf wie der Wechsel über die Frist.**
+    ///
+    /// Beide Wege führen in eine neue Runde, und beide müssen die
+    /// Stimmen der alten wegwerfen. Stünde das Aufräumen nur im
+    /// Fristweg, liefe der Knoten nach einem Sprung mit den Stimmen der
+    /// alten Runde weiter und baute daraus ein Zertifikat, das keine
+    /// Runde mehr bezeugt.
+    #[test]
+    fn der_sprung_wirft_die_stimmen_der_alten_runde_weg() {
+        let g = probenetz();
+        let leader = leader_name_der_runde(&g, 0);
+        let k = Konsensschluessel::probe(leader).expect("Schlüssel");
+        let (mut r, _) =
+            Konsensrunde::beginnen(&g, k, vorschlag(), 0, weite_fristen()).expect("Runde");
+        let h = vorschlag();
+
+        // Eine Stimme der Runde 0 sammeln.
+        for name in NAMEN.iter().filter(|n| **n != leader).take(1) {
+            let s = Konsensschluessel::probe(name).expect("Schlüssel");
+            let (urteil, _) = r.empfange(
+                &Konsensnachricht::Vote(Vote {
+                    round: 0,
+                    block_hash: h,
+                    voter: s.kennung(),
+                    signature: s.signiere(&vote_message(0, &h)).expect("Signatur"),
+                }),
+                0,
+            );
+            assert_eq!(urteil.als_text(), "angenommen");
+        }
+
+        for name in ["alpha", "beta"] {
+            let s = Konsensschluessel::probe(name).expect("Schlüssel");
+            r.empfange(
+                &Konsensnachricht::Vote(Vote {
+                    round: 7,
+                    block_hash: h,
+                    voter: s.kennung(),
+                    signature: s.signiere(&vote_message(7, &h)).expect("Signatur"),
+                }),
+                0,
+            );
+        }
+        assert_eq!(r.runde(), 7);
+        assert!(
+            r.stimmen.is_empty(),
+            "die Stimmen der Runde 0 haben den Sprung überlebt"
+        );
     }
 
     #[test]

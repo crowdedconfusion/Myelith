@@ -42,6 +42,21 @@ import json
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
+KATALOG = Path(__file__).resolve().parent.parent / "Ausschluss.json"
+
+
+def katalogklassen() -> list[dict]:
+    """Die Klassen des Ausschlusskatalogs, die bei der Aufnahme greifen.
+
+    ⚑ **Gelesen und nicht abgeschrieben.** Stünde die Liste hier noch
+    einmal, liefe sie beim ersten Zusatz auseinander, und die kürzere
+    wäre die angewandte.
+    """
+    if not KATALOG.is_file():
+        return []
+    d = json.loads(KATALOG.read_text(encoding="utf-8"))
+    return [k for k in (d.get("klasse") or []) if k.get("bei_aufnahme")]
+
 
 def leer(x) -> bool:
     return x is None or x == "" or x == [] or x == {}
@@ -78,6 +93,30 @@ def pruefe(d: dict) -> list[str]:
         for feld in ("was", "werkzeug", "werkzeugversion"):
             if leer(a.get(feld)):
                 m.append(f"ausschluss[{i}].{feld} fehlt")
+
+    # ⚑ **Jede Klasse des Katalogs, nicht nach freier Wahl** (2026-08-31).
+    # Bis dahin war `was` ein freies Textfeld: Ein Antrag konnte
+    # „Dubletten entfernt" eintragen und galt als vollständig, während
+    # über die Klassen, um die es geht, nichts dastand. Der Katalog
+    # nennt sie; hier wird verlangt, dass jede angesprochen ist.
+    #
+    # **Verlangt wird die Aussage, nicht ihre Richtigkeit.** Ob wirklich
+    # ausgeschlossen wurde, sagt keine Zeile Python, sondern die
+    # Abstimmung und die Reproduzierbarkeit aus Pflichtangabe 4.
+    klassen = katalogklassen()
+    if not klassen:
+        m.append(
+            "Ausschlusskatalog nicht lesbar: ohne ihn ist Pflichtangabe 2 "
+            "nicht pruefbar"
+        )
+    genannt = {str(a.get("was", "")).strip().upper() for a in ausschluss}
+    for k in klassen:
+        kennung = str(k.get("kennung", "")).upper()
+        if kennung not in genannt:
+            m.append(
+                f"ausschluss: Klasse {kennung} ({k.get('name')}) nicht "
+                "angesprochen"
+            )
 
     # 3: Personenbezug
     pb = d.get("personenbezug")
@@ -181,6 +220,10 @@ def main() -> int:
         print("[antrag] UNVOLLSTÄNDIG: wird nicht zur Abstimmung gestellt (G3)")
         return 1
     print("[antrag] VOLLSTÄNDIG: alle vier Pflichtangaben sind ausgefüllt")
+    print(
+        f"[antrag] Ausschlusskatalog: {len(katalogklassen())} Klassen "
+        "angesprochen"
+    )
     print("[antrag] ⚑ Das ist keine Aussage über ihre Richtigkeit.")
     return 0
 

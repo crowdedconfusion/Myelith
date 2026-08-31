@@ -1,7 +1,7 @@
 # Myelith — Ethik-Manifest
 
-**Version:** 1.0.0
-**Datum:** 2026-08-18
+**Version:** 1.1.0
+**Datum:** 2026-08-31
 **Geltung:** Für alle Komponenten dieses Repositoriums. Bei Konflikt mit
 einer Komponentenplanung gilt dieses Dokument; Abweichungen sind zu
 begründen und hier zu vermerken.
@@ -236,6 +236,48 @@ Energiewirkung zu beziffern.
 *Mechanismus: Kap. 4.4, 6.10. Kategorie: Absichtserklärung mit
 Governance-Verankerung.*
 
+### G9 — Was das Netz nicht lernt und nicht bedient
+
+**Festlegung des Projektinhabers, 2026-08-31.** Es gibt einen benannten
+Ausschlusskatalog (`ETHICS/Ausschluss.json`): Massenvernichtungswaffen,
+konventionelle Waffen und Sprengstoff, Angriffswerkzeuge gegen fremde
+Systeme, Missbrauchsdarstellungen und Verfolgung von Personen, Täuschung
+über die Person.
+
+**Wo er greift, und wo nicht.** Die Aufnahme eines Korpus in die
+kanonische Liste ist nach G2 ausdrücklich ein **Governance-Akt, kein
+technischer**, und ein Governance-Akt darf Ablehnungsgründe haben. Dort
+wirkt der Katalog: Ein Antrag muss zu **jeder** Klasse Werkzeug, Version
+und Zahl der ausgeschlossenen Stücke nennen, sonst wird er nicht zur
+Abstimmung gestellt.
+
+⚑ **Bei der Abfrage wirkt er nicht auf Protokollebene, und das steht
+hier, weil es sonst jemand anders behaupten würde.** G1 sagt, das
+Protokoll könne Missbrauch der Inferenz nicht am Inhalt erkennen; daran
+ändert dieser Grundsatz nichts. Der Katalog bindet **Betreiber von
+Gateways und Clients**. Da das Basismodell nach G7 frei nachnutzbar sein
+muss, kann es ohnehin jeder lokal ausführen.
+
+**Die Zusage lautet deshalb: Dieses Netz bedient es nicht und lernt es
+nicht.** Sie lautet nicht, es sei unmöglich. Abschnitt 7 verbietet
+Zusagen ohne Mechanismus; die stärkere Fassung wäre genau das.
+
+⚑ **Jede Klasse trägt eine Abgrenzung, und ohne sie fällt sie durch die
+Prüfung.** „Waffen" als Stichwort verschluckt Geschichte, Chemie,
+Metallurgie, Rüstungskontrolle und den halben Journalismus. Eine Klasse
+ohne Abgrenzung ist kein Ausschluss, sondern ein Ermessensspielraum, und
+G1 nennt den Grund, warum es den nicht geben soll: Wer entscheidet,
+welcher Text schädlich ist, entscheidet auch, welcher Text unbequem ist.
+**Der Maßstab ist Befähigung, nicht Thema.**
+
+**Selbstbindung:** Der Katalog wird nicht stillschweigend erweitert.
+Jede Klasse und jede Abgrenzung steht in einer versionierten Datei, und
+`ausschlussprobe.py` weist eine Klasse ohne Abgrenzung ab.
+
+*Mechanismus: Governance-Akt bei der Korpus-Aufnahme (Kap. 7.3, 10.3).
+Kategorie: bei der Aufnahme governance-durchsetzbar, bei der Abfrage
+Betreiberpflicht und nicht protokoll-durchsetzbar.*
+
 ---
 
 ## 3. Selbstbindungen der Autoren
@@ -354,6 +396,28 @@ Alle übrigen Abschnitte folgen dem Governance-Prozess aus Kap. 10.3.
 ---
 
 ## Changelog
+
+### v1.1.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
+
+Auf Festlegung des Projektinhabers. Ein benannter Ausschlusskatalog in
+`ETHICS/Ausschluss.json`, fünf Klassen, jede mit Abgrenzung.
+
+⚑ **Der Grundsatz fügt eine Zusage hinzu, und Abschnitt 7 verlangt dafür
+einen Mechanismus.** Er hat einen, aber nur an einer der beiden Stellen:
+Bei der Korpus-Aufnahme wirkt er über den Governance-Akt, den G2 ohnehin
+dort verortet; bei der Abfrage bindet er Betreiber und nicht den
+Konsens. Beides steht ausdrücklich im Text, damit die stärkere Fassung
+nicht später hineingelesen wird.
+
+⚑ **Und er hebt G1 nicht auf.** Das Protokoll bekommt keinen
+Ermessensspielraum; es rechnet weiter, was ihm gegeben wird. Was sich
+ändert, ist der Katalog der Ablehnungsgründe eines Antrags, und der
+gehört seit jeher der Governance.
+
+**Der Antrag ist mitgewachsen:** `ausschluss` ist kein freies Textfeld
+mehr, sondern eine Zeile je Katalogklasse. Bis dahin konnte ein Antrag
+„Dubletten entfernt" eintragen und galt als vollständig, während über
+die Klassen, um die es geht, nichts dastand.
 
 ### v1.0.0 – 2026-08-18
 - Erstfassung. Aufbau bewusst als Grenzziehung zuerst

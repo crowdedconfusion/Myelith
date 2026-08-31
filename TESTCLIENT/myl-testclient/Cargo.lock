@@ -2448,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.17.2"
+version = "0.18.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "borsh",
  "getrandom 0.3.4",
