@@ -8,7 +8,7 @@
 //! Folgerung, gefragt werde nach einem Blattindex und geantwortet mit
 //! „Blatt und Merkle-Pfad", **schließt die Lücke aber nicht**, wenn mit
 //! Blatt der Blatt-*Hash* gemeint ist. Der Kommentar an
-//! [`crate::gegenstand::TEILGROESSE`] sagte genau das: ein Mebibyte sei
+//! [`myl_types::gegenstand::TEILGROESSE`] sagte genau das: ein Mebibyte sei
 //! „klein genug, dass ein Verfügbarkeitsnachweis nicht ein Mebibyte
 //! Antwort erzeugt".
 //!
@@ -50,18 +50,18 @@
 //! die Shard-Zuteilung gezogen wird. Er ist nicht vorhersehbar und für
 //! jeden nachrechenbar, und beides braucht diese Stichprobe.
 
-use crate::gegenstand::{Manifest, TEILGROESSE};
+use myl_types::gegenstand::{Manifest, TEILGROESSE};
 use myl_types::hash::Hash;
 use myl_types::ids::{EpochId, MerkleRoot, MinerId};
 use myl_types::merkle::{MerkleProof, MerkleTree};
-use myl_types::seed_rng::SeedRng;
 
 /// Trennstring der Stichproben-Ableitung.
 ///
-/// Wie überall im Protokoll bekommt jede Ableitung ihren eigenen
-/// Anfang, damit derselbe Seed in zwei Verwendungen nicht dieselbe Zahl
-/// liefert.
-pub const DST_SPEICHER_STICHPROBE: &[u8] = b"MYELITH_SPEICHER_STICHPROBE_v1";
+/// ⚑ **Wiederausfuhr, keine zweite Fassung** (2026-08-31). Die
+/// Ableitung zog nach `myl-types`, weil jeder, der eine Quittung prüft,
+/// dieselbe Zahl ausrechnen können muss, ohne an der Store-Rolle zu
+/// hängen. Zwei Fassungen wären zwei Quellen für dieselbe Wahrheit.
+pub use myl_types::zuteilung::DST_SPEICHER_STICHPROBE;
 
 /// Welche Stelle eines Gegenstands von wem verlangt wird.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,18 +91,7 @@ impl Stichprobe {
         halter: &MinerId,
         seed: &[u8; 32],
     ) -> Self {
-        let mut vorlage = Vec::with_capacity(DST_SPEICHER_STICHPROBE.len() + 32 * 3 + 16);
-        vorlage.extend_from_slice(DST_SPEICHER_STICHPROBE);
-        vorlage.extend_from_slice(seed);
-        vorlage.extend_from_slice(manifest.wurzel.as_bytes());
-        vorlage.extend_from_slice(&manifest.fassung.to_le_bytes());
-        vorlage.extend_from_slice(&epoche.0.to_le_bytes());
-        vorlage.extend_from_slice(halter.as_bytes());
-
-        let abgeleitet = Hash::sha256(&vorlage);
-        let mut rng = SeedRng::new(&abgeleitet.0);
-        // `teilzahl` ist nach `Manifest::neu` niemals null.
-        let teil = rng.next_below(u64::from(manifest.teilzahl)) as u32;
+        let teil = myl_types::zuteilung::verlangter_teil(manifest, epoche, halter, seed);
 
         Self {
             wurzel: manifest.wurzel,
@@ -263,7 +252,7 @@ pub fn pruefe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gegenstand::{teile_bilden, Gegenstandsart, Redundanzform};
+    use myl_types::gegenstand::{teile_bilden, Gegenstandsart, Redundanzform};
 
     /// Drei Teile: zwei volle und ein kurzer letzter.
     fn gegenstand() -> (Manifest, Vec<Vec<u8>>) {

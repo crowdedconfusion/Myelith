@@ -1,9 +1,24 @@
+//! Das Format eines Gegenstands: Teile, Manifest, Ablage.
+//!
+//! # ⚑ Warum das hier liegt und nicht in `myl-store` (2026-08-31)
+//!
+//! **Ein gemeinsamer Vertrag gehört in die gemeinsame Kiste**, und zwar
+//! aus demselben Grund wie beim Übergangs-Signaturvertrag zwei Tage
+//! zuvor: Das Manifest wandert in den **Konsenszustand**, also muss der
+//! Ledger es lesen können. `myl-ledger` an `myl-store` zu hängen hieße,
+//! die ganze Store-Rolle an den Konsens zu hängen: Abruf, Auslieferung,
+//! Rotation und später Netz-Ein- und -Ausgabe.
+//!
+//! Die Trennlinie ist damit: **das Format hier, die Rolle dort.** Was
+//! zwei Halter ohne Absprache gleich sehen müssen, steht in dieser
+//! Kiste; was ein Halter tut, steht in `myl-store`.
+//!
 //! Was ein gespeicherter Gegenstand ist: Teile, Hashes, Manifest.
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use myl_types::hash::Hash;
-use myl_types::ids::MerkleRoot;
-use myl_types::merkle::{MerkleError, MerkleTree};
+use crate::hash::Hash;
+use crate::ids::MerkleRoot;
+use crate::merkle::{MerkleError, MerkleTree};
 
 /// Feste Teilgröße in Bytes.
 ///
@@ -21,7 +36,7 @@ use myl_types::merkle::{MerkleError, MerkleTree};
 /// erzeugt". Der Satz beschreibt einen Nachweis, der ohne die Nutzdaten
 /// auskommt, und ein solcher belegt keine Speicherung: Die Blätter des
 /// Baums **sind** die Teil-Hashes, wer sie hält, antwortet für immer
-/// richtig. Das ist Fund 106, siehe [`crate::nachweis`]. Die Antwort
+/// richtig. Das ist Fund 106, siehe der Verfügbarkeitsnachweis in `myl-store`. Die Antwort
 /// trägt seither den Teil selbst, und ein Mebibyte ist genau die Größe,
 /// die das tragbar macht.
 pub const TEILGROESSE: usize = 1024 * 1024;
@@ -49,7 +64,7 @@ pub enum Gegenstandsart {
     ///
     /// Eine **Einlage**: Sie hat einen Einleger, der für sie zahlt, und
     /// sie verfällt, wenn niemand mehr zahlt. Siehe
-    /// [`crate::entgelt`].
+    /// das Speicherentgelt in `myl-store`.
     Wissensstueck,
     /// Sonstiges, das gehalten werden muss.
     Sonstiges,
@@ -65,6 +80,97 @@ pub enum Gegenstandsart {
     /// Arten ihre Borsh-Nummer behalten: Ein Manifest von gestern muss
     /// heute dasselbe bedeuten.
     Netzwerkwissen,
+}
+
+impl Gegenstandsart {
+    /// Wo das Manifest dieser Art im Konsenszustand steht.
+    ///
+    /// Die Grenze wird nicht nur beschrieben, sondern **erzwungen**: Der
+    /// Übergang, der einen Eintrag in den Zustand aufnimmt, weist die
+    /// Wissensklassen mit benanntem Grund ab, statt sie stillschweigend
+    /// wachsen zu lassen.
+    pub fn ablage(self) -> Ablage {
+        match self {
+            Self::Shardgewichte | Self::Skalenpaket | Self::Sonstiges => Ablage::Direkt,
+            Self::Wissensstueck | Self::Netzwerkwissen => Ablage::UeberWurzel,
+        }
+    }
+}
+
+/// Woraus die Vergütung eines Halters bezahlt wird.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finanzierung {
+    /// Aus der Treasury: für alles, was vorliegen **muss** und keinen
+    /// Einleger hat.
+    Treasury,
+    /// Aus dem Guthaben des Gegenstands, eingezahlt vom Einleger.
+    Einleger,
+}
+
+impl Gegenstandsart {
+    /// Wer die Vergütung für diese Art trägt.
+    pub fn finanzierung(self) -> Finanzierung {
+        match self {
+            Self::Shardgewichte
+            | Self::Skalenpaket
+            | Self::Sonstiges
+            | Self::Netzwerkwissen => Finanzierung::Treasury,
+            Self::Wissensstueck => Finanzierung::Einleger,
+        }
+    }
+
+    /// Ob ein Gegenstand dieser Art verfallen darf.
+    ///
+    /// **Genau die aus dem Guthaben eines Einlegers finanzierten.** Was
+    /// die Allgemeinheit trägt, trägt sie, bis sie es abwählt; ein
+    /// Verfall wäre dort ein stiller Verlust ohne Entscheidung.
+    pub fn verfaellt(self) -> bool {
+        matches!(self.finanzierung(), Finanzierung::Einleger)
+    }
+}
+
+/// Wo das Manifest eines Gegenstands im Konsenszustand steht.
+///
+/// # ⚑ Warum es zwei Ablagen gibt und nicht eine
+///
+/// `LedgerState::commitment()` **serialisiert den ganzen Zustand und
+/// hasht ihn**. Es gibt keinen Baum mit Teilbeweisen, sondern eine
+/// Bytefolge über alles. Jede Zustandsänderung kostet damit
+/// O(Zustandsgröße), und zwar je Block.
+///
+/// Daraus folgt unmittelbar: **Eine Menge, die unbegrenzt wächst, darf
+/// nicht einzeln im Zustand stehen.** Die Wissensdatenbank wächst mit
+/// der Nutzung; stünde jedes ihrer Manifeste dort, würde jeder Block die
+/// ganze Datenbank serialisieren und hashen. Das ist keine Vorliebe,
+/// sondern die Bauart des Commitments.
+///
+/// # Warum umgekehrt nicht alles über eine Wurzel läuft
+///
+/// **Ein beitretender Miner braucht die Shardgewichte, bevor er
+/// irgendetwas beweisen kann.** Sie müssen ohne Beweis auffindbar sein,
+/// sonst braucht der Beitritt genau das, was der Beitritt erst
+/// herstellt. Die Infrastruktur ist zugleich klein und wächst nur durch
+/// Governance-Akte, also ist sie im Zustand gut aufgehoben.
+///
+/// Dazu kommt eine schlichte Tatsache: `myl-types::merkle` baut Bäume
+/// **statisch** aus einer Blattfolge. Einen Baum mit Aktualisierung gibt
+/// es nicht, und ihn für eine Menge mit heute null Einträgen zu bauen,
+/// wäre Maschinerie vor dem Bedarf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ablage {
+    /// Das Manifest steht einzeln im Ledger-Zustand.
+    ///
+    /// Nur für Klassen, deren Zahl durch Governance begrenzt ist.
+    Direkt,
+    /// Nur eine Wurzel steht im Zustand, das einzelne Manifest wird
+    /// gegen sie bewiesen.
+    ///
+    /// Für die Wissensdatenbank, deren Umfang an der Nutzung hängt.
+    /// Die Wurzel ist κ_v, siehe [`myl-store`s κ_v]. **Der Weg dorthin ist
+    /// heute nicht gebaut**, und das ist Absicht: Die Menge hat null
+    /// Einträge, und die Aufnahme in sie ist ein Governance-Akt, der
+    /// ebenfalls noch aussteht.
+    UeberWurzel,
 }
 
 /// Wie ein Gegenstand vervielfältigt wird.
@@ -101,6 +207,38 @@ impl Redundanzform {
         match self {
             Self::Kopien { .. } => 1,
             Self::Erasure { k, .. } => *k as u32,
+        }
+    }
+
+    /// Wie viele Halter einem Gegenstand dieser Form **zugeteilt**
+    /// werden.
+    ///
+    /// ⚑ **Nicht zu verwechseln mit [`Self::halter_je_abruf`].** Das
+    /// eine ist die Untergrenze für einen vollständigen **Abruf**, das
+    /// andere die Zahl der Halter, die es überhaupt geben muss. Bei
+    /// Erasure k=8/m=6 sind das 8 gegen 14; wer das eine für das andere
+    /// nimmt, teilt sechs Halter zu wenig zu und merkt es erst, wenn
+    /// sechs ausfallen.
+    pub fn halterzahl(&self) -> u32 {
+        match self {
+            Self::Kopien { anzahl } => *anzahl as u32,
+            Self::Erasure { k, m } => (*k as u32) + (*m as u32),
+        }
+    }
+
+    /// Wie viele Bytes ein einzelner Halter von `laenge` trägt.
+    ///
+    /// Bei Kopien die ganze Länge, bei Erasure ein Fragment. **Aufgerundet**:
+    /// Ein Fragment, das rechnerisch 0,4 Bytes groß wäre, belegt trotzdem
+    /// eines, und ein zu klein gerechneter Platzbedarf führt zu einer
+    /// Zuteilung, die nicht passt.
+    pub fn anteil_je_halter(&self, laenge: u64) -> u64 {
+        match self {
+            Self::Kopien { .. } => laenge,
+            Self::Erasure { k, .. } => {
+                let k = (*k as u64).max(1);
+                laenge.div_ceil(k)
+            }
         }
     }
 
@@ -251,6 +389,82 @@ impl Manifest {
     /// vollständiger Abruf möglich bleibt.
     pub fn mindesthalter(&self) -> u32 {
         self.redundanz.halter_je_abruf()
+    }
+}
+
+#[cfg(test)]
+mod ablage_tests {
+    use super::*;
+
+    /// Jede Art hat eine Ablage, und die beiden Wissensklassen sind
+    /// genau die über eine Wurzel.
+    #[test]
+    fn jede_art_hat_eine_ablage_und_wissen_geht_ueber_die_wurzel() {
+        for (art, erwartet) in [
+            (Gegenstandsart::Shardgewichte, Ablage::Direkt),
+            (Gegenstandsart::Skalenpaket, Ablage::Direkt),
+            (Gegenstandsart::Sonstiges, Ablage::Direkt),
+            (Gegenstandsart::Wissensstueck, Ablage::UeberWurzel),
+            (Gegenstandsart::Netzwerkwissen, Ablage::UeberWurzel),
+        ] {
+            assert_eq!(art.ablage(), erwartet, "{art:?}");
+        }
+    }
+
+    /// ⚑ **Was direkt im Zustand steht, trägt die Allgemeinheit.**
+    ///
+    /// Daraus folgt, dass das Speicherregister im Ledger **kein
+    /// Guthaben** führt, und das ist kein Vergessen: Ein Guthaben
+    /// braucht nur, was ein Einleger bezahlt, und das läuft über die
+    /// Wurzel.
+    ///
+    /// Der Test steht hier, damit eine künftig ergänzte Art nicht still
+    /// in die Lücke fällt. Wer eine Art als `Direkt` und zugleich
+    /// `Einleger` einträgt, bekommt hier einen Fehlschlag und muss sich
+    /// entscheiden, statt ein Guthaben zu erfinden, das niemand führt.
+    #[test]
+    fn was_direkt_im_zustand_steht_traegt_die_allgemeinheit() {
+        for art in [
+            Gegenstandsart::Shardgewichte,
+            Gegenstandsart::Skalenpaket,
+            Gegenstandsart::Wissensstueck,
+            Gegenstandsart::Sonstiges,
+            Gegenstandsart::Netzwerkwissen,
+        ] {
+            if art.ablage() == Ablage::Direkt {
+                assert_eq!(
+                    art.finanzierung(),
+                    Finanzierung::Treasury,
+                    "{art:?} steht direkt im Zustand und braeuchte ein Guthaben"
+                );
+            }
+        }
+    }
+
+    /// ⚑ **Der Grund hinter der Zuordnung, als Zusicherung.**
+    ///
+    /// Direkt in den Zustand darf nur, was durch einen Governance-Akt
+    /// hinzukommt und damit begrenzt ist. Was durch **Nutzung** wächst,
+    /// darf es nicht, weil `commitment()` den ganzen Zustand
+    /// serialisiert und hasht: Jeder Block zahlte sonst für die ganze
+    /// Wissensdatenbank.
+    ///
+    /// Ohne diesen Test wäre die Zuordnung eine Liste, die jemand
+    /// erweitert, ohne den Grund zu kennen.
+    #[test]
+    fn was_durch_nutzung_waechst_steht_nicht_einzeln_im_zustand() {
+        let waechst_mit_der_nutzung = [
+            Gegenstandsart::Wissensstueck,
+            Gegenstandsart::Netzwerkwissen,
+        ];
+        for art in waechst_mit_der_nutzung {
+            assert_eq!(
+                art.ablage(),
+                Ablage::UeberWurzel,
+                "{art:?} waechst mit der Nutzung und darf nicht einzeln \
+                 im Zustand stehen"
+            );
+        }
     }
 }
 

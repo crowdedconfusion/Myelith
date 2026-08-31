@@ -70,6 +70,144 @@ pub fn ema_update_with_alpha(prev: u64, sample: u64, num: u64, den: u64) -> u64 
     new.clamp(0, u64::MAX as i128) as u64
 }
 
+/// Warum der Epochenabschluss nicht lief.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Abschlussfehler {
+    /// Diese Epoche ist bereits fortgeschrieben.
+    ///
+    /// ⚑ **Zweimal gerufen verschiebt die Glättung den Durchschnitt in
+    /// Richtung der letzten Beobachtung**, und niemand sähe es der Zahl
+    /// an. Ein Doppelaufruf ist deshalb ein Fehler und kein
+    /// Wiederholungsversuch.
+    SchonFortgeschrieben {
+        /// Bis hierhin ist fortgeschrieben.
+        bis: myl_types::ids::EpochId,
+    },
+}
+
+impl std::fmt::Display for Abschlussfehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SchonFortgeschrieben { bis } => write!(
+                f,
+                "bis Epoche {} bereits fortgeschrieben",
+                bis.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Abschlussfehler {}
+
+/// Schreibt den geglätteten Burn um eine Epoche fort.
+///
+/// # Wozu
+///
+/// Kap. 5.2 leitet die Prägung `m_e` aus dem geglätteten Burn ab, den
+/// geglätteten aus dem Burn je Epoche. Der Ledger zählt seit dem
+/// 2026-08-31 mit, was verbrannt wurde; diese Funktion faltet die
+/// Epochensumme in den Durchschnitt und setzt den Zähler zurück.
+///
+/// # ⚑ Warum sie hier steht und nicht im Ledger
+///
+/// Die Formel gehört zur Wirtschaft, nicht zum Kontenbuch, und
+/// `myl-tokenomics` hängt ohnehin an `myl-ledger`; umgekehrt ginge es
+/// nicht, das wäre ein Ring. Dasselbe Muster wie beim Slashing, das
+/// ebenfalls von hier in den Zustand schreibt.
+///
+/// **Gibt den neuen geglätteten Wert zurück**, damit der Aufrufer ihn
+/// unmittelbar an `mint_amount` geben kann, ohne den Zustand erneut zu
+/// lesen.
+pub fn epochenabschluss_burn(
+    state: &mut myl_ledger::state::LedgerState,
+) -> Result<u64, Abschlussfehler> {
+    if state.burn_ema_bis >= state.epoch && state.epoch.0 > 0 {
+        return Err(Abschlussfehler::SchonFortgeschrieben {
+            bis: state.burn_ema_bis,
+        });
+    }
+    let neu = ema_update(state.burn_ema, state.burn_epoche);
+    state.burn_ema = neu;
+    state.burn_epoche = 0;
+    state.burn_ema_bis = state.epoch;
+    Ok(neu)
+}
+
+#[cfg(test)]
+mod abschluss_tests {
+    use super::*;
+    use myl_ledger::state::LedgerState;
+    use myl_ledger::transitions::burn_to_credits;
+    use myl_types::ids::{Address, EpochId};
+
+    fn konto(b: u8) -> Address {
+        Address::new([b; 32])
+    }
+
+    /// Was verbrannt wird, landet in der Epochensumme und von dort im
+    /// Durchschnitt.
+    #[test]
+    fn verbranntes_erreicht_den_geglaetteten_wert() {
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&konto(1)).balance = 1_000;
+        burn_to_credits(&mut st, &konto(1), 600, EpochId(10)).expect("burn");
+        assert_eq!(st.burn_epoche, 600, "der Burn wurde nicht gezaehlt");
+
+        st.epoch = EpochId(1);
+        let neu = epochenabschluss_burn(&mut st).expect("Abschluss");
+        assert_eq!(neu, ema_update(0, 600));
+        assert_eq!(st.burn_ema, neu);
+        assert_eq!(st.burn_epoche, 0, "der Zaehler wurde nicht zurueckgesetzt");
+        assert_eq!(st.burn_ema_bis, EpochId(1));
+    }
+
+    /// ⚑ **Zweimal in derselben Epoche ist ein Fehler.**
+    ///
+    /// Der zweite Aufruf zöge den Durchschnitt ein zweites Mal in
+    /// Richtung derselben Beobachtung, und das Ergebnis sähe
+    /// unauffällig aus.
+    #[test]
+    fn zweimal_in_derselben_epoche_wird_abgelehnt() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(3);
+        st.burn_epoche = 500;
+        let erst = epochenabschluss_burn(&mut st).expect("erster Abschluss");
+        assert_eq!(
+            epochenabschluss_burn(&mut st),
+            Err(Abschlussfehler::SchonFortgeschrieben { bis: EpochId(3) })
+        );
+        assert_eq!(st.burn_ema, erst, "der zweite Aufruf hat gerechnet");
+    }
+
+    /// Über mehrere Epochen nähert sich der Durchschnitt der Beobachtung.
+    #[test]
+    fn ueber_mehrere_epochen_naehert_er_sich_an() {
+        let mut st = LedgerState::genesis(1);
+        let mut vorher = 0;
+        for e in 1..=10u64 {
+            st.epoch = EpochId(e);
+            st.burn_epoche = 1_000;
+            let jetzt = epochenabschluss_burn(&mut st).expect("Abschluss");
+            assert!(jetzt > vorher, "Epoche {e}: {jetzt} nicht groesser als {vorher}");
+            assert!(jetzt <= 1_000, "ueber die Beobachtung hinausgeschossen");
+            vorher = jetzt;
+        }
+    }
+
+    /// Eine Epoche ohne Burn zieht den Durchschnitt nach unten, und das
+    /// ist der Ausfall, den Punkt 21 beschreibt.
+    #[test]
+    fn eine_epoche_ohne_burn_zieht_den_durchschnitt_nach_unten() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(1);
+        st.burn_epoche = 10_000;
+        let hoch = epochenabschluss_burn(&mut st).expect("Abschluss");
+        st.epoch = EpochId(2);
+        let runter = epochenabschluss_burn(&mut st).expect("Abschluss");
+        assert!(runter < hoch, "ohne Burn blieb der Durchschnitt stehen");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

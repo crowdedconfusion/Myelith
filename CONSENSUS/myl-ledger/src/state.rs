@@ -1,7 +1,8 @@
 //! Kontenmodell und Ledger-Zustand (Punkt 1.1).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use myl_types::ids::{Address, EpochId, SitzungId};
+use myl_types::gegenstand::Manifest;
+use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, SitzungId};
 use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand};
 use myl_types::Hash;
 use sha2::{Digest, Sha256};
@@ -139,6 +140,78 @@ pub struct LedgerState {
     /// Offene Agenten-Sessions, deterministisch nach Kontraktadresse
     /// geordnet (Whitepaper Kap. 8.2).
     pub sitzungen: BTreeMap<SitzungId, Sitzung>,
+    /// Gegenstände, deren Manifest **unmittelbar** im Zustand steht,
+    /// geordnet nach ihrer Wurzel.
+    ///
+    /// # ⚑ Warum nur ein Teil der Gegenstände hier steht (D7, 2026-08-31)
+    ///
+    /// [`Self::commitment`] serialisiert den **ganzen** Zustand und
+    /// hasht ihn; es gibt keinen Baum mit Teilbeweisen. Jede
+    /// Zustandsänderung kostet damit O(Zustandsgröße), und zwar je
+    /// Block. **Eine unbegrenzt wachsende Menge darf deshalb nicht
+    /// einzeln hier stehen**, sonst serialisiert jeder Block die ganze
+    /// Wissensdatenbank.
+    ///
+    /// Hier steht die **Infrastruktur**: Shardgewichte, Skalenpakete,
+    /// Tabellen. Sie wächst nur durch Governance-Akte und ist damit
+    /// begrenzt, und ein beitretender Miner muss sie finden können,
+    /// **bevor** er irgendetwas beweisen kann.
+    ///
+    /// Die Wissensdatenbank läuft über eine Wurzel (κ_v). Der Weg
+    /// dorthin ist nicht gebaut; [`crate::transitions::speicher_aufnehmen`]
+    /// weist die Wissensklassen deshalb mit benanntem Grund ab, statt
+    /// sie stillschweigend aufzunehmen.
+    ///
+    /// **Angehängt und nicht eingefügt.** Ein neues Feld ändert den
+    /// Zustandshash ohnehin; die Reihenfolge bleibt trotzdem stabil,
+    /// damit ein Leser zweier Fassungen sieht, was dazukam.
+    pub speicher: BTreeMap<MerkleRoot, Manifest>,
+    /// Was in der **laufenden** Epoche verbrannt wurde, `B_e`.
+    ///
+    /// ⚑ **Ohne diese Zahl gibt es keine Prägung.** Kap. 5.2 leitet
+    /// `m_e` aus dem geglätteten Burn ab, der geglättete aus dem
+    /// Burn je Epoche. `burn_to_credits` zerstörte die Münzen bis zum
+    /// 2026-08-31 und vergaß sofort, wie viele es waren; die
+    /// Prägungsformel hatte damit keine Eingabe im Zustand.
+    pub burn_epoche: u64,
+    /// Der geglättete Burn `B̄_e` über die bisherigen Epochen.
+    pub burn_ema: u64,
+    /// Bis einschließlich welcher Epoche der geglättete Burn fortgeschrieben ist.
+    ///
+    /// ⚑ **Gegen die doppelte Fortschreibung.** Die Glättung darf je
+    /// Epoche genau einmal laufen; zweimal gerufen, verschiebt sie den
+    /// Durchschnitt in Richtung der letzten Beobachtung, und niemand
+    /// sähe es der Zahl an.
+    pub burn_ema_bis: EpochId,
+    /// Wohin ein Miner bezahlt wird.
+    ///
+    /// # ⚑ Warum die Auszahlung nicht an der Miner-Kennung hängt
+    ///
+    /// Die Kennung ist `SHA-256` über den **Konsensschlüssel**, und der
+    /// liegt heiß: Er unterschreibt jeden Vote, jeden Commit, jeden
+    /// Übergang, jede Kapazitätszusage und jede Speicherquittung. Ihn
+    /// zugleich zum Konto zu machen, auf dem sich der Ertrag sammelt,
+    /// ist der Fehler, den Ethereum als Auszahlungsnachweis `0x00`
+    /// gemacht und mit einer ökosystemweiten Migration auf `0x01`
+    /// korrigiert hat. Cosmos und Filecoin trennen von Anfang an;
+    /// Filecoins `owner` gegen `worker` ist derselbe Schnitt für
+    /// dieselbe Lage.
+    ///
+    /// # ⚑ Und die Änderung gehört dem kalten Konto
+    ///
+    /// Die **erste** Eintragung unterschreibt der Miner selbst, er hat
+    /// nichts zu verlieren. **Jede weitere unterschreibt das
+    /// eingetragene Konto.** Damit kann ein gestohlener heißer Schlüssel
+    /// den Ertrag nicht umleiten, und es braucht dafür keine Wartefrist,
+    /// über die jemand streiten könnte.
+    ///
+    /// # Ohne Eintrag kein Anteil
+    ///
+    /// Festlegung des Projektinhabers, 2026-08-31: Wer nichts eingetragen
+    /// hat, wird bei der Verteilung übergangen, sein Gewicht zählt nicht.
+    /// **So sammelt sich nie ein Ertrag unter einem heißen Schlüssel an**,
+    /// und der Fehler fällt sofort auf, weil nichts ankommt.
+    pub auszahlung: BTreeMap<MinerId, Address>,
 }
 
 impl LedgerState {
@@ -149,6 +222,11 @@ impl LedgerState {
             credit_price,
             accounts: BTreeMap::new(),
             sitzungen: BTreeMap::new(),
+            speicher: BTreeMap::new(),
+            burn_epoche: 0,
+            burn_ema: 0,
+            burn_ema_bis: EpochId(0),
+            auszahlung: BTreeMap::new(),
         }
     }
 

@@ -206,7 +206,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "myl-store"
-version = "0.3.0"
+version = "0.5.1"
 dependencies = [
  "borsh",
  "myl-types",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.13.0"
+version = "0.18.0"
 dependencies = [
  "blst",
  "borsh",

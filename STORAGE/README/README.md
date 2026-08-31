@@ -1,12 +1,18 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.3.0
-> **Datum:** 2026-08-30
+> **Version:** 0.5.1
+> **Datum:** 2026-08-31
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
-> **Speicherentgelt** stehen (`myl-store` v0.3.0, 29 Tests). Fünf der sechs Entwurfsfragen sind
-> entschieden, eine ausdrücklich nicht: Ob ein Gegenstand vervielfältigt
-> oder erasure-kodiert wird, ist Latenz gegen Platz, und **beide Zahlen
-> fehlen**, solange es keinen echten Abrufverkehr gibt.
+> **Speicherentgelt** stehen (`myl-store` v0.5.1, 22 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
+> sieben Entwurfsfragen sind entschieden, eine ausdrücklich nicht: Ob ein
+> Gegenstand vervielfältigt oder erasure-kodiert wird, ist Latenz gegen
+> Platz. **Die Platz-Zahl steht seit dem 2026-08-30**, die Latenz-Zahl
+> wartet auf echten Abrufverkehr.
+>
+> ⚑ **Zwei Ablagen im Konsenszustand** (2026-08-31): Infrastruktur steht
+> einzeln darin, Wissen nur über eine Wurzel. Der Grund ist die Bauart
+> des Zustands-Commitments, das den ganzen Zustand serialisiert und
+> hasht: Eine unbegrenzt wachsende Menge würde jeden Block belasten.
 >
 > ⚑ **Das Entgelt wird unabhängig vom Mining ausgezahlt** (Festlegung
 > des Projektinhabers, 2026-08-30). Ein Knoten kann Wissen halten, ohne

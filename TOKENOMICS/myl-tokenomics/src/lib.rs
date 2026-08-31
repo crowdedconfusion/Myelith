@@ -22,6 +22,7 @@
 #![deny(unsafe_code)]
 
 pub mod anlauf;
+pub mod ausschuettung;
 pub mod distribute;
 pub mod ema;
 pub mod exp_approx;
@@ -34,6 +35,7 @@ pub mod stake;
 pub mod training;
 pub mod utilization;
 pub mod vtfe;
+pub mod zuschreibung;
 
 /// Anzahl der Kleinstbeträge je MYL (1 MYL = 10⁶ Kleinstbeträge).
 pub const UNITS_PER_MYL: u64 = 1_000_000;
@@ -46,12 +48,16 @@ pub use anlauf::{
     kleinste_ausreichende_rate, stufe as anlaufstufe, trainingsrate, Anlaufstufe,
     TRAININGSRATE_FAKTOR,
 };
+pub use ausschuettung::{
+    epochenausschuettung, Ausgelassen, Ausschuettung, Ausschuettungsfehler, Auslassungsgrund,
+    Empfaengerklasse,
+};
 pub use distribute::{
     distribute_mint, redundancy_normalized_weight, split_proportional, Distribution,
     DistributeError, SHARE_CHECKERS_BPS, SHARE_COORDINATORS_BPS, SHARE_SHARD_MINERS_BPS,
     SHARE_TREASURY_BPS, SHARE_VALIDATORS_BPS, SHARES_TOTAL_BPS,
 };
-pub use ema::{ema_update, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
+pub use ema::{ema_update, epochenabschluss_burn, Abschlussfehler, EMA_ALPHA_DEN, EMA_ALPHA_NUM};
 pub use exp_approx::{
     exp_approx, update_price, update_price_mit_untergrenze, PREIS_UNTERGRENZE_VORGABE,
 };
@@ -74,3 +80,7 @@ pub use utilization::{
     UTILIZATION_SCALE,
 };
 pub use vtfe::{vtfe_gutschrift, vtfe_voll, ModellProfil, ShardZuschnitt, VtfeError};
+
+pub use zuschreibung::{
+    zuschreiben, Podleistung, Podposition, Zuschreibung, ZuschreibungFehler,
+};

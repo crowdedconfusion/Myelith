@@ -11,6 +11,32 @@
 //!
 //! **Design:** Metadaten werden zusammen mit den Latenz-Attesten
 //! verbreitet (Phase 2.2). Jeder Node signiert seine eigenen Metadaten.
+//!
+//! # ⚑ Fund 108: Die Unterschrift belegt den Absender, nicht den Inhalt
+//!
+//! **Region und ASN erklärt jeder Knoten über sich selbst**, und
+//! [`NodeMetadata::validate_structure`] prüft davon allein den
+//! Zeitstempel. Die Signatur belegt, **wer** etwas behauptet, nicht
+//! **dass es stimmt**; das ist derselbe Unterschied wie zwischen
+//! „unterschrieben" und „wahr".
+//!
+//! Damit ist jede Diversitätsprüfung, die auf diesen Feldern ruht, eine
+//! Prüfung gegen die Angabe des Geprüften. Wer beide Pods eines
+//! Redundanzpaars im selben Rechenzentrum betreibt, trägt zwei
+//! verschiedene Regionen ein und besteht sie
+//! ([`crate::node_metadata::DiversityChecker`],
+//! `myl_scheduler::redundancy`).
+//!
+//! **Was diese Felder trotzdem taugen:** Sie halten versehentliche
+//! Bündelung fern, also den ehrlichen Betreiber, der nicht aufpasst.
+//! Gegen einen Angreifer taugen sie nichts, und dieser Absatz steht
+//! hier, damit niemand mehr aus ihnen liest.
+//!
+//! **Woran eine belastbare Prüfung hängen müsste:** an einer
+//! **gemessenen** Größe (der Latenzgraph liegt bereits vor und wird für
+//! die Clusterbildung benutzt) oder an einer, die **Geld kostet**. Eine
+//! erklärte Angabe kostet nichts, deshalb wählt ein Angreifer sie frei.
+//! Zu entscheiden ist das nicht hier, sondern als Punkt 13.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
@@ -99,11 +125,15 @@ impl std::fmt::Display for Asn {
     }
 }
 
-/// Geo-/AS-Metadaten eines Nodes.
+/// Geo-/AS-Metadaten eines Nodes, **von ihm selbst erklärt**.
 ///
 /// Wird zusammen mit dem Latenz-Attest verbreitet und signiert.
 /// Andere Nodes können diese Metadaten verwenden, um die Diversität
 /// eines Pods zu prüfen.
+///
+/// ⚑ **Die Angaben sind unbelegt.** Siehe den Modulkopf: Nichts prüft
+/// sie, und die Unterschrift belegt nur den Absender. Wer daraus eine
+/// Sicherheitsaussage ableitet, leitet sie aus einer Behauptung ab.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct NodeMetadata {
     /// Der Miner, dem diese Metadaten gehören.
@@ -117,10 +147,17 @@ pub struct NodeMetadata {
 }
 
 impl NodeMetadata {
-    /// Validiert die Struktur der Metadaten.
+    /// Validiert die **Struktur** der Metadaten.
     ///
     /// Prüft:
     /// - Zeitstempel ist nicht in der Zukunft (mit 5 min Toleranz)
+    ///
+    /// ⚑ **Und sonst nichts, insbesondere nicht Region und ASN.** Der
+    /// Name sagt „Struktur", und genau so weit reicht die Aussage: Ob
+    /// ein Knoten wirklich in der Region steht, die er nennt, ist von
+    /// hier aus nicht feststellbar. Wer diese Funktion für eine
+    /// Echtheitsprüfung hält, hat eine Zusage gelesen, die nicht da
+    /// steht.
     pub fn validate_structure(&self) -> Result<(), NodeMetadataError> {
         // Zeitstempel prüfen (nicht mehr als 5 min in der Zukunft)
         let now_ms = std::time::SystemTime::now()
@@ -185,7 +222,13 @@ impl DiversityChecker {
     /// Prüft, ob die gegebenen Metadaten die Diversitätsanforderungen erfüllen.
     ///
     /// Gibt `true` zurück, wenn mindestens `min_regions` verschiedene Regionen
-    /// und `min_asns` verschiedene AS vorhanden sind.
+    /// und `min_asns` verschiedene AS **angegeben** sind.
+    ///
+    /// ⚑ **Zählt Angaben, nicht Standorte** (Fund 108). Drei Maschinen
+    /// in einem Schrank, die drei Regionen und drei AS eintragen,
+    /// bestehen diese Prüfung. Sie taugt gegen Nachlässigkeit und nicht
+    /// gegen Absicht; der Modulkopf sagt, woran eine belastbare Prüfung
+    /// hängen müsste.
     pub fn check_diversity(&self, metadata: &[NodeMetadata]) -> bool {
         use std::collections::HashSet;
 
@@ -286,5 +329,25 @@ mod tests {
 
         // 3 Regionen ✓, aber nur 1 AS < min_asns (3) ✗
         assert!(!checker.check_diversity(&metadata));
+    }
+
+    /// ⚑ **Fund 108 als Test:** Drei Angaben aus einem Schrank bestehen
+    /// die Vielfaltsprüfung. Der Test hält fest, was der Mechanismus
+    /// **nicht** leistet, damit niemand ihn später für mehr hält.
+    #[test]
+    fn drei_erklaerte_zonen_bestehen_die_pruefung_ohne_jeden_beleg() {
+        let aus_einem_schrank = [
+            test_metadata(1, GeoRegion::Europe, 13335),
+            test_metadata(2, GeoRegion::NorthAmerica, 16509),
+            test_metadata(3, GeoRegion::Asia, 15169),
+        ];
+        assert!(
+            DiversityChecker::new().check_diversity(&aus_einem_schrank),
+            "die Pruefung zaehlt Angaben; genau das ist der Befund"
+        );
+        // Und die Strukturpruefung hat daran nichts auszusetzen.
+        for m in &aus_einem_schrank {
+            assert!(m.validate_structure().is_ok());
+        }
     }
 }

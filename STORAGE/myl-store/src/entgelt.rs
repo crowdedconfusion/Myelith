@@ -69,39 +69,7 @@
 //! Governance-Parameter und eine Festlegung des Projektinhabers; dieses
 //! Modul rechnet in Byte-Epochen und kennt keinen Preis.
 
-use crate::gegenstand::{Gegenstandsart, Manifest};
-
-/// Woraus die Vergütung eines Halters bezahlt wird.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Finanzierung {
-    /// Aus der Treasury: für alles, was vorliegen **muss** und keinen
-    /// Einleger hat.
-    Treasury,
-    /// Aus dem Guthaben des Gegenstands, eingezahlt vom Einleger.
-    Einleger,
-}
-
-impl Gegenstandsart {
-    /// Wer die Vergütung für diese Art trägt.
-    pub fn finanzierung(self) -> Finanzierung {
-        match self {
-            Self::Shardgewichte
-            | Self::Skalenpaket
-            | Self::Sonstiges
-            | Self::Netzwerkwissen => Finanzierung::Treasury,
-            Self::Wissensstueck => Finanzierung::Einleger,
-        }
-    }
-
-    /// Ob ein Gegenstand dieser Art verfallen darf.
-    ///
-    /// **Genau die aus dem Guthaben eines Einlegers finanzierten.** Was
-    /// die Allgemeinheit trägt, trägt sie, bis sie es abwählt; ein
-    /// Verfall wäre dort ein stiller Verlust ohne Entscheidung.
-    pub fn verfaellt(self) -> bool {
-        matches!(self.finanzierung(), Finanzierung::Einleger)
-    }
-}
+use myl_types::gegenstand::{Gegenstandsart, Manifest};
 
 /// Das verbleibende Guthaben eines Gegenstands, in Byte-Epochen.
 ///
@@ -224,7 +192,7 @@ pub fn darf_fallengelassen_werden(art: Gegenstandsart, guthaben: &Speicherguthab
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gegenstand::{teile_bilden, Redundanzform, TEILGROESSE};
+    use myl_types::gegenstand::{teile_bilden, Finanzierung, Redundanzform, TEILGROESSE};
 
     fn manifest(art: Gegenstandsart, form: Redundanzform) -> Manifest {
         let daten = vec![7u8; 3 * TEILGROESSE];

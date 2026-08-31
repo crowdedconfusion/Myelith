@@ -1,8 +1,8 @@
 # ethics
 
-> **Version:** 1.2.0
+> **Version:** 0.3.0
 > **Datum:** 2026-08-31
-> **Status:** Manifest v1.1.0 steht (neu: **G9**, der Ausschlusskatalog),
+> **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
 > Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
 > prüfen kann. Die Design-Entscheidungen bleiben offen, und Phase 2
@@ -78,7 +78,15 @@ ETHICS/
 
 ## Changelog
 
-### v1.2.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
+⚑ **Umnummeriert am 2026-08-31** (Festlegung des Projektinhabers): Diese
+Komponente lief als einzige auf `1.x` und steht jetzt wie alle anderen
+auf `0.x`. **Eine Eins vorn heißt Produktionsreife**, und die ist nicht
+erreicht. Am Inhalt ändert das nichts, die Einträge behalten ihre
+Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
+`v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
+die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
+
+### v0.3.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
 
 Auf Festlegung des Projektinhabers. `Ausschluss.json` mit fünf Klassen:
 Massenvernichtungswaffen, konventionelle Waffen und Sprengstoff,
@@ -114,7 +122,7 @@ Vorlage durchfällt; eine Prüfung, die **alles** ablehnt, besteht diesen
 Test ebenfalls. Neu ist ein vollständiger Beispielantrag als
 Positivprobe, und beide Richtungen laufen im selben Schritt.
 
-### v1.1.0 – 2026-08-29 (Phase 1: aus Zusagen werden Dateien)
+### v0.2.0 – 2026-08-29 (Phase 1: aus Zusagen werden Dateien)
 
 Fünf Artefakte, drei davon als Skript im CI:
 
@@ -140,7 +148,7 @@ Sie prüfen Vollständigkeit und Form, nicht Wahrheit. Ob eine
 Merkle-Wurzel stimmt oder ein Filter wirklich lief, sieht kein Skript.
 Sie sorgen dafür, dass jemand es hingeschrieben hat und dafür einsteht.
 
-### v1.0.0 – 2026-08-18
+### v0.1.0 – 2026-08-18 (bis zum 2026-08-31 als v1.0.0 geführt)
 - Komponente angelegt, `Manifest.md` v1.0.0.
 - Aufbau bewusst als Grenzziehung: Was ist protokoll-durchsetzbar, was
   governance-abhängig, was nicht kontrollierbar. Erst danach Zusagen.

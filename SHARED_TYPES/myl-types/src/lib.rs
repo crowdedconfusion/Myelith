@@ -25,6 +25,7 @@
 pub mod bls;
 pub mod challenge;
 pub mod core_types;
+pub mod gegenstand;
 pub mod hash;
 pub mod ids;
 pub mod latency_attest;
@@ -34,8 +35,12 @@ pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;
 pub mod sitzung;
+pub mod treasury;
 pub mod uebergang;
 pub mod vrf;
+pub mod quittung;
+pub mod zusage;
+pub mod zuteilung;
 pub mod erasure;
 
 pub use erasure::{

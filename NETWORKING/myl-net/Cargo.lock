@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.13.0"
+version = "0.18.0"
 dependencies = [
  "blst",
  "borsh",

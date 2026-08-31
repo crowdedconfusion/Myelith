@@ -29,6 +29,29 @@ use myl_net::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+/// Wie lange ein Knoten auf seine erste Horchadresse warten darf, wenn
+/// sie **kommen soll**.
+///
+/// ⚑ **Grosszuegig, und das ist Absicht.** Auf dem Positivpfad kann ein
+/// zu langes Warten nichts falsch bestaetigen, es macht den Lauf nur
+/// langsamer; ein zu kurzes dagegen laesst einen richtigen Lauf
+/// scheitern, sobald die Maschine ausgelastet ist. Genau das ist am
+/// 2026-08-31 einmal passiert: `nat.rs` fiel waehrend zweier paralleler
+/// Uebersetzungslaeufe aus und war in zwanzig Wiederholungen danach
+/// nicht wieder einzufangen.
+const FRIST_ERWARTET: Duration = Duration::from_secs(30);
+
+/// Wie lange der Negativtest wartet, **bevor er das Ausbleiben
+/// feststellt**.
+///
+/// Hier ist die Frist keine Geduld, sondern die Behauptung selbst: Nach
+/// dieser Zeit ist keine Reservierung gekommen, und das ist das
+/// Ergebnis. Sie gehoert deshalb kurz, und sie gehoert **getrennt** von
+/// der oberen. Bis heute teilten sich beide Pfade eine einzige Frist von
+/// fuenf Sekunden, und damit hing der Positivpfad an einer Zahl, die
+/// fuer den Negativpfad bemessen war.
+const FRIST_AUSBLEIBEN: Duration = Duration::from_secs(5);
+
 struct Node {
     peer_id: libp2p::PeerId,
     commands: mpsc::UnboundedSender<NodeCommand>,
@@ -49,7 +72,12 @@ impl Node {
             },
             ..NetConfig::default()
         };
-        let node = Node::start(config, Some("/ip4/127.0.0.1/tcp/0".parse().unwrap())).await;
+        let node = Node::start(
+            config,
+            Some("/ip4/127.0.0.1/tcp/0".parse().unwrap()),
+            FRIST_ERWARTET,
+        )
+        .await;
         if dient_als_relais {
             // ⚑ Fund 56: Ein Relais trägt seine bestätigten externen
             // Adressen in die Reservierungsantwort ein. Ohne diesen
@@ -58,6 +86,19 @@ impl Node {
             node.commands
                 .send(NodeCommand::ExterneAdresse { addr: node.adresse() })
                 .expect("Kommando");
+            // ⚑ **Ein blindes Warten, und es bleibt eines.** `Dial`,
+            // `Publish` und `PeerCount` tragen einen Rueckkanal
+            // (`result: Some(tx)`), `ExterneAdresse` nicht: Es gibt
+            // nichts, worauf sich hier warten liesse ausser der Uhr. Auf
+            // einer ausgelasteten Maschine kann die Laufzeitschleife in
+            // 200 ms noch nicht drangewesen sein, und dann reserviert der
+            // naechste Knoten bei einem Relais, das seine Adresse noch
+            // nicht kennt.
+            //
+            // Der saubere Weg waere ein Rueckkanal an der Marke, wie ihn
+            // die drei anderen Kommandos haben. Das ist eine Aenderung am
+            // Kommando-Typ und damit an `myl-net` selbst, nicht am Test;
+            // vermerkt statt still gelassen.
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
         node
@@ -76,10 +117,14 @@ impl Node {
         };
         let circuit = relais_horchadresse(relais).expect("Relais-Adresse");
         assert!(ist_vermittelt(&circuit), "Horchadresse ohne p2p-circuit");
-        Node::start(config, Some(circuit)).await
+        Node::start(config, Some(circuit), FRIST_ERWARTET).await
     }
 
-    async fn start(config: NetConfig, horchen: Option<libp2p::Multiaddr>) -> Node {
+    async fn start(
+        config: NetConfig,
+        horchen: Option<libp2p::Multiaddr>,
+        frist_bis_zur_adresse: Duration,
+    ) -> Node {
         let identity = NodeIdentity::generate();
         let peer_id = identity.peer_id();
         let mut swarm = build_swarm(&identity, &config).expect("Swarm");
@@ -97,11 +142,11 @@ impl Node {
             // Auf die erste gemeldete Adresse warten. Bei einem Knoten
             // hinter NAT ist das die vermittelte, und sie erscheint erst,
             // wenn das Relais die Reservierung bestätigt hat.
-            // Fünf Sekunden. Eine Reservierung über Loopback ist in
-            // Millisekunden da; die Frist ist für den Negativtest
-            // bemessen, der das Ausbleiben belegt, und macht ihn nicht
-            // unnötig langsam.
-            let frist = tokio::time::Instant::now() + Duration::from_secs(5);
+            //
+            // ⚑ **Die Frist kommt von aussen**, weil die beiden Pfade
+            // Verschiedenes von ihr wollen: siehe FRIST_ERWARTET und
+            // FRIST_AUSBLEIBEN.
+            let frist = tokio::time::Instant::now() + frist_bis_zur_adresse;
             while tokio::time::Instant::now() < frist {
                 let rest = frist.saturating_duration_since(tokio::time::Instant::now());
                 match tokio::time::timeout(rest, ev_rx.recv()).await {
@@ -118,7 +163,13 @@ impl Node {
     }
 
     fn adresse(&self) -> libp2p::Multiaddr {
-        self.listen_addr.clone().expect("keine Horchadresse gemeldet")
+        self.listen_addr.clone().unwrap_or_else(|| {
+            panic!(
+                "keine Horchadresse innerhalb von {:?} gemeldet: Entweder blieb die \
+                 Reservierung aus, oder die Maschine war zu ausgelastet",
+                FRIST_ERWARTET
+            )
+        })
     }
 
     async fn dial(&self, addr: libp2p::Multiaddr) -> bool {
@@ -291,7 +342,7 @@ async fn ohne_erklaerung_dient_ein_knoten_nicht_als_relais() {
         ..NetConfig::default()
     };
     let circuit = relais_horchadresse(&kein_relais.adresse().to_string()).expect("Adresse");
-    let versuch = Node::start(config, Some(circuit)).await;
+    let versuch = Node::start(config, Some(circuit), FRIST_AUSBLEIBEN).await;
 
     assert!(
         versuch.listen_addr.is_none(),

@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.11.2
-> **Datum:** 2026-08-29
+> **Version:** 0.11.3
+> **Datum:** 2026-08-31
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -108,6 +108,32 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.11.3 – 2026-08-31 (die NAT-Prüfung hing an einer Frist, die für etwas anderes bemessen war)
+
+⛑ **Ein Fehlschlag, der nichts über den Code sagte.** `tests/nat.rs` fiel
+einmal aus, während auf derselben Maschine zwei Übersetzungsläufe
+liefen; zwanzig Wiederholungen danach waren grün. Ein Test, der unter
+Last falsch rot wird, ist kein Test mehr, sondern ein Geräusch, das man
+sich abgewöhnt zu lesen.
+
+**Die Ursache war eine geteilte Zahl.** Der Hilfsknoten wartete fünf
+Sekunden auf seine erste Horchadresse, und diese fünf Sekunden waren für
+den **Negativtest** bemessen, der das *Ausbleiben* einer Reservierung
+belegt. Dort ist die Frist die Behauptung selbst und gehört kurz. Auf
+dem Positivpfad ist sie nur eine Geduldsgrenze: **Zu lange zu warten
+kann dort nichts falsch bestätigen**, zu kurz zu warten dagegen lässt
+einen richtigen Lauf scheitern.
+
+Die beiden Fristen sind jetzt getrennt, `FRIST_ERWARTET` mit dreißig
+Sekunden und `FRIST_AUSBLEIBEN` mit fünf, jede mit ihrer Begründung. Wer
+keine Adresse bekommt, liest im Abbruch, welche Frist verstrichen ist.
+
+⚑ **Und ein blindes Warten bleibt vermerkt:** Nach `ExterneAdresse`
+schläft der Test 200 ms, weil dieses Kommando als einziges keinen
+Rückkanal trägt; `Dial`, `Publish` und `PeerCount` haben einen. Der
+saubere Weg wäre einer an dieser Marke, und das ist eine Änderung am
+Kommando-Typ, nicht am Test.
 
 ### v0.11.2 – 2026-08-30 (die Bündelwurzel bezeugt jetzt auch das Ergebnis)
 

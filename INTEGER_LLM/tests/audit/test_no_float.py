@@ -153,6 +153,34 @@ CONSENSUS_PATH = [
     # Vollstaendigkeitspruefung hat ihn beim ersten Lauf gemeldet, statt
     # dass er ein Jahr lang ungeprueft mitgelaufen waere.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "uebergang.rs",
+    # 2026-08-31: Die Kapazitaetszusage. Sie rechnet in Bytes und
+    # Epochen, also in Ganzzahlen, und muss es bleiben: Ein Speicherwert
+    # als Gleitkomma waere ueber zwei Knoten hinweg nicht sicher gleich,
+    # und die Summe der Zusagen ist eine Konsensgroesse.
+    # ⚑ Auch diese Datei hat die Vollstaendigkeitspruefung gemeldet, im
+    # ersten Lauf nach ihrer Entstehung.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zusage.rs",
+    # 2026-08-31: Das Gegenstandsformat zog aus `myl-store` hierher,
+    # damit der Ledger es lesen kann, ohne an der Store-Rolle zu haengen.
+    # Es rechnet in Bytes, Teilzahlen und Bruechen aus kleinen ganzen
+    # Zahlen; der Platzfaktor geht in die Verguetung ein und darf
+    # deshalb kein Gleitkomma sein.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "gegenstand.rs",
+    # 2026-08-31: Die Zuteilung. Sie rechnet in Bytes und Halterzahlen
+    # und muss es bleiben: Zwei Knoten, die dieselbe Zuteilung mit
+    # Gleitkomma ausrechnen, bekaemen an der Kante verschiedene
+    # Ergebnisse und stritten ueber eine Abrechnung, ohne dass einer
+    # gelogen haette.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "zuteilung.rs",
+    # 2026-08-31: Der Stichprobenlauf. Er zaehlt Lieferungen und
+    # entscheidet, wer bezahlt wird; eine Zahl mit Gleitkomma waere hier
+    # eine Zahl, ueber die zwei Knoten streiten koennen.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "quittung.rs",
+    # 2026-08-31: Die Adresse der Treasury. Sie faellt aus einem Hash und
+    # muss auf jeder Maschine dieselbe sein; ein Gleitkommawert haette
+    # hier nichts zu suchen, aber die Datei gehoert in die Liste, damit
+    # das auch morgen noch geprueft wird.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "treasury.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lib.rs",
     # Der Generator der Konformitaetsvektoren gehoert dazu, obwohl er
     # nicht laeuft, wenn das Netz laeuft: Er **erzeugt die Referenz**,
@@ -260,6 +288,24 @@ CONSENSUS_PATH = [
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "slashing.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "anlauf.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "genesis.rs",
+    # 2026-08-31, ⚑ **Fund 107: Die Datei, die entscheidet, wer wie viel
+    # bekommt, stand nicht in dieser Liste.** `vtfe.rs` zaehlt die
+    # Multiplikations-Additionen je Zuschnitt und legt damit den Anteil
+    # jedes Miners fest; sie lief seit ihrer Entstehung ungeprueft mit.
+    # Aufgefallen ist es nur, weil zwei neue Dateien daneben eingetragen
+    # wurden und die Liste dabei von Hand mit dem Verzeichnis verglichen
+    # wurde. Dieselbe Klasse wie Fund 84, Fund 44 und Fund 103, jetzt
+    # zum vierten Mal, und deshalb steht das ganze Verzeichnis seit
+    # heute in der Vollstaendigkeitspruefung.
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "vtfe.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "lib.rs",
+    # 2026-08-31: Die Zuschreibung leitet den Anteil je Miner aus
+    # Pod-Besetzung und Zuschnitt ab, die Ausschuettung macht daraus eine
+    # Gutschrift. Beide rechnen in Ganzzahlen und muessen es bleiben: An
+    # ihrem Ergebnis haengt ein Kontostand, und zwei Knoten mit
+    # verschiedenen Kontostaenden sind ein Konsensbruch.
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "zuschreibung.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "ausschuettung.rs",
 ]
 
 # Gleitkomma-Indikatoren (angewandt nach Entfernen von Kommentaren,
@@ -411,6 +457,11 @@ VOLLSTAENDIG_ZU_PRUEFEN = [
     # `bin/`, siehe BEWUSST_DRAUSSEN.
     REPO / "kernels" / "src",
     REPO / "runtime" / "src",
+    # 2026-08-31 dazugekommen, nach Fund 107. In `myl-tokenomics` ist
+    # jede Datei eine Formel, die in einen Ledger-Uebergang eingeht; der
+    # Modulkopf des Crates sagt das selbst. Die einzige Ausnahme ist
+    # `utilization.rs`, und sie steht benannt in BEWUSST_DRAUSSEN.
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src",
 ]
 
 # Dateien aus den obigen Verzeichnissen, die bewusst **nicht** geprueft
@@ -447,6 +498,20 @@ BEWUSST_DRAUSSEN: dict = {
     / "runtime"
     / "src"
     / "loader.rs": "f64 nur zur Konsistenzpruefung von scale gegen shift, nie im Rechenpfad",
+    # 2026-08-31: `utilization_to_f64` und `f64_to_utilization` wandeln
+    # eine Festkommazahl fuer Protokollzeilen und Tests um. Der
+    # Rechenweg der Auslastung selbst ist ganzzahlig; die beiden
+    # Umrechnungen stehen daneben und gehen in keinen Zustand ein.
+    #
+    # **Die Ausnahme ist nicht gratis** (siehe den Absatz ueber `bin/`):
+    # Wer hier eine dritte Funktion ergaenzt, die doch in eine
+    # Zustandsrechnung eingeht, hat sie der Pruefung entzogen. Diese
+    # Zeile gehoert bei jeder Aenderung an `utilization.rs` mitgelesen.
+    ROOT
+    / "TOKENOMICS"
+    / "myl-tokenomics"
+    / "src"
+    / "utilization.rs": "f64 nur zum Anzeigen und in Tests, nie in einer Zustandsrechnung",
 }
 
 # Verzeichnisnamen, deren Inhalt bewusst nicht geprueft wird.

@@ -1,10 +1,16 @@
 # Myelith — Ethik-Manifest
 
-**Version:** 1.1.0
+**Version:** 0.2.0
 **Datum:** 2026-08-31
 **Geltung:** Für alle Komponenten dieses Repositoriums. Bei Konflikt mit
 einer Komponentenplanung gilt dieses Dokument; Abweichungen sind zu
 begründen und hier zu vermerken.
+
+⚑ **Zur Nummer:** Dieses Dokument lief bis zum 2026-08-31 auf `1.x` und
+steht seither auf `0.x`, wie jede andere Komponente auch. **Eine Eins
+vorn heißt Produktionsreife**, und die ist nicht erreicht. Die
+Umnummerierung ändert am Inhalt nichts: `v1.0.0` heißt jetzt `v0.1.0`,
+`v1.1.0` heißt `v0.2.0`.
 
 ---
 
@@ -397,7 +403,7 @@ Alle übrigen Abschnitte folgen dem Governance-Prozess aus Kap. 10.3.
 
 ## Changelog
 
-### v1.1.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
+### v0.2.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
 
 Auf Festlegung des Projektinhabers. Ein benannter Ausschlusskatalog in
 `ETHICS/Ausschluss.json`, fünf Klassen, jede mit Abgrenzung.
@@ -419,7 +425,7 @@ mehr, sondern eine Zeile je Katalogklasse. Bis dahin konnte ein Antrag
 „Dubletten entfernt" eintragen und galt als vollständig, während über
 die Klassen, um die es geht, nichts dastand.
 
-### v1.0.0 – 2026-08-18
+### v0.1.0 – 2026-08-18 (bis zum 2026-08-31 als v1.0.0 geführt)
 - Erstfassung. Aufbau bewusst als Grenzziehung zuerst
   (durchsetzbar / governance-abhängig / nicht kontrollierbar), dann
   Grundsätze mit Mechanismus, dann die vier ungelösten Spannungen.

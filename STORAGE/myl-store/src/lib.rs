@@ -50,17 +50,19 @@
 #![deny(unsafe_code)]
 
 pub mod entgelt;
-pub mod gegenstand;
 pub mod kappa;
 pub mod nachweis;
 
-pub use gegenstand::{
-    teile_bilden, Gegenstandsart, Manifest, ManifestFehler, Redundanzform, Teil, MAX_TEILE,
-    TEILGROESSE,
+// ⚑ **Das Format zog am 2026-08-31 nach `myl-types`**, weil das
+// Manifest in den Konsenszustand wandert und der Ledger es lesen können
+// muss. Hier steht es weiter zur Verfügung, damit ein Aufrufer nicht
+// wissen muss, in welcher Kiste ein Vertrag wohnt.
+pub use myl_types::gegenstand::{
+    teile_bilden, Ablage, Finanzierung, Gegenstandsart, Manifest, ManifestFehler, Redundanzform,
+    Teil, MAX_TEILE, TEILGROESSE,
 };
 pub use entgelt::{
-    abrechnen, darf_fallengelassen_werden, verbrauch_je_epoche, Abrechnung, Finanzierung,
-    Speicherguthaben,
+    abrechnen, darf_fallengelassen_werden, verbrauch_je_epoche, Abrechnung, Speicherguthaben,
 };
 pub use kappa::{Kappa, KappaFehler, Uebergang};
 pub use nachweis::{

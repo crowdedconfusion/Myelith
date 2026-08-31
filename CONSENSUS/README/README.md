@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.21.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.4.0,
-> `myl-ledger` 0.5.0)
-> **Datum:** 2026-08-30
+> **Version:** 0.25.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.4.0,
+> `myl-ledger` 0.9.0)
+> **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -18,8 +18,8 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **380 Tests grün** (258 `myl-consensus`, 68 `myl-scheduler`,
-> 54 `myl-ledger`).
+> **406 Tests grün** (269 `myl-consensus`, 68 `myl-scheduler`,
+> 69 `myl-ledger`), über alle Testbinaries gezählt.
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -107,6 +107,90 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.25.0 (`myl-ledger` 0.9.0) – 2026-08-31 (die eine Stelle, an der MYL entsteht)
+
+`praegen` schreibt einem Konto geprägte MYL gut. Vier Tests, zwei
+Gegenproben.
+
+⚑ **Bis heute gab es diesen Übergang nicht.** Jeder andere schiebt
+Guthaben oder vernichtet es; keiner ließ die Menge wachsen. Der Burn
+wurde gezählt, geglättet, zu einer Prägung gerechnet, aufgeteilt, und
+dann war Schluss.
+
+**Die Funktion ist klein und prüft keine Bedingung selbst.** Wer prägen
+darf und wie viel, entscheidet die Wirtschaftsrechnung in
+`myl-tokenomics`; ein Kontenbuch, das die Prägeformel kennte, wäre ein
+zweiter Ort für dieselbe Wahrheit. Zwei Dinge prüft sie doch: Ein Betrag
+von null ist ein Fehler und kein Nichtstun, denn wer null prägt, hat sich
+verrechnet und ein stiller Erfolg verdeckt das. Und ein Überlauf wird
+**gemeldet statt gesättigt**: Eine gesättigte Prägung wäre
+stillschweigend eine andere Geldmenge, und zwei Knoten mit verschiedenen
+Geldmengen sind ein Konsensbruch.
+
+### v0.24.0 (`myl-ledger` 0.8.0) – 2026-08-31 (das Auszahlungskonto gehört nicht dem heißen Schlüssel)
+
+`LedgerState` führt, wohin ein Miner bezahlt wird; ein Übergang trägt es
+ein. Fünf Tests, zwei Gegenproben.
+
+⚑ **Die Miner-Kennung ist `SHA-256` über den Konsensschlüssel, und der
+liegt heiß:** Er unterschreibt jeden Vote, jeden Commit, jeden Übergang,
+jede Kapazitätszusage und jede Speicherquittung. Ihn zugleich zum Konto
+zu machen, auf dem sich der Ertrag sammelt, ist der Fehler, den Ethereum
+als Auszahlungsnachweis `0x00` gemacht und mit einer ökosystemweiten
+Migration auf `0x01` korrigiert hat. Cosmos trennt von Anfang an,
+Filecoin ebenso mit `owner` gegen `worker`, und das ist für Speicher
+plus Beweise dieselbe Lage wie hier.
+
+⚑ **Und die Änderung gehört dem kalten Konto.** Die **erste** Eintragung
+unterschreibt der Miner selbst, er hat nichts zu verlieren; **jede
+weitere das eingetragene Konto**. Damit leitet ein gestohlener
+Konsensschlüssel den Ertrag nicht um, und es braucht keine Wartefrist,
+über die jemand streiten könnte.
+
+**Ohne Eintrag kein Anteil** (Festlegung des Projektinhabers): Wer
+nichts eingetragen hat, wird bei der Verteilung übergangen, sein Gewicht
+zählt nicht. So sammelt sich nie ein Ertrag unter einem heißen Schlüssel
+an, und der Fehler fällt sofort auf, weil nichts ankommt.
+
+### v0.23.0 (`myl-ledger` 0.7.0) – 2026-08-31 (der Zustand zählt den Burn mit)
+
+Drei Felder: der Burn der laufenden Epoche, der geglättete Wert und die
+Epoche, bis zu der fortgeschrieben ist. `burn_to_credits` zählt mit.
+
+⚑ **Bis heute zerstörte der Übergang Münzen und vergaß sofort, wie viele
+es waren.** Kap. 5.2 leitet die Prägung aus dem geglätteten Burn ab, den
+geglätteten aus dem Burn je Epoche; ohne diese Zahl im Zustand hat die
+Prägungsformel keine Eingabe. Die Fortschreibung selbst liegt in
+TOKENOMICS, wo die Formel wohnt.
+
+### v0.22.0 (`myl-ledger` 0.6.0) – 2026-08-31 (das Speicherregister im Zustand)
+
+`LedgerState` bekommt ein Register der Gegenstände, deren Manifest
+unmittelbar im Zustand steht, dazu zwei Übergänge zum Aufnehmen und
+Entfernen. Sechs Tests.
+
+⚑ **Nur ein Teil der Gegenstände steht darin, und der Grund ist die
+Bauart des Commitments.** `commitment()` serialisiert den **ganzen**
+Zustand und hasht ihn; es gibt keinen Baum mit Teilbeweisen. Jede
+Änderung kostet O(Zustandsgröße) je Block. Eine unbegrenzt wachsende
+Menge darf deshalb nicht einzeln darin stehen, sonst serialisiert jeder
+Block die ganze Wissensdatenbank. **Die Infrastruktur steht direkt da**,
+sie wächst nur durch Governance-Akte, und ein beitretender Miner muss
+sie finden können, bevor er irgendetwas beweisen kann.
+
+Die Wissensklassen weist der Übergang mit benanntem Grund ab, statt sie
+stillschweigend aufzunehmen. Gegenprobe gefahren: Ohne die Prüfung
+kommen sie durch.
+
+⚑ **Das Register führt kein Guthaben, und das ist kein Vergessen:** Jede
+Art, die direkt im Zustand steht, ist treasury-finanziert. Ein Guthaben
+braucht nur, was ein Einleger bezahlt, und das läuft über die Wurzel.
+Ein Test in `myl-types` hält den Zusammenhang fest.
+
+Ein Test hält außerdem fest, dass das Register **in den Zustandshash
+eingeht**: Täte es das nicht, wären sich zwei Knoten über den Inhalt
+einig, ohne es zu sein.
 
 ### v0.21.0 (`myl-consensus` 0.18.0) – 2026-08-30 (wer zurückfällt, kommt zurück)
 

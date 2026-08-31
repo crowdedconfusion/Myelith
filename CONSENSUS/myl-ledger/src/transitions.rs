@@ -5,7 +5,8 @@
 //! (Übergänge prüfen zuerst und ändern erst dann).
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use myl_types::ids::{Address, EpochId, SegmentId, SitzungId};
+use myl_types::gegenstand::{Ablage, Manifest};
+use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, SegmentId, SitzungId};
 use myl_types::sitzung::{pruefe, Befund, Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
 use myl_types::InferenceCredit;
 
@@ -37,6 +38,33 @@ pub enum TransitionError {
     SitzungAbgelaufen,
     /// Nur der Inhaber darf widerrufen oder eröffnen, nicht der Agent.
     NichtDerInhaber,
+    /// ⚑ Diese Gegenstandsart gehört nicht einzeln in den Zustand.
+    ///
+    /// Die Wissensdatenbank wächst mit der Nutzung, und
+    /// [`LedgerState::commitment`] serialisiert den ganzen Zustand: Jeder
+    /// Block zahlte sonst für die ganze Datenbank. Solche Gegenstände
+    /// laufen über eine Wurzel (κ_v), und dieser Weg ist noch nicht
+    /// gebaut. **Der Fehler benennt das, statt sie stillschweigend
+    /// aufzunehmen** (STORAGE D7).
+    GegenstandUeberWurzel,
+    /// Unter dieser Wurzel steht schon ein Gegenstand.
+    GegenstandExistiert,
+    /// Unter dieser Wurzel steht keiner.
+    GegenstandUnbekannt,
+    /// ⚑ Wer das Auszahlungskonto ändern will, ist nicht das Konto.
+    ///
+    /// Die **erste** Eintragung darf der Miner selbst vornehmen; jede
+    /// weitere gehört dem eingetragenen Konto. Damit leitet ein
+    /// gestohlener heißer Schlüssel den Ertrag nicht um.
+    NichtDasAuszahlungskonto,
+    /// Das Manifest nennt eine andere Wurzel, als unter der es abgelegt
+    /// werden soll.
+    ///
+    /// Kann nicht vorkommen, solange der Aufrufer die Wurzel aus dem
+    /// Manifest nimmt, und genau deshalb steht die Prüfung hier: Ein
+    /// Eintrag, dessen Schlüssel nicht zu seinem Inhalt passt, wäre
+    /// später von außen nicht mehr auffindbar.
+    WurzelPasstNicht,
     /// ⚑ Der Einreicher ist nicht der Agent des Vorhabens.
     ///
     /// `myl_types::sitzung::pruefe` prüft, ob der **im Vorhaben
@@ -101,6 +129,27 @@ impl std::fmt::Display for TransitionError {
                 write!(f, "Transaktionsnummer {hatte}, erwartet {erwartet}")
             }
             Self::KontraktVerbietet(b) => write!(f, "Session-Kontrakt: {b}"),
+            Self::GegenstandUeberWurzel => write!(
+                f,
+                "diese Gegenstandsart läuft über eine Wurzel und gehört \
+                 nicht einzeln in den Zustand"
+            ),
+            Self::GegenstandExistiert => {
+                write!(f, "unter dieser Wurzel steht schon ein Gegenstand")
+            }
+            Self::GegenstandUnbekannt => {
+                write!(f, "unter dieser Wurzel steht kein Gegenstand")
+            }
+            Self::NichtDasAuszahlungskonto => write!(
+                f,
+                "nur der Miner selbst darf erstmals eintragen, danach nur \
+                 das eingetragene Konto"
+            ),
+            Self::WurzelPasstNicht => write!(
+                f,
+                "das Manifest nennt eine andere Wurzel als die, unter der \
+                 es abgelegt werden soll"
+            ),
         }
     }
 }
@@ -298,6 +347,27 @@ pub fn burn_to_credits(
         // Verfalls-Epoche (siehe `credit_spend`).
         account.credits.sort_by_key(|c| c.expiry);
     }
+
+    // ⚑ **Was verbrannt wurde, wird gezählt** (2026-08-31). Bis dahin
+    // zerstörte dieser Übergang Münzen und vergaß sofort, wie viele es
+    // waren. Kap. 5.2 leitet die Prägung aus dem geglätteten Burn ab und
+    // den geglätteten aus dem Burn je Epoche; ohne diese Zeile hat die
+    // Prägungsformel keine Eingabe im Zustand.
+    //
+    // Gezählt wird `syn`, das Verbrannte, nicht `minted`: Der
+    // Rundungsrest bei der Umrechnung in Credits ist ebenfalls
+    // vernichtet und gehört dazu.
+    state.burn_epoche = state.burn_epoche.saturating_add(syn);
+
+    // ⚑ **Was verbrannt wurde, wird gezählt** (2026-08-31). Bis dahin
+    // zerstörte dieser Übergang Münzen und vergaß sofort, wie viele es
+    // waren. Kap. 5.2 leitet die Prägung aus dem geglätteten Burn ab und
+    // den geglätteten aus dem Burn je Epoche; ohne diese Zeile hat die
+    // Prägungsformel keine Eingabe im Zustand.
+    //
+    // Gezählt wird `syn`, das Verbrannte, nicht `minted`: Der
+    // Rundungsrest bei der Umrechnung in Credits ist ebenfalls
+    // vernichtet und gehört dazu.
     Ok(minted)
 }
 
@@ -572,6 +642,144 @@ pub fn sitzung_ausgeben(
         Waehrung::Myl => sitzung.zustand.verbraucht_myl = neu_verbraucht,
     }
     Ok(())
+}
+
+/// Trägt das Auszahlungskonto eines Miners ein oder ändert es.
+///
+/// # ⚑ Wer darf
+///
+/// | Lage | Wer unterschreibt |
+/// |---|---|
+/// | noch kein Eintrag | der **Miner selbst** |
+/// | Eintrag vorhanden | das **eingetragene Konto** |
+///
+/// Die erste Eintragung darf der Miner vornehmen, er hat nichts zu
+/// verlieren. Jede weitere gehört dem kalten Konto, damit ein
+/// gestohlener Konsensschlüssel den Ertrag nicht umleiten kann. Es ist
+/// Filecoins Trennung von `owner` und `worker`, nur ohne die Wartefrist,
+/// über die sonst jemand streiten könnte.
+///
+/// `unterzeichner` ist die Adresse, die aus dem Schlüssel der
+/// Transaktion folgt; `miner` ist die Kennung, für die eingetragen wird.
+pub fn auszahlungskonto_eintragen(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    miner: &MinerId,
+    konto: Address,
+) -> Result<(), TransitionError> {
+    let darf = match state.auszahlung.get(miner) {
+        // Erste Eintragung: der Miner selbst. Kennung und Adresse sind
+        // verschiedene Typen über denselben Bytes, deshalb der Vergleich
+        // über die Bytes und nicht über den Typ.
+        None => unterzeichner.as_bytes() == miner.as_bytes(),
+        // Jede weitere: das eingetragene Konto.
+        Some(bisher) => unterzeichner == bisher,
+    };
+    if !darf {
+        return Err(TransitionError::NichtDasAuszahlungskonto);
+    }
+    state.auszahlung.insert(*miner, konto);
+    Ok(())
+}
+
+/// Schreibt geprägte MYL einem Konto gut.
+///
+/// # ⚑ Die einzige Stelle, an der MYL entsteht
+///
+/// Jeder andere Übergang schiebt Guthaben oder vernichtet es;
+/// hier allein wächst die Menge. Das ist der Grund, aus dem diese
+/// Funktion so klein ist und keine Bedingung selbst prüft: **Wer prägen
+/// darf und wie viel, entscheidet die Wirtschaftsrechnung**
+/// (`myl_tokenomics::ausschuettung`), nicht das Kontenbuch. Ein Ledger,
+/// das die Prägeformel kennte, hätte zwei Orte für dieselbe Wahrheit.
+///
+/// Bis zum 2026-08-31 gab es sie nicht. Der Burn wurde gezählt, der
+/// geglättete Wert fortgeschrieben, die Prägung gerechnet, und dann
+/// endete der Weg: **Es gab keinen Übergang, der ein Konto erhöht.**
+///
+/// # Was geprüft wird
+///
+/// Ein Betrag von null ist ein Fehler, kein Nichtstun: Wer null prägt,
+/// hat sich verrechnet, und ein stiller Erfolg verdeckt das. Ein
+/// Überlauf gibt [`TransitionError::Overflow`] zurück, statt zu sättigen;
+/// gesättigte Prägung wäre stillschweigend eine andere Geldmenge.
+pub fn praegen(
+    state: &mut LedgerState,
+    konto: &Address,
+    betrag: u64,
+) -> Result<(), TransitionError> {
+    if betrag == 0 {
+        return Err(TransitionError::ZeroAmount);
+    }
+    let neu = state
+        .account(konto)
+        .balance
+        .checked_add(betrag)
+        .ok_or(TransitionError::Overflow)?;
+    state.account_mut(konto).balance = neu;
+    Ok(())
+}
+
+/// Wohin dieser Miner bezahlt wird, falls er es gesagt hat.
+///
+/// ⚑ **`None` heißt: kein Anteil.** Wer nichts eingetragen hat, wird bei
+/// der Verteilung übergangen und sein Gewicht zählt nicht. So sammelt
+/// sich nie ein Ertrag unter einem heißen Schlüssel an, und der Fehler
+/// fällt sofort auf, weil nichts ankommt.
+pub fn auszahlungskonto(state: &LedgerState, miner: &MinerId) -> Option<Address> {
+    state.auszahlung.get(miner).copied()
+}
+
+/// Nimmt einen Gegenstand in das Speicherregister auf.
+///
+/// # Was geprüft wird, und in welcher Reihenfolge
+///
+/// Erst die **Ablage**: Wissensklassen gehören nicht einzeln in den
+/// Zustand (STORAGE D7). Dann die **Wurzel**, dann die **Doppelung**.
+/// Die Reihenfolge benennt den grundsätzlichen Einwand zuerst; ein
+/// Wissensstück soll nicht erst an einer Doppelung scheitern und dann
+/// beim zweiten Versuch an der Ablage.
+///
+/// # ⚑ Kein Guthaben, und das ist kein Vergessen
+///
+/// Ein Eintrag trägt hier **kein** Speicherguthaben. Jede Art mit
+/// [`myl_types::gegenstand::Ablage::Direkt`] ist
+/// [`myl_types::gegenstand::Finanzierung::Treasury`]: Was unmittelbar im
+/// Zustand steht, trägt die Allgemeinheit, und was ein Einleger
+/// bezahlt, läuft über die Wurzel. Ein Test in `myl-types` hält diesen
+/// Zusammenhang fest, damit eine künftig ergänzte Art nicht still in die
+/// Lücke fällt.
+pub fn speicher_aufnehmen(
+    state: &mut LedgerState,
+    manifest: Manifest,
+    wurzel: MerkleRoot,
+) -> Result<(), TransitionError> {
+    if manifest.art.ablage() != Ablage::Direkt {
+        return Err(TransitionError::GegenstandUeberWurzel);
+    }
+    if manifest.wurzel != wurzel {
+        return Err(TransitionError::WurzelPasstNicht);
+    }
+    if state.speicher.contains_key(&wurzel) {
+        return Err(TransitionError::GegenstandExistiert);
+    }
+    state.speicher.insert(wurzel, manifest);
+    Ok(())
+}
+
+/// Nimmt einen Gegenstand aus dem Register.
+///
+/// Für ausgemusterte Modellfassungen. **Ein Governance-Akt**, kein
+/// Vorgang eines einzelnen Halters: Was hier verschwindet, findet ein
+/// beitretender Miner nicht mehr.
+pub fn speicher_entfernen(
+    state: &mut LedgerState,
+    wurzel: &MerkleRoot,
+) -> Result<Manifest, TransitionError> {
+    state
+        .speicher
+        .remove(wurzel)
+        .ok_or(TransitionError::GegenstandUnbekannt)
 }
 
 /// Räumt Sessions weg, deren Fenster länger als
@@ -1373,5 +1581,242 @@ mod tests {
         let id = *nachher.sitzungen.keys().next().expect("eine");
         sitzung_ausgeben(&mut nachher, &adresse(2), &vorhaben(id, 10)).expect("erlaubt");
         assert_ne!(mit.commitment(), nachher.commitment());
+    }
+
+    // ── Speicherregister (STORAGE D7) ───────────────────────────────
+
+    fn manifest_mit(art: myl_types::gegenstand::Gegenstandsart) -> Manifest {
+        use myl_types::gegenstand::{teile_bilden, Redundanzform};
+        let teile = teile_bilden(b"ein kleiner Gegenstand").expect("Teile");
+        Manifest::neu(art, 1, &teile, Redundanzform::Kopien { anzahl: 3 }).expect("Manifest")
+    }
+
+    #[test]
+    fn ein_shardgewicht_kommt_in_den_zustand() {
+        use myl_types::gegenstand::Gegenstandsart;
+        let mut st = LedgerState::genesis(1);
+        let m = manifest_mit(Gegenstandsart::Shardgewichte);
+        let w = m.wurzel;
+        assert_eq!(speicher_aufnehmen(&mut st, m.clone(), w), Ok(()));
+        assert_eq!(st.speicher.get(&w), Some(&m));
+    }
+
+    /// ⚑ **Die Grenze aus D7, und sie wird erzwungen statt beschrieben.**
+    ///
+    /// Beide Wissensklassen gehören über eine Wurzel, und zwar aus
+    /// verschiedenen Gründen dieselbe Folge: Ein Wissensstück zahlt sein
+    /// Einleger, Netzwerkwissen trägt die Allgemeinheit, **aber beide
+    /// wachsen mit der Nutzung**. `commitment()` serialisiert den ganzen
+    /// Zustand; jeder Block zahlte sonst für die ganze Datenbank.
+    #[test]
+    fn wissen_gehoert_nicht_einzeln_in_den_zustand() {
+        use myl_types::gegenstand::Gegenstandsart;
+        for art in [Gegenstandsart::Wissensstueck, Gegenstandsart::Netzwerkwissen] {
+            let mut st = LedgerState::genesis(1);
+            let m = manifest_mit(art);
+            let w = m.wurzel;
+            assert_eq!(
+                speicher_aufnehmen(&mut st, m, w),
+                Err(TransitionError::GegenstandUeberWurzel),
+                "{art:?} kam in den Zustand"
+            );
+            assert!(st.speicher.is_empty(), "{art:?} hinterliess einen Eintrag");
+        }
+    }
+
+    #[test]
+    fn derselbe_gegenstand_zweimal_wird_abgewiesen() {
+        use myl_types::gegenstand::Gegenstandsart;
+        let mut st = LedgerState::genesis(1);
+        let m = manifest_mit(Gegenstandsart::Skalenpaket);
+        let w = m.wurzel;
+        speicher_aufnehmen(&mut st, m.clone(), w).expect("erste Aufnahme");
+        assert_eq!(
+            speicher_aufnehmen(&mut st, m, w),
+            Err(TransitionError::GegenstandExistiert)
+        );
+    }
+
+    /// Ein Eintrag, dessen Schlüssel nicht zu seinem Inhalt passt, wäre
+    /// später von außen nicht mehr auffindbar.
+    #[test]
+    fn eine_fremde_wurzel_wird_abgewiesen() {
+        use myl_types::gegenstand::Gegenstandsart;
+        let mut st = LedgerState::genesis(1);
+        let m = manifest_mit(Gegenstandsart::Shardgewichte);
+        let fremd = MerkleRoot::new([9u8; 32]);
+        assert_ne!(m.wurzel, fremd);
+        assert_eq!(
+            speicher_aufnehmen(&mut st, m, fremd),
+            Err(TransitionError::WurzelPasstNicht)
+        );
+    }
+
+    #[test]
+    fn entfernen_geht_nur_was_dasteht() {
+        use myl_types::gegenstand::Gegenstandsart;
+        let mut st = LedgerState::genesis(1);
+        let m = manifest_mit(Gegenstandsart::Sonstiges);
+        let w = m.wurzel;
+        assert_eq!(
+            speicher_entfernen(&mut st, &w),
+            Err(TransitionError::GegenstandUnbekannt)
+        );
+        speicher_aufnehmen(&mut st, m.clone(), w).expect("Aufnahme");
+        assert_eq!(speicher_entfernen(&mut st, &w), Ok(m));
+        assert!(st.speicher.is_empty());
+    }
+
+    /// ⚑ **Das Register ist Konsensgegenstand, nicht Beiwerk.**
+    ///
+    /// Änderte es den Zustandshash nicht, wären sich zwei Knoten über
+    /// den Inhalt einig, ohne es zu sein: Der eine hätte das
+    /// Shardgewicht, der andere nicht, und beide meldeten dieselbe
+    /// Zustandswurzel.
+    #[test]
+    fn das_register_geht_in_den_zustandshash_ein() {
+        use myl_types::gegenstand::Gegenstandsart;
+        let leer = LedgerState::genesis(1);
+        let mut mit = LedgerState::genesis(1);
+        let m = manifest_mit(Gegenstandsart::Shardgewichte);
+        let w = m.wurzel;
+        speicher_aufnehmen(&mut mit, m, w).expect("Aufnahme");
+        assert_ne!(leer.commitment(), mit.commitment());
+
+        speicher_entfernen(&mut mit, &w).expect("Entfernen");
+        assert_eq!(leer.commitment(), mit.commitment(), "nicht rueckstandsfrei");
+    }
+
+    // ── Auszahlungskonto (Entscheidung 2026-08-31) ──────────────────
+
+    fn miner(b: u8) -> MinerId {
+        MinerId::new([b; 32])
+    }
+
+    #[test]
+    fn der_miner_traegt_sich_erstmals_selbst_ein() {
+        let mut st = LedgerState::genesis(1);
+        let m = miner(1);
+        let selbst = Address::new([1u8; 32]);
+        let kalt = Address::new([9u8; 32]);
+        assert_eq!(auszahlungskonto_eintragen(&mut st, &selbst, &m, kalt), Ok(()));
+        assert_eq!(auszahlungskonto(&st, &m), Some(kalt));
+    }
+
+    /// ⚑ **Ein Fremder trägt nicht für einen Miner ein.**
+    ///
+    /// Ohne diese Prüfung könnte jeder das Auszahlungskonto eines
+    /// anderen setzen und dessen Ertrag zu sich lenken.
+    #[test]
+    fn ein_fremder_traegt_nicht_ein() {
+        let mut st = LedgerState::genesis(1);
+        let m = miner(1);
+        let fremd = Address::new([7u8; 32]);
+        assert_eq!(
+            auszahlungskonto_eintragen(&mut st, &fremd, &m, Address::new([9u8; 32])),
+            Err(TransitionError::NichtDasAuszahlungskonto)
+        );
+        assert_eq!(auszahlungskonto(&st, &m), None);
+    }
+
+    /// ⚑ **Der Kern der Entscheidung: Nach der ersten Eintragung
+    /// gehört die Änderung dem kalten Konto.**
+    ///
+    /// Ein gestohlener Konsensschlüssel kann den Ertrag damit nicht
+    /// umleiten. Das ist der Fehler, den Ethereum als
+    /// Auszahlungsnachweis `0x00` gemacht und später ökosystemweit
+    /// korrigiert hat.
+    #[test]
+    fn nach_der_ersten_eintragung_darf_nur_noch_das_konto() {
+        let mut st = LedgerState::genesis(1);
+        let m = miner(1);
+        let selbst = Address::new([1u8; 32]);
+        let kalt = Address::new([9u8; 32]);
+        auszahlungskonto_eintragen(&mut st, &selbst, &m, kalt).expect("erste Eintragung");
+
+        // Der heisse Schluessel des Miners darf jetzt nicht mehr.
+        assert_eq!(
+            auszahlungskonto_eintragen(&mut st, &selbst, &m, Address::new([6u8; 32])),
+            Err(TransitionError::NichtDasAuszahlungskonto),
+            "der heisse Schluessel konnte den Ertrag umleiten"
+        );
+        assert_eq!(auszahlungskonto(&st, &m), Some(kalt));
+
+        // Das kalte Konto darf.
+        let neu = Address::new([5u8; 32]);
+        assert_eq!(auszahlungskonto_eintragen(&mut st, &kalt, &m, neu), Ok(()));
+        assert_eq!(auszahlungskonto(&st, &m), Some(neu));
+    }
+
+    /// Ohne Eintrag kein Konto, und damit kein Anteil.
+    #[test]
+    fn ohne_eintrag_gibt_es_kein_konto() {
+        let st = LedgerState::genesis(1);
+        assert_eq!(auszahlungskonto(&st, &miner(3)), None);
+    }
+
+    /// Das Register geht in den Zustandshash ein, sonst wären sich zwei
+    /// Knoten über die Empfänger einig, ohne es zu sein.
+    #[test]
+    fn das_auszahlungsregister_geht_in_den_zustandshash_ein() {
+        let leer = LedgerState::genesis(1);
+        let mut mit = LedgerState::genesis(1);
+        auszahlungskonto_eintragen(
+            &mut mit,
+            &Address::new([1u8; 32]),
+            &miner(1),
+            Address::new([9u8; 32]),
+        )
+        .expect("Eintragung");
+        assert_ne!(leer.commitment(), mit.commitment());
+    }
+
+    /// Prägung erhöht das Guthaben, und zwar genau um den Betrag.
+    #[test]
+    fn praegung_erreicht_das_konto() {
+        let mut state = LedgerState::genesis(1);
+        let konto = adresse(7);
+        praegen(&mut state, &konto, 4_200).expect("Praegung");
+        assert_eq!(state.account(&konto).balance, 4_200);
+        praegen(&mut state, &konto, 800).expect("zweite Praegung");
+        assert_eq!(state.account(&konto).balance, 5_000);
+    }
+
+    /// Gegenprobe: null zu prägen ist ein Fehler und kein stilles
+    /// Nichtstun. Wer null prägt, hat sich verrechnet.
+    #[test]
+    fn null_zu_praegen_ist_ein_fehler() {
+        let mut state = LedgerState::genesis(1);
+        assert_eq!(
+            praegen(&mut state, &adresse(1), 0),
+            Err(TransitionError::ZeroAmount)
+        );
+    }
+
+    /// Gegenprobe: ein Überlauf wird gemeldet, nicht gesättigt. Eine
+    /// gesättigte Prägung wäre stillschweigend eine andere Geldmenge.
+    #[test]
+    fn ueberlauf_wird_gemeldet_und_nicht_gesaettigt() {
+        let mut state = LedgerState::genesis(1);
+        let konto = adresse(2);
+        state.account_mut(&konto).balance = u64::MAX - 5;
+        assert_eq!(
+            praegen(&mut state, &konto, 6),
+            Err(TransitionError::Overflow)
+        );
+        assert_eq!(
+            state.account(&konto).balance,
+            u64::MAX - 5,
+            "der Zustand wurde trotz Fehler veraendert"
+        );
+    }
+
+    /// Die Prägung geht in die Zustandsverpflichtung ein.
+    #[test]
+    fn praegung_veraendert_das_commitment() {
+        let vorher = LedgerState::genesis(1);
+        let mut nachher = LedgerState::genesis(1);
+        praegen(&mut nachher, &adresse(3), 1).expect("Praegung");
+        assert_ne!(vorher.commitment(), nachher.commitment());
     }
 }

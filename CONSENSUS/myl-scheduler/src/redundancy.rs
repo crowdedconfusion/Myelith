@@ -9,8 +9,32 @@
 //!
 //! **Design:** Für jedes Segment werden 2 Pods ausgewählt, die:
 //! 1. Disjunkt sind (keine gemeinsamen Miner)
-//! 2. Aus verschiedenen geografischen Regionen kommen
+//! 2. Verschiedene geografische Regionen **angeben**
 //! 3. Deterministisch mit dem Seed ausgewählt werden
+//!
+//! # ⚑ Fund 108: Was diese Zonendiversität wert ist, und was nicht
+//!
+//! Punkt 2 steht dort mit Bedacht als „angeben" und nicht als „kommen
+//! aus". Die Region ist ein Feld in
+//! [`myl_types::node_metadata::NodeMetadata`], **das jeder Knoten über
+//! sich selbst erklärt**; `validate_structure` prüft davon allein den
+//! Zeitstempel. Wer beide Pods eines Redundanzpaars im selben
+//! Rechenzentrum betreibt, trägt zwei verschiedene Regionen ein und
+//! besteht diese Prüfung.
+//!
+//! **Damit ist der Redundanzvergleich in genau der Lage, vor der
+//! [`pods_are_disjoint`] eine Ebene tiefer schützt:** Dort wird
+//! verhindert, dass dieselbe *Maschine* auf beiden Seiten steht, weil
+//! Stufe 1 der Verifikation sonst eine Selbstbestätigung wäre. Dieselbe
+//! *Ausfallzone* auf beiden Seiten ist derselbe Fehler, eine Ebene
+//! gröber, und dagegen hilft eine Selbstauskunft nicht.
+//!
+//! **Was die Prüfung trotzdem leistet:** Sie hält versehentliche
+//! Bündelung fern, also den ehrlichen Betreiber, der nicht aufpasst.
+//! Gegen einen Angreifer leistet sie nichts, und dieser Absatz steht
+//! hier, damit niemand sie für mehr hält. Die Gegenmaßnahme muss an
+//! einer **gemessenen** oder **kostenpflichtigen** Größe hängen, nicht
+//! an einer erklärten; das ist Punkt 13 des Fahrplans.
 
 use myl_types::seed_rng::deterministic_shuffle;
 use std::collections::{HashMap, HashSet};
@@ -31,17 +55,41 @@ pub struct SegmentAssignment {
     pub redundant_pod_index: u32,
 }
 
-/// Extrahiert die GeoRegion für einen Pod aus den Node-Metadaten.
+/// Die Region eines Pods, **wenn seine Mitglieder sich einig sind**.
 ///
-/// Verwendet die Region des ersten Miners im Pod als Repräsentant.
-/// (In der Praxis sollten alle Miner in einem Pod aus derselben Region kommen,
-/// da sie im selben Cluster sind.)
+/// # ⚑ Fund 108, zweite Hälfte: Der Vertreter vertrat niemanden
+///
+/// Hier stand bis zum 2026-08-31 die Region des **ersten** Miners, mit
+/// dem Kommentar „in der Praxis sollten alle Miner in einem Pod aus
+/// derselben Region kommen, da sie im selben Cluster sind".
+///
+/// **Das Cluster garantiert das nicht.** [`crate::geo_clustering`]
+/// bildet Cluster aus **gemessener Latenz** und liest `region` an keiner
+/// Stelle; die Datei erwähnt den Typ nicht einmal. Zwei Maschinen können
+/// zwanzig Millisekunden auseinanderliegen und trotzdem verschiedene
+/// Regionen angeben, und dann trug der Pod das Etikett irgendeines
+/// Mitglieds.
+///
+/// Jetzt gilt eine Region nur, wenn **alle** Mitglieder mit bekannten
+/// Metadaten dieselbe nennen. Sind sie uneins, ist die Ausfallzone des
+/// Pods **unbekannt**, und das ist etwas anderes als vielfältig: Ein Pod,
+/// der nicht sagen kann, wo er steht, taugt nicht als Beleg für
+/// Diversität. `None` schließt ihn aus jedem Paar aus, und das ist die
+/// sichere Richtung.
 fn pod_region(pod: &Pod, metadata: &HashMap<MinerId, NodeMetadata>) -> Option<GeoRegion> {
-    // Nimm den ersten Miner im ersten Shard
-    pod.shards
-        .first()
-        .and_then(|shard| metadata.get(&shard.miner.miner_id))
-        .map(|meta| meta.region)
+    let mut bekannt: Option<GeoRegion> = None;
+    for m in pod.mitglieder() {
+        let Some(meta) = metadata.get(&m.miner_id) else {
+            continue;
+        };
+        match bekannt {
+            None => bekannt = Some(meta.region),
+            Some(r) if r == meta.region => {}
+            // Uneinig: Die Ausfallzone ist unbekannt.
+            Some(_) => return None,
+        }
+    }
+    bekannt
 }
 
 /// Prüft, ob zwei Pods disjunkt sind (keine gemeinsamen Mitglieder).
@@ -426,5 +474,89 @@ mod tests {
         for (idx, assignment) in assignments.iter().enumerate() {
             assert_eq!(assignment.segment_index, idx as u32);
         }
+    }
+
+    /// ⚑ **Fund 108, zweite Hälfte:** Ein Pod, dessen Mitglieder
+    /// verschiedene Regionen angeben, hat **keine** Region. Vorher trug
+    /// er die des ersten Mitglieds, und damit war das Etikett eine
+    /// Zufallsauswahl.
+    #[test]
+    fn ein_uneiniger_pod_hat_keine_region() {
+        let pod = test_pod(0, &[1, 2, 3]);
+        let meta: HashMap<MinerId, NodeMetadata> = [
+            test_metadata(1, GeoRegion::Europe),
+            test_metadata(2, GeoRegion::NorthAmerica),
+            test_metadata(3, GeoRegion::Europe),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(pod_region(&pod, &meta), None);
+    }
+
+    /// Sind sich alle einig, gilt ihre Region.
+    #[test]
+    fn ein_einiger_pod_hat_seine_region() {
+        let pod = test_pod(0, &[1, 2, 3]);
+        let meta: HashMap<MinerId, NodeMetadata> = [
+            test_metadata(1, GeoRegion::Europe),
+            test_metadata(2, GeoRegion::Europe),
+            test_metadata(3, GeoRegion::Europe),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(pod_region(&pod, &meta), Some(GeoRegion::Europe));
+    }
+
+    /// ⚑ **Die Reserve zählt mit.** Sie übernimmt bei einem Ausfall und
+    /// steht dann in derselben Ausfallzone wie die Position, die sie
+    /// ersetzt. Ein Pod, dessen Reserve woanders sitzt, weiß nicht, wo
+    /// er nach der Übernahme steht.
+    #[test]
+    fn eine_reserve_aus_fremder_zone_macht_den_pod_uneinig() {
+        let pod = test_pod_mit_reserve(0, &[1, 2], &[3]);
+        let meta: HashMap<MinerId, NodeMetadata> = [
+            test_metadata(1, GeoRegion::Europe),
+            test_metadata(2, GeoRegion::Europe),
+            test_metadata(3, GeoRegion::Asia),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(pod_region(&pod, &meta), None);
+    }
+
+    /// Wer keine Metadaten hat, widerspricht auch nicht: Ein Pod, von
+    /// dem nur ein Teil bekannt ist, trägt die Region der Bekannten.
+    #[test]
+    fn unbekannte_mitglieder_widersprechen_nicht() {
+        let pod = test_pod(0, &[1, 2, 3]);
+        let meta: HashMap<MinerId, NodeMetadata> =
+            [test_metadata(2, GeoRegion::SouthAmerica)].into_iter().collect();
+        assert_eq!(pod_region(&pod, &meta), Some(GeoRegion::SouthAmerica));
+    }
+
+    /// Ohne jede Metadaten gibt es keine Region und damit kein Paar.
+    #[test]
+    fn ganz_ohne_metadaten_gibt_es_keine_region() {
+        let pod = test_pod(0, &[1, 2]);
+        assert_eq!(pod_region(&pod, &HashMap::new()), None);
+    }
+
+    /// Ein uneiniger Pod bildet mit niemandem ein Paar.
+    #[test]
+    fn ein_uneiniger_pod_bildet_kein_paar() {
+        let uneinig = test_pod(0, &[1, 2]);
+        let einig = test_pod(1, &[3, 4]);
+        let meta: HashMap<MinerId, NodeMetadata> = [
+            test_metadata(1, GeoRegion::Europe),
+            test_metadata(2, GeoRegion::NorthAmerica),
+            test_metadata(3, GeoRegion::Asia),
+            test_metadata(4, GeoRegion::Asia),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            assign_redundant_pods(1, &[uneinig, einig], &meta, &[7u8; 32]),
+            Err(ZuweisungsHindernis::KeinGueltigesPaar { pods: 2 })
+        );
     }
 }

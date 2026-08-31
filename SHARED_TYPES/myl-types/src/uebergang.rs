@@ -137,6 +137,16 @@ pub enum Rolle {
     Validator = 3,
     /// Rechnet ein Segment als Stichprobe nach.
     Checker = 4,
+    /// Hält Gegenstände vor und weist ihre Verfügbarkeit nach.
+    ///
+    /// Die siebte Netzwerkrolle (Entscheidung des Projektinhabers,
+    /// 2026-08-25). Sie rechnet nicht: Ein Knoten kann Wissen halten,
+    /// ohne eine Token-Position zu berechnen, und wird dafür
+    /// unabhängig vom Mining vergütet.
+    ///
+    /// **Angehängt, nicht eingefügt.** Die Zuordnung ist Teil des
+    /// Konsensvertrags; die Nummern 1 bis 4 bleiben, wo sie sind.
+    Store = 5,
 }
 
 impl Rolle {

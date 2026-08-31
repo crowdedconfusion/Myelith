@@ -1,6 +1,6 @@
 [package]
 name = "myl-net"
-version = "0.11.2"
+version = "0.11.3"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette

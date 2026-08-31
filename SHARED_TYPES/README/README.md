@@ -1,15 +1,16 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.13.0
-> **Datum:** 2026-08-28
+> **Version:** 0.18.0
+> **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
 > GF(2⁸)**, ID-Newtypes, Kern-Structs
 > aus Anhang A.1, Golden Vectors (18 Vektoren), Fuzz-Harness
 > (100.000 Iterationen), Konformitätspaket.
-> **177 Tests grün.** (Die Zeile stand bis heute auf 133 und zählte
-> damit nur einen Teil der Testbinaries.)
+> **225 Tests grün** über sieben Testbinaries. (Die Zeile stand heute
+> früh auf 133 und zählte damit nur die Lib; 177 war der Stand vor den
+> fünf Zugängen dieses Tages.)
 
 Protokollweite Kern-Datentypen, Hash-/Merkle-Primitiven und Serialisierung
 für Myelith. Referenzimplementierung von Whitepaper Anhang A.1.
@@ -49,6 +50,161 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.18.0 – 2026-08-31 (die Treasury, ein Konto ohne Schlüssel)
+
+`treasury.rs`: eine feste Adresse, aus einem Trennstring abgeleitet,
+**ohne bekanntes Schlüssel-Urbild**.
+
+⚑ **Ein Treasury-Konto mit privatem Schlüssel wäre ein Honigtopf und
+eine Machtposition.** G1 nennt eine Machtposition ausdrücklich als das,
+was in einem anonymen offenen Netz nicht legitim besetzbar ist; für Geld
+gilt das eine Stufe schärfer. Eine gewöhnliche Adresse ist `SHA-256`
+über einen öffentlichen Schlüssel, wer für die Treasury unterschreiben
+wollte, müsste einen Schlüssel finden, dessen Hash auf diesen festen
+Wert fällt. **Damit ist „nur das Protokoll kann sie belasten" eine
+Tatsache der Bauart und keine Zusage**, derselbe Unterschied, den G6 für
+die Vertraulichkeit macht.
+
+Das Muster ist nicht neu: Cosmos nennt es ModuleAccount, eine Adresse
+ohne Schlüssel, die ausschließlich Modul-Logik bewegt.
+
+**Auszahlung nur über einen angenommenen Governance-Beschluss**
+(Festlegung des Projektinhabers). Was sie nicht leistet: Sie schützt
+nicht davor, dass eine Mehrheit sich selbst auszahlt; das ist eine Frage
+des Abstimmungsverfahrens und steht dort.
+
+### v0.17.0 – 2026-08-31 (der Stichprobenlauf: niemand fragt)
+
+`quittung.rs`, 8 Tests, zwei Gegenproben. Dazu zieht die Ableitung des
+verlangten Teils aus `myl-store` hierher; `nachweis.rs` führt sie aus,
+statt eine zweite Fassung zu halten.
+
+⚑ **Niemand fragt, und das ist der ganze Entwurf.** Die Stichprobe folgt
+aus Epochenseed, Gegenstand, Epoche und Halterkennung. Jeder kann sie
+ausrechnen, also auch der Halter: **Er weiß ohne Anfrage, was er
+schuldet.** Damit entfällt eine ganze Klasse von Fragen, wer fragt, was
+gilt, wenn niemand fragt, und wie man einen unterbliebenen Anruf
+beweist. Dieselbe Wendung wie bei E10, nur in die andere Richtung: Dort
+bringt der Ankläger alles mit, hier der Halter.
+
+**Vorgelegt wird eine Quittung**, rund 130 Byte statt eines Mebibytes:
+der Hash über die Bytes des verlangten Teils, gebunden an Epoche,
+Gegenstand, Teilnummer und Halter, unterschrieben in der Rolle Store.
+
+⚑ **Eine Quittung beweist nichts, sie verpflichtet.** Hashen kann jeder
+irgendetwas. Wer eine abgibt, lässt sich später auf die Bytes
+festnageln; wer keine abgibt, ist schon ohne Ankläger auffällig.
+
+⚑ **Und das ist der Kern: Die fehlende Quittung braucht keinen
+Ankläger.** Die Zuteilung ist nachrechenbar, jeder sieht dieselbe Liste
+der Schuldner, und wessen Quittung fehlt, steht objektiv fest. Kein
+Zeuge, keine Behauptung, kein Beweis eines Negativs. Die Schuldnerliste
+entsteht deshalb aus der **Zuteilung**, nicht aus den vorgelegten
+Quittungen; die Gegenprobe zeigt, dass andernfalls genau die
+unsichtbar werden, um die es geht.
+
+**Schweigen und ein untauglicher Versuch bleiben getrennt.** Das eine
+kann ein Ausfall sein, das andere ist eine Handlung; sie in einen Topf
+zu werfen hieße, dem Abgestürzten dasselbe vorzuwerfen wie dem, der es
+versucht hat.
+
+**Was hier nicht entschieden wird:** ob eine abgegebene Quittung wahr
+ist. Dafür müsste jemand das Mebibyte anfordern und nachrechnen, und das
+ist der optimistische Teil, der wie die Verifikation der Inferenz
+arbeitet.
+
+### v0.16.0 – 2026-08-31 (die Zuteilung: wer welchen Gegenstand hält)
+
+`zuteilung.rs`, 11 Tests, drei Gegenproben. Aus Register, Zusagen und
+Epochenseed ergibt sich deterministisch, wer welchen Gegenstand hält.
+Dazu `Redundanzform::halterzahl` und `anteil_je_halter`.
+
+⚑ **`halterzahl` ist nicht `halter_je_abruf`.** Das eine ist die Zahl
+der Halter, die es geben muss, das andere die Untergrenze für einen
+vollständigen Abruf. Bei Erasure k=8/m=6 sind das 14 gegen 8; wer das
+eine für das andere nimmt, teilt sechs Halter zu wenig zu und merkt es
+erst, wenn sechs ausfallen. Ein Test bindet beide an den Platzfaktor,
+damit die drei Größen nicht auseinanderlaufen.
+
+⚑ **Sie wird gerechnet, nicht gespeichert.** Der Zustandshash entsteht
+über eine Serialisierung des ganzen Zustands; eine Zuteilung über
+Tausende Teile machte ihn je Epoche neu und groß. Aus demselben Grund
+liegt der Code hier: **Wer eine Abrechnung prüft, muss die Zuteilung
+nachrechnen können**, ohne an der Store-Rolle zu hängen. Wer sie nur
+entgegennimmt, überlässt dem Einreicher die Wahl, wer bezahlt wird, und
+das ist der Fehler aus Fund 96.
+
+**Je Gegenstand ein eigener Seed**, wie beim Pod-Shuffle im Scheduler:
+Mit dem blanken Epochenseed bekäme jeder Gegenstand dieselbe Reihenfolge
+und dieselben Halter liefen zuerst voll. **Fehlender Platz wird
+gemeldet**, nicht verschwiegen; `assign_redundant_pods` überging
+fehlende Metadaten stillschweigend, und genau das soll hier nicht
+passieren.
+
+⛑ **Zwei Berichtigungen an der eigenen Arbeit.** Der erste Test zum
+eigenen Seed prüfte die Ableitungsfunktion statt ihre Wirkung und blieb
+grün, als der Aufruf versuchsweise durch den blanken Seed ersetzt wurde:
+Er prüfte, dass das Werkzeug funktioniert, nicht dass es benutzt wird.
+Und der Kommentar an der Sortierung nannte einen Grund, den sie nicht
+hat: Zwei Rechner geben ohnehin dieselbe Liste aus. Sie steht als
+Vorsorge, damit die Ausgabe kanonisch bleibt, wenn jemand das
+Auswahlverfahren ändert, und jetzt hält ein Test sie fest.
+
+**Was hier nicht geschieht:** keine Diversität über Geo-Zone und ASN,
+keine Rotation, keine Nachbesetzung. Alle drei setzen die Zuteilung
+voraus und kommen darauf.
+
+### v0.15.0 – 2026-08-31 (das Gegenstandsformat zieht in die gemeinsame Kiste)
+
+`gegenstand.rs` kommt aus `myl-store`: Teile, Manifest, Gegenstandsart,
+Redundanzform, dazu **neu** `Ablage` und `Finanzierung`.
+
+⚑ **Der Grund ist derselbe wie beim Übergangs-Signaturvertrag zwei Tage
+zuvor.** Das Manifest wandert in den Konsenszustand, also muss der Ledger
+es lesen können. `myl-ledger` an `myl-store` zu hängen hieße, die ganze
+Store-Rolle an den Konsens zu hängen: Abruf, Auslieferung, Rotation und
+später Netz-Ein- und -Ausgabe. **Ein gemeinsamer Vertrag gehört in die
+gemeinsame Kiste**; die Trennlinie ist das Format hier, die Rolle dort.
+
+`myl-store` führt die Namen weiter aus, damit ein Aufrufer nicht wissen
+muss, in welcher Kiste ein Vertrag wohnt.
+
+### v0.14.0 – 2026-08-31 (die Kapazitätszusage, und eine siebte Rolle)
+
+`zusage.rs`, 9 Tests: Was ein Knoten zu halten anbietet, signiert und
+epochengebunden. Dazu `Rolle::Store` als fünfte Marke, **angehängt und
+nicht eingefügt**; die Nummern 1 bis 4 bleiben, wo sie sind, und ein
+Test hält das fest.
+
+⚑ **Sie gilt ab der nächsten Epoche, nie ab sofort.** `ab_epoche` muss
+echt größer als die laufende Epoche sein. Damit ist „mitten im Auftrag
+abschalten" durch Konstruktion ausgeschlossen: Wer abschalten will, sagt
+für die nächste Epoche weniger zu. Nebenbei erledigt dieselbe Regel den
+Wiedereinspielungsangriff, denn eine alte, höhere Zusage trägt ihre
+Epoche im signierten Teil.
+
+⚑ **Null ist die Abmeldung, kein Fehler.** Wer sie verböte, machte den
+Beitritt zu einer Falle: Ein Knoten käme aus der Speicherpflicht nur
+noch durch Verschwinden, und Verschwinden ist im Protokoll ein Ausfall
+mit Folgen. Der geordnete Ausstieg muss ausdrücklich möglich sein.
+
+**Unterschrift und Identität in einem Schritt**, nach dem Muster von
+Fund 96: Der Schlüssel muss zum genannten Halter gehören. Nur die
+Unterschrift zu prüfen hieße, jeden Beliebigen im Namen eines anderen
+zusagen zu lassen. Die Rolle wird mitsigniert, eine Unterschrift aus
+einer anderen Rolle trägt hier nicht. Drei Gegenproben gefahren, jede
+fällt auf ihren eigenen Test.
+
+⚑ **Nur Speicher, obwohl der Schalter vier Größen nennt.** CPU und GPU
+sind über die verifizierte Arbeit bereits bezahlt, Arbeitsspeicher ist
+Voraussetzung und keine eigene Größe. **Ein Feld, das niemand liest, ist
+in diesem Repositorium ein benannter Fehler** (Fund 98). Sobald die
+Zuteilung Rechenkapazität wirklich auswertet, gehören die Felder dazu;
+vorher nicht.
+
+**Eine Zusage ist eine Obergrenze, keine Zusicherung.** Bezahlt wird
+davon nichts; bezahlt wird, was nachgewiesen ist.
 
 ### v0.13.0 – 2026-08-30 (⚑ Fund 100: das Bündel bezeugte nicht, was gerechnet wurde)
 

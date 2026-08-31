@@ -1,12 +1,12 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.11.0
-> **Datum:** 2026-08-27
+> **Version:** 0.13.0
+> **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 4 abgeschlossen**, Phase 5 offen
 > (Auslastungsboden und Subventionsplan).
-> **147 Tests grün** (127 Modultests, 17 adversariale, 3 Akzeptanz).
+> **180 Tests grün** (156 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
 >
 > **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
 > dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
@@ -97,6 +97,92 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.13.0 – 2026-08-31 (⚑ Punkt 38 geschlossen: die Prägung erreicht ein Konto)
+
+Die Kette war in der Mitte durchtrennt. Der Burn wurde gezählt, geglättet,
+zu einer Prägung gerechnet und auf fünf Klassen aufgeteilt, **und dann
+endete der Weg**: Es gab keinen Übergang, der ein Konto erhöht. Zwei neue
+Module schließen die Lücke.
+
+**`zuschreibung.rs`: wer welchen Anteil der Pod-Arbeit hatte.** Abgeleitet
+aus Pod-Besetzung und Zuschnitt, nicht aus einem erklärten Feld. ⚑ **Ein
+erklärtes Feld wäre eine Behauptung**, die ein Pod intern falsch melden
+könnte; von außen sieht niemand, wer welchen Zuschnitt gerechnet hat. Was
+abgeleitet wird, kann niemand falsch melden.
+
+**Die Reserve bekommt nichts, und sie wird genannt.** Sie hat nicht
+gerechnet, und Bereitschaft ist eine andere Größe mit einer eigenen
+Quelle, die es noch nicht gibt. Sie stillschweigend wegzulassen sähe aus,
+als hätte es keine gegeben; sie steht deshalb in
+`Zuschreibung::reserve_ohne_anteil`, dieselbe Lehre wie bei
+`Zuteilung::ohne_pod`.
+
+**Die Redundanz-Normierung bleibt draußen**, und das ist kein Vergessen:
+Als Gewicht in einer proportionalen Aufteilung ist eine Halbierung aller
+Werte wirkungslos und verschluckt bei ungeraden Werten nur eine Einheit.
+
+**`ausschuettung.rs`: der Epochenabschluss.** Fortschreiben, prägen,
+aufteilen, gutschreiben, in dieser Reihenfolge und mit dem ganzen Plan
+vor der ersten Zustandsänderung. ⚑ **Es wird nichts geprägt, was nicht
+gutgeschrieben wird:** Koordinatoren, Validatoren und Prüfer haben noch
+keine Gewichtsquelle, und ihre Anteile ins Treasury zu schieben, damit
+die Summe aufgeht, hieße die Geldmenge um unverdiente Beträge zu
+vermehren. Sie werden **nicht geprägt** und namentlich benannt. Zu wenig
+zu prägen lässt sich nachholen, zu viel nicht.
+
+**Ohne Auszahlungskonto kein Anteil**, und das Gewicht des Übergangenen
+zählt nicht: Die Übrigen teilen den vollen Anteil ihrer Klasse. Die
+Übergangenen stehen namentlich im Ergebnis.
+
+⚑ **Fund 107: Die Datei, die entscheidet, wer wie viel bekommt, stand
+nicht in der Gleitkomma-Prüfliste.** `vtfe.rs` zählt die
+Multiplikations-Additionen je Zuschnitt und legt damit jeden Anteil fest;
+sie lief seit ihrer Entstehung ungeprüft mit. Aufgefallen ist es nur,
+weil zwei neue Dateien daneben eingetragen wurden. **Dieselbe Klasse wie
+Fund 84, Fund 44 und Fund 103, zum vierten Mal**, und deshalb steht das
+ganze Verzeichnis jetzt in der Vollständigkeitsprüfung, mit
+`utilization.rs` als benannter Ausnahme. Der Konsenspfad wuchs damit von
+84 auf 88 Dateien.
+
+`Abschlussfehler` hat jetzt `Display` und `Error`, wie jeder andere
+Fehlertyp hier.
+
+### v0.12.0 – 2026-08-31 (⚑ Punkt 38: der Burn wurde verbrannt und vergessen)
+
+`epochenabschluss_burn` schreibt den geglätteten Burn um eine Epoche
+fort, aus der Epochensumme, die der Ledger seit heute mitzählt. Vier
+Tests, zwei Gegenproben.
+
+⚑ **Gefunden bei der Suche nach dem Ort einer Auszahlung.** Kap. 5.2
+leitet die Prägung `m_e` aus dem geglätteten Burn ab, den geglätteten
+aus dem Burn je Epoche. **Der Ledger zerstörte die Münzen und vergaß
+sofort, wie viele es waren:** `burn_to_credits` senkte den Kontostand
+und schrieb nirgends mit. Die Prägungsformel hatte damit keine Eingabe
+im Zustand, und `ema_update` war eine Funktion ohne Aufrufer außerhalb
+der Simulation.
+
+**Gezählt wird das Verbrannte, nicht das Gutgeschriebene.** Der
+Rundungsrest bei der Umrechnung in Credits ist ebenfalls vernichtet und
+gehört dazu.
+
+⚑ **Die Fortschreibung darf je Epoche genau einmal laufen.** Zweimal
+gerufen zieht sie den Durchschnitt ein zweites Mal in Richtung derselben
+Beobachtung, und das Ergebnis sähe unauffällig aus. Der Zustand merkt
+sich deshalb, bis zu welcher Epoche fortgeschrieben ist, und ein zweiter
+Aufruf ist ein Fehler und kein Wiederholungsversuch.
+
+**Sie steht hier und nicht im Ledger**, weil die Formel zur Wirtschaft
+gehört und `myl-tokenomics` ohnehin an `myl-ledger` hängt; umgekehrt
+wäre es ein Ring. Dasselbe Muster wie beim Slashing.
+
+**Damit ist ein Glied der Kette geschlossen, nicht die Kette.** Damit
+eine Prägung ein Konto erreicht, fehlen drei weitere Stücke, und jedes
+ist eine Festlegung: Ein PoI-Bündel trägt keine Zuschreibung je Miner
+und keine Adresse; `MinerId` und `Address` sind absichtlich verschiedene
+Typen über denselben Bytes, und ob ein Miner unter seiner Kennung oder
+unter einer eingetragenen Adresse bezahlt wird, ist ungeklärt; ein
+Treasury-Konto gibt es nicht.
 
 ### v0.11.0 – 2026-08-29 (die Summe stimmt jetzt nachweislich immer)
 
