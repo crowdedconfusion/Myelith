@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "integer-llm-runtime",

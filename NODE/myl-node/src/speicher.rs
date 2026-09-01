@@ -413,6 +413,7 @@ mod tests {
             prev_block_hash: Hash::sha256(&hoehe.to_le_bytes()),
             timestamp_ms: 1_700_000_000_000 + hoehe,
             state_root: Hash::sha256(b"zustand"),
+            saatquelle: None,
         });
         b.txs.push(
             Transaktion::signiere(

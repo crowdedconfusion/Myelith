@@ -116,6 +116,31 @@ pub struct BlockHeader {
     /// vorschlagen, und das Komitee hätte nichts, woran es den Fehler
     /// festmachen könnte.
     pub state_root: Hash,
+    /// Die Saatquelle für die Stichprobenlotterie des Vorgängers
+    /// (Punkt 44).
+    ///
+    /// # ⚑ Warum sie in den Block muss und nicht lokal bleiben kann
+    ///
+    /// Die Saat entscheidet, **wer nachgerechnet wird**, und das ist
+    /// eine Konsensentscheidung. Das Commitzertifikat entsteht in der
+    /// Runde und liegt danach **lokal** bei dem, der es zusammengesetzt
+    /// hat; zwei Knoten mit verschiedenen Zertifikaten zögen
+    /// verschiedene Segmente. **Eine Saat aus lokalem Zustand ist keine
+    /// Saat, sondern eine Meinung.**
+    ///
+    /// Hier steht deshalb, was der Erzeuger als Quelle benutzt hat, und
+    /// jeder rechnet damit dasselbe. Dieselbe Bauart wie `LastCommit`
+    /// in Tendermint: Ein Block trägt den Beleg für seinen Vorgänger.
+    ///
+    /// ⚑ **`None` heißt Blockhash**, und das ist der Rückfall für die
+    /// erste Runde und für einen Knoten ohne Zertifikat. Er ist
+    /// **schlechter** (unbegrenzter Mahlraum statt höchstens sechzehn
+    /// Bit, Fund 120) und deshalb ausdrücklich benannt statt
+    /// stillschweigend.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Feldreihenfolge ist
+    /// Konsensvertrag.
+    pub saatquelle: Option<Vec<u8>>,
 }
 
 /// Trennzeichen für die Transaktionsunterschrift.
@@ -428,6 +453,7 @@ mod tests {
             prev_block_hash: test_hash(0),
             timestamp_ms: 1_700_000_000_000,
             state_root: test_hash(99),
+            saatquelle: None,
         }
     }
 

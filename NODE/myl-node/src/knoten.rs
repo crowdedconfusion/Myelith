@@ -488,6 +488,11 @@ impl Knoten {
         let jetzt = self.uhr_ms();
         let (laufende, raus) =
             Konsensrunde::beginnen(genesis, schluessel, vorschlag, jetzt, timeouts)?;
+        // ⚑ **Und die Kette bekommt den Stimmsatz** (Punkt 44). Ohne ihn
+        // prüft sie eine Saatquelle nur gegen den Vorgänger und nicht
+        // gegen die Unterschriften; sie sagt das dann auch, statt
+        // stillschweigend alles anzunehmen.
+        self.kette.stimmsatz_setzen(genesis.stimmberechtigte());
         let runde = laufende.runde();
         self.protokoll.schreibe(
             Eintrag::neu("konsens_runde_beginnt")
@@ -1061,6 +1066,18 @@ impl Knoten {
     /// zuerst**, das steckt in [`Kette::baue_block`]: Der Zustand wird
     /// angewandt, bevor die Wurzel in den Block geschrieben wird.
     pub async fn erzeuge_block(&mut self) -> bool {
+        // ⚑ **Die Saatquelle aus dem eigenen Commitzertifikat** (Punkt
+        // 44). Sie geht in den Block, damit jeder dieselbe Stichprobe
+        // zieht; eine Saat aus lokalem Zustand wäre keine Saat, sondern
+        // eine Meinung.
+        if let Some(z) = self.konsens.as_ref().and_then(|k| k.commitzertifikat()) {
+            // ⚑ **Das ganze Zertifikat, nicht nur das Aggregat.** Eine
+            // Quelle, die sich nicht selbst beschreibt, kann der
+            // Empfänger nicht prüfen; mit dem Zertifikat kann er es.
+            if let Ok(roh) = borsh::to_vec(z) {
+                self.kette.saatquelle_setzen(roh);
+            }
+        }
         let wartend = self.kette.wartend();
         let block = self.kette.baue_block();
         let daten = match borsh::to_vec(&block) {
@@ -1298,6 +1315,13 @@ impl Knoten {
                         // `passt-nicht-an` gesehen.
                         let ablehnungsart = match grund {
                             crate::kette::KettenFehler::SchonBekannt => "dublette",
+                            // ⚑ Eigene Marke: Eine untragende Saatquelle
+                            // ist ein Befund über den **Erzeuger**, kein
+                            // Anschlussproblem, und sie darf keine
+                            // Nachforderung auslösen.
+                            crate::kette::KettenFehler::SaatquelleTraegtNicht => {
+                                "saatquelle-traegt-nicht"
+                            }
                             crate::kette::KettenFehler::PasstNichtAn { .. } => "passt-nicht-an",
                             crate::kette::KettenFehler::ZustandWeichtAb { .. } => {
                                 "zustand-weicht-ab"

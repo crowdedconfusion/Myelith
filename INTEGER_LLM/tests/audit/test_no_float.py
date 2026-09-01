@@ -242,6 +242,10 @@ CONSENSUS_PATH = [
     # damit ueber Slashing. Gleitkomma hier hiesse: zwei Knoten kommen zu
     # verschiedenen Urteilen ueber denselben Miner.
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "nachrechner.rs",
+    # 2026-09-01: Die Anzeige entscheidet, wer beschuldigt wird. Ein
+    # Gleitkommawert an der Zuordnung Stelle -> Shard hiesse: zwei
+    # Knoten beschuldigen zwei verschiedene Miner.
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "anzeige.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "challenge.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "bisection.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",

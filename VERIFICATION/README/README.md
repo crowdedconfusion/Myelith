@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.16.0
+> **Version:** 0.17.0
 > **Datum:** 2026-09-01
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -134,6 +134,34 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.17.0 – 2026-09-01 (die Streitanzeige, Punkt 45)
+
+**Der Bisektionspfad stand, das Topic stand, `validate_structure` wurde
+in der Netzschicht geprüft, und niemand erzeugte eine `Challenge`.**
+Damit fand Stufe 2 etwas und tat nichts damit.
+
+⚑ **Die eigentliche Frage ist, wen es trifft.** Die Spur läuft über
+**alle** Shards eines Pods; eine Abweichung an Stelle `j` gehört dem
+Shard, dessen Layerbereich `j` enthält, und keinem anderen. **Wer hier
+danebengreift, beschuldigt einen Unschuldigen**, und zwar mit einem
+Beweisstück, das gegen ihn zählt.
+
+Deshalb gibt `beschuldigter` **`None`**, wenn kein Bereich passt, statt
+auf den ersten zu zeigen: **Keine Anzeige ist besser als die falsche.**
+Ein Loch in den Zuständigkeiten oder eine Stelle jenseits aller Bereiche
+führt zu keiner Anzeige, sondern zu einem benannten Fehler.
+
+⚑ **Unterschrieben wird in der Rolle Checker, und zwar hier.** Eine
+unsignierte Anzeige wäre „ein Hebel zum Schikanieren, den jeder ohne
+Einsatz ziehen kann": Der Angeklagte muss antworten, und das heißt seit
+der Umstellung auf Nachrechnen, eine ganze Folge neu zu rechnen. **Erst
+die Struktur, dann die Unterschrift:** Eine unterschriebene Anzeige,
+die sich selbst widerspricht, wäre ein gültiger Beleg für Unsinn.
+
+**Die Zuständigkeiten kommen als Argument**, nicht aus TOKENOMICS.
+`ShardZuschnitt` liegt dort, und VERIFICATION hängt nicht daran; eine
+neue Kante für eine Zahl wäre der falsche Preis.
 
 ### v0.16.0 – 2026-09-01 (der Nachrechner, Punkt 45)
 

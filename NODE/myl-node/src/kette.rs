@@ -190,6 +190,13 @@ pub enum KettenFehler {
     /// errechnet. Irgendwo im Ledger-Pfad ist etwas nicht
     /// deterministisch.
     ZustandWeichtAb { erwartet: Hash, errechnet: Hash },
+    /// Die Saatquelle des Blocks trägt nicht (Punkt 44).
+    ///
+    /// ⚑ **Eine Ablehnung und keine Warnung.** Die Saat entscheidet, wer
+    /// nachgerechnet wird; eine Quelle, die niemand belegt, ist ein frei
+    /// gewählter Wert und damit unbegrenzter Mahlraum. Sie durchzulassen
+    /// hieße, das Feld gleich wegzulassen.
+    SaatquelleTraegtNicht,
     /// **Die Höhe im Kopf passt nicht zur Kette.**
     ///
     /// Der Vorgängerhash bindet die Kette schon; diese Prüfung hält das
@@ -217,6 +224,10 @@ impl std::fmt::Display for KettenFehler {
                 &bekommen.to_hex()[..16]
             ),
             Self::SchonBekannt => write!(f, "bereits übernommen"),
+            Self::SaatquelleTraegtNicht => write!(
+                f,
+                "die Saatquelle trägt nicht: kein Zertifikat des Vorgängers"
+            ),
             Self::ZustandWeichtAb { erwartet, errechnet } => write!(
                 f,
                 "Zustandswurzel weicht ab: Block sagt {}, errechnet {}",
@@ -242,6 +253,21 @@ pub struct Kette {
     hoehe: u64,
     letzter_hash: Hash,
     zustand: LedgerState,
+    /// Der Stimmsatz, gegen den Saatquellen geprüft werden (Punkt 44).
+    ///
+    /// ⚑ **`None` heißt: nicht prüfbar, und das wird gemeldet.** Ein
+    /// Knoten ohne Stimmsatz kann eine Aggregatsignatur nicht
+    /// nachrechnen; er soll deshalb sagen, dass er es nicht tut, statt
+    /// stillschweigend alles anzunehmen.
+    stimmsatz: Option<myl_consensus::validator::VotingSet>,
+    /// Die Saatquelle, die der nächste erzeugte Block tragen soll
+    /// (Punkt 44).
+    ///
+    /// ⚑ **Sie kommt von außen, weil sie im Konsens entsteht.** Die
+    /// Kette kennt keine Runde und kein Zertifikat; der Knoten setzt
+    /// sie, sobald er eines hat. `None` heißt Blockhash, und das ist
+    /// der schlechtere Rückfall (Fund 120).
+    naechste_saatquelle: Option<Vec<u8>>,
     /// Die zuletzt gezogene Stichprobe, mit der Epoche, zu der sie
     /// gehört (Punkt 45).
     ///
@@ -317,6 +343,8 @@ impl Kette {
             // lehnte die Kettendatei ihre eigene Kette ab.
             letzter_hash: Self::startwert(),
             zustand,
+            stimmsatz: None,
+            naechste_saatquelle: None,
             letzte_stichprobe: None,
             mempool: Vec::new(),
             bekannt: std::collections::HashSet::new(),
@@ -627,6 +655,59 @@ impl Kette {
         )
     }
 
+    /// Setzt den Stimmsatz, gegen den Saatquellen geprüft werden.
+    pub fn stimmsatz_setzen(&mut self, satz: myl_consensus::validator::VotingSet) {
+        self.stimmsatz = Some(satz);
+    }
+
+    /// Prüft die Saatquelle eines Blocks (Punkt 44).
+    ///
+    /// # ⚑ Zwei Bindungen, und die erste wiegt schwerer
+    ///
+    /// 1. **Das Zertifikat gehört zum Vorgänger dieses Blocks.** Sonst
+    ///    reichte ein Erzeuger ein altes oder fremdes Zertifikat ein und
+    ///    hätte damit eine Saat, die er sich aussuchen kann.
+    /// 2. **Die Aggregatsignatur trägt gegen den Stimmsatz.** Ohne sie
+    ///    wären die Unterzeichner eine Behauptung.
+    ///
+    /// ⚑ **Ohne Stimmsatz wird nur die erste geprüft**, und das ist
+    /// weniger, aber nicht nichts: Die Bindung an den Vorgänger allein
+    /// nimmt dem Erzeuger schon jede Wahl **zwischen** Zertifikaten.
+    fn saatquelle_traegt(&self, block: &Block) -> bool {
+        let Some(roh) = block.header.saatquelle.as_deref() else {
+            // Kein Feld heißt Blockhash als Rückfall; das ist erlaubt
+            // und benannt (Fund 120).
+            return true;
+        };
+        use borsh::BorshDeserialize;
+        let mut rest = roh;
+        let Ok(zert) =
+            myl_consensus::round_change::Commitzertifikat::deserialize(&mut rest)
+        else {
+            return false;
+        };
+        if !rest.is_empty() {
+            return false;
+        }
+        if zert.block_hash != block.header.prev_block_hash {
+            return false;
+        }
+        match &self.stimmsatz {
+            Some(satz) => zert.verify(satz).is_ok(),
+            None => true,
+        }
+    }
+
+    /// Setzt die Saatquelle für den nächsten erzeugten Block.
+    ///
+    /// ⚑ **Nur der Erzeuger setzt sie; alle anderen lesen sie aus dem
+    /// Block.** Anders ginge es nicht: Wer sie aus eigenem Zustand
+    /// nähme, zöge eine andere Stichprobe als seine Nachbarn, und wer
+    /// nachgerechnet wird, ist eine Konsensentscheidung.
+    pub fn saatquelle_setzen(&mut self, quelle: Vec<u8>) {
+        self.naechste_saatquelle = Some(quelle);
+    }
+
     /// Die zuletzt gezogene Stichprobe (Punkt 45).
     ///
     /// Leer, solange keine Epoche abgeschlossen wurde. **Sie wird
@@ -699,8 +780,16 @@ impl Kette {
         bezeugt: &[myl_types::PoIBundle],
         epoche: u64,
         letzter_hash: &Hash,
+        saatquelle: Option<&[u8]>,
     ) -> Vec<crate::stichprobe::Segmentstichprobe> {
-        let saat = crate::stichprobe::stichprobensaat(letzter_hash, epoche);
+        // ⚑ **Die Quelle steht im Block, der Blockhash ist der
+        // Rückfall.** Der Rückfall ist schlechter (unbegrenzter
+        // Mahlraum statt höchstens sechzehn Bit, Fund 120) und deshalb
+        // benannt statt stillschweigend.
+        let saat = crate::stichprobe::stichprobensaat(
+            saatquelle.unwrap_or_else(|| letzter_hash.as_bytes()),
+            epoche,
+        );
         crate::stichprobe::stichprobe_der_epoche(bezeugt, &saat, Self::STICHPROBE_BP)
     }
 
@@ -738,6 +827,7 @@ impl Kette {
         zustand: &mut LedgerState,
         neue_epoche: u64,
         letzter_hash: &Hash,
+        saatquelle: Option<&[u8]>,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) {
         if neue_epoche <= zustand.epoch.0 {
@@ -759,7 +849,8 @@ impl Kette {
         // Segments, und die liegt beim Koordinator. Was hier steht, ist
         // die Ziehung; sie **allein** macht `p` von null verschieden und
         // ist die Vorbedingung für alles Weitere.
-        let stichprobe = Self::stichprobe_der_epoche(&bezeugt, alte_epoche, letzter_hash);
+        let stichprobe =
+            Self::stichprobe_der_epoche(&bezeugt, alte_epoche, letzter_hash, saatquelle);
         *gezogen = Some((alte_epoche, stichprobe));
         // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
         // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
@@ -800,9 +891,10 @@ impl Kette {
         txs: &[Transaktion],
         epoch: u64,
         letzter_hash: &Hash,
+        saatquelle: Option<&[u8]>,
         gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) {
-        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, gezogen);
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, saatquelle, gezogen);
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -903,8 +995,16 @@ impl Kette {
 
         // ⚑ **Nur wenn ein Epochenwechsel stattfand**, sonst löschte
         // jeder Block die Ziehung der laufenden Epoche.
+        let quelle = self.naechste_saatquelle.clone();
         let mut gezogen = None;
-        Self::anwenden(&mut self.zustand, &txs, epoch, &self.letzter_hash, &mut gezogen);
+        Self::anwenden(
+            &mut self.zustand,
+            &txs,
+            epoch,
+            &self.letzter_hash,
+            quelle.as_deref(),
+            &mut gezogen,
+        );
         if gezogen.is_some() {
             self.letzte_stichprobe = gezogen;
         }
@@ -915,6 +1015,7 @@ impl Kette {
             prev_block_hash: self.letzter_hash,
             timestamp_ms: crate::protokoll::jetzt_ms().max(0) as u64,
             state_root: self.zustand.commitment(),
+            saatquelle: quelle,
         });
         for tx in txs {
             block.add_transaction(tx);
@@ -937,6 +1038,13 @@ impl Kette {
         let hash = block.hash();
         if self.bekannt.contains(&hash) {
             return Err(KettenFehler::SchonBekannt);
+        }
+        // ⚑ **Die Saatquelle wird geprüft, bevor gerechnet wird**
+        // (Punkt 44). Sie geht in keine Zustandswurzel ein, also fiele
+        // sie sonst niemandem auf, und ein frei gewählter Wert wäre
+        // unbegrenzter Mahlraum.
+        if !self.saatquelle_traegt(block) {
+            return Err(KettenFehler::SaatquelleTraegtNicht);
         }
         if block.header.prev_block_hash != self.letzter_hash {
             return Err(KettenFehler::PasstNichtAn {
@@ -973,11 +1081,14 @@ impl Kette {
         // Block folgt, hätte den Befund verschluckt.
         let mut versuch = self.zustand.clone();
         let mut gezogen = None;
+        // ⚑ **Die Quelle kommt aus dem Block, nicht aus eigenem
+        // Zustand.** Sonst zöge jeder Knoten eine andere Stichprobe.
         Self::anwenden(
             &mut versuch,
             &block.txs,
             block.header.epoch,
             &self.letzter_hash,
+            block.header.saatquelle.as_deref(),
             &mut gezogen,
         );
         let errechnet = versuch.commitment();
@@ -1868,6 +1979,102 @@ mod tests {
             myl_types::bls::aggregate_signatures(&teile).expect("Aggregat");
         buendel.aggregate_sig = myl_types::bls::BlsSignature(aggregat.0);
     }
+
+    /// ⚑ **Eine erfundene Saatquelle wird abgelehnt** (Punkt 44).
+    ///
+    /// Ohne diese Prüfung könnte ein Erzeuger beliebige Bytes eintragen:
+    /// Sie gehen in keine Zustandswurzel ein, also fiele es niemandem
+    /// auf, und der Mahlraum wäre unbegrenzt statt höchstens sechzehn
+    /// Bit (Fund 120).
+    #[test]
+    fn eine_erfundene_saatquelle_wird_abgelehnt() {
+        let mut k = Kette::probestand();
+        let mut block = k.baue_block();
+        block.header.saatquelle = Some(b"frei erfunden".to_vec());
+        let mut leser = Kette::probestand();
+        assert_eq!(
+            leser.uebernimm(&block),
+            Err(KettenFehler::SaatquelleTraegtNicht),
+            "erfundene Bytes gingen als Saatquelle durch"
+        );
+    }
+
+    /// ⚑ **Und ein Zertifikat für einen *anderen* Block ebenso.**
+    ///
+    /// Das ist die schwerere Hälfte: Ein altes oder fremdes Zertifikat
+    /// ist strukturell einwandfrei, und wer es einsetzen darf, **wählt
+    /// unter Zertifikaten** und damit seine Saat.
+    #[test]
+    fn ein_zertifikat_fuer_einen_anderen_block_wird_abgelehnt() {
+        use myl_consensus::round_change::Commitzertifikat;
+        let mut k = Kette::probestand();
+        let fremd = Commitzertifikat {
+            round: 1,
+            block_hash: Hash::sha256(b"ein ganz anderer Block"),
+            committers: vec![myl_types::ids::MinerId::new([1; 32])],
+            aggregate: myl_types::bls::BlsAggregateSignature([0; 96]),
+        };
+        let mut block = k.baue_block();
+        block.header.saatquelle = Some(borsh::to_vec(&fremd).expect("borsh"));
+        let mut leser = Kette::probestand();
+        assert_eq!(
+            leser.uebernimm(&block),
+            Err(KettenFehler::SaatquelleTraegtNicht)
+        );
+    }
+
+    /// Ohne Saatquelle bleibt der Blockhash der Rückfall, und der ist
+    /// erlaubt: benannt schlechter, nicht verboten.
+    #[test]
+    fn ohne_saatquelle_wird_ein_block_angenommen() {
+        let mut k = Kette::probestand();
+        let block = k.baue_block();
+        assert!(block.header.saatquelle.is_none());
+        let mut leser = Kette::probestand();
+        assert!(leser.uebernimm(&block).is_ok());
+    }
+
+    /// ⚑ **Die Saatquelle aus dem Block bestimmt die Ziehung.**
+    ///
+    /// Das ist die Zusage aus Punkt 44: Wer den Block übernimmt, liest
+    /// die Quelle **aus ihm** und nicht aus eigenem Zustand. Zwei Knoten
+    /// mit verschiedenen Quellen zögen verschiedene Segmente, und wer
+    /// geprüft wird, ist eine Konsensentscheidung.
+    ///
+    /// ⛑ **Was dieser Test nicht zeigt, und es gehört gesagt:** dass die
+    /// Quelle **echt** ist. Ein Erzeuger kann heute beliebige Bytes
+    /// eintragen; sie gehen in keine Zustandswurzel ein, also fällt es
+    /// niemandem auf. **Damit ist der Mahlraum wieder unbegrenzt**, wie
+    /// beim Blockhash, und die sechzehn Bit aus Fund 120 sind erst
+    /// erreicht, wenn ein Übernehmer die Quelle gegen das Zertifikat des
+    /// Vorgängers prüft. **Das ist der offene Rest von Punkt 44.**
+    #[test]
+    fn die_saatquelle_aus_dem_block_bestimmt_die_ziehung() {
+        let bezeugt: Vec<myl_types::PoIBundle> = vec![myl_types::PoIBundle {
+            epoch: EpochId(0),
+            pod: myl_types::ids::PodId::new([5; 32]),
+            segments_root: myl_types::ids::MerkleRoot::new([5; 32]),
+            vtfe_claimed: 1,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1_000,
+        }];
+        let mit =
+            Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), Some(b"zertifikat"));
+        let ohne = Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), None);
+        assert_eq!(mit.len(), 20);
+        assert_eq!(ohne.len(), 20);
+        assert_ne!(
+            mit, ohne,
+            "die Quelle aus dem Block muss die Ziehung aendern, sonst wirkt sie nicht"
+        );
+        // Zweimal dieselbe Quelle ergibt dieselbe Ziehung: Darauf ruht,
+        // dass zwei Knoten dasselbe pruefen.
+        assert_eq!(
+            mit,
+            Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), Some(b"zertifikat"))
+        );
+    }
+
 
     /// ⚑ **Punkt 40 als Ganzes: bezeugte Arbeit erreicht ein Konto.**
     ///

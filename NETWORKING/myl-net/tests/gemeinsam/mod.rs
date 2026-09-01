@@ -77,6 +77,37 @@ pub async fn warte_auf_peers(
     }
 }
 
+/// Wartet, bis **höchstens** `ziel` Peers verbunden sind, längstens `frist`.
+///
+/// # ⚑ Die Gegenrichtung, und sie fehlte
+///
+/// [`warte_auf_peers`] wartet auf ein **Erreichen**. Nach einer Sperre
+/// wartet man auf das Gegenteil: dass die bestehende Verbindung
+/// wegfällt. Dafür stand in `chaos.rs` ein fester
+/// `sleep(500 ms)`. ⚑ **Der ist am 2026-09-01 unter Last
+/// umgefallen.** Der volle Lauf brauchte 28,6 Sekunden statt 3,6; in
+/// der Zeit war die Sperre noch nicht wirksam, die Nachricht kam durch,
+/// und der Partitionstest meldete einen Fehler, den es nicht gab.
+///
+/// **Ein Test, der nur auf einer unbeschäftigten Maschine besteht, ist
+/// kein Test, sondern ein Wetterbericht.** Gewartet wird deshalb auf die
+/// **Wirkung** und nicht auf die Uhr; wer früher fertig ist, wartet
+/// nicht länger, und wer länger braucht, bekommt die Zeit.
+pub async fn warte_auf_trennung(
+    kommandos: &mpsc::UnboundedSender<NodeCommand>,
+    ziel: usize,
+    frist: Duration,
+) -> usize {
+    let ende = tokio::time::Instant::now() + frist;
+    loop {
+        let n = peerzahl(kommandos).await;
+        if n <= ziel || tokio::time::Instant::now() >= ende {
+            return n;
+        }
+        tokio::time::sleep(TAKT).await;
+    }
+}
+
 /// Wartet, bis die Peerzahl `ruhe` lang unverändert bleibt, längstens `frist`.
 ///
 /// Für Tests, die nicht auf ein Erreichen warten, sondern darauf, dass

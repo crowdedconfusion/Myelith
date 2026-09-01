@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.24.0
+> **Version:** 0.27.0
 > **Datum:** 2026-09-01
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,86 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.27.0 – 2026-09-01 (die Saatquelle wird geprüft, Punkt 44 geschlossen)
+
+**Der offene Rest von heute Nachmittag ist zu.** Ein Erzeuger konnte
+beliebige Bytes in `saatquelle` schreiben; sie gehen in keine
+Zustandswurzel ein, also fiel es niemandem auf, **und der Mahlraum war
+wieder unbegrenzt** statt höchstens sechzehn Bit (Fund 120).
+
+⚑ **Die Quelle beschreibt sich jetzt selbst:** Sie trägt das ganze
+`Commitzertifikat` in Borsh, nicht nur das Aggregat. Eine Quelle, die
+sich nicht selbst beschreibt, kann der Empfänger nicht prüfen.
+
+**Zwei Bindungen, und die erste wiegt schwerer:**
+
+1. ⚑ **Das Zertifikat gehört zum Vorgänger dieses Blocks.** Sonst
+   reichte ein Erzeuger ein altes oder fremdes Zertifikat ein, es wäre
+   strukturell einwandfrei, und er **wählte damit unter Zertifikaten**
+   und so seine Saat.
+2. **Die Aggregatsignatur trägt gegen den Stimmsatz.** Ohne sie wären
+   die Unterzeichner eine Behauptung.
+
+**Geprüft wird vor dem Rechnen**, in `uebernimm`, mit eigener
+Fehlermarke: Eine untragende Saatquelle ist ein Befund über den
+**Erzeuger**, kein Anschlussproblem, und sie darf keine Nachforderung
+auslösen.
+
+⚑ **Ohne Stimmsatz wird nur die erste Bindung geprüft, und der Knoten
+sagt es.** Das ist weniger, aber nicht nichts: Die Bindung an den
+Vorgänger nimmt schon jede Wahl **zwischen** Zertifikaten. Die Kette
+bekommt den Satz aus der Genesis, sobald eine Konsensrunde beginnt.
+
+**Ohne Saatquelle bleibt der Blockhash der Rückfall:** benannt
+schlechter, nicht verboten.
+
+### v0.26.0 – 2026-09-01 (die Saatquelle geht in den Block, Punkt 44)
+
+Der Erzeuger schreibt sie aus seinem **Commitzertifikat** in den
+Blockkopf, der Übernehmer liest sie **aus dem Block**. Damit zieht jeder
+dieselbe Stichprobe.
+
+⛑ **Und der offene Rest ist benannt, nicht verschwiegen:** Ein Erzeuger
+kann heute **beliebige Bytes** eintragen. Sie gehen in keine
+Zustandswurzel ein, also fällt es niemandem auf. ⚑ **Damit ist der
+Mahlraum wieder unbegrenzt**, wie beim Blockhash, und die sechzehn Bit
+aus Fund 120 sind erst erreicht, **wenn ein Übernehmer die Quelle gegen
+das Zertifikat des Vorgängers prüft**. Das steht am Test, damit niemand
+den grünen Lauf für mehr hält, als er sagt.
+
+### v0.25.0 – 2026-09-01 (⚑ Fund 120: die Saat der Lotterie, und was sie nicht leistet)
+
+`saat_aus_zertifikat` (Punkt 44). Die Stichprobensaat soll aus der
+**Aggregatsignatur des Komitees** kommen, nicht aus dem Blockhash: Der
+Blockhash gibt dem Erzeuger des Abschlussblocks **unbegrenzten**
+Mahlraum, denn er variiert den Inhalt, bis die Ziehung ihm passt.
+
+⛑ **Und die Entscheidung von heute Vormittag stand auf einer falschen
+Annahme, die von mir war.** Sie lautete: „BLS ist deterministisch, also
+kann niemand unter Kandidaten wählen." ⚑ **Die Eindeutigkeit gilt für
+Nachricht *und* Schlüsselmenge**, und das Commitzertifikat trägt eine
+**variable** Unterzeichnermenge; wer es zusammenstellt, wählt sie,
+solange sie das Quorum trägt.
+
+**Gemessen** (Komitee 21, Schwelle 15): 4,1 Bit Mahlraum bei 16
+eingegangenen Stimmen, 9,9 bei 18, **16,3 bei 21**.
+
+**Die Entscheidung bleibt trotzdem:** Unbegrenzt auf höchstens sechzehn
+Bit ist ein echter Gewinn, und sechzehn Bit sind nicht null. **Eindeutig
+wird es erst mit Schwellen-BLS und verteilter Schlüsselerzeugung**, wo
+*irgendwelche* `t` von `n` dasselbe ergeben; das ist ein eigenes
+Vorhaben und berührt Punkt 27.
+
+⚑ **Die Unterzeichnermenge geht in die Saat ein**, nicht nur das
+Aggregat. Sie wegzulassen hieße nicht, das Mahlen zu verhindern, sondern
+es **unsichtbar** zu machen: Dieselbe Saat käme dann aus zwei
+verschiedenen Zertifikaten.
+
+**Was noch fehlt:** Der Epochenabschluss übergibt heute den Blockhash;
+das Zertifikat liegt im Konsens und muss dorthin durchgereicht werden.
+Die Grenze steht am Doc-Kommentar der Saatfunktion, damit niemand sie
+für schon erledigt hält.
 
 ### v0.24.0 – 2026-09-01 (das Fragen, Punkt 45)
 

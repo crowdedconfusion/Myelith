@@ -81,12 +81,54 @@ pub struct Segmentstichprobe {
 }
 
 /// Die Saat der Stichprobe, aus einer Quelle und dem Trennstring.
-pub fn stichprobensaat(quelle: &Hash, epoche: u64) -> [u8; 32] {
-    let mut vor = Vec::with_capacity(DST_STICHPROBE.len() + 32 + 8);
+///
+/// ⚑ **Die Quelle soll die Aggregatsignatur des Komitees sein, nicht der
+/// Blockhash** (Punkt 44). Der Blockhash gibt dem Erzeuger des
+/// Abschlussblocks **unbegrenzten** Mahlraum: Er variiert den
+/// Blockinhalt, bis die Ziehung seine eigenen Segmente verschont.
+///
+/// ⛑ **Und die Aggregatsignatur ist nicht eindeutig** (Fund 120,
+/// 2026-09-01). BLS ist eindeutig für Nachricht **und** Schlüsselmenge;
+/// das Commitzertifikat trägt aber eine **variable** Unterzeichnermenge,
+/// und wer es zusammenstellt, wählt sie, solange sie das Quorum trägt.
+/// Gemessen bei Komitee 21 und Schwelle 15:
+///
+/// | erhaltene Stimmen | gültige Teilmengen | Mahlraum |
+/// |---|---|---|
+/// | 16 | 17 | 4,1 Bit |
+/// | 18 | 988 | 9,9 Bit |
+/// | 21 | 82 160 | 16,3 Bit |
+///
+/// **Unbegrenzt auf höchstens sechzehn Bit ist ein echter Gewinn, und
+/// sechzehn Bit sind nicht null.** Eindeutig wird es erst mit
+/// Schwellen-BLS und verteilter Schlüsselerzeugung, wo *irgendwelche*
+/// `t` von `n` dasselbe ergeben. Das ist ein eigenes Vorhaben.
+pub fn stichprobensaat(quelle: &[u8], epoche: u64) -> [u8; 32] {
+    let mut vor = Vec::with_capacity(DST_STICHPROBE.len() + quelle.len() + 8);
     vor.extend_from_slice(DST_STICHPROBE);
-    vor.extend_from_slice(quelle.as_bytes());
+    vor.extend_from_slice(quelle);
     vor.extend_from_slice(&epoche.to_le_bytes());
     Hash::sha256(&vor).0
+}
+
+/// Die Saat aus einem Commitzertifikat: **die bevorzugte Quelle**.
+///
+/// ⚑ **Die Unterzeichnermenge geht mit ein, nicht nur das Aggregat.**
+/// Sonst ergäben zwei Zertifikate mit verschiedenen Unterzeichnern und
+/// zufällig gleichem Aggregat dieselbe Saat; das kann nicht vorkommen,
+/// aber die Saat soll **an dem hängen, was das Zertifikat ausmacht**,
+/// und nicht an einem Teil davon.
+pub fn saat_aus_zertifikat(
+    aggregat: &myl_types::bls::BlsAggregateSignature,
+    unterzeichner: &[myl_types::ids::MinerId],
+    epoche: u64,
+) -> [u8; 32] {
+    let mut quelle = Vec::with_capacity(96 + unterzeichner.len() * 32);
+    quelle.extend_from_slice(&aggregat.0);
+    for m in unterzeichner {
+        quelle.extend_from_slice(m.as_bytes());
+    }
+    stichprobensaat(&quelle, epoche)
 }
 
 /// Zieht die Stichprobe einer Epoche aus ihren Bündeln.
@@ -267,10 +309,43 @@ mod tests {
     /// dieselben Segmente.
     #[test]
     fn die_saat_haengt_an_quelle_und_epoche() {
-        let a = stichprobensaat(&Hash::sha256(b"block"), 7);
-        assert_eq!(a, stichprobensaat(&Hash::sha256(b"block"), 7));
-        assert_ne!(a, stichprobensaat(&Hash::sha256(b"block"), 8));
-        assert_ne!(a, stichprobensaat(&Hash::sha256(b"anderer"), 7));
+        let a = stichprobensaat(Hash::sha256(b"block").as_bytes(), 7);
+        assert_eq!(a, stichprobensaat(Hash::sha256(b"block").as_bytes(), 7));
+        assert_ne!(a, stichprobensaat(Hash::sha256(b"block").as_bytes(), 8));
+        assert_ne!(a, stichprobensaat(Hash::sha256(b"anderer").as_bytes(), 7));
+    }
+
+    /// ⚑ **Die Unterzeichnermenge geht in die Saat ein.**
+    ///
+    /// Sie ist der Teil, den ein Zusammensteller waehlen kann (Fund
+    /// 120). Sie **wegzulassen** hiesse nicht, das Mahlen zu
+    /// verhindern, sondern es unsichtbar zu machen: Dieselbe Saat kaeme
+    /// dann aus zwei verschiedenen Zertifikaten.
+    #[test]
+    fn die_unterzeichnermenge_geht_in_die_saat_ein() {
+        use myl_types::bls::BlsAggregateSignature;
+        use myl_types::ids::MinerId;
+        let agg = BlsAggregateSignature([3; 96]);
+        let a = saat_aus_zertifikat(&agg, &[MinerId::new([1; 32]), MinerId::new([2; 32])], 7);
+        let b = saat_aus_zertifikat(&agg, &[MinerId::new([1; 32]), MinerId::new([3; 32])], 7);
+        assert_ne!(a, b, "zwei Unterzeichnermengen ergaben dieselbe Saat");
+        // Und die Reihenfolge zaehlt ebenfalls: Das Zertifikat fuehrt
+        // sie streng aufsteigend, also ist eine andere Reihenfolge ein
+        // anderes Zertifikat.
+        let c = saat_aus_zertifikat(&agg, &[MinerId::new([2; 32]), MinerId::new([1; 32])], 7);
+        assert_ne!(a, c);
+    }
+
+    /// Und das Aggregat allein aendert sie auch.
+    #[test]
+    fn ein_anderes_aggregat_ergibt_eine_andere_saat() {
+        use myl_types::bls::BlsAggregateSignature;
+        use myl_types::ids::MinerId;
+        let u = [MinerId::new([1; 32])];
+        assert_ne!(
+            saat_aus_zertifikat(&BlsAggregateSignature([3; 96]), &u, 7),
+            saat_aus_zertifikat(&BlsAggregateSignature([4; 96]), &u, 7)
+        );
     }
 
     /// **Die Stichprobensaat ist nicht die der Pod-Bildung.**
@@ -286,7 +361,7 @@ mod tests {
     fn die_saat_ist_nicht_der_epochenseed_der_podbildung() {
         let block = Hash::sha256(b"block");
         assert_ne!(
-            stichprobensaat(&block, 7),
+            stichprobensaat(block.as_bytes(), 7),
             myl_scheduler::zonenzuteilung::epochenseed(&block, 7)
         );
     }

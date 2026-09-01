@@ -242,8 +242,18 @@ async fn partitionslauf(sperren: bool) -> (usize, usize) {
 
     if sperren {
         a.sperren(b.peer_id, true).await;
-        // Die bestehende Verbindung schließen lassen.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // ⚑ **Auf die Wirkung warten, nicht auf die Uhr.** Hier stand
+        // ein fester `sleep(500 ms)`, und der ist am 2026-09-01 unter
+        // Last umgefallen: Der volle Lauf brauchte 28,6 Sekunden statt
+        // 3,6, die Sperre war noch nicht wirksam, die Nachricht kam
+        // durch, und der Test meldete einen Fehler, den es nicht gab.
+        let uebrig =
+            gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
+        assert_eq!(
+            uebrig, 0,
+            "die Sperre wurde in zehn Sekunden nicht wirksam; dann misst der \
+             Partitionstest die Frist und nicht die Sperre"
+        );
     }
 
     a.veroeffentliche(2).await;
@@ -313,10 +323,17 @@ async fn eine_sperre_ueberlebt_einen_neuen_verbindungsversuch() {
     assert_eq!(b.empfange(Duration::from_secs(8), Some(1)).await, 1);
 
     a.sperren(b.peer_id, true).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // ⚑ Auf die Wirkung warten, nicht auf die Uhr: dasselbe Muster, das
+    // am 2026-09-01 im Partitionstest unter Last umgefallen ist.
+    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
 
     // B versucht es noch einmal, über dieselbe Adresse.
     b.waehlen(a.adresse.clone());
+    // ⚑ **Hier bleibt eine feste Wartezeit, und das ist Absicht.**
+    // Erwartet wird, dass **nichts** passiert; auf ein Ausbleiben kann
+    // man nicht warten, man kann ihm nur Zeit geben. Eine zu kurze Zeit
+    // ergäbe ein falsches Bestehen, keine falsche Meldung, also die
+    // ungefährliche Richtung.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     a.veroeffentliche(5).await;
@@ -353,7 +370,8 @@ async fn ein_knoten_der_wiederkommt_bekommt_wieder_nachrichten() {
         // Hier verschwindet B: Der Task endet, wenn der Kommandokanal
         // fällt.
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // ⚑ Auf das Verschwinden warten, nicht auf die Uhr.
+    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
 
     let mut c = Knoten::starten(Some(a.adresse.clone())).await;
     a.warte_auf_peers(1, Duration::from_secs(10)).await;
@@ -387,10 +405,13 @@ async fn wiederholtes_trennen_und_verbinden_haelt_das_netz_am_leben() {
 
     for _ in 0..4 {
         a.sperren(b.peer_id, true).await;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // ⚑ Warten, bis die Sperre greift, statt auf 300 ms zu hoffen.
+        gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
         a.sperren(b.peer_id, false).await;
         b.waehlen(a.adresse.clone());
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Und bis die Verbindung wieder steht; bleibt sie aus, geht es
+        // trotzdem weiter, denn der Lauf soll das Flattern aushalten.
+        a.warte_auf_peers(1, Duration::from_secs(10)).await;
     }
     a.warte_auf_peers(1, Duration::from_secs(10)).await;
 

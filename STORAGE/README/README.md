@@ -1,6 +1,6 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
-> **Version:** 0.5.1
+> **Version:** 0.5.2
 > **Datum:** 2026-08-31
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
 > **Speicherentgelt** stehen (`myl-store` v0.5.1, 22 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der

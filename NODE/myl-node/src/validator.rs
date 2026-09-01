@@ -230,6 +230,7 @@ mod tests {
             prev_block_hash: Hash::sha256(b"vorgaenger"),
             timestamp_ms: 1_700_000_000_000,
             state_root: Hash::sha256(b"zustand"),
+            saatquelle: None,
         });
         // Ein Block mit Inhalt: Die Vektoren sind der Grund, warum der
         // Borsh-Parse hier mehr leistet als eine Längenprüfung (Fund 45).

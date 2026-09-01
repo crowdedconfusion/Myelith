@@ -1,6 +1,6 @@
 # networking (`myl-net`)
 
-> **Version:** 0.14.0
+> **Version:** 0.14.1
 > **Datum:** 2026-09-01
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,29 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.14.1 – 2026-09-02 (⛑ ein Test, der nur auf einer ruhigen Maschine bestand)
+
+`eine_partition_trennt_und_heilt_wieder` fiel im vollen Lauf um und
+bestand einzeln dreimal. Der Unterschied war die **Last**: 28,6 Sekunden
+statt 3,6. In der Zeit war die Sperre noch nicht wirksam, die Nachricht
+kam durch, und der Test meldete einen Fehler, den es nicht gab.
+
+⚑ **Ein Test, der nur auf einer unbeschäftigten Maschine besteht, ist
+kein Test, sondern ein Wetterbericht.**
+
+Vier feste Wartezeiten in `chaos.rs` warten jetzt auf die **Wirkung**
+statt auf die Uhr: `warte_auf_trennung` mit großzügiger Frist. Wer früher
+fertig ist, wartet nicht länger; wer länger braucht, bekommt die Zeit.
+
+⚑ **Eine feste Wartezeit bleibt, und das ist Absicht:** Dort wird
+erwartet, dass **nichts** geschieht, und auf ein Ausbleiben kann man
+nicht warten. Sie ist die ungefährliche Richtung, denn zu kurz ergibt ein
+falsches **Bestehen** und keine falsche Meldung.
+
+**Die Stelle war am selben Tag benannt und stehen gelassen worden**, als
+die vier Kopien von `warte_auf_peers` zusammengeführt wurden. Sie hat
+sich noch am selben Tag gemeldet.
 
 ### v0.14.0 – 2026-09-01 (die Umwandlung, die seit je versprochen war)
 

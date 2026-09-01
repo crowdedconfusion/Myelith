@@ -34,7 +34,9 @@ pub use redundancy::{
 pub use delivery::{
     decide_delivery, DeliveryDecision, DeliveryError, first_divergence, should_deliver_confirmed,
 };
+pub mod anzeige;
 pub mod nachrechner;
+pub use anzeige::{anzeige_erheben, beschuldigter, Anzeigefehler, Zustaendigkeit};
 pub use nachrechner::ModellAuditor;
 pub use checker::{
     check_segment, pruefe_spurantwort, CheckError, CheckResult, SegmentAuditor, Spurfehler,

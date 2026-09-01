@@ -194,6 +194,7 @@ async fn ein_echter_block_kommt_an_unsinn_nicht() {
         prev_block_hash: Hash::sha256(b"genesis"),
         timestamp_ms: 1_700_000_000_000,
         state_root: Hash::sha256(b"zustand"),
+        saatquelle: None,
     });
     let gueltig = borsh::to_vec(&block).expect("Serialisierung");
 

@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.34.0 (`myl-consensus` 0.23.0, `myl-scheduler` 0.9.0,
+> **Version:** 0.35.0 (`myl-consensus` 0.24.0, `myl-scheduler` 0.9.0,
 > `myl-ledger` 0.13.0)
 > **Datum:** 2026-09-01
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -107,6 +107,24 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.35.0 – 2026-09-01 (`myl-consensus` v0.24.0: der Block trägt seine Saatquelle)
+
+`BlockHeader.saatquelle`, additiv angehängt (Punkt 44).
+
+⚑ **Warum sie in den Block muss.** Die Saat entscheidet, **wer
+nachgerechnet wird**, und das ist eine Konsensentscheidung. Das
+Commitzertifikat entsteht in der Runde und liegt danach **lokal** bei
+dem, der es zusammengesetzt hat; zwei Knoten mit verschiedenen
+Zertifikaten zögen verschiedene Segmente. **Eine Saat aus lokalem
+Zustand ist keine Saat, sondern eine Meinung.**
+
+Dieselbe Bauart wie `LastCommit` in Tendermint: Ein Block trägt den
+Beleg für seinen Vorgänger.
+
+⚑ **`None` heißt Blockhash**, und das ist der schlechtere Rückfall
+(unbegrenzter Mahlraum statt höchstens sechzehn Bit, Fund 120). Er ist
+deshalb ausdrücklich benannt statt stillschweigend.
 
 ### v0.34.0 – 2026-09-01 (`myl-consensus` v0.23.0, `myl-ledger` v0.14.0: die Anmeldung nennt eine Adresse)
 

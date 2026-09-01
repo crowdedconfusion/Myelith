@@ -68,6 +68,22 @@
 //! und wie viel eine Byte-Epoche einbringt. Das ist ein
 //! Governance-Parameter und eine Festlegung des Projektinhabers; dieses
 //! Modul rechnet in Byte-Epochen und kennt keinen Preis.
+//!
+//! ⚑ **Hergeleitet ist er seit dem 2026-09-01, gesetzt nicht.** Der
+//! Vorschlag hat eine Form und eine Zahl:
+//!
+//! - **Form: ein Verhältnis zum Credit-Preis, kein eigener Parameter.**
+//!   Der Rechenpreis ist dynamisch (`P_{e+1} = P_e · exp(κ(u−u*))`); ein
+//!   fester Speichersatz daneben liefe ihm davon und wäre still
+//!   subventioniert. **Ein Verhältnis kann nicht auseinanderlaufen.**
+//! - **Zahl: eine Byte-Epoche kostet real so viel wie rund 1 420
+//!   Recheneinheiten**, über fünf Empfindlichkeitsfälle zwischen 793 und
+//!   2 840.
+//!
+//! ⚑ **Speicher ist teuer, in Recheneinheiten gemessen**, und deshalb
+//! ist Fund 106 kein Rundungsfehler: Ein Beschleuniger liefert rund
+//! `1e18` Operationen je Stunde, während ein Byte eine Stunde lang
+//! nichts tut außer dazuliegen.
 
 use myl_types::gegenstand::{Gegenstandsart, Manifest};
 

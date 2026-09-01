@@ -2448,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2467,7 +2467,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.24.0"
+version = "0.27.0"
 dependencies = [
  "borsh",
  "getrandom 0.3.4",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "integer-llm-runtime",
