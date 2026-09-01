@@ -130,6 +130,7 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
                         miner_id: MinerId::new(b),
                         hardware_class: HardwareClass::MediumGpu,
                         registration_epoch: 0,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
                     }
                 })
                 .collect();

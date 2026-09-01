@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.17.0
+> **Version:** 0.20.0
 > **Datum:** 2026-09-01
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **185 Tests grün.**
+> **195 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,72 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.20.0 – 2026-09-01 (⚑ Punkt 40 geschlossen: bezeugte Arbeit erreicht ein Konto)
+
+Der Knoten leitet am Epochenwechsel die Zuteilung ab, ordnet die Bündel
+ihren Pods zu und schüttet aus. **Der Weg ist damit durchgehend:**
+Register → Zuteilung → Bündel → Anteile → Konto.
+
+⚑ **Jeder Schritt ist eine Ableitung, keine Angabe.** Wer im Register
+steht, sagt die Kette; wer in welchem Pod sitzt, folgt aus Register,
+Zone und Blockhash; welcher Pod ein Bündel eingereicht hat, folgt aus
+der abgeleiteten Pod-Kennung. Nur die Gewichtung ist gesetzt, und zwar
+von der Governance, nicht von einem Teilnehmer.
+
+**Der Test, an dem der Punkt hängt:** Sechs Miner melden sich an, tragen
+ein Auszahlungskonto ein, jemand verbrennt, ein Bündel kommt in die
+Kette, und am Epochenwechsel wächst das Konto eines Pod-Mitglieds.
+Höchstens vier Konten wachsen, denn ein Pod hat vier Positionen und zwei
+in Reserve.
+
+⚑ **Ein Bündel mit erfundener Pod-Kennung zahlt nichts aus**, und ein
+eigener Test hält das fest. **Das ist die Schranke gegen ein
+gefälschtes Bündel**, solange die Aggregatsignatur noch nicht geprüft
+wird: Wer eine Kennung erfindet, trifft keine Platznummer dieser Epoche.
+
+⚑ **Ohne Arbeitsverteilung bekommt niemand etwas.** Lieber nichts
+ausschütten als nach einer Gewichtung, die niemand gesetzt hat.
+
+**Die Verteilung wird nicht über eine Anweisung gesetzt**, sondern vom
+Betreiber. Eine Anweisung stünde jedem Absender offen, und wer die
+Gewichte setzt, setzt die Verteilung des Ertrags.
+
+⛑ **Und drei Tests von mir sahen stärker aus, als sie waren**, alle drei
+in der Gegenprobe aufgefallen: einer prüfte „ohne Bündel keine
+Auszahlung" statt „ohne Verteilung keine Auszahlung", die anderen beiden
+stehen im Scheduler-Changelog.
+
+### v0.19.0 – 2026-09-01 (Punkt 40, Glied 1: das Bündel über die Kette)
+
+`Anweisung::BuendelEinreichen` angewandt, und der Epochenabschluss leert
+die Bündel der abgerechneten Epoche.
+
+⚑ **Heute werden sie verworfen, ohne zugeschrieben zu werden**, weil
+dafür die Pod-Besetzung im Zustand fehlt (Glied 3c). **Verloren geht
+dabei nichts**, denn geprägt wurde für sie auch nichts; gewonnen ist,
+dass der Weg in die Kette steht.
+
+Zwei Tests, eine Gegenprobe: Ohne das Leeren bleiben die Bündel über den
+Epochenwechsel stehen, und der Zustand wüchse unbegrenzt.
+
+### v0.18.0 – 2026-09-01 (Punkt 40, Glied 3a: Anmeldung über die Kette)
+
+Zwei angehängte Anweisungen, `MinerAnmelden` und `MinerAbmelden`, und
+ihre Anwendung in `anwenden`.
+
+⚑ **Die Kennung steht nicht in der Anweisung**, sie folgt aus dem
+Schlüssel, mit dem unterschrieben wurde. Ein zusätzliches Feld ließe
+sich abweichend füllen, und dann meldete A für B an. Dieselbe
+Begründung, aus der `Anweisung` kein Absenderfeld trägt.
+
+⚑ **Und die Registrierungsepoche steht auch nicht darin.** Sie setzt
+die Kette aus ihrem eigenen Zustand; ein selbst gewähltes Datum hübe den
+Registrierungsschluss auf.
+
+Vier Tests, darunter die Gegenprobe zu Fund 85 für die neue Anweisung
+(eine verfälschte Unterschrift wirkt nicht) und die Wurzelgleichheit
+zwischen Erzeuger und Übernehmer.
 
 ### v0.17.0 – 2026-09-01 (⚑ Punkt 38: der Knoten schließt die Epoche ab)
 

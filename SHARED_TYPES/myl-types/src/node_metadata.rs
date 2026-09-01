@@ -47,7 +47,18 @@ use crate::ids::MinerId;
 /// Die Regionen sind bewusst grob gehalten (Kontinente + große Regionen),
 /// um Privacy zu schützen und gleichzeitig sinnvolle Diversität zu ermöglichen.
 /// Fine-grained Locations (Städte, Koordinaten) werden nicht gespeichert.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
+/// ⚑ **`Ord` ist seit dem 2026-09-01 dabei, und zwar aus einem
+/// Konsensgrund:** Die Zuteilung gruppiert Miner nach Zone, und die
+/// Gruppen müssen in **kanonischer Reihenfolge** entstehen. Eine
+/// `HashMap` oder eine unsortierte Sammlung ergäbe je Knoten eine andere
+/// Reihenfolge und damit andere Pods, ohne dass etwas kaputt wäre.
+///
+/// **Die Reihenfolge ist die der Marken**, also die Reihenfolge, in der
+/// sie hier stehen. Sie ist damit Teil des Konsensvertrags und darf
+/// nicht umgestellt werden, so wenig wie die Zahlen einer Borsh-Marke.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
+)]
 pub enum GeoRegion {
     /// Nordamerika (USA, Kanada, Mexiko)
     NorthAmerica,

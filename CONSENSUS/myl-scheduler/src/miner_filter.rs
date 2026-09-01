@@ -11,89 +11,8 @@
 //! **Design:** Die Filterung ist eine reine Funktion (Eingabe → Ausgabe) ohne
 //! versteckten globalen Zustand. Borsh-Serialisierung für kanonische Darstellung.
 
-use borsh::{BorshDeserialize, BorshSerialize};
 
-use myl_types::ids::MinerId;
-
-/// Hardware-Klasse eines Miners (grob, für Pod-Bildung).
-///
-/// Die Hardware-Klasse bestimmt, welche Miner zusammen in einem Pod arbeiten können.
-/// Pods bestehen aus Minern ähnlicher Hardware, um die Inferenzleistung zu optimieren.
-///
-/// **Konsens-Feld:** Die Einteilung ist Teil des Konsensvertrags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
-pub enum HardwareClass {
-    /// Kleine GPU (z.B. RTX 3060, 12 GB VRAM) — 1-2 Mrd. Parameter
-    SmallGpu,
-    /// Mittlere GPU (z.B. RTX 4090, 24 GB VRAM) — 3-7 Mrd. Parameter
-    MediumGpu,
-    /// Große GPU (z.B. A100, 80 GB VRAM) — 8-13 Mrd. Parameter
-    LargeGpu,
-    /// Multi-GPU (z.B. 2x A100) — >13 Mrd. Parameter
-    MultiGpu,
-}
-
-impl HardwareClass {
-    /// Alle Hardware-Klassen in kanonischer Reihenfolge.
-    pub fn all() -> [HardwareClass; 4] {
-        [
-            Self::SmallGpu,
-            Self::MediumGpu,
-            Self::LargeGpu,
-            Self::MultiGpu,
-        ]
-    }
-
-    /// Menschlich lesbare Bezeichnung.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::SmallGpu => "Small GPU",
-            Self::MediumGpu => "Medium GPU",
-            Self::LargeGpu => "Large GPU",
-            Self::MultiGpu => "Multi-GPU",
-        }
-    }
-}
-
-impl std::fmt::Display for HardwareClass {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name())
-    }
-}
-
-/// Miner-Registrierung: enthält MinerId, Hardware-Klasse und Registrierungs-Epoche.
-///
-/// Wird bei der Miner-Registrierung erstellt und im Ledger gespeichert.
-/// Der Scheduler verwendet diese Informationen für die Filterung.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct MinerRegistration {
-    /// Die MinerId (eindeutige Identifikation).
-    pub miner_id: MinerId,
-    /// Hardware-Klasse des Miners.
-    pub hardware_class: HardwareClass,
-    /// Epoche, in der der Miner sich registriert hat.
-    pub registration_epoch: u64,
-}
-
-impl MinerRegistration {
-    /// Prüft, ob der Miner für Epoche `target_epoch` qualifiziert ist.
-    ///
-    /// Ein Miner ist qualifiziert, wenn:
-    /// - Er sich vor dem Registrierungsschluss (target_epoch - 2) registriert hat
-    /// - Seine Hardware-Klasse in `allowed_classes` ist
-    pub fn is_qualified(&self, target_epoch: u64, allowed_classes: &[HardwareClass]) -> bool {
-        // Registrierungsschluss: Epoche e-2
-        let registration_deadline = target_epoch.saturating_sub(2);
-        
-        // Prüfe Registrierungs-Epoche
-        if self.registration_epoch > registration_deadline {
-            return false;
-        }
-        
-        // Prüfe Hardware-Klasse
-        allowed_classes.contains(&self.hardware_class)
-    }
-}
+pub use myl_types::miner::{HardwareClass, MinerRegistration};
 
 /// Filtert eine Liste von Miner-Registrierungen nach Hardware-Klasse und Registrierungsschluss.
 ///
@@ -127,12 +46,14 @@ pub fn filter_miners(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use myl_types::ids::MinerId;
 
     fn test_registration(miner_byte: u8, hw_class: HardwareClass, reg_epoch: u64) -> MinerRegistration {
         MinerRegistration {
             miner_id: MinerId::new([miner_byte; 32]),
             hardware_class: hw_class,
             registration_epoch: reg_epoch,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
         }
     }
 

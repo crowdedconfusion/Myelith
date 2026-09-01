@@ -91,5 +91,6 @@ pub use utilization::{
 pub use vtfe::{vtfe_gutschrift, vtfe_voll, ModellProfil, ShardZuschnitt, VtfeError};
 
 pub use zuschreibung::{
-    zuschreiben, Podleistung, Podposition, Zuschreibung, ZuschreibungFehler,
+    zuschreiben, zuschreiben_aus_abrechnung, Abrechnungsfehler, Podabrechnung, Podleistung,
+    Podposition, Zuschreibung, ZuschreibungFehler,
 };

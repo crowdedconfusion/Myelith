@@ -181,6 +181,17 @@ CONSENSUS_PATH = [
     # hier nichts zu suchen, aber die Datei gehoert in die Liste, damit
     # das auch morgen noch geprueft wird.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "treasury.rs",
+    # 2026-09-01: Wer minen darf. Die Typen zogen aus `myl-scheduler`
+    # hierher, weil Kontenbuch und Scheduler denselben brauchen, seit die
+    # Kette ein Miner-Register fuehrt. Hardware-Klasse und
+    # Registrierungsepoche sind Ganzzahlen und muessen es bleiben: An
+    # ihnen haengt, wer in welchen Pod kommt.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "miner.rs",
+    # 2026-09-01: Die Arbeitsverteilung teilt die vTFE eines Pods auf
+    # seine Positionen. An ihr haengt, wer wie viel bekommt; sie rechnet
+    # in Ganzzahlen und muss es bleiben, sonst kaemen zwei Knoten zu
+    # verschiedenen Kontostaenden.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "arbeitsverteilung.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lib.rs",
     # Der Generator der Konformitaetsvektoren gehoert dazu, obwohl er
     # nicht laeuft, wenn das Netz laeuft: Er **erzeugt die Referenz**,
@@ -196,6 +207,10 @@ CONSENSUS_PATH = [
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "redundancy.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "sampling.rs",
+    # 2026-09-01: Die Zonenzuteilung entscheidet, wer in welchem Pod
+    # sitzt, und der Seed dafuer ist eine Ganzzahl aus einem Hash. Zwei
+    # Knoten mit verschiedener Zuteilung rechnen verschiedene Spuren.
+    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "zonenzuteilung.rs",
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "bft.rs",
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "block.rs",
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "signing.rs",

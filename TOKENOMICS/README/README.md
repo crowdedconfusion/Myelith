@@ -1,12 +1,12 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.14.0
+> **Version:** 0.15.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
 > α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
 > Subventionsplan seit dem 1. September).
-> **210 Tests grün** (186 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
+> **218 Tests grün** (194 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
 >
 > **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
 > dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
@@ -97,6 +97,34 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.15.0 – 2026-09-01 (die Zuschreibung auf dem Weg der Kette)
+
+`zuschreiben_aus_abrechnung`: die vTFE eines Pods nach den Gewichten der
+Arbeitsverteilung auf seine Positionen, **ohne Modellprofil**.
+
+⚑ **Zwei Wege zu derselben Zahl, und ein Test hält sie zusammen.**
+`zuschreiben` ist der Weg des **Prüfers**: Modellprofil, Zuschnitte,
+Segmentzahl. `zuschreiben_aus_abrechnung` ist der Weg der **Kette**:
+Positionsnummern und Gewichte. Sie runden verschieden, also wird auf
+**eine Einheit genau** verglichen; mehr wäre falsch behauptet, weniger
+wertlos. **Die Gegenprobe dazu ist die schärfste dieses Tages:** Teilt
+man gleich statt nach Gewichten, fällt genau dieser Test.
+
+⚑ **Unbesetzte Positionen lassen ihren Anteil verfallen.** Aufgeteilt
+wird über **alle** Positionen, nicht nur die besetzten. Die Alternative
+wäre falsch: Die Besetzten bekämen Geld für Layer, die sie **nicht
+gerechnet haben**. Ein Pod, dem eine Position fehlt, hat weniger
+geleistet, und der Verfall bildet das ab. Was verfällt, wird nicht
+umverteilt und nicht geprägt; es entsteht schlicht nicht.
+
+⛑ **Der erste Entwurf des Tests dazu erwartete das Gegenteil**, nämlich
+dass die ganze Pod-vTFE auf die Besetzten fällt. Der Fehlschlag war die
+richtige Antwort und hat die Regel hervorgebracht.
+
+**Eine unbekannte Positionsnummer ist ein Fehler und keine Null:** Wer
+über eine Position abrechnet, die es im gültigen Zuschnitt nicht gibt,
+rechnet über etwas anderes ab als die Kette.
 
 ### v0.14.0 – 2026-09-01 (Phase 5: der Boden und der Anlaufanreiz)
 

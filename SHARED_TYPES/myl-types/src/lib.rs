@@ -22,6 +22,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod arbeitsverteilung;
 pub mod bls;
 pub mod challenge;
 pub mod core_types;
@@ -31,6 +32,7 @@ pub mod ids;
 pub mod latency_attest;
 pub mod merkle;
 pub mod pq;
+pub mod miner;
 pub mod node_metadata;
 pub mod protocol;
 pub mod seed_rng;
@@ -62,6 +64,8 @@ pub use latency_attest::{
     BlsSignatureBytes, LatencyAttest, LatencyAttestError, LatencyGraph, PeerIdBytes,
 };
 pub use merkle::{leaf_hash, node_hash, MerkleError, MerkleProof, MerkleTree};
+pub use arbeitsverteilung::{Arbeitsverteilung, Verteilungsfehler};
+pub use miner::{pod_kennung, HardwareClass, MinerRegistration, DST_PODKENNUNG};
 pub use node_metadata::{Asn, DiversityChecker, GeoRegion, NodeMetadata, NodeMetadataError};
 pub use seed_rng::{deterministic_shuffle, weighted_sample_without_replacement, SeedRng};
 pub use sitzung::{

@@ -177,6 +177,7 @@ impl Protokolllauf {
                     miner_id: t.miner,
                     hardware_class: HardwareClass::MediumGpu,
                     registration_epoch: 0,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
                 })
                 .collect();
             let cluster = MinerCluster {

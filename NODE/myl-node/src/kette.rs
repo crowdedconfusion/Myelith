@@ -76,8 +76,7 @@ use myl_consensus::block::{epoche_fuer_hoehe, Anweisung, Block, BlockHeader, Tra
 use myl_ledger::state::LedgerState;
 use myl_ledger::transitions::{
     burn_to_credits, nonce_verbrauchen, sitzung_ausgeben, sitzung_eroeffnen, sitzung_widerrufen,
-    transfer,
-};
+    transfer, miner_abmelden, miner_anmelden, buendel_einreichen, buendel_leeren, angemeldete_miner, buendel_der_epoche};
 use myl_types::hash::Hash;
 use myl_types::ids::{Address, EpochId};
 
@@ -407,6 +406,17 @@ impl Kette {
             .collect()
     }
 
+    /// Der Zustand zum Ändern, **nur für Tests und den Betreiber**.
+    ///
+    /// ⚑ **Kein Weg für Teilnehmer.** Wer den Zustand von außen ändern
+    /// kann, umgeht jede Übergangsprüfung; deshalb steht hier
+    /// ausdrücklich, wofür das da ist. Alles, was ein Absender darf,
+    /// geht über eine Anweisung und über `anwenden`.
+    #[doc(hidden)]
+    pub fn zustand_mut(&mut self) -> &mut LedgerState {
+        &mut self.zustand
+    }
+
     /// Der Ledger-Zustand, für Diagnose und Tests.
     pub fn zustand(&self) -> &LedgerState {
         &self.zustand
@@ -457,6 +467,95 @@ impl Kette {
         }
     }
 
+    /// Setzt die Arbeitsverteilung der Pod-Positionen.
+    ///
+    /// # ⚑ Kein Weg über eine Transaktion, und das ist Absicht
+    ///
+    /// Die Gewichte sind ein **Governance-Gegenstand**: Sie folgen aus
+    /// dem Pipeline-Stand, und wer sie setzen darf, entscheidet eine
+    /// Abstimmung. Der Draht von einem angenommenen Beschluss hierher
+    /// fehlt, wie bei der Belastung der Treasury.
+    ///
+    /// **Solange er fehlt, gibt es keine Anweisung dafür.** Eine wäre
+    /// schlimmer als keine: Sie stünde jedem Absender offen, und wer die
+    /// Gewichte setzt, setzt die Verteilung des Ertrags. Dieser Weg ist
+    /// dem Betreiber des Knotens vorbehalten und niemandem sonst.
+    pub fn arbeitsverteilung_setzen(
+        &mut self,
+        verteilung: myl_types::arbeitsverteilung::Arbeitsverteilung,
+    ) -> Result<(), myl_ledger::transitions::TransitionError> {
+        myl_ledger::transitions::arbeitsverteilung_setzen(&mut self.zustand, verteilung)
+    }
+
+    /// Wie viele Shard-Positionen ein Pod dieser Probekette hat.
+    ///
+    /// ⚑ **Fest, solange die Kette eine Probekette ist.** Der Zuschnitt
+    /// gehört ins Pipeline-Manifest und damit unter Governance; ein
+    /// beweglicher Wert, den nur einer kennt, wäre schlimmer als ein
+    /// fester, den beide Seiten sehen.
+    const PROBE_SHARDS: u32 = 4;
+
+    /// Leitet die Zuschreibung der abzurechnenden Epoche ab.
+    ///
+    /// # Der Weg, und er ist jetzt vollständig
+    ///
+    /// Register → Zuteilung → Bündel → Anteile. Jeder Schritt ist eine
+    /// **Ableitung**, keine Angabe: Wer im Register steht, sagt die
+    /// Kette; wer in welchem Pod sitzt, folgt aus Register, Zone und
+    /// Blockhash; welcher Pod ein Bündel eingereicht hat, folgt aus der
+    /// abgeleiteten Pod-Kennung; und wie sich die vTFE eines Pods auf
+    /// seine Positionen teilt, sagt die Arbeitsverteilung.
+    ///
+    /// # ⚑ Ohne Arbeitsverteilung wird nichts zugeschrieben
+    ///
+    /// Dann bleibt die Zuschreibung leer, der Shard-Miner-Anteil
+    /// ungeprägt, und das ist die sichere Richtung: **Lieber nichts
+    /// ausschütten als nach einer Gewichtung, die niemand gesetzt hat.**
+    ///
+    /// # ⚑ Ein Bündel ohne passenden Pod fällt still weg
+    ///
+    /// Es nennt eine Kennung, die zu keiner Platznummer dieser Epoche
+    /// gehört. Das ist der Normalfall bei einem gefälschten Bündel; es
+    /// zu verwerfen ist richtig, und es **den Block verwerfen zu
+    /// lassen wäre falsch**, denn dann hielte eine einzige Fälschung die
+    /// Kette an.
+    fn zuschreibung_der_epoche(
+        zustand: &LedgerState,
+        letzter_hash: &Hash,
+    ) -> myl_tokenomics::Zuschreibung {
+        let Some(verteilung) = zustand.arbeitsverteilung.clone() else {
+            return myl_tokenomics::Zuschreibung::default();
+        };
+        let epoche = zustand.epoch.0;
+        let register = angemeldete_miner(zustand);
+        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            epoche,
+            letzter_hash,
+            Self::PROBE_SHARDS,
+        );
+
+        let mut abrechnungen = Vec::new();
+        for buendel in buendel_der_epoche(zustand) {
+            let Some(pod) =
+                myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, epoche, &buendel.pod)
+            else {
+                continue;
+            };
+            abrechnungen.push(myl_tokenomics::Podabrechnung {
+                positionen: pod
+                    .shards
+                    .iter()
+                    .map(|s| (s.miner.miner_id, s.shard_index))
+                    .collect(),
+                reserve: pod.reserve.iter().map(|m| m.miner_id).collect(),
+                vtfe_pod: buendel.vtfe_claimed,
+            });
+        }
+        myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &abrechnungen)
+            .unwrap_or_default()
+    }
+
     /// Schließt die vorige Epoche ab, wenn eine neue beginnt (Punkt 38).
     ///
     /// # Was hier geschieht und was nicht
@@ -487,12 +586,30 @@ impl Kette {
     /// gescheiterte Transaktion. Beide Seiten überspringen dasselbe,
     /// weil beide dieselbe Funktion durchlaufen; ein Abbruch hier
     /// hielte die Kette an, und zwar bei allen gleichzeitig.
-    fn epochenwechsel_abschliessen(zustand: &mut LedgerState, neue_epoche: u64) {
+    fn epochenwechsel_abschliessen(
+        zustand: &mut LedgerState,
+        neue_epoche: u64,
+        letzter_hash: &Hash,
+    ) {
         if neue_epoche <= zustand.epoch.0 {
             return;
         }
-        let leer = myl_tokenomics::Zuschreibung::default();
-        let _ = myl_tokenomics::epochenausschuettung(zustand, &leer, &Self::praegeparameter());
+        let zuschreibung = Self::zuschreibung_der_epoche(zustand, letzter_hash);
+        let _ = myl_tokenomics::epochenausschuettung(
+            zustand,
+            &zuschreibung,
+            &Self::praegeparameter(),
+        );
+        // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
+        // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
+        // wäre gebrochen; die Historie steht in den Blöcken.
+        //
+        // ⚑ **Heute werden sie verworfen, ohne zugeschrieben zu
+        // werden**, weil dafür die Pod-Besetzung im Zustand fehlt
+        // (Glied 3c). Verloren geht dabei nichts, denn es wurde für sie
+        // auch nichts geprägt; **gewonnen ist nur, dass der Weg in die
+        // Kette jetzt steht**.
+        let _ = buendel_leeren(zustand);
     }
 
     /// Wendet Transaktionen auf den Zustand an.
@@ -516,8 +633,13 @@ impl Kette {
     /// Anwenden hier steht: Erzeuger und Übernehmer müssen dieselbe
     /// Folge von Änderungen ausführen. Ein Abschluss, den nur der
     /// Erzeuger rechnet, wäre eine abweichende Zustandswurzel.
-    fn anwenden(zustand: &mut LedgerState, txs: &[Transaktion], epoch: u64) {
-        Self::epochenwechsel_abschliessen(zustand, epoch);
+    fn anwenden(
+        zustand: &mut LedgerState,
+        txs: &[Transaktion],
+        epoch: u64,
+        letzter_hash: &Hash,
+    ) {
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash);
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -566,6 +688,20 @@ impl Kette {
                 Anweisung::SitzungEroeffnen { kontrakt } => {
                     let _ = sitzung_eroeffnen(zustand, &absender, kontrakt.clone());
                 }
+                // ⚑ Die Kennung folgt aus dem Absender und steht nicht
+                // in der Anweisung: Beide sind derselbe Schlüssel, und
+                // ein zweites Feld ließe sich abweichend füllen.
+                Anweisung::MinerAnmelden { hardware, zone } => {
+                    let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    let _ = miner_anmelden(zustand, &absender, &kennung, *hardware, *zone);
+                }
+                Anweisung::MinerAbmelden => {
+                    let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
+                    let _ = miner_abmelden(zustand, &absender, &kennung);
+                }
+                Anweisung::BuendelEinreichen { buendel } => {
+                    let _ = buendel_einreichen(zustand, &absender, buendel.clone());
+                }
                 Anweisung::SitzungWiderrufen { sitzung } => {
                     let _ = sitzung_widerrufen(zustand, sitzung, &absender);
                 }
@@ -586,7 +722,7 @@ impl Kette {
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
-        Self::anwenden(&mut self.zustand, &txs, epoch);
+        Self::anwenden(&mut self.zustand, &txs, epoch, &self.letzter_hash);
 
         let mut block = Block::new(BlockHeader {
             height: hoehe,
@@ -651,7 +787,7 @@ impl Kette {
         // eigene Zustand unberührt. Ein Knoten, der einem abweichenden
         // Block folgt, hätte den Befund verschluckt.
         let mut versuch = self.zustand.clone();
-        Self::anwenden(&mut versuch, &block.txs, block.header.epoch);
+        Self::anwenden(&mut versuch, &block.txs, block.header.epoch, &self.letzter_hash);
         let errechnet = versuch.commitment();
         if errechnet != block.header.state_root {
             return Err(KettenFehler::ZustandWeichtAb {
@@ -1392,6 +1528,466 @@ mod tests {
             erzeuger.zustand().commitment(),
             uebernehmer.zustand().commitment(),
             "die Zustandswurzeln weichen ueber die Epochengrenze ab"
+        );
+    }
+
+    // --- Punkt 40, Glied 3a: Anmeldung über die Kette ---
+
+    fn anmeldung(wer: u8, hardware: myl_types::miner::HardwareClass) -> Transaktion {
+        Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(wer),
+            0,
+            Anweisung::MinerAnmelden {
+                hardware,
+                zone: myl_types::node_metadata::GeoRegion::Europe,
+            },
+        )
+        .expect("signieren")
+    }
+
+    /// ⚑ **Punkt 40, Glied 3a in der Kette:** Eine Anmeldung über eine
+    /// Transaktion steht danach im Register.
+    #[test]
+    fn eine_anmeldung_ueber_die_kette_steht_im_register() {
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        k.aufnehmen(anmeldung(0, HardwareClass::MediumGpu));
+        k.baue_block();
+        let kennung = myl_types::ids::MinerId::new(*probekonto(0).as_bytes());
+        let eintrag = k.zustand().miner.get(&kennung).expect("angemeldet");
+        assert_eq!(eintrag.hardware_class, HardwareClass::MediumGpu);
+    }
+
+    /// ⚑ **Die Zone kommt mit und steht im Zustand** (Entscheidung 3b).
+    /// Sie entscheidet, in welchem Topf gemischt wird, und ist deshalb
+    /// Konsensdatum und keine gegossipte Angabe.
+    #[test]
+    fn die_zone_kommt_mit_in_den_zustand() {
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        let mut k = Kette::probestand();
+        let tx = Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(0),
+            0,
+            Anweisung::MinerAnmelden {
+                hardware: HardwareClass::MediumGpu,
+                zone: GeoRegion::Asia,
+            },
+        )
+        .expect("signieren");
+        k.aufnehmen(tx);
+        k.baue_block();
+        let kennung = myl_types::ids::MinerId::new(*probekonto(0).as_bytes());
+        assert_eq!(k.zustand().miner[&kennung].zone, GeoRegion::Asia);
+    }
+
+    /// ⚑ **Punkt 40, Glied 1 in der Kette:** Ein Bündel eines
+    /// angemeldeten Miners kommt in den Zustand.
+    #[test]
+    fn ein_buendel_ueber_die_kette_kommt_an() {
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        let mut k = Kette::probestand();
+        k.aufnehmen(anmeldung(0, HardwareClass::MediumGpu));
+        k.baue_block();
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::ids::PodId::new([3; 32]),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 4_200,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        let tx = Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(0),
+            1,
+            Anweisung::BuendelEinreichen { buendel: b },
+        )
+        .expect("signieren");
+        k.aufnehmen(tx);
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1);
+        let _ = GeoRegion::Europe;
+    }
+
+    /// ⚑ **Und am Epochenwechsel fallen sie weg.** Ohne das wüchse der
+    /// Zustand unbegrenzt; die Historie steht in den Blöcken.
+    #[test]
+    fn am_epochenwechsel_fallen_die_buendel_weg() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        k.aufnehmen(anmeldung(0, HardwareClass::MediumGpu));
+        k.baue_block();
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::ids::PodId::new([3; 32]),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 4_200,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                1,
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        assert!(k.zustand().buendel.is_empty(), "die Buendel blieben stehen");
+    }
+
+    /// ⚑ **Punkt 40 als Ganzes: bezeugte Arbeit erreicht ein Konto.**
+    ///
+    /// Sechs Miner melden sich an, tragen ein Auszahlungskonto ein,
+    /// jemand verbrennt, ein Bündel kommt in die Kette, und am
+    /// Epochenwechsel wächst das Konto eines Pod-Mitglieds.
+    ///
+    /// **Das ist der Test, an dem der ganze Punkt hängt.** Jeder
+    /// Zwischenschritt hat seine eigenen Tests; dieser prüft, dass sie
+    /// zusammen etwas ergeben.
+    #[test]
+    fn bezeugte_arbeit_erreicht_ein_konto() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::arbeitsverteilung::Arbeitsverteilung;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        // Gewichte für vier Positionen, das letzte Stück wiegt schwerer
+        // (dort sitzt der LM-Kopf).
+        k.arbeitsverteilung_setzen(
+            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
+                .expect("Verteilung"),
+        )
+        .expect("setzen");
+
+        // Sechs Miner: vier Positionen plus zwei Reserve.
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        // Und Brennstoff für die Prägung.
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        k.baue_block();
+        assert_eq!(k.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
+        assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
+
+        // Auszahlungskonten eintragen, damit „ohne Eintrag kein Anteil"
+        // nicht greift. Die erste Eintragung darf der Miner selbst.
+        for w in 0..6u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            myl_ledger::transitions::auszahlungskonto_eintragen(
+                k.zustand_mut(),
+                &probekonto(w),
+                &kennung,
+                kaltes_konto(w),
+            )
+            .expect("Eintragung");
+        }
+
+        // Die Zuteilung dieser Epoche nachrechnen und für ihren Pod ein
+        // Bündel einreichen.
+        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
+        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            k.zustand().epoch.0,
+            &k.letzter_hash(),
+            4,
+        );
+        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
+        let pod_index = zuteilung.pods[0].pod_index;
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                nonce[0],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+
+        // Über die Epochengrenze.
+        let vorher: Vec<u64> = (0..6u8)
+            .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
+            .collect();
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+
+        let nachher: Vec<u64> = (0..6u8)
+            .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
+            .collect();
+        let gewachsen = (0..6).filter(|i| nachher[*i] > vorher[*i]).count();
+        assert!(
+            gewachsen > 0,
+            "kein Auszahlungskonto ist gewachsen: {vorher:?} -> {nachher:?}"
+        );
+        assert!(
+            gewachsen <= 4,
+            "mehr als die vier Positionen bekamen etwas: {nachher:?}"
+        );
+    }
+
+    /// ⚑ **Ohne Arbeitsverteilung wird nichts zugeschrieben**, und das
+    /// ist die sichere Richtung: lieber nichts ausschütten als nach
+    /// einer Gewichtung, die niemand gesetzt hat.
+    ///
+    /// ⛑ **Der erste Entwurf reichte kein Bündel ein** und prüfte damit
+    /// „ohne Bündel keine Auszahlung" statt „ohne Verteilung keine
+    /// Auszahlung". Er blieb grün, als die fehlende Verteilung durch
+    /// eine erfundene ersetzt wurde: **Der Name log.** Jetzt ist alles
+    /// da außer der Verteilung.
+    #[test]
+    fn ohne_arbeitsverteilung_bekommt_niemand_etwas() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        // Alles wie im Test darüber, **nur ohne** die Arbeitsverteilung.
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        k.baue_block();
+        for w in 0..6u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            myl_ledger::transitions::auszahlungskonto_eintragen(
+                k.zustand_mut(),
+                &probekonto(w),
+                &kennung,
+                kaltes_konto(w),
+            )
+            .expect("Eintragung");
+        }
+        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
+        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            k.zustand().epoch.0,
+            &k.letzter_hash(),
+            4,
+        );
+        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, zuteilung.pods[0].pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                nonce[0],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+        assert!(
+            k.zustand().arbeitsverteilung.is_none(),
+            "die Verteilung ist gesetzt, dann prueft der Test nichts"
+        );
+
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        for w in 0..6u8 {
+            assert_eq!(
+                k.zustand().account(&kaltes_konto(w)).balance,
+                0,
+                "ohne Verteilung wurde ausgeschuettet"
+            );
+        }
+    }
+
+    /// ⚑ **Ein Bündel mit erfundener Pod-Kennung zahlt nichts aus.**
+    ///
+    /// ⛑ Ohne diesen Test war die Kennungssuche in der Kette ungeprüft:
+    /// Die Gegenprobe „nimm einfach den ersten Pod" blieb grün, weil in
+    /// den übrigen Tests nur **ein** Pod entsteht. Hier scheitert sie.
+    ///
+    /// **Das ist die Schranke gegen ein gefälschtes Bündel**, solange
+    /// die Aggregatsignatur noch nicht geprüft wird: Wer eine Kennung
+    /// erfindet, trifft keine Platznummer dieser Epoche.
+    #[test]
+    fn ein_buendel_mit_erfundener_kennung_zahlt_nichts_aus() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::arbeitsverteilung::Arbeitsverteilung;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        k.arbeitsverteilung_setzen(
+            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
+                .expect("Verteilung"),
+        )
+        .expect("setzen");
+
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        k.baue_block();
+        for w in 0..6u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            myl_ledger::transitions::auszahlungskonto_eintragen(
+                k.zustand_mut(),
+                &probekonto(w),
+                &kennung,
+                kaltes_konto(w),
+            )
+            .expect("Eintragung");
+        }
+
+        // ⚑ Eine Kennung, die zu keiner Platznummer dieser Epoche gehört.
+        let erfunden = myl_types::ids::PodId::new([0xAB; 32]);
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: erfunden,
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                nonce[0],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        for w in 0..6u8 {
+            assert_eq!(
+                k.zustand().account(&kaltes_konto(w)).balance,
+                0,
+                "ein erfundenes Buendel hat ausgezahlt"
+            );
+        }
+    }
+
+    fn kaltes_konto(w: u8) -> Address {
+        Address::new([200 + w; 32])
+    }
+
+    /// Die Abmeldung wirkt über die Kette ebenso.
+    #[test]
+    fn eine_abmeldung_ueber_die_kette_wirkt() {
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        k.aufnehmen(anmeldung(0, HardwareClass::SmallGpu));
+        k.baue_block();
+        let ab = Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(0),
+            1,
+            Anweisung::MinerAbmelden,
+        )
+        .expect("signieren");
+        k.aufnehmen(ab);
+        k.baue_block();
+        assert!(k.zustand().miner.is_empty(), "die Abmeldung wirkte nicht");
+    }
+
+    /// ⚑ **Ohne gültige Unterschrift keine Anmeldung.** Dieselbe
+    /// Gegenprobe wie zu Fund 85, für die neue Anweisung.
+    #[test]
+    fn eine_anmeldung_ohne_unterschrift_wirkt_nicht() {
+        use myl_types::miner::HardwareClass;
+        let mut k = Kette::probestand();
+        let mut tx = anmeldung(0, HardwareClass::SmallGpu);
+        // Die Unterschrift verfälschen.
+        tx.signatur.0[0] ^= 0xFF;
+        k.aufnehmen(tx);
+        k.baue_block();
+        assert!(k.zustand().miner.is_empty(), "eine verfaelschte Anmeldung wirkte");
+    }
+
+    /// Erzeuger und Übernehmer kommen auch mit Anmeldungen zur selben
+    /// Wurzel.
+    #[test]
+    fn eine_anmeldung_aendert_bei_beiden_dieselbe_wurzel() {
+        use myl_types::miner::HardwareClass;
+        let mut erzeuger = Kette::probestand();
+        let mut uebernehmer = Kette::probestand();
+        erzeuger.aufnehmen(anmeldung(0, HardwareClass::LargeGpu));
+        let b = erzeuger.baue_block();
+        uebernehmer.uebernimm(&b).expect("Uebernahme");
+        assert_eq!(
+            erzeuger.zustand().commitment(),
+            uebernehmer.zustand().commitment()
         );
     }
 }

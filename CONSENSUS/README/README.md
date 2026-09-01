@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.26.0 (`myl-consensus` 0.18.0, `myl-scheduler` 0.5.0,
-> `myl-ledger` 0.9.0)
+> **Version:** 0.30.0 (`myl-consensus` 0.20.0, `myl-scheduler` 0.7.0,
+> `myl-ledger` 0.12.0)
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -18,8 +18,8 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **412 Tests grün** (269 `myl-consensus`, 74 `myl-scheduler`,
-> 69 `myl-ledger`), über alle Testbinaries gezählt.
+> **444 Tests grün** (269 `myl-consensus`, 86 `myl-scheduler`,
+> 89 `myl-ledger`), über alle Testbinaries gezählt.
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -107,6 +107,121 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.30.0 (`myl-ledger` 0.12.0) – 2026-09-01 (die Arbeitsverteilung im Zustand)
+
+`LedgerState.arbeitsverteilung` und `arbeitsverteilung_setzen`.
+
+⚑ **Eine Verteilung je Pipeline-Stand, und nicht zwei.** Steht für
+denselben Stand schon eine, wird abgelehnt: **Dieselbe Pipeline zweimal
+verschieden zu gewichten hieße, dass die Gewichte nicht aus ihr folgen**,
+und dann wären sie frei wählbar. Wer anders gewichten will, wechselt den
+Stand, und der Wechsel ist sichtbar.
+
+⚑ **Wer setzen darf, ist noch nicht durchgesetzt.** Das ist ein
+Governance-Akt, und der Draht von einem angenommenen Beschluss hierher
+fehlt, wie bei der Belastung der Treasury. **Es gibt deshalb keine
+Anweisung dafür**, und das ist die sichere Wahl: Eine stünde jedem
+Absender offen, und wer die Gewichte setzt, setzt die Verteilung des
+Ertrags.
+
+**`None` heißt: es wird nichts zugeschrieben**, der Shard-Miner-Anteil
+bleibt ungeprägt.
+
+### v0.29.0 (`myl-scheduler` 0.7.0) – 2026-09-01 (Punkt 40, Glied 3c: die Zuteilung, abgeleitet statt gespeichert)
+
+`zonenzuteilung.rs`: Register, Registrierungsschluss, je Zone ein
+Cluster, Pods per Seed. Zwölf Tests, vier Gegenproben.
+
+⚑ **Abgeleitet und nicht gespeichert.** Die Zuteilung ist eine reine
+Funktion aus Register, Epoche und Blockhash; sie in den Zustand zu
+schreiben wäre eine zweite Quelle für dieselbe Aussage. Nebenbei
+erspart es die D7-Frage ganz.
+
+⚑ **Der Seed und was an ihm schwach ist.** Er folgt aus Blockhash und
+Epoche, benutzt dabei denselben Trennstring wie der VRF-Seed, damit es
+**eine** Kodierung gibt. **Der Erzeuger des letzten Blocks einer Epoche
+kann ihn mahlen**: Er sieht für jeden möglichen Block die entstehende
+Zuteilung. **Ein VRF-Seed behebt das nicht** — der Erzeuger hält den
+Schlüssel und kann ebenso wählen; was der VRF bringt, ist
+Unvorhersehbarkeit für alle anderen, nicht Mahlfestigkeit. Wogegen es
+hilft, steht schon im Entwurf: Der Registrierungsschluss bei `e-2`
+friert die **Menge** der Teilnehmer ein. Ein Mahlender kann umschichten,
+wer wo landet, nicht, wer dabei ist.
+
+⚑ **Und `pod_zu_kennung` schließt Fund 109**: Ein Bündel nennt seinen
+Pod über eine `PodId`, die Zuteilung über `pod_index`, und zwischen
+beiden gab es keine Verbindung.
+
+⛑ **Zwei Tests sahen stärker aus, als sie waren**, und beide fielen erst
+in der Gegenprobe auf. Der eine rief `filter_miners` selbst und prüfte
+damit das Werkzeug statt seines Gebrauchs; der andere listete erst alle
+Europäer, dann alle Asiaten, und weil die Zuteilung Cluster der Reihe
+nach in Pod-Portionen schneidet, wären die Pods auch **ohne**
+Zonengruppierung sortenrein gewesen. **Er prüfte seine eigenen Daten.**
+Beide gehen jetzt durch die Zuteilung und mit verschränkter Eingabe.
+
+### v0.28.0 (`myl-ledger` 0.11.0, `myl-consensus` 0.20.0) – 2026-09-01 (Punkt 40, Glied 1: das Bündel erreicht die Kette)
+
+`Anweisung::BuendelEinreichen` (angehängt), `LedgerState.buendel`, dazu
+`buendel_einreichen`, `buendel_der_epoche` und `buendel_leeren`.
+
+**Geprüft wird:** angemeldeter Miner, laufende Epoche, kein zweites
+Bündel für denselben Pod. Sieben Tests, drei Gegenproben.
+
+⚑ **Was ausdrücklich nicht geprüft wird: die Aggregatsignatur gegen die
+Pod-Mitglieder.** Sie ist die eigentliche Prüfung und setzt voraus, dass
+der Zustand weiß, wer im Pod sitzt; das ist Glied 3c und steht aus.
+**Solange sie fehlt, ist „angemeldeter Miner" eine schwache Schranke**,
+und das gehört gesagt statt verschwiegen: Ein Angemeldeter kann heute
+ein Bündel für irgendeinen Pod einreichen. Was ihn bremst, ist allein,
+dass ohne Besetzung ohnehin nichts ausgeschüttet wird.
+
+⚑ **Das Bündel trägt die Leistung des Pods, nicht die des Einzelnen.**
+Ein Feld „mein Anteil" gäbe es hier nicht, auch wenn jemand eines
+wollte: Ein Pod könnte damit intern umverteilen, und niemand außerhalb
+könnte widersprechen (Festlegung vom 2026-08-31).
+
+⚑ **Und die Bündel fallen am Epochenwechsel weg.** Ohne das wüchse der
+Zustand unbegrenzt und **D7 wäre gebrochen**; begrenzt ist die Menge,
+weil sie geleert wird, nicht weil sie klein anfängt. Die Historie steht
+in den Blöcken.
+
+### v0.27.0 (`myl-ledger` 0.10.0, `myl-consensus` 0.19.0) – 2026-09-01 (Punkt 40, Glied 3a: das Miner-Register)
+
+**Der Ledger führt jetzt, wer sich als Miner angemeldet hat**, und die
+Kette trägt die Anweisungen dafür (`MinerAnmelden`, `MinerAbmelden`,
+angehängt wie `ProposeMitPolka`).
+
+⚑ **Der Doc-Kommentar behauptete es seit Monaten.**
+`MinerRegistration` trug den Satz „wird … im Ledger gespeichert"; der
+Ledger kannte sie nicht. Der Scheduler bekam seine Liste vom Aufrufer,
+**und wer sie liefert, entscheidet über die Pod-Bildung**: Zwei Knoten
+mit verschiedenen Listen kommen zu verschiedenen Pods.
+
+⚑ **Die Registrierungsepoche setzt die Kette, nicht der Antragsteller.**
+Ein selbst gewähltes Datum hübe den Registrierungsschluss aus Anhang A.2
+auf, der gerade verhindern soll, dass sich jemand kurzfristig anmeldet,
+um eine Zuteilung zu beeinflussen. Die Anweisung hat deshalb **kein
+Feld** dafür, und auch keins für die Kennung: Die folgt aus dem
+Schlüssel, mit dem unterschrieben wurde.
+
+⚑ **Eine Klassenänderung behält das Datum.** Sonst machte sie den Miner
+jünger und damit für die nächste Zuteilung unqualifiziert.
+
+**Die Abmeldung wirkt sofort.** Der Registrierungsschluss schützt die
+Zuteilung vor **Zugängen**, die sie beeinflussen wollen, nicht vor
+Abgängen; wer geht, bis zum Epochenwechsel weiterzuführen hieße, ihn in
+Pods zu setzen, die er nicht mehr besetzt.
+
+⚑ **Warum das Register in den Zustand darf und die Wissensdatenbank
+nicht:** D7 hält **unbegrenzt wachsende** Mengen heraus, weil
+`commitment()` den ganzen Zustand je Block serialisiert. Das Register
+wächst mit der Zahl der Miner, und die ist die Größe des Netzes selbst.
+**Latenz-Atteste gehören aus demselben Grund nicht hinein**; sie wären
+bei tausend Minern gut vier Megabyte je Epoche.
+
+Dreizehn neue Tests, drei Gegenproben.
 
 ### v0.26.0 (`myl-scheduler` 0.5.0) – 2026-08-31 (⚑ Fund 108: der Vertreter vertrat niemanden)
 

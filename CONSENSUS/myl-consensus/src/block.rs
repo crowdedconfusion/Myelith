@@ -34,6 +34,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use myl_ledger::transitions::Verdict;
 use myl_types::bls::{BlsPublicKey, BlsSignature};
+use myl_types::miner::HardwareClass;
+use myl_types::node_metadata::GeoRegion;
 use myl_types::ids::SitzungId;
 use myl_types::sitzung::{Sitzungskontrakt, Vorhaben};
 use myl_types::challenge::Challenge;
@@ -153,6 +155,52 @@ pub enum Anweisung {
     SitzungAusgeben {
         /// Was.
         vorhaben: Vorhaben,
+    },
+    /// Sich als Miner anmelden oder die Hardware-Klasse ändern
+    /// (Punkt 40, Glied 3a).
+    ///
+    /// ⚑ **Kein Feld für die Registrierungsepoche.** Sie setzt die
+    /// Kette aus ihrem eigenen Zustand; ein selbst gewähltes Datum
+    /// hübe den Registrierungsschluss aus Anhang A.2 auf, der gerade
+    /// verhindern soll, dass sich jemand kurzfristig anmeldet, um eine
+    /// Zuteilung zu beeinflussen.
+    ///
+    /// ⚑ **Und kein Feld für die Kennung.** Sie folgt aus dem
+    /// Schlüssel, mit dem unterschrieben wurde, wie beim Absender: Ein
+    /// zusätzliches Feld ließe sich abweichend füllen, und dann meldete
+    /// A für B an.
+    MinerAnmelden {
+        /// Die Hardware-Klasse, in der gearbeitet wird.
+        hardware: HardwareClass,
+        /// Die Zone, in der gerechnet wird (Entscheidung 3b).
+        ///
+        /// ⚑ **Eine Angabe, keine Messung.** Sie entscheidet, in welchem
+        /// Topf der Miner gemischt wird; wer eine falsche nennt, bremst
+        /// die Zone, in die er sich setzt, und die Vergütung folgt der
+        /// Arbeit. Der Gewinn gegenüber einer gegossipten Region ist
+        /// nicht Wahrheit, sondern **Gleichheit**: Sie steht im
+        /// Konsenszustand und ist für jeden Leser dieselbe.
+        zone: GeoRegion,
+    },
+    /// Sich als Miner abmelden.
+    ///
+    /// **Angehängt und nicht eingefügt**, wie `ProposeMitPolka` im
+    /// Rundenwechsel: Die Reihenfolge der Marken ist Teil des
+    /// Konsensvertrags, und Borsh kodiert sie als Zahl.
+    MinerAbmelden,
+    /// Ein PoI-Bündel für die laufende Epoche einreichen
+    /// (Punkt 40, Glied 1).
+    ///
+    /// ⚑ **Das Bündel trägt die Leistung des Pods, nicht die des
+    /// Einzelnen.** `vtfe_claimed` gilt für den ganzen Pod; wer davon
+    /// welchen Anteil bekommt, wird aus Besetzung und Zuschnitt
+    /// **abgeleitet** (Festlegung vom 2026-08-31). Ein Feld „mein
+    /// Anteil" gäbe es hier nicht, auch wenn jemand eines wollte: Ein
+    /// Pod könnte damit intern umverteilen, und niemand außerhalb
+    /// könnte widersprechen.
+    BuendelEinreichen {
+        /// Das Bündel.
+        buendel: PoIBundle,
     },
 }
 

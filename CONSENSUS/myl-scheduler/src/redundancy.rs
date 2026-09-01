@@ -224,6 +224,7 @@ mod tests {
             miner_id: MinerId::new([miner_byte; 32]),
             hardware_class: HardwareClass::MediumGpu,
             registration_epoch: 5,
+            zone: myl_types::node_metadata::GeoRegion::Europe,
         }
     }
 

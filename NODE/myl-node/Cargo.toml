@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.17.0"
+version = "0.20.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -27,6 +27,11 @@ myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 # in die Kette, und das ist die einzige Stelle, an der beides zusammen
 # vorkommt.
 myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
+# ⚑ Fuer die Zuteilung am Epochenwechsel: Der Knoten leitet aus dem
+# Miner-Register ab, wer in welchem Pod sitzt. Er speichert die Zuteilung
+# nicht, er rechnet sie aus; zwei Quellen fuer dieselbe Aussage laufen
+# auseinander.
+myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal"] }
 libp2p = { version = "0.56", features = ["tokio"] }
 

@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.19.0
+> **Version:** 0.22.0
 > **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,77 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.22.0 – 2026-09-01 (die Arbeitsverteilung, und warum kein Modellprofil)
+
+`arbeitsverteilung.rs`: je Shard-Position ein Gewicht, gebunden an einen
+Pipeline-Stand. Neun Tests.
+
+⚑ **Warum Gewichte und nicht das Modellprofil.** Die Zuschreibung folgt
+aus den Multiplikations-Additionen des Zuschnitts; dafür bräuchte der
+Konsens das Profil (zehn Felder) und den Zuschnitt je Position (vier je
+Position). **Ein Profil im Zustand ist genauso eine Erklärung wie ein
+Gewicht, nur mit zehnfacher Fläche**, und es zöge die Modellinnereien in
+einen Konsenstyp: Eine neue Architektur änderte die **Form des
+Zustands** und verlangte eine harte Gabelung. Mit Gewichten ändert sie
+die Zahlen.
+
+**Erklärt, aber nachrechenbar:** Die Gewichte sind eine Angabe der
+Governance, nicht eines Teilnehmers, und der Pipeline-Stand bindet θ_v.
+Wer beides hat, rechnet nach und widerspricht. Genau diesen Maßstab
+setzt die vTFE-Regel selbst.
+
+⚑ **Und die Aufteilung ist exakt.** Jeder Anteil wird abgerundet, der
+Rest geht in Positionsreihenfolge je eine Einheit an Positionen mit
+Gewicht über null. **Die Summe der Anteile ist stets der Betrag**; ein
+Rest, der verschwindet, wäre Geld, das niemand bekommt.
+
+**Keine Tokenzahl darin:** Ein Bündel nennt die vTFE seines Pods, das
+Verhältnis genügt. **Ein Feld weniger im Drahtformat ist ein Feld
+weniger, über das jemand lügen kann.**
+
+### v0.21.0 – 2026-09-01 (⚑ Fund 109: das Bündel nannte einen Pod, den die Zuteilung nicht kannte)
+
+`MinerRegistration.zone` (Entscheidung 3b) und `pod_kennung`.
+
+⚑ **Fund 109.** `PoIBundle` trägt seit jeher ein Feld `pod: PodId`, die
+Zuteilung nummeriert ihre Pods mit `pod_index`, **und zwischen beiden
+gab es keine Verbindung**. Im ganzen Repositorium entstand eine `PodId`
+allein über `PodId::new([b; 32])`, und zwar ausschließlich in Tests:
+**keine einzige Ableitung**. Damit war der Weg vom Bündel zur Besetzung
+unterbrochen, ohne dass es auffiel, denn beide Seiten waren für sich
+vollständig und getestet. **Dieselbe Klasse wie Fund 83 und Fund 87.**
+
+`pod_kennung(epoche, pod_index)` leitet sie ab statt sie zu vergeben:
+**Eine vergebene Kennung bräuchte eine Stelle, die vergibt**, und die
+wäre ein Eintrag im Zustand samt Reihenfolge und Streitfrage. Die Epoche
+gehört hinein, weil Pod 3 der Epoche 7 und Pod 3 der Epoche 8
+verschiedene Besetzungen haben; ohne sie ließe sich ein altes Bündel
+unter neuer Besetzung abrechnen.
+
+**Die Zone** steht in der Registrierung, weil die Pod-Bildung Nähe
+braucht und ein gemessener Latenzgraph im Konsens einem Angreifer einen
+Hebel auf die Pod-Bildung gäbe (Entscheidung 3b). ⚑ **`GeoRegion` hat
+seither `Ord`, und zwar aus einem Konsensgrund:** Die Gruppen müssen in
+kanonischer Reihenfolge entstehen, sonst kämen zwei Knoten zu
+verschiedenen Pods, ohne dass etwas kaputt wäre.
+
+### v0.20.0 – 2026-09-01 (wer minen darf, zieht dorthin, wo beide Seiten es brauchen)
+
+`miner.rs` mit `HardwareClass` und `MinerRegistration`, aus
+`myl-scheduler` hierher.
+
+⚑ **Der Doc-Kommentar sagte es seit Monaten, und es stimmte nicht.**
+`MinerRegistration` trug den Satz „wird bei der Miner-Registrierung
+erstellt und **im Ledger gespeichert**". Der Ledger kannte sie nicht;
+der Scheduler bekam seine Liste vom Aufrufer, **und wer sie liefert,
+entscheidet über die Pod-Bildung.**
+
+Seit die Kette ein Miner-Register führt, brauchen beide Seiten denselben
+Typ: das Kontenbuch zum Speichern, der Scheduler zum Pods-Bilden. Ein
+eigener Typ je Seite wären zwei Quellen für dieselbe Aussage. Derselbe
+Grund, aus dem das Gegenstandsformat am 31. August hierher zog. Die
+**Filterung** bleibt im Scheduler: Sie ist ein Algorithmus, kein Typ.
 
 ### v0.19.0 – 2026-08-31 (⚑ Fund 108: die Unterschrift belegt den Absender, nicht den Inhalt)
 

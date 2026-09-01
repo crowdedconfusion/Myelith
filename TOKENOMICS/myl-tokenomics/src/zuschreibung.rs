@@ -38,6 +38,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use myl_types::arbeitsverteilung::Arbeitsverteilung;
 use myl_types::ids::MinerId;
 
 use crate::vtfe::{vtfe_gutschrift, ModellProfil, ShardZuschnitt, VtfeError};
@@ -192,6 +193,151 @@ pub fn zuschreiben(
     }
 
     // Wer irgendwo eine Position hielt, ist keine reine Reserve.
+    let reserve_ohne_anteil = reserve
+        .into_iter()
+        .filter(|m| !je_miner.contains_key(m))
+        .collect();
+
+    Ok(Zuschreibung {
+        je_miner,
+        reserve_ohne_anteil,
+    })
+}
+
+/// Was ein Pod in einer Epoche abgerechnet hat, wie es aus einem
+/// bestätigten Bündel folgt.
+///
+/// # ⚑ Der Unterschied zu [`Podleistung`]
+///
+/// [`Podleistung`] trägt **Zuschnitte** und eine Segmentzahl; daraus
+/// rechnet [`zuschreiben`] die Gutschriften mit dem Modellprofil. Das
+/// ist der Weg des **Prüfers**, der θ_v hat.
+///
+/// Diese hier trägt **Positionsnummern** und die vTFE des Pods; die
+/// Gewichtung liefert die [`Arbeitsverteilung`] aus dem Konsenszustand.
+/// Das ist der Weg der **Kette**, die kein Modellprofil hat und keines
+/// haben soll.
+///
+/// **Beide müssen dasselbe ergeben**, und ein Test hält das fest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Podabrechnung {
+    /// Die besetzten Positionen: wer, und auf welcher Nummer.
+    pub positionen: Vec<(MinerId, u32)>,
+    /// Die Reserve. Sie stand bereit und rechnete nicht.
+    pub reserve: Vec<MinerId>,
+    /// Was der Pod insgesamt beansprucht.
+    pub vtfe_pod: u64,
+}
+
+/// Was beim Abrechnen schiefgehen kann.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Abrechnungsfehler {
+    /// Ein Pod ohne besetzte Position.
+    PodOhnePositionen {
+        /// Index des Pods in der Eingabe.
+        pod: usize,
+    },
+    /// Derselbe Miner steht zweimal in demselben Pod.
+    MinerZweimalImPod {
+        /// Index des Pods in der Eingabe.
+        pod: usize,
+    },
+    /// Eine Positionsnummer, die die Verteilung nicht kennt.
+    ///
+    /// ⚑ **Ein Fehler und keine Null.** Wer eine Position abrechnet, die
+    /// es im gültigen Zuschnitt nicht gibt, rechnet über etwas anderes
+    /// ab als die Kette; sie stillschweigend mit null zu gewichten
+    /// verstiege den Widerspruch, statt ihn zu melden.
+    PositionUnbekannt {
+        /// Index des Pods in der Eingabe.
+        pod: usize,
+        /// Die verlangte Positionsnummer.
+        position: u32,
+        /// Wie viele es gibt.
+        positionen: usize,
+    },
+}
+
+impl std::fmt::Display for Abrechnungsfehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PodOhnePositionen { pod } => {
+                write!(f, "Pod {pod} hat keine besetzte Position")
+            }
+            Self::MinerZweimalImPod { pod } => {
+                write!(f, "Pod {pod}: derselbe Miner steht zweimal darin")
+            }
+            Self::PositionUnbekannt {
+                pod,
+                position,
+                positionen,
+            } => write!(
+                f,
+                "Pod {pod}: Position {position} gibt es nicht, die Verteilung kennt {positionen}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Abrechnungsfehler {}
+
+/// Leitet die Gutschrift je Miner aus Bündeln und Arbeitsverteilung ab.
+///
+/// **Der Weg der Kette**, ohne Modellprofil: Die vTFE eines Pods wird
+/// nach den Gewichten seiner Positionen aufgeteilt, exakt, sodass die
+/// Summe je Pod erhalten bleibt.
+///
+/// Die Reserve bekommt nichts und wird genannt, wie in [`zuschreiben`].
+///
+/// # ⚑ Unbesetzte Positionen lassen ihren Anteil verfallen
+///
+/// Aufgeteilt wird über **alle** Positionen der Verteilung, nicht nur
+/// über die besetzten. Fehlt eine Position, verfällt ihr Anteil.
+///
+/// **Die Alternative wäre falsch:** Verteilte man nur auf die
+/// Besetzten, bekämen sie Geld für Layer, die sie nicht gerechnet
+/// haben. Ein Pod, dem eine Position fehlt, hat weniger geleistet, und
+/// der Verfall bildet genau das ab. Was verfällt, wird nicht
+/// umverteilt und nicht geprägt; es entsteht schlicht nicht.
+pub fn zuschreiben_aus_abrechnung(
+    verteilung: &Arbeitsverteilung,
+    abrechnungen: &[Podabrechnung],
+) -> Result<Zuschreibung, Abrechnungsfehler> {
+    let mut je_miner: BTreeMap<MinerId, u64> = BTreeMap::new();
+    let mut reserve: BTreeSet<MinerId> = BTreeSet::new();
+
+    for (pi, pod) in abrechnungen.iter().enumerate() {
+        if pod.positionen.is_empty() {
+            return Err(Abrechnungsfehler::PodOhnePositionen { pod: pi });
+        }
+        let mut gesehen: BTreeSet<MinerId> = BTreeSet::new();
+        for m in pod
+            .positionen
+            .iter()
+            .map(|(m, _)| *m)
+            .chain(pod.reserve.iter().copied())
+        {
+            if !gesehen.insert(m) {
+                return Err(Abrechnungsfehler::MinerZweimalImPod { pod: pi });
+            }
+        }
+        for (_, nummer) in &pod.positionen {
+            if *nummer as usize >= verteilung.positionen() {
+                return Err(Abrechnungsfehler::PositionUnbekannt {
+                    pod: pi,
+                    position: *nummer,
+                    positionen: verteilung.positionen(),
+                });
+            }
+        }
+        let anteile = verteilung.aufteilen(pod.vtfe_pod);
+        for (miner, nummer) in &pod.positionen {
+            let eintrag = je_miner.entry(*miner).or_insert(0);
+            *eintrag = eintrag.saturating_add(anteile[*nummer as usize]);
+        }
+        reserve.extend(pod.reserve.iter().copied());
+    }
+
     let reserve_ohne_anteil = reserve
         .into_iter()
         .filter(|m| !je_miner.contains_key(m))
@@ -492,5 +638,168 @@ mod tests {
         let z = zuschreiben(&qwen05b(), &[voller_pod(0, 1)]).expect("Zuschreibung");
         assert_eq!(z.summe(), 0);
         assert_eq!(z.je_miner.len(), 4, "die Positionen stehen mit null da");
+    }
+
+    // --- Der Weg der Kette: aus Bündel und Arbeitsverteilung ---
+
+    fn verteilung(gewichte: Vec<u64>) -> Arbeitsverteilung {
+        Arbeitsverteilung::neu(myl_types::Hash::sha256(b"probe"), gewichte)
+            .expect("Verteilung")
+    }
+
+    fn abrechnung(ab: u8, vtfe: u64) -> Podabrechnung {
+        Podabrechnung {
+            positionen: (0..4u32).map(|i| (miner(ab + i as u8), i)).collect(),
+            reserve: vec![miner(ab + 4), miner(ab + 5)],
+            vtfe_pod: vtfe,
+        }
+    }
+
+    /// Die vTFE eines Pods wird nach den Gewichten aufgeteilt, und die
+    /// Summe bleibt erhalten.
+    #[test]
+    fn die_pod_vtfe_wird_vollstaendig_aufgeteilt() {
+        let v = verteilung(vec![3, 1, 1, 5]);
+        let z = zuschreiben_aus_abrechnung(&v, &[abrechnung(1, 1_000)]).expect("Abrechnung");
+        assert_eq!(z.summe(), 1_000, "es ging etwas verloren");
+    }
+
+    /// ⚑ **Die beiden Wege ergeben dasselbe**: der des Prüfers mit
+    /// Modellprofil und Zuschnitt, und der der Kette mit Gewichten.
+    ///
+    /// Sie runden verschieden (der eine je Position ab, der andere
+    /// verteilt den Rest), also wird auf **eine Einheit genau**
+    /// verglichen. Mehr wäre falsch behauptet, weniger wertlos.
+    #[test]
+    fn beide_wege_ergeben_dasselbe() {
+        let profil = qwen05b();
+        let pod = voller_pod(1_000, 1);
+
+        // Weg des Prüfers.
+        let a = zuschreiben(&profil, std::slice::from_ref(&pod)).expect("Pruefer");
+
+        // Weg der Kette: Gewichte sind die MAC-Anteile der Zuschnitte.
+        let gewichte: Vec<u64> = pod
+            .positionen
+            .iter()
+            .map(|p| p.zuschnitt.macs(&profil) as u64)
+            .collect();
+        let v = verteilung(gewichte);
+        let b = zuschreiben_aus_abrechnung(
+            &v,
+            &[Podabrechnung {
+                positionen: pod
+                    .positionen
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| (p.miner, i as u32))
+                    .collect(),
+                reserve: pod.reserve.clone(),
+                vtfe_pod: a.summe() as u64,
+            }],
+        )
+        .expect("Kette");
+
+        assert_eq!(a.je_miner.len(), b.je_miner.len());
+        for (m, wert_a) in &a.je_miner {
+            let wert_b = b.je_miner[m];
+            let abstand = wert_a.abs_diff(wert_b);
+            assert!(
+                abstand <= 1,
+                "Miner {m:?}: Pruefer {wert_a}, Kette {wert_b}, Abstand {abstand}"
+            );
+        }
+        assert_eq!(a.reserve_ohne_anteil, b.reserve_ohne_anteil);
+    }
+
+    /// Die Reserve bekommt auch auf diesem Weg nichts und wird genannt.
+    #[test]
+    fn die_reserve_bekommt_auch_hier_nichts() {
+        let v = verteilung(vec![1, 1, 1, 1]);
+        let z = zuschreiben_aus_abrechnung(&v, &[abrechnung(1, 400)]).expect("Abrechnung");
+        assert_eq!(z.reserve_ohne_anteil, vec![miner(5), miner(6)]);
+        assert!(!z.je_miner.contains_key(&miner(5)));
+    }
+
+    /// ⚑ Gegenprobe: Eine Position, die die Verteilung nicht kennt, ist
+    /// ein Fehler und keine Null.
+    #[test]
+    fn eine_unbekannte_position_ist_ein_fehler() {
+        let v = verteilung(vec![1, 1]);
+        let ergebnis = zuschreiben_aus_abrechnung(&v, &[abrechnung(1, 400)]);
+        assert!(
+            matches!(ergebnis, Err(Abrechnungsfehler::PositionUnbekannt { .. })),
+            "kam: {ergebnis:?}"
+        );
+    }
+
+    /// Gegenprobe: derselbe Miner zweimal im Pod.
+    #[test]
+    fn derselbe_miner_zweimal_ist_auch_hier_ein_fehler() {
+        let v = verteilung(vec![1, 1]);
+        let a = Podabrechnung {
+            positionen: vec![(miner(1), 0), (miner(1), 1)],
+            reserve: vec![],
+            vtfe_pod: 100,
+        };
+        assert_eq!(
+            zuschreiben_aus_abrechnung(&v, &[a]),
+            Err(Abrechnungsfehler::MinerZweimalImPod { pod: 0 })
+        );
+    }
+
+    /// Gegenprobe: ein Pod ohne Position.
+    #[test]
+    fn ein_pod_ohne_position_ist_auch_hier_ein_fehler() {
+        let v = verteilung(vec![1, 1]);
+        let a = Podabrechnung {
+            positionen: vec![],
+            reserve: vec![miner(1)],
+            vtfe_pod: 100,
+        };
+        assert_eq!(
+            zuschreiben_aus_abrechnung(&v, &[a]),
+            Err(Abrechnungsfehler::PodOhnePositionen { pod: 0 })
+        );
+    }
+
+    /// Wer in zwei Pods sitzt, bekommt auch hier beide Gutschriften.
+    #[test]
+    fn wer_in_zwei_pods_sitzt_bekommt_auch_hier_beide() {
+        let v = verteilung(vec![1, 1, 1, 1]);
+        let einer = Podabrechnung {
+            positionen: vec![(miner(9), 0)],
+            reserve: vec![],
+            vtfe_pod: 100,
+        };
+        let z = zuschreiben_aus_abrechnung(&v, &[einer.clone(), einer]).expect("Abrechnung");
+        // Position 0 trägt ein Viertel der Gewichte, also 25 je Pod.
+        assert_eq!(z.je_miner[&miner(9)], 50);
+    }
+
+    /// ⚑ **Unbesetzte Positionen bekommen nichts, und ihr Anteil
+    /// verfällt.** Das sieht nach Verlust aus und ist die einzig
+    /// richtige Wahl.
+    ///
+    /// ⛑ Der erste Entwurf des Tests darüber erwartete, dass die ganze
+    /// Pod-vTFE auf die **besetzten** Positionen fällt. Das wäre falsch:
+    /// Die Besetzten bekämen dann Geld für Layer, die sie **nicht
+    /// gerechnet haben**. Ein Pod, dem eine Position fehlt, hat weniger
+    /// geleistet, und genau das bildet der Verfall ab.
+    ///
+    /// **Die sichere Richtung dazu:** Was verfällt, wird nicht
+    /// umverteilt und auch nicht geprägt; es entsteht schlicht nicht.
+    #[test]
+    fn unbesetzte_positionen_lassen_ihren_anteil_verfallen() {
+        let v = verteilung(vec![1, 1, 1, 1]);
+        let halb = Podabrechnung {
+            positionen: vec![(miner(1), 0), (miner(2), 1)],
+            reserve: vec![],
+            vtfe_pod: 1_000,
+        };
+        let z = zuschreiben_aus_abrechnung(&v, &[halb]).expect("Abrechnung");
+        assert_eq!(z.summe(), 500, "der Anteil der Unbesetzten wurde umverteilt");
+        assert_eq!(z.je_miner[&miner(1)], 250);
+        assert_eq!(z.je_miner[&miner(2)], 250);
     }
 }

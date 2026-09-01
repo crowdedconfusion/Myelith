@@ -7,8 +7,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use myl_types::gegenstand::{Ablage, Manifest};
 use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, SegmentId, SitzungId};
+use myl_types::miner::{HardwareClass, MinerRegistration};
+use myl_types::node_metadata::GeoRegion;
 use myl_types::sitzung::{pruefe, Befund, Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
-use myl_types::InferenceCredit;
+use myl_types::arbeitsverteilung::Arbeitsverteilung;
+use myl_types::{InferenceCredit, PoIBundle};
 
 use crate::state::{LedgerState, Sitzung, SITZUNG_NACHFRIST};
 
@@ -57,6 +60,21 @@ pub enum TransitionError {
     /// weitere gehört dem eingetragenen Konto. Damit leitet ein
     /// gestohlener heißer Schlüssel den Ertrag nicht um.
     NichtDasAuszahlungskonto,
+    /// Der Unterzeichner ist nicht der Miner.
+    NichtDerMiner,
+    /// Der Miner ist nicht angemeldet.
+    MinerUnbekannt,
+    /// Das Bündel gehört zu einer anderen Epoche als der laufenden.
+    FremdeEpoche {
+        /// Die Epoche im Bündel.
+        buendel: EpochId,
+        /// Die laufende Epoche des Zustands.
+        laufend: EpochId,
+    },
+    /// Für diesen Pod liegt in dieser Epoche schon ein Bündel vor.
+    BuendelExistiert,
+    /// Für diesen Pipeline-Stand steht schon eine Arbeitsverteilung.
+    VerteilungExistiert,
     /// Das Manifest nennt eine andere Wurzel, als unter der es abgelegt
     /// werden soll.
     ///
@@ -145,6 +163,21 @@ impl std::fmt::Display for TransitionError {
                 "nur der Miner selbst darf erstmals eintragen, danach nur \
                  das eingetragene Konto"
             ),
+            Self::NichtDerMiner => {
+                f.write_str("nur der Miner selbst darf sich an- und abmelden")
+            }
+            Self::MinerUnbekannt => f.write_str("dieser Miner ist nicht angemeldet"),
+            Self::FremdeEpoche { buendel, laufend } => write!(
+                f,
+                "das Buendel gilt fuer Epoche {}, laufend ist {}",
+                buendel.0, laufend.0
+            ),
+            Self::BuendelExistiert => {
+                f.write_str("fuer diesen Pod liegt in dieser Epoche schon ein Buendel vor")
+            }
+            Self::VerteilungExistiert => {
+                f.write_str("fuer diesen Pipeline-Stand steht schon eine Arbeitsverteilung")
+            }
             Self::WurzelPasstNicht => write!(
                 f,
                 "das Manifest nennt eine andere Wurzel als die, unter der \
@@ -680,6 +713,202 @@ pub fn auszahlungskonto_eintragen(
     }
     state.auszahlung.insert(*miner, konto);
     Ok(())
+}
+
+/// Meldet einen Miner an oder ändert seine Hardware-Klasse (Punkt 40, 3a).
+///
+/// # ⚑ Wer darf
+///
+/// Nur der Miner selbst: Der Unterzeichner muss der Schlüssel hinter der
+/// Kennung sein. Kennung und Adresse sind verschiedene Typen über
+/// denselben Bytes, deshalb der Vergleich über die Bytes; dasselbe
+/// Muster wie bei [`auszahlungskonto_eintragen`].
+///
+/// **Anders als beim Auszahlungskonto gibt es hier kein kaltes Konto.**
+/// Eine Anmeldung ist keine Vermögensverfügung: Wer den heißen Schlüssel
+/// hat, rechnet ohnehin unter dieser Kennung, und ihn daran zu hindern,
+/// sich anzumelden, schützte nichts.
+///
+/// # ⚑ Die Zone ist eine Angabe, und sie steht hier statt im Gossip
+///
+/// Sie entscheidet, in welchem Topf ein Miner gemischt wird
+/// (Entscheidung 3b vom 2026-09-01). Wer eine falsche nennt, wird nicht
+/// ertappt; **vorwärts bestraft es sich selbst**, denn er bremst die
+/// Zone, in die er sich setzt, und die Vergütung folgt der Arbeit.
+/// Rückwärts nicht, und das ist Fund 108.
+///
+/// **Anders als `NodeMetadata::region` steht sie im Konsenszustand**,
+/// ist also für jeden Leser dieselbe. Das ist der eigentliche Gewinn:
+/// nicht Wahrheit, sondern Gleichheit.
+///
+/// # ⚑ Die Registrierungsepoche setzt die Kette, nicht der Antragsteller
+///
+/// Sie ist die **laufende** Epoche des Zustands und kein Feld aus der
+/// Anweisung. Ein selbst gewähltes Datum wäre eine Behauptung, und der
+/// Registrierungsschluss (Epoche `e-2`, Anhang A.2) soll gerade
+/// verhindern, dass sich jemand kurzfristig anmeldet, um eine Zuteilung
+/// zu beeinflussen. Wer sein Datum selbst schriebe, hätte den Schluss
+/// aufgehoben.
+///
+/// # Eine bestehende Anmeldung behält ihr Datum
+///
+/// Wer die Hardware-Klasse ändert, bleibt so alt, wie er ist.
+/// ⚑ **Sonst wäre die Klassenänderung ein Weg, den Registrierungsschluss
+/// zu umgehen**, und zwar in die falsche Richtung: Ein Wechsel machte
+/// den Miner **jünger** und damit für die nächste Zuteilung
+/// unqualifiziert; ein Angreifer könnte so einen ehrlichen Miner nicht
+/// treffen, wohl aber sich selbst aus einer Zuteilung nehmen, in die er
+/// nicht wollte.
+pub fn miner_anmelden(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    miner: &MinerId,
+    hardware: HardwareClass,
+    zone: GeoRegion,
+) -> Result<(), TransitionError> {
+    if unterzeichner.as_bytes() != miner.as_bytes() {
+        return Err(TransitionError::NichtDerMiner);
+    }
+    let seit = state
+        .miner
+        .get(miner)
+        .map(|r| r.registration_epoch)
+        .unwrap_or(state.epoch.0);
+    state.miner.insert(
+        *miner,
+        MinerRegistration {
+            miner_id: *miner,
+            hardware_class: hardware,
+            registration_epoch: seit,
+            zone,
+        },
+    );
+    Ok(())
+}
+
+/// Meldet einen Miner ab.
+///
+/// ⚑ **Und die Abmeldung wirkt sofort, nicht erst zur nächsten
+/// Zuteilung.** Wer geht, geht; ihn bis zum Epochenwechsel in der Liste
+/// zu führen hieße, ihn in Pods zu setzen, die er nicht mehr besetzt.
+/// Der Registrierungsschluss schützt die Zuteilung vor **Zugängen**, die
+/// sie beeinflussen wollen, nicht vor Abgängen.
+pub fn miner_abmelden(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    miner: &MinerId,
+) -> Result<(), TransitionError> {
+    if unterzeichner.as_bytes() != miner.as_bytes() {
+        return Err(TransitionError::NichtDerMiner);
+    }
+    if state.miner.remove(miner).is_none() {
+        return Err(TransitionError::MinerUnbekannt);
+    }
+    Ok(())
+}
+
+/// Die angemeldeten Miner in kanonischer Ordnung.
+///
+/// ⚑ **Kanonisch, weil daran die Pod-Bildung hängt.** Eine
+/// `BTreeMap` liefert ihre Schlüssel sortiert; eine `HashMap` täte es
+/// nicht, und zwei Knoten kämen zu verschiedenen Zuteilungen, ohne dass
+/// etwas kaputt wäre.
+pub fn angemeldete_miner(state: &LedgerState) -> Vec<MinerRegistration> {
+    state.miner.values().copied().collect()
+}
+
+/// Setzt die Arbeitsverteilung der Pod-Positionen.
+///
+/// # ⚑ Eine Verteilung je Pipeline-Stand, und nicht zwei
+///
+/// Steht für **denselben** Pipeline-Stand schon eine Verteilung, wird
+/// abgelehnt. Die Gewichte folgen aus dem Stand; **dieselbe Pipeline
+/// zweimal verschieden zu gewichten hieße, dass sie nicht aus ihr
+/// folgen**, und dann wären sie frei wählbar. Wer anders gewichten will,
+/// wechselt den Stand, und der Wechsel ist sichtbar.
+///
+/// # ⚑ Wer setzen darf, ist noch nicht durchgesetzt
+///
+/// Das ist ein **Governance-Akt**, und der Draht von einem angenommenen
+/// Beschluss hierher fehlt, wie bei der Belastung der Treasury. Bis
+/// dahin prüft diese Funktion die Form und nicht die Befugnis, **und das
+/// steht hier, statt eine Sicherheit vorzugeben, die es nicht gibt**.
+pub fn arbeitsverteilung_setzen(
+    state: &mut LedgerState,
+    verteilung: Arbeitsverteilung,
+) -> Result<(), TransitionError> {
+    if let Some(bisher) = &state.arbeitsverteilung {
+        if bisher.pipeline() == verteilung.pipeline() {
+            return Err(TransitionError::VerteilungExistiert);
+        }
+    }
+    state.arbeitsverteilung = Some(verteilung);
+    Ok(())
+}
+
+/// Nimmt ein PoI-Bündel in die laufende Epoche auf (Punkt 40, Glied 1).
+///
+/// # Was hier geprüft wird
+///
+/// - Der Einreichende ist ein **angemeldeter Miner**.
+/// - Das Bündel gehört zur **laufenden** Epoche.
+/// - Für diesen Pod liegt in dieser Epoche **noch keines** vor.
+///
+/// # ⚑ Was hier ausdrücklich **nicht** geprüft wird, und warum
+///
+/// **Die Aggregatsignatur gegen die Pod-Mitglieder.** Sie ist die
+/// eigentliche Prüfung, und sie setzt voraus, dass der Zustand weiß, wer
+/// in diesem Pod sitzt. Das tut er noch nicht: Die Ableitung der
+/// Zuteilung ist Glied 3c und steht aus.
+///
+/// **Solange sie fehlt, ist „angemeldeter Miner" eine schwache
+/// Schranke**, und das gehört gesagt statt verschwiegen: Ein
+/// angemeldeter Miner kann heute ein Bündel für **irgendeinen** Pod
+/// einreichen. Was ihn bremst, ist allein, dass die Zuschreibung ohne
+/// Besetzung ohnehin nichts ausschüttet; **die Lücke ist bekannt,
+/// begrenzt und benannt**, und sie schließt sich mit 3c.
+///
+/// Sie ist kein Grund, das Glied nicht zu bauen: Ohne einen Weg in die
+/// Kette gibt es nichts zu prüfen.
+pub fn buendel_einreichen(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    buendel: PoIBundle,
+) -> Result<(), TransitionError> {
+    let kennung = MinerId::new(*unterzeichner.as_bytes());
+    if !state.miner.contains_key(&kennung) {
+        return Err(TransitionError::MinerUnbekannt);
+    }
+    if buendel.epoch != state.epoch {
+        return Err(TransitionError::FremdeEpoche {
+            buendel: buendel.epoch,
+            laufend: state.epoch,
+        });
+    }
+    if state.buendel.contains_key(&buendel.pod) {
+        return Err(TransitionError::BuendelExistiert);
+    }
+    state.buendel.insert(buendel.pod, buendel);
+    Ok(())
+}
+
+/// Die Bündel der laufenden Epoche in kanonischer Ordnung.
+pub fn buendel_der_epoche(state: &LedgerState) -> Vec<PoIBundle> {
+    state.buendel.values().cloned().collect()
+}
+
+/// Leert die Bündel, weil die Epoche abgerechnet ist.
+///
+/// ⚑ **Ohne diesen Aufruf wächst der Zustand unbegrenzt**, und
+/// Entscheidung D7 wäre gebrochen. Er gehört in denselben Zug wie der
+/// Epochenabschluss; **die Historie steht in den Blöcken**, nicht hier.
+///
+/// Gibt zurück, wie viele geleert wurden, damit ein Aufrufer die Zahl
+/// protokollieren kann statt sie zu raten.
+pub fn buendel_leeren(state: &mut LedgerState) -> usize {
+    let n = state.buendel.len();
+    state.buendel.clear();
+    n
 }
 
 /// Schreibt geprägte MYL einem Konto gut.
@@ -1818,5 +2047,292 @@ mod tests {
         let mut nachher = LedgerState::genesis(1);
         praegen(&mut nachher, &adresse(3), 1).expect("Praegung");
         assert_ne!(vorher.commitment(), nachher.commitment());
+    }
+
+    // --- Punkt 40, Glied 3a: das Miner-Register ---
+
+    fn kennung(b: u8) -> MinerId {
+        MinerId::new([b; 32])
+    }
+
+    /// Eine Anmeldung steht danach im Register, mit der laufenden Epoche.
+    #[test]
+    fn eine_anmeldung_steht_im_register() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(7);
+        miner_anmelden(&mut st, &adresse(3), &kennung(3), HardwareClass::MediumGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+        let eintrag = st.miner.get(&kennung(3)).expect("eingetragen");
+        assert_eq!(eintrag.hardware_class, HardwareClass::MediumGpu);
+        assert_eq!(eintrag.registration_epoch, 7);
+    }
+
+    /// ⚑ **Die Registrierungsepoche setzt die Kette.** Ein selbst
+    /// gewähltes Datum hübe den Registrierungsschluss auf.
+    #[test]
+    fn die_epoche_kommt_aus_dem_zustand() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(42);
+        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+        assert_eq!(st.miner[&kennung(1)].registration_epoch, 42);
+    }
+
+    /// ⚑ **Eine Klassenänderung behält das Datum.** Sonst machte sie den
+    /// Miner jünger und damit für die nächste Zuteilung unqualifiziert.
+    #[test]
+    fn eine_klassenaenderung_behaelt_das_datum() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(5);
+        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+            .expect("erste");
+        st.epoch = EpochId(50);
+        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::LargeGpu, GeoRegion::Europe)
+            .expect("zweite");
+        let eintrag = st.miner[&kennung(1)];
+        assert_eq!(eintrag.hardware_class, HardwareClass::LargeGpu);
+        assert_eq!(eintrag.registration_epoch, 5, "das Datum wanderte mit");
+    }
+
+    /// Gegenprobe: Ein Fremder meldet niemanden an.
+    #[test]
+    fn ein_fremder_meldet_niemanden_an() {
+        let mut st = LedgerState::genesis(1);
+        assert_eq!(
+            miner_anmelden(&mut st, &adresse(9), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe),
+            Err(TransitionError::NichtDerMiner)
+        );
+        assert!(st.miner.is_empty(), "der Fremde hat eingetragen");
+    }
+
+    /// Die Abmeldung wirkt sofort.
+    #[test]
+    fn eine_abmeldung_wirkt_sofort() {
+        let mut st = LedgerState::genesis(1);
+        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+        miner_abmelden(&mut st, &adresse(1), &kennung(1)).expect("Abmeldung");
+        assert!(st.miner.is_empty());
+    }
+
+    /// Gegenprobe: Ein Fremder meldet niemanden ab.
+    #[test]
+    fn ein_fremder_meldet_niemanden_ab() {
+        let mut st = LedgerState::genesis(1);
+        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+        assert_eq!(
+            miner_abmelden(&mut st, &adresse(9), &kennung(1)),
+            Err(TransitionError::NichtDerMiner)
+        );
+        assert_eq!(st.miner.len(), 1, "der Fremde hat abgemeldet");
+    }
+
+    /// Wer nicht angemeldet ist, kann sich nicht abmelden, und das wird
+    /// benannt statt stillschweigend hingenommen.
+    #[test]
+    fn ein_unbekannter_kann_sich_nicht_abmelden() {
+        let mut st = LedgerState::genesis(1);
+        assert_eq!(
+            miner_abmelden(&mut st, &adresse(1), &kennung(1)),
+            Err(TransitionError::MinerUnbekannt)
+        );
+    }
+
+    /// ⚑ **Die Liste ist kanonisch geordnet**, denn daran hängt die
+    /// Pod-Bildung: Zwei Knoten mit verschiedener Reihenfolge kämen zu
+    /// verschiedenen Zuteilungen, ohne dass etwas kaputt wäre.
+    #[test]
+    fn die_minerliste_ist_kanonisch_geordnet() {
+        let mut st = LedgerState::genesis(1);
+        for b in [9u8, 2, 7, 1] {
+            miner_anmelden(&mut st, &adresse(b), &kennung(b), HardwareClass::SmallGpu, GeoRegion::Europe)
+                .expect("Anmeldung");
+        }
+        let ids: Vec<MinerId> = angemeldete_miner(&st).iter().map(|r| r.miner_id).collect();
+        let mut sortiert = ids.clone();
+        sortiert.sort();
+        assert_eq!(ids, sortiert);
+    }
+
+    /// Das Register geht in die Zustandsverpflichtung ein.
+    #[test]
+    fn das_register_veraendert_das_commitment() {
+        let leer = LedgerState::genesis(1);
+        let mut mit = LedgerState::genesis(1);
+        miner_anmelden(&mut mit, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+        assert_ne!(leer.commitment(), mit.commitment());
+    }
+
+    // --- Punkt 40, Glied 1: das Bündel in der Kette ---
+
+    fn pod(b: u8) -> myl_types::ids::PodId {
+        myl_types::ids::PodId::new([b; 32])
+    }
+
+    fn buendel(p: u8, epoche: u64, vtfe: u64) -> PoIBundle {
+        PoIBundle {
+            epoch: EpochId(epoche),
+            pod: pod(p),
+            segments_root: MerkleRoot::new([7; 32]),
+            vtfe_claimed: vtfe,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        }
+    }
+
+    fn angemeldet(st: &mut LedgerState, b: u8) {
+        miner_anmelden(st, &adresse(b), &kennung(b), HardwareClass::MediumGpu, GeoRegion::Europe)
+            .expect("Anmeldung");
+    }
+
+    /// Ein Bündel eines angemeldeten Miners für die laufende Epoche
+    /// wird aufgenommen.
+    #[test]
+    fn ein_buendel_wird_aufgenommen() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        assert_eq!(buendel_der_epoche(&st).len(), 1);
+        assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500);
+    }
+
+    /// Gegenprobe: Wer nicht angemeldet ist, reicht nichts ein.
+    #[test]
+    fn ein_unangemeldeter_reicht_nichts_ein() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        assert_eq!(
+            buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)),
+            Err(TransitionError::MinerUnbekannt)
+        );
+        assert!(st.buendel.is_empty());
+    }
+
+    /// ⚑ Gegenprobe: Ein Bündel einer anderen Epoche gilt nicht. Ohne
+    /// diese Schranke ließe sich Arbeit aus einer alten Epoche in einer
+    /// neuen abrechnen.
+    #[test]
+    fn ein_buendel_fremder_epoche_gilt_nicht() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        assert_eq!(
+            buendel_einreichen(&mut st, &adresse(1), buendel(9, 3, 500)),
+            Err(TransitionError::FremdeEpoche {
+                buendel: EpochId(3),
+                laufend: EpochId(4)
+            })
+        );
+    }
+
+    /// ⚑ Gegenprobe: Zweimal für denselben Pod geht nicht. Sonst
+    /// rechnete ein Pod seine Arbeit mehrfach ab.
+    #[test]
+    fn zweimal_fuer_denselben_pod_geht_nicht() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)).expect("erste");
+        assert_eq!(
+            buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 900)),
+            Err(TransitionError::BuendelExistiert)
+        );
+        assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500, "das zweite hat ueberschrieben");
+    }
+
+    /// Verschiedene Pods dürfen nebeneinander stehen.
+    #[test]
+    fn verschiedene_pods_stehen_nebeneinander() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        for p in [1u8, 5, 9] {
+            buendel_einreichen(&mut st, &adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+        }
+        assert_eq!(buendel_der_epoche(&st).len(), 3);
+    }
+
+    /// ⚑ **Das Leeren gehört zum Abschluss.** Ohne es wüchse der
+    /// Zustand unbegrenzt, und D7 wäre gebrochen.
+    #[test]
+    fn das_leeren_gibt_die_zahl_zurueck() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        for p in [1u8, 5] {
+            buendel_einreichen(&mut st, &adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+        }
+        assert_eq!(buendel_leeren(&mut st), 2);
+        assert!(st.buendel.is_empty());
+        assert_eq!(buendel_leeren(&mut st), 0, "das zweite Leeren fand noch etwas");
+    }
+
+    /// Bündel gehen in die Zustandsverpflichtung ein.
+    #[test]
+    fn ein_buendel_veraendert_das_commitment() {
+        let mut ohne = LedgerState::genesis(1);
+        ohne.epoch = EpochId(4);
+        angemeldet(&mut ohne, 1);
+        let mut mit = ohne.clone();
+        buendel_einreichen(&mut mit, &adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        assert_ne!(ohne.commitment(), mit.commitment());
+    }
+
+    // --- Punkt 40, letztes Glied: die Arbeitsverteilung ---
+
+    fn verteilung(stand: u8, gewichte: Vec<u64>) -> Arbeitsverteilung {
+        Arbeitsverteilung::neu(myl_types::Hash::sha256(&[stand; 4]), gewichte)
+            .expect("Verteilung")
+    }
+
+    /// Eine Verteilung steht danach im Zustand.
+    #[test]
+    fn eine_verteilung_steht_im_zustand() {
+        let mut st = LedgerState::genesis(1);
+        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![3, 1, 1, 5])).expect("setzen");
+        let v = st.arbeitsverteilung.as_ref().expect("gesetzt");
+        assert_eq!(v.gewichte(), &[3, 1, 1, 5]);
+    }
+
+    /// ⚑ **Derselbe Pipeline-Stand bekommt keine zweite Gewichtung.**
+    /// Sonst folgten die Gewichte nicht aus dem Stand, sondern wären
+    /// frei wählbar.
+    #[test]
+    fn derselbe_stand_bekommt_keine_zweite_gewichtung() {
+        let mut st = LedgerState::genesis(1);
+        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![1, 1])).expect("erste");
+        assert_eq!(
+            arbeitsverteilung_setzen(&mut st, verteilung(1, vec![9, 1])),
+            Err(TransitionError::VerteilungExistiert)
+        );
+        assert_eq!(
+            st.arbeitsverteilung.as_ref().expect("gesetzt").gewichte(),
+            &[1, 1],
+            "die zweite hat ueberschrieben"
+        );
+    }
+
+    /// Ein anderer Stand darf anders gewichten, und der Wechsel ist
+    /// sichtbar.
+    #[test]
+    fn ein_anderer_stand_darf_anders_gewichten() {
+        let mut st = LedgerState::genesis(1);
+        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![1, 1])).expect("erste");
+        arbeitsverteilung_setzen(&mut st, verteilung(2, vec![9, 1])).expect("zweite");
+        assert_eq!(
+            st.arbeitsverteilung.as_ref().expect("gesetzt").gewichte(),
+            &[9, 1]
+        );
+    }
+
+    /// Die Verteilung geht in die Zustandsverpflichtung ein.
+    #[test]
+    fn die_verteilung_veraendert_das_commitment() {
+        let ohne = LedgerState::genesis(1);
+        let mut mit = LedgerState::genesis(1);
+        arbeitsverteilung_setzen(&mut mit, verteilung(1, vec![1])).expect("setzen");
+        assert_ne!(ohne.commitment(), mit.commitment());
     }
 }

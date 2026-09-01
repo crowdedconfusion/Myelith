@@ -27,6 +27,7 @@ pub mod miner_filter;
 pub mod redundancy;
 pub mod sampling;
 pub mod shard_assignment;
+pub mod zonenzuteilung;
 pub mod vrf_seed;
 
 pub use geo_clustering::{form_clusters, LatencyMatrix, MinerCluster};

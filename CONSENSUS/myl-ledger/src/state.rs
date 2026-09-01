@@ -2,7 +2,10 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use myl_types::gegenstand::Manifest;
-use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, SitzungId};
+use myl_types::miner::MinerRegistration;
+use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, PodId, SitzungId};
+use myl_types::arbeitsverteilung::Arbeitsverteilung;
+use myl_types::PoIBundle;
 use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand};
 use myl_types::Hash;
 use sha2::{Digest, Sha256};
@@ -212,6 +215,70 @@ pub struct LedgerState {
     /// **So sammelt sich nie ein Ertrag unter einem heißen Schlüssel an**,
     /// und der Fehler fällt sofort auf, weil nichts ankommt.
     pub auszahlung: BTreeMap<MinerId, Address>,
+
+    /// Wer sich als Miner angemeldet hat (Punkt 40, Glied 3a).
+    ///
+    /// # ⚑ Der Doc-Kommentar sagte es seit Monaten, und es stimmte nicht
+    ///
+    /// `MinerRegistration` trug schon immer den Satz „wird bei der
+    /// Miner-Registrierung erstellt und **im Ledger gespeichert**".
+    /// **Der Ledger kannte sie nicht.** Der Scheduler bekam seine Liste
+    /// vom Aufrufer, und wer sie liefert, entscheidet über die
+    /// Pod-Bildung: Zwei Knoten mit verschiedenen Listen kommen zu
+    /// verschiedenen Pods.
+    ///
+    /// # Warum das in den Zustand darf und die Wissensdatenbank nicht
+    ///
+    /// Entscheidung D7 hält unbegrenzt wachsende Mengen aus dem
+    /// Zustand heraus, weil [`LedgerState::commitment`] den **ganzen**
+    /// Zustand je Block serialisiert. **Das Register wächst nicht
+    /// unbegrenzt**, sondern mit der Zahl der Miner, und die ist die
+    /// Größe des Netzes selbst: Ein Netz, dessen Teilnehmerliste den
+    /// Zustand sprengt, hat ein anderes Problem.
+    ///
+    /// ⚑ **Latenz-Atteste gehören aus demselben Grund nicht hierher.**
+    /// Sie wären bei tausend Minern gut vier Megabyte je Epoche; sie
+    /// sind Blockdaten, und in den Zustand kommt nur, was aus ihnen
+    /// folgt.
+    pub miner: BTreeMap<MinerId, MinerRegistration>,
+
+    /// Die PoI-Bündel der **laufenden** Epoche, je Pod eines
+    /// (Punkt 40, Glied 1).
+    ///
+    /// # ⚑ Warum das den Zustand nicht sprengt
+    ///
+    /// Ein Bündel je Pod je Epoche, und **beim Epochenabschluss wird
+    /// geleert**. Bei tausend Minern und Pods aus `k+2` Mitgliedern sind
+    /// das rund 170 Einträge zu je gut 200 Byte. Entscheidung D7 hält
+    /// unbegrenzt wachsende Mengen aus dem Zustand heraus, weil
+    /// [`LedgerState::commitment`] ihn je Block ganz serialisiert;
+    /// **begrenzt ist diese Menge, weil sie geleert wird**, nicht weil
+    /// sie klein anfängt.
+    ///
+    /// Wer hier eine Aufbewahrung über Epochen hinweg einbaut, macht aus
+    /// einer begrenzten Menge eine wachsende und bricht D7. Die Historie
+    /// steht in den Blöcken.
+    pub buendel: BTreeMap<PodId, PoIBundle>,
+
+    /// Wie sich die Arbeit eines Pods auf seine Positionen verteilt
+    /// (Punkt 40, letztes Glied).
+    ///
+    /// # ⚑ Warum Gewichte und nicht das Modellprofil
+    ///
+    /// Die Zuschreibung je Miner folgt aus den
+    /// Multiplikations-Additionen seines Zuschnitts. Dafür bräuchte der
+    /// Zustand das **Modellprofil** und den **Zuschnitt je Position**;
+    /// beides wäre möglich und die falsche Wahl. **Ein Profil im Zustand
+    /// ist genauso eine Erklärung wie ein Gewicht, nur mit zehnfacher
+    /// Fläche**, und es zöge die Modellinnereien in einen Konsenstyp:
+    /// Eine neue Architektur änderte die **Form des Zustands** und
+    /// verlangte eine harte Gabelung. Mit Gewichten ändert sie die
+    /// Zahlen.
+    ///
+    /// **`None` heißt: es wird nichts zugeschrieben.** Ohne Verteilung
+    /// bleibt der Shard-Miner-Anteil ungeprägt, und das ist die sichere
+    /// Richtung.
+    pub arbeitsverteilung: Option<Arbeitsverteilung>,
 }
 
 impl LedgerState {
@@ -227,6 +294,9 @@ impl LedgerState {
             burn_ema: 0,
             burn_ema_bis: EpochId(0),
             auszahlung: BTreeMap::new(),
+            miner: BTreeMap::new(),
+            buendel: BTreeMap::new(),
+            arbeitsverteilung: None,
         }
     }
 
