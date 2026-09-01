@@ -40,9 +40,14 @@ Auswertung der Proben), niemals im Integer-Inferenzpfad.
 Perplexität Integer-Modell **15,59** vs. BF16-Baseline **14,95** =
 **+4,29 %** (Kriterium: max. +5 % relativer Anstieg). Protokoll:
 `results/decision_12-21.md`. Der zugehörige plastische Beleg
-(Bit-Identität, Parallelgenerierung DE/EN, Top-1-Agreement 89,3 %,
-Durchsatz-Basis) liegt unter `results/evidence/`; Zusammenfassung und
-Einordnung in `../docs/02_empirischer_beleg_bit-exakte-inferenz.md`.
+(Bit-Identität, Parallelgenerierung DE/EN, Top-1-Agreement,
+Durchsatz-Basis) liegt unter `results/evidence/`.
+
+⚑ **Eine zweite Zusammenfassung gibt es bewusst nicht mehr.** Sie stand
+bis zum 2026-09-01 unter `../docs/` und führte die Zahlen eines älteren
+θ_v weiter, während `results/decision_12-21.md` bei jedem Lauf neu
+geschrieben wird. **Wer eine Messung an zwei Orten führt, pflegt
+irgendwann nur noch einen.**
 
 ## Aufruf
 

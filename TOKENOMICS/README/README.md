@@ -1,12 +1,12 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.13.0
+> **Version:** 0.14.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
-> α=2/31); 🎉 **Phasen 1 bis 4 abgeschlossen**, Phase 5 offen
-> (Auslastungsboden und Subventionsplan).
-> **180 Tests grün** (156 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
+> α=2/31); 🎉 **Phasen 1 bis 5 abgeschlossen** (Auslastungsboden und
+> Subventionsplan seit dem 1. September).
+> **210 Tests grün** (186 Modultests, 17 adversariale, 4 Eigenschafts-, 3 Akzeptanztests).
 >
 > **Seit dem 27. August greift die Slashing-Staffelung wirklich.** Bis
 > dahin war sie eine Tabelle mit drei Stufen, von denen immer die erste
@@ -97,6 +97,74 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.14.0 – 2026-09-01 (Phase 5: der Boden und der Anlaufanreiz)
+
+**Das Ausfallbild, gegen das der Boden gebaut ist:** Viele Halter kaufen
+MYL und verbrennen nicht. Der geglättete Burn fällt, die Prägung folgt
+ihm, Miner gehen, die Kapazität sinkt. ⚑ **Der Kurs kann dabei
+steigen**, und genau das macht es tückisch: Von außen sieht ein
+sterbendes Netz aus wie ein erfolgreiches. Der Burn-Deckel begrenzt
+einen Stoß **nach oben**, die Preisuntergrenze fängt den Preis; **das
+Problem ist die Menge.**
+
+**`boden.rs`** (5.1 bis 5.3). Fällt die Auslastung unter 50 Prozent,
+schreibt treasury-finanziertes Training die Lücke aus, gedeckelt durch
+die bestehenden 70 Prozent gegenüber der Inferenz und durch den
+Treasury-Bestand. ⚑ **Reicht das Treasury nur für einen Teil, bleibt die
+Lücke im Ergebnis sichtbar:** Ein halb geschlossener Boden, der wie ein
+geschlossener aussieht, ist schlimmer als gar keiner, denn dann sucht
+niemand nach der Ursache der Abwanderung.
+
+⚑ **Ein Boden ohne Reichweite ist ein Versprechen.** Das Treasury bekommt
+drei Prozent der Prägung, **und die Prägung fällt in genau dem Szenario,
+in dem der Boden gebraucht wird.** `reichweite` rechnet die Zahl aus, mit
+dem Zufluss, den der Aufrufer nennt, und sagt dabei, dass sie eine
+**Obergrenze und keine Zusage** ist: In diesem Szenario fällt genau
+dieser Zufluss.
+
+**Die Liveness-Bedingung ist prüfbar formuliert:** Das Minereinkommen
+darf die Kosten des Onlinebleibens nicht länger als `t` Epochen
+unterschreiten. Eine einzelne Epoche darunter ist kein Verstoß;
+Einkommen schwankt, und eine Bedingung, die bei jeder Schwankung
+anschlägt, wird abgeschaltet.
+
+**`subventionsplan.rs`** (5.4 bis 5.6). Die Subventionsrate ist ein Plan
+je Epochenbereich statt einer Zahl. ⚑ **Nicht über eine höhere
+Genesis-Menge:** `genesis.rs` nimmt Arbeitsnachweise und sonst nichts,
+und diese Eigenschaft ist durch die **Form der Funktion** durchgesetzt,
+nicht durch eine Prüfung. Sie für einen Anreiz aufzugeben, den es auch
+anders gibt, wäre zu teuer.
+
+**Abgelehnt, nicht gewarnt:** Ein Plan muss bei Epoche null beginnen,
+darf nicht steigen und muss an jedem Punkt unter der
+Self-Dealing-Schranke liegen. ⚑ Ein Anlaufanreiz, der später steigt,
+belohnte das Warten, also das Gegenteil dessen, wofür er da ist.
+
+⚑ **Der Widerspruch zu Anhang B.8.4 steht ausdrücklich dabei.** Eine
+steilere Kurve erhöht den Erstjahresanteil, während Kap. 5.7 eine flache
+empfiehlt. **Das ist der Zweck und keine Nebenwirkung:** Der Vorteil
+früher Teilnahme *ist* der Anreiz. Deshalb liefert der Plan seinen
+Erstjahresanteil **als Zahl mit**. Wer ihn ändert, sieht sofort, was er
+an der Konzentration ändert; ein Abwägen, das man sehen kann, ist der
+Unterschied zwischen einer Entscheidung und einem Nebeneffekt.
+
+⚑ **Und die Annahme dahinter gehört dem Aufrufer.** Der Anteil hängt am
+Verlauf der Prägung ohne Subvention, und den kennt dieses Modul nicht.
+Es rechnet über eine Basisreihe, die der Aufrufer mitbringt; eine
+eingebaute Abklingkurve sähe aus wie eine Messung und wäre eine Setzung.
+`basis_halbierung_je_jahr` liefert die Reihe aus B.8.4, damit die
+dortige Zahl nachrechenbar bleibt.
+
+⛑ **Ein Test hieß etwas anderes, als er prüfte.** „Auch ein späterer
+Abschnitt wird gegen die Schranke geprüft" prüfte den ersten. Beim
+Nachsehen war der Grund interessanter als der Fehler: Weil der Plan
+nicht steigen darf, **ist der erste Abschnitt immer der größte**, und ein
+Plan mit einem späteren darüber scheitert vorher an der Monotonie. Die
+Prüfung je Abschnitt bleibt trotzdem stehen, mit dieser Begründung
+daneben.
+
+30 neue Tests, vier Gegenproben.
 
 ### v0.13.0 – 2026-08-31 (⚑ Punkt 38 geschlossen: die Prägung erreicht ein Konto)
 

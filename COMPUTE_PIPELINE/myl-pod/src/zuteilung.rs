@@ -210,6 +210,55 @@ pub fn pod_aus_zuteilung(pods: &[Pod], pod_index: u32) -> Result<&Pod, Zuteilung
         })
 }
 
+/// Baut die Netzreserve der Epoche aus dem, was die Zuteilung übrig
+/// ließ (Punkt 3.4).
+///
+/// `Zuteilung::ohne_pod` führt jeden registrierten Miner, der in keinen
+/// vollständigen Pod passte. **Bisher wartete er auf eine Zuweisung, die
+/// nie kam**; jetzt ist er die Reserve, aus der ein Pod nachbesetzt,
+/// wenn seine eigenen zwei Plätze verbraucht sind.
+///
+/// Der Seed ist derselbe wie für die Pod-Bildung, die Mischung aber
+/// nicht: [`crate::netzreserve::DST_NETZRESERVE`] trennt die beiden
+/// Ableitungen.
+pub fn netzreserve_aus_zuteilung(
+    zuteilung: &Zuteilung,
+    seed: &[u8; 32],
+    epoche: EpochId,
+) -> crate::netzreserve::Netzreserve {
+    let frei: Vec<MinerId> = zuteilung.ohne_pod.iter().map(|r| r.miner_id).collect();
+    crate::netzreserve::Netzreserve::verteilen(&frei, zuteilung.pods.len(), seed, epoche)
+}
+
+/// Wie [`netzreserve_aus_zuteilung`], ordnet aber Auffällige nach hinten
+/// (Punkt 3.6).
+///
+/// `verstoesse` bildet einen Miner auf seine Zahl im
+/// Beobachtungsfenster ab. Sie stammt aus
+/// `myl_ledger::LedgerState::verstoesse_im_fenster`, das nach **Adresse**
+/// fragt; Kennung und Adresse sind verschiedene Typen über denselben
+/// Bytes, die Abbildung macht der Aufrufer.
+///
+/// ⚑ **Der Ledger wird hier nicht gelesen**, und das ist Absicht:
+/// `myl-pod` hängt nicht an ihm. Wer die Zahlen liefert, hat sie an
+/// **einer** Blockhöhe gelesen, und nur so sind sie über zwei Knoten
+/// hinweg dieselben.
+pub fn netzreserve_aus_zuteilung_gestaffelt(
+    zuteilung: &Zuteilung,
+    seed: &[u8; 32],
+    epoche: EpochId,
+    verstoesse: &std::collections::BTreeMap<MinerId, u64>,
+) -> crate::netzreserve::Netzreserve {
+    let frei: Vec<MinerId> = zuteilung.ohne_pod.iter().map(|r| r.miner_id).collect();
+    crate::netzreserve::Netzreserve::verteilen_gestaffelt(
+        &frei,
+        zuteilung.pods.len(),
+        seed,
+        epoche,
+        verstoesse,
+    )
+}
+
 /// Führt den Epochenwechsel aus einer Scheduler-Zuteilung aus.
 ///
 /// Gibt die Rebuild-Aufträge der gewechselten Positionen zurück.
@@ -570,5 +619,68 @@ mod tests {
         let b: std::collections::BTreeSet<MinerId> =
             z.pods[1].mitglieder().map(|m| m.miner_id).collect();
         assert!(a.is_disjoint(&b), "zwei Pods teilten sich einen Miner");
+    }
+
+    /// ⚑ **Punkt 3.4: Wer in keinen Pod passte, wartet nicht mehr
+    /// vergeblich.** Aus `ohne_pod` wird die Netzreserve, und sie ist
+    /// auf die Pods aufgeteilt.
+    #[test]
+    fn aus_ohne_pod_wird_die_netzreserve() {
+        let zuteilung = Zuteilung {
+            pods: vec![pod(4, 6, 0, 1), pod(4, 6, 1, 2)],
+            ohne_pod: (20..=25).map(miner).collect(),
+        };
+        let netz = netzreserve_aus_zuteilung(&zuteilung, &[9u8; 32], EpochId(3));
+        assert_eq!(netz.pods(), 2);
+        assert_eq!(netz.uebrig(), 6);
+        assert!(netz.pods_ohne_reserve().is_empty());
+    }
+
+    /// Ging die Zuteilung glatt auf, gibt es keine Netzreserve, und
+    /// jeder Pod erfährt das.
+    #[test]
+    fn ohne_uebrige_gibt_es_keine_netzreserve() {
+        let zuteilung = Zuteilung {
+            pods: vec![pod(4, 6, 0, 1)],
+            ohne_pod: vec![],
+        };
+        let netz = netzreserve_aus_zuteilung(&zuteilung, &[9u8; 32], EpochId(3));
+        assert_eq!(netz.uebrig(), 0);
+        assert_eq!(netz.pods_ohne_reserve(), vec![0]);
+    }
+
+    /// ⚑ **Punkt 3.6 an der Nahtstelle:** Wer auffiel, steht in der
+    /// Netzreserve hinten.
+    #[test]
+    fn die_netzreserve_staffelt_nach_verstoessen() {
+        let zuteilung = Zuteilung {
+            pods: vec![pod(4, 6, 0, 1)],
+            ohne_pod: (20..=25).map(miner).collect(),
+        };
+        let mut v = std::collections::BTreeMap::new();
+        // Die ersten drei sind auffällig.
+        for b in 20..=22u8 {
+            v.insert(MinerId::new([b; 32]), 4u64);
+        }
+        let netz = netzreserve_aus_zuteilung_gestaffelt(&zuteilung, &[9u8; 32], EpochId(3), &v);
+        let folge = netz.fuer_pod(0);
+        assert_eq!(folge.len(), 6);
+        for m in &folge[..3] {
+            assert!(!v.contains_key(m), "ein Auffälliger stand vorn: {m:?}");
+        }
+    }
+
+    /// Ohne Verstöße ist die gestaffelte Verteilung die gewöhnliche.
+    #[test]
+    fn ohne_verstoesse_staffelt_nichts() {
+        let zuteilung = Zuteilung {
+            pods: vec![pod(4, 6, 0, 1), pod(4, 6, 1, 2)],
+            ohne_pod: (20..=25).map(miner).collect(),
+        };
+        let leer = std::collections::BTreeMap::new();
+        assert_eq!(
+            netzreserve_aus_zuteilung_gestaffelt(&zuteilung, &[9u8; 32], EpochId(3), &leer),
+            netzreserve_aus_zuteilung(&zuteilung, &[9u8; 32], EpochId(3))
+        );
     }
 }

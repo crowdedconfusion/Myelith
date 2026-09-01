@@ -4,7 +4,26 @@
 # darueber, welche Modelle es gibt, woher sie kommen und unter welcher
 # Lizenz. Der Testclient liest ihn, und ohne ihn faende er die Gewichte
 # nicht. README.md wird daraus erzeugt (tools/modelle_liste.py).
+#
+# Seit dem 2026-09-01 gehoert die Lizenzdatei eines **empfohlenen**
+# Modells ebenfalls dazu (Festlegung des Projektinhabers). Der Grund ist
+# der Ablauf beim Miner: Er holt die Gewichte per Skript direkt von der
+# Quelle. Laege die Lizenz nur neben den heruntergeladenen Gewichten,
+# erfuehre er die Bedingungen erst **nachdem** er sie geholt hat.
+#
+# Die Regel ist: Wer im KATALOG.json steht, bringt seine Lizenzdatei mit.
+# Der Katalog ist die kuratierte Liste; ein Modell, das jemand nur einmal
+# zum Messen laedt und nicht eintraegt, gehoert nicht dazu. Die Gewichte
+# bleiben in jedem Fall draussen.
+#
+# Nebenwirkung, und eine erwuenschte: `ETHICS/werkzeuge/lizenzprobe.py`
+# fand in der CI bisher einen leeren Ordner und ging durch. Jetzt liest
+# sie dort vier echte Lizenztexte.
 /*
 !/.gitignore
 !/README.md
 !/KATALOG.json
+!/*/
+/*/*
+!/*/LICENSE
+!/*/LICENSE.*

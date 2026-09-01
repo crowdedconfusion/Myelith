@@ -18,7 +18,7 @@ Welt zulässt, kann nicht zusichern, wo gerechnet wird.
 Sie liest **Dateien**, nicht Recht. Ein Verzeichnis ohne Lizenzdatei
 fällt auf; eine Lizenz, die anders heißt als ihr Inhalt, fällt nicht
 auf. Die variantenscharfe Bewertung steht in
-`INTEGER_LLM/docs/01_licenses.md` und stammt von Menschen.
+`ETHICS/Lizenzlage.md` und stammt von Menschen.
 
 **Und sie prüft nur, was lokal liegt.** Ein Modell, das nie
 heruntergeladen wurde, hat hier kein Verzeichnis und erzeugt keinen

@@ -1,6 +1,18 @@
-# Lizenzübersicht
+# Lizenzlage der Basismodelle
 
-**Stand:** 2026-08-23
+**Stand:** 2026-09-01 (Inhalt vom 2026-08-23, Fundort gewechselt)
+
+> ⚑ **Diese Datei lag bis zum 2026-09-01 unter
+> `INTEGER_LLM/docs/01_licenses.md`.** Sie steht jetzt in ETHICS, weil
+> sie hierher gehört: Grundsatz **G7** verlangt Apache 2.0 oder MIT, und
+> dies ist der Beleg dafür, welche Varianten das erfüllen.
+> `werkzeuge/lizenzprobe.py` liest Dateien und kann Recht nicht lesen;
+> **die variantenscharfe Bewertung steht hier und stammt von Menschen.**
+>
+> Das Verzeichnis `INTEGER_LLM/docs/` ist im selben Zug entfallen. Die
+> beiden anderen Dateien darin waren überholt, eine davon nannte für
+> denselben Entscheidungspunkt andere Zahlen als das Protokoll, das ihn
+> führt.
 
 | Komponente | Lizenz | Nutzung |
 |---|---|---|
@@ -120,6 +132,19 @@ in beiden Fällen bytegleich (SHA-256
 `832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e`) und
 ist der unveränderte Apache-2.0-Text.
 
-`models/` ist nicht versioniert, die Datei liegt also auf jeder Maschine
-neben ihren Gewichten und nicht im Repositorium. Das ist richtig so: Sie
-gehört zu den Gewichten, nicht zum Quelltext.
+`models/` war nicht versioniert, die Datei lag also auf jeder Maschine
+neben ihren Gewichten und nicht im Repositorium.
+
+⚑ **Am 2026-09-01 wurde das umgedreht** (Festlegung des
+Projektinhabers), und der Grund ist der Ablauf beim Miner: Er holt die
+Gewichte **per Skript direkt von der Quelle**. Liegt die Lizenz nur
+neben den heruntergeladenen Gewichten, erfährt er die Bedingungen
+**nachdem** er sie geholt hat. Künftig trägt jedes empfohlene Modell
+sein Verzeichnis samt Lizenzdatei bereits im Repositorium, die Gewichte
+bleiben draußen. Damit ist die Lizenz lesbar, **bevor** jemand etwas
+herunterlädt, und ein Modellordner ohne Lizenz fällt in
+`lizenzprobe.py` auf, statt erst nach dem Download zu entstehen.
+
+**Angelegt wird eine solche Datei, sobald ein Modell für den
+Produktionsbetrieb empfohlen ist**, nicht für jedes, das jemand einmal
+zum Messen geladen hat.

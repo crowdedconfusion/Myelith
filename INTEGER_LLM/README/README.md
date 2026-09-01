@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.28.1 (θ_v 0.17.0; kernels 0.29.1, runtime 0.22.1, pipeline 0.15.0)
-> **Datum:** 2026-08-30
+> **Version:** 0.29.0 (θ_v 0.17.0; kernels 0.29.1, runtime 0.22.1, pipeline 0.15.0)
+> **Datum:** 2026-09-01
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -136,12 +136,11 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 | `tests/` | Unit-, Integrations-, Regressions- und Golden-Vector-Tests. Python-Tests sind eigenständige Skripte, Rust-Tests liegen inline in den Modulen. |
 | `eval/` | Qualitätsmessung: Gleitkomma-Baseline und Perplexitätsvergleich. |
 | `bench/` | Zwei Messungen: `run.py` misst Durchsatz je Backend und gegen die Gleitkomma-Referenz und **prüft dabei, dass alle Backends bitgleich rechnen**; `qualitativ.py` stellt echte Prompts Seite an Seite mit BF16. Zahlen und Einordnung in [`bench/README.md`](../bench/README.md). |
-| `models/` | Quellmodelle (Qwen2.5-0,5B und -7B, nicht versioniert). |
+| `models/` | Quellmodelle (nicht versioniert). Von einem Modell, das für den Produktionsbetrieb **empfohlen** ist, liegt hier künftig das Verzeichnis samt Lizenzdatei im Repositorium, damit die Bedingungen lesbar sind, **bevor** jemand die Gewichte holt. |
 | `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert) und die [Modellkarte](../artifacts/MODEL_CARD.md) — Verfahren, Kalibrierungsdaten, Werkzeugversionen und **was die Artefakte nicht belegen**. |
 | `scripts/` | Hilfs-Skripte: `fetch_model.sh` (Modell-Download mit fixierter Revision), `build_artifacts.sh` (Kalibrierung + Export in einem Lauf). |
 | `conformance/` | 30 eingefrorene Testvektoren mit `run.sh`. Ein fremdes Backend gilt als konform, wenn es alle 30 bitgleich reproduziert. |
 | `configs/` | Pipeline-Layouts (4, 8 und ungleichmäßig geshardet). Die Layouts liefern nachweislich identische Token. |
-| `docs/` | Ausgearbeitete Belege, u. a. der empirische Nachweis der bit-exakten Inferenz. |
 
 ## Qualitativer Benchmark
 
@@ -421,6 +420,43 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.29.0 – 2026-09-01 (`docs/` entfällt; die Lizenz zieht zu den Modellen)
+
+Festlegung des Projektinhabers. Von den drei Dateien in `docs/` waren
+zwei überholt und eine gehörte woanders hin.
+
+⚑ **Eine Messung stand an zwei Orten, und der zweite war alt.**
+`docs/02_empirischer_beleg_…` führte für Entscheidungspunkt 12.21
+**θ_v 0.10.0 und +4,29 %**, während `eval/results/decision_12-21.md` bei
+jedem Messlauf neu geschrieben wird und **θ_v 0.17.0 mit +2,11 %**
+ausweist. Derselbe veraltete Wert stand auch im `verification_report.md`.
+**Wer eine Messung an zwei Orten führt, pflegt irgendwann nur noch
+einen**, und der andere wird zufällig zuerst gelesen. Beide Verweise
+zeigen jetzt auf das Protokoll, das die Zahl erzeugt.
+
+`docs/00_requirements.md` nannte zwei eigene Punkte selbst überholt; was
+darin trug, steht im Glossar, in dieser README und in der
+Gleitkomma-Prüfung.
+
+⚑ **`docs/01_licenses.md` war nicht überholt und ist deshalb nicht
+entfallen, sondern umgezogen** nach `ETHICS/Lizenzlage.md`. Sie ist der
+menschliche, variantenscharfe Teil, den `lizenzprobe.py` im eigenen Kopf
+ausdrücklich nicht leistet: „Sie liest Dateien, nicht Recht." An ihr
+hängen der Ausschluss von Qwen2.5-3B und -72B und damit die Antwort
+darauf, welche Größe als Nächstes kommt.
+
+**Neu: eine Lizenzdatei je empfohlenem Modell.** Wer die Gewichte per
+Skript direkt von der Quelle holt, erfuhr die Bedingungen bisher erst
+**danach**. Künftig trägt jedes für den Produktionsbetrieb empfohlene
+Modell sein Verzeichnis samt Lizenzdatei im Repositorium; die Gewichte
+bleiben draußen. `models/.gitignore` lässt genau diese Datei durch, und
+die vier Lizenzdateien der katalogisierten Modelle liegen jetzt darin;
+alle vier sind bytegleich derselbe unveränderte Apache-2.0-Text.
+
+**Die Regel: Wer im `KATALOG.json` steht, bringt seine Lizenzdatei mit.**
+⚑ Damit prüft `ETHICS/werkzeuge/lizenzprobe.py` in der CI erstmals
+etwas: Sie fand dort bisher einen leeren Ordner und ging durch.
 
 ### v0.28.1 (kernels 0.29.1) – 2026-08-30 (⚑ Fund 104: der Paritätstest lief in keinem CI-Job)
 

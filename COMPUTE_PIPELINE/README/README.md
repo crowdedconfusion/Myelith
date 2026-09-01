@@ -1,17 +1,19 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.16.0
-> **Datum:** 2026-08-26
+> **Version:** 0.19.0
+> **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
 > KV-Cache-Session-Affinität, erasure-codierte DA-Archivierung,
-> Ausfallsicherung mit Standby-Übernahme, Epochenübergang und seit dem
-> 26. August die **Verdrahtung mit dem Epochen-Scheduler**.
-> **76 Tests grün.**
+> Ausfallsicherung mit Standby-Übernahme, Epochenübergang, seit dem
+> 26. August die **Verdrahtung mit dem Epochen-Scheduler** und seit dem
+> 1. September die **Nachbesetzung aus der Reserve des Netzes** (3.4)
+> samt **Gegenzeichnung und Frist** für die Ausfallmeldung (3.5) und der
+> **Staffelung nach dem Verstoß-Zähler** (3.6). **115 Tests grün.**
 >
-> **Offen:** die Ersatzsuche des Koordinators (3.4 bis 3.6) und der
-> Pod-Lauf über getrennte Hosts.
+> **Offen:** die Verbreitung der Meldung über Gossip (der zweite Teil von
+> 3.5) und der Pod-Lauf über getrennte Hosts.
 
 Pod-Orchestrierung über ein echtes Netzwerk: Pipeline-Routing,
 Micro-Batching, KV-Cache-Verwaltung, spekulatives Decoding.
@@ -69,6 +71,144 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.19.0 – 2026-09-01 (Punkt 3.6: wer wiederholt ausfällt, kommt später dran)
+
+Der Ledger führt seit dem 27. August einen Verstoß-Zähler je Konto. Er
+entstand für die Slashing-Staffelung und trägt hier ein zweites Mal:
+`verteilen_gestaffelt` ordnet die freien Miner nach ihrer
+Auffälligkeit im Fenster und erst danach nach der Mischung.
+
+⚑ **Sortiert und nicht ausgeschlossen**, gegen die naheliegende Lösung.
+Eine Schwelle („ab drei Verstößen keine Reserve mehr") wäre eine Klippe:
+Wer sie überschreitet, ist draußen, und wer knapp darunter liegt, ist so
+gut wie ein Fehlerfreier. Eine Ordnung wirkt stetig und hat keinen Rand,
+an dem sich rechnen ließe.
+
+⚑ **Und niemand wird ausgeschlossen, auch nicht der Auffälligste.**
+Läuft der Vorrat leer, rückt auch er ein, statt die Sitzung zu
+verlieren. **Am Rand schlägt Liveness die Bestrafung**, denn ein
+verlorener Pod schadet den Anfragenden, der Zähler nur dem Auffälligen.
+Wer das anders will, braucht eine Schwelle, und damit den Rand.
+
+⚑ **Die Sortierung ist stabil, und das ist keine Feinheit.** Bei
+gleicher Auffälligkeit bleibt die Ordnung der Mischung erhalten, also
+entscheidet weiterhin der Seed. Eine unstabile Sortierung machte die
+Zuteilung von der Bauart der Standardbibliothek abhängig, und zwei
+Knoten mit verschiedenen Rust-Fassungen kämen zu verschiedenen Pods.
+Eine Gegenprobe hält genau das fest.
+
+**Der Ledger wird hier nicht gelesen.** `myl-pod` hängt nicht an ihm;
+die Zahlen kommen vom Aufrufer, der sie an **einer** Blockhöhe gelesen
+hat. Nur so sind sie über zwei Knoten hinweg dieselben.
+
+9 neue Tests, zwei Gegenproben.
+
+### v0.18.0 – 2026-09-01 (Punkt 3.5: eine Ausfallmeldung ist eine Waffe)
+
+Wer melden darf, dass ein anderer ausgefallen sei, kann einen
+**ehrlichen** Knoten aus seinem Pod werfen und seinen Platz füllen
+lassen. Bis heute genügte dafür ein Funktionsaufruf: eine Behauptung
+ohne Absender, ohne Beleg und ohne Frist.
+
+⚑ **Punkt 3.4 hat das Problem vergrößert**, nicht verkleinert: Die
+Netzreserve verlängert den Vorrat, den wiederholte Meldungen leerziehen
+können. `ausfallmeldung.rs` schließt die Lücke mit drei Stücken, und
+jedes leistet etwas anderes.
+
+**Erstens nennt die Meldung, wer ausgefallen sein soll**, nicht nur die
+Position. Damit ist eine wiederholte Meldung erkennbar dieselbe Aussage
+und eine über den Nachrücker erkennbar eine andere. Ohne dieses Feld ist
+die Entprellung aus Punkt 3.1 wirkungslos, sobald einmal nachbesetzt
+wurde.
+
+**Zweitens die Gegenzeichnung:** Eine Meldung wirkt erst mit einer
+**Mehrheit der übrigen Mitglieder**, mindestens aber zwei. Mehrheit und
+nicht Einstimmigkeit, denn Einstimmigkeit gäbe jedem Einzelnen ein Veto
+gegen jede Nachbesetzung, und ein Pod, der nicht nachbesetzen kann,
+verliert die Sitzung: Der Angriff wechselte nur die Richtung.
+
+**Drittens eine Frist von fünf Sekunden** seit der ersten Unterschrift.
+Ohne sie ließen sich Unterschriften über Stunden sammeln und im
+günstigen Moment zusammenlegen; ein Ausfall, der vor einer Stunde
+bezeugt wurde, sagt über jetzt nichts. Eine zurückspringende Uhr ist ein
+Fehler und keine Toleranz, denn sie machte aus einer abgelaufenen Frist
+eine laufende.
+
+⚑ **Und die Bauart setzt es durch, nicht die Disziplin.** Eine
+Nachbesetzung über diesen Weg verlangt einen `Beschluss`, dessen Felder
+privat sind und den es nur aus einer Sammlung mit genug Unterschriften
+gibt. **„Ohne Gegenzeichnung wird niemand verdrängt" ist damit eine
+Eigenschaft des Typs**, dieselbe Bauart wie bei der Treasury ohne
+Schlüssel. Beim Ausführen wird zusätzlich geprüft, dass der Beschluss
+Epoche, Pod, Position **und den tatsächlich Amtierenden** meint: Ein
+Beschluss über einen längst Ersetzten ist verbraucht.
+
+⚑ **Was das alles nicht leistet:** Gegen eine bösartige **Mehrheit** des
+Pods hilft es nicht. Der Pod ist kein BFT-Komitee, und das
+Verifikationsmodell geht ausdrücklich davon aus, dass ein ganzer Pod
+falsch rechnen kann; genau dafür gibt es den zweiten Pod. Was bleibt,
+ist zweierlei: Ein **einzelner** Angreifer kann es nicht mehr, und jede
+Verdrängung hinterlässt **unterschriebene Aussagen mit Namen**, die eine
+Schiedsstelle lesen kann.
+
+**Offen bleibt der Transport.** Punkt 3.5 nennt „Ausfallmeldung ins
+Gossip"; hier stehen Meldung, Sammlung, Frist und Beschluss, nicht ihre
+Verbreitung über ein Topic. Das ist Arbeit in NETWORKING und steht als
+solche da, statt als erledigt zu gelten.
+
+19 neue Tests, sieben Gegenproben.
+
+### v0.17.0 – 2026-09-01 (Punkt 3.4: der dritte Ausfall kostet die Sitzung nicht mehr)
+
+Kap. 6.8 gibt jedem Pod zwei Reserveplätze und sagt Sitzungsverlust
+„nur bei mehr als zwei gleichzeitigen Ausfällen" zu. Beim dritten war
+die Sitzung verloren, **auch wenn im Netz hundert freie Miner standen**:
+Die Ausfallsicherung kannte nur die eigene Reserve.
+
+Die freien Miner gab es längst und sie waren sogar benannt:
+`Zuteilung::ohne_pod` führt jeden registrierten Miner, der in keinen
+vollständigen Pod passte. Bisher wartete er auf eine Zuweisung, die nie
+kam.
+
+⚑ **Verteilt und nicht gemischt, und das ist der ganze Entwurf.** Der
+naheliegende Weg gibt jedem Pod eine gemischte Liste und lässt ihn vorne
+zugreifen. Dann greifen zwei gleichzeitig ausfallende Pods nach
+demselben Miner. Bei verschiedenen Mischungen ist das selten, und
+**„selten" heißt im Konsens „es passiert, und dann sitzen zwei Knoten
+mit verschiedenen Besetzungen da"**. Die Netzreserve wird deshalb
+aufgeteilt: Jeder freie Miner gehört zu höchstens einem Pod, eine
+Kollision ist nicht unwahrscheinlich, sondern unmöglich.
+
+⚑ **Damit hält auch die Disjunktheit des Redundanzpaars von selbst.**
+Sie wird bei der Zuteilung geprüft und danach nie wieder; eine
+Nachbesetzung zur Laufzeit könnte sie unbemerkt einreißen und aus Stufe
+1 der Verifikation eine Selbstbestätigung machen. Ein aufgeteilter
+Vorrat kann das nicht.
+
+**Woher jemand kam, steht jetzt im Ergebnis** (`Herkunft::PodReserve`
+gegen `Herkunft::Netzreserve`). Die Pod-Reserve ist die Zusage aus
+Kap. 6.8; die Netzreserve ist, was in dieser Epoche übrig war, und kann
+leer sein. Wer beides gleich meldet, kann später nicht sagen, ob die
+Zusage gehalten wurde oder ob es nur gut ausging. Pods ohne Netzreserve
+werden genannt statt verschwiegen.
+
+⛑ **Und ein Test, der mich korrigiert hat.** Er erwartete, dass eine
+doppelte Ausfallmeldung keine zweite Reserve verbraucht, und lag falsch:
+Nach einer geglückten Übernahme **sitzt wieder jemand** auf der
+Position, und „der ist ausgefallen" ist dann eine neue Aussage über eine
+neue Person. Die Entprellung aus Punkt 3.1 greift nur bei einer
+**leeren** Position.
+
+**Daraus folgt eine Eigenschaft, die zu kennen wichtiger ist als der
+Test:** Wiederholte Meldungen über dieselbe Position ziehen den ganzen
+Vorrat. Vorher endete das nach zwei Meldungen, jetzt nach zwei plus der
+Netzreserve. **Das ist kein neues Leck, sondern dasselbe mit größerem
+Eimer**, und es steht so im Modulkopf, weil ein größerer Eimer wie eine
+Lösung aussieht. Frist und Gegenzeichnung sind Punkt 3.5.
+
+19 neue Tests, drei Gegenproben; eine davon belegt, dass die
+Positionsschranke einen echten Absturz verhindert.
 
 ### v0.16.0 – 2026-08-30 (der Protokoll-Beleg ist jetzt eine Projektion)
 

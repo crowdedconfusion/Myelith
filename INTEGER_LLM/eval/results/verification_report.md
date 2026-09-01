@@ -11,11 +11,18 @@ vor der Präzisions-Entscheidung (int16 / Mischpräzision / Akzeptanz).
 > Perplexitäts-Angaben unten (73,15, „+389 %", „Offene
 > Präzisions-Entscheidung") sind der Diagnose-Stand VOR der Behebung von
 > Fund 17 (fehlende 1/√head_dim-Attention-Skalierung). Der
-> Entscheidungspunkt 12.21 ist inzwischen **AKZEPTIERT**: Perplexität
-> **15,59** vs. FP 14,95 = **+4,29 %** (Kriterium max. +5 %); die
+> Entscheidungspunkt 12.21 ist inzwischen **AKZEPTIERT**; die
 > verbleibende Lücke ist echtes Quantisierungsrauschen, keine offene
-> Präzisions-Entscheidung mehr. Maßgebliche Dokumente:
-> `decision_12-21.md` und `INTEGER_LLM/docs/02_empirischer_beleg_bit-exakte-inferenz.md`.
+> Präzisions-Entscheidung mehr. **Maßgeblich ist allein
+> `decision_12-21.md`**, weil es die Messung mit sich führt und bei
+> jedem Lauf neu geschrieben wird: Stand 2026-09-01 sind es θ_v 0.17.0
+> und **+2,11 %**.
+>
+> ⚑ Hier stand bis zum 2026-09-01 „+4,29 %" und daneben ein Verweis auf
+> ein zweites Belegdokument. Beides war von θ_v 0.10.0 und damit
+> überholt; **zwei Orte für dieselbe Messung sind einer zu viel**, und
+> der veraltete gewinnt, sobald jemand ihn zuerst liest. Das Dokument
+> ist entfallen, die Zahl steht nur noch dort, wo sie entsteht.
 > Ebenfalls überholt ist die Schlussfolgerung in Abschnitt 4, die
 > Gewichtsquantisierung sei „dominant": Die damalige Perplexitäts-Messung
 > war durch die noch unentdeckten Struktur-Bugs (Fund 15/16) kontaminiert.

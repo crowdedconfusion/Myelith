@@ -1,10 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.16.0
-> **Datum:** 2026-08-30
+> **Version:** 0.17.0
+> **Datum:** 2026-09-01
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
-> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel.
-> **176 Tests grün.**
+> Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
+> 1. September **schließt der Knoten die Epoche selbst ab**.
+> **185 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -277,6 +278,44 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.17.0 – 2026-09-01 (⚑ Punkt 38: der Knoten schließt die Epoche ab)
+
+Die Rechnung stand seit dem 31. August vollständig: Zuschreibung,
+Ausschüttung, `praegen`. **Was fehlte, war der Aufruf.** Er steht jetzt
+in `anwenden`, also an der einzigen Stelle, an der sich der Zustand
+ändert.
+
+⚑ **Und genau dort, weil beide Seiten sie durchlaufen.** Ein Abschluss,
+den nur der Blockerzeuger rechnet, wäre eine abweichende Zustandswurzel
+und damit ein Konsensbruch. Die Reihenfolge ist tragend: Erst wird die
+**vorige** Epoche abgeschlossen, dann gilt die neue. Eine Gegenprobe mit
+vertauschter Reihenfolge fällt durch.
+
+⚑ **Die Zuschreibung ist heute leer, und das ist kein Versehen.** Sie
+leitet sich aus bestätigten PoI-Bündeln ab, und **diese Kette trägt
+keine**: `Anweisung` kennt Burn, Überweisung und die drei
+Sitzungsanweisungen, kein Bündel. Ohne bezeugte Arbeit gibt es nichts
+zuzuschreiben.
+
+**Die Folge ist die sichere.** Der Shard-Miner-Anteil wird **nicht
+geprägt**, weil ihm kein Empfänger gegenübersteht; geprägt wird allein
+der Treasury-Anteil. Ein Test hält fest, dass die Geldmenge um genau
+diesen Anteil wächst und um sonst nichts. **Was damit noch fehlt, ist
+eine Anweisung, die ein Bündel in die Kette trägt, samt ihrer Prüfung.**
+
+⚑ **Ein Test prüft Übereinstimmung, nicht Richtigkeit**, und das steht
+jetzt an ihm dran. Erzeuger und Übernehmer kommen über die
+Epochengrenze zur selben Wurzel; **beide laufen durch denselben Code**,
+ein falsch rechnender Abschluss rechnete auf beiden Seiten gleich falsch
+und der Test bliebe grün. Zwei Gegenproben haben genau das gezeigt: Sie
+brachten die anderen beiden Tests zu Fall, diesen nicht.
+
+**Die Prägeparameter sind fest**, solange die Kette eine Probekette ist.
+Ein Parameter, der sich ändern kann, gehört an eine Stelle, die beide
+Seiten gleich sehen, und die Governance-Registry ist noch nicht an die
+Kette gebunden. Bis dahin ist ein fester Wert ehrlicher als ein
+beweglicher, den nur einer kennt.
 
 ### v0.16.0 – 2026-08-30 (beide Richtungen aus Fund 67 treffen sich an einer Stelle)
 

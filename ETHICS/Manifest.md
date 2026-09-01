@@ -209,7 +209,7 @@ Die 72B-Klausel ist genau der Fall, den dieser Punkt als nicht
 einhaltbar benennt: Ein offenes Protokoll hat keine Instanz, die
 monatlich aktive Nutzer zählt, und keine, die eine Lizenz beantragen
 könnte. Vollständige Prüfung samt Methode in
-`INTEGER_LLM/docs/01_licenses.md`.
+`ETHICS/Lizenzlage.md`.
 
 **Für die Skalierungsfrage (K6) folgt daraus:** Die nächste Größe nach
 7B ist **14B**, nicht 72B.

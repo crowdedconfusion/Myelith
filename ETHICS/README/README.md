@@ -1,6 +1,6 @@
 # ethics
 
-> **Version:** 0.3.0
+> **Version:** 0.4.0
 > **Datum:** 2026-08-31
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
@@ -86,6 +86,39 @@ Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
 `v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
 die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
 
+### v0.4.0 – 2026-09-01 (die Lizenzlage zieht dorthin, wo sie gilt)
+
+`Lizenzlage.md` ist neu hier und lag vorher unter `INTEGER_LLM/docs/`.
+Sie gehört hierher: **G7 verlangt Apache 2.0 oder MIT, und dies ist der
+Beleg dafür, welche Varianten das erfüllen.** `lizenzprobe.py` sagt in
+seinem eigenen Kopf, dass es Dateien liest und nicht Recht; die
+variantenscharfe Bewertung stammt von Menschen und stand bis heute in
+einer fremden Komponente.
+
+**Das Verzeichnis `INTEGER_LLM/docs/` ist im selben Zug entfallen**
+(Festlegung des Projektinhabers). ⚑ Von seinen drei Dateien waren zwei
+überholt, und eine davon auf eine Art, die teuer werden kann: Sie führte
+für Entscheidungspunkt 12.21 **θ_v 0.10.0 und +4,29 %**, während
+`eval/results/decision_12-21.md` bei jedem Lauf neu geschrieben wird und
+θ_v 0.17.0 mit **+2,11 %** ausweist. **Zwei Orte für dieselbe Messung
+sind einer zu viel**, und der veraltete gewinnt, sobald jemand ihn
+zuerst liest.
+
+⚑ **Und eine Festlegung dreht eine frühere um.** In `Lizenzlage.md`
+stand, die Lizenzdatei gehöre zu den Gewichten und nicht ins
+Repositorium. Künftig trägt jedes **für den Produktionsbetrieb
+empfohlene** Modell sein Verzeichnis samt Lizenzdatei im Repositorium,
+die Gewichte bleiben draußen. Der Grund ist der Ablauf beim Miner: Er
+holt die Gewichte per Skript direkt von der Quelle und erführe die
+Bedingungen sonst erst **danach**. Die vier Lizenzdateien der
+katalogisierten Modelle liegen seit heute im Repositorium.
+
+⚑ **Damit prüft `lizenzprobe.py` in der CI erstmals etwas.** Sie fand
+dort bisher einen leeren Ordner und ging durch, was sie im eigenen Kopf
+als Nicht-Beleg benennt. Jetzt liest sie vier echte Lizenztexte. **Was
+sie weiterhin nicht leistet:** Sie liest Dateien, nicht Recht; die
+Beurteilung steht in `Lizenzlage.md` und stammt von Menschen.
+
 ### v0.3.0 – 2026-08-31 (G9: was das Netz nicht lernt und nicht bedient)
 
 Auf Festlegung des Projektinhabers. `Ausschluss.json` mit fünf Klassen:
@@ -159,5 +192,5 @@ Sie sorgen dafür, dass jemand es hingeschrieben hat und dafür einsteht.
   Basismodells" ist damit **für diese Variante** beantwortet, aber
   nicht für die Modellfamilie: einzelne Qwen2.5-Größen stehen unter
   abweichenden Lizenzen. Die Prüfung muss variantenscharf erfolgen,
-  nicht familienweit. Vermerkt in `INTEGER_LLM/docs/01_licenses.md` und
+  nicht familienweit. Vermerkt in `ETHICS/Lizenzlage.md` und
   unter Punkt 1.3.

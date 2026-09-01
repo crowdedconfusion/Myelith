@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "getrandom 0.3.4",
@@ -2495,13 +2495,14 @@ dependencies = [
  "myl-consensus",
  "myl-ledger",
  "myl-net",
+ "myl-tokenomics",
  "myl-types",
  "tokio",
 ]
 
 [[package]]
 name = "myl-pod"
-version = "0.16.0"
+version = "0.19.0"
 dependencies = [
  "borsh",
  "integer-llm-kernels",
@@ -2544,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "myl-ledger",
  "myl-types",

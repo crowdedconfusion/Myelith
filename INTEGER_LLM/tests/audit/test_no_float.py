@@ -224,6 +224,18 @@ CONSENSUS_PATH = [
     # steht in der Liste, damit das so bleibt.
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "unterscheidbarkeit.rs",
     ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "standby.rs",
+    # 2026-09-01, zusammen mit Punkt 3.4. Beide Dateien entscheiden,
+    # **wer auf welcher Position sitzt**, und zwei Knoten mit
+    # verschiedenen Besetzungen rechnen verschiedene Spuren. `standby.rs`
+    # stand hier schon; die Uebersetzung davor und die Netzreserve
+    # daneben gehoeren aus demselben Grund dazu.
+    ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "zuteilung.rs",
+    ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "netzreserve.rs",
+    # 2026-09-01, Punkt 3.5. Die Schwelle der Gegenzeichnung entscheidet,
+    # ob jemand aus seinem Pod verdraengt wird; sie ist eine Zahl, ueber
+    # die zwei Knoten nicht streiten duerfen. Auch die Frist rechnet in
+    # Ganzzahlen und muss es bleiben.
+    ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "ausfallmeldung.rs",
     ROOT / "SIMULATION" / "myl-simulation" / "src" / "szenario.rs",
     # NETWORKING, nachgetragen 2026-08-23 (Fund 44).
     #
@@ -306,6 +318,11 @@ CONSENSUS_PATH = [
     # verschiedenen Kontostaenden sind ein Konsensbruch.
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "zuschreibung.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "ausschuettung.rs",
+    # 2026-09-01, Phase 5. Der Auslastungsboden entscheidet, wie viel
+    # Training aus dem Treasury bezahlt wird, der Subventionsplan, wie
+    # viel geprägt wird. Beides geht in einen Kontostand ein.
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "boden.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "subventionsplan.rs",
 ]
 
 # Gleitkomma-Indikatoren (angewandt nach Entfernen von Kommentaren,

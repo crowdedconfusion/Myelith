@@ -96,4 +96,4 @@ verschiedenen Specs zu mischen — das wäre ein stiller Modellwechsel.
 Skalen und LUTs sind Messwerte und Tabellen dieses Projekts, keine
 abgeleiteten Modellgewichte. Die Gewichte selbst werden nicht verteilt;
 jeder bezieht sie unter der Lizenz von Qwen direkt von Hugging Face
-(siehe [`../docs/01_licenses.md`](../docs/01_licenses.md)).
+(siehe [`../../ETHICS/Lizenzlage.md`](../../ETHICS/Lizenzlage.md)).

@@ -438,6 +438,63 @@ impl Kette {
         }
     }
 
+    /// Die Prägeparameter dieser Testkette.
+    ///
+    /// ⚑ **Fest und nicht aus Governance**, solange die Kette eine
+    /// Probekette ist. Ein Parameter, der sich ändern kann, gehört an
+    /// eine Stelle, an der beide Seiten dieselbe Änderung sehen; die
+    /// Registry ist noch nicht an die Kette gebunden. Bis dahin ist ein
+    /// fester Wert ehrlicher als ein beweglicher, den nur einer kennt.
+    ///
+    /// Subventionsrate null: Die Anlaufkurve ist ein
+    /// Governance-Gegenstand (`myl_tokenomics::Subventionsplan`) und
+    /// gehört nicht als Zahl in eine Testkette.
+    fn praegeparameter() -> myl_tokenomics::MintParams {
+        myl_tokenomics::MintParams {
+            subsidy_num: 0,
+            subsidy_den: 1,
+            m_max: u64::MAX,
+        }
+    }
+
+    /// Schließt die vorige Epoche ab, wenn eine neue beginnt (Punkt 38).
+    ///
+    /// # Was hier geschieht und was nicht
+    ///
+    /// Der Aufruf geht an [`myl_tokenomics::epochenausschuettung`]: Der
+    /// Knoten rechnet die Prägung **nicht selbst**, er ruft sie. Die
+    /// Formeln gehören in die Wirtschaft, der Aufruf in die Kette.
+    ///
+    /// ⚑ **Die Zuschreibung ist heute leer, und das ist kein
+    /// Versehen.** Sie leitet sich aus bestätigten PoI-Bündeln ab, und
+    /// **diese Kette trägt keine**: `Anweisung` kennt Burn, Überweisung
+    /// und die drei Sitzungsanweisungen, kein Bündel. Ohne
+    /// bezeugte Arbeit gibt es nichts zuzuschreiben.
+    ///
+    /// **Die Folge ist die sichere:** Der Shard-Miner-Anteil wird
+    /// **nicht geprägt**, weil ihm kein Empfänger gegenübersteht, und
+    /// das Ergebnis benennt es. Geprägt wird allein der Treasury-Anteil.
+    /// Die Geldmenge wächst also um das, was ankommt, und um sonst
+    /// nichts.
+    ///
+    /// **Was damit noch fehlt**, ist eine Anweisung, die ein Bündel in
+    /// die Kette trägt, samt ihrer Prüfung. Das ist der nächste Draht
+    /// und keine Rechnung mehr.
+    ///
+    /// # Warum ein Fehlschlag den Block nicht verwirft
+    ///
+    /// Scheitert der Abschluss, wird er **übersprungen**, wie eine
+    /// gescheiterte Transaktion. Beide Seiten überspringen dasselbe,
+    /// weil beide dieselbe Funktion durchlaufen; ein Abbruch hier
+    /// hielte die Kette an, und zwar bei allen gleichzeitig.
+    fn epochenwechsel_abschliessen(zustand: &mut LedgerState, neue_epoche: u64) {
+        if neue_epoche <= zustand.epoch.0 {
+            return;
+        }
+        let leer = myl_tokenomics::Zuschreibung::default();
+        let _ = myl_tokenomics::epochenausschuettung(zustand, &leer, &Self::praegeparameter());
+    }
+
     /// Wendet Transaktionen auf den Zustand an.
     ///
     /// **Die einzige Stelle, an der das geschieht**, und das ist der
@@ -449,7 +506,18 @@ impl Kette {
     /// Gescheiterte Transaktionen werden **übersprungen, nicht
     /// abgebrochen**: Eine Burn-Transaktion ohne Deckung ist kein Grund,
     /// den Block zu verwerfen, und beide Seiten überspringen sie gleich.
+    ///
+    /// # ⚑ Und hier wechselt die Epoche (Punkt 38)
+    ///
+    /// Wächst `epoch` gegenüber dem Zustand, wird die **vorige** Epoche
+    /// abgeschlossen, bevor die neue gilt: geglätteten Burn
+    /// fortschreiben, prägen, verteilen, gutschreiben. Das geschieht
+    /// **hier und nirgends sonst**, aus demselben Grund, aus dem das
+    /// Anwenden hier steht: Erzeuger und Übernehmer müssen dieselbe
+    /// Folge von Änderungen ausführen. Ein Abschluss, den nur der
+    /// Erzeuger rechnet, wäre eine abweichende Zustandswurzel.
     fn anwenden(zustand: &mut LedgerState, txs: &[Transaktion], epoch: u64) {
+        Self::epochenwechsel_abschliessen(zustand, epoch);
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -1224,6 +1292,107 @@ mod tests {
         mit_anhang.push(0);
         assert!(!k.aufnehmen_roh(&mit_anhang));
         assert_eq!(k.wartend(), 1);
+    }
+
+    // --- Punkt 38: der Epochenabschluss in der Kette ---
+
+    /// Summe aller Guthaben, um das Wachstum der Geldmenge zu messen.
+    fn geldmenge(k: &Kette) -> u128 {
+        k.zustand().accounts.values().map(|a| a.balance as u128).sum()
+    }
+
+    /// ⚑ **Punkt 38, die Kernaussage in der Kette:** An der
+    /// Epochengrenze wird abgeschlossen, und ein Konto wächst.
+    #[test]
+    fn an_der_epochengrenze_wird_abgeschlossen() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut k = Kette::probestand();
+        // Erst verbrennen, damit es eine Bemessungsgrundlage gibt.
+        k.aufnehmen(burn(0, 1_000_000));
+        k.baue_block();
+        assert!(k.zustand().burn_epoche > 0, "es wurde nichts verbrannt");
+
+        let vor = geldmenge(&k);
+        for _ in 1..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        assert_eq!(k.zustand().burn_epoche, 0, "der Zaehler wurde nicht zurueckgesetzt");
+        assert!(k.zustand().burn_ema > 0, "der geglaettete Wert blieb null");
+        assert!(geldmenge(&k) > vor, "es wurde nichts gepraegt");
+    }
+
+    /// ⚑ **Geprägt wird allein der Treasury-Anteil**, weil dieser Kette
+    /// keine bezeugte Arbeit vorliegt. Der Shard-Miner-Anteil bleibt
+    /// ungeprägt, statt irgendwohin zu fließen.
+    #[test]
+    fn ohne_bezeugte_arbeit_bekommt_nur_das_treasury() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut k = Kette::probestand();
+        k.aufnehmen(burn(0, 1_000_000));
+        k.baue_block();
+        let vor = geldmenge(&k);
+        for _ in 1..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        let treasury = myl_types::treasury::treasury_adresse();
+        let auf_treasury = k.zustand().account(&treasury).balance as u128;
+        assert!(auf_treasury > 0, "das Treasury ging leer aus");
+        assert_eq!(
+            geldmenge(&k) - vor,
+            auf_treasury,
+            "es wuchs mehr als der Treasury-Anteil"
+        );
+    }
+
+    /// Innerhalb einer Epoche wird nicht abgeschlossen.
+    #[test]
+    fn innerhalb_einer_epoche_wird_nicht_abgeschlossen() {
+        let mut k = Kette::probestand();
+        k.aufnehmen(burn(0, 1_000_000));
+        for _ in 0..5 {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 0);
+        assert!(
+            k.zustand().burn_epoche > 0,
+            "der Zaehler wurde mitten in der Epoche zurueckgesetzt"
+        );
+    }
+
+    /// ⚑ **Der entscheidende Test: Erzeuger und Übernehmer kommen zur
+    /// selben Zustandswurzel.**
+    ///
+    /// Ein Abschluss, den nur der Erzeuger rechnet, wäre eine
+    /// abweichende Wurzel und damit ein Konsensbruch. Er steht deshalb
+    /// in `anwenden`, das beide Seiten durchlaufen; dieser Test hält es
+    /// über eine Epochengrenze hinweg fest.
+    ///
+    /// ⚑ **Er prüft Übereinstimmung, nicht Richtigkeit.** Beide Seiten
+    /// laufen durch denselben Code; ein Abschluss, der falsch rechnet,
+    /// rechnet auf beiden Seiten gleich falsch, und dieser Test bliebe
+    /// grün. Zwei Gegenproben haben das bestätigt: Mit ausgebautem
+    /// Abschluss und mit vertauschter Reihenfolge fielen die beiden
+    /// Tests darüber, dieser nicht. **Dass er nicht alles prüft, ist
+    /// kein Mangel, sondern seine Aufgabe** — und es gehört
+    /// aufgeschrieben, damit niemand ihn für mehr hält.
+    #[test]
+    fn erzeuger_und_uebernehmer_stimmen_ueber_die_epochengrenze_ueberein() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        let mut erzeuger = Kette::probestand();
+        let mut uebernehmer = Kette::probestand();
+        erzeuger.aufnehmen(burn(0, 1_000_000));
+
+        for _ in 0..=BLOECKE_JE_EPOCHE {
+            let b = erzeuger.baue_block();
+            uebernehmer.uebernimm(&b).expect("Uebernahme");
+        }
+        assert_eq!(erzeuger.zustand().epoch.0, 1, "die Grenze wurde nicht ueberschritten");
+        assert_eq!(
+            erzeuger.zustand().commitment(),
+            uebernehmer.zustand().commitment(),
+            "die Zustandswurzeln weichen ueber die Epochengrenze ab"
+        );
     }
 }
 
