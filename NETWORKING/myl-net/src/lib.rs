@@ -52,7 +52,7 @@ pub use gossip::{
     publish, subscribe, subscribe_all, GossipError, GossipTopic, ALL_TOPICS, TOPIC_BLOCKS,
     TOPIC_CHALLENGES, TOPIC_LATENCY_ATTESTS, TOPIC_POI_BUNDLES, TOPIC_TRANSACTIONS,
 };
-pub use identity::NodeIdentity;
+pub use identity::{netzadresse, peer_id_aus_bytes, NodeIdentity};
 pub use latency::{
     LatencyTracker, PeerLatency, PingMessage, PongMessage, PING_INTERVAL_SECS,
 };

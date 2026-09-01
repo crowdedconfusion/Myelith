@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.21.0
+> **Version:** 0.24.0
 > **Datum:** 2026-09-01
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,77 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.24.0 – 2026-09-01 (das Fragen, Punkt 45)
+
+**Der Knoten verschickt die Stichprobe.** Die Lotterie zog seit heute
+(Fund 114), die Adresse stand seit heute in der Kette (Fund 116), die
+Prüfung einer Antwort war vollständig — ⚑ **ohne diesen Aufruf wäre alles
+drei ohne Wirkung geblieben, und genau so ist Fund 114 entstanden.**
+
+`anfragen_fuer` trifft die Entscheidung, der Knoten verschickt nur ihr
+Ergebnis. ⚑ **Damit ist sie prüfbar, ohne ein Netz zu starten**, und der
+Versandteil bleibt so dünn, dass an ihm nichts schiefgehen kann.
+
+**Gefragt wird jedes Mitglied**, Reserve eingeschlossen. Und **einmal je
+Epoche**: Zwischen zwei Wechseln liegen viele Blöcke, und dieselbe Frage
+hundertmal zu stellen wäre eine Flut, die der Gefragte zu Recht als
+Angriff läse.
+
+⚑ **Pods ohne Adresse werden gezählt und protokolliert**, nicht
+übergangen. Sonst wäre „ich nenne keine Adresse" die billigste Art, sich
+der Prüfung zu entziehen.
+
+**Was noch fehlt:** die Antwort zu verarbeiten. `pruefe_spurantwort`
+steht in VERIFICATION; was fehlt, ist ein **Nachrechner mit Modell**, und
+der hängt an Artefakten.
+
+### v0.23.0 – 2026-09-01 (an wen ein Checker fragt, Punkt 46)
+
+`adressen_des_pods` gibt die Netzadressen **aller** Mitglieder zurück,
+Reserve eingeschlossen.
+
+⚑ **An den Pod, nicht an den Koordinator.** Naheliegend wäre der
+Koordinator, denn er sammelt die Spuren ein; **dann genügte sein
+Schweigen, um die Prüfung zu vereiteln.** Alle Mitglieder haben das
+Bündel unterschrieben, und der Merkle-Beweis bindet eine Antwort an die
+unterschriebene Wurzel statt an den Antwortenden. **So muss ein ganzer
+Pod schweigen statt einer.**
+
+⚑ **Die Nulladresse ist keine.** Wer keine nennt, taucht nicht in der
+Liste auf; bleibt sie leer, ist der Pod **nicht prüfbar**, und das ist
+ein Befund. Sonst wäre „ich nenne keine Adresse" die billigste Art, sich
+der Prüfung zu entziehen.
+
+### v0.22.0 – 2026-09-01 (⚑ Fund 114: Stufe 2 wird gezogen, Punkt 45)
+
+**`sample_segments` und `check_segment` hatten null Aufrufer.** Beide
+waren seit dem 2026-08-17 gebaut, geprüft und abgehakt; außerhalb der
+Tests rief sie nichts. **Damit lief Stufe 2 der Verifikation in keinem
+Knoten**, und die gesamte Sicherheitsbedingung aus Anhang B.1 hängt an
+`p`, der Wahrscheinlichkeit einer Nachrechnung. Ohne Ziehung ist `p = 0`.
+
+Der Epochenabschluss zieht jetzt, aus den **bezeugten** Bündeln, also
+denen mit gültiger Aggregatsignatur: Eine Flut ungültiger Bündel soll
+die Rate der ehrlichen nicht verdünnen.
+
+⚑ **Ein gemeinsamer Indexraum, kein Zug je Pod.** Zöge man je Pod, so
+bekäme ein Pod mit drei Segmenten bei jeder Aufrundung eines und damit
+33 Prozent statt 2. **`p` ist eine Wahrscheinlichkeit je Segment**, und
+die ist nur in einem gemeinsamen Raum für alle dieselbe.
+
+⛑ **Zwei eigene Fehler auf dem Weg, beide von Gegenproben gefunden.**
+Die Ziehung stand zuerst in einem blanken `Vec` und wurde **von jedem
+Block überschrieben**; sie gehört zu einer Epoche, nicht zu einem Block.
+Und der Test „kleine Pods bekommen keine höhere Rate" prüfte `klein <= 1`
+und ließ damit **genau den schlechten Fall zu**, denn der Zug je Pod
+ergibt eins. Er misst jetzt den Anteil über zweihundert Saaten: 1 Prozent
+statt 14.
+
+**Was noch nicht geschieht:** das Nachrechnen selbst, denn es braucht die
+Spur des Segments, und die liegt beim Koordinator. ⚑ Und die **Saat**
+ist heute der Blockhash und damit mahlbar; sie steht deshalb als
+**Argument** an der Aufrufstelle, nicht als Ableitung im Modul.
 
 ### v0.21.0 – 2026-09-01 (⚑ Punkt 40 ganz: die Unterschrift wird geprüft)
 

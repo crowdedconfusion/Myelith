@@ -771,6 +771,7 @@ pub fn miner_anmelden(
     hardware: HardwareClass,
     zone: GeoRegion,
     schluessel: myl_types::bls::BlsPublicKey,
+    netzadresse: myl_types::latency_attest::PeerIdBytes,
 ) -> Result<(), TransitionError> {
     if unterzeichner.as_bytes() != miner.as_bytes() {
         return Err(TransitionError::NichtDerMiner);
@@ -794,6 +795,7 @@ pub fn miner_anmelden(
             registration_epoch: seit,
             zone,
             schluessel,
+            netzadresse,
         },
     );
     Ok(())
@@ -2091,7 +2093,7 @@ mod tests {
     fn eine_anmeldung_steht_im_register() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(7);
-        miner_anmelden(&mut st, &miner_adresse(3), &kennung(3), HardwareClass::MediumGpu, GeoRegion::Europe, probeschluessel(3))
+        miner_anmelden(&mut st, &miner_adresse(3), &kennung(3), HardwareClass::MediumGpu, GeoRegion::Europe, probeschluessel(3), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
         let eintrag = st.miner.get(&kennung(3)).expect("eingetragen");
         assert_eq!(eintrag.hardware_class, HardwareClass::MediumGpu);
@@ -2104,7 +2106,7 @@ mod tests {
     fn die_epoche_kommt_aus_dem_zustand() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(42);
-        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
         assert_eq!(st.miner[&kennung(1)].registration_epoch, 42);
     }
@@ -2115,10 +2117,10 @@ mod tests {
     fn eine_klassenaenderung_behaelt_das_datum() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(5);
-        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("erste");
         st.epoch = EpochId(50);
-        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::LargeGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::LargeGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("zweite");
         let eintrag = st.miner[&kennung(1)];
         assert_eq!(eintrag.hardware_class, HardwareClass::LargeGpu);
@@ -2130,7 +2132,7 @@ mod tests {
     fn ein_fremder_meldet_niemanden_an() {
         let mut st = LedgerState::genesis(1);
         assert_eq!(
-            miner_anmelden(&mut st, &miner_adresse(9), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1)),
+            miner_anmelden(&mut st, &miner_adresse(9), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32])),
             Err(TransitionError::NichtDerMiner)
         );
         assert!(st.miner.is_empty(), "der Fremde hat eingetragen");
@@ -2140,7 +2142,7 @@ mod tests {
     #[test]
     fn eine_abmeldung_wirkt_sofort() {
         let mut st = LedgerState::genesis(1);
-        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
         miner_abmelden(&mut st, &miner_adresse(1), &kennung(1)).expect("Abmeldung");
         assert!(st.miner.is_empty());
@@ -2150,7 +2152,7 @@ mod tests {
     #[test]
     fn ein_fremder_meldet_niemanden_ab() {
         let mut st = LedgerState::genesis(1);
-        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
         assert_eq!(
             miner_abmelden(&mut st, &miner_adresse(9), &kennung(1)),
@@ -2177,7 +2179,7 @@ mod tests {
     fn die_minerliste_ist_kanonisch_geordnet() {
         let mut st = LedgerState::genesis(1);
         for b in [9u8, 2, 7, 1] {
-            miner_anmelden(&mut st, &miner_adresse(b), &kennung(b), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(b))
+            miner_anmelden(&mut st, &miner_adresse(b), &kennung(b), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(b), myl_types::latency_attest::PeerIdBytes([0; 32]))
                 .expect("Anmeldung");
         }
         let ids: Vec<MinerId> = angemeldete_miner(&st).iter().map(|r| r.miner_id).collect();
@@ -2191,7 +2193,7 @@ mod tests {
     fn das_register_veraendert_das_commitment() {
         let leer = LedgerState::genesis(1);
         let mut mit = LedgerState::genesis(1);
-        miner_anmelden(&mut mit, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
+        miner_anmelden(&mut mit, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
         assert_ne!(leer.commitment(), mit.commitment());
     }
@@ -2209,6 +2211,7 @@ mod tests {
             segments_root: MerkleRoot::new([7; 32]),
             vtfe_claimed: vtfe,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         }
     }
 
@@ -2219,8 +2222,7 @@ mod tests {
             &kennung(b),
             HardwareClass::MediumGpu,
             GeoRegion::Europe,
-            probeschluessel(b),
-        )
+            probeschluessel(b), myl_types::latency_attest::PeerIdBytes([0; 32]))
             .expect("Anmeldung");
     }
 
@@ -2388,8 +2390,7 @@ mod tests {
                 &kennung(1),
                 HardwareClass::SmallGpu,
                 GeoRegion::Europe,
-                probeschluessel(2),
-            ),
+                probeschluessel(2), myl_types::latency_attest::PeerIdBytes([0; 32])),
             Err(TransitionError::SchluesselPasstNicht)
         );
         assert!(st.miner.is_empty());

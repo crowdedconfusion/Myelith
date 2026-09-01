@@ -133,6 +133,47 @@ pub struct MinerRegistration {
     /// steht im Gossip und ist je Leser eine andere; diese steht im
     /// Konsenszustand und ist für alle dieselbe.
     pub zone: GeoRegion,
+    /// Wo dieser Miner im Netz erreichbar ist (Punkt 46, Fund 116).
+    ///
+    /// # ⚑ Warum das fehlte, und was daran hing
+    ///
+    /// Am 2026-08-26 wurde der **BLS-Konsensschlüssel von der
+    /// Netzidentität getrennt**, mit Besitznachweis. Die Entscheidung ist
+    /// richtig: zwei Rollen, zwei Schlüssel. **Nachgezogen wurde die
+    /// Folge nicht**, und seither konnte niemand, der nur die Kette
+    /// kennt, einen Miner **erreichen**: `MinerId` ist der Hash des
+    /// Konsensschlüssels, die `PeerId` kommt aus dem Netzschlüssel.
+    ///
+    /// Das hielt Stufe 2 der Verifikation auf. Ein Checker zieht
+    /// `(Pod, Segment)` aus dem Zustand und hatte danach **keine
+    /// Adresse**, an die er fragen konnte.
+    ///
+    /// # ⚑ Eine Angabe, keine Beweisführung, und warum das trägt
+    ///
+    /// Hier steht **kein Besitznachweis für den Netzschlüssel**, und das
+    /// ist eine Entscheidung. Dieselbe wie bei der Zone (Punkt 13):
+    /// **Eine falsche Adresse bestraft den, der sie angibt.** Wer nicht
+    /// erreichbar ist, kann keine Spur liefern, und eine ausbleibende
+    /// Antwort zählt wie eine falsche.
+    ///
+    /// ⛑ **Was das nicht deckt, und es gehört gesagt:** Wer viele Miner
+    /// auf die Adresse eines **Dritten** anmeldet, schickt ihm fremden
+    /// Verkehr. Das ist heute frei, weil eine Anmeldung nichts kostet;
+    /// **sobald Stake an der Anmeldung hängt, ist es bepreist**, und
+    /// dann erst wäre ein Besitznachweis die teurere Antwort auf ein
+    /// billiges Problem. Vorher ist er es nicht.
+    ///
+    /// # Wechselt ein Knoten seine Adresse, meldet er sich neu an
+    ///
+    /// ⚑ **Damit könnte er nach einer Epoche wegrotieren**, bevor der
+    /// Checker fragt. Dagegen hilft kein Register, sondern die Regel,
+    /// die ohnehin gelten muss: **Schweigen zählt wie eine falsche
+    /// Antwort.** Eine tote Adresse ist dann kein Schlupfloch, sondern
+    /// derselbe Fall wie Nichtantworten.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Feldreihenfolge ist
+    /// Konsensvertrag.
+    pub netzadresse: crate::latency_attest::PeerIdBytes,
 }
 
 impl MinerRegistration {

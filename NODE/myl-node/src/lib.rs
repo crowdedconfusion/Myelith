@@ -57,6 +57,7 @@ pub mod probe;
 pub mod protokoll;
 pub mod schluessel;
 pub mod speicher;
+pub mod stichprobe;
 pub mod validator;
 pub mod validatorsatz;
 

@@ -181,6 +181,8 @@ pub enum Anweisung {
         /// nicht Wahrheit, sondern **Gleichheit**: Sie steht im
         /// Konsenszustand und ist für jeden Leser dieselbe.
         zone: GeoRegion,
+        /// Wo der Miner im Netz erreichbar ist (Punkt 46).
+        netzadresse: myl_types::latency_attest::PeerIdBytes,
     },
     /// Sich als Miner abmelden.
     ///
@@ -436,6 +438,7 @@ mod tests {
             segments_root: MerkleRoot::new([8u8; 32]),
             vtfe_claimed: 1234,
             aggregate_sig: BlsSignature([9u8; 96]),
+            segmente: 1,
         }
     }
 

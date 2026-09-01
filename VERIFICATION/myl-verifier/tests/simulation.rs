@@ -141,6 +141,7 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
                         // und die Paarung las die falsche.
                         zone: zonen[(p as usize) % zonen.len()],
                         schluessel: myl_types::bls::BlsPublicKey([0; 48]),
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
                     }
                 })
                 .collect();

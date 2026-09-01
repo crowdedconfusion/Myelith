@@ -1,6 +1,6 @@
 # networking (`myl-net`)
 
-> **Version:** 0.12.0
+> **Version:** 0.14.0
 > **Datum:** 2026-09-01
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,66 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.14.0 – 2026-09-01 (die Umwandlung, die seit je versprochen war)
+
+`peer_id_aus_bytes` und `netzadresse` (Fund 117). Der Kommentar an
+`PeerIdBytes` verwies für die Umwandlung seit je auf NETWORKING; **hier
+stand sie nicht.**
+
+⚑ **Und eine Prüfung, die man erwarten würde, gibt es nicht:** Jede Folge
+von 32 Bytes ergibt eine gültige `PeerId`, denn ein Ed25519-Punkt wird
+erst beim Rechnen geprüft. Ein Test hielt zuerst das Gegenteil fest und
+fiel um; **er hatte unrecht, nicht der Code**. Für die Registrierung
+heißt das: **Eine falsche Netzadresse ist beim Eintragen nicht
+erkennbar**, und das einzige Signal bleibt die ausbleibende Antwort. Das
+passt zur Entscheidung zu Punkt 46 und macht sie schärfer.
+
+### v0.13.0 – 2026-09-01 (das Topic für Ausfallmeldungen, Punkt 22)
+
+**`/myelith/pod-failures/1`**, das siebte Topic. Ein Mitglied behauptet,
+eine Position sei ausgefallen, die übrigen zeichnen gegen; **ohne
+Verbreitung erreicht die Behauptung die Gegenzeichner nicht**, und genau
+die fehlte. Frist, Gegenzeichnung und Beschluss standen seit dem
+2026-09-01 in COMPUTE_PIPELINE.
+
+⚑ **Ein eigenes Topic und nicht `PoiBundles`**, aus demselben Grund, aus
+dem Stimmen nicht zu den Blöcken gehören: klein, kurzlebig und nur für
+einen Pod gegen groß, endgültig und für jeden. Im selben Topic teilten
+sie Mesh, Bandbreite und Bewertung.
+
+**Die Grenze ist gerechnet, nicht geraten:** Epoche (8), Pod (4),
+Position (4), Gemeldeter (32), Melder (32), Unterschrift (96), also 176
+Bytes; aufgerundet auf 512. Den Inhalt prüft ein `PayloadValidator`, denn
+sein Typ liegt oberhalb der Netzschicht, genau wie bei Blöcken.
+
+⚑ **Beim Anlegen aufgefallen: `GossipTopic::ALLE` und `all()` führten
+dieselbe Menge zweimal auf**, und die neue Variante landete prompt nur in
+einer von beiden. `all()` gibt jetzt `ALLE` zurück. Ein Test prüft
+zusätzlich, dass keine zwei Topics denselben Namen tragen; zwei gleiche
+Namen teilten ein Mesh, ohne dass es jemand sähe.
+
+**Berichtigt:** Der Doc-Kommentar zu `TOPIC_LATENCY_ATTESTS` nannte die
+Atteste „Grundlage des LatencyGraph für die Pod-Bildung". Die
+Entscheidung 3b hat die gemessene Latenz aus der Pod-Bildung genommen;
+die Atteste bleiben als Messung, **sie bestimmen nichts mehr**.
+
+### v0.12.1 – 2026-09-01 (vier Kopien einer Wartefunktion, die auseinandergelaufen waren)
+
+`warte_auf_peers` stand in vier Testdateien, und die vier waren nicht
+gleich. ⚑ **Der gefährliche Unterschied war der letzte:** `chaos` brach
+ab, wenn der Knoten weg war (`expect`), `nat` zählte ihn als null Peers.
+In einem Chaos-Test ist ein verschwundener Knoten der **Versuchsaufbau**;
+ein Abbruch mitten im Szenario ist kein Ergebnis.
+
+Dazu: drei gaben die Zahl zurück, eine brach bei Fristablauf ab; der Takt
+war einmal 50 und dreimal 100 ms. **Wer ein Muster übernahm, bekam ein
+anderes Fehlerverhalten, ohne es zu merken.**
+
+Jetzt eine Fassung in `tests/gemeinsam/`: Ein fortgefallener Knoten zählt
+als null Peers, bei Fristablauf kommt die Zahl zurück, und die Bewertung
+macht der Aufrufer. `sitzung` behält seinen Abbruch, aber als **eigene
+Zeile** über der gemeinsamen Fassung.
 
 ### v0.12.0 – 2026-09-01 (die Pingfrist wird geprüft statt abgewartet)
 

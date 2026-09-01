@@ -272,3 +272,54 @@ mod tests {
         assert_eq!(sortiert.len(), bytes.len());
     }
 }
+
+/// Hash über die Aktivierungen eines Shard-Ausgangs: der Spur-Eintrag
+/// `h(a_i)` (Anhang A.3).
+///
+/// Die Aktivierungen werden als little-endian `i16`-Folge gehasht.
+/// Deterministisch und auf jedem Knoten identisch.
+///
+/// # ⚑ Warum das hier steht und nicht bei dem, der es erzeugt
+///
+/// `TransitionSig` zog am 2026-08-29 aus `myl_pod::trace` hierher, „damit
+/// die **Schiedsstelle** ihn lesen kann, ohne an dieses Crate und damit
+/// an die ganze Inferenz-Laufzeit zu hängen". **Für `activation_hash`
+/// galt derselbe Grund, und niemand hat ihn nachgezogen** (2026-09-01).
+///
+/// Er fiel auf, als der **Checker** eine Spur nachrechnen sollte: Er
+/// hätte den Hash entweder aus `myl-pod` holen müssen, also der Prüfer
+/// vom Geprüften, oder ihn ein zweites Mal schreiben. ⚑ **Beides ist
+/// falsch, und das zweite ist Fund 111.**
+///
+/// **Ein Spur-Eintrag ist ein Konsensdatum.** Wer ihn anders rechnet,
+/// bekommt eine andere Spur, und ein Streit darüber wäre nicht
+/// entscheidbar, sondern nur zwei Meinungen.
+pub fn activation_hash(activations: &[i16]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for v in activations {
+        hasher.update(v.to_le_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
+#[cfg(test)]
+mod aktivierungstests {
+    use super::activation_hash;
+
+    /// Deterministisch, und empfindlich gegen jede Änderung.
+    #[test]
+    fn deterministisch_und_empfindlich() {
+        let a = vec![1i16, -2, 3];
+        assert_eq!(activation_hash(&a), activation_hash(&a));
+        assert_ne!(activation_hash(&a), activation_hash(&[1i16, -2, 4]));
+        // ⚑ Auch die **Reihenfolge** zaehlt: Sonst waeren zwei
+        // verschiedene Aktivierungen dieselbe Spur.
+        assert_ne!(activation_hash(&a), activation_hash(&[3i16, -2, 1]));
+        // Und die Laenge: eine angehaengte Null ist ein anderer Zustand.
+        assert_ne!(activation_hash(&a), activation_hash(&[1i16, -2, 3, 0]));
+    }
+}

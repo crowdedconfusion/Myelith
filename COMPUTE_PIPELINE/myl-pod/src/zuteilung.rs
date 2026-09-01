@@ -1,4 +1,4 @@
-//! Vom Epochenseed zur Pod-Besetzung (Punkt 3.3).
+//! Von der Zuteilung zur Pod-Besetzung (Punkt 3.3).
 //!
 //! # Was hier zusammenkommt
 //!
@@ -8,9 +8,10 @@
 //! überführte: Die Schnittstelle stand auf beiden Seiten, die
 //! Verdrahtung dazwischen fehlte.
 //!
-//! [`plane_epoche`] geht vom **geprüften** Epochenseed über Filter,
-//! Clusterbildung und Pod-Zuteilung; [`epochenwechsel_aus_zuteilung`]
-//! speist das Ergebnis in eine laufende Besetzung.
+//! [`epochenwechsel_aus_zuteilung`] speist eine fertige Zuteilung in
+//! eine laufende Besetzung. **Gerechnet wird sie nicht hier**, sondern
+//! einmal in `myl_scheduler::zuteilung_der_epoche`; warum, steht in der
+//! Notiz weiter unten.
 //!
 //! # ⚑ Was beim Zusammenstecken auffiel (Entscheidung D3)
 //!
@@ -28,23 +29,19 @@
 //! [`PodBesetzung::neu`] erwartet, ist genau
 //! `myl_scheduler::Pod::mitglieder`.
 //!
-//! # ⚑ Der Seed wird geprüft, nicht geglaubt
+//! # ⚑ Die Zuteilung wird hier nicht mehr gerechnet (Punkt 43)
 //!
-//! [`plane_epoche`] nimmt Beweis und öffentlichen Schlüssel entgegen und
-//! verifiziert selbst, statt einen `EpochSeed` als gegeben zu nehmen.
-//! **Ein Aufrufer, der die Prüfung vergisst, fällt sonst nicht auf**,
-//! und wer den Seed frei wählen kann, wählt seine eigenen Pod-Nachbarn.
+//! Bis zum 2026-09-01 stand hier `plane_epoche`, eine **zweite**
+//! Herleitung derselben Zuteilung. Fund 111 hat gezeigt, wohin das
+//! führt: Sie stimmte mit dem Weg der Kette in keinem Schritt überein,
+//! und zwei Knoten bekamen verschiedene Pods.
 //!
-//! Zusätzlich muss die Epoche des Seeds passen: Ein gültiger Seed der
-//! **vorigen** Epoche ist immer noch ein gültiger VRF-Beweis und hielte
-//! sonst die alte Zuteilung fest.
+//! Die Regel steht jetzt einmal, im Scheduler. **Was hier bleibt, ist
+//! die Übersetzung ins Laufende**, und das ist die Arbeit, die dieses
+//! Crate wirklich besitzt.
 
-use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
 use myl_scheduler::shard_assignment::{Pod, Zuteilung};
-use myl_scheduler::zonenzuteilung::zuteilung_aus_saat;
-use myl_scheduler::vrf_seed::{verify_epoch_seed, EpochSeed};
 use myl_types::ids::{EpochId, MinerId};
-use myl_types::vrf::{VrfProof, VrfPublicKey};
 
 use crate::standby::{BesetzungFehler, PodBesetzung, RebuildAuftrag};
 
@@ -60,15 +57,6 @@ pub enum ZuteilungFehler {
     ShardzahlPasstNicht { erwartet: usize, bekommen: usize },
     /// Die Besetzung ließ sich nicht bilden.
     Besetzung(BesetzungFehler),
-    /// Der Epochenseed hielt der Prüfung nicht stand.
-    ///
-    /// ⚑ **Der wichtigste Fehler dieses Moduls.** Wer den Seed frei
-    /// wählen kann, wählt die Pods, in denen er sitzt, und damit seine
-    /// eigenen Nachbarn. Das ist Grinding, und es ist der Angriff, gegen
-    /// den der VRF überhaupt gebaut wurde.
-    SeedNichtBelegt,
-    /// Der Seed gehört zu einer anderen Epoche.
-    SeedAndereEpoche { erwartet: u64, bekommen: u64 },
 }
 
 impl std::fmt::Display for ZuteilungFehler {
@@ -87,19 +75,6 @@ impl std::fmt::Display for ZuteilungFehler {
                  Entweder bliebe eine Position unbesetzt oder ein Shard ohne Position"
             ),
             Self::Besetzung(e) => write!(f, "Besetzung: {e}"),
-            Self::SeedNichtBelegt => write!(
-                f,
-                "der VRF-Beweis zum Epochenseed gilt nicht. Ein frei gewählter Seed \
-                 wäre die Wahl der eigenen Pod-Nachbarn"
-            ),
-            Self::SeedAndereEpoche {
-                erwartet,
-                bekommen,
-            } => write!(
-                f,
-                "der Seed gehört zu Epoche {bekommen}, geplant wird {erwartet}. Ein \
-                 gültiger Seed der vorigen Epoche hielte die alte Zuteilung fest"
-            ),
         }
     }
 }
@@ -112,76 +87,39 @@ impl From<BesetzungFehler> for ZuteilungFehler {
     }
 }
 
-/// Die Größen, mit denen eine Epoche geplant wird.
-///
-/// **Alles davon sind Governance-Parameter** (Kap. 10.3). Sie stehen
-/// hier zusammen, damit ein Knoten sie an einer Stelle setzt und nicht
-/// über drei Aufrufe verteilt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Planparameter {
-    /// Shards je Pod, also `k`.
-    pub shards_je_pod: u32,
-    /// Zugelassene Hardwareklassen.
-    pub zugelassene_klassen: Vec<HardwareClass>,
-}
-
-/// Plant eine Epoche: vom geprüften Seed zur Pod-Zuteilung.
-///
-/// **Die Stelle, die bis zum 2026-08-26 fehlte.** Siehe Modulkopf, auch
-/// dazu, warum der Seed hier geprüft und nicht geglaubt wird.
-///
-/// # ⚑ Fund 111: Hier stand eine zweite Herleitung derselben Zuteilung
-///
-/// Bis zum 2026-09-01 rechnete diese Funktion die Zuteilung **selbst**
-/// aus, und sie stimmte mit
-/// [`myl_scheduler::zonenzuteilung::zuteilung_der_epoche`], dem Weg der
-/// Kette, in **keinem** der drei Schritte überein:
-///
-/// - Sie clusterte nach **gemessener Latenz**. Die Entscheidung 3b hat
-///   das am 2026-09-01 verworfen, weil wer wählt, mit wem er attestiert,
-///   mitformt, in welchem Topf er gemischt wird. **Der Aufruf blieb
-///   trotzdem stehen.**
-/// - Sie nahm die **VRF-Saat**, die Kette die Saat aus dem Blockhash.
-/// - Sie ließ nur die Klassen aus [`Planparameter`] zu, die Kette alle.
-///
-/// **Zwei Knoten, die denselben Pod auf verschiedenen Wegen ausrechnen,
-/// bekamen verschiedene Pods.** Die Regel steht jetzt einmal, in
-/// `zuteilung_aus_saat`; diese Funktion prüft die Saat und ruft sie.
-///
-/// ⚑ **Offen bleibt allein, welche Saat gilt.** Diese hier verlangt
-/// einen VRF-Beweis, die Kette nimmt den Blockhash. Das ist eine
-/// Entscheidung und kein Algorithmus, und sie ist jetzt eine Zeile groß
-/// statt einer Datei.
-///
-/// # Determinismus
-///
-/// Alle Schritte hängen am selben Seed und an Angaben aus dem
-/// Konsenszustand. **Es geht keine gemessene Größe mehr ein.**
-pub fn plane_epoche(
-    seed: &EpochSeed,
-    beweis: &VrfProof,
-    vrf_pk: &VrfPublicKey,
-    epoche: u64,
-    registrierungen: &[MinerRegistration],
-    p: &Planparameter,
-) -> Result<Zuteilung, ZuteilungFehler> {
-    if seed.epoch != epoche {
-        return Err(ZuteilungFehler::SeedAndereEpoche {
-            erwartet: epoche,
-            bekommen: seed.epoch,
-        });
-    }
-    if !verify_epoch_seed(seed, beweis, vrf_pk) {
-        return Err(ZuteilungFehler::SeedNichtBelegt);
-    }
-    Ok(zuteilung_aus_saat(
-        registrierungen,
-        epoche,
-        &seed.as_random_bytes(),
-        p.shards_je_pod,
-        &p.zugelassene_klassen,
-    ))
-}
+// ⚑ **Notiz zu `plane_epoche` und `Planparameter`, entfernt am 2026-09-01
+// (Entscheidung zu Punkt 43).**
+//
+// Hier stand eine zweite Herleitung der Epochenzuteilung: aus einem
+// **VRF-Seed** mit Beweis, mit eigenen zugelassenen Hardwareklassen und,
+// bis Fund 111, mit eigener Clusterbildung. Sie ist ersatzlos
+// weggefallen; wer die Zuteilung braucht, ruft
+// [`myl_scheduler::zuteilung_der_epoche`].
+//
+// **Die Saat ist der vorherige Blockhash, nicht der VRF**, und zwar aus
+// vier Gründen:
+//
+// - **Den Blockhash gibt es immer.** Ein VRF-Seed muss erzeugt,
+//   veröffentlicht und geprüft werden; schweigt der Halter, gibt es
+//   keine Zuteilung. Das ist eine Liveness-Abhängigkeit für nichts.
+// - **Gemahlen werden können beide.** Wer den letzten Block einer Epoche
+//   erzeugt, sieht bei beiden Verfahren die entstehende Zuteilung und
+//   wählt die ihm liebste. Begrenzt wird das vom Registrierungsschluss
+//   bei `e-2`, und der bleibt.
+// - ⚑ **Der Vorteil des VRF trägt hier nicht.** Er bringt
+//   Unvorhersehbarkeit **für alle anderen**. Die zahlt sich aus, wo
+//   jemand von frühem Wissen profitiert; die Zuteilung rechnet jeder im
+//   selben Augenblick aus demselben Kettenzustand.
+// - ⚑ **„Verifiziert statt geglaubt" (D3) bleibt, und zwar stärker.**
+//   An einem Blockhash ist nichts zu glauben, er **ist** die Kette. Wer
+//   einen falschen einsetzt, bekommt eine Zuteilung, die niemand teilt.
+//   Auch die Epochenbindung bleibt: Sie steckt in `epochenseed(hash,
+//   epoche)` und ist damit Bau statt Prüfung.
+//
+// ⚑ **Wo der VRF hingehört, ist die Stichprobenlotterie.** Dort hilft
+// frühes Wissen sehr wohl: Wer weiß, welche Segmente geprüft werden,
+// weiß auch, bei welchen er sich nicht anstrengen muss. Das ist ein
+// eigener Punkt und keine Sache dieses Moduls.
 
 /// Die Mitglieder eines Pods in der Reihenfolge, die
 /// [`PodBesetzung::neu`] erwartet: erst die Positionen, dann die
@@ -301,10 +239,10 @@ pub fn epochenwechsel_aus_zuteilung(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
+    use myl_scheduler::zonenzuteilung::zuteilung_der_epoche;
     use myl_scheduler::shard_assignment::{assign_shards, pod_groesse, RESERVE_JE_POD};
-    use myl_scheduler::vrf_seed::{derive_epoch_seed, seed_alpha};
     use myl_types::hash::Hash;
-    use myl_types::vrf::VrfSecretKey;
 
     fn miner(b: u8) -> MinerRegistration {
         MinerRegistration {
@@ -313,6 +251,7 @@ mod tests {
             registration_epoch: 1,
             zone: myl_types::node_metadata::GeoRegion::Europe,
             schluessel: myl_types::bls::BlsPublicKey([0; 48]),
+            netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
         }
     }
 
@@ -471,9 +410,6 @@ mod tests {
 
     // ── Der volle Bogen: von der Kette zum Pod ──────────────────────
 
-    fn vrf() -> VrfSecretKey {
-        VrfSecretKey::from_seed([3u8; 32])
-    }
 
     /// ⚑ **Über mehrere Zonen**, sonst könnte dieser Aufbau eine
     /// Zonenbildung nicht von einem einzigen großen Cluster
@@ -492,70 +428,34 @@ mod tests {
             .collect()
     }
 
-    fn parameter() -> Planparameter {
-        Planparameter {
-            shards_je_pod: 4,
-            zugelassene_klassen: vec![HardwareClass::MediumGpu, HardwareClass::LargeGpu],
-        }
-    }
-
-    fn planen(marke: &[u8], epoche: u64, n: u8) -> Result<Zuteilung, ZuteilungFehler> {
-        let sk = vrf();
-        let v = Hash::sha256(marke);
-        let seed = derive_epoch_seed(v, &sk, epoche).expect("Seed");
-        let (beweis, _) = sk.prove(&seed_alpha(&v, epoche)).expect("Beweis");
-        plane_epoche(
-            &seed,
-            &beweis,
-            &sk.public_key(),
-            epoche,
-            &registrierungen(n),
-            &parameter(),
-        )
-    }
-
-    /// ⚑ **Fund 111: eine Regel, zwei Eingänge.**
+    /// ⚑ **Planen heißt jetzt: den Scheduler fragen.**
     ///
-    /// Bis zum 2026-09-01 rechnete [`plane_epoche`] die Zuteilung selbst
-    /// aus, und zwar anders als die Kette: nach gemessener Latenz statt
-    /// nach Zone. **Zwei Knoten, die denselben Pod auf verschiedenen
-    /// Wegen ausrechnen, bekamen verschiedene Pods.**
-    ///
-    /// Dieser Test hält die Zusage fest, die den Fund behebt: Bei
-    /// gleicher Saat, gleichem Register und gleichen Klassen kommt über
-    /// beide Eingänge **dieselbe** Zuteilung heraus. Bliebe hier eine
-    /// zweite Herleitung stehen, fiele es auf.
-    #[test]
-    fn beide_eingaenge_ergeben_dieselbe_zuteilung() {
-        let sk = vrf();
-        let v = Hash::sha256(b"vorgaengerblock");
-        let epoche = 7u64;
-        let seed = derive_epoch_seed(v, &sk, epoche).expect("Seed");
-        let (beweis, _) = sk.prove(&seed_alpha(&v, epoche)).expect("Beweis");
-        let reg = registrierungen(12);
-        let p = parameter();
-
-        let ueber_den_pod =
-            plane_epoche(&seed, &beweis, &sk.public_key(), epoche, &reg, &p).expect("Planung");
-        let ueber_den_scheduler = zuteilung_aus_saat(
-            &reg,
-            epoche,
-            &seed.as_random_bytes(),
-            p.shards_je_pod,
-            &p.zugelassene_klassen,
-        );
-        assert_eq!(ueber_den_pod, ueber_den_scheduler);
-        assert!(
-            !ueber_den_pod.pods.is_empty(),
-            "zwölf Miner müssen mindestens einen Pod ergeben"
-        );
+    /// Die Saat ist der vorherige Blockhash (Punkt 43). Die
+    /// Epochenbindung steckt in der Ableitung und nicht in einer
+    /// Prüfung: Wer die Epoche verwechselt, bekommt eine andere Saat und
+    /// damit eine Zuteilung, die niemand teilt.
+    fn planen(marke: &[u8], epoche: u64, n: u8) -> Zuteilung {
+        zuteilung_der_epoche(&registrierungen(n), epoche, &Hash::sha256(marke), 4)
     }
+
+    // ⚑ **Hier stand ein Test, der zweimal dieselbe reine Funktion rief
+    // und ihre Ergebnisse verglich.** Er hätte nur scheitern können,
+    // wenn die Zuteilung zufällig wäre, und das verbietet der
+    // Konsensvertrag ohnehin. **Eine Zusage, die nicht brechen kann,
+    // ist keine Zusage**, dieselbe Klasse wie die schwachen Tests vom
+    // 2026-09-01.
+    //
+    // Die Zusage aus Fund 111 lautet „die Regel steht nur einmal da",
+    // und die hält kein Test, sondern **die Abwesenheit des Codes**:
+    // `plane_epoche` gibt es nicht mehr. Geprüft wird stattdessen, was
+    // prüfbar ist, nämlich dass die Zuteilung des Schedulers hier
+    // besetzbar ankommt.
 
     /// **Der Punkt, der 3.3 offen hielt:** eine Stelle, die den
     /// Scheduler befragt und das Ergebnis in den Pod einspeist.
     #[test]
     fn eine_epoche_laesst_sich_von_der_kette_bis_zum_pod_planen() {
-        let z = planen(b"vorgaengerblock", 7, 6).expect("Planung");
+        let z = planen(b"vorgaengerblock", 7, 6);
         assert_eq!(z.pods.len(), 1, "sechs Miner tragen genau einen Pod");
         assert!(z.ohne_pod.is_empty());
 
@@ -569,7 +469,7 @@ mod tests {
     fn zwoelf_miner_tragen_zwei_pods() {
         // Mehr Miner heißt mehr Kapazität, nicht mehr Belegung je
         // Position. Das ist die Aussage von D3.
-        let z = planen(b"vorgaengerblock", 7, 12).expect("Planung");
+        let z = planen(b"vorgaengerblock", 7, 12);
         assert_eq!(z.pods.len(), 2);
         assert!(z.ohne_pod.is_empty());
         for p in &z.pods {
@@ -578,60 +478,13 @@ mod tests {
         }
     }
 
-    /// ⚑ **Ein frei gewählter Seed kommt nicht durch.**
-    #[test]
-    fn ein_seed_ohne_gueltigen_beweis_wird_abgewiesen() {
-        let sk = vrf();
-        let v = Hash::sha256(b"vorgaengerblock");
-        let echt = derive_epoch_seed(v, &sk, 7).expect("Seed");
-        let (beweis, _) = sk.prove(&seed_alpha(&v, 7)).expect("Beweis");
-        let mut gefaelscht = echt;
-        gefaelscht.beta[0] ^= 0xFF;
 
-        let ruf = |s: &EpochSeed| {
-            plane_epoche(
-                s,
-                &beweis,
-                &sk.public_key(),
-                7,
-                &registrierungen(6),
-                &parameter(),
-            )
-        };
-        assert_eq!(ruf(&gefaelscht), Err(ZuteilungFehler::SeedNichtBelegt));
-        // Gegenprobe: Ohne sie wäre auch eine Prüfung grün, die jeden
-        // Seed ablehnt.
-        assert!(ruf(&echt).is_ok());
-    }
-
-    /// ⚑ **Ein gültiger Seed der vorigen Epoche hält die Rotation nicht auf.**
-    #[test]
-    fn ein_seed_der_vorigen_epoche_wird_abgewiesen() {
-        let sk = vrf();
-        let v = Hash::sha256(b"vorgaengerblock");
-        let alt = derive_epoch_seed(v, &sk, 6).expect("Seed");
-        let (beweis, _) = sk.prove(&seed_alpha(&v, 6)).expect("Beweis");
-        assert_eq!(
-            plane_epoche(
-                &alt,
-                &beweis,
-                &sk.public_key(),
-                7,
-                &registrierungen(6),
-                &parameter(),
-            ),
-            Err(ZuteilungFehler::SeedAndereEpoche {
-                erwartet: 7,
-                bekommen: 6
-            })
-        );
-    }
 
     #[test]
     fn zwei_knoten_planen_dieselbe_epoche() {
         assert_eq!(
-            planen(b"vorgaengerblock", 7, 12).expect("a"),
-            planen(b"vorgaengerblock", 7, 12).expect("b")
+            planen(b"vorgaengerblock", 7, 12),
+            planen(b"vorgaengerblock", 7, 12)
         );
     }
 
@@ -640,8 +493,8 @@ mod tests {
         // Ohne diese Gegenprobe wäre auch eine Planung grün, die den
         // Seed nie benutzt, und dann rotierte nichts.
         assert_ne!(
-            planen(b"block-a", 7, 12).expect("a"),
-            planen(b"block-b", 7, 12).expect("b")
+            planen(b"block-a", 7, 12),
+            planen(b"block-b", 7, 12)
         );
     }
 
@@ -650,14 +503,14 @@ mod tests {
         // Fünf Miner bei k=4: einer zu wenig. Sie dürfen nicht
         // verschwinden, sonst warten sie auf eine Zuweisung, die nie
         // kommt.
-        let z = planen(b"vorgaengerblock", 7, 5).expect("Planung");
+        let z = planen(b"vorgaengerblock", 7, 5);
         assert!(z.pods.is_empty());
         assert_eq!(z.ohne_pod.len(), 5);
     }
 
     #[test]
     fn ein_cluster_von_vierzehn_traegt_zwei_pods_und_meldet_den_rest() {
-        let z = planen(b"vorgaengerblock", 7, 14).expect("Planung");
+        let z = planen(b"vorgaengerblock", 7, 14);
         assert_eq!(z.pods.len(), 2);
         assert_eq!(z.ohne_pod.len(), 2, "zwei Miner passten nicht mehr hinein");
     }
@@ -669,7 +522,7 @@ mod tests {
     /// derselben Maschine.
     #[test]
     fn zwei_pods_derselben_zuteilung_sind_disjunkt() {
-        let z = planen(b"vorgaengerblock", 7, 12).expect("Planung");
+        let z = planen(b"vorgaengerblock", 7, 12);
         let a: std::collections::BTreeSet<MinerId> =
             z.pods[0].mitglieder().map(|m| m.miner_id).collect();
         let b: std::collections::BTreeSet<MinerId> =

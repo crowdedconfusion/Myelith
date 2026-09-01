@@ -296,6 +296,7 @@ mod tests {
             registration_epoch: 5,
             zone,
             schluessel: myl_types::bls::BlsPublicKey([0; 48]),
+            netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
         }
     }
 

@@ -91,6 +91,7 @@ fn gueltiges_bundle() -> PoIBundle {
         segments_root: segments_root(&zeugnisse(&segments)).expect("Merkle-Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: sk.sign(b"poi").expect("sign"),
+        segmente: 1,
     }
 }
 

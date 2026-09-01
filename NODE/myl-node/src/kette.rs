@@ -242,6 +242,25 @@ pub struct Kette {
     hoehe: u64,
     letzter_hash: Hash,
     zustand: LedgerState,
+    /// Die zuletzt gezogene Stichprobe, mit der Epoche, zu der sie
+    /// gehört (Punkt 45).
+    ///
+    /// ⛑ **Hier stand zuerst ein blanker `Vec`, und er wurde von jedem
+    /// Block überschrieben.** Eine Ziehung gehört zu einer **Epoche**,
+    /// und zwischen zwei Epochenwechseln liegen viele Blöcke; jeder
+    /// setzte sie auf leer zurück. Der Test fiel sofort um, und das war
+    /// die richtige Antwort.
+    ///
+    /// ⚑ **Nicht im `LedgerState`, und das ist Absicht.** Die Ziehung ist
+    /// eine **reine Funktion** aus den bezeugten Bündeln, der Epoche und
+    /// dem Blockhash; sie in den Zustand zu schreiben wäre eine zweite
+    /// Quelle für dieselbe Aussage, und `commitment()` serialisiert den
+    /// ganzen Zustand je Block (D7). Wer sie braucht, rechnet sie nach.
+    ///
+    /// Hier steht sie nur, damit der Knoten sie **protokollieren** kann:
+    /// Eine Ziehung, die niemand sieht, ist von keiner Ziehung nicht zu
+    /// unterscheiden, und das war Fund 114.
+    letzte_stichprobe: Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     mempool: Vec<Transaktion>,
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
     /// Gossip nicht zweimal angewandt werden.
@@ -298,6 +317,7 @@ impl Kette {
             // lehnte die Kettendatei ihre eigene Kette ab.
             letzter_hash: Self::startwert(),
             zustand,
+            letzte_stichprobe: None,
             mempool: Vec::new(),
             bekannt: std::collections::HashSet::new(),
             verlauf: std::collections::BTreeMap::new(),
@@ -557,9 +577,9 @@ impl Kette {
     fn zuschreibung_der_epoche(
         zustand: &LedgerState,
         letzter_hash: &Hash,
-    ) -> myl_tokenomics::Zuschreibung {
+    ) -> (myl_tokenomics::Zuschreibung, Vec<myl_types::PoIBundle>) {
         let Some(verteilung) = zustand.arbeitsverteilung.clone() else {
-            return myl_tokenomics::Zuschreibung::default();
+            return (myl_tokenomics::Zuschreibung::default(), Vec::new());
         };
         let epoche = zustand.epoch.0;
         let register = angemeldete_miner(zustand);
@@ -571,6 +591,7 @@ impl Kette {
         );
 
         let mut abrechnungen = Vec::new();
+        let mut bezeugt: Vec<myl_types::PoIBundle> = Vec::new();
         for buendel in buendel_der_epoche(zustand) {
             let Some(pod) =
                 myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, epoche, &buendel.pod)
@@ -597,9 +618,90 @@ impl Kette {
                 reserve: pod.reserve.iter().map(|m| m.miner_id).collect(),
                 vtfe_pod: buendel.vtfe_claimed,
             });
+            bezeugt.push(buendel.clone());
         }
-        myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &abrechnungen)
-            .unwrap_or_default()
+        (
+            myl_tokenomics::zuschreiben_aus_abrechnung(&verteilung, &abrechnungen)
+                .unwrap_or_default(),
+            bezeugt,
+        )
+    }
+
+    /// Die zuletzt gezogene Stichprobe (Punkt 45).
+    ///
+    /// Leer, solange keine Epoche abgeschlossen wurde. **Sie wird
+    /// gerechnet, nicht gespeichert**; dieser Zugang gibt nur weiter,
+    /// was der letzte Abschluss ergab, damit der Knoten es
+    /// protokollieren kann.
+    pub fn letzte_stichprobe(&self) -> &[crate::stichprobe::Segmentstichprobe] {
+        self.letzte_stichprobe.as_ref().map_or(&[], |(_, s)| s.as_slice())
+    }
+
+    /// Zu welcher Epoche die letzte Ziehung gehört, wenn es eine gibt.
+    pub fn stichprobenepoche(&self) -> Option<u64> {
+        self.letzte_stichprobe.as_ref().map(|(e, _)| *e)
+    }
+
+    /// Der Pod zu einer Bündel-Kennung, aus der Zuteilung **der
+    /// gefragten Epoche**.
+    ///
+    /// ⚑ **Nicht aus der laufenden.** Ein Checker fragt zu einer
+    /// abgeschlossenen Epoche, und die Zuteilung hängt an ihr: Wer die
+    /// heutige nähme, bekäme andere Mitglieder und damit andere
+    /// Adressen. Der Blockhash ist derselbe wie bei der Ziehung, weil
+    /// beide dieselbe Zuteilung meinen müssen.
+    pub fn pod_der_kennung(
+        &self,
+        epoche: u64,
+        kennung: &myl_types::ids::PodId,
+    ) -> Option<myl_scheduler::shard_assignment::Pod> {
+        let register = angemeldete_miner(&self.zustand);
+        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            epoche,
+            &self.letzter_hash,
+            Self::PROBE_SHARDS,
+        );
+        myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, epoche, kennung).cloned()
+    }
+
+    /// Die Stichprobenrate, in Basispunkten.
+    ///
+    /// **200 bp sind zwei Prozent**, der Wert aus Kap. 3.4 und dem
+    /// Zahlenbeispiel in Anhang B.1. Er ist ein Governance-Parameter und
+    /// steht hier, bis Governance ihn setzt; **eine andere Zahl wäre
+    /// erfunden**.
+    pub const STICHPROBE_BP: u32 = 200;
+
+    /// Zieht die Stichprobe der abgeschlossenen Epoche (Punkt 45).
+    ///
+    /// # ⚑ Warum diese Zeile der eigentliche Fund ist
+    ///
+    /// `sample_segments` und `check_segment` waren seit dem 2026-08-17
+    /// gebaut, geprüft und abgehakt, und **sie hatten bis zum
+    /// 2026-09-01 null Aufrufer** (Fund 114). Damit lief Stufe 2 der
+    /// Verifikation in keinem Knoten, und die Sicherheitsbedingung aus
+    /// Anhang B.1 hängt an genau der Wahrscheinlichkeit, die dabei null
+    /// war.
+    ///
+    /// **Gezogen wird nur aus Bündeln, deren Aggregatsignatur gilt.**
+    /// Wer ein Bündel einreicht, das die Prüfung nicht besteht, bekommt
+    /// nichts gutgeschrieben und soll auch keinen Indexraum aufblähen
+    /// dürfen: Sonst verdünnte eine Flut ungültiger Bündel die
+    /// Stichprobenrate der ehrlichen.
+    ///
+    /// ⚑ **Die Saat ist heute der Blockhash, und das ist die offene
+    /// Hälfte.** Wer den Abschlussblock erzeugt, kann Kandidaten
+    /// probieren, bis die Ziehung seine eigenen Segmente verschont. Das
+    /// Ziel ist die Aggregatsignatur des Komitees; sie steht hier
+    /// deshalb als **Argument** und nicht als Ableitung im Modul.
+    fn stichprobe_der_epoche(
+        bezeugt: &[myl_types::PoIBundle],
+        epoche: u64,
+        letzter_hash: &Hash,
+    ) -> Vec<crate::stichprobe::Segmentstichprobe> {
+        let saat = crate::stichprobe::stichprobensaat(letzter_hash, epoche);
+        crate::stichprobe::stichprobe_der_epoche(bezeugt, &saat, Self::STICHPROBE_BP)
     }
 
     /// Schließt die vorige Epoche ab, wenn eine neue beginnt (Punkt 38).
@@ -636,16 +738,29 @@ impl Kette {
         zustand: &mut LedgerState,
         neue_epoche: u64,
         letzter_hash: &Hash,
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) {
         if neue_epoche <= zustand.epoch.0 {
             return;
         }
-        let zuschreibung = Self::zuschreibung_der_epoche(zustand, letzter_hash);
+        let alte_epoche = zustand.epoch.0;
+        let (zuschreibung, bezeugt) = Self::zuschreibung_der_epoche(zustand, letzter_hash);
         let _ = myl_tokenomics::epochenausschuettung(
             zustand,
             &zuschreibung,
             &Self::praegeparameter(),
         );
+        // ⚑ **Stufe 2 wird gezogen, und zwar hier** (Punkt 45, Fund
+        // 114). Vorher lief sie in keinem Knoten, und `p` aus Anhang
+        // B.1 war null. Gezogen wird aus den **bezeugten** Bündeln,
+        // also denen, deren Aggregatsignatur galt.
+        //
+        // ⚑ **Das Nachrechnen fehlt noch**, denn es braucht die Spur des
+        // Segments, und die liegt beim Koordinator. Was hier steht, ist
+        // die Ziehung; sie **allein** macht `p` von null verschieden und
+        // ist die Vorbedingung für alles Weitere.
+        let stichprobe = Self::stichprobe_der_epoche(&bezeugt, alte_epoche, letzter_hash);
+        *gezogen = Some((alte_epoche, stichprobe));
         // ⚑ **Und die Bündel der abgerechneten Epoche fallen weg.**
         // Ohne dies wüchse der Zustand unbegrenzt, und Entscheidung D7
         // wäre gebrochen; die Historie steht in den Blöcken.
@@ -657,6 +772,7 @@ impl Kette {
         // Kette jetzt steht**.
         let _ = buendel_leeren(zustand);
     }
+
 
     /// Wendet Transaktionen auf den Zustand an.
     ///
@@ -684,8 +800,9 @@ impl Kette {
         txs: &[Transaktion],
         epoch: u64,
         letzter_hash: &Hash,
+        gezogen: &mut Option<(u64, Vec<crate::stichprobe::Segmentstichprobe>)>,
     ) {
-        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash);
+        Self::epochenwechsel_abschliessen(zustand, epoch, letzter_hash, gezogen);
         // ⚑ **Die Epoche des Zustands wird mitgeführt** (seit
         // 2026-08-27). Vorher stand sie auf 0 und blieb dort: `anwenden`
         // benutzte die Epoche nur, um den Verfall auszurechnen, und
@@ -741,7 +858,11 @@ impl Kette {
                 // Transaktion, nicht aus einem Feld der Anweisung.
                 // Damit ist der Besitz bewiesen: Wer unterschreiben
                 // kann, hält den geheimen Teil.
-                Anweisung::MinerAnmelden { hardware, zone } => {
+                Anweisung::MinerAnmelden {
+                    hardware,
+                    zone,
+                    netzadresse,
+                } => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
                     let _ = miner_anmelden(
                         zustand,
@@ -750,6 +871,7 @@ impl Kette {
                         *hardware,
                         *zone,
                         geprueft.inhalt().absender,
+                        *netzadresse,
                     );
                 }
                 Anweisung::MinerAbmelden => {
@@ -779,7 +901,13 @@ impl Kette {
         let hoehe = self.hoehe + 1;
         let epoch = epoche_fuer_hoehe(hoehe);
 
-        Self::anwenden(&mut self.zustand, &txs, epoch, &self.letzter_hash);
+        // ⚑ **Nur wenn ein Epochenwechsel stattfand**, sonst löschte
+        // jeder Block die Ziehung der laufenden Epoche.
+        let mut gezogen = None;
+        Self::anwenden(&mut self.zustand, &txs, epoch, &self.letzter_hash, &mut gezogen);
+        if gezogen.is_some() {
+            self.letzte_stichprobe = gezogen;
+        }
 
         let mut block = Block::new(BlockHeader {
             height: hoehe,
@@ -844,7 +972,14 @@ impl Kette {
         // eigene Zustand unberührt. Ein Knoten, der einem abweichenden
         // Block folgt, hätte den Befund verschluckt.
         let mut versuch = self.zustand.clone();
-        Self::anwenden(&mut versuch, &block.txs, block.header.epoch, &self.letzter_hash);
+        let mut gezogen = None;
+        Self::anwenden(
+            &mut versuch,
+            &block.txs,
+            block.header.epoch,
+            &self.letzter_hash,
+            &mut gezogen,
+        );
         let errechnet = versuch.commitment();
         if errechnet != block.header.state_root {
             return Err(KettenFehler::ZustandWeichtAb {
@@ -1598,6 +1733,7 @@ mod tests {
             Anweisung::MinerAnmelden {
                 hardware,
                 zone: myl_types::node_metadata::GeoRegion::Europe,
+                netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
             },
         )
         .expect("signieren")
@@ -1631,6 +1767,7 @@ mod tests {
             Anweisung::MinerAnmelden {
                 hardware: HardwareClass::MediumGpu,
                 zone: GeoRegion::Asia,
+                netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
             },
         )
         .expect("signieren");
@@ -1655,6 +1792,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 4_200,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         };
         let tx = Transaktion::signiere(
             &Kette::startwert(),
@@ -1684,6 +1822,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 4_200,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         };
         k.aufnehmen(
             Transaktion::signiere(
@@ -1766,6 +1905,7 @@ mod tests {
                     Anweisung::MinerAnmelden {
                         hardware: HardwareClass::MediumGpu,
                         zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
                     },
                 )
                 .expect("signieren"),
@@ -1809,6 +1949,9 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            // Tausend Segmente, damit bei 200 bp zwanzig gezogen werden
+            // und die Ziehung ueberhaupt sichtbar ist.
+            segmente: 1_000,
         };
         buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
         k.aufnehmen(
@@ -1835,6 +1978,30 @@ mod tests {
         let nachher: Vec<u64> = (0..6u8)
             .map(|w| k.zustand().account(&kaltes_konto(w)).balance)
             .collect();
+        // ⚑ **Fund 114: Und die Stichprobe ist gezogen.**
+        //
+        // `sample_segments` und `check_segment` waren seit dem
+        // 2026-08-17 gebaut, geprueft und abgehakt, und **hatten null
+        // Aufrufer**. Damit war `p` aus Anhang B.1 im Betrieb null, und
+        // `S_min = g/p^2` keine Schranke mehr.
+        //
+        // ⛑ **Geprueft wird die Ziehung, nicht das Nachrechnen.** Das
+        // braucht die Spur des Segments, und die liegt beim
+        // Koordinator. Diese Grenze steht hier, damit niemand den
+        // gruenen Test fuer mehr haelt, als er sagt.
+        let kennung = myl_types::pod_kennung(0, pod_index);
+        let stichprobe = k.letzte_stichprobe();
+        assert_eq!(
+            stichprobe.len(),
+            20,
+            "200 bp von 1000 Segmenten sind zwanzig, gezogen wurden {}",
+            stichprobe.len()
+        );
+        assert!(
+            stichprobe.iter().all(|x| x.pod == kennung && x.segment < 1_000),
+            "eine Ziehung zeigte ins Leere"
+        );
+
         let gewachsen = (0..6).filter(|i| nachher[*i] > vorher[*i]).count();
         assert!(
             gewachsen > 0,
@@ -1878,6 +2045,7 @@ mod tests {
                     Anweisung::MinerAnmelden {
                         hardware: HardwareClass::MediumGpu,
                         zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
                     },
                 )
                 .expect("signieren"),
@@ -1911,6 +2079,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         };
         k.aufnehmen(
             Transaktion::signiere(
@@ -1964,6 +2133,7 @@ mod tests {
                     Anweisung::MinerAnmelden {
                         hardware: HardwareClass::MediumGpu,
                         zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
                     },
                 )
                 .expect("signieren"),
@@ -1997,6 +2167,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         };
         k.aufnehmen(
             Transaktion::signiere(
@@ -2060,6 +2231,7 @@ mod tests {
                     Anweisung::MinerAnmelden {
                         hardware: HardwareClass::MediumGpu,
                         zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
                     },
                 )
                 .expect("signieren"),
@@ -2088,6 +2260,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente: 1,
         };
         k.aufnehmen(
             Transaktion::signiere(

@@ -234,3 +234,280 @@ mod tests {
         assert_ne!(CheckResult::Valid, CheckResult::Invalid { first_divergence: 0 });
     }
 }
+
+/// Warum eine Spurantwort nicht taugt.
+///
+/// ⚑ **Jeder dieser Fälle ist eine eigene Aussage, kein Sammelfehler.**
+/// „Der Koordinator hat ein anderes Segment geschickt" und „er hat
+/// falsch gerechnet" sind verschiedene Befunde mit verschiedenen Folgen:
+/// Das eine ist Verweigerung, das andere ein Streitfall.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Spurfehler {
+    /// Der Beweis gehört zu einem anderen Segment als dem gefragten.
+    FalschesSegment { gefragt: u32, geliefert: u64 },
+    /// Die bewiesene Blattzahl passt nicht zur Segmentzahl des Bündels.
+    ///
+    /// ⚑ **Das ist die Gegenprobe zu `PoIBundle::segmente`.** Die Zahl
+    /// steht unterschrieben in der Kette, und der Merkle-Beweis trägt
+    /// sie ein zweites Mal, gebunden an die Wurzel (Fund 77). Wer sie
+    /// aufbläht, um die Stichprobe zu verdünnen, **kann keinen
+    /// passenden Beweis liefern**: Die Behauptung fällt beim ersten
+    /// Abruf.
+    BlattzahlPasstNicht { im_buendel: u32, im_beweis: u64 },
+    /// Der Beweis trägt nicht gegen `segments_root`.
+    BeweisTraegtNicht,
+    /// Die gelieferte Spur ergibt nicht die bezeugte Spurwurzel.
+    SpurPasstNichtZumZeugnis,
+    /// Das Nachrechnen selbst scheiterte.
+    Nachrechnen(CheckError),
+}
+
+impl std::fmt::Display for Spurfehler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FalschesSegment { gefragt, geliefert } => write!(
+                f,
+                "gefragt war Segment {gefragt}, geliefert wurde {geliefert}. \
+                 Wer die Antwort wählt, beantwortet nicht die Frage"
+            ),
+            Self::BlattzahlPasstNicht {
+                im_buendel,
+                im_beweis,
+            } => write!(
+                f,
+                "das Bündel nennt {im_buendel} Segmente, der Beweis {im_beweis}. \
+                 Eine aufgeblähte Segmentzahl verdünnt die Stichprobe"
+            ),
+            Self::BeweisTraegtNicht => write!(
+                f,
+                "der Merkle-Beweis trägt nicht gegen die unterschriebene Wurzel"
+            ),
+            Self::SpurPasstNichtZumZeugnis => write!(
+                f,
+                "die gelieferte Spur ergibt eine andere Wurzel als das Zeugnis"
+            ),
+            Self::Nachrechnen(e) => write!(f, "Nachrechnen: {e:?}"),
+        }
+    }
+}
+
+/// Prüft eine Spurantwort **ganz**: erst die Bindung, dann die Rechnung.
+///
+/// # ⚑ Die Reihenfolge ist die Sicherheit
+///
+/// Vier Bindungen stehen vor dem Nachrechnen, und jede einzelne fehlt,
+/// wenn man sie weglässt:
+///
+/// 1. **Der Beweis gehört zum gefragten Index.** Sonst reicht der
+///    Koordinator ein Segment heraus, das er richtig gerechnet hat.
+/// 2. **Die Blattzahl passt zur Segmentzahl des Bündels.** Sonst bläht
+///    er die Zahl auf und verdünnt die Stichprobe.
+/// 3. **Der Beweis trägt gegen `segments_root`.** Die Wurzel steht im
+///    unterschriebenen Bündel; ohne diesen Schritt hinge alles an einer
+///    Behauptung des Gefragten.
+/// 4. **Die gelieferte Spur ergibt die bezeugte Spurwurzel.** Sonst
+///    liefert er zum richtigen Zeugnis eine andere Spur.
+///
+/// **Erst danach wird gerechnet.** Ein `Invalid` aus dieser Funktion ist
+/// deshalb ein Befund über die **Rechnung** und nicht über die Lieferung.
+pub fn pruefe_spurantwort(
+    auditor: &dyn SegmentAuditor,
+    antwort: &myl_types::Spurantwort,
+    segments_root: &myl_types::ids::MerkleRoot,
+    segmente_im_buendel: u32,
+) -> Result<CheckResult, Spurfehler> {
+    if antwort.beweis.leaf_index != u64::from(antwort.anfrage.segment) {
+        return Err(Spurfehler::FalschesSegment {
+            gefragt: antwort.anfrage.segment,
+            geliefert: antwort.beweis.leaf_index,
+        });
+    }
+    if antwort.beweis.leaf_count != u64::from(segmente_im_buendel) {
+        return Err(Spurfehler::BlattzahlPasstNicht {
+            im_buendel: segmente_im_buendel,
+            im_beweis: antwort.beweis.leaf_count,
+        });
+    }
+
+    // Das Blatt ist `Id ‖ Spurwurzel`, genau wie in `segments_root`.
+    let mut blatt = Vec::with_capacity(64);
+    blatt.extend_from_slice(antwort.zeugnis.id.as_ref());
+    blatt.extend_from_slice(antwort.zeugnis.spurwurzel.as_ref());
+    let wurzel = Hash(*segments_root.as_bytes());
+    if !antwort
+        .beweis
+        .verify(&wurzel, &blatt, antwort.beweis.leaf_index)
+    {
+        return Err(Spurfehler::BeweisTraegtNicht);
+    }
+
+    let roh: Vec<[u8; 32]> = antwort.spur.iter().map(|h| *h.as_bytes()).collect();
+    match myl_types::spurwurzel(&roh) {
+        Ok(w) if w == antwort.zeugnis.spurwurzel => {}
+        _ => return Err(Spurfehler::SpurPasstNichtZumZeugnis),
+    }
+
+    check_segment(
+        auditor,
+        antwort.zeugnis.id,
+        &antwort.eingabe,
+        &antwort.spur,
+    )
+    .map_err(Spurfehler::Nachrechnen)
+}
+
+#[cfg(test)]
+mod spurtests {
+    use super::*;
+    use myl_types::ids::{EpochId, MerkleRoot, PodId, SegmentId};
+    use myl_types::merkle::MerkleTree;
+    use myl_types::{Segmentzeugnis, Spuranfrage, Spurantwort};
+
+    fn hash(b: u8) -> Hash {
+        Hash::sha256(&[b])
+    }
+
+    /// Ein Auditor, der genau die vorgegebene Spur zurueckgibt.
+    struct EchterAuditor(Vec<Hash>);
+    impl SegmentAuditor for EchterAuditor {
+        fn audit_segment(&self, _id: SegmentId, _ein: &[u8]) -> Result<Vec<Hash>, CheckError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Baut ein Buendel aus `n` Zeugnissen und eine Antwort auf das
+    /// `index`-te davon.
+    fn aufbau(n: usize, index: usize) -> (MerkleRoot, u32, Spurantwort, Vec<Hash>) {
+        let spuren: Vec<Vec<Hash>> = (0..n)
+            .map(|i| vec![hash(i as u8), hash(i as u8 + 100), hash(i as u8 + 200)])
+            .collect();
+        let zeugnisse: Vec<Segmentzeugnis> = spuren
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let roh: Vec<[u8; 32]> = s.iter().map(|h| *h.as_bytes()).collect();
+                let mut idb = [0u8; 32];
+                idb[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                Segmentzeugnis {
+                    id: SegmentId::new(idb),
+                    spurwurzel: myl_types::spurwurzel(&roh).expect("Spurwurzel"),
+                }
+            })
+            .collect();
+        let wurzel = myl_types::segments_root(&zeugnisse).expect("Wurzel");
+
+        let blaetter: Vec<Vec<u8>> = zeugnisse
+            .iter()
+            .map(|z| {
+                let mut b = Vec::with_capacity(64);
+                b.extend_from_slice(z.id.as_ref());
+                b.extend_from_slice(z.spurwurzel.as_ref());
+                b
+            })
+            .collect();
+        let refs: Vec<&[u8]> = blaetter.iter().map(|b| b.as_slice()).collect();
+        let baum = MerkleTree::new(&refs).expect("Baum");
+        let beweis = baum.proof(index).expect("Beweis");
+
+        let antwort = Spurantwort {
+            anfrage: Spuranfrage {
+                epoche: EpochId(7),
+                pod: PodId::new([1; 32]),
+                segment: index as u32,
+            },
+            zeugnis: zeugnisse[index],
+            beweis,
+            eingabe: vec![1, 2, 3],
+            spur: spuren[index].clone(),
+        };
+        (wurzel, n as u32, antwort, spuren[index].clone())
+    }
+
+    /// Der volle Weg: gebunden **und** richtig gerechnet.
+    #[test]
+    fn eine_richtige_antwort_besteht() {
+        let (wurzel, n, antwort, spur) = aufbau(8, 3);
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, n),
+            Ok(CheckResult::Valid)
+        );
+    }
+
+    /// ⚑ **Wer die Antwort waehlt, beantwortet nicht die Frage.**
+    ///
+    /// Der Koordinator liefert ein Segment, das er richtig gerechnet
+    /// hat, statt des gezogenen. Ohne die Indexpruefung waere die
+    /// Ziehung wertlos.
+    #[test]
+    fn ein_anderes_segment_wird_abgewiesen() {
+        let (wurzel, n, mut antwort, spur) = aufbau(8, 3);
+        antwort.anfrage.segment = 5;
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, n),
+            Err(Spurfehler::FalschesSegment {
+                gefragt: 5,
+                geliefert: 3
+            })
+        );
+    }
+
+    /// ⚑ **Die aufgeblaehte Segmentzahl faellt beim ersten Abruf.**
+    ///
+    /// Wer im Buendel mehr Segmente behauptet, um die Stichprobe zu
+    /// verduennen, kann keinen Beweis mit passender Blattzahl liefern:
+    /// Sie geht in die Wurzel ein (Fund 77).
+    #[test]
+    fn eine_aufgeblaehte_segmentzahl_faellt_auf() {
+        let (wurzel, _n, antwort, spur) = aufbau(8, 3);
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, 800),
+            Err(Spurfehler::BlattzahlPasstNicht {
+                im_buendel: 800,
+                im_beweis: 8
+            })
+        );
+    }
+
+    /// Ein Zeugnis, das nicht unter der unterschriebenen Wurzel haengt.
+    #[test]
+    fn ein_fremdes_zeugnis_traegt_nicht() {
+        let (wurzel, n, mut antwort, spur) = aufbau(8, 3);
+        antwort.zeugnis.spurwurzel = MerkleRoot::new([9; 32]);
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, n),
+            Err(Spurfehler::BeweisTraegtNicht)
+        );
+    }
+
+    /// Zum richtigen Zeugnis eine andere Spur liefern.
+    #[test]
+    fn eine_vertauschte_spur_passt_nicht_zum_zeugnis() {
+        let (wurzel, n, mut antwort, spur) = aufbau(8, 3);
+        antwort.spur = vec![hash(250), hash(251)];
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, n),
+            Err(Spurfehler::SpurPasstNichtZumZeugnis)
+        );
+    }
+
+    /// ⚑ **Und erst danach zaehlt die Rechnung.** Alles gebunden, aber
+    /// der Auditor kommt zu einem anderen Ergebnis: Das ist der
+    /// Streitfall, den Stufe 2 finden soll.
+    #[test]
+    fn eine_falsche_rechnung_wird_gefunden() {
+        let (wurzel, n, antwort, mut spur) = aufbau(8, 3);
+        spur[1] = hash(99);
+        let a = EchterAuditor(spur);
+        assert_eq!(
+            pruefe_spurantwort(&a, &antwort, &wurzel, n),
+            Ok(CheckResult::Invalid {
+                first_divergence: 1
+            })
+        );
+    }
+}

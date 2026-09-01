@@ -186,6 +186,7 @@ pub fn probe_poi_buendel(absender: &str, folge: u64) -> Option<PoIBundle> {
         segments_root: wurzel,
         vtfe_claimed: vtfe,
         aggregate_sig,
+        segmente: 1,
     })
 }
 

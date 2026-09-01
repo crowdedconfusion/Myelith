@@ -83,24 +83,33 @@ pub const DST_POI_BUNDLE: &[u8] = b"MYELITH_POI_BUNDLE_v1";
 /// Kanonische Signierbotschaft eines PoI-Bündels.
 ///
 /// **Aufbau:** `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
-/// u64_le(vtfe_claimed)` — feste Feldbreiten in fester Reihenfolge,
-/// damit zu einem Bündel genau eine Bytefolge gehört.
+/// u64_le(vtfe_claimed) ‖ u32_le(segmente)` — feste Feldbreiten in
+/// fester Reihenfolge, damit zu einem Bündel genau eine Bytefolge
+/// gehört.
 ///
 /// `vtfe_claimed` ist Teil der Botschaft: sonst könnte der Koordinator
 /// die beanspruchte Arbeitsmenge nach dem Einsammeln der Signaturen
 /// erhöhen, ohne das Aggregat ungültig zu machen.
+///
+/// ⚑ **`segmente` gehört aus demselben Grund dazu, und der Schaden wäre
+/// ein anderer** (Fund 115, 2026-09-01): Wer die Segmentzahl nachträglich
+/// erhöht, **verdünnt die Stichprobenwahrscheinlichkeit je Segment**. Aus
+/// `p` wird `p/k`, und die Sicherheitsbedingung aus Anhang B.1 hängt
+/// genau an `p`.
 pub fn poi_bundle_message(
     epoch: EpochId,
     pod: PodId,
     segments_root: &MerkleRoot,
     vtfe_claimed: u64,
+    segmente: u32,
 ) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(DST_POI_BUNDLE.len() + 8 + 32 + 32 + 8);
+    let mut msg = Vec::with_capacity(DST_POI_BUNDLE.len() + 8 + 32 + 32 + 8 + 4);
     msg.extend_from_slice(DST_POI_BUNDLE);
     msg.extend_from_slice(&epoch.0.to_le_bytes());
     msg.extend_from_slice(pod.as_bytes());
     msg.extend_from_slice(segments_root.as_bytes());
     msg.extend_from_slice(&vtfe_claimed.to_le_bytes());
+    msg.extend_from_slice(&segmente.to_le_bytes());
     msg
 }
 
@@ -111,6 +120,7 @@ pub fn bundle_message(bundle: &PoIBundle) -> Vec<u8> {
         bundle.pod,
         &bundle.segments_root,
         bundle.vtfe_claimed,
+        bundle.segmente,
     )
 }
 
@@ -550,7 +560,7 @@ mod tests {
     /// Bündel, unterschrieben von den Mitgliedern in `signer`.
     fn bundle_signed_by(signer: &[u8], epoch: u64, vtfe: u64) -> PoIBundle {
         let segments_root = root(9);
-        let msg = poi_bundle_message(EpochId(epoch), pod(1), &segments_root, vtfe);
+        let msg = poi_bundle_message(EpochId(epoch), pod(1), &segments_root, vtfe, 1);
         let sigs: Vec<BlsSignature> = signer
             .iter()
             .map(|&i| keypair(i).0.sign(&msg).expect("sign"))
@@ -562,6 +572,7 @@ mod tests {
             segments_root,
             vtfe_claimed: vtfe,
             aggregate_sig: BlsSignature(agg.0),
+            segmente: 1,
         }
     }
 
@@ -575,9 +586,9 @@ mod tests {
 
     #[test]
     fn botschaft_ist_deterministisch_und_hat_erwartete_laenge() {
-        let m = poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000);
-        assert_eq!(m, poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000));
-        assert_eq!(m.len(), DST_POI_BUNDLE.len() + 8 + 32 + 32 + 8);
+        let m = poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000, 1);
+        assert_eq!(m, poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000, 1));
+        assert_eq!(m.len(), DST_POI_BUNDLE.len() + 8 + 32 + 32 + 8 + 4);
     }
 
     #[test]
@@ -586,22 +597,22 @@ mod tests {
         // Koordinator die beanspruchte Menge nach dem Einsammeln der
         // Signaturen hochsetzen.
         assert_ne!(
-            poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000),
-            poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000_000)
+            poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000, 1),
+            poi_bundle_message(EpochId(7), pod(1), &root(9), 1_000_000, 1)
         );
     }
 
     #[test]
     fn epoche_pod_und_wurzel_binden_die_botschaft() {
-        let b = poi_bundle_message(EpochId(7), pod(1), &root(9), 5);
-        assert_ne!(b, poi_bundle_message(EpochId(8), pod(1), &root(9), 5));
-        assert_ne!(b, poi_bundle_message(EpochId(7), pod(2), &root(9), 5));
-        assert_ne!(b, poi_bundle_message(EpochId(7), pod(1), &root(8), 5));
+        let b = poi_bundle_message(EpochId(7), pod(1), &root(9), 5, 1);
+        assert_ne!(b, poi_bundle_message(EpochId(8), pod(1), &root(9), 5, 1));
+        assert_ne!(b, poi_bundle_message(EpochId(7), pod(2), &root(9), 5, 1));
+        assert_ne!(b, poi_bundle_message(EpochId(7), pod(1), &root(8), 5, 1));
     }
 
     #[test]
     fn botschaft_ist_domain_getrennt() {
-        let m = poi_bundle_message(EpochId(7), pod(1), &root(9), 5);
+        let m = poi_bundle_message(EpochId(7), pod(1), &root(9), 5, 1);
         assert!(m.starts_with(DST_POI_BUNDLE));
         assert_ne!(DST_POI_BUNDLE, crate::signing::DST_VOTE);
         assert_ne!(DST_POI_BUNDLE, crate::signing::DST_COMMIT);
@@ -860,7 +871,7 @@ mod tests {
             (10..13u8).map(mitglied).collect();
         let m2 = PodMembership::new(EpochId(3), pod(2), miner(10), members2).expect("m2");
         let segments_root = root(4);
-        let msg = poi_bundle_message(EpochId(3), pod(2), &segments_root, 500);
+        let msg = poi_bundle_message(EpochId(3), pod(2), &segments_root, 500, 1);
         let sigs: Vec<BlsSignature> = (10..13u8)
             .map(|i| keypair(i).0.sign(&msg).expect("sign"))
             .collect();
@@ -871,6 +882,7 @@ mod tests {
             segments_root,
             vtfe_claimed: 500,
             aggregate_sig: BlsSignature(agg.0),
+            segmente: 1,
         };
         reg.submit(&b2, &m2, &miner(10), EpochId(3)).expect("pod 2");
 
@@ -905,7 +917,7 @@ mod tests {
                     (0..3u8).map(mitglied).collect();
                 let m = PodMembership::new(EpochId(3), pod(p), miner(0), members).expect("m");
                 let segments_root = root(9);
-                let msg = poi_bundle_message(EpochId(3), pod(p), &segments_root, 100);
+                let msg = poi_bundle_message(EpochId(3), pod(p), &segments_root, 100, 1);
                 let sigs: Vec<BlsSignature> = (0..3u8)
                     .map(|i| keypair(i).0.sign(&msg).expect("sign"))
                     .collect();
@@ -916,6 +928,7 @@ mod tests {
                     segments_root,
                     vtfe_claimed: 100,
                     aggregate_sig: BlsSignature(agg.0),
+                    segmente: 1,
                 };
                 reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
             }
@@ -938,7 +951,7 @@ mod tests {
                 (0..3u8).map(mitglied).collect();
             let m = PodMembership::new(EpochId(3), pod(p), miner(0), members).expect("m");
             let segments_root = root(9);
-            let msg = poi_bundle_message(EpochId(3), pod(p), &segments_root, v);
+            let msg = poi_bundle_message(EpochId(3), pod(p), &segments_root, v, 1);
             let sigs: Vec<BlsSignature> = (0..3u8)
                 .map(|i| keypair(i).0.sign(&msg).expect("sign"))
                 .collect();
@@ -949,6 +962,7 @@ mod tests {
                 segments_root,
                 vtfe_claimed: v,
                 aggregate_sig: BlsSignature(agg.0),
+                segmente: 1,
             };
             reg.submit(&b, &m, &miner(0), EpochId(3)).expect("submit");
         }

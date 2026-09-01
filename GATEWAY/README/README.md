@@ -1,111 +1,102 @@
 # gateway (`myl-gateway`)
 
-> **Version:** –
-> **Datum:** 2026-08-29
-> **Status:** Konzept und Phasen stehen, noch keine Zeile Code.
+> **Version:** 0.1.0
+> **Datum:** 2026-09-01
+> **Status:** Stufe 1 steht: die Tür auf `localhost` und der Beleg. Sie
+> nimmt entgegen und schreibt fest; **an einen Pod gibt sie noch nichts**.
 
-Die Tür zum Netz für alle, die nicht mitrechnen: Nutzeranfragen
-entgegennehmen, an einen Pod geben, das Ergebnis samt Beleg
-zurückliefern. Referenzimplementierung der Gateway-Rolle aus Whitepaper
-Kap. 3.3.
+## ⚑ Die Rolle stand im Papier und hatte keine Komponente (Fund 87)
 
-## Aufgabe
+Kap. 3.3 führt Gateways als eine von sechs Rollen: Nutzeranfragen
+entgegennehmen, an Pods geben, Ergebnisse zurückliefern. **Es gab weder
+Komponente noch Code noch einen HTTP-Server im ganzen Repositorium.**
+Zwei gebaute Schutzmechanismen hatten damit keinen Betreiber, und das
+Netzmodell war ohne den Agent Layer nicht benutzbar.
 
-**Das Netzwerkmodell soll auch ohne unseren Agent Layer benutzbar
-sein.** Wer eine eigene Agenten-Umgebung betreibt, eine fremde
-Bibliothek oder gar nichts davon, soll das Modell wie jede andere
-Inferenz-Schnittstelle ansprechen können. Der Agent Layer ist ein
-Aufsatz, kein Zugangsweg.
+## Der Schnitt: Stufe 1
 
-⚑ **Das Gateway ist dabei kein neuer Mechanismus, sondern der Ort, an
-dem sechs vorhandene zusammenkommen:** die ganzzahlige Inferenz
-(INTEGER_LLM), die Pod-Pipeline (COMPUTE_PIPELINE), Credits aus
-verbrannten MYL (TOKENOMICS), der Session-Kontrakt als Vollmacht
-(SHARED_TYPES), die Wahl des Auslieferungsmodus (VERIFICATION) und der
-verschlüsselte Kanal (NETWORKING). Neu ist allein die Fläche nach außen.
+Das eigene Gateway auf `localhost`. **Der Betreiber ist der
+Kontoinhaber, also entfällt die ganze Bezahlfrage**, und mit ihr
+Zugangsschlüsselverwaltung, Ratenbegrenzung und Missbrauchsschutz. Was
+bleibt, ist die Tür und der Beleg, und der Beleg ist ohnehin das
+Produkt.
 
-## ⚑ Zwei Rollen, nicht eine
+## ⚑ Keine HTTP-Bibliothek, und das ist eine Entscheidung
 
-Das Whitepaper führt unter „Gateways" zwei Aufgaben zusammen, deren
-Vertrauensanforderungen entgegengesetzt sind.
+Der Fahrplan nennt sie „die größte neue Abhängigkeitsfläche seit
+`libp2p`" und verlangt sie **vor** dem ersten Code. Sie lautet: keine.
 
-**Die Tür** nimmt Anfragen an und leitet weiter. Sie braucht **kein
-Vertrauen**: Der Kanal ist Ende zu Ende verschlüsselt, sie liest nichts,
-und wenn sie lügt oder verschluckt, merkt der Nutzer es sofort. Jeder
-darf eine betreiben, auch der Nutzer für sich selbst.
+Was ein Rahmenwerk mitbrächte, ist Wegewahl und Mittelschicht für
+Anforderungen, die Stufe 1 nicht hat; `axum` zöge `hyper` und `tower`
+nach, **drei Bäume für eine Tür mit einem Weg**. `tokio` liegt ohnehin in
+NODE und NETWORKING.
 
-**Die Prüfeinspeisung** gibt Kontrollsegmente mit Anteil γ in den
-Auftragsstrom (Kap. 6.7). Sie braucht **vollständiges Vertrauen**, denn
-der Mechanismus wirkt nur, solange ein Miner die Kontrollen nicht
-erkennt.
+⚑ **Der eigentliche Gewinn ist der Zeitpunkt.** Sobald Stufe 2 kommt,
+also ein öffentliches Gateway mit TLS, Zugang und Ratenbegrenzung, ist
+die Rahmenwerksfrage eine **echte** Frage mit echten Anforderungen. Sie
+jetzt zu entscheiden hieße, sie ohne Anforderungen zu entscheiden. **Wer
+die Abhängigkeit für die Stufe nimmt, die sie nicht braucht, trifft die
+Wahl im ungünstigsten Augenblick.**
 
-⚑ **Betreibt jeder sein eigenes Gateway, schleust niemand
-Kontrollsegmente ein.** Ein Nutzer hat keinen Anreiz, für Köder zu
-zahlen. Die Einspeisung gehört deshalb zu einer Rolle, die etwas zu
-verlieren hat, und liegt nicht in dieser Komponente. Diese hier ist nur
-die Tür.
+**Wird umgestoßen, wenn** Stufe 1 mehr als einen Weg braucht, oder ein
+Klient mehr verlangt als `Content-Length` und einen Rumpf.
 
-## Was es ausdrücklich nicht leistet
+## ⚑ Handgeschriebenes HTTP: wo die Gefahr liegt und wie sie gefasst ist
 
-**Ohne Plan gilt die Kettenzusage nicht.** Führt eine fremde Umgebung
-die Schrittfolge, kann das Protokoll nicht mehr belegen, dass keine
-Schritte ausgelassen, eingefügt oder vertauscht wurden (Kap. 8.4);
-ebenso wenig greift die architektonische Trennung gegen eingeschleuste
-Anweisungen (Kap. 8.3). **Beides sind Zusagen des Agent Layer, nicht des
-Netzes.**
+Sie liegt dort, wo **Zerlegung auf fremde Eingaben** trifft. Deshalb
+steht das Zerlegen als **reine Funktion** ohne Netz und wird einzeln
+geprüft; der Teil, der Sockets anfasst, bleibt so dünn, dass an ihm
+nichts schiefgehen kann. Dieselbe Bauart wie `anfragen_fuer` im Knoten.
 
-Was bleibt, ist genau das, wofür jemand hierherkommt: Budget, Frist und
-Empfängerliste bleiben durchgesetzt, und **jedes einzelne Segment bleibt
-nachrechenbar**. Der Beleg sagt das ausdrücklich, statt es offenzulassen.
+**Abgelehnt wird ausdrücklich, statt geraten:**
 
-## Abhängigkeiten
+- **`Transfer-Encoding: chunked`.** Es stillschweigend als Rumpf zu
+  lesen wäre die klassische Schmuggelstelle: zwei Leser, zwei Meinungen
+  über die Nachrichtengrenze.
+- **Fehlendes oder doppeltes `Content-Length`.** Ohne Länge weiß niemand,
+  wo die Nachricht endet; mit zweien wissen es zwei verschieden.
+- **Ein Rumpf, der kürzer ankommt als angekündigt.** Ihn als kurze
+  Anfrage zu nehmen hieße, **eine andere Frage festzuschreiben als die
+  gestellte**.
+- **Alles über den Grenzen** (Kopf 8 KiB, Rumpf 1 MiB). Der Deckel ist
+  eine Ablehnung und kein Abschneiden.
 
-COMPUTE_PIPELINE (rechnet), CONSENSUS (Credits und Kontrakt),
-VERIFICATION (Auslieferungsmodus, Kontrollsegmente), NETWORKING
-(verschlüsselter Kanal), SHARED_TYPES (Kontrakt- und Segmenttypen).
+⚑ **`Tuer::binden` nimmt keine Adresse entgegen**, sondern bindet fest an
+`127.0.0.1`. Eine Adresse als Parameter wäre eine Einladung, sie auf
+`0.0.0.0` zu setzen, und dann stünde eine Tür ohne Schloss im Netz. **Wer
+öffentlich hören will, braucht Stufe 2 und nicht ein anderes Argument.**
 
-## Struktur
+## Der Beleg, und warum er zuerst kam
 
-Noch keine Zeile Code. ⚑ **Und das Crate wird kleiner, als der Name
-vermuten lässt.** Beim Durchsehen, was hier wirklich hingehört, blieb
-wenig übrig:
+Ein Gateway, das nur eine Antwort liefert, ist ein Weiterleiter. **Was
+Myelith anders macht, ist der Beleg.**
 
-- **Der Beleg gehört nach SHARED_TYPES**, nicht hierher. Er ist kein
-  neuer Typ, sondern das vorhandene `Segment` plus zwei Felder,
-  Auslieferungsmodus und Reifegrad. ⚑ **Läge er hier, bräuchte jeder,
-  der einen Beleg prüfen will, einen Webserver** — der Prüfweg muss der
-  leichteste sein, nicht der schwerste.
-- **Der Zugangsschlüssel** ist der Session-Kontrakt und steht in
-  SHARED_TYPES und CONSENSUS.
-- **Die Prüfeinspeisung** ist zu den Validatoren gewandert.
-- **Zuteilung, verschlüsselter Kanal und Rechnen** stehen in
-  COMPUTE_PIPELINE, NETWORKING und CONSENSUS.
+⚑ **Und ohne die Bindung der Anfrage geht auch Stufe 2 der Verifikation
+nicht.** Der Prompt kam im Konsens nicht vor; ein Checker müsste ihn dem
+Pod glauben und prüfte dann, ob der Pod zu seiner **eigenen** Eingabe
+passt. Eine Frage, auf die der Gefragte beide Hälften wählt. Deshalb
+schreibt das Gateway **zuerst** fest und leitet **dann** weiter.
 
-**Hier bleibt die Fläche nach außen und der Zusammenbau.** Der Grund für
-ein eigenes Crate ist genau einer: **Die HTTP-Abhängigkeit darf nicht in
-ein Crate, das andere ohnehin einbinden.** Eine Rolle braucht ein
-eigenes Crate, wenn sie eine eigene Angriffsfläche mitbringt, und sonst
-nicht.
+Gebunden wird `SHA-256` über Trennstring, Sitzungsnummer und Anfrage;
+die Sitzungsnummer geht mit ein, damit dieselbe Anfrage in zwei
+Sitzungen nicht denselben Wert bekommt und eine Bindung nicht
+übertragbar ist.
 
-## Wer die Tür bezahlt
+## Changelog
 
-Die Rollentabelle in Kap. 3.3 nennt als Anreiz einen „Anteil der
-Inferenzgebühr". **Eine Inferenzgebühr in diesem Sinn gibt es im
-gebauten Modell nicht:** Nutzer verbrennen MYL zu Credits, die Credits
-werden beim Rechnen ersatzlos verbraucht, und vergütet wird aus frisch
-geprägten MYL. Die Prägung teilt sich in fünf Anteile, und Gateways sind
-keiner davon.
+### v0.1.0 – 2026-09-01 (die Tür und der Beleg, Punkt 39)
 
-**Entschieden ist deshalb ein dritter Weg: Der Auftraggeber hängt seiner
-Anfrage ein Entgelt an**, fällig, sobald das Segment festgeschrieben ist
-und die Tür darin steht. Keine Prägungsänderung, kein sechster Anteil.
+Das **neunzehnte Crate**. 21 Tests: 15 auf die reinen Funktionen, 6 über
+einen echten Socket.
 
-⚑ **Der Grund ist, dass die naheliegende Alternative erprobt und
-verworfen ist.** Erlaubnisfreies, unvergütetes Weiterleiten führt nicht
-zu vielen kleinen Betreibern, sondern dazu, dass es nur noch die tun,
-die ohnehin große Knoten betreiben. Andere Netze haben das durchlaufen
-und nachträglich ein Entgelt je Zustellung eingeführt.
+⛑ **Der erste Testlauf blieb hängen**, und das war lehrreich: Der
+Testklient schloss seine Schreibseite nicht, also wartete der Server auf
+den angekündigten Rest und der Klient auf die Antwort. **Ein Deadlock,
+und er hat gezeigt, dass der Server einen abgebrochenen Rumpf am
+Dateiende erkennt und nicht an einer Frist** — die richtige Reihenfolge.
+Der Klient schließt jetzt, und eine Fünf-Sekunden-Frist darüber ist der
+zweite Riegel: **Ein hängender Test sagt nichts, ein fehlgeschlagener
+sagt etwas.**
 
-**Wer für sich selbst weiterleitet, zahlt an sich selbst, also nichts.**
-Der Selbstbetrieb bleibt kostenlos; er ist nur nicht mehr die einzige
-Möglichkeit.
+**Was Stufe 1 nicht tut:** an einen Pod geben. Dafür braucht sie eine
+Sitzung im Netz, und die ist eigene Arbeit.

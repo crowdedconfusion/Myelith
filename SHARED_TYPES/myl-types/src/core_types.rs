@@ -47,6 +47,29 @@ pub struct PoIBundle {
     pub segments_root: MerkleRoot,
     pub vtfe_claimed: u64,
     pub aggregate_sig: BlsSignature,
+    /// Wie viele Segmente unter [`Self::segments_root`] hängen.
+    ///
+    /// # ⚑ Fund 115: Die Kette konnte nicht zählen, was sie bezahlt
+    ///
+    /// Bis zum 2026-09-01 trug ein Bündel nur die **Wurzel** über seine
+    /// Segmentzeugnisse. Eine Wurzel sagt nichts über die Zahl der
+    /// Blätter, und damit war aus dem Kettenzustand **nicht ableitbar,
+    /// wie viele Segmente eine Epoche hatte**.
+    ///
+    /// Das war die stille Vorbedingung, an der Stufe 2 scheiterte:
+    /// [`sample_segments`](../../../CONSENSUS/myl-scheduler) zieht aus
+    /// `num_segments`, und diese Zahl gab es nirgends. **Erst mit ihr
+    /// ist eine Stichprobe überhaupt herleitbar.**
+    ///
+    /// ⚑ **Sie gehört in die signierte Botschaft**, aus demselben Grund
+    /// wie `vtfe_claimed`: Sonst erhöhte der Koordinator sie nach dem
+    /// Einsammeln der Unterschriften und **verdünnte damit die
+    /// Stichprobenwahrscheinlichkeit je Segment**, ohne das Aggregat
+    /// ungültig zu machen.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Feldreihenfolge ist
+    /// Konsensvertrag.
+    pub segmente: u32,
 }
 
 /// Inferenz-Credit: durch Burn erworbenes Guthaben an Inferenzarbeit
@@ -172,6 +195,7 @@ mod tests {
             segments_root: MerkleRoot::new(rng.fill()),
             vtfe_claimed: rng.next_u64(),
             aggregate_sig: BlsSignature(rng.fill()),
+            segmente: 1,
         }
     }
 
@@ -318,4 +342,77 @@ mod tests {
         assert!(bytes[132..136].iter().all(|&b| b == 0)); // leere trace
         assert!(bytes[136..140].iter().all(|&b| b == 0)); // leere signatures
     }
+}
+
+/// Die Frage nach der Spur eines gezogenen Segments (Punkt 45, Stufe 2).
+///
+/// ⚑ **Die Kette hält nur eine Wurzel.** Wer ein Segment nachrechnen
+/// will, braucht seine Eingabe und die behauptete Spur, und beide liegen
+/// beim Koordinator des Pods. Ohne diesen Abruf ist die Ziehung eine
+/// Lotterie ohne Ziehungsergebnis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Spuranfrage {
+    /// Die Epoche, aus der das Bündel stammt.
+    pub epoche: EpochId,
+    /// Der Pod, dessen Bündel das Segment bezeugt.
+    pub pod: PodId,
+    /// Der Index des Segments **innerhalb dieses Bündels**.
+    pub segment: u32,
+}
+
+/// Die Antwort darauf: das Zeugnis, sein Beweis, und was gerechnet wurde.
+///
+/// # ⚑ Warum der Beweis dazugehört
+///
+/// Ohne ihn reichte der Koordinator ein **anderes** Segment heraus,
+/// nämlich eines, das er richtig gerechnet hat. Die Ziehung wäre dann
+/// eine Frage, auf die der Gefragte die Antwort wählt. Der Beweis bindet
+/// das Zeugnis an `segments_root` aus dem Bündel, und das Bündel ist
+/// unterschrieben.
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Spurantwort {
+    /// Worauf geantwortet wird.
+    pub anfrage: Spuranfrage,
+    /// Das Zeugnis an dieser Stelle: Kennung und Spurwurzel.
+    pub zeugnis: Segmentzeugnis,
+    /// Merkle-Beweis des Zeugnisses gegen `segments_root`.
+    pub beweis: crate::merkle::MerkleProof,
+    /// Die Eingabe-Aktivierungen `a_0`.
+    ///
+    /// # ⚑ Fund 118: Dieses Feld kann heute niemand füllen
+    ///
+    /// **Die Entscheidung E10 (2026-08-30) hat das Archivieren der
+    /// Aktivierungen abgeschafft.** Sie kostete über die Streitfrist
+    /// zwischen 65 GiB und 1,8 TiB je Knoten, zusätzlich zur
+    /// Modellgröße. Was bleibt, ist die **Spur**: 32 Byte je Layer statt
+    /// 7 KiB je Eingang.
+    ///
+    /// Die Begründung dort lautet: Im Streitfall legt der **Ankläger**
+    /// die Eingabe offen, denn „bei `j-1` sind sich beide einig, und er
+    /// hat den Wert ohnehin, weil er das Segment gerade nachgerechnet
+    /// hat."
+    ///
+    /// ⚑ **Das trägt für die Bisektion und nicht für die Stichprobe.**
+    /// In der Bisektion streiten zwei, die beide gerechnet haben. Ein
+    /// Checker der Stufe 2 hat **noch nichts gerechnet**; er will
+    /// gerade erst anfangen und braucht dafür die Eingabe, die niemand
+    /// mehr aufhebt.
+    ///
+    /// **Drei Wege, und keiner ist umsonst:**
+    ///
+    /// - Der Checker rechnet die **ganze Pipeline** vom Prompt an nach.
+    ///   Selbstgenügsam, aber er zahlt `k`-mal statt einmal.
+    /// - Die Eingabe wird **doch** aufgehoben, für eine kürzere Frist
+    ///   als die Streitfrist. Das ist E10 mit anderer Zahl, nicht gegen
+    ///   E10.
+    /// - Stufe 2 prüft nur den **ersten** Shard eines Segments, dessen
+    ///   Eingabe aus dem Prompt folgt. Billig, deckt aber `1/k` ab.
+    ///
+    /// **Das ist eine Entscheidung des Projektinhabers und keine
+    /// Verdrahtung.** Sie steht als eigener Punkt im Fahrplan; bis dahin
+    /// bleibt das Feld im Typ, weil die Prüfung darauf aufbaut und das
+    /// Bindungsgerüst darum herum vollständig und geprüft ist.
+    pub eingabe: Vec<u8>,
+    /// Die behaupteten Commitment-Hashes der Spur.
+    pub spur: Vec<crate::hash::Hash>,
 }

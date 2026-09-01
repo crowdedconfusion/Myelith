@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.20.0
+> **Version:** 0.22.1
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -71,6 +71,73 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.22.1 – 2026-09-01 (Beweiser gegen Prüfer, mit echtem Modell)
+
+`tests/nachrechnen.rs`: `myl-pod` rechnet die Spur eines Shards, wie im
+Betrieb; `myl_verifier::ModellAuditor` rechnet sie **auf eigenem Weg**
+nach. Vier Tests, gegen echte Artefakte.
+
+⚑ **Ohne diesen Test wäre der Nachrechner eine Vermutung.** Er könnte
+richtig aussehen und systematisch etwas anderes rechnen; dann
+beschuldigte Stufe 2 ehrliche Miner, und zwar **alle**.
+
+Geprüft wird auch, dass eine verfälschte Spur an der **richtigen
+Stelle** gefunden wird: Die Bisektion beginnt bei der ersten Abweichung,
+und eine falsch gemeldete Position stritte über die falsche Layer.
+
+`activation_hash` kommt jetzt aus `myl_types::uebergang`; hier steht die
+Wiederausfuhr, denn dies ist die Stelle, an der er **erzeugt** wird.
+
+### v0.22.0 – 2026-09-01 (die Signierbotschaft zieht nach, und eine Gegenprobe hat sich bezahlt)
+
+`signierbotschaft` bindet `segmente` mit (Fund 115). ⚑ **Die Kodierung
+steht hier zwangsläufig ein zweites Mal**, denn `myl-consensus` ist nur
+dev-dependency: `myl-pod` darf zur Bauzeit nicht am Konsens hängen.
+
+⚑ **Was die Kopie zusammenhält, ist der Test
+`die_signierbotschaft_des_pods_ist_die_des_konsenses`, und er hat sich
+heute bezahlt gemacht.** Als `PoIBundle` das neue Feld bekam, band die
+Konsensfassung es und diese nicht; **der Test fiel um, bevor irgendetwas
+auseinanderlaufen konnte.** Eine erzwungene Kopie ist tragbar, solange
+eine Gegenprobe an ihr hängt; ohne sie wäre sie Fund 111.
+
+### v0.21.0 – 2026-09-01 (Punkt 43: die Zuteilung wird hier nicht mehr gerechnet)
+
+**`plane_epoche` und `Planparameter` sind entfernt.** Fund 111 hatte
+gezeigt, dass es die Pod-Bildung zweimal gab; die halbe Antwort war, beide
+auf dieselbe Regel zu setzen. **Die ganze ist, dass es den zweiten
+Eingang nicht gibt.** Wer die Zuteilung braucht, ruft
+`myl_scheduler::zuteilung_der_epoche`.
+
+⚑ **Die Saat ist der vorherige Blockhash, nicht der VRF**, und dafür gibt
+es vier Gründe:
+
+- **Den Blockhash gibt es immer.** Ein VRF-Seed muss erzeugt,
+  veröffentlicht und geprüft werden; schweigt der Halter, gibt es keine
+  Zuteilung. Das ist eine Liveness-Abhängigkeit für nichts.
+- **Gemahlen werden können beide.** Wer den letzten Block einer Epoche
+  erzeugt, sieht bei beiden Verfahren die entstehende Zuteilung. Begrenzt
+  wird das vom Registrierungsschluss bei `e-2`, und der bleibt.
+- ⚑ **Der Vorteil des VRF trägt hier nicht.** Er bringt
+  Unvorhersehbarkeit **für alle anderen**; die zahlt sich aus, wo jemand
+  von frühem Wissen profitiert. Die Zuteilung rechnet jeder im selben
+  Augenblick aus demselben Kettenzustand.
+- ⚑ **„Verifiziert statt geglaubt" (D3) bleibt, und zwar stärker.** An
+  einem Blockhash ist nichts zu glauben, er **ist** die Kette. Auch die
+  Epochenbindung bleibt und ist jetzt Bau statt Prüfung: Sie steckt in
+  `epochenseed(hash, epoche)`.
+
+⚑ **Wo der VRF hingehört, ist die Stichprobenlotterie.** Dort hilft
+frühes Wissen sehr wohl: Wer weiß, welche Segmente geprüft werden, weiß
+auch, bei welchen er sich nicht anstrengen muss. Als eigener Punkt
+vermerkt.
+
+⛑ **Ein Test kam wieder heraus, statt zu bleiben.** Er rief zweimal
+dieselbe reine Funktion und verglich die Ergebnisse; scheitern hätte er
+nur können, wenn die Zuteilung zufällig wäre. **Die Zusage „die Regel
+steht nur einmal da" hält kein Test, sondern die Abwesenheit des
+Codes.**
 
 ### v0.20.0 – 2026-09-01 (⚑ Funde 111 und 113)
 

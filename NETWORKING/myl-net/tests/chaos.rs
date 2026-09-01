@@ -56,6 +56,8 @@ use myl_types::ids::{EpochId, PodId, SegmentId};
 use myl_types::{segments_root, BlsSecretKey, PoIBundle};
 use tokio::sync::{mpsc, oneshot};
 
+mod gemeinsam;
+
 /// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
 /// Spurwurzel.
 ///
@@ -157,23 +159,9 @@ impl Knoten {
         let _ = self.kommandos.send(NodeCommand::Dial { addr, result: None });
     }
 
-    async fn peers(&self) -> usize {
-        let (tx, rx) = oneshot::channel();
-        self.kommandos
-            .send(NodeCommand::PeerCount(tx))
-            .expect("Kommandokanal");
-        rx.await.expect("Ergebniskanal")
-    }
 
     async fn warte_auf_peers(&self, n: usize, frist: Duration) -> usize {
-        let ende = tokio::time::Instant::now() + frist;
-        loop {
-            let p = self.peers().await;
-            if p >= n || tokio::time::Instant::now() >= ende {
-                return p;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        gemeinsam::warte_auf_peers(&self.kommandos, n, frist).await
     }
 
     /// Zählt die Nachrichten, die innerhalb der Frist eintreffen.
@@ -216,6 +204,7 @@ fn buendel(marke: u8) -> PoIBundle {
         segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 1000 + marke as u64,
         aggregate_sig: sig,
+        segmente: 1,
     }
 }
 

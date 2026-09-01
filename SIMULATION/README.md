@@ -1,10 +1,10 @@
 # Protokollsimulation und Sicherheitsaudit
 
 > **Version:** `myl-simulation` 0.1.2
-> **Datum:** 2026-08-27
+> **Datum:** 2026-09-01
 > **Status:** Ein Szenario läuft (Segmentweg über alle Schichten) mit
-> Abdeckungsbericht. `latency_sim.py` und `security_sim.py` aus M1 sind
-> noch Platzhalter.
+> Abdeckungsbericht. `latency_sim.py` und `security_sim.py` laufen seit
+> dem 2026-09-01 und **behaupten**, statt nur zu drucken.
 
 
 Ein Ort für das, was keine einzelne Komponente prüfen kann: **den Weg

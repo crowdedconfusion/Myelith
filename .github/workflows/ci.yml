@@ -250,6 +250,58 @@ jobs:
         working-directory: INTEGER_LLM/conformance
         run: ./run.sh reference
 
+  # ── Bitgleichheit auf einer zweiten Architektur (Punkt 30) ─────────
+  #
+  # ⚑ **Die Frage war falsch gestellt.** Sie lautete „bekommt macOS
+  # zusaetzlich einen Runner", also nach einem dritten **Betriebssystem**.
+  # `ubuntu-latest` und `windows-latest` sind aber beide **x86_64**: Drei
+  # Betriebssysteme, ein Befehlssatz.
+  #
+  # ⚑ **`macos-latest` ist ARM64**, und damit ist dieser Job die einzige
+  # Stelle im ganzen Bau, an der die Bitgleichheit auf einer **zweiten
+  # Architektur** geprueft wird. Genau das ist das Versprechen des
+  # Projekts: Ganzzahlig heisst, jede Maschine rechnet dasselbe. Bis
+  # heute stand dafuer nur die Maschine des Entwicklers, von Hand, und
+  # damit dieselbe Art Beleg, der dieses Projekt sonst nirgends traut.
+  #
+  # **Zugeschnitten, nicht vollstaendig.** macOS-Minuten zaehlen
+  # zehnfach, deshalb laeuft hier nur, wo die Architektur ueberhaupt
+  # etwas aendern kann: die Kernels und die Golden-Vektoren. Netz, Chaos
+  # und Konsens haengen nicht am Befehlssatz und bleiben auf Linux.
+  bitgleichheit-arm:
+    name: Bitgleichheit auf ARM64 (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Die rechnenden Kerne. Fiele hier etwas aus, das auf x86_64
+      # besteht, waere das der wichtigste Befund, den dieses Projekt
+      # haben kann.
+      - name: cargo test — INTEGER_LLM (kernels)
+        working-directory: INTEGER_LLM/kernels
+        run: cargo test --quiet
+
+      - name: cargo test — SHARED_TYPES (myl-types)
+        working-directory: SHARED_TYPES/myl-types
+        run: cargo test --quiet
+
+      # Derselbe Lauf wie auf Linux, dieselben sechs Vektoren. **Der
+      # Vergleich ist der Zweck**, nicht der Lauf.
+      - name: Konformitaet — Op-Level-Golden-Vektoren (ohne Artefakte)
+        working-directory: INTEGER_LLM/conformance
+        run: ./run.sh reference
+
   # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
   runtime:
     name: Runtime Tests
@@ -371,32 +423,31 @@ jobs:
       # Bewusst dokumentierte Ausnahmen stehen als `#![allow(...)]` mit
       # Begründung im jeweiligen Modulkopf (Kernel-Signaturen tragen den
       # Fixed-Point-Vertrag, Matrix-Namen folgen Whitepaper-Anhang B).
+      # ⚑ **Die Liste stand hier von Hand, und das ist dieselbe Falle
+      # wie Fund 65** (ein Crate ohne Zeile ist ungeprueft). Sie hat am
+      # 2026-09-01 prompt zugeschlagen: Das neunzehnte Crate war
+      # gebaut, geprueft und stand in keiner der beiden Listen.
+      #
+      # Jetzt kommt sie aus dem Dateisystem, wie in der
+      # Mindestfassungs-Pruefung auch. **Ein neues Crate ist damit
+      # automatisch dabei**, und wer eines vergisst, kann es nicht mehr.
       - name: cargo clippy (alle Crates)
         run: |
-          set -e
-          for crate in \
-            SHARED_TYPES/myl-types \
-            NETWORKING/myl-net \
-            CONSENSUS/myl-ledger \
-            CONSENSUS/myl-scheduler \
-            CONSENSUS/myl-consensus \
-            TOKENOMICS/myl-tokenomics \
-            VERIFICATION/myl-verifier \
-            GOVERNANCE/myl-governance \
-            AGENT_LAYER/myl-agent \
-            STORAGE/myl-store \
-            SIMULATION/myl-simulation \
-            COMPUTE_PIPELINE/myl-pod \
-            TRAINING/myl-train \
-            INTEGER_LLM/kernels \
-            INTEGER_LLM/runtime \
-            INTEGER_LLM/pipeline \
-            NODE/myl-node \
-            TESTCLIENT/myl-testclient
-          do
+          set -euo pipefail
+          gefunden=0
+          for manifest in */*/Cargo.toml; do
+            crate=$(dirname "$manifest")
             echo "── clippy: $crate"
             (cd "$crate" && cargo clippy --all-targets -- -D warnings)
+            gefunden=$((gefunden + 1))
           done
+          # ⚑ Eine Zaehlung, die null zaehlt, ist kein Befund: Faende der
+          # Glob nichts, liefe der Schritt gruen durch, ohne zu pruefen.
+          if [ "$gefunden" -lt 15 ]; then
+            echo "FEHLER: nur $gefunden Crates gefunden; der Glob passt nicht mehr."
+            exit 1
+          fi
+          echo "clippy ueber $gefunden Crates"
 
       # `simd.rs`, `cuda.rs` und `rocm.rs` werden NUR mit ihrem Feature
       # kompiliert — ein Lauf ohne Flags sieht sie nie. Genau daran ist
@@ -463,6 +514,18 @@ jobs:
       # Artefakte. Läuft in Millisekunden.
       - name: cargo test — STORAGE (myl-store)
         working-directory: STORAGE/myl-store
+        run: cargo test --quiet
+
+      # ⚑ **Ein Crate ohne CI-Zeile ist ungeprueft, und das hat dieses
+      # Projekt schon einmal bezahlt** (Fund 65, 2026-08-26: NODE lief
+      # mit 132 Tests in keinem Job). Diese Zeile entstand deshalb im
+      # selben Zug wie das Crate und nicht danach.
+      #
+      # myl-gateway: reine Zerlegung plus sechs Tests ueber einen echten
+      # Socket auf der Rueckschleife. Kein Netz nach aussen, keine
+      # Artefakte, Millisekunden.
+      - name: cargo test — GATEWAY (myl-gateway)
+        working-directory: GATEWAY/myl-gateway
         run: cargo test --quiet
 
       - name: cargo test — SIMULATION (myl-simulation)
@@ -884,11 +947,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      # `latency_sim.py` und `security_sim.py` sind dokumentierte Stubs
-      # fuer Meilenstein M1 und beenden sich mit Exit 1 und Begruendung.
-      # Der Schritt schlaegt fehl, wenn einer von ihnen **durchlaeuft**:
-      # dann ist er entweder implementiert (und gehoert aus der Liste)
-      # oder er meldet seinen Zustand nicht mehr.
+      # ⚑ **Die Ausnahmeliste ist seit dem 2026-09-01 leer** (Punkt 15).
+      # `latency_sim.py` und `security_sim.py` waren dokumentierte Stubs
+      # fuer Meilenstein M1 und beendeten sich mit Exit 1; jetzt laufen
+      # sie und **behaupten** dabei, statt nur zu drucken. Die Mechanik
+      # bleibt stehen: Traegt jemand hier wieder etwas ein, schlaegt der
+      # Schritt fehl, sobald es durchlaeuft.
       # Zwei der Simulationen machen 84 der 89 Sekunden aus
       # (`topk_stability_sim.py` 56 s, `robustness_sim.py` 28 s). Ihre
       # Stichprobenzahlen zu senken waere der naheliegende Weg und der
@@ -917,7 +981,7 @@ jobs:
           LANGSAME: ${{ steps.diff.outputs.langsame }}
         run: |
           set -e
-          GEPLANT="latency_sim.py security_sim.py"
+          GEPLANT=""
           LANGSAM="topk_stability_sim.py robustness_sim.py"
           for f in *.py; do
             case " ${GEPLANT} " in

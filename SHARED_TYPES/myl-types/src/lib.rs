@@ -54,7 +54,7 @@ pub use bls::{
     BLS_POP_DST,
 };
 pub use challenge::{Challenge, ChallengeStructureError, DST_CHALLENGE};
-pub use core_types::{segments_root, spurwurzel, InferenceCredit, PoIBundle, Segment, Segmentzeugnis};
+pub use core_types::{segments_root, spurwurzel, InferenceCredit, PoIBundle, Segment, Segmentzeugnis, Spuranfrage, Spurantwort,};
 pub use hash::Hash;
 pub use ids::{
     ActivationHash, Address, EpochId, IdParseError, MerkleRoot, MinerId, PodId, SegmentId,
@@ -70,7 +70,6 @@ pub use node_metadata::{Asn, DiversityChecker, GeoRegion, NodeMetadata, NodeMeta
 pub use seed_rng::{deterministic_shuffle, weighted_sample_without_replacement, SeedRng};
 pub use sitzung::{
     pruefe, Agentenbefund, Befund, Grenzen, KontraktFehler, Sitzungskontrakt, Sitzungszustand,
-    Vorhaben, Waehrung, Zeugenstufe, DST_SITZUNGSKONTRAKT, MAX_EMPFAENGER, MAX_ZEUGENSTUFEN,
-};
+    Vorhaben, Waehrung, Zeugenstufe, DST_SITZUNGSKONTRAKT, MAX_EMPFAENGER, MAX_ZEUGENSTUFEN, Anfragebindung, DST_ANFRAGE,};
 pub use uebergang::{Rolle, TransitionSig, DST_SHARD_TRANSITION};
 pub use vrf::{VrfError, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey};

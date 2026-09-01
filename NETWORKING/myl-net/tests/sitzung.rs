@@ -37,6 +37,8 @@ use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
 use tokio::sync::mpsc;
 
+mod gemeinsam;
+
 const FRIST: Duration = Duration::from_secs(20);
 
 /// Ein laufender Knoten mit Kommando- und Ereigniskanal.
@@ -97,22 +99,13 @@ impl Knoten {
     ///
     /// Über das Kommando, nicht am Swarm vorbei: geprüft wird der Weg,
     /// den ein Knoten im Betrieb nimmt.
+    /// ⚑ **Die einzige Fassung, die bei Fristablauf abbricht**, und das
+    /// ist hier richtig: Ohne Verbindung prüft dieser Test nichts. Das
+    /// Warten selbst kommt aus der gemeinsamen Fassung, nur die
+    /// Bewertung steht hier.
     async fn warte_auf_peers(&self, n: usize) {
-        let ende = tokio::time::Instant::now() + FRIST;
-        loop {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            self.kommandos
-                .send(NodeCommand::PeerCount(tx))
-                .expect("Kommandokanal");
-            if rx.await.expect("Ergebniskanal") >= n {
-                return;
-            }
-            assert!(
-                tokio::time::Instant::now() < ende,
-                "keine Verbindung innerhalb der Frist"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let erreicht = gemeinsam::warte_auf_peers(&self.kommandos, n, FRIST).await;
+        assert!(erreicht >= n, "keine Verbindung innerhalb der Frist");
     }
 
     /// Wartet auf eine eingehende Anfrage und gibt Bytes samt Marke zurück.

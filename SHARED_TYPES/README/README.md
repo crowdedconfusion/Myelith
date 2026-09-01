@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.23.0
+> **Version:** 0.28.0
 > **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,132 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.28.0 – 2026-09-01 (die Anfrage wird gebunden, Punkte 39 und 47)
+
+`Anfragebindung`. ⚑ **Der Prompt eines Nutzers kam im Konsens nicht
+vor**: `Sitzungskontrakt` regelt Agentenbefugnisse, nicht Inferenz, und
+ein PoI-Bündel bindet `(Id, Spurwurzel)` und sonst nichts.
+
+Zwei Dinge gehen dadurch nicht. **Stufe 2 kann nicht nachrechnen**: Die
+Entscheidung zu Punkt 47 lautet „Sitzungen ziehen", und ein Checker
+braucht dafür den Prompt. Ohne Bindung müsste er ihn dem Pod glauben,
+und dann prüft er, ob der Pod zu seiner **eigenen** Eingabe passt: eine
+Frage, auf die der Gefragte beide Hälften wählt. Und **ein Nutzer kann
+nicht belegen, was er gefragt hat**; ein Beleg ohne die Frage belegt nur
+eine Antwort.
+
+⚑ **Gebunden wird der Hash, nicht der Text.** Die Anfrage gehört nicht in
+den Zustand: beliebig lang, und `commitment()` serialisiert ihn ganz
+(D7). Wer nachrechnen will, holt den Text bei einem Beteiligten und
+prüft ihn gegen den Hash. **Dieselbe Bauart wie beim Merkle-Beweis der
+Spur: Die Kette trägt die Zusicherung, der Beteiligte den Inhalt, und
+wer liefert, kann nicht wählen.**
+
+⚑ **Die Sitzungsnummer geht in den Hash ein**, sonst hätte dieselbe
+Anfrage in zwei Sitzungen denselben Wert und eine Bindung ließe sich
+übertragen. Die Epoche steht daneben, damit eine Sitzungsnummer nicht
+zeitlos wiederverwendbar ist.
+
+### v0.27.1 – 2026-09-01 (⚑ Fund 118 an `Spurantwort::eingabe` vermerkt)
+
+**Dieses Feld kann heute niemand füllen.** Die Entscheidung E10
+(2026-08-30) hat das Archivieren der Aktivierungen abgeschafft; sie
+kostete über die Streitfrist zwischen 65 GiB und 1,8 TiB je Knoten.
+
+⚑ **Die Begründung von E10 trägt für die Bisektion und nicht für die
+Stichprobe.** Dort legt der Ankläger die Eingabe offen, „denn er hat das
+Segment gerade nachgerechnet"; ein Checker der Stufe 2 hat **noch nichts
+gerechnet**.
+
+Drei Wege stehen am Feld, samt Preis. **Das ist eine Entscheidung und
+keine Verdrahtung**; das Bindungsgerüst darum herum ist vollständig,
+geprüft und unabhängig davon richtig.
+
+### v0.27.0 – 2026-09-01 (der Spur-Eintrag zieht dorthin, wo ihn beide lesen)
+
+`activation_hash` liegt jetzt in `myl_types::uebergang`.
+
+⚑ **Der Präzedenzfall stand seit dem 2026-08-29 in derselben Datei:**
+`TransitionSig` zog aus `myl_pod::trace` hierher, „damit die
+Schiedsstelle ihn lesen kann, ohne an dieses Crate und damit an die
+ganze Inferenz-Laufzeit zu hängen". **Für `activation_hash` galt
+derselbe Grund, und niemand hat ihn nachgezogen.**
+
+Aufgefallen ist es, als der **Checker** eine Spur nachrechnen sollte: Er
+hätte den Hash entweder aus `myl-pod` holen müssen, also der Prüfer vom
+Geprüften, oder ihn ein zweites Mal schreiben. ⚑ **Beides ist falsch, und
+das zweite ist Fund 111.**
+
+**Ein Spur-Eintrag ist ein Konsensdatum.** Wer ihn anders rechnet,
+bekommt eine andere Spur, und ein Streit darüber wäre nicht
+entscheidbar, sondern nur zwei Meinungen.
+
+### v0.26.1 – 2026-09-01 (⚑ Fund 117: der Name sagte etwas, das nicht hineinpasst)
+
+`PeerIdBytes` trug seit je den Kommentar „PeerId als 32-Byte-Array … Die
+Konvertierung erfolgt in NETWORKING". **Die Konvertierung gab es
+nicht**, und sie hätte so nicht gehen können: Eine `PeerId` ist ein
+Multihash und misst für Ed25519 **38 Bytes**.
+
+⚑ **Aufgefallen ist es erst, als jemand das Feld benutzen wollte.**
+Vorher trug der Typ nur Latenzatteste, in denen niemand zurückrechnete:
+**Ein Feld, das keiner liest, kann jede Bedeutung tragen.**
+
+Die 32 Bytes sind der **öffentliche Schlüssel**, und die `PeerId` folgt
+daraus, denn sie ist sein Hash. Der Schlüssel trägt also mehr und nicht
+weniger. Nur der Doc-Kommentar ändert sich; der Name bleibt, weil er im
+Konsensvertrag steht.
+
+### v0.26.0 – 2026-09-01 (⚑ Fund 116: die Netzadresse kommt in die Registrierung, Punkt 46)
+
+Am 2026-08-26 wurde der **BLS-Konsensschlüssel von der Netzidentität
+getrennt**, mit Besitznachweis. Richtig, und die Folge blieb liegen:
+`MinerId` ist der Hash des Konsensschlüssels, die `PeerId` kommt aus dem
+Netzschlüssel, und **nichts band die beiden**. Wer nur die Kette kannte,
+konnte keinen Miner **erreichen**, und das hielt Stufe 2 auf.
+
+`MinerRegistration.netzadresse`, additiv angehängt.
+
+⚑ **Eine Angabe, kein Besitznachweis, und das ist eine Entscheidung.**
+Dieselbe wie bei der Zone: **Eine falsche Adresse bestraft den, der sie
+angibt.** Wer nicht erreichbar ist, kann keine Spur liefern, und
+Schweigen zählt wie eine falsche Antwort.
+
+⛑ **Was das nicht deckt:** Wer viele Miner auf die Adresse eines
+**Dritten** anmeldet, schickt ihm fremden Verkehr. Heute frei, weil eine
+Anmeldung nichts kostet; **sobald Stake daran hängt, ist es bepreist**,
+und erst dann wäre ein Besitznachweis die passende Antwort statt der
+teureren auf ein billiges Problem.
+
+### v0.25.0 – 2026-09-01 (die Frage nach einer Spur, und ihre Antwort)
+
+`Spuranfrage` und `Spurantwort` (Punkt 45, Stufe 2). Die Kette hält nur
+eine Wurzel; wer ein gezogenes Segment nachrechnen will, braucht seine
+Eingabe und die behauptete Spur, und beide liegen beim Koordinator.
+
+⚑ **Der Merkle-Beweis gehört in die Antwort, sonst reicht der
+Koordinator ein anderes Segment heraus**, nämlich eines, das er richtig
+gerechnet hat. Die Ziehung wäre dann eine Frage, auf die der Gefragte
+die Antwort wählt.
+
+### v0.24.0 – 2026-09-01 (⚑ Fund 115: die Kette konnte nicht zählen, was sie bezahlt)
+
+`PoIBundle` trug bis heute nur die **Wurzel** über seine
+Segmentzeugnisse. **Eine Wurzel sagt nichts über die Zahl ihrer
+Blätter**, und damit war aus dem Kettenzustand nicht ableitbar, wie
+viele Segmente eine Epoche hatte.
+
+⚑ **Das war die stille Vorbedingung, an der Stufe 2 scheiterte.**
+`sample_segments` zieht aus `num_segments`, und diese Zahl gab es
+nirgends. Ohne sie ist keine Stichprobe herleitbar, und ohne Stichprobe
+ist `p` aus Anhang B.1 null.
+
+`segmente: u32` ist **additiv angehängt** und steht **in der signierten
+Botschaft**, aus demselben Grund wie `vtfe_claimed` und mit anderem
+Schaden: Wer sie nachträglich erhöht, **verdünnt die
+Stichprobenwahrscheinlichkeit je Segment**, ohne das Aggregat ungültig zu
+machen. Aus `p` würde `p/k`.
 
 ### v0.23.0 – 2026-09-01 (der Schlüssel im Register, und der Besitz ist damit bewiesen)
 

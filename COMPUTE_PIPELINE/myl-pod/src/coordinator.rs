@@ -426,6 +426,7 @@ impl Coordinator {
             segments_root: root,
             vtfe_claimed: vtfe,
             aggregate_sig: agg,
+            segmente: 1,
         })
     }
 
@@ -441,14 +442,28 @@ impl Coordinator {
     ///
     /// Die Kodierung steht in `myl_consensus::poi::poi_bundle_message`
     /// und lautet `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
-    /// u64_le(vtfe_claimed)`.
+    /// u64_le(vtfe_claimed) ‖ u32_le(segmente)`.
+    ///
+    /// ⚑ **Sie steht hier zwangsläufig ein zweites Mal.** `myl-consensus`
+    /// ist nur **dev-dependency** dieses Crates, denn `myl-pod` darf zur
+    /// Bauzeit nicht am Konsens hängen. Rufen geht also nicht, nur
+    /// abschreiben.
+    ///
+    /// **Was die Kopie zusammenhält, ist der Test
+    /// `die_signierbotschaft_des_pods_ist_die_des_konsenses`**, und er
+    /// hat sich am 2026-09-01 bezahlt gemacht: Als `PoIBundle` das Feld
+    /// `segmente` bekam, band die Konsensfassung es und diese nicht.
+    /// **Der Test fiel um, bevor irgendetwas auseinanderlaufen konnte.**
+    /// Eine erzwungene Kopie ist tragbar, solange eine Gegenprobe an ihr
+    /// hängt; ohne sie wäre sie Fund 111.
     pub fn signierbotschaft(bundle: &PoIBundle) -> Vec<u8> {
-        let mut msg = Vec::with_capacity(21 + 8 + 32 + 32 + 8);
+        let mut msg = Vec::with_capacity(21 + 8 + 32 + 32 + 8 + 4);
         msg.extend_from_slice(b"MYELITH_POI_BUNDLE_v1");
         msg.extend_from_slice(&bundle.epoch.0.to_le_bytes());
         msg.extend_from_slice(bundle.pod.as_bytes());
         msg.extend_from_slice(bundle.segments_root.as_bytes());
         msg.extend_from_slice(&bundle.vtfe_claimed.to_le_bytes());
+        msg.extend_from_slice(&bundle.segmente.to_le_bytes());
         msg
     }
 

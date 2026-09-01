@@ -110,6 +110,13 @@ pub struct Knoten {
     konfig: KnotenKonfig,
     peer_id: libp2p::PeerId,
     kommandos: mpsc::UnboundedSender<NodeCommand>,
+    /// Für welche Epoche die Stichprobe schon verschickt wurde.
+    ///
+    /// ⚑ **Ohne dies fragte jeder Block erneut.** Die Ziehung gehört zu
+    /// einer Epoche, und zwischen zwei Wechseln liegen viele Blöcke;
+    /// dieselbe Frage hundertmal zu stellen wäre eine Flut, die der
+    /// Gefragte zu Recht als Angriff läse.
+    stichprobe_gefragt: Option<u64>,
     ereignisse: mpsc::UnboundedReceiver<NodeEvent>,
     protokoll: Betriebsprotokoll,
     /// Die eigene Kette: Zustand, Höhe, Mempool.
@@ -390,6 +397,7 @@ impl Knoten {
             konfig,
             peer_id,
             kommandos: cmd_tx,
+            stichprobe_gefragt: None,
             ereignisse: ev_rx,
             protokoll,
             testverkehr_zaehler: 0,
@@ -1070,7 +1078,75 @@ impl Knoten {
                 .text("block", kurz(&self.kette.letzter_hash()))
                 .wahr("verbreitet", ok),
         );
+        self.stichprobe_verschicken().await;
         ok
+    }
+
+    /// Fragt die gezogenen Segmente bei ihren Pods ab (Punkt 45).
+    ///
+    /// # ⚑ Die Naht, ohne die die Ziehung nichts bewirkt
+    ///
+    /// Die Lotterie zieht seit heute (Fund 114), die Adresse steht seit
+    /// heute in der Kette (Fund 116), und die Prüfung einer Antwort ist
+    /// vollständig. **Ohne diesen Aufruf bliebe alles drei ohne Wirkung**,
+    /// und genau so ist Fund 114 entstanden.
+    ///
+    /// # Was hier geschieht und was nicht
+    ///
+    /// Gefragt wird **jedes Mitglied** des Pods, nicht nur der
+    /// Koordinator: Sonst genügte dessen Schweigen. Der Merkle-Beweis
+    /// bindet die Antwort an die unterschriebene Wurzel, also ist
+    /// gleichgültig, wer antwortet.
+    ///
+    /// ⚑ **Die Antwort wird hier noch nicht verarbeitet.** Sie kommt als
+    /// `NodeEvent` zurück, und was dann zu tun ist, steht in
+    /// `myl_verifier::pruefe_spurantwort`; **was fehlt, ist ein
+    /// Nachrechner mit Modell**, und der hängt an Artefakten. Diese
+    /// Grenze steht hier, damit niemand den Aufruf für mehr hält.
+    async fn stichprobe_verschicken(&mut self) {
+        let Some(epoche) = self.kette.stichprobenepoche() else {
+            return;
+        };
+        if self.stichprobe_gefragt == Some(epoche) {
+            return;
+        }
+        let gezogen: Vec<_> = self.kette.letzte_stichprobe().to_vec();
+        if gezogen.is_empty() {
+            return;
+        }
+        self.stichprobe_gefragt = Some(epoche);
+
+        let epoche_ = epoche;
+        let (fragen, ohne_adresse) = crate::stichprobe::anfragen_fuer(&gezogen, epoche_, |k| {
+            self.kette.pod_der_kennung(epoche_, k)
+        });
+        let mut gefragt = 0usize;
+        for (adresse, anfrage) in fragen {
+            let Ok(daten) = borsh::to_vec(&anfrage) else {
+                continue;
+            };
+            let Ok(an) = myl_net::peer_id_aus_bytes(&adresse) else {
+                continue;
+            };
+            if self
+                .kommandos
+                .send(NodeCommand::Anfrage { an, daten })
+                .is_ok()
+            {
+                gefragt += 1;
+            }
+        }
+        // ⚑ **Ohne Adresse ist ein Pod nicht prüfbar, und das ist ein
+        // Befund.** Er steht im Protokoll und nicht in einer stillen
+        // Fortsetzung: Sonst wäre „ich nenne keine Adresse" die
+        // billigste Art, sich der Prüfung zu entziehen.
+        self.protokoll.schreibe(
+            Eintrag::neu("stichprobe_gefragt")
+                .zahl("epoche", epoche as i64)
+                .zahl("segmente", gezogen.len() as i64)
+                .zahl("anfragen", gefragt as i64)
+                .zahl("ohne_adresse", ohne_adresse as i64),
+        );
     }
 
     /// Schickt eine Transaktion ins Netz.

@@ -1079,3 +1079,134 @@ mod tests {
         assert!(!k.zahlt_an(&adr(255)));
     }
 }
+
+/// Die Bindung einer Inferenzanfrage an ihre Sitzung (Punkt 39/47).
+///
+/// # ⚑ Warum es sie braucht: der Prompt war nirgends gebunden
+///
+/// Am 2026-09-01 fiel bei der Entscheidung zu Punkt 47 auf, dass **die
+/// Anfrage eines Nutzers im Konsens nicht vorkommt**. Der
+/// [`Sitzungskontrakt`] regelt Agentenbefugnisse, nicht Inferenz, und
+/// ein PoI-Bündel bindet `(Id, Spurwurzel)` und sonst nichts.
+///
+/// Zwei Dinge gehen dadurch nicht:
+///
+/// - ⚑ **Stufe 2 kann nicht nachrechnen.** Die Entscheidung zu Punkt 47
+///   lautet „Sitzungen ziehen, nicht Positionen", und ein Checker
+///   braucht dafür den **Prompt**. Ohne Bindung müsste er ihn dem Pod
+///   glauben, und dann prüft er, ob der Pod zu seiner eigenen Eingabe
+///   passt: eine Frage, auf die der Gefragte beide Hälften wählt.
+/// - **Ein Nutzer kann nicht belegen, was er gefragt hat.** Der Beleg
+///   ist laut Fahrplan das Produkt des Gateways; ein Beleg ohne die
+///   Frage belegt nur eine Antwort.
+///
+/// # ⚑ Gebunden wird der Hash, nicht der Text
+///
+/// Die Anfrage selbst gehört **nicht** in den Konsenszustand: Sie ist
+/// beliebig lang, `commitment()` serialisiert den ganzen Zustand je
+/// Block (D7), und der Inhalt geht niemanden außer den Beteiligten an.
+/// Gebunden wird `SHA-256` über die Anfrage, mit eigenem Trennstring.
+///
+/// **Wer nachrechnen will, holt den Text bei einem Beteiligten und
+/// prüft ihn gegen den Hash.** Das ist dieselbe Bauart wie beim
+/// Merkle-Beweis der Spur: Die Kette trägt die Zusicherung, der
+/// Beteiligte den Inhalt, und wer liefert, kann nicht wählen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub struct Anfragebindung {
+    /// Die Sitzungsnummer, auf die sich `SegmentId` bezieht.
+    pub sitzung: u64,
+    /// `SHA-256(DST ‖ u64_le(sitzung) ‖ anfrage)`.
+    pub anfrage_hash: crate::hash::Hash,
+    /// Die Epoche, in der die Sitzung eröffnet wurde.
+    ///
+    /// ⚑ **Ohne sie wäre eine Bindung zeitlos**, und eine Sitzungsnummer
+    /// aus einer alten Epoche ließe sich für neue Arbeit wiederverwenden.
+    pub epoche: EpochId,
+}
+
+/// Trennstring der Anfragebindung.
+pub const DST_ANFRAGE: &[u8] = b"MYELITH_ANFRAGE_v1";
+
+impl Anfragebindung {
+    /// Bindet eine Anfrage an ihre Sitzung.
+    pub fn neu(sitzung: u64, anfrage: &[u8], epoche: EpochId) -> Self {
+        Self {
+            sitzung,
+            anfrage_hash: Self::hash(sitzung, anfrage),
+            epoche,
+        }
+    }
+
+    /// Der Hash über Sitzung und Anfrage.
+    ///
+    /// ⚑ **Die Sitzungsnummer geht mit ein.** Sonst hätte dieselbe
+    /// Anfrage in zwei Sitzungen denselben Hash, und eine Bindung ließe
+    /// sich von der einen auf die andere übertragen.
+    pub fn hash(sitzung: u64, anfrage: &[u8]) -> crate::hash::Hash {
+        let mut vor = Vec::with_capacity(DST_ANFRAGE.len() + 8 + anfrage.len());
+        vor.extend_from_slice(DST_ANFRAGE);
+        vor.extend_from_slice(&sitzung.to_le_bytes());
+        vor.extend_from_slice(anfrage);
+        crate::hash::Hash::sha256(&vor)
+    }
+
+    /// Passt dieser Text zu **einer anderen** Sitzung?
+    ///
+    /// Nur für die Gegenprobe: Sie zeigt, dass die Bindung nicht
+    /// übertragbar ist.
+    pub fn passt_zu_sitzung(&self, sitzung: u64, anfrage: &[u8]) -> bool {
+        Self::hash(sitzung, anfrage) == self.anfrage_hash
+    }
+
+    /// Passt dieser Text zu der Bindung?
+    ///
+    /// Das ist die Prüfung, die ein Checker macht, bevor er nachrechnet:
+    /// **Erst feststellen, worüber gerechnet werden sollte**, dann
+    /// rechnen.
+    pub fn passt(&self, anfrage: &[u8]) -> bool {
+        Self::hash(self.sitzung, anfrage) == self.anfrage_hash
+    }
+}
+
+#[cfg(test)]
+mod anfragetests {
+    use super::*;
+
+    #[test]
+    fn eine_gebundene_anfrage_wird_erkannt() {
+        let b = Anfragebindung::neu(7, b"was ist ein pod", EpochId(3));
+        assert!(b.passt(b"was ist ein pod"));
+    }
+
+    /// ⚑ **Ein einziges Zeichen anders ist eine andere Anfrage.**
+    #[test]
+    fn ein_anderer_text_passt_nicht() {
+        let b = Anfragebindung::neu(7, b"was ist ein pod", EpochId(3));
+        assert!(!b.passt(b"was ist ein Pod"));
+        assert!(!b.passt(b"was ist ein pod "));
+        assert!(!b.passt(b""));
+    }
+
+    /// ⚑ **Die Bindung ist nicht uebertragbar.**
+    ///
+    /// Ohne die Sitzungsnummer im Hash haette dieselbe Anfrage in zwei
+    /// Sitzungen denselben Wert, und ein Pod koennte die Bindung der
+    /// einen fuer die andere vorzeigen.
+    #[test]
+    fn dieselbe_anfrage_in_zwei_sitzungen_bindet_verschieden() {
+        let a = Anfragebindung::neu(7, b"dieselbe frage", EpochId(3));
+        let b = Anfragebindung::neu(8, b"dieselbe frage", EpochId(3));
+        assert_ne!(a.anfrage_hash, b.anfrage_hash);
+        assert!(!a.passt_zu_sitzung(8, b"dieselbe frage"));
+    }
+
+    /// Und die Epoche gehoert dazu, damit eine Sitzungsnummer nicht
+    /// zeitlos wiederverwendbar ist.
+    #[test]
+    fn die_epoche_steht_in_der_bindung() {
+        let a = Anfragebindung::neu(7, b"x", EpochId(3));
+        let b = Anfragebindung::neu(7, b"x", EpochId(4));
+        assert_eq!(a.anfrage_hash, b.anfrage_hash, "der Hash bindet den Text");
+        assert_ne!(a, b, "die Bindung als Ganzes unterscheidet die Epochen");
+    }
+}

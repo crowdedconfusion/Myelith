@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.29.0 (θ_v 0.17.0; kernels 0.29.1, runtime 0.22.1, pipeline 0.15.0)
+> **Version:** 0.30.0 (θ_v 0.17.0; kernels 0.30.0, runtime 0.22.1, pipeline 0.15.0)
 > **Datum:** 2026-09-01
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -420,6 +420,41 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.30.0 – 2026-09-01 (der Trainingsschritt bekommt einen Aufrufer, Punkt 16)
+
+**`backward` und `optimierer` hatten null Aufrufer.** Das stand so im
+Fahrplan („offen bleibt die Verdrahtung zur Schleife"), war also bekannt
+und kein Fund. ⚑ **Aber es ist dieselbe Lage, und sie hat dieselbe
+Folge:** Einzeln geprüfte Teile sagen nichts über ihr Zusammenspiel.
+
+`trainingsschritt.rs` schließt den Kreis für eine lineare Ebene:
+vorwärts, Verlustgradient, rückwärts, fortschreiben. ⚑ **Und die Brücke,
+die fehlte, war `gewicht_aus_master`:** Der Optimierer rechnet auf
+`Master`, der Vorwärtspass will `i8` mit einer Skala je Zeile, und diese
+Umrechnung gab es nirgends. Ohne sie kann man fortschreiben **oder**
+rechnen, nicht beides.
+
+⛑ **Der Test hat auf dem Weg zweimal zugeschlagen, und beide Male lag es
+an einer Skala zwischen zwei richtigen Kernen.**
+
+Zuerst blieb der Abstand **exakt stehen**: Die Testdaten schoben den
+Master um `FEIN_BITS` nach links, `gewicht_aus_master` schob ihn um
+sechzehn Stellen zurück, und ein Schritt von wenigen hundert war danach
+unsichtbar. **`FEIN_BITS` liegen unterhalb der Rasterstufe und gehören in
+den Schritt, nicht in die Darstellung.**
+
+Dann stieg der Abstand von 64 214 auf 80 089: Die Lernrate `1/4` sprang
+über das Ziel. Sie ist jetzt **gerechnet**: Der Schritt ist `g·lr/nenner`
+in Rasterstufen, mit Gradienten um zweihundert und einem Ziel von einer
+Fünftel Stufe folgt `nenner ≈ 1000`.
+
+⚑ **Genau das kann kein Golden-Vektor zeigen.** Jeder Kern war für sich
+richtig; falsch war, was zwischen zweien liegt.
+
+**Was noch nicht steht:** die Schleife über ein ganzes Netz. Sie braucht
+einen Vorwärtspass, der seine Zwischenwerte behält, und der Vorwärtspass
+der Laufzeit ist auf Inferenz zugeschnitten und behält nichts.
 
 ### v0.29.0 – 2026-09-01 (`docs/` entfällt; die Lizenz zieht zu den Modellen)
 

@@ -65,6 +65,8 @@ use myl_net::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod gemeinsam;
+
 struct Node {
     peer_id: libp2p::PeerId,
     commands: mpsc::UnboundedSender<NodeCommand>,
@@ -99,13 +101,6 @@ impl Node {
         Node { peer_id, commands: cmd_tx, events: ev_rx, listen_addr }
     }
 
-    async fn peer_count(&self) -> usize {
-        let (tx, rx) = oneshot::channel();
-        self.commands
-            .send(NodeCommand::PeerCount(tx))
-            .expect("Kommando");
-        rx.await.unwrap_or(0)
-    }
 
     /// Wählt eine Adresse aus dem laufenden Knoten heraus. Rückgabe: ob
     /// der Wählversuch begonnen wurde.
@@ -147,36 +142,14 @@ impl Node {
     }
 
     async fn warte_auf_peers(&self, n: usize, frist: Duration) -> usize {
-        let bis = tokio::time::Instant::now() + frist;
-        loop {
-            let c = self.peer_count().await;
-            if c >= n || tokio::time::Instant::now() >= bis {
-                return c;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        gemeinsam::warte_auf_peers(&self.commands, n, frist).await
     }
 
     /// Wartet, bis die Peer-Anzahl sich `ruhe` lang nicht mehr ändert.
     /// Für Deckelungstests: Dort ist die Frage nicht „erreicht er n",
     /// sondern „wo bleibt er stehen".
     async fn warte_auf_ruhe(&self, ruhe: Duration, frist: Duration) -> usize {
-        let bis = tokio::time::Instant::now() + frist;
-        let mut letzte = self.peer_count().await;
-        let mut seit = tokio::time::Instant::now();
-        loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let jetzt = self.peer_count().await;
-            if jetzt != letzte {
-                letzte = jetzt;
-                seit = tokio::time::Instant::now();
-            } else if seit.elapsed() >= ruhe {
-                return jetzt;
-            }
-            if tokio::time::Instant::now() >= bis {
-                return jetzt;
-            }
-        }
+        gemeinsam::warte_auf_ruhe(&self.commands, ruhe, frist).await
     }
 }
 

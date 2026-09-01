@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.32.0 (`myl-consensus` 0.21.0, `myl-scheduler` 0.9.0,
+> **Version:** 0.34.0 (`myl-consensus` 0.23.0, `myl-scheduler` 0.9.0,
 > `myl-ledger` 0.13.0)
 > **Datum:** 2026-09-01
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -107,6 +107,25 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.34.0 – 2026-09-01 (`myl-consensus` v0.23.0, `myl-ledger` v0.14.0: die Anmeldung nennt eine Adresse)
+
+`Anweisung::MinerAnmelden` trägt `netzadresse`, `miner_anmelden` nimmt
+sie entgegen (Punkt 46, Fund 116). ⚑ **Sie steht in der Anweisung und
+nicht daneben**, aus demselben Grund wie Hardware und Zone: Ein Feld
+außerhalb der unterschriebenen Anweisung ließe sich abweichend füllen,
+und dann meldete A für B an.
+
+### v0.33.0 – 2026-09-01 (`myl-consensus` v0.22.0: die Segmentzahl wird mitunterschrieben)
+
+`poi_bundle_message` bindet jetzt `segmente` (Fund 115). Der Aufbau
+lautet `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
+u64_le(vtfe_claimed) ‖ u32_le(segmente)`.
+
+⚑ **Ohne diese Bindung könnte der Koordinator die Segmentzahl nach dem
+Einsammeln der Unterschriften erhöhen** und damit die
+Stichprobenwahrscheinlichkeit je Segment verdünnen. `vtfe_claimed` steht
+aus demselben Grund darin; der Schaden ist nur ein anderer.
 
 ### v0.32.0 – 2026-09-01 (`myl-scheduler` v0.9.0; ⚑ Funde 110, 111 und 112: die Paarung las eine Quelle außerhalb des Konsens)
 

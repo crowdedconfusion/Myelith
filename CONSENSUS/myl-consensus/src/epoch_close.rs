@@ -376,7 +376,7 @@ mod tests {
             let members: Vec<_> = (0..3u8).map(mitglied).collect();
             let m = PodMembership::new(EpochId(epoch), pod(p), miner(0), members).expect("m");
             let segments_root = root(9);
-            let msg = poi_bundle_message(EpochId(epoch), pod(p), &segments_root, vtfe);
+            let msg = poi_bundle_message(EpochId(epoch), pod(p), &segments_root, vtfe, 1);
             let sigs: Vec<BlsSignature> = (0..3u8)
                 .map(|i| {
                     BlsSecretKey::key_gen(&[i.wrapping_add(1); 32])
@@ -392,6 +392,7 @@ mod tests {
                 segments_root,
                 vtfe_claimed: vtfe,
                 aggregate_sig: BlsSignature(agg.0),
+                segmente: 1,
             };
             reg.submit(&bundle, &m, &miner(0), EpochId(epoch))
                 .expect("submit");

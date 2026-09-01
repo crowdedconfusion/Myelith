@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.14.1
+> **Version:** 0.16.0
 > **Datum:** 2026-09-01
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -134,6 +134,62 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.16.0 – 2026-09-01 (der Nachrechner, Punkt 45)
+
+`ModellAuditor` fährt ein echtes Modell und rechnet die Spur eines
+Shards nach. Damit ist Stufe 2 vollständig: ziehen, fragen, prüfen,
+**nachrechnen**.
+
+⚑ **Er ruft `myl-pod` nicht**, und das ist der ganze Punkt. Naheliegend
+wäre, die Spur mit dem Code zu rechnen, der sie erzeugt hat; **dann
+prüfte der Prüfer den Geprüften mit dessen eigenem Werkzeug**, und ein
+übereinstimmendes Ergebnis hieße nur, dass dieselbe Funktion zweimal
+dasselbe tut. Er geht selbst durch `integer_llm_runtime`.
+
+**Geteilt wird nur der Spur-Vertrag** `myl_types::uebergang::activation_hash`,
+und der ist ein Konsensdatum. ⚑ **Genau darauf ruht das Versprechen des
+Projekts:** Verbindlich sind Quantisierungsschema und Arithmetik, nicht
+die Ausführung (Kap. 6.2). **Zwei Wege durch dieselbe Spezifikation
+müssen dasselbe ergeben, sonst ist die Bitgleichheit eine Behauptung.**
+
+**Das ist die eine Stelle, an der VERIFICATION an INTEGER_LLM hängt**,
+und sie ist unvermeidlich: Stufe 2 heißt „vollständig nachrechnen".
+Nicht an `myl-pod` hängt es dabei.
+
+**Was der Aufrufer mitbringen muss:** den **Layerbereich** des
+beschuldigten Shards. Er steht nicht im Segment, denn die Kette kennt nur
+Kennung und Spurwurzel. ⚑ Wer ihn falsch angibt, bekommt eine
+Abweichung, die keine ist; das steht im Modulkopf, weil es eine echte
+Fehlerquelle ist und keine theoretische.
+
+### v0.15.0 – 2026-09-01 (Stufe 2 prüft eine Antwort ganz, Punkt 45)
+
+`pruefe_spurantwort` setzt **vier Bindungen vor das Nachrechnen**, und
+jede einzelne fehlt, wenn man sie weglässt:
+
+1. **Der Beweis gehört zum gefragten Index.** Sonst reicht der
+   Koordinator ein Segment heraus, das er richtig gerechnet hat.
+2. ⚑ **Die bewiesene Blattzahl passt zur Segmentzahl des Bündels.** Das
+   ist die Gegenprobe zu `PoIBundle::segmente`: Die Zahl steht
+   unterschrieben in der Kette, und der Beweis trägt sie ein zweites
+   Mal, gebunden an die Wurzel (Fund 77). **Wer sie aufbläht, um die
+   Stichprobe zu verdünnen, kann keinen passenden Beweis liefern** — die
+   Behauptung fällt beim ersten Abruf.
+3. **Der Beweis trägt gegen `segments_root`**, und die Wurzel steht im
+   unterschriebenen Bündel.
+4. **Die gelieferte Spur ergibt die bezeugte Spurwurzel.**
+
+**Erst danach wird gerechnet.** Ein `Invalid` ist deshalb ein Befund über
+die **Rechnung** und nicht über die Lieferung; die beiden haben
+verschiedene Folgen, und deshalb tragen sie verschiedene Namen.
+
+⚑ **Fund 116 hält den Rest auf: Wer nur die Kette kennt, kann keinen
+Miner erreichen.** Der Konsensschlüssel ist seit dem 2026-08-26
+absichtlich von der Netzidentität getrennt, und **nichts bindet die
+beiden**. Ein Checker zieht `(Pod, Segment)` aus dem Zustand und hat
+keine Adresse, an die er fragen könnte. Das Fragen selbst gäbe es:
+`NodeCommand::Anfrage` steht in NETWORKING.
 
 ### v0.14.1 – 2026-09-01 (der stille Rückgabewert ist erledigt, ⚑ Fund 110)
 

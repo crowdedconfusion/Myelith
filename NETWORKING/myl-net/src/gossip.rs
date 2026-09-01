@@ -31,8 +31,15 @@ pub const TOPIC_TRANSACTIONS: &str = "/myelith/transactions/1";
 pub const TOPIC_POI_BUNDLES: &str = "/myelith/poi-bundles/1";
 /// Topic für Challenges (Bisektions-Spiel, VERIFICATION).
 pub const TOPIC_CHALLENGES: &str = "/myelith/challenges/1";
-/// Topic für signierte Latenz-Atteste (Phase 2, Grundlage des
-/// LatencyGraph für die Pod-Bildung).
+/// Topic für signierte Latenz-Atteste (Phase 2).
+///
+/// ⚑ **Nicht mehr Grundlage der Pod-Bildung.** Hier stand bis zum
+/// 2026-09-01 „Grundlage des LatencyGraph für die Pod-Bildung"; die
+/// Entscheidung 3b hat die gemessene Latenz aus der Pod-Bildung
+/// genommen, weil wer wählt, mit wem er attestiert, mitformt, in
+/// welchem Topf er gemischt wird. Pods entstehen seither je **Zone**
+/// aus dem Konsenszustand. Die Atteste bleiben als Messung des Netzes;
+/// **sie bestimmen nichts mehr.**
 pub const TOPIC_LATENCY_ATTESTS: &str = "/myelith/latency-attests/1";
 /// Topic für die BFT-Runden selbst: Propose, Vote, Commit.
 ///
@@ -47,15 +54,31 @@ pub const TOPIC_LATENCY_ATTESTS: &str = "/myelith/latency-attests/1";
 /// Blöcke mehr. Zwei Topics kosten ein sechstes Mesh und trennen dafür
 /// die beiden Fehlerfälle.
 pub const TOPIC_CONSENSUS: &str = "/myelith/consensus/1";
+/// Topic für Ausfallmeldungen innerhalb eines Pods (COMPUTE_PIPELINE 3.5).
+///
+/// Ein Mitglied behauptet, eine Position sei ausgefallen; die übrigen
+/// zeichnen gegen, und ab [`myl_pod::ausfallmeldung::MINDESTENS_ZEICHNER`]
+/// gilt der Ausfall als beschlossen. **Ohne Verbreitung erreicht die
+/// Behauptung die Gegenzeichner nicht**, und genau die fehlte bis zum
+/// 2026-09-01.
+///
+/// ⚑ **Ein eigenes Topic und nicht `PoiBundles`**, aus demselben Grund,
+/// aus dem Stimmen nicht zu den Blöcken gehören: Eine Ausfallmeldung ist
+/// klein, kurzlebig und nur für einen Pod interessant, ein Bündel ist
+/// groß, endgültig und für jeden. Im selben Topic teilten sie Mesh,
+/// Bandbreite und Bewertung, und wer mit Meldungen flutet, träfe die
+/// Abrechnung mit.
+pub const TOPIC_POD_FAILURES: &str = "/myelith/pod-failures/1";
 
 /// Alle Protokoll-Topics in kanonischer Reihenfolge.
-pub const ALL_TOPICS: [&str; 6] = [
+pub const ALL_TOPICS: [&str; 7] = [
     TOPIC_BLOCKS,
     TOPIC_TRANSACTIONS,
     TOPIC_POI_BUNDLES,
     TOPIC_CHALLENGES,
     TOPIC_LATENCY_ATTESTS,
     TOPIC_CONSENSUS,
+    TOPIC_POD_FAILURES,
 ];
 
 /// Die Nachrichtenklassen des Protokolls (ein Wert je Topic).
@@ -68,6 +91,11 @@ pub enum GossipTopic {
     LatencyAttests,
     /// Propose, Vote und Commit einer BFT-Runde.
     Consensus,
+    /// Ausfallmeldungen innerhalb eines Pods, mit Gegenzeichnung.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Reihenfolge der
+    /// Varianten ist Konsensvertrag.
+    PodFailures,
 }
 
 impl GossipTopic {
@@ -76,13 +104,14 @@ impl GossipTopic {
     /// Neben [`ALL_TOPICS`], das die **Namen** führt: Wer über Topics
     /// rechnet statt über Zeichenketten, braucht die Werte. Eine neue
     /// Variante fällt hier auf, weil der Test unten die Länge prüft.
-    pub const ALLE: [GossipTopic; 6] = [
+    pub const ALLE: [GossipTopic; 7] = [
         Self::Blocks,
         Self::Transactions,
         Self::PoiBundles,
         Self::Challenges,
         Self::LatencyAttests,
         Self::Consensus,
+        Self::PodFailures,
     ];
 
     /// Der kanonische Topic-Name (Konsens-Feld).
@@ -94,19 +123,18 @@ impl GossipTopic {
             Self::Challenges => TOPIC_CHALLENGES,
             Self::LatencyAttests => TOPIC_LATENCY_ATTESTS,
             Self::Consensus => TOPIC_CONSENSUS,
+            Self::PodFailures => TOPIC_POD_FAILURES,
         }
     }
 
     /// Alle Topic-Varianten in kanonischer Reihenfolge.
-    pub fn all() -> [GossipTopic; 6] {
-        [
-            Self::Blocks,
-            Self::Transactions,
-            Self::PoiBundles,
-            Self::Challenges,
-            Self::LatencyAttests,
-            Self::Consensus,
-        ]
+    ///
+    /// ⚑ **Zwei Aufzählungen derselben Menge, und sie sind schon einmal
+    /// auseinandergelaufen** (2026-09-01: `ALLE` hatte sieben,
+    /// `all()` sechs). `all()` gibt deshalb `ALLE` zurück statt die
+    /// Liste ein zweites Mal zu schreiben.
+    pub fn all() -> [GossipTopic; 7] {
+        Self::ALLE
     }
 
     /// Das zugehörige Gossipsub-Topic (Hash des Namens).
@@ -188,6 +216,13 @@ mod tests {
         // vier Topics und die andere über fünf.
         use super::{GossipTopic, ALL_TOPICS};
         assert_eq!(GossipTopic::ALLE.len(), ALL_TOPICS.len());
+        // ⚑ Und die Namen sind verschieden: Zwei Topics mit demselben
+        // Namen teilten ein Mesh, ohne dass es jemand sähe.
+        let mut namen: Vec<&str> = GossipTopic::ALLE.iter().map(|t| t.name()).collect();
+        namen.sort_unstable();
+        let vorher = namen.len();
+        namen.dedup();
+        assert_eq!(namen.len(), vorher, "zwei Topics tragen denselben Namen");
         for t in GossipTopic::ALLE {
             assert!(
                 ALL_TOPICS.contains(&t.name()),
@@ -266,6 +301,7 @@ mod tests {
             segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: 123_456,
             aggregate_sig: sig,
+            segmente: 1,
         }
     }
 

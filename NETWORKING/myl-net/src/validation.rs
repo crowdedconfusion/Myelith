@@ -92,6 +92,14 @@ pub const MAX_POI_BUNDLES_BYTES: usize = 512 * 1024;
 pub const MAX_CHALLENGES_BYTES: usize = 64 * 1024;
 /// Maximale Größe eines Latenz-Attests.
 pub const MAX_LATENCY_ATTESTS_BYTES: usize = 4 * 1024;
+/// Ausfallmeldung eines Pod-Mitglieds (COMPUTE_PIPELINE 3.5).
+///
+/// **Gerechnet, nicht geraten:** Die Behauptung trägt Epoche (8),
+/// Pod-Index (4), Position (4) und die Kennung des Gemeldeten (32), dazu
+/// der Melder (32) und seine BLS-Unterschrift (96), also **176 Bytes**.
+/// Aufgerundet auf 512 bleibt Luft für eine Rahmung, ohne dass jemand
+/// ein Bündel durch dieses Topic schieben könnte.
+pub const MAX_POD_FAILURES_BYTES: usize = 512;
 /// Maximale Größe einer BFT-Konsensnachricht.
 ///
 /// **Hergeleitet, nicht geraten.** Die größte heute definierte Nachricht
@@ -178,6 +186,7 @@ pub fn max_payload_bytes(topic: GossipTopic) -> usize {
         GossipTopic::Challenges => MAX_CHALLENGES_BYTES,
         GossipTopic::LatencyAttests => MAX_LATENCY_ATTESTS_BYTES,
         GossipTopic::Consensus => MAX_CONSENSUS_BYTES,
+        GossipTopic::PodFailures => MAX_POD_FAILURES_BYTES,
     }
 }
 
@@ -226,7 +235,16 @@ pub fn validate_payload(topic: GossipTopic, data: &[u8]) -> Result<(), Validatio
         // daran hängen — die vollständige Prüfung kommt über einen
         // PayloadValidator von der Node-Verdrahtung. Bewusste
         // Entscheidung, keine Auslassung.
-        GossipTopic::Blocks | GossipTopic::Transactions | GossipTopic::Consensus => {}
+        // Ausfallmeldungen tragen `myl_pod::ausfallmeldung::Meldung`,
+        // und dieser Typ liegt oberhalb der Netzschicht. ⚑ **Hier gilt
+        // dieselbe Grenze wie bei Blöcken:** L0 darf nicht an L2 hängen,
+        // also prüft die Netzschicht die Größe und der PayloadValidator
+        // den Inhalt. Eine Größenprüfung allein ist hier mehr wert als
+        // sonst, weil die Nutzlast eine **feste** Länge hat.
+        GossipTopic::Blocks
+        | GossipTopic::Transactions
+        | GossipTopic::Consensus
+        | GossipTopic::PodFailures => {}
     }
     Ok(())
 }
@@ -411,6 +429,7 @@ mod tests {
             segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: 42,
             aggregate_sig: sig,
+            segmente: 1,
         };
         borsh::to_vec(&bundle).expect("Serialisierung")
     }

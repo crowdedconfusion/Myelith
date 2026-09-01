@@ -9,7 +9,6 @@
 //! Alle Operationen sind deterministisch: derselbe Input ergibt denselben
 //! Hash und dieselbe Signatur (BLS ohne Zufallsdaten).
 
-use sha2::{Digest, Sha256};
 
 /// Der Übergangs-Signaturvertrag liegt seit dem 2026-08-29 in
 /// `myl_types::uebergang`, damit die **Schiedsstelle** ihn lesen kann,
@@ -18,21 +17,13 @@ use sha2::{Digest, Sha256};
 /// an der er benutzt wird.
 pub use myl_types::uebergang::{Rolle, TransitionSig, DST_SHARD_TRANSITION};
 
-/// Hash über die Aktivierungen eines Shard-Ausgangs.
-///
-/// Die Aktivierungen werden als little-endian i16-Folge gehasht. Das ist
-/// der Spur-Eintrag `h(a_i)` (Anhang A.3). Deterministisch und auf jedem
-/// Node identisch.
-pub fn activation_hash(activations: &[i16]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    for v in activations {
-        hasher.update(v.to_le_bytes());
-    }
-    let digest = hasher.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
-}
+/// Der Spur-Eintrag liegt seit dem 2026-09-01 in
+/// `myl_types::uebergang`, aus demselben Grund wie `TransitionSig`: Der
+/// **Checker** muss ihn nachrechnen können, ohne an dieses Crate und
+/// damit an die Beweiserseite zu hängen. Hier steht er weiter zur
+/// Verfügung, denn dies ist die Stelle, an der er erzeugt wird.
+pub use myl_types::uebergang::activation_hash;
+
 
 /// Null-Hash (vorheriger Spur-Eintrag für Shard 0).
 pub const ZERO_HASH: [u8; 32] = [0u8; 32];

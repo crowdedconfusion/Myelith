@@ -29,6 +29,8 @@ use myl_net::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod gemeinsam;
+
 /// Wie lange ein Knoten auf seine erste Horchadresse warten darf, wenn
 /// sie **kommen soll**.
 ///
@@ -188,23 +190,9 @@ impl Node {
         rx.await.unwrap_or(false)
     }
 
-    async fn peer_count(&self) -> usize {
-        let (tx, rx) = oneshot::channel();
-        self.commands
-            .send(NodeCommand::PeerCount(tx))
-            .expect("Kommando");
-        rx.await.unwrap_or(0)
-    }
 
     async fn warte_auf_peers(&self, n: usize, frist: Duration) -> usize {
-        let bis = tokio::time::Instant::now() + frist;
-        loop {
-            let c = self.peer_count().await;
-            if c >= n || tokio::time::Instant::now() >= bis {
-                return c;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        gemeinsam::warte_auf_peers(&self.commands, n, frist).await
     }
 
     async fn empfange(&mut self, frist: Duration) -> Option<Vec<u8>> {

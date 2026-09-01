@@ -66,6 +66,7 @@ fn ehrliches_buendel(epoch: EpochId, pod: PodId, vtfe: u64) -> PoIBundle {
         segments_root: root,
         vtfe_claimed: vtfe,
         aggregate_sig: BlsSignature([0u8; 96]),
+        segmente: 1,
     };
     let msg = bundle_message(&vorlage);
     let sigs: Vec<BlsSignature> = (1..=3u8).map(|i| sk(i).sign(&msg).expect("sign")).collect();
@@ -184,6 +185,7 @@ fn ein_allein_unterschriebenes_buendel_wird_abgelehnt() {
         segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
+        segmente: 1,
     };
     let msg = bundle_message(&vorlage);
 
@@ -257,6 +259,7 @@ fn fund_52_die_uebergangssignaturen_verifizieren_das_buendel_nicht() {
         segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 1_000,
         aggregate_sig: BlsSignature([0u8; 96]),
+        segmente: 1,
     };
 
     // So baut `Coordinator::build_poi_bundle` das Aggregat: über die
@@ -319,6 +322,7 @@ fn die_signierbotschaft_des_pods_ist_die_des_konsenses() {
             segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
             vtfe_claimed: w,
             aggregate_sig: BlsSignature([0u8; 96]),
+            segmente: 1,
         };
         assert_eq!(
             myl_pod::coordinator::Coordinator::signierbotschaft(&b),

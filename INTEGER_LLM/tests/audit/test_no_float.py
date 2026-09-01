@@ -187,6 +187,15 @@ CONSENSUS_PATH = [
     # Registrierungsepoche sind Ganzzahlen und muessen es bleiben: An
     # ihnen haengt, wer in welchen Pod kommt.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "miner.rs",
+    # 2026-09-01: Die Anfragebindung des Gateways entscheidet, was ein
+    # Checker nachrechnet. Sie haengt an einem Hash ueber Bytes und darf
+    # nie an einer Gleitkommagroesse haengen.
+    ROOT / "GATEWAY" / "myl-gateway" / "src" / "annahme.rs",
+    # 2026-09-01: Der Trainingsschritt fuehrt Vorwaertspass, Rueckwaerts-
+    # pass und Optimierer zusammen. Ein Gleitkommawert an der Naht
+    # zwischen zweien waere genau der Fehler, den zwei Miner
+    # verschieden rechnen.
+    ROOT / "INTEGER_LLM" / "kernels" / "src" / "trainingsschritt.rs",
     # 2026-09-01: Die Arbeitsverteilung teilt die vTFE eines Pods auf
     # seine Positionen. An ihr haengt, wer wie viel bekommt; sie rechnet
     # in Ganzzahlen und muss es bleiben, sonst kaemen zwei Knoten zu
@@ -229,6 +238,10 @@ CONSENSUS_PATH = [
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "exp_lut_table.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "redundancy.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "checker.rs",
+    # 2026-09-01: Der Nachrechner rechnet eine Spur nach und entscheidet
+    # damit ueber Slashing. Gleitkomma hier hiesse: zwei Knoten kommen zu
+    # verschiedenen Urteilen ueber denselben Miner.
+    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "nachrechner.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "challenge.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "bisection.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",
@@ -293,6 +306,10 @@ CONSENSUS_PATH = [
     # Verdrahtung darf so wenig Gleitkomma enthalten wie das, was sie
     # verdrahtet, sonst wandert es genau hierher.
     ROOT / "NODE" / "myl-node" / "src" / "kette.rs",
+    # 2026-09-01: Die Stichprobe entscheidet, wer nachgerechnet wird.
+    # Sie rechnet mit Indizes und Anteilen; ein Gleitkommawert hier
+    # ergaebe auf zwei Knoten zwei verschiedene Stichproben.
+    ROOT / "NODE" / "myl-node" / "src" / "stichprobe.rs",
     ROOT / "NODE" / "myl-node" / "src" / "probe.rs",
     ROOT / "NODE" / "myl-node" / "src" / "nachschub.rs",
     ROOT / "NODE" / "myl-node" / "src" / "knoten.rs",

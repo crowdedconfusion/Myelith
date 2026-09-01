@@ -199,3 +199,87 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 }
+
+/// Die Netzadresse eines Knotens als 32 Bytes: sein **öffentlicher
+/// Ed25519-Schlüssel**.
+///
+/// # ⚑ Fund 117: Eine `PeerId` passt nicht in 32 Bytes
+///
+/// `myl_types::latency_attest::PeerIdBytes` trägt seit je den Kommentar
+/// „PeerId als 32-Byte-Array … Die Konvertierung erfolgt in NETWORKING".
+/// **Die Konvertierung gab es nicht**, und sie hätte so auch nicht
+/// gehen können: Eine `PeerId` ist ein Multihash und misst für Ed25519
+/// **38 Bytes**, nicht 32.
+///
+/// Aufgefallen ist das erst, als die Adresse mit Punkt 46 in die
+/// Registrierung kam und jemand sie benutzen wollte. Vorher trug der Typ
+/// nur Latenzatteste, in denen niemand zurückrechnete; **ein Feld, das
+/// keiner liest, kann jede Bedeutung tragen.**
+///
+/// **Die 32 Bytes sind deshalb der öffentliche Schlüssel**, und die
+/// `PeerId` folgt daraus. Das ist keine Notlösung, sondern die
+/// ursprüngliche Größe: Die `PeerId` **ist** der Hash dieses Schlüssels,
+/// also trägt der Schlüssel mehr und nicht weniger.
+pub fn peer_id_aus_bytes(
+    b: &myl_types::latency_attest::PeerIdBytes,
+) -> Result<PeerId, libp2p::identity::DecodingError> {
+    let pk = libp2p::identity::ed25519::PublicKey::try_from_bytes(&b.0)?;
+    Ok(PeerId::from(libp2p::identity::PublicKey::from(pk)))
+}
+
+/// Die eigene Netzadresse, so wie sie in eine Anmeldung gehört.
+///
+/// ⚑ **Nicht die `PeerId`, sondern der Schlüssel**, aus dem sie folgt.
+/// Wer die `PeerId` einträgt, trägt einen Hash ein, und aus einem Hash
+/// lässt sich nichts wiederherstellen.
+pub fn netzadresse(id: &NodeIdentity) -> Option<myl_types::latency_attest::PeerIdBytes> {
+    id.keypair()
+        .public()
+        .try_into_ed25519()
+        .ok()
+        .map(|pk| myl_types::latency_attest::PeerIdBytes(pk.to_bytes()))
+}
+
+#[cfg(test)]
+mod adresstests {
+    use super::*;
+
+    /// ⚑ **Der Weg muss hin und zurück gehen**, sonst ist eine Adresse
+    /// in der Kette keine Adresse, sondern eine Zahl.
+    #[test]
+    fn adresse_und_peer_id_gehoeren_zusammen() {
+        let id = NodeIdentity::generate();
+        let a = netzadresse(&id).expect("Ed25519");
+        assert_eq!(peer_id_aus_bytes(&a).expect("zurueck"), id.peer_id());
+    }
+
+    /// Zwei Knoten haben zwei Adressen.
+    #[test]
+    fn zwei_knoten_zwei_adressen() {
+        let a = netzadresse(&NodeIdentity::generate()).expect("Ed25519");
+        let b = netzadresse(&NodeIdentity::generate()).expect("Ed25519");
+        assert_ne!(a, b);
+    }
+
+    /// ⚑ **Jede Folge von 32 Bytes ergibt eine `PeerId`, und das ist
+    /// kein Versehen der Bibliothek.**
+    ///
+    /// ⛑ Hier stand zuerst die umgekehrte Behauptung: Unsinn solle einen
+    /// Fehler ergeben. Der Test fiel um, und **er hatte unrecht, nicht
+    /// der Code**. Ein Ed25519-Punkt wird erst beim Rechnen geprüft,
+    /// nicht beim Einlesen.
+    ///
+    /// **Für die Registrierung heißt das:** Eine falsche Netzadresse ist
+    /// beim Eintragen **nicht** erkennbar. Das passt zur Entscheidung zu
+    /// Punkt 46 und macht sie schärfer: Die Adresse ist eine Angabe, und
+    /// **das einzige Signal ist die ausbleibende Antwort**. Wer eine
+    /// Prüfung beim Eintragen erwartet, verlässt sich auf etwas, das es
+    /// nicht gibt.
+    #[test]
+    fn jede_bytefolge_ergibt_eine_peer_id() {
+        let irgendwas = myl_types::latency_attest::PeerIdBytes([1; 32]);
+        let p = peer_id_aus_bytes(&irgendwas).expect("32 Bytes genuegen");
+        // Und sie ist eine andere als die eines echten Knotens.
+        assert_ne!(p, NodeIdentity::generate().peer_id());
+    }
+}

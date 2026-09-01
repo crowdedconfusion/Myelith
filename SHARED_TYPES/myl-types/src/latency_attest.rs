@@ -43,10 +43,25 @@ pub struct LatencyAttest {
     pub signature: BlsSignatureBytes,
 }
 
-/// PeerId als 32-Byte-Array (für Borsh-Serialisierung).
+/// Die Netzadresse eines Knotens: sein **öffentlicher
+/// Ed25519-Schlüssel**, 32 Bytes.
 ///
-/// libp2p::PeerId ist nicht direkt Borsh-serialisierbar, daher speichern
-/// wir die Bytes. Die Konvertierung erfolgt in NETWORKING.
+/// # ⚑ Fund 117: Der Name sagte etwas, das nicht hineinpasst
+///
+/// Hier stand bis zum 2026-09-01 „PeerId als 32-Byte-Array … Die
+/// Konvertierung erfolgt in NETWORKING". **Die Konvertierung gab es
+/// nicht**, und sie hätte so nicht gehen können: Eine `PeerId` ist ein
+/// Multihash und misst für Ed25519 **38 Bytes**.
+///
+/// Aufgefallen ist es erst, als die Adresse mit Punkt 46 in die
+/// Registrierung kam und jemand sie benutzen wollte. Vorher trug der Typ
+/// nur Latenzatteste, in denen niemand zurückrechnete: ⚑ **Ein Feld, das
+/// keiner liest, kann jede Bedeutung tragen.**
+///
+/// **Die 32 Bytes sind der öffentliche Schlüssel**, und die `PeerId`
+/// folgt daraus, denn sie ist sein Hash. Der Schlüssel trägt also mehr
+/// und nicht weniger. Die Umwandlung steht in NETWORKING, dort, wo
+/// libp2p schon liegt; der Name bleibt, weil er im Konsensvertrag steht.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize)]
 pub struct PeerIdBytes(pub [u8; 32]);
 

@@ -214,6 +214,7 @@ fn beispiel_bundle(epoch: u64) -> PoIBundle {
         segments_root: segments_root(&zeugnisse(&ids)).expect("Wurzel"),
         vtfe_claimed: 99,
         aggregate_sig: sig,
+        segmente: 1,
     }
 }
 

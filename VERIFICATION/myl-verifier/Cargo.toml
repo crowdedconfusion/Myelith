@@ -1,6 +1,6 @@
 [package]
 name = "myl-verifier"
-version = "0.14.1"
+version = "0.16.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Verifikations-Subsystem für Myelith (Whitepaper Kap. 6.4–6.9, Anhang A.4): Redundanzvergleich, Bisektions-Spiel, Kontrollsegmente. Nutzt INTEGER_LLMs Determinismus-Eigenschaft für wirtschaftliche Manipulationssicherung."
@@ -10,6 +10,12 @@ license = "PolyForm Shield License 1.0.0"
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
+# ⚑ **Ein Checker muss nachrechnen koennen, sonst prueft er nichts.**
+# Das ist die eine Stelle, an der VERIFICATION an INTEGER_LLM haengt, und
+# sie ist unvermeidlich: Stufe 2 heisst „vollstaendig nachrechnen"
+# (Kap. 3.4). Nicht an `myl-pod` haengt es dabei, und das ist der Punkt:
+# **Der Pruefer darf nicht den Code des Geprueften rufen.**
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
 sha2 = "0.10"
 borsh = { version = "1.6", features = ["derive"] }
 
