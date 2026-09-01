@@ -1,7 +1,7 @@
 # networking (`myl-net`)
 
-> **Version:** 0.11.3
-> **Datum:** 2026-08-31
+> **Version:** 0.12.0
+> **Datum:** 2026-09-01
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
 > (Verbindungsgrenzen und Peer-Diversität) und seit dem 26. August
@@ -108,6 +108,23 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.12.0 – 2026-09-01 (die Pingfrist wird geprüft statt abgewartet)
+
+`cleanup_stale_pings` las die Uhr selbst. Damit war ihre Grenze **gar
+nicht prüfbar**: Ein Test konnte nur echte Zeit verstreichen lassen.
+`cleanup_stale_pings_zu(jetzt)` nimmt das Jetzt als Argument, die Frist
+heißt jetzt `PING_FRIST` und steht an einer Stelle.
+
+⛑ **Der alte Test schlief sechs echte Sekunden** und war damit die
+gesamte Laufzeit der Bibliothekssuite. ⚑ **Geprüft hat er die Frist
+trotzdem nicht:** Sechs Sekunden liegen weit hinter fünf, er hätte auch
+eine Frist von einer Sekunde bestanden. Der neue prüft **beide Ränder**,
+eine Millisekunde davor und genau darauf.
+
+**6,01 s auf 0,01 s**, und schärfer als vorher. Das fällt selten
+zusammen; hier fällt es zusammen, weil beides dieselbe Ursache hatte:
+eine Funktion, die ihre Zeit selbst besorgt.
 
 ### v0.11.3 – 2026-08-31 (die NAT-Prüfung hing an einer Frist, die für etwas anderes bemessen war)
 

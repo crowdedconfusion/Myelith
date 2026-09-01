@@ -487,8 +487,18 @@ jobs:
       # ueberspringt sich. Es ist die Ebene, die Fund 41 gefunden hat
       # (Manipulationserkennung ging bei leerer Spur vacuously durch,
       # unpassende Laenge = Panik im Kernel), und sie lief nie in der CI.
+      #
+      # ⚑ **MYL_OHNE_ARTEFAKTE=1 ist Absicht und muss hier stehen**
+      # (Fund 113, 2026-09-01). Vorher sprangen die Tests ohne Artefakte
+      # **still** ab: `cargo test` faengt die Standardfehlerausgabe
+      # bestandener Tests ab, also meldete die Suite „ok", ohne ein
+      # Gewicht angefasst zu haben. Jetzt schlaegt ein fehlendes Modell
+      # fehl, ausser der Sprung wird ausdruecklich erlaubt. **Diese
+      # Zeile ist die Erlaubnis, und sie steht dort, wo sie gilt.**
       - name: cargo test — COMPUTE_PIPELINE (myl-pod, lib + adversarial)
         working-directory: COMPUTE_PIPELINE/myl-pod
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
         run: |
           cargo test --lib --quiet
           cargo test --test adversarial --quiet

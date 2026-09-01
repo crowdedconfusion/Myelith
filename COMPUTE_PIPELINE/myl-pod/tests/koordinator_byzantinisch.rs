@@ -15,6 +15,8 @@ use myl_types::bls::{aggregate_signatures, BlsSecretKey, BlsSignature};
 use myl_types::ids::{EpochId, MinerId, PodId, SegmentId};
 use myl_types::{segments_root, PoIBundle};
 
+mod artefakte;
+
 /// Segment-Ids zu Zeugnissen, mit einer aus der Id abgeleiteten
 /// Spurwurzel.
 ///
@@ -350,8 +352,7 @@ fn fund_52_das_unterschriebene_buendel_verifiziert() {
         p.push("qwen2.5-0.5b");
         p
     };
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {dir:?}");
+    if !artefakte::vorhanden(&dir) {
         return;
     }
 
@@ -453,8 +454,7 @@ fn ein_mitglied_unterschreibt_keinen_falschen_anspruch() {
         p.push("qwen2.5-0.5b");
         p
     };
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {dir:?}");
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));

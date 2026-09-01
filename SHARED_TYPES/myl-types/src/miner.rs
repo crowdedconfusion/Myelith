@@ -80,6 +80,30 @@ pub struct MinerRegistration {
     pub hardware_class: HardwareClass,
     /// Epoche, in der der Miner sich registriert hat.
     pub registration_epoch: u64,
+    /// Sein öffentlicher BLS-Schlüssel.
+    ///
+    /// # ⚑ Er steht hier, weil die Kennung ihn nicht hergibt
+    ///
+    /// `MinerId` ist `SHA-256` über diesen Schlüssel, und aus einem Hash
+    /// folgt kein Urbild. Ohne den Schlüssel im Register kann der
+    /// Konsens **keine Aggregatsignatur eines Pods prüfen**, denn er
+    /// wüsste nicht, gegen welche Schlüssel.
+    ///
+    /// # ⚑ Und der Besitz ist damit bewiesen, ohne eigenen Nachweis
+    ///
+    /// Eine Anmeldung kommt als **unterschriebene Transaktion**, und die
+    /// Unterschrift entsteht mit genau diesem Schlüssel. **Wer
+    /// unterschreiben kann, besitzt den geheimen Teil** — das ist
+    /// dasselbe, was ein `BlsProofOfPossession` belegt, nur bereits
+    /// erbracht.
+    ///
+    /// Das ist keine Feinheit: Ohne Besitznachweis wäre ein
+    /// **Rogue-Key-Angriff** möglich, bei dem jemand einen Schlüssel
+    /// veröffentlicht, der als Differenz fremder Schlüssel gebildet ist,
+    /// und damit Aggregate fälscht. Wer so einen Schlüssel bildet, kann
+    /// mit ihm **nicht unterschreiben** und kommt also nicht ins
+    /// Register.
+    pub schluessel: crate::bls::BlsPublicKey,
     /// Die Zone, in der er rechnet (Entscheidung 3b, 2026-09-01).
     ///
     /// # ⚑ Warum eine Zone und kein Latenzgraph

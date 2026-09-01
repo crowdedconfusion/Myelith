@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.22.0
+> **Version:** 0.23.0
 > **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,28 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.23.0 – 2026-09-01 (der Schlüssel im Register, und der Besitz ist damit bewiesen)
+
+`MinerRegistration.schluessel`.
+
+⚑ **Er steht dort, weil die Kennung ihn nicht hergibt.** `MinerId` ist
+`SHA-256` über den Schlüssel, und aus einem Hash folgt kein Urbild. Ohne
+ihn kann der Konsens **keine Aggregatsignatur eines Pods prüfen**, denn
+er wüsste nicht, gegen welche Schlüssel. Genau daran hing Glied 2 von
+Punkt 40.
+
+⚑ **Und der Besitz ist damit bewiesen, ohne eigenen Nachweis.** Eine
+Anmeldung kommt als **unterschriebene Transaktion**, und die Unterschrift
+entsteht mit genau diesem Schlüssel: **Wer unterschreiben kann, besitzt
+den geheimen Teil.** Das ist dasselbe, was ein `BlsProofOfPossession`
+belegt, nur bereits erbracht.
+
+**Das ist keine Feinheit.** Ohne Besitznachweis wäre ein
+**Rogue-Key-Angriff** möglich: Jemand veröffentlicht einen Schlüssel, der
+als Differenz fremder Schlüssel gebildet ist, und fälscht damit
+Aggregate. **Wer so einen Schlüssel bildet, kann mit ihm nicht
+unterschreiben** und kommt gar nicht erst ins Register.
 
 ### v0.22.0 – 2026-09-01 (die Arbeitsverteilung, und warum kein Modellprofil)
 

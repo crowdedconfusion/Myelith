@@ -39,9 +39,9 @@
 //! **vorigen** Epoche ist immer noch ein gültiger VRF-Beweis und hielte
 //! sonst die alte Zuteilung fest.
 
-use myl_scheduler::geo_clustering::{form_clusters, LatencyMatrix};
-use myl_scheduler::miner_filter::{filter_miners, HardwareClass, MinerRegistration};
-use myl_scheduler::shard_assignment::{assign_pods, Pod, Zuteilung};
+use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
+use myl_scheduler::shard_assignment::{Pod, Zuteilung};
+use myl_scheduler::zonenzuteilung::zuteilung_aus_saat;
 use myl_scheduler::vrf_seed::{verify_epoch_seed, EpochSeed};
 use myl_types::ids::{EpochId, MinerId};
 use myl_types::vrf::{VrfProof, VrfPublicKey};
@@ -121,9 +121,6 @@ impl From<BesetzungFehler> for ZuteilungFehler {
 pub struct Planparameter {
     /// Shards je Pod, also `k`.
     pub shards_je_pod: u32,
-    /// Höchste zulässige Latenz innerhalb eines Clusters, in
-    /// Millisekunden.
-    pub max_latenz_ms: u32,
     /// Zugelassene Hardwareklassen.
     pub zugelassene_klassen: Vec<HardwareClass>,
 }
@@ -133,21 +130,39 @@ pub struct Planparameter {
 /// **Die Stelle, die bis zum 2026-08-26 fehlte.** Siehe Modulkopf, auch
 /// dazu, warum der Seed hier geprüft und nicht geglaubt wird.
 ///
+/// # ⚑ Fund 111: Hier stand eine zweite Herleitung derselben Zuteilung
+///
+/// Bis zum 2026-09-01 rechnete diese Funktion die Zuteilung **selbst**
+/// aus, und sie stimmte mit
+/// [`myl_scheduler::zonenzuteilung::zuteilung_der_epoche`], dem Weg der
+/// Kette, in **keinem** der drei Schritte überein:
+///
+/// - Sie clusterte nach **gemessener Latenz**. Die Entscheidung 3b hat
+///   das am 2026-09-01 verworfen, weil wer wählt, mit wem er attestiert,
+///   mitformt, in welchem Topf er gemischt wird. **Der Aufruf blieb
+///   trotzdem stehen.**
+/// - Sie nahm die **VRF-Saat**, die Kette die Saat aus dem Blockhash.
+/// - Sie ließ nur die Klassen aus [`Planparameter`] zu, die Kette alle.
+///
+/// **Zwei Knoten, die denselben Pod auf verschiedenen Wegen ausrechnen,
+/// bekamen verschiedene Pods.** Die Regel steht jetzt einmal, in
+/// `zuteilung_aus_saat`; diese Funktion prüft die Saat und ruft sie.
+///
+/// ⚑ **Offen bleibt allein, welche Saat gilt.** Diese hier verlangt
+/// einen VRF-Beweis, die Kette nimmt den Blockhash. Das ist eine
+/// Entscheidung und kein Algorithmus, und sie ist jetzt eine Zeile groß
+/// statt einer Datei.
+///
 /// # Determinismus
 ///
-/// Alle Schritte hängen am selben Seed. Zwei Knoten mit denselben
-/// Registrierungen und derselben Latenzmatrix planen dieselbe Epoche.
-/// **Die Latenzmatrix ist die weiche Stelle:** Sie entsteht aus
-/// Attesten, und die Signaturprüfung dafür liegt beim Knoten
-/// (`NODE/src/validatorsatz.rs`, Audit A10). Ohne sie wäre die Planung
-/// deterministisch, aber steuerbar.
+/// Alle Schritte hängen am selben Seed und an Angaben aus dem
+/// Konsenszustand. **Es geht keine gemessene Größe mehr ein.**
 pub fn plane_epoche(
     seed: &EpochSeed,
     beweis: &VrfProof,
     vrf_pk: &VrfPublicKey,
     epoche: u64,
     registrierungen: &[MinerRegistration],
-    latenzen: &LatencyMatrix,
     p: &Planparameter,
 ) -> Result<Zuteilung, ZuteilungFehler> {
     if seed.epoch != epoche {
@@ -159,10 +174,13 @@ pub fn plane_epoche(
     if !verify_epoch_seed(seed, beweis, vrf_pk) {
         return Err(ZuteilungFehler::SeedNichtBelegt);
     }
-    let saat = seed.as_random_bytes();
-    let geeignet = filter_miners(registrierungen, epoche, &p.zugelassene_klassen);
-    let cluster = form_clusters(&geeignet, latenzen, p.max_latenz_ms, &saat);
-    Ok(assign_pods(&cluster, p.shards_je_pod, &saat))
+    Ok(zuteilung_aus_saat(
+        registrierungen,
+        epoche,
+        &seed.as_random_bytes(),
+        p.shards_je_pod,
+        &p.zugelassene_klassen,
+    ))
 }
 
 /// Die Mitglieder eines Pods in der Reihenfolge, die
@@ -294,6 +312,7 @@ mod tests {
             hardware_class: HardwareClass::MediumGpu,
             registration_epoch: 1,
             zone: myl_types::node_metadata::GeoRegion::Europe,
+            schluessel: myl_types::bls::BlsPublicKey([0; 48]),
         }
     }
 
@@ -456,24 +475,26 @@ mod tests {
         VrfSecretKey::from_seed([3u8; 32])
     }
 
+    /// ⚑ **Über mehrere Zonen**, sonst könnte dieser Aufbau eine
+    /// Zonenbildung nicht von einem einzigen großen Cluster
+    /// unterscheiden. Die Gegenprobe hat das gezeigt: Mit lauter
+    /// `Europe` blieb der Test grün, als `plane_epoche` versuchsweise
+    /// wieder selbst rechnete.
     fn registrierungen(n: u8) -> Vec<MinerRegistration> {
-        (0..n).map(miner).collect()
-    }
-
-    fn latenzen(n: u8, ms: u32) -> LatencyMatrix {
-        let mut m = LatencyMatrix::new();
-        for a in 0..n {
-            for b in (a + 1)..n {
-                m.set_latency(MinerId::new([a; 32]), MinerId::new([b; 32]), ms);
-            }
-        }
-        m
+        use myl_types::node_metadata::GeoRegion;
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        (0..n)
+            .map(|b| {
+                let mut m = miner(b);
+                m.zone = zonen[(b as usize) % zonen.len()];
+                m
+            })
+            .collect()
     }
 
     fn parameter() -> Planparameter {
         Planparameter {
             shards_je_pod: 4,
-            max_latenz_ms: 100,
             zugelassene_klassen: vec![HardwareClass::MediumGpu, HardwareClass::LargeGpu],
         }
     }
@@ -489,9 +510,45 @@ mod tests {
             &sk.public_key(),
             epoche,
             &registrierungen(n),
-            &latenzen(n, 20),
             &parameter(),
         )
+    }
+
+    /// ⚑ **Fund 111: eine Regel, zwei Eingänge.**
+    ///
+    /// Bis zum 2026-09-01 rechnete [`plane_epoche`] die Zuteilung selbst
+    /// aus, und zwar anders als die Kette: nach gemessener Latenz statt
+    /// nach Zone. **Zwei Knoten, die denselben Pod auf verschiedenen
+    /// Wegen ausrechnen, bekamen verschiedene Pods.**
+    ///
+    /// Dieser Test hält die Zusage fest, die den Fund behebt: Bei
+    /// gleicher Saat, gleichem Register und gleichen Klassen kommt über
+    /// beide Eingänge **dieselbe** Zuteilung heraus. Bliebe hier eine
+    /// zweite Herleitung stehen, fiele es auf.
+    #[test]
+    fn beide_eingaenge_ergeben_dieselbe_zuteilung() {
+        let sk = vrf();
+        let v = Hash::sha256(b"vorgaengerblock");
+        let epoche = 7u64;
+        let seed = derive_epoch_seed(v, &sk, epoche).expect("Seed");
+        let (beweis, _) = sk.prove(&seed_alpha(&v, epoche)).expect("Beweis");
+        let reg = registrierungen(12);
+        let p = parameter();
+
+        let ueber_den_pod =
+            plane_epoche(&seed, &beweis, &sk.public_key(), epoche, &reg, &p).expect("Planung");
+        let ueber_den_scheduler = zuteilung_aus_saat(
+            &reg,
+            epoche,
+            &seed.as_random_bytes(),
+            p.shards_je_pod,
+            &p.zugelassene_klassen,
+        );
+        assert_eq!(ueber_den_pod, ueber_den_scheduler);
+        assert!(
+            !ueber_den_pod.pods.is_empty(),
+            "zwölf Miner müssen mindestens einen Pod ergeben"
+        );
     }
 
     /// **Der Punkt, der 3.3 offen hielt:** eine Stelle, die den
@@ -538,7 +595,6 @@ mod tests {
                 &sk.public_key(),
                 7,
                 &registrierungen(6),
-                &latenzen(6, 20),
                 &parameter(),
             )
         };
@@ -562,7 +618,6 @@ mod tests {
                 &sk.public_key(),
                 7,
                 &registrierungen(6),
-                &latenzen(6, 20),
                 &parameter(),
             ),
             Err(ZuteilungFehler::SeedAndereEpoche {

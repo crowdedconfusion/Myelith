@@ -487,6 +487,41 @@ impl Kette {
         myl_ledger::transitions::arbeitsverteilung_setzen(&mut self.zustand, verteilung)
     }
 
+    /// Die Mitgliedschaft eines Pods, wie sie die Aggregatprüfung
+    /// braucht (Punkt 40, Glied 2).
+    ///
+    /// # ⚑ Der Weg vom Register zur Signaturprüfung, und er fehlte
+    ///
+    /// `myl_consensus::poi::verify_bundle_signature` ist seit Langem
+    /// gebaut und geprüft und **wurde von der Kette nie gerufen**, weil
+    /// ihr die öffentlichen Schlüssel der Pod-Mitglieder fehlten:
+    /// `MinerId` ist `SHA-256` über den Schlüssel, und aus einem Hash
+    /// folgt kein Urbild. Seit das Register den Schlüssel führt, liegen
+    /// sie vor.
+    ///
+    /// **Diese Funktion steht hier und nicht im Scheduler**, denn der
+    /// bildet Pods und soll von Bündeln nichts wissen; und nicht in
+    /// `myl-consensus`, der die Zuteilung nicht kennt. Der Knoten ist
+    /// die einzige Stelle, die beides sieht.
+    ///
+    /// **Der Koordinator ist das Mitglied auf Position null**, also der
+    /// erste Shard der Pipeline.
+    fn mitgliedschaft(
+        pod: &myl_scheduler::shard_assignment::Pod,
+        epoche: u64,
+    ) -> Option<myl_consensus::poi::PodMembership> {
+        let erste = pod.shards.first()?;
+        let mitglieder: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
+            pod.mitglieder().map(|m| (m.miner_id, m.schluessel)).collect();
+        myl_consensus::poi::PodMembership::ohne_besitznachweis(
+            EpochId(epoche),
+            myl_types::pod_kennung(epoche, pod.pod_index),
+            erste.miner.miner_id,
+            mitglieder,
+        )
+        .ok()
+    }
+
     /// Wie viele Shard-Positionen ein Pod dieser Probekette hat.
     ///
     /// ⚑ **Fest, solange die Kette eine Probekette ist.** Der Zuschnitt
@@ -542,6 +577,17 @@ impl Kette {
             else {
                 continue;
             };
+            // ⚑ **Und jetzt wird die Aggregatsignatur geprüft**
+            // (Punkt 40, Glied 2). Die Mitgliedschaft kommt aus der
+            // **Zuteilung**, nie aus dem Bündel: Wer sie aus dem Bündel
+            // nähme, ließe den Einreicher bestimmen, gegen welche
+            // Schlüssel geprüft wird.
+            let Some(mitgliedschaft) = Self::mitgliedschaft(pod, epoche) else {
+                continue;
+            };
+            if myl_consensus::poi::verify_bundle_signature(&buendel, &mitgliedschaft).is_err() {
+                continue;
+            }
             abrechnungen.push(myl_tokenomics::Podabrechnung {
                 positionen: pod
                     .shards
@@ -691,9 +737,20 @@ impl Kette {
                 // ⚑ Die Kennung folgt aus dem Absender und steht nicht
                 // in der Anweisung: Beide sind derselbe Schlüssel, und
                 // ein zweites Feld ließe sich abweichend füllen.
+                // ⚑ Der Schlüssel kommt aus der **geprüften**
+                // Transaktion, nicht aus einem Feld der Anweisung.
+                // Damit ist der Besitz bewiesen: Wer unterschreiben
+                // kann, hält den geheimen Teil.
                 Anweisung::MinerAnmelden { hardware, zone } => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
-                    let _ = miner_anmelden(zustand, &absender, &kennung, *hardware, *zone);
+                    let _ = miner_anmelden(
+                        zustand,
+                        &absender,
+                        &kennung,
+                        *hardware,
+                        *zone,
+                        geprueft.inhalt().absender,
+                    );
                 }
                 Anweisung::MinerAbmelden => {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
@@ -1646,6 +1703,33 @@ mod tests {
         assert!(k.zustand().buendel.is_empty(), "die Buendel blieben stehen");
     }
 
+    /// Unterschreibt ein Bündel mit **allen** Mitgliedern seines Pods.
+    ///
+    /// ⚑ **Allen, nicht nur den Positionen.** `PodMembership::pubkeys`
+    /// liefert die Schlüssel aller Mitglieder einschließlich der
+    /// Reserve, und `fast_aggregate_verify` prüft gegen genau diese
+    /// Menge. Wer nur die Positionen unterschreiben ließe, bekäme ein
+    /// Aggregat, das gegen mehr Schlüssel geprüft wird, als es enthält.
+    fn buendel_unterschreiben(
+        buendel: &mut myl_types::PoIBundle,
+        pod: &myl_scheduler::shard_assignment::Pod,
+    ) {
+        let msg = myl_consensus::poi::bundle_message(buendel);
+        let mut teile = Vec::new();
+        for m in pod.mitglieder() {
+            // Welcher Probeschlüssel gehört zu dieser Kennung?
+            let w = (0..6u8)
+                .find(|w| {
+                    myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == m.miner_id
+                })
+                .expect("Mitglied ist ein Probekonto");
+            teile.push(probeschluessel(w).sign(&msg).expect("Unterschrift"));
+        }
+        let aggregat =
+            myl_types::bls::aggregate_signatures(&teile).expect("Aggregat");
+        buendel.aggregate_sig = myl_types::bls::BlsSignature(aggregat.0);
+    }
+
     /// ⚑ **Punkt 40 als Ganzes: bezeugte Arbeit erreicht ein Konto.**
     ///
     /// Sechs Miner melden sich an, tragen ein Auszahlungskonto ein,
@@ -1719,13 +1803,14 @@ mod tests {
         );
         assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
         let pod_index = zuteilung.pods[0].pod_index;
-        let b = myl_types::PoIBundle {
+        let mut b = myl_types::PoIBundle {
             epoch: k.zustand().epoch,
             pod: myl_types::pod_kennung(k.zustand().epoch.0, pod_index),
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
         };
+        buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
         k.aufnehmen(
             Transaktion::signiere(
                 &Kette::startwert(),
@@ -1759,6 +1844,97 @@ mod tests {
             gewachsen <= 4,
             "mehr als die vier Positionen bekamen etwas: {nachher:?}"
         );
+    }
+
+    /// ⚑ **Punkt 40, Glied 2: Ein Bündel ohne gültige Aggregatsignatur
+    /// zahlt nichts aus.**
+    ///
+    /// Der Pod ist echt, die Kennung stimmt, die Epoche stimmt, und der
+    /// Einreicher ist angemeldet. **Nur die Unterschrift der Mitglieder
+    /// fehlt**, und genau das schließt die Lücke, die bis hierher offen
+    /// war: Ein angemeldeter Miner konnte ein Bündel für einen fremden
+    /// Pod einreichen.
+    #[test]
+    fn ein_buendel_ohne_gueltige_unterschrift_zahlt_nichts_aus() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::arbeitsverteilung::Arbeitsverteilung;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        k.arbeitsverteilung_setzen(
+            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
+                .expect("Verteilung"),
+        )
+        .expect("setzen");
+
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        k.baue_block();
+        for w in 0..6u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            myl_ledger::transitions::auszahlungskonto_eintragen(
+                k.zustand_mut(),
+                &probekonto(w),
+                &kennung,
+                kaltes_konto(w),
+            )
+            .expect("Eintragung");
+        }
+        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
+        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            k.zustand().epoch.0,
+            &k.letzter_hash(),
+            4,
+        );
+        // ⚑ Echter Pod, echte Kennung, **Attrappe als Unterschrift**.
+        let b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, zuteilung.pods[0].pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: 1_000_000,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+        };
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                nonce[0],
+                Anweisung::BuendelEinreichen { buendel: b },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+
+        for _ in 2..=BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        for w in 0..6u8 {
+            assert_eq!(
+                k.zustand().account(&kaltes_konto(w)).balance,
+                0,
+                "ein Buendel ohne gueltige Unterschrift hat ausgezahlt"
+            );
+        }
     }
 
     /// ⚑ **Ohne Arbeitsverteilung wird nichts zugeschrieben**, und das

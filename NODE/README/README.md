@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.20.0
+> **Version:** 0.21.0
 > **Datum:** 2026-09-01
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **195 Tests grün.**
+> **196 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,26 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.21.0 – 2026-09-01 (⚑ Punkt 40 ganz: die Unterschrift wird geprüft)
+
+Der Knoten baut die Pod-Mitgliedschaft aus der **Zuteilung** und prüft
+damit die Aggregatsignatur jedes Bündels. Ein Bündel, das sie nicht
+besteht, fällt weg.
+
+⚑ **Damit ist die letzte Lücke zu**: Bis hierher konnte ein angemeldeter
+Miner ein Bündel für einen **echten fremden** Pod einreichen und dessen
+Mitgliedern eine unverdiente Gutschrift verschaffen. Jetzt braucht es
+die Unterschriften aller Mitglieder.
+
+**Die Funktion steht im Knoten und nicht im Scheduler**, denn der bildet
+Pods und soll von Bündeln nichts wissen; und nicht in `myl-consensus`,
+der die Zuteilung nicht kennt. **Der Knoten ist die einzige Stelle, die
+beides sieht.**
+
+⛑ **Und der Test, an dem der Punkt hängt, fiel beim Einschalten sofort
+um.** Er benutzte eine Attrappe als Signatur; die Prüfung tat also genau
+das, was sie soll. Er unterschreibt jetzt mit allen Mitgliedern.
 
 ### v0.20.0 – 2026-09-01 (⚑ Punkt 40 geschlossen: bezeugte Arbeit erreicht ein Konto)
 

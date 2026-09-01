@@ -23,6 +23,8 @@ use std::sync::Arc;
 use myl_pod::wire::{self, PodMessage, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TOKEN_INPUT};
 use myl_types::ids::SegmentId;
 
+mod artefakte;
+
 /// SplitMix64, reproduzierbar und ohne Abhängigkeit.
 struct Rng(u64);
 
@@ -191,8 +193,7 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
         p.push("qwen2.5-0.5b");
         p
     };
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));

@@ -54,6 +54,7 @@ mod tests {
             hardware_class: hw_class,
             registration_epoch: reg_epoch,
             zone: myl_types::node_metadata::GeoRegion::Europe,
+            schluessel: myl_types::bls::BlsPublicKey([0; 48]),
         }
     }
 

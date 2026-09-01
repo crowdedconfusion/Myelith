@@ -113,8 +113,10 @@ fn ohne_den_seed_ist_der_plan_nicht_vorhersehbar() {
 
 /// Baut `anzahl` Pods aus je `k` Shards mit je einem Miner.
 fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
-    use myl_scheduler::geo_clustering::MinerCluster;
+    use myl_scheduler::shard_assignment::MinerCluster;
     use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
+    use myl_types::node_metadata::GeoRegion;
+    let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
     (0..anzahl)
         .map(|p| {
             // ⚑ **k+2 Mitglieder, nicht k** (Entscheidung D3, 2026-08-26).
@@ -130,7 +132,15 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
                         miner_id: MinerId::new(b),
                         hardware_class: HardwareClass::MediumGpu,
                         registration_epoch: 0,
-            zone: myl_types::node_metadata::GeoRegion::Europe,
+                        // ⚑ **Die Zone kommt aus der Registrierung**
+                        // (Fund 110). Sie stand hier bis zum
+                        // 2026-09-01 für alle auf `Europe`, während
+                        // eine zweite Hilfsfunktion den Pods über
+                        // gegossipte Metadaten rotierende Regionen
+                        // gab. **Zwei Quellen, die sich widersprachen**,
+                        // und die Paarung las die falsche.
+                        zone: zonen[(p as usize) % zonen.len()],
+                        schluessel: myl_types::bls::BlsPublicKey([0; 48]),
                     }
                 })
                 .collect();
@@ -144,42 +154,6 @@ fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
         .collect()
 }
 
-/// Metadaten für `anzahl` Pods, Regionen rotierend über drei.
-///
-/// **Ohne Metadaten weist `assign_redundant_pods` nichts zu**, weil die
-/// Zonendiversität mangels Region nicht feststellbar ist und das Paar
-/// dann übersprungen wird. Das ist fail-closed und damit die richtige
-/// Richtung; seit der Aufteilung des Rückgabewerts nennt das Ergebnis
-/// den Grund ausdrücklich, statt ihn in einer leeren Liste zu
-/// verschweigen.
-fn metadaten(
-    pods: &[Pod],
-) -> std::collections::HashMap<MinerId, myl_types::node_metadata::NodeMetadata> {
-    use myl_types::node_metadata::{Asn, GeoRegion, NodeMetadata};
-    let regionen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
-    let mut m = std::collections::HashMap::new();
-    for p in pods {
-        let region = regionen[(p.pod_index as usize) % regionen.len()];
-        // **Auch die Reserve braucht Metadaten.** Seit D3 hat ein Pod
-        // eine getrennte Reserve, und `pods_are_disjoint` zählt sie mit;
-        // ohne Region fiele die Zonendiversität still aus.
-        for miner in p.mitglieder() {
-            {
-                m.insert(
-                    miner.miner_id,
-                    NodeMetadata {
-                        miner: miner.miner_id,
-                        region,
-                        asn: Asn(1000 + p.pod_index),
-                        timestamp_ms: 1,
-                    },
-                );
-            }
-        }
-    }
-    m
-}
-
 /// **Anhang B.2 gegen die echte Zuteilung.**
 ///
 /// Das Papier sagt `P_koll ≈ β^{2k}` und unterstellt damit, dass die
@@ -187,7 +161,7 @@ fn metadaten(
 /// gezogen werden. Die Implementierung zieht anders: `assign_shards`
 /// verteilt die Miner eines Clusters per Fisher-Yates auf Shards, und
 /// `assign_redundant_pods` wählt aus den **gültigen Paaren** (disjunkt,
-/// zonendivers).
+/// und zonendivers, solange es solche gibt).
 ///
 /// Gemessen wird die tatsächliche Rate über viele Zuteilungen, mit
 /// zufällig als kolludierend markierten Minern.
@@ -215,10 +189,13 @@ fn kollusionsrate_gegen_anhang_b2() {
                 .map(|m| m.miner_id)
                 .collect();
 
-            let metadata = metadaten(&alle_pods);
-            let zuteilungen = assign_redundant_pods(segmente, &alle_pods, &metadata, &s)
-                .expect("acht Pods über drei Regionen bilden Paare");
-            for z in &zuteilungen {
+            let zuteilung = assign_redundant_pods(segmente, &alle_pods, &s)
+                .expect("acht Pods über drei Zonen bilden Paare");
+            assert!(
+                zuteilung.zonendivers,
+                "acht Pods über drei Zonen müssen zonendiverse Paare hergeben"
+            );
+            for z in &zuteilung.zuweisungen {
                 let beide_boese = [z.primary_pod_index, z.redundant_pod_index].iter().all(|pi| {
                     alle_pods
                         .iter()

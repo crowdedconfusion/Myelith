@@ -6,8 +6,20 @@
 # gemeinsamen Abhängigkeiten erneut: `myl_types` lag in 66 Kopien vor,
 # `sha2` in 34, insgesamt 2789 .rlib-Dateien und 23,8 GB.
 #
-# Diese Zeile ändert NICHT die Bau-Struktur — die Crates bleiben
+# Diese Zeile ändert NICHT die Bau-Struktur: Die Crates bleiben
 # eigenständig, es gibt weiterhin kein Workspace. Sie legt nur fest,
 # WOHIN gebaut wird.
+#
+# ⚑ NACHTRAG 2026-09-01, und er gehört zur Begründung dazu: Das Bündeln
+# hat den Haufen nicht abgetragen, sondern an einer Stelle gesammelt, wo
+# ihn erst recht nichts abträgt. Cargo räumt `target/` **nie** auf; nach
+# gut zwei Wochen standen hier 216 GB in 724 647 Dateien, darunter 684
+# Kopien von `libmyl_types`. Langsam wurde es nicht am Platz, sondern an
+# der Zahl der Dateien, die Cargo bei jedem Aufruf abklopft.
+#
+# Die Einstellung bleibt richtig, sie genügt nur nicht allein: Das
+# Verzeichnis wird regelmäßig geleert und einmal voll gebaut. Ein
+# frischer Vollbau aller Crates liegt bei rund 6 GB in 35 000 Dateien;
+# wer deutlich darüber liegt, hat Altlasten und keine Abhängigkeiten.
 [build]
 target-dir = "target-shared"

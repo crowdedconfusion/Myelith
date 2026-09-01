@@ -7,9 +7,9 @@ Erzeugt je θ_v-Fassung eine Karte aus `theta_v/spec.json` und
 ## ⚑ Warum erzeugt und nicht geschrieben
 
 Eine Modellkarte, die jemand von Hand nachträgt, ist genau so aktuell
-wie seine Erinnerung. Am 2026-08-29 fand `abhakprobe.py` in diesem
+wie seine Erinnerung. Eine Durchsicht am 2026-08-29 fand in diesem
 Repositorium zehn falsch gesetzte Haken und sechs Versionsnummern, die
-vor ihrem eigenen Changelog lagen — **alle von Hand gepflegt, alle
+vor ihrem eigenen Changelog lagen: **alle von Hand gepflegt, alle
 irgendwann auseinandergelaufen.**
 
 Eine erzeugte Karte kann veralten, aber sie kann nicht **falsch** sein:

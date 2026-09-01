@@ -203,7 +203,6 @@ CONSENSUS_PATH = [
     ROOT / "CONSENSUS" / "myl-ledger" / "src" / "transitions.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "vrf_seed.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "miner_filter.rs",
-    ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "geo_clustering.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "shard_assignment.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "redundancy.rs",
     ROOT / "CONSENSUS" / "myl-scheduler" / "src" / "sampling.rs",
@@ -217,6 +216,11 @@ CONSENSUS_PATH = [
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "validator.rs",
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "voting_weight.rs",
     ROOT / "CONSENSUS" / "myl-consensus" / "src" / "double_signing.rs",
+    # 2026-09-01: `poi.rs` haelt die Mitgliedschaft eines Pods und prueft
+    # die Aggregatsignatur seines Buendels. **An dieser Datei haengt, ob
+    # bezeugte Arbeit bezahlt wird**; sie rechnet nur mit Indizes und
+    # Byte-Folgen und muss es bleiben.
+    ROOT / "CONSENSUS" / "myl-consensus" / "src" / "poi.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "ema.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "mint.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "distribute.rs",

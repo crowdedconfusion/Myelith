@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
 
+mod artefakte;
+
 fn artifacts_dir() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let mut p = PathBuf::from(manifest);
@@ -22,8 +24,7 @@ fn artifacts_dir() -> PathBuf {
 #[test]
 fn layer_fuer_layer_ergibt_dasselbe_wie_der_bereich() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = load_model(&dir).expect("Modell-Ladung");

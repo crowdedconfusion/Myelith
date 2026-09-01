@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.30.0 (`myl-consensus` 0.20.0, `myl-scheduler` 0.7.0,
-> `myl-ledger` 0.12.0)
-> **Datum:** 2026-08-31
+> **Version:** 0.32.0 (`myl-consensus` 0.21.0, `myl-scheduler` 0.9.0,
+> `myl-ledger` 0.13.0)
+> **Datum:** 2026-09-01
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -18,8 +18,8 @@
 > mehr:** Session-Kontrakte stehen im Ledger, **Anweisungen sind
 > unterschrieben** (Fund 85), und es gibt eine Überweisung von Konto zu
 > Konto.
-> **444 Tests grün** (269 `myl-consensus`, 86 `myl-scheduler`,
-> 89 `myl-ledger`), über alle Testbinaries gezählt.
+> **448 Tests grün** (269 `myl-consensus`, 86 `myl-scheduler`,
+> 93 `myl-ledger`), über alle Testbinaries gezählt.
 >
 > ⚑ **Seit dem 27. August trägt der Blockkopf eine Höhe.** Er hieß bis
 > dahin `EpochMeta`, führte kein Höhenfeld, und die Probekette schrieb
@@ -107,6 +107,115 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.32.0 – 2026-09-01 (`myl-scheduler` v0.9.0; ⚑ Funde 110, 111 und 112: die Paarung las eine Quelle außerhalb des Konsens)
+
+**`assign_redundant_pods` nahm die Zone eines Pods aus der gegossipten
+`NodeMetadata` seiner Mitglieder.** Seit der Entscheidung 3b steht die
+Zone in der **Registrierung**, also im Konsenszustand, und der Pod trägt
+die Registrierung jedes Mitglieds ohnehin bei sich. Die alte Quelle blieb
+stehen, und sie hatte drei Löcher.
+
+⚑ **Zwei Knoten mit verschiedener Gossip-Sicht paarten verschieden.** Wer
+wessen Ergebnis nachrechnet, ist eine Konsensentscheidung. Sie aus einer
+Quelle zu treffen, die nicht Teil des Konsens ist, bricht die
+Gleichheit, auf der alles ruht. Das ist der schwerste der drei.
+
+⚑ **Ein einzelnes Mitglied konnte seinen Pod aus jeder Paarung nehmen**,
+indem es eine abweichende Region gossipte: Dann war die Zone des Pods
+unbestimmt, und unbestimmt schloss ihn überall aus. Genug davon, und eine
+ganze Epoche bekam keine Redundanz. **Genau diesen Verweigerungshebel
+sollte die Entscheidung 3b vermeiden**, und er saß die ganze Zeit eine
+Ebene tiefer.
+
+**Fehlende Metadaten wirkten wie Widerspruch.** Ein frisch gestarteter
+Knoten, dessen Gossip noch nicht durch war, fiel aus der Paarung, ohne
+etwas falsch gemacht zu haben.
+
+⚑ **Fund 111: Die Pod-Bildung gab es zweimal.**
+`myl_pod::zuteilung::plane_epoche` rechnete die Zuteilung einer Epoche
+**selbst** aus, und sie stimmte mit dem Weg der Kette in **keinem** der
+drei Schritte überein: Cluster nach gemessener Latenz statt nach Zone,
+VRF-Saat statt Blockhash, nur die Klassen aus den Parametern statt aller.
+**Zwei Knoten, die denselben Pod auf verschiedenen Wegen ausrechnen,
+bekamen verschiedene Pods.** `zuteilung_aus_saat` ist jetzt die eine
+Regel; `zuteilung_der_epoche` und `plane_epoche` sind Eingänge in sie.
+⚑ **`geo_clustering.rs` ist entfernt** (287 Zeilen samt acht Tests):
+`form_clusters` und `LatencyMatrix` standen für den Weg, den 3b
+verworfen hat, und **ein Grund im Entwurf hat den Aufruf nicht
+verhindert**. `MinerCluster` ist geblieben und steht jetzt bei `Pod` und
+`Zuteilung` in `shard_assignment.rs`, mit einer Notiz, was dort war und
+warum es weg ist.
+
+⚑ **Fund 112: Eine dünne Zone schloss ihre Miner aus, und das lud zum
+Lügen ein.** Ein Pod braucht `k + 2` Mitglieder. Trug eine Zone weniger,
+so trug sie **keinen einzigen Pod**, und ihre Miner landeten in
+`ohne_pod`. Bei sieben Zonen und `k = 8` wären das siebzig Miner, bevor
+jede Zone einen Pod trägt. **Der Schaden ist nicht der Ausschluss,
+sondern der Anreiz:** Wer allein in seiner Zone steht, verdient nichts,
+solange er die Wahrheit sagt, und alles, sobald er eine volle Zone
+angibt. Das Verfahren drängte die Angabe zur Unwahrheit, genau dort, wo
+sie am meisten wert gewesen wäre. Zonen unter der Mindestbesetzung kommen
+jetzt in **ein gemeinsames Sammelcluster** in kanonischer
+Zonenreihenfolge. Seine Pods haben keine bestimmte Ausfallzone, und die
+Paarung sieht das, statt ihnen ein falsches Etikett zu geben.
+
+**Was sich sonst ändert:**
+
+- Zonendiversität ist **Vorliebe statt Bedingung**. Gibt es kein
+  zonendiverses Paar, wird auf disjunkte Paare derselben Zone
+  ausgewichen, und `Redundanzzuteilung::zonendivers` sagt es. **Keine
+  Redundanz ist schlechter als Redundanz in einer Zone**, denn ohne Paar
+  entfällt Stufe 1 der Verifikation ganz, und ein Netz, das in einer Zone
+  anfängt, käme nie in Gang.
+- Die Wahl zwischen beiden Mengen fällt **einmal für die ganze
+  Zuteilung**, nicht Segment für Segment. Mischte man sie, käme jedes
+  Segment zuerst an die diversen Paare, und wer zwei Zonen angibt, säße
+  bevorzugt in jedem Vergleich.
+- `ZuweisungsHindernis::KeinGueltigesPaar` heißt jetzt „kein Paar ist
+  disjunkt", also eine Aussage über den **Aufbau** der Pods statt über
+  Angaben ihrer Mitglieder.
+- Der Anspruch, die Zonenprüfung schütze vor derselben Selbstbestätigung
+  wie `pods_are_disjoint`, ist **zurückgezogen**. Eine erklärte Angabe
+  trägt die Ausfalldiversität und nicht die Sicherheit (Fund 108).
+
+⛑ **Ein Test prüfte eine Aussage, die unter beiden Fassungen gilt.** Er
+sollte zeigen, dass ein abweichendes Mitglied seinen Pod nicht aus der
+Paarung nimmt, und prüfte, dass die **übrigen** Pods weiter gepaart
+werden. Das gilt auch mit dem alten Ausschluss. Die Zusage sitzt nicht in
+der Paarung, sondern in der **Pod-Bildung**: Cluster entstehen je Zone,
+also teilen die Mitglieder eines Pods seine Zone durch Konstruktion. Der
+Test prüft jetzt die echte Zuteilung.
+
+### v0.31.0 (`myl-consensus` 0.21.0, `myl-ledger` 0.13.0) – 2026-09-01 (⚑ Punkt 40, Glied 2: die Aggregatsignatur wird geprüft)
+
+**`verify_bundle_signature` war seit Langem gebaut, geprüft und wurde von
+der Kette nie gerufen.** Ihr fehlten die öffentlichen Schlüssel der
+Pod-Mitglieder: `MinerId` ist `SHA-256` über den Schlüssel, und aus einem
+Hash folgt kein Urbild. **Dieselbe Klasse wie Fund 87 und Fund 109**, zum
+dritten Mal an diesem Vorhaben.
+
+**`miner_anmelden` trägt jetzt den Schlüssel ein** und prüft, dass er zur
+Kennung passt: Sonst trüge das Register einen fremden Schlüssel unter
+dieser Kennung, und die Aggregatprüfung liefe gegen den falschen.
+
+⚑ **`PodMembership::ohne_besitznachweis`, und warum das kein Loch ist.**
+`PodMembership::new` verlangt je Mitglied einen Besitznachweis gegen
+Rogue Keys. Kommen die Schlüssel aus dem **Register**, ist er bereits
+erbracht, und zwar stärker: Ein Schlüssel gelangt nur über eine
+**unterschriebene Anmeldung** hinein. **Wer einen Rogue Key als Differenz
+fremder Schlüssel bildet, kann mit ihm nicht unterschreiben** und kommt
+gar nicht erst hinein. Ihn ein zweites Mal zu verlangen hieße, je Epoche
+eine Paarung je Mitglied zu rechnen, für eine Aussage, die feststeht.
+
+⚑ **Die Mitgliedschaft kommt aus der Zuteilung, nie aus dem Bündel.**
+Wer sie aus dem Bündel nähme, ließe den Einreicher bestimmen, gegen
+welche Schlüssel geprüft wird.
+
+⛑ **Der Test, an dem der Punkt hängt, fiel beim Einschalten sofort um**,
+und das war die richtige Antwort: Er benutzte eine Attrappe als
+Signatur. Er unterschreibt jetzt mit **allen** Mitgliedern, Reserve
+eingeschlossen, denn gegen deren Schlüsselmenge wird geprüft.
 
 ### v0.30.0 (`myl-ledger` 0.12.0) – 2026-09-01 (die Arbeitsverteilung im Zustand)
 

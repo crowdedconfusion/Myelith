@@ -151,7 +151,7 @@ impl Protokolllauf {
     /// liefert, und dass die Paare disjunkt sind. Ohne Disjunktheit ist
     /// Stufe 1 der Verifikation eine Selbstbestätigung.
     pub fn naht_scheduler(&mut self) -> Vec<myl_scheduler::shard_assignment::Pod> {
-        use myl_scheduler::geo_clustering::MinerCluster;
+        use myl_scheduler::shard_assignment::MinerCluster;
         use myl_scheduler::miner_filter::{HardwareClass, MinerRegistration};
         use myl_scheduler::shard_assignment::assign_shards;
 
@@ -177,7 +177,8 @@ impl Protokolllauf {
                     miner_id: t.miner,
                     hardware_class: HardwareClass::MediumGpu,
                     registration_epoch: 0,
-            zone: myl_types::node_metadata::GeoRegion::Europe,
+                    zone: myl_types::node_metadata::GeoRegion::Europe,
+                    schluessel: myl_types::bls::BlsPublicKey([0; 48]),
                 })
                 .collect();
             let cluster = MinerCluster {

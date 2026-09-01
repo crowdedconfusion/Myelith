@@ -22,7 +22,6 @@
 
 #![deny(unsafe_code)]
 
-pub mod geo_clustering;
 pub mod miner_filter;
 pub mod redundancy;
 pub mod sampling;
@@ -30,13 +29,18 @@ pub mod shard_assignment;
 pub mod zonenzuteilung;
 pub mod vrf_seed;
 
-pub use geo_clustering::{form_clusters, LatencyMatrix, MinerCluster};
+pub use zonenzuteilung::{
+    epochenseed, pod_zu_kennung, zonen_cluster, zuteilung_aus_saat, zuteilung_der_epoche,
+};
 pub use miner_filter::{
     filter_miners, HardwareClass, MinerRegistration,
 };
-pub use redundancy::{assign_redundant_pods, SegmentAssignment, ZuweisungsHindernis};
+pub use redundancy::{
+    assign_redundant_pods, Redundanzzuteilung, SegmentAssignment, ZuweisungsHindernis,
+};
 pub use sampling::{sample_segments, SamplingResult};
 pub use shard_assignment::{
-    assign_pods, assign_shards, pod_groesse, Pod, Shard, Zuteilung, RESERVE_JE_POD,
+    assign_pods, assign_shards, pod_groesse, MinerCluster, Pod, Shard, Zuteilung,
+    RESERVE_JE_POD,
 };
 pub use vrf_seed::{derive_epoch_seed, seed_alpha, verify_epoch_seed, EpochSeed, VrfSeedError};

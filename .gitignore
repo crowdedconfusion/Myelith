@@ -7,9 +7,14 @@
 # Rust-Build-Artefakte
 target/
 # Gemeinsames Ausgabeverzeichnis (siehe .cargo/config.toml). Alle Crates
-# bauen dorthin, statt je ein eigenes target/ anzulegen — das sparte
-# 23,8 GB auf 2,1 GB, weil gemeinsame Abhängigkeiten nur noch einmal
-# übersetzt werden.
+# bauen dorthin, statt je ein eigenes target/ anzulegen: Gemeinsame
+# Abhängigkeiten werden nur einmal übersetzt.
+#
+# ⚑ Die Zahl, die hier stand („sparte 23,8 GB auf 2,1 GB"), galt am Tag
+# der Umstellung und stimmte am 2026-09-01 nicht mehr: Das Verzeichnis
+# war auf 216 GB und 724 647 Dateien angewachsen, weil Cargo target/
+# **nie** aufräumt. Es zu bündeln beseitigt den Haufen nicht, es sammelt
+# ihn: Er muss von Zeit zu Zeit geleert werden.
 target-shared/
 
 # Python

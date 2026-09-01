@@ -28,6 +28,8 @@ use myl_pod::wire::{self, PodMessage};
 use myl_types::bls::BlsSecretKey;
 use myl_types::ids::{EpochId, PodId};
 
+mod artefakte;
+
 /// Das Artefaktverzeichnis, standardmäßig Qwen2.5-0,5B.
 ///
 /// ⚑ **Über `MYL_POD_MODELL` wählbar** (2026-08-25). Vorher stand hier
@@ -84,9 +86,7 @@ const MAX_NEW_TOKENS: u64 = 6;
 #[test]
 fn pod_deterministisch_und_bitgleich_mit_einzelknoten() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        // Artefakte nicht vorhanden (z.B. in CI) — Test ueberspringen
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = load_model(&dir).expect("Modell-Ladung");
@@ -198,9 +198,7 @@ fn ein_verschobenes_logit_bewegt_den_digest() {
 #[test]
 fn manipulierte_aktivierung_wird_abgelehnt() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        // Artefakte nicht vorhanden (z.B. in CI) — Test ueberspringen
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = load_model(&dir).expect("Modell-Ladung");
@@ -265,8 +263,7 @@ fn manipulierte_aktivierung_wird_abgelehnt() {
 #[test]
 fn beanspruchte_arbeit_haengt_nicht_am_zuschnitt() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
@@ -343,8 +340,7 @@ fn beanspruchte_arbeit_haengt_nicht_am_zuschnitt() {
 #[test]
 fn der_lm_kopf_zaehlt_beim_letzten_shard_mit() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
@@ -374,8 +370,7 @@ fn der_lm_kopf_zaehlt_beim_letzten_shard_mit() {
 #[test]
 fn die_spur_haengt_am_modell_nicht_am_zuschnitt() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
@@ -456,8 +451,7 @@ fn die_spur_haengt_am_modell_nicht_am_zuschnitt() {
 #[test]
 fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));
@@ -559,8 +553,7 @@ fn jede_position_ist_ein_eigenes_segment_mit_eigenem_archiv() {
 #[test]
 fn vier_gegen_acht_shards_sind_vergleichbar() {
     let dir = artifacts_dir();
-    if !dir.exists() {
-        eprintln!("SKIP: Artefakte fehlen: {:?}", dir);
+    if !artefakte::vorhanden(&dir) {
         return;
     }
     let model = Arc::new(load_model(&dir).expect("Modell-Ladung"));

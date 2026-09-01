@@ -64,6 +64,8 @@ pub enum TransitionError {
     NichtDerMiner,
     /// Der Miner ist nicht angemeldet.
     MinerUnbekannt,
+    /// Der Schlüssel gehört nicht zu dieser Kennung.
+    SchluesselPasstNicht,
     /// Das Bündel gehört zu einer anderen Epoche als der laufenden.
     FremdeEpoche {
         /// Die Epoche im Bündel.
@@ -167,6 +169,9 @@ impl std::fmt::Display for TransitionError {
                 f.write_str("nur der Miner selbst darf sich an- und abmelden")
             }
             Self::MinerUnbekannt => f.write_str("dieser Miner ist nicht angemeldet"),
+            Self::SchluesselPasstNicht => {
+                f.write_str("der Schluessel gehoert nicht zu dieser Kennung")
+            }
             Self::FremdeEpoche { buendel, laufend } => write!(
                 f,
                 "das Buendel gilt fuer Epoche {}, laufend ist {}",
@@ -765,9 +770,16 @@ pub fn miner_anmelden(
     miner: &MinerId,
     hardware: HardwareClass,
     zone: GeoRegion,
+    schluessel: myl_types::bls::BlsPublicKey,
 ) -> Result<(), TransitionError> {
     if unterzeichner.as_bytes() != miner.as_bytes() {
         return Err(TransitionError::NichtDerMiner);
+    }
+    // ⚑ **Der Schlüssel muss zur Kennung passen.** Sonst trüge das
+    // Register einen fremden Schlüssel unter dieser Kennung, und die
+    // Aggregatprüfung eines Pods liefe gegen den falschen.
+    if MinerId::aus_schluessel(&schluessel) != *miner {
+        return Err(TransitionError::SchluesselPasstNicht);
     }
     let seit = state
         .miner
@@ -781,6 +793,7 @@ pub fn miner_anmelden(
             hardware_class: hardware,
             registration_epoch: seit,
             zone,
+            schluessel,
         },
     );
     Ok(())
@@ -2051,8 +2064,26 @@ mod tests {
 
     // --- Punkt 40, Glied 3a: das Miner-Register ---
 
+    /// ⚑ **Echte Schlüssel, nicht erfundene Bytes.**
+    ///
+    /// Die Anmeldung prüft seit dem 2026-09-01, dass die Kennung aus dem
+    /// Schlüssel folgt. `MinerId::new([b; 32])` konnte das nie
+    /// erfüllen, denn zu einem gewürfelten Hash gibt es kein Urbild;
+    /// **ein Test damit hätte belegt, dass die Prüfung nicht greift**.
+    fn probeschluessel(b: u8) -> myl_types::bls::BlsPublicKey {
+        let sk = myl_types::bls::BlsSecretKey::key_gen(&[b.wrapping_add(1); 32])
+            .expect("Schluessel");
+        sk.public_key().expect("pk")
+    }
+
     fn kennung(b: u8) -> MinerId {
-        MinerId::new([b; 32])
+        MinerId::aus_schluessel(&probeschluessel(b))
+    }
+
+    /// Die Adresse desselben Schlüssels. Kennung und Adresse sind
+    /// verschiedene Typen über denselben Bytes.
+    fn miner_adresse(b: u8) -> Address {
+        Address::aus_schluessel(&probeschluessel(b))
     }
 
     /// Eine Anmeldung steht danach im Register, mit der laufenden Epoche.
@@ -2060,7 +2091,7 @@ mod tests {
     fn eine_anmeldung_steht_im_register() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(7);
-        miner_anmelden(&mut st, &adresse(3), &kennung(3), HardwareClass::MediumGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(3), &kennung(3), HardwareClass::MediumGpu, GeoRegion::Europe, probeschluessel(3))
             .expect("Anmeldung");
         let eintrag = st.miner.get(&kennung(3)).expect("eingetragen");
         assert_eq!(eintrag.hardware_class, HardwareClass::MediumGpu);
@@ -2073,7 +2104,7 @@ mod tests {
     fn die_epoche_kommt_aus_dem_zustand() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(42);
-        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("Anmeldung");
         assert_eq!(st.miner[&kennung(1)].registration_epoch, 42);
     }
@@ -2084,10 +2115,10 @@ mod tests {
     fn eine_klassenaenderung_behaelt_das_datum() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(5);
-        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("erste");
         st.epoch = EpochId(50);
-        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::LargeGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::LargeGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("zweite");
         let eintrag = st.miner[&kennung(1)];
         assert_eq!(eintrag.hardware_class, HardwareClass::LargeGpu);
@@ -2099,7 +2130,7 @@ mod tests {
     fn ein_fremder_meldet_niemanden_an() {
         let mut st = LedgerState::genesis(1);
         assert_eq!(
-            miner_anmelden(&mut st, &adresse(9), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe),
+            miner_anmelden(&mut st, &miner_adresse(9), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1)),
             Err(TransitionError::NichtDerMiner)
         );
         assert!(st.miner.is_empty(), "der Fremde hat eingetragen");
@@ -2109,9 +2140,9 @@ mod tests {
     #[test]
     fn eine_abmeldung_wirkt_sofort() {
         let mut st = LedgerState::genesis(1);
-        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("Anmeldung");
-        miner_abmelden(&mut st, &adresse(1), &kennung(1)).expect("Abmeldung");
+        miner_abmelden(&mut st, &miner_adresse(1), &kennung(1)).expect("Abmeldung");
         assert!(st.miner.is_empty());
     }
 
@@ -2119,10 +2150,10 @@ mod tests {
     #[test]
     fn ein_fremder_meldet_niemanden_ab() {
         let mut st = LedgerState::genesis(1);
-        miner_anmelden(&mut st, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+        miner_anmelden(&mut st, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("Anmeldung");
         assert_eq!(
-            miner_abmelden(&mut st, &adresse(9), &kennung(1)),
+            miner_abmelden(&mut st, &miner_adresse(9), &kennung(1)),
             Err(TransitionError::NichtDerMiner)
         );
         assert_eq!(st.miner.len(), 1, "der Fremde hat abgemeldet");
@@ -2134,7 +2165,7 @@ mod tests {
     fn ein_unbekannter_kann_sich_nicht_abmelden() {
         let mut st = LedgerState::genesis(1);
         assert_eq!(
-            miner_abmelden(&mut st, &adresse(1), &kennung(1)),
+            miner_abmelden(&mut st, &miner_adresse(1), &kennung(1)),
             Err(TransitionError::MinerUnbekannt)
         );
     }
@@ -2146,7 +2177,7 @@ mod tests {
     fn die_minerliste_ist_kanonisch_geordnet() {
         let mut st = LedgerState::genesis(1);
         for b in [9u8, 2, 7, 1] {
-            miner_anmelden(&mut st, &adresse(b), &kennung(b), HardwareClass::SmallGpu, GeoRegion::Europe)
+            miner_anmelden(&mut st, &miner_adresse(b), &kennung(b), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(b))
                 .expect("Anmeldung");
         }
         let ids: Vec<MinerId> = angemeldete_miner(&st).iter().map(|r| r.miner_id).collect();
@@ -2160,7 +2191,7 @@ mod tests {
     fn das_register_veraendert_das_commitment() {
         let leer = LedgerState::genesis(1);
         let mut mit = LedgerState::genesis(1);
-        miner_anmelden(&mut mit, &adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe)
+        miner_anmelden(&mut mit, &miner_adresse(1), &kennung(1), HardwareClass::SmallGpu, GeoRegion::Europe, probeschluessel(1))
             .expect("Anmeldung");
         assert_ne!(leer.commitment(), mit.commitment());
     }
@@ -2182,7 +2213,14 @@ mod tests {
     }
 
     fn angemeldet(st: &mut LedgerState, b: u8) {
-        miner_anmelden(st, &adresse(b), &kennung(b), HardwareClass::MediumGpu, GeoRegion::Europe)
+        miner_anmelden(
+            st,
+            &miner_adresse(b),
+            &kennung(b),
+            HardwareClass::MediumGpu,
+            GeoRegion::Europe,
+            probeschluessel(b),
+        )
             .expect("Anmeldung");
     }
 
@@ -2193,7 +2231,7 @@ mod tests {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
-        buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)).expect("Einreichung");
         assert_eq!(buendel_der_epoche(&st).len(), 1);
         assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500);
     }
@@ -2204,7 +2242,7 @@ mod tests {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
         assert_eq!(
-            buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)),
+            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)),
             Err(TransitionError::MinerUnbekannt)
         );
         assert!(st.buendel.is_empty());
@@ -2219,7 +2257,7 @@ mod tests {
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
         assert_eq!(
-            buendel_einreichen(&mut st, &adresse(1), buendel(9, 3, 500)),
+            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 3, 500)),
             Err(TransitionError::FremdeEpoche {
                 buendel: EpochId(3),
                 laufend: EpochId(4)
@@ -2234,9 +2272,9 @@ mod tests {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
-        buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 500)).expect("erste");
+        buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)).expect("erste");
         assert_eq!(
-            buendel_einreichen(&mut st, &adresse(1), buendel(9, 4, 900)),
+            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 900)),
             Err(TransitionError::BuendelExistiert)
         );
         assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500, "das zweite hat ueberschrieben");
@@ -2249,7 +2287,7 @@ mod tests {
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
         for p in [1u8, 5, 9] {
-            buendel_einreichen(&mut st, &adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+            buendel_einreichen(&mut st, &miner_adresse(1), buendel(p, 4, 100)).expect("Einreichung");
         }
         assert_eq!(buendel_der_epoche(&st).len(), 3);
     }
@@ -2262,7 +2300,7 @@ mod tests {
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
         for p in [1u8, 5] {
-            buendel_einreichen(&mut st, &adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+            buendel_einreichen(&mut st, &miner_adresse(1), buendel(p, 4, 100)).expect("Einreichung");
         }
         assert_eq!(buendel_leeren(&mut st), 2);
         assert!(st.buendel.is_empty());
@@ -2276,7 +2314,7 @@ mod tests {
         ohne.epoch = EpochId(4);
         angemeldet(&mut ohne, 1);
         let mut mit = ohne.clone();
-        buendel_einreichen(&mut mit, &adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        buendel_einreichen(&mut mit, &miner_adresse(1), buendel(9, 4, 500)).expect("Einreichung");
         assert_ne!(ohne.commitment(), mit.commitment());
     }
 
@@ -2334,5 +2372,34 @@ mod tests {
         let mut mit = LedgerState::genesis(1);
         arbeitsverteilung_setzen(&mut mit, verteilung(1, vec![1])).expect("setzen");
         assert_ne!(ohne.commitment(), mit.commitment());
+    }
+
+    /// ⚑ **Ein Schlüssel, der nicht zur Kennung gehört, wird
+    /// abgewiesen.** Sonst trüge das Register einen fremden Schlüssel
+    /// unter dieser Kennung, und die Aggregatprüfung eines Pods liefe
+    /// gegen den falschen.
+    #[test]
+    fn ein_fremder_schluessel_wird_abgewiesen() {
+        let mut st = LedgerState::genesis(1);
+        assert_eq!(
+            miner_anmelden(
+                &mut st,
+                &miner_adresse(1),
+                &kennung(1),
+                HardwareClass::SmallGpu,
+                GeoRegion::Europe,
+                probeschluessel(2),
+            ),
+            Err(TransitionError::SchluesselPasstNicht)
+        );
+        assert!(st.miner.is_empty());
+    }
+
+    /// Der eingetragene Schlüssel ist der, mit dem unterschrieben wurde.
+    #[test]
+    fn der_eingetragene_schluessel_ist_der_unterschreibende() {
+        let mut st = LedgerState::genesis(1);
+        angemeldet(&mut st, 3);
+        assert_eq!(st.miner[&kennung(3)].schluessel, probeschluessel(3));
     }
 }

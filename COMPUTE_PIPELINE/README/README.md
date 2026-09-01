@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.19.0
+> **Version:** 0.20.0
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -71,6 +71,53 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.20.0 – 2026-09-01 (⚑ Funde 111 und 113)
+
+## ⚑ Fund 113: Elf Tests sprangen still ab und meldeten „ok"
+
+In vier Testdateien stand elfmal `if !dir.exists() { eprintln!("SKIP:
+Artefakte fehlen"); return; }`. **`cargo test` fängt die
+Standardfehlerausgabe bestandener Tests ab**, die Zeile war also nur mit
+`--nocapture` zu sehen. Ohne Artefakte meldete `pod_e2e` „8 passed",
+ohne ein einziges Gewicht angefasst zu haben, und das sind die Tests,
+die die **Bitgleichheit** belegen.
+
+⚑ **Gefährlich wurde das durch eine anstehende Entscheidung:**
+`INTEGER_LLM/artifacts/` belegt 42 GB. Wer sie wegräumt, um Platz zu
+gewinnen, bekommt danach eine grüne Suite, die nichts mehr prüft, und
+nichts sagt es ihm.
+
+**Jetzt schlägt ein fehlendes Modell fehl**, mit einem Satz, der sagt,
+was zu tun ist. Wer bewusst ohne Artefakte läuft, setzt
+`MYL_OHNE_ARTEFAKTE=1`; die CI tut das, und dort steht auch warum.
+Dieselbe Klasse wie „eine Zählung, die null zählt, ist kein Befund".
+
+## ⚑ Fund 111: die Pod-Bildung gab es zweimal
+
+**`plane_epoche` rechnete die Zuteilung selbst aus**, und sie stimmte mit
+dem Weg der Kette in **keinem** der drei Schritte überein:
+
+- Sie clusterte nach **gemessener Latenz**. Die Entscheidung 3b hat das
+  am selben Tag verworfen, weil wer wählt, mit wem er attestiert,
+  mitformt, in welchem Topf er gemischt wird. **Der Aufruf blieb stehen.**
+- Sie nahm die **VRF-Saat**, die Kette die Saat aus dem Blockhash.
+- Sie ließ nur die Klassen aus `Planparameter` zu, die Kette alle.
+
+⚑ **Zwei Knoten, die denselben Pod auf verschiedenen Wegen ausrechnen,
+bekamen verschiedene Pods.** Dieselbe Lehre wie bei Fund 34: Zwei Quellen
+für dieselbe Aussage laufen auseinander.
+
+**Die Regel steht jetzt einmal**, in
+`myl_scheduler::zonenzuteilung::zuteilung_aus_saat`; `plane_epoche` prüft
+die Saat und ruft sie. `Planparameter::max_latenz_ms` und der
+Latenzparameter sind entfallen, **es geht keine gemessene Größe mehr
+ein**. Ein Test hält fest, dass beide Eingänge bei gleicher Saat dieselbe
+Zuteilung ergeben.
+
+⚑ **Offen bleibt allein, welche Saat gilt**, VRF oder Blockhash. Das ist
+eine Entscheidung und kein Algorithmus, und sie ist jetzt eine Zeile groß
+statt einer Datei.
 
 ### v0.19.0 – 2026-09-01 (Punkt 3.6: wer wiederholt ausfällt, kommt später dran)
 

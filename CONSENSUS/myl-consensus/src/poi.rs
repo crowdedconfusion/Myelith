@@ -186,6 +186,60 @@ impl PodMembership {
         })
     }
 
+    /// Baut eine Mitgliedschaft aus Schlüsseln, deren Besitz **anderswo**
+    /// bewiesen wurde.
+    ///
+    /// # ⚑ Warum es das gibt, und warum es kein Loch ist
+    ///
+    /// [`Self::new`] verlangt je Mitglied einen
+    /// `BlsProofOfPossession`, damit kein **Rogue Key** in die
+    /// Aggregatprüfung gerät: Wer einen Schlüssel als Differenz fremder
+    /// Schlüssel bildet, könnte sonst Aggregate fälschen.
+    ///
+    /// Kommen die Schlüssel aus dem **Miner-Register der Kette**, ist
+    /// der Besitz bereits bewiesen, und zwar stärker als durch einen
+    /// mitgelieferten Nachweis: Ein Schlüssel gelangt nur über eine
+    /// **unterschriebene Anmeldung** hinein, und wer unterschreiben
+    /// kann, hält den geheimen Teil. **Ein Rogue Key kommt gar nicht
+    /// erst ins Register**, weil sein Bildner mit ihm nicht
+    /// unterschreiben kann.
+    ///
+    /// Die Prüfung ein zweites Mal zu verlangen hieße, je Epoche eine
+    /// Paarung je Mitglied zu rechnen, für eine Aussage, die feststeht.
+    ///
+    /// ⚑ **Wer diese Funktion mit Schlüsseln aus anderer Quelle
+    /// aufruft, hebt den Schutz auf.** Sie heißt deshalb, wie sie heißt,
+    /// und dieser Absatz steht hier statt in einem Kommentar am
+    /// Aufrufer.
+    ///
+    /// Doppelte Mitglieder und ein Koordinator außerhalb des Pods werden
+    /// weiterhin abgewiesen; beides hat mit dem Besitznachweis nichts zu
+    /// tun.
+    pub fn ohne_besitznachweis(
+        epoch: EpochId,
+        pod: PodId,
+        coordinator: MinerId,
+        members: Vec<(MinerId, BlsPublicKey)>,
+    ) -> Result<Self, PoIError> {
+        if members.is_empty() {
+            return Err(PoIError::EmptyPod);
+        }
+        let mut gesehen: Vec<&MinerId> = members.iter().map(|(m, _)| m).collect();
+        gesehen.sort();
+        if gesehen.windows(2).any(|w| w[0] == w[1]) {
+            return Err(PoIError::DuplicateMember);
+        }
+        if !members.iter().any(|(m, _)| *m == coordinator) {
+            return Err(PoIError::CoordinatorNotMember);
+        }
+        Ok(Self {
+            epoch,
+            pod,
+            coordinator,
+            members,
+        })
+    }
+
     /// Anzahl der Mitglieder.
     pub fn len(&self) -> usize {
         self.members.len()

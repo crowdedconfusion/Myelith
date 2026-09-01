@@ -39,7 +39,7 @@
 //!
 //! 1. Die Aufteilung eines Clusters in Pods folgt seiner Reihenfolge, und
 //!    die stammt aus dem seed-gesteuerten Shuffle in
-//!    [`crate::geo_clustering::form_clusters`].
+//!    [`crate::zonenzuteilung::zonen_cluster`].
 //! 2. Innerhalb eines Pods verteilt Fisher-Yates die Mitglieder auf die
 //!    Positionen, mit einem **je Pod abgeleiteten** Seed.
 //!
@@ -53,7 +53,6 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::geo_clustering::MinerCluster;
 use crate::miner_filter::MinerRegistration;
 use myl_types::seed_rng::deterministic_shuffle;
 
@@ -67,6 +66,37 @@ pub const RESERVE_JE_POD: usize = 2;
 /// Wie viele Mitglieder ein Pod mit `k` Shards hat.
 pub fn pod_groesse(num_shards: u32) -> usize {
     num_shards as usize + RESERVE_JE_POD
+}
+
+/// Ein Cluster von Minern, aus dem Pods gebildet werden.
+///
+/// # ⚑ Notiz zu dem, was hier stand (2026-09-01)
+///
+/// Bis zum 2026-09-01 lag dieser Typ in `geo_clustering.rs`, zusammen
+/// mit `LatencyMatrix` und `form_clusters`: Cluster aus einer
+/// **gemessenen** Latenzmatrix, nach Anhang A.2, Schritt 3.
+///
+/// **Die Entscheidung 3b hat diesen Weg verworfen.** Wer wählt, mit wem
+/// er attestiert, formt mit, in welchem Topf er gemischt wird, und
+/// erhöht damit seine Chance, **beide Seiten eines Redundanzpaars** zu
+/// besetzen; dann verglände Stufe 1 der Verifikation zwei Ergebnisse
+/// desselben Betreibers. Cluster entstehen seither je **Zone**, siehe
+/// [`crate::zonenzuteilung::zonen_cluster`].
+///
+/// ⚑ **Der verworfene Code blieb danach noch stehen und wurde weiter
+/// gerufen** (Fund 111): `myl_pod::zuteilung::plane_epoche` bildete
+/// damit eine zweite, abweichende Zuteilung. **Ein Grund in einem
+/// Entwurf hindert niemanden.** Deshalb ist er entfernt und nicht nur
+/// abgeraten.
+///
+/// `max_internal_latency` ist geblieben und steht auf null: Es wird
+/// nichts gemessen, und eine erfundene Zahl wäre schlimmer als keine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MinerCluster {
+    /// Miner in diesem Cluster.
+    pub miners: Vec<MinerRegistration>,
+    /// Höchste Latenz innerhalb des Clusters, in Millisekunden.
+    pub max_internal_latency: u32,
 }
 
 /// Eine Shard-Position innerhalb eines Pods.
@@ -223,6 +253,7 @@ mod tests {
             hardware_class: HardwareClass::MediumGpu,
             registration_epoch: 5,
             zone: myl_types::node_metadata::GeoRegion::Europe,
+            schluessel: myl_types::bls::BlsPublicKey([0; 48]),
         }
     }
 

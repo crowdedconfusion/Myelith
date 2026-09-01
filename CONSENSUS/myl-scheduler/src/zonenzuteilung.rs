@@ -2,8 +2,9 @@
 //!
 //! # ⚑ Zonen statt Latenzgraph (Entscheidung 3b, 2026-09-01)
 //!
-//! [`crate::geo_clustering::form_clusters`] bildet Cluster aus einer
-//! **gemessenen** Latenzmatrix. Die gehört nicht in den Konsens: Wer
+//! Bis zum 2026-09-01 bildete `geo_clustering::form_clusters` Cluster
+//! aus einer **gemessenen** Latenzmatrix. Die gehört nicht in den
+//! Konsens: Wer
 //! wählt, mit wem er attestiert, formt mit, in welchem Topf er gemischt
 //! wird, und erhöht damit seine Chance, **beide Seiten eines
 //! Redundanzpaars** zu besetzen. Dann verglände Stufe 1 der Verifikation
@@ -46,9 +47,8 @@ use myl_types::hash::Hash;
 use myl_types::miner::{HardwareClass, MinerRegistration};
 use myl_types::node_metadata::GeoRegion;
 
-use crate::geo_clustering::MinerCluster;
 use crate::miner_filter::filter_miners;
-use crate::shard_assignment::{assign_pods, Zuteilung};
+use crate::shard_assignment::{assign_pods, pod_groesse, MinerCluster, Zuteilung};
 use crate::vrf_seed::seed_alpha;
 
 /// Bildet je Zone ein Cluster.
@@ -60,18 +60,53 @@ use crate::vrf_seed::seed_alpha;
 ///
 /// `max_internal_latency` bleibt null: Es wird nichts gemessen, und eine
 /// erfundene Zahl wäre schlimmer als keine.
-pub fn zonen_cluster(miner: &[MinerRegistration]) -> Vec<MinerCluster> {
+///
+/// # ⚑ Fund 112: Eine dünne Zone schloss ihre Miner aus, und das lud zum Lügen ein
+///
+/// Ein Pod braucht `k + 2` Mitglieder. Bildete man je Zone genau ein
+/// Cluster, so trug eine Zone mit weniger Minern **keinen einzigen Pod**,
+/// und ihre Miner landeten in `ohne_pod`. Bei sieben Zonen und `k = 8`
+/// hieße das: **siebzig Miner, bevor jede Zone einen Pod trägt.**
+///
+/// ⚑ **Und der Schaden ist nicht nur der Ausschluss, sondern der
+/// Anreiz.** Wer allein in seiner Zone steht, verdient nichts, solange er
+/// die Wahrheit sagt, und alles, sobald er eine volle Zone angibt. **Das
+/// Verfahren drängte die Angabe zur Unwahrheit**, und zwar genau dort, wo
+/// sie die Vielfalt am meisten wert gewesen wäre.
+///
+/// Zonen unter `mindestbesetzung` kommen deshalb in **ein gemeinsames
+/// Sammelcluster**, in kanonischer Zonenreihenfolge. Niemand wird
+/// ausgeschlossen, und eine dünne Zone anzugeben kostet nichts mehr.
+///
+/// **Was das Sammelcluster nicht vortäuscht:** Seine Pods haben
+/// Mitglieder aus mehreren Zonen, also **keine** bestimmte Ausfallzone.
+/// Die Redundanzpaarung sieht das und behandelt sie entsprechend, statt
+/// ihnen ein Etikett zu geben, das nicht stimmt.
+pub fn zonen_cluster(miner: &[MinerRegistration], mindestbesetzung: usize) -> Vec<MinerCluster> {
     let mut nach_zone: BTreeMap<GeoRegion, Vec<MinerRegistration>> = BTreeMap::new();
     for m in miner {
         nach_zone.entry(m.zone).or_default().push(*m);
     }
-    nach_zone
-        .into_values()
-        .map(|miners| MinerCluster {
-            miners,
+
+    let mut cluster = Vec::new();
+    let mut sammel: Vec<MinerRegistration> = Vec::new();
+    for (_, miners) in nach_zone {
+        if miners.len() >= mindestbesetzung {
+            cluster.push(MinerCluster {
+                miners,
+                max_internal_latency: 0,
+            });
+        } else {
+            sammel.extend(miners);
+        }
+    }
+    if !sammel.is_empty() {
+        cluster.push(MinerCluster {
+            miners: sammel,
             max_internal_latency: 0,
-        })
-        .collect()
+        });
+    }
+    cluster
 }
 
 /// Der Seed einer Epoche, aus Blockhash und Epoche.
@@ -84,10 +119,39 @@ pub fn epochenseed(vorheriger_blockhash: &Hash, epoche: u64) -> [u8; 32] {
     Hash::sha256(&seed_alpha(vorheriger_blockhash, epoche)).0
 }
 
-/// Die Zuteilung einer Epoche, abgeleitet aus dem Register.
+/// Die Zuteilung einer Epoche aus einer fertigen Saat.
 ///
 /// Filtert nach Registrierungsschluss und Hardware-Klasse, bildet je
 /// Zone ein Cluster und teilt daraus Pods zu.
+///
+/// # ⚑ Fund 111: Es gab diese Regel zweimal
+///
+/// Bis zum 2026-09-01 stand in `myl_pod::zuteilung::plane_epoche` eine
+/// **zweite, eigenständige** Herleitung derselben Zuteilung, und sie
+/// stimmte in **keinem** der drei Schritte mit dieser überein: Sie
+/// clusterte nach **gemessener Latenz** statt nach Zone, nahm die
+/// **VRF-Saat** statt der Saat aus dem Blockhash und ließ nur die
+/// Klassen aus ihren Parametern zu statt aller.
+///
+/// **Zwei Herleitungen derselben Konsensgröße laufen auseinander**,
+/// dieselbe Lehre wie bei Fund 34. Die Regel steht deshalb nur noch
+/// hier, und `plane_epoche` ruft sie. **Was die beiden Wege
+/// unterscheidet, ist jetzt die Saat und sonst nichts**, und das ist die
+/// offene Entscheidung, nicht ein zweiter Algorithmus.
+pub fn zuteilung_aus_saat(
+    register: &[MinerRegistration],
+    epoche: u64,
+    saat: &[u8; 32],
+    shards_je_pod: u32,
+    zugelassen: &[HardwareClass],
+) -> Zuteilung {
+    let geeignet = filter_miners(register, epoche, zugelassen);
+    let cluster = zonen_cluster(&geeignet, pod_groesse(shards_je_pod));
+    assign_pods(&cluster, shards_je_pod, saat)
+}
+
+/// Die Zuteilung einer Epoche, abgeleitet aus dem Register, mit der Saat
+/// aus dem Blockhash. Das ist der Weg, den die Kette geht.
 ///
 /// **Alle Hardware-Klassen sind zugelassen**, solange es keine Regel
 /// gibt, die eine ausschließt. Eine leere Liste zugelassener Klassen
@@ -98,10 +162,13 @@ pub fn zuteilung_der_epoche(
     vorheriger_blockhash: &Hash,
     shards_je_pod: u32,
 ) -> Zuteilung {
-    let zugelassen = HardwareClass::all();
-    let geeignet = filter_miners(register, epoche, &zugelassen);
-    let cluster = zonen_cluster(&geeignet);
-    assign_pods(&cluster, shards_je_pod, &epochenseed(vorheriger_blockhash, epoche))
+    zuteilung_aus_saat(
+        register,
+        epoche,
+        &epochenseed(vorheriger_blockhash, epoche),
+        shards_je_pod,
+        &HardwareClass::all(),
+    )
 }
 
 /// Findet den Pod zu einer Bündel-Kennung.
@@ -137,6 +204,7 @@ mod tests {
             hardware_class: HardwareClass::MediumGpu,
             registration_epoch: ab,
             zone,
+            schluessel: myl_types::bls::BlsPublicKey([0; 48]),
         }
     }
 
@@ -153,7 +221,7 @@ mod tests {
             miner(3, GeoRegion::Europe, 0),
             miner(4, GeoRegion::NorthAmerica, 0),
         ];
-        let cluster = zonen_cluster(&register);
+        let cluster = zonen_cluster(&register, 1);
         assert_eq!(cluster.len(), 3);
         let gesamt: usize = cluster.iter().map(|c| c.miners.len()).sum();
         assert_eq!(gesamt, 4, "ein Miner ging verloren");
@@ -163,14 +231,14 @@ mod tests {
     /// zwei Knoten zu verschiedenen Pods.
     #[test]
     fn die_zonen_kommen_kanonisch() {
-        let a = zonen_cluster(&[
-            miner(1, GeoRegion::Asia, 0),
-            miner(2, GeoRegion::Europe, 0),
-        ]);
-        let b = zonen_cluster(&[
-            miner(2, GeoRegion::Europe, 0),
-            miner(1, GeoRegion::Asia, 0),
-        ]);
+        let a = zonen_cluster(
+            &[miner(1, GeoRegion::Asia, 0), miner(2, GeoRegion::Europe, 0)],
+            1,
+        );
+        let b = zonen_cluster(
+            &[miner(2, GeoRegion::Europe, 0), miner(1, GeoRegion::Asia, 0)],
+            1,
+        );
         let zonen_a: Vec<GeoRegion> = a.iter().map(|c| c.miners[0].zone).collect();
         let zonen_b: Vec<GeoRegion> = b.iter().map(|c| c.miners[0].zone).collect();
         assert_eq!(zonen_a, zonen_b, "die Reihenfolge haengt an der Eingabe");
@@ -179,8 +247,70 @@ mod tests {
     /// ⚑ **Es wird nichts gemessen, also steht dort auch keine Zahl.**
     #[test]
     fn keine_erfundene_latenz() {
-        let cluster = zonen_cluster(&[miner(1, GeoRegion::Europe, 0)]);
+        let cluster = zonen_cluster(&[miner(1, GeoRegion::Europe, 0)], 1);
         assert_eq!(cluster[0].max_internal_latency, 0);
+    }
+
+    /// ⚑ **Fund 112: Eine dünne Zone schließt ihre Miner nicht mehr
+    /// aus.**
+    ///
+    /// Vier Miner in Europa, je einer in Asien und Nordamerika, und ein
+    /// Pod braucht vier Mitglieder: Ohne das Sammelcluster trüge Europa
+    /// einen Pod und die beiden anderen nichts, obwohl sie zusammen
+    /// reichen.
+    #[test]
+    fn duenne_zonen_kommen_in_ein_sammelcluster() {
+        let register = vec![
+            miner(1, GeoRegion::Europe, 0),
+            miner(2, GeoRegion::Europe, 0),
+            miner(3, GeoRegion::Europe, 0),
+            miner(4, GeoRegion::Europe, 0),
+            miner(5, GeoRegion::Asia, 0),
+            miner(6, GeoRegion::NorthAmerica, 0),
+        ];
+        let cluster = zonen_cluster(&register, 4);
+        assert_eq!(cluster.len(), 2, "Europa und das Sammelcluster");
+        assert_eq!(cluster[0].miners.len(), 4);
+        assert_eq!(cluster[1].miners.len(), 2, "Asien und Nordamerika zusammen");
+        let gesamt: usize = cluster.iter().map(|c| c.miners.len()).sum();
+        assert_eq!(gesamt, 6, "ein Miner ging verloren");
+    }
+
+    /// Und das Sammelcluster steht am Ende, in kanonischer
+    /// Zonenreihenfolge seiner Mitglieder: Sonst hinge die Zuteilung an
+    /// der Eingabereihenfolge.
+    #[test]
+    fn das_sammelcluster_ist_kanonisch() {
+        let vorwaerts = vec![
+            miner(1, GeoRegion::Asia, 0),
+            miner(2, GeoRegion::Europe, 0),
+            miner(3, GeoRegion::NorthAmerica, 0),
+        ];
+        let mut rueckwaerts = vorwaerts.clone();
+        rueckwaerts.reverse();
+        let a = zonen_cluster(&vorwaerts, 4);
+        let b = zonen_cluster(&rueckwaerts, 4);
+        assert_eq!(a.len(), 1);
+        let ids_a: Vec<_> = a[0].miners.iter().map(|m| m.miner_id).collect();
+        let ids_b: Vec<_> = b[0].miners.iter().map(|m| m.miner_id).collect();
+        assert_eq!(ids_a, ids_b, "die Reihenfolge haengt an der Eingabe");
+    }
+
+    /// ⚑ **Über drei Zonen entstehen Pods, ohne dass eine Zone allein
+    /// die Mindestbesetzung trägt.**
+    ///
+    /// Zwölf Miner zu je vier in drei Zonen, `k = 4`, also sechs
+    /// Mitglieder je Pod: Keine Zone trägt einen Pod, das Sammelcluster
+    /// trägt zwei.
+    #[test]
+    fn drei_duenne_zonen_tragen_zusammen_zwei_pods() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let register: Vec<MinerRegistration> = (1..=12u8)
+            .map(|b| miner(b, zonen[(b as usize) % zonen.len()], 0))
+            .collect();
+        let z = zuteilung_der_epoche(&register, 5, &hash(1), 4);
+        assert_eq!(z.pods.len(), 2, "zwölf Miner tragen zwei Pods zu sechs");
+        assert!(z.ohne_pod.is_empty());
     }
 
     /// Dieselbe Eingabe ergibt dieselbe Zuteilung.

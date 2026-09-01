@@ -31,6 +31,12 @@ pub const PING_INTERVAL_SECS: u64 = 15;
 /// Eine untere Grenze gibt es nicht: In realen Netzen ist die RTT größer
 /// als null, in der CI kann eine Antwort schneller kommen als die Uhr
 /// auflöst, und ein Mindestwert würde dort jede Messung verwerfen.
+/// Wie lange ein unbeantworteter Ping vorgehalten wird.
+///
+/// Danach gilt der Pong als verloren und der Eintrag wird geräumt, damit
+/// verlorene Antworten den Speicher nicht anwachsen lassen.
+pub const PING_FRIST: Duration = Duration::from_secs(5);
+
 const MAX_RTT_US: u64 = 10_000_000;
 
 /// Ping-Nachricht: enthält einen Zeitstempel und eine Nonce.
@@ -259,15 +265,25 @@ impl LatencyTracker {
         &self.peer_latencies
     }
 
-    /// Entfernt veraltete Pending-Pings (Timeout nach 5 s).
+    /// Entfernt veraltete Pending-Pings (Frist [`PING_FRIST`]).
     ///
     /// Sollte regelmäßig aufgerufen werden (z. B. alle 10 s), um
     /// Speicherlecks durch verlorene Pong-Antworten zu vermeiden.
     pub fn cleanup_stale_pings(&mut self) {
-        let timeout = Duration::from_secs(5);
-        self.pending_pings.retain(|_, pending| {
-            pending.sent_at.elapsed() < timeout
-        });
+        self.cleanup_stale_pings_zu(Instant::now());
+    }
+
+    /// Wie [`Self::cleanup_stale_pings`], aber mit ausdrücklichem Jetzt.
+    ///
+    /// ⚑ **Nicht nur der Prüfung wegen.** Solange die Funktion die Uhr
+    /// selbst las, war ihre Grenze **gar nicht prüfbar**: Ein Test
+    /// konnte nur echte Zeit verstreichen lassen, und ein Test, der
+    /// sechs Sekunden schläft, prüft die Grenze trotzdem nicht, sondern
+    /// nur einen Punkt weit dahinter. Mit dem Jetzt als Argument sind
+    /// **beide Seiten der Frist** prüfbar, und es kostet keine Zeit.
+    pub fn cleanup_stale_pings_zu(&mut self, jetzt: Instant) {
+        self.pending_pings
+            .retain(|_, pending| jetzt.duration_since(pending.sent_at) < PING_FRIST);
     }
 
     /// Entfernt einen Peer aus dem Tracker (z. B. bei Disconnect).
@@ -416,19 +432,28 @@ mod tests {
         );
     }
 
+    /// ⚑ **Beide Seiten der Frist, und ohne zu warten.**
+    ///
+    /// ⛑ Hier stand ein Test, der **sechs Sekunden schlief**, um einen
+    /// Ping veralten zu lassen. Er kostete die ganze Suite sechs
+    /// Sekunden und prüfte die Grenze **nicht**: Er lag weit dahinter
+    /// und hätte auch eine Frist von einer Sekunde bestanden.
     #[test]
-    fn cleanup_removes_stale_pings() {
+    fn die_pingfrist_gilt_an_beiden_raendern() {
         let mut tracker = LatencyTracker::new();
         let peer = PeerId::random();
-
         let _ping = tracker.create_ping(peer);
         assert_eq!(tracker.pending_pings.len(), 1);
 
-        // Simuliere Zeitablauf (mehr als 5 s)
-        std::thread::sleep(Duration::from_secs(6));
+        let gesendet = tracker.pending_pings[&peer].sent_at;
 
-        tracker.cleanup_stale_pings();
-        assert_eq!(tracker.pending_pings.len(), 0);
+        // Genau auf der Frist ist noch nicht darüber.
+        tracker.cleanup_stale_pings_zu(gesendet + PING_FRIST - Duration::from_millis(1));
+        assert_eq!(tracker.pending_pings.len(), 1, "vor der Frist geräumt");
+
+        // Und einen Wimpernschlag danach ist er weg.
+        tracker.cleanup_stale_pings_zu(gesendet + PING_FRIST);
+        assert_eq!(tracker.pending_pings.len(), 0, "nach der Frist geblieben");
     }
 
     #[test]
