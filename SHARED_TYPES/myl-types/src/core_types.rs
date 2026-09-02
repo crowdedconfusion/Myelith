@@ -409,7 +409,7 @@ pub struct Spurantwort {
     ///   Eingabe aus dem Prompt folgt. Billig, deckt aber `1/k` ab.
     ///
     /// **Das ist eine Entscheidung des Projektinhabers und keine
-    /// Verdrahtung.** Sie steht als eigener Punkt im Fahrplan; bis dahin
+    /// Verdrahtung**, und sie ist als eigener Punkt offen; bis dahin
     /// bleibt das Feld im Typ, weil die Prüfung darauf aufbaut und das
     /// Bindungsgerüst darum herum vollständig und geprüft ist.
     pub eingabe: Vec<u8>,

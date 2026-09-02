@@ -1,0 +1,118 @@
+# Fuzz-Ziele fuer myl-types. Eigenes Crate, weil `libfuzzer-sys` eine
+# Nightly-Werkzeugkette braucht und die uebrigen neunzehn Crates auf
+# stable uebersetzen (Mindestfassung 1.85).
+#
+# ⚑ Die Ziele selbst stehen NICHT hier, sondern in
+# `../tests/fuzzziele/mod.rs`, und werden per `include!` eingebunden.
+# Der stabile Regressionslauf `../tests/fuzzkorpus.rs` bindet dieselbe
+# Datei als Modul ein. Zwei Fassungen desselben Ziels waeren zwei
+# Wahrheiten, und der Fuzzer faende dann etwas, das die Regression
+# hinterher nicht festhaelt.
+#
+# Aufruf (Nightly noetig):
+#   cargo +nightly fuzz run segment -- -max_total_time=60
+#   cargo +nightly fuzz list
+
+[package]
+name = "myl-types-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+borsh = { version = "1.6", features = ["derive"] }
+
+[dependencies.myl-types]
+path = ".."
+
+# Ein Fuzz-Ziel ohne Optimierung findet ein Zehntel der Pfade in
+# derselben Zeit. Ueberlaufpruefungen bleiben an, denn ein stiller
+# Ueberlauf ist genau das, wonach hier gesucht wird.
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "segment"
+path = "fuzz_targets/segment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "poi_buendel"
+path = "fuzz_targets/poi_buendel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "credit"
+path = "fuzz_targets/credit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "latenz_attest"
+path = "fuzz_targets/latenz_attest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anfechtung"
+path = "fuzz_targets/anfechtung.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "merkle_beweis"
+path = "fuzz_targets/merkle_beweis.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uebergang"
+path = "fuzz_targets/uebergang.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "miner_anmeldung"
+path = "fuzz_targets/miner_anmeldung.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "knoten_metadaten"
+path = "fuzz_targets/knoten_metadaten.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "spuranfrage"
+path = "fuzz_targets/spuranfrage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "spurantwort"
+path = "fuzz_targets/spurantwort.rs"
+test = false
+doc = false
+bench = false

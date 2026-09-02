@@ -251,14 +251,17 @@ CONSENSUS_PATH = [
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "adjudicate.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "slash.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "delivery.rs",
-    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "kontrollsegmente.rs",
-    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "unterscheider.rs",
-    # 2026-08-27 mit dem Messgeraet fuer die Ununterscheidbarkeit.
-    # Es misst Verteilungen und ist genau deshalb der Ort, an dem
-    # Gleitkomma am naechsten liegt: p-Werte, Abstaende, Anteile.
-    # Alles davon ist hier ein Bruch zweier Ganzzahlen, und die Datei
-    # steht in der Liste, damit das so bleibt.
-    ROOT / "VERIFICATION" / "myl-verifier" / "src" / "unterscheidbarkeit.rs",
+    # ⚑ Hier standen bis zum 2026-09-02 die drei Kontrollsegment-Module
+    # `kontrollsegmente.rs`, `unterscheider.rs` und
+    # `unterscheidbarkeit.rs`. Sie sind mit ihrem Gegenstand entfallen
+    # (Entscheidung A1). Das letzte war der Ort, an dem Gleitkomma am
+    # naechsten lag, denn es mass Verteilungen: p-Werte, Abstaende,
+    # Anteile, alles als Bruch zweier Ganzzahlen.
+    #
+    # **Die Vollstaendigkeitspruefung dieser Liste hat den Wegfall
+    # sofort gemeldet**, mit drei FEHLT-Zeilen, und genau dafuer ist sie
+    # da (Fund 84). Eine Liste, die geloeschte Dateien stillschweigend
+    # ueberginge, wuerde auch eine neu hinzugekommene uebergehen.
     ROOT / "COMPUTE_PIPELINE" / "myl-pod" / "src" / "standby.rs",
     # 2026-09-01, zusammen mit Punkt 3.4. Beide Dateien entscheiden,
     # **wer auf welcher Position sitzt**, und zwei Knoten mit

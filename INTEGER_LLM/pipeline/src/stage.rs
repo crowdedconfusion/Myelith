@@ -90,6 +90,30 @@ impl StageRuntime {
         self.expected_theta_u64
     }
 
+    /// Nimmt eine Sperre und macht aus einer **vergifteten** einen Fehler.
+    ///
+    /// ⚑ **Dieselbe Härtung wie in `myl-pod::shard`, aus demselben
+    /// Grund.** Ein `Mutex` merkt sich eine Panik unter der Sperre;
+    /// danach liefert jedes weitere `lock()` einen Fehler, und
+    /// `.unwrap()` darauf ist wieder eine Panik. Eine Stage bedient
+    /// viele Anfragen, der Ausfall einer hätte damit alle getötet.
+    ///
+    /// **Auslösbar ist das heute nicht:** Unter den drei Sperren läuft
+    /// nichts, was in Panik geht. Das ist eine Aussage über den jetzigen
+    /// Rumpf und nicht über den Vertrag.
+    ///
+    /// **Entgiftet wird nicht.** `into_inner` gäbe einen halb
+    /// geschriebenen KV-Cache heraus, und der Ausgabepfad muss bitgleich
+    /// sein; eine abgelehnte Nachricht ist das kleinere Übel.
+    fn sperre<'a, T>(
+        m: &'a std::sync::Mutex<T>,
+        was: &str,
+    ) -> Result<std::sync::MutexGuard<'a, T>, String> {
+        m.lock().map_err(|_| {
+            format!("Sperre {was} ist vergiftet: ein Thread ging beim Halten in Panik")
+        })
+    }
+
     /// Verarbeitet eine eingehende Nachricht und erzeugt Ausgaben.
     pub fn process_message(&self, blob: &[u8]) -> Result<StageOutput, String> {
         let (meta, tensor) = crate::codec::decode_message(blob)?;
@@ -97,7 +121,7 @@ impl StageRuntime {
         // 1. Duplikaterkennung (idempotente Retransmits).
         let key = meta.dedup_key();
         {
-            let mut keys = self.processed_keys.lock().unwrap();
+            let mut keys = Self::sperre(&self.processed_keys, "Dubletten")?;
             if keys.contains(&key) {
                 return Ok(StageOutput::empty());
             }
@@ -114,7 +138,7 @@ impl StageRuntime {
 
         // 3. Abort.
         if meta.is_abort() {
-            self.abort_request(meta.request_id);
+            self.abort_request(meta.request_id)?;
             return Ok(StageOutput::empty());
         }
 
@@ -140,7 +164,7 @@ impl StageRuntime {
         }
         let tokens = unpack_tokens(tensor)?;
         let base = meta.token_position as usize;
-        let mut cache = self.take_cache(meta.request_id);
+        let mut cache = self.take_cache(meta.request_id)?;
         let mut out = Vec::with_capacity(tokens.len() * self.model.hidden_size);
         for (i, tok) in tokens.iter().enumerate() {
             let pos = base + i;
@@ -154,7 +178,7 @@ impl StageRuntime {
             );
             out.extend_from_slice(&hidden);
         }
-        self.put_cache(meta.request_id, cache);
+        self.put_cache(meta.request_id, cache)?;
 
         let next_meta = MessageMeta {
             version: meta.version,
@@ -191,7 +215,7 @@ impl StageRuntime {
         }
         let count = tensor.len() / hs;
         let base = meta.token_position as usize;
-        let mut cache = self.take_cache(meta.request_id);
+        let mut cache = self.take_cache(meta.request_id)?;
         let mut last_hidden: Option<Vec<i16>> = None;
         let mut forwarded = Vec::new();
         for i in 0..count {
@@ -223,7 +247,7 @@ impl StageRuntime {
                 forwarded.extend_from_slice(&hidden);
             }
         }
-        self.put_cache(meta.request_id, cache);
+        self.put_cache(meta.request_id, cache)?;
 
         let mut output = StageOutput::empty();
 
@@ -254,7 +278,7 @@ impl StageRuntime {
             .push((meta.request_id, pos_last, token));
 
         // Generierungs-Buchhaltung und Feedback.
-        let mut gen = self.gen_state.lock().unwrap();
+        let mut gen = Self::sperre(&self.gen_state, "Generierungszustand")?;
         let entry = gen.entry(meta.request_id).or_insert((false, 0));
         if meta.starts_generation() && !entry.0 {
             entry.0 = true;
@@ -284,32 +308,35 @@ impl StageRuntime {
     }
 
     /// KV-Cache eines Requests entnehmen (oder anlegen).
-    fn take_cache(&self, request_id: u64) -> KVCache {
-        let mut caches = self.caches.lock().unwrap();
-        caches
-            .remove(&request_id)
-            .unwrap_or_else(|| {
-                KVCache::for_range(
-                    self.manifest.layer_start,
-                    self.manifest.layer_end,
-                    self.model.num_kv_heads,
-                )
-            })
+    /// ⚑ **Das Anlegen steht außerhalb der Sperre**, wie in
+    /// `myl-pod::shard`: `for_range` legt je Layer und Kopf eine Karte
+    /// an, und unter der Sperre warteten dabei alle anderen Anfragen
+    /// dieser Stage, ausgerechnet beim ersten Zugriff einer neuen.
+    fn take_cache(&self, request_id: u64) -> Result<KVCache, String> {
+        let vorhanden = Self::sperre(&self.caches, "KV-Cache")?.remove(&request_id);
+        Ok(vorhanden.unwrap_or_else(|| {
+            KVCache::for_range(
+                self.manifest.layer_start,
+                self.manifest.layer_end,
+                self.model.num_kv_heads,
+            )
+        }))
     }
 
-    fn put_cache(&self, request_id: u64, cache: KVCache) {
-        let mut caches = self.caches.lock().unwrap();
-        caches.insert(request_id, cache);
+    fn put_cache(&self, request_id: u64, cache: KVCache) -> Result<(), String> {
+        Self::sperre(&self.caches, "KV-Cache")?.insert(request_id, cache);
+        Ok(())
     }
 
     /// Markiert einen Request als abgebrochen.
-    pub fn abort_request(&self, request_id: u64) {
-        let mut gen = self.gen_state.lock().unwrap();
+    pub fn abort_request(&self, request_id: u64) -> Result<(), String> {
+        let mut gen = Self::sperre(&self.gen_state, "Generierungszustand")?;
         gen.remove(&request_id);
         println!(
             "[stage:{}] Request {} abgebrochen.",
             self.manifest.stage_id, request_id
         );
+        Ok(())
     }
 
     pub fn is_final_stage(&self) -> bool {

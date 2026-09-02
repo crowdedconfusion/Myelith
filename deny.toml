@@ -1,0 +1,127 @@
+# Abhaengigkeitspruefung fuer alle Crates dieses Repositoriums.
+#
+# Aufruf je Crate, weil es kein gemeinsames Workspace-Manifest gibt:
+#
+#   (cd <KOMPONENTE>/<crate> && cargo deny --config ../../deny.toml check)
+#
+# Die CI faehrt dieselbe Schleife ueber alle */*/Cargo.toml und leitet
+# die Liste aus dem Dateisystem ab, nicht aus einer getippten Aufzaehlung.
+# Ein neues Crate ist damit automatisch dabei.
+#
+# Warum es diese Datei gibt: Der Baum von myl-node umfasst 284 Crates,
+# und bis zum 2026-09-02 hat keines davon jemand gegen eine
+# Schwachstellenliste gehalten. Das ist die Art Luecke, die ein externer
+# Pruefer als Erstes anspricht, und sie kostet zwei Sekunden je Crate.
+
+[graph]
+# Was die Freigabe baut, siehe release.yml. Ohne diese Liste urteilt die
+# Pruefung ueber Abhaengigkeiten, die auf keinem Ziel gebaut werden, etwa
+# die UEFI- und Windows-Zweige.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = false
+
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Eine zurueckgezogene Fassung ist ein Fehlschlag, keine Warnung. Der
+# Grund ist derselbe wie ueberall hier: Eine Warnung, die niemand liest,
+# ist keine Pruefung.
+yanked = "deny"
+
+# ⚑ Unwartet gilt nur fuer das, woran dieses Projekt etwas aendern kann.
+#
+# `paste` (RUSTSEC-2024-0436) und `number_prefix` haengen beide
+# ausschliesslich transitiv im Baum: `paste` ueber
+# libp2p > if-watch > netlink-packet-core, `number_prefix` ueber
+# runtime > tokenizers > indicatif. Sie zu melden hiesse, bei jedem Lauf
+# etwas anzuzeigen, das niemand hier beheben kann, und nach der dritten
+# Wiederholung sieht man weg.
+#
+# **Fuer eine direkte Abhaengigkeit beisst die Pruefung weiter.** Genau
+# das ist die Grenze, die "workspace" zieht.
+unmaintained = "workspace"
+
+ignore = [
+    # ⚑ chacha20 0.10.1 ist zurueckgezogen und liegt trotzdem im Baum von
+    # myl-net, myl-node und myl-testclient.
+    #
+    # **Es ist nicht der Pfad, auf dem dieses Projekt verschluesselt.**
+    # Die eigene Sitzungsverschluesselung nimmt chacha20poly1305 0.10.1
+    # und darunter chacha20 **0.9.1**, und die ist nicht zurueckgezogen.
+    # Die 0.10.1 kommt allein ueber rand 0.10.2 in quinn-proto, also im
+    # Zufallszahlengenerator der QUIC-Schicht von libp2p.
+    #
+    # Aufgeloest ist das, sobald libp2p oder quinn nachziehen. Bis dahin
+    # steht die Ausnahme hier **einzeln und mit Grund**, damit ein
+    # zweiter zurueckgezogener Kandidat den Lauf bricht.
+    { crate = "chacha20@0.10.1", reason = "zurueckgezogen, nur ueber quinn-proto, nicht auf dem eigenen Kryptopfad; faellt mit dem naechsten libp2p" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    # Der eigene Code. PolyForm Shield steht nicht in der SPDX-Liste,
+    # deshalb die LicenseRef-Form: Sie ist die von SPDX vorgesehene
+    # Schreibweise fuer genau diesen Fall und ist maschinenlesbar,
+    # anders als der Klartext, der bis zum 2026-09-02 in 16 Manifesten
+    # stand und von jedem Werkzeug als "unlicensed" gelesen wurde.
+    "LicenseRef-PolyForm-Shield-1.0.0",
+
+    # Freizuegig, ohne Auflagen fuer ein Binaerprogramm.
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+
+    # ⚑ Schwaches Copyleft, ausdruecklich aufgenommen und nicht uebersehen.
+    # MPL-2.0 wirkt je Datei: Wer eine MPL-Datei aendert, gibt sie
+    # weiter; unveraendertes Einbinden in ein Binaerprogramm ist frei.
+    # Im Baum haengt daran attohttpc, ueber den Modellbezug.
+    "MPL-2.0",
+]
+
+[bans]
+# ⚑ Mehrfache Fassungen sind hier eine Warnung und kein Fehler, und das
+# ist eine Feststellung ueber libp2p: Ein Baum mit 284 Crates fuehrt
+# unvermeidlich zwei Staende derselben Bibliothek. Ein Fehler daraus
+# waere eine Pruefung, die immer rot ist, und die liest niemand.
+multiple-versions = "warn"
+
+# Eine Registry-Abhaengigkeit ohne Fassungsangabe ist nicht
+# reproduzierbar: Der naechste Bau nimmt, was gerade oben liegt.
+wildcards = "deny"
+
+# ⚑ Ausgenommen sind Pfadabhaengigkeiten, und der Grund ist eine Regel
+# dieses Projekts. Die neunzehn Crates verweisen ueber `path` aufeinander
+# und **ohne** Fassungsangabe. Eine dazuzuschreiben hiesse, dieselbe
+# Nummer an zwei Stellen zu fuehren, im Manifest des Abnehmers und im
+# Manifest des Lieferanten, und zwei Stellen mit derselben Zahl laufen
+# auseinander. Bei einem Pfad gibt es ausserdem nichts festzunageln: Es
+# ist genau ein Verzeichnis, und das liegt daneben.
+allow-wildcard-paths = true
+
+[sources]
+# Alles kommt aus der einen Registry. Eine Git-Abhaengigkeit waere ein
+# Stueck Code ohne Fassung und ohne Zurueckziehung, und in einem
+# Konsenspfad ist das keine Kleinigkeit.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

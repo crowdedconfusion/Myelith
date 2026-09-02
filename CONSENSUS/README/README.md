@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
 > **Version:** 0.35.0 (`myl-consensus` 0.24.0, `myl-scheduler` 0.9.0,
-> `myl-ledger` 0.13.0)
+> `myl-ledger` 0.14.0)
 > **Datum:** 2026-09-01
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,

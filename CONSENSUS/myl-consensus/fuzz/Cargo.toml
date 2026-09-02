@@ -1,0 +1,78 @@
+# Fuzz-Ziele fuer myl-consensus. Eigenes Crate, weil `libfuzzer-sys` eine
+# Nightly-Werkzeugkette braucht und die uebrigen Crates auf stable
+# uebersetzen (Mindestfassung 1.85).
+#
+# ⚑ Die Ziele selbst stehen NICHT hier, sondern in
+# `../tests/fuzzziele/mod.rs`, und werden per `include!` eingebunden.
+# Der stabile Regressionslauf `../tests/fuzzkorpus.rs` bindet dieselbe
+# Datei als Modul ein.
+#
+# Aufruf (Nightly noetig):
+#   cargo +nightly fuzz run block -- -max_total_time=60
+#   cargo +nightly fuzz list
+
+[package]
+name = "myl-consensus-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+borsh = { version = "1.6", features = ["derive"] }
+
+[dependencies.myl-consensus]
+path = ".."
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "block"
+path = "fuzz_targets/block.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transaktion"
+path = "fuzz_targets/transaktion.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anweisung"
+path = "fuzz_targets/anweisung.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "konsensnachricht"
+path = "fuzz_targets/konsensnachricht.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stimme"
+path = "fuzz_targets/stimme.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "polka"
+path = "fuzz_targets/polka.rs"
+test = false
+doc = false
+bench = false

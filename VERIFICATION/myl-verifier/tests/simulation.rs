@@ -16,11 +16,8 @@
 //! Hier wird sie gemessen.
 
 use myl_scheduler::redundancy::assign_redundant_pods;
-use myl_scheduler::sampling::sample_segments;
 use myl_scheduler::shard_assignment::{assign_shards, Pod};
-use myl_types::hash::Hash;
-use myl_types::ids::{EpochId, MinerId, SegmentId};
-use myl_verifier::{einschleusungsplan, KontrollsegmentVorrat, Kontrollsegment};
+use myl_types::ids::{EpochId, MinerId};
 
 /// SplitMix64, reproduzierbar.
 struct Rng(u64);
@@ -43,73 +40,34 @@ fn seed(n: u64) -> [u8; 32] {
     s
 }
 
-fn segment(n: u64) -> SegmentId {
-    let mut b = [0u8; 32];
-    b[..8].copy_from_slice(&n.to_le_bytes());
-    SegmentId::new(b)
-}
-
-// ---------------------------------------------------------------------
-// 4.2 (Teil 1): Die Kontrollsegment-Rate
-// ---------------------------------------------------------------------
-
-/// **Die Einschleusung hält γ ein**, über viele Ströme gemittelt.
-///
-/// Das ist die Voraussetzung dafür, dass „Entdeckungsrisiko γ" aus
-/// Kap. 6.7 überhaupt eine Aussage ist. Hält der Plan die Rate nicht ein,
-/// ist die Zahl im Papier eine Behauptung über etwas, das nicht
-/// stattfindet.
-#[test]
-fn die_einschleusung_haelt_die_rate_ein() {
-    for (gz, gn) in [(2u64, 100u64), (1, 100), (3, 100), (10, 100)] {
-        let mut gesamt = 0usize;
-        let mut auftraege = 0usize;
-        for lauf in 0..200u64 {
-            let n = 500;
-            let plan = einschleusungsplan(n, gz, gn, &seed(lauf)).expect("Plan");
-            gesamt += plan.len();
-            auftraege += n;
-            // Aufsteigend und ohne Doppelung.
-            let mut sortiert = plan.clone();
-            sortiert.sort_unstable();
-            sortiert.dedup();
-            assert_eq!(sortiert, plan, "Plan muss aufsteigend und doppelungsfrei sein");
-            assert!(plan.iter().all(|&i| i < n));
-        }
-        let ist_bp = (gesamt as f64 / auftraege as f64 * 10_000.0).round() as u64;
-        let soll_bp = gz * 10_000 / gn;
-        assert!(
-            ist_bp.abs_diff(soll_bp) <= 20,
-            "γ = {gz}/{gn}: gemessen {ist_bp} bp statt {soll_bp} bp"
-        );
-    }
-}
-
-/// **Die Einschleusung ist ohne den Seed nicht vorhersehbar.**
-///
-/// Zwei Seeds müssen zu deutlich verschiedenen Plänen führen. Wäre der
-/// Plan seedunabhängig, kennte ihn jeder Miner, und der ganze Mechanismus
-/// wäre wirkungslos.
-#[test]
-fn ohne_den_seed_ist_der_plan_nicht_vorhersehbar() {
-    let n = 1_000;
-    let a = einschleusungsplan(n, 2, 100, &seed(1)).unwrap();
-    let b = einschleusungsplan(n, 2, 100, &seed(2)).unwrap();
-    let gemeinsam = a.iter().filter(|i| b.contains(i)).count();
-    // Bei 20 aus 1000 wären zufällig ~0,4 gemeinsam; alles unter der
-    // Hälfte ist deutlich verschieden.
-    assert!(
-        gemeinsam * 2 < a.len(),
-        "zwei Seeds ergaben {gemeinsam} von {} gemeinsamen Positionen",
-        a.len()
-    );
-    // Und derselbe Seed ergibt denselben Plan — sonst wäre nichts prüfbar.
-    assert_eq!(a, einschleusungsplan(n, 2, 100, &seed(1)).unwrap());
-}
-
 // ---------------------------------------------------------------------
 // 4.1: Kollusionswahrscheinlichkeit gegen Anhang B.2
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// ⚑ Hier standen sechs Tests zu den Kontrollsegmenten
+// ---------------------------------------------------------------------
+//
+// Sie prueften die Einschleusungsrate gegen gamma, die
+// Unvorhersehbarkeit des Plans ohne Seed, die **Unabhaengigkeit** von
+// Stichprobe und Einschleusung (Kap. 6.8 rechnet multiplikativ, und das
+// gilt nur, wenn beide nicht aus demselben Seed stammen), die
+// Gegenprobe dazu, den einmaligen Eingriff und die Vorratserneuerung.
+//
+// **Sie sind mit ihrem Gegenstand entfallen** (Entscheidung A1,
+// 2026-09-02): Die Kontrollsegmente wurden abgeschafft, gamma ist in die
+// Stichprobenrate aufgegangen.
+//
+// ⚑ **Was damit auch entfaellt, ist eine Annahme, die nie leicht war:**
+// Kap. 6.8 multipliziert `(1-p)` und `(1-gamma)` und setzt dafuer
+// Unabhaengigkeit voraus. Mit nur noch einer Ziehung gibt es nichts
+// mehr, was korreliert sein koennte. **Eine Voraussetzung, die
+// wegfaellt, ist besser als eine, die geprueft wird.**
+//
+// Die Rechnung, die an ihre Stelle tritt, steht in `security_sim.py`,
+// Abschnitte 7 und 8: Wie hoch die Stichprobenrate sein muss, damit sie
+// beide Stufen gleichwertig ersetzt, und warum der naive Ansatz
+// `p + gamma - p*gamma` dabei 20 % zu wenig prueft (Fund 138).
 
 /// Baut `anzahl` Pods aus je `k` Shards mit je einem Miner.
 fn pods_bauen(anzahl: u32, k: usize, s: &[u8; 32]) -> Vec<Pod> {
@@ -243,191 +201,13 @@ fn kollusionsrate_gegen_anhang_b2() {
 // 4.2: Soundness gegen Kap. 6.8
 // ---------------------------------------------------------------------
 
-/// **Kap. 6.8 behauptet Unabhängigkeit der drei Ereignisse.**
-///
-/// > „Ein falsches Segment überlebt die Streitfrist nur, wenn beide
-/// > redundanten Pods identisch falsch rechnen, es nicht in der
-/// > Stichprobe landet (P = 1−p) und kein Kontrollsegment trifft
-/// > (P = 1−γ). **Die Ereignisse sind unabhängig, das Gesamtrisiko
-/// > multiplikativ.**"
-///
-/// Unabhängigkeit ist eine Aussage über die Implementierung, nicht über
-/// die Formel. Stichprobe und Kontrollsegment werden beide aus einem Seed
-/// gezogen; **liefen sie aus demselben Seed, wären sie korreliert**, und
-/// das Produkt wäre falsch.
-///
-/// Gemessen wird die gemeinsame Überlebensrate gegen das Produkt der
-/// Einzelraten.
-#[test]
-fn soundness_die_ereignisse_sind_unabhaengig() {
-    let n = 2_000usize;
-    let p_bp = 200u32; // 2 % Stichprobe
-    let (gz, gn) = (2u64, 100u64); // 2 % Kontrollsegmente
 
-    let mut ueberlebt = 0usize;
-    let mut nur_stichprobe = 0usize;
-    let mut nur_kontrolle = 0usize;
-    let mut gesamt = 0usize;
-
-    for lauf in 0..100u64 {
-        // **Verschiedene Seeds**, wie im Betrieb: Die Stichproben-Lotterie
-        // läuft über den Epochenseed des Konsenses, die Einschleusung über
-        // den Gateway-Seed.
-        let stichprobe = sample_segments(n as u32, p_bp, &seed(lauf));
-        let gezogen: std::collections::BTreeSet<u32> =
-            stichprobe.sampled_segments.iter().copied().collect();
-        let plan: std::collections::BTreeSet<usize> =
-            einschleusungsplan(n, gz, gn, &seed(lauf + 1_000_000))
-                .unwrap()
-                .into_iter()
-                .collect();
-
-        for i in 0..n {
-            let in_stichprobe = gezogen.contains(&(i as u32));
-            let ist_kontrolle = plan.contains(&i);
-            if !in_stichprobe {
-                nur_stichprobe += 1;
-            }
-            if !ist_kontrolle {
-                nur_kontrolle += 1;
-            }
-            if !in_stichprobe && !ist_kontrolle {
-                ueberlebt += 1;
-            }
-            gesamt += 1;
-        }
-    }
-
-    let p_ueberleben = ueberlebt as f64 / gesamt as f64;
-    let p_produkt =
-        (nur_stichprobe as f64 / gesamt as f64) * (nur_kontrolle as f64 / gesamt as f64);
-    eprintln!(
-        "  gemeinsam {p_ueberleben:.5}, Produkt der Einzelraten {p_produkt:.5}, \
-         Abweichung {:.2} %",
-        (p_ueberleben - p_produkt).abs() / p_produkt * 100.0
-    );
-
-    // Unabhängig heißt: Die gemeinsame Rate ist das Produkt, bis auf die
-    // Stichprobenschwankung.
-    assert!(
-        (p_ueberleben - p_produkt).abs() / p_produkt < 0.02,
-        "gemeinsame Überlebensrate {p_ueberleben:.5} weicht mehr als 2 % vom Produkt \
-         {p_produkt:.5} ab; die Ereignisse sind dann nicht unabhängig, und das \
-         multiplikative Risiko aus Kap. 6.8 gilt nicht"
-    );
-}
-
-/// **Die Gegenprobe: Aus demselben Seed sind sie es nicht.**
-///
-/// Der Test hält fest, **warum** verschiedene Seeds eine Bedingung sind
-/// und nicht eine Bequemlichkeit. Liefen Stichprobe und Einschleusung aus
-/// demselben Seed, wären die gezogenen Mengen korreliert, und das Produkt
-/// aus Kap. 6.8 wäre eine zu optimistische Schranke.
-#[test]
-fn aus_demselben_seed_waeren_sie_korreliert() {
-    let n = 2_000usize;
-    let mut ueberlebt = 0usize;
-    let mut nur_a = 0usize;
-    let mut nur_b = 0usize;
-    let mut gesamt = 0usize;
-
-    for lauf in 0..100u64 {
-        let s = seed(lauf);
-        // **Derselbe Seed für beide** — genau das, was nicht passieren darf.
-        let stichprobe = sample_segments(n as u32, 200, &s);
-        let gezogen: std::collections::BTreeSet<u32> =
-            stichprobe.sampled_segments.iter().copied().collect();
-        let plan: std::collections::BTreeSet<usize> =
-            einschleusungsplan(n, 2, 100, &s).unwrap().into_iter().collect();
-
-        for i in 0..n {
-            let a = !gezogen.contains(&(i as u32));
-            let b = !plan.contains(&i);
-            if a {
-                nur_a += 1;
-            }
-            if b {
-                nur_b += 1;
-            }
-            if a && b {
-                ueberlebt += 1;
-            }
-            gesamt += 1;
-        }
-    }
-    let p_gemeinsam = ueberlebt as f64 / gesamt as f64;
-    let p_produkt = (nur_a as f64 / gesamt as f64) * (nur_b as f64 / gesamt as f64);
-    let abweichung = (p_gemeinsam - p_produkt).abs() / p_produkt * 100.0;
-    eprintln!("  gleicher Seed: gemeinsam {p_gemeinsam:.5}, Produkt {p_produkt:.5}, Abweichung {abweichung:.2} %");
-    // Kein harter Assert auf Korrelation: Die beiden Verfahren ziehen
-    // verschieden (Lotterie gegen Sortierschlüssel), also muss ein
-    // gemeinsamer Seed nicht zwangsläufig korrelieren. Der Test hält die
-    // Messung fest; die **Betriebsbedingung** verschiedener Seiten steht
-    // in der Moduldoku von `kontrollsegmente`.
-}
 
 // ---------------------------------------------------------------------
 // Der Vorrat
 // ---------------------------------------------------------------------
 
-/// **Gegenprobe: Ein Kontrollsegment fängt den einmaligen Eingriff.**
-///
-/// Das ist die Aussage, für die es den Mechanismus gibt. Ohne diesen Test
-/// wäre alles darüber Buchhaltung.
-#[test]
-fn ein_kontrollsegment_faengt_den_einmaligen_eingriff() {
-    let mut vorrat = KontrollsegmentVorrat::neu(100);
-    let soll = Hash::sha256(b"das richtige Ergebnis");
-    vorrat.aufnehmen(Kontrollsegment {
-        segment_id: segment(1),
-        soll_commitment: soll,
-        aufgenommen_in: EpochId(1),
-    });
 
-    // Der ehrliche Pod besteht.
-    assert_eq!(
-        vorrat.pruefen(&segment(1), &soll),
-        myl_verifier::Kontrollergebnis::Bestanden
-    );
-
-    // Der manipulierte fällt durch, **beim ersten Versuch** und ohne
-    // Bisektion: Das richtige Ergebnis lag bereits vor.
-    let gefaelscht = Hash::sha256(b"manipuliert");
-    assert!(matches!(
-        vorrat.pruefen(&segment(1), &gefaelscht),
-        myl_verifier::Kontrollergebnis::Abgewichen { .. }
-    ));
-
-    // Und ein Segment, das keine Kontrolle ist, wird **nicht beurteilt**.
-    // Ein Vorgabewert „bestanden" wäre Fund 41 an anderer Stelle.
-    assert_eq!(
-        vorrat.pruefen(&segment(99), &gefaelscht),
-        myl_verifier::Kontrollergebnis::KeineKontrolle
-    );
-}
-
-/// **Die Erneuerung hält den Vorrat begrenzt und verdrängt deterministisch.**
-#[test]
-fn die_erneuerung_verdraengt_die_aeltesten() {
-    let mut vorrat = KontrollsegmentVorrat::neu(10);
-    for i in 0..50u64 {
-        vorrat.erneuern(segment(i), Hash::sha256(&i.to_le_bytes()), EpochId(i));
-    }
-    assert_eq!(vorrat.len(), 10);
-    // Die zehn jüngsten sind übrig.
-    for k in vorrat.segmente() {
-        assert!(k.aufgenommen_in.0 >= 40, "zu altes Segment im Vorrat");
-    }
-
-    // Deterministisch: derselbe Ablauf ergibt denselben Vorrat.
-    let mut zweiter = KontrollsegmentVorrat::neu(10);
-    for i in 0..50u64 {
-        zweiter.erneuern(segment(i), Hash::sha256(&i.to_le_bytes()), EpochId(i));
-    }
-    let a: Vec<_> = vorrat.segmente().cloned().collect();
-    let b: Vec<_> = zweiter.segmente().cloned().collect();
-    assert_eq!(a, b);
-}
 
 // ---------------------------------------------------------------------
 // 4.3: Liveness der Standby-Übernahme gegen Kap. 6.8

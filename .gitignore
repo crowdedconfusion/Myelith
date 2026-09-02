@@ -37,3 +37,14 @@ __pycache__/
 # keinen Einfluss. Wer den Schlüssel hat, kann im Netz als dieser
 # Knoten auftreten.
 *.key
+
+# Fuzzing (cargo-fuzz, seit 2026-09-02). Eingecheckt wird der **Korpus**
+# und werden die **Reproduzierer**: Sie sind das Ergebnis des Fuzzens und
+# die Grundlage des stabilen Regressionslaufs. Alles andere ist
+# Bauausgabe.
+#
+# ⚑ Der Korpus wird vor dem Einchecken mit `cargo +nightly fuzz cmin
+# <ziel>` verkleinert. Ohne das waechst er ins Sechsstellige, und ein
+# Korpus, den niemand mehr klont, ist keiner.
+*/*/fuzz/target/
+*/*/fuzz/coverage/

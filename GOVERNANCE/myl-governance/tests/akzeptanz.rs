@@ -69,7 +69,9 @@ fn jeder_parameter_hat_einen_wert() {
     for p in Parameter::alle() {
         let _ = reg.wert(p); // paniert, falls er fehlt
     }
-    assert_eq!(Parameter::alle().len(), 33);
+    // ⚑ Dreissig seit dem 2026-09-02: Die drei Kontrollsegment-Parameter
+    // sind mit ihrem Gegenstand entfallen (Entscheidung A1).
+    assert_eq!(Parameter::alle().len(), 30);
 }
 
 // ---------------------------------------------------------------------
@@ -156,7 +158,14 @@ fn eine_andere_art_wird_abgelehnt() {
 fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
     let reg = ParameterRegistry::vorgabe();
 
-    // Weg 1: Prüfrate von 2 % auf 1 % senken. S_min vervierfacht sich.
+    // Weg 1: Pruefrate von 5 % auf 1 % senken. S_min steigt um das
+    // Fuenfundzwanzigfache.
+    //
+    // ⚑ Die Rate steht seit dem 2026-09-02 auf 5 % statt 2 %, weil
+    // gamma in sie aufgegangen ist. **Das senkt S_min = g/p^2 um den
+    // Faktor 6,25**, von 1 250 auf 200 MYL. Der Vorgabewert des
+    // Mindeststakes ist damit deutlich ueber der Schranke; das ist
+    // sicher und gehoert bei der Parameter-Kalibrierung angesehen.
     let f = pruefe_vorschlag(&reg, &vorschlag(Parameter::Stichprobenrate, bruch(1, 100)));
     match f {
         Err(VorschlagFehler::Invariante(b)) => {
@@ -165,30 +174,82 @@ fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
         andere => panic!("erwartet war eine S_min-Verletzung, bekommen: {andere:?}"),
     }
 
-    // Weg 2: den Betrugsgewinn verdoppeln, ohne den Stake anzuheben.
+    // Weg 2: den Betrugsgewinn heben, ohne den Stake anzuheben.
+    //
+    // ⚑ **Verdoppeln genuegt seit dem 2026-09-02 nicht mehr.** Bei
+    // p = 5 % ist `S_min = g/p^2 = 400 g`; mit g = 1 MYL waeren das
+    // 400 MYL und damit unter dem Vorgabestake von 1 250. Erst ueber
+    // `1250/400 = 3,125 MYL` bricht die Schranke. Genommen wird 4 MYL,
+    // das ergibt S_min = 1 600.
     let f = pruefe_vorschlag(
         &reg,
-        &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(UNITS_PER_MYL)),
+        &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(4 * UNITS_PER_MYL)),
     );
     assert!(matches!(f, Err(VorschlagFehler::Invariante(_))));
 
-    // Weg 3: den Stake um einen Kleinstbetrag senken.
+    // Und die Gegenprobe: knapp darunter geht durch, sonst prueft der
+    // Test nur, dass irgendein grosser Wert abgelehnt wird.
+    assert!(
+        pruefe_vorschlag(
+            &reg,
+            &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(3 * UNITS_PER_MYL)),
+        )
+        .is_ok(),
+        "g = 3 MYL ergibt S_min = 1 200 und liegt damit unter dem Stake"
+    );
+
+    // Weg 3: den Stake unter S_min senken.
+    //
+    // ⚑ **Seit dem 2026-09-02 ist das nicht mehr ein Kleinstbetrag.**
+    // Die Stichprobenrate steht auf 5 % statt 2 %, und `S_min = g/p^2`
+    // faellt damit von 1 250 auf **200 MYL**. Der Vorgabewert des
+    // Mindeststakes ist unveraendert 1 250 geblieben, liegt also **um
+    // den Faktor 6,25 ueber der Schranke**.
+    //
+    // **Das ist die sichere Richtung und trotzdem ein offener Punkt:**
+    // Ein Mindeststake weit ueber der Anforderung haelt Teilnehmer
+    // fern, ohne dafuer Sicherheit zu kaufen. Ob er mitfaellt, ist eine
+    // wirtschaftliche Entscheidung und gehoert zur
+    // Parameter-Kalibrierung, nicht zu dieser Aenderung.
     let jetzt = reg
         .wert(Parameter::MindestStake)
         .als_ganzzahl()
         .expect("Ganzzahl");
-    let f = pruefe_vorschlag(
-        &reg,
-        &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(jetzt - 1)),
-    );
-    assert!(matches!(f, Err(VorschlagFehler::Invariante(_))));
+    let g = reg
+        .wert(Parameter::Betrugsgewinn)
+        .als_ganzzahl()
+        .expect("Ganzzahl");
+    let (pz, pn) = reg
+        .wert(Parameter::Stichprobenrate)
+        .als_bruch()
+        .expect("Bruch");
+    // S_min = g/p^2 = g * n^2 / z^2, ganzzahlig aufgerundet.
+    let s_min = (g as u128 * pn as u128 * pn as u128).div_ceil(pz as u128 * pz as u128) as u64;
 
-    // Die Gegenprobe an der Schranke: genau S_min ist zulässig.
+    assert!(
+        jetzt > s_min,
+        "der Vorgabestake {jetzt} muss ueber S_min {s_min} liegen"
+    );
+    assert_eq!(
+        jetzt / s_min,
+        6,
+        "der Abstand ist der Faktor 6,25; wer ihn aendert, sieht es hier"
+    );
+
+    // Genau S_min ist zulaessig, einer darunter nicht. Das ist die
+    // Schranke selbst, unabhaengig davon, wo der Vorgabewert steht.
+    assert!(
+        pruefe_vorschlag(&reg, &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(s_min))).is_ok(),
+        "genau S_min muss zulaessig sein"
+    );
     let f = pruefe_vorschlag(
         &reg,
-        &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(jetzt)),
+        &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(s_min - 1)),
     );
-    assert!(f.is_ok(), "genau S_min muss zulässig sein");
+    assert!(
+        matches!(f, Err(VorschlagFehler::Invariante(_))),
+        "einer unter S_min darf nicht durchgehen"
+    );
 }
 
 /// **„… oder die Self-Dealing-Invariante verletzt."**
@@ -294,7 +355,6 @@ fn die_strukturellen_schranken_greifen() {
     let reg = ParameterRegistry::vorgabe();
     let faelle: Vec<(Parameter, Wert, Invariante)> = vec![
         (Parameter::Stichprobenrate, bruch(1, 0), Invariante::NennerNichtNull),
-        (Parameter::Kontrollsegmentanteil, bruch(2, 1), Invariante::RateInEinheitsintervall),
         (Parameter::Auslastungsziel, bruch(11, 10), Invariante::RateInEinheitsintervall),
         (Parameter::Redundanzfaktor, Wert::Ganzzahl(1), Invariante::RedundanzMindestensZwei),
         (Parameter::Komiteegroesse, Wert::Ganzzahl(3), Invariante::KomiteeGrossGenug),
@@ -422,140 +482,27 @@ fn kein_angenommener_vorschlag_verletzt_je_eine_invariante() {
 }
 
 // ---------------------------------------------------------------------
-// ⚑ Fund 58: der Kontrollsegment-Vorrat
+// ⚑ Hier standen drei Tests zu Fund 58: der Kontrollsegment-Vorrat
 // ---------------------------------------------------------------------
+//
+// Sie prüften, dass ein Vorrat unter der Schranke abgelehnt wird, dass
+// die Schranke genau dort liegt, wo die Rechnung sie erwartet, und dass
+// der gefährlichste Zug auffliegt: γ heben, ohne den Vorrat mitzuziehen.
+// Der sah aus, als schärfe er die Kontrolle, und schaltete sie ab.
+//
+// **Sie sind mit ihrem Gegenstand entfallen** (Entscheidung A1,
+// 2026-09-02): Die Kontrollsegmente wurden abgeschafft, weil ihre
+// Einschleusung einen Einspeiser braucht, den es nicht geben kann, und
+// weil die Stichprobe dieselbe Aufgabe ohne Vorrat löst. γ ist in die
+// Stichprobenrate aufgegangen, hochgerechnet auf 5 %.
+//
+// ⚑ **Was hier nicht mit entfällt, ist die Bauart, die diese drei Tests
+// vorgeführt haben:** Eine Invariante, die zwei Parameter koppelt, fängt
+// den Zug, der einen davon allein bewegt. Dieselbe Bauart prüft
+// `die_trainingsrate_liegt_nie_unter_der_inferenzrate` weiter oben, und
+// die Ablehnungsmeldung dazu steht in `examples/schranke_meldung.rs`.
 
-/// **Ein Vorrat unter der Schranke wird abgelehnt.**
-///
-/// Er hebt die Kontrollsegmente nicht ab, sondern **um**: Ein Miner mit
-/// Gedächtnis erkennt die Kontrollen sicher, rechnet genau die ehrlich
-/// und manipuliert den Rest. Gemessen bei γ = 2 % über 100 000
-/// Aufträge: Vorrat 64 → 96,8 % erkannt, null Fehlalarme.
-#[test]
-fn ein_zu_kleiner_kontrollsegmentvorrat_wird_abgelehnt() {
-    let reg = ParameterRegistry::vorgabe();
-    match pruefe_vorschlag(
-        &reg,
-        &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(64)),
-    ) {
-        Err(VorschlagFehler::Invariante(b)) => {
-            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung);
-            assert_eq!(b.parameter, Parameter::Kontrollsegmentvorrat);
-        }
-        andere => panic!("ein Vorrat von 64 muss scheitern, bekommen: {andere:?}"),
-    }
-}
 
-/// **Genau auf der Schranke ist er zulässig, einer darunter nicht.**
-///
-/// Die Gegenprobe zur Ablehnung: Eine Prüfung, die jeden kleineren Wert
-/// ablehnt, könnte auch alles ablehnen. Der Sprung genau an der
-/// gerechneten Stelle zeigt, dass sie die Schranke prüft und nicht
-/// irgendeine.
-#[test]
-fn die_schranke_liegt_genau_dort_wo_die_rechnung_sie_erwartet() {
-    let reg = ParameterRegistry::vorgabe();
-    let fenster = reg
-        .wert(Parameter::Kontrollsegmentfenster)
-        .als_ganzzahl()
-        .expect("Ganzzahl");
-    let (gz, gn) = reg
-        .wert(Parameter::Kontrollsegmentanteil)
-        .als_bruch()
-        .expect("Bruch");
-    let noetig = myl_verifier::noetiger_vorrat(fenster, gz, gn);
-
-    assert!(
-        pruefe_vorschlag(
-            &reg,
-            &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(noetig))
-        )
-        .is_ok(),
-        "genau der nötige Vorrat {noetig} muss zulässig sein"
-    );
-    assert!(
-        matches!(
-            pruefe_vorschlag(
-                &reg,
-                &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(noetig - 1))
-            ),
-            Err(VorschlagFehler::Invariante(_))
-        ),
-        "einer weniger als {noetig} darf nicht durchgehen"
-    );
-}
-
-/// **⚑ Der Zug, gegen den diese Invariante gebaut ist: γ heben, ohne
-/// den Vorrat mitzuziehen.**
-///
-/// Er sieht aus, als schärfe er die Kontrolle, und schaltet sie ab. Bei
-/// γ = 2 % trägt der Vorgabevorrat das Fenster; bei γ = 4 % bräuchte es
-/// den doppelten. Ohne diese Prüfung wäre der Vorschlag zulässig, und
-/// das Ergebnis wäre eine Stichprobenprüfung, die jeder Miner erkennt.
-#[test]
-fn gamma_erhoehen_ohne_den_vorrat_mitzuziehen_wird_abgelehnt() {
-    let reg = ParameterRegistry::vorgabe();
-    match pruefe_vorschlag(&reg, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(4, 100))) {
-        Err(VorschlagFehler::Invariante(b)) => {
-            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung)
-        }
-        andere => panic!("gamma = 4 % ohne größeren Vorrat muss scheitern, bekommen: {andere:?}"),
-    }
-
-    // **Und mit mitgezogenem Vorrat geht derselbe Zug durch.** Ohne
-    // diese Hälfte prüfte der Test nur, dass irgendetwas abgelehnt wird.
-    let groesser = pruefe_vorschlag(
-        &reg,
-        &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(4_096)),
-    )
-    .expect("ein größerer Vorrat ist zulässig");
-    assert!(
-        pruefe_vorschlag(&groesser, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(4, 100)))
-            .is_ok(),
-        "mit verdoppeltem Vorrat muss gamma = 4 % zulässig sein"
-    );
-}
-
-/// **Ein größeres Fenster verlangt einen größeren Vorrat.**
-///
-/// Das Fenster ist die Annahme über das Gedächtnis des Angreifers. Wer
-/// sie anhebt, ohne den Vorrat mitzuziehen, verschiebt die Schranke
-/// unter den geltenden Wert — derselbe Zug wie bei γ, nur an der
-/// anderen Größe.
-#[test]
-fn ein_groesseres_fenster_ohne_groesseren_vorrat_wird_abgelehnt() {
-    let reg = ParameterRegistry::vorgabe();
-    match pruefe_vorschlag(
-        &reg,
-        &vorschlag(Parameter::Kontrollsegmentfenster, Wert::Ganzzahl(1_000_000)),
-    ) {
-        Err(VorschlagFehler::Invariante(b)) => {
-            assert_eq!(b.invariante, Invariante::VorratTraegtEinschleusung)
-        }
-        andere => panic!("ein zehnfaches Fenster muss scheitern, bekommen: {andere:?}"),
-    }
-}
-
-/// **Ohne Einschleusung greift die Schranke nicht.**
-///
-/// Bei γ = 0 wird nichts eingeschleust, also wiederholt sich nichts.
-/// Eine Invariante, die auch dann einen Vorrat verlangte, verböte einen
-/// zulässigen Zustand — und eine Schranke, die mehr verbietet als ihre
-/// Begründung trägt, ist eine heimliche Festlegung.
-#[test]
-fn ohne_einschleusung_verlangt_die_schranke_keinen_vorrat() {
-    let reg = ParameterRegistry::vorgabe();
-    let ohne_gamma = pruefe_vorschlag(&reg, &vorschlag(Parameter::Kontrollsegmentanteil, bruch(0, 100)))
-        .expect("gamma = 0 ist zulässig");
-    assert!(
-        pruefe_vorschlag(
-            &ohne_gamma,
-            &vorschlag(Parameter::Kontrollsegmentvorrat, Wert::Ganzzahl(0))
-        )
-        .is_ok(),
-        "ohne Einschleusung darf der Vorrat leer sein"
-    );
-}
 
 // ---------------------------------------------------------------------
 // Die Invarianten aus den Entscheidungen vom 2026-08-24
@@ -610,10 +557,11 @@ fn eine_trainingsrate_unter_der_inferenzrate_wird_abgelehnt() {
         Err(VorschlagFehler::Invariante(b)) => {
             assert_eq!(b.invariante, Invariante::TrainingsrateNichtUnterInferenzrate)
         }
-        andere => panic!("1 % unter 2 % muss scheitern, bekommen: {andere:?}"),
+        andere => panic!("1 % unter 5 % muss scheitern, bekommen: {andere:?}"),
     }
-    // Gleichstand ist zulässig, darüber erst recht.
-    assert!(pruefe_vorschlag(&reg, &vorschlag(Parameter::TrainingsStichprobenrate, bruch(2, 100))).is_ok());
+    // Gleichstand ist zulässig, darüber erst recht. ⚑ Die Inferenzrate
+    // steht seit dem 2026-09-02 auf 5 %, nicht mehr auf 2 %.
+    assert!(pruefe_vorschlag(&reg, &vorschlag(Parameter::TrainingsStichprobenrate, bruch(5, 100))).is_ok());
     assert!(pruefe_vorschlag(&reg, &vorschlag(Parameter::TrainingsStichprobenrate, bruch(50, 100))).is_ok());
 
     // Und andersherum: Wer die Inferenzrate über die Trainingsrate hebt,

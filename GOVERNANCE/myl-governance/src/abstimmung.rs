@@ -129,14 +129,14 @@ pub fn gewicht(
 /// die Registry-Werte mit den Vorgaben aus `myl-consensus` zusammen.
 pub fn stimmgewichts_parameter(reg: &ParameterRegistry) -> StimmgewichtsParameter {
     StimmgewichtsParameter {
-        arbeitsbezug: reg
-            .wert(Parameter::Arbeitsbezug)
+        schwelle_zaehler: reg
+            .wert(Parameter::ArbeitsschwelleZaehler)
             .als_ganzzahl()
-            .unwrap_or(myl_consensus::voting_weight::ARBEITSBEZUG_VORGABE),
-        hoechstfaktor: reg
-            .wert(Parameter::Hoechstfaktor)
+            .unwrap_or(myl_consensus::voting_weight::ARBEITSSCHWELLE_ZAEHLER_VORGABE),
+        schwelle_nenner: reg
+            .wert(Parameter::ArbeitsschwelleNenner)
             .als_ganzzahl()
-            .unwrap_or(myl_consensus::voting_weight::HOECHSTFAKTOR_VORGABE),
+            .unwrap_or(myl_consensus::voting_weight::ARBEITSSCHWELLE_NENNER_VORGABE),
     }
 }
 
@@ -435,12 +435,18 @@ impl Abstimmung {
     /// dieser Zeit können andere Vorschläge wirksam geworden sein.
     ///
     /// **Zwei Vorschläge, jeder für sich zulässig, können zusammen eine
-    /// Invariante brechen.** Ein Beispiel aus dieser Registry: Der
-    /// Kontrollsegmentvorrat trägt das Beobachtungsfenster bei
-    /// gegebenem γ. Eine Abstimmung senkt den Vorrat auf das gerade
-    /// noch Ausreichende, eine zweite, gleichzeitig laufende, erhöht γ.
-    /// Beide waren bei ihrer Eröffnung zulässig; zusammen ist der
-    /// Vorrat zu klein, und Fund 58 wäre zurück.
+    /// Invariante brechen.** Ein Beispiel aus dieser Registry: Die
+    /// Trainings-Stichprobenrate darf nie unter der Inferenzrate liegen.
+    /// Eine Abstimmung senkt die Trainingsrate auf das gerade noch
+    /// Zulässige, eine zweite, gleichzeitig laufende, hebt die
+    /// Inferenzrate. Beide waren bei ihrer Eröffnung zulässig; zusammen
+    /// liegt die Trainingsrate darunter, und der größere Schaden wäre
+    /// schlechter geschützt als der kleinere.
+    ///
+    /// ⚑ **Hier stand bis zum 2026-09-02 das Kontrollsegment-Beispiel**
+    /// (Vorrat gegen γ, Fund 58). Es ist mit den Kontrollsegmenten
+    /// entfallen; die Eigenschaft, die es zeigte, ist geblieben und
+    /// braucht nur ein anderes Paar.
     ///
     /// Die zweite Prüfung ist deshalb keine Vorsichtsmaßnahme, sondern
     /// die Stelle, an der die Reihenfolge entschieden wird: Der erste
@@ -522,8 +528,10 @@ mod tests {
         let ergebnis = Abstimmung::eroeffne(
             &ParameterRegistry::vorgabe(),
             ParameterVorschlag {
-                parameter: Parameter::Kontrollsegmentvorrat,
-                neuer_wert: Wert::Ganzzahl(10),
+                // Die Trainingsrate unter die Inferenzrate zu senken
+                // bricht `TrainingsrateNichtUnterInferenzrate`.
+                parameter: Parameter::TrainingsStichprobenrate,
+                neuer_wert: Wert::Bruch { zaehler: 1, nenner: 100 },
             },
             EpochId(1),
         );
@@ -608,25 +616,42 @@ mod tests {
     }
 
     #[test]
-    fn das_gewicht_steht_bei_der_eroeffnung_fest() {
-        // ⚑ Gerechnet wird gegen die Eröffnungsepoche. Sonst zerfiele
-        // die Arbeitshistorie während des Fensters, und wer früh
-        // stimmt, hätte ein anderes Gewicht als wer spät stimmt.
+    fn das_gewicht_haengt_seit_2026_09_02_nicht_mehr_an_der_epoche() {
+        // ⚑ **Dieser Test hiess `das_gewicht_steht_bei_der_eroeffnung_fest`
+        // und ist gegenstandslos geworden.**
+        //
+        // Gerechnet wurde gegen die Eroeffnungsepoche, damit die
+        // Arbeitshistorie nicht waehrend des Fensters zerfaellt und wer
+        // frueh stimmt nicht ein anderes Gewicht hat als wer spaet
+        // stimmt. Seit „Arbeit qualifiziert, Stake wiegt" ist das
+        // Gewicht der Stake, und der zerfaellt nicht.
+        //
+        // ⚑ **Die Sorge ist nicht verschwunden, sie ist umgezogen.**
+        // Sobald die Arbeitsschwelle ueber null steht und die
+        // Qualifikation in die Auszaehlung eingeht, kehrt genau dieselbe
+        // Frage zurueck: gegen welche Epoche wird qualifiziert? Dann
+        // gehoert hier wieder eine Trennung hin. **Solange die
+        // Qualifikation nicht verdrahtet ist, waere ein Test darueber
+        // eine Behauptung**, und deshalb steht sie hier als benannte
+        // Luecke statt als gruener Haken.
         let mut a = offene_abstimmung();
         a.stimme_ab(waehler(1), Stimme::Dafuer, EpochId(100)).unwrap();
 
-        // Arbeit in der Eröffnungsepoche, weit vor der Auszählung.
         let liste = [berechtigt(1, 1_000, 100, 8_900_000_000)];
         let z = a.zaehle_aus(&liste, a.wirksam_ab()).expect("auszählen");
 
         let p = stimmgewichts_parameter(&ParameterRegistry::vorgabe());
         let bei_eroeffnung = gewicht(&liste[0], EpochId(100), &p) as u128;
         let bei_auszaehlung = gewicht(&liste[0], a.wirksam_ab(), &p) as u128;
+
         assert_eq!(z.dafuer, bei_eroeffnung);
-        assert_ne!(
+        assert_eq!(
             bei_eroeffnung, bei_auszaehlung,
-            "der Testfall trennt die beiden Epochen nicht"
+            "das Gewicht darf seit dem 2026-09-02 nicht mehr an der Epoche haengen"
         );
+        // Und die Gegenprobe, dass die Zahl ueberhaupt etwas ist: der
+        // Stake, und nicht null.
+        assert_eq!(bei_eroeffnung, 1_000);
     }
 
     #[test]
@@ -743,17 +768,22 @@ mod tests {
         // Reihenfolge.
         let reg = ParameterRegistry::vorgabe();
 
-        // A: Fenster hoch auf 102 400. Nötiger Vorrat wird 2 048, der
-        // vorhandene ist 2 048. Gerade noch zulässig.
+        // ⚑ Bis zum 2026-09-02 lief dieser Test über den
+        // Kontrollsegment-Vorrat gegen das Fenster. Beide Parameter sind
+        // mit den Kontrollsegmenten entfallen; die **Eigenschaft**, die
+        // der Test zeigt, braucht nur ein anderes gekoppeltes Paar.
+        //
+        // A: Trainingsrate runter auf genau die Inferenzrate (5/100).
+        // Gerade noch zulässig, denn verlangt ist „nicht darunter".
         let a_vorschlag = ParameterVorschlag {
-            parameter: Parameter::Kontrollsegmentfenster,
-            neuer_wert: Wert::Ganzzahl(102_400),
+            parameter: Parameter::TrainingsStichprobenrate,
+            neuer_wert: Wert::Bruch { zaehler: 5, nenner: 100 },
         };
-        // B: Vorrat runter auf 2 000. Bei Fenster 100 000 ist der
-        // nötige Vorrat 2 000. Ebenfalls gerade noch zulässig.
+        // B: Inferenzrate hoch auf 6/100. Gegen die **heutige**
+        // Trainingsrate von 10/100 ebenfalls zulässig.
         let b_vorschlag = ParameterVorschlag {
-            parameter: Parameter::Kontrollsegmentvorrat,
-            neuer_wert: Wert::Ganzzahl(2_000),
+            parameter: Parameter::Stichprobenrate,
+            neuer_wert: Wert::Bruch { zaehler: 6, nenner: 100 },
         };
 
         let mut a = Abstimmung::eroeffne(&reg, a_vorschlag, EpochId(10)).expect("A eröffnen");

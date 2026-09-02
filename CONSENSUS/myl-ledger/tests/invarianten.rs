@@ -23,8 +23,9 @@
 //! Gegenbeispiels. Dafür nennt jeder Fehlschlag hier den Keim und den
 //! Schritt, und damit ist der Fall von Hand nachzustellen.
 
+use myl_ledger::transitions::praegen;
 use myl_ledger::{
-    apply_verdict, burn_to_credits, credit_spend, LedgerState, SlashParams, Verdict,
+    apply_verdict, burn_to_credits, credit_spend, transfer, LedgerState, SlashParams, Verdict,
     VerdictOutcome,
 };
 use myl_types::ids::{Address, EpochId, SegmentId};
@@ -92,32 +93,92 @@ fn startzustand() -> LedgerState {
     state
 }
 
-/// **Invariante 1: MYL entsteht nicht aus dem Nichts.**
+/// **Invariante 1: MYL entsteht nicht aus dem Nichts, und wo doch, ist
+/// die Quelle benannt.**
 ///
-/// Kein Übergang in diesem Crate prägt MYL. `burn_to_credits` verbrennt,
-/// `apply_verdict` schlachtet und verteilt einen Teil davon weiter, der
-/// Rest bleibt unverteilt. Die Summe aus Guthaben und Stake darf deshalb
-/// **nie steigen**.
+/// `burn_to_credits` verbrennt, `apply_verdict` schlachtet und verteilt
+/// einen Teil weiter, `transfer` verschiebt. Genau ein Übergang erzeugt
+/// MYL, nämlich `praegen`. Die Summe aus Guthaben und Stake darf deshalb
+/// **nur durch Prägung steigen, und genau um den geprägten Betrag**.
 ///
 /// Das ist die Invariante, deren Verletzung am teuersten wäre: Ein
 /// Übergang, der Geld erzeugt, ist ein Loch in der Geldmenge.
+///
+/// # ⚑ Bis zum 2026-09-02 stand hier die halbe Aussage (Fund 136)
+///
+/// Der Test hieß `myl_steigt_niemals`, und der Kopf darüber behauptete:
+/// „Kein Übergang in diesem Crate prägt MYL." **Das stimmte, als der
+/// Test geschrieben wurde, und seit Punkt 38 nicht mehr:** `praegen`
+/// gibt es seither, und der Knoten ruft es beim Epochenabschluss.
+///
+/// ⚑ **Aufgefallen ist es nicht an der Behauptung, sondern an der
+/// Auswahl.** Der Zufallslauf würfelte über **drei** Übergänge, während
+/// `myl-ledger` deren achtzehn kennt, und die beiden, die MYL bewegen
+/// und erzeugen, waren nicht dabei. Die Invariante galt damit über eine
+/// Zustandsmaschine, die ein Fünftel der echten war.
+///
+/// Der Satz auf der Beweisliste lautet vollständig: die Summe bleibt
+/// gleich **oder die Quelle ist benannt**. Geprüft wurde die erste
+/// Hälfte, über eine Menge, in der die zweite gar nicht vorkommen
+/// konnte. Jetzt beide, und die zweite verlangt zusätzlich, dass der
+/// Zuwachs **genau** dem geprägten Betrag entspricht.
 #[test]
-fn myl_steigt_niemals() {
+fn myl_steigt_nur_durch_praegung_und_genau_um_sie() {
+    let mut gepraegte_schritte = 0usize;
+    let mut gesunkene_schritte = 0usize;
+
     for keim in 1..=25u64 {
         let mut w = Wuerfel::neu(keim);
         let mut state = startzustand();
         let mut vorher = myl_gesamt(&state);
 
         for schritt in 0..200 {
-            zufaelliger_uebergang(&mut w, &mut state);
+            let s = zufaelliger_uebergang(&mut w, &mut state);
             let nachher = myl_gesamt(&state);
-            assert!(
-                nachher <= vorher,
-                "Keim {keim}, Schritt {schritt}: MYL stieg von {vorher} auf {nachher}"
-            );
+
+            if s.gepraegt > 0 {
+                gepraegte_schritte += 1;
+                // ⚑ Die Quelle ist benannt, **und die Zahl muss stimmen**.
+                // Ein blosses „es wurde ja gepraegt" waere eine Ausrede,
+                // unter der jeder Betrag durchginge.
+                assert_eq!(
+                    nachher,
+                    vorher + s.gepraegt,
+                    "Keim {keim}, Schritt {schritt}: gepraegt wurden {}, gestiegen ist die \
+                     Menge um {}",
+                    s.gepraegt,
+                    nachher as i128 - vorher as i128
+                );
+            } else {
+                assert!(
+                    nachher <= vorher,
+                    "Keim {keim}, Schritt {schritt}: MYL stieg von {vorher} auf {nachher}, \
+                     ohne dass eine Quelle benannt war"
+                );
+                if nachher < vorher {
+                    gesunkene_schritte += 1;
+                }
+            }
             vorher = nachher;
         }
     }
+
+    println!(
+        "[invarianten] {gepraegte_schritte} Schritte mit Praegung, \
+         {gesunkene_schritte} mit Rueckgang"
+    );
+    // ⚑ Beide Zahlen muessen ueber null liegen. Ohne Praegung prueft die
+    // zweite Haelfte der Invariante nie, ohne Rueckgang bewegt die Folge
+    // nichts.
+    assert!(
+        gepraegte_schritte > 0,
+        "kein einziger Schritt hat gepraegt; dann prueft dieser Test die benannte \
+         Quelle nie"
+    );
+    assert!(
+        gesunkene_schritte > 0,
+        "die Menge ist nie gesunken; dann bewegt die Folge nichts"
+    );
 }
 
 /// **Invariante 2: Credits sind durch verbranntes MYL gedeckt.**
@@ -271,14 +332,43 @@ fn extreme_betraege_laufen_nicht_um() {
 }
 
 /// Ein zufälliger, aber reproduzierbarer Übergang.
-fn zufaelliger_uebergang(w: &mut Wuerfel, state: &mut LedgerState) {
+/// Wie viel MYL der letzte Übergang **erklärtermaßen** erzeugt hat.
+///
+/// ⚑ **Das ist die Hälfte der Invariante, die bis zum 2026-09-02
+/// fehlte.** Der Satz auf der Beweisliste lautet „die Summe bleibt
+/// gleich **oder die Quelle ist benannt**"; geprüft wurde nur die erste
+/// Hälfte, und zwar über eine Übergangsmenge, in der es gar keine Quelle
+/// gab.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Schritt {
+    /// Betrag, den dieser Übergang neu geprägt hat. Null bei allen
+    /// übrigen.
+    gepraegt: u128,
+}
+
+/// Ein zufälliger Übergang, und er nennt seine Quelle.
+///
+/// ⚑ **Die Auswahl war der Fund (2026-09-02).** Diese Funktion würfelte
+/// bis dahin über **drei** Übergänge plus einen direkten Schreibzugriff
+/// auf die Epoche, während `myl-ledger` deren **achtzehn** kennt.
+/// Ausgerechnet die beiden, die MYL **bewegen** und **erzeugen**,
+/// `transfer` und `praegen`, waren nicht dabei. Die Invariante „MYL
+/// steigt niemals" galt damit über eine Zustandsmaschine, die ein
+/// Fünftel der echten war, und über eine, in der Prägung nicht vorkam.
+///
+/// Dieselbe Klasse wie überall hier: nicht die Behauptung war falsch,
+/// sondern die **Auswahl**. Eine Prüfung, die nichts auswählt, sieht aus
+/// wie eine, die nichts findet.
+fn zufaelliger_uebergang(w: &mut Wuerfel, state: &mut LedgerState) -> Schritt {
     let addr = adresse((w.bis(4) + 1) as u8);
-    match w.bis(4) {
+    match w.bis(6) {
         0 => {
             let _ = burn_to_credits(state, &addr, w.bis(5000), EpochId(w.bis(20)));
+            Schritt::default()
         }
         1 => {
             let _ = credit_spend(state, &addr, w.bis(500));
+            Schritt::default()
         }
         2 => {
             let v = Verdict {
@@ -292,9 +382,31 @@ fn zufaelliger_uebergang(w: &mut Wuerfel, state: &mut LedgerState) {
                 },
             };
             let _ = apply_verdict(state, &v, &params());
+            Schritt::default()
+        }
+        3 => {
+            // Überweisung: verschiebt MYL, erzeugt keines. Der
+            // Empfänger wird bewusst auch mal derselbe sein, denn
+            // `transfer` lehnt das ab, und ein abgelehnter Übergang
+            // gehört ebenfalls in die Folge.
+            let nach = adresse((w.bis(4) + 1) as u8);
+            let _ = transfer(state, &addr, &nach, w.bis(3000));
+            Schritt::default()
+        }
+        4 => {
+            // ⚑ Der einzige Übergang, der MYL **erzeugt**, und deshalb
+            // der einzige, der etwas zurückmeldet.
+            let betrag = w.bis(2000);
+            match praegen(state, &addr, betrag) {
+                Ok(()) => Schritt {
+                    gepraegt: betrag as u128,
+                },
+                Err(_) => Schritt::default(),
+            }
         }
         _ => {
             state.epoch = EpochId(w.bis(50));
+            Schritt::default()
         }
     }
 }

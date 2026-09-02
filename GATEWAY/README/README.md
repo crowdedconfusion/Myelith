@@ -23,8 +23,8 @@ Produkt.
 
 ## ⚑ Keine HTTP-Bibliothek, und das ist eine Entscheidung
 
-Der Fahrplan nennt sie „die größte neue Abhängigkeitsfläche seit
-`libp2p`" und verlangt sie **vor** dem ersten Code. Sie lautet: keine.
+Sie ist die größte neue Abhängigkeitsfläche seit `libp2p` und gehört
+deshalb **vor** den ersten Code entschieden. Sie lautet: keine.
 
 Was ein Rahmenwerk mitbrächte, ist Wegewahl und Mittelschicht für
 Anforderungen, die Stufe 1 nicht hat; `axum` zöge `hyper` und `tower`

@@ -122,9 +122,11 @@ fn pod_deterministisch_und_bitgleich_mit_einzelknoten() {
 
     let (digest_1, schritte_1) = coordinator
         .dekodier_digest(1)
+        .expect("die Sperre darf nicht vergiftet sein")
         .expect("Pod muss einen Dekodier-Digest liefern");
     let (digest_2, schritte_2) = coordinator
         .dekodier_digest(2)
+        .expect("die Sperre darf nicht vergiftet sein")
         .expect("Pod muss einen Dekodier-Digest liefern");
 
     // Akzeptanzkriterium 1: Determinismus, über die Zahlen.

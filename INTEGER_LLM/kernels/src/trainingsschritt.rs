@@ -9,8 +9,8 @@
 //! `silu_backward` und `optimierer::schritt` wurden von nichts außerhalb
 //! ihrer eigenen Tests gerufen.
 //!
-//! Das stand so im Fahrplan („offen bleibt die Verdrahtung zur
-//! Schleife"), war also bekannt und kein Fund. **Aber es ist dieselbe
+//! Die Verdrahtung zur Schleife stand als offener Punkt fest, war also
+//! bekannt und kein Fund. **Aber es ist dieselbe
 //! Lage**, und sie hat dieselbe Folge: Einzeln geprüfte Teile sagen
 //! nichts über ihr Zusammenspiel. ⚑ **Wo Ganzzahltraining bricht, ist
 //! nicht der einzelne Kern, sondern die Skala zwischen zweien.**
@@ -29,7 +29,7 @@
 //! Ebene; die Schleife über ein ganzes Netz braucht einen Vorwärtspass,
 //! der seine Zwischenwerte behält, und der Vorwärtspass der Laufzeit ist
 //! auf Inferenz zugeschnitten und behält nichts. Das ist eigene Arbeit
-//! und steht so im Fahrplan.
+//! und ein eigener offener Punkt.
 
 use crate::backward::{linear_backward, Grad};
 use crate::linear::linear_w8a16;

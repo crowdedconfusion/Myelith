@@ -9,7 +9,8 @@ edition = "2021"
 # geschaetzt: 1.85 und 1.86 scheitern, 1.88 traegt.
 rust-version = "1.88"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 borsh = { version = "1.6", features = ["derive"] }

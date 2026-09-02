@@ -331,11 +331,14 @@ impl Genesis {
     /// Die stimmberechtigte Menge für die erste Runde.
     ///
     /// **Gewicht gleich Stake, und das ist keine Vereinfachung.**
-    /// `myl_consensus::voting_weight::calculate_voting_weight` rechnet
-    /// `stake + stake · abgeklungene_Arbeit / arbeitsbezug`, gedeckelt.
-    /// Zu Genesis ist die Arbeitshistorie leer, der Bonus also null, und
-    /// der Deckel greift auf `stake · hoechstfaktor` und damit nicht.
-    /// Es bleibt exakt der Stake.
+    /// `myl_consensus::voting_weight::calculate_voting_weight` liefert
+    /// seit dem 2026-09-02 den Stake, und zwar für jede Epoche und jede
+    /// Arbeitshistorie: Arbeit qualifiziert, sie wiegt nicht.
+    ///
+    /// ⚑ **Hier stand bis dahin die alte Summenform mit Deckel**, samt
+    /// der Begründung, dass zu Genesis die Historie leer sei und der
+    /// Bonus deshalb null. Die Begründung stimmte und war ein Sonderfall;
+    /// jetzt gilt die Aussage allgemein und braucht keinen.
     pub fn stimmberechtigte(&self) -> VotingSet {
         let mitglieder = self
             .validatoren

@@ -4,7 +4,8 @@ version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Trainingsschicht für Myelith (Whitepaper Kap. 7). Enthält vorerst die Datenprovenienz (Kap. 7.3): Merkle-verankerte kanonische Korpora, Segmentreferenz per Beweis statt Rohdaten, gebündelte Beweise und VRF-gesteuerte Zuweisung. Prüft Herkunft, nicht Inhalt."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 myl-types = { path = "../../SHARED_TYPES/myl-types" }

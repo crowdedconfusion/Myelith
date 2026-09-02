@@ -152,49 +152,19 @@ pub enum Parameter {
     // ---- änderbar, an anderer Stelle als Governance-Parameter benannt ----
     /// Preis-Sensitivität `κ` (Kap. 5.4).
     PreisSensitivitaet,
-    /// Anteil `γ` eingeschleuster Kontrollsegmente (Kap. 6.7).
-    Kontrollsegmentanteil,
-    /// Größe des Vorrats an Kontrollsegmenten (⚑ Fund 58).
-    ///
-    /// **Eine Sicherheitsschranke, keine Puffergröße.** Der Vorrat ist
-    /// endlich, der Auftragsstrom nicht; wird öfter eingeschleust, als
-    /// der Vorrat verschiedene Segmente hält, wiederholen sich
-    /// Segment-Ids. Echte Arbeit wiederholt sich nie, also ist jedes
-    /// zweite Auftreten kein Verdacht, sondern ein **Beweis**, und ein
-    /// Miner braucht dafür nur ein Gedächtnis. Gemessen am 2026-08-25:
-    /// Bei γ = 2 % über 100 000 Aufträge erkennt er bei einem Vorrat von
-    /// 64 rund **96,8 %** der Kontrollen, **ohne einen einzigen
-    /// Fehlalarm** — er rechnet genau die ehrlich und manipuliert den
-    /// Rest.
-    ///
-    /// **Warum das hier steht und nicht als Konstante im Quelltext:**
-    /// Die Schranke ist γ × Auftragsrate × Beobachtungsfenster, und alle
-    /// drei Größen bewegen sich im Betrieb. Eine Zahl, die sich mit dem
-    /// Netz ändern muss, aber nur mit einer neuen Version änderbar ist,
-    /// wird irgendwann falsch und bleibt es.
-    ///
-    /// Der Wert ist **änderbar**, das Unterschreiten der Schranke nicht:
-    /// [`crate::Invariante::VorratTraegtEinschleusung`] weist jeden
-    /// Vorschlag darunter zurück, bevor abgestimmt wird. Dieselbe
-    /// Bauart wie `S_min`.
-    Kontrollsegmentvorrat,
-    /// Beobachtungsfenster des Wiederholungsunterscheiders, in Aufträgen
-    /// (⚑ Fund 58).
-    ///
-    /// Über wie viele Aufträge hinweg dem Angreifer unterstellt wird,
-    /// dass er Segment-Ids vergleichen kann. **Eine Annahme über den
-    /// Angreifer, keine Messung:** Ein Gedächtnis kostet ihn nur
-    /// Speicher, 100 000 Ids sind 3,2 MB. Die Zahl sagt deshalb nicht,
-    /// was er kann, sondern wogegen das Protokoll sich zu schützen
-    /// verpflichtet.
-    ///
-    /// **Ohne sie ist die Schranke nicht hinschreibbar.** „Der Vorrat
-    /// muss größer sein als die Zahl der Einschleusungen" ist für einen
-    /// unbegrenzten Auftragsstrom von keinem endlichen Vorrat
-    /// erfüllbar; erst ein Fenster macht die Bedingung entscheidbar.
-    /// Wer es senkt, senkt die Schranke — deshalb ist es ein Parameter
-    /// mit Fundstelle und kein Rechenhilfsmittel.
-    Kontrollsegmentfenster,
+    // ⚑ Hier standen bis zum 2026-09-02 `Kontrollsegmentanteil` (gamma),
+    // `Kontrollsegmentvorrat` und `Kontrollsegmentfenster`.
+    //
+    // **Sie sind mit ihrem Gegenstand entfallen** (Entscheidung A1): Die
+    // Kontrollsegmente wurden abgeschafft, weil ihre Einschleusung einen
+    // Einspeiser braucht, den es nicht geben kann, und weil Stufe 2
+    // dieselbe Aufgabe ohne Vorrat und ohne Ununterscheidbarkeitsproblem
+    // loest. Gamma ist in die Stichprobenrate aufgegangen.
+    //
+    // **Was mit ihnen verschwindet, ist Fund 58 als Schranke**, nicht
+    // als Erkenntnis: Ein endlicher Vorrat in einem unbegrenzten
+    // Auftragsstrom wiederholt Ids, und echte Arbeit tut das nie. Die
+    // Erkenntnis gilt fuer jeden kuenftigen Vorrat, den jemand einfuehrt.
     /// Obergrenze der Trainingsvergütung als Anteil der Inferenzvergütung
     /// (Kap. 5.6, Entwurf: 70 %).
     TrainingsverguetungsAnteil,
@@ -252,16 +222,26 @@ pub enum Parameter {
     /// Es bleibt die Invariante, dass sie **nie unter** der Inferenzrate
     /// liegt; sonst kehrt sich die Begründung aus Kap. 5.5 um.
     TrainingsStichprobenrate,
-    /// Bezugsgröße des Arbeitsanteils im Stimmgewicht (Fund 51).
+    /// Zähler der Arbeitsschwelle, als Bruchteil des Netzmedians.
     ///
-    /// Die vTFE-Menge, die einen Bonus in Höhe des Stakes wert ist.
-    /// `myl-consensus` führt sie als Startparameter; hier steht sie,
-    /// damit der Gleichstands-Test sie hält. Sie veraltet mit jeder
-    /// Durchsatz-Optimierung, und genau das ist einmal unbemerkt
-    /// geschehen.
-    Arbeitsbezug,
-    /// Höchstfaktor des Stimmgewichts auf den Stake.
-    Hoechstfaktor,
+    /// ⚑ **Ersetzt seit dem 2026-09-02 `Arbeitsbezug` und
+    /// `Hoechstfaktor`.** Beide gehörten zu einer Formel, die Arbeit
+    /// multiplikativ ins Stimmgewicht nahm; sie ist entfallen, weil ihr
+    /// unterscheidender Bereich dreizehn Prozent breit war (Fund 135)
+    /// und weil sie im Betrieb nie erreicht wurde (Fund 137). Seither
+    /// gilt: Arbeit qualifiziert, Stake wiegt.
+    ///
+    /// **Der Bezug ist der Median des Netzes und keine feste Zahl.** Ein
+    /// fester Bezug veraltet mit jeder Durchsatz-Optimierung, und genau
+    /// das ist zweimal geschehen; ein relativer wandert mit.
+    ///
+    /// ⚑ **Der Startwert ist null**, und das ist der einzige, bei dem
+    /// ein Netz ohne Arbeitshistorie anfangen kann. Wer ihn hebt, bevor
+    /// bezeugte Arbeit die Validatoren erreicht, ändert nichts und hält
+    /// es für eine Verschärfung.
+    ArbeitsschwelleZaehler,
+    /// Nenner der Arbeitsschwelle.
+    ArbeitsschwelleNenner,
     /// Anteil der Gesamtstimmkraft, der sich beteiligen muss, damit
     /// eine Abstimmung überhaupt zählt (Promille).
     ///
@@ -363,7 +343,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 33] {
+    pub fn alle() -> [Parameter; 30] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -372,9 +352,6 @@ impl Parameter {
             Auslastungsziel,
             Streitfrist,
             PreisSensitivitaet,
-            Kontrollsegmentanteil,
-            Kontrollsegmentvorrat,
-            Kontrollsegmentfenster,
             TrainingsverguetungsAnteil,
             PraegeObergrenze,
             EmaGlaettung,
@@ -388,8 +365,8 @@ impl Parameter {
             GeglaetteterBurn,
             PreisUntergrenze,
             TrainingsStichprobenrate,
-            Arbeitsbezug,
-            Hoechstfaktor,
+            ArbeitsschwelleZaehler,
+            ArbeitsschwelleNenner,
             Epochenlaenge,
             MindestStake,
             Betrugsgewinn,
@@ -428,9 +405,6 @@ impl Parameter {
             Auslastungsziel => "Auslastungsziel u*",
             Streitfrist => "Streitfrist",
             PreisSensitivitaet => "Preis-Sensitivität kappa",
-            Kontrollsegmentanteil => "Kontrollsegmentanteil gamma",
-            Kontrollsegmentvorrat => "Kontrollsegment-Vorrat",
-            Kontrollsegmentfenster => "Kontrollsegment-Beobachtungsfenster",
             TrainingsverguetungsAnteil => "Trainingsvergütungs-Anteil",
             PraegeObergrenze => "Präge-Obergrenze M_max",
             EmaGlaettung => "EMA-Glättung alpha",
@@ -446,8 +420,8 @@ impl Parameter {
             GeglaetteterBurn => "geglätteter Burn B_e",
             PreisUntergrenze => "Preis-Untergrenze",
             TrainingsStichprobenrate => "Trainings-Stichprobenrate",
-            Arbeitsbezug => "Arbeitsbezug des Stimmgewichts",
-            Hoechstfaktor => "Höchstfaktor des Stimmgewichts",
+            ArbeitsschwelleZaehler => "Arbeitsschwelle des Stimmgewichts, Zähler",
+            ArbeitsschwelleNenner => "Arbeitsschwelle des Stimmgewichts, Nenner",
             MindestStake => "Mindest-Stake S",
             Betrugsgewinn => "Betrugsgewinn g",
             Kopfgeldanteil => "Kopfgeldanteil b",
@@ -506,7 +480,23 @@ impl ParameterRegistry {
         use Parameter::*;
         let mut werte = BTreeMap::new();
         // Kap. 5.5: p = 2 %.
-        werte.insert(Stichprobenrate, Wert::Bruch { zaehler: 2, nenner: 100 });
+        // ⚑ Kap. 5.5 nannte 2 %. Seit dem 2026-09-02 sind es **5 %**,
+        // und die Zahl ist hergeleitet und nicht gesetzt.
+        //
+        // Mit der Entscheidung A1 entfallen die Kontrollsegmente; ihr
+        // Anteil gamma geht in diese Rate. **Der naive Ansatz
+        // `p + gamma - p*gamma = 3,96 %` ist zu klein**, denn die beiden
+        // Stufen sind nicht symmetrisch: Ein Kontrollsegment wird gegen
+        // eine hinterlegte Antwort geprueft, eine Stichprobe von einem
+        // **Checker**, und der kann dem Angreifer gehoeren (Fund 138).
+        //
+        // Gleichwertig ist `gamma/(1-c) + p*(1-gamma)`. Fuer `c` nimmt
+        // die Herleitung die byzantinische Schranke des Protokolls
+        // selbst, also ein Drittel; jeder andere Wert waere frei
+        // gewaehlt. Das ergibt 4,96 %, aufgerundet auf 5 %.
+        //
+        // Gerechnet und zugesichert in `security_sim.py`, Abschnitt 8.
+        werte.insert(Stichprobenrate, Wert::Bruch { zaehler: 5, nenner: 100 });
         // Kap. 5.7 / Anhang B.4: Start-Subvention s = 0,5.
         werte.insert(Subventionsrate, Wert::Bruch { zaehler: 1, nenner: 2 });
         // Leer bis zum Genesis-Manifest (GOVERNANCE 3.4).
@@ -517,19 +507,6 @@ impl ParameterRegistry {
         werte.insert(Streitfrist, Wert::Ganzzahl(7 * 24 * 60 * 60));
         // Kap. 5.4: kappa = 0,1.
         werte.insert(PreisSensitivitaet, Wert::Bruch { zaehler: 1, nenner: 10 });
-        // Kap. 6.7: 1 bis 3 % des Volumens; Entwurf 2 %.
-        werte.insert(Kontrollsegmentanteil, Wert::Bruch { zaehler: 2, nenner: 100 });
-        // Fund 58: der gemessene Vorrat ohne erkannte Kontrolle und das
-        // Fenster, über das gemessen wurde. Beide stehen in
-        // `myl-verifier`, damit sie nicht zweimal dastehen.
-        werte.insert(
-            Kontrollsegmentvorrat,
-            Wert::Ganzzahl(myl_verifier::VORRAT_VORGABE),
-        );
-        werte.insert(
-            Kontrollsegmentfenster,
-            Wert::Ganzzahl(myl_verifier::BEOBACHTUNGSFENSTER_VORGABE),
-        );
         // Kap. 5.6: höchstens 70 % (myl-tokenomics: TRAINING_CAP_BPS).
         werte.insert(TrainingsverguetungsAnteil, Wert::Bruch { zaehler: 7_000, nenner: 10_000 });
         // Anhang B.8.3: ohne bindenden Deckel im Entwurf.
@@ -572,14 +549,15 @@ impl ParameterRegistry {
         werte.insert(PreisUntergrenze, Wert::Ganzzahl(1));
         // Kap. 5.5: erhöhte Rate für Trainingssegmente; Entwurf 10 %.
         werte.insert(TrainingsStichprobenrate, Wert::Bruch { zaehler: 10, nenner: 100 });
-        // myl-consensus: Referenzknoten, Stunden-Epoche (Fund 51).
+        // myl-consensus: Arbeitsschwelle als Bruchteil des Netzmedians,
+        // Startwert null (Entscheidung 2026-09-02).
         werte.insert(
-            Arbeitsbezug,
-            Wert::Ganzzahl(myl_consensus::voting_weight::ARBEITSBEZUG_VORGABE),
+            ArbeitsschwelleZaehler,
+            Wert::Ganzzahl(myl_consensus::voting_weight::ARBEITSSCHWELLE_ZAEHLER_VORGABE),
         );
         werte.insert(
-            Hoechstfaktor,
-            Wert::Ganzzahl(myl_consensus::voting_weight::HOECHSTFAKTOR_VORGABE),
+            ArbeitsschwelleNenner,
+            Wert::Ganzzahl(myl_consensus::voting_weight::ARBEITSSCHWELLE_NENNER_VORGABE),
         );
         // Anhang B.1: g = 0,5 MYL, S_min = 1250 MYL je Kapazitätseinheit.
         werte.insert(MindestStake, Wert::Ganzzahl(1_250 * myl_tokenomics::UNITS_PER_MYL));

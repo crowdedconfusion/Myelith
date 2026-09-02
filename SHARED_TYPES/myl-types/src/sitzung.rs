@@ -1097,8 +1097,8 @@ mod tests {
 ///   glauben, und dann prüft er, ob der Pod zu seiner eigenen Eingabe
 ///   passt: eine Frage, auf die der Gefragte beide Hälften wählt.
 /// - **Ein Nutzer kann nicht belegen, was er gefragt hat.** Der Beleg
-///   ist laut Fahrplan das Produkt des Gateways; ein Beleg ohne die
-///   Frage belegt nur eine Antwort.
+///   ist das Produkt des Gateways; ein Beleg ohne die Frage belegt nur
+///   eine Antwort.
 ///
 /// # ⚑ Gebunden wird der Hash, nicht der Text
 ///

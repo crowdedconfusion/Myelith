@@ -108,6 +108,40 @@ pub struct ShardNode {
     dekodier_digest: Mutex<HashMap<u64, DekodierDigest>>,
 }
 
+/// Nimmt eine Sperre und macht aus einer **vergifteten** einen Fehler.
+///
+/// # ⚑ Warum `.lock().unwrap()` hier die falsche Antwort war
+///
+/// Ein `Mutex` in Rust merkt sich, ob ein Thread beim Halten der Sperre
+/// in Panik ging. Danach liefert **jedes weitere** `lock()` einen
+/// Fehler, und `.unwrap()` darauf ist eine Panik. Ein `ShardNode` liegt
+/// hinter einem `Arc` und bedient viele Sitzungen: Der Ausfall **einer**
+/// Sitzung hätte damit den Shard für **alle** getötet, dauerhaft, und
+/// kein Test hätte es gezeigt.
+///
+/// **Heute ist das nicht auslösbar**, und das gehört dazugesagt: Unter
+/// den drei Sperren läuft nichts, was in Panik geht. `DekodierDigest`
+/// hasht, `KVCache::for_range` legt Karten an, der Zähler zählt. Das ist
+/// aber eine Aussage über den **jetzigen** Rumpf und nicht über den
+/// Vertrag, und sie fällt mit der nächsten Zeile, die jemand
+/// dazwischenschreibt.
+///
+/// **Deshalb der Fehler statt der Panik.** Er kostet nichts, solange
+/// nichts vergiftet, und wo er greift, ist er die richtige Antwort:
+/// [`ShardNode::process`] gibt ohnehin ein `Result` zurück, der
+/// Koordinator behandelt es, und ein Shard, der eine Nachricht
+/// zurückweist, ist etwas anderes als einer, der stirbt.
+///
+/// **Was er ausdrücklich nicht tut, ist die Sperre entgiften.**
+/// `PoisonError::into_inner` gäbe den Inhalt heraus und damit einen
+/// Zustand, den ein abgestürzter Thread halb geschrieben hat. In einem
+/// Pfad, dessen Ausgabe bitgleich sein muss, ist ein halber KV-Cache
+/// schlimmer als eine abgelehnte Nachricht.
+fn sperre<'a, T>(m: &'a Mutex<T>, was: &str) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    m.lock()
+        .map_err(|_| format!("Sperre {was} ist vergiftet: ein Thread ging beim Halten in Panik"))
+}
+
 impl ShardNode {
     pub fn new(
         shard_index: usize,
@@ -147,9 +181,15 @@ impl ShardNode {
     /// verschiedene viele Schritte sind schlicht verschieden und sähen
     /// wie ein Determinismusfehler aus, was die Verwechslung aus Fund 35
     /// eine Ebene tiefer wäre.
-    pub fn dekodier_digest(&self, session_id: u64) -> Option<(String, usize)> {
-        let d = self.dekodier_digest.lock().unwrap();
-        d.get(&session_id).map(|x| (x.hex(), x.schritte()))
+    /// ⚑ **Der Fehlerfall ist vom `None` getrennt, und das ist der Grund
+    /// für das `Result`.** `None` heißt „hier ist nichts gesampelt
+    /// worden" und ist harmlos; eine vergiftete Sperre heißt „ein Thread
+    /// ist gestorben" und ist es nicht. Beides in dasselbe `None` zu
+    /// legen hieße, dem Feld eine dritte Bedeutung zu geben, die niemand
+    /// unterscheiden kann.
+    pub fn dekodier_digest(&self, session_id: u64) -> Result<Option<(String, usize)>, String> {
+        let d = sperre(&self.dekodier_digest, "Dekodier-Digest")?;
+        Ok(d.get(&session_id).map(|x| (x.hex(), x.schritte())))
     }
 
     /// Unterschreibt die Botschaft eines **fertigen** PoI-Bündels als
@@ -273,16 +313,22 @@ impl ShardNode {
     }
 
     /// KV-Cache einer Session entnehmen oder anlegen.
-    fn take_cache(&self, session_id: u64) -> KVCache {
-        let mut caches = self.caches.lock().unwrap();
-        caches.remove(&session_id).unwrap_or_else(|| {
+    ///
+    /// ⚑ **Das Anlegen steht außerhalb der Sperre.** `for_range` legt je
+    /// Layer und Kopf eine Karte an; unter der Sperre wäre das ein
+    /// Abschnitt, in dem alle anderen Sitzungen dieses Shards warten,
+    /// und zwar ausgerechnet beim ersten Zugriff einer neuen Sitzung.
+    /// Gebraucht wird die Sperre nur für das Entnehmen.
+    fn take_cache(&self, session_id: u64) -> Result<KVCache, String> {
+        let vorhanden = sperre(&self.caches, "KV-Cache")?.remove(&session_id);
+        Ok(vorhanden.unwrap_or_else(|| {
             KVCache::for_range(self.layer_start, self.layer_end, self.model.num_kv_heads)
-        })
+        }))
     }
 
-    fn put_cache(&self, session_id: u64, cache: KVCache) {
-        let mut caches = self.caches.lock().unwrap();
-        caches.insert(session_id, cache);
+    fn put_cache(&self, session_id: u64, cache: KVCache) -> Result<(), String> {
+        sperre(&self.caches, "KV-Cache")?.insert(session_id, cache);
+        Ok(())
     }
 
     /// Verarbeitet eine Nachricht; liefert die Ausgabe des Shards.
@@ -308,12 +354,12 @@ impl ShardNode {
             }
             let token = tokens[0] as usize;
 
-            let mut cache = self.take_cache(session_id);
+            let mut cache = self.take_cache(session_id)?;
             let hidden = self.model.embed_token(token);
             let mut trace = msg.trace.clone();
             let out =
                 self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
-            self.put_cache(session_id, cache);
+            self.put_cache(session_id, cache)?;
 
             // **Eine Signatur je Shard, auch wenn die Spur je Layer
             // wächst.** Die Spur ist der Vergleichsgegenstand und braucht
@@ -364,10 +410,10 @@ impl ShardNode {
         // ausgelieferte Arbeit.
         let hidden = msg.payload.clone();
 
-        let mut cache = self.take_cache(session_id);
+        let mut cache = self.take_cache(session_id)?;
         let mut trace = msg.trace.clone();
         let out = self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
-        self.put_cache(session_id, cache);
+        self.put_cache(session_id, cache)?;
 
         let out_hash = *trace.last().unwrap_or(&ZERO_HASH);
         let sig = self.sign_transition(&msg.segment_id, pos as u64, &prev_hash, &out_hash)?;
@@ -487,15 +533,13 @@ impl ShardNode {
             // ein Argmax über `vocab_size` Zahlen und ändert sich erst,
             // wenn deren Rangfolge kippt; gemessen an 0,5B blieb er bei
             // 0,1 % veränderter Modellbytes unverändert.
-            self.dekodier_digest
-                .lock()
-                .unwrap()
+            sperre(&self.dekodier_digest, "Dekodier-Digest")?
                 .entry(session_id)
                 .or_insert_with(DekodierDigest::neu)
                 .schritt(&logits, token);
 
             // Generierungs-Buchhaltung + Feedback.
-            let mut gen = self.gen_count.lock().unwrap();
+            let mut gen = sperre(&self.gen_count, "Generierungszaehler")?;
             let entry = gen.entry(session_id).or_insert(0);
             *entry += 1;
             let feedback = if *entry < self.max_new_tokens {

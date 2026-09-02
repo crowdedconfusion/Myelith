@@ -4,7 +4,8 @@ version = "0.28.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Protokollweite Kern-Datentypen und Primitiven für Myelith (Referenzimplementierung von Whitepaper Anhang A.1): Hash-/Merkle-Primitiven, VRF- und BLS-Signatur-Schnittstellen, Segment/PoIBundle/InferenceCredit. Deterministische Borsh-Serialisierung, SHA-256 über das gesamte Protokoll."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 blst = "0.3"

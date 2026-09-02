@@ -43,10 +43,10 @@ pub use myl_ledger::transitions::{Verdict, VerdictOutcome};
 pub use myl_types::challenge::Challenge;
 pub use myl_types::core_types::PoIBundle;
 pub use voting_weight::{
-    InferenceHistory, calculate_voting_weight, compare_voting_weight,
-    DECAY_FACTOR_NUM, DECAY_FACTOR_DEN, MAX_HISTORY_EPOCHS, VTFE_UNIT,
-    calculate_voting_weight_mit, StimmgewichtsParameter, ARBEITSBEZUG_VORGABE,
-    HOECHSTFAKTOR_VORGABE,
+    arbeitsqualifikation, calculate_voting_weight, calculate_voting_weight_mit,
+    compare_voting_weight, netzmedian, InferenceHistory, StimmgewichtsParameter,
+    ARBEITSSCHWELLE_NENNER_VORGABE, ARBEITSSCHWELLE_ZAEHLER_VORGABE, DECAY_FACTOR_DEN,
+    DECAY_FACTOR_NUM, MAX_HISTORY_EPOCHS, VTFE_UNIT,
 };
 pub use signing::{
     signable_bytes, propose_message, vote_message, commit_message,

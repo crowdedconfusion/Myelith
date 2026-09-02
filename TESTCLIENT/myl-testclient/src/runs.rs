@@ -754,7 +754,18 @@ pub fn run_shard(
         // auf den Token-Vergleich wäre genau der Zustand, aus dem Fund 36
         // kam.
         let pod_logits_digest = match coordinator.dekodier_digest(nr as u64) {
-            Some((d, schritte)) => {
+            // ⚑ Eine vergiftete Sperre ist etwas anderes als ein
+            // fehlender Digest, und sie darf nicht so aussehen: Der eine
+            // heißt „nichts gesampelt", die andere „ein Thread ist
+            // gestorben". Beide brechen den Lauf ab, aber die Meldung
+            // muss sagen, welcher Fall vorlag.
+            Err(grund) => {
+                log.error(format!(
+                    "Der Pod kann seinen Dekodier-Digest nicht herausgeben: {grund}"
+                ));
+                return false;
+            }
+            Ok(Some((d, schritte))) => {
                 if schritte != steps {
                     log.error(format!(
                         "Pod hat {} von {} Schritten gesampelt; ein Digest über \
@@ -766,7 +777,7 @@ pub fn run_shard(
                 }
                 d
             }
-            None => {
+            Ok(None) => {
                 log.error(
                     "Der Pod liefert keinen Dekodier-Digest. Ohne ihn prüft dieser \
                      Lauf nur, ob die Aufteilung dieselbe Entscheidung erzeugt, \

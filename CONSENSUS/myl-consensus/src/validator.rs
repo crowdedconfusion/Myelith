@@ -707,8 +707,18 @@ mod tests {
             .is_ok());
     }
 
+    /// ⚑ **Arbeit wird festgehalten und bewegt das Gewicht nicht.**
+    ///
+    /// Bis zum 2026-09-02 hieß dieser Test
+    /// `record_work_fliesst_ins_stimmgewicht` und verlangte das
+    /// Gegenteil. Mit der Entscheidung „Arbeit qualifiziert, Stake
+    /// wiegt" ist die Historie zur Grundlage der **Qualifikation**
+    /// geworden, nicht mehr zu einem Summanden des Gewichts.
+    ///
+    /// **Beide Hälften stehen hier**, denn beide sind Zusagen: Die
+    /// Historie muss ankommen, und sie darf das Gewicht nicht anfassen.
     #[test]
-    fn record_work_fliesst_ins_stimmgewicht() {
+    fn arbeit_wird_festgehalten_und_bewegt_das_gewicht_nicht() {
         let mut registry = ValidatorRegistry::new();
         let miner = test_miner(1);
         registry
@@ -719,9 +729,20 @@ mod tests {
         registry.record_work(&miner, 10, 1_000_000).unwrap();
         let mit_arbeit = registry.get_validator(&miner).unwrap().voting_weight(10);
 
-        assert!(
-            mit_arbeit > ohne_arbeit,
-            "nachgewiesene Arbeit muss das Stimmgewicht erhöhen"
+        assert_eq!(
+            mit_arbeit, ohne_arbeit,
+            "Arbeit qualifiziert, sie wiegt nicht: das Gewicht ist der Stake"
+        );
+        // Die Gegenprobe zur ersten Haelfte: Die Arbeit ist wirklich
+        // angekommen, sonst prueft die Gleichheit oben nichts.
+        assert_eq!(
+            registry
+                .get_validator(&miner)
+                .unwrap()
+                .history
+                .decayed_weight(10),
+            1_000_000,
+            "die Arbeit muss in der Historie stehen"
         );
     }
 

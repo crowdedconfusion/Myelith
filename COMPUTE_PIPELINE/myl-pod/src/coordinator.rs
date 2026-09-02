@@ -568,8 +568,17 @@ impl Coordinator {
     /// Zahlen und ändert sich erst, wenn deren Rangfolge kippt. Genau
     /// die kleinen Abweichungen, gegen die dieses Projekt gebaut ist,
     /// wären durchgerutscht.
-    pub fn dekodier_digest(&self, session_id: u64) -> Option<(String, usize)> {
-        self.shards.last()?.dekodier_digest(session_id)
+    ///
+    /// ⚑ **Der Fehlerfall ist vom `None` getrennt.** `None` heißt „kein
+    /// Shard da" oder „nichts gesampelt", eine vergiftete Sperre heißt
+    /// „ein Thread ist gestorben". Beides in dasselbe `None` zu legen
+    /// hieße, dem Rückgabewert eine dritte Bedeutung zu geben, die
+    /// niemand unterscheiden kann.
+    pub fn dekodier_digest(&self, session_id: u64) -> Result<Option<(String, usize)>, String> {
+        match self.shards.last() {
+            Some(s) => s.dekodier_digest(session_id),
+            None => Ok(None),
+        }
     }
 }
 

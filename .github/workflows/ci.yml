@@ -37,6 +37,9 @@ on:
   # Aenderungen, sondern durch einen Python- oder Umgebungswechsel.
   schedule:
     - cron: '0 4 * * 1'
+  # Von Hand ausloesbar, vor allem fuer den Fuzz-Job: Wer eine
+  # Serialisierung anfasst, will ihn sofort fahren und nicht am Montag.
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths-ignore:
@@ -776,6 +779,155 @@ jobs:
   # hier bleibt, braucht kein Rust und laeuft in unter einer Sekunde.
   #
   # **Nichts ist entfallen**, nur verschoben.
+  # ── Abhaengigkeiten: Schwachstellen, Lizenzen, Herkunft ──────────
+  #
+  # ⚑ Der Baum von myl-node umfasst 284 Crates, und bis zum 2026-09-02
+  # hat keines davon jemand gegen eine Schwachstellenliste gehalten. Das
+  # ist die Art Luecke, die ein externer Pruefer als Erstes anspricht,
+  # und sie kostet zwei Sekunden je Crate.
+  #
+  # Vier Pruefungen in einer: bekannte Schwachstellen und
+  # zurueckgezogene Fassungen (advisories), erlaubte Lizenzen
+  # (licenses), Platzhalterfassungen (bans) und die Herkunft aus genau
+  # einer Registry (sources). Die Begruendung je Einstellung steht in
+  # `deny.toml`, nicht hier: Eine Regel und ihr Grund gehoeren
+  # zusammen.
+  #
+  # Die Crate-Liste kommt aus dem Dateisystem, wie in der
+  # Mindestfassungs-Pruefung und in der Clippy-Schleife. Ein neues Crate
+  # ist damit automatisch dabei, und wer eines vergisst, kann es nicht
+  # mehr.
+  #
+  # ⚑ Der Job laeuft bei jedem Push **und** im woechentlichen Zeitplan
+  # oben, und der zweite Teil ist der eigentliche Zweck. Eine
+  # Schwachstelle wird nicht dann bekannt, wenn jemand committet; ohne
+  # den Zeitplan faende dieser Job sie erst beim naechsten Patch, und in
+  # einer ruhigen Woche gar nicht. Woechentlich heisst zugleich: bis zu
+  # sieben Tage Verzug, wenn niemand committet. Das ist die Zusage, und
+  # sie steht hier, damit sie niemand fuer eine engere haelt.
+  abhaengigkeiten:
+    name: Abhaengigkeitspruefung (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Jedes Crate gegen deny.toml
+        run: |
+          set -euo pipefail
+          gefunden=0
+          fehler=0
+          for manifest in */*/Cargo.toml; do
+            crate=$(dirname "$manifest")
+            gefunden=$((gefunden + 1))
+            echo "── deny: $crate"
+            if ! cargo deny --manifest-path "$manifest" --config deny.toml check; then
+              fehler=$((fehler + 1))
+            fi
+          done
+          # Eine Schleife ueber null Crates waere ein gruener Job, der
+          # nichts geprueft hat. Dieselbe Falle wie beim Sammellauf, der
+          # fuer ein Crate ohne uebersetzendes Testmodul "0 Suiten, 0
+          # Fehlschlaege" meldete.
+          if [ "$gefunden" -eq 0 ]; then
+            echo "FEHLER: kein Crate gefunden, also eine Pruefung ohne Gegenstand"
+            exit 1
+          fi
+          echo "$gefunden Crate(s) geprueft, $fehler mit Fehlschlag"
+          exit $([ "$fehler" -eq 0 ] && echo 0 || echo 1)
+
+  # ── Fuzzing der Drahtformate ─────────────────────────────────────
+  #
+  # ⚑ Bis zum 2026-09-02 gab es kein deckungsgefuehrtes Fuzzing. Was
+  # "Fuzz-Harness" hiess, war ein Handgenerator ueber zufaellige Bytes,
+  # und woran der scheitert, ist gemessen: Rein zufaellige Bytes
+  # deserialisierten in 50 000 Versuchen kein einziges Mal, weil Borsh
+  # zuerst Laengenfelder liest. Ein Fuzzer mit
+  # Deckungsrueckmeldung findet dieselben Laengenfelder in Sekunden.
+  #
+  # **Was geprueft wird, ist nicht "stuerzt nicht ab".** Das prueft
+  # libfuzzer nebenbei. Geprueft wird **Kanonizitaet**: Liest sich eine
+  # Bytefolge vollstaendig als Typ, muss sie sich wieder genau so
+  # schreiben lassen. Wo zwei Bytefolgen denselben Wert ergeben, ist eine
+  # nicht kanonisch, und im Gossip heisst das zwei Nachrichten-Kennungen
+  # fuer denselben Inhalt. Dieselbe Klasse wie Fund 77, eine Ebene tiefer.
+  #
+  # ⚑ **Nightly, und nur hier.** `libfuzzer-sys` braucht Sanitizer, die
+  # es auf stable nicht gibt. Die uebrigen Crates bleiben auf 1.85, und
+  # die Fuzz-Crates liegen bewusst eine Ebene tiefer
+  # (`*/*/fuzz/Cargo.toml`), damit weder die Clippy-Schleife noch die
+  # Mindestfassungs-Pruefung noch die Abhaengigkeitspruefung sie
+  # einsammelt.
+  #
+  # **Der Regressionsteil laeuft dagegen auf stable und bei jedem Push:**
+  # `tests/fuzzkorpus.rs` faehrt den eingecheckten Korpus durch dieselben
+  # Ziele und liegt damit in den gewoehnlichen Crate-Tests. Dieser Job
+  # sucht, jener haelt fest.
+  fuzzing:
+    name: Fuzzing der Drahtformate (nightly)
+    runs-on: ubuntu-latest
+    # Nur im Zeitplan und von Hand: Ein Fuzz-Lauf je Push kostet
+    # Wanduhrzeit und findet beim zweiten Mal nichts Neues.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz
+
+      - name: Jedes Ziel jedes Fuzz-Crates
+        run: |
+          set -euo pipefail
+          crates=0
+          ziele=0
+          for manifest in */*/fuzz/Cargo.toml; do
+            crate=$(dirname "$(dirname "$manifest")")
+            crates=$((crates + 1))
+            echo "══ $crate"
+            for ziel in $(cd "$crate" && cargo +nightly fuzz list); do
+              ziele=$((ziele + 1))
+              echo "── fuzz: $crate/$ziel"
+              (cd "$crate" && cargo +nightly fuzz run "$ziel" -- -max_total_time=30 -print_final_stats=1)
+            done
+          done
+          # Eine Schleife ueber null Ziele waere ein gruener Job, der
+          # nichts geprueft hat. Dieselbe Falle wie beim Sammellauf, der
+          # fuer ein Crate ohne uebersetzendes Testmodul null Suiten und
+          # null Fehlschlaege meldete.
+          if [ "$ziele" -eq 0 ]; then
+            echo "FEHLER: kein Fuzz-Ziel gefunden, also eine Pruefung ohne Gegenstand"
+            exit 1
+          fi
+          echo "$ziele Ziel(e) in $crates Crate(s) gefuzzt"
+
+      # Ein Fund ist eine Datei unter fuzz/artifacts/. Sie gehoert in die
+      # Hand dessen, der den Lauf ansieht, denn ohne sie ist der Fehler
+      # nicht zu wiederholen.
+      - name: Reproduzierer sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-reproduzierer
+          path: '*/*/fuzz/artifacts/**'
+          if-no-files-found: ignore
+
   audit:
     name: Zahlensemantik-Audit
     runs-on: ubuntu-latest

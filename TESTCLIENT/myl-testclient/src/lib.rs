@@ -33,6 +33,12 @@
 //! Diagnosewerkzeug darf laut, gesprächig und roh sein; ein
 //! Nutzer-Client nicht.
 
+//! Konsens-Regel wie ueberall in Myelith: kein `unsafe`. Fuer ein
+//! Werkzeug, das Nachweise erhebt, gilt sie erst recht: Ein Nachweis
+//! aus einem Programm mit undefiniertem Verhalten belegt nichts.
+
+#![deny(unsafe_code)]
+
 pub mod animation;
 pub mod artefakte;
 pub mod auswahl;

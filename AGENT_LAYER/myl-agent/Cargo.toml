@@ -4,7 +4,8 @@ version = "0.7.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Agent Layer für Myelith (Whitepaper Kap. 8): Skill- und Werkzeug-Manifeste mit Herkunftsstufe, damit einem Segment anzusehen ist, ob es nachrechenbar oder nur bezeugt ist."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 borsh = { version = "1.6", features = ["derive"] }

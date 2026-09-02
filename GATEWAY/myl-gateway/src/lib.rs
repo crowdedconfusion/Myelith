@@ -18,8 +18,8 @@
 //!
 //! # ⚑ Keine HTTP-Bibliothek, und das ist eine Entscheidung
 //!
-//! Der Fahrplan nennt sie „die größte neue Abhängigkeitsfläche seit
-//! `libp2p`" und verlangt sie **vor** dem ersten Code. Sie lautet:
+//! Sie ist die größte neue Abhängigkeitsfläche seit `libp2p` und
+//! gehört deshalb **vor** den ersten Code entschieden. Sie lautet:
 //! keine. Was ein Rahmenwerk mitbrächte, ist Wegewahl und Mittelschicht
 //! für Anforderungen, die Stufe 1 nicht hat; `axum` zöge `hyper` und
 //! `tower` nach, drei Bäume für eine Tür mit einem Weg.
@@ -36,6 +36,16 @@
 //! Pod**, denn dafür braucht sie eine Sitzung im Netz, und die ist eigene
 //! Arbeit. Diese Grenze steht hier, damit niemand den grünen Test für
 //! mehr hält, als er sagt.
+
+//! # Kein `unsafe`, und hier zaehlt es doppelt
+//!
+//! Die Regel gilt in Myelith ueberall, wo Protokoll gerechnet wird.
+//! Diese Komponente ist zusaetzlich die **einzige nach aussen
+//! gerichtete**: Was hier Bytes liest, liest sie von jemandem, der
+//! nicht im Netz ist. Der Uebersetzer haelt die Regel, nicht der
+//! Vorsatz.
+
+#![deny(unsafe_code)]
 
 pub mod annahme;
 pub mod http;

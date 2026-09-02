@@ -1,10 +1,11 @@
 [package]
 name = "myl-scheduler"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Deterministischer Epochen-Scheduler für Myelith (Whitepaper Anhang A.2): VRF-Seed-Ableitung, Miner-Filterung, Geo-Clustering, Shard-Zuweisung (Fisher-Yates), Redundanz-Zuteilung, Stichproben-Lotterie. Alle Schritte sind deterministisch und von jedem Node unabhängig nachrechenbar."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 borsh = "1.6"

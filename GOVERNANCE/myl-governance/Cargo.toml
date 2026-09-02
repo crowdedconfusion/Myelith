@@ -4,7 +4,8 @@ version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Parameter-Governance für Myelith (Whitepaper Kap. 10.3): Registry aller Governance-Parameter mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs und Prüfung der Sicherheitsinvarianten aus Anhang B bereits am Vorschlag."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 myl-types = { path = "../../SHARED_TYPES/myl-types" }

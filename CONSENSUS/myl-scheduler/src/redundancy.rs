@@ -64,9 +64,34 @@
 //! und ein Fünfzigstel. Die Diversität kauft Ausfallsicherheit und
 //! bezahlt mit Streuung.
 //!
-//! Eine Schwelle, ab der Streuung die Diversität schlägt, wäre eine
-//! erfundene Zahl, solange sie nicht gerechnet ist. Sie ist deshalb hier
-//! **benannt und nicht gesetzt**.
+//! ⚑ **Gerechnet am 2026-09-02** (`security_sim.py`, Abschnitt 9), und
+//! das Ergebnis ist keine Schwelle in Segmenten, sondern eine Bedingung
+//! an die Verteilung:
+//!
+//! **Die Verengung beträgt `(km−1)/((k−1)m)` bei `k` gleich besetzten
+//! Zonen mit je `m` Pods, also rund `k/(k−1)`.**
+//!
+//! | Zonen | Verengung |
+//! |---|---|
+//! | 2 | **1,95** |
+//! | 3 | 1,48 |
+//! | 4 | 1,32 |
+//! | 10 | 1,11 |
+//!
+//! Ungleichverteilung kommt oben drauf: Bei zwei Zonen und 100 Pods
+//! kostet der halbe Schnitt Faktor 1,98, ein Schnitt von 90 zu 10 aber
+//! **5,50**.
+//!
+//! ⚑ **Die Größe, an der es hängt, ist die Zahl der Zonen und nicht der
+//! Anteil der größten.** Wer die Verengung unter zwei bringen will,
+//! braucht eine **dritte** Zone; eine gleichmäßigere Verteilung auf zwei
+//! reicht nicht, denn der günstigste Fall bei zwei Zonen kostet bereits
+//! Faktor zwei.
+//!
+//! **Was die Rechnung nicht beantwortet:** ob Ausfallsicherheit diesen
+//! Preis wert ist. Das hängt an der Wahrscheinlichkeit eines regionalen
+//! Ausfalls, und dafür gibt es keine Messung. **Die Abwägung bleibt
+//! deshalb eine Entscheidung**, nur jetzt eine mit Zahlen dahinter.
 
 use myl_types::seed_rng::deterministic_shuffle;
 use std::collections::HashSet;

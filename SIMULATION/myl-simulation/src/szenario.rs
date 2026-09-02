@@ -11,7 +11,7 @@
 //!      │
 //!  Konsens    ─ prüft Aggregat gegen die Mitgliedermenge
 //!      │
-//!  Verifikation ─ Stufe 1 Vergleich, Kontrollsegmente, Bisektion
+//!  Verifikation ─ Stufe 1 Vergleich, Stufe 2 Stichprobe, Bisektion
 //!      │
 //!  Epochenabschluss ─ Übereinstimmung, Rückbuchung, Endgültigkeit
 //!      │
@@ -478,9 +478,12 @@ impl Abdeckung {
                     "geprüft in myl-consensus/tests/liveness.rs über 21 Validatoren",
                 ),
                 (
-                    "Kontrollsegment-Einschleusung im Durchlauf",
-                    "die Rate ist in myl-verifier/tests/simulation.rs gemessen; \
-                     im Durchlauf fehlt der Auftragsstrom, in den eingeschleust würde",
+                    "Stichprobenziehung im Durchlauf",
+                    "die Saatquelle steht im Block und wird geprüft; im Durchlauf \
+                     fehlt der Auftragsstrom, aus dem gezogen würde. ⚑ Hier stand \
+                     bis zum 2026-09-02 die Kontrollsegment-Einschleusung; sie ist \
+                     mit Entscheidung A1 entfallen, γ ist in die Stichprobenrate \
+                     aufgegangen",
                 ),
                 (
                     "Cross-Hardware-Determinismus",

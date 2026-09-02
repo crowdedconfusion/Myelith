@@ -10,6 +10,10 @@
 //! sie braucht keine der offenen Design-Entscheidungen, weil ein Format
 //! keine Laufzeit ist.
 
+//! Konsens-Regel wie ueberall in Myelith: kein `unsafe`.
+
+#![deny(unsafe_code)]
+
 pub mod beobachtung;
 pub mod kette;
 pub mod manifest;

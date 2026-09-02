@@ -423,9 +423,9 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
 
 ### v0.30.0 – 2026-09-01 (der Trainingsschritt bekommt einen Aufrufer, Punkt 16)
 
-**`backward` und `optimierer` hatten null Aufrufer.** Das stand so im
-Fahrplan („offen bleibt die Verdrahtung zur Schleife"), war also bekannt
-und kein Fund. ⚑ **Aber es ist dieselbe Lage, und sie hat dieselbe
+**`backward` und `optimierer` hatten null Aufrufer.** Die Verdrahtung
+zur Schleife stand als offener Punkt fest, war also bekannt und kein
+Fund. ⚑ **Aber es ist dieselbe Lage, und sie hat dieselbe
 Folge:** Einzeln geprüfte Teile sagen nichts über ihr Zusammenspiel.
 
 `trainingsschritt.rs` schließt den Kreis für eine lineare Ebene:

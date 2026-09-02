@@ -1,80 +1,98 @@
-//! Stimmgewichts-Kopplung — Whitepaper Kap. 3.5.2.
-//!
-//! Koppelt das Stimmgewicht an gestakten Coin **und** nachgewiesene
-//! historische Inferenzarbeit (mit Abklingfaktor):
+//! Stimmgewicht: **Arbeit qualifiziert, Stake wiegt** (Kap. 3.5.2).
 //!
 //! ```text
-//! voting_weight = stake + (stake · abgeklungene_Arbeit) / VTFE_UNIT
+//! voting_weight = stake, für jeden qualifizierten Validator
 //! ```
 //!
-//! **Warum eine Summe und kein reines Produkt (Design-Entscheidung
-//! 2026-08-18, Audit-Block 3):** Die ursprüngliche Formel war
-//! `stake × Arbeit / 10¹²`. Ein reines Produkt gibt jedem Validator ohne
-//! Arbeitshistorie das Gewicht **null** — und wer Gewicht null hat, wird
-//! nie ins Komitee gewählt, kann nie Arbeit nachweisen und bleibt
-//! dauerhaft bei null. Bei Genesis hätte *kein* Validator Gewicht, das
-//! Komitee wäre nicht wählbar. Die Summenform hält die Aussage des
-//! Whitepapers („speist sich aus zwei Quellen") und löst die Blockade:
-//! der Stake ist die Grundlage, die Arbeit multipliziert sie hoch. Ein
-//! Validator mit einer vollen vTFE-Einheit abgeklungener Arbeit hat
-//! doppeltes Gewicht gegenüber einem gleich gestakten ohne Arbeit.
+//! # ⚑ Die Entscheidung vom 2026-09-02, und warum sie fiel
 //!
-//! ## Wiedervorlage erledigt (2026-08-23): der Bezugswert war um drei
-//! bis fünf Größenordnungen zu klein
+//! Bis dahin stand hier eine Summenform, die die nachgewiesene
+//! Inferenzarbeit **multiplikativ** ins Gewicht nahm, gedeckelt auf
+//! `hoechstfaktor` Stakes. Zwei Messungen haben sie erledigt.
 //!
-//! Die Wiedervorlage von 2026-08-18 nannte zwei offene Punkte, beide
-//! blockiert durch dieselbe fehlende Zahl: *„hängt an der real
-//! erreichbaren vTFE-Menge pro Epoche, die noch nicht gemessen ist."*
+//! **Fund 135: Der Deckel griff ab 1,13-fachem Referenzdurchsatz.**
+//! Darüber ergaben 1,2-fach und hundertfach denselben Wert. Der
+//! Arbeitsanteil unterschied also in einem Band von dreizehn Prozent und
+//! war darüber blind, was seine einzige Aufgabe war. Dieselbe Klasse wie
+//! Fund 51, eine Ebene höher.
 //!
-//! Seit der Festlegung der vTFE-Zuschreibung (`myl_tokenomics::vtfe`,
-//! 2026-08-23) ist sie ausrechenbar. **Der alte Bezugswert `VTFE_UNIT`
-//! entspricht dem Vorwärtspass eines einzigen Tokens.** Gemessen an den
-//! echten Durchsatzwerten des Projekts und einer Stunden-Epoche
-//! (Whitepaper Kap. 3.2):
+//! ⚑ **Und die Sicherheitsaussage stand daneben, ungesagt:** Ein MYL im
+//! gedeckelten Validator wog **zehnmal** so viel wie eines im
+//! arbeitslosen. Wer ein Drittel des Stimmgewichts wollte, brauchte am
+//! Deckel ein Zehntel des Stakes. **Der Höchstfaktor war keine
+//! Begrenzung neben den Angriffskosten, er war ihr Divisor.**
 //!
-//! | Fall | Verdopplung nach | Faktor nach einer Epoche | volle Historie |
-//! |---|---|---|---|
-//! | 0,5B, ganzes Modell, 49,17 tok/s | 0,020 s | **177 012** | 1 420 568 |
-//! | 0,5B, Viertel-Shard | 0,081 s | 44 253 | 355 142 |
-//! | 7B, ganzes Modell, 10,74 tok/s | 0,093 s | 38 664 | 310 289 |
-//! | 7B, Viertel-Shard | 0,404 s | 8 921 | 71 593 |
+//! **Fund 137: Der Arbeitsanteil wurde nie erreicht.**
+//! `ValidatorRegistry::record_work` hatte außerhalb seiner eigenen Tests
+//! **keinen einzigen Aufrufer**. Die Historie war im Betrieb immer leer,
+//! und damit galt `voting_weight == stake` schon die ganze Zeit. Die
+//! Formel beschrieb ein Verhalten, das der Code nie zeigte.
 //!
-//! *Die Durchsatzwerte sind die vom 2026-08-24 (nach der
-//! Zeilen-Parallelisierung). Die erste Fassung dieser Tabelle rechnete
-//! mit 38,19 und 2,07 tok/s, den Werten davor; sie blieb stehen, als sich
-//! der Durchsatz verschob, und wurde erst von der Härtungsschleife
-//! gefunden. Die Aussage ändert sich dadurch nicht, sie wird deutlicher.*
+//! ⚑ **Die Umstellung ist deshalb keine Verhaltensänderung, sondern
+//! eine Berichtigung des Vertrags.** Sie ist die sechste Ausprägung des
+//! häufigsten Fehlerbilds dieses Projekts: beide Seiten gebaut, beide
+//! für sich geprüft, die Naht fehlt.
 //!
-//! **Der Stake hörte damit nach wenigen Sekunden Arbeit auf,
-//! Angriffskosten zu sein.** Genau davor warnte der zweite offene Punkt;
-//! die Zahlen zeigen, dass es keine ferne Sorge war, sondern der
-//! Normalfall ab der ersten Epoche.
+//! # Was die Recherche gesagt hat
 //!
-//! **Behoben mit zwei Sicherungen (Entscheidung Projektinhaber,
-//! 2026-08-23), und zwar bewusst mit zweien:**
+//! **Ethereum**, der am stärksten geprüfte Proof-of-Stake-Betrieb, kennt
+//! keinen Arbeitsanteil: Das Stimmgewicht **ist** der Stake, gedeckelt
+//! über `MAX_EFFECTIVE_BALANCE`, und dieser Deckel diente der
+//! Komitee-Dominanz und nicht dem Risiko. Als der Grund entfiel, wurde
+//! er mit EIP-7251 um das Vierundsechzigfache gehoben.
 //!
-//! 1. **Der Bezugswert ist ein Governance-Parameter geworden**
-//!    ([`StimmgewichtsParameter::arbeitsbezug`]). Er steht auf der
-//!    vTFE-Menge, die ein **Referenzknoten in einer Epoche** schafft,
-//!    nicht mehr auf einem einzelnen Token. Ein Knoten mit
-//!    Referenzdurchsatz bekommt damit je Epoche einen Bonus in der
-//!    Größenordnung seines Stakes statt des Tausendfachen.
-//! 2. **Ein harter Deckel** ([`StimmgewichtsParameter::hoechstfaktor`]):
-//!    Das Gesamtgewicht übersteigt den Stake nie um mehr als diesen
-//!    Faktor.
+//! **Filecoin** kennt denselben Faktor 10 als Qualitätsmultiplikator
+//! (`QUALITY_BASE_MULTIPLIER = 10`, `VERIFIED_DEAL_WEIGHT_MULTIPLIER =
+//! 100`), verlangt dafür aber **zehnfache Sicherheit und schlachtet
+//! zehnfach**. Der Multiplikator verdünnt das Risiko nicht, er skaliert
+//! mit ihm.
 //!
-//! Die zweite Sicherung ist nicht überflüssig neben der ersten: Der
-//! Bezugswert ist **parametrisch** und kann falsch gesetzt werden, der
-//! Deckel nicht. Eine Fehlkalibrierung um drei Größenordnungen, wie sie
-//! hier vorlag, schlägt mit Deckel auf Faktor 10 durch statt auf Faktor
-//! 137 000.
+//! **Bittensor** mischt Stake und Konsensübereinstimmung, und die
+//! empirische Auswertung ist unbequem: Die Korrelation Stake zu
+//! Belohnung liegt bei 0,80 bis 0,95, die von Leistung zu Belohnung bei
+//! rund 0,50. Eine Mischung sieht aus, als belohne sie Qualität, und tut
+//! es messbar nicht.
 //!
-//! **Was bleibt:** Die Alternative — Bootstrap über ein per
-//! Konfiguration gesetztes Genesis-Komitee, danach reines Produkt
-//! `stake × Arbeit` — ist weiterhin zurückgestellt, nicht verworfen.
+//! **RepuCoin** ist der akademische Fall **für** arbeitsgewichtete
+//! Stimmen und zeigt zugleich, woran es hier fehlte: Dort entsteht
+//! Reputation aus Arbeit, **integriert über die gesamte
+//! Kettengeschichte**, und ist absichtlich träge. Das Fenster hier war
+//! zehn Epochen, also zehn Stunden. Die Trägheit, die RepuCoins
+//! Sicherheitsaussage trägt, gab es nie.
 //!
-//! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des Konsensvertrags.
-//! Änderungen nur über Governance (Kap. 10.3).
+//! # Was stattdessen gilt
+//!
+//! **Arbeit ist eine Eignung und keine Menge.** Die Frage, die der
+//! Arbeitsanteil beantworten soll, lautet „ist dieser Validator ein
+//! echter Miner und kein reiner Kapitalhalter", und das ist eine
+//! **Schwelle**. Oberhalb davon sagt mehr Durchsatz nichts mehr über
+//! Vertrauenswürdigkeit; die alte Formel verhielt sich ab 1,13-fach
+//! ohnehin so, nur unbeabsichtigt.
+//!
+//! Die Schwelle misst **relativ zum Netz** ([`arbeitsqualifikation`]),
+//! nicht gegen einen festen Bezugswert. Damit endet die Klasse Fund 51:
+//! Ein relativer Bezug veraltet nicht, wenn sich der Durchsatz
+//! verschiebt, weil er mitwandert.
+//!
+//! ⚑ **Und sie startet bei null.** Bei Genesis hat niemand Arbeit; eine
+//! Schwelle über null wäre dieselbe Blockade wie das reine Produkt, gegen
+//! das die Summenform gebaut worden war. Null ist der einzige Startwert,
+//! der ohne Sonderregel für den Genesis-Satz auskommt. Governance hebt
+//! sie, sobald das Netz eine messbare Durchsatzverteilung hat.
+//!
+//! ⚑ **Solange `record_work` keinen Aufrufer hat, ist die Qualifikation
+//! wirkungslos**, und das gehört dazugesagt: Sie beißt erst, wenn
+//! bezeugte Arbeit die Validatoren erreicht. Das ist Punkt 40 und nicht
+//! dieses Modul.
+//!
+//! # Was am Papier zu ändern ist
+//!
+//! Kap. 3.5.2 beschreibt zwei Quellen, die sich multiplizieren. Beide
+//! Quellen gelten weiter, ihr Zusammenspiel nicht: Die eine
+//! qualifiziert, die andere wiegt. Vermerkt für die nächste Fassung.
+//!
+//! **Konsens-Feld:** Die Stimmgewichts-Berechnung ist Teil des
+//! Konsensvertrags. Änderungen nur über Governance (Kap. 10.3).
 
 /// Abklingfaktor für historische Inferenzarbeit (pro Epoche).
 /// 0.95 bedeutet: Arbeit aus der vorherigen Epoche zählt zu 95%.
@@ -174,86 +192,51 @@ fn apply_decay(value: u64, epochs: u64) -> u64 {
 ///
 /// Das ist der **Vorwärtspass genau eines Tokens** durch das ganze
 /// Modell. Bis 2026-08-23 war dieser Wert zugleich die Bezugsgröße des
-/// Arbeitsanteils, ein einzelnes Token verdoppelte also das Stimmgewicht.
-/// Der Bezug steht jetzt in [`StimmgewichtsParameter::arbeitsbezug`];
+/// Arbeitsanteils, ein einzelnes Token verdoppelte also das
+/// Stimmgewicht. Seit dem 2026-09-02 gibt es keine Bezugsgröße mehr;
 /// diese Konstante behält ihre ursprüngliche Bedeutung als Einheit.
 pub const VTFE_UNIT: u64 = 1_000_000;
 
-/// Bezugsgröße des Arbeitsanteils: die vTFE-Menge, die einen Bonus in
-/// Höhe des Stakes wert ist.
+/// Zähler der Arbeitsschwelle, als Bruchteil des Netzmedians.
 ///
-/// **Herleitung der Vorgabe.** Referenzfall ist ein Knoten, der ein
-/// Viertel von Qwen2.5-7B hält und eine Stunden-Epoche durchläuft:
-/// 230 729 vTFE-Einheiten je Token bei **10,74 tok/s** ergeben
-/// 8 920 906 056 Einheiten je Epoche. Gerundet auf **8,9 · 10⁹**.
+/// ⚑ **Null, und das ist kein Platzhalter, sondern der einzige
+/// zulässige Startwert.** Bei Genesis hat niemand Arbeitshistorie. Eine
+/// Schwelle über null schlösse damit **jeden** Validator aus, und wer
+/// ausgeschlossen ist, sammelt keine Arbeit und kommt nie herein: genau
+/// die Bootstrap-Blockade, gegen die 2026-08-18 die Summenform gebaut
+/// wurde.
 ///
-/// Damit gilt: Ein Knoten mit Referenzdurchsatz verdient in einer Epoche
-/// einen Bonus von etwa einem Stake. Über die volle Historie von zehn
-/// Epochen summiert sich das mit dem Abklingfaktor auf rund das
-/// Achtfache, das Gesamtgewicht liegt also knapp unter dem Deckel. **Das
-/// ist Absicht:** Der Deckel soll erreichbar sein, aber erst von einem
-/// Knoten, der dauerhaft über Referenzdurchsatz liefert.
-///
-/// # ⚑ Fund 51: Hier stand 1,7 · 10⁹, und die Absicht war zerstört
-///
-/// Die erste Herleitung (2026-08-23) rechnete mit **2,07 tok/s**, dem
-/// Durchsatz **vor** der Zeilen-Parallelisierung (kernels v0.21.0). Die
-/// Parallelisierung hob ihn am selben Tag auf 10,74 tok/s, also um das
-/// 5,19-Fache; der Bezugswert blieb stehen.
-///
-/// | | Bonus je Epoche | über 10 Epochen | Deckel (10) |
-/// |---|---|---|---|
-/// | mit 1,7 · 10⁹ | 5,25 Stake | 42,1 | **greift immer** |
-/// | mit 8,9 · 10⁹ | 1,01 Stake | 8,12 | greift nicht |
-///
-/// Mit dem alten Wert saß **jeder** Knoten bei Referenzdurchsatz am
-/// Deckel. Der Arbeitsanteil unterschied damit nicht mehr zwischen
-/// Knoten, was seine einzige Aufgabe ist: Ein Knoten mit doppeltem
-/// Durchsatz bekam dasselbe Gewicht wie einer mit einfachem.
-///
-/// Dieselbe Klasse wie der veraltete K8-Eintrag: eine Zahl,
-/// die richtig abgeleitet wurde und deren Grundlage sich am selben Tag
-/// verschoben hat. **Jeder feste Bezugswert veraltet mit der nächsten
-/// Optimierung**; ein selbstregulierender Bezug (etwa der Median des
-/// Netzes) liegt als Entwurf vor.
-///
-/// Der Wert hängt an Modell und Hardware und gehört deshalb in die
-/// Governance-Registry, nicht in eine Konstante. Er steht hier als
-/// **Startparameter** und wird von
-/// `myl-governance/tests/gleichstand.rs` gegen die Registry geprüft,
-/// damit die nächste Verschiebung sofort auffällt.
-pub const ARBEITSBEZUG_VORGABE: u64 = 8_900_000_000;
+/// Governance hebt die Schwelle, sobald das Netz eine messbare
+/// Durchsatzverteilung hat. Ein Fünftel des Medians ist der Wert, den
+/// die Entscheidung vom 2026-09-02 als Richtgröße nennt; gesetzt wird er
+/// nicht hier, sondern in der Registry und erst mit Betrieb.
+pub const ARBEITSSCHWELLE_ZAEHLER_VORGABE: u64 = 0;
 
-/// Höchstfaktor des Gesamtgewichts auf den Stake.
+/// Nenner der Arbeitsschwelle. Eins, damit `0/1` gilt.
 ///
-/// `voting_weight ≤ stake · HOECHSTFAKTOR_VORGABE`. Ohne diesen Deckel
-/// kann ein Knoten mit viel Arbeit sein Gewicht beliebig weit über
-/// seinen Stake heben, und der Stake verliert seine Funktion als
-/// Angriffskosten.
-///
-/// Der Wert 10 stammt aus dem Wiedervorlage-Vermerk vom 2026-08-18
-/// („z. B. Faktor 10"). Ebenfalls Governance-Parameter.
-pub const HOECHSTFAKTOR_VORGABE: u64 = 10;
+/// Getrennt von der Einheit gehalten, weil ein Bruch aus zwei
+/// Ganzzahlen exakt ist und eine Fließkommaschwelle im Konsenspfad nicht
+/// vorkommt.
+pub const ARBEITSSCHWELLE_NENNER_VORGABE: u64 = 1;
 
-/// Die beiden Größen, die den Arbeitsanteil des Stimmgewichts steuern.
+/// Parameter der Stimmgewichts-Qualifikation, aus der Governance-Registry.
 ///
-/// Beide sind **konsensrelevant** (Kap. 10.3): Zwei Knoten mit
-/// verschiedenen Werten kommen zu verschiedenen Komitees. Sie gehören
-/// deshalb in die Governance-Registry und werden zur Epochengrenze
-/// gewechselt, nicht mitten in einer Epoche.
+/// **Wirksam wird eine Änderung zur nächsten Epochengrenze**, nicht
+/// mitten in einer Epoche: Zwei Knoten, die mitten in einer Runde
+/// verschiedene Schwellen benutzen, kommen zu verschiedenen Komitees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StimmgewichtsParameter {
-    /// vTFE-Menge, die einen Bonus in Höhe des Stakes wert ist.
-    pub arbeitsbezug: u64,
-    /// Höchstfaktor des Gesamtgewichts auf den Stake.
-    pub hoechstfaktor: u64,
+    /// Zähler der Arbeitsschwelle als Bruchteil des Netzmedians.
+    pub schwelle_zaehler: u64,
+    /// Nenner der Arbeitsschwelle.
+    pub schwelle_nenner: u64,
 }
 
 impl Default for StimmgewichtsParameter {
     fn default() -> Self {
         Self {
-            arbeitsbezug: ARBEITSBEZUG_VORGABE,
-            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
+            schwelle_zaehler: ARBEITSSCHWELLE_ZAEHLER_VORGABE,
+            schwelle_nenner: ARBEITSSCHWELLE_NENNER_VORGABE,
         }
     }
 }
@@ -261,26 +244,28 @@ impl Default for StimmgewichtsParameter {
 impl StimmgewichtsParameter {
     /// Sind die Werte brauchbar?
     ///
-    /// `arbeitsbezug = 0` wäre eine Division durch null, und
-    /// `hoechstfaktor = 0` gäbe jedem Validator das Gewicht null, also
-    /// genau die Bootstrap-Blockade, gegen die die Summenform gebaut
-    /// wurde.
+    /// Ein Nenner von null wäre eine Division durch null. Ein Zähler
+    /// über dem Nenner verlangte **mehr als den Median**, und mehr als
+    /// die Hälfte des Netzes liegt darunter: Das schlösse per
+    /// Konstruktion die Mehrheit aus.
     pub fn ist_brauchbar(&self) -> bool {
-        self.arbeitsbezug > 0 && self.hoechstfaktor >= 1
+        self.schwelle_nenner > 0 && self.schwelle_zaehler <= self.schwelle_nenner
     }
 }
 
-/// Berechnet das Stimmgewicht eines Validators mit den Vorgabewerten.
+/// Das Stimmgewicht eines Validators: **sein Stake**.
 ///
-/// **Formel:**
-/// `voting_weight = min(stake + stake · decayed_work / arbeitsbezug,
-/// stake · hoechstfaktor)`
+/// Die Arbeit steht nicht mehr in dieser Zahl, sie steht in
+/// [`arbeitsqualifikation`]. Die Begründung, die Recherche dahinter und
+/// die beiden Funde, die sie ausgelöst haben, stehen im Modulkopf.
 ///
-/// Der Stake ist die Grundlage, die nachgewiesene Arbeit multipliziert
-/// sie hoch, der Deckel begrenzt sie. Siehe die Modul-Dokumentation für
-/// die Begründung, warum hier eine Summe und kein reines Produkt steht
-/// (Bootstrap-Blockade), und warum der Bezugswert seit 2026-08-23 nicht
-/// mehr ein einzelnes Token ist.
+/// ⚑ **Die Signatur behält Historie und Epoche**, obwohl sie sie nicht
+/// mehr liest, und das ist Absicht: Der nächste Schritt ist eine
+/// gewichtete Qualifikation, und ein Aufrufer, der die Historie schon
+/// heute durchreicht, muss dann nicht angefasst werden. **Wer eine
+/// ungenutzte Angabe stehen lässt, schreibt eine Behauptung auf, die
+/// niemand prüft** (Fund 117), deshalb steht sie hier ausdrücklich als
+/// Vorhalt und nicht als vergessener Rest.
 pub fn calculate_voting_weight(
     stake: u64,
     history: &InferenceHistory,
@@ -295,42 +280,66 @@ pub fn calculate_voting_weight(
 }
 
 /// Wie [`calculate_voting_weight`], aber mit ausdrücklichen Parametern.
-///
-/// **Parameter:**
-/// - `stake`: Stake des Validators (in MYL-Kleinstbeträgen)
-/// - `history`: Historische Inferenzarbeit
-/// - `current_epoch`: Aktuelle Epoche
-/// - `p`: Bezugswert und Deckel (Governance)
-///
-/// Unbrauchbare Parameter fallen auf die Vorgabe zurück, statt eine
-/// Division durch null oder ein Gewicht von null zu erzeugen: Ein
-/// Konsenspfad darf an einem Konfigurationsfehler nicht anhalten, und
-/// ein Gewicht von null wäre die Bootstrap-Blockade.
-///
-/// **Returns:** Stimmgewicht (u64, gesättigt statt überlaufend).
 pub fn calculate_voting_weight_mit(
     stake: u64,
+    _history: &InferenceHistory,
+    _current_epoch: u64,
+    _p: &StimmgewichtsParameter,
+) -> u64 {
+    stake
+}
+
+/// Hält dieser Validator die Arbeitsschwelle?
+///
+/// Die Schwelle ist ein Bruchteil des **Netzmedians** der abgeklungenen
+/// Arbeit, nicht ein fester Bezugswert. ⚑ **Das ist der Kern der
+/// Entscheidung vom 2026-09-02:** Ein fester Bezug veraltet mit jeder
+/// Durchsatzoptimierung, und genau das ist in diesem Projekt zweimal
+/// passiert (Fund 51 und die Tabelle, die ihm folgte). Ein relativer
+/// Bezug wandert mit.
+///
+/// **Bei Schwelle null qualifiziert jeder**, auch wer nie gearbeitet
+/// hat. Das ist der Startzustand und die Bedingung dafür, dass ein Netz
+/// ohne Historie überhaupt anfangen kann.
+///
+/// **Ein Median von null qualifiziert ebenfalls jeden.** Hat niemand
+/// gearbeitet, ist die Schwelle null mal irgendetwas, und niemanden
+/// auszuschließen ist die einzige Antwort, die kein Netz zum Stillstand
+/// bringt.
+pub fn arbeitsqualifikation(
     history: &InferenceHistory,
     current_epoch: u64,
+    netzmedian: u64,
     p: &StimmgewichtsParameter,
-) -> u64 {
+) -> bool {
     let vorgabe = StimmgewichtsParameter::default();
     let p = if p.ist_brauchbar() { p } else { &vorgabe };
 
-    let decayed_work = history.decayed_weight(current_epoch);
+    if p.schwelle_zaehler == 0 || netzmedian == 0 {
+        return true;
+    }
+    let schwelle =
+        (netzmedian as u128 * p.schwelle_zaehler as u128) / p.schwelle_nenner as u128;
+    history.decayed_weight(current_epoch) as u128 >= schwelle
+}
 
-    // stake ist in MYL-Kleinstbeträgen (1 MYL = 10^6),
-    // decayed_work in vTFE-Kleinstbeträgen (1 vTFE = 10^6).
-    // u128 für die Zwischenrechnung, Sättigung statt Überlauf.
-    let work_bonus = (stake as u128 * decayed_work as u128) / p.arbeitsbezug as u128;
-    let weight = stake as u128 + work_bonus;
-
-    // **Der Deckel greift auf das Gesamtgewicht, nicht auf den Bonus.**
-    // So steht die Zusage direkt da, die er geben soll: Ein Validator
-    // wiegt nie mehr als `hoechstfaktor` Stakes.
-    let deckel = stake as u128 * p.hoechstfaktor as u128;
-
-    u64::try_from(weight.min(deckel)).unwrap_or(u64::MAX)
+/// Der Median der abgeklungenen Arbeit über eine Validatorenmenge.
+///
+/// ⚑ **Median und nicht Mittelwert**, und der Grund ist ein Angriff:
+/// Ein einzelner Teilnehmer mit sehr viel Arbeit hebt einen Mittelwert
+/// beliebig weit und schlösse damit die Mehrheit aus. Auf den Median
+/// wirkt er wie jeder andere auch.
+///
+/// Bei gerader Anzahl wird der **untere** der beiden mittleren Werte
+/// genommen. Das ist die Wahl, die keine Division braucht und damit auf
+/// jeder Maschine dasselbe ergibt; ein Mittelwert der beiden wäre eine
+/// Rundung im Konsenspfad ohne Not.
+pub fn netzmedian(werte: &mut [u64]) -> u64 {
+    if werte.is_empty() {
+        return 0;
+    }
+    werte.sort_unstable();
+    werte[(werte.len() - 1) / 2]
 }
 
 /// Vergleicht zwei Validatoren nach Stimmgewicht (für Komiteewahl).
@@ -353,69 +362,48 @@ pub fn compare_voting_weight(
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------
+    // Die Historie selbst. Sie bleibt, denn die Qualifikation liest sie.
+    // -----------------------------------------------------------------
+
     #[test]
     fn inference_history_add_work() {
         let mut history = InferenceHistory::new();
         history.add_work(10, 1000);
         history.add_work(11, 2000);
-
         assert_eq!(history.work_per_epoch.len(), 2);
-        // Sortiert absteigend nach Epoche
-        assert_eq!(history.work_per_epoch[0], (11, 2000));
-        assert_eq!(history.work_per_epoch[1], (10, 1000));
     }
 
     #[test]
     fn inference_history_update_existing() {
         let mut history = InferenceHistory::new();
         history.add_work(10, 1000);
-        history.add_work(10, 500); // Aktualisiere Epoche 10
-
+        history.add_work(10, 500);
         assert_eq!(history.work_per_epoch.len(), 1);
-        assert_eq!(history.work_per_epoch[0], (10, 1500));
+        assert_eq!(history.work_per_epoch[0].1, 1500);
     }
 
     #[test]
     fn inference_history_old_entries_removed() {
         let mut history = InferenceHistory::new();
-
-        // Füge Arbeit über MAX_HISTORY_EPOCHS hinzu
-        for i in 0..15 {
-            history.add_work(i, 1000);
+        for e in 0..(MAX_HISTORY_EPOCHS as u64 + 5) {
+            history.add_work(e, 100);
         }
-
-        // Nur die letzten MAX_HISTORY_EPOCHS sollten übrig sein
-        assert!(history.work_per_epoch.len() <= MAX_HISTORY_EPOCHS);
+        assert_eq!(history.work_per_epoch.len(), MAX_HISTORY_EPOCHS);
     }
 
     #[test]
     fn decayed_weight_no_decay() {
         let mut history = InferenceHistory::new();
         history.add_work(10, 1000);
-
-        // Keine Abklingung (current_epoch = 10)
-        let weight = history.decayed_weight(10);
-        assert_eq!(weight, 1000);
+        assert_eq!(history.decayed_weight(10), 1000);
     }
 
     #[test]
     fn decayed_weight_one_epoch_decay() {
         let mut history = InferenceHistory::new();
         history.add_work(10, 1000);
-
-        // Eine Epoche Abklingung: 1000 * 0.95 = 950
-        let weight = history.decayed_weight(11);
-        assert_eq!(weight, 950);
-    }
-
-    #[test]
-    fn decayed_weight_multiple_epochs_decay() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, 1000);
-
-        // Zwei Epochen Abklingung: 1000 * 0.95^2 = 902
-        let weight = history.decayed_weight(12);
-        assert_eq!(weight, 902);
+        assert_eq!(history.decayed_weight(11), 950);
     }
 
     #[test]
@@ -423,283 +411,8 @@ mod tests {
         let mut history = InferenceHistory::new();
         history.add_work(10, 1000);
         history.add_work(11, 2000);
-
-        // Epoche 10: 1000 * 0.95^2 = 902
-        // Epoche 11: 2000 * 0.95^1 = 1900
-        // Total: 902 + 1900 = 2802
-        let weight = history.decayed_weight(12);
-        assert_eq!(weight, 2802);
-    }
-
-    /// Der Bezugswert verdoppelt das Gewicht, und zwar **er** und nicht
-    /// mehr ein einzelnes Token.
-    #[test]
-    fn der_arbeitsbezug_verdoppelt_das_gewicht() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, ARBEITSBEZUG_VORGABE);
-
-        let stake = 10_000_000; // 10 MYL
-        assert_eq!(calculate_voting_weight(stake, &history, 10), 20_000_000);
-    }
-
-    #[test]
-    fn calculate_voting_weight_with_decay() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, ARBEITSBEZUG_VORGABE);
-
-        let stake = 10_000_000; // 10 MYL
-        // Arbeit klingt eine Epoche ab: Bezug × 0,95
-        assert_eq!(calculate_voting_weight(stake, &history, 11), 19_500_000);
-    }
-
-    /// **Der Befund vom 2026-08-23, als Test festgehalten.** Ein einzelnes
-    /// Token, also eine volle vTFE-Einheit, hob das Gewicht früher aufs
-    /// Doppelte. Jetzt bewegt es fast nichts, und das ist der Sinn der
-    /// Änderung: Der Bezug ist die Arbeit einer Epoche, nicht die eines
-    /// Tokens.
-    #[test]
-    fn ein_einzelnes_token_verdoppelt_das_gewicht_nicht_mehr() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, VTFE_UNIT); // genau ein Token
-
-        let stake = 10_000_000;
-        let weight = calculate_voting_weight(stake, &history, 10);
-        assert!(
-            weight < stake + stake / 1000,
-            "ein Token darf das Gewicht kaum bewegen, ergab aber {}",
-            weight
-        );
-    }
-
-    /// **Eine Epoche Referenzarbeit ergibt etwa einen Stake Bonus.**
-    ///
-    /// Das ist die Kalibrierungsaussage selbst, und sie wird **gegen die
-    /// Konstante** geprüft und nicht gegen eine getippte Zahl: Vor
-    /// Fund 51 stand hier das Literal `1_719_394_757`, und als sich der
-    /// Bezugswert korrigierte, schlug der Test fehl, obwohl an der
-    /// geprüften Regel nichts falsch war. Geprüft gehört die Regel „eine
-    /// Epoche Referenzarbeit ist einen Stake wert", nicht die Zahl.
-    #[test]
-    fn eine_epoche_referenzarbeit_ist_etwa_einen_stake_wert() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, ARBEITSBEZUG_VORGABE);
-
-        let stake = 10_000_000;
-        let weight = calculate_voting_weight(stake, &history, 10);
-
-        // Stake plus etwa ein Stake Bonus, also rund das Doppelte.
-        assert!(weight > stake * 2 - stake / 10, "ergab {weight}");
-        assert!(weight < stake * 3, "ergab {weight}");
-    }
-
-    /// **Regression zu Fund 51: Der alte Bezugswert setzte jeden Knoten
-    /// an den Deckel.**
-    ///
-    /// `ARBEITSBEZUG_VORGABE` stand bis zum 2026-08-24 auf 1,7·10⁹, dem
-    /// Durchsatz **vor** der Zeilen-Parallelisierung. Mit dem heute
-    /// gemessenen Durchsatz liefert ein Referenzknoten 8,9·10⁹ je Epoche,
-    /// also das 5,19-Fache des alten Bezugs; über zehn Epochen sind das
-    /// 42 Stakes Bonus und damit weit über dem Deckel von 10.
-    ///
-    /// **Die Folge war nicht ein zu hohes Gewicht, sondern gar keine
-    /// Unterscheidung mehr:** Am Deckel bekommt ein Knoten mit doppeltem
-    /// Durchsatz dasselbe Gewicht wie einer mit einfachem, und der
-    /// Arbeitsanteil verliert seine einzige Aufgabe.
-    #[test]
-    fn der_alte_bezugswert_haette_jeden_knoten_an_den_deckel_gesetzt() {
-        const ALT: u64 = 1_700_000_000;
-        let stake = 10_000_000;
-        let mut history = InferenceHistory::new();
-        // Zehn Epochen Referenzarbeit nach heutiger Messung.
-        for e in 1..=10u64 {
-            history.add_work(e, ARBEITSBEZUG_VORGABE);
-        }
-
-        let alt = StimmgewichtsParameter {
-            arbeitsbezug: ALT,
-            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
-        };
-        let alt_weight = calculate_voting_weight_mit(stake, &history, 10, &alt);
-        assert_eq!(
-            alt_weight,
-            stake * HOECHSTFAKTOR_VORGABE,
-            "mit dem alten Bezug säße der Referenzknoten am Deckel"
-        );
-
-        // Mit dem korrigierten Bezug bleibt er darunter, und das ist der
-        // Sinn der Kalibrierung.
-        let jetzt = calculate_voting_weight(stake, &history, 10);
-        assert!(
-            jetzt < stake * HOECHSTFAKTOR_VORGABE,
-            "der Referenzknoten darf den Deckel nicht erreichen, ergab {jetzt}"
-        );
-        // Und ein Knoten mit doppelter Arbeit bekommt jetzt mehr — genau
-        // das, was am Deckel verlorenginge.
-        let mut doppelt = InferenceHistory::new();
-        for e in 1..=10u64 {
-            doppelt.add_work(e, ARBEITSBEZUG_VORGABE * 2);
-        }
-        assert!(
-            calculate_voting_weight(stake, &doppelt, 10) > jetzt,
-            "doppelte Arbeit muss mehr Gewicht ergeben"
-        );
-    }
-
-    /// **Der Deckel greift**, auch wenn der Bezugswert falsch gesetzt
-    /// wäre. Das ist der Grund für zwei Sicherungen statt einer: Der
-    /// Bezug ist parametrisch, der Deckel nicht.
-    #[test]
-    fn der_deckel_faengt_eine_fehlkalibrierung_ab() {
-        let mut history = InferenceHistory::new();
-        // Gegen die Konstante, nicht gegen ein Literal (Fund 51).
-        history.add_work(10, ARBEITSBEZUG_VORGABE);
-
-        let stake = 10_000_000;
-        let falsch = StimmgewichtsParameter {
-            arbeitsbezug: VTFE_UNIT, // um drei Größenordnungen zu klein
-            hoechstfaktor: HOECHSTFAKTOR_VORGABE,
-        };
-        let weight = calculate_voting_weight_mit(stake, &history, 10, &falsch);
-        assert_eq!(weight, stake * HOECHSTFAKTOR_VORGABE);
-    }
-
-    /// Ein Knoten mit Referenzdurchsatz über die volle Historie liegt
-    /// knapp **unter** dem Deckel. Absicht: Der Deckel soll erreichbar
-    /// sein, aber erst oberhalb des Referenzdurchsatzes.
-    #[test]
-    fn volle_historie_bei_referenzdurchsatz_liegt_knapp_unter_dem_deckel() {
-        let mut history = InferenceHistory::new();
-        for epoche in 0..MAX_HISTORY_EPOCHS as u64 {
-            history.add_work(epoche, ARBEITSBEZUG_VORGABE);
-        }
-        let stake = 10_000_000;
-        let weight = calculate_voting_weight(stake, &history, MAX_HISTORY_EPOCHS as u64 - 1);
-        let deckel = stake * HOECHSTFAKTOR_VORGABE;
-
-        assert!(weight < deckel, "{} muss unter {} liegen", weight, deckel);
-        assert!(
-            weight > deckel * 8 / 10,
-            "{} sollte nah am Deckel liegen ({})",
-            weight,
-            deckel
-        );
-    }
-
-    /// Unbrauchbare Parameter dürfen den Konsenspfad nicht anhalten und
-    /// nicht das Gewicht null erzeugen (Bootstrap-Blockade).
-    #[test]
-    fn unbrauchbare_parameter_fallen_auf_die_vorgabe_zurueck() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, ARBEITSBEZUG_VORGABE);
-        let stake = 10_000_000;
-        let erwartet = calculate_voting_weight(stake, &history, 10);
-
-        for kaputt in [
-            StimmgewichtsParameter {
-                arbeitsbezug: 0,
-                hoechstfaktor: 10,
-            },
-            StimmgewichtsParameter {
-                arbeitsbezug: ARBEITSBEZUG_VORGABE,
-                hoechstfaktor: 0,
-            },
-        ] {
-            assert!(!kaputt.ist_brauchbar());
-            assert_eq!(
-                calculate_voting_weight_mit(stake, &history, 10, &kaputt),
-                erwartet
-            );
-        }
-    }
-
-    /// Ohne Stake bleibt das Gewicht null, gleich wie viel gearbeitet
-    /// wurde: Der Arbeitsanteil ist ein Faktor auf den Stake, keine
-    /// eigene Quelle.
-    #[test]
-    fn ohne_stake_hilft_auch_arbeit_nicht() {
-        let mut history = InferenceHistory::new();
-        history.add_work(10, ARBEITSBEZUG_VORGABE * 1000);
-        assert_eq!(calculate_voting_weight(0, &history, 10), 0);
-    }
-
-    /// Bootstrap: ohne Arbeitshistorie muss der Stake allein zählen.
-    /// Die alte Produktformel lieferte hier 0 — ein Validator mit
-    /// Gewicht 0 wird nie gewählt, kann nie Arbeit nachweisen und
-    /// bleibt dauerhaft bei 0. Bei Genesis wäre kein Komitee wählbar.
-    #[test]
-    fn ohne_arbeitshistorie_zaehlt_der_stake() {
-        let history = InferenceHistory::new();
-        let stake = 10_000_000;
-        assert_eq!(calculate_voting_weight(stake, &history, 0), stake);
-    }
-
-    /// Arbeit erhöht das Gewicht monoton.
-    #[test]
-    fn mehr_arbeit_ergibt_mehr_gewicht() {
-        let stake = 10_000_000;
-        let mut wenig = InferenceHistory::new();
-        wenig.add_work(5, VTFE_UNIT);
-        let mut viel = InferenceHistory::new();
-        viel.add_work(5, VTFE_UNIT * 3);
-
-        assert!(
-            calculate_voting_weight(stake, &viel, 5)
-                > calculate_voting_weight(stake, &wenig, 5)
-        );
-    }
-
-    /// Kein Überlauf bei extremen Werten — vorher panickte
-    /// `apply_decay` im Debug-Build (`value * 95`) und lief im
-    /// Release-Build still um.
-    #[test]
-    fn extremwerte_saettigen_statt_zu_ueberlaufen() {
-        let mut history = InferenceHistory::new();
-        history.add_work(0, u64::MAX);
-        // Darf weder panicken noch umlaufen.
-        let w = calculate_voting_weight(u64::MAX, &history, 0);
-        assert_eq!(w, u64::MAX);
-
-        let mut spaet = InferenceHistory::new();
-        spaet.add_work(0, u64::MAX);
-        let _ = spaet.decayed_weight(9); // neun Abkling-Schritte
-    }
-
-    #[test]
-    fn test_compare_voting_weight_work_matters() {
-        let mut history_a = InferenceHistory::new();
-        history_a.add_work(10, 2_000_000); // 2 vTFE
-
-        let mut history_b = InferenceHistory::new();
-        history_b.add_work(10, 1_000_000); // 1 vTFE
-
-        let stake_a = 10_000_000;
-        let stake_b = 10_000_000;
-
-        // A hat mehr Arbeit → höheres Gewicht
-        assert!(compare_voting_weight(
-            stake_a, &history_a,
-            stake_b, &history_b,
-            10
-        ));
-    }
-
-    #[test]
-    fn test_compare_voting_weight_stake_matters() {
-        let mut history_a = InferenceHistory::new();
-        history_a.add_work(10, 1_000_000);
-
-        let mut history_b = InferenceHistory::new();
-        history_b.add_work(10, 1_000_000);
-
-        let stake_a = 20_000_000; // 20 MYL
-        let stake_b = 10_000_000; // 10 MYL
-
-        // A hat mehr Stake → höheres Gewicht
-        assert!(compare_voting_weight(
-            stake_a, &history_a,
-            stake_b, &history_b,
-            10
-        ));
+        // 1000 * 0,95² = 902, 2000 * 0,95 = 1900.
+        assert_eq!(history.decayed_weight(12), 2802);
     }
 
     #[test]
@@ -707,7 +420,6 @@ mod tests {
         assert_eq!(apply_decay(1000, 0), 1000);
         assert_eq!(apply_decay(1000, 1), 950);
         assert_eq!(apply_decay(1000, 2), 902);
-        assert_eq!(apply_decay(1000, 3), 856);
     }
 
     #[test]
@@ -715,5 +427,174 @@ mod tests {
         assert_eq!(DECAY_FACTOR_NUM, 95);
         assert_eq!(DECAY_FACTOR_DEN, 100);
         assert_eq!(MAX_HISTORY_EPOCHS, 10);
+    }
+
+    // -----------------------------------------------------------------
+    // Das Gewicht: der Stake, und sonst nichts.
+    // -----------------------------------------------------------------
+
+    /// ⚑ **Die Aussage der Entscheidung vom 2026-09-02, als Test.**
+    ///
+    /// Kein Umfang an Arbeit ändert das Gewicht. Der Test zieht
+    /// absichtlich extreme Historien heran, damit er nicht nur die
+    /// leeren Fälle abdeckt.
+    #[test]
+    fn arbeit_aendert_das_gewicht_nicht_mehr() {
+        let stake = 10_000_000u64;
+        let ohne = calculate_voting_weight(stake, &InferenceHistory::new(), 10);
+
+        for arbeit in [1u64, 1_000_000, 8_900_000_000, u64::MAX / 16] {
+            let mut h = InferenceHistory::new();
+            for e in 1..=MAX_HISTORY_EPOCHS as u64 {
+                h.add_work(e, arbeit);
+            }
+            assert_eq!(
+                calculate_voting_weight(stake, &h, MAX_HISTORY_EPOCHS as u64),
+                ohne,
+                "Arbeit {arbeit} hat das Gewicht bewegt; Arbeit qualifiziert, sie wiegt nicht"
+            );
+        }
+        assert_eq!(ohne, stake, "das Gewicht ist der Stake");
+    }
+
+    /// Ohne Stake kein Gewicht, auch mit Arbeit.
+    #[test]
+    fn ohne_stake_hilft_auch_arbeit_nicht() {
+        let mut h = InferenceHistory::new();
+        h.add_work(10, u64::MAX / 4);
+        assert_eq!(calculate_voting_weight(0, &h, 10), 0);
+    }
+
+    /// Extreme Stakes sättigen nicht und laufen nicht um.
+    #[test]
+    fn extremwerte_laufen_nicht_um() {
+        let mut h = InferenceHistory::new();
+        h.add_work(10, u64::MAX);
+        assert_eq!(calculate_voting_weight(u64::MAX, &h, 10), u64::MAX);
+    }
+
+    #[test]
+    fn test_compare_voting_weight_stake_matters() {
+        let leer = InferenceHistory::new();
+        assert!(compare_voting_weight(2_000_000, &leer, 1_000_000, &leer, 10));
+        assert!(!compare_voting_weight(1_000_000, &leer, 2_000_000, &leer, 10));
+    }
+
+    /// ⚑ **Die Gegenrichtung, und sie ist der Sinn der Änderung.**
+    ///
+    /// Vor dem 2026-09-02 gewann bei gleichem Stake der mit mehr Arbeit.
+    /// Jetzt gewinnt niemand: Gleicher Stake heißt gleiches Gewicht,
+    /// unabhängig von der Historie.
+    #[test]
+    fn bei_gleichem_stake_entscheidet_arbeit_nicht_mehr() {
+        let leer = InferenceHistory::new();
+        let mut viel = InferenceHistory::new();
+        viel.add_work(10, 8_900_000_000);
+        assert!(!compare_voting_weight(1_000_000, &viel, 1_000_000, &leer, 10));
+        assert!(!compare_voting_weight(1_000_000, &leer, 1_000_000, &viel, 10));
+    }
+
+    // -----------------------------------------------------------------
+    // Die Qualifikation.
+    // -----------------------------------------------------------------
+
+    /// **Bei Schwelle null qualifiziert jeder.** Das ist der Startwert
+    /// und die Bedingung dafür, dass ein Netz ohne Historie anfangen
+    /// kann.
+    #[test]
+    fn bei_schwelle_null_qualifiziert_jeder() {
+        let p = StimmgewichtsParameter::default();
+        assert_eq!(p.schwelle_zaehler, 0);
+        assert!(arbeitsqualifikation(&InferenceHistory::new(), 10, 0, &p));
+        assert!(arbeitsqualifikation(
+            &InferenceHistory::new(),
+            10,
+            1_000_000_000,
+            &p
+        ));
+    }
+
+    /// **Ein Median von null qualifiziert ebenfalls jeden.** Hat niemand
+    /// gearbeitet, gibt es nichts, wogegen zu messen wäre.
+    #[test]
+    fn ein_median_von_null_qualifiziert_jeden() {
+        let p = StimmgewichtsParameter {
+            schwelle_zaehler: 1,
+            schwelle_nenner: 5,
+        };
+        assert!(arbeitsqualifikation(&InferenceHistory::new(), 10, 0, &p));
+    }
+
+    /// **Mit Schwelle trennt sie**, und zwar am Median gemessen.
+    #[test]
+    fn eine_schwelle_ueber_null_trennt_am_median() {
+        let p = StimmgewichtsParameter {
+            schwelle_zaehler: 1,
+            schwelle_nenner: 5,
+        };
+        let median = 1_000_000u64;
+
+        let mut knapp_drueber = InferenceHistory::new();
+        knapp_drueber.add_work(10, 200_000);
+        assert!(arbeitsqualifikation(&knapp_drueber, 10, median, &p));
+
+        let mut knapp_drunter = InferenceHistory::new();
+        knapp_drunter.add_work(10, 199_999);
+        assert!(!arbeitsqualifikation(&knapp_drunter, 10, median, &p));
+
+        // Und die Gegenprobe: ohne Arbeit faellt man durch.
+        assert!(!arbeitsqualifikation(&InferenceHistory::new(), 10, median, &p));
+    }
+
+    /// Unbrauchbare Parameter fallen auf die Vorgabe zurück, und die
+    /// Vorgabe schließt niemanden aus.
+    ///
+    /// ⚑ **Die Richtung ist wichtig:** Ein kaputter Parameter darf das
+    /// Netz nicht anhalten. Ein Nenner von null wäre eine Division durch
+    /// null, ein Zähler über dem Nenner schlösse die Mehrheit aus.
+    #[test]
+    fn unbrauchbare_parameter_fallen_auf_die_vorgabe_zurueck() {
+        let kaputt = [
+            StimmgewichtsParameter {
+                schwelle_zaehler: 1,
+                schwelle_nenner: 0,
+            },
+            StimmgewichtsParameter {
+                schwelle_zaehler: 3,
+                schwelle_nenner: 2,
+            },
+        ];
+        for p in kaputt {
+            assert!(!p.ist_brauchbar());
+            assert!(
+                arbeitsqualifikation(&InferenceHistory::new(), 10, 1_000_000, &p),
+                "ein kaputter Parameter darf niemanden ausschliessen"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Der Netzmedian.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn der_median_nimmt_bei_gerader_zahl_den_unteren() {
+        assert_eq!(netzmedian(&mut []), 0);
+        assert_eq!(netzmedian(&mut [7]), 7);
+        assert_eq!(netzmedian(&mut [1, 3]), 1);
+        assert_eq!(netzmedian(&mut [3, 1, 2]), 2);
+        assert_eq!(netzmedian(&mut [10, 1, 2, 3]), 2);
+    }
+
+    /// ⚑ **Ein einzelner Riese verschiebt den Median nicht.**
+    ///
+    /// Das ist der Grund für den Median statt eines Mittelwerts: Ein
+    /// Teilnehmer mit sehr viel Arbeit hübe einen Mittelwert beliebig
+    /// weit und schlösse damit die Mehrheit aus.
+    #[test]
+    fn ein_einzelner_riese_verschiebt_den_median_nicht() {
+        let ohne = netzmedian(&mut [1, 2, 3, 4, 5]);
+        let mit = netzmedian(&mut [1, 2, 3, 4, u64::MAX]);
+        assert_eq!(ohne, mit, "der Median darf sich von einem Ausreisser nicht bewegen");
     }
 }

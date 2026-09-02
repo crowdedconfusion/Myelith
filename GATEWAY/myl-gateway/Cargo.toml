@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Gateway (Whitepaper Kap. 3.3, Rolle 6): nimmt Inferenzanfragen entgegen, schreibt sie fest und liefert einen Beleg. Stufe 1 ist das eigene Gateway auf localhost; der Betreiber ist der Kontoinhaber, damit entfaellt die Bezahlfrage."
-license = "PolyForm Shield License 1.0.0"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 [dependencies]
 myl-types = { path = "../../SHARED_TYPES/myl-types" }

@@ -73,17 +73,33 @@ fn komiteegroesse_stimmt_mit_consensus() {
 
 /// Der Mindest-Stake, gegen die Formel aus `myl_tokenomics::sicherheit`.
 ///
-/// Die Vorgabewerte müssen das Zahlenbeispiel aus Anhang B.1 ergeben:
-/// g = 0,5 MYL, p = 2 % → S_min = 1250 MYL.
+/// ⚑ **Das Zahlenbeispiel aus Anhang B.1 gilt nicht mehr, und das ist
+/// eine Folge von A1.** Dort steht g = 0,5 MYL, p = 2 % und daraus
+/// S_min = 1 250 MYL. Seit dem 2026-09-02 ist p = 5 %, weil gamma in
+/// die Rate aufgegangen ist, und `S_min = g/p^2` faellt damit auf
+/// **200 MYL**, also um den Faktor 6,25.
+///
+/// **Der Vorgabestake ist bei 1 250 geblieben.** Er liegt jetzt weit
+/// ueber der Schranke, was die sichere Richtung ist und trotzdem ein
+/// offener Punkt: Ein Mindeststake weit ueber der Anforderung haelt
+/// Teilnehmer fern, ohne Sicherheit zu kaufen. Ob er mitfaellt, ist
+/// eine wirtschaftliche Entscheidung.
+///
+/// Der Test haelt beide Zahlen fest, damit die Luecke sichtbar bleibt
+/// und niemand eine davon nebenbei bewegt.
 #[test]
-fn mindeststake_stimmt_mit_anhang_b1() {
+fn mindeststake_liegt_ueber_s_min_und_um_wie_viel() {
     let reg = ParameterRegistry::vorgabe();
     let (pz, pn) = bruch(&reg, Parameter::Stichprobenrate);
     let g = zahl(&reg, Parameter::Betrugsgewinn);
     let s = zahl(&reg, Parameter::MindestStake);
     assert_eq!(g, UNITS_PER_MYL / 2);
-    assert_eq!(myl_tokenomics::s_min(g, pz, pn).unwrap(), 1_250 * UNITS_PER_MYL);
-    assert_eq!(s, 1_250 * UNITS_PER_MYL);
+    assert_eq!((pz, pn), (5, 100), "die Rate steht seit A1 auf 5 %");
+
+    let noetig = myl_tokenomics::s_min(g, pz, pn).unwrap();
+    assert_eq!(noetig, 200 * UNITS_PER_MYL, "S_min = g/p^2 = 200 MYL");
+    assert_eq!(s, 1_250 * UNITS_PER_MYL, "der Vorgabestake ist unveraendert");
+    assert_eq!(s / noetig, 6, "der Abstand ist der Faktor 6,25");
 }
 
 /// **Die Streitfrist, gegen `myl_consensus::epoch_close::DEFAULT_DISPUTE_EPOCHS`.**
@@ -177,34 +193,47 @@ fn die_registry_prueft_genau_die_formel_aus_tokenomics() {
     assert!(geprueft > 300, "nur {geprueft} Werte geprüft");
 }
 
-/// **Der Arbeitsbezug des Stimmgewichts, gegen `myl-consensus`** (Fund 51).
+/// **Die Arbeitsschwelle der Registry, gegen `myl-consensus`.**
 ///
-/// Der Wert ist aus einer Durchsatzmessung abgeleitet und **veraltet mit
-/// jeder Optimierung**; genau das ist am 2026-08-23 unbemerkt geschehen,
-/// als die Zeilen-Parallelisierung den Durchsatz um das 5,19-Fache hob
-/// und der Bezug stehen blieb. Dieser Test ist der Grund, warum es kein
-/// zweites Mal unbemerkt geschieht.
+/// ⚑ **Bis zum 2026-09-02 stand hier der Arbeitsbezug** (Fund 51), also
+/// die vTFE-Menge, die einen Bonus in Höhe des Stakes wert war. Er ist
+/// mit der Formel entfallen: Ihr unterscheidender Bereich war dreizehn
+/// Prozent breit (Fund 135), und erreicht wurde sie im Betrieb nie
+/// (Fund 137).
+///
+/// **Der Test bleibt, weil sein Grund bleibt.** Zwei Zahlen, die
+/// dieselbe Sache in zwei Crates beschreiben, laufen auseinander, ohne
+/// dass ein einziger Aufruf falsch aussieht.
 #[test]
-fn arbeitsbezug_und_hoechstfaktor_stimmen_mit_consensus() {
+fn die_arbeitsschwelle_stimmt_mit_consensus() {
     let reg = ParameterRegistry::vorgabe();
     assert_eq!(
-        zahl(&reg, Parameter::Arbeitsbezug),
-        myl_consensus::voting_weight::ARBEITSBEZUG_VORGABE
+        zahl(&reg, Parameter::ArbeitsschwelleZaehler),
+        myl_consensus::voting_weight::ARBEITSSCHWELLE_ZAEHLER_VORGABE
     );
     assert_eq!(
-        zahl(&reg, Parameter::Hoechstfaktor),
-        myl_consensus::voting_weight::HOECHSTFAKTOR_VORGABE
+        zahl(&reg, Parameter::ArbeitsschwelleNenner),
+        myl_consensus::voting_weight::ARBEITSSCHWELLE_NENNER_VORGABE
     );
 
-    // Und die Kalibrierungsaussage selbst: Eine Epoche Referenzarbeit ist
-    // etwa einen Stake wert, nicht das Fünffache und nicht ein Fünftel.
+    // ⚑ Und die Aussage dahinter, nicht nur die Gleichheit: Der
+    // Startwert muss **null** sein. Ein Wert darüber schlösse bei
+    // Genesis jeden Validator aus, denn niemand hat Arbeitshistorie.
+    assert_eq!(
+        zahl(&reg, Parameter::ArbeitsschwelleZaehler),
+        0,
+        "der Startwert der Arbeitsschwelle muss null sein, sonst faengt kein Netz an"
+    );
+
+    // Und die Kalibrierungsaussage der Nachfolgerin: Arbeit bewegt das
+    // Gewicht nicht mehr, in keinem Umfang.
     let stake = 10_000_000u64;
     let mut history = myl_consensus::voting_weight::InferenceHistory::new();
-    history.add_work(1, zahl(&reg, Parameter::Arbeitsbezug));
+    history.add_work(1, 8_900_000_000);
     let gewicht = myl_consensus::voting_weight::calculate_voting_weight(stake, &history, 1);
-    assert!(
-        gewicht > stake * 19 / 10 && gewicht < stake * 21 / 10,
-        "eine Epoche Referenzarbeit muss etwa einen Stake Bonus ergeben, ergab {gewicht}"
+    assert_eq!(
+        gewicht, stake,
+        "Arbeit qualifiziert, sie wiegt nicht: das Gewicht muss der Stake sein"
     );
 }
 
@@ -218,75 +247,14 @@ fn die_trainingsrate_liegt_ueber_der_inferenzrate() {
     assert_eq!((tz, tn), (10, 100), "Entwurf: 10 %");
 }
 
-/// **Der Kontrollsegment-Vorrat und sein Fenster, gegen `myl-verifier`**
-/// (⚑ Fund 58).
-///
-/// Beide Zahlen stammen aus der Messung vom 2026-08-25 und stehen dort,
-/// wo der Mechanismus steht. Liefe die Registry davon, stünde in der
-/// Governance eine Schranke, die mit der gemessenen nichts mehr zu tun
-/// hat — und niemand könnte sagen, welche der beiden gilt.
-#[test]
-fn kontrollsegmentvorrat_und_fenster_stimmen_mit_verification() {
-    let reg = ParameterRegistry::vorgabe();
-    assert_eq!(
-        zahl(&reg, Parameter::Kontrollsegmentvorrat),
-        myl_verifier::VORRAT_VORGABE
-    );
-    assert_eq!(
-        zahl(&reg, Parameter::Kontrollsegmentfenster),
-        myl_verifier::BEOBACHTUNGSFENSTER_VORGABE
-    );
-}
-
-/// **Die Vorratsprüfung der Registry ist genau die Formel aus
-/// VERIFICATION**, nicht eine zweite Fassung davon.
-///
-/// Geprüft über 400 Vorratsgrößen rund um die Schranke: Die Registry
-/// muss **genau dann** ablehnen, wenn `noetiger_vorrat` mehr verlangt,
-/// als der Vorschlag bietet. Liefe eine der beiden Seiten davon, fiele
-/// es hier auf — dasselbe Muster wie bei der Self-Dealing-Grenze.
-#[test]
-fn die_registry_prueft_genau_die_formel_aus_verification() {
-    use myl_governance::registry::Wert;
-    use myl_governance::{pruefe_vorschlag, ParameterVorschlag, VorschlagFehler};
-
-    let basis = ParameterRegistry::vorgabe();
-    let fenster = zahl(&basis, Parameter::Kontrollsegmentfenster);
-    let (gz, gn) = bruch(&basis, Parameter::Kontrollsegmentanteil);
-    let noetig = myl_verifier::noetiger_vorrat(fenster, gz, gn);
-
-    let mut abgelehnt = 0usize;
-    let mut angenommen = 0usize;
-    for delta in 0..400u64 {
-        for vorrat in [noetig.saturating_sub(delta), noetig + delta] {
-            let ergebnis = pruefe_vorschlag(
-                &basis,
-                &ParameterVorschlag {
-                    parameter: Parameter::Kontrollsegmentvorrat,
-                    neuer_wert: Wert::Ganzzahl(vorrat),
-                },
-            );
-            if vorrat >= noetig {
-                assert!(
-                    ergebnis.is_ok(),
-                    "Vorrat {vorrat} deckt die nötigen {noetig}, wurde aber abgelehnt: {ergebnis:?}"
-                );
-                angenommen += 1;
-            } else {
-                assert!(
-                    matches!(ergebnis, Err(VorschlagFehler::Invariante(_))),
-                    "Vorrat {vorrat} liegt unter den nötigen {noetig}, wurde aber angenommen"
-                );
-                abgelehnt += 1;
-            }
-        }
-    }
-    // **Beide Seiten müssen vorkommen.** Ein Test, in dem nichts
-    // abgelehnt oder nichts angenommen wird, prüft die Grenze nicht,
-    // sondern nur eine Richtung.
-    assert!(abgelehnt > 100, "nur {abgelehnt} Ablehnungen");
-    assert!(angenommen > 100, "nur {angenommen} Annahmen");
-}
+// ⚑ Hier standen zwei Gleichstandstests zum Kontrollsegment-Vorrat
+// (Fund 58): Die Registry führte Vorrat und Fenster, `myl-verifier` die
+// Formel dazu, und beide Seiten mussten dieselbe Zahl ergeben.
+//
+// **Sie sind mit ihrem Gegenstand entfallen** (Entscheidung A1,
+// 2026-09-02). Der Gedanke bleibt und steht weiter unten mehrfach: Zwei
+// Crates, die dieselbe Zahl führen, laufen auseinander, ohne dass ein
+// einziger Aufruf falsch aussieht.
 
 /// **Drei Fenster von zehn Epochen, und nur eines davon ist gebunden.**
 ///
@@ -414,8 +382,11 @@ fn die_stimmgewichtsparameter_der_registry_sind_die_von_consensus() {
     let aus_der_registry =
         myl_governance::abstimmung::stimmgewichts_parameter(&ParameterRegistry::vorgabe());
     let aus_consensus = myl_consensus::voting_weight::StimmgewichtsParameter::default();
-    assert_eq!(aus_der_registry.arbeitsbezug, aus_consensus.arbeitsbezug);
-    assert_eq!(aus_der_registry.hoechstfaktor, aus_consensus.hoechstfaktor);
+    assert_eq!(
+        aus_der_registry.schwelle_zaehler,
+        aus_consensus.schwelle_zaehler
+    );
+    assert_eq!(aus_der_registry.schwelle_nenner, aus_consensus.schwelle_nenner);
     assert!(aus_der_registry.ist_brauchbar());
 }
 
