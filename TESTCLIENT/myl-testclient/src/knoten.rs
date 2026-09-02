@@ -274,6 +274,9 @@ pub fn anlaufstelle() -> bool {
             ],
         },
         aufnahme_sekunden: 30,
+        // Kein Endpunkt: Der Testklient faehrt mehrere Knoten in einem
+        // Prozess, und ein fester Port kann nur einmal vergeben werden.
+        beobachtung: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
         // Zwei Erzeuger gabeln die Kette sofort, weil niemand
@@ -338,6 +341,9 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
             oeffentliche_adressen: Vec::new(),
         },
         aufnahme_sekunden: 30,
+        // Kein Endpunkt: Der Testklient faehrt mehrere Knoten in einem
+        // Prozess, und ein fester Port kann nur einmal vergeben werden.
+        beobachtung: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.

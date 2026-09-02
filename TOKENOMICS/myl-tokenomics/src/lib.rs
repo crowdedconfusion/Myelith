@@ -32,6 +32,7 @@ pub mod exp_lut_table;
 pub mod mint;
 pub mod sicherheit;
 pub mod slashing;
+pub mod speicherentgelt;
 pub mod stake;
 pub mod subventionsplan;
 pub mod training;
@@ -81,6 +82,9 @@ pub use slashing::{
     matrix as slashing_matrix, satz as slashing_satz, satz_aus_ledger, satz_gestaffelt,
     urteil_buchen_gestaffelt, Akteur, Grund, SlashBuchungFehler, Slashsatz,
     WIEDERHOLUNGSFENSTER,
+};
+pub use speicherentgelt::{
+    byte_epochen, SPEICHERSATZ_VORGABE, SPEICHER_KOSTENBODEN,
 };
 pub use stake::{erforderlicher_stake, getragene_kapazitaet, StakeAnspruch, StakeFehler};
 pub use training::{capped_training_reward, training_reward_cap, TRAINING_CAP_BPS};

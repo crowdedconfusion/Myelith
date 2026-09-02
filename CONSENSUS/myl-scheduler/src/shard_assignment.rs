@@ -211,8 +211,21 @@ pub fn assign_pods(
     let je_pod = pod_groesse(num_shards_per_pod);
     for cluster in clusters {
         // In der Reihenfolge des Clusters schneiden. Sie stammt aus dem
-        // seed-gesteuerten Shuffle der Clusterbildung, ist also bereits
-        // kanonisch und unvorhersagbar.
+        // seed-gesteuerten Mischen in `zonen_cluster`, ist also
+        // kanonisch und innerhalb der Zone unvorhersagbar.
+        //
+        // ⚑ **Dieser Satz war vom 2026-09-01 bis zum 2026-09-02
+        // falsch** (Fund 142). Er beschrieb den Shuffle in
+        // `geo_clustering.rs`; die Datei ist entfernt worden, der
+        // Shuffle mit ihr, der Satz blieb stehen. Die Reihenfolge war
+        // in dieser Zeit die des Registers, also nach `MinerId`
+        // sortiert und damit **wählbar**, weil `MinerId` ein Hash über
+        // einen frei erzeugbaren Schlüssel ist.
+        //
+        // ⚑ **Und „unvorhersagbar" gilt innerhalb der Zone, nicht über
+        // sie hinweg.** Die Zone ist eine Erklärung; wer eine leere
+        // angibt, bekommt sie ganz. Siehe den Kopf von
+        // [`crate::zonenzuteilung::zonen_cluster`].
         let mut rest = &cluster.miners[..];
         while rest.len() >= je_pod {
             let index = zuteilung.pods.len() as u32;

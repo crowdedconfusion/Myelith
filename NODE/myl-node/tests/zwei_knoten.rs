@@ -59,6 +59,10 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         konsensschluesseldatei: None,
         nat: Default::default(),
         aufnahme_sekunden: 1,
+        // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
+        // Testknoten nebeneinander laufen, und dieser Test prueft
+        // ohnehin etwas anderes.
+        beobachtung: None,
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,

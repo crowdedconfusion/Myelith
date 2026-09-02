@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.35.0 (`myl-consensus` 0.24.0, `myl-scheduler` 0.9.0,
-> `myl-ledger` 0.14.0)
-> **Datum:** 2026-09-01
+> **Version:** 0.37.0 (`myl-consensus` 0.26.0, `myl-scheduler` 0.10.0,
+> `myl-ledger` 0.15.0)
+> **Datum:** 2026-09-02
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,148 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.37.0 – 2026-09-02 (⚑ die Pod-Besetzung war wählbar, und die Prüfung stand am falschen Ort)
+
+**Drei Funde aus Tor B, Punkt 2, und der erste ist der schwerste.**
+
+⚑ **Fund 142: Die Besetzung folgte der Registerreihenfolge, nicht der
+Saat.** `zonen_cluster` erhielt die Eingabereihenfolge, `assign_pods`
+schnitt sie an festen Stellen, und die Eingabe ist `state.miner.values()`,
+also nach `MinerId` sortiert. `MinerId` ist `SHA-256` über einen frei
+erzeugbaren BLS-Schlüssel: **Wer eine Kennung an einer bestimmten Stelle
+haben wollte, erzeugte Schlüssel, bis eine dort landete.**
+
+**Damit fiel die Annahme, auf der Stufe 1 steht.** Zwei Pods rechnen
+dieselbe Arbeit doppelt, und das trägt nur, solange ein Angreifer nicht
+bestimmen kann, mit wem er in einem Pod sitzt.
+
+⚑ **Der Kommentar in `assign_pods` behauptete das Mischen bereits.** Er
+stammte aus `geo_clustering.rs`, die am 2026-09-01 entfernt wurde; der
+Shuffle ging mit ihr, der Satz blieb stehen. **Eine Zusicherung, deren
+Code verschwunden ist, ist gefährlicher als gar keine**, denn sie hält
+den nächsten Leser vom Nachsehen ab.
+
+**Gemessen** (`podbesetzung_sim.py`): Ein ganzer Pod kostete **0,06
+Sekunden** Schlüsselerzeugung bei tausend ehrlichen Minern und drei
+Sekunden bei hunderttausend. Der Anteil blinder Redundanzpaare bei einem
+Angreifer an der byzantinischen Schranke lag bei **0,107**, also über
+der Stichprobenrate der Stufe 2 (fünf Prozent) statt vier
+Größenordnungen darunter.
+
+**Jetzt wird gemischt**, je Zone mit einer eigenen abgeleiteten Saat,
+und das Sammelcluster ebenso. Aus dem Anteil `f` an den Kennungen wird
+ein Anteil `f⁶` an den ganz besetzten Pods.
+
+⚑ **Was das Mischen nicht schließt, und das steht ausdrücklich im
+Code:** Die Zone ist eine **Erklärung**. Wer eine angibt, in der sonst
+niemand steht, bekommt daraus ganze Pods, gemischt oder nicht. Sie zu
+schließen hieße, die Zone aus der Besetzung zu nehmen, und das kostet
+Latenz in einer Pipeline, deren Shards nacheinander rechnen. **Das ist
+eine Entscheidung des Projektinhabers und keine Ableitung**; sie ist
+gefallen und lautet: Die Zone bleibt, die Antwortzeit zählt.
+
+⚑ **Fund 143: Die Epochensaat kam vom Ende derselben Epoche.** Der
+Knoten reichte den letzten Blockhash durch, und beim Epochenabschluss
+ist das der letzte Block der Epoche, die gerade abgerechnet wird. **Die
+Zuteilung stand also erst fest, wenn die Epoche vorbei war**, während
+ein Bündel während ihr eingereicht sein muss: Kein Pod konnte wissen,
+dass er einer ist.
+
+Die Saat steht jetzt im Ledger-Zustand, gilt die ganze Epoche und stammt
+aus `e−2`. **Genauso weit reicht der Registrierungsschluss aus Anhang
+A.2**, und das ist kein Zufall: Wäre die Saat näher als der Schluss,
+könnte sich jemand anmelden, nachdem er sie kennt. Ethereum nennt
+dieselbe Konstruktion `MIN_SEED_LOOKAHEAD`.
+
+⚑ **Warum der Fehler unentdeckt blieb:** Der große Test des Punktes hat
+sechs Miner, also genau einen Pod, und der enthält alle sechs, gleich
+welche Saat man nimmt. **Fund 142 hat Fund 143 unsichtbar gemacht.**
+
+⚑ **Fund 144: Die Aufnahme eines Bündels prüfte nichts als die
+Anmeldung.** `buendel_einreichen` prüfte Miner, Epoche und Dublette;
+Mitgliedschaft, Koordinator und Aggregatsignatur prüfte es nicht,
+sondern erst der Epochenabschluss.
+
+**Die vollständige Prüfung gab es im Baum zweimal, und die vollständige
+Hälfte war die ungenutzte:** `PoIRegistry::submit` prüft alle fünf
+Schritte und hatte außerhalb von Tests keinen einzigen Aufrufer.
+
+**Die Folge war Zustandswachstum, nicht nur eine späte Prüfung.**
+`state.buendel` ist nach `PodId` geschlüsselt, und die Kennung wählt der
+Einreichende frei: Jeder angemeldete Miner konnte den Zustand bis zur
+Blockgrenze mit Bündeln für erfundene Pods füllen, rund 212 Bytes je
+Stück, und jedes davon steckte bis zum Epochenwechsel in jeder
+Zustandswurzel.
+
+⚑ **Die Signierbotschaft ist dafür nach `myl-types` gezogen.** Sie lag
+in `myl_consensus::poi`, und dort konnte `myl-ledger` sie nicht sehen,
+denn `myl-consensus` hängt an `myl-ledger` und nicht umgekehrt. **Die
+Prüfung stand am falschen Ort, weil die Botschaft am falschen Ort
+stand.** Verschoben, nicht kopiert: Zwei Kodierungen wären zwei
+Meinungen darüber, was unterschrieben wurde.
+
+**Belegt:** fünf neue Ablehnungstests im Ledger, zwei im Scheduler, vier
+im Knoten, und für jede eingebaute Prüfung eine eigene Gegenprobe.
+⚑ **Eine davon hat zunächst nicht gebissen:** Der Test zur erfundenen
+Pod-Kennung änderte die Kennung **nach** dem Unterschreiben und
+scheiterte deshalb am Aggregat statt an der Kennungssuche. Er
+unterschreibt jetzt neu und trifft die Suche.
+
+### v0.36.0 – 2026-09-02 (`myl-consensus` v0.25.0: Arbeit qualifiziert, Stake wiegt)
+
+**Entscheidung A3 des Projektinhabers, recherchiert und gebaut.** Der
+Arbeitsanteil verlässt die Gewichtsformel; `voting_weight` ist der
+Stake. Eine Mindestarbeit wird stattdessen Voraussetzung, gemessen als
+Bruchteil des **Netzmedians** und mit Startwert **null**.
+
+⚑ **Zwei Messungen haben die alte Formel erledigt.**
+
+**Fund 135:** Der Höchstfaktor griff ab **1,13-fachem**
+Referenzdurchsatz; darüber ergaben 1,2-fach und hundertfach denselben
+Wert. Der Arbeitsanteil unterschied in einem Band von dreizehn Prozent.
+**Und die Sicherheitsaussage stand daneben, ungesagt:** Ein MYL im
+gedeckelten Validator wog zehnmal so viel wie eines im arbeitslosen. Der
+Höchstfaktor war der **Divisor der Angriffskosten**.
+
+**Fund 137:** `ValidatorRegistry::record_work` hatte außerhalb seiner
+eigenen Tests **keinen Aufrufer**. Die Historie war im Betrieb immer
+leer, `voting_weight == stake` galt bereits. **Die Umstellung ist
+deshalb keine Verhaltensänderung, sondern eine Berichtigung des
+Vertrags**, und die sechste Ausprägung des häufigsten Fehlerbilds dieses
+Projekts.
+
+**Was die Recherche sagt:** Ethereum kennt keinen Arbeitsanteil, das
+Gewicht **ist** der Stake. Filecoin kennt denselben Faktor 10, verlangt
+dafür aber zehnfache Sicherheit und schlachtet zehnfach. Bittensor
+mischt, und die Auswertung zeigt Stake-zu-Belohnung 0,80 bis 0,95 gegen
+rund 0,50 für Leistung. RepuCoin trägt arbeitsgewichtete Stimmen nur mit
+Integration über die **gesamte** Kettengeschichte; das Fenster hier war
+zehn Stunden.
+
+**`myl-scheduler` v0.9.1: die Zahl, die seit dem 2026-08-26 offen war.**
+`redundancy.rs` führte die Abwägung „ab wann schlägt Streuung die
+Diversität" als **benannt und nicht gesetzt**. Gerechnet
+(`security_sim.py`, Abschnitt 9): Die Verengung beträgt
+`(km−1)/((k−1)m)` bei `k` Zonen, also rund `k/(k−1)`. Zwei Zonen kosten
+Faktor 1,95, drei 1,48, zehn 1,11. ⚑ **Die Größe, an der es hängt, ist
+die Zahl der Zonen und nicht der Anteil der größten.**
+
+Dazu ein neuer Eigenschaftstest über die **Pod-Disjunktheit**: 2 800
+erzeugte Pod-Mengen mit 27 201 überlappenden Paaren in den Eingaben,
+Gegenprobe fällt bei Keim 1. Damit steht der Satz auf der Beweisliste
+von `geprüft (Beispiele)` auf `geprüft`.
+
+**`myl-ledger` v0.14.1: die halbe Invariante ist ganz geworden
+(⚑ Fund 136).** Der Zufallslauf würfelte über **drei von achtzehn**
+Übergängen, und `transfer` und `praegen` fehlten, also ausgerechnet die
+beiden, die MYL bewegen und erzeugen. Der Satz der Beweisliste lautet
+vollständig „die Summe bleibt gleich **oder die Quelle ist benannt**";
+geprüft wurde die erste Hälfte über eine Menge, in der die zweite gar
+nicht vorkommen konnte. Jetzt beide, und der Zuwachs muss **genau** dem
+geprägten Betrag entsprechen.
+
+**Nicht die Behauptung war falsch, sondern die Auswahl.**
 
 ### v0.35.0 – 2026-09-01 (`myl-consensus` v0.24.0: der Block trägt seine Saatquelle)
 

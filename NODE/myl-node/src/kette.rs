@@ -92,6 +92,25 @@ pub const PROBEKONTEN: u8 = 8;
 /// Guthaben je Probekonto in MYL-Kleinstbeträgen. **Spielgeld.**
 pub const PROBEGUTHABEN: u64 = 10_000_000;
 
+/// Wie viele Blöcke der Knoten im Arbeitsspeicher hält.
+///
+/// ⚑ **Hergeleitet, nicht gegriffen.** Der Zwischenspeicher hat genau
+/// eine Aufgabe: eine Nachforderung beantworten, ohne die Platte
+/// anzufassen. Eine Nachforderung umfasst höchstens
+/// [`crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG`] Blöcke (64), also
+/// deckt ein Fenster von vier Lieferungen den Fall ab, dass mehrere
+/// Nachzügler gleichzeitig und an verschiedenen Stellen aufholen.
+///
+/// **Vier Lieferungen sind 256, und dieselbe Zahl steht bei
+/// go-ethereum** als `bodyCacheLimit` und `blockCacheLimit`. Zwei
+/// verschiedene Herleitungen, dieselbe Größenordnung: Das ist ein
+/// Hinweis, kein Beweis, aber ein beruhigender.
+///
+/// **Die Obergrenze im Speicher** ist damit benannt und nicht mehr
+/// offen: 256 mal [`crate::speicher::MAX_SATZ_BYTES`] im schlimmsten
+/// Fall, im Betrieb um Größenordnungen weniger.
+pub const VERLAUFSFENSTER: usize = 4 * crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG as usize;
+
 /// Der Startwert, an dem die Probekette hängt.
 ///
 /// **Der Riegel gegen eine Verwechslung mit dem echten Netz.** Ein Block
@@ -291,13 +310,25 @@ pub struct Kette {
     /// Die Hashes der übernommenen Blöcke, damit Dubletten aus dem
     /// Gossip nicht zweimal angewandt werden.
     bekannt: std::collections::HashSet<Hash>,
-    /// Die Blöcke selbst, nach Höhe.
+    /// Die jüngsten Blöcke, nach Höhe. **Höchstens
+    /// [`VERLAUFSFENSTER`] Stück.**
     ///
     /// **Wer nachliefern soll, muss aufheben.** Ohne diesen Speicher
     /// könnte ein Knoten einem Neuling nicht helfen, und der Rückstand
-    /// wäre endgültig. Für einen Probelauf im Speicher zu halten ist
-    /// vertretbar; ein echtes Netz legt sie auf die Platte, und das
-    /// ist ein offener Punkt.
+    /// wäre endgültig.
+    ///
+    /// ⚑ **Bis zum 2026-09-02 wuchs er unbegrenzt** (Fund 124). Ein
+    /// Knoten, der lange genug lief, hielt die vollständige Kette im
+    /// Arbeitsspeicher und starb an ihr, und zwar leise: erst
+    /// Auslagern, dann der Abschuss durch das Betriebssystem, ohne
+    /// Eintrag im eigenen Protokoll.
+    ///
+    /// Jetzt ist er ein **Zwischenspeicher**, und die Datei ist die
+    /// Quelle. Was aus dem Fenster fällt, holt
+    /// [`Kette::bloecke_von_bis`] von der Platte zurück, solange ein
+    /// [`crate::speicher::Kettenspeicher`] geführt wird. Wer mit
+    /// `--ohne-kette` fährt, hat nur noch das Fenster, und das steht
+    /// dort ausdrücklich.
     verlauf: std::collections::BTreeMap<u64, Block>,
     /// Das Blockprotokoll auf der Platte, falls eines geführt wird.
     ///
@@ -314,6 +345,14 @@ pub struct Kette {
     /// darf nicht still bleiben: Der Zähler geht in jede
     /// Zustandsaufnahme.
     schreibfehler: u64,
+    /// Wie oft ein Block aus der Datei nicht zurückkam.
+    ///
+    /// **Zählt nur echte Lesefehler**, nicht „nicht vorhanden". Ein
+    /// Nachzügler, der zu weit zurückfragt, ist kein Fehler; eine
+    /// Datei, die einen Satz nicht mehr hergibt, den sie beim Öffnen
+    /// noch hergab, ist einer. Auch dieser Zähler geht in jede
+    /// Zustandsaufnahme.
+    lesefehler: u64,
 }
 
 impl Kette {
@@ -336,6 +375,11 @@ impl Kette {
         for n in 0..PROBEKONTEN {
             zustand.account_mut(&probekonto(n)).balance = PROBEGUTHABEN;
         }
+        // ⚑ **Die Saat der ersten beiden Epochen ist der Startwert**
+        // (Fund 143). Der Ledger kennt ihn nicht, die Kette schon; ohne
+        // ihn stünde dort eine Null, die in jedem Netz dieselbe wäre.
+        zustand.epochensaat = Self::startwert();
+        zustand.epochensaat_naechste = Self::startwert();
         Self {
             hoehe: 0,
             // Nicht das Literal wiederholen: Zwei Stellen mit derselben
@@ -351,6 +395,7 @@ impl Kette {
             verlauf: std::collections::BTreeMap::new(),
             speicher: None,
             schreibfehler: 0,
+            lesefehler: 0,
         }
     }
 
@@ -376,6 +421,12 @@ impl Kette {
     /// Wie oft das Schreiben fehlschlug.
     pub fn schreibfehler(&self) -> u64 {
         self.schreibfehler
+    }
+
+    /// Wie oft ein Block aus der Datei nicht zurückkam. Siehe Feld
+    /// `lesefehler`.
+    pub fn lesefehler(&self) -> u64 {
+        self.lesefehler
     }
 
     /// Wie viele Blöcke die Datei führt, falls eine geführt wird.
@@ -441,17 +492,91 @@ impl Kette {
         });
     }
 
+    /// Nimmt einen Block in den Zwischenspeicher und wirft heraus,
+    /// was aus dem Fenster fällt.
+    ///
+    /// ⚑ **`bekannt` wird mit gekürzt**, und zwar über den Hash des
+    /// Blocks, der geht. Sonst wüchse die Hashmenge weiter, und das
+    /// Fenster hätte nur die Hälfte des Speichers gebunden.
+    ///
+    /// **Was das für die Dublettenerkennung heißt:** Ein Block, der
+    /// älter ist als das Fenster und ein zweites Mal ankommt, wird
+    /// nicht mehr mit [`KettenFehler::SchonBekannt`] abgewiesen,
+    /// sondern mit [`KettenFehler::PasstNichtAn`]. **Abgewiesen wird er
+    /// so oder so**, denn seine Höhe liegt hinter der eigenen und sein
+    /// Vorgängerhash passt nicht auf den letzten. Nur der Grund im
+    /// Protokoll ist ein anderer, und der genauere ist ohnehin der
+    /// zweite.
+    fn verlauf_aufnehmen(&mut self, hoehe: u64, block: &Block) {
+        self.verlauf.insert(hoehe, block.clone());
+        while self.verlauf.len() > VERLAUFSFENSTER {
+            let Some((_, alt)) = self.verlauf.pop_first() else {
+                break;
+            };
+            self.bekannt.remove(&alt.hash());
+        }
+    }
+
     /// Die Blöcke der Höhen `ab` bis einschließlich `bis`, soweit
     /// vorhanden, aufsteigend.
     ///
     /// Lücken werden **übersprungen, nicht aufgefüllt**: Wer nur einen
     /// Teil hat, liefert diesen Teil. Der Fragende merkt es daran, dass
     /// sein Rückstand nicht ganz verschwindet, und fragt weiter.
-    pub fn bloecke_von_bis(&self, ab: u64, bis: u64) -> Vec<Block> {
-        self.verlauf
-            .range(ab..=bis)
-            .map(|(_, b)| b.clone())
-            .collect()
+    ///
+    /// ⚑ **Erst das Fenster, dann die Platte** (Fund 124). Der
+    /// Zwischenspeicher hält nur die jüngsten
+    /// [`VERLAUFSFENSTER`] Blöcke; alles davor kommt aus der
+    /// Kettendatei, falls eine geführt wird. **Wer mit `--ohne-kette`
+    /// fährt, liefert nur das Fenster**, und ein Nachzügler, der weiter
+    /// zurückliegt, muss einen anderen fragen. Das ist der Preis dafür,
+    /// nichts zu behalten, und er steht in der Hilfe zu `--ohne-kette`.
+    ///
+    /// **Der häufige Fall kostet keine Platte:** Ein Nachzügler fragt
+    /// die jüngsten Blöcke nach, und die stehen im Fenster.
+    pub fn bloecke_von_bis(&mut self, ab: u64, bis: u64) -> Vec<Block> {
+        if ab > bis {
+            return Vec::new();
+        }
+        // ⚑ **Die Spanne wird gedeckelt, bevor irgendetwas geholt
+        // wird** (Fund 141). `ab` und `bis` kommen von einer
+        // Gegenstelle, und eine Gegenstelle muss sich nicht an
+        // [`crate::nachschub::Nachforderung::fuer_rueckstand`] halten.
+        // Ohne diesen Deckel wäre `Bloecke { ab: 0, bis: u64::MAX }`
+        // eine Anfrage, die eine ganze Kette in **eine** Antwort packt,
+        // also ein Verstärker: ein paar Bytes hinein, Megabyte hinaus.
+        // Mehr als eine Lieferung fordert ohnehin niemand an.
+        let bis = bis.min(ab.saturating_add(crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG - 1));
+        // Was im Fenster liegt, ist umsonst zu haben.
+        let aus_dem_fenster: Vec<Block> =
+            self.verlauf.range(ab..=bis).map(|(_, b)| b.clone()).collect();
+        // Die Grenze, unterhalb derer das Fenster nichts mehr weiß.
+        let untergrenze = self.verlauf.keys().next().copied().unwrap_or(u64::MAX);
+        if ab >= untergrenze {
+            return aus_dem_fenster;
+        }
+        let Some(speicher) = self.speicher.as_mut() else {
+            return aus_dem_fenster;
+        };
+        // Bis zur Untergrenze des Fensters, damit kein Block zweimal
+        // in die Antwort kommt.
+        let bis_datei = bis.min(untergrenze - 1);
+        let mut aus_der_datei = Vec::new();
+        let mut fehler = 0u64;
+        for hoehe in speicher.hoehen_von_bis(ab, bis_datei) {
+            match speicher.block_bei(hoehe) {
+                Ok(Some(b)) => aus_der_datei.push(b),
+                // Der Verweis sagte, der Satz sei da, und er ist es
+                // nicht: dieselbe Lage wie ein Lesefehler.
+                Ok(None) => fehler += 1,
+                // Ein Lesefehler bricht die Lieferung nicht ab, denn
+                // ein Teil ist besser als nichts, aber er wird gezählt.
+                Err(_) => fehler += 1,
+            }
+        }
+        self.lesefehler += fehler;
+        aus_der_datei.extend(aus_dem_fenster);
+        aus_der_datei
     }
 
     /// Der Zustand zum Ändern, **nur für Tests und den Betreiber**.
@@ -604,19 +729,13 @@ impl Kette {
     /// Kette an.
     fn zuschreibung_der_epoche(
         zustand: &LedgerState,
-        letzter_hash: &Hash,
     ) -> (myl_tokenomics::Zuschreibung, Vec<myl_types::PoIBundle>) {
         let Some(verteilung) = zustand.arbeitsverteilung.clone() else {
             return (myl_tokenomics::Zuschreibung::default(), Vec::new());
         };
         let epoche = zustand.epoch.0;
-        let register = angemeldete_miner(zustand);
-        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-            &register,
-            epoche,
-            letzter_hash,
-            Self::PROBE_SHARDS,
-        );
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+        let _ = &verteilung;
 
         let mut abrechnungen = Vec::new();
         let mut bezeugt: Vec<myl_types::PoIBundle> = Vec::new();
@@ -723,26 +842,62 @@ impl Kette {
         self.letzte_stichprobe.as_ref().map(|(e, _)| *e)
     }
 
+    /// Die Pod-Zuteilung der laufenden Epoche.
+    ///
+    /// ⚑ **Die einzige Stelle, an der sie entsteht** (Fund 143). Vorher
+    /// stand die Ableitung an drei Stellen, jede mit einem eigenen
+    /// Blockhash, und zwei davon nahmen den **letzten** statt der
+    /// Epochensaat. Zwei Herleitungen derselben Konsensgröße laufen
+    /// auseinander, und diese hier taten es bereits: Der Abschluss
+    /// rechnete gegen eine Zuteilung, die während der Epoche niemand
+    /// kannte.
+    ///
+    /// **Die Saat kommt aus dem Zustand**, gilt die ganze Epoche und
+    /// stammt aus `e−2`; siehe [`myl_ledger::state::LedgerState`].
+    ///
+    /// ⚑ **Der Rückfall ist strukturell ausgeschlossen, nicht nur
+    /// getestet.** Diese Funktion sieht **nur** den Zustand, und im
+    /// Zustand steht kein Blockhash: `epochensaat` und
+    /// `epochensaat_naechste` wechseln ausschließlich am
+    /// Epochenwechsel. Wer den alten Fehler wiederholen wollte, müsste
+    /// erst einen Parameter hinzufügen, und das fällt beim Lesen auf.
+    fn zuteilung_der_laufenden_epoche(
+        zustand: &LedgerState,
+    ) -> myl_scheduler::shard_assignment::Zuteilung {
+        let register = angemeldete_miner(zustand);
+        myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+            &register,
+            zustand.epoch.0,
+            &zustand.epochensaat,
+            Self::PROBE_SHARDS,
+        )
+    }
+
     /// Der Pod zu einer Bündel-Kennung, aus der Zuteilung **der
     /// gefragten Epoche**.
     ///
     /// ⚑ **Nicht aus der laufenden.** Ein Checker fragt zu einer
     /// abgeschlossenen Epoche, und die Zuteilung hängt an ihr: Wer die
     /// heutige nähme, bekäme andere Mitglieder und damit andere
-    /// Adressen. Der Blockhash ist derselbe wie bei der Ziehung, weil
-    /// beide dieselbe Zuteilung meinen müssen.
+    /// Adressen.
+    ///
+    /// ⚑ **Die Grenze dieser Auskunft, und sie gehört benannt**
+    /// (Fund 143): Die Saat im Zustand ist die der **laufenden**
+    /// Epoche. Für eine ältere Epoche liefert diese Funktion deshalb
+    /// nur dann die richtige Zuteilung, wenn `epoche` die laufende ist.
+    /// **Für ältere fehlt die Saat**, und sie zu erfinden wäre
+    /// schlimmer als sie zu vermissen: Der Zustand hebt zwei Saaten
+    /// auf, nicht die Historie. Wer weiter zurück fragt, braucht den
+    /// Block, in dem die Epoche endete.
     pub fn pod_der_kennung(
         &self,
         epoche: u64,
         kennung: &myl_types::ids::PodId,
     ) -> Option<myl_scheduler::shard_assignment::Pod> {
-        let register = angemeldete_miner(&self.zustand);
-        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-            &register,
-            epoche,
-            &self.letzter_hash,
-            Self::PROBE_SHARDS,
-        );
+        if epoche != self.zustand.epoch.0 {
+            return None;
+        }
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(&self.zustand);
         myl_scheduler::zonenzuteilung::pod_zu_kennung(&zuteilung, epoche, kennung).cloned()
     }
 
@@ -834,7 +989,7 @@ impl Kette {
             return;
         }
         let alte_epoche = zustand.epoch.0;
-        let (zuschreibung, bezeugt) = Self::zuschreibung_der_epoche(zustand, letzter_hash);
+        let (zuschreibung, bezeugt) = Self::zuschreibung_der_epoche(zustand);
         let _ = myl_tokenomics::epochenausschuettung(
             zustand,
             &zuschreibung,
@@ -862,6 +1017,21 @@ impl Kette {
         // auch nichts geprägt; **gewonnen ist nur, dass der Weg in die
         // Kette jetzt steht**.
         let _ = buendel_leeren(zustand);
+        // ⚑ **Und die Saat rückt weiter** (Fund 143).
+        //
+        // **Hinter dem Abschluss, nicht davor.** Die abgerechnete
+        // Epoche musste mit der Saat abgerechnet werden, die
+        // **während** ihr galt; drehte man zuerst, rechnete der
+        // Abschluss gegen eine Zuteilung, die es in dieser Epoche nie
+        // gab.
+        //
+        // Danach gilt: Die Saat der Epoche `e` ist der letzte
+        // Blockhash von `e−2`, also zwei Epochen Vorlauf. Genauso weit
+        // reicht der Registrierungsschluss aus Anhang A.2, und das ist
+        // kein Zufall: Wäre die Saat näher als der Schluss, könnte
+        // sich jemand anmelden, nachdem er sie kennt.
+        zustand.epochensaat = zustand.epochensaat_naechste;
+        zustand.epochensaat_naechste = *letzter_hash;
     }
 
 
@@ -905,6 +1075,9 @@ impl Kette {
         // Sie steht **vor** dem Anwenden, weil die Übergänge sie lesen.
         zustand.epoch = EpochId(epoch);
         let netz = Self::startwert();
+        // ⚑ **Träge, nicht immer.** Die meisten Blöcke tragen kein
+        // Bündel, und die Ableitung mischt das ganze Register.
+        let mut zuteilung: Option<myl_scheduler::shard_assignment::Zuteilung> = None;
         for tx in txs {
             // ⚑ **Die Unterschrift wird hier geprüft und nicht erst bei
             // der Aufnahme in den Mempool** (2026-08-28, Fund 85). Ein
@@ -971,7 +1144,43 @@ impl Kette {
                     let _ = miner_abmelden(zustand, &absender, &kennung);
                 }
                 Anweisung::BuendelEinreichen { buendel } => {
-                    let _ = buendel_einreichen(zustand, &absender, buendel.clone());
+                    // ⚑ **Die Besetzung wird hier nachgeschlagen und
+                    // nicht geglaubt** (Fund 144). Der Übergang prüft
+                    // Koordinator und Aggregatsignatur, aber er kann
+                    // die Zuteilung nicht ableiten: Der Ledger kennt
+                    // den Scheduler nicht, und er soll ihn auch nicht
+                    // kennen. Diese Stelle sieht beides.
+                    //
+                    // **Einmal je Block, nicht je Bündel.** Die
+                    // Ableitung mischt das ganze Register; sie für
+                    // jedes Bündel zu wiederholen wäre eine Einladung,
+                    // einen Block mit Bündeln zu füllen.
+                    let zuteilung = zuteilung.get_or_insert_with(|| {
+                        Self::zuteilung_der_laufenden_epoche(zustand)
+                    });
+                    let epoche_jetzt = zustand.epoch.0;
+                    // Kennt die Zuteilung diesen Pod nicht, ist das
+                    // Bündel erfunden. **Übersprungen, nicht
+                    // abgebrochen**, wie jede gescheiterte Anweisung.
+                    let Some(pod) = myl_scheduler::zonenzuteilung::pod_zu_kennung(
+                        zuteilung,
+                        epoche_jetzt,
+                        &buendel.pod,
+                    ) else {
+                        continue;
+                    };
+                    let Some(erster) = pod.shards.first() else {
+                        continue;
+                    };
+                    let mitglieder: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
+                        pod.mitglieder().map(|m| (m.miner_id, m.schluessel)).collect();
+                    let _ = buendel_einreichen(
+                        zustand,
+                        &absender,
+                        buendel.clone(),
+                        &erster.miner.miner_id,
+                        &mitglieder,
+                    );
                 }
                 Anweisung::SitzungWiderrufen { sitzung } => {
                     let _ = sitzung_widerrufen(zustand, sitzung, &absender);
@@ -1024,7 +1233,7 @@ impl Kette {
         self.hoehe = hoehe;
         self.letzter_hash = block.hash();
         self.bekannt.insert(self.letzter_hash);
-        self.verlauf.insert(hoehe, block.clone());
+        self.verlauf_aufnehmen(hoehe, &block);
         self.schreibe(&block);
         block
     }
@@ -1103,7 +1312,7 @@ impl Kette {
         self.hoehe = block.header.height;
         self.letzter_hash = hash;
         self.bekannt.insert(hash);
-        self.verlauf.insert(block.header.height, block.clone());
+        self.verlauf_aufnehmen(block.header.height, block);
         // ⚑ Was der Block enthält, wartet nicht mehr.
         //
         // Ohne diese Zeile wächst der Mempool eines Knotens, der selbst
@@ -1572,6 +1781,138 @@ mod tests {
         assert_eq!(erzeuger.zustandswurzel(), folger.zustandswurzel());
     }
 
+    /// ⚑ **Das Fenster hält, was es verspricht** (Fund 124).
+    ///
+    /// Bis zum 2026-09-02 wuchs `verlauf` unbegrenzt; ein Knoten, der
+    /// lange genug lief, hielt die vollständige Kette im
+    /// Arbeitsspeicher. Der Test baut mehr Blöcke, als das Fenster
+    /// fasst, und sieht nach.
+    #[test]
+    fn der_verlauf_bleibt_im_fenster() {
+        let mut k = Kette::probestand();
+        let ueber = VERLAUFSFENSTER as u64 + 20;
+        for i in 1..=ueber {
+            k.aufnehmen(burn((i % 8) as u8, 100 + i));
+            let _ = k.baue_block();
+        }
+        assert_eq!(k.hoehe(), ueber);
+        assert_eq!(
+            k.verlauf.len(),
+            VERLAUFSFENSTER,
+            "der Zwischenspeicher hält mehr, als das Fenster erlaubt"
+        );
+        // Und die Hashmenge wird mitgekürzt, sonst hätte das Fenster
+        // nur die Hälfte des Speichers gebunden.
+        assert_eq!(
+            k.bekannt.len(),
+            VERLAUFSFENSTER,
+            "die Hashmenge wächst weiter, obwohl das Fenster kürzt"
+        );
+        // Die jüngsten sind da, die ältesten nicht.
+        assert!(k.verlauf.contains_key(&ueber));
+        assert!(!k.verlauf.contains_key(&1));
+    }
+
+    /// ⚑ **Was aus dem Fenster fällt, holt die Platte zurück**
+    /// (Fund 124).
+    ///
+    /// Das ist die Bedingung, unter der das Fenster überhaupt zulässig
+    /// ist: Ohne den Rückgriff wäre ein Nachzügler, der weiter
+    /// zurückliegt als 256 Blöcke, von diesem Knoten nicht mehr zu
+    /// bedienen.
+    #[test]
+    fn was_aus_dem_fenster_faellt_kommt_von_der_platte() {
+        let d = std::env::temp_dir().join(format!(
+            "myelith-fenster-{}-{}",
+            std::process::id(),
+            crate::protokoll::jetzt_ms()
+        ));
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let p = d.join("kette.log");
+
+        let mut k = Kette::probestand();
+        let (speicher, _) =
+            crate::speicher::Kettenspeicher::oeffnen(&p, Kette::startwert()).expect("öffnen");
+        k.speicher_setzen(speicher);
+
+        let ueber = VERLAUFSFENSTER as u64 + 20;
+        for i in 1..=ueber {
+            k.aufnehmen(burn((i % 8) as u8, 100 + i));
+            let _ = k.baue_block();
+        }
+        assert_eq!(k.schreibfehler(), 0, "die Datei nahm nicht alles an");
+
+        // Höhe 1 liegt weit unter dem Fenster.
+        assert!(!k.verlauf.contains_key(&1));
+        let geliefert = k.bloecke_von_bis(1, 3);
+        assert_eq!(geliefert.len(), 3, "die Platte lieferte nicht nach");
+        assert_eq!(geliefert[0].header.height, 1);
+        assert_eq!(geliefert[2].header.height, 3);
+        assert_eq!(k.lesefehler(), 0);
+
+        // Und eine Anfrage über die Fenstergrenze hinweg liefert
+        // beides, in einem Stück und aufsteigend.
+        let grenze = ueber - VERLAUFSFENSTER as u64;
+        let ueberlappend = k.bloecke_von_bis(grenze - 2, grenze + 2);
+        let hoehen: Vec<u64> = ueberlappend.iter().map(|b| b.header.height).collect();
+        assert_eq!(
+            hoehen,
+            vec![grenze - 2, grenze - 1, grenze, grenze + 1, grenze + 2],
+            "an der Fenstergrenze fehlt oder doppelt etwas"
+        );
+
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// ⚑ **Ohne Kettendatei bleibt nur das Fenster**, und das ist die
+    /// bewusst in Kauf genommene Folge von `--ohne-kette`.
+    ///
+    /// Der Test hält sie fest, damit sie niemand für einen Fehler hält.
+    #[test]
+    fn ohne_kettendatei_liefert_nur_das_fenster() {
+        let mut k = Kette::probestand();
+        let ueber = VERLAUFSFENSTER as u64 + 20;
+        for i in 1..=ueber {
+            k.aufnehmen(burn((i % 8) as u8, 100 + i));
+            let _ = k.baue_block();
+        }
+        assert!(
+            k.bloecke_von_bis(1, 3).is_empty(),
+            "ohne Datei kann nichts von unterhalb des Fensters kommen"
+        );
+        assert_eq!(k.lesefehler(), 0, "nicht vorhanden ist kein Lesefehler");
+    }
+
+    /// ⚑ **Eine Nachforderung von außen kann keinen Verstärker bauen**
+    /// (Fund 141).
+    ///
+    /// `ab` und `bis` kommen über die Leitung. Ohne Deckel packte
+    /// `Bloecke { ab: 0, bis: u64::MAX }` alles, was der Knoten hat, in
+    /// **eine** Antwort: ein paar Bytes hinein, Megabyte hinaus.
+    #[test]
+    fn eine_masslose_nachforderung_wird_gedeckelt() {
+        let mut k = Kette::probestand();
+        let ueber = VERLAUFSFENSTER as u64 + 20;
+        for i in 1..=ueber {
+            k.aufnehmen(burn((i % 8) as u8, 100 + i));
+            let _ = k.baue_block();
+        }
+        let geliefert = k.bloecke_von_bis(0, u64::MAX);
+        assert!(
+            geliefert.len() as u64 <= crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG,
+            "die Antwort trägt {} Blöcke, erlaubt sind {}",
+            geliefert.len(),
+            crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG
+        );
+        // Gegenprobe zum Deckel: Ohne ihn kämen hier mehr als 64
+        // Blöcke, denn das Fenster hält 256.
+        assert!(
+            k.verlauf.len() as u64 > crate::nachschub::MAX_BLOECKE_JE_LIEFERUNG,
+            "der Test beweist nichts, wenn das Fenster kleiner ist als der Deckel"
+        );
+    }
+
+
     /// **Ein Neuling holt über den Verlauf auf.**
     ///
     /// Der Fall, für den es [`crate::nachschub`] gibt: Beta verpasst
@@ -1888,34 +2229,146 @@ mod tests {
         assert_eq!(k.zustand().miner[&kennung].zone, GeoRegion::Asia);
     }
 
+    /// Welches Probekonto der Koordinator dieses Pods ist.
+    ///
+    /// ⚑ **Der Koordinator ist Position null**, und welcher
+    /// Probeschlüssel das ist, entscheidet die Saat. Ihn zu raten hieße,
+    /// den Test an eine Permutation zu binden, und seit dem Mischen
+    /// (Fund 142) ist es nicht mehr Konto null.
+    fn koordinator_von(pod: &myl_scheduler::shard_assignment::Pod) -> u8 {
+        (0..PROBEKONTEN)
+            .find(|w| {
+                myl_types::ids::MinerId::new(*probekonto(*w).as_bytes())
+                    == pod.shards[0].miner.miner_id
+            })
+            .expect("der Koordinator ist ein Probekonto")
+    }
+
+    /// Baut eine Probekette mit **einem echten Pod** und liefert sie
+    /// samt einem gültig unterschriebenen Bündel dafür.
+    ///
+    /// ⚑ **Seit Fund 144 braucht jeder Bündeltest das.** Vorher genügte
+    /// eine erfundene Pod-Kennung und eine Nullsignatur: Die Aufnahme
+    /// prüfte beides nicht. Jetzt prüft sie Koordinator und Aggregat,
+    /// und ein Test, der das umgeht, prüfte den Weg nicht mehr, den ein
+    /// echtes Bündel geht.
+    ///
+    /// Gibt die Kette, das Bündel und die nächste freie Nummer des
+    /// Koordinators zurück.
+    fn kette_mit_pod(vtfe: u64, segmente: u32) -> (Kette, myl_types::PoIBundle, u8, u64) {
+        use myl_types::miner::HardwareClass;
+
+        let mut k = Kette::probestand();
+        let mut nonce = [0u64; 6];
+        for w in 0..6u8 {
+            k.aufnehmen(anmeldung(w, HardwareClass::MediumGpu));
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        assert_eq!(k.zustand().miner.len(), 6, "die Anmeldungen kamen nicht an");
+
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
+        let pod = &zuteilung.pods[0];
+        let koordinator = koordinator_von(pod);
+
+        let mut b = myl_types::PoIBundle {
+            epoch: k.zustand().epoch,
+            pod: myl_types::pod_kennung(k.zustand().epoch.0, pod.pod_index),
+            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
+            vtfe_claimed: vtfe,
+            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
+            segmente,
+        };
+        buendel_unterschreiben(&mut b, pod);
+        (k, b, koordinator, nonce[koordinator as usize])
+    }
+
+    /// Die Transaktion, die ein Bündel einreicht.
+    fn einreichung(wer: u8, nonce: u64, buendel: myl_types::PoIBundle) -> Transaktion {
+        Transaktion::signiere(
+            &Kette::startwert(),
+            &probeschluessel(wer),
+            nonce,
+            Anweisung::BuendelEinreichen { buendel },
+        )
+        .expect("signieren")
+    }
+
     /// ⚑ **Punkt 40, Glied 1 in der Kette:** Ein Bündel eines
     /// angemeldeten Miners kommt in den Zustand.
     #[test]
     fn ein_buendel_ueber_die_kette_kommt_an() {
-        use myl_types::miner::HardwareClass;
-        use myl_types::node_metadata::GeoRegion;
-        let mut k = Kette::probestand();
-        k.aufnehmen(anmeldung(0, HardwareClass::MediumGpu));
-        k.baue_block();
-        let b = myl_types::PoIBundle {
-            epoch: k.zustand().epoch,
-            pod: myl_types::ids::PodId::new([3; 32]),
-            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
-            vtfe_claimed: 4_200,
-            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
-            segmente: 1,
-        };
-        let tx = Transaktion::signiere(
-            &Kette::startwert(),
-            &probeschluessel(0),
-            1,
-            Anweisung::BuendelEinreichen { buendel: b },
-        )
-        .expect("signieren");
-        k.aufnehmen(tx);
+        let (mut k, b, koordinator, nonce) = kette_mit_pod(4_200, 1);
+        k.aufnehmen(einreichung(koordinator, nonce, b));
         k.baue_block();
         assert_eq!(k.zustand().buendel.len(), 1);
-        let _ = GeoRegion::Europe;
+    }
+
+    /// ⚑ **Gegenprobe zur Aufnahme: ein erfundener Pod kommt nicht
+    /// hinein** (Fund 144).
+    ///
+    /// Bis zum 2026-09-02 kam er hinein und blieb bis zum
+    /// Epochenwechsel im Zustand. Die Kennung wählt der Einreichende
+    /// frei, also war das ein Weg, den Zustand wachsen zu lassen.
+    #[test]
+    fn ein_erfundener_pod_kommt_nicht_in_den_zustand() {
+        let (mut k, b, koordinator, nonce) = kette_mit_pod(4_200, 1);
+
+        // ⚑ **Die Kennung wird geändert und danach neu unterschrieben.**
+        // Die Kennung steht in der Signierbotschaft; wer sie nach dem
+        // Unterschreiben ändert, scheitert schon am Aggregat, und dann
+        // prüfte dieser Test die Signatur und nicht die Kennungssuche.
+        // Der erste Anlauf hat genau daran gelegen: Er bestand auch
+        // dann, wenn man die Suche ausbaute.
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        let mut erfunden = b.clone();
+        erfunden.pod = myl_types::ids::PodId::new([3; 32]);
+        buendel_unterschreiben(&mut erfunden, &zuteilung.pods[0]);
+
+        k.aufnehmen(einreichung(koordinator, nonce, erfunden));
+        k.baue_block();
+        assert!(
+            k.zustand().buendel.is_empty(),
+            "ein Buendel fuer einen Pod, den es nicht gibt, steht im Zustand"
+        );
+
+        // Gegenprobe zur Gegenprobe: Dasselbe Bündel mit der **echten**
+        // Kennung geht durch. Sonst bewiese der Test nur, dass
+        // irgendetwas scheitert.
+        k.aufnehmen(einreichung(koordinator, nonce + 1, b));
+        k.baue_block();
+        assert_eq!(
+            k.zustand().buendel.len(),
+            1,
+            "auch mit der echten Kennung kam nichts an"
+        );
+    }
+
+    /// ⚑ **Und eine Attrappe als Unterschrift auch nicht** (Fund 144).
+    #[test]
+    fn eine_attrappe_kommt_nicht_in_den_zustand() {
+        let (mut k, mut b, koordinator, nonce) = kette_mit_pod(4_200, 1);
+        b.aggregate_sig = myl_types::bls::BlsSignature([0; 96]);
+        k.aufnehmen(einreichung(koordinator, nonce, b));
+        k.baue_block();
+        assert!(
+            k.zustand().buendel.is_empty(),
+            "ein unsigniertes Buendel steht im Zustand"
+        );
+    }
+
+    /// ⚑ **Nur der Koordinator reicht ein** (Fund 144).
+    #[test]
+    fn ein_anderes_mitglied_reicht_nicht_ein() {
+        let (mut k, b, koordinator, _) = kette_mit_pod(4_200, 1);
+        let anderer = (koordinator + 1) % 6;
+        k.aufnehmen(einreichung(anderer, 1, b));
+        k.baue_block();
+        assert!(
+            k.zustand().buendel.is_empty(),
+            "ein Mitglied ohne Koordinatorrolle hat eingereicht"
+        );
     }
 
     /// ⚑ **Und am Epochenwechsel fallen sie weg.** Ohne das wüchse der
@@ -1923,31 +2376,15 @@ mod tests {
     #[test]
     fn am_epochenwechsel_fallen_die_buendel_weg() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
-        use myl_types::miner::HardwareClass;
-        let mut k = Kette::probestand();
-        k.aufnehmen(anmeldung(0, HardwareClass::MediumGpu));
-        k.baue_block();
-        let b = myl_types::PoIBundle {
-            epoch: k.zustand().epoch,
-            pod: myl_types::ids::PodId::new([3; 32]),
-            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
-            vtfe_claimed: 4_200,
-            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
-            segmente: 1,
-        };
-        k.aufnehmen(
-            Transaktion::signiere(
-                &Kette::startwert(),
-                &probeschluessel(0),
-                1,
-                Anweisung::BuendelEinreichen { buendel: b },
-            )
-            .expect("signieren"),
-        );
+        let (mut k, b, koordinator, nonce) = kette_mit_pod(4_200, 1);
+        k.aufnehmen(einreichung(koordinator, nonce, b));
         k.baue_block();
         assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
-        for _ in 2..=BLOECKE_JE_EPOCHE {
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
             k.baue_block();
+            if k.zustand().epoch.0 == 1 {
+                break;
+            }
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         assert!(k.zustand().buendel.is_empty(), "die Buendel blieben stehen");
@@ -2076,6 +2513,152 @@ mod tests {
     }
 
 
+    /// ⚑ **Die Zuteilung steht schon während ihrer Epoche fest**
+    /// (Fund 143).
+    ///
+    /// Bis zum 2026-09-02 kam die Saat aus `self.letzter_hash`, und
+    /// beim Epochenabschluss ist das der **letzte** Block der Epoche,
+    /// die gerade abgerechnet wird. Die Zuteilung stand also erst fest,
+    /// wenn die Epoche vorbei war, während ein Bündel **während** ihr
+    /// eingereicht sein muss: Kein Pod konnte wissen, dass er einer
+    /// ist.
+    ///
+    /// ⚑ **Warum der alte Fehler unentdeckt blieb:** Der große Test
+    /// dieses Punktes hat sechs Miner, also genau einen Pod, und der
+    /// enthält alle sechs, gleich welche Saat man nimmt. Die
+    /// Mitgliedschaft war saatunabhängig (Fund 142), und damit war auch
+    /// die falsche Saat unauffällig. **Dieser Test hat achtzehn Miner
+    /// und damit drei Pods**, und über drei Pods entscheidet die Saat.
+    #[test]
+    fn die_zuteilung_aendert_sich_waehrend_ihrer_epoche_nicht() {
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+
+        let mut k = Kette::probestand();
+        // ⚑ **Eigene Schlüssel, nicht die Probekonten.** Von denen gibt
+        // es acht (`PROBEKONTEN`), und `probeschluessel` rechnet modulo:
+        // Achtzehn Aufrufe ergäben achtzehn Anmeldungen unter acht
+        // Kennungen, also acht Miner. Der Test bräuchte dann drei Pods
+        // und bekäme einen.
+        for w in 0..18u8 {
+            let geheim = myl_types::bls::BlsSecretKey::key_gen(&[w.wrapping_add(1); 32])
+                .expect("32 Byte sind für key_gen gültig");
+            let oeffentlich = geheim.public_key().expect("gültiger Punkt");
+            let kennung = myl_types::ids::MinerId::aus_schluessel(&oeffentlich);
+            myl_ledger::transitions::miner_anmelden(
+                k.zustand_mut(),
+                &myl_types::ids::Address::new(*kennung.as_bytes()),
+                &kennung,
+                HardwareClass::MediumGpu,
+                GeoRegion::Europe,
+                oeffentlich,
+                myl_types::latency_attest::PeerIdBytes([0; 32]),
+            )
+            .expect("Anmeldung");
+        }
+        assert_eq!(k.zustand().miner.len(), 18, "es entstanden nicht achtzehn Kennungen");
+
+        let besetzung = |k: &Kette| -> Vec<Vec<[u8; 32]>> {
+            Kette::zuteilung_der_laufenden_epoche(k.zustand())
+                .pods
+                .iter()
+                .map(|p| {
+                    let mut m: Vec<[u8; 32]> =
+                        p.mitglieder().map(|x| *x.miner_id.as_bytes()).collect();
+                    m.sort();
+                    m
+                })
+                .collect()
+        };
+
+        let am_anfang = besetzung(&k);
+        assert_eq!(am_anfang.len(), 3, "achtzehn Miner ergeben drei Pods zu sechs");
+
+        // Zehn Blöcke weiter, mitten in derselben Epoche.
+        for _ in 0..10 {
+            k.baue_block();
+        }
+        assert_eq!(k.zustand().epoch.0, 0, "die Epoche wechselte zu früh");
+        assert_eq!(
+            besetzung(&k),
+            am_anfang,
+            "die Besetzung hat sich innerhalb der Epoche geändert"
+        );
+
+        // ⚑ **Gegenprobe zur Zusicherung selbst:** Der letzte Hash hat
+        // sich in diesen zehn Blöcken sehr wohl geändert. Wäre er die
+        // Saat, sähe der Test oben etwas anderes, und dass er nichts
+        // sieht, wäre nichts wert.
+        let mit_letztem_hash: Vec<Vec<[u8; 32]>> =
+            myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
+                &angemeldete_miner(k.zustand()),
+                k.zustand().epoch.0,
+                &k.letzter_hash(),
+                Kette::PROBE_SHARDS,
+            )
+            .pods
+            .iter()
+            .map(|p| {
+                let mut m: Vec<[u8; 32]> =
+                    p.mitglieder().map(|x| *x.miner_id.as_bytes()).collect();
+                m.sort();
+                m
+            })
+            .collect();
+        assert_ne!(
+            mit_letztem_hash, am_anfang,
+            "der letzte Hash ergibt dieselbe Besetzung wie die Epochensaat, \
+             dann prüft dieser Test nichts"
+        );
+    }
+
+    /// ⚑ **Die Saat rückt um genau eine Epoche vor, mit zwei Epochen
+    /// Vorlauf** (Fund 143).
+    #[test]
+    fn die_saat_kommt_aus_der_vorletzten_epoche() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+
+        let mut k = Kette::probestand();
+        assert_eq!(k.zustand().epochensaat, Kette::startwert());
+
+        // Bis zum Wechsel bauen und dabei den Hash **vor** jedem Block
+        // merken. ⚑ Nicht die Höhe abzählen: Der Wechsel geschieht
+        // **im** Block, dessen Epoche höher ist, und `letzter_hash` ist
+        // dann schon der seine. Der erste Anlauf dieses Tests hat genau
+        // daran gelegen, mit einer Zahl statt einer Wirkung.
+        let mut ende_epoche_0 = k.letzter_hash();
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
+            let vorher = k.letzter_hash();
+            k.baue_block();
+            if k.zustand().epoch.0 == 1 {
+                ende_epoche_0 = vorher;
+                break;
+            }
+        }
+        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
+        // In Epoche 1 gilt noch der Startwert: Epoche `e` nimmt die Saat
+        // von `e−2`, und `−1` gibt es nicht.
+        assert_eq!(
+            k.zustand().epochensaat,
+            Kette::startwert(),
+            "Epoche 1 nimmt schon eine Saat, die es noch nicht geben darf"
+        );
+        assert_eq!(k.zustand().epochensaat_naechste, ende_epoche_0);
+
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
+            k.baue_block();
+            if k.zustand().epoch.0 == 2 {
+                break;
+            }
+        }
+        assert_eq!(k.zustand().epoch.0, 2);
+        assert_eq!(
+            k.zustand().epochensaat,
+            ende_epoche_0,
+            "Epoche 2 muss die Saat vom Ende der Epoche 0 tragen"
+        );
+    }
+
     /// ⚑ **Punkt 40 als Ganzes: bezeugte Arbeit erreicht ein Konto.**
     ///
     /// Sechs Miner melden sich an, tragen ein Auszahlungskonto ein,
@@ -2145,7 +2728,10 @@ mod tests {
         let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
             &register,
             k.zustand().epoch.0,
-            &k.letzter_hash(),
+            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
+            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
+            // gegen sie rechnet der Abschluss nach.
+            &k.zustand().epochensaat,
             4,
         );
         assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
@@ -2161,11 +2747,15 @@ mod tests {
             segmente: 1_000,
         };
         buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
+        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
+        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
+        // nur deshalb richtig, weil niemand hinsah.
+        let koordinator = koordinator_von(&zuteilung.pods[0]);
         k.aufnehmen(
             Transaktion::signiere(
                 &Kette::startwert(),
-                &probeschluessel(0),
-                nonce[0],
+                &probeschluessel(koordinator),
+                nonce[koordinator as usize],
                 Anweisung::BuendelEinreichen { buendel: b },
             )
             .expect("signieren"),
@@ -2276,7 +2866,10 @@ mod tests {
         let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
             &register,
             k.zustand().epoch.0,
-            &k.letzter_hash(),
+            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
+            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
+            // gegen sie rechnet der Abschluss nach.
+            &k.zustand().epochensaat,
             4,
         );
         // ⚑ Echter Pod, echte Kennung, **Attrappe als Unterschrift**.
@@ -2288,20 +2881,32 @@ mod tests {
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
         };
+        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
+        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
+        // nur deshalb richtig, weil niemand hinsah.
+        let koordinator = koordinator_von(&zuteilung.pods[0]);
         k.aufnehmen(
             Transaktion::signiere(
                 &Kette::startwert(),
-                &probeschluessel(0),
-                nonce[0],
+                &probeschluessel(koordinator),
+                nonce[koordinator as usize],
                 Anweisung::BuendelEinreichen { buendel: b },
             )
             .expect("signieren"),
         );
         k.baue_block();
-        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+        // ⚑ **Seit Fund 144 kommt es gar nicht erst hinein.** Vorher
+        // stand es im Zustand und zahlte dort nur nichts aus.
+        assert!(
+            k.zustand().buendel.is_empty(),
+            "ein Buendel ohne gueltige Unterschrift kam in den Zustand"
+        );
 
-        for _ in 2..=BLOECKE_JE_EPOCHE {
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
             k.baue_block();
+            if k.zustand().epoch.0 == 1 {
+                break;
+            }
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         for w in 0..6u8 {
@@ -2364,11 +2969,14 @@ mod tests {
         let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
             &register,
             k.zustand().epoch.0,
-            &k.letzter_hash(),
+            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
+            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
+            // gegen sie rechnet der Abschluss nach.
+            &k.zustand().epochensaat,
             4,
         );
         assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
-        let b = myl_types::PoIBundle {
+        let mut b = myl_types::PoIBundle {
             epoch: k.zustand().epoch,
             pod: myl_types::pod_kennung(k.zustand().epoch.0, zuteilung.pods[0].pod_index),
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
@@ -2376,11 +2984,21 @@ mod tests {
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
         };
+        // ⚑ **Richtig unterschrieben, sonst prüfte der Test das
+        // Falsche** (Fund 144). Seit die Aufnahme das Aggregat prüft,
+        // käme ein unsigniertes Bündel gar nicht in den Zustand, und
+        // „niemand bekommt etwas" wäre dann keine Aussage über die
+        // fehlende Arbeitsverteilung.
+        buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
+        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
+        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
+        // nur deshalb richtig, weil niemand hinsah.
+        let koordinator = koordinator_von(&zuteilung.pods[0]);
         k.aufnehmen(
             Transaktion::signiere(
                 &Kette::startwert(),
-                &probeschluessel(0),
-                nonce[0],
+                &probeschluessel(koordinator),
+                nonce[koordinator as usize],
                 Anweisung::BuendelEinreichen { buendel: b },
             )
             .expect("signieren"),
@@ -2392,8 +3010,11 @@ mod tests {
             "die Verteilung ist gesetzt, dann prueft der Test nichts"
         );
 
-        for _ in 2..=BLOECKE_JE_EPOCHE {
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
             k.baue_block();
+            if k.zustand().epoch.0 == 1 {
+                break;
+            }
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         for w in 0..6u8 {
@@ -2411,9 +3032,11 @@ mod tests {
     /// Die Gegenprobe „nimm einfach den ersten Pod" blieb grün, weil in
     /// den übrigen Tests nur **ein** Pod entsteht. Hier scheitert sie.
     ///
-    /// **Das ist die Schranke gegen ein gefälschtes Bündel**, solange
-    /// die Aggregatsignatur noch nicht geprüft wird: Wer eine Kennung
-    /// erfindet, trifft keine Platznummer dieser Epoche.
+    /// ⚑ **Seit Fund 144 ist die Aussage schärfer geworden.** Bis zum
+    /// 2026-09-02 kam ein erfundenes Bündel in den Zustand und zahlte
+    /// dort nur nichts aus; jetzt kommt es gar nicht erst hinein, weil
+    /// die Aufnahme die Besetzung nachschlägt. Der Test prüft beides:
+    /// nicht im Zustand **und** kein Konto gewachsen.
     #[test]
     fn ein_buendel_mit_erfundener_kennung_zahlt_nichts_aus() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
@@ -2469,6 +3092,8 @@ mod tests {
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
             segmente: 1,
         };
+        // Eingereicht wird von einem angemeldeten Miner, damit der
+        // Test nicht schon an der Anmeldung scheitert.
         k.aufnehmen(
             Transaktion::signiere(
                 &Kette::startwert(),
@@ -2479,10 +3104,16 @@ mod tests {
             .expect("signieren"),
         );
         k.baue_block();
-        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
+        assert!(
+            k.zustand().buendel.is_empty(),
+            "ein Buendel fuer einen Pod, den es nicht gibt, kam in den Zustand"
+        );
 
-        for _ in 2..=BLOECKE_JE_EPOCHE {
+        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
             k.baue_block();
+            if k.zustand().epoch.0 == 1 {
+                break;
+            }
         }
         assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
         for w in 0..6u8 {

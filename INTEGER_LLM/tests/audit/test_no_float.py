@@ -153,6 +153,16 @@ CONSENSUS_PATH = [
     # Vollstaendigkeitspruefung hat ihn beim ersten Lauf gemeldet, statt
     # dass er ein Jahr lang ungeprueft mitgelaufen waere.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "uebergang.rs",
+    # 2026-09-02: Die Signierbotschaft des PoI-Buendels zog aus
+    # `myl-consensus` hierher, damit `myl-ledger` sie sehen kann und die
+    # Aufnahmepruefung dort stattfindet, wo sie hingehoert (Fund 144).
+    # ⚑ Die Vollstaendigkeitspruefung hat sie beim ersten Lauf gemeldet,
+    # und zwar am selben Tag, an dem sie entstand.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "poi_botschaft.rs",
+    # 2026-09-02: Der Speichersatz (Punkt B4). Er rechnet in
+    # Recheneinheiten je Byte-Epoche, also ganzzahlig, und muss es
+    # bleiben: Ein Gleitkommasatz waere je Maschine ein anderer Preis.
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "speicherentgelt.rs",
     # 2026-08-31: Die Kapazitaetszusage. Sie rechnet in Bytes und
     # Epochen, also in Ganzzahlen, und muss es bleiben: Ein Speicherwert
     # als Gleitkomma waere ueber zwei Knoten hinweg nicht sicher gleich,

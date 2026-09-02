@@ -48,3 +48,10 @@ __pycache__/
 # Korpus, den niemand mehr klont, ist keiner.
 */*/fuzz/target/
 */*/fuzz/coverage/
+
+# Laufzeitzustand eines Knotens. Seit myl-node v0.28.0 schreibt ein
+# Knoten seine Kette ohne weitere Angabe nach kette.dat im
+# Arbeitsverzeichnis (Fund 122), und das ist auch das
+# Arbeitsverzeichnis von `cargo test`.
+kette.dat
+kette.log

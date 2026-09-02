@@ -75,7 +75,7 @@ fn burn(k: &Kette, konto: u8, betrag: u64) -> myl_consensus::block::Transaktion 
 fn kette_fuellen(pfad: &std::path::Path, n: u64) -> (u64, Hash, Hash) {
     let (speicher, anlauf) =
         Kettenspeicher::oeffnen(pfad, Kette::startwert()).expect("Speicher öffnen");
-    assert!(anlauf.bloecke.is_empty(), "das Verzeichnis war nicht frisch");
+    assert_eq!(anlauf.anzahl, 0, "das Verzeichnis war nicht frisch");
     let mut k = Kette::probestand();
     k.speicher_setzen(speicher);
 
@@ -91,15 +91,19 @@ fn kette_fuellen(pfad: &std::path::Path, n: u64) -> (u64, Hash, Hash) {
 /// Öffnet die Datei und spielt sie nach, wie der Knoten es beim Start
 /// tut: durch dieselbe `uebernimm`.
 fn kette_nachspielen(pfad: &std::path::Path) -> (Kette, usize, u64) {
-    let (speicher, anlauf) =
+    let (mut speicher, anlauf) =
         Kettenspeicher::oeffnen(pfad, Kette::startwert()).expect("Speicher öffnen");
     let mut k = Kette::probestand();
     let mut uebernommen = 0usize;
-    for b in &anlauf.bloecke {
-        if k.uebernimm(b).is_ok() {
-            uebernommen += 1;
-        }
-    }
+    // Satz für Satz, wie der Knoten es tut: Die ganze Datei auf einmal
+    // in den Arbeitsspeicher zu holen war Fund 124.
+    speicher
+        .fuer_jeden_satz(|b| {
+            if k.uebernimm(&b).is_ok() {
+                uebernommen += 1;
+            }
+        })
+        .expect("nachspielen");
     k.speicher_setzen(speicher);
     (k, uebernommen, anlauf.abgeschnitten)
 }
@@ -250,18 +254,19 @@ fn ein_veraenderter_block_faellt_beim_nachspielen_durch() {
 
     // Den zweiten Satz durch einen Block ersetzen, der für sich gültig
     // aussieht, aber nicht an den ersten anschließt.
-    let (_, anlauf) = Kettenspeicher::oeffnen(&p, Kette::startwert()).unwrap();
-    assert_eq!(anlauf.bloecke.len(), 3);
-    let mut geaendert = anlauf.bloecke[1].clone();
+    let (mut alt, anlauf) = Kettenspeicher::oeffnen(&p, Kette::startwert()).unwrap();
+    assert_eq!(anlauf.anzahl, 3);
+    let vorher = alt.alle_saetze().expect("zurücklesen");
+    let mut geaendert = vorher[1].clone();
     geaendert.header.prev_block_hash = Hash::sha256(b"etwas anderes");
 
     // Die Datei neu schreiben, mit korrekten Prüfsummen.
     std::fs::remove_file(&p).unwrap();
     {
         let (mut s, _) = Kettenspeicher::oeffnen(&p, Kette::startwert()).unwrap();
-        s.anhaengen(&anlauf.bloecke[0]).unwrap();
+        s.anhaengen(&vorher[0]).unwrap();
         s.anhaengen(&geaendert).unwrap();
-        s.anhaengen(&anlauf.bloecke[2]).unwrap();
+        s.anhaengen(&vorher[2]).unwrap();
     }
 
     let (k, uebernommen, abgeschnitten) = kette_nachspielen(&p);
@@ -305,6 +310,10 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         rolle: Rolle::Teilnehmer,
         nat: Default::default(),
         aufnahme_sekunden: 1,
+        // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
+        // Testknoten nebeneinander laufen, und dieser Test prueft
+        // ohnehin etwas anderes.
+        beobachtung: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: erzeuger,
         teilnehmer: vec!["erzeuger".into(), "zeuge".into()],

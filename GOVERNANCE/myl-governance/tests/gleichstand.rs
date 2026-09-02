@@ -79,16 +79,18 @@ fn komiteegroesse_stimmt_mit_consensus() {
 /// die Rate aufgegangen ist, und `S_min = g/p^2` faellt damit auf
 /// **200 MYL**, also um den Faktor 6,25.
 ///
-/// **Der Vorgabestake ist bei 1 250 geblieben.** Er liegt jetzt weit
-/// ueber der Schranke, was die sichere Richtung ist und trotzdem ein
-/// offener Punkt: Ein Mindeststake weit ueber der Anforderung haelt
-/// Teilnehmer fern, ohne Sicherheit zu kaufen. Ob er mitfaellt, ist
-/// eine wirtschaftliche Entscheidung.
+/// ⚑ **Der Vorgabestake ist bis zum Nachmittag desselben Tages bei
+/// 1 250 geblieben** (Fund 146), und die Invariante hat es nicht
+/// gemerkt: Sie prueft `S ≥ S_min`, und eine Untergrenze faengt einen
+/// zu hohen Wert nicht. **Ein Mindeststake weit ueber der Anforderung
+/// ist kein Sicherheitsproblem, sondern eine Eintrittshuerde, die
+/// niemand beschlossen hat.**
 ///
-/// Der Test haelt beide Zahlen fest, damit die Luecke sichtbar bleibt
-/// und niemand eine davon nebenbei bewegt.
+/// Jetzt wird die Vorgabe **gerechnet**. Der Test haelt fest, dass sie
+/// die Rechnung ist und keine abgeschriebene Zahl: Wer `p` oder `g`
+/// bewegt, bewegt sie mit.
 #[test]
-fn mindeststake_liegt_ueber_s_min_und_um_wie_viel() {
+fn der_mindeststake_ist_die_rechnung_und_keine_zahl() {
     let reg = ParameterRegistry::vorgabe();
     let (pz, pn) = bruch(&reg, Parameter::Stichprobenrate);
     let g = zahl(&reg, Parameter::Betrugsgewinn);
@@ -98,8 +100,20 @@ fn mindeststake_liegt_ueber_s_min_und_um_wie_viel() {
 
     let noetig = myl_tokenomics::s_min(g, pz, pn).unwrap();
     assert_eq!(noetig, 200 * UNITS_PER_MYL, "S_min = g/p^2 = 200 MYL");
-    assert_eq!(s, 1_250 * UNITS_PER_MYL, "der Vorgabestake ist unveraendert");
-    assert_eq!(s / noetig, 6, "der Abstand ist der Faktor 6,25");
+    assert_eq!(
+        s, noetig,
+        "der Vorgabestake ist nicht die Rechnung; eine abgeschriebene Zahl \
+         veraltet beim naechsten Mal wieder"
+    );
+    // ⚑ **Und die Gegenprobe zur Zusicherung selbst:** Sie ist nur
+    // etwas wert, solange `s_min` ueberhaupt von `p` abhaengt. Waere
+    // sie eine Konstante, sagte die Gleichheit oben nichts.
+    let bei_zwei_prozent = myl_tokenomics::s_min(g, 2, 100).unwrap();
+    assert_eq!(
+        bei_zwei_prozent,
+        1_250 * UNITS_PER_MYL,
+        "die alte Zahl muss aus der alten Rate folgen, sonst stimmt die Herleitung nicht"
+    );
 }
 
 /// **Die Streitfrist, gegen `myl_consensus::epoch_close::DEFAULT_DISPUTE_EPOCHS`.**

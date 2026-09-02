@@ -69,9 +69,21 @@ pub struct KnotenKonfig {
     pub rolle: Rolle,
     /// Datei für das Blockprotokoll der Kette.
     ///
-    /// Ohne sie beginnt jeder Start bei null. **Das ist die Vorgabe**,
-    /// solange die Kette Wegwerfware ist; wer über Neustarts hinweg
-    /// weiterrechnen will, gibt einen Pfad an.
+    /// ⚑ **Vorgabe `kette.dat` seit dem 2026-09-02 (Fund 122).** Bis
+    /// dahin war sie `None`, ein Knoten ohne ausdrückliche Angabe hielt
+    /// also **nichts** über einen Neustart hinweg. Die Begründung stand
+    /// dabei und war ehrlich („solange die Kette Wegwerfware ist"), aber
+    /// sie beschrieb den Probelauf und nicht den Betrieb.
+    ///
+    /// **Die sichere Vorgabe ist die umgekehrte.** Wer nichts behalten
+    /// will, sagt es mit `--ohne-kette`; wer nichts sagt, behält.
+    /// Dieselbe Bauart wie [`Self::schluesseldatei`], die seit jeher auf
+    /// `knoten.key` steht statt auf nichts: Ein Knoten, der bei jedem
+    /// Start eine neue Identität bekäme, wäre auch niemandem nützlich.
+    ///
+    /// **Was die Umstellung nicht ändert:** Eine Datei aus einem anderen
+    /// Netz wird weiter abgewiesen, denn der Startwert steht in ihrem
+    /// Kopf. Und eine unlesbare Datei bleibt ein Startfehler.
     pub kettendatei: Option<PathBuf>,
     /// Genesis-Datei mit dem Validator-Satz.
     ///
@@ -89,6 +101,15 @@ pub struct KnotenKonfig {
     pub nat: NatKonfig,
     /// Abstand der Zustandsaufnahmen im Protokoll, in Sekunden.
     pub aufnahme_sekunden: u64,
+    /// Wo der Beobachtungsendpunkt horcht, oder `None`.
+    ///
+    /// ⚑ **Die Vorgabe ist die Rückschleife**, nicht `0.0.0.0` (siehe
+    /// [`crate::beobachtung`]). Was dort heraussieht, ist eine
+    /// Landkarte des Knotens: Peerzahl, Höhe, Latenzspanne. Für einen
+    /// Betreiber ist das Diagnose, für einen Angreifer die Aufklärung.
+    /// Wer weiter hinaus will, sagt es ausdrücklich und stellt eine
+    /// Zugangskontrolle davor; der Endpunkt selbst hat keine.
+    pub beobachtung: Option<std::net::SocketAddr>,
     /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
     ///
     /// **Nur für Testnetze.** Der Knoten schickt dann getaktet einen
@@ -178,11 +199,16 @@ impl Default for KnotenKonfig {
             horchadressen: standard_horchadressen(4150),
             bootstrap: Vec::new(),
             rolle: Rolle::Teilnehmer,
-            kettendatei: None,
+            kettendatei: Some(PathBuf::from("kette.dat")),
             genesisdatei: None,
             konsensschluesseldatei: None,
             nat: NatKonfig::default(),
             aufnahme_sekunden: 30,
+            // ⚑ **An, und zwar auf der Rückschleife** (Fund 129). Ein
+            // Endpunkt, den niemand von außen erreicht, kostet nichts
+            // und ist im Fehlerfall da. Aus war die Vorgabe genau so
+            // lange, wie es ihn nicht gab.
+            beobachtung: Some(std::net::SocketAddr::from(([127, 0, 0, 1], 4151))),
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             teilnehmer: Vec::new(),
@@ -240,6 +266,22 @@ impl KnotenKonfig {
 
 #[cfg(test)]
 mod tests {
+    /// ⚑ **Die Kette wird standardmäßig geschrieben** (Fund 122).
+    ///
+    /// Bis zum 2026-09-02 stand hier `None`, ein Knoten ohne
+    /// ausdrückliche Angabe hielt also nichts über einen Neustart
+    /// hinweg. Der Test hält die Umkehr fest, damit sie niemand
+    /// nebenbei zurückdreht.
+    #[test]
+    fn die_kette_wird_standardmaessig_geschrieben() {
+        let k = super::KnotenKonfig::default();
+        assert_eq!(
+            k.kettendatei.as_deref(),
+            Some(std::path::Path::new("kette.dat")),
+            "ohne Angabe muss der Knoten seine Kette behalten"
+        );
+    }
+
     use super::*;
 
     #[test]

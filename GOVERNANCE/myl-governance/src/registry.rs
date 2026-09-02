@@ -299,6 +299,19 @@ pub enum Parameter {
     /// Hinterlegter Mindest-Stake je Kapazitätseinheit, in
     /// Kleinstbeträgen (Kap. 5.5).
     MindestStake,
+    /// Recheneinheiten je Byte-Epoche: der Preis des Speicherns,
+    /// ausgedrückt in Rechenarbeit (Punkt B4, entschieden 2026-09-02).
+    ///
+    /// ⚑ **Ein Verhältnis und kein fester Preis.** Der Credit-Preis für
+    /// Rechenarbeit ist dynamisch; ein fester Speicherpreis daneben
+    /// liefe ihm davon und wäre dann subventioniert, ohne dass jemand
+    /// etwas entschieden hätte.
+    ///
+    /// ⚑ **Und ein Parameter und keine Konstante.** Er hängt an
+    /// Hardwarepreisen, und die bewegen sich; eine Zahl, die sich als
+    /// falsch herausstellt, muss korrigierbar sein. Herleitung und
+    /// Anker in [`myl_tokenomics::speicherentgelt`].
+    Speichersatz,
     /// Angenommener Betrugsgewinn `g` je Segment, in Kleinstbeträgen
     /// (Kap. 5.5). Geht mit `p` in `S_min = g/p²` ein.
     Betrugsgewinn,
@@ -343,7 +356,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 30] {
+    pub fn alle() -> [Parameter; 31] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -369,6 +382,7 @@ impl Parameter {
             ArbeitsschwelleNenner,
             Epochenlaenge,
             MindestStake,
+            Speichersatz,
             Betrugsgewinn,
             Kopfgeldanteil,
             Kostenanteil,
@@ -423,6 +437,7 @@ impl Parameter {
             ArbeitsschwelleZaehler => "Arbeitsschwelle des Stimmgewichts, Zähler",
             ArbeitsschwelleNenner => "Arbeitsschwelle des Stimmgewichts, Nenner",
             MindestStake => "Mindest-Stake S",
+            Speichersatz => "Speichersatz je Byte-Epoche",
             Betrugsgewinn => "Betrugsgewinn g",
             Kopfgeldanteil => "Kopfgeldanteil b",
             Kostenanteil => "Realkostenanteil c",
@@ -559,9 +574,43 @@ impl ParameterRegistry {
             ArbeitsschwelleNenner,
             Wert::Ganzzahl(myl_consensus::voting_weight::ARBEITSSCHWELLE_NENNER_VORGABE),
         );
-        // Anhang B.1: g = 0,5 MYL, S_min = 1250 MYL je Kapazitätseinheit.
-        werte.insert(MindestStake, Wert::Ganzzahl(1_250 * myl_tokenomics::UNITS_PER_MYL));
-        werte.insert(Betrugsgewinn, Wert::Ganzzahl(myl_tokenomics::UNITS_PER_MYL / 2));
+        // Anhang B.1: g = 0,5 MYL.
+        let g = myl_tokenomics::UNITS_PER_MYL / 2;
+        werte.insert(Betrugsgewinn, Wert::Ganzzahl(g));
+        // ⚑ **Gerechnet, nicht geschrieben** (Fund 146, 2026-09-02).
+        //
+        // Hier stand `1_250 * UNITS_PER_MYL`, und das war `g/p²` bei
+        // `p = 2 %`. Am selben Tag stieg `p` auf 5 %, und damit fiel
+        // `S_min` auf **200 MYL**. Die Zahl blieb stehen.
+        //
+        // ⚑ **Die Invariante hat das nicht gemerkt, und zwar zu
+        // Recht:** Sie prüft `S ≥ S_min`, und 1250 ist größer als 200.
+        // **Eine Untergrenze fängt einen zu hohen Wert nicht**, und ein
+        // zu hoher Mindest-Stake ist kein Sicherheitsproblem, sondern
+        // eine Eintrittshürde, die niemand beschlossen hat.
+        //
+        // **Deshalb steht hier jetzt die Rechnung.** Wer `p` oder `g`
+        // ändert, ändert die Vorgabe mit; eine abgeschriebene Zahl kann
+        // das nicht. Governance darf weiterhin höher setzen, die
+        // Invariante lässt das zu; sie darf nur nicht mehr **versehentlich**
+        // höher stehen.
+        //
+        // `expect` ist hier zulässig: `p = 5/100` ist eine Konstante
+        // dieser Funktion, also kann die Rechnung nicht scheitern. Ein
+        // `unwrap_or` mit erfundenem Ersatzwert wäre schlimmer, denn er
+        // stünde dann als Mindest-Stake da.
+        let s_min_vorgabe = myl_tokenomics::s_min(g, 5, 100)
+            .expect("p = 5/100 und g > 0 sind rechenbar");
+        werte.insert(MindestStake, Wert::Ganzzahl(s_min_vorgabe));
+        // Punkt B4, entschieden 2026-09-02: 9 000 Recheneinheiten je
+        // Byte-Epoche, also 1,49 je TB-Monat und damit die Rate, die
+        // Storj seinen Betreibern zahlt. Herleitung und Anker stehen in
+        // `myl_tokenomics::speicherentgelt`; hier steht nur der Verweis,
+        // damit es die Zahl nicht zweimal gibt.
+        werte.insert(
+            Speichersatz,
+            Wert::Ganzzahl(myl_tokenomics::SPEICHERSATZ_VORGABE),
+        );
         // Anhang B.3: b = 30 % des geschlachteten Betrags.
         werte.insert(
             Kopfgeldanteil,

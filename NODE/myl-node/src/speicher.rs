@@ -77,9 +77,51 @@
 //! Dafür genügt `flush`, und ein `fsync` je Block kostete auf einer
 //! rotierenden Platte mehr, als der Probelauf wert ist. **Für ein echtes
 //! Netz ist das eine offene Entscheidung**, keine Empfehlung.
+//!
+//! # ⚑ Was im Speicher liegt: die Orte, nicht die Blöcke
+//!
+//! Bis zum 2026-09-02 las `oeffnen` die **ganze Datei** in den
+//! Arbeitsspeicher und gab **alle Blöcke** als `Vec<Block>` zurück, also
+//! zweimal dieselbe Kette: einmal roh, einmal dekodiert. Bei einer Datei
+//! von zehn Gigabyte startete kein Knoten mehr, und das ist keine
+//! ferne Größe: Ein Block darf bis zu [`MAX_SATZ_BYTES`] tragen.
+//!
+//! Jetzt hält der Speicher je Satz **acht Bytes**, nämlich seinen
+//! Anfang in der Datei. Wer einen Block braucht, liest ihn. Das ist die
+//! Bauart, die sich in den großen Ketten durchgesetzt hat: Bitcoin Core
+//! hält die Blöcke in `blk*.dat` und im Arbeitsspeicher nur den
+//! Blockindex; go-ethereum hält die Körper in der Datenbank und im
+//! Arbeitsspeicher einen Zwischenspeicher von 256 Stück
+//! (`bodyCacheLimit`).
+//!
+//! **Zwei Verweise, mit verschiedenen Aufgaben:**
+//!
+//! | Verweis | Reihenfolge | Wofür |
+//! |---|---|---|
+//! | `orte` | wie in der Datei | Wiederanlauf, jeder Satz genau einmal |
+//! | `nach_hoehe` | nach Blockhöhe | Nachlieferung an Fragende |
+//!
+//! ⚑ **Der Wiederanlauf geht über `orte`, nicht über `nach_hoehe`**, und
+//! das ist keine Kleinigkeit. Eine Datei mit doppelten oder springenden
+//! Höhen fiele in `nach_hoehe` zusammen, und der Wiederanlauf spielte
+//! **weniger** Sätze ab, als die Datei enthält. Das wäre eine Auswahl
+//! **vor** der Prüfung, also genau die Stelle, an der ein manipulierter
+//! Verlauf durchkäme. Über `orte` geht jeder Satz durch `uebernimm`, in
+//! Dateireihenfolge, wie bisher.
+//!
+//! **Und `nach_hoehe` darf ungenau sein**, weil ein falscher Block dort
+//! nur an einen Fragenden geht, der ihn selbst über `uebernimm` prüft:
+//! Vorgänger-Hash und Zustandswurzel entscheiden, nicht die Herkunft.
+//!
+//! **Gelesen wird über einen zweiten Dateigriff.** Ein Griff für beides
+//! hieße, dass jedes Lesen die Schreibstelle verschiebt, und ein
+//! vergessenes Zurückspringen schriebe den nächsten Block **mitten in
+//! die Kette**. Der Fehler wäre still und die Datei danach hin. Zwei
+//! Griffe können das nicht.
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use myl_consensus::block::Block;
@@ -131,6 +173,16 @@ pub enum SpeicherFehler {
     },
     /// Ein Block ließ sich nicht als Block lesen.
     UnlesbarerSatz { pfad: PathBuf, nummer: u64 },
+    /// Ein Satz, der beim Öffnen noch las, liest sich jetzt nicht mehr.
+    ///
+    /// ⚑ **Anderer Fall als [`SpeicherFehler::UnlesbarerSatz`].** Der
+    /// steht für eine Datei, die von Anfang an nicht stimmte. Dieser
+    /// hier steht für eine, die stimmte und es nicht mehr tut: Die
+    /// Platte hat gekippt, oder jemand hat die Datei unter dem
+    /// laufenden Knoten bearbeitet. Deshalb nennt er den **Ort in
+    /// Bytes** und nicht die Satznummer: Der Ort ist es, an dem
+    /// nachzusehen ist.
+    SatzNichtLesbar { pfad: PathBuf, ort: u64 },
 }
 
 impl std::fmt::Display for SpeicherFehler {
@@ -166,6 +218,12 @@ impl std::fmt::Display for SpeicherFehler {
                  als Block. Das ist kein Abbruch, sondern ein Formatfehler",
                 pfad.display()
             ),
+            Self::SatzNichtLesbar { pfad, ort } => write!(
+                f,
+                "{}: der Satz bei Byte {ort} las sich beim Öffnen und jetzt nicht mehr. \
+                 Die Datei hat sich unter dem laufenden Knoten geändert",
+                pfad.display()
+            ),
         }
     }
 }
@@ -175,8 +233,14 @@ impl std::error::Error for SpeicherFehler {}
 /// Was beim Öffnen aus der Datei kam.
 #[derive(Debug)]
 pub struct Wiederanlauf {
-    /// Die gelesenen Blöcke, in Schreibreihenfolge.
-    pub bloecke: Vec<Block>,
+    /// Wie viele vollständige Sätze die Datei führt.
+    ///
+    /// ⚑ **Die Blöcke selbst stehen hier nicht mehr** (Fund 124). Sie
+    /// kamen bis zum 2026-09-02 als `Vec<Block>` zurück, und damit lag
+    /// die ganze Kette im Arbeitsspeicher, bevor der Knoten den ersten
+    /// Block geprüft hatte. Wer sie braucht, holt sie über
+    /// [`Kettenspeicher::fuer_jeden_satz`], einen nach dem anderen.
+    pub anzahl: u64,
     /// Wie viele Bytes am Ende verworfen wurden, weil ein Satz
     /// abbrach.
     ///
@@ -192,7 +256,25 @@ pub struct Wiederanlauf {
 #[derive(Debug)]
 pub struct Kettenspeicher {
     pfad: PathBuf,
+    /// Der Griff zum Anhängen. Steht immer am Ende der Datei.
     datei: File,
+    /// Der Griff zum Lesen. Springt frei umher und stört das Anhängen
+    /// deshalb nicht (siehe Modulkopf).
+    leser: File,
+    /// Wo jeder Satz anfängt, in Dateireihenfolge.
+    ///
+    /// **Acht Bytes je Block.** Eine Kette von einer Million Blöcken
+    /// kostet hier acht Megabyte, die Blöcke selbst kosteten je nach
+    /// Größe drei bis vier Zehnerpotenzen mehr.
+    orte: Vec<u64>,
+    /// Wo der Satz zu einer Höhe anfängt, für die Nachlieferung.
+    ///
+    /// Bei doppelten Höhen gewinnt der spätere Satz. Das ist zulässig,
+    /// weil ein Empfänger jeden gelieferten Block selbst prüft; siehe
+    /// Modulkopf.
+    nach_hoehe: BTreeMap<u64, u64>,
+    /// Die Länge der Datei, also der Anfang des nächsten Satzes.
+    laenge: u64,
     geschrieben: u64,
 }
 
@@ -241,30 +323,43 @@ impl Kettenspeicher {
             datei.write_all(&FASSUNG.to_le_bytes()).map_err(fehler)?;
             datei.write_all(startwert.as_bytes()).map_err(fehler)?;
             datei.flush().map_err(fehler)?;
+            let leser = File::open(pfad).map_err(fehler)?;
             return Ok((
                 Self {
                     pfad: pfad.to_path_buf(),
                     datei,
+                    leser,
+                    orte: Vec::new(),
+                    nach_hoehe: BTreeMap::new(),
+                    laenge: KOPF_BYTES,
                     geschrieben: 0,
                 },
                 Wiederanlauf {
-                    bloecke: Vec::new(),
+                    anzahl: 0,
                     abgeschnitten: 0,
                     neu: true,
                 },
             ));
         }
 
-        let mut inhalt = Vec::new();
-        datei.seek(SeekFrom::Start(0)).map_err(fehler)?;
-        datei.read_to_end(&mut inhalt).map_err(fehler)?;
+        // ⚑ **Satzweise lesen, nicht die Datei am Stück** (Fund 124).
+        // `read_to_end` legte die ganze Kette in den Arbeitsspeicher,
+        // und `borsh::from_slice` legte sie ein zweites Mal daneben.
+        // Hier steht immer nur **ein** Satz im Speicher, und was bleibt,
+        // sind seine acht Bytes Ort.
+        let dateilaenge = datei.metadata().map_err(fehler)?.len();
+        let mut leser = BufReader::new(File::open(pfad).map_err(fehler)?);
 
-        if inhalt.len() < KOPF_BYTES as usize || &inhalt[..8] != MAGIE {
+        let mut kopf = [0u8; KOPF_BYTES as usize];
+        leser.read_exact(&mut kopf).map_err(|_| SpeicherFehler::KeineKettendatei {
+            pfad: pfad.to_path_buf(),
+        })?;
+        if &kopf[..8] != MAGIE {
             return Err(SpeicherFehler::KeineKettendatei {
                 pfad: pfad.to_path_buf(),
             });
         }
-        let fassung = u16::from_le_bytes([inhalt[8], inhalt[9]]);
+        let fassung = u16::from_le_bytes([kopf[8], kopf[9]]);
         if fassung != FASSUNG {
             return Err(SpeicherFehler::FremdeFassung {
                 pfad: pfad.to_path_buf(),
@@ -272,7 +367,7 @@ impl Kettenspeicher {
             });
         }
         let mut roh = [0u8; 32];
-        roh.copy_from_slice(&inhalt[10..42]);
+        roh.copy_from_slice(&kopf[10..42]);
         let gefunden = Hash::from_bytes(roh);
         if gefunden != startwert {
             return Err(SpeicherFehler::FremdeKette {
@@ -283,64 +378,69 @@ impl Kettenspeicher {
         }
 
         // Sätze lesen, bis einer abbricht.
-        let mut bloecke = Vec::new();
-        let mut pos = KOPF_BYTES as usize;
+        let mut orte: Vec<u64> = Vec::new();
+        let mut nach_hoehe: BTreeMap<u64, u64> = BTreeMap::new();
+        let mut pos = KOPF_BYTES;
         let mut gueltig_bis = pos;
         let mut nummer = 0u64;
-        while pos + 4 <= inhalt.len() {
-            let laenge = u32::from_le_bytes([
-                inhalt[pos],
-                inhalt[pos + 1],
-                inhalt[pos + 2],
-                inhalt[pos + 3],
-            ]);
+        let mut laengenkopf = [0u8; 4];
+        let mut pruefkopf = [0u8; 4];
+        loop {
+            if leser.read_exact(&mut laengenkopf).is_err() {
+                break;
+            }
+            let laenge = u32::from_le_bytes(laengenkopf);
             // Ein unsinniger Längenkopf ist ein Abbruch, keine
             // Speicheranforderung.
             if laenge == 0 || laenge > MAX_SATZ_BYTES {
                 break;
             }
-            let ende = pos + 4 + laenge as usize + 4;
-            if ende > inhalt.len() {
+            let mut nutz = vec![0u8; laenge as usize];
+            if leser.read_exact(&mut nutz).is_err() {
                 break;
             }
-            let nutz = &inhalt[pos + 4..pos + 4 + laenge as usize];
-            let gespeichert = u32::from_le_bytes([
-                inhalt[ende - 4],
-                inhalt[ende - 3],
-                inhalt[ende - 2],
-                inhalt[ende - 1],
-            ]);
-            if pruefsumme(nutz) != gespeichert {
+            if leser.read_exact(&mut pruefkopf).is_err() {
+                break;
+            }
+            if pruefsumme(&nutz) != u32::from_le_bytes(pruefkopf) {
                 break;
             }
             let block: Block =
-                borsh::from_slice(nutz).map_err(|_| SpeicherFehler::UnlesbarerSatz {
+                borsh::from_slice(&nutz).map_err(|_| SpeicherFehler::UnlesbarerSatz {
                     pfad: pfad.to_path_buf(),
                     nummer,
                 })?;
-            bloecke.push(block);
+            orte.push(pos);
+            nach_hoehe.insert(block.header.height, pos);
             nummer += 1;
-            pos = ende;
-            gueltig_bis = ende;
+            pos += 4 + laenge as u64 + 4;
+            gueltig_bis = pos;
         }
 
-        let abgeschnitten = (inhalt.len() - gueltig_bis) as u64;
+        let abgeschnitten = dateilaenge.saturating_sub(gueltig_bis);
         if abgeschnitten > 0 {
             // Der Rest ist ein abgebrochener Satz. Kürzen, damit der
             // nächste Block sauber anhängt.
-            datei.set_len(gueltig_bis as u64).map_err(fehler)?;
+            datei.set_len(gueltig_bis).map_err(fehler)?;
         }
         datei.seek(SeekFrom::End(0)).map_err(fehler)?;
+        // Erst **nach** dem Kürzen öffnen: Ein Lesegriff auf die
+        // ungekürzte Datei wäre gleich wieder falsch.
+        let lesegriff = File::open(pfad).map_err(fehler)?;
 
-        let anzahl = bloecke.len() as u64;
+        let anzahl = orte.len() as u64;
         Ok((
             Self {
                 pfad: pfad.to_path_buf(),
                 datei,
+                leser: lesegriff,
+                orte,
+                nach_hoehe,
+                laenge: gueltig_bis,
                 geschrieben: anzahl,
             },
             Wiederanlauf {
-                bloecke,
+                anzahl,
                 abgeschnitten,
                 neu: false,
             },
@@ -366,10 +466,129 @@ impl Kettenspeicher {
         satz.extend_from_slice(&(nutz.len() as u32).to_le_bytes());
         satz.extend_from_slice(&nutz);
         satz.extend_from_slice(&pruefsumme(&nutz).to_le_bytes());
-        self.datei.write_all(&satz).map_err(fehler)?;
+        // ⚑ **Nach einem Schreibfehler wird die Länge nachgeschlagen,
+        // nicht fortgeschrieben.** `write_all` kann mitten im Satz
+        // scheitern, und dann stehen schon Bytes in der Datei. Wer
+        // `self.laenge` unverändert ließe, verwiese den nächsten Satz
+        // auf eine Stelle **vor** diesen Bytes, und der Verweis zeigte
+        // ins Leere. Die Datei selbst weiß es besser.
+        if let Err(e) = self.datei.write_all(&satz) {
+            if let Ok(m) = self.datei.metadata() {
+                self.laenge = m.len();
+            }
+            return Err(fehler(e));
+        }
         self.datei.flush().map_err(fehler)?;
+        // Der Verweis wird **nach** dem gelungenen Schreiben gesetzt.
+        // Andersherum zeigte er nach einem Schreibfehler auf eine
+        // Stelle, an der nichts steht.
+        self.orte.push(self.laenge);
+        self.nach_hoehe.insert(block.header.height, self.laenge);
+        self.laenge += satz.len() as u64;
         self.geschrieben += 1;
         Ok(())
+    }
+
+    /// Liest den Satz, der bei `ort` anfängt.
+    ///
+    /// Geht über den **Lesegriff**, verschiebt die Schreibstelle also
+    /// nicht (siehe Modulkopf).
+    fn satz_lesen(&mut self, ort: u64) -> Result<Block, SpeicherFehler> {
+        let unlesbar = || SpeicherFehler::SatzNichtLesbar {
+            pfad: self.pfad.clone(),
+            ort,
+        };
+        self.leser
+            .seek(SeekFrom::Start(ort))
+            .map_err(|_| unlesbar())?;
+        let mut laengenkopf = [0u8; 4];
+        self.leser
+            .read_exact(&mut laengenkopf)
+            .map_err(|_| unlesbar())?;
+        let laenge = u32::from_le_bytes(laengenkopf);
+        // Dieselbe Schranke wie beim Öffnen: Ein gekipptes Bit im
+        // Längenkopf darf keine Speicheranforderung werden.
+        if laenge == 0 || laenge > MAX_SATZ_BYTES {
+            return Err(unlesbar());
+        }
+        let mut nutz = vec![0u8; laenge as usize];
+        self.leser.read_exact(&mut nutz).map_err(|_| unlesbar())?;
+        let mut pruefkopf = [0u8; 4];
+        self.leser
+            .read_exact(&mut pruefkopf)
+            .map_err(|_| unlesbar())?;
+        if pruefsumme(&nutz) != u32::from_le_bytes(pruefkopf) {
+            return Err(unlesbar());
+        }
+        borsh::from_slice(&nutz).map_err(|_| unlesbar())
+    }
+
+    /// Reicht jeden Satz **in Dateireihenfolge** einmal an `f`.
+    ///
+    /// ⚑ **Der Weg des Wiederanlaufs.** Nicht über die Höhen, sondern
+    /// über die Orte: Eine Datei mit doppelten Höhen soll nicht
+    /// stillschweigend weniger Sätze abspielen, als sie enthält. Was
+    /// nicht anschließt, weist `uebernimm` ab, und das ist die Stelle,
+    /// an der das entschieden gehört.
+    ///
+    /// Immer nur **ein** Block liegt dabei im Arbeitsspeicher.
+    pub fn fuer_jeden_satz(
+        &mut self,
+        mut f: impl FnMut(Block),
+    ) -> Result<(), SpeicherFehler> {
+        for i in 0..self.orte.len() {
+            let ort = self.orte[i];
+            f(self.satz_lesen(ort)?);
+        }
+        Ok(())
+    }
+
+    /// Alle Sätze auf einmal, **nur für Tests und Werkzeuge**.
+    ///
+    /// ⚑ **Nicht im Betrieb benutzen.** Genau diese Form, die ganze
+    /// Kette in einem `Vec<Block>`, war Fund 124. Sie steht hier, weil
+    /// ein Test die Datei als Ganzes prüfen darf: Er weiß, wie groß sie
+    /// ist, weil er sie selbst geschrieben hat. Der Knoten weiß es
+    /// nicht und nimmt [`Kettenspeicher::fuer_jeden_satz`].
+    #[doc(hidden)]
+    pub fn alle_saetze(&mut self) -> Result<Vec<Block>, SpeicherFehler> {
+        let mut alle = Vec::new();
+        self.fuer_jeden_satz(|b| alle.push(b))?;
+        Ok(alle)
+    }
+
+    /// Der Block einer Höhe, falls die Datei ihn führt.
+    ///
+    /// `Ok(None)` heißt „nicht in dieser Datei". Ein `Err` heißt, der
+    /// Satz steht da und ließ sich nicht lesen, und **das ist ein
+    /// Unterschied**: Der erste Fall ist ein Nachzügler, der zu weit
+    /// zurückfragt, der zweite eine beschädigte Platte.
+    pub fn block_bei(&mut self, hoehe: u64) -> Result<Option<Block>, SpeicherFehler> {
+        let Some(&ort) = self.nach_hoehe.get(&hoehe) else {
+            return Ok(None);
+        };
+        self.satz_lesen(ort).map(Some)
+    }
+
+    /// Die kleinste Höhe, die die Datei führt.
+    pub fn kleinste_hoehe(&self) -> Option<u64> {
+        self.nach_hoehe.keys().next().copied()
+    }
+
+    /// Welche der Höhen `ab` bis einschließlich `bis` die Datei führt.
+    ///
+    /// ⚑ **Über den Verweis, nicht über die Zahlen.** Wer stattdessen
+    /// `for h in ab..=bis` liefe und jede Höhe einzeln nachschlüge,
+    /// arbeitete so lange wie die **Spanne**, nicht wie das Ergebnis,
+    /// und eine Spanne kommt von außen: `Bloecke { ab: 0, bis: u64::MAX }`
+    /// wäre eine Anfrage, die einen Knoten für immer beschäftigt. Der
+    /// Bereich über die Verweistabelle kostet dagegen nur, was er
+    /// findet.
+    pub fn hoehen_von_bis(&self, ab: u64, bis: u64) -> Vec<u64> {
+        if ab > bis {
+            return Vec::new();
+        }
+        self.nach_hoehe.range(ab..=bis).map(|(h, _)| *h).collect()
     }
 
     /// Wie viele Blöcke die Datei führt.
@@ -431,9 +650,10 @@ mod tests {
     fn eine_neue_datei_bekommt_einen_kopf_und_bleibt_leer() {
         let d = tempdir("neu");
         let p = d.join("kette.log");
-        let (s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
         assert!(w.neu);
-        assert!(w.bloecke.is_empty());
+        assert_eq!(w.anzahl, 0);
+        assert!(s.alle_saetze().unwrap().is_empty());
         assert_eq!(w.abgeschnitten, 0);
         assert_eq!(s.bloecke(), 0);
         assert_eq!(std::fs::metadata(&p).unwrap().len(), KOPF_BYTES);
@@ -451,12 +671,14 @@ mod tests {
             }
             assert_eq!(s.bloecke(), 5);
         }
-        let (s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("wieder öffnen");
         assert!(!w.neu);
         assert_eq!(w.abgeschnitten, 0);
         assert_eq!(s.bloecke(), 5);
-        assert_eq!(w.bloecke.len(), 5);
-        for (i, b) in w.bloecke.iter().enumerate() {
+        assert_eq!(w.anzahl, 5);
+        let gelesen = s.alle_saetze().expect("zurücklesen");
+        assert_eq!(gelesen.len(), 5);
+        for (i, b) in gelesen.iter().enumerate() {
             assert_eq!(*b, block(i as u64 + 1), "Block {i} kam verändert zurück");
         }
         std::fs::remove_dir_all(&d).ok();
@@ -474,13 +696,18 @@ mod tests {
         }
         {
             let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).unwrap();
-            assert_eq!(w.bloecke.len(), 1);
+            assert_eq!(w.anzahl, 1);
             s.anhaengen(&block(2)).unwrap();
             assert_eq!(s.bloecke(), 2);
+            // Ein Block, der eben erst angehängt wurde, muss über den
+            // Lesegriff schon sichtbar sein: Sonst hätte der
+            // Zwischenspeicher in der Kette eine Lücke, die niemand
+            // füllt.
+            assert_eq!(s.block_bei(2).unwrap(), Some(block(2)));
         }
-        let (_, w) = Kettenspeicher::oeffnen(&p, startwert()).unwrap();
-        assert_eq!(w.bloecke.len(), 2);
-        assert_eq!(w.bloecke[1], block(2));
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).unwrap();
+        assert_eq!(w.anzahl, 2);
+        assert_eq!(s.alle_saetze().unwrap()[1], block(2));
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -515,7 +742,7 @@ mod tests {
         assert_eq!(std::fs::metadata(&p).unwrap().len(), vorher + angehaengt);
 
         let (s, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen nach Abbruch");
-        assert_eq!(w.bloecke.len(), 2, "die vollständigen Sätze müssen bleiben");
+        assert_eq!(w.anzahl, 2, "die vollständigen Sätze müssen bleiben");
         assert_eq!(w.abgeschnitten, angehaengt);
         assert_eq!(s.bloecke(), 2);
         assert_eq!(
@@ -545,9 +772,9 @@ mod tests {
             assert!(w.abgeschnitten > 0);
             s.anhaengen(&block(2)).unwrap();
         }
-        let (_, w) = Kettenspeicher::oeffnen(&p, startwert()).unwrap();
-        assert_eq!(w.bloecke.len(), 2);
-        assert_eq!(w.bloecke[1], block(2));
+        let (mut s, w) = Kettenspeicher::oeffnen(&p, startwert()).unwrap();
+        assert_eq!(w.anzahl, 2);
+        assert_eq!(s.alle_saetze().unwrap()[1], block(2));
         assert_eq!(w.abgeschnitten, 0);
         std::fs::remove_dir_all(&d).ok();
     }
@@ -568,8 +795,8 @@ mod tests {
         std::fs::write(&p, &inhalt).unwrap();
 
         let (_, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
-        assert!(
-            w.bloecke.is_empty(),
+        assert_eq!(
+            w.anzahl, 0,
             "ein verstümmelter erster Satz darf nichts durchlassen"
         );
         assert!(w.abgeschnitten > 0);
@@ -590,7 +817,7 @@ mod tests {
             f.write_all(&u32::MAX.to_le_bytes()).unwrap();
         }
         let (_, w) = Kettenspeicher::oeffnen(&p, startwert()).expect("öffnen");
-        assert!(w.bloecke.is_empty());
+        assert_eq!(w.anzahl, 0);
         assert_eq!(w.abgeschnitten, 4);
         std::fs::remove_dir_all(&d).ok();
     }

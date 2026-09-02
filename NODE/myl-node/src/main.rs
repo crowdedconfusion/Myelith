@@ -42,13 +42,28 @@ myl-node — ein Myelith-Netzknoten
                          Atteste als unbekannter Aussteller verworfen. Ohne
                          Angabe werden alle Atteste verworfen: Ungeprüfte
                          durchzulassen wäre schlechter.
-  --kette <datei>        Blockprotokoll der Kette. Ohne diese Angabe
-                         beginnt JEDER START BEI NULL. Mit ihr spielt der
-                         Knoten die Datei beim Start nach und rechnet dabei
-                         jede Zustandswurzel neu; ein abgebrochener letzter
-                         Satz wird verworfen und die Datei gekürzt.
-                         Gespeichert werden nur die Blöcke: Höhe, Zustand
-                         und letzter Hash folgen daraus.
+  --kette <datei>        Blockprotokoll der Kette (Vorgabe: kette.dat).
+                         Der Knoten spielt die Datei beim Start nach und
+                         rechnet dabei jede Zustandswurzel neu; ein
+                         abgebrochener letzter Satz wird verworfen und die
+                         Datei gekürzt. Gespeichert werden nur die Blöcke:
+                         Höhe, Zustand und letzter Hash folgen daraus.
+  --ohne-kette           Nichts auf die Platte schreiben, JEDER START
+                         BEGINNT DANN BEI NULL. Bis zum 2026-09-02 war das
+                         die Vorgabe; die sichere Vorgabe ist die
+                         umgekehrte, und wer nichts behalten will, sagt es.
+                         Zweite Folge: Dieser Knoten kann Nachzueglern dann
+                         nur noch die juengsten 256 Bloecke nachliefern,
+                         denn mehr haelt er nicht im Arbeitsspeicher.
+  --beobachtung <adr>    Wo der Beobachtungsendpunkt horcht. Vorgabe
+                         127.0.0.1:4151. Wege: /metriken (Prometheus),
+                         /gesundheit (lebt der Prozess), /bereit (kann er
+                         bedienen). ACHTUNG: Der Endpunkt hat KEINE
+                         Zugangskontrolle und gibt Peerzahl, Hoehe und
+                         Latenzspanne preis. Wer ihn ueber die
+                         Rueckschleife hinaus bindet, stellt selbst etwas
+                         davor.
+  --ohne-beobachtung     Keinen Beobachtungsendpunkt oeffnen.
   --genesis <datei>      Genesis-Datei mit dem Validator-Satz. Nur damit
                          stimmt dieser Knoten bei BFT-Runden mit; ohne sie
                          hört er zu und rechnet nach. Der Knoten muss mit
@@ -162,6 +177,18 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
             "--relais" => { konfig.nat.relais.push(wert(i)?); i += 2; }
             "--schluessel" => { konfig.schluesseldatei = PathBuf::from(wert(i)?); i += 2; }
             "--kette" => { konfig.kettendatei = Some(PathBuf::from(wert(i)?)); i += 2; }
+            // ⚑ Der Gegenweg zur neuen Vorgabe (Fund 122). Wer nichts
+            // behalten will, sagt es; wer nichts sagt, behaelt.
+            "--ohne-kette" => { konfig.kettendatei = None; i += 1; }
+            "--beobachtung" => {
+                konfig.beobachtung = Some(
+                    wert(i)?
+                        .parse()
+                        .map_err(|_| "--beobachtung erwartet adresse:port".to_string())?,
+                );
+                i += 2;
+            }
+            "--ohne-beobachtung" => { konfig.beobachtung = None; i += 1; }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
             "--aufnahme" => {
                 konfig.aufnahme_sekunden = wert(i)?
@@ -360,6 +387,7 @@ async fn main() {
     let kettendatei = args.konfig.kettendatei.clone();
     let probe = args.probeschluessel;
     let timeouts = args.timeouts;
+    let beobachtungsadresse = args.konfig.beobachtung;
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -381,6 +409,95 @@ async fn main() {
     }
     eprintln!("myl-node: Protokoll {}", knoten.protokollpfad().display());
 
+    // ⚑ **Der Beobachtungsendpunkt, bevor der Vorlauf beginnt**
+    // (Fund 129). Gerade waehrend des Aufholens will jemand wissen, wie
+    // weit der Knoten ist; ein Endpunkt, der erst danach aufmacht,
+    // antwortet genau dann nicht, wenn man ihn braucht.
+    //
+    // Ein Fehler beim Binden beendet den Knoten **nicht**: Ein besetzter
+    // Port ist ein Betriebsfehler, kein Grund, das Netz zu verlassen.
+    // Er steht aber sichtbar da, sonst suchte jemand die Metriken an
+    // einer Stelle, an der nie etwas horchte.
+    if let Some(adresse) = beobachtungsadresse {
+        match tokio::net::TcpListener::bind(adresse).await {
+            Ok(lauscher) => {
+                let wo = lauscher.local_addr().unwrap_or(adresse);
+                eprintln!("myl-node: Beobachtung auf http://{wo}/metriken");
+                if !wo.ip().is_loopback() {
+                    eprintln!(
+                        "myl-node: WARNUNG: die Beobachtung horcht auf {wo}, also nicht nur \
+                         auf der Rueckschleife. Sie hat keine Zugangskontrolle."
+                    );
+                }
+                tokio::spawn(myl_node::beobachtung::laufen(
+                    lauscher,
+                    knoten.beobachtungsstelle(),
+                ));
+            }
+            Err(e) => eprintln!("myl-node: Beobachtung nicht geoeffnet ({adresse}): {e}"),
+        }
+    }
+
+    // ⚑ **Der Startvorlauf laeuft gegen die Wache** (Fund 140).
+    //
+    // Was jetzt folgt, wartet: bis zu acht Sekunden auf eine
+    // QUIC-Adresse, bis zu fuenf auf irgendeine Horchadresse, danach
+    // auf ein Mesh fuer den Konsens. Bis zum 2026-09-02 haengte der
+    // Signalhandler erst **danach** ein, und ein SIGTERM in diesem
+    // Fenster riss den Knoten hart heraus, ohne Abschlusseintrag: also
+    // genau das, wogegen Fund 123 gebaut wurde, nur eine Stelle
+    // frueher. Wer einen Knoten in einem Container startet und schnell
+    // wieder stoppt, traf immer dieses Fenster.
+    let wache = knoten.beendigungswache();
+    let vorlauf_beendet = tokio::select! {
+        grund = wache.warten() => Some(grund),
+        _ = startvorlauf(
+            &mut knoten,
+            genesisdatei.clone(),
+            &name,
+            konsensschluessel,
+            probe,
+            timeouts,
+        ) => None,
+    };
+    if let Some(grund) = vorlauf_beendet {
+        eprintln!("myl-node: {grund} im Startvorlauf, beende");
+        knoten.abschluss(grund).await;
+        eprintln!(
+            "myl-node: beendet, {} Protokollzeilen in {}",
+            knoten.protokollzeilen(),
+            knoten.protokollpfad().display()
+        );
+        return;
+    }
+
+    // Ein Weg für beide Fälle: Auch mit --laufzeit muss Strg-C einen
+    // Abschlusseintrag schreiben, sonst sieht ein früh beendeter Lauf
+    // aus wie ein Absturz.
+    knoten
+        .laufen_bis(args.laufzeit.map(Duration::from_secs))
+        .await;
+    eprintln!(
+        "myl-node: beendet, {} Protokollzeilen in {}",
+        knoten.protokollzeilen(),
+        knoten.protokollpfad().display()
+    );
+}
+
+/// Alles zwischen „der Knoten steht" und „die Schleife laeuft".
+///
+/// Als eigene Funktion, damit `main` das Ganze in ein `select!` gegen
+/// die Beendigungswache stellen kann (Fund 140). Inline ginge das
+/// nicht: Ein `select!`-Zweig braucht **ein** Future, und der Vorlauf
+/// leiht sich den Knoten ueber mehrere `await` hinweg aus.
+async fn startvorlauf(
+    knoten: &mut Knoten,
+    genesisdatei: Option<PathBuf>,
+    name: &str,
+    konsensschluessel: Option<PathBuf>,
+    probe: bool,
+    timeouts: myl_consensus::round_change::TimeoutConfig,
+) {
     // Die eigenen Adressen nennen, sobald sie feststehen. Sie sind das,
     // was die anderen Maschinen als --bootstrap brauchen.
     // Erst auf QUIC warten, dann ausgeben: Der Betreiber soll die
@@ -414,26 +531,14 @@ async fn main() {
     // durch ein Mesh, und das steht beim Start noch nicht. Ein Knoten,
     // der sofort proposet, redet ins Leere und die Runde hängt, ohne
     // dass jemand etwas falsch gemacht hätte.
-    if let Some(pfad) = genesisdatei.clone() {
+    if let Some(pfad) = genesisdatei {
         if let Err(e) =
-            starte_konsens(&mut knoten, &pfad, &name, konsensschluessel, probe, timeouts).await
+            starte_konsens(knoten, &pfad, name, konsensschluessel, probe, timeouts).await
         {
             eprintln!("myl-node: Konsens nicht gestartet: {e}");
             std::process::exit(1);
         }
     }
-
-    // Ein Weg für beide Fälle: Auch mit --laufzeit muss Strg-C einen
-    // Abschlusseintrag schreiben, sonst sieht ein früh beendeter Lauf
-    // aus wie ein Absturz.
-    knoten
-        .laufen_bis(args.laufzeit.map(Duration::from_secs))
-        .await;
-    eprintln!(
-        "myl-node: beendet, {} Protokollzeilen in {}",
-        knoten.protokollzeilen(),
-        knoten.protokollpfad().display()
-    );
 }
 
 /// Lädt Genesis und Konsensschlüssel und beginnt Runde 0.

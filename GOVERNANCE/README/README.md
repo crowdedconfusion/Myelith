@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.6.0
-> **Datum:** 2026-08-30
+> **Version:** 0.8.0
+> **Datum:** 2026-09-02
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,80 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.8.0 – 2026-09-02 (der einunddreissigste Parameter, und jeder nennt jetzt seine Herkunft)
+
+⚑ **`Speichersatz` ist neu, und dass er neu ist, war die eigentliche
+Erkenntnis.** Der Satz galt als eine Zahl, die sich nach dem Genesis
+nicht mehr ändern lässt; beim Nachsehen war er **nirgends** ein
+Parameter.
+**Die Unumkehrbarkeit war keine Eigenschaft der Sache, sondern eine
+Folge davon, wo man die Zahl hinschreibt.** Als Registry-Eintrag mit
+Invariante ist er per Governance änderbar, und das muss er sein: Seine
+Herleitung hängt an Hardwarepreisen, und die bewegen sich.
+
+⚑ **`MindestStake` war um den Faktor 6,25 veraltet** (Fund 146). 1 250
+MYL war `g/p²` bei `p = 2 %`; am selben Tag stieg `p` auf 5 %, `S_min`
+fiel auf 200, und die Zahl blieb stehen. **Die Invariante hat es nicht
+gemerkt, und zwar zu Recht:** Sie prüft `S ≥ S_min`, und eine
+Untergrenze fängt einen zu hohen Wert nicht.
+
+⚑ **Der Schaden war nicht die Eintrittshürde, sondern der unsichtbare
+Spielraum.** Bei einem Stake auf der Schranke bricht jede Erhöhung des
+Betrugsgewinns die Invariante; beim 6,25-Fachen durfte er sich
+**verdreifachen**, ohne dass etwas geschah. **Eine Prüfung, deren
+Reserve niemand kennt, prüft weniger, als sie zu prüfen scheint.** Die
+Vorgabe wird jetzt gerechnet statt geschrieben.
+
+⚑ **`tests/herkunft.rs`, neu: jeder Parameter nennt, woher sein Wert
+kommt.** Einer gerechnet, einundzwanzig entschieden mit Fundstelle, zwei
+Startwerte, **sieben Entwürfe**, die niemand beschlossen hat. Die Zahl
+der Entwürfe ist eine Sperrklinke: Sie darf fallen, nicht steigen. Das
+ist der Stand der Parameter-Kalibrierung in einer Zahl, und es ist der
+Abschluss von Punkt B5.
+
+**Die Vollständigkeitsprüfung hat sofort gearbeitet:** Der neue
+`Speichersatz` liess sich nicht hinzufügen, ohne seine Herkunft zu
+nennen; der Bau brach ab, bis der Eintrag stand.
+
+### v0.7.0 – 2026-09-02 (drei Parameter und eine Invariante entfallen, die Stichprobenrate steigt)
+
+**Folge der Entscheidung A1 des Projektinhabers.** Die
+Kontrollsegmente sind abgeschafft, und mit ihnen fallen hier
+`Kontrollsegmentanteil` (γ), `Kontrollsegmentvorrat`,
+`Kontrollsegmentfenster` und die Invariante
+`VorratTraegtEinschleusung` weg. Die Registry führt damit **dreißig**
+Parameter statt dreiunddreißig.
+
+⚑ **Die Stichprobenrate steht jetzt auf 5 %, und die Zahl ist
+hergeleitet.** γ geht in sie auf, aber **nicht naiv**: Ein
+Kontrollsegment wird gegen eine hinterlegte Antwort geprüft, eine
+Stichprobe von einem **Checker**, und der kann dem Angreifer gehören
+(Fund 138). Gleichwertig ist `γ/(1−c) + p·(1−γ)`; für `c` nimmt die
+Herleitung die byzantinische Schranke des Protokolls selbst, also ein
+Drittel. Das ergibt 4,96 %, aufgerundet auf 5 %. Der naive Wert 3,96 %
+hätte **20 Prozent zu wenig geprüft**. Gerechnet und zugesichert in
+`security_sim.py`, Abschnitte 7 und 8.
+
+⚑ **Eine Folge, die mitgehört:** `S_min = g/p²` fällt damit **um den
+Faktor 6,25**, von 1 250 auf 200 MYL. Der Mindeststake ist bei 1 250
+geblieben und liegt jetzt weit über der Schranke. Das ist die sichere
+Richtung und ein offener Punkt der Parameter-Kalibrierung: Ein
+Mindeststake über der Anforderung hält Teilnehmer fern, ohne Sicherheit
+zu kaufen. Zwei Tests halten beide Zahlen und ihren Abstand fest.
+
+**Die Stimmgewichtsparameter sind ausgetauscht** (Entscheidung A3):
+`Arbeitsbezug` und `Hoechstfaktor` gehörten zu einer Formel, die
+entfallen ist; an ihrer Stelle stehen `ArbeitsschwelleZaehler` und
+`ArbeitsschwelleNenner`, als Bruchteil des Netzmedians und mit Startwert
+null.
+
+**Was bei den Tests nicht verlorengeht:** Drei Tests führten die
+Kontrollsegmente nur als **Beispiel** für eine echte Eigenschaft vor,
+nämlich dass zwei einzeln zulässige Vorschläge zusammen eine Invariante
+brechen. Sie laufen jetzt über Trainings- gegen Inferenzrate, dasselbe
+gekoppelte Paar in anderer Gestalt. ⚑ **Ersetzt wurde das Beispiel, nicht
+der Test.**
 
 ### v0.6.0 – 2026-08-30 (die Platz-Seite von D3, und eine Kopplung, die es nicht gibt)
 

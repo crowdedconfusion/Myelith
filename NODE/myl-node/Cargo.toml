@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.27.0"
+version = "0.29.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -33,7 +33,10 @@ myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 # nicht, er rechnet sie aus; zwei Quellen fuer dieselbe Aussage laufen
 # auseinander.
 myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal"] }
+# `net` und `io-util` fuer den Beobachtungsendpunkt (Fund 129): ein
+# GET-Dienst auf der Rueckschleife, ohne HTTP-Rahmenwerk. Dieselbe
+# Entscheidung wie im Gateway.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal", "net", "io-util"] }
 libp2p = { version = "0.56", features = ["tokio"] }
 
 [lib]

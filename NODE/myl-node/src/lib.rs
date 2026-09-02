@@ -46,6 +46,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod beobachtung;
 pub mod genesis;
 pub mod kette;
 pub mod knoten;

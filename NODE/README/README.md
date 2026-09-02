@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.27.0
-> **Datum:** 2026-09-01
+> **Version:** 0.29.0
+> **Datum:** 2026-09-02
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,171 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.29.0 – 2026-09-02 (die Zuteilung steht während ihrer Epoche fest, und ein Bündel wird bei der Aufnahme geprüft)
+
+**Die Knotenseite der Funde 142 bis 144.**
+
+⚑ **Eine Ableitung der Zuteilung statt dreier.**
+`zuteilung_der_laufenden_epoche` ist jetzt die einzige Stelle, an der
+sie entsteht. Vorher stand sie an drei Stellen, jede mit einem eigenen
+Blockhash, und zwei davon nahmen den **letzten** statt der Epochensaat:
+Der Abschluss rechnete gegen eine Zuteilung, die während der Epoche
+niemand kannte.
+
+⚑ **Der Rückfall ist jetzt strukturell ausgeschlossen, nicht nur
+getestet.** Die Funktion sieht nur den Ledger-Zustand, und im Zustand
+steht kein Blockhash: Die beiden Saatfelder wechseln ausschließlich am
+Epochenwechsel. Wer den alten Fehler wiederholen wollte, müsste erst
+einen Parameter hinzufügen, und das fällt beim Lesen auf.
+
+⚑ **Die Besetzung wird bei der Aufnahme nachgeschlagen** (Fund 144).
+Der Knoten ist die einzige Stelle, die Scheduler und Ledger zugleich
+sieht: Er schlägt den Pod zur Kennung des Bündels nach und übergibt
+Koordinator und Mitgliedsschlüssel an den Übergang, der beides prüft.
+**Einmal je Block, träge**, denn die Ableitung mischt das ganze
+Register, und sie für jedes Bündel zu wiederholen wäre eine Einladung,
+einen Block mit Bündeln zu füllen.
+
+**`pod_der_kennung` sagt jetzt Nein für vergangene Epochen**, statt eine
+falsche Zuteilung zu liefern. Der Zustand hebt zwei Saaten auf, nicht
+die Historie; wer weiter zurück fragt, braucht den Block, in dem die
+Epoche endete. **Eine erfundene Antwort wäre schlimmer als keine.**
+
+**Die Tests des Punktes reichen jetzt echte Bündel ein**: sechs Miner,
+ein abgeleiteter Pod, eine Unterschrift aller Mitglieder, eingereicht
+vom Koordinator. ⚑ **Wer der Koordinator ist, entscheidet die Saat**,
+und seit dem Mischen ist es nicht mehr Probekonto null; ihn zu raten
+hieße, den Test an eine Permutation zu binden.
+
+### v0.28.0 – 2026-09-02 (der Knoten wird betriebstauglich: Signale, Speicher, Sichtbarkeit)
+
+**Sechs Betriebsbefunde aus der Produktionsreife-Durchsicht.** Angesetzt
+waren vier; zwei kamen beim Umsetzen dazu, und einer davon war kein
+kleiner.
+
+⚑ **Fund 123: SIGTERM wurde nicht behandelt.** `laufen_bis` horchte
+allein auf `ctrl_c`, also **SIGINT**, das Signal einer Tastatur. Unter
+systemd, Docker und Kubernetes kommt **SIGTERM**, und daran starb der
+Knoten wortlos: kein Abschlusseintrag, keine Zustandsaufnahme, nach der
+Schonfrist ein SIGKILL.
+
+**Damit fiel genau die Unterscheidung weg, für die der Abschlusseintrag
+gebaut wurde.** Der Modulkopf sagt es selbst: „absichtlich beendet" ließ
+sich von „abgestürzt" nicht unterscheiden, und bei einem Lauf über
+mehrere Maschinen ist das die erste Frage, wenn ein Protokoll kürzer ist
+als die anderen. **Gelöst war sie für den Probelauf und offen im
+Betrieb.** Beide Signale werden jetzt behandelt und im Protokoll
+**unterschieden**: `Abbruchsignal` gegen `Beendigungssignal`.
+
+⚑ **Fund 140: Und im Startvorlauf horchte weiterhin niemand.** Der
+Handler hing erst in `laufen_bis`, davor liegen bis zu acht Sekunden
+Warten auf eine QUIC-Adresse und fünf auf irgendeine Horchadresse. Wer
+einen Knoten im Container startet und schnell wieder stoppt, traf immer
+dieses Fenster. Jetzt steht die **Beendigungswache**, sobald der Knoten
+existiert, und der Startvorlauf läuft in einem `select!` gegen sie.
+
+**Zwei Hälften, und die zweite fiel fast durch.** Das frühe Einhängen
+allein ließ den Knoten überleben, aber er arbeitete den Vorlauf zu Ende
+und antwortete erst danach: **gemessen 8,6 Sekunden statt 58
+Millisekunden**, bei zehn Sekunden Vorgabefrist von Docker. Sichtbar
+wurde das erst in der Gegenprobe, denn die erste Fassung des Tests
+bestand auch ohne den `select!`. Der Test misst deshalb jetzt die
+**Frist**.
+
+⚑ **Fund 122: Die Kette wurde standardmäßig nicht geschrieben.**
+`kettendatei` stand auf `None`, ein Knoten ohne ausdrückliche Angabe
+hielt also nichts über einen Neustart hinweg. Die Vorgabe ist jetzt
+`kette.dat`, und wer nichts behalten will, sagt es mit `--ohne-kette`.
+Dieselbe Bauart wie `--schluessel`, das seit jeher auf `knoten.key`
+steht.
+
+⚑ **Fund 124: Die Kette lag vollständig im Arbeitsspeicher, zweimal.**
+`verlauf` wuchs unbegrenzt, ein Blockklon je Höhe, nie beschnitten. Und
+`Kettenspeicher::oeffnen` las beim Start die **ganze Datei** ein und gab
+**alle Blöcke** als `Vec<Block>` zurück, also die Kette noch einmal
+daneben, bevor der Knoten den ersten Block geprüft hatte. Ein Knoten,
+der lange genug lief, starb daran, und zwar leise: erst Auslagern, dann
+der Abschuss durch das Betriebssystem, ohne einen Eintrag im eigenen
+Protokoll.
+
+**Jetzt hält der Speicher die Orte, nicht die Blöcke:** acht Bytes je
+Satz. Im Arbeitsspeicher liegen die jüngsten **256** Blöcke, alles
+davor kommt von der Platte. Wiederanlauf und Nachlieferung lesen
+satzweise, es liegt immer nur **ein** Block da.
+
+**Die 256 sind hergeleitet, nicht gegriffen:** Eine Nachforderung
+umfasst höchstens `MAX_BLOECKE_JE_LIEFERUNG` (64) Blöcke, vier
+Lieferungen decken mehrere gleichzeitig aufholende Nachzügler ab.
+Dieselbe Zahl steht bei go-ethereum als `bodyCacheLimit`. Zwei
+Herleitungen, dieselbe Größenordnung.
+
+⚑ **Zwei Verweistabellen, mit verschiedenen Aufgaben, und das ist keine
+Kleinigkeit.** Der Wiederanlauf geht über die **Dateireihenfolge**, nie
+über die Höhen: Eine Datei mit doppelten Höhen fiele in einer
+Höhentabelle zusammen, und der Wiederanlauf spielte **weniger** Sätze ab,
+als die Datei enthält. Das wäre eine Auswahl **vor** der Prüfung, also
+genau die Stelle, an der ein manipulierter Verlauf durchkäme. Gelesen
+wird außerdem über einen **zweiten Dateigriff**: Ein Griff für beides
+hieße, dass jedes Lesen die Schreibstelle verschiebt, und ein vergessenes
+Zurückspringen schriebe den nächsten Block mitten in die Kette.
+
+⚑ **Fund 141: Eine Nachforderung von außen war ein Verstärker.** `ab`
+und `bis` kommen über die Leitung, und der Beantworter deckelte die
+Spanne nicht: `Bloecke { ab: 0, bis: u64::MAX }` packte alles, was der
+Knoten hatte, in **eine** Antwort. Ein paar Bytes hinein, Megabyte
+hinaus. Aufgefallen beim Bauen von Fund 124, weil der neue
+Plattenrückgriff beinahe über einen Zahlenbereich gelaufen wäre und aus
+dem Speicherproblem ein Rechenzeitproblem gemacht hätte. Jetzt Deckel
+**vor** dem Holen, und die Datei wird bereichsweise über die
+Verweistabelle gelesen: in der Länge des Ergebnisses, nicht der Spanne.
+
+⚑ **Fund 129: Es gab keinen Weg, einem laufenden Knoten zuzusehen.**
+Kein Metrik-, Zustands- oder Bereitschaftsendpunkt, im ganzen
+Repositorium keiner. Wer zwanzig Knoten fährt, liest keine zwanzig
+Protokolldateien, und wer einen Knoten in ein Kubernetes stellt, wird
+nach `livenessProbe` und `readinessProbe` gefragt.
+
+**Die Zahlen gab es längst**, die Zustandsaufnahme trägt sie seit
+Langem. Es fehlte der **Abholweg**, und genau das ist das neue Modul
+`beobachtung`: `/metriken` im Prometheus-Textformat, `/gesundheit` und
+`/bereit`. Der Stand entsteht aus **derselben Erhebung** wie der
+Protokolleintrag, im selben Augenblick; zwei getrennte Erhebungen liefen
+auseinander, und dann sagte das Protokoll etwas anderes als der
+Endpunkt.
+
+⚑ **Leben und Bereitschaft sind zwei Fragen.** Auf ein totes Leben
+folgt ein **Neustart**, auf fehlende Bereitschaft nur, dass kein Verkehr
+kommt. Ein Knoten, der aufholt, ist am Leben und nicht bereit; wer
+beides zusammenwirft, startet ihn mitten im Aufholen neu, und dann holt
+er wieder von vorn auf. Bereit heißt hier: mindestens ein Peer, und
+keine Höhe gehört, die über der eigenen liegt.
+
+⚑ **Die Bindeadresse ist eine Sicherheitsentscheidung**, deshalb ist
+die Vorgabe `127.0.0.1:4151` und nicht `0.0.0.0`. Was dort heraussieht,
+ist eine Landkarte: Peerzahl, Höhe, Latenzspanne, Mesh-Größen. Für einen
+Betreiber ist das Diagnose, für einen Angreifer die Aufklärung, und zwar
+ohne einen einzigen Verbindungsversuch ins Protokoll zu schreiben. Die
+Prometheus-Welt hat diesen Fehler durchgemacht; go-ethereum bindet
+`--metrics.addr` deshalb ab Werk auf die Rückschleife. Wer weiter hinaus
+will, sagt es mit `--beobachtung`, bekommt eine Warnung und stellt
+selbst eine Zugangskontrolle davor: **der Endpunkt hat keine.**
+
+**Kein HTTP-Rahmenwerk**, dieselbe Entscheidung wie beim Gateway. Ein
+`GET` ohne Rumpf ist der einfachste Fall, den HTTP kennt, und **ohne
+Rumpf gibt es die Schmuggelklasse nicht**: Es gibt keine zweite Meinung
+über eine Nachrichtengrenze, wenn nach dem Kopf nichts mehr gelesen
+wird. Das Zerlegen steht als reine Funktion ohne Netz und wird einzeln
+geprüft.
+
+**Neu an der Befehlszeile:** `--ohne-kette`, `--beobachtung <adr>`,
+`--ohne-beobachtung`.
+
+**Belegt:** elf Modultests am Endpunkt, ein Integrationstest am echten
+Prozess (der sich seinen Port aus der Ausgabe des Knotens holt, damit
+zwei Läufe nebeneinander nicht kollidieren), drei Tests am Fenster und
+sieben Gegenproben. Jede Gegenprobe entfernt genau eine Zeile und lässt
+genau den einen Test fallen, der sie beweist.
 
 ### v0.27.0 – 2026-09-01 (die Saatquelle wird geprüft, Punkt 44 geschlossen)
 

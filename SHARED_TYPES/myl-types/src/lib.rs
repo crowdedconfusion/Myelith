@@ -34,6 +34,7 @@ pub mod merkle;
 pub mod pq;
 pub mod miner;
 pub mod node_metadata;
+pub mod poi_botschaft;
 pub mod protocol;
 pub mod seed_rng;
 pub mod sitzung;

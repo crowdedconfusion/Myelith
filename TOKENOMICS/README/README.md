@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.15.0
+> **Version:** 0.16.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,39 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.16.0 – 2026-09-02 (der Speichersatz bekommt eine Zahl und einen Boden)
+
+⚑ **`speicherentgelt`, neu: Punkt B4 ist entschieden.** Der Satz, zu dem
+Speicher gegen Rechenarbeit getauscht wird, steht bei **9 000
+Recheneinheiten je Byte-Epoche**. Das sind 1,49 je TB-Monat und damit
+die Rate, die Storj seinen Betreibern zahlt, bei hergeleiteten Kosten
+von 0,60.
+
+**Ein Verhältnis und kein fester Preis.** Der Credit-Preis für
+Rechenarbeit ist dynamisch; ein fester Speicherpreis daneben liefe ihm
+davon und wäre dann subventioniert, ohne dass jemand etwas entschieden
+hätte.
+
+⚑ **Dazu ein Kostenboden**, `SPEICHER_KOSTENBODEN = 3 000`: die Kosten
+eines effizienten Halters, aufgerundet. Ein Satz darunter heisst, dass
+auch der günstigste Halter drauflegt, also niemand hält, also die Rolle
+Store unbesetzbar ist. GOVERNANCE prüft dagegen. **Nur eine
+Untergrenze:** Ein zu hoher Satz ist eine wirtschaftliche Frage, ein zu
+niedriger eine strukturelle, und nur die zweite gehört in eine
+Invariante.
+
+⚑ **Die Herleitung war zweimal zu günstig** (Fund 147). Die Platte
+stand mit 12,50 je TB im Modell, der Markt lag im September 2026 bei 22
+bis 25. Und schwerer: **Das Modell rechnete eine nackte Platte**, ohne
+Gehäuse, Rechner und Netz. Beides zusammen hebt die Kosten um das
+Zweieinhalbfache.
+
+**Zum Strom, weil die Frage kam:** Er steht im Modell und macht 12
+Prozent der Plattenkosten aus und 13 Prozent der Kartenkosten. Weil er
+auf beiden Seiten fast gleich anteilig steckt, **kürzt er sich im
+Verhältnis heraus**: von fünf bis sechzig Cent je Kilowattstunde
+bewegt sich der Satz um unter ein Prozent.
 
 ### v0.15.0 – 2026-09-01 (die Zuschreibung auf dem Weg der Kette)
 

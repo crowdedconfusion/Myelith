@@ -75,6 +75,12 @@ pub enum TransitionError {
     },
     /// Für diesen Pod liegt in dieser Epoche schon ein Bündel vor.
     BuendelExistiert,
+    /// Der Einreichende ist nicht der Koordinator dieses Pods.
+    NichtKoordinator,
+    /// Zu dieser Pod-Kennung gibt es in dieser Epoche keine Besetzung.
+    PodOhneMitglieder,
+    /// Die Aggregatsignatur gilt nicht unter den Mitgliedsschlüsseln.
+    AggregatUngueltig,
     /// Für diesen Pipeline-Stand steht schon eine Arbeitsverteilung.
     VerteilungExistiert,
     /// Das Manifest nennt eine andere Wurzel, als unter der es abgelegt
@@ -176,6 +182,15 @@ impl std::fmt::Display for TransitionError {
                 f,
                 "das Buendel gilt fuer Epoche {}, laufend ist {}",
                 buendel.0, laufend.0
+            ),
+            Self::NichtKoordinator => f.write_str(
+                "nur der Koordinator eines Pods darf dessen Buendel einreichen",
+            ),
+            Self::PodOhneMitglieder => f.write_str(
+                "zu dieser Pod-Kennung gibt es in dieser Epoche keine Besetzung",
+            ),
+            Self::AggregatUngueltig => f.write_str(
+                "die Aggregatsignatur gilt nicht unter den Mitgliedsschluesseln",
             ),
             Self::BuendelExistiert => {
                 f.write_str("fuer diesen Pod liegt in dieser Epoche schon ein Buendel vor")
@@ -865,30 +880,52 @@ pub fn arbeitsverteilung_setzen(
 ///
 /// # Was hier geprüft wird
 ///
-/// - Der Einreichende ist ein **angemeldeter Miner**.
-/// - Das Bündel gehört zur **laufenden** Epoche.
-/// - Für diesen Pod liegt in dieser Epoche **noch keines** vor.
+/// **Fünf Schritte, billig vor teuer:**
 ///
-/// # ⚑ Was hier ausdrücklich **nicht** geprüft wird, und warum
+/// 1. Der Einreichende ist ein **angemeldeter Miner**.
+/// 2. Das Bündel gehört zur **laufenden** Epoche.
+/// 3. Für diesen Pod liegt in dieser Epoche **noch keines** vor.
+/// 4. Der Einreichende ist der **Koordinator** dieses Pods.
+/// 5. Das **Aggregat** gilt unter **allen** Mitgliedsschlüsseln.
 ///
-/// **Die Aggregatsignatur gegen die Pod-Mitglieder.** Sie ist die
-/// eigentliche Prüfung, und sie setzt voraus, dass der Zustand weiß, wer
-/// in diesem Pod sitzt. Das tut er noch nicht: Die Ableitung der
-/// Zuteilung ist Glied 3c und steht aus.
+/// # ⚑ Fund 144: Bis zum 2026-09-02 waren es drei
 ///
-/// **Solange sie fehlt, ist „angemeldeter Miner" eine schwache
-/// Schranke**, und das gehört gesagt statt verschwiegen: Ein
-/// angemeldeter Miner kann heute ein Bündel für **irgendeinen** Pod
-/// einreichen. Was ihn bremst, ist allein, dass die Zuschreibung ohne
-/// Besetzung ohnehin nichts ausschüttet; **die Lücke ist bekannt,
-/// begrenzt und benannt**, und sie schließt sich mit 3c.
+/// Mitgliedschaft, Koordinator und Aggregatsignatur wurden hier
+/// **nicht** geprüft, sondern erst beim Epochenabschluss, also eine
+/// ganze Epoche später. Die vollständige Prüfung gab es im Baum sogar
+/// zweimal, und die vollständige Hälfte war die **ungenutzte**:
+/// `myl_consensus::poi::PoIRegistry::submit` prüft alle fünf Schritte
+/// und hatte außerhalb von Tests keinen einzigen Aufrufer.
 ///
-/// Sie ist kein Grund, das Glied nicht zu bauen: Ohne einen Weg in die
-/// Kette gibt es nichts zu prüfen.
+/// ⚑ **Die Folge war Zustandswachstum, nicht nur eine späte Prüfung.**
+/// `state.buendel` ist nach `PodId` geschlüsselt, und die Kennung wählt
+/// der Einreichende frei: Jeder angemeldete Miner konnte den Zustand bis
+/// zur Blockgrenze mit Bündeln für **erfundene** Pods füllen, rund 212
+/// Bytes je Stück, und jedes davon steckte bis zum Epochenwechsel in
+/// jeder Zustandswurzel.
+///
+/// # ⚑ Woher die Mitglieder kommen, und woher nie
+///
+/// **Aus der Zuteilung des Schedulers, nie aus dem Bündel.** Wer sie
+/// aus dem Bündel nähme, ließe den Einreichenden bestimmen, gegen
+/// welche Schlüssel geprüft wird, und die Prüfung prüfte nichts.
+///
+/// Der Aufrufer schlägt den Pod zu `buendel.pod` in der Zuteilung nach
+/// und übergibt, was dort steht. **Er kann das nicht umgehen:** Ein
+/// erfundener Mitgliedersatz besteht Schritt 5 nur, wenn seine Inhaber
+/// unterschrieben haben, und dann sind es keine erfundenen.
+///
+/// # Warum die Botschaft nicht hier gebaut wird
+///
+/// Sie steht in [`myl_types::poi_botschaft`], zusammen mit dem Typ, den
+/// sie kodiert. Eine zweite Kodierung wäre eine zweite Meinung darüber,
+/// was unterschrieben wurde.
 pub fn buendel_einreichen(
     state: &mut LedgerState,
     unterzeichner: &Address,
     buendel: PoIBundle,
+    koordinator: &MinerId,
+    mitglieder: &[(MinerId, myl_types::bls::BlsPublicKey)],
 ) -> Result<(), TransitionError> {
     let kennung = MinerId::new(*unterzeichner.as_bytes());
     if !state.miner.contains_key(&kennung) {
@@ -902,6 +939,29 @@ pub fn buendel_einreichen(
     }
     if state.buendel.contains_key(&buendel.pod) {
         return Err(TransitionError::BuendelExistiert);
+    }
+    // ⚑ **Nur der Koordinator reicht ein.** Sonst könnte jedes
+    // Mitglied dasselbe Bündel einreichen, und die Dublettensperre
+    // entschiede nach Reihenfolge statt nach Zuständigkeit.
+    if kennung != *koordinator {
+        return Err(TransitionError::NichtKoordinator);
+    }
+    // ⚑ **Ein leerer Mitgliedersatz gilt nie.** `fast_aggregate_verify`
+    // weist ihn selbst ab, aber eine eigene Ablehnung sagt, was fehlt,
+    // statt „Signatur ungültig" zu melden, wenn gar keine geprüft
+    // werden konnte.
+    if mitglieder.is_empty() {
+        return Err(TransitionError::PodOhneMitglieder);
+    }
+    let schluessel: Vec<myl_types::bls::BlsPublicKey> =
+        mitglieder.iter().map(|(_, k)| *k).collect();
+    let botschaft = myl_types::poi_botschaft::bundle_message(&buendel);
+    if !myl_types::bls::fast_aggregate_verify(
+        &schluessel,
+        &botschaft,
+        &buendel.aggregate_sig.as_aggregate(),
+    ) {
+        return Err(TransitionError::AggregatUngueltig);
     }
     state.buendel.insert(buendel.pod, buendel);
     Ok(())
@@ -2215,6 +2275,34 @@ mod tests {
         }
     }
 
+    fn geheim(b: u8) -> myl_types::bls::BlsSecretKey {
+        myl_types::bls::BlsSecretKey::key_gen(&[b.wrapping_add(1); 32]).expect("Schluessel")
+    }
+
+    /// Die Mitglieder eines Probe-Pods: die Miner `b` bis `b+n-1`, der
+    /// erste ist Koordinator.
+    fn besetzung(b: u8, n: u8) -> Vec<(MinerId, myl_types::bls::BlsPublicKey)> {
+        (b..b + n).map(|x| (kennung(x), probeschluessel(x))).collect()
+    }
+
+    /// Unterschreibt ein Bündel mit **allen** Mitgliedern, wie ein
+    /// echter Pod es täte.
+    fn unterschreiben(b: &mut PoIBundle, von: u8, n: u8) {
+        let msg = myl_types::poi_botschaft::bundle_message(b);
+        let sigs: Vec<myl_types::bls::BlsSignature> = (von..von + n)
+            .map(|x| geheim(x).sign(&msg).expect("signieren"))
+            .collect();
+        let agg = myl_types::bls::aggregate_signatures(&sigs).expect("aggregieren");
+        b.aggregate_sig = myl_types::bls::BlsSignature(agg.0);
+    }
+
+    /// Ein unterschriebenes Bündel des Pods `p`, Mitglieder `von..von+n`.
+    fn signiertes_buendel(p: u8, epoche: u64, vtfe: u64, von: u8, n: u8) -> PoIBundle {
+        let mut b = buendel(p, epoche, vtfe);
+        unterschreiben(&mut b, von, n);
+        b
+    }
+
     fn angemeldet(st: &mut LedgerState, b: u8) {
         miner_anmelden(
             st,
@@ -2232,8 +2320,17 @@ mod tests {
     fn ein_buendel_wird_aufgenommen() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
-        angemeldet(&mut st, 1);
-        buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
+        buendel_einreichen(
+            &mut st,
+            &miner_adresse(1),
+            signiertes_buendel(9, 4, 500, 1, 3),
+            &kennung(1),
+            &besetzung(1, 3),
+        )
+        .expect("Einreichung");
         assert_eq!(buendel_der_epoche(&st).len(), 1);
         assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500);
     }
@@ -2244,7 +2341,13 @@ mod tests {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
         assert_eq!(
-            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)),
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(9, 4, 500, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
             Err(TransitionError::MinerUnbekannt)
         );
         assert!(st.buendel.is_empty());
@@ -2259,7 +2362,13 @@ mod tests {
         st.epoch = EpochId(4);
         angemeldet(&mut st, 1);
         assert_eq!(
-            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 3, 500)),
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(9, 3, 500, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
             Err(TransitionError::FremdeEpoche {
                 buendel: EpochId(3),
                 laufend: EpochId(4)
@@ -2273,10 +2382,25 @@ mod tests {
     fn zweimal_fuer_denselben_pod_geht_nicht() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
-        angemeldet(&mut st, 1);
-        buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 500)).expect("erste");
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
+        buendel_einreichen(
+            &mut st,
+            &miner_adresse(1),
+            signiertes_buendel(9, 4, 500, 1, 3),
+            &kennung(1),
+            &besetzung(1, 3),
+        )
+        .expect("erste");
         assert_eq!(
-            buendel_einreichen(&mut st, &miner_adresse(1), buendel(9, 4, 900)),
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(9, 4, 900, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
             Err(TransitionError::BuendelExistiert)
         );
         assert_eq!(st.buendel[&pod(9)].vtfe_claimed, 500, "das zweite hat ueberschrieben");
@@ -2287,9 +2411,18 @@ mod tests {
     fn verschiedene_pods_stehen_nebeneinander() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
-        angemeldet(&mut st, 1);
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
         for p in [1u8, 5, 9] {
-            buendel_einreichen(&mut st, &miner_adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(p, 4, 100, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            )
+            .expect("Einreichung");
         }
         assert_eq!(buendel_der_epoche(&st).len(), 3);
     }
@@ -2300,13 +2433,160 @@ mod tests {
     fn das_leeren_gibt_die_zahl_zurueck() {
         let mut st = LedgerState::genesis(1);
         st.epoch = EpochId(4);
-        angemeldet(&mut st, 1);
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
         for p in [1u8, 5] {
-            buendel_einreichen(&mut st, &miner_adresse(1), buendel(p, 4, 100)).expect("Einreichung");
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(p, 4, 100, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            )
+            .expect("Einreichung");
         }
         assert_eq!(buendel_leeren(&mut st), 2);
         assert!(st.buendel.is_empty());
         assert_eq!(buendel_leeren(&mut st), 0, "das zweite Leeren fand noch etwas");
+    }
+
+    /// ⚑ **Nur der Koordinator reicht ein** (Fund 144).
+    ///
+    /// Sonst könnte jedes Mitglied dasselbe Bündel einreichen, und die
+    /// Dublettensperre entschiede nach Reihenfolge statt nach
+    /// Zuständigkeit.
+    #[test]
+    fn ein_anderes_mitglied_reicht_nicht_ein() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
+        assert_eq!(
+            buendel_einreichen(
+                &mut st,
+                // Miner 2 ist Mitglied, aber nicht Koordinator.
+                &miner_adresse(2),
+                signiertes_buendel(9, 4, 500, 1, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
+            Err(TransitionError::NichtKoordinator)
+        );
+        assert!(st.buendel.is_empty());
+    }
+
+    /// ⚑ **Ohne Besetzung wird nichts aufgenommen** (Fund 144).
+    ///
+    /// Das ist der Normalfall bei einer erfundenen Pod-Kennung: Die
+    /// Zuteilung kennt sie nicht, der Aufrufer hat nichts zu übergeben.
+    #[test]
+    fn ein_pod_ohne_besetzung_wird_abgewiesen() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        angemeldet(&mut st, 1);
+        assert_eq!(
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(9, 4, 500, 1, 3),
+                &kennung(1),
+                &[],
+            ),
+            Err(TransitionError::PodOhneMitglieder)
+        );
+    }
+
+    /// ⚑ **Die Aggregatsignatur wird bei der Aufnahme geprüft**
+    /// (Fund 144), nicht erst beim Epochenabschluss.
+    ///
+    /// Bis zum 2026-09-02 kam ein Bündel mit einer Attrappe als
+    /// Unterschrift in den Zustand und blieb dort bis zum
+    /// Epochenwechsel. Jeder angemeldete Miner konnte den Zustand so mit
+    /// Bündeln für erfundene Pods füllen.
+    #[test]
+    fn eine_attrappe_als_unterschrift_kommt_nicht_hinein() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
+        assert_eq!(
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                // Nicht unterschrieben: die Nullsignatur.
+                buendel(9, 4, 500),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
+            Err(TransitionError::AggregatUngueltig)
+        );
+        assert!(st.buendel.is_empty(), "das Buendel steht trotzdem im Zustand");
+    }
+
+    /// ⚑ **Und eine Unterschrift der falschen Leute gilt auch nicht.**
+    ///
+    /// Die Gegenprobe zur vorigen: Ein vollständig und richtig
+    /// unterschriebenes Bündel, aber von einem anderen Mitgliedersatz
+    /// als dem, der zu diesem Pod gehört. **Das ist der eigentliche
+    /// Angriff**, denn eine Nullsignatur fällt jedem auf.
+    #[test]
+    fn eine_fremde_besetzung_traegt_die_unterschrift_nicht() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        for b in 1..7u8 {
+            angemeldet(&mut st, b);
+        }
+        // Unterschrieben von 4,5,6; geprüft gegen 1,2,3.
+        assert_eq!(
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                signiertes_buendel(9, 4, 500, 4, 3),
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
+            Err(TransitionError::AggregatUngueltig)
+        );
+        // Und mit der richtigen Besetzung geht dasselbe Bündel durch:
+        // sonst prüfte der Test nur, dass irgendetwas scheitert.
+        buendel_einreichen(
+            &mut st,
+            &miner_adresse(4),
+            signiertes_buendel(9, 4, 500, 4, 3),
+            &kennung(4),
+            &besetzung(4, 3),
+        )
+        .expect("mit der richtigen Besetzung");
+    }
+
+    /// ⚑ **Ein nachträglich erhöhter Anspruch bricht die Unterschrift.**
+    ///
+    /// `vtfe_claimed` steht in der Signierbotschaft, damit der
+    /// Koordinator die beanspruchte Arbeitsmenge nach dem Einsammeln
+    /// der Unterschriften nicht erhöhen kann. Der Test hält fest, dass
+    /// die **Aufnahme** das jetzt merkt.
+    #[test]
+    fn ein_nachtraeglich_erhoehter_anspruch_faellt_durch() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(4);
+        for b in 1..4u8 {
+            angemeldet(&mut st, b);
+        }
+        let mut b = signiertes_buendel(9, 4, 500, 1, 3);
+        b.vtfe_claimed = 5_000_000;
+        assert_eq!(
+            buendel_einreichen(
+                &mut st,
+                &miner_adresse(1),
+                b,
+                &kennung(1),
+                &besetzung(1, 3),
+            ),
+            Err(TransitionError::AggregatUngueltig)
+        );
     }
 
     /// Bündel gehen in die Zustandsverpflichtung ein.
@@ -2314,9 +2594,18 @@ mod tests {
     fn ein_buendel_veraendert_das_commitment() {
         let mut ohne = LedgerState::genesis(1);
         ohne.epoch = EpochId(4);
-        angemeldet(&mut ohne, 1);
+        for b in 1..4u8 {
+            angemeldet(&mut ohne, b);
+        }
         let mut mit = ohne.clone();
-        buendel_einreichen(&mut mit, &miner_adresse(1), buendel(9, 4, 500)).expect("Einreichung");
+        buendel_einreichen(
+            &mut mit,
+            &miner_adresse(1),
+            signiertes_buendel(9, 4, 500, 1, 3),
+            &kennung(1),
+            &besetzung(1, 3),
+        )
+        .expect("Einreichung");
         assert_ne!(ohne.commitment(), mit.commitment());
     }
 

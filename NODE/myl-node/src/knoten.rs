@@ -108,6 +108,12 @@ impl std::error::Error for KnotenFehler {}
 /// Ein laufender Knoten.
 pub struct Knoten {
     konfig: KnotenKonfig,
+    /// Horcht ab dem Start auf Beendigungssignale.
+    ///
+    /// ⚑ **Steht hier und nicht in `laufen_bis`** (Fund 140). Wer sie
+    /// erst dort stellte, liesse den ganzen Vorlauf ungeschuetzt; siehe
+    /// [`Beendigungswache`].
+    wache: Beendigungswache,
     peer_id: libp2p::PeerId,
     kommandos: mpsc::UnboundedSender<NodeCommand>,
     /// Für welche Epoche die Stichprobe schon verschickt wurde.
@@ -152,6 +158,18 @@ pub struct Knoten {
     /// von zwanzig Blöcken wären das zwanzig Anfragen für dieselbe
     /// Lücke, und der Gegenüber bezahlt sie alle.
     nachforderung_laeuft: bool,
+    /// Wohin die Zustandsaufnahme ihre Zahlen zusaetzlich legt.
+    ///
+    /// ⚑ **Der Abholweg zu den Zahlen, die es laengst gab** (Fund 129).
+    /// Siehe [`crate::beobachtung`].
+    beobachtungsstelle: crate::beobachtung::Beobachtungsstelle,
+    /// Die hoechste Hoehe, von der dieser Knoten gehoert hat.
+    ///
+    /// **Grundlage der Bereitschaftsauskunft.** Wer eine hoehere Hoehe
+    /// kennt als seine eigene, ist im Rueckstand und sollte keinen
+    /// Verkehr bekommen; ohne diese Zahl waere „bereit" nicht von „hat
+    /// noch nichts gehoert" zu unterscheiden.
+    hoechste_gehoerte: u64,
     /// Die eigenen Horchadressen, wie sie gemeldet wurden.
     ///
     /// Der Knoten kennt sie beim Start noch nicht: Bei Port 0 vergibt
@@ -341,13 +359,22 @@ impl Knoten {
         let mut kette = Kette::probestand();
         if let Some(pfad) = konfig.kettendatei.clone() {
             match crate::speicher::Kettenspeicher::oeffnen(&pfad, Kette::startwert()) {
-                Ok((speicher, anlauf)) => {
-                    let vorhanden = anlauf.bloecke.len();
+                Ok((mut speicher, anlauf)) => {
+                    let vorhanden = anlauf.anzahl;
                     let mut uebernommen = 0usize;
                     let mut abgelehnt = 0usize;
                     let mut erster_grund = String::new();
-                    for b in &anlauf.bloecke {
-                        match kette.uebernimm(b) {
+                    // ⚑ **Satz für Satz, nicht alle auf einmal**
+                    // (Fund 124). Bis zum 2026-09-02 stand die ganze
+                    // Kette im Arbeitsspeicher, bevor der erste Block
+                    // geprüft war. Jetzt liegt immer nur einer da.
+                    //
+                    // Ein Lesefehler mitten im Nachspielen bricht ab:
+                    // Was danach kommt, schlösse an einen Block an, den
+                    // dieser Knoten nicht hat, und würde ohnehin
+                    // abgewiesen. Der Grund geht ins Protokoll.
+                    let lesefehler = speicher
+                        .fuer_jeden_satz(|b| match kette.uebernimm(&b) {
                             Ok(()) => uebernommen += 1,
                             Err(e) => {
                                 abgelehnt += 1;
@@ -355,8 +382,8 @@ impl Knoten {
                                     erster_grund = e.to_string();
                                 }
                             }
-                        }
-                    }
+                        })
+                        .err();
                     // Erst **nach** dem Nachspielen anhängen, sonst
                     // schriebe der Wiederanlauf jeden Block ein zweites
                     // Mal in dieselbe Datei.
@@ -365,6 +392,10 @@ impl Knoten {
                         .text("datei", pfad.display().to_string())
                         .wahr("neu", anlauf.neu)
                         .zahl("in_datei", vorhanden as i64)
+                        .text(
+                            "lesefehler",
+                            lesefehler.map(|e| e.to_string()).unwrap_or_default(),
+                        )
                         .zahl("uebernommen", uebernommen as i64)
                         .zahl("abgelehnt", abgelehnt as i64)
                         // Ein abgebrochener letzter Satz heißt: der
@@ -395,6 +426,9 @@ impl Knoten {
 
         Ok(Self {
             konfig,
+            // ⚑ **Als Erstes, noch vor allem Warten** (Fund 140). Ab
+            // hier ist jedes Signal aufgehoben.
+            wache: Beendigungswache::stellen(),
             peer_id,
             kommandos: cmd_tx,
             stichprobe_gefragt: None,
@@ -403,6 +437,8 @@ impl Knoten {
             testverkehr_zaehler: 0,
             kette,
             nachforderung_laeuft: false,
+            beobachtungsstelle: crate::beobachtung::Beobachtungsstelle::neu(),
+            hoechste_gehoerte: 0,
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
             horchadressen: Vec::new(),
@@ -901,8 +937,9 @@ impl Knoten {
     /// die als Erstes gestellt wird, wenn ein Protokoll kürzer ist als
     /// die anderen.
     pub async fn laufen_bis(&mut self, dauer: Option<Duration>) {
+        let wache = self.wache.clone();
         let grund = tokio::select! {
-            _ = tokio::signal::ctrl_c() => "Abbruchsignal",
+            g = wache.warten() => g,
             _ = async {
                 match dauer {
                     Some(d) => self.laufe_fuer(d).await,
@@ -912,6 +949,32 @@ impl Knoten {
                 }
             } => "Laufzeit abgelaufen",
         };
+        self.abschluss(grund).await;
+    }
+
+    /// Die Beobachtungsstelle dieses Knotens.
+    ///
+    /// Der Klon ist billig; der Dienst haelt einen und liest daraus,
+    /// waehrend der Knoten hineinschreibt.
+    pub fn beobachtungsstelle(&self) -> crate::beobachtung::Beobachtungsstelle {
+        self.beobachtungsstelle.clone()
+    }
+
+    /// Die Wache dieses Knotens, zum Mitlauschen.
+    ///
+    /// Der Klon ist billig und **unabhaengig vom Knoten**: Damit kann
+    /// `main` den Startvorlauf gegen das Signal stellen, obwohl der
+    /// Vorlauf den Knoten die ganze Zeit ausleiht.
+    pub fn beendigungswache(&self) -> Beendigungswache {
+        self.wache.clone()
+    }
+
+    /// Schreibt den Abschluss, ohne vorher gelaufen zu sein.
+    ///
+    /// Fuer den Fall, dass das Signal schon im Startvorlauf kommt: Auch
+    /// dann soll im Protokoll stehen, dass jemand beendet hat, und
+    /// nicht nichts (Fund 140).
+    pub async fn abschluss(&mut self, grund: &str) {
         self.aufnahme().await;
         self.protokoll.schreibe(
             Eintrag::neu("ende")
@@ -1225,7 +1288,8 @@ impl Knoten {
             .zahl("konsens_vorlauf_verworfen", self.konsens_vorlauf_verworfen as i64)
             // Ein Schreibfehler macht den Block nicht ungültig, wohl
             // aber die Datei unvollständig. Das darf nicht still bleiben.
-            .zahl("kette_schreibfehler", self.kette.schreibfehler() as i64);
+            .zahl("kette_schreibfehler", self.kette.schreibfehler() as i64)
+            .zahl("kette_lesefehler", self.kette.lesefehler() as i64);
         if let Some(n) = self.kette.gespeicherte_bloecke() {
             eintrag = eintrag.zahl("kette_gespeichert", n as i64);
         }
@@ -1251,6 +1315,29 @@ impl Knoten {
             );
         }
         self.protokoll.schreibe(eintrag);
+
+        // ⚑ **Dieselben Zahlen, ein zweiter Weg** (Fund 129). Nicht
+        // eine zweite Quelle: Der Stand entsteht aus derselben
+        // Erhebung wie der Protokolleintrag, im selben Augenblick.
+        // Zwei getrennte Erhebungen liefen auseinander, und dann sagte
+        // das Protokoll etwas anderes als der Endpunkt.
+        self.beobachtungsstelle.setzen(crate::beobachtung::Beobachtungsstand {
+            stand_ms: crate::protokoll::jetzt_ms().max(0) as u64,
+            hoehe: self.kette.hoehe(),
+            hoechste_gehoerte: self.hoechste_gehoerte,
+            peers: z.peers as u64,
+            wartend: self.kette.wartend() as u64,
+            schlecht_bewertet: z.schlecht_bewertet as u64,
+            protokollzeilen: self.protokoll.geschrieben(),
+            konsens_vorlauf: self.konsens_vorlauf.len() as u64,
+            konsens_vorlauf_verworfen: self.konsens_vorlauf_verworfen,
+            kette_schreibfehler: self.kette.schreibfehler(),
+            kette_lesefehler: self.kette.lesefehler(),
+            kette_gespeichert: self.kette.gespeicherte_bloecke().unwrap_or(0),
+            latenz_messungen: anzahl,
+            latenz_min_us: if anzahl > 0 { kleinste } else { 0 },
+            latenz_max_us: groesste,
+        });
     }
 
     /// Fordert die fehlenden Blöcke bei einem Peer nach.
@@ -1350,6 +1437,11 @@ impl Knoten {
                         if ablehnungsart == "passt-nicht-an" {
                             self.fordere_nach(m.von, block.header.height);
                         }
+                        // Auch eine abgelehnte Hoehe ist eine gehoerte
+                        // Hoehe: Sie sagt, dass jemand weiter ist, und
+                        // genau das entscheidet ueber die Bereitschaft.
+                        self.hoechste_gehoerte =
+                            self.hoechste_gehoerte.max(block.header.height);
                     }
                 }
             }
@@ -1539,5 +1631,113 @@ impl Knoten {
                 .text("grund", grund),
         };
         self.protokoll.schreibe(eintrag);
+    }
+}
+
+/// Wartet auf das erste Beendigungssignal und nennt es beim Namen.
+///
+/// # ⚑ Warum SIGTERM dazugehoert (Fund 123, 2026-09-02)
+///
+/// Bis dahin stand hier allein `ctrl_c`, also **SIGINT**. Das ist das
+/// Signal einer Tastatur. **Unter systemd, Docker und Kubernetes kommt
+/// SIGTERM**, und der Prozess starb daran wortlos: kein Abschlusseintrag,
+/// keine Zustandsaufnahme, nach der Schonfrist ein SIGKILL.
+///
+/// ⚑ **Damit fiel genau die Unterscheidung weg, fuer die der
+/// Abschlusseintrag gebaut wurde.** Der Modulkopf von [`laufen_bis`]
+/// sagt es selbst: „absichtlich beendet" liess sich von „abgestuerzt"
+/// nicht unterscheiden, und fuer einen Lauf ueber mehrere Maschinen ist
+/// das die erste Frage, wenn ein Protokoll kuerzer ist als die anderen.
+/// Sie war fuer den Probelauf geloest und im **Betrieb** offen, also
+/// dort, wo sie zaehlt.
+///
+/// **Beide Signale, und der Grund steht im Rueckgabewert:** Wer das
+/// Protokoll liest, will wissen, ob ein Mensch abgebrochen hat oder ein
+/// Dienstverwalter beendet.
+async fn beendigungssignal() -> &'static str {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        // Schlaegt das Einhaengen fehl, bleibt SIGINT allein uebrig. Das
+        // ist schlechter als beides und besser als ein Absturz beim
+        // Start.
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return "Abbruchsignal";
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => "Abbruchsignal",
+            _ = term.recv() => "Beendigungssignal",
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        "Abbruchsignal"
+    }
+}
+
+/// Horcht ab dem Start auf Beendigungssignale.
+///
+/// # ⚑ Warum das eine eigene Wache ist (Fund 140, 2026-09-02)
+///
+/// Bis dahin haengte [`Knoten::laufen_bis`] den Signalhandler selbst
+/// ein, und zwar in dem Augenblick, in dem es aufgerufen wurde. Davor
+/// lagen **bis zu dreizehn Sekunden Vorlauf**: acht auf eine
+/// QUIC-Adresse, fuenf auf irgendeine Horchadresse. In diesem Fenster
+/// behandelte der Knoten kein Signal, und ein SIGTERM riss ihn hart
+/// heraus, ohne Abschlusseintrag. Also genau das, wogegen Fund 123
+/// gebaut wurde, nur an einer anderen Stelle.
+///
+/// **Gefunden hat es ein Test, der zweimal falsch rot war.** Er toetete
+/// nach vier Sekunden, also mitten im Vorlauf, und meldete einen
+/// Fehler, den es nicht gab. Der Fehler war stattdessen nebenan.
+///
+/// **Die Wache wird gestellt, sobald der Knoten existiert.** Ab da ist
+/// jedes Signal aufgehoben, auch wenn niemand gerade darauf wartet: Der
+/// [`tokio::sync::watch`]-Kanal haelt den Grund fest, und wer spaeter
+/// hinzukommt, sieht ihn sofort. Ein `Notify` koennte das nicht, denn
+/// ein Weckruf ohne Wartenden ist verloren.
+#[derive(Debug, Clone)]
+pub struct Beendigungswache {
+    empfaenger: tokio::sync::watch::Receiver<Option<&'static str>>,
+}
+
+impl Beendigungswache {
+    /// Stellt die Wache. Verlangt eine laufende Tokio-Laufzeit.
+    pub fn stellen() -> Self {
+        let (sender, empfaenger) = tokio::sync::watch::channel(None);
+        tokio::spawn(async move {
+            let grund = beendigungssignal().await;
+            // Schlaegt das Senden fehl, hoert niemand mehr zu, und dann
+            // ist auch nichts mehr zu tun.
+            let _ = sender.send(Some(grund));
+        });
+        Self { empfaenger }
+    }
+
+    /// Wartet, bis ein Signal kam, und nennt es beim Namen.
+    ///
+    /// **Kehrt sofort zurueck, wenn das Signal schon da war.** Das ist
+    /// der Punkt der ganzen Uebung: Ein Signal aus dem Vorlauf geht
+    /// nicht verloren.
+    pub async fn warten(&self) -> &'static str {
+        let mut empfaenger = self.empfaenger.clone();
+        loop {
+            if let Some(grund) = *empfaenger.borrow_and_update() {
+                return grund;
+            }
+            if empfaenger.changed().await.is_err() {
+                // Der Sender ist fort, ohne gesendet zu haben. Kann
+                // nicht vorkommen, denn die Aufgabe sendet, bevor sie
+                // endet. Falls doch: **ewig warten**, nicht sofort
+                // enden. Ein falsches „beendet" waere schlimmer als ein
+                // Knoten, der weiterlaeuft.
+                std::future::pending::<()>().await;
+            }
+        }
     }
 }

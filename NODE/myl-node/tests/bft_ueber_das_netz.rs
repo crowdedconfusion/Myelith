@@ -113,6 +113,10 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         konsensschluesseldatei: None,
         nat: Default::default(),
         aufnahme_sekunden: 1,
+        // Kein Endpunkt: Ein fester Port kollidierte, sobald zwei
+        // Testknoten nebeneinander laufen, und dieser Test prueft
+        // ohnehin etwas anderes.
+        beobachtung: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
         teilnehmer: TEILNEHMER.iter().map(|(n, _)| n.to_string()).collect(),

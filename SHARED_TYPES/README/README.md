@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.28.0
+> **Version:** 0.29.0
 > **Datum:** 2026-08-31
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,25 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.29.0 – 2026-09-02 (die Signierbotschaft zieht zu ihrem Typ)
+
+⚑ **`poi_botschaft`, neu, und der Umzug hatte einen Grund** (Fund 144).
+Die kanonische Signierbotschaft eines PoI-Bündels lag in
+`myl_consensus::poi`. Dort konnte `myl-ledger` sie nicht sehen, denn
+`myl-consensus` hängt an `myl-ledger` und nicht umgekehrt.
+
+**Die Prüfung stand deshalb am falschen Ort:** Der Übergang, der ein
+Bündel in den Zustand nimmt, konnte die Aggregatsignatur nicht prüfen,
+also prüfte er sie nicht, und geprüft wurde erst beim Epochenabschluss,
+eine ganze Epoche später.
+
+**Eine Botschaft gehört zu ihrem Typ.** `PoIBundle` steht in dieser
+Kiste, also steht die Bytefolge, die ihn unterschreibbar macht, jetzt
+daneben. **Verschoben, nicht kopiert:** Zwei Kodierungen wären zwei
+Meinungen darüber, was unterschrieben wurde, und `myl_consensus::poi`
+gibt die Namen unverändert weiter, damit kein Aufrufer etwas anderes
+benutzt.
 
 ### v0.28.0 – 2026-09-01 (die Anfrage wird gebunden, Punkte 39 und 47)
 

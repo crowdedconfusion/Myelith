@@ -73,6 +73,15 @@ pub enum Invariante {
     /// bis zur ersten erwarteten Prüfung überwiegen. Wer `p` senkt oder
     /// `g` hebt, ohne `S` anzuheben, macht Betrug rational.
     MindestStake,
+    /// ⚑ **Belegt, Punkt B4 vom 2026-09-02:** Der Speichersatz deckt die
+    /// Kosten eines effizienten Halters.
+    ///
+    /// Ein Satz unter [`myl_tokenomics::SPEICHER_KOSTENBODEN`] heißt:
+    /// Auch der günstigste Halter zahlt drauf, also hält niemand, also
+    /// gibt es die Rolle Store nicht mehr. **Die Schranke schützt nicht
+    /// vor Betrug, sondern vor dem Verschwinden einer Rolle**, und
+    /// deshalb steht sie hier und nicht in einer Empfehlung.
+    SpeichersatzDecktKosten,
     /// **Belegt, Anhang B.4:** `s < c/(1−c)`.
     ///
     /// Self-Dealing ist in der Subventionsphase genau dann
@@ -183,6 +192,7 @@ impl Invariante {
     pub fn fundstelle(&self) -> &'static str {
         match self {
             Self::MindestStake => "Kap. 5.5, Anhang B.1",
+            Self::SpeichersatzDecktKosten => "Punkt B4, 2026-09-02",
             Self::SelfDealing => "Anhang B.4",
             Self::TrainingsverguetungUnterInferenz => "Kap. 5.6",
             Self::NennerNichtNull => "strukturell",
@@ -233,6 +243,7 @@ impl std::error::Error for InvariantenBruch {}
 pub fn pruefe_invarianten(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
     strukturelle_pruefungen(reg)?;
     mindeststake(reg)?;
+    speichersatz(reg)?;
     self_dealing(reg)?;
     trainingsverguetung(reg)?;
     praegedeckel(reg)?;
@@ -391,6 +402,38 @@ fn mindeststake(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
             begruendung: format!(
                 "S = {} liegt unter S_min = g/p² = {} (g = {}, p = {}/{})",
                 s, noetig, g, pz, pn
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Der Speichersatz deckt die Kosten eines effizienten Halters
+/// (Punkt B4).
+///
+/// **Die Zahl steht in `myl-tokenomics` und wird hier benutzt**, nicht
+/// wiederholt: dieselbe Arbeitsteilung wie bei `S_min`. Dieses Modul
+/// entscheidet, *dass* die Bedingung gilt; wie hoch der Boden liegt und
+/// woraus er folgt, steht dort, wo die übrigen wirtschaftlichen Größen
+/// stehen.
+///
+/// ⚑ **Nur eine Untergrenze, keine Obergrenze.** Ein zu hoher Satz
+/// macht Speichern teuer und ist eine wirtschaftliche Frage; ein zu
+/// niedriger macht die Rolle Store unbesetzbar und ist eine
+/// strukturelle. Nur die zweite gehört in eine Invariante.
+fn speichersatz(reg: &ParameterRegistry) -> Result<(), InvariantenBruch> {
+    let satz = reg
+        .wert(Parameter::Speichersatz)
+        .als_ganzzahl()
+        .expect("der Speichersatz ist eine Ganzzahl");
+    if satz < myl_tokenomics::SPEICHER_KOSTENBODEN {
+        return Err(InvariantenBruch {
+            invariante: Invariante::SpeichersatzDecktKosten,
+            parameter: Parameter::Speichersatz,
+            begruendung: format!(
+                "Satz {satz} liegt unter dem Kostenboden {}; auch ein effizienter \
+                 Halter zahlte dann drauf",
+                myl_tokenomics::SPEICHER_KOSTENBODEN
             ),
         });
     }

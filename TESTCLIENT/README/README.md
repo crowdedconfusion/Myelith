@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.20.0
-> **Datum:** 2026-08-30
+> **Version:** 0.20.1
+> **Datum:** 2026-09-02
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -509,6 +509,15 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.20.1 – 2026-09-02 (der Beobachtungsendpunkt bleibt hier zu)
+
+Der Knoten öffnet seit `myl-node` v0.28.0 ab Werk einen
+Beobachtungsendpunkt auf `127.0.0.1:4151`. **Der Testklient fährt
+mehrere Knoten in einem Prozess**, und ein fester Port lässt sich nur
+einmal vergeben: Der zweite und jeder weitere bekämen eine Warnung über
+einen besetzten Port, die nichts bedeutet. Beide Knotenaufbauten setzen
+deshalb `beobachtung: None`.
 
 ### v0.20.0 – 2026-08-30 (⚑ Fund 105: der Nachweis ließ sich auf einer einzigen Maschine erzeugen)
 

@@ -69,60 +69,25 @@
 
 use myl_types::bls::{BlsProofOfPossession, BlsPublicKey, fast_aggregate_verify};
 use myl_types::core_types::PoIBundle;
-use myl_types::ids::{EpochId, MerkleRoot, MinerId, PodId};
+use myl_types::ids::{EpochId, MinerId, PodId};
+#[cfg(test)]
+use myl_types::ids::MerkleRoot;
 use std::collections::BTreeMap;
 
-/// Domain-Separation-Präfix für PoI-Bündel-Signaturen.
-///
-/// Eigenes Präfix aus demselben Grund wie im BFT-Protokoll
-/// ([`crate::signing`]): ohne Trennung wäre eine Signatur aus einem
-/// anderen Zusammenhang unter Umständen als Bündel-Bestätigung
-/// wiederverwendbar.
-pub const DST_POI_BUNDLE: &[u8] = b"MYELITH_POI_BUNDLE_v1";
-
-/// Kanonische Signierbotschaft eines PoI-Bündels.
-///
-/// **Aufbau:** `DST_POI_BUNDLE ‖ u64_le(epoch) ‖ pod ‖ segments_root ‖
-/// u64_le(vtfe_claimed) ‖ u32_le(segmente)` — feste Feldbreiten in
-/// fester Reihenfolge, damit zu einem Bündel genau eine Bytefolge
-/// gehört.
-///
-/// `vtfe_claimed` ist Teil der Botschaft: sonst könnte der Koordinator
-/// die beanspruchte Arbeitsmenge nach dem Einsammeln der Signaturen
-/// erhöhen, ohne das Aggregat ungültig zu machen.
-///
-/// ⚑ **`segmente` gehört aus demselben Grund dazu, und der Schaden wäre
-/// ein anderer** (Fund 115, 2026-09-01): Wer die Segmentzahl nachträglich
-/// erhöht, **verdünnt die Stichprobenwahrscheinlichkeit je Segment**. Aus
-/// `p` wird `p/k`, und die Sicherheitsbedingung aus Anhang B.1 hängt
-/// genau an `p`.
-pub fn poi_bundle_message(
-    epoch: EpochId,
-    pod: PodId,
-    segments_root: &MerkleRoot,
-    vtfe_claimed: u64,
-    segmente: u32,
-) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(DST_POI_BUNDLE.len() + 8 + 32 + 32 + 8 + 4);
-    msg.extend_from_slice(DST_POI_BUNDLE);
-    msg.extend_from_slice(&epoch.0.to_le_bytes());
-    msg.extend_from_slice(pod.as_bytes());
-    msg.extend_from_slice(segments_root.as_bytes());
-    msg.extend_from_slice(&vtfe_claimed.to_le_bytes());
-    msg.extend_from_slice(&segmente.to_le_bytes());
-    msg
-}
-
-/// Signierbotschaft zu einem konkreten Bündel.
-pub fn bundle_message(bundle: &PoIBundle) -> Vec<u8> {
-    poi_bundle_message(
-        bundle.epoch,
-        bundle.pod,
-        &bundle.segments_root,
-        bundle.vtfe_claimed,
-        bundle.segmente,
-    )
-}
+// ⚑ **Die Signierbotschaft steht jetzt in `myl-types`** (Fund 144).
+//
+// Sie kodiert einen `myl_types::PoIBundle` und benutzt sonst nichts aus
+// dieser Kiste. Solange sie hier stand, konnte `myl-ledger` sie nicht
+// sehen, denn `myl-consensus` haengt an `myl-ledger` und nicht
+// umgekehrt: Die Aufnahmepruefung eines Buendels musste deshalb
+// **ausserhalb** des Uebergangs stattfinden, und dort fand sie gar
+// nicht statt.
+//
+// **Verschoben, nicht kopiert.** Zwei Kodierungen derselben Botschaft
+// waeren zwei Meinungen darueber, was unterschrieben wurde; dieselbe
+// Lehre wie bei Fund 34 und Fund 111. Die Namen bleiben hier
+// erreichbar, damit kein Aufrufer etwas anderes benutzt.
+pub use myl_types::poi_botschaft::{bundle_message, poi_bundle_message, DST_POI_BUNDLE};
 
 /// Die Mitgliedschaft eines Pods in einer Epoche.
 ///

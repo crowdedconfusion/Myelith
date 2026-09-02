@@ -279,6 +279,45 @@ pub struct LedgerState {
     /// bleibt der Shard-Miner-Anteil ungeprägt, und das ist die sichere
     /// Richtung.
     pub arbeitsverteilung: Option<Arbeitsverteilung>,
+
+    /// Die Saat, aus der die Pod-Zuteilung **dieser** Epoche folgt.
+    ///
+    /// # ⚑ Fund 143: Die Saat kam vom Ende derselben Epoche
+    ///
+    /// Bis zum 2026-09-02 reichte der Knoten `self.letzter_hash` durch,
+    /// und beim Epochenabschluss ist das der letzte Block der Epoche,
+    /// die gerade abgerechnet wird. **Damit stand die Zuteilung erst
+    /// fest, wenn die Epoche vorbei war**, während ein Bündel
+    /// **während** ihr eingereicht sein muss. Kein Pod konnte während
+    /// seiner Epoche wissen, dass er einer ist.
+    ///
+    /// **Jetzt steht sie im Zustand und gilt die ganze Epoche.** Sie
+    /// ist der letzte Blockhash der Epoche `e−2`; siehe
+    /// [`Self::epochensaat_naechste`] für den Umlauf.
+    ///
+    /// ⚑ **Zwei Epochen Vorlauf, und die Zahl ist nicht gegriffen.**
+    /// Der Registrierungsschluss in Anhang A.2 ist `e−2`: Wer sich
+    /// später anmeldet, zählt nicht mit. Käme die Saat aus `e−1`, wäre
+    /// der Schluss weicher als die Saat, und ein Miner könnte sich
+    /// anmelden, nachdem er sie kennt. Ethereum nennt dieselbe
+    /// Konstruktion `MIN_SEED_LOOKAHEAD` und legt die Saat für Epoche
+    /// `N` ebenfalls auf das Ende von `N−2`.
+    pub epochensaat: Hash,
+
+    /// Die Saat, die zur **nächsten** Epoche in Kraft tritt.
+    ///
+    /// Der Umlauf am Epochenwechsel mit dem letzten Blockhash `h`:
+    ///
+    /// ```text
+    /// epochensaat          <- epochensaat_naechste
+    /// epochensaat_naechste <- h
+    /// ```
+    ///
+    /// ⚑ **Der Umlauf steht hinter dem Abschluss, nicht davor.** Die
+    /// abzurechnende Epoche muss mit der Saat abgerechnet werden, die
+    /// **während** ihr galt; drehte man zuerst, rechnete der Abschluss
+    /// gegen eine Zuteilung, die es in dieser Epoche nie gab.
+    pub epochensaat_naechste: Hash,
 }
 
 impl LedgerState {
@@ -297,6 +336,15 @@ impl LedgerState {
             miner: BTreeMap::new(),
             buendel: BTreeMap::new(),
             arbeitsverteilung: None,
+            // ⚑ **Null, und die Kette setzt sie.** Vor dem ersten
+            // Block gibt es keinen Blockhash, und der Ledger kennt den
+            // Startwert seiner Kette nicht: Er ist eine Eigenschaft des
+            // Netzes, nicht des Zustands. `Kette::probestand` trägt ihn
+            // ein, damit die Saat der ersten beiden Epochen an ihre
+            // Kette gebunden ist statt an eine Null, die überall
+            // dieselbe wäre.
+            epochensaat: Hash::from_bytes([0u8; 32]),
+            epochensaat_naechste: Hash::from_bytes([0u8; 32]),
         }
     }
 

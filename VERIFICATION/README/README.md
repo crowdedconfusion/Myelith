@@ -1,7 +1,7 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.17.0
-> **Datum:** 2026-09-01
+> **Version:** 0.18.0
+> **Datum:** 2026-09-02
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
@@ -134,6 +134,50 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.18.0 – 2026-09-02 (die Kontrollsegmente entfallen, rund 1 700 Zeilen)
+
+**Entscheidung A1 des Projektinhabers, recherchiert und gebaut.** Drei
+Module gehen: `kontrollsegmente` (Mechanik und Vorrat), `unterscheider`
+(die Spur der Mechanik, Fund 58) und `unterscheidbarkeit` (das Messgerät
+für Kap. 6.7 Anforderung 1), dazu das Beispiel `a11_kurve` und sechs
+Tests in `tests/simulation.rs`.
+
+⚑ **Der Grund ist kein Mangel an ihnen, sondern einer an der Rolle, die
+sie voraussetzten.** Kap. 6.7 legt die Einschleusung den Gateways zu,
+und das trägt nicht: Ein Gateway hat nichts zu verlieren, ein
+selbstbetriebenes speist gar nichts ein. **Truebit** schließt den
+Auftraggeber aus demselben Grund ausdrücklich vom Wissen aus,
+**Proof of Sampling** ersetzt ihn durch ein BFT-Zufallsverfahren, und
+Myelith hat dieses Verfahren seit Punkt 44 im Block.
+
+⚑ **Und beim Nebeneinanderlegen stand der Mechanismus zweimal da.**
+Kontrollsegmente und Stufe 2 haben dieselbe Form, denselben Zweck und
+decken denselben Angriff, den einmaligen Eingriff bei beiden Pods in
+einer Hand. Nur einer von beiden braucht einen Einspeiser, einen
+endlichen Vorrat und eine Ununterscheidbarkeit, die er nachweislich
+nicht herstellen kann.
+
+**Was damit geschlossen ist:** die Einspeisung der Kontrollsegmente in
+CONSENSUS, die drei Befunde zu ihrer Ununterscheidbarkeit, die offene
+Entwurfsfrage dazu und der Punkt 3.2 dieses Bereichs, der eine
+Ununterscheidbarkeit verlangte, die niemand herstellen kann.
+
+**Anforderung 1 wird erfüllbar, indem sie entfällt.** Unauffällig zu
+sein ist eine Eigenschaft der Daten und von keinem Code herstellbar;
+eine gezogene **echte** Arbeitseinheit ist von echter Arbeit nicht zu
+unterscheiden, weil sie es ist.
+
+**Was nicht verlorengeht, steht als Notiz in `lib.rs`, wo die Module
+standen:** Fund 58 als Erkenntnis (ein endlicher Vorrat in einem
+unbegrenzten Strom wiederholt Ids, echte Arbeit nie), der Grund für die
+Unerfüllbarkeit von Anforderung 1, und Fund 138 mit der Rechnung, die
+die Zusammenlegung korrigiert hat.
+
+**Und eine Voraussetzung weniger in Kap. 6.8:** Die multiplikative
+Rechnung setzte Unabhängigkeit von Stichprobe und Einschleusung voraus.
+Mit einer Ziehung gibt es nichts mehr, was korreliert sein könnte. **Eine
+Voraussetzung, die wegfällt, ist besser als eine, die geprüft wird.**
 
 ### v0.17.0 – 2026-09-01 (die Streitanzeige, Punkt 45)
 

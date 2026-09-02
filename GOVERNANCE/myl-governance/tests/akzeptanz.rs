@@ -11,7 +11,6 @@
 
 use myl_governance::registry::{Aenderbarkeit, Parameter, ParameterRegistry, Wert};
 use myl_governance::{pruefe_vorschlag, Invariante, ParameterVorschlag, VorschlagFehler};
-use myl_tokenomics::UNITS_PER_MYL;
 
 fn bruch(z: u64, n: u64) -> Wert {
     Wert::Bruch { zaehler: z, nenner: n }
@@ -69,9 +68,13 @@ fn jeder_parameter_hat_einen_wert() {
     for p in Parameter::alle() {
         let _ = reg.wert(p); // paniert, falls er fehlt
     }
-    // ⚑ Dreissig seit dem 2026-09-02: Die drei Kontrollsegment-Parameter
-    // sind mit ihrem Gegenstand entfallen (Entscheidung A1).
-    assert_eq!(Parameter::alle().len(), 30);
+    // ⚑ Einunddreissig seit dem 2026-09-02, in zwei Schritten desselben
+    // Tages: Die drei Kontrollsegment-Parameter sind mit ihrem
+    // Gegenstand entfallen (Entscheidung A1), und der **Speichersatz**
+    // ist dazugekommen (Punkt B4). Er stand vorher nirgends, und genau
+    // das war die Frage: Eine Zahl, die kein Parameter ist, laesst sich
+    // nach dem Genesis nicht mehr aendern.
+    assert_eq!(Parameter::alle().len(), 31);
 }
 
 // ---------------------------------------------------------------------
@@ -163,9 +166,8 @@ fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
     //
     // ⚑ Die Rate steht seit dem 2026-09-02 auf 5 % statt 2 %, weil
     // gamma in sie aufgegangen ist. **Das senkt S_min = g/p^2 um den
-    // Faktor 6,25**, von 1 250 auf 200 MYL. Der Vorgabewert des
-    // Mindeststakes ist damit deutlich ueber der Schranke; das ist
-    // sicher und gehoert bei der Parameter-Kalibrierung angesehen.
+    // Faktor 6,25**, von 1 250 auf 200 MYL, und seit Fund 146 faellt
+    // der Vorgabestake mit: Er wird gerechnet und nicht geschrieben.
     let f = pruefe_vorschlag(&reg, &vorschlag(Parameter::Stichprobenrate, bruch(1, 100)));
     match f {
         Err(VorschlagFehler::Invariante(b)) => {
@@ -176,41 +178,44 @@ fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
 
     // Weg 2: den Betrugsgewinn heben, ohne den Stake anzuheben.
     //
-    // ⚑ **Verdoppeln genuegt seit dem 2026-09-02 nicht mehr.** Bei
-    // p = 5 % ist `S_min = g/p^2 = 400 g`; mit g = 1 MYL waeren das
-    // 400 MYL und damit unter dem Vorgabestake von 1 250. Erst ueber
-    // `1250/400 = 3,125 MYL` bricht die Schranke. Genommen wird 4 MYL,
-    // das ergibt S_min = 1 600.
+    // ⚑ **Seit Fund 146 genuegt der kleinste Schritt.** Der
+    // Vorgabestake ist jetzt **genau** S_min, also sitzt der
+    // Parametersatz auf der Schranke: Jede Erhoehung von g bricht sie.
+    // Vorher lag der Stake um den Faktor 6,25 darueber, und g durfte
+    // sich verdreifachen, ohne dass etwas geschah. **Das war die
+    // eigentliche Gefahr der veralteten Zahl**, nicht die Huerde
+    // selbst: Sie liess drei Viertel des Spielraums unbemerkt.
+    let g_jetzt = reg
+        .wert(Parameter::Betrugsgewinn)
+        .als_ganzzahl()
+        .expect("Ganzzahl");
     let f = pruefe_vorschlag(
         &reg,
-        &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(4 * UNITS_PER_MYL)),
+        &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(g_jetzt + 1)),
     );
-    assert!(matches!(f, Err(VorschlagFehler::Invariante(_))));
+    assert!(
+        matches!(f, Err(VorschlagFehler::Invariante(_))),
+        "ein groesserer Betrugsgewinn muss die Schranke brechen"
+    );
 
-    // Und die Gegenprobe: knapp darunter geht durch, sonst prueft der
-    // Test nur, dass irgendein grosser Wert abgelehnt wird.
+    // Und die Gegenprobe: kleiner geht durch, sonst prueft der Test
+    // nur, dass irgendein Vorschlag zu diesem Parameter abgelehnt wird.
     assert!(
         pruefe_vorschlag(
             &reg,
-            &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(3 * UNITS_PER_MYL)),
+            &vorschlag(Parameter::Betrugsgewinn, Wert::Ganzzahl(g_jetzt / 2)),
         )
         .is_ok(),
-        "g = 3 MYL ergibt S_min = 1 200 und liegt damit unter dem Stake"
+        "ein kleinerer Betrugsgewinn senkt S_min und muss durchgehen"
     );
 
     // Weg 3: den Stake unter S_min senken.
     //
-    // ⚑ **Seit dem 2026-09-02 ist das nicht mehr ein Kleinstbetrag.**
-    // Die Stichprobenrate steht auf 5 % statt 2 %, und `S_min = g/p^2`
-    // faellt damit von 1 250 auf **200 MYL**. Der Vorgabewert des
-    // Mindeststakes ist unveraendert 1 250 geblieben, liegt also **um
-    // den Faktor 6,25 ueber der Schranke**.
-    //
-    // **Das ist die sichere Richtung und trotzdem ein offener Punkt:**
-    // Ein Mindeststake weit ueber der Anforderung haelt Teilnehmer
-    // fern, ohne dafuer Sicherheit zu kaufen. Ob er mitfaellt, ist eine
-    // wirtschaftliche Entscheidung und gehoert zur
-    // Parameter-Kalibrierung, nicht zu dieser Aenderung.
+    // ⚑ **Seit Fund 146 ist die Vorgabe genau S_min**, nicht mehr das
+    // 6,25-Fache. 1250 MYL war `g/p²` bei `p = 2 %`; am 2026-09-02
+    // stieg p auf 5 %, und die Zahl blieb stehen. **Die Invariante hat
+    // das nicht gemerkt, und zwar zu Recht:** Sie prueft `S ≥ S_min`,
+    // und eine Untergrenze faengt einen zu hohen Wert nicht.
     let jetzt = reg
         .wert(Parameter::MindestStake)
         .als_ganzzahl()
@@ -226,14 +231,9 @@ fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
     // S_min = g/p^2 = g * n^2 / z^2, ganzzahlig aufgerundet.
     let s_min = (g as u128 * pn as u128 * pn as u128).div_ceil(pz as u128 * pz as u128) as u64;
 
-    assert!(
-        jetzt > s_min,
-        "der Vorgabestake {jetzt} muss ueber S_min {s_min} liegen"
-    );
     assert_eq!(
-        jetzt / s_min,
-        6,
-        "der Abstand ist der Faktor 6,25; wer ihn aendert, sieht es hier"
+        jetzt, s_min,
+        "die Vorgabe muss die Rechnung sein, nicht eine abgeschriebene Zahl"
     );
 
     // Genau S_min ist zulaessig, einer darunter nicht. Das ist die
@@ -242,6 +242,7 @@ fn ein_vorschlag_unter_s_min_wird_abgelehnt() {
         pruefe_vorschlag(&reg, &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(s_min))).is_ok(),
         "genau S_min muss zulaessig sein"
     );
+
     let f = pruefe_vorschlag(
         &reg,
         &vorschlag(Parameter::MindestStake, Wert::Ganzzahl(s_min - 1)),
@@ -688,4 +689,64 @@ fn ein_abstimmungsfenster_von_null_wird_zurueckgewiesen() {
         },
     )
     .is_ok());
+}
+
+/// ⚑ **Ein Speichersatz unter dem Kostenboden wird abgelehnt**
+/// (Punkt B4).
+///
+/// Die Schranke schützt nicht vor Betrug, sondern **vor dem
+/// Verschwinden einer Rolle**: Unter den Kosten eines effizienten
+/// Halters hält niemand mehr, und die Rolle Store ist unbesetzbar.
+#[test]
+fn ein_speichersatz_unter_den_kosten_wird_abgelehnt() {
+    let reg = ParameterRegistry::vorgabe();
+    let boden = myl_tokenomics::SPEICHER_KOSTENBODEN;
+
+    // Genau der Boden ist zulaessig, einer darunter nicht.
+    assert!(
+        pruefe_vorschlag(&reg, &vorschlag(Parameter::Speichersatz, Wert::Ganzzahl(boden))).is_ok(),
+        "genau der Kostenboden muss zulaessig sein"
+    );
+    let f = pruefe_vorschlag(
+        &reg,
+        &vorschlag(Parameter::Speichersatz, Wert::Ganzzahl(boden - 1)),
+    );
+    match f {
+        Err(VorschlagFehler::Invariante(b)) => {
+            assert_eq!(b.invariante, Invariante::SpeichersatzDecktKosten);
+        }
+        andere => panic!("erwartet war eine Kostenboden-Verletzung, bekommen: {andere:?}"),
+    }
+
+    // ⚑ **Und nach oben ist offen**, mit Absicht: Ein zu hoher Satz
+    // macht Speichern teuer und ist eine wirtschaftliche Frage; nur ein
+    // zu niedriger ist eine strukturelle.
+    assert!(
+        pruefe_vorschlag(
+            &reg,
+            &vorschlag(Parameter::Speichersatz, Wert::Ganzzahl(boden * 1_000)),
+        )
+        .is_ok(),
+        "nach oben darf Governance entscheiden, auch wenn es unklug waere"
+    );
+}
+
+/// Der Startwert des Speichersatzes, gegen die Zahl in `myl-tokenomics`.
+///
+/// **Es gibt sie einmal.** Die Registry verweist, sie schreibt nicht ab;
+/// dieselbe Lehre wie bei Fund 146.
+#[test]
+fn der_speichersatz_ist_der_aus_tokenomics() {
+    let reg = ParameterRegistry::vorgabe();
+    let satz = reg
+        .wert(Parameter::Speichersatz)
+        .als_ganzzahl()
+        .expect("Ganzzahl");
+    assert_eq!(satz, myl_tokenomics::SPEICHERSATZ_VORGABE);
+    assert_eq!(satz, 9_000, "Punkt B4: 9 000 Recheneinheiten je Byte-Epoche");
+    // Der Abstand zum Boden ist der Anreiz, und er soll spuerbar sein.
+    assert!(
+        satz >= myl_tokenomics::SPEICHER_KOSTENBODEN * 2,
+        "der Aufschlag ueber die Kosten ist kleiner als das Doppelte"
+    );
 }
