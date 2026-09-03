@@ -84,6 +84,16 @@ pub trait Rechenwerk: Send + Sync {
     fn gegenstelle(&self) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
         None
     }
+
+    /// Nimmt die unterschriebene Ankündigung der Gegenstelle entgegen.
+    ///
+    /// ⚑ **Vorgabe: nein.** Ein Rechenwerk ohne Siegel hat keine
+    /// Gegenstelle, und „nein" ist darauf die ehrliche Antwort. Wer
+    /// hier `true` zurückgäbe, ohne etwas zu prüfen, machte aus der
+    /// Ankündigung eine Höflichkeitsfloskel.
+    fn ankuendigung_annehmen(&self, _roh: &[u8]) -> bool {
+        false
+    }
 }
 
 /// Die lokale Tür.
@@ -255,6 +265,19 @@ impl Ortsdienst {
             // formwidriger Auftrag wird abgelehnt, **ohne dass das
             // Rechenwerk ihn sieht**. Das ist der Deckel vor der teuren
             // Arbeit, und hier steht er richtig.
+            // ⚑ **Vor dem Deckel des Rahmens noch ein eigener** (Fund
+            // 165): Eine Ankündigung ist rund 1 370 Bytes; alles
+            // darüber ist keine, und der Deckel steht in
+            // `MAX_ANKUENDIGUNG_BYTES`.
+            Ortsfrage::Ankuendigung(roh) => {
+                if roh.len() > myl_types::ortsleitung::MAX_ANKUENDIGUNG_BYTES
+                    || !self.werk.ankuendigung_annehmen(&roh)
+                {
+                    Ortsantwort::Abgelehnt
+                } else {
+                    Ortsantwort::Angenommen
+                }
+            }
             Ortsfrage::Inferenz(auftrag) => {
                 if auftrag.pruefe_form().is_err() {
                     return Ortsantwort::Inferenz(Inferenzantwort::Abgelehnt {

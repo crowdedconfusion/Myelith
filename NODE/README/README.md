@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.38.0
+> **Version:** 0.40.0
 > **Datum:** 2026-09-03
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,61 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.40.0 – 2026-09-04 (✅ Fund 170: Owner und Worker getrennt, Fund 171 in der Kette)
+
+**Fund 170.** `abrechnungen_verbreiten` unterschrieb mit
+`kette::schluessel_fuer(name)`, also `probeschluessel(sha256(name)[0])`:
+einer von acht, aus dem Namen nachrechenbar. Wer den Namen eines Knotens
+kannte, konnte in seinem Namen unterschreiben.
+
+Neu `--kontoschluessel <datei>` und `--konto <hex>`, Filecoins
+`worker`/`owner`-Trennung. Ohne Datei bleibt der abgeleitete Schlüssel,
+**und der Knoten sagt es beim Start**.
+
+⚑ **Beim Schreiben des Tests aufgefallen:** `konto_fuer` bildet auf
+`probekonto(hash[0])` ab, also auf **acht** Konten. Zwei Knoten mit
+verschiedenen Namen teilen sich mit Wahrscheinlichkeit 1/8 ein Konto und
+damit einen Nonce-Raum.
+
+Die Wahl des Schlüssels steht als
+`schluessel::abrechnung_unterschreiben` in der Bibliothek, nicht in
+`Knoten`: Ein `Knoten` braucht Netz, Identität und Protokoll, dorthin
+kommt keine Gegenprobe.
+
+**Fund 171.** `Kette::STICHPROBE_BP` kommt aus
+`myl_tokenomics::stichprobe_bp()` und ist damit 500 bp statt 200. Die
+200 waren der Wert aus der Welt **mit** Kontrollsegmenten; A1 hat sie
+entfernt, und die Kette hat seither auf eine zweite Linie vertraut, die
+es nicht mehr gibt.
+
+### v0.39.0 – 2026-09-04 (⚑ Funde 165 und 166: die Tür führt jetzt wirklich zum Modell)
+
+**Fund 166.** `Kontraktabschrift` trägt die Epoche des zuletzt
+abgelegten Standes und frischt sie mit jedem Block auf. Bis dahin las
+`main.rs` sie **einmal vor dem `spawn`**; ein Sitzungskontrakt lief nie
+ab, `Befund::Abgelaufen` konnte nicht eintreten. Die Schleifenrunde
+steht jetzt als `tuer::eine_anfrage` in der Bibliothek: Der Fehler war
+nicht schwer, er war **unerreichbar**.
+
+**Fund 165.** `bedienen_v1`, `Ortsweg::neu` und `mit_abrechnung` hatten
+zusammen **null** Produktionsaufrufer; `main.rs` bediente `/inferenz`
+und gab nichts an einen Shard. Neu:
+
+- `rechenweg::fuer_betreiber` setzt den Weg zusammen, **in der
+  Bibliothek und nicht in `main.rs`** (die Lehre aus 166).
+- `Ortsweg::mit_ankuendigung`, träge gesendet, damit ein
+  Shard-Neustart von selbst heilt, plus `epoche_wechseln`.
+- `Konsensschluessel::{endpunkt, epochenankuendigung}`; der geheime
+  Teil verlässt den Typ nicht.
+- `tuer::eine_v1_anfrage`, `--pod`, `--modell`.
+
+⚑ **Und nicht mit `kette::schluessel_fuer`.** Der ist
+`probeschluessel(sha256(name)[0])`, also einer von acht öffentlich
+ableitbaren; eine damit unterschriebene Ankündigung fälschte jeder, der
+den Knotennamen kennt. Unterschrieben wird mit dem Konsensschlüssel,
+und wenn der aus einem Namen abgeleitet ist, sagt der Knoten es beim
+Start.
 
 ### v0.38.0 – 2026-09-03 (`genesis.rs` heisst jetzt `stimmsatzdatei.rs`)
 

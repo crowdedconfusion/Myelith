@@ -37,7 +37,7 @@ use std::sync::Mutex;
 
 use myl_siegel::{Endpunkt, Gegenpunkte, Sitzungen, Umschlag};
 use myl_types::hash::Hash;
-use myl_types::ids::PodId;
+use myl_types::ids::{EpochId, PodId};
 use myl_types::inferenzauftrag::{Inferenzantwort, Inferenzauftrag};
 
 use crate::ortsdienst::Rechenwerk;
@@ -53,6 +53,39 @@ pub trait Gegenstellen: Send + Sync {
     ///
     /// `None` heisst: Diese Sitzung gehört nicht hierher.
     fn nachschlagen(&self, sitzung: u64) -> Option<(Endpunkt, Gegenpunkte)>;
+
+    /// Nimmt eine unterschriebene Ankündigung entgegen (Fund 165).
+    ///
+    /// ⚑ **Vorgabe: keine.** Eine Zuteilung aus der Kette braucht keine
+    /// Ankündigung über die Leitung, sie weiss es besser. Nur der
+    /// Betreiberzuschnitt der Phase 1 erfährt es so, und der sagt es
+    /// mit einer eigenen Umsetzung
+    /// ([`crate::gegenstelle::Betreibergegenstelle`]).
+    ///
+    /// `roh` ist eine borsh-kodierte `myl_siegel::Epochenankuendigung`;
+    /// `myl-pod` reicht sie ungeprüft weiter, denn **prüfen darf nur,
+    /// wer weiss, wen er erwartet.**
+    fn ankuendigen(&self, _roh: &[u8], _epoche: EpochId) -> bool {
+        false
+    }
+
+    /// Für welche Epoche diese Ankündigung gilt, **wenn sie trägt**.
+    ///
+    /// ⚑ **Geprüft und nicht nur gelesen.** Die Epoche steht in der
+    /// Ankündigung, und die Unterschrift deckt sie mit; wer sie
+    /// ungeprüft läse, liesse jeden, der den Ausweis der Leitung hat,
+    /// die Epoche des Shards verstellen. Das wäre kein Einbruch, aber
+    /// ein Ausfall.
+    fn gueltige_epoche(&self, _roh: &[u8]) -> Option<EpochId> {
+        None
+    }
+
+    /// Vergisst, was angekündigt war.
+    ///
+    /// Beim Epochenwechsel: Punkte einer alten Epoche tragen keinen
+    /// Kanal mehr, und stehenzulassen hiesse, einen Fehlschlag später
+    /// und unverständlicher zu machen.
+    fn zuruecksetzen(&self) {}
 }
 
 /// Was das Rechenwerk sieht, nachdem entsiegelt und geprüft wurde.
@@ -128,6 +161,28 @@ impl Entsiegelndes {
         }
     }
 
+    /// Wechselt die Epoche: neue Sitzungsschlüssel, leerer Platz.
+    ///
+    /// ⚑ **Beides zusammen oder gar nicht.** `Sitzungen` gilt für genau
+    /// eine Epoche (`nimm_kapsel` weist eine fremde ab), und die
+    /// angekündigten Punkte gelten für genau dieselbe. Wer nur eines
+    /// austauschte, bekäme einen Shard, der eine Epoche lang gar nichts
+    /// öffnet und nicht sagen kann, warum.
+    pub fn epoche_wechseln(&self, neuer: myl_siegel::Epochenschluessel) {
+        if let Ok(mut s) = self.sitzungen.lock() {
+            *s = Sitzungen::neu(self.ich, neuer);
+        }
+        self.gegenstellen.zuruecksetzen();
+    }
+
+    /// Die Epoche, für die dieser Prozess gerade Schlüssel hält.
+    pub fn epoche(&self) -> EpochId {
+        self.sitzungen
+            .lock()
+            .map(|s| s.epoche())
+            .unwrap_or(EpochId(0))
+    }
+
     /// Warum der letzte Auftrag abgewiesen wurde, falls einer es wurde.
     pub fn letzter_grund(&self) -> Option<Abweisungsgrund> {
         self.letzter_grund.lock().ok().and_then(|g| *g)
@@ -192,6 +247,40 @@ impl Rechenwerk for Entsiegelndes {
     fn gegenstelle(&self) -> Option<([u8; 32], [u8; 32], Vec<u8>)> {
         let sitzungen = self.sitzungen.lock().ok()?;
         Some(eigene_punkte(&sitzungen, self.ich))
+    }
+
+    /// ⚑ **Die Epoche kommt aus den eigenen Sitzungen und nicht aus der
+    /// Ankündigung.** Wer die Epoche vom Ankündigenden nähme, liesse ihn
+    /// bestimmen, gegen welche geprüft wird, und die Prüfung
+    /// „stimmt die Epoche" prüfte sich selbst.
+    fn ankuendigung_annehmen(&self, roh: &[u8]) -> bool {
+        let epoche = self.epoche();
+        if self.gegenstellen.ankuendigen(roh, epoche) {
+            return true;
+        }
+        // # ⚑ Der Knoten treibt die Epoche, der Shard folgt
+        //
+        // `Sitzungen` gilt für **genau eine** Epoche (`nimm_kapsel`
+        // weist eine fremde Kapsel ab) und hat keine Rotation. Ohne das
+        // hier verstummte ein laufendes Paar an der ersten
+        // Epochengrenze, **und zwar stumm**: Der Knoten versiegelte für
+        // eine Epoche, der Shard öffnete für eine andere.
+        //
+        // Der Shard erfährt die Epoche nur vom Knoten, also folgt er
+        // ihm. **Sicher ist das, weil die Unterschrift die Epoche
+        // mitdeckt:** Nur wer den Identitätsschlüssel des erwarteten
+        // Knotens hat, kann den Shard bewegen, und nur vorwärts. Wer
+        // bloss den Ausweis der Leitung hat, kommt hier nicht durch.
+        let Some(neue) = self.gegenstellen.gueltige_epoche(roh) else {
+            return false;
+        };
+        if neue.0 <= epoche.0 {
+            // Rückwärts nie: Eine echte alte Ankündigung wäre sonst ein
+            // Weg, die Rotation zurückzudrehen.
+            return false;
+        }
+        self.epoche_wechseln(myl_siegel::Epochenschluessel::ziehe(neue));
+        self.gegenstellen.ankuendigen(roh, neue)
     }
 }
 

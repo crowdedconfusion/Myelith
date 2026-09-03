@@ -137,6 +137,20 @@ impl Pipelinewerk {
     pub fn shardzahl(&self) -> u32 {
         SHARDS as u32
     }
+
+    /// Wie viele Sitzungen die Shards gerade halten.
+    ///
+    /// ⚑ **Damit eine Zusicherung auf die Verdrahtung zeigen kann**
+    /// (Fund 164). Der erste Entwurf der Räumung hatte einen Test, der
+    /// `sitzung_abschliessen` selbst rief; die Gegenprobe, den Aufruf in
+    /// `rechne` zu streichen, blieb deshalb **grün**. Eine Zusicherung
+    /// über einen Aufruf muss über den Weg gehen, der ihn tut.
+    pub fn gehaltene_sitzungen(&self) -> usize {
+        self.koordinator
+            .lock()
+            .map(|k| k.gehaltene_sitzungen())
+            .unwrap_or(0)
+    }
 }
 
 impl Klartextwerk for Pipelinewerk {
@@ -174,6 +188,20 @@ impl Klartextwerk for Pipelinewerk {
             .last()
             .map(|s| s.id)
             .unwrap_or(SegmentId::new([0u8; 32]));
+        // ⚑ **Und jetzt ist die Sitzung vorbei** (Fund 164, 2026-09-04).
+        //
+        // Hier stand nichts, und deshalb behielt jeder Shard den
+        // KV-Cache und den Dekodier-Digest **jeder je gerechneten
+        // Anfrage**, für immer. Das Gateway vergibt je Anfrage eine neue
+        // Sitzungsnummer und `run_prompt` füllt immer ab Position 0 vor;
+        // kein Aufrufer hat je eine Sitzung fortgesetzt, der Cache war
+        // also geschrieben und nie wieder gelesen.
+        //
+        // ⚑ **Nach dem Lesen des Segments und nicht davor**: Der Digest
+        // gehört zur Sitzung, und wer vorher räumte, nähme ihn weg.
+        // Dieselbe Regel wie in vLLM, wo die Blöcke einer Anfrage
+        // zurückgehen, sobald sie fertig ist.
+        koordinator.sitzung_abschliessen(sitzung);
         drop(koordinator);
 
         let ausgabe: Vec<usize> = token.iter().map(|t| *t as usize).collect();

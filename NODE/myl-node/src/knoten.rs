@@ -207,6 +207,13 @@ pub struct Knoten {
     /// Quellen dieselbe Nonce und eine der beiden Transaktionen fiele
     /// still aus.
     abrechnungsnonce: u64,
+    /// Der Schlüssel, mit dem dieser Knoten Kettentransaktionen
+    /// unterschreibt (Fund 170), falls einer aus einer Datei kam.
+    ///
+    /// ⚑ **`None` heisst: der abgeleitete Probeschlüssel.** Der ist aus
+    /// dem Knotennamen nachzurechnen, also kein Geheimnis; für einen
+    /// Probelauf gewollt, für ein Netz unbrauchbar.
+    kontoschluessel: Option<crate::schluessel::Konsensschluessel>,
     /// Die hoechste Hoehe, von der dieser Knoten gehoert hat.
     ///
     /// **Grundlage der Bereitschaftsauskunft.** Wer eine hoehere Hoehe
@@ -317,6 +324,20 @@ impl Knoten {
                     .map_err(|e| KnotenFehler::Ortsleitung(format!("{}: {e}", ausweis.display())))?,
             ),
             _ => None,
+        };
+
+        // ⚑ **Der Kontoschluessel** (Fund 170). Fehlt er, faellt der
+        // Knoten auf `kette::schluessel_fuer(name)` zurueck, und das ist
+        // `probeschluessel(sha256(name)[0])`: einer von acht, aus dem
+        // Namen nachrechenbar. Ein Startfehler waere hier falsch, denn
+        // der Probelauf soll ohne Schluesseldatei laufen; **stumm
+        // bleiben waere aber schlimmer**.
+        let kontoschluessel = match konfig.kontoschluesseldatei.as_ref() {
+            Some(pfad) => Some(
+                crate::schluessel::Konsensschluessel::aus_datei(pfad)
+                    .map_err(|e| KnotenFehler::Ortsleitung(format!("{}: {e:?}", pfad.display())))?,
+            ),
+            None => None,
         };
 
         let identitaet = NodeIdentity::load_or_create(Path::new(&konfig.schluesseldatei))
@@ -505,6 +526,7 @@ impl Knoten {
             abrechnungen: abrechnungen_rx,
             abrechnungskanal: abrechnungen_tx,
             abrechnungsnonce: 1_000_000,
+            kontoschluessel,
             hoechste_gehoerte: 0,
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
@@ -1382,6 +1404,24 @@ impl Knoten {
         self.veroeffentliche(GossipTopic::Transactions, daten).await
     }
 
+    /// Das Konto, dessen Schlüssel dieser Knoten für Kettentransaktionen
+    /// hält (Fund 170).
+    ///
+    /// ⚑ **Das muss der Empfänger der Abbuchung sein**, sonst weist
+    /// `pruefe` sie mit `EmpfaengerNichtGelistet` ab: Der Nutzer hat in
+    /// seiner Positivliste eine Adresse stehen, und nur diese.
+    pub fn eigenes_konto(&self) -> myl_types::ids::Address {
+        match self.kontoschluessel.as_ref() {
+            Some(k) => k.adresse(),
+            None => crate::kette::konto_fuer(&self.konfig.name),
+        }
+    }
+
+    /// Ob der Kontoschlüssel aus einer Datei kam.
+    pub fn kontoschluessel_aus_datei(&self) -> bool {
+        self.kontoschluessel.is_some()
+    }
+
     /// Der Kanal, über den die Tür ihre Abrechnungen abgibt.
     pub fn abrechnungskanal(
         &self,
@@ -1404,20 +1444,21 @@ impl Knoten {
     ///
     /// Gibt zurück, wie viele verbreitet wurden.
     pub async fn abrechnungen_verbreiten(&mut self) -> usize {
-        use myl_consensus::block::Transaktion;
 
         let mut offen = Vec::new();
         while let Ok(a) = self.abrechnungen.try_recv() {
             offen.push(a);
         }
-        let schluessel = crate::kette::schluessel_fuer(&self.konfig.name);
+        // ⚑ **Die Wahl steht in `schluessel::abrechnung_unterschreiben`**
+        // (Fund 170), damit eine Gegenprobe sie erreicht.
         let mut verbreitet = 0usize;
         for anweisung in offen {
             let nonce = self.abrechnungsnonce;
             self.abrechnungsnonce += 1;
-            let Ok(tx) = Transaktion::signiere(
+            let Some(tx) = crate::schluessel::abrechnung_unterschreiben(
+                self.kontoschluessel.as_ref(),
+                &self.konfig.name,
                 &crate::kette::Kette::startwert(),
-                &schluessel,
                 nonce,
                 anweisung,
             ) else {

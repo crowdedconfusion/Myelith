@@ -1,6 +1,6 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.9.0
+> **Version:** 0.10.0
 > **Datum:** 2026-09-03
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
@@ -134,6 +134,21 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.10.0 – 2026-09-04 (⚑ Fund 171: zwei Vorgaben leiten ab statt abzuschreiben)
+
+`Stichprobenrate` und `MindestStake` kommen aus
+`myl_tokenomics::STICHPROBE_*` statt aus Literalen.
+
+⚑ **Fund 146 wollte eine kopierte Zahl beseitigen und hat dabei eine
+zweite eingeführt.** Der Kommentar über `MindestStake` versprach: „Wer
+`p` oder `g` ändert, ändert die Vorgabe mit." Für `g` stimmte das; `p`
+stand daneben als Literal `5, 100`, und die Kette lief mit 2/100.
+
+Die Regel dahinter ist die von Cosmos SDK (ADR-046) und Substrate: eine
+maßgebliche Stelle je Größe, alles andere leitet ab. Der Endzustand
+bleibt, dass der Konsens die Registry liest, denn Kap. 10 nennt `p`
+ausdrücklich abstimmbar.
 
 ### v0.9.0 – 2026-09-03 (die Naht zwischen Sperrfrist und Streitfrist)
 

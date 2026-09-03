@@ -1,6 +1,6 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.39.0 (`myl-consensus` 0.28.0, `myl-scheduler` 0.10.0,
+> **Version:** 0.40.0 (`myl-consensus` 0.29.0, `myl-scheduler` 0.10.0,
 > `myl-ledger` 0.17.0)
 > **Datum:** 2026-09-03
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
@@ -107,6 +107,23 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.40.0 – 2026-09-04 (⚑ Fund 167: das Auszahlungskonto bekommt einen Weg)
+
+`Anweisung::AuszahlungskontoEintragen { kennung, konto }`, angehängt
+(Borsh kodiert den Index, eine eingeschobene Variante verschöbe jede
+dahinter).
+
+`myl_ledger::transitions::auszahlungskonto_eintragen` stand seit dem
+2026-09-01 fertig da, mit Berechtigungsregel und Tests, und **keine
+`Anweisung` trug sie**. **Ohne Eintrag kein Anteil**, also hätte auf
+einem echten Netz kein einziger Miner etwas bekommen, ohne dass
+irgendwo ein Fehler entstanden wäre.
+
+⚑ **Die Kennung ist ein Feld, anders als bei `MinerAnmelden`.** Dort
+folgt sie aus dem Absender, weil nur der Miner selbst darf; hier gehört
+jede weitere Eintragung dem eingetragenen **kalten Konto**, und das ist
+gerade nicht die Kennung.
 
 ### v0.39.0 – 2026-09-03 (⚑ Fund 160: eine gerechnete Anfrage wird jetzt wirklich abgebucht)
 

@@ -926,11 +926,25 @@ impl Kette {
 
     /// Die Stichprobenrate, in Basispunkten.
     ///
-    /// **200 bp sind zwei Prozent**, der Wert aus Kap. 3.4 und dem
-    /// Zahlenbeispiel in Anhang B.1. Er ist ein Governance-Parameter und
-    /// steht hier, bis Governance ihn setzt; **eine andere Zahl wäre
-    /// erfunden**.
-    pub const STICHPROBE_BP: u32 = 200;
+    /// # ⚑ Abgeleitet und nicht mehr abgeschrieben (Fund 171, 2026-09-04)
+    ///
+    /// Hier standen **200 bp**, „der Wert aus Kap. 3.4 und dem
+    /// Zahlenbeispiel in Anhang B.1". Das war richtig, solange es die
+    /// **Kontrollsegmente** gab: Zwei Linien teilten sich die Arbeit,
+    /// die Stichprobe `p` und die Einschleusung `gamma`.
+    ///
+    /// ⚑ **Entscheidung A1 hat `gamma` am 2026-09-02 entfernt.** Seither
+    /// muss `p` beides tragen, und
+    /// `security_sim.py::zusammengelegte_rate` rechnet die Rate aus, die
+    /// beide gleichwertig ersetzt: 4,96 %, aufgerundet **fünf**. Die
+    /// Registry hat den neuen Wert übernommen, **diese Konstante
+    /// nicht**, und damit hat die Kette seit A1 auf eine zweite Linie
+    /// vertraut, die es nicht mehr gibt. Dieselbe Klasse wie Fund 151.
+    ///
+    /// Sie kommt jetzt aus [`myl_tokenomics::stichprobe_bp`], der einen
+    /// maßgeblichen Stelle. Wenn der Konsens die Registry liest (B10),
+    /// wird auch diese Konstante überflüssig.
+    pub const STICHPROBE_BP: u32 = myl_tokenomics::stichprobe_bp();
 
     /// Zieht die Stichprobe der abgeschlossenen Epoche (Punkt 45).
     ///
@@ -1224,6 +1238,24 @@ impl Kette {
                 }
                 Anweisung::SitzungAusgeben { vorhaben, vollmacht } => {
                     let _ = sitzung_ausgeben(zustand, &absender, vorhaben, vollmacht.as_ref());
+                }
+                // ⚑ **Der Weg zum kalten Konto** (Fund 167). Bis zum
+                // 2026-09-03 gab es ihn nicht: Die Berechtigungsregel
+                // stand seit dem 2026-09-01 fertig im Ledger, und kein
+                // Block trug sie. **Ohne Eintrag kein Anteil**, also
+                // hätte ein echtes Netz niemanden bezahlt, ohne dass
+                // irgendwo ein Fehler entstanden wäre.
+                //
+                // ⚑ **Die Kennung kommt aus der Anweisung, der
+                // Unterzeichner aus der geprüften Transaktion.** Wer
+                // eine fremde Kennung nennt, kommt an der Regel im
+                // Übergang nicht vorbei: erste Eintragung nur durch den
+                // Miner selbst, jede weitere nur durch das eingetragene
+                // Konto.
+                Anweisung::AuszahlungskontoEintragen { kennung, konto } => {
+                    let _ = myl_ledger::transitions::auszahlungskonto_eintragen(
+                        zustand, &absender, kennung, *konto,
+                    );
                 }
             }
         }
@@ -2717,8 +2749,12 @@ mod tests {
         let mit =
             Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), Some(b"zertifikat"));
         let ohne = Kette::stichprobe_der_epoche(&bezeugt, 0, &Kette::startwert(), None);
-        assert_eq!(mit.len(), 20);
-        assert_eq!(ohne.len(), 20);
+        // ⚑ **Aus der Konstante gerechnet und nicht abgeschrieben**
+        // (Fund 171). Hier stand zweimal `20`, und als die Rate von 200
+        // auf 500 bp stieg, war das die einzige Stelle, die es merkte.
+        let erwartet = (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000);
+        assert_eq!(mit.len(), erwartet);
+        assert_eq!(ohne.len(), erwartet);
         assert_ne!(
             mit, ohne,
             "die Quelle aus dem Block muss die Ziehung aendern, sonst wirkt sie nicht"
@@ -2925,15 +2961,38 @@ mod tests {
 
         // Auszahlungskonten eintragen, damit „ohne Eintrag kein Anteil"
         // nicht greift. Die erste Eintragung darf der Miner selbst.
+        //
+        // ⚑ **Über die Kette und nicht über den Übergang** (Fund 167,
+        // 2026-09-03). Bis dahin rief dieser Test
+        // `auszahlungskonto_eintragen` direkt, und das war der einzige
+        // Weg, den es gab: Keine `Anweisung` trug ihn. Der Test war
+        // grün und belegte einen Ablauf, den auf einem echten Netz
+        // niemand gehen konnte. Jetzt geht er denselben Weg wie ein
+        // Miner.
         for w in 0..6u8 {
             let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
-            myl_ledger::transitions::auszahlungskonto_eintragen(
-                k.zustand_mut(),
-                &probekonto(w),
-                &kennung,
-                kaltes_konto(w),
-            )
-            .expect("Eintragung");
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen {
+                        kennung,
+                        konto: kaltes_konto(w),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        for w in 0..6u8 {
+            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
+            assert_eq!(
+                k.zustand().auszahlung.get(&kennung),
+                Some(&kaltes_konto(w)),
+                "das Auszahlungskonto kam nicht ueber die Kette an"
+            );
         }
 
         // Die Zuteilung dieser Epoche nachrechnen und für ihren Pod ein
@@ -2956,7 +3015,7 @@ mod tests {
             segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
             vtfe_claimed: 1_000_000,
             aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
-            // Tausend Segmente, damit bei 200 bp zwanzig gezogen werden
+            // Tausend Segmente, damit die Ziehung ueberhaupt sichtbar ist
             // und die Ziehung ueberhaupt sichtbar ist.
             segmente: 1_000,
         };
@@ -3004,8 +3063,10 @@ mod tests {
         let stichprobe = k.letzte_stichprobe();
         assert_eq!(
             stichprobe.len(),
-            20,
-            "200 bp von 1000 Segmenten sind zwanzig, gezogen wurden {}",
+            (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000),
+            "{} bp von 1000 Segmenten sind {}, gezogen wurden {}",
+            Kette::STICHPROBE_BP,
+            (1_000 * Kette::STICHPROBE_BP as usize).div_ceil(10_000),
             stichprobe.len()
         );
         assert!(
@@ -3230,6 +3291,111 @@ mod tests {
 
     fn kaltes_konto(w: u8) -> Address {
         Address::new([200 + w; 32])
+    }
+
+    /// ⚑ **Fund 167: das Auszahlungskonto hat einen Weg über die Kette,
+    /// und die Berechtigungsregel gilt auf ihm.**
+    ///
+    /// Drei Lagen in einem Test, weil sie zusammen die Regel ergeben:
+    /// Die **erste** Eintragung darf der Miner selbst, jede **weitere**
+    /// nur das eingetragene kalte Konto, und ein **Fremder** nie.
+    ///
+    /// ⛑ Ohne diesen Test wäre die neue `Anweisung` eine Variante, die
+    /// der Übersetzer kennt und kein Block anwendet: genau die Klasse,
+    /// aus der der Fund kam.
+    #[test]
+    fn ein_auszahlungskonto_geht_ueber_die_kette_und_nur_der_richtige_darf() {
+        let mut k = Kette::probestand();
+        let kennung = myl_types::ids::MinerId::new(*probekonto(0).as_bytes());
+
+        // ⚑ **Das kalte Konto ist hier ein Probekonto und keine nackte
+        // Adresse**, denn der positive Fall „das kalte Konto ändert" ist
+        // die Hälfte der Regel, und dafür muss jemand unterschreiben
+        // können. Eine `Address::new([...])` kann das nicht.
+        let kalt = probekonto(5);
+
+        // 1. Die erste Eintragung, vom Miner selbst.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                0,
+                Anweisung::AuszahlungskontoEintragen { kennung, konto: kalt },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().auszahlung.get(&kennung),
+            Some(&kalt),
+            "die erste Eintragung kam nicht an"
+        );
+
+        // 2. Ein Fremder will umleiten. ⚑ **Genau der Angriff, gegen den
+        // die Trennung steht**: ein gestohlener Konsensschlüssel, der
+        // den Ertrag woanders hin schickt.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(3),
+                0,
+                Anweisung::AuszahlungskontoEintragen {
+                    kennung,
+                    konto: kaltes_konto(3),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().auszahlung.get(&kennung),
+            Some(&kalt),
+            "ein Fremder hat das Auszahlungskonto umgeleitet"
+        );
+
+        // ⚑ **Und der Miner selbst darf es jetzt auch nicht mehr.**
+        // Nach der ersten Eintragung gehört die Änderung dem kalten
+        // Konto; sonst nützte die Trennung nichts.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                1,
+                Anweisung::AuszahlungskontoEintragen {
+                    kennung,
+                    konto: kaltes_konto(4),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().auszahlung.get(&kennung),
+            Some(&kalt),
+            "der heisse Schluessel konnte nach der ersten Eintragung umleiten"
+        );
+
+        // 3. Das eingetragene kalte Konto darf. **Ohne diese Hälfte
+        // wäre die Regel eine Sperre und keine Trennung:** Wer sein
+        // kaltes Konto verliert, käme nie wieder an seine Erträge.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(5),
+                0,
+                Anweisung::AuszahlungskontoEintragen {
+                    kennung,
+                    konto: kaltes_konto(9),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().auszahlung.get(&kennung),
+            Some(&kaltes_konto(9)),
+            "das eingetragene Konto durfte seine eigene Eintragung nicht aendern"
+        );
     }
 
     /// Die Abmeldung wirkt über die Kette ebenso.

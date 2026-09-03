@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.25.1
+> **Version:** 0.27.0
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,50 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.27.0 – 2026-09-04 (✅ Fund 164 geschlossen: eine Anfrage hinterlässt nichts)
+
+`ShardNode::sitzung_vergessen`, `Coordinator::{sitzung_abschliessen,
+buendel_ziehen, gehaltene_sitzungen, verworfene_segmente}`,
+`MAX_ABGESCHLOSSENE`.
+
+**vLLMs Regel:** Die Blöcke einer Anfrage gehen zurück, sobald sie fertig
+ist. Hier genauso, und es passt, weil das Gateway je Anfrage eine neue
+Sitzungsnummer vergibt und `run_prompt` immer ab Position 0 vorfüllt:
+**Der KV-Cache wurde geschrieben und nie wieder gelesen.**
+
+`buendel_ziehen` leert die Segmentliste, getrennt von
+`build_signed_poi_bundle`, das nur baut. Dazu ein Deckel mit sichtbarem
+Zähler als Notbremse, solange niemand zieht.
+
+⚑ **Die Gegenprobe hat den ersten Entwurf verworfen.** Der erste Test
+rief `sitzung_abschliessen` selbst, also blieb er grün, als der Aufruf
+in `Pipelinewerk::rechne` gestrichen wurde. Eine Zusicherung über einen
+Aufruf muss über den Weg gehen, der ihn tut: jetzt über
+`Klartextwerk::rechne`.
+
+### v0.26.0 – 2026-09-04 (⚑ Fund 169 geschlossen: der Shard ist ein Dienst)
+
+`myl-pod-node` war **kein Dienst**, sondern eine Vorführung: ein Prompt,
+eine Ausgabe, Ende, mit `PodId::new([0xAA; 32])` als Literal.
+`Ortsdienst::oeffnen` hatte null Produktionsaufrufer. **Damit erklärte
+sich Fund 165 rückwärts**: Der Knoten baute keinen `Ortsweg`, weil es
+nichts gab, wo er sich anschloss.
+
+Jetzt: ohne `--prompt` öffnet das Programm die lokale Tür, legt einen
+frischen Ausweis ab und wartet. Die Vorführung bleibt als Ausnahme.
+
+Neu `gegenstelle::Betreibergegenstelle`: **ein** Platz, kein
+Verzeichnis (Fund 164 ist einen Tag alt), erwarteter Endpunkt aus
+`--knoten`, `Epochenankuendigung::pruefe` als einziger Ausgang. Dazu
+`Gegenstellen::{ankuendigen, gueltige_epoche, zuruecksetzen}` und
+`Entsiegelndes::epoche_wechseln`.
+
+⚑ **Der Shard folgt der Epoche des Knotens, und nur vorwärts.**
+`Sitzungen` gilt für genau eine Epoche und hat keine Rotation; ohne das
+verstummte ein laufendes Paar an der ersten Epochengrenze, und zwar
+stumm. Sicher ist es, weil die Unterschrift die Epoche mitdeckt: Wer
+bloss den Ausweis der Leitung hat, bewegt den Shard nicht.
 
 ### v0.25.1 – 2026-09-03 (⚑ Fund 162: die Shardzahl ist jetzt gebunden)
 

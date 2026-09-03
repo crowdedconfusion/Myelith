@@ -215,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "myl-ledger",
  "myl-types",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "blst",
  "borsh",

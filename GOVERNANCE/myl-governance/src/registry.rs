@@ -511,7 +511,17 @@ impl ParameterRegistry {
         // gewaehlt. Das ergibt 4,96 %, aufgerundet auf 5 %.
         //
         // Gerechnet und zugesichert in `security_sim.py`, Abschnitt 8.
-        werte.insert(Stichprobenrate, Wert::Bruch { zaehler: 5, nenner: 100 });
+        // ⚑ **Aus `myl_tokenomics` und nicht als Literal** (Fund 171).
+        // Die Zahl stand hier, in `Kette::STICHPROBE_BP` und ein
+        // drittes Mal als Literal in der Vorgabe von `MindestStake`;
+        // die Kette lief mit 2 %, die Registry mit 5 %.
+        werte.insert(
+            Stichprobenrate,
+            Wert::Bruch {
+                zaehler: myl_tokenomics::STICHPROBE_ZAEHLER,
+                nenner: myl_tokenomics::STICHPROBE_NENNER,
+            },
+        );
         // Kap. 5.7 / Anhang B.4: Start-Subvention s = 0,5.
         werte.insert(Subventionsrate, Wert::Bruch { zaehler: 1, nenner: 2 });
         // Leer bis zum Genesis-Manifest (GOVERNANCE 3.4).
@@ -595,12 +605,24 @@ impl ParameterRegistry {
         // Invariante lässt das zu; sie darf nur nicht mehr **versehentlich**
         // höher stehen.
         //
-        // `expect` ist hier zulässig: `p = 5/100` ist eine Konstante
-        // dieser Funktion, also kann die Rechnung nicht scheitern. Ein
-        // `unwrap_or` mit erfundenem Ersatzwert wäre schlimmer, denn er
-        // stünde dann als Mindest-Stake da.
-        let s_min_vorgabe = myl_tokenomics::s_min(g, 5, 100)
-            .expect("p = 5/100 und g > 0 sind rechenbar");
+        // ⚑ **Und `p` kommt aus derselben Quelle wie oben, nicht als
+        // Literal** (Fund 171, 2026-09-04). Bis dahin stand hier
+        // `s_min(g, 5, 100)`, und der Kommentar darüber versprach: „Wer
+        // `p` oder `g` ändert, ändert die Vorgabe mit." **Für `g`
+        // stimmte das, für `p` nicht**, denn `p` war abgeschrieben. Der
+        // Fund, der eine kopierte Zahl beseitigen sollte, hat dabei eine
+        // zweite eingeführt.
+        //
+        // `expect` bleibt zulässig: Zähler und Nenner sind Konstanten,
+        // also kann die Rechnung nicht scheitern. Ein `unwrap_or` mit
+        // erfundenem Ersatzwert wäre schlimmer, denn er stünde dann als
+        // Mindest-Stake da.
+        let s_min_vorgabe = myl_tokenomics::s_min(
+            g,
+            myl_tokenomics::STICHPROBE_ZAEHLER,
+            myl_tokenomics::STICHPROBE_NENNER,
+        )
+        .expect("die Stichprobenrate ist eine Konstante und g > 0");
         werte.insert(MindestStake, Wert::Ganzzahl(s_min_vorgabe));
         // Punkt B4, entschieden 2026-09-02: 9 000 Recheneinheiten je
         // Byte-Epoche, also 1,49 je TB-Monat und damit die Rate, die

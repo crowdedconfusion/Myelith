@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.34.0
+> **Version:** 0.35.0
 > **Datum:** 2026-09-03
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,22 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.35.0 – 2026-09-04 (die Gegenrichtung der lokalen Leitung, Fund 165)
+
+`Ortsfrage::Ankuendigung(Vec<u8>)` und `Ortsantwort::Angenommen`,
+angehängt, dazu `MAX_ANKUENDIGUNG_BYTES`.
+
+⚑ **Ohne sie konnte kein Shard je einen echten Umschlag öffnen.**
+`Umschlag::oeffnen` bildet den Kanal aus **beiden** Punktpaaren; der
+Shard braucht die des Knotens **vor** dem Entsiegeln, sie können also
+nicht im Umschlag reisen. `Ortsfrage::Gegenstelle` fragt in die andere
+Richtung, umgekehrt gab es nichts.
+
+Rohe Bytes, weil `myl-types` `myl-siegel` nicht kennen soll: dieselbe
+Begründung, die schon über `Ortsantwort::Gegenstelle` steht. Der Inhalt
+ist eine `Epochenankuendigung`, also der statische Schlüssel mit einer
+Signatur des Identitätsschlüssels, wie in `libp2p-noise`.
 
 ### v0.34.0 – 2026-09-03 (die Vollmacht wohnt jetzt hier, und ein Riegel gegen die zweite Abbuchung)
 

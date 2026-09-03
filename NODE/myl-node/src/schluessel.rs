@@ -262,6 +262,70 @@ impl Konsensschluessel {
     }
 
     /// Signiert eine kanonische Botschaft aus `myl_consensus::signing`.
+    /// Unterschreibt eine Kettentransaktion (Fund 170).
+    ///
+    /// # ⚑ Warum das hier steht und nicht der Schlüssel herausgereicht wird
+    ///
+    /// Derselbe Grund wie bei [`Self::epochenankuendigung`]: Der geheime
+    /// Teil verlässt diesen Typ nicht. Ein `geheim()`-Zugriff daneben
+    /// wäre die Abkürzung, die irgendwann jemand nimmt.
+    ///
+    /// # ⚑ Zwei Rollen, zwei Dateien
+    ///
+    /// Dieser Typ ist „ein BLS-Schlüssel aus einer Datei", und ein
+    /// Betreiber führt davon **zwei**: den **Konsensschlüssel**, mit dem
+    /// er stimmt und sich beim Shard ausweist, und den
+    /// **Kontoschlüssel**, mit dem er über Guthaben verfügt. Filecoin
+    /// trennt genauso (`worker` gegen `owner`), Ethereum und Cosmos
+    /// ebenso, und Myelith tut es für Miner bereits
+    /// (`auszahlungskonto_eintragen`). **Sie gehören nicht in dieselbe
+    /// Datei**, denn wer den einen stiehlt, soll nicht den anderen
+    /// haben.
+    pub fn transaktion(
+        &self,
+        netz: &myl_types::hash::Hash,
+        nonce: u64,
+        anweisung: myl_consensus::block::Anweisung,
+    ) -> Result<myl_consensus::block::Transaktion, SchluesselFehler> {
+        myl_consensus::block::Transaktion::signiere(netz, &self.geheim, nonce, anweisung)
+            .map_err(|_| SchluesselFehler::Bls("transaktion"))
+    }
+
+    /// Die Konto-Adresse zu diesem Schlüssel.
+    pub fn adresse(&self) -> myl_types::ids::Address {
+        myl_types::ids::Address::aus_schluessel(&self.oeffentlich)
+    }
+
+    /// Der Endpunkt dieses Knotens: der Hash des öffentlichen Teils.
+    ///
+    /// ⚑ **Dieselbe Zahl, die ein Shard als `--knoten` erwartet.** Sie
+    /// steht hier und wird nicht an zwei Stellen gebildet.
+    pub fn endpunkt(&self) -> myl_siegel::Endpunkt {
+        myl_siegel::endpunkt_aus_schluessel(&self.oeffentlich)
+    }
+
+    /// Baut die unterschriebene Epochenankündigung für diesen Knoten
+    /// (Fund 165).
+    ///
+    /// ⚑ **Der geheime Teil verlässt diesen Typ nicht.** Ein
+    /// `geheim()`-Zugriff daneben wäre die Abkürzung, die irgendwann
+    /// jemand nimmt, und sie sähe an der Aufrufstelle harmlos aus;
+    /// dieselbe Überlegung, die `Debug` hier von Hand schreiben lässt.
+    ///
+    /// ⚑ **Und dieser Schlüssel und kein anderer.**
+    /// `kette::schluessel_fuer(name)` ist `probeschluessel(sha256(name)[0])`,
+    /// also einer von acht öffentlich ableitbaren; eine damit
+    /// unterschriebene Ankündigung fälschte jeder, der den Knotennamen
+    /// kennt, und die ganze Schicht wäre Theater.
+    pub fn epochenankuendigung(
+        &self,
+        epochenschluessel: &myl_siegel::Epochenschluessel,
+    ) -> Result<Vec<u8>, SchluesselFehler> {
+        let a = myl_siegel::Epochenankuendigung::neu(&self.geheim, epochenschluessel)
+            .map_err(|_| SchluesselFehler::Bls("ankuendigen"))?;
+        borsh::to_vec(&a).map_err(|_| SchluesselFehler::Bls("kodieren"))
+    }
+
     pub fn signiere(&self, botschaft: &[u8]) -> Result<BlsSignature, SchluesselFehler> {
         self.geheim
             .sign(botschaft)
@@ -346,8 +410,177 @@ fn setze_enge_rechte(_pfad: &Path) -> Result<(), SchluesselFehler> {
     Ok(())
 }
 
+/// Unterschreibt eine Abrechnung mit dem Kontoschlüssel, oder mit dem
+/// abgeleiteten Rückfall (Fund 170).
+///
+/// # ⚑ Warum das eine eigene Funktion ist
+///
+/// Sie stand in `Knoten::abrechnungen_verbreiten`, und dort kommt kein
+/// Test hin: Ein `Knoten` braucht Netz, Identität und Protokoll. **Die
+/// Gegenprobe zu der Wahl wäre damit nicht zu haben gewesen**, und eine
+/// Wahl ohne Gegenprobe ist eine Behauptung. Dieselbe Lehre wie bei
+/// `tuer::eine_anfrage` und `rechenweg::fuer_betreiber`.
+///
+/// ⚑ **Der Rückfall ist kein Geheimnis.** `kette::schluessel_fuer` ist
+/// `probeschluessel(sha256(name)[0])`, einer von acht, aus dem Namen
+/// nachrechenbar. Er steht hier, damit ein Probelauf ohne Schlüsseldatei
+/// läuft; der Knoten sagt beim Start, dass er ihn nimmt.
+pub fn abrechnung_unterschreiben(
+    konto: Option<&Konsensschluessel>,
+    name: &str,
+    netz: &myl_types::hash::Hash,
+    nonce: u64,
+    anweisung: myl_consensus::block::Anweisung,
+) -> Option<myl_consensus::block::Transaktion> {
+    match konto {
+        Some(k) => k.transaktion(netz, nonce, anweisung).ok(),
+        None => myl_consensus::block::Transaktion::signiere(
+            netz,
+            &crate::kette::schluessel_fuer(name),
+            nonce,
+            anweisung,
+        )
+        .ok(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// ⚑ **Fund 170: ein Schlüssel aus einer Datei ist ein Geheimnis,
+    /// ein abgeleiteter ist keins.**
+    ///
+    /// Die Transaktion trägt danach die Adresse des Dateischlüssels, und
+    /// die ist **nicht** das aus dem Namen ableitbare Probekonto. Ohne
+    /// diesen Test wäre `--kontoschluessel` eine Fahne, die nichts
+    /// bewirkt.
+    #[test]
+    fn eine_transaktion_traegt_die_adresse_des_dateischluessels() {
+        let verz = std::env::temp_dir().join(format!(
+            "myl-kontoschluessel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&verz).expect("Verzeichnis");
+        let pfad = verz.join("konto.key");
+        let k = Konsensschluessel::neu_erzeugen(&pfad).expect("erzeugen");
+
+        let tx = k
+            .transaktion(
+                &crate::kette::Kette::startwert(),
+                7,
+                myl_consensus::block::Anweisung::Burn { betrag: 1 },
+            )
+            .expect("unterschreiben");
+        assert_eq!(
+            tx.absender_adresse(),
+            k.adresse(),
+            "die Transaktion gehoert nicht zum Dateischluessel"
+        );
+        assert!(
+            tx.pruefe(&crate::kette::Kette::startwert()).is_ok(),
+            "die Unterschrift traegt nicht"
+        );
+
+        // ⚑ **Der Kern des Fundes.** `schluessel_fuer` ist
+        // `probeschluessel(sha256(name)[0])`, also einer von acht, aus
+        // dem Namen nachrechenbar. Ein Dateischluessel darf damit
+        // nichts zu tun haben.
+        let abgeleitet = crate::kette::konto_fuer("irgendein-knoten");
+        assert_ne!(
+            k.adresse(),
+            abgeleitet,
+            "der Dateischluessel landete auf einem ableitbaren Probekonto"
+        );
+        let _ = std::fs::remove_dir_all(&verz);
+    }
+
+    /// ⚑ **Die Wahl des Schlüssels, mit Gegenprobe in beide Richtungen.**
+    ///
+    /// ⛑ Ohne sie wäre `--kontoschluessel` eine Fahne, die den Weg zwar
+    /// erreicht, aber nichts daran ändert.
+    #[test]
+    fn die_abrechnung_nimmt_den_kontoschluessel_wenn_es_einen_gibt() {
+        use myl_consensus::block::Anweisung;
+        let netz = crate::kette::Kette::startwert();
+        let verz = std::env::temp_dir().join(format!(
+            "myl-abrechnungsschluessel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&verz).expect("Verzeichnis");
+        let k = Konsensschluessel::neu_erzeugen(&verz.join("konto.key")).expect("erzeugen");
+
+        let mit = abrechnung_unterschreiben(
+            Some(&k),
+            "ein-knoten",
+            &netz,
+            1,
+            Anweisung::Burn { betrag: 1 },
+        )
+        .expect("unterschrieben");
+        assert_eq!(
+            mit.absender_adresse(),
+            k.adresse(),
+            "die Abrechnung ging nicht vom Kontoschluessel aus"
+        );
+
+        let ohne =
+            abrechnung_unterschreiben(None, "ein-knoten", &netz, 1, Anweisung::Burn { betrag: 1 })
+                .expect("unterschrieben");
+        assert_eq!(
+            ohne.absender_adresse(),
+            crate::kette::konto_fuer("ein-knoten"),
+            "ohne Datei muss der abgeleitete Schluessel greifen"
+        );
+        assert_ne!(
+            mit.absender_adresse(),
+            ohne.absender_adresse(),
+            "beide Wege landeten auf demselben Konto; dann trennt die Fahne nichts"
+        );
+        let _ = std::fs::remove_dir_all(&verz);
+    }
+
+    /// ⚑ **Der abgeleitete Schlüssel folgt allein aus dem Namen, und es
+    /// gibt nur acht davon.**
+    ///
+    /// ⛑ Ohne diese Zeilen wäre die Warnung im Knotenstart eine
+    /// Behauptung.
+    ///
+    /// ⚑ **Beim Schreiben dieses Tests aufgefallen und es gehört zu
+    /// Fund 170:** `konto_fuer` bildet auf `probekonto(hash[0])` ab,
+    /// also auf **acht** Konten. Zwei Knoten mit verschiedenen Namen
+    /// teilen sich mit Wahrscheinlichkeit 1/8 ein Konto **und damit
+    /// einen Nonce-Raum**; ihre Abrechnungen verdrängen sich dann
+    /// gegenseitig. Der erste Entwurf dieses Tests hat genau darüber
+    /// gestolpert: „knoten-a" und „knoten-b" landen auf demselben.
+    #[test]
+    fn der_abgeleitete_schluessel_folgt_allein_aus_dem_namen() {
+        assert_eq!(
+            crate::kette::konto_fuer("knoten-a"),
+            crate::kette::konto_fuer("knoten-a"),
+            "die Ableitung ist nicht stabil"
+        );
+        // Wie viele verschiedene Konten kommen aus vielen Namen heraus?
+        let verschiedene: std::collections::BTreeSet<_> = (0..500)
+            .map(|n| crate::kette::konto_fuer(&format!("knoten-{n}")))
+            .collect();
+        assert!(
+            verschiedene.len() <= 8,
+            "aus fuenfhundert Namen kamen {} Konten; die Ableitung ist breiter als gedacht",
+            verschiedene.len()
+        );
+        assert!(
+            verschiedene.len() > 1,
+            "alle Namen landen auf einem Konto, dann ist die Ableitung kaputt"
+        );
+    }
     use super::*;
     use myl_consensus::signing::vote_message;
 

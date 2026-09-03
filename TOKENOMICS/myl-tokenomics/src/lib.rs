@@ -90,6 +90,7 @@ pub use sicherheit::{
     s_min, self_dealing_grenze, self_dealing_sicher, self_dealing_sicher_konservativ,
     stake_genuegt, SicherheitsFehler, KOSTENANTEIL_UNTEN_NENNER, KOSTENANTEIL_UNTEN_ZAEHLER,
 };
+pub use sicherheit::{stichprobe_bp, STICHPROBE_NENNER, STICHPROBE_ZAEHLER};
 pub use sicherheit::{burn_spielraum, BURN_DECKEL_AB, BURN_DECKEL_NENNER, BURN_DECKEL_ZAEHLER};
 pub use slashing::{
     matrix as slashing_matrix, satz as slashing_satz, satz_aus_ledger, satz_gestaffelt,

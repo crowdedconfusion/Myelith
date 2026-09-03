@@ -263,6 +263,40 @@ pub enum Anweisung {
         /// Das Bündel.
         buendel: PoIBundle,
     },
+    /// Trägt das Auszahlungskonto eines Miners ein oder ändert es
+    /// (Fund 167).
+    ///
+    /// # ⚑ Warum es diese Variante geben muss
+    ///
+    /// `myl_ledger::transitions::auszahlungskonto_eintragen` gab es seit
+    /// dem 2026-09-01, mit vollständiger Berechtigungsregel und eigenen
+    /// Tests. **Nur führte kein Weg dorthin:** Ausserhalb der Tests rief
+    /// sie niemand, weil keine `Anweisung` sie trug. **Ohne Eintrag kein
+    /// Anteil**, und damit hätte auf einem echten Netz kein einziger
+    /// Miner je etwas bekommen, ohne dass irgendwo ein Fehler entstanden
+    /// wäre. Gefunden bei der Auswertung des Gesamtlaufs.
+    ///
+    /// ⚑ **Angehängt und nicht eingefügt.** Die Reihenfolge der
+    /// Varianten ist Protokollvertrag: Borsh kodiert sie als Index, und
+    /// eine eingeschobene Variante verschöbe jede dahinter.
+    ///
+    /// # ⚑ Warum die Kennung ein Feld ist, anders als bei `MinerAnmelden`
+    ///
+    /// Bei der Anmeldung folgt die Kennung aus dem Absender, denn nur
+    /// der Miner selbst darf. **Hier nicht:** Jede weitere Eintragung
+    /// gehört dem **eingetragenen kalten Konto**, und das ist gerade
+    /// nicht die Kennung. Ohne das Feld liesse sich ein Auszahlungskonto
+    /// nach der ersten Eintragung nie wieder ändern, und genau dafür ist
+    /// die Trennung da.
+    ///
+    /// Ein falsch gefülltes Feld ist ungefährlich: Der Übergang prüft
+    /// den Unterzeichner gegen die genannte Kennung und weist ab.
+    AuszahlungskontoEintragen {
+        /// Für welchen Miner.
+        kennung: MinerId,
+        /// Wohin die Erträge gehen.
+        konto: Address,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.

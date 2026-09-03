@@ -10,6 +10,7 @@
 //! öffentliche Adresse nahm Reservierungen an und antwortete ohne Ziel.
 //! Alles lief, nur niemand kam an.
 
+use myl_types::ids::Address;
 use std::path::PathBuf;
 
 use myl_net::{NatKonfig, NetConfig};
@@ -134,6 +135,36 @@ pub struct KnotenKonfig {
     /// ⚑ **Ohne ihn gibt es keine Leitung**, denn die lokale Tür des
     /// Shards lässt niemanden ohne Ausweis herein.
     pub ortsausweis: Option<std::path::PathBuf>,
+    /// Die Pod-Kennung, auf die sich Knoten und Shard einigen.
+    ///
+    /// ⚑ **Beide Seiten müssen dieselbe nennen.** Sie geht in die
+    /// Ableitung des Sitzungskanals ein; zwei verschiedene Kennungen
+    /// ergeben zwei Kanäle, und kein Umschlag geht auf.
+    ///
+    /// Für einen echten Pod kommt sie aus der Zuteilung der Kette. Im
+    /// Betreiberzuschnitt der Phase 1 nennt sie der Betreiber, weil
+    /// dieser Shard keinem Pod der Kette zugeteilt ist.
+    pub pod: Option<[u8; 32]>,
+    /// Wie das Modell heisst, das dieser Knoten nach aussen anbietet.
+    pub modellname: String,
+    /// Der Schlüssel, mit dem dieser Knoten **Kettentransaktionen**
+    /// unterschreibt (Fund 170).
+    ///
+    /// ⚑ **Ohne ihn nimmt der Knoten `kette::schluessel_fuer(name)`,
+    /// und der ist kein Geheimnis:** `probeschluessel(sha256(name)[0])`,
+    /// einer von acht, aus dem Namen nachrechenbar. Für einen Probelauf
+    /// gewollt, für ein Netz unbrauchbar; der Knoten sagt es beim Start.
+    ///
+    /// **Eine andere Datei als der Konsensschlüssel.** Filecoins
+    /// `owner`/`worker`-Trennung: Wer den einen stiehlt, soll nicht den
+    /// anderen haben.
+    pub kontoschluesseldatei: Option<PathBuf>,
+    /// Wohin die Erträge dieses Knotens gehen sollen.
+    ///
+    /// ⚑ **Das kalte Konto**, in Filecoins Worten der `owner`. Ohne
+    /// Angabe ist es die Adresse des unterschreibenden Schlüssels
+    /// selbst, also heiss.
+    pub konto: Option<Address>,
     /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
     ///
     /// **Nur für Testnetze.** Der Knoten schickt dann getaktet einen
@@ -257,6 +288,10 @@ impl Default for KnotenKonfig {
             // vortäuschen; die Ablehnung ist dann die richtige Antwort.
             ortsleitung: None,
             ortsausweis: None,
+            pod: None,
+            modellname: "myelith-qwen2.5-0.5b".to_string(),
+            kontoschluesseldatei: None,
+            konto: None,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             teilnehmer: Vec::new(),

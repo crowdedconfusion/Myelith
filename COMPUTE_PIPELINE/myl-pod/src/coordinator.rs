@@ -23,6 +23,15 @@ use crate::shard::{ShardNode, ShardOut};
 use crate::wire::{self, PodMessage, FLAG_SAMPLE};
 
 /// Default für das Micro-Batching-Fenster (Design-Entscheidung 2026-08-13).
+/// Wie viele abgeschlossene Segmente höchstens ungezogen liegen.
+///
+/// ⚑ **Eine Notbremse und keine Politik** (Fund 164). Der vorgesehene
+/// Weg ist [`Coordinator::buendel_ziehen`], das die Liste leert; dieser
+/// Deckel fängt nur den Fall, dass niemand zieht. 100 000 Einträge sind
+/// bei rund vierzehn je Anfrage über siebentausend Anfragen, also weit
+/// jenseits einer Epoche, und trotzdem endlich.
+pub const MAX_ABGESCHLOSSENE: usize = 100_000;
+
 pub const DEFAULT_WINDOW_MS: u64 = 250;
 
 /// Ein abgeschlossenes Segment mit den gesammelten Übergangs-Signaturen.
@@ -168,6 +177,8 @@ pub struct Coordinator {
     shards: Vec<Arc<ShardNode>>,
     /// Abgeschlossene Segmente dieser Epoche.
     completed: Vec<CompletedSegment>,
+    /// Wie viele Segmente wegen des Deckels verworfen wurden.
+    verworfen: u64,
 }
 
 impl Coordinator {
@@ -178,6 +189,7 @@ impl Coordinator {
             window_ms,
             shards,
             completed: Vec::new(),
+            verworfen: 0,
         }
     }
 
@@ -267,6 +279,14 @@ impl Coordinator {
         // `kette[j]` ist die Eingabe der Layer `j`, `kette[j+1]` ihre
         // Ausgabe. Ohne den ersten Eintrag hinge die erste Layer an
         // nichts.
+        // ⚑ **Die Notbremse** (Fund 164). Solange niemand ein Bündel
+        // zieht, wächst die Liste sonst ohne Grenze. Der Deckel ist
+        // grosszügig und der Zähler daneben sagt, dass er greift; ein
+        // stiller Verlust wäre schlimmer als ein sichtbarer.
+        if self.completed.len() >= MAX_ABGESCHLOSSENE {
+            self.verworfen += 1;
+            return;
+        }
         let mut kette = Vec::with_capacity(trace.len() + 1);
         kette.push(eingangs_commitment);
         kette.extend_from_slice(&trace);
@@ -513,6 +533,54 @@ impl Coordinator {
     /// Die abgeschlossenen Segmente (für Tests/Inspektion).
     pub fn completed_segments(&self) -> &[CompletedSegment] {
         &self.completed
+    }
+
+    /// Beendet eine Sitzung: Alle Shards vergessen ihren Zustand dazu.
+    ///
+    /// ⚑ **Der Aufrufer ist das Rechenwerk, nicht die Tür** (Fund 164).
+    /// Es weiss als einziges, wann eine Antwort vollständig gelesen ist:
+    /// Der Dekodier-Digest wird **nach** dem Rechnen gebraucht, und wer
+    /// vorher räumte, nähme ihn weg.
+    pub fn sitzung_abschliessen(&self, session_id: u64) {
+        for shard in &self.shards {
+            shard.sitzung_vergessen(session_id);
+        }
+    }
+
+    /// Wie viele Sitzungen der erste Shard gerade hält.
+    pub fn gehaltene_sitzungen(&self) -> usize {
+        self.shards
+            .first()
+            .map(|s| s.gehaltene_sitzungen())
+            .unwrap_or(0)
+    }
+
+    /// Wie viele abgeschlossene Segmente verworfen wurden, weil der
+    /// Deckel erreicht war.
+    ///
+    /// ⚑ **Sichtbar und nicht still** (Fund 164). Verworfene Segmente
+    /// sind Arbeit, die niemand mehr bezeugen kann; wer sie stumm
+    /// wegwirft, verschenkt Vergütung, ohne dass es jemand merkt.
+    pub fn verworfene_segmente(&self) -> u64 {
+        self.verworfen
+    }
+
+    /// Zieht das Bündel und **leert** die Segmentliste.
+    ///
+    /// # ⚑ Warum das Ziehen räumt
+    ///
+    /// `completed` wächst mit jedem Token und wurde nie kleiner
+    /// (Fund 164): gemessen 14 Einträge je Anfrage, streng linear. Ein
+    /// Bündel fasst die Arbeit **einer Epoche** zusammen; was darin
+    /// steht, ist abgegeben, und was danach kommt, gehört ins nächste.
+    ///
+    /// ⚑ **Getrennt von [`Self::build_signed_poi_bundle`]**, das nur
+    /// baut und nichts anfasst. Zwei Namen, zwei Wirkungen: Wer
+    /// hinsehen will, sieht hin; wer abgibt, gibt ab.
+    pub fn buendel_ziehen(&mut self) -> Result<PoIBundle, String> {
+        let buendel = self.build_signed_poi_bundle()?;
+        self.completed.clear();
+        Ok(buendel)
     }
 
     /// Die beanspruchte Arbeitsmenge dieser Epoche in vTFE-Einheiten.

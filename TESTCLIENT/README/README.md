@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.22.0
+> **Version:** 0.23.0
 > **Datum:** 2026-09-02
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -521,6 +521,25 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.23.0 – 2026-09-04 (zwei echte Prozesse, ein Auftrag)
+
+`tests/zwei_prozesse.rs`. Der Gesamtlauf baut alles in **einem** Prozess
+zusammen und hat genau deshalb die Funde 165 und 169 nicht gefunden: Er
+spielte selbst die Rolle, die in der Produktion niemand spielte.
+
+Hier startet `myl-pod-node` als **eigenes Programm** über seine
+Kommandozeile, der Port kommt aus seiner Ausgabe, und der Rechenweg
+entsteht durch `myl_node::rechenweg::fuer_betreiber`, also durch
+**dieselbe Funktion, die `myl-node` aufruft**.
+
+Zwei Tests: ein Aufruf kommt durch und wird abgebucht, und **ein Shard,
+der einen anderen Knoten erwartet, rechnet nicht**. Der zweite ist die
+Zeile, an der die Ausweisschicht hängt: Der Ausweis der Leitung sagt
+„du darfst hereinreden", nicht „du bist der Knoten".
+
+Drei Gegenproben, alle rot: nicht ankündigen, kein Abrechnungskanal,
+der Shard prüft den Endpunkt nicht.
 
 ### v0.22.0 – 2026-09-03 (der Gesamtlauf, zwölf Stationen an einem Auftrag)
 

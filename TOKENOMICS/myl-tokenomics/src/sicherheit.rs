@@ -90,6 +90,62 @@ impl std::fmt::Display for SicherheitsFehler {
 
 impl std::error::Error for SicherheitsFehler {}
 
+/// Die Stichprobenrate der Stufe 2, als Bruch: **die eine maßgebliche
+/// Stelle** (Fund 171, 2026-09-04).
+///
+/// # ⚑ Warum sie hier steht und nicht dreimal woanders
+///
+/// Bis zum 2026-09-04 gab es diese Größe an **drei** Stellen mit
+/// **zwei** Werten:
+///
+/// | Ort | Wert | Wer las ihn |
+/// |---|---|---|
+/// | `ParameterRegistry`-Vorgabe | 5/100 | niemand |
+/// | `Kette::STICHPROBE_BP` | 200 bp = 2/100 | **die Kette, bei jeder Ziehung** |
+/// | ein Literal in der Vorgabe von `MindestStake` | 5/100 | setzte den Mindest-Einsatz |
+///
+/// ⚑ **Und der Unterschied war kein Schreibfehler, sondern eine
+/// vergessene Entscheidung.** Entscheidung **A1** hat am 2026-09-02 die
+/// Kontrollsegmente entfernt. Bis dahin teilten sich zwei Linien die
+/// Arbeit: die Stichprobe `p` und die Kontrollsegmente `gamma`. Ohne
+/// `gamma` muss `p` beides tragen, und
+/// `security_sim.py::zusammengelegte_rate` rechnet aus, welche Rate
+/// **beide gleichwertig ersetzt**: 4,96 %, aufgerundet fünf.
+///
+/// Die Registry hat den neuen Wert übernommen. **Die Kette nicht.**
+/// `Kette::STICHPROBE_BP` trug weiter die 200 bp „aus Kap. 3.4 und dem
+/// Zahlenbeispiel in Anhang B.1", also den Wert aus der Welt **mit**
+/// Kontrollsegmenten. Damit hat die Kette seit A1 mit einer Rate
+/// gestichprobt, die nur zusammen mit einer zweiten Linie trug, **die es
+/// nicht mehr gibt**. Dieselbe Klasse wie Fund 151.
+///
+/// # Die Regel dahinter
+///
+/// Eine maßgebliche Stelle je Größe, alles andere leitet ab. So halten
+/// es Cosmos SDK (ADR-046: was Governance ändert, liegt im Zustand und
+/// wird beim Ausführen gelesen) und Substrate (Konstanten nur per
+/// Runtime-Upgrade, alles Änderbare im Speicher, und als Ketten
+/// Ratsbeschlüsse wollten, liess Parity den Konstantentyp aus dem
+/// Speicher lesen statt eine zweite Kopie zu erlauben).
+///
+/// ⚑ **Der Endzustand ist trotzdem ein anderer:** Kap. 10 nennt `p`
+/// ausdrücklich als abstimmbar, sie gehört also in den Konsenszustand,
+/// nicht in eine Konstante. Bis der Konsens die Registry liest (B10),
+/// ist diese Konstante die eine Stelle, und ein `const`-Riegel hält die
+/// Ableitungen daran.
+pub const STICHPROBE_ZAEHLER: u64 = 5;
+
+/// Der Nenner zu [`STICHPROBE_ZAEHLER`].
+pub const STICHPROBE_NENNER: u64 = 100;
+
+/// Dieselbe Rate in Basispunkten, für die Ziehung.
+///
+/// `sample_segments` rechnet in Zehntausendsteln; die Umrechnung steht
+/// hier, damit sie nicht an jeder Aufrufstelle neu entsteht.
+pub const fn stichprobe_bp() -> u32 {
+    (STICHPROBE_ZAEHLER * 10_000 / STICHPROBE_NENNER) as u32
+}
+
 /// `S_min = g/p²` mit `p = zaehler/nenner`, aufgerundet.
 ///
 /// **Parameter:**

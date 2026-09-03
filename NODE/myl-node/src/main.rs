@@ -70,6 +70,18 @@ myl-node — ein Myelith-Netzknoten
                          Rechnen den Konsens nicht anhaelt. Ohne diese
                          Angabe lehnt der Knoten Inferenzauftraege ab,
                          und das ist die ehrliche Antwort.
+  --pod <64 hex>         Die Pod-Kennung. Knoten und Shard muessen
+                         dieselbe nennen, sonst geht kein Umschlag auf.
+                         Noetig, damit die /v1-Tuer rechnen laesst.
+  --modell <name>        Wie das Modell nach aussen heisst. Vorgabe
+                         myelith-qwen2.5-0.5b.
+  --kontoschluessel <datei>
+                         Der Schluessel fuer Kettentransaktionen. OHNE IHN
+                         nimmt der Knoten einen aus seinem Namen
+                         abgeleiteten Schluessel, den jeder nachrechnen
+                         kann. Eine ANDERE Datei als --konsensschluessel.
+  --konto <64 hex>       Wohin die Ertraege gehen. Vorgabe: die Adresse
+                         des unterschreibenden Schluessels selbst.
   --ortsausweis <pfad>   Wo der Ausweis des Shard-Prozesses liegt, Datei
                          oder Verzeichnis. Der Shard legt ihn beim Start
                          ab, unter Unix mit 0600. Gehoert zusammen mit
@@ -227,6 +239,37 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--ortsausweis" => { konfig.ortsausweis = Some(PathBuf::from(wert(i)?)); i += 2; }
+            "--pod" => {
+                let t = wert(i)?;
+                if t.len() != 64 {
+                    return Err("--pod erwartet 64 Hexzeichen".to_string());
+                }
+                let mut b = [0u8; 32];
+                for (n, p) in b.iter_mut().enumerate() {
+                    *p = u8::from_str_radix(&t[n * 2..n * 2 + 2], 16)
+                        .map_err(|_| "--pod ist kein Hex".to_string())?;
+                }
+                konfig.pod = Some(b);
+                i += 2;
+            }
+            "--modell" => { konfig.modellname = wert(i)?; i += 2; }
+            "--kontoschluessel" => {
+                konfig.kontoschluesseldatei = Some(PathBuf::from(wert(i)?));
+                i += 2;
+            }
+            "--konto" => {
+                let t = wert(i)?;
+                if t.len() != 64 {
+                    return Err("--konto erwartet 64 Hexzeichen".to_string());
+                }
+                let mut b = [0u8; 32];
+                for (n, p) in b.iter_mut().enumerate() {
+                    *p = u8::from_str_radix(&t[n * 2..n * 2 + 2], 16)
+                        .map_err(|_| "--konto ist kein Hex".to_string())?;
+                }
+                konfig.konto = Some(myl_types::ids::Address::new(b));
+                i += 2;
+            }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
             "--aufnahme" => {
                 konfig.aufnahme_sekunden = wert(i)?
@@ -449,6 +492,28 @@ async fn main() {
     let timeouts = args.timeouts;
     let beobachtungsadresse = args.konfig.beobachtung;
     let tueradresse = args.konfig.tuer;
+    // ⚑ **Der Rechenweg der Tuer** (Fund 165). `starten` nimmt die
+    // Konfiguration mit, also wird hier festgehalten, was danach noch
+    // gebraucht wird.
+    let ortsleitung = args.konfig.ortsleitung;
+    let ortsausweis = args.konfig.ortsausweis.clone();
+    let podkennung = args.konfig.pod;
+    let modellname = args.konfig.modellname.clone();
+    let konsenspfad = args.konfig.konsensschluesseldatei.clone();
+    // ⚑ **Der Identitaetsschluessel der Tuer.** Er unterschreibt die
+    // Epochenankuendigung, mit der sich der Knoten beim Shard ausweist.
+    // Ohne ihn gibt es keinen Shard-Weg, und das ist richtig so: Der
+    // Ausweis der Leitung sagt nur „du darfst hereinreden".
+    let konsens: Option<myl_node::schluessel::Konsensschluessel> = match &konsenspfad {
+        Some(pfad) => match myl_node::schluessel::Konsensschluessel::aus_datei(pfad) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                eprintln!("myl-node: Konsensschluessel nicht gelesen ({}): {e:?}", pfad.display());
+                None
+            }
+        },
+        None => None,
+    };
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -469,6 +534,17 @@ async fn main() {
         eprintln!("myl-node: keine Kettendatei, dieser Start beginnt bei null");
     }
     eprintln!("myl-node: Protokoll {}", knoten.protokollpfad().display());
+    if !knoten.kontoschluessel_aus_datei() {
+        // ⚑ **Fund 170, laut gesagt.** `kette::schluessel_fuer(name)`
+        // ist `probeschluessel(sha256(name)[0])`: einer von acht, aus
+        // dem Namen nachrechenbar. Wer den Namen kennt, unterschreibt
+        // im Namen dieses Knotens.
+        eprintln!(
+            "myl-node: WARNUNG: kein --kontoschluessel. Kettentransaktionen werden mit \
+             einem aus dem Namen abgeleiteten Schluessel unterschrieben, den jeder \
+             nachrechnen kann, der den Namen kennt. Nur fuer Probelaeufe."
+        );
+    }
 
     // ⚑ **Die eigene Tür** (B6-3, Stufe 4, erster Schnitt). Sie hört
     // auf der Rückschleife; der Verkehr verlässt die Maschine nie, und
@@ -482,7 +558,6 @@ async fn main() {
         match tokio::net::TcpListener::bind(adresse).await {
             Ok(lauscher) => {
                 let wo = lauscher.local_addr().unwrap_or(adresse);
-                eprintln!("myl-node: eigenes Gateway auf http://{wo}/inferenz");
                 if !wo.ip().is_loopback() {
                     eprintln!(
                         "myl-node: WARNUNG: die Tuer horcht auf {wo}, also nicht nur auf der \
@@ -491,25 +566,94 @@ async fn main() {
                     );
                 }
                 let abschrift = knoten.kontraktabschrift();
-                let epoche = myl_types::ids::EpochId(knoten.kette().zustand().epoch.0);
+                // ⚑ **Die Startepoche nur als Startwert** (Fund 166).
+                // Ab hier holt sie sich jede Runde aus der Abschrift;
+                // bis zum 2026-09-03 stand dieser Wert für immer, und
+                // ein Sitzungskontrakt lief nie ab.
+                let start = myl_types::ids::EpochId(knoten.kette().zustand().epoch.0);
+
+                // ⚑ **Und jetzt bekommt die Tuer einen Rechenweg**
+                // (Fund 165). Bis zum 2026-09-03 bediente sie
+                // `/inferenz` und gab nichts an einen Shard: `Ortsweg`,
+                // `bedienen_v1` und `mit_abrechnung` hatten null
+                // Produktionsaufrufer.
+                let empfaenger = knoten.eigenes_konto();
+                let weg = myl_node::rechenweg::fuer_betreiber(
+                    ortsleitung,
+                    ortsausweis.as_deref(),
+                    podkennung,
+                    &modellname,
+                    konsens.as_ref(),
+                    start,
+                    empfaenger,
+                    knoten.abrechnungskanal(),
+                );
+                match &weg {
+                    Some(_) => eprintln!(
+                        "myl-node: eigenes Gateway auf http://{wo}/v1/chat/completions                          (Shard-Weg steht, Abrechnung an)"
+                    ),
+                    None => eprintln!(
+                        "myl-node: kein Shard-Weg, die Tuer bedient nur /inferenz.                          Fuer /v1: --ortsleitung, --ortsausweis, --pod und                          --konsensschluessel."
+                    ),
+                }
+                let konsens_fuer_tuer = konsens;
                 tokio::spawn(async move {
                     let tuer = myl_gateway::Tuer::aus_lauscher(lauscher);
-                    let mut annahme = myl_gateway::annahme::Annahme::neu(1, epoche);
-                    let mut stelle = myl_gateway::zugang::Zugangsstelle::neu(abschrift);
+                    let mut annahme = myl_gateway::annahme::Annahme::neu(1, start);
+                    let mut stelle =
+                        myl_gateway::zugang::Zugangsstelle::neu(abschrift.clone());
+                    let mut weg = weg;
                     loop {
-                        let jetzt_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(0);
-                        if tuer
-                            .bedienen_mit_zugang(&mut annahme, &mut stelle, epoche, jetzt_ms)
-                            .await
-                            .is_err()
+                        // ⚑ **Der Epochenwechsel, bevor die naechste
+                        // Anfrage kommt.** `Sitzungen` gilt fuer genau
+                        // eine Epoche; ohne diesen Schritt versiegelte
+                        // der Knoten nach der ersten Epochengrenze fuer
+                        // eine Epoche, die der Shard nicht mehr fuehrt,
+                        // und keine Anfrage kaeme mehr durch.
+                        if let (Some(w), Some(k)) =
+                            (weg.as_mut(), konsens_fuer_tuer.as_ref())
                         {
-                            // Ein Verbindungsfehler ist kein Grund, die
-                            // Tuer zu schliessen: Meist ist es eine
-                            // Gegenstelle, die aufgelegt hat.
-                            continue;
+                            let jetzt = abschrift.epoche();
+                            if jetzt != w.epoche() {
+                                let s = myl_siegel::Epochenschluessel::ziehe(jetzt);
+                                match k.epochenankuendigung(&s) {
+                                    Ok(bytes) => {
+                                        w.epoche_wechseln(jetzt, s, bytes);
+                                        eprintln!(
+                                            "myl-node: Sitzungsschluessel auf Epoche {} gewechselt",
+                                            jetzt.0
+                                        );
+                                    }
+                                    Err(e) => eprintln!(
+                                        "myl-node: Epochenankuendigung gescheitert ({e:?});                                          der Shard-Weg bleibt auf Epoche {}",
+                                        w.epoche().0
+                                    ),
+                                }
+                            }
+                        }
+                        // Ein Verbindungsfehler ist kein Grund, die
+                        // Tuer zu schliessen: Meist ist es eine
+                        // Gegenstelle, die aufgelegt hat.
+                        match weg.as_ref() {
+                            Some(w) => {
+                                let _ = myl_node::tuer::eine_v1_anfrage(
+                                    &tuer,
+                                    &mut annahme,
+                                    &mut stelle,
+                                    &abschrift,
+                                    w,
+                                )
+                                .await;
+                            }
+                            None => {
+                                let _ = myl_node::tuer::eine_anfrage(
+                                    &tuer,
+                                    &mut annahme,
+                                    &mut stelle,
+                                    &abschrift,
+                                )
+                                .await;
+                            }
                         }
                     }
                 });
@@ -759,3 +903,4 @@ fn eigene_genesiszeile(
     };
     k.genesiszeile(stake).map_err(|e| e.to_string())
 }
+

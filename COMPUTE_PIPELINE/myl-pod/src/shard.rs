@@ -326,6 +326,43 @@ impl ShardNode {
         }))
     }
 
+    /// Vergisst alles, was zu dieser Sitzung gehört.
+    ///
+    /// # ⚑ Warum beim Abschluss und nicht später (Fund 164)
+    ///
+    /// Bis zum 2026-09-04 wuchsen `caches` und `dekodier_digest` mit
+    /// **jeder** Anfrage und wurden nie kleiner. Gemessen an der
+    /// Probepipeline: ein KV-Cache und ein Digest je Anfrage, für
+    /// immer. Ein Knoten, der Anfragen bedient, hielt jede je gerechnete
+    /// Anfrage im Speicher.
+    ///
+    /// ⚑ **Und niemand hatte etwas davon.** Das Gateway vergibt je
+    /// Anfrage eine **neue** Sitzungsnummer, und `run_prompt` füllt
+    /// immer ab Position 0 vor; kein Aufrufer hat je eine Sitzung
+    /// fortgesetzt. Die Session-Affinität aus Kap. 4.2 stand im Feld und
+    /// hatte keinen Nutzer.
+    ///
+    /// **vLLM macht es genauso:** Die Blöcke einer Anfrage gehen zurück
+    /// in die freie Liste, sobald sie fertig ist. Wenn eines Tages
+    /// jemand eine Sitzung fortsetzt, gehört hierher eine Verdrängung
+    /// nach Alter, kein Weglassen.
+    pub fn sitzung_vergessen(&self, session_id: u64) {
+        if let Ok(mut c) = self.caches.lock() {
+            c.remove(&session_id);
+        }
+        if let Ok(mut d) = self.dekodier_digest.lock() {
+            d.remove(&session_id);
+        }
+    }
+
+    /// Wie viele Sitzungen dieser Shard gerade hält.
+    ///
+    /// ⚑ **Damit eine Zusicherung darauf zeigen kann.** Eine Zahl, die
+    /// niemand lesen kann, wächst unbemerkt.
+    pub fn gehaltene_sitzungen(&self) -> usize {
+        self.caches.lock().map(|c| c.len()).unwrap_or(0)
+    }
+
     fn put_cache(&self, session_id: u64, cache: KVCache) -> Result<(), String> {
         sperre(&self.caches, "KV-Cache")?.insert(session_id, cache);
         Ok(())

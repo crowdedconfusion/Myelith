@@ -41,6 +41,7 @@ pub mod shard;
 pub mod ausfallmeldung;
 pub mod netzreserve;
 pub mod entsiegelung;
+pub mod gegenstelle;
 pub mod ortsdienst;
 pub mod pipelinewerk;
 pub mod standby;

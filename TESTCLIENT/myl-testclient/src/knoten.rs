@@ -284,6 +284,10 @@ pub fn anlaufstelle() -> bool {
         // Rechenwerke. Ein Auftrag wird ehrlich abgelehnt.
         ortsleitung: None,
         ortsausweis: None,
+        pod: None,
+        modellname: "myelith-qwen2.5-0.5b".to_string(),
+        kontoschluesseldatei: None,
+        konto: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
         // Zwei Erzeuger gabeln die Kette sofort, weil niemand
@@ -358,6 +362,10 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // Rechenwerke. Ein Auftrag wird ehrlich abgelehnt.
         ortsleitung: None,
         ortsausweis: None,
+        pod: None,
+        modellname: "myelith-qwen2.5-0.5b".to_string(),
+        kontoschluesseldatei: None,
+        konto: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.

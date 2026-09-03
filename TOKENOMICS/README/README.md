@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.18.0
+> **Version:** 0.19.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,24 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.19.0 – 2026-09-04 (⚑ Fund 171: die Stichprobenrate bekommt eine Heimat)
+
+`sicherheit::{STICHPROBE_ZAEHLER, STICHPROBE_NENNER, stichprobe_bp}`.
+
+Die Rate stand an **drei** Stellen mit **zwei** Werten: als
+Registry-Vorgabe (5/100, las niemand), als `Kette::STICHPROBE_BP`
+(200 bp = 2/100, las die Kette bei jeder Ziehung) und als Literal in der
+Vorgabe von `MindestStake` (5/100, setzte den Mindest-Einsatz).
+
+⚑ **Der Unterschied war kein Schreibfehler, sondern eine vergessene
+Entscheidung.** A1 hat die Kontrollsegmente entfernt; seither muss `p`
+allein tragen, was vorher `p` und `gamma` teilten, und
+`security_sim.py::zusammengelegte_rate` rechnet dafür 4,96 %. Die
+Registry hat den Wert übernommen, die Kette nicht.
+
+Alle drei leiten jetzt von hier ab. Solange der Konsens die Registry
+nicht liest (B10), ist das die eine maßgebliche Stelle.
 
 ### v0.18.0 – 2026-09-03 (die Genesis-Verteilung verlässt das Repositorium)
 

@@ -113,7 +113,48 @@ pub enum Ortsfrage {
     /// sind verschieden: „lebst du" fragt ein Betreiber im Sekundentakt,
     /// „wer bist du" fragt der Knoten einmal je Epoche.
     Gegenstelle,
+    /// Hier sind meine angekündigten Punkte, unterschrieben.
+    ///
+    /// ⚑ **Rohe Bytes, wie bei [`Ortsantwort::Gegenstelle`]**, und aus
+    /// demselben Grund: Der Inhalt ist eine `myl_siegel::Epochenankuendigung`,
+    /// und `myl-types` kennt `myl-siegel` nicht. Wer sie braucht,
+    /// setzt sie selbst zusammen.
+    ///
+    /// # ⚑ Warum es diese Frage geben muss (Fund 165, 2026-09-03)
+    ///
+    /// `Umschlag::oeffnen` braucht die Punkte der Gegenstelle **vor**
+    /// dem Entsiegeln; sie können also nicht im Umschlag stecken.
+    /// [`Ortsfrage::Gegenstelle`] fragt in die andere Richtung: Der
+    /// Knoten erfährt, für wen er versiegelt. **Umgekehrt gab es
+    /// nichts**, und deshalb konnte kein Shard je einen echten Umschlag
+    /// öffnen. Genau deshalb hatte `Ortsweg::neu` keinen
+    /// Produktionsaufrufer: Es gab nichts, wo er sich anschloss.
+    ///
+    /// # ⚑ Warum eine Unterschrift und nicht bloss zwei Punkte
+    ///
+    /// Der Ausweis der Leitung sagt „du darfst hereinreden", nicht „du
+    /// bist der Knoten". Wer nur Punkte schickte, machte jeden, der den
+    /// Ausweis lesen kann, zur Gegenstelle, und das Siegel wäre
+    /// Theater. Die Ankündigung ist mit dem **Konsensschlüssel**
+    /// unterschrieben, und der Endpunkt ist dessen Hash; der Shard
+    /// prüft gegen den Endpunkt, den sein Betreiber ihm genannt hat.
+    ///
+    /// Dieselbe Bauart wie in `libp2p-noise`, wo der statische Schlüssel
+    /// im Handshake durch eine Signatur des Identitätsschlüssels
+    /// gedeckt wird, und dieselbe Schichtung wie bei Bitcoin Core: die
+    /// Datei mit `0600` trägt den Zugang, die Unterschrift die
+    /// Identität.
+    Ankuendigung(Vec<u8>),
 }
+
+/// Der grösste erlaubte Umfang einer Ankündigung.
+///
+/// Eine `Epochenankuendigung` ist rund 1 370 Bytes (Epoche, X25519-Punkt,
+/// ML-KEM-768-Kapselpunkt, BLS-Schlüssel, BLS-Signatur). ⚑ **Der Deckel
+/// steht trotzdem hier und nicht nur im Rahmen:** Ohne ihn liesse sich
+/// [`MAX_NUTZLAST_BYTES`] an Unsinn als Ankündigung einreichen, und der
+/// Shard buchstabierte sie durch, bevor er sie verwirft.
+pub const MAX_ANKUENDIGUNG_BYTES: usize = 2048;
 
 /// Was zurückkommt.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -147,6 +188,12 @@ pub enum Ortsantwort {
         /// Der ML-KEM-Kapselpunkt.
         kapselpunkt: Vec<u8>,
     },
+    /// Die Ankündigung wurde geprüft und gilt.
+    ///
+    /// ⚑ **Ein Bit und keine Begründung.** Eine abgelehnte Ankündigung
+    /// bekommt [`Ortsantwort::Abgelehnt`], wie alles andere; wer
+    /// begründete, sagte einem Fremden, welcher Endpunkt erwartet wird.
+    Angenommen,
 }
 
 /// Was an einem Rahmen nicht stimmt.
