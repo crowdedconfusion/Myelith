@@ -2447,6 +2447,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-agent"
+version = "0.7.0"
+dependencies = [
+ "borsh",
+ "myl-types",
+]
+
+[[package]]
 name = "myl-consensus"
 version = "0.28.0"
 dependencies = [
@@ -2466,6 +2474,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "myl-governance"
+version = "0.9.0"
+dependencies = [
+ "myl-consensus",
+ "myl-tokenomics",
+ "myl-types",
+ "myl-verifier",
 ]
 
 [[package]]
@@ -2558,21 +2576,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-store"
+version = "0.5.2"
+dependencies = [
+ "borsh",
+ "myl-types",
+]
+
+[[package]]
 name = "myl-testclient"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "borsh",
  "crossterm",
  "integer-llm-kernels",
  "integer-llm-runtime",
+ "myl-agent",
  "myl-consensus",
  "myl-gateway",
+ "myl-governance",
  "myl-ledger",
  "myl-net",
  "myl-node",
  "myl-pod",
  "myl-scheduler",
  "myl-siegel",
+ "myl-store",
  "myl-tokenomics",
  "myl-types",
  "myl-verifier",

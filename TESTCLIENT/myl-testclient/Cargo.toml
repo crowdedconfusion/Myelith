@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -31,6 +31,12 @@ myl-net = { path = "../../NETWORKING/myl-net" }
 # Rechenwerk beruehrt fuenf Kisten, und keine sieht mehr als ihren
 # Nachbarn. `myl-testclient` ist die einzige Stelle, die alle sieht.
 myl-gateway = { path = "../../GATEWAY/myl-gateway" }
+# ⚑ **Nur fuer den Gesamtlauf** (2026-09-03): Die drei Kisten nehmen am
+# Anfrageweg teil (Parameter, Speicherentgelt, Sitzungskontrakt), und der
+# Gesamtlauf ist die einzige Stelle, die sie zusammen mit dem Rest sieht.
+myl-governance = { path = "../../GOVERNANCE/myl-governance" }
+myl-store = { path = "../../STORAGE/myl-store" }
+myl-agent = { path = "../../AGENT_LAYER/myl-agent" }
 myl-siegel = { path = "../../NETWORKING/myl-siegel" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
 sha2 = "0.10"

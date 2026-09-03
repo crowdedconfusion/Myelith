@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.21.0
+> **Version:** 0.22.0
 > **Datum:** 2026-09-02
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -387,6 +387,13 @@ Optionen: `--prompt`, `--steps`, `--shards`, `--artifacts`, `--logs`,
 | `determinismus` | INTEGER_LLM (runtime, kernels) | **ja** |
 | `shard` | COMPUTE_PIPELINE (myl-pod) + INTEGER_LLM | **ja** |
 
+⚑ **Und ein Lauf, der kein Befehl ist.** `tests/gesamtlauf.rs`
+(`cargo test --test gesamtlauf -- --nocapture`) geht **einen** Auftrag
+durch **zwölf Stationen**, von der Parametertabelle bis zur Auszahlung,
+und führt dabei eine Stationsliste mit, die am Ende gegen eine feste
+Reihenfolge geprüft wird. Er steht hier, weil `myl-testclient` die
+einzige Kiste ist, die alle anderen sieht.
+
 **Nicht abgedeckt:** `myl-net` (Gossip über echte Sockets gehört in die
 NETWORKING-Testsuite) und die BFT-Runden selbst: Der Client stimmt nicht
 mit, aus der bewussten Grenze heraus, die der Changelog unter v0.14.1
@@ -478,6 +485,11 @@ TESTCLIENT/
     │   ├── spec.rs           Testplan (erzeugen, prüfen, laden)
     │   ├── vergleich.rs      Protokolle gegenüberstellen, urteilen, berichten
     │   └── stack.rs          Protokoll-Durchlauf (10 Stufen)
+    ├── tests/                die Nähte zwischen den Kisten
+    │   ├── gesamtlauf.rs     alle zwölf Stationen an einem Auftrag
+    │   ├── harness_bis_modell.rs  ein Nutzeraufruf bis zum echten Modell
+    │   ├── tuer_bis_rechenwerk.rs der Weg, fünf Kisten, echte Sockets
+    │   └── kalter_pfad.rs    Auftrag über das Netz, ohne Gateway
     └── Cargo.toml
 ```
 
@@ -509,6 +521,34 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.22.0 – 2026-09-03 (der Gesamtlauf, zwölf Stationen an einem Auftrag)
+
+`tests/gesamtlauf.rs`: **ein** Nutzerauftrag, **eine** Kette, und jede
+Kiste, die am Anfrageweg beteiligt ist, kommt genau einmal vor.
+GOVERNANCE stellt die Parameter, sechs Miner melden sich an, der Nutzer
+verbrennt 5 000 000 MYL und bekommt 50 000 Credits, ein Sitzungskontrakt
+geht in die Kette, der Agent stellt eine Vollmacht aus, ein Harness ruft
+`/v1/chat/completions`, der Knoten versiegelt, vier Shards rechnen mit
+dem echten Qwen2.5-0,5B, die erzeugten Token werden gegen die Vollmacht
+abgebucht (Wiederholung abgewiesen), dieselbe Frage ein zweites Mal
+ergibt Wort für Wort dieselbe Antwort, das Speicherentgelt wird
+abgerechnet, und am Epochenschluss erreicht ein PoI-Bündel vier von
+sechs kalten Konten. **2,7 Sekunden.**
+
+⚑ **Die Stationsliste ist kein Schmuck.** Ohne sie bliebe der Lauf grün,
+wenn ein Zweig still nichts täte; das ist Fund 113 in klein.
+
+Dafür kommen drei Kisten neu in die Abhängigkeiten (`myl-governance`,
+`myl-store`, `myl-agent`), **ausschliesslich für diesen Lauf**.
+
+**Was er nicht abdeckt, und das steht im Kopf der Datei:** TRAINING und
+SIMULATION nehmen an einem Anfrageweg nicht teil, und der Pod baut sein
+Bündel nicht selbst: Vier Shards in *einem* Prozess sind der
+Phase-1-Probelauf, kein Pod aus unabhängigen Minern.
+
+Sieben Gegenproben, jede rot. Die fünfte hat **Fund 164** erzeugt (drei
+Sitzungsverzeichnisse ohne Räumung, siehe Fahrplan).
 
 ### v0.21.0 – 2026-09-03 (die Abbuchung, Ende zu Ende)
 

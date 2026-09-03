@@ -29,6 +29,35 @@ INTEGER_LLM herum — sie ersetzt nicht dessen Rechenkerne (`kernels`/
 `runtime`), sondern verteilt sie über echte Nodes, mit Session-Affinität,
 Ausfallsicherung und Durchsatzoptimierung.
 
+## ⚑ Offener Mangel: Fund 164 (2026-09-03)
+
+**Drei Sitzungsverzeichnisse wachsen unbegrenzt.** `ShardNode` führt
+`caches: HashMap<u64, KVCache>` (Session-Affinität, Kap. 4.2) und
+`dekodier_digest: HashMap<u64, DekodierDigest>`, der `Coordinator` führt
+`completed: Vec<CompletedSegment>`. **Keine wird je verkleinert.**
+
+Dazu kommt: **Jede Anfrage bekommt vom Gateway eine neue
+Sitzungsnummer**, und `run_prompt` füllt immer ab Position 0 vor. Der
+KV-Cache wird also geschrieben und **nie wieder gelesen**. Die
+Session-Affinität steht im Whitepaper und im Feld, aber kein Aufrufer
+zieht Nutzen daraus.
+
+Gemessen an der Probepipeline, streng linear:
+
+| Anfragen | abgeschlossene Segmente |
+|---|---|
+| 1 | 14 |
+| 10 | 140 |
+| 30 | 420 |
+
+**Warum es hier steht und nicht behoben ist:** `completed` einfach zu
+leeren geht nicht, weil `build_signed_poi_bundle` daraus `segmente`
+zählt und die Unterschriften aggregiert. Wer räumt, muss zuerst sagen,
+**wann ein Bündel gezogen wird** und **wann eine Sitzung endet**. Beides
+gehört zu dem Bauschritt, der ohnehin ansteht: ein Knoten, der genau
+**einen** Shard hält. Gefunden vom Gesamtlauf
+(`TESTCLIENT/myl-testclient/tests/gesamtlauf.rs`).
+
 ## Abhängigkeiten
 
 NETWORKING (Aktivierungs-Streams zwischen Shards), CONSENSUS
