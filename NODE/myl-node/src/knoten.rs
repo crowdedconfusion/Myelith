@@ -89,6 +89,13 @@ pub enum KnotenFehler {
     /// beginnen hieße, eine vorhandene Historie zu übergehen, und das
     /// fiele erst auf, wenn jemand die Höhen vergleicht.
     Kette(String),
+    /// Der Anschluss an den Shard-Prozess kam nicht zustande.
+    ///
+    /// ⚑ **Ein Startfehler, kein Hinweis.** Wer `--ortsleitung` sagt,
+    /// will rechnen lassen; ohne Ausweis lehnt der Knoten jeden Auftrag
+    /// ab, und im Betrieb sähe das aus wie ein Shard, der schweigt.
+    /// Lieber gleich und laut als später und leise.
+    Ortsleitung(String),
 }
 
 impl std::fmt::Display for KnotenFehler {
@@ -99,6 +106,7 @@ impl std::fmt::Display for KnotenFehler {
             Self::Identitaet(e) => write!(f, "Identität: {}", e),
             Self::Kette(e) => write!(f, "Kette: {}", e),
             Self::Netz(e) => write!(f, "Netz: {}", e),
+            Self::Ortsleitung(e) => write!(f, "Ortsleitung zum Shard-Prozess: {}", e),
         }
     }
 }
@@ -163,6 +171,42 @@ pub struct Knoten {
     /// ⚑ **Der Abholweg zu den Zahlen, die es laengst gab** (Fund 129).
     /// Siehe [`crate::beobachtung`].
     beobachtungsstelle: crate::beobachtung::Beobachtungsstelle,
+    /// Die Abschrift der Sitzungskontrakte für die eigene Tür.
+    ///
+    /// ⚑ **Bei jedem Block aufgefrischt**, nicht bei jeder Anfrage: Der
+    /// Kettenzustand gehört dieser Schleife, und eine Sperre über ein
+    /// `await` wäre der Weg in den Stillstand.
+    kontraktabschrift: crate::tuer::Kontraktabschrift,
+    /// Die zuletzt eingetroffene Antwort auf einen Inferenzauftrag.
+    ///
+    /// ⚑ **Ein Fach und keine Warteschlange**, solange nur ein Auftrag
+    /// zugleich läuft. Wer mehrere gleichzeitig führt, braucht eine
+    /// Zuordnung über die Sitzungsnummer, und die steht in der Antwort;
+    /// hier fehlt sie noch, und das gehört gesagt statt angenommen.
+    letzte_inferenzantwort: Option<myl_types::inferenzauftrag::Inferenzantwort>,
+    /// Der Anschluss an einen lokalen Shard-Prozess, oder `None`.
+    ///
+    /// ⚑ **Die Vorgabe ist `None`, anders als bei der Tür.** Ein Knoten
+    /// ist nicht notwendig ein Miner: Er kann Teil eines Pods sein,
+    /// Speicher stellen oder einfach nur Nutzer sein. Wer rechnet, sagt
+    /// es mit `--ortsleitung`; wer nichts sagt, lehnt Aufträge ehrlich
+    /// ab, statt einen Shard vorzutäuschen, den es nicht gibt.
+    ortsanschluss: Option<crate::ortsklient::Ortsanschluss>,
+    /// Was die Tür an Abrechnungen abgelegt hat.
+    ///
+    /// ⚑ **Ein Kanal und kein direkter Aufruf**, weil die Tür in einer
+    /// eigenen Aufgabe läuft und der Kettenzustand der Ereignisschleife
+    /// gehört. Dieselbe Bauart wie bei der Kontraktabschrift: Wer
+    /// schreibt, schreibt hier; wer die Kette anfasst, tut es dort.
+    abrechnungen: tokio::sync::mpsc::UnboundedReceiver<myl_consensus::block::Anweisung>,
+    /// Das Gegenstück, für die Tür.
+    abrechnungskanal: tokio::sync::mpsc::UnboundedSender<myl_consensus::block::Anweisung>,
+    /// Die Nonce der eigenen Abrechnungstransaktionen.
+    ///
+    /// ⚑ **Getrennt vom Testverkehrszähler**, sonst vergäben zwei
+    /// Quellen dieselbe Nonce und eine der beiden Transaktionen fiele
+    /// still aus.
+    abrechnungsnonce: u64,
     /// Die hoechste Hoehe, von der dieser Knoten gehoert hat.
     ///
     /// **Grundlage der Bereitschaftsauskunft.** Wer eine hoehere Hoehe
@@ -180,7 +224,7 @@ pub struct Knoten {
     ///
     /// `None` bei einem Knoten, der nur zuhört. **Das ist der
     /// Normalfall**, nicht die Ausnahme: Stimmberechtigt ist, wer in der
-    /// Genesis-Datei steht, und das sind wenige.
+    /// Stimmsatzdatei steht, und das sind wenige.
     konsens: Option<Konsensrunde>,
     /// Startzeitpunkt, als **monotone** Uhr für die BFT-Fristen.
     ///
@@ -257,6 +301,23 @@ impl Knoten {
         auf_bildschirm: bool,
     ) -> Result<Self, KnotenFehler> {
         konfig.pruefe().map_err(KnotenFehler::Konfig)?;
+
+        // Der Weg von der Tür zur Kette. Unbegrenzt, weil eine
+        // Abrechnung nicht verlorengehen darf: Ein voller Kanal hiesse,
+        // dass gerechnete Arbeit unbezahlt bleibt.
+        let (abrechnungen_tx, abrechnungen_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // ⚑ **Der Ausweis wird beim Start gelesen, nicht bei der ersten
+        // Frage.** Eine Datei im heissen Pfad ist eine Fehlerquelle im
+        // heissen Pfad, und ein fehlender Ausweis soll den Betreiber
+        // beim Start erreichen und nicht den ersten Nutzer.
+        let ortsanschluss = match (konfig.ortsleitung, konfig.ortsausweis.as_ref()) {
+            (Some(adr), Some(ausweis)) => Some(
+                crate::ortsklient::Ortsanschluss::neu(adr, ausweis)
+                    .map_err(|e| KnotenFehler::Ortsleitung(format!("{}: {e}", ausweis.display())))?,
+            ),
+            _ => None,
+        };
 
         let identitaet = NodeIdentity::load_or_create(Path::new(&konfig.schluesseldatei))
             .map_err(|e| KnotenFehler::Identitaet(e.to_string()))?;
@@ -438,6 +499,12 @@ impl Knoten {
             kette,
             nachforderung_laeuft: false,
             beobachtungsstelle: crate::beobachtung::Beobachtungsstelle::neu(),
+            kontraktabschrift: crate::tuer::Kontraktabschrift::neu(),
+            letzte_inferenzantwort: None,
+            ortsanschluss,
+            abrechnungen: abrechnungen_rx,
+            abrechnungskanal: abrechnungen_tx,
+            abrechnungsnonce: 1_000_000,
             hoechste_gehoerte: 0,
             latenz_je_peer: std::collections::BTreeMap::new(),
             latenz: (u64::MAX, 0, 0),
@@ -506,7 +573,7 @@ impl Knoten {
 
     /// Beginnt eine BFT-Runde und schickt hinaus, was sofort hinaus muss.
     ///
-    /// Der Knoten muss in der Genesis-Datei stehen, sonst
+    /// Der Knoten muss in der Stimmsatzdatei stehen, sonst
     /// [`KonsensFehler::NichtStimmberechtigt`].
     ///
     /// ⚑ **Die Herkunft des Schlüssels landet im Protokoll.** Ein
@@ -515,7 +582,7 @@ impl Knoten {
     /// nachträglich aus dem Protokoll hervorgehen.
     pub async fn beginne_konsensrunde(
         &mut self,
-        genesis: &crate::genesis::Genesis,
+        genesis: &crate::stimmsatzdatei::Stimmsatzdatei,
         schluessel: crate::schluessel::Konsensschluessel,
         vorschlag: myl_types::hash::Hash,
         timeouts: myl_consensus::round_change::TimeoutConfig,
@@ -710,6 +777,16 @@ impl Knoten {
     }
 
     /// Die eigene Kette, für Tests und Diagnose.
+    /// Die Kette zum Ändern, **nur für Tests und den Betreiber**.
+    ///
+    /// ⚑ **Kein Weg für Teilnehmer**, dieselbe Begründung wie bei
+    /// [`Kette::zustand_mut`]: Wer den Zustand von außen ändert, umgeht
+    /// jede Übergangsprüfung.
+    #[doc(hidden)]
+    pub fn kette_mut(&mut self) -> &mut Kette {
+        &mut self.kette
+    }
+
     pub fn kette(&self) -> &Kette {
         &self.kette
     }
@@ -950,6 +1027,44 @@ impl Knoten {
             } => "Laufzeit abgelaufen",
         };
         self.abschluss(grund).await;
+    }
+
+    /// Schickt einen Inferenzauftrag an einen Knoten.
+    ///
+    /// ⚑ **Über dieselbe Schiene wie die Blocknachforderung.** Ein
+    /// eigenes Protokoll hätte einen zweiten Codec, eine zweite
+    /// Größengrenze und eine zweite Zerlegung auf fremden Eingaben.
+    ///
+    /// **Die Form wird vor dem Senden geprüft**, nicht erst beim
+    /// Empfänger: Ein Auftrag, der ohnehin abgewiesen wird, soll die
+    /// Leitung nicht belasten. Der Empfänger prüft trotzdem noch
+    /// einmal, denn er glaubt dem Absender nichts.
+    pub async fn inferenz_senden(
+        &mut self,
+        an: libp2p::PeerId,
+        auftrag: myl_types::inferenzauftrag::Inferenzauftrag,
+    ) -> bool {
+        if auftrag.pruefe_form().is_err() {
+            return false;
+        }
+        let Some(daten) = crate::nachschub::Nachforderung::Inferenz(auftrag).als_bytes() else {
+            return false;
+        };
+        self.kommandos
+            .send(NodeCommand::Anfrage { an, daten })
+            .is_ok()
+    }
+
+    /// Die zuletzt eingetroffene Inferenzantwort.
+    pub fn letzte_inferenzantwort(
+        &self,
+    ) -> Option<&myl_types::inferenzauftrag::Inferenzantwort> {
+        self.letzte_inferenzantwort.as_ref()
+    }
+
+    /// Die Kontraktabschrift dieses Knotens, für die eigene Tür.
+    pub fn kontraktabschrift(&self) -> crate::tuer::Kontraktabschrift {
+        self.kontraktabschrift.clone()
     }
 
     /// Die Beobachtungsstelle dieses Knotens.
@@ -1267,6 +1382,62 @@ impl Knoten {
         self.veroeffentliche(GossipTopic::Transactions, daten).await
     }
 
+    /// Der Kanal, über den die Tür ihre Abrechnungen abgibt.
+    pub fn abrechnungskanal(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedSender<myl_consensus::block::Anweisung> {
+        self.abrechnungskanal.clone()
+    }
+
+    /// Holt abgelegte Abrechnungen ab, signiert sie und verbreitet sie.
+    ///
+    /// # ⚑ Warum das der Knoten tut und nicht die Tür
+    ///
+    /// Eine Kettentransaktion braucht einen Schlüssel, und die Tür hat
+    /// keinen: Ein Harness weist sich mit einer **Vollmacht** aus. Der
+    /// Betreiber reicht deshalb ein, und die Kette erkennt die Vollmacht
+    /// des Agenten an (siehe `myl_ledger::transitions::sitzung_ausgeben`).
+    ///
+    /// ⚑ **Die Nonce zählt hoch und wird mit unterschrieben.** Ohne sie
+    /// wäre jede Abrechnung die Wiedereinspielung ihrer Vorgängerin und
+    /// fiele beim Anwenden still heraus.
+    ///
+    /// Gibt zurück, wie viele verbreitet wurden.
+    pub async fn abrechnungen_verbreiten(&mut self) -> usize {
+        use myl_consensus::block::Transaktion;
+
+        let mut offen = Vec::new();
+        while let Ok(a) = self.abrechnungen.try_recv() {
+            offen.push(a);
+        }
+        let schluessel = crate::kette::schluessel_fuer(&self.konfig.name);
+        let mut verbreitet = 0usize;
+        for anweisung in offen {
+            let nonce = self.abrechnungsnonce;
+            self.abrechnungsnonce += 1;
+            let Ok(tx) = Transaktion::signiere(
+                &crate::kette::Kette::startwert(),
+                &schluessel,
+                nonce,
+                anweisung,
+            ) else {
+                continue;
+            };
+            let Ok(daten) = borsh::to_vec(&tx) else {
+                continue;
+            };
+            if self.veroeffentliche(GossipTopic::Transactions, daten).await {
+                verbreitet += 1;
+            }
+        }
+        if verbreitet > 0 {
+            self.protokoll.schreibe(
+                Eintrag::neu("abrechnungen_verbreitet").zahl("anzahl", verbreitet as i64),
+            );
+        }
+        verbreitet
+    }
+
     /// Schreibt eine Zustandsaufnahme.
     ///
     /// Die regelmäßige Aufnahme ist der Gegenpol zu den Ereignissen:
@@ -1316,6 +1487,24 @@ impl Knoten {
         }
         self.protokoll.schreibe(eintrag);
 
+        // ⚑ **Und die Kontraktabschrift für die eigene Tür** (B6-3).
+        // Hier und nicht in der Blockschleife: Die Aufnahme ist die
+        // Stelle, an der der Knoten seinen Zustand ohnehin ausliest,
+        // und ein zweiter Abgleichpunkt wäre eine zweite Quelle für
+        // dieselbe Abschrift.
+        //
+        // ⚑ **Damit ist sie so frisch wie die Aufnahme**, also im
+        // Vorgabefall dreissig Sekunden. Ein Widerruf wirkt mit dieser
+        // Verzögerung, und das gehört gesagt statt angenommen.
+        self.kontraktabschrift.setzen(self.kette.zustand());
+
+        // ⚑ **Und die Abrechnungen gehen mit.** Sie hier abzuholen und
+        // nicht in einer eigenen Schleife hält die Zahl der Stellen
+        // klein, an denen der Knoten die Kette anfasst. Was das kostet,
+        // gehört gesagt: Eine Abrechnung wartet höchstens einen
+        // Aufnahmetakt, im Vorgabefall dreissig Sekunden.
+        self.abrechnungen_verbreiten().await;
+
         // ⚑ **Dieselben Zahlen, ein zweiter Weg** (Fund 129). Nicht
         // eine zweite Quelle: Der Stand entsteht aus derselben
         // Erhebung wie der Protokolleintrag, im selben Augenblick.
@@ -1337,7 +1526,22 @@ impl Knoten {
             latenz_messungen: anzahl,
             latenz_min_us: if anzahl > 0 { kleinste } else { 0 },
             latenz_max_us: groesste,
+            nachforderung_laeuft: self.nachforderung_laeuft,
         });
+    }
+
+    /// Speist ein Netzereignis ein, als waere es ueber die Leitung
+    /// gekommen.
+    ///
+    /// ⚑ **Nur fuer Tests**, und aus einem Grund, der sich nicht
+    /// umgehen laesst: Manche Reihenfolgen sind ueber echte Sockets
+    /// nicht herstellbar. Dass eine Inferenzantwort **waehrend** einer
+    /// laufenden Blocknachforderung eintrifft, ist ein Rennen, das ein
+    /// Test nicht verlaesslich gewinnt. Ohne diese Tuer bliebe die
+    /// Zeile, die den Aufholzustand rettet, ungeprueft.
+    #[doc(hidden)]
+    pub fn ereignis_einspeisen(&mut self, ereignis: myl_net::NodeEvent) {
+        self.vermerke(ereignis);
     }
 
     /// Fordert die fehlenden Blöcke bei einem Peer nach.
@@ -1354,7 +1558,11 @@ impl Knoten {
         let Some(bytes) = forderung.als_bytes() else {
             return;
         };
-        let Nachforderung::Bloecke { ab, bis } = forderung;
+        // Diese Stelle fordert nur Blöcke nach; ein Inferenzauftrag
+        // kommt nie von hier.
+        let Nachforderung::Bloecke { ab, bis } = forderung else {
+            return;
+        };
         if self
             .kommandos
             .send(NodeCommand::Anfrage { an: von, daten: bytes })
@@ -1533,20 +1741,89 @@ impl Knoten {
             }
             // Jemand fragt Blöcke nach. Antworten, soweit vorhanden.
             NodeEvent::AnfrageEingegangen { von, daten, marke } => {
-                let (antwort, anzahl) = match Nachforderung::aus_bytes(&daten) {
+                let sofort = match Nachforderung::aus_bytes(&daten) {
                     Some(Nachforderung::Bloecke { ab, bis }) => {
                         let bloecke = self.kette.bloecke_von_bis(ab, bis);
                         let n = bloecke.len();
                         if n == 0 {
-                            (Nachlieferung::Nichts, 0)
+                            Some((Nachlieferung::Nichts, 0))
                         } else {
-                            (Nachlieferung::Bloecke(bloecke), n)
+                            Some((Nachlieferung::Bloecke(bloecke), n))
+                        }
+                    }
+                    // ⚑ **Ein Inferenzauftrag** (GATEWAY Stufe 4).
+                    //
+                    // Dieser Knoten rechnet nicht selbst, und das ist
+                    // die Entscheidung vom 2026-09-03: **Ein Shard
+                    // läuft in einem eigenen Prozess**, damit ein
+                    // Absturz beim Rechnen den Konsens nicht anhält.
+                    // Der Knoten reicht weiter, wenn er einen
+                    // Anschluss hat.
+                    //
+                    // ⚑ **Und zwar in einer eigenen Aufgabe.** Der
+                    // Shard rechnet Sekunden bis Minuten; wer hier
+                    // wartet, hält die Blockverarbeitung genau so
+                    // lange an. Die Antwort geht später über dieselbe
+                    // Marke zurück.
+                    //
+                    // ⚑ **Ohne Anschluss wird abgelehnt und nicht
+                    // geschwiegen.** Der Fragende soll „hier rechnet
+                    // niemand" von „nicht angekommen" unterscheiden
+                    // können; ein Auftrag ohne Antwort läuft in eine
+                    // Zeitüberschreitung, die nichts bedeutet.
+                    //
+                    // ⚑ **Die Formprüfung steht nicht hier, sondern im
+                    // Shard-Prozess** (Fund 154). Hier hätten beide
+                    // Zweige dasselbe Ergebnis, dort liegt hinter dem
+                    // einen ein Rechenwerk und hinter dem anderen
+                    // nicht. Eine Prüfung gehört an die Naht, an der
+                    // sie etwas unterscheidet.
+                    Some(Nachforderung::Inferenz(auftrag)) => {
+                        let sitzung = auftrag.sitzung;
+                        match self.ortsanschluss.clone() {
+                            Some(anschluss) => {
+                                let sender = self.kommandos.clone();
+                                tokio::spawn(async move {
+                                    let antwort = match anschluss
+                                        .frage(&myl_types::ortsleitung::Ortsfrage::Inferenz(
+                                            auftrag,
+                                        ))
+                                        .await
+                                    {
+                                        Some(myl_types::ortsleitung::Ortsantwort::Inferenz(a)) => a,
+                                        // Alles andere ist keine
+                                        // Antwort auf diese Frage.
+                                        _ => myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt {
+                                            sitzung,
+                                        },
+                                    };
+                                    if let Some(bytes) = Nachlieferung::Inferenz(antwort).als_bytes()
+                                    {
+                                        let _ = sender
+                                            .send(NodeCommand::Antwort { marke, daten: bytes });
+                                    }
+                                });
+                                None
+                            }
+                            None => Some((
+                                Nachlieferung::Inferenz(
+                                    myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt {
+                                        sitzung,
+                                    },
+                                ),
+                                0,
+                            )),
                         }
                     }
                     // Unlesbare Anfrage: trotzdem antworten. Schweigen
                     // ließe den Fragenden auf eine Zeitüberschreitung
                     // warten, die ihm nichts sagt.
-                    None => (Nachlieferung::Nichts, 0),
+                    None => Some((Nachlieferung::Nichts, 0)),
+                };
+                // `None` heisst: Die Antwort geht später aus einer
+                // eigenen Aufgabe, über dieselbe Marke.
+                let Some((antwort, anzahl)) = sofort else {
+                    return;
                 };
                 if let Some(bytes) = antwort.als_bytes() {
                     let _ = self.kommandos.send(NodeCommand::Antwort { marke, daten: bytes });
@@ -1557,10 +1834,35 @@ impl Knoten {
             }
             // Die nachgeforderten Blöcke sind da.
             NodeEvent::AntwortEingegangen { von, daten } => {
+                let vorher_lief = self.nachforderung_laeuft;
                 self.nachforderung_laeuft = false;
                 let vorher = self.kette.hoehe();
                 let mut angenommen = 0usize;
                 let mut abgelehnt = 0usize;
+                // ⚑ **Eine Inferenzantwort ist keine Blocklieferung**, und
+                // sie darf die Nachforderung nicht als erledigt
+                // buchen: Wer beides über dieselbe Schiene schickt,
+                // muss beim Lesen wieder trennen, sonst hebt eine
+                // Inferenzantwort die laufende Blocknachforderung auf.
+                if let Some(Nachlieferung::Inferenz(antwort)) = Nachlieferung::aus_bytes(&daten) {
+                    self.nachforderung_laeuft = vorher_lief;
+                    let (art, sitzung) = match &antwort {
+                        myl_types::inferenzauftrag::Inferenzantwort::Ergebnis {
+                            sitzung, token, ..
+                        } => (format!("{} Token", token.len()), *sitzung),
+                        myl_types::inferenzauftrag::Inferenzantwort::Abgelehnt { sitzung } => {
+                            ("abgelehnt".to_string(), *sitzung)
+                        }
+                    };
+                    self.letzte_inferenzantwort = Some(antwort);
+                    self.protokoll.schreibe(
+                        Eintrag::neu("inferenz_antwort")
+                            .text("von", von.to_string())
+                            .zahl("sitzung", sitzung as i64)
+                            .text("ergebnis", art),
+                    );
+                    return;
+                }
                 if let Some(Nachlieferung::Bloecke(bloecke)) = Nachlieferung::aus_bytes(&daten) {
                     // **Derselbe Weg wie bei verbreiteten Blöcken.**
                     // Nachschub ist ein Transportweg, kein

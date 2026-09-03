@@ -214,7 +214,7 @@ mod tests {
 
     fn burn(n: u8, betrag: u64) -> Transaktion {
         Transaktion::signiere(
-            &Hash::sha256(b"myelith-testkette-genesis"),
+            &crate::kette::Kette::startwert(),
             &myl_types::bls::BlsSecretKey::key_gen(&[n; 32]).expect("Schlüssel"),
             0,
             Anweisung::Burn { betrag },

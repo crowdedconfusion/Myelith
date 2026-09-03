@@ -78,13 +78,13 @@ use myl_consensus::signing::{commit_message, propose_message, propose_pol_messag
 use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
 
-use crate::genesis::Genesis;
+use crate::stimmsatzdatei::Stimmsatzdatei;
 use crate::schluessel::{Konsensschluessel, SchluesselFehler};
 
 /// Was beim Fahren einer Runde schiefgehen kann.
 #[derive(Debug)]
 pub enum KonsensFehler {
-    /// Der eigene Schlüssel steht nicht in der Genesis-Datei.
+    /// Der eigene Schlüssel steht nicht in der Stimmsatzdatei.
     ///
     /// Ein Knoten, der nicht im Validator-Satz steht, kann zuhören, aber
     /// nicht mitstimmen. Das ist kein Fehler des Netzes, sondern eine
@@ -101,7 +101,7 @@ impl std::fmt::Display for KonsensFehler {
         match self {
             Self::NichtStimmberechtigt { kennung } => write!(
                 f,
-                "{kennung:?} steht nicht im Validator-Satz der Genesis-Datei \
+                "{kennung:?} steht nicht im Validator-Satz der Stimmsatzdatei \
                  und kann deshalb nicht mitstimmen"
             ),
             Self::Runde(e) => write!(f, "BFT: {e}"),
@@ -245,7 +245,7 @@ impl Konsensrunde {
     /// müssen: bei einem Leader Propose und die eigene Vote, sonst
     /// nichts.
     pub fn beginnen(
-        genesis: &Genesis,
+        genesis: &Stimmsatzdatei,
         schluessel: Konsensschluessel,
         vorschlag: Hash,
         jetzt_ms: u64,
@@ -257,7 +257,7 @@ impl Konsensrunde {
             return Err(KonsensFehler::NichtStimmberechtigt { kennung: ich });
         }
         // Die Producer-Liste ist die kanonische Kennungsfolge der
-        // Genesis-Datei. Sie hängt an den Schlüsseln, also rechnet jeder
+        // Stimmsatzdatei. Sie hängt an den Schlüsseln, also rechnet jeder
         // Knoten dieselbe, und damit denselben Leader je Runde.
         let treiber = RoundDriver::new(genesis.kennungen(), menge, timeouts, jetzt_ms)?;
 
@@ -715,14 +715,14 @@ mod tests {
     const STAKES: [u64; 5] = [250_000_000, 230_000_000, 200_000_000, 120_000_000, 100_000_000];
 
     /// Die Verteilung des Probenetzes.
-    fn probenetz() -> Genesis {
+    fn probenetz() -> Stimmsatzdatei {
         let mut text = String::from("netz konsens-test\n");
         for (name, stake) in NAMEN.iter().zip(STAKES) {
             let k = Konsensschluessel::probe(name).expect("Schlüssel");
             text.push_str(&k.genesiszeile(stake).expect("Zeile"));
             text.push('\n');
         }
-        Genesis::aus_text(&text).expect("lesbar")
+        Stimmsatzdatei::aus_text(&text).expect("lesbar")
     }
 
     fn vorschlag() -> Hash {
@@ -740,7 +740,7 @@ mod tests {
         }
     }
 
-    fn leader_name_der_runde(g: &Genesis, runde: Round) -> &'static str {
+    fn leader_name_der_runde(g: &Stimmsatzdatei, runde: Round) -> &'static str {
         let leader = select_leader(runde, &g.kennungen()).expect("Leader");
         for name in NAMEN {
             if Konsensschluessel::probe(name).unwrap().kennung() == leader {
@@ -763,7 +763,7 @@ mod tests {
     impl Netz {
         /// `teilnehmer` nennt, wer überhaupt startet. Wer fehlt, ist
         /// ausgefallen, bevor es losging.
-        fn neu(g: &Genesis, teilnehmer: &[&'static str], t: TimeoutConfig) -> Self {
+        fn neu(g: &Stimmsatzdatei, teilnehmer: &[&'static str], t: TimeoutConfig) -> Self {
             let mut netz = Self {
                 knoten: Vec::new(),
                 schlange: VecDeque::new(),
@@ -901,7 +901,7 @@ mod tests {
     // ── Gewicht gegen Köpfe ─────────────────────────────────────────
 
     /// Lässt **genau** die genannten Knoten stimmen.
-    fn stimmgewicht_von(g: &Genesis, stimmende: &[&'static str]) -> (u64, u64, bool) {
+    fn stimmgewicht_von(g: &Stimmsatzdatei, stimmende: &[&'static str]) -> (u64, u64, bool) {
         let leader_name = leader_name_der_runde(g, 0);
         let beobachter_name = stimmende
             .iter()
@@ -1134,7 +1134,7 @@ mod tests {
     ///
     /// Der Beleg dagegen steht für sich. Alpha braucht dafür weder eine
     /// Kette noch die Runde der anderen, nur die stimmberechtigte Menge,
-    /// die es aus der Genesis-Datei ohnehin hat.
+    /// die es aus der Stimmsatzdatei ohnehin hat.
     ///
     /// **Der Weg im Test ist der Weg im Betrieb**, in beide Richtungen:
     /// Alpha gibt sich durch seinen Vorschlag aus Runde 5 selbst zu

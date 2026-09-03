@@ -55,7 +55,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         bootstrap,
         rolle: Rolle::Teilnehmer,
         kettendatei: None,
-        genesisdatei: None,
+        stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
         nat: Default::default(),
         aufnahme_sekunden: 1,
@@ -63,6 +63,11 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // Testknoten nebeneinander laufen, und dieser Test prueft
         // ohnehin etwas anderes.
         beobachtung: None,
+        // Dieselbe Begruendung: ein fester Port kollidiert, sobald zwei
+        // Knoten nebeneinander laufen.
+        tuer: None,
+        ortsleitung: None,
+        ortsausweis: None,
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit
         // sichtbar bleibt, welche Nachricht wessen ist.
         testverkehr_sekunden: None,
@@ -348,4 +353,299 @@ async fn die_identitaet_ueberlebt_den_neustart() {
     );
 
     std::fs::remove_dir_all(&verz).ok();
+}
+
+/// ⚑ **Der Knoten frischt die Kontraktabschrift auf** (B6-3).
+///
+/// Die Abschrift selbst ist in `tuer.rs` geprüft. **Was hier geprüft
+/// wird, ist der Aufruf:** dass die Zustandsaufnahme ihn tut. Ohne
+/// diesen Test wäre die eine Zeile in `aufnahme` ungeprüft, und ihr
+/// Wegfall fiele nirgends auf.
+///
+/// ⚑ **Gefunden, weil die Gegenprobe nicht biss.** Der Aufruf war
+/// gebaut und von keinem Test erreicht: dieselbe Klasse, die diese
+/// Woche siebenmal aufgetreten ist.
+#[tokio::test]
+async fn die_zustandsaufnahme_frischt_die_kontraktabschrift_auf() {
+    use myl_types::ids::{Address, EpochId};
+    use myl_types::sitzung::{Grenzen, Sitzungskontrakt};
+
+    let verz = arbeitsverzeichnis("abschrift");
+    let mut alpha = Knoten::starten(konfig(&verz, "alpha", vec![]), false)
+        .await
+        .expect("Alpha startet");
+
+    let abschrift = alpha.kontraktabschrift();
+    assert_eq!(abschrift.anzahl(), 0, "vor der Aufnahme ist sie leer");
+
+    // Einen Kontrakt in die Kette des Knotens legen.
+    let kontrakt = Sitzungskontrakt {
+        inhaber: Address::new([1; 32]),
+        agent: Address::new([2; 32]),
+        credits: Grenzen::gesperrt(),
+        myl: Grenzen::gesperrt(),
+        empfaenger: Vec::new(),
+        gueltig_ab: EpochId(0),
+        gueltig_bis: EpochId(10),
+        max_schritte: 1,
+    };
+    let id = kontrakt.adresse();
+    alpha.kette_mut().zustand_mut().sitzungen.insert(
+        id,
+        myl_ledger::state::Sitzung {
+            kontrakt,
+            zustand: myl_types::sitzung::Sitzungszustand::neu(),
+        },
+    );
+
+    alpha.aufnahme().await;
+    assert_eq!(
+        abschrift.anzahl(),
+        1,
+        "die Aufnahme hat die Abschrift nicht aufgefrischt"
+    );
+
+    let _ = std::fs::remove_dir_all(&verz);
+}
+
+/// ⚑ **Ein Inferenzauftrag geht über das Netz und bekommt eine Antwort**
+/// (GATEWAY Stufe 4, erster Transportschnitt).
+///
+/// Bis zum 2026-09-03 gab es dafür keinen Weg: kein Gossip-Thema, kein
+/// Auftragstyp, und `myl-pod` kannte `myl-net` nicht. **Ein Pod bekam
+/// seine Arbeit von der Kommandozeile.**
+///
+/// **Die Antwort ist hier `Abgelehnt`, und das ist richtig so:** Der
+/// Empfänger beherbergt keinen Shard, denn ein Shard läuft nach der
+/// Entscheidung vom 2026-09-03 in einem **eigenen Prozess**. Was der
+/// Test belegt, ist der Weg, nicht das Rechnen.
+///
+/// ⚑ **Abgelehnt und nicht geschwiegen.** Der Fragende soll „hier
+/// rechnet niemand" von „nicht angekommen" unterscheiden können; ein
+/// Auftrag ohne Antwort läuft in eine Zeitüberschreitung, die nichts
+/// bedeutet.
+#[tokio::test]
+async fn ein_inferenzauftrag_geht_ueber_das_netz() {
+    use myl_types::ids::EpochId;
+    use myl_types::inferenzauftrag::{Inferenzantwort, Inferenzauftrag};
+    use myl_types::sitzung::Anfragebindung;
+
+    let verz = arbeitsverzeichnis("inferenz");
+    let mut alpha = Knoten::starten(konfig(&verz, "alpha", vec![]), false)
+        .await
+        .expect("Alpha startet");
+    let adresse = alpha
+        .warte_auf_adresse(Duration::from_secs(10))
+        .await
+        .expect("Alpha nennt eine Adresse");
+    let mut beta = Knoten::starten(
+        konfig(&verz, "beta", vec![adresse.to_string()]),
+        false,
+    )
+    .await
+    .expect("Beta startet");
+
+    // Auf die Verbindung warten, nicht auf die Uhr.
+    let alpha_id = alpha.peer_id();
+    let bis = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < bis && beta.peers().await == 0 {
+        beta.laufe_fuer(Duration::from_millis(200)).await;
+        alpha.laufe_fuer(Duration::from_millis(200)).await;
+    }
+    assert!(beta.peers().await > 0, "Beta hat Alpha nicht gefunden");
+
+    let auftrag = Inferenzauftrag {
+        sitzung: 42,
+        bindung: Anfragebindung::neu(42, b"was ist die hauptstadt von frankreich", EpochId(0)),
+        prompt_versiegelt: b"versiegelter prompt".to_vec(),
+        max_token: 64,
+        pipeline: myl_types::hash::Hash::sha256(b"probe-pipeline"),
+    };
+    assert!(
+        beta.inferenz_senden(alpha_id, auftrag).await,
+        "der Auftrag wurde nicht abgeschickt"
+    );
+
+    // Auf die Wirkung warten.
+    let bis = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < bis && beta.letzte_inferenzantwort().is_none() {
+        alpha.laufe_fuer(Duration::from_millis(200)).await;
+        beta.laufe_fuer(Duration::from_millis(200)).await;
+    }
+
+    match beta.letzte_inferenzantwort() {
+        Some(Inferenzantwort::Abgelehnt { sitzung }) => {
+            assert_eq!(*sitzung, 42, "die Ablehnung nennt eine fremde Sitzung");
+        }
+        andere => panic!("erwartet war eine Ablehnung, bekommen: {andere:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&verz);
+}
+
+/// ⚑ **Ein formwidriger Auftrag verlässt die Maschine gar nicht.**
+///
+/// Der Deckel steht **vor** der Leitung: Ein Auftrag, der ohnehin
+/// abgewiesen wird, soll sie nicht belasten. Der Empfänger prüft
+/// trotzdem noch einmal, denn er glaubt dem Absender nichts.
+#[tokio::test]
+async fn ein_formwidriger_auftrag_wird_nicht_gesendet() {
+    use myl_types::ids::EpochId;
+    use myl_types::inferenzauftrag::{Inferenzauftrag, MAX_NEUE_TOKEN};
+    use myl_types::sitzung::Anfragebindung;
+
+    let verz = arbeitsverzeichnis("formwidrig");
+    let mut alpha = Knoten::starten(konfig(&verz, "alpha", vec![]), false)
+        .await
+        .expect("Alpha startet");
+    let fremd = alpha.peer_id();
+
+    let schlecht = |max_token: u32, prompt: Vec<u8>| Inferenzauftrag {
+        sitzung: 1,
+        bindung: Anfragebindung::neu(1, b"frage", EpochId(0)),
+        prompt_versiegelt: prompt,
+        max_token,
+        pipeline: myl_types::hash::Hash::sha256(b"p"),
+    };
+
+    assert!(
+        !alpha.inferenz_senden(fremd, schlecht(0, b"x".to_vec())).await,
+        "ein Auftrag ueber null Token ging auf die Leitung"
+    );
+    assert!(
+        !alpha
+            .inferenz_senden(fremd, schlecht(MAX_NEUE_TOKEN + 1, b"x".to_vec()))
+            .await,
+        "ein Auftrag ueber zu viele Token ging auf die Leitung"
+    );
+    assert!(
+        !alpha.inferenz_senden(fremd, schlecht(8, Vec::new())).await,
+        "ein Auftrag ohne Prompt ging auf die Leitung"
+    );
+    // Gegenprobe: ein gueltiger geht raus, sonst prueft der Test nur,
+    // dass gar nichts gesendet wird.
+    assert!(
+        alpha.inferenz_senden(fremd, schlecht(8, b"x".to_vec())).await,
+        "auch der gueltige Auftrag ging nicht raus"
+    );
+
+    let _ = std::fs::remove_dir_all(&verz);
+}
+
+/// ⚑ **Die Wiederausfuhr der Leitungsgrenze zeigt noch auf dieselbe Zahl.**
+///
+/// Bis zum 2026-09-03 stand hier die Naht selbst: `MAX_PROMPT_BYTES` in
+/// `myl-types`, `MAX_ANFRAGE_BYTES` in `myl-net`, und nur dieser Test
+/// sah beide. **Seit Fund 155 wohnt die Grenze in `myl-types`**, und
+/// die Naht ist dort eine Zusicherung des Übersetzers.
+///
+/// Übrig bleibt eine Frage, die ein Test noch beantworten muss: Führt
+/// `myl_net::anfrage::MAX_ANFRAGE_BYTES` weiterhin auf dieselbe Zahl?
+/// **Eine Wiederausfuhr kann jederzeit wieder zu einer eigenen
+/// Konstante werden**, und dann liefen zwei Zahlen auseinander, ohne
+/// dass irgendwo etwas rot würde.
+///
+/// ⚑ **Und deshalb ist es kein Test, sondern eine Zusicherung des
+/// Übersetzers.** Beide Seiten sind Konstanten; ein `assert!` darüber
+/// liefe erst, wenn jemand die Testreihe fährt, und clippy sagt zu
+/// Recht, dass die Zusicherung einen festen Wert hat. Ein `const _`
+/// lässt sich nicht filtern und nicht vergessen.
+const _: () = assert!(
+    myl_net::anfrage::MAX_ANFRAGE_BYTES == myl_types::protocol::MAX_ANFRAGE_BYTES,
+    "myl-net fuehrt eine eigene Leitungsgrenze"
+);
+
+/// ⚑ **Eine Inferenzantwort hebt die laufende Blocknachforderung nicht auf.**
+///
+/// Beide gehen über dieselbe Anfrageschiene, und der Empfänger löscht
+/// beim Eintreffen einer Antwort zuerst `nachforderung_laeuft`, weil
+/// die erwartete Antwort die Blocklieferung ist. Träfe dazwischen eine
+/// Inferenzantwort ein, wäre die Nachforderung als erledigt gebucht,
+/// **obwohl die Blöcke noch unterwegs sind**: Der Knoten fragte
+/// dieselben Blöcke ein zweites Mal an, und der Nachbar lieferte sie
+/// ein zweites Mal.
+///
+/// Wer beides über eine Schiene schickt, muss beim Lesen wieder
+/// trennen. Genau diese Trennung steht hier auf dem Prüfstand.
+#[tokio::test]
+async fn eine_inferenzantwort_beendet_die_blocknachforderung_nicht() {
+    use borsh::BorshSerialize;
+    use myl_node::nachschub::Nachlieferung;
+    use myl_types::inferenzauftrag::Inferenzantwort;
+
+    let verz = arbeitsverzeichnis("aufholen");
+    let mut alpha = Knoten::starten(konfig(&verz, "alpha", vec![]), false)
+        .await
+        .expect("Alpha startet");
+    let mut beta = Knoten::starten(konfig(&verz, "beta", vec![]), false)
+        .await
+        .expect("Beta startet");
+    let alpha_id = alpha.peer_id();
+
+    // Alpha zieht davon. Beta bleibt bei null.
+    //
+    // `erzeuge_block` meldet, ob der Block **verbreitet** wurde, nicht
+    // ob er entstand: Ohne Mesh-Nachbarn ist das `false`, und die Kette
+    // waechst trotzdem. Deshalb steht die Zusicherung auf der Hoehe.
+    for _ in 0..5 {
+        alpha.erzeuge_block().await;
+    }
+    assert_eq!(alpha.kette_mut().hoehe(), 5, "Alpha ist nicht gewachsen");
+    let vorn = alpha
+        .kette_mut()
+        .bloecke_von_bis(5, 5)
+        .pop()
+        .expect("Alpha hat einen Block auf Hoehe 5");
+    let mut roh = Vec::new();
+    vorn.serialize(&mut roh).expect("der Block laesst sich schreiben");
+
+    // ⚑ **Beide Ausloeser durch dieselbe Tuer**, damit die Reihenfolge
+    // steht: Ueber echte Sockets waere das Aufholen laengst beendet,
+    // bevor der Test es ablesen koennte.
+    beta.ereignis_einspeisen(myl_net::NodeEvent::Message(myl_net::InboundMessage {
+        topic: myl_net::GossipTopic::Blocks,
+        data: roh,
+        von: alpha_id,
+    }));
+    beta.aufnahme().await;
+    assert!(
+        beta.beobachtungsstelle().holen().nachforderung_laeuft,
+        "ein Block aus der Ferne hat keine Nachforderung ausgeloest"
+    );
+
+    // Jetzt die Inferenzantwort **vor** der Blocklieferung.
+    let bytes = Nachlieferung::Inferenz(Inferenzantwort::Abgelehnt { sitzung: 7 })
+        .als_bytes()
+        .expect("die Antwort laesst sich schreiben");
+    beta.ereignis_einspeisen(myl_net::NodeEvent::AntwortEingegangen {
+        von: alpha_id,
+        daten: bytes,
+    });
+    assert_eq!(
+        beta.letzte_inferenzantwort(),
+        Some(&Inferenzantwort::Abgelehnt { sitzung: 7 }),
+        "die Inferenzantwort kam gar nicht an"
+    );
+    beta.aufnahme().await;
+    assert!(
+        beta.beobachtungsstelle().holen().nachforderung_laeuft,
+        "die Inferenzantwort hat die laufende Blocknachforderung geloescht"
+    );
+
+    // Gegenprobe: Eine **Blocklieferung** beendet sie sehr wohl, sonst
+    // prueft der Test nur, dass das Feld nie zurueckgesetzt wird.
+    let lieferung = Nachlieferung::Bloecke(Vec::new())
+        .als_bytes()
+        .expect("die Lieferung laesst sich schreiben");
+    beta.ereignis_einspeisen(myl_net::NodeEvent::AntwortEingegangen {
+        von: alpha_id,
+        daten: lieferung,
+    });
+    beta.aufnahme().await;
+    assert!(
+        !beta.beobachtungsstelle().holen().nachforderung_laeuft,
+        "eine Blocklieferung hat die Nachforderung nicht beendet"
+    );
+
+    let _ = std::fs::remove_dir_all(&verz);
 }

@@ -116,3 +116,17 @@ path = "fuzz_targets/spurantwort.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "inferenzauftrag"
+path = "fuzz_targets/inferenzauftrag.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inferenzantwort"
+path = "fuzz_targets/inferenzantwort.rs"
+test = false
+doc = false
+bench = false

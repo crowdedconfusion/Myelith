@@ -1,7 +1,7 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.29.0
-> **Datum:** 2026-08-31
+> **Version:** 0.34.0
+> **Datum:** 2026-09-03
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
 > mit Aggregation **und Proof-of-Possession**, **Erasure-Codierung über
@@ -50,6 +50,131 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.34.0 – 2026-09-03 (die Vollmacht wohnt jetzt hier, und ein Riegel gegen die zweite Abbuchung)
+
+**`vollmacht` ist aus `myl-gateway` hierher gezogen.** Die Kette muss
+sie prüfen können, um eine gerechnete Anfrage abzubuchen, und
+`myl-ledger` darf `myl-gateway` nicht kennen. Dieselbe Begründung wie
+bei `poi_botschaft` und `ortsleitung`: ein Typ, den beide Seiten
+brauchen, gehört dorthin, wo beide hinsehen. Die Wiederausfuhr in
+`myl-gateway` bleibt, kein Aufrufer bricht.
+
+⚑ **`Vorhaben` trägt jetzt eine `nummer`.** Der Transaktionsnonce
+schützt nur vor der Wiederholung *derselben* Transaktion; wer dasselbe
+Vorhaben mit neuem Nonce ein zweites Mal einreicht, bucht ein zweites
+Mal ab. Solange nur der Agent selbst einreichen konnte, schadete das
+ihm selbst. **Seit die Kette eine Vollmacht als Autorisierung
+anerkennt, reicht ein Fremder ein**, und dann ist es ein Angriff auf
+das Budget des Nutzers. Die Nummer muss echt über die zuletzt
+gebuchte steigen (`Sitzungszustand::hoechste_abrechnung`), geprüft
+noch vor jeder anderen Grenze in `pruefe`.
+
+### v0.33.0 – 2026-09-03 (die Antwort zählt ihre Prompt-Token selbst)
+
+`Inferenzantwort::Ergebnis` trägt `prompt_token`, angehängt und nicht
+eingefügt. ⚑ **Gezählt vom Rechnenden, weil nur er zählen kann**, und
+das ist Fund 160: Die Tür gab bis heute die **Byte-Länge** des Prompts
+als `usage.prompt_tokens` aus, und das ist ein Feld mit festgelegter
+Bedeutung, mit dem ein Klient Kosten rechnet.
+
+### v0.32.0 – 2026-09-03 (die Leitungsgrenze zieht ein, und die Antwort trägt Text)
+
+⚑ **`protocol::MAX_ANFRAGE_BYTES` wohnt jetzt hier** (Fund 155). Drei
+Kisten leiten Grenzen daraus ab: der Transport (`myl_net::anfrage`), der
+vertrauliche Kanal (`myl_siegel`, der Kopf, Tag und Längenpräfix
+abzieht) und der Auftragstyp. **Der Sitzungskanal musste dafür bis heute
+libp2p mitbauen**, und das war der Pfeil, der den falschen Kistenschnitt
+sichtbar gemacht hat. `myl-net` reicht sie weiter.
+
+**Und damit ist ein Test zu einer Zusicherung geworden.** Dass der
+Promptdeckel mit Rahmen in die Leitungsgrenze passt, stand heute Morgen
+noch als Test in `myl-node`, weil nur dort beide Zahlen sichtbar waren.
+Jetzt ist es ein `const _`: **nicht zu übersehen, nicht zu filtern und
+nicht zu vergessen.**
+
+**`Inferenzantwort::Ergebnis` trägt den Text**, angehängt und nicht
+eingefügt. ⚑ **Gerendert vom Rechnenden, weil nur er es kann:** Der
+Wortschatz liegt bei den Artefakten. **Und deshalb ist der Text eine
+Auskunft und kein Beweis**, bezeugt und nachgerechnet werden die Token.
+
+**`ortsleitung` bekommt `Gegenstelle`**, angehängt: Wer für einen Shard
+versiegeln will, muss seinen Kapselpunkt kennen, sonst bildet der Shard
+seinen Empfangsschlüssel gar nicht. ⚑ **Rohe Bytes und keine
+Siegeltypen**, denn sonst hinge die Vokabelkiste an ML-KEM, und das
+bauen dann alle zwanzig Kisten.
+
+### v0.31.0 – 2026-09-03 (das Protokoll der lokalen Leitung)
+
+**`ortsleitung`: der Rahmen zwischen Knoten und Shard-Prozess.** Er
+gehört hierher, weil ihn **beide** brauchen und die beiden Kisten
+einander nicht kennen sollen: `myl-pod` zieht die Ganzzahl-Laufzeit
+nach, `myl-node` zieht libp2p nach, und keine will die Last der anderen.
+Dieselbe Begründung wie bei `poi_botschaft` (Fund 144) und
+`inferenzauftrag`.
+
+⚑ **Zwei Kopien des Rahmens wären zwei Quellen für dieselbe Aussage.**
+Ein Byte Unterschied, und die Leitung schweigt, ohne dass eine Seite
+sagen könnte, warum.
+
+⚑ **Eine schleifenlokale Tür ist eine Tür.** Jeder lokale Prozess kann
+wählen, also braucht sie einen Ausweis: eine Schlüsseldatei nach dem
+Vorbild von Bitcoin Cores `.cookie`, beim Start frisch, unter Unix mit
+`0600`, verglichen in gleichbleibender Zeit. Wer die Datei lesen kann,
+darf fragen; das ist genau der Kreis, den das Dateisystem ohnehin zieht.
+
+**Der Unix-Socket wäre stärker gewesen**, weil dort das Betriebssystem
+die Rechte erzwingt. Er fiel aus, weil `windows-latest` in der
+CI-Matrix steht.
+
+⚑ **Der Ausweis steht vor der Länge, und die Länge vor der Nutzlast.**
+Ein Fremder bringt den Empfänger nicht dazu, Speicher zu belegen;
+stünde die Länge vorn, wäre die Prüfung selbst der Angriff.
+
+**Neun Tests, fünf Gegenproben je Zeile.**
+
+### v0.30.0 – 2026-09-03 (der Auftrag an einen Pod bekommt einen Typ)
+
+⚑ **`inferenzauftrag`, neu, und bis heute gab es ihn nicht.** Ein Pod
+bekam seine Arbeit von der Kommandozeile: `myl-pod-node --prompt
+"<text>"`. Kein Gossip-Thema für Anfragen, `myl-pod` kannte `myl-net`
+nicht, `myl-node` kannte `myl-pod` nicht. **Es gab keinen Weg, einem Pod
+über das Netz etwas zu geben**, auf keiner der beiden Seiten, und damit
+führte auch die fertige Tür des Gateways nirgendwohin.
+
+**Der Typ steht hier, weil ihn beide Seiten brauchen** und die beiden
+Kisten einander nicht kennen sollen. Dieselbe Begründung wie bei
+`poi_botschaft` (Fund 144).
+
+⚑ **Die Bindung geht mit, und ohne sie wäre der Auftrag wertlos.**
+`Anfragebindung` bindet Sitzung, Prompt und Epoche. Ohne sie rechnete
+ein Pod etwas, und niemand könnte später zeigen, dass genau diese
+Anfrage es ausgelöst hat.
+
+⚑ **Der Prompt ist versiegelt, die Bindung bindet den Klartext, und das
+ist kein Widerspruch.** Der Koordinator entsiegelt und **kann die
+Bindung dann selbst prüfen**: Sie passt zu dem, was er in Händen hält.
+Der Weg trägt keinen Klartext, und der Empfänger kann trotzdem
+feststellen, ob er bekommen hat, was der Auftrag behauptet.
+
+**Zwei Deckel, beide vor der Arbeit:** `max_token` und die Promptlänge.
+Ohne sie bestimmt der Anfragende, wie lange ein Pod rechnet, und das ist
+dieselbe Klasse wie Fund 141. `pruefe_form` ist ausdrücklich **vor dem
+Entsiegeln** zu rufen; ein Auftrag, der die Deckel verletzt, soll keine
+Entsiegelung kosten.
+
+⚑ **Der Pipeline-Stand gehört in den Auftrag.** Ohne ihn rechnete ein
+Pod mit dem Stand, den er zufällig geladen hat, und zwei Pods derselben
+Redundanzpaarung könnten **verschiedene Modelle** rechnen: Dann
+verglichen sie zwei richtige Ergebnisse und meldeten einen Streit.
+
+**Die Antwort kennt zwei Fälle**, und `Abgelehnt` trägt keinen Grund:
+Ein Pod, der begründet, warum er nicht rechnet, verrät seine Auslastung.
+Aber er antwortet, denn Schweigen liesse den Fragenden auf eine
+Zeitüberschreitung warten, die nichts bedeutet.
+
+**Beide Typen gehen über die Leitung, also unter dasselbe Prädikat wie
+alles andere:** zwei neue Fuzz-Ziele, damit neunzehn.
 
 ### v0.29.0 – 2026-09-02 (die Signierbotschaft zieht zu ihrem Typ)
 

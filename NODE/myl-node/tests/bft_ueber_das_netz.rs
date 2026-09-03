@@ -20,7 +20,7 @@
 //!
 //! # ⚑ Warum fünf und nicht vier
 //!
-//! Die Ein-Drittel-Schranke der Genesis-Datei verlangt **mindestens
+//! Die Ein-Drittel-Schranke der Stimmsatzdatei verlangt **mindestens
 //! vier** Validatoren: Drei Werte unter je einem Drittel ergeben nie
 //! ihre eigene Summe.
 //!
@@ -39,7 +39,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use myl_node::genesis::Genesis;
+use myl_node::stimmsatzdatei::Stimmsatzdatei;
 use myl_node::konfig::{KnotenKonfig, Rolle};
 use myl_node::schluessel::Konsensschluessel;
 use myl_node::Knoten;
@@ -68,7 +68,7 @@ fn timeouts() -> TimeoutConfig {
 /// `⌊2·900/3⌋ + 1` = 600 000 001. Drei Köpfe liegen je nach Auswahl
 /// darunter (200+120+100 = 420), genau darauf (250+230+120 = 600) oder
 /// darüber (250+230+200 = 680). Die Begründung steht in
-/// `genesis.rs::die_verteilung_legt_drei_grenzfaelle_aus`.
+/// `stimmsatzdatei.rs::die_verteilung_legt_drei_grenzfaelle_aus`.
 const TEILNEHMER: [(&str, u64); 5] = [
     ("alpha", 250_000_000),
     ("beta", 230_000_000),
@@ -90,14 +90,14 @@ fn arbeitsverzeichnis(marke: &str) -> PathBuf {
     p
 }
 
-fn genesis() -> Genesis {
+fn stimmsatz() -> Stimmsatzdatei {
     let mut text = String::from("netz myelith-probenetz-1\n");
     for (name, stake) in TEILNEHMER {
         let k = Konsensschluessel::probe(name).expect("Probeschlüssel");
-        text.push_str(&k.genesiszeile(stake).expect("Genesiszeile"));
+        text.push_str(&k.genesiszeile(stake).expect("Stimmsatzdateizeile"));
         text.push('\n');
     }
-    Genesis::aus_text(&text).expect("Genesis muss lesbar sein")
+    Stimmsatzdatei::aus_text(&text).expect("Stimmsatzdatei muss lesbar sein")
 }
 
 fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> KnotenKonfig {
@@ -109,7 +109,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         bootstrap,
         rolle: Rolle::Teilnehmer,
         kettendatei: None,
-        genesisdatei: None,
+        stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
         nat: Default::default(),
         aufnahme_sekunden: 1,
@@ -117,6 +117,11 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         // Testknoten nebeneinander laufen, und dieser Test prueft
         // ohnehin etwas anderes.
         beobachtung: None,
+        // Dieselbe Begruendung: ein fester Port kollidiert, sobald zwei
+        // Knoten nebeneinander laufen.
+        tuer: None,
+        ortsleitung: None,
+        ortsausweis: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: false,
         teilnehmer: TEILNEHMER.iter().map(|(n, _)| n.to_string()).collect(),
@@ -191,7 +196,7 @@ async fn starte_netz(verzeichnis: &std::path::Path) -> Vec<Knoten> {
 #[tokio::test]
 async fn fuenf_knoten_commiten_denselben_block() {
     let verzeichnis = arbeitsverzeichnis("commit");
-    let g = genesis();
+    let g = stimmsatz();
     let mut knoten = starte_netz(&verzeichnis).await;
 
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
@@ -267,7 +272,7 @@ async fn fuenf_knoten_commiten_denselben_block() {
 #[tokio::test]
 async fn jeder_knoten_zaehlt_auch_sein_eigenes_gewicht() {
     let verzeichnis = arbeitsverzeichnis("eigengewicht");
-    let g = genesis();
+    let g = stimmsatz();
     let gesamt = g.gesamtstake();
     let mut knoten = starte_netz(&verzeichnis).await;
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
@@ -311,7 +316,7 @@ async fn jeder_knoten_zaehlt_auch_sein_eigenes_gewicht() {
 #[tokio::test]
 async fn das_protokoll_traegt_gewicht_und_schwelle() {
     let verzeichnis = arbeitsverzeichnis("protokoll");
-    let g = genesis();
+    let g = stimmsatz();
     let mut knoten = starte_netz(&verzeichnis).await;
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
     assert!(mesh.iter().all(|n| *n >= 1), "kein Mesh: {mesh:?}");
@@ -383,7 +388,7 @@ async fn das_protokoll_traegt_gewicht_und_schwelle() {
 #[tokio::test]
 async fn ein_vorzeitiger_propose_geht_nicht_verloren() {
     let verzeichnis = arbeitsverzeichnis("vorlauf");
-    let g = genesis();
+    let g = stimmsatz();
     let mut knoten = starte_netz(&verzeichnis).await;
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
     assert!(mesh.iter().all(|n| *n >= 1), "kein Mesh: {mesh:?}");
@@ -468,7 +473,7 @@ async fn ein_vorzeitiger_propose_geht_nicht_verloren() {
 #[tokio::test]
 async fn keine_protokollzeile_hat_einen_schluessel_zweimal() {
     let verzeichnis = arbeitsverzeichnis("schluessel");
-    let g = genesis();
+    let g = stimmsatz();
     let mut knoten = starte_netz(&verzeichnis).await;
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
     assert!(mesh.iter().all(|n| *n >= 1), "kein Mesh: {mesh:?}");
@@ -545,7 +550,7 @@ async fn keine_protokollzeile_hat_einen_schluessel_zweimal() {
 #[tokio::test]
 async fn ein_ausgefallener_leader_haelt_das_netz_nicht_auf() {
     let verzeichnis = arbeitsverzeichnis("ausfall");
-    let g = genesis();
+    let g = stimmsatz();
     let mut knoten = starte_netz(&verzeichnis).await;
     let mesh = warte_auf_mesh(&mut knoten, Duration::from_secs(20)).await;
     assert!(mesh.iter().all(|n| *n >= 1), "kein Mesh: {mesh:?}");

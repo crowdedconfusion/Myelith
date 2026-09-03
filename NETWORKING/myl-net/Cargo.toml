@@ -1,6 +1,6 @@
 [package]
 name = "myl-net"
-version = "0.14.1"
+version = "0.16.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -21,6 +21,10 @@ hkdf = "0.12"
 ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 libp2p = { version = "0.56", features = ["tokio", "gossipsub", "kad", "noise", "tcp", "quic", "yamux", "identify", "ping", "macros", "autonat", "relay", "dcutr", "request-response"] }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# Der vertrauliche Sitzungskanal, seit dem 2026-09-03 eine eigene Kiste
+# (Fund 155). Bleibt hier als Abhaengigkeit, weil `lib.rs` ihn
+# weiterreicht: `myl_net::sitzung` soll gueltig bleiben.
+myl-siegel = { path = "../myl-siegel" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }

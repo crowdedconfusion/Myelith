@@ -49,7 +49,16 @@
 
 pub mod annahme;
 pub mod http;
+pub mod oai;
+pub mod takt;
 pub mod tuer;
+// ⚑ **Die Vollmacht wohnt seit dem 2026-09-03 in `myl-types`**, weil die
+// Kette sie prüfen muss: Ein Harness hält einen Bearer und keinen
+// Schlüssel, also kann nur die Vollmacht eine Abbuchung autorisieren,
+// und `myl-ledger` darf diese Kiste nicht kennen. Die Wiederausfuhr
+// bleibt, damit kein Aufrufer bricht.
+pub use myl_types::vollmacht;
+pub mod zugang;
 
 pub use annahme::{Annahme, Beleg, Annahmefehler};
 pub use http::{antwort, kopf_lesen, Httpfehler, Kopf, MAX_KOPF, MAX_RUMPF};

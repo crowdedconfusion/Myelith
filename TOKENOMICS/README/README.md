@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.16.0
+> **Version:** 0.18.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,73 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.18.0 – 2026-09-03 (die Genesis-Verteilung verlässt das Repositorium)
+
+`genesis.rs` ist entfernt. Sie war gebaut, geprüft und hatte **keinen
+Aufrufer**; entfernt wurde sie nicht wegen Mängeln, sondern weil sie
+**genau einmal laufen darf** und ihr Lauf unumkehrbar ist. Der Startwert
+der Kette geht in jede Transaktionssignatur ein, und wer am Block 0 was
+hält, lässt sich nie korrigieren.
+
+**Was von der Konstruktion bleibt, weil es die Zusage trägt**, steht
+weiter im Abschnitt zu Kap. 5.7: „Kein Vorverkauf" war nicht durch eine
+Prüfung durchgesetzt, sondern durch die **Form der Funktion**.
+
+### v0.17.1 – 2026-09-03 (⚑ Fund 162: die Shardzahl ist jetzt gebunden)
+
+Die Shardzahl der Pipeline und die der Gewichtsableitung standen beide
+auf vier, und **nichts im Code hielt sie zusammen**. Eine Abweichung
+hätte stumm dazu geführt, dass ein Pod für seine Arbeit nichts bekommt.
+Zwei `const`-Zusicherungen binden sie jetzt.
+
+⚑ **Der erste Anlauf war Zierde**, und die Gegenprobe fing ihn: Ein
+assoziiertes `const` im `impl`-Block wird erst berechnet, wenn es
+jemand benutzt. Auf Modulebene verschoben, beisst es.
+
+### v0.17.0 – 2026-09-03 (⚑ Fund 161: die Arbeitsverteilung wird gerechnet, nicht gesetzt)
+
+**Der Projektinhaber fragte, ob das Schreiben der Blöcke nach der
+Erzeugung von PoI-Bündeln schon simuliert ist.** Beim Nachsehen stand
+die Mechanik: `buendel_einreichen` prüft Miner, Epoche, Dublette,
+Koordinator und BLS-Aggregat, alles gebaut und getestet. **Aber die
+Epochen-Ausschüttung, die auf ein Bündel folgt, war strukturell tot.**
+
+⚑ **`Arbeitsverteilung`, die Gewichte, aus denen sich die gesamte
+Zuschreibung ergibt, hatte keine `Anweisung`-Variante.** Neun
+Varianten im Enum, keine davon setzte sie. Die einzige Methode,
+`Kette::arbeitsverteilung_setzen`, mutierte den Zustand **direkt**,
+ausserhalb jeder Blockanwendung. Der Kommentar daneben wusste sogar,
+dass eine `Anweisung` gefährlich wäre („sie stünde jedem Absender
+offen"), aber nicht, dass auch die „dem Betreiber vorbehaltene" Variante
+nicht funktioniert: **Auf einem echten Knoten gerufen, hätte sie dessen
+Zustandswurzel sofort von jeder anderen getrennt**, weil sie nicht aus
+den Blöcken folgt, die jeder Knoten gleichermassen sieht. Ohne sie blieb
+`zuschreibung_der_epoche` immer leer, und ein Bündel im Zustand wurde
+beim Epochenabschluss verworfen, ohne dass je etwas geprägt wurde.
+
+**Die Lösung ist, nichts zu setzen.**
+[`vtfe::arbeitsverteilung_probe`] rechnet die Gewichte aus dem
+Modellprofil der Probepipeline (Qwen2.5-0,5B, abgeschrieben aus
+`INTEGER_LLM/artifacts/qwen2.5-0.5b/model_config.json`) und demselben
+Shard-Zuschnitt, den `myl_pod::pipelinewerk` schon fährt. **Zwei
+Knoten, die dieselbe Formel rechnen, kommen auf dieselbe Zahl**; ein
+Wert, der übertragen werden müsste, kann auseinanderlaufen.
+
+⚑ **Gegen die vTFE-Formel selbst geprüft, nicht gegen eine zweite
+eigene Rechnung.** `zuschreiben_aus_abrechnung(&arbeitsverteilung_probe(), ...)`
+und `vtfe_gutschrift` runden unabhängig voneinander (Position für sich
+vs. Rest in Reihenfolge verteilt) und weichen deshalb um höchstens eine
+Einheit je Position voneinander ab, nie mehr.
+
+**Was das nicht leistet:** Die Funktion kennt ein Modell. `PoIBundle`
+trägt heute keinen Pipeline-Stand; für ein Netz mit mehreren
+Architekturen bräuchte es eine echte Zuordnung, wer welches Modell
+gerechnet hat. Für die Probekette mit einem Modell stellt sich die
+Frage nicht.
+
+**Fünf Tests, gegen die reale vTFE-Formel und nicht gegen erdachte
+Zahlen.**
 
 ### v0.16.0 – 2026-09-02 (der Speichersatz bekommt eine Zahl und einen Boden)
 
@@ -481,19 +548,29 @@ Teilnehmers und ist es nicht. Dasselbe gilt für den Faktor der
 Trainings-Stichprobenrate, den Kap. 5.5 ebenfalls nicht beziffert. Beides
 ist ein offener Punkt.
 
-#### Wie „kein Vorverkauf" durchgesetzt wird
+#### ⚑ Die Genesis-Verteilung liegt seit dem 2026-09-03 nicht mehr hier
 
-Nicht durch eine Prüfung, sondern durch die **Form der Funktion**:
-`genesis_verteilung` nimmt Arbeitsnachweise und sonst nichts. Kein Parameter
-für Sonderzuteilungen, keine Liste von Ausnahmen, kein Rest, über den jemand
-verfügen könnte. Wer eine Zuteilung außerhalb der Arbeit unterbringen
-wollte, müsste die Signatur ändern, und das fällt in einem Diff auf. Eine
-Prüfung wäre die schwächere Lösung: Sie ließe den Weg offen und stellte sich
-davor.
+Sie war gebaut und geprüft und hatte **keinen Aufrufer**. Entfernt wurde
+sie nicht wegen Mängeln, sondern weil sie **genau einmal laufen darf**
+und ihr Lauf unumkehrbar ist: Der Startwert der Kette geht in jede
+Transaktionssignatur ein, und wer am Block 0 was hält, lässt sich nie
+korrigieren. Code, der das tut, gehört nicht in einen Baum, in dem ein
+späterer Leser ihn für benutzbar hält.
 
-Ergänzend lehnt die Funktion eine Menge **ohne jeden Arbeitsnachweis** ab.
-Sonst fiele sie vollständig ans Treasury, und das wäre genau die Zuteilung
-außerhalb der Arbeit, die Kap. 5.7 ausschließt.
+**Was von der Konstruktion bleibt, weil es die Zusage trägt:**
+Durchgesetzt wurde „kein Vorverkauf" nicht durch eine Prüfung, sondern
+durch die **Form der Funktion**: Sie nahm Arbeitsnachweise und sonst
+nichts, kein Parameter für Sonderzuteilungen, keine Ausnahmeliste, kein
+Rest, über den jemand verfügen könnte. Wer eine Zuteilung außerhalb der
+Arbeit hätte unterbringen wollen, hätte die Signatur ändern müssen, und
+das fällt in einem Diff auf. Eine Prüfung wäre die schwächere Lösung
+gewesen: Sie ließe den Weg offen und stellte sich davor. Ergänzend lehnte
+sie eine Menge **ohne jeden Arbeitsnachweis** ab, weil sie sonst
+vollständig ans Treasury fiele.
+
+**Wann und unter welchen Bedingungen sie wieder gebaut wird**, ist
+festgelegt und an fünf Voraussetzungen gebunden, darunter eine
+**externe** Nachrechnung der Verteilung.
 
 #### ⚑ Ein Widerspruch, der beim Lesen von Kap. 5.7 auffiel
 

@@ -1,6 +1,6 @@
-# networking (`myl-net`)
+# networking (`myl-net`, `myl-siegel`)
 
-> **Version:** 0.14.1
+> **Version:** 0.16.0
 > **Datum:** 2026-09-01
 > **Status:** **Phase 1 und 2 abgeschlossen** (1.1–1.6, 2.1–2.3),
 > **Phase 3 umgesetzt** (3.1–3.4, Abschluss unter Reviewvorbehalt), dazu Punkt 4.2 (Fuzzing der Wire-Protocol-Parser), Punkt 4.3
@@ -108,6 +108,52 @@ NETWORKING/
 ```
 
 ## Changelog
+
+### v0.16.0 – 2026-09-03 (⚑ Fund 159: der Umschlag passte nicht durch den Kanal)
+
+**`MAX_KLARTEXT_BYTES` zog den Kapselvorspann nicht ab.** Die Herleitung
+stammte aus der Zeit vor dem hybriden Austausch; seit dem KEM-Zweig geht
+jede versiegelte Nachricht im Umschlag, und der ist 1 192 Byte länger.
+Der grösste erlaubte Klartext ergab damit **4 195 496 Byte gegen eine
+Grenze von 4 194 304**.
+
+⚑ **Gefunden hat es kein Test, sondern eine Simulation**
+(`umschlag_sim.py`). Jeder Test sah einen Umschlag, der aufgeht; keiner
+sah den grössten. Berichtigt als Übersetzungszusicherung, mit einer
+Gegenprobe darauf, dass ein Byte mehr nicht passt.
+
+**Und die Zahl im Kommentar war falsch:** Der Vorspann ist 1 324 Byte
+und nicht 1 088. Bei einer gewöhnlichen Chatanfrage von 300 Byte sind
+das **81,5 Prozent Verpackung**.
+
+### v0.15.0 – 2026-09-03 (der Sitzungskanal zieht aus, B6-4)
+
+**`sitzung.rs` ist jetzt die eigene Kiste `myl-siegel`.** 2428 Zeilen
+hybrider Schlüsselaustausch, X25519 und ML-KEM-768, ChaCha20-Poly1305.
+
+⚑ **Der Anlass war Fund 155: Sie hatte keinen Aufrufer.** Alle 21
+Fundstellen von `sitzung::` im Baum waren `myl_types::sitzung`, also der
+Kontrakt; innerhalb dieser Kiste benutzte sie keine andere Datei, und
+`lib.rs` reichte sie nur weiter. **Aufgefallen ist es, als GATEWAY
+Stufe 4 sie brauchte:** Der Shard-Prozess muss entsiegeln, hängt aber
+nicht am Netz.
+
+**Gemessen statt geschätzt:** Über `myl-net` hätte `myl-pod` **181
+zusätzliche Kisten** gebaut, über `myl-siegel` sind es **21**.
+
+⚑ **Die Wiederausfuhr bleibt:** `myl_net::sitzung` und alle Namen aus
+`lib.rs` tragen weiter. Ein Umzug soll keinen Aufrufer kosten.
+
+**Der Integrationstest bleibt hier**, und das ist die Nahtregel: Er
+fährt das Siegel **über das echte Netz**, und nur diese Kiste sieht
+beide. Die Einheitstests des Kanals sind mitgegangen.
+
+⚑ **Und eine Behauptung ist zu einer Prüfung geworden.**
+`MAX_ANFRAGE_BYTES` wohnt jetzt in `myl-types`, weil drei Kisten Grenzen
+daraus ableiten; die Gleichziehung mit `MAX_GOSSIP_MESSAGE_BYTES` stand
+seit dem 2026-08-12 als Satz im Kommentar und ist seit heute eine
+Übersetzungszusicherung. **Ein Satz, den kein Code liest, hält keine
+zwei Zahlen zusammen.**
 
 ### v0.14.1 – 2026-09-02 (⛑ ein Test, der nur auf einer ruhigen Maschine bestand)
 

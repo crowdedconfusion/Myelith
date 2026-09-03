@@ -43,6 +43,26 @@ pub const VRF_ALGO_ECVRF_CURVE25519: u8 = 0;
 /// Versionsnummern.
 pub const SIG_ALGO_BLS12_381: u8 = 0;
 
+/// Größengrenze einer einzelnen Nachricht auf der Leitung, in Bytes.
+///
+/// Gilt für Anfrage **und** Antwort des Anfragekanals und ist mit der
+/// Gossip-Grenze gleichgezogen: Was über Gossip passt, muss auch über
+/// eine Nachfrage passen, sonst wäre eine Nachricht verbreitbar, aber
+/// nicht nachforderbar.
+///
+/// ⚑ **Steht seit dem 2026-09-03 hier und nicht mehr in `myl-net`**
+/// (Fund 155). Drei Kisten leiten Grenzen daraus ab: der Transport
+/// (`myl_net::anfrage`), der vertrauliche Kanal (`myl_siegel`, der vom
+/// Budget Kopf, Tag und Längenpräfix abzieht) und der Auftragstyp
+/// (`crate::inferenzauftrag`). **Der Sitzungskanal musste dafür bis
+/// dahin libp2p mitbauen**, und das war der Pfeil, der den falschen
+/// Kistenschnitt sichtbar gemacht hat.
+///
+/// Ohne diese Grenze liesse sich ein Knoten mit einer einzigen Anfrage
+/// zum Senden beliebiger Datenmengen bewegen: wenig Aufwand beim
+/// Angreifer, viel beim Opfer.
+pub const MAX_ANFRAGE_BYTES: usize = 4 * 1024 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;

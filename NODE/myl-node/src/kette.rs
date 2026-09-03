@@ -76,7 +76,8 @@ use myl_consensus::block::{epoche_fuer_hoehe, Anweisung, Block, BlockHeader, Tra
 use myl_ledger::state::LedgerState;
 use myl_ledger::transitions::{
     burn_to_credits, nonce_verbrauchen, sitzung_ausgeben, sitzung_eroeffnen, sitzung_widerrufen,
-    transfer, miner_abmelden, miner_anmelden, buendel_einreichen, buendel_leeren, angemeldete_miner, buendel_der_epoche};
+    transfer, miner_abmelden, miner_anmelden, buendel_einreichen, buendel_leeren, angemeldete_miner, buendel_der_epoche,
+    einsatz_hinterlegen, einsatz_kuendigen, einsatz_abholen};
 use myl_types::hash::Hash;
 use myl_types::ids::{Address, EpochId};
 
@@ -355,6 +356,22 @@ pub struct Kette {
     lesefehler: u64,
 }
 
+/// ⚑ **Dieselbe Bindung wie in `myl_pod::pipelinewerk`** (seit
+/// 2026-09-03): Der Zuschnitt, gegen den die Kette Pods bildet, und die
+/// Gewichte, nach denen sie auszahlt, müssen dieselbe Zahl von
+/// Positionen kennen. Eine Abweichung zahlte nichts aus, ohne einen
+/// Fehler zu melden.
+///
+/// ⚑ **Auf Modulebene und nicht im `impl`-Block**, und das ist der
+/// Unterschied zwischen Prüfung und Zierde: Ein assoziiertes `const`
+/// wird erst berechnet, wenn es jemand benutzt. Der erste Anlauf stand
+/// im `impl`, und die Gegenprobe zeigte, dass er bei einer Abweichung
+/// **nicht** ausgelöst hätte.
+const _: () = assert!(
+    Kette::PROBE_SHARDS as u64 == myl_tokenomics::vtfe::PROBE_SHARDS,
+    "Shardzahl der Kette und der Gewichtsableitung sind auseinandergelaufen"
+);
+
 impl Kette {
     /// Eine frische Probekette.
     ///
@@ -405,7 +422,15 @@ impl Kette {
     /// Startwert wird abgewiesen, statt eine fremde Historie als eigene
     /// auszugeben.
     pub fn startwert() -> Hash {
-        Hash::sha256(b"myelith-testkette-genesis")
+        // ⚑ **Aus [`PROBE_STARTWERT`], nicht aus einem eigenen Literal**
+        // (Fund 163, 2026-09-03). Bis dahin stand hier
+        // `sha256(b"myelith-testkette-genesis")`, und `PROBE_STARTWERT`
+        // wurde **nur in Kommentaren erwähnt**: Der Doc-Kommentar
+        // erklärte ihn zum „Riegel gegen eine Verwechslung mit dem
+        // echten Netz" und schloss mit „Der Text sagt es auch dem, der
+        // die Bytes anschaut". Nur sagte der wirklich benutzte Text
+        // genau das nicht.
+        Hash::sha256(PROBE_STARTWERT)
     }
 
     /// Hängt ein Blockprotokoll an diese Kette.
@@ -640,25 +665,20 @@ impl Kette {
         }
     }
 
-    /// Setzt die Arbeitsverteilung der Pod-Positionen.
-    ///
-    /// # ⚑ Kein Weg über eine Transaktion, und das ist Absicht
-    ///
-    /// Die Gewichte sind ein **Governance-Gegenstand**: Sie folgen aus
-    /// dem Pipeline-Stand, und wer sie setzen darf, entscheidet eine
-    /// Abstimmung. Der Draht von einem angenommenen Beschluss hierher
-    /// fehlt, wie bei der Belastung der Treasury.
-    ///
-    /// **Solange er fehlt, gibt es keine Anweisung dafür.** Eine wäre
-    /// schlimmer als keine: Sie stünde jedem Absender offen, und wer die
-    /// Gewichte setzt, setzt die Verteilung des Ertrags. Dieser Weg ist
-    /// dem Betreiber des Knotens vorbehalten und niemandem sonst.
-    pub fn arbeitsverteilung_setzen(
-        &mut self,
-        verteilung: myl_types::arbeitsverteilung::Arbeitsverteilung,
-    ) -> Result<(), myl_ledger::transitions::TransitionError> {
-        myl_ledger::transitions::arbeitsverteilung_setzen(&mut self.zustand, verteilung)
-    }
+    // ⚑ **`arbeitsverteilung_setzen` ist am 2026-09-03 entfernt worden**
+    // (Fund 161). Der Kommentar hier sagte es fast richtig: „Eine
+    // Anweisung wäre schlimmer als keine, sie stünde jedem Absender
+    // offen." **Was er nicht sagte:** Auch als „dem Betreiber
+    // vorbehalten" war es keine Blockanwendung, sondern eine direkte
+    // Mutation des Zustands ausserhalb jeder Wiederherstellung aus
+    // Blöcken. Auf einem echten Knoten gerufen, hätte sie dessen
+    // Zustandswurzel sofort von jeder anderen getrennt, unabhängig
+    // davon, wer sie rufen durfte.
+    //
+    // **Die Lösung ist keine Anweisung, sondern gar kein Zustand:**
+    // `myl_tokenomics::vtfe::arbeitsverteilung_probe` rechnet dieselben
+    // Gewichte aus denselben öffentlichen Grunddaten, auf jedem Knoten
+    // gleich, ohne dass sie je gesetzt werden müssten.
 
     /// Die Mitgliedschaft eines Pods, wie sie die Aggregatprüfung
     /// braucht (Punkt 40, Glied 2).
@@ -703,6 +723,7 @@ impl Kette {
     /// fester, den beide Seiten sehen.
     const PROBE_SHARDS: u32 = 4;
 
+
     /// Leitet die Zuschreibung der abzurechnenden Epoche ab.
     ///
     /// # Der Weg, und er ist jetzt vollständig
@@ -714,11 +735,15 @@ impl Kette {
     /// abgeleiteten Pod-Kennung; und wie sich die vTFE eines Pods auf
     /// seine Positionen teilt, sagt die Arbeitsverteilung.
     ///
-    /// # ⚑ Ohne Arbeitsverteilung wird nichts zugeschrieben
-    ///
-    /// Dann bleibt die Zuschreibung leer, der Shard-Miner-Anteil
-    /// ungeprägt, und das ist die sichere Richtung: **Lieber nichts
-    /// ausschütten als nach einer Gewichtung, die niemand gesetzt hat.**
+    /// ⚑ **Seit dem 2026-09-03 wird sie gerechnet, nicht gesetzt**
+    /// (Fund 161): [`myl_tokenomics::vtfe::arbeitsverteilung_probe`].
+    /// Vorher stand hier ein Zustandsfeld, das keine `Anweisung` je
+    /// füllte; ohne einen Wert blieb die Zuschreibung immer leer, und
+    /// ein Bündel, das im Zustand stand, wurde beim Epochenabschluss
+    /// verworfen, **ohne dass je etwas geprägt wurde**. Jeder Knoten
+    /// rechnet jetzt dieselbe Zahl aus denselben öffentlichen
+    /// Grunddaten; nichts kann mehr auseinanderlaufen, weil nichts mehr
+    /// übertragen wird.
     ///
     /// # ⚑ Ein Bündel ohne passenden Pod fällt still weg
     ///
@@ -730,9 +755,7 @@ impl Kette {
     fn zuschreibung_der_epoche(
         zustand: &LedgerState,
     ) -> (myl_tokenomics::Zuschreibung, Vec<myl_types::PoIBundle>) {
-        let Some(verteilung) = zustand.arbeitsverteilung.clone() else {
-            return (myl_tokenomics::Zuschreibung::default(), Vec::new());
-        };
+        let verteilung = myl_tokenomics::vtfe::arbeitsverteilung_probe();
         let epoche = zustand.epoch.0;
         let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
         let _ = &verteilung;
@@ -1143,6 +1166,20 @@ impl Kette {
                     let kennung = myl_types::ids::MinerId::new(*absender.as_bytes());
                     let _ = miner_abmelden(zustand, &absender, &kennung);
                 }
+                // ⚑ **Der Einsatz** (Punkt B11, Fund 145). Bis zum
+                // 2026-09-03 gab es keinen Weg, MYL zu hinterlegen;
+                // `staked` war im Betrieb immer null, und die ganze
+                // wirtschaftliche Sicherheitsschicht hing an einer
+                // Zahl, die niemand setzte.
+                Anweisung::EinsatzHinterlegen { betrag } => {
+                    let _ = einsatz_hinterlegen(zustand, &absender, *betrag);
+                }
+                Anweisung::EinsatzKuendigen { betrag } => {
+                    let _ = einsatz_kuendigen(zustand, &absender, *betrag);
+                }
+                Anweisung::EinsatzAbholen => {
+                    let _ = einsatz_abholen(zustand, &absender);
+                }
                 Anweisung::BuendelEinreichen { buendel } => {
                     // ⚑ **Die Besetzung wird hier nachgeschlagen und
                     // nicht geglaubt** (Fund 144). Der Übergang prüft
@@ -1185,8 +1222,8 @@ impl Kette {
                 Anweisung::SitzungWiderrufen { sitzung } => {
                     let _ = sitzung_widerrufen(zustand, sitzung, &absender);
                 }
-                Anweisung::SitzungAusgeben { vorhaben } => {
-                    let _ = sitzung_ausgeben(zustand, &absender, vorhaben);
+                Anweisung::SitzungAusgeben { vorhaben, vollmacht } => {
+                    let _ = sitzung_ausgeben(zustand, &absender, vorhaben, vollmacht.as_ref());
                 }
             }
         }
@@ -1479,24 +1516,27 @@ mod tests {
         let _ = k.baue_block();
         assert!(k.zustand().sitzung(&id).is_some(), "die Session steht im Zustand");
 
-        let zahlung = |betrag: u64| Vorhaben {
+        // ⚑ **Mit steigender Nummer**, seit die Kette den Riegel gegen
+        // die zweite Abbuchung führt.
+        let zahlung = |betrag: u64, nummer: u64| Vorhaben {
             sitzung: id,
             handelnder: agent,
             waehrung: Waehrung::Myl,
             betrag,
             empfaenger,
             bestaetigt_ausgeliefert: false,
+            nummer,
         };
         let empf_vorher = k.zustand().account(&empfaenger).balance;
         let inh_vorher = k.zustand().account(&inhaber).balance;
 
         // Ueber dem Einzellimit: wirkungslos.
-        k.aufnehmen(sig(7, 0, Anweisung::SitzungAusgeben { vorhaben: zahlung(3_000) }));
+        k.aufnehmen(sig(7, 0, Anweisung::SitzungAusgeben { vorhaben: zahlung(3_000, 1), vollmacht: None }));
         let _ = k.baue_block();
         assert_eq!(k.zustand().account(&empfaenger).balance, empf_vorher);
 
         // Darunter: es fliesst, und zwar vom Konto des Inhabers.
-        k.aufnehmen(sig(7, 1, Anweisung::SitzungAusgeben { vorhaben: zahlung(1_500) }));
+        k.aufnehmen(sig(7, 1, Anweisung::SitzungAusgeben { vorhaben: zahlung(1_500, 1), vollmacht: None }));
         let _ = k.baue_block();
         assert_eq!(k.zustand().account(&empfaenger).balance, empf_vorher + 1_500);
         assert_eq!(k.zustand().account(&inhaber).balance, inh_vorher - 1_500);
@@ -1512,7 +1552,7 @@ mod tests {
 
         // Und danach fliesst nichts mehr.
         let nach_widerruf = k.zustand().account(&empfaenger).balance;
-        k.aufnehmen(sig(7, 3, Anweisung::SitzungAusgeben { vorhaben: zahlung(100) }));
+        k.aufnehmen(sig(7, 3, Anweisung::SitzungAusgeben { vorhaben: zahlung(100, 2), vollmacht: None }));
         let _ = k.baue_block();
         assert_eq!(k.zustand().account(&empfaenger).balance, nach_widerruf);
     }
@@ -2295,6 +2335,185 @@ mod tests {
         .expect("signieren")
     }
 
+    /// ⚑ **Der Einsatz über die Kette: hinterlegen, kündigen, holen**
+    /// (Punkt B11, Fund 145).
+    ///
+    /// Bis zum 2026-09-03 war `staked` im Betrieb immer null, weil
+    /// keine Anweisung es schrieb. Der Test geht den ganzen Weg über
+    /// echte, unterschriebene Transaktionen.
+    #[test]
+    fn ein_einsatz_geht_ueber_die_kette() {
+        let mut k = Kette::probestand();
+        let vorher = k.zustand().account(&probekonto(0)).balance;
+        assert!(vorher > 0, "das Probekonto hat kein Guthaben");
+
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                0,
+                Anweisung::EinsatzHinterlegen { betrag: 5_000 },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().account(&probekonto(0)).staked,
+            5_000,
+            "der Einsatz kam nicht an"
+        );
+        assert_eq!(k.zustand().account(&probekonto(0)).balance, vorher - 5_000);
+
+        // Kuendigen: aus `staked` heraus, aber noch nicht ins Guthaben.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                1,
+                Anweisung::EinsatzKuendigen { betrag: 2_000 },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        let konto = k.zustand().account(&probekonto(0));
+        assert_eq!(konto.staked, 3_000);
+        assert_eq!(konto.balance, vorher - 5_000, "das Geld kam zu frueh zurueck");
+        assert_eq!(konto.gekuendigt.values().sum::<u64>(), 2_000);
+
+        // Abholen vor der Freigabe bewirkt nichts.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                2,
+                Anweisung::EinsatzAbholen,
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert_eq!(
+            k.zustand().account(&probekonto(0)).balance,
+            vorher - 5_000,
+            "vor der Freigabe wurde ausgezahlt"
+        );
+
+        // ⚑ **Die Reife wird hier nicht geprüft, und der Grund ist
+        // lehrreich.** Der erste Anlauf stellte `zustand.epoch` von
+        // Hand auf die Freigabe-Epoche. Das hält nicht: `anwenden`
+        // setzt die Epoche aus der **Blockhöhe**, bevor es die
+        // Transaktionen anwendet, und überschreibt die gestellte
+        // Zahl. **Das ist richtig so** und genau die Regel, die
+        // Erzeuger und Übernehmer zusammenhält.
+        //
+        // Die Sperrfrist über echte Blöcke abzuwarten hiesse 168
+        // Epochen zu bauen. **Die Reife steht deshalb dort, wo sie
+        // hingehört**, bei den Übergängen: `gekuendigtes_liegt_bis_zur_freigabe`
+        // in `myl-ledger` prüft sie samt Gegenprobe. Dieser Test hier
+        // prüft, was nur er prüfen kann: dass die Anweisungen über
+        // eine unterschriebene Transaktion in den Zustand gelangen.
+        let konto = k.zustand().account(&probekonto(0));
+        assert_eq!(konto.staked, 3_000, "der ungekuendigte Rest wurde angefasst");
+    }
+
+    /// ⚑ **Der Weg des Nutzers, von der Kette bis zum Beleg**
+    /// (B6-3, Stufe 4, erster Schnitt).
+    ///
+    /// Ein Kontrakt kommt über eine unterschriebene Transaktion in die
+    /// Kette, der Knoten frischt seine Abschrift auf, und die Tür lässt
+    /// eine Vollmacht durch, die auf **diesen** Kontrakt zeigt.
+    ///
+    /// **Der Test bleibt in einem Prozess**, denn die Tür über einen
+    /// echten Socket ist im Gateway geprüft; was hier geprüft wird, ist
+    /// die **Naht**: dass der Kontrakt aus der Kette dort ankommt, wo
+    /// die Tür ihn sucht. ⚑ **Genau diese Naht hat in dieser Woche
+    /// siebenmal gefehlt.**
+    #[test]
+    fn ein_kontrakt_aus_der_kette_erreicht_die_tuer() {
+        use myl_gateway::zugang::Kontraktquelle;
+        use myl_types::sitzung::{Grenzen, Sitzungskontrakt};
+
+        let mut k = Kette::probestand();
+        let agent = probeschluessel(1).public_key().expect("pk");
+        let kontrakt = Sitzungskontrakt {
+            inhaber: probekonto(0),
+            agent: Address::aus_schluessel(&agent),
+            credits: Grenzen {
+                budget: 10_000,
+                einzellimit: 1_000,
+                schwelle: u64::MAX,
+                zeugenleiter: Vec::new(),
+            },
+            myl: Grenzen::gesperrt(),
+            empfaenger: vec![probekonto(2)],
+            gueltig_ab: EpochId(0),
+            gueltig_bis: EpochId(100),
+            max_schritte: 1_000,
+        };
+        let id = kontrakt.adresse();
+
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(0),
+                0,
+                Anweisung::SitzungEroeffnen {
+                    kontrakt: kontrakt.clone(),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        assert!(
+            k.zustand().sitzung(&id).is_some(),
+            "der Kontrakt kam nicht in die Kette"
+        );
+
+        // Der Knoten frischt die Abschrift auf, die Tür liest sie.
+        let abschrift = crate::tuer::Kontraktabschrift::neu();
+        abschrift.setzen(k.zustand());
+        let (gefunden, _) = abschrift
+            .nachschlagen(id)
+            .expect("die Tuer findet den Kontrakt nicht");
+        assert_eq!(gefunden, kontrakt);
+
+        // ⚑ **Und eine Vollmacht darauf geht durch.** Das ist der
+        // ganze Weg: Kette, Abschrift, Zugangsstelle, Befund.
+        let vollmacht = myl_gateway::vollmacht::Vollmacht::ausstellen(
+            &probeschluessel(1),
+            vec![myl_gateway::vollmacht::Vorbehalt::NurSitzung(id)],
+            [5u8; 32],
+        )
+        .expect("ausstellen");
+        let rahmen = myl_gateway::vollmacht::Anfragerahmen {
+            jetzt: EpochId(0),
+            sitzung: id,
+            credits: 1,
+            modell: Hash::sha256(b"egal"),
+        };
+        let mut stelle = myl_gateway::zugang::Zugangsstelle::neu(abschrift.clone());
+        assert_eq!(
+            stelle.durchlassen_mit_vollmacht(&vollmacht, &rahmen, 1_000),
+            myl_gateway::zugang::Zugangsbefund::Erlaubt,
+            "die Vollmacht auf einen Kettenkontrakt wurde abgewiesen"
+        );
+
+        // ⚑ **Gegenprobe: ein Widerruf in der Kette schliesst die Tür**,
+        // sobald die Abschrift aufgefrischt ist.
+        k.zustand_mut()
+            .sitzungen
+            .get_mut(&id)
+            .expect("da")
+            .zustand
+            .widerrufen = true;
+        abschrift.setzen(k.zustand());
+        let mut stelle = myl_gateway::zugang::Zugangsstelle::neu(abschrift);
+        assert_eq!(
+            stelle.durchlassen_mit_vollmacht(&vollmacht, &rahmen, 1_000),
+            myl_gateway::zugang::Zugangsbefund::Abgelehnt,
+            "der Widerruf erreichte die Tuer nicht"
+        );
+    }
+
     /// ⚑ **Punkt 40, Glied 1 in der Kette:** Ein Bündel eines
     /// angemeldeten Miners kommt in den Zustand.
     #[test]
@@ -2671,18 +2890,13 @@ mod tests {
     #[test]
     fn bezeugte_arbeit_erreicht_ein_konto() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
-        use myl_types::arbeitsverteilung::Arbeitsverteilung;
         use myl_types::miner::HardwareClass;
         use myl_types::node_metadata::GeoRegion;
 
+        // ⚑ **Keine Verteilung mehr zu setzen** (Fund 161): Sie wird
+        // gerechnet und ist immer da. Das letzte Shard-Stück wiegt von
+        // selbst schwerer, weil dort der LM-Kopf sitzt.
         let mut k = Kette::probestand();
-        // Gewichte für vier Positionen, das letzte Stück wiegt schwerer
-        // (dort sitzt der LM-Kopf).
-        k.arbeitsverteilung_setzen(
-            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
-                .expect("Verteilung"),
-        )
-        .expect("setzen");
 
         // Sechs Miner: vier Positionen plus zwei Reserve.
         let mut nonce = [0u64; 6];
@@ -2821,16 +3035,11 @@ mod tests {
     #[test]
     fn ein_buendel_ohne_gueltige_unterschrift_zahlt_nichts_aus() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
-        use myl_types::arbeitsverteilung::Arbeitsverteilung;
         use myl_types::miner::HardwareClass;
         use myl_types::node_metadata::GeoRegion;
 
+        // ⚑ Keine Verteilung mehr zu setzen (Fund 161): sie ist immer da.
         let mut k = Kette::probestand();
-        k.arbeitsverteilung_setzen(
-            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
-                .expect("Verteilung"),
-        )
-        .expect("setzen");
 
         let mut nonce = [0u64; 6];
         for w in 0..6u8 {
@@ -2918,113 +3127,12 @@ mod tests {
         }
     }
 
-    /// ⚑ **Ohne Arbeitsverteilung wird nichts zugeschrieben**, und das
-    /// ist die sichere Richtung: lieber nichts ausschütten als nach
-    /// einer Gewichtung, die niemand gesetzt hat.
-    ///
-    /// ⛑ **Der erste Entwurf reichte kein Bündel ein** und prüfte damit
-    /// „ohne Bündel keine Auszahlung" statt „ohne Verteilung keine
-    /// Auszahlung". Er blieb grün, als die fehlende Verteilung durch
-    /// eine erfundene ersetzt wurde: **Der Name log.** Jetzt ist alles
-    /// da außer der Verteilung.
-    #[test]
-    fn ohne_arbeitsverteilung_bekommt_niemand_etwas() {
-        use myl_consensus::block::BLOECKE_JE_EPOCHE;
-        use myl_types::miner::HardwareClass;
-        use myl_types::node_metadata::GeoRegion;
-
-        let mut k = Kette::probestand();
-        // Alles wie im Test darüber, **nur ohne** die Arbeitsverteilung.
-        let mut nonce = [0u64; 6];
-        for w in 0..6u8 {
-            k.aufnehmen(
-                Transaktion::signiere(
-                    &Kette::startwert(),
-                    &probeschluessel(w),
-                    nonce[w as usize],
-                    Anweisung::MinerAnmelden {
-                        hardware: HardwareClass::MediumGpu,
-                        zone: GeoRegion::Europe,
-                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
-                    },
-                )
-                .expect("signieren"),
-            );
-            nonce[w as usize] += 1;
-        }
-        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
-        nonce[0] += 1;
-        k.baue_block();
-        for w in 0..6u8 {
-            let kennung = myl_types::ids::MinerId::new(*probekonto(w).as_bytes());
-            myl_ledger::transitions::auszahlungskonto_eintragen(
-                k.zustand_mut(),
-                &probekonto(w),
-                &kennung,
-                kaltes_konto(w),
-            )
-            .expect("Eintragung");
-        }
-        let register = myl_ledger::transitions::angemeldete_miner(k.zustand());
-        let zuteilung = myl_scheduler::zonenzuteilung::zuteilung_der_epoche(
-            &register,
-            k.zustand().epoch.0,
-            // ⚑ Die Saat aus dem Zustand, nicht der letzte Hash
-            // (Fund 143): Nur sie gilt die ganze Epoche, und nur
-            // gegen sie rechnet der Abschluss nach.
-            &k.zustand().epochensaat,
-            4,
-        );
-        assert_eq!(zuteilung.pods.len(), 1, "es entstand kein Pod");
-        let mut b = myl_types::PoIBundle {
-            epoch: k.zustand().epoch,
-            pod: myl_types::pod_kennung(k.zustand().epoch.0, zuteilung.pods[0].pod_index),
-            segments_root: myl_types::ids::MerkleRoot::new([7; 32]),
-            vtfe_claimed: 1_000_000,
-            aggregate_sig: myl_types::bls::BlsSignature([0; 96]),
-            segmente: 1,
-        };
-        // ⚑ **Richtig unterschrieben, sonst prüfte der Test das
-        // Falsche** (Fund 144). Seit die Aufnahme das Aggregat prüft,
-        // käme ein unsigniertes Bündel gar nicht in den Zustand, und
-        // „niemand bekommt etwas" wäre dann keine Aussage über die
-        // fehlende Arbeitsverteilung.
-        buendel_unterschreiben(&mut b, &zuteilung.pods[0]);
-        // ⚑ **Eingereicht wird vom Koordinator**, seit die Aufnahme
-        // ihn prüft (Fund 144). Vorher tat es Konto null, und das war
-        // nur deshalb richtig, weil niemand hinsah.
-        let koordinator = koordinator_von(&zuteilung.pods[0]);
-        k.aufnehmen(
-            Transaktion::signiere(
-                &Kette::startwert(),
-                &probeschluessel(koordinator),
-                nonce[koordinator as usize],
-                Anweisung::BuendelEinreichen { buendel: b },
-            )
-            .expect("signieren"),
-        );
-        k.baue_block();
-        assert_eq!(k.zustand().buendel.len(), 1, "das Buendel kam nicht an");
-        assert!(
-            k.zustand().arbeitsverteilung.is_none(),
-            "die Verteilung ist gesetzt, dann prueft der Test nichts"
-        );
-
-        for _ in 0..BLOECKE_JE_EPOCHE * 2 {
-            k.baue_block();
-            if k.zustand().epoch.0 == 1 {
-                break;
-            }
-        }
-        assert_eq!(k.zustand().epoch.0, 1, "die Epoche wechselte nicht");
-        for w in 0..6u8 {
-            assert_eq!(
-                k.zustand().account(&kaltes_konto(w)).balance,
-                0,
-                "ohne Verteilung wurde ausgeschuettet"
-            );
-        }
-    }
+    // ⚑ **Der Test `ohne_arbeitsverteilung_bekommt_niemand_etwas` ist
+    // am 2026-09-03 entfernt worden** (Fund 161), zusammen mit dem
+    // Zustand, den er prüfte: Es gibt kein „ohne Verteilung" mehr,
+    // seit sie gerechnet statt gesetzt wird. Was von seiner Prüfung
+    // bleibt, deckt jetzt `ein_buendel_ohne_gueltige_unterschrift_zahlt_nichts_aus`
+    // ab: Ein Bündel ohne gültiges Aggregat zahlt nichts aus.
 
     /// ⚑ **Ein Bündel mit erfundener Pod-Kennung zahlt nichts aus.**
     ///
@@ -3040,16 +3148,11 @@ mod tests {
     #[test]
     fn ein_buendel_mit_erfundener_kennung_zahlt_nichts_aus() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
-        use myl_types::arbeitsverteilung::Arbeitsverteilung;
         use myl_types::miner::HardwareClass;
         use myl_types::node_metadata::GeoRegion;
 
+        // ⚑ Keine Verteilung mehr zu setzen (Fund 161): sie ist immer da.
         let mut k = Kette::probestand();
-        k.arbeitsverteilung_setzen(
-            Arbeitsverteilung::neu(Hash::sha256(b"probe-pipeline"), vec![1, 1, 1, 5])
-                .expect("Verteilung"),
-        )
-        .expect("setzen");
 
         let mut nonce = [0u64; 6];
         for w in 0..6u8 {

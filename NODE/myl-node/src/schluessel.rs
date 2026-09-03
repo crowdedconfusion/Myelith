@@ -496,7 +496,7 @@ mod tests {
             text.push_str(&k.genesiszeile(stake).expect("Zeile"));
             text.push('\n');
         }
-        let g = crate::genesis::Genesis::aus_text(&text).expect("lesbar");
+        let g = crate::stimmsatzdatei::Stimmsatzdatei::aus_text(&text).expect("lesbar");
         assert_eq!(g.validatoren.len(), 4);
         assert_eq!(g.gesamtstake(), 900);
         // Und die Kennungen decken sich mit denen der Schlüssel.

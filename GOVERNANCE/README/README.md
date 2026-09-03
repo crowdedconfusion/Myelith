@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.8.0
-> **Datum:** 2026-09-02
+> **Version:** 0.9.0
+> **Datum:** 2026-09-03
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,20 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.9.0 – 2026-09-03 (die Naht zwischen Sperrfrist und Streitfrist)
+
+⚑ **Drei Zahlen, drei Kisten, und nur GOVERNANCE sieht alle drei:** die
+Streitfrist als Parameter, `DEFAULT_DISPUTE_EPOCHS` in `myl-consensus`,
+`SPERRFRIST_EPOCHEN` in `myl-ledger`. Keine der drei Kisten kennt die
+beiden anderen, denn beide hängen an der Registry und nicht sie an
+ihnen. **Der Gleichstands-Test ist die Naht.**
+
+Die Aussage: Ein Einsatz, den man vor dem Urteil abziehen kann, ist
+keiner. Die Sperrfrist muss deshalb mindestens so lang sein wie das
+Fenster, in dem noch ein Urteil kommen kann, **und nicht länger**, sonst
+wäre sie eine Härte ohne Begründung. Der Test verlangt Gleichheit; ein
+Abstand müsste begründet werden und stünde dann dort.
 
 ### v0.8.0 – 2026-09-02 (der einunddreissigste Parameter, und jeder nennt jetzt seine Herkunft)
 

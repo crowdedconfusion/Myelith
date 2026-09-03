@@ -2448,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.26.0"
+version = "0.28.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -2457,8 +2457,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-gateway"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "borsh",
+ "myl-types",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "myl-ledger"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -2467,7 +2479,7 @@ dependencies = [
 
 [[package]]
 name = "myl-net"
-version = "0.14.1"
+version = "0.16.0"
 dependencies = [
  "async-trait",
  "borsh",
@@ -2476,6 +2488,7 @@ dependencies = [
  "hkdf",
  "libp2p",
  "ml-kem",
+ "myl-siegel",
  "myl-types",
  "rand_core 0.6.4",
  "sha2",
@@ -2486,16 +2499,20 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.29.0"
+version = "0.38.0"
 dependencies = [
+ "async-trait",
  "borsh",
  "getrandom 0.3.4",
+ "hex",
  "integer-llm-kernels",
  "libp2p",
  "myl-consensus",
+ "myl-gateway",
  "myl-ledger",
  "myl-net",
  "myl-scheduler",
+ "myl-siegel",
  "myl-tokenomics",
  "myl-types",
  "tokio",
@@ -2503,12 +2520,14 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.22.1"
+version = "0.25.1"
 dependencies = [
  "borsh",
+ "getrandom 0.2.17",
  "integer-llm-kernels",
  "integer-llm-runtime",
  "myl-scheduler",
+ "myl-siegel",
  "myl-tokenomics",
  "myl-types",
  "sha2",
@@ -2524,29 +2543,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "myl-siegel"
+version = "0.2.0"
+dependencies = [
+ "borsh",
+ "chacha20poly1305",
+ "hkdf",
+ "ml-kem",
+ "myl-types",
+ "rand_core 0.6.4",
+ "sha2",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "myl-testclient"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "borsh",
  "crossterm",
  "integer-llm-kernels",
  "integer-llm-runtime",
  "myl-consensus",
+ "myl-gateway",
  "myl-ledger",
  "myl-net",
  "myl-node",
  "myl-pod",
  "myl-scheduler",
+ "myl-siegel",
  "myl-tokenomics",
  "myl-types",
  "myl-verifier",
+ "serde_json",
  "sha2",
  "tokio",
 ]
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "myl-ledger",
  "myl-types",
@@ -2554,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.29.0"
+version = "0.34.0"
 dependencies = [
  "blst",
  "borsh",
@@ -2566,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "borsh",
  "integer-llm-runtime",

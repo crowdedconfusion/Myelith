@@ -42,6 +42,17 @@ pub struct Beleg {
     /// Text ohnehin; was ihm fehlt, ist die Zusicherung, dass **dieser**
     /// Text die Arbeit ausgelöst hat.
     pub bindung: Anfragebindung,
+    /// Wie sich der Anfragende ausgewiesen hat.
+    ///
+    /// ⚑ **Der Unterschied wird vermerkt, nicht versteckt** (Stufe 2).
+    /// Eine Vollmacht läuft in jedem Harness, bindet aber den Prompt
+    /// nicht: Das Gateway könnte im Rahmen der Vorbehalte Anfragen
+    /// erfinden. Eine Unterschrift je Anfrage kann es nicht.
+    ///
+    /// **Wer den Beleg liest, sieht, welche Zusicherung er hat**, statt
+    /// die stärkere anzunehmen. `None` heisst Stufe 1: die Rückschleife
+    /// ohne Zugangsprüfung, wo der Betreiber der Kontoinhaber ist.
+    pub weg: Option<crate::zugang::Ausweisweg>,
 }
 
 /// Die Annahmestelle: vergibt Sitzungsnummern und bindet Anfragen.
@@ -70,8 +81,18 @@ impl Annahme {
         self.epoche = epoche;
     }
 
-    /// Nimmt eine Anfrage an und schreibt sie fest.
+    /// Nimmt eine Anfrage an und schreibt sie fest (Stufe 1, ohne
+    /// Ausweis).
     pub fn annehmen(&mut self, anfrage: &[u8]) -> Result<Beleg, Annahmefehler> {
+        self.annehmen_mit(anfrage, None)
+    }
+
+    /// Nimmt eine Anfrage an und vermerkt, wie sie ausgewiesen war.
+    pub fn annehmen_mit(
+        &mut self,
+        anfrage: &[u8],
+        weg: Option<crate::zugang::Ausweisweg>,
+    ) -> Result<Beleg, Annahmefehler> {
         if anfrage.is_empty() {
             return Err(Annahmefehler::Leer);
         }
@@ -80,6 +101,7 @@ impl Annahme {
         Ok(Beleg {
             sitzung,
             bindung: Anfragebindung::neu(sitzung, anfrage, self.epoche),
+            weg,
         })
     }
 }

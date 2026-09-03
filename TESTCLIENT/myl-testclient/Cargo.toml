@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.20.1"
+version = "0.21.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -27,6 +27,11 @@ myl-verifier = { path = "../../VERIFICATION/myl-verifier" }
 # und starten, nicht zwei und dazwischen einen Pfad suchen.
 myl-node = { path = "../../NODE/myl-node" }
 myl-net = { path = "../../NETWORKING/myl-net" }
+# ⚑ **Nur fuer die Naht** (2026-09-03): Der Weg von der Tuer bis zum
+# Rechenwerk beruehrt fuenf Kisten, und keine sieht mehr als ihren
+# Nachbarn. `myl-testclient` ist die einzige Stelle, die alle sieht.
+myl-gateway = { path = "../../GATEWAY/myl-gateway" }
+myl-siegel = { path = "../../NETWORKING/myl-siegel" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "signal"] }
 sha2 = "0.10"
 borsh = { version = "1.6", features = ["derive"] }
@@ -92,3 +97,11 @@ opt-level = 2
 
 [profile.dev.package.integer-llm-runtime]
 opt-level = 2
+
+[dev-dependencies]
+# ⚑ **Zum Lesen der Antwort im Naht-Test.** Eine Antwort mit `find` und
+# Indizes zu zerlegen ist ein zweiter Zerleger, und der erste Entwurf des
+# Tests hat sich damit prompt vertan: Er las den halben Rumpf als
+# `content`. Wer eine Form prueft, prueft sie mit demselben Werkzeug, mit
+# dem ein Klient sie liest.
+serde_json = "1.0"

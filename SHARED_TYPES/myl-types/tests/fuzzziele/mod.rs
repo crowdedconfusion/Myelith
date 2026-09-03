@@ -117,6 +117,15 @@ pub const ZIELE: &[(&str, Ziel)] = &[
     ("knoten_metadaten", |d| kanonisch::<myl_types::NodeMetadata>(d)),
     ("spuranfrage", |d| kanonisch::<myl_types::Spuranfrage>(d)),
     ("spurantwort", |d| kanonisch::<myl_types::Spurantwort>(d)),
+    // 2026-09-03, GATEWAY Stufe 4: Auftrag und Antwort gehen ueber die
+    // Leitung und gehoeren damit unter dasselbe Praedikat wie alles
+    // andere, was sie geht.
+    ("inferenzauftrag", |d| {
+        kanonisch::<myl_types::inferenzauftrag::Inferenzauftrag>(d)
+    }),
+    ("inferenzantwort", |d| {
+        kanonisch::<myl_types::inferenzauftrag::Inferenzantwort>(d)
+    }),
 ];
 
 /// Sucht ein Ziel nach Namen.

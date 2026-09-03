@@ -1,6 +1,6 @@
 [package]
 name = "myl-governance"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Parameter-Governance für Myelith (Whitepaper Kap. 10.3): Registry aller Governance-Parameter mit Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs und Prüfung der Sicherheitsinvarianten aus Anhang B bereits am Vorschlag."

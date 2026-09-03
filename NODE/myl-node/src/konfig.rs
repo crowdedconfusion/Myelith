@@ -85,12 +85,12 @@ pub struct KnotenKonfig {
     /// Netz wird weiter abgewiesen, denn der Startwert steht in ihrem
     /// Kopf. Und eine unlesbare Datei bleibt ein Startfehler.
     pub kettendatei: Option<PathBuf>,
-    /// Genesis-Datei mit dem Validator-Satz.
+    /// Stimmsatzdatei mit dem Validator-Satz.
     ///
     /// Ohne sie stimmt der Knoten nicht mit: Er nimmt am Netz teil,
     /// hört zu und rechnet nach, aber er fährt keine BFT-Runde. **Das
     /// ist der Normalfall**, denn stimmberechtigt sind wenige.
-    pub genesisdatei: Option<PathBuf>,
+    pub stimmsatzdatei_pfad: Option<PathBuf>,
     /// Datei mit dem geheimen BLS-Konsensschlüssel.
     ///
     /// Getrennt von [`Self::schluesseldatei`], die die **Netzidentität**
@@ -110,6 +110,30 @@ pub struct KnotenKonfig {
     /// Wer weiter hinaus will, sagt es ausdrücklich und stellt eine
     /// Zugangskontrolle davor; der Endpunkt selbst hat keine.
     pub beobachtung: Option<std::net::SocketAddr>,
+    /// Wo die eigene Tür horcht, oder `None`.
+    ///
+    /// ⚑ **Die Vorgabe ist die Rückschleife**, und das ist der
+    /// entschiedene Zuschnitt (B6-3, 2026-09-03): nur das eigene
+    /// Gateway. Der Betreiber ist der Kontoinhaber, der Verkehr
+    /// verlässt die Maschine nie, und deshalb braucht die Tür weder TLS
+    /// noch Rahmenwerk.
+    ///
+    /// ⚑ **Wer sie hinausbindet, verlässt den Zuschnitt.** Dann gelten
+    /// K0s Einwände wieder: Ein Überlastangriff gegen die Tür wird zu
+    /// einem gegen die Lebendigkeit des Konsenses.
+    pub tuer: Option<std::net::SocketAddr>,
+    /// Wo der lokale Shard-Prozess horcht, oder `None`.
+    ///
+    /// ⚑ **Die Vorgabe ist aus, anders als bei der Tür.** Ein Knoten
+    /// ist nicht notwendig ein Miner: Er kann Shard in einem Pod sein,
+    /// Speicher stellen oder einfach nur Nutzer sein (Fund 152). Wer
+    /// rechnet, sagt es; alles andere wäre ein vorgetäuschter Shard.
+    pub ortsleitung: Option<std::net::SocketAddr>,
+    /// Wo der Ausweis des Shard-Prozesses liegt: Datei oder Verzeichnis.
+    ///
+    /// ⚑ **Ohne ihn gibt es keine Leitung**, denn die lokale Tür des
+    /// Shards lässt niemanden ohne Ausweis herein.
+    pub ortsausweis: Option<std::path::PathBuf>,
     /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
     ///
     /// **Nur für Testnetze.** Der Knoten schickt dann getaktet einen
@@ -158,6 +182,10 @@ pub enum KonfigFehler {
     Nat(myl_net::NatFehler),
     /// Ein Bootstrap-Eintrag ist unbrauchbar.
     Bootstrap(String),
+    /// `--ortsleitung` ohne `--ortsausweis`.
+    OrtsleitungOhneAusweis,
+    /// `--ortsausweis` ohne `--ortsleitung`.
+    AusweisOhneOrtsleitung,
 }
 
 impl std::fmt::Display for KonfigFehler {
@@ -171,6 +199,15 @@ impl std::fmt::Display for KonfigFehler {
             ),
             Self::Nat(e) => write!(f, "NAT-Einstellungen: {}", e),
             Self::Bootstrap(b) => write!(f, "unbrauchbarer Bootstrap-Eintrag: {}", b),
+            Self::OrtsleitungOhneAusweis => write!(
+                f,
+                "--ortsleitung ohne --ortsausweis: die lokale Tuer des Shards laesst \
+                 niemanden ohne Ausweis herein, die Leitung waere von Anfang an tot"
+            ),
+            Self::AusweisOhneOrtsleitung => write!(
+                f,
+                "--ortsausweis ohne --ortsleitung: ein Schluessel ohne Tuer"
+            ),
         }
     }
 }
@@ -200,7 +237,7 @@ impl Default for KnotenKonfig {
             bootstrap: Vec::new(),
             rolle: Rolle::Teilnehmer,
             kettendatei: Some(PathBuf::from("kette.dat")),
-            genesisdatei: None,
+            stimmsatzdatei_pfad: None,
             konsensschluesseldatei: None,
             nat: NatKonfig::default(),
             aufnahme_sekunden: 30,
@@ -209,6 +246,17 @@ impl Default for KnotenKonfig {
             // und ist im Fehlerfall da. Aus war die Vorgabe genau so
             // lange, wie es ihn nicht gab.
             beobachtung: Some(std::net::SocketAddr::from(([127, 0, 0, 1], 4151))),
+            // ⚑ **An, auf der Rückschleife** (B6-3). Eine Tür, die
+            // niemand von aussen erreicht, kostet nichts und ist da,
+            // wenn der Nutzer sie braucht.
+            tuer: Some(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                crate::tuer::TUER_PORT,
+            ))),
+            // ⚑ **Aus.** Wer keinen Shard-Prozess fährt, soll keinen
+            // vortäuschen; die Ablehnung ist dann die richtige Antwort.
+            ortsleitung: None,
+            ortsausweis: None,
             testverkehr_sekunden: None,
             erzeugt_bloecke: false,
             teilnehmer: Vec::new(),
@@ -238,6 +286,16 @@ impl KnotenKonfig {
         // sonst schaltet `build_swarm` den Dienst gar nicht ein.
         let nat = self.nat_mit_rolle();
         myl_net::nat_pruefen(&nat).map_err(KonfigFehler::Nat)?;
+        // ⚑ **Adresse und Ausweis gehören zusammen** (Klasse von
+        // Fund 56). Eine Adresse ohne Ausweis wäre eine Leitung, die
+        // bei jeder Frage abgewiesen wird, und ein Ausweis ohne
+        // Adresse wäre ein Schlüssel ohne Tür: Beides sähe im Betrieb
+        // aus wie „der Shard antwortet nicht".
+        match (&self.ortsleitung, &self.ortsausweis) {
+            (Some(_), None) => return Err(KonfigFehler::OrtsleitungOhneAusweis),
+            (None, Some(_)) => return Err(KonfigFehler::AusweisOhneOrtsleitung),
+            _ => {}
+        }
         Ok(())
     }
 

@@ -27,7 +27,21 @@ pub mod boden;
 pub mod distribute;
 pub mod ema;
 pub mod exp_approx;
-pub mod genesis;
+// ⚑ **`genesis` ist am 2026-09-03 aus dem Repositorium entfernt worden**
+// (Entscheidung des Projektinhabers). Das Modul rechnete die
+// **unumkehrbare Erstverteilung** der MYL aus Arbeitsnachweisen des
+// Testnetzes.
+//
+// **Der Grund ist nicht, dass der Code schlecht war, sondern dass er
+// genau einmal laufen darf.** Der Startwert der Kette geht in jede
+// Transaktionssignatur ein; wer am Block 0 was haelt, laesst sich nie
+// nachtraeglich aendern. Solange die Vorbereitung nicht mehrfach und
+// **auch extern** geprueft ist, soll dieser Code nicht im Baum liegen,
+// wo ein spaeterer Leser ihn fuer benutzbar haelt.
+//
+// **Wann und unter welchen Bedingungen sie wieder gebaut wird**, ist
+// festgelegt und an fuenf Voraussetzungen gebunden, darunter eine
+// **externe** Nachrechnung der Verteilung.
 pub mod exp_lut_table;
 pub mod mint;
 pub mod sicherheit;
@@ -71,7 +85,6 @@ pub use ema::{ema_update, epochenabschluss_burn, Abschlussfehler, EMA_ALPHA_DEN,
 pub use exp_approx::{
     exp_approx, update_price, update_price_mit_untergrenze, PREIS_UNTERGRENZE_VORGABE,
 };
-pub use genesis::{genesis_verteilung, Arbeitsnachweis, GenesisFehler, GenesisVerteilung};
 pub use mint::{mint_amount, MintParams};
 pub use sicherheit::{
     s_min, self_dealing_grenze, self_dealing_sicher, self_dealing_sicher_konservativ,

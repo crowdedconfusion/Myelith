@@ -5,13 +5,13 @@
 //! Zwei Stellen im Projekt rechnen dieselbe Ableitung aus, und keine
 //! von beiden kann die andere sehen:
 //!
-//! - `myl_node::genesis::GenesisValidator::kennung` bildet aus dem
+//! - `myl_node::stimmsatzdatei::Stimmberechtigter::kennung` bildet aus dem
 //!   BLS-Schlüssel eines Validators seine `MinerId`.
 //! - `myl_net::endpunkt_aus_schluessel` bildet aus demselben Schlüssel
 //!   den Endpunkt einer verschlüsselten Sitzung.
 //!
 //! Der Grund für die Trennung ist die Schichtung: `myl-net` ist L0 und
-//! darf die Genesis-Datei nicht kennen. Der Preis ist eine
+//! darf die Stimmsatzdatei nicht kennen. Der Preis ist eine
 //! **Doppelrechnung**, und Doppelrechnungen laufen auseinander, sobald
 //! jemand eine von beiden anfasst.
 //!
@@ -26,12 +26,12 @@
 //!
 //! Diese Datei ist der Ort, an dem das auffällt, bevor es passiert.
 
-use myl_node::genesis::GenesisValidator;
+use myl_node::stimmsatzdatei::Stimmberechtigter;
 use myl_types::bls::BlsSecretKey;
 
-fn validator(saat: u8, stake: u64) -> GenesisValidator {
+fn validator(saat: u8, stake: u64) -> Stimmberechtigter {
     let sk = BlsSecretKey::key_gen(&[saat; 32]).expect("Schlüsselerzeugung");
-    GenesisValidator {
+    Stimmberechtigter {
         pubkey: sk.public_key().expect("Schlüssel"),
         pop: sk.prove_possession().expect("Besitznachweis"),
         stake,
@@ -39,16 +39,16 @@ fn validator(saat: u8, stake: u64) -> GenesisValidator {
 }
 
 #[test]
-fn die_minerid_der_genesis_ist_der_sitzungsendpunkt() {
-    // Die eine Aussage, um die es geht: Wer in der Genesis-Datei steht,
+fn die_minerid_des_stimmsatzes_ist_der_sitzungsendpunkt() {
+    // Die eine Aussage, um die es geht: Wer in der Stimmsatzdatei steht,
     // ist im Sitzungskanal derselbe.
     for saat in [1u8, 7, 42, 200] {
         let v = validator(saat, 1_000);
-        let aus_der_genesis = v.kennung();
+        let aus_dem_stimmsatz = v.kennung();
         let aus_der_netzschicht = myl_net::endpunkt_aus_schluessel(&v.pubkey);
         assert_eq!(
             aus_der_netzschicht.bytes(),
-            aus_der_genesis.as_bytes(),
+            aus_dem_stimmsatz.as_bytes(),
             "MinerId und Sitzungsendpunkt sind auseinandergelaufen (Saat {saat})"
         );
     }
@@ -68,12 +68,12 @@ fn verschiedene_schluessel_geben_verschiedene_endpunkte() {
 }
 
 #[test]
-fn eine_ankuendigung_wird_gegen_die_genesis_kennung_geprueft() {
+fn eine_ankuendigung_wird_gegen_die_stimmsatz_kennung_geprueft() {
     // Der Weg, wie er im Betrieb läuft: Der Pod-Pfad nennt eine
     // MinerId, die Ankündigung kommt vom Netz, und geprüft wird gegen
     // genau diese MinerId. Ohne Register, ohne Zuordnungstabelle.
     let sk = BlsSecretKey::key_gen(&[9u8; 32]).expect("Schlüsselerzeugung");
-    let v = GenesisValidator {
+    let v = Stimmberechtigter {
         pubkey: sk.public_key().expect("Schlüssel"),
         pop: sk.prove_possession().expect("Besitznachweis"),
         stake: 1_000,

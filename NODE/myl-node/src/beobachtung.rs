@@ -112,6 +112,13 @@ pub struct Beobachtungsstand {
     pub latenz_messungen: u64,
     pub latenz_min_us: u64,
     pub latenz_max_us: u64,
+    /// Ob dieser Knoten gerade Bloecke nachfordert.
+    ///
+    /// ⚑ **Die Frage eines Betreibers lautet nicht „ist er wach“,
+    /// sondern „holt er noch auf“.** Ein Knoten mit niedriger Hoehe
+    /// und laufender Nachforderung arbeitet; einer mit niedriger Hoehe
+    /// und ohne Nachforderung haengt.
+    pub nachforderung_laeuft: bool,
 }
 
 impl Beobachtungsstand {
@@ -258,6 +265,12 @@ pub fn als_prometheus(stand: &Beobachtungsstand, jetzt_ms: u64) -> String {
         "Konsensnachrichten, die auf ihre Runde warten.",
         "gauge",
         stand.konsens_vorlauf,
+    );
+    zeile(
+        "myelith_nachforderung_laeuft",
+        "Ob dieser Knoten gerade Bloecke nachfordert (1) oder nicht (0).",
+        "gauge",
+        u64::from(stand.nachforderung_laeuft),
     );
     zeile(
         "myelith_kette_gespeicherte_bloecke",
@@ -409,6 +422,7 @@ mod tests {
             protokollzeilen: 900,
             kette_gespeichert: 42,
             latenz_messungen: 5,
+            nachforderung_laeuft: true,
             latenz_min_us: 300,
             latenz_max_us: 9_000,
             ..Default::default()
@@ -452,6 +466,20 @@ mod tests {
             weg_aus_anfrage(b"GET /metriken?ts=1 HTTP/1.1\r\n\r\n").as_deref(),
             Some("/metriken")
         );
+    }
+
+    /// ⚑ **Ein Ja/Nein wird zu 1 und 0**, nicht zu `true` und `false`.
+    /// Prometheus kennt nur Zahlen; ein Wort in der Wertspalte macht
+    /// die Zeile unlesbar, und zwar still.
+    #[test]
+    fn ein_zustand_wird_als_eins_oder_null_ausgegeben() {
+        let mut s = stand();
+        s.nachforderung_laeuft = true;
+        let t = als_prometheus(&s, 1_500);
+        assert!(t.contains("\nmyelith_nachforderung_laeuft 1\n"), "{t}");
+        s.nachforderung_laeuft = false;
+        let t = als_prometheus(&s, 1_500);
+        assert!(t.contains("\nmyelith_nachforderung_laeuft 0\n"), "{t}");
     }
 
     #[test]

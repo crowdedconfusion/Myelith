@@ -1,6 +1,6 @@
 [package]
 name = "myl-gateway"
-version = "0.1.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Gateway (Whitepaper Kap. 3.3, Rolle 6): nimmt Inferenzanfragen entgegen, schreibt sie fest und liefert einen Beleg. Stufe 1 ist das eigene Gateway auf localhost; der Betreiber ist der Kontoinhaber, damit entfaellt die Bezahlfrage."
@@ -10,6 +10,17 @@ publish = false
 [dependencies]
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 borsh = { version = "1.6", features = ["derive"] }
+# ⚑ **JSON schon, HTTP nicht** (2026-09-03, Stufe 3). Das Format kommt
+# von aussen und ist nicht verhandelbar: Ein Harness spricht die
+# OpenAI-Form, sonst kann der Nutzer den Schluessel nirgends einkleben.
+# Einen Zerleger fuer fremde Eingaben selbst zu schreiben waere die
+# schlechtere Wahl als eine gepruefte Bibliothek; die Entscheidung gegen
+# ein HTTP-Rahmenwerk bleibt davon unberuehrt.
+# Fuer das Rechenweg-Merkmal: Die Tuer bedient, der Aufrufer rechnet,
+# und das ist ein `async`-Merkmal.
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # ⚑ **Keine HTTP-Bibliothek, und das ist eine Entscheidung** (2026-09-01,
 # Punkt 39). Stufe 1 ist localhost, ein Betreiber, kein Bezahlen, kein
 # TLS, kein Zugang; was ein Rahmenwerk mitbraechte, ist Wegewahl und
@@ -18,6 +29,7 @@ borsh = { version = "1.6", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "net", "macros", "sync", "time"] }
 
 [dev-dependencies]
+async-trait = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "net", "macros", "sync", "time"] }
 
 [lib]

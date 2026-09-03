@@ -4,7 +4,6 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use myl_types::gegenstand::Manifest;
 use myl_types::miner::MinerRegistration;
 use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, PodId, SitzungId};
-use myl_types::arbeitsverteilung::Arbeitsverteilung;
 use myl_types::PoIBundle;
 use myl_types::sitzung::{Sitzungskontrakt, Sitzungszustand};
 use myl_types::Hash;
@@ -104,6 +103,30 @@ pub struct AccountState {
     /// verschiedenen Zuständen.
     pub nonce: u64,
     pub staked: u64,
+    /// Gekündigter Einsatz, nach der Epoche seiner Freigabe.
+    ///
+    /// # ⚑ Warum er nicht einfach zurück ins Guthaben geht (Punkt B11)
+    ///
+    /// **Ein Einsatz, den man sofort abziehen kann, ist keiner.** Wer
+    /// falsch rechnet, zöge ab, bevor das Urteil da ist, und die
+    /// Schlachtung fände ein leeres Konto. Die Sperrfrist ist deshalb
+    /// so lang wie die Streitfrist.
+    ///
+    /// ⚑ **Und er haftet hier weiter.** Was gekündigt ist, zählt zur
+    /// Schlachtmasse, bis es abgeholt wurde
+    /// ([`crate::einsatz::schlachtbar`]). Zählte man es nicht
+    /// mit, wäre die Kündigung genau der Fluchtweg, den die Frist
+    /// schliessen soll.
+    ///
+    /// **Nach Freigabe-Epoche geschlüsselt und damit begrenzt.**
+    /// Kündigungen derselben Epoche werden zusammengelegt, es gibt also
+    /// höchstens einen Eintrag je Freigabe-Epoche und nie mehr als
+    /// [`crate::einsatz::MAX_OFFENE_KUENDIGUNGEN`]. Eine Liste statt einer Karte wäre
+    /// unbegrenzt gewachsen, und das ist die Klasse von Fund 144.
+    ///
+    /// **Angehängt und nicht eingefügt:** Die Feldreihenfolge ist
+    /// Konsensvertrag.
+    pub gekuendigt: BTreeMap<u64, u64>,
     pub credits: Vec<myl_types::InferenceCredit>,
     /// Wann dieses Konto geschlachtet wurde, je Epoche gezählt.
     ///
@@ -121,6 +144,7 @@ impl AccountState {
             balance: 0,
             nonce: 0,
             staked: 0,
+            gekuendigt: BTreeMap::new(),
             credits: Vec::new(),
             verstoesse: Vec::new(),
         }
@@ -278,7 +302,6 @@ pub struct LedgerState {
     /// **`None` heißt: es wird nichts zugeschrieben.** Ohne Verteilung
     /// bleibt der Shard-Miner-Anteil ungeprägt, und das ist die sichere
     /// Richtung.
-    pub arbeitsverteilung: Option<Arbeitsverteilung>,
 
     /// Die Saat, aus der die Pod-Zuteilung **dieser** Epoche folgt.
     ///
@@ -335,7 +358,6 @@ impl LedgerState {
             auszahlung: BTreeMap::new(),
             miner: BTreeMap::new(),
             buendel: BTreeMap::new(),
-            arbeitsverteilung: None,
             // ⚑ **Null, und die Kette setzt sie.** Vor dem ersten
             // Block gibt es keinen Blockhash, und der Ledger kennt den
             // Startwert seiner Kette nicht: Er ist eine Eigenschaft des

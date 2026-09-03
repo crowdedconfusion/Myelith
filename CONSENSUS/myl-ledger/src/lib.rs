@@ -24,6 +24,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod einsatz;
 pub mod state;
 pub mod transitions;
 

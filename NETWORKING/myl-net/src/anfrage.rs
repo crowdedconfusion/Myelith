@@ -42,10 +42,21 @@ pub const ANFRAGE_PROTOKOLL: &str = "/myelith/anfrage/1";
 
 /// Größengrenze für Anfrage und Antwort.
 ///
-/// 4 MiB, gleichgezogen mit [`crate::config::MAX_GOSSIP_MESSAGE_BYTES`]:
-/// Was über Gossip passt, muss auch über eine Nachfrage passen, sonst
-/// wäre eine Nachricht verbreitbar, aber nicht nachforderbar.
-pub const MAX_ANFRAGE_BYTES: usize = 4 * 1024 * 1024;
+/// ⚑ **Wohnt seit dem 2026-09-03 in `myl-types`** (Fund 155), weil drei
+/// Kisten Grenzen daraus ableiten und eine davon den Netzstapel nicht
+/// bauen soll. Hier bleibt die Wiederausfuhr, damit
+/// `myl_net::anfrage::MAX_ANFRAGE_BYTES` weiter trägt.
+pub use myl_types::protocol::MAX_ANFRAGE_BYTES;
+
+/// ⚑ **Die Gleichziehung mit der Gossip-Grenze wird geprüft, nicht
+/// behauptet.** Sie stand seit dem 2026-08-12 als Satz im Kommentar;
+/// ein Satz, den kein Code liest, hält keine zwei Zahlen zusammen. Was
+/// über Gossip passt, muss auch über eine Nachfrage passen, sonst wäre
+/// eine Nachricht verbreitbar, aber nicht nachforderbar.
+const _: () = assert!(
+    MAX_ANFRAGE_BYTES == crate::config::MAX_GOSSIP_MESSAGE_BYTES,
+    "Anfragegrenze und Gossip-Grenze sind auseinandergelaufen"
+);
 
 /// Der Codec: Längenpräfix, dann Bytes.
 ///

@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.22.1
+> **Version:** 0.25.1
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -71,6 +71,125 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.25.1 – 2026-09-03 (⚑ Fund 162: die Shardzahl ist jetzt gebunden)
+
+Die Shardzahl der Pipeline und die der Gewichtsableitung standen beide
+auf vier, und **nichts im Code hielt sie zusammen**. Eine Abweichung
+hätte stumm dazu geführt, dass ein Pod für seine Arbeit nichts bekommt.
+Zwei `const`-Zusicherungen binden sie jetzt.
+
+⚑ **Der erste Anlauf war Zierde**, und die Gegenprobe fing ihn: Ein
+assoziiertes `const` im `impl`-Block wird erst berechnet, wenn es
+jemand benutzt. Auf Modulebene verschoben, beisst es.
+
+### v0.25.0 – 2026-09-03 (das Rechenwerk, das wirklich rechnet)
+
+`pipelinewerk` setzt hinter die Entsiegelung, was bis heute nur ein
+Merkmal war: Wortschatz, vier Shards, Koordinator über den geladenen
+Artefakten. Damit läuft der Weg von der Türklinke bis zum Modell.
+
+⚑ **Der Pipeline-Stand wird übergeben und nicht ausgerechnet.** Welche
+Artefakte gelten, steht **gemessen** in `scale_packs/REGISTER.json`; ihn
+hier ein zweites Mal aus den Dateien zu bilden hiesse, zwei Wahrheiten
+über die Modellfassung zu führen.
+
+**Der Deckel des Betreibers schlägt den des Auftrags.** Wer eine
+schwache Maschine fährt, will nicht, dass ein Auftrag über
+`MAX_NEUE_TOKEN` sie minutenlang belegt. Beide sind Obergrenzen: Wer
+weniger bekommt als verlangt, bekommt trotzdem eine Antwort.
+
+**Eine Anfrage nach der anderen.** Der Koordinator hält KV-Cache und
+Segmentspur; zwei Aufträge gleichzeitig stritten um beide. Das ist keine
+Einschränkung, sondern die Aussage darüber, was ein Shard ist: ein
+Rechenwerk und keine Warteschlange.
+
+⚑ **Der Artefakt-Wächter steht jetzt in der Bibliothek**, weil ihn eine
+zweite Kiste braucht: Der Test von der Türklinke bis zum Modell liegt in
+`myl-testclient`, und ein Testmodul ist von dort nicht erreichbar. Zwei
+Wächter wachen irgendwann verschieden.
+
+**Und `Inferenzantwort::Ergebnis` trägt die Promptlänge in Token**
+(Fund 160), gezählt vom Rechnenden. Die Tür gab vorher die Byte-Länge
+als `usage.prompt_tokens` aus, und das ist ein Feld, mit dem ein Klient
+Kosten rechnet.
+
+### v0.24.0 – 2026-09-03 (der Shard entsiegelt und prüft die Bindung)
+
+**Der verschlüsselte Kanal zu den Pod-Enden ist zu** (GATEWAY Stufe 4,
+Fund 155). `entsiegelung` nimmt einen versiegelten Prompt an, öffnet ihn
+und prüft **danach** die Bindung.
+
+⚑ **Der Koordinator ist ein Fremder, und deshalb geht das überhaupt.**
+Der Prompt reist versiegelt; wer ihn weiterleitet, sieht ihn nicht. Der
+Empfänger entsiegelt und kann die Bindung dann **selbst** prüfen, weil
+sie den Klartext bindet, den er nun in Händen hält. Ohne die Prüfung
+rechnete er etwas, und niemand könnte später zeigen, dass genau diese
+Anfrage es ausgelöst hat.
+
+⚑ **Drei Tore, und ihre Reihenfolge ist die Aussage:** die Form (im
+Ortsdienst, vor dem Aufruf), das Entsiegeln (eine KEM-Dekapselung, also
+beschränkte Rechenzeit), die Bindung (ein SHA-256). **Erst danach sieht
+das Rechenwerk irgendetwas.** Wer das Rechnen vor die Bindung stellte,
+liesse jeden, der einen Kanal aufbauen darf, den Pod beliebig rechnen
+lassen.
+
+**Der billigste Vergleich zuerst:** Ein Auftrag für einen fremden
+Pipeline-Stand kostet einen Hashvergleich und keine Dekapselung.
+
+**Die Zuteilung ist ein Merkmal und keine Nachbildung.** Wer zu einer
+Sitzung gehört, steht in der Kette, und `myl-pod` kennt die Kette nicht;
+eine eigene Tabelle hier wäre eine zweite Wahrheit darüber, wer zu einem
+Pod gehört.
+
+⚑ **Der Text wird hier gerendert, weil nur hier der Wortschatz liegt.**
+`Inferenzantwort::Ergebnis` trägt ihn seit heute mit. Bezeugt und
+nachgerechnet werden aber die **Token**: Der Text ist eine Auskunft und
+kein Beweis.
+
+**Fünf Tests, jeder gegen ein Tor.**
+
+### v0.23.0 – 2026-09-03 (der Shard bekommt eine Tür)
+
+**Bis heute bekam ein Pod seine Arbeit von der Kommandozeile.**
+`myl-pod-node --prompt "<text>"`. Ein Auftrag aus dem Netz hatte keinen
+Weg hierher, auf keiner der beiden Seiten.
+
+`ortsdienst` ist die lokale Tür: Der Knoten fragt, der Shard antwortet.
+Der heisse Pfad (Aktivierungen je Token) bleibt bei `wire` und geht
+direkt zum Nachbarshard; **nur der kalte Pfad geht hier durch.**
+
+⚑ **Hier steht die Formprüfung, und hier hat sie zwei Ausgänge.** Am
+selben Tag stand dieselbe Prüfung schon einmal im Knoten und wurde
+wieder ausgebaut (Fund 154): Dort lieferten beide Zweige dasselbe
+`Abgelehnt`, weil der Knoten ohnehin nicht rechnet. Hier liegt hinter
+dem einen Zweig ein Rechenwerk und hinter dem anderen nicht. **Eine
+Prüfung gehört an die Naht, an der sie etwas unterscheidet.**
+
+⚑ **Das Rechenwerk ist ein Merkmal und keine feste Verdrahtung.** Die
+Pipeline braucht geladene Artefakte; ein Test, der jedes Mal ein Modell
+lädt, wird nicht gefahren. Der Dienst ist gegen das Merkmal geprüft, die
+Pipeline gegen ihre eigenen Tests, und `myl-pod-node` setzt beides
+zusammen.
+
+**Eine Verbindung nach der anderen**, und das ist Absicht: Ein Shard ist
+ein Rechenwerk, zwei gleichzeitige Aufträge stritten um dasselbe Modell
+und denselben KV-Cache. Was das kostet, gehört gesagt: **Ein langsamer
+Klient hält die Leitung.** Dagegen stehen Lese- und Schreibfristen,
+nicht mehr und nicht weniger.
+
+⚑ **Fund 156, halb hier:** Der Notdeckel gegen einen wachsenden Puffer
+ist ausgebaut, weil er nie greifen kann. `NutzlastFehlt` kommt nur,
+solange weniger als `KOPF_LEN + laenge` Bytes da sind, und `laenge`
+liegt unter der Grenze, sonst wäre es `ZuLang` und die Verbindung fiele
+oben heraus. **Regel von Fund 154, auf eigenen frischen Code angewandt.**
+
+⚑ **Fund 157:** Ein Test prüfte „keine gültige Antwort", zugesichert war
+„keine Auskunft". Vier Bytes „nein" hätten ihn nicht gestört, und die
+sagen einem Fremden, dass er die richtige Tür und den falschen Ausweis
+hat. Jetzt zählt er Bytes.
+
+**Sechs Tests über echte Sockets, vier Gegenproben je Zeile.**
 
 ### v0.22.1 – 2026-09-01 (Beweiser gegen Prüfer, mit echtem Modell)
 

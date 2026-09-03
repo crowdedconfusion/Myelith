@@ -622,7 +622,7 @@ mod tests {
     }
 
     fn startwert() -> Hash {
-        Hash::sha256(b"myelith-testkette-genesis")
+        crate::kette::Kette::startwert()
     }
 
     fn block(hoehe: u64) -> Block {
@@ -636,7 +636,7 @@ mod tests {
         });
         b.txs.push(
             Transaktion::signiere(
-                &Hash::sha256(b"myelith-testkette-genesis"),
+                &crate::kette::Kette::startwert(),
                 &myl_types::bls::BlsSecretKey::key_gen(&[hoehe as u8; 32]).expect("Schlüssel"),
                 0,
                 Anweisung::Burn { betrag: 1_000 + hoehe },

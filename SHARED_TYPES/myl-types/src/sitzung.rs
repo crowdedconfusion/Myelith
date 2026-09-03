@@ -374,6 +374,12 @@ pub struct Sitzungszustand {
     pub verbraucht_myl: u64,
     /// Vom Inhaber vorzeitig beendet.
     pub widerrufen: bool,
+    /// Die höchste bisher abgerechnete Nummer (siehe [`Vorhaben::nummer`]).
+    ///
+    /// ⚑ **Null heisst „noch nichts abgerechnet"**, und deshalb beginnt
+    /// die erste Nummer bei eins: Ein Vorhaben mit der Nummer null wäre
+    /// nicht grösser als der Anfangswert und käme nie durch.
+    pub hoechste_abrechnung: u64,
 }
 
 impl Sitzungszustand {
@@ -407,6 +413,28 @@ pub struct Vorhaben {
     /// Ob das zugrundeliegende Segment im Modus bestätigter
     /// Auslieferung gerechnet wurde (Kap. 6.4).
     pub bestaetigt_ausgeliefert: bool,
+    /// Die laufende Nummer dieser Abrechnung innerhalb der Sitzung.
+    ///
+    /// # ⚑ Der Riegel gegen die zweite Abbuchung (2026-09-03)
+    ///
+    /// **Der Transaktionsnonce genügt nicht.** Er schützt vor der
+    /// Wiederholung *derselben* Transaktion; wer dasselbe Vorhaben mit
+    /// einem neuen Nonce ein zweites Mal einreicht, bucht ein zweites
+    /// Mal ab. Solange nur der Agent selbst einreichen kann, schadet er
+    /// sich damit selbst. **Seit die Kette eine Vollmacht als
+    /// Autorisierung anerkennt, reicht ein Fremder ein**, und dann ist
+    /// es ein Angriff auf das Budget des Nutzers.
+    ///
+    /// Deshalb muss die Nummer **echt grösser** sein als die zuletzt
+    /// abgerechnete: [`Sitzungszustand::hoechste_abrechnung`]. Das ist
+    /// O(1) Zustand statt einer wachsenden Menge, dieselbe Bauart wie
+    /// die Nummer im Zugangsausweis des Gateways.
+    ///
+    /// **Was das kostet, gehört gesagt:** Abrechnungen, die verspätet
+    /// eintreffen, fallen heraus. Für ein Gateway, das seine Nummern
+    /// selbst vergibt und der Reihe nach einreicht, ist das kein
+    /// Verlust; wer parallel einreicht, muss ordnen.
+    pub nummer: u64,
 }
 
 /// Das Ergebnis der Prüfung, für den Knoten und den Client des
@@ -442,6 +470,13 @@ pub enum Befund {
     NullBetrag,
     /// Der Empfänger steht nicht auf der Positivliste.
     EmpfaengerNichtGelistet,
+    /// Diese Abrechnungsnummer wurde schon verbraucht oder liegt
+    /// zurück.
+    ///
+    /// ⚑ **Der Riegel gegen die zweite Abbuchung.** Siehe
+    /// [`Vorhaben::nummer`]; seit die Kette eine Vollmacht als
+    /// Autorisierung anerkennt, reicht ein Fremder ein.
+    NummerVerbraucht { nummer: u64, zuletzt: u64 },
     /// Über dem Einzeltransaktionslimit.
     EinzellimitUeberschritten {
         /// Die Grenze.
@@ -495,6 +530,10 @@ impl std::fmt::Display for Befund {
             Self::FalscheSitzung => write!(f, "Vorhaben zeigt auf einen anderen Kontrakt"),
             Self::FalscherHandelnder => write!(f, "Einreicher ist nicht der Agent"),
             Self::Widerrufen => write!(f, "Session widerrufen"),
+            Self::NummerVerbraucht { nummer, zuletzt } => write!(
+                f,
+                "Abrechnung {nummer} liegt nicht ueber der zuletzt gebuchten {zuletzt}"
+            ),
             Self::NochNichtGueltig { jetzt, ab } => {
                 write!(f, "Epoche {}, Session beginnt erst {}", jetzt.0, ab.0)
             }
@@ -536,6 +575,17 @@ pub fn pruefe(
     }
     if vorhaben.handelnder != kontrakt.agent {
         return Befund::FalscherHandelnder;
+    }
+    // ⚑ **Der Riegel steht vor allem Weiteren**, gleich hinter der
+    // Zuordnung: Eine wiedereingereichte Abrechnung soll nicht erst an
+    // Fristen oder Grenzen scheitern, sondern daran, dass sie schon
+    // gebucht ist. Sonst hinge der Schutz an einer anderen Prüfung, und
+    // deren Lockerung risse ihn mit.
+    if vorhaben.nummer <= zustand.hoechste_abrechnung {
+        return Befund::NummerVerbraucht {
+            nummer: vorhaben.nummer,
+            zuletzt: zustand.hoechste_abrechnung,
+        };
     }
     if zustand.widerrufen {
         return Befund::Widerrufen;
@@ -614,6 +664,7 @@ mod tests {
             betrag,
             empfaenger: adr(10),
             bestaetigt_ausgeliefert: false,
+            nummer: 1,
         }
     }
 
@@ -682,6 +733,7 @@ mod tests {
             betrag: 50_000,
             empfaenger: adr(99),
             bestaetigt_ausgeliefert: true,
+            nummer: 1,
         };
         assert_eq!(pruefe(&gefaelscht, &z, EpochId(7), &v), Befund::FalscheSitzung);
 
@@ -970,7 +1022,12 @@ mod tests {
         assert_eq!(k, zurueck);
         assert_eq!(k.adresse(), zurueck.adresse());
 
-        let z = Sitzungszustand { verbraucht_credits: 7, verbraucht_myl: 9, widerrufen: true };
+        let z = Sitzungszustand {
+            verbraucht_credits: 7,
+            verbraucht_myl: 9,
+            widerrufen: true,
+            hoechste_abrechnung: 0,
+        };
         let z2: Sitzungszustand = from_slice(&to_vec(&z).expect("ser")).expect("de");
         assert_eq!(z, z2);
 

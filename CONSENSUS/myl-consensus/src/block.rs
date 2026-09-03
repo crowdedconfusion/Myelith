@@ -180,6 +180,17 @@ pub enum Anweisung {
     SitzungAusgeben {
         /// Was.
         vorhaben: Vorhaben,
+        /// Die Vollmacht, falls nicht der Agent selbst einreicht.
+        ///
+        /// ⚑ **Angehängt und nicht eingefügt** (2026-09-03): Die
+        /// Feldreihenfolge ist Protokollvertrag.
+        ///
+        /// **Ohne dieses Feld kann eine gerechnete Anfrage nicht
+        /// abgebucht werden.** Ein Harness hält einen Bearer-Token und
+        /// keinen Schlüssel; es kann keine Kettentransaktion signieren,
+        /// also muss der Betreiber einreichen und die Kette die
+        /// Vollmacht des Agenten anerkennen.
+        vollmacht: Option<myl_types::vollmacht::Vollmacht>,
     },
     /// Sich als Miner anmelden oder die Hardware-Klasse ändern
     /// (Punkt 40, Glied 3a).
@@ -225,6 +236,29 @@ pub enum Anweisung {
     /// Anteil" gäbe es hier nicht, auch wenn jemand eines wollte: Ein
     /// Pod könnte damit intern umverteilen, und niemand außerhalb
     /// könnte widersprechen.
+    /// Hinterlegt einen Einsatz (Punkt B11).
+    ///
+    /// ⚑ **Bis zum 2026-09-03 gab es keinen Weg dorthin** (Fund 145).
+    /// `staked` stand im Zustand, der ganze wirtschaftliche
+    /// Sicherheitsbau hing daran, und keine Anweisung schrieb es.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Reihenfolge der
+    /// Varianten ist Konsensvertrag.
+    EinsatzHinterlegen {
+        /// In MYL-Kleinstbeträgen.
+        betrag: u64,
+    },
+    /// Kündigt einen Teil des Einsatzes (Punkt B11).
+    ///
+    /// ⚑ **Der Betrag haftet weiter**, bis er abgeholt ist; die
+    /// Sperrfrist verschiebt die Auszahlung, sie beendet die Haftung
+    /// nicht.
+    EinsatzKuendigen {
+        /// In MYL-Kleinstbeträgen.
+        betrag: u64,
+    },
+    /// Holt fälligen gekündigten Einsatz ins Guthaben (Punkt B11).
+    EinsatzAbholen,
     BuendelEinreichen {
         /// Das Bündel.
         buendel: PoIBundle,

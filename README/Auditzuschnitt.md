@@ -13,7 +13,7 @@
 > selbst leisten müsste, auf unsere Kosten.
 
 Wie eine Schwachstelle gemeldet wird, steht in
-[`SECURITY.md`](../SECURITY.md). Welche Angriffsklassen heute wie
+`SECURITY.md` (intern geführt, beim Projektinhaber). Welche Angriffsklassen heute wie
 abgedeckt sind, steht in
 [`SIMULATION/Sicherheitsaudit.md`](../SIMULATION/Sicherheitsaudit.md).
 
@@ -25,7 +25,7 @@ abgedeckt sind, steht in
 überlebt den Code. Vor Beginn wird deshalb ein **Commit-Hash**
 festgehalten, und der Bericht nennt ihn.
 
-Zum Zeitpunkt dieses Dokuments: neunzehn Crates, 2 324 Tests, alle grün;
+Zum Zeitpunkt dieses Dokuments: zwanzig Crates, 2 324 Tests, alle grün;
 Mindestfassung Rust 1.85; keine bekannte Schwachstelle im
 Abhängigkeitsbaum (284 Pakete unter dem Knoten, geprüft mit
 `cargo deny`).
@@ -248,7 +248,7 @@ vollständige Stand nach Angriffsklassen steht in
 
 ## 7. Was an Werkzeug bereitliegt
 
-- **2 324 Tests** über neunzehn Crates, darunter fünf adversariale
+- **2 324 Tests** über zwanzig Crates, darunter fünf adversariale
   Ebenen (`tests/adversarial.rs` in NETWORKING, CONSENSUS,
   COMPUTE_PIPELINE, VERIFICATION, TOKENOMICS), Chaos-Tests über
   Partition, Neustart und Paketverlust, und ein
@@ -280,7 +280,7 @@ beginnen.**
 
 ## 8. Was ein Befund uns wert ist
 
-Meldeweg, Umfang und Fristen stehen in [`SECURITY.md`](../SECURITY.md).
+Meldeweg, Umfang und Fristen stehen in `SECURITY.md` (intern geführt, beim Projektinhaber).
 Es gibt kein Kopfgeldprogramm.
 
 ⚑ **Was wir ausdrücklich auch hören wollen:** eine Zusage, die zu stark

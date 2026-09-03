@@ -314,11 +314,16 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         // Testknoten nebeneinander laufen, und dieser Test prueft
         // ohnehin etwas anderes.
         beobachtung: None,
+        // Dieselbe Begruendung: ein fester Port kollidiert, sobald zwei
+        // Knoten nebeneinander laufen.
+        tuer: None,
+        ortsleitung: None,
+        ortsausweis: None,
         testverkehr_sekunden: None,
         erzeugt_bloecke: erzeuger,
         teilnehmer: vec!["erzeuger".into(), "zeuge".into()],
         kettendatei: if kette { Some(kettendatei.clone()) } else { None },
-        genesisdatei: None,
+        stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
     };
 

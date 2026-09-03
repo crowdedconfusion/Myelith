@@ -1,11 +1,11 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.29.0
-> **Datum:** 2026-09-02
+> **Version:** 0.38.0
+> **Datum:** 2026-09-03
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
-> **196 Tests grün.**
+> **251 Tests grün.**
 >
 > ⚑ **Seit dem 27. August sind Blockhöhe und Epoche zwei Dinge.** Die
 > Probekette schrieb ihre Höhe in das Epochenfeld des Blockkopfs; das
@@ -278,6 +278,274 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.38.0 – 2026-09-03 (`genesis.rs` heisst jetzt `stimmsatzdatei.rs`)
+
+⚑ **Die Namensgleichheit war die Quelle einer gefährlichen
+Verwechslung.** Das Modul liest den **Stimmsatz**: wer bei BFT-Runden
+mitstimmt, mit welchem Gewicht. Eine Betriebsdatei für jeden Netzlauf
+**einschliesslich Probelauf**, an der nichts unumkehrbar ist. Mit dem
+**produktiven Genesis**, dessen Ausführung sich nicht wiederholen lässt,
+hat sie nichts zu tun.
+
+Umbenannt sind Modul, Typen (`Stimmsatzdatei`, `Stimmberechtigter`,
+`Stimmsatzfehler`), das Konfigurationsfeld und die Schalter:
+`--stimmsatz` und `--stimmsatzzeile`. **Die alten Namen werden noch
+angenommen und warnen**, damit ein bestehendes Betreiberskript nicht
+stumm scheitert.
+
+### v0.37.0 – 2026-09-03 (⚑ Fund 163: der Riegel gegen die Verwechslung war nie eingelegt)
+
+`PROBE_STARTWERT` trug einen Doc-Kommentar, der ihn zum „Riegel gegen
+eine Verwechslung mit dem echten Netz" erklärte und mit „Der Text sagt es
+auch dem, der die Bytes anschaut" schloss. ⚑ **Die Konstante wurde
+ausschliesslich in Kommentaren erwähnt.** `Kette::startwert()` rechnete
+`sha256("myelith-testkette-genesis")`, und dieser Text sagt genau das
+nicht.
+
+Dazu stand der wirkliche Wert an **sechs Stellen als Literal**, in drei
+Kisten. Beides geschlossen: `startwert()` nimmt die Konstante, die
+Literale rufen die Funktion. Die Gegenprobe ändert die Konstante und
+beobachtet, dass beide Kisten mitziehen.
+
+**Gefunden wurde er nicht durch einen Test**, sondern durch die Frage des
+Projektinhabers, ob die Regeln in der Agentenanweisung im Kontext des
+Projekts überhaupt stimmen.
+
+### v0.36.1 – 2026-09-03 (⚑ Fund 162: die Shardzahl ist jetzt gebunden)
+
+Die Shardzahl der Pipeline und die der Gewichtsableitung standen beide
+auf vier, und **nichts im Code hielt sie zusammen**. Eine Abweichung
+hätte stumm dazu geführt, dass ein Pod für seine Arbeit nichts bekommt.
+Zwei `const`-Zusicherungen binden sie jetzt.
+
+⚑ **Der erste Anlauf war Zierde**, und die Gegenprobe fing ihn: Ein
+assoziiertes `const` im `impl`-Block wird erst berechnet, wenn es
+jemand benutzt. Auf Modulebene verschoben, beisst es.
+
+### v0.36.0 – 2026-09-03 (⚑ Fund 160: der Rechenweg bucht wirklich ab)
+
+**Nach jeder echten Antwort geht eine Abrechnung in die Kette.** Der
+Rechenweg baut `Anweisung::SitzungAusgeben` (Betrag = erzeugte Token,
+mindestens eins), gibt sie über einen Kanal an den Knoten, der sie mit
+dem eigenen Kettenschlüssel signiert und verbreitet, dieselbe Bauart
+wie bei der Kontraktabschrift der Tür: Wer schreibt, schreibt in der
+Ereignisschleife; wer rechnet, tut es woanders.
+
+⚑ **Erst wenn gerechnet wurde, wird abgebucht.** Wer vorher bucht,
+kassiert für eine Anfrage, die scheitern kann.
+
+**Und `zuschreibung_der_epoche` bekommt seine Arbeitsverteilung jetzt
+immer.** `Kette::arbeitsverteilung_setzen` ist entfernt (Fund 161): Es
+war eine nackte Methode, die den Zustand ausserhalb jeder
+Blockanwendung mutierte und auf einem echten Knoten die Zustandswurzel
+gespalten hätte. `myl_tokenomics::vtfe::arbeitsverteilung_probe`
+rechnet dieselbe Zahl auf jedem Knoten.
+
+### v0.35.0 – 2026-09-03 (der Rechenweg fragt, statt zu raten)
+
+⚑ **Fund 160, die Knotenhälfte.** `Ortsweg::modell` las nur den
+gemerkten Pipeline-Stand und gab „unbekannt" zurück, solange keiner da
+war. Da ein Harness die Modelle **vor** der ersten Anfrage abruft, war
+das der Normalfall; jetzt wird gefragt.
+
+**Und `prompt_tokens` kommt vom Shard statt aus der Byte-Länge.** Der
+frühere Kommentar hier begründete das Schätzen damit, dass der
+Wortschatz beim Shard liegt. Richtig beobachtet, falsch gefolgert: Dann
+zählt der Shard.
+
+### v0.34.0 – 2026-09-03 (der Knoten erfüllt den Rechenweg der Tür)
+
+**Die Tür führt bis zum Rechenwerk** (GATEWAY Stufe 3). `rechenweg`
+setzt zusammen, was nur der Knoten zusammen sieht: die Tür, den
+Sitzungskanal und die lokale Leitung zum Shard.
+
+⚑ **Der Knoten versiegelt, obwohl er den Klartext ohnehin sieht.** Das
+klingt sinnlos und ist es nicht: **Der Weg endet nicht hier.** Heute
+liegt der Shard auf derselben Maschine, morgen in einem fremden Pod, und
+dann trägt genau dieselbe Versiegelung. Wer den Klartext auf die lokale
+Leitung legt, weil sie kurz ist, hat beim ersten fremden Pod eine zweite
+Codeform und einen zweiten Fehlerpfad.
+
+⚑ **Und die Bindung braucht es ohnehin.** Sie bindet den Klartext, den
+der Rechnende erst nach dem Entsiegeln sieht; ohne Siegel gäbe es
+nichts, wogegen er sie prüfen könnte.
+
+**Der Shard sagt einmal, wer er ist**, und der Knoten merkt es sich: Die
+angekündigten Punkte gelten für eine Epoche, und sie bei jeder Anfrage
+zu erfragen wäre ein zusätzlicher Umlauf vor jeder Inferenz.
+
+**Der Deckel des Protokolls schlägt den Wunsch des Klienten.** Ein
+Harness darf mehr Token verlangen, als das Protokoll erlaubt; es bekommt
+das Erlaubte und keine Ablehnung, denn die Zahl ist eine Obergrenze und
+kein Versprechen.
+
+**Was hier bewusst nicht steht:** die Zuteilung aus der Kette. Dieser
+Weg fragt den **lokalen** Shard und keinen fremden Pod; wer einen
+fremden fragt, braucht die Zuteilung, den Weg über `myl-net` und die
+angekündigten Punkte aus dem Block. Das ist der nächste Schnitt und
+keine Zeile, die man hier nebenbei unterbringt.
+
+⚑ **`prompt_tokens` zählt Bytes und keine Token**, und der Name stammt
+aus der OpenAI-Form. Der Wortschatz liegt beim Shard; eine geschätzte
+Tokenzahl wäre eine Zahl, die aussieht wie eine Messung.
+
+### v0.33.0 – 2026-09-03 (der Knoten reicht an den Shard weiter)
+
+**Der kalte Pfad ist zu.** Ein Inferenzauftrag aus dem Netz geht über
+die lokale Leitung an den Shard-Prozess und die Antwort denselben Weg
+zurück. Neu: `ortsklient`, `--ortsleitung <adr>` und
+`--ortsausweis <pfad>`.
+
+⚑ **Und nichts davon läuft in der Ereignisschleife.** Der Shard rechnet
+Sekunden bis Minuten; wer dort wartet, hält die Blockverarbeitung genau
+so lange an. Der Auftrag geht in eine eigene Aufgabe, die Antwort später
+über dieselbe Marke zurück.
+
+⚑ **Die Vorgabe ist aus, anders als bei der Tür.** Ein Knoten ist nicht
+notwendig ein Miner: Er kann Shard in einem Pod sein, Speicher stellen
+oder einfach nur Nutzer sein (Fund 152). Wer rechnet, sagt es; wer
+nichts sagt, lehnt ehrlich ab, statt einen Shard vorzutäuschen.
+
+⚑ **Adresse und Ausweis gehören zusammen**, und wer eines allein
+angibt, bekommt keinen Knoten. Klasse von Fund 56: Eine Absicht, die
+nicht erfüllbar ist, soll den Betreiber beim Start erreichen und nicht
+den ersten Nutzer. Ein Knoten, der jeden Auftrag ablehnt, sieht im
+Betrieb aus wie ein Shard, der schweigt.
+
+⚑ **Fund 156, die gefährliche Hälfte:** Der Klient prüfte nur auf
+`Ok` und las sonst weiter. Ein Shard-Prozess, der eine masslose Länge
+ankündigt, brachte den Knoten dazu, **ein Megabyte Müll zu sammeln**,
+bevor ein Notdeckel griff. Jetzt liest er die Fehlerart und lässt
+sofort fallen. **„Lokal" heisst nicht „vertrauenswürdig ohne Grenze".**
+
+⚑ **Eine Gegenprobe biss als Hänger und nicht als Fehlschlag.** Ohne
+Frist wartet der Knoten auf einen schweigenden Shard unbegrenzt, und
+genau das ist die Zusicherung. Ein Prüfskript, das nur auf `FAILED`
+sieht, hätte sie als bestanden gebucht.
+
+**256 Tests grün.**
+
+### v0.32.0 – 2026-09-03 (ein Inferenzauftrag geht über das Netz)
+
+**Der Rest von Stufe 4, erster Schnitt.** Bis heute gab es für einen
+Inferenzauftrag keinen Weg über das Netz: kein Auftragstyp, kein
+Transport, und `myl-pod` bekam seine Arbeit von der Kommandozeile.
+`Nachforderung::Inferenz` und `Nachlieferung::Inferenz` fahren jetzt auf
+**derselben Anfrageschiene wie die Blocknachforderung**.
+
+⚑ **Eine zweite Schiene wäre ein zweiter Codec, eine zweite
+Größengrenze und eine zweite Zerlegung auf fremden Eingaben.** Genau die
+drei Dinge, die man nicht doppelt haben will. Die Varianten sind
+**angehängt, nicht eingeschoben**: Die Reihenfolge ist Protokollvertrag.
+
+**Der Deckel steht vor der Leitung.** `inferenz_senden` prüft die Form,
+bevor der Auftrag abgeht; was ohnehin abgewiesen wird, soll die Leitung
+nicht belasten.
+
+⚑ **Und die beiden Grenzen sind aneinandergebunden.**
+`MAX_PROMPT_BYTES` steht in `myl-types`, `MAX_ANFRAGE_BYTES` in
+`myl-net`, und die beiden Kisten kennen einander nicht. **Nur hier sind
+beide sichtbar**, also steht die Naht hier: Passte ein formgültiger
+Auftrag nicht durch, scheiterte er erst auf der Leitung, und zwar für
+den Absender unsichtbar.
+
+**Die Antwort ist heute `Abgelehnt`, und das ist keine Übergangslösung
+im Verstecken.** Ein Shard läuft nach der Entscheidung vom 3. September
+in einem **eigenen Prozess**, damit ein Absturz beim Rechnen den Konsens
+nicht anhält. Was fehlt, ist die lokale Schnittstelle dorthin.
+
+⚑ **Abgelehnt und nicht geschwiegen.** Der Fragende soll „hier rechnet
+niemand" von „nicht angekommen" unterscheiden können; ein Auftrag ohne
+Antwort läuft in eine Zeitüberschreitung, die nichts bedeutet.
+
+⚑ **Eine Inferenzantwort hebt die laufende Blocknachforderung nicht
+auf.** Wer beides über eine Schiene schickt, muss beim Lesen wieder
+trennen: Der Empfänger löscht beim Eintreffen einer Antwort zuerst den
+Aufholzustand, weil er eine Blocklieferung erwartet. Ohne die Trennung
+wäre die Nachforderung als erledigt gebucht, **obwohl die Blöcke noch
+unterwegs sind**, und der Knoten fragte dieselben Blöcke ein zweites Mal
+an.
+
+**Eine tote Prüfung ist wieder ausgebaut** (Fund 154). Der Empfänger
+prüfte die Auftragsform, aber beide Zweige lieferten dasselbe
+`Abgelehnt`, und das Ergebnis landete als `bloecke`-Zahl im Protokoll:
+Ein Inferenzauftrag protokollierte sich als Blocklieferung. Eine
+Prüfung, auf die keine Gegenprobe beißen kann, ist Zierde; sie gehört an
+die Naht zum Shard und geht mit ihr ein.
+
+**Neu in der Beobachtung:** `myelith_nachforderung_laeuft`. Die Frage
+eines Betreibers lautet nicht „ist er wach", sondern „holt er noch auf":
+Ein Knoten mit niedriger Höhe und laufender Nachforderung arbeitet,
+einer mit niedriger Höhe und ohne Nachforderung hängt.
+
+**Und eine Tür für Tests**, `ereignis_einspeisen`, mit einem Grund, der
+sich nicht umgehen lässt: Dass eine Inferenzantwort **während** einer
+laufenden Blocknachforderung eintrifft, ist über echte Sockets ein
+Rennen, das ein Test nicht verlässlich gewinnt. Der erste Versuch hat
+genau das bewiesen, indem er flatterte.
+
+**251 Tests grün, sieben Gegenproben je Zeile, alle sieben beißen.**
+
+### v0.31.0 – 2026-09-03 (der Knoten beherbergt das eigene Gateway)
+
+**Punkt B6-3, entschieden am selben Tag: nur das eigene Gateway.** Der
+Betreiber ist der Kontoinhaber, die Tür hört auf `127.0.0.1:4160`, und
+damit entfallen Namensfindung, Vertrauensfrage und Vergütung.
+
+⚑ **K0s Einwand gilt hier nicht, und das ist der Grund, warum es
+geht.** K0 sagt: „Eine öffentliche Tür gehört nicht auf die
+Konsensmaschine", denn ein Überlastangriff gegen die Tür wäre einer
+gegen die Lebendigkeit des Konsenses. **Diese Tür ist nicht
+öffentlich**, und wer sie hinausbindet, bekommt eine Warnung, die genau
+das sagt.
+
+**Drei Ports, nebeneinander und unterscheidbar:** 4150 das Netz, 4151
+die Beobachtung, 4160 die Tür. Ein Blick in `netstat` sagt, was wozu
+gehört.
+
+⚑ **Der Zugang ist ein Sitzungskontrakt aus der Kette**, nicht aus einer
+Attrappe. Der Kettenzustand gehört der Ereignisschleife; ihn mit einem
+Netzdienst zu teilen hiesse, eine Sperre über ein `await` zu halten.
+**Deshalb legt der Knoten bei jeder Zustandsaufnahme eine Abschrift ab**,
+und die Tür liest nur diese: dieselbe Bauart wie bei der
+Betriebsbeobachtung.
+
+**Was das kostet, gehört gesagt:** Die Abschrift ist so frisch wie die
+Aufnahme, im Vorgabefall dreissig Sekunden. **Ein Widerruf wirkt mit
+dieser Verzögerung**, und wer widerruft, will meist sofort.
+
+⚑ **Eine Gegenprobe hat einen ungeprüften Aufruf gefunden.** Die
+Abschrift selbst war geprüft, ihr Aufruf in der Zustandsaufnahme nicht:
+Ausgebaut blieb alles grün. **Dieselbe Klasse, die diese Woche siebenmal
+aufgetreten ist**, diesmal im eigenen frischen Code. Der Test in
+`zwei_knoten.rs` schliesst sie.
+
+**Was dieser Schnitt nicht ist:** Er gibt noch nichts an einen Pod. Es
+gibt keinen Weg dorthin, auf keiner der beiden Seiten; das ist der Rest
+von Stufe 4 und die eigentliche Arbeit.
+
+**Neu an der Befehlszeile:** `--tuer <adr>`, `--ohne-tuer`.
+
+### v0.30.0 – 2026-09-03 (drei Anweisungen für den Einsatz, Punkt B11)
+
+Der Knoten reicht `EinsatzHinterlegen`, `EinsatzKuendigen` und
+`EinsatzAbholen` an den Ledger weiter, wie jede andere Anweisung: über
+`anwenden`, an der einen Stelle, an der der Zustand sich ändert.
+
+⚑ **Damit ist `staked` zum ersten Mal von null verschieden** (Fund 145).
+Es stand seit Langem im Zustand, und keine der acht Anweisungen schrieb
+es; die ganze wirtschaftliche Sicherheitsschicht hing an einer Zahl, die
+niemand setzte.
+
+**Ein Test geht den Weg über echte, unterschriebene Transaktionen.**
+⚑ **Was er nicht prüft, und warum:** Der erste Anlauf stellte
+`zustand.epoch` von Hand auf die Freigabe-Epoche, um das Abholen zu
+sehen. Das hält nicht, denn `anwenden` setzt die Epoche aus der
+**Blockhöhe**, bevor es Transaktionen anwendet, und überschreibt die
+gestellte Zahl. **Das ist richtig so**, es ist die Regel, die Erzeuger
+und Übernehmer zusammenhält. Die Reife steht deshalb dort, wo sie
+hingehört, bei den Übergängen in `myl-ledger`, samt Gegenprobe.
 
 ### v0.29.0 – 2026-09-02 (die Zuteilung steht während ihrer Epoche fest, und ein Bündel wird bei der Aufnahme geprüft)
 

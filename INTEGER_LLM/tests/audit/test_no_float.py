@@ -159,10 +159,21 @@ CONSENSUS_PATH = [
     # ⚑ Die Vollstaendigkeitspruefung hat sie beim ersten Lauf gemeldet,
     # und zwar am selben Tag, an dem sie entstand.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "poi_botschaft.rs",
+    # 2026-09-03: Der Auftrag an einen Pod (GATEWAY Stufe 4). Er rechnet
+    # in Token und Bytes, also ganzzahlig, und muss es bleiben: Ein
+    # Deckel mit Rundungsfehler waere je Knoten ein anderer.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "inferenzauftrag.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "ortsleitung.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "vollmacht.rs",
     # 2026-09-02: Der Speichersatz (Punkt B4). Er rechnet in
     # Recheneinheiten je Byte-Epoche, also ganzzahlig, und muss es
     # bleiben: Ein Gleitkommasatz waere je Maschine ein anderer Preis.
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "speicherentgelt.rs",
+    # 2026-09-03: Der Einsatz (Punkt B11). Er rechnet in
+    # Kleinstbetraegen und Epochen, also ganzzahlig, und muss es
+    # bleiben: Eine Schlachtmasse mit Rundungsfehler waere je Knoten
+    # eine andere.
+    ROOT / "CONSENSUS" / "myl-ledger" / "src" / "einsatz.rs",
     # 2026-08-31: Die Kapazitaetszusage. Sie rechnet in Bytes und
     # Epochen, also in Ganzzahlen, und muss es bleiben: Ein Speicherwert
     # als Gleitkomma waere ueber zwei Knoten hinweg nicht sicher gleich,
@@ -318,7 +329,7 @@ CONSENSUS_PATH = [
     # oder in einer Groessengrenze waere kein Rundungsfehler, sondern
     # eine Nonce-Wiederholung. Aufgenommen mit der ersten Zeile, nicht
     # spaeter: Fund 44 entstand genau aus dem "spaeter".
-    ROOT / "NETWORKING" / "myl-net" / "src" / "sitzung.rs",
+    ROOT / "NETWORKING" / "myl-siegel" / "src" / "lib.rs",
     # NODE, aufgenommen 2026-08-24 mit dem Knoten-Binary. Die
     # Verdrahtung darf so wenig Gleitkomma enthalten wie das, was sie
     # verdrahtet, sonst wandert es genau hierher.
@@ -352,7 +363,6 @@ CONSENSUS_PATH = [
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "stake.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "slashing.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "anlauf.rs",
-    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "genesis.rs",
     # 2026-08-31, ⚑ **Fund 107: Die Datei, die entscheidet, wer wie viel
     # bekommt, stand nicht in dieser Liste.** `vtfe.rs` zaehlt die
     # Multiplikations-Additionen je Zuschnitt und legt damit den Anteil

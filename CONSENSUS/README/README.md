@@ -1,8 +1,8 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.37.0 (`myl-consensus` 0.26.0, `myl-scheduler` 0.10.0,
-> `myl-ledger` 0.15.0)
-> **Datum:** 2026-09-02
+> **Version:** 0.39.0 (`myl-consensus` 0.28.0, `myl-scheduler` 0.10.0,
+> `myl-ledger` 0.17.0)
+> **Datum:** 2026-09-03
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
 > Streitfrist 7 Tage, Reed-Solomon k=8/m=4);
@@ -107,6 +107,83 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.39.0 – 2026-09-03 (⚑ Fund 160: eine gerechnete Anfrage wird jetzt wirklich abgebucht)
+
+**Der Projektinhaber fragte, ob die Umsetzung von MYL in Credits samt
+Burn schon durchgespielt ist.** `burn_to_credits` war verdrahtet;
+**`sitzung_ausgeben`, der Übergang, der Credits nach einer gerechneten
+Anfrage abbucht, hatte ausserhalb der eigenen Tests keinen Aufrufer.**
+Ein Nutzer konnte unbegrenzt fragen, ohne dass sein Budget sank.
+
+⚑ **`sitzung_ausgeben` akzeptiert jetzt eine Vollmacht als
+Autorisierung.** Ein Harness hält einen Bearer-Token und keinen
+Schlüssel; es kann keine Kettentransaktion signieren. Der Betreiber
+reicht ein, die Kette prüft die Vollmacht des Agenten
+(`myl_types::vollmacht`, aus `myl-gateway` hierher gezogen, weil die
+Kette sie prüfen muss und `myl-ledger` `myl-gateway` nicht kennen
+darf).
+
+⚑ **Und ein Riegel gegen die zweite Abbuchung.** `Vorhaben` trägt jetzt
+eine `nummer`, die über die zuletzt gebuchte steigen muss
+(`Sitzungszustand::hoechste_abrechnung`). Der Transaktionsnonce schützt
+nur vor der Wiederholung *derselben* Transaktion; solange nur der Agent
+selbst einreichen konnte, schadete eine zweite Einreichung ihm selbst.
+**Seit ein Fremder mit Vollmacht einreicht, ist das ein Angriff auf das
+Budget des Nutzers.**
+
+**Verdrahtet bis zum Ende:** `myl-node`s Rechenweg baut nach jeder
+echten Antwort eine `SitzungAusgeben`-Anweisung (Betrag = erzeugte
+Token, mindestens eins), signiert sie mit dem eigenen Kettenschlüssel
+und verbreitet sie. Ein Test über den ganzen Weg (Anfrage → Rechnen →
+Kanal → Signatur → Kettenzustand) beweist den Verbrauch, samt
+Gegenprobe auf die doppelte Buchung.
+
+### v0.38.0 – 2026-09-03 (⚑ der Einsatz bekommt einen Weg in den Zustand, Punkt B11)
+
+⚑ **Fund 145: `staked` stand seit Langem im Zustand, und niemand
+schrieb es.** Der ganze wirtschaftliche Sicherheitsbau hing daran:
+`S_min = g/p²`, das Stimmgewicht, die Slashing-Staffelung, das
+Kopfgeld. Keine der acht Anweisungen setzte einen Einsatz, also war
+`staked` im Betrieb **immer null**, also schlachtete `apply_verdict`
+immer null, also hatte `MindestStake` nichts zu begrenzen.
+
+**Drei neue Anweisungen:** `EinsatzHinterlegen`, `EinsatzKuendigen`,
+`EinsatzAbholen`.
+
+⚑ **Die Sperrfrist ist hergeleitet, nicht gewählt.** Ein Einsatz, den
+man sofort abziehen kann, ist keiner: Wer falsch rechnet, zöge ab, bevor
+das Urteil da ist. Also muss die Frist mindestens so lang sein wie das
+Fenster, in dem noch ein Urteil kommen kann, und das ist die
+**Streitfrist**: 168 Epochen, sieben Tage bei Stunden-Epochen.
+
+⚑ **Und die Frist allein genügt nicht.** Wer kündigt, hätte den Betrag
+aus `staked` heraus und damit aus der Schlachtmasse, obwohl er noch
+haftet. `apply_verdict` zählt das Gekündigte deshalb **mit** und nimmt
+es in der Reihenfolge der Freigabe, also die Kündigung zuerst, die der
+Auszahlung am nächsten ist: die Richtung, die einem Fliehenden zuerst
+nimmt, was er zu retten versucht. **Die Frist verschiebt die Auszahlung,
+sie beendet die Haftung nicht.**
+
+**Gegen Zustandswachstum geschlüsselt.** `gekuendigt` ist eine Karte
+nach Freigabe-Epoche, nicht eine Liste: Kündigungen derselben Epoche
+werden zusammengelegt, es gibt also höchstens einen Eintrag je Epoche
+und nie mehr als 169. Eine Liste wäre unbegrenzt gewachsen, und das ist
+die Klasse von Fund 144.
+
+⚑ **Das Abholen ist eine eigene Anweisung**, weil das Gegenteil hiesse,
+jedes Konto in jeder Epoche anzufassen: eine Arbeit in der Grösse des
+Netzes für einen Vorgang, der einzelne betrifft.
+
+**Wo das Modul steht, war ein Umweg.** Der erste Anlauf legte es zu den
+übrigen wirtschaftlichen Grössen nach TOKENOMICS. Das ging nicht, denn
+`myl-tokenomics` hängt an `myl-ledger` und nicht umgekehrt, **und die
+Einordnung war ohnehin falsch:** Was hier steht, ist keine Formel,
+sondern Zustandsmechanik.
+
+**Belegt:** elf Tests, vier Gegenproben. Die schärfste davon baut den
+Fluchtweg wieder ein, indem sie das Gekündigte aus der Masse nimmt; dann
+meldet das Urteil `NoStake` und der Test fällt.
 
 ### v0.37.0 – 2026-09-02 (⚑ die Pod-Besetzung war wählbar, und die Prüfung stand am falschen Ort)
 

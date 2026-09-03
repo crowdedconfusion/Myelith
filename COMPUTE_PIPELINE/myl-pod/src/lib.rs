@@ -34,11 +34,15 @@
 
 #![deny(unsafe_code)]
 
+pub mod artefakte;
 pub mod wire;
 pub mod trace;
 pub mod shard;
 pub mod ausfallmeldung;
 pub mod netzreserve;
+pub mod entsiegelung;
+pub mod ortsdienst;
+pub mod pipelinewerk;
 pub mod standby;
 pub mod coordinator;
 pub mod micro_batch;

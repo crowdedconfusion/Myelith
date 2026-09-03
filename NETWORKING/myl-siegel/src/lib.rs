@@ -1,6 +1,29 @@
 //! Ende-zu-Ende-verschlüsselte Sitzungen zwischen zwei Endpunkten
 //! (Punkte 3.1 bis 3.3, Whitepaper Kap. 9.2).
 //!
+//! # ⚑ Warum das eine eigene Kiste ist (seit 2026-09-03, Fund 155)
+//!
+//! Diese Datei stand bis dahin als `sitzung.rs` in `myl-net`, und dort
+//! **hatte sie keinen Aufrufer**: Alle 21 Fundstellen von `sitzung::`
+//! im Baum waren `myl_types::sitzung`, also der Kontrakt. Innerhalb von
+//! `myl-net` benutzte keine andere Datei sie; `lib.rs` reichte sie nur
+//! weiter.
+//!
+//! **Aufgefallen ist es, als GATEWAY Stufe 4 sie brauchte.** Der
+//! Shard-Prozess muss entsiegeln, denn die Bindung bindet den Klartext
+//! und lässt sich erst danach prüfen. Über `myl-net` hätte er dafür
+//! **181 zusätzliche Kisten** gebaut, libp2p, tokio und die
+//! Gossip-Schicht, die er nie benutzt; über diese Kiste sind es 21.
+//!
+//! ⚑ **Der Pfeil im Weg war das Symptom, nicht das Problem.** Sie
+//! importiert nichts aus `myl-net`, öffnet keinen Socket, kennt kein
+//! `async`. Sie ist der **vertrauliche Kanal ohne den Transport**, und
+//! die alte Kiste mischte beides. Die Komponente stimmte, der
+//! Kistenschnitt nicht.
+//!
+//! **`myl-net` reicht sie weiter**, damit kein Aufrufer bricht:
+//! `myl_net::sitzung` bleibt gültig.
+//!
 //! # Warum der Transport nicht genügt
 //!
 //! libp2p verschlüsselt jede Verbindung mit Noise. Für zwei Knoten, die
@@ -141,11 +164,35 @@ pub const KOPF_BYTES: usize = 112;
 /// Größte Klartextlänge, die durch den Anfragekanal passt.
 ///
 /// Abgeleitet, nicht gesetzt: Eine versiegelte Nachricht reist als
-/// Nutzlast über [`crate::anfrage`], und dort gilt
-/// [`crate::anfrage::MAX_ANFRAGE_BYTES`]. Vom Budget gehen der Kopf, das
-/// Tag und die vier Bytes Borsh-Längenpräfix des Geheimtexts ab.
-pub const MAX_KLARTEXT_BYTES: usize =
-    crate::anfrage::MAX_ANFRAGE_BYTES - KOPF_BYTES - TAG_LEN - 4;
+/// Nutzlast über den Anfragekanal, und dort gilt
+/// [`myl_types::protocol::MAX_ANFRAGE_BYTES`]. Vom Budget gehen der
+/// Kopf, das Tag, die vier Bytes Borsh-Längenpräfix des Geheimtexts
+/// **und der Kapselvorspann** ab.
+///
+/// ⚑ **Der Kapselvorspann fehlte bis zum 2026-09-03** (Fund 159). Die
+/// Herleitung stammte aus der Zeit vor dem hybriden Austausch, als eine
+/// versiegelte Nachricht allein auf die Leitung ging. Seit dem KEM-Zweig
+/// geht sie im [`Umschlag`], und der ist 1 192 Byte länger: **Der
+/// grösste erlaubte Klartext passte damit nicht mehr durch den Kanal,
+/// für den er berechnet war.**
+///
+/// Gefunden hat es keine Prüfung, sondern eine Simulation
+/// (`umschlag_sim.py`), und das ist die Klasse „eine Kostenannahme kann
+/// kein Test widerlegen": Jeder Test sah einen Umschlag, der aufgeht,
+/// und keiner den grössten.
+pub const MAX_KLARTEXT_BYTES: usize = myl_types::protocol::MAX_ANFRAGE_BYTES
+    - KOPF_BYTES
+    - TAG_LEN
+    - 4
+    - KAPSELRAHMEN_LEN;
+
+/// ⚑ Der grösste erlaubte Klartext muss **im Umschlag** durch den Kanal
+/// passen, nicht nur ohne ihn.
+const _: () = assert!(
+    MAX_KLARTEXT_BYTES + KOPF_BYTES + TAG_LEN + 4 + KAPSELRAHMEN_LEN
+        <= myl_types::protocol::MAX_ANFRAGE_BYTES,
+    "der groesste Umschlag passt nicht durch den Anfragekanal"
+);
 
 /// Ein Endpunkt einer Sitzung: 32 Bytes, mehr weiß diese Schicht nicht.
 ///
@@ -155,7 +202,7 @@ pub const MAX_KLARTEXT_BYTES: usize =
 /// zwischen zwei Punkten; wer diese Punkte sind, entscheidet die
 /// Anwendung. Stünde hier ein `MinerId`, könnte ein Nutzer keine
 /// Sitzung führen, ohne einer zu sein, und `myl-net` wüsste plötzlich,
-/// was ein Miner ist. Dieselbe Trennung hält [`crate::anfrage`] für
+/// was ein Miner ist. Dieselbe Trennung hält der Anfragekanal für
 /// seine Nutzlast ein.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
@@ -556,7 +603,7 @@ pub struct Versiegelt {
 }
 
 impl Versiegelt {
-    /// Kanonische Bytes für den Transport über [`crate::anfrage`].
+    /// Kanonische Bytes für den Transport über den Anfragekanal.
     pub fn zu_bytes(&self) -> Vec<u8> {
         borsh::to_vec(self).expect("Versiegelt ist borsh-serialisierbar")
     }
@@ -1269,6 +1316,15 @@ impl Sitzungen {
         self.eigener.punkt()
     }
 
+    /// Der eigene Kapselpunkt zum Ankündigen.
+    ///
+    /// ⚑ **Beide gehören zusammen angekündigt.** Wer nur den X25519-Punkt
+    /// nennt, lässt die Gegenstelle den KEM-Zweig nicht bilden, und dann
+    /// ist die Nachricht unlesbar, ohne dass jemand sagen könnte, warum.
+    pub fn kapselpunkt(&self) -> Kapselpunkt {
+        self.eigener.kapselpunkt()
+    }
+
     /// Woher das eigene Material stammt.
     pub fn herkunft(&self) -> Herkunft {
         self.eigener.herkunft()
@@ -1368,6 +1424,70 @@ impl Sitzungen {
     }
 }
 
+/// Länge des Kapselvorspanns: `epoche ‖ pod ‖ von ‖ an ‖ chiffrat`.
+pub const KAPSELRAHMEN_LEN: usize = 8 + 32 + 32 + 32 + KAPSEL_LEN;
+
+/// Kapsel und versiegelte Nachricht in einem Stück.
+///
+/// # ⚑ Warum der Rahmen hier steht und nicht beim Aufrufer
+///
+/// **Seit dem hybriden Austausch reicht die versiegelte Nachricht
+/// allein nicht.** Der KEM-Zweig hat eine Richtung: Der Absender
+/// kapselt gegen den Kapselpunkt des Empfängers, und ohne das dabei
+/// entstehende Chiffrat kann der Empfänger seinen Empfangsschlüssel gar
+/// nicht bilden. **Wer nur [`Versiegelt`] schickt, schickt etwas
+/// Unlesbares.**
+///
+/// Bis zum 2026-09-03 stand dieser Rahmen als Hilfsfunktion in einem
+/// **Test** von `myl-net`. Als GATEWAY Stufe 4 ihn brauchte, wäre er ein
+/// zweites Mal geschrieben worden: **zwei Rahmen für dieselbe Aussage
+/// laufen auseinander**, und dann schweigt eine Leitung, ohne dass eine
+/// Seite sagen könnte, warum.
+///
+/// Die Kapsel ist festlanger, der Rahmen braucht deshalb keine
+/// Längenangabe.
+///
+/// ⚑ **Sie geht jeder Nachricht voran und nicht nur der ersten.** Das
+/// kostet 1088 Byte je Nachricht und ist die einfachere Wahrheit: Wer
+/// sie nur einmal sendet, muss wissen, ob die Gegenstelle sie schon
+/// hat, und das weiss ein zustandsloser Auftrag nicht.
+pub struct Umschlag;
+
+impl Umschlag {
+    /// Versiegelt und legt die eigene Kapsel davor.
+    pub fn schliessen(kanal: &mut Kanal, klartext: &[u8]) -> Result<Vec<u8>, SitzungsFehler> {
+        let mut roh = kanal.eigene_kapsel().zu_bytes();
+        roh.extend_from_slice(&kanal.versiegle(klartext)?.zu_bytes());
+        Ok(roh)
+    }
+
+    /// Nimmt die Kapsel an und öffnet die Nachricht.
+    ///
+    /// ⚑ **Erst den eigenen Kanal, dann ihre Kapsel.** Wer eine Kapsel
+    /// annimmt, ohne selbst einen Kanal geöffnet zu haben, hat den
+    /// Kapselpunkt der Gegenstelle nie geprüft und dürfte ihr also nicht
+    /// glauben; [`Sitzungen::nimm_kapsel`] verlangt dieselbe
+    /// Reihenfolge.
+    pub fn oeffnen(
+        sitzungen: &mut Sitzungen,
+        pod: PodId,
+        gegenstelle: Endpunkt,
+        gegenpunkte: &Gegenpunkte,
+        roh: &[u8],
+    ) -> Result<Vec<u8>, SitzungsFehler> {
+        if roh.len() <= KAPSELRAHMEN_LEN {
+            return Err(SitzungsFehler::UnleserlicherRahmen);
+        }
+        let kapsel = Kapsel::aus_bytes(&roh[..KAPSELRAHMEN_LEN])?;
+        let versiegelt = Versiegelt::aus_bytes(&roh[KAPSELRAHMEN_LEN..])?;
+        sitzungen.kanal(pod, gegenstelle, gegenpunkte)?;
+        sitzungen.nimm_kapsel(&kapsel)?;
+        sitzungen
+            .kanal(pod, gegenstelle, gegenpunkte)?
+            .oeffne(&versiegelt)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1420,6 +1540,77 @@ mod tests {
         (a, b)
     }
 
+    /// ⚑ **Der Umschlag trägt die Kapsel mit, und ohne sie geht nichts
+    /// auf.** Das ist die Aussage, die bis zum 2026-09-03 nur in einem
+    /// Test einer fremden Kiste stand.
+    #[test]
+    fn ein_umschlag_geht_beim_empfaenger_auf() {
+        let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        let a_punkte = punkte(&a_schluessel);
+        let b_punkte = punkte(&b_schluessel);
+
+        let mut a = Sitzungen::neu(endpunkt(1), a_schluessel);
+        let mut b = Sitzungen::neu(endpunkt(2), b_schluessel);
+
+        let roh = {
+            let kanal = a.kanal(pod(9), endpunkt(2), &b_punkte).expect("Kanal");
+            Umschlag::schliessen(kanal, b"der versiegelte prompt").expect("schliessen")
+        };
+        assert!(
+            !roh.windows(6).any(|f| f == b"prompt"),
+            "der Klartext steht im Umschlag"
+        );
+
+        let klartext = Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &roh)
+            .expect("oeffnen");
+        assert_eq!(klartext, b"der versiegelte prompt");
+    }
+
+    /// ⚑ **Ohne Kapsel ist der Umschlag unleserlich**, und zwar bevor
+    /// irgendetwas entschlüsselt wird.
+    #[test]
+    fn ein_umschlag_ohne_kapsel_geht_nicht_auf() {
+        let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let b_schluessel = Epochenschluessel::probe(EpochId(1), [2u8; 32]);
+        let a_punkte = punkte(&a_schluessel);
+        let b_punkte = punkte(&b_schluessel);
+        let mut a = Sitzungen::neu(endpunkt(1), a_schluessel);
+        let mut b = Sitzungen::neu(endpunkt(2), b_schluessel);
+
+        let roh = {
+            let kanal = a.kanal(pod(9), endpunkt(2), &b_punkte).expect("Kanal");
+            Umschlag::schliessen(kanal, b"prompt").expect("schliessen")
+        };
+        // Nur der versiegelte Teil, ohne Kapsel.
+        let ohne = &roh[KAPSELRAHMEN_LEN..];
+        assert!(
+            Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, ohne).is_err(),
+            "ein Umschlag ohne Kapsel ging auf"
+        );
+        // Gegenprobe: mit Kapsel geht derselbe auf.
+        assert!(
+            Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &roh).is_ok(),
+            "der vollstaendige Umschlag ging nicht auf"
+        );
+    }
+
+    /// Ein leerer oder zu kurzer Umschlag fällt vor jeder Rechnung.
+    #[test]
+    fn ein_zu_kurzer_umschlag_faellt_sofort() {
+        let a_schluessel = Epochenschluessel::probe(EpochId(1), [1u8; 32]);
+        let a_punkte = punkte(&a_schluessel);
+        let mut b = Sitzungen::neu(endpunkt(2), Epochenschluessel::probe(EpochId(1), [2u8; 32]));
+        for laenge in [0usize, 1, KAPSELRAHMEN_LEN - 1, KAPSELRAHMEN_LEN] {
+            let roh = vec![0u8; laenge];
+            assert_eq!(
+                Umschlag::oeffnen(&mut b, pod(9), endpunkt(1), &a_punkte, &roh),
+                Err(SitzungsFehler::UnleserlicherRahmen),
+                "Laenge {laenge} kam durch"
+            );
+        }
+    }
+
     #[test]
     fn die_kennung_ist_versioniert() {
         // Ohne Version leitet eine Formatänderung stumm andere
@@ -1451,7 +1642,7 @@ mod tests {
         let klartext = vec![0u8; MAX_KLARTEXT_BYTES];
         let versiegelt = a.versiegle(&klartext).expect("versiegeln");
         assert!(
-            versiegelt.zu_bytes().len() <= crate::anfrage::MAX_ANFRAGE_BYTES,
+            versiegelt.zu_bytes().len() <= myl_types::protocol::MAX_ANFRAGE_BYTES,
             "die größte Nachricht passt nicht durch den Kanal, der sie tragen soll"
         );
     }

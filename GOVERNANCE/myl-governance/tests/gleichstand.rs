@@ -429,3 +429,42 @@ fn die_abstimmungsvorgaben_halten_ihre_eigene_untergrenze() {
     myl_governance::invarianten::pruefe_invarianten(&ParameterRegistry::vorgabe())
         .expect("die Vorgabe verletzt ihre eigene Invariante");
 }
+
+/// ⚑ **Die Sperrfrist des Einsatzes deckt die Streitfrist** (Punkt B11).
+///
+/// Ein Einsatz, den man vor dem Urteil abziehen kann, ist keiner. Die
+/// Frist muss deshalb mindestens so lang sein wie das Fenster, in dem
+/// noch ein Urteil kommen kann.
+///
+/// **Drei Zahlen, drei Kisten, und nur hier sieht man alle:** die
+/// Streitfrist als Governance-Parameter, `DEFAULT_DISPUTE_EPOCHS` in
+/// `myl-consensus`, `SPERRFRIST_EPOCHEN` in `myl-ledger`. Keine der
+/// drei Kisten kennt die beiden anderen; **dieser Test ist die
+/// Naht.**
+#[test]
+fn die_sperrfrist_deckt_die_streitfrist() {
+    let reg = ParameterRegistry::vorgabe();
+    let frist_s = zahl(&reg, Parameter::Streitfrist);
+    let epoche_s = zahl(&reg, Parameter::Epochenlaenge);
+    let streit_epochen = frist_s / epoche_s;
+
+    assert!(
+        myl_ledger::einsatz::SPERRFRIST_EPOCHEN >= streit_epochen,
+        "Sperrfrist {} Epochen deckt die Streitfrist von {streit_epochen} nicht; \
+         wer kuendigt, waere vor dem Urteil draussen",
+        myl_ledger::einsatz::SPERRFRIST_EPOCHEN
+    );
+    // ⚑ **Und nicht laenger als noetig**, sonst waere sie eine Haerte
+    // ohne Begruendung. Gleichheit ist die Aussage; ein Abstand muesste
+    // begruendet werden und stuende dann hier.
+    assert_eq!(
+        myl_ledger::einsatz::SPERRFRIST_EPOCHEN,
+        streit_epochen,
+        "Sperrfrist und Streitfrist laufen auseinander"
+    );
+    // Die dritte Zahl derselben Aussage.
+    assert_eq!(
+        streit_epochen,
+        myl_consensus::epoch_close::DEFAULT_DISPUTE_EPOCHS
+    );
+}

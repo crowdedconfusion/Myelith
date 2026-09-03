@@ -402,6 +402,7 @@ jobs:
           workspaces: |
             SHARED_TYPES/myl-types
             NETWORKING/myl-net
+            NETWORKING/myl-siegel
             CONSENSUS/myl-ledger
             CONSENSUS/myl-scheduler
             CONSENSUS/myl-consensus
@@ -476,6 +477,13 @@ jobs:
 
       - name: cargo test — NETWORKING (myl-net)
         working-directory: NETWORKING/myl-net
+        run: cargo test --quiet
+
+      # ⚑ Der vertrauliche Sitzungskanal, seit dem 2026-09-03 eine eigene
+      # Kiste (B6-4). Eigener Eintrag und kein Anhaengsel von myl-net:
+      # Was einzeln gebaut wird, wird einzeln geprueft.
+      - name: cargo test — NETWORKING (myl-siegel)
+        working-directory: NETWORKING/myl-siegel
         run: cargo test --quiet
 
       - name: cargo test — CONSENSUS (myl-ledger)
@@ -595,10 +603,19 @@ jobs:
         run: cargo test --quiet
 
       # Testclient: Die Tests decken Protokollformat und Fingerabdruck ab
-      # und laufen ohne Artefakte; die Modellläufe selbst brauchen welche
-      # und melden ihr Fehlen sauber, statt fehlzuschlagen.
+      # und laufen ohne Artefakte.
+      #
+      # ⚑ **MYL_OHNE_ARTEFAKTE=1 steht seit dem 2026-09-03 auch hier**,
+      # und der Satz daneben stimmte seit Fund 113 nicht mehr: Er sagte,
+      # die Modellläufe meldeten ihr Fehlen „sauber, statt
+      # fehlzuschlagen". Genau das war der Fund. Seither **schlägt** ein
+      # fehlendes Modell fehl, ausser der Sprung wird ausdrücklich
+      # erlaubt, und der Test von der Türklinke bis zum Modell
+      # (`harness_bis_modell`) braucht Artefakte, die hier nicht liegen.
       - name: cargo test — TESTCLIENT (myl-testclient)
         working-directory: TESTCLIENT/myl-testclient
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
       # ⚑ **Die Kernthese, auf Linux geprüft** (Punkt 30, 2026-08-29).

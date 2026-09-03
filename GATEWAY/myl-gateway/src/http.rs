@@ -57,6 +57,14 @@ pub enum Httpfehler {
     FalscherWeg,
     /// `Content-Length` fehlt, ist doppelt oder keine Zahl.
     Laengenangabe,
+    /// `Authorization` ist doppelt, leer oder kein `Bearer`.
+    ///
+    /// ⚑ **Ein eigener Fall und nicht „unlesbarer Kopf".** Wer zwei
+    /// Ausweise schickt, hat ein anderes Problem als wer keinen
+    /// schickt, und das Protokoll des Betreibers soll es
+    /// unterscheiden können. **Nach draussen sieht man den Unterschied
+    /// trotzdem nicht**, siehe `Tuer::abgewiesen`.
+    Ausweisangabe,
     /// Der Rumpf überschreitet [`MAX_RUMPF`].
     RumpfZuGross { bytes: usize, grenze: usize },
     /// `Transfer-Encoding` wird nicht unterstützt.
@@ -70,6 +78,10 @@ impl Httpfehler {
             Self::Unvollstaendig => 400,
             Self::KopfZuGross { .. } => 431,
             Self::Startzeile | Self::Laengenangabe => 400,
+            // ⚑ **401 und nicht 400.** Ein fehlerhafter Ausweis ist
+            // eine Frage der Berechtigung und keine der Form; ein
+            // Klient soll daran erkennen, dass er sich ausweisen muss.
+            Self::Ausweisangabe => 401,
             Self::FalschesVerfahren => 405,
             Self::FalscherWeg => 404,
             Self::RumpfZuGross { .. } => 413,
@@ -90,12 +102,30 @@ pub struct Anfrage {
 /// Wie viele Bytes der Rumpf haben soll, und wo er beginnt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Kopf {
+    /// Das Verfahren der Startzeile.
+    ///
+    /// ⚑ **Es steht seit dem 2026-09-03 hier** (Stufe 3): Die Tür hat
+    /// nicht mehr einen Weg, sondern mehrere, und `/v1/models` ist ein
+    /// `GET`. Wer nur den Weg vergleicht, verwechselt „Modelle nennen"
+    /// mit „Modelle setzen".
+    pub verfahren: String,
     /// Der angefragte Weg.
     pub weg: String,
     /// Erstes Byte des Rumpfes in der Eingabe.
     pub rumpf_ab: usize,
     /// Angekündigte Rumpflänge.
     pub laenge: usize,
+    /// Der Bearer-Wert aus `Authorization`, falls einer da war.
+    ///
+    /// ⚑ **Der Weg, den ein Harness gehen kann** (Stufe 2). Jeder
+    /// Inferenzanbieter authentifiziert so, und ein Wechsel heisst
+    /// Basis-URL und Schlüssel tauschen. Wer signiert statt einen
+    /// Bearer zu schicken, geht den anderen Weg.
+    ///
+    /// **Nur der Wert nach `Bearer `**, nicht die ganze Zeile: Ein
+    /// anderes Verfahren (`Basic`, `Digest`) ist keines, das dieses
+    /// Gateway kennt, und wird wie ein fehlender Kopf behandelt.
+    pub vollmacht: Option<String>,
 }
 
 /// Liest den Kopf, ohne auf den Rumpf zu warten.
@@ -104,6 +134,21 @@ pub struct Kopf {
 /// ist: **Das ist kein Fehler, sondern die Aufforderung weiterzulesen**,
 /// und der Aufrufer muss die beiden unterscheiden können.
 pub fn kopf_lesen(daten: &[u8], erwarteter_weg: &str) -> Result<Kopf, Httpfehler> {
+    kopf_lesen_wege(daten, &[("POST", erwarteter_weg)])
+}
+
+/// Liest den Kopf und lässt mehrere Verfahren und Wege zu.
+///
+/// ⚑ **Eine Liste und keine Musterprüfung.** Die Tür kennt genau die
+/// Wege, die sie bedient; wer mit Mustern arbeitet, bedient irgendwann
+/// einen, den er nicht gemeint hat. Dieselbe Haltung wie beim
+/// Beobachtungsendpunkt des Knotens.
+///
+/// ⚑ **Ein `GET` ohne `Content-Length` ist kein Fehler**, sondern der
+/// Normalfall: Ein Abfrageweg hat keinen Rumpf. Bei `POST` bleibt die
+/// Längenangabe Pflicht, denn dort ist ihr Fehlen die Frage „wo hört
+/// die Nachricht auf".
+pub fn kopf_lesen_wege(daten: &[u8], erlaubt: &[(&str, &str)]) -> Result<Kopf, Httpfehler> {
     let ende = match finde_kopfende(daten) {
         Some(e) => e,
         None => {
@@ -128,14 +173,18 @@ pub fn kopf_lesen(daten: &[u8], erwarteter_weg: &str) -> Result<Kopf, Httpfehler
     if teile.next().is_some() || !fassung.starts_with("HTTP/1.") {
         return Err(Httpfehler::Startzeile);
     }
-    if verfahren != "POST" {
-        return Err(Httpfehler::FalschesVerfahren);
-    }
-    if weg != erwarteter_weg {
+    // ⚑ **Erst der Weg, dann das Verfahren.** Andersherum bekäme ein
+    // `GET` auf einen Weg, den es gar nicht gibt, die Auskunft „falsches
+    // Verfahren", und das sagte dem Fragenden, dass der Weg existiert.
+    if !erlaubt.iter().any(|(_, w)| *w == weg) {
         return Err(Httpfehler::FalscherWeg);
+    }
+    if !erlaubt.iter().any(|(v, w)| *w == weg && *v == verfahren) {
+        return Err(Httpfehler::FalschesVerfahren);
     }
 
     let mut laenge: Option<usize> = None;
+    let mut vollmacht: Option<String> = None;
     for z in zeilen {
         if z.is_empty() {
             continue;
@@ -156,8 +205,33 @@ pub fn kopf_lesen(daten: &[u8], erwarteter_weg: &str) -> Result<Kopf, Httpfehler
             }
             laenge = Some(wert.parse::<usize>().map_err(|_| Httpfehler::Laengenangabe)?);
         }
+        if name == "authorization" {
+            // ⚑ **Zwei Ausweise heissen zwei Meinungen darueber, wer
+            // da ist.** Derselbe Grund wie bei zwei Laengenangaben, und
+            // dieselbe Antwort: ablehnen statt einen auswaehlen.
+            if vollmacht.is_some() {
+                return Err(Httpfehler::Ausweisangabe);
+            }
+            // Nur `Bearer`, und der Name ist ohne Ruecksicht auf
+            // Grossschreibung zu lesen (RFC 7235).
+            let Some(rest) = wert.get(..7).filter(|p| p.eq_ignore_ascii_case("bearer ")) else {
+                return Err(Httpfehler::Ausweisangabe);
+            };
+            let _ = rest;
+            let token = wert[7..].trim();
+            if token.is_empty() {
+                return Err(Httpfehler::Ausweisangabe);
+            }
+            vollmacht = Some(token.to_string());
+        }
     }
-    let laenge = laenge.ok_or(Httpfehler::Laengenangabe)?;
+    let laenge = match laenge {
+        Some(l) => l,
+        // Ein Abfrageweg hat keinen Rumpf; für alles Schreibende bleibt
+        // die Längenangabe Pflicht.
+        None if verfahren == "GET" => 0,
+        None => return Err(Httpfehler::Laengenangabe),
+    };
     if laenge > MAX_RUMPF {
         return Err(Httpfehler::RumpfZuGross {
             bytes: laenge,
@@ -165,9 +239,11 @@ pub fn kopf_lesen(daten: &[u8], erwarteter_weg: &str) -> Result<Kopf, Httpfehler
         });
     }
     Ok(Kopf {
+        verfahren: verfahren.to_string(),
         weg: weg.to_string(),
         rumpf_ab: ende + 4,
         laenge,
+        vollmacht,
     })
 }
 

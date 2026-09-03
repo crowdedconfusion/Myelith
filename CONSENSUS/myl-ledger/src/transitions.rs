@@ -10,7 +10,6 @@ use myl_types::ids::{Address, EpochId, MerkleRoot, MinerId, SegmentId, SitzungId
 use myl_types::miner::{HardwareClass, MinerRegistration};
 use myl_types::node_metadata::GeoRegion;
 use myl_types::sitzung::{pruefe, Befund, Sitzungskontrakt, Sitzungszustand, Vorhaben, Waehrung};
-use myl_types::arbeitsverteilung::Arbeitsverteilung;
 use myl_types::{InferenceCredit, PoIBundle};
 
 use crate::state::{LedgerState, Sitzung, SITZUNG_NACHFRIST};
@@ -81,8 +80,13 @@ pub enum TransitionError {
     PodOhneMitglieder,
     /// Die Aggregatsignatur gilt nicht unter den Mitgliedsschlüsseln.
     AggregatUngueltig,
-    /// Für diesen Pipeline-Stand steht schon eine Arbeitsverteilung.
-    VerteilungExistiert,
+    /// Der hinterlegte Einsatz deckt die Kündigung nicht.
+    EinsatzReichtNicht { verfuegbar: u64, verlangt: u64 },
+    /// Zu viele offene Kündigungen; siehe
+    /// [`crate::einsatz::MAX_OFFENE_KUENDIGUNGEN`].
+    ZuVieleKuendigungen { offen: usize },
+    /// Keine Kündigung ist fällig.
+    NichtsFaellig,
     /// Das Manifest nennt eine andere Wurzel, als unter der es abgelegt
     /// werden soll.
     ///
@@ -189,14 +193,22 @@ impl std::fmt::Display for TransitionError {
             Self::PodOhneMitglieder => f.write_str(
                 "zu dieser Pod-Kennung gibt es in dieser Epoche keine Besetzung",
             ),
+            Self::EinsatzReichtNicht { verfuegbar, verlangt } => write!(
+                f,
+                "hinterlegter Einsatz {verfuegbar} deckt die Kuendigung {verlangt} nicht"
+            ),
+            Self::ZuVieleKuendigungen { offen } => write!(
+                f,
+                "{offen} offene Kuendigungen; erst abholen, dann weiter kuendigen"
+            ),
+            Self::NichtsFaellig => {
+                f.write_str("keine Kuendigung ist faellig")
+            }
             Self::AggregatUngueltig => f.write_str(
                 "die Aggregatsignatur gilt nicht unter den Mitgliedsschluesseln",
             ),
             Self::BuendelExistiert => {
                 f.write_str("fuer diesen Pod liegt in dieser Epoche schon ein Buendel vor")
-            }
-            Self::VerteilungExistiert => {
-                f.write_str("fuer diesen Pipeline-Stand steht schon eine Arbeitsverteilung")
             }
             Self::WurzelPasstNicht => write!(
                 f,
@@ -318,8 +330,17 @@ pub fn apply_verdict(
         return Err(TransitionError::InvalidParameters);
     }
 
-    // Prüfphase: Stake vorhanden?
-    let staked = state.account(&guilty).staked;
+    // Prüfphase: Ist überhaupt etwas da?
+    //
+    // ⚑ **Gekündigtes zählt mit** (Punkt B11). Wer falsch rechnet und
+    // sofort kündigt, hätte den Betrag sonst aus `staked` heraus und
+    // damit aus der Schlachtmasse, obwohl er noch haftet. Die
+    // Sperrfrist verschiebt die Auszahlung, sie beendet die Haftung
+    // nicht; siehe [`crate::einsatz::schlachtbar`]. Ohne diese Zeile
+    // wäre die Kündigung genau der Fluchtweg, den die Frist schliessen
+    // soll.
+    let konto = state.account(&guilty);
+    let staked = crate::einsatz::schlachtbar(konto.staked, &konto.gekuendigt);
     if staked == 0 {
         return Err(TransitionError::NoStake);
     }
@@ -342,7 +363,22 @@ pub fn apply_verdict(
     let vorverstoesse = state.verstoesse_im_fenster(&guilty, crate::state::VERSTOSS_FENSTER);
 
     // Änderungsphase.
-    state.account_mut(&guilty).staked = staked - slashed;
+    // ⚑ **Genommen wird erst der hinterlegte Einsatz, dann die
+    // Kündigungen in der Reihenfolge ihrer Freigabe**, also die zuerst,
+    // die am nächsten an der Auszahlung ist. Das ist die Richtung, die
+    // einem Fliehenden zuerst nimmt, was er zu retten versucht.
+    {
+        let k = state.account_mut(&guilty);
+        let genommen = crate::einsatz::nimm_aus_der_masse(
+            &mut k.staked,
+            &mut k.gekuendigt,
+            slashed,
+        );
+        debug_assert_eq!(
+            genommen, slashed,
+            "die Masse war vorher gross genug, also muss alles genommen worden sein"
+        );
+    }
     state.account_mut(&innocent).balance = innocent_balance + bounty;
     // **Der Vermerk gehört hierher und nirgendwo sonst.** Ein Urteil,
     // das gebucht wird, ohne gezählt zu werden, macht die Staffelung zu
@@ -659,9 +695,40 @@ pub fn sitzung_ausgeben(
     state: &mut LedgerState,
     wer: &Address,
     vorhaben: &Vorhaben,
+    vollmacht: Option<&myl_types::vollmacht::Vollmacht>,
 ) -> Result<(), TransitionError> {
+    // # ⚑ Zwei Wege zur Autorisierung, und der zweite ist der Grund,
+    // warum es diese Funktion überhaupt in einem Block gibt
+    //
+    // **Der Agent selbst reicht ein** (der alte Weg), oder er hat eine
+    // **Vollmacht** ausgestellt und ein anderer reicht ein. Ohne den
+    // zweiten Weg kann eine gerechnete Anfrage nie abgebucht werden:
+    // Ein Harness hält einen Bearer-Token und keinen Schlüssel, kann
+    // also keine Kettentransaktion signieren. Genau das war der Befund
+    // vom 2026-09-03: `sitzung_ausgeben` hatte ausserhalb der eigenen
+    // Tests **keinen Aufrufer**, und das Budget eines Nutzers sank nie.
+    //
+    // ⚑ **Der Aufwand ist beschränkt**, und das gehört zur
+    // Entscheidung: Eine Vollmacht hat höchstens
+    // `myl_types::vollmacht::MAX_BLOECKE` Blöcke, also höchstens so
+    // viele Signaturprüfungen je Transaktion.
     if vorhaben.handelnder != *wer {
-        return Err(TransitionError::NichtDerHandelnde);
+        let Some(v) = vollmacht else {
+            return Err(TransitionError::NichtDerHandelnde);
+        };
+        let rahmen = myl_types::vollmacht::Anfragerahmen {
+            jetzt: state.epoch,
+            sitzung: vorhaben.sitzung,
+            credits: vorhaben.betrag,
+            // ⚑ **Der Modellvorbehalt kann hier nicht geprüft werden**,
+            // und deshalb steht ein Wert, der ihn niemals erfüllt: Die
+            // Kette weiss nicht, welches Modell gerechnet hat. Wer
+            // `NurModell` in seine Vollmacht schreibt, kann mit ihr
+            // nicht abrechnen lassen, und das ist die sichere Richtung.
+            modell: myl_types::hash::Hash([0u8; 32]),
+        };
+        v.pruefen(&vorhaben.handelnder, &rahmen)
+            .map_err(|_| TransitionError::NichtDerHandelnde)?;
     }
     // Prüfphase.
     let (inhaber, befund, neu_verbraucht) = {
@@ -694,6 +761,11 @@ pub fn sitzung_ausgeben(
         Waehrung::Credits => sitzung.zustand.verbraucht_credits = neu_verbraucht,
         Waehrung::Myl => sitzung.zustand.verbraucht_myl = neu_verbraucht,
     }
+    // ⚑ **Der Riegel wird im selben Übergang gebucht.** `pruefe` hat
+    // ihn geprüft; wer ihn erst später fortschriebe, liesse ein Fenster
+    // offen, in dem dieselbe Nummer ein zweites Mal durchginge.
+    // Dieselbe Haltung wie beim Verstossvermerk in `apply_verdict`.
+    sitzung.zustand.hoechste_abrechnung = vorhaben.nummer;
     Ok(())
 }
 
@@ -847,34 +919,13 @@ pub fn angemeldete_miner(state: &LedgerState) -> Vec<MinerRegistration> {
     state.miner.values().copied().collect()
 }
 
-/// Setzt die Arbeitsverteilung der Pod-Positionen.
-///
-/// # ⚑ Eine Verteilung je Pipeline-Stand, und nicht zwei
-///
-/// Steht für **denselben** Pipeline-Stand schon eine Verteilung, wird
-/// abgelehnt. Die Gewichte folgen aus dem Stand; **dieselbe Pipeline
-/// zweimal verschieden zu gewichten hieße, dass sie nicht aus ihr
-/// folgen**, und dann wären sie frei wählbar. Wer anders gewichten will,
-/// wechselt den Stand, und der Wechsel ist sichtbar.
-///
-/// # ⚑ Wer setzen darf, ist noch nicht durchgesetzt
-///
-/// Das ist ein **Governance-Akt**, und der Draht von einem angenommenen
-/// Beschluss hierher fehlt, wie bei der Belastung der Treasury. Bis
-/// dahin prüft diese Funktion die Form und nicht die Befugnis, **und das
-/// steht hier, statt eine Sicherheit vorzugeben, die es nicht gibt**.
-pub fn arbeitsverteilung_setzen(
-    state: &mut LedgerState,
-    verteilung: Arbeitsverteilung,
-) -> Result<(), TransitionError> {
-    if let Some(bisher) = &state.arbeitsverteilung {
-        if bisher.pipeline() == verteilung.pipeline() {
-            return Err(TransitionError::VerteilungExistiert);
-        }
-    }
-    state.arbeitsverteilung = Some(verteilung);
-    Ok(())
-}
+// ⚑ **`arbeitsverteilung_setzen` ist am 2026-09-03 entfernt worden**
+// (Fund 161). Es war keine `Anweisung`-Variante, sondern eine nackte
+// Methode, die den Zustand direkt mutierte, ausserhalb jeder
+// Blockanwendung: Auf einem echten Knoten aufgerufen, hätte sie die
+// Zustandswurzel sofort von jeder anderen getrennt. Die Gewichte, die
+// sie trug, werden seither **gerechnet**, nicht gesetzt:
+// `myl_tokenomics::vtfe::arbeitsverteilung_probe`.
 
 /// Nimmt ein PoI-Bündel in die laufende Epoche auf (Punkt 40, Glied 1).
 ///
@@ -965,6 +1016,116 @@ pub fn buendel_einreichen(
     }
     state.buendel.insert(buendel.pod, buendel);
     Ok(())
+}
+
+/// Hinterlegt `betrag` als Einsatz (Punkt B11).
+///
+/// # ⚑ Warum es das bis zum 2026-09-02 nicht gab (Fund 145)
+///
+/// `staked` stand seit Langem im Zustand, und der ganze wirtschaftliche
+/// Sicherheitsbau hing daran. **Nur schrieb es niemand**, also war es
+/// im Betrieb immer null, also schlachtete [`apply_verdict`] immer
+/// null, also hatte `MindestStake` nichts zu begrenzen.
+///
+/// # Was hier geprüft wird
+///
+/// - Der Betrag ist nicht null.
+/// - Das **verfügbare** Guthaben deckt ihn.
+///
+/// ⚑ **Sofort wirksam, ohne Frist.** Wer haften will, darf das ohne
+/// Wartezeit; die Frist steht auf der anderen Seite, beim Abziehen.
+pub fn einsatz_hinterlegen(
+    state: &mut LedgerState,
+    wer: &Address,
+    betrag: u64,
+) -> Result<(), TransitionError> {
+    if betrag == 0 {
+        return Err(TransitionError::ZeroAmount);
+    }
+    let konto = state.account(wer);
+    if konto.balance < betrag {
+        return Err(TransitionError::InsufficientBalance {
+            available: konto.balance,
+            required: betrag,
+        });
+    }
+    let k = state.account_mut(wer);
+    k.balance -= betrag;
+    k.staked += betrag;
+    Ok(())
+}
+
+/// Kündigt `betrag` vom hinterlegten Einsatz (Punkt B11).
+///
+/// Der Betrag verlässt `staked` und liegt bis zur Freigabe-Epoche in
+/// [`AccountState::gekuendigt`].
+///
+/// ⚑ **Er haftet dort weiter.** Die Frist verschiebt die Auszahlung,
+/// sie beendet die Haftung nicht; siehe
+/// [[`crate::einsatz::schlachtbar`]]. Andernfalls wäre die
+/// Kündigung der Fluchtweg, den die Frist gerade schliessen soll.
+///
+/// # Was hier geprüft wird
+///
+/// - Der Betrag ist nicht null.
+/// - Der hinterlegte Einsatz deckt ihn.
+/// - Das Konto hat nicht zu viele offene Kündigungen.
+///
+/// **Kündigungen derselben Freigabe-Epoche werden zusammengelegt.** Das
+/// ist die Schranke, die den Zustand begrenzt: höchstens ein Eintrag je
+/// Epoche.
+pub fn einsatz_kuendigen(
+    state: &mut LedgerState,
+    wer: &Address,
+    betrag: u64,
+) -> Result<u64, TransitionError> {
+    if betrag == 0 {
+        return Err(TransitionError::ZeroAmount);
+    }
+    let konto = state.account(wer);
+    if konto.staked < betrag {
+        return Err(TransitionError::EinsatzReichtNicht {
+            verfuegbar: konto.staked,
+            verlangt: betrag,
+        });
+    }
+    let frei_ab = crate::einsatz::freigabe_epoche(state.epoch.0);
+    let schon_da = konto.gekuendigt.contains_key(&frei_ab);
+    if !schon_da && konto.gekuendigt.len() >= crate::einsatz::MAX_OFFENE_KUENDIGUNGEN {
+        return Err(TransitionError::ZuVieleKuendigungen {
+            offen: konto.gekuendigt.len(),
+        });
+    }
+    let k = state.account_mut(wer);
+    k.staked -= betrag;
+    *k.gekuendigt.entry(frei_ab).or_insert(0) += betrag;
+    Ok(frei_ab)
+}
+
+/// Holt fälligen gekündigten Einsatz ins Guthaben (Punkt B11).
+///
+/// Gibt zurück, wie viel geholt wurde.
+///
+/// # ⚑ Warum das eine eigene Anweisung ist
+///
+/// Freigewordenen Einsatz beim Epochenwechsel automatisch
+/// zurückzubuchen hiesse, **jedes Konto in jeder Epoche anzufassen**:
+/// eine Arbeit in der Grösse des Netzes für einen Vorgang, der einzelne
+/// betrifft. Wer sein Geld will, holt es.
+pub fn einsatz_abholen(
+    state: &mut LedgerState,
+    wer: &Address,
+) -> Result<u64, TransitionError> {
+    let jetzt = state.epoch.0;
+    let konto = state.account(wer);
+    let summe = crate::einsatz::faellig(&konto.gekuendigt, jetzt);
+    if summe == 0 {
+        return Err(TransitionError::NichtsFaellig);
+    }
+    let k = state.account_mut(wer);
+    k.gekuendigt.retain(|frei_ab, _| *frei_ab > jetzt);
+    k.balance += summe;
+    Ok(summe)
 }
 
 /// Die Bündel der laufenden Epoche in kanonischer Ordnung.
@@ -1517,6 +1678,15 @@ mod tests {
     }
 
     fn vorhaben(sitzung: SitzungId, betrag: u64) -> Vorhaben {
+        vorhaben_nr(sitzung, betrag, 1)
+    }
+
+    /// Wie [`vorhaben`], mit ausdrücklicher Abrechnungsnummer.
+    ///
+    /// ⚑ **Seit dem 2026-09-03 muss sie steigen.** Eine Folge von
+    /// Abbuchungen unter derselben Sitzung braucht deshalb steigende
+    /// Nummern; das ist der Riegel gegen die zweite Abbuchung.
+    fn vorhaben_nr(sitzung: SitzungId, betrag: u64, nummer: u64) -> Vorhaben {
         Vorhaben {
             sitzung,
             handelnder: adresse(2),
@@ -1524,6 +1694,7 @@ mod tests {
             betrag,
             empfaenger: adresse(10),
             bestaetigt_ausgeliefert: false,
+            nummer,
         }
     }
 
@@ -1539,10 +1710,141 @@ mod tests {
         (state, id)
     }
 
+    /// ⚑ **Der Betreiber reicht ein, die Kette erkennt die Vollmacht des
+    /// Agenten an.**
+    ///
+    /// Ohne diesen Weg kann eine gerechnete Anfrage **nie** abgebucht
+    /// werden: Ein Harness hält einen Bearer-Token und keinen Schlüssel,
+    /// kann also keine Kettentransaktion signieren. Genau deshalb hatte
+    /// `sitzung_ausgeben` bis zum 2026-09-03 ausserhalb der eigenen
+    /// Tests keinen Aufrufer, und das Budget eines Nutzers sank nie.
+    #[test]
+    fn eine_vollmacht_autorisiert_die_abbuchung_durch_einen_fremden() {
+        use myl_types::vollmacht::{Vollmacht, Vorbehalt};
+
+        // ⚑ **Der Agent muss hier aus einem Schlüssel stammen**, denn
+        // die Vollmacht wird gegen `Address::aus_schluessel` geprüft.
+        // Die üblichen `adresse(n)` sind gesetzte Bytes und gehören zu
+        // keinem Schlüssel.
+        let agent_sk =
+            myl_types::bls::BlsSecretKey::key_gen(&[3u8; 32]).expect("Schluessel");
+        let agent = Address::aus_schluessel(&agent_sk.public_key().expect("pk"));
+        let mut state = LedgerState::genesis(1);
+        state.account_mut(&adresse(1)).credits.push(InferenceCredit {
+            owner: adresse(1),
+            vtfe: 10_000,
+            expiry: EpochId(1_000),
+        });
+        let k = Sitzungskontrakt::neu(
+            adresse(1),
+            agent,
+            grenzen(1_000, 300, u64::MAX),
+            myl_types::sitzung::Grenzen::gesperrt(),
+            vec![adresse(10)],
+            EpochId(0),
+            EpochId(100),
+            16,
+        )
+        .expect("gueltiger Kontrakt");
+        let id = sitzung_eroeffnen(&mut state, &adresse(1), k).expect("eroeffnen");
+        let plan = |betrag: u64, nummer: u64| Vorhaben {
+            sitzung: id,
+            handelnder: agent,
+            waehrung: Waehrung::Credits,
+            betrag,
+            empfaenger: adresse(10),
+            bestaetigt_ausgeliefert: false,
+            nummer,
+        };
+        let vollmacht = Vollmacht::ausstellen(
+            &agent_sk,
+            vec![
+                Vorbehalt::NurSitzung(id),
+                Vorbehalt::HoechstensCredits(300),
+                Vorbehalt::GueltigBis(EpochId(100)),
+            ],
+            [42u8; 32],
+        )
+        .expect("ausstellen");
+
+        // Ein Fremder reicht ein, ohne Vollmacht: nein.
+        assert_eq!(
+            sitzung_ausgeben(&mut state, &adresse(3), &plan(200, 1), None),
+            Err(TransitionError::NichtDerHandelnde)
+        );
+        // Mit Vollmacht: ja.
+        sitzung_ausgeben(
+            &mut state,
+            &adresse(3),
+            &plan(200, 1),
+            Some(&vollmacht),
+        )
+        .expect("die Vollmacht autorisiert");
+        assert_eq!(
+            state.sitzung(&id).expect("da").zustand.verbraucht_credits,
+            200,
+            "es wurde nicht abgebucht"
+        );
+
+        // ⚑ **Der Riegel gilt auch für den Vollmachtsweg**, und das ist
+        // der Punkt: Solange nur der Agent einreichen konnte, schadete
+        // eine zweite Einreichung ihm selbst. Jetzt reicht ein Fremder
+        // ein.
+        assert_eq!(
+            sitzung_ausgeben(
+                &mut state,
+                &adresse(3),
+                &plan(200, 1),
+                Some(&vollmacht)
+            ),
+            Err(TransitionError::KontraktVerbietet(Befund::NummerVerbraucht {
+                nummer: 1,
+                zuletzt: 1
+            })),
+            "dieselbe Abrechnung ging ein zweites Mal durch"
+        );
+        assert_eq!(
+            state.sitzung(&id).expect("da").zustand.verbraucht_credits,
+            200,
+            "es wurde doppelt abgebucht"
+        );
+
+        // ⚑ **Der Vorbehalt bindet den Betrag.** Über 300 trägt diese
+        // Vollmacht nicht, auch wenn der Kontrakt mehr erlaubte.
+        assert_eq!(
+            sitzung_ausgeben(
+                &mut state,
+                &adresse(3),
+                &plan(301, 2),
+                Some(&vollmacht)
+            ),
+            Err(TransitionError::NichtDerHandelnde),
+            "eine Vollmacht ueber 300 hat 301 durchgelassen"
+        );
+
+        // Und eine Vollmacht eines Fremden trägt nicht.
+        let fremde = Vollmacht::ausstellen(
+            &myl_types::bls::BlsSecretKey::key_gen(&[9u8; 32]).expect("Schluessel"),
+            vec![Vorbehalt::NurSitzung(id)],
+            [7u8; 32],
+        )
+        .expect("ausstellen");
+        assert_eq!(
+            sitzung_ausgeben(
+                &mut state,
+                &adresse(3),
+                &plan(100, 2),
+                Some(&fremde)
+            ),
+            Err(TransitionError::NichtDerHandelnde),
+            "eine fremde Vollmacht hat autorisiert"
+        );
+    }
+
     #[test]
     fn eine_session_bucht_vom_konto_des_inhabers() {
         let (mut state, id) = state_mit_sitzung(500);
-        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 200)).expect("erlaubt");
+        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 200), None).expect("erlaubt");
 
         // Die Credits kommen vom Inhaber, nicht vom Agenten.
         assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 300);
@@ -1580,7 +1882,7 @@ mod tests {
 
         // Über dem Einzellimit.
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 301)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 301), None),
             Err(TransitionError::KontraktVerbietet(
                 Befund::EinzellimitUeberschritten { limit: 300 }
             ))
@@ -1588,7 +1890,7 @@ mod tests {
         // An einen Empfänger, der nicht gelistet ist.
         let woanders = Vorhaben { empfaenger: adresse(99), ..vorhaben(id, 100) };
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &woanders),
+            sitzung_ausgeben(&mut state, &adresse(2), &woanders, None),
             Err(TransitionError::KontraktVerbietet(Befund::EmpfaengerNichtGelistet))
         );
         // ⚑ Drei Wege, unter fremdem Namen zu handeln, und alle drei
@@ -1596,21 +1898,21 @@ mod tests {
         // jemand anderen als Handelnden nennt.
         let fremder_name = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &fremder_name),
+            sitzung_ausgeben(&mut state, &adresse(2), &fremder_name, None),
             Err(TransitionError::NichtDerHandelnde)
         );
         // Zweitens, und das ist die Luecke, die der Einreicher-Vergleich
         // schliesst: Ein Fremder schreibt den **echten** Agenten ins
         // Feld. Der Kontrakt allein saehe daran nichts.
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(3), &vorhaben(id, 100)),
+            sitzung_ausgeben(&mut state, &adresse(3), &vorhaben(id, 100), None),
             Err(TransitionError::NichtDerHandelnde)
         );
         // Drittens: Einreicher und Feld stimmen ueberein, nur ist der
         // Genannte nicht der Agent dieses Kontrakts.
         let konsequent = Vorhaben { handelnder: adresse(3), ..vorhaben(id, 100) };
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(3), &konsequent),
+            sitzung_ausgeben(&mut state, &adresse(3), &konsequent, None),
             Err(TransitionError::KontraktVerbietet(Befund::FalscherHandelnder))
         );
 
@@ -1637,16 +1939,22 @@ mod tests {
 
         // Das Budget ist nach vier vollen Vorgängen erschöpft, obwohl
         // das Konto noch reichlich Credits trägt.
-        for _ in 0..3 {
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 300)).expect("erlaubt");
+        //
+        // ⚑ **Steigende Nummern**, seit der Riegel gegen die zweite
+        // Abbuchung steht: Eine Folge von Abbuchungen ist eine Folge und
+        // keine Wiederholung.
+        for n in 1..=3u64 {
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben_nr(id, 300, n), None)
+                .expect("erlaubt");
         }
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 300)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben_nr(id, 300, 4), None),
             Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 100 }))
         );
-        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 100)).expect("die letzten 100");
+        sitzung_ausgeben(&mut state, &adresse(2), &vorhaben_nr(id, 100, 4), None)
+            .expect("die letzten 100");
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 1)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben_nr(id, 1, 5), None),
             Err(TransitionError::KontraktVerbietet(Befund::BudgetErschoepft { rest: 0 }))
         );
         assert_eq!(state.account(&adresse(1)).credits[0].vtfe, 9_000);
@@ -1674,7 +1982,7 @@ mod tests {
 
         // Unter der alten Adresse gelten weiter die alten Grenzen.
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 5_000)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 5_000), None),
             Err(TransitionError::KontraktVerbietet(
                 Befund::EinzellimitUeberschritten { limit: 300 }
             ))
@@ -1694,7 +2002,7 @@ mod tests {
         sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("Inhaber");
         sitzung_widerrufen(&mut state, &id, &adresse(1)).expect("nochmal, und das ist kein Fehler");
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 10)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 10), None),
             Err(TransitionError::KontraktVerbietet(Befund::Widerrufen))
         );
         assert_eq!(
@@ -1709,7 +2017,7 @@ mod tests {
     fn ein_erlaubtes_vorhaben_scheitert_trotzdem_an_leeren_credits() {
         let (mut state, id) = state_mit_sitzung(50);
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 100)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 100), None),
             Err(TransitionError::InsufficientCredits { available: 50, required: 100 })
         );
         // ⚑ Und das Budget ist dabei **nicht** geschrumpft: Sonst wäre
@@ -1721,7 +2029,7 @@ mod tests {
     fn eine_unbekannte_sitzung_zahlt_nicht() {
         let mut state = LedgerState::genesis(1);
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(SitzungId::new([9u8; 32]), 1)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(SitzungId::new([9u8; 32]), 1), None),
             Err(TransitionError::SitzungUnbekannt)
         );
     }
@@ -1838,19 +2146,35 @@ mod tests {
 
         let zahlung =
             Vorhaben { waehrung: Waehrung::Myl, ..vorhaben(id, 250) };
-        sitzung_ausgeben(&mut state, &adresse(2), &zahlung).expect("erlaubt");
+        sitzung_ausgeben(&mut state, &adresse(2), &zahlung, None).expect("erlaubt");
         assert_eq!(state.account(&adresse(1)).balance, 9_750);
         assert_eq!(state.account(&adresse(10)).balance, 250);
         assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_myl, 250);
         assert_eq!(state.sitzung(&id).expect("da").zustand.verbraucht_credits, 0);
 
         // Credits sind unter diesem Kontrakt gesperrt.
+        //
+        // ⚑ **Mit der nächsten Nummer**, sonst fiele der Versuch schon
+        // am Riegel gegen die zweite Abbuchung und sagte über die
+        // Sperre nichts. Genau das ist die Reihenfolge, die `pruefe`
+        // hält: Der Riegel steht vor allen Grenzen.
         assert_eq!(
-            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben(id, 1)),
+            sitzung_ausgeben(&mut state, &adresse(2), &vorhaben_nr(id, 1, 2), None),
             Err(TransitionError::KontraktVerbietet(
                 Befund::EinzellimitUeberschritten { limit: 0 }
             ))
         );
+        // Und die Gegenprobe auf den Riegel selbst: dieselbe Nummer
+        // noch einmal kommt nicht durch.
+        let nochmal = Vorhaben { waehrung: Waehrung::Myl, ..vorhaben_nr(id, 100, 1) };
+        assert_eq!(
+            sitzung_ausgeben(&mut state, &adresse(2), &nochmal, None),
+            Err(TransitionError::KontraktVerbietet(Befund::NummerVerbraucht {
+                nummer: 1,
+                zuletzt: 1
+            }))
+        );
+        assert_eq!(state.account(&adresse(10)).balance, 250, "es wurde zweimal gezahlt");
     }
 
     #[test]
@@ -1883,7 +2207,7 @@ mod tests {
         // Und der Verbrauch zählt mit.
         let mut nachher = mit.clone();
         let id = *nachher.sitzungen.keys().next().expect("eine");
-        sitzung_ausgeben(&mut nachher, &adresse(2), &vorhaben(id, 10)).expect("erlaubt");
+        sitzung_ausgeben(&mut nachher, &adresse(2), &vorhaben(id, 10), None).expect("erlaubt");
         assert_ne!(mit.commitment(), nachher.commitment());
     }
 
@@ -2258,6 +2582,134 @@ mod tests {
         assert_ne!(leer.commitment(), mit.commitment());
     }
 
+    // --- Punkt B11: der Einsatz ---------------------------------------
+
+    /// ⚑ **Es gibt einen Weg, MYL zu hinterlegen** (Fund 145).
+    ///
+    /// Bis zum 2026-09-03 gab es keinen: `staked` stand im Zustand, und
+    /// keine der acht Anweisungen schrieb es.
+    #[test]
+    fn ein_einsatz_wird_hinterlegt() {
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&adresse(1)).balance = 1_000;
+        einsatz_hinterlegen(&mut st, &adresse(1), 400).expect("hinterlegen");
+        assert_eq!(st.account(&adresse(1)).balance, 600);
+        assert_eq!(st.account(&adresse(1)).staked, 400);
+    }
+
+    /// Wer nichts hat, hinterlegt nichts.
+    #[test]
+    fn ohne_deckung_wird_nichts_hinterlegt() {
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&adresse(1)).balance = 100;
+        assert_eq!(
+            einsatz_hinterlegen(&mut st, &adresse(1), 101),
+            Err(TransitionError::InsufficientBalance {
+                available: 100,
+                required: 101
+            })
+        );
+        assert_eq!(st.account(&adresse(1)).staked, 0);
+    }
+
+    /// ⚑ **Gekündigtes ist nicht sofort da**, sonst wäre der Einsatz
+    /// keiner.
+    #[test]
+    fn gekuendigtes_liegt_bis_zur_freigabe() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(10);
+        st.account_mut(&adresse(1)).balance = 1_000;
+        einsatz_hinterlegen(&mut st, &adresse(1), 1_000).expect("hinterlegen");
+
+        let frei_ab = einsatz_kuendigen(&mut st, &adresse(1), 600).expect("kuendigen");
+        assert_eq!(frei_ab, 10 + crate::einsatz::SPERRFRIST_EPOCHEN);
+        assert_eq!(st.account(&adresse(1)).staked, 400);
+        assert_eq!(st.account(&adresse(1)).balance, 0, "das Geld ist noch nicht zurueck");
+        assert_eq!(st.account(&adresse(1)).gekuendigt[&frei_ab], 600);
+
+        // Eine Epoche vor der Freigabe ist nichts zu holen.
+        st.epoch = EpochId(frei_ab - 1);
+        assert_eq!(
+            einsatz_abholen(&mut st, &adresse(1)),
+            Err(TransitionError::NichtsFaellig)
+        );
+        // Und in der Freigabe-Epoche schon.
+        st.epoch = EpochId(frei_ab);
+        assert_eq!(einsatz_abholen(&mut st, &adresse(1)), Ok(600));
+        assert_eq!(st.account(&adresse(1)).balance, 600);
+        assert!(st.account(&adresse(1)).gekuendigt.is_empty());
+    }
+
+    /// Kündigungen derselben Epoche werden zusammengelegt: das ist die
+    /// Schranke, die den Zustand begrenzt.
+    #[test]
+    fn kuendigungen_derselben_epoche_werden_zusammengelegt() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(5);
+        st.account_mut(&adresse(1)).balance = 1_000;
+        einsatz_hinterlegen(&mut st, &adresse(1), 1_000).expect("hinterlegen");
+        for _ in 0..10 {
+            einsatz_kuendigen(&mut st, &adresse(1), 50).expect("kuendigen");
+        }
+        assert_eq!(
+            st.account(&adresse(1)).gekuendigt.len(),
+            1,
+            "zehn Kuendigungen in einer Epoche ergaben zehn Eintraege"
+        );
+        assert_eq!(st.account(&adresse(1)).gekuendigt.values().sum::<u64>(), 500);
+    }
+
+    /// ⚑ **Der Fluchtweg ist zu** (Punkt B11).
+    ///
+    /// Wer falsch rechnet und sofort kündigt, hätte den Betrag aus
+    /// `staked` heraus. Er haftet trotzdem: `apply_verdict` zählt das
+    /// Gekündigte mit und nimmt es zuerst, weil es der Auszahlung am
+    /// nächsten ist.
+    #[test]
+    fn wer_kuendigt_entzieht_sich_der_schlachtung_nicht() {
+        let mut st = LedgerState::genesis(1);
+        st.epoch = EpochId(1);
+        st.account_mut(&adresse(1)).balance = 1_000;
+        einsatz_hinterlegen(&mut st, &adresse(1), 1_000).expect("hinterlegen");
+        // Alles kuendigen: `staked` ist danach null.
+        einsatz_kuendigen(&mut st, &adresse(1), 1_000).expect("kuendigen");
+        assert_eq!(st.account(&adresse(1)).staked, 0);
+
+        // Und trotzdem wird geschlachtet.
+        apply_verdict(
+            &mut st,
+            &verdict(VerdictOutcome::SlashMiner),
+            &standard_params(),
+        )
+        .expect("das Urteil muss greifen");
+        let rest: u64 = st.account(&adresse(1)).gekuendigt.values().sum();
+        assert!(
+            rest < 1_000,
+            "die Kuendigung blieb unangetastet, der Fluchtweg ist offen"
+        );
+        assert_eq!(
+            st.account(&adresse(1)).balance,
+            0,
+            "geschlachtet wurde aus dem Guthaben statt aus der Masse"
+        );
+    }
+
+    /// Die Gegenprobe zur vorigen: **ohne jeden Einsatz gibt es nichts
+    /// zu schlachten**, und das ist eine eigene Antwort und kein
+    /// Durchwinken.
+    #[test]
+    fn ohne_einsatz_greift_kein_urteil() {
+        let mut st = LedgerState::genesis(1);
+        assert_eq!(
+            apply_verdict(
+                &mut st,
+                &verdict(VerdictOutcome::SlashMiner),
+                &standard_params()
+            ),
+            Err(TransitionError::NoStake)
+        );
+    }
+
     // --- Punkt 40, Glied 1: das Bündel in der Kette ---
 
     fn pod(b: u8) -> myl_types::ids::PodId {
@@ -2609,61 +3061,13 @@ mod tests {
         assert_ne!(ohne.commitment(), mit.commitment());
     }
 
-    // --- Punkt 40, letztes Glied: die Arbeitsverteilung ---
-
-    fn verteilung(stand: u8, gewichte: Vec<u64>) -> Arbeitsverteilung {
-        Arbeitsverteilung::neu(myl_types::Hash::sha256(&[stand; 4]), gewichte)
-            .expect("Verteilung")
-    }
-
-    /// Eine Verteilung steht danach im Zustand.
-    #[test]
-    fn eine_verteilung_steht_im_zustand() {
-        let mut st = LedgerState::genesis(1);
-        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![3, 1, 1, 5])).expect("setzen");
-        let v = st.arbeitsverteilung.as_ref().expect("gesetzt");
-        assert_eq!(v.gewichte(), &[3, 1, 1, 5]);
-    }
-
-    /// ⚑ **Derselbe Pipeline-Stand bekommt keine zweite Gewichtung.**
-    /// Sonst folgten die Gewichte nicht aus dem Stand, sondern wären
-    /// frei wählbar.
-    #[test]
-    fn derselbe_stand_bekommt_keine_zweite_gewichtung() {
-        let mut st = LedgerState::genesis(1);
-        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![1, 1])).expect("erste");
-        assert_eq!(
-            arbeitsverteilung_setzen(&mut st, verteilung(1, vec![9, 1])),
-            Err(TransitionError::VerteilungExistiert)
-        );
-        assert_eq!(
-            st.arbeitsverteilung.as_ref().expect("gesetzt").gewichte(),
-            &[1, 1],
-            "die zweite hat ueberschrieben"
-        );
-    }
-
-    /// Ein anderer Stand darf anders gewichten, und der Wechsel ist
-    /// sichtbar.
-    #[test]
-    fn ein_anderer_stand_darf_anders_gewichten() {
-        let mut st = LedgerState::genesis(1);
-        arbeitsverteilung_setzen(&mut st, verteilung(1, vec![1, 1])).expect("erste");
-        arbeitsverteilung_setzen(&mut st, verteilung(2, vec![9, 1])).expect("zweite");
-        assert_eq!(
-            st.arbeitsverteilung.as_ref().expect("gesetzt").gewichte(),
-            &[9, 1]
-        );
-    }
-
-    /// Die Verteilung geht in die Zustandsverpflichtung ein.
-    #[test]
-    fn die_verteilung_veraendert_das_commitment() {
-        let ohne = LedgerState::genesis(1);
-        let mut mit = LedgerState::genesis(1);
-        arbeitsverteilung_setzen(&mut mit, verteilung(1, vec![1])).expect("setzen");
-        assert_ne!(ohne.commitment(), mit.commitment());
-    }
+    // ⚑ **Die Testreihe zur Arbeitsverteilung ist am 2026-09-03
+    // entfernt worden** (Fund 161), zusammen mit der Methode, die sie
+    // prüfte: `arbeitsverteilung_setzen` war nie über eine `Anweisung`
+    // erreichbar und hätte auf einem echten Knoten die Zustandswurzel
+    // gespalten. Die Gegenprobe dazu steht jetzt in
+    // `myl-tokenomics/src/vtfe.rs`, wo die Gewichte **gerechnet** und
+    // nicht mehr gesetzt werden.
 
     /// ⚑ **Ein Schlüssel, der nicht zur Kennung gehört, wird
     /// abgewiesen.** Sonst trüge das Register einen fremden Schlüssel

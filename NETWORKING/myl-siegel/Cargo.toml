@@ -1,0 +1,39 @@
+[package]
+name = "myl-siegel"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Der vertrauliche Sitzungskanal für Myelith (Whitepaper Kap. 9.2): hybrider Schlüsselaustausch aus X25519 und ML-KEM-768, abgeleitet über HKDF-SHA256, versiegelt mit ChaCha20-Poly1305. Trägt keinen Transport: Wer die Bytes bewegt, entscheidet der Aufrufer."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+# ⚑ **Kein libp2p, kein tokio, kein async.** Das ist der ganze Grund,
+# warum diese Kiste seit dem 2026-09-03 eine eigene ist: Der Kanal stand
+# bis dahin in `myl-net`, benutzte von dort **nichts** und zwang jeden,
+# der entsiegeln wollte, den ganzen Netzstapel mitzubauen. Gemessen für
+# `myl-pod`: 181 zusätzliche Kisten über `myl-net`, 21 über diese hier.
+[dependencies]
+borsh = { version = "1.6", features = ["derive"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+rand_core = { version = "0.6", features = ["getrandom"] }
+sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+zeroize = "1"
+
+[lib]
+name = "myl_siegel"
+path = "src/lib.rs"
+
+# Testprofil: optimiert, aber ohne eine einzige Pruefung weniger. Siehe
+# die ausfuehrliche Begruendung in `SHARED_TYPES/myl-types/Cargo.toml`.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"
+
+[profile.dev]
+debug = "line-tables-only"

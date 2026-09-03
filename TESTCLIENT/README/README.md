@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.20.1
+> **Version:** 0.21.0
 > **Datum:** 2026-09-02
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -509,6 +509,82 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.21.0 – 2026-09-03 (die Abbuchung, Ende zu Ende)
+
+`tests/tuer_bis_rechenwerk.rs` bekommt eine zweite Naht:
+`eine_gerechnete_anfrage_bucht_credits_ab` fährt eine Anfrage bis zum
+Modell und zurück und prüft danach im **Kettenzustand**, dass der
+Verbrauch steht, mit Gegenprobe auf die doppelte Buchung derselben
+Abrechnung.
+
+### v0.20.5 – 2026-09-03 (ein Nutzeraufruf erreicht das echte Modell)
+
+`tests/harness_bis_modell.rs` fährt den Weg mit den
+Qwen2.5-0,5B-Artefakten: HTTP mit Bearer über einen Socket, Vollmacht
+gegen Sitzungskontrakt, Beleg, Versiegelung, lokale Leitung,
+Entsiegelung, Bindungsprüfung, vier Shards, Wortschatz, zurück als JSON.
+
+**Was ankam:** `"Die Hauptstadt von Frankreich ist Paris"`, zehn
+Prompt-Token, acht erzeugte, Segment `2900…` mit der Sitzungsnummer 41
+darin.
+
+⚑ **Er hat beim ersten Lauf zwei Fehler gefunden** (Fund 160):
+`/v1/models` meldete `"unbekannt"` als Pipeline-Stand, weil die Frage
+synchron gestellt wurde, obwohl sie an einen fremden Prozess geht; und
+`usage.prompt_tokens` zählte Bytes statt Token.
+
+**Und einen dritten in sich selbst:** Die erste Fassung las das JSON mit
+`find` und Indizes und nahm den halben Rumpf als `content`. Jetzt liest
+sie mit `serde_json`, **mit demselben Werkzeug, mit dem ein Klient
+liest**.
+
+**Ohne Artefakte schlägt er fehl**, mit einem Satz, der sagt was zu tun
+ist; wer sie bewusst nicht hat, setzt `MYL_OHNE_ARTEFAKTE=1`. Das ist
+Fund 113, und der Wächter ist in beide Richtungen gegengeprüft.
+
+### v0.20.4 – 2026-09-03 (die Naht von der Türklinke bis zum Rechenwerk)
+
+`tests/tuer_bis_rechenwerk.rs` fährt den ganzen Weg: HTTP mit Bearer an
+die Tür, Beleg, Versiegelung, lokale Leitung, Entsiegelung,
+Bindungsprüfung, Rechenwerk, und zurück als JSON.
+
+⚑ **Der Weg berührt fünf Kisten, und keine sieht mehr als ihren
+Nachbarn.** `myl-testclient` ist die einzige Stelle, die alle fünf
+sieht, also ist er hier richtig und nirgends sonst. Dieselbe Begründung
+wie beim kalten Pfad, und dieselbe Fehlerklasse dahinter: beide Seiten
+gebaut, beide für sich geprüft, die Naht fehlt.
+
+**Geprüft wird der Weg und nicht die Inferenz.** Ein Modell hier machte
+den Test langsam und sagte über den Weg nichts; die Pipeline hat ihre
+eigenen Tests gegen echte Artefakte.
+
+### v0.20.3 – 2026-09-03 (die Naht des kalten Pfades)
+
+**Der einzige Ort, der beide Enden sieht.** Ein echter Knoten aus
+`myl-node` und ein echter Shard-Dienst aus `myl-pod`: Die beiden Kisten
+kennen einander nicht und sollen es nicht, also kann nur ein Dritter
+zeigen, dass sie zusammenpassen.
+
+⚑ **Das ist die Fehlerklasse, die dieses Projekt neunmal getroffen
+hat:** beide Seiten gebaut, beide für sich geprüft, die Naht fehlt.
+
+`tests/kalter_pfad.rs` fährt den ganzen Weg: Auftrag über das Netz an
+den Knoten, über die lokale Leitung an den Shard, Antwort zurück. Dazu
+die Gegenprobe, dass derselbe Knoten **ohne** Ortsleitung ablehnt, und
+die, dass er ohne Ausweis gar nicht erst startet.
+
+⚑ **Kein Modell im Test**, und das ist Absicht: Auf dem Prüfstand steht
+der **Weg** und nicht die Inferenz. Die Pipeline hat ihre eigenen Tests
+gegen echte Artefakte; ein Modell hier machte den Test langsam und sagte
+über den Weg nichts.
+
+### v0.20.2 – 2026-09-03 (auch die eigene Tür bleibt hier zu)
+
+Der Knoten öffnet seit `myl-node` v0.31.0 ab Werk eine eigene Tür auf
+`127.0.0.1:4160`. Der Testklient fährt mehrere Knoten in einem Prozess,
+und ein fester Port lässt sich nur einmal vergeben: Beide Knotenaufbauten
+setzen deshalb `tuer: None`, wie schon `beobachtung: None`.
 
 ### v0.20.1 – 2026-09-02 (der Beobachtungsendpunkt bleibt hier zu)
 

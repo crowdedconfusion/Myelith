@@ -55,6 +55,25 @@ myl-node — ein Myelith-Netzknoten
                          Zweite Folge: Dieser Knoten kann Nachzueglern dann
                          nur noch die juengsten 256 Bloecke nachliefern,
                          denn mehr haelt er nicht im Arbeitsspeicher.
+  --tuer <adr>           Wo das eigene Gateway horcht. Vorgabe
+                         127.0.0.1:4160, Weg /inferenz. Der Zugang ist ein
+                         Sitzungskontrakt aus der Kette; der API-Schluessel
+                         ist eine Vollmacht als Bearer-Token. ACHTUNG: Der
+                         entschiedene Zuschnitt ist das EIGENE Gateway auf
+                         der Rueckschleife. Wer hinausbindet, macht aus
+                         einem Ueberlastangriff gegen die Tuer einen gegen
+                         den Konsens.
+  --ohne-tuer            Kein eigenes Gateway oeffnen.
+  --ortsleitung <adr>    Wo der lokale Shard-Prozess horcht. Vorgabe: aus.
+                         Ein Knoten rechnet NICHT selbst; ein Shard laeuft
+                         in einem eigenen Prozess, damit ein Absturz beim
+                         Rechnen den Konsens nicht anhaelt. Ohne diese
+                         Angabe lehnt der Knoten Inferenzauftraege ab,
+                         und das ist die ehrliche Antwort.
+  --ortsausweis <pfad>   Wo der Ausweis des Shard-Prozesses liegt, Datei
+                         oder Verzeichnis. Der Shard legt ihn beim Start
+                         ab, unter Unix mit 0600. Gehoert zusammen mit
+                         --ortsleitung; eines allein ist ein Fehler.
   --beobachtung <adr>    Wo der Beobachtungsendpunkt horcht. Vorgabe
                          127.0.0.1:4151. Wege: /metriken (Prometheus),
                          /gesundheit (lebt der Prozess), /bereit (kann er
@@ -64,7 +83,7 @@ myl-node — ein Myelith-Netzknoten
                          Rueckschleife hinaus bindet, stellt selbst etwas
                          davor.
   --ohne-beobachtung     Keinen Beobachtungsendpunkt oeffnen.
-  --genesis <datei>      Genesis-Datei mit dem Validator-Satz. Nur damit
+  --stimmsatz <datei>    Stimmsatzdatei mit dem Validator-Satz. Nur damit
                          stimmt dieser Knoten bei BFT-Runden mit; ohne sie
                          hört er zu und rechnet nach. Der Knoten muss mit
                          seinem Konsensschlüssel darin stehen.
@@ -98,7 +117,8 @@ myl-node — ein Myelith-Netzknoten
                          geschlachtet und verschmutzt bis dahin den
                          Auftragsstrom. Wer den Schalter setzt, sieht ihn
                          in der Kommandozeile und im Protokoll.
-  --genesiszeile <stake> die eigene Zeile für die Genesis-Datei ausgeben
+  --stimmsatzzeile <stake>
+                         die eigene Zeile für die Stimmsatzdatei ausgeben
                          und beenden. Erzeugt den Konsensschlüssel, falls
                          er noch nicht existiert. Damit niemand 288 Zeichen
                          Hex von Hand abschreibt: Jeder Betreiber ruft das
@@ -123,7 +143,7 @@ struct Argumente {
     auf_bildschirm: bool,
     /// Konsensschlüssel aus dem Namen ableiten statt aus einer Datei.
     probeschluessel: bool,
-    /// Nur die eigene Genesis-Zeile ausgeben, mit diesem Stake.
+    /// Nur die eigene Stimmsatzdatei-Zeile ausgeben, mit diesem Stake.
     genesiszeile: Option<u64>,
     /// Fristen der BFT-Runden.
     timeouts: myl_consensus::round_change::TimeoutConfig,
@@ -189,6 +209,24 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--ohne-beobachtung" => { konfig.beobachtung = None; i += 1; }
+            "--tuer" => {
+                konfig.tuer = Some(
+                    wert(i)?
+                        .parse()
+                        .map_err(|_| "--tuer erwartet adresse:port".to_string())?,
+                );
+                i += 2;
+            }
+            "--ohne-tuer" => { konfig.tuer = None; i += 1; }
+            "--ortsleitung" => {
+                konfig.ortsleitung = Some(
+                    wert(i)?
+                        .parse()
+                        .map_err(|_| "--ortsleitung erwartet adresse:port".to_string())?,
+                );
+                i += 2;
+            }
+            "--ortsausweis" => { konfig.ortsausweis = Some(PathBuf::from(wert(i)?)); i += 2; }
             "--protokolle" => { konfig.protokollverzeichnis = PathBuf::from(wert(i)?); i += 2; }
             "--aufnahme" => {
                 konfig.aufnahme_sekunden = wert(i)?
@@ -203,7 +241,24 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 i += 2;
             }
             "--teilnehmer" => { konfig.teilnehmer.push(wert(i)?); i += 2; }
-            "--genesis" => { konfig.genesisdatei = Some(PathBuf::from(wert(i)?)); i += 2; }
+            // ⚑ **`--genesis` hiess dieser Schalter bis zum 2026-09-03**,
+            // und der Name war die Quelle einer gefaehrlichen
+            // Verwechslung: Er liest den **Stimmsatz**, eine
+            // Betriebsdatei fuer jeden Netzlauf einschliesslich
+            // Probelauf, und hat mit dem **produktiven Genesis** nichts
+            // zu tun. Der alte Name wird noch angenommen, aber er warnt.
+            "--stimmsatz" => {
+                konfig.stimmsatzdatei_pfad = Some(PathBuf::from(wert(i)?));
+                i += 2;
+            }
+            "--genesis" => {
+                eprintln!(
+                    "myl-node: WARNUNG: --genesis heisst jetzt --stimmsatz. Der alte Name \
+                     verwechselt den Stimmsatz mit dem produktiven Genesis und faellt weg."
+                );
+                konfig.stimmsatzdatei_pfad = Some(PathBuf::from(wert(i)?));
+                i += 2;
+            }
             "--konsensschluessel" => {
                 konfig.konsensschluesseldatei = Some(PathBuf::from(wert(i)?));
                 i += 2;
@@ -221,11 +276,16 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
                 );
                 i += 2;
             }
-            "--genesiszeile" => {
+            "--stimmsatzzeile" | "--genesiszeile" => {
+                if roh[i] == "--genesiszeile" {
+                    eprintln!(
+                        "myl-node: WARNUNG: --genesiszeile heisst jetzt --stimmsatzzeile."
+                    );
+                }
                 genesiszeile = Some(
                     wert(i)?
                         .parse()
-                        .map_err(|_| "--genesiszeile erwartet einen Stake als Zahl".to_string())?,
+                        .map_err(|_| "--stimmsatzzeile erwartet einen Stake als Zahl".to_string())?,
                 );
                 i += 2;
             }
@@ -256,7 +316,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
         konfig.schluesseldatei = PathBuf::from(format!("{}.key", konfig.name));
     }
     // Aus demselben Grund bekommt auch der Konsensschlüssel den Namen.
-    if konfig.genesisdatei.is_some()
+    if konfig.stimmsatzdatei_pfad.is_some()
         && konfig.konsensschluesseldatei.is_none()
         && !probeschluessel
     {
@@ -268,7 +328,7 @@ fn lies_argumente() -> Result<Option<Argumente>, String> {
         konfig.konsensschluesseldatei =
             Some(PathBuf::from(format!("{}.konsens.key", konfig.name)));
     }
-    if probeschluessel && konfig.genesisdatei.is_none() && genesiszeile.is_none() {
+    if probeschluessel && konfig.stimmsatzdatei_pfad.is_none() && genesiszeile.is_none() {
         return Err(
             "--probe-konsensschluessel ohne --genesis: ohne Validator-Satz \
              gibt es nichts zu stimmen"
@@ -312,7 +372,7 @@ async fn main() {
         }
     };
 
-    // ⚑ **Vor dem Start des Netzes.** Wer nur seine Genesis-Zeile
+    // ⚑ **Vor dem Start des Netzes.** Wer nur seine Stimmsatzdatei-Zeile
     // braucht, soll dafür kein Netz aufmachen und keine Ports belegen.
     if let Some(stake) = args.genesiszeile {
         match eigene_genesiszeile(
@@ -381,13 +441,14 @@ async fn main() {
 
     // Vor dem Start festhalten, was danach gebraucht wird: `starten`
     // nimmt die Konfiguration mit.
-    let genesisdatei = args.konfig.genesisdatei.clone();
+    let stimmsatzdatei_pfad = args.konfig.stimmsatzdatei_pfad.clone();
     let konsensschluessel = args.konfig.konsensschluesseldatei.clone();
     let name = args.konfig.name.clone();
     let kettendatei = args.konfig.kettendatei.clone();
     let probe = args.probeschluessel;
     let timeouts = args.timeouts;
     let beobachtungsadresse = args.konfig.beobachtung;
+    let tueradresse = args.konfig.tuer;
 
     let mut knoten = match Knoten::starten(args.konfig, args.auf_bildschirm).await {
         Ok(k) => k,
@@ -408,6 +469,54 @@ async fn main() {
         eprintln!("myl-node: keine Kettendatei, dieser Start beginnt bei null");
     }
     eprintln!("myl-node: Protokoll {}", knoten.protokollpfad().display());
+
+    // ⚑ **Die eigene Tür** (B6-3, Stufe 4, erster Schnitt). Sie hört
+    // auf der Rückschleife; der Verkehr verlässt die Maschine nie, und
+    // deshalb braucht sie weder TLS noch Rahmenwerk.
+    //
+    // ⚑ **Sie gibt noch nichts an einen Pod.** Es gibt keinen Weg
+    // dorthin, auf keiner der beiden Seiten; das ist der Rest von
+    // Stufe 4. Was hier läuft, nimmt an, prüft den Kontrakt aus der
+    // Kette und schreibt fest.
+    if let Some(adresse) = tueradresse {
+        match tokio::net::TcpListener::bind(adresse).await {
+            Ok(lauscher) => {
+                let wo = lauscher.local_addr().unwrap_or(adresse);
+                eprintln!("myl-node: eigenes Gateway auf http://{wo}/inferenz");
+                if !wo.ip().is_loopback() {
+                    eprintln!(
+                        "myl-node: WARNUNG: die Tuer horcht auf {wo}, also nicht nur auf der \
+                         Rueckschleife. Das verlaesst den entschiedenen Zuschnitt: Ein \
+                         Ueberlastangriff gegen die Tuer trifft dann den Konsens mit."
+                    );
+                }
+                let abschrift = knoten.kontraktabschrift();
+                let epoche = myl_types::ids::EpochId(knoten.kette().zustand().epoch.0);
+                tokio::spawn(async move {
+                    let tuer = myl_gateway::Tuer::aus_lauscher(lauscher);
+                    let mut annahme = myl_gateway::annahme::Annahme::neu(1, epoche);
+                    let mut stelle = myl_gateway::zugang::Zugangsstelle::neu(abschrift);
+                    loop {
+                        let jetzt_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        if tuer
+                            .bedienen_mit_zugang(&mut annahme, &mut stelle, epoche, jetzt_ms)
+                            .await
+                            .is_err()
+                        {
+                            // Ein Verbindungsfehler ist kein Grund, die
+                            // Tuer zu schliessen: Meist ist es eine
+                            // Gegenstelle, die aufgelegt hat.
+                            continue;
+                        }
+                    }
+                });
+            }
+            Err(e) => eprintln!("myl-node: Tuer nicht geoeffnet ({adresse}): {e}"),
+        }
+    }
 
     // ⚑ **Der Beobachtungsendpunkt, bevor der Vorlauf beginnt**
     // (Fund 129). Gerade waehrend des Aufholens will jemand wissen, wie
@@ -453,7 +562,7 @@ async fn main() {
         grund = wache.warten() => Some(grund),
         _ = startvorlauf(
             &mut knoten,
-            genesisdatei.clone(),
+            stimmsatzdatei_pfad.clone(),
             &name,
             konsensschluessel,
             probe,
@@ -492,7 +601,7 @@ async fn main() {
 /// leiht sich den Knoten ueber mehrere `await` hinweg aus.
 async fn startvorlauf(
     knoten: &mut Knoten,
-    genesisdatei: Option<PathBuf>,
+    stimmsatzdatei_pfad: Option<PathBuf>,
     name: &str,
     konsensschluessel: Option<PathBuf>,
     probe: bool,
@@ -525,13 +634,13 @@ async fn startvorlauf(
         eprintln!("myl-node: noch keine Horchadresse gemeldet");
     }
 
-    // Wenn eine Genesis-Datei da ist: mitstimmen.
+    // Wenn eine Stimmsatzdatei da ist: mitstimmen.
     //
     // ⚑ **Erst hier, nicht beim Start.** Der Propose des Leaders muss
     // durch ein Mesh, und das steht beim Start noch nicht. Ein Knoten,
     // der sofort proposet, redet ins Leere und die Runde hängt, ohne
     // dass jemand etwas falsch gemacht hätte.
-    if let Some(pfad) = genesisdatei {
+    if let Some(pfad) = stimmsatzdatei_pfad {
         if let Err(e) =
             starte_konsens(knoten, &pfad, name, konsensschluessel, probe, timeouts).await
         {
@@ -541,7 +650,7 @@ async fn startvorlauf(
     }
 }
 
-/// Lädt Genesis und Konsensschlüssel und beginnt Runde 0.
+/// Lädt Stimmsatzdatei und Konsensschlüssel und beginnt Runde 0.
 ///
 /// **Der Vorschlag ist aus dem Netz abgeleitet**, nämlich
 /// `sha256(genesis_hash ‖ runde)`. Das ist ein Platzhalter für einen
@@ -550,16 +659,16 @@ async fn startvorlauf(
 /// nachrechenbar.
 async fn starte_konsens(
     knoten: &mut Knoten,
-    genesisdatei: &std::path::Path,
+    stimmsatzdatei_pfad: &std::path::Path,
     name: &str,
     schluesseldatei: Option<PathBuf>,
     probe: bool,
     timeouts: myl_consensus::round_change::TimeoutConfig,
 ) -> Result<(), String> {
-    let text = std::fs::read_to_string(genesisdatei)
-        .map_err(|e| format!("{}: {e}", genesisdatei.display()))?;
-    let g = myl_node::genesis::Genesis::aus_text(&text)
-        .map_err(|e| format!("{}: {e}", genesisdatei.display()))?;
+    let text = std::fs::read_to_string(stimmsatzdatei_pfad)
+        .map_err(|e| format!("{}: {e}", stimmsatzdatei_pfad.display()))?;
+    let g = myl_node::stimmsatzdatei::Stimmsatzdatei::aus_text(&text)
+        .map_err(|e| format!("{}: {e}", stimmsatzdatei_pfad.display()))?;
 
     let schluessel = if probe {
         eprintln!(
@@ -575,7 +684,7 @@ async fn starte_konsens(
     };
 
     eprintln!(
-        "myl-node: Genesis {} ({}), {} Validatoren, Gesamtstake {}",
+        "myl-node: Stimmsatzdatei {} ({}), {} Validatoren, Gesamtstake {}",
         myl_node::knoten::kurz(&g.hash()),
         g.netz,
         g.validatoren.len(),
@@ -620,7 +729,7 @@ async fn starte_konsens(
     Ok(())
 }
 
-/// Baut die eigene Zeile für die Genesis-Datei.
+/// Baut die eigene Zeile für die Stimmsatzdatei.
 ///
 /// Legt die Schlüsseldatei an, falls sie fehlt: Wer seine Zeile
 /// erzeugt, legt damit seine Stimme fest, und die muss von da an

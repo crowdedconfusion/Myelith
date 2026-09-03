@@ -26,6 +26,11 @@
 //! nicht feststeht, dass überhaupt etwas zu lesen war. Wo ein Test etwas
 //! ausschließt, zeigt derselbe Test, dass der erlaubte Fall gelingt.
 
+//!
+//! ⚑ **Dieser Test bleibt hier, obwohl das Siegel seit dem 2026-09-03
+//! in `myl-siegel` wohnt** (Fund 155). Er fährt es **über das echte
+//! Netz**, und nur `myl-net` sieht beide: den Kanal und den Transport.
+//! Die Einheitstests des Kanals stehen bei ihm, die Naht steht hier.
 use std::time::Duration;
 
 use myl_net::{

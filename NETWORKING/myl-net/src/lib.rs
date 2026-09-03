@@ -40,7 +40,16 @@ pub mod nat;
 pub mod node;
 pub mod runtime;
 pub mod scoring;
-pub mod sitzung;
+// ⚑ **Der Sitzungskanal ist seit dem 2026-09-03 eine eigene Kiste**
+// (`myl-siegel`, Fund 155). Er importierte von hier nichts, öffnet
+// keinen Socket und kennt kein `async`; wer entsiegeln will, sollte
+// dafür nicht libp2p bauen müssen. Gemessen an `myl-pod`: 181
+// zusätzliche Kisten über `myl-net`, 21 über `myl-siegel`.
+//
+// **Die Wiederausfuhr bleibt**, damit `myl_net::sitzung::...` und die
+// Namen aus dieser Kiste weiter tragen: Ein Umzug soll keinen Aufrufer
+// kosten.
+pub use myl_siegel as sitzung;
 pub mod validation;
 
 pub use anfrage::{

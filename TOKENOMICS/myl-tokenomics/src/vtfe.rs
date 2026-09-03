@@ -268,6 +268,189 @@ pub fn vtfe_voll(tokens: u64) -> u64 {
     VTFE_UNITS_PER_TFE.saturating_mul(tokens)
 }
 
+/// Wie viele Shards die Probepipeline hat.
+///
+/// ⚑ **Dieselbe Zahl wie `myl_pod::pipelinewerk::SHARDS` und
+/// `NODE::kette::Kette::PROBE_SHARDS`**, und aus demselben Grund fest:
+/// erst der Weg mit festem `k`, dann die variable Knotenzahl.
+///
+/// ⚑ **Seit dem 2026-09-03 hält das der Übersetzer** (Fund 162): Beide
+/// Kisten tragen eine `const`-Zusicherung gegen diesen Wert. Vorher
+/// stand die Gleichheit nur als Satz hier, und eine Abweichung hätte
+/// **stumm** dazu geführt, dass ein Pod für seine Arbeit nichts
+/// bekommt: `zuschreiben_aus_abrechnung` weist jede Position ausserhalb
+/// der Gewichtsliste mit `PositionUnbekannt` ab.
+pub const PROBE_SHARDS: u64 = 4;
+
+/// Das Modellprofil der Probepipeline: Qwen2.5-0,5B.
+///
+/// Abgeschrieben aus `INTEGER_LLM/artifacts/qwen2.5-0.5b/model_config.json`
+/// (Revision `060db6499f32faf8b98477b0a26969ef7d8b9987`, siehe
+/// `INTEGER_LLM/models/KATALOG.json`). **Kein dichtes Feld ist geraten**:
+/// Jede Zahl steht so in der veröffentlichten Modellkonfiguration.
+pub const PROBE_MODELL: ModellProfil = ModellProfil {
+    hidden_size: 896,
+    intermediate_size: 4864,
+    num_experts: 0,
+    num_experts_per_tok: 0,
+    moe_intermediate_size: 0,
+    num_layers: 24,
+    vocab_size: 151_936,
+    num_heads: 14,
+    num_kv_heads: 2,
+    head_dim: 64,
+};
+
+/// Die Arbeitsverteilung der Probepipeline, **gerechnet und nicht
+/// gesetzt** (Fund 161, 2026-09-03).
+///
+/// # ⚑ Warum es das gibt, und warum es keine Anweisung gibt, die es setzt
+///
+/// Bis dahin führte der Kettenzustand ein Feld `arbeitsverteilung`, das
+/// **keine `Anweisung`-Variante je füllte**: `LedgerState::arbeitsverteilung_setzen`
+/// war eine nackte Methode, die den Zustand direkt mutierte, ausserhalb
+/// jeder Blockanwendung. Auf einem echten Knoten aufgerufen, hätte sie
+/// die Zustandswurzel dieses Knotens sofort von jeder anderen getrennt,
+/// denn kein anderer Knoten hätte denselben Aufruf gesehen. **Ohne das
+/// Feld blieb `zuschreibung_der_epoche` immer leer**, und ein Bündel,
+/// das im Zustand stand, wurde beim Epochenabschluss verworfen, ohne
+/// dass je etwas geprägt wurde.
+///
+/// **Die Lösung ist, nichts zu setzen.** Jeder Knoten rechnet dieselben
+/// Gewichte aus denselben öffentlichen Grunddaten: dem festen
+/// Shard-Zuschnitt der Probepipeline (`layer * s / PROBE_SHARDS`,
+/// dieselbe Formel wie in `Pipelinewerk::laden`) und dem
+/// Modellprofil des einen Modells, das die Probekette kennt. Zwei
+/// Knoten, die dieselbe Formel rechnen, kommen auf dieselbe Zahl; ein
+/// Wert, der gesetzt werden müsste, kann auseinanderlaufen.
+///
+/// # ⚑ Was das für ein Netz mit mehreren Modellen nicht leistet
+///
+/// **Diese Funktion kennt ein Modell.** `PoIBundle` trägt heute keinen
+/// Pipeline-Stand; woher ein Validator wüsste, welches Modell ein
+/// Bündel behauptet zu sein, und wie er das gegen eine zweite,
+/// dritte Architektur prüfte, ist eine offene Frage und keine, die
+/// diese Funktion beantwortet. Für die Probekette mit einem Modell
+/// stellt sich die Frage nicht.
+pub fn arbeitsverteilung_probe() -> myl_types::arbeitsverteilung::Arbeitsverteilung {
+    let profil = PROBE_MODELL;
+    let layer = profil.num_layers;
+    let mut gewichte = Vec::with_capacity(PROBE_SHARDS as usize);
+    for s in 0..PROBE_SHARDS {
+        let start = layer * s / PROBE_SHARDS;
+        let ende = layer * (s + 1) / PROBE_SHARDS;
+        let zuschnitt = ShardZuschnitt {
+            layer_start: start,
+            layer_end: ende,
+            hat_embedding: s == 0,
+            hat_lm_kopf: s == PROBE_SHARDS - 1,
+        };
+        let macs = zuschnitt.macs(&profil);
+        // ⚑ **`u128` auf `u64` verdichtet, ohne zu runden.** Für das
+        // eine Modell dieser Probekette passt die volle MAC-Zahl
+        // bequem in `u64` (die grösste Position liegt hier bei rund
+        // 2,3 · 10^8, die Grenze bei 1,8 · 10^19): keine Schrumpfung,
+        // also kein Rundungsfehler gegenüber der vTFE-Formel.
+        gewichte.push(macs.min(u64::MAX as u128).max(1) as u64);
+    }
+    myl_types::arbeitsverteilung::Arbeitsverteilung::neu(
+        myl_types::hash::Hash::sha256(b"myelith-probe-qwen2.5-0.5b"),
+        gewichte,
+    )
+    .expect("die Probeverteilung ist wohlgeformt: vier Shards, keiner ohne Arbeit")
+}
+
+#[cfg(test)]
+mod arbeitsverteilung_probe_tests {
+    use super::*;
+
+    /// ⚑ **Zwei Aufrufe kommen auf dieselbe Zahl.** Das ist der ganze
+    /// Punkt der Ableitung: Kein Zustand, keine Reihenfolge, keine
+    /// Übertragung, die auseinanderlaufen könnte.
+    #[test]
+    fn zwei_aufrufe_stimmen_ueberein() {
+        assert_eq!(arbeitsverteilung_probe(), arbeitsverteilung_probe());
+    }
+
+    /// Vier Positionen, keine ohne Gewicht.
+    #[test]
+    fn vier_positionen_alle_mit_gewicht() {
+        let v = arbeitsverteilung_probe();
+        assert_eq!(v.positionen(), PROBE_SHARDS as usize);
+        for i in 0..v.positionen() {
+            assert!(v.aufteilen(1_000_000_000)[i] > 0, "Position {i} bekommt nichts");
+        }
+    }
+
+    /// ⚑ **Die erste und die letzte Position tragen mehr**, weil sie
+    /// Embedding beziehungsweise LM-Head zusätzlich zu ihren Layern
+    /// rechnen. Eine Ableitung, die alle vier gleich gewichtete, hätte
+    /// das nicht aus dem Modellprofil gerechnet, sondern angenommen.
+    #[test]
+    fn embedding_und_lm_kopf_shard_tragen_mehr() {
+        let v = arbeitsverteilung_probe();
+        let g = v.gewichte();
+        // ⚑ **Das Embedding taugt hier nicht als Extragewicht.** Es
+        // ist ein Tabellennachschlag, keine Rechnung; `ShardZuschnitt::macs`
+        // zählt ihn deshalb bewusst nicht mit. Der Embedding-Shard
+        // wiegt darum genau so viel wie jeder andere reine Layer-Shard
+        // gleicher Länge, und **das** ist die Zusicherung, nicht das
+        // Gegenteil.
+        assert_eq!(g[0], g[1], "der Embedding-Shard wiegt anders als ein reiner Layer-Shard");
+        assert_eq!(g[1], g[2], "zwei gleich grosse reine Layer-Shards wiegen verschieden");
+        assert!(g[3] > g[2], "der LM-Kopf-Shard ist nicht schwerer als ein mittlerer");
+    }
+
+    /// ⚑ **Gegen die vTFE-Formel selbst**, nicht gegen eine eigene
+    /// zweite Rechnung. `aufteilen` und `vtfe_gutschrift` müssen auf
+    /// dieselbe Aufteilung kommen, denn beide beanspruchen, dieselbe
+    /// Arbeit zu messen.
+    #[test]
+    fn stimmt_mit_der_vtfe_gutschrift_ueberein() {
+        let v = arbeitsverteilung_probe();
+        let tokens = 1_000u64;
+        let voll = v.aufteilen(vtfe_voll(tokens));
+        let boundaries = [0u64, 6, 12, 18, 24];
+        for s in 0..4usize {
+            let zuschnitt = ShardZuschnitt {
+                layer_start: boundaries[s],
+                layer_end: boundaries[s + 1],
+                hat_embedding: s == 0,
+                hat_lm_kopf: s == 3,
+            };
+            let direkt = vtfe_gutschrift(&PROBE_MODELL, &zuschnitt, tokens).expect("gutschrift");
+            let ueber_verteilung = voll[s];
+            // ⚑ **Höchstens eine Einheit Unterschied, und der Grund ist
+            // benennbar.** `vtfe_gutschrift` rundet jede Position **für
+            // sich** ab; `aufteilen` rundet zuerst alle ab und verteilt
+            // den Rest danach **in Positionsreihenfolge**, damit die
+            // Summe exakt dem Betrag entspricht (kein Rest verschwindet
+            // spurlos). Beide Regeln sind für sich richtig, und weil sie
+            // verschieden runden, weichen sie um höchstens eine Einheit
+            // je Position voneinander ab, nie mehr, weil beide von
+            // derselben Division ausgehen.
+            let differenz = direkt.abs_diff(ueber_verteilung);
+            assert!(
+                differenz <= 1,
+                "Position {s}: direkt {direkt}, über Verteilung {ueber_verteilung}, \
+                 Differenz {differenz} ist mehr als eine Rundungseinheit"
+            );
+        }
+    }
+
+    /// Die Summe der Anteile weicht von der vollen Gutschrift nur um
+    /// den Rundungsrest ab, nicht um mehr.
+    #[test]
+    fn die_aufteilung_verschenkt_fast_nichts() {
+        let v = arbeitsverteilung_probe();
+        let betrag = 1_000_000u64;
+        let anteile = v.aufteilen(betrag);
+        let summe: u64 = anteile.iter().sum();
+        assert!(summe <= betrag);
+        assert!(betrag - summe < v.positionen() as u64, "es geht mehr als Rundung verloren");
+    }
+}
+
 #[cfg(test)]
 mod moe_tests {
     use super::*;

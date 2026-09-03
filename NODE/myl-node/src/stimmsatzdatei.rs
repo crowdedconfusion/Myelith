@@ -1,4 +1,4 @@
-//! Der Validator-Satz zu Genesis: wer stimmen darf, mit welchem Gewicht.
+//! Der Stimmsatz beim Kettenstart: wer stimmen darf, mit welchem Gewicht.
 //!
 //! # Warum eine Datei und nicht das Netz
 //!
@@ -11,13 +11,13 @@
 //! „außen".
 //!
 //! Die dritte Möglichkeit, den Satz aus dem Ledger-Zustand über eine
-//! Genesis-Transaktion zu beziehen, ist nicht verworfen, sondern
+//! Stimmsatzdatei-Transaktion zu beziehen, ist nicht verworfen, sondern
 //! zurückgestellt: Sie ist der richtige Weg für Ein- und Austritt im
 //! Dauerbetrieb, blockiert aber den ersten Netzlauf, bis sie steht.
 //!
 //! # Der Hash liegt auf dem Inhalt, nicht auf der Datei
 //!
-//! [`Genesis::hash`] rechnet über die **kanonische Borsh-Kodierung des
+//! [`Stimmsatzdatei::hash`] rechnet über die **kanonische Borsh-Kodierung des
 //! gelesenen Inhalts**, nach Kennung sortiert, nicht über die Bytes der
 //! Datei. Zwei Dateien, die dieselben Validatoren in anderer Reihenfolge
 //! oder mit anderen Kommentaren führen, haben denselben Hash.
@@ -49,7 +49,7 @@
 //!
 //!    ⚑ **Diese Schranke bestimmt zugleich eine Mindestzahl.** Drei
 //!    Werte, die alle unter einem Drittel ihrer Summe liegen, können
-//!    diese Summe nicht ergeben. Ein Genesis-Satz braucht also
+//!    diese Summe nicht ergeben. Ein Stimmsatzdatei-Satz braucht also
 //!    **mindestens vier** Validatoren, unabhängig von der Verteilung.
 //!    Aufgefallen beim Nachrechnen eines fehlgeschlagenen Tests, der
 //!    drei Validatoren prüfte und erwartete, dass einer durchgeht.
@@ -58,7 +58,7 @@
 //! 3. **Keine doppelten Schlüssel**, kein Validator ohne Stake.
 //!
 //! Nicht geprüft, sondern nur **berichtet**, wird
-//! [`Genesis::unterscheidet_koepfe_von_gewicht`]. Ein Produktivnetz mit
+//! [`Stimmsatzdatei::unterscheidet_koepfe_von_gewicht`]. Ein Produktivnetz mit
 //! Hunderten Validatoren erfüllt das nebenbei; ein Testnetz mit gleichen
 //! Gewichten nicht, und dort ist es ein Mangel. Ein Ladefehler wäre es
 //! aber nicht: Eine gültige Stake-Verteilung darf nicht daran scheitern,
@@ -72,9 +72,9 @@ use myl_types::bls::{BlsProofOfPossession, BlsPublicKey, BLS_PK_LEN, BLS_SIG_LEN
 use myl_types::hash::Hash;
 use myl_types::ids::MinerId;
 
-/// Ein Validator, wie die Genesis-Datei ihn führt.
+/// Ein Validator, wie die Stimmsatzdatei ihn führt.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct GenesisValidator {
+pub struct Stimmberechtigter {
     /// Öffentlicher BLS-Schlüssel. Der einzige Bezeichner in der Datei.
     pub pubkey: BlsPublicKey,
     /// Besitznachweis über eben diesen Schlüssel (Fund 27).
@@ -83,7 +83,7 @@ pub struct GenesisValidator {
     pub stake: u64,
 }
 
-impl GenesisValidator {
+impl Stimmberechtigter {
     /// Die Kennung: `sha256(pubkey)`.
     ///
     /// Abgeleitet und nicht aufgeschrieben, siehe Modulkopf.
@@ -92,23 +92,23 @@ impl GenesisValidator {
     }
 }
 
-/// Der Genesis-Zustand, soweit ein Knoten ihn zum Mitstimmen braucht.
+/// Der Stimmsatz, soweit ein Knoten ihn zum Mitstimmen braucht.
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-pub struct Genesis {
+pub struct Stimmsatzdatei {
     /// Netzname. Trennt Probenetze voneinander und vom Hauptnetz.
     ///
     /// Geht in den Hash ein: Zwei Netze mit gleichem Validator-Satz und
     /// verschiedenem Namen sind verschiedene Netze.
     pub netz: String,
     /// Die Validatoren, **nach Kennung sortiert**. Die Sortierung stellt
-    /// [`Genesis::aus_text`] her, damit die Reihenfolge in der Datei
+    /// [`Stimmsatzdatei::aus_text`] her, damit die Reihenfolge in der Datei
     /// keinen Einfluss auf den Hash hat.
-    pub validatoren: Vec<GenesisValidator>,
+    pub validatoren: Vec<Stimmberechtigter>,
 }
 
-/// Was beim Lesen einer Genesis-Datei schiefgehen kann.
+/// Was beim Lesen einer Stimmsatzdatei schiefgehen kann.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GenesisFehler {
+pub enum Stimmsatzfehler {
     /// Eine Zeile ist keine bekannte Anweisung.
     UnbekannteZeile { zeile: usize, inhalt: String },
     /// Eine Anweisung hat die falsche Anzahl Felder.
@@ -143,7 +143,7 @@ pub enum GenesisFehler {
     },
 }
 
-impl std::fmt::Display for GenesisFehler {
+impl std::fmt::Display for Stimmsatzfehler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnbekannteZeile { zeile, inhalt } => {
@@ -191,15 +191,15 @@ impl std::fmt::Display for GenesisFehler {
     }
 }
 
-impl std::error::Error for GenesisFehler {}
+impl std::error::Error for Stimmsatzfehler {}
 
 /// Liest ein Hexfeld fester Länge.
 fn hex_feld<const N: usize>(
     text: &str,
     zeile: usize,
     feld: &'static str,
-) -> Result<[u8; N], GenesisFehler> {
-    let fehler = || GenesisFehler::KeinHex {
+) -> Result<[u8; N], Stimmsatzfehler> {
+    let fehler = || Stimmsatzfehler::KeinHex {
         zeile,
         feld,
         erwartete_zeichen: N * 2,
@@ -222,8 +222,8 @@ fn als_hex(bytes: &[u8]) -> String {
     s
 }
 
-impl Genesis {
-    /// Liest eine Genesis-Datei.
+impl Stimmsatzdatei {
+    /// Liest eine Stimmsatzdatei.
     ///
     /// **Format**, eine Anweisung je Zeile, Felder durch Leerraum
     /// getrennt, `#` leitet einen Kommentar ein:
@@ -236,8 +236,8 @@ impl Genesis {
     /// Die Reihenfolge der `validator`-Zeilen ist ohne Bedeutung: Sie
     /// werden nach Kennung sortiert, bevor irgendetwas daraus folgt.
     ///
-    /// Prüft anschließend [`Genesis::pruefe`].
-    pub fn aus_text(text: &str) -> Result<Self, GenesisFehler> {
+    /// Prüft anschließend [`Stimmsatzdatei::pruefe`].
+    pub fn aus_text(text: &str) -> Result<Self, Stimmsatzfehler> {
         let mut netz: Option<String> = None;
         let mut validatoren = Vec::new();
 
@@ -249,7 +249,7 @@ impl Genesis {
                 [] => {}
                 ["netz", name] => netz = Some((*name).to_string()),
                 ["netz", ..] => {
-                    return Err(GenesisFehler::FalscheFeldzahl {
+                    return Err(Stimmsatzfehler::FalscheFeldzahl {
                         zeile,
                         erwartet: 2,
                         bekommen: felder.len(),
@@ -262,21 +262,21 @@ impl Genesis {
                         BlsProofOfPossession(hex_feld::<BLS_SIG_LEN>(pop, zeile, "pop")?);
                     let stake: u64 = stake
                         .parse()
-                        .map_err(|_| GenesisFehler::UnbrauchbarerStake { zeile })?;
+                        .map_err(|_| Stimmsatzfehler::UnbrauchbarerStake { zeile })?;
                     if stake == 0 {
-                        return Err(GenesisFehler::UnbrauchbarerStake { zeile });
+                        return Err(Stimmsatzfehler::UnbrauchbarerStake { zeile });
                     }
-                    validatoren.push(GenesisValidator { pubkey, pop, stake });
+                    validatoren.push(Stimmberechtigter { pubkey, pop, stake });
                 }
                 ["validator", ..] => {
-                    return Err(GenesisFehler::FalscheFeldzahl {
+                    return Err(Stimmsatzfehler::FalscheFeldzahl {
                         zeile,
                         erwartet: 4,
                         bekommen: felder.len(),
                     })
                 }
                 _ => {
-                    return Err(GenesisFehler::UnbekannteZeile {
+                    return Err(Stimmsatzfehler::UnbekannteZeile {
                         zeile,
                         inhalt: ohne_kommentar.trim().to_string(),
                     })
@@ -284,9 +284,9 @@ impl Genesis {
             }
         }
 
-        let netz = netz.ok_or(GenesisFehler::OhneNetznamen)?;
+        let netz = netz.ok_or(Stimmsatzfehler::OhneNetznamen)?;
         if validatoren.is_empty() {
-            return Err(GenesisFehler::OhneValidatoren);
+            return Err(Stimmsatzfehler::OhneValidatoren);
         }
         // Kanonische Reihenfolge: Der Hash darf nicht davon abhängen,
         // in welcher Zeile jemand seinen Validator eingetragen hat.
@@ -300,7 +300,7 @@ impl Genesis {
     /// Schreibt die Datei zurück, in kanonischer Reihenfolge.
     pub fn als_text(&self) -> String {
         let mut s = String::new();
-        s.push_str("# Myelith-Genesis. Die Kennung wird aus dem Schlüssel abgeleitet.\n");
+        s.push_str("# Myelith-Stimmsatzdatei. Die Kennung wird aus dem Schlüssel abgeleitet.\n");
         s.push_str(&format!("netz {}\n", self.netz));
         for v in &self.validatoren {
             s.push_str(&format!(
@@ -313,13 +313,13 @@ impl Genesis {
         s
     }
 
-    /// Der Genesis-Hash: SHA-256 über die kanonische Borsh-Kodierung.
+    /// Der Stimmsatzdatei-Hash: SHA-256 über die kanonische Borsh-Kodierung.
     ///
     /// **Nicht über die Dateibytes**, siehe Modulkopf. Zwei Knoten mit
     /// gleichem Inhalt und verschieden formatierter Datei rechnen
     /// denselben Hash.
     pub fn hash(&self) -> Hash {
-        let bytes = borsh::to_vec(self).expect("Genesis ist aus festen Feldern serialisierbar");
+        let bytes = borsh::to_vec(self).expect("Stimmsatzdatei ist aus festen Feldern serialisierbar");
         Hash::sha256(&bytes)
     }
 
@@ -336,7 +336,7 @@ impl Genesis {
     /// Arbeitshistorie: Arbeit qualifiziert, sie wiegt nicht.
     ///
     /// ⚑ **Hier stand bis dahin die alte Summenform mit Deckel**, samt
-    /// der Begründung, dass zu Genesis die Historie leer sei und der
+    /// der Begründung, dass beim Kettenstart die Historie leer sei und der
     /// Bonus deshalb null. Die Begründung stimmte und war ein Sonderfall;
     /// jetzt gilt die Aussage allgemein und braucht keinen.
     pub fn stimmberechtigte(&self) -> VotingSet {
@@ -368,18 +368,18 @@ impl Genesis {
     /// Prüft, was vor dem Start feststehen muss.
     ///
     /// Siehe Modulkopf, Punkte 1 bis 3.
-    pub fn pruefe(&self) -> Result<(), GenesisFehler> {
+    pub fn pruefe(&self) -> Result<(), Stimmsatzfehler> {
         let mut gesehen = BTreeSet::new();
         for v in &self.validatoren {
             let kennung = v.kennung();
             if !gesehen.insert(kennung) {
-                return Err(GenesisFehler::DoppelterSchluessel { kennung });
+                return Err(Stimmsatzfehler::DoppelterSchluessel { kennung });
             }
             // Fund 27: Ohne Besitznachweis ließe sich ein Schlüssel
             // eintragen, dessen geheimen Teil niemand kennt, aber so
             // gewählt, dass er die Aggregatsignatur verschiebt.
             if !v.pubkey.verify_possession(&v.pop) {
-                return Err(GenesisFehler::BesitzNichtNachgewiesen { kennung });
+                return Err(Stimmsatzfehler::BesitzNichtNachgewiesen { kennung });
             }
         }
 
@@ -387,7 +387,7 @@ impl Genesis {
         for v in &self.validatoren {
             // „hält ein Drittel oder mehr" heißt 3 · stake >= gesamt.
             if (v.stake as u128) * 3 >= gesamt as u128 {
-                return Err(GenesisFehler::ZuVielGewicht {
+                return Err(Stimmsatzfehler::ZuVielGewicht {
                     kennung: v.kennung(),
                     stake: v.stake,
                     gesamt,
@@ -513,8 +513,8 @@ mod tests {
         s
     }
 
-    fn probenetz() -> Genesis {
-        Genesis::aus_text(&probenetz_text()).expect("Probenetz muss lesbar sein")
+    fn probenetz() -> Stimmsatzdatei {
+        Stimmsatzdatei::aus_text(&probenetz_text()).expect("Probenetz muss lesbar sein")
     }
 
     #[test]
@@ -547,7 +547,7 @@ mod tests {
         let kopf: Vec<&str> = zeilen.drain(..2).collect();
         zeilen.reverse();
         let rueckwaerts_text = format!("{}\n{}\n", kopf.join("\n"), zeilen.join("\n"));
-        let rueckwaerts = Genesis::aus_text(&rueckwaerts_text).expect("lesbar");
+        let rueckwaerts = Stimmsatzdatei::aus_text(&rueckwaerts_text).expect("lesbar");
         assert_eq!(vorwaerts.hash(), rueckwaerts.hash());
         assert_eq!(vorwaerts, rueckwaerts);
     }
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn kommentare_und_leerraum_aendern_den_hash_nicht() {
         let ohne = probenetz();
-        let mit = Genesis::aus_text(&format!(
+        let mit = Stimmsatzdatei::aus_text(&format!(
             "# oben\n\n   \n{}\n# unten\n",
             probenetz_text().replace('\n', "   # Anmerkung\n")
         ))
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn ein_anderer_netzname_ist_ein_anderes_netz() {
         let a = probenetz();
-        let b = Genesis::aus_text(&probenetz_text().replace("probenetz-1", "probenetz-2"))
+        let b = Stimmsatzdatei::aus_text(&probenetz_text().replace("probenetz-1", "probenetz-2"))
             .expect("lesbar");
         assert_ne!(a.hash(), b.hash());
     }
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn ein_anderer_stake_ist_ein_anderer_hash() {
         let a = probenetz();
-        let b = Genesis::aus_text(&probenetz_text().replace("100000000", "110000000"))
+        let b = Stimmsatzdatei::aus_text(&probenetz_text().replace("100000000", "110000000"))
             .expect("lesbar");
         assert_ne!(a.hash(), b.hash());
     }
@@ -614,16 +614,16 @@ mod tests {
             als_hex(&pk_c.0),
             als_hex(&pop_c.0),
         );
-        match Genesis::aus_text(&text) {
-            Err(GenesisFehler::ZuVielGewicht { stake, gesamt, .. }) => {
+        match Stimmsatzdatei::aus_text(&text) {
+            Err(Stimmsatzfehler::ZuVielGewicht { stake, gesamt, .. }) => {
                 assert_eq!((stake, gesamt), (300, 900));
             }
             andere => panic!("erwartet ZuVielGewicht, bekommen {andere:?}"),
         }
     }
 
-    /// Baut eine Genesis aus Stakes, mit frischen Schlüsseln je Eintrag.
-    fn genesis_mit(netz: &str, saat: u8, stakes: &[u64]) -> Result<Genesis, GenesisFehler> {
+    /// Baut eine Stimmsatzdatei aus Stakes, mit frischen Schlüsseln je Eintrag.
+    fn genesis_mit(netz: &str, saat: u8, stakes: &[u64]) -> Result<Stimmsatzdatei, Stimmsatzfehler> {
         let mut text = format!("netz {netz}\n");
         for (i, stake) in stakes.iter().enumerate() {
             let (pk, pop) = schluessel(saat.wrapping_add(i as u8));
@@ -634,7 +634,7 @@ mod tests {
                 stake
             ));
         }
-        Genesis::aus_text(&text)
+        Stimmsatzdatei::aus_text(&text)
     }
 
     #[test]
@@ -645,7 +645,7 @@ mod tests {
         // Genau ein Drittel reicht schon, um jedes Quorum zu blockieren.
         assert!(matches!(
             genesis_mit("knapp-drueber", 20, &[300, 299, 150, 151]),
-            Err(GenesisFehler::ZuVielGewicht { stake: 300, .. })
+            Err(Stimmsatzfehler::ZuVielGewicht { stake: 300, .. })
         ));
     }
 
@@ -671,7 +671,7 @@ mod tests {
             assert!(
                 matches!(
                     genesis_mit("zu-wenige", 30, &stakes),
-                    Err(GenesisFehler::ZuVielGewicht { .. })
+                    Err(Stimmsatzfehler::ZuVielGewicht { .. })
                 ),
                 "{stakes:?} kam durch, obwohl drei Werte unter je einem \
                  Drittel ihre eigene Summe nicht erreichen können"
@@ -711,7 +711,7 @@ mod tests {
                 als_hex(&pop.0)
             ));
         }
-        let g = Genesis::aus_text(&text).expect("lesbar");
+        let g = Stimmsatzdatei::aus_text(&text).expect("lesbar");
         assert!(
             g.unterscheidet_koepfe_von_gewicht().is_none(),
             "bei gleichen Gewichten darf es kein unterscheidendes Paar geben"
@@ -778,7 +778,7 @@ mod tests {
                     stake
                 ));
             }
-            let g = Genesis::aus_text(&text)
+            let g = Stimmsatzdatei::aus_text(&text)
                 .unwrap_or_else(|e| panic!("{stakes:?} sollte gültig sein: {e}"));
             assert!(
                 g.unterscheidet_koepfe_von_gewicht().is_none(),
@@ -809,8 +809,8 @@ mod tests {
             felder[3]
         );
         assert!(matches!(
-            Genesis::aus_text(&text.replace(erste, &verfaelscht)),
-            Err(GenesisFehler::BesitzNichtNachgewiesen { .. })
+            Stimmsatzdatei::aus_text(&text.replace(erste, &verfaelscht)),
+            Err(Stimmsatzfehler::BesitzNichtNachgewiesen { .. })
         ));
     }
 
@@ -825,8 +825,8 @@ mod tests {
             als_hex(&pop2.0)
         );
         assert!(matches!(
-            Genesis::aus_text(&text),
-            Err(GenesisFehler::DoppelterSchluessel { .. })
+            Stimmsatzdatei::aus_text(&text),
+            Err(Stimmsatzfehler::DoppelterSchluessel { .. })
         ));
     }
 
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn die_datei_laesst_sich_zurueckschreiben_und_wieder_lesen() {
         let g = probenetz();
-        let wieder = Genesis::aus_text(&g.als_text()).expect("Rückschrift muss lesbar sein");
+        let wieder = Stimmsatzdatei::aus_text(&g.als_text()).expect("Rückschrift muss lesbar sein");
         assert_eq!(g, wieder);
         assert_eq!(g.hash(), wieder.hash());
     }
@@ -844,22 +844,22 @@ mod tests {
     fn eine_datei_ohne_netznamen_wird_abgewiesen() {
         let (pk, pop) = schluessel(60);
         let text = format!("validator {} {} 100\n", als_hex(&pk.0), als_hex(&pop.0));
-        assert_eq!(Genesis::aus_text(&text), Err(GenesisFehler::OhneNetznamen));
+        assert_eq!(Stimmsatzdatei::aus_text(&text), Err(Stimmsatzfehler::OhneNetznamen));
     }
 
     #[test]
     fn eine_datei_ohne_validatoren_wird_abgewiesen() {
         assert_eq!(
-            Genesis::aus_text("netz leer\n"),
-            Err(GenesisFehler::OhneValidatoren)
+            Stimmsatzdatei::aus_text("netz leer\n"),
+            Err(Stimmsatzfehler::OhneValidatoren)
         );
     }
 
     #[test]
     fn ein_tippfehler_im_schluessel_faellt_auf_und_nennt_die_zeile() {
         let text = "netz x\nvalidator abcd deadbeef 100\n";
-        match Genesis::aus_text(text) {
-            Err(GenesisFehler::KeinHex { zeile, feld, .. }) => {
+        match Stimmsatzdatei::aus_text(text) {
+            Err(Stimmsatzfehler::KeinHex { zeile, feld, .. }) => {
                 assert_eq!((zeile, feld), (2, "pubkey"));
             }
             andere => panic!("erwartet KeinHex, bekommen {andere:?}"),
@@ -872,8 +872,8 @@ mod tests {
         // jemand für wirksam hält.
         let text = format!("netz x\nvalidatoren 5\n{}", probenetz_text());
         assert!(matches!(
-            Genesis::aus_text(&text),
-            Err(GenesisFehler::UnbekannteZeile { zeile: 2, .. })
+            Stimmsatzdatei::aus_text(&text),
+            Err(Stimmsatzfehler::UnbekannteZeile { zeile: 2, .. })
         ));
     }
 
@@ -888,8 +888,8 @@ mod tests {
             als_hex(&pop.0)
         );
         assert!(matches!(
-            Genesis::aus_text(&text),
-            Err(GenesisFehler::UnbrauchbarerStake { zeile: 2 })
+            Stimmsatzdatei::aus_text(&text),
+            Err(Stimmsatzfehler::UnbrauchbarerStake { zeile: 2 })
         ));
     }
 

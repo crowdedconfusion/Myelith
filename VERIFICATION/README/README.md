@@ -1,29 +1,40 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.18.0
-> **Datum:** 2026-09-02
+> **Version:** 0.19.0
+> **Datum:** 2026-09-03
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
 > 4.3 ✅ seit 2026-08-24): Redundanzvergleich (Stufe 1),
 > Bisektions-Spiel (Stufe 2) mit Checker-Modul, Challenge-Erzeugung,
-> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik,
-> Kontrollsegmente samt der Vorratsschranke aus Fund 58 und die
+> Bisektionsprotokoll, On-Chain-Schiedsrunde, Slash-Logik und die
 > Sicherheitssimulationen gegen Anhang B.2 und Kap. 6.8.
+>
+> ⚑ **Die Kontrollsegmente sind seit dem 2026-09-02 fort** (Entscheidung
+> A1, rund 1 700 Zeilen: Mechanik, Spurdetektor und Messgerät). Dass
+> dieser Kopf sie bis zum 2026-09-03 noch führte, ist Fund 158. Der
+> Grabstein mit der vollständigen Begründung steht in
+> `myl-verifier/src/lib.rs`; `gamma` ist in die Stichprobenrate
+> aufgegangen.
 > **144 Tests grün** (111 Modultests, 19 adversariale, 9 Simulation, 3 Bisektion, 2 Doku-Tests).
 >
-> ⚑ **Punkt 3.2 trägt weiterhin ein ⚠ und keinen Haken, aber aus einem
-> anderen Grund als bisher.** Die Ununterscheidbarkeit ist eine
-> Eigenschaft der Daten und braucht ein Prompt-Profil aus echtem
-> Betrieb. Was seit v0.9.0 nicht mehr fehlt, ist das **Messgerät**
-> (Punkt 3.6): Es fehlt der Verkehr, nicht das Verfahren.
+> ⚑ **Punkt 3.2 ist seit dem 2026-09-03 nicht mehr offen, sondern
+> gegenstandslos** (Fund 158). Die Ununterscheidbarkeit galt für
+> **eingeschleuste** Kontrollsegmente, die wie echte Arbeit aussehen
+> mussten. Die Stichprobe zieht **echte** Arbeitseinheiten, und die sind
+> von echter Arbeit nicht zu unterscheiden, **weil sie es sind**. Die
+> Anforderung entfällt, statt erfüllt zu werden.
+>
+> **Der Satz „das Messgerät steht, der Verkehr fehlt" stand hier seit
+> dem 2026-08-27 und stimmt seit dem 2026-09-02 nicht mehr:** Das
+> Messgerät ist mit seinem Gegenstand gegangen.
 >
 > ⚑ **Die adversariale Ebene fand Fund 42:** Das Bisektions-Spiel nannte
 > systematisch die **falsche Layer** und hätte damit den Betrüger
 > freigesprochen und den ehrlichen Checker geschlachtet. Behoben in
 > v0.4.0, siehe Changelog.
 
-Verifikations-Subsystem: Redundanzvergleich, Bisektions-Spiel (Stufe 2),
-Kontrollsegmente (Stufe 3). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
+Verifikations-Subsystem: Redundanzvergleich (Stufe 1) und
+Bisektions-Spiel (Stufe 2). Referenzimplementierung von Whitepaper Kap. 6.4–6.9
 und Anhang A.4.
 
 ## Aufgabe
@@ -134,6 +145,25 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.19.0 – 2026-09-03 (der Kopf sagt endlich, was der Code seit einem Tag tut)
+
+**Kein Code, nur eine Berichtigung, und sie ist Fund 158.** A1 hat am
+2026-09-02 rund 1 700 Zeilen entfernt: `kontrollsegmente`,
+`unterscheider` **und das Messgerät `unterscheidbarkeit` selbst**.
+Dieser Kopf führte sie einen Tag länger.
+
+⚑ **Dieselbe Form wie Fund 151:** Eine Entscheidung entzieht einem Punkt
+den Boden, und der Punkt steht weiter da, weil ihn niemand daraufhin
+angesehen hat. Betroffen waren ausserdem zwei Zeilen der internen
+Abhak-Liste, eine davon mit einem Verweis auf eine Datei, die es nicht
+gibt, und der offene GATEWAY-Punkt zur Ununterscheidbarkeit.
+
+**Die Regel daraus:** Wer eine Entscheidung umsetzt, die etwas
+**entfernt**, geht danach die Punkte durch, die davon lebten. Der
+Grabstein im Code ist die halbe Arbeit; die Liste ist die andere.
+
+
 
 ### v0.18.0 – 2026-09-02 (die Kontrollsegmente entfallen, rund 1 700 Zeilen)
 

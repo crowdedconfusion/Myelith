@@ -277,6 +277,13 @@ pub fn anlaufstelle() -> bool {
         // Kein Endpunkt: Der Testklient faehrt mehrere Knoten in einem
         // Prozess, und ein fester Port kann nur einmal vergeben werden.
         beobachtung: None,
+        // Dieselbe Begruendung: ein fester Port kollidiert, sobald zwei
+        // Knoten nebeneinander laufen.
+        tuer: None,
+        // Kein Shard-Prozess: Der Testklient faehrt Knoten, keine
+        // Rechenwerke. Ein Auftrag wird ehrlich abgelehnt.
+        ortsleitung: None,
+        ortsausweis: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Die Anlaufstelle baut die Blöcke. **Genau einer im Netz**:
         // Zwei Erzeuger gabeln die Kette sofort, weil niemand
@@ -285,10 +292,10 @@ pub fn anlaufstelle() -> bool {
         erzeugt_bloecke: true,
         teilnehmer,
         // Kein Mitstimmen: Der Testclient fährt keine BFT-Runden.
-        // Dafür bräuchte er eine Genesis-Datei mit dem Validator-Satz,
+        // Dafür bräuchte er eine Stimmsatzdatei mit dem Validator-Satz,
         // und die entsteht nicht nebenbei aus einer Einladung.
         kettendatei: None,
-        genesisdatei: None,
+        stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
     };
 
@@ -344,13 +351,20 @@ pub fn teilnehmer(name_vorgabe: &str) -> bool {
         // Kein Endpunkt: Der Testklient faehrt mehrere Knoten in einem
         // Prozess, und ein fester Port kann nur einmal vergeben werden.
         beobachtung: None,
+        // Dieselbe Begruendung: ein fester Port kollidiert, sobald zwei
+        // Knoten nebeneinander laufen.
+        tuer: None,
+        // Kein Shard-Prozess: Der Testklient faehrt Knoten, keine
+        // Rechenwerke. Ein Auftrag wird ehrlich abgelehnt.
+        ortsleitung: None,
+        ortsausweis: None,
         testverkehr_sekunden: if takt == 0 { None } else { Some(takt) },
         // Teilnehmer erzeugen nicht, sie schicken Transaktionen und
         // rechnen die Blöcke der Anlaufstelle nach.
         erzeugt_bloecke: false,
         teilnehmer,
         kettendatei: None,
-        genesisdatei: None,
+        stimmsatzdatei_pfad: None,
         konsensschluesseldatei: None,
     };
 

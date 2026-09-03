@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.26.0"
+version = "0.28.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -592,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "myl-consensus",
  "myl-ledger",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.15.0"
+version = "0.17.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "myl-ledger",
  "myl-types",
@@ -629,7 +629,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.29.0"
+version = "0.34.0"
 dependencies = [
  "blst",
  "borsh",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "borsh",
  "integer-llm-runtime",

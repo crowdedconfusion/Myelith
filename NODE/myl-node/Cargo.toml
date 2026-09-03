@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.29.0"
+version = "0.38.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -16,6 +16,10 @@ publish = false
 borsh = { version = "1.6", features = ["derive"] }
 getrandom = "0.3"
 myl-net = { path = "../../NETWORKING/myl-net" }
+# Der Sitzungskanal, um fuer den Shard zu versiegeln. Direkt und nicht
+# ueber die Wiederausfuhr in `myl-net`: Wer eine Kiste benutzt, nennt
+# sie (Fund 155).
+myl-siegel = { path = "../../NETWORKING/myl-siegel" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 # ⚑ Nur für das Konformitätstor: Der Knoten prüft beim Start, ob seine
 # Maschine die eingefrorenen Op-Vektoren trifft. Ein Knoten, der anders
@@ -33,6 +37,18 @@ myl-tokenomics = { path = "../../TOKENOMICS/myl-tokenomics" }
 # nicht, er rechnet sie aus; zwei Quellen fuer dieselbe Aussage laufen
 # auseinander.
 myl-scheduler = { path = "../../CONSENSUS/myl-scheduler" }
+# ⚑ **Der Knoten beherbergt das eigene Gateway** (B6-3, 2026-09-03).
+# Entschieden ist der Zuschnitt „nur eigenes Gateway": Die Tuer hoert auf
+# der Rueckschleife, der Verkehr verlaesst die Maschine nie. K0s Einwand,
+# eine oeffentliche Tuer gehoere nicht auf die Konsensmaschine, gilt
+# deshalb nicht: Sie ist nicht oeffentlich.
+myl-gateway = { path = "../../GATEWAY/myl-gateway" }
+# Fuer `myl_gateway::oai::Rechenweg`: Die Tuer bedient, der Knoten
+# rechnet, und das ist ein `async`-Merkmal.
+async-trait = "0.1"
+# Fuer die Segmentkennung in der Antwort der Tuer: hexadezimal, weil ein
+# Klient sie als Text weiterreicht.
+hex = "0.4"
 # `net` und `io-util` fuer den Beobachtungsendpunkt (Fund 129): ein
 # GET-Dienst auf der Rueckschleife, ohne HTTP-Rahmenwerk. Dieselbe
 # Entscheidung wie im Gateway.

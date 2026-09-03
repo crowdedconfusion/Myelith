@@ -61,6 +61,19 @@ pub const MAX_BLOECKE_JE_LIEFERUNG: u64 = 64;
 pub enum Nachforderung {
     /// Blöcke der Höhen `ab` bis einschließlich `bis`.
     Bloecke { ab: u64, bis: u64 },
+    /// Ein Inferenzauftrag an den Pod dieses Knotens (GATEWAY Stufe 4).
+    ///
+    /// ⚑ **Dieselbe Schiene wie die Blocknachforderung, und das ist
+    /// eine Entscheidung.** Ein eigenes Protokoll dafür hätte einen
+    /// zweiten Codec, eine zweite Größengrenze und eine zweite Stelle,
+    /// an der eine Zerlegung auf fremde Eingaben trifft. Die Schiene
+    /// hier trägt Längenpräfix und Deckel bereits.
+    ///
+    /// **Additiv angehängt, nie eingefügt:** Die Reihenfolge der
+    /// Varianten ist Protokollvertrag; ein Knoten alter Fassung liest
+    /// die neue Marke nicht und antwortet mit `Nichts`, statt etwas
+    /// Falsches zu verstehen.
+    Inferenz(myl_types::inferenzauftrag::Inferenzauftrag),
 }
 
 /// Was auf eine Nachforderung zurückkommt.
@@ -68,6 +81,8 @@ pub enum Nachforderung {
 pub enum Nachlieferung {
     /// Die angeforderten Blöcke, aufsteigend nach Höhe.
     Bloecke(Vec<Block>),
+    /// Die Antwort auf einen Inferenzauftrag.
+    Inferenz(myl_types::inferenzauftrag::Inferenzantwort),
     /// Nichts vorhanden. **Eine Antwort, kein Schweigen:** Der
     /// Fragende soll den Unterschied zwischen „habe ich nicht" und
     /// „habe nicht geantwortet" kennen, sonst wartet er auf eine
@@ -152,7 +167,9 @@ mod tests {
         // Datenmengen zu senden: wenig Aufwand beim Fragenden, viel
         // beim Antwortenden.
         let n = Nachforderung::fuer_rueckstand(0, 10_000).unwrap();
-        let Nachforderung::Bloecke { ab, bis } = n;
+        let Nachforderung::Bloecke { ab, bis } = n else {
+            panic!("fuer_rueckstand baut nur Blockanfragen");
+        };
         assert_eq!(ab, 1);
         assert_eq!(bis, MAX_BLOECKE_JE_LIEFERUNG);
         assert_eq!(bis - ab + 1, MAX_BLOECKE_JE_LIEFERUNG);

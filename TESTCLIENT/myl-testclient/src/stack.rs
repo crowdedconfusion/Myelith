@@ -475,7 +475,7 @@ fn stufe_block() -> Stufe {
         Err(_) => return Stufe::fehler("block", "Schlüsselerzeugung schlug fehl"),
     };
     let tx = match Transaktion::signiere(
-        &Hash::sha256(b"myelith-testkette-genesis"),
+        &myl_node::kette::Kette::startwert(),
         &schluessel,
         0,
         Anweisung::Burn { betrag: 5_000_000 },
@@ -483,7 +483,7 @@ fn stufe_block() -> Stufe {
         Ok(t) => t,
         Err(_) => return Stufe::fehler("block", "Signieren schlug fehl"),
     };
-    if tx.clone().pruefe(&Hash::sha256(b"myelith-testkette-genesis")).is_err() {
+    if tx.clone().pruefe(&myl_node::kette::Kette::startwert()).is_err() {
         return Stufe::fehler("block", "die eigene Unterschrift wurde nicht anerkannt");
     }
     block.add_transaction(tx);
