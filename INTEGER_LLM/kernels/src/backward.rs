@@ -590,6 +590,62 @@ fn clamp_i16_sat(v: i32) -> i16 {
 /// übernommen (`r_wert`, `r_frac`): Ein zweiter LUT-Nachschlag könnte
 /// einen anderen Index treffen, und dann leitete dieser Kernel eine
 /// andere Funktion ab als die, die gerechnet wurde.
+/// Baut den Gradientenvorrat **aus der Vorwaerts-Tabelle** (TRAINING V).
+///
+/// # ⚑ Die Ableitung dessen, was gelaufen ist, nicht dessen, was gemeint war
+///
+/// Der Vorwaertspass rechnet Silu **nicht** analytisch, sondern schlaegt
+/// in einer Tabelle nach. Ein Gradientenvorrat aus der analytischen
+/// Ableitung passte deshalb zu einer Funktion, die so nie ausgefuehrt
+/// wurde; an den Stellen, an denen die Tabelle rundet, zeigte er in eine
+/// leicht andere Richtung. **Hier steht die zentrale Differenz der
+/// Tabelle selbst**, und die passt immer.
+///
+/// # ⚑ Und sie ist exakt, weil sich zwei Zweien wegkuerzen
+///
+/// Die Ableitung ist `(lut[i+1] - lut[i-1]) / 2` je Eingangsschritt,
+/// also mal `2^(in - out + f)` auf Bruchstellen `f`. Mit
+/// `f = out - in + 1` bleibt genau `lut[i+1] - lut[i-1]` stehen:
+/// **keine Division, keine Rundung, kein Gleitkomma.**
+/// [`silu_grad_frac`] rechnet die Skala aus.
+///
+/// An den beiden Raendern steht die einseitige Differenz, verdoppelt,
+/// damit sie dieselbe Skala traegt.
+///
+/// # Panics
+///
+/// Wenn die Tabelle weniger als zwei Eintraege hat: Aus einem Punkt
+/// folgt keine Steigung.
+pub fn silu_grad_aus_lut(lut: &[i16]) -> Vec<i16> {
+    assert!(
+        lut.len() >= 2,
+        "silu_grad_aus_lut: aus {} Eintraegen folgt keine Steigung",
+        lut.len()
+    );
+    let n = lut.len();
+    let mut aus = vec![0i16; n];
+    for i in 0..n {
+        let d: i32 = if i == 0 {
+            2 * (i32::from(lut[1]) - i32::from(lut[0]))
+        } else if i == n - 1 {
+            2 * (i32::from(lut[n - 1]) - i32::from(lut[n - 2]))
+        } else {
+            i32::from(lut[i + 1]) - i32::from(lut[i - 1])
+        };
+        aus[i] = crate::fixed_point::clamp_i16(d);
+    }
+    aus
+}
+
+/// Auf welchen Bruchstellen [`silu_grad_aus_lut`] liefert.
+///
+/// ⚑ **Eine Funktion und keine Zahl im Kommentar.** Wer die Ableitung
+/// baut, braucht ihre Skala, und zwei Stellen, die sie unabhaengig
+/// ausrechnen, laufen auseinander.
+pub const fn silu_grad_frac(lut_in_frac: u8, lut_out_frac: u8) -> u8 {
+    lut_out_frac + 1 - lut_in_frac
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn rmsnorm_backward(
     g: &[Grad],
@@ -1787,6 +1843,52 @@ mod tests {
                 (s * (1.0 + xf * (1.0 - s)) * out_scale).round() as i16
             })
             .collect()
+    }
+
+    /// ⚑ **Der gebaute Vorrat trifft die analytische Ableitung.**
+    ///
+    /// Gebaut wird er ganzzahlig aus der Vorwaertstabelle; hier steht
+    /// die analytische Rechnung als **unabhaengige** Gegenprobe. Sie
+    /// darf Gleitkomma benutzen, weil sie nur prueft und nie laeuft.
+    #[test]
+    fn der_gradientenvorrat_trifft_die_analytische_ableitung() {
+        let (in_frac, out_frac) = (6u8, 12u8);
+        let (min, max) = (-256i32, 256i32);
+        let vorwaerts: Vec<i16> = (min..=max)
+            .map(|x| {
+                let xf = x as f64 / (1 << in_frac) as f64;
+                let s = 1.0 / (1.0 + (-xf).exp());
+                (xf * s * (1 << out_frac) as f64).round() as i16
+            })
+            .collect();
+        let gebaut = silu_grad_aus_lut(&vorwaerts);
+        let f = silu_grad_frac(in_frac, out_frac);
+        assert_eq!(gebaut.len(), vorwaerts.len());
+
+        // ⚑ **Die Raender bleiben draussen**: Dort steht die einseitige
+        // Differenz, und die ist von Natur aus ungenauer.
+        let mut groesster = 0.0f64;
+        for (i, x) in (min..=max).enumerate() {
+            if i == 0 || i + 1 == gebaut.len() {
+                continue;
+            }
+            let xf = x as f64 / (1 << in_frac) as f64;
+            let sg = 1.0 / (1.0 + (-xf).exp());
+            let wahr = sg * (1.0 + xf * (1.0 - sg));
+            let unser = gebaut[i] as f64 / (1i64 << f) as f64;
+            groesster = groesster.max((wahr - unser).abs());
+        }
+        assert!(
+            groesster < 0.02,
+            "der gebaute Vorrat weicht um {groesster} von der Ableitung ab"
+        );
+    }
+
+    /// Aus einem Punkt folgt keine Steigung.
+    #[test]
+    #[should_panic(expected = "keine Steigung")]
+    fn ein_einzelner_punkt_hat_keine_ableitung() {
+        let _ = silu_grad_aus_lut(&[7]);
     }
 
     /// Gegen die numerische Ableitung der **Vorwärts-LUT**, also gegen

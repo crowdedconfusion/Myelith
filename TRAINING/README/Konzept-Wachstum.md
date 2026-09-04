@@ -160,7 +160,7 @@ Summe eingehen, nicht wie summiert wird.
 
 ## 5. Wachstum: ein Modell, das immer weiter wächst
 
-Kap. 7.5 sieht funktionserhaltende Expansion vor (Net2Net, bert2BERT).
+Kap. 7.5 sieht funktionserhaltende Expansion vor.
 In Gleitkomma ist sie nur *näherungsweise* funktionserhaltend und braucht
 künstliches Rauschen, um die Symmetrie der Kopien zu brechen.
 **Ganzzahlig ist beides besser lösbar.**
@@ -204,7 +204,8 @@ identisch: Die neue Kapazität wäre tot. Gemessen über 20 Schritte:
 Die Aufteilung trennt `a` und `b` bei jedem ungeraden Eintrag um 1 LSB,
 **ohne jeden Zufall**. Das stochastische Runden trennt zusätzlich die
 eingehenden Zeilen. Beide Mechanismen sind deterministisch und
-nachrechenbar; Net2Nets künstliches Rauschen wird nicht gebraucht.
+nachrechenbar; das künstliche Rauschen der Literatur wird nicht
+gebraucht.
 
 ### 5.3 Tiefenwachstum und Shards
 

@@ -145,8 +145,10 @@ zweite eingeführt.** Der Kommentar über `MindestStake` versprach: „Wer
 `p` oder `g` ändert, ändert die Vorgabe mit." Für `g` stimmte das; `p`
 stand daneben als Literal `5, 100`, und die Kette lief mit 2/100.
 
-Die Regel dahinter ist die von Cosmos SDK (ADR-046) und Substrate: eine
-maßgebliche Stelle je Größe, alles andere leitet ab. Der Endzustand
+Die Regel dahinter ist die, auf die alle gereiften Systeme kommen: eine
+maßgebliche Stelle je Größe, alles andere leitet ab. Was Governance
+ändern kann, liegt im Zustand und wird beim Ausführen gelesen; eine
+Konstante daneben ist das Antimuster. Der Endzustand
 bleibt, dass der Konsens die Registry liest, denn Kap. 10 nennt `p`
 ausdrücklich abstimmbar.
 

@@ -17,9 +17,8 @@
 //! ist.
 //!
 //! Dasselbe Muster wie bei der Speicher-Stichprobe, deren Seed
-//! hergeleitet und nicht mitgeschickt wird, und wie bei Ethereum, das
-//! Attestierungs-Belohnungen aus dem Beacon-Zustand rechnet statt sie
-//! sich melden zu lassen.
+//! hergeleitet und nicht mitgeschickt wird, und wie überall dort, wo
+//! Belohnungen aus dem Zustand **gerechnet** statt gemeldet werden.
 //!
 //! # Was hier **nicht** geschieht
 //!

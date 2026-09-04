@@ -781,8 +781,8 @@ pub fn sitzung_ausgeben(
 /// Die erste Eintragung darf der Miner vornehmen, er hat nichts zu
 /// verlieren. Jede weitere gehört dem kalten Konto, damit ein
 /// gestohlener Konsensschlüssel den Ertrag nicht umleiten kann. Es ist
-/// Filecoins Trennung von `owner` und `worker`, nur ohne die Wartefrist,
-/// über die sonst jemand streiten könnte.
+/// die übliche Trennung von haltendem und arbeitendem Schlüssel, nur
+/// ohne die Wartefrist, über die sonst jemand streiten könnte.
 ///
 /// `unterzeichner` ist die Adresse, die aus dem Schlüssel der
 /// Transaktion folgt; `miner` ist die Kennung, für die eingetragen wird.
@@ -2351,9 +2351,8 @@ mod tests {
     /// gehört die Änderung dem kalten Konto.**
     ///
     /// Ein gestohlener Konsensschlüssel kann den Ertrag damit nicht
-    /// umleiten. Das ist der Fehler, den Ethereum als
-    /// Auszahlungsnachweis `0x00` gemacht und später ökosystemweit
-    /// korrigiert hat.
+    /// umleiten. Das ist ein Fehler, den andere Netze gemacht und
+    /// später mit einer ökosystemweiten Migration korrigiert haben.
     #[test]
     fn nach_der_ersten_eintragung_darf_nur_noch_das_konto() {
         let mut st = LedgerState::genesis(1);

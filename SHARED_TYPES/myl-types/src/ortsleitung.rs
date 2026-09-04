@@ -32,8 +32,8 @@
 //! der Shard rechnet und was er dabei mit seinem BLS-Schlüssel
 //! unterschreibt.
 //!
-//! **Deshalb eine Schlüsseldatei**, nach dem Vorbild von Bitcoin Cores
-//! `.cookie`: Der Shard-Prozess legt sie beim Start an, mit Rechten
+//! **Deshalb eine Schlüsseldatei**, und zwar die eingeführte Bauart für
+//! eine lokale Leitung: Der Shard-Prozess legt sie beim Start an, mit Rechten
 //! `0600` unter Unix, und der Knoten liest sie. Wer die Datei lesen
 //! kann, darf fragen; das ist genau der Kreis, den das Dateisystem
 //! ohnehin zieht.
@@ -139,11 +139,10 @@ pub enum Ortsfrage {
     /// unterschrieben, und der Endpunkt ist dessen Hash; der Shard
     /// prüft gegen den Endpunkt, den sein Betreiber ihm genannt hat.
     ///
-    /// Dieselbe Bauart wie in `libp2p-noise`, wo der statische Schlüssel
-    /// im Handshake durch eine Signatur des Identitätsschlüssels
-    /// gedeckt wird, und dieselbe Schichtung wie bei Bitcoin Core: die
-    /// Datei mit `0600` trägt den Zugang, die Unterschrift die
-    /// Identität.
+    /// **Zwei Schichten, und beide werden gebraucht:** die Datei mit
+    /// `0600` trägt den Zugang, die Unterschrift die Identität. Der
+    /// statische Schlüssel trägt sich dabei nicht selbst, er wird von
+    /// einer Signatur des Identitätsschlüssels gedeckt.
     Ankuendigung(Vec<u8>),
 }
 

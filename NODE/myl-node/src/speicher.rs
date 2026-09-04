@@ -87,12 +87,11 @@
 //! ferne Größe: Ein Block darf bis zu [`MAX_SATZ_BYTES`] tragen.
 //!
 //! Jetzt hält der Speicher je Satz **acht Bytes**, nämlich seinen
-//! Anfang in der Datei. Wer einen Block braucht, liest ihn. Das ist die
-//! Bauart, die sich in den großen Ketten durchgesetzt hat: Bitcoin Core
-//! hält die Blöcke in `blk*.dat` und im Arbeitsspeicher nur den
-//! Blockindex; go-ethereum hält die Körper in der Datenbank und im
-//! Arbeitsspeicher einen Zwischenspeicher von 256 Stück
-//! (`bodyCacheLimit`).
+//! Anfang in der Datei. Wer einen Block braucht, liest ihn. **Das ist
+//! die Bauart, die sich in den grossen Ketten durchgesetzt hat:** Die
+//! Blöcke liegen in Dateien oder einer Datenbank, im Arbeitsspeicher
+//! steht nur der Index und ein kleiner Zwischenspeicher in der
+//! Grössenordnung von ein paar hundert Sätzen.
 //!
 //! **Zwei Verweise, mit verschiedenen Aufgaben:**
 //!

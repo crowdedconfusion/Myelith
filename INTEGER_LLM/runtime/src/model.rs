@@ -18,8 +18,8 @@ use integer_llm_kernels::moe::{mische_experten, route_top_k};
 use integer_llm_kernels::rmsnorm::{qk_norm_heads, rmsnorm_i16};
 use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
-use integer_llm_kernels::attention::attention_int;
-use integer_llm_kernels::mlp::mlp_int;
+use integer_llm_kernels::attention::attention_int_mit_spur;
+use integer_llm_kernels::mlp::{mlp_int_mit_spur, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
@@ -449,7 +449,7 @@ impl IntegerModel {
                 &self.final_residual_frac
             };
             hidden = self.forward_layer(
-                layer, &hidden, pos, cache, out_frac, Some(&mut befunde),
+                layer, &hidden, pos, cache, out_frac, Some(&mut befunde), None,
             );
         }
 
@@ -499,7 +499,7 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None);
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None, None);
         }
 
         // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
@@ -581,11 +581,44 @@ impl IntegerModel {
     /// KV-Cache wird gelesen und geschrieben (absolute Layer-Indizes).
     pub fn run_layers(
         &self,
+        hidden: Vec<i16>,
+        pos: usize,
+        cache: &mut KVCache,
+        layer_start: usize,
+        layer_end: usize,
+    ) -> Vec<i16> {
+        self.run_layers_intern(hidden, pos, cache, layer_start, layer_end, None)
+    }
+
+    /// Dasselbe, aber mit Mitschnitt für den Rückwärtspass (TRAINING V).
+    ///
+    /// ⚑ **Ein zweiter Eingang, kein zweiter Pfad.** Beide Wege laufen
+    /// durch dieselbe Schleife und dieselbe `forward_layer`; das ist die
+    /// ganze Absicht. Genau dieser Vorwärtspass ist über dreissig
+    /// Konformitätsvektoren als bitgleich belegt, und eine zweite
+    /// Umsetzung wäre eine zweite Wahrheit über den Rechenpfad.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_layers_mit_mitschnitt(
+        &self,
+        hidden: Vec<i16>,
+        pos: usize,
+        cache: &mut KVCache,
+        layer_start: usize,
+        layer_end: usize,
+        mitschnitt: &mut crate::mitschnitt::Zwischenwerte,
+    ) -> Vec<i16> {
+        self.run_layers_intern(hidden, pos, cache, layer_start, layer_end, Some(mitschnitt))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_layers_intern(
+        &self,
         mut hidden: Vec<i16>,
         pos: usize,
         cache: &mut KVCache,
         layer_start: usize,
         layer_end: usize,
+        mut mitschnitt: Option<&mut crate::mitschnitt::Zwischenwerte>,
     ) -> Vec<i16> {
         for i in layer_start..layer_end {
             let out_frac: &[u8] = if i + 1 < self.layers.len() {
@@ -593,7 +626,17 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(&self.layers[i], &hidden, pos, cache, out_frac, None);
+            hidden = self.forward_layer(
+                &self.layers[i],
+                &hidden,
+                pos,
+                cache,
+                out_frac,
+                None,
+                // ⚑ `as_deref_mut`, sonst wandert die Ausleihe in der
+                // ersten Runde hinein und fehlt in der zweiten.
+                mitschnitt.as_deref_mut(),
+            );
         }
         hidden
     }
@@ -641,6 +684,12 @@ impl IntegerModel {
         logits
     }
 
+    // ⚑ **Acht Argumente, und die letzten beiden sind Ausgänge.** Sie
+    // zu einem Typ zusammenzufassen hiesse, zwei unabhängige Mitschriften
+    // aneinanderzubinden: die MoE-Diagnose läuft im Betrieb, der
+    // Trainingsmitschnitt nur beim Training. Wer sie koppelte, zahlte
+    // das eine, um das andere zu bekommen.
+    #[allow(clippy::too_many_arguments)]
     fn forward_layer(
         &self,
         layer: &TransformerLayer,
@@ -649,10 +698,22 @@ impl IntegerModel {
         cache: &mut KVCache,
         out_residual_frac: &[u8],
         befunde: Option<&mut Vec<Routingbefund>>,
+        mitschnitt: Option<&mut crate::mitschnitt::Zwischenwerte>,
     ) -> Vec<i16> {
         let cfg = &self.config;
         let hs = self.hidden_size;
         let sc = &layer.scales;
+
+        // ⚑ **Nur mitschneiden, wenn jemand zuhört** (TRAINING V).
+        // Inferenz gibt `None` und zahlt je Aufnahmestelle einen
+        // `is_some`, keine Kopie. Ein zweiter Vorwärtspass, der immer
+        // alles behält, wäre eine zweite Wahrheit über den Rechenpfad.
+        let mut auf = mitschnitt
+            .is_some()
+            .then(crate::mitschnitt::Ebenenmitschnitt::default);
+        if let Some(a) = auf.as_mut() {
+            a.residual_ein = hidden.to_vec();
+        }
 
         // === Attention-Block ===
         // Pre-Attention RMSNorm (int16 -> int16 auf der kalibrierten
@@ -668,6 +729,9 @@ impl IntegerModel {
             self.inv_n_q20,
             sc.norm_attn_frac,
         );
+        if let Some(a) = auf.as_mut() {
+            a.norm_ein = norm_hidden.clone();
+        }
 
         // Q, K, V Projektionen: Per-Channel-Gewichtsskalen (theta_v 0.7.0),
         // Ausgang auf der jeweils kalibrierten Per-Layer-Skala.
@@ -760,6 +824,14 @@ impl IntegerModel {
         for kh in k_heads.iter_mut() {
             *kh = rotate_half_split_i16(kh, cos_row, sin_row, cfg.rope_frac_bits);
         }
+        // ⚑ **Nach RoPE und vor dem Zwischenspeicher**: So hat die
+        // Aufmerksamkeit sie gesehen, und nur so passt der Gradient.
+        // V wird nicht gedreht und steht deshalb unverändert daneben.
+        if let Some(a) = auf.as_mut() {
+            a.q = q_heads.clone();
+            a.k = k_heads.clone();
+            a.v = v_heads.clone();
+        }
 
         // KV-Cache schreiben — OHNE Reskalierung (Fund 22, 2026-08-19).
         //
@@ -845,11 +917,19 @@ impl IntegerModel {
                 .saturating_sub(cfg.score_frac_bits as u16) as u8;
             let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 
-            let head_out = attention_int(
+            // ⚑ **Eine Zeile je Kopf.** `q_seq` hat genau einen
+            // Eintrag, also liefert die Spur je Aufruf genau eine
+            // Zeile, und die Reihenfolge ist die der Köpfe.
+            let mut kopfspur: Vec<Vec<i32>> = Vec::new();
+            let head_out = attention_int_mit_spur(
                 &q_seq, &k_seq, &v_seq, &mask,
                 score_mult, score_shift, &self.exp_lut, exp_lut_shift,
                 cfg.prob_frac_bits,
+                auf.as_ref().map(|_| &mut kopfspur),
             );
+            if let Some(a) = auf.as_mut() {
+                a.wahrscheinlichkeiten.append(&mut kopfspur);
+            }
 
             // Ergebnis in attn_out schreiben
             for d in 0..self.head_dim {
@@ -864,6 +944,11 @@ impl IntegerModel {
             for v in attn_out.iter_mut() {
                 *v = clamp_i16(rescale(*v as i32, sc.v_frac, sc.attn_out_frac));
             }
+        }
+        // ⚑ **Nach der Umskalierung**, denn `o_proj` bekommt diese
+        // Zahlen und keine anderen.
+        if let Some(a) = auf.as_mut() {
+            a.attn_aus = attn_out.clone();
         }
 
         // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang auf der
@@ -893,6 +978,10 @@ impl IntegerModel {
         }
 
         // === MLP-Block ===
+        if let Some(a) = auf.as_mut() {
+            a.residual_mitte = residual.clone();
+        }
+
         let norm_residual = rmsnorm_i16(
             &residual,
             &sc.residual_mid_frac,
@@ -909,6 +998,10 @@ impl IntegerModel {
         // in ihrer festen Domaene (silu_in_frac/Offset), Gate-Werte werden
         // dorthin reskaliert. out_residual_frac ist seit Fund 20 per Kanal
         // (down_proj addiert direkt in den Residualstrom).
+        if let Some(a) = auf.as_mut() {
+            a.norm_mitte = norm_residual.clone();
+        }
+
         let acc_mlp: Vec<u8> = sc
             .residual_mid_frac
             .iter()
@@ -917,9 +1010,26 @@ impl IntegerModel {
             .collect();
         let mlp_out = match &layer.ffn {
             Feedforward::Dense(mlp) => {
-                self.mlp_vorwaerts(mlp, &norm_residual, sc, cfg, &acc_mlp)
+                let mut spur = auf.as_ref().map(|_| Mlpspur::default());
+                let aus =
+                    self.mlp_vorwaerts(mlp, &norm_residual, sc, cfg, &acc_mlp, spur.as_mut());
+                if let (Some(a), Some(sp)) = (auf.as_mut(), spur) {
+                    a.mlp = crate::mitschnitt::Mlpteil::Dicht {
+                        gate: sp.gate,
+                        up: sp.up,
+                        h: sp.h,
+                    };
+                }
+                aus
             }
             Feedforward::Moe(moe) => {
+                // ⚑ **Der Mitschnitt sagt hier ausdruecklich „nicht
+                // aufgezeichnet"**, statt drei leere Vektoren
+                // zurueckzulassen. `moe_backward` verlangt andere Werte
+                // (Expertenwahl, Gewichte, Expertenausgaben); Phase 5.
+                if let Some(a) = auf.as_mut() {
+                    a.mlp = crate::mitschnitt::Mlpteil::Expertengemisch;
+                }
                 self.moe_vorwaerts(moe, &norm_residual, sc, cfg, &acc_mlp, befunde, layer.layer_idx)
             }
         };
@@ -956,6 +1066,13 @@ impl IntegerModel {
             let r = rescale_i64(residual[i] as i64, sc.residual_mid_frac[i], acc_mlp[i]);
             let summe = r + mlp_out[i] as i64;
             out[i] = clamp_i16_from_i64(rescale_i64(summe, acc_mlp[i], out_residual_frac[i]));
+        }
+
+        // ⚑ **Ganz am Ende abgeben**, damit auch die MLP-Werte
+        // drinstehen. Eine halb aufgezeichnete Ebene sähe vollständig
+        // aus.
+        if let (Some(m), Some(a)) = (mitschnitt, auf) {
+            m.anhaengen(a);
         }
 
         out
@@ -1001,7 +1118,7 @@ impl IntegerModel {
             } else {
                 &self.final_residual_frac
             };
-            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None);
+            hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None, None);
             dump.push((hidden.clone(), out_frac.to_vec()));
         }
 
@@ -1063,8 +1180,9 @@ impl IntegerModel {
         sc: &LayerScales,
         cfg: &ModelConfig,
         acc: &[u8],
+        spur: Option<&mut Mlpspur>,
     ) -> Vec<i16> {
-        mlp_int(
+        mlp_int_mit_spur(
             x,
             &mlp.gate_proj.data,
             &mlp.up_proj.data,
@@ -1083,6 +1201,7 @@ impl IntegerModel {
             cfg.silu_lut_offset,
             cfg.silu_out_frac,
             acc,
+            spur,
         )
     }
 
@@ -1164,7 +1283,7 @@ impl IntegerModel {
         let ausgaben: Vec<Vec<i16>> = routing
             .experten
             .iter()
-            .map(|e| self.mlp_vorwaerts(&moe.experts[*e as usize], x, sc, cfg, acc))
+            .map(|e| self.mlp_vorwaerts(&moe.experts[*e as usize], x, sc, cfg, acc, None))
             .collect();
 
         mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits)

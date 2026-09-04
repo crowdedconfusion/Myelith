@@ -275,9 +275,9 @@ impl Konsensschluessel {
     /// Dieser Typ ist „ein BLS-Schlüssel aus einer Datei", und ein
     /// Betreiber führt davon **zwei**: den **Konsensschlüssel**, mit dem
     /// er stimmt und sich beim Shard ausweist, und den
-    /// **Kontoschlüssel**, mit dem er über Guthaben verfügt. Filecoin
-    /// trennt genauso (`worker` gegen `owner`), Ethereum und Cosmos
-    /// ebenso, und Myelith tut es für Miner bereits
+    /// **Kontoschlüssel**, mit dem er über Guthaben verfügt. **Der
+    /// arbeitende und der haltende Schlüssel gehören getrennt**, und
+    /// Myelith tut das für Miner bereits
     /// (`auszahlungskonto_eintragen`). **Sie gehören nicht in dieselbe
     /// Datei**, denn wer den einen stiehlt, soll nicht den anderen
     /// haben.

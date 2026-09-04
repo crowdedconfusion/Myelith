@@ -1,6 +1,6 @@
 //! Qwen2.5 Tokenizer-Wrapper
 //! 
-//! Verwendet die Hugging Face `tokenizers` Crate fuer deterministische
+//! Verwendet die `tokenizers`-Kiste fuer deterministische
 //! BPE-Tokenisierung. Der Encoding-Pfad ist float-frei und deterministisch.
 //! 
 //! Voraussetzung: `tokenizer.json` muss im Artefakt-Verzeichnis liegen

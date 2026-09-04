@@ -3,5 +3,6 @@ pub mod kv_cache;
 pub mod generate;
 pub mod konformitaet;
 pub mod tokenizer;
+pub mod mitschnitt;
 pub mod model;
 pub mod paths;

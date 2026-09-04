@@ -252,8 +252,8 @@ dass er einer ist.
 Die Saat steht jetzt im Ledger-Zustand, gilt die ganze Epoche und stammt
 aus `e−2`. **Genauso weit reicht der Registrierungsschluss aus Anhang
 A.2**, und das ist kein Zufall: Wäre die Saat näher als der Schluss,
-könnte sich jemand anmelden, nachdem er sie kennt. Ethereum nennt
-dieselbe Konstruktion `MIN_SEED_LOOKAHEAD`.
+könnte sich jemand anmelden, nachdem er sie kennt. Zwei Epochen
+Vorlauf sind dabei kein eigener Einfall, sondern Stand der Technik.
 
 ⚑ **Warum der Fehler unentdeckt blieb:** Der große Test des Punktes hat
 sechs Miner, also genau einen Pod, und der enthält alle sechs, gleich
@@ -312,13 +312,15 @@ deshalb keine Verhaltensänderung, sondern eine Berichtigung des
 Vertrags**, und die sechste Ausprägung des häufigsten Fehlerbilds dieses
 Projekts.
 
-**Was die Recherche sagt:** Ethereum kennt keinen Arbeitsanteil, das
-Gewicht **ist** der Stake. Filecoin kennt denselben Faktor 10, verlangt
-dafür aber zehnfache Sicherheit und schlachtet zehnfach. Bittensor
-mischt, und die Auswertung zeigt Stake-zu-Belohnung 0,80 bis 0,95 gegen
-rund 0,50 für Leistung. RepuCoin trägt arbeitsgewichtete Stimmen nur mit
-Integration über die **gesamte** Kettengeschichte; das Fenster hier war
-zehn Stunden.
+**Vier Befunde aus der Durchsicht:** Der am stärksten geprüfte
+Einsatzbetrieb kennt keinen Arbeitsanteil, das Gewicht **ist** der
+Stake. Ein Qualitätsfaktor von zehn kann tragen, aber nur zusammen mit
+zehnfacher Sicherheit und zehnfacher Schlachtung. Eine Mischung aus
+Stake und Übereinstimmung korreliert gemessen 0,80 bis 0,95 mit dem
+Stake und nur rund 0,50 mit der Leistung, sieht also aus, als belohne
+sie Qualität. Und arbeitsgewichtete Stimmen tragen nur mit Integration
+über die **gesamte** Kettengeschichte; das Fenster hier war zehn
+Stunden.
 
 **`myl-scheduler` v0.9.1: die Zahl, die seit dem 2026-08-26 offen war.**
 `redundancy.rs` führte die Abwägung „ab wann schlägt Streuung die
@@ -355,8 +357,9 @@ dem, der es zusammengesetzt hat; zwei Knoten mit verschiedenen
 Zertifikaten zögen verschiedene Segmente. **Eine Saat aus lokalem
 Zustand ist keine Saat, sondern eine Meinung.**
 
-Dieselbe Bauart wie `LastCommit` in Tendermint: Ein Block trägt den
-Beleg für seinen Vorgänger.
+Es ist die geläufige Bauart für diese Art Bindung: **Ein Block trägt
+den Beleg für seinen Vorgänger mit**, statt dass der Leser ihn sich aus
+eigenem Zustand zusammensucht.
 
 ⚑ **`None` heißt Blockhash**, und das ist der schlechtere Rückfall
 (unbegrenzter Mahlraum statt höchstens sechzehn Bit, Fund 120). Er ist
@@ -659,11 +662,11 @@ ein. Fünf Tests, zwei Gegenproben.
 ⚑ **Die Miner-Kennung ist `SHA-256` über den Konsensschlüssel, und der
 liegt heiß:** Er unterschreibt jeden Vote, jeden Commit, jeden Übergang,
 jede Kapazitätszusage und jede Speicherquittung. Ihn zugleich zum Konto
-zu machen, auf dem sich der Ertrag sammelt, ist der Fehler, den Ethereum
-als Auszahlungsnachweis `0x00` gemacht und mit einer ökosystemweiten
-Migration auf `0x01` korrigiert hat. Cosmos trennt von Anfang an,
-Filecoin ebenso mit `owner` gegen `worker`, und das ist für Speicher
-plus Beweise dieselbe Lage wie hier.
+zu machen, auf dem sich der Ertrag sammelt, ist ein bekannter Fehler:
+Andere Netze haben ihn gemacht und später mit einer ökosystemweiten
+Migration korrigiert, andere trennen von Anfang an. **Der Schnitt heisst
+überall dasselbe:** ein Schlüssel, der arbeitet, und ein Konto, das
+hält.
 
 ⚑ **Und die Änderung gehört dem kalten Konto.** Die **erste** Eintragung
 unterschreibt der Miner selbst, er hat nichts zu verlieren; **jede
@@ -841,12 +844,10 @@ nimmt ihr Ergebnis an: Eine Runde zurückzusetzen wäre angreifbar, denn
 dann zöge altes Nachrichtenmaterial einen Knoten beliebig weit nach
 hinten.
 
-Das ist nicht eigens erfunden, sondern der übliche Weg: In Tendermint
-trägt der commitete Block seine Commit-Signaturen mit sich und wird über
-die Blocksynchronisation unabhängig vom Konsens-Reaktor übernommen, in
-QBFT stehen die Commit-Siegel im Blockkopf, in HotStuff gilt ein
-Quorum-Zertifikat für sich, ohne dass der Empfänger in der passenden
-Sicht säße.
+Das ist nicht eigens erfunden, sondern die übliche Bauart: Ein
+commiteter Block trägt seine Commit-Signaturen mit sich und wird beim
+Aufholen unabhängig vom Konsensteil übernommen; ein Quorumszertifikat
+gilt für sich, ohne dass der Empfänger in der passenden Sicht säße.
 
 **Der Beleg geht nur hinaus, wenn ihn jemand braucht.** Der
 naheliegende Weg, ihn nach jedem Commit zu veröffentlichen, kostet bei

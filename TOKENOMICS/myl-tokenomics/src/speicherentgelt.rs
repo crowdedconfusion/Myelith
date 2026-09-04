@@ -50,10 +50,10 @@
 //! **Kosten zu decken ist kein Anreiz.** Wer zum Selbstkostenpreis
 //! hält, verdient nichts und hält deshalb nicht.
 //!
-//! ⚑ **Der Anker ist Storj**, und er ist der einzige direkt
-//! vergleichbare: ein dezentrales Netz, das Privatleute mit **eigener**
-//! Hardware bezahlt, und zwar **1,50 je TB-Monat**, gerechnet auf die
-//! erasure-kodierten Bytes. Dieselbe Konvention gilt hier: Die
+//! ⚑ **Der Anker ist die einzige direkt vergleichbare Rate:** was ein
+//! dezentrales Netz Privatleuten mit **eigener** Hardware zahlt, und
+//! zwar **1,50 je TB-Monat**, gerechnet auf die erasure-kodierten
+//! Bytes. Dieselbe Konvention gilt hier: Die
 //! Redundanz steckt in der Bytezahl (`Manifest::redundanz`) und nicht
 //! im Satz.
 //!
@@ -61,14 +61,15 @@
 //! **2,5-Fache**, und daraus folgt der Satz von 9 000.
 //!
 //! ⚑ **Was ausdrücklich nicht der Anker ist: ein Endkundenpreis.**
-//! Backblaze B2 nimmt 6,95 je TB-Monat, AWS S3 nimmt 23. Darin stecken
-//! Rechenzentrum, Personal, Bandbreite, Verfügbarkeitszusage und Marge.
+//! Gehostete Objektspeicher liegen zwischen rund 7 und 23 je TB-Monat.
+//! Darin stecken Rechenzentrum, Personal, Bandbreite,
+//! Verfügbarkeitszusage und Marge.
 //! **Ein Halter in diesem Netz liefert davon nichts**, und die
 //! Redundanz rechnet das Protokoll ohnehin getrennt. Ein Satz von
 //! 42 000 wäre eine Überzahlung um das Zwölffache.
 //!
-//! **Die ehrliche Einschränkung:** Storj steht unter Druck, diese Rate
-//! zu senken. 1,50 ist eher das obere Ende des Tragfähigen als die
+//! **Die ehrliche Einschränkung:** Der Anker steht unter Druck, diese
+//! Rate zu senken. 1,50 ist eher das obere Ende des Tragfähigen als die
 //! Mitte, und der Satz ist deshalb ein Governance-Parameter und keine
 //! Konstante.
 
@@ -93,7 +94,7 @@ pub const SPEICHER_KOSTENBODEN: u64 = 3_000;
 /// Der Startwert des Speichersatzes: Recheneinheiten je Byte-Epoche.
 ///
 /// **Entschieden am 2026-09-02.** Ergibt 1,49 je TB-Monat und trifft
-/// damit die Storj-Rate von 1,50; das ist das 2,5-Fache der
+/// damit die Ankerrate von 1,50; das ist das 2,5-Fache der
 /// hergeleiteten Kosten. Siehe den Modulkopf für die Herleitung und für
 /// den Grund, warum kein Endkundenpreis der Anker ist.
 ///
@@ -159,7 +160,7 @@ mod tests {
     /// ⚑ **Die Zahl, gegen die die Herleitung geprüft wird.**
     ///
     /// 9 000 Recheneinheiten je Byte-Epoche sollen 1,50 je TB-Monat
-    /// entsprechen, also der Storj-Rate. Der Test rechnet es nach, mit
+    /// entsprechen, also der Ankerrate. Der Test rechnet es nach, mit
     /// denselben Kosten wie die Simulation, damit die Zahl nicht ohne
     /// ihre Bedeutung dasteht.
     #[test]

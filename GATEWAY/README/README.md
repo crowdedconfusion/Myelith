@@ -252,13 +252,14 @@ Bearer ist der Rumpf der nackte Prompt, und genau das macht die Tür
 harnessfähig; ohne ihn ist er eine Hülle mit Unterschrift. **Zu raten,
 welche Form vorliegt, wäre die Schmuggelstelle.**
 
-### Die Bauart: Biscuits Signaturkette, nicht sein Datalog
+### Die Bauart: eine Signaturkette, kein Logikprogramm
 
-**Macaroons prüft ihr Aussteller** mit einem Wurzelgeheimnis, das er
-selbst hält. Hier ist der Aussteller der **Nutzer** und der Prüfer das
-**Gateway**, also zwei Parteien: Ein HMAC über ein gemeinsames Geheimnis
+Der geläufige Bauplan für abschwächbare Zugangsmarken lässt den
+**Aussteller** prüfen, mit einem Wurzelgeheimnis, das er selbst hält.
+**Hier geht das nicht:** Aussteller ist der **Nutzer**, Prüfer das
+**Gateway**, also zwei Parteien. Ein HMAC über ein gemeinsames Geheimnis
 scheidet aus, denn das Gateway darf den Schlüssel des Nutzers nicht
-haben. **Biscuit löst genau das** mit einer Kette signierter Blöcke.
+haben. **Eine Kette signierter Blöcke löst genau das.**
 
 1. Der Vollmachtsblock ist mit dem Agentenschlüssel unterschrieben und
    nennt den **nächsten** öffentlichen Schlüssel.
@@ -277,9 +278,9 @@ passenden zu bauen, bräuchte er die Saat des Vorgängers, und die hat der
 Abschwächende weggeworfen. **Der Test dazu ist der wichtigste des
 Moduls.**
 
-⚑ **Was ausdrücklich nicht übernommen wird: Biscuits Datalog.** Ein
-Logikinterpreter, der vom Anfragenden gelieferte Programme an der Tür
-auswertet, ist eine Angriffsfläche, die zu dieser Stufe nicht passt:
+⚑ **Was ausdrücklich nicht kommt: ein Logikprogramm an der Tür.** Ein
+Interpreter, der vom Anfragenden gelieferte Regeln auswertet, ist eine
+Angriffsfläche, die zu dieser Stufe nicht passt:
 unbegrenzte Laufzeit, unbegrenzter Speicher, eine eigene Zerlegung.
 **Die Vorbehalte hier sind ein Aufzählungstyp mit vier Fällen**, jeder
 in konstanter Zeit prüfbar.

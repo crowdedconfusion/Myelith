@@ -121,12 +121,13 @@ impl std::error::Error for SicherheitsFehler {}
 ///
 /// # Die Regel dahinter
 ///
-/// Eine maßgebliche Stelle je Größe, alles andere leitet ab. So halten
-/// es Cosmos SDK (ADR-046: was Governance ändert, liegt im Zustand und
-/// wird beim Ausführen gelesen) und Substrate (Konstanten nur per
-/// Runtime-Upgrade, alles Änderbare im Speicher, und als Ketten
-/// Ratsbeschlüsse wollten, liess Parity den Konstantentyp aus dem
-/// Speicher lesen statt eine zweite Kopie zu erlauben).
+/// **Eine maßgebliche Stelle je Größe, alles andere leitet ab.** Darauf
+/// kommt jedes gereifte System: Was Governance ändern kann, liegt im
+/// Zustand und wird beim Ausführen gelesen; was nur ein Upgrade ändert,
+/// ist eine Konstante. **Beides nebeneinander ist das Antimuster**, und
+/// wo jemand später doch beschliessen wollte, was als Konstante
+/// dastand, war die Antwort nie eine zweite Kopie, sondern die
+/// Konstante aus dem Zustand zu lesen.
 ///
 /// ⚑ **Der Endzustand ist trotzdem ein anderer:** Kap. 10 nennt `p`
 /// ausdrücklich als abstimmbar, sie gehört also in den Konsenszustand,

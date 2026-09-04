@@ -131,8 +131,8 @@ GPU, hauptsächlich CPU und gute Anbindung.
 
 **Checker** (auch *Fisherman*) — Rechnet zufällig ausgeloste Segmente
 nach und meldet Abweichungen. Verdient Kopfgeld aus geslashtem Stake.
-Der Name „Fisherman" stammt aus Polkadot: jemand, der im Netz nach
-Betrug fischt.
+Der Name „Fisherman" ist in dieser Rolle eingeführt: jemand, der im Netz
+nach Betrug fischt.
 *Im Code:* `VERIFICATION/myl-verifier/src/checker.rs`
 
 **Store** — Hält vor, was das Netz zum Rechnen braucht, aber nicht selbst
@@ -516,7 +516,7 @@ zurück.
 *Beispiel:* `" The history of"` → `[576, 3840, 315]`
 
 *Im Code:* `INTEGER_LLM/runtime/src/tokenizer.rs` (BPE über die
-HuggingFace-`tokenizers`-Crate; der Encoding-Pfad ist float-frei)
+`tokenizers`-Kiste; der Encoding-Pfad ist float-frei)
 
 ### Embedding
 
@@ -879,7 +879,7 @@ geprüft wird. Bei einer Blockchain, in der jeder Block dauerhaft
 gespeichert wird, ist das ein erheblicher Unterschied.
 
 Myelith nutzt die **min-pk**-Variante (Public Keys auf G1, 48 Bytes;
-Signaturen auf G2, 96 Bytes) — dieselbe wie der Ethereum-Konsens.
+Signaturen auf G2, 96 Bytes), die verbreitetste des Entwurfs.
 
 *Im Code:* `SHARED_TYPES/myl-types/src/bls.rs`
 
@@ -1063,8 +1063,8 @@ etwas anderes hatte. Dieser Beweis ist das **Polka-Zertifikat** (*Proof
 of Lock Change*): eine Sammlung von Votes, die das Quorum belegt.
 
 Ohne Sperre könnte ein Netz mit wechselnden Leadern zwei verschiedene
-Blöcke in verschiedenen Runden finalisieren — Safety-Bruch. Die Mechanik
-stammt aus Tendermint.
+Blöcke in verschiedenen Runden finalisieren, also Safety-Bruch. Die
+Mechanik ist die geläufige für diesen Fall.
 
 **Härtung:** Die Wählerliste eines Polka-Zertifikats muss **streng
 aufsteigend** sortiert sein. Sonst könnte ein Angreifer denselben
@@ -1091,10 +1091,9 @@ der Irrende ist. Ohne einen Beleg, der außerhalb der Runden gilt, käme er
 nie zurück. Die übliche Regel, auf eine **höhere** Runde zu springen,
 hilft ihm nicht: Er ist voraus, nicht zurück.
 
-Derselbe Gedanke steht anderswo unter anderem Namen: In Tendermint trägt
-der commitete Block seine Commit-Signaturen mit sich und wird über die
-Blocksynchronisation übernommen, in QBFT stehen die Commit-Siegel im
-Blockkopf, in HotStuff heißt der Beleg Quorum-Zertifikat.
+Derselbe Gedanke steht anderswo unter anderen Namen: Ein commiteter
+Block trägt seine Commit-Signaturen mit sich und wird beim Aufholen
+übernommen; der Beleg dafür heisst dort Quorumszertifikat.
 
 **Härtung:** Dieselbe strenge Ordnung der Unterzeichner wie beim
 Polka-Zertifikat, dazu ein eigenes Präfix in der Signierbotschaft. Ohne
@@ -1925,7 +1924,7 @@ Drittel Angreiferanteil.
 Der Median braucht nur Vergleiche — bleibt also deterministisch und im
 Verifikationsmodell nachprüfbar.
 
-### Funktionserhaltende Expansion (Net2Net, bert2BERT)
+### Funktionserhaltende Expansion
 
 Verfahren, die ein Modell **vergrößern, ohne seine Funktion zu ändern**:
 Neuronen werden aufgespalten, neue Schichten als Identität initialisiert.
@@ -2008,7 +2007,7 @@ die sich als Nutzerauftrag ausgeben. Das Problem ist bekannt und
 **ungelöst**; filterbasierte Ansätze gelten als unzuverlässig, weil der
 Prüfmechanismus derselben Angriffsfläche unterliegt wie das Modell.
 
-Myelith folgt der architektonischen Trennung (Dual-LLM, CaMeL): Der
+Myelith folgt der architektonischen Trennung: Der
 planende Teil sieht keine fremden Inhalte, der verarbeitende Teil kann
 keine Werkzeuge aufrufen, und abgerufene Daten beeinflussen den
 Kontrollfluss nicht. Verstärkt wird das dadurch, dass die Berechtigungen

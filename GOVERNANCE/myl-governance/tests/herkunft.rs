@@ -65,7 +65,7 @@ fn herkunft(p: Parameter) -> (Herkunft, &'static str) {
         Speichersatz => (
             Entschieden,
             "Punkt B4 vom 2026-09-02: 9 000 je Byte-Epoche, also 1,49 je TB-Monat \
-             und damit die Rate, die Storj seinen Betreibern zahlt",
+             und damit die Ankerrate eines vergleichbaren Netzes",
         ),
         // --- entschieden, mit Fundstelle ---
         Stichprobenrate => (Entschieden, "A1 vom 2026-09-02: gamma/(1-c) + p*(1-gamma), aufgerundet"),

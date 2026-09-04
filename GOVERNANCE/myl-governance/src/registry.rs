@@ -625,8 +625,8 @@ impl ParameterRegistry {
         .expect("die Stichprobenrate ist eine Konstante und g > 0");
         werte.insert(MindestStake, Wert::Ganzzahl(s_min_vorgabe));
         // Punkt B4, entschieden 2026-09-02: 9 000 Recheneinheiten je
-        // Byte-Epoche, also 1,49 je TB-Monat und damit die Rate, die
-        // Storj seinen Betreibern zahlt. Herleitung und Anker stehen in
+        // Byte-Epoche, also 1,49 je TB-Monat und damit die Ankerrate
+        // eines vergleichbaren Netzes. Herleitung und Anker stehen in
         // `myl_tokenomics::speicherentgelt`; hier steht nur der Verweis,
         // damit es die Zahl nicht zweimal gibt.
         werte.insert(

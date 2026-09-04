@@ -128,8 +128,8 @@ CPU and good connectivity.
 *In code:* `CONSENSUS/myl-consensus/src/validator.rs`
 
 **Checker** (also *fisherman*) — recomputes randomly drawn segments and
-reports deviations. Earns a bounty from slashed stake. The name comes
-from Polkadot: someone fishing the network for fraud.
+reports deviations. Earns a bounty from slashed stake. The name is
+established for this role: someone fishing the network for fraud.
 *In code:* `VERIFICATION/myl-verifier/src/checker.rs`
 
 **Store** — holds what the network needs in order to compute but does not
@@ -500,7 +500,7 @@ and back.
 *Example:* `" The history of"` → `[576, 3840, 315]`
 
 *In code:* `INTEGER_LLM/runtime/src/tokenizer.rs` (BPE via the
-HuggingFace `tokenizers` crate; the encoding path is float-free)
+`tokenizers` crate; the encoding path is float-free)
 
 ### Embedding
 
@@ -845,7 +845,7 @@ verified against all 21 public keys at once. For a blockchain that stores
 every block forever, that is a substantial difference.
 
 Myelith uses the **min-pk** variant (public keys on G1, 48 bytes;
-signatures on G2, 96 bytes) — the same one as Ethereum consensus.
+signatures on G2, 96 bytes), the most widely deployed one of the draft.
 
 *In code:* `SHARED_TYPES/myl-types/src/bls.rs`
 
@@ -1857,7 +1857,7 @@ fail at an attacker share of one third.
 The median needs only comparisons — so it stays deterministic and
 checkable within the verification model.
 
-### Function-preserving expansion (Net2Net, bert2BERT)
+### Function-preserving expansion
 
 Methods that **enlarge a model without changing its function**: neurons
 are split, new layers initialised as the identity. Immediately after

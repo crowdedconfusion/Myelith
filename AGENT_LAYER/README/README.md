@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.7.0
+> **Version:** 0.8.0
 > **Datum:** 2026-08-28
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -44,6 +44,29 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.8.0 – 2026-09-04 (das lokale Harness bekommt seinen Ort und seine Grenze)
+
+Neue Kiste `myl-local-agent` in `AGENT_LAYER/local-agent/`, **neben
+`myl-agent` und nicht darin**: eigene Fassung, eigener Lebenslauf.
+
+⚑ **Sie trägt heute ihre Grenze und sonst nichts, und das ist Absicht.**
+Das Harness darf die Kette nicht kennen; seine einzige Berührung mit ihr
+ist ein Token, das ihm gereicht wurde. Es unterschreibt keine
+Transaktion, liest keinen Kettenzustand und hält keinen Schlüssel.
+Abgebucht wird vom Knoten, nachdem gerechnet wurde.
+
+`tests/isolation.rs` hält die eigene `Cargo.toml` gegen eine Liste
+verbotener Kisten (`myl-consensus`, `myl-ledger`, `myl-node`), mit einer
+Gegenprobe darauf, dass die Suche einen eingebauten Verstoss auch
+findet. **Eine Grenze, die nur im Text steht, überlebt den ersten
+eiligen Nachmittag nicht.**
+
+⚑ **Und die Schichtung gehört genau gefasst:** `myl-agent` läuft nicht
+im Block. Durchgesetzt wird eine Ebene tiefer, in `myl_types::sitzung`
+und `myl_ledger::transitions`; `myl-agent` ist die deterministische
+Schicht darüber, deren Erzeugnisse **verankerbar** sind, und
+`myl-local-agent` ist die isolierte Schicht daneben.
 
 ### v0.7.0 – 2026-08-29 (die Kette, und ein Loch in der Zusage von gestern)
 

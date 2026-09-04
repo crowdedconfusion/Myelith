@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.30.0 (θ_v 0.17.0; kernels 0.30.0, runtime 0.22.1, pipeline 0.15.0)
+> **Version:** 0.34.0 (θ_v 0.17.0; kernels 0.32.0, runtime 0.25.0, pipeline 0.15.0)
 > **Datum:** 2026-09-01
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
@@ -420,6 +420,193 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.34.0 – 2026-09-04 (der Trainingslauf auf echten Gewichten, und was er gefunden hat)
+
+`runtime/tests/trainingslauf.rs`: derselbe MLP-Schritt wie im
+Kerneltest, aber auf **13 074 432 echten Gewichten**, einem
+Aktivierungsvektor aus einem echten Vorwaertspass und den Skalen der
+jeweiligen Ebene.
+
+⚑ **Der Unterschied zum Kerneltest ist nicht die Groesse, sondern die
+Verteilung.** Erfundene Gewichte sind gleichmaessig; echte haben
+Ausreisser, Nullzeilen und Spannen ueber Groessenordnungen.
+
+| Ebene | Abstand vorher | nachher | gefallen |
+|---|---|---|---|
+| 0 | 801 131 902 414 | 35 223 587 769 | 96 % |
+| 12 | 705 929 702 | 2 964 334 | 100 % |
+| 23 | 59 065 050 066 | 150 098 420 | 100 % |
+
+Gegenprobe: mit umgekehrtem Schritt steigt der Abstand auf Ebene 12 von
+706 Millionen auf **926 Milliarden**.
+
+### ⚑ Der Befund: eine Lernrate passt nicht zu allen Ebenen
+
+Bei vierzig Schritten fiel Ebene 0 nur um **achtzehn** Prozent, Ebene 18
+um 63, die uebrigen um 99 bis 100. Bei zweihundert Schritten fallen alle.
+
+| Ebene | typische Ausgabe | `aus_frac` | 40 Schritte | 200 |
+|---|---|---|---|---|
+| 0 | 29 702 | **19** | 18 % | 96 % |
+| 12 | 882 | 13 | 99 % | 100 % |
+| 18 | 555 | 12 | 63 % | 99 % |
+
+⚑ **Die Richtung stimmt ueberall, die Rate nicht.** Ebene 0 traegt sechs
+Bit mehr Ausgabeskala als die mittleren, also ist derselbe Schritt dort
+vierundsechzigmal kleiner. **Und ihre typische Ausgabe liegt bei 29 702,
+dicht unter der `i16`-Grenze**: Wer die Rate dort anhebt, ohne das zu
+bedenken, laeuft in die Saettigung.
+
+**Fuer einen echten Trainingslauf folgt:** Die Lernrate gehoert je Ebene
+gesetzt oder der Gradient normiert.
+
+### ⚑ Und das Training laeuft auch auf einem Expertengemisch
+
+`runtime/tests/training_moe.rs` (mit `--ignored`, weil das Laden gut
+zwei Minuten kostet):
+
+```text
+geladen in 131 s: 48 Ebenen, hidden 2048
+Mitschnitt: 48 Ebenen, alle als Expertengemisch gemeldet
+Ebene 24: Router waehlte 8 von 128 Experten, geprueft wird Experte 10
+Experte: 2048 Eingaenge, 768 innere Einheiten, 4 718 592 Gewichte
+Abstand 547 716 633 -> 10 643 336 (99 Prozent gefallen)
+```
+
+⚑ **Die erste Einschaetzung war falsch.** „29 GB passen nicht in 24 GB"
+uebersieht, dass die Gewichte **speicherabgebildet** werden und nicht in
+den Heap gehen; der Ladevorgang liest sie einmal fuer die Hashpruefung,
+danach haelt das Betriebssystem nur die angefassten Seiten.
+
+**Ein Experte ist ein dichter Block** (`MoeLayer::experts` ist ein
+`Vec<DenseMlp>`), also gilt `schritt_auf_mlp` unveraendert. Trainiert
+wird ein Experte, den der Router fuer dieses Token **wirklich gewaehlt
+hat**.
+
+⚑ **Nicht abgedeckt bleibt der Rueckwaertspass durch Router und
+Mischung**; dafuer verlangt `moe_backward` andere Werte, und der
+Mitschnitt sagt dort ausdruecklich `Mlpteil::Expertengemisch`. Das ist
+Phase 5.
+
+Der Typ selbst ist aus diesem Versuch entstanden: Vorher standen drei
+Vektoren da, die bei MoE leer blieben. **Ein leerer Vektor sieht aus wie
+ein aufgezeichneter ohne Inhalt**; ein Typ zwingt jeden Leser, den Fall
+zu behandeln.
+
+### v0.33.0 – 2026-09-04 (kernels 0.32.0: der Kreis schliesst sich ueber einen ganzen MLP-Block)
+
+`schritt_auf_mlp` und `gradienten_des_mlp` mit `Mlpvorgaben` und
+`Mlpgradienten`, dazu `silu_grad_aus_lut` und `silu_grad_frac`.
+
+⚑ **Der Gradientenvorrat ist die Ableitung der Vorwaerts-Tabelle, nicht
+der gemeinten Funktion.** Der Vorwaertspass schlaegt Silu nach, statt es
+zu rechnen; ein analytischer Vorrat passte deshalb zu einer Funktion,
+die so nie lief. Die zentrale Differenz der Tabelle ist **exakt**, weil
+sich zwei Zweien wegkuerzen: keine Division, keine Rundung, kein
+Gleitkomma.
+
+**Warum der Block und nicht die drei Projektionen einzeln:**
+`schritt_auf_linear` schliesst den Kreis fuer eine lineare Ebene. Was
+dort nicht vorkommt, ist die Stelle, an der Ganzzahltraining bricht,
+naemlich **die Skala zwischen zwei Kernen**. Der MLP-Block hat davon
+vier hintereinander.
+
+### ⚑ Der Test hat sich dreimal als zu schwach erwiesen
+
+| Gegenprobe | „Abstand sinkt" | Richtung, eine Stelle | Richtung, aggregiert | plus Groessenvergleich |
+|---|---|---|---|---|
+| Verlustgradient gedreht | rot | rot | rot | rot |
+| Gradientenaeste vertauscht | **gruen** | unbrauchbar | rot | rot |
+| Vorrat auf falscher Skala | **gruen** | **gruen** | **gruen** | rot |
+
+⚑ **„Der Abstand sinkt" beweist weniger, als es klingt.**
+Abstiegsverfahren sind gutmuetig: Viele falsche, aber korrelierte
+Richtungen senken einen quadratischen Abstand auch.
+
+⚑ **Und eine Richtungspruefung an einer einzelnen Stelle ist ein
+Zufallsgenerator.** Der Schub muss die Quantisierung ueberwinden und
+liegt damit weit ausserhalb des linearen Bereichs; **gemessen sagt der
+Gradient in 82 bis 85 Prozent der Faelle richtig voraus, nicht in
+hundert.** Der erste Entwurf pruefte eine Stelle je Matrix und fiel an
+einer der achtzehn Prozent.
+
+⚑ **Ein Richtungstest kann einen Skalenfehler prinzipiell nicht
+sehen.** Ein Vorrat auf der falschen Skala macht den Gate-Gradienten
+zweiunddreissigmal kleiner, **ohne sein Vorzeichen zu aendern**; der
+Abstieg laeuft weiter bergab, nur mit einer stillschweigend anderen
+Lernrate. Dafuer steht jetzt ein Groessenvergleich daneben: Gate und Up
+sind strukturell symmetrisch und duerfen sich nicht um
+Groessenordnungen unterscheiden. Gemessen 159 gegen 122 im gesunden
+Fall, **5 gegen 122** mit dem Fehler.
+
+### v0.32.0 – 2026-09-04 (der Mitschnitt ist vollständig für eine dichte Ebene)
+
+`attention_int_mit_spur` und `mlp_int_mit_spur` mit `Mlpspur`, dazu vier
+neue Felder im `Ebenenmitschnitt`: die Aufmerksamkeitswahrscheinlichkeiten
+je Kopf sowie Gate, Up und das Produkt des MLP-Blocks.
+
+⚑ **Ein zweiter Eingang, kein zusätzliches Argument.** Beide Kerne
+stehen im `Backend`-Merkmal, in vier Umsetzungen. Ein Argument mehr
+risse alle vier auf, für etwas, das nur der Rückwärtspass braucht. Beide
+neuen Eingänge laufen durch dieselbe Umsetzung wie die alten.
+
+**Damit hat eine dichte Ebene zehn Werte je Durchlauf**, und das ist
+alles, was `kernels::backward` von ihr verlangt. ⚑ **Für ein
+Expertengemisch bleibt der MLP-Teil leer**, benannt im Modulkopf:
+`moe_backward` verlangt Expertenwahl, Gewichte und Expertenausgaben, und
+das ist Phase 5.
+
+### Die Gegenproben, und zwei haben den Test verbessert
+
+| Schnitt | zuerst | danach |
+|---|---|---|
+| Punktzahlen statt Wahrscheinlichkeiten | rot (Softmax-Invariante) | rot |
+| Produkt statt Gate | **grün** | rot |
+| Gate und Up vertauscht | **grün** | rot |
+| Produkt verfälscht | rot | rot |
+
+⚑ **Die beiden grünen hatten dieselbe Ursache:** Gate, Up und das
+Produkt sind gleich breit und vorzeichensymmetrisch, also fängt keine
+Längen- oder Vorzeichenprüfung eine Vertauschung. **Nichts an ihrer Form
+unterscheidet sie, nur ihre Rolle in `h = silu(gate) · up`**, und die
+ist nicht symmetrisch. Der Test rechnet `h` jetzt aus Gate und Up nach,
+mit dem Silu-Vorrat und den Skalen der Ebene; das ist genau die
+Rechnung, die der Rückwärtspass rückwärts geht.
+
+### v0.31.0 – 2026-09-04 (runtime 0.23.0: der Vorwärtspass kann mitschreiben)
+
+Neues Modul `runtime::mitschnitt` und ein zweiter **Eingang**
+`run_layers_mit_mitschnitt`, der durch dieselbe Schleife und dieselbe
+`forward_layer` läuft wie `run_layers`.
+
+⚑ **Ein Pfad, kein zweiter.** Der Rückwärtspass braucht die Eingänge
+jeder Rechenstufe, und die Laufzeit war auf Inferenz zugeschnitten und
+behielt nichts. Ein zweiter Vorwärtspass, der alles behält, wäre eine
+zweite Wahrheit über den Rechenpfad gewesen: **Genau dieser Pfad ist
+über dreissig Konformitätsvektoren als bitgleich belegt**, ein zweiter
+trüge keine.
+
+`forward_layer` bekommt ein `Option<&mut Zwischenwerte>`. Inferenz gibt
+`None` und zahlt je Aufnahmestelle einen `is_some`, keine Kopie. Das
+Muster stand schon da: Für die MoE-Diagnose lief bereits ein
+`Option<&mut Vec<Routingbefund>>` durch dieselbe Funktion.
+
+**Sechs Werte je Ebene**, nämlich die, die `forward_layer` selbst sieht:
+Residualeingang, normierter Eingang, q/k/v nach RoPE,
+Aufmerksamkeitsausgabe, Residualstand nach der Aufmerksamkeit, zweiter
+normierter Strom.
+
+⚑ **Drei fehlen, und sie fehlen benannt:** die
+Aufmerksamkeitswahrscheinlichkeiten (in `attention_int`) sowie Gate-,
+Up- und Produktausgabe (in `mlp_int`). Beide Kerne geben nur ihre
+Ausgabe zurück; sie durchzureichen gehört zum Schritt, der den
+Rückwärtspass einer ganzen Ebene baut. **Die Grenze steht im Modulkopf,
+damit niemand den Mitschnitt für vollständig hält.**
+
+Zwei Tests, beide gegenprobiert: **mit Mitschnitt kommt bitgleich
+dasselbe heraus**, und die Ebenen hängen aneinander (was eine ausgibt,
+sieht die nächste als Residualeingang).
 
 ### v0.30.0 – 2026-09-01 (der Trainingsschritt bekommt einen Aufrufer, Punkt 16)
 

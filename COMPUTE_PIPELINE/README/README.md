@@ -107,8 +107,8 @@ COMPUTE_PIPELINE/
 buendel_ziehen, gehaltene_sitzungen, verworfene_segmente}`,
 `MAX_ABGESCHLOSSENE`.
 
-**vLLMs Regel:** Die Blöcke einer Anfrage gehen zurück, sobald sie fertig
-ist. Hier genauso, und es passt, weil das Gateway je Anfrage eine neue
+**Die schlichte Regel eines Inferenzdienstes:** Was zu einer Anfrage
+gehört, wird frei, sobald sie fertig ist. Hier genauso, und es passt, weil das Gateway je Anfrage eine neue
 Sitzungsnummer vergibt und `run_prompt` immer ab Position 0 vorfüllt:
 **Der KV-Cache wurde geschrieben und nie wieder gelesen.**
 

@@ -19,7 +19,7 @@
 //! Zustand, den BFT ausschließen soll, erzeugt durch den Mechanismus, der
 //! die Liveness herstellen sollte.
 //!
-//! Die Regel, die das verhindert (Tendermint-Sperrmechanik, hier als
+//! Die Regel, die das verhindert (die geläufige Sperrmechanik, hier als
 //! Eigenbau nach Design-Entscheidung 1 dieser Komponente):
 //!
 //! 1. **Sperren.** Wer in Runde r ein Quorum an Votes für Block A sieht,
@@ -354,12 +354,11 @@ fn pruefe_aggregat(
 /// und für gültig befindet, übernimmt die Entscheidung, in welcher Runde
 /// er auch immer steht ([`RoundDriver::apply_commitzertifikat`]).
 ///
-/// Das ist keine Sonderlösung dieses Netzes, sondern die übliche: In
-/// Tendermint trägt der commitete Block seine Commit-Signaturen mit sich
-/// und wird über die Blocksynchronisation unabhängig vom Zustand des
-/// Konsens-Reaktors übernommen; in QBFT stehen die Commit-Siegel im
-/// Blockkopf; in HotStuff ist ein Quorum-Zertifikat für sich genommen
-/// gültig, ohne dass der Empfänger in der passenden Sicht säße.
+/// Das ist keine Sonderlösung dieses Netzes, sondern die übliche
+/// Bauart: Ein commiteter Block trägt seine Commit-Signaturen mit sich
+/// und wird beim Aufholen unabhängig vom Zustand des Konsensteils
+/// übernommen; ein Quorumszertifikat ist für sich genommen gültig, ohne
+/// dass der Empfänger in der passenden Sicht säße.
 ///
 /// **Es zieht keine Sperre nach.** Ein Commit-Quorum schließt ein
 /// Vote-Quorum für denselben Block ein, die Sperre wäre also zulässig,

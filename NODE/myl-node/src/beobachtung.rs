@@ -34,8 +34,8 @@
 //!
 //! **Bereit heißt hier: Es ist niemand da, von dem wir wissen, dass er
 //! weiter ist.** Also mindestens ein Peer, und keine Höhe gehört, die
-//! über der eigenen liegt. Dieselbe Frage, die `eth_syncing` bei
-//! go-ethereum und `catching_up` bei Cosmos beantworten.
+//! über der eigenen liegt. Es ist die Frage, für die jede Kette einen
+//! Endpunkt hat, meist unter einem Namen wie „hole gerade auf".
 //!
 //! # ⚑ Die Bindeadresse ist eine Sicherheitsentscheidung
 //!
@@ -45,10 +45,10 @@
 //! Aufklärung vor dem Angriff, und zwar ohne einen einzigen
 //! Verbindungsversuch ins Protokoll zu schreiben.
 //!
-//! Die Prometheus-Welt hat diesen Fehler durchgemacht: Ausführer, die
-//! ab Werk auf allen Schnittstellen horchten, stehen bis heute
-//! zehntausendfach offen im Netz. go-ethereum bindet `--metrics.addr`
-//! deshalb ab Werk auf die Rückschleife, und das ist die richtige
+//! **Diesen Fehler hat die Messwelt schon durchgemacht:** Ausführer,
+//! die ab Werk auf allen Schnittstellen horchten, stehen bis heute
+//! zehntausendfach offen im Netz. Wer daraus gelernt hat, bindet seinen
+//! Messendpunkt ab Werk auf die Rückschleife, und das ist die richtige
 //! Wahl. Wer weiter hinaus will, sagt es ausdrücklich und stellt eine
 //! Zugangskontrolle davor; **dieser Endpunkt hat keine**, und das steht
 //! auch in der Hilfe.

@@ -180,7 +180,7 @@ diese Fassung nichts.
 
 **War der Fall bis zum 2026-08-28.** Der Merkle-Baum füllte eine Ebene
 mit ungerader Knotenzahl auf, indem er den letzten Knoten mit sich
-selbst paarte, im Bitcoin-Stil, und erbte damit den Fehler des Vorbilds
+selbst paarte, also in der klassischen Bauart, und erbte damit deren Fehler
 (CVE-2012-2459). Die Abbildung von Blattfolgen auf Wurzeln war **nicht
 injektiv**, und die Kollisionsfamilie war größer als der bekannte
 Einzelfall:
@@ -216,7 +216,7 @@ dieselbe Wurzel); eine Gegenprobe, die festhält, dass die **inneren**
 Wurzeln weiterhin zusammenfallen und allein das Präfix sie trennt; einen
 Test über sechs erfundene Blattzahlen im Beweis, die alle scheitern; und
 einen fünften Konformitätsvektor `four_leaves_last_repeated`, den eine
-Umsetzung im Bitcoin-Stil als einzigen nicht trifft.
+Umsetzung ohne Blattzahlbindung als einzigen nicht trifft.
 
 ⚑ **Die Gegenprobe ist hier wichtiger als der Haupttest.** Ein grüner
 Injektivitätstest allein bewiese nicht, dass die Bindung die Ursache

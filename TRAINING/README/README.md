@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
 > **Version:** 0.2.0
-> **Datum:** 2026-08-26
+> **Datum:** 2026-09-04
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -14,8 +14,22 @@
 >   ganzzahlige Aufteilung, Identitätsebene, Digestvergleich vor und
 >   nach.
 >
-> Alles Übrige aus Kap. 7 bleibt Entwurf und wartet auf den
-> ganzzahligen Rückwärtspass in INTEGER_LLM.
+> **Der Rückwärtspass ist seit dem 2026-09-04 kein Wartegrund mehr**
+> (INTEGER_LLM `kernels` 0.32.0, `runtime` 0.25.0). Ein Kreis aus
+> Vorwärtspass, Mitschnitt der Zwischenwerte, Gradient und Optimierer
+> schliesst sich über den ganzen MLP-Block, gemessen auf echten
+> Gewichten und auf einem Experten eines Expertengemischs. Was fehlt,
+> ist der Rückwärtspass des Aufmerksamkeitsblocks, der Zusammenbau zur
+> ganzen Ebene und die Schleife über eine Folge. **Die Zuordnung bleibt
+> wie bisher:** Die Rechenkerne stehen in INTEGER_LLM, die Arbeitsklasse
+> und die Aggregation stehen hier.
+>
+> ⚑ **Eine Lernrate passt nicht zu allen Ebenen** (Fund 172). Ebene 0
+> von Qwen2.5-0,5B trägt sechs Bit mehr Ausgabeskala als die mittleren
+> Ebenen, derselbe Schritt wirkt dort vierundsechzigmal schwächer, und
+> ihre typischen Werte liegen dicht unter der `i16`-Grenze. Die
+> Obergrenze für die Rate ist damit nicht die Konvergenz, sondern die
+> Sättigung. Das ist die nächste inhaltliche Frage der Blockskalierung.
 >
 > **Die eine Messung ist gemacht.** Punkt 0.1 ist beantwortet:
 > Das Schema **trägt**, sofern die Gewichte stochastisch gerundet werden
@@ -97,8 +111,8 @@ Drei Punkte, alle drei ohne fremde Hardware machbar und alle drei
 unabhängig vom ganzzahligen Rückwärtspass.
 
 **1.2, der Wachstumsoperator** (`src/wachstum.rs`). Die ganzzahlige
-Aufteilung `a = ⌊m/2⌋`, `b = m − a` statt der Halbierung aus Net2Net und
-bert2BERT. `a + b = m` gilt für jede ganze Zahl, es wird nichts gerundet,
+Aufteilung `a = ⌊m/2⌋`, `b = m − a` statt der Halbierung, die die
+Literatur vorsieht. `a + b = m` gilt für jede ganze Zahl, es wird nichts gerundet,
 und bei jedem ungeraden Eintrag trennt die Aufteilung die beiden Kopien
 um genau ein LSB, **ohne jeden Zufall**.
 

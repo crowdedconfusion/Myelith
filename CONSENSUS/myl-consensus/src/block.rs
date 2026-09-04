@@ -129,8 +129,10 @@ pub struct BlockHeader {
     /// Saat, sondern eine Meinung.**
     ///
     /// Hier steht deshalb, was der Erzeuger als Quelle benutzt hat, und
-    /// jeder rechnet damit dasselbe. Dieselbe Bauart wie `LastCommit`
-    /// in Tendermint: Ein Block trägt den Beleg für seinen Vorgänger.
+    /// jeder rechnet damit dasselbe. Es ist die geläufige Bauart für
+    /// diese Art Bindung: **Ein Block trägt den Beleg für seinen
+    /// Vorgänger mit**, statt dass der Leser ihn sich aus eigenem
+    /// Zustand zusammensucht.
     ///
     /// ⚑ **`None` heißt Blockhash**, und das ist der Rückfall für die
     /// erste Runde und für einen Knoten ohne Zertifikat. Er ist

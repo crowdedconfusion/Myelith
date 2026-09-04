@@ -286,8 +286,9 @@ NODE/
 einer von acht, aus dem Namen nachrechenbar. Wer den Namen eines Knotens
 kannte, konnte in seinem Namen unterschreiben.
 
-Neu `--kontoschluessel <datei>` und `--konto <hex>`, Filecoins
-`worker`/`owner`-Trennung. Ohne Datei bleibt der abgeleitete Schlüssel,
+Neu `--kontoschluessel <datei>` und `--konto <hex>`, also die Trennung
+von arbeitendem und haltendem Schlüssel. Ohne Datei bleibt der
+abgeleitete Schlüssel,
 **und der Knoten sagt es beim Start**.
 
 ⚑ **Beim Schreiben des Tests aufgefallen:** `konto_fuer` bildet auf
@@ -697,8 +698,8 @@ satzweise, es liegt immer nur **ein** Block da.
 **Die 256 sind hergeleitet, nicht gegriffen:** Eine Nachforderung
 umfasst höchstens `MAX_BLOECKE_JE_LIEFERUNG` (64) Blöcke, vier
 Lieferungen decken mehrere gleichzeitig aufholende Nachzügler ab.
-Dieselbe Zahl steht bei go-ethereum als `bodyCacheLimit`. Zwei
-Herleitungen, dieselbe Größenordnung.
+Dieselbe Grössenordnung steht in gereiften Kettenknoten als Deckel
+ihrer Blockzwischenspeicher. Zwei Herleitungen, dasselbe Ergebnis.
 
 ⚑ **Zwei Verweistabellen, mit verschiedenen Aufgaben, und das ist keine
 Kleinigkeit.** Der Wiederanlauf geht über die **Dateireihenfolge**, nie
@@ -745,9 +746,10 @@ keine Höhe gehört, die über der eigenen liegt.
 die Vorgabe `127.0.0.1:4151` und nicht `0.0.0.0`. Was dort heraussieht,
 ist eine Landkarte: Peerzahl, Höhe, Latenzspanne, Mesh-Größen. Für einen
 Betreiber ist das Diagnose, für einen Angreifer die Aufklärung, und zwar
-ohne einen einzigen Verbindungsversuch ins Protokoll zu schreiben. Die
-Prometheus-Welt hat diesen Fehler durchgemacht; go-ethereum bindet
-`--metrics.addr` deshalb ab Werk auf die Rückschleife. Wer weiter hinaus
+ohne einen einzigen Verbindungsversuch ins Protokoll zu schreiben.
+**Diesen Fehler hat die Messwelt schon durchgemacht**, und wer daraus
+gelernt hat, bindet seinen Messendpunkt ab Werk auf die Rückschleife.
+Wer weiter hinaus
 will, sagt es mit `--beobachtung`, bekommt eine Warnung und stellt
 selbst eine Zugangskontrolle davor: **der Endpunkt hat keine.**
 

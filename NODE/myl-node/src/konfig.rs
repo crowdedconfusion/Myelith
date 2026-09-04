@@ -155,15 +155,15 @@ pub struct KnotenKonfig {
     /// einer von acht, aus dem Namen nachrechenbar. Für einen Probelauf
     /// gewollt, für ein Netz unbrauchbar; der Knoten sagt es beim Start.
     ///
-    /// **Eine andere Datei als der Konsensschlüssel.** Filecoins
-    /// `owner`/`worker`-Trennung: Wer den einen stiehlt, soll nicht den
-    /// anderen haben.
+    /// **Eine andere Datei als der Konsensschlüssel.** Ein Schlüssel,
+    /// der arbeitet, und ein Schlüssel, der hält: Wer den einen stiehlt,
+    /// soll nicht den anderen haben.
     pub kontoschluesseldatei: Option<PathBuf>,
     /// Wohin die Erträge dieses Knotens gehen sollen.
     ///
-    /// ⚑ **Das kalte Konto**, in Filecoins Worten der `owner`. Ohne
+    /// ⚑ **Das kalte Konto**, also der haltende Teil des Paares. Ohne
     /// Angabe ist es die Adresse des unterschreibenden Schlüssels
-    /// selbst, also heiss.
+    /// selbst, und die ist heiss.
     pub konto: Option<Address>,
     /// Abstand des Testverkehrs in Sekunden, `None` heißt keiner.
     ///

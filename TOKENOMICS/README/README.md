@@ -188,7 +188,7 @@ Zahlen.**
 ⚑ **`speicherentgelt`, neu: Punkt B4 ist entschieden.** Der Satz, zu dem
 Speicher gegen Rechenarbeit getauscht wird, steht bei **9 000
 Recheneinheiten je Byte-Epoche**. Das sind 1,49 je TB-Monat und damit
-die Rate, die Storj seinen Betreibern zahlt, bei hergeleiteten Kosten
+die Ankerrate eines vergleichbaren Netzes, bei hergeleiteten Kosten
 von 0,60.
 
 **Ein Verhältnis und kein fester Preis.** Der Credit-Preis für

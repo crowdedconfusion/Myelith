@@ -87,8 +87,8 @@ fn generate_merkle_vectors(output_dir: &Path) {
     vectors.push(merkle_vector_json("three_leaves", &leaves3, &tree3, &proof3, 1));
 
     // ⚑ Vier Blätter, das letzte wiederholt (Fund 77). Dieser Vektor
-    // steht hier, weil er der einzige ist, den eine Umsetzung im
-    // Bitcoin-Stil **nicht** trifft: Ohne die Bindung der Blattzahl
+    // steht hier, weil er der einzige ist, den eine Umsetzung ohne die
+    // Blattzahlbindung **nicht** trifft: Ohne diese Bindung
     // hätte er dieselbe Wurzel wie `three_leaves`. Wer nach diesen
     // Vektoren implementiert und die Blattzahl vergisst, fällt hier
     // durch und nur hier.

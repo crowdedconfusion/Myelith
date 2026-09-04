@@ -110,7 +110,7 @@ fn validate_merkle_vectors() {
     }
 
     // ⚑ Fund 77 als eigene Zusicherung ueber die Vektoren hinweg: Eine
-    // Umsetzung im Bitcoin-Stil erzeugt fuer diese beiden Folgen
+    // Umsetzung ohne Blattzahlbindung erzeugt fuer diese beiden Folgen
     // dieselbe Wurzel. Wer die Vektoren einzeln prueft, merkt das nicht;
     // die Aussage steht zwischen zwei Vektoren, nicht in einem.
     let hole = |name: &str| -> &MerkleVector {

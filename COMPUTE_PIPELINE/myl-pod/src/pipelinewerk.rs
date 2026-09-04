@@ -199,8 +199,8 @@ impl Klartextwerk for Pipelinewerk {
         //
         // ⚑ **Nach dem Lesen des Segments und nicht davor**: Der Digest
         // gehört zur Sitzung, und wer vorher räumte, nähme ihn weg.
-        // Dieselbe Regel wie in vLLM, wo die Blöcke einer Anfrage
-        // zurückgehen, sobald sie fertig ist.
+        // Sonst gilt die schlichte Regel: Was zu einer Anfrage gehört,
+        // wird frei, sobald sie fertig ist.
         koordinator.sitzung_abschliessen(sitzung);
         drop(koordinator);
 

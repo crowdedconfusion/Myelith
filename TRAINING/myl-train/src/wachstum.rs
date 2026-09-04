@@ -3,8 +3,8 @@
 //!
 //! ## Warum ganzzahlig besser ist als in Gleitkomma
 //!
-//! Die Literatur (Net2Net, bert2BERT) verdoppelt eine Einheit und
-//! **halbiert** ihre ausgehenden Gewichte. In Gleitkomma ist das nur
+//! Die Literatur verdoppelt eine Einheit und **halbiert** ihre
+//! ausgehenden Gewichte. In Gleitkomma ist das nur
 //! näherungsweise funktionserhaltend, und die beiden Kopien bekommen
 //! danach identische Gradienten: Sie bleiben für immer gleich, die neue
 //! Kapazität ist tot. Die Literatur behilft sich mit künstlichem

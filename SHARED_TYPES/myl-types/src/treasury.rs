@@ -21,8 +21,9 @@
 //! keine Zusage**, und der Unterschied ist genau der, den G6 für die
 //! Vertraulichkeit macht.
 //!
-//! Das Muster ist nicht neu: Cosmos nennt es **ModuleAccount**, eine
-//! Adresse ohne Schlüssel, die ausschließlich Modul-Logik bewegt.
+//! **Das Muster ist nicht neu:** eine Adresse ohne Schlüssel, die
+//! ausschliesslich Protokolllogik bewegt. Andere Ketten führen dafür
+//! einen eigenen Kontotyp.
 //!
 //! # Was daraus folgt
 //!

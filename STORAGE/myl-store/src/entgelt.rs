@@ -44,9 +44,10 @@
 //!
 //! - **Einlagen sind wirtschaftlich begrenzt.** Nichts kommt hinein,
 //!   ohne dass jemand dafür Byte-Epochen erwirbt, und nichts bleibt
-//!   liegen, wenn niemand nachzahlt. Das ist die Bauart, die Swarm mit
-//!   seinen Frankierungen und Arweave mit seinem Fonds benutzen: Der
-//!   Einleger trägt die Zukunft mit, nicht der Halter.
+//!   liegen, wenn niemand nachzahlt. Das ist die Bauart, die
+//!   dezentrale Speichernetze für dieses Problem gefunden haben, ob
+//!   über Frankierungen oder über einen Fonds: **Der Einleger trägt die
+//!   Zukunft mit, nicht der Halter.**
 //! - **Netzwerkwissen ist verwaltungsmäßig begrenzt.** Es verfällt
 //!   nicht, also muss die Schranke bei der **Aufnahme** sitzen. Was
 //!   aufgenommen wird, ist eine Entscheidung, und sie gehört gegen die

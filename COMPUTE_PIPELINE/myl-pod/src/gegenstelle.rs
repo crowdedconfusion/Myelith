@@ -16,18 +16,18 @@
 //!
 //! # ⚑ Zwei Schichten, und beide werden gebraucht
 //!
-//! 1. **Der Ausweis der Leitung** (`0600`, wie Bitcoin Cores
-//!    `.cookie`) sagt: „du darfst hereinreden". Er ist ein
-//!    vorgeteiltes Geheimnis und sagt **nichts** darüber, wer redet.
+//! 1. **Der Ausweis der Leitung** (`0600`) sagt: „du darfst
+//!    hereinreden". Er ist ein vorgeteiltes Geheimnis und sagt
+//!    **nichts** darüber, wer redet.
 //! 2. **Die Ankündigung** sagt: „ich bin dieser Endpunkt". Sie ist mit
 //!    dem **Konsensschlüssel** unterschrieben, und der Endpunkt ist
 //!    dessen Hash, also ist die Frage „gehört dieser Punkt zu dieser
 //!    Gegenstelle" vollständig aus der Ankündigung beantwortbar.
 //!
 //! Wer nur die erste Schicht hätte, machte jeden, der den Ausweis lesen
-//! kann, zum Knoten, und das Siegel wäre Theater. **Dieselbe Bauart wie
-//! in `libp2p-noise`**, wo der statische Schlüssel im Handshake durch
-//! eine Signatur des Identitätsschlüssels gedeckt ist.
+//! kann, zum Knoten, und das Siegel wäre Theater. **Der statische
+//! Schlüssel trägt sich nicht selbst**, er wird von einer Signatur des
+//! Identitätsschlüssels gedeckt.
 //!
 //! # ⚑ Ein Platz und keine Tabelle
 //!
@@ -50,8 +50,8 @@ pub struct Betreibergegenstelle {
     /// Knotens.
     ///
     /// ⚑ **Ohne ihn trägt nichts.** Er ist der einzige Teil, der
-    /// ausserhalb des Protokolls vereinbart wird, wie der statische
-    /// Schlüssel einer WireGuard-Gegenstelle. Ein Shard, der jeden
+    /// ausserhalb des Protokolls vereinbart wird, wie jeder statische
+    /// Schlüssel, den zwei Seiten vorab austauschen. Ein Shard, der jeden
     /// Endpunkt annähme, prüfte nur noch, ob eine Unterschrift zu sich
     /// selbst passt.
     erwartet: Endpunkt,

@@ -11,8 +11,8 @@
 //!   Damit kann ein Blatt-Hash niemals als innerer Knoten interpretiert
 //!   werden und umgekehrt (verhindert Second-Preimage-Angriffe).
 //! - **Ungerade Ebenen:** der letzte Knoten einer Ebene mit ungerader
-//!   Anzahl wird dupliziert und mit sich selbst gepaart (Bitcoin-Stil).
-//!   Damit ist jeder innere Knoten einheitlich ein Hash aus zwei Kindern.
+//!   Anzahl wird dupliziert und mit sich selbst gepaart. Damit ist jeder
+//!   innere Knoten einheitlich ein Hash aus zwei Kindern.
 //! - **Ein-Blatt-Baum:** die innere Wurzel ist der Blatt-Hash selbst
 //!   (keine zusätzliche Paarung). Ein leerer Baum ist ein Fehler.
 //! - **Blattzahl in der Wurzel (seit 2026-08-28, Fund 77):** die
@@ -22,8 +22,9 @@
 //!
 //! ## ⚑ Fund 77 (2026-08-28): Die Wurzel bestimmt die Blattfolge, seit heute
 //!
-//! **Die Duplikationsregel allein ist nicht injektiv.** Sie stammt aus
-//! dem Bitcoin-Stil und erbte dessen Fehler (CVE-2012-2459): Bei
+//! **Die Duplikationsregel allein ist nicht injektiv.** Sie ist die
+//! klassische Bauart und erbt deren bekannten Fehler (CVE-2012-2459):
+//! Bei
 //! ungerader Blattzahl `n ≥ 3` erzeugen `[l₁ … lₙ]` und
 //! `[l₁ … lₙ, lₙ]` dieselbe **innere** Wurzel, weil die zweite Folge
 //! genau das Blatt enthält, das die erste sich beim Auffüllen selbst

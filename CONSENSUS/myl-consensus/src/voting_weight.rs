@@ -33,32 +33,30 @@
 //! häufigsten Fehlerbilds dieses Projekts: beide Seiten gebaut, beide
 //! für sich geprüft, die Naht fehlt.
 //!
-//! # Was die Recherche gesagt hat
+//! # Vier Befunde aus der Durchsicht
 //!
-//! **Ethereum**, der am stärksten geprüfte Proof-of-Stake-Betrieb, kennt
-//! keinen Arbeitsanteil: Das Stimmgewicht **ist** der Stake, gedeckelt
-//! über `MAX_EFFECTIVE_BALANCE`, und dieser Deckel diente der
-//! Komitee-Dominanz und nicht dem Risiko. Als der Grund entfiel, wurde
-//! er mit EIP-7251 um das Vierundsechzigfache gehoben.
+//! ⚑ **Die Durchsicht selbst steht im Fahrplan**, mit Namen, Zahlen und
+//! Fundstellen. Hier stehen ihre Ergebnisse, denn nur die tragen die
+//! Entscheidung.
 //!
-//! **Filecoin** kennt denselben Faktor 10 als Qualitätsmultiplikator
-//! (`QUALITY_BASE_MULTIPLIER = 10`, `VERIFIED_DEAL_WEIGHT_MULTIPLIER =
-//! 100`), verlangt dafür aber **zehnfache Sicherheit und schlachtet
-//! zehnfach**. Der Multiplikator verdünnt das Risiko nicht, er skaliert
-//! mit ihm.
-//!
-//! **Bittensor** mischt Stake und Konsensübereinstimmung, und die
-//! empirische Auswertung ist unbequem: Die Korrelation Stake zu
-//! Belohnung liegt bei 0,80 bis 0,95, die von Leistung zu Belohnung bei
-//! rund 0,50. Eine Mischung sieht aus, als belohne sie Qualität, und tut
-//! es messbar nicht.
-//!
-//! **RepuCoin** ist der akademische Fall **für** arbeitsgewichtete
-//! Stimmen und zeigt zugleich, woran es hier fehlte: Dort entsteht
-//! Reputation aus Arbeit, **integriert über die gesamte
-//! Kettengeschichte**, und ist absichtlich träge. Das Fenster hier war
-//! zehn Epochen, also zehn Stunden. Die Trägheit, die RepuCoins
-//! Sicherheitsaussage trägt, gab es nie.
+//! 1. **Der am stärksten geprüfte Einsatzbetrieb kennt keinen
+//!    Arbeitsanteil.** Das Stimmgewicht ist der Stake. Wo ein Deckel
+//!    darauf liegt, dient er der Komiteedominanz und nicht dem Risiko,
+//!    und als dieser Grund entfiel, wurde er um das
+//!    Vierundsechzigfache gehoben.
+//! 2. **Ein Qualitätsmultiplikator von zehn kann tragen, aber nur
+//!    zusammen mit zehnfacher Sicherheit und zehnfacher
+//!    Schlachtung.** Dann verdünnt er das Risiko nicht, er skaliert mit
+//!    ihm. Die Summenform hier tat das Gegenteil.
+//! 3. **Eine Mischung aus Stake und Übereinstimmung sieht aus, als
+//!    belohne sie Qualität, und tut es messbar nicht.** Gemessen
+//!    korreliert die Belohnung mit dem Stake zu 0,80 bis 0,95, mit der
+//!    Leistung zu rund 0,50.
+//! 4. **Arbeitsgewichtete Stimmen tragen, wenn die Arbeit über die
+//!    ganze Kettengeschichte integriert und dadurch absichtlich träge
+//!    ist.** Das Fenster hier war zehn Epochen, also zehn Stunden;
+//!    genau die Trägheit, auf der die Sicherheitsaussage ruht, gab es
+//!    nie.
 //!
 //! # Was stattdessen gilt
 //!

@@ -102,8 +102,8 @@ pub const PROBEGUTHABEN: u64 = 10_000_000;
 /// deckt ein Fenster von vier Lieferungen den Fall ab, dass mehrere
 /// Nachzügler gleichzeitig und an verschiedenen Stellen aufholen.
 ///
-/// **Vier Lieferungen sind 256, und dieselbe Zahl steht bei
-/// go-ethereum** als `bodyCacheLimit` und `blockCacheLimit`. Zwei
+/// **Vier Lieferungen sind 256, und dieselbe Zahl steht in gereiften
+/// Kettenknoten** als Deckel ihrer Blockzwischenspeicher. Zwei
 /// verschiedene Herleitungen, dieselbe Größenordnung: Das ist ein
 /// Hinweis, kein Beweis, aber ein beruhigender.
 ///

@@ -342,8 +342,8 @@ impl ShardNode {
     /// fortgesetzt. Die Session-Affinität aus Kap. 4.2 stand im Feld und
     /// hatte keinen Nutzer.
     ///
-    /// **vLLM macht es genauso:** Die Blöcke einer Anfrage gehen zurück
-    /// in die freie Liste, sobald sie fertig ist. Wenn eines Tages
+    /// **Das ist die schlichte Regel eines Inferenzdienstes:** Was zu
+    /// einer Anfrage gehört, wird frei, sobald sie fertig ist. Wenn eines Tages
     /// jemand eine Sitzung fortsetzt, gehört hierher eine Verdrängung
     /// nach Alter, kein Weglassen.
     pub fn sitzung_vergessen(&self, session_id: u64) {

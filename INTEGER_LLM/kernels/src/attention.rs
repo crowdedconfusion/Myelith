@@ -50,6 +50,43 @@ pub fn attention_int(
     lut_shift: u8,
     prob_frac_bits: u8,
 ) -> Vec<Vec<i16>> {
+    attention_int_mit_spur(
+        q, k, v, mask, score_mult, score_shift, exp_lut, lut_shift, prob_frac_bits, None,
+    )
+}
+
+/// Dasselbe, aber die Wahrscheinlichkeiten fallen mit ab (TRAINING V).
+///
+/// # ⚑ Warum ein zweiter Eingang und kein Parameter mehr an `attention_int`
+///
+/// `attention_int` steht im `Backend`-Merkmal, und zwar in vier
+/// Umsetzungen. Ein zusätzliches Argument dort risse alle vier auf, für
+/// etwas, das nur der Rückwärtspass braucht. **Hier steht deshalb die
+/// eine Umsetzung, und `attention_int` ist ihr Eingang ohne Spur.**
+///
+/// # ⚑ Warum der Rückwärtspass sie braucht
+///
+/// `softmax_backward(g, p, frac)` rechnet mit den **Wahrscheinlichkeiten
+/// selbst**, denn die Ableitung des Softmax ist
+/// `p ⊙ (g − ⟨g, p⟩)`. Ohne sie liesse sich der Gradient nur durch
+/// Nachrechnen der Punktprodukte gewinnen, also durch eine zweite
+/// Umsetzung derselben Rechnung.
+///
+/// `spur` bekommt je Abfragezeile eine Zeile Wahrscheinlichkeiten auf
+/// `prob_frac_bits`, in derselben Reihenfolge wie die Ausgabe.
+#[allow(clippy::too_many_arguments)]
+pub fn attention_int_mit_spur(
+    q: &[Vec<i16>],
+    k: &[Vec<i16>],
+    v: &[Vec<i16>],
+    mask: &[Vec<bool>],
+    score_mult: i64,
+    score_shift: u8,
+    exp_lut: &[i16],
+    lut_shift: u8,
+    prob_frac_bits: u8,
+    mut spur: Option<&mut Vec<Vec<i32>>>,
+) -> Vec<Vec<i16>> {
     let q_len = q.len();
     let kv_len = k.len();
     assert_eq!(kv_len, v.len(), "attention_int: k und v muessen gleich lang sein");
@@ -71,6 +108,11 @@ pub fn attention_int(
         }
 
         let probs = softmax_int(&scores, exp_lut, lut_shift, prob_frac_bits);
+        // ⚑ **Nach dem Softmax und vor der Gewichtung**: Das ist der
+        // Wert, mit dem `softmax_backward` rechnet.
+        if let Some(sp) = spur.as_deref_mut() {
+            sp.push(probs.clone());
+        }
 
         let mut row = vec![0i64; head_dim];
         for j in 0..kv_len {

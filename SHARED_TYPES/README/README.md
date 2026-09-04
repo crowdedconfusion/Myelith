@@ -65,7 +65,7 @@ Richtung, umgekehrt gab es nichts.
 Rohe Bytes, weil `myl-types` `myl-siegel` nicht kennen soll: dieselbe
 Begründung, die schon über `Ortsantwort::Gegenstelle` steht. Der Inhalt
 ist eine `Epochenankuendigung`, also der statische Schlüssel mit einer
-Signatur des Identitätsschlüssels, wie in `libp2p-noise`.
+Signatur des Identitätsschlüssels: **Er trägt sich nicht selbst.**
 
 ### v0.34.0 – 2026-09-03 (die Vollmacht wohnt jetzt hier, und ein Riegel gegen die zweite Abbuchung)
 
@@ -134,8 +134,8 @@ Ein Byte Unterschied, und die Leitung schweigt, ohne dass eine Seite
 sagen könnte, warum.
 
 ⚑ **Eine schleifenlokale Tür ist eine Tür.** Jeder lokale Prozess kann
-wählen, also braucht sie einen Ausweis: eine Schlüsseldatei nach dem
-Vorbild von Bitcoin Cores `.cookie`, beim Start frisch, unter Unix mit
+wählen, also braucht sie einen Ausweis: eine Schlüsseldatei, die
+eingeführte Bauart für eine lokale Leitung, beim Start frisch, unter Unix mit
 `0600`, verglichen in gleichbleibender Zeit. Wer die Datei lesen kann,
 darf fragen; das ist genau der Kreis, den das Dateisystem ohnehin zieht.
 
@@ -467,8 +467,9 @@ Wert fällt. **Damit ist „nur das Protokoll kann sie belasten" eine
 Tatsache der Bauart und keine Zusage**, derselbe Unterschied, den G6 für
 die Vertraulichkeit macht.
 
-Das Muster ist nicht neu: Cosmos nennt es ModuleAccount, eine Adresse
-ohne Schlüssel, die ausschließlich Modul-Logik bewegt.
+**Das Muster ist nicht neu:** eine Adresse ohne Schlüssel, die
+ausschliesslich Protokolllogik bewegt. Andere Ketten führen dafür einen
+eigenen Kontotyp.
 
 **Auszahlung nur über einen angenommenen Governance-Beschluss**
 (Festlegung des Projektinhabers). Was sie nicht leistet: Sie schützt
@@ -842,8 +843,8 @@ der Rückweg wirklich zu ist.
 
 ⚑ **Änderung am Konsensvertrag: jede Merkle-Wurzel ist eine andere.**
 Der Baum füllte eine Ebene mit ungerader Knotenzahl auf, indem er den
-letzten Knoten mit sich selbst paarte, im Bitcoin-Stil, und erbte damit
-den Fehler des Vorbilds (CVE-2012-2459): Die Abbildung von Blattfolgen
+letzten Knoten mit sich selbst paarte, also in der klassischen Bauart,
+und erbte deren bekannten Fehler (CVE-2012-2459): Die Abbildung von Blattfolgen
 auf Wurzeln war **nicht injektiv**.
 
 Gemessen, und die Kollisionsfamilie ist größer als der bekannte
@@ -891,8 +892,8 @@ Crates musste angepasst werden.
 
 - **Alle vier eingefrorenen Prüfvektoren** (`conformance/vectors/merkle.json`)
   sind neu erzeugt, und **ein fünfter ist dazugekommen**:
-  `four_leaves_last_repeated`. Er ist der einzige, den eine Umsetzung im
-  Bitcoin-Stil nicht trifft, denn ohne die Bindung trüge er dieselbe
+  `four_leaves_last_repeated`. Er ist der einzige, den eine Umsetzung
+  ohne Blattzahlbindung nicht trifft, denn ohne sie trüge er dieselbe
   Wurzel wie `three_leaves`. Wer nach diesen Vektoren implementiert und
   die Blattzahl vergisst, fällt hier durch und nur hier. Die Prüfung
   vergleicht zusätzlich beide Wurzeln miteinander, denn die Aussage
@@ -1119,9 +1120,8 @@ jeweiligen Komponente.
 
 ### v0.1.4 – 2026-08-13 (Punkt 1.4)
 - BLS-Signaturschnittstelle: BLS12-381 in der min-pk-Variante
-  (Public Key G1/48 B, Signatur G2/96 B, Ethereum-DST
-  `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_`) über das `blst`-Crate
-  (Supranational-Referenzimplementierung).
+  (Public Key G1/48 B, Signatur G2/96 B, DST
+  `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_`) über das `blst`-Crate.
 - KeyGen nach BLS-Draft §2.3 (HKDF, IKM ≥ 32 Bytes), deterministisches
   Signieren, `aggregate_signatures`, `fast_aggregate_verify` (der
   PoI-Bündel-Fall: gleiche Nachricht, viele Unterzeichner) und

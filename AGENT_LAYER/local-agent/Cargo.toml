@@ -1,29 +1,22 @@
 [package]
-name = "integer-llm-kernels"
-version = "0.32.0"
+name = "myl-local-agent"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
+description = "Das lokale Harness des Agent Layers: spricht gegen die /v1-Tuer eines Knotens und ist von der Kette isoliert."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
 
-[[bin]]
-name = "golden_runner"
-path = "src/bin/golden_runner.rs"
-
-[features]
-default = ["reference"]
-reference = []
-cpu-simd = []
-cuda = []
-rocm = []
-
+# ⚑ **Diese Liste ist die Grenze** (AGENT_LAYER 5.6). Was hier fehlt,
+# fehlt mit Absicht: `myl-consensus`, `myl-ledger` und `myl-node` haben
+# hier nichts zu suchen, und `tests/isolation.rs` haelt das fest.
 [dependencies]
-itertools = "0.13"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10"
+myl-agent = { path = "../myl-agent" }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
 
-[dev-dependencies]
+[lib]
+name = "myl_local_agent"
+path = "src/lib.rs"
 
 # Testprofil, siehe die ausfuehrliche Begruendung in
 # `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`

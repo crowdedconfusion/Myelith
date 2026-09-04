@@ -220,7 +220,8 @@ einen Stelle und keine Regel, die etwas erzwingt.
 
 **War der Fall bis zum 2026-08-28.** Der Merkle-Baum füllte eine Ebene
 mit ungerader Knotenzahl auf, indem er den letzten Knoten mit sich
-selbst paarte (Bitcoin-Stil), und erbte damit CVE-2012-2459: Bei
+selbst paarte, also in der klassischen Bauart, und erbte damit
+CVE-2012-2459: Bei
 ungerader Blattzahl ab 3 hatten `[l₁ … lₙ]` und `[l₁ … lₙ, lₙ]`
 dieselbe Wurzel.
 

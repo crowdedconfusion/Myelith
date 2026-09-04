@@ -93,6 +93,59 @@ pub fn mlp_int(
     silu_out_frac: u8,
     out_frac_bits: &[u8],
 ) -> Vec<i16> {
+    mlp_int_mit_spur(
+        x, W_gate, W_up, W_down, hidden_size, intermediate_size, gate_w_shifts, up_w_shifts,
+        down_w_shifts, silu_lut, in_frac_bits, gate_out_frac, up_out_frac, down_in_frac,
+        silu_in_frac, silu_lut_offset, silu_out_frac, out_frac_bits, None,
+    )
+}
+
+/// Was der MLP-Block an Zwischenwerten zurücklässt (TRAINING V).
+///
+/// ⚑ **Drei Werte, und jeder hat genau einen Abnehmer:** `gate` ist das
+/// `x` von [`crate::backward::silu_backward`], `up` der zweite Faktor
+/// des Produkts, und `h` das `x` von `down_proj`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Mlpspur {
+    /// Die Gate-Projektion **vor** der Aktivierung, auf `gate_out_frac`.
+    pub gate: Vec<i16>,
+    /// Die Up-Projektion, auf `up_out_frac`.
+    pub up: Vec<i16>,
+    /// Das Produkt `silu(gate) · up`, auf `down_in_frac`: der Eingang
+    /// von `down_proj`.
+    pub h: Vec<i16>,
+}
+
+/// Dasselbe wie [`mlp_int`], aber die Zwischenwerte fallen mit ab.
+///
+/// # ⚑ Warum ein zweiter Eingang und kein Parameter mehr an `mlp_int`
+///
+/// `mlp_int` steht im `Backend`-Merkmal, in vier Umsetzungen. Ein
+/// zusätzliches Argument dort risse alle vier auf, für etwas, das nur
+/// der Rückwärtspass braucht. **Hier steht die eine Umsetzung**, und
+/// `mlp_int` ist ihr Eingang ohne Spur.
+#[allow(non_snake_case, clippy::too_many_arguments)]
+pub fn mlp_int_mit_spur(
+    x: &[i16],
+    W_gate: &[i8],
+    W_up: &[i8],
+    W_down: &[i8],
+    hidden_size: usize,
+    intermediate_size: usize,
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    down_w_shifts: &[u8],
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+    spur: Option<&mut Mlpspur>,
+) -> Vec<i16> {
     // Flache Gewichte, Begründung im Kopf von `linear_w8a16`.
     let gate = linear_w8a16(x, W_gate, hidden_size, gate_w_shifts, in_frac_bits, gate_out_frac);
     let up = linear_w8a16(x, W_up, hidden_size, up_w_shifts, in_frac_bits, up_out_frac);
@@ -116,6 +169,15 @@ pub fn mlp_int(
             silu_out_frac + up_out_frac,
             down_in_frac,
         )));
+    }
+
+    // ⚑ **Alle drei zusammen oder keiner.** Sie gehören zu **einem**
+    // Durchlauf; wer nur zwei nähme, rechnete einen Gradienten aus
+    // Werten, die nie gemeinsam entstanden sind.
+    if let Some(sp) = spur {
+        sp.gate = gate;
+        sp.up = up;
+        sp.h = h.clone();
     }
 
     linear_w8a16_pc(

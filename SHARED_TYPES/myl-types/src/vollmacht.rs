@@ -27,15 +27,16 @@
 //! schärfere Zusicherung braucht, nimmt den anderen Weg; wer bequem
 //! anfangen will, nimmt diesen und sieht am Beleg, was er hat.
 //!
-//! # Die Bauart: Biscuits Signaturkette, nicht sein Datalog
+//! # Die Bauart: eine Signaturkette, kein Logikprogramm
 //!
-//! **Macaroons prüft ihr Aussteller** mit einem Wurzelgeheimnis, das er
-//! selbst hält. Hier ist der Aussteller der **Nutzer** und der Prüfer
-//! das **Gateway**, also zwei verschiedene Parteien: Ein HMAC über ein
-//! gemeinsames Geheimnis scheidet aus, denn das Gateway darf den
+//! Der geläufige Bauplan für abschwächbare Zugangsmarken lässt den
+//! **Aussteller** prüfen, mit einem Wurzelgeheimnis, das er selbst hält.
+//! **Hier geht das nicht:** Aussteller ist der **Nutzer**, Prüfer das
+//! **Gateway**, also zwei verschiedene Parteien. Ein HMAC über ein
+//! gemeinsames Geheimnis scheidet damit aus, denn das Gateway darf den
 //! Schlüssel des Nutzers nicht haben.
 //!
-//! **Biscuit löst genau das** mit einer Kette signierter Blöcke:
+//! **Eine Kette signierter Blöcke löst genau das:**
 //!
 //! 1. Der **Vollmachtsblock** ist mit dem Agentenschlüssel
 //!    unterschrieben und nennt den **nächsten** öffentlichen Schlüssel.
@@ -55,11 +56,12 @@
 //!
 //! # ⚑ Was ausdrücklich nicht übernommen wird
 //!
-//! **Biscuits Datalog.** Ein Logikinterpreter, der vom Anfragenden
-//! gelieferte Programme an der Tür auswertet, ist eine Angriffsfläche,
-//! die zu dieser Stufe nicht passt: unbegrenzte Laufzeit, unbegrenzter
-//! Speicher, eine eigene Zerlegung. **Die Vorbehalte hier sind ein
-//! Aufzählungstyp mit vier Fällen**, jeder in konstanter Zeit prüfbar.
+//! **Die Vorbehalte sind kein Logikprogramm.** Ein Interpreter, der vom
+//! Anfragenden gelieferte Regeln an der Tür auswertet, ist eine
+//! Angriffsfläche, die zu dieser Stufe nicht passt: unbegrenzte
+//! Laufzeit, unbegrenzter Speicher, eine eigene Zerlegung. **Die
+//! Vorbehalte hier sind ein Aufzählungstyp mit vier Fällen**, jeder in
+//! konstanter Zeit prüfbar.
 //!
 //! Wer später mehr braucht, hängt Fälle an; wer einen Interpreter
 //! braucht, hat eine andere Frage.
@@ -104,8 +106,8 @@ pub const MAX_BLOECKE: usize = 8;
 /// Was ein Vorbehalt einschränkt.
 ///
 /// ⚑ **Ein Aufzählungstyp und keine Sprache.** Jeder Fall ist in
-/// konstanter Zeit prüfbar; siehe den Modulkopf dazu, warum Biscuits
-/// Datalog hier nicht übernommen wird.
+/// konstanter Zeit prüfbar; siehe den Modulkopf dazu, warum an der Tür
+/// kein Logikprogramm ausgewertet wird.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub enum Vorbehalt {
     /// Gilt nur bis einschliesslich dieser Epoche.

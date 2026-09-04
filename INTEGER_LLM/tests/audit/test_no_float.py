@@ -109,6 +109,10 @@ HOT_PATH = [
     REPO / "runtime" / "src" / "lib.rs",
     REPO / "runtime" / "src" / "main.rs",
     REPO / "runtime" / "src" / "paths.rs",
+    # ⚑ Der Mitschnitt fuer den Rueckwaertspass (TRAINING V). Er haelt
+    # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
+    # ein float darin waere ein Gradient, der nicht bitgleich ist.
+    REPO / "runtime" / "src" / "mitschnitt.rs",
     REPO / "runtime" / "src" / "tokenizer.rs",
     # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
     #

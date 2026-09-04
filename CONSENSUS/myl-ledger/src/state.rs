@@ -218,11 +218,10 @@ pub struct LedgerState {
     /// liegt heiß: Er unterschreibt jeden Vote, jeden Commit, jeden
     /// Übergang, jede Kapazitätszusage und jede Speicherquittung. Ihn
     /// zugleich zum Konto zu machen, auf dem sich der Ertrag sammelt,
-    /// ist der Fehler, den Ethereum als Auszahlungsnachweis `0x00`
-    /// gemacht und mit einer ökosystemweiten Migration auf `0x01`
-    /// korrigiert hat. Cosmos und Filecoin trennen von Anfang an;
-    /// Filecoins `owner` gegen `worker` ist derselbe Schnitt für
-    /// dieselbe Lage.
+    /// ist ein bekannter Fehler: Andere Netze haben ihn gemacht und
+    /// später mit einer ökosystemweiten Migration korrigiert, andere
+    /// trennen von Anfang an. **Der Schnitt heisst überall dasselbe:**
+    /// ein Schlüssel, der arbeitet, und ein Konto, das hält.
     ///
     /// # ⚑ Und die Änderung gehört dem kalten Konto
     ///
@@ -322,9 +321,9 @@ pub struct LedgerState {
     /// Der Registrierungsschluss in Anhang A.2 ist `e−2`: Wer sich
     /// später anmeldet, zählt nicht mit. Käme die Saat aus `e−1`, wäre
     /// der Schluss weicher als die Saat, und ein Miner könnte sich
-    /// anmelden, nachdem er sie kennt. Ethereum nennt dieselbe
-    /// Konstruktion `MIN_SEED_LOOKAHEAD` und legt die Saat für Epoche
-    /// `N` ebenfalls auf das Ende von `N−2`.
+    /// anmelden, nachdem er sie kennt. Zwei Epochen Vorlauf sind
+    /// dabei kein eigener Einfall: Die Saat für Epoche `N` am Ende von
+    /// `N−2` ist Stand der Technik.
     pub epochensaat: Hash,
 
     /// Die Saat, die zur **nächsten** Epoche in Kraft tritt.

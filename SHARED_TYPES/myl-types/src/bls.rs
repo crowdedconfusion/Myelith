@@ -3,7 +3,7 @@
 //! Implementiert die min-pk-Variante der IETF-BLS-Signaturen
 //! (draft-irtf-cfrg-bls-signature): Public Keys liegen auf G1
 //! (komprimiert 48 Bytes), Signaturen auf G2 (komprimiert 96 Bytes).
-//! Das ist die Ethereum-Konsens-Variante; die zugehörige
+//! Das ist die verbreitetste Variante des Entwurfs; die zugehörige
 //! Domain-Separation-Tag (DST) ist unten als Konstante fixiert und Teil
 //! des Konsensvertrags (nur über Governance änderbar, Kap. 10.3).
 //!
@@ -52,9 +52,9 @@
 //! SPHINCS+ oder Hybrid-Varianten (GOVERNANCE,
 //! Design-Entscheidung 4: Krypto-Agilität).
 //!
-//! Die Kurvenarithmetik kommt aus dem `blst`-Crate (die
-//! Referenz-Implementierung von Supranational, auch in Ethereum-Konsens
-//! im Einsatz). Dieses Modul kapselt `blst` hinter festen Byte-Arrays,
+//! Die Kurvenarithmetik kommt aus dem `blst`-Crate, der am breitesten
+//! eingesetzten Umsetzung dieser Kurve. Dieses Modul kapselt `blst`
+//! hinter festen Byte-Arrays,
 //! damit alle öffentlichen Typen Borsh-serialisierbar und in der Größe
 //! konsensstabil sind.
 
