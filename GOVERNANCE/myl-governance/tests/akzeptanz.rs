@@ -74,7 +74,12 @@ fn jeder_parameter_hat_einen_wert() {
     // ist dazugekommen (Punkt B4). Er stand vorher nirgends, und genau
     // das war die Frage: Eine Zahl, die kein Parameter ist, laesst sich
     // nach dem Genesis nicht mehr aendern.
-    assert_eq!(Parameter::alle().len(), 31);
+    //
+    // ⚑ **Vierunddreissig seit dem 2026-09-05**, aus demselben Grund:
+    // Die Trainingszuteilung braucht eine Pod-Kapazitaet und zwei Raten.
+    // Alle drei waeren als Konstanten nach dem Genesis unbeweglich, und
+    // die Pod-Kapazitaet haengt am Modell, wechselt also planmaessig.
+    assert_eq!(Parameter::alle().len(), 34);
 }
 
 // ---------------------------------------------------------------------

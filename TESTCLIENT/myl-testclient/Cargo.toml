@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.23.0"
+version = "0.30.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -111,3 +111,9 @@ opt-level = 2
 # `content`. Wer eine Form prueft, prueft sie mit demselben Werkzeug, mit
 # dem ein Klient sie liest.
 serde_json = "1.0"
+# ⚑ **Der Beleg fuer AGENT_LAYER 5.1, und er kann nur hier stehen.** Das
+# lokale Harness darf `myl-gateway` nicht kennen, das Gateway kennt das
+# Harness nicht. Beide schreiben die OpenAI-Form unabhaengig auf; ob die
+# beiden Fassungen zusammenpassen, laesst sich nur dort pruefen, wo beide
+# sichtbar sind, und das ist diese Kiste.
+myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }

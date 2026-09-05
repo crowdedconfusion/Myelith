@@ -157,6 +157,27 @@ impl Chatanfrage {
     /// ⚑ **Die Rolle geht mit.** Ohne sie wäre „du bist ein Assistent"
     /// von der Frage des Nutzers nicht zu unterscheiden, und ein Modell,
     /// das den Unterschied nicht sieht, folgt der falschen Hälfte.
+    ///
+    /// # ⚑ Fund 181: Das ist nicht die Vorlage, mit der trainiert wurde
+    ///
+    /// Qwen2.5 und Qwen3 sind auf **ChatML** trainiert
+    /// (`<|im_start|>role\ncontent<|im_end|>`), nicht auf
+    /// `role: content`. Diese Zusammensetzung ist damit eine Form, die
+    /// das Modell **nie gesehen hat**.
+    ///
+    /// **Für eine einzelne Frage fällt das kaum auf**, und deshalb ist
+    /// es bis zum 2026-09-05 nicht aufgefallen. **Für den Agent Layer
+    /// fällt es auf**: Ein Harness bietet Werkzeuge in einer
+    /// Systemnachricht an und erwartet einen `<tool_call>`-Block zurück.
+    /// Genau diese Fähigkeit ist an die Vorlage gebunden; ohne sie
+    /// schlägt ein Modell seltener oder gar keine Werkzeuge vor, **und
+    /// niemand sieht dem Ergebnis an, warum**.
+    ///
+    /// ⚑ **Nicht hier geändert, und der Grund ist der Preis.** Die
+    /// Vorlage bestimmt die Token, die Token bestimmen die
+    /// E2E-Vektoren, und die stehen im Konformitätswert. Eine Änderung
+    /// bewegt ihn, und das ist eine Entscheidung über den numerischen
+    /// Vertrag, keine Verbesserung nebenbei. Vermerkt als offener Punkt.
     pub fn prompt(&self) -> String {
         let mut aus = String::new();
         for m in &self.messages {

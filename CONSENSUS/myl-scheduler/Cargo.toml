@@ -1,6 +1,6 @@
 [package]
 name = "myl-scheduler"
-version = "0.10.0"
+version = "0.12.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Deterministischer Epochen-Scheduler für Myelith (Whitepaper Anhang A.2): VRF-Seed-Ableitung, Miner-Filterung, Geo-Clustering, Shard-Zuweisung (Fisher-Yates), Redundanz-Zuteilung, Stichproben-Lotterie. Alle Schritte sind deterministisch und von jedem Node unabhängig nachrechenbar."
@@ -10,6 +10,10 @@ publish = false
 [dependencies]
 borsh = "1.6"
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# ⚑ **Fuer die Korpuszuweisung im Trainingsplan** (2026-09-05). Bis dahin
+# hatte `myl-train` keinen einzigen Aufrufer (Fund 183). Die Kiste haengt
+# selbst nur an `myl-types`, es entsteht also kein Ring.
+myl-train = { path = "../../TRAINING/myl-train" }
 sha2 = "0.10"
 
 [lib]

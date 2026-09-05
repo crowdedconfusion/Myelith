@@ -26,6 +26,7 @@ pub mod miner_filter;
 pub mod redundancy;
 pub mod sampling;
 pub mod shard_assignment;
+pub mod trainingszuteilung;
 pub mod zonenzuteilung;
 pub mod vrf_seed;
 

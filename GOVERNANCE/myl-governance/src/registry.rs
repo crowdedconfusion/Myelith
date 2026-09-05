@@ -222,6 +222,54 @@ pub enum Parameter {
     /// Es bleibt die Invariante, dass sie **nie unter** der Inferenzrate
     /// liegt; sonst kehrt sich die Begründung aus Kap. 5.5 um.
     TrainingsStichprobenrate,
+    /// Was ein Pod je Epoche an Rechenleistung liefert, in vTFE.
+    ///
+    /// ⚑ **Die fehlende Eingangsgrösse der Auslastung** (Fund 184,
+    /// 2026-09-05). `calculate_utilization` braucht eine verfügbare
+    /// Kapazität, und die ist Podzahl mal dieser Wert. Ohne ihn liess
+    /// sich die Auslastung nicht ausrechnen, und ohne Auslastung nicht
+    /// entscheiden, wie viel trainiert wird (Kap. 7.1).
+    ///
+    /// ⚑ **Ein Parameter und keine Konstante**, weil die Zahl vom Modell
+    /// und von der zugelassenen Hardware-Klasse abhängt. Ein grösseres
+    /// Modell senkt sie, schnellere Hardware hebt sie. Eine einbetonierte
+    /// Zahl wäre ab dem ersten Modellwechsel falsch, ohne dass es jemandem
+    /// auffiele.
+    PodKapazitaet,
+    /// Der Sockel der Trainingsmenge: Anteil der **Gesamtkapazität**,
+    /// der auch bei voller Auslastung trainiert, in Basispunkten.
+    ///
+    /// ⚑ **Hier weicht der Bau vom Whitepaper ab, und das gehört
+    /// benannt.** Kap. 7.1 bemisst die Trainingsmenge allein an der
+    /// **freien** Kapazität; bei voller Auslastung wäre sie damit null,
+    /// und Training hörte auf, sobald das Netz Erfolg hat. Der Sockel
+    /// hält eine Untergrenze frei.
+    ///
+    /// **Null stellt das Whitepaper exakt wieder her.** Wer die
+    /// Verdrängungsfreiheit aus Kap. 7.1 wörtlich will, setzt diesen
+    /// Wert auf null; dann bleibt nur [`Parameter::TrainingsFreianteil`].
+    TrainingsGrundrate,
+    /// Der Zuschlag auf die **freie** Kapazität, in Basispunkten.
+    ///
+    /// Das ist γ_train aus Kap. 7.1, **aber nicht in der dort genannten
+    /// Höhe**. Der Text nennt fünf bis zehn Prozent der freien
+    /// Kapazität; hier stehen achtzig.
+    ///
+    /// ⚑ **Die Begründung dreht sich um** (2026-09-05). Kap. 7.1 fragt,
+    /// wie wenig Training das Netz verträgt. Die andere Frage ist, was
+    /// leerlaufende Miner sonst tun sollen, und die Antwort ist: nichts.
+    /// Ein Netz ohne Nachfrage soll mit dem Grossteil seiner Pods
+    /// trainieren.
+    ///
+    /// ⚑ **Warum nicht hundert Prozent der freien Kapazität.** Die
+    /// Auslastung ist die der **Vorepoche**, gemessen über eine Stunde.
+    /// Steigt die Nachfrage innerhalb der laufenden Epoche, können die
+    /// Trainingspods sie nicht bedienen: Sie rechnen etwas anderes. Die
+    /// fehlenden zwanzig Prozent sind **Luft für Nachfragewachstum**.
+    ///
+    /// **Wie viel Luft nötig ist, ist nicht gemessen** und hängt an der
+    /// Schwankung der Nachfrage über eine Epoche. Deshalb ein Parameter.
+    TrainingsFreianteil,
     /// Zähler der Arbeitsschwelle, als Bruchteil des Netzmedians.
     ///
     /// ⚑ **Ersetzt seit dem 2026-09-02 `Arbeitsbezug` und
@@ -356,7 +404,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 31] {
+    pub fn alle() -> [Parameter; 34] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -378,6 +426,9 @@ impl Parameter {
             GeglaetteterBurn,
             PreisUntergrenze,
             TrainingsStichprobenrate,
+            PodKapazitaet,
+            TrainingsGrundrate,
+            TrainingsFreianteil,
             ArbeitsschwelleZaehler,
             ArbeitsschwelleNenner,
             Epochenlaenge,
@@ -434,6 +485,9 @@ impl Parameter {
             GeglaetteterBurn => "geglätteter Burn B_e",
             PreisUntergrenze => "Preis-Untergrenze",
             TrainingsStichprobenrate => "Trainings-Stichprobenrate",
+            PodKapazitaet => "Pod-Kapazität je Epoche (vTFE)",
+            TrainingsGrundrate => "Trainings-Grundrate (Basispunkte der Gesamtkapazität)",
+            TrainingsFreianteil => "Trainings-Freianteil γ_train (Basispunkte der freien Kapazität)",
             ArbeitsschwelleZaehler => "Arbeitsschwelle des Stimmgewichts, Zähler",
             ArbeitsschwelleNenner => "Arbeitsschwelle des Stimmgewichts, Nenner",
             MindestStake => "Mindest-Stake S",
@@ -574,6 +628,30 @@ impl ParameterRegistry {
         werte.insert(PreisUntergrenze, Wert::Ganzzahl(1));
         // Kap. 5.5: erhöhte Rate für Trainingssegmente; Entwurf 10 %.
         werte.insert(TrainingsStichprobenrate, Wert::Bruch { zaehler: 10, nenner: 100 });
+        // ⚑ **Startwert mit Herkunft, keine geratene Zahl.** Der
+        // Gesamtlauf vom 2026-09-05 bucht für acht Token über vierzehn
+        // Segmente 13 999 998 vTFE ab, also rund 1,0 Mio. je Segment.
+        // Ein Pod, der eine Epoche (3600 s) mit einem Segment je Sekunde
+        // fährt, liefert damit rund 3,6 Mrd. vTFE.
+        //
+        // **Die Zahl ist eine Grössenordnung und kein Messwert**, denn
+        // die Segmente je Sekunde sind nicht gemessen. Sie steht als
+        // Parameter genau deshalb hier: Wer misst, hebt sie an, ohne das
+        // Protokoll anzufassen.
+        werte.insert(PodKapazitaet, Wert::Ganzzahl(3_600_000_000));
+        // Kap. 7.1: der Sockel. 200 Basispunkte sind zwei Prozent der
+        // Gesamtkapazität. Null stellt das Whitepaper wörtlich her.
+        werte.insert(TrainingsGrundrate, Wert::Ganzzahl(200));
+        // ⚑ **8000 und nicht die 1000 aus Kap. 7.1** (2026-09-05). Der
+        // Text nennt „fünf bis zehn Prozent der freien Kapazität", und
+        // das ist falsch herum gedacht: Ein Netz ohne Nachfrage hat
+        // nichts anderes zu tun, als zu trainieren.
+        //
+        // **Warum nicht 10000:** Die Auslastung ist die der Vorepoche.
+        // Steigt die Nachfrage innerhalb der laufenden Epoche, können
+        // die Trainingspods sie nicht bedienen. Die fehlenden zwanzig
+        // Prozent der freien Kapazität sind Luft, kein Rundungsrest.
+        werte.insert(TrainingsFreianteil, Wert::Ganzzahl(8_000));
         // myl-consensus: Arbeitsschwelle als Bruchteil des Netzmedians,
         // Startwert null (Entscheidung 2026-09-02).
         werte.insert(

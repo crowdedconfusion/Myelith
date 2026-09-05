@@ -38,8 +38,8 @@ fn das_harness_kennt_die_kette_nicht() {
             "`{kiste}` steht in den Abhaengigkeiten des lokalen Harness.\n\
              Damit kann es Kettenzustand lesen oder eine Transaktion bauen, und der Satz\n\
              „das Harness haelt nur ein Token\" ist nicht mehr wahr.\n\
-             Wenn das gewollt ist, gehoert die Entscheidung in den Fahrplan, nicht in eine\n\
-             Cargo.toml."
+             Wenn das gewollt ist, ist es eine Entscheidung ueber das Vertrauensmodell\n\
+             und gehoert ausgesprochen, nicht in eine Cargo.toml eingetragen."
         );
     }
 }

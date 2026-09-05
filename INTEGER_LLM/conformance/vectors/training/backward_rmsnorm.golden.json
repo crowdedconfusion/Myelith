@@ -1,0 +1,137 @@
+{
+  "name": "backward_rmsnorm",
+  "level": "training",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "r": 106,
+    "norm_frac": 17,
+    "ref_shift": 8,
+    "inv_n_q20": 131072,
+    "g_frac": 12,
+    "gx_frac": 12
+  },
+  "inputs": {
+    "g": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "9490d398462b7b5703e06c1343eb0afe3d5159c8dedfa26a063bcb370fae2431",
+      "data": [
+        12288,
+        -8192,
+        20480,
+        4096,
+        -16384,
+        8192,
+        -24576,
+        -4096
+      ]
+    },
+    "x": {
+      "dtype": "int16",
+      "shape": [
+        8
+      ],
+      "hash": "318da509b0415231c956e21ef0ff0b0b15b38bd8a73f09e4252560d58b0a0eb2",
+      "data": [
+        300,
+        -180,
+        90,
+        240,
+        -60,
+        410,
+        -320,
+        150
+      ]
+    },
+    "x_shifts": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "da8e2f1dce25bd6dddd684c57401f81fabeb3b49c9cdd6958e1e3e4416ea7a25",
+      "data": [
+        6,
+        6,
+        7,
+        6,
+        8,
+        6,
+        5,
+        7
+      ]
+    },
+    "gamma": {
+      "dtype": "int8",
+      "shape": [
+        8
+      ],
+      "hash": "7aaad72b517a3e971ab4f812663cb212bf5b81e8d13f2d7fac0ee2f005d98f97",
+      "data": [
+        64,
+        -40,
+        90,
+        32,
+        -70,
+        55,
+        20,
+        -100
+      ]
+    },
+    "gamma_shifts": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "adcded9eb829b04dec21a9d22dccdb910b2ace644c9c4d19577e91c8d6ea4409",
+      "data": [
+        5,
+        6,
+        7,
+        5,
+        6,
+        7,
+        5,
+        6
+      ]
+    }
+  },
+  "outputs": {
+    "gx": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "c5cb844b3784769a0ea6125c7eb18288f23e7759cfb44448318a880edb701f6c",
+      "data": [
+        3498,
+        2014,
+        2743,
+        -424,
+        3789,
+        -1444,
+        211,
+        928
+      ]
+    },
+    "ggamma": {
+      "dtype": "int64",
+      "shape": [
+        8
+      ],
+      "hash": "8e51d3140837addcd41532d7c352b48a88a65384bec0362ac507981b2291506d",
+      "data": [
+        11925,
+        4770,
+        2981,
+        3180,
+        795,
+        10865,
+        50880,
+        -994
+      ]
+    }
+  }
+}

@@ -203,7 +203,10 @@ mod tests {
     /// dahinter ist still. Ohne die Pruefung liefert `sqrt_q` hier `0`,
     /// ohne abzubrechen, in beiden Bauprofilen.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "ueber der Grenze 32")]
     fn sqrt_q_ueber_der_grenze_bricht_ab_statt_still_null_zu_liefern() {
         let _ = sqrt_q(i32::MAX, 33);
@@ -228,7 +231,10 @@ mod tests {
 
     /// ⚑ Gegenprobe zu Fund 75: eins strenger als bei `sqrt_q`.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "ueber der Grenze 31")]
     fn rsqrt_q_ueber_der_grenze_bricht_ab() {
         let _ = rsqrt_q(4, 32);
@@ -254,7 +260,10 @@ mod tests {
     /// Index im Release-Bau und das Clamping darunter klemmt den
     /// falschen Wert.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "verlaesst i16")]
     fn lut_lookup_index_ueberlauf_bricht_ab() {
         let lut: Vec<i16> = (0..16).collect();
@@ -263,7 +272,10 @@ mod tests {
 
     /// ⚑ Gegenprobe zu Fund 75, Punkt 1.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "ueber der Grenze 15")]
     fn lut_lookup_shift_ueber_der_grenze_bricht_ab() {
         let lut: Vec<i16> = (0..16).collect();
@@ -274,7 +286,10 @@ mod tests {
     /// Pruefung ergibt `lut.len() as i16 - 1` den Wert `-1`, und
     /// `(-1) as usize` ist eine Indizierung weit jenseits der Tabelle.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "Tabellenlaenge")]
     fn lut_lookup_leere_tabelle_bricht_ab() {
         let leer: Vec<i16> = Vec::new();

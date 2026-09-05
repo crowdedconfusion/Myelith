@@ -37,9 +37,29 @@ pub struct GoldenVector {
     /// nicht. Das Feld wird mitgeführt, damit ein Vektor ohne es
     /// auffällt.
     pub theta_v_hash: String,
+    /// Woher die Sollwerte stammen.
+    ///
+    /// ⚑ **Die Unterscheidung steht im Vektor und nicht im Kommentar.**
+    /// `unabhaengig` heisst: Eine getrennte Umsetzung hat sie gerechnet,
+    /// und eine Uebereinstimmung belegt **Richtigkeit**.
+    /// `selbsterzeugt` heisst: Dieser Code hat sie selbst erzeugt, und
+    /// eine Uebereinstimmung belegt **Determinismus zwischen Maschinen**,
+    /// sonst nichts. Wer die beiden verwechselt, hält eine
+    /// Selbstzertifizierung für einen Beleg (Fund 105 in anderer
+    /// Gestalt).
+    ///
+    /// Fehlt das Feld, gilt `unabhaengig`: Alle Vektoren bis zum
+    /// 2026-09-04 sind es, und ein stillschweigend anderer Vorgabewert
+    /// wäre die gefährlichere Richtung.
+    #[serde(default = "herkunft_vorgabe")]
+    pub herkunft: String,
     pub metadata: serde_json::Value,
     pub inputs: HashMap<String, TensorData>,
     pub outputs: HashMap<String, TensorData>,
+}
+
+fn herkunft_vorgabe() -> String {
+    "unabhaengig".to_string()
 }
 
 /// Ein Tensor im Golden Vector.
@@ -160,6 +180,120 @@ pub fn op_vektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
         gruende,
         integer_verletzt: false,
     }
+}
+
+/// Prüft einen Vektor des Trainingspfades (Umfang `training`).
+///
+/// # ⚑ Warum ein eigener Umfang
+///
+/// Der `op`-Umfang trägt den Wert `894d8357ae92b5c1`, und der steht an
+/// sechs Stellen des Repositoriums fest. Neue Vektoren dort hätten ihn
+/// geändert, also eine bestehende Zusage gebrochen, um eine neue
+/// aufzustellen. **Zwei Umfänge, zwei Zahlen, beide im Protokoll**, und
+/// eine Abweichung ist damit sofort eingegrenzt.
+///
+/// ⚑ **Diese fünf Vektoren decken die Lücke, aus der die Funde 173 bis
+/// 175 kamen.** Drei der acht Rückwärtskerne rechneten falsch, und der
+/// Prüflauf, der 33 von 33 meldete, hat keinen von ihnen je gerechnet.
+pub fn trainingsvektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
+    let name = gv.name.clone();
+    let mut gruende: Vec<String> = Vec::new();
+
+    if !tensor_hashes_pruefen(gv, &mut gruende) {
+        return VektorErgebnis { name, bestanden: false, gruende, integer_verletzt: true };
+    }
+
+    let (bestanden, weitere) = match gv.name.as_str() {
+        "backward_attention" => run_backward_attention(gv),
+        "backward_silu" => run_backward_silu(gv),
+        "backward_rmsnorm" => run_backward_rmsnorm(gv),
+        "backward_embedding" => run_backward_embedding(gv),
+        "optimierer_schritt" => run_optimierer_schritt(gv),
+        "softmax_vokabular" => run_softmax_vokabular(gv),
+        _ => (false, vec![format!("Unbekannter Trainingsvektor: {}", gv.name)]),
+    };
+    gruende.extend(weitere);
+    VektorErgebnis { name, bestanden, gruende, integer_verletzt: false }
+}
+
+/// Prüft einen Vektor des **MoE-Routingpfades** (Umfang `moe`).
+///
+/// # ⚑ Warum es diesen Umfang gibt (Fund 180, 2026-09-05)
+///
+/// `route_top_k` und `mische_experten` waren **nirgends** gegen ein
+/// festes Soll geprüft: nicht unter `op`, nicht unter `training`, nicht
+/// unter `layer` (die Layer-Vektoren gehören zum dichten 0,5B-Modell).
+///
+/// **Das ist der Pfad, der entscheidet, welche Experten rechnen.** Zwei
+/// Knoten, die verschieden routen, rechnen verschiedene Netze, und der
+/// Redundanzvergleich meldete beide als fehlerhaft, ohne dass einer
+/// gelogen hätte. Dieselbe Klasse wie die drei Rückwärtskerne ohne
+/// Aufrufer: tragend und unbelegt.
+///
+/// ⚑ **Eigener Umfang, aus demselben Grund wie bei `training`:**
+/// `894d8357ae92b5c1` steht an sechs Stellen fest, und eine bestehende
+/// Zusage bricht man nicht, um eine neue aufzustellen.
+pub fn moe_vektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
+    let name = gv.name.clone();
+    let mut gruende: Vec<String> = Vec::new();
+
+    if !tensor_hashes_pruefen(gv, &mut gruende) {
+        return VektorErgebnis { name, bestanden: false, gruende, integer_verletzt: true };
+    }
+
+    let (bestanden, weitere) = match gv.name.as_str() {
+        "routing_normiert" | "routing_unnormiert" | "routing_gleichstand" => run_routing(gv),
+        "mischung" => run_mischung(gv),
+        _ => (false, vec![format!("Unbekannter MoE-Vektor: {}", gv.name)]),
+    };
+    gruende.extend(weitere);
+    VektorErgebnis { name, bestanden, gruende, integer_verletzt: false }
+}
+
+/// Prüft eine Datei als MoE-Vektor.
+pub fn moe_vektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
+    let gv = vektor_lesen(pfad)?;
+    Ok(moe_vektor_pruefen(&gv))
+}
+
+fn run_routing(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let logits = als_i32(&gv.inputs["logits"]);
+    let exp_lut = als_i16(&gv.inputs["exp_lut"]);
+    let normieren = gv.metadata["normieren"].as_bool().unwrap_or(false);
+    let routing = crate::moe::route_top_k(
+        &logits,
+        zahl(gv, "k") as usize,
+        &exp_lut,
+        zahl(gv, "lut_shift") as u8,
+        zahl(gv, "frac_bits") as u8,
+        normieren,
+    );
+    let mut gruende = Vec::new();
+    let experten: Vec<i32> = routing.experten.iter().map(|e| i32::from(*e)).collect();
+    let soll_e: Vec<i32> = gv.outputs["experten"].data.iter().map(|v| *v as i32).collect();
+    let soll_w: Vec<i32> = gv.outputs["gewichte"].data.iter().map(|v| *v as i32).collect();
+    let a = vergleiche("experten", &experten, &soll_e, &mut gruende);
+    let b = vergleiche("gewichte", &routing.gewichte, &soll_w, &mut gruende);
+    (a && b, gruende)
+}
+
+fn run_mischung(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let n = zahl(gv, "experten") as usize;
+    let ausgaben: Vec<Vec<i16>> =
+        (0..n).map(|i| als_i16(&gv.inputs[&format!("a{i}")])).collect();
+    let gewichte = als_i32(&gv.inputs["gewichte"]);
+    let y = crate::moe::mische_experten(&ausgaben, &gewichte, zahl(gv, "frac_bits") as u8);
+    let ist: Vec<i32> = y.iter().map(|v| i32::from(*v)).collect();
+    let soll: Vec<i32> = gv.outputs["y"].data.iter().map(|v| *v as i32).collect();
+    let mut gruende = Vec::new();
+    let ok = vergleiche("y", &ist, &soll, &mut gruende);
+    (ok, gruende)
+}
+
+/// Prüft eine Datei als Trainingsvektor.
+pub fn trainingsvektor_aus_datei(pfad: &Path) -> Result<VektorErgebnis, String> {
+    let gv = vektor_lesen(pfad)?;
+    Ok(trainingsvektor_pruefen(&gv))
 }
 
 /// Prüft eine Datei als Operations-Vektor.
@@ -352,6 +486,201 @@ fn run_backward_rope(gv: &GoldenVector) -> (bool, Vec<String>) {
     (true, Vec::new())
 }
 
+// ---------------------------------------------------------------------------
+// Der Trainingspfad
+// ---------------------------------------------------------------------------
+
+fn als_i16(t: &TensorData) -> Vec<i16> {
+    t.data.iter().map(|&v| v as i16).collect()
+}
+
+fn als_u8(t: &TensorData) -> Vec<u8> {
+    t.data.iter().map(|&v| v as u8).collect()
+}
+
+fn zahl(gv: &GoldenVector, feld: &str) -> i64 {
+    gv.metadata[feld].as_i64().unwrap_or_else(|| panic!("{feld} fehlt in den Metadaten"))
+}
+
+/// Zerlegt einen flachen Tensor in `zeilen` gleich lange Stuecke.
+fn in_zeilen(flach: &[i16], zeilen: usize) -> Vec<Vec<i16>> {
+    let breite = flach.len() / zeilen;
+    (0..zeilen).map(|z| flach[z * breite..(z + 1) * breite].to_vec()).collect()
+}
+
+fn vergleiche(name: &str, ist: &[i32], soll: &[i32], gruende: &mut Vec<String>) -> bool {
+    if ist == soll {
+        return true;
+    }
+    gruende.push(format!("{name}: erwartet {soll:?}, erhalten {ist:?}"));
+    false
+}
+
+fn run_backward_attention(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let g = als_i32(&gv.inputs["g"]);
+    let q = als_i16(&gv.inputs["q"]);
+    let kv_len = zahl(gv, "kv_len") as usize;
+    let k = in_zeilen(&als_i16(&gv.inputs["k"]), kv_len);
+    let v = in_zeilen(&als_i16(&gv.inputs["v"]), kv_len);
+    let p = als_i32(&gv.inputs["p"]);
+    let maske: Vec<bool> = gv.metadata["maske"]
+        .as_array()
+        .expect("maske fehlt")
+        .iter()
+        .map(|b| b.as_bool().unwrap_or(false))
+        .collect();
+    let skalen = crate::backward::Aufmerksamkeitsskalen {
+        score_mult: zahl(gv, "score_mult"),
+        score_mult_frac: zahl(gv, "score_mult_frac") as u8,
+        q_frac: zahl(gv, "q_frac") as u8,
+        k_frac: zahl(gv, "k_frac") as u8,
+        v_frac: zahl(gv, "v_frac") as u8,
+        prob_frac: zahl(gv, "prob_frac") as u8,
+    };
+
+    let (gq, gk, gvv) =
+        crate::backward::attention_backward(&g, &q, &k, &v, &p, &maske, skalen);
+    let flach = |z: &[Vec<i32>]| -> Vec<i32> { z.iter().flatten().copied().collect() };
+
+    let mut gruende = Vec::new();
+    let mut ok = vergleiche("gq", &gq, &als_i32(&gv.outputs["gq"]), &mut gruende);
+    ok &= vergleiche("gk", &flach(&gk), &als_i32(&gv.outputs["gk"]), &mut gruende);
+    ok &= vergleiche("gv", &flach(&gvv), &als_i32(&gv.outputs["gv"]), &mut gruende);
+    (ok, gruende)
+}
+
+fn run_backward_silu(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let g = als_i32(&gv.inputs["g"]);
+    let x = als_i16(&gv.inputs["x"]);
+    let lut = als_i16(&gv.inputs["grad_lut"]);
+    let aus = crate::backward::silu_backward(
+        &g,
+        &x,
+        &lut,
+        zahl(gv, "x_frac") as u8,
+        zahl(gv, "lut_in_frac") as u8,
+        zahl(gv, "lut_offset") as i16,
+        zahl(gv, "lut_out_frac") as u8,
+        zahl(gv, "g_frac") as u8,
+        zahl(gv, "out_frac") as u8,
+    );
+    let mut gruende = Vec::new();
+    let ok = vergleiche("gx", &aus, &als_i32(&gv.outputs["gx"]), &mut gruende);
+    (ok, gruende)
+}
+
+fn run_backward_rmsnorm(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let g = als_i32(&gv.inputs["g"]);
+    let x = als_i16(&gv.inputs["x"]);
+    let xs = als_u8(&gv.inputs["x_shifts"]);
+    let gamma: Vec<i8> = gv.inputs["gamma"].data.iter().map(|&v| v as i8).collect();
+    let gs = als_u8(&gv.inputs["gamma_shifts"]);
+    let (gx, ggamma) = crate::backward::rmsnorm_backward(
+        &g,
+        &x,
+        &xs,
+        &gamma,
+        &gs,
+        crate::backward::Normskalen {
+            r: zahl(gv, "r") as i32,
+            norm_frac: zahl(gv, "norm_frac") as u8,
+            ref_shift: zahl(gv, "ref_shift") as u8,
+            inv_n_q20: zahl(gv, "inv_n_q20"),
+            g_frac: zahl(gv, "g_frac") as u8,
+            gx_frac: zahl(gv, "gx_frac") as u8,
+        },
+    );
+    let mut gruende = Vec::new();
+    let mut ok = vergleiche("gx", &gx, &als_i32(&gv.outputs["gx"]), &mut gruende);
+    let ggamma_soll = &gv.outputs["ggamma"].data;
+    if &ggamma != ggamma_soll {
+        gruende.push(format!("ggamma: erwartet {ggamma_soll:?}, erhalten {ggamma:?}"));
+        ok = false;
+    }
+    (ok, gruende)
+}
+
+fn run_backward_embedding(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let hidden = zahl(gv, "hidden") as usize;
+    let vocab = zahl(gv, "vocab_size") as usize;
+    let token: Vec<usize> = gv.metadata["token_ids"]
+        .as_array()
+        .expect("token_ids fehlen")
+        .iter()
+        .map(|v| v.as_u64().unwrap() as usize)
+        .collect();
+    let mut ziel = vec![0i64; hidden * vocab];
+    for (n, id) in token.iter().enumerate() {
+        let g = als_i32(&gv.inputs[&format!("g{n}")]);
+        crate::backward::embedding_backward_akkumulieren(&mut ziel, vocab, *id, &g);
+    }
+    let soll = &gv.outputs["ziel"].data;
+    if &ziel != soll {
+        return (false, vec![format!("ziel: erwartet {soll:?}, erhalten {ziel:?}")]);
+    }
+    (true, Vec::new())
+}
+
+/// Der Softmax über ein Vokabular (Fund 177).
+///
+/// ⚑ **Der Vektor ist klein, der Kern ist es nicht.** Er trifft die
+/// Maximumsubtraktion, die Verschiebung von der Logit- auf die
+/// Tabellenskala, einen Index jenseits der Tabelle und die
+/// kaufmännische Rundung der Division: genau die vier Stellen, an denen
+/// zwei Umsetzungen auseinanderlaufen können.
+fn run_softmax_vokabular(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let logits = als_i32(&gv.inputs["logits"]);
+    let exp_lut = als_i16(&gv.inputs["exp_lut"]);
+    let p = crate::softmax::softmax_ueber_vokabular(
+        &logits,
+        zahl(gv, "logit_frac") as u8,
+        &exp_lut,
+        zahl(gv, "exp_input_frac") as u8,
+        zahl(gv, "frac_bits") as u8,
+    );
+    let mut gruende = Vec::new();
+    let soll: Vec<i32> = gv.outputs["p"].data.iter().map(|&v| v as i32).collect();
+    let ok = vergleiche("p", &p, &soll, &mut gruende);
+    (ok, gruende)
+}
+
+fn run_optimierer_schritt(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let mut master = als_i32(&gv.inputs["master"]);
+    let grad = als_i32(&gv.inputs["grad"]);
+    let kennung = crate::optimierer::Schrittkennung {
+        ebene: zahl(gv, "ebene") as u32,
+        schritt: zahl(gv, "schritt") as u64,
+        index_versatz: zahl(gv, "index_versatz") as u64,
+    };
+    let mut gruende = Vec::new();
+    let mut ok = true;
+
+    // ⚑ **Erst der Wuerfel, dann der Schritt.** Wer nur das Ergebnis
+    // vergleicht, sieht bei einer Abweichung nicht, ob der Zufall oder
+    // die Rundung abwich, und das sind zwei sehr verschiedene Fehler.
+    let wuerfe_soll = &gv.outputs["wuerfe"].data;
+    let wuerfe: Vec<i64> = (0..master.len())
+        .map(|i| {
+            crate::optimierer::wuerfel(kennung.ebene, kennung.schritt, kennung.index_versatz + i as u64)
+                as i64
+        })
+        .collect();
+    if &wuerfe != wuerfe_soll {
+        gruende.push("die Wuerfe weichen ab: der Zufall ist nicht derselbe".to_string());
+        ok = false;
+    }
+
+    crate::optimierer::schritt(
+        &mut master,
+        &grad,
+        kennung,
+        zahl(gv, "lr_zaehler"),
+        zahl(gv, "lr_nenner"),
+    );
+    ok &= vergleiche("master_neu", &master, &als_i32(&gv.outputs["master_neu"]), &mut gruende);
+    (ok, gruende)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +755,68 @@ mod tests {
     }
 
     /// Ein unbekannter Vektorname ist ein Fehlschlag, kein Absturz.
+    /// ⚑ **Die Vektoren des Trainingspfades bestehen, und sie sind
+    /// unabhaengig erzeugt.**
+    ///
+    /// Fuenf Kerne, die bis zum 2026-09-04 kein Vektor deckte:
+    /// `attention_backward`, `silu_backward`, `rmsnorm_backward`,
+    /// `embedding_backward_akkumulieren` und der Optimierer. **Drei der
+    /// acht Rueckwaertskerne rechneten falsch**, und der Prueflauf, der
+    /// 33 von 33 meldete, hat keinen von ihnen je gerechnet.
+    ///
+    /// ⛑ **Der Test prueft auch die Herkunft.** Ein selbsterzeugter
+    /// Vektor belegt Determinismus, kein unabhaengiger belegt
+    /// Richtigkeit; wer die beiden verwechselt, haelt eine
+    /// Selbstzertifizierung fuer einen Beleg.
+    #[test]
+    fn trainingsvektoren_des_repositoriums_bestehen() {
+        let verzeichnis = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../conformance/vectors/training");
+        let mut gesehen = 0;
+        for eintrag in std::fs::read_dir(&verzeichnis).expect("Trainingsvektoren fehlen") {
+            let pfad = eintrag.expect("Verzeichniseintrag").path();
+            if pfad.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let gv = vektor_lesen(&pfad).expect("Vektor lesbar");
+            assert_eq!(gv.level, "training", "{}: falsche Ebene", gv.name);
+            assert_eq!(
+                gv.herkunft, "unabhaengig",
+                "{}: ein selbsterzeugter Vektor belegt keine Richtigkeit",
+                gv.name
+            );
+            let e = trainingsvektor_pruefen(&gv);
+            assert!(e.bestanden, "{}: {:?}", e.name, e.gruende);
+            gesehen += 1;
+        }
+        assert_eq!(gesehen, 6, "erwartet werden sechs Trainingsvektoren");
+    }
+
+    /// ⚑ **Der MoE-Routingpfad, seit dem 2026-09-05 belegt** (Fund 180).
+    #[test]
+    fn moe_vektoren_des_repositoriums_bestehen() {
+        let verzeichnis = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../conformance/vectors/moe");
+        let mut gesehen = 0;
+        for eintrag in std::fs::read_dir(&verzeichnis).expect("MoE-Vektoren fehlen") {
+            let pfad = eintrag.expect("Verzeichniseintrag").path();
+            if pfad.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let gv = vektor_lesen(&pfad).expect("Vektor lesbar");
+            assert_eq!(gv.level, "moe", "{}: falsche Ebene", gv.name);
+            assert_eq!(
+                gv.herkunft, "unabhaengig",
+                "{}: ein selbsterzeugter Vektor belegt keine Richtigkeit",
+                gv.name
+            );
+            let e = moe_vektor_pruefen(&gv);
+            assert!(e.bestanden, "{}: {:?}", e.name, e.gruende);
+            gesehen += 1;
+        }
+        assert_eq!(gesehen, 4, "erwartet werden vier MoE-Vektoren");
+    }
+
     #[test]
     fn unbekannter_vektor_wird_abgelehnt() {
         let gv: GoldenVector = serde_json::from_str(r#"{

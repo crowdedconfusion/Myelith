@@ -56,6 +56,7 @@ pub mod plaene;
 pub mod runs;
 pub mod spec;
 pub mod stack;
+pub mod training;
 pub mod vergleich;
 
 pub use hardware::Fingerprint;

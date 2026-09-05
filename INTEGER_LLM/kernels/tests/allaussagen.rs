@@ -245,8 +245,19 @@ fn sqrt_q_ist_die_floor_wurzel_ueber_den_ganzen_bereich() {
 /// Nur im Debug-Bau; im Release ist die Sättigung **stumm**, und genau
 /// das ist der Grund, warum die Grenze dokumentiert gehört und nicht nur
 /// zugesichert.
+///
+/// ⚑ **Und deshalb steht die Schaltung hier und nicht nur im Text.**
+/// Ohne sie scheitert der Test bei jedem `cargo test --release`, weil
+/// die Zusicherung dort gar nicht läuft. Am 2026-09-04 tat er das; ein
+/// Test, der je nach Bauart rot wird, kostet auf einer Mietmaschine
+/// Geld und Vertrauen. `ignore` statt `cfg`, damit der Lauf ihn
+/// **nennt**, statt ihn verschwinden zu lassen.
 #[test]
 #[should_panic(expected = "Fund 95")]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "prueft eine debug_assert-Zusicherung; im Release saettigt sqrt_q stumm"
+)]
 fn sqrt_q_sagt_bescheid_wenn_das_ergebnis_nicht_mehr_passt() {
     let frac_bits = 32u8;
     let zu_gross = (hoechstes_x(frac_bits) + 1) as i32;

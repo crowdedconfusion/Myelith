@@ -1,0 +1,86 @@
+{
+  "name": "optimierer_schritt",
+  "level": "training",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "ebene": 3,
+    "schritt": 17,
+    "index_versatz": 64,
+    "lr_zaehler": 1,
+    "lr_nenner": 1000,
+    "fein_bits": 20
+  },
+  "inputs": {
+    "master": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "57c1af301b680bffc46bb80fa88a0c5334d15b420b8032a664d6c2d674cbce65",
+      "data": [
+        1280,
+        -640,
+        320,
+        0,
+        -1280,
+        96,
+        -32,
+        4096
+      ]
+    },
+    "grad": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "607b9cc750341f379933642261611317caa209b5571a3fb37ca29f091f6aa26e",
+      "data": [
+        1500,
+        -700,
+        40,
+        900,
+        -3,
+        1000000,
+        7,
+        -250000
+      ]
+    }
+  },
+  "outputs": {
+    "master_neu": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "b03758b06f2d429b992bb891f202e53cfbca522cd0e94a0f5f1ddc12dd9256ed",
+      "data": [
+        1278,
+        -639,
+        320,
+        -1,
+        -1280,
+        -904,
+        -32,
+        4346
+      ]
+    },
+    "wuerfe": {
+      "dtype": "int64",
+      "shape": [
+        8
+      ],
+      "hash": "5e6dc8b074bbb0d4c5e25bb661cc121ac4007fa50fc6f47b14f594721053767b",
+      "data": [
+        -5985313531051212011,
+        -6702551335181426239,
+        -3035699744150184872,
+        -8183596039069169173,
+        -6834691245779401638,
+        -5199283827507439977,
+        4513537325887893267,
+        8575287985600041126
+      ]
+    }
+  }
+}

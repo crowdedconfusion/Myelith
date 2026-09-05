@@ -1,6 +1,6 @@
 # training (`myl-train`)
 
-> **Version:** 0.2.0
+> **Version:** 0.3.0
 > **Datum:** 2026-09-04
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
@@ -15,14 +15,20 @@
 >   nach.
 >
 > **Der Rückwärtspass ist seit dem 2026-09-04 kein Wartegrund mehr**
-> (INTEGER_LLM `kernels` 0.32.0, `runtime` 0.25.0). Ein Kreis aus
+> (INTEGER_LLM `kernels` 0.34.0, `runtime` 0.25.0). Ein Kreis aus
 > Vorwärtspass, Mitschnitt der Zwischenwerte, Gradient und Optimierer
-> schliesst sich über den ganzen MLP-Block, gemessen auf echten
+> schliesst sich über **beide Blöcke** einer Ebene: über den ganzen
+> MLP-Block und über den Aufmerksamkeitsblock samt RoPE, Softmax,
+> Kopfgewichtung und gruppierter Aufmerksamkeit. Gemessen auf echten
 > Gewichten und auf einem Experten eines Expertengemischs. Was fehlt,
-> ist der Rückwärtspass des Aufmerksamkeitsblocks, der Zusammenbau zur
-> ganzen Ebene und die Schleife über eine Folge. **Die Zuordnung bleibt
-> wie bisher:** Die Rechenkerne stehen in INTEGER_LLM, die Arbeitsklasse
-> und die Aggregation stehen hier.
+> ist der Zusammenbau zur ganzen Ebene und die Schleife über eine
+> Folge. **Die Zuordnung bleibt wie bisher:** Die Rechenkerne stehen in
+> INTEGER_LLM, die Arbeitsklasse und die Aggregation stehen hier.
+>
+> ⚑ **Der Aufmerksamkeitsblock rechnet über eine Folge**, und das ist
+> Bedingung und nicht Bequemlichkeit: Bei einer einzigen Position
+> liefert der Softmax exakt eins, seine Ableitung ist exakt null, und
+> Q und K bekämen keinen Gradienten.
 >
 > ⚑ **Eine Lernrate passt nicht zu allen Ebenen** (Fund 172). Ebene 0
 > von Qwen2.5-0,5B trägt sechs Bit mehr Ausgabeskala als die mittleren
@@ -104,6 +110,26 @@ Rückwärtspass** in INTEGER_LLM, der dort noch nicht implementiert ist
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### myl-train v0.3.0 – 2026-09-05 (Fund 183: die Kiste bekommt ihren ersten Aufrufer)
+
+`myl_train::zuweisung::zuweisen` wird jetzt aus
+`myl_scheduler::trainingszuteilung` gerufen: Jeder Trainingspod bekommt
+sein Korpusbündel aus der Epochensaat.
+
+⚑ **Bis heute hatte diese Kiste ausserhalb ihrer eigenen Tests keinen
+einzigen Aufrufer.** Datenprovenienz, Wachstumsoperator und
+VRF-Zuweisung waren gebaut, geprüft und unerreicht: die bekannteste
+Fehlerklasse dieses Projekts in ihrer grössten Ausprägung, nicht eine
+Funktion ohne Aufrufer, sondern eine ganze Kiste.
+
+Die Ursache war eine einzige: Es gab keinen Weg, auf dem ein Pod ein
+Trainingssegment zugewiesen bekommt. `zuweisen` beantwortet die Frage
+„welches Bündel bekommt Pod *i*?", und niemand stellte sie.
+
+**Provenienz und Wachstum haben weiterhin keinen Aufrufer.** Sie hängen
+an Punkten, die noch offen sind: der Segmentprüfung und dem
+Wachstumsereignis.
 
 ### myl-train v0.2.0 – 2026-08-23 (Wachstumsoperator, Bitbudget, Tiefenwachstum)
 

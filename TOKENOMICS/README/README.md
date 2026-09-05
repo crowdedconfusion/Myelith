@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.19.0
+> **Version:** 0.20.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,28 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.20.0 – 2026-09-05 (der Epochenabschluss rollt die Nachfrage mit)
+
+`epochenabschluss_burn` schreibt jetzt auch `vtfe_vorepoche` fort und
+nullt `vtfe_epoche`.
+
+⚑ **Fachlich gehört das ins Kontenbuch und steht trotzdem hier.** Dieser
+Abschluss ist die **eine Stelle mit dem Wächter**: `burn_ema_bis >=
+epoch` verhindert die doppelte Fortschreibung. Ein zweiter, eigener
+Epochenabschluss bräuchte einen zweiten Wächter, und der Kopf der Datei
+warnt genau davor: „zweimal gerufen, verschiebt sie den Durchschnitt,
+und niemand sähe es der Zahl an."
+
+**Ein Wächter für zwei Zähler schlägt zwei Wächter.**
+
+### `utilization` reicht durch statt zu rechnen
+
+`UTILIZATION_SCALE` und `calculate_utilization` verweisen auf
+`myl_types::auslastung`. Der Scheduler braucht dieselbe Skala, und eine
+Konsenskonstante an zwei Orten ist eine zweite Wahrheit. Die
+`f64`-Helfer bleiben hier: Sie dienen der Anzeige, und `myl-types` liegt
+im Konsenspfad des Gleitkomma-Audits.
 
 ### v0.19.0 – 2026-09-04 (⚑ Fund 171: die Stichprobenrate bekommt eine Heimat)
 

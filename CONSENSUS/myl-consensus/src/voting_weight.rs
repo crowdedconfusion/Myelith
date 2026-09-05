@@ -35,9 +35,10 @@
 //!
 //! # Vier Befunde aus der Durchsicht
 //!
-//! ⚑ **Die Durchsicht selbst steht im Fahrplan**, mit Namen, Zahlen und
-//! Fundstellen. Hier stehen ihre Ergebnisse, denn nur die tragen die
-//! Entscheidung.
+//! ⚑ **Hier stehen die Ergebnisse der Durchsicht, nicht die Durchsicht.**
+//! Wessen Quelltext dafür gelesen wurde und mit welchen Zahlen, gehört
+//! nicht in eine Datei dieses Projekts; was die Entscheidung trägt, ist
+//! ihre Begründung in eigenen Worten.
 //!
 //! 1. **Der am stärksten geprüfte Einsatzbetrieb kennt keinen
 //!    Arbeitsanteil.** Das Stimmgewicht ist der Stake. Wo ein Deckel

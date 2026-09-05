@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.40.0"
+version = "0.43.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -101,3 +101,11 @@ opt-level = 2
 
 [profile.dev.package.integer-llm-runtime]
 opt-level = 2
+
+[dev-dependencies]
+# ⚑ **Nur zum Prüfen und ausdrücklich nicht im Bau.** Der Knoten liest
+# die Parameter-Registry nicht; er spiegelt drei Zahlen als `const`.
+# `tests/parameter.rs` hält beide Fassungen gegeneinander. Stünde
+# `myl-governance` unter `dependencies`, sähe es aus, als läse die Kette
+# die Registry, und genau das tut sie nicht.
+myl-governance = { path = "../../GOVERNANCE/myl-governance" }

@@ -1,0 +1,160 @@
+{
+  "name": "backward_attention",
+  "level": "training",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "head_dim": 4,
+    "kv_len": 3,
+    "score_mult": 16384,
+    "score_mult_frac": 15,
+    "q_frac": 8,
+    "k_frac": 7,
+    "v_frac": 10,
+    "prob_frac": 14,
+    "maske": [
+      true,
+      true,
+      true
+    ]
+  },
+  "inputs": {
+    "g": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "f5b6dc7bff64af922ed3b37532fe7f3de348956b0b8afdf078dc4bfa9104748a",
+      "data": [
+        3072,
+        -2048,
+        5120,
+        1024
+      ]
+    },
+    "q": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "f7ce0e688c633876d3caa250115b70bea00ba6cf5456aaa37e533953b859d9c5",
+      "data": [
+        300,
+        -180,
+        90,
+        240
+      ]
+    },
+    "k": {
+      "dtype": "int16",
+      "shape": [
+        12
+      ],
+      "hash": "514ca9d001b9686c8216283fc12baaa0ff376bc0178c384fc06795841eff3328",
+      "data": [
+        120,
+        60,
+        -40,
+        200,
+        -90,
+        150,
+        220,
+        30,
+        200,
+        -20,
+        70,
+        -110
+      ]
+    },
+    "v": {
+      "dtype": "int16",
+      "shape": [
+        12
+      ],
+      "hash": "1529c69215ec71af5bff023812b60b81ca982d8c1a35e0fca51d37be1d9c9e7e",
+      "data": [
+        1000,
+        -400,
+        250,
+        700,
+        -600,
+        900,
+        -120,
+        340,
+        50,
+        80,
+        -900,
+        120
+      ]
+    },
+    "p": {
+      "dtype": "int32",
+      "shape": [
+        3
+      ],
+      "hash": "7d7dbac02a265d72def622551f9b920b501d334539469c5835d4730ef0a88826",
+      "data": [
+        8608,
+        1974,
+        5802
+      ]
+    }
+  },
+  "outputs": {
+    "gq": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "51b40a570b010e1adc3334055b5e241c81f4683e4b4ac0a1ad44a396c955ba75",
+      "data": [
+        -116,
+        391,
+        -1415,
+        2701
+      ]
+    },
+    "gk": {
+      "dtype": "int32",
+      "shape": [
+        12
+      ],
+      "hash": "4f16f39a2e0cbb56413e4b1943a601c750ab414fc027e36adbc74b3d5bd1c9ef",
+      "data": [
+        1462,
+        -877,
+        439,
+        1170,
+        -343,
+        206,
+        -103,
+        -275,
+        -1119,
+        671,
+        -336,
+        -895
+      ]
+    },
+    "gv": {
+      "dtype": "int32",
+      "shape": [
+        12
+      ],
+      "hash": "b4ef41693254f9a0223151f75af4d6e08db5c249b9b12c589c100d51113581b3",
+      "data": [
+        1614,
+        -1076,
+        2690,
+        538,
+        370,
+        -247,
+        617,
+        123,
+        1088,
+        -725,
+        1813,
+        363
+      ]
+    }
+  }
+}

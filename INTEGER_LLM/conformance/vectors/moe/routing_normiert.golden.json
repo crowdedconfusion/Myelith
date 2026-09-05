@@ -1,0 +1,129 @@
+{
+  "name": "routing_normiert",
+  "level": "moe",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "k": 3,
+    "frac_bits": 8,
+    "lut_shift": 0,
+    "normieren": true
+  },
+  "inputs": {
+    "logits": {
+      "dtype": "int32",
+      "shape": [
+        6
+      ],
+      "hash": "6438ffdf867cf086cc6d3f2ecc65f1d9f686ca2491a4bc4148707011601834cd",
+      "data": [
+        0,
+        -70,
+        -200,
+        -5,
+        -400,
+        -12
+      ]
+    },
+    "exp_lut": {
+      "dtype": "int16",
+      "shape": [
+        65
+      ],
+      "hash": "6812aa4e5e5da56f08d8eaa2d6aa50aadc43909a68693e3cc9f2e815cea43d96",
+      "data": [
+        256,
+        94,
+        35,
+        13,
+        5,
+        2,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "outputs": {
+    "experten": {
+      "dtype": "int32",
+      "shape": [
+        3
+      ],
+      "hash": "96506e6b75f711fc5df6aff453d07c6da904c0728b10bfd80f0fa63150433daa",
+      "data": [
+        0,
+        3,
+        5
+      ]
+    },
+    "gewichte": {
+      "dtype": "int32",
+      "shape": [
+        3
+      ],
+      "hash": "7339bb1d8d7948726aa4e138b376e244949cc21c79357b1166fd0e654e608210",
+      "data": [
+        253,
+        2,
+        1
+      ]
+    }
+  }
+}

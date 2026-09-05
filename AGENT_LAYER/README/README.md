@@ -1,7 +1,7 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.8.0
-> **Datum:** 2026-08-28
+> **Version:** 0.14.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.7.0)
+> **Datum:** 2026-09-04
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -44,6 +44,295 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.14.0 – 2026-09-05 (Punkt 5.7: ein Steckplatz, der tun darf und nicht erlauben, und die Schleife, die beides zusammenhält)
+
+### ⚑ Die Erlaubnis prüfte gegen ein Angebot, das niemand einlösen konnte
+
+Bis gestern kannte diese Kiste `Werkzeug`, `Vorschlag`, `Erlaubnis`,
+`Betriebsart` und `Risikoklassen`, und keines davon führte je ein
+Werkzeug aus. Die Prüfkette war vollständig und lief ins Leere.
+
+`src/ausfuehrung.rs` schliesst das mit dem Merkmal
+[`Werkzeugausfuehrung`](../local-agent/src/ausfuehrung.rs) und dem
+`Werkzeugkasten`, der Angebot und Ausführung aneinander bindet.
+
+### ⚑ Ein Steckplatz darf TUN, nie ERLAUBEN
+
+Die Anregung war eine Steckplatz-Architektur nach dem Vorbild von
+OpenClaw und DeepSeek Harness. Sie ist gebaut, mit einer Grenze, die
+dort nicht so scharf gezogen ist: **`ausfuehren` bekommt keine
+`Erlaubnis`, keinen Kontrakt, keinen Strom und keine Registratur.** Ein
+Steckplatz sieht seine Argumente und gibt Text zurück.
+
+Damit kann er nicht entscheiden, ob er laufen darf. Das hat die
+Schleife vier Stufen früher entschieden, und ein neu eingehängter
+Steckplatz kann diese Entscheidung nicht aufweichen, weil er sie nicht
+sieht. Die Methode heisst `ausfuehren_ungeprueft`, damit die Abwesenheit
+der Prüfung an der Aufrufstelle im Text steht.
+
+### ⚑ `Send + Sync` ist eine Zusicherung, keine Formalie
+
+Ein Steckplatz, der nicht zwischen Fäden wandern darf, hält
+fadenlokalen Zustand, und dann rechnet er je nach Faden anders. Das ist
+genau die Sorte Nichtdeterminismus, die dieses Projekt überall sonst
+ausschliesst. Hier fällt sie beim Übersetzen auf statt im Betrieb.
+
+### Die Reihenfolge in `Lauf::fahren`, und warum sie festliegt
+
+`src/schleife.rs` führt acht Stufen in dieser Folge zusammen:
+Schrittzahl, Modell, Vorschläge, Erlaubnis, Argumentform, Betriebsart,
+Ausführen, Strom.
+
+⚑ **Die Betriebsart steht an Stufe 6**, also nachdem das Werkzeug
+bekannt ist und bevor es läuft. Früher ginge nicht, weil die Stufe eines
+Werkzeugs erst feststeht, wenn man weiss, welches gemeint ist; später
+wäre zu spät, weil dann schon etwas geschehen wäre.
+
+⚑ **Ein Schritt, in dem alles abgelehnt wurde, beendet den Lauf.** Sonst
+könnte ein Modell, das beharrlich Verbotenes vorschlägt, das Schrittbudget
+des Sitzungskontrakts aufbrauchen, ohne dass je etwas geschieht.
+
+### ⚑ Der Beleg an der echten Tür, und ein Fund aus dem eigenen Testaufbau
+
+`TESTCLIENT/myl-testclient/tests/harness_bis_modell.rs` fährt die
+Schleife jetzt gegen die **echte** Tür und die echte Shard-Pipeline: Die
+Vollmacht wird geprüft, der Knoten versiegelt, vier Shards rechnen. Der
+Strom trägt danach echte Segmentkennungen, also eine Kette.
+
+⚑ **Was der Test NICHT prüft, und warum:** dass das Modell ein Werkzeug
+vorschlägt. Ein 0,5B-Modell tut das unzuverlässig. Geprüft wird die
+Schleife und der Beleg, nicht die Bereitwilligkeit des Modells; die
+Entscheidungslogik liegt in `tests/schleife.rs` gegen einen Stummel.
+
+⚑ **Der erste Entwurf des Tests blieb stehen.** Er bediente die Tür
+zweimal, weil der Kontrakt zwei Schritte erlaubt. Das Modell schlug kein
+Werkzeug vor, die Schleife endete nach einem Schritt, und die Tür
+wartete auf einen zweiten Aufruf, der nie kam: null Prozent CPU nach 32
+Sekunden. Wie viele Aufrufe kommen, weiss nur die Schleife. Der Test
+fragt jetzt nicht mehr danach, sondern hört auf, wenn sie fertig ist.
+
+### v0.13.0 – 2026-09-05 (Punkt 5.5: eine Warnung, die niemand las, und ein Bericht, der etwas sagt)
+
+**Phase 5 ist damit vollständig.**
+
+### ⚑ `ETHICS/Risikoklassen.toml` hatte null Leser
+
+Die Datei sagt in ihrem eigenen Kopf: „CLIENT und AGENT_LAYER binden
+diese Datei ein, statt den Text abzuschreiben." **Bis heute tat das
+niemand.** Sie war eine Quelle ohne Leser, und die Warnung erreichte
+damit genau niemanden.
+
+Das ist bitter, weil die Begründung im selben Kopf steht: „Eine Warnung,
+die an drei Stellen steht, steht irgendwann in drei Fassungen da, und
+die mildeste wird die gelesene." **Der Entwurf war richtig; es fehlte
+der Aufrufer.** Die fünfte Kiste dieser Art an einem Tag.
+
+`myl_local_agent::risiko` bettet sie über `include_str!` ein: Damit kann
+sie zur Laufzeit **weder fehlen noch bearbeitet werden**, und wer sie
+milder haben will, muss das Programm neu übersetzen.
+
+⚑ **Klasse C wird abgelehnt, nicht gewarnt**, und die Begründung kommt
+**aus der Quelle**. Wer sie neu formulierte, hätte die zweite Fassung
+geschaffen, vor der die Datei warnt.
+
+⚑ **Und eine unbekannte Klasse ist keine milde Klasse.** Dieselbe
+Überlegung wie bei `Segmentstufe::Unbekannt` aus 5.4: In etwas, das
+niemand kennt, lässt sich nicht einwilligen.
+
+### ⚑ Der Bericht: Festhalten ist nicht Zeigen
+
+Die Herkunftskennzeichnung ist nach Kap. 8.1 eine **sichtbare**
+Anforderung. Ein Strom, der die Stufe je Schritt trägt und sie niemandem
+zeigt, erfüllt sie nicht. `Sitzungsstrom::bericht` nennt Betriebsart,
+abgelehnte Vorschläge mit Stelle, und die nicht nachrechenbaren
+Schritte.
+
+⚑ **Ein sauberer Lauf sagt das ausdrücklich**, statt zu schweigen:
+„Keine Ablehnungen" ist eine Aussage, eine leere Zeile ist keine, und
+der Leser könnte sie für ein fehlendes Protokoll halten. Ein Test
+verlangt, dass ein sauberer Bericht **keine Flagge** trägt.
+
+### v0.12.0 – 2026-09-05 (Punkt 5.4: die Betriebsart, und wo die Wahl des Nutzers aufhört)
+
+`myl_local_agent::betrieb`. Der Nutzer wählt, ob er Schritte zulässt,
+die **niemand nachrechnen kann**: `NurVerankert` oder `Alles`. Die Stufe
+kommt aus `myl_agent::Registratur::stufe` und ist das **Minimum über
+alles Benutzte**, also ergibt ein verankerter Skill neben einem lokalen
+ein Segment, das niemand nachrechnen kann.
+
+**Die Wahl gehört dem Nutzer und nicht dem Programm.** Ein lokaler Skill
+ist zulässig und bequem; sein Preis ist, dass ein Dritter das Ergebnis
+nur glauben kann.
+
+### ⚑ Aber „unbekannt" ist keine Wahl, sondern ein Defekt
+
+`Segmentstufe` kennt **drei** Zustände, und der dritte ist keine
+schwächere Form des zweiten:
+
+| Stufe | Was der Nutzer in Kauf nähme |
+|---|---|
+| `Nachrechenbar` | nichts |
+| `Bezeugt` | „ich kann das nicht nachrechnen" |
+| `Unbekannt` | **„ich weiss nicht, was gelaufen ist"** |
+
+⚑ **In die dritte Zeile lässt sich nicht einwilligen.** Wer nicht weiss,
+welcher Skill benutzt wurde, weiss auch nicht, wozu er ja sagt. Eine
+Einwilligung ohne Gegenstand ist keine, und deshalb lehnen **beide**
+Betriebsarten sie ab. `Alles` heisst nicht alles.
+
+### ⚑ Gefragt wird vor dem Schritt, nicht danach
+
+Ein Segment, das niemand nachrechnen kann, hinterher als solches
+auszuweisen, ist zu spät: Der Nutzer hat dann schon bezahlt, und die
+Antwort steht schon in seinem Kontext.
+
+⚑ **Und die Betriebsart steht im Sitzungsstrom.** Sonst liesse sich
+später nicht unterscheiden, ob alle Schritte nachrechenbar waren, **weil
+die Betriebsart es erzwang** oder weil es sich zufällig so ergab. Zwei
+verschiedene Aussagen, und nur die erste ist eine Zusage. Der Strom
+nennt dazu, **wo** es kippte: die Stufe hängt am Schritt, nicht an der
+Sitzung, denn die Stelle ist das, was ein Prüfer sucht.
+
+**Die Vorgabe ist `NurVerankert`.** Wer nichts sagt, bekommt das Engere;
+eine Vorgabe, die mehr zulässt als nötig, ist eine Entscheidung, die
+niemand getroffen hat.
+
+### v0.11.0 – 2026-09-05 (Punkt 5.3: der Sitzungsstrom, und eine Ablehnung gehört hinein)
+
+`myl_local_agent::strom`. Ein Strom aus Anfrage-, Antwort- und
+Ergebnis-Commitments, den Vorschlägen samt Entscheidung, und der
+Segmentkennung je Schritt. Daraus fallen die Kettenglieder nach
+Kap. 8.4 ab, und der Kettenwert rechnet sich nach.
+
+⚑ **Ein Beleg und kein Protokoll.** Ein Protokoll schreibt man für die
+Fehlersuche und kann es weglassen; hier gilt der Satz umgekehrt: Was der
+Nutzer später prüfen will, **muss beim Laufen entstanden sein**.
+Nachträglich liesse es sich nicht herstellen, denn dann bezeugte es sich
+selbst.
+
+### ⚑ Der Kern: eine abgelehnte Anfrage steht mit drin
+
+Ein Strom, der nur zeigt, **was ausgeführt wurde**, verschweigt das
+Interessanteste. Wer ihn liest, sieht einen ordentlichen Lauf und kann
+nicht unterscheiden, ob das Modell brav geblieben ist oder dreimal
+versucht hat zu überweisen und dreimal abgewiesen wurde. **Das ist
+derselbe Lauf und ein völlig anderer Befund.**
+
+⚑ **Ein Angriffsversuch ist ein Ereignis, kein Nichtereignis**, und er
+ist das früheste Zeichen, das es überhaupt gibt: Wer ihn wegwirft,
+erfährt von einem Angriff erst, wenn einer gelingt. `abgelehnte()` ist
+die Zahl, die ein Mensch zuerst sehen will.
+
+### ⚑ Und `kette.rs` hat seinen ersten Aufrufer
+
+`myl_agent::kette` stand seit dem 2026-08-29 mit **null Aufrufern** da,
+wie heute Morgen schon `Expertenwacht` und zwei Nachbarn im MoE-Pfad.
+Der Strom ruft sie.
+
+⛑ **Dabei fiel eine Lücke im eigenen 5.1 auf.** Der `Tuerklient` las
+`id` („myl-42", eine Anzeigekennung) und warf `myelith_segment` weg,
+also genau die 32 Bytes, an denen die Kette hängt. Ein Sitzungsstrom,
+der sich darauf beruft, hätte sie nicht gehabt. ⚑ **Und wo sie fehlt,
+sagt der Strom das:** Ein Schritt ohne Segmentkennung trägt **kein**
+Kettenglied, und der Versuch, eine Kette zu bilden, scheitert mit
+Begründung. Wer solche Schritte überspränge, bekäme eine kürzere Kette,
+die in sich stimmig ist und zu einem anderen Plan gehört: genau der
+Fall, den Kap. 8.4 „ausgelassen" nennt.
+
+### v0.10.0 – 2026-09-05 (Punkt 5.2: der Aufruf ist ein Vorschlag)
+
+`myl_local_agent::werkzeug`. Das Format ist die Hermes-Form, die Qwen
+spricht: Werkzeuge als JSON in einer Systemnachricht, der Vorschlag als
+`<tool_call>{…}</tool_call>` im Antworttext.
+
+⚑ **Das Format ist die Nebensache. Die Aussage ist: ein Vorschlag ist
+keine Erlaubnis.**
+
+| Quelle der Erlaubnis | zulässig |
+|---|---|
+| `Erlaubnis`, gesetzt **vor** dem Lauf | ja |
+| Sitzungskontrakt, `myl_agent::Plan` | ja |
+| **die Antwort des Modells** | **nein** |
+| **das Ergebnis eines Werkzeugs** | **nein** |
+
+⚑ **Die Prüfung sieht den Vorschlag nicht an.** Sie fragt nicht, ob er
+verdächtig aussieht, sondern ob sein Name in der Erlaubnis steht. Ein
+Filter, der nach Aussehen sortiert, ist ein Wettrennen gegen den
+Formulierungsspielraum einer Sprache; eine Positivliste ist keines. Und
+die Argumente gehen bewusst nicht ein: Eine Prüfung, die je nach
+Argument anders entscheidet, ist wieder ein Filter.
+
+**Der Angriff steht als Test da**, nicht als Absatz: Ein
+Werkzeugergebnis enthält präparierten Text mit einem `<tool_call>` für
+`ueberweisen`, das Modell plappert ihn nach, **der Vorschlag entsteht**,
+und die Erlaubnis lehnt ihn ab.
+
+### ⚑ Kodieren ist nicht Filtern
+
+Der erste Entwurf des Tests verlangte, dass der Marker im
+Werkzeugergebnis **entschärft** wird. Er scheiterte, und das war richtig:
+Das Ergebnis geht **unverändert** zurück, nur JSON-kodiert, damit der
+Rahmen nicht zerbricht. Eine eigene Zeile prüft, dass das Dekodieren
+Zeichen für Zeichen dasselbe ergibt: **Ein Filter bestünde sie nicht.**
+
+Unschädlich ist der Text aus einem anderen Grund: `vorschlaege` wird auf
+die Antwort des Modells angewendet und auf nichts sonst.
+
+### ⚑ Fund 181: die Tür setzt den Prompt nicht in der Vorlage zusammen
+
+Qwen2.5 und Qwen3 sind auf **ChatML** trainiert
+(`<|im_start|>role\ncontent<|im_end|>`); `myl_gateway::oai` setzt
+`role: content` aneinander. **Für eine einzelne Frage fällt das kaum
+auf, für den Agent Layer fällt es auf**: Werkzeugaufrufe hängen an
+genau dieser Vorlage, und ohne sie schlägt ein Modell seltener oder gar
+keine vor, **ohne dass jemand dem Ergebnis ansieht, warum**.
+
+**Nicht geändert**, weil die Vorlage die Token bestimmt, die Token die
+E2E-Vektoren und die den Konformitätswert. Das ist eine Entscheidung
+über den numerischen Vertrag, keine Verbesserung nebenbei.
+
+⚑ **Was geprüft ist**: Angebot und Werkzeugantwort **kommen an**. Über
+die echte Tür bis in die geshardete Pipeline, 127 Prompt-Token statt 10.
+**Nicht geprüft** ist, ob das 0,5B-Modell daraufhin einen Aufruf
+vorschlägt; das tut es unzuverlässig, und ein Test, der davon abhinge,
+wäre flatterig statt scharf.
+
+### v0.9.0 – 2026-09-05 (Punkt 5.1: das Harness spricht mit der Tür)
+
+`myl_local_agent::Tuerklient` schickt eine Vervollständigung an
+`/v1/chat/completions`, mit der Vollmacht als `Authorization: Bearer`,
+und liest die Antwort als Text, Abschlussgrund, Segmentkennung und
+Verbrauchszahlen.
+
+⚑ **Der Beleg steht in `myl-testclient`, und das ist der Kern der
+Sache.** Das Harness darf `myl-gateway` nicht kennen, das Gateway kennt
+das Harness nicht, und beide schreiben die OpenAI-Form **unabhängig**
+auf. Ein Klient, der die Typen des Servers benutzte, könnte die
+Behauptung „ein gewöhnlicher OpenAI-Klient erreicht diese Tür" gar nicht
+belegen: Er passte auch dann noch, wenn beide gemeinsam von der Form
+abgewichen wären. Gemessen über einen echten Socket bis in die
+geshardete Pipeline: **„Die Hauptstadt von Frankreich ist Paris"**, acht
+Token, Abschlussgrund `stop`.
+
+⚑ **Und keine HTTP-Bibliothek.** `reqwest` zöge `tokio`, `hyper` und
+`rustls` herein, für eine POST-Anfrage mit einem Kopf und einem Rumpf.
+`std::net::TcpStream` genügt, und jede Abhängigkeit weniger ist eine
+Angriffsfläche weniger an der Stelle, die eine Vollmacht trägt.
+
+⚑ **Der Status wird unterschieden und nicht eingeebnet.** Ein Harness,
+das jede Nicht-200 gleich behandelt, kann „die Vollmacht ist abgelaufen"
+nicht von „kein Guthaben" und nicht von „der Knoten rechnet gerade"
+trennen. Der Mensch davor soll erfahren, was zu tun ist, und das ist je
+nach Zahl etwas anderes.
+
+⛑ **Drei Testdateien lasen die Antwort bisher mit `read_to_end`**, sie
+verlassen sich also darauf, dass die Gegenseite auflegt. Ein Klient, der
+eine Vollmacht trägt und eine Abrechnung auslöst, darf nicht daran
+hängen, ob der Server `keep-alive` beherrscht: Er läse bis zur Frist und
+meldete eine Zeitüberschreitung für eine Antwort, die längst vollständig
+da war. Der neue Klient liest `Content-Length` und meldet einen
+abgeschnittenen Rumpf als Abbruch statt als „unlesbar".
 
 ### v0.8.0 – 2026-09-04 (das lokale Harness bekommt seinen Ort und seine Grenze)
 

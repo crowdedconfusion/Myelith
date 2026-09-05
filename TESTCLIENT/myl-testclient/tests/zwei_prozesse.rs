@@ -250,7 +250,13 @@ impl Aufbau {
             .arg("--ortsleitung")
             .arg("127.0.0.1:0")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // ⚑ **Nicht wegwerfen.** Bis zum 2026-09-05 stand hier
+            // `Stdio::null()`, und als der Dienst wegen einer
+            // θ_v-Abweichung gar nicht erst hochkam, meldete der Test
+            // „der Shard-Dienst hat seine Adresse nicht genannt". Das
+            // ist wahr und nutzlos: Die Ursache stand in der Zeile, die
+            // gerade verworfen wurde.
+            .stderr(Stdio::piped())
             .spawn()
             .expect("myl-pod-node startet");
 
@@ -271,8 +277,28 @@ impl Aufbau {
                 break;
             }
         }
-        let kind = Kind(prozess);
-        let adresse = adresse.expect("der Shard-Dienst hat seine Adresse nicht genannt");
+        let mut kind = Kind(prozess);
+        let adresse = match adresse {
+            Some(a) => a,
+            None => {
+                // ⚑ **Erst lesen, dann klagen.** Der häufigste Grund ist
+                // ein veraltetes Binary: `myl-pod-node` wird vorgebaut
+                // benutzt, nicht vom Test gebaut, und nach einer
+                // θ_v-Änderung passt es nicht mehr zu den Artefakten.
+                let mut fehler = String::new();
+                if let Some(mut e) = kind.0.stderr.take() {
+                    use std::io::Read;
+                    let _ = e.read_to_string(&mut fehler);
+                }
+                panic!(
+                    "der Shard-Dienst hat seine Adresse nicht genannt.\n\
+                     Seine Fehlerausgabe:\n{}\n\
+                     Haeufigster Grund: `myl-pod-node` ist aelter als die Artefakte. \n\
+                     Neu bauen mit: cd COMPUTE_PIPELINE/myl-pod && cargo build --bin myl-pod-node",
+                    if fehler.trim().is_empty() { "(leer)" } else { fehler.trim() }
+                );
+            }
+        };
 
         // --- 3. Der Rechenweg, gebaut wie in `myl-node` -------------
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();

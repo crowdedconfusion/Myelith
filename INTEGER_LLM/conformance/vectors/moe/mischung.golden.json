@@ -1,0 +1,79 @@
+{
+  "name": "mischung",
+  "level": "moe",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "frac_bits": 8,
+    "experten": 3,
+    "breite": 4
+  },
+  "inputs": {
+    "a0": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "396e4c40aa12c432402aaed1d3d741e3c202a58d62c99566fe2be9d9f5464dc7",
+      "data": [
+        1000,
+        -400,
+        250,
+        700
+      ]
+    },
+    "a1": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "b3f811a26e1a83d1817796298245bbd14cb766eface2e85f9331e2420c80dd11",
+      "data": [
+        -600,
+        900,
+        -120,
+        340
+      ]
+    },
+    "a2": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "489d79bec31fee9aa62aff6c529be295c66f121c5309a65981a1c643ca5f2073",
+      "data": [
+        50,
+        80,
+        -900,
+        120
+      ]
+    },
+    "gewichte": {
+      "dtype": "int32",
+      "shape": [
+        3
+      ],
+      "hash": "7339bb1d8d7948726aa4e138b376e244949cc21c79357b1166fd0e654e608210",
+      "data": [
+        253,
+        2,
+        1
+      ]
+    }
+  },
+  "outputs": {
+    "y": {
+      "dtype": "int16",
+      "shape": [
+        4
+      ],
+      "hash": "a495412bcbab1157c92d3296690de9e963c1dd12639b6829c4f440d7b0f3308d",
+      "data": [
+        984,
+        -388,
+        243,
+        695
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.35.0
+> **Version:** 0.39.0
 > **Datum:** 2026-09-03
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,120 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.39.0 – 2026-09-05 (die Charge bindet das Bündel an den Korpus)
+
+`Korpusanker::charge(start, laenge)` bildet den Wert, den ein
+Trainingssegment als seinen Datenstand nennt.
+
+⚑ **Die Wurzel geht mit hinein.** Ohne sie wäre die Charge nur „Segment
+512 bis 767", und dieselbe Angabe passte auf **jeden** Korpus: Ein Pod
+könnte auf eigenen Daten rechnen und dieselbe Charge nennen, ohne dass
+der Konsens einen Unterschied sähe.
+
+⚑ **Sie ist keine Prüfung der Daten, sondern deren Benennung.** Ob das
+Segment wirklich zum Korpus gehört, weist ein Merkle-Beweis nach
+(Kap. 7.3); die Charge sagt nur, welcher Teil gemeint war.
+
+`Segmentfehler` ist jetzt `Copy`, weil `myl_ledger::TransitionError` ihn
+trägt und selbst `Copy` ist. Alle Varianten sind Zahlen; ein Fehler, der
+eine Allokation bräuchte, gehörte ohnehin nicht in einen
+Übergangsfehler, der in jedem Block millionenfach entstehen kann.
+
+### v0.38.0 – 2026-09-05 (der Korpusanker)
+
+`myl_types::korpusanker::Korpusanker` trägt Kennung, Merkle-Wurzel,
+Segmentzahl und Bündelgrösse. Der Konsens hält den **Anker**, nicht die
+Daten.
+
+### ⚑ Warum es keine Anweisung `KorpusVerankern` gibt
+
+Sie wäre naheliegend und fahrlässig. **Wessen Daten das Modell
+trainieren, ist die schwerste Entscheidung dieses Systems**, und eine
+Anweisung, die jeder einreichen kann, übergäbe sie an jeden.
+
+Der richtige Weg wäre ein Governance-Beschluss. Den gibt es nicht: Die
+Parameter-Registry ist vom Kettenzustand aus nicht erreichbar, es gibt
+also überhaupt keinen Weg, auf dem ein Beschluss den Zustand ändert.
+
+**Solange das so ist, steht der Anker im Genesis und sonst nirgends.**
+Lieber unbeweglich als von jedem beweglich.
+
+⚑ **Die Bündelgrösse gehört zum Anker und ist kein Parameter des Pods.**
+Anhang B.6.4 rechnet den Beweis-Overhead an ihr aus (ein Segment 11,7
+Prozent, 256 Segmente 0,42 Prozent); wer sie wählen dürfte, wählte
+seinen eigenen Aufwand.
+
+### v0.37.0 – 2026-09-05 (die Auslastung zieht in den Konsenspfad)
+
+### ⚑ Eine Grösse, die zwei Schichten brauchen, gehört unter beide
+
+`myl_types::auslastung` ist neu und trägt `u_e = nachgefragt / Kapazität`
+als Festkommarechnung mit 16 Nachkommastellen.
+
+Sie stand bis heute in `myl_tokenomics::utilization`, und das war
+richtig, solange **nur der Preis** sie brauchte (Kap. 5.4). Seit heute
+braucht sie auch der Scheduler: Kap. 7.1 macht die Trainingsmenge von
+der Auslastung abhängig. Der Scheduler hätte sonst die ganze Wirtschaft
+einbinden müssen, um ein Verhältnis auszurechnen, oder die Skala
+abschreiben, und eine abgeschriebene Konsenskonstante ist eine zweite
+Wahrheit.
+
+⚑ **Die `f64`-Anzeigehelfer sind oben geblieben**, denn diese Kiste
+liegt im Konsenspfad des Gleitkomma-Audits. Der Schnitt fällt damit
+**genau auf die Konsensgrenze**: Was gerechnet wird, liegt hier; was
+angezeigt wird, liegt in der Wirtschaft.
+
+⚑ **Die Vollständigkeitsprüfung des Audits hat die neue Datei sofort
+bemerkt** und den Lauf fallen lassen, bis sie in `CONSENSUS_PATH` stand.
+Genau dafür ist sie da.
+
+### v0.36.0 – 2026-09-05 (TRAINING 2.1: die zweite Arbeitsklasse)
+
+`trainingssegment::Trainingssegment`. Ein Inferenzsegment ist
+verifizierbar, weil es eine **reine Funktion** seiner Eingabe ist; genau
+das gilt hier, mit anderer Eingabe und anderer Ausgabe:
+
+| | Eingabe | Ausgabe |
+|---|---|---|
+| Inferenz | Prompt-Stück, KV-Wurzel, θ_v | Aktivierungsspur, Ergebnis |
+| **Training** | θ_v, Charge, Startschritt, Schrittzahl, Lernrate | **Δm je Gewicht** |
+
+⚑ **Es braucht keinen neuen Verifikationsmechanismus.** Die Bisektion
+aus Kap. 6.6 überträgt sich unverändert: Weichen zwei Pods ab, wird
+halbiert, bis der erste abweichende Schritt feststeht, und der wird
+nachgerechnet.
+
+⚑ **Und es ist keine Kiste ohne Aufrufer, seit gestern.** Ein Segment
+trägt ein Commitment über Δm; bis zum 2026-09-04 gab es nichts, das ein
+Δm erzeugt. `integer_llm_runtime::trainingsschleife` erzeugt es seither,
+für eine dichte Ebene und für ein Expertengemisch.
+`TESTCLIENT/tests/trainingssegment.rs` lässt beide aufeinandertreffen:
+ein gerechneter Schritt wird zu einem Segment, das seine Prüfung
+besteht.
+
+### ⚑ Die Lernrate steht im Segment, ohne harte Schranke
+
+Sie muss committet sein, sonst ist das Segment keine reine Funktion.
+Eine Protokollschranke wäre bis zum 2026-09-05 zwingend gewesen: Ein zu
+grosser Schritt auf einem Router war **nicht behebbar**, weil der
+Ganzzahl-Softmax sättigte. Der Boden in `moe::route_top_k` (θ_v 0.18.0)
+hat den Zustand entfernt; ein zu grosser Schritt verschwendet seither
+Arbeit, statt einen Router zu töten, und Verschwendung braucht keine
+Konsensregel. Geprüft wird auf Sinn: kein Nenner von null, keine
+negative Rate.
+
+### ⚑ Was der Typ nicht tut
+
+**Er geht nicht in die Kette.** Es gibt keine Anweisung, die ein
+Trainingsbündel einreicht, und das ist kein Versehen: Ein Bündel
+entsteht, wenn ein Pod Trainingsarbeit **über das Netz** geleistet hat,
+und diesen Weg gibt es nicht. Eine Anweisung ohne Aufrufer wäre genau
+der Fehler, den dieses Modul zwei Absätze weiter oben vermeidet.
+
+**Und der Streitfall hat keine Zähne.** `create_slash_decision` und
+`apply_verdict` haben ausserhalb ihrer Tests keinen Aufrufer, für die
+Inferenz genauso. Der Typ erbt die Mechanik, nicht ihre Durchsetzung.
 
 ### v0.35.0 – 2026-09-04 (die Gegenrichtung der lokalen Leitung, Fund 165)
 

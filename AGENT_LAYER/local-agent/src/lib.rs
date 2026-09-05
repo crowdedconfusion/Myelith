@@ -47,9 +47,23 @@
 //! Absicht: Punkt 5.6 (die Isolation als Zusicherung statt als Absicht)
 //! liess sich bauen, bevor die erste Zeile Harness existiert, und eine
 //! Grenze, die nur im Text steht, überlebt den ersten eiligen
-//! Nachmittag nicht. Die Punkte 5.1 bis 5.5 stehen im Fahrplan.
+//! Nachmittag nicht. Was noch fehlt: der Anfrageweg zur `/v1`-Tür,
+//! das Werkzeugformat, der Sitzungsstrom, die Betriebsart „nur
+//! verankert" und die Herkunftskennzeichnung.
 
 #![deny(unsafe_code)]
+
+pub mod tuerklient;
+pub mod ausfuehrung;
+pub mod betrieb;
+pub mod risiko;
+pub mod schleife;
+pub mod vollmacht_grenzen;
+pub mod strom;
+pub mod werkzeug;
+
+pub use tuerklient::{Antwort, Nachricht, Tuerfehler, Tuerklient};
+pub use werkzeug::{Erlaubnis, Vorschlag, Werkzeug};
 
 /// Die Kisten, die dieses Harness **nicht** kennen darf.
 ///

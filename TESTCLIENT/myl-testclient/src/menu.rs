@@ -233,12 +233,17 @@ fn kurz(p: &std::path::Path) -> String {
 /// seither **hergestellt statt geprüft** — die Beschreibung des
 /// Menüpunkts entsteht aus dieser Liste, und [`stufe`] greift auf sie zu,
 /// sodass eine sechste Stufe ohne Eintrag beim ersten Lauf auffällt.
-pub(crate) const STUFEN: [(&str, &str); 5] = [
+pub(crate) const STUFEN: [(&str, &str); 6] = [
     ("Hardware", "Hardware"),
     ("Determinismus", "Determinismus (Einzelknoten)"),
     ("Shards", "Geshardete Inferenz"),
     ("Protokoll-Durchlauf", "Protokoll-Durchlauf"),
     ("Konformität", "Konformität"),
+    // ⚑ **Seit dem 2026-09-04, und sie ist die zweite Hälfte der
+    // Kernthese.** Die fünf davor belegen, dass zwei Maschinen dieselbe
+    // Inferenz rechnen; bezahlte Trainingsarbeit ist ohne diese Stufe
+    // unprüfbar.
+    ("Trainingsschritt", "Trainingsschritt (letzte Ebene)"),
 ];
 
 /// Die Protokollzeile einer Stufe: `Stufe 3 von 5: Geshardete Inferenz`.
@@ -389,10 +394,9 @@ fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
 /// Menü sah es aus wie eine Auswahl zwischen gleichwertigen Wegen.
 ///
 /// *(Hier stand bis zum 2026-08-27 „die vier Einzelstufen" und „vier
-/// getrennte Protokolle". Seit dem Konformitätslauf sind es fünf
-/// Stufen; eine feste Zahl in einem Modulkopf veraltet mit der
-/// nächsten Stufe wieder, die Aussage über die getrennten Protokolle
-/// nicht.)*
+/// getrennte Protokolle"; bis zum 2026-09-04 „fünf Stufen". Eine feste
+/// Zahl in einem Modulkopf veraltet mit der nächsten Stufe wieder, die
+/// Aussage über die getrennten Protokolle nicht.)*
 ///
 /// Sortiert nach Wichtigkeit, nicht nach Ablauf: Wer dieses Menü öffnet,
 /// ist in der Regel Koordinator und will vergleichen.
@@ -888,7 +892,7 @@ const KURZANLEITUNG: &str = "\
     [1] Artefakt wählen. Wird beschafft, falls keines vorliegt.
     [2] Testdatei wählen, die der Koordinator geschickt hat. Sie
         gehört nach TESTCLIENT/Testpläne/ und gilt für jedes Modell.
-    [3] Testlauf starten: fünf Stufen, ein Protokoll. Danach die
+    [3] Testlauf starten: sechs Stufen, ein Protokoll. Danach die
         Dateien aus TESTCLIENT/logs/ verschicken.
     [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
     [5] Am Netz teilnehmen: der zweite Test, Rechner statt Rechnung.
@@ -995,15 +999,16 @@ fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
     RunLog::mit_ziel(ziel, true)
 }
 
-/// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, fünf Stufen.
+/// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, alle Stufen.
 ///
 /// Hardware, Determinismus über die Einzelknoten-Runtime, geshardete
-/// Inferenz, der Protokoll-Durchlauf und die Konformität gehören zu
-/// **einer** Messung. Fünf getrennte Protokolldateien wären fünf
-/// Teilaussagen, die der Koordinator erst wieder zusammensetzen müsste,
-/// und beim Verschicken geht die eine verloren, die den Befund trägt.
-/// Die Regel sagt es kürzer: Ein Testlauf ohne Protokoll ist wertlos,
-/// und ein Testlauf mit fünf Protokollen ist einer zuviel.
+/// Inferenz, der Protokoll-Durchlauf, die Konformität und der
+/// Trainingsschritt gehören zu **einer** Messung. Getrennte
+/// Protokolldateien wären getrennte Teilaussagen, die der Koordinator
+/// erst wieder zusammensetzen müsste, und beim Verschicken geht die eine
+/// verloren, die den Befund trägt. Die Regel sagt es kürzer: Ein
+/// Testlauf ohne Protokoll ist wertlos, und ein Testlauf mit sechs
+/// Protokollen ist fünf zuviel.
 ///
 /// Die Stufen laufen **alle**, auch wenn eine fehlschlägt: Ein
 /// fehlgeschlagener Determinismuslauf macht die Hardware-Erhebung nicht
@@ -1043,8 +1048,31 @@ fn testlauf(e: &mut Einstellungen) -> bool {
         println!("  Läufen anderer Maschinen nicht vergleichbar.\n");
     }
     let e = &*e;
+    let log = protokoll("testlauf", e);
+    stufen_fahren(e, artefakt, log)
+}
 
-    let mut log = protokoll("testlauf", e);
+/// Die Stufen selbst, mit bereits geklärten Einstellungen.
+///
+/// # ⚑ Warum das vom Menü getrennt ist (2026-09-04)
+///
+/// Der Sammellauf war nur über das Menü erreichbar, und auf einer
+/// Mietmaschine sitzt niemand davor: Man verbindet sich über SSH, tippt
+/// einen Befehl und liest das Protokoll. **Ein Messverfahren, das eine
+/// Tastatur voraussetzt, ist auf einer stundenweise gemieteten Maschine
+/// eine Fehlerquelle**, denn jeder Handgriff mehr ist einer, der beim
+/// zweiten Rechner anders ausfällt.
+///
+/// Das Menü fragt nach, was fehlt, und ruft dann hierher; `myl-test
+/// testlauf` reicht die Einstellungen aus den Aufrufparametern durch.
+/// **Eine Umsetzung, zwei Eingänge**, siehe Fund 178.
+/// ⚑ **Das Protokoll kommt von aussen, und zwar genau eins.** Wer es
+/// hier anlegte, schriebe für den Aufruf über die Befehlszeile ein
+/// zweites: eine leere Datei mit demselben Namensmuster, die der
+/// Vergleich als zweiten Lauf derselben Maschine liest. Ein Testlauf
+/// mit zwei Protokollen ist eins zuviel.
+pub fn stufen_fahren(e: &Einstellungen, artefakt: PathBuf, log: RunLog) -> bool {
+    let mut log = log;
 
     // Nur auf den Bildschirm, nicht ins Protokoll: Der Hinweis richtet
     // sich an den Menschen davor, und er kommt VOR der ersten Stufe, weil
@@ -1074,15 +1102,25 @@ fn testlauf(e: &mut Einstellungen) -> bool {
     log.note(stufe(5));
     let konformitaet = crate::konformitaet::laufen(&mut log, Some(&artefakt));
 
+    // ⚑ **Nach der Konformität und nicht davor.** Weicht schon ein
+    // Rückwärtskern gegen sein festes Soll ab, ist die Ursache benannt,
+    // und der Trainingsabdruck sagt darüber nichts Neues. Umgekehrt ist
+    // ein abweichender Abdruck bei stimmender Konformität die
+    // interessante Lage: die Kerne rechnen gleich, der Weg als Ganzes
+    // nicht.
+    log.note(stufe(6));
+    let training = crate::training::laufen(&mut log, &artefakt);
+
     println!(
-        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}, Konformität {}",
+        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}, Konformität {}, Training {}",
         ja_nein(hardware),
         ja_nein(determinismus),
         ja_nein(shard),
         ja_nein(stapel),
-        ja_nein(konformitaet)
+        ja_nein(konformitaet),
+        ja_nein(training)
     );
-    log.finish(hardware && determinismus && shard && stapel && konformitaet)
+    log.finish(hardware && determinismus && shard && stapel && konformitaet && training)
 }
 
 /// Wartet auf einen Tastendruck und räumt danach den Bildschirm auf.

@@ -91,6 +91,55 @@ if [ -d "${VECTORS_DIR}/op" ]; then
     done
 fi
 
+# ── Trainings-Level: derselbe Starter, anderer Pruefer ─────────────
+#
+# Fuenf Kerne, die bis zum 2026-09-04 kein Vektor deckte. Drei der acht
+# Rueckwaertskerne rechneten falsch, und der Prueflauf, der 33 von 33
+# meldete, hat keinen von ihnen je gerechnet.
+echo ""
+echo "--- Trainings-Level ---"
+if [ -d "${VECTORS_DIR}/training" ]; then
+    for f in "${VECTORS_DIR}/training"/*.golden.json; do
+        [ -f "$f" ] || continue
+        TOTAL=$((TOTAL + 1))
+        NAME=$(basename "$f" .golden.json)
+        if cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
+                --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
+                "$f" "$BACKEND" 2>/dev/null | grep -q "^PASS:"; then
+            PASSED=$((PASSED + 1))
+            echo "  PASS: ${NAME}"
+        else
+            FAILED=$((FAILED + 1))
+            echo "  FAIL: ${NAME}"
+        fi
+    done
+fi
+
+# ── MoE: der Routingpfad (Fund 180) ────────────────────────────────
+#
+# route_top_k und mische_experten waren bis zum 2026-09-05 nirgends
+# gegen ein festes Soll geprueft. Das ist der Pfad, der entscheidet,
+# WELCHE Experten rechnen; zwei Knoten, die verschieden routen, rechnen
+# verschiedene Netze.
+echo ""
+echo "--- MoE-Level ---"
+if [ -d "${VECTORS_DIR}/moe" ]; then
+    for f in "${VECTORS_DIR}/moe"/*.golden.json; do
+        [ -f "$f" ] || continue
+        TOTAL=$((TOTAL + 1))
+        NAME=$(basename "$f" .golden.json)
+        if cargo run --manifest-path "${KERNELS_DIR}/Cargo.toml" \
+                --bin golden_runner --no-default-features --features "${BACKEND}" --quiet -- \
+                "$f" "$BACKEND" 2>/dev/null | grep -q "^PASS:"; then
+            PASSED=$((PASSED + 1))
+            echo "  PASS: ${NAME}"
+        else
+            FAILED=$((FAILED + 1))
+            echo "  FAIL: ${NAME}"
+        fi
+    done
+fi
+
 # ── Layer + E2E: golden_model Batch-Modus (runtime-Crate) ──────────
 echo ""
 echo "--- Layer + E2E ---"

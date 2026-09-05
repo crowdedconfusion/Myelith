@@ -80,6 +80,23 @@ pub enum TransitionError {
     PodOhneMitglieder,
     /// Die Aggregatsignatur gilt nicht unter den Mitgliedsschlüsseln.
     AggregatUngueltig,
+    /// Dieser Pod war in dieser Epoche nicht zum Training bestellt.
+    ///
+    /// ⚑ **Die Kernprüfung des Trainingsweges.** Ohne sie könnte jeder
+    /// Pod Trainingsarbeit einreichen, die er sich selbst ausgesucht
+    /// hat, und die ganze Begründung der VRF-Zuweisung fiele: Wer keine
+    /// Daten fälschen kann, kann immer noch auswählen.
+    NichtZumTrainingBestellt,
+    /// Für diesen Pod liegt in dieser Epoche schon ein Segment vor.
+    SegmentExistiert,
+    /// Das Segment ist in sich nicht schlüssig.
+    SegmentUnbrauchbar(myl_types::trainingssegment::Segmentfehler),
+    /// Das Segment weicht von dem ab, was der Plan verlangt hat.
+    ///
+    /// Genannt wird **welches Feld**, nicht der erwartete Wert: Der
+    /// Erwartungswert steht ohnehin im Plan, und wer ihn zurückmeldet,
+    /// baut eine Sonde für alle, die ihn nicht kennen.
+    SegmentWeichtAb(&'static str),
     /// Der hinterlegte Einsatz deckt die Kündigung nicht.
     EinsatzReichtNicht { verfuegbar: u64, verlangt: u64 },
     /// Zu viele offene Kündigungen; siehe
@@ -179,6 +196,16 @@ impl std::fmt::Display for TransitionError {
                 f.write_str("nur der Miner selbst darf sich an- und abmelden")
             }
             Self::MinerUnbekannt => f.write_str("dieser Miner ist nicht angemeldet"),
+            Self::NichtZumTrainingBestellt => {
+                f.write_str("dieser Pod war in dieser Epoche nicht zum Training bestellt")
+            }
+            Self::SegmentExistiert => {
+                f.write_str("fuer diesen Pod liegt schon ein Trainingssegment vor")
+            }
+            Self::SegmentUnbrauchbar(e) => write!(f, "das Trainingssegment ist unbrauchbar: {e}"),
+            Self::SegmentWeichtAb(feld) => {
+                write!(f, "das Trainingssegment weicht im Feld `{feld}` vom Plan ab")
+            }
             Self::SchluesselPasstNicht => {
                 f.write_str("der Schluessel gehoert nicht zu dieser Kennung")
             }
@@ -497,6 +524,17 @@ pub fn credit_spend(
             required: vtfe,
         });
     }
+
+    // ⚑ **Hier und nur hier wird die Nachfrage gezählt** (Fund 184).
+    // Jede bezahlte Anfrage geht durch diesen Engpass, auch die über
+    // `sitzung_ausgeben`. Eine zweite Zählstelle wäre eine zweite
+    // Wahrheit über dieselbe Grösse.
+    //
+    // ⚑ **Nach der Prüfung und nicht davor.** Eine abgelehnte Ausgabe
+    // ist keine bediente Nachfrage; wer sie mitzählte, liesse die
+    // Auslastung durch fehlgeschlagene Versuche steigen, und das wäre
+    // ein kostenloser Hebel auf die Trainingsmenge.
+    state.vtfe_epoche = state.vtfe_epoche.saturating_add(vtfe);
 
     // Änderungsphase: verfallene entsorgen, dann FIFO verbrauchen.
     let account = state.account_mut(owner);
@@ -1016,6 +1054,133 @@ pub fn buendel_einreichen(
     }
     state.buendel.insert(buendel.pod, buendel);
     Ok(())
+}
+
+/// Was der Plan von einem Trainingssegment verlangt.
+///
+/// ⚑ **Der Ledger rechnet den Plan nicht selbst aus**, denn
+/// `myl-scheduler` hängt an ihm und nicht umgekehrt. Dieselbe
+/// Arbeitsteilung wie bei `koordinator` und `mitglieder` in
+/// [`buendel_einreichen`]: Der Aufrufer legt vor, der Übergang prüft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segmentvorgabe {
+    /// Der Datenstand, den der Plan diesem Pod zugewiesen hat.
+    pub charge: myl_types::hash::Hash,
+    /// Die Modellfassung, an der gearbeitet wird.
+    pub modell_version: myl_types::ids::MerkleRoot,
+    /// Zähler der Lernrate.
+    pub lr_zaehler: i64,
+    /// Nenner der Lernrate.
+    pub lr_nenner: i64,
+}
+
+/// `TrainingssegmentEinreichen`: Ein Pod liefert seine Trainingsarbeit ab.
+///
+/// # ⚑ Was hier geprüft wird, und warum jede Prüfung nötig ist
+///
+/// 1. **Der Unterzeichner ist ein angemeldeter Miner** und der
+///    **Koordinator** dieses Pods. Sonst reichte jedes Mitglied
+///    dasselbe Segment ein, und die Dublettensperre entschiede nach
+///    Reihenfolge statt nach Zuständigkeit.
+/// 2. **Der Pod war zum Training bestellt.** Das ist die Kernprüfung:
+///    Ohne sie könnte jeder Pod Arbeit einreichen, die er sich selbst
+///    ausgesucht hat, und die ganze Begründung der VRF-Zuweisung fiele.
+/// 3. **Noch kein Segment für diesen Pod**, wie bei den Bündeln.
+/// 4. **Das Segment ist in sich schlüssig** (`Trainingssegment::pruefen`).
+/// 5. **Charge, Modellfassung und Lernrate stimmen mit dem Plan
+///    überein.** Ein Pod, der seine eigene Lernrate wählte, wählte
+///    seinen eigenen Arbeitsaufwand; einer, der seine eigene Charge
+///    wählte, wählte die Datenzusammensetzung des Modells.
+/// 6. **Die Aggregatsignatur gilt** unter den Mitgliedsschlüsseln.
+///
+/// # ⚑ Was hier **nicht** geprüft wird
+///
+/// Ob das `delta_commitment` das Ergebnis einer richtigen Rechnung ist.
+/// Das kann der Konsens nicht sehen und soll er auch nicht: Dafür gibt
+/// es die Redundanz und die Bisektion, genau wie bei der Inferenz. Der
+/// Übergang stellt fest, dass **jemand Zuständiges etwas Wohlgeformtes
+/// zum richtigen Auftrag** abgeliefert hat.
+#[allow(clippy::too_many_arguments)]
+pub fn trainingssegment_einreichen(
+    state: &mut LedgerState,
+    unterzeichner: &Address,
+    pod: myl_types::ids::PodId,
+    segment: myl_types::trainingssegment::Trainingssegment,
+    bestellt: bool,
+    koordinator: &MinerId,
+    mitglieder: &[(MinerId, myl_types::bls::BlsPublicKey)],
+    vorgabe: &Segmentvorgabe,
+) -> Result<(), TransitionError> {
+    let kennung = MinerId::new(*unterzeichner.as_bytes());
+    if !state.miner.contains_key(&kennung) {
+        return Err(TransitionError::MinerUnbekannt);
+    }
+    if kennung != *koordinator {
+        return Err(TransitionError::NichtKoordinator);
+    }
+    if !bestellt {
+        return Err(TransitionError::NichtZumTrainingBestellt);
+    }
+    if state.trainingssegmente.contains_key(&pod) {
+        return Err(TransitionError::SegmentExistiert);
+    }
+    segment.pruefen().map_err(TransitionError::SegmentUnbrauchbar)?;
+    if segment.charge != vorgabe.charge {
+        return Err(TransitionError::SegmentWeichtAb("charge"));
+    }
+    if segment.modell_version != vorgabe.modell_version {
+        return Err(TransitionError::SegmentWeichtAb("modell_version"));
+    }
+    if segment.lr_zaehler != vorgabe.lr_zaehler || segment.lr_nenner != vorgabe.lr_nenner {
+        return Err(TransitionError::SegmentWeichtAb("lernrate"));
+    }
+    if mitglieder.is_empty() {
+        return Err(TransitionError::PodOhneMitglieder);
+    }
+    let schluessel: Vec<myl_types::bls::BlsPublicKey> =
+        mitglieder.iter().map(|(_, k)| *k).collect();
+    // ⚑ **Ein Segment traegt eine Unterschrift je Mitglied**, anders als
+    // ein PoI-Buendel, das ein fertiges Aggregat traegt.
+    // `Trainingssegment::pruefen` verlangt `signaturen.len() ==
+    // pod_pfad.len()`, und diese Form bleibt: Sie sagt, **wer** haftet,
+    // und laesst spaeter eine Teilbesetzung zu, die ein fertiges
+    // Aggregat nicht hergibt.
+    //
+    // ⚑ **Geprueft wird trotzdem nur einmal.** Alle unterschreiben
+    // dieselbe Botschaft, also lassen sich die Signaturen zu einer
+    // zusammenfassen und mit `fast_aggregate_verify` in **einem**
+    // Pairing pruefen. Sie einzeln zu pruefen kostete das Sechsfache und
+    // saehe genauso aus.
+    if segment.signaturen.len() != schluessel.len() {
+        return Err(TransitionError::AggregatUngueltig);
+    }
+    let Ok(aggregat) = myl_types::bls::aggregate_signatures(&segment.signaturen) else {
+        return Err(TransitionError::AggregatUngueltig);
+    };
+    let botschaft = segment.botschaft();
+    if !myl_types::bls::fast_aggregate_verify(&schluessel, &botschaft, &aggregat) {
+        return Err(TransitionError::AggregatUngueltig);
+    }
+    state.trainingssegmente.insert(pod, segment);
+    Ok(())
+}
+
+/// Die Trainingssegmente der laufenden Epoche, in kanonischer Ordnung.
+pub fn trainingssegmente_der_epoche(
+    state: &LedgerState,
+) -> Vec<myl_types::trainingssegment::Trainingssegment> {
+    state.trainingssegmente.values().cloned().collect()
+}
+
+/// Räumt die Trainingssegmente der abgerechneten Epoche weg.
+///
+/// ⚑ **Aus demselben Grund wie bei den Bündeln:** Ohne dies wüchse der
+/// Zustand unbegrenzt und Entscheidung D7 wäre gebrochen. Die Historie
+/// steht in den Blöcken.
+pub fn trainingssegmente_leeren(state: &mut LedgerState) -> usize {
+    let n = state.trainingssegmente.len();
+    state.trainingssegmente.clear();
+    n
 }
 
 /// Hinterlegt `betrag` als Einsatz (Punkt B11).

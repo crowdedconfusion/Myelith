@@ -1,6 +1,6 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.10.0
+> **Version:** 0.12.0
 > **Datum:** 2026-09-03
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
@@ -134,6 +134,45 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.12.0 – 2026-09-05 (der Freianteil steigt auf 8000)
+
+`TrainingsFreianteil` steht auf 8000 statt 1000 Basispunkten.
+
+⚑ **Die Begründung dreht sich um.** Kap. 7.1 fragt, wie wenig Training
+das Netz verträgt. Die andere Frage ist, was leerlaufende Miner sonst
+tun sollen, und die Antwort ist: nichts.
+
+**Warum nicht 10000:** Die Auslastung ist die der Vorepoche. Die
+fehlenden zwanzig Prozent der freien Kapazität sind Luft für
+Nachfragewachstum innerhalb der laufenden Epoche, kein Rundungsrest. Wie
+viel Luft nötig ist, ist **nicht gemessen**.
+
+### v0.11.0 – 2026-09-05 (drei Parameter für die Trainingszuteilung)
+
+Neu: `PodKapazitaet`, `TrainingsGrundrate`, `TrainingsFreianteil`.
+Damit sind es 34 statt 31.
+
+⚑ **Warum Parameter und nicht Konstanten:** Die Pod-Kapazität hängt vom
+Modell und von der zugelassenen Hardware-Klasse ab. Ein grösseres Modell
+senkt sie, schnellere Hardware hebt sie. Eine einbetonierte Zahl wäre ab
+dem ersten Modellwechsel falsch, ohne dass es jemandem auffiele.
+
+### ⚑ Die Entwurfs-Sperrklinke ist von sieben auf neun gestiegen, und das ist ein Rückschritt
+
+Sie soll fallen, nicht steigen. Zwei der drei neuen Werte hat niemand
+beschlossen, und beide sind **ehrlich** Entwürfe:
+
+- `PodKapazitaet` ist eine Grössenordnung. Aus dem Gesamtlauf ist der
+  vTFE-Betrag je Segment bekannt (rund 1,0 Mio.), die Segmente je
+  Sekunde sind es nicht. **Sie fällt, sobald jemand misst**, und das ist
+  eine Messung, kein Beschluss.
+- `TrainingsGrundrate` ist eine Abweichung von Kap. 7.1. Sie fällt,
+  sobald der Projektinhaber sie entscheidet, oder sie geht auf null und
+  Kap. 7.1 gilt wörtlich.
+
+**Beide haben einen benannten Weg heraus.** Ein Entwurf ohne solchen Weg
+gehörte nicht hinzugefügt.
 
 ### v0.10.0 – 2026-09-04 (⚑ Fund 171: zwei Vorgaben leiten ab statt abzuschreiben)
 

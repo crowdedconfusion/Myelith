@@ -203,6 +203,72 @@ pub struct LedgerState {
     pub burn_epoche: u64,
     /// Der geglättete Burn `B̄_e` über die bisherigen Epochen.
     pub burn_ema: u64,
+    /// Die in der **laufenden** Epoche nachgefragte Rechenleistung in
+    /// vTFE.
+    ///
+    /// ⚑ **Ohne diese Zahl gibt es keine Auslastung** (Fund 184,
+    /// 2026-09-05). `myl_tokenomics::utilization::calculate_utilization`
+    /// stand seit Monaten da und hatte ausserhalb der eigenen Tests
+    /// keinen Aufrufer, weil ihre Eingangsgrösse im Zustand nicht
+    /// existierte. Kap. 7.1 macht die Trainingsmenge von der Auslastung
+    /// abhängig; die Regel liess sich nicht auswerten.
+    ///
+    /// Gezählt wird in [`crate::transitions::credit_spend`], dem einen
+    /// Engpass, durch den jede bezahlte Anfrage geht.
+    pub vtfe_epoche: u64,
+    /// Was in der **abgeschlossenen** Vorepoche nachgefragt wurde.
+    ///
+    /// # ⚑ Warum die Vorepoche und nicht die laufende
+    ///
+    /// Die Pod-Zuteilung einer Epoche steht **fest, bevor die Epoche
+    /// läuft**. Wer sie aus der Nachfrage derselben Epoche ableitete,
+    /// bräuchte eine Zahl, die es noch nicht gibt.
+    ///
+    /// ⚑ **Dasselbe Kausalitätsargument wie beim Lastausgleich des
+    /// Routers**, der die vorige Charge benutzt und nicht die laufende.
+    /// Es ist kein Kompromiss, sondern die einzige Reihenfolge, in der
+    /// die Frage überhaupt beantwortbar ist.
+    pub vtfe_vorepoche: u64,
+    /// Die Trainingssegmente der laufenden Epoche, je Pod eines.
+    ///
+    /// ⚑ **Wie die Bündel: begrenzt und je Epoche geleert.** Eine
+    /// wachsende Menge im Zustand bräche Entscheidung D7, weil
+    /// `commitment` den ganzen Zustand serialisiert. Die Historie steht
+    /// in den Blöcken.
+    pub trainingssegmente: BTreeMap<PodId, myl_types::trainingssegment::Trainingssegment>,
+
+    /// Der verankerte Trainingskorpus, falls das Netz einen hat.
+    ///
+    /// ⚑ **Nur im Genesis zu setzen**, siehe
+    /// [`myl_types::korpusanker::Korpusanker`]: Eine Anweisung, die
+    /// jeder einreichen kann, uebergaebe die schwerste Entscheidung
+    /// dieses Systems an jeden, und einen Governance-Weg in den Zustand
+    /// gibt es noch nicht.
+    ///
+    /// `None` heisst: Dieses Netz trainiert nicht, auch wenn es
+    /// Trainingspods bildet. Der Plan weist dann kein Buendel zu, und
+    /// **das steht im Plan** statt in einem Protokoll.
+    pub korpus: Option<myl_types::korpusanker::Korpusanker>,
+    /// Wann jeder Miner zuletzt zum Training herangezogen wurde.
+    ///
+    /// # ⚑ Am Miner und nicht am Pod
+    ///
+    /// „Ein Pod, der zuletzt trainiert hat, kommt nicht sofort wieder
+    /// dran" ist die Absicht, aber **Pods werden jede Epoche neu
+    /// gebildet**: Pod 5 der Epoche 100 und Pod 5 der Epoche 101 sind
+    /// verschiedene Leute. Was über Epochen hinweg besteht, ist der
+    /// Miner.
+    ///
+    /// ⚑ **Vermerkt wird die Zuweisung, nicht die erbrachte Leistung.**
+    /// Ein Pod, der zugewiesen war und scheiterte, soll nicht sofort
+    /// wieder vorn stehen; sonst wäre Scheitern ein Weg, immer wieder
+    /// gewählt zu werden, und bei gedeckelter Trainingsvergütung will
+    /// das niemand. Ob er geliefert hat, entscheidet die Vergütung.
+    ///
+    /// ⚑ **Er wächst nicht unbegrenzt.** Die Menge ist durch das
+    /// Minerregister beschränkt, das ohnehin im Zustand steht; ein
+    /// abgemeldeter Miner verschwindet mit dem nächsten Aufräumen.
+    pub trainingsstand: std::collections::BTreeMap<MinerId, u64>,
     /// Bis einschließlich welcher Epoche der geglättete Burn fortgeschrieben ist.
     ///
     /// ⚑ **Gegen die doppelte Fortschreibung.** Die Glättung darf je
@@ -352,6 +418,11 @@ impl LedgerState {
             sitzungen: BTreeMap::new(),
             speicher: BTreeMap::new(),
             burn_epoche: 0,
+            vtfe_epoche: 0,
+            vtfe_vorepoche: 0,
+            trainingsstand: std::collections::BTreeMap::new(),
+            korpus: None,
+            trainingssegmente: BTreeMap::new(),
             burn_ema: 0,
             burn_ema_bis: EpochId(0),
             auszahlung: BTreeMap::new(),

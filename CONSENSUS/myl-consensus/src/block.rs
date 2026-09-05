@@ -299,6 +299,36 @@ pub enum Anweisung {
         /// Wohin die Erträge gehen.
         konto: Address,
     },
+    /// `TrainingssegmentEinreichen`: Ein Pod liefert seine
+    /// Trainingsarbeit ab (Whitepaper Kap. 7.2).
+    ///
+    /// ⚑ **Angehängt und nicht eingefügt**, wie jede Variante seit dem
+    /// 2026-09-03: Borsh kodiert sie als Index, und eine eingeschobene
+    /// Variante verschöbe jede dahinter.
+    ///
+    /// # ⚑ Warum es diese Variante geben muss
+    ///
+    /// `myl_types::trainingssegment::Trainingssegment` steht seit dem
+    /// 2026-09-05 als Arbeitsklasse da, und **kein Weg führte dorthin**:
+    /// Ein Pod konnte rechnen, aber nichts abliefern. Dieselbe Lage wie
+    /// bei `AuszahlungskontoEintragen` (Fund 167) und bei der ganzen
+    /// Kiste `myl-train` (Fund 183).
+    ///
+    /// # ⚑ Der Pod steht im Klartext, das Segment nennt ihn nicht
+    ///
+    /// `Trainingssegment` trägt einen `pod_pfad` aus Miner-Kennungen,
+    /// aber keine `PodId`. Der Übergang braucht sie, um Dubletten zu
+    /// sperren und um gegen den Trainingsplan zu prüfen.
+    ///
+    /// **Ein falsch gefülltes Feld ist ungefährlich:** Der Übergang
+    /// leitet Koordinator und Besetzung aus dieser Kennung ab und prüft
+    /// den Unterzeichner dagegen.
+    TrainingssegmentEinreichen {
+        /// Welcher Pod.
+        pod: myl_types::ids::PodId,
+        /// Das Segment.
+        segment: myl_types::trainingssegment::Trainingssegment,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.

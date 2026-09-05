@@ -1,6 +1,6 @@
 {
   "theta_v": {
-    "version": "0.17.0",
+    "version": "0.18.0",
     "model": {
       "family": "qwen2.5",
       "variant": "0.5b",
@@ -169,6 +169,17 @@
           "has_sampling": true
         }
       ]
+    },
+    "moe": {
+      "note": "Theta_v 0.18.0 (2026-09-05, Fund 79 und Fund 180). BIS HIERHER STAND MOE UEBERHAUPT NICHT IN DIESER DATEI, und das ist die Haelfte von Fund 180: Der Pfad, der entscheidet WELCHE Experten rechnen, hatte weder Festlegung noch Konformitaetsvektor. Beides ist jetzt da (Umfang `moe`, vier Vektoren).",
+      "auswahl": "top_k ueber die LOGITS, nicht ueber die Wahrscheinlichkeiten: der Weg ueber die exp-Tabelle erzeugt Gleichstaende, die es vorher nicht gab. Bei Gleichstand gewinnt der kleinere Expertenindex. Gewaehlt wird k-mal das Maximum ueber einen vollstaendigen Vergleich, NICHT ueber eine Sortierung: ein sort_unstable_by ueber einen Vergleich, der nur den Logit ansieht, ordnet gleiche Elemente bibliotheks- und laengenabhaengig an.",
+      "gewichte_boden": 1,
+      "gewichte_boden_note": "⚑ FUND 79. Bei norm_topk_prob wird jedes Mischgewicht auf mindestens 1 gehoben, der Ueberschuss geht vom groessten ab (dieselbe Regel wie die Summenkorrektur). GRUND: Der Ganzzahl-Softmax saettigt, und Saettigung ist fuer den Router ein ABSORBIERENDER Zustand. Traegt der Gewinner exakt 2^prob_frac_bits, ist der Gradient JEDES Routerlogits exakt null, aus Rechengruenden und nicht durch Rundung: fuer einen Verlierer ist p_i = 0, fuer den Gewinner wird die Klammer null. Ein Router, der einmal sicher genug war, bleibt es fuer immer. In Gleitkomma gibt es diesen Zustand nicht. GEMESSEN an Qwen3-30B-A3B: im Betrieb schlaegt der Boden NIE an (97 Token, 48 Ebenen, 4656 Routerstellen, 37248 Mischgewichte, kein einziges auf null, kleinstes je 24 von 16384), die Inferenz aendert sich also um kein Bit. Im Training rettet er den Router: bei Schrittweite 2^-10 und 2^-14 saettigt der Router ohne Boden in 199 von 200 Schritten und steht danach still, mit Boden in keinem; bei 2^-18 und 2^-22 ist das Ergebnis MIT und OHNE Boden bitgleich. Er wirkt genau dort, wo er rettet, und sonst nirgends.",
+      "gewichte_boden_nur_bei_normierung": true,
+      "gewichte_boden_nur_bei_normierung_note": "Die Regel 'Ueberschuss vom groessten abziehen' setzt voraus, dass die Summe vorher exakt 2^prob_frac_bits ist, und das leistet nur die Summenkorrektur bei norm_topk_prob. Ohne Normierung sind die Gewichte ein Ausschnitt aus dem vollen Softmax; ein Boden verschoebe dort die Gesamtmasse.",
+      "summenkorrektur": "Bei norm_topk_prob summieren sich die Gewichte exakt auf 2^prob_frac_bits. Der Rundungsrest geht an das GROESSTE Gewicht (bei Gleichstand an den kleineren Index): dort ist die relative Verzerrung am kleinsten, und die Regel braucht keine zweite Rundung. Der Fehler ist nicht zufaellig, sondern haengt an der Werteverteilung und wiederholt sich; ueber 48 Ebenen ist er nicht mehr belanglos.",
+      "mischung": "y = (Summe_i w_i * a_i) >> prob_frac_bits, in i64 summiert und EINMAL geschoben, nicht je Summand (Fund 24).",
+      "lastausgleich": "OFFEN. Ein Lastausgleich ist bei MoE keine Verbesserung, sondern Voraussetzung: er muss verhindern, dass ein Router saettigt. Die ueblichen Verfahren scheiden aus, weil sie Batch-Statistiken im Vorwaertspass und Rauschen im Router brauchen; beides bricht den Determinismus. Kandidat: die Vorspannung je Experte nach Loss-Free Balancing (Wang u.a. 2024), b_i += u * sign(mittlere Last - Last_i), wirksam NUR auf die Top-k-Auswahl. Sie ist kein Gradient, sondern ein Zaehler und ein Vorzeichen, beides exakt ganzzahlig, und die Statistik geht ins Gewichtsupdate statt in die Rechnung. NICHT GEBAUT, weil sie eine Definition der Arbeitseinheit braucht (TRAINING 2.1), und die ist offen."
     }
   }
 }

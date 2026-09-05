@@ -1,7 +1,7 @@
 {
   "qwen2.5-0.5b": {
-    "artefakt_digest_sha256": "c42bb8a8d85bba5a76b3302298903fb5c1edfe4463c5d1d44256bef447ffd5c9",
-    "bytes": 556163,
+    "artefakt_digest_sha256": "ea442c3c8ecf628e12b4751ecc03fc64a623d904e0495936e895d98832833d2e",
+    "bytes": 556181,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -17,12 +17,12 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.17.0",
+    "theta_v": "0.18.0",
     "weights_manifest_sha256": "e0ef3424764338fec017e65bce2aa821985c8519687a447a8b57046a621c6a05"
   },
   "qwen2.5-7b": {
-    "artefakt_digest_sha256": "9786998278b12feae347397fd366e96effca08101104587a3d7998a353894569",
-    "bytes": 1290921,
+    "artefakt_digest_sha256": "6a5492d59c322c21f972ed154182dc6dc4015bce29c1b24005fef4d62a56b08e",
+    "bytes": 1290939,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -38,12 +38,12 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.17.0",
+    "theta_v": "0.18.0",
     "weights_manifest_sha256": "63d1e700b1915f6aa0d2a9eee7ba55e76fc2682fa839158abb1a1f271c7adce1"
   },
   "qwen3-30b-a3b": {
-    "artefakt_digest_sha256": "95ba3107028ec17bfdafa316df2066b179185fadd814003f8cc7dd7645117f8a",
-    "bytes": 1323009,
+    "artefakt_digest_sha256": "68cc13b051271e3a9c204d2e4460bd66e8d08880bd546baefa4a3cafee3eb587",
+    "bytes": 1323027,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -59,12 +59,12 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.17.0",
+    "theta_v": "0.18.0",
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
   "qwen3-4b": {
-    "artefakt_digest_sha256": "a28ac6edeb88d28262ad7b8e600ca71d7d26a1a60232bd5f60e1f14286105b82",
-    "bytes": 1262198,
+    "artefakt_digest_sha256": "f2a6a6b97db860146b1aed5cd7c12c09b62b55bab304244e5008d27517716d9d",
+    "bytes": 1262216,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -80,7 +80,7 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.17.0",
+    "theta_v": "0.18.0",
     "weights_manifest_sha256": "4437d872387dc80a820f5373e501089fe4d7a4e91d73a3ce6e015fa5e935baff"
   }
 }

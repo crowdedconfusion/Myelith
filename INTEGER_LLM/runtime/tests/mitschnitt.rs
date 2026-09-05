@@ -287,3 +287,50 @@ fn die_werte_aus_den_kernen_stimmen() {
         }
     }
 }
+
+/// ⚑ **Zwei Wege zu denselben Logits (Fund 176).**
+///
+/// `forward_token` schreibt Normierung und Kopf aus;
+/// `forward_token_mit_routing` liefert dieselben Logits und zusätzlich
+/// die Routing-Befunde. **Sie müssen bitgleich sein**, denn sie sind
+/// dieselbe Rechnung.
+///
+/// ⛑ **Bis zum 2026-09-04 waren sie es nicht.** Der Routing-Weg
+/// normierte den Strom selbst und reichte ihn dann an `head_logits`,
+/// das ihn ein **zweites Mal** normierte, dazu auf der falschen
+/// Eingangsskala. Der Rechenpfad des Netzes war nie betroffen; betroffen
+/// war der **Messpfad**, also die Zahlen, mit denen eine
+/// Routing-Untersuchung arbeitet. **Ein Messgerät, das falsch misst,
+/// meldet keinen Fehler.**
+///
+/// ⚑ **Aufgefallen ist es beim Lesen, nicht beim Testen**, und das ist
+/// der Grund für diesen Test: Zwei Funktionen, die dasselbe liefern
+/// sollen, gehören nebeneinandergelegt.
+#[test]
+fn beide_wege_liefern_dieselben_logits() {
+    let Some(m) = modell() else { return };
+    let token = 9707usize;
+
+    let mut cache_a = KVCache::for_range(0, m.num_layers, m.num_kv_heads);
+    let logits_a = m.forward_token(token, 0, &mut cache_a);
+
+    let mut cache_b = KVCache::for_range(0, m.num_layers, m.num_kv_heads);
+    let (logits_b, _) = m.forward_token_mit_routing(token, 0, &mut cache_b);
+
+    assert_eq!(
+        logits_a.len(),
+        logits_b.len(),
+        "die beiden Wege liefern verschieden viele Logits"
+    );
+    let abweichend = logits_a
+        .iter()
+        .zip(logits_b.iter())
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(
+        abweichend, 0,
+        "{abweichend} von {} Logits weichen ab: der Routing-Weg rechnet etwas anderes \
+         als der Inferenzpfad",
+        logits_a.len()
+    );
+}

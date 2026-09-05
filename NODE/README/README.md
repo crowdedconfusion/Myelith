@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.40.0
+> **Version:** 0.43.0
 > **Datum:** 2026-09-03
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,86 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.43.0 – 2026-09-05 (der Weg vom Trainingsplan bis in den Zustand)
+
+`Anweisung::TrainingssegmentEinreichen` wird in `kette.rs` bedient:
+Besetzung nachschlagen, Plan rechnen, Charge ableiten, Übergang rufen.
+
+⚑ **Dieselbe Arbeitsteilung wie beim Bündel** (Fund 144): Der Ledger
+kennt den Scheduler nicht und soll ihn nicht kennen; diese Stelle sieht
+beides und legt vor, was der Übergang prüft.
+
+⚑ **Der Plan wird gerechnet und nicht gespeichert.** Er ist eine reine
+Funktion des Zustands; ihn abzulegen führte eine zweite Wahrheit ein,
+die mit dem Zustand auseinanderlaufen könnte.
+
+⚑ **Ohne Korpus oder ohne Zuweisung gibt es keine Charge**, und dann
+steht dort eine Null. Der Übergang lehnt über `bestellt` oder über die
+Charge ab; **eine erfundene Charge wäre schlimmer als keine.**
+
+Ein Test fährt den ganzen Weg: Ein Segment mit fremder Charge wird
+abgewiesen, das richtige steht danach im Zustand. **Die Fälschung steht
+im Test vor dem Erfolg**, damit der Erfolg nicht bloss belegt, dass
+irgendetwas durchgeht.
+
+### Die Lernrate ist ein Protokollwert
+
+`TRAININGS_LR_ZAEHLER` und `TRAININGS_LR_NENNER` stehen bei der Kette,
+und der Übergang prüft jedes Segment dagegen. **2⁻¹² ist der Wert aus
+dem Trainingslauf**, der auf dem 0,5B über dreissig Schritte sein Ziel
+trifft; für das Expertengemisch liegt das Arbeitsfenster des Routers bei
+2⁻¹⁸ bis 2⁻²², und **dass hier eine Zahl für beide steht, ist eine
+offene Vereinfachung** und kein Ergebnis.
+
+### v0.42.0 – 2026-09-05 (der Epochenwechsel vermerkt, wer trainiert hat)
+
+`epochenwechsel_abschliessen` schreibt `trainingsstand` fort, **vor**
+dem Drehen der Saat: Der Plan der abgelaufenen Epoche hängt an der Saat,
+die während ihr galt.
+
+⚑ **Ohne diesen Eintrag bliebe das Gedächtnis leer**, die Reihum-Ordnung
+hätte nichts zu ordnen, und die Auswahl fiele still auf das blosse Los
+zurück. Ein Test fährt die Kette über Epochengrenzen und hält fest, dass
+der Vermerk entsteht und mitrückt.
+
+### ⚑ Vermerkt wird die Zuweisung, nicht die Leistung
+
+Ein Pod, der zugewiesen war und scheiterte, soll nicht sofort wieder
+vorn stehen; sonst wäre Scheitern ein Weg, immer wieder gewählt zu
+werden, und bei gedeckelter Trainingsvergütung will das niemand. Ob er
+geliefert hat, entscheidet die Vergütung.
+
+### Die Probekette hat einen Probekorpus
+
+Ohne Anker bildet die Kette Trainingspods und weist ihnen nichts zu; der
+Weg von der Zuteilung bis zum Bündel wäre von keinem Test berührt. Die
+Wurzel ist ein Platzhalter und ausdrücklich keine echte Verankerung.
+
+### v0.41.0 – 2026-09-05 (der Trainingsplan bekommt seinen Aufrufer)
+
+`Kette::trainingsplan_der_laufenden_epoche` fragt
+`myl_scheduler::trainingszuteilung`, welche Pods trainieren.
+
+⚑ **Bis heute stellte die Frage niemand.** Dasselbe galt für die ganze
+Kiste `myl-train` (Fund 183) und für die Auslastungsrechnung (Fund 184):
+gebaut, geprüft, unerreicht.
+
+Die Nachfrage kommt aus `vtfe_vorepoche`, nicht aus der laufenden
+Epoche. Die Zuteilung steht fest, **bevor** die Epoche läuft; wer die
+laufende Nachfrage nähme, bräuchte eine Zahl, die es noch nicht gibt.
+
+### ⚑ Der Knoten liest die Parameter-Registry nicht, und das ist ein Behelf
+
+Er bindet `myl-governance` nicht ein und spiegelt die drei neuen Zahlen
+als `const`. `tests/parameter.rs` hält beide Fassungen gegeneinander,
+mit einer Gegenprobe, dass eine Abweichung auch auffällt.
+
+⚑ **`myl-governance` steht nur unter `dev-dependencies`.** Wäre es eine
+gewöhnliche Abhängigkeit, sähe es aus, als läse die Kette die Registry,
+und genau das tut sie nicht. Die eigentliche Antwort wäre, die Parameter
+in den Kettenzustand zu nehmen, damit ein **Beschluss** sie bewegt statt
+eines neuen Baus.
 
 ### v0.40.0 – 2026-09-04 (✅ Fund 170: Owner und Worker getrennt, Fund 171 in der Kette)
 

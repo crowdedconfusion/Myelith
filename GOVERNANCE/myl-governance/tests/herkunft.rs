@@ -73,6 +73,26 @@ fn herkunft(p: Parameter) -> (Herkunft, &'static str) {
         Auslastungsziel => (Entschieden, "Kap. 5.4: u* = 0,7"),
         PreisSensitivitaet => (Entschieden, "Kap. 5.4: kappa = 0,1"),
         TrainingsverguetungsAnteil => (Entschieden, "Kap. 5.6: hoechstens 70 Prozent"),
+        TrainingsFreianteil => (
+            Entschieden,
+            "Kap. 7.1: gamma_train, fuenf bis zehn Prozent der FREIEN Kapazitaet;              hier bewusst deutlich darueber, siehe registry.rs",
+        ),
+        // ⚑ **Entwurf und nicht „entschieden", obwohl eine Fundstelle
+        // naheliegt.** Kap. 7.1 kennt diesen Sockel nicht: Dort bemisst
+        // sich die Trainingsmenge allein an der freien Kapazitaet. Der
+        // Sockel ist eine Abweichung, angeregt am 2026-09-05, und
+        // solange sie niemand beschlossen hat, ist sie ein Vorschlag.
+        TrainingsGrundrate => (
+            Entwurf,
+            "Abweichung von Kap. 7.1, angeregt 2026-09-05: ein Sockel, damit Training              bei voller Auslastung nicht ganz aufhoert. Null stellt Kap. 7.1 wieder her",
+        ),
+        // ⚑ **Eine Groessenordnung, kein Messwert.** Aus dem Gesamtlauf
+        // vom 2026-09-05 ist nur der vTFE-Betrag je Segment bekannt
+        // (rund 1,0 Mio.); die Segmente je Sekunde sind nicht gemessen.
+        PodKapazitaet => (
+            Entwurf,
+            "Groessenordnung aus dem Gesamtlauf 2026-09-05: rund 1,0 Mio. vTFE je Segment,              ein Segment je Sekunde ueber eine Epoche angenommen. Nicht gemessen",
+        ),
         EmaGlaettung => (Entschieden, "myl_tokenomics: 30-Epochen-Fenster"),
         Redundanzfaktor => (Entschieden, "Kap. 4.4: r = 2"),
         Shardzahl => (Entschieden, "Kap. 4.1: k = 8"),
@@ -118,7 +138,7 @@ fn jeder_parameter_nennt_seine_herkunft() {
             "{p:?} nennt keine Quelle",
         );
     }
-    assert_eq!(Parameter::alle().len(), 31, "die Zahl der Parameter hat sich geaendert");
+    assert_eq!(Parameter::alle().len(), 34, "die Zahl der Parameter hat sich geaendert");
 }
 
 /// ⚑ **Was gerechnet ist, muss die Rechnung sein** (Fund 146).
@@ -175,9 +195,26 @@ fn die_entwuerfe_sind_gezaehlt_und_werden_nicht_mehr() {
         .into_iter()
         .filter(|p| herkunft(*p).0 == Herkunft::Entwurf)
         .collect();
+    // ⚑ **Am 2026-09-05 von sieben auf neun gehoben, und das ist ein
+    // Rueckschritt.** Die Sperrklinke soll fallen, nicht steigen; wer
+    // sie hebt, schreibt hin, warum.
+    //
+    // Die Trainingszuteilung braucht zwei Zahlen, die noch niemand
+    // beschlossen hat, und beide sind **ehrlich** Entwuerfe:
+    //
+    // - `PodKapazitaet`: Aus dem Gesamtlauf ist der vTFE-Betrag je
+    //   Segment bekannt, die Segmente je Sekunde sind es nicht. Die
+    //   Zahl ist eine Groessenordnung. **Sie faellt, sobald jemand
+    //   misst**, und das ist eine Messung, kein Beschluss.
+    // - `TrainingsGrundrate`: Eine Abweichung von Kap. 7.1, angeregt am
+    //   2026-09-05. Sie faellt, sobald der Projektinhaber sie
+    //   entscheidet, oder sie geht auf null und Kap. 7.1 gilt woertlich.
+    //
+    // **Beide haben einen benannten Weg heraus.** Ein Entwurf ohne
+    // solchen Weg gehoerte nicht hinzugefuegt.
     assert!(
-        entwuerfe.len() <= 7,
-        "es sind {} Entwuerfe statt hoechstens sieben: {entwuerfe:?}",
+        entwuerfe.len() <= 9,
+        "es sind {} Entwuerfe statt hoechstens neun: {entwuerfe:?}",
         entwuerfe.len()
     );
     // Und die Gegenprobe zur Sperrklinke: Sie ist nur etwas wert,

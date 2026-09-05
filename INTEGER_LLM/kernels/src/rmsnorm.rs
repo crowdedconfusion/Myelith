@@ -58,6 +58,38 @@ pub fn inv_n_q20(n: usize) -> i64 {
 ///   Vorversion (siehe `test_rmsnorm_per_channel_uniform_shifts_matches_legacy`).
 /// - eps (HF: 1e-6) rundet bei realistischen Residualskalen auf 0; der Fall
 ///   M = 0 liefert explizit Nullen (identisch zu HF: 0/sqrt(eps) = 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Rmsnormspur {
+    /// Noch nichts gerechnet.
+    #[default]
+    Leer,
+    /// Der Eingang war überall null. **Es gibt kein `r`**, und das ist
+    /// eine eigene Aussage: Ein `r` von null sähe aus wie ein
+    /// nachgeschlagener Wert, ist aber keiner. Der Rückwärtspass gibt
+    /// hier null zurück, weil die Ausgabe von keinem Eingang abhängt.
+    Null,
+    /// Der Kehrwert der Wurzel, **wie der Vorwärtspass ihn
+    /// nachgeschlagen hat**.
+    ///
+    /// ⚑ **Drei Zahlen und nicht eine.** `r` allein sagt nichts: Seine
+    /// Skala entsteht aus der Ausgangsskala der Tabelle, der halben
+    /// Eingangsverschiebung und dem halben dynamischen Index, und die
+    /// Ausrichtung der Quadratsumme (`ref_shift`) geht ebenfalls ein.
+    /// Wer hier eine Zahl zusammenfasst, legt eine Lesart fest, die der
+    /// Rückwärtspass nicht mehr nachprüfen kann.
+    Wert {
+        /// Der Tabellenwert selbst.
+        r: i32,
+        /// Seine Bruchstellen, bezogen auf die **Darstellung** der
+        /// Quadratsumme: `lut_output_frac + lut_input_shift/2 + q/2`.
+        norm_frac: u8,
+        /// Die Ausrichtung, gegen die die Quadratsumme gebildet wurde:
+        /// das **Maximum** der Eingangsverschiebungen (Fund 24).
+        ref_shift: u8,
+    },
+}
+
+/// RMSNorm über int16-Aktivierungen.
 pub fn rmsnorm_i16(
     x: &[i16],
     x_shifts: &[u8],
@@ -68,6 +100,38 @@ pub fn rmsnorm_i16(
     lut_output_frac: u8,
     inv_n_q20: i64,
     out_frac_bits: u8,
+) -> Vec<i16> {
+    rmsnorm_i16_mit_spur(
+        x, x_shifts, gamma, gamma_shifts, rsqrt_lut, lut_input_shift, lut_output_frac,
+        inv_n_q20, out_frac_bits, None,
+    )
+}
+
+/// Dasselbe, aber der Kehrwert der Wurzel fällt mit ab (TRAINING V).
+///
+/// # ⚑ Warum der Rückwärtspass ihn braucht und nicht nachrechnen darf
+///
+/// `rmsnorm_backward` rechnet mit `r`, und **ein zweiter
+/// Tabellennachschlag könnte einen anderen Index treffen**: Der Index
+/// entsteht aus einer dynamischen Verschiebung `q`, die von der
+/// Quadratsumme abhängt. Wer ihn nachrechnet, leitet unter Umständen
+/// eine andere Funktion ab als die, die gelaufen ist.
+///
+/// ⚑ **Zweiter Eingang und kein zusätzliches Argument**, aus demselben
+/// Grund wie bei `attention_int_mit_spur`: Der Kern steht im
+/// `Backend`-Merkmal in vier Umsetzungen.
+#[allow(clippy::too_many_arguments)]
+pub fn rmsnorm_i16_mit_spur(
+    x: &[i16],
+    x_shifts: &[u8],
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    inv_n_q20: i64,
+    out_frac_bits: u8,
+    spur: Option<&mut Rmsnormspur>,
 ) -> Vec<i16> {
     let n = x.len();
     assert_eq!(n, gamma.len(), "rmsnorm_i16: x und gamma muessen gleich lang sein");
@@ -102,6 +166,9 @@ pub fn rmsnorm_i16(
         acc += sq << align;
     }
     if acc == 0 {
+        if let Some(sp) = spur {
+            *sp = Rmsnormspur::Null;
+        }
         return vec![0i16; n];
     }
 
@@ -125,6 +192,13 @@ pub fn rmsnorm_i16(
 
     let lut_val = rsqrt_lut[idx] as i64;
     let norm_frac = lut_output_frac as u32 + lut_input_shift as u32 / 2 + q / 2;
+    if let Some(sp) = spur {
+        *sp = Rmsnormspur::Wert {
+            r: lut_val as i32,
+            norm_frac: u8::try_from(norm_frac).expect("rmsnorm: norm_frac passt in u8"),
+            ref_shift,
+        };
+    }
 
     let mut out = Vec::with_capacity(n);
     for i in 0..n {

@@ -517,8 +517,17 @@ mod tests {
         use crate::zonenzuteilung::zuteilung_der_epoche;
 
         // Miner über drei Zonen, genug für mehrere volle Pods je Zone.
+        //
+        // ⚑ **Vierundfünfzig und nicht sechzig** (2026-09-05): 54/3 = 18
+        // je Zone, und 18 ist durch die Podgrösse 6 teilbar. **Es bleibt
+        // kein Rest.** Seit die Reste aller Cluster in einen Topf
+        // kommen, ergäben sechs übrige Miner einen zonengemischten Pod,
+        // und der ist hier kein Angriff, sondern die gewollte Wirkung.
+        //
+        // Dieser Test handelt vom Zonencluster, also bekommt er einen
+        // Aufbau ohne Rest. Der Topf hat seinen eigenen Test.
         let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
-        let register: Vec<MinerRegistration> = (0u16..60)
+        let register: Vec<MinerRegistration> = (0u16..54)
             .map(|i| {
                 let mut b = [0u8; 32];
                 b[..2].copy_from_slice(&i.to_le_bytes());
@@ -533,7 +542,7 @@ mod tests {
             zuteilung_der_epoche(&register, 5, &myl_types::hash::Hash([3u8; 32]), 4);
         assert!(
             !zuteilung.pods.is_empty(),
-            "sechzig Miner über drei Zonen müssen Pods ergeben"
+            "vierundfuenfzig Miner ueber drei Zonen muessen Pods ergeben"
         );
         for pod in &zuteilung.pods {
             assert!(

@@ -38,6 +38,17 @@ BEFEHLE
                     das Artefakt, mit dem sie erzeugt wurden. Schreibt wie
                     jeder Lauf eine .jsonl, eine Zeile je Vektor plus
                     Gesamtwert, den `vergleich` mitliest.
+    testlauf        Alle sechs Stufen in einem Lauf, ohne Menü, mit EINEM
+                    Protokoll. Der Befehl für eine Mietmaschine: verbinden,
+                    aufrufen, Protokoll abholen. Braucht ein Artefakt und
+                    sollte einen Testplan bekommen (--plan), sonst ist der
+                    Lauf mit keinem anderen vergleichbar.
+    training        Einen Trainingsschritt über die letzte Ebene rechnen und
+                    den Abdruck über die fortgeschriebenen Gewichte melden.
+                    Die zweite Hälfte der Kernthese: Für einen ganzen
+                    Trainingsweg gibt es kein festes Soll, deshalb
+                    vergleichen zwei Maschinen ihre Abdrücke miteinander.
+                    Braucht ein Artefakt.
 
     modellstaende   Was sich beim Wechsel von θ_v A nach B geändert hat und
                     was nicht. Kein Determinismusurteil: Zwei Modellstände
@@ -140,7 +151,7 @@ TESTPLAN
         → schreibt <plan-id>.plan
 
     Teilnehmer verwenden ihn:
-        myl-test --plan 2026-08-18-arch.plan determinismus
+        myl-test --plan 2026-08-18-arch.plan testlauf
 
     Die Datei trägt eine Prüfsumme über Prompt, Token, Shards und
     Modell. Wird sie verändert, verweigert der Client den Lauf: ein
@@ -149,7 +160,10 @@ TESTPLAN
 CROSS-HARDWARE-NACHWEIS
     1. Auf jeder Maschine:  myl-test artefakte
        → derselbe Modellstand, sonst sagt der Vergleich nichts aus.
-    2. Auf jeder Maschine:  myl-test --name <wer> --plan <datei> determinismus
+    2. Auf jeder Maschine:  myl-test --name <wer> --plan <datei> testlauf
+       → alle sechs Stufen, EIN Protokoll. `determinismus` allein misst
+         weniger, und zwei Läufe mit verschiedenem Umfang sind nicht
+         vergleichbar.
     3. Alle .jsonl nach TESTCLIENT/Vergleiche legen, dann:
            myl-test vergleich
 
@@ -362,7 +376,7 @@ fn plan_erzeugen(args: &Args) -> ExitCode {
     println!("  Einstellungs-ID {}", plan.short_id());
     println!();
     println!("Diese Datei unverändert an alle Teilnehmer schicken. Sie starten damit:");
-    println!("    myl-test --plan {} determinismus", ziel.display());
+    println!("    myl-test --name <wer> --plan {} testlauf", ziel.display());
     println!();
     println!("Alle Protokolle landen dann unter");
     println!(
@@ -507,7 +521,8 @@ fn main() -> ExitCode {
         echo,
     );
 
-    let braucht_modell = matches!(args.command.as_str(), "determinismus" | "shard");
+    let braucht_modell =
+        matches!(args.command.as_str(), "determinismus" | "shard" | "training" | "testlauf");
 
     // **Das Backend zuerst, vor dem Artefakt.** Ein Bau, der für ein
     // Backend ohne Rechenpfad konfiguriert ist, taugt für keinen
@@ -571,6 +586,29 @@ fn main() -> ExitCode {
             &mut log,
             args.artifacts_explizit.then_some(args.artifacts.as_path()),
         ),
+        // ⚑ **Anders als `konformitaet` braucht dieser Lauf ein Modell**,
+        // und deshalb steht er oben in `braucht_modell`: Ein
+        // Trainingsschritt ohne Gewichte gibt es nicht.
+        "training" => myl_testclient::training::laufen(&mut log, &args.artifacts),
+        // ⚑ **Der Sammellauf ohne Menü** (2026-09-04). Er schreibt sein
+        // eigenes Protokoll, deshalb wird das hier begonnene sofort
+        // abgeschlossen: Zwei offene Protokolle über einen Lauf wären
+        // zwei Teilaussagen, und der Vergleich müsste raten, welche gilt.
+        "testlauf" => {
+            let e = myl_testclient::menu::Einstellungen {
+                prompts: args.prompts.clone(),
+                steps: args.steps,
+                shards: args.shards,
+                artifacts: Some(args.artifacts.clone()),
+                testdatei: plan_name.clone(),
+                logs: args.logs.clone(),
+                einstellungen_id: einstellungen_id.clone(),
+                teilnehmer: args.name.clone(),
+                wiederholungen: args.wiederholungen,
+            };
+            let ok = myl_testclient::menu::stufen_fahren(&e, args.artifacts.clone(), log);
+            return if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+        }
         other => {
             log.error(format!("unbekannter Befehl: {}", other));
             log.finish(false);

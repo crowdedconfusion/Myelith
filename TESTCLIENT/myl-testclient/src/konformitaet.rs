@@ -28,10 +28,42 @@ use std::path::{Path, PathBuf};
 
 /// Name des Vergleichswerts über den ganzen Lauf.
 pub const WERT: &str = "konformitaet";
+
+/// Name des Vergleichswerts der **Operations-Stufe allein**.
+///
+/// # ⚑ Warum es ihn seit dem 2026-09-04 gibt
+///
+/// Mit den Trainingsvektoren wächst der Umfang, und damit ändert sich
+/// der Wert über den ganzen Lauf. **Der Wert der Operations-Stufe darf
+/// sich davon nicht bewegen:** Er steht an sechs Stellen des
+/// Repositoriums fest, darunter beide CI-Läufe, und eine bestehende
+/// Zusage bricht man nicht, um eine neue aufzustellen.
+///
+/// ⚑ **Und je Stufe ein Wert grenzt eine Abweichung ohne zweiten Lauf
+/// ein.** Weichen beide ab, sitzt es unter dem Modell; weicht nur der
+/// Trainingswert ab, sitzt es im Rückwärtspass. Dieselbe Überlegung wie
+/// bei `digest_umfang` und der Fallunterscheidung des Sammellaufs.
+pub const WERT_OP: &str = "konformitaet_op";
+
+/// Name des Vergleichswerts der **Trainings-Stufe allein**.
+pub const WERT_TRAINING: &str = "konformitaet_training";
+
+/// Name des Vergleichswerts des **MoE-Routingpfades**.
+///
+/// ⚑ **Seit dem 2026-09-05, und der Anlass ist Fund 180:**
+/// `route_top_k` und `mische_experten` waren nirgends gegen ein festes
+/// Soll geprüft. Das ist der Pfad, der entscheidet, **welche Experten
+/// rechnen**; zwei Knoten, die verschieden routen, rechnen verschiedene
+/// Netze, und der Redundanzvergleich meldete beide als fehlerhaft, ohne
+/// dass einer gelogen hätte.
+pub const WERT_MOE: &str = "konformitaet_moe";
+
 /// Nur die Operations-Vektoren wurden geprüft.
 pub const UMFANG_OP: &str = "op";
-/// Operations-, Layer- und E2E-Vektoren wurden geprüft.
-pub const UMFANG_VOLL: &str = "op+layer+e2e";
+/// Operations- und Trainingsvektoren, ohne Modell.
+pub const UMFANG_OHNE_MODELL: &str = "op+training+moe";
+/// Alles: Operations-, Trainings-, Layer- und E2E-Vektoren.
+pub const UMFANG_VOLL: &str = "op+training+moe+layer+e2e";
 
 /// Das Manifest bei den Vektoren: welches Artefakt sie erzeugt hat.
 ///
@@ -232,6 +264,106 @@ pub fn laufen(log: &mut RunLog, artefakt: Option<&Path>) -> bool {
         }
     }
 
+    // ⚑ **Der Wert der Operations-Stufe, bevor die naechste dazukommt.**
+    // Er ist die bestehende Zusage und darf sich nicht bewegen, wenn der
+    // Umfang waechst.
+    log.result(
+        WERT_OP,
+        &digest_aus_ergebnissen(&ergebnisse),
+        format!("{}/{}", bestanden, gesamt),
+    );
+    let (op_bestanden, op_gesamt) = (bestanden, gesamt);
+
+    // Stufe 2: der Trainingspfad, ebenfalls ohne Modell.
+    //
+    // ⚑ **Fuenf Kerne, die bis zum 2026-09-04 kein Vektor deckte.** Drei
+    // der acht Rueckwaertskerne rechneten falsch, und der Prueflauf, der
+    // 33 von 33 meldete, hat keinen von ihnen je gerechnet.
+    let training_dateien = vektor_dateien(&vektoren, "training");
+    if training_dateien.is_empty() {
+        log.error(format!(
+            "keine Trainingsvektoren unter {}",
+            vektoren.join("training").display()
+        ));
+        return false;
+    }
+    for pfad in &training_dateien {
+        match integer_llm_kernels::konformitaet::trainingsvektor_aus_datei(pfad) {
+            Ok(e) => {
+                gesamt += 1;
+                if e.bestanden {
+                    bestanden += 1;
+                } else {
+                    for grund in &e.gruende {
+                        log.error(format!("{}: {}", e.name, grund));
+                    }
+                }
+                let name = zeile("training", &e.name, e.bestanden);
+                ergebnisse.push((name.clone(), e.bestanden));
+                log.event(Event::Step {
+                    name: format!("konformitaet_{}", name),
+                    millis: 0,
+                    detail: if e.bestanden { "bestanden".into() } else { "fehlschlagen".into() },
+                });
+            }
+            Err(e) => {
+                log.error(format!("{}: {}", pfad.display(), e));
+                return false;
+            }
+        }
+    }
+    log.result(
+        WERT_TRAINING,
+        &digest_aus_ergebnissen(&ergebnisse[op_gesamt..]),
+        format!("{}/{}", bestanden - op_bestanden, gesamt - op_gesamt),
+    );
+
+    // --- MoE: der Routingpfad (Fund 180) -----------------------------
+    //
+    // ⚑ **Braucht kein Modell**, wie die Operations- und
+    // Trainingsvektoren: feste Logits, feste Tabelle, feste Sollwerte.
+    let vor_moe_gesamt = gesamt;
+    let vor_moe_bestanden = bestanden;
+    let vor_moe_ergebnisse = ergebnisse.len();
+    let moe_dateien = vektor_dateien(&vektoren, "moe");
+    if moe_dateien.is_empty() {
+        log.error(format!(
+            "keine MoE-Vektoren unter {}",
+            vektoren.join("moe").display()
+        ));
+        return false;
+    }
+    for pfad in &moe_dateien {
+        match integer_llm_kernels::konformitaet::moe_vektor_aus_datei(pfad) {
+            Ok(e) => {
+                gesamt += 1;
+                if e.bestanden {
+                    bestanden += 1;
+                } else {
+                    for grund in &e.gruende {
+                        log.error(format!("{}: {}", e.name, grund));
+                    }
+                }
+                let name = zeile("moe", &e.name, e.bestanden);
+                ergebnisse.push((name.clone(), e.bestanden));
+                log.event(Event::Step {
+                    name: format!("konformitaet_{}", name),
+                    millis: 0,
+                    detail: if e.bestanden { "bestanden".into() } else { "fehlschlagen".into() },
+                });
+            }
+            Err(e) => {
+                log.error(format!("{}: {}", pfad.display(), e));
+                return false;
+            }
+        }
+    }
+    log.result(
+        WERT_MOE,
+        &digest_aus_ergebnissen(&ergebnisse[vor_moe_ergebnisse..]),
+        format!("{}/{}", bestanden - vor_moe_bestanden, gesamt - vor_moe_gesamt),
+    );
+
     let umfang = if entscheidung.layer_e2e {
         // Stufe 2 und 3 gegen das gewählte Artefakt. Das Modell wird
         // **einmal** geladen: Bei 0,5B kostet die Ladung ein Vielfaches
@@ -282,7 +414,7 @@ pub fn laufen(log: &mut RunLog, artefakt: Option<&Path>) -> bool {
             "Layer- und E2E-Vektoren übersprungen: {}",
             entscheidung.begruendung
         ));
-        UMFANG_OP
+        UMFANG_OHNE_MODELL
     };
 
     // Der Umfang ist Teil des Messverfahrens und steht bei der Hardware,

@@ -1,6 +1,6 @@
 [package]
 name = "myl-local-agent"
-version = "0.1.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Das lokale Harness des Agent Layers: spricht gegen die /v1-Tuer eines Knotens und ist von der Kette isoliert."
@@ -13,6 +13,20 @@ publish = false
 [dependencies]
 myl-agent = { path = "../myl-agent" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# ⚑ **Und sonst nichts, insbesondere kein HTTP-Klient.** `reqwest` zoege
+# `tokio`, `hyper` und `rustls` herein, fuer eine POST-Anfrage mit einem
+# Kopf und einem Rumpf. Die Tuer spricht HTTP/1.1 ohne Verschluesselung
+# auf der Schleife; `std::net::TcpStream` genuegt, und jede Abhaengigkeit
+# weniger ist eine Angriffsflaeche weniger an der Stelle, die eine
+# Vollmacht traegt.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# ⚑ **Fuer die Risikoklassen, und nur dafuer.** `ETHICS/Risikoklassen.toml`
+# ist die eine Quelle der Warnung an den Nutzer; sie wird zur Uebersetzung
+# eingebettet (`include_str!`), damit sie zur Laufzeit weder fehlen noch
+# bearbeitet werden kann. Ein Zerleger von Hand waere schlechter als eine
+# kleine, reine Bibliothek.
+toml = "0.8"
 
 [lib]
 name = "myl_local_agent"

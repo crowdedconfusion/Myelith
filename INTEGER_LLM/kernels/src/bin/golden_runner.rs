@@ -40,7 +40,14 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let ergebnis = konformitaet::op_vektor_pruefen(&gv);
+    // ⚑ **Der Vektor sagt selbst, welcher Pruefer zustaendig ist.** Ein
+    // Starter, der das aus dem Dateipfad raet, prueft den falschen Kern,
+    // sobald jemand eine Datei verschiebt.
+    let ergebnis = match gv.level.as_str() {
+        "training" => konformitaet::trainingsvektor_pruefen(&gv),
+        "moe" => konformitaet::moe_vektor_pruefen(&gv),
+        _ => konformitaet::op_vektor_pruefen(&gv),
+    };
 
     for grund in &ergebnis.gruende {
         eprintln!("  {}", grund);

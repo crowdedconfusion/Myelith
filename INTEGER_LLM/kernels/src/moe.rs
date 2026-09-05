@@ -140,7 +140,18 @@ pub fn route_top_k(
         let gewaehlte: Vec<i32> =
             experten.iter().map(|e| router_logits[*e as usize]).collect();
         let mut w = softmax_int(&gewaehlte, exp_lut, lut_shift, gewicht_frac_bits);
+        // ⚑ **Boden vor Summenkorrektur.** Der Boden hebt an, die
+        // Korrektur nimmt den Überschuss vom grössten wieder weg; so
+        // bleibt `korrigiere_summe` die einzige Stelle, die die Summe
+        // herstellt. Der grösste liegt bei mindestens `eins/k` und
+        // verliert höchstens `k−1`, kann also nicht unter den Boden
+        // rutschen.
+        boden_setzen(&mut w);
         korrigiere_summe(&mut w, gewicht_frac_bits);
+        debug_assert!(
+            w.iter().all(|g| *g >= 1),
+            "der Boden haelt nicht: {w:?}"
+        );
         w
     } else {
         let alle = softmax_int(router_logits, exp_lut, lut_shift, gewicht_frac_bits);
@@ -191,6 +202,70 @@ fn waehle_top_k(logits: &[i32], k: usize) -> Vec<u16> {
 
 /// Schlägt den Rundungsrest dem größten Gewicht zu, damit die Summe
 /// exakt `1 << frac_bits` ergibt.
+/// Der **Boden**: kein gewähltes Gewicht fällt auf null, keines trägt
+/// alles.
+///
+/// # ⚑ Was er entfernt (Fund 79)
+///
+/// Der Ganzzahl-Softmax sättigt, und Sättigung ist für den Router ein
+/// **absorbierender Zustand**. Trägt der Gewinner exakt
+/// `1 << frac_bits`, ist der Gradient **jedes** Routerlogits exakt null,
+/// und zwar aus Rechengründen, nicht durch Rundung:
+///
+/// ```text
+/// out_i = ( (g_i − Σ_j g_j p_j / 2^frac) · p_i ) >> frac
+/// ```
+///
+/// Für einen Verlierer ist `p_i = 0`, für den Gewinner wird die Klammer
+/// null. **Ein Router, der einmal sicher genug war, bleibt es für
+/// immer.** In Gleitkomma gibt es diesen Zustand nicht; er entsteht erst
+/// durch die Ganzzahltabelle.
+///
+/// Der Boden hebt jedes Gewicht auf mindestens eins. Damit ist
+/// `p_i >= 1` für jeden Verlierer, und weil die Summe erhalten bleibt,
+/// ist der Gewinner höchstens `eins − (k−1)`. **Beide Wege zum
+/// Gradienten null sind zu.**
+///
+/// # ⚑ Gemessen, bevor er eingebaut wurde (2026-09-05)
+///
+/// **Im Betrieb schlägt er nie an.** Qwen3-30B-A3B, 97 Token über 48
+/// Ebenen, also 4656 Routerstellen und 37.248 Mischgewichte: **kein
+/// einziges auf null**, kleinstes je 24 von 16384, und jede Summe exakt
+/// eins. Die Inferenz dieses Modells ändert sich dadurch um kein Bit.
+///
+/// **Im Training rettet er den Router.** Derselbe Lauf, 200 Schritte,
+/// nur der Router lernt:
+///
+/// | Schrittweite | ohne Boden | mit Boden |
+/// |---|---|---|
+/// | 2^-10 | **199/200 gesättigt** | 0 gesättigt |
+/// | 2^-14 | **199/200 gesättigt** | 0 gesättigt |
+/// | 2^-18 | 0 gesättigt | **bitgleich dasselbe** |
+/// | 2^-22 | 0 gesättigt | **bitgleich dasselbe** |
+///
+/// ⚑ **Die letzten beiden Zeilen sind das Argument.** Er wirkt genau
+/// dort, wo er rettet, und sonst nirgends.
+///
+/// # ⚑ Warum nur bei `normieren`
+///
+/// Die Regel „den Überschuss vom grössten abziehen" setzt voraus, dass
+/// die Summe **vorher exakt eins** ist. Das leistet
+/// [`korrigiere_summe`], und das gibt es nur bei `norm_topk_prob`. Ohne
+/// Normierung sind die Gewichte ein Ausschnitt aus dem vollen Softmax
+/// und summieren sich zu irgendetwas; ein Boden könnte dort die
+/// Gesamtmasse verschieben, und das wäre eine andere Rechnung.
+///
+/// ⚑ **Bei `k = 1` tut er nichts, und das ist richtig.** Ein einziges
+/// Gewicht muss eins sein; sein Gradient ist mathematisch null, nicht
+/// aus Quantisierungsgründen.
+fn boden_setzen(gewichte: &mut [i32]) {
+    for g in gewichte.iter_mut() {
+        if *g < 1 {
+            *g = 1;
+        }
+    }
+}
+
 fn korrigiere_summe(gewichte: &mut [i32], frac_bits: u8) {
     if gewichte.is_empty() {
         return;
@@ -505,6 +580,81 @@ mod tests {
 
     fn route(logits: &[i32], k: usize, normieren: bool) -> Routing {
         route_top_k(logits, k, &EXP_LUT, 0, FRAC, normieren)
+    }
+
+    // ---- Der Boden (Fund 79) ----------------------------------------
+
+    /// ⚑ **Ohne Boden trägt der Gewinner alles, und der Router ist tot.**
+    ///
+    /// Der Beleg, dass es den Zustand gibt, den der Boden entfernt. Die
+    /// Tabelle hier ist 65 Einträge lang; ein Abstand von 64 Einheiten
+    /// genügt, damit der Verlierer null bekommt.
+    #[test]
+    fn ohne_boden_saettigt_der_router_und_sein_gradient_ist_null() {
+        let mut w = softmax_int(&[0, -70], &EXP_LUT, 0, FRAC);
+        korrigiere_summe(&mut w, FRAC);
+        assert_eq!(w, vec![1 << FRAC, 0], "der Aufbau saettigt nicht: {w:?}");
+
+        // Und dann ist der Gradient exakt null, auf beiden Wegen.
+        let g = vec![1000i32, -700, 400];
+        let ausgaben = vec![vec![5i16, -3, 2], vec![-4i16, 6, -1]];
+        let gr = crate::backward::moe_backward(&g, &[0, 1], &w, &ausgaben, 2, FRAC, 8, 6);
+        assert!(
+            gr.logits.iter().all(|v| *v == 0),
+            "der Aufbau belegt den absorbierenden Zustand nicht: {:?}",
+            gr.logits
+        );
+    }
+
+    /// ⚑ **Mit Boden lebt er.** Derselbe Aufbau durch `route_top_k`.
+    #[test]
+    fn mit_boden_bleibt_der_routergradient_von_null_verschieden() {
+        let r = route(&[0, -70], 2, true);
+        assert_eq!(r.gewichte, vec![(1 << FRAC) - 1, 1], "der Boden greift nicht: {r:?}");
+
+        let g = vec![1000i32, -700, 400];
+        let ausgaben = vec![vec![5i16, -3, 2], vec![-4i16, 6, -1]];
+        let gr = crate::backward::moe_backward(&g, &r.experten, &r.gewichte, &ausgaben, 2, FRAC, 8, 6);
+        assert!(
+            gr.logits.iter().any(|v| *v != 0),
+            "der Gradient ist trotz Boden ueberall null: {:?}",
+            gr.logits
+        );
+    }
+
+    /// ⚑ **Die Summe bleibt exakt eins**, auch wenn der Boden anhebt.
+    #[test]
+    fn der_boden_laesst_die_summe_exakt() {
+        for abstand in [0i32, 10, 40, 70, 200, 5000] {
+            let r = route(&[0, -abstand, -2 * abstand, -3 * abstand], 4, true);
+            let summe: i32 = r.gewichte.iter().sum();
+            assert_eq!(summe, 1 << FRAC, "Abstand {abstand}: Summe {summe}, {r:?}");
+            assert!(r.gewichte.iter().all(|g| *g >= 1), "Abstand {abstand}: {r:?}");
+            assert!(
+                r.gewichte.iter().all(|g| *g < 1 << FRAC),
+                "Abstand {abstand}: einer traegt alles, {r:?}"
+            );
+        }
+    }
+
+    /// ⚑ **Ohne Normierung bleibt alles wie es war.**
+    ///
+    /// Die Regel „Ueberschuss vom groessten abziehen" setzt eine Summe
+    /// von genau eins voraus, und die gibt es nur bei `norm_topk_prob`.
+    #[test]
+    fn ohne_normierung_greift_der_boden_nicht() {
+        let ohne = route(&[0, -70, -200], 2, false);
+        let alle = softmax_int(&[0, -70, -200], &EXP_LUT, 0, FRAC);
+        assert_eq!(ohne.gewichte, vec![alle[0], alle[1]], "{ohne:?}");
+    }
+
+    /// ⚑ **Bei einem einzigen Experten tut der Boden nichts**, und das
+    /// ist richtig: Ein einziges Gewicht muss eins sein, und sein
+    /// Gradient ist mathematisch null, nicht aus Rundungsgruenden.
+    #[test]
+    fn bei_einem_experten_bleibt_das_gewicht_eins() {
+        let r = route(&[0, -70, -200], 1, true);
+        assert_eq!(r.gewichte, vec![1 << FRAC], "{r:?}");
     }
 
     // ---- Expertenwacht und Wachstum ---------------------------------

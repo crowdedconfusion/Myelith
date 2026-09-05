@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.23.0
-> **Datum:** 2026-09-02
+> **Version:** 0.30.0
+> **Datum:** 2026-09-04
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -522,6 +522,167 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 
 ## Changelog
 
+### v0.30.0 – 2026-09-05 (die zweite Ausfallart des Trainingsschritts)
+
+Stufe 6 meldet jetzt auch, wenn die Gewichte die Übertragungsform
+verlassen haben, mit dem Schritt und der Abhilfe.
+
+⚑ **Es ist die stillere der beiden Ausfallarten.** Ein solcher Lauf hat
+gerechnet und Gewichte bewegt: Er sieht von aussen aus wie ein Erfolg.
+Nur lässt sich das Ergebnis nicht ins Artefakt zurückschreiben, und das
+fiele erst beim Zurückschreiben auf.
+
+### v0.29.0 – 2026-09-05 (der Beleg für AGENT_LAYER 5.2)
+
+`tests/harness_bis_modell.rs` schickt jetzt auch ein **Werkzeugangebot**
+und eine **Werkzeugantwort** durch die echte Tür bis in die geshardete
+Pipeline: 127 Prompt-Token statt 10, das Angebot kommt also an.
+
+⚑ **Nicht geprüft ist, ob das Modell daraufhin einen Aufruf
+vorschlägt.** Ein 0,5B-Modell tut das unzuverlässig, und ein Test, der
+davon abhinge, wäre flatterig statt scharf. Was ein Vorschlag darf,
+entscheidet ohnehin nicht das Modell, sondern die Erlaubnis, und die ist
+im Harness geprüft, samt dem eingeschleusten Aufruf.
+
+### v0.28.0 – 2026-09-05 (die Trainingsstufe sagt, wie viele Experten drankamen)
+
+Auf einem Expertengemisch meldet die sechste Stufe jetzt
+`Expertengemisch: 18 von 128 Experten berührt`.
+
+⚑ **Das ist die Zahl, die zählt.** Ein Experte, den der Router nie
+wählt, bekommt nie einen Gradienten und ist **still tot**: keine Zahl
+weicht dabei ab. Wie viele überhaupt drankamen, sagt über einen
+MoE-Trainingslauf mehr als die Zahl der bewegten Gewichte.
+
+### v0.27.0 – 2026-09-05 (die Naht zwischen Arbeitsklasse und Erzeuger)
+
+`tests/trainingssegment.rs`. ⚑ **Er kann nur hier stehen:** `myl-types`
+kennt die Laufzeit nicht, die Laufzeit kennt `myl-types` nicht, und das
+ist Absicht. `myl-testclient` ist die einzige Stelle, die beide sieht,
+dieselbe Lage wie beim Beleg für AGENT_LAYER 5.1.
+
+**Was er belegt:** dass die zweite Arbeitsklasse einen **Erzeuger** hat.
+Ein Trainingssegment trägt ein Commitment über Δm; bis zum 2026-09-04
+gab es nichts, das ein Δm erzeugt, und der Typ wäre eine Kiste ohne
+Aufrufer gewesen. Hier läuft die Schleife, liefert ihr Δm-Commitment,
+und daraus entsteht ein Segment, das seine Prüfung besteht, über zwei
+Läufe dieselbe Botschaft trägt und bei anderer Arbeit eine andere.
+
+### v0.26.0 – 2026-09-05 (der MoE-Routingpfad kommt in die Konformität)
+
+Der Konformitätslauf hat eine **vierte Stufe**: die vier Vektoren des
+MoE-Routingpfades, Wert `bc7911c97f528e32`. Er steht damit bei **16 von
+16** ohne Modell und 43 von 43 mit Artefakt.
+
+⚑ **Der Anlass ist Fund 180:** `route_top_k` und `mische_experten` waren
+**nirgends** gegen ein festes Soll geprüft, weder unter `op` noch unter
+`training` noch unter `layer`. Das ist der Pfad, der entscheidet, welche
+Experten rechnen; zwei Knoten, die verschieden routen, rechnen
+verschiedene Netze, und der Redundanzvergleich meldete beide als
+fehlerhaft, ohne dass einer gelogen hätte.
+
+⚑ **Eigener Umfang, aus demselben Grund wie bei `training`:**
+`894d8357ae92b5c1` steht an sechs Stellen fest, und eine bestehende
+Zusage bricht man nicht, um eine neue aufzustellen. Beide alten Werte
+sind unverändert.
+
+⛑ **Und ein Test wurde sprechend gemacht.** `zwei_prozesse.rs` startet
+`myl-pod-node` als **vorgebautes** Binary und warf dessen Fehlerausgabe
+weg. Als das alte Binary die auf θ_v 0.18.0 gehobenen Artefakte
+ablehnte, meldete der Test „der Shard-Dienst hat seine Adresse nicht
+genannt": wahr und nutzlos, denn die Ursache stand in der Zeile, die
+gerade verworfen wurde. Jetzt steht sie da, samt Abhilfe.
+
+### v0.25.0 – 2026-09-04 (sechste Stufe: der Trainingsschritt; und der Sammellauf ohne Menü)
+
+**Der Sammellauf hat eine sechste Stufe.** Sie rechnet einen echten
+Trainingsschritt über die letzte Ebene des gewählten Modells,
+dreissig Schritte, und meldet den **Trainingsabdruck**: einen SHA-256
+über die fortgeschriebenen Gewichte.
+
+⚑ **Das ist die zweite Hälfte der Kernthese.** Die fünf Stufen davor
+belegen, dass zwei Maschinen dieselbe **Inferenz** rechnen; bezahlte
+**Trainings**arbeit ist ohne diese Stufe unprüfbar. Für einen ganzen
+Trainingsweg gibt es kein festes Soll und kann keins geben, denn die
+Sollwerte wären die Antwort auf genau die Frage. Also vergleichen die
+Maschinen ihre Ergebnisse miteinander.
+
+⚑ **Was der Abdruck belegt und was nicht.** Er belegt Übereinstimmung,
+nicht Richtigkeit: Zwei Maschinen, die denselben Fehler machen,
+bekommen denselben Abdruck. Ob das Ergebnis **richtig** ist, sagen die
+Konformitätsvektoren. Und er belegt nicht, dass ein Modell lernt: eine
+Folge, ein Zielwort.
+
+**Die eine Bedingung, die auf einer Maschine prüfbar ist**, prüft die
+Stufe selbst: Bewegt sich kein Gewicht, war der Gradient überall null,
+und der Abdruck ist der des unveränderten Modells. Ein Wert, auf den
+sich zwei Maschinen mühelos einigen und der nichts belegt.
+
+### ⚑ `myl-test testlauf`: der Sammellauf ohne Menü
+
+Bis hierher war er nur über Menüpunkt [3] erreichbar. **Auf einer
+Mietmaschine sitzt niemand vor dem Bildschirm**: Man verbindet sich über
+SSH, tippt einen Befehl und holt das Protokoll ab. Ein Messverfahren,
+das eine Tastatur voraussetzt, ist auf einer stundenweise gemieteten
+Maschine eine Fehlerquelle, denn jeder Handgriff mehr ist einer, der
+beim zweiten Rechner anders ausfällt.
+
+```
+myl-test --name <wer> --plan <datei> --repeat 3 testlauf
+```
+
+Sechs Stufen, **ein** Protokoll, derselbe Weg wie über das Menü:
+[`menu::stufen_fahren`] ist die eine Umsetzung, und beide Eingänge rufen
+sie. Das Protokoll wird dabei **durchgereicht**, nicht neu angelegt;
+sonst schriebe der Aufruf über die Befehlszeile ein zweites, leeres, das
+der Vergleich als zweiten Lauf derselben Maschine läse.
+
+### ⚑ `vergleich` grenzt den neuen Wert ein, und widerspricht sich nicht
+
+Weicht der Trainingsabdruck ab, während die Konformitätsvektoren
+stimmen, ist das der schärfste Fall, den dieses Werkzeug melden kann:
+Jeder einzelne geprüfte Kern rechnet gleich, der Weg als Ganzes nicht.
+Dann ist nicht das Artefakt zu prüfen, sondern die Vektorliste zu
+ergänzen.
+
+⛑ **Die erste Fassung dieses Textes riet erst zu `myl-test artefakte`
+und sagte zwei Absätze später, das werde es nicht finden.** Zwei
+widersprüchliche Anweisungen sind schlechter als eine ungenaue, und
+dieser Text wird um zwei Uhr nachts auf einer Mietmaschine gelesen. Ein
+Test hält die Fälle jetzt auseinander.
+
+### v0.24.0 – 2026-09-04 (die Konformität misst den Trainingspfad mit)
+
+Der Konformitätslauf hat eine zweite Stufe: **fünf Vektoren des
+Trainingspfades**, ohne Modell und damit auf jeder frischen Maschine in
+Millisekunden. Er steht jetzt bei **11 von 11** statt 6 von 6.
+
+⚑ **Drei Vergleichswerte je Lauf statt einem**, und das ist kein
+Beiwerk:
+
+| Wert | Umfang | heute |
+|---|---|---|
+| `konformitaet_op` | die sechs Operations-Vektoren | `894d8357ae92b5c1` |
+| `konformitaet_training` | die sechs Trainingsvektoren | `86e5e9835fe29565` |
+| `konformitaet_moe` | die vier MoE-Vektoren | `bc7911c97f528e32` |
+| `konformitaet` | der ganze Lauf | `ed7b5042352f6a82` |
+
+**Der erste Wert bewegt sich nicht.** Er steht an sechs Stellen des
+Repositoriums fest, darunter beide CI-Läufe; eine bestehende Zusage
+bricht man nicht, um eine neue aufzustellen.
+
+⚑ **Und je Stufe ein Wert grenzt eine Abweichung ohne zweiten Lauf
+ein.** Weichen beide ab, sitzt sie unterhalb, in den Grundoperationen;
+weicht nur der Trainingswert ab, sitzt sie im Rückwärtspass. Das ist
+dieselbe Überlegung wie hinter der Fallunterscheidung des Sammellaufs,
+und auf einer stündlich abgerechneten Mietmaschine ist sie der
+Unterschied zwischen einem Befund und einem verlorenen Nachmittag.
+
+**Warum das jetzt kommt:** Am 2026-09-04 stellte sich heraus, dass drei
+der acht Rückwärtskerne falsch rechneten. Alle drei hatten keinen
+Aufrufer ausserhalb ihrer Tests, und der Prüflauf, der 33 von 33
+meldete, hat keinen von ihnen je gerechnet.
+
 ### v0.23.0 – 2026-09-04 (zwei echte Prozesse, ein Auftrag)
 
 `tests/zwei_prozesse.rs`. Der Gesamtlauf baut alles in **einem** Prozess
@@ -566,8 +727,8 @@ SIMULATION nehmen an einem Anfrageweg nicht teil, und der Pod baut sein
 Bündel nicht selbst: Vier Shards in *einem* Prozess sind der
 Phase-1-Probelauf, kein Pod aus unabhängigen Minern.
 
-Sieben Gegenproben, jede rot. Die fünfte hat **Fund 164** erzeugt (drei
-Sitzungsverzeichnisse ohne Räumung, siehe Fahrplan).
+Sieben Gegenproben, jede rot. Die fünfte hat **Fund 164** erzeugt: drei
+Sitzungsverzeichnisse, die nie geräumt werden.
 
 ### v0.21.0 – 2026-09-03 (die Abbuchung, Ende zu Ende)
 

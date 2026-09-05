@@ -52,8 +52,8 @@
 //! 0 vor, **der KV-Cache je Sitzung wird also geschrieben und nie wieder
 //! gelesen**, und weder er noch `dekodier_digest` noch
 //! `Coordinator::completed` werden je geräumt. Gemessen: 14 Segmente je
-//! Anfrage, streng linear. Steht im Fahrplan; behoben wird es mit dem
-//! Bauschritt, der ohnehin klären muss, wer im Pod das Bündel zieht.
+//! Anfrage, streng linear. Behoben wird es mit dem Bauschritt, der
+//! ohnehin klären muss, wer im Pod das Bündel zieht.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

@@ -341,6 +341,204 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         prompt_token < 20,
         "prompt_tokens sieht nach Bytes aus und nicht nach Token: {prompt_token}"
     );
+    // --- 2b. Derselbe Aufruf durch das echte Harness -----------------
+    //
+    // ⚑ **Das ist der Beleg von AGENT_LAYER 5.1**, und er ist ein
+    // anderer als der oben. Oben steht eine von Hand getippte Anfrage;
+    // hier spricht `myl_local_agent::Tuerklient`, der die OpenAI-Form
+    // **unabhaengig** aufschreibt und `myl-gateway` nicht kennen darf.
+    // Zwei getrennt geschriebene Fassungen, die sich hier treffen: Genau
+    // das ist die Behauptung „ein gewoehnlicher OpenAI-Klient erreicht
+    // diese Tuer", und sie liesse sich mit geteilten Typen nicht pruefen.
+    let dienst2 = async {
+        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+            .await
+            .expect("bedienen (Harness)");
+    };
+    let token2 = token.clone();
+    let harness = tokio::task::spawn_blocking(move || {
+        myl_local_agent::Tuerklient::neu("127.0.0.1", port, token2)
+            .mit_frist(std::time::Duration::from_secs(600))
+            .chat(
+                "myelith-qwen2.5-0.5b",
+                &[myl_local_agent::Nachricht::nutzer(frage)],
+                Some(8),
+            )
+    });
+    let (aus, _) = tokio::join!(harness, dienst2);
+    let a = aus.expect("Harness-Faden").expect("die Tuer antwortet dem Harness");
+
+    eprintln!("\n--- Was das Harness liest ---\n{a:#?}\n");
+    assert!(!a.text.trim().is_empty(), "das Harness hat keinen Text bekommen");
+    assert_eq!(a.abschlussgrund.as_deref(), Some("stop"), "{a:?}");
+    assert!(!a.kennung.is_empty(), "ohne Kennung hat der Nutzer keinen Beleg");
+    assert!(a.antwort_token > 0 && a.antwort_token <= 8, "{a:?}");
+    assert!(a.prompt_token > 0, "{a:?}");
+
+    // --- 2c. Das Werkzeugangebot geht durch die Tuer --------------
+    //
+    // ⚑ **Der Beleg fuer AGENT_LAYER 5.2, soweit er hier zu haben ist.**
+    // Geprueft wird, dass eine Systemnachricht mit dem Werkzeugangebot
+    // und eine Werkzeugantwort **ankommen**, also die Tuer sie annimmt
+    // und in den Prompt setzt. **Nicht geprueft** wird, ob das Modell
+    // daraufhin einen Aufruf vorschlaegt: Ein 0,5B-Modell tut das
+    // unzuverlaessig, und ein Test, der davon abhinge, waere flatterig
+    // statt scharf.
+    //
+    // ⚑ **Was ein Vorschlag darf, entscheidet ohnehin nicht das
+    // Modell**, sondern `werkzeug::Erlaubnis`, und die ist in
+    // `AGENT_LAYER/local-agent/tests/werkzeug.rs` geprueft, samt dem
+    // eingeschleusten Aufruf.
+    let werkzeuge = vec![myl_local_agent::werkzeug::Werkzeug::ohne_parameter(
+        "zeit",
+        "Die aktuelle Zeit.",
+    )];
+    let angebot = myl_local_agent::werkzeug::angebot(&werkzeuge);
+    let ergebnis = myl_local_agent::werkzeug::Werkzeugergebnis::nachricht("zeit", "12:00");
+    let dienst3 = async {
+        tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
+            .await
+            .expect("bedienen (Werkzeuge)");
+    };
+    let token3 = token.clone();
+    let mit_werkzeugen = tokio::task::spawn_blocking(move || {
+        myl_local_agent::Tuerklient::neu("127.0.0.1", port, token3)
+            .mit_frist(std::time::Duration::from_secs(600))
+            .chat(
+                "myelith-qwen2.5-0.5b",
+                &[angebot, myl_local_agent::Nachricht::nutzer("Wie spät ist es?"), ergebnis],
+                Some(8),
+            )
+    });
+    let (aus3, _) = tokio::join!(mit_werkzeugen, dienst3);
+    let a3 = aus3.expect("Faden").expect("die Tuer nimmt Werkzeugnachrichten an");
+    assert!(a3.prompt_token > 20, "das Angebot ist nicht im Prompt gelandet: {a3:?}");
+    eprintln!("\n--- Mit Werkzeugangebot ---\n{} Prompt-Token statt {}\n", a3.prompt_token, a.prompt_token);
+
+    // --- 2d. Die ganze Agentenschleife, an der echten Tuer ----------
+    //
+    // ⚑ **Die Simulation unter echten Bedingungen.** Kein Stummel: die
+    // Tuer prueft die Vollmacht, der Knoten versiegelt, vier Shards
+    // rechnen, der Wortschatz dekodiert. Was hier laeuft, ist die
+    // Schleife aus `myl_local_agent::schleife` von Anfang bis Ende.
+    //
+    // ⚑ **Was NICHT geprueft wird: dass das Modell ein Werkzeug
+    // vorschlaegt.** Ein 0,5B-Modell tut das unzuverlaessig. Geprueft
+    // wird, dass die Schleife durchlaeuft, einen Beleg hinterlaesst und
+    // an einer Grenze endet statt ins Leere.
+    {
+        use myl_local_agent::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler, Werkzeugkasten};
+        use myl_local_agent::betrieb::Betriebsart;
+        use myl_local_agent::schleife::Lauf;
+        use myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen;
+
+        struct Zeit;
+        impl Werkzeugausfuehrung for Zeit {
+            fn name(&self) -> &str {
+                "zeit"
+            }
+            fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+                Ok("12:00".to_string())
+            }
+        }
+
+        let mut kasten = Werkzeugkasten::neu();
+        kasten
+            .einhaengen(
+                myl_local_agent::werkzeug::Werkzeug::ohne_parameter("zeit", "Die Zeit."),
+                Box::new(Zeit),
+            )
+            .expect("eingehaengt");
+        let mut registratur = myl_agent::registratur::Registratur::neu();
+        let a_zeit = registratur
+            .nimm_werkzeug(myl_agent::manifest::Werkzeugmanifest {
+                name: "zeit".into(),
+                anbieter: "Myelith".into(),
+                revision: "1".into(),
+                lizenz: "PolyForm-Shield-1.0.0".into(),
+                art: myl_agent::manifest::Werkzeugart::Deterministisch,
+                herkunft: myl_agent::manifest::Herkunft::Verankert,
+            })
+            .expect("angenommen");
+        let kontrakt = myl_types::sitzung::Sitzungskontrakt::neu(
+            myl_types::ids::Address::new([1u8; 32]),
+            myl_types::ids::Address::new([2u8; 32]),
+            myl_types::sitzung::Grenzen {
+                budget: 1000,
+                einzellimit: 100,
+                schwelle: u64::MAX,
+                zeugenleiter: Vec::new(),
+            },
+            myl_types::sitzung::Grenzen {
+                budget: 1000,
+                einzellimit: 100,
+                schwelle: u64::MAX,
+                zeugenleiter: Vec::new(),
+            },
+            vec![myl_types::ids::Address::new([9u8; 32])],
+            EpochId(0),
+            EpochId(100),
+            2,
+        )
+        .expect("Kontrakt");
+        let grenzen = Sitzungsgrenzen::neu(kontrakt, kasten.angebote());
+        let finden = move |n: &str| -> Option<myl_types::ids::MerkleRoot> {
+            (n == "zeit").then_some(a_zeit)
+        };
+
+        let token4 = token.clone();
+        let agent = tokio::task::spawn_blocking(move || {
+            let klient = myl_local_agent::Tuerklient::neu("127.0.0.1", port, token4)
+                .mit_frist(std::time::Duration::from_secs(600));
+            Lauf {
+                klient: &klient,
+                modell: "myelith-qwen2.5-0.5b",
+                grenzen: &grenzen,
+                betriebsart: Betriebsart::NurVerankert,
+                kasten: &kasten,
+                registratur: &registratur,
+                adressen: &finden,
+                anker: myl_types::hash::Hash::from_bytes([7u8; 32]),
+                max_tokens: Some(16),
+            }
+            .fahren("Wie spaet ist es?")
+        });
+
+        // ⚑ **Die Tuer bedient, solange der Agent laeuft, und keinen
+        // Aufruf laenger.** Der erste Entwurf hat hier `join!` mit einer
+        // festen Zahl von `bedienen_v1` benutzt, und der Lauf blieb am
+        // 2026-09-05 stehen: Ein 0,5B-Modell schlaegt oft KEIN Werkzeug
+        // vor, dann endet die Schleife nach einem Schritt, und die Tuer
+        // wartete auf einen zweiten Aufruf, der nie kam. Gemessen: null
+        // Prozent CPU nach 32 Sekunden.
+        //
+        // Wie viele Aufrufe kommen, weiss nur die Schleife. Also fragt
+        // der Test nicht danach, sondern hoert auf, wenn sie fertig ist.
+        tokio::pin!(agent);
+        let aus4 = loop {
+            tokio::select! {
+                r = &mut agent => break r,
+                _ = tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000) => {}
+            }
+        };
+        let e = aus4.expect("Agentenfaden");
+
+        eprintln!(
+            "\n--- Agentenschleife an der echten Tuer ---\n  Ende: {}\n{}",
+            e.ende,
+            e.strom.bericht()
+        );
+        assert!(!e.strom.schritte().is_empty(), "die Schleife hat keinen Schritt gemacht");
+        // ⚑ **Der Beleg traegt eine Kette**, denn die echte Tuer nennt
+        // ihre Segmentkennung. Das ist der Unterschied zum Stummel.
+        let glieder = e.strom.kettenglieder().expect("die Tuer nennt Segmentkennungen");
+        assert_eq!(glieder.len(), e.strom.schritte().len());
+        assert!(
+            e.strom.nicht_nachrechenbare().is_empty(),
+            "unter `nur verankert` darf kein Schritt offen bleiben"
+        );
+    }
+
     assert_eq!(
         doc["usage"]["total_tokens"].as_u64(),
         Some(prompt_token + neue),

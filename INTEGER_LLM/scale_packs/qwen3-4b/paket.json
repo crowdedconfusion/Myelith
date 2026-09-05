@@ -1,5 +1,5 @@
 {
-  "theta_v": "0.17.0",
+  "theta_v": "0.18.0",
   "dateien": [
     "scales.json",
     "luts.json",
@@ -10,8 +10,8 @@
     "silu.lut.bin",
     "sin.lut.bin"
   ],
-  "bytes": 1262198,
-  "artefakt_digest_sha256": "a28ac6edeb88d28262ad7b8e600ca71d7d26a1a60232bd5f60e1f14286105b82",
+  "bytes": 1262216,
+  "artefakt_digest_sha256": "f2a6a6b97db860146b1aed5cd7c12c09b62b55bab304244e5008d27517716d9d",
   "digest_ueber": [
     "theta_v.json",
     "model_config.json",

@@ -22,6 +22,8 @@
 
 #![deny(unsafe_code)]
 
+pub mod auslastung;
+pub mod korpusanker;
 pub mod arbeitsverteilung;
 pub mod bls;
 pub mod challenge;
@@ -40,6 +42,7 @@ pub mod poi_botschaft;
 pub mod protocol;
 pub mod seed_rng;
 pub mod sitzung;
+pub mod trainingssegment;
 pub mod treasury;
 pub mod uebergang;
 pub mod vollmacht;

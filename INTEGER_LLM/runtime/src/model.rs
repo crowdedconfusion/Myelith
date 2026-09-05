@@ -203,6 +203,28 @@ pub struct Routingbefund {
     /// Gleichstände erzeugt, die es vorher nicht gab. Wie viele, sagt
     /// erst diese Zahl.
     pub randgleichstaende_wahrscheinlichkeit: usize,
+    /// Die Mischgewichte der gewählten Experten, auf `prob_frac_bits`.
+    ///
+    /// # ⚑ Warum sie hier stehen (2026-09-05)
+    ///
+    /// Wegen **Fund 79**, und die Frage ist nicht akademisch, sobald das
+    /// Primärmodell ein Expertengemisch wird. Der Ganzzahl-Softmax
+    /// sättigt, und Sättigung ist für den Router ein **absorbierender
+    /// Zustand**: Trägt der Gewinner exakt `1 << prob_frac_bits`, ist
+    /// der Gradient **jedes** Routerlogits exakt null, aus
+    /// Rechengründen und nicht durch Rundung. Ein Router, der einmal
+    /// sicher genug war, bleibt es für immer.
+    ///
+    /// ⚑ **Ob das ein reales oder ein rechnerisches Problem ist,
+    /// entscheidet eine Messung, und die braucht diese Zahlen.** Ohne
+    /// sie liesse sich nur sagen, dass der Zustand existiert, nicht wie
+    /// oft er eintritt.
+    pub gewichte: Vec<i32>,
+    /// Der grösste Abstand zwischen zwei Routerlogits an dieser Stelle.
+    ///
+    /// ⚑ Die Grösse, aus der die Sättigung folgt: Ab einem gewissen
+    /// Abstand liefert die exp-Tabelle für den Verlierer null.
+    pub logit_spanne: i32,
 }
 
 /// Der Feedforward-Teil einer Layer.
@@ -431,7 +453,6 @@ impl IntegerModel {
         pos: usize,
         cache: &mut KVCache,
     ) -> (Vec<i32>, Vec<Routingbefund>) {
-        let cfg = &self.config;
         let first_residual_frac = &self.layers[0].scales.residual_in_frac;
         let emb = self.embedding_table.row(token_id);
         let emb_shift = self.embedding_table.shifts[token_id];
@@ -453,18 +474,15 @@ impl IntegerModel {
             );
         }
 
-        let normed = rmsnorm_i16(
-            &hidden,
-            &self.final_residual_frac,
-            &self.final_norm_gamma.data,
-            &self.final_norm_gamma.shifts,
-            &self.rsqrt_lut,
-            cfg.rsqrt_input_shift,
-            cfg.rsqrt_output_frac,
-            self.inv_n_q20,
-            self.final_norm_frac,
-        );
-        (self.head_logits(&normed), befunde)
+        // ⚑ **`head_logits` normiert selbst** (Fund 176). Bis zum
+        // 2026-09-04 stand hier eine eigene Normierung davor, und der
+        // Kopf bekam einen bereits normierten Strom, den er ein zweites
+        // Mal normierte, dazu auf der falschen Eingangsskala. Der
+        // Rechenpfad selbst war nie betroffen: `forward_token` schreibt
+        // Normierung und Kopf aus, und der Shard ruft `head_logits` mit
+        // dem rohen Residualstrom. **Betroffen war der Messpfad**, also
+        // die Zahlen, die eine Routing-Untersuchung liefert.
+        (self.head_logits(&hidden), befunde)
     }
 
     /// Einzelner Forward-Schritt fuer ein Token an Position `pos`.
@@ -516,41 +534,8 @@ impl IntegerModel {
             self.final_norm_frac,
         );
 
-        // 4. LM Head.
-        //    Pfad A (spec-Ausnahme): INT16-LM-Head mit Per-Channel-
-        //    Skalen — i64-Akkumulator (896 * 32767 * 32767 > i32) und
-        //    Zeilen-Rescale auf die gemeinsame Logit-Skala (jede Zeile hat
-        //    ihren eigenen Zweierpotenz-Shift).
-        //    Pfad B (Fallback, ältere Artefakte mit Weight-Tying): INT8 x
-        //    INT16 -> INT32 Logits, i64-Akkumulator, Per-Channel-Zeilen-
-        //    Rescale (theta_v 0.7.0).
-        let mut logits = vec![0i32; self.vocab_size];
-        if let Some(lmh) = &self.lm_head_int16 {
-            let hidden_dim = normed.len();
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
-                let base = row * hidden_dim;
-                for (d, v) in normed.iter().enumerate() {
-                    acc += (lmh.data[base + d] as i64) * (*v as i64);
-                }
-                let row_frac = lmh.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
-        } else {
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
-                let weight_row = self.lm_head.row(row);
-                for (w, v) in weight_row.iter().zip(normed.iter()) {
-                    acc += (*w as i64) * (*v as i64);
-                }
-                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
-        }
-
-        logits
+        // 4. LM-Kopf, siehe `logits_aus_normiertem`.
+        self.logits_aus_normiertem(&normed, cfg.logit_frac_bits)
     }
 
     // === Pipeline-Stage-API (Phase 12.56–12.59) =======================
@@ -644,18 +629,45 @@ impl IntegerModel {
     /// Finale RMSNorm + LM-Head: Eingang auf `final_residual_frac`,
     /// Ausgabe die Logits auf `config.logit_frac_bits`.
     pub fn head_logits(&self, hidden: &[i16]) -> Vec<i32> {
-        let cfg = &self.config;
-        let normed = rmsnorm_i16(
-            hidden,
-            &self.final_residual_frac,
-            &self.final_norm_gamma.data,
-            &self.final_norm_gamma.shifts,
-            &self.rsqrt_lut,
-            cfg.rsqrt_input_shift,
-            cfg.rsqrt_output_frac,
-            self.inv_n_q20,
-            self.final_norm_frac,
-        );
+        self.head_logits_mit_spur(hidden, self.config.logit_frac_bits, None)
+    }
+
+    /// Dasselbe, aber die Spur der Abschlussnormierung fällt mit ab.
+    ///
+    /// ⚑ **Zweiter Eingang und kein zweiter Pfad** (TRAINING V). Der
+    /// Rückwärtspass der Normierung braucht das `r`, das der
+    /// Vorwärtspass nachgeschlagen hat; ein zweiter Nachschlag könnte
+    /// einen anderen Eintrag treffen. **Und eine zweite Umsetzung des
+    /// Kopfes wäre eine zweite Wahrheit über den Rechenpfad**, deren
+    /// Bitgleichheit niemand belegt.
+    /// Der LM-Kopf über einem **bereits normierten** Strom.
+    ///
+    /// # ⚑ Eine Umsetzung, drei Aufrufer (Fund 178)
+    ///
+    /// Bis zum 2026-09-04 stand dieser Block **dreimal wortgleich** im
+    /// Modul: in [`Self::forward_token`], in
+    /// [`Self::head_logits_mit_spur`] und im Aktivierungsabzug. Über
+    /// [`Self::head_logits_mit_spur`] stand dabei der Satz, eine zweite
+    /// Umsetzung des Kopfes wäre „eine zweite Wahrheit über den
+    /// Rechenpfad", und es waren schon drei.
+    ///
+    /// ⚑ **Das ist nicht bloss Wiederholung, es hat schon einmal
+    /// gekostet.** Fund 176 war genau dieser Fehler eine Ebene höher:
+    /// `forward_token_mit_routing` normierte selbst und reichte den
+    /// Strom dann an einen Kopf, der noch einmal normierte. Wer eine der
+    /// drei Kopien anfasst, ändert den Rechenpfad für ein Drittel der
+    /// Aufrufer.
+    ///
+    /// **Pfad A** (Ausnahme in theta_v): INT16-LM-Kopf mit
+    /// Per-Kanal-Skalen, i64-Akkumulator (896 · 32767 · 32767 > i32) und
+    /// Zeilenumskalierung auf die gemeinsame Logitskala, denn jede Zeile
+    /// hat ihren eigenen Zweierpotenzversatz. **Pfad B** (Rückfall,
+    /// ältere Artefakte mit gebundenen Einbettungen): INT8 × INT16,
+    /// i64-Akkumulator, dieselbe Zeilenumskalierung (theta_v 0.7.0).
+    ///
+    /// `logit_frac` ist die Skala der Ausgabe, siehe
+    /// [`Self::head_logits_mit_spur`].
+    fn logits_aus_normiertem(&self, normed: &[i16], logit_frac: u8) -> Vec<i32> {
         let mut logits = vec![0i32; self.vocab_size];
         if let Some(lmh) = &self.lm_head_int16 {
             let hidden_dim = normed.len();
@@ -666,7 +678,7 @@ impl IntegerModel {
                     acc += (lmh.data[base + d] as i64) * (*v as i64);
                 }
                 let row_frac = lmh.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                let y = rescale_i64(acc, row_frac, logit_frac);
                 logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }
         } else {
@@ -677,11 +689,48 @@ impl IntegerModel {
                     acc += (*w as i64) * (*v as i64);
                 }
                 let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
+                let y = rescale_i64(acc, row_frac, logit_frac);
                 logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             }
         }
         logits
+    }
+
+    ///
+    /// # ⚑ Warum die Logitskala ein Argument ist (Fund 177)
+    ///
+    /// `logit_frac_bits` steht im Lader auf 6 mit der Begründung
+    /// „nur fuer Sampling/Argmax (skaleninvariant)". Das ist richtig:
+    /// Wer nur das Maximum sucht, dem ist die Skala gleich. **Wer eine
+    /// Wahrscheinlichkeitsverteilung braucht, dem nicht**, und der
+    /// Kreuzentropiegradient des Trainings braucht genau die. Bei Q6
+    /// liest die exp-Tabelle, die Q8 erwartet, den Exponenten viermal zu
+    /// flach; gemessen am 2026-09-04 fielen dabei 150.064 von 151.936
+    /// Wörtern auf null.
+    ///
+    /// ⚑ **Ein Argument und kein vierter Kopf.**
+    /// [`Self::head_logits`] reicht unverändert `cfg.logit_frac_bits`
+    /// durch; der Inferenzpfad rechnet Bit für Bit dasselbe wie vorher.
+    pub fn head_logits_mit_spur(
+        &self,
+        hidden: &[i16],
+        logit_frac: u8,
+        spur: Option<&mut integer_llm_kernels::rmsnorm::Rmsnormspur>,
+    ) -> Vec<i32> {
+        let cfg = &self.config;
+        let normed = integer_llm_kernels::rmsnorm::rmsnorm_i16_mit_spur(
+            hidden,
+            &self.final_residual_frac,
+            &self.final_norm_gamma.data,
+            &self.final_norm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+            spur,
+        );
+        self.logits_aus_normiertem(&normed, logit_frac)
     }
 
     // ⚑ **Acht Argumente, und die letzten beiden sind Ausgänge.** Sie
@@ -1023,14 +1072,30 @@ impl IntegerModel {
                 aus
             }
             Feedforward::Moe(moe) => {
-                // ⚑ **Der Mitschnitt sagt hier ausdruecklich „nicht
-                // aufgezeichnet"**, statt drei leere Vektoren
-                // zurueckzulassen. `moe_backward` verlangt andere Werte
-                // (Expertenwahl, Gewichte, Expertenausgaben); Phase 5.
-                if let Some(a) = auf.as_mut() {
-                    a.mlp = crate::mitschnitt::Mlpteil::Expertengemisch;
+                // ⚑ **Seit dem 2026-09-05 wird auch hier aufgezeichnet**,
+                // und zwar durch denselben Eingang wie beim dichten Fall:
+                // ein `Option`, das im Regelbetrieb `None` ist.
+                let mut spur = auf.as_ref().map(|_| crate::mitschnitt::Moespur::default());
+                let aus = self.moe_vorwaerts(
+                    moe,
+                    &norm_residual,
+                    sc,
+                    cfg,
+                    &acc_mlp,
+                    befunde,
+                    layer.layer_idx,
+                    spur.as_mut(),
+                );
+                if let (Some(a), Some(sp)) = (auf.as_mut(), spur) {
+                    a.mlp = crate::mitschnitt::Mlpteil::Expertengemisch {
+                        experten: sp.experten,
+                        gewichte: sp.gewichte,
+                        ausgaben: sp.ausgaben,
+                        teile: sp.teile,
+                        logits: sp.logits,
+                    };
                 }
-                self.moe_vorwaerts(moe, &norm_residual, sc, cfg, &acc_mlp, befunde, layer.layer_idx)
+                aus
             }
         };
 
@@ -1139,31 +1204,7 @@ impl IntegerModel {
         let norm_shifts = vec![self.final_norm_frac; normed.len()];
         dump.push((normed.clone(), norm_shifts));
 
-        let mut logits = vec![0i32; self.vocab_size];
-        if let Some(lmh) = &self.lm_head_int16 {
-            let hidden_dim = normed.len();
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
-                let base = row * hidden_dim;
-                for (d, v) in normed.iter().enumerate() {
-                    acc += (lmh.data[base + d] as i64) * (*v as i64);
-                }
-                let row_frac = lmh.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
-        } else {
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
-                let weight_row = self.lm_head.row(row);
-                for (w, v) in weight_row.iter().zip(normed.iter()) {
-                    acc += (*w as i64) * (*v as i64);
-                }
-                let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
-                let y = rescale_i64(acc, row_frac, cfg.logit_frac_bits);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
-        }
+        let logits = self.logits_aus_normiertem(&normed, cfg.logit_frac_bits);
 
         (logits, dump)
     }
@@ -1220,6 +1261,12 @@ impl IntegerModel {
     /// Pods batchen verschieden, und der Redundanzvergleich meldete zwei
     /// ehrliche Pods als abweichend.
     #[allow(clippy::too_many_arguments)]
+    /// ⚑ **Neun Argumente, und die letzten beiden sind Ausgänge.**
+    /// Dieselbe Aufteilung wie bei [`Self::forward_layer`]: Die
+    /// Routing-Diagnose läuft im Betrieb, der Trainingsmitschnitt nur
+    /// beim Training. Wer sie koppelte, zahlte das eine, um das andere
+    /// zu bekommen.
+    #[allow(clippy::too_many_arguments)]
     fn moe_vorwaerts(
         &self,
         moe: &MoeLayer,
@@ -1229,6 +1276,7 @@ impl IntegerModel {
         acc: &[u8],
         befunde: Option<&mut Vec<Routingbefund>>,
         layer_idx: usize,
+        spur: Option<&mut crate::mitschnitt::Moespur>,
     ) -> Vec<i16> {
         // Router-Logits. Die Projektion laeuft wie jede andere; ihre
         // Ausgangsskala ist kalibriert wie die der uebrigen Projektionen.
@@ -1265,6 +1313,8 @@ impl IntegerModel {
                 exp_lut_shift,
                 cfg.prob_frac_bits,
             );
+            let groesstes = logits.iter().copied().max().unwrap_or(0);
+            let kleinstes = logits.iter().copied().min().unwrap_or(0);
             sammler.push(Routingbefund {
                 layer: layer_idx,
                 experten: routing.experten.clone(),
@@ -1273,6 +1323,8 @@ impl IntegerModel {
                     integer_llm_kernels::moe::randgleichstaende(
                         &ueber_wahrscheinlichkeit, moe.top_k,
                     ),
+                gewichte: routing.gewichte.clone(),
+                logit_spanne: groesstes.saturating_sub(kleinstes),
             });
         }
 
@@ -1280,11 +1332,39 @@ impl IntegerModel {
         // Ausgangsskala `acc`, denn sie addieren in denselben
         // Residualstrom; deshalb mischt `mische_experten` ohne
         // Umskalierung.
+        //
+        // ⚑ **Ein Experte ist ein dichter Block**, und deshalb laeuft er
+        // durch dieselbe `mlp_vorwaerts` wie eine dichte Ebene. Damit
+        // gilt auch `schritt_auf_mlp` fuer ihn unveraendert, gemessen an
+        // echten 30B-A3B-Gewichten.
+        let mut teile: Vec<Mlpspur> = Vec::new();
         let ausgaben: Vec<Vec<i16>> = routing
             .experten
             .iter()
-            .map(|e| self.mlp_vorwaerts(&moe.experts[*e as usize], x, sc, cfg, acc, None))
+            .map(|e| {
+                let mut sp = spur.as_ref().map(|_| Mlpspur::default());
+                let aus = self.mlp_vorwaerts(
+                    &moe.experts[*e as usize],
+                    x,
+                    sc,
+                    cfg,
+                    acc,
+                    sp.as_mut(),
+                );
+                if let Some(sp) = sp {
+                    teile.push(sp);
+                }
+                aus
+            })
             .collect();
+
+        if let Some(ziel) = spur {
+            ziel.experten = routing.experten.clone();
+            ziel.gewichte = routing.gewichte.clone();
+            ziel.ausgaben = ausgaben.clone();
+            ziel.teile = teile;
+            ziel.logits = logits.clone();
+        }
 
         mische_experten(&ausgaben, &routing.gewichte, cfg.prob_frac_bits)
     }

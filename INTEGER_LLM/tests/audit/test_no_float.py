@@ -113,6 +113,22 @@ HOT_PATH = [
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.
     REPO / "runtime" / "src" / "mitschnitt.rs",
+    # ⚑ **Die Trainingsschleife, und sie gehoert hier genauso her wie
+    # `backward.rs`** (2026-09-04). Sie rechnet den Gradienten vom
+    # Zielwort bis in die Gewichte; ein float darin waere ein Gewicht,
+    # das zwei Maschinen verschieden fortschreiben.
+    #
+    # ⚑ **Der Verlustwert steht deshalb NICHT in dieser Datei**, sondern
+    # in `runtime/tests/trainingsschleife.rs`: Die Kreuzentropie braucht
+    # einen Logarithmus, ihre Ableitung nicht. Die Schleife gibt Logits
+    # heraus, wer eine Diagnose will, rechnet sie draussen. **Wer den
+    # Verlustwert hier hereinholt, hat die Bitgleichheit an einen
+    # Logarithmus gehaengt**, und diese Zeile ist die Stelle, an der es
+    # auffaellt.
+    REPO / "runtime" / "src" / "trainingsschleife.rs",
+    # ⚑ Seit dem 2026-09-05: Training ueber einen Ebenenbereich, also
+    # das, was ein Shard tut. Derselbe Heisspfad wie die Schleife.
+    REPO / "runtime" / "src" / "shardtraining.rs",
     REPO / "runtime" / "src" / "tokenizer.rs",
     # Die Konformitaetspruefung, seit sie eine Bibliothek ist (2026-08-27).
     #
@@ -138,6 +154,16 @@ CONSENSUS_PATH = [
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "merkle.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "ids.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "core_types.rs",
+    # ⚑ **Die zweite Arbeitsklasse** (TRAINING 2.1, 2026-09-05). Ein
+    # Trainingssegment ist eine reine Funktion seiner Eingabe, und seine
+    # Signierbotschaft haengt an jedem Feld; eine Gleitkommazahl darin
+    # waere ein Commitment, das zwei Maschinen verschieden bilden.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "trainingssegment.rs",
+    # ⚑ Seit dem 2026-09-05: die Auslastungsrechnung ist aus
+    # `myl-tokenomics` hierher gewandert, weil zwei Schichten sie
+    # brauchen. Die f64-Helfer sind oben geblieben, genau deshalb.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "auslastung.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "korpusanker.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "challenge.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "seed_rng.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "bls.rs",

@@ -1,0 +1,125 @@
+{
+  "name": "routing_gleichstand",
+  "level": "moe",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "k": 2,
+    "frac_bits": 8,
+    "lut_shift": 0,
+    "normieren": true
+  },
+  "inputs": {
+    "logits": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "c3873d3c580e96194800c8b3aeda45fe895af92c88fc23b1a55e96de40206cbe",
+      "data": [
+        100,
+        50,
+        50,
+        10
+      ]
+    },
+    "exp_lut": {
+      "dtype": "int16",
+      "shape": [
+        65
+      ],
+      "hash": "6812aa4e5e5da56f08d8eaa2d6aa50aadc43909a68693e3cc9f2e815cea43d96",
+      "data": [
+        256,
+        94,
+        35,
+        13,
+        5,
+        2,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "outputs": {
+    "experten": {
+      "dtype": "int32",
+      "shape": [
+        2
+      ],
+      "hash": "01acecb507abfe1a354aa8064f4af5d3f1acd019e37db3c11c97523b71c76e9d",
+      "data": [
+        0,
+        1
+      ]
+    },
+    "gewichte": {
+      "dtype": "int32",
+      "shape": [
+        2
+      ],
+      "hash": "7cd2d463e503fb49d7a165929102a9dd775b031d16879673cea769e2c87856b4",
+      "data": [
+        255,
+        1
+      ]
+    }
+  }
+}

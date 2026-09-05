@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.27.0
+> **Version:** 0.28.0
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,28 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.28.0 – 2026-09-05 (der Trainingspod)
+
+`trainingswerk::Trainingswerk` fährt ein Trainingssegment über vier
+Shards: vorwärts durch alle, der letzte bildet den Verlustgradienten,
+dann rückwärts durch dieselben Shards.
+
+**Gemessen gegen den Einzelknoten:** 24 Ebenen in vier Shards ergeben
+Ebene für Ebene dieselben Gewichte wie alle Ebenen am Stück. 246 399 263
+von 357 826 560 Gewichten über zwei Schritte bewegt.
+
+⚑ **Derselbe Zuschnitt wie die Inferenzpipeline**, und ein Test hält
+beide Zahlen gegeneinander. Liefen sie auseinander, wäre ein
+Trainingsergebnis nicht gegen dieselbe Pipeline nachrechenbar, mit der
+abgeleitet wird, wie viel jeder Shard trägt.
+
+⚑ **Es ist der Pod, nicht das Netz.** Alle Shards laufen in einem
+Prozess, genau wie `Pipelinewerk` es für die Inferenz tut. Was fehlt,
+ist der Draht: dieselben Nachrichten über `PodMessage` zwischen echten
+Prozessen. Der Zuschnitt ist derselbe, also ist es Transport und keine
+zweite Rechnung; **solange er nicht steht, ist das ein Pod auf einer
+Maschine**, und das steht im Modulkopf statt in einem Protokoll.
 
 ### v0.27.0 – 2026-09-04 (✅ Fund 164 geschlossen: eine Anfrage hinterlässt nichts)
 

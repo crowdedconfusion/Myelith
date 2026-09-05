@@ -760,6 +760,19 @@ fn erlaeuterung(u: &Urteil) -> &'static str {
 ///
 /// Das ist keine Vermutung, sondern eine Fallunterscheidung über zwei
 /// Werte, die beide schon gemessen wurden.
+///
+/// # ⚑ Seit dem 2026-09-04 ein dritter Wert
+///
+/// Der **Trainingsabdruck** grenzt eine Abweichung in eine Richtung ein,
+/// die die anderen beiden nicht sehen: Die Konformitätsvektoren prüfen
+/// einzelne Rückwärtskerne gegen ein festes Soll, der Abdruck den
+/// ganzen Weg über dreissig Schritte und fünfzehn Millionen Gewichte.
+///
+/// ⚑ **Stimmen die Vektoren und weicht der Abdruck ab, ist das die
+/// interessanteste Lage, die dieses Werkzeug melden kann:** Jeder
+/// einzelne Kern rechnet auf beiden Maschinen gleich, der Weg als
+/// Ganzes nicht. Dann sitzt es in etwas, das kein Vektor abdeckt, und
+/// die Vektoren sind zu ergänzen.
 pub fn abweichungs_hinweis(g: &Gruppe) -> String {
     let geteilt = |name: &str| -> bool {
         g.werte
@@ -799,6 +812,7 @@ pub fn abweichungs_hinweis(g: &Gruppe) -> String {
         return zeilen.join("\n");
     }
 
+    let training = crate::training::WERT;
     if geteilt(konf) {
         zeilen.extend([
             String::new(),
@@ -830,12 +844,48 @@ pub fn abweichungs_hinweis(g: &Gruppe) -> String {
     zeilen.extend([
         String::new(),
         "Die Konformitätsvektoren stimmen überein. Die Kernel rechnen auf beiden".into(),
-        "Maschinen bitgleich; der Unterschied liegt DARÜBER: Artefakt, Laden des".into(),
-        "Modells, Zuschnitt der Shards oder Abtastung.".into(),
+        "Maschinen bitgleich; der Unterschied liegt DARÜBER.".into(),
+    ]);
+
+    // ⚑ **Entweder oder, und nicht beides hintereinander.** Die erste
+    // Fassung dieses Textes riet erst zu `myl-test artefakte` und sagte
+    // zwei Absätze später, das werde es nicht finden. **Zwei
+    // widersprüchliche Anweisungen sind schlechter als eine ungenaue**,
+    // und dieser Text wird um zwei Uhr nachts auf einer Mietmaschine
+    // gelesen.
+    if geteilt(training) {
+        zeilen.extend([
+            String::new(),
+            "Und der Trainingsabdruck weicht ab, während die Konformitätsvektoren".into(),
+            "stimmen. Das ist der schärfste Fall, den dieses Werkzeug melden kann:".into(),
+            "Jeder EINZELNE geprüfte Kern rechnet auf beiden Maschinen gleich, der".into(),
+            "ganze Rückwärtsweg über dreissig Schritte nicht. Es sitzt damit in einer".into(),
+            "Rechnung, die KEIN Vektor abdeckt.".into(),
+            String::new(),
+            "Nächster Schritt: die Zeile `training_vorgaben` in beiden Protokollen".into(),
+            "vergleichen. Stehen dort verschiedene Zahlen, haben die Maschinen".into(),
+            "verschiedene Arbeiten gerechnet und der Abdruck DARF abweichen. Stimmen".into(),
+            "sie überein, ist der Befund echt und die Vektorliste unvollständig; dann".into(),
+            "gehört ein neuer Trainingsvektor gebaut, der die Lücke schliesst.".into(),
+        ]);
+        return zeilen.join("\n");
+    }
+
+    zeilen.extend([
+        String::new(),
+        "In Frage kommen Artefakt, Laden des Modells, Zuschnitt der Shards oder".into(),
+        "Abtastung.".into(),
         String::new(),
         "Nächster Schritt: `myl-test artefakte` auf beiden Maschinen. Weicht schon der".into(),
         "Artefakt-Digest ab, ist es kein Hardware-Befund, sondern ein anderes Modell.".into(),
     ]);
+    if vorhanden(training) {
+        zeilen.extend([
+            String::new(),
+            "Der Trainingsabdruck stimmt übrigens überein: Auch der Rückwärtsweg über".into(),
+            "dreissig Schritte läuft auf beiden Maschinen bitgleich.".into(),
+        ]);
+    }
     zeilen.join("\n")
 }
 
@@ -1929,5 +1979,67 @@ mod tests {
             lauf_mit("cpu-b", &[("konformitaet", "k0"), ("determinismus", "d1")], "op"),
         ]);
         assert!(t.contains("Auseinander gehen: determinismus"), "{t}");
+    }
+}
+
+#[cfg(test)]
+mod trainingshinweis_tests {
+    use super::*;
+
+    fn gruppe(werte: &[(&str, &[&str])]) -> Gruppe {
+        Gruppe {
+            befehl: "testlauf".into(),
+            einstellungen_id: "abcd1234".into(),
+            protokolle: Vec::new(),
+            urteil: Urteil::Abweichung,
+            werte: werte
+                .iter()
+                .map(|(n, d)| {
+                    (
+                        n.to_string(),
+                        d.iter().map(|x| (x.to_string(), Vec::new())).collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// ⚑ **Der Fall, für den der Hinweis gebaut ist.**
+    #[test]
+    fn vektoren_gleich_und_abdruck_verschieden_nennt_die_luecke() {
+        let text = abweichungs_hinweis(&gruppe(&[
+            ("konformitaet", &["k0"]),
+            ("training", &["t0", "t1"]),
+        ]));
+        assert!(text.contains("KEIN Vektor abdeckt"), "{text}");
+        assert!(
+            !text.contains("`myl-test artefakte`"),
+            "widersprechende Anweisung: {text}"
+        );
+        assert!(text.contains("training_vorgaben"), "{text}");
+    }
+
+    /// ⚑ **Die Gegenprobe**: Stimmen beide, darf der Text die Lücke
+    /// nicht behaupten.
+    #[test]
+    fn stimmt_der_abdruck_wird_die_luecke_nicht_behauptet() {
+        let text = abweichungs_hinweis(&gruppe(&[
+            ("konformitaet", &["k0"]),
+            ("training", &["t0"]),
+            ("determinismus", &["d0", "d1"]),
+        ]));
+        assert!(!text.contains("KEIN Vektor abdeckt"), "{text}");
+        assert!(text.contains("`myl-test artefakte`"), "{text}");
+        assert!(text.contains("Rückwärtsweg über"), "{text}");
+    }
+
+    /// ⚑ Ohne Trainingswert wird über ihn nichts gesagt.
+    #[test]
+    fn ohne_trainingswert_steht_nichts_darueber_da() {
+        let text = abweichungs_hinweis(&gruppe(&[
+            ("konformitaet", &["k0"]),
+            ("determinismus", &["d0", "d1"]),
+        ]));
+        assert!(!text.contains("Trainingsabdruck"), "{text}");
     }
 }

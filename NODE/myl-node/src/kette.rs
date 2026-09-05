@@ -392,6 +392,21 @@ impl Kette {
         for n in 0..PROBEKONTEN {
             zustand.account_mut(&probekonto(n)).balance = PROBEGUTHABEN;
         }
+        // ⚑ **Ein Probekorpus, damit die Trainingspods etwas zu tun
+        // haben** (2026-09-05). Ohne Anker bildet die Kette
+        // Trainingspods und weist ihnen nichts zu; der Weg von der
+        // Zuteilung bis zum Bündel wäre dann von keinem Test berührt.
+        //
+        // **Die Wurzel ist ein Platzhalter und keine echte Verankerung.**
+        // Diese Kette ist eine Probekette; ein echtes Netz setzt hier
+        // die Wurzel eines wirklich verankerten Korpus, und wie er sich
+        // ändern lässt, steht in `myl_types::korpusanker`.
+        zustand.korpus = Some(myl_types::korpusanker::Korpusanker {
+            kennung: "probekorpus".into(),
+            wurzel: Hash::sha256(b"myelith-probekorpus"),
+            segmente: 65_536,
+            buendel: 256,
+        });
         // ⚑ **Die Saat der ersten beiden Epochen ist der Startwert**
         // (Fund 143). Der Ledger kennt ihn nicht, die Kette schon; ohne
         // ihn stünde dort eine Null, die in jedem Netz dieselbe wäre.
@@ -723,6 +738,56 @@ impl Kette {
     /// fester, den beide Seiten sehen.
     const PROBE_SHARDS: u32 = 4;
 
+    /// Was ein Pod je Epoche an Rechenleistung liefert, in vTFE.
+    ///
+    /// ⚑ **Spiegelt `myl_governance::Parameter::PodKapazitaet`**, und
+    /// das ist ein Behelf, kein Entwurf. Der Knoten bindet
+    /// `myl-governance` nicht ein und kann die Registry deshalb nicht
+    /// lesen; die Zahl steht hier zum zweiten Mal.
+    ///
+    /// **Ein Test hält beide gegeneinander** (`tests/parameter.rs`).
+    /// Laufen sie auseinander, rechnet die Kette gegen eine Auslastung,
+    /// die niemand beschlossen hat.
+    const POD_KAPAZITAET_VTFE: u64 = 3_600_000_000;
+
+    /// Der Sockel der Trainingsmenge, in Basispunkten der
+    /// Gesamtkapazität. Spiegelt `Parameter::TrainingsGrundrate`.
+    const TRAININGS_GRUNDRATE_BPS: u32 = 200;
+
+    /// γ_train, in Basispunkten der freien Kapazität. Spiegelt
+    /// `Parameter::TrainingsFreianteil`.
+    const TRAININGS_FREIANTEIL_BPS: u32 = 8_000;
+
+    /// Zähler und Nenner der Lernrate eines Trainingssegments.
+    ///
+    /// ⚑ **Vom Protokoll gesetzt und nicht vom Pod gewählt.** Ein Pod,
+    /// der seine eigene Lernrate wählte, wählte seinen eigenen
+    /// Arbeitsaufwand: Eine winzige Schrittweite bewegt fast nichts und
+    /// ist trotzdem eine ausgeführte Rechnung.
+    ///
+    /// ⚑ **2⁻¹² ist der Wert aus dem Trainingslauf**, der auf dem
+    /// 0,5B über dreissig Schritte sein Ziel trifft. Für das
+    /// Expertengemisch liegt das Arbeitsfenster des Routers bei 2⁻¹⁸ bis
+    /// 2⁻²²; **dass hier eine Zahl für beide steht, ist eine offene
+    /// Vereinfachung** und kein Ergebnis.
+    const TRAININGS_LR_ZAEHLER: i64 = 1;
+    /// Siehe [`Kette::TRAININGS_LR_ZAEHLER`].
+    const TRAININGS_LR_NENNER: i64 = 1 << 12;
+
+    /// Die drei Spiegelwerte, damit `tests/parameter.rs` sie gegen die
+    /// Registry halten kann.
+    pub fn pod_kapazitaet_vtfe() -> u64 {
+        Self::POD_KAPAZITAET_VTFE
+    }
+    /// Siehe [`Kette::pod_kapazitaet_vtfe`].
+    pub fn trainings_grundrate_bps() -> u32 {
+        Self::TRAININGS_GRUNDRATE_BPS
+    }
+    /// Siehe [`Kette::pod_kapazitaet_vtfe`].
+    pub fn trainings_freianteil_bps() -> u32 {
+        Self::TRAININGS_FREIANTEIL_BPS
+    }
+
 
     /// Leitet die Zuschreibung der abzurechnenden Epoche ab.
     ///
@@ -896,6 +961,42 @@ impl Kette {
         )
     }
 
+    /// Welche Pods der laufenden Epoche trainieren statt zu rechnen.
+    ///
+    /// # ⚑ Der Weg, und er war bis zum 2026-09-05 nicht da
+    ///
+    /// `myl_scheduler::trainingszuteilung` beantwortet die Frage, und
+    /// bis heute stellte sie niemand. Dasselbe galt für die ganze Kiste
+    /// `myl-train` (Fund 183) und für die Auslastungsrechnung
+    /// (Fund 184): gebaut, geprüft, unerreicht.
+    ///
+    /// ⚑ **Die Nachfrage kommt aus der Vorepoche**
+    /// ([`LedgerState::vtfe_vorepoche`]), nicht aus der laufenden. Die
+    /// Zuteilung steht fest, bevor die Epoche läuft; wer die laufende
+    /// Nachfrage nähme, bräuchte eine Zahl, die es noch nicht gibt.
+    ///
+    /// ⚑ **Und dieselbe Saat wie die Podbildung**, denn beide gehören
+    /// zur selben Epoche. Innerhalb der Auswahl wird sie noch einmal
+    /// abgeleitet, damit Trainingslast und Shard-Position nicht an
+    /// derselben Permutation hängen.
+    pub fn trainingsplan_der_laufenden_epoche(
+        zustand: &LedgerState,
+    ) -> myl_scheduler::trainingszuteilung::Trainingsplan {
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+        myl_scheduler::trainingszuteilung::plane(
+            &zuteilung,
+            zustand.vtfe_vorepoche,
+            Self::POD_KAPAZITAET_VTFE,
+            &myl_scheduler::trainingszuteilung::Trainingsraten {
+                grundrate_bps: Self::TRAININGS_GRUNDRATE_BPS,
+                freianteil_bps: Self::TRAININGS_FREIANTEIL_BPS,
+            },
+            &zustand.trainingsstand,
+            zustand.korpus.as_ref(),
+            &zustand.epochensaat.0,
+        )
+    }
+
     /// Der Pod zu einer Bündel-Kennung, aus der Zuteilung **der
     /// gefragten Epoche**.
     ///
@@ -1054,6 +1155,17 @@ impl Kette {
         // auch nichts geprägt; **gewonnen ist nur, dass der Weg in die
         // Kette jetzt steht**.
         let _ = buendel_leeren(zustand);
+        // ⚑ **Und die Trainingssegmente ebenso** (2026-09-05). Aus
+        // demselben Grund: Eine je Epoche wachsende Menge im Zustand
+        // bräche Entscheidung D7, weil `commitment` den ganzen Zustand
+        // serialisiert.
+        //
+        // ⚑ **Auch sie werden heute verworfen, ohne zugeschrieben zu
+        // werden.** Die Vergütung eines Trainingssegments hängt an der
+        // Prüfung, und die steht noch nicht: Redundanz und Bisektion auf
+        // Trainingssegmente sind offen. Gewonnen ist, dass der Weg in
+        // die Kette steht.
+        let _ = myl_ledger::transitions::trainingssegmente_leeren(zustand);
         // ⚑ **Und die Saat rückt weiter** (Fund 143).
         //
         // **Hinter dem Abschluss, nicht davor.** Die abgerechnete
@@ -1067,6 +1179,26 @@ impl Kette {
         // reicht der Registrierungsschluss aus Anhang A.2, und das ist
         // kein Zufall: Wäre die Saat näher als der Schluss, könnte
         // sich jemand anmelden, nachdem er sie kennt.
+        // ⚑ **Wer in der abgelaufenen Epoche zum Training herangezogen
+        // war, wird vermerkt** (2026-09-05). Ohne diesen Eintrag bliebe
+        // `trainingsstand` leer, die Reihum-Ordnung hätte nichts zu
+        // ordnen, und die Auswahl fiele auf das blosse Los zurück.
+        //
+        // ⚑ **Vor dem Drehen der Saat**, aus demselben Grund, aus dem
+        // der Abschluss davor steht: Der Plan der abgelaufenen Epoche
+        // hängt an der Saat, die **während** ihr galt. Danach wäre es
+        // der Plan einer Epoche, die es nie gab.
+        {
+            let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
+            let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+            myl_scheduler::trainingszuteilung::stand_fortschreiben(
+                &mut zustand.trainingsstand,
+                &zuteilung.pods,
+                &plan.pods,
+                alte_epoche,
+            );
+        }
+        // ⚑ **Und die Saat rückt weiter** (Fund 143), siehe oben.
         zustand.epochensaat = zustand.epochensaat_naechste;
         zustand.epochensaat_naechste = *letzter_hash;
     }
@@ -1231,6 +1363,67 @@ impl Kette {
                         buendel.clone(),
                         &erster.miner.miner_id,
                         &mitglieder,
+                    );
+                }
+                Anweisung::TrainingssegmentEinreichen { pod: kennung, segment } => {
+                    // ⚑ **Dieselbe Arbeitsteilung wie beim Bündel**
+                    // (Fund 144): Der Ledger kennt den Scheduler nicht
+                    // und soll ihn nicht kennen; diese Stelle sieht
+                    // beides und legt vor, was der Übergang prüft.
+                    let zuteilung = zuteilung.get_or_insert_with(|| {
+                        Self::zuteilung_der_laufenden_epoche(zustand)
+                    });
+                    let epoche_jetzt = zustand.epoch.0;
+                    let Some(pod) = myl_scheduler::zonenzuteilung::pod_zu_kennung(
+                        zuteilung,
+                        epoche_jetzt,
+                        kennung,
+                    ) else {
+                        continue;
+                    };
+                    let Some(erster) = pod.shards.first() else {
+                        continue;
+                    };
+                    // ⚑ **Der Plan sagt, ob dieser Pod bestellt war und
+                    // woran.** Ohne diese beiden Auskünfte könnte jeder
+                    // Pod Arbeit einreichen, die er sich selbst
+                    // ausgesucht hat, und die ganze Begründung der
+                    // VRF-Zuweisung fiele.
+                    //
+                    // ⚑ **Der Plan wird hier neu gerechnet und nicht
+                    // gespeichert.** Er ist eine reine Funktion des
+                    // Zustands; ihn abzulegen führte eine zweite
+                    // Wahrheit ein, die mit dem Zustand auseinanderlaufen
+                    // könnte.
+                    let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
+                    let bestellt = plan.pods.contains(&pod.pod_index);
+                    let charge = match (zustand.korpus.as_ref(), plan.zuweisungen.get(&pod.pod_index))
+                    {
+                        (Some(k), Some(z)) => k.charge(z.start, z.laenge),
+                        // Ohne Korpus oder ohne Zuweisung gibt es keine
+                        // Charge, gegen die zu prüfen wäre. Der Übergang
+                        // lehnt dann über `bestellt` oder über die
+                        // Charge ab; **eine erfundene Charge wäre
+                        // schlimmer als keine.**
+                        _ => Hash([0u8; 32]),
+                    };
+                    let mitglieder: Vec<(myl_types::ids::MinerId, myl_types::bls::BlsPublicKey)> =
+                        pod.mitglieder().map(|m| (m.miner_id, m.schluessel)).collect();
+                    let vorgabe = myl_ledger::transitions::Segmentvorgabe {
+                        charge,
+                        modell_version: segment.modell_version,
+                        lr_zaehler: Self::TRAININGS_LR_ZAEHLER,
+                        lr_nenner: Self::TRAININGS_LR_NENNER,
+                    };
+                    let _ = myl_ledger::transitions::trainingssegment_einreichen(
+                        zustand,
+                        &absender,
+                        *kennung,
+                        segment.clone(),
+                        bestellt,
+                        &erster.miner.miner_id,
+                        &mitglieder,
+                        &vorgabe,
                     );
                 }
                 Anweisung::SitzungWiderrufen { sitzung } => {
@@ -2151,6 +2344,226 @@ mod tests {
     /// Summe aller Guthaben, um das Wachstum der Geldmenge zu messen.
     fn geldmenge(k: &Kette) -> u128 {
         k.zustand().accounts.values().map(|a| a.balance as u128).sum()
+    }
+
+    /// ⚑ **Der Trainingsplan entsteht in der Kette und wird vermerkt.**
+    ///
+    /// Ohne diesen Test wäre der Eintrag im Epochenwechsel eine Zeile,
+    /// die niemand erreicht, und `trainingsstand` bliebe leer: Die
+    /// Reihum-Ordnung hätte nichts zu ordnen, und niemandem fiele es
+    /// auf, weil die Auswahl dann still auf das blosse Los zurückfiele.
+    ///
+    /// Acht Miner ergeben einen Pod (vier Positionen, zwei Reserve, zwei
+    /// bleiben ohne). Ohne Nachfrage ist die Auslastung null, der Anteil
+    /// 82 Prozent, und gerundet ist das **ein** Trainingspod.
+    ///
+    /// ⚑ **Acht und nicht zwölf**, weil die Probekette genau acht Konten
+    /// hat. Die Reihum-Ordnung über mehrere Pods steht in den Tests von
+    /// `myl_scheduler::trainingszuteilung`; hier geht es um die Naht.
+    #[test]
+    fn der_trainingsplan_entsteht_und_wird_vermerkt() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        let mut k = Kette::probestand();
+        let mut nonce = [0u64; 8];
+        for w in 0..8u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        assert_eq!(k.zustand().miner.len(), 8, "die Anmeldungen kamen nicht an");
+
+        // Die Anmeldungen greifen erst nach dem Registrierungsschluss.
+        for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        assert_eq!(zuteilung.pods.len(), 1, "acht Miner muessen einen Pod ergeben");
+
+        let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+        assert_eq!(plan.auslastung, 0, "ohne Nachfrage ist die Auslastung null");
+        assert_eq!(plan.anteil_bps, 8_200, "der Anteil bei leerem Netz");
+        assert_eq!(plan.pods.len(), 1, "der einzige Pod muss trainieren");
+        // ⚑ **Und er bekommt ein Buendel**, sonst waere der Plan eine
+        // Zuteilung ohne Aufgabe.
+        let nr = *plan.pods.iter().next().expect("ein Pod");
+        let buendel = plan.zuweisungen.get(&nr).expect("kein Buendel zugewiesen");
+        assert_eq!(buendel.laenge, 256);
+        assert_eq!(buendel.start % 256, 0, "das Buendel liegt nicht auf dem Raster");
+        assert!(buendel.start + buendel.laenge <= 65_536, "es ragt aus dem Korpus");
+
+        // ⚑ **Der Vermerk entsteht am Epochenwechsel**, also sobald die
+        // Anmeldungen greifen und ein Pod entsteht.
+        let nach_eins = k.zustand().trainingsstand.clone();
+        assert!(!nach_eins.is_empty(), "der Epochenwechsel hat nichts vermerkt");
+        assert!(nach_eins.len() >= 6, "ein Trainingspod hat sechs Mitglieder");
+        let epoche_jetzt = k.zustand().epoch.0;
+        assert!(
+            nach_eins.values().all(|e| *e < epoche_jetzt),
+            "vermerkt wird die abgelaufene Epoche, nicht die laufende"
+        );
+        // ⚑ **Acht Miner, sechs Plaetze: zwei bleiben je Epoche
+        // draussen, und es sind nicht immer dieselben.** Die Pods werden
+        // jede Epoche neu gemischt, also kommen ueber mehrere Epochen
+        // alle acht an die Reihe. Genau deshalb haengt das Gedaechtnis
+        // am Miner und nicht am Pod.
+        assert!(nach_eins.len() <= 8, "mehr Vermerke als Miner");
+
+        // ⚑ **Und der Vermerk rückt mit der Epoche vor**, statt auf dem
+        // ersten Stand stehen zu bleiben.
+        for _ in 0..BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+        let nach_zwei = &k.zustand().trainingsstand;
+        let juengster_vorher = nach_eins.values().max().copied().unwrap_or(0);
+        let juengster_nachher = nach_zwei.values().max().copied().unwrap_or(0);
+        assert!(
+            juengster_nachher > juengster_vorher,
+            "der Vermerk blieb stehen: vorher {juengster_vorher}, nachher {juengster_nachher}"
+        );
+        assert!(nach_zwei.len() >= nach_eins.len(), "der Stand hat Miner verloren");
+    }
+
+    /// ⚑ **Der Weg vom Trainingsplan bis in den Zustand, ganz.**
+    ///
+    /// Ein bestellter Pod reicht sein Segment ein und es steht danach im
+    /// Zustand; ein Segment mit fremder Charge wird abgewiesen. Ohne
+    /// diesen Test wäre `TrainingssegmentEinreichen` eine Variante, die
+    /// niemand geht, und `Trainingssegment` bliebe die Arbeitsklasse
+    /// ohne Weg, die sie bis heute war.
+    #[test]
+    fn ein_bestellter_pod_reicht_sein_trainingssegment_ein() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        use myl_types::trainingssegment::Trainingssegment;
+
+        let mut k = Kette::probestand();
+        let mut nonce = [0u64; 8];
+        for w in 0..8u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+        let nr = *plan.pods.iter().next().expect("ein Trainingspod");
+        let pod = zuteilung.pods.iter().find(|p| p.pod_index == nr).expect("Pod");
+        let kennung = myl_types::miner::pod_kennung(k.zustand().epoch.0, nr);
+        let zuweisung = plan.zuweisungen[&nr];
+        let charge =
+            k.zustand().korpus.as_ref().expect("Korpus").charge(zuweisung.start, zuweisung.laenge);
+
+        // Welcher Probeschlüssel gehört zum Koordinator?
+        let koordinator = pod.shards[0].miner.miner_id;
+        let w = (0..8u8)
+            .find(|w| {
+                myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == koordinator
+            })
+            .expect("der Koordinator ist ein Probekonto");
+
+        let bauen = |charge: myl_types::hash::Hash| {
+            let mut seg = Trainingssegment {
+                id: myl_types::ids::SegmentId::new([3u8; 32]),
+                modell_version: myl_types::ids::MerkleRoot::new([4u8; 32]),
+                charge,
+                startschritt: 0,
+                schrittzahl: 30,
+                lr_zaehler: Kette::TRAININGS_LR_ZAEHLER,
+                lr_nenner: Kette::TRAININGS_LR_NENNER,
+                delta_commitment: myl_types::hash::Hash([5u8; 32]),
+                pod_pfad: pod.mitglieder().map(|m| m.miner_id).collect(),
+                signaturen: Vec::new(),
+            };
+            // ⚑ **Eine Unterschrift je Mitglied**, in der Reihenfolge
+            // des Pfades. Der Übergang fasst sie zusammen und prüft in
+            // einem Pairing.
+            let botschaft = seg.botschaft();
+            seg.signaturen = pod
+                .mitglieder()
+                .map(|m| {
+                    let nr = (0..8u8)
+                        .find(|w| {
+                            myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == m.miner_id
+                        })
+                        .expect("Mitglied ist ein Probekonto");
+                    probeschluessel(nr).sign(&botschaft).expect("signieren")
+                })
+                .collect();
+            seg
+        };
+
+        // ⚑ **Erst die Fälschung**, damit der Erfolg danach nicht bloss
+        // beweist, dass irgendetwas durchgeht.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(w),
+                nonce[w as usize],
+                Anweisung::TrainingssegmentEinreichen {
+                    pod: kennung,
+                    segment: bauen(myl_types::hash::Hash([99u8; 32])),
+                },
+            )
+            .expect("signieren"),
+        );
+        nonce[w as usize] += 1;
+        k.baue_block();
+        assert!(
+            k.zustand().trainingssegmente.is_empty(),
+            "ein Segment mit fremder Charge kam durch"
+        );
+
+        // Und jetzt das richtige.
+        k.aufnehmen(
+            Transaktion::signiere(
+                &Kette::startwert(),
+                &probeschluessel(w),
+                nonce[w as usize],
+                Anweisung::TrainingssegmentEinreichen {
+                    pod: kennung,
+                    segment: bauen(charge),
+                },
+            )
+            .expect("signieren"),
+        );
+        k.baue_block();
+        let abgelegt = k
+            .zustand()
+            .trainingssegmente
+            .get(&kennung)
+            .expect("das Segment steht nicht im Zustand");
+        assert_eq!(abgelegt.charge, charge);
+        assert_eq!(abgelegt.lr_nenner, Kette::TRAININGS_LR_NENNER);
     }
 
     /// ⚑ **Punkt 38, die Kernaussage in der Kette:** An der

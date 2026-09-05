@@ -1,0 +1,87 @@
+{
+  "name": "backward_embedding",
+  "level": "training",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "hidden": 4,
+    "vocab_size": 5,
+    "token_ids": [
+      2,
+      2,
+      0
+    ]
+  },
+  "inputs": {
+    "g0": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "b9c0136be7fbaa606e7a9d5c19d5b8edceea7f4034470cc38a76ac59d6855422",
+      "data": [
+        7,
+        -3,
+        11,
+        5
+      ]
+    },
+    "g1": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "43c9c20872f5a14a61b49963287137e99c082849b0d88912e91e1a694886f3c5",
+      "data": [
+        1,
+        1,
+        -1,
+        -1
+      ]
+    },
+    "g2": {
+      "dtype": "int32",
+      "shape": [
+        4
+      ],
+      "hash": "e55f704330dd9c3cbc2cfed14efde2376f64ec3c9985b7758e934ddaebbce20c",
+      "data": [
+        4,
+        4,
+        4,
+        4
+      ]
+    }
+  },
+  "outputs": {
+    "ziel": {
+      "dtype": "int64",
+      "shape": [
+        20
+      ],
+      "hash": "6b7093db45778c7a74189766f4b6fbec5128fd8be569d4a6308f26e5203b1481",
+      "data": [
+        4,
+        4,
+        4,
+        4,
+        0,
+        0,
+        0,
+        0,
+        8,
+        -2,
+        10,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  }
+}

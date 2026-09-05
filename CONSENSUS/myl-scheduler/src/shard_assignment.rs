@@ -202,6 +202,7 @@ pub fn assign_pods(
     seed: &[u8; 32],
 ) -> Zuteilung {
     let mut zuteilung = Zuteilung::default();
+    let mut uebrig: Vec<MinerRegistration> = Vec::new();
     if num_shards_per_pod == 0 {
         for c in clusters {
             zuteilung.ohne_pod.extend(c.miners.iter().copied());
@@ -234,9 +235,59 @@ pub fn assign_pods(
             }
             rest = &rest[je_pod..];
         }
+        uebrig.extend(rest.iter().copied());
+    }
+
+    // ⚑ **Die Reste aller Cluster kommen in einen Topf** (2026-09-05).
+    //
+    // Bis heute fielen sie einzeln in `ohne_pod`, und das war eine
+    // Verschwendung, die genau in der Anfangsphase wehtut: **Drei Zonen
+    // mit je elf Minern ergaben drei Pods und liessen fuenfzehn Miner
+    // liegen.** Gepoolt sind es fuenf Pods; vierzig Prozent der
+    // Kapazitaet standen ungenutzt herum.
+    //
+    // ⚑ **Es nimmt keinem zonenreinen Pod etwas weg.** Die Cluster
+    // werden zuerst gierig geschnitten; gepoolt wird nur, was danach
+    // uebrig ist und sonst gar keinen Pod bildete. Ein Pod aus dem Topf
+    // ist zonengemischt und damit langsamer als ein zonenreiner, aber
+    // die Alternative ist kein Pod, und der ist unendlich langsam.
+    //
+    // ⚑ **Und es ist keine neue Art von Pod.** Das Sammelcluster der
+    // duennen Zonen bildet seit jeher zonengemischte Pods. Dass die
+    // Reste der dicken Zonen weggeworfen wurden statt genauso behandelt,
+    // war kein Grundsatz, sondern eine Luecke.
+    //
+    // Der Topf wird gemischt: Ungemischt waere seine Reihenfolge die
+    // Verkettung der Clusterreihenfolgen und damit ableitbar.
+    if uebrig.len() >= je_pod {
+        deterministic_shuffle(&mut uebrig, &restesaat(seed));
+        let mut rest = &uebrig[..];
+        while rest.len() >= je_pod {
+            let index = zuteilung.pods.len() as u32;
+            if let Some(pod) = assign_shards(&rest[..je_pod], num_shards_per_pod, index, seed) {
+                zuteilung.pods.push(pod);
+            }
+            rest = &rest[je_pod..];
+        }
         zuteilung.ohne_pod.extend(rest.iter().copied());
+    } else {
+        zuteilung.ohne_pod.extend(uebrig);
     }
     zuteilung
+}
+
+/// Die Saat des Restetopfs.
+///
+/// Eigene Domaene, damit der Topf nicht dieselbe Permutation bekommt wie
+/// irgendein Cluster.
+fn restesaat(seed: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"MYELITH_POD_RESTETOPF_v1");
+    h.update(seed);
+    let d = h.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&d);
+    out
 }
 
 /// Der Seed eines einzelnen Pods.
@@ -252,6 +303,94 @@ fn pod_seed(seed: &[u8; 32], pod_index: u32) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&d);
     out
+}
+
+#[cfg(test)]
+mod restetopf {
+    use super::*;
+    use crate::zonenzuteilung::zuteilung_der_epoche;
+    use myl_types::hash::Hash;
+    use myl_types::ids::MinerId;
+    use crate::miner_filter::{HardwareClass, MinerRegistration};
+    use myl_types::node_metadata::GeoRegion;
+
+    fn register(n: u16, zonen: &[GeoRegion]) -> Vec<MinerRegistration> {
+        (0..n)
+            .map(|i| {
+                let mut b = [0u8; 32];
+                b[..2].copy_from_slice(&i.to_le_bytes());
+                MinerRegistration {
+                    miner_id: MinerId::new(b),
+                    hardware_class: HardwareClass::MediumGpu,
+                    registration_epoch: 0,
+                    schluessel: myl_types::bls::BlsPublicKey([0u8; 48]),
+                    zone: zonen[(i as usize) % zonen.len()],
+                    netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                }
+            })
+            .collect()
+    }
+
+    /// ⚑ **Die Zahl aus der Begruendung, nachgerechnet.**
+    ///
+    /// Drei Zonen mit je elf Minern, Podgroesse sechs. Je Zone geht ein
+    /// Pod auf, fuenf bleiben liegen: **drei Pods, fuenfzehn Miner
+    /// ungenutzt.** Gepoolt bilden die fuenfzehn zwei weitere Pods.
+    #[test]
+    fn drei_duenne_zonen_ergeben_fuenf_pods_statt_drei() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let z = zuteilung_der_epoche(&register(33, &zonen), 5, &Hash([9u8; 32]), 4);
+        assert_eq!(z.pods.len(), 5, "die Reste bilden keine Pods");
+        assert_eq!(z.ohne_pod.len(), 3, "33 = 5 Pods a 6 plus 3 uebrig");
+    }
+
+    /// ⚑ **Es nimmt keinem zonenreinen Pod etwas weg.** Bei glatt
+    /// teilbarer Besetzung entstehen genau die zonenreinen Pods und kein
+    /// Topf.
+    #[test]
+    fn ohne_rest_aendert_sich_nichts() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let z = zuteilung_der_epoche(&register(54, &zonen), 5, &Hash([9u8; 32]), 4);
+        assert_eq!(z.pods.len(), 9, "54 Miner, 18 je Zone, drei Pods je Zone");
+        assert!(z.ohne_pod.is_empty());
+        for pod in &z.pods {
+            let zonen_im_pod: std::collections::BTreeSet<GeoRegion> =
+                pod.mitglieder().map(|m| m.zone).collect();
+            assert_eq!(zonen_im_pod.len(), 1, "ein Pod ohne Rest ist zonenrein");
+        }
+    }
+
+    /// Was auch gepoolt keinen Pod fuellt, steht weiter im Protokoll.
+    #[test]
+    fn was_auch_gepoolt_nicht_reicht_bleibt_ohne_pod() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica];
+        // Vier Miner: nirgends genug, auch nicht zusammen.
+        let z = zuteilung_der_epoche(&register(4, &zonen), 5, &Hash([9u8; 32]), 4);
+        assert!(z.pods.is_empty());
+        assert_eq!(z.ohne_pod.len(), 4, "eine Zuteilung darf niemanden verschweigen");
+    }
+
+    /// Der Topf ist deterministisch, aber nicht die Verkettung der
+    /// Clusterreihenfolgen.
+    #[test]
+    fn der_topf_ist_deterministisch_und_gemischt() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let a = zuteilung_der_epoche(&register(33, &zonen), 5, &Hash([9u8; 32]), 4);
+        let b = zuteilung_der_epoche(&register(33, &zonen), 5, &Hash([9u8; 32]), 4);
+        let c = zuteilung_der_epoche(&register(33, &zonen), 5, &Hash([4u8; 32]), 4);
+        assert_eq!(a, b, "dieselbe Saat, dieselbe Zuteilung");
+        assert_ne!(a.pods, c.pods, "eine andere Saat teilt gleich zu");
+
+        // ⚑ Die zwei Pods aus dem Topf sind zonengemischt: Der Topf
+        // haelt Reste aus allen drei Zonen.
+        let gemischt = a.pods[3..]
+            .iter()
+            .filter(|p| {
+                p.mitglieder().map(|m| m.zone).collect::<std::collections::BTreeSet<_>>().len() > 1
+            })
+            .count();
+        assert_eq!(gemischt, 2, "die Topfpods sind nicht zonengemischt");
+    }
 }
 
 #[cfg(test)]

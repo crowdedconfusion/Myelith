@@ -566,30 +566,6 @@ fn clamp_i16_sat(v: i32) -> i16 {
     crate::fixed_point::clamp_i16(v)
 }
 
-// ---------------------------------------------------------------------------
-// RMSNorm
-// ---------------------------------------------------------------------------
-
-/// Rückwärts zu [`crate::rmsnorm::rmsnorm_i16`].
-///
-/// Vorwärts: `y_i = x_i · r · γ_i` mit `r = 1/sqrt(mean(x²))`, wobei `r`
-/// aus der rsqrt-LUT stammt.
-///
-/// ```text
-/// dL/dγ_i = g_i · x_i · r
-/// dL/dx_j = r · γ_j · g_j − (r³ · x_j / n) · Σ_i g_i · γ_i · x_i
-/// ```
-///
-/// **Der zweite Term ist der, den man vergisst.** Er kommt daher, dass
-/// `r` von *allen* `x` abhängt: Eine Änderung an `x_j` verschiebt die
-/// Norm und damit jede Ausgabe. Ohne ihn ist der Gradient nicht falsch
-/// skaliert, sondern schlicht ein anderer, und der Fehler wächst mit der
-/// Länge des Vektors.
-///
-/// `r` wird **nicht neu berechnet**, sondern vom Vorwärtspfad
-/// übernommen (`r_wert`, `r_frac`): Ein zweiter LUT-Nachschlag könnte
-/// einen anderen Index treffen, und dann leitete dieser Kernel eine
-/// andere Funktion ab als die, die gerechnet wurde.
 /// Baut den Gradientenvorrat **aus der Vorwaerts-Tabelle** (TRAINING V).
 ///
 /// # ⚑ Die Ableitung dessen, was gelaufen ist, nicht dessen, was gemeint war
@@ -646,65 +622,183 @@ pub const fn silu_grad_frac(lut_in_frac: u8, lut_out_frac: u8) -> u8 {
     lut_out_frac + 1 - lut_in_frac
 }
 
-#[allow(clippy::too_many_arguments)]
+// ---------------------------------------------------------------------------
+// RMSNorm
+// ---------------------------------------------------------------------------
+
+/// Die Skalen, mit denen eine RMSNorm rückwärts gerechnet wird.
+///
+/// ⚑ **`r` allein sagt nichts.** Seine Bruchstellen bestehen aus zwei
+/// Zahlen, die der Vorwärtspass getrennt kennt: `norm_frac` (die Skala
+/// des Tabellenwerts) und `ref_shift` (die Ausrichtung, gegen die die
+/// Quadratsumme gebildet wurde). Beide kommen aus
+/// [`crate::rmsnorm::Rmsnormspur`], und wer sie hier zu einer Zahl
+/// zusammenzieht, legt eine Lesart fest, die niemand mehr nachprüfen
+/// kann.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Normskalen {
+    /// Der Tabellenwert des Kehrwerts der Wurzel, aus dem Vorwärtspass.
+    pub r: i32,
+    /// Seine Bruchstellen, bezogen auf die Darstellung der Quadratsumme.
+    pub norm_frac: u8,
+    /// Die Ausrichtung der Quadratsumme, also das Maximum der
+    /// Eingangsverschiebungen.
+    pub ref_shift: u8,
+    /// `2^20 / n`, wie im Vorwärtspass.
+    pub inv_n_q20: i64,
+    /// Bruchstellen des eingehenden Gradienten (der Bus herein).
+    pub g_frac: u8,
+    /// Bruchstellen des ausgehenden Gradienten (der Bus heraus).
+    pub gx_frac: u8,
+}
+
+/// Schutzstellen der Zwischenwerte im RMSNorm-Rückwärtspass.
+///
+/// ⚑ **Vierundzwanzig, und die Zahl ist gerechnet.** Der zweite Term
+/// entsteht aus `r³ · x · Σ`, und jede Stufe, die auf die Einerstelle
+/// rundet, wirft ihn bei kleinen `r` weg. Mit vierundzwanzig
+/// Schutzstellen bleiben die beiden Faktoren unter `2^63`, sodass ihr
+/// Produkt in `i128` passt: `r_real³ ≤ 1` gibt `2^(rf+24) ≤ 2^44`, mal
+/// `x ≤ 2^15` sind `2^59`.
+const SCHUTZ_BITS: i32 = 24;
+
+/// Schiebt in beide Richtungen: rechts mit Rundung, links exakt.
+///
+/// ⚑ **Nötig, weil die Gesamtverschiebung hier negativ werden kann.**
+/// `norm_frac − ref_shift` ist die Skala von `r` gegenüber dem realen
+/// Wert, und sie ist bei grober Eingangsskala kleiner als null.
+#[inline]
+fn verschiebe_i128(v: i128, shift: i32) -> i128 {
+    if shift >= 0 {
+        crate::fixed_point::rshift_round_i128(v, shift as u32)
+    } else {
+        v << (-shift) as u32
+    }
+}
+
+/// Rückwärts zu [`crate::rmsnorm::rmsnorm_i16`].
+///
+/// Vorwärts: `y_i = x_i · r · γ_i` mit `r = 1/sqrt(mean(x²))`, wobei `r`
+/// aus der rsqrt-Tabelle stammt.
+///
+/// ```text
+/// dL/dγ_i = g_i · x_i · r
+/// dL/dx_j = r · γ_j · g_j − (r³ · x_j / n) · Σ_i g_i · γ_i · x_i
+/// ```
+///
+/// **Der zweite Term ist der, den man vergisst.** Er kommt daher, dass
+/// `r` von *allen* `x` abhängt: Eine Änderung an `x_j` verschiebt die
+/// Norm und damit jede Ausgabe. Ohne ihn ist der Gradient nicht falsch
+/// skaliert, sondern schlicht ein anderer, und der Fehler wächst mit der
+/// Länge des Vektors.
+///
+/// `r` wird **nicht neu berechnet**, sondern vom Vorwärtspfad
+/// übernommen: Ein zweiter Tabellennachschlag könnte einen anderen Index
+/// treffen, und dann leitete dieser Kern eine andere Funktion ab als die,
+/// die gerechnet wurde.
+///
+/// # ⚑ Jede Grösse dieser Formel ist eine **reale** Grösse (Fund 175)
+///
+/// Die Formel oben steht in realen Werten, und genau darin lag der
+/// Fehler: Bis zum 2026-09-04 setzte die Umsetzung an drei Stellen
+/// **Darstellungen** ein.
+///
+/// | Grösse | stand | gehört |
+/// |---|---|---|
+/// | `r` | `r / 2^norm_frac` | `r / 2^(norm_frac − ref_shift)` |
+/// | `x` im zweiten Term | die Darstellung | `x / 2^x_shifts[j]` |
+/// | `x` in der Summe | die Darstellung | `x / 2^x_shifts[i]` |
+///
+/// ⚑ **Die beiden Terme lagen dadurch auf verschiedenen Skalen**, und
+/// das ist schlimmer als ein gemeinsamer Faktor: Gegen die numerische
+/// Ableitung des echten Vorwärtskerns gemessen streuten die
+/// Verhältnisse über acht Kanäle von **1,08 bis −37,4**, also
+/// einschliesslich eines gedrehten Vorzeichens.
+///
+/// ⚑ **Und `x_shifts` fehlte ganz.** Der Vorwärtspass trägt eine Skala
+/// **je Kanal** (Fund 20); dieser Kern kannte sie nicht und konnte
+/// deshalb nicht einmal im Ansatz stimmen, sobald sie auseinandergehen.
+///
+/// **Aufgefallen ist es nicht, weil die Funktion ausserhalb ihrer Tests
+/// keinen Aufrufer hatte** und ihre beiden Tests Eigenschaften prüften,
+/// die von der Skala unabhängig sind: dass der zweite Term überhaupt
+/// wirkt, und dass ein Nullgradient nichts erzeugt. Dieselbe Lage wie
+/// bei Fund 173.
 pub fn rmsnorm_backward(
     g: &[Grad],
     x: &[i16],
+    x_shifts: &[u8],
     gamma: &[i8],
     gamma_shifts: &[u8],
-    r_wert: i32,
-    r_frac: u8,
-    inv_n_q20: i64,
-    g_frac: u8,
-    gx_frac: u8,
+    s: Normskalen,
 ) -> (Vec<Grad>, Vec<i64>) {
     let n = x.len();
     assert_eq!(g.len(), n, "rmsnorm_backward: g und x muessen gleich lang sein");
     assert_eq!(gamma.len(), n, "rmsnorm_backward: gamma passt nicht");
     assert_eq!(gamma_shifts.len(), n, "rmsnorm_backward: ein Shift je Gamma");
+    assert_eq!(x_shifts.len(), n, "rmsnorm_backward: ein Shift je Eingangskanal (Fund 20)");
 
-    let r = r_wert as i64;
+    let r = i128::from(s.r);
+    // Die Bruchstellen von `r` gegenueber dem **realen** Wert.
+    let rf = i32::from(s.norm_frac) - i32::from(s.ref_shift);
 
-    // Σ g_i · γ_i · x_i. Die Gamma-Skala je Element muss heraus, sonst
-    // gewichtet die Summe die Kanäle falsch.
+    // Σ g_i · γ_i^real · x_i^real.
     //
-    // **Wieder nach oben ausgerichtet**, aus demselben Grund wie in
-    // [`linear_backward`]: Jeden Summanden einzeln zu runden löscht die
-    // kleinen aus, und bei einer breiten Shift-Spanne bleibt von der
-    // Summe nur der gröbste Kanal übrig. Das ist Fund 24, wörtlich.
-    let ref_gshift = *gamma_shifts.iter().max().expect("rmsnorm_backward: gamma_shifts ist leer");
+    // **Nach oben ausgerichtet und einmal geschoben**, aus demselben
+    // Grund wie in [`linear_backward`]: Jeden Summanden einzeln zu
+    // runden loescht die kleinen aus, und bei breiter Shift-Spanne
+    // bleibt von der Summe nur der groebste Kanal uebrig (Fund 24).
+    let ref_summe = (0..n)
+        .map(|i| u32::from(gamma_shifts[i]) + u32::from(x_shifts[i]))
+        .max()
+        .expect("rmsnorm_backward: leerer Vektor");
     let mut s_acc: i128 = 0;
     for i in 0..n {
-        let term = (g[i] as i128) * (gamma[i] as i128) * (x[i] as i128);
-        s_acc += term << ((ref_gshift - gamma_shifts[i]) as u32);
+        let eigen = u32::from(gamma_shifts[i]) + u32::from(x_shifts[i]);
+        let term = i128::from(g[i]) * i128::from(gamma[i]) * i128::from(x[i]);
+        s_acc += term << (ref_summe - eigen);
     }
-    let s = crate::fixed_point::rshift_round_i128(s_acc, ref_gshift as u32)
-        .clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+    // ⚑ **Nicht auf die Einerstelle runden, sondern auf `SCHUTZ_BITS`.**
+    // Die Summe geht als Faktor in den zweiten Term ein; wer sie hier
+    // ganzzahlig macht, wirft bei kleinen Werten den ganzen Term weg.
+    let summe_fein = verschiebe_i128(s_acc, ref_summe as i32 - SCHUTZ_BITS)
+        .clamp(i64::MIN as i128, i64::MAX as i128);
 
-    // dL/dγ: g_i · x_i · r, ohne Reduktion.
+    // dL/dγ_i = g_i · x_i^real · r^real, ohne Reduktion.
     let mut ggamma = Vec::with_capacity(n);
     for i in 0..n {
-        ggamma.push(rshift_round_i64((g[i] as i64) * (x[i] as i64) * r, r_frac));
+        let roh = i128::from(g[i]) * i128::from(x[i]) * r;
+        let geschoben = verschiebe_i128(roh, i32::from(x_shifts[i]) + rf);
+        ggamma.push(geschoben.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
     }
 
     // dL/dx
+    //
+    // ⚑ **Gestaffelt geschoben, aber mit Schutzbits.** Ein Produkt aus
+    // `r³`, `x_j` und der Summe verliesse i128; wer dagegen nach jeder
+    // Stufe auf die Einerstelle rundet, verliert den zweiten Term
+    // ganz. ⛑ Gemessen: `r` von 106 auf neun Bruchstellen ergibt `r³`
+    // gerundet **5**, und `5 · 300 >> 15` ist **null**: Der ganze
+    // Normierungsterm verschwand, und der Test daneben sah es nicht,
+    // weil seine Summe sich zufaellig fast aufhob.
+    //
+    // `r3f` traegt `r_real³ · 2^(rf + SCHUTZ_BITS)`.
+    let r2f = verschiebe_i128(r * r, rf - SCHUTZ_BITS);
+    let r3f = verschiebe_i128(r2f * r, rf);
     let mut gx = Vec::with_capacity(n);
     for j in 0..n {
-        // Erster Term: r · γ_j · g_j
-        let t1 = rshift_round_i64(
-            rshift_round_i64((g[j] as i64) * (gamma[j] as i64), gamma_shifts[j]) * r,
-            r_frac,
+        // Erster Term: r^real · γ_j^real · g_j
+        let t1 = verschiebe_i128(
+            i128::from(g[j]) * i128::from(gamma[j]) * r,
+            i32::from(gamma_shifts[j]) + rf,
         );
-        // Zweiter Term: (r³ · x_j / n) · s
-        //
-        // Gestaffelt geschoben statt am Stück: r³ trägt 3·r_frac, und
-        // ein Produkt aus r³, x_j und s überschritte sonst auch i64.
-        let r2 = rshift_round_i64(r * r, r_frac);
-        let r3 = rshift_round_i64(r2 * r, r_frac);
-        let mit_x = rshift_round_i64(r3 * (x[j] as i64), r_frac);
-        let mit_n = (mit_x * inv_n_q20) >> 20;
-        let t2 = rshift_round_i64(mit_n * s, r_frac);
-        gx.push(clamp_i32(rescale_i64(t1 - t2, g_frac, gx_frac)));
+        // Zweiter Term: (r³ · x_j^real / n) · Σ
+        let mit_x = verschiebe_i128(r3f * i128::from(x[j]), i32::from(x_shifts[j]));
+        let mit_n = ((mit_x * i128::from(s.inv_n_q20)) >> 20)
+            .clamp(i64::MIN as i128, i64::MAX as i128);
+        let t2 = verschiebe_i128(mit_n * summe_fein, rf + 2 * SCHUTZ_BITS);
+        let roh = (t1 - t2).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        gx.push(clamp_i32(rescale_i64(roh, s.g_frac, s.gx_frac)));
     }
     (gx, ggamma)
 }
@@ -761,6 +855,33 @@ pub fn rope_backward(g: &[Grad], cos_row: &[i16], sin_row: &[i16], frac_bits: u8
 // Attention
 // ---------------------------------------------------------------------------
 
+/// Die Skalen, mit denen ein Aufmerksamkeitskopf rückwärts gerechnet
+/// wird.
+///
+/// ⚑ **Zusammengefasst, weil sechs gleichartige Zahlen niemand richtig
+/// übergibt.** `q_frac` und `k_frac` stehen in **verschiedenen**
+/// Schiebeweiten und sind beide `u8`; eine Vertauschung ist kein
+/// Übersetzungsfehler, sondern ein um Zweierpotenzen verschobener
+/// Gradient.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Aufmerksamkeitsskalen {
+    /// Der Faktor `1/sqrt(head_dim)` des Vorwärtspasses, als Ganzzahl.
+    pub score_mult: i64,
+    /// Bruchstellen von `score_mult`. Für
+    /// [`crate::fixed_point::inv_sqrt_q15`] sind es 15.
+    pub score_mult_frac: u8,
+    /// Bruchstellen der Q-Werte, **wie die Aufmerksamkeit sie sah**,
+    /// also nach RoPE und gegebenenfalls nach der QK-Normierung.
+    pub q_frac: u8,
+    /// Bruchstellen der K-Werte, ebenso.
+    pub k_frac: u8,
+    /// Bruchstellen der V-Werte. ⚑ **Und damit auch der Ausgabe**: Eine
+    /// gewichtete Summe von V trägt die Skala von V.
+    pub v_frac: u8,
+    /// Bruchstellen der Wahrscheinlichkeiten.
+    pub prob_frac: u8,
+}
+
 /// Rückwärts zu [`crate::attention::attention_int`], für **eine**
 /// Abfrageposition.
 ///
@@ -771,9 +892,51 @@ pub fn rope_backward(g: &[Grad], cos_row: &[i16], sin_row: &[i16], frac_bits: u8
 /// dL/dv_j = g · p_j
 /// dL/dp_j = g · v_j                (Summe über die Kopf-Dimension)
 /// dL/ds   = softmax_backward(dL/dp, p)
-/// dL/dq   = Σ_j dL/ds_j · k_j · score_mult >> score_shift
-/// dL/dk_j = dL/ds_j · q · score_mult >> score_shift
+/// dL/dq   = Σ_j dL/ds_j · k_j / sqrt(head_dim)
+/// dL/dk_j = dL/ds_j · q / sqrt(head_dim)
 /// ```
+///
+/// # ⚑ Der Vertrag über einen Gradienten, und warum er hier stehen muss
+///
+/// Ein Gradient dieses Projekts trägt **`dL/dZ` nach dem realen Wert**
+/// von `Z`, dargestellt auf einer gemeinsamen Skala, die der Aufrufer
+/// wählt (dem Gradientenbus). Jeder Kern nimmt die Skala herein und
+/// gibt die Skala heraus: [`linear_backward`] als `g_frac`/`gx_frac`,
+/// [`silu_backward`] ebenso, [`rmsnorm_backward`] ebenso.
+///
+/// **Daraus folgen die Schiebeweiten hier**, und keine davon ist die
+/// des Vorwärtspasses:
+///
+/// | Schritt | Schiebeweite | weil |
+/// |---|---|---|
+/// | `dL/dv` | `prob_frac` | der Faktor ist `p`, und `p` ist dimensionslos |
+/// | `dL/dp` | **`v_frac`** | der Faktor ist `v`, nicht `p` |
+/// | `dL/dq` | **`k_frac + score_mult_frac`** | der Faktor ist `k`, nicht `q` |
+/// | `dL/dk` | **`q_frac + score_mult_frac`** | der Faktor ist `q`, nicht `k` |
+///
+/// ⚑ **Bis zum 2026-09-04 stand an allen vier Stellen etwas anderes:**
+/// `prob_frac` für `dL/dp` und der **Vorwärts**-`score_shift`
+/// (`q_frac + k_frac + score_mult_frac − score_frac`) für `dL/dq` und
+/// `dL/dk`. Das ist in sich stimmig, wenn ein Gradient `dL/dZ` nach der
+/// **Darstellung** von `Z` trägt statt nach ihrem Wert; und es ist mit
+/// jedem anderen Rückwärtskern dieses Moduls unvereinbar, weil die
+/// beiden Lesarten sich um `2^(2·frac)` unterscheiden. Gemessen an der
+/// numerischen Ableitung des echten Vorwärtskerns war `dL/dq` um
+/// `2^(v_frac − prob_frac + score_frac − q_frac)` daneben, bei
+/// Qwen2.5-0,5B also um den Faktor 256, `dL/dk` um 512.
+///
+/// **Aufgefallen ist es nicht**, weil diese Funktion ausserhalb ihrer
+/// eigenen Tests keinen Aufrufer hatte und die Tests genau die
+/// Richtung prüften, in der sich die beiden Lesarten nicht
+/// unterscheiden: `dL/dv` trägt dieselbe Skala wie die Ausgabe, und für
+/// gleiche Skalen fallen beide Lesarten zusammen.
+///
+/// # ⚑ `score_frac` kommt nicht mehr vor, und das ist die Probe
+///
+/// Rückwärts gibt es keine Score-Skala: `s` und `p` sind reale Grössen,
+/// und die Ableitung des Softmax `p ⊙ (g − ⟨g, p⟩)` ist zwischen ihnen
+/// dimensionslos. Wer hier eine Score-Skala braucht, rechnet nach der
+/// Darstellung statt nach dem Wert.
 ///
 /// **Maskierte Positionen bekommen null**, und zwar ausdrücklich statt
 /// nebenbei: Vorwärts bekommen sie `i32::MIN` und damit `p ≈ 0`, aber
@@ -784,7 +947,6 @@ pub fn rope_backward(g: &[Grad], cos_row: &[i16], sin_row: &[i16], frac_bits: u8
 /// Die Funktion setzt [`softmax_backward`] ein und rechnet sonst nur
 /// Produkte und Summen; sie ist die Zusammensetzung, als die sie im
 /// Konzept beschrieben ist.
-#[allow(clippy::too_many_arguments)]
 pub fn attention_backward(
     g: &[Grad],
     q: &[i16],
@@ -792,9 +954,7 @@ pub fn attention_backward(
     v: &[Vec<i16>],
     p: &[Grad],
     mask: &[bool],
-    score_mult: i64,
-    score_shift: u8,
-    prob_frac_bits: u8,
+    s: Aufmerksamkeitsskalen,
 ) -> (Vec<Grad>, Vec<Vec<Grad>>, Vec<Vec<Grad>>) {
     let kv_len = k.len();
     let head_dim = q.len();
@@ -804,6 +964,11 @@ pub fn attention_backward(
     assert_eq!(g.len(), head_dim, "attention_backward: g passt nicht zu q");
 
     // dL/dv_j = g · p_j, und dL/dp_j = Σ_d g_d · v_j[d].
+    //
+    // ⚑ **Zwei Produkte, zwei Schiebeweiten.** Im ersten ist der Faktor
+    // `p` und die Weite deshalb `prob_frac`; im zweiten ist der Faktor
+    // `v` und die Weite deshalb `v_frac`. Dass beide Zeilen
+    // nebeneinander stehen und verschieden schieben, ist die Aussage.
     let mut gv = Vec::with_capacity(kv_len);
     let mut gp = Vec::with_capacity(kv_len);
     for j in 0..kv_len {
@@ -817,20 +982,28 @@ pub fn attention_backward(
         for d in 0..head_dim {
             zeile.push(clamp_i32(rshift_round_i64(
                 (g[d] as i64) * (p[j] as i64),
-                prob_frac_bits,
+                s.prob_frac,
             )));
             acc += (g[d] as i64) * (v[j][d] as i64);
         }
         gv.push(zeile);
-        gp.push(clamp_i32(rshift_round_i64(acc, prob_frac_bits)));
+        gp.push(clamp_i32(rshift_round_i64(acc, s.v_frac)));
     }
 
-    let gs = softmax_backward(&gp, p, prob_frac_bits);
+    let gs = softmax_backward(&gp, p, s.prob_frac);
 
-    // dL/dq und dL/dk. Die Skalierung `score_mult >> score_shift` ist
-    // dieselbe wie vorwärts (Fund 19: Q15-Multiplikation statt Shift,
-    // weil der Shift nur für gerade Zweierpotenzen stimmt).
-    let mut gq_acc = vec![0i64; head_dim];
+    // dL/dq und dL/dk. Der Faktor `1/sqrt(head_dim)` steht vorwärts wie
+    // rückwärts (Fund 19: Q15-Multiplikation statt Shift, weil der Shift
+    // nur für gerade Zweierpotenzen stimmt); die **Schiebeweite** ist
+    // rückwärts eine andere, und zwar für jeden der beiden Ausgänge eine
+    // eigene.
+    let gq_shift = s.k_frac + s.score_mult_frac;
+    let gk_shift = s.q_frac + s.score_mult_frac;
+    // i128, weil `gs · k · score_mult` über alle Positionen summiert
+    // 2^31 · 2^15 · 2^15 · kv_len erreicht und damit i64 verlässt. Der
+    // Faktor kommt nach der Summe dazu, sonst kostete er je Summand eine
+    // Multiplikation.
+    let mut gq_acc = vec![0i128; head_dim];
     let mut gk = Vec::with_capacity(kv_len);
     for j in 0..kv_len {
         if !mask[j] || gs[j] == 0 {
@@ -840,10 +1013,10 @@ pub fn attention_backward(
         let gsj = gs[j] as i64;
         let mut zeile = Vec::with_capacity(head_dim);
         for d in 0..head_dim {
-            gq_acc[d] += gsj * (k[j][d] as i64);
+            gq_acc[d] += (gsj as i128) * (k[j][d] as i128);
             zeile.push(clamp_i32(rshift_round_i64(
-                gsj * (q[d] as i64) * score_mult,
-                score_shift,
+                gsj * (q[d] as i64) * s.score_mult,
+                gk_shift,
             )));
         }
         gk.push(zeile);
@@ -851,10 +1024,59 @@ pub fn attention_backward(
     // Ein Shift ganz am Ende, nicht je Summand.
     let gq = gq_acc
         .into_iter()
-        .map(|a| clamp_i32(rshift_round_i64(a * score_mult, score_shift)))
+        .map(|a| {
+            let mit = a * (s.score_mult as i128);
+            let geschoben =
+                crate::fixed_point::rshift_round_i128(mit, gq_shift as u32);
+            clamp_i32(geschoben.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
+        })
         .collect();
 
     (gq, gk, gv)
+}
+
+// ---------------------------------------------------------------------------
+// Der Verlust
+// ---------------------------------------------------------------------------
+
+/// Der Gradient der Kreuzentropie nach den Logits.
+///
+/// ```text
+/// dL/dz = p − onehot(ziel)
+/// ```
+///
+/// # ⚑ Der Gradient ist ganzzahlig, der Verlustwert nicht
+///
+/// Die Kreuzentropie selbst ist `−log p[ziel]`, und ein Logarithmus
+/// gehört nicht in den Rechenpfad dieses Projekts. **Ihre Ableitung
+/// braucht keinen:** Sie ist `p − onehot`, und `p` liefert
+/// [`crate::softmax::softmax_int`] als ganze Zahl.
+///
+/// ⚑ **Damit steht die Grenze an der richtigen Stelle.** Was in den
+/// Ganzzahlpfad eintritt und die Gewichte bewegt, ist vollständig
+/// ganzzahlig und auf jeder Maschine dasselbe. Der **Verlustwert** ist
+/// eine Diagnose für Menschen und kein Vergleichswert; wer ihn zum
+/// Vergleichswert macht, hängt die Bitgleichheit an einen Logarithmus.
+///
+/// Der zurückgegebene Gradient liegt auf `prob_frac`: `p` trägt diese
+/// Bruchstellen, und die Eins des Zielworts ist deshalb `2^prob_frac`.
+///
+/// # Panics
+///
+/// Wenn `ziel` ausserhalb des Vokabulars liegt. **Ein Zielwort, das es
+/// nicht gibt, ist ein Aufruferfehler**, und ein stillschweigend
+/// ignoriertes ergäbe einen Gradienten, der überall in dieselbe Richtung
+/// zeigt.
+pub fn kreuzentropie_gradient(p: &[Grad], ziel: usize, prob_frac: u8) -> Vec<Grad> {
+    assert!(
+        ziel < p.len(),
+        "kreuzentropie_gradient: Zielwort {ziel} liegt ausserhalb des Vokabulars ({})",
+        p.len()
+    );
+    let eins = 1i64 << prob_frac;
+    let mut aus: Vec<Grad> = p.to_vec();
+    aus[ziel] = clamp_i32(i64::from(aus[ziel]) - eins);
+    aus
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,6 +1232,44 @@ mod tests {
         (routing.experten, routing.gewichte, gewaehlt, y)
     }
 
+    /// Die Mischgewichte **ohne den Boden**, also so, wie `route_top_k`
+    /// sie bis zum 2026-09-05 lieferte.
+    ///
+    /// # ⚑ Warum es diesen Nachbau gibt
+    ///
+    /// Seit dem 2026-09-05 hebt `route_top_k` bei `norm_topk_prob` jedes
+    /// Gewicht auf mindestens eins und entfernt damit den absorbierenden
+    /// Zustand aus Fund 79. **Drei Tests dieses Moduls sind genau dafür
+    /// da, ihn zu belegen**, und sie konnten ihn danach nicht mehr
+    /// bauen; ihre Meldung lautete „der Aufbau saettigt nicht mehr".
+    ///
+    /// ⚑ **Der Zustand ist damit aus einem Weg verschwunden, nicht aus
+    /// der Welt.** `moe_backward` bekommt seine Gewichte als Argument
+    /// und kann sie von überall her bekommen: von einem Modell ohne
+    /// `norm_topk_prob`, von einem anderen Router, aus einer Datei. Was
+    /// es bei Sättigung tut, gehört deshalb weiter geprüft, und dafür
+    /// wird sie hier von Hand gebaut.
+    fn gewichte_ohne_boden(logits: &[i32], experten: &[u16], frac: u8) -> Vec<i32> {
+        let lut = crate::moe::tests_exp_lut();
+        let gewaehlte: Vec<i32> = experten.iter().map(|e| logits[*e as usize]).collect();
+        let mut w = crate::softmax::softmax_int(&gewaehlte, &lut, 0, frac);
+        // Dieselbe Summenkorrektur wie `moe::korrigiere_summe`, nur ohne
+        // den Boden davor.
+        let soll = 1i64 << frac;
+        let ist: i64 = w.iter().map(|g| i64::from(*g)).sum();
+        let rest = soll - ist;
+        if rest != 0 {
+            let mut groesster = 0usize;
+            for (i, v) in w.iter().enumerate() {
+                if *v > w[groesster] {
+                    groesster = i;
+                }
+            }
+            w[groesster] = (i64::from(w[groesster]) + rest) as i32;
+        }
+        w
+    }
+
     /// ⚑ **Der Satz, um den es bei Mixture-of-Experts-Modellen geht: Ein nicht
     /// gewählter Experte bekommt exakt null.**
     ///
@@ -1132,7 +1392,10 @@ mod tests {
     #[test]
     fn ein_gesaettigter_router_hat_ueberall_gradient_null() {
         let (logits, alle, n, k, frac) = gemisch();
-        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let (experten, _, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        // ⚑ **Von Hand und nicht ueber `route_top_k`**, siehe
+        // [`gewichte_ohne_boden`].
+        let gewichte = gewichte_ohne_boden(&logits, &experten, frac);
         let g: Vec<Grad> = vec![7, -3, 11];
 
         assert_eq!(
@@ -1296,7 +1559,8 @@ mod tests {
     #[test]
     fn die_strafe_wirkt_wo_der_softmax_gradient_null_ist() {
         let (logits, alle, n, k, frac) = gemisch();
-        let (experten, gewichte, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let (experten, _, gewaehlt, _) = vorwaerts(&logits, &alle, k, frac);
+        let gewichte = gewichte_ohne_boden(&logits, &experten, frac);
         assert_eq!(gewichte, vec![1 << frac, 0], "der Aufbau saettigt nicht mehr");
 
         let g: Vec<Grad> = vec![7, -3, 11];
@@ -1329,7 +1593,8 @@ mod tests {
     fn wiederholte_strafe_fuehrt_aus_der_saettigung_heraus() {
         let (start, alle, n, k, frac) = gemisch();
         let mut logits = start.clone();
-        let (experten, gewichte, _, _) = vorwaerts(&logits, &alle, k, frac);
+        let (experten, _, _, _) = vorwaerts(&logits, &alle, k, frac);
+        let gewichte = gewichte_ohne_boden(&logits, &experten, frac);
         assert_eq!(gewichte, vec![1 << frac, 0], "der Aufbau saettigt nicht");
 
         let g: Vec<Grad> = vec![7, -3, 11];
@@ -1345,7 +1610,10 @@ mod tests {
                 *z += *dz;
             }
             schritte += 1;
-            let (_, w, _, _) = vorwaerts(&logits, &alle, k, frac);
+            // ⚑ **Gemessen ohne Boden**, sonst prüfte der Test den
+            // Boden statt die Strafe: Mit ihm ist jedes Gewicht ab dem
+            // ersten Schritt über null, und „befreit" wäre trivial wahr.
+            let w = gewichte_ohne_boden(&logits, &experten, frac);
             if w.iter().all(|x| *x > 0) {
                 befreit = true;
                 break;
@@ -1358,7 +1626,8 @@ mod tests {
 
         // Und der Beleg, dass es wirklich der Ausstieg ist: Jetzt kommt
         // wieder ein Gradient durch, wo vorher null stand.
-        let (e2, w2, a2, _) = vorwaerts(&logits, &alle, k, frac);
+        let (e2, _, a2, _) = vorwaerts(&logits, &alle, k, frac);
+        let w2 = gewichte_ohne_boden(&logits, &e2, frac);
         let jetzt = moe_backward(&g, &e2, &w2, &a2, n, frac, 6, 6);
         assert!(
             jetzt.logits.iter().any(|d| *d != 0),
@@ -1532,7 +1801,10 @@ mod tests {
         let g: Vec<Grad> = (0..n).map(|i| (i as i32 % 5) - 2).collect();
         let inv_n = ((1i64 << 20) as f64 / n as f64).round() as i64;
 
-        let (gx, ggamma) = rmsnorm_backward(&g, &x, &gamma, &gshifts, 1 << 12, 12, inv_n, 8, 8);
+        let (gx, ggamma) = rmsnorm_backward(
+            &g, &x, &vec![0u8; n], &gamma, &gshifts,
+            Normskalen { r: 1 << 12, norm_frac: 12, ref_shift: 0, inv_n_q20: inv_n, g_frac: 8, gx_frac: 8 },
+        );
         assert_eq!(gx.len(), n);
         assert_eq!(ggamma.len(), n);
 
@@ -1554,9 +1826,104 @@ mod tests {
         let gamma = vec![32i8; n];
         let gshifts = vec![5u8; n];
         let inv_n = ((1i64 << 20) as f64 / n as f64).round() as i64;
-        let (gx, gg) = rmsnorm_backward(&vec![0; n], &x, &gamma, &gshifts, 1 << 12, 12, inv_n, 8, 8);
+        let (gx, gg) = rmsnorm_backward(
+            &vec![0; n], &x, &vec![0u8; n], &gamma, &gshifts,
+            Normskalen { r: 1 << 12, norm_frac: 12, ref_shift: 0, inv_n_q20: inv_n, g_frac: 8, gx_frac: 8 },
+        );
         assert!(gx.iter().all(|v| *v == 0), "{gx:?}");
         assert!(gg.iter().all(|v| *v == 0), "{gg:?}");
+    }
+
+    /// ⚑ **Gegen die geschlossene Form der Ableitung, mit paarweise
+    /// verschiedenen Kanalskalen (Fund 175).**
+    ///
+    /// # ⚑ Warum hier keine numerische Ableitung steht
+    ///
+    /// Jeder andere Rueckwaertskern wird gegen die numerische Ableitung
+    /// des echten Vorwaertskerns geprueft. **Hier traegt das nicht**, und
+    /// der Grund ist die Tabelle: `r` ist eine **ganze** Zahl aus der
+    /// rsqrt-Tabelle, also ist `dr/dx` eine Treppe. Ein Schub an einem
+    /// grossen Kanal verschiebt den Tabellenindex um eine Stufe, und die
+    /// Differenz misst dann den Sprung statt der Steigung. Gemessen:
+    /// Die vier kleinen Kanaele trafen auf drei Promille, die vier
+    /// grossen streuten zwischen -5 und +9.
+    ///
+    /// **Verglichen wird deshalb mit der Formel selbst**, ausgerechnet
+    /// aus denselben **realen** Groessen. Das ist keine zweite Umsetzung
+    /// des Vorwaertspasses, sondern die Spezifikation des
+    /// Rueckwaertspasses: Genau ihre Skalenbuchhaltung war falsch.
+    ///
+    /// ⛑ **Die beiden Tests darueber koennen den Fehler nicht sehen.**
+    /// „Der zweite Term wirkt" und „ohne Gradient kein Gradient" sind von
+    /// jeder Skala unabhaengig. Mit der alten Fassung streuten die
+    /// Verhaeltnisse hier von **1,08 bis -37,4**.
+    #[test]
+    fn rmsnorm_backward_trifft_die_geschlossene_form() {
+        const N: usize = 8;
+        const OUT: u8 = 13;
+        let lut: Vec<i16> = (0..4096)
+            .map(|x| if x == 0 { 256 } else { (4096.0 / (x as f64).sqrt()).round() as i16 })
+            .collect();
+        let x: Vec<i16> = vec![300, -180, 90, 240, -60, 410, -320, 150];
+        // ⚑ **Absichtlich verschieden.** Der Vorwaertspass traegt eine
+        // Skala je Kanal (Fund 20); mit lauter gleichen Werten pruefte
+        // dieser Test genau das nicht, woran die alte Fassung scheiterte.
+        let xs: Vec<u8> = vec![6, 6, 7, 6, 8, 6, 5, 7];
+        let gamma: Vec<i8> = vec![64, -40, 90, 32, -70, 55, 20, -100];
+        let gs: Vec<u8> = vec![5, 6, 7, 5, 6, 7, 5, 6];
+        let inv_n = ((1i64 << 20) as f64 / N as f64).round() as i64;
+
+        let mut spur = crate::rmsnorm::Rmsnormspur::Leer;
+        let _ = crate::rmsnorm::rmsnorm_i16_mit_spur(
+            &x, &xs, &gamma, &gs, &lut, 0, 12, inv_n, OUT, Some(&mut spur),
+        );
+        let crate::rmsnorm::Rmsnormspur::Wert { r, norm_frac, ref_shift } = spur else {
+            panic!("der Vorwaertspass hat kein r hinterlassen");
+        };
+        let b = 12u8;
+        // ⚑ **Die Vorzeichen sind gewaehlt, nicht gewuerfelt.** Mit
+        // `+6` an Stelle sechs hob sich `Σ g·γ·x` fast auf (−0,38 statt
+        // 74,6), und dann traegt der zweite Term nichts zum Ergebnis
+        // bei: Der Test prueft dann nur den ersten. **Eine Summe, die
+        // sich aufhebt, ist eine Pruefung, die nichts auswaehlt.**
+        let g: Vec<Grad> = [3i32, -2, 5, 1, -4, 2, -6, -1].iter().map(|c| c << b).collect();
+
+        let (gx, ggamma) = rmsnorm_backward(
+            &g, &x, &xs, &gamma, &gs,
+            Normskalen { r, norm_frac, ref_shift, inv_n_q20: inv_n, g_frac: b, gx_frac: b },
+        );
+
+        let rf = i32::from(norm_frac) - i32::from(ref_shift);
+        let r_real = f64::from(r) / 2f64.powi(rf);
+        let xr: Vec<f64> = (0..N).map(|i| f64::from(x[i]) / 2f64.powi(i32::from(xs[i]))).collect();
+        let gr: Vec<f64> =
+            (0..N).map(|i| f64::from(gamma[i]) / 2f64.powi(i32::from(gs[i]))).collect();
+        let gg: Vec<f64> = (0..N).map(|i| f64::from(g[i]) / 2f64.powi(i32::from(b))).collect();
+        let summe: f64 = (0..N).map(|i| gg[i] * gr[i] * xr[i]).sum();
+        let bus = 2f64.powi(i32::from(b));
+
+        for j in 0..N {
+            let erwartet =
+                bus * (r_real * gr[j] * gg[j] - (r_real.powi(3) * xr[j] / N as f64) * summe);
+            let verhaeltnis = f64::from(gx[j]) / erwartet;
+            assert!(
+                erwartet.abs() > 100.0,
+                "Kanal {j}: die Erwartung ist zu klein zum Vergleichen ({erwartet:.1})"
+            );
+            assert!(
+                (0.95..=1.05).contains(&verhaeltnis),
+                "Kanal {j}: dL/dx ist {}, die geschlossene Form sagt {erwartet:.1}, \
+                 also das {verhaeltnis:.3}-fache",
+                gx[j]
+            );
+            let erw_gamma = gg[j] * xr[j] * r_real * bus;
+            let abweichung = (ggamma[j] as f64 - erw_gamma).abs();
+            assert!(
+                abweichung <= erw_gamma.abs() * 0.01 + 2.0,
+                "Kanal {j}: dL/dgamma ist {}, die geschlossene Form sagt {erw_gamma:.1}",
+                ggamma[j]
+            );
+        }
     }
 
     // ---- Determinismus -----------------------------------------------
@@ -1654,16 +2021,29 @@ mod tests {
         let gamma: Vec<i8> = vec![127; n];
         let g: Vec<Grad> = vec![64; n];
         let inv_n = ((1i64 << 20) as f64 / n as f64).round() as i64;
+        // ⚑ **Die Skalen muessen zueinander passen, seit Fund 175.** Ein
+        // Eingang von 30 000 auf Verschiebung null ist real 30 000, und
+        // dazu ein `r` von eins waere die Behauptung, der quadratische
+        // Mittelwert sei eins. Der zweite Term wird dann so gross, dass
+        // alles saettigt. Mit Verschiebung 15 ist der reale Eingang
+        // 0,92, und `r = 1` passt dazu.
+        let xs = vec![15u8; n];
+        let skalen = Normskalen {
+            r: 1 << 12,
+            norm_frac: 27,
+            ref_shift: 15,
+            inv_n_q20: inv_n,
+            g_frac: 8,
+            gx_frac: 8,
+        };
 
-        let (mit_feinen, _) =
-            rmsnorm_backward(&g, &x, &gamma, &gshifts, 1 << 12, 12, inv_n, 8, 8);
+        let (mit_feinen, _) = rmsnorm_backward(&g, &x, &xs, &gamma, &gshifts, skalen);
 
         // Dieselbe Rechnung, aber die feinen Kanäle auf null gesetzt:
         // Wenn sie nichts beitrügen, käme dasselbe heraus.
         let mut g_nur_grob = vec![0; n];
         g_nur_grob[0] = 64;
-        let (nur_grob, _) =
-            rmsnorm_backward(&g_nur_grob, &x, &gamma, &gshifts, 1 << 12, 12, inv_n, 8, 8);
+        let (nur_grob, _) = rmsnorm_backward(&g_nur_grob, &x, &xs, &gamma, &gshifts, skalen);
 
         assert_ne!(
             mit_feinen, nur_grob,
@@ -1718,6 +2098,21 @@ mod tests {
 
     // ---- Attention ----------------------------------------------------
 
+    /// Skalen für die kleinen Attention-Proben: alle Aktivierungsskalen
+    /// gleich, damit diese Tests von der Skalenfrage unabhängig bleiben.
+    /// Wo sie **nicht** unabhängig ist, steht
+    /// `der_gradient_nach_q_und_k_trifft_die_numerische_ableitung`.
+    fn probeskalen(prob_frac: u8) -> Aufmerksamkeitsskalen {
+        Aufmerksamkeitsskalen {
+            score_mult: 1 << 15,
+            score_mult_frac: 15,
+            q_frac: 0,
+            k_frac: 0,
+            v_frac: prob_frac,
+            prob_frac,
+        }
+    }
+
     /// **Maskierte Positionen bekommen exakt null.** Vorwärts sind sie
     /// „ungefähr null", und das ist im Rückwärtspass kein Argument: Ein
     /// Gradient auf eine Position, die nie gelesen wurde, wäre ein Leck
@@ -1732,7 +2127,7 @@ mod tests {
         let mask = vec![true, true, false];
         let g: Vec<Grad> = vec![3, -4, 5, -6];
 
-        let (_, gk, gv) = attention_backward(&g, &q, &k, &v, &p, &mask, 1 << 15, 15, 8);
+        let (_, gk, gv) = attention_backward(&g, &q, &k, &v, &p, &mask, probeskalen(8));
 
         assert!(gk[2].iter().all(|x| *x == 0), "gk der maskierten Position: {:?}", gk[2]);
         assert!(gv[2].iter().all(|x| *x == 0), "gv der maskierten Position: {:?}", gv[2]);
@@ -1749,7 +2144,7 @@ mod tests {
         let v: Vec<Vec<i16>> = vec![vec![5, 6], vec![7, 8]];
         let p: Vec<Grad> = vec![1 << 7, 1 << 7];
         let mask = vec![true, true];
-        let (gq, gk, gv) = attention_backward(&[0, 0], &q, &k, &v, &p, &mask, 1 << 15, 15, 8);
+        let (gq, gk, gv) = attention_backward(&[0, 0], &q, &k, &v, &p, &mask, probeskalen(8));
         assert!(gq.iter().all(|x| *x == 0), "{gq:?}");
         assert!(gk.iter().all(|z| z.iter().all(|x| *x == 0)));
         assert!(gv.iter().all(|z| z.iter().all(|x| *x == 0)));
@@ -1784,7 +2179,7 @@ mod tests {
             .collect();
         let p = crate::softmax::softmax_int(&scores, &lut, 0, frac);
         let (_, _, gv) = attention_backward(
-            &c, &q[0], &k, &v, &p, &mask[0], 1 << 15, 15, frac);
+            &c, &q[0], &k, &v, &p, &mask[0], probeskalen(frac));
 
         for j in 0..2 {
             for d in 0..2 {
@@ -1802,6 +2197,181 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// ⚑ **Gegen die numerische Ableitung nach `q` und `k`, mit
+    /// absichtlich paarweise verschiedenen Skalen.**
+    ///
+    /// ⛑ **Der Test darüber kann diesen Fehler nicht sehen.** Er leitet
+    /// nach `v` ab, und `v` trägt dieselbe Skala wie die Ausgabe; für
+    /// gleiche Skalen fallen die beiden möglichen Lesarten eines
+    /// Gradienten (nach dem Wert oder nach der Darstellung) zusammen.
+    /// Hier sind `q_frac`, `k_frac`, `v_frac`, `score_frac` und
+    /// `prob_frac` verschieden, und mit den Schiebeweiten des
+    /// **Vorwärts**passes lag `dL/dq` um den Faktor 4 daneben und
+    /// `dL/dk` um den Faktor 8.
+    ///
+    /// Gemessen wird gegen `2^B · dL/dZ` nach dem **realen** Wert, denn
+    /// das ist der Vertrag: `B` ist der Gradientenbus, hier `v_frac`.
+    #[test]
+    fn der_gradient_nach_q_und_k_trifft_die_numerische_ableitung() {
+        const Q_FRAC: u8 = 8;
+        const K_FRAC: u8 = 7;
+        const V_FRAC: u8 = 10;
+        const SCORE_FRAC: u8 = 12;
+        const PROB_FRAC: u8 = 14;
+        const EXP_IN: u8 = 8;
+        const HEAD_DIM: usize = 4;
+
+        // exp(-x) auf `SCORE_FRAC` Bruchstellen, Eingangsraster 2^-EXP_IN.
+        let lut: Vec<i16> = (0..4096)
+            .map(|i| {
+                let x = i as f64 / (1u32 << EXP_IN) as f64;
+                ((-x).exp() * (1u32 << SCORE_FRAC) as f64).round() as i16
+            })
+            .collect();
+        let q: Vec<i16> = vec![300, -180, 90, 240];
+        let k: Vec<Vec<i16>> = vec![
+            vec![120, 60, -40, 200],
+            vec![-90, 150, 220, 30],
+            vec![200, -20, 70, -110],
+        ];
+        let v: Vec<Vec<i16>> = vec![
+            vec![1000, -400, 250, 700],
+            vec![-600, 900, -120, 340],
+            vec![50, 80, -900, 120],
+        ];
+        let mask = vec![true, true, true];
+        let c: Vec<i64> = vec![3, -2, 5, 1];
+
+        let score_mult = crate::fixed_point::inv_sqrt_q15(HEAD_DIM);
+        let score_shift =
+            (Q_FRAC as u16 + K_FRAC as u16 + 15).saturating_sub(SCORE_FRAC as u16) as u8;
+        let lut_shift = SCORE_FRAC - EXP_IN;
+
+        let vorwaerts = |q: &[i16], k: &[Vec<i16>], v: &[Vec<i16>]| {
+            let mut spur: Vec<Vec<i32>> = Vec::new();
+            let q_zeile = [q.to_vec()];
+            let out = crate::attention::attention_int_mit_spur(
+                &q_zeile, k, v, std::slice::from_ref(&mask), score_mult, score_shift,
+                &lut, lut_shift, PROB_FRAC, Some(&mut spur),
+            );
+            (out[0].clone(), spur[0].clone())
+        };
+        // L = Σ_d c_d · out_real[d]
+        let verlust = |q: &[i16], k: &[Vec<i16>], v: &[Vec<i16>]| -> f64 {
+            let (out, _) = vorwaerts(q, k, v);
+            out.iter().zip(c.iter()).map(|(o, ci)| *o as f64 * *ci as f64).sum::<f64>()
+                / (1u64 << V_FRAC) as f64
+        };
+
+        let (_, p) = vorwaerts(&q, &k, &v);
+        // Der Bus: `dL/dout_real` mal 2^B mit B = V_FRAC.
+        let b = V_FRAC;
+        let g: Vec<Grad> = c.iter().map(|ci| (*ci << b) as Grad).collect();
+        let (gq, gk, _) = attention_backward(
+            &g, &q, &k, &v, &p, &mask,
+            Aufmerksamkeitsskalen {
+                score_mult,
+                score_mult_frac: 15,
+                q_frac: Q_FRAC,
+                k_frac: K_FRAC,
+                v_frac: V_FRAC,
+                prob_frac: PROB_FRAC,
+            },
+        );
+
+        let h = 64i16;
+        let pruefe = |name: String, num: f64, ana: f64| {
+            let erwartet = num * (1u64 << b) as f64;
+            let abweichung = (erwartet - ana).abs();
+            let bezug = erwartet.abs().max(ana.abs()).max(1.0);
+            assert!(
+                abweichung <= 2.0 || abweichung / bezug < 0.30,
+                "{name}: numerisch {erwartet:.1}, analytisch {ana:.1}"
+            );
+        };
+
+        for d in 0..HEAD_DIM {
+            let mut plus = q.clone();
+            let mut minus = q.clone();
+            plus[d] += h;
+            minus[d] -= h;
+            let num = (verlust(&plus, &k, &v) - verlust(&minus, &k, &v))
+                / (2.0 * h as f64 / (1u64 << Q_FRAC) as f64);
+            pruefe(format!("q[{d}]"), num, gq[d] as f64);
+        }
+        for j in 0..k.len() {
+            for d in 0..HEAD_DIM {
+                let mut plus = k.clone();
+                let mut minus = k.clone();
+                plus[j][d] += h;
+                minus[j][d] -= h;
+                let num = (verlust(&q, &plus, &v) - verlust(&q, &minus, &v))
+                    / (2.0 * h as f64 / (1u64 << K_FRAC) as f64);
+                pruefe(format!("k[{j}][{d}]"), num, gk[j][d] as f64);
+            }
+        }
+        // ⛑ Ohne diese Zeile bestünde der Test auch, wenn beide Seiten
+        // überall null wären.
+        assert!(gq.iter().any(|x| *x != 0), "gq ist überall null, der Test misst nichts");
+    }
+
+    // ---- Der Verlust ---------------------------------------------------
+
+    /// ⚑ **Der Gradient der Kreuzentropie summiert sich zu null.**
+    ///
+    /// `Σ p = 1` und `Σ onehot = 1`, also ist `Σ (p − onehot) = 0`. Das
+    /// ist keine Zierde, sondern die Aussage, dass eine gemeinsame
+    /// Verschiebung aller Logits den Verlust nicht aendert: **Der
+    /// Softmax ist gegen sie invariant**, und ein Gradient, der das
+    /// nicht abbildet, schoebe alle Logits gemeinsam nach oben oder
+    /// unten.
+    #[test]
+    fn der_kreuzentropie_gradient_summiert_sich_zu_null() {
+        let frac = 12u8;
+        let lut: Vec<i16> = (0..128)
+            .map(|i| ((-(i as f64) / 256.0).exp() * 256.0).round() as i16)
+            .collect();
+        let logits: Vec<i32> = vec![900, -400, 1500, 200, 60];
+        let p = crate::softmax::softmax_int(&logits, &lut, 8, frac);
+        assert_eq!(p.iter().map(|v| i64::from(*v)).sum::<i64>(), 1 << frac);
+
+        let g = kreuzentropie_gradient(&p, 2, frac);
+        let summe: i64 = g.iter().map(|v| i64::from(*v)).sum();
+        assert_eq!(summe, 0, "der Gradient summiert sich zu {summe} statt zu null");
+    }
+
+    /// ⚑ **Das Zielwort zieht nach unten, alle anderen nach oben.**
+    ///
+    /// Der Gradient zeigt in die Richtung **steigenden** Verlusts; ein
+    /// Schritt geht ihm entgegen. Das Zielwort bekommt deshalb einen
+    /// negativen Eintrag, damit sein Logit steigt.
+    ///
+    /// ⛑ Ein vertauschtes Vorzeichen faellt an keiner Summe auf und
+    /// traegt einen Lauf, der zuverlaessig das **falsche** Wort lernt.
+    #[test]
+    fn das_zielwort_bekommt_das_andere_vorzeichen() {
+        let frac = 12u8;
+        // ⛑ Alle vier gleich, damit keiner null ist: Ein Wort mit
+        // Wahrscheinlichkeit null bekaeme den Gradienten null, und der
+        // Test prueft dann eine Ungleichung, die gar nicht gilt.
+        let p: Vec<Grad> = vec![1 << 10; 4];
+        assert_eq!(p.iter().map(|v| i64::from(*v)).sum::<i64>(), 1 << frac);
+        let g = kreuzentropie_gradient(&p, 1, frac);
+        assert!(g[1] < 0, "das Zielwort bekam {} statt eines negativen Eintrags", g[1]);
+        for (i, v) in g.iter().enumerate() {
+            if i != 1 {
+                assert!(*v > 0, "Wort {i} bekam {v} statt eines positiven Eintrags");
+            }
+        }
+    }
+
+    /// Ein Zielwort ausserhalb des Vokabulars ist ein Aufruferfehler.
+    #[test]
+    #[should_panic(expected = "ausserhalb des Vokabulars")]
+    fn ein_zielwort_ausserhalb_des_vokabulars_bricht_ab() {
+        let _ = kreuzentropie_gradient(&[1, 2, 3], 3, 8);
     }
 
     // ---- Embedding ----------------------------------------------------

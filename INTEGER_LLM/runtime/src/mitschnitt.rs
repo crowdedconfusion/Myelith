@@ -39,11 +39,18 @@
 //! Kerne stehen im `Backend`-Merkmal in vier Umsetzungen. Ein Argument
 //! mehr risse alle vier auf, für etwas, das nur das Training braucht.
 //!
-//! ⚑ **Was weiterhin fehlt, und es steht im Typ statt im Kommentar:**
-//! ein Expertengemisch. [`Mlpteil::Expertengemisch`] sagt „hier wurde
-//! nicht aufgezeichnet", und der Übersetzer zwingt jeden Leser, den
-//! Fall zu behandeln. `moe_backward` verlangt andere Werte
-//! (Expertenwahl, Gewichte, Expertenausgaben); das ist Phase 5.
+//! ⚑ **Seit dem 2026-09-05 auch ein Expertengemisch.**
+//! [`Mlpteil::Expertengemisch`] sagte bis dahin „hier wurde nicht
+//! aufgezeichnet", und der Übersetzer zwang jeden Leser, den Fall zu
+//! behandeln. Jetzt trägt die Variante, was `moe_backward` verlangt:
+//! Expertenwahl, Mischgewichte, Expertenausgaben, die Zwischenwerte je
+//! Experte und die Routerlogits.
+//!
+//! ⚑ **Und die Marke bleibt trotzdem ein Typ mit Inhalt, kein Tupel
+//! leerer Vektoren.** Ein leerer Vektor sieht aus wie ein
+//! aufgezeichneter ohne Inhalt; ein Feld, das fehlt, gibt es nicht.
+
+use integer_llm_kernels::mlp::Mlpspur;
 
 /// Was eine Ebene an Zwischenwerten zurücklässt.
 ///
@@ -124,14 +131,57 @@ pub enum Mlpteil {
         /// Das Produkt `silu(gate) · up`: das `x` von `down_proj`.
         h: Vec<i16>,
     },
-    /// Ein Expertengemisch, **nicht aufgezeichnet**.
+    /// Ein Expertengemisch, vollständig aufgezeichnet.
     ///
-    /// ⚑ `moe_backward` verlangt andere Werte als eine dichte Einheit:
-    /// Expertenwahl, Gewichte und Expertenausgaben. Sie hier
-    /// mitzuschneiden ist eigene Arbeit und steht als Phase 5 im
-    /// Fahrplan.
-    Expertengemisch,
+    /// # ⚑ Seit dem 2026-09-05, und was sich damit ändert
+    ///
+    /// Bis dahin stand hier eine **Marke ohne Inhalt**: „hier wurde
+    /// nicht aufgezeichnet". Das war ehrlich und hat den Zweck erfüllt,
+    /// den ein Typ erfüllen soll, nämlich jeden Leser zu zwingen, den
+    /// Fall zu behandeln. **Jetzt trägt sie, was `moe_backward`
+    /// verlangt**, und damit läuft der Rückwärtspass auch durch Router
+    /// und Mischung.
+    ///
+    /// ⚑ **Der Anlass ist eine Entscheidung über das Primärmodell.**
+    /// Wird es ein Expertengemisch, ist die zweite Hälfte des
+    /// Arbeitsbegriffs ohne diesen Weg unprüfbar.
+    Expertengemisch {
+        /// Die gewählten Experten, in Auswahlreihenfolge.
+        ///
+        /// ⚑ **Die Reihenfolge ist nicht Zierrat.** `moe_backward`
+        /// ordnet ihr `je_ausgabe` zu, und `gewichte` steht in derselben
+        /// Folge. Wer sie sortierte, ordnete Gradienten den falschen
+        /// Experten zu, und es fiele nicht auf.
+        experten: Vec<u16>,
+        /// Die Mischgewichte, auf `prob_frac_bits`, in derselben Folge.
+        gewichte: Vec<i32>,
+        /// Die Ausgabe **jedes gewählten** Experten, vor der Mischung.
+        ausgaben: Vec<Vec<i16>>,
+        /// Die Zwischenwerte jedes gewählten Experten.
+        ///
+        /// ⚑ **Ein Experte ist ein dichter Block**, und deshalb steht
+        /// hier [`Mlpspur`], derselbe Typ wie beim dichten Fall, nur
+        /// k-mal. `schritt_auf_mlp` gilt für einen Experten unverändert;
+        /// das ist an echten 30B-A3B-Gewichten gemessen
+        /// (`tests/training_moe.rs`).
+        ///
+        /// ⛑ **Hier stand für eine halbe Stunde ein eigener Typ
+        /// `Expertenspur` mit denselben drei Feldern.** Das ist die
+        /// Klasse von Fund 178: zwei Fassungen derselben Sache, die
+        /// auseinanderlaufen können, und niemand merkt es, weil beide
+        /// übersetzen.
+        teile: Vec<Mlpspur>,
+        /// Die Routerlogits über **alle** Experten der Ebene.
+        ///
+        /// ⚑ Sie sind der Eingang des Routergradienten, und sie stehen
+        /// hier, weil `moe_backward` seinen Logitgradienten über alle
+        /// Experten ausgibt: Wer ihn auf die Routergewichte zurückführen
+        /// will, braucht die Eingabe der Projektion, und das ist
+        /// `norm_mitte`, plus diese Logits zur Prüfung.
+        logits: Vec<i32>,
+    },
 }
+
 
 /// Der Mitschnitt eines Vorwärtspasses über mehrere Ebenen.
 ///
@@ -180,4 +230,25 @@ impl Zwischenwerte {
     pub fn leeren(&mut self) {
         self.ebenen.clear();
     }
+}
+
+/// Der Sammelplatz, den [`crate::model::IntegerModel`] beim
+/// Vorwärtspass eines Expertengemisches füllt.
+///
+/// ⚑ **Ein eigener Typ und nicht fünf Ausgangsargumente.** Fünf
+/// `&mut`-Argumente an einer Funktion, die schon acht hat, liest
+/// niemand mehr; und sie gehören zusammen, denn `moe_backward` braucht
+/// sie zusammen.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Moespur {
+    /// Die gewählten Experten, in Auswahlreihenfolge.
+    pub experten: Vec<u16>,
+    /// Die Mischgewichte, in derselben Folge.
+    pub gewichte: Vec<i32>,
+    /// Die Ausgabe jedes gewählten Experten.
+    pub ausgaben: Vec<Vec<i16>>,
+    /// Die Zwischenwerte jedes gewählten Experten.
+    pub teile: Vec<Mlpspur>,
+    /// Die Routerlogits über alle Experten.
+    pub logits: Vec<i32>,
 }

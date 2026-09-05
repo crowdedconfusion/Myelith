@@ -520,35 +520,50 @@ mod tests {
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "ueber der Grenze 30")]
         fn rshift_round_bei_31_bricht_ab() {
             let _ = rshift_round(1000, 31);
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "ueber der Grenze 62")]
         fn rshift_round_i64_bei_63_bricht_ab() {
             let _ = rshift_round_i64(1000, 63);
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "ueber der Grenze 126")]
         fn rshift_round_i128_bei_127_bricht_ab() {
             let _ = rshift_round_i128(1000, 127);
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "Abstand 31 ausserhalb")]
         fn rescale_rechts_ueber_der_grenze_bricht_ab() {
             let _ = rescale(1024, 31, 0);
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "Abstand -32 ausserhalb")]
         fn rescale_links_ueber_der_grenze_bricht_ab() {
             let _ = rescale(1, 0, 32);
@@ -558,14 +573,20 @@ mod tests {
         /// Weg nach `i8` negativ, und `rescale` schiebt dann in die
         /// **falsche Richtung**, ohne dass irgendetwas abbricht.
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "ab 128 dreht die Differenz das Vorzeichen")]
         fn rescale_mit_frac_bits_ab_128_bricht_ab() {
             let _ = rescale(1024, 128, 0);
         }
 
         #[test]
-        #[cfg(debug_assertions)]
+        #[cfg_attr(
+            not(debug_assertions),
+            ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+        )]
         #[should_panic(expected = "ab 128 dreht die Differenz das Vorzeichen")]
         fn rescale_i64_mit_frac_bits_ab_128_bricht_ab() {
             let _ = rescale_i64(1024, 0, 200);

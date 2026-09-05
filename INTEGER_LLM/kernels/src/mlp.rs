@@ -246,7 +246,10 @@ mod tests {
     /// damit eine hinreichende statt der notwendigen Bedingung; die
     /// Prüfvorrichtungen des Laders fielen dadurch zu Unrecht durch.
     #[test]
-    #[cfg(debug_assertions)]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
+    )]
     #[should_panic(expected = "verlaesst i16")]
     fn ein_gate_wert_ausserhalb_von_i16_bricht_ab() {
         // Gewichte am Rand und ein Linksschieber um 5 Bit: der

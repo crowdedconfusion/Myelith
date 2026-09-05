@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.40.0 (`myl-consensus` 0.29.0, `myl-scheduler` 0.10.0,
-> `myl-ledger` 0.17.0)
+> **Version:** 0.43.0 (`myl-consensus` 0.30.0, `myl-scheduler` 0.12.0,
+> `myl-ledger` 0.20.0)
 > **Datum:** 2026-09-03
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -107,6 +107,187 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.43.0 – 2026-09-05 (`TrainingssegmentEinreichen`: der Pod liefert ab)
+
+### ⚑ Die Arbeitsklasse hatte keinen Weg in die Kette
+
+`Trainingssegment` stand als Typ da, und **ein Pod konnte rechnen, aber
+nichts abliefern**. Dieselbe Lage wie bei `AuszahlungskontoEintragen`
+(Fund 167) und bei der ganzen Kiste `myl-train` (Fund 183).
+
+`Anweisung::TrainingssegmentEinreichen` und
+`transitions::trainingssegment_einreichen` schliessen das.
+
+### Was geprüft wird, und warum jede Prüfung nötig ist
+
+| Prüfung | Ohne sie |
+|---|---|
+| Unterzeichner ist der **Koordinator** | jedes Mitglied reichte dasselbe ein, und die Dublettensperre entschiede nach Reihenfolge statt nach Zuständigkeit |
+| Der Pod war **zum Training bestellt** | jeder Pod reichte Arbeit ein, die er sich selbst ausgesucht hat, und die ganze Begründung der VRF-Zuweisung fiele |
+| **Charge** stimmt mit dem Plan | ein Pod wählte die Datenzusammensetzung des Modells |
+| **Lernrate** stimmt mit dem Protokoll | ein Pod wählte seinen eigenen Arbeitsaufwand: Eine winzige Schrittweite bewegt fast nichts und ist trotzdem eine ausgeführte Rechnung |
+| Aggregatsignatur gilt | jeder reichte im Namen fremder Pods ein |
+
+⚑ **Was nicht geprüft wird:** ob das `delta_commitment` das Ergebnis
+einer richtigen Rechnung ist. Das kann der Konsens nicht sehen und soll
+er nicht: Dafür gibt es Redundanz und Bisektion, genau wie bei der
+Inferenz. Der Übergang stellt fest, dass **jemand Zuständiges etwas
+Wohlgeformtes zum richtigen Auftrag** abgeliefert hat.
+
+### ⚑ Eine Unterschrift je Mitglied, geprüft in einem Pairing
+
+`Trainingssegment::pruefen` verlangt `signaturen.len() ==
+pod_pfad.len()`, anders als ein PoI-Bündel, das ein fertiges Aggregat
+trägt. **Die Form bleibt:** Sie sagt, wer haftet, und lässt später eine
+Teilbesetzung zu, die ein fertiges Aggregat nicht hergibt.
+
+Geprüft wird trotzdem nur einmal: Alle unterschreiben dieselbe
+Botschaft, also lassen sich die Signaturen zusammenfassen und mit
+`fast_aggregate_verify` in einem Pairing prüfen. Sie einzeln zu prüfen
+kostete das Sechsfache und sähe genauso aus.
+
+### ⚑ Die Variante steht am Ende des `Anweisung`-Enums
+
+Beim ersten Anlauf stand sie **mitten drin**, und Borsh kodiert
+Varianten als Index: Jede dahinter wäre verschoben worden. Der eigene
+Kommentar an `AuszahlungskontoEintragen` warnt genau davor, und der
+erste Entwurf hat ihn missachtet.
+
+### `myl-ledger`: `trainingssegmente` im Zustand
+
+Je Pod eines, und am Epochenwechsel geleert, aus demselben Grund wie die
+Bündel: Eine je Epoche wachsende Menge bräche Entscheidung D7, weil
+`commitment` den ganzen Zustand serialisiert.
+
+### v0.42.0 – 2026-09-05 (Reihum statt Los, Zonenreste im Topf, und `myl-train` bekommt seinen Aufrufer)
+
+### ⚑ Die Zonenreste wurden weggeworfen
+
+`assign_pods` schnitt jeden Zonentopf in Pods und liess den Rest in
+`ohne_pod` fallen. **Drei Zonen mit je elf Minern ergaben drei Pods und
+liessen fünfzehn Miner liegen**, also vierzig Prozent der Kapazität. In
+der Anfangsphase, in der noch nicht jede Region besetzt ist, ist das
+genau der schlechteste Zeitpunkt dafür.
+
+Die Reste **aller** Töpfe kommen jetzt in einen gemeinsamen, gemischten
+Topf. Aus 33 Minern werden fünf Pods statt drei.
+
+⚑ **Es nimmt keinem zonenreinen Pod etwas weg.** Die Töpfe werden zuerst
+gierig geschnitten; gepoolt wird nur, was sonst gar keinen Pod bildete.
+Ein Topfpod ist zonengemischt und damit langsamer, aber die Alternative
+ist kein Pod, und der ist unendlich langsam.
+
+⚑ **Und es ist keine neue Art von Pod.** Das Sammelcluster der dünnen
+Zonen bildet seit jeher zonengemischte Pods. Dass die Reste der dicken
+Zonen weggeworfen wurden, war kein Grundsatz, sondern eine Lücke.
+
+### ⚑ Die Trainingsauswahl geht reihum, und das Gedächtnis hängt am Miner
+
+„Ein Pod, der zuletzt trainiert hat, wird nicht gewählt" hat **keinen
+Gegenstand**: Pods werden jede Epoche neu gebildet. Pod 5 der Epoche 100
+und Pod 5 der Epoche 101 sind verschiedene Leute. Was besteht, ist der
+**Miner**.
+
+`Trainingsstand` hält je Miner die Epoche seiner letzten Heranziehung.
+Die Frische eines Pods ist die seines **zuletzt** dran gewesenen
+Mitglieds, also das Maximum: Sonst liesse sich ein Vielrechner immer
+wieder mit Neulingen zusammen nach vorn tragen.
+
+⚑ **Geordnet und nicht ausgeschlossen.** Ein Ausschluss („wer letzte
+Epoche trainiert hat, ist gesperrt") bricht bei hohem Anteil zusammen:
+Bei 82 Prozent hätten fast alle trainiert, fast kein Pod wäre wählbar,
+und das Training pendelte zwischen 82 Prozent und null. Die Ordnung
+liefert immer genau so viele Pods wie gebraucht.
+
+⚑ **Vorhersagbar, und das ist hier richtig.** Wer sich abmeldet und neu
+anmeldet, gilt als „nie trainiert" und steht damit **ganz vorn**. Der
+Ausweichversuch beschleunigt die eigene Heranziehung.
+
+### ⚑ Die Kurve: bei leerem Netz trainieren 82 Prozent, nicht 12
+
+Der Freianteil steht auf 8000 statt 1000 Basispunkten. Kap. 7.1 fragt,
+wie **wenig** Training das Netz verträgt; die andere Frage ist, was
+leerlaufende Miner sonst tun sollen, und die Antwort ist: nichts.
+
+**Warum nicht 10000:** Die Auslastung ist die der Vorepoche. Steigt die
+Nachfrage innerhalb der laufenden Epoche, können die Trainingspods sie
+nicht bedienen. Die fehlenden zwanzig Prozent sind Luft, kein
+Rundungsrest.
+
+### ⚑ Kaufmännisch gerundet statt abgerundet
+
+Abrunden war bei vier Prozent richtig und kippt bei 82: Ein Netz mit
+**einem** Pod träfe nie ein Training, auch vollständig leerlaufend. Null
+liegt dann weiter vom Ziel entfernt als eins. Der Schutz kleiner Netze
+bleibt: zehn Pods bei vier Prozent ergeben weiter null.
+
+### ⚑ Fund 183: `myl-train` hatte keinen einzigen Aufrufer
+
+`Trainingsplan::zuweisungen` sagt jetzt, welches Korpusbündel jeder
+Trainingspod bearbeitet, und ruft dafür `myl_train::zuweisung::zuweisen`.
+Die Kiste war gebaut, geprüft und unerreicht; die Ursache war genau
+diese fehlende Stelle.
+
+⚑ **Der Pod wählt sein Bündel nicht.** Wer keine Daten fälschen kann,
+kann immer noch auswählen; ein Angreifer mit vierzig Prozent
+Kapazitätsanteil hätte bei freier Wahl vierzig Prozent Einfluss auf die
+Datenzusammensetzung, und jedes einzelne Segment wäre dabei echt.
+
+⚑ **Ohne Korpus bleibt die Zuweisung leer, und das steht im Plan.** Ein
+Plan, der Pods nennt und ihnen nichts zuweist, wäre eine Falle für jeden
+Aufrufer.
+
+### `myl-ledger`: `korpus` und `trainingsstand` im Zustand
+
+### v0.41.0 – 2026-09-05 (die Nachfrage wird gezählt, und Trainingspods entstehen)
+
+### ⚑ Fund 184: die Auslastung wurde berechnet, aber nirgends gemessen
+
+`calculate_utilization` hatte ausserhalb der eigenen Tests **keinen
+Aufrufer**, und der Grund lag hier: Im Kettenzustand stand keine
+gemessene Nachfrage. Kap. 7.1 macht die Trainingsmenge von der
+Auslastung abhängig; die Regel liess sich nicht auswerten, weil ihre
+Eingangsgrösse nicht existierte.
+
+`LedgerState` trägt jetzt `vtfe_epoche` und `vtfe_vorepoche`.
+
+⚑ **Gezählt wird in `credit_spend`, dem einen Engpass**, durch den jede
+bezahlte Anfrage geht, auch die über `sitzung_ausgeben`. Eine zweite
+Zählstelle wäre eine zweite Wahrheit über dieselbe Grösse.
+
+⚑ **Nach der Prüfung und nicht davor.** Eine abgelehnte Ausgabe ist
+keine bediente Nachfrage. Wer sie mitzählte, liesse die Auslastung durch
+Fehlversuche steigen, und das wäre ein **kostenloser Hebel auf die
+Trainingsmenge des ganzen Netzes**.
+
+### `myl-scheduler`: wie viel des Netzes trainiert, und welche Pods
+
+`trainingszuteilung` ist neu:
+
+```text
+anteil = grundrate + freianteil · max(0, 1 − auslastung)
+```
+
+Bei 200 und 1000 Basispunkten sind das zwei Prozent bei voller
+Auslastung, vier bei achtzig, acht bei vierzig und zwölf im Leerlauf.
+**Konstant bei normaler Last, steigend bei fallender.**
+
+⚑ **Die Grundrate ist eine Abweichung von Kap. 7.1** und als „Entwurf"
+gekennzeichnet. Das Whitepaper bemisst allein an der freien Kapazität;
+wörtlich gelesen trainiert bei voller Auslastung niemand, und ein Netz,
+das Erfolg hat, hört auf, sein Modell zu verbessern. **Null stellt Kap.
+7.1 wieder her**, und ein Test hält das fest.
+
+⚑ **Kein Pod darf sich das aussuchen.** Trainingsvergütung ist auf 70
+Prozent gedeckelt; wer wählen dürfte, wählte Inferenz, und zwar jeder.
+Die Auswahl kommt aus der Epochensaat, mit **eigener Ableitung**: Nähme
+sie die Podpermutation, wüsste wer seine Shard-Position kennt etwas über
+seine Trainingslast.
+
+⚑ **Ein kleines Netz trainiert nicht.** Abgerundet, ohne Mindestzahl:
+Bei zehn Pods wären vier Prozent ein ganzer Pod, also zehn Prozent des
+Netzes und das Dreifache dessen, was Anhang B.7.2 verträgt.
 
 ### v0.40.0 – 2026-09-04 (⚑ Fund 167: das Auszahlungskonto bekommt einen Weg)
 

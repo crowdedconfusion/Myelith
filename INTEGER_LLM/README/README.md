@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.34.0 (θ_v 0.17.0; kernels 0.32.0, runtime 0.25.0, pipeline 0.15.0)
-> **Datum:** 2026-09-01
+> **Version:** 0.48.0 (θ_v 0.18.0; kernels 0.44.0, runtime 0.33.0, pipeline 0.15.0)
+> **Datum:** 2026-09-04
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
 > 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
@@ -420,6 +420,938 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.48.0 – 2026-09-05 (der Rückwärtsweg über Shardgrenzen)
+
+`runtime::shardtraining` trainiert einen **Ebenenbereich**, also das,
+was ein Shard tut: vorwärts mit Mitschnitt, dann `dL/dZ` am Ausgang
+hinein und `dL/dX` am Eingang hinaus.
+
+**Gemessen:** Ein Bereich in zwei Shards zerlegt ergibt dasselbe wie
+derselbe Bereich am Stück, Ebene für Ebene, bitgleich. Ohne diese
+Eigenschaft wäre geshardetes Training nicht gegen einen Einzelknoten
+nachrechenbar, und damit fiele die Redundanzprüfung, auf der die ganze
+Verifikation ruht.
+
+### ⚑ Drei Dinge, an denen es steht oder fällt
+
+**Die globale Ebenennummer.** Der Würfel des stochastischen Rundens ist
+eine reine Funktion aus `(ebene, schritt, index)`, und `index` zählt
+innerhalb der Ebene. Ein Shard, der seine Ebenen bei null
+durchnummerierte, würfelte anders. **Niemand sähe es dem Ergebnis an:**
+Es wäre ein plausibles Delta, nur ein anderes.
+
+**Die Skala des Gradienten, und sie ist ein Feld.** Ein Gradient ohne
+Skala ist eine Zahl ohne Einheit, genau die Fehlerklasse von Fund 179.
+Und der Residualstrom trägt **eine Verschiebung je Kanal**, nicht eine
+für alle: Wer hier ein `u8` erwartete, hätte jeden Kanal ausser einem
+falsch skaliert, und der Fehler wäre klein genug, um wie Rauschen
+auszusehen. `Shardergebnis::eingang_frac` ist deshalb ein `Vec<u8>`.
+
+**Der Mitschnitt überlebt die Lücke.** Bei der Inferenz ist ein Shard je
+Token zustandslos; beim Training hält er zwischen Vorwärts- und
+Rückwärtslauf eine Ebenenspur je Ebene. Wer mitten im Segment stirbt,
+nimmt ihn mit, und die Reserve kann nicht einspringen. **Daraus folgt
+eine Obergrenze für die Segmentlänge.**
+
+### ⚑ Ein Fehler im ersten Entwurf, den ein Schritt nicht gefunden hätte
+
+`rueckwaerts` änderte eine **Kopie** der Gewichte und warf sie weg. Über
+einen einzigen Schritt wäre das nicht aufgefallen; über dreissig wären
+es dreissig Mal derselbe erste Schritt gewesen. Die Gewichte stehen
+jetzt in `Shardgewichte` und überleben das Segment, und ein Test hält
+fest, dass der zweite Schritt auf dem ersten aufbaut.
+
+### Der Zuschnitt einer Ebene steht an einer Stelle
+
+`vorgaben_der_ebene`, `gewichte_der_ebene`, `master_der_ebene` und
+`breiten_der_ebene` sind aus `trainingsschleife` herausgezogen,
+**bevor** der zweite Aufrufer entstand. Ein zweiter Aufbau derselben
+Zahlenskalen wäre eine zweite Wahrheit gewesen, dieselbe Sorte Doppelung
+wie Fund 34, 111 und 143.
+
+### v0.47.0 – 2026-09-05 (Fund 185: die Schranke schlug erst am fernen Ende zu)
+
+### ⚑ Eine Panik ist keine Antwort für einen Pod
+
+Der 30B-Lauf meldet bei Lernrate 2⁻¹⁰: „AUS DEM MASTER bei Schritt 67".
+Er meldet das nur, weil der Testaufbau **von Hand danach sieht**. Weder
+`optimierer::schritt` noch die Trainingsschleife prüften etwas; die
+Prüfung gab es nur als Panik in `gewicht_aus_master`, also beim
+Zurückschreiben ins Artefakt, nach womöglich tausend Schritten.
+
+Für geshardetes Training trägt das nicht: **Ein Absturz ist von einem
+ausgefallenen Miner nicht zu unterscheiden.** Ein Pod, dessen Segment
+aus der Form läuft, muss es melden können.
+
+**Gebaut:** `optimierer::ausserhalb_der_form` und `MASTER_GRENZE`; beide
+Trainingsschleifen brechen ab und melden über
+`Trainingsergebnis::aus_der_form`. Der Abbruch ist eine reine Funktion
+der Gewichte, also deterministisch: Zwei Maschinen hören am selben
+Schritt auf und kommen zum selben Abdruck.
+
+### ⚑ Und die Zahl selbst war um eine Oktave falsch
+
+Naheliegend ist `127 << master_frac`, denn 127 ist der grösste Betrag
+eines `i8`. **Die Gegenprobe hat das widerlegt:** `gewicht_aus_master`
+sucht die kleinste Verschiebung `s` mit `betrag >> s <= 127` und lässt
+`s` bis `master_frac` zu. Bei `s = master_frac` passt alles bis
+`(128 << master_frac) − 1`, weil das Schieben **abrundet**.
+
+Der Unterschied ist keine Spitzfindigkeit. Eine Prüfung, die **strenger**
+ist als die Form, meldet ein Segment als gescheitert, das gerechnet
+hätte werden können; eine, die **lockerer** ist, lässt genau den Absturz
+zu, den sie verhindern soll.
+
+### ⚑ Shardtransparenz des Würfels: gemessen statt behauptet
+
+`optimierer::shardtransparenz` hält fest, dass eine Ebene in Scheiben
+fortzuschreiben dasselbe ergibt wie am Stück, sofern jede Scheibe ihren
+**globalen** Versatz kennt. **Ohne diese Eigenschaft wäre geshardetes
+Training nicht gegen einen Einzelknoten nachrechenbar**, und damit fiele
+die Redundanzprüfung aus, auf der die ganze Verifikation ruht.
+
+⚑ **Die Gegenprobe hat einen Fehler im Test selbst gefunden.** Der erste
+Entwurf nahm Gradienten, die glatt durch den Nenner teilbar waren; dann
+ist die Schrittweite exakt, das stochastische Runden hat nichts zu
+entscheiden, **und der Würfel kommt gar nicht vor**. Beide Tests waren
+grün und prüften nichts.
+
+### v0.46.0 – 2026-09-05 (Phase 5: der Lastausgleich bekommt einen Aufrufer, und die Aggregation wird dünn)
+
+⚑ **Der Fund war, dass alles schon dastand und niemand es rief.**
+`moe::Expertenwacht`, `backward::router_spreizung` und
+`moe::experte_einhaengen` stehen seit dem 2026-08-28 in den Kernen und
+hatten **null Aufrufer**. Das ist die Fehlerklasse der Funde 173 bis
+175, hier dreifach.
+
+#### ⚑ Der Lastausgleich, gemessen statt behauptet
+
+`trainingsschleife` hält jetzt eine `Expertenwacht` und wendet ihren
+Schub vor der Auswahl an. Gemessen an Qwen3-30B-A3B, Ebene 47, 24
+Schritte:
+
+| | berührte Experten | bewegte Gewichte |
+|---|---|---|
+| ohne Ausgleich | **10 von 128** | 1.870.957 |
+| mit Ausgleich | **18 von 128** | 1.886.427 |
+
+Fast doppelt so viele Experten bekommen einen Gradienten, zu praktisch
+gleichen Kosten.
+
+⚑ **Der zweite absorbierende Zustand, und er ist der stillere.** Der
+erste (ein gewählter Experte mit Gewicht null) ist seit θ_v 0.18.0
+entfernt. Der zweite: Ein Experte, der **nie gewählt** wird, wird nie
+gerechnet, bekommt nie einen Gradienten und ändert sich nie. **Er ist
+tot, ohne dass irgendeine Zahl davon abweicht.**
+
+⚑ **Und die Wacht beantwortet die Frage schärfer als die Literatur.**
+Der übliche Lastausgleich mittelt über den **Batch**, und das ist hier
+verboten. Die Wacht zählt über die **Segmentfolge**: Die
+Batch-Zusammensetzung wählt der Miner, die Segmentfolge legt das
+Protokoll fest. Dieselbe Einsicht wie „Loss-Free Balancing" (Wang u.a.
+2024, DeepSeek-V3), unabhängig gefunden; dort ist der Grund Kausalität,
+hier Determinismus.
+
+Dazu die **Spreizungsstrafe** auf den Routergradienten: Sie liest die
+Logit-Abstände statt der quantisierten Gewichte und hat deshalb ihren
+grössten Wert genau dort, wo der Softmax-Gradient verschwunden ist.
+
+#### ⚑ `aggregiere_duenn`: die Aggregation über dünn besetzte Beiträge
+
+Bei 18 von 128 berührten Experten wäre ein dichtes Δm zu **86 Prozent
+null**, also 560 Millionen Nullen je Ebene und Beitrag. ⚑ **Das ist
+nicht Sparsamkeit, sondern der Kern der Sache:** Ein Expertengemisch ist
+genau deshalb billig, weil ein Token nur k Experten berührt; eine
+Aggregation, die alle anfasst, hat den Vorteil weggeworfen.
+
+Dünn und dicht liefern nachweislich dasselbe, zwei Beiträge auf dieselbe
+Stelle addieren sich statt zu überschreiben, und geklemmt wird auch hier
+genau einmal.
+
+### v0.45.0 – 2026-09-05 (kernels 0.42.0, runtime 0.30.0: die Aggregation, und Δm als eigenes Commitment)
+
+**TRAINING 2.2:** `optimierer::aggregiere` schreibt einen Master mit
+vielen Beiträgen fort:
+
+```text
+m_{v+1} = klemmen(m_v + Σ Δm_i)
+```
+
+⚑ **Ordnungsfrei, und geklemmt genau einmal am Ende.** Wer je Summand
+klemmt, bekommt ein Ergebnis, das an der Reihenfolge hängt, und die
+bestimmt im Netz niemand: Pakete überholen sich. Mit Obergrenze 100 und
+den Beiträgen `+80, +80, −80` gibt die Reihenfolge links 20 und rechts
+80; einmal am Ende geklemmt sind es beide Male 80. **Dieselbe Regel wie
+in `mische_experten` und `linear_backward`** (Fund 24), zum dritten Mal
+und aus demselben Grund. Die Gegenprobe steht daneben und scheitert
+absichtlich, wenn der Aufbau die Sättigung gar nicht erreicht.
+
+**`optimierer::delta`** bildet Δm als Differenz, mit Klemmung statt
+Umlauf: Die Differenz zweier `i32` passt nicht immer in `i32`, und ein
+Umlauf machte aus einem grossen Schritt einen grossen Schritt in die
+Gegenrichtung.
+
+### ⚑ Δm bekommt ein eigenes Commitment, neben dem Abdruck
+
+`Trainingsergebnis` trägt jetzt beides, und keines ersetzt das andere:
+
+| | Frage |
+|---|---|
+| `abdruck` (Endzustand) | Haben **zwei Maschinen dieselbe Arbeit** gleich gerechnet? |
+| `delta_commitment` (Δm) | Was **addiert sich** in den nächsten Modellstand? |
+
+⚑ **Endzustände addieren sich nicht.** Viele Miner rechnen verschiedene
+Chargen gegen denselben Ausgangszustand; ihre Differenzen summieren
+sich, ihre Endzustände nicht. Der Abdruck war für die Frage des
+Miettags gebaut und ist dafür weiter richtig.
+
+### v0.44.0 – 2026-09-05 (runtime 0.29.0: die Schleife nimmt ein Expertengemisch an)
+
+`trainingsschleife` bricht auf einer MoE-Ebene nicht mehr ab, sondern
+nimmt einen zweiten Weg: **Router und alle gewählten Experten lernen
+gegen das nächste Token.** Gemessen an Qwen3-30B-A3B, Ebene 47:
+
+| | |
+|---|---|
+| bewegte Gewichte | 7.233.979 von 47.448.064 |
+| Kreuzentropie über 12 Schritte | 9,4583 auf **8,7000** |
+| Trainingsabdruck | wird geliefert wie im dichten Lauf |
+
+⚑ **Damit ist die sechste Stufe des Testclients auch auf einem
+Expertengemisch ein Vergleichswert**, ohne dass der Client etwas davon
+wissen muss.
+
+**Trainiert wird der Expertenblock, die Aufmerksamkeit derselben Ebene
+bleibt eingefroren.** Das ist keine Verkürzung, sondern der Zuschnitt der
+Frage: Die Aufmerksamkeit ist Zeile für Zeile derselbe Code wie im
+dichten Lauf, und der belegt sie. Neu und unbelegt war der Weg durch
+Mischung und Router.
+
+⚑ **Die Master der Experten entstehen erst bei Bedarf.** 128 Experten je
+Ebene kosten als Master 2,4 GB, und gebraucht werden sie nicht: **Ein
+Experte, den der Router nie wählt, hat den Gradienten exakt null**, nicht
+„fast null". Ein Master entsteht beim ersten Mal, dass sein Experte
+gewählt wird.
+
+⚑ **Und die Reihenfolge der Erzeugung geht nirgends ein.** Der Würfel des
+Optimierers ist eine reine Funktion aus Ebene, Schritt und Index; der
+Index eines Experten folgt aus **seiner Nummer**, nicht daraus, wann er
+zum ersten Mal drankam. Sonst hinge das Ergebnis daran, welchen Weg der
+Router zufällig zuerst nahm. Aus demselben Grund eine `BTreeMap` und
+keine Hashtabelle.
+
+⚑ **Was das nicht ist: geshardetes Training.** Der Lauf ist ein Prozess
+auf einer Ebene. In COMPUTE_PIPELINE, NODE und CONSENSUS steht **keine
+Zeile** Trainingscode; die Arbeitsklasse (TRAINING 2.1) und die
+Aggregation (2.2) sind offen.
+
+### v0.43.0 – 2026-09-05 (θ_v 0.18.0: der Boden im Router-Softmax, und der Routingpfad bekommt Vektoren)
+
+**θ_v 0.18.0**, und es ist der erste Eintrag, den `moe` in dieser Datei
+überhaupt hat. Bis heute stand der Pfad, der entscheidet **welche
+Experten rechnen**, weder in der Formatfestlegung noch in einem
+Konformitätsvektor; das ist die Hälfte von Fund 180.
+
+#### ⚑ Der Boden (Fund 79)
+
+`route_top_k` hebt bei `norm_topk_prob` jedes Mischgewicht auf
+mindestens eins; der Überschuss geht vom grössten ab. Damit ist
+`p_i >= 1` für jeden Verlierer und der Gewinner höchstens
+`eins − (k−1)`: **beide Wege zum Gradienten null sind zu.**
+
+| gemessen an Qwen3-30B-A3B | |
+|---|---|
+| im Betrieb, 4656 Routerstellen, 37.248 Gewichte | **schlägt nie an**, kein Bit ändert sich |
+| im Training, Schrittweite 2^-10 und 2^-14 | ohne Boden 199/200 gesättigt, **mit Boden 0** |
+| im Training, 2^-18 und 2^-22 | **bitgleich dasselbe Ergebnis** |
+
+⚑ **Er wirkt genau dort, wo er rettet, und sonst nirgends.**
+
+⚑ **Nur bei `norm_topk_prob`, und das ist eine Zusicherung, kein
+Kommentar.** Die Regel „Überschuss vom grössten abziehen" setzt eine
+Summe von exakt eins voraus, und die gibt es nur dort.
+
+⛑ **Drei Tests des Rückwärtspasses konnten den Zustand danach nicht mehr
+bauen** und meldeten „der Aufbau saettigt nicht mehr". Sie bauen ihn
+jetzt von Hand: Der Zustand ist aus einem **Weg** verschwunden, nicht
+aus der Welt, denn `moe_backward` bekommt seine Gewichte als Argument.
+
+#### ⚑ Der Umfang `moe`: vier Vektoren, Wert `bc7911c97f528e32`
+
+Routing mit und ohne Normierung, ein Gleichstand an der Auswahlgrenze,
+und die Mischung. Aus unabhängiger Nachbildung in
+`tools/golden_moe.py`. Der Konformitätslauf steht damit bei **43/43**;
+⚑ **`894d8357ae92b5c1` und `86e5e9835fe29565` sind unverändert.**
+
+#### ⚑ Was θ_v 0.18.0 an den Artefakten ändert: nur die Versionszeile
+
+Der Artefakt-Digest geht über `theta_v.json`, und dort steht die
+Spec-Version. Alle vier Modelle haben deshalb einen neuen Digest, **ohne
+dass sich ein Gewicht, eine Skala oder eine Tabelle geändert hätte**;
+die drei Hashes daneben belegen es. Qwen2.5-0,5B:
+`c42bb8a8d85bba5a` wird `ea442c3c8ecf628e`.
+
+⛑ **Und ein Test wurde dabei sprechend gemacht.**
+`zwei_prozesse.rs` startet `myl-pod-node` als **vorgebautes** Binary und
+warf dessen Fehlerausgabe weg. Als das alte Binary die neuen Artefakte
+ablehnte, meldete der Test „der Shard-Dienst hat seine Adresse nicht
+genannt": wahr und nutzlos. Jetzt steht die Ursache samt Abhilfe da.
+
+⛑ **Dreizehn Tests verschwanden im Release-Bau stumm**, weil sie
+`#[cfg(debug_assertions)]` tragen. Dieselbe Klasse wie der `sqrt_q`-Test
+von gestern; jetzt werden sie **genannt** statt weggelassen (184
+bestanden, 13 übersprungen statt 184 ohne Hinweis).
+
+### v0.42.0 – 2026-09-05 (kernels 0.40.0, runtime 0.28.0: der Rückwärtspass durch ein Expertengemisch; ⚑ Fund 79 gemessen, Funde 179 und 180)
+
+`gradienten_des_gemisches` schliesst den Kreis über ein
+Expertengemisch: drei Zweige, die sich am Eingang treffen. Durch die
+Mischung in jeden gewählten Experten, durch die Mischgewichte in die
+Routerlogits, und von dort durch die Routerprojektion. Der Mitschnitt
+trägt dafür jetzt Inhalt statt der Marke „nicht aufgezeichnet".
+
+#### ⚑ Fund 79 ist real, und er schlägt nach einem Schritt zu
+
+Bis heute war der absorbierende Zustand des Routers eine Herleitung.
+Gemessen an Qwen3-30B-A3B, nur der Router lernt, festes Ziel, 200
+Schritte:
+
+| Nenner | gesättigt | Abstand |
+|---|---|---|
+| 2^10 | **199/200** | 2,58e9 auf 2,30e9 |
+| 2^14 | **199/200** | 2,58e9 auf **6,51e9** |
+| 2^18 | 0/200 | 2,58e9 auf **2,03e9** |
+| 2^22 | 0/200 | 2,58e9 auf 2,03e9 |
+
+Bei 2^10 sättigt der Router im **ersten** Schritt und steht danach 199
+Schritte still: `[13679, 1608, 226, …]` wird zu `[16384, 0, 0, …]`.
+
+⚑ **Im Arbeitsfenster wird die Verteilung ausgeglichener, nicht
+schärfer**, von 83 Prozent auf der Spitze auf 52. Der Verlust selbst
+treibt zum Ausgleich, solange der Router sich bewegen kann.
+
+**Die Lehre:** Die Schrittweite des Routers ist keine
+Abstimmungsgrösse, sondern eine **Sicherheitsgrenze**. Zu gross heisst
+nicht „langsam", sondern „tot", und der Schaden ist nicht behebbar.
+
+#### ⚑ Ein Boden im Router-Softmax entfernt den Zustand und kostet nichts
+
+Mit `w_i = max(w_i, 1)` und dem Überschuss vom grössten abgezogen:
+Bei 2^10 und 2^14, wo der Router ohne ihn stirbt, lebt er. Bei 2^18 und
+2^22 ist das Ergebnis **bitgleich dasselbe**.
+
+⚑ **Das ist das Argument.** Der Boden wirkt genau dort, wo er rettet,
+und sonst nirgends. **Offen und ausdrücklich nicht entschieden**, ob er
+in θ_v kommt.
+
+#### ⚑ Fund 179: ein Faktor acht im Routerzweig
+
+`router_frac` statt `act_frac` als Ausgangsskala des
+Eingangsgradienten. Der Test „der Abstand sinkt" blieb grün, weil er
+`dL/dx` gar nicht benutzt. Gefunden hat es der Vergleich gegen die
+**geschlossene Form**: Kosinus 0,9766 richtig gegen 0,7332 mit dem
+Fehler.
+
+⚑ **Bei dieser Körnung entscheidet der Winkel, nicht die einzelne
+Komponente.** Auch der unabhängig belegte dichte Pfad streut je
+Komponente um 0,74 bis 1,14.
+
+#### ⚑ Fund 180: Der MoE-Routingpfad hat keinen Konformitätsvektor
+
+`route_top_k` und `mische_experten` sind nirgends gegen ein festes Soll
+geprüft. Das ist der Pfad, der entscheidet, **welche Experten rechnen**.
+Offen.
+
+### v0.41.0 – 2026-09-04 (kernels 0.39.0, runtime 0.27.0: TRAINING V Schritt 2e, die Schleife läuft; ⚑ Funde 177 und 178)
+
+`runtime/tests/trainingsschleife.rs` schliesst den Kreis vom **echten
+Ziel** bis in die Gewichte: Vorwärtspass über die letzte Ebene, Logits,
+Softmax, Kreuzentropie, Rückwärtspass durch Kopf und
+Abschlussnormierung, Schritt auf sieben Matrizen. **Gemessen an
+Qwen2.5-0,5B über dreissig Schritte: Kreuzentropie 9,2204 auf 0,1371,
+und das Zielwort ist am Ende der Argmax.**
+
+⚑ **Was das zeigt und was nicht.** Es zeigt, dass ein echtes Ziel echte
+Gewichte bewegt. Es zeigt **nicht**, dass ein Modell lernt: Trainiert
+wird auf einer einzigen Folge gegen ein einziges Wort, und ein Verlust,
+der dabei fällt, ist Auswendiglernen. Dafür braucht es einen Korpus und
+eine Haltemenge, und genau daran ist am 2026-08-22 schon einmal eine
+Messung gescheitert, die den Trainingsverlust für den Beleg hielt.
+
+⚑ **Die Gegenprobe steht im selben Test.** Ein Schritt, der bloss alle
+Logits anhebt, liesse auch den Verlust eines nicht trainierten
+Kontrollworts fallen. Der gemessene Kontrollverlust **steigt** von
+3,7944 auf 6,7173. Nimmt man dem Kreuzentropiegradienten den Zielterm,
+steigt der Zielverlust auf 12,8000 und der Argmax landet bei 468.
+
+#### ⚑ Fund 177: Der Softmax über das Vokabular verlor 88,5 % der Masse
+
+Der erste Lauf der Schleife meldete dreissig Schritte lang **9,7041**,
+unverändert bis auf die vierte Stelle. Der Wert ist 14 · ln 2, also
+genau der Boden, den ein Verlust aus `p[ziel] = 0` annimmt.
+
+`softmax_int` ist auf **Aufmerksamkeitspositionen** ausgelegt, und
+theta_v 0.16.0 rechnet seine Überlaufschranke ausdrücklich für 2048
+Einträge aus. Über 151.936 Wörter gilt keine seiner Annahmen mehr:
+
+| gemessen an Qwen2.5-0,5B | |
+|---|---|
+| Summe der Wahrscheinlichkeiten | **1879 statt 16384** |
+| Wörter mit `p = 0` | **150.064 von 151.936** |
+| grösster Eintrag | 2 von 16384 |
+
+⚑ **Es ist kein Rundungsfehler, es ist ein Boden.** Liegt der typische
+Wert unter einer halben Einheit, rundet nicht die Hälfte hoch und die
+Hälfte runter: **alle** fallen auf null. Das ist derselbe Defekt, den
+theta_v 0.16.0 für lange Kontexte beschreibt, nur eine Grössenordnung
+schlimmer.
+
+⚑ **Dazu ein zweiter Fehler an derselben Stelle.** Der Aufrufer bildete
+die Tabellenverschiebung als `logit_frac_bits − exp_input_frac`, also
+`6 − 8`, **mit `saturating_sub`**. Heraus kam 0, und der Exponent wurde
+viermal zu flach gelesen, ohne dass irgendetwas scheiterte.
+
+**Die Antwort ist `softmax::softmax_ueber_vokabular`**: i64-Summe, freie
+Ausgangsskala, und die Logitskala steht im Argument statt beim Aufrufer.
+Die Zusicherung `2^frac_bits >= n` verbietet genau den Fall, der hier
+eintrat, und `logit_frac >= exp_input_frac` ersetzt die Sättigung, die
+den zweiten Fehler verdeckte. Dazu ein sechster Trainingsvektor
+(`softmax_vokabular`), Umfang `training` damit auf `86e5e9835fe29565`.
+
+⚑ **Der Kopf liefert die Skala jetzt auf Anfrage.** `logit_frac_bits`
+steht auf 6, und der Kommentar dazu ist richtig: „nur fuer
+Sampling/Argmax (skaleninvariant)". Wer eine Wahrscheinlichkeit braucht,
+braucht mehr; `head_logits_mit_spur` nimmt die Skala deshalb als
+Argument, und `head_logits` reicht unverändert die alte durch. **Der
+Inferenzpfad rechnet Bit für Bit dasselbe**, und die 33 Layer- und
+E2E-Vektoren belegen es.
+
+#### ⚑ Fund 178: Der LM-Kopf stand dreimal wortgleich im Modul
+
+Über einer der drei Kopien stand der Satz, eine zweite Umsetzung des
+Kopfes wäre „eine zweite Wahrheit über den Rechenpfad", und es waren
+schon drei: in `forward_token`, in `head_logits_mit_spur` und im
+Aktivierungsabzug, fünfundzwanzig Zeilen, Zeichen für Zeichen gleich.
+
+⚑ **Das hat schon einmal gekostet.** Fund 176 war genau dieser Fehler
+eine Ebene höher. Jetzt gibt es `logits_aus_normiertem`, und alle drei
+rufen es.
+
+### v0.40.0 – 2026-09-04 (⚑ Fund 176: der Messpfad normierte zweimal; und die Masterskala bekommt eine Quelle)
+
+### ⚑ Fund 176: `forward_token_mit_routing` lieferte falsche Logits
+
+Der Weg normierte den Residualstrom selbst und reichte ihn dann an
+`head_logits`, **das ihn ein zweites Mal normiert**, dazu auf der
+falschen Eingangsskala. Gemessen an Qwen2.5-0,5B wichen **151 840 von
+151 936 Logits** ab.
+
+⚑ **Der Rechenpfad des Netzes war nie betroffen.** `forward_token`
+schreibt Normierung und Kopf aus, und der Shard ruft `head_logits` mit
+dem **rohen** Residualstrom. Betroffen war der **Messpfad**: die Zahlen,
+mit denen eine Routing-Untersuchung arbeitet, und die Tokenfolge, die
+sie dabei erzeugt. **Ein Messgeraet, das falsch misst, meldet keinen
+Fehler**, und das ist dieselbe Klasse wie die Funde 33 bis 36.
+
+⚑ **Aufgefallen ist es beim Lesen, nicht beim Testen.** Zwei Funktionen
+lieferten dasselbe und niemand hatte sie je nebeneinandergelegt;
+`beide_wege_liefern_dieselben_logits` tut das jetzt, und die Gegenprobe
+faellt mit 151 840 Abweichungen.
+
+### ⚑ Die Bruchstellen des Masters sind eine Festlegung, keine Wahl
+
+`optimierer::MASTER_FRAC` ist neu, und die Zahl gehoert dorthin: Aus ihr
+und der Zeilenverschiebung folgt der reale Wert eines Gewichts.
+**Zwei ehrliche Miner, die denselben Schritt mit verschiedenen Werten
+rechnen, bekommen verschiedene Gewichte**, und der Redundanzvergleich
+meldete beide als fehlerhaft, ohne dass einer gelogen haette. Dieselbe
+Lage wie beim Wuerfel des Optimierers, und dort steht die Antwort schon
+ausgeschrieben.
+
+⛑ **Bis zum 2026-09-04 stand sie in zwei Testdateien**, also genau die
+Lage, die dieses Projekt sonst durch einen Test verbindet oder auf eine
+Quelle zurueckfuehrt.
+
+**Offen bleibt der Ort.** Als Eigenschaft des Zahlenformats gehoert sie
+in die Formatfestlegung neben die uebrigen Bruchstellen; heute steht sie
+in der Bibliothek, weil eine Formataenderung **jeden** Golden Vector neu
+erzeugen liesse. Solange sie dort steht, gilt: Ein Aufrufer, der sie
+ueberschreibt, verlaesst das Protokoll.
+
+### v0.39.0 – 2026-09-04 (kernels 0.37.0: TRAINING V Schritt 2d, der Zusammenbau zur ganzen Ebene)
+
+`vorwaerts_der_ebene`, `gradienten_der_ebene` und `schritt_auf_ebene`
+mit `Ebenenvorgaben`, `Ebenengewichte`, `Ebenenspur`,
+`Ebenengradienten`, `Ebenentabellen` und `Normierungsgewichte`. Damit
+laeuft der Kreis ueber eine **vollstaendige Transformer-Ebene**: zwei
+Normierungen, zwei Bloecke, zwei Residualadditionen, sieben Matrizen.
+
+⚑ **Der Beleg ist byteweise.** `die_ganze_ebene_trifft_den_mitschnitt`
+vergleicht den Ausgang der Ebene mit dem **Eingang der naechsten Ebene**
+aus dem Mitschnitt eines echten Vorwaertspasses, auf den Ebenen 0, 12
+und 22 von Qwen2.5-0,5B ueber sechs Positionen.
+
+### ⚑ Eine Annahme war falsch: die Residualskalen sind wirklich je Kanal
+
+Am selben Tag stand hier noch, die Residualskalen des Artefakts seien
+skalar und vom Lader nur repliziert. **Das war falsch.** Die Angabe
+`shift` in `scales.json` ist der Skalar, der Lader nimmt aber `shifts`,
+und der ist ein Vektor: Auf Ebene 12 spannt er von **vier bis
+fuenfzehn**.
+
+⚑ **Damit ist eine Ebene mit einer einzigen Ausgabeskala nicht bitgleich
+zur Laufzeit**, und der byteweise Vergleich waere nicht moeglich
+gewesen. Die Ebene rechnet jetzt kanalweise, und `linear_w8a16_pc` ist
+im Aufmerksamkeitsblock wahlweise zugeschaltet: **Allein geprueft
+traegt der Block eine Skala, in einer Ebene addiert er in den
+Residualstrom.**
+
+### ⚑ Die Ausgabeskala ist eine je Kanal, der Gradientenbus ist eine Zahl
+
+Diese Unterscheidung war vorher nicht noetig und ist jetzt tragend.
+Vorwaerts braucht ein Block die Kanalskalen des Residualstroms;
+rueckwaerts nimmt `linear_backward` **eine** Skala fuer den eingehenden
+Gradienten. Die Ebene rechnet an der Blockgrenze um.
+
+⚑ **Genommen wird das Maximum**, denn dann ist jede Umrechnung von
+`acc[i]` auf den Bus ein **Linksschieben und damit exakt**. Mit dem
+Minimum verloere jeder feinere Kanal Stellen, bevor der Block ihn
+ueberhaupt sieht.
+
+### ⚑ Ein Zweig im Rauschen braucht eine Gleichung, keine Schranke
+
+Die Residualaddition ist rueckwaerts eine **Verzweigung**: Beide
+Summanden bekommen den vollen Gradienten. Der Zweig der **ersten**
+Addition wirkt aber nur auf `dL/dx` der Ebene, und dort geht er neben
+dem Beitrag der Normierung unter. ⛑ **Seine Wegnahme aenderte das
+gemessene Verhaeltnis von 0,872 auf 0,886**, also gar nichts.
+
+**Der Ausweg ist ein Aufbau, in dem sich beide Seiten hinschreiben
+lassen:** Sind `o_proj` und `down_proj` null, geben beide Bloecke null
+aus, und die Ebene ist ein **Durchreicher**. Vorwaerts bleibt
+`out = hidden`, rueckwaerts `dL/dx = dL/dy`, beide nur umskaliert. Der
+Vergleich ist dann eine Gleichheit, und die Gegenprobe beisst.
+
+⚑ **Und dieser Zweig ist der Grund, warum tiefe Netze trainierbar
+sind:** Er fuehrt den Gradienten an der Ebene **vorbei** nach unten,
+ungedaempft durch Normierung und Bloecke.
+
+### ⚑ Zwei Nullmutationen und ein Fehler in der Testrechnung
+
+- **Bei `aus_frac` unterhalb von `residual_mid_frac` ist `acc_mlp`
+  gleich `aus_frac`**, der Buswechsel zum Feedforward-Block also ein
+  Nullschritt. Zwei Gegenproben blieben gruen, weil sie nichts
+  vertauschten. Mit 11/8/10 schieben beide Wechsel wirklich.
+- ⛑ **Q, K und V tragen den inneren Bus des Blocks, nicht die
+  Additionsskala.** Mit dem falschen Exponenten lagen die Verhaeltnisse
+  je nach Skalenwahl bei 0,07 oder bei 2,1, und beide Male sah es nach
+  einem Fehler im Code aus. **Eine Erwartung, die falsch gerechnet ist,
+  sieht aus wie ein Fund.**
+- ⛑ **Bei Schrittweite eins bewegt sich genau ein Gewicht**, und eine
+  einzelne ganzzahlige Aenderung ist Raster und keine Messung. Gemessen:
+  3 326 vorhergesagt gegen 114 gemessen; bei Weite zwei 22 124 gegen
+  21 574.
+
+**Zwoelf Gegenproben, alle rot**, davon vier nur am byteweisen
+Vergleich: falsche Zielskala nach der ersten Addition, `acc_attn` ohne
+das Minimum, falsche MLP-Ausgabeskala, vertauschte Gammas.
+
+### Was die Ebene ausdruecklich nicht tut
+
+**Die beiden Gammas lernen.** Ein Gamma traegt eine Skala je **Element**,
+ein Gewicht eine je **Zeile**; ein Master fuer das eine ist etwas
+anderes als fuer das andere. `rmsnorm_backward` rechnet den
+Gamma-Gradienten aus, dieser Schritt verwirft ihn. Dasselbe gilt fuer
+die Vorspannungen.
+
+### v0.38.0 – 2026-09-04 (kernels 0.36.0: der Trainingspfad bekommt Golden Vectors, Umfang `training`)
+
+Fuenf neue Vektoren unter `conformance/vectors/training/`, erzeugt von
+`tools/golden_training.py` aus einer **unabhaengigen** Nachbildung:
+`backward_attention`, `backward_silu`, `backward_rmsnorm`,
+`backward_embedding` und `optimierer_schritt`. Der Prueflauf steht damit
+bei **38 von 38** statt 33 von 33.
+
+⚑ **Sie schliessen die Luecke, aus der die Funde 173 bis 175 kamen.**
+Drei der acht Rueckwaertskerne rechneten falsch, und der Lauf, der 33
+von 33 meldete, hat keinen von ihnen je gerechnet. **Gegengeprueft:**
+Dreht man Fund 173 oder Fund 175 zurueck, aendert man den Wuerfel des
+Optimierers oder laesst den Embedding-Gradienten zuweisen statt
+addieren, faellt der Trainingsumfang.
+
+### ⚑ Ein eigener Umfang, damit eine bestehende Zusage nicht bricht
+
+`894d8357ae92b5c1` steht an sechs Stellen des Repositoriums fest,
+darunter beide CI-Laeufe. Neue Vektoren im `op`-Umfang haetten ihn
+geaendert, also eine Zusage gebrochen, um eine neue aufzustellen.
+**Deshalb ein eigener Umfang und drei Werte je Lauf:**
+
+| Vergleichswert | Umfang | Wert |
+|---|---|---|
+| `konformitaet_op` | 6 Vektoren | `894d8357ae92b5c1`, **unveraendert** |
+| `konformitaet_training` | 6 Vektoren | `86e5e9835fe29565` |
+| `konformitaet_moe` | 4 Vektoren | `bc7911c97f528e32` |
+| `konformitaet` | der ganze Lauf | `ed7b5042352f6a82` |
+
+⚑ **Und je Stufe ein Wert grenzt eine Abweichung ohne zweiten Lauf
+ein.** Weichen beide Stufen ab, sitzt es unterhalb, in den
+Grundoperationen; weicht nur der Trainingswert ab, sitzt es im
+Rueckwaertspass. Dieselbe Ueberlegung wie hinter `digest_umfang`.
+
+### ⚑ Die Herkunft steht im Vektor, nicht im Kommentar
+
+Das Format traegt ein Feld `herkunft`. **`unabhaengig`** heisst: Eine
+getrennte Umsetzung hat die Sollwerte gerechnet, eine Uebereinstimmung
+belegt **Richtigkeit**. **`selbsterzeugt`** heisst: Dieser Code hat sie
+selbst erzeugt, eine Uebereinstimmung belegt **Determinismus zwischen
+Maschinen** und sonst nichts.
+
+⚑ **Wer die beiden verwechselt, haelt eine Selbstzertifizierung fuer
+einen Beleg**, und genau das war Fund 105 in anderer Gestalt: Ein
+zweiter `cargo build` genuegte damals fuer ein Urteil ueber Hardware.
+Fehlt das Feld, gilt `unabhaengig`, denn alle Vektoren bis zum
+2026-09-04 sind es; ein stillschweigend anderer Vorgabewert waere die
+gefaehrlichere Richtung. Ein Test haelt fest, dass alle fuenf neuen
+Vektoren `unabhaengig` tragen.
+
+### Was ausdruecklich fehlt
+
+**`moe_backward`.** Sein Eingang ist eine Routing-Entscheidung, und eine
+unabhaengige Nachbildung braeuchte den Router mit. Das gehoert zu
+Phase 5 der Trainingsseite und ist dort benannt, statt hier halb
+gemacht zu werden.
+
+**Und die beiden Bloecke** (`schritt_auf_mlp`,
+`schritt_auf_aufmerksamkeit`). Eine unabhaengige Nachbildung braeuchte
+den ganzen Vorwaertspfad ein zweites Mal in Python; was sie leisten
+koennen, ist ein **Determinismus**beleg, und der gehoert an den Lauf auf
+echten Gewichten und nicht an einen erfundenen Vektor.
+
+### v0.37.0 – 2026-09-04 (kernels 0.35.0: ⚑ Fund 174 geschlossen, die Skala des Masters ist ein Argument)
+
+`gewicht_aus_master` nimmt `master_frac` und gibt als
+Zeilenverschiebung die **Differenz** `master_frac − s` zurueck statt `s`.
+Damit ist der reale Wert eines Gewichts `master / 2^master_frac`,
+unabhaengig davon, wie viele Stellen zum Hineinpassen in `i8` wegfallen.
+`Schrittvorgaben`, `Mlpvorgaben` und `Aufmerksamkeitsvorgaben` tragen das
+Feld; die Laeufe auf echten Gewichten setzen es auf zwanzig.
+
+**Was vorher galt:** Der reale Wert war `master / 2^(2·s)`. Solange `s`
+sich nicht aenderte, war das eine Proportionalitaet. Ueber eine
+Oktavgrenze hinweg fiel er auf ein Viertel, und die Abbildung war dort
+nicht einmal monoton: Betragsmaximum 127 gab 127,00, Betragsmaximum
+**128** gab **32,00**.
+
+### ⚑ Die Wirkung war groesser als der Sprung an der Grenze
+
+Das war die auffaellige Haelfte. Die stille Haelfte ist diese: Ein
+Schritt wirkte auf eine Zeile um `2^(2·shift)` gedaempft, und **eine
+Zeile mit kleinen Gewichten traegt eine grosse Verschiebung**. Rechnerisch
+bewegte sich eine Zeile mit `shift = 20` um den Faktor `2^40` langsamer
+als eine mit `shift = 0`. ⚑ **Die feinskalierten Zeilen waren praktisch
+eingefroren, und niemand hat es gesehen**, weil der Abstand trotzdem
+fiel: Die groben Zeilen allein genuegten dafuer.
+
+**Gemessen an Qwen2.5-0,5B, sechzig Schritte:**
+
+| | vor der Behebung | nach der Behebung |
+|---|---|---|
+| Aufmerksamkeit, Ebene 0 | 97 % (Rate `1/2^14`) | 97 % (Rate `1/2^18`) |
+| Aufmerksamkeit, Ebene 12 | 91 % | **99 %** |
+| dieselbe Rate `1/2^14` | faellt | **steigt auf das 64-fache** |
+
+⚑ **Die Lernrate musste sechzehnmal kleiner werden**, und das ist die
+Bestaetigung: Vorher war sie fuer die groben Zeilen gewaehlt, waehrend
+die feinen nichts taten. Seit sich alle gleich schnell bewegen, laesst
+dieselbe Rate den Lauf davonlaufen.
+
+### ⚑ Und eine frueher berichtete Zahl war ein Artefakt des Aufbaus
+
+Der MLP-Blocktest meldete bisher, der Gradient sage in **82 bis 85
+Prozent** der Faelle die Richtung richtig voraus, und der Modulkopf
+erklaerte das mit der Quantisierung. **Das stimmte nicht.** Die Master
+standen in Rasterstufen mit Betraegen bis sechs, und der Schub von
+vierundsechzig war das **Zehnfache des Gewichts**. Seit die Master acht
+Bruchstellen tragen, ist derselbe Schub ein Bruchteil davon, und die
+Quote liegt bei **hundert Prozent**. Die Zahl beschrieb den Aufbau, nicht
+das Verfahren.
+
+### ⚑ Der Rundlauf ueber das Artefakt ist jetzt eine Zusicherung
+
+`der_weg_vom_artefakt_zum_master_und_zurueck_ist_exakt` haelt fest, dass
+`master_aus_gewicht` und `gewicht_aus_master` Umkehrungen sind, ueber
+einundzwanzig Matrizen auf drei Ebenen von Qwen2.5-0,5B, **byteweise**.
+Vorher galt das nur zufaellig: Der Rundlauf traf, solange das
+Betragsmaximum einer Zeile in der obersten Oktave lag, und das tut es bei
+einem frisch quantisierten Artefakt. **Nach dem ersten Trainingsschritt
+nicht mehr.** Ohne diese Zusicherung traete der erste Schritt gegen ein
+anderes Modell an als das geladene.
+
+**Und ein zu grosses Gewicht bricht ab**, statt still zu saettigen: Ein
+realer Wert ueber 127 laesst sich als `i8` mit einer Zeilenverschiebung
+nicht ausdruecken, und eine stille Kappung fiele erst an der
+Verlustkurve auf, wo sie wie ein Trainingsproblem aussieht.
+
+### v0.36.0 – 2026-09-04 (kernels 0.34.0: die Ebene wird zusammensetzbar, ⚑ Fund 175)
+
+Drei Vorarbeiten fuer den Zusammenbau zur ganzen Transformer-Ebene, und
+ein Fund, der dabei herausfiel.
+
+**1. Beide Bloecke geben ihren Eingangsgradienten heraus.**
+`Mlpgradienten` und `Aufmerksamkeitsgradienten` tragen ein Feld
+`eingang`. Ein Block fuer sich haengt an einem Ziel, und dort endet die
+Kette; **in einer Ebene endet sie nicht**, denn der Eingang eines Blocks
+ist die Ausgabe einer Normierung.
+
+⚑ **Er ist eine Summe.** Gate und Up lesen denselben Eingang, Q, K und V
+ebenso. Wer nur einen Beitrag nimmt, halbiert oder drittelt den
+Gradienten, **ohne seine Richtung zu aendern**.
+
+**2. `rmsnorm_i16_mit_spur` schneidet den Kehrwert der Wurzel mit.**
+`rmsnorm_backward` darf ihn nicht nachrechnen: Der Tabellenindex
+entsteht aus einer dynamischen Verschiebung, und ein zweiter Nachschlag
+koennte einen anderen Eintrag treffen. Die Spur ist ein `enum` und keine
+Zahl: `Leer`, `Null` (der Eingang war ueberall null, **es gibt kein
+`r`**) und `Wert { r, norm_frac, ref_shift }`. ⚑ **Drei Zahlen und nicht
+eine**, weil `r` allein seine Skala nicht traegt.
+
+### ⚑ Fund 175: `rmsnorm_backward` rechnete an drei Stellen mit Darstellungen
+
+Dieselbe Familie wie Fund 173 und derselbe Grund: **kein Aufrufer
+ausserhalb der eigenen Tests**, und die beiden vorhandenen Tests prueften
+Eigenschaften, die von jeder Skala unabhaengig sind (dass der zweite Term
+ueberhaupt wirkt, und dass ein Nullgradient nichts erzeugt).
+
+| Groesse | stand | gehoert |
+|---|---|---|
+| `r` | `r / 2^norm_frac` | `r / 2^(norm_frac − ref_shift)` |
+| `x` im zweiten Term | die Darstellung | `x / 2^x_shifts[j]` |
+| `x` in der Summe | die Darstellung | `x / 2^x_shifts[i]` |
+
+⚑ **Und `x_shifts` fehlte in der Signatur ganz.** Der Vorwaertspass
+traegt seit Fund 20 eine Skala **je Kanal**; dieser Kern kannte sie
+nicht und konnte deshalb nicht einmal im Ansatz stimmen, sobald sie
+auseinandergehen.
+
+**Gemessen gegen die geschlossene Form der Ableitung**, mit paarweise
+verschiedenen Kanalskalen: Die Verhaeltnisse streuten von **1,08 bis
+−37,4**, also einschliesslich gedrehter Vorzeichen. Nach der Behebung
+liegen sie ueber acht Kanaele bei **0,986 bis 1,005**, der
+Gamma-Gradient trifft auf ein Promille.
+
+### ⚑ Warum hier keine numerische Ableitung prueft
+
+Jeder andere Rueckwaertskern wird gegen die numerische Ableitung des
+echten Vorwaertskerns gehalten. **Bei RMSNorm traegt das nicht:** `r`
+ist eine **ganze** Zahl aus der Tabelle, also ist `dr/dx` eine Treppe.
+Ein Schub an einem grossen Kanal verschiebt den Index um eine Stufe, und
+die Differenz misst den Sprung statt der Steigung. Gemessen trafen die
+vier kleinen Kanaele auf drei Promille, die vier grossen streuten
+zwischen −5 und +9.
+
+**Verglichen wird deshalb mit der Formel selbst**, ausgerechnet aus
+denselben realen Groessen. Das ist keine zweite Umsetzung des
+Vorwaertspasses, sondern die **Spezifikation des Rueckwaertspasses**,
+und genau ihre Skalenbuchhaltung war falsch.
+
+### ⚑ Drei Nebenbefunde beim Beheben, alle aus der eigenen Regelliste
+
+- **Ein Doc-Kommentar hatte den Anschluss verloren.** `silu_grad_aus_lut`
+  und `silu_grad_frac` sind in v0.32.0 **zwischen** den Kommentar von
+  `rmsnorm_backward` und die Funktion geraten; `rmsnorm_backward` hatte
+  seither gar keine Beschreibung, und `silu_grad_aus_lut` trug eine, die
+  mit einem Satz ueber RMSNorm beginnt. Beide stehen wieder an ihrem
+  Platz.
+- ⛑ **Die erste Behebung rundete den Normierungsterm auf null weg.**
+  `r` von 106 auf neun Bruchstellen ergibt `r³` gerundet **5**, und
+  `5 · 300 >> 15` ist **null**. Jetzt mit vierundzwanzig gerechneten
+  Schutzstellen: `r_real³ ≤ 1` gibt `2^(rf+24) ≤ 2^44`, mal `x ≤ 2^15`
+  sind `2^59`, und das Produkt der beiden Faktoren passt in `i128`.
+- ⛑ **Der erste Testaufbau hatte eine Summe, die sich fast aufhob**
+  (−0,38 statt 74,6). Der zweite Term trug dann nichts bei, und drei
+  Gegenproben blieben gruen. **Eine Summe, die sich aufhebt, ist eine
+  Pruefung, die nichts auswaehlt.** Vorzeichen gewaehlt statt
+  gewuerfelt, danach beissen alle sieben.
+- ⛑ **Und ein bestehender Test hatte unstimmige Skalen**, die vorher
+  niemandem auffielen: Eingang 30 000 auf Verschiebung null ist real
+  30 000, dazu ein `r` von eins waere die Behauptung, der quadratische
+  Mittelwert sei eins. Mit der richtigen Formel saettigte alles. Die
+  Skalen passen jetzt zueinander.
+
+### v0.35.0 – 2026-09-04 (kernels 0.33.0: der Kreis ueber den Aufmerksamkeitsblock, ⚑ Funde 173 und 174)
+
+`schritt_auf_aufmerksamkeit`, `gradienten_der_aufmerksamkeit` und
+`vorwaerts_der_aufmerksamkeit` mit `Aufmerksamkeitsvorgaben`,
+`Aufmerksamkeitsgewichte`, `Aufmerksamkeitsspur`,
+`Aufmerksamkeitsgradienten` und `Vorspannungen`. Damit ist der Kreis
+aus Vorwaertspass, Gradient und Fortschreibung ueber **beide** Blocke
+einer Ebene geschlossen: Q, K, V, RoPE, Softmax, Kopfgewichtung und
+Ausgabeprojektion, mit gruppierter Aufmerksamkeit.
+
+⚑ **Ueber eine Folge und nicht ueber eine Position, und das ist keine
+Bequemlichkeit.** Bei einer einzigen Position gibt es genau einen
+Schluessel, der Softmax liefert exakt eins, und seine Ableitung
+`p · (g − ⟨g, p⟩)` ist damit **exakt null**: Q und K bekaemen keinen
+Gradienten. Ein Aufbau mit einer Position haette ausschliesslich V und
+die Ausgabeprojektion geprueft, waehrend die Ueberschrift
+„Aufmerksamkeitsblock" lautet. Ein Test haelt das fest.
+
+### ⚑ Fund 173: `attention_backward` rechnete nach einer anderen Lesart als jeder andere Rueckwaertskern
+
+Ein Gradient traegt in diesem Projekt `dL/dZ` nach dem **realen Wert**
+von `Z`, dargestellt auf einer Skala, die der Aufrufer waehlt;
+`linear_backward`, `silu_backward` und `rmsnorm_backward` nehmen sie als
+`g_frac` herein und als `gx_frac` heraus. **`attention_backward` rechnete
+nach der Darstellung**, und die beiden Lesarten unterscheiden sich um
+`2^(2·frac)`.
+
+Konkret standen an vier Stellen andere Schiebeweiten:
+
+| Schritt | stand | gehoert | weil |
+|---|---|---|---|
+| `dL/dv` | `prob_frac` | `prob_frac` | der Faktor ist `p` |
+| `dL/dp` | `prob_frac` | **`v_frac`** | der Faktor ist `v` |
+| `dL/dq` | Vorwaerts-`score_shift` | **`k_frac + 15`** | der Faktor ist `k` |
+| `dL/dk` | Vorwaerts-`score_shift` | **`q_frac + 15`** | der Faktor ist `q` |
+
+Gemessen gegen die numerische Ableitung des echten Vorwaertskerns war
+`dL/dq` um den Faktor 4 daneben und `dL/dk` um 8 (bei den Skalen der
+Probe); mit den Skalen von Qwen2.5-0,5B waeren es 256 und 512.
+
+⚑ **Aufgefallen ist es nicht, und das hat zwei Gruende, die beide
+bekannt sind.** Erstens hatte die Funktion **ausserhalb ihrer eigenen
+Tests keinen Aufrufer**; sie war gebaut, geprueft, abgehakt und
+unbenutzt. Zweitens prueften ihre Tests genau die Richtung, in der sich
+die beiden Lesarten **nicht** unterscheiden: `dL/dv` traegt dieselbe
+Skala wie die Ausgabe, und fuer gleiche Skalen fallen sie zusammen. Der
+neue Test `der_gradient_nach_q_und_k_trifft_die_numerische_ableitung`
+setzt deshalb `q_frac`, `k_frac`, `v_frac`, `score_frac` und `prob_frac`
+**paarweise verschieden**.
+
+⚑ **Und `score_frac` kommt im Rueckwaertspass nicht mehr vor.** Das ist
+die Probe auf die Lesart: `s` und `p` sind reale Groessen, und die
+Ableitung des Softmax ist zwischen ihnen dimensionslos. Wer hier eine
+Punktzahlskala braucht, rechnet nach der Darstellung.
+
+### ⚑ Fund 174: `gewicht_aus_master` hat keinen Begriff von der Skala des Masters
+
+Der reale Wert eines Gewichts ist `(master >> s) / 2^s` mit dem dort
+gewaehlten `s`, also `master / 2^(2·s)`. Solange `s` bleibt, ist das
+eine Proportionalitaet. **Aendert `s` sich, springt der Wert der ganzen
+Zeile:**
+
+| Betragsmaximum | `s` | groesstes `i8` | realer Wert |
+|---|---|---|---|
+| 127 | 0 | 127 | 127,00 |
+| **128** | **1** | **64** | **32,00** |
+| 254 | 1 | 127 | 63,50 |
+| **256** | **2** | **64** | **16,00** |
+
+**Ein Master, der um eins waechst, laesst das Gewicht auf ein Viertel
+fallen**, sobald das Betragsmaximum einer Zeile eine Zweierpotenz
+ueberschreitet. In einem langen Trainingslauf passiert das
+zwangslaeufig, und es saehe aus wie „das Modell wird ploetzlich
+schlechter".
+
+**Nicht behoben**, denn der Weg heraus ist eine feste Bruchstellenzahl
+des Masters als Argument (Verschiebung `master_frac − s` statt `s`) und
+damit eine Aenderung an jedem Aufrufer. Festgehalten sind die Grenze im
+Doc-Kommentar und die Sprungstelle als Test
+(`die_oktavgrenze_bricht_die_proportionalitaet`), der beim Beheben
+**absichtlich** rot wird.
+
+### ⚑ Zwei Umsetzungen desselben Vorwaertspasses, und was sie zusammenhaelt
+
+Der Trainingsschritt des MLP-Blocks ruft **denselben** Kern wie die
+Inferenz (`mlp_int_mit_spur`). Fuer die Aufmerksamkeit geht das nicht:
+Sie steht im Vorwaertspass der Laufzeit ausgeschrieben, ueber **eine**
+Position mit Zwischenspeicher, waehrend das Training eine **Folge**
+braucht. Es gibt also zwei Umsetzungen, und das ist sonst genau die
+Falle „zwei Wahrheiten ueber den Rechenpfad".
+
+⚑ **Deshalb steht der Vorwaertspass als eigene, oeffentliche Funktion
+da und nicht im Rumpf des Gradienten:** Nur so laesst er sich gegen die
+aufgezeichneten Zwischenwerte eines echten Vorwaertspasses stellen.
+`runtime/tests/trainingslauf.rs::die_vorwaerts_haelfte_trifft_den_mitschnitt`
+vergleicht die Aufmerksamkeitsausgabe **byteweise**, auf den Ebenen 0,
+12 und 23 von Qwen2.5-0,5B und ueber sechs Positionen. Vier
+Gegenproben, die kein Kerneltest faengt, scheitern daran: eine
+vertauschte Kopfgruppe, eine weggenommene Umskalierung, ein zusaetzlich
+gedrehtes V und ein Positionsversatz, der nur auf einer Seite gilt.
+
+### ⚑ Was der Test aus dem MLP-Block gelernt hat, und was er dazugelernt hat
+
+Beim MLP-Block war der Ertrag: „der Abstand sinkt" ist zu schwach, eine
+Richtungspruefung an einer einzelnen Stelle ist ein Zufallsgenerator,
+und ein Groessenvergleich zwischen symmetrischen Aesten faengt einen
+Skalenfehler. Alle drei stehen auch hier (Q und K sind symmetrisch).
+
+⚑ **Dazugelernt: Im Aufmerksamkeitsblock traegt die Richtungspruefung
+je Gewicht gar nicht mehr.** Gemessen ueber sieben Schubweiten von 64
+bis 1024 **schwankt sie ueber jede Schranke hinweg**, die man setzen
+koennte:
+
+| | Q | K | V | O |
+|---|---|---|---|---|
+| Anteil richtig | 63 bis 77 % | 61 bis 80 % | 84 bis 95 % | 79 bis 95 % |
+
+**Bei siebzig Prozent waere der Test fuer Q an drei der sieben
+Schubweiten rot und fuer K an drei**, ohne dass am Gradienten etwas
+falsch ist. Der Grund ist der Weg, den Q und K nehmen: nur ueber den
+Softmax, mit kleinem Beitrag zur Ausgabe, und ein Schub, der die
+Quantisierung ueberwindet, ist laengst ausserhalb des linearen
+Bereichs.
+
+**An ihre Stelle tritt ein Schritt entlang des ganzen Gradienten**, der
+die Spruenge herausmittelt und die Aussage prueft, die ein Gradient
+wirklich macht: **um wie viel** der Abstand faellt.
+
+| gemessen / vorhergesagt | Q | K | V | O |
+|---|---|---|---|---|
+| gesund | 0,84 | 1,11 | 0,88 | 1,03 |
+| Drehung nicht zurueckgenommen | **0,01** | **0,42** | | |
+| Positionsversatz nur auf einer Seite | | **0,48 / 0,64** | | |
+| K-Gradient zugewiesen statt summiert | | **0,64** | | |
+
+⚑ **Die Schranke darf eng sein (0,75 bis 1,50), weil der ganze Lauf
+ganzzahlig und damit auf jeder Maschine bitgleich ist.** Sie faengt
+damit auch einen Faktor zwei.
+
+### ⚑ Und drei Stellen, an denen der Aufbau eines Tests selbst der Befund war
+
+- **Eine Skala, die zufaellig einer anderen gleicht, prueft nichts.**
+  Mit `act_frac = aus_frac` ist ein Vertauschen der beiden ein
+  Nullschritt; mit `attn_out_frac = act_frac` ebenso. Der Aufbau setzt
+  alle Skalen paarweise verschieden.
+- **Eine Drehtabelle mit grosser Grundzahl dreht nur das erste Paar.**
+  Mit der echten Grundzahl (eine Million) drehen die uebrigen Paare um
+  Bruchteile eines Tausendstels, und die Ruecknahme der Drehung ist
+  nicht pruefbar. Der Aufbau nimmt drei.
+- ⚑ **Ein Abschnitt, der bei Position null beginnt, laesst genau den
+  Fall aus, in dem RoPE etwas tut.** Dort ist die Drehung die Einheit,
+  und der Schluessel der ersten Position wird von **jeder** Abfrage
+  gelesen, geht also am staerksten in den Gradienten ein. Daraus ist ein
+  Feld geworden: `positionsversatz`. **Ein Trainingsabschnitt beginnt
+  nicht bei null**, seine Positionen sind die im Text.
+
+### ⚑ Was der Block ausdruecklich nicht tut
+
+- **Die Normierung der Koepfe vor RoPE**, die manche Modelle haben. Der
+  Vergleich mit dem Mitschnitt prueft ausdruecklich, dass das geladene
+  Modell keine hat, statt still danebenzurechnen.
+- **Die Vorspannungen lernen.** Sie gehen als Konstanten ein, weil der
+  Block sonst ein anderer waere als der, der laeuft; fortgeschrieben
+  werden sie nicht. Eine Vorspannung liegt als `i16` mit einer Skala je
+  Element vor, ein Gewicht als `i8` mit einer Skala je Zeile: Ein Master
+  fuer das eine ist etwas anderes als fuer das andere.
+- **Den Gradienten nach dem Blockeingang herausgeben.** Er wird
+  gerechnet und verworfen; gebraucht wird er erst beim Zusammenbau zur
+  ganzen Ebene.
+
+**Gemessen auf echten Gewichten** (Qwen2.5-0,5B, sechs Positionen, 60
+Schritte, Rate `1/2^14`): Ebene 0 faellt um 97 Prozent, Ebene 12 um 91.
+Mit umgekehrtem Vorzeichen steigt der Abstand von 3,3e9 auf 1,1e12.
 
 ### v0.34.0 – 2026-09-04 (der Trainingslauf auf echten Gewichten, und was er gefunden hat)
 

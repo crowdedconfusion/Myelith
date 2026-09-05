@@ -129,8 +129,94 @@ pub fn epochenabschluss_burn(
     let neu = ema_update(state.burn_ema, state.burn_epoche);
     state.burn_ema = neu;
     state.burn_epoche = 0;
+
+    // ⚑ **Die Nachfrage rollt hier mit, und das ist Absicht** (Fund 184,
+    // 2026-09-05). Sie gehört fachlich nicht zur Wirtschaft, sondern zur
+    // Buchführung, und läge insofern besser im Ledger.
+    //
+    // Sie steht trotzdem hier, weil dieser Abschluss die **eine
+    // Stelle** mit dem Wächter darüber ist: `burn_ema_bis >= epoch`
+    // verhindert die doppelte Fortschreibung. Ein zweiter, eigener
+    // Epochenabschluss bräuchte einen zweiten Wächter, und der Kopf
+    // dieser Datei warnt genau davor: „zweimal gerufen, verschiebt sie
+    // den Durchschnitt, und niemand sähe es der Zahl an."
+    //
+    // **Ein Wächter für zwei Zähler schlägt zwei Wächter.**
+    state.vtfe_vorepoche = state.vtfe_epoche;
+    state.vtfe_epoche = 0;
+
     state.burn_ema_bis = state.epoch;
     Ok(neu)
+}
+
+#[cfg(test)]
+mod nachfrage_tests {
+    use myl_ledger::state::LedgerState;
+    use myl_ledger::transitions::{burn_to_credits, credit_spend};
+    use myl_types::ids::{Address, EpochId};
+
+    fn wer() -> Address {
+        Address::new([7u8; 32])
+    }
+
+    /// Ein Zustand mit gedeckten Credits.
+    fn mit_credits() -> LedgerState {
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&wer()).balance = 1_000_000;
+        burn_to_credits(&mut st, &wer(), 1_000, EpochId(1_000)).expect("Burn");
+        st
+    }
+
+    /// Eine bediente Anfrage zählt, eine abgelehnte nicht.
+    ///
+    /// ⚑ **Die zweite Hälfte ist die wichtigere.** Zählte auch der
+    /// Fehlversuch, könnte jeder die gemessene Auslastung kostenlos
+    /// hochtreiben, indem er Ausgaben ohne Deckung einreicht, und damit
+    /// die Trainingsmenge des Netzes steuern.
+    #[test]
+    fn nur_die_bediente_nachfrage_wird_gezaehlt() {
+        let mut st = mit_credits();
+        assert_eq!(st.vtfe_epoche, 0, "der Burn selbst ist keine Nachfrage");
+
+        credit_spend(&mut st, &wer(), 40).expect("Ausgabe");
+        assert_eq!(st.vtfe_epoche, 40);
+        credit_spend(&mut st, &wer(), 2).expect("Ausgabe");
+        assert_eq!(st.vtfe_epoche, 42, "die zweite Ausgabe kommt hinzu");
+
+        let vorher = st.vtfe_epoche;
+        assert!(
+            credit_spend(&mut st, &wer(), u64::MAX).is_err(),
+            "eine Ausgabe ohne Deckung muss scheitern"
+        );
+        assert_eq!(st.vtfe_epoche, vorher, "der Fehlversuch hat mitgezaehlt");
+    }
+
+    /// Der Abschluss rollt die Nachfrage in die Vorepoche und nullt sie.
+    #[test]
+    fn der_abschluss_rollt_die_nachfrage() {
+        let mut st = mit_credits();
+        credit_spend(&mut st, &wer(), 55).expect("Ausgabe");
+
+        super::epochenabschluss_burn(&mut st).expect("Abschluss");
+        assert_eq!(st.vtfe_vorepoche, 55, "die Vorepoche traegt den alten Stand");
+        assert_eq!(st.vtfe_epoche, 0, "die laufende faengt bei null an");
+    }
+
+    /// ⚑ **Der Wächter deckt beide Zähler.** Ein zweiter Abschluss in
+    /// derselben Epoche darf die Nachfrage so wenig verschieben wie den
+    /// geglätteten Burn.
+    #[test]
+    fn ein_zweiter_abschluss_verschiebt_auch_die_nachfrage_nicht() {
+        let mut st = mit_credits();
+        st.epoch = EpochId(3);
+        credit_spend(&mut st, &wer(), 55).expect("Ausgabe");
+        super::epochenabschluss_burn(&mut st).expect("Abschluss");
+
+        credit_spend(&mut st, &wer(), 9).expect("Ausgabe in derselben Epoche");
+        assert!(super::epochenabschluss_burn(&mut st).is_err(), "zweimal darf nicht");
+        assert_eq!(st.vtfe_vorepoche, 55, "die Vorepoche wurde ueberschrieben");
+        assert_eq!(st.vtfe_epoche, 9, "die laufende wurde genullt");
+    }
 }
 
 #[cfg(test)]

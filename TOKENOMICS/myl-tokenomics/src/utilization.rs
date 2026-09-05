@@ -14,7 +14,12 @@
 
 /// Fixed-Point-Skalierung für Auslastung (16 Bit Nachkommastellen).
 /// 1.0 = 2^16 = 65536
-pub const UTILIZATION_SCALE: i64 = 1 << 16;
+///
+/// ⚑ **Durchgereicht seit dem 2026-09-05**, nicht mehr hier festgelegt.
+/// Der Scheduler braucht dieselbe Skala (Kap. 7.1, Trainingsmenge nach
+/// Auslastung), und eine Konsenskonstante an zwei Orten ist eine zweite
+/// Wahrheit. Sie steht jetzt in [`myl_types::auslastung`].
+pub const UTILIZATION_SCALE: i64 = myl_types::auslastung::AUSLASTUNG_SKALA;
 
 /// Berechnet die Auslastung u_e aus Nachfrage und Kapazität.
 ///
@@ -38,17 +43,7 @@ pub const UTILIZATION_SCALE: i64 = 1 << 16;
 /// **Hinweis:** Wenn available_capacity = 0, wird u_e = 0 zurückgegeben
 /// (keine Kapazität = keine Auslastung messbar).
 pub fn calculate_utilization(demanded_vtfe: u64, available_capacity: u64) -> i64 {
-    if available_capacity == 0 {
-        return 0;
-    }
-
-    // u_e = demanded / capacity
-    // Ergebnis als Fixed-Point mit 16 Bit Nachkommastellen
-    // Verwende u128 für Zwischenrechnung, um Überlauf zu vermeiden
-    
-    
-    ((demanded_vtfe as u128 * UTILIZATION_SCALE as u128) 
-                       / available_capacity as u128) as i64
+    myl_types::auslastung::auslastung(demanded_vtfe, available_capacity)
 }
 
 /// Berechnet die Auslastung aus der Burn-Historie.
