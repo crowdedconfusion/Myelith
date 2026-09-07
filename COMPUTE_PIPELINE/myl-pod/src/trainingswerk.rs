@@ -169,7 +169,7 @@ impl Trainingswerk {
         for s in 0..v.schritte {
             // 1. Einbettung und Vorwärtslauf durch alle Shards.
             let mut strom: Vec<Vec<i16>> =
-                v.folge.iter().map(|t| m.embed_token(*t as usize)).collect();
+                v.folge.iter().map(|t| m.embed_token(*t)).collect();
             let mut mitschnitte = Vec::with_capacity(SHARDS);
             for j in 0..SHARDS {
                 let vg = self.vorgaben(j, s, v);

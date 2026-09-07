@@ -1439,6 +1439,68 @@ pub fn sitzung_aufraeumen(state: &mut LedgerState) -> usize {
     vorher - state.sitzungen.len()
 }
 
+
+/// Wendet einen Schuldspruch an, **nachdem** sein Beleg geprüft wurde.
+///
+/// # ⚑ Warum diese Funktion neben `apply_verdict` steht
+///
+/// [`apply_verdict`] bewegt Guthaben und fragt nicht, woher das Urteil
+/// kommt. Das war richtig, solange es keinen Aufrufer gab, und es war
+/// gefährlich, sobald einer entstünde: Ein `Verdict` nennt Täter und
+/// Kopfgeldempfänger und trägt **keinen Nachweis** (Fund 192).
+///
+/// Diese Funktion ist die Naht dazwischen. Sie nimmt den Beleg, prüft
+/// ihn, leitet daraus **beides** ab, den Ausgang und wen es trifft, und
+/// reicht erst dann weiter.
+///
+/// ⚑ **Der Beschuldigte wird aus dem Beleg abgeleitet und nicht
+/// geglaubt.** Die Anweisung nennt zwar ein Konto, aber die Kennung des
+/// Unterzeichners steht im Schlüssel des Belegs; passen sie nicht
+/// zusammen, wird abgewiesen. Sonst könnte man einen gültigen Beleg
+/// vorlegen und einen Dritten benennen.
+pub fn schuldspruch_einreichen(
+    state: &mut LedgerState,
+    segment: myl_types::ids::SegmentId,
+    beleg: &myl_types::schuldbeleg::Belegart,
+    beschuldigt: &Address,
+    anzeigend: &Address,
+    params: &SlashParams,
+) -> Result<VerdictEffect, TransitionError> {
+    use myl_types::schuldbeleg::Belegart;
+    // Billig vor teuer: Zuordnung erst, Kryptografie zuletzt. Eine
+    // Signaturprüfung als erste Hürde wäre eine Rechenlast, die jeder
+    // mit einem falsch adressierten Beleg auslösen kann.
+    if beschuldigt == anzeigend {
+        return Err(TransitionError::InvalidParameters);
+    }
+    let (kennung, outcome) = match beleg {
+        Belegart::PrimaerHatGerechnet(b) => (b.unterzeichner(), VerdictOutcome::SlashMiner),
+        Belegart::HerausfordererHatAngefochten(b) => (
+            myl_types::ids::MinerId::aus_schluessel(&b.schluessel),
+            VerdictOutcome::SlashChecker,
+        ),
+    };
+    // ⚑ **Die Kennung des Unterzeichners muss das beschuldigte Konto
+    // sein.** Ein Miner ist über seinen Schlüssel an sein Konto
+    // gebunden; wer hier nicht prüfte, könnte mit fremdem Beleg einen
+    // Dritten schlachten.
+    if kennung.as_bytes() != beschuldigt.as_bytes() {
+        return Err(TransitionError::BelegPasstNichtZumKonto);
+    }
+    if !beleg.ist_gueltig() {
+        return Err(TransitionError::BelegUngueltig);
+    }
+    let verdict = Verdict {
+        segment_id: segment,
+        // ⚑ Bei `SlashMiner` verliert `miner`, bei `SlashChecker` der
+        // `checker`; beide Male ist der Verlierer der Beschuldigte.
+        miner: if matches!(outcome, VerdictOutcome::SlashMiner) { *beschuldigt } else { *anzeigend },
+        checker: if matches!(outcome, VerdictOutcome::SlashMiner) { *anzeigend } else { *beschuldigt },
+        outcome,
+    };
+    apply_verdict(state, &verdict, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3272,65 +3334,4 @@ mod tests {
         angemeldet(&mut st, 3);
         assert_eq!(st.miner[&kennung(3)].schluessel, probeschluessel(3));
     }
-}
-
-/// Wendet einen Schuldspruch an, **nachdem** sein Beleg geprüft wurde.
-///
-/// # ⚑ Warum diese Funktion neben `apply_verdict` steht
-///
-/// [`apply_verdict`] bewegt Guthaben und fragt nicht, woher das Urteil
-/// kommt. Das war richtig, solange es keinen Aufrufer gab, und es war
-/// gefährlich, sobald einer entstünde: Ein `Verdict` nennt Täter und
-/// Kopfgeldempfänger und trägt **keinen Nachweis** (Fund 192).
-///
-/// Diese Funktion ist die Naht dazwischen. Sie nimmt den Beleg, prüft
-/// ihn, leitet daraus **beides** ab, den Ausgang und wen es trifft, und
-/// reicht erst dann weiter.
-///
-/// ⚑ **Der Beschuldigte wird aus dem Beleg abgeleitet und nicht
-/// geglaubt.** Die Anweisung nennt zwar ein Konto, aber die Kennung des
-/// Unterzeichners steht im Schlüssel des Belegs; passen sie nicht
-/// zusammen, wird abgewiesen. Sonst könnte man einen gültigen Beleg
-/// vorlegen und einen Dritten benennen.
-pub fn schuldspruch_einreichen(
-    state: &mut LedgerState,
-    segment: myl_types::ids::SegmentId,
-    beleg: &myl_types::schuldbeleg::Belegart,
-    beschuldigt: &Address,
-    anzeigend: &Address,
-    params: &SlashParams,
-) -> Result<VerdictEffect, TransitionError> {
-    use myl_types::schuldbeleg::Belegart;
-    // Billig vor teuer: Zuordnung erst, Kryptografie zuletzt. Eine
-    // Signaturprüfung als erste Hürde wäre eine Rechenlast, die jeder
-    // mit einem falsch adressierten Beleg auslösen kann.
-    if beschuldigt == anzeigend {
-        return Err(TransitionError::InvalidParameters);
-    }
-    let (kennung, outcome) = match beleg {
-        Belegart::PrimaerHatGerechnet(b) => (b.unterzeichner(), VerdictOutcome::SlashMiner),
-        Belegart::HerausfordererHatAngefochten(b) => (
-            myl_types::ids::MinerId::aus_schluessel(&b.schluessel),
-            VerdictOutcome::SlashChecker,
-        ),
-    };
-    // ⚑ **Die Kennung des Unterzeichners muss das beschuldigte Konto
-    // sein.** Ein Miner ist über seinen Schlüssel an sein Konto
-    // gebunden; wer hier nicht prüfte, könnte mit fremdem Beleg einen
-    // Dritten schlachten.
-    if kennung.as_bytes() != beschuldigt.as_bytes() {
-        return Err(TransitionError::BelegPasstNichtZumKonto);
-    }
-    if !beleg.ist_gueltig() {
-        return Err(TransitionError::BelegUngueltig);
-    }
-    let verdict = Verdict {
-        segment_id: segment,
-        // ⚑ Bei `SlashMiner` verliert `miner`, bei `SlashChecker` der
-        // `checker`; beide Male ist der Verlierer der Beschuldigte.
-        miner: if matches!(outcome, VerdictOutcome::SlashMiner) { *beschuldigt } else { *anzeigend },
-        checker: if matches!(outcome, VerdictOutcome::SlashMiner) { *anzeigend } else { *beschuldigt },
-        outcome,
-    };
-    apply_verdict(state, &verdict, params)
 }

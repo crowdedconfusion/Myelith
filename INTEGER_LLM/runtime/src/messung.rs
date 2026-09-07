@@ -80,7 +80,7 @@ mod tests {
     /// Perplexität acht.
     #[test]
     fn gleichverteilung_ergibt_ln_n() {
-        let v = kreuzentropie_aus_logits(&vec![0i32; 8], 3, 16);
+        let v = kreuzentropie_aus_logits(&[0i32; 8], 3, 16);
         assert!((v - 8f64.ln()).abs() < 1e-9, "der Verlust ist {v} statt ln 8");
         assert!((perplexitaet(v, 1) - 8.0).abs() < 1e-6);
     }

@@ -161,9 +161,8 @@ fn vier_prozesse_trainieren_wie_ein_prozess() {
         // Vorwaerts durch alle, jeder Mitschnitt bleibt liegen.
         let mut strom = hidden.clone();
         let mut mitschnitte = Vec::with_capacity(SHARDS);
-        for s in 0..SHARDS {
-            let ms = vorwaerts(&modell, &mut gewichte[s], &vorgabe(s, 0), &strom)
-                .expect("vorwaerts");
+        for (s, g) in gewichte.iter_mut().enumerate().take(SHARDS) {
+            let ms = vorwaerts(&modell, g, &vorgabe(s, 0), &strom).expect("vorwaerts");
             strom = ms.ausgang.clone();
             mitschnitte.push(ms);
         }

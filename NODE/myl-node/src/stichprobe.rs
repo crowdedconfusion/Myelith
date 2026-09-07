@@ -49,6 +49,7 @@
 //! - **Die Streitanzeige bei Abweichung.** Das Bisektions-Spiel steht in
 //!   VERIFICATION; was fehlt, ist der Weg von „stimmt nicht überein" zu
 //!   einer `Challenge` im Gossip.
+//!
 //! ⚑ **Die Saat ist seit Punkt 44 nicht mehr offen, und dieser Absatz
 //! war es bis zum 2026-09-06.** Er sagte, der Knoten übergebe den
 //! Blockhash und der sei mahlbar. Das stimmt nicht mehr:

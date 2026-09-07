@@ -397,15 +397,11 @@ pub fn gradient_vom_ziel(
     (logits, g_y)
 }
 
-/// Trainiert die **letzte** Ebene gegen das nächste Token.
-///
-/// Die Ebenen davor bleiben eingefroren; ihr Ausgang wird **einmal**
-/// mitgeschnitten und ist danach der Eingang jedes Schrittes.
-///
-/// ⚑ **Der Verlust wird nur an der letzten Position gerechnet.** Das
-/// ist die Vorhersage des nächsten Wortes; der Kopf kostet je Position
-/// 136 Millionen Multiplikationen, und über sechs Positionen wäre der
-/// Lauf sechsmal so teuer, ohne mehr zu zeigen.
+// ⛑ **Hier stand bis zum 2026-09-07 ein verwaister Doc-Kommentar**
+// („Trainiert die letzte Ebene gegen das naechste Token"). Die
+// Funktion, die er beschrieb, gibt es seit der Umstellung auf
+// `shardtraining` nicht mehr; der Kommentar haftete seither an
+// `master_der_ebene` und beschrieb dort etwas voellig anderes.
 // ===========================================================================
 // Der Zuschnitt einer Ebene, an **einer** Stelle
 // ===========================================================================

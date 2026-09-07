@@ -140,6 +140,14 @@ pub struct Shardgewichte {
 /// Gewichten; sie alle als Master zu halten wären **2,4 GB je Ebene**,
 /// und der Shard hält zwölf Ebenen. Bei Top-8 über eine kurze Folge sind
 /// es höchstens ein paar Dutzend.
+/// Ein Experte, aus seinen Mastern quantisiert: Gate, Up und Down, je
+/// mit ihren Zeilenskalen.
+///
+/// ⚑ **Ein Name statt eines Sechsertupels.** Ausgeschrieben war der Typ
+/// nicht zu lesen und nicht zu aendern, ohne an drei Stellen zu zaehlen,
+/// an welcher Stelle welche Matrix steht.
+type QuantisierterExperte = (Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8>);
+
 pub enum Ebenenstand {
     /// Q, K, V, O, Gate, Up, Down.
     Dicht(Box<[Vec<Master>; 7]>),
@@ -1221,7 +1229,7 @@ fn gemisch_rueckwaerts(
     for (nr, g_y) in g_aus.iter().enumerate() {
         let teil = &spur.gemisch[nr];
         // Die Experten dieser Position, quantisiert aus ihren Mastern.
-        let halde: Vec<(Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8>, Vec<i8>, Vec<u8>)> = teil
+        let halde: Vec<QuantisierterExperte> = teil
             .experten
             .iter()
             .map(|i| {

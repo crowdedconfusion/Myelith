@@ -64,7 +64,7 @@ fn ein_pod_aus_vier_shards_rechnet_wie_ein_einzelner() {
             lr_nenner: v.lr_nenner,
         };
         let strom: Vec<Vec<i16>> =
-            v.folge.iter().map(|t| m.embed_token(*t as usize)).collect();
+            v.folge.iter().map(|t| m.embed_token(*t)).collect();
         let ms = vorwaerts(m, &mut ganz, &vg, &strom).expect("vorwaerts");
         let (_logits, g_y) = gradient_vom_ziel(m, &ms.ausgang[letzte], &v);
         let mut g: Vec<Vec<i32>> =

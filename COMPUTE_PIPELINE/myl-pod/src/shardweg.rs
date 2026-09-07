@@ -191,7 +191,13 @@ pub enum Shardanfrage {
 #[derive(Debug, Clone, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub enum Shardantwort {
     /// Das Ergebnis einer Rechnung.
-    Gerechnet(ShardOut),
+    ///
+    /// ⚑ **Eingeschachtelt, und das ist keine Formaenderung.** `ShardOut`
+    /// ist mit 352 Byte die mit Abstand groesste Variante; ohne Box
+    /// zahlte **jede** Antwort diese Groesse, auch ein `Erledigt`.
+    /// Borsh serialisiert `Box<T>` wie `T`, das Drahtformat bleibt also
+    /// gleich, und der Konformanzabdruck damit auch.
+    Gerechnet(Box<ShardOut>),
     /// Der Layerbereich.
     Zuschnitt(myl_tokenomics::ShardZuschnitt),
     /// Der öffentliche Schlüssel.
@@ -246,7 +252,7 @@ pub trait Shardweg: Send + Sync {
     /// Gibt Shard `nummer` die Nachricht und liefert, was herauskommt.
     fn rechne(&self, nummer: usize, nachricht: &PodMessage) -> Result<ShardOut, String> {
         match self.frage(nummer, &Shardanfrage::Rechne(nachricht.clone()))? {
-            Shardantwort::Gerechnet(aus) => Ok(aus),
+            Shardantwort::Gerechnet(aus) => Ok(*aus),
             Shardantwort::Fehler(e) => Err(e),
             andere => Err(format!("Shard {nummer} antwortete mit {andere:?} statt einer Rechnung")),
         }
@@ -436,7 +442,7 @@ pub fn bedienen(shard: &ShardNode, anfrage: &Shardanfrage) -> Shardantwort {
                 );
             }
             match shard.process(m) {
-                Ok(a) => Shardantwort::Gerechnet(a),
+                Ok(a) => Shardantwort::Gerechnet(Box::new(a)),
                 Err(e) => Shardantwort::Fehler(e),
             }
         }

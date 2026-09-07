@@ -306,8 +306,7 @@ fn eine_laufende_kette_greift_ineinander() {
     b.sagt(
         "CONSENSUS",
         "Paar nicht zonendivers, und der Plan sagt es: in dieser Besetzung \
-         gibt es kein diverses Paar"
-            .to_string(),
+         gibt es kein diverses Paar",
     );
 
     // ---- 5. Das Paar liefert übereinstimmend ab ---------------------

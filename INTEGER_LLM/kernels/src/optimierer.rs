@@ -440,7 +440,7 @@ mod normierung {
     /// ihr bewegen beide **gleich weit**. Genau das ist Fund 194.
     #[test]
     fn die_skala_des_gradienten_faellt_heraus() {
-        let klein: Vec<i32> = (0..64).map(|i| (i as i32) - 32).collect();
+        let klein: Vec<i32> = (0..64).map(|i| i - 32).collect();
         let gross: Vec<i32> = klein.iter().map(|g| g * 1000).collect();
         let kn = Schrittkennung { ebene: 2, schritt: 0, index_versatz: 0 };
 
@@ -657,7 +657,7 @@ mod sammlung {
     /// Minern.
     #[test]
     fn eins_gesammelt_ist_ein_gewoehnlicher_schritt() {
-        let grad: Vec<i32> = (0..64).map(|i| (i as i32) * 37 - 900).collect();
+        let grad: Vec<i32> = (0..64).map(|i| i * 37 - 900).collect();
         let kn = Schrittkennung { ebene: 5, schritt: 11, index_versatz: 7 };
 
         let mut a = leer();
