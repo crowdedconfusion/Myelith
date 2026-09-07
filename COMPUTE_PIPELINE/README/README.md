@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.28.0
+> **Version:** 0.33.0
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,125 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.33.0 – 2026-09-06 (der Pod rechnet normiert)
+
+`Shardtrainer` sammelt seit heute normiert: Die Bewegung ist ein Anteil
+des eigenen Betragsmaximums jeder Matrix, und damit bedeutet eine
+Lernrate auf jedem Modell dasselbe (Fund 194).
+
+⚑ **Der Draht bleibt dabei bitgleich mit dem Einprozesslauf**, Abdruck
+für Abdruck über vier Shards. Die Umstellung hat daran nichts geändert,
+und der Test hätte es gemeldet: Er vergleicht gegen dieselbe Rechnung
+in denselben vier Zuschnitten.
+
+### v0.32.0 – 2026-09-06 (vier Prozesse trainieren wie einer)
+
+Der Draht trägt jetzt auch das **Training**: `Shardtrainer`,
+`Shardstelle::oeffnen_mit_training`, `myl-shard --training` und drei
+Anfragen (`TrainVorwaerts`, `TrainRueckwaerts`, `TrainAnwenden`).
+
+⚑ **Der Rückwärtspass ist der schwerere Fall.** Vorwärts fliesst ein
+Residualstrom in eine Richtung; rückwärts muss der Gradient zurück, und
+jeder Shard braucht dabei seinen Mitschnitt aus dem Vorwärtslauf. Der
+Mitschnitt bleibt beim Shard, geht also nicht über den Draht: Er ist
+gross, und nur sein Shard braucht ihn.
+
+⚑ **Angewandt wird erst am Ende**, nicht nach jeder Folge. Zwischen
+Rückwärtspass und Anwenden liegt die Sammlung; über wenige Schritte
+streut das stochastische Runden stärker, als das Gradientensignal wiegt
+(Fund 189).
+
+### ⚑ Fund 193: die Lernrate fehlte auf dem Rückweg
+
+Der erste Entwurf gab dem Rückwärtspass `lr_nenner = 1`, weil die
+Anfrage die Rate nicht trug. Über vier Prozesse bewegten sich daraufhin
+**351 statt 237 Millionen** Gewichte.
+
+⚑ **Beide Zahlen sehen plausibel aus**, und genau darin lag die Gefahr:
+Ein Lauf, der nur mit sich selbst verglichen worden wäre, hätte
+zugestimmt. Gefunden hat es der Vergleich gegen den Einprozesslauf in
+**denselben vier Zuschnitten**, Abdruck für Abdruck. Dieselbe Lehre wie
+bei Fund 188: Ein Test, der einen neuen Weg nur gegen sich selbst hält,
+prüft die Wiederholbarkeit und nicht die Richtigkeit.
+
+**Behoben, und zwar so, dass es nicht wiederkommt:** Die Sitzung merkt
+sich die Rate des Vorwärtspasses, `TrainRueckwaerts` trägt sie mit, und
+eine Abweichung ist ein **Fehler** statt einer stillen Fehlrechnung.
+
+### v0.31.0 – 2026-09-06 (Fund 186: vier Prozesse, ein Pod)
+
+### ⚑ Die Shards eines Pods liefen nie über einen Draht
+
+`PodMessage` war seit Langem ein fertiges Format: borsh-serialisiert,
+mit Rundlauftest. **Nur überquerte es nie eine Prozessgrenze.**
+`Coordinator` rief `shard.process` unmittelbar, und `Pipelinewerk` legte
+alle vier `ShardNode` in **einen** Prozess.
+
+⚑ **Der Beweis stand im Code selbst:** `Pipelinewerk::laden` leitet vier
+BLS-Schlüssel ab und schreibt dazu „für einen echten Pod kommt der
+Schlüssel aus der Identität des Miners". **Ein Prozess, der vier
+Minerschlüssel hält, ist kein Pod.**
+
+Auch `zwei_prozesse.rs` widerlegte das nicht: Dort sind die zwei
+Prozesse **Knoten und Poddienst**, und der Poddienst hielt weiter alle
+vier Shards.
+
+**Damit war die Kernaussage des Shardings unbelegt, auch für die
+Inferenz.**
+
+### Was gebaut ist
+
+`shardweg` mit `Shardanfrage`/`Shardantwort`, `ImProzess`,
+`UeberDenDraht` und `Shardstelle`; dazu das Programm `myl-shard`, das
+**einen** Shard hält.
+
+⚑ **Mehr als „rechne", und der Grund ist die Signatur.** Ein PoI-Bündel
+trägt eine Aggregatsignatur aller Mitglieder; die kann der Koordinator
+nicht bilden, sie verlangt die **privaten** Schlüssel. Solange alle vier
+in einem Prozess lagen, fiel das nicht auf.
+
+⚑ **Stern und nicht Kette.** Die Ausfallbehandlung wohnt beim
+Koordinator, und **ein Shard, der weiterreicht, wählt seinen
+Nachfolger**: Er könnte die Pipeline umleiten, und die Spur bewiese nur
+noch, dass irgendwer gerechnet hat.
+
+⚑ **Feste Angaben werden einmal erhoben.** Zuschnitt und Modellprofil
+wiederholt zu erfragen kostete nicht nur Zeit: Ein Shard könnte beim
+zweiten Mal etwas anderes sagen.
+
+**Gemessen:** Vier Prozesse, jeder mit nur seinem Schlüssel und seinem
+Layerbereich, liefern dieselben Token, denselben Dekodier-Abdruck,
+dieselben vTFE und dieselbe Aggregatsignatur wie ein Prozess.
+
+### ⚑ Fund 187: `segmente` stand fest auf eins
+
+`build_poi_bundle` schrieb `segmente: 1`, während dreizehn Segmente unter
+`segments_root` hingen. **Aus dieser Zahl zieht die Stichprobe der Stufe
+2**, also waren zwölf von dreizehn Segmenten unziehbar: genau die
+Verdünnung, vor der Fund 115 warnt, nur vom Erzeuger verursacht.
+
+Und die Shards prüften schon richtig dagegen: `signiere_buendel` rechnet
+die vTFE gegen die **wirkliche** Zahl nach, während die unterschriebene
+Botschaft eine Eins trug.
+
+### v0.30.0 – 2026-09-06 (der Abdruck über Gemischebenen)
+
+`abdruck_des_shards` ruft `Shardgewichte::deltas`, damit Pod und Prüfer
+dieselbe Ordnung nehmen. Bei einer Gemischebene hängt sie an den
+Expertennummern.
+
+### v0.29.0 – 2026-09-05 (die Spur des Trainingspods ist prüfbare Form)
+
+`Podtrainingsergebnis::delta_je_shard` trägt jetzt `Hash` statt
+Hex-Text, und `delta_commitment` entsteht mit
+`Trainingssegment::commitment_aus_spur` statt mit einer eigenen
+Verkettung.
+
+⚑ **Damit ist die Spur das, was ein Prüfer sehen will.** Weichen zwei
+Pods voneinander ab, sagt der erste abweichende Eintrag, **welcher
+Shard** es war; ohne sie liesse sich nur feststellen, dass einer von
+beiden falsch liegt.
 
 ### v0.28.0 – 2026-09-05 (der Trainingspod)
 

@@ -184,6 +184,42 @@ pub fn epochenausschuettung(
     zuschreibung: &Zuschreibung,
     params: &MintParams,
 ) -> Result<Ausschuettung, Ausschuettungsfehler> {
+    epochenausschuettung_mit_training(state, zuschreibung, &Zuschreibung::default(), 0, params)
+}
+
+/// Dasselbe, aber mit einer zweiten Zuschreibung für **Training**.
+///
+/// # ⚑ Gleiche Rate, andere Quelle
+///
+/// Trainingsarbeit wird je Rechenstunde **genauso** vergütet wie
+/// Inferenz. Anhang B.7.3 begründet den Deckel aus Kap. 5.6 damit, dass
+/// „Miner zwischen beiden Arbeitsklassen nach der Vergütung je
+/// Rechenstunde wählen"; seit die Zuteilung erzwungen ist, wählt
+/// niemand, und derselbe Anhang sagt für diesen Fall: „Bei Gleichstand
+/// entscheidet allein die Zuteilung."
+///
+/// ⚑ **Gleichstand ist sogar besser als ein Deckel.** Läge Training
+/// darunter, hätte ein zugeteilter Trainingspod einen Anreiz,
+/// absichtlich zu scheitern.
+///
+/// ⚑ **Die Quelle bleibt die Treasury** (Kap. 5.6). Eine Finanzierung
+/// aus Zusatzprägung verdoppelte die Netto-Inflation beinahe. Die
+/// Treasury hat drei Prozent der Prägung gegen 78 der Shard-Miner, deckt
+/// also rund 3,85 Prozent des Inferenzvolumens.
+///
+/// ⚑ **Was darüber liegt, wird nicht gekürzt, sondern geteilt.** Bei
+/// viel Training fällt die Vergütung je Einheit, weil die Treasury nicht
+/// mehr hergibt; das ist Arithmetik und keine Politik. Ein leerlaufender
+/// Miner, der wenig verdient, steht immer noch besser da als einer, der
+/// nichts tut. **Sichtbar wird es über
+/// [`crate::vtfe::trainingsdeckung_bps`].**
+pub fn epochenausschuettung_mit_training(
+    state: &mut LedgerState,
+    zuschreibung: &Zuschreibung,
+    training: &Zuschreibung,
+    auslastung: i64,
+    params: &MintParams,
+) -> Result<Ausschuettung, Ausschuettungsfehler> {
     // ---- Prüfphase: der ganze Plan, ohne eine Zustandsänderung. ----
 
     // Was der Abschluss ergäbe. Deterministisch dieselbe Rechnung, die
@@ -204,6 +240,17 @@ pub fn epochenausschuettung(
         checkers,
         treasury,
     } = distribute_mint(m_e);
+
+    // ⚑ **Die Trainingsabgabe**, siehe [`crate::trainingsabgabe`]: Bei
+    // hoher Auslastung geht ein Teil der Shard-Miner-Quote in die
+    // Treasury, bei niedriger nicht. Das Netz spart, wenn es reich ist,
+    // und investiert, wenn Kapazität übrig ist.
+    let abgabe_bps =
+        crate::trainingsabgabe::abgabe_bps(auslastung, crate::trainingsabgabe::ABGABE_MAX_BPS);
+    let abgabe = crate::trainingsabgabe::abgabe_betrag(m_e, abgabe_bps);
+    let abgabe = abgabe.min(shard_miners);
+    let shard_miners = shard_miners - abgabe;
+    let treasury = treasury.saturating_add(abgabe);
 
     let mut ohne_konto: Vec<MinerId> = Vec::new();
     let mut gewichte: Vec<(Address, u64)> = Vec::new();
@@ -249,9 +296,84 @@ pub fn epochenausschuettung(
         }
     }
 
-    if treasury > 0 {
+    // ⚑ **Training zuerst aus der Treasury, der Rest an die Treasury.**
+    // Die Reihenfolge ist die Aussage: Der Trainingsanteil ist kein
+    // Zuschuss aus der Prägung, sondern ein Teil dessen, was die
+    // Treasury ohnehin bekäme.
+    let mut treasury_rest = treasury;
+    // Was über den Zufluss hinaus aus dem Bestand genommen wird, und
+    // an wen es geht.
+    let mut aus_bestand: u64 = 0;
+    let mut ueberweisung: BTreeMap<Address, u64> = BTreeMap::new();
+    let mut training_gewichte: Vec<(Address, u64)> = Vec::new();
+    for (miner, gewicht) in &training.je_miner {
+        match auszahlungskonto(state, miner) {
+            Some(konto) => training_gewichte.push((konto, *gewicht)),
+            None => ohne_konto.push(*miner),
+        }
+    }
+    if treasury_rest > 0 && !training_gewichte.is_empty() {
+        // ⚑ **Der Anspruch folgt aus der Inferenzrate, nicht aus der
+        // Treasury.** Der erste Entwurf teilte die **ganze** Treasury
+        // unter den Trainingspods auf; ein einziges kleines Segment
+        // hätte damit drei Prozent der Prägung bekommen. Gleiche Rate
+        // heisst: dieselbe Vergütung je Gewichtseinheit wie Inferenz.
+        let inferenz_gewicht: u64 =
+            gewichte.iter().map(|(_, g)| *g).fold(0u64, |a, b| a.saturating_add(b));
+        let training_gewicht: u64 =
+            training_gewichte.iter().map(|(_, g)| *g).fold(0u64, |a, b| a.saturating_add(b));
+        // ⚑ **Ohne Inferenz gibt es keine Rate.** Dann ist der Anspruch
+        // das, was da ist: Die Prägung ist gegen den geglätteten Burn
+        // erfolgt, die Shard-Miner-Quote bleibt mangels Arbeit liegen,
+        // und die Trainingspods sind die einzigen, die gerechnet haben.
+        // **Das ist derselbe Fall wie „Anspruch übersteigt Treasury"**,
+        // nur von der anderen Seite, und wird deshalb gleich behandelt.
+        let anspruch = if inferenz_gewicht > 0 {
+            ((shard_miners as u128 * training_gewicht as u128) / inferenz_gewicht as u128)
+                .min(u64::MAX as u128) as u64
+        } else {
+            treasury_rest
+        };
+        // ⚑ **Der Puffer: die Treasury darf ihr Angespartes ausgeben.**
+        // Ohne das wäre die Abgabe nutzlos, denn sie sammelt in guten
+        // Epochen genau dafür an. Was in dieser Epoche zufliesst, deckt
+        // am Auslastungsziel gerade die Kosten; darunter kommt der Rest
+        // aus dem Bestand.
+        let bestand = state.account(&treasury_adresse()).balance;
+        let verfuegbar = treasury_rest.saturating_add(bestand);
+        let zu_zahlen = anspruch.min(verfuegbar);
+        if zu_zahlen > 0 {
+            // ⚑ **Zwei Töpfe, und sie werden verschieden gebucht.** Was
+            // aus dem Zufluss dieser Epoche kommt, wird **geprägt**: Es
+            // wäre sonst an die Treasury geprägt worden. Was aus dem
+            // **Bestand** kommt, ist schon vorhandenes Geld und wird
+            // **überwiesen**.
+            //
+            // ⚑ **Der Unterschied ist der ganze Punkt von Kap. 5.6.**
+            // Wer den Bestand präge, verdoppelte die Netto-Inflation
+            // genau so, wie es dort ausgeschlossen wird, und der Puffer
+            // wäre keiner: Er nähme nichts weg, er schüfe.
+            let aus_zufluss = zu_zahlen.min(treasury_rest);
+            aus_bestand = zu_zahlen - aus_zufluss;
+            if aus_zufluss > 0 {
+                if let Ok(anteile) = split_proportional(aus_zufluss, &training_gewichte) {
+                    for (konto, betrag) in anteile {
+                        let e = plan.entry(konto).or_insert(0);
+                        *e = e.saturating_add(betrag);
+                    }
+                }
+            }
+            if aus_bestand > 0 {
+                if let Ok(anteile) = split_proportional(aus_bestand, &training_gewichte) {
+                    ueberweisung = anteile;
+                }
+            }
+            treasury_rest -= aus_zufluss;
+        }
+    }
+    if treasury_rest > 0 {
         let e = plan.entry(treasury_adresse()).or_insert(0);
-        *e = e.saturating_add(treasury);
+        *e = e.saturating_add(treasury_rest);
     }
 
     // ⚑ Nullbeträge fallen heraus, **bevor** der Plan gilt. Bei kleinen
@@ -283,6 +405,20 @@ pub fn epochenausschuettung(
         gutgeschrieben = gutgeschrieben.saturating_add(*betrag);
     }
 
+    // ⚑ **Der Griff in den Puffer, als Überweisung und nicht als
+    // Prägung.** Er verschiebt vorhandenes Geld von der Treasury zu den
+    // Trainingsminern; die Geldmenge bleibt unberührt.
+    if aus_bestand > 0 {
+        let von = treasury_adresse();
+        let haben = state.account(&von).balance;
+        debug_assert!(haben >= aus_bestand, "der Bestand wurde vorher geprueft");
+        state.account_mut(&von).balance = haben.saturating_sub(aus_bestand);
+        for (konto, betrag) in &ueberweisung {
+            let e = state.account_mut(konto);
+            e.balance = e.balance.saturating_add(*betrag);
+        }
+    }
+
     Ok(Ausschuettung {
         epoche: state.epoch,
         burn_ema,
@@ -296,6 +432,237 @@ pub fn epochenausschuettung(
 
 #[cfg(test)]
 mod tests {
+    /// Ein Lauf mit Inferenz- und Trainingsarbeit, gibt zurueck, was
+    /// beide Seiten bekommen haben.
+    fn lauf(inferenz_gewicht: u64, training_gewicht: u64) -> (u64, u64) {
+        lauf_bei(inferenz_gewicht, training_gewicht, 0)
+    }
+
+    /// Derselbe Lauf, aber mit einer Auslastung, die die Abgabe steuert.
+    fn lauf_bei(inferenz_gewicht: u64, training_gewicht: u64, auslastung: i64) -> (u64, u64) {
+        use crate::zuschreibung::Zuschreibung;
+        use myl_ledger::state::LedgerState;
+        use myl_types::ids::{Address, MinerId};
+
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&Address::new([1u8; 32])).balance = 10_000_000;
+        myl_ledger::transitions::burn_to_credits(
+            &mut st,
+            &Address::new([1u8; 32]),
+            5_000_000,
+            myl_types::ids::EpochId(1_000),
+        )
+        .expect("Burn");
+        let inf_miner = MinerId::new([10u8; 32]);
+        let tr_miner = MinerId::new([20u8; 32]);
+        st.auszahlung.insert(inf_miner, Address::new([11u8; 32]));
+        st.auszahlung.insert(tr_miner, Address::new([21u8; 32]));
+
+        let mut inferenz = Zuschreibung::default();
+        if inferenz_gewicht > 0 {
+            inferenz.je_miner.insert(inf_miner, inferenz_gewicht);
+        }
+        let mut training = Zuschreibung::default();
+        training.je_miner.insert(tr_miner, training_gewicht);
+
+        let vor_inf = st.account(&Address::new([11u8; 32])).balance;
+        let vor_tr = st.account(&Address::new([21u8; 32])).balance;
+        let _ = epochenausschuettung_mit_training(
+            &mut st,
+            &inferenz,
+            &training,
+            auslastung,
+            &MintParams { subsidy_num: 1, subsidy_den: 2, m_max: u64::MAX },
+        )
+        .expect("Ausschuettung");
+        (
+            st.account(&Address::new([11u8; 32])).balance - vor_inf,
+            st.account(&Address::new([21u8; 32])).balance - vor_tr,
+        )
+    }
+
+    /// ⚑ **Solange die Treasury reicht, ist die Rate exakt gleich.**
+    ///
+    /// Bei einem Trainingsanteil von drei Prozent des Inferenzgewichts
+    /// liegt der Anspruch unter der Treasury, und dann bekommt jede
+    /// Gewichtseinheit dasselbe wie bei der Inferenz.
+    #[test]
+    fn solange_die_treasury_reicht_ist_die_rate_gleich() {
+        let (inf, tr) = lauf(1_000, 30);
+        assert!(inf > 0 && tr > 0);
+        // Je Gewichtseinheit, auf Rundung genau.
+        let inf_je = inf / 1_000;
+        let tr_je = tr / 30;
+        assert!(
+            inf_je.abs_diff(tr_je) <= 1,
+            "die Rate weicht ab: Inferenz {inf_je} je Einheit, Training {tr_je}"
+        );
+    }
+
+    /// ⚑ **Bei gleichem Gewicht reicht die Treasury nicht, und das ist
+    /// der Befund.**
+    ///
+    /// Die Treasury bekommt 3 Prozent der Prägung, die Shard-Miner 78.
+    /// Ein Trainingsanspruch in Höhe des Inferenzvolumens ist damit
+    /// **sechsundzwanzigfach** überzeichnet, und die Vergütung je
+    /// Einheit fällt entsprechend.
+    ///
+    /// ⚑ **Das ist Arithmetik und keine Politik**, und es steht als Test
+    /// da, damit die Zahl nicht in einem Kommentar verschwindet: Wer den
+    /// Trainingsanteil aus Kap. 7.1 hochsetzt, senkt damit die Vergütung
+    /// je Trainingseinheit.
+    #[test]
+    fn bei_gleichem_gewicht_deckelt_die_treasury_auf_ein_sechsundzwanzigstel() {
+        let (inf, tr) = lauf(1_000, 1_000);
+        assert!(tr > 0, "der Trainingsminer bekam nichts");
+        assert!(tr < inf, "die Treasury deckelt nicht");
+        let verhaeltnis = inf / tr;
+        assert!(
+            (24..=28).contains(&verhaeltnis),
+            "Inferenz {inf}, Training {tr}, Verhaeltnis {verhaeltnis} statt rund 26"
+        );
+    }
+
+    /// Mehr Arbeit bringt mehr, solange die Treasury nicht ausgereizt
+    /// ist, und danach nicht mehr.
+    #[test]
+    fn mehr_arbeit_bringt_mehr_bis_die_treasury_ausgereizt_ist() {
+        let (_, wenig) = lauf(1_000, 10);
+        let (_, mittel) = lauf(1_000, 30);
+        let (_, viel) = lauf(1_000, 100_000);
+        assert!(mittel > wenig, "dreimal so viel Arbeit brachte nicht mehr");
+        assert!(viel > mittel, "sehr viel Arbeit brachte nicht mehr als mittel");
+        assert!(
+            viel < wenig.saturating_mul(1_000),
+            "die Treasury deckelt nicht: {wenig} auf {viel}"
+        );
+    }
+
+    /// ⚑ **Bei hoher Auslastung wächst der Puffer.**
+    ///
+    /// Ohne diesen Test wäre die Abgabe eine Zahl, die niemand einzieht.
+    #[test]
+    fn bei_hoher_auslastung_waechst_der_puffer() {
+        use crate::zuschreibung::Zuschreibung;
+        use myl_ledger::state::LedgerState;
+        use myl_types::ids::{Address, MinerId};
+
+        let bestand_nach = |auslastung: i64| -> u64 {
+            let mut st = LedgerState::genesis(1);
+            st.account_mut(&Address::new([1u8; 32])).balance = 10_000_000;
+            myl_ledger::transitions::burn_to_credits(
+                &mut st,
+                &Address::new([1u8; 32]),
+                5_000_000,
+                myl_types::ids::EpochId(1_000),
+            )
+            .expect("Burn");
+            let inf = MinerId::new([10u8; 32]);
+            st.auszahlung.insert(inf, Address::new([11u8; 32]));
+            let mut inferenz = Zuschreibung::default();
+            inferenz.je_miner.insert(inf, 1_000);
+            let _ = epochenausschuettung_mit_training(
+                &mut st,
+                &inferenz,
+                &Zuschreibung::default(),
+                auslastung,
+                &MintParams { subsidy_num: 1, subsidy_den: 2, m_max: u64::MAX },
+            )
+            .expect("Ausschuettung");
+            st.account(&treasury_adresse()).balance
+        };
+
+        let skala = myl_types::auslastung::AUSLASTUNG_SKALA;
+        let leer = bestand_nach(0);
+        let ziel = bestand_nach(skala * 7 / 10);
+        let voll = bestand_nach(skala);
+        assert!(ziel > leer, "am Ziel wird nicht mehr abgefuehrt als im Leerlauf");
+        assert!(voll > ziel, "bei voller Auslastung wird nicht mehr abgefuehrt");
+        // ⚑ Rund das Achtfache: 3 Prozent ohne Abgabe gegen 33 Prozent
+        // mit voller Abgabe.
+        let faktor = voll / leer.max(1);
+        assert!((8..=12).contains(&faktor), "der Faktor ist {faktor} statt rund zehn");
+    }
+
+    /// ⚑ **Und bei niedriger Auslastung wird er ausgegeben.**
+    ///
+    /// Das ist die andere Hälfte des Puffers. Ohne sie wäre die Abgabe
+    /// eine Steuer ohne Zweck.
+    #[test]
+    fn ein_angesparter_puffer_zahlt_mehr_training_als_die_epoche_hergibt() {
+        use crate::zuschreibung::Zuschreibung;
+        use myl_ledger::state::LedgerState;
+        use myl_types::ids::{Address, MinerId};
+
+        let mut st = LedgerState::genesis(1);
+        st.account_mut(&Address::new([1u8; 32])).balance = 10_000_000;
+        myl_ledger::transitions::burn_to_credits(
+            &mut st,
+            &Address::new([1u8; 32]),
+            5_000_000,
+            myl_types::ids::EpochId(1_000),
+        )
+        .expect("Burn");
+        // Ein angesparter Bestand aus guten Epochen.
+        st.account_mut(&treasury_adresse()).balance = 50_000_000;
+        let geldmenge_vor: u128 =
+            st.accounts.values().map(|a| u128::from(a.balance) + u128::from(a.staked)).sum();
+
+        let inf = MinerId::new([10u8; 32]);
+        let tr = MinerId::new([20u8; 32]);
+        st.auszahlung.insert(inf, Address::new([11u8; 32]));
+        st.auszahlung.insert(tr, Address::new([21u8; 32]));
+        let mut inferenz = Zuschreibung::default();
+        inferenz.je_miner.insert(inf, 1_000);
+        let mut training = Zuschreibung::default();
+        training.je_miner.insert(tr, 1_000);
+
+        let vor_tr = st.account(&Address::new([21u8; 32])).balance;
+        let bestand_vor = st.account(&treasury_adresse()).balance;
+        let a = epochenausschuettung_mit_training(
+            &mut st,
+            &inferenz,
+            &training,
+            0, // leerlaufendes Netz: keine Abgabe, nur der Bestand
+            &MintParams { subsidy_num: 1, subsidy_den: 2, m_max: u64::MAX },
+        )
+        .expect("Ausschuettung");
+        let tr_bekommen = st.account(&Address::new([21u8; 32])).balance - vor_tr;
+        let inf_bekommen = st.account(&Address::new([11u8; 32])).balance;
+
+        // ⚑ **Gleiche Rate, weil der Puffer sie trägt.** Ohne Bestand
+        // wäre das Training auf ein Sechsundzwanzigstel gedeckelt.
+        assert!(
+            tr_bekommen > inf_bekommen / 2,
+            "der Puffer traegt nicht: Inferenz {inf_bekommen}, Training {tr_bekommen}"
+        );
+        assert!(
+            st.account(&treasury_adresse()).balance < bestand_vor,
+            "der Bestand wurde nicht angetastet"
+        );
+
+        // ⚑ **Der Griff in den Puffer prägt nicht.** Die Geldmenge darf
+        // nur um das Geprägte wachsen, nicht um die Überweisung.
+        let geldmenge_nach: u128 =
+            st.accounts.values().map(|a| u128::from(a.balance) + u128::from(a.staked)).sum();
+        assert_eq!(
+            geldmenge_nach - geldmenge_vor,
+            u128::from(a.gutgeschrieben),
+            "der Puffergriff hat Geld geschaffen"
+        );
+    }
+
+    /// ⚑ **Ohne Inferenz gibt es keine Rate**, und dann bekommt das
+    /// Training, was die Treasury hergibt. Ein leerlaufendes Netz zahlt
+    /// seinen Trainingspods aus dem, was da ist.
+    #[test]
+    fn ohne_inferenz_bekommt_training_die_treasury() {
+        let (inf, tr) = lauf(0, 1_000);
+        assert_eq!(inf, 0, "ohne Arbeit kein Inferenzanteil");
+        assert!(tr > 0, "ein leerlaufendes Netz zahlt seinen Trainingspods nichts");
+    }
+
+
     use super::*;
     use myl_ledger::transitions::{auszahlungskonto_eintragen, burn_to_credits};
     use myl_types::ids::EpochId;

@@ -1224,7 +1224,7 @@ impl Ebenenvorgaben<'_> {
     /// von `acc[i]` auf den Bus ein **Linksschieben und damit exakt**.
     /// Mit dem Minimum verlöre jeder feinere Kanal Stellen, bevor der
     /// Block ihn überhaupt sieht.
-    fn bloecke(&self) -> (Aufmerksamkeitsvorgaben, Mlpvorgaben) {
+    pub fn bloecke(&self) -> (Aufmerksamkeitsvorgaben, Mlpvorgaben) {
         let mut a = self.aufmerksamkeit;
         a.aus_frac = self.acc_attn().into_iter().max().unwrap_or(0);
         let mut m = self.mlp;
@@ -1679,7 +1679,15 @@ pub fn schritt_auf_ebene(
 /// [`crate::rmsnorm::Rmsnormspur::Null`] hängt die Ausgabe von keinem
 /// Eingang ab.
 #[allow(clippy::too_many_arguments)]
-fn normrueckwaerts(
+/// Der Rückwärtsweg durch eine RMS-Normierung, mit Skalenwechsel.
+///
+/// ⚑ **Öffentlich seit dem 2026-09-05**, weil die Gemischebene in der
+/// Runtime gebaut wird und ihn braucht: Dort liegt die Materialisierung
+/// der gewählten Experten, hier die Arithmetik. Ein Nachbau drüben wäre
+/// eine zweite Wahrheit über einen heiklen Randfall, nämlich den
+/// zweiten Zweig unten: **Eine leere Spur ergibt einen Nullgradienten
+/// und keinen Absturz.**
+pub fn normrueckwaerts(
     g: &[Grad],
     x: &[i16],
     x_shifts: &[u8],
@@ -1713,7 +1721,12 @@ fn normrueckwaerts(
 ///
 /// ⚑ **Gesaettigt statt umlaufend**, denn ein umgelaufener Gradient
 /// zeigt in die **Gegenrichtung**, und der Schritt liefe dann bergauf.
-fn begrenze(v: i64) -> Grad {
+///
+/// ⚑ **Öffentlich seit dem 2026-09-05**, aus demselben Grund wie
+/// [`normrueckwaerts`]: Wer in der Runtime `as Grad` schriebe statt zu
+/// sättigen, bekäme genau den umlaufenden Gradienten, vor dem dieser
+/// Kommentar warnt.
+pub fn begrenze(v: i64) -> Grad {
     v.clamp(i64::from(Grad::MIN), i64::from(Grad::MAX)) as Grad
 }
 

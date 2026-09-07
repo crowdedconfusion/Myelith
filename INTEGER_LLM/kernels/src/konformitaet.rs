@@ -209,6 +209,7 @@ pub fn trainingsvektor_pruefen(gv: &GoldenVector) -> VektorErgebnis {
         "backward_rmsnorm" => run_backward_rmsnorm(gv),
         "backward_embedding" => run_backward_embedding(gv),
         "optimierer_schritt" => run_optimierer_schritt(gv),
+        "optimierer_schritt_normiert" => run_optimierer_schritt_normiert(gv),
         "softmax_vokabular" => run_softmax_vokabular(gv),
         _ => (false, vec![format!("Unbekannter Trainingsvektor: {}", gv.name)]),
     };
@@ -789,7 +790,11 @@ mod tests {
             assert!(e.bestanden, "{}: {:?}", e.name, e.gruende);
             gesehen += 1;
         }
-        assert_eq!(gesehen, 6, "erwartet werden sechs Trainingsvektoren");
+        // ⚑ **Sieben seit dem 2026-09-06.** Dazugekommen ist
+        // `optimierer_schritt_normiert`: Seit die Kette normiert
+        // rechnet, prueft `optimierer_schritt` einen Weg, den das
+        // Protokoll nicht mehr geht.
+        assert_eq!(gesehen, 7, "erwartet werden sieben Trainingsvektoren");
     }
 
     /// ⚑ **Der MoE-Routingpfad, seit dem 2026-09-05 belegt** (Fund 180).
@@ -831,4 +836,49 @@ mod tests {
         assert!(!e.bestanden);
         assert!(e.gruende.iter().any(|g| g.contains("Unknown golden vector")));
     }
+}
+
+/// Der **normierte** Schritt, wie ihn das Protokoll seit dem 2026-09-06
+/// rechnet.
+///
+/// # ⚑ Warum es diesen Vektor zusätzlich braucht
+///
+/// `optimierer_schritt` prüft den unnormierten Weg, und der ist seit
+/// der Normierung **nicht mehr der, den die Kette geht**. Ohne diesen
+/// Vektor wäre die Konformitätsprüfung grün, während die tatsächliche
+/// Trainingsarithmetik zwischen zwei Umsetzungen ungeprüft
+/// auseinanderlaufen könnte.
+///
+/// ⚑ **Seine Herkunft ist `implementierung` und nicht `unabhaengig`**,
+/// und das steht so in der Datei. Er hält das Verhalten fest; er belegt
+/// nicht, dass es richtig ist. Ein unabhängig gerechneter Vektor wäre
+/// mehr wert, und dass es ihn nicht gibt, gehört benannt statt
+/// verschwiegen.
+fn run_optimierer_schritt_normiert(gv: &GoldenVector) -> (bool, Vec<String>) {
+    let master = als_i32(&gv.inputs["master"]);
+    let grad = als_i32(&gv.inputs["grad"]);
+    let kennung = crate::optimierer::Schrittkennung {
+        ebene: zahl(gv, "ebene") as u32,
+        schritt: zahl(gv, "schritt") as u64,
+        index_versatz: zahl(gv, "index_versatz") as u64,
+    };
+    let mut gruende = Vec::new();
+    let mut ok = true;
+
+    // ⚑ **Erst die rohe Summe, dann der Schritt**, aus demselben Grund
+    // wie beim Würfel nebenan: Wer nur das Ergebnis vergleicht, sieht
+    // bei einer Abweichung nicht, ob die Sammlung oder die Normierung
+    // abwich.
+    let mut summe = vec![0i64; grad.len()];
+    crate::optimierer::sammle_roh(&mut summe, &grad);
+    if summe != gv.outputs["summe_roh"].data {
+        gruende.push("die rohe Summe weicht ab: schon das Sammeln ist verschieden".to_string());
+        ok = false;
+    }
+
+    let mut m = master.clone();
+    crate::optimierer::schritt_normiert(&mut m, &mut summe, kennung, zahl(gv, "lr_nenner"));
+    let soll = als_i32(&gv.outputs["master_neu"]);
+    ok &= vergleiche("master_neu", &m, &soll, &mut gruende);
+    (ok, gruende)
 }

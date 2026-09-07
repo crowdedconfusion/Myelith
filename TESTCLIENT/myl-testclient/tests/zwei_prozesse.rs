@@ -290,11 +290,24 @@ impl Aufbau {
                     use std::io::Read;
                     let _ = e.read_to_string(&mut fehler);
                 }
+                // ⚑ **Der Ausgang des Kindes gehoert in die Meldung**
+                // (2026-09-06). Ohne ihn liest sich jeder Ausfall wie
+                // „das Binary passt nicht zu den Artefakten", und genau
+                // das hat einmal in die Irre gefuehrt: Der Test fiel in
+                // einem Gesamtlauf, unter dem nebenher gebaut wurde,
+                // und war isoliert mehrfach gruen. Ein Pruefstand, der
+                // seine eigene Ausfallursache verschweigt, gewoehnt den
+                // Leser daran, Fehlschlaege wegzuerklaeren.
+                let ausgang = kind.0.try_wait().ok().flatten();
                 panic!(
                     "der Shard-Dienst hat seine Adresse nicht genannt.\n\
+                     Ausgang des Prozesses: {ausgang:?}\n\
                      Seine Fehlerausgabe:\n{}\n\
-                     Haeufigster Grund: `myl-pod-node` ist aelter als die Artefakte. \n\
-                     Neu bauen mit: cd COMPUTE_PIPELINE/myl-pod && cargo build --bin myl-pod-node",
+                     Zwei haeufige Gruende:\n  \
+                     1. `myl-pod-node` ist aelter als die Artefakte. \
+                     Neu bauen mit: cd COMPUTE_PIPELINE/myl-pod && cargo build --bin myl-pod-node\n  \
+                     2. Es wurde waehrend des Laufs gebaut. Dieser Test benutzt das \
+                     **vorgebaute** Programm; ein `cargo build` nebenher schreibt es neu.",
                     if fehler.trim().is_empty() { "(leer)" } else { fehler.trim() }
                 );
             }

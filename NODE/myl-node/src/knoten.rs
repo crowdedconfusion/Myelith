@@ -1670,6 +1670,18 @@ impl Knoten {
                             // noch eine Nachforderung aus.
                             crate::kette::KettenFehler::HoeheWeichtAb { .. } => "hoehe-weicht-ab",
                             crate::kette::KettenFehler::EpocheWeichtAb { .. } => "epoche-weicht-ab",
+                            // ⚑ Ebenfalls Befunde über den Erzeuger:
+                            // Wer einen Schuldspruch ohne Beleg in
+                            // einen Block schreibt, versucht zu
+                            // schlachten, und wer eine unsinnige
+                            // Anfechtung mitschickt, versucht es auch.
+                            // Beide dürfen keine Nachforderung auslösen.
+                            crate::kette::KettenFehler::SchuldspruchOhneBeleg { .. } => {
+                                "schuldspruch-ohne-beleg"
+                            }
+                            crate::kette::KettenFehler::AnfechtungUnsinnig => {
+                                "anfechtung-unsinnig"
+                            }
                         };
                         self.protokoll.schreibe(
                             Eintrag::neu("block_abgelehnt")

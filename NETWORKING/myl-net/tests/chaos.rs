@@ -1,3 +1,16 @@
+//! ⚑ **Die Fristen dieses Tests sind grosszuegig, und das ist Absicht**
+//! (2026-09-06). Sie binden **nur im Fehlerfall**: Wer wartet, bis eine
+//! Bedingung eintritt, wartet auf einer unbelasteten Maschine
+//! Millisekunden und auf einer belasteten laenger. Eine knappe Frist
+//! misst deshalb nicht das Protokoll, sondern die Maschinenlast.
+//!
+//! **Der Anlass war ein Fehlschlag, der keiner war:** In einem
+//! Gesamtlauf, unter dem nebenher gebaut und gemessen wurde, riss die
+//! Zehn-Sekunden-Frist, und isoliert war derselbe Test mehrfach gruen.
+//! Ein Pruefstand, dessen Ergebnis von der Last abhaengt, gewoehnt den
+//! Leser daran, Fehlschlaege wegzuerklaeren, und das ist teurer als
+//! zwanzig Sekunden Wartezeit, die im Normalfall nie anfallen.
+
 //! Chaos-Tests: was das Netz aushält, und was hier nicht messbar ist.
 //!
 //! # ⚑ Was diese Datei **nicht** misst, und warum das oben steht
@@ -213,7 +226,7 @@ async fn zwei_verbundene() -> (Knoten, Knoten) {
     let a = Knoten::starten(None).await;
     let b = Knoten::starten(Some(a.adresse.clone())).await;
     assert!(
-        a.warte_auf_peers(1, Duration::from_secs(10)).await >= 1,
+        a.warte_auf_peers(1, Duration::from_secs(30)).await >= 1,
         "die beiden fanden einander nicht"
     );
     (a, b)
@@ -230,12 +243,12 @@ async fn partitionslauf(sperren: bool) -> (usize, usize) {
     // Mesh aufbauen lassen: Ohne Mesh nimmt Gossipsub nicht an, und das
     // sähe aus wie eine wirkende Sperre.
     assert!(
-        a.veroeffentliche_beharrlich(1, Duration::from_secs(15))
+        a.veroeffentliche_beharrlich(1, Duration::from_secs(45))
             .await,
         "das Mesh kam nicht zustande"
     );
     assert_eq!(
-        b.empfange(Duration::from_secs(8), Some(1)).await,
+        b.empfange(Duration::from_secs(24), Some(1)).await,
         1,
         "der Aufbau trug schon vor der Störung nicht"
     );
@@ -248,7 +261,7 @@ async fn partitionslauf(sperren: bool) -> (usize, usize) {
         // 3,6, die Sperre war noch nicht wirksam, die Nachricht kam
         // durch, und der Test meldete einen Fehler, den es nicht gab.
         let uebrig =
-            gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
+            gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(30)).await;
         assert_eq!(
             uebrig, 0,
             "die Sperre wurde in zehn Sekunden nicht wirksam; dann misst der \
@@ -262,14 +275,14 @@ async fn partitionslauf(sperren: bool) -> (usize, usize) {
     if sperren {
         a.sperren(b.peer_id, false).await;
         b.waehlen(a.adresse.clone());
-        b.warte_auf_peers(1, Duration::from_secs(10)).await;
+        b.warte_auf_peers(1, Duration::from_secs(30)).await;
     }
 
     let angenommen = a
-        .veroeffentliche_beharrlich(3, Duration::from_secs(15))
+        .veroeffentliche_beharrlich(3, Duration::from_secs(45))
         .await;
     let danach = if angenommen {
-        b.empfange(Duration::from_secs(10), Some(1)).await
+        b.empfange(Duration::from_secs(30), Some(1)).await
     } else {
         0
     };
@@ -317,15 +330,15 @@ async fn ohne_sperre_kaeme_beides_durch() {
 async fn eine_sperre_ueberlebt_einen_neuen_verbindungsversuch() {
     let (a, mut b) = zwei_verbundene().await;
     assert!(
-        a.veroeffentliche_beharrlich(4, Duration::from_secs(15))
+        a.veroeffentliche_beharrlich(4, Duration::from_secs(45))
             .await
     );
-    assert_eq!(b.empfange(Duration::from_secs(8), Some(1)).await, 1);
+    assert_eq!(b.empfange(Duration::from_secs(24), Some(1)).await, 1);
 
     a.sperren(b.peer_id, true).await;
     // ⚑ Auf die Wirkung warten, nicht auf die Uhr: dasselbe Muster, das
     // am 2026-09-01 im Partitionstest unter Last umgefallen ist.
-    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
+    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(30)).await;
 
     // B versucht es noch einmal, über dieselbe Adresse.
     b.waehlen(a.adresse.clone());
@@ -357,13 +370,13 @@ async fn ein_knoten_der_wiederkommt_bekommt_wieder_nachrichten() {
     let a = Knoten::starten(None).await;
     {
         let mut b = Knoten::starten(Some(a.adresse.clone())).await;
-        a.warte_auf_peers(1, Duration::from_secs(10)).await;
+        a.warte_auf_peers(1, Duration::from_secs(30)).await;
         assert!(
-            a.veroeffentliche_beharrlich(6, Duration::from_secs(15))
+            a.veroeffentliche_beharrlich(6, Duration::from_secs(45))
                 .await
         );
         assert_eq!(
-            b.empfange(Duration::from_secs(8), Some(1)).await,
+            b.empfange(Duration::from_secs(24), Some(1)).await,
             1,
             "der erste Auftritt trug schon nicht"
         );
@@ -371,16 +384,16 @@ async fn ein_knoten_der_wiederkommt_bekommt_wieder_nachrichten() {
         // fällt.
     }
     // ⚑ Auf das Verschwinden warten, nicht auf die Uhr.
-    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
+    gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(30)).await;
 
     let mut c = Knoten::starten(Some(a.adresse.clone())).await;
-    a.warte_auf_peers(1, Duration::from_secs(10)).await;
+    a.warte_auf_peers(1, Duration::from_secs(30)).await;
     assert!(
-        a.veroeffentliche_beharrlich(7, Duration::from_secs(15))
+        a.veroeffentliche_beharrlich(7, Duration::from_secs(45))
             .await
     );
     assert_eq!(
-        c.empfange(Duration::from_secs(10), Some(1)).await,
+        c.empfange(Duration::from_secs(30), Some(1)).await,
         1,
         "der wiedergekommene Knoten bekam nichts. Ein Netz, das einen Neustart \
          nicht verkraftet, verkraftet keinen Betrieb"
@@ -398,22 +411,22 @@ async fn ein_knoten_der_wiederkommt_bekommt_wieder_nachrichten() {
 async fn wiederholtes_trennen_und_verbinden_haelt_das_netz_am_leben() {
     let (a, mut b) = zwei_verbundene().await;
     assert!(
-        a.veroeffentliche_beharrlich(8, Duration::from_secs(15))
+        a.veroeffentliche_beharrlich(8, Duration::from_secs(45))
             .await
     );
-    assert_eq!(b.empfange(Duration::from_secs(8), Some(1)).await, 1);
+    assert_eq!(b.empfange(Duration::from_secs(24), Some(1)).await, 1);
 
     for _ in 0..4 {
         a.sperren(b.peer_id, true).await;
         // ⚑ Warten, bis die Sperre greift, statt auf 300 ms zu hoffen.
-        gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(10)).await;
+        gemeinsam::warte_auf_trennung(&a.kommandos, 0, Duration::from_secs(30)).await;
         a.sperren(b.peer_id, false).await;
         b.waehlen(a.adresse.clone());
         // Und bis die Verbindung wieder steht; bleibt sie aus, geht es
         // trotzdem weiter, denn der Lauf soll das Flattern aushalten.
-        a.warte_auf_peers(1, Duration::from_secs(10)).await;
+        a.warte_auf_peers(1, Duration::from_secs(30)).await;
     }
-    a.warte_auf_peers(1, Duration::from_secs(10)).await;
+    a.warte_auf_peers(1, Duration::from_secs(30)).await;
 
     assert!(
         a.veroeffentliche_beharrlich(9, Duration::from_secs(20))
@@ -421,7 +434,7 @@ async fn wiederholtes_trennen_und_verbinden_haelt_das_netz_am_leben() {
         "nach vier Trennungen nahm Gossipsub nichts mehr an"
     );
     assert_eq!(
-        b.empfange(Duration::from_secs(10), Some(1)).await,
+        b.empfange(Duration::from_secs(30), Some(1)).await,
         1,
         "nach vier Trennungen kam nichts mehr an: das Netz erholt sich nicht"
     );
@@ -448,21 +461,21 @@ async fn ein_haengender_knoten_haelt_das_netz_nicht_auf() {
     let mut b = Knoten::starten(Some(a.adresse.clone())).await;
     let mut haenger = Knoten::starten(Some(a.adresse.clone())).await;
     assert!(
-        a.warte_auf_peers(2, Duration::from_secs(15)).await >= 2,
+        a.warte_auf_peers(2, Duration::from_secs(45)).await >= 2,
         "die drei fanden einander nicht"
     );
 
     assert!(
-        a.veroeffentliche_beharrlich(10, Duration::from_secs(15))
+        a.veroeffentliche_beharrlich(10, Duration::from_secs(45))
             .await
     );
-    assert_eq!(b.empfange(Duration::from_secs(10), Some(1)).await, 1);
+    assert_eq!(b.empfange(Duration::from_secs(30), Some(1)).await, 1);
 
     // Der Hänger holt seine Ereignisse nicht ab: Wir rufen `empfange`
     // schlicht nicht auf. Sein Kanal läuft voll.
     a.veroeffentliche(11).await;
     assert_eq!(
-        b.empfange(Duration::from_secs(10), Some(1)).await,
+        b.empfange(Duration::from_secs(30), Some(1)).await,
         1,
         "während einer hing, kam bei den übrigen nichts an"
     );

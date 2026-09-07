@@ -77,6 +77,7 @@ pub use delivery::{
 };
 pub mod anzeige;
 pub mod nachrechner;
+pub mod trainingspruefung;
 pub use anzeige::{anzeige_erheben, beschuldigter, Anzeigefehler, Zustaendigkeit};
 pub use nachrechner::ModellAuditor;
 pub use checker::{

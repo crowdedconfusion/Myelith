@@ -88,7 +88,20 @@ use myl_types::ids::{Address, EpochId};
 pub const PROBE_CREDIT_PREIS: u64 = 100;
 
 /// Zahl der Probekonten, die zu Beginn Guthaben bekommen.
-pub const PROBEKONTEN: u8 = 8;
+///
+/// # ⚑ Zwölf seit dem 2026-09-05, und die Zahl ist begründet
+///
+/// Vorher acht. Ein Pod hat `PROBE_SHARDS + 2` Mitglieder, also sechs;
+/// acht Konten ergeben damit **einen** Pod, und ein einzelner Pod kann
+/// nicht trainieren: Trainingssegmente werden paarweise vergeben, weil
+/// ein Ergebnis, das nur einer gerechnet hat, sich mit nichts
+/// vergleichen lässt.
+///
+/// **Zwölf ist das Minimum eines Netzes, das trainieren kann:** zwei
+/// volle Pods, ein Redundanzpaar. Mehr wäre Ballast, weniger machte den
+/// Trainingsweg in der Probekette unerreichbar, und ein Weg, den kein
+/// Test geht, ist keiner.
+pub const PROBEKONTEN: u8 = 12;
 
 /// Guthaben je Probekonto in MYL-Kleinstbeträgen. **Spielgeld.**
 pub const PROBEGUTHABEN: u64 = 10_000_000;
@@ -232,6 +245,30 @@ pub enum KettenFehler {
     /// sie, weil an ihr der Verfall von Credits und das Fenster der
     /// Verstoßhistorie hängen.
     EpocheWeichtAb { erwartet: u64, bekommen: u64 },
+    /// **Der Block trägt einen Schuldspruch, und niemand kann ihn
+    /// prüfen** (Fund 192).
+    ///
+    /// ⚑ **Eine Ablehnung, obwohl die Kette Schuldsprüche heute gar
+    /// nicht anwendet, und gerade deshalb.** `Block::verdicts` ist Teil
+    /// des gehashten Blocks, `Block::add_verdict` steht offen, und der
+    /// Ledger hat mit `apply_verdict` alles, was zum Schlachten nötig
+    /// ist. Was fehlt, ist der **Beleg**: Ein `Verdict` nennt Täter und
+    /// Kopfgeldempfänger und trägt keinen Nachweis. Wer die beiden
+    /// Enden verbände, ohne den Beleg zu verlangen, gäbe dem
+    /// Blockerzeuger ein Werkzeug, mit dem er jeden schlachten kann.
+    ///
+    /// **Die Ablehnung ist die sichere Zwischenlage:** Solange der
+    /// Beleg nicht auf dem Draht ist, kommt kein Schuldspruch in einen
+    /// Block. Damit ist das Feld nicht länger stiller Ballast, den ein
+    /// späterer Bau versehentlich scharf schaltet, sondern eine Tür,
+    /// die aufgeschlossen werden **muss**.
+    SchuldspruchOhneBeleg { anzahl: usize },
+    /// **Die Anfechtungen des Blocks sind unsinnig** (Fund 192).
+    ///
+    /// `Block::validate_challenges` gab es seit jeher und hatte bis zum
+    /// 2026-09-06 **keinen Aufrufer**: eine geprüfte, abgehakte Prüfung,
+    /// die nie lief.
+    AnfechtungUnsinnig,
 }
 
 impl std::fmt::Display for KettenFehler {
@@ -262,6 +299,14 @@ impl std::fmt::Display for KettenFehler {
                 f,
                 "Epoche folgt nicht aus der Höhe: erwartet {erwartet}, Block sagt {bekommen}"
             ),
+            Self::SchuldspruchOhneBeleg { anzahl } => write!(
+                f,
+                "{anzahl} Schuldspruch/Schuldsprueche im Block, aber kein Beleg auf dem Draht: \
+                 abgelehnt, bis der Nachweisweg steht"
+            ),
+            Self::AnfechtungUnsinnig => {
+                f.write_str("eine Anfechtung des Blocks besteht die Strukturpruefung nicht")
+            }
         }
     }
 }
@@ -406,6 +451,7 @@ impl Kette {
             wurzel: Hash::sha256(b"myelith-probekorpus"),
             segmente: 65_536,
             buendel: 256,
+            tokens_je_segment: 2_048,
         });
         // ⚑ **Die Saat der ersten beiden Epochen ist der Startwert**
         // (Fund 143). Der Ledger kennt ihn nicht, die Kette schon; ohne
@@ -765,14 +811,122 @@ impl Kette {
     /// Arbeitsaufwand: Eine winzige Schrittweite bewegt fast nichts und
     /// ist trotzdem eine ausgeführte Rechnung.
     ///
-    /// ⚑ **2⁻¹² ist der Wert aus dem Trainingslauf**, der auf dem
-    /// 0,5B über dreissig Schritte sein Ziel trifft. Für das
-    /// Expertengemisch liegt das Arbeitsfenster des Routers bei 2⁻¹⁸ bis
-    /// 2⁻²²; **dass hier eine Zahl für beide steht, ist eine offene
-    /// Vereinfachung** und kein Ergebnis.
+    /// ⚑ **Der Zähler ist eins, der Nenner folgt der Tiefe.** Bis zum
+    /// 2026-09-06 stand hier ein fester Nenner von 2¹², und der war
+    /// gemessen falsch: Über die vierundzwanzig Ebenen des 0,5B zerstört
+    /// er das Modell in einem Lauf, Perplexität 2,5 Milliarden gegen
+    /// einen Ausgangsstand von 23. Die Zahl stammte aus einem Lauf über
+    /// **eine** Ebene gegen **ein** Zielwort.
     const TRAININGS_LR_ZAEHLER: i64 = 1;
-    /// Siehe [`Kette::TRAININGS_LR_ZAEHLER`].
-    const TRAININGS_LR_NENNER: i64 = 1 << 12;
+
+    /// Der Nenner der Lernrate für ein Segment über `tiefe` Ebenen mit
+    /// `gradienten` eingehenden Gradienten.
+    ///
+    /// ⚑ **Keine Konstante mehr, sondern eine Funktion von Tiefe und
+    /// Chargengrösse** ([`myl_types::lernrate`]). Der Knoten wählt sie
+    /// nicht; er rechnet sie aus, und der Übergang prüft sie gegen
+    /// dieselbe Funktion.
+    fn trainings_lr_nenner(tiefe: u32, gradienten: u32) -> i64 {
+        myl_types::lernrate::lernrate_nenner(tiefe, gradienten)
+    }
+
+    /// Die Stimmberechtigten aus dem **Kettenzustand**, nicht aus der
+    /// Genesis-Datei.
+    ///
+    /// # ⚑ Was daran der Unterschied ist
+    ///
+    /// Bis zum 2026-09-06 kam das Stimmgewicht aus
+    /// `Stimmsatzdatei::stimmberechtigte`, also aus einer **Textdatei**.
+    /// Damit wog eine Zahl, die niemand auf der Kette hinterlegt hatte,
+    /// und der Einsatz, den `EinsatzHinterlegen` seit dem 2026-09-03
+    /// bewegt, wog nichts.
+    ///
+    /// Hier folgt das Gewicht dem **hinterlegten Einsatz**, und der
+    /// Schlüssel kommt aus dem Minerregister, wo `MinerAnmelden` ihn
+    /// gegen die Kennung prüft. Beides steht im Zustand und ist damit
+    /// nachrechenbar.
+    ///
+    /// ⚑ **Arbeit qualifiziert, Stake wiegt** (Entscheidung A3): Wer
+    /// nicht im Register steht, ist nicht stimmberechtigt, gleich wie
+    /// viel er hinterlegt hat; wer darin steht, wiegt mit seinem
+    /// Einsatz.
+    ///
+    /// ⚑ **Unter der Mindestschwelle zählt niemand mit.** Ein Konto mit
+    /// einem Satoshi Einsatz wäre sonst stimmberechtigt und verdünnte
+    /// die Zweidrittelmehrheit.
+    pub fn stimmberechtigte_aus_zustand(
+        zustand: &LedgerState,
+        mindesteinsatz: u64,
+    ) -> myl_consensus::validator::VotingSet {
+        let mitglieder = zustand
+            .miner
+            .values()
+            .filter_map(|r| {
+                let konto = Address::new(*r.miner_id.as_bytes());
+                let einsatz = zustand.account(&konto).staked;
+                if einsatz < mindesteinsatz {
+                    return None;
+                }
+                Some((
+                    r.miner_id,
+                    myl_consensus::validator::VotingMember {
+                        pubkey: r.schluessel,
+                        weight: einsatz,
+                    },
+                ))
+            })
+            .collect();
+        myl_consensus::validator::VotingSet::from_members(mitglieder)
+    }
+
+    /// Der Mindesteinsatz, ab dem jemand mitstimmt.
+    ///
+    /// ⚑ Spiegel von `Parameter::MindestStake`; ein Test hält beide
+    /// Fassungen gegeneinander.
+    pub fn mindesteinsatz() -> u64 {
+        // ⚑ **Gerechnet und nicht getippt.** Derselbe Weg wie in der
+        // Registry: `S_min = g / p²` aus Anhang B.1, mit der
+        // Stichprobenrate als Konstante.
+        // Anhang B.1: g = 0,5 MYL, dieselbe Herleitung wie in der
+        // Registry.
+        myl_tokenomics::s_min(
+            myl_tokenomics::UNITS_PER_MYL / 2,
+            myl_tokenomics::STICHPROBE_ZAEHLER,
+            myl_tokenomics::STICHPROBE_NENNER,
+        )
+        .unwrap_or(u64::MAX)
+    }
+
+    /// Der Slashsatz für ein bewiesenes falsches Ergebnis.
+    ///
+    /// ⚑ **Spiegel von `myl_tokenomics::slashing::matrix()`**, Kap. 5.5,
+    /// Zeile „Shard-Miner, falsches Ergebnis, 100 Prozent Stake", mit
+    /// dem Kopfgeld aus Anhang B.3. Der Knoten zieht `myl-governance`
+    /// nicht ein und kann die Registry nicht lesen; ein Test hält beide
+    /// Fassungen gegeneinander.
+    pub fn slashsatz_oeffentlich() -> myl_ledger::transitions::SlashParams {
+        Self::slashsatz()
+    }
+
+    fn slashsatz() -> myl_ledger::transitions::SlashParams {
+        myl_ledger::transitions::SlashParams {
+            slash_fraction_num: 1,
+            slash_fraction_den: 1,
+            bounty_fraction_num: myl_tokenomics::slashing::KOPFGELD_ZAEHLER,
+            bounty_fraction_den: myl_tokenomics::slashing::KOPFGELD_NENNER,
+        }
+    }
+
+    /// Die Tiefe, über die ein Trainingssegment dieser Kette rechnet.
+    ///
+    /// ⚑ **Das ganze Modell und nicht der Shard.** Ein Pod schreibt alle
+    /// Ebenen fort, geshardet; die Verkettung, an der die Lernrate
+    /// hängt, läuft über alle. Wer je Shard rechnete, bekäme für
+    /// dieselbe Arbeit verschiedene Raten, je nachdem, in wie viele
+    /// Stücke sie geschnitten war.
+    fn trainingstiefe() -> u32 {
+        myl_tokenomics::vtfe::PROBE_MODELL.num_layers as u32
+    }
 
     /// Die drei Spiegelwerte, damit `tests/parameter.rs` sie gegen die
     /// Registry halten kann.
@@ -949,7 +1103,7 @@ impl Kette {
     /// `epochensaat_naechste` wechseln ausschließlich am
     /// Epochenwechsel. Wer den alten Fehler wiederholen wollte, müsste
     /// erst einen Parameter hinzufügen, und das fällt beim Lesen auf.
-    fn zuteilung_der_laufenden_epoche(
+    pub fn zuteilung_der_laufenden_epoche(
         zustand: &LedgerState,
     ) -> myl_scheduler::shard_assignment::Zuteilung {
         let register = angemeldete_miner(zustand);
@@ -959,6 +1113,132 @@ impl Kette {
             &zustand.epochensaat,
             Self::PROBE_SHARDS,
         )
+    }
+
+    /// Die Zuschreibung der **Trainingsarbeit** der abgelaufenen Epoche.
+    ///
+    /// # ⚑ Gleiche Rate wie Inferenz, andere Quelle
+    ///
+    /// Ein Trainingssegment wird je Rechenstunde genauso vergütet wie
+    /// ein Inferenzsegment. Der Deckel aus Kap. 5.6 begründet sich in
+    /// Anhang B.7.3 damit, dass Miner zwischen den Arbeitsklassen
+    /// **wählen**; seit die Zuteilung erzwungen ist, wählt niemand, und
+    /// derselbe Anhang sagt: „Bei Gleichstand entscheidet allein die
+    /// Zuteilung."
+    ///
+    /// Bezahlt wird aus der **Treasury** und nicht aus der
+    /// Shard-Miner-Quote; die Quelle bleibt, was Kap. 5.6 festlegt.
+    ///
+    /// ⚑ **Nur bestätigte Paare**, denn nur sie sind nachgerechnet
+    /// worden. Ein Segment, dem der Partner fehlt, ist Arbeit, die
+    /// niemand prüfen kann.
+    ///
+    /// ⚑ **Die Tokenzahl kommt aus dem verankerten Korpus**, nicht vom
+    /// Pod. Dürfte er sie nennen, nennte er seine eigene Vergütung.
+    fn trainingszuschreibung(
+        zustand: &LedgerState,
+        paare: &[(u32, u32)],
+        epoche: u64,
+    ) -> myl_tokenomics::Zuschreibung {
+        let mut zu = myl_tokenomics::Zuschreibung::default();
+        let Some(korpus) = zustand.korpus.as_ref() else {
+            return zu;
+        };
+        if !korpus.traegt_ein_buendel() {
+            return zu;
+        }
+        let tokens = korpus.tokens_je_buendel();
+        let zuteilung = Self::zuteilung_der_laufenden_epoche(zustand);
+        let profil = myl_tokenomics::vtfe::PROBE_MODELL;
+        let bestaetigt = Self::bestaetigte_deltas(zustand, paare, epoche);
+        if bestaetigt.is_empty() {
+            return zu;
+        }
+        for (a, b) in paare {
+            let ka = myl_types::miner::pod_kennung(epoche, *a);
+            let Some(seg) = zustand.trainingssegmente.get(&ka) else {
+                continue;
+            };
+            if !bestaetigt.contains(&seg.delta_commitment) {
+                continue;
+            }
+            for nr in [a, b] {
+                let Some(pod) = zuteilung.pods.iter().find(|p| p.pod_index == *nr) else {
+                    continue;
+                };
+                let grenzen: Vec<usize> = (0..=pod.shards.len())
+                    .map(|s| profil.num_layers as usize * s / pod.shards.len().max(1))
+                    .collect();
+                for (i, sh) in pod.shards.iter().enumerate() {
+                    let zuschnitt = myl_tokenomics::vtfe::ShardZuschnitt {
+                        layer_start: grenzen[i] as u64,
+                        layer_end: grenzen[i + 1] as u64,
+                        hat_embedding: i == 0,
+                        hat_lm_kopf: i + 1 == pod.shards.len(),
+                    };
+                    let Ok(g) = myl_tokenomics::vtfe::vtfe_training_gutschrift(
+                        &profil,
+                        &zuschnitt,
+                        tokens,
+                        u64::from(seg.schrittzahl),
+                    ) else {
+                        continue;
+                    };
+                    let e = zu.je_miner.entry(sh.miner.miner_id).or_insert(0);
+                    *e = e.saturating_add(g);
+                }
+            }
+        }
+        zu
+    }
+
+    /// Die Δ-Commitments, auf die sich beide Pods eines Paars geeinigt
+    /// haben, kanonisch geordnet.
+    ///
+    /// # ⚑ Warum ein Paar und nicht ein einzelnes Segment zählt
+    ///
+    /// Ein Ergebnis, das nur einer gerechnet hat, **liesse sich mit
+    /// nichts vergleichen**. Die Kette könnte es annehmen oder
+    /// verwerfen, aber nie prüfen, und die Modellfassung hinge an einer
+    /// Behauptung. Dieselbe Regel wie bei der Inferenz (Kap. 4.4,
+    /// `r = 2`); beim Training kann sie nicht schwächer sein, denn ein
+    /// falsches Δm verdirbt nicht eine Antwort, sondern das Modell.
+    ///
+    /// ⚑ **Der Auftrag wird mitgeprüft, nicht nur das Ergebnis.** Zwei
+    /// Pods, die Verschiedenes gerechnet haben, sind nicht uneinig,
+    /// sondern unvergleichbar, und ihre Übereinstimmung im Ergebnis
+    /// wäre ein Zufall, keine Bestätigung.
+    ///
+    /// ⚑ **Sortiert und nicht in Paarreihenfolge.** Die Ordnung geht in
+    /// die neue Modellfassung ein; sie an der Paarbildung aufzuhängen
+    /// hiesse, zwei Dinge zu koppeln, die nichts miteinander zu tun
+    /// haben.
+    fn bestaetigte_deltas(
+        zustand: &LedgerState,
+        paare: &[(u32, u32)],
+        epoche: u64,
+    ) -> Vec<Hash> {
+        let mut bestaetigt: Vec<Hash> = Vec::new();
+        for (a, b) in paare {
+            let ka = myl_types::miner::pod_kennung(epoche, *a);
+            let kb = myl_types::miner::pod_kennung(epoche, *b);
+            let (Some(sa), Some(sb)) =
+                (zustand.trainingssegmente.get(&ka), zustand.trainingssegmente.get(&kb))
+            else {
+                continue;
+            };
+            if sa.charge == sb.charge
+                && sa.modell_version == sb.modell_version
+                && sa.lr_zaehler == sb.lr_zaehler
+                && sa.lr_nenner == sb.lr_nenner
+                && sa.schrittzahl == sb.schrittzahl
+                && sa.delta_commitment == sb.delta_commitment
+            {
+                bestaetigt.push(sa.delta_commitment);
+            }
+        }
+        bestaetigt.sort_unstable_by(|x, y| x.as_bytes().cmp(y.as_bytes()));
+        bestaetigt
     }
 
     /// Welche Pods der laufenden Epoche trainieren statt zu rechnen.
@@ -1128,9 +1408,21 @@ impl Kette {
         }
         let alte_epoche = zustand.epoch.0;
         let (zuschreibung, bezeugt) = Self::zuschreibung_der_epoche(zustand);
-        let _ = myl_tokenomics::epochenausschuettung(
+        // ⚑ **Die Trainingszuschreibung entsteht VOR der Ausschüttung**
+        // und aus dem Zustand, den die abgelaufene Epoche hinterlassen
+        // hat. Danach sind die Segmente weg.
+        let trainingsplan = Self::trainingsplan_der_laufenden_epoche(zustand);
+        let trainingszuschreibung =
+            Self::trainingszuschreibung(zustand, &trainingsplan.paare, alte_epoche);
+        let _ = myl_tokenomics::ausschuettung::epochenausschuettung_mit_training(
             zustand,
             &zuschreibung,
+            &trainingszuschreibung,
+            // ⚑ **Die Auslastung steuert die Trainingsabgabe**: bei
+            // hoher Last führt das Netz ab, bei niedriger zahlt es aus.
+            // Sie kommt aus demselben Plan, aus dem die Trainingspods
+            // kommen; eine zweite Rechnung wäre eine zweite Wahrheit.
+            trainingsplan.auslastung,
             &Self::praegeparameter(),
         );
         // ⚑ **Stufe 2 wird gezogen, und zwar hier** (Punkt 45, Fund
@@ -1165,6 +1457,21 @@ impl Kette {
         // Prüfung, und die steht noch nicht: Redundanz und Bisektion auf
         // Trainingssegmente sind offen. Gewonnen ist, dass der Weg in
         // die Kette steht.
+        // ⚑ **Was zwei Pods übereinstimmend gerechnet haben, bewegt das
+        // Modell** (2026-09-05). Alles andere nicht: Ein Ergebnis, das
+        // nur einer geliefert hat, liesse sich mit nichts vergleichen,
+        // und die Modellfassung hinge an einer Behauptung.
+        //
+        // ⚑ **Die Kette summiert die Δm nicht.** Sie hält das Rezept aus
+        // alter Fassung und geordneter Liste der bestätigten
+        // Commitments; wer die Gewichte hat, wendet es an und rechnet
+        // die Wurzel nach.
+        {
+            let plan = Self::trainingsplan_der_laufenden_epoche(zustand);
+            let bestaetigt = Self::bestaetigte_deltas(zustand, &plan.paare, alte_epoche);
+            zustand.modell_version =
+                myl_types::modellversion::naechste_version(&zustand.modell_version, &bestaetigt);
+        }
         let _ = myl_ledger::transitions::trainingssegmente_leeren(zustand);
         // ⚑ **Und die Saat rückt weiter** (Fund 143).
         //
@@ -1413,7 +1720,14 @@ impl Kette {
                         charge,
                         modell_version: segment.modell_version,
                         lr_zaehler: Self::TRAININGS_LR_ZAEHLER,
-                        lr_nenner: Self::TRAININGS_LR_NENNER,
+                        // ⚑ **Die Rate folgt dem Budget DIESES Segments.**
+                        // Schrittzahl und Folgen stehen darin und sind
+                        // signiert; wer sie erhöht, ohne die Rate zu
+                        // senken, fällt hier durch.
+                        lr_nenner: Self::trainings_lr_nenner(
+                            Self::trainingstiefe(),
+                            segment.gradienten(),
+                        ),
                     };
                     let _ = myl_ledger::transitions::trainingssegment_einreichen(
                         zustand,
@@ -1424,6 +1738,31 @@ impl Kette {
                         &erster.miner.miner_id,
                         &mitglieder,
                         &vorgabe,
+                    );
+                }
+                // ⚑ **Der Urteilsweg, und er hat seit heute einen
+                // Aufrufer** (Fund 192). `apply_verdict` lag seit jeher
+                // fertig da und wurde ausserhalb seiner Tests von nichts
+                // erreicht; das Feld `Block::verdicts` daneben trug
+                // einen Schuldspruch **ohne Beleg**.
+                //
+                // Hier kommt der Beleg mit der Anweisung, und der
+                // Übergang leitet aus ihm ab, **wen** es trifft. Der
+                // Blockerzeuger kann niemanden benennen, dessen
+                // Unterschrift er nicht hat.
+                Anweisung::SchuldspruchEinreichen {
+                    segment,
+                    beleg,
+                    beschuldigt,
+                    anzeigend,
+                } => {
+                    let _ = myl_ledger::transitions::schuldspruch_einreichen(
+                        zustand,
+                        *segment,
+                        beleg,
+                        beschuldigt,
+                        anzeigend,
+                        &Self::slashsatz(),
                     );
                 }
                 Anweisung::SitzungWiderrufen { sitzung } => {
@@ -1545,6 +1884,19 @@ impl Kette {
                 erwartet: erwartete_epoche,
                 bekommen: block.header.epoch,
             });
+        }
+
+        // ⚑ **Was im Block steht, muss geprüft werden oder darf nicht
+        // drin stehen** (Fund 192). Beide Felder sind Teil des
+        // gehashten Blocks und wurden bis zum 2026-09-06 von der Kette
+        // weder geprüft noch angewandt.
+        if !block.verdicts.is_empty() {
+            return Err(KettenFehler::SchuldspruchOhneBeleg {
+                anzahl: block.verdicts.len(),
+            });
+        }
+        if block.validate_challenges().is_err() {
+            return Err(KettenFehler::AnfechtungUnsinnig);
         }
 
         // Auf einer Kopie rechnen: Weicht das Ergebnis ab, bleibt der
@@ -2353,21 +2705,22 @@ mod tests {
     /// Reihum-Ordnung hätte nichts zu ordnen, und niemandem fiele es
     /// auf, weil die Auswahl dann still auf das blosse Los zurückfiele.
     ///
-    /// Acht Miner ergeben einen Pod (vier Positionen, zwei Reserve, zwei
-    /// bleiben ohne). Ohne Nachfrage ist die Auslastung null, der Anteil
-    /// 82 Prozent, und gerundet ist das **ein** Trainingspod.
+    /// Zwölf Miner ergeben zwei Pods. Ohne Nachfrage ist die Auslastung
+    /// null, der Anteil 82 Prozent, und gerundet sind das **zwei**
+    /// Trainingspods, also **ein Redundanzpaar**.
     ///
-    /// ⚑ **Acht und nicht zwölf**, weil die Probekette genau acht Konten
-    /// hat. Die Reihum-Ordnung über mehrere Pods steht in den Tests von
-    /// `myl_scheduler::trainingszuteilung`; hier geht es um die Naht.
+    /// ⚑ **Zwölf ist das Minimum eines Netzes, das trainieren kann.**
+    /// Mit acht Konten gäbe es einen Pod, kein Paar und damit keine
+    /// prüfbare Arbeit; genau daran fiel dieser Test am 2026-09-05, als
+    /// die Paarbildung dazukam, und das war richtig so.
     #[test]
     fn der_trainingsplan_entsteht_und_wird_vermerkt() {
         use myl_consensus::block::BLOECKE_JE_EPOCHE;
         use myl_types::miner::HardwareClass;
         use myl_types::node_metadata::GeoRegion;
         let mut k = Kette::probestand();
-        let mut nonce = [0u64; 8];
-        for w in 0..8u8 {
+        let mut nonce = [0u64; 12];
+        for w in 0..12u8 {
             k.aufnehmen(
                 Transaktion::signiere(
                     &Kette::startwert(),
@@ -2384,19 +2737,20 @@ mod tests {
             nonce[w as usize] += 1;
         }
         k.baue_block();
-        assert_eq!(k.zustand().miner.len(), 8, "die Anmeldungen kamen nicht an");
+        assert_eq!(k.zustand().miner.len(), 12, "die Anmeldungen kamen nicht an");
 
         // Die Anmeldungen greifen erst nach dem Registrierungsschluss.
         for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
             k.baue_block();
         }
         let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
-        assert_eq!(zuteilung.pods.len(), 1, "acht Miner muessen einen Pod ergeben");
+        assert_eq!(zuteilung.pods.len(), 2, "zwoelf Miner muessen zwei Pods ergeben");
 
         let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
         assert_eq!(plan.auslastung, 0, "ohne Nachfrage ist die Auslastung null");
         assert_eq!(plan.anteil_bps, 8_200, "der Anteil bei leerem Netz");
-        assert_eq!(plan.pods.len(), 1, "der einzige Pod muss trainieren");
+        assert_eq!(plan.pods.len(), 2, "82 Prozent von zwei, gerundet");
+        assert_eq!(plan.paare.len(), 1, "zwei Trainingspods ergeben ein Paar");
         // ⚑ **Und er bekommt ein Buendel**, sonst waere der Plan eine
         // Zuteilung ohne Aufgabe.
         let nr = *plan.pods.iter().next().expect("ein Pod");
@@ -2415,12 +2769,12 @@ mod tests {
             nach_eins.values().all(|e| *e < epoche_jetzt),
             "vermerkt wird die abgelaufene Epoche, nicht die laufende"
         );
-        // ⚑ **Acht Miner, sechs Plaetze: zwei bleiben je Epoche
-        // draussen, und es sind nicht immer dieselben.** Die Pods werden
+        // ⚑ **Zwoelf Miner, zwei Trainingspods zu je sechs Plaetzen.**
+        // Die Pods werden
         // jede Epoche neu gemischt, also kommen ueber mehrere Epochen
         // alle acht an die Reihe. Genau deshalb haengt das Gedaechtnis
         // am Miner und nicht am Pod.
-        assert!(nach_eins.len() <= 8, "mehr Vermerke als Miner");
+        assert!(nach_eins.len() <= 12, "mehr Vermerke als Miner");
 
         // ⚑ **Und der Vermerk rückt mit der Epoche vor**, statt auf dem
         // ersten Stand stehen zu bleiben.
@@ -2435,6 +2789,88 @@ mod tests {
             "der Vermerk blieb stehen: vorher {juengster_vorher}, nachher {juengster_nachher}"
         );
         assert!(nach_zwei.len() >= nach_eins.len(), "der Stand hat Miner verloren");
+    }
+
+    /// ⚑ **Nur ein Paar, das sich einig ist, bewegt das Modell.**
+    ///
+    /// Vier Fälle, und drei davon dürfen nichts bewegen: ein Paar, von
+    /// dem nur einer geliefert hat; ein Paar mit verschiedenen
+    /// Ergebnissen; ein Paar, das gar nicht denselben Auftrag hatte.
+    #[test]
+    fn nur_ein_einiges_paar_bestaetigt_ein_delta() {
+        use myl_types::trainingssegment::Trainingssegment;
+
+        let mut z = Kette::probestand().zustand().clone();
+        let e = 7u64;
+        let seg = |charge: u8, commitment: u8| Trainingssegment {
+            id: myl_types::ids::SegmentId::new([1u8; 32]),
+            modell_version: myl_types::ids::MerkleRoot::new([2u8; 32]),
+            charge: Hash([charge; 32]),
+            startschritt: 0,
+            schrittzahl: 30,
+            folgen: 1,
+            lr_zaehler: 1,
+            lr_nenner: 1 << 12,
+            delta_commitment: Hash([commitment; 32]),
+            bewegte_gewichte: 1,
+            pod_pfad: vec![myl_types::ids::MinerId::new([3u8; 32])],
+            signaturen: vec![myl_types::bls::BlsSignature([0u8; 96])],
+        };
+        let setzen = |z: &mut LedgerState, pod: u32, s: Trainingssegment| {
+            z.trainingssegmente.insert(myl_types::miner::pod_kennung(e, pod), s);
+        };
+
+        // Paar (0, 1): einig.
+        setzen(&mut z, 0, seg(9, 42));
+        setzen(&mut z, 1, seg(9, 42));
+        // Paar (2, 3): uneinig.
+        setzen(&mut z, 2, seg(9, 42));
+        setzen(&mut z, 3, seg(9, 43));
+        // Paar (4, 5): nur einer hat geliefert.
+        setzen(&mut z, 4, seg(9, 42));
+        // Paar (6, 7): dasselbe Ergebnis, aber verschiedene Charge.
+        setzen(&mut z, 6, seg(9, 42));
+        setzen(&mut z, 7, seg(8, 42));
+
+        let paare = [(0u32, 1u32), (2, 3), (4, 5), (6, 7)];
+        let bestaetigt = Kette::bestaetigte_deltas(&z, &paare, e);
+        assert_eq!(bestaetigt, vec![Hash([42; 32])], "es zaehlte mehr als das einige Paar");
+
+        // ⚑ Und ohne einiges Paar bleibt die Fassung stehen.
+        let leer = Kette::bestaetigte_deltas(&z, &[(2, 3), (4, 5)], e);
+        assert!(leer.is_empty());
+        let alt = myl_types::ids::MerkleRoot::new([5u8; 32]);
+        assert_eq!(myl_types::modellversion::naechste_version(&alt, &leer), alt);
+        assert_ne!(myl_types::modellversion::naechste_version(&alt, &bestaetigt), alt);
+    }
+
+    /// ⚑ **Die Ordnung haengt nicht an der Paarreihenfolge.**
+    #[test]
+    fn die_bestaetigten_deltas_stehen_kanonisch() {
+        use myl_types::trainingssegment::Trainingssegment;
+        let mut z = Kette::probestand().zustand().clone();
+        let e = 3u64;
+        let seg = |c: u8| Trainingssegment {
+            id: myl_types::ids::SegmentId::new([1u8; 32]),
+            modell_version: myl_types::ids::MerkleRoot::new([2u8; 32]),
+            charge: Hash([9; 32]),
+            startschritt: 0,
+            schrittzahl: 30,
+            folgen: 1,
+            lr_zaehler: 1,
+            lr_nenner: 1 << 12,
+            delta_commitment: Hash([c; 32]),
+            bewegte_gewichte: 1,
+            pod_pfad: vec![myl_types::ids::MinerId::new([3u8; 32])],
+            signaturen: vec![myl_types::bls::BlsSignature([0u8; 96])],
+        };
+        for (pod, c) in [(0u32, 9u8), (1, 9), (2, 1), (3, 1)] {
+            z.trainingssegmente.insert(myl_types::miner::pod_kennung(e, pod), seg(c));
+        }
+        let vorwaerts = Kette::bestaetigte_deltas(&z, &[(0, 1), (2, 3)], e);
+        let rueckwaerts = Kette::bestaetigte_deltas(&z, &[(2, 3), (0, 1)], e);
+        assert_eq!(vorwaerts, rueckwaerts, "die Paarreihenfolge wirkt auf die Ordnung");
+        assert_eq!(vorwaerts, vec![Hash([1; 32]), Hash([9; 32])]);
     }
 
     /// ⚑ **Der Weg vom Trainingsplan bis in den Zustand, ganz.**
@@ -2452,8 +2888,8 @@ mod tests {
         use myl_types::trainingssegment::Trainingssegment;
 
         let mut k = Kette::probestand();
-        let mut nonce = [0u64; 8];
-        for w in 0..8u8 {
+        let mut nonce = [0u64; 12];
+        for w in 0..12u8 {
             k.aufnehmen(
                 Transaktion::signiere(
                     &Kette::startwert(),
@@ -2485,7 +2921,7 @@ mod tests {
 
         // Welcher Probeschlüssel gehört zum Koordinator?
         let koordinator = pod.shards[0].miner.miner_id;
-        let w = (0..8u8)
+        let w = (0..12u8)
             .find(|w| {
                 myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == koordinator
             })
@@ -2498,9 +2934,11 @@ mod tests {
                 charge,
                 startschritt: 0,
                 schrittzahl: 30,
+                folgen: 1,
                 lr_zaehler: Kette::TRAININGS_LR_ZAEHLER,
-                lr_nenner: Kette::TRAININGS_LR_NENNER,
+                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(), 30),
                 delta_commitment: myl_types::hash::Hash([5u8; 32]),
+                bewegte_gewichte: 1,
                 pod_pfad: pod.mitglieder().map(|m| m.miner_id).collect(),
                 signaturen: Vec::new(),
             };
@@ -2511,7 +2949,7 @@ mod tests {
             seg.signaturen = pod
                 .mitglieder()
                 .map(|m| {
-                    let nr = (0..8u8)
+                    let nr = (0..12u8)
                         .find(|w| {
                             myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == m.miner_id
                         })
@@ -2563,7 +3001,157 @@ mod tests {
             .get(&kennung)
             .expect("das Segment steht nicht im Zustand");
         assert_eq!(abgelegt.charge, charge);
-        assert_eq!(abgelegt.lr_nenner, Kette::TRAININGS_LR_NENNER);
+        assert_eq!(
+            abgelegt.lr_nenner,
+            Kette::trainings_lr_nenner(Kette::trainingstiefe(), abgelegt.gradienten())
+        );
+    }
+
+    /// ⚑ **Der ganze Trainingsweg: Paar reicht ein, Kette bestätigt,
+    /// Modell rückt, Miner wird bezahlt.**
+    ///
+    /// Ohne diesen Test wären die letzten drei Glieder Behauptungen: Ein
+    /// Segment käme in den Zustand, und ob daraus je eine
+    /// Modellfassung oder eine Gutschrift wird, sähe niemand.
+    #[test]
+    fn ein_einiges_paar_bewegt_das_modell_und_wird_bezahlt() {
+        use myl_consensus::block::BLOECKE_JE_EPOCHE;
+        use myl_types::miner::HardwareClass;
+        use myl_types::node_metadata::GeoRegion;
+        use myl_types::trainingssegment::Trainingssegment;
+
+        let mut k = Kette::probestand();
+        let mut nonce = [0u64; 12];
+        for w in 0..12u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::MinerAnmelden {
+                        hardware: HardwareClass::MediumGpu,
+                        zone: GeoRegion::Europe,
+                        netzadresse: myl_types::latency_attest::PeerIdBytes([0; 32]),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        // Auszahlungskonten, sonst gilt „ohne Eintrag kein Anteil".
+        for w in 0..12u8 {
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::AuszahlungskontoEintragen {
+                        kennung: myl_types::ids::MinerId::new(*probekonto(w).as_bytes()),
+                        konto: probekonto(w),
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        // Brennstoff, damit es überhaupt eine Prägung gibt.
+        k.aufnehmen(burn_nr(0, 5_000_000, nonce[0]));
+        nonce[0] += 1;
+        k.baue_block();
+        for _ in 0..(3 * BLOECKE_JE_EPOCHE) {
+            k.baue_block();
+        }
+
+        let zuteilung = Kette::zuteilung_der_laufenden_epoche(k.zustand());
+        let plan = Kette::trainingsplan_der_laufenden_epoche(k.zustand());
+        assert_eq!(plan.paare.len(), 1, "zwoelf Miner ergeben ein Trainingspaar");
+        let (a, b) = plan.paare[0];
+        let zuweisung = plan.zuweisungen[&a];
+        assert_eq!(zuweisung, plan.zuweisungen[&b], "das Paar hat verschiedene Buendel");
+        let charge = k
+            .zustand()
+            .korpus
+            .as_ref()
+            .expect("Korpus")
+            .charge(zuweisung.start, zuweisung.laenge);
+        let epoche = k.zustand().epoch.0;
+        let vorher = k.zustand().modell_version;
+
+        let schluessel_von = |id: myl_types::ids::MinerId| -> u8 {
+            (0..12u8)
+                .find(|w| myl_types::ids::MinerId::new(*probekonto(*w).as_bytes()) == id)
+                .expect("Mitglied ist ein Probekonto")
+        };
+
+        // ⚑ **Beide Pods des Paars reichen dasselbe Ergebnis ein.**
+        for nr in [a, b] {
+            let pod = zuteilung.pods.iter().find(|p| p.pod_index == nr).expect("Pod");
+            let mut seg = Trainingssegment {
+                id: myl_types::ids::SegmentId::new([3u8; 32]),
+                modell_version: myl_types::ids::MerkleRoot::new([4u8; 32]),
+                charge,
+                startschritt: 0,
+                schrittzahl: 30,
+                folgen: 1,
+                lr_zaehler: Kette::TRAININGS_LR_ZAEHLER,
+                lr_nenner: Kette::trainings_lr_nenner(Kette::trainingstiefe(), 30),
+                delta_commitment: Hash([5u8; 32]),
+                bewegte_gewichte: 1,
+                pod_pfad: pod.mitglieder().map(|m| m.miner_id).collect(),
+                signaturen: Vec::new(),
+            };
+            let botschaft = seg.botschaft();
+            seg.signaturen = pod
+                .mitglieder()
+                .map(|m| probeschluessel(schluessel_von(m.miner_id)).sign(&botschaft).expect("sig"))
+                .collect();
+            let w = schluessel_von(pod.shards[0].miner.miner_id);
+            k.aufnehmen(
+                Transaktion::signiere(
+                    &Kette::startwert(),
+                    &probeschluessel(w),
+                    nonce[w as usize],
+                    Anweisung::TrainingssegmentEinreichen {
+                        pod: myl_types::miner::pod_kennung(epoche, nr),
+                        segment: seg,
+                    },
+                )
+                .expect("signieren"),
+            );
+            nonce[w as usize] += 1;
+        }
+        k.baue_block();
+        assert_eq!(
+            k.zustand().trainingssegmente.len(),
+            2,
+            "beide Segmente muessen im Zustand stehen"
+        );
+
+        // Ein Mitglied des Paars, dessen Konto wir beobachten.
+        let beobachtet = {
+            let pod = zuteilung.pods.iter().find(|p| p.pod_index == a).expect("Pod");
+            probekonto(schluessel_von(pod.shards[1].miner.miner_id))
+        };
+        let vor_geld = k.zustand().account(&beobachtet).balance;
+
+        // Über die Epochengrenze.
+        for _ in 0..BLOECKE_JE_EPOCHE {
+            k.baue_block();
+        }
+
+        assert_ne!(
+            k.zustand().modell_version,
+            vorher,
+            "ein einiges Paar hat die Modellfassung nicht bewegt"
+        );
+        assert!(
+            k.zustand().trainingssegmente.is_empty(),
+            "die Segmente wurden nicht geraeumt"
+        );
+        assert!(
+            k.zustand().account(&beobachtet).balance > vor_geld,
+            "der Trainingsminer wurde nicht bezahlt"
+        );
     }
 
     /// ⚑ **Punkt 38, die Kernaussage in der Kette:** An der
@@ -3204,10 +3792,10 @@ mod tests {
 
         let mut k = Kette::probestand();
         // ⚑ **Eigene Schlüssel, nicht die Probekonten.** Von denen gibt
-        // es acht (`PROBEKONTEN`), und `probeschluessel` rechnet modulo:
-        // Achtzehn Aufrufe ergäben achtzehn Anmeldungen unter acht
-        // Kennungen, also acht Miner. Der Test bräuchte dann drei Pods
-        // und bekäme einen.
+        // es zwölf (`PROBEKONTEN`), und `probeschluessel` rechnet
+        // modulo: Achtzehn Aufrufe ergäben achtzehn Anmeldungen unter
+        // zwölf Kennungen, also zwölf Miner. Der Test bräuchte dann drei
+        // Pods und bekäme zwei.
         for w in 0..18u8 {
             let geheim = myl_types::bls::BlsSecretKey::key_gen(&[w.wrapping_add(1); 32])
                 .expect("32 Byte sind für key_gen gültig");

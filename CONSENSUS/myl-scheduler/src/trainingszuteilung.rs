@@ -114,7 +114,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
-use crate::shard_assignment::Zuteilung;
+use crate::shard_assignment::{Pod, Zuteilung};
 use myl_types::ids::MinerId;
 
 /// Basispunktbasis (100 Prozent).
@@ -160,6 +160,47 @@ pub struct Trainingsplan {
     pub anteil_bps: u32,
     /// Die verfügbare Kapazität, gegen die gemessen wurde.
     pub kapazitaet: u64,
+    /// Die Redundanzpaare: zwei Pods, dasselbe Bündel.
+    ///
+    /// # ⚑ Ohne Paare ist ein Trainingssegment nicht prüfbar
+    ///
+    /// Der erste Entwurf gab **jedem** Pod ein eigenes Bündel, abgeleitet
+    /// aus seiner Nummer. Das sah nach Vielfalt aus und war ein Loch:
+    /// Ein Ergebnis, das nur einer gerechnet hat, lässt sich mit nichts
+    /// vergleichen. Die Kette könnte es annehmen oder verwerfen, aber
+    /// nie prüfen, und die Vergütung hinge an einer Behauptung.
+    ///
+    /// ⚑ **Dieselbe Regel wie bei der Inferenz** (Kap. 4.4, `r = 2`).
+    /// Redundanz ist dort die Grundlage der ganzen Verifikation; beim
+    /// Training kann sie nicht weniger sein, denn ein falsches Δm
+    /// verdirbt nicht eine Antwort, sondern das Modell.
+    ///
+    /// ⚑ **Eine ungerade Zahl lässt einen Pod übrig**, und der bekommt
+    /// **kein** Bündel. Ihm eines zu geben hiesse, unprüfbare Arbeit zu
+    /// bestellen; ihn zum Dritten eines Tripels zu machen hiesse, die
+    /// Kosten um die Hälfte zu heben, damit niemand leer ausgeht.
+    pub paare: Vec<(u32, u32)>,
+    /// Ob **jedes** Paar aus zwei verschieden verorteten Pods besteht.
+    ///
+    /// # ⚑ Warum das mitgeführt wird und nicht erzwungen
+    ///
+    /// Redundanz schützt nur, wenn die beiden Berechnungen **unabhängig**
+    /// sind (Kap. 4, Absatz zur Pod-Trennung). Zwei Pods unter derselben
+    /// Jurisdiktion oder am selben Stromnetz sind ein korreliertes
+    /// Kollusionsrisiko, und ein falsches Δm verdirbt nicht eine
+    /// Antwort, sondern das Modell.
+    ///
+    /// ⚑ **Erzwingen liesse die Anfangsphase leerlaufen.** Zwölf Miner
+    /// auf drei Zonen ergeben zwei Pods, beide aus dem Sammeltopf, beide
+    /// zonengemischt: Es **gibt** kein diverses Paar. Wer hier auf
+    /// Diversität besteht, trainiert nie. Wer sie verschweigt, behauptet
+    /// eine Unabhängigkeit, die er nicht hat.
+    ///
+    /// **Deshalb dasselbe Verfahren wie bei der Inferenz**
+    /// ([`crate::redundancy::Redundanzzuteilung::zonendivers`]): Erst
+    /// werden diverse Paare gebildet, und was übrig bleibt, wird
+    /// trotzdem gepaart. Das Feld sagt, welcher der beiden Fälle eintrat.
+    pub zonendivers: bool,
     /// Welches Korpusbündel jeder Trainingspod bearbeitet.
     ///
     /// # ⚑ Leer heisst: Das Netz hat keinen Korpus
@@ -343,13 +384,64 @@ pub fn plane(
     let bps = anteil_bps(auslastung, raten);
     let n = runden(pods, bps);
     let gewaehlt = trainingspods(&zuteilung.pods, n, stand, saat);
+    let (paare, zonendivers) = paare_bilden(&gewaehlt, &zuteilung.pods);
     Trainingsplan {
-        zuweisungen: buendel_zuweisen(&gewaehlt, korpus, saat),
+        zuweisungen: buendel_zuweisen(&paare, korpus, saat),
+        paare,
+        zonendivers,
         pods: gewaehlt,
         auslastung,
         anteil_bps: bps,
         kapazitaet,
     }
+}
+
+/// Bildet aus den gewählten Pods Paare.
+///
+/// ⚑ **In der kanonischen Ordnung der Nummern und nicht gelost.** Die
+/// Auswahl selbst ist schon aus der Saat gezogen; ein zweites Losen
+/// brächte keine Unvorhersagbarkeit hinzu, nur eine zweite Stelle, an
+/// der zwei Knoten auseinanderlaufen können.
+///
+/// ⚑ **Was übrig bleibt, bleibt übrig.** Bei ungerader Zahl steht der
+/// letzte Pod ohne Partner da und bekommt kein Bündel.
+///
+/// ⚑ **Zonendiverse Paare zuerst.** Gepaart wird gierig in der
+/// kanonischen Ordnung: Jeder noch freie Pod sucht den nächsten freien
+/// Partner in einer **anderen** Zone, und erst wenn es keinen gibt, den
+/// nächsten freien überhaupt. Der zweite Rückgabewert sagt, ob das für
+/// **jedes** Paar gelang.
+///
+/// ⚑ **Ein zonengemischter Pod ist unbestimmt und zählt nie als
+/// divers**, genau wie in [`crate::redundancy`]. Seit Pods aus dem
+/// Sammeltopf über Zonen hinweg gebildet werden, ist das der Regelfall
+/// in einem dünn besetzten Netz, und deshalb muss es sichtbar sein.
+pub fn paare_bilden(gewaehlt: &BTreeSet<u32>, pods: &[Pod]) -> (Vec<(u32, u32)>, bool) {
+    let nummern: Vec<u32> = gewaehlt.iter().copied().collect();
+    let zone = |n: u32| pods.get(n as usize).and_then(crate::redundancy::pod_zone);
+    let divers = |a: u32, b: u32| matches!((zone(a), zone(b)), (Some(x), Some(y)) if x != y);
+
+    let mut frei: Vec<bool> = vec![true; nummern.len()];
+    let mut paare: Vec<(u32, u32)> = Vec::with_capacity(nummern.len() / 2);
+    let mut alle_divers = true;
+    for i in 0..nummern.len() {
+        if !frei[i] {
+            continue;
+        }
+        // Erst der beste Partner, dann irgendeiner.
+        let j = ((i + 1)..nummern.len())
+            .find(|&j| frei[j] && divers(nummern[i], nummern[j]))
+            .or_else(|| ((i + 1)..nummern.len()).find(|&j| frei[j]));
+        let Some(j) = j else { break };
+        frei[i] = false;
+        frei[j] = false;
+        alle_divers &= divers(nummern[i], nummern[j]);
+        paare.push((nummern[i], nummern[j]));
+    }
+    // Die Ordnung des Ergebnisses hängt nicht an der Suchreihenfolge:
+    // Zwei Knoten mit derselben Eingabe liefern dieselbe Liste.
+    paare.sort_unstable();
+    (paare, alle_divers)
 }
 
 /// Weist jedem gewählten Pod sein Korpusbündel zu.
@@ -365,21 +457,27 @@ pub fn plane(
 /// Grösse verschieden viel Arbeit tragen und die Vergütung dann an der
 /// Position im Korpus hinge.
 fn buendel_zuweisen(
-    gewaehlt: &BTreeSet<u32>,
+    paare: &[(u32, u32)],
     korpus: Option<&myl_types::korpusanker::Korpusanker>,
     saat: &[u8; 32],
 ) -> BTreeMap<u32, myl_train::zuweisung::Zuweisung> {
     let Some(k) = korpus.filter(|k| k.traegt_ein_buendel()) else {
         return BTreeMap::new();
     };
-    gewaehlt
-        .iter()
-        .filter_map(|nr| {
-            myl_train::zuweisung::zuweisen(saat, &k.kennung, k.segmente, k.buendel, u64::from(*nr))
-                .ok()
-                .map(|z| (*nr, z))
-        })
-        .collect()
+    let mut aus = BTreeMap::new();
+    for (nr, (a, b)) in paare.iter().enumerate() {
+        // ⚑ **Aus der PAARNUMMER und nicht aus der Podnummer.** Beide
+        // Pods eines Paars müssen dasselbe Bündel bekommen, sonst haben
+        // sie nichts Vergleichbares gerechnet.
+        let Ok(z) =
+            myl_train::zuweisung::zuweisen(saat, &k.kennung, k.segmente, k.buendel, nr as u64)
+        else {
+            continue;
+        };
+        aus.insert(*a, z);
+        aus.insert(*b, z);
+    }
+    aus
 }
 
 /// Die abgeleitete Saat der Trainingsauswahl.
@@ -396,7 +494,7 @@ fn trainingssaat(saat: &[u8; 32]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shard_assignment::{Pod, Shard};
+    use crate::shard_assignment::Shard;
     use myl_types::node_metadata::GeoRegion;
 
     const SKALA: i64 = myl_types::auslastung::AUSLASTUNG_SKALA;
@@ -432,6 +530,21 @@ mod tests {
                 reserve: Vec::new(),
             })
             .collect()
+    }
+
+    /// Ein Pod mit vier Mitgliedern, alle in derselben Zone.
+    fn pod_in_zone(i: u16, z: GeoRegion) -> Pod {
+        Pod {
+            pod_index: i as u32,
+            shards: (0..4)
+                .map(|j| {
+                    let mut m = miner(i * 4 + j as u16);
+                    m.zone = z;
+                    Shard { shard_index: j, miner: m }
+                })
+                .collect(),
+            reserve: Vec::new(),
+        }
     }
 
     // ------------------------------------------------------ die Kurve
@@ -638,6 +751,7 @@ mod tests {
             wurzel: myl_types::hash::Hash([2u8; 32]),
             segmente,
             buendel,
+            tokens_je_segment: 2_048,
         }
     }
 
@@ -645,22 +759,122 @@ mod tests {
         Zuteilung { pods: pods(n), ohne_pod: Vec::new() }
     }
 
-    /// ⚑ **Jeder Trainingspod bekommt ein Bündel, und zwar genau eines.**
+    /// ⚑ **Jeder Pod eines Paars bekommt dasselbe Bündel.** Ohne das
+    /// wäre kein Ergebnis mit irgendetwas vergleichbar.
     #[test]
-    fn jeder_trainingspod_bekommt_ein_buendel() {
+    fn beide_pods_eines_paars_bekommen_dasselbe_buendel() {
         let z = zuteilung(10);
         let k = anker(4_096, 256);
         let p = plane(
             &z, 0, 3_600_000_000, &raten(), &Trainingsstand::new(), Some(&k), &[5u8; 32],
         );
         assert_eq!(p.pods.len(), 8, "82 Prozent von zehn, gerundet");
-        assert_eq!(p.zuweisungen.len(), p.pods.len(), "nicht jeder Pod hat ein Buendel");
-        for nr in &p.pods {
-            let zw = p.zuweisungen[nr];
+        assert_eq!(p.paare.len(), 4, "acht Pods ergeben vier Paare");
+        assert_eq!(p.zuweisungen.len(), 8, "beide Pods jedes Paars brauchen ein Buendel");
+        for (a, b) in &p.paare {
+            assert_eq!(
+                p.zuweisungen[a], p.zuweisungen[b],
+                "Paar ({a}, {b}) hat verschiedene Buendel"
+            );
+            let zw = p.zuweisungen[a];
             assert_eq!(zw.laenge, 256);
             assert_eq!(zw.start % 256, 0, "das Buendel liegt nicht auf dem Raster");
             assert!(zw.start + zw.laenge <= 4_096, "das Buendel ragt aus dem Korpus");
         }
+    }
+
+    /// ⚑ **Verschiedene Paare bekommen verschiedene Bündel**, sonst
+    /// rechnete das ganze Netz an einer Stelle des Korpus.
+    #[test]
+    fn verschiedene_paare_bekommen_verschiedene_buendel() {
+        let z = zuteilung(40);
+        let k = anker(1_048_576, 256);
+        let p = plane(
+            &z, 0, 3_600_000_000, &raten(), &Trainingsstand::new(), Some(&k), &[5u8; 32],
+        );
+        let starts: BTreeSet<u64> =
+            p.paare.iter().map(|(a, _)| p.zuweisungen[a].start).collect();
+        assert!(
+            starts.len() > p.paare.len() / 2,
+            "die Buendel haeufen sich: {} verschiedene bei {} Paaren",
+            starts.len(),
+            p.paare.len()
+        );
+    }
+
+    /// ⚑ **Bei ungerader Zahl bleibt einer ohne Bündel.** Ihm eines zu
+    /// geben hiesse, unprüfbare Arbeit zu bestellen.
+    #[test]
+    fn ein_uebrig_gebliebener_pod_bekommt_kein_buendel() {
+        let z = zuteilung(4);
+        let k = anker(4_096, 256);
+        // Bei vier Pods und 82 Prozent sind es drei Trainingspods.
+        let p = plane(
+            &z, 0, 3_600_000_000, &raten(), &Trainingsstand::new(), Some(&k), &[5u8; 32],
+        );
+        assert_eq!(p.pods.len(), 3);
+        assert_eq!(p.paare.len(), 1, "drei Pods ergeben ein Paar");
+        assert_eq!(p.zuweisungen.len(), 2, "der dritte bekommt nichts");
+        let ohne: Vec<u32> =
+            p.pods.iter().filter(|n| !p.zuweisungen.contains_key(n)).copied().collect();
+        assert_eq!(ohne.len(), 1);
+    }
+
+    /// Die Paarbildung selbst, ohne Zoneninformation.
+    ///
+    /// ⚑ **Eine leere Podliste heisst „nichts bekannt"**, nicht
+    /// „dieselbe Zone". Gepaart wird dann kanonisch, und `zonendivers`
+    /// ist `false`, weil Diversität nicht **gezeigt** ist. Der
+    /// Unterschied zwischen „nicht divers" und „unbekannt" faellt hier
+    /// bewusst zugunsten der vorsichtigeren Aussage aus.
+    #[test]
+    fn paare_entstehen_in_kanonischer_ordnung() {
+        assert_eq!(paare_bilden(&BTreeSet::from([3, 1, 4, 2]), &[]).0, vec![(1, 2), (3, 4)]);
+        assert_eq!(paare_bilden(&BTreeSet::from([5, 1, 3]), &[]).0, vec![(1, 3)]);
+        assert!(paare_bilden(&BTreeSet::from([7]), &[]).0.is_empty());
+        assert!(paare_bilden(&BTreeSet::new(), &[]).0.is_empty());
+        assert!(!paare_bilden(&BTreeSet::from([3, 1, 4, 2]), &[]).1, "unbekannt ist nicht divers");
+    }
+
+    /// ⚑ **Die Zone entscheidet die Paarung, nicht die Nummer.**
+    ///
+    /// Vier Pods: 0 und 1 in Europa, 2 und 3 in Asien. Kanonisch
+    /// entstünden (0,1) und (2,3), also **zwei Paare in je einer Zone**.
+    /// Mit der Zonenpräferenz entstehen (0,2) und (1,3).
+    ///
+    /// **Die Gegenprobe steckt im selben Test:** Liegen alle vier in
+    /// Europa, bleibt es bei der kanonischen Paarung, und
+    /// `zonendivers` ist `false`.
+    #[test]
+    fn zonendiverse_paare_gehen_vor() {
+        use myl_types::node_metadata::GeoRegion::{Asia, Europe};
+        let pods = |zonen: [GeoRegion; 4]| -> Vec<Pod> {
+            zonen.iter().enumerate().map(|(i, z)| pod_in_zone(i as u16, *z)).collect()
+        };
+        let gewaehlt = BTreeSet::from([0, 1, 2, 3]);
+
+        let (paare, divers) = paare_bilden(&gewaehlt, &pods([Europe, Europe, Asia, Asia]));
+        assert_eq!(paare, vec![(0, 2), (1, 3)], "die Zone schlaegt die Nummer");
+        assert!(divers);
+
+        let (paare, divers) = paare_bilden(&gewaehlt, &pods([Europe, Europe, Europe, Europe]));
+        assert_eq!(paare, vec![(0, 1), (2, 3)], "ohne Wahl bleibt es kanonisch");
+        assert!(!divers, "eine Zone ist keine Diversitaet, und der Plan sagt es");
+    }
+
+    /// ⚑ **Ein zonengemischter Pod ist unbestimmt**, und ein Paar mit
+    /// ihm gilt nie als divers. Genau das ist der Fall aus dem
+    /// Sammeltopf.
+    #[test]
+    fn ein_gemischter_pod_macht_das_paar_unbestimmt() {
+        use myl_types::node_metadata::GeoRegion::{Asia, Europe};
+        let mut gemischt = pod_in_zone(0, Europe);
+        // Ein Mitglied aus einer anderen Zone genuegt.
+        gemischt.shards[1].miner.zone = Asia;
+        let pods = vec![gemischt, pod_in_zone(1, Asia)];
+        let (paare, divers) = paare_bilden(&BTreeSet::from([0, 1]), &pods);
+        assert_eq!(paare, vec![(0, 1)], "gerechnet wird trotzdem");
+        assert!(!divers, "unbestimmt gegen Asien ist nicht divers");
     }
 
     /// ⚑ **Ohne Korpus keine Zuweisung, und der Plan sagt es.** Die Pods
@@ -684,24 +898,6 @@ mod tests {
             &z, 0, 3_600_000_000, &raten(), &Trainingsstand::new(), Some(&k), &[5u8; 32],
         );
         assert!(p.zuweisungen.is_empty(), "ein gekuerztes Buendel wurde erfunden");
-    }
-
-    /// ⚑ **Zwei Pods bekommen nicht zwangsläufig dasselbe.** Sonst
-    /// rechnete das ganze Netz an einer Stelle des Korpus.
-    #[test]
-    fn verschiedene_pods_bekommen_verschiedene_buendel() {
-        let z = zuteilung(40);
-        let k = anker(1_048_576, 256);
-        let p = plane(
-            &z, 0, 3_600_000_000, &raten(), &Trainingsstand::new(), Some(&k), &[5u8; 32],
-        );
-        let starts: BTreeSet<u64> = p.zuweisungen.values().map(|z| z.start).collect();
-        assert!(
-            starts.len() > p.zuweisungen.len() / 2,
-            "die Buendel haeufen sich: {} verschiedene bei {} Pods",
-            starts.len(),
-            p.zuweisungen.len()
-        );
     }
 
     /// Und die Zuweisung ist deterministisch.

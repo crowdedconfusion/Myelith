@@ -329,6 +329,39 @@ pub enum Anweisung {
         /// Das Segment.
         segment: myl_types::trainingssegment::Trainingssegment,
     },
+    /// `SchuldspruchEinreichen`: Ein Streitfall endet, **mit Beleg**
+    /// (Whitepaper Kap. 6.6, Anhang B.3).
+    ///
+    /// ⚑ **Angehängt und nicht eingefügt**, aus demselben Grund wie
+    /// oben.
+    ///
+    /// # ⚑ Warum der Beleg in der Anweisung steht
+    ///
+    /// `Block::verdicts` gab es seit jeher, und das Feld trug einen
+    /// Schuldspruch **ohne Nachweis**: Täter und Kopfgeldempfänger als
+    /// blosse Namen. Bis zum 2026-09-06 wandte die Kette es nicht an,
+    /// und **allein das** hat davor geschützt, dass ein Blockerzeuger
+    /// jeden schlachten kann (Fund 192).
+    ///
+    /// Hier trägt die Anweisung den Beleg mit sich, und der Beleg trägt
+    /// sich selbst: Er ist die **eigene Unterschrift des Beschuldigten**
+    /// über den strittigen Übergang, in der Rolle Shard. Wer ihn nicht
+    /// hat, kann niemanden benennen.
+    ///
+    /// ⚑ **Was er belegt und was nicht.** Er belegt die
+    /// **Urheberschaft**, also wen es trifft. Dass die Rechnung falsch
+    /// war, entscheidet die Bisektion; diese Anweisung setzt sie
+    /// voraus, statt sie zu ersetzen.
+    SchuldspruchEinreichen {
+        /// Das strittige Segment.
+        segment: myl_types::ids::SegmentId,
+        /// Der Beleg, der den Ausgang trägt.
+        beleg: myl_types::schuldbeleg::Belegart,
+        /// Das Konto, das den Einsatz verliert.
+        beschuldigt: myl_types::ids::Address,
+        /// Das Konto, das das Kopfgeld erhält.
+        anzeigend: myl_types::ids::Address,
+    },
 }
 
 /// Die Bytes, über die der Absender unterschreibt.
@@ -754,5 +787,50 @@ mod tests {
         let miners = block.challenged_miners();
         assert_eq!(miners.len(), 2);
         assert!(miners.windows(2).all(|w| w[0] < w[1]));
+    }
+}
+
+#[cfg(test)]
+mod korpussaat {
+    use super::*;
+
+    /// Schreibt Saatkörner für den Fuzzer, wenn `KORPUS_NACH` gesetzt ist.
+    ///
+    /// ⚑ **Ein Test und kein Binary**, damit er mit dem Typ wandert. Er
+    /// erzeugt gültige Kodierungen der **neuen** Varianten; der Fuzzer
+    /// findet von dort aus die Nachbarschaft, was er aus zufälligen
+    /// Bytes nie täte: Eine Anweisung mit Beleg hat rund zweihundert
+    /// Bytes Struktur, und die trifft kein Zufall.
+    #[test]
+    fn saatkoerner_fuer_den_fuzzer() {
+        let Ok(ziel) = std::env::var("KORPUS_NACH") else {
+            return;
+        };
+        let d = std::path::PathBuf::from(&ziel);
+        std::fs::create_dir_all(&d).expect("Verzeichnis");
+        let beleg = myl_types::schuldbeleg::Belegart::PrimaerHatGerechnet(
+            myl_types::schuldbeleg::Schuldbeleg {
+                uebergang: myl_types::uebergang::TransitionSig {
+                    segment_id: myl_types::ids::SegmentId::new([5u8; 32]),
+                    shard_index: 2,
+                    position: 7,
+                    prev_hash: [1u8; 32],
+                    next_hash: [2u8; 32],
+                },
+                schluessel: myl_types::bls::BlsPublicKey([3u8; 48]),
+                signatur: myl_types::bls::BlsSignature([4u8; 96]),
+            },
+        );
+        let proben = [Anweisung::SchuldspruchEinreichen {
+            segment: myl_types::ids::SegmentId::new([5u8; 32]),
+            beleg,
+            beschuldigt: myl_types::ids::Address::new([6u8; 32]),
+            anzeigend: myl_types::ids::Address::new([7u8; 32]),
+        }];
+        for (i, p) in proben.iter().enumerate() {
+            let bytes = borsh::to_vec(p).expect("kodierbar");
+            std::fs::write(d.join(format!("schuldspruch-{i}")), &bytes).expect("schreiben");
+            eprintln!("[korpussaat] {} Bytes nach {}", bytes.len(), ziel);
+        }
     }
 }

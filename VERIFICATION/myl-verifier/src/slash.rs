@@ -47,10 +47,7 @@
 //! Änderungen nur über Governance (Kap. 10.3).
 
 use myl_ledger::transitions::{Verdict as LedgerVerdict, VerdictOutcome as LedgerOutcome};
-use myl_types::bls::{BlsPublicKey, BlsSignature};
 use myl_types::ids::{Address, MinerId, SegmentId};
-use myl_types::challenge::Challenge;
-use myl_types::uebergang::{Rolle, TransitionSig};
 
 /// Ergebnis der Schiedsrunde (wer hat gewonnen/verloren).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,86 +87,16 @@ pub enum SlashReason {
     RedundantFault,
 }
 
-/// Der Beleg, dass ein bestimmter Miner den strittigen Schritt selbst
-/// gerechnet hat.
-///
-/// Er besteht aus dem unterschriebenen Übergang, dem öffentlichen
-/// Schlüssel des Unterzeichners und seiner Signatur. Die Kennung wird
-/// aus dem Schlüssel **abgeleitet** und nicht mitgeführt: Zwei Quellen
-/// für dieselbe Wahrheit widersprechen sich irgendwann.
-///
-/// # Was er belegt und was nicht
-///
-/// **Belegt:** Der Inhaber dieses Schlüssels hat für dieses Segment
-/// einen Übergang von `prev_hash` nach `next_hash` unterschrieben, in
-/// der Rolle [`Rolle::Shard`] und in keiner anderen.
-///
-/// **Belegt nicht:** dass gerade die strittige *Layer* in seinem
-/// Zuständigkeitsbereich lag. Die Signatur ist je Shard und
-/// Token-Position, die Bisektion zeigt auf eine Layer-Position, und die
-/// Zuordnung Layer zu Shard steht in der Layer-Spanne des Shards, die
-/// die Signatur nicht mitführt. Sie einfach gleichzusetzen wäre eine
-/// erfundene Prüfung, und eine erfundene Prüfung ist schlimmer als
-/// keine, weil ein Leser sie für einen Schutz hält.
-///
-/// Was der Beleg trotzdem leistet: Geschlachtet werden kann nur noch,
-/// wer an diesem Segment unter eigenem Schlüssel gearbeitet hat. Vorher
-/// konnte jeder benannt werden.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Schuldbeleg {
-    /// Der unterschriebene Übergang.
-    pub uebergang: TransitionSig,
-    /// Der öffentliche Schlüssel des Unterzeichners.
-    pub schluessel: BlsPublicKey,
-    /// Seine Signatur über den Übergang in der Rolle [`Rolle::Shard`].
-    pub signatur: BlsSignature,
-}
-
-impl Schuldbeleg {
-    /// Wen der Beleg belastet: die aus dem Schlüssel abgeleitete Kennung.
-    pub fn unterzeichner(&self) -> MinerId {
-        MinerId::aus_schluessel(&self.schluessel)
-    }
-
-    /// Prüft die Signatur, und zwar ausdrücklich in der Rolle
-    /// [`Rolle::Shard`].
-    ///
-    /// Die Rolle mitzuprüfen ist der Sinn der Rollenbindung: Eine
-    /// Unterschrift, die derselbe Miner als Pod-Mitglied oder Validator
-    /// abgegeben hat, gilt hier nicht.
-    pub fn ist_gueltig(&self) -> bool {
-        self.uebergang
-            .verify_mit_rolle(&self.schluessel, &self.signatur, Rolle::Shard)
-    }
-}
-
-/// Der Beleg, dass ein bestimmter Miner die Anfechtung eingereicht hat.
-///
-/// # ⚑ Die zweite Hälfte von Fund 96 (2026-08-29)
-///
-/// Verliert der Herausforderer, wird er dafür geschlachtet, dass er
-/// **falsch beschuldigt** hat. Belegt war das bis dahin nicht: Die
-/// Anfechtung nannte beide Miner als Felder, und nichts band einen
-/// davon an denjenigen, der sie einreichte. Wer schlachtete,
-/// bestimmte, wen es trifft, genau wie auf der anderen Seite.
-///
-/// Seit `myl-types` v0.12.0 trägt eine Anfechtung eine Unterschrift in
-/// der Rolle `Checker`, und die Kennung des Unterzeichners wird aus dem
-/// Schlüssel abgeleitet. Dieser Beleg führt beides zusammen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Anfechtungsbeleg {
-    /// Die unterschriebene Anfechtung.
-    pub anfechtung: Challenge,
-    /// Der öffentliche Schlüssel des Herausforderers.
-    pub schluessel: BlsPublicKey,
-}
-
-impl Anfechtungsbeleg {
-    /// Prüft Unterschrift und Zuordnung in einem.
-    pub fn ist_gueltig(&self) -> bool {
-        self.anfechtung.ist_vom_herausforderer(&self.schluessel)
-    }
-}
+// ⚑ **`Schuldbeleg` und `Anfechtungsbeleg` liegen seit dem 2026-09-06
+// in `myl-types`** und werden hier nur weitergereicht. Der Grund ist
+// Fund 192: Der Konsens muss einen Beleg **auf den Draht** legen
+// können, und `myl-consensus` darf nicht an VERIFICATION hängen.
+//
+// **Zwei Fassungen desselben Typs wären das Schlimmere gewesen.** Eine
+// Kopie hier hätte dieselbe Aussage an zwei Orten getroffen, und die
+// erste Abweichung zwischen ihnen wäre von einem Rechenfehler nicht zu
+// unterscheiden (dieselbe Lehre wie Fund 34).
+pub use myl_types::schuldbeleg::{Anfechtungsbeleg, Schuldbeleg};
 
 /// Der Nachweis, auf den eine Slash-Entscheidung gestützt wird.
 ///
@@ -377,6 +304,13 @@ pub fn create_slash_decision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // ⚑ Diese vier gehoeren hierher und nicht nach oben: Sie werden
+    // ausschliesslich in den Tests gebraucht. Am Modulkopf erzeugten
+    // sie in jeder abhaengigen Kiste eine Warnung, also 28 Stueck fuer
+    // fuenf Stellen.
+    use myl_types::bls::BlsSignature;
+    use myl_types::challenge::Challenge;
+    use myl_types::uebergang::{Rolle, TransitionSig};
     use myl_ledger::state::LedgerState;
     use myl_ledger::transitions::{apply_verdict, SlashParams};
 

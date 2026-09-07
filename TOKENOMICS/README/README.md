@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.20.0
+> **Version:** 0.22.0
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,127 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.22.0 – 2026-09-06 (die Trainingsabgabe: ein antizyklischer Puffer)
+
+### ⚑ Das Problem, in einer Zahl
+
+Die Treasury bekommt 3 Prozent der Prägung, die Shard-Miner 78. Bei
+gleicher Vergütung je Rechenstunde deckt sie damit **3,85 Prozent des
+Inferenzvolumens** an Training. Kap. 7.1 lässt am Auslastungsziel 26
+Prozent der Pods trainieren, im Leerlauf 82.
+
+⚑ **Und die Lücke ist strukturell.** Training ist genau dann am
+erwünschtesten, wenn Inferenz leerläuft, und beide Geldquellen sind
+genau dann am kleinsten: Die Prägung folgt dem Burn, der Burn der
+Nachfrage, ein Gebührenaufschlag ebenfalls.
+
+### Die Antwort: bei hoher Auslastung abführen, bei niedriger auszahlen
+
+`λ(u) = λ_max · u`, ein Anteil der Prägung, der von den Shard-Minern in
+die Treasury geht. Das Netz spart, wenn es reich ist, und investiert,
+wenn Kapazität übrig ist. Genau dann ist Training auch am billigsten,
+denn die Pods stünden sonst still.
+
+| Vorbild | Was dort geschieht | Was hier davon gilt |
+|---|---|---|
+| Basel III, antizyklischer Kapitalpuffer | im Aufschwung aufbauen, im Abschwung auflösen | die Richtung |
+| EIP-1559, Basisgebühr | eine protokollgesetzte Gebühr steigt über einem Auslastungsziel | die Form |
+
+⚑ **Der Unterschied zu EIP-1559 ist der Verbleib.** Dort wird die
+Basisgebühr **verbrannt**; hier fliesst sie in einen Fonds und kommt als
+Trainingsvergütung zu denselben Minern zurück. Verbrennen nähme dem Netz
+genau das Geld, mit dem es sein Modell verbessert.
+
+### ⚑ λ_max ist gerechnet, nicht gesetzt
+
+Aus einer Bedingung: Am Auslastungsziel trägt die Abgabe das Training
+genau.
+
+```text
+u*² · λ_max = t(u*) · (S − u* · λ_max)
+λ_max = t(u*) · S / (u*² + t(u*) · u*)   =  3017 Basispunkte
+```
+
+| u | λ(u) | Shard-Miner | Zufluss | Kosten | Saldo |
+|---|---|---|---|---|---|
+| 1,0 | 30,2 % | 47,8 % | 0,302 | 0,010 | **+0,292** |
+| **0,7** | **21,1 %** | **56,9 %** | **0,148** | **0,148** | **0,000** |
+| 0,1 | 3,0 % | 75,0 % | 0,003 | 0,555 | **−0,552** |
+
+⚑ **Rund zwei volle Epochen tragen eine leere**, und die Formel steht
+als `abgabe_max_bps`: Die Herkunftsprüfung der Registry rechnet sie bei
+jedem Lauf nach, damit eine abgeschriebene Zahl nicht veralten kann.
+
+### ⚑ Die Abgabe ist kein Verlust für die Miner
+
+Sie ist eine Umschichtung zwischen zwei Arbeitsarten derselben Leute.
+Über einen Zyklus bekommen sie dasselbe Geld für mehr Arbeit, und die
+Arbeit verbessert das Modell, von dem ihre künftige Vergütung lebt.
+
+⚑ **Die drei Prozent der Treasury bleiben unangetastet.** Eine Abgabe,
+die eine bestehende Haushaltsstelle still aufbraucht, wäre keine
+Finanzierung, sondern eine Umwidmung.
+
+### ⚑ Der Griff in den Puffer prägt nicht, er überweist
+
+Was in einer Epoche zufliesst, wird geprägt: Es wäre sonst an die
+Treasury geprägt worden. Was aus dem **Bestand** kommt, ist vorhandenes
+Geld und wird überwiesen.
+
+**Der Unterschied ist der ganze Punkt von Kap. 5.6.** Wer den Bestand
+prägte, verdoppelte die Netto-Inflation genau so, wie es dort
+ausgeschlossen wird, und der Puffer wäre keiner: Er nähme nichts weg, er
+schüfe. Ein Test hält die Geldmenge dagegen.
+
+### Die Grenze, und sie bleibt stehen
+
+Ein Netz mit **dauerhaft** niedriger Nachfrage kann Training nicht voll
+bezahlen. Das ist keine Lücke im Entwurf, sondern die Wahrheit, dass ein
+Netz ohne Einnahmen nichts zu verteilen hat.
+
+### v0.21.0 – 2026-09-06 (Training wird wie Inferenz vergütet)
+
+### ⚑ Der Deckel aus Kap. 5.6 hat seinen Gegenstand verloren
+
+Anhang B.7.3 begründet ihn: „Miner wählen zwischen beiden Arbeitsklassen
+nach der Vergütung je Rechenstunde." **Seit die Zuteilung erzwungen ist,
+wählt niemand mehr**, und derselbe Anhang sagt für diesen Fall: „Bei
+Gleichstand entscheidet allein die Zuteilung."
+
+⚑ **Gleichstand ist sogar besser als ein Deckel.** Läge Training
+darunter, hätte ein zugeteilter Trainingspod einen Anreiz, absichtlich
+zu scheitern und auf eine Inferenzrunde zu hoffen.
+
+`vtfe_training_gutschrift` rechnet die Arbeit eines Trainingssegments
+mit dem **Faktor drei**: Für jede Matrix `Y = X·W` fallen vorwärts eine
+und rückwärts zwei Matrixmultiplikationen an. Das ist die
+Standardzählung, keine Hausnummer. Sie ist eine **Obergrenze**, weil sie
+den eingefrorenen LM-Kopf dreifach zählt.
+
+### ⚑ Gleiche Rate heisst nicht gleiche Quelle, und daraus folgt eine Zahl
+
+Kap. 5.6 zahlt Training aus der **Treasury**, nicht aus Zusatzprägung,
+weil das die Netto-Inflation beinahe verdoppelte. Die Treasury bekommt
+3 Prozent der Prägung, die Shard-Miner 78.
+
+**Bei gleicher Rate deckt die Treasury damit rund 3,85 Prozent des
+Inferenzvolumens**, und `trainingsdeckung_bps` macht die Zahl lesbar.
+Anhang B.7.2 sagt dasselbe von der anderen Seite.
+
+⚑ **Damit kollidiert sie mit dem Trainingsanteil aus Kap. 7.1**, wenn
+dieser hoch steht: Bei einem Freianteil von 8000 Basispunkten trainieren
+im Leerlauf 82 Prozent der Pods.
+
+⚑ **Und die Kollision ist strukturell.** Training ist genau dann am
+erwünschtesten, wenn Inferenz leerläuft, und **beide** Geldquellen sind
+genau dann am kleinsten: Die Prägung folgt dem Burn, der Burn folgt der
+Nachfrage, der Gebührenaufschlag ebenfalls.
+
+**Die ehrliche Folge ist keine Kürzung der Rate, sondern eine Teilung
+dessen, was da ist.** Bei viel Training fällt die Vergütung je Einheit;
+ein leerlaufender Miner, der wenig verdient, steht immer noch besser da
+als einer, der nichts tut. Ein Test hält das Verhältnis fest.
 
 ### v0.20.0 – 2026-09-05 (der Epochenabschluss rollt die Nachfrage mit)
 

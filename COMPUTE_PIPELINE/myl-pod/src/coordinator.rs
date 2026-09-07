@@ -174,7 +174,16 @@ pub struct Coordinator {
     pub epoch: EpochId,
     pub window_ms: u64,
     /// Die Shard-Pipeline in Reihenfolge (Shard 0 zuerst).
-    shards: Vec<Arc<ShardNode>>,
+    /// Wie die Shards erreicht werden.
+    ///
+    /// ⚑ **Ein Merkmal und keine Liste von Objekten** (Fund 186). Bis
+    /// zum 2026-09-06 standen hier vier `Arc<ShardNode>`, also vier
+    /// Shards **in diesem Prozess**, und damit war jede Messung über
+    /// „geshardete Inferenz" eine Messung über eine Maschine, die vier
+    /// Rollen spielt.
+    weg: std::sync::Arc<dyn crate::shardweg::Shardweg>,
+    /// Die festen Angaben des Pods, einmal erhoben.
+    besetzung: crate::shardweg::Podbesetzung,
     /// Abgeschlossene Segmente dieser Epoche.
     completed: Vec<CompletedSegment>,
     /// Wie viele Segmente wegen des Deckels verworfen wurden.
@@ -182,20 +191,41 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
+    /// Neu, mit Shards **in diesem Prozess**.
+    ///
+    /// ⚑ **Für Prüfläufe und den Einzelbetrieb.** Wer so fährt, hält
+    /// alle Schlüssel des Pods; siehe [`crate::shardweg::ImProzess`].
     pub fn new(pod_id: PodId, epoch: EpochId, shards: Vec<Arc<ShardNode>>, window_ms: u64) -> Self {
-        Self {
+        let weg = std::sync::Arc::new(crate::shardweg::ImProzess::neu(shards));
+        Self::ueber_weg(pod_id, epoch, weg, window_ms)
+            .expect("Shards im Prozess antworten immer")
+    }
+
+    /// Neu, über einen beliebigen Weg zu den Shards.
+    ///
+    /// Erhebt dabei einmal die festen Angaben; siehe
+    /// [`crate::shardweg::Podbesetzung`].
+    pub fn ueber_weg(
+        pod_id: PodId,
+        epoch: EpochId,
+        weg: std::sync::Arc<dyn crate::shardweg::Shardweg>,
+        window_ms: u64,
+    ) -> Result<Self, String> {
+        let besetzung = crate::shardweg::Podbesetzung::erheben(weg.as_ref())?;
+        Ok(Self {
             pod_id,
             epoch,
             window_ms,
-            shards,
+            weg,
+            besetzung,
             completed: Vec::new(),
             verworfen: 0,
-        }
+        })
     }
 
     /// Anzahl der Shards in der Pipeline.
     pub fn num_shards(&self) -> usize {
-        self.shards.len()
+        self.weg.shardzahl()
     }
 
     /// Führt einen Prompt durch die Shard-Pipeline und liefert die
@@ -271,7 +301,7 @@ impl Coordinator {
         if trace.is_empty() {
             return;
         }
-        let pod_path: Vec<MinerId> = (0..self.shards.len())
+        let pod_path: Vec<MinerId> = (0..self.weg.shardzahl())
             .map(|i| MinerId::new([(i as u8) + 1; 32]))
             .collect();
         // ⚑ Die Kette ist `[Eingang] ++ Spur`, und damit ist die Eingabe
@@ -326,11 +356,10 @@ impl Coordinator {
             } else {
                 (current.sender_shard + 1) as usize
             };
-            if shard_idx >= self.shards.len() {
+            if shard_idx >= self.weg.shardzahl() {
                 break;
             }
-            let shard = &self.shards[shard_idx];
-            match shard.process(&current) {
+            match self.weg.rechne(shard_idx, &current) {
                 Ok(ShardOut::Forward(next)) => {
                     trace = next.trace.clone();
                     signatures.push(next.signature);
@@ -446,7 +475,18 @@ impl Coordinator {
             segments_root: root,
             vtfe_claimed: vtfe,
             aggregate_sig: agg,
-            segmente: 1,
+            // ⚑ **Fund 187: hier stand fest eine Eins** (behoben
+            // 2026-09-06). `segmente` sagt, wie viele Blätter unter
+            // `segments_root` hängen, und **daraus zieht die
+            // Stichprobe der Stufe 2**. Mit einer Eins über acht
+            // Segmenten konnten sieben davon nie gezogen werden.
+            //
+            // ⚑ **Genau die Verdünnung, vor der Fund 115 warnt**, nur
+            // vom Erzeuger verursacht statt vom Angreifer. Und die
+            // Shards prüften dagegen schon richtig: `signiere_buendel`
+            // rechnet die vTFE gegen `completed.len()` nach, während
+            // die unterschriebene Botschaft eine Eins trug.
+            segmente: self.completed.len() as u32,
         })
     }
 
@@ -510,18 +550,40 @@ impl Coordinator {
     pub fn build_signed_poi_bundle(&self) -> Result<PoIBundle, String> {
         let bundle = self.build_poi_bundle()?;
         let botschaft = Self::signierbotschaft(&bundle);
+        // ⚑ **Dieselbe Zahl wie im Bündel, und das wird geprüft**
+        // (Fund 187). Sie ging auseinander: Das Bündel trug eine Eins,
+        // die Shards rechneten gegen die wirkliche Zahl. Ein Bündel,
+        // dessen Signatur für eine andere Segmentzahl gegeben wurde als
+        // die, die darin steht, ist nicht prüfbar.
         let segmente = self.completed.len() as u64;
-        let zuschnitte: Vec<myl_tokenomics::ShardZuschnitt> =
-            self.shards.iter().map(|s| s.zuschnitt()).collect();
+        debug_assert_eq!(
+            u64::from(bundle.segmente),
+            segmente,
+            "die Segmentzahl im Buendel und die der Unterschrift laufen auseinander"
+        );
+        let zuschnitte = self.besetzung.zuschnitte.clone();
 
-        let mut sigs = Vec::with_capacity(self.shards.len());
-        for shard in &self.shards {
-            sigs.push(shard.signiere_buendel(
-                &botschaft,
-                bundle.vtfe_claimed,
-                segmente,
-                &zuschnitte,
-            )?);
+        // ⚑ **Jeder Shard unterschreibt selbst.** Der Koordinator kann
+        // es nicht: Es braucht die privaten Schlüssel, und ein Shard
+        // prüft die beanspruchten vTFE nach, bevor er sie gibt
+        // (Fund 52). Über den Draht ist das eine eigene Nachricht.
+        let mut sigs = Vec::with_capacity(self.weg.shardzahl());
+        for j in 0..self.weg.shardzahl() {
+            match self.weg.frage(
+                j,
+                &crate::shardweg::Shardanfrage::Unterschreibe {
+                    botschaft: botschaft.clone(),
+                    vtfe: bundle.vtfe_claimed,
+                    segmente,
+                    zuschnitte: zuschnitte.clone(),
+                },
+            )? {
+                crate::shardweg::Shardantwort::Unterschrift(sig) => sigs.push(sig),
+                crate::shardweg::Shardantwort::Fehler(e) => return Err(e),
+                andere => {
+                    return Err(format!("Shard {j} antwortete mit {andere:?} statt einer Unterschrift"))
+                }
+            }
         }
         let agg = aggregate_signatures(&sigs).map_err(|e| e.to_string())?;
         Ok(PoIBundle {
@@ -542,17 +604,20 @@ impl Coordinator {
     /// Der Dekodier-Digest wird **nach** dem Rechnen gebraucht, und wer
     /// vorher räumte, nähme ihn weg.
     pub fn sitzung_abschliessen(&self, session_id: u64) {
-        for shard in &self.shards {
-            shard.sitzung_vergessen(session_id);
+        for j in 0..self.weg.shardzahl() {
+            // ⚑ **Ein Fehler beim Räumen bricht nichts ab.** Wer eine
+            // Sitzung nicht vergisst, hält Speicher; wer deshalb den
+            // ganzen Abschluss abbricht, hält die übrigen auch.
+            let _ = self.weg.frage(j, &crate::shardweg::Shardanfrage::SitzungVergessen(session_id));
         }
     }
 
     /// Wie viele Sitzungen der erste Shard gerade hält.
     pub fn gehaltene_sitzungen(&self) -> usize {
-        self.shards
-            .first()
-            .map(|s| s.gehaltene_sitzungen())
-            .unwrap_or(0)
+        match self.weg.frage(0, &crate::shardweg::Shardanfrage::GehalteneSitzungen) {
+            Ok(crate::shardweg::Shardantwort::Zahl(n)) => n as usize,
+            _ => 0,
+        }
     }
 
     /// Wie viele abgeschlossene Segmente verworfen wurden, weil der
@@ -604,19 +669,19 @@ impl Coordinator {
     /// die Stelle, die über die Pods hinwegsieht, nicht in den einzelnen
     /// Pod.
     pub fn beanspruchte_vtfe(&self) -> Result<u64, String> {
-        let Some(erster) = self.shards.first() else {
+        if self.besetzung.zuschnitte.is_empty() {
             return Err("Pod ohne Shards beansprucht keine Arbeit".to_string());
-        };
-        let profil = erster.modell_profil();
+        }
+        let profil = self.besetzung.profil;
         // Ein Segment ist ein Vorwärtspass, also ein
         // Token-Forward-Äquivalent. Prefill-Positionen zählen mit: Sie
         // emittieren kein Token, rechnen aber denselben Pass.
         let tokens: u64 = self.completed.len() as u64;
 
         let mut summe = 0u64;
-        for shard in &self.shards {
-            let anteil = myl_tokenomics::vtfe_gutschrift(&profil, &shard.zuschnitt(), tokens)
-                .map_err(|e| format!("Shard {}: {}", shard.shard_index, e))?;
+        for (j, z) in self.besetzung.zuschnitte.iter().enumerate() {
+            let anteil = myl_tokenomics::vtfe_gutschrift(&profil, z, tokens)
+                .map_err(|e| format!("Shard {j}: {e}"))?;
             summe = summe.saturating_add(anteil);
         }
         Ok(summe)
@@ -643,9 +708,16 @@ impl Coordinator {
     /// hieße, dem Rückgabewert eine dritte Bedeutung zu geben, die
     /// niemand unterscheiden kann.
     pub fn dekodier_digest(&self, session_id: u64) -> Result<Option<(String, usize)>, String> {
-        match self.shards.last() {
-            Some(s) => s.dekodier_digest(session_id),
-            None => Ok(None),
+        let letzter = self.weg.shardzahl().checked_sub(1);
+        let Some(j) = letzter else {
+            return Ok(None);
+        };
+        match self.weg.frage(j, &crate::shardweg::Shardanfrage::DekodierDigest(session_id))? {
+            crate::shardweg::Shardantwort::DekodierDigest(d) => {
+                Ok(d.map(|(h, s)| (h, s as usize)))
+            }
+            crate::shardweg::Shardantwort::Fehler(e) => Err(e),
+            andere => Err(format!("Shard {j} antwortete mit {andere:?} statt einem Abdruck")),
         }
     }
 }

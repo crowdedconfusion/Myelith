@@ -1,6 +1,6 @@
 [package]
 name = "myl-pod"
-version = "0.28.0"
+version = "0.33.0"
 edition = "2021"
 rust-version = "1.85"
 description = "L2-Compute-Pipeline für Myelith (Whitepaper Kap. 4, Anhang A.3): Pod-Mining-Loop mit Spur-Hashes und Eingangs-Prüfung (Manipulationserkennung), BLS-Signierung der Shard-Übergänge, KV-Cache-Session-Affinität und erasure-codierter DA-Archivierung. Konsumiert die INTEGER_LLM-Stage-API und myl-types."
@@ -40,6 +40,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "myl-pod-node"
 path = "src/main.rs"
+
+# ⚑ **Ein Shard als eigenes Programm** (Fund 186). Ohne dieses Binary
+# gibt es keinen geshardeten Pod, sondern nur eine Maschine, die vier
+# Rollen spielt.
+[[bin]]
+name = "myl-shard"
+path = "src/bin/myl-shard.rs"
 
 # Testprofil, siehe die ausfuehrliche Begruendung in
 # `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber `debug-assertions`

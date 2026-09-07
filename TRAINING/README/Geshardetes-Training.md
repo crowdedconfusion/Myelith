@@ -7,9 +7,14 @@ Ein Pod aus vier Shards über 24 Ebenen rechnet **bitgleich** zu einem
 Rechner, der alle Ebenen am Stück hält, und liefert sein Segment über
 `Anweisung::TrainingssegmentEinreichen` in den Kettenzustand ab.
 
-Offen sind die **Prüfung** (Redundanz und Bisektion auf
-Trainingssegmente, und damit die Vergütung) und der **Draht** (dieselben
-Nachrichten zwischen echten Prozessen statt in einem).
+**Die Prüfung steht seit dem vierten Durchgang** (Redundanzpaare,
+Spurvergleich, Nachrechner), und die Modellfassung steigt aus
+bestätigten Δm.
+
+Offen sind drei Dinge: **Ebenen des Expertengemischs über
+Shardgrenzen** (der nächste Punkt, denn das Primärmodell wird
+wahrscheinlich MoE), der **Draht** zwischen echten Prozessen, und die
+**Vergütung** bestätigter Segmente.
 
 ---
 
@@ -449,6 +454,107 @@ erreichbar. **Solange das so ist, steht der Anker im Genesis.**
 
 ---
 
+## 5c. Was der vierte Durchgang gebracht hat (2026-09-05)
+
+### ⚑ Ohne Paare ist ein Trainingssegment nicht prüfbar
+
+Der Plan gab bis dahin **jedem** Pod ein eigenes Bündel aus seiner
+Nummer. Das sah nach Vielfalt aus und war ein Loch: Ein Ergebnis, das
+nur einer gerechnet hat, lässt sich mit nichts vergleichen, und die
+Vergütung hinge an einer Behauptung.
+
+`Trainingsplan::paare` bildet Redundanzpaare, und **beide Pods eines
+Paars bekommen dasselbe Bündel**, abgeleitet aus der **Paarnummer**.
+Eine ungerade Zahl lässt einen übrig, und der bekommt kein Bündel: Ihm
+eines zu geben hiesse, unprüfbare Arbeit zu bestellen.
+
+### Die Prüfung, und worin sie stärker ist als die der Inferenz
+
+| | Inferenz | Training |
+|---|---|---|
+| Spur über | Layer | **Shards** |
+| Nachrechnung beginnt bei | Eingangsaktivierungen **aus der Spur des Beschuldigten** | dem **Artefakt** |
+| Umfang der Nachrechnung | ein Shard | der **ganze Lauf** |
+
+⚑ **Der Trainingsprüfer braucht nichts, was der Beschuldigte liefert.**
+Ein Segment ist vollständig bestimmt durch die Gewichte der
+Modellfassung, die Charge, die Lernrate und die Schrittzahl.
+
+⚑ **Der Preis ist der ganze Lauf statt eines Shards**, und das ist kein
+Versäumnis: Der Δ eines Shards hängt über den Rückwärtsweg an allen
+Shards hinter ihm.
+
+### Die Modellfassung steigt, aber die Kette rechnet nicht
+
+`LedgerState::modell_version` steigt nur durch bestätigtes Training. Die
+Kette hält das **Rezept** (alte Fassung plus geordnete Liste der
+bestätigten Δ-Commitments), nicht das Ergebnis: Wer die Gewichte hat,
+wendet es an und rechnet die Wurzel nach.
+
+⚑ **Die Reihenfolge ist nur für die Kennung, nicht für die Arithmetik.**
+Wäre sie für die Summe nötig, wäre die Aggregation nicht ordnungsfrei,
+und zwei Knoten mit verschieden sortierten Eingaben kämen zu
+verschiedenen Gewichten.
+
+### ⚑ Ein Netz mit einem Pod kann nicht trainieren
+
+Die Probekette hatte acht Konten, also einen Pod, also kein Paar. Der
+Trainingstest fiel, als die Paarbildung dazukam, **und das war
+richtig**. `PROBEKONTEN` steht jetzt auf zwölf: zwei Pods, ein Paar, das
+Minimum eines Netzes, das trainieren kann.
+
+---
+
+## 5d. Was der fünfte Durchgang gebracht hat (2026-09-06)
+
+### Der Draht, und dass er auch der Inferenz fehlte
+
+Die Shards eines Pods lagen bis heute **in einem Prozess**, und zwar
+nicht nur beim Training. `myl-shard` ist ein Shard mit einem Schlüssel
+und einer Tür; `Shardweg` ist die Sternverbindung des Koordinators
+dorthin. Vier eigenständige Prozesse liefern dieselben Token, denselben
+Digest, dieselbe vTFE-Zuschreibung und eine gemeinsame aggregierte
+Unterschrift wie der Einzelknoten (Fund 186).
+
+⚑ **Stern und nicht Kette.** Ein weiterreichender Shard müsste seinen
+Nachfolger selbst wählen und beim Ausfall selbst entscheiden. Beides
+gehört zum Koordinator, weil nur er sieht, wer noch da ist.
+
+### Die Gemischebene über Shardgrenzen
+
+Der oben als „wichtigster offener Punkt" geführte Fall ist gebaut und am
+echten 30B gemessen. Zwei Dinge waren daran anders als bei einer dichten
+Ebene: Die Experten werden erst gehalten, **wenn sie gewählt sind** (25
+von 128 bei sechs Positionen und Top-8; alle 128 wären 2,4 GB je Ebene),
+und der Versatz im Würfelraum hängt an der **Expertennummer** statt an
+der Auswahlreihenfolge.
+
+### Fund 188, und was er über das Messen sagt
+
+Jede Ebene schrieb ihre Ausgabe auf `final_residual_frac` statt auf die
+Eingangsskala der **nächsten**. Solange nur die letzte Ebene trainiert
+wurde, waren beide dasselbe, und der Fehler war unsichtbar. Perplexität
+30 474 statt 24,04.
+
+⚑ **Gefunden hat ihn kein Codelesen, sondern ein Test, der den
+Shardweg gegen `run_layers` hält**, also gegen den Weg der Inferenz. Ein
+Test, der den Shardweg nur mit sich selbst vergleicht, hätte
+zugestimmt: Zwei Zuschnitte rechneten dasselbe Falsche.
+
+### Fund 190: das Paar hatte keine Bedingung an die Unabhängigkeit
+
+Gepaart wurde nach Podnummer. Die Inferenz sucht seit jeher zuerst ein
+**zonendiverses** Paar und meldet, wenn es keines gab; das Training tat
+beides nicht. `Trainingsplan::zonendivers` schliesst das, und
+`paare_bilden` sucht den Partner zuerst in einer anderen Zone.
+
+⚑ **Erzwungen wird es nicht, und das hängt am Sammeltopf oben.** Ein
+Pod aus dem Topf ist zonengemischt und damit unbestimmt; zwölf Miner auf
+drei Zonen ergeben zwei gemischte Pods und **kein** diverses Paar. Wer
+hier auf Diversität besteht, trainiert nie.
+
+---
+
 ## 6. Was dieser Entwurf offen lässt
 
 - **Der Knoten liest die Parameter-Registry nicht.** Er spiegelt die
@@ -462,6 +568,16 @@ erreichbar. **Solange das so ist, steht der Anker im Genesis.**
 - **Einbettung und Kopf werden nicht trainiert** (3.2). Bei 0,5B ist die
   Einbettung wegen Weight-Tying zugleich der LM-Kopf: 136 Mio. Parameter
   in einem einzigen Δm.
+- ⚑ **Die Gradientensammlung innerhalb eines Segments, und das ist
+  jetzt der wichtigste offene Punkt** (4.14, Fund 189). Bei kleiner
+  Lernrate ist `gradient / nenner` fast immer null mit grossem Rest, und
+  das stochastische Runden entscheidet über jedes Gewicht: mit richtigem
+  Erwartungswert, aber einer Streuung, die das Signal überdeckt.
+  Gemessen streuen drei Würfelreihen bei sonst identischem Lauf über
+  38,4, 20,8 und 20,1 gegen einen Ausgangsstand von 23,3. **Und die
+  Redundanz fängt das nicht**, weil beide Pods denselben Würfel werfen.
+- **Die Lernrate hängt an der Tiefe** (4.15). `TRAININGS_LR_NENNER` ist
+  eine Zahl; über 24 Ebenen ist sie eine andere als über eine.
 - **Expertenwachstum braucht ein Wachstumsereignis.**
   `myl_train::wachstum` kann Breite und Tiefe wachsen lassen; wer es
   auslöst und wie die Kette es beschliesst, ist offen.

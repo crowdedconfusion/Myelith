@@ -79,7 +79,7 @@ fn jeder_parameter_hat_einen_wert() {
     // Die Trainingszuteilung braucht eine Pod-Kapazitaet und zwei Raten.
     // Alle drei waeren als Konstanten nach dem Genesis unbeweglich, und
     // die Pod-Kapazitaet haengt am Modell, wechselt also planmaessig.
-    assert_eq!(Parameter::alle().len(), 34);
+    assert_eq!(Parameter::alle().len(), 35);
 }
 
 // ---------------------------------------------------------------------

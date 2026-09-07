@@ -24,6 +24,9 @@
 
 pub mod auslastung;
 pub mod korpusanker;
+pub mod lernrate;
+pub mod schuldbeleg;
+pub mod modellversion;
 pub mod arbeitsverteilung;
 pub mod bls;
 pub mod challenge;

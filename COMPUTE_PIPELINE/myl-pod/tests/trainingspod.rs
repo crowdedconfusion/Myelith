@@ -65,7 +65,7 @@ fn ein_pod_aus_vier_shards_rechnet_wie_ein_einzelner() {
         };
         let strom: Vec<Vec<i16>> =
             v.folge.iter().map(|t| m.embed_token(*t as usize)).collect();
-        let ms = vorwaerts(m, &ganz, &vg, &strom).expect("vorwaerts");
+        let ms = vorwaerts(m, &mut ganz, &vg, &strom).expect("vorwaerts");
         let (_logits, g_y) = gradient_vom_ziel(m, &ms.ausgang[letzte], &v);
         let mut g: Vec<Vec<i32>> =
             (0..v.folge.len()).map(|_| vec![0i32; m.hidden_size]).collect();
@@ -81,7 +81,7 @@ fn ein_pod_aus_vier_shards_rechnet_wie_ein_einzelner() {
         for e in von..bis {
             assert_eq!(
                 werk_master(&werk, j, e - von),
-                &ganz.master[e],
+                ganz.master[e].matrizen(),
                 "Ebene {e} weicht ab (Shard {j})"
             );
             ebene += 1;
@@ -106,8 +106,8 @@ fn ein_pod_aus_vier_shards_rechnet_wie_ein_einzelner() {
     );
 }
 
-fn werk_master(werk: &Trainingswerk, shard: usize, i: usize) -> &[Vec<i32>; 7] {
-    &werk.gewichte_des_shards(shard).master[i]
+fn werk_master(werk: &Trainingswerk, shard: usize, i: usize) -> Vec<&[i32]> {
+    werk.gewichte_des_shards(shard).master[i].matrizen()
 }
 
 /// ⚑ **Ein zweiter Lauf mit denselben Vorgaben ergibt dasselbe

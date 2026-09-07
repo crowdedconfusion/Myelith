@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.19.0
+> **Version:** 0.22.0
 > **Datum:** 2026-09-03
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -145,6 +145,75 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.22.0 – 2026-09-06 (die Belege wandern in die geteilten Typen)
+
+`Schuldbeleg` und `Anfechtungsbeleg` liegen jetzt in `myl-types` und
+werden hier weiterexportiert; für Aufrufer ändert sich nichts.
+
+⚑ **Der Grund ist Fund 192.** Der Konsens muss einen Beleg **auf den
+Draht** legen können, damit ein Schuldspruch im Block prüfbar ist, und
+`myl-consensus` darf nicht an VERIFICATION hängen. Eine Kopie hier
+hätte dieselbe Aussage an zwei Orten getroffen, und die erste
+Abweichung zwischen ihnen wäre von einem Rechenfehler nicht zu
+unterscheiden.
+
+### v0.21.0 – 2026-09-06 (der Abdruck kommt aus einer Hand)
+
+`delta_abdruck` ruft `Shardgewichte::deltas` statt eine eigene Schleife
+zu fahren.
+
+⚑ **Bei einer Gemischebene hängt die Reihenfolge an den
+Expertennummern**, und wer sie hier nachbaute, baute die Konsensordnung
+ein zweites Mal. Ein Experte, den nur eine Seite gewählt hat, fällt
+dadurch auf: Er steht in der einen Liste und in der anderen nicht.
+
+### v0.20.0 – 2026-09-05 (die Prüfung von Trainingssegmenten)
+
+`trainingspruefung` bringt den Trainingsweg auf dieselbe Mechanik wie
+die Inferenz: Zwei Pods, ein Vergleich, bei Abweichung sagt die **Spur**,
+welcher Shard es war, und ein Nachrechner entscheidet.
+
+### ⚑ Der Nachrechner braucht nichts, was der Beschuldigte liefert
+
+Das ist der Unterschied zur Inferenzprüfung, und er ist ein Vorteil.
+Dort beginnt die Nachrechnung mit den **Eingangsaktivierungen aus der
+Spur des Beschuldigten**; wer sie fälscht, verschiebt die Prüfung.
+
+Ein Trainingssegment ist vollständig bestimmt durch die Gewichte der
+Modellfassung, die Charge, die Lernrate und die Schrittzahl. Alle vier
+stehen im Segment oder folgen aus dem verankerten Korpus.
+`Modelltrainingsauditor` fängt beim Artefakt an und rechnet den ganzen
+Lauf.
+
+⚑ **Der Preis ist der ganze Lauf statt eines Shards.** Kein Versäumnis:
+Der Δ eines Shards hängt über den Rückwärtsweg an allen Shards hinter
+ihm, und wer nur einen nachrechnete, müsste dessen Ausgangsgradienten
+vom Beschuldigten nehmen.
+
+### ⚑ Ein Vergleich sagt dass, nie wer
+
+Zwei Pods, die sich widersprechen, sind zwei Behauptungen; erst das
+Nachrechnen ist eine dritte, unabhängige. Wer aus dem blossen
+Widerspruch eine Schuld ableitete, bestrafte in der Hälfte der Fälle den
+Ehrlichen. `Trainingsbefund::Uneinig` trägt deshalb keine Schuld.
+
+⚑ **Und verschiedene Aufträge sind kein Streitfall.** Zwei Pods mit
+verschiedener Charge oder Lernrate haben verschiedene Arbeit getan; ihre
+Ergebnisse zu vergleichen wäre sinnlos, und eine daraus abgeleitete
+Schuld wäre erfunden.
+
+### ⚑ Die Spur ersetzt die Bisektion, sie ergänzt sie nicht
+
+Die Spur ist so lang wie der Pod Shards hat, also vier bis acht
+Einträge; sie vollständig zu übertragen kostet weniger als eine einzige
+Bisektionsrunde. Erst **innerhalb** eines Shards, über seine Ebenen,
+lohnt das Halbieren.
+
+**Gemessen** (`tests/trainingspruefung.rs`): Der Nachrechner bestätigt
+alle vier Shards eines ehrlichen Pods und widerlegt genau den
+gefälschten. `myl-pod` steht dabei als Dev-Abhängigkeit: Der Nachrechner
+**ruft** den Pod nicht, er wird nur **gegen** ihn gehalten.
 
 ### v0.19.0 – 2026-09-03 (der Kopf sagt endlich, was der Code seit einem Tag tut)
 

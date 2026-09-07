@@ -571,10 +571,16 @@ mod tests {
         let verschiedene: std::collections::BTreeSet<_> = (0..500)
             .map(|n| crate::kette::konto_fuer(&format!("knoten-{n}")))
             .collect();
+        // ⚑ **An `PROBEKONTEN` gebunden und nicht als Zahl hingeschrieben.**
+        // Die Ableitung rechnet modulo dieser Zahl; sie stand hier als
+        // Acht, und als sie am 2026-09-05 auf Zwoelf stieg, fiel dieser
+        // Test, obwohl nichts an der Ableitung falsch war.
         assert!(
-            verschiedene.len() <= 8,
-            "aus fuenfhundert Namen kamen {} Konten; die Ableitung ist breiter als gedacht",
-            verschiedene.len()
+            verschiedene.len() <= usize::from(crate::kette::PROBEKONTEN),
+            "aus fuenfhundert Namen kamen {} Konten bei {} Probekonten; \
+             die Ableitung ist breiter als gedacht",
+            verschiedene.len(),
+            crate::kette::PROBEKONTEN
         );
         assert!(
             verschiedene.len() > 1,

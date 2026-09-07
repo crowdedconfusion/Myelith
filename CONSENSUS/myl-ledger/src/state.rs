@@ -237,6 +237,19 @@ pub struct LedgerState {
     /// in den Blöcken.
     pub trainingssegmente: BTreeMap<PodId, myl_types::trainingssegment::Trainingssegment>,
 
+    /// Die Fassung des Modells, an der gerechnet wird.
+    ///
+    /// ⚑ **Sie steigt nur durch bestätigtes Training** (Kap. 7.2), also
+    /// dann, wenn beide Pods eines Redundanzpaars zum selben Δ gekommen
+    /// sind. Ein Ergebnis, das nur einer gerechnet hat, bewegt das
+    /// Modell nicht: **Es liesse sich mit nichts vergleichen.**
+    ///
+    /// ⚑ **Die Kette rechnet die Summe nicht**, sie hält das Rezept:
+    /// alte Fassung plus geordnete Liste der bestätigten Δ-Commitments,
+    /// siehe [`myl_types::modellversion`]. Wer die Gewichte hat, wendet
+    /// sie an und rechnet die Wurzel nach.
+    pub modell_version: MerkleRoot,
+
     /// Der verankerte Trainingskorpus, falls das Netz einen hat.
     ///
     /// ⚑ **Nur im Genesis zu setzen**, siehe
@@ -422,6 +435,7 @@ impl LedgerState {
             vtfe_vorepoche: 0,
             trainingsstand: std::collections::BTreeMap::new(),
             korpus: None,
+            modell_version: MerkleRoot::new([0u8; 32]),
             trainingssegmente: BTreeMap::new(),
             burn_ema: 0,
             burn_ema_bis: EpochId(0),

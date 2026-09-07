@@ -164,6 +164,14 @@ CONSENSUS_PATH = [
     # brauchen. Die f64-Helfer sind oben geblieben, genau deshalb.
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "auslastung.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "korpusanker.rs",
+    # Die Lernrate eines Segments folgt der Tiefe und ist damit
+    # Konsensgroesse: Zwei Miner mit verschiedenen Raten liefern
+    # verschiedene Deltas und haetten beide recht.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "lernrate.rs",
+    # Die Belege eines Schuldspruchs sind Konsensgroessen: Ueber sie
+    # entscheidet sich, wessen Einsatz geschlachtet wird.
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "schuldbeleg.rs",
+    ROOT / "SHARED_TYPES" / "myl-types" / "src" / "modellversion.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "challenge.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "seed_rng.rs",
     ROOT / "SHARED_TYPES" / "myl-types" / "src" / "bls.rs",
@@ -285,6 +293,7 @@ CONSENSUS_PATH = [
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "mint.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "distribute.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "training.rs",
+    ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "trainingsabgabe.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "exp_approx.rs",
     ROOT / "TOKENOMICS" / "myl-tokenomics" / "src" / "exp_lut_table.rs",
     ROOT / "VERIFICATION" / "myl-verifier" / "src" / "redundancy.rs",
@@ -608,6 +617,22 @@ BEWUSST_DRAUSSEN: dict = {
     / "runtime"
     / "src"
     / "loader.rs": "f64 nur zur Konsistenzpruefung von scale gegen shift, nie im Rechenpfad",
+    # ⚑ **2026-09-06: Messwerte fuer Menschen.** Kreuzentropie und
+    # Perplexitaet, an denen ein Mensch abliest, ob ein Trainingslauf
+    # etwas gebracht hat. Kein Wert geht in ein Gewicht, ein Commitment
+    # oder einen Block ein; die Funktionen nehmen Ganzzahlen und geben
+    # `f64`, die Richtung ist eine Einbahnstrasse.
+    #
+    # **Die Ausnahme ist nicht gratis.** Ein erster Entwurf legte die
+    # Kreuzentropie in `trainingsschleife.rs`, und diese Pruefung hat sie
+    # zurueckgewiesen; das war richtig. Wer hier eine Funktion ergaenzt,
+    # deren Ergebnis in den Rechenpfad zurueckfliesst, hat sie der
+    # Pruefung entzogen. **Diese Zeile gehoert bei jeder Aenderung an
+    # `messung.rs` mitgelesen.**
+    REPO
+    / "runtime"
+    / "src"
+    / "messung.rs": "Kreuzentropie und Perplexitaet als Anzeige, nie im Rechenpfad",
     # 2026-08-31: `utilization_to_f64` und `f64_to_utilization` wandeln
     # eine Festkommazahl fuer Protokollzeilen und Tests um. Der
     # Rechenweg der Auslastung selbst ist ganzzahlig; die beiden

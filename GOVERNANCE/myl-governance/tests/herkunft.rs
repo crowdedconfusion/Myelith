@@ -73,6 +73,14 @@ fn herkunft(p: Parameter) -> (Herkunft, &'static str) {
         Auslastungsziel => (Entschieden, "Kap. 5.4: u* = 0,7"),
         PreisSensitivitaet => (Entschieden, "Kap. 5.4: kappa = 0,1"),
         TrainingsverguetungsAnteil => (Entschieden, "Kap. 5.6: hoechstens 70 Prozent"),
+        // ⚑ **Gerechnet, nicht entschieden.** Sie folgt aus der
+        // Bilanzbedingung am Auslastungsziel und aendert sich mit ihren
+        // Eingaben, kann also nicht veralten.
+        TrainingsAbgabeMax => (
+            Gerechnet,
+            "Bilanz am Auslastungsziel: u*^2*lam = t(u*)*(S - u**lam), \
+             myl_tokenomics::trainingsabgabe",
+        ),
         TrainingsFreianteil => (
             Entschieden,
             "Kap. 7.1: gamma_train, fuenf bis zehn Prozent der FREIEN Kapazitaet;              hier bewusst deutlich darueber, siehe registry.rs",
@@ -138,7 +146,7 @@ fn jeder_parameter_nennt_seine_herkunft() {
             "{p:?} nennt keine Quelle",
         );
     }
-    assert_eq!(Parameter::alle().len(), 34, "die Zahl der Parameter hat sich geaendert");
+    assert_eq!(Parameter::alle().len(), 35, "die Zahl der Parameter hat sich geaendert");
 }
 
 /// ⚑ **Was gerechnet ist, muss die Rechnung sein** (Fund 146).
@@ -174,10 +182,38 @@ fn was_gerechnet_ist_stimmt_mit_seiner_rechnung() {
                 );
                 assert_eq!(s, 200 * UNITS_PER_MYL, "bei p = 5 Prozent sind es 200 MYL");
             }
+            Parameter::TrainingsAbgabeMax => {
+                let Wert::Bruch { zaehler: uz, nenner: un } = *reg.wert(Parameter::Auslastungsziel)
+                else {
+                    panic!("u* ist ein Bruch");
+                };
+                let Wert::Ganzzahl(grund) = *reg.wert(Parameter::TrainingsGrundrate) else {
+                    panic!("die Grundrate ist eine Ganzzahl");
+                };
+                let Wert::Ganzzahl(frei) = *reg.wert(Parameter::TrainingsFreianteil) else {
+                    panic!("der Freianteil ist eine Ganzzahl");
+                };
+                let Wert::Ganzzahl(lam) = *reg.wert(Parameter::TrainingsAbgabeMax) else {
+                    panic!("die Abgabe ist eine Ganzzahl");
+                };
+                assert_eq!(
+                    lam,
+                    myl_tokenomics::trainingsabgabe::abgabe_max_bps(
+                        uz,
+                        un,
+                        myl_tokenomics::distribute::SHARE_SHARD_MINERS_BPS,
+                        grund,
+                        frei,
+                    )
+                    .expect("rechenbar"),
+                    "TrainingsAbgabeMax folgt nicht aus der Bilanz am Auslastungsziel"
+                );
+                assert_eq!(lam, 3_017, "bei u* = 0,7 und 8000 bp Freianteil");
+            }
             andere => panic!("{andere:?} ist als gerechnet gefuehrt, wird hier aber nicht gerechnet"),
         }
     }
-    assert_eq!(gerechnet, 1, "die Zahl der gerechneten Vorgaben hat sich geaendert");
+    assert_eq!(gerechnet, 2, "die Zahl der gerechneten Vorgaben hat sich geaendert");
 }
 
 /// ⚑ **Wie viele Zahlen noch niemand beschlossen hat.**

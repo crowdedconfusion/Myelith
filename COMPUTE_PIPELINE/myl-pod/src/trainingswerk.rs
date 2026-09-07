@@ -17,9 +17,13 @@
 //! Einzelknoten nachgerechnet wird.
 //!
 //! **Was fehlt, ist der Draht:** dieselben Nachrichten über
-//! `PodMessage` zwischen echten Prozessen. Der Zuschnitt ist derselbe,
-//! also ist es Transport und keine zweite Rechnung; **solange er nicht
-//! steht, ist das hier ein Pod auf einer Maschine.**
+//! `PodMessage` zwischen echten Prozessen.
+//!
+//! ⚑ **Und den gibt es auch für die Inferenz nicht** (nachgesehen am
+//! 2026-09-06). `PodMessage` ist ein fertiges Format mit Rundlauftest,
+//! aber `Coordinator` ruft `shard.process` unmittelbar; `Ortsdienst`
+//! bedient ganze Aufträge, nicht Nachrichten zwischen Shards. **Solange
+//! das so ist, ist auch ein Inferenzpod ein Pod auf einer Maschine.**
 //!
 //! # ⚑ Der Zuschnitt ist derselbe wie bei der Inferenz, und das ist kein Zufall
 //!
@@ -31,9 +35,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::kv_cache::KVCache;
 use integer_llm_runtime::loader::load_model;
-use integer_llm_runtime::mitschnitt::Zwischenwerte;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::shardtraining::{
     rueckwaerts, vorwaerts, Shardfehler, Shardgewichte, Shardvorgaben,
@@ -50,13 +52,20 @@ pub const SHARDS: usize = crate::pipelinewerk::SHARDS;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Podtrainingsergebnis {
     /// Je Shard sein Δ-Commitment, in Shardreihenfolge.
-    pub delta_je_shard: Vec<String>,
+    ///
+    /// ⚑ **Das ist die Spur des Segments**, und sie ist genau das, was
+    /// ein Prüfer auf Anforderung sehen will: Weichen zwei Pods
+    /// voneinander ab, sagt der erste abweichende Eintrag, **welcher
+    /// Shard** es war. Ohne sie liesse sich nur feststellen, dass einer
+    /// von beiden falsch liegt.
+    pub delta_je_shard: Vec<myl_types::hash::Hash>,
     /// Das Commitment des ganzen Pods über alle Shards.
     ///
-    /// ⚑ **Über die Verkettung in Shardreihenfolge**, denn genau das
-    /// nennt ein `Trainingssegment` als `delta_commitment`. Eine andere
-    /// Reihenfolge beschriebe dieselben Zahlen als eine andere Arbeit.
-    pub delta_commitment: String,
+    /// ⚑ **Gebildet mit `Trainingssegment::commitment_aus_spur`** und
+    /// nicht hier: Der Prüfer rechnet die Shards nach und muss zum
+    /// selben Wert kommen. Zwei Rechnungen für dieselbe Aussage liefen
+    /// auseinander, dieselbe Lehre wie bei Fund 34.
+    pub delta_commitment: myl_types::hash::Hash,
     /// Wie viele Gewichte sich im ganzen Pod bewegt haben.
     pub bewegte_gewichte: usize,
     /// Wie viele Gewichte der Pod insgesamt fortschreibt.
@@ -164,7 +173,7 @@ impl Trainingswerk {
             let mut mitschnitte = Vec::with_capacity(SHARDS);
             for j in 0..SHARDS {
                 let vg = self.vorgaben(j, s, v);
-                let ms = vorwaerts(&m, &self.gewichte[j], &vg, &strom)
+                let ms = vorwaerts(&m, &mut self.gewichte[j], &vg, &strom)
                     .map_err(|e| format!("Shard {j} vorwaerts: {e}"))?;
                 strom = ms.ausgang.clone();
                 mitschnitte.push(ms);
@@ -216,9 +225,11 @@ impl Trainingswerk {
             bewegte += b;
             gesamt += g;
         }
-        let verkettet = delta_je_shard.join("");
         Ok(Podtrainingsergebnis {
-            delta_commitment: format!("{:x}", sha2::Sha256::digest(verkettet.as_bytes())),
+            delta_commitment:
+                myl_types::trainingssegment::Trainingssegment::commitment_aus_spur(
+                    &delta_je_shard,
+                ),
             delta_je_shard,
             bewegte_gewichte: bewegte,
             gewichte_gesamt: gesamt,
@@ -241,26 +252,34 @@ impl Trainingswerk {
         }
     }
 
-    fn abdruck_des_shards(&self, shard: usize) -> (String, usize, usize) {
+    fn abdruck_des_shards(&self, shard: usize) -> (myl_types::hash::Hash, usize, usize) {
         let g = &self.gewichte[shard];
-        let deltas: Vec<Vec<i32>> = g
-            .anfangsstand()
-            .iter()
-            .zip(g.master.iter())
-            .flat_map(|(a, b)| {
-                a.iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| integer_llm_kernels::optimierer::delta(x, y))
-            })
-            .collect();
+        // ⚑ **`Shardgewichte::deltas` und keine eigene Schleife**, damit
+        // Pod und Pruefer dieselbe Ordnung nehmen. Bei einer
+        // Gemischebene haengt sie an den Expertennummern.
+        let deltas = g.deltas();
         let scheiben: Vec<&[i32]> = deltas.iter().map(|v| v.as_slice()).collect();
         let bewegte = deltas.iter().flat_map(|d| d.iter()).filter(|v| **v != 0).count();
-        let gesamt = g.master.iter().flat_map(|e| e.iter()).map(|m| m.len()).sum();
-        (integer_llm_kernels::optimierer::trainingsabdruck(&scheiben), bewegte, gesamt)
+        let hex = integer_llm_kernels::optimierer::trainingsabdruck(&scheiben);
+        (hex_zu_hash(&hex), bewegte, g.gewichte_gesamt())
     }
 }
 
-use sha2::Digest;
+/// Wandelt einen Abdruck aus `trainingsabdruck` in einen `Hash`.
+///
+/// ⚑ **Panik bei falscher Form.** Der Abdruck kommt aus dem eigenen
+/// Kernel und ist immer 64 Hex-Zeichen; wäre er es nicht, wäre etwas
+/// grundlegend anders als angenommen, und ein stillschweigend gefüllter
+/// Nullhash verglände sich mit jedem anderen Fehlerfall.
+fn hex_zu_hash(hex: &str) -> myl_types::hash::Hash {
+    assert_eq!(hex.len(), 64, "ein Trainingsabdruck hat 64 Hex-Zeichen, nicht {}", hex.len());
+    let mut b = [0u8; 32];
+    for (i, paar) in hex.as_bytes().chunks(2).enumerate() {
+        b[i] = u8::from_str_radix(std::str::from_utf8(paar).expect("Hex ist ASCII"), 16)
+            .expect("trainingsabdruck liefert Hex");
+    }
+    myl_types::hash::Hash(b)
+}
 
 /// Der Fehlerfall eines Shards, für Aufrufer sichtbar gemacht.
 pub type Werkfehler = Shardfehler;
@@ -277,4 +296,179 @@ mod tests {
     fn der_zuschnitt_ist_der_der_inferenzpipeline() {
         assert_eq!(SHARDS, crate::pipelinewerk::SHARDS);
     }
+}
+
+/// Was ein Trainingsauftrag festlegt, bevor gerechnet wird.
+///
+/// ⚑ **Alles hier ist Bestellung, nichts ist Ergebnis.** Was der Lauf
+/// hervorbringt, kommt aus [`Podtrainingsergebnis`] und kann von keinem
+/// Aufrufer gesetzt werden. Genau darin liegt der Zweck dieses Typs.
+#[derive(Debug, Clone)]
+pub struct Segmentauftrag {
+    pub id: myl_types::ids::SegmentId,
+    pub modell_version: myl_types::ids::MerkleRoot,
+    pub charge: myl_types::hash::Hash,
+    pub startschritt: u64,
+    pub schrittzahl: u32,
+    /// Wie viele Folgen in jeden Schritt eingegangen sind.
+    pub folgen: u32,
+    pub lr_zaehler: i64,
+    pub lr_nenner: i64,
+    pub pod_pfad: Vec<myl_types::ids::MinerId>,
+}
+
+/// Baut das einzureichende Segment aus Auftrag und Ergebnis, **ohne
+/// Signaturen**.
+///
+/// # ⚑ Warum es diese Funktion gibt, und was ohne sie geschah
+///
+/// `bewegte_gewichte` ist seit dem 2026-09-06 Teil des Segments und
+/// damit Teil der Unterschrift (Fund 191). Die Zahl entsteht im
+/// Rechenwerk und darf **nicht** von der Aufrufstelle kommen: Ein
+/// Aufrufer, der sie tippt, tippt eine Behauptung, und der
+/// Redundanzvergleich hätte zwei ehrliche Pods mit verschiedenen
+/// Behauptungen als uneinig gemeldet.
+///
+/// **Hier kommt sie aus dem Ergebnis und sonst nirgendwoher.** Wer das
+/// Segment anders zusammensetzt, kann sie vergessen; wer diese Funktion
+/// benutzt, kann es nicht.
+pub fn segment_aus_ergebnis(
+    auftrag: &Segmentauftrag,
+    erg: &Podtrainingsergebnis,
+) -> myl_types::trainingssegment::Trainingssegment {
+    myl_types::trainingssegment::Trainingssegment {
+        id: auftrag.id,
+        modell_version: auftrag.modell_version,
+        charge: auftrag.charge,
+        startschritt: auftrag.startschritt,
+        schrittzahl: auftrag.schrittzahl,
+        folgen: auftrag.folgen,
+        lr_zaehler: auftrag.lr_zaehler,
+        lr_nenner: auftrag.lr_nenner,
+        delta_commitment: erg.delta_commitment,
+        bewegte_gewichte: erg.bewegte_gewichte as u64,
+        pod_pfad: auftrag.pod_pfad.clone(),
+        signaturen: Vec::new(),
+    }
+}
+
+/// Was ein Trainingsdurchgang über den Draht ergeben hat.
+#[derive(Debug, Clone)]
+pub struct Drahtergebnis {
+    /// Je Shard sein Δ-Commitment, in Shardreihenfolge.
+    pub delta_je_shard: Vec<myl_types::hash::Hash>,
+    /// Das Commitment des ganzen Pods.
+    pub delta_commitment: myl_types::hash::Hash,
+    /// Wie viele Master sich bewegt haben, über alle Shards.
+    pub bewegte_gewichte: usize,
+    /// Wie viele Master der Pod fortschreibt.
+    pub gewichte_gesamt: usize,
+    /// Der erste Shard, der die Übertragungsform verlassen hat.
+    pub aus_der_form: Option<(usize, u64)>,
+}
+
+/// Fährt **einen** Trainingsdurchgang über den Draht: vorwärts durch
+/// alle Shards, rückwärts zurück, dann anwenden.
+///
+/// # ⚑ Warum die Reihenfolge nicht verhandelbar ist
+///
+/// Vorwärts läuft der Residualstrom von Shard 0 nach `n−1`, rückwärts
+/// der Gradient von `n−1` nach 0. Jeder Shard hält seinen Mitschnitt
+/// zwischen beiden Aufrufen; er geht **nicht** über den Draht, weil ihn
+/// nur sein Shard braucht und er gross ist.
+///
+/// ⚑ **Angewandt wird erst am Ende, und zwar bei jedem Shard einmal.**
+/// Zwischen Rückwärtspass und Anwenden liegt die Sammlung: Über wenige
+/// Schritte streut das stochastische Runden stärker, als das
+/// Gradientensignal wiegt (Fund 189). Wer nach jeder Folge anwendete,
+/// bekäme über vierundzwanzig Ebenen einen Faktor tausend Streuung.
+///
+/// **Mehrere Folgen je Schritt** entstehen, indem der Aufrufer
+/// `folge_ueber_den_draht` mehrfach ruft und erst danach
+/// `anwenden_ueber_den_draht`.
+pub fn folge_ueber_den_draht(
+    weg: &dyn crate::shardweg::Shardweg,
+    sitzung: u64,
+    hidden: Vec<Vec<i16>>,
+    g_aus: Vec<Vec<i32>>,
+    lr_nenner: i64,
+) -> Result<(), String> {
+    use crate::shardweg::{Shardanfrage, Shardantwort};
+    let n = weg.shardzahl();
+    // --- Vorwärts, Shard 0 bis n−1 --------------------------------
+    let mut strom = hidden;
+    for s in 0..n {
+        let anfrage = Shardanfrage::TrainVorwaerts {
+            sitzung,
+            hidden: strom,
+            schritt: 0,
+            lr_nenner,
+        };
+        strom = match weg.frage(s, &anfrage)? {
+            Shardantwort::TrainAusgang(a) => a,
+            Shardantwort::Fehler(e) => return Err(format!("Shard {s} vorwaerts: {e}")),
+            andere => return Err(format!("Shard {s} antwortete mit {andere:?}")),
+        };
+    }
+    // --- Rückwärts, Shard n−1 bis 0 -------------------------------
+    let mut grad = g_aus;
+    for s in (0..n).rev() {
+        let anfrage = Shardanfrage::TrainRueckwaerts { sitzung, g_aus: grad, lr_nenner };
+        grad = match weg.frage(s, &anfrage)? {
+            Shardantwort::TrainEingang { eingang, .. } => eingang,
+            Shardantwort::Fehler(e) => return Err(format!("Shard {s} rueckwaerts: {e}")),
+            andere => return Err(format!("Shard {s} antwortete mit {andere:?}")),
+        };
+    }
+    Ok(())
+}
+
+/// Wendet an, was alle Shards gesammelt haben, und bildet den Abdruck
+/// des Pods.
+///
+/// ⚑ **Das Commitment entsteht aus der Spur und nicht neben ihr**, mit
+/// `Trainingssegment::commitment_aus_spur`: Ein Prüfer, der die Shards
+/// nachrechnet, muss zum selben Wert kommen.
+pub fn anwenden_ueber_den_draht(
+    weg: &dyn crate::shardweg::Shardweg,
+    schritt: u64,
+    lr_nenner: i64,
+) -> Result<Drahtergebnis, String> {
+    use crate::shardweg::{Shardanfrage, Shardantwort};
+    let n = weg.shardzahl();
+    let mut spur = Vec::with_capacity(n);
+    let mut bewegte = 0usize;
+    let mut gesamt = 0usize;
+    let mut aus_der_form = None;
+    for s in 0..n {
+        let anfrage = Shardanfrage::TrainAnwenden { schritt, lr_nenner };
+        match weg.frage(s, &anfrage)? {
+            Shardantwort::TrainAngewandt {
+                delta_commitment,
+                bewegte: b,
+                gesamt: g,
+                aus_der_form: form,
+            } => {
+                spur.push(hex_zu_hash(&delta_commitment));
+                bewegte += b as usize;
+                gesamt += g as usize;
+                if aus_der_form.is_none() {
+                    if let Some(e) = form {
+                        aus_der_form = Some((s, e));
+                    }
+                }
+            }
+            Shardantwort::Fehler(e) => return Err(format!("Shard {s} anwenden: {e}")),
+            andere => return Err(format!("Shard {s} antwortete mit {andere:?}")),
+        }
+    }
+    let gesamtabdruck =
+        myl_types::trainingssegment::Trainingssegment::commitment_aus_spur(&spur);
+    Ok(Drahtergebnis {
+        delta_je_shard: spur,
+        delta_commitment: gesamtabdruck,
+        bewegte_gewichte: bewegte,
+        gewichte_gesamt: gesamt,
+        aus_der_form,
+    })
 }

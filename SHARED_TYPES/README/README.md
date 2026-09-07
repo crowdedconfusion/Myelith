@@ -1,6 +1,6 @@
 # shared-types (`myl-types`)
 
-> **Version:** 0.39.0
+> **Version:** 0.43.0
 > **Datum:** 2026-09-03
 > **Status:** 🎉 **Phase 2 abgeschlossen** (Punkte 1.1–1.7, 2.1–2.3):
 > Hash, Merkle-Baum, VRF (bit-exakt gegen RFC-9381-Vektoren), BLS12-381
@@ -50,6 +50,86 @@ SHARED_TYPES/
 ```
 
 ## Changelog
+
+### v0.43.0 – 2026-09-06 (die Lernrate wird eine Protokollgrösse)
+
+`lernrate::NORMIERTER_NENNER` und `schuldbeleg` sind neu.
+
+⚑ **Die Rate bedeutet zum ersten Mal auf jedem Modell dasselbe.** Mit
+`optimierer::schritt_normiert` bewegt sich das grösste Gewicht einer
+Matrix um einen Bruchteil **ihres eigenen Betragsmaximums**; gemessen
+lernen alle vier Modelle bei **derselben** Zahl 256, das Expertengemisch
+am stärksten (Haltemenge −23,8 Prozent). Zuvor bewegte Qwen3-4B bei
+jeder zulässigen Rate kein einziges Gewicht (Fund 194).
+
+**`schuldbeleg` liegt hier, weil es Wiretypen sind.** Der Konsens muss
+einen Beleg auf den Draht legen können, und `myl-consensus` darf nicht
+an VERIFICATION hängen. VERIFICATION exportiert sie weiter; zwei
+Fassungen desselben Typs wären das Schlimmere gewesen.
+
+### v0.42.0 – 2026-09-06 (das Segment sagt jetzt, wie gross es ist)
+
+`lernrate` ist neu, und `Trainingssegment` trägt zwei Felder mehr:
+`bewegte_gewichte` und `folgen`. Die Botschaft steht damit auf `v3`.
+
+⚑ **Beide aus demselben Grund: Das Protokoll prüfte die Absicht eines
+Segments und nicht seine Grösse.** Eine Schrittzahl über null und eine
+Lernrate über null sagen, dass jemand trainieren **wollte**. Sie sagen
+nicht, wie weit sich etwas bewegt hat (`bewegte_gewichte`, Fund 191) und
+über wie viele Gradienten (`folgen`).
+
+**Ohne `folgen` ist die Lernrate keine Angabe über die Schrittweite.**
+Mit Gradientensammlung summiert ein Schritt die Bewegung aller Folgen
+und rundet einmal; die Bewegung wächst linear mit ihrer Zahl. Gemessen:
+Dieselbe Ebene, dieselbe Rate 2⁻¹⁶, acht statt zwei Folgen, und die
+Perplexität stieg von 41,6 auf 24 084. Ein Pod hätte tausend Folgen mit
+einer Rate für sechzehn fahren können und jede Prüfung bestanden.
+
+**`lernrate` bindet deshalb das Budget** `schritte · folgen / nenner`
+an die Tiefe, nicht die Rate für sich. Die Kurve ist an vier Messpunkten
+kalibriert und liegt bewusst **unter** ihnen; ihre Tabelle steht im
+Modulkopf, samt der Zeile, die zeigt, dass eine zu grosse Rate zuerst
+überanpasst und erst dann zerstört.
+
+### v0.41.0 – 2026-09-06 (die Tokenzahl gehört zum Korpus)
+
+`Korpusanker::tokens_je_segment` und `::tokens_je_buendel`.
+
+⚑ **Die Verguetung haengt daran.** Die Arbeit eines Trainingssegments
+ist Schrittzahl mal Tokenzahl mal Modellgroesse. Dürfte der Pod die
+Tokenzahl nennen, nennte er seine eigene Vergütung; stünde sie nirgends,
+könnte die Kette gar nicht vergüten.
+
+### v0.40.0 – 2026-09-05 (Spurcommitment und Modellfortschreibung)
+
+`Trainingssegment::commitment_aus_spur` bildet aus den Δ-Abdrücken der
+Shards **einen** Wert.
+
+⚑ **Eine Funktion und nicht zwei Rechnungen.** Der Pod schreibt den Wert
+ins Segment, der Prüfer rechnet die Shards nach und muss zum selben
+kommen. Rechneten beide auf eigene Faust, wäre eine Abweichung nicht von
+einem Rechenfehler im Pod zu unterscheiden: dieselbe Lehre wie bei
+Fund 34.
+
+Reihenfolge **und** Zahl der Shards gehen ein: Ohne die Zahl liesse sich
+ein Segment aus zwei Shards nicht von einem aus vier unterscheiden,
+dessen letzte zwei Abdrücke leer sind.
+
+### `modellversion`: das Rezept, nicht das Ergebnis
+
+`naechste_version(alt, deltas)` bildet die neue Modellfassung aus der
+alten und den bestätigten Δ-Commitments. **Die Kette hält keine
+Gewichte, also kann sie nicht summieren**; sie hält das Rezept, und wer
+die Gewichte hat, wendet es an und rechnet die Wurzel nach.
+
+⚑ **Die Reihenfolge ist nur für die Kennung, nicht für die Arithmetik.**
+`optimierer::aggregiere` summiert ordnungsfrei; wäre die Reihenfolge für
+die Summe nötig, kämen zwei Knoten mit verschieden sortierten Eingaben
+zu verschiedenen Gewichten.
+
+⚑ **Eine leere Liste lässt die Fassung stehen.** Eine Epoche ohne
+bestätigtes Training hat das Modell nicht verändert; eine neue Kennung
+dafür wäre eine Änderung, die es nicht gab.
 
 ### v0.39.0 – 2026-09-05 (die Charge bindet das Bündel an den Korpus)
 

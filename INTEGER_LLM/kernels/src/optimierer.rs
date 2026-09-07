@@ -232,18 +232,443 @@ pub fn schritt(
     lr_nenner: i64,
 ) {
     assert_eq!(master.len(), grad.len(), "schritt: Laengen passen nicht");
-    assert!(lr_nenner > 0, "schritt: Lernraten-Nenner muss > 0 sein");
+    let mut summe = vec![0i64; grad.len()];
+    sammle(&mut summe, grad, lr_zaehler, lr_nenner);
+    schritt_aus_summe(master, &summe, kennung);
+}
 
-    for (i, (w, g)) in master.iter_mut().zip(grad).enumerate() {
-        let index = kennung.index_versatz + i as u64;
-        // Die Bewegung, in feinen Einheiten unterhalb der Rasterstufe.
+/// Rechnet einen Gradienten in feine Einheiten um und **addiert** ihn
+/// auf, statt ihn anzuwenden.
+///
+/// # ⚑ Wozu, und warum die Summe und nicht der Mittelwert
+///
+/// Bei kleiner Lernrate ist die Bewegung eines einzelnen Schrittes fast
+/// immer **kleiner als eine Master-Stufe**. Das stochastische Runden
+/// entscheidet dann über jedes Gewicht mit einem Münzwurf: im Mittel
+/// richtig, aber mit einer Streuung, die über viele Ebenen das Signal
+/// überdeckt. **Gemessen am 2026-09-06 waren es über 24 Ebenen drei
+/// Grössenordnungen** (Fund 189).
+///
+/// Wer `n` Gradienten erst summiert und dann **einmal** rundet, bekommt
+/// **denselben Erwartungswert** und **einen** Münzwurf statt `n`. Die
+/// Lernrate bleibt dabei dieselbe: Summiert werden die feinen
+/// Einheiten, nicht die Schritte.
+///
+/// ⚑ **Der Mittelwert wäre falsch.** Er teilte die Bewegung durch `n`
+/// und wäre damit eine `n`-fach kleinere Lernrate, also genau die
+/// Grösse, die das Problem erzeugt.
+///
+/// ⚑ **`i64` und nicht `i32`.** Ein einzelnes `fein` passt in `i32`
+/// nicht sicher, und die Summe über tausend Folgen erst recht nicht.
+pub fn sammle(ziel: &mut [i64], grad: &[Grad], lr_zaehler: i64, lr_nenner: i64) {
+    assert_eq!(ziel.len(), grad.len(), "sammle: Laengen passen nicht");
+    assert!(lr_nenner > 0, "sammle: Lernraten-Nenner muss > 0 sein");
+    for (z, g) in ziel.iter_mut().zip(grad) {
         let fein = -(*g as i64) * lr_zaehler * (1i64 << FEIN_BITS) / lr_nenner;
-        let stufen = runde_stochastisch(fein, wuerfel(kennung.ebene, kennung.schritt, index));
-        // Sättigend: Ein Gewicht, das den Bereich verlässt, bleibt am
-        // Rand stehen, statt umzulaufen. Ein umlaufendes Gewicht wäre
-        // ein Vorzeichenwechsel aus dem Nichts.
+        *z = z.saturating_add(fein);
+    }
+}
+
+/// Wendet eine aufgelaufene Summe feiner Einheiten an, mit **einem**
+/// Wurf je Gewicht.
+///
+/// ⚑ **Sättigend, und aus demselben Grund wie zuvor:** Ein Gewicht, das
+/// den Bereich verlässt, bleibt am Rand stehen. Ein umlaufendes Gewicht
+/// wäre ein Vorzeichenwechsel aus dem Nichts.
+pub fn schritt_aus_summe(master: &mut [Master], summe: &[i64], kennung: Schrittkennung) {
+    assert_eq!(master.len(), summe.len(), "schritt_aus_summe: Laengen passen nicht");
+    for (i, (w, f)) in master.iter_mut().zip(summe).enumerate() {
+        let index = kennung.index_versatz + i as u64;
+        let stufen = runde_stochastisch(*f, wuerfel(kennung.ebene, kennung.schritt, index));
         *w = (*w as i64).saturating_add(stufen).clamp(Master::MIN as i64, Master::MAX as i64)
             as Master;
+    }
+}
+
+/// Sammelt den **rohen** Gradienten, ohne Lernrate.
+///
+/// ⚑ **Die Rate kommt erst nach der Normierung.** Wer sie vorher
+/// anwendete, teilte durch eine Zahl und normierte danach wieder weg,
+/// was er geteilt hat; die Rate wäre wirkungslos.
+pub fn sammle_roh(ziel: &mut [i64], grad: &[Grad]) {
+    assert_eq!(ziel.len(), grad.len(), "sammle_roh: Laengen passen nicht");
+    for (z, g) in ziel.iter_mut().zip(grad) {
+        *z = z.saturating_sub(*g as i64);
+    }
+}
+
+/// Auf wie viele Bits das Betragsmaximum einer Matrix gebracht wird,
+/// bevor die Lernrate greift.
+///
+/// # ⚑ Warum genau `MASTER_FRAC + FEIN_BITS`
+///
+/// Eine Rasterstufe sind `2^MASTER_FRAC` Master-Stufen, und eine
+/// Master-Stufe sind `2^FEIN_BITS` feine Einheiten. Ein Betragsmaximum
+/// von `2^(MASTER_FRAC + FEIN_BITS)` feinen Einheiten heisst deshalb
+/// genau: **das grösste Gewicht der Matrix bewegt sich um eine ganze
+/// Rasterstufe.**
+///
+/// Damit bekommt der Nenner der Lernrate eine Bedeutung, die man
+/// aussprechen kann: `lr_nenner` ist die Zahl der Aktualisierungen, die
+/// das grösste Gewicht einer Matrix braucht, um **eine Rasterstufe**
+/// zu wandern.
+pub const NORMBITS: u32 = MASTER_FRAC as u32 + FEIN_BITS;
+
+/// Bringt eine gesammelte Bewegung auf die Normskala und gibt die
+/// angewandte Verschiebung zurück.
+///
+/// # ⚑ Wozu, und was ohne sie geschieht
+///
+/// Ein Gradient trägt `dL/dZ` auf **einer Skala, die der Rechenweg
+/// wählt**. Gemessen am 2026-09-06 fällt sie je Modell um
+/// Grössenordnungen verschieden aus: Qwen2.5-0,5B lernt bei 2⁻²⁶ über
+/// vierundzwanzig Ebenen, Qwen3-4B bewegt bei 2⁻¹² **kein einziges
+/// Gewicht** und erst bei 2⁻⁸ (Fund 194).
+///
+/// **Damit war die Lernrate keine Protokollgrösse**, sondern eine Zahl,
+/// die je Modell neu zu kalibrieren gewesen wäre. Für ein Netz, das
+/// sein Modell wachsen lässt, ist das nicht haltbar: Nach jedem
+/// Wachstumsschritt stünde die Kalibrierung wieder aus.
+///
+/// ⚑ **Eine Division und keine Zweierpotenz-Verschiebung, und das
+/// haben zwei Tests entschieden.** Der erste Entwurf verschob um
+/// `NORMBITS − bits(max)`. Das bringt das Betragsmaximum in ein **Band**
+/// `[2^(NORMBITS−1), 2^NORMBITS)` und nicht auf einen Wert: Zwei
+/// Modelle, deren Gradienten sich um den Faktor tausend unterscheiden,
+/// lagen danach noch um den Faktor zwei auseinander.
+///
+/// **Zwei ist viel weniger als 256, und trotzdem nicht null.** Der Sinn
+/// dieser Funktion ist, dass eine Lernrate überall dasselbe bedeutet;
+/// ein Rest von einer Oktave hätte genau das nicht geleistet. Die
+/// Division ist ganzzahlig, reihenfolgeunabhängig und einmalig beim
+/// Anwenden, führt also keine zweite Art von **gespeicherter** Skala
+/// ein.
+///
+/// ⚑ **Und sie wirkt je Matrix.** Zwei Matrizen einer Ebene tragen
+/// verschieden grosse Gradienten, und mit dieser Normierung bewegen
+/// sich beide gleich weit. Das ist eine Entscheidung und keine
+/// Nebenwirkung: Sie entspricht der schichtweisen Ratenanpassung, die
+/// die Literatur für grosse Chargen kennt.
+///
+/// Gibt das ursprüngliche Betragsmaximum zurück, oder `None`, wenn die
+/// Matrix sich gar nicht bewegt hat; dann gibt es nichts zu normieren.
+///
+/// ⚑ **Das Maximum ist der Rückgabewert und nicht die Verschiebung**,
+/// weil es die Grösse ist, die etwas aussagt: Sie sagt, wie weit dieses
+/// Modell überhaupt zieht, und genau diese Zahl unterscheidet sich je
+/// Modell um Grössenordnungen.
+pub fn normiere(summe: &mut [i64]) -> Option<u64> {
+    let groesster = summe.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+    if groesster == 0 {
+        return None;
+    }
+    // ⚑ **`i128` für das Zwischenergebnis.** `summe_i · 2^40` verlässt
+    // `i64` schon bei mittelgrossen Summen; wer hier sättigte, machte
+    // aus der Normierung eine Klemmung.
+    let ziel = 1i128 << NORMBITS;
+    let teiler = groesster as i128;
+    for z in summe.iter_mut() {
+        *z = ((*z as i128) * ziel / teiler) as i64;
+    }
+    Some(groesster)
+}
+
+/// Normiert eine gesammelte Bewegung und wendet sie mit **einem** Wurf
+/// je Gewicht an.
+///
+/// `lr_nenner` ist danach der Kehrwert des Anteils, um den sich das
+/// **grösste Gewicht dieser Matrix je Aktualisierung bezogen auf sich
+/// selbst** bewegt: Bei `lr_nenner = 1000` ändert es sich um ein
+/// Tausendstel seines eigenen Betrags. Diese Bedeutung hängt weder an
+/// der Skala des Gradienten noch an der der Gewichte.
+///
+/// Gibt das Betragsmaximum vor der Normierung zurück, oder `None`, wenn
+/// sich nichts bewegt hat.
+pub fn schritt_normiert(
+    master: &mut [Master],
+    summe: &mut [i64],
+    kennung: Schrittkennung,
+    lr_nenner: i64,
+) -> Option<u64> {
+    assert_eq!(master.len(), summe.len(), "schritt_normiert: Laengen passen nicht");
+    assert!(lr_nenner > 0, "schritt_normiert: Lernraten-Nenner muss > 0 sein");
+    let g_max = summe.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+    if g_max == 0 {
+        return None;
+    }
+    // ⚑ **Das Ziel ist die Matrix selbst und keine feste Rasterstufe.**
+    // Der erste Entwurf normierte auf eine ganze Rasterstufe, also auf
+    // eine **absolute** Grösse. Gemessen zerstörte das ein Netz aus
+    // vierundzwanzig Ebenen bei Nenner vier vollständig, und der Grund
+    // ist einleuchtend, sobald man ihn sieht: Eine Zeile mit kleinen
+    // Gewichten bekam dieselbe absolute Bewegung wie eine mit grossen,
+    // also eine **relative** Änderung von hundert Prozent.
+    //
+    // Bezogen wird die Bewegung deshalb auf das Betragsmaximum der
+    // Matrix: `lr_nenner` sagt, um welchen **Bruchteil ihres eigenen
+    // grössten Gewichts** sich eine Matrix je Aktualisierung bewegt.
+    // Das ist scale-frei in beiden Richtungen, gegen die Skala des
+    // Gradienten und gegen die der Gewichte, und es ist dieselbe
+    // Grösse, die die Literatur zur schichtweisen Ratenanpassung als
+    // Vertrauensverhältnis führt.
+    let w_max = master.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+    if w_max == 0 {
+        // Eine Matrix aus lauter Nullen hat keine eigene Skala; sie zu
+        // bewegen hiesse, eine zu erfinden.
+        return None;
+    }
+    let ziel = (w_max as i128) << FEIN_BITS;
+    let teiler = (g_max as i128) * (lr_nenner as i128);
+    for (i, (w, f)) in master.iter_mut().zip(summe.iter()).enumerate() {
+        let index = kennung.index_versatz + i as u64;
+        let fein = ((*f as i128) * ziel / teiler) as i64;
+        let stufen = runde_stochastisch(fein, wuerfel(kennung.ebene, kennung.schritt, index));
+        *w = (*w as i64).saturating_add(stufen).clamp(Master::MIN as i64, Master::MAX as i64)
+            as Master;
+    }
+    Some(g_max)
+}
+
+#[cfg(test)]
+mod normierung {
+    use super::*;
+
+    /// ⚑ **Zwei Modelle, dieselbe Bewegung.**
+    ///
+    /// Derselbe Gradient, einmal mit dem Tausendfachen multipliziert.
+    /// Ohne Normierung bewegte der eine Lauf tausendmal so weit; mit
+    /// ihr bewegen beide **gleich weit**. Genau das ist Fund 194.
+    #[test]
+    fn die_skala_des_gradienten_faellt_heraus() {
+        let klein: Vec<i32> = (0..64).map(|i| (i as i32) - 32).collect();
+        let gross: Vec<i32> = klein.iter().map(|g| g * 1000).collect();
+        let kn = Schrittkennung { ebene: 2, schritt: 0, index_versatz: 0 };
+
+        // ⚑ **Ein Startstand, der nicht null ist.** Die Bewegung ist
+        // seit dem 2026-09-06 ein Anteil des **eigenen** Betragsmaximums
+        // der Matrix; eine Matrix aus lauter Nullen hat keines, und sie
+        // zu bewegen hiesse, eine Skala zu erfinden.
+        let start: Vec<Master> = (0..64).map(|i| (i as Master) * 1000 + 5000).collect();
+
+        let mut a = start.clone();
+        let mut sa = vec![0i64; 64];
+        sammle_roh(&mut sa, &klein);
+        schritt_normiert(&mut a, &mut sa, kn, 1 << 4);
+
+        let mut b = start.clone();
+        let mut sb = vec![0i64; 64];
+        sammle_roh(&mut sb, &gross);
+        schritt_normiert(&mut b, &mut sb, kn, 1 << 4);
+
+        assert_eq!(a, b, "die Gradientenskala faellt nicht heraus");
+        assert!(a != start, "es hat sich gar nichts bewegt");
+    }
+
+    /// ⚑ **Der Nenner sagt, was er verspricht.** Bei `lr_nenner = n`
+    /// bewegt sich das groesste Gewicht einer Matrix um ein `n`-tel
+    /// **seines eigenen Betrags**.
+    ///
+    /// ⚑ **Das ist die zweite Fassung dieses Tests, und die erste war
+    /// falsch.** Sie erwartete ein `n`-tel einer **Rasterstufe**, also
+    /// eine absolute Groesse. Gemessen zerstoerte diese Bedeutung ein
+    /// Netz aus vierundzwanzig Ebenen bei `n = 4` vollstaendig: Eine
+    /// Zeile mit kleinen Gewichten bekam dieselbe absolute Bewegung wie
+    /// eine mit grossen.
+    #[test]
+    fn der_nenner_bedeutet_ein_n_tel_des_eigenen_betrags() {
+        for n in [1i64, 2, 16, 256] {
+            let grad: Vec<i32> = vec![-1000, 500, -250, 125];
+            // Ein Betragsmaximum, das gross genug ist, dass ein
+            // Zweihundertsechsundfuenfzigstel davon noch sichtbar ist.
+            let start: Vec<Master> = vec![1 << 20, 1 << 18, -(1 << 17), 1 << 16];
+            let w_max = (1i64 << 20) as f64;
+            let mut m = start.clone();
+            let mut s = vec![0i64; grad.len()];
+            sammle_roh(&mut s, &grad);
+            schritt_normiert(
+                &mut m,
+                &mut s,
+                Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 },
+                n,
+            );
+            // Das groesste Element des Gradienten ist -1000, es sitzt
+            // auf Position 0; dort ist die Bewegung am groessten.
+            let bewegung = (m[0] - start[0]).unsigned_abs() as f64;
+            let erwartet = w_max / n as f64;
+            assert!(
+                (bewegung - erwartet).abs() <= 2.0,
+                "bei n={n} erwartet {erwartet}, gefunden {bewegung}"
+            );
+        }
+    }
+
+    /// Eine Matrix ohne Bewegung wird nicht normiert.
+    ///
+    /// ⚑ **Sonst teilte man durch null.** Und der Fall ist nicht
+    /// theoretisch: Ein Experte, der in keiner Position gewaehlt wurde,
+    /// hat genau diesen Gradienten.
+    #[test]
+    fn eine_unbewegte_matrix_wird_nicht_normiert() {
+        let mut s = vec![0i64; 8];
+        assert_eq!(normiere(&mut s), None);
+        let mut m = vec![7i32; 8];
+        let vorher = m.clone();
+        assert_eq!(
+            schritt_normiert(
+                &mut m,
+                &mut s,
+                Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 },
+                4
+            ),
+            None
+        );
+        assert_eq!(m, vorher, "eine unbewegte Matrix darf sich nicht bewegen");
+    }
+
+    /// Eine Matrix aus lauter Nullen wird nicht bewegt.
+    ///
+    /// ⚑ **Sie hat keine eigene Skala**, und eine zu erfinden hiesse,
+    /// ihr eine Bedeutung zu geben, die sie nicht hat.
+    #[test]
+    fn eine_nullmatrix_bekommt_keine_skala() {
+        let mut m = vec![0i32; 4];
+        let mut s = vec![0i64; 4];
+        sammle_roh(&mut s, &[-1000, 500, -250, 125]);
+        assert_eq!(
+            schritt_normiert(
+                &mut m,
+                &mut s,
+                Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 },
+                8
+            ),
+            None
+        );
+        assert_eq!(m, vec![0i32; 4]);
+    }
+
+    /// Die Normierung trifft ihr Ziel **genau**, nach oben wie nach
+    /// unten.
+    ///
+    /// ⚑ **`assert_eq` und nicht „im Band".** Der erste Entwurf
+    /// verschob um Zweierpotenzen und traf ein Band; der Test darauf
+    /// waere gruen gewesen und haette den Faktor zwei durchgelassen,
+    /// den der Test darueber dann fand.
+    #[test]
+    fn nach_der_normierung_liegt_das_maximum_im_band() {
+        for start in [1i64, 1 << 10, 1 << 40, 1 << 55] {
+            let mut s = vec![start, -start / 3, start / 7];
+            normiere(&mut s).expect("bewegt");
+            let groesster = s.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+            assert_eq!(
+                groesster,
+                1u64 << NORMBITS,
+                "bei Start {start} traf die Normierung ihr Ziel nicht"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod sammlung {
+    use super::*;
+
+    /// ⚑ **Der Aufbau ist so gewaehlt, dass der Wuerfel maximal
+    /// entscheidet.** Mit `g = -1` und `lr_nenner = 2` ist die Bewegung
+    /// eines Schrittes **exakt eine halbe Master-Stufe**: Der ganze
+    /// Anteil ist null, der Rest ist die Haelfte, und das Runden ist
+    /// ein fairer Muenzwurf. Ein Aufbau, bei dem der Rest klein waere,
+    /// prueft nichts.
+    const N: usize = 16;
+
+    fn leer() -> Vec<Master> {
+        vec![0; 64]
+    }
+
+    /// Ein Sammelschritt ueber `N` Gradienten bewegt **jedes** Gewicht
+    /// um genau `N/2` Stufen, ohne jede Streuung.
+    ///
+    /// ⚑ **Das ist der Kern von Punkt 4.14.** Die Summe ist
+    /// `N * stufe/2 = (N/2) * stufe`, also ein glattes Vielfaches: Es
+    /// bleibt **kein Rest**, ueber den der Wuerfel entscheiden koennte.
+    #[test]
+    fn gesammelt_bewegt_sich_jedes_gewicht_gleich_weit() {
+        let mut master = leer();
+        let grad = vec![-1i32; master.len()];
+        let mut summe = vec![0i64; master.len()];
+        for _ in 0..N {
+            sammle(&mut summe, &grad, 1, 2);
+        }
+        schritt_aus_summe(
+            &mut master,
+            &summe,
+            Schrittkennung { ebene: 3, schritt: 0, index_versatz: 0 },
+        );
+        assert!(
+            master.iter().all(|w| *w == (N / 2) as Master),
+            "gesammelt darf nicht streuen, gefunden: {:?}",
+            &master[..8]
+        );
+    }
+
+    /// **Die Gegenprobe:** Dieselben `N` Gradienten einzeln angewandt
+    /// streuen, und zwar breit.
+    ///
+    /// ⚑ **Der Erwartungswert ist derselbe**, die Streuung ist es
+    /// nicht. Genau das ist Fund 189 in seiner kleinsten Form.
+    #[test]
+    fn einzeln_angewandt_streut_dasselbe_ergebnis() {
+        let mut master = leer();
+        let grad = vec![-1i32; master.len()];
+        for s in 0..N as u64 {
+            schritt(
+                &mut master,
+                &grad,
+                Schrittkennung { ebene: 3, schritt: s, index_versatz: 0 },
+                1,
+                2,
+            );
+        }
+        let kleinster = *master.iter().min().expect("nicht leer");
+        let groesster = *master.iter().max().expect("nicht leer");
+        assert!(
+            groesster > kleinster,
+            "einzeln angewandt muesste streuen, alle stehen auf {kleinster}"
+        );
+        // Und die Streuung ist keine Kleinigkeit: ueber sechzehn Wuerfe
+        // liegen die Gewichte mehrere Stufen auseinander.
+        assert!(
+            groesster - kleinster >= 4,
+            "erwartet wurde eine breite Streuung, gefunden {kleinster} bis {groesster}"
+        );
+        // Der Mittelwert trifft trotzdem N/2: der Wuerfel ist fair.
+        let summe: i64 = master.iter().map(|w| *w as i64).sum();
+        let mittel = summe as f64 / master.len() as f64;
+        assert!(
+            (mittel - (N as f64 / 2.0)).abs() < 2.0,
+            "der Erwartungswert stimmt nicht, Mittel {mittel}"
+        );
+    }
+
+    /// Ein einzelner gesammelter Gradient ist **bitgleich** mit einem
+    /// gewoehnlichen Schritt.
+    ///
+    /// ⚑ **Sonst waere die Sammlung ein zweiter Rechenweg** und damit
+    /// eine zweite Quelle fuer Abweichungen zwischen zwei ehrlichen
+    /// Minern.
+    #[test]
+    fn eins_gesammelt_ist_ein_gewoehnlicher_schritt() {
+        let grad: Vec<i32> = (0..64).map(|i| (i as i32) * 37 - 900).collect();
+        let kn = Schrittkennung { ebene: 5, schritt: 11, index_versatz: 7 };
+
+        let mut a = leer();
+        schritt(&mut a, &grad, kn, 1, 1 << 12);
+
+        let mut b = leer();
+        let mut summe = vec![0i64; grad.len()];
+        sammle(&mut summe, &grad, 1, 1 << 12);
+        schritt_aus_summe(&mut b, &summe, kn);
+
+        assert_eq!(a, b, "Sammlung mit n=1 weicht vom gewoehnlichen Schritt ab");
     }
 }
 
@@ -1069,5 +1494,45 @@ mod duenne_aggregation_tests {
         let mut m = vec![0i32; 5];
         let d = [1i32, 1, 1, 1];
         aggregiere_duenn(&mut m, &[&[(3usize, &d[..])]]);
+    }
+}
+
+#[cfg(test)]
+mod vektorbau {
+    use super::*;
+
+    /// Erzeugt die Zahlen für den Konformitätsvektor des normierten
+    /// Schritts.
+    ///
+    /// ⚑ **Ein Test und kein Binary**, damit er mit dem Code wandert und
+    /// nicht daneben veraltet. Er läuft nur mit `--nocapture` sichtbar
+    /// und behauptet nichts über Richtigkeit: Er **liest ab**, was diese
+    /// Umsetzung tut.
+    #[test]
+    fn zahlen_fuer_den_konformitaetsvektor() {
+        let master: Vec<Master> = vec![1280, -640, 320, 16, -1280, 96, -32, 4096];
+        let grad: Vec<Grad> = vec![1500, -700, 40, 900, -3, 1000000, 7, -250000];
+        let kn = Schrittkennung { ebene: 3, schritt: 17, index_versatz: 64 };
+        let nenner = 256i64;
+
+        let mut summe = vec![0i64; grad.len()];
+        sammle_roh(&mut summe, &grad);
+        let mut m = master.clone();
+        let vorher = schritt_normiert(&mut m, &mut summe, kn, nenner).expect("bewegt");
+
+        let wuerfe: Vec<u64> = (0..master.len())
+            .map(|i| wuerfel(kn.ebene, kn.schritt, kn.index_versatz + i as u64))
+            .collect();
+        eprintln!("VEKTOR master     {master:?}");
+        eprintln!("VEKTOR grad       {grad:?}");
+        eprintln!("VEKTOR summe_roh  {:?}", {
+            let mut s = vec![0i64; grad.len()];
+            sammle_roh(&mut s, &grad);
+            s
+        });
+        eprintln!("VEKTOR wuerfe     {wuerfe:?}");
+        eprintln!("VEKTOR g_max      {vorher}");
+        eprintln!("VEKTOR master_neu {m:?}");
+        assert_ne!(m, master, "der Vektor muesste etwas bewegen");
     }
 }

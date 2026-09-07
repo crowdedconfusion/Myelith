@@ -49,15 +49,27 @@
 //! - **Die Streitanzeige bei Abweichung.** Das Bisektions-Spiel steht in
 //!   VERIFICATION; was fehlt, ist der Weg von „stimmt nicht überein" zu
 //!   einer `Challenge` im Gossip.
-//! - ⚑ **Die endgültige Saat.** Sie ist hier ein **Argument**, damit die
-//!   offene Entscheidung an der Aufrufstelle sichtbar bleibt statt in
-//!   dieser Datei zu verschwinden. Heute übergibt der Knoten den
-//!   Blockhash; **der ist mahlbar**, denn wer den Abschlussblock
-//!   erzeugt, probiert Kandidaten, bis die Ziehung seine eigenen
-//!   Segmente verschont. Ziel ist die **Aggregatsignatur des Komitees**
-//!   über den Abschlussblock: BLS ist deterministisch, also kann niemand
-//!   unter Kandidaten wählen, und kein einzelnes Mitglied kennt sie,
-//!   bevor zwei Drittel unterschrieben haben.
+//! ⚑ **Die Saat ist seit Punkt 44 nicht mehr offen, und dieser Absatz
+//! war es bis zum 2026-09-06.** Er sagte, der Knoten übergebe den
+//! Blockhash und der sei mahlbar. Das stimmt nicht mehr:
+//! `Knoten::erzeuge_block` setzt die Saatquelle aus dem eigenen
+//! **Commitzertifikat**, `Kette::saatquelle_traegt` bindet sie an den
+//! Vorgängerblock und prüft die Aggregatsignatur gegen den Stimmsatz.
+//! BLS ist deterministisch, also kann niemand unter Kandidaten wählen,
+//! und kein einzelnes Mitglied kennt die Signatur, bevor zwei Drittel
+//! unterschrieben haben.
+//!
+//! **Was bleibt, ist der benannte Rückfall:** Ohne Zertifikat gilt der
+//! Blockhash (Fund 120). Er ist mahlbar, und er greift nur in einem
+//! Netz ohne laufenden Konsens. Die Saat ist deshalb ein **Argument**
+//! dieser Funktionen und keine Konstante: Wer sie setzt, soll es an der
+//! Aufrufstelle entscheiden müssen.
+//!
+//! ⛑ **Die Lehre aus diesem Absatz gilt über ihn hinaus.** Ein
+//! Modulkopf, der eine Lücke beschreibt, veraltet nicht mit ihr; er
+//! bleibt stehen und wird geglaubt. Dieser hier hat am 2026-09-06 einen
+//! Prüfbericht in die Irre geführt, der die Saat als offene
+//! Sicherheitslücke führte, obwohl sie seit Punkt 44 geschlossen ist.
 
 use myl_types::core_types::PoIBundle;
 use myl_types::hash::Hash;

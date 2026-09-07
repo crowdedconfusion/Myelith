@@ -51,7 +51,7 @@ use crate::wire::{unpack_tokens, PodMessage, FLAG_FEEDBACK, FLAG_SAMPLE, FLAG_TO
 ///
 /// Aufgefallen beim Umbau auf Layer-Granularität, weil die
 /// vTFE-Zuschreibung bei `k = 1` plötzlich null ergab.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub enum ShardOut {
     /// Aktivierungen an den nächsten Shard weiterreichen.
     Forward(PodMessage),

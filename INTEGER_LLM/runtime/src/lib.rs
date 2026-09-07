@@ -4,6 +4,7 @@ pub mod generate;
 pub mod konformitaet;
 pub mod tokenizer;
 pub mod mitschnitt;
+pub mod messung;
 pub mod shardtraining;
 pub mod trainingsschleife;
 pub mod model;

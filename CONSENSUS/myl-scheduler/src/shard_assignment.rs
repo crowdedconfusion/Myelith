@@ -307,7 +307,6 @@ fn pod_seed(seed: &[u8; 32], pod_index: u32) -> [u8; 32] {
 
 #[cfg(test)]
 mod restetopf {
-    use super::*;
     use crate::zonenzuteilung::zuteilung_der_epoche;
     use myl_types::hash::Hash;
     use myl_types::ids::MinerId;
@@ -358,6 +357,69 @@ mod restetopf {
                 pod.mitglieder().map(|m| m.zone).collect();
             assert_eq!(zonen_im_pod.len(), 1, "ein Pod ohne Rest ist zonenrein");
         }
+    }
+
+    /// ⚑ **Was der Topf der Redundanz kostet, nachgemessen.**
+    ///
+    /// `redundancy::pod_zone` gibt die Zone eines Pods nur zurueck, wenn
+    /// **alle** Mitglieder dieselbe nennen; ein gemischter Pod ist
+    /// unbestimmt. Ein Pod aus dem Sammeltopf ist gemischt, und damit
+    /// faellt jedes Paar, an dem er beteiligt ist, aus der
+    /// zonendiversen Menge heraus.
+    ///
+    /// **Der Test haelt das fest, statt es zu behaupten**, und er ist
+    /// zugleich die Gegenprobe zur Zeile darueber: Ohne Rest bleiben die
+    /// Pods zonenrein, mit Rest nicht.
+    #[test]
+    fn ein_pod_aus_dem_topf_ist_zonenunbestimmt() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let z = zuteilung_der_epoche(&register(33, &zonen), 5, &Hash([9u8; 32]), 4);
+        let gemischt = z
+            .pods
+            .iter()
+            .filter(|pod| {
+                pod.mitglieder().map(|m| m.zone).collect::<std::collections::BTreeSet<_>>().len() > 1
+            })
+            .count();
+        assert_eq!(gemischt, 2, "die beiden Topf-Pods sind gemischt, die drei zonenreinen nicht");
+
+        // Und die Folge daraus, an der Redundanzzuteilung selbst.
+        let zut = crate::redundancy::assign_redundant_pods(4, &z.pods, &[7u8; 32])
+            .expect("fuenf Pods reichen fuer Paare");
+        assert!(
+            zut.zonendivers,
+            "die drei zonenreinen Pods tragen die Diversitaet allein"
+        );
+    }
+
+    /// ⚑ **Und der Fall, in dem es doch beisst.**
+    ///
+    /// Zwoelf Miner auf drei Zonen, Podgroesse sechs: Keine Zone fuellt
+    /// allein einen Pod, **alle** Pods kommen aus dem Topf, alle sind
+    /// gemischt, und damit gibt es kein einziges zonendiverses Paar.
+    ///
+    /// ⚑ **Das ist kein Fehler der Zuteilung, sondern die Lage.** Vier
+    /// Miner je Zone tragen keine zonengetrennte Redundanz, egal wie
+    /// man schneidet. Der Unterschied ist, dass es ohne Topf **gar
+    /// keine Pods** gaebe. `zonendivers = false` ist deshalb die
+    /// richtige Antwort: rechnen ja, unabhaengig nein, und es steht im
+    /// Protokoll statt in einer Annahme.
+    #[test]
+    fn kommen_alle_pods_aus_dem_topf_faellt_die_zonendiversitaet() {
+        let zonen = [GeoRegion::Europe, GeoRegion::NorthAmerica, GeoRegion::Asia];
+        let z = zuteilung_der_epoche(&register(12, &zonen), 5, &Hash([9u8; 32]), 4);
+        assert_eq!(z.pods.len(), 2, "zwoelf Miner ergeben zwei Pods, beide aus dem Topf");
+        for pod in &z.pods {
+            let n = pod.mitglieder().map(|m| m.zone).collect::<std::collections::BTreeSet<_>>().len();
+            assert!(n > 1, "ein Topf-Pod ist gemischt");
+        }
+        let zut = crate::redundancy::assign_redundant_pods(2, &z.pods, &[7u8; 32])
+            .expect("zwei Pods reichen fuer ein Paar");
+        assert!(
+            !zut.zonendivers,
+            "es kann kein zonendiverses Paar geben, und die Zuteilung sagt es"
+        );
+        assert_eq!(zut.zuweisungen.len(), 2, "gerechnet wird trotzdem");
     }
 
     /// Was auch gepoolt keinen Pod fuellt, steht weiter im Protokoll.

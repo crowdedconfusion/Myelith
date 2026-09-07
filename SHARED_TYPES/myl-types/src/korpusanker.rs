@@ -46,6 +46,14 @@ pub struct Korpusanker {
     /// Segment 11,7 Prozent, 256 Segmente 0,42 Prozent); wer sie waehlen
     /// duerfte, waehlte seinen eigenen Aufwand.
     pub buendel: u64,
+    /// Wie viele Token ein Segment traegt.
+    ///
+    /// ⚑ **Teil des Ankers, weil die Verguetung daran haengt.** Die
+    /// Arbeit eines Trainingssegments ist Schrittzahl mal Tokenzahl mal
+    /// Modellgroesse. Duerfte der Pod die Tokenzahl nennen, nennte er
+    /// seine eigene Verguetung; stuende sie nirgends, koennte die Kette
+    /// gar nicht verguetein.
+    pub tokens_je_segment: u32,
 }
 
 impl Korpusanker {
@@ -55,7 +63,12 @@ impl Korpusanker {
     /// sondern eine Zahl. Die Zuweisung koennte nichts zuweisen, und ein
     /// Trainingspod bekaeme eine leere Aufgabe.
     pub fn traegt_ein_buendel(&self) -> bool {
-        self.buendel > 0 && self.segmente >= self.buendel
+        self.buendel > 0 && self.segmente >= self.buendel && self.tokens_je_segment > 0
+    }
+
+    /// Wie viele Token ein zugewiesenes Buendel traegt.
+    pub fn tokens_je_buendel(&self) -> u64 {
+        self.buendel.saturating_mul(u64::from(self.tokens_je_segment))
     }
 
     /// Die **Charge** eines zugewiesenen Buendels: der Wert, den ein
@@ -96,6 +109,7 @@ mod tests {
             wurzel: Hash([1u8; 32]),
             segmente,
             buendel,
+            tokens_je_segment: 2048,
         }
     }
 
@@ -105,6 +119,10 @@ mod tests {
         assert!(anker(16, 16).traegt_ein_buendel());
         assert!(!anker(15, 16).traegt_ein_buendel(), "kein volles Buendel");
         assert!(!anker(256, 0).traegt_ein_buendel(), "Buendelgroesse null");
+        let mut ohne_token = anker(256, 16);
+        ohne_token.tokens_je_segment = 0;
+        assert!(!ohne_token.traegt_ein_buendel(), "ein Segment ohne Token traegt nichts");
+        assert_eq!(anker(256, 16).tokens_je_buendel(), 16 * 2048);
         assert!(!anker(0, 16).traegt_ein_buendel(), "leerer Korpus");
     }
 

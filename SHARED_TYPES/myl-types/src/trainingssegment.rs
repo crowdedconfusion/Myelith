@@ -78,6 +78,25 @@ pub struct Trainingssegment {
     pub startschritt: u64,
     /// Wie viele Schritte.
     pub schrittzahl: u32,
+    /// Wie viele Folgen in **jeden** Schritt eingegangen sind.
+    ///
+    /// # ⚑ Warum die Chargengrösse committet werden muss
+    ///
+    /// Mit Gradientensammlung summiert ein Schritt die Bewegung aller
+    /// Folgen und rundet **einmal**; die Bewegung je Schritt wächst damit
+    /// **linear mit dieser Zahl**. Eine Lernrate ohne sie ist keine
+    /// Angabe über die Schrittweite.
+    ///
+    /// ⚑ **Gemessen am 2026-09-06:** Dieselbe Ebene, dieselbe Rate
+    /// 2⁻¹⁶, nur acht statt zwei Folgen je Durchgang, und die
+    /// Perplexität stieg von 41,6 auf 24 084. Ohne dieses Feld könnte
+    /// ein Pod tausend Folgen mit einer Rate fahren, die für sechzehn
+    /// gedacht war, und jede Prüfung bestehen.
+    ///
+    /// **Zusammen mit `schrittzahl` ergibt sie das Budget des
+    /// Segments**, gegen das [`crate::lernrate::nenner_traegt`] die Rate
+    /// hält.
+    pub folgen: u32,
     /// Zähler der Lernrate.
     pub lr_zaehler: i64,
     /// Nenner der Lernrate.
@@ -125,6 +144,33 @@ pub struct Trainingssegment {
     /// rechnen und ihr Ergebnis vergleichen. Das ist die Frage des
     /// Miettags, nicht die der Aggregation.
     pub delta_commitment: Hash,
+    /// Wie viele Master sich durch dieses Segment **bewegt** haben.
+    ///
+    /// # ⚑ Warum das Ergebnis committet wird und nicht nur die Absicht
+    ///
+    /// Bis zum 2026-09-06 stand hier nichts dergleichen, und das war
+    /// eine Lücke mit Preis (Fund 191). Ein Master trägt zwanzig
+    /// Bruchstellen unterhalb der Rasterstufe; bei einer Zeile mit
+    /// vollem Betrag verbraucht die Rückrechnung nach acht Bit genau
+    /// diese zwanzig. Eine Master-Stufe ist dort **2⁻²⁰ einer
+    /// Rasterstufe**. Liegt die Bewegung eines Segments darunter, ändert
+    /// sich **kein einziges ausgeliefertes Gewicht**.
+    ///
+    /// ⚑ **Gemessen ist das kein Randfall.** Qwen3-4B bewegte bei der
+    /// Referenzrate über vier Durchgänge null Gewichte, während
+    /// Qwen2.5-7B bei gleicher Rate und gleicher Schrittzahl sich
+    /// bewegte. Ob ein Segment wirkt, hängt am Modell.
+    ///
+    /// ⚑ **Und der Redundanzvergleich konnte es nicht sehen.** Zwei
+    /// ehrliche Pods, die beide auf null kommen, nennen dasselbe
+    /// `delta_commitment`; das Segment galt als bestätigt, und beide
+    /// wurden vergütet. Die Prüfung verlangte eine Schrittzahl und eine
+    /// Lernrate über null, also die **Absicht** zu trainieren, und nicht
+    /// das **Ergebnis**.
+    ///
+    /// **Die Zahl ist nachrechenbar**, also keine Behauptung: Wer das
+    /// Segment nachrechnet, zählt dieselben bewegten Master.
+    pub bewegte_gewichte: u64,
     /// Die Miner, die gerechnet haben, in Pipeline-Reihenfolge.
     pub pod_pfad: Vec<MinerId>,
     /// Eine BLS-Signatur je Übergang.
@@ -141,6 +187,15 @@ pub struct Trainingssegment {
 pub enum Segmentfehler {
     /// Ein Segment ohne Schritte hat nichts gerechnet.
     OhneSchritte,
+    /// Ein Schritt ohne Folgen hat keinen Gradienten.
+    OhneFolgen,
+    /// Gerechnet, aber kein Gewicht bewegt (Fund 191).
+    ///
+    /// ⚑ **Der Unterschied zu `OhneSchritte` ist Absicht gegen
+    /// Ergebnis.** Dort fehlt die Arbeit, hier fehlt ihre Wirkung: Die
+    /// Bewegung lag unter einer Master-Stufe, und das ausgelieferte
+    /// Gewicht ist dasselbe geblieben.
+    OhneWirkung,
     /// Ein Nenner von null ist keine Lernrate.
     LernrateOhneNenner,
     /// Ein Zähler von null bewegt kein Gewicht.
@@ -162,6 +217,10 @@ impl std::fmt::Display for Segmentfehler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OhneSchritte => f.write_str("schrittzahl ist null"),
+            Self::OhneFolgen => f.write_str("folgen ist null: ein Schritt ohne Gradienten"),
+            Self::OhneWirkung => f.write_str(
+                "kein Gewicht bewegt: die Bewegung lag unter einer Master-Stufe",
+            ),
             Self::LernrateOhneNenner => f.write_str("lr_nenner ist null"),
             Self::LernrateOhneZaehler => f.write_str("lr_zaehler ist null"),
             Self::LernrateNegativ => {
@@ -179,6 +238,15 @@ impl std::fmt::Display for Segmentfehler {
 impl std::error::Error for Segmentfehler {}
 
 impl Trainingssegment {
+    /// Wie viele Gradienten insgesamt in die Gewichte eingehen.
+    ///
+    /// ⚑ **Das Produkt und nicht die Schrittzahl.** Mit
+    /// Gradientensammlung gehen je Schritt so viele Gradienten ein, wie
+    /// Folgen gesammelt wurden.
+    pub fn gradienten(&self) -> u32 {
+        self.schrittzahl.saturating_mul(self.folgen)
+    }
+
     /// Prüft, was sich ohne Nachrechnen prüfen lässt.
     ///
     /// ⚑ **Das ist kein Verifikationsersatz.** Ob das Δm stimmt, sagt
@@ -186,6 +254,18 @@ impl Trainingssegment {
     /// erkennbar unmöglich ist, damit der teure Weg nicht für Unsinn
     /// bezahlt wird.
     pub fn pruefen(&self) -> Result<(), Segmentfehler> {
+        // ⚑ **Ein Segment, das nichts bewegt hat, ist keine Arbeit,
+        // für die das Netz zahlt** (Fund 191). Es ist auch kein Betrug:
+        // Der Pod hat ehrlich gerechnet, und die Rate war für dieses
+        // Modell zu klein. Der Pod sieht es an seinem eigenen Ergebnis,
+        // bevor er einreicht, und die Antwort ist eine grössere Rate
+        // oder eine Gradientensammlung, nicht eine Einreichung.
+        if self.bewegte_gewichte == 0 {
+            return Err(Segmentfehler::OhneWirkung);
+        }
+        if self.folgen == 0 {
+            return Err(Segmentfehler::OhneFolgen);
+        }
         if self.schrittzahl == 0 {
             return Err(Segmentfehler::OhneSchritte);
         }
@@ -210,6 +290,33 @@ impl Trainingssegment {
         Ok(())
     }
 
+    /// Das Commitment eines Segments aus der **Spur seiner Shards**.
+    ///
+    /// # ⚑ Warum es diese Funktion gibt und nicht zwei Rechnungen
+    ///
+    /// Der Pod bildet aus den Δ-Abdrücken seiner Shards **einen** Wert
+    /// und schreibt ihn ins Segment. Der Prüfer rechnet die Shards nach
+    /// und muss zum selben Wert kommen. Rechneten beide auf eigene Faust,
+    /// wäre eine Abweichung nicht zu unterscheiden von einem
+    /// Rechenfehler im Pod: dieselbe Lehre wie bei Fund 34.
+    ///
+    /// ⚑ **Die Reihenfolge der Shards ist Teil der Aussage.** Dieselben
+    /// Abdrücke in anderer Reihenfolge beschrieben eine andere
+    /// Aufteilung derselben Arbeit, also eine andere Arbeit.
+    ///
+    /// ⚑ **Und die Zahl der Shards steht mit darin.** Ohne sie liesse
+    /// sich ein Segment aus zwei Shards nicht von einem aus vier
+    /// unterscheiden, dessen letzte zwei Abdrücke leer sind.
+    pub fn commitment_aus_spur(spur: &[Hash]) -> Hash {
+        let mut roh = Vec::with_capacity(8 + spur.len() * 32 + 24);
+        roh.extend_from_slice(b"myl-trainingsspur-v1");
+        roh.extend_from_slice(&(spur.len() as u64).to_le_bytes());
+        for h in spur {
+            roh.extend_from_slice(h.as_bytes());
+        }
+        Hash::sha256(&roh)
+    }
+
     /// Die Botschaft, die ein Pod unterschreibt.
     ///
     /// # ⚑ Was darin steht, und warum jedes Feld
@@ -226,15 +333,27 @@ impl Trainingssegment {
     /// bezeugtes Segment einem anderen Pod unterschieben.
     pub fn botschaft(&self) -> [u8; 32] {
         let mut roh: Vec<u8> = Vec::new();
-        roh.extend_from_slice(b"myl-trainingssegment-v1");
+        // ⚑ **v3 seit dem Nachmittag des 2026-09-06.** `folgen` ist
+        // dazugekommen, aus demselben Grund wie `bewegte_gewichte`:
+        // Wer ein Feld nachtraegen koennte, ohne die Unterschrift zu
+        // brechen, koennte es setzen.
+        //
+        // ⚑ **v2 seit dem 2026-09-06.** Mit `bewegte_gewichte` ist ein
+        // Feld dazugekommen; eine Unterschrift über die alte Botschaft
+        // darf über der neuen **nicht** gelten, sonst liesse sich das
+        // neue Feld nachträglich setzen, ohne die Unterschrift zu
+        // brechen.
+        roh.extend_from_slice(b"myl-trainingssegment-v3");
         roh.extend_from_slice(self.id.as_bytes());
         roh.extend_from_slice(self.modell_version.as_bytes());
         roh.extend_from_slice(self.charge.as_bytes());
         roh.extend_from_slice(&self.startschritt.to_le_bytes());
         roh.extend_from_slice(&self.schrittzahl.to_le_bytes());
+        roh.extend_from_slice(&self.folgen.to_le_bytes());
         roh.extend_from_slice(&self.lr_zaehler.to_le_bytes());
         roh.extend_from_slice(&self.lr_nenner.to_le_bytes());
         roh.extend_from_slice(self.delta_commitment.as_bytes());
+        roh.extend_from_slice(&self.bewegte_gewichte.to_le_bytes());
         // ⚑ **Die Länge vor der Liste.** Ohne sie liessen sich zwei
         // verschiedene Pfade zu derselben Bytefolge zusammensetzen;
         // dieselbe Überlegung wie beim Trainingsabdruck.
@@ -248,6 +367,33 @@ impl Trainingssegment {
 
 #[cfg(test)]
 mod tests {
+    /// ⚑ **Reihenfolge und Zahl der Shards gehen ein.**
+    #[test]
+    fn das_spurcommitment_haengt_an_reihenfolge_und_zahl() {
+        let a = Hash([1u8; 32]);
+        let b = Hash([2u8; 32]);
+        assert_eq!(
+            Trainingssegment::commitment_aus_spur(&[a, b]),
+            Trainingssegment::commitment_aus_spur(&[a, b]),
+            "nicht deterministisch"
+        );
+        assert_ne!(
+            Trainingssegment::commitment_aus_spur(&[a, b]),
+            Trainingssegment::commitment_aus_spur(&[b, a]),
+            "die Reihenfolge wirkt nicht"
+        );
+        assert_ne!(
+            Trainingssegment::commitment_aus_spur(&[a, b]),
+            Trainingssegment::commitment_aus_spur(&[a, b, Hash([0u8; 32])]),
+            "die Zahl der Shards wirkt nicht"
+        );
+        assert_ne!(
+            Trainingssegment::commitment_aus_spur(&[]),
+            Hash([0u8; 32]),
+            "die leere Spur ergibt nicht die Null"
+        );
+    }
+
     use super::*;
 
     fn segment() -> Trainingssegment {
@@ -257,9 +403,11 @@ mod tests {
             charge: Hash::from_bytes([2u8; 32]),
             startschritt: 40,
             schrittzahl: 8,
+            folgen: 1,
             lr_zaehler: 1,
             lr_nenner: 4096,
             delta_commitment: Hash::from_bytes([3u8; 32]),
+            bewegte_gewichte: 1,
             pod_pfad: vec![MinerId::new([9u8; 32]), MinerId::new([10u8; 32])],
             signaturen: vec![BlsSignature([0u8; 96]), BlsSignature([1u8; 96])],
         }

@@ -43,6 +43,7 @@ pub mod netzreserve;
 pub mod entsiegelung;
 pub mod gegenstelle;
 pub mod ortsdienst;
+pub mod shardweg;
 pub mod trainingswerk;
 pub mod pipelinewerk;
 pub mod standby;

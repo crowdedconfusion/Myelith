@@ -65,6 +65,7 @@
 //! weniger als ein Millionstel Token je Shard. Der Rest verfällt und wird
 //! nicht verteilt.
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use crate::VTFE_UNITS_PER_TFE;
 
 /// Die Maße eines Modells, soweit sie die Rechenarbeit bestimmen.
@@ -73,7 +74,7 @@ use crate::VTFE_UNITS_PER_TFE;
 /// `theta_v_hash` gebunden. Die Struktur trägt bewusst keine Werte, die
 /// eine einzelne Anfrage betreffen (Kontextlänge, Batchgröße): Die
 /// Gutschrift soll ohne Anfragezustand nachrechenbar sein.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ModellProfil {
     pub hidden_size: u64,
     pub intermediate_size: u64,
@@ -176,7 +177,12 @@ impl ModellProfil {
 ///
 /// `layer_start` einschließlich, `layer_end` ausschließlich, wie in
 /// `myl_pod::shard::ShardNode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// ⚑ **Borsh seit dem 2026-09-06**, weil der Zuschnitt über den Draht
+/// muss: Ein Shard prueft die beanspruchten vTFE gegen die Zuschnitte
+/// **aller** Mitglieder nach, bevor er unterschreibt (Fund 52). Solange
+/// alle Shards in einem Prozess lagen, lagen sie ohnehin vor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ShardZuschnitt {
     pub layer_start: u64,
     pub layer_end: u64,
@@ -260,6 +266,109 @@ pub fn vtfe_gutschrift(
         .saturating_mul(tokens as u128)
         / gesamt;
     Ok(einheiten.min(u64::MAX as u128) as u64)
+}
+
+/// Wie viel teurer ein Trainingsschritt ist als ein Vorwärtspass.
+///
+/// # ⚑ Die Drei ist gerechnet, nicht geschätzt
+///
+/// Für jede Gewichtsmatrix `Y = X·W` fallen an:
+///
+/// | | Rechnung | Matrixmultiplikationen |
+/// |---|---|---|
+/// | vorwärts | `Y = X·W` | 1 |
+/// | rückwärts, Eingang | `dL/dX = dL/dY · Wᵀ` | 1 |
+/// | rückwärts, Gewicht | `dL/dW = Xᵀ · dL/dY` | 1 |
+///
+/// Alle drei haben dieselbe MAC-Zahl. Ein Trainingsschritt kostet damit
+/// **dreimal** den Vorwärtspass, und das ist die Standardzählung für
+/// Rückwärtsausbreitung, keine Hausnummer.
+///
+/// # ⚑ Was die Drei nicht abdeckt, und in welche Richtung sie irrt
+///
+/// - **Der LM-Kopf wird nicht trainiert** (Einbettung und Kopf bleiben
+///   eingefroren). Sein Anteil steckt aber in `macs_vorwaerts`, also
+///   zählt diese Regel ihn dreifach, obwohl er einfach anfällt.
+/// - **Der Router eines Expertengemischs** kommt hinzu und ist hier
+///   nicht enthalten; er ist gegenüber den Experten klein.
+///
+/// ⚑ **Der erste Punkt wiegt schwerer und geht zugunsten des Miners.**
+/// Die Regel ist damit eine **Obergrenze** der geleisteten Arbeit. Das
+/// steht hier, damit niemand sie später für eine Messung hält.
+pub const TRAININGSFAKTOR: u64 = 3;
+
+/// Die Gutschrift eines **Trainingssegments** für einen Shard.
+///
+/// Dieselbe Regel wie [`vtfe_gutschrift`], mal Schrittzahl mal
+/// [`TRAININGSFAKTOR`].
+///
+/// # ⚑ Gleiche Rate wie Inferenz, und das ist eine Entscheidung
+///
+/// Kap. 5.6 setzt eine Obergrenze von 70 Prozent der Inferenzvergütung.
+/// Ihre Begründung steht in Anhang B.7.3: „Miner wählen zwischen beiden
+/// Arbeitsklassen nach der Vergütung je Rechenstunde." **Seit die
+/// Zuteilung erzwungen ist, wählt niemand mehr**, und derselbe Anhang
+/// sagt für diesen Fall: „Bei Gleichstand entscheidet allein die
+/// Zuteilung."
+///
+/// ⚑ **Gleichstand ist sogar besser als ein Deckel.** Läge die
+/// Trainingsvergütung darunter, hätte ein zugeteilter Trainingspod
+/// einen Anreiz, absichtlich zu scheitern und auf eine Inferenzrunde zu
+/// hoffen. Bei Gleichstand gibt es diesen Anreiz nicht.
+///
+/// ⚑ **Die Finanzierung bleibt davon unberührt.** Kap. 5.6 zahlt
+/// Training aus der Treasury und nicht aus Zusatzprägung, weil das die
+/// Netto-Inflation beinahe verdoppelte. Gleiche **Rate** heisst nicht
+/// gleiche **Quelle**, und die Treasury hat 3 Prozent der Prägung gegen
+/// 78 Prozent der Shard-Miner. Was daraus folgt, steht in
+/// [`trainingsdeckung_bps`].
+pub fn vtfe_training_gutschrift(
+    profil: &ModellProfil,
+    zuschnitt: &ShardZuschnitt,
+    tokens: u64,
+    schritte: u64,
+) -> Result<u64, VtfeError> {
+    let je_schritt = vtfe_gutschrift(profil, zuschnitt, tokens)?;
+    Ok(je_schritt
+        .saturating_mul(schritte)
+        .saturating_mul(TRAININGSFAKTOR))
+}
+
+/// Welcher Anteil eines Trainingsanspruchs aus der Treasury gedeckt ist,
+/// in Basispunkten.
+///
+/// # ⚑ Die Zahl, die zwei Entscheidungen gegeneinander stellt
+///
+/// Die Treasury bekommt 3 Prozent der Prägung, die Shard-Miner 78. Bei
+/// **gleicher Rate** deckt die Treasury damit einen Trainingsanteil von
+/// höchstens `300/7800`, also **rund 3,85 Prozent des Inferenzvolumens**.
+/// Anhang B.7.2 sagt dasselbe von der anderen Seite: „die Treasury deckt
+/// Trainingsanteile bis etwa drei Prozent der Prägung vollständig."
+///
+/// ⚑ **Damit kollidiert sie mit dem Trainingsanteil aus Kap. 7.1**, wenn
+/// dieser hoch steht. Bei einem Freianteil von 8000 Basispunkten
+/// trainieren im Leerlauf 82 Prozent der Pods; das ist ein Vielfaches
+/// dessen, was die Treasury trägt.
+///
+/// ⚑ **Und die Kollision ist strukturell, nicht behebbar durch eine
+/// Zahl.** Training ist genau dann am erwünschtesten, wenn Inferenz
+/// leerläuft, und **beide** Geldquellen sind genau dann am kleinsten:
+/// Die Prägung folgt dem Burn, der Burn folgt der Nachfrage, und der
+/// Gebührenaufschlag aus Kap. 5.6 folgt ihr ebenfalls.
+///
+/// **Die ehrliche Folge ist keine Kürzung der Rate, sondern eine
+/// Aufteilung dessen, was da ist:** Bei viel Training fällt die
+/// Vergütung je Einheit, weil die Treasury nicht mehr hergibt. Ein
+/// leerlaufender Miner, der wenig verdient, steht immer noch besser da
+/// als einer, der nichts tut. **Sichtbar muss es sein**, und dafür ist
+/// diese Funktion da.
+pub fn trainingsdeckung_bps(treasury: u64, anspruch: u64) -> u64 {
+    if anspruch == 0 {
+        return crate::distribute::SHARES_TOTAL_BPS;
+    }
+    let gedeckt = (treasury as u128 * crate::distribute::SHARES_TOTAL_BPS as u128)
+        / anspruch as u128;
+    (gedeckt.min(crate::distribute::SHARES_TOTAL_BPS as u128)) as u64
 }
 
 /// Die volle Gutschrift für `tokens` Token, also die Summe, die ein
@@ -572,6 +681,65 @@ mod moe_tests {
 
 #[cfg(test)]
 mod tests {
+    /// ⚑ **Ein Trainingsschritt kostet dreimal den Vorwärtspass.**
+    #[test]
+    fn ein_trainingsschritt_kostet_dreimal_vorwaerts() {
+        let z = ShardZuschnitt {
+            layer_start: 0,
+            layer_end: PROBE_MODELL.num_layers,
+            hat_embedding: true,
+            hat_lm_kopf: true,
+        };
+        let vorwaerts = vtfe_gutschrift(&PROBE_MODELL, &z, 8).expect("Gutschrift");
+        let training =
+            vtfe_training_gutschrift(&PROBE_MODELL, &z, 8, 1).expect("Trainingsgutschrift");
+        assert_eq!(training, vorwaerts * 3);
+        let zehn = vtfe_training_gutschrift(&PROBE_MODELL, &z, 8, 10).expect("zehn Schritte");
+        assert_eq!(zehn, vorwaerts * 30, "die Schrittzahl geht linear ein");
+    }
+
+    /// Ein Zuschnitt ausserhalb des Modells wird auch hier abgewiesen.
+    #[test]
+    fn ein_falscher_zuschnitt_gibt_auch_beim_training_keine_gutschrift() {
+        let z = ShardZuschnitt {
+            layer_start: 0,
+            layer_end: PROBE_MODELL.num_layers + 1,
+            hat_embedding: false,
+            hat_lm_kopf: false,
+        };
+        assert!(vtfe_training_gutschrift(&PROBE_MODELL, &z, 8, 1).is_err());
+    }
+
+    /// ⚑ **Die Zahl, die zwei Entscheidungen gegeneinander stellt.**
+    ///
+    /// Bei gleicher Rate deckt die Treasury (3 Prozent der Prägung)
+    /// einen Trainingsanteil von rund 3,85 Prozent des Inferenzvolumens.
+    #[test]
+    fn die_treasury_deckt_knapp_vier_prozent_des_inferenzvolumens() {
+        use crate::distribute::{distribute_mint, SHARES_TOTAL_BPS};
+        let m = 1_000_000_000u64;
+        let d = distribute_mint(m);
+        // Ein Trainingsanspruch in Höhe des Inferenzvolumens.
+        let voll = trainingsdeckung_bps(d.treasury, d.shard_miners);
+        assert!(
+            (380..=390).contains(&voll),
+            "die Deckung liegt bei {voll} Basispunkten statt bei rund 385"
+        );
+        // ⚑ **Voll gedeckt ist genau, was die Treasury hergibt**, also
+        // 3,85 Prozent des Inferenzvolumens. Ein Anspruch von vier
+        // Prozent ist es schon nicht mehr, und diese Kante gehoert in
+        // den Test: Sie ist der ganze Punkt.
+        assert_eq!(trainingsdeckung_bps(d.treasury, d.treasury), SHARES_TOTAL_BPS);
+        let knapp_darueber = trainingsdeckung_bps(d.treasury, d.shard_miners / 25);
+        assert!(
+            knapp_darueber < SHARES_TOTAL_BPS,
+            "vier Prozent des Inferenzvolumens sind nicht mehr voll gedeckt"
+        );
+        assert!((9_500..10_000).contains(&knapp_darueber), "{knapp_darueber}");
+        // Und ohne Anspruch ist alles gedeckt.
+        assert_eq!(trainingsdeckung_bps(0, 0), SHARES_TOTAL_BPS);
+    }
+
     use super::*;
 
     fn qwen05b() -> ModellProfil {

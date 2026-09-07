@@ -269,7 +269,7 @@ impl Trainingsergebnis {
 }
 
 /// Hebt ein int8-Gewicht mit Zeilenversatz auf den Master.
-fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
+pub(crate) fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
     let in_features = t.shape[1];
     t.data
         .iter()
@@ -284,6 +284,58 @@ fn master_aus_gewicht(t: &QTensor) -> Vec<Master> {
 ///
 /// Gibt die Logits mit heraus, damit der Aufrufer daraus eine Diagnose
 /// rechnen kann, ohne den Weg ein zweites Mal zu gehen.
+/// Der Verlustgradient an **jeder** Position, gegen das jeweils nächste
+/// Wort.
+///
+/// # ⚑ Teacher Forcing, und warum es mehr ist als eine Bequemlichkeit
+///
+/// [`gradient_vom_ziel`] bedient **eine** Position: Aus einer Folge der
+/// Länge `L` lernt ein Schritt genau ein Wort. Der Vorwärtspass rechnet
+/// aber alle `L` Positionen ohnehin, und an jeder steht ein Ziel fest,
+/// nämlich das nächste Wort der Folge.
+///
+/// ⚑ **Damit lernt derselbe Vorwärtspass `L−1` Mal so viel.** Das ist
+/// keine Feinheit: Ein Trainingssegment kostet Rechenzeit für den
+/// Vorwärtspass, und wer davon nur eine Position auswertet, bezahlt das
+/// Ganze und nimmt einen Bruchteil mit.
+///
+/// ⚑ **Und ein Qualitätsmass wird erst dadurch möglich.** Perplexität
+/// ist der Verlust über **alle** Positionen; ein Training, das nur die
+/// letzte kennt, lässt sich daran nicht messen.
+///
+/// **Returns:** je Position der Gradient auf dem Residualstrom, und je
+/// Position die Logits, aus denen ein Aufrufer einen Verlust messen kann.
+///
+/// ⚑ **Die letzte Position hat kein Ziel** und bekommt einen
+/// Nullgradienten: Was nach ihr kommt, steht nicht in der Folge.
+///
+/// ⚑ **Der Verlust wird hier NICHT gerechnet.** Er wäre eine
+/// Gleitkommazahl, und diese Datei liegt im Heisspfad des
+/// Gleitkomma-Audits. Wer ihn braucht, nimmt
+/// [`crate::messung::kreuzentropie_aus_logits`]; ein erster Entwurf am
+/// 2026-09-06 rechnete ihn hier, und das Audit hat ihn zurückgewiesen.
+pub fn gradienten_je_position(
+    m: &IntegerModel,
+    y: &[Vec<i16>],
+    v: &Trainingsvorgaben,
+) -> (Vec<Vec<i32>>, Vec<Vec<i32>>) {
+    let mut aus: Vec<Vec<i32>> = Vec::with_capacity(y.len());
+    let mut alle_logits: Vec<Vec<i32>> = Vec::with_capacity(y.len());
+    for (i, zeile) in y.iter().enumerate() {
+        // Das Ziel der Position `i` ist das Wort an `i+1`.
+        let Some(ziel) = v.folge.get(i + 1).copied() else {
+            aus.push(vec![0i32; m.hidden_size]);
+            alle_logits.push(Vec::new());
+            continue;
+        };
+        let vorgabe = Trainingsvorgaben { ziel, ..v.clone() };
+        let (logits, g) = gradient_vom_ziel(m, zeile, &vorgabe);
+        alle_logits.push(logits);
+        aus.push(g);
+    }
+    (aus, alle_logits)
+}
+
 pub fn gradient_vom_ziel(
     m: &IntegerModel,
     y: &[i16],
@@ -451,7 +503,25 @@ pub(crate) fn vorgaben_der_ebene<'a>(
         },
         residual_in_frac: &sc.residual_in_frac,
         residual_mid_frac: &sc.residual_mid_frac,
-        aus_frac: &m.final_residual_frac,
+        // ⚑ **Die Ausgangsskala ist die EINGANGSSKALA DER NÄCHSTEN
+        // EBENE**, nicht die des Modellausgangs (Fund 188, 2026-09-06).
+        //
+        // Hier stand `&m.final_residual_frac` für **jede** Ebene. Das
+        // war richtig, solange nur die **letzte** trainiert wurde, denn
+        // dort fallen beide zusammen. Sobald Ebenen verkettet werden,
+        // schreibt jede auf eine fremde Skala, und der Residualstrom ist
+        // ab der ersten unbrauchbar.
+        //
+        // ⚑ **Gemessen:** Eine Perplexität von 30 474 statt 15 auf
+        // WikiText-2. `model.rs` macht es seit jeher richtig
+        // (`layers[i+1].scales.residual_in_frac`, sonst
+        // `final_residual_frac`); der Trainingspfad hatte eine zweite,
+        // falsche Fassung derselben Regel.
+        aus_frac: if e + 1 < m.num_layers {
+            &m.layers[e + 1].scales.residual_in_frac
+        } else {
+            &m.final_residual_frac
+        },
         rsqrt_input_shift: m.config.rsqrt_input_shift,
         rsqrt_output_frac: m.config.rsqrt_output_frac,
         inv_n_q20: m.inv_n_q20,

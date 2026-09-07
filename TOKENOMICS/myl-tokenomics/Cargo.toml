@@ -1,6 +1,6 @@
 [package]
 name = "myl-tokenomics"
-version = "0.20.0"
+version = "0.22.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Tokenomik-Berechnungen für Myelith (Whitepaper Kap. 5): Prägefunktion, Verteilung, Credit-Preisbildung, Staking/Slashing-Matrix. Durchgehend Fixed-Point-Ganzzahl-Arithmetik (Brüche als Zähler/Nenner-Paare) — jede Formel ist ein Ledger-Zustandsübergang und muss auf jedem Node bitgleich nachrechenbar sein."
@@ -9,6 +9,11 @@ publish = false
 
 [dependencies]
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
+# ⚑ **Fuer `ShardZuschnitt` ueber den Draht** (2026-09-06): Ein Shard
+# prueft die beanspruchten vTFE gegen die Zuschnitte aller Mitglieder
+# nach, bevor er unterschreibt. Solange alle Shards in einem Prozess
+# lagen, lagen die Zuschnitte ohnehin vor.
+borsh = { version = "1.6", features = ["derive"] }
 myl-ledger = { path = "../../CONSENSUS/myl-ledger" }
 
 [lib]

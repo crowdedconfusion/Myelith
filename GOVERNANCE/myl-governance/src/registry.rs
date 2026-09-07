@@ -270,6 +270,20 @@ pub enum Parameter {
     /// **Wie viel Luft nötig ist, ist nicht gemessen** und hängt an der
     /// Schwankung der Nachfrage über eine Epoche. Deshalb ein Parameter.
     TrainingsFreianteil,
+    /// Der Höchstsatz der **Trainingsabgabe** bei voller Auslastung, in
+    /// Basispunkten der Prägung.
+    ///
+    /// ⚑ **Gerechnet und nicht gesetzt.** Sie folgt aus einer Bedingung:
+    /// Am Auslastungsziel soll die Abgabe das Training genau tragen.
+    /// Mit Shard-Anteil 78 Prozent, Trainingsanteil `0,02 + 0,8·(1−u)`
+    /// und `u* = 0,7` ergibt das 3018 Basispunkte, siehe
+    /// `myl_tokenomics::trainingsabgabe`.
+    ///
+    /// ⚑ **Die Abgabe ist kein Verlust für die Miner**, sondern eine
+    /// Umschichtung zwischen zwei Arbeitsarten derselben Leute: Was bei
+    /// hoher Auslastung abgeführt wird, kommt bei niedriger als
+    /// Trainingsvergütung zurück.
+    TrainingsAbgabeMax,
     /// Zähler der Arbeitsschwelle, als Bruchteil des Netzmedians.
     ///
     /// ⚑ **Ersetzt seit dem 2026-09-02 `Arbeitsbezug` und
@@ -404,7 +418,7 @@ impl Parameter {
     /// kanonischen Hash** über die Registry, und jede Prüfung läuft
     /// über diese Liste statt über die Kartenreihenfolge. Käme eines
     /// der drei hinzu, wäre das Einschieben eine Protokolländerung.
-    pub fn alle() -> [Parameter; 34] {
+    pub fn alle() -> [Parameter; 35] {
         use Parameter::*;
         [
             Stichprobenrate,
@@ -429,6 +443,7 @@ impl Parameter {
             PodKapazitaet,
             TrainingsGrundrate,
             TrainingsFreianteil,
+            TrainingsAbgabeMax,
             ArbeitsschwelleZaehler,
             ArbeitsschwelleNenner,
             Epochenlaenge,
@@ -488,6 +503,7 @@ impl Parameter {
             PodKapazitaet => "Pod-Kapazität je Epoche (vTFE)",
             TrainingsGrundrate => "Trainings-Grundrate (Basispunkte der Gesamtkapazität)",
             TrainingsFreianteil => "Trainings-Freianteil γ_train (Basispunkte der freien Kapazität)",
+            TrainingsAbgabeMax => "Trainingsabgabe bei voller Auslastung (Basispunkte)",
             ArbeitsschwelleZaehler => "Arbeitsschwelle des Stimmgewichts, Zähler",
             ArbeitsschwelleNenner => "Arbeitsschwelle des Stimmgewichts, Nenner",
             MindestStake => "Mindest-Stake S",
@@ -652,6 +668,9 @@ impl ParameterRegistry {
         // die Trainingspods sie nicht bedienen. Die fehlenden zwanzig
         // Prozent der freien Kapazität sind Luft, kein Rundungsrest.
         werte.insert(TrainingsFreianteil, Wert::Ganzzahl(8_000));
+        // ⚑ **Aus der Bilanzbedingung gerechnet** (2026-09-06): Am
+        // Auslastungsziel u* = 0,7 trägt die Abgabe das Training genau.
+        werte.insert(TrainingsAbgabeMax, Wert::Ganzzahl(3_017));
         // myl-consensus: Arbeitsschwelle als Bruchteil des Netzmedians,
         // Startwert null (Entscheidung 2026-09-02).
         werte.insert(

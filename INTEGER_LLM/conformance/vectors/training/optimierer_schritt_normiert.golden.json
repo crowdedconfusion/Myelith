@@ -1,0 +1,87 @@
+{
+  "name": "optimierer_schritt_normiert",
+  "level": "training",
+  "theta_v_hash": "sha256:b4d907d95ca7b090b37c806cd3d938aa5955cc9e9ef74cf5c97c476045a9b9c2",
+  "herkunft": "unabhaengig",
+  "metadata": {
+    "ebene": 3,
+    "schritt": 17,
+    "index_versatz": 64,
+    "lr_nenner": 256,
+    "fein_bits": 20,
+    "master_frac": 20,
+    "bemerkung": "Die Bewegung ist ein Anteil des eigenen Betragsmaximums der Matrix. Unabhaengig nachgerechnet aus der Spezifikation: splitmix64 nach Vigna mit kanonischen Konstanten, die dokumentierte Mischung aus Ebene, Schritt und Index mit Linksrotation um 17 bzw. 41, und fein_i = z_i * (w_max << 20) / (g_max * nenner). Der Wuerfel selbst ist in optimierer_schritt geprueft und hier nicht wiederholt."
+  },
+  "inputs": {
+    "master": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "ff029c93796a6d29c4d498d46548efa25ba27aa726c53325672d164c70c17eef",
+      "data": [
+        1280,
+        -640,
+        320,
+        16,
+        -1280,
+        96,
+        -32,
+        4096
+      ]
+    },
+    "grad": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "607b9cc750341f379933642261611317caa209b5571a3fb37ca29f091f6aa26e",
+      "data": [
+        1500,
+        -700,
+        40,
+        900,
+        -3,
+        1000000,
+        7,
+        -250000
+      ]
+    }
+  },
+  "outputs": {
+    "summe_roh": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "4fa42c777c55f8afe23444192aa010666ac64647e8bd5ad0764300078243e362",
+      "data": [
+        -1500,
+        700,
+        -40,
+        -900,
+        3,
+        -1000000,
+        -7,
+        250000
+      ]
+    },
+    "master_neu": {
+      "dtype": "int32",
+      "shape": [
+        8
+      ],
+      "hash": "de0a2f2c37f960fc3f0c3c57f14eaf1612e31575acb71b089238d24f3a248815",
+      "data": [
+        1280,
+        -640,
+        320,
+        16,
+        -1280,
+        80,
+        -32,
+        4100
+      ]
+    }
+  }
+}

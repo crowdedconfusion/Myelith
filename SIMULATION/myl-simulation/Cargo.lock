@@ -91,9 +91,9 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f"
+checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
 dependencies = [
  "borsh-derive",
  "bytes",
@@ -102,15 +102,15 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8f347189c62a579b8cd5f80714efa178f52e461dc2e6d701d264f5ff22e566c"
+checksum = "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.44.0"
+version = "0.48.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.33.0"
+version = "0.37.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "myl-consensus"
-version = "0.30.0"
+version = "0.31.0"
 dependencies = [
  "borsh",
  "myl-ledger",
@@ -829,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "myl-consensus",
  "myl-tokenomics",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "myl-ledger"
-version = "0.20.0"
+version = "0.22.0"
 dependencies = [
  "borsh",
  "myl-types",
@@ -848,7 +848,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.28.0"
+version = "0.33.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "myl-scheduler"
-version = "0.12.0"
+version = "0.15.0"
 dependencies = [
  "borsh",
  "myl-train",
@@ -902,8 +902,9 @@ dependencies = [
 
 [[package]]
 name = "myl-tokenomics"
-version = "0.20.0"
+version = "0.22.0"
 dependencies = [
+ "borsh",
  "myl-ledger",
  "myl-types",
 ]
@@ -917,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "myl-types"
-version = "0.39.0"
+version = "0.43.0"
 dependencies = [
  "blst",
  "borsh",
@@ -929,9 +930,10 @@ dependencies = [
 
 [[package]]
 name = "myl-verifier"
-version = "0.19.0"
+version = "0.22.0"
 dependencies = [
  "borsh",
+ "integer-llm-kernels",
  "integer-llm-runtime",
  "myl-ledger",
  "myl-scheduler",

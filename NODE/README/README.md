@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.43.0
+> **Version:** 0.48.0
 > **Datum:** 2026-09-03
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,92 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.0 – 2026-09-06 (der Urteilsweg und das Stimmgewicht)
+
+Zwei Enden, die seit langem dalagen, sind verbunden.
+
+⚑ **Der Urteilsweg hat einen Aufrufer.** `Anweisung::SchuldspruchEinreichen`
+geht durch `anwenden`, und ein Beleg ohne Deckung schlachtet niemanden:
+Drei Tests halten fest, dass ein Beleg schlachtet, ein gefälschter nicht
+und ein echter keinen Dritten trifft.
+
+⚑ **Das Stimmgewicht folgt dem hinterlegten Einsatz**
+(`stimmberechtigte_aus_zustand`) und nicht mehr einer Textdatei. Wer
+nicht im Minerregister steht, stimmt nicht mit, gleich wie viel er
+hinterlegt hat; wer darunter bleibt, auch nicht. **Arbeit qualifiziert,
+Stake wiegt.**
+
+**Die Lernrate der Kette ist jetzt die normierte Protokollzahl.**
+
+### v0.47.0 – 2026-09-06 (Fund 192: das Urteilsfeld war scharf)
+
+Ein Block mit einem Schuldspruch wird abgewiesen
+(`KettenFehler::SchuldspruchOhneBeleg`), und die Anfechtungen eines
+Blocks laufen zum ersten Mal durch `Block::validate_challenges`.
+
+⚑ **Der Fund kam aus einer Gegenprobe, nicht aus einer Überlegung.**
+Nimmt man die neue Prüfung heraus, übernimmt die Kette einen Block mit
+einem Schuldspruch **als gültig**. `Block::verdicts` ist Teil des
+gehashten Blocks, `Block::add_verdict` steht offen, und
+`myl_ledger::apply_verdict` hat alles, was zum Schlachten nötig ist. Was
+fehlt, ist der **Beleg**: Ein `Verdict` nennt Täter und
+Kopfgeldempfänger und trägt keinen Nachweis.
+
+⚑ **Bisher schützte allein, dass niemand die Enden verband.** Das ist
+kein Schutz, sondern ein Zufall mit Verfallsdatum: Wer den Urteilsweg
+verdrahtet, ohne den Beleg zu verlangen, gibt dem Blockerzeuger ein
+Werkzeug, mit dem er jeden schlachten kann. Die Ablehnung ist die
+sichere Zwischenlage; sie zwingt den späteren Bau, den Nachweis
+mitzuliefern.
+
+**`validate_challenges` hatte seit jeher keinen Aufrufer**, eine
+geprüfte und abgehakte Prüfung, die nie lief. Sie läuft jetzt.
+
+### v0.46.0 – 2026-09-06 (die Auslastung steuert die Abgabe)
+
+Der Epochenwechsel gibt der Ausschüttung die Auslastung mit, damit die
+Trainingsabgabe greifen kann.
+
+⚑ **Sie kommt aus demselben Plan, aus dem die Trainingspods kommen.**
+Eine zweite Rechnung wäre eine zweite Wahrheit über dieselbe Grösse, und
+die beiden liefen an dem Tag auseinander, an dem jemand eine von beiden
+anfasst.
+
+### v0.45.0 – 2026-09-06 (Trainingsarbeit wird vergütet)
+
+`Kette::trainingszuschreibung` gibt jedem Mitglied eines **bestätigten**
+Paars sein Gewicht, und `epochenausschuettung_mit_training` zahlt es aus
+der Treasury.
+
+⚑ **Nur bestätigte Paare**, denn nur sie sind nachgerechnet worden. Ein
+Segment, dem der Partner fehlt, ist Arbeit, die niemand prüfen kann.
+
+⚑ **Die Tokenzahl kommt aus dem verankerten Korpus, nicht vom Pod.**
+Dürfte er sie nennen, nennte er seine eigene Vergütung.
+
+Ein Test fährt den ganzen Weg: Ein Paar reicht ein, die Kette bestätigt,
+die Modellfassung rückt, und ein Mitglied bekommt Geld.
+
+### v0.44.0 – 2026-09-05 (die Modellfassung steigt am Epochenwechsel)
+
+`Kette::bestaetigte_deltas` sammelt die Δ-Commitments, auf die sich
+beide Pods eines Paars geeinigt haben, und der Epochenwechsel schreibt
+daraus die Modellfassung fort.
+
+⚑ **Der Auftrag wird mitgeprüft, nicht nur das Ergebnis.** Zwei Pods,
+die Verschiedenes gerechnet haben, sind nicht uneinig, sondern
+unvergleichbar, und ihre Übereinstimmung im Ergebnis wäre ein Zufall,
+keine Bestätigung.
+
+⚑ **Sortiert und nicht in Paarreihenfolge.** Die Ordnung geht in die
+neue Modellfassung ein; sie an der Paarbildung aufzuhängen hiesse, zwei
+Dinge zu koppeln, die nichts miteinander zu tun haben. Ein Test hält
+fest, dass die Paarreihenfolge auf das Ergebnis nicht wirkt.
+
+⚑ **Herausgezogen aus dem Epochenwechsel**, statt inline in einer
+dreitausend Zeilen langen Funktion zu stehen: Eine Regel, die man nicht
+einzeln rufen kann, kann man auch nicht einzeln prüfen.
 
 ### v0.43.0 – 2026-09-05 (der Weg vom Trainingsplan bis in den Zustand)
 

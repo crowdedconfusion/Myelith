@@ -1,9 +1,13 @@
 # integer-llm
 
-> **Version:** 0.48.0 (θ_v 0.18.0; kernels 0.44.0, runtime 0.33.0, pipeline 0.15.0)
-> **Datum:** 2026-09-04
-> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf beiden Modellen erreicht.**
-> 7B: **41,42 → 8,78** (+1,14 % gegen die BF16-Baseline 8,68), 0,5B: **15,27** (+2,11 %).
+> **Version:** 0.52.0 (θ_v 0.18.0; kernels 0.48.0, runtime 0.37.0, pipeline 0.15.0)
+> **Datum:** 2026-09-06
+> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
+> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
+> (+2,11 %), 4B **19,95** (+1,64 %), 7B **41,42 → 8,78** (+1,14 %),
+> 30B-A3B (MoE) **10,42** gegen 10,48. Der Abstand fällt monoton mit der
+> Modellgrösse; ⚑ **bei 435 Positionen ist ein halbes Prozent nicht
+> auflösbar**, das Vorzeichen der letzten Zeile trägt also nicht.
 > Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
 > gesamte verbleibende Umsetzungsverlust beträgt damit **0,30 Punkte**.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
@@ -420,6 +424,174 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.52.0 – 2026-09-06 (die Normierung, und ein Vektor für sie)
+
+`optimierer::{normiere, sammle_roh, schritt_normiert}` und
+`shardtraining::Sammlung::normiert`.
+
+⚑ **Zwei Anläufe, beide von einer Messung entschieden.** Der erste
+normierte auf eine **Rasterstufe**, also eine absolute Grösse, und
+zerstörte ein Netz aus vierundzwanzig Ebenen bei Nenner vier
+vollständig: Eine Zeile mit kleinen Gewichten bekam dieselbe absolute
+Bewegung wie eine mit grossen. Bezogen wird jetzt auf das
+Betragsmaximum der Matrix selbst.
+
+⚑ **Und der erste Testentwurf war ebenfalls falsch.** Er prüfte „ein
+n-tel einer Rasterstufe" und wäre grün gewesen; erst der Lauf über das
+echte Netz zeigte, dass die Bedeutung nichts taugt. Ein Test, der eine
+falsche Bedeutung genau prüft, prüft nichts.
+
+**Neuer Konformitätsvektor `optimierer_schritt_normiert`**, Umfang
+`training` damit 7/7 und `ab88349ee965fae3`. Ohne ihn hätte die Suite
+einen Weg geprüft, den das Protokoll nicht mehr geht.
+
+### v0.51.0 – 2026-09-06 (die Haltemenge, und was sie zeigt)
+
+`trainingsguete` hat zwei neue Schalter, und beide beantworten Fragen,
+die vorher nicht stellbar waren.
+
+⚑ **`--haltemenge N`: Folgen, auf denen NICHT trainiert wird.** Ohne
+sie mass dieses Programm Auswendiglernen und nannte es Qualität. Mit
+ihr fällt zum ersten Mal ein Urteil, und es lautet auf dem 0,5B über
+alle 24 Ebenen: **die Perplexität auf nie trainiertem Text fällt um
+21,8 Prozent.**
+
+⚑ **`--sammeln`: erst summieren, dann einmal runden.** Bei kleiner
+Rate liegt die Bewegung einer Folge unter einer Master-Stufe; das
+stochastische Runden entscheidet dann je Gewicht mit einem Münzwurf.
+Gemessen bei sonst gleichem Lauf über 24 Ebenen: Die Streuung zwischen
+zwei Würfelreihen fällt von **Faktor 2 372 auf 1,41**.
+
+**Das Urteil unterscheidet vier Fälle** und nicht zwei: gelernt,
+auswendig gelernt, **kein Gewicht bewegt** (die Rate liegt unter der
+Auflösung, Fund 191) und **kaum bewegt** (unter einem Zehntelprozent,
+also Rauschen). Die letzten beiden kamen dazu, weil das Programm sonst
+„der Lauf schadet" meldete, wo sich nichts bewegt hatte.
+
+#### Die Gradientensammlung im Optimierer
+
+`optimierer::sammle` und `::schritt_aus_summe` trennen das Umrechnen
+eines Gradienten in feine Einheiten vom Anwenden.
+`shardtraining::Sammlung` führt darüber Buch, je Ebene und Matrix, und
+`sammlung_anwenden` setzt einen Sammelschritt.
+
+⚑ **Der Wurf hängt an der globalen Ebene, nicht am Index im Shard.**
+Ebene 12 des Modells ist im zweiten von zwei Shards die Ebene 0; wer
+den lokalen Index in den Würfel gäbe, bekäme für dieselbe Arbeit
+verschiedene Gewichte, je nach Zuschnitt. Ein Test hält das fest, mit
+der Gegenprobe im selben Test.
+
+### v0.50.0 – 2026-09-06 (Fund 188, und die erste Qualitätsmessung eines Trainingslaufs)
+
+### ⚑ Fund 188: jede Ebene schrieb auf die Skala der letzten
+
+Gefunden durch die erste Perplexitätsmessung: **30 474 statt 15**.
+
+`vorgaben_der_ebene` setzte `aus_frac: &m.final_residual_frac` für
+**jede** Ebene. `model.rs` macht es seit jeher richtig: Der Ausgang einer
+Ebene liegt auf der **Eingangsskala der nächsten**, nur die letzte auf
+`final_residual_frac`.
+
+⚑ **Unsichtbar, solange nur die letzte Ebene trainiert wurde**, denn
+dort fallen beide zusammen. Sobald Ebenen verkettet werden, schreibt jede
+auf eine fremde Skala.
+
+⚑ **Kein bestehender Test konnte ihn finden.** Die Shardtransparenz
+vergleicht den Shardweg mit **sich selbst** in zwei Zuschnitten; beide
+rechneten dasselbe Falsche. `der_shardweg_rechnet_wie_das_modell` ist
+neu und hält ihn gegen `run_layers`, also gegen den Weg der Inferenz.
+
+**Nach der Behebung** stimmt die Perplexität mit `perplexity_probe`
+überein: 3,1796 gegen 3,1800 über 508 Token.
+
+### Teacher Forcing über alle Positionen
+
+`gradienten_je_position` bildet den Gradienten an **jeder** Position
+gegen das jeweils nächste Wort. Der Vorwärtspass rechnet sie ohnehin
+alle; wer nur eine auswertet, bezahlt das Ganze und nimmt einen
+Bruchteil mit.
+
+### ⚑ Fund 189: bei kleiner Lernrate entscheidet der Würfel
+
+Gleiche Rate, gleiche Folgen, gleiche Schrittzahl, **nur ein anderer
+Würfelversatz**: Perplexität 38,40 gegen 20,80 gegen 20,10, bei einem
+Ausgangswert von 23,33.
+
+**Der Mechanismus:** Bei kleiner Rate ist `gradient / nenner` fast immer
+null mit grossem Rest; das stochastische Runden entscheidet dann über
+jedes Gewicht, mit richtigem Erwartungswert und einer Streuung, die das
+Signal überdeckt.
+
+⚑ **Der Gradient ist dabei nachweislich richtig.** Über eine Ebene bei
+2⁻¹⁶ fällt die Perplexität monoton: 23,33 → 22,47 → 20,69 → 16,61 →
+**10,48**.
+
+### `messung.rs`: Zahlen für Menschen
+
+Kreuzentropie und Perplexität. **Ein erster Entwurf legte sie in
+`trainingsschleife.rs`, und das Gleitkomma-Audit hat ihn
+zurückgewiesen**; das war richtig. Das Modul steht jetzt benannt in
+`BEWUSST_DRAUSSEN`, mit demselben Vorbehalt wie `loader.rs`: Wer hier
+etwas ergänzt, dessen Ergebnis in den Rechenpfad zurückfliesst, hat es
+der Prüfung entzogen.
+
+### `trainingsguete`: der Benchmark
+
+Misst die Perplexität über WikiText-2, trainiert auf denselben Folgen,
+misst erneut. ⚑ **Und sagt selbst, was er nicht beweist:** Gemessen wird
+auf den Trainingsfolgen; eine sinkende Perplexität heisst „das Modell
+hat sich diesen Text gemerkt", nicht „es ist allgemein besser
+geworden".
+
+### v0.49.0 – 2026-09-06 (Gemischebenen über Shardgrenzen)
+
+**Gemessen auf dem echten qwen3-30b-a3b:** Vier Gemischebenen in zwei
+Shards zerlegt ergeben dasselbe wie dieselben vier am Stück, Matrix für
+Matrix. 575 967 566 von 586 153 984 Gewichten bewegt.
+
+Damit trägt der Shardweg das Modell, das das Primärmodell werden soll.
+
+### ⚑ Nur die gewählten Experten kommen in den Shard
+
+Das 30B hat 128 Experten je Ebene zu je 4,7 Millionen Gewichten. Alle
+als Master zu halten wären **2,4 GB je Ebene**, und ein Shard hält ein
+Dutzend. `Ebenenstand::Gemisch` hält deshalb eine Karte, die der Router
+füllt: **gemessen 25 von 128** bei sechs Positionen und Top-8.
+
+### ⚑ Der Versatz im Würfelraum hängt an der Expertennummer
+
+Der Würfel des stochastischen Rundens ist eine reine Funktion aus
+`(ebene, schritt, index)`. Hinge der Versatz eines Experten an der
+**Auswahlreihenfolge**, würfelte derselbe Experte verschieden, je
+nachdem, an welcher Position er zuerst drankam, und zwei Shards mit
+anderer Positionsverteilung liefen auseinander.
+
+`Gemischversatz` legt die Aufteilung fest: Aufmerksamkeit, dann Router,
+dann die Experten nach ihrer Nummer. **Der Router steht vor den
+Experten**, weil die Zahl der Experten fest ist und die der gewählten
+nicht: dahinter läge er bei jedem Schritt woanders.
+
+### ⚑ Die Skala des Gemischblocks ist die der Inferenz
+
+Nachgesehen statt angenommen: `forward_layer` gibt `moe_vorwaerts` die
+**kanalweise** Akkumulationsskala, und der Shardweg tut dasselbe. Wer
+hier abwiche, trainierte Gewichte für einen Vorwärtspass, den niemand
+rechnet.
+
+⚑ **Dabei ist eine Abweichung in `gemischschleife` aufgefallen:** Sie
+nimmt `max(acc_mlp)` statt der kanalweisen Skala. Beide Wege sind in
+sich stimmig und unterscheiden sich nur an der Sättigung, aber es sind
+zwei Fassungen derselben Sache. **Notiert, nicht behoben**, weil eine
+Änderung die MoE-Golden-Vectors verschöbe.
+
+### `normrueckwaerts` und `begrenze` sind öffentlich
+
+Die Gemischebene wird in der Runtime gebaut, weil dort die
+Materialisierung der Experten liegt; die Arithmetik liegt in den
+Kerneln. Ein Nachbau drüben wäre eine zweite Wahrheit über einen
+heiklen Randfall: **Eine leere Normierungsspur ergibt einen
+Nullgradienten und keinen Absturz.**
 
 ### v0.48.0 – 2026-09-05 (der Rückwärtsweg über Shardgrenzen)
 

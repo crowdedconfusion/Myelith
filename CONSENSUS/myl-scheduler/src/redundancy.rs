@@ -138,7 +138,7 @@ pub struct SegmentAssignment {
 /// „unbestimmt" mehr herstellen kann**; vorher genügte dafür eine
 /// abweichende Zeile im Gossip. Der Hebel ist an seiner Quelle
 /// verschwunden, nicht an seiner Wirkung.
-fn pod_zone(pod: &Pod) -> Option<GeoRegion> {
+pub(crate) fn pod_zone(pod: &Pod) -> Option<GeoRegion> {
     let mut bekannt: Option<GeoRegion> = None;
     for m in pod.mitglieder() {
         match bekannt {

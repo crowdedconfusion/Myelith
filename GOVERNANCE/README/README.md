@@ -1,6 +1,6 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.12.0
+> **Version:** 0.13.0
 > **Datum:** 2026-09-03
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
@@ -134,6 +134,19 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.13.0 – 2026-09-06 (die Trainingsabgabe als gerechneter Parameter)
+
+`TrainingsAbgabeMax` = 3017 Basispunkte. Damit sind es 35 Parameter.
+
+⚑ **Als „gerechnet" geführt und nicht als Entwurf**, und die
+Herkunftsprüfung rechnet sie nach: Sie folgt aus Auslastungsziel,
+Shard-Anteil, Trainings-Grundrate und Freianteil. **Ändert sich eine
+davon, ändert sich die Abgabe**, und eine abgeschriebene Zahl wäre ab
+diesem Tag falsch, ohne dass es jemandem auffiele.
+
+Damit steht sie neben `MindestStake` als zweiter Wert, der nicht gesetzt,
+sondern hergeleitet ist.
 
 ### v0.12.0 – 2026-09-05 (der Freianteil steigt auf 8000)
 

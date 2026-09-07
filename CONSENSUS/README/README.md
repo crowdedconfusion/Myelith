@@ -1,7 +1,7 @@
 # consensus (`myl-consensus` + `myl-ledger` + `myl-scheduler`)
 
-> **Version:** 0.43.0 (`myl-consensus` 0.30.0, `myl-scheduler` 0.12.0,
-> `myl-ledger` 0.20.0)
+> **Version:** 0.47.0 (`myl-consensus` 0.31.0, `myl-scheduler` 0.15.0,
+> `myl-ledger` 0.22.0)
 > **Datum:** 2026-09-03
 > **Status:** Design-Entscheidungen getroffen (malachite hinter
 > trait-Grenze mit Eigenbau-Fallback, Blockzeit 2 s, Komitee 21/7,
@@ -107,6 +107,85 @@ myl-consensus/tests/
 ```
 
 ## Changelog
+
+### v0.47.0 – 2026-09-06 (der Schuldspruch bringt seinen Beleg mit)
+
+`Anweisung::SchuldspruchEinreichen` und
+`transitions::schuldspruch_einreichen`.
+
+⚑ **`apply_verdict` hat damit seinen ersten Aufrufer**, und zwar einen
+mit Nachweis. Der Beleg ist die **eigene Unterschrift des
+Beschuldigten** über den strittigen Übergang, in der Rolle Shard; wer
+sie nicht hat, kann niemanden benennen.
+
+**Zwei Prüfungen, und die zweite ist die unauffälligere:** Der Beleg
+muss tragen, **und** die aus seinem Schlüssel abgeleitete Kennung muss
+das beschuldigte Konto sein. Ohne die zweite wäre ein echter Beleg eine
+Waffe gegen Dritte.
+
+### v0.46.0 – 2026-09-06 (das Trainingspaar sagt, was es an Unabhängigkeit hergibt)
+
+`Trainingsplan` trägt jetzt `zonendivers`, und `paare_bilden` sucht
+zuerst einen Partner in einer **anderen** Zone.
+
+⚑ **Der Fund kam aus der verzahnten Simulation, nicht aus dem Code.**
+Die Inferenz hat für ihre Redundanzpaare seit jeher eine
+Zonenpräferenz und meldet in `Redundanzzuteilung::zonendivers`, wenn es
+keine gab. **Das Training hatte beides nicht:** Gepaart wurde nach
+Podnummer, und niemand erfuhr, ob die beiden Pods überhaupt getrennt
+stehen. Ein falsches Δm verdirbt nicht eine Antwort, sondern das
+Modell; die Unabhängigkeit ist dort also nicht weniger wert.
+
+⚑ **Erzwungen wird sie trotzdem nicht, und das ist eine Entscheidung.**
+Seit die Zonenreste in einen Sammeltopf gehen, sind Pods in einem dünn
+besetzten Netz **zonengemischt**, und ein gemischter Pod ist
+unbestimmt. Zwölf Miner auf drei Zonen ergeben zwei Pods, beide
+gemischt: Es **gibt** kein diverses Paar. Wer hier auf Diversität
+besteht, trainiert nie. Das Feld sagt deshalb, welcher Fall eintrat,
+statt den einen zu erzwingen oder den anderen zu verschweigen.
+
+**Zwei neue Tests in `shard_assignment`** halten die Kehrseite des
+Sammeltopfs fest: Bei fünf Pods tragen die drei zonenreinen die
+Diversität allein; kommen alle Pods aus dem Topf, fällt sie, und
+`assign_redundant_pods` meldet es.
+
+### v0.45.0 – 2026-09-06 (der Trainingsplan kennt die Tokenzahl)
+
+Der Probekorpus im Scheduler-Test trägt `tokens_je_segment`, wie der
+Anker es seit heute verlangt.
+
+### v0.44.0 – 2026-09-05 (Redundanz beim Training, und die Modellfassung steigt)
+
+### ⚑ Ohne Paare ist ein Trainingssegment nicht prüfbar
+
+Der Trainingsplan gab bis heute **jedem** Pod ein eigenes Bündel,
+abgeleitet aus seiner Nummer. Das sah nach Vielfalt aus und war ein
+Loch: Ein Ergebnis, das nur einer gerechnet hat, lässt sich mit nichts
+vergleichen. Die Kette könnte es annehmen oder verwerfen, aber nie
+prüfen, und die Vergütung hinge an einer Behauptung.
+
+`Trainingsplan::paare` bildet jetzt Redundanzpaare, und **beide Pods
+eines Paars bekommen dasselbe Bündel**, abgeleitet aus der
+**Paarnummer** statt aus der Podnummer. Dieselbe Regel wie bei der
+Inferenz (Kap. 4.4, `r = 2`); beim Training kann sie nicht schwächer
+sein, denn ein falsches Δm verdirbt nicht eine Antwort, sondern das
+Modell.
+
+⚑ **Eine ungerade Zahl lässt einen Pod übrig, und der bekommt kein
+Bündel.** Ihm eines zu geben hiesse, unprüfbare Arbeit zu bestellen; ihn
+zum Dritten eines Tripels zu machen hiesse, die Kosten um die Hälfte zu
+heben, damit niemand leer ausgeht.
+
+### `myl-ledger`: `modell_version` im Zustand
+
+Sie steigt **nur durch bestätigtes Training**, also dann, wenn beide
+Pods eines Paars zum selben Δ gekommen sind.
+
+⚑ **Die Kette rechnet die Summe nicht**, sie hält das Rezept: alte
+Fassung plus geordnete Liste der bestätigten Δ-Commitments. Wer die
+Gewichte hat, wendet es an und rechnet die Wurzel nach. Damit ist die
+Versionsanhebung prüfbar, ohne dass die Kette 357 Millionen Zahlen
+addiert.
 
 ### v0.43.0 – 2026-09-05 (`TrainingssegmentEinreichen`: der Pod liefert ab)
 

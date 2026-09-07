@@ -59,3 +59,75 @@ fn eine_abweichung_faellt_auf() {
         "eine geaenderte Registry sieht aus wie die unveraenderte"
     );
 }
+
+/// Die Lernrate der Kette trägt die Tiefe, über die sie rechnet.
+///
+/// # ⚑ Warum das eine eigene Prüfung braucht
+///
+/// Bis zum 2026-09-06 stand die Lernrate als Konstante `1 << 12` im
+/// Knoten, und sie war gemessen falsch: Über die vierundzwanzig Ebenen
+/// des Primärmodells zerstört sie das Modell in einem Lauf, Perplexität
+/// 2,5 Milliarden gegen einen Ausgangsstand von 23.
+///
+/// **Eine Konstante hätte niemand nachgerechnet.** Diese Prüfung hält
+/// die Zahl, die der Knoten bestellt, gegen die Schranke aus
+/// `myl_types::lernrate`, und sie fällt, sobald jemand die Tiefe des
+/// Modells erhöht, ohne die Rate mitzuziehen.
+#[test]
+fn die_lernrate_traegt_die_tiefe_des_modells() {
+    let tiefe = myl_tokenomics::vtfe::PROBE_MODELL.num_layers as u32;
+    // Ein Segment aus dreissig Schritten zu je acht Folgen: 240
+    // Gradienten.
+    let gradienten = 30 * 8;
+    let nenner = myl_types::lernrate::lernrate_nenner(tiefe, gradienten);
+    assert!(
+        myl_types::lernrate::nenner_traegt(nenner, tiefe, gradienten),
+        "die eigene Kurve traegt ihre eigene Zahl nicht"
+    );
+    // Und die alte Konstante faellt durch, sonst prueft der Test nichts.
+    assert!(
+        !myl_types::lernrate::nenner_traegt(1 << 12, tiefe, gradienten),
+        "die alte Konstante muesste durchfallen"
+    );
+    // ⚑ **Und mehr Folgen verlangen eine kleinere Rate.** Ohne diese
+    // Zeile pruefte der Test nur die Tiefe, und genau das war der
+    // Mangel der ersten Fassung.
+    assert!(
+        !myl_types::lernrate::nenner_traegt(nenner, tiefe, gradienten * 2),
+        "die doppelte Chargengroesse muesste dieselbe Rate reissen"
+    );
+}
+
+/// Der Mindesteinsatz des Knotens deckt sich mit der Registry.
+///
+/// ⚑ **Der Knoten zieht `myl-governance` nicht ein** und rechnet die
+/// Zahl deshalb selbst; ohne diese Prüfung stimmten Kette und Beschluss
+/// über das Stimmrecht nicht überein.
+#[test]
+fn der_mindesteinsatz_deckt_sich_mit_der_registry() {
+    let reg = ParameterRegistry::vorgabe();
+    let aus_registry = ganzzahl(&reg, Parameter::MindestStake);
+    assert_eq!(
+        myl_node::kette::Kette::mindesteinsatz(),
+        aus_registry,
+        "der Knoten rechnet einen anderen Mindesteinsatz als die Registry"
+    );
+}
+
+/// Der Slashsatz des Knotens deckt sich mit Kapitel 5.5.
+#[test]
+fn der_slashsatz_deckt_sich_mit_der_matrix() {
+    let zeile = myl_tokenomics::slashing::matrix()
+        .into_iter()
+        .find(|z| {
+            matches!(z.akteur, myl_tokenomics::slashing::Akteur::ShardMiner)
+                && matches!(z.grund, myl_tokenomics::slashing::Grund::FalschesErgebnis)
+        })
+        .expect("die Zeile steht in der Matrix");
+    let aus_matrix = zeile.als_ledger_parameter();
+    let aus_kette = myl_node::kette::Kette::slashsatz_oeffentlich();
+    assert_eq!(aus_kette.slash_fraction_num, aus_matrix.slash_fraction_num);
+    assert_eq!(aus_kette.slash_fraction_den, aus_matrix.slash_fraction_den);
+    assert_eq!(aus_kette.bounty_fraction_num, aus_matrix.bounty_fraction_num);
+    assert_eq!(aus_kette.bounty_fraction_den, aus_matrix.bounty_fraction_den);
+}

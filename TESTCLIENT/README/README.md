@@ -1,6 +1,6 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.30.0
+> **Version:** 0.31.0
 > **Datum:** 2026-09-04
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
@@ -394,6 +394,28 @@ und führt dabei eine Stationsliste mit, die am Ende gegen eine feste
 Reihenfolge geprüft wird. Er steht hier, weil `myl-testclient` die
 einzige Kiste ist, die alle anderen sieht.
 
+⚑ **Und ein zweiter, der weiter greift.** `tests/verzahnte_simulation.rs`
+(`cargo test --test verzahnte_simulation -- --nocapture`) fährt **zwölf
+Stationen über eine laufende Kette**, und zwar nicht nacheinander,
+sondern ineinander: Zwölf Miner in drei Zonen melden sich an, der
+Scheduler bildet daraus Pods (auch aus dünn besetzten Zonen, über den
+Sammeltopf), ein Nutzer verbrennt MYL und gibt Credits aus, die
+Nachfrage rollt in die nächste Epoche, der Trainingsplan lost ein
+Podpaar, beide liefern ihr Segment, ein Segment mit fremder Charge wird
+abgewiesen, der Epochenschluss rückt die Modellfassung und zahlt aus,
+ein uneiniges Paar bewegt nichts, und ein überführter Miner wird
+geschnitten.
+
+⚑ **Was dieser Lauf ausdrücklich nicht kann, und warum das dort
+steht.** Die Auslastung bleibt null. `PodKapazitaet` ist mit 3,6
+Milliarden vTFE je Pod und Epoche eine Zahl für ein echtes Netz;
+achtzehntausend vTFE aus einer Probeausgabe sind dagegen auf der
+Festkommaskala exakt null. **Das ist die Grenze der Simulation und kein
+Fehler in ihr:** Geprüft wird, dass die Zahl ankommt und in die
+Vorepoche rollt. Wie Trainingsanteil und Abgabe daraus folgen, prüft der
+Lauf an der Regel und nicht an der Kette, und er schreibt beides ins
+Protokoll, damit der Unterschied sichtbar bleibt.
+
 **Nicht abgedeckt:** `myl-net` (Gossip über echte Sockets gehört in die
 NETWORKING-Testsuite) und die BFT-Runden selbst: Der Client stimmt nicht
 mit, aus der bewussten Grenze heraus, die der Changelog unter v0.14.1
@@ -521,6 +543,21 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.31.0 – 2026-09-06 (zwölf Stationen über eine laufende Kette)
+
+`tests/verzahnte_simulation.rs`: Anmeldung, Pods aus dem Sammeltopf,
+Burn, Ausgabe, Trainingsplan, zwei Segmente, ein abgewiesenes Segment,
+Epochenschluss mit Modellfassung und Auszahlung, ein uneiniges Paar und
+ein Slashing, alles am selben Zustand.
+
+⚑ **Der Lauf sagt selbst, wo er aufhört.** Die Auslastung bleibt null,
+weil die Podkapazität eine Netzzahl ist und die Probeausgabe dagegen
+nicht ins Gewicht fällt. Geprüft ist damit die **Verdrahtung**, dass die
+Nachfrage gezählt wird und in die Vorepoche rollt; die Rückkopplung
+selbst steht daneben als Rechnung an der Regel, mit den Zahlen im
+Protokoll. Eine Simulation, die ihre eigene Grenze verschweigt, belegt
+weniger als eine, die sie ausspricht.
 
 ### v0.30.0 – 2026-09-05 (die zweite Ausfallart des Trainingsschritts)
 

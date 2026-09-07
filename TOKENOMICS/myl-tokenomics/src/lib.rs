@@ -50,6 +50,7 @@ pub mod speicherentgelt;
 pub mod stake;
 pub mod subventionsplan;
 pub mod training;
+pub mod trainingsabgabe;
 pub mod utilization;
 pub mod vtfe;
 pub mod zuschreibung;
