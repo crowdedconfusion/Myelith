@@ -234,11 +234,14 @@ mod tests {
             .filter(|p| p.to_string_lossy().ends_with(".golden.json"))
             .collect();
         kandidaten.sort();
-        let (quelle, inhalt) = kandidaten
+        // ⛑ Nur der Inhalt wird gebraucht. Der Pfad stand hier als
+        //   zweiter Rueckgabewert und wurde von niemandem gelesen; unter
+        //   `-D warnings` ist das ein Fehler und kein Hinweis.
+        let inhalt = kandidaten
             .iter()
             .find_map(|p| {
                 let t = std::fs::read_to_string(p).ok()?;
-                t.contains(marke).then(|| (p.clone(), t))
+                t.contains(marke).then_some(t)
             })
             .expect("ein Vektor mit Ausgabefeld");
 

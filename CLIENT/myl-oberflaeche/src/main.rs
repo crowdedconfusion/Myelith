@@ -190,7 +190,8 @@ fn modelle() -> Result<Vec<Modellwahl>, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let mut aus: Vec<Modellwahl> = Vec::new();
 
-    let hier = std::path::Path::new(&e.modell.artefakt);
+    let aufgeloest = artefakt_absolut(&e.modell.artefakt);
+    let hier = std::path::Path::new(&aufgeloest);
     if let Some(eltern) = hier.parent() {
         if let Ok(lesen) = std::fs::read_dir(eltern) {
             let mut pfade: Vec<std::path::PathBuf> =
@@ -329,7 +330,9 @@ struct Werkzeugliste {
 
 #[tauri::command]
 fn modell(artefakt: String) -> Result<String, String> {
-    let m = myl_client::Oertlichesmodell::laden(&artefakt)?;
+    let pfad = artefakt_absolut(&artefakt);
+    let m = myl_client::Oertlichesmodell::laden(&pfad)
+        .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
     Ok(format!("{:?}", m.vorlage()))
 }
 
@@ -354,7 +357,9 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<String, String
         return Err("es ist kein Artefakt eingestellt".into());
     }
     let anfang = std::time::Instant::now();
-    let mut m = myl_client::Oertlichesmodell::laden(&e.modell.artefakt)?;
+    let pfad = artefakt_absolut(&e.modell.artefakt);
+    let mut m = myl_client::Oertlichesmodell::laden(&pfad)
+        .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
     m.grenze = e.modell.token;
     m.denken = e.modell.denken;
     let vorlage = format!("{:?}", m.vorlage());
@@ -520,7 +525,8 @@ fn main() {
             modelle,
             katalog,
             voraussetzungen,
-            artefakt_bauen
+            artefakt_bauen,
+            gespraech_ausgeben
         ])
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");
@@ -575,14 +581,127 @@ struct Katalogeintrag {
 /// aus einem ganz anderen Verzeichnis. Wer den Pfad festnagelt, baut
 /// einen Knopf, der auf genau einer Maschine geht.
 fn wurzel_suchen() -> Option<std::path::PathBuf> {
-    let mut p = std::env::current_dir().ok()?;
-    loop {
-        if p.join("INTEGER_LLM/scripts/build_artifacts.sh").is_file() {
-            return Some(p);
+    // ⛑ **Zwei Anfaenge, und der zweite ist der wichtige.** Aus dem
+    // Finder gestartet bekommt ein Programm auf macOS das
+    // Arbeitsverzeichnis `/`; von dort findet sich kein Klon. Das
+    // Programm selbst liegt aber im Baum (`target-shared/...`), und von
+    // seinem Pfad aus fuehrt der Weg nach oben ans Ziel.
+    //
+    // Das Arbeitsverzeichnis bleibt vorn, damit ein Aufruf aus einem
+    // anderen Klon heraus auch dessen Artefakte nimmt.
+    let anfaenge = [std::env::current_dir().ok(), eigener_ordner()];
+    for anfang in anfaenge.into_iter().flatten() {
+        let mut p = anfang;
+        loop {
+            if p.join("INTEGER_LLM/scripts/build_artifacts.sh").is_file() {
+                return Some(p);
+            }
+            if !p.pop() {
+                break;
+            }
         }
-        if !p.pop() {
-            return None;
-        }
+    }
+    None
+}
+
+/// Das Verzeichnis, in dem dieses Programm liegt.
+fn eigener_ordner() -> Option<std::path::PathBuf> {
+    let p = std::env::current_exe().ok()?;
+    // ⚑ Aufgeloest, denn in einem `.app` fuehrt der Weg ueber
+    // `Contents/MacOS`, und Verweise waeren sonst nicht zu verfolgen.
+    let p = std::fs::canonicalize(&p).unwrap_or(p);
+    p.parent().map(|q| q.to_path_buf())
+}
+
+/// Schreibt ein Gespraech als Markdown neben die Einstellungen.
+///
+/// # ⚑ Warum hier und nicht ueber einen Speichern-Dialog
+///
+/// Ein Dialog braucht die Dateiwahl von Tauri, also ein weiteres
+/// Zusatzstueck und eine weitere Berechtigung. Fuer „das Gespraech
+/// hierher legen und mir sagen wohin" reicht ein Ort, den die
+/// Anwendung ohnehin benutzt: das Verzeichnis der Einstellungen. Der
+/// Pfad kommt zurueck und steht in der Meldung, also weiss jeder, wo
+/// es liegt.
+///
+/// ⛑ **Der Name wird entschaerft und nicht uebernommen.** Ein Titel
+/// kommt aus dem ersten Satz eines Gespraechs und kann alles
+/// enthalten, `/` und `..` eingeschlossen; ungeprueft uebernommen
+/// schriebe das Fenster irgendwohin. Erlaubt sind Buchstaben, Ziffern,
+/// Strich und Unterstrich, alles andere wird zu einem Strich.
+#[tauri::command]
+fn gespraech_ausgeben(titel: String, inhalt: String) -> Result<String, String> {
+    let ordner = myl_client::Einstellungen::vorgabepfad()
+        .parent()
+        .ok_or("die Einstellungen haben kein Verzeichnis")?
+        .join("gespraeche");
+    std::fs::create_dir_all(&ordner).map_err(|e| format!("{}: {e}", ordner.display()))?;
+
+    let sauber: String = titel
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let sauber = sauber.trim_matches('-');
+    let stamm = if sauber.is_empty() { "gespraech" } else { sauber };
+    // ⚑ Ein Zeitstempel davor, damit zwei gleichnamige Gespraeche sich
+    //   nicht ueberschreiben und die Liste nach Zeit sortiert steht.
+    let wann = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let ziel = ordner.join(format!("{wann}-{}.md", &stamm[..stamm.len().min(60)]));
+    std::fs::write(&ziel, inhalt).map_err(|e| format!("{}: {e}", ziel.display()))?;
+    Ok(ziel.display().to_string())
+}
+
+/// Ergaenzt eine Fehlermeldung um den Hinweis, der wirklich hilft.
+///
+/// ⛑ **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
+/// directory".** Nicht als fehlende Berechtigung: Der Kernel gibt
+/// `ENOENT` zurueck, damit ein Programm nicht einmal erfaehrt, dass es
+/// den Ordner gibt. Wer die Meldung liest, sucht danach einen
+/// Tippfehler im Pfad, und den gibt es nicht.
+///
+/// Betroffen sind `Schreibtisch`, `Dokumente`, `Downloads`, iCloud und
+/// Wechselmedien. Dieses Repositorium liegt bei mindestens einem
+/// Nutzer unter `Schreibtisch`, und dort ist der Fall eingetreten.
+fn mit_zugriffshinweis(fehler: String, pfad: &str) -> String {
+    if !fehler.contains("os error 2") && !fehler.contains("No such file") {
+        return fehler;
+    }
+    let p = std::path::Path::new(pfad);
+    // ⚑ Liegt der Pfad in einem geschuetzten Ordner? Verglichen wird
+    //   gegen die englischen Namen, denn so heissen sie im Dateisystem,
+    //   auch wenn der Finder sie uebersetzt anzeigt.
+    let geschuetzt = ["Desktop", "Documents", "Downloads"];
+    let betroffen = p
+        .components()
+        .any(|c| geschuetzt.contains(&c.as_os_str().to_string_lossy().as_ref()));
+    if !betroffen {
+        return fehler;
+    }
+    format!(
+        "{fehler}\n\nDer Pfad liegt in einem Ordner, den macOS schuetzt.          Wurde die Nachfrage nach dem Zugriff abgelehnt, meldet das System          die Datei als nicht vorhanden, obwohl sie da ist.\n\
+         Zu erlauben unter: Systemeinstellungen, Datenschutz und Sicherheit,          Dateien und Ordner, Myelith.\n\
+         Oder das Artefakt ausserhalb von Schreibtisch, Dokumente und          Downloads ablegen."
+    )
+}
+
+/// Macht einen relativen Artefaktpfad gegen die Wurzel absolut.
+///
+/// ⛑ **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
+/// zwar mit `No such file or directory`: In den Einstellungen steht
+/// `INTEGER_LLM/artifacts/qwen3-4b`, und das ist relativ zu einem
+/// Arbeitsverzeichnis, das dort `/` ist. Ein absoluter Pfad in den
+/// Einstellungen bliebe unberuehrt.
+fn artefakt_absolut(pfad: &str) -> String {
+    let p = std::path::Path::new(pfad);
+    if p.is_absolute() || pfad.is_empty() {
+        return pfad.to_string();
+    }
+    match wurzel_suchen() {
+        Some(w) => w.join(p).display().to_string(),
+        None => pfad.to_string(),
     }
 }
 

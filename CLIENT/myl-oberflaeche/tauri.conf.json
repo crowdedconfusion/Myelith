@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Myelith",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "identifier": "org.myelith.oberflaeche",
   "build": {
     "frontendDist": "ui"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Myelith",

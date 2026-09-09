@@ -18,7 +18,24 @@ cd "$(dirname "$0")/../.."
 BINAER=target-shared/release/myl-oberflaeche
 ZIEL=${1:-target-shared/Myelith.app}
 
-[ -f "$BINAER" ] || { echo "Erst bauen: (cd CLIENT/myl-oberflaeche && cargo build --release)"; exit 1; }
+# ⛑ **Erst bauen, dann buendeln, und zwar hier drin.**
+#
+# Bis zum 2026-09-09 setzte dieses Skript ein gebautes Programm voraus
+# und kopierte, was gerade dalag. Damit gab es zwei Staende: das
+# Programm unter `target-shared/release/` und den im Buendel, und nur
+# einer davon wurde beim Uebersetzen erneuert.
+#
+# Gemessen an diesem Tag: Buendel von 17:37, Programm von 17:44,
+# verschiedene Pruefsummen. Drei Fehlerberichte des Projektinhabers in
+# Folge betrafen Dinge, die laengst behoben waren; er startete per
+# Doppelklick, also das Buendel, und sah den alten Stand. Nichts daran
+# sieht nach einem Bauproblem aus.
+#
+# ⚑ Ein Bauschritt an dieser Stelle kostet ein paar Sekunden, wenn
+# nichts zu tun ist, und nimmt dafuer die Frage weg, welcher von zwei
+# Staenden gerade laeuft.
+cargo build --release --quiet --manifest-path CLIENT/myl-oberflaeche/Cargo.toml
+[ -f "$BINAER" ] || { echo "Der Bau hat kein $BINAER hinterlassen."; exit 1; }
 
 rm -rf "$ZIEL"
 mkdir -p "$ZIEL/Contents/MacOS" "$ZIEL/Contents/Resources"

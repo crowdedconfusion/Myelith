@@ -242,6 +242,151 @@ async function reichweite_zeichnen() {
   }
 }
 
+// --- Das Menue am Gespraech ---------------------------------------------
+//
+// ⚑ **Ein Menue fuer alle Zeilen.** Bei dreissig Gespraechen waeren
+// dreissig Menues im Baum, von denen neunundzwanzig nie zu sehen sind,
+// und jedes Neuzeichnen legte sie erneut an.
+//
+// ⚑ **Der Loeschknopf am Rand bleibt.** Er ist der schnelle Weg und
+// mit der Tastatur erreichbar; ein Rechtsklick ist keines von beidem.
+// Das Menue kommt dazu, es ersetzt nichts.
+let menue_fuer = null;
+
+function menue_schliessen() {
+  menue_fuer = null;
+  $("kontextmenue").hidden = true;
+}
+
+function menue_oeffnen(g, x, y) {
+  const m = $("kontextmenue");
+  menue_fuer = g;
+  m.hidden = false;
+  // ⛑ **Erst zeigen, dann messen.** Ein verstecktes Element hat keine
+  // Masse; wer vorher misst, rechnet mit null und schiebt das Menue an
+  // den Rand.
+  const r = m.getBoundingClientRect();
+  const rand = 8;
+  const lx = Math.min(x, window.innerWidth - r.width - rand);
+  const ly = Math.min(y, window.innerHeight - r.height - rand);
+  m.style.left = `${Math.max(rand, lx)}px`;
+  m.style.top = `${Math.max(rand, ly)}px`;
+  m.querySelector(".menueeintrag")?.focus();
+}
+
+// ⚑ Alles, was das Menue ueberholt, schliesst es: ein Klick daneben,
+//   die Fluchttaste, ein Bildlauf, ein anderes Fenster.
+document.addEventListener("pointerdown", (e) => {
+  if (menue_fuer && !$("kontextmenue").contains(e.target)) menue_schliessen();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && menue_fuer) menue_schliessen();
+});
+window.addEventListener("blur", menue_schliessen);
+document.addEventListener("scroll", menue_schliessen, true);
+
+/// Das Gespraech als Markdown, so wie es im Fenster steht.
+function als_markdown(g) {
+  const kopf = [
+    `# ${g.titel}`,
+    "",
+    `- Modus: ${MODI.find((m) => m.id === g.modus)?.name || g.modus}`,
+    `- Begonnen: ${g.wann}`,
+    `- Beitraege: ${g.beitraege.length}`,
+    "",
+  ];
+  const teile = g.beitraege.map((b) => {
+    const wer = b.von === "nutzer" ? "Du" : "Myelith";
+    // ⚑ Die Werkzeugschritte eines Agentenlaufs gehoeren mit hinein;
+    //   ohne sie ist ein Auftrag nicht nachvollziehbar.
+    const schritte = (b.schritte || [])
+      .map((z) => `  - ${z.art}: ${z.text}`)
+      .join("\n");
+    return [`## ${wer}`, "", b.text, schritte, b.fuss ? `\n_${b.fuss}_` : ""]
+      .filter(Boolean)
+      .join("\n");
+  });
+  return `${kopf.join("\n")}${teile.join("\n\n")}\n`;
+}
+
+async function menue_tat(tat) {
+  const g = menue_fuer;
+  menue_schliessen();
+  if (!g) return;
+
+  if (tat === "loeschen") {
+    gespraeche = gespraeche.filter((x) => x.id !== g.id);
+    if (offen && offen.id === g.id) offen = gespraeche[0] || null;
+    sichern();
+    alles_zeichnen();
+    melden(`Gespraech "${g.titel}" geloescht.`);
+    return;
+  }
+
+  if (tat === "umbenennen") {
+    umbenennen(g);
+    return;
+  }
+
+  if (tat === "ausgeben") {
+    try {
+      const wo = await invoke("gespraech_ausgeben", {
+        titel: g.titel,
+        inhalt: als_markdown(g),
+      });
+      melden(`Gespraech abgelegt: ${wo}`);
+    } catch (f) {
+      melden(`Fehler beim Ausgeben: ${f}`);
+    }
+  }
+}
+
+/// Den Titel an Ort und Stelle bearbeiten.
+///
+/// ⚑ **Kein Dialog.** Ein Fenster, das nach einem Namen fragt, nimmt
+/// den Blick von der Zeile, um die es geht. Das Feld sitzt genau auf
+/// dem Titel; Eingabe uebernimmt, Flucht verwirft, und ein Klick
+/// daneben uebernimmt ebenfalls, denn das ist, was ein Mensch erwartet.
+function umbenennen(g) {
+  const zeile = $("chatliste").querySelector(`[data-id="${g.id}"]`);
+  const knopf = zeile?.querySelector(".titel");
+  if (!knopf) return;
+
+  const feld = document.createElement("input");
+  feld.type = "text";
+  feld.className = "titelfeld";
+  feld.value = g.titel;
+  feld.setAttribute("aria-label", "Gespraech umbenennen");
+  knopf.replaceWith(feld);
+  feld.focus();
+  feld.select();
+
+  let fertig = false;
+  const schliessen = (uebernehmen) => {
+    if (fertig) return;
+    fertig = true;
+    if (uebernehmen) {
+      const neu = feld.value.trim();
+      // ⛑ Ein leerer Titel waere eine Zeile ohne Aufschrift. Dann
+      //   bleibt der alte.
+      if (neu) {
+        g.titel = neu;
+        sichern();
+      }
+    }
+    alles_zeichnen();
+  };
+  feld.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") schliessen(true);
+    if (e.key === "Escape") schliessen(false);
+  });
+  feld.addEventListener("blur", () => schliessen(true));
+}
+
+for (const e of document.querySelectorAll(".menueeintrag")) {
+  e.addEventListener("click", () => menue_tat(e.dataset.tat));
+}
+
 function chats_zeichnen() {
   const w = $("chatliste");
   w.replaceChildren();
@@ -249,6 +394,12 @@ function chats_zeichnen() {
     const zeile = document.createElement("div");
     zeile.className = "chat blank";
     zeile.setAttribute("role", "listitem");
+    // ⚑ Die Kennung, damit `umbenennen` seine Zeile wiederfindet.
+    zeile.dataset.id = g.id;
+    zeile.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      menue_oeffnen(g, e.clientX, e.clientY);
+    });
     if (offen && g.id === offen.id) zeile.setAttribute("aria-current", "true");
 
     const auf = document.createElement("button");
@@ -598,12 +749,12 @@ async function kopf_zeichnen() {
   // ⚑ Die Kurzform steht in der Marke, der ganze Satz im Titel. Wer
   // wissen will, warum sein Agent nichts anfasst, findet den Grund am
   // selben Ding und nicht in einer Anleitung.
-  const m = $("betriebsart");
-  m.textContent = e.betriebsart;
-  m.title = e.betriebsart_warum;
-  const offen_jetzt = e.bezeugtes && e.wurzel;
-  m.classList.toggle("eng", !offen_jetzt);
-  m.classList.toggle("offen", Boolean(offen_jetzt));
+  // ⛑ **Hier stand die Marke „liest und schreibt" oben rechts.** Sie
+  // ist am 2026-09-09 auf Festlegung des Projektinhabers entfallen.
+  // ⚑ Die Auskunft geht nicht verloren: Was der Agent anfassen darf,
+  // steht ausfuehrlich in der Seitenleiste unter `#reichweite`, und
+  // dort steht auch der Pfad dazu. Die Marke war die Kurzform davon an
+  // einer zweiten Stelle.
   $("modellzeile").textContent = geladen ? e.artefakt : `${e.artefakt} (nicht geladen)`;
   return e;
 }
@@ -754,20 +905,10 @@ async function senden(text) {
 // Zeiger ist, verhaelt sich wie eine gewoelbte Oberflaeche unter einer
 // Lichtquelle.
 //
-// ⚑ **Gerechnet wird ein Winkel und keine Stelle.** `--w` ist der
-// Winkel von der Mitte der Flaeche zum Zeiger, im Bezugssystem von
-// `conic-gradient`: null bei zwoelf Uhr, im Uhrzeigersinn. Der Verlauf
-// im Stil traegt seine scharfe Spitze bei null Grad, also liegt sie
-// immer dem Zeiger zugewandt.
-//
-// ⚑ **Ein Horcher am Fenster und nicht einer je Knopf.** Die
-// Oberflaeche baut ihre Knoepfe staendig neu (Gespraechsliste, Modi);
-// je Element einen Horcher zu haengen hiesse, sie bei jedem Neuzeichnen
-// wieder zu haengen und die alten zu vergessen.
-//
-// ⚑ **Und gerechnet wird im Bildtakt.** `mousemove` feuert oefter als
-// der Schirm zeichnet; ohne die Sperre setzte man Werte, die niemand je
-// sieht, und das kostet Rechenzeit, die dem Modell gehoert.
+// ⚑ **Gerechnet wird die Stelle des Zeigers, in Prozent der Flaeche.**
+// `--mx` und `--my` setzen die Mitte des `radial-gradient`, der den
+// Glanz zeichnet. Prozent trifft immer, gleich wie gross oder wie rund
+// die Flaeche ist.
 const LINSEN = ".glas, .eingabefeld, button:not(.blank), section";
 let reflex_angefragt = false;
 let letzte_stelle = null;
@@ -788,14 +929,18 @@ document.addEventListener("mousemove", (e) => {
     for (const el of document.querySelectorAll(LINSEN)) {
       if (el !== unten && !el.contains(unten)) continue;
       const r = el.getBoundingClientRect();
-      const dx = z.clientX - (r.left + r.width / 2);
-      const dy = z.clientY - (r.top + r.height / 2);
-      // `atan2` misst von drei Uhr gegen den Uhrzeigersinn, `conic`
-      // von zwoelf Uhr im Uhrzeigersinn; die Bildschirmachse zeigt nach
-      // unten, also dreht sich das Vorzeichen mit. Plus neunzig Grad
-      // bringt beide zur Deckung.
-      const w = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
-      el.style.setProperty("--w", String(w));
+      // ⚑ **Die Stelle des Zeigers in Prozent der Flaeche.** Der Glanz
+      // ist ein `radial-gradient` im Hintergrund des Pseudoelements;
+      // ein Punkt in Prozent trifft dort immer, gleich wie gross oder
+      // wie rund die Flaeche ist.
+      //
+      // ⛑ Hier stand ein WINKEL fuer einen Kegelverlauf. Der zeichnete
+      // eine wandernde Kante, und Kanten waren genau das Problem: Drei
+      // Anlaeufe lagen auf demselben Pseudoelement und stritten sich.
+      const mx = ((z.clientX - r.left) / r.width) * 100;
+      const my = ((z.clientY - r.top) / r.height) * 100;
+      el.style.setProperty("--mx", `${mx.toFixed(1)}%`);
+      el.style.setProperty("--my", `${my.toFixed(1)}%`);
     }
   });
 });

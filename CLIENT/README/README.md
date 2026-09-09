@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.15.0 (`myl-client` 0.11.1, `myl-oberflaeche` 0.14.0)
+> **Version:** 0.16.0 (`myl-client` 0.11.1, `myl-oberflaeche` 0.15.0)
 > **Datum:** 2026-09-09
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -33,6 +33,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „API, kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
 | **Einstellungen** | Je Feld ein Bedienelement, die Art kommt aus der Kiste |
+| **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
 an zweiundzwanzig Stellen, und startet **keinen einzigen
@@ -99,7 +100,7 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
-### v0.15.0 – 2026-09-09 (Punkt 1.8 zu: die Oberfläche liegt der Freigabe bei)
+### v0.16.0 – 2026-09-09 (die Oberfläche läuft: Punkt 1.8 zu, und alles, was der erste echte Start zutage gebracht hat)
 
 `myl-oberflaeche` **0.13.0 auf 0.14.0**. Neuer Job `oberflaeche` in
 `release.yml`: `.dmg`, `.msi`, `.deb` und AppImage, vier Ziele, alles
@@ -152,6 +153,13 @@ Projektinhabers: dieselbe goldene Spirale, je um neunzig Grad gedreht
 und an den Achsen aneinandergesetzt. Vier goldene Rechtecke im Windrad
 ergeben ein Quadrat, die Leinwand folgt also der Figur.
 
+⚑ **Alle Linien tragen dieselbe Deckkraft und dieselbe Breite**, auf
+Festlegung des Projektinhabers. Frueher waren die aeusseren Boegen
+schwaecher gedeckt, um die Vorlage nachzubilden. Eine Marke steht aber
+bei zweiunddreissig Pixeln, auf hellem und dunklem Grund und als
+Programmsymbol, und eine schwach gedeckte Linie verschwindet dort
+einfach.
+
 ⚑ **Der grosse Kreis aussen wird nicht gezeichnet, er entsteht.** Die
 Figur liegt so, dass der Mittelpunkt des aeussersten Bogens im
 Drehpunkt sitzt; damit liegen alle vier aeussersten Boegen auf
@@ -188,6 +196,79 @@ Die Fibonacci-Quadrate sind aus der Marke verschwunden; sie sind
 Hilfslinien und gehoeren in die Herleitung. Die Leinwand ist damit
 quadratisch statt golden, die **Breite** aber unveraendert, denn an ihr
 haengt die Sperrung des Schriftzugs.
+
+⚑ **Die Gespraeche tragen ein Menue auf den Rechtsklick**: umbenennen,
+exportieren, loeschen. Ein Menue fuer alle Zeilen, nicht eines je
+Zeile, und ausserhalb der Seitenleiste, denn die traegt
+`overflow: hidden` fuer ihren Bildlauf. Umbenannt wird an Ort und
+Stelle statt in einem Dialog; ausgegeben wird Markdown neben die
+Einstellungen, samt der Werkzeugschritte eines Agentenlaufs.
+
+⛑ **Der Bildlauf lag eine Ebene zu tief.** Die Gespraechsliste trug
+ihren eigenen, der Modus stand daneben; wurde die Liste lang, war der
+Modus nicht mehr erreichbar, und ein Bildlauf im Bildlauf erwischt mit
+dem Rad immer den falschen. Jetzt scrollt **ein** Behaelter zwischen
+Marke und Modellwahl, waehrend Kopf und Fuss stehen.
+
+⚑ **Der Glaseffekt malt eine Flaeche und keine Kante.** Drei Anlaeufe
+hatten ein wanderndes Licht auf den Rand legen wollen, alle drei auf
+demselben `::after`, und stritten sich um `inset` und `background`.
+Die jetzige Fassung ist ein `radial-gradient` ueber die ganze Flaeche,
+dessen Mitte in Prozent aus der Zeigerstelle kommt: `inset: 0`, keine
+Maske, kein Hintergrundfilter, kein Ueberstand. Sie kann bauartbedingt
+nicht verrutschen.
+
+⛑ **Das Buendel und das Programm liefen auseinander.**
+`buendeln-macos.sh` setzte ein gebautes Programm voraus und kopierte,
+was dalag; erneuert wurde beim Uebersetzen nur das Programm. Wer per
+Doppelklick startet, startet das Buendel und sieht den alten Stand.
+Das Skript baut jetzt selbst, bevor es buendelt.
+
+⛑ **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
+directory".** Liegt der Klon unter `Desktop`, `Documents` oder
+`Downloads`, gibt der Kernel `ENOENT` zurueck, damit ein Programm nicht
+einmal erfaehrt, dass es den Ordner gibt. Die Meldung nennt jetzt den
+Grund und den Weg dorthin.
+
+⛑ **Jeder Ring der Glasoptik sass um zwei Pixel daneben.**
+`* { box-sizing: border-box }` trifft keine Pseudoelemente, und beide
+Ringe liegen auf `::before` und `::after` mit `inset: 0; padding: 1px`.
+Im `content-box`-Modell kommt das Padding aussen dazu. Behoben mit
+`*, *::before, *::after`, bewacht von
+`die_ringe_rechnen_im_randkasten`.
+
+⛑ **Die Gespraechsliste liess sich nicht scrollen**, obwohl
+`overflow-y: auto` dastand: Ein Flex-Kind hat `min-height: auto` und
+schrumpft nicht unter seinen Inhalt. `overflow` allein scrollt nichts,
+es braucht eine Hoehe.
+
+⛑ **„Modell laden" scheiterte aus dem Finder heraus.** In den
+Einstellungen steht ein **relativer** Artefaktpfad, und macOS gibt
+einem aus dem Finder gestarteten Programm das Arbeitsverzeichnis `/`.
+`wurzel_suchen` sucht jetzt zusaetzlich vom Ort des Programms aus, und
+ein relativer Pfad wird gegen die Wurzel absolut gemacht. Von der
+Kommandozeile fiel es nie auf, weil das Arbeitsverzeichnis dort stimmt.
+
+⛑ **Die Oberflaeche ist nie gelaufen, und keine der sechzehn Pruefungen
+hat es gemerkt.** Beim ersten Doppelklick blieb das Fenster am
+Vorschaltbild stehen. Die Ursache steht in der zweiten Zeile von
+`app.js`: `const { invoke } = window.__TAURI__.core;`. In Tauri v2 gibt
+es `window.__TAURI__` nur mit `app.withGlobalTauri` in der
+Konfiguration, und das stand dort nie. Der Zugriff wirft **beim
+Auswerten des Moduls**, also laeuft danach keine Zeile, es gibt kein
+`catch`, und der Vorhang bleibt.
+
+⚑ **Warum es niemandem auffiel:** Die Pruefungen lesen HTML, CSS und
+Skript als Text und halten sie gegeneinander. Ob die Bruecke ins
+Fenster existiert, entscheidet die Konfiguration.
+`wer_die_globale_bruecke_benutzt_muss_sie_anmelden` schliesst genau
+diese Luecke. ⛑ Die Lehre ist groesser als der Fehler: Eine Sammlung,
+die nur Text vergleicht, kann gruen sein, waehrend das Programm nicht
+startet.
+
+⚑ **Das Programmsymbol kommt jetzt aus der Marke.** Es trug noch den
+Platzhalter von Tauri. Im Symbol faellt der Rahmen weg, denn er
+konkurriert mit der abgerundeten Kachel.
 
 ⛑ **Beide Kisten waren unlizenziert, und die Abhängigkeitsprüfung war
 deshalb rot.** Einundzwanzig von dreiundzwanzig Kisten tragen `license`

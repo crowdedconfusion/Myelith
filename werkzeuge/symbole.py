@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Erzeugt `icon.ico` und `icon.icns` aus `icons/icon.png`.
+"""Erzeugt das Programmsymbol in allen Groessen, aus der Marke.
 
 # ⛑ Warum es das braucht
 
@@ -10,13 +10,27 @@ bricht nicht immer ab: Er liefert unter Umstaenden ein Buendel mit dem
 Platzhalter des Werkzeugs, und das faellt erst dem auf, der es
 anklickt.
 
+# ⚑ Aus der Marke und nicht aus einer abgelegten PNG
+
+Die Quelle ist `werkzeuge/marke.py`, dieselbe wie fuer die Marke in der
+Seitenleiste. Eine PNG danebenzulegen und von Hand nachzuziehen hiesse,
+zwei Wahrheiten zu haben; die eine wuerde irgendwann vergessen.
+
+⛑ **Ein Ding ist im Symbol anders als in der Marke: Der Rahmen faellt
+weg.** Er konkurriert mit der abgerundeten Kachel des
+Programmsymbols, und der grosse Kreis ist dort Grenze genug.
+
+⚑ Die Deckkraft war frueher ein zweiter Unterschied. Seit dem
+2026-09-09 traegt die Marke selbst ueberall dieselbe, es gibt hier also
+nichts mehr abzuschalten.
+
 # ⚑ Ohne neue Abhaengigkeit
 
-Das Projekt hat keine Bildbibliothek in Python, und fuer zwei Dateien
-soll es auch keine bekommen. Verkleinert wird mit `sips`, gepackt mit
-`iconutil`, beides bringt macOS mit; die ICO-Datei entsteht hier von
-Hand, denn ihr Aufbau ist ein Kopf, ein Eintrag je Groesse und die
-PNG-Dateien unveraendert dahinter.
+Das Projekt hat keine Bildbibliothek in Python, und dafuer soll es auch
+keine bekommen. Gezeichnet wird mit `qlmanage`, verkleinert mit `sips`,
+gepackt mit `iconutil`, alles drei bringt macOS mit; die ICO-Datei
+entsteht hier von Hand, denn ihr Aufbau ist ein Kopf, ein Eintrag je
+Groesse und die PNG-Dateien unveraendert dahinter.
 
 ⚑ **Das Ergebnis wird abgelegt und nicht bei jedem Bau erzeugt.** Damit
 braucht die CI weder macOS noch dieses Skript, und `freigabe.sh` auf
@@ -29,6 +43,7 @@ Aufruf: `python3 werkzeuge/symbole.py` (macOS).
 from __future__ import annotations
 
 import pathlib
+import re
 import shutil
 import struct
 import subprocess
@@ -42,6 +57,32 @@ ICO_GROESSEN = [16, 24, 32, 48, 64, 128, 256]
 
 # Die Groessen, die macOS in einem Iconset erwartet, je einfach und doppelt.
 ICNS_GROESSEN = [16, 32, 128, 256, 512]
+
+
+# Der Grund des Symbols und die Farbe der Linien darauf.
+GRUND, LINIE, RUNDUNG = "#141416", "#e8e8ea", 22
+# Wie viel von der Kachel die Marke einnimmt.
+ANTEIL = 0.80
+
+
+def symbol_svg(wurzel: pathlib.Path) -> str:
+    """Die Marke als Programmsymbol: ohne Rahmen, volle Deckkraft."""
+    marke = subprocess.run(
+        [sys.executable, str(wurzel / "werkzeuge" / "marke.py")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    inneres = marke[marke.index(">") + 1 : marke.rindex("</svg>")]
+    # ⛑ Der Rahmen ist das einzige `rect` der Marke.
+    inneres = re.sub(r"<rect[^>]*/>\n?", "", inneres)
+    return (
+        '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" '
+        f'style="color:{LINIE}">\n'
+        f'<rect x="0" y="0" width="100" height="100" rx="{RUNDUNG}" fill="{GRUND}"/>\n'
+        f'<g transform="translate(50 50) scale({ANTEIL}) translate(-50 -50)">\n'
+        f"{inneres}\n</g>\n</svg>\n"
+    )
 
 
 def verkleinern(quelle: pathlib.Path, ziel: pathlib.Path, kante: int) -> None:
@@ -85,16 +126,37 @@ def ico_schreiben(bilder: list[tuple[int, bytes]], ziel: pathlib.Path) -> None:
 def main() -> int:
     wurzel = pathlib.Path(__file__).resolve().parent.parent
     verzeichnis = wurzel / "CLIENT" / "myl-oberflaeche" / "icons"
-    quelle = verzeichnis / "icon.png"
-    if not quelle.exists():
-        print(f"Fehlt: {quelle}")
-        return 1
-    if not shutil.which("sips") or not shutil.which("iconutil"):
-        print("Dieses Skript braucht `sips` und `iconutil`, also macOS.")
-        return 1
+    verzeichnis.mkdir(parents=True, exist_ok=True)
+    for werkzeug in ("sips", "iconutil", "qlmanage"):
+        if not shutil.which(werkzeug):
+            print(f"Dieses Skript braucht `{werkzeug}`, also macOS.")
+            return 1
 
     with tempfile.TemporaryDirectory() as tmp:
         arbeit = pathlib.Path(tmp)
+
+        # ── Das Symbol zeichnen ──────────────────────────────────
+        svg = arbeit / "symbol.svg"
+        svg.write_text(symbol_svg(wurzel), encoding="utf-8")
+        subprocess.run(
+            ["qlmanage", "-t", "-s", "1024", "-o", str(arbeit), str(svg)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        quelle = arbeit / "symbol.svg.png"
+        if not quelle.is_file():
+            print("qlmanage hat nichts gezeichnet.")
+            return 1
+
+        # ── Die Groessen, die `tauri.conf.json` anmeldet ─────────
+        for name, kante in (
+            ("icon.png", 512),
+            ("32x32.png", 32),
+            ("128x128.png", 128),
+            ("128x128@2x.png", 256),
+        ):
+            verkleinern(quelle, verzeichnis / name, kante)
 
         bilder = []
         for kante in ICO_GROESSEN:
@@ -113,9 +175,16 @@ def main() -> int:
             check=True,
         )
 
-    for name in ("icon.ico", "icon.icns"):
+    for name in (
+        "32x32.png",
+        "128x128.png",
+        "128x128@2x.png",
+        "icon.png",
+        "icon.ico",
+        "icon.icns",
+    ):
         p = verzeichnis / name
-        print(f"  {name:<12} {p.stat().st_size:>7} Byte")
+        print(f"  {name:<16} {p.stat().st_size:>7} Byte")
     return 0
 
 

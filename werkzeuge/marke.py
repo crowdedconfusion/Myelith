@@ -73,17 +73,17 @@ Daraus folgt die Regel eindeutig: Der neue Mittelpunkt ist die Ecke des
 neuen Quadrats, die vom Uebergangspunkt aus **in dieselbe Richtung**
 liegt wie der alte Mittelpunkt. Keine Suche, kein Raten.
 
-# ⚑ Die Tiefenstaffelung, und warum sie keine Farbe ist
+# ⚑ Alle Linien tragen dieselbe Deckkraft
 
-Die Vorlage geht von Gold innen nach Blaugrau aussen. Die Marke bleibt
-**schwarzweiss**, auf Festlegung des Projektinhabers. Uebersetzt ist
-der Verlauf deshalb in **Deckkraft**: innen voll, aussen schwach. Das
-ist derselbe Tiefeneindruck mit einer einzigen Farbe, und er traegt
-auch dort, wo die Marke auf hellem Grund steht.
+Bis zum 2026-09-09 waren die aeusseren Boegen schwaecher gedeckt als
+die inneren; das sollte die Vorlage nachbilden, die von Gold innen nach
+Blaugrau aussen geht. Auf Festlegung des Projektinhabers ist die
+Staffelung weg: **eine Strichstaerke, eine Deckkraft, eine Farbe.**
 
-⛑ Ohne diese Staffelung sieht man vier gleich laute Kreise und keine
-Spirale: Bei gleicher Deckkraft draengt sich der grosse aeussere Bogen
-genauso vor wie der kleine innere, und das Auge findet keinen Anfang.
+⚑ Das ist auch die robustere Wahl. Eine Marke steht bei
+zweiunddreissig Pixeln, auf hellem und auf dunklem Grund, und in einem
+Programmsymbol; eine schwach gedeckte Linie verschwindet dort einfach.
+Was bleibt, ist die Konstruktion selbst.
 
 Aufruf:  python3 werkzeuge/marke.py [--eigenstaendig] > marke.svg
 """
@@ -305,19 +305,12 @@ def P(p):
     return (S / 2 + x * sk, S / 2 - y * sk)
 
 
-def deckkraft(i):
-    """Innen voll, aussen schwach; dazwischen linear ueber den Index."""
-    if N < 2:
-        return NAH
-    return NAH + (FERN - NAH) * i / (N - 1)
-
-
 # ── Rahmen und Kreis, und sonst nichts vom Geruest ──────────────────
 # ⛑ Die Quadrate werden gerechnet, aber nicht gezeichnet: Sie sind die
 # Herleitung der Boegen und in einer Marke Hilfslinien.
 geruest = [
     f'<rect x="{rand:.2f}" y="{rand:.2f}" '
-    f'width="{S - 2 * rand:.2f}" height="{S - 2 * rand:.2f}" opacity="{FERN:.2f}"/>',
+    f'width="{S - 2 * rand:.2f}" height="{S - 2 * rand:.2f}"/>',
 ]
 
 # ── Die Boegen, je einer als eigener Pfad wegen der Deckkraft ───────
@@ -351,7 +344,7 @@ geruest = [
 SICHTBAR = STRICH / 60
 
 pfade = []
-for i, radius, m, anfang, ende, _windung in boegen:
+for _i, radius, m, anfang, ende, _windung in boegen:
     if radius * sk < SICHTBAR:
         continue
     a, e, mm = P(anfang), P(ende), P(m)
@@ -361,7 +354,7 @@ for i, radius, m, anfang, ende, _windung in boegen:
     rr = radius * sk
     pfade.append(
         f'<path d="M{a[0]:.2f} {a[1]:.2f} A{rr:.2f} {rr:.2f} 0 0 '
-        f'{1 if kreuz > 0 else 0} {e[0]:.2f} {e[1]:.2f}" opacity="{deckkraft(i):.2f}"/>'
+        f'{1 if kreuz > 0 else 0} {e[0]:.2f} {e[1]:.2f}"/>'
     )
 
 # ⛑ Ohne `xmlns`, denn die Marke wird INLINE in HTML benutzt; dort setzt

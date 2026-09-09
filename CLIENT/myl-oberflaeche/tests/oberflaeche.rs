@@ -335,11 +335,66 @@ fn selektoren_mit(css: &str, eigenschaft: &str) -> BTreeSet<String> {
 /// abbestellt, soll sie sehen koennen, nur eben still.
 #[test]
 fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
-    let stil = lies("stil.css");
+    let stil = ohne_kommentare(&lies("stil.css"));
     let i = stil.find("prefers-reduced-motion").expect("die Regel gibt es");
-    let block: String = stil[i..].chars().take(400).collect();
-    for was in ["#netz", ".vorhangtext", "button::after"] {
-        assert!(block.contains(was), "{was} bewegt sich weiter, obwohl abbestellt:\n{block}");
+
+    // ⛑ **Der Block hat ein Ende, und alles danach zaehlt wieder mit.**
+    //   Ein erster Entwurf durchsuchte nur `stil[..i]`, also den Teil
+    //   VOR der Regel. Eine Bewegung, die danach steht, sah er nicht,
+    //   und die Gegenprobe schlug prompt nicht an: Genau die Sorte
+    //   Wache, die gruen ist, weil sie nicht hinsieht.
+    let ab = stil[i..].find('{').map(|k| i + k + 1).expect("Blockanfang");
+    let mut tiefe = 1usize;
+    let mut bis = ab;
+    for (k, c) in stil[ab..].char_indices() {
+        match c {
+            '{' => tiefe += 1,
+            '}' => {
+                tiefe -= 1;
+                if tiefe == 0 {
+                    bis = ab + k;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let block = stil[ab..bis].to_string();
+    let ausserhalb = format!("{}{}", &stil[..i], &stil[bis..]);
+
+    // ⛑ **Die Liste wird hergeleitet und nicht gepflegt.** Sie stand
+    //   hier fest, und als `button::after` aus dem Stilblatt
+    //   verschwand, schlug die Pruefung auf etwas an, das es nicht mehr
+    //   gibt. Eine Wache, die eine Abschrift fuehrt, verrottet mit der
+    //   Vorlage; diese liest die Vorlage.
+    //
+    // ⚑ Gesucht wird jeder Selektor, der ausserhalb des Blocks eine
+    //   `animation` setzt. Wer sich bewegt, muss sich abbestellen
+    //   lassen.
+    let mut beweglich: BTreeSet<String> = BTreeSet::new();
+    for block_text in ausserhalb.split('}') {
+        let Some((selektor, regeln)) = block_text.split_once('{') else { continue };
+        if regeln.contains("animation:") && !regeln.contains("animation: none") {
+            for teil in selektor.split(',') {
+                let s = teil.trim();
+                if !s.is_empty() && !s.starts_with('@') && !s.starts_with('%') {
+                    beweglich.insert(s.to_string());
+                }
+            }
+        }
+    }
+
+    // ⚑ Das Netz bewegt sich vom Skript aus, nicht vom Stilblatt; es
+    //   steht deshalb zusaetzlich hier.
+    beweglich.insert("#netz".to_string());
+
+    assert!(!beweglich.is_empty(), "nichts bewegt sich? dann stimmt die Suche nicht");
+    for was in &beweglich {
+        assert!(
+            block.contains(was.as_str()),
+            "{was} bewegt sich, wird im Block fuer reduzierte Bewegung aber\n\
+             nicht abbestellt:\n{block}"
+        );
     }
 }
 
@@ -623,5 +678,65 @@ fn jedes_bauskript_bekommt_die_umgebung_in_den_pfad() {
         quelle.matches("calibrate/.venv/bin\")").count(),
         1,
         "der Pfad zur Kalibrier-Umgebung steht mehr als einmal im Quelltext"
+    );
+}
+
+/// **Wer `window.__TAURI__` benutzt, braucht `withGlobalTauri`.**
+///
+/// ⛑ Ohne die Zeile in `tauri.conf.json` gibt es das Objekt nicht. Das
+/// Skript holt sich `invoke` daraus in seiner **zweiten** Zeile; ein
+/// Zugriff auf `undefined` wirft dort, und dann laeuft vom Modul
+/// ueberhaupt nichts. Das Fenster bleibt am Vorschaltbild stehen und
+/// meldet nichts, denn der Fehler passiert, bevor irgendein `catch`
+/// existiert.
+///
+/// ⚑ **Keine der uebrigen Pruefungen faengt das**, und das ist der
+/// Grund, warum es diese gibt: Sie lesen HTML, CSS und Skript als
+/// Text. Ob die Bruecke ins Fenster ueberhaupt da ist, entscheidet die
+/// Konfiguration, und die stand nie daneben.
+#[test]
+fn wer_die_globale_bruecke_benutzt_muss_sie_anmelden() {
+    let js = lies("app.js");
+    let konf = std::fs::read_to_string(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.conf.json"),
+    )
+    .expect("tauri.conf.json");
+
+    if js.contains("window.__TAURI__") {
+        assert!(
+            konf.contains("\"withGlobalTauri\": true"),
+            "app.js greift auf `window.__TAURI__` zu, aber `withGlobalTauri`\n\
+             steht nicht in tauri.conf.json. Das Objekt gibt es dann nicht,\n\
+             und das Fenster bleibt am Vorschaltbild stehen."
+        );
+    }
+}
+
+/// **Die Pseudoelemente rechnen im selben Kastenmodell wie alles
+/// andere.**
+///
+/// ⛑ `* { box-sizing: border-box }` trifft `::before` und `::after`
+/// **nicht**. Beide tragen die Ringe der Glasoptik, mit
+/// `position: absolute; inset: 0; padding: 1px`; im `content-box`-Modell
+/// kommt das Padding aussen dazu, der Ring wird zwei Pixel groesser als
+/// sein Traeger und sitzt sichtbar daneben. Gemeldet wurde es als
+/// „Highlight nach links verschoben" an jedem runden Knopf.
+///
+/// ⚑ Die Pruefung haengt an der Technik und nicht am Wortlaut: Sie
+/// greift nur, wenn ueberhaupt ein Ring ueber `inset` und `padding`
+/// gebaut wird.
+#[test]
+fn die_ringe_rechnen_im_randkasten() {
+    let css = ohne_kommentare(&lies("stil.css"));
+    let baut_ringe = css.contains("::before") && css.contains("inset: 0");
+    if !baut_ringe {
+        return;
+    }
+    let hat = css.contains("*::before") && css.contains("*::after");
+    assert!(
+        hat,
+        "Die Ringe liegen auf ::before und ::after, aber `box-sizing`\n\
+         gilt nur fuer `*`. Pseudoelemente sind davon nicht erfasst und\n\
+         werden um ihr Padding groesser als ihr Traeger."
     );
 }

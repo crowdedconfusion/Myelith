@@ -63,7 +63,33 @@
   --rund-klein: 10px;
 }
 
-* { box-sizing: border-box; }
+/* ⛑ **Die Pseudoelemente gehoeren ausdruecklich dazu.** `*` trifft sie
+   nicht, und das war am 2026-09-09 der Grund fuer verschobene
+   Highlights an jedem Knopf: Die beiden Ringe sind `::before` und
+   `::after` mit `position: absolute; inset: 0; padding: 1px`. Im
+   `content-box`-Modell kommt das Padding **aussen** dazu, jeder Ring
+   wird also zwei Pixel groesser als sein Traeger und waechst von links
+   oben weg. Bei einem Rundknopf von zwei Rem sind das sechs Prozent,
+   und genau die sieht man. */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+/* ⛑ **Ohne diese Regel scrollt das Dokument statt der Liste.**
+   Es gab bis zum 2026-09-09 ueberhaupt keine `html`-Regel, und `body`
+   hatte weder Hoehe noch Ueberlaufsperre. `#huelle` steht zwar auf
+   `100vh`, aber jede Ueberschreitung irgendwo darunter macht das
+   Dokument scrollbar, und dann nimmt das Rad das Dokument statt des
+   Behaelters unter dem Zeiger: Es bewegt sich alles, und nichts
+   bleibt stehen.
+
+   ⚑ Ein Fenster mit fester Aufteilung scrollt nicht als Ganzes. Was
+   scrollen soll, sagt es selbst, und das ist die Gespraechsliste. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
 
 body {
   margin: 0;
@@ -101,7 +127,7 @@ body {
 
    | | wie es hier gebaut ist |
    |---|---|
-   | **Der helle Punkt WANDERT auf dem Rand** | Ein `conic-gradient`, dessen Anfangswinkel `--w` aus der Zeigerstelle kommt. Das Licht liegt also immer dort, wo der Zeiger ist, und laeuft beim Bewegen um die Kante herum. Das ist der eine Kniff, an dem das Auge Glas erkennt |
+   | **Das Licht WANDERT mit dem Zeiger** | Ein `radial-gradient`, dessen Mitte ueber `--mx` und `--my` aus der Zeigerstelle kommt. Das Licht liegt also immer dort, wo der Zeiger ist. Das ist der eine Kniff, an dem das Auge Glas erkennt. ⛑ Frueher lief es als Kegelverlauf um die **Kante**; drei Anlaeufe dieser Art lagen auf demselben Pseudoelement und stritten sich, siehe den Kommentar am Glanz weiter unten |
    | **Die Spitze ist SCHARF** | Zwoelf Grad von null auf voll, dann ein langer Abfall. Ein weicher Fleck sieht nach Leuchten aus, eine scharfe Spitze mit langem Schweif nach einer gewoelbten Kante |
    | **Es gibt ein Gegenlicht** | Eine schwache zweite Spitze gegenueber. Echtes Glas hat zwei Kanten, und die hintere faengt das Licht ebenfalls |
 
@@ -173,7 +199,25 @@ section::before {
   mask-composite: exclude;
 }
 
-/* Der Reflex: ein zweiter Ring darueber, in Ruhe unsichtbar. */
+/* ⚑ **Der Glanz beim Ueberfahren, und warum er so gebaut ist.**
+   Ein weiches Licht an der Stelle des Zeigers, ueber die ganze
+   Flaeche. Es folgt der Maus ueber `--mx` und `--my`, die das Skript
+   in Prozent setzt.
+
+   ⛑ **Zwei Vorgaenger sind daran gescheitert, dass sie Kanten malen
+   wollten.** Ein maskierter Ring mit `mask-composite` und ein zweiter
+   mit `backdrop-filter`, dazu ein Lichtstreifen mit `inset: -40% -60%`,
+   und alle drei lagen auf **demselben** Pseudoelement. Welche
+   Eigenschaft gewann, entschied die Spezifitaet; heraus kam eine
+   Flaeche neben dem Knopf, gemeldet als „Umrandung nach links
+   verschoben".
+
+   ⚑ **Diese Fassung kann bauartbedingt nicht verrutschen:** `inset: 0`
+   auf einem Traeger mit `position: relative`, `border-radius: inherit`,
+   keine Maske, kein Hintergrundfilter, kein Ueberstand. Sie deckt genau
+   die Flaeche und nichts sonst. Die Kante uebernimmt der ruhende Ring
+   auf `::before`, der nachweislich konzentrisch sitzt; beim
+   Ueberfahren wird er nur heller. */
 .glas::after,
 .eingabefeld::after,
 button:not(.blank)::after,
@@ -182,42 +226,16 @@ section::after {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 1px;
   pointer-events: none;
   z-index: 2;
   opacity: 0;
-  transition: opacity .28s ease;
-  background: conic-gradient(
-    from calc(var(--w, 0) * 1deg),
-    rgba(255, 255, 255, 0) 0deg,
-    rgba(255, 255, 255, .95) 11deg,
-    rgba(255, 255, 255, .42) 30deg,
-    rgba(255, 255, 255, .10) 62deg,
-    rgba(255, 255, 255, 0) 105deg,
-    rgba(255, 255, 255, 0) 175deg,
-    rgba(255, 255, 255, .22) 191deg,
-    rgba(255, 255, 255, .05) 215deg,
-    rgba(255, 255, 255, 0) 255deg,
-    rgba(255, 255, 255, 0) 360deg
+  transition: opacity .2s ease;
+  background: radial-gradient(
+    circle at var(--mx, 50%) var(--my, 50%),
+    rgba(255, 255, 255, .17),
+    rgba(255, 255, 255, .07) 36%,
+    rgba(255, 255, 255, 0) 68%
   );
-  backdrop-filter: blur(.5px) saturate(260%) brightness(1.5);
-  -webkit-backdrop-filter: blur(.5px) saturate(260%) brightness(1.5);
-  /* ⛑ **Die Reihenfolge ist hier der ganze Unterschied.** Die
-     Kurzform `mask` setzt `mask-composite` auf ihren Anfangswert
-     zurueck; steht der Verbund davor, ist er weg, die Maske verrechnet
-     sich nicht mehr, und statt eines Rings entsteht eine gefuellte
-     Flaeche. Genau das war zu sehen: Die Knoepfe trugen einen hellen
-     Keil statt einer Kante. Beide Kurzformen zuerst, beide Verbunde
-     danach; in einer Einzelprobe nachgestellt und in beiden
-     Reihenfolgen bestaetigt. */
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
 }
 
 .glas:hover::after,
@@ -226,6 +244,15 @@ section::after {
 button:not(.blank):hover:not(:disabled)::after,
 section:hover::after {
   opacity: 1;
+}
+
+/* Und die Kante hellt beim Ueberfahren mit auf. */
+.glas:hover::before,
+.eingabefeld:hover::before,
+.eingabefeld:focus-within::before,
+button:not(.blank):hover:not(:disabled)::before,
+section:hover::before {
+  background: rgba(255, 255, 255, .30);
 }
 
 /* ⚑ Der Schein IM Glas, sehr schwach: Echtes Glas leuchtet innen
@@ -253,14 +280,6 @@ section:hover::after {
     background: var(--grund-hoch);
   }
   button:hover:not(:disabled) { background: var(--grund-hoch); }
-  /* Ohne Brechung traegt der wandernde Reflex nichts; dann hellt sich
-     beim Ueberfahren nur die Kante auf. */
-  .glas::after, .eingabefeld::after, button:not(.blank)::after,
-  section::after {
-    background: rgba(255, 255, 255, .22);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 
 /* --- Die Huelle -----------------------------------------------------
@@ -313,9 +332,20 @@ section:hover::after {
 }
 
 .leistenteil { padding: .5rem 1.1rem; }
-.leistenteil.chats {
+
+/* ⚑ **Der Bildlauf der Leiste sitzt hier und nirgends sonst.** Kopf und
+   Fuss bleiben stehen, alles dazwischen faehrt. `min-height: 0` gehoert
+   dazu: Ein Flex-Kind schrumpft sonst nicht unter seinen Inhalt, und
+   dann gibt es nichts zu scrollen, sondern nur etwas zum
+   Abschneiden. */
+.leistenmitte {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  /* Am Ende der Liste nicht an das Fenster weiterreichen. */
+  overscroll-behavior: contain;
+}
+.leistenteil.chats {
   display: flex;
   flex-direction: column;
   gap: .5rem;
@@ -391,10 +421,41 @@ section:hover::after {
 .modus[data-offen="nein"]:hover { background: none; color: var(--leise); cursor: help; }
 
 #chatliste {
+  display: grid;
+  gap: .15rem;
+  align-content: start;
+  /* ⛑ **Kein eigener Bildlauf mehr.** Er lag hier und zugleich eine
+     Ebene hoeher; zwei ineinander sind schwer zu treffen, und das Rad
+     erwischte immer den falschen.
+     ⚑ `min-content` bleibt: Ohne die Angabe stauchen sich die
+     Rasterzeilen, der Inhalt passt dann, und es gibt nichts zu
+     scrollen. */
+  grid-auto-rows: min-content;
+  /* Der eigene Rand, damit der Fokusring nicht am Rand abgeschnitten
+     wird. */
+  padding: 2px;
+  margin: -2px;
+}`
+     abgeschnitten. Erst `flex: 1` und `min-height: 0` geben ihr eine
+     Hoehe, an der es etwas zu scrollen gibt. */
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: grid;
   gap: .15rem;
   align-content: start;
+  /* ⛑ **Ohne diese Zeile gibt die Liste nach, statt ueberzulaufen.**
+     Rasterzeilen ohne Groessenangabe sind `auto` und duerfen sich
+     stauchen: Bei knappem Platz wurden aus neunundzwanzig Gespraechen
+     vierzehn Pixel uebereinandergeschobener Text, und weil der Inhalt
+     damit **passte**, gab es fuer `overflow-y` nichts zu tun. Mit
+     `min-content` behaelt jede Zeile ihre Hoehe, der Inhalt wird
+     groesser als der Behaelter, und erst dann entsteht eine
+     Bildlaufleiste. */
+  grid-auto-rows: min-content;
+  /* ⚑ Am Ende der Liste soll das Rad nicht an das Fenster
+     weitergereicht werden; sonst ruckt beim Weiterdrehen der Rest. */
+  overscroll-behavior: contain;
   /* Der eigene Rand, damit der Fokusring nicht am Rand abgeschnitten
      wird. */
   padding: 2px;
@@ -981,60 +1042,22 @@ button {
     transform .28s cubic-bezier(.34, 1.56, .64, 1);
 }
 
-/* ⚑ **Der Lichtstreifen ist der Kern des Glaseffekts.** Er liegt quer
-   ueber dem Knopf, steht ausserhalb und faehrt beim Ueberfahren
-   hindurch. Dass er sich bewegt, ist der Unterschied zwischen einer
-   helleren Flaeche und etwas, das aussieht wie Glas: Glas verraet sich
-   dadurch, dass sein Licht wandert. */
-button::after {
-  content: "";
-  position: absolute;
-  inset: -40% -60%;
-  pointer-events: none;
-  background: linear-gradient(
-    100deg,
-    transparent 35%,
-    rgba(255, 255, 255, .16) 50%,
-    transparent 65%
-  );
-  transform: translateX(-70%);
-  opacity: 0;
-  transition: transform .55s ease, opacity .2s ease;
-}
+/* ⛑ **Hier lag der Lichtstreifen: ein zweites, grosses `::after` mit
+   `inset: -40% -60%`, das quer ueber den Knopf fuhr.**
 
-/* ⚑ Beim Ueberfahren wird das Licht staerker, nicht die Flaeche
-   heller: Eine hellere Flaeche ist Farbe, ein staerkeres Licht ist
-   Material. */
-button:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--glas-hell), var(--glas-hoch));
-  box-shadow:
-    0 8px 22px -10px rgba(0, 0, 0, .6),
-    inset 0 -1px 0 rgba(0, 0, 0, .22);
-}
+   Er ist am 2026-09-09 entfernt worden, zusammen mit dem Reflexring,
+   und dabei kam heraus, warum die Umrandung „nach links verschoben"
+   aussah: **Beide Wirkungen lagen auf demselben Pseudoelement.** Der
+   Ring wollte `inset: 0` mit einer Maske, der Streifen `inset: -40%
+   -60%` ohne; ein `::after` kann nicht beides sein. Welche Eigenschaft
+   gewann, entschied die Spezifitaet, und heraus kam eine Flaeche, die
+   weit ueber den Knopf hinausragte.
 
-/* ⚑ Die flachen Knoepfe in der Leiste tragen die Klasse `blank` und
-   bekommen damit weder Ring noch Licht: Eine Liste aus zwoelf
-   linsenden Flaechen ist Unruhe, nicht Material. */
-.blank { background: none; box-shadow: none; border: 1px solid transparent; }
+   ⚑ Was bleibt, ist die ruhende Haarlinie auf `::before` und ein
+   Aufhellen der Flaeche beim Ueberfahren. Wer den Streifen
+   zurueckholen will, braucht ein eigenes Element dafuer und nicht das
+   Pseudoelement, das schon vergeben ist. */
 
-/* ⚑ Beim Druecken gibt das Material nach und federt zurueck. Der
-   Ruecksprung ueber eins hinaus (`cubic-bezier` mit Ueberschwingen in
-   der `transition` oben) ist der Unterschied zwischen einem Knopf, der
-   einsinkt, und einem, der aus Gel ist. */
-button:active:not(:disabled) {
-  transform: scale(.975);
-  box-shadow:
-    inset 0 2px 8px rgba(0, 0, 0, .45),
-    inset 0 1px 0 rgba(255, 255, 255, .05);
-}
-
-button:disabled {
-  color: var(--leiser);
-  cursor: progress;
-  box-shadow: none;
-  background: var(--glas);
-}
-button:disabled::after { opacity: 0 !important; }
 button:disabled::before { background: rgba(255, 255, 255, .06); }
 
 input:hover, select:hover { border-color: var(--kante-hell); }
@@ -1124,6 +1147,46 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   .vorhangtext { animation: none; }
   .meldung { animation: none; }
   #netz { display: none; }
-  button::after { display: none; }
   * { transition: none !important; }
+}
+
+
+/* --- Das Menue am Gespraech ------------------------------------------- */
+
+/* ⚑ **Fest positioniert und ausserhalb der Seitenleiste.** Die Leiste
+   traegt `overflow: hidden`, damit ihr Bildlauf greift; ein Menue
+   darin waere am Rand abgeschnitten. Die Stelle setzt das Skript aus
+   der Zeigerposition. */
+#kontextmenue {
+  position: fixed;
+  z-index: 60;
+  min-width: 11rem;
+  padding: .3rem;
+  display: grid;
+  gap: .1rem;
+  border-radius: var(--rund);
+  background: var(--grund-hoch);
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .8);
+}
+
+.menueeintrag {
+  text-align: left;
+  padding: .4rem .6rem;
+  border-radius: calc(var(--rund) - .25rem);
+  color: var(--leise);
+  font-size: .82rem;
+}
+.menueeintrag:hover:not(:disabled) { background: var(--glas); color: var(--text); }
+.menueeintrag.weg:hover:not(:disabled) { color: var(--text); }
+
+/* ⚑ Das Feld zum Umbenennen sitzt genau auf dem Titel und uebernimmt
+   dessen Masse, damit die Zeile beim Bearbeiten nicht springt. */
+.titelfeld {
+  width: 100%;
+  background: var(--grund);
+  border: 1px solid var(--kante-hell);
+  border-radius: calc(var(--rund) - .3rem);
+  color: var(--text);
+  font: inherit;
+  padding: .1rem .3rem;
 }

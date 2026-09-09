@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "myl-client",
  "serde",
