@@ -35,7 +35,7 @@
 <div id="kontextmenue" class="glas" role="menu" hidden>
   <button type="button" class="menueeintrag blank" role="menuitem" data-tat="umbenennen">Umbenennen</button>
   <button type="button" class="menueeintrag blank" role="menuitem" data-tat="ausgeben">Exportieren</button>
-  <button type="button" class="menueeintrag blank weg" role="menuitem" data-tat="loeschen">Loeschen</button>
+  <button type="button" class="menueeintrag blank weg" role="menuitem" data-tat="loeschen">Löschen</button>
 </div>
 
 <div id="huelle">
@@ -46,7 +46,7 @@
        traegt es den Verlauf mit, beim Agenten steht jeder Auftrag fuer
        sich. Wer die Gespraeche zuerst saehe, waehlte in einem Zustand,
        den er noch nicht kennt. -->
-  <aside id="seitenleiste" aria-label="Gespraeche und Betriebsart">
+  <aside id="seitenleiste" aria-label="Gespräche und Betriebsart">
     <!-- ⚑ **Die Marke ist gerechnet und nicht gezeichnet**, erzeugt von
          `werkzeuge/marke.py`: Fibonacci-Quadrate, tangentenstetige
          Viertelkreise darin, und das Ganze **viermal**, je um neunzig
@@ -173,8 +173,8 @@
       </nav>
 
       <div class="leistenteil chats">
-        <h2>Gespraeche</h2>
-        <button id="neues-gespraech" class="breit">Neues Gespraech</button>
+        <h2>Gespräche</h2>
+        <button id="neues-gespraech" class="breit">Neues Gespräch</button>
         <div id="chatliste" role="list"></div>
       </div>
     </div>
@@ -249,7 +249,7 @@
     <section id="einstellungsseite" hidden aria-label="Einstellungen">
       <div class="seitenkopf">
         <h1>Einstellungen</h1>
-        <button id="zurueck" class="rundknopf" aria-label="Zurueck zum Gespraech">
+        <button id="zurueck" class="rundknopf" aria-label="Zurück zum Gespräch">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <path d="M5 5l10 10M15 5L5 15"/>
           </svg>
@@ -274,7 +274,14 @@
         </div>
       </section>
 
-      <h2>Einstellungen</h2>
+      <!-- ⛑ **Hier stand ein zweites „Einstellungen".** Eines als
+           Ueberschrift der Seite, eines ueber der Tabelle, und
+           dazwischen der Abschnitt „Modelle". Die Tabelle traegt ihre
+           Ueberschriften jetzt selbst, eine je Bereich, und die zweite
+           Zeile mit demselben Wort ist entfallen. -->
+      <!-- ⚑ Steht nur da, wenn das Fenster hierher gefuehrt hat, und
+           sagt dann, warum. -->
+      <p id="feldhinweis" class="hinweiskasten" role="status" hidden></p>
       <table id="einstellungen"><tbody></tbody></table>
       <p class="pfad" id="pfad"></p>
       <p class="pfad" id="setzmeldung" role="status"></p>

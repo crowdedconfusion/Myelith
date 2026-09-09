@@ -48,6 +48,9 @@ struct Ansicht {
     schreiben: bool,
     /// Was `kap.kerne` sagt.
     kerne_eingestellt: Option<usize>,
+    /// Wohin ausgegebene Gespraeche gehen; `None` heisst „noch nicht
+    /// entschieden", und das Fenster fuehrt dann zur Einstellung.
+    ausgabe_ordner: Option<String>,
     /// ⚑ Und was davon **wirkt**. Eine Grenze ueber der Maschine hebt
     /// sie nicht an, und der Unterschied gehoert sichtbar.
     kerne_wirksam: usize,
@@ -128,6 +131,7 @@ fn einstellungen() -> Result<Ansicht, String> {
         wurzel: e.agent.wurzel.clone(),
         schreiben: e.agent.schreiben,
         kerne_eingestellt: e.kapazitaet.kerne,
+        ausgabe_ordner: e.ausgabe.ordner.clone(),
         kerne_wirksam: myl_client::kapazitaet::kerne(),
         betriebsart: kurzform(&e.agent).0.into(),
         betriebsart_warum: kurzform(&e.agent).1.into(),
@@ -139,17 +143,20 @@ fn einstellungen() -> Result<Ansicht, String> {
 ///
 /// ⚑ **Ohne es zu laden**, denn das kostet bei einem 4B-Modell zehn
 /// Sekunden. Die Vorlage folgt aus der Familie und steht im Katalog.
-/// Die setzbaren Felder mit ihrer Art.
+/// Die setzbaren Felder mit Art, Bereich, Beschriftung und Hinweis.
 ///
 /// ⚑ **Aus der Kiste und nicht hier aufgezaehlt.** Eine zweite Liste im
 /// Fenster liefe irgendwann auseinander, und dann zeigt die Oberflaeche
 /// ein Feld, das der Setzer nicht kennt.
+///
+/// ⛑ **Auch die Beschriftung kommt von dort.** Dieser Befehl gab
+/// einmal nur Name und Art zurueck; das Fenster zeigte daraufhin
+/// `kap.beschleuniger` als Beschriftung, weil es nichts Besseres
+/// hatte. Die Alternative waere eine Uebersetzungstabelle im Skript
+/// gewesen, also wieder zwei Listen.
 #[tauri::command]
-fn felder() -> Vec<(String, String)> {
-    myl_client::einstellungen::FELDER
-        .iter()
-        .map(|(n, a)| (n.to_string(), format!("{a:?}")))
-        .collect()
+fn felder() -> Vec<myl_client::einstellungen::Feld> {
+    myl_client::einstellungen::FELDER.to_vec()
 }
 
 /// Setzt ein Feld und schreibt die Ablage.
@@ -328,14 +335,6 @@ struct Werkzeugliste {
     namen: Vec<String>,
 }
 
-#[tauri::command]
-fn modell(artefakt: String) -> Result<String, String> {
-    let pfad = artefakt_absolut(&artefakt);
-    let m = myl_client::Oertlichesmodell::laden(&pfad)
-        .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
-    Ok(format!("{:?}", m.vorlage()))
-}
-
 /// Das geladene Modell, samt seiner Ruestung.
 ///
 /// ⚑ **Einmal geladen, viele Auftraege**, genau wie `myl sitzung`. Der
@@ -510,14 +509,72 @@ fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
     }
 }
 
+/// Laesst den Nutzer ein Verzeichnis auswaehlen.
+///
+/// # ⚑ Warum das aus dem Ruecken gerufen wird und nicht aus dem Fenster
+///
+/// Das Zusatzstueck `tauri-plugin-dialog` bringt eine Befehlsgruppe
+/// fuer die Webansicht mit, `plugin:dialog|open`. Sie zu benutzen
+/// hiesse: eine Berechtigung in `capabilities/vorgabe.json`, ein
+/// JS-Paket fuer die Bindung oder ein von Hand nachgebauter Aufruf mit
+/// einer Nutzlast, deren Form sich mit dem Zusatzstueck aendern kann.
+///
+/// ⚑ **Aus Rust gerufen entfaellt alles drei.** Berechtigungen regeln,
+/// was die **Webansicht** rufen darf; eigene Befehle brauchen keine.
+/// Das Fenster ruft `ordner_waehlen` wie jeden anderen Befehl auch,
+/// und die Erlaubnisliste bleibt bei ihrem einen Eintrag.
+///
+/// ⛑ **`async`, und das ist keine Kosmetik.** Tauri fuehrt Befehle
+/// ohne `async` **auf dem Hauptfaden** aus, und `blocking_pick_folder`
+/// wartet dort auf eine Antwort, die nur der Hauptfaden geben kann:
+/// Das Fenster stuende. Mit `async` laeuft der Befehl auf dem
+/// Nebenlaeufer, und das Warten ist harmlos.
+///
+/// ⚑ **Auf macOS ist die Auswahl zugleich die Freigabe.** Was der
+/// Nutzer im Fensterdialog waehlt, darf die Anwendung danach lesen und
+/// schreiben, auch unterhalb von Schreibtisch oder Dokumenten. Wer den
+/// Pfad von Hand eintippt, bekommt genau dort `ENOENT`.
+#[tauri::command]
+async fn ordner_waehlen(
+    app: tauri::AppHandle,
+    titel: String,
+    start: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let mut w = app.dialog().file().set_title(titel);
+    // ⚑ Der bisherige Wert als Startort, aber nur wenn es ihn gibt:
+    // Ein Dialog, der in einem nicht vorhandenen Verzeichnis aufmacht,
+    // landet je nach System irgendwo oder gar nicht.
+    if let Some(v) = start.filter(|v| !v.is_empty()) {
+        let pfad = std::path::PathBuf::from(&v);
+        if pfad.is_dir() {
+            w = w.set_directory(pfad);
+        } else if let Some(eltern) = pfad.parent().filter(|e| e.is_dir()) {
+            w = w.set_directory(eltern);
+        }
+    }
+
+    // `None` heisst: abgebrochen. Das ist kein Fehler, und das Fenster
+    // laesst den bisherigen Wert dann stehen.
+    let Some(gewaehlt) = w.blocking_pick_folder() else {
+        return Ok(None);
+    };
+    // ⛑ `simplified` nimmt unter Windows das `\\?\`-Praefix weg. Ohne
+    // das stuende im Feld ein Pfad, den zwar jede Rust-Funktion
+    // versteht, aber kein Mensch wiedererkennt.
+    let pfad = gewaehlt.simplified().into_path().map_err(|f| f.to_string())?;
+    Ok(Some(pfad.display().to_string()))
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Halter::default())
         .invoke_handler(tauri::generate_handler![
             einstellungen,
             felder,
             setzen,
-            modell,
             modell_laden,
             agent_fahren,
             frage,
@@ -526,7 +583,8 @@ fn main() {
             katalog,
             voraussetzungen,
             artefakt_bauen,
-            gespraech_ausgeben
+            gespraech_ausgeben,
+            ordner_waehlen
         ])
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");
@@ -613,16 +671,28 @@ fn eigener_ordner() -> Option<std::path::PathBuf> {
     p.parent().map(|q| q.to_path_buf())
 }
 
-/// Schreibt ein Gespraech als Markdown neben die Einstellungen.
+/// Die Marke, an der das Fenster „es fehlt der Ordner" erkennt.
+///
+/// ⚑ Eine Zeichenkette und kein eigener Fehlertyp: Der Weg zwischen
+/// Ruecken und Fenster traegt ohnehin nur Text, und ein Typ, der dabei
+/// zu Text wird, ist einer, den beide Seiten trotzdem vergleichen
+/// muessen.
+const KEIN_ORDNER: &str = "kein-ausgabeordner";
+
+/// Schreibt ein Gespraech als Markdown in den eingestellten Ordner.
 ///
 /// # ⚑ Warum hier und nicht ueber einen Speichern-Dialog
 ///
-/// Ein Dialog braucht die Dateiwahl von Tauri, also ein weiteres
-/// Zusatzstueck und eine weitere Berechtigung. Fuer „das Gespraech
-/// hierher legen und mir sagen wohin" reicht ein Ort, den die
-/// Anwendung ohnehin benutzt: das Verzeichnis der Einstellungen. Der
-/// Pfad kommt zurueck und steht in der Meldung, also weiss jeder, wo
-/// es liegt.
+/// ⛑ **Diese Begruendung hiess einmal „ein Dialog braucht ein
+/// weiteres Zusatzstueck".** Seit dem Ordnerauswaehler gibt es das
+/// Zusatzstueck, und die Begruendung traegt trotzdem, nur aus einem
+/// anderen Grund: Ein Speichern-Dialog ist **bei jedem Ausgeben** ein
+/// Dialog. Ein eingestellter Ordner ist **eine** Entscheidung, danach
+/// ist Ausgeben ein Klick. Gewaehlt wird der Ordner einmal, in den
+/// Einstellungen, und dort mit demselben Fensterdialog.
+///
+/// Der Pfad kommt zurueck und steht in der Meldung, also weiss jeder,
+/// wo es liegt.
 ///
 /// ⛑ **Der Name wird entschaerft und nicht uebernommen.** Ein Titel
 /// kommt aus dem ersten Satz eines Gespraechs und kann alles
@@ -631,11 +701,22 @@ fn eigener_ordner() -> Option<std::path::PathBuf> {
 /// Strich und Unterstrich, alles andere wird zu einem Strich.
 #[tauri::command]
 fn gespraech_ausgeben(titel: String, inhalt: String) -> Result<String, String> {
-    let ordner = myl_client::Einstellungen::vorgabepfad()
-        .parent()
-        .ok_or("die Einstellungen haben kein Verzeichnis")?
-        .join("gespraeche");
-    std::fs::create_dir_all(&ordner).map_err(|e| format!("{}: {e}", ordner.display()))?;
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    // ⛑ **Ohne eingestellten Ordner wird nichts geschrieben**, und der
+    // Fehler traegt eine Marke, an der das Fenster ihn erkennt: Es
+    // oeffnet dann die Einstellungen an genau diesem Feld, statt eine
+    // Meldung zu zeigen, die niemand in eine Handlung uebersetzen kann.
+    //
+    // ⚑ Ein Voreinstellungsordner waere die bequeme Wahl und die
+    // falsche: Ein Ort, den niemand gewaehlt hat, ist einer, an dem
+    // niemand sucht.
+    let Some(ordner) = e.ausgabe.ordner.filter(|o| !o.trim().is_empty()) else {
+        return Err(KEIN_ORDNER.into());
+    };
+    let ordner = std::path::PathBuf::from(ordner);
+    std::fs::create_dir_all(&ordner).map_err(|f| {
+        mit_zugriffshinweis(format!("{}: {f}", ordner.display()), &ordner.display().to_string())
+    })?;
 
     let sauber: String = titel
         .chars()
@@ -650,7 +731,9 @@ fn gespraech_ausgeben(titel: String, inhalt: String) -> Result<String, String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let ziel = ordner.join(format!("{wann}-{}.md", &stamm[..stamm.len().min(60)]));
-    std::fs::write(&ziel, inhalt).map_err(|e| format!("{}: {e}", ziel.display()))?;
+    std::fs::write(&ziel, inhalt).map_err(|f| {
+        mit_zugriffshinweis(format!("{}: {f}", ziel.display()), &ziel.display().to_string())
+    })?;
     Ok(ziel.display().to_string())
 }
 

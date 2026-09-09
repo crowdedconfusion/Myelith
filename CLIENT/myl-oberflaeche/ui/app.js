@@ -63,13 +63,13 @@ const MODI = [
     id: "chat",
     name: "Chat",
     was: "ohne Werkzeuge",
-    leer: "Ein Gespraech mit dem lokalen Modell. Der Verlauf wird mitgegeben, das Modell sieht also, was vorher gesagt wurde.",
+    leer: "Ein Gespräch mit dem lokalen Modell. Der Verlauf wird mitgegeben, das Modell sieht also, was vorher gesagt wurde.",
   },
   {
     id: "agent",
     name: "Agent",
     was: "mit Werkzeugen",
-    leer: "Ein Auftrag, den der Agent mit Werkzeugen erledigt. ⚑ Jeder Auftrag steht fuer sich: Schrittbudget und Belegkette gelten je Lauf, der vorige Auftrag geht nicht mit ein.",
+    leer: "Ein Auftrag, den der Agent mit Werkzeugen erledigt. ⚑ Jeder Auftrag steht für sich: Schrittbudget und Belegkette gelten je Lauf, der vorige Auftrag geht nicht mit ein.",
   },
   // ⚠️ **Zwei Modi, die es geben WIRD und heute nicht gibt.** Sie
   // stehen gedaempft da und sagen beim Anfassen, was fehlt. Ein Modus,
@@ -81,7 +81,7 @@ const MODI = [
     was: "Mining",
     offen: false,
     warum:
-      "Der Knoten rechnet fuer das Netz und verdient daran. Dem Klienten fehlen Knotenadresse und Vollmacht (Fahrplan 2.2 bis 2.5b).",
+      "Der Knoten rechnet für das Netz und verdient daran. Dem Klienten fehlen Knotenadresse und Vollmacht (Fahrplan 2.2 bis 2.5b).",
     leer: "",
   },
   {
@@ -90,7 +90,7 @@ const MODI = [
     was: "Guthaben",
     offen: false,
     warum:
-      "Guthaben, Ueberweisungen und die Belege dazu. Braucht dieselbe Netzhaelfte wie der Knoten (Fahrplan 2.2 bis 2.5b).",
+      "Guthaben, Überweisungen und die Belege dazu. Braucht dieselbe Netzhälfte wie der Knoten (Fahrplan 2.2 bis 2.5b).",
     leer: "",
   },
 ];
@@ -131,7 +131,7 @@ function sichern() {
   try {
     localStorage.setItem(SPEICHER, JSON.stringify(gespraeche));
   } catch {
-    hinweis("Das Gespraech liess sich nicht merken; der Speicher des Fensters ist zu.");
+    hinweis("Das Gespräch ließ sich nicht merken; der Speicher des Fensters ist zu.");
   }
 }
 
@@ -140,7 +140,7 @@ const jetzt = () => new Date().toISOString();
 function neues_gespraech(modus) {
   const g = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    titel: "Neues Gespraech",
+    titel: "Neues Gespräch",
     modus: modus || (offen ? offen.modus : MODI[0].id),
     beitraege: [],
     wann: jetzt(),
@@ -220,8 +220,11 @@ async function reichweite_zeichnen() {
   const p = document.createElement("p");
   p.className = "reichweitezeile";
   if (!r.wurzel) {
-    p.textContent = "kein Verzeichnis eingehaengt";
-    p.title = "Ohne `agent.wurzel` hat der Agent keine Werkzeuge. In den Einstellungen setzen.";
+    p.textContent = "kein Verzeichnis eingehängt";
+    // ⛑ Hier stand der technische Name. Wer den Hinweis liest, sucht
+    // danach in den Einstellungen, und dort steht seit dem
+    // 2026-09-09 die Beschriftung: „Arbeitsordner".
+    p.title = "Ohne Arbeitsordner hat der Agent keine Werkzeuge. In den Einstellungen setzen.";
   } else {
     // ⛑ **Von vorn gekuerzt, im Skript.** Das Aussagekraeftige an
     // einem Pfad steht hinten; `direction: rtl` taete dasselbe und
@@ -292,7 +295,7 @@ function als_markdown(g) {
     "",
     `- Modus: ${MODI.find((m) => m.id === g.modus)?.name || g.modus}`,
     `- Begonnen: ${g.wann}`,
-    `- Beitraege: ${g.beitraege.length}`,
+    `- Beiträge: ${g.beitraege.length}`,
     "",
   ];
   const teile = g.beitraege.map((b) => {
@@ -319,7 +322,7 @@ async function menue_tat(tat) {
     if (offen && offen.id === g.id) offen = gespraeche[0] || null;
     sichern();
     alles_zeichnen();
-    melden(`Gespraech "${g.titel}" geloescht.`);
+    melden(`Gespräch „${g.titel}“ gelöscht.`);
     return;
   }
 
@@ -334,8 +337,18 @@ async function menue_tat(tat) {
         titel: g.titel,
         inhalt: als_markdown(g),
       });
-      melden(`Gespraech abgelegt: ${wo}`);
+      melden(`Gespräch abgelegt: ${wo}`, "einstellungen");
     } catch (f) {
+      // ⛑ **Ein fehlender Ordner ist keine Fehlermeldung, sondern eine
+      // fehlende Entscheidung.** Wer „kein Ausgabeordner" liest, weiss
+      // noch nicht, wo er ihn setzt. Also fuehrt das Fenster dorthin.
+      if (String(f).includes("kein-ausgabeordner")) {
+        await zum_feld("ausgabe.ordner",
+          "Bevor ein Gespräch ausgegeben werden kann, braucht es einen " +
+          "Ordner dafür. Trage ihn hier ein; danach landet jedes " +
+          "ausgegebene Gespräch als Markdown darin.");
+        return;
+      }
       melden(`Fehler beim Ausgeben: ${f}`);
     }
   }
@@ -356,7 +369,7 @@ function umbenennen(g) {
   feld.type = "text";
   feld.className = "titelfeld";
   feld.value = g.titel;
-  feld.setAttribute("aria-label", "Gespraech umbenennen");
+  feld.setAttribute("aria-label", "Gespräch umbenennen");
   knopf.replaceWith(feld);
   feld.focus();
   feld.select();
@@ -387,6 +400,27 @@ for (const e of document.querySelectorAll(".menueeintrag")) {
   e.addEventListener("click", () => menue_tat(e.dataset.tat));
 }
 
+/// Oeffnet die Einstellungen und hebt ein Feld hervor.
+///
+/// ⚑ **Mit einer Begruendung daneben und nicht nur mit einem Rahmen.**
+/// Ein hervorgehobenes Feld ohne Satz laesst raten, warum man hier
+/// steht; der Satz steht in einer Box ueber der Tabelle und
+/// verschwindet, sobald das Feld einen Wert hat.
+async function zum_feld(name, warum) {
+  $("einstellungsseite").hidden = false;
+  await einstellungen_zeichnen();
+  const kasten = $("feldhinweis");
+  kasten.textContent = warum;
+  kasten.hidden = false;
+  const zeile = $("einstellungen").querySelector(`tr[data-feld="${name}"]`);
+  const feld = zeile?.querySelector(`[data-feld="${name}"]`);
+  if (zeile) {
+    zeile.classList.add("gesucht");
+    zeile.scrollIntoView({ block: "center" });
+  }
+  feld?.focus();
+}
+
 function chats_zeichnen() {
   const w = $("chatliste");
   w.replaceChildren();
@@ -412,18 +446,11 @@ function chats_zeichnen() {
       alles_zeichnen();
     });
 
-    const weg = document.createElement("button");
-    weg.type = "button";
-    weg.className = "weg blank";
-    weg.textContent = "×";
-    weg.setAttribute("aria-label", `Gespraech "${g.titel}" loeschen`);
-    weg.addEventListener("click", (e) => {
-      e.stopPropagation();
-      gespraeche = gespraeche.filter((x) => x.id !== g.id);
-      if (offen && offen.id === g.id) offen = gespraeche[0] || null;
-      sichern();
-      alles_zeichnen();
-    });
+    // ⛑ **Hier lag ein Loeschknopf am Zeilenrand.** Er ist am
+    // 2026-09-09 entfallen, auf Festlegung des Projektinhabers:
+    // Geloescht wird ueber das Menue am Rechtsklick, zusammen mit
+    // Umbenennen und Ausgeben. Ein zweiter Weg an derselben Zeile ist
+    // ein zweiter Ort, an dem dieselbe Entscheidung faellt.
 
     // ⚑ Der Titelknopf traegt keine eigene Umrandung, die Zeile
     // uebernimmt sie; sonst haette jede Zeile zwei Rahmen.
@@ -433,7 +460,7 @@ function chats_zeichnen() {
     auf.style.color = "inherit";
     auf.style.padding = "0";
     auf.style.textAlign = "left";
-    zeile.append(auf, weg);
+    zeile.append(auf);
     w.append(zeile);
   }
 }
@@ -533,7 +560,7 @@ function melden(text, wo) {
   t.textContent = text;
   const zu = document.createElement("button");
   zu.className = "rundknopf blank";
-  zu.setAttribute("aria-label", "Meldung schliessen");
+  zu.setAttribute("aria-label", "Meldung schließen");
   zu.textContent = "×";
   zu.addEventListener("click", () => k.remove());
   k.append(t, zu);
@@ -545,17 +572,53 @@ function melden(text, wo) {
 
 // --- Einstellungen ------------------------------------------------------
 
-// ⚑ Je Feld ein Bedienelement, und die Art kommt aus der Kiste: Text,
-// Zahl, Schalter, Grenze, Pfad. Eine zweite Liste im Fenster liefe
-// irgendwann auseinander.
-const feldzeile = (name, art, wert, beim_setzen) => {
+// ⚑ Eine Ueberschrift IN der Tabelle und nicht daneben. Sie gehoert zu
+// den Zeilen darunter, und wer die Tabelle stattdessen in vier
+// Tabellen zerlegt, verliert die gemeinsame Spaltenbreite: Jeder
+// Bereich haette dann seine eigene, und die Eingabefelder saessen auf
+// vier verschiedenen Hoehen.
+const bereichszeile = (name) => {
   const tr = document.createElement("tr");
-  const a = document.createElement("td");
-  a.textContent = name;
-  const b = document.createElement("td");
+  tr.className = "bereichszeile";
+  const th = document.createElement("th");
+  th.colSpan = 2;
+  th.scope = "colgroup";
+  th.textContent = name;
+  tr.append(th);
+  return tr;
+};
 
+// ⚑ Je Feld ein Bedienelement, und Art wie Beschriftung kommen aus der
+// Kiste: Sie kennt die Felder, das Fenster zeichnet sie nur.
+//
+// ⛑ **Hier stand der technische Name als Beschriftung**, also
+// `kap.beschleuniger` und `agent.bezeugtes` in einer Spalte, die ein
+// Mensch liest. Das war kein Deutsch, sondern eine Kennung. Seit dem
+// 2026-09-09 traegt jedes Feld einen Titel und einen Satz dazu, und
+// beides steht in `myl-client` und nicht hier, damit es die
+// Beschriftung nur einmal gibt.
+const feldzeile = (f, wert, beim_setzen) => {
+  const tr = document.createElement("tr");
+  // ⚑ Damit die Seite an ein bestimmtes Feld springen kann. Hier steht
+  // weiter der technische Name, denn danach sucht `zum_feld`.
+  tr.dataset.feld = f.name;
+
+  const a = document.createElement("td");
+  const titel = document.createElement("span");
+  titel.className = "feldtitel";
+  titel.textContent = f.titel;
+  const satz = document.createElement("span");
+  satz.className = "feldsatz";
+  satz.textContent = f.hinweis;
+  a.append(titel, satz);
+  // ⚑ Der technische Name geht nicht verloren, er steht nur nicht mehr
+  // in der Spalte: Wer `myl setzen` benutzt, braucht ihn, und ein
+  // Zeigen auf die Beschriftung gibt ihn her.
+  a.title = f.name;
+
+  const b = document.createElement("td");
   let element;
-  if (art === "Schalter") {
+  if (f.art === "Schalter") {
     element = document.createElement("input");
     element.type = "checkbox";
     element.checked = wert === true || wert === "an" || wert === "true";
@@ -566,15 +629,80 @@ const feldzeile = (name, art, wert, beim_setzen) => {
     element.value = wert === null || wert === undefined ? "" : String(wert);
     element.addEventListener("change", () => beim_setzen(element.value.trim() || "aus"));
   }
-  b.append(element);
-  if (art === "Grenze") {
-    const h = document.createElement("span");
-    h.className = "grenze";
-    h.textContent = "leer oder `aus` loescht die Grenze";
-    b.append(h);
+  element.dataset.feld = f.name;
+  // ⛑ **Hier hing ein zweiter Hinweis am Eingabefeld**, „leer oder
+  // `aus` loescht die Grenze", nur bei der Feldart Grenze. Er steht
+  // jetzt im Satz unter der Beschriftung, zusammen mit allem anderen,
+  // was ueber das Feld zu sagen ist. Zwei Orte fuer Auskunft ueber
+  // dasselbe Feld waren einer zu viel.
+
+  // ⚑ **Verzeichnisfelder bekommen einen Auswaehler daneben.** Welche
+  // das sind, sagt die Kiste ueber `f.ordner`; das Fenster zaehlt die
+  // Feldarten nicht selbst auf. Getippt werden darf der Pfad weiter,
+  // der Knopf nimmt nur den Zwang weg.
+  if (f.ordner) {
+    const huelle = document.createElement("div");
+    huelle.className = "pfadzeile";
+    huelle.append(element, ordnerknopf(f, element, beim_setzen));
+    b.append(huelle);
+  } else {
+    b.append(element);
   }
   tr.append(a, b);
   return tr;
+};
+
+// ⚑ Der Knopf, der den Fensterdialog des Betriebssystems oeffnet.
+//
+// ⚑ **Auf macOS ist die Auswahl zugleich die Freigabe:** Was der
+// Nutzer im Dialog waehlt, darf die Anwendung danach lesen und
+// schreiben, auch unterhalb von Schreibtisch oder Dokumenten. Ein von
+// Hand eingetippter Pfad bekommt dort `ENOENT`, und das sieht aus wie
+// ein Fehler des Programms.
+const ordnerknopf = (f, feld, beim_setzen) => {
+  const k = document.createElement("button");
+  k.type = "button";
+  k.className = "ordnerknopf";
+  k.title = "Ordner waehlen";
+  k.setAttribute("aria-label", `Ordner fuer ${f.titel} waehlen`);
+  k.append(sinnbild(
+    "M2.5 6.2V5a1 1 0 0 1 1-1h3.3a1 1 0 0 1 .8.4l.9 1.2H16a1 1 0 0 1 1 1v8.4" +
+    "a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1z"));
+  k.addEventListener("click", async () => {
+    k.disabled = true;
+    try {
+      const gewaehlt = await invoke("ordner_waehlen", {
+        titel: f.titel,
+        start: feld.value.trim() || null,
+      });
+      // ⚑ `null` heisst abgebrochen, und ein Abbruch aendert nichts.
+      // Ein leerer Wert waere hier das Loeschen der Einstellung, also
+      // genau das Gegenteil dessen, was ein Abbruch bedeutet.
+      if (!gewaehlt) return;
+      feld.value = gewaehlt;
+      await beim_setzen(gewaehlt);
+    } catch (fehler) {
+      $("setzmeldung").textContent = `Fehler: ${fehler}`;
+    } finally {
+      k.disabled = false;
+    }
+  });
+  return k;
+};
+
+// ⛑ **Ein SVG braucht seinen Namensraum.** `createElement("svg")`
+// erzeugt ein HTML-Element mit dem Namen „svg", das nichts zeichnet
+// und auch nichts meldet; man sieht nur eine leere Flaeche.
+const sinnbild = (d) => {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const pfad = document.createElementNS(NS, "path");
+  pfad.setAttribute("d", d);
+  svg.append(pfad);
+  return svg;
 };
 
 // --- Modelle holen und bauen --------------------------------------------
@@ -726,16 +854,26 @@ async function einstellungen_zeichnen() {
     "agent.wurzel": e.wurzel,
     "agent.schreiben": e.schreiben,
     "kap.kerne": e.kerne_eingestellt,
+    "ausgabe.ordner": e.ausgabe_ordner,
   };
-  for (const [name, art] of felder) {
+  // ⚑ Die Reihenfolge kommt aus der Kiste, und der Bereichswechsel
+  // ergibt sich daraus: Gleiche Bereiche stehen dort beieinander, also
+  // reicht ein Vergleich mit dem vorigen. Eine zweite Liste, die nur
+  // die Bereiche aufzaehlt, waere wieder eine zweite Liste.
+  let bereich = null;
+  for (const f of felder) {
+    if (f.bereich !== bereich) {
+      bereich = f.bereich;
+      koerper.append(bereichszeile(bereich));
+    }
     koerper.append(
-      feldzeile(name, art, wert[name], async (neu) => {
+      feldzeile(f, wert[f.name], async (neu) => {
         try {
-          await invoke("setzen", { feld: name, wert: neu });
-          $("setzmeldung").textContent = `${name} gesetzt.`;
+          await invoke("setzen", { feld: f.name, wert: neu });
+          $("setzmeldung").textContent = `${f.titel} gesetzt.`;
           await kopf_zeichnen();
-        } catch (f) {
-          $("setzmeldung").textContent = `Fehler: ${f}`;
+        } catch (fehler) {
+          $("setzmeldung").textContent = `Fehler: ${fehler}`;
         }
       }),
     );
@@ -800,7 +938,7 @@ $("modellwahl").addEventListener("change", async () => {
     // faehrt der naechste Auftrag mit dem alten Modell, waehrend die
     // Anzeige das neue nennt.
     geladen = false;
-    hinweis("Modell gewechselt; es wird beim naechsten Auftrag geladen.");
+    hinweis("Modell gewechselt; es wird beim nächsten Auftrag geladen.");
     await kopf_zeichnen();
     reichweite_zeichnen();
   } catch (f) {
@@ -812,7 +950,7 @@ async function modell_laden() {
   const knopf = $("laden");
   knopf.disabled = true;
   const vorher = knopf.textContent;
-  knopf.textContent = "laedt";
+  knopf.textContent = "lädt";
   try {
     const wort = await invoke("modell_laden");
     geladen = true;
@@ -839,7 +977,7 @@ async function senden(text) {
 
   const knopf = $("senden");
   knopf.disabled = true;
-  hinweis(offen.modus === "agent" ? "der Agent faehrt" : "das Modell antwortet");
+  hinweis(offen.modus === "agent" ? "der Agent fährt" : "das Modell antwortet");
 
   try {
     if (!geladen) await modell_laden();
@@ -909,7 +1047,7 @@ async function senden(text) {
 // `--mx` und `--my` setzen die Mitte des `radial-gradient`, der den
 // Glanz zeichnet. Prozent trifft immer, gleich wie gross oder wie rund
 // die Flaeche ist.
-const LINSEN = ".glas, .eingabefeld, button:not(.blank), section";
+const LINSEN = ".glas, .eingabefeld, button:not(.blank)";
 let reflex_angefragt = false;
 let letzte_stelle = null;
 
@@ -953,6 +1091,10 @@ $("leiste-schalten").addEventListener("click", () => {
 });
 
 $("zu-einstellungen").addEventListener("click", async () => {
+  $("feldhinweis").hidden = true;
+  for (const z of $("einstellungen").querySelectorAll(".gesucht")) {
+    z.classList.remove("gesucht");
+  }
   $("einstellungsseite").hidden = false;
   await einstellungen_zeichnen();
   // Beim Oeffnen ist nichts im Bau, also auch kein Balken.

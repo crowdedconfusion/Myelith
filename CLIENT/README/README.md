@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.16.0 (`myl-client` 0.11.1, `myl-oberflaeche` 0.15.0)
+> **Version:** 0.17.0 (`myl-client` 0.12.0, `myl-oberflaeche` 0.16.0)
 > **Datum:** 2026-09-09
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -32,12 +32,14 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „API, kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
-| **Einstellungen** | Je Feld ein Bedienelement, die Art kommt aus der Kiste |
-| **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen |
+| **Einstellungen** | Vier Bereiche, zwölf Felder, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
+| **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-an zweiundzwanzig Stellen, und startet **keinen einzigen
-Unterprozess**. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
+an sechzehn Stellen über dreizehn Befehle, und startet **keinen
+einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
+Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
 Logik, die hier nicht hingehört.
 
@@ -47,7 +49,7 @@ Logik, die hier nicht hingehört.
 |---|---|
 | `myl-client/` | Die Kiste. Einstellungen, örtlicher Betrieb, Agentenschleife, Werkzeuge mit Einhängegrenze, Türklient. Kommandozeile `myl`. |
 | `myl-oberflaeche/` | Die grafische Oberfläche auf Tauri v2. Rücken in Rust, Frontend als reines HTML, CSS und ES-Module: **kein Bündler, keine Node-Werkzeugkette**. |
-| `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Sechzehn Prüfungen halten HTML, CSS und Skript gegeneinander. |
+| `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Einundzwanzig Prüfungen halten HTML, CSS, Skript und Rücken gegeneinander. |
 | `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` erzeugt `werkzeuge/symbole.py` aus `icon.png`; von Hand nachbessern hilft nicht. |
 | `README/Fahrplan-v1.md` | Der Fahrplan mit allen Punkten, Funden und dem Changelog. |
 
@@ -100,7 +102,99 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
-### v0.16.0 – 2026-09-09 (die Oberfläche läuft: Punkt 1.8 zu, und alles, was der erste echte Start zutage gebracht hat)
+### v0.17.0 – 2026-09-09 (die Oberfläche läuft: Punkt 1.8 zu, und alles, was der erste echte Start zutage gebracht hat)
+
+⛑ **`hidden` war schwächer als die Anzeigeart, zum dritten Mal.** Das
+Vorgabestilblatt setzt `[hidden] { display: none }` mit der schwächsten
+Spezifität; jede eigene `display`-Angabe gewinnt dagegen. Das
+Kontextmenü stand nach jedem Start links oben und ließ sich nicht
+schließen. ⚑ Im Stilblatt standen bereits **zwei** Einzelflicken dafür;
+niemand hatte daraus eine Regel gemacht. Jetzt eine für alle, gehalten
+von `verstecktes_bleibt_versteckt`.
+
+⚑ **Der Ausgabeordner ist eine Einstellung und keine Vorgabe.** Ein
+Ort, den niemand gewählt hat, ist einer, an dem niemand sucht. Ein
+fehlender Ordner ist deshalb keine Fehlermeldung, sondern eine fehlende
+Entscheidung: Das Fenster öffnet die Einstellungen, hebt das Feld hervor
+und schreibt in einen Kasten darüber, warum.
+
+⛑ **Ein `section` in der Linsenliste hat die halbe Einstellungsseite
+zum Leuchten gebracht.** Der Glanz beim Überfahren lag auf `.glas`,
+`.eingabefeld`, `button:not(.blank)` **und `section`**. Das klang
+harmlos und war es nicht: `#einstellungsseite` liegt auf `inset: 0`
+über dem ganzen Fenster, `#modellbau` füllt zwei Drittel davon, und
+beide bekamen Ring und Glanz. ⚑ **Die Regel dahinter: Glas tragen
+Dinge, die man drücken kann.** Knopf, Eingabefeld, Karte. Ein
+Behälter, der nur Platz einteilt, trägt keines. Gehalten von
+`glas_traegt_nur_bedienelemente`, das die Selektoren mit `var(--mx`
+nimmt, acht Behälternamen darunter verbietet und verlangt, dass die
+Linsenliste im Skript dieselbe Menge ist.
+
+⚑ **Die Beschriftung eines Einstellungsfeldes ist kein Feldname.** Die
+Seite zeigte in der linken Spalte `kap.beschleuniger`,
+`agent.bezeugtes`, `modell.artefakt`. Das ist kein Deutsch, sondern
+eine Kennung. ⚑ **Der Ausweg, den es nicht geworden ist:** eine
+Übersetzungstabelle im Skript, die auseinanderläuft, sobald in der
+Kiste ein Feld dazukommt. Stattdessen ist `FELDER` von
+`[(&str, Feldart); 12]` auf `[Feld; 12]` gewachsen, mit `bereich`,
+`titel` und `hinweis`; `felder` reicht die Struktur durch, das Fenster
+zeichnet nur. Die Reihenfolge in der Kiste ist die Anzeige, und der
+Bereichswechsel ergibt sich daraus, also braucht auch die Gliederung
+keine zweite Liste. Vier Bereiche, zwölf Zeilen, jede mit einem Satz
+darunter, was sie bewirkt und was ohne Angabe gilt.
+
+⚠️ **Und beim Schreiben dieser Sätze fiel auf, dass drei Felder nichts
+tun.** Von den vier Grenzen dieses Rechners wird genau eine angewendet,
+`kap.kerne`; `beschleuniger`, `speicher` und `platte` werden gespeichert,
+angezeigt, und danach liest sie niemand. Ein Schieber, der aussieht wie
+eine Grenze und keine ist, ist eine Behauptung. Solange die Felder
+dastehen, steht **„Noch ohne Wirkung"** dabei. ⛑ Ein Satz derselben
+Sorte war auch der erste Entwurf zu `agent.bezeugtes`: „Erlaubt
+zusätzlich Werkzeuge …" klang, als käme etwas zu einem Bestand hinzu,
+während in Wahrheit **alle** Werkzeuge dieses Rechners bezeugt sind und
+ohne den Schalter gar keines läuft.
+
+⚑ **Und die sichtbaren Zeichenketten tragen jetzt Umlaute.** Bis dahin
+stand im Fenster `Gespraeche`, `Loeschen`, `laedt`. Die Umschrift
+`ae`/`oe`/`ue`/`ss` ist eine Regel für Commit-Titel und Quelltext,
+nicht für das, was ein Mensch auf dem Schirm liest. Zwanzig
+Zeichenketten umgestellt; Kommentare und Bezeichner bleiben.
+
+⚑ **Die Verzeichnisfelder lassen sich im Fensterdialog wählen.**
+Artefakt, Arbeitsordner und Ausgabeordner tragen einen Knopf neben dem
+Eingabefeld; getippt werden darf der Pfad weiter, der Knopf nimmt nur
+den Zwang weg. Welche Felder das sind, sagt die Kiste: `Feldart::Ordner`
+ist dazugekommen, und das Verhältnis von `Ordner` zu `Pfad` ist dasselbe
+wie das von `Zahl` zu `Grenze`, beide meinen ein Verzeichnis, aber nur
+eines lässt sich wegnehmen. ⚑ **Gerufen wird `tauri-plugin-dialog` aus
+Rust und nicht aus dem Fenster**, dann braucht die Webansicht keine neue
+Berechtigung, kein JS-Paket und keinen von Hand nachgebauten Aufruf; die
+Erlaubnisliste bleibt bei ihrem einen Eintrag. ⛑ Der Befehl ist `async`,
+weil Tauri Befehle ohne `async` auf dem Hauptfaden ausführt und
+`blocking_pick_folder` dort auf eine Antwort wartete, die nur der
+Hauptfaden geben kann. ⚑ Auf macOS ist die Auswahl zugleich die
+Freigabe, was den Zugriffsfall entschärft: Ein getippter Pfad unterhalb
+von Schreibtisch oder Dokumenten bekommt `ENOENT`, ein gewählter nicht.
+
+⛑ **Ein angemeldeter Befehl, den niemand ruft.** `modell(artefakt)` lud
+ein ganzes Artefakt, druckte dessen Vorlage und warf es weg; abgelöst
+hat ihn `modell_laden`. Gefunden hat ihn der neue Wächter
+`jeder_befehl_ist_angemeldet` in seiner vierten Richtung. Die ersten
+drei schließen die Lücke, an der auch der Start scheiterte:
+`#[tauri::command]` allein tut nichts, fehlt der Name in
+`generate_handler!`, übersetzt alles sauber und der Aufruf scheitert
+erst beim Klicken. Die vierte ist die Gegenrichtung: Ein angemeldeter
+Befehl ist eine Zusage an das Fenster, und eine Zusage, die niemand
+einlöst, ist eine Behauptung.
+
+⛑ **Eine Prüfung mit handgepflegter Liste, zum zweiten Mal.**
+`jede_klasse_aus_dem_skript_hat_eine_regel` hieß so, tat es aber nicht:
+Sie hielt elf Namen von Hand. Als die Marke `grenze` entfiel, fiel die
+Prüfung **wegen einer Klasse, die es nicht mehr gibt**. Derselbe Fehler
+wie bei den Bewegungsregeln, dieselbe Behebung: Sie liest die Namen
+jetzt aus dem Skript, und auf ganze Namen statt auf Teilzeichenketten,
+denn `contains("grenze")` fand das Wort „Obergrenze" in einem
+Kommentar.
 
 `myl-oberflaeche` **0.13.0 auf 0.14.0**. Neuer Job `oberflaeche` in
 `release.yml`: `.dmg`, `.msi`, `.deb` und AppImage, vier Ziele, alles
@@ -293,9 +387,10 @@ Sperrdateien in zwei Sekunden, und geprüft wird nicht nur die eigene
 Version, sondern **jede** Kiste dieses Repositoriums in **jeder**
 Sperrdatei.
 
-Vier neue Prüfungen, alle gegengeprüft. Die Oberfläche steht bei
-sechzehn, `myl-client` bei siebenundachtzig, und `cargo deny` geht über
-alle dreiundzwanzig Kisten ohne Fehlschlag.
+Elf neue Prüfungen, alle gegengeprüft. Die Oberfläche steht bei
+einundzwanzig, `myl-client` bei neunundachtzig, und `cargo deny` geht
+über alle dreiundzwanzig Kisten ohne Fehlschlag, `tauri-plugin-dialog`
+und seine Abhängigkeiten eingeschlossen.
 
 ### v0.14.0 und früher
 

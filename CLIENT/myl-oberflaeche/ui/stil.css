@@ -75,6 +75,22 @@
 *::before,
 *::after { box-sizing: border-box; }
 
+/* ⛑ **`hidden` muss staerker sein als jede Anzeigeart.** Das
+   Vorgabestilblatt des Browsers setzt `[hidden] { display: none }` mit
+   der schwaechsten Spezifitaet, die es gibt; sobald eine eigene Regel
+   `display: grid` oder `display: block` vergibt, gewinnt sie, und das
+   Element steht sichtbar da, obwohl das Skript es versteckt hat.
+
+   Dieses Stilblatt hatte den Fall dreimal: `#baustand`,
+   `#einstellungsseite` und, seit dem Kontextmenue, `#kontextmenue`.
+   Zweimal war er einzeln geflickt, beim dritten Mal fiel es auf, weil
+   das Menue nach jedem Start links oben stand und sich nicht schliessen
+   liess.
+
+   ⚑ Eine Regel fuer alle, damit der vierte Fall nicht auch noch
+   auffallen muss. Gehalten von `verstecktes_bleibt_versteckt`. */
+[hidden] { display: none !important; }
+
 /* ⛑ **Ohne diese Regel scrollt das Dokument statt der Liste.**
    Es gab bis zum 2026-09-09 ueberhaupt keine `html`-Regel, und `body`
    hatte weder Hoehe noch Ueberlaufsperre. `#huelle` steht zwar auf
@@ -171,8 +187,7 @@ body {
 /* Die Ruhelage: eine gleichmaessige Haarlinie. */
 .glas::before,
 .eingabefeld::before,
-button:not(.blank)::before,
-section::before {
+button:not(.blank)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -217,11 +232,23 @@ section::before {
    keine Maske, kein Hintergrundfilter, kein Ueberstand. Sie deckt genau
    die Flaeche und nichts sonst. Die Kante uebernimmt der ruhende Ring
    auf `::before`, der nachweislich konzentrisch sitzt; beim
-   Ueberfahren wird er nur heller. */
+   Ueberfahren wird er nur heller.
+
+   ⛑ **Hier stand `section` mit in der Liste, und das war die dritte
+   Fassung desselben Fehlers.** Ein `section` ist kein Bedienelement,
+   sondern eine Flaeche: `#einstellungsseite` liegt auf `inset: 0` ueber
+   dem ganzen Fenster, `#modellbau` fuellt zwei Drittel davon. Beide
+   bekamen Ring und Glanz, also leuchtete beim Ueberfahren die halbe
+   Einstellungsseite auf. Gemeldet als „ein erleuchtender Kasten ueber
+   etwa zwei Dritteln".
+
+   ⚑ **Die Regel dahinter: Glas tragen Dinge, die man druecken kann.**
+   Knopf, Eingabefeld, Karte. Ein Behaelter, der nur Platz einteilt,
+   traegt keines. Wer hier einen Selektor ergaenzt, prueft zuerst, ob
+   das Ding eine Bedienung ist. */
 .glas::after,
 .eingabefeld::after,
-button:not(.blank)::after,
-section::after {
+button:not(.blank)::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -241,8 +268,7 @@ section::after {
 .glas:hover::after,
 .eingabefeld:hover::after,
 .eingabefeld:focus-within::after,
-button:not(.blank):hover:not(:disabled)::after,
-section:hover::after {
+button:not(.blank):hover:not(:disabled)::after {
   opacity: 1;
 }
 
@@ -250,8 +276,7 @@ section:hover::after {
 .glas:hover::before,
 .eingabefeld:hover::before,
 .eingabefeld:focus-within::before,
-button:not(.blank):hover:not(:disabled)::before,
-section:hover::before {
+button:not(.blank):hover:not(:disabled)::before {
   background: rgba(255, 255, 255, .30);
 }
 
@@ -270,7 +295,7 @@ section:hover::before {
      jeden Selektor prueft und nicht die Zahl der Bloecke.
 
      Wer hier eine Flaeche ergaenzt, ergaenzt sie **beidseits**. */
-  .glas, .eingabefeld, section {
+  .glas, .eingabefeld {
     background: var(--grund-hoch);
   }
   #seitenleiste, header {
@@ -701,7 +726,8 @@ header {
   border-radius: 999px;
   color: var(--leise);
 }
-.rundknopf svg {
+.rundknopf svg,
+.ordnerknopf svg {
   width: 1.15rem;
   height: 1.15rem;
   fill: none;
@@ -929,7 +955,7 @@ header {
 /* --- Modellbau -------------------------------------------------------- */
 
 #modellbau { display: grid; gap: .5rem; max-width: 46rem; }
-#modellbau h2, #einstellungsseite h2 { margin: .6rem 0 0; }
+#einstellungsseite h2 { margin: .6rem 0 0; }
 
 /* ⚑ Zwei Spalten fuer Name und Knopf, und der Baustand darunter ueber
    beide: Er gehoert zu DIESEM Modell und nicht neben die Liste. */
@@ -974,7 +1000,6 @@ header {
   white-space: pre-wrap;
 }
 #baustand { display: grid; gap: .35rem; }
-#baustand[hidden] { display: none; }
 
 /* --- Einstellungsseite ------------------------------------------------ */
 
@@ -989,7 +1014,6 @@ header {
   align-content: start;
   gap: 1rem;
 }
-#einstellungsseite[hidden] { display: none; }
 
 .seitenkopf {
   display: flex;
@@ -1000,13 +1024,49 @@ header {
 .seitenkopf h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
 
 table { border-collapse: collapse; width: 100%; max-width: 46rem; }
-td { padding: .3rem 1rem .3rem 0; vertical-align: middle; }
-td:first-child {
-  color: var(--leise);
-  white-space: nowrap;
-  font-family: var(--fest);
+
+/* ⚑ **Oben ausgerichtet, weil die Beschriftung zwei Zeilen hat.**
+   Titel und Satz stehen untereinander; mittig ausgerichtet saesse das
+   Eingabefeld zwischen beiden statt neben dem Titel. */
+td { padding: .5rem 1rem .5rem 0; vertical-align: top; }
+
+/* ⛑ **Hier stand `white-space: nowrap` und eine feste Schrift.** Das
+   war richtig, solange in der Spalte eine Kennung stand: `kap.kerne`
+   soll nicht umbrechen. Seit dort Prosa steht, waere beides falsch,
+   ein Satz in Schreibmaschinenschrift, der die Tabelle breiter macht
+   als das Fenster. */
+td:first-child { width: 44%; padding-right: 1.4rem; line-height: 1.35; }
+.feldtitel { display: block; color: var(--text); font-size: .9rem; font-weight: 500; }
+.feldsatz { display: block; color: var(--leiser); font-size: .74rem; margin-top: .15rem; }
+
+/* ⚑ Die Bereichsueberschrift trennt und benennt in einem: die Linie
+   darunter statt eines Abstands, der nur Luft waere. */
+.bereichszeile th {
+  text-align: left;
   font-size: .82rem;
+  font-weight: 600;
+  color: var(--leise);
+  padding: 1.5rem 0 .4rem;
+  border-bottom: 1px solid var(--kante);
 }
+.bereichszeile:first-child th { padding-top: .3rem; }
+
+/* ⚑ Feld und Auswaehler in einer Zeile: Das Eingabefeld nimmt den
+   Platz, der Knopf nimmt seine Groesse. `min-width: 0` ist noetig,
+   weil ein `input` sonst seine Vorgabebreite als Mindestbreite
+   durchsetzt und die Zeile ueber die Tabelle hinausschiebt. */
+.pfadzeile { display: flex; align-items: center; gap: .4rem; }
+.pfadzeile input { flex: 1; min-width: 0; }
+.ordnerknopf {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  color: var(--leise);
+}
+.ordnerknopf:hover:not(:disabled) { color: var(--text); }
 
 .pfad { color: var(--leise); font-size: .78rem; margin: .8rem 0 0; font-family: var(--fest); }
 
@@ -1026,6 +1086,24 @@ button, input, select, textarea {
 }
 
 input::placeholder, textarea::placeholder { color: var(--leiser); }
+
+/* ⛑ **Ein Ankreuzfeld ist kein Eingabefeld.** Die Regel darueber gilt
+   fuer `input` und traf es mit: Polsterung, Glasverlauf und
+   Hintergrundfilter auf einem Kaestchen von zwoelf Pixeln, das dadurch
+   verrutschte und wie ein Rest aussah. Es bekommt seine eigene Groesse
+   und ueberlaesst dem Betriebssystem das Haekchen; `accent-color`
+   haelt es in der Graustufenpalette. */
+input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  margin: .3rem 0 0;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  accent-color: var(--text);
+  cursor: pointer;
+}
 
 button {
   position: relative;
@@ -1072,8 +1150,6 @@ input:focus, select:focus { border-color: var(--kante-hell); }
 }
 
 td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
-.grenze { color: var(--leise); font-size: .76rem; margin-left: .5rem; }
-
 /* ⚑ Auf schmalen Fenstern liegt die Leiste UEBER dem Gespraech statt
    daneben. Zwei Spalten auf achthundert Pixeln ergaeben zwei zu enge. */
 @media (max-width: 46rem) {
@@ -1190,3 +1266,22 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   font: inherit;
   padding: .1rem .3rem;
 }
+
+
+/* --- Der Hinweis an einem gesuchten Feld ------------------------------- */
+
+.hinweiskasten {
+  margin: 0 0 .8rem;
+  padding: .6rem .8rem;
+  border-radius: var(--rund-klein);
+  background: var(--grund-hoch);
+  border: 1px solid var(--kante-hell);
+  color: var(--text);
+  font-size: .84rem;
+  max-width: 46rem;
+}
+
+/* ⚑ Die Zeile, zu der gefuehrt wurde. Kein Blinken: Wer hierher
+   geschickt wird, sucht ein Feld und keine Aufmerksamkeit. */
+tr.gesucht td { background: var(--glas); }
+tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }

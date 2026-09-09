@@ -217,8 +217,8 @@ fn setzen(args: &[String]) -> i32 {
     let (Some(feld), Some(wert)) = (args.first(), args.get(1)) else {
         eprintln!("myl setzen: es fehlt Feld oder Wert");
         eprintln!("myl setzen: bekannte Felder:");
-        for (name, art) in myl_client::einstellungen::FELDER {
-            eprintln!("  {name:<20} {art:?}");
+        for f in myl_client::einstellungen::FELDER {
+            eprintln!("  {:<20} {:<8} {}", f.name, format!("{:?}", f.art), f.titel);
         }
         return 2;
     };

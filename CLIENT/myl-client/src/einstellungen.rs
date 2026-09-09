@@ -115,6 +115,27 @@ pub struct Einstellungen {
     pub modell: Modelleinstellung,
     pub kapazitaet: Kapazitaet,
     pub agent: Agenteneinstellung,
+    #[serde(default)]
+    pub ausgabe: Ausgabeeinstellung,
+}
+
+/// Wohin ausgegebene Gespraeche geschrieben werden.
+///
+/// ⚑ **Ohne Angabe wird nichts geschrieben**, und das ist die Vorgabe.
+/// Ein Voreinstellungsordner waere die bequeme Wahl und die falsche:
+/// Wer ein Gespraech ausgibt, will wissen wohin, und ein Ort, den
+/// niemand gewaehlt hat, ist ein Ort, an dem niemand sucht. Das Fenster
+/// fuehrt stattdessen zur Einstellung.
+///
+/// ⛑ `#[serde(default)]` an beiden Stellen, damit eine Ablage aus der
+/// Zeit davor weiter lesbar bleibt. Ohne das waere jede bestehende
+/// Datei mit einem Schlag kaputt, und `lesen` lehnt eine kaputte Datei
+/// zu Recht ab.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Ausgabeeinstellung {
+    /// Das Verzeichnis fuer ausgegebene Gespraeche.
+    #[serde(default)]
+    pub ordner: Option<String>,
 }
 
 impl Einstellungen {
@@ -243,25 +264,156 @@ impl Einstellungen {
     }
 }
 
-/// Die Felder, die sich setzen lassen, mit ihrer Art.
+/// Ein setzbares Feld, so wie es in einer Oberflaeche erscheint.
 ///
-/// ⚑ **Damit eine Oberflaeche sie nicht raten muss.** Wer eine
-/// Einstellungsseite baut, braucht drei Dinge je Feld: den Namen, was
-/// dort hineingehoert, und ob es abschaltbar ist. Ohne diese Liste
-/// entstuende sie ein zweites Mal im Fenster, und dann laufen zwei
-/// Listen auseinander.
-pub const FELDER: [(&str, Feldart); 11] = [
-    ("modell.artefakt", Feldart::Text),
-    ("modell.token", Feldart::Zahl),
-    ("modell.denken", Feldart::Schalter),
-    ("agent.schritte", Feldart::Zahl),
-    ("agent.bezeugtes", Feldart::Schalter),
-    ("agent.wurzel", Feldart::Pfad),
-    ("agent.schreiben", Feldart::Schalter),
-    ("kap.kerne", Feldart::Grenze),
-    ("kap.beschleuniger", Feldart::Schalter),
-    ("kap.speicher", Feldart::Grenze),
-    ("kap.platte", Feldart::Grenze),
+/// ⚑ **Damit eine Oberflaeche es weder raten noch benennen muss.** Wer
+/// eine Einstellungsseite baut, braucht fuenf Dinge je Feld: den
+/// technischen Namen zum Setzen, was dort hineingehoert, den Bereich,
+/// unter dem es steht, eine Beschriftung in ganzen Worten und einen
+/// Satz dazu, was es bewirkt.
+///
+/// ⛑ **Die Beschriftung steht hier und nicht im Fenster.** Bis zum
+/// 2026-09-09 zeigte die Einstellungsseite den technischen Namen:
+/// `kap.beschleuniger`, `agent.bezeugtes`, `modell.artefakt`. Das ist
+/// kein Deutsch, sondern eine Kennung, und wer sie nicht geschrieben
+/// hat, muss raten, was sie tut. Eine Uebersetzungstabelle im Fenster
+/// waere der bequeme Ausweg gewesen und der falsche: Sie laeuft
+/// auseinander, sobald hier ein Feld dazukommt, und dann traegt eine
+/// Zeile die Beschriftung einer anderen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Feld {
+    /// Der Name, unter dem [`Einstellungen::setzen`] das Feld kennt.
+    pub name: &'static str,
+    /// Was hineingehoert.
+    pub art: Feldart,
+    /// Die Ueberschrift, unter der das Feld auf der Seite steht.
+    pub bereich: &'static str,
+    /// Die Beschriftung der Zeile.
+    pub titel: &'static str,
+    /// Ob in diesem Feld ein Verzeichnis steht.
+    ///
+    /// ⚑ **Abgeleitet aus der Art und nicht in der Tabelle getippt**,
+    /// siehe [`Feldart::ist_ordner`]. Ein von Hand gesetztes Merkmal
+    /// waere ein zwoelfmal wiederholtes `true`/`false`, und eines davon
+    /// waere irgendwann falsch.
+    pub ordner: bool,
+    /// Ein Satz dazu, was das Feld bewirkt und was ohne Angabe gilt.
+    ///
+    /// ⚑ **Er nennt die Vorgabe, wo es eine gibt.** „Ohne Angabe gibt
+    /// es keine Dateiwerkzeuge" ist die Auskunft, die jemand beim
+    /// Einstellen braucht; sie steht sonst nur im Quelltext.
+    ///
+    /// ⚠️ **Und er sagt es, wenn ein Feld nichts bewirkt.** Von den
+    /// vier Grenzen dieses Rechners wird genau eine angewendet,
+    /// `kap.kerne`; `beschleuniger`, `speicher` und `platte` werden
+    /// gespeichert und angezeigt, und danach liest sie niemand. Ein
+    /// Schieber, der aussieht wie eine Grenze und keine ist, ist eine
+    /// Behauptung. Solange die Felder dastehen, steht der Satz dabei.
+    pub hinweis: &'static str,
+}
+
+/// Kurzschreibweise fuer die Tabelle darunter.
+const fn feld(
+    name: &'static str,
+    art: Feldart,
+    bereich: &'static str,
+    titel: &'static str,
+    hinweis: &'static str,
+) -> Feld {
+    Feld { name, art, bereich, titel, hinweis, ordner: art.ist_ordner() }
+}
+
+/// Die Felder, die sich setzen lassen, in der Reihenfolge der Seite.
+///
+/// ⚑ **Die Reihenfolge ist die Anzeige.** Gleiche Bereiche stehen
+/// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
+/// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
+/// die Reihenfolge festlegt, waere wieder eine zweite Liste.
+pub const FELDER: [Feld; 12] = [
+    feld(
+        "modell.artefakt",
+        Feldart::Ordner,
+        "Modell",
+        "Artefakt",
+        "Der Ordner des Modells, aus dem geantwortet wird.",
+    ),
+    feld(
+        "modell.token",
+        Feldart::Zahl,
+        "Modell",
+        "Länge der Antwort",
+        "Höchstzahl der Token je Antwort. Mehr Token heißt längere Antworten und längere Wartezeit.",
+    ),
+    feld(
+        "modell.denken",
+        Feldart::Schalter,
+        "Modell",
+        "Vor dem Antworten denken",
+        "Das Modell überlegt sichtbar, bevor es antwortet. Jedes Denktoken kostet so viel Zeit wie ein Antworttoken; ohne Angabe bleibt es aus.",
+    ),
+    feld(
+        "agent.schritte",
+        Feldart::Zahl,
+        "Agent",
+        "Schritte je Auftrag",
+        "Nach so vielen Werkzeugaufrufen bricht der Agent ab und antwortet mit dem, was er hat.",
+    ),
+    feld(
+        "agent.bezeugtes",
+        Feldart::Schalter,
+        "Agent",
+        "Bezeugte Werkzeuge zulassen",
+        "Alle Werkzeuge dieses Rechners sind bezeugt: Nur diese Maschine belegt, was sie ausgegeben haben, das Netz kann es nicht nachrechnen. Ohne Angabe sind sie angemeldet, aber gesperrt, und der Agent arbeitet ohne Werkzeuge.",
+    ),
+    feld(
+        "agent.wurzel",
+        Feldart::Pfad,
+        "Agent",
+        "Arbeitsordner",
+        "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe gibt es keine Dateiwerkzeuge.",
+    ),
+    feld(
+        "agent.schreiben",
+        Feldart::Schalter,
+        "Agent",
+        "Schreiben erlauben",
+        "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
+    ),
+    feld(
+        "kap.kerne",
+        Feldart::Grenze,
+        "Grenzen dieses Rechners",
+        "Rechenkerne",
+        "Wie viele Kerne der Betrieb benutzen darf. Das ändert die Laufzeit und nie das Ergebnis. Leer oder „aus“ heißt: alle.",
+    ),
+    feld(
+        "kap.beschleuniger",
+        Feldart::Schalter,
+        "Grenzen dieses Rechners",
+        "Beschleuniger benutzen",
+        "Noch ohne Wirkung: Der Wert wird gespeichert, gerechnet wird auf der CPU. Es gibt bisher kein Rechenwerk, das dieser Schalter einschalten könnte.",
+    ),
+    feld(
+        "kap.speicher",
+        Feldart::Grenze,
+        "Grenzen dieses Rechners",
+        "Arbeitsspeicher in GiB",
+        "Noch ohne Wirkung: Der Wert wird gespeichert, aber nichts misst den Arbeitsspeicher dagegen. Leer oder „aus“ heißt: ohne Grenze.",
+    ),
+    feld(
+        "kap.platte",
+        Feldart::Grenze,
+        "Grenzen dieses Rechners",
+        "Plattenplatz in GiB",
+        "Noch ohne Wirkung: Der Wert wird gespeichert, aber nichts misst den Plattenplatz dagegen. Leer oder „aus“ heißt: ohne Grenze.",
+    ),
+    feld(
+        "ausgabe.ordner",
+        Feldart::Pfad,
+        "Ausgabe",
+        "Ordner für ausgegebene Gespräche",
+        "Wohin ein ausgegebenes Gespräch geschrieben wird. Ohne Angabe wird nichts geschrieben, und das Fenster führt beim Ausgeben hierher.",
+    ),
 ];
 
 /// Was in ein Feld hineingehoert.
@@ -281,6 +433,26 @@ pub enum Feldart {
     /// Ein Pfad **oder** `aus`, das ihn wegnimmt. Ein leerer Pfad waere
     /// das Wurzelverzeichnis.
     Pfad,
+    /// Ein Verzeichnis, das **immer** einen Wert hat.
+    ///
+    /// ⚑ **Das Verhaeltnis zu [`Feldart::Pfad`] ist dasselbe wie das
+    /// von [`Feldart::Zahl`] zu [`Feldart::Grenze`]:** Beide meinen ein
+    /// Verzeichnis, aber nur eines laesst sich wegnehmen. Ein Modell
+    /// ohne Artefakt waere kein enger gestellter Klient, sondern einer,
+    /// der nicht antwortet.
+    Ordner,
+}
+
+impl Feldart {
+    /// Steht in diesem Feld ein Verzeichnis?
+    ///
+    /// ⚑ **Die Frage entscheidet, ob eine Oberflaeche einen Auswaehler
+    /// anbieten darf**, und sie wird hier beantwortet und nicht dort.
+    /// Ein Fenster, das die beiden Namen selbst aufzaehlt, faengt bei
+    /// der naechsten Feldart wieder von vorne an.
+    pub const fn ist_ordner(self) -> bool {
+        matches!(self, Self::Ordner | Self::Pfad)
+    }
 }
 
 /// Was `an` bedeutet.
@@ -321,6 +493,9 @@ impl Einstellungen {
             "kap.beschleuniger" => self.kapazitaet.beschleuniger = ja(wert),
             "kap.speicher" => self.kapazitaet.speicher_gib = opt(wert),
             "kap.platte" => self.kapazitaet.platte_gib = opt(wert),
+            "ausgabe.ordner" => {
+                self.ausgabe.ordner = (wert != "aus").then(|| wert.to_string())
+            }
             andere => return Err(format!("unbekanntes Feld {andere}")),
         }
         Ok(())
@@ -386,15 +561,54 @@ mod setzer {
     /// in der Oberflaeche, die nichts tut.
     #[test]
     fn jedes_gelistete_feld_laesst_sich_setzen() {
-        for (name, art) in FELDER {
+        for feld in FELDER {
             let mut e = Einstellungen::default();
-            let wert = match art {
-                Feldart::Text | Feldart::Pfad => "irgendwas",
+            let wert = match feld.art {
+                Feldart::Text | Feldart::Pfad | Feldart::Ordner => "irgendwas",
                 Feldart::Zahl | Feldart::Grenze => "3",
                 Feldart::Schalter => "an",
             };
+            let name = feld.name;
             e.setzen(name, wert)
                 .unwrap_or_else(|f| panic!("{name} steht in FELDER, der Setzer sagt: {f}"));
+        }
+    }
+
+    /// ⚑ **Das Ordnermerkmal folgt aus der Art und nirgends sonst.**
+    /// Waere es in der Tabelle getippt, stuende es zwoelfmal da, und
+    /// eines davon waere irgendwann falsch.
+    #[test]
+    fn das_ordnermerkmal_folgt_aus_der_art() {
+        for f in FELDER {
+            assert_eq!(f.ordner, f.art.ist_ordner(), "{} traegt ein fremdes Merkmal", f.name);
+        }
+        // ⚑ Diese Aufzaehlung ist Absicht und keine zweite Liste: Sie
+        // haelt fest, **welche** Felder einen Auswaehler bekommen.
+        // Kommt ein Verzeichnisfeld dazu, faellt sie, und genau dann
+        // soll jemand hinsehen.
+        let ordner: Vec<&str> = FELDER.iter().filter(|f| f.ordner).map(|f| f.name).collect();
+        assert_eq!(
+            ordner,
+            ["modell.artefakt", "agent.wurzel", "ausgabe.ordner"],
+            "die Menge der Verzeichnisfelder hat sich geaendert; bekommt das neue Feld einen Auswaehler?"
+        );
+    }
+
+    /// ⚑ **Eine Beschriftung ist kein Feldname.** Sie steht in der
+    /// Oberflaeche vor einem Menschen; ein Punkt darin waere wieder die
+    /// Kennung, die dort bis zum 2026-09-09 stand.
+    #[test]
+    fn jede_beschriftung_ist_deutsch_und_vollstaendig() {
+        for f in FELDER {
+            assert!(!f.titel.contains('.'), "`{}`: die Beschriftung `{}` traegt einen Punkt", f.name, f.titel);
+            assert!(!f.titel.is_empty(), "`{}` hat keine Beschriftung", f.name);
+            assert!(!f.bereich.is_empty(), "`{}` hat keinen Bereich", f.name);
+            assert!(
+                f.hinweis.len() > 20 && f.hinweis.ends_with('.'),
+                "`{}`: der Hinweis ist kein ganzer Satz: {}",
+                f.name,
+                f.hinweis
+            );
         }
     }
 
@@ -409,7 +623,7 @@ mod setzer {
                      "agent.schreiben", "kap.kerne", "kap.beschleuniger",
                      "kap.speicher", "kap.platte"] {
             assert!(
-                FELDER.iter().any(|(n, _)| *n == name),
+                FELDER.iter().any(|f| f.name == name),
                 "{name} laesst sich setzen, steht aber nicht in FELDER"
             );
             let _ = e.setzen(name, "an");

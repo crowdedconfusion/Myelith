@@ -96,19 +96,89 @@ fn jede_klasse_im_html_hat_eine_regel() {
     }
 }
 
+/// Alle Klassen, die das Skript vergibt, aus dem Skript gelesen.
+///
+/// ⚑ **`className = "..."`, die festen Teile einer Vorlage und
+/// `classList.add/remove/toggle`.** Der veraenderliche Teil einer
+/// Vorlage laesst sich nicht ablesen, der feste davor schon: Aus
+/// ``` `beitrag von-${b.von}` ``` kommt `beitrag`, und `von-` faellt
+/// weg, weil dort ein Wort angehaengt wird.
+fn klassen_aus_skript(js: &str) -> BTreeSet<String> {
+    let mut aus = BTreeSet::new();
+    for (marke, ende) in [("className = \"", '"'), ("className = `", '`')] {
+        let mut rest = js;
+        while let Some(a) = rest.find(marke) {
+            let nach = &rest[a + marke.len()..];
+            let Some(e) = nach.find(ende) else { break };
+            for k in nach[..e].split("${").next().unwrap_or("").split_whitespace() {
+                if !k.ends_with('-') {
+                    aus.insert(k.to_string());
+                }
+            }
+            rest = &nach[e..];
+        }
+    }
+    for marke in ["classList.add(\"", "classList.remove(\"", "classList.toggle(\""] {
+        let mut rest = js;
+        while let Some(a) = rest.find(marke) {
+            let nach = &rest[a + marke.len()..];
+            let Some(e) = nach.find('"') else { break };
+            aus.insert(nach[..e].to_string());
+            rest = &nach[e..];
+        }
+    }
+    aus
+}
+
+/// Gibt es zu dieser Klasse eine Regel?
+///
+/// ⛑ **Auf ganze Namen und nicht auf Teilzeichenketten.** Ein blosses
+/// `css.contains(".zu")` faende auch `.zusatz`, und `js.contains("grenze")`
+/// fand seinerzeit das Wort „Obergrenze" in einem Kommentar.
+fn hat_regel(css: &str, klasse: &str) -> bool {
+    let marke = format!(".{klasse}");
+    let mut rest = css;
+    while let Some(a) = rest.find(&marke) {
+        let nach = &rest[a + marke.len()..];
+        let ende_ist_wortende = nach
+            .as_bytes()
+            .first()
+            .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_'));
+        if ende_ist_wortende {
+            return true;
+        }
+        rest = nach;
+    }
+    false
+}
+
 /// Und die Klassen, die das Skript vergibt, ebenso.
+///
+/// ⛑ **Diese Pruefung hielt eine von Hand gepflegte Liste von elf
+/// Namen.** Das ist derselbe Fehler wie Fund 261, nur an einer anderen
+/// Stelle: Die Liste rottet. Als am 2026-09-09 die Marke `grenze`
+/// entfiel, weil ihr Hinweis in den Satz unter der Beschriftung
+/// gewandert ist, blieb sie in der Liste stehen, und die Pruefung fiel
+/// wegen einer Klasse, die es nicht mehr gibt. Sie liest die Namen
+/// jetzt aus dem Skript.
 #[test]
 fn jede_klasse_aus_dem_skript_hat_eine_regel() {
     let js = lies("app.js");
     let css = lies("stil.css");
-    // `className = "schritt ..."` und die Vorlagen darin.
-    for k in ["schritt", "aufruf", "ergebnis", "unlesbar", "antwort", "hinweis",
-              "marke", "eng", "offen", "grenze", "weg"] {
-        assert!(
-            js.contains(k) || css.contains(k),
-            "`{k}` wird weder vergeben noch gestaltet"
-        );
-        assert!(css.contains(&format!(".{k}")), "`{k}` wird vergeben, hat aber keine Regel");
+
+    let vergeben = klassen_aus_skript(&js);
+    assert!(vergeben.len() >= 15, "nur {} Klassen gefunden; liest die Pruefung noch richtig?", vergeben.len());
+    for k in &vergeben {
+        assert!(hat_regel(&css, k), "`{k}` wird im Skript vergeben, hat aber keine Regel");
+    }
+
+    // ⚑ **Die vier Schrittarten kommen aus einer Vorlage und lassen
+    // sich deshalb nicht ablesen.** Damit die Aufzaehlung trotzdem
+    // nicht rottet, muss jeder Name **als Schluessel** im Skript
+    // vorkommen; genau dort steht die Tabelle, die sie erzeugt.
+    for k in ["aufruf", "ergebnis", "unlesbar", "hinweis"] {
+        assert!(js.contains(&format!("{k}:")), "`{k}` ist keine Schrittart mehr");
+        assert!(hat_regel(&css, k), "die Schrittart `{k}` hat keine Regel");
     }
 }
 
@@ -118,8 +188,16 @@ fn jede_klasse_aus_dem_skript_hat_eine_regel() {
 /// nicht auf, weil sie einfach nicht laedt.
 #[test]
 fn nichts_wird_aus_dem_netz_geladen() {
+    // ⛑ **Der Namensraum eines SVG ist eine Kennung und keine
+    // Adresse.** `createElementNS("http://www.w3.org/2000/svg", …)`
+    // ruft nichts ab, der Text steht in jedem SVG der Welt, und ohne
+    // ihn erzeugt der Browser ein HTML-Element namens „svg", das
+    // nichts zeichnet. Er wird deshalb vor der Suche weggeschnitten
+    // und nicht von der Suche ausgenommen: Wer eine **zweite**
+    // `http://`-Stelle einbaut, faellt weiter auf.
+    const SVG_NS: &str = "http://www.w3.org/2000/svg";
     for datei in ["index.html", "stil.css", "app.js", "netz.js"] {
-        let inhalt = lies(datei);
+        let inhalt = lies(datei).replace(SVG_NS, "");
         for marke in ["http://", "https://", "//fonts.", "cdn."] {
             assert!(
                 !inhalt.contains(marke),
@@ -738,5 +816,183 @@ fn die_ringe_rechnen_im_randkasten() {
         "Die Ringe liegen auf ::before und ::after, aber `box-sizing`\n\
          gilt nur fuer `*`. Pseudoelemente sind davon nicht erfasst und\n\
          werden um ihr Padding groesser als ihr Traeger."
+    );
+}
+
+/// Eine Datei aus `src/`, nicht aus `ui/`.
+fn lies_quelle(name: &str) -> String {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(name);
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// **Jeder Befehl ist angemeldet, und jeder gerufene Name ist ein
+/// Befehl.**
+///
+/// ⛑ **Das ist die Luecke der Sorte 251:** `#[tauri::command]` allein
+/// tut nichts. Fehlt der Name in `generate_handler!`, uebersetzt alles
+/// sauber, die Kiste ist gruen, und der Aufruf scheitert erst beim
+/// Klicken mit „not allowed by ACL" oder „command not found". Beim
+/// Ordnerauswaehler waere das ein Knopf gewesen, der aussieht, als
+/// tue er etwas.
+///
+/// ⚑ **Drei Richtungen, denn jede kann einzeln kaputtgehen:** ein
+/// Befehl ohne Anmeldung, eine Anmeldung ohne Befehl (nach einer
+/// Umbenennung), und ein Aufruf im Fenster, den es im Ruecken nicht
+/// gibt.
+#[test]
+fn jeder_befehl_ist_angemeldet() {
+    let rs = lies_quelle("main.rs");
+    let js = lies("app.js");
+
+    /// Der Funktionsname nach einem `#[tauri::command]`.
+    fn befehle(rs: &str) -> BTreeSet<String> {
+        let mut aus = BTreeSet::new();
+        for teil in rs.split("#[tauri::command]").skip(1) {
+            let Some(a) = teil.find("fn ") else { continue };
+            let nach = &teil[a + 3..];
+            let ende = nach
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(nach.len());
+            aus.insert(nach[..ende].to_string());
+        }
+        aus
+    }
+
+    let vorhanden = befehle(&rs);
+    assert!(vorhanden.len() >= 10, "nur {} Befehle gefunden; sucht die Pruefung noch richtig?", vorhanden.len());
+
+    let liste = rs
+        .split("tauri::generate_handler![")
+        .nth(1)
+        .expect("keine Anmeldeliste im Ruecken")
+        .split(']')
+        .next()
+        .unwrap_or("");
+    let angemeldet: BTreeSet<String> = liste
+        .split(',')
+        .map(|z| z.trim().to_string())
+        .filter(|z| !z.is_empty())
+        .collect();
+
+    assert_eq!(
+        vorhanden, angemeldet,
+        "Befehle und Anmeldeliste stimmen nicht ueberein.\n\
+         Nur mit `#[tauri::command]`: {:?}\n\
+         Nur in `generate_handler!`: {:?}",
+        vorhanden.difference(&angemeldet).collect::<Vec<_>>(),
+        angemeldet.difference(&vorhanden).collect::<Vec<_>>()
+    );
+
+    // Und die dritte Richtung: Was das Fenster ruft, muss es geben.
+    let mut rest = js.as_str();
+    let mut gerufen = BTreeSet::new();
+    while let Some(a) = rest.find("invoke(\"") {
+        let nach = &rest[a + "invoke(\"".len()..];
+        let Some(e) = nach.find('"') else { break };
+        gerufen.insert(nach[..e].to_string());
+        rest = &nach[e..];
+    }
+    assert!(!gerufen.is_empty(), "das Fenster ruft gar keinen Befehl; sucht die Pruefung noch richtig?");
+    for name in &gerufen {
+        assert!(
+            angemeldet.contains(name),
+            "das Fenster ruft `{name}`, aber der Ruecken meldet ihn nicht an"
+        );
+    }
+
+    // ⚑ **Und die vierte Richtung: Was niemand ruft, gehoert weg.**
+    // Diese Haelfte hat beim ersten Lauf `modell` gefunden, einen
+    // Befehl, der ein ganzes Artefakt laedt, dessen Vorlage druckt und
+    // es wegwirft; gerufen hat ihn nichts. Ein angemeldeter Befehl ist
+    // eine Zusage an das Fenster, und eine Zusage, die niemand
+    // einloest, ist eine Behauptung.
+    assert_eq!(
+        angemeldet, gerufen,
+        "angemeldet, aber vom Fenster nicht gerufen: {:?}",
+        angemeldet.difference(&gerufen).collect::<Vec<_>>()
+    );
+}
+
+/// **Glas tragen Bedienelemente, keine Behaelter.**
+///
+/// ⛑ Am 2026-09-09 stand `section` in der Linsenliste. Das klang
+/// harmlos und war es nicht: `#einstellungsseite` liegt auf `inset: 0`
+/// ueber dem ganzen Fenster, `#modellbau` fuellt zwei Drittel davon.
+/// Beim Ueberfahren leuchtete also die halbe Einstellungsseite auf,
+/// gemeldet vom Projektinhaber als „ein erleuchtender Kasten ueber
+/// etwa zwei Dritteln".
+///
+/// ⚑ **Die Pruefung haengt an der Technik und nicht am Wortlaut.** Sie
+/// nimmt die Selektoren, in deren Rumpf `var(--mx` steht, denn das ist
+/// der Glanz, und verlangt zweierlei. Erstens darf kein Behaelter
+/// darunter sein. Zweitens muss das Skript **genau dieselben** Traeger
+/// verfolgen: Rechnet es fuer mehr, ist das Arbeit fuer nichts;
+/// rechnet es fuer weniger, sitzt der Glanz bei einem Traeger fest in
+/// der Mitte, weil `--mx` nie gesetzt wird.
+#[test]
+fn glas_traegt_nur_bedienelemente() {
+    let css = ohne_kommentare(&lies("stil.css"));
+    let js = lies("app.js");
+
+    /// Der Traeger ohne Pseudoelement und ohne `:not(...)`.
+    fn stamm(sel: &str) -> String {
+        sel.split(':').next().unwrap_or(sel).trim().to_string()
+    }
+
+    let glanz: BTreeSet<String> = selektoren_mit(&css, "var(--mx").iter().map(|s| stamm(s)).collect();
+    assert!(!glanz.is_empty(), "kein Selektor zeichnet den Glanz; sucht die Pruefung noch richtig?");
+
+    const BEHAELTER: [&str; 8] =
+        ["section", "main", "article", "aside", "div", "body", "html", "form"];
+    for b in BEHAELTER {
+        assert!(
+            !glanz.contains(b),
+            "`{b}` traegt Glas. Das ist ein Behaelter und kein Bedienelement:\n\
+             Er nimmt die ganze Flaeche ein, also leuchtet beim Ueberfahren\n\
+             die ganze Flaeche. Glas tragen Knopf, Eingabefeld und Karte."
+        );
+    }
+
+    let zeile = js
+        .lines()
+        .find(|z| z.contains("const LINSEN"))
+        .expect("`const LINSEN` steht nicht mehr im Skript; wer verfolgt jetzt den Zeiger?");
+    let linsen: BTreeSet<String> = zeile
+        .split('"')
+        .nth(1)
+        .expect("die Linsenliste ist keine Zeichenkette mehr")
+        .split(',')
+        .map(stamm)
+        .collect();
+
+    assert_eq!(
+        glanz, linsen,
+        "Stil und Skript verfolgen verschiedene Traeger.\n\
+         Glanz im Stil: {glanz:?}\n\
+         Linsen im Skript: {linsen:?}"
+    );
+}
+
+/// **Was `hidden` traegt, bleibt versteckt.**
+///
+/// ⛑ Das Vorgabestilblatt setzt `[hidden] { display: none }` mit der
+/// schwaechsten Spezifitaet. Eine eigene Regel mit `display: grid` oder
+/// `display: block` gewinnt dagegen, und das Element steht sichtbar da,
+/// obwohl das Skript es versteckt hat. Dieses Stilblatt hatte den Fall
+/// dreimal; zweimal war er einzeln geflickt, beim dritten Mal stand das
+/// Kontextmenue nach jedem Start links oben und liess sich nicht
+/// schliessen.
+#[test]
+fn verstecktes_bleibt_versteckt() {
+    let html = lies("index.html");
+    let css = ohne_kommentare(&lies("stil.css"));
+    if !html.contains(" hidden") {
+        return;
+    }
+    assert!(
+        css.contains("[hidden]") && css.contains("display: none !important"),
+        "Im HTML tragen Elemente `hidden`, aber das Stilblatt hat keine\n\
+         Regel `[hidden] {{ display: none !important }}`. Jede eigene\n\
+         `display`-Angabe schlaegt sonst das Verstecken."
     );
 }
