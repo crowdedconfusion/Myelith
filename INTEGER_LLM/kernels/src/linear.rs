@@ -45,15 +45,53 @@ const PARALLEL_AB: usize = 1_500_000;
 /// feste Zahl ist also für eine der beiden Größen falsch.
 const ARBEIT_JE_THREAD: usize = 1_000_000;
 
-/// Obergrenze der Threadzahl, einmal ermittelt statt je Aufruf.
+/// Was der Nutzer diesem Prozess an Kernen zugesteht; 0 heisst „alles".
+///
+/// # ⚑ Warum eine Obergrenze hierher gehoert und warum sie gefahrlos ist
+///
+/// Ein Knoten gibt einen **Teil** seiner Maschine her, nicht die ganze,
+/// und ohne diese Grenze nimmt sich der Rechenpfad, was
+/// `available_parallelism` meldet. Eine Einstellung, die das nicht
+/// begrenzt, ist eine Anzeige und keine Einstellung.
+///
+/// ⚑ **Und sie aendert kein Ergebnis.** Jede Ausgabezeile ist ein
+/// eigenes Skalarprodukt ueber ihre eigene Gewichtszeile und schreibt
+/// in ihr eigenes Feld; zwischen den Zeilen gibt es keine gemeinsame
+/// Zwischensumme. Threadzahl, Aufteilung und Schwelle sind damit reine
+/// Laufzeitentscheidungen, siehe [`zeilen_rechnen`]. Genau deshalb darf
+/// ein Nutzer daran drehen, ohne die Bitgleichheit anzutasten, und
+/// genau das prueft `dieselbe_antwort_bei_jeder_kernzahl`.
+static KERNGRENZE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Setzt die Obergrenze; `0` gibt die Maschine wieder frei.
+///
+/// ⚑ **Wirkt auf den ganzen Prozess.** Gedacht ist sie fuer den Aufruf
+/// beim Start, aus der Kapazitaetseinstellung des Nutzers.
+pub fn kerngrenze_setzen(n: usize) {
+    KERNGRENZE.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Was gerade gilt, nach Beruecksichtigung der Maschine.
+pub fn kerngrenze() -> usize {
+    max_threads()
+}
+
+/// Obergrenze der Threadzahl. Die Maschine wird einmal befragt, die
+/// Grenze des Nutzers bei jedem Aufruf gelesen: Ein Atomlesen kostet
+/// nichts, und eine zwischengespeicherte Grenze liesse sich nach dem
+/// ersten Rechenschritt nicht mehr aendern.
 fn max_threads() -> usize {
     use std::sync::OnceLock;
     static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| {
+    let vorhanden = *N.get_or_init(|| {
         std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
-    })
+    });
+    match KERNGRENZE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => vorhanden,
+        n => n.min(vorhanden).max(1),
+    }
 }
 
 /// Rechnet `zeilen` unabhängige Ausgabewerte, einkernig oder verteilt.
@@ -74,10 +112,25 @@ where
     F: Fn(usize) -> i16 + Sync,
 {
     let arbeit = zeilen.saturating_mul(arbeit_je_zeile);
-    let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, max_threads());
-    if arbeit < PARALLEL_AB || max_threads() < 2 || zeilen < 2 {
+    // ⛑ **Die Reihenfolge dieser beiden Zeilen war bis zum 2026-09-08
+    // vertauscht**, und `clamp(2, 1)` ist kein milder Fehler, sondern
+    // eine Panik: `min > max`. Getroffen haette es jede **einkernige**
+    // Maschine bei jeder Matrix ueber der Schwelle, also genau die
+    // Geraete, auf die dieses Projekt ausdruecklich setzt. Gefunden hat
+    // es die Pruefung zur Kerngrenze, weil sie die Kernzahl auf eins
+    // stellen darf; ohne sie waere der Fehler erst auf fremder Hardware
+    // aufgefallen.
+    //
+    // ⚑ **Einmal gelesen, nicht zweimal gefragt.** Die Grenze steht in
+    // einer Atomvariablen und kann sich zwischen zwei Aufrufen aendern;
+    // ein Wert, der die Verzweigung entscheidet und danach neu gelesen
+    // wird, ist genau die Sorte Fenster, die selten und dann schwer
+    // auffaellt.
+    let kerne = max_threads();
+    if arbeit < PARALLEL_AB || kerne < 2 || zeilen < 2 {
         return (0..zeilen).map(&f).collect();
     }
+    let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne);
 
     let mut out = vec![0i16; zeilen];
     let je = zeilen.div_ceil(n);
@@ -327,5 +380,64 @@ mod tests {
     fn test_add_bias_i16_length_mismatch_panics() {
         let mut out = vec![0i16; 3];
         add_bias_i16(&mut out, &[1i16, 1], &[0, 0], 0);
+    }
+}
+
+#[cfg(test)]
+mod kerngrenze_probe {
+    use super::*;
+
+    /// ⚑ **Die Eigenschaft, auf der die Kerngrenze ruht.**
+    ///
+    /// Ein Nutzer darf an der Kernzahl drehen, weil sie kein Ergebnis
+    /// aendert: Jede Ausgabezeile ist ein eigenes Skalarprodukt ueber
+    /// ihre eigene Gewichtszeile, zwischen den Zeilen gibt es keine
+    /// gemeinsame Zwischensumme. **Wer diese Zusicherung gibt, prueft
+    /// sie**, sonst ist sie eine Behauptung im Kommentar.
+    ///
+    /// Die Matrix ist absichtlich gross genug, um ueber `PARALLEL_AB`
+    /// zu liegen; darunter liefe der einkernige Zweig und die Pruefung
+    /// vergliche viermal dasselbe.
+    ///
+    /// ⚑ **Zur Nebenlaeufigkeit:** `KERNGRENZE` gilt fuer den ganzen
+    /// Prozess, und andere Pruefungen laufen daneben. Sie sehen
+    /// zeitweise eine andere Fadenzahl und bekommen **dasselbe
+    /// Ergebnis**, denn genau das steht hier zur Pruefung.
+    #[test]
+    fn dieselbe_antwort_bei_jeder_kernzahl() {
+        // ⚑ Ueber `PARALLEL_AB`, sonst laeuft der einkernige Zweig
+        // und die Pruefung vergliche viermal dasselbe.
+        let zeilen = 2048;
+        let ein = 1024;
+        assert!(zeilen * ein > PARALLEL_AB, "die Matrix loest den verteilten Zweig nicht aus");
+
+        let x: Vec<i16> = (0..ein).map(|i| ((i * 37) % 401) as i16 - 200).collect();
+        let w: Vec<i8> = (0..zeilen * ein).map(|i| ((i * 31) % 255) as i8).collect();
+        let shifts: Vec<u8> = (0..zeilen).map(|i| (i % 4) as u8 + 6).collect();
+
+        let rechnen = || linear_w8a16(&x, &w, ein, &shifts, 12, 12);
+
+        kerngrenze_setzen(1);
+        let einkernig = rechnen();
+        assert_eq!(max_threads(), 1, "die Grenze greift nicht");
+
+        for n in [2usize, 3, 8, 64] {
+            kerngrenze_setzen(n);
+            assert_eq!(rechnen(), einkernig, "bei {n} Kernen kam etwas anderes heraus");
+        }
+
+        kerngrenze_setzen(0);
+        assert_eq!(rechnen(), einkernig, "ohne Grenze kam etwas anderes heraus");
+    }
+
+    /// Eine Grenze ueber der Maschine hebt die Maschine nicht an, und
+    /// eine Grenze von null gibt sie wieder frei.
+    #[test]
+    fn die_grenze_bleibt_zwischen_eins_und_der_maschine() {
+        let vorhanden = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        kerngrenze_setzen(100_000);
+        assert_eq!(max_threads(), vorhanden, "die Grenze hat Kerne erfunden");
+        kerngrenze_setzen(0);
+        assert_eq!(max_threads(), vorhanden);
     }
 }

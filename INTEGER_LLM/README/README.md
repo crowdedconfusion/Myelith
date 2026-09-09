@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.52.0 (θ_v 0.18.0; kernels 0.48.0, runtime 0.37.0, pipeline 0.15.0)
+> **Version:** 0.54.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.39.0, pipeline 0.15.0)
 > **Datum:** 2026-09-06
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
@@ -424,6 +424,113 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.54.0 – 2026-09-08 (der Ablesekopf lernt, die Normierung wird zeilenweise, der Rechenpfad hört auf den Nutzer)
+
+`integer-llm-kernels` **0.48.0 auf 0.49.0**, `integer-llm-runtime`
+**0.38.0 auf 0.39.0**.
+
+⛑ **Fund 202: Der Ablesekopf war nie im Trainingspfad.**
+`matrizen_veraenderlich` gibt Aufmerksamkeit, Router und Experten
+heraus, dann endet die Liste. Weder Einbettung noch `lm_head`. Das
+Modell konnte verstellen, **was** der verborgene Zustand ist, aber nie,
+**wie** ein Zustand auf ein Token zeigt.
+
+⚑ **Der Gradient dafür fiel die ganze Zeit an.** `linear_backward`
+liefert `(dL/dx, dL/dW)`, und der Aufrufer schrieb `let (g_normed, _)`.
+Neu ist `Kopfsammlung`: Sie verfolgt die Zeilen der Token, die im Korpus
+vorkommen, denn die volle Kopfmatrix wäre als `i64`-Gradient **ein
+Gigabyte je Position**, ist aber ein äußeres Produkt und außerhalb der
+Zielzeile winzig. `schritt_normiert` trägt sie unverändert, weil er die
+Skala des Meisters nirgends voraussetzt.
+
+`trainingsguete` bekommt `--kopf` und `--nur-kopf`.
+
+### ⚑ Der Rechenpfad hört auf den Nutzer
+
+`linear.rs` nahm sich, was `available_parallelism` meldete. Neu sind
+`kerngrenze_setzen` und die Naht `runtime::kapazitaet`, damit ein
+Aufrufer die Kernkiste nicht kennen muss.
+
+⚑ **Die Grenze ändert kein Ergebnis**, denn jede Ausgabezeile ist ein
+eigenes Skalarprodukt über ihre eigene Gewichtszeile. Das stand seit
+jeher als Zusicherung im Kommentar und war **nicht geprüft**; jetzt
+prüft es `dieselbe_antwort_bei_jeder_kernzahl`.
+
+### ⛑ Und die Normierung war Fund 194, eine Ebene zu hoch stehengeblieben
+
+`schritt_normiert` bezieht die Bewegung auf das Betragsmaximum der
+**Matrix**. Das Gewicht mit dem größten Gradienten bewegt sich damit um
+einen Bruchteil des größten Gewichts der Matrix, nicht des eigenen:
+
+| Gewicht | Anteil an `w_max` | Bewegung bei Nenner 64 | in Prozent seiner selbst |
+|---|---|---|---|
+| das größte | 100 % | 1,6 % von `w_max` | 1,6 % |
+| ein mittleres | 10 % | 1,6 % von `w_max` | **16 %** |
+| ein kleines | 1 % | 1,6 % von `w_max` | ⛑ **156 %**, es kippt |
+
+⚑ **Und das ist wörtlich die Begründung, die schon im Kommentar von
+`schritt_normiert` steht**, nur eine Ebene tiefer: Damals ging es von
+*je Tensor absolut* auf *je Matrix relativ*, und innerhalb der Matrix
+besteht dasselbe Problem unverändert fort.
+
+Neu ist `schritt_normiert_je_zeile`. Die Übertragungsform quantisiert
+ohnehin **zeilenweise**, also ist das Maximum einer Zeile dieselbe
+Größe, an der auch die Quantisierung hängt, und keine erfundene.
+
+⚑ **`g_max` bleibt über die ganze Matrix.** Nähme man auch ihn je
+Zeile, bewegte sich jede Zeile um `1/lr_nenner` ihres eigenen Maximums,
+auch eine mit verschwindendem Gradienten: Aus der Wichtigkeit einer
+Zeile würde ihre bloße Anwesenheit.
+
+**Gemessen statt behauptet:** Bei zwei Zeilen mit hundertfach
+verschiedenen Gewichten bewegt die Matrixnormierung die kleine Zeile um
+über 50 Prozent ihrer selbst, die Zeilennormierung um unter 5.
+
+Wege dorthin: `Sammlung::zeilenbreiten_setzen`, `zeilenbreiten_dicht`
+und der Schalter `--zeilenweise`. ⚑ **Leer heißt „wie bisher"**, damit
+ein Aufrufer, der nichts sagt, keine stille Änderung bekommt.
+
+### ⛑ Und was diese Prüfung gefunden hat
+
+```rust
+let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, max_threads());
+if arbeit < PARALLEL_AB || max_threads() < 2 || zeilen < 2 { ... }
+```
+
+**Die Reihenfolge war vertauscht**, und `clamp(2, 1)` panikt mit
+`min > max`. Getroffen hätte es **jede einkernige Maschine** bei jeder
+Matrix über der Schwelle. Gefunden hat es die neue Prüfung, weil sie die
+Kernzahl auf eins stellen darf; sonst wäre es erst auf fremder Hardware
+aufgefallen, als Absturz mitten in einer Anfrage.
+
+### v0.53.0 – 2026-09-07 (das Messwerkzeug lernt fragen, und zählt endlich das Richtige)
+
+`trainingsguete` bekommt drei Schalter und eine Diagnose, und alle drei
+entstanden aus einem Fehlschluss, den sie künftig verhindern.
+
+**`--fragen <tsv>`** befragt das Modell vor und nach dem Training und
+hält die Antwort **im Wortlaut** fest, nicht nur ihren Treffer. Eine
+Perplexität sagt, ob ein Text wahrscheinlicher wurde; sie sagt nicht, ob
+das Modell die Sache **abrufen** kann.
+
+**`--rauschen <stufen>`** stört die Gewichte ohne jeden Gradienten.
+⚑ **Ohne diesen Nullpunkt ist keine Aussage über eine Haltemenge
+gültig:** Reines Rauschen auf ein quantisiertes Modell senkt die
+Perplexität auf gewöhnlichem Text um bis zu 0,67 Prozent, mehr als
+mancher echte Trainingslauf.
+
+**Die `INT8`-Zeile** zählt, wie viele **ausgelieferte** Gewichte sich
+geändert haben. Bis heute meldete das Werkzeug nur bewegte Master, und
+ein Master ist 2⁻²⁰ einer Rasterstufe: 190 Mio. bewegte Master
+entsprachen 3,4 Mio. geänderten int8-Gewichten, also 1,8 Prozent davon.
+
+⛑ **Zwei Berichtigungen an der Messung selbst.** Das Urteil sagte „der
+Lauf hat gelernt", sobald die Haltemenge fiel; ein Lauf mit **null
+Schritten und ohne Gradienten** bekam dasselbe Urteil. Und der Rang
+verglich `erwartet` in der Schreibweise ohne führendes Leerzeichen, also
+ein Token, das im Satz nicht an dieser Stelle stehen kann: `Paris` ergab
+Rang 558, ` Paris` Rang 0. Gemessen wird jetzt der bessere beider Ränge.
 
 ### v0.52.0 – 2026-09-06 (die Normierung, und ein Vektor für sie)
 

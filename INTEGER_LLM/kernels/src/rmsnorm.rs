@@ -265,6 +265,57 @@ pub fn rmsnorm_i16_mit_spur(
 /// Funktion `x_shifts` je Kanal entgegen, ohne dass sich sonst etwas
 /// ändert: [`rmsnorm_i16`] kann es bereits.
 #[allow(clippy::too_many_arguments)]
+/// Wie [`qk_norm_heads`], gibt aber je Kopf die Spur heraus.
+///
+/// # ⛑ Warum es das bis zum 2026-09-08 nicht gab
+///
+/// Die QK-Normierung (Qwen3) stand **nur im Vorwaertspfad**. Der
+/// Trainingspfad rechnete die Aufmerksamkeit ohne sie, und nichts
+/// pruefte das: Ein Lauf auf einem Qwen3-Artefakt lief durch und
+/// trainierte gegen eine andere Aufmerksamkeit als die Inferenz.
+///
+/// ⚑ **Ein stiller Unterschied im Vorwaertspfad ist die schlimmste
+/// Sorte**, weil das Ergebnis plausibel aussieht. Seither lehnt
+/// `Shardgewichte::aus_modell` solche Modelle ab, und diese Funktion
+/// ist der Weg, die Ablehnung wieder aufzuheben.
+///
+/// **Die Spur je Kopf braucht der Rueckwaertspass**, genau wie bei den
+/// Ebenennormierungen: `r` ist nachgeschlagen und nicht nachrechenbar,
+/// ohne den Vorwaertspass zu wiederholen.
+pub fn qk_norm_heads_mit_spur(
+    heads: &mut [Vec<i16>],
+    x_frac: u8,
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    rsqrt_lut: &[i16],
+    lut_input_shift: u8,
+    lut_output_frac: u8,
+    out_frac_bits: u8,
+) -> Vec<Rmsnormspur> {
+    let head_dim = gamma.len();
+    let inv_n = inv_n_q20(head_dim);
+    let x_shifts = vec![x_frac; head_dim];
+    let mut spuren = Vec::with_capacity(heads.len());
+    for kopf in heads.iter_mut() {
+        debug_assert_eq!(kopf.len(), head_dim, "qk_norm_heads: jeder Kopf traegt head_dim");
+        let mut spur = Rmsnormspur::Leer;
+        *kopf = rmsnorm_i16_mit_spur(
+            kopf,
+            &x_shifts,
+            gamma,
+            gamma_shifts,
+            rsqrt_lut,
+            lut_input_shift,
+            lut_output_frac,
+            inv_n,
+            out_frac_bits,
+            Some(&mut spur),
+        );
+        spuren.push(spur);
+    }
+    spuren
+}
+
 pub fn qk_norm_heads(
     heads: &mut [Vec<i16>],
     x_frac: u8,

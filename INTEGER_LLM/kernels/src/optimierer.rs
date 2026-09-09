@@ -429,6 +429,231 @@ pub fn schritt_normiert(
     Some(g_max)
 }
 
+/// Wie [`schritt_normiert`], bezieht die Bewegung aber auf das
+/// Betragsmaximum **der Zeile** statt der ganzen Matrix.
+///
+/// # ⛑ Warum es das braucht: Fund 194, eine Ebene tiefer
+///
+/// [`schritt_normiert`] traegt in seinem eigenen Kommentar die
+/// Begruendung, die hier weitergeht:
+///
+/// > Eine Zeile mit kleinen Gewichten bekam dieselbe absolute Bewegung
+/// > wie eine mit grossen, also eine **relative** Aenderung von hundert
+/// > Prozent.
+///
+/// Damals ging es von **je Tensor absolut** auf **je Matrix relativ**.
+/// ⚑ **Innerhalb der Matrix besteht dasselbe Problem unveraendert
+/// fort:** Das Gewicht mit dem groessten Gradienten bewegt sich um
+/// `w_max / lr_nenner`, einen Bruchteil des groessten Gewichts **der
+/// Matrix**.
+///
+/// | Gewicht | Anteil an `w_max` | Bewegung bei Nenner 64 | in Prozent seiner selbst |
+/// |---|---|---|---|
+/// | das groesste | 100 % | 1,6 % von `w_max` | 1,6 % |
+/// | ein mittleres | 10 % | 1,6 % von `w_max` | **16 %** |
+/// | ein kleines | 1 % | 1,6 % von `w_max` | ⛑ **156 %**, es kippt |
+///
+/// Gemessen am 2026-09-08: Nenner 64 auf den Ebenen zerstoerte das
+/// Modell, Paris fiel von Rang 94 auf 51 670.
+///
+/// # ⚑ Warum die Zeile die richtige Einheit ist, und keine erfundene
+///
+/// Die Uebertragungsform quantisiert **zeilenweise**: Jede Zeile traegt
+/// ihren eigenen Versatz (`w_shifts`), und die Matrix liegt als
+/// `[aus, ein]` zeilenweise. Das Betragsmaximum einer Zeile ist damit
+/// dieselbe Groesse, an der auch die Quantisierung haengt.
+///
+/// # ⚑ Und warum `g_max` trotzdem ueber die ganze Matrix geht
+///
+/// Naeme man auch ihn je Zeile, bewegte sich **jede** Zeile um
+/// `1/lr_nenner` ihres eigenen Maximums, auch eine mit verschwindendem
+/// Gradienten: Aus der Wichtigkeit einer Zeile wuerde ihre blosse
+/// Anwesenheit. `lr_nenner` sagt hier: **Die Zeile mit dem groessten
+/// Gradienten der Matrix bewegt sich um diesen Bruchteil ihres eigenen
+/// Maximums**, alle anderen anteilig weniger.
+///
+/// `zeilenbreite` ist `in_features`. Ist sie 0 oder passt sie nicht,
+/// faellt die Funktion auf [`schritt_normiert`] zurueck, statt still
+/// etwas anderes zu rechnen.
+pub fn schritt_normiert_je_zeile(
+    master: &mut [Master],
+    summe: &mut [i64],
+    zeilenbreite: usize,
+    kennung: Schrittkennung,
+    lr_nenner: i64,
+) -> Option<u64> {
+    assert_eq!(master.len(), summe.len(), "schritt_normiert_je_zeile: Laengen passen nicht");
+    assert!(lr_nenner > 0, "schritt_normiert_je_zeile: Lernraten-Nenner muss > 0 sein");
+    if zeilenbreite == 0 || master.len() % zeilenbreite != 0 {
+        return schritt_normiert(master, summe, kennung, lr_nenner);
+    }
+    let g_max = summe.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+    if g_max == 0 {
+        return None;
+    }
+    let teiler = (g_max as i128) * (lr_nenner as i128);
+    for (z, (mzeile, szeile)) in master
+        .chunks_mut(zeilenbreite)
+        .zip(summe.chunks(zeilenbreite))
+        .enumerate()
+    {
+        let w_max = mzeile.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+        if w_max == 0 {
+            // Eine Zeile aus lauter Nullen hat keine eigene Skala; sie
+            // zu bewegen hiesse, eine zu erfinden. Dieselbe Ueberlegung
+            // wie fuer die Matrix in `schritt_normiert`.
+            continue;
+        }
+        let ziel = (w_max as i128) << FEIN_BITS;
+        let ab = z * zeilenbreite;
+        for (i, (w, f)) in mzeile.iter_mut().zip(szeile.iter()).enumerate() {
+            let index = kennung.index_versatz + (ab + i) as u64;
+            let fein = ((*f as i128) * ziel / teiler) as i64;
+            let stufen = runde_stochastisch(fein, wuerfel(kennung.ebene, kennung.schritt, index));
+            *w = (*w as i64).saturating_add(stufen).clamp(Master::MIN as i64, Master::MAX as i64)
+                as Master;
+        }
+    }
+    Some(g_max)
+}
+
+#[cfg(test)]
+mod zeilennormierung {
+    use super::*;
+
+    /// ⚑ **Der Befund, um den es geht.**
+    ///
+    /// Zwei Zeilen, dieselbe Gradientenlage, hundertfach verschiedene
+    /// Gewichte. Bei Matrixnormierung bekommt die kleine Zeile die
+    /// **absolute** Bewegung der grossen und wird zerrissen; bei
+    /// Zeilennormierung bewegen sich beide um denselben **Anteil ihrer
+    /// selbst**.
+    #[test]
+    fn die_kleine_zeile_wird_nicht_von_der_grossen_zerrissen() {
+        let breite: usize = 8;
+        let gross: Vec<Master> = (0..breite).map(|i| 100_000 + i as Master * 1000).collect();
+        let klein: Vec<Master> = (0..breite).map(|i| 1_000 + i as Master * 10).collect();
+        let start: Vec<Master> = gross.iter().chain(klein.iter()).copied().collect();
+        let grad: Vec<i32> =
+            (0..2 * breite).map(|i| if i % 2 == 0 { 1000i32 } else { -1000 }).collect();
+        let kn = Schrittkennung { ebene: 1, schritt: 0, index_versatz: 0 };
+
+        let mut a = start.clone();
+        let mut sa = vec![0i64; 2 * breite];
+        sammle_roh(&mut sa, &grad);
+        schritt_normiert(&mut a, &mut sa, kn, 64);
+
+        let mut b = start.clone();
+        let mut sb = vec![0i64; 2 * breite];
+        sammle_roh(&mut sb, &grad);
+        schritt_normiert_je_zeile(&mut b, &mut sb, breite, kn, 64);
+
+        // Die kleine Zeile: relative Bewegung je Verfahren.
+        let rel = |neu: &[Master]| -> f64 {
+            let d: i64 = neu[breite..]
+                .iter()
+                .zip(&start[breite..])
+                .map(|(n, s)| (*n as i64 - *s as i64).abs())
+                .sum();
+            let betrag: i64 = start[breite..].iter().map(|w| w.unsigned_abs() as i64).sum();
+            d as f64 / betrag as f64
+        };
+        let matrix = rel(&a);
+        let zeile = rel(&b);
+        assert!(
+            matrix > 0.5,
+            "die Matrixnormierung zerreisst die kleine Zeile nicht mehr ({matrix:.2});              dann ist dieser Test veraltet"
+        );
+        assert!(
+            zeile < 0.05,
+            "die Zeilennormierung bewegt die kleine Zeile zu weit ({zeile:.3})"
+        );
+    }
+
+    /// Die grosse Zeile bewegt sich bei beiden Verfahren gleich weit:
+    /// Ihr Maximum **ist** das Maximum der Matrix.
+    #[test]
+    fn die_groesste_zeile_bewegt_sich_wie_zuvor() {
+        let breite: usize = 8;
+        let start: Vec<Master> = (0..2 * breite).map(|i| 50_000 - (i as Master) * 100).collect();
+        let grad: Vec<i32> = (0..2 * breite).map(|i| (i as i32 % 5) - 2).collect();
+        let kn = Schrittkennung { ebene: 3, schritt: 7, index_versatz: 0 };
+
+        let mut a = start.clone();
+        let mut sa = vec![0i64; 2 * breite];
+        sammle_roh(&mut sa, &grad);
+        schritt_normiert(&mut a, &mut sa, kn, 128);
+
+        let mut b = start.clone();
+        let mut sb = vec![0i64; 2 * breite];
+        sammle_roh(&mut sb, &grad);
+        schritt_normiert_je_zeile(&mut b, &mut sb, breite, kn, 128);
+
+        // Erste Zeile: bei ihr sind Zeilen- und Matrixmaximum dasselbe.
+        assert_eq!(&a[..breite], &b[..breite]);
+    }
+
+    /// ⚑ Skalenfrei wie das Vorbild: derselbe Gradient mal tausend
+    /// bewegt gleich weit.
+    #[test]
+    fn die_skala_des_gradienten_faellt_auch_hier_heraus() {
+        let breite: usize = 4;
+        let start: Vec<Master> = (0..3 * breite).map(|i| 2000 + i as Master * 300).collect();
+        let klein: Vec<i32> = (0..3 * breite).map(|i| i as i32 - 6).collect();
+        let gross: Vec<i32> = klein.iter().map(|g| g * 1000).collect();
+        let kn = Schrittkennung { ebene: 2, schritt: 1, index_versatz: 0 };
+
+        let mut a = start.clone();
+        let mut sa = vec![0i64; 3 * breite];
+        sammle_roh(&mut sa, &klein);
+        schritt_normiert_je_zeile(&mut a, &mut sa, breite, kn, 16);
+
+        let mut b = start.clone();
+        let mut sb = vec![0i64; 3 * breite];
+        sammle_roh(&mut sb, &gross);
+        schritt_normiert_je_zeile(&mut b, &mut sb, breite, kn, 16);
+
+        assert_eq!(a, b, "die Gradientenskala faellt nicht heraus");
+        assert_ne!(a, start, "es hat sich gar nichts bewegt");
+    }
+
+    /// ⚑ **Kein stiller Rueckfall in etwas Drittes.** Passt die Breite
+    /// nicht, wird die Matrixnormierung gerechnet, und zwar genau sie.
+    #[test]
+    fn eine_unpassende_breite_faellt_sauber_zurueck() {
+        let start: Vec<Master> = (0..10).map(|i| 700 + i as Master * 50).collect();
+        let grad: Vec<i32> = (0..10).map(|i| i - 5).collect();
+        let kn = Schrittkennung { ebene: 0, schritt: 0, index_versatz: 0 };
+
+        let mut a = start.clone();
+        let mut sa = vec![0i64; 10];
+        sammle_roh(&mut sa, &grad);
+        schritt_normiert(&mut a, &mut sa, kn, 32);
+
+        for breite in [0usize, 3, 4, 7] {
+            let mut b = start.clone();
+            let mut sb = vec![0i64; 10];
+            sammle_roh(&mut sb, &grad);
+            schritt_normiert_je_zeile(&mut b, &mut sb, breite, kn, 32);
+            assert_eq!(a, b, "Breite {breite} faellt nicht auf die Matrixnormierung zurueck");
+        }
+    }
+
+    /// Eine Zeile aus lauter Nullen bekommt keine erfundene Skala.
+    #[test]
+    fn eine_nullzeile_bleibt_null() {
+        let breite: usize = 4;
+        let mut m: Vec<Master> = vec![0, 0, 0, 0, 900, 800, 700, 600];
+        let grad: Vec<i32> = vec![5, -5, 5, -5, 5, -5, 5, -5];
+        let mut s = vec![0i64; 8];
+        sammle_roh(&mut s, &grad);
+        let kn = Schrittkennung { ebene: 4, schritt: 2, index_versatz: 0 };
+        schritt_normiert_je_zeile(&mut m, &mut s, breite, kn, 8);
+        assert_eq!(&m[..breite], &[0, 0, 0, 0], "die Nullzeile hat eine Skala bekommen");
+        assert_ne!(&m[breite..], &[900, 800, 700, 600], "die zweite Zeile hat sich nicht bewegt");
+    }
+}
+
 #[cfg(test)]
 mod normierung {
     use super::*;

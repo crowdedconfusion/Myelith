@@ -1,0 +1,29 @@
+[package]
+name = "myl-oberflaeche"
+version = "0.8.0"
+edition = "2021"
+rust-version = "1.88"
+
+# ⚑ **Der Ruecken ruft die Kiste, nicht das Binaerprogramm.** „Die
+# Oberflaeche ruft dieselben Unterbefehle, ohne eigene Logik" heisst
+# nicht, dass sie `myl` als Unterprozess startet: Dann muesste sie
+# dessen Ausgabe wieder zerlegen, und aus einer Textausgabe fuer
+# Menschen eine Schnittstelle zu machen ist genau die Sorte Logik, die
+# hier nicht hingehoert. Sie ruft dieselben Funktionen.
+[dependencies]
+myl-client = { path = "../myl-client" }
+tauri = { version = "2", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber
+# `debug-assertions` und `overflow-checks` bleiben an.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"

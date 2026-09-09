@@ -21,7 +21,7 @@
 #
 # ZUR EINORDNUNG: Der Testclient misst BITGLEICHHEIT, nicht Genauigkeit.
 # Ob die Antwort stimmt, beantwortet dieser Lauf nicht und soll er nicht;
-# dafuer gibt es INTEGER_LLM/eval (Perplexitaet gegen die
+# dafuer gibt es BENCHMARKS/Inferenz (Perplexitaet gegen die
 # Gleitkomma-Referenz). Hier zaehlt, dass zwei Maschinen dieselben Zahlen
 # rechnen, gerade weil diese Prompts das Modell an ungewoehnliche Stellen
 # fuehren.

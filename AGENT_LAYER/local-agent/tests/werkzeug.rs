@@ -6,7 +6,7 @@
 //! Erlaubnis ist**. Die Tests bauen den Angriff nach, gegen den Kap. 8.3
 //! geschrieben ist: Ein abgerufener Text steuert den Kontrollfluss.
 
-use myl_local_agent::werkzeug::{
+use myl_local_agent::werkzeug::{Ansageform, 
     angebot, vorschlaege, Erlaubnis, Vorschlag, Werkzeug, Werkzeugergebnis,
 };
 
@@ -193,7 +193,7 @@ fn eine_antwort_ohne_aufruf_ergibt_nichts() {
 /// ⚑ **Das Angebot nennt jedes Werkzeug.**
 #[test]
 fn das_angebot_nennt_jedes_werkzeug() {
-    let n = angebot(&werkzeuge());
+    let n = angebot(&werkzeuge(), Ansageform::Amtlich);
     assert_eq!(n.role, "system");
     assert!(n.content.contains("<tools>") && n.content.contains("</tools>"), "{}", n.content);
     for w in werkzeuge() {

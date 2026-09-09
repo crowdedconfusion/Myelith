@@ -480,3 +480,307 @@ fn gesammelt_rechnen_zwei_shards_wie_einer() {
         erg_ganz.bewegte_gewichte, erg_ganz.gewichte_gesamt
     );
 }
+
+/// ⚑ **Die Vorgabe muss „wie bisher" sein, und das ohne Modell.**
+///
+/// Seit dem 2026-09-08 ruft `sammlung_anwenden` nicht mehr
+/// `schritt_normiert`, sondern `schritt_normiert_je_zeile` (Fund 206).
+/// Das ist gefahrlos, **solange keine Zeilenbreiten gesetzt sind**:
+/// Breite null faellt in der Kernkiste auf die Matrixnormierung zurueck,
+/// und das prueft dort `eine_unpassende_breite_faellt_sauber_zurueck`.
+///
+/// ⛑ **Hier steht die andere Haelfte:** dass eine frische `Sammlung`
+/// wirklich keine Breiten hat. Ein Standardwert, der versehentlich
+/// gesetzt waere, aenderte den Protokollpfad still, und still ist genau
+/// das Problem: Zwei Knoten mit verschiedenen Fassungen rechneten
+/// verschiedene Deltas und haetten beide recht.
+#[test]
+fn eine_frische_sammlung_normiert_je_matrix() {
+    use integer_llm_runtime::shardtraining::Matrixkennung;
+    for bau in [Sammlung::neu(), Sammlung::normiert()] {
+        for n in 0..7u8 {
+            assert_eq!(
+                bau.zeilenbreite(Matrixkennung::Dicht(n)),
+                0,
+                "Dicht({n}) hat eine Zeilenbreite, ohne dass jemand sie gesetzt hat"
+            );
+        }
+        assert_eq!(bau.zeilenbreite(Matrixkennung::Router), 0);
+        assert_eq!(bau.zeilenbreite(Matrixkennung::Aufmerksamkeit(0)), 0);
+        assert_eq!(bau.zeilenbreite(Matrixkennung::Experte(3, 1)), 0);
+    }
+}
+
+/// Und dass ein Setzen ankommt, sonst waere die Naht eine Attrappe.
+#[test]
+fn gesetzte_zeilenbreiten_kommen_an() {
+    use integer_llm_runtime::shardtraining::Matrixkennung;
+    let mut s = Sammlung::normiert();
+    let mut b = std::collections::BTreeMap::new();
+    b.insert(Matrixkennung::Dicht(0), 896);
+    b.insert(Matrixkennung::Dicht(6), 4864);
+    s.zeilenbreiten_setzen(b);
+    assert_eq!(s.zeilenbreite(Matrixkennung::Dicht(0)), 896);
+    assert_eq!(s.zeilenbreite(Matrixkennung::Dicht(6)), 4864);
+    // Was nicht in der Tabelle steht, bleibt „unbekannt".
+    assert_eq!(s.zeilenbreite(Matrixkennung::Dicht(3)), 0);
+}
+
+/// ⚑ **Ein Stand muss zurueckkommen, wie er hinausging.**
+///
+/// Ohne diese Zusicherung ist „Fortsetzen" ein Neuanfang mit
+/// Zwischenschritt, und man merkt es nur an Zahlen, die nicht passen.
+#[test]
+fn ein_geschriebener_stand_kommt_gleich_zurueck() {
+    use integer_llm_runtime::shardtraining::{stand_lesen, stand_schreiben};
+    let Some(m) = modell() else { return };
+    let von = m.num_layers.saturating_sub(2);
+    let mut a = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+
+    // Etwas veraendern, damit der Vergleich nicht trivial ist.
+    for stand in a.master.iter_mut() {
+        for mat in stand.matrizen_veraenderlich() {
+            for (i, w) in mat.iter_mut().enumerate().take(97) {
+                *w = w.wrapping_add(i as i32 * 37 + 11);
+            }
+        }
+    }
+
+    let d = std::env::temp_dir().join("myl-stand-probe.bin");
+    stand_schreiben(&a, &d).expect("schreiben");
+
+    let mut b = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+    let vorher: Vec<Vec<i32>> = b
+        .master
+        .iter()
+        .flat_map(|s| s.matrizen().iter().map(|m| m.to_vec()).collect::<Vec<_>>())
+        .collect();
+    stand_lesen(&mut b, &d).expect("lesen");
+
+    let nachher: Vec<Vec<i32>> = b
+        .master
+        .iter()
+        .flat_map(|s| s.matrizen().iter().map(|m| m.to_vec()).collect::<Vec<_>>())
+        .collect();
+    let soll: Vec<Vec<i32>> = a
+        .master
+        .iter()
+        .flat_map(|s| s.matrizen().iter().map(|m| m.to_vec()).collect::<Vec<_>>())
+        .collect();
+    assert_eq!(nachher, soll, "der gelesene Stand ist nicht der geschriebene");
+    assert_ne!(nachher, vorher, "der Stand hat gar nichts geaendert, der Test prueft nichts");
+    let _ = std::fs::remove_file(&d);
+}
+
+/// ⛑ **Ein Stand aus einem anderen Ebenenbereich wird abgelehnt**, statt
+/// stillschweigend Unsinn zu ergeben.
+#[test]
+fn ein_fremder_stand_wird_abgelehnt() {
+    use integer_llm_runtime::shardtraining::{stand_lesen, stand_schreiben};
+    let Some(m) = modell() else { return };
+    if m.num_layers < 3 {
+        return;
+    }
+    let a = Shardgewichte::aus_modell(&m, m.num_layers - 1, m.num_layers).expect("Gewichte");
+    let d = std::env::temp_dir().join("myl-stand-fremd.bin");
+    stand_schreiben(&a, &d).expect("schreiben");
+
+    let mut b = Shardgewichte::aus_modell(&m, m.num_layers - 2, m.num_layers).expect("Gewichte");
+    let f = stand_lesen(&mut b, &d);
+    assert!(f.is_err(), "ein Stand aus einem anderen Bereich wurde angenommen");
+    assert!(f.unwrap_err().contains("Ebenen"), "der Grund wird nicht genannt");
+    let _ = std::fs::remove_file(&d);
+}
+
+/// Und eine Datei, die keine ist.
+#[test]
+fn eine_fremde_datei_wird_abgelehnt() {
+    use integer_llm_runtime::shardtraining::stand_lesen;
+    let Some(m) = modell() else { return };
+    let d = std::env::temp_dir().join("myl-stand-kaputt.bin");
+    std::fs::write(&d, b"das ist kein Gewichtsstand").expect("schreiben");
+    let mut b = Shardgewichte::aus_modell(&m, m.num_layers - 1, m.num_layers).expect("Gewichte");
+    assert!(stand_lesen(&mut b, &d).is_err());
+    let _ = std::fs::remove_file(&d);
+}
+
+/// ⚑ **Der Anker zieht zum Ausgangsstand, nicht gegen null.**
+///
+/// Der naheliegende Fehler waere `master >> staerke` abzuziehen; das
+/// waere kein Anker, sondern ein Schrumpfen, und es zerstoerte gerade
+/// die Gewichte, die von Haus aus gross sind.
+#[test]
+fn der_anker_zieht_zum_ausgangsstand() {
+    use integer_llm_runtime::shardtraining::zum_anfang_ziehen;
+    let Some(m) = modell() else { return };
+    let von = m.num_layers.saturating_sub(1);
+    let mut g = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+
+    let anfang: Vec<i32> = g.master[0].matrizen()[0][..40].to_vec();
+    // Weit weg schieben, in beide Richtungen.
+    for (i, w) in g.master[0].matrizen_veraenderlich()[0].iter_mut().take(40).enumerate() {
+        *w = w.saturating_add(if i % 2 == 0 { 100_000 } else { -100_000 });
+    }
+    let weit: Vec<i32> = g.master[0].matrizen()[0][..40].to_vec();
+
+    let bewegt = zum_anfang_ziehen(&mut g, 4); // ein Sechzehntel des Abstandes
+    assert!(bewegt > 0, "der Anker hat nichts bewegt");
+
+    let nah: Vec<i32> = g.master[0].matrizen()[0][..40].to_vec();
+    for i in 0..40 {
+        let vorher = (weit[i] as i64 - anfang[i] as i64).abs();
+        let nachher = (nah[i] as i64 - anfang[i] as i64).abs();
+        assert!(
+            nachher < vorher,
+            "Gewicht {i}: der Abstand zum Anfang ist nicht kleiner geworden ({vorher} auf {nachher})"
+        );
+        // ⚑ Und nicht ueberschossen: Der Zug ist ein Bruchteil.
+        assert!(
+            nachher > vorher / 2,
+            "Gewicht {i}: der Zug war viel zu stark ({vorher} auf {nachher})"
+        );
+    }
+}
+
+/// ⚑ **Staerke null heisst: gar nicht.** Ein Aufrufer, der nichts sagt,
+/// bekommt nichts.
+#[test]
+fn ohne_staerke_zieht_nichts() {
+    use integer_llm_runtime::shardtraining::zum_anfang_ziehen;
+    let Some(m) = modell() else { return };
+    let von = m.num_layers.saturating_sub(1);
+    let mut g = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+    for w in g.master[0].matrizen_veraenderlich()[0].iter_mut().take(20) {
+        *w = w.saturating_add(50_000);
+    }
+    let vorher: Vec<i32> = g.master[0].matrizen()[0][..20].to_vec();
+    assert_eq!(zum_anfang_ziehen(&mut g, 0), 0, "Staerke null hat gezogen");
+    assert_eq!(&g.master[0].matrizen()[0][..20], &vorher[..]);
+}
+
+/// ⛑ **Ein Gewicht, das schon am Anfang steht, bleibt.** Sonst waere
+/// der Anker selbst eine Stoerquelle, und das Rauschen aus Fund 196
+/// bekaeme eine zweite Quelle.
+#[test]
+fn wer_schon_da_ist_bleibt_stehen() {
+    use integer_llm_runtime::shardtraining::zum_anfang_ziehen;
+    let Some(m) = modell() else { return };
+    let von = m.num_layers.saturating_sub(1);
+    let mut g = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
+    let vorher: Vec<i32> = g.master[0].matrizen()[0][..64].to_vec();
+    zum_anfang_ziehen(&mut g, 6);
+    assert_eq!(
+        &g.master[0].matrizen()[0][..64],
+        &vorher[..],
+        "der Anker hat unveraenderte Gewichte bewegt"
+    );
+}
+
+/// ⚑ **Die Auswahl trifft die richtigen Matrizen.**
+///
+/// Die Reihenfolge der sieben dichten Matrizen ist q, k, v, o, gate,
+/// up, down; dieselbe wie in `breiten_der_ebene`. Ein Vertauschen fiele
+/// nirgends auf, es fror nur die falschen Gewichte ein.
+#[test]
+fn die_auswahl_trifft_die_mlp_bloecke() {
+    use integer_llm_runtime::shardtraining::{Auswahl, Matrixkennung};
+    for n in 0..7u8 {
+        let k = Matrixkennung::Dicht(n);
+        assert!(Auswahl::Alles.erlaubt(k), "Alles verbietet Dicht({n})");
+        assert_eq!(
+            Auswahl::NurMlp.erlaubt(k),
+            n >= 4,
+            "NurMlp bei Dicht({n}): gate, up und down sind 4, 5, 6"
+        );
+        assert_eq!(
+            Auswahl::NurAbwaerts.erlaubt(k),
+            n == 6,
+            "NurAbwaerts bei Dicht({n}): down_proj ist 6"
+        );
+    }
+}
+
+/// ⛑ **Diese Pruefung hiess bis zum 2026-09-08 „ein Gemisch wird nicht
+/// geraten" und verlangte, dass jede Gemischkennung abgelehnt wird.**
+///
+/// Das war richtig, **solange die Zuordnung unbekannt war**: Zu raten,
+/// welche Matrix eines Gemisches der MLP-Teil ist, hiesse die falschen
+/// Gewichte einzufrieren. Seit die Zuordnung gebaut und geprueft ist
+/// (`die_auswahl_trifft_auch_im_gemisch`), ist die Zusicherung eine
+/// andere, und diese hier haelt fest, was von der alten bleibt:
+///
+/// ⚑ **Der Router gehoert nicht zum Speicher.** Er entscheidet, **wer**
+/// rechnet, nicht **was** herauskommt, und steht damit auf der Seite
+/// der Aufmerksamkeit.
+#[test]
+fn der_router_gehoert_nicht_zum_speicher() {
+    use integer_llm_runtime::shardtraining::{Auswahl, Matrixkennung};
+    for k in [Matrixkennung::Router, Matrixkennung::Aufmerksamkeit(0)] {
+        assert!(Auswahl::Alles.erlaubt(k), "Alles verbietet {k:?}");
+        assert!(!Auswahl::NurMlp.erlaubt(k), "NurMlp nimmt {k:?} mit");
+        assert!(!Auswahl::NurAbwaerts.erlaubt(k), "NurAbwaerts nimmt {k:?} mit");
+    }
+}
+
+/// Und die Vorgabe ist `Alles`, damit ein Aufrufer, der nichts sagt,
+/// das bisherige Verhalten bekommt.
+#[test]
+fn die_vorgabe_ist_alles() {
+    use integer_llm_runtime::shardtraining::{Auswahl, Sammlung};
+    assert_eq!(Sammlung::neu().auswahl(), Auswahl::Alles);
+    assert_eq!(Sammlung::normiert().auswahl(), Auswahl::Alles);
+    assert_eq!(Auswahl::default(), Auswahl::Alles);
+}
+
+/// ⚑ **Die Parameterisolierung trifft auch im Gemisch das Richtige.**
+///
+/// Beim Expertengemisch **sind** die Experten der MLP-Teil; der Router
+/// gehoert zur Aufmerksamkeit und nicht zum Speicher, denn er
+/// entscheidet, **wer** rechnet, nicht **was** herauskommt.
+#[test]
+fn die_auswahl_trifft_auch_im_gemisch() {
+    use integer_llm_runtime::shardtraining::{Auswahl, Matrixkennung};
+    for n in 0..3u8 {
+        let k = Matrixkennung::Experte(7, n);
+        assert!(Auswahl::NurMlp.erlaubt(k), "NurMlp verbietet Experte(7, {n})");
+        assert_eq!(
+            Auswahl::NurAbwaerts.erlaubt(k),
+            n == 2,
+            "NurAbwaerts bei Experte(7, {n}): down ist 2"
+        );
+    }
+    for k in [Matrixkennung::Router, Matrixkennung::Aufmerksamkeit(2)] {
+        assert!(!Auswahl::NurMlp.erlaubt(k), "NurMlp nimmt {k:?} mit");
+        assert!(!Auswahl::NurAbwaerts.erlaubt(k), "NurAbwaerts nimmt {k:?} mit");
+        assert!(Auswahl::Alles.erlaubt(k));
+    }
+}
+
+/// ⚑ **Und die Zeilennormierung kennt das Gemisch.** Bis zum
+/// 2026-09-08 fiel sie dort still auf die Matrixnormierung zurueck: Sie
+/// rechnete, sie rechnete nur das Alte.
+#[test]
+fn die_zeilenbreiten_decken_das_gemisch_ab() {
+    use integer_llm_runtime::shardtraining::{zeilenbreiten_gemisch, Matrixkennung};
+    let Some(m) = modell() else { return };
+    let moe_is = 1408usize;
+    let b = zeilenbreiten_gemisch(&m, moe_is, 4);
+
+    // Aufmerksamkeit: q, k, v auf hidden, o auf num_heads · head_dim.
+    for n in 0..3u8 {
+        assert_eq!(b[&Matrixkennung::Aufmerksamkeit(n)], m.hidden_size);
+    }
+    assert_eq!(b[&Matrixkennung::Aufmerksamkeit(3)], m.num_heads * m.head_dim);
+    assert_eq!(b[&Matrixkennung::Router], m.hidden_size);
+
+    // ⚑ Der Unterschied, auf den es ankommt: `down` ist die einzige
+    // Matrix, deren Zeile die Zwischenbreite hat.
+    for e in 0..4u16 {
+        assert_eq!(b[&Matrixkennung::Experte(e, 0)], m.hidden_size);
+        assert_eq!(b[&Matrixkennung::Experte(e, 1)], m.hidden_size);
+        assert_eq!(b[&Matrixkennung::Experte(e, 2)], moe_is);
+    }
+    // Alle Experten sind abgedeckt, denn welche gewaehlt werden, steht
+    // erst zur Laufzeit fest.
+    assert_eq!(b.len(), 4 + 1 + 3 * 4);
+}

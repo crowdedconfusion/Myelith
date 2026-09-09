@@ -70,7 +70,8 @@
 //! Matrix für Matrix, 575 967 566 von 586 153 984 Gewichten bewegt.
 
 use integer_llm_kernels::optimierer::{
-    ausserhalb_der_form, delta, sammle, sammle_roh, schritt, schritt_aus_summe, schritt_normiert,
+    ausserhalb_der_form, delta, sammle, sammle_roh, schritt, schritt_aus_summe,
+    schritt_normiert_je_zeile,
     trainingsabdruck, Master, Schrittkennung, MASTER_FRAC,
 };
 use integer_llm_kernels::backward::silu_grad_aus_lut;
@@ -211,6 +212,22 @@ pub enum Matrixkennung {
 /// Folgen geteilt.
 #[derive(Debug, Clone, Default)]
 pub struct Sammlung {
+    /// Je Matrixkennung ihre Zeilenbreite (`in_features`), falls
+    /// bekannt.
+    ///
+    /// # ⚑ Warum sie nicht aus der Summe folgt
+    ///
+    /// Eine flache Matrix sagt ihre Laenge, nicht ihre Form. Wer die
+    /// Zeilenbreite raet, raet bei quadratischen Matrizen richtig und
+    /// bei `[4864, 896]` falsch, und der Fehler faellt nirgends auf:
+    /// Die Rechnung geht durch und normiert auf eine erfundene Zeile.
+    ///
+    /// ⛑ **Leer heisst: wie bisher, je Matrix.** Das ist die
+    /// Vorgabe, damit ein Aufrufer, der nichts sagt, das bisherige
+    /// Verhalten bekommt und keine stille Aenderung.
+    zeilenbreiten: std::collections::BTreeMap<Matrixkennung, usize>,
+    /// Welche Matrizen ueberhaupt bewegt werden (Parameterisolierung).
+    auswahl: Auswahl,
     /// Je Ebene im Shard und Matrix: Würfelversatz und Summe.
     summen: std::collections::BTreeMap<(usize, Matrixkennung), (u64, Vec<i64>)>,
     /// Wie viele Folgen eingegangen sind.
@@ -230,6 +247,92 @@ impl Sammlung {
         Self::default()
     }
 
+    /// ⚑ **Momentum ueber die Summen, als Messwerkzeug (2026-09-08).**
+    ///
+    /// Faltet einen Puffer ein, der zwischen den Durchgaengen lebt:
+    /// `m = m − m/2^schub + g`, danach ist `m` die neue Summe. Alles in
+    /// Ganzzahlen, also **exakt und reihenfolgeunabhaengig**; in
+    /// Gleitkomma driftete ein Momentum mit der Summierungsreihenfolge
+    /// und koennte in einem geshardeten Netz gar nicht in den Konsens.
+    ///
+    /// ⚑ **Warum es beide Befunde vom 2026-09-08 zugleich adressiert:**
+    /// Der Gradient einer **wiederholten** Tatsache zeigt jedes Mal in
+    /// dieselbe Richtung und summiert sich auf; der Gradient breiten
+    /// Textes zeigt wechselnd und mittelt sich weg. Fund 198 hat beides
+    /// gemessen, den zu langsamen Aufbau und die Erosion ab Durchgang
+    /// acht.
+    ///
+    /// ⛑ **Kein Konsensweg.** Diese Funktion aendert `schritt_normiert`
+    /// nicht und wird ausschliesslich vom Messwerkzeug gerufen. Ob
+    /// Momentum in den Trainingsvertrag gehoert, ist eine Entscheidung
+    /// und keine Messung.
+    pub fn momentum_falten(
+        &mut self,
+        puffer: &mut std::collections::BTreeMap<(usize, Matrixkennung), Vec<i64>>,
+        schub: u32,
+    ) {
+        for (schluessel, (_, summe)) in self.summen.iter_mut() {
+            let m = puffer
+                .entry(*schluessel)
+                .or_insert_with(|| vec![0i64; summe.len()]);
+            if m.len() != summe.len() {
+                m.resize(summe.len(), 0);
+            }
+            let teiler = 1i64 << schub;
+            for (mi, gi) in m.iter_mut().zip(summe.iter()) {
+                // ⛑ **Division und NICHT Rechtsschieben (2026-09-08).**
+                // Die erste Fassung nahm `*mi >> schub`. Arithmetisches
+                // Rechtsschieben rundet Richtung minus unendlich und ist
+                // damit **unsymmetrisch**: `-1 >> 3` ist `-1`, also
+                // zerfaellt eine kleine negative Zahl vollstaendig,
+                // waehrend `1 >> 3` null ist und eine kleine positive
+                // unveraendert bleibt. Ueber Millionen Gewichte war das
+                // kein Momentum, sondern ein **Gleichrichter** mit
+                // systematischer Drift ins Positive; der Lauf M2 wurde
+                // dadurch in allen Zahlen schlechter als der ohne
+                // Puffer. Rust trunkiert bei Division Richtung null,
+                // also symmetrisch.
+                *mi = mi.saturating_sub(*mi / teiler).saturating_add(*gi);
+            }
+            summe.copy_from_slice(m);
+        }
+    }
+
+    /// ⚑ **Vorzeichenabstieg, als Messwerkzeug (Eskalationsstufe T2).**
+    ///
+    /// Ersetzt jede Gradientensumme durch ihr **Vorzeichen**, skaliert
+    /// auf einen festen Betrag. Weil [`schritt_normiert`] danach durch
+    /// das Betragsmaximum teilt und alle Betraege gleich sind, bewegt
+    /// sich **jedes** Gewicht um denselben Schritt, nur in der Richtung
+    /// seines Gradienten.
+    ///
+    /// # ⚑ Warum das gerade hier naheliegt
+    ///
+    /// Am 2026-09-08 wurde gemessen, dass **Momentum nichts bringt**
+    /// (M1 gegen M2: jede Zahl schlechter). Der Grund ist eine
+    /// Unvertraeglichkeit zweier Bausteine: Momentum macht die Summe
+    /// groesser, und die Normierung teilt durch deren Maximum, rechnet
+    /// die Verstaerkung also **von Bauart wegen wieder heraus**.
+    ///
+    /// ⚑ **Ein Vorzeichen hat diese Unvertraeglichkeit nicht**, weil es
+    /// gar keine Skala traegt. Und in Ganzzahlen ist es die billigste
+    /// denkbare Operation: ein Vergleich, keine Division.
+    ///
+    /// ⛑ **Kein Konsensweg.** Ob Vorzeichenabstieg in den
+    /// Trainingsvertrag gehoert, ist eine Entscheidung und keine
+    /// Messung; `schritt_normiert` bleibt unangetastet.
+    pub fn vorzeichen_falten(&mut self, betrag: i64) {
+        for (_, summe) in self.summen.values_mut() {
+            for g in summe.iter_mut() {
+                *g = match (*g).cmp(&0) {
+                    std::cmp::Ordering::Greater => betrag,
+                    std::cmp::Ordering::Less => -betrag,
+                    std::cmp::Ordering::Equal => 0,
+                };
+            }
+        }
+    }
+
     /// Eine Sammlung, die vor dem Anwenden **normiert**.
     pub fn normiert() -> Self {
         Self { normiert: true, ..Self::default() }
@@ -238,6 +341,33 @@ impl Sammlung {
     /// Ob diese Sammlung normiert.
     pub fn ist_normiert(&self) -> bool {
         self.normiert
+    }
+
+    /// Setzt die Zeilenbreiten, damit **je Zeile** normiert wird.
+    ///
+    /// ⚑ **Ohne diesen Aufruf bleibt alles wie bisher.** Das ist die
+    /// Vorgabe: Ein Aufrufer, der nichts sagt, bekommt das bisherige
+    /// Verhalten und keine stille Aenderung.
+    pub fn zeilenbreiten_setzen(
+        &mut self,
+        breiten: std::collections::BTreeMap<Matrixkennung, usize>,
+    ) {
+        self.zeilenbreiten = breiten;
+    }
+
+    /// Die Zeilenbreite einer Matrix, `0` fuer „unbekannt".
+    pub fn zeilenbreite(&self, k: Matrixkennung) -> usize {
+        self.zeilenbreiten.get(&k).copied().unwrap_or(0)
+    }
+
+    /// Beschraenkt, welche Matrizen bewegt werden.
+    pub fn auswahl_setzen(&mut self, a: Auswahl) {
+        self.auswahl = a;
+    }
+
+    /// Was gerade gilt.
+    pub fn auswahl(&self) -> Auswahl {
+        self.auswahl
     }
 
     /// Die Zahl der eingegangenen Folgen.
@@ -357,6 +487,26 @@ impl Ebenenstand {
         }
     }
 
+    /// Dieselben Matrizen, veraenderlich, in **derselben** kanonischen
+    /// Reihenfolge wie [`Self::matrizen`].
+    ///
+    /// ⚑ Nur fuer Messwerkzeuge gedacht, die den Stand absichtlich
+    /// stoeren. Der Trainingsweg fasst Matrizen ueber
+    /// [`Self::matrix_mut`] an, weil er weiss, welche er meint.
+    pub fn matrizen_veraenderlich(&mut self) -> Vec<&mut Vec<Master>> {
+        match self {
+            Self::Dicht(m) => m.iter_mut().collect(),
+            Self::Gemisch { aufmerksamkeit, router, experten } => {
+                let mut aus: Vec<&mut Vec<Master>> = aufmerksamkeit.iter_mut().collect();
+                aus.push(router);
+                for drei in experten.values_mut() {
+                    aus.extend(drei.iter_mut());
+                }
+                aus
+            }
+        }
+    }
+
     /// Ist diese Ebene ein Expertengemisch?
     pub fn ist_gemisch(&self) -> bool {
         matches!(self, Self::Gemisch { .. })
@@ -389,6 +539,20 @@ impl Shardgewichte {
                 },
             });
         }
+        // ⛑ **Hier stand am 2026-09-08 eine Schranke gegen Modelle mit
+        // QK-Normierung**, und sie war richtig: Der Trainingspfad
+        // rechnete die Aufmerksamkeit ohne sie, waehrend die Inferenz
+        // sie anwandte, und **nichts pruefte das**. Ein Lauf auf einem
+        // Qwen3-Artefakt waere durchgelaufen und haette gegen ein
+        // Modell trainiert, das es nicht gibt.
+        //
+        // ⚑ **Sie ist am selben Tag aufgehoben worden**, weil der
+        // Vorwaerts- und der Rueckwaertspfad sie jetzt tragen:
+        // `qk_norm_heads_mit_spur` und `qk_norm_heads_backward`, der
+        // zweite gegen die numerische Ableitung des echten Kernels
+        // geprueft. Die Schranke bleibt als Fehlerart bestehen, denn
+        // sie ist der Ort, an dem die naechste solche Luecke gemeldet
+        // wird.
         Ok(Self { anfang: master.clone(), master, von, bis })
     }
 
@@ -592,6 +756,19 @@ pub enum Shardfehler {
     /// Meldung kommt, wenn ein Gewichtsstand aus einem anderen Modell
     /// stammt als die Spur, und dann wäre jede Rechnung darauf sinnlos.
     ArtPasstNicht { ebene: usize },
+    /// ⛑ **Das Modell hat QK-Normierung, der Trainingspfad nicht.**
+    ///
+    /// Qwen3 normiert Q und K je Kopf, bevor die Aufmerksamkeit
+    /// rechnet; `model.rs` tut das im Vorwaertspfad, `vorwaerts_der_ebene`
+    /// im Trainingspfad **nicht**.
+    ///
+    /// ⚑ **Bis zum 2026-09-08 fiel das nicht auf, weil nichts es
+    /// pruefte.** Ein Lauf auf einem Qwen3-Artefakt waere
+    /// durchgelaufen und haette eine andere Aufmerksamkeit gerechnet
+    /// als die Inferenz, also einen Gradienten zu einem Modell, das es
+    /// nicht gibt. **Ein stiller Unterschied im Vorwaertspfad ist die
+    /// schlimmste Sorte**, weil das Ergebnis plausibel aussieht.
+    QkNormNichtGetragen { ebene: usize },
     /// Der eingehende Gradient passt nicht zur Folge.
     GradientPasstNicht { erwartet: usize, bekommen: usize },
 }
@@ -602,6 +779,13 @@ impl std::fmt::Display for Shardfehler {
             Self::BereichUngueltig { von, bis, ebenen } => write!(
                 f,
                 "Ebenenbereich {von}..{bis} liegt nicht in einem Modell mit {ebenen} Ebenen"
+            ),
+            Self::QkNormNichtGetragen { ebene } => write!(
+                f,
+                "Ebene {ebene} hat QK-Normierung (Qwen3), und der Trainingspfad rechnet sie \
+                 NICHT. Ein Lauf darauf traeniert gegen eine andere Aufmerksamkeit als die \
+                 Inferenz. Bis das gebaut ist, traegt der Trainingspfad nur Modelle ohne \
+                 QK-Normierung"
             ),
             Self::ArtPasstNicht { ebene } => write!(
                 f,
@@ -779,6 +963,7 @@ fn gemisch_vorwaerts(
         tab.sin,
         tab.exp,
         Some(&acc_attn),
+        crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
         a_vorgaben,
     );
 
@@ -985,6 +1170,293 @@ pub struct Sammelergebnis {
 /// letzten Folge, hinge der Würfel daran, wie viele Folgen eingingen,
 /// und zwei Pods mit gleicher Arbeit, aber anderer Aufteilung liefen
 /// auseinander.
+/// Welche Matrizen ueberhaupt bewegt werden duerfen.
+///
+/// # ⚑ Parameterisolierung, die dritte Saeule gegen das Vergessen
+///
+/// Die Literatur kennt drei Mittel gegen katastrophales Vergessen:
+/// **Wiederholung** (mehr alter Text im Korpus), **Regularisierung**
+/// (siehe [`zum_anfang_ziehen`]) und **Parameterisolierung**. Die
+/// bekannteste Form der dritten ist ein Niedrigrangzusatz, der die
+/// urspruenglichen Gewichte gar nicht anfasst; die einfachste ist,
+/// **weniger anzufassen**.
+///
+/// ⚑ **Und die Literatur sagt auch, wo Tatsachen liegen:** ROME und
+/// MEMIT bearbeiten die MLP-Bloecke, nicht die Aufmerksamkeit. Die
+/// Aufmerksamkeit entscheidet, **worauf** eine Position blickt; der
+/// MLP-Block ist der Schluessel-Wert-Speicher.
+///
+/// ⛑ **Ungemessen in diesem Projekt.** Fund 205 hat schon einmal eine
+/// Erklaerung aus der Literatur genommen und daraus einen Lauf gemacht,
+/// der zwischen ihr und der Alternative nicht trennte. Diese Auswahl
+/// ist deshalb **gebaut und standardmaessig aus**; wer sie einschaltet,
+/// misst sie gegen einen Lauf ohne sie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Auswahl {
+    /// Alles, was `matrizen_veraenderlich` hergibt. Die Vorgabe.
+    #[default]
+    Alles,
+    /// Nur die drei MLP-Matrizen (`gate`, `up`, `down`).
+    NurMlp,
+    /// ⚑ Nur `down_proj`, die Stelle, die MEMIT bearbeitet.
+    NurAbwaerts,
+}
+
+impl Auswahl {
+    /// Ob eine Matrix bewegt werden darf.
+    ///
+    /// ⛑ **Bei einem Expertengemisch greift nur `Alles`.** Die
+    /// Zuordnung von Kennung zu Rolle ist dort eine andere, und sie zu
+    /// raten hiesse, die falschen Matrizen einzufrieren. Wer ein
+    /// Gemisch damit trainieren will, baut die Zuordnung zuerst.
+    pub fn erlaubt(&self, k: Matrixkennung) -> bool {
+        match (self, k) {
+            (Self::Alles, _) => true,
+            // Dicht: 0 bis 3 Aufmerksamkeit (q, k, v, o), 4 gate,
+            // 5 up, 6 down. Dieselbe Reihenfolge wie in
+            // `breiten_der_ebene`.
+            (Self::NurMlp, Matrixkennung::Dicht(n)) => n >= 4,
+            (Self::NurAbwaerts, Matrixkennung::Dicht(n)) => n == 6,
+            // ⚑ **Und dasselbe fuer ein Expertengemisch** (2026-09-08
+            // nachgetragen). Beim Gemisch **sind** die Experten der
+            // MLP-Teil; die Aufmerksamkeit ist die Aufmerksamkeit, und
+            // der Router gehoert zu ihr und nicht zum Speicher: Er
+            // entscheidet, **wer** rechnet, nicht **was** herauskommt.
+            //
+            // Die drei Matrizen je Experte stehen in derselben
+            // Reihenfolge wie im dichten Block: 0 gate, 1 up, 2 down.
+            (Self::NurMlp, Matrixkennung::Experte(_, _)) => true,
+            (Self::NurAbwaerts, Matrixkennung::Experte(_, n)) => n == 2,
+            (Self::NurMlp | Self::NurAbwaerts, _) => false,
+        }
+    }
+
+    /// Der Name fuer die Ausgabe.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Alles => "alles",
+            Self::NurMlp => "nur MLP",
+            Self::NurAbwaerts => "nur down_proj",
+        }
+    }
+}
+
+/// Zieht die Gewichte um einen Bruchteil zum Ausgangsstand zurueck.
+///
+/// # ⚑ Warum das hier hingehoert, und warum es fast nichts kostet
+///
+/// **Der bindende Engpass des Trainings ist nicht der Optimierer,
+/// sondern das Vergessen.** Sieben Messlaeufe am 2026-09-08 haben
+/// sechs Verfahren verglichen; die Zieltatsache stieg in allen, und in
+/// allen erodierte das allgemeine Wissen mit. Die Literatur kennt drei
+/// Mittel dagegen (Wiederholung, Regularisierung, Parameterisolierung),
+/// und keines davon war eingebaut.
+///
+/// ⚑ **Der Ausgangsstand liegt bereits im Speicher.** `Shardgewichte`
+/// haelt ihn fuer das Δ-Commitment; ein Zug zurueck ist damit
+/// **eine Subtraktion und eine Schiebeoperation**, kein neuer Zustand.
+///
+/// ```text
+/// master += (anfang − master) >> staerke
+/// ```
+///
+/// **Was das tut, und warum es das Richtige tut:** Ein Gewicht, das der
+/// Gradient stetig in dieselbe Richtung schiebt, waechst schneller, als
+/// der Zug es zurueckholt; eines, das nur durch Rauschen oder
+/// Nebenwirkung verschoben wurde, wandert zurueck. **Der Zug
+/// unterscheidet nicht nach Bedeutung, sondern nach Beharrlichkeit**,
+/// und genau das ist der Unterschied zwischen einer gelernten Tatsache
+/// und einem Kollateralschaden.
+///
+/// ⛑ **Es ist L2-SP und nicht EWC.** EWC gewichtet den Zug mit der
+/// Fisher-Information, also damit, wie **wichtig** ein Gewicht fuer das
+/// alte Wissen war; das braeuchte einen zweiten Durchgang ueber alte
+/// Daten und eine Groesse, die es hier nicht gibt. Der einfache Zug ist
+/// die schwaechere Fassung, und er ist die, die ohne neue Messung
+/// auskommt.
+///
+/// `staerke` ist eine Zweierpotenz: 6 zieht ein Vierundsechzigstel des
+/// Abstandes zurueck, 10 ein Tausendstel. ⚑ **Null heisst: gar nicht**,
+/// damit ein Aufrufer, der nichts sagt, nichts bekommt.
+///
+/// **Gibt zurueck**, wie viele Gewichte sich dabei bewegt haben.
+pub fn zum_anfang_ziehen(g: &mut Shardgewichte, staerke: u32) -> u64 {
+    if staerke == 0 {
+        return 0;
+    }
+    let mut bewegt = 0u64;
+    for (stand, anfang) in g.master.iter_mut().zip(g.anfang.iter()) {
+        let alt: Vec<Vec<Master>> = anfang.matrizen().iter().map(|m| m.to_vec()).collect();
+        for (mat, a) in stand.matrizen_veraenderlich().iter_mut().zip(alt.iter()) {
+            if mat.len() != a.len() {
+                continue;
+            }
+            for (w, u) in mat.iter_mut().zip(a.iter()) {
+                // ⚑ **Die Verschiebung geht auf den Abstand, nicht auf
+                // das Gewicht.** Wer `master >> staerke` abzoege, zoege
+                // alles gegen null statt zum Ausgangsstand, und das
+                // waere kein Anker, sondern ein Schrumpfen.
+                let d = (*u as i64) - (*w as i64);
+                let zug = d >> staerke;
+                if zug != 0 {
+                    *w = (*w as i64 + zug).clamp(Master::MIN as i64, Master::MAX as i64) as Master;
+                    bewegt += 1;
+                }
+            }
+        }
+    }
+    bewegt
+}
+
+/// Schreibt einen Gewichtsstand als Datei.
+///
+/// # ⛑ Warum es das bis zum 2026-09-08 nicht gab
+///
+/// Das Messwerkzeug mass vorher, trainierte, mass nachher und **warf
+/// alles weg**. „Noch ein paar Durchgaenge" hiess damit: von vorn
+/// anfangen. Bei einem Lauf von drei Stunden ist das kein Detail.
+///
+/// ⚑ **Und es ist kein Ersatz fuer ein Artefakt.** Was hier
+/// hinausgeht, sind die **Meister** (i32 mit `MASTER_FRAC`
+/// Nachkommabits), nicht die Uebertragungsform. Ein Artefakt daraus zu
+/// bauen ist ein eigener Schritt; hier geht es allein darum, einen
+/// Lauf fortsetzen zu koennen.
+///
+/// **Das Format ist absichtlich stumpf:** eine Kopfzeile mit `von`,
+/// `bis` und der Zahl der Matrizen je Ebene, dann die Werte als
+/// `i32` in nativer Bytefolge. ⛑ **Damit ist es NICHT zwischen
+/// Maschinen uebertragbar**, und das ist hier richtig: Es dient dem
+/// Fortsetzen auf derselben Maschine, und ein Format, das mehr
+/// verspricht, waere ein Format, das jemand fuer den Konsens haelt.
+pub fn stand_schreiben(g: &Shardgewichte, pfad: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::io::BufWriter::new(std::fs::File::create(pfad)?);
+    f.write_all(b"MYLSTAND1")?;
+    f.write_all(&(g.von as u32).to_ne_bytes())?;
+    f.write_all(&(g.bis as u32).to_ne_bytes())?;
+    for stand in &g.master {
+        let matrizen = stand.matrizen();
+        f.write_all(&(matrizen.len() as u32).to_ne_bytes())?;
+        for m in matrizen {
+            f.write_all(&(m.len() as u64).to_ne_bytes())?;
+            for w in m {
+                f.write_all(&w.to_ne_bytes())?;
+            }
+        }
+    }
+    f.flush()
+}
+
+/// Liest einen Gewichtsstand in einen bestehenden ein.
+///
+/// ⚑ **Die Form muss passen**, sonst wird abgelehnt statt zurechtgebogen:
+/// Ein Stand, der zu einem anderen Ebenenbereich oder einem anderen
+/// Modell gehoert, ergaebe stillschweigend Unsinn.
+pub fn stand_lesen(g: &mut Shardgewichte, pfad: &std::path::Path) -> Result<(), String> {
+    let d = std::fs::read(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    let mut i = 0usize;
+    let mut nimm = |n: usize| -> Result<&[u8], String> {
+        if i + n > d.len() {
+            return Err("die Datei endet zu frueh".to_string());
+        }
+        let s = &d[i..i + n];
+        i += n;
+        Ok(s)
+    };
+    if nimm(9)? != b"MYLSTAND1" {
+        return Err("das ist kein Gewichtsstand (Kennung fehlt)".into());
+    }
+    let von = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+    let bis = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+    if von != g.von || bis != g.bis {
+        return Err(format!(
+            "der Stand gehoert zu den Ebenen {von} bis {bis}, hier laufen {} bis {}",
+            g.von, g.bis
+        ));
+    }
+    for (e, stand) in g.master.iter_mut().enumerate() {
+        let anzahl = u32::from_ne_bytes(nimm(4)?.try_into().unwrap()) as usize;
+        let mut matrizen = stand.matrizen_veraenderlich();
+        if anzahl != matrizen.len() {
+            return Err(format!(
+                "Ebene {e}: der Stand hat {anzahl} Matrizen, das Modell {}",
+                matrizen.len()
+            ));
+        }
+        for m in matrizen.iter_mut() {
+            let laenge = u64::from_ne_bytes(nimm(8)?.try_into().unwrap()) as usize;
+            if laenge != m.len() {
+                return Err(format!(
+                    "Ebene {e}: eine Matrix hat {laenge} Werte, erwartet {}",
+                    m.len()
+                ));
+            }
+            for w in m.iter_mut() {
+                *w = Master::from_ne_bytes(nimm(4)?.try_into().unwrap());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Die Zeilenbreiten eines Expertengemisches.
+///
+/// ⚑ **Damit traegt die Zeilennormierung (Fund 206) auch dort.** Sie
+/// war beim Einbau nur fuer dichte Ebenen gebaut, und ein Gemisch fiel
+/// still auf die Matrixnormierung zurueck: Es rechnete, es rechnete nur
+/// das Alte.
+///
+/// | Kennung | Breite |
+/// |---|---|
+/// | `Aufmerksamkeit(0..3)` | `hidden` fuer q, k, v; `num_heads · head_dim` fuer o |
+/// | `Router` | `hidden` |
+/// | `Experte(_, 0)`, `Experte(_, 1)` | `hidden` fuer gate und up |
+/// | `Experte(_, 2)` | ⚑ `moe_intermediate_size` fuer down |
+///
+/// `experten` ist die Zahl der Experten; die Karte deckt sie alle ab,
+/// denn welche in einem Durchgang gewaehlt werden, steht erst zur
+/// Laufzeit fest.
+pub fn zeilenbreiten_gemisch(
+    m: &crate::model::IntegerModel,
+    moe_is: usize,
+    experten: usize,
+) -> std::collections::BTreeMap<Matrixkennung, usize> {
+    let hs = m.hidden_size;
+    let mut aus = std::collections::BTreeMap::new();
+    let a = [hs, hs, hs, m.num_heads * m.head_dim];
+    for (n, b) in a.iter().enumerate() {
+        aus.insert(Matrixkennung::Aufmerksamkeit(n as u8), *b);
+    }
+    aus.insert(Matrixkennung::Router, hs);
+    for e in 0..experten as u16 {
+        aus.insert(Matrixkennung::Experte(e, 0), hs);
+        aus.insert(Matrixkennung::Experte(e, 1), hs);
+        aus.insert(Matrixkennung::Experte(e, 2), moe_is);
+    }
+    aus
+}
+
+/// Die Zeilenbreiten der sieben dichten Matrizen einer Ebene.
+///
+/// ⚑ **Fuer [`Sammlung::zeilenbreiten_setzen`]**, damit je Zeile statt
+/// je Matrix normiert wird (Fund 206). Die Breiten kommen aus
+/// derselben Quelle, aus der auch die Rueckumrechnung in die
+/// Uebertragungsform sie nimmt; eine zweite Tabelle waere die zweite
+/// Fassung, die irgendwann abweicht.
+///
+/// ⛑ **Nur fuer dichte Ebenen.** Bei einem Expertengemisch haengt die
+/// Breite an der Kennung des Experten, und die Zuordnung gehoert dann
+/// dorthin, wo die Experten leben. Solange das nicht gebaut ist, gibt
+/// diese Funktion fuer ein Gemisch **nichts** heraus statt etwas
+/// Geratenes.
+pub fn zeilenbreiten_dicht(
+    m: &crate::model::IntegerModel,
+    is: usize,
+) -> std::collections::BTreeMap<Matrixkennung, usize> {
+    let b = breiten_der_ebene(m, is);
+    (0..7u8).map(|n| (Matrixkennung::Dicht(n), b[n as usize])).collect()
+}
+
 pub fn sammlung_anwenden(
     sammlung: &Sammlung,
     gew_stand: &mut Shardgewichte,
@@ -1009,8 +1481,19 @@ pub fn sammlung_anwenden(
             schritt: v.schritt,
             index_versatz: *versatz,
         };
+        // ⚑ **Parameterisolierung, vor dem Schritt.** Eine Matrix,
+        // die nicht ausgewaehlt ist, bekommt gar nichts; sie zu
+        // sammeln und dann zu verwerfen waere dasselbe Ergebnis mit
+        // mehr Arbeit, aber der Sammler weiss die Auswahl nicht.
+        if !sammlung.auswahl.erlaubt(*k) {
+            continue;
+        }
         if sammlung.normiert {
-            schritt_normiert(mm, summe, kn, v.lr_nenner);
+            // ⚑ **Je Zeile, wenn die Breite bekannt ist** (Fund 206).
+            // `schritt_normiert_je_zeile` faellt bei Breite 0 selbst auf
+            // die Matrixnormierung zurueck, also steht hier kein zweiter
+            // Zweig, der auseinanderlaufen koennte.
+            schritt_normiert_je_zeile(mm, summe, sammlung.zeilenbreite(*k), kn, v.lr_nenner);
         } else {
             schritt_aus_summe(mm, summe, kn);
         }
@@ -1352,6 +1835,7 @@ fn gemisch_rueckwaerts(
         a_gew,
         tab.cos,
         tab.sin,
+        crate::trainingsschleife::qk_vorgaben_der_ebene(m, e),
         a_vorgaben,
     );
 

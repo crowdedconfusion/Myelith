@@ -319,6 +319,17 @@ pub fn gradienten_je_position(
     y: &[Vec<i16>],
     v: &Trainingsvorgaben,
 ) -> (Vec<Vec<i32>>, Vec<Vec<i32>>) {
+    gradienten_je_position_mit_kopf(m, y, v, None)
+}
+
+/// Wie [`gradienten_je_position`], sammelt aber zugleich den Gradienten
+/// der verfolgten Kopfzeilen ein (siehe [`Kopfsammlung`]).
+pub fn gradienten_je_position_mit_kopf(
+    m: &IntegerModel,
+    y: &[Vec<i16>],
+    v: &Trainingsvorgaben,
+    mut kopf: Option<&mut Kopfsammlung>,
+) -> (Vec<Vec<i32>>, Vec<Vec<i32>>) {
     let mut aus: Vec<Vec<i32>> = Vec::with_capacity(y.len());
     let mut alle_logits: Vec<Vec<i32>> = Vec::with_capacity(y.len());
     for (i, zeile) in y.iter().enumerate() {
@@ -329,17 +340,139 @@ pub fn gradienten_je_position(
             continue;
         };
         let vorgabe = Trainingsvorgaben { ziel, ..v.clone() };
-        let (logits, g) = gradient_vom_ziel(m, zeile, &vorgabe);
+        let (logits, g) =
+            gradient_vom_ziel_mit_kopf(m, zeile, &vorgabe, kopf.as_deref_mut());
         alle_logits.push(logits);
         aus.push(g);
     }
     (aus, alle_logits)
 }
 
+/// Der Sammler fuer die **Zeilen des Ablesekopfes**.
+///
+/// # ⚑ Warum der Kopf einen eigenen Sammler braucht
+///
+/// Bis zum 2026-09-08 war der Kopf **gar nicht im Trainingspfad**.
+/// [`crate::shardtraining::Ebenenstand::matrizen_veraenderlich`] gibt
+/// die Aufmerksamkeit, den Router und die Experten heraus, und damit
+/// endet die Liste: Das Modell konnte verstellen, **was** der verborgene
+/// Zustand ist, aber nie, **wie** ein Zustand auf ein Token zeigt.
+///
+/// ⚑ **Genau das ist die Konzentration, die Fund 201 vermisst.** Drei
+/// Verfahren nacheinander zeigten dasselbe: Je gleichmaessiger ein
+/// Schritt ueber die Ebenen verteilt wird, desto schlechter lernt das
+/// Modell eine einzelne Tatsache. Die Kopfzeile eines Tokens sind
+/// `hidden_size` Zahlen, die unmittelbar auf genau dieses Token wirken,
+/// und sie lagen fest.
+///
+/// # Warum nur ein Teil der Zeilen
+///
+/// Die volle Kopfmatrix ist `vocab × hidden`, bei Qwen2.5-0,5B also
+/// 136 Millionen Werte, und ihr Gradient als `i64` waere ein Gigabyte
+/// **je Position**. Er ist aber ein aeusseres Produkt,
+/// `dL/dW[i][j] = g[i] · x[j]`, und `g[i] = p[i] − 1[i = Ziel]`: gross
+/// in der Zielzeile, winzig ueberall sonst. Verfolgt werden deshalb die
+/// Zeilen der Token, die im Korpus **vorkommen**; jede andere Zeile
+/// bekaeme ohnehin nur ihr `p[i]`.
+///
+/// ⚑ **Kosten:** Der Vorwaertslauf des Kopfes rechnet `vocab × hidden`
+/// je Position und ist damit teurer als alle vier Ebenen zusammen. Ein
+/// paar tausend verfolgte Zeilen sind daneben ein Prozentbruchteil.
+pub struct Kopfsammlung {
+    /// Token zu seiner laufenden Nummer in [`Self::summen`].
+    zeile_von_token: std::collections::BTreeMap<u32, usize>,
+    /// Je verfolgter Zeile `hidden` Summen, hintereinander.
+    ///
+    /// ⚑ Wie bei [`integer_llm_kernels::optimierer::sammle_roh`] steht
+    /// hier der **negative** Gradient, denn der Schritt addiert.
+    summen: Vec<i64>,
+    hidden: usize,
+    /// Wie viele Positionen eingegangen sind, fuer den Bericht.
+    positionen: u64,
+}
+
+impl Kopfsammlung {
+    /// `tokens` sind die Zeilen, die verfolgt werden; Duplikate schaden
+    /// nicht.
+    pub fn neu(tokens: &[u32], hidden: usize) -> Self {
+        let mut zeile_von_token = std::collections::BTreeMap::new();
+        for t in tokens {
+            let n = zeile_von_token.len();
+            zeile_von_token.entry(*t).or_insert(n);
+        }
+        let summen = vec![0i64; zeile_von_token.len() * hidden];
+        Self { zeile_von_token, summen, hidden, positionen: 0 }
+    }
+
+    pub fn zeilen(&self) -> usize {
+        self.zeile_von_token.len()
+    }
+
+    pub fn positionen(&self) -> u64 {
+        self.positionen
+    }
+
+    /// Die verfolgten Token in aufsteigender Ordnung.
+    pub fn token(&self) -> Vec<u32> {
+        self.zeile_von_token.keys().copied().collect()
+    }
+
+    /// Die Summen einer Zeile, zum Anwenden des Schritts.
+    pub fn summe_mut(&mut self, token: u32) -> Option<&mut [i64]> {
+        let i = *self.zeile_von_token.get(&token)?;
+        Some(&mut self.summen[i * self.hidden..(i + 1) * self.hidden])
+    }
+
+    /// Alles auf null, fuer den naechsten Durchgang.
+    pub fn leeren(&mut self) {
+        self.summen.iter_mut().for_each(|v| *v = 0);
+        self.positionen = 0;
+    }
+
+    /// Eine Position aufnehmen.
+    ///
+    /// `g_logits` ist der Gradient auf den Logits ueber das ganze
+    /// Vokabular, `normed` der **normierte** Strom, auf dem der Kopf
+    /// rechnet. Beides zusammen ist das aeussere Produkt.
+    pub fn aufnehmen(&mut self, g_logits: &[i32], normed: &[i16]) {
+        debug_assert_eq!(normed.len(), self.hidden, "Kopfsammlung: Breite passt nicht");
+        for (tok, zeile) in &self.zeile_von_token {
+            let Some(g) = g_logits.get(*tok as usize).copied() else { continue };
+            if g == 0 {
+                continue;
+            }
+            let g = g as i64;
+            let ab = zeile * self.hidden;
+            for (j, x) in normed.iter().enumerate() {
+                let s = &mut self.summen[ab + j];
+                *s = s.saturating_sub(g * *x as i64);
+            }
+        }
+        self.positionen += 1;
+    }
+}
+
+
 pub fn gradient_vom_ziel(
     m: &IntegerModel,
     y: &[i16],
     v: &Trainingsvorgaben,
+) -> (Vec<i32>, Vec<i32>) {
+    gradient_vom_ziel_mit_kopf(m, y, v, None)
+}
+
+/// Wie [`gradient_vom_ziel`], nimmt aber den Kopfgradienten mit.
+///
+/// ⚑ Er faellt im Rueckwaertslauf **ohnehin an**: `linear_backward`
+/// gibt `(dL/dx, dL/dW)` zurueck, und der Aufrufer hat den zweiten Wert
+/// bis zum 2026-09-08 weggeworfen. Hier wird er nicht neu gerechnet,
+/// sondern aus `g_logits` und `normed` fuer die verfolgten Zeilen
+/// gebildet; die volle Matrix zu materialisieren waere ein Gigabyte.
+pub fn gradient_vom_ziel_mit_kopf(
+    m: &IntegerModel,
+    y: &[i16],
+    v: &Trainingsvorgaben,
+    kopf: Option<&mut Kopfsammlung>,
 ) -> (Vec<i32>, Vec<i32>) {
     let mut spur = Rmsnormspur::Leer;
     let logits = m.head_logits_mit_spur(y, v.logit_frac, Some(&mut spur));
@@ -365,6 +498,10 @@ pub fn gradient_vom_ziel(
         m.inv_n_q20,
         m.final_norm_frac,
     );
+    if let Some(k) = kopf {
+        k.aufnehmen(&g_logits, &normed);
+    }
+
     let (g_normed, _) = linear_backward(
         &g_logits,
         &normed,
@@ -449,6 +586,30 @@ pub(crate) fn breiten_der_ebene(m: &IntegerModel, is: usize) -> [usize; 7] {
 /// `(ebene, schritt, index)`. Ein Shard, der seine Ebenen bei null
 /// durchnummerierte, würfelte anders, und niemand sähe es dem Ergebnis
 /// an: Es wäre ein plausibles Delta, nur ein anderes.
+/// Die QK-Normierung einer Ebene, falls das Modell sie hat (Qwen3).
+///
+/// ⚑ **Eine Stelle und nicht zwei.** Die Vorgaben werden an zwei Orten
+/// gebaut, und eine zweite Abschrift dieser Zuordnung liefe irgendwann
+/// auseinander: Dann traeniert der eine Weg mit Normierung und der
+/// andere ohne, und beide sehen richtig aus.
+pub(crate) fn qk_vorgaben_der_ebene(
+    m: &IntegerModel,
+    e: usize,
+) -> Option<integer_llm_kernels::trainingsschritt::QkNormVorgaben<'_>> {
+    let qkn = m.layers[e].qk_norm.as_ref()?;
+    Some(integer_llm_kernels::trainingsschritt::QkNormVorgaben {
+        q_gamma: &qkn.q_gamma.data,
+        q_gamma_shifts: &qkn.q_gamma.shifts,
+        k_gamma: &qkn.k_gamma.data,
+        k_gamma_shifts: &qkn.k_gamma.shifts,
+        q_out_frac: qkn.q_out_frac,
+        k_out_frac: qkn.k_out_frac,
+        rsqrt_lut: &m.rsqrt_lut,
+        rsqrt_input_shift: m.config.rsqrt_input_shift,
+        rsqrt_output_frac: m.config.rsqrt_output_frac,
+    })
+}
+
 pub(crate) fn vorgaben_der_ebene<'a>(
     m: &'a IntegerModel,
     sc: &'a crate::model::LayerScales,
@@ -460,6 +621,7 @@ pub(crate) fn vorgaben_der_ebene<'a>(
 ) -> Ebenenvorgaben<'a> {
     let kennung = Schrittkennung { ebene: e as u32, schritt, index_versatz: 0 };
     Ebenenvorgaben {
+        qk_norm: qk_vorgaben_der_ebene(m, e),
         aufmerksamkeit: Aufmerksamkeitsvorgaben {
             hidden_size: m.hidden_size,
             num_heads: m.num_heads,
@@ -643,6 +805,7 @@ pub fn trainingsschleife(
     let mut aus_der_form: Option<u64> = None;
     for s in 0..v.schritte {
         let vg = Ebenenvorgaben {
+            qk_norm: qk_vorgaben_der_ebene(m, 0),
             aufmerksamkeit: Aufmerksamkeitsvorgaben {
                 hidden_size: m.hidden_size,
                 num_heads: m.num_heads,
@@ -1173,4 +1336,86 @@ fn klemme_i16(v: i64) -> i16 {
 
 fn klemme_i32(v: i64) -> i32 {
     v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
+#[cfg(test)]
+mod kopfsammlung {
+    use super::*;
+
+    /// ⚑ **Das Vorzeichen ist die halbe Richtigkeit dieser Klasse.**
+    ///
+    /// Der Sammler haelt den **negativen** Gradienten, wie
+    /// `sammle_roh`, denn `schritt_normiert` **addiert**. Fuer das
+    /// Zieltoken ist `g = p − 1 < 0`, also wandert seine Kopfzeile
+    /// **auf den verborgenen Zustand zu**, und genau das soll ein
+    /// Lernschritt tun. Ein Vorzeichenfehler hier liefe stumm und
+    /// verschoebe das Ziel weg statt hin.
+    #[test]
+    fn die_zielzeile_wandert_auf_den_zustand_zu() {
+        let mut k = Kopfsammlung::neu(&[7], 4);
+        let mut g = vec![0i32; 16];
+        g[7] = -100; // wie beim Ziel: p − 1
+        k.aufnehmen(&g, &[2, 0, -3, 1]);
+        let s = k.summe_mut(7).expect("Zeile 7");
+        assert_eq!(s, &[200, 0, -300, 100], "die Zielzeile wandert nicht auf den Zustand zu");
+    }
+
+    /// Ein Mitbewerber hat `g = p > 0` und wird **weggeschoben**.
+    #[test]
+    fn eine_mitbewerberzeile_wandert_weg() {
+        let mut k = Kopfsammlung::neu(&[3], 2);
+        let mut g = vec![0i32; 8];
+        g[3] = 5;
+        k.aufnehmen(&g, &[10, -4]);
+        assert_eq!(k.summe_mut(3).expect("Zeile 3"), &[-50, 20]);
+    }
+
+    /// ⚑ **Was nicht verfolgt wird, bleibt unberuehrt**, und das ist
+    /// die Voraussetzung dafuer, ueberhaupt nur einen Teil des
+    /// Vokabulars zu fuehren.
+    #[test]
+    fn unverfolgte_zeilen_bleiben_draussen() {
+        let mut k = Kopfsammlung::neu(&[1, 2], 3);
+        assert_eq!(k.zeilen(), 2);
+        assert!(k.summe_mut(9).is_none(), "eine unverfolgte Zeile hat eine Summe");
+        assert_eq!(k.token(), vec![1, 2]);
+    }
+
+    #[test]
+    fn doppelte_token_geben_eine_zeile() {
+        let k = Kopfsammlung::neu(&[5, 5, 5], 2);
+        assert_eq!(k.zeilen(), 1);
+    }
+
+    /// Mehrere Positionen summieren sich, und `leeren` setzt zurueck.
+    #[test]
+    fn positionen_summieren_sich_und_leeren_setzt_zurueck() {
+        let mut k = Kopfsammlung::neu(&[0], 2);
+        let g = vec![-1i32, 0];
+        k.aufnehmen(&g, &[3, 5]);
+        k.aufnehmen(&g, &[3, 5]);
+        assert_eq!(k.positionen(), 2);
+        assert_eq!(k.summe_mut(0).expect("Zeile 0"), &[6, 10]);
+        k.leeren();
+        assert_eq!(k.positionen(), 0);
+        assert_eq!(k.summe_mut(0).expect("Zeile 0"), &[0, 0]);
+    }
+
+    /// ⚑ Ein Gradient von null kostet keine Arbeit und aendert nichts;
+    /// bei einem Vokabular von 151 936 ist das der Normalfall.
+    #[test]
+    fn ein_nullgradient_bewegt_nichts() {
+        let mut k = Kopfsammlung::neu(&[4], 3);
+        k.aufnehmen(&[0i32; 8], &[7, 7, 7]);
+        assert_eq!(k.summe_mut(4).expect("Zeile 4"), &[0, 0, 0]);
+    }
+
+    /// Ein Token jenseits der Logitliste wird uebersprungen statt zu
+    /// stuerzen: Der Korpus kann Token nennen, die der Kopf nicht hat.
+    #[test]
+    fn ein_token_ausserhalb_der_logits_stuerzt_nicht() {
+        let mut k = Kopfsammlung::neu(&[99], 2);
+        k.aufnehmen(&[1, 2, 3], &[1, 1]);
+        assert_eq!(k.summe_mut(99).expect("Zeile 99"), &[0, 0]);
+    }
 }

@@ -50,12 +50,22 @@ pub const OHNE: &str = "MYL_OHNE_ARTEFAKTE";
 /// ist der ganze Zweck: Ein stiller Sprung sieht aus wie ein bestandener
 /// Test.
 pub fn vorhanden(dir: &Path) -> bool {
+    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // damit war der Schalter auf jeder Maschine wirkungslos, die die
+    // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
+    // nichts liegt, und den Entwickler, der waehrend einer Messung
+    // keine Rechenzeit an eine Pruefsammlung abgeben will. Nur der
+    // erste wurde bedient. Aufgefallen, als `MYL_OHNE_ARTEFAKTE=1
+    // cargo test` neben einem laufenden Training doch das 4B-Modell
+    // lud und 59 Sekunden rechnete. Der Schalter heisst „ohne
+    // Artefakte" und bedeutet jetzt genau das, unabhaengig davon, ob
+    // welche da sind.
+    if std::env::var_os(OHNE).is_some() {
+        eprintln!("SKIP ({OHNE} gesetzt): {dir:?}");
+        return false;
+    }
     if dir.exists() {
         return true;
-    }
-    if std::env::var_os(OHNE).is_some() {
-        eprintln!("SKIP ({OHNE} gesetzt): Artefakte fehlen: {dir:?}");
-        return false;
     }
     panic!(
         "Artefakte fehlen: {dir:?}\n\
@@ -64,4 +74,47 @@ pub fn vorhanden(dir: &Path) -> bool {
          wählen (MYL_POD_MODELL=...), oder den Sprung ausdrücklich erlauben:\n\
          {OHNE}=1 cargo test"
     );
+}
+
+#[cfg(test)]
+mod pruefungen {
+    use super::*;
+
+    /// ⚑ **Diese Kiste hatte für `vorhanden` keine einzige Prüfung**,
+    /// und deshalb konnte Fund 218 zwei Monate unbemerkt daliegen. Was
+    /// hier geprüft wird, ist keine Rechnung, sondern eine Zusage an den
+    /// Aufrufer, und die kostet nichts.
+    ///
+    /// ⛑ Die Umgebungsvariable ist prozessweit; deshalb steht alles in
+    /// **einer** Prüfung und nicht in dreien. Drei Prüfungen liefen
+    /// nebenläufig im selben Prozess und setzten sich gegenseitig die
+    /// Variable um, und das Ergebnis hinge an der Reihenfolge.
+    #[test]
+    fn der_schalter_wirkt_auch_wenn_die_artefakte_da_sind() {
+        let da = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let weg = std::path::Path::new("/dieses/verzeichnis/gibt/es/nicht");
+
+        // Ohne Schalter: Was da ist, ist da.
+        std::env::remove_var(OHNE);
+        assert!(vorhanden(da), "ein vorhandenes Verzeichnis ist vorhanden");
+
+        // Ohne Schalter: Was fehlt, bricht ab, statt still zu springen.
+        let ausgang = std::panic::catch_unwind(|| vorhanden(weg));
+        assert!(
+            ausgang.is_err(),
+            "ohne Schalter muss ein fehlendes Verzeichnis abbrechen, \
+             sonst sieht ein übersprungener Lauf aus wie ein bestandener"
+        );
+
+        // ⛑ Der Kern von Fund 218: mit Schalter wird auch dann
+        // gesprungen, wenn die Artefakte **daliegen**. Vorher stand
+        // diese Abfrage unter der Pfadprüfung und kam nie zum Zuge.
+        std::env::set_var(OHNE, "1");
+        assert!(
+            !vorhanden(da),
+            "der Schalter heißt „ohne Artefakte“ und muss auch mit welchen greifen"
+        );
+        assert!(!vorhanden(weg), "und ohne welche erst recht");
+        std::env::remove_var(OHNE);
+    }
 }

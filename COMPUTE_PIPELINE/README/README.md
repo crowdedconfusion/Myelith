@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.33.0
+> **Version:** 0.33.1
 > **Datum:** 2026-09-01
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,21 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.33.1 – 2026-09-07 (die grosse Variante wird eingeschachtelt)
+
+`Shardantwort::Gerechnet` traegt sein `ShardOut` seit heute in einer
+Box. ⚑ **Das ist keine Formaenderung:** Borsh serialisiert `Box<T>` wie
+`T`, Drahtformat und Konformanzabdruck bleiben gleich. Ohne die Box
+zahlte **jede** Antwort die 352 Byte der groessten Variante, auch ein
+`Erledigt`.
+
+Dazu zwei ueberfluessige Umwandlungen und eine Zaehlschleife in den
+Tests. Gefunden hat das die CI, nicht dieser Baum: Vor dem Commit lief
+`cargo check` und `cargo test`, aber nicht `cargo clippy -D warnings`.
+⚑ **Wer hier etwas aendert, faehrt clippy ueber alle Kisten**, nicht nur
+ueber die beruehrten; die CI endet beim ersten Abbruch und zeigt
+deshalb immer nur den naechsten Fund.
 
 ### v0.33.0 – 2026-09-06 (der Pod rechnet normiert)
 

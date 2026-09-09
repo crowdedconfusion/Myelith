@@ -1,14 +1,30 @@
-# eval/
+# Inferenzmessung
 
-Ablageort für die Qualitätsmessung des Integer-Modells: Gleitkomma-
-Baseline, Perplexitätsberechnung, Evidenz-Läufe und die dafür benötigten
+Qualitätsmessung des Integer-Modells: Gleitkomma-Vergleichsstand,
+Perplexitätsberechnung, Evidenzläufe und die dafür benötigten
 Datensätze. Eine Qualitätsmessung ist kein Integrationstest (siehe
-`tests/`) und gehört deshalb in ein eigenes Verzeichnis.
+`INTEGER_LLM/tests/`) und liegt deshalb in einem eigenen Verzeichnis.
+
+⚑ **Umgezogen am 2026-09-07** von `INTEGER_LLM/eval/`, damit alle
+Messungen dieses Projekts an einem Ort liegen. Wer ältere Laufberichte
+liest, findet dort noch den alten Pfad; datierte Berichte werden nicht
+nachträglich umgeschrieben.
+
+⚑ **Zwei Wurzeln, seit dem Umzug getrennt benannt.** Die Skripte
+brauchen zweierlei: `LLM` zeigt auf `INTEGER_LLM/` für Artefakte, Tests
+und Kalibrierung, `HIER` auf dieses Verzeichnis für Datensätze und
+Ergebnisse. Vorher hiess beides `REPO` und war dasselbe; **wer das
+übersieht, misst gegen ein Verzeichnis, das es nicht gibt.**
+
+⚑ **Die Regel aus der Ebene darüber gilt auch hier:** Ein Modell, das
+nach einer Änderung besser misst, gehört gegen einen **Rauschnullpunkt**
+gehalten. Eine Störung mit Requantisierung verbessert ein quantisiertes
+Modell auch dann, wenn niemand etwas gelernt hat.
 
 ## Struktur
 
 ```
-eval/
+BENCHMARKS/Inferenz/
 ├── README.md
 ├── wikitext_common.py      # EINZIGE Quelle der Messsequenzen (alle Messungen)
 ├── baseline.py             # BF16-Baseline (HF), Teacher-Forcing
@@ -30,12 +46,12 @@ eval/
 WikiText-2-Testsplit aus (substantielle Zeilen, fester Stride,
 Qwen-Tokenizer). Integer-E2E-Test, BF16-Baseline, Perplexitätsvergleich
 und das Top-1-Agreement verwenden dieselbe Auswahl, denselben Tokenizer
-und dieselbe Sequenzlänge — nur so ist der Vergleich aussagekräftig
+und dieselbe Sequenzlänge; nur so ist der Vergleich aussagekräftig
 („identische Messmethode"). Gleitkomma darf nur im
 Mess-/Referenzpfad verwendet werden (BF16-Baseline, Log-Softmax-
 Auswertung der Proben), niemals im Integer-Inferenzpfad.
 
-## Entscheidungspunkt 12.21 — AKZEPTIERT
+## Entscheidungspunkt 12.21: AKZEPTIERT
 
 Perplexität Integer-Modell **15,59** vs. BF16-Baseline **14,95** =
 **+4,29 %** (Kriterium: max. +5 % relativer Anstieg). Protokoll:

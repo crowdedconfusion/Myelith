@@ -17,6 +17,12 @@ target/
 # ihn: Er muss von Zeit zu Zeit geleert werden.
 target-shared/
 
+# ⛑ Das Ergebnis von `werkzeuge/freigabe.sh`: gebaute Binaries samt
+# `Myelith.app`, rund 63 MB. Sie gehören nicht ins Repositorium, sondern
+# an ein Release; ohne diese Zeile nähme ein `git add -A` sie mit, und
+# ein einmal committetes Binary bleibt für immer in der Historie.
+freigabe/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -27,7 +33,7 @@ __pycache__/
 .qwen/
 
 # Hinweis: Modelle (INTEGER_LLM/models/), Export-Artefakte (INTEGER_LLM/artifacts/),
-# Evaluierungs-Datensätze (INTEGER_LLM/eval/datasets/) und synthetische Test-Artefakte
+# Evaluierungs-Datensätze (BENCHMARKS/Inferenz/datasets/) und synthetische Test-Artefakte
 # werden über die jeweiligen lokalen .gitignore-Dateien ausgeschlossen.
 
 # Private Knotenschlüssel. Der Testclient legt sie in

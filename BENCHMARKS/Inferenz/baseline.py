@@ -41,7 +41,7 @@ def main():
     # knappem Speicher still auf die Platte auslagert — eine Baseline aus
     # halb geladenen Gewichten waere schlimmer als gar keine, weil sie
     # plausibel aussieht (Fund beim 7B-Lauf, 2026-08-18).
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "calibrate"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "INTEGER_LLM" / "calibrate"))
     from src.loader import load_reference_model
 
     sequences = select_sequences(n_sequences, seq_len)

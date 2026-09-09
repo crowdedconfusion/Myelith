@@ -1,0 +1,41 @@
+[package]
+name = "myl-client"
+version = "0.11.1"
+edition = "2021"
+rust-version = "1.85"
+
+# ⚑ **Hier darf das Modelllaufwerk liegen, in `local-agent` nicht.**
+# Jene Kiste traegt eine Vollmacht und haelt ihre Angriffsflaeche klein;
+# diese ist die Anwendung und bringt zusammen, was der Nutzer braucht.
+# Genau dafuer gibt es das Merkmal `Modellweg` (CLIENT 0.2).
+[dependencies]
+myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
+myl-agent = { path = "../../AGENT_LAYER/myl-agent" }
+myl-types = { path = "../../SHARED_TYPES/myl-types" }
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
+# ⚑ Nur fuer das eine Feld `family` aus `model_config.json`. Das
+# Laufwerk gibt es nicht heraus, und es dafuer zu aendern waere ein
+# Eingriff in den Rechenpfad fuer eine Anzeigefrage.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# ⚑ Nur fuer die Pruefungen der Einhaengegrenze: Sie brauchen ein
+# echtes Verzeichnis, denn `canonicalize` loest gegen das Dateisystem
+# auf. Eine nachgebaute Ablage pruefte genau das nicht, worum es geht.
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+cuda = ["integer-llm-runtime/cuda"]
+rocm = ["integer-llm-runtime/rocm"]
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber
+# `debug-assertions` und `overflow-checks` bleiben an. ⚑ `--release`
+# waere die falsche Abkuerzung, denn es schaltet genau die Pruefungen
+# ab, um deretwillen man prueft.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"

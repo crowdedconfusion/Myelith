@@ -1062,7 +1062,7 @@ fn bericht_text(quelle: &Path, datum: &str, uhrzeit: &str, gruppen: &[Gruppe]) -
         t,
         "Dieser Bericht hält den Stand des Quellordners zum genannten \
          Zeitpunkt fest. Ein **bestätigter** Cross-Hardware-Nachweis gehört \
-         nach `INTEGER_LLM/eval/results/` (Punkt 2.3), der \
+         nach `BENCHMARKS/Inferenz/results/` (Punkt 2.3), der \
          Berichtsordner wird nicht versioniert."
     );
     t

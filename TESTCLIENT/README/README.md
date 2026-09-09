@@ -185,7 +185,7 @@ Je Prompt entsteht ein Einzelwert, darüber ein Gesamtwert.
 
 **Was diese Pläne nicht sind: Genauigkeitsmessungen.** Der Client
 vergleicht Digests, er bewertet keine Antworten. Ob ein Modell richtig
-rechnet, beantwortet `INTEGER_LLM/eval` über die Perplexität gegen die
+rechnet, beantwortet `BENCHMARKS/Inferenz` über die Perplexität gegen die
 Gleitkomma-Referenz. Die Benchmark-Pläne führen das Modell an
 ungewöhnliche Stellen, **damit** die Bitgleichheit dort geprüft wird und
 nicht nur auf dem eingefahrenen Pfad: Fund 15 (RoPE) und Fund 16

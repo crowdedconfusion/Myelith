@@ -1,0 +1,139 @@
+{
+  "_kommentar": [
+    "Auftraege fuer die Agentenmessung.",
+    "",
+    "⚑ Jeder Auftrag hat einen ueberpruefbaren Ausgang in der Aussenwelt,",
+    "und das ist der Unterschied zu Inferenz und Training: Dort faellt die",
+    "Zahl aus dem Modell, hier faellt sie aus dem Dateisystem.",
+    "",
+    "⚑ Die Stufen sind getrennt, weil ein Modell Stufe 1 koennen und an",
+    "Stufe 2 scheitern kann. Beides in eine Quote zu werfen ergaebe eine",
+    "Zahl, die nichts erklaert.",
+    "",
+    "JSON und nicht TOML: `tomllib` gibt es erst ab Python 3.11, und die",
+    "Messmaschine faehrt 3.9. Eine Messung, die an der Fassung des",
+    "Interpreters scheitert, ist keine.",
+    "",
+    "⚑ Die Auftraege mit \"satz\": \"voll\" brauchen `search_files` oder",
+    "`edit_file` und werden im knappen Satz uebersprungen statt zu",
+    "scheitern: Ein Auftrag, den das Modell mangels Werkzeug nicht",
+    "loesen KANN, waere keine Aussage ueber das Modell."
+  ],
+  "auftrag": [
+    {
+      "name": "auflisten",
+      "stufe": 1,
+      "auftrag": "Liste die Dateien im Arbeitsverzeichnis auf.",
+      "dateien": {
+        "notiz.txt": "Irgendein Text."
+      },
+      "antwort_enthaelt": [
+        "notiz.txt"
+      ]
+    },
+    {
+      "name": "lesen",
+      "stufe": 1,
+      "auftrag": "Lies die Datei geheim.txt und sage mir, was darin steht.",
+      "dateien": {
+        "geheim.txt": "Das Losungswort ist Goldfisch."
+      },
+      "antwort_enthaelt": [
+        "Goldfisch"
+      ]
+    },
+    {
+      "name": "lesen_und_folgern",
+      "stufe": 2,
+      "auftrag": "In zahlen.txt stehen zwei Zahlen. Lies sie und nenne mir ihre Summe.",
+      "dateien": {
+        "zahlen.txt": "Die erste Zahl ist 12.\nDie zweite Zahl ist 30."
+      },
+      "antwort_enthaelt": [
+        "42"
+      ]
+    },
+    {
+      "name": "waehlen",
+      "stufe": 2,
+      "auftrag": "Im Arbeitsverzeichnis liegen mehrere Dateien. Lies die mit der Endung .md und nenne die Ueberschrift.",
+      "dateien": {
+        "a.txt": "nichts",
+        "b.md": "# Der Nordwind\n\nText.",
+        "c.log": "nichts"
+      },
+      "antwort_enthaelt": [
+        "Nordwind"
+      ]
+    },
+    {
+      "name": "schreiben",
+      "stufe": 3,
+      "schreiben": true,
+      "auftrag": "Schreibe in die Datei antwort.txt genau das Wort Goldfisch.",
+      "datei_enthaelt": {
+        "antwort.txt": "Goldfisch"
+      }
+    },
+    {
+      "name": "lesen_dann_schreiben",
+      "stufe": 3,
+      "schreiben": true,
+      "auftrag": "Lies das Wort aus quelle.txt und schreibe es in ziel.txt.",
+      "dateien": {
+        "quelle.txt": "Steinbeisser"
+      },
+      "datei_enthaelt": {
+        "ziel.txt": "Steinbeisser"
+      }
+    },
+    {
+      "name": "suchen_ueber_ebenen",
+      "stufe": 2,
+      "satz": "voll",
+      "auftrag": "In welcher Datei steht das Wort Goldfisch? Nenne den Dateinamen.",
+      "dateien": {
+        "notiz.txt": "Nichts Besonderes hier.\n",
+        "protokoll.md": "# Protokoll\n\nZeile eins.\nDas Wort Goldfisch steht hier.\nZeile drei.\n",
+        "liste.csv": "a,b,c\n1,2,3\n"
+      },
+      "antwort_enthaelt": [
+        "protokoll"
+      ]
+    },
+    {
+      "name": "suchen_statt_lesen",
+      "stufe": 2,
+      "satz": "voll",
+      "auftrag": "Welche Zahl steht in der Zeile mit dem Wort Schwellwert?",
+      "dateien": {
+        "a.txt": "nichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\n",
+        "b.txt": "nichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\n",
+        "c.txt": "nichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nSchwellwert = 4711\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\n",
+        "d.txt": "nichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\nnichts\n"
+      },
+      "antwort_enthaelt": [
+        "4711"
+      ]
+    },
+    {
+      "name": "aendern_statt_ueberschreiben",
+      "stufe": 3,
+      "satz": "voll",
+      "schreiben": true,
+      "auftrag": "In der Datei einstellungen.txt steht `farbe = blau`. Aendere blau in gruen. Alles andere muss unveraendert bleiben.",
+      "dateien": {
+        "einstellungen.txt": "# Einstellungen\nname = Myelith\nfarbe = blau\ntakt = 12\nnotiz = bitte nicht loeschen\n"
+      },
+      "datei_enthaelt": {
+        "einstellungen.txt": "farbe = gruen"
+      },
+      "datei_enthaelt_auch": {
+        "einstellungen.txt": [
+          "name = Myelith",
+          "notiz = bitte nicht loeschen"
+        ]
+      }
+    }
+  ]
+}

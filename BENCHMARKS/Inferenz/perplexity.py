@@ -27,9 +27,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+# ⚑ **Zwei Wurzeln, und der Unterschied war bis zum 2026-09-07 nicht
+# sichtbar.** Diese Datei lag unter `BENCHMARKS/Inferenz/`, und `REPO`
+# hiess zwar so, zeigte aber auf `INTEGER_LLM/`. Seit dem Umzug nach
+# `BENCHMARKS/Inferenz/` sind es zwei verschiedene Orte, und beide
+# bekommen deshalb einen eigenen Namen: `LLM` fuer Artefakte, Tests und
+# Kalibrierung, `HIER` fuer alles, was zu dieser Messung gehoert.
+LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
+HIER = Path(__file__).resolve().parent
+REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
 
-sys.path.insert(0, str(REPO / "eval"))
+sys.path.insert(0, str(HIER))
 sys.path.insert(0, str(REPO / "tests"))
 from wikitext_common import (  # noqa: E402
     ARTIFACTS_DIR as ARTIFACTS,
@@ -45,7 +53,7 @@ from cargo_paths import binary, fehlt_hinweis  # noqa: E402
 
 PROBE = binary("runtime", "perplexity_probe")
 BASELINE_JSON = ergebnis_pfad("baseline_wikitext2")
-RESULTS_DIR = REPO / "eval" / "results"
+RESULTS_DIR = HIER / "results"
 
 
 def main():

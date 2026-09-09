@@ -463,7 +463,7 @@ MoE is −0.59 %, but the standard error across the four sequences is
 positions a difference of that size cannot be resolved
 (→ [the 1 % rule](#the-1--rule)).
 
-*In code:* `INTEGER_LLM/eval/perplexity.py`
+*In code:* `BENCHMARKS/Inferenz/perplexity.py`
 
 ### θ_v (theta-v, model version)
 
@@ -747,7 +747,7 @@ true range systematically. Understated scales saturate in production.
 
 *In code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 probe `runtime/src/bin/router_probe.rs`
-*Measured in:* `INTEGER_LLM/eval/results/`, model `qwen3-30b-a3b`
+*Measured in:* `BENCHMARKS/Inferenz/results/`, model `qwen3-30b-a3b`
 
 ### KV cache
 

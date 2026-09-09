@@ -109,6 +109,14 @@ HOT_PATH = [
     REPO / "runtime" / "src" / "lib.rs",
     REPO / "runtime" / "src" / "main.rs",
     REPO / "runtime" / "src" / "paths.rs",
+    # ⚑ Die Naht zur Kernzahl (2026-09-08). Sie rechnet nichts am
+    # Modell, aber sie steht im Heisspfad-Crate, und genau darum geht
+    # es dieser Liste: **Eine Datei, die niemand gelistet hat, wird
+    # nicht geprueft, und der Lauf meldet trotzdem null Treffer.** Die
+    # Kerngrenze aendert ohnehin kein Ergebnis, siehe
+    # `dieselbe_antwort_bei_jeder_kernzahl`; hier steht sie, damit die
+    # Vollstaendigkeit stimmt und nicht als Ausnahme.
+    REPO / "runtime" / "src" / "kapazitaet.rs",
     # ⚑ Der Mitschnitt fuer den Rueckwaertspass (TRAINING V). Er haelt
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.

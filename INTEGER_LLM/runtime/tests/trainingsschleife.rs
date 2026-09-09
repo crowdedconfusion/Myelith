@@ -34,12 +34,22 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn modell() -> Option<IntegerModel> {
+    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // damit war der Schalter auf jeder Maschine wirkungslos, die die
+    // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
+    // nichts liegt, und den Entwickler, der waehrend einer Messung
+    // keine Rechenzeit an eine Pruefsammlung abgeben will. Nur der
+    // erste wurde bedient. Aufgefallen, als `MYL_OHNE_ARTEFAKTE=1
+    // cargo test` neben einem laufenden Training doch das 4B-Modell
+    // lud und 59 Sekunden rechnete. Der Schalter heisst „ohne
+    // Artefakte" und bedeutet jetzt genau das, unabhaengig davon, ob
+    // welche da sind.
+    if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
+        eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt)");
+        return None;
+    }
     let dir = artefakte();
     if !dir.exists() {
-        if std::env::var_os("MYL_OHNE_ARTEFAKTE").is_some() {
-            eprintln!("SKIP (MYL_OHNE_ARTEFAKTE gesetzt): {dir:?}");
-            return None;
-        }
         panic!("Artefakte fehlen: {dir:?}");
     }
     Some(load_model(&dir).expect("Modell laedt"))

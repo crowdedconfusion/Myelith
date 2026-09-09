@@ -31,16 +31,69 @@
 //! ```text
 //! trainingsguete <artefakte> <sequenzdatei> [--schritte N] [--nenner B]
 //! ```
+//!
+//! Die Schalter, die den **Trainingspfad** aendern:
+//!
+//! | Schalter | Was er tut |
+//! |---|---|
+//! | `--normiert` | Bewegung je Matrix auf ihr eigenes Betragsmaximum (Fund 194) |
+//! | `--momentum N` | ⛑ gemessen und verworfen, Fund 201 |
+//! | `--vorzeichen` | ⛑ gemessen und verworfen, Fund 201 |
+//! | `--kopf` | ⚑ **Der Ablesekopf lernt mit**, Fund 202 |
+//! | `--nur-kopf` | Nur er; die Ebenen bleiben stehen |
+//! | `--kopf-nenner N` | Eigene Schrittweite fuer den Kopf, Fund 204 |
+//! | `--zeilenweise` | ⚑ **Je Zeile normieren statt je Matrix**, Fund 206 |
+//! | `--stand-schreiben P` | ⚑ Die trainierten Gewichte nach `P` |
+//! | `--stand-lesen P` | Dort weitermachen, wo ein Lauf aufhoerte |
+//! | `--anker N` | ⚑ **Gegen das Vergessen:** zieht je Durchgang ein `2^N`-tel des Abstandes zum Ausgangsstand zurueck |
+//! | `--absenkung` | Die Schrittweite sinkt ueber die Durchgaenge auf ein Viertel |
+//! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; ⛑ ungemessen |
+//!
+//! ⛑ **`--probentoken N` (Vorgabe 40).** Wie viele Token je Probe
+//! erzeugt werden. Stand fest auf zwoelf, und das reichte nicht: Beim
+//! ChatML-Lauf auf Qwen3-4B begannen die Antworten mit „Okay, the user
+//! is asking where …", einem Denkpraeludium, das das ganze Budget
+//! frass. Zwoelf von sechzehn Proben konnten deshalb **gar nicht
+//! treffen**, auch bei perfekt gelernter Tatsache (Fund 225).
+//!
+//! ⚑ **Der Rang wird seither ueber alle Schritte genommen und nicht
+//! nur ueber den ersten.** An der ersten Stelle will das Modell „Okay"
+//! sagen; ein hoher Rang dort heisst nicht, dass die Antwort fern
+//! liegt, sondern dass dort noch keine Antwort steht.
+//!
+//! Und einer, der nur misst: `--spitze N` zeigt je Frage die `N`
+//! wahrscheinlichsten Token. ⚑ Ein Rang von 161 hinter 160 plausiblen
+//! Woertern ist etwas anderes als einer hinter 160 Schreibweisen
+//! desselben Wortes.
+//!
+//! ⚑ **Warum der Kopf einen eigenen Nenner hat.** `schritt_normiert`
+//! bezieht die Bewegung auf das Betragsmaximum der jeweiligen Matrix.
+//! Bei einer Kopfzeile ist das die Zeile **eines Tokens**; ein grosser
+//! Schritt bewegt genau die Token mit grossem Gradienten. Eine
+//! Ebenenmatrix dagegen traegt **alles**, was das Modell weiss, in
+//! denselben Zahlen. Gemessen: Der Kopf haelt bei Nenner 64 die
+//! Kontrolle bei Faktor 1,0, die Ebenen zerstoeren das Modell dabei.
+//! Ein gemeinsamer Nenner zwaenge beide auf das Mass des
+//! empfindlicheren.
 
 use std::sync::Arc;
 
+use integer_llm_kernels::optimierer::{schritt_normiert, Schrittkennung};
+
+/// Je Fragenart: Treffer, Anzahl, Rangsumme, Summe der Logwahrscheinlichkeiten.
+type Befund = std::collections::BTreeMap<String, (usize, usize, f64, f64)>;
+
+/// Je Frage: Art, Frage, erwartete Antwort, tatsaechliche Antwort.
+type Wortlaut = Vec<(String, String, String, String)>;
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::messung::{kreuzentropie_aus_logits, perplexitaet};
 use integer_llm_runtime::shardtraining::{
     rueckwaerts, rueckwaerts_mit, sammlung_anwenden, vorwaerts, Fortschreibung, Sammlung, Shardgewichte,
     Shardvorgaben,
 };
-use integer_llm_runtime::trainingsschleife::{gradienten_je_position, Trainingsvorgaben};
+use integer_llm_runtime::trainingsschleife::{
+    gradienten_je_position, gradienten_je_position_mit_kopf, Kopfsammlung, Trainingsvorgaben,
+};
 
 /// Der Residualstrom **vor** Ebene `von`, je Position.
 ///
@@ -77,6 +130,27 @@ fn main() {
     }
     let dir = std::path::PathBuf::from(&args[1]);
     let mut schritte: u64 = 1;
+    let mut fragendatei: Option<String> = None;
+    let mut fragen_alle: Option<u64> = None;
+    let mut momentum: Option<u32> = None;
+    let mut vorzeichen = false;
+    let mut kopf = false;
+    let mut nur_kopf = false;
+    let mut kopf_nenner: Option<i64> = None;
+    let mut zeilenweise = false;
+    let mut spitze: usize = 0;
+    // ⛑ **Zwoelf war zu wenig, siehe Fund 225.** Die Vorgabe steht auf
+    // vierzig: Ein Denkpraeludium ist rund zehn Token lang, die
+    // Antwort kommt danach, und wer knapp misst, misst das Praeludium.
+    // Sie kosten Zeit; eine Messung, die nicht messen kann, kostet
+    // mehr.
+    let mut probentoken: usize = 40;
+    let mut stand_ein: Option<String> = None;
+    let mut stand_aus: Option<String> = None;
+    let mut anker: u32 = 0;
+    let mut absenkung = false;
+    let mut auswahl = integer_llm_runtime::shardtraining::Auswahl::Alles;
+    let mut rauschen: Option<i64> = None;
     let mut nenner: i64 = 1 << 12;
     let mut fenster: usize = 128;
     let mut folgenzahl: usize = 4;
@@ -94,6 +168,92 @@ fn main() {
             "--schritte" => {
                 i += 1;
                 schritte = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1);
+            }
+            "--vorzeichen" => {
+                vorzeichen = true;
+            }
+            // ⚑ **T4, der lernende Ablesekopf.** Siehe Fund 202.
+            "--kopf" => {
+                kopf = true;
+            }
+            // Nur der Kopf, die Ebenen bleiben stehen: die reinste
+            // Form der Frage, ob die Konzentration die fehlende
+            // Achse ist.
+            "--nur-kopf" => {
+                kopf = true;
+                nur_kopf = true;
+            }
+            // ⚑ **Ein eigener Nenner fuer den Kopf, und er ist
+            // gemessen und nicht geraten.** T4a und T4b zeigen: Bei
+            // Nenner 1024 bleibt die Kontrolle des Kopfes bei Faktor
+            // 1,0, bei 64 ebenso, waehrend jeder Ebenenlauf sie schon
+            // bei 1024 ankratzt. Der Kopf vertraegt mehr, und ein
+            // gemeinsamer Nenner zwaenge beide auf das Mass des
+            // empfindlicheren.
+            // ⚑ **Je Zeile statt je Matrix normieren** (Fund 206).
+            // ⚑ Zeigt je Frage die N wahrscheinlichsten Token.
+            "--spitze" => {
+                i += 1;
+                spitze = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
+            }
+            "--probentoken" => {
+                i += 1;
+                probentoken = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(40).max(1);
+            }
+            // ⚑ **Fortsetzen statt neu anfangen.** Bis zum 2026-09-08
+            // warf dieses Werkzeug die trainierten Gewichte weg; „noch
+            // ein paar Durchgaenge" hiess damit: drei Stunden noch
+            // einmal.
+            // ⚑ **Gegen das Vergessen, nicht fuer die Tatsache.**
+            // Zieht die Gewichte je Durchgang um ein `2^n`-tel ihres
+            // Abstandes zum Ausgangsstand zurueck.
+            // ⚑ Parameterisolierung, die dritte Saeule. ⛑ Ungemessen,
+            // deshalb standardmaessig aus.
+            "--nur-mlp" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurMlp;
+            }
+            "--nur-abwaerts" => {
+                auswahl = integer_llm_runtime::shardtraining::Auswahl::NurAbwaerts;
+            }
+            "--anker" => {
+                i += 1;
+                anker = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
+            }
+            // Die Schrittweite sinkt ueber die Durchgaenge: gross
+            // frueh, klein spaet.
+            "--absenkung" => {
+                absenkung = true;
+            }
+            "--stand-lesen" => {
+                i += 1;
+                stand_ein = args.get(i).cloned();
+            }
+            "--stand-schreiben" => {
+                i += 1;
+                stand_aus = args.get(i).cloned();
+            }
+            "--zeilenweise" => {
+                zeilenweise = true;
+            }
+            "--kopf-nenner" => {
+                i += 1;
+                kopf_nenner = args.get(i).and_then(|s| s.parse::<i64>().ok());
+            }
+            "--momentum" => {
+                i += 1;
+                momentum = args.get(i).and_then(|s| s.parse::<u32>().ok());
+            }
+            "--fragen-alle" => {
+                i += 1;
+                fragen_alle = args.get(i).and_then(|s| s.parse::<u64>().ok());
+            }
+            "--fragen" => {
+                i += 1;
+                fragendatei = args.get(i).cloned();
+            }
+            "--rauschen" => {
+                i += 1;
+                rauschen = args.get(i).and_then(|s| s.parse::<i64>().ok());
             }
             "--nenner" => {
                 i += 1;
@@ -179,7 +339,7 @@ fn main() {
         i += 1;
     }
 
-    let m = Arc::new(load_model(&dir).expect("Modell-Ladung fehlgeschlagen"));
+    let mut m = Arc::new(load_model(&dir).expect("Modell-Ladung fehlgeschlagen"));
     let text = std::fs::read_to_string(&args[2]).expect("Sequenzdatei unlesbar");
     // ⚑ **Zwei Formen, und die erkannte hängt am Inhalt.** Eine Datei
     // mit Token-Nummern (wie `perplexity_probe` sie liest) wird direkt
@@ -249,28 +409,60 @@ fn main() {
     // auf. Wer je Folge neu lüde, machte `n` Mal denselben ersten
     // Schritt.
     let von = ebenen.map(|n| m.num_layers.saturating_sub(n)).unwrap_or(0);
+    // ⚑ Die Zwischenbreite des MLP, aus der ersten Ebene: Sie ist die
+    // Zeilenbreite von `down_proj` und wird fuer `--zeilenweise`
+    // gebraucht.
+    let zwischenbreite = match &m.layers[0].ffn {
+        integer_llm_runtime::model::Feedforward::Dense(d) => d.gate_proj.shape[0],
+        // ⛑ Ein Expertengemisch bekommt keine Zeilenbreiten; siehe
+        // `zeilenbreiten_dicht`. Null heisst dort „unbekannt", und
+        // dann bleibt es bei der Matrixnormierung.
+        integer_llm_runtime::model::Feedforward::Moe(_) => 0,
+    };
     let mut gewichte = Shardgewichte::aus_modell(&m, von, m.num_layers).expect("Gewichte");
-    eprintln!("[trainingsguete] trainiere Ebenen {von} bis {}", m.num_layers);
+    if let Some(pfad) = &stand_ein {
+        match integer_llm_runtime::shardtraining::stand_lesen(
+            &mut gewichte,
+            std::path::Path::new(pfad),
+        ) {
+            Ok(()) => eprintln!("[trainingsguete] Stand gelesen aus {pfad}"),
+            Err(f) => {
+                // ⛑ Abbruch und kein Weitermachen: Ein Lauf, der auf
+                // einem nicht geladenen Stand aufsetzt, sieht aus wie
+                // eine Fortsetzung und ist ein Neuanfang.
+                eprintln!("ABBRUCH  Stand nicht lesbar: {f}");
+                std::process::exit(1);
+            }
+        }
+    }
+    eprintln!(
+        "[trainingsguete] trainiere Ebenen {von} bis {}, Matrizen: {}",
+        m.num_layers,
+        auswahl.name()
+    );
 
     // ⚑ **Dieselbe Messfunktion vorher und nachher**, und sie geht über
     // die trainierten Gewichte. Wer vorher mit dem Artefakt und nachher
     // mit den Mastern misst, vergleicht zwei Rechenwege statt zwei
     // Modellstände.
-    let messen = |gewichte: &mut Shardgewichte, welche: &[Vec<usize>]| -> (f64, usize) {
+    let messen = |mm: &integer_llm_runtime::model::IntegerModel,
+                  gewichte: &mut Shardgewichte,
+                  welche: &[Vec<usize>]|
+     -> (f64, usize) {
         let mut summe = 0.0f64;
         let mut n = 0usize;
         for folge in welche {
             let v = vorgabe(folge);
             let vg = Shardvorgaben {
                 von,
-                bis: m.num_layers,
+                bis: mm.num_layers,
                 schritt: 0,
                 lr_zaehler: 1,
                 lr_nenner: nenner,
             };
-            let strom = strom_vor(&m, folge, von);
-            let ms = vorwaerts(&m, gewichte, &vg, &strom).expect("vorwaerts");
-            let (_g, logits) = gradienten_je_position(&m, &ms.ausgang, &v);
+            let strom = strom_vor(mm, folge, von);
+            let ms = vorwaerts(mm, gewichte, &vg, &strom).expect("vorwaerts");
+            let (_g, logits) = gradienten_je_position(mm, &ms.ausgang, &v);
             for (p, l) in logits.iter().enumerate() {
                 if l.is_empty() {
                     continue;
@@ -341,14 +533,327 @@ fn main() {
         );
     };
 
-    let (v_vor, n_vor) = messen(&mut gewichte, &lernfolgen);
+
+    // ⚑ **Die Befragung, vorher und nachher (2026-09-07).**
+    // Perplexitaet sagt, ob ein Text wahrscheinlicher wurde. Sie sagt
+    // nicht, ob das Modell die Sache **abrufen** kann. Dafuer wird
+    // gefragt, und die Antwort wird gegen die erwartete gehalten.
+    //
+    // ⚑ Zwei Masse, weil sie verschiedene Auspraegungen messen:
+    // **Treffer** heisst, die gierige Fortsetzung enthaelt die
+    // erwartete Zeichenfolge. **Rang** ist die Position des ersten
+    // erwarteten Tokens in der Logit-Ordnung; er sinkt lange bevor der
+    // Treffer kommt und zeigt Lernen, das noch nicht durchschlaegt.
+    let befragen = |mm: &integer_llm_runtime::model::IntegerModel,
+                    gewichte: &mut Shardgewichte,
+                    fragen: &[(String, String, String)],
+                    ws: &integer_llm_runtime::tokenizer::Tokenizer|
+     -> (Befund, Wortlaut) {
+        // ⚑ **Die Antwort im Wortlaut, nicht nur ihr Treffer.** Eine
+        // Trefferquote sagt, wie oft es stimmte; sie sagt nicht, was
+        // das Modell stattdessen sagte, und genau daran erkennt man,
+        // ob eine Formatluecke oder eine Wissensluecke vorliegt.
+        let mut wortlaut: Wortlaut = Vec::new();
+        let mut je_art: Befund = std::collections::BTreeMap::new();
+        for (frage, erwartet, art) in fragen {
+            let mut folge = ws.encode(frage);
+            // ⛑ **Beide Schreibweisen, seit dem 2026-09-07.** BPE kodiert
+            // ein Wort am Zeichenkettenanfang anders als nach einem
+            // Leerzeichen, und im Satz folgt immer die zweite Variante.
+            // Bis heute wurde nur `erwartet` kodiert; gemessen wurde
+            // damit ein Token, das an dieser Stelle gar nicht stehen
+            // kann. Gegenprobe: `Paris` ergab Rang 558, ` Paris` Rang 0.
+            let kandidaten: Vec<usize> = [
+                ws.encode(erwartet).first().copied(),
+                ws.encode(&format!(" {erwartet}")).first().copied(),
+            ]
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
+            let mut rang = usize::MAX;
+            let mut logp = f64::NEG_INFINITY;
+            let anfang = folge.len();
+            // ⛑ **Hier stand `0..12`, und zwoelf Token reichten nicht.**
+            // Beim ChatML-Lauf auf Qwen3-4B (2026-09-09, Fund 225)
+            // begannen die Antworten mit „Okay, the user is asking
+            // where …", also mit einem Denkpraeludium, und das frass
+            // das ganze Budget. Zwoelf von sechzehn Proben konnten
+            // deshalb **gar nicht treffen**, auch bei perfekt
+            // gelernter Tatsache.
+            //
+            // ⚑ **Und das Praeludium kommt nicht vom Training.** Vor
+            // dem ersten Schritt war „Okay" bereits der
+            // Spitzenkandidat, und der Prompt ist korrekt gebaut: Er
+            // endet auf Qwens Nicht-Denk-Form, und der Tokenizer
+            // kodiert alle fuenf Sondermarken als solche. Es gibt also
+            // keinen Schalter, den man vergessen haette; es braucht
+            // Platz, damit die Antwort nach dem Praeludium noch kommt.
+            for schritt in 0..probentoken {
+                if folge.len() < 2 {
+                    break;
+                }
+                let vg = Shardvorgaben {
+                    von,
+                    bis: mm.num_layers,
+                    schritt: 0,
+                    lr_zaehler: 1,
+                    lr_nenner: nenner,
+                };
+                let strom = strom_vor(mm, &folge, von);
+                let ms = vorwaerts(mm, gewichte, &vg, &strom).expect("vorwaerts");
+                // ⚑ **Der Kopf direkt, nicht ueber den Gradientenweg.**
+                // `gradienten_je_position` laesst die letzte Position
+                // leer, weil dort kein Ziel steht. Genau deren Logits
+                // sind hier aber die Vorhersage des naechsten Wortes.
+                let Some(letzte) = ms.ausgang.last() else { break };
+                // ⛑ **Nicht `head_logits`, das rechnet auf
+                // `config.logit_frac_bits` = 6.** Der Trainingsweg
+                // benutzt 16 (Fund 177), und wer die Logits von 6 durch
+                // 2^16 teilt, flacht die Verteilung um Faktor 1024 ab
+                // und misst eine Gleichverteilung. Fuer Argmax und Rang
+                // ist die Skala gleichgueltig, fuer die
+                // Wahrscheinlichkeit nicht.
+                let l = mm.head_logits_mit_spur(letzte, vorgabe(&folge).logit_frac, None);
+                if l.is_empty() {
+                    break;
+                }
+                // ⛑ **Der Rang wird ueber ALLE Schritte genommen, nicht
+                // nur ueber den ersten.** Er stand auf `schritt == 0`,
+                // und dort will das Modell „Okay" sagen und keine
+                // Stadt: Rang 996 hiess dann nicht „die Stadt liegt
+                // fern", sondern „an dieser Stelle wird keine Stadt
+                // erwartet". Beide Masse waren an derselben Position
+                // blind (Fund 225).
+                //
+                // ⚑ **Der beste Rang ueber den Lauf ist die richtige
+                // Frage:** Gab es irgendwo eine Stelle, an der das
+                // Modell die Stadt fuer wahrscheinlich hielt? Wo diese
+                // Stelle liegt, ist eine Frage der Antwortform und
+                // nicht des Wissens.
+                {
+                    // ⚑ Der beste der beiden Schreibweisen zaehlt: Wer
+                    // die schlechtere naehme, meldete einen Rang fuer
+                    // ein Token, das dort nicht hingehoert.
+                    let hier = kandidaten
+                        .iter()
+                        .map(|t| {
+                            let ziel = l.get(*t).copied().unwrap_or(i32::MIN);
+                            l.iter().filter(|v| **v > ziel).count()
+                        })
+                        .min()
+                        .unwrap_or(usize::MAX);
+                    rang = rang.min(hier);
+                }
+                if schritt == 0 {
+                    // ⚑ **Wer steht davor?** Ein Rang von 161 hinter
+                    // 160 plausiblen deutschen Woertern ist etwas
+                    // anderes als ein Rang von 161 hinter 160
+                    // Schreibweisen desselben Wortes. Der Rang allein
+                    // sagt das nicht, und ohne es zu wissen laesst sich
+                    // nicht entscheiden, ob mehr Training hilft oder ob
+                    // die Konkurrenz eine andere Art von Problem ist.
+                    if spitze > 0 {
+                        let mut mit_index: Vec<(usize, i32)> =
+                            l.iter().copied().enumerate().collect();
+                        mit_index.sort_by_key(|(_, v)| std::cmp::Reverse(*v));
+                        let namen: Vec<String> = mit_index
+                            .iter()
+                            .take(spitze)
+                            .map(|(t, _)| {
+                                ws.decode(&[*t]).replace('\n', "\\n")
+                            })
+                            .collect();
+                        println!("SPITZE  [{art}] {frage}  ==>  {}", namen.join(" | "));
+                    }
+                    // ⚑ **Und die Wahrscheinlichkeit, nicht nur der
+                    // Rang (2026-09-07).** Ein Token auf Rang 682 kann
+                    // seine Wahrscheinlichkeit verhundertfacht haben
+                    // und trotzdem dort stehen, wenn die 682 davor
+                    // ebenfalls plausibel sind. Der Rang misst die
+                    // Konkurrenz, die Wahrscheinlichkeit misst das
+                    // Lernen.
+                    // ⛑ **Erste Fassung selbst gerechnet und dabei
+                    // uebergelaufen:** `(*v - hoch)` subtrahiert in i32,
+                    // bevor gecastet wird. Die vorhandene, gepruefte
+                    // Funktion castet zuerst und wird deshalb benutzt
+                    // statt nachgebaut. Sie liefert die Kreuzentropie,
+                    // also genau `-log p`.
+                    let lf = vorgabe(&folge).logit_frac;
+                    logp = -kandidaten
+                        .iter()
+                        .map(|t| kreuzentropie_aus_logits(&l, *t, lf))
+                        .filter(|v| v.is_finite())
+                        .fold(f64::INFINITY, f64::min);
+                }
+                let naechstes = l
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, v)| **v)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                folge.push(naechstes);
+            }
+            let antwort = ws.decode(&folge[anfang..]);
+            let treffer = antwort.to_lowercase().contains(&erwartet.to_lowercase());
+            wortlaut.push((
+                art.clone(),
+                frage.clone(),
+                erwartet.clone(),
+                antwort.replace('\n', " ").trim().to_string(),
+            ));
+            let e = je_art.entry(art.clone()).or_insert((0, 0, 0.0, 0.0));
+            e.1 += 1;
+            if treffer {
+                e.0 += 1;
+            }
+            e.2 += if rang == usize::MAX { 1e9 } else { rang as f64 };
+            e.3 += if logp.is_finite() { logp } else { -50.0 };
+        }
+        (je_art, wortlaut)
+    };
+
+    let fragen: Vec<(String, String, String)> = fragendatei
+        .as_ref()
+        .map(|d| {
+            std::fs::read_to_string(d)
+                .expect("Fragendatei")
+                .lines()
+                .filter(|z| !z.starts_with('#') && !z.trim().is_empty())
+                .filter_map(|z| {
+                    let mut t = z.split('\t');
+                    // ⚑ **`\n` wird zum Zeilenumbruch** (2026-09-08).
+                    // Eine Probe im ChatML-Format traegt Rollenmarken
+                    // mit Umbruechen darin, und die Datei ist
+                    // zeilenweise mit Tabulatoren: Ein echter Umbruch
+                    // zerrisse sie. Ohne diese Auflösung liessen sich
+                    // instruktionsangepasste Modelle nur in der Form
+                    // befragen, in der ihre Anpassung wirkungslos ist.
+                    let auf = |x: &str| x.replace("\\n", "\n");
+                    Some((auf(t.next()?), auf(t.next()?), t.next()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+
+    let ws_fragen = (!fragen.is_empty()).then(|| {
+        integer_llm_runtime::tokenizer::Tokenizer::from_file(
+            dir.join("tokenizer.json").to_str().expect("Pfad"),
+        )
+        .expect("Wortschatz fuer die Fragen")
+    });
+    let fragen_vor = ws_fragen
+        .as_ref()
+        .map(|w| befragen(&m, &mut gewichte, &fragen, w));
+
+    let (v_vor, n_vor) = messen(&m, &mut gewichte, &lernfolgen);
     bericht("VORHER", "lern", v_vor, n_vor);
     let (h_vor, hn_vor) = if halte.is_empty() {
         (0.0, 0)
     } else {
-        messen(&mut gewichte, &halte)
+        messen(&m, &mut gewichte, &halte)
     };
     bericht("VORHER", "halte", h_vor, hn_vor);
+
+    // ⚑ **Reines Rauschen statt Gradient (Kontrolle vom 2026-09-07).**
+    // Drei Laeufe zeigten dieselbe Verbesserung der Haltemenge, ob auf
+    // echtem Text oder auf Wortsalat, und sie wuchs mit der ZAHL der
+    // bewegten Gewichte statt mit der Richtung des Gradienten. Der
+    // Verdacht ist Dithering: Die int8-Gewichte tragen einen
+    // systematischen Rundungsfehler, und eine Stoerung mit
+    // anschliessender Requantisierung mittelt ihn weg. Trifft das zu,
+    // muss reines Rauschen dasselbe leisten, ohne einen einzigen
+    // Vorwaerts- oder Rueckwaertspass.
+    if let Some(stufen) = rauschen {
+        let mut beruehrt = 0u64;
+        for (i, stand) in gewichte.master.iter_mut().enumerate() {
+            let ebene = (von + i) as u32;
+            let mut versatz = 0u64;
+            for mat in stand.matrizen_veraenderlich() {
+                for (j, w) in mat.iter_mut().enumerate() {
+                    let z = integer_llm_kernels::optimierer::wuerfel(ebene, 0, versatz + j as u64);
+                    let d = (z % (2 * stufen as u64 + 1)) as i64 - stufen;
+                    if d != 0 {
+                        *w = (*w as i64).saturating_add(d) as i32;
+                        beruehrt += 1;
+                    }
+                }
+                versatz += mat.len() as u64;
+            }
+        }
+        eprintln!(
+            "[trainingsguete] RAUSCHEN: {beruehrt} Gewichte um bis zu {stufen} Stufen gestoert, KEIN Gradient"
+        );
+    }
+
+    // ⚑ Der Momentumpuffer lebt ueber alle Durchgaenge, die Sammlung
+    // nicht. Deshalb liegt er hier und nicht in ihr.
+    let mut mompuffer: std::collections::BTreeMap<
+        (usize, integer_llm_runtime::shardtraining::Matrixkennung),
+        Vec<i64>,
+    > = std::collections::BTreeMap::new();
+
+    // --- Der lernende Ablesekopf (T4) ---------------------------------
+    //
+    // ⚑ **Bis zum 2026-09-08 war der Kopf gar nicht im Trainingspfad.**
+    // `matrizen_veraenderlich` gibt Aufmerksamkeit, Router und Experten
+    // heraus, und damit endet die Liste. Das Modell konnte verstellen,
+    // **was** der verborgene Zustand ist, aber nie, **wie** ein Zustand
+    // auf ein Token zeigt: Jede gelernte Tatsache musste durch einen
+    // eingefrorenen Ableser hindurch.
+    //
+    // ⚑ Fund 201 sagt, woran die drei bisherigen Verfahren scheiterten:
+    // Je gleichmaessiger der Schritt verteilt wird, desto schlechter
+    // die Einzeltatsache. Die Kopfzeile eines Tokens ist die
+    // konzentrierteste Stelle im ganzen Modell.
+    //
+    // **Die Skala:** Der Meister ist der int16-Wert, um `KOPF_SUB` Bits
+    // nach links geschoben, damit ein Schritt unter einer Rasterstufe
+    // nicht verloren geht. `schritt_normiert` ist skalenfrei und
+    // braucht davon nichts zu wissen; er bezieht die Bewegung auf das
+    // Betragsmaximum der Zeile.
+    const KOPF_SUB: u32 = 8;
+    // ⚑ Eine Ebenennummer, die keine Ebene ist: Der Wuerfel darf nicht
+    // mit dem einer echten Ebene zusammenfallen.
+    const KOPF_EBENE: u32 = u32::MAX;
+    let mut kopfsammlung: Option<Kopfsammlung> = None;
+    let mut kopfmaster: Vec<i32> = Vec::new();
+    let mut kopftoken: Vec<u32> = Vec::new();
+    if kopf {
+        let hs = m.hidden_size;
+        let lmh = m
+            .lm_head_int16
+            .as_ref()
+            .expect("--kopf braucht einen int16-Ablesekopf im Artefakt");
+        // ⚑ **Verfolgt werden die Zeilen der Token, die im Korpus
+        // vorkommen.** Die volle Kopfmatrix waere `vocab × hidden`, ihr
+        // Gradient als i64 ein Gigabyte je Position; er ist aber ein
+        // aeusseres Produkt und ausserhalb der Zielzeile winzig.
+        let mut toks: Vec<u32> =
+            lernfolgen.iter().flatten().map(|t| *t as u32).collect();
+        toks.sort_unstable();
+        toks.dedup();
+        let k = Kopfsammlung::neu(&toks, hs);
+        kopftoken = k.token();
+        kopfmaster = Vec::with_capacity(kopftoken.len() * hs);
+        for t in &kopftoken {
+            let ab = *t as usize * hs;
+            for w in &lmh.data[ab..ab + hs] {
+                kopfmaster.push((*w as i32) << KOPF_SUB);
+            }
+        }
+        eprintln!(
+            "[trainingsguete] KOPF: {} Zeilen von {} verfolgt ({:.2} Prozent des Vokabulars), \
+             Nenner {}{}",
+            kopftoken.len(),
+            lmh.shape[0],
+            100.0 * kopftoken.len() as f64 / lmh.shape[0] as f64,
+            kopf_nenner.unwrap_or(nenner),
+            if nur_kopf { ", die Ebenen bleiben stehen" } else { "" }
+        );
+        kopfsammlung = Some(k);
+    }
 
     // --- Training, Teacher Forcing über alle Positionen ----------------
     let anfang = std::time::Instant::now();
@@ -360,6 +865,15 @@ fn main() {
         // eingingen.
         let mut sammlung =
             if normiert { Sammlung::normiert() } else { Sammlung::neu() };
+        sammlung.auswahl_setzen(auswahl);
+        if zeilenweise {
+            // ⚑ Die Breiten kommen aus derselben Quelle wie die
+            // Rueckumrechnung in die Uebertragungsform; eine zweite
+            // Tabelle waere die zweite Fassung.
+            sammlung.zeilenbreiten_setzen(
+                integer_llm_runtime::shardtraining::zeilenbreiten_dicht(&m, zwischenbreite),
+            );
+        }
         for folge in &lernfolgen {
             let v = vorgabe(folge);
             let vg = Shardvorgaben {
@@ -371,7 +885,8 @@ fn main() {
             };
             let strom = strom_vor(&m, folge, von);
             let ms = vorwaerts(&m, &mut gewichte, &vg, &strom).expect("vorwaerts");
-            let (mut g, _logits) = gradienten_je_position(&m, &ms.ausgang, &v);
+            let (mut g, _logits) =
+                gradienten_je_position_mit_kopf(&m, &ms.ausgang, &v, kopfsammlung.as_mut());
             if nur_letzte {
                 let letzte = g.len() - 1;
                 for (p, zeile) in g.iter_mut().enumerate() {
@@ -401,35 +916,177 @@ fn main() {
             }
         }
         if sammeln {
+            // ⚑ **Die Schrittweite sinkt, wenn sie sinken soll.** Ein
+            // grosser Nenner ist ein kleiner Schritt, also waechst er:
+            // linear von `nenner` im ersten Durchgang auf das Vierfache
+            // im letzten. **Gross frueh** holt die Tatsache, **klein
+            // spaet** festigt sie, ohne weiter zu schaden.
+            let nenner_jetzt = if absenkung && schritte > 1 {
+                nenner + (nenner * 3 * s as i64) / (schritte as i64 - 1)
+            } else {
+                nenner
+            };
             let vg = Shardvorgaben {
                 von,
                 bis: m.num_layers,
                 schritt: schrittzahl,
                 lr_zaehler: 1,
-                lr_nenner: nenner,
+                lr_nenner: nenner_jetzt,
             };
-            let erg = sammlung_anwenden(&sammlung, &mut gewichte, &vg);
-            if let Some(ebene) = erg.aus_der_form {
-                eprintln!(
-                    "ABBRUCH  Ebene {ebene} hat die Uebertragungsform verlassen \
-                     (Sammelschritt {schrittzahl}, Nenner {nenner})"
-                );
-                std::process::exit(1);
+            if let Some(schub) = momentum {
+                sammlung.momentum_falten(&mut mompuffer, schub);
             }
-            eprintln!(
-                "[trainingsguete] Durchgang {} von {schritte}: {} Folgen gesammelt, \
-                 {} Matrizen, {} Gewichte bewegt",
-                s + 1,
-                erg.laeufe,
-                sammlung.matrizen(),
-                erg.bewegte_gewichte
-            );
+            // ⚑ Nach dem Momentum, damit sich beides kombinieren
+            // liesse; der Betrag ist beliebig, weil danach normiert
+            // wird, und 2^20 haelt Abstand zu Ueberlauf und Null.
+            if vorzeichen {
+                sammlung.vorzeichen_falten(1 << 20);
+            }
+            if nur_kopf {
+                eprintln!(
+                    "[trainingsguete] Durchgang {} von {schritte}: die Ebenen bleiben stehen",
+                    s + 1
+                );
+            } else {
+                let erg = sammlung_anwenden(&sammlung, &mut gewichte, &vg);
+                if let Some(ebene) = erg.aus_der_form {
+                    eprintln!(
+                        "ABBRUCH  Ebene {ebene} hat die Uebertragungsform verlassen \
+                         (Sammelschritt {schrittzahl}, Nenner {nenner})"
+                    );
+                    std::process::exit(1);
+                }
+                eprintln!(
+                    "[trainingsguete] Durchgang {} von {schritte}: {} Folgen gesammelt, \
+                     {} Matrizen, {} Gewichte bewegt",
+                    s + 1,
+                    erg.laeufe,
+                    sammlung.matrizen(),
+                    erg.bewegte_gewichte
+                );
+            }
+
+            // ⚑ **Der Anker, NACH dem Schritt.** Davor gezogen zoege
+            // er an einem Stand, den der Schritt gleich wieder
+            // verschiebt; danach gezogen wirkt er auf das Ergebnis.
+            if anker > 0 {
+                let bewegt =
+                    integer_llm_runtime::shardtraining::zum_anfang_ziehen(&mut gewichte, anker);
+                eprintln!(
+                    "[trainingsguete] ANKER Durchgang {}: {bewegt} Gewichte zum Anfang gezogen \
+                     (ein {}-tel des Abstandes)",
+                    s + 1,
+                    1u64 << anker
+                );
+            }
+
+            // ⚑ **Der Schritt auf dem Ablesekopf.** Er laeuft ueber
+            // dieselbe Normierung wie die Ebenen: `nenner` sagt, um
+            // welchen Bruchteil ihres **eigenen** Betragsmaximums sich
+            // eine Kopfzeile je Durchgang bewegt. Das ist genau die
+            // Groesse, die Fund 194 skalenfrei gemacht hat, und sie
+            // traegt hier ohne Aenderung, weil `schritt_normiert` die
+            // Skala des Meisters nirgends voraussetzt.
+            if let Some(k) = kopfsammlung.as_mut() {
+                let hs = m.hidden_size;
+                let positionen = k.positionen();
+                let mut zeilen_bewegt = 0u64;
+                for (zi, t) in kopftoken.iter().enumerate() {
+                    let kn = Schrittkennung {
+                        ebene: KOPF_EBENE,
+                        schritt: schrittzahl,
+                        index_versatz: (zi * hs) as u64,
+                    };
+                    let Some(summe) = k.summe_mut(*t) else { continue };
+                    if schritt_normiert(
+                        &mut kopfmaster[zi * hs..(zi + 1) * hs],
+                        summe,
+                        kn,
+                        kopf_nenner.unwrap_or(nenner),
+                    )
+                    .is_some()
+                    {
+                        zeilen_bewegt += 1;
+                    }
+                }
+                k.leeren();
+
+                let mm = Arc::get_mut(&mut m)
+                    .expect("der Kopf laesst sich nur schreiben, solange das Modell ungeteilt ist");
+                let lmh = mm.lm_head_int16.as_mut().expect("int16-Kopf");
+                let mut geaendert = 0u64;
+                for (zi, t) in kopftoken.iter().enumerate() {
+                    let ab = *t as usize * hs;
+                    for j in 0..hs {
+                        // ⚑ **Runden, nicht schieben.** Ein
+                        // arithmetischer Rechtsschieber rundet gegen
+                        // minus unendlich und zoege den ganzen Kopf
+                        // Durchgang um Durchgang nach unten; genau so
+                        // eine stille Schieflage war Fund 187.
+                        let roh = kopfmaster[zi * hs + j];
+                        let v = ((roh + (1 << (KOPF_SUB - 1))) >> KOPF_SUB)
+                            .clamp(i16::MIN as i32, i16::MAX as i32)
+                            as i16;
+                        if lmh.data[ab + j] != v {
+                            geaendert += 1;
+                        }
+                        lmh.data[ab + j] = v;
+                    }
+                }
+                eprintln!(
+                    "[trainingsguete] KOPF Durchgang {}: {positionen} Positionen, \
+                     {zeilen_bewegt} von {} Zeilen bewegt, {geaendert} Gewichte geaendert",
+                    s + 1,
+                    kopftoken.len()
+                );
+            }
             schrittzahl += 1;
         } else {
             eprintln!("[trainingsguete] Durchgang {} von {schritte}", s + 1);
         }
+
+        // ⚑ **Zwischenmessung (2026-09-08).** Sieben Punkte aus einem
+        // Lauf statt sieben Laeufen. Sie kostet je Punkt nur die
+        // Befragung, also Sekunden, und sie beantwortet zwei Fragen,
+        // die ein Vorher-Nachher nicht beantworten kann: **wann genau**
+        // die Kontrolle kippt, und ob die Kurve linear oder saettigend
+        // ist.
+        if let (Some(alle), Some(w)) = (fragen_alle, ws_fragen.as_ref()) {
+            if alle > 0 && (s + 1) % alle == 0 && s + 1 < schritte {
+                let (zw, wort) = befragen(&m, &mut gewichte, &fragen, w);
+                for (art, (t, n, r, pp)) in &zw {
+                    let (_, _, _, p0) = fragen_vor
+                        .as_ref()
+                        .and_then(|v| v.0.get(art).copied())
+                        .unwrap_or((0, 0, 0.0, 0.0));
+                    println!(
+                        "ZWISCHEN {:3} {art:<14} {t:2}/{n:<2}  Rang {:7.0}  p {:.3e}  Faktor {:8.1}",
+                        s + 1,
+                        r / *n as f64,
+                        (pp / *n as f64).exp(),
+                        ((pp - p0) / *n as f64).exp()
+                    );
+                }
+                for (art, frage, erwartet, antwort) in &wort {
+                    println!("ZWANTWORT {:3} [{art}] {frage}  ==>  {antwort}  (erwartet: {erwartet})", s + 1);
+                }
+            }
+        }
     }
     let dauer = anfang.elapsed();
+
+    // ⚑ **Den Stand hinausschreiben, bevor gemessen wird.** Die
+    // Schlussmessung dauert Minuten; wer erst danach schreibt, verliert
+    // bei einem Abbruch alles.
+    if let Some(pfad) = &stand_aus {
+        match integer_llm_runtime::shardtraining::stand_schreiben(
+            &gewichte,
+            std::path::Path::new(pfad),
+        ) {
+            Ok(()) => eprintln!("[trainingsguete] Stand geschrieben nach {pfad}"),
+            Err(f) => eprintln!("[trainingsguete] ⛑ Stand NICHT geschrieben: {f}"),
+        }
+    }
 
     // ⚑ **Wie weit sind die Gewichte gewandert?** Die Übertragungsform
     // quantisiert **zeilenweise**: Ein einziger Ausreisser hebt den
@@ -460,7 +1117,39 @@ fn main() {
         );
     }
 
-    let (v_nach, n_nach) = messen(&mut gewichte, &lernfolgen);
+    // ⚑ **Was sich am WIRKLICHEN Modell bewegt hat (2026-09-07).**
+    // Bis heute meldete dieses Werkzeug nur bewegte **Master**, und ein
+    // Master ist 2^-20 einer Rasterstufe. Gerechnet wird aber mit der
+    // int8-Requantisierung: Ein Master kann sich bewegen, ohne dass
+    // sich am Gewicht, das der Vorwaertspass sieht, irgendetwas
+    // aendert. Die Zahl unten ist deshalb die einzige, die zaehlt.
+    {
+        use integer_llm_kernels::trainingsschritt::gewicht_aus_master;
+        let mut geaendert = 0u64;
+        let mut gesamt = 0u64;
+        let mut zeilenskalen = 0u64;
+        for (a, b) in gewichte.anfangsstand().iter().zip(gewichte.master.iter()) {
+            for (ma, mb) in a.matrizen().iter().zip(b.matrizen().iter()) {
+                // in_features ist unbekannt; die Zeilenlaenge folgt aus
+                // dem Modell. Fuer den Vergleich genuegt dieselbe Form
+                // auf beiden Seiten.
+                let inf = m.hidden_size;
+                if ma.len() % inf != 0 {
+                    continue;
+                }
+                let (wa, sa) = gewicht_aus_master(ma, inf, integer_llm_kernels::optimierer::MASTER_FRAC);
+                let (wb, sb) = gewicht_aus_master(mb, inf, integer_llm_kernels::optimierer::MASTER_FRAC);
+                geaendert += wa.iter().zip(wb.iter()).filter(|(x, y)| x != y).count() as u64;
+                zeilenskalen += sa.iter().zip(sb.iter()).filter(|(x, y)| x != y).count() as u64;
+                gesamt += wa.len() as u64;
+            }
+        }
+        println!(
+            "INT8    {geaendert} von {gesamt} Gewichten geaendert ({:.4} Prozent), {zeilenskalen} Zeilenskalen verschoben",
+            100.0 * geaendert as f64 / gesamt.max(1) as f64
+        );
+    }
+    let (v_nach, n_nach) = messen(&m, &mut gewichte, &lernfolgen);
     let ppl_vor = perplexitaet(v_vor, n_vor);
     let ppl_nach = perplexitaet(v_nach, n_nach);
     bericht("NACHHER", "lern", v_nach, n_nach);
@@ -477,7 +1166,7 @@ fn main() {
     // **nicht** trainiert. Fallen beide, hat der Lauf etwas gelernt;
     // fällt nur die obere, hat er auswendig gelernt.
     if !halte.is_empty() {
-        let (h_nach, hn_nach) = messen(&mut gewichte, &halte);
+        let (h_nach, hn_nach) = messen(&m, &mut gewichte, &halte);
         let hppl_vor = perplexitaet(h_vor, hn_vor);
         let hppl_nach = perplexitaet(h_nach, hn_nach);
         bericht("NACHHER", "halte", h_nach, hn_nach);
@@ -508,10 +1197,21 @@ fn main() {
                 "kein Gewicht bewegt: die Bewegung lag unter einer Master-Stufe, \
                  die Rate ist fuer dieses Modell zu klein"
             } else if kaum {
+
                 "kaum bewegt: beide Zahlen aendern sich um weniger als ein \
                  Zehntelprozent, das ist Rauschen und kein Ergebnis"
             } else if hppl_nach < hppl_vor {
-                "die Haltemenge wird besser: der Lauf hat gelernt"
+                // ⛑ **Hier stand bis zum 2026-09-07 „der Lauf hat
+                // gelernt", und das war falsch.** Am selben Tag bekam
+                // ein Lauf mit **null Schritten und ohne Gradienten**,
+                // der nur Rauschen addierte, genau dieses Urteil: Die
+                // Haltemenge fiel um 0,67 Prozent, mehr als bei jedem
+                // echten Training. Ursache ist Dithering an der
+                // deterministisch gerundeten Quantisierung. Ein Urteil
+                // aus dem **Vorzeichen** allein nennt Rauschen Lernen.
+                "die Haltemenge wird besser. ⚑ Das ist mit Lernen vereinbar und noch kein \
+                 Beleg: Ein Lauf mit gleicher int8-Stoerung und OHNE Gradienten \
+                 (--rauschen) erreicht dasselbe. Erst der Abstand zu ihm zaehlt"
             } else if ppl_nach < ppl_vor {
                 "nur die Lernfolgen werden besser: auswendig gelernt"
             } else {
@@ -520,6 +1220,58 @@ fn main() {
         );
     } else {
         println!("URTEIL  ohne Haltemenge nicht zu faellen (--haltemenge N setzen)");
+
+
+    }
+
+    // ⚑ **Die Auswertung der Befragung.** Treffer sagt, ob die Antwort
+    // dasteht; Rang sagt, wie nah das Modell dran war. Der Rang faellt
+    // frueher als der Treffer und zeigt Lernen, das noch nicht
+    // durchschlaegt.
+    if let (Some((vor, wort_vor)), Some(w)) = (fragen_vor.clone(), ws_fragen.as_ref()) {
+        let (nach, wort_nach) = befragen(&m, &mut gewichte, &fragen, w);
+        println!(
+            "FRAGEN  Art             Treffer          mittlerer Rang        Wahrscheinlichkeit"
+        );
+        for (art, (t_n, n, r_n, p_n)) in &nach {
+            let (t_v, _, r_v, p_v) = vor.get(art).copied().unwrap_or((0, 0, 0.0, 0.0));
+            // ⚑ Absolut UND als Faktor: Der Faktor sagt, wie viel
+            // gelernt wurde, die absolute Zahl, wie weit es noch ist.
+            let (mv, mn) = (p_v / *n as f64, p_n / *n as f64);
+            let f = (mn - mv).exp();
+            println!(
+                "FRAGEN  {art:<14} {t_v:3}/{n:<3} -> {t_n:3}/{n:<3}  Rang {:7.0} -> {:7.0}   p {:.3e} -> {:.3e}   Faktor {f:9.1}",
+                r_v / *n as f64,
+                r_n / *n as f64,
+                mv.exp(),
+                mn.exp()
+            );
+        }
+        // ⚑ **Beispiele im Wortlaut, je Art hoechstens zwei.** Eine
+        // Zahl ueberzeugt niemanden, der wissen will, was das Modell
+        // wirklich sagt.
+        let mut gezeigt: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for (i, (art, frage, erwartet, a_nach)) in wort_nach.iter().enumerate() {
+            let z = gezeigt.entry(art.as_str()).or_insert(0);
+            if *z >= 4 {
+                continue;
+            }
+            *z += 1;
+            let a_vor = wort_vor.get(i).map(|t| t.3.as_str()).unwrap_or("");
+            println!("BEISPIEL [{art}] {frage}");
+            println!("BEISPIEL    erwartet: {erwartet}");
+            println!("BEISPIEL    vorher:  {a_vor}");
+            println!("BEISPIEL    nachher: {a_nach}");
+        }
+
+        // ⚑ Die Zeile, die den Rest erst gueltig macht.
+        if let Some((t, n, _, _)) = nach.get("fremd") {
+            println!(
+                "FRAGEN  ⚑ Gegenprobe: {t} von {n} fremden Personen beantwortet. \
+                 Ueber null hiesse, die Pruefung misst das Format und nicht das Wissen."
+            );
+        }
     }
     // ⚑ **Der Abdruck, damit der Lauf nachrechenbar ist.** Zwei
     // Maschinen mit demselben Artefakt und derselben Sequenzdatei

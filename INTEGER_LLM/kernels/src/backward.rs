@@ -724,6 +724,71 @@ fn verschiebe_i128(v: i128, shift: i32) -> i128 {
 /// die von der Skala unabhängig sind: dass der zweite Term überhaupt
 /// wirkt, und dass ein Nullgradient nichts erzeugt. Dieselbe Lage wie
 /// bei Fund 173.
+/// Rueckwaerts durch die QK-Normierung, je Kopf.
+///
+/// # ⚑ Was hier NICHT gerechnet wird, und warum
+///
+/// **Der Gradient auf `gamma` wird verworfen.** Die Normierungsgewichte
+/// von Q und K sind `head_dim` Zahlen je Ebene, bei Qwen3-4B also 128
+/// von rund vier Milliarden. Sie mitzutrainieren braeuchte eigene
+/// Meister, einen eigenen Wuerfelversatz und damit eine Aussage im
+/// Trainingsvertrag; der Nutzen daran ist verschwindend.
+///
+/// ⛑ **Und das ist eine Festlegung und kein Versehen.** Wer sie
+/// spaeter aufhebt, aendert die Bitgleichheit: Ein zusaetzlicher
+/// Meister verschiebt die Indizes des stochastischen Rundens, und zwei
+/// Knoten mit verschiedenen Fassungen rechneten verschiedene Deltas.
+///
+/// **Was gerechnet wird**, ist der Gradient auf den **Eingang**, denn
+/// ohne ihn endet der Rueckwaertspass vor den Projektionen `q` und `k`
+/// und deren Gewichte bekaemen gar nichts.
+///
+/// `spuren` und `heads_ein` sind, was der Vorwaertspass gesehen hat:
+/// die Koepfe **vor** der Normierung.
+///
+/// ⚑ **`gx_frac` ist ein Parameter und keine Annahme.** Der erste
+/// Entwurf setzte ihn fest auf `x_frac`, und die Pruefung gegen die
+/// numerische Ableitung fand prompt einen Faktor von 877, also im
+/// Wesentlichen `2^10`. Der Gradient war richtig, die Skala war
+/// geraten. **Nur der Aufrufer weiss, in welcher Skala der naechste
+/// Baustein rechnet.**
+#[allow(clippy::too_many_arguments)]
+pub fn qk_norm_heads_backward(
+    g_heads: &[Vec<Grad>],
+    heads_ein: &[Vec<i16>],
+    spuren: &[crate::rmsnorm::Rmsnormspur],
+    x_frac: u8,
+    gamma: &[i8],
+    gamma_shifts: &[u8],
+    g_frac: u8,
+    gx_frac: u8,
+    inv_n_q20: i64,
+) -> Vec<Vec<Grad>> {
+    let head_dim = gamma.len();
+    let x_shifts = vec![x_frac; head_dim];
+    let mut aus = Vec::with_capacity(g_heads.len());
+    for ((g, x), spur) in g_heads.iter().zip(heads_ein).zip(spuren) {
+        let crate::rmsnorm::Rmsnormspur::Wert { r, norm_frac, ref_shift } = *spur else {
+            // ⚑ **Ein Kopf, der durchweg null war, hat kein `r`.** Die
+            // Ausgabe hing von keinem Eingang ab, also ist der Gradient
+            // null. Ein `r` von null einzusetzen saehe aus wie ein
+            // nachgeschlagener Wert und waere keiner.
+            aus.push(vec![0 as Grad; head_dim]);
+            continue;
+        };
+        let (gx, _g_gamma) = rmsnorm_backward(
+            g,
+            x,
+            &x_shifts,
+            gamma,
+            gamma_shifts,
+            Normskalen { r, norm_frac, ref_shift, inv_n_q20, g_frac, gx_frac },
+        );
+        aus.push(gx);
+    }
+    aus
+}
+
 pub fn rmsnorm_backward(
     g: &[Grad],
     x: &[i16],
@@ -1130,6 +1195,122 @@ mod tests {
         plus[j] = plus[j].saturating_add(h);
         minus[j] = minus[j].saturating_sub(h);
         (f(&plus) - f(&minus)) / (2.0 * h as f64)
+    }
+
+    // ---- QK-Normierung (Qwen3) ---------------------------------------
+
+    /// Baut eine Nachschlagetabelle fuer die Kehrwurzel, wie das
+    /// Modell sie mitbringt.
+    fn rsqrt_tabelle(eingangsschiebung: u8, ausgangsfrac: u8) -> Vec<i16> {
+        (0..4096)
+            .map(|i| {
+                let x = (i as f64) * (1u32 << eingangsschiebung) as f64;
+                if x <= 0.0 {
+                    return 0i16;
+                }
+                let r = (1.0 / x.sqrt()) * (1u32 << ausgangsfrac) as f64;
+                r.min(i16::MAX as f64) as i16
+            })
+            .collect()
+    }
+
+    /// ⚑ **Der Gradient durch die QK-Normierung gegen die numerische
+    /// Ableitung des echten Kernels.**
+    ///
+    /// Bis zum 2026-09-08 gab es diesen Weg im Trainingspfad gar nicht;
+    /// die Aufmerksamkeit wurde ohne QK-Normierung gerechnet, waehrend
+    /// die Inferenz sie anwandte. **Ein stiller Unterschied im
+    /// Vorwaertspfad ist die schlimmste Sorte**, und ein neu gebauter
+    /// Rueckwaertspass dazu darf nicht auf Zuruf richtig sein.
+    #[test]
+    fn qk_norm_backward_trifft_die_numerische_ableitung() {
+        let hd = 16usize;
+        let x_frac = 10u8;
+        let out_frac = 10u8;
+        let lut_shift = 4u8;
+        let lut_frac = 12u8;
+        let lut = rsqrt_tabelle(lut_shift, lut_frac);
+        let gamma: Vec<i8> = (0..hd).map(|i| (40 + (i as i32 % 17) * 3) as i8).collect();
+        let gamma_shifts = vec![6u8; hd];
+        let inv_n = crate::rmsnorm::inv_n_q20(hd);
+
+        let ein: Vec<i16> = (0..hd).map(|i| ((i as i32 * 37) % 511 - 255) as i16).collect();
+        // Eine Zielrichtung, gegen die die Ableitung gemessen wird.
+        let ziel: Vec<i32> = (0..hd).map(|i| ((i as i32 * 13) % 29) - 14).collect();
+
+        // Der echte Kernel als skalare Funktion: <ziel, norm(x)>.
+        let vorwaerts = |x: &[i16]| -> f64 {
+            let mut kopf = vec![x.to_vec()];
+            crate::rmsnorm::qk_norm_heads(
+                &mut kopf, x_frac, &gamma, &gamma_shifts, &lut, lut_shift, lut_frac, out_frac,
+            );
+            kopf[0].iter().zip(&ziel).map(|(a, b)| *a as f64 * *b as f64).sum()
+        };
+
+        // Und derselbe Kernel mit Spur, dann rueckwaerts.
+        let mut kopf = vec![ein.clone()];
+        let spuren = crate::rmsnorm::qk_norm_heads_mit_spur(
+            &mut kopf, x_frac, &gamma, &gamma_shifts, &lut, lut_shift, lut_frac, out_frac,
+        );
+        let g_heads: Vec<Vec<Grad>> = vec![ziel.clone()];
+        // ⚑ Beide Skalen auf null: Dann ist der Rueckgabewert
+        // unmittelbar mit der numerischen Ableitung vergleichbar, und
+        // der Test misst die Ableitung statt einer Umrechnung.
+        let gx = qk_norm_heads_backward(
+            &g_heads,
+            std::slice::from_ref(&ein),
+            &spuren,
+            x_frac,
+            &gamma,
+            &gamma_shifts,
+            0,
+            0,
+            inv_n,
+        );
+
+        let mut geprueft = 0;
+        for (j, wert) in gx[0].iter().enumerate() {
+            let num = numerisch(&ein, j, 8, vorwaerts);
+            let mein = *wert as f64;
+            // ⛑ Beide sind ganzzahlig gerundet; verglichen wird die
+            // Richtung und die Groessenordnung, nicht die letzte Stelle.
+            if num.abs() < 1.0 {
+                continue;
+            }
+            geprueft += 1;
+            assert!(
+                mein.signum() == num.signum() || mein == 0.0,
+                "Stelle {j}: Vorzeichen {mein} gegen numerisch {num}"
+            );
+            let q = mein / num;
+            assert!(
+                (0.3..3.0).contains(&q),
+                "Stelle {j}: {mein} gegen numerisch {num}, Verhaeltnis {q:.2}"
+            );
+        }
+        assert!(geprueft >= hd / 2, "nur {geprueft} Stellen hatten eine messbare Ableitung");
+    }
+
+    /// ⚑ **Ein Kopf aus lauter Nullen gibt einen Nullgradienten**, und
+    /// zwar ohne `r` zu erfinden.
+    #[test]
+    fn ein_leerer_kopf_gibt_null() {
+        let hd = 8usize;
+        let gamma = vec![64i8; hd];
+        let shifts = vec![6u8; hd];
+        let spuren = vec![crate::rmsnorm::Rmsnormspur::Null];
+        let gx = qk_norm_heads_backward(
+            &[vec![100 as Grad; hd]],
+            &[vec![0i16; hd]],
+            &spuren,
+            10,
+            &gamma,
+            &shifts,
+            0,
+            0,
+            crate::rmsnorm::inv_n_q20(hd),
+        );
+        assert_eq!(gx[0], vec![0 as Grad; hd]);
     }
 
     // ---- Übertragungsform -------------------------------------------

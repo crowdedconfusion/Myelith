@@ -478,7 +478,7 @@ MoE liegt bei −0,59 %, der Standardfehler über die vier Sequenzen aber bei
 435 gewerteten Positionen ist ein Unterschied dieser Größe nicht
 auflösbar (→ [Die 1-%-Regel](#die-1--regel)).
 
-*Im Code:* `INTEGER_LLM/eval/perplexity.py`
+*Im Code:* `BENCHMARKS/Inferenz/perplexity.py`
 
 ### θ_v (Theta-v, Modellversion)
 
@@ -777,7 +777,7 @@ Skalen sättigen im Betrieb.
 
 *Im Code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 Sonde `runtime/src/bin/router_probe.rs`
-*Gemessen in:* `INTEGER_LLM/eval/results/`, Modell `qwen3-30b-a3b`
+*Gemessen in:* `BENCHMARKS/Inferenz/results/`, Modell `qwen3-30b-a3b`
 
 ### KV-Cache
 

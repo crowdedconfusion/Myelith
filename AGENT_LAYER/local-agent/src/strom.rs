@@ -96,11 +96,43 @@ pub struct Schritt {
     pub stufe: Segmentstufe,
 }
 
+/// Was ein Werkzeug erreichen durfte.
+///
+/// # ⚑ Warum das in den Strom gehoert
+///
+/// Bis zum 2026-09-08 hielt der Strom fest, **welches** Werkzeug lief
+/// und ob es erlaubt war. Er hielt nicht fest, **worauf** es zugreifen
+/// konnte. Wer das Protokoll spaeter liest, sieht „`datei_schreiben`
+/// wurde gerufen und war erlaubt" und weiss nicht, ob das
+/// Arbeitsverzeichnis ein Unterordner oder die Wurzel des
+/// Dateisystems war.
+///
+/// ⚑ **Die Wurzel steht als Abdruck darin und nicht als Pfad.** Der
+/// Strom ist das Stueck, das die Maschine verlaesst; ein Pfad darin
+/// verriete das Wirtsverzeichnis an jeden, der ihn prueft. Wer den
+/// Pfad kennt, kann den Abdruck nachrechnen, und genau das ist die
+/// Nachvollziehbarkeit, um die es geht.
+///
+/// ⛑ **`schreiben` steht im Klartext**, denn es ist die Angabe, auf
+/// die es ankommt: Ein Lauf, der nur lesen durfte, kann nichts
+/// veraendert haben, und das soll man sehen, ohne etwas nachzurechnen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Einhaengungsmarke {
+    /// Der Abdruck der aufgeloesten Wurzel.
+    pub wurzel: Hash,
+    /// Ob geschrieben werden durfte.
+    pub schreiben: bool,
+}
+
 /// Der Strom einer Sitzung.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sitzungsstrom {
     anker: Hash,
     betriebsart: Betriebsart,
+    /// ⚑ `None` heisst: **kein** Dateizugriff, nicht „unbekannt".
+    /// Der Unterschied ist der ganze Zweck: Ein Lauf ohne Einhaengung
+    /// hat keine Datei angefasst, und das ist eine Aussage.
+    einhaengung: Option<Einhaengungsmarke>,
     schritte: Vec<Schritt>,
 }
 
@@ -140,7 +172,22 @@ impl Sitzungsstrom {
     /// [`myl_agent::kette::anker`]: Sitzung und Plan. Ohne ihn liesse
     /// sich eine ganze Kette aus einer Sitzung in eine andere heben.
     pub fn neu(anker: Hash, betriebsart: Betriebsart) -> Self {
-        Self { anker, betriebsart, schritte: Vec::new() }
+        Self { anker, betriebsart, einhaengung: None, schritte: Vec::new() }
+    }
+
+    /// Wie [`Self::neu`], haelt aber fest, worauf zugegriffen werden
+    /// durfte.
+    pub fn neu_mit_einhaengung(
+        anker: Hash,
+        betriebsart: Betriebsart,
+        einhaengung: Option<Einhaengungsmarke>,
+    ) -> Self {
+        Self { anker, betriebsart, einhaengung, schritte: Vec::new() }
+    }
+
+    /// Worauf zugegriffen werden durfte, falls ueberhaupt.
+    pub fn einhaengung(&self) -> Option<Einhaengungsmarke> {
+        self.einhaengung
     }
 
     /// Der Anker.

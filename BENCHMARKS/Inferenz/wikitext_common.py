@@ -15,8 +15,16 @@ import os
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-DATASETS = REPO / "eval" / "datasets"
+# ⚑ **Zwei Wurzeln, und der Unterschied war bis zum 2026-09-07 nicht
+# sichtbar.** Diese Datei lag unter `BENCHMARKS/Inferenz/`, und `REPO`
+# hiess zwar so, zeigte aber auf `INTEGER_LLM/`. Seit dem Umzug nach
+# `BENCHMARKS/Inferenz/` sind es zwei verschiedene Orte, und beide
+# bekommen deshalb einen eigenen Namen: `LLM` fuer Artefakte, Tests und
+# Kalibrierung, `HIER` fuer alles, was zu dieser Messung gehoert.
+LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
+HIER = Path(__file__).resolve().parent
+REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
+DATASETS = HIER / "datasets"
 WIKITEXT_CACHE = DATASETS / "wikitext2_test.txt"
 
 sys.path.insert(0, str(REPO / "calibrate"))
@@ -48,7 +56,7 @@ def ergebnis_pfad(basis: str, endung: str = ".json") -> Path:
     0.5B behaelt die historischen Dateinamen (baseline_wikitext2.json),
     weil sie in Whitepaper-Vorarbeit und Changelog zitiert sind.
     """
-    return REPO / "eval" / "results" / f"{basis}{_SUFFIX}{endung}"
+    return HIER / "results" / f"{basis}{_SUFFIX}{endung}"
 
 
 MIN_LINE_CHARS = 160  # nur inhaltlich substantielle Zeilen

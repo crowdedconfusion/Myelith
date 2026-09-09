@@ -43,20 +43,29 @@ use myl_types::hash::Hash;
 use crate::ausfuehrung::Werkzeugkasten;
 use crate::betrieb::Betriebsart;
 use crate::strom::{Entscheidung, Sitzungsstrom};
-use crate::tuerklient::{Nachricht, Tuerfehler, Tuerklient};
+use crate::tuerklient::{Modellweg, Nachricht, Tuerfehler};
 use crate::vollmacht_grenzen::{Grenzfehler, Sitzungsgrenzen};
 use crate::werkzeug::{angebot, argumente_pruefen, vorschlaege, Erlaubnis, Werkzeugergebnis};
 
 /// Was ein Lauf braucht.
 pub struct Lauf<'a> {
-    /// Die Tür.
-    pub klient: &'a Tuerklient,
+    /// Woher die Modellantwort kommt: die Tuer eines Knotens oder ein
+    /// Modell auf derselben Maschine.
+    ///
+    /// ⚑ **Seit dem 2026-09-08 ein Merkmal statt eines Klienten**, damit
+    /// derselbe Agent mit und ohne Netz laeuft (CLIENT 0.2).
+    pub klient: &'a dyn Modellweg,
     /// Welches Modell.
     pub modell: &'a str,
     /// Die Grenzen aus dem Sitzungskontrakt.
     pub grenzen: &'a Sitzungsgrenzen,
     /// Was der Nutzer zulässt.
     pub betriebsart: Betriebsart,
+    /// Worauf die Werkzeuge zugreifen durften, fuer das Protokoll.
+    ///
+    /// ⚑ **`None` heisst: kein Dateizugriff**, nicht „unbekannt". Wer
+    /// den Strom spaeter liest, soll den Unterschied sehen.
+    pub einhaengung: Option<crate::strom::Einhaengungsmarke>,
     /// Die Werkzeuge samt Ausführung.
     pub kasten: &'a Werkzeugkasten,
     /// Wo die Manifeste stehen, für die Stufe je Schritt.
@@ -72,6 +81,13 @@ pub struct Lauf<'a> {
     pub anker: Hash,
     /// Höchstzahl der Modellaufrufe, zusätzlich zur Schrittzahl.
     pub max_tokens: Option<u32>,
+    /// In welcher Form die Werkzeuge angesagt werden.
+    ///
+    /// ⚑ **Die Vorgabe ist die amtliche Form**, also die des Modells
+    /// selbst; siehe [`crate::werkzeug::Ansageform`] fuer die
+    /// Herleitung und dafuer, warum die deutsche Fassung als Schalter
+    /// stehen bleibt, bis die Agentenprobe gelaufen ist.
+    pub ansageform: crate::werkzeug::Ansageform,
 }
 
 /// Warum ein Lauf endete.
@@ -115,10 +131,14 @@ impl<'a> Lauf<'a> {
     /// der interessante Fall; ein Beleg, den es nur bei Erfolg gibt, ist
     /// keiner.
     pub fn fahren(&self, auftrag: &str) -> Ergebnis {
-        let mut strom = Sitzungsstrom::neu(self.anker, self.betriebsart);
+        let mut strom = Sitzungsstrom::neu_mit_einhaengung(
+            self.anker,
+            self.betriebsart,
+            self.einhaengung,
+        );
         let erlaubnis = Erlaubnis::aus_angebot(self.kasten.angebote());
         let mut nachrichten =
-            vec![angebot(self.kasten.angebote()), Nachricht::nutzer(auftrag)];
+            vec![angebot(self.kasten.angebote(), self.ansageform), Nachricht::nutzer(auftrag)];
         let mut getan: u32 = 0;
 
         let ende = loop {
@@ -135,10 +155,7 @@ impl<'a> Lauf<'a> {
                 };
             getan += 1;
             let gefragt = nachrichten.clone();
-            nachrichten.push(Nachricht {
-                role: "assistant".to_string(),
-                content: antwort.text.clone(),
-            });
+            nachrichten.push(Nachricht::modell(antwort.text.clone()));
 
             // 3. Vorschlaege, aus der ANTWORT und aus nichts sonst.
             let roh = vorschlaege(&antwort.text);

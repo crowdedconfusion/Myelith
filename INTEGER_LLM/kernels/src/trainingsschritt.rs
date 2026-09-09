@@ -610,6 +610,46 @@ pub struct Aufmerksamkeitsvorgaben {
     pub kennung: Schrittkennung,
 }
 
+/// Die QK-Normierung eines Blocks (Qwen3), falls das Modell sie hat.
+///
+/// # ⛑ Warum sie bis zum 2026-09-08 fehlte
+///
+/// Sie stand **nur im Vorwaertspfad** (`model.rs`). Der Trainingspfad
+/// rechnete die Aufmerksamkeit ohne sie, und **nichts pruefte das**:
+/// Ein Lauf auf einem Qwen3-Artefakt lief durch und trainierte gegen
+/// eine andere Aufmerksamkeit als die Inferenz.
+///
+/// ⚑ **Die Gammas sind nicht trainierbar**, und das ist eine
+/// Festlegung: Sie sind `head_dim` Zahlen je Ebene, und ein
+/// zusaetzlicher Meister verschoebe die Indizes des stochastischen
+/// Rundens. Zwei Knoten mit verschiedenen Fassungen rechneten dann
+/// verschiedene Deltas und haetten beide recht.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QkNormVorgaben<'a> {
+    /// Gamma fuer Q, je Kopfdimension.
+    pub q_gamma: &'a [i8],
+    /// Die Zeilenskalen dazu.
+    pub q_gamma_shifts: &'a [u8],
+    /// Gamma fuer K.
+    pub k_gamma: &'a [i8],
+    /// Die Zeilenskalen dazu.
+    pub k_gamma_shifts: &'a [u8],
+    /// Die Ausgangsskala von Q nach der Normierung.
+    ///
+    /// ⚑ **Sie ersetzt `q_frac` fuer alles danach**, also fuer RoPE
+    /// und fuer die Punktzahlskala. Wer das vergisst, rechnet die
+    /// Aufmerksamkeit um Zweierpotenzen daneben.
+    pub q_out_frac: u8,
+    /// Dasselbe fuer K.
+    pub k_out_frac: u8,
+    /// Die Nachschlagetabelle der Kehrwurzel.
+    pub rsqrt_lut: &'a [i16],
+    /// Ihre Eingangsschiebung.
+    pub rsqrt_input_shift: u8,
+    /// Ihre Ausgangsskala.
+    pub rsqrt_output_frac: u8,
+}
+
 /// Die Gradienten eines Aufmerksamkeitsblocks.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Aufmerksamkeitsgradienten {
@@ -784,6 +824,21 @@ pub struct Aufmerksamkeitsspur {
     pub attn_aus: Vec<Vec<i16>>,
     /// Die Ausgabe des Blocks je Position.
     pub y: Vec<Vec<i16>>,
+    /// Q je Position und Kopf **vor** der QK-Normierung, leer ohne sie.
+    ///
+    /// ⚑ Der Rueckwaertspass durch eine Normierung braucht ihren
+    /// **Eingang**, nicht ihre Ausgabe; aus der Ausgabe laesst er sich
+    /// nicht zurueckrechnen.
+    pub q_vor_norm: Vec<Vec<Vec<i16>>>,
+    /// Dasselbe fuer K.
+    pub k_vor_norm: Vec<Vec<Vec<i16>>>,
+    /// Die Normspur je Position und Kopf fuer Q, leer ohne Normierung.
+    ///
+    /// ⚑ `r` ist **nachgeschlagen** und nicht nachrechenbar, ohne den
+    /// Vorwaertspass zu wiederholen.
+    pub q_normspur: Vec<Vec<crate::rmsnorm::Rmsnormspur>>,
+    /// Dasselbe fuer K.
+    pub k_normspur: Vec<Vec<crate::rmsnorm::Rmsnormspur>>,
 }
 
 /// Der Vorwärtspass des Aufmerksamkeitsblocks über eine Folge.
@@ -811,6 +866,7 @@ pub fn vorwaerts_der_aufmerksamkeit(
     sin_lut: &[i16],
     exp_lut: &[i16],
     aus_skalen: Option<&[u8]>,
+    qkn: Option<QkNormVorgaben<'_>>,
     v: Aufmerksamkeitsvorgaben,
 ) -> Aufmerksamkeitsspur {
     let hs = v.hidden_size;
@@ -835,7 +891,15 @@ pub fn vorwaerts_der_aufmerksamkeit(
     // Vorwaerts bringt diese Weite das Skalarprodukt auf die
     // Punktzahlskala. ⚑ **Rueckwaerts gilt sie nicht**, dort hat jeder
     // der beiden Ausgaenge seine eigene; siehe `attention_backward`.
-    let score_shift = (v.q_frac as u16 + v.k_frac as u16 + 15)
+    // ⚑ **Nach der QK-Normierung gilt ihre Ausgangsskala**, nicht die
+    // der Projektion. Wer das vergisst, rechnet die Aufmerksamkeit um
+    // Zweierpotenzen daneben, und zwar ohne dass etwas saettigt oder
+    // ueberlaeuft: Es kommt eine andere, plausible Verteilung heraus.
+    let (q_wirk, k_wirk) = match &qkn {
+        Some(n) => (n.q_out_frac, n.k_out_frac),
+        None => (v.q_frac, v.k_frac),
+    };
+    let score_shift = (q_wirk as u16 + k_wirk as u16 + 15)
         .saturating_sub(v.score_frac as u16) as u8;
     let lut_shift = v.score_frac.saturating_sub(v.exp_input_frac);
 
@@ -854,18 +918,49 @@ pub fn vorwaerts_der_aufmerksamkeit(
         let idx = (v.positionsversatz + t) % n_pos;
         let cos_row = &cos_lut[idx * halb..(idx + 1) * halb];
         let sin_row = &sin_lut[idx * halb..(idx + 1) * halb];
+        // ⚑ **Koepfe zuerst, dann normieren, dann RoPE**, und die
+        // Reihenfolge ist Teil des Ausfuehrungsprofils: Das
+        // Referenzmodell normiert vor der Drehung, und RoPE selbst ist
+        // skaleninvariant, reicht die neue Skala also unveraendert
+        // weiter.
+        let mut q_koepfe: Vec<Vec<i16>> =
+            (0..v.num_heads).map(|h| q_flat[h * hd..(h + 1) * hd].to_vec()).collect();
+        let mut k_koepfe: Vec<Vec<i16>> =
+            (0..v.num_kv_heads).map(|h| k_flat[h * hd..(h + 1) * hd].to_vec()).collect();
+        if let Some(n) = &qkn {
+            spur.q_vor_norm.push(q_koepfe.clone());
+            spur.k_vor_norm.push(k_koepfe.clone());
+            spur.q_normspur.push(crate::rmsnorm::qk_norm_heads_mit_spur(
+                &mut q_koepfe,
+                v.q_frac,
+                n.q_gamma,
+                n.q_gamma_shifts,
+                n.rsqrt_lut,
+                n.rsqrt_input_shift,
+                n.rsqrt_output_frac,
+                n.q_out_frac,
+            ));
+            spur.k_normspur.push(crate::rmsnorm::qk_norm_heads_mit_spur(
+                &mut k_koepfe,
+                v.k_frac,
+                n.k_gamma,
+                n.k_gamma_shifts,
+                n.rsqrt_lut,
+                n.rsqrt_input_shift,
+                n.rsqrt_output_frac,
+                n.k_out_frac,
+            ));
+        }
         spur.q.push(
-            (0..v.num_heads)
-                .map(|h| {
-                    rotate_half_split_i16(&q_flat[h * hd..(h + 1) * hd], cos_row, sin_row, v.rope_frac)
-                })
+            q_koepfe
+                .iter()
+                .map(|kopf| rotate_half_split_i16(kopf, cos_row, sin_row, v.rope_frac))
                 .collect(),
         );
         spur.k.push(
-            (0..v.num_kv_heads)
-                .map(|h| {
-                    rotate_half_split_i16(&k_flat[h * hd..(h + 1) * hd], cos_row, sin_row, v.rope_frac)
-                })
+            k_koepfe
+                .iter()
+                .map(|kopf| rotate_half_split_i16(kopf, cos_row, sin_row, v.rope_frac))
                 .collect(),
         );
         // ⚑ **V wird nicht gedreht.** RoPE traegt die Position in das
@@ -955,6 +1050,10 @@ pub fn gradienten_der_aufmerksamkeit(
         sin_lut,
         exp_lut,
         None,
+        // ⚑ Ohne QK-Normierung: Modelle mit ihr lehnt
+        // `Shardgewichte::aus_modell` ab, bis der Rueckwaertspass sie
+        // traegt.
+        None,
         v,
     );
     let mut abstand = 0i64;
@@ -980,7 +1079,12 @@ pub fn gradienten_der_aufmerksamkeit(
                 q: &wq, q_skalen: &sq, k: &wk, k_skalen: &sk,
                 v: &wv, v_skalen: &sv, o: &wo, o_skalen: &so,
             },
-            cos_lut, sin_lut, v,
+            cos_lut,
+            sin_lut,
+            // ⚑ Ohne QK-Normierung, siehe den Vorwaertspfad.
+            None,
+            v,
+
         ),
     )
 }
@@ -1006,6 +1110,7 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
     gew: Aufmerksamkeitsgewichte<'_>,
     cos_lut: &[i16],
     sin_lut: &[i16],
+    qkn: Option<QkNormVorgaben<'_>>,
     v: Aufmerksamkeitsvorgaben,
 ) -> Aufmerksamkeitsgradienten {
     let hs = v.hidden_size;
@@ -1100,6 +1205,46 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
             g_v_flat.extend(roh_v.iter().copied().map(begrenze));
         }
 
+        // ⚑ **Und zurueck durch die QK-Normierung**, falls das Modell
+        // sie hat (Qwen3). Sie sitzt im Vorwaertspfad **vor** RoPE,
+        // also hier **danach**: Erst die Drehung zurueck, dann die
+        // Normierung.
+        //
+        // ⛑ **Der Gradient auf die Gammas wird verworfen**, siehe
+        // `qk_norm_heads_backward`. Sie sind `head_dim` Zahlen je
+        // Ebene, und ein zusaetzlicher Meister verschoebe die Indizes
+        // des stochastischen Rundens.
+        if let Some(n) = &qkn {
+            let je_kopf = |flach: &[Grad], anzahl: usize| -> Vec<Vec<Grad>> {
+                (0..anzahl).map(|h| flach[h * hd..(h + 1) * hd].to_vec()).collect()
+            };
+            let inv_n = crate::rmsnorm::inv_n_q20(hd);
+            let gq = crate::backward::qk_norm_heads_backward(
+                &je_kopf(&g_q_flat, v.num_heads),
+                &spur.q_vor_norm[t],
+                &spur.q_normspur[t],
+                v.q_frac,
+                n.q_gamma,
+                n.q_gamma_shifts,
+                v.attn_out_frac,
+                v.attn_out_frac,
+                inv_n,
+            );
+            g_q_flat = gq.concat();
+            let gk = crate::backward::qk_norm_heads_backward(
+                &je_kopf(&g_k_flat, v.num_kv_heads),
+                &spur.k_vor_norm[t],
+                &spur.k_normspur[t],
+                v.k_frac,
+                n.k_gamma,
+                n.k_gamma_shifts,
+                v.attn_out_frac,
+                v.attn_out_frac,
+                inv_n,
+            );
+            g_k_flat = gk.concat();
+        }
+
         // ⚑ **Der Eingangsgradient ist die Summe ueber Q, K und V**,
         // denn alle drei lesen dieselbe Zeile. In `i64` addiert und
         // **einmal** gesaettigt.
@@ -1176,6 +1321,12 @@ pub struct Ebenenvorgaben<'a> {
     /// Die Vorgaben des Feedforward-Blocks. `aus_frac` wird
     /// überschrieben.
     pub mlp: Mlpvorgaben,
+    /// Die QK-Normierung (Qwen3), falls die Ebene sie hat.
+    ///
+    /// ⚑ **`None` ist der bisherige Weg**, und dass er unveraendert
+    /// bleibt, ist die Zusicherung, an der die Bitgleichheit aller
+    /// schon trainierten Modelle haengt.
+    pub qk_norm: Option<QkNormVorgaben<'a>>,
     /// Bruchstellen des Residualstroms beim Eintritt, **je Kanal**.
     ///
     /// ⚑ **Je Kanal und nicht eine Zahl** (Fund 20). Gemessen an
@@ -1325,7 +1476,9 @@ pub fn vorwaerts_der_ebene(
     // 2. Der Aufmerksamkeitsblock ueber die ganze Folge.
     spur.aufmerksamkeit = vorwaerts_der_aufmerksamkeit(
         g.aufmerksamkeit, &spur.norm_ein, vorspannungen, t.cos, t.sin, t.exp,
-        Some(&acc_attn), a_vorgaben,
+        Some(&acc_attn),
+        v.qk_norm,
+        a_vorgaben,
     );
 
     // 3. Erste Residualaddition, zweite Normierung, Feedforward,
@@ -1520,6 +1673,8 @@ pub fn gradienten_der_ebene_aus_gradient(
         .collect();
     let a_grad = gradienten_der_aufmerksamkeit_aus_gradient(
         &g_attn, &spur.norm_ein, &spur.aufmerksamkeit, g.aufmerksamkeit, t.cos, t.sin,
+        // ⚑ Ohne QK-Normierung, siehe den Vorwaertspfad.
+        None,
         a_vorgaben,
     );
 
@@ -2638,6 +2793,8 @@ mod tests {
         m.master_frac = 14;
         m.lr_zaehler = lr_zaehler;
         Ebenenvorgaben {
+            // ⚑ Dieses Pruefmodell hat keine QK-Normierung.
+            qk_norm: None,
             aufmerksamkeit: a,
             mlp: m,
             residual_in_frac: &sk.0,

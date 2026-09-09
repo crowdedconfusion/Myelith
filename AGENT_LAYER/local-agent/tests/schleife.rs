@@ -175,6 +175,7 @@ fn fahren(
         adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
     };
     Lauf {
+        einhaengung: None,
         klient: &klient,
         modell: "m",
         grenzen: &grenzen,
@@ -184,8 +185,98 @@ fn fahren(
         adressen: &finden,
         anker: Hash::from_bytes([7u8; 32]),
         max_tokens: Some(32),
+        ansageform: Default::default(),
     }
     .fahren("Wie spaet ist es?")
+}
+
+// --- ⚑ Die Naht: ein Modellweg ohne Netz (CLIENT 0.2) -----------------
+
+/// Ein Modellweg, der **keinen Netzverkehr** treibt.
+///
+/// ⚑ **Er steht hier als Gegenprobe der Naht.** Bis zum 2026-09-08
+/// verlangte [`Lauf`] einen `Tuerklient`, also einen Knoten; der Agent
+/// war ohne Netz nutzlos, obwohl das Modell auf derselben Maschine
+/// liegen kann. Dass dieser Stummel ohne eine einzige Verbindung durch
+/// dieselbe Schleife laeuft, ist der Beleg dafuer, dass die Trennung
+/// eine ist.
+///
+/// ⛑ **Was er NICHT ist:** ein lokales Modell. Er antwortet aus einer
+/// Liste. Das eigentliche Einhaengen des Ganzzahllaufwerks gehoert in
+/// den Client und ausdruecklich nicht in diese Kiste, die eine
+/// Vollmacht traegt und deshalb fast keine Abhaengigkeiten hat.
+struct OertlicherWeg {
+    antworten: std::cell::RefCell<std::collections::VecDeque<String>>,
+    gerufen: std::cell::Cell<usize>,
+}
+
+impl OertlicherWeg {
+    fn neu(antworten: Vec<&str>) -> Self {
+        Self {
+            antworten: std::cell::RefCell::new(
+                antworten.into_iter().map(String::from).collect(),
+            ),
+            gerufen: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl myl_local_agent::Modellweg for OertlicherWeg {
+    fn chat(
+        &self,
+        _modell: &str,
+        _nachrichten: &[myl_local_agent::Nachricht],
+        _max_tokens: Option<u32>,
+    ) -> Result<myl_local_agent::Antwort, myl_local_agent::Tuerfehler> {
+        self.gerufen.set(self.gerufen.get() + 1);
+        let text = self.antworten.borrow_mut().pop_front().unwrap_or_default();
+        Ok(myl_local_agent::Antwort {
+            text,
+            abschlussgrund: None,
+            kennung: "oertlich".to_string(),
+            segment: Default::default(),
+            prompt_token: 0,
+            antwort_token: 0,
+        })
+    }
+}
+
+/// ⚑ **Derselbe Lauf, ohne einen einzigen Netzaufruf.**
+#[test]
+fn die_schleife_laeuft_ohne_netz() {
+    let weg = OertlicherWeg::neu(vec![
+        "{\"werkzeug\":\"zeit\",\"argumente\":{}}",
+        "Fertig.",
+    ]);
+    let a = aufbau();
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(4), a.kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> {
+        adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
+    };
+    let erg = Lauf {
+        klient: &weg,
+        modell: "oertlich",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &a.kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+    }
+    .fahren("Wie spaet ist es?");
+
+    assert!(
+        weg.gerufen.get() >= 1,
+        "der oertliche Weg wurde nie gerufen: die Naht traegt nicht"
+    );
+    assert!(
+        !erg.nachrichten.is_empty(),
+        "ohne Netz entstand kein Verlauf, die Schleife lief also nicht"
+    );
 }
 
 // --- Die Tests --------------------------------------------------------

@@ -64,6 +64,16 @@ impl Nachricht {
     pub fn system(text: impl Into<String>) -> Self {
         Self { role: "system".to_string(), content: text.into() }
     }
+    /// Eine Nachricht des Modells.
+    ///
+    /// ⛑ **Die gab es bis zum 2026-09-09 nicht**, und `schleife.rs`
+    /// baute sie deshalb von Hand mit `role: "assistant"`. Eine
+    /// Rollenbezeichnung, die an zwei Stellen als Zeichenkette steht,
+    /// ist eine Stelle zu viel: Wer sie an einer aendert, bekommt kein
+    /// Wort vom Uebersetzer.
+    pub fn modell(text: impl Into<String>) -> Self {
+        Self { role: "assistant".to_string(), content: text.into() }
+    }
 }
 
 /// Was der Klient sendet.
@@ -188,12 +198,44 @@ impl std::fmt::Display for Tuerfehler {
 
 impl std::error::Error for Tuerfehler {}
 
+/// Woher eine Modellantwort kommt.
+///
+/// # ⚑ Die Naht zwischen Netzbetrieb und lokalem Betrieb (CLIENT 0.2)
+///
+/// Die Schleife brauchte bis zum 2026-09-08 einen [`Tuerklient`], also
+/// **einen Knoten**. Damit war der Agent ohne Netz nutzlos, obwohl das
+/// Modell auf derselben Maschine liegen kann.
+///
+/// ⚑ **Warum ein Merkmal und nicht eine zweite Abhaengigkeit.** Der
+/// naheliegende Griff waere, `integer-llm-runtime` hier einzuhaengen.
+/// **Er waere falsch:** Diese Kiste traegt eine Vollmacht und hat
+/// deshalb bewusst fast keine Abhaengigkeiten, nicht einmal einen
+/// HTTP-Klienten (siehe die Begruendung in `Cargo.toml`). Das
+/// Modelllaufwerk hereinzuziehen kehrte diese Entscheidung um. Das
+/// Merkmal laesst die Umsetzung **draussen**: Der Client baut sie, die
+/// Schleife kennt nur die Form.
+///
+/// ⚑ **Und die Form ist bereits die richtige.** Die Tuer spricht die
+/// OpenAI-Form; ein lokales Modell bedient dieselbe Form, ohne dass die
+/// Schleife den Unterschied bemerkt.
+pub trait Modellweg {
+    /// Eine Runde: Nachrichten hinein, eine Antwort heraus.
+    fn chat(
+        &self,
+        modell: &str,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+    ) -> Result<Antwort, Tuerfehler>;
+}
+
 /// Ein Klient für die Tür eines Knotens.
 ///
 /// ⚑ **Er hält eine Vollmacht und sonst nichts.** Das ist die ganze
 /// Berührung dieses Harness mit der Kette, siehe Modulkopf von
 /// [`crate`].
 #[derive(Debug, Clone)]
+
+
 pub struct Tuerklient {
     wirt: String,
     port: u16,
@@ -398,4 +440,16 @@ fn inhaltslaenge(kopf: &str) -> Option<usize> {
         .find(|z| z.to_ascii_lowercase().starts_with("content-length:"))
         .and_then(|z| z.split(':').nth(1))
         .and_then(|w| w.trim().parse().ok())
+}
+
+/// ⚑ Die Tuer ist der erste Weg und bleibt der Regelfall.
+impl Modellweg for Tuerklient {
+    fn chat(
+        &self,
+        modell: &str,
+        nachrichten: &[Nachricht],
+        max_tokens: Option<u32>,
+    ) -> Result<Antwort, Tuerfehler> {
+        Tuerklient::chat(self, modell, nachrichten, max_tokens)
+    }
 }

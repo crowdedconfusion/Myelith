@@ -31,6 +31,17 @@
 #   Release.
 # - **Keine Signatur der Binaries.** Es gibt Prüfsummen, und die sagen
 #   nur, dass die Datei unverändert ankam, nicht von wem sie stammt.
+#   macOS-Gatekeeper und Windows-SmartScreen werden das Ergebnis
+#   entsprechend anmeckern.
+# - **Keine Oberfläche.** `myl-oberflaeche` ist hier nicht dabei. Sie
+#   braucht je Plattform ein eigenes Bündel (`.app`/`.dmg`, `.msi`,
+#   AppImage) und auf Linux die WebKit-Pakete des Runners; das ist ein
+#   eigener Job und keine sechste Zeile in diesem hier. Wer sie will,
+#   baut sie mit `werkzeuge/freigabe.sh` für die eigene Maschine.
+# - **Nicht reproduzierbar.** Zwei Läufe geben verschiedene Summen. Die
+#   Summen belegen, dass eine heruntergeladene Datei die ist, die
+#   gebaut wurde, nicht, dass jemand anders denselben Bau nachvollziehen
+#   kann.
 
 name: Release
 
@@ -106,6 +117,15 @@ jobs:
         working-directory: NODE/myl-node
         run: cargo build --release --locked --target ${{ matrix.ziel }}
 
+      # ⚑ Der Client kam am 2026-09-08 dazu. Bis dahin lieferte dieser
+      # Job Knoten und Testclient, also die beiden Programme fuer
+      # Teilnehmer, und nicht das Programm, mit dem ein Mensch das Netz
+      # ueberhaupt benutzt.
+      - name: Client bauen
+        shell: bash
+        working-directory: CLIENT/myl-client
+        run: cargo build --release --locked --target ${{ matrix.ziel }}
+
       # ⚑ Der Kern dieses Workflows. Nicht der Bau belegt etwas, sondern
       # dieser Lauf: Das **gebaute** Binary rechnet die sechs
       # Operations-Vektoren, und der Gesamtwert muss der bekannte sein.
@@ -118,13 +138,51 @@ jobs:
           BIN="TESTCLIENT/myl-testclient/target/${{ matrix.ziel }}/release/myl-test${{ matrix.endung }}"
           mkdir -p release-konf
           "$BIN" --name release --logs release-konf konformitaet
-          if ! grep -q '894d8357ae92b5c1' release-konf/*.jsonl; then
-            echo "FEHLER: dieses Binary rechnet anders als das Netz."
-            echo "Erwartet 894d8357ae92b5c1, gefunden:"
-            grep -o '"gesamt":"[^"]*"' release-konf/*.jsonl || cat release-konf/*.jsonl
+          # ⛑ **Hier stand nur `894d…`, und das ist der Abdruck von
+          # `konformitaet_op`, also nur der sechs Operations-Vektoren.**
+          # Der Lauf prueft siebzehn. Ein Binary mit einem abweichenden
+          # Trainings- oder MoE-Kern waere veroeffentlicht worden, und
+          # genau dessen Bitgleichheit ist die Zusage, die dieses
+          # Release gibt.
+          for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
+                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+            abdruck="${paar%%:*}"; was="${paar#*:}"
+            if ! grep -q "$abdruck" release-konf/*.jsonl; then
+              echo "FEHLER: dieses Binary rechnet anders als das Netz."
+              echo "$was weicht ab, erwartet $abdruck. Gefunden:"
+              grep -o '"name":"[^"]*","digest":"[^"]*"' release-konf/*.jsonl || cat release-konf/*.jsonl
+              exit 1
+            fi
+          done
+          echo "Konformitaet belegt fuer ${{ matrix.ziel }}: 17 Vektoren"
+
+      # ⚑ **Warum der Client keinen eigenen Konformitaetslauf bekommt.**
+      # Er koennte einen haben, und er waere eine Doppelung: `myl` und
+      # `myl-test` binden dieselben Kerne, gebaut aus derselben Quelle,
+      # mit derselben Toolchain, auf demselben Runner. Ganzzahlarithmetik
+      # ist exakt; Inlining und LTO koennen ein Ergebnis nicht
+      # verschieben, wie es bei Gleitkomma der Fall waere. Der Lauf oben
+      # belegt die Kerne dieses Runners, und `myl` traegt dieselben.
+      #
+      # Was er **nicht** belegt, ist, dass das Client-Binary auf diesem
+      # Ziel ueberhaupt startet. Genau das prueft die Startprobe, und
+      # ⛑ sie hat beim Bauen sofort etwas gefunden: `myl` gab auf
+      # **jeden** unbekannten Befehl die Hilfe aus und dazu null zurueck,
+      # eine Startprobe waere also auch dann gruen gewesen, wenn das
+      # Binary nichts kann. Seit CLIENT 0.8.1 ist ein Aufruffehler eine
+      # 2 auf stderr, gedeckt von `tests/aufruf.rs`.
+      - name: Startprobe des Clients
+        if: matrix.eigen
+        shell: bash
+        run: |
+          set -e
+          BIN="CLIENT/myl-client/target/${{ matrix.ziel }}/release/myl${{ matrix.endung }}"
+          "$BIN" --hilfe > /dev/null
+          if "$BIN" kein-solcher-befehl > /dev/null 2>&1; then
+            echo "FEHLER: myl meldet einen unbekannten Befehl nicht."
             exit 1
           fi
-          echo "Konformitaet belegt fuer ${{ matrix.ziel }}"
+          echo "Start belegt fuer ${{ matrix.ziel }}"
 
       - name: Ungeprueftes Ziel benennen
         if: ${{ !matrix.eigen }}
@@ -143,6 +201,8 @@ jobs:
              "ausgabe/myl-test-${{ matrix.ziel }}${{ matrix.endung }}"
           cp "NODE/myl-node/target/${{ matrix.ziel }}/release/myl-node${{ matrix.endung }}" \
              "ausgabe/myl-node-${{ matrix.ziel }}${{ matrix.endung }}"
+          cp "CLIENT/myl-client/target/${{ matrix.ziel }}/release/myl${{ matrix.endung }}" \
+             "ausgabe/myl-${{ matrix.ziel }}${{ matrix.endung }}"
           # Ein Ziel, das sich nicht selbst pruefen konnte, wird als
           # solches ausgeliefert und nicht stillschweigend gleichgestellt.
           if [ "${{ matrix.eigen }}" != "true" ]; then
@@ -189,13 +249,23 @@ jobs:
           MARKE="${GITHUB_REF_NAME}"
           gh release create "$MARKE" release/* \
             --title "$MARKE" \
-            --notes "Gebaute Binaries für Testclient (\`myl-test\`) und Knoten (\`myl-node\`).
+            --notes "Gebaute Binaries für Client (\`myl\`), Testclient (\`myl-test\`) und Knoten (\`myl-node\`).
+
+          \`myl\` ist das Programm für Menschen: eine Frage an ein lokales Modell, die
+          Agentenschleife, die Einstellungen. Es braucht ein Modellartefakt, und das liegt
+          einem Release nicht bei (mehrere Gigabyte, aus einem Kalibrierungslauf entstanden).
+          Die grafische Oberfläche ist nicht dabei; sie braucht je Plattform ein eigenes
+          Bündel und wird mit \`werkzeuge/freigabe.sh\` örtlich gebaut.
 
           **Jedes Binary hat vor der Veröffentlichung belegt, dass es richtig rechnet:**
-          Der Konformitätslauf der sechs Operations-Vektoren lief mit genau diesem
-          Binary auf dem Rechner, der es gebaut hat, und ergab den bekannten Wert.
+          Der Konformitätslauf über **siebzehn** Vektoren (Operationen, Training und
+          Gemisch) lief mit genau diesem Binary auf dem Rechner, der es gebaut hat, und
+          ergab die bekannten Werte.
           Ausnahme ist \`x86_64-apple-darwin\`; der macOS-Runner ist arm64 und kann
           dieses Binary nicht starten. Es liegt eine Datei \`UNGEPRUEFT-*.txt\` dabei.
+          Der Lauf gilt \`myl-test\`; \`myl\` und \`myl-node\` binden dieselben Kerne aus
+          derselben Quelle, und Ganzzahlarithmetik ist exakt, also verschiebt kein Inlining
+          ein Ergebnis. Für \`myl\` ist zusätzlich belegt, dass es auf dem Ziel startet.
 
           **Die Linux-Binaries binden gegen die glibc des Runners.** Auf einer
           älteren Verteilung starten sie nicht; dort weiterhin selbst übersetzen.

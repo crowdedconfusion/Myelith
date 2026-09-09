@@ -15,8 +15,23 @@
 //! ## Der Umfang gehört zum Messverfahren
 //!
 //! Zwei Läufe können verschiedene Mengen an Vektoren geprüft haben:
-//! ohne Artefakt nur die sechs Operations-Vektoren, mit passendem
-//! Artefakt alle dreiunddreißig. Der Gesamtwert trägt deshalb den
+//! ohne Artefakt **siebzehn** (sechs Operationen, dazu Training und
+//! Gemisch), mit passendem Artefakt zusätzlich die modellabhängigen.
+//!
+//! ⛑ **Hier stand „sechs ohne Artefakt, dreiunddreißig mit", und das
+//! galt einmal.** Training und Gemisch kamen später dazu und brauchen
+//! kein Artefakt; die Zeile wurde nicht nachgezogen. Am 2026-09-09 fiel
+//! auf, dass die Wächter in `ci.yml` und `release.yml` deshalb den
+//! **falschen Abdruck** prüften: `894d8357ae92b5c1` ist der von
+//! `konformitaet_op`, also nur der sechs, und der Gesamtwert
+//! `6da384ba301b9454` über alle siebzehn war von nirgends gedeckt. Ein
+//! Trainings- oder MoE-Kern hätte sich ändern können, und alle Jobs
+//! wären grün geblieben.
+//!
+//! ⚑ **Wer hier den Umfang ändert, ändert den Gesamtabdruck**, und
+//! dann fallen drei CI-Jobs und der Release-Job. Das ist gewollt: Sie
+//! sind die einzige Stelle, an der jemand merkt, dass sich die Zusage
+//! geändert hat. Der Gesamtwert trägt deshalb den
 //! Umfang (`konformitaet_umfang`), und `vergleich` behandelt zwei
 //! verschiedene Umfänge wie zwei verschiedene Modellstände:
 //! unvergleichbar, ausdrücklich kein Hardware-Befund. Dasselbe Prinzip

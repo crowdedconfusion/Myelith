@@ -21,7 +21,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+# ⚑ **Zwei Wurzeln, und der Unterschied war bis zum 2026-09-07 nicht
+# sichtbar.** Diese Datei lag unter `BENCHMARKS/Inferenz/`, und `REPO`
+# hiess zwar so, zeigte aber auf `INTEGER_LLM/`. Seit dem Umzug nach
+# `BENCHMARKS/Inferenz/` sind es zwei verschiedene Orte, und beide
+# bekommen deshalb einen eigenen Namen: `LLM` fuer Artefakte, Tests und
+# Kalibrierung, `HIER` fuer alles, was zu dieser Messung gehoert.
+LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
+HIER = Path(__file__).resolve().parent
+REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
 ARTIFACTS = REPO / "artifacts" / "qwen2.5-0.5b"
 # Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
@@ -31,7 +39,7 @@ sys.path.insert(0, str(REPO / "tests"))
 from cargo_paths import binary, fehlt_hinweis  # noqa: E402
 
 BENCH = binary("runtime", "bench_probe")
-RESULTS_DIR = REPO / "eval" / "results" / "evidence"
+RESULTS_DIR = HIER / "results" / "evidence"
 
 # Kurzer Prompt (wenige Prompt-Tokens, Decode-dominiert) und längerer
 # Prompt (Prefill-Anteil sichtbar). Repetitions für Stabilität.

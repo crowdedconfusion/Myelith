@@ -620,7 +620,7 @@ kurzen Prompts kaum auffielen.
 **Wichtig zur Einordnung:** Der Client misst **Bitgleichheit, nicht
 Genauigkeit**. Ob eine Antwort inhaltlich stimmt, beantwortet dieser
 Lauf nicht und soll er nicht; dafür gibt es die Perplexitätsmessung in
-`INTEGER_LLM/eval` gegen die Gleitkomma-Referenz. Ein „Benchmark" heißt
+`BENCHMARKS/Inferenz` gegen die Gleitkomma-Referenz. Ein „Benchmark" heißt
 hier: ein Prompt, der schwer zu rechnen ist, nicht einer, der bewertet
 wird.
 
@@ -730,7 +730,7 @@ Ein **Laufprotokoll** schreibt `vergleich` dagegen nicht: Es misst nichts,
 es wertet aus.
 
 Der Berichtsordner wird nicht versioniert. Was bleiben soll, gehört nach
-`INTEGER_LLM/eval/results/`: siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
+`BENCHMARKS/Inferenz/results/`: siehe [B7](#b7-ergebnis-dauerhaft-festhalten).
 
 ## B4a. Nach einem Modellwechsel: `modellstaende`
 
@@ -823,7 +823,7 @@ veralteter Stand, nicht kaputte Hardware.
 ## B7. Ergebnis dauerhaft festhalten
 
 Laufprotokolle sind flüchtig, `logs/` ist gitignored. Ein bestätigter
-Cross-Hardware-Nachweis gehört nach `INTEGER_LLM/eval/results/`, mit
+Cross-Hardware-Nachweis gehört nach `BENCHMARKS/Inferenz/results/`, mit
 Datum, beteiligten Architekturen, Backends, θ_v-Stand und den
 Vergleichswerten.
 

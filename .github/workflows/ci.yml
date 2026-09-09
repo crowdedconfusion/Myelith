@@ -305,6 +305,51 @@ jobs:
         working-directory: INTEGER_LLM/conformance
         run: ./run.sh reference
 
+      # ⛑ **Der Gesamtwert fehlte hier, und die Linux-Meldung behauptete
+      # trotzdem, er stimme „mit Windows und macOS ueberein".** Auf
+      # macOS lief bis zum 2026-09-09 nur `run.sh`, das die sechs
+      # Vektoren einzeln prueft; die eine Zahl, die das Netz spaeter
+      # vergleicht, wurde hier nie gerechnet. Zwei Plattformen mit dem
+      # Wert und eine Behauptung ueber die dritte sind nicht drei
+      # Plattformen (CLIENT 1.7).
+      #
+      # ⚑ **Ein Fund derselben Art wie Punkt 30 vom 2026-08-29**, wo
+      # der Wert nur auf Windows geprueft wurde und die Begruendung fuer
+      # Linux eine Gewohnheit beschrieb statt einer Pruefung. Diesmal
+      # war es umgekehrt herum, und die Meldung sagte es sogar laut.
+      #
+      # Ohne `--release`, weil der Wert profilunabhaengig ist: am
+      # 2026-08-29 auf aarch64/macOS in beiden Profilen gemessen,
+      # derselbe Wert. Er braucht kein Modell.
+      - name: Konformitaetswert (macOS, aarch64)
+        working-directory: TESTCLIENT/myl-testclient
+        run: |
+          set -e
+          mkdir -p ci-konf
+          cargo run --quiet -- --name ci --logs ci-konf konformitaet
+          # ⛑ **ZWEI Abdruecke, und der zweite ist der eigentliche.**
+          # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
+          # das ist der Abdruck von `konformitaet_op`, also **nur der
+          # sechs Operations-Vektoren**. Der Lauf prueft aber
+          # siebzehn: op, training und moe. Ein Trainings- oder
+          # MoE-Kern haette sich also aendern koennen, und der
+          # Waechter waere gruen geblieben, obwohl genau diese
+          # Bitgleichheit die Kernthese des Projekts ist.
+          #
+          # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
+          # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
+          # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
+          for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
+                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+            abdruck="${paar%%:*}"; was="${paar#*:}"
+            if ! grep -q "$abdruck" ci-konf/*.jsonl; then
+              echo "FEHLER: $was weicht ab, erwartet $abdruck"
+              grep -o '"name":"[^"]*","digest":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
+              exit 1
+            fi
+          done
+          echo "Konformitaet belegt auf aarch64/macOS: 17 Vektoren, beide Abdruecke"
+
   # ── Runtime: Nur Unit-Tests (keine Integrationstests mit Artefakten) ─
   runtime:
     name: Runtime Tests
@@ -416,6 +461,8 @@ jobs:
             TRAINING/myl-train
             NODE/myl-node
             TESTCLIENT/myl-testclient
+            CLIENT/myl-client
+            CLIENT/myl-oberflaeche
             # ⚑ Diese drei fehlten bis zum 2026-08-28, obwohl die
             # Clippy-Schleife darunter sie seit jeher übersetzt: Sie
             # bauten in jedem Lauf von vorn, und `kernels` sogar
@@ -618,6 +665,54 @@ jobs:
           MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
+      # ⛑ **Der Client lief bis zum 2026-09-08 in keinem Testlauf.**
+      #
+      # Die Clippy-Schleife oben findet ihn, weil sie die Crates aus
+      # dem Dateisystem holt; `cargo test` steht dagegen je Crate von
+      # Hand hier, und ein neues Crate ist damit erst einmal ungeprüft.
+      # **Das ist dieselbe Falle wie Fund 65**, nur eine Zeile weiter.
+      #
+      # Was hier läuft, braucht **kein Artefakt**: die Einhängegrenze
+      # der Dateiwerkzeuge (`..`, Verweis, absoluter Pfad), der Weg vom
+      # Werkzeugvorschlag bis zur geschriebenen Datei über einen
+      # eingesteckten `Modellweg`, und die Zusicherung, dass sich das
+      # geladene Modell über Fäden teilen lässt.
+      #
+      # ⛑ **`MYL_OHNE_ARTEFAKTE=1` ist keine Formalie.**
+      # `tests/ende_zu_ende.rs` laedt sonst ein 4B-Artefakt und schlaegt
+      # fehl, wenn keines da ist, und in der CI liegt keines. Genau so
+      # steht es seit Fund 113 auch beim Testclient: Ein fehlendes
+      # Modell **schlaegt fehl**, ausser der Sprung wird ausdruecklich
+      # erlaubt. Beim ersten Einbau dieses Schrittes fehlte die Zeile.
+      - name: cargo test — CLIENT (myl-client)
+        working-directory: CLIENT/myl-client
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
+        run: cargo test --quiet
+
+      # ⛑ **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
+      # Systems**, und unter Ubuntu heissen sie `libwebkit2gtk-4.1-dev`
+      # samt `libgtk-3-dev` und `libayatana-appindicator3-dev`. Ohne sie
+      # bricht der Bau in `wry` ab, mit einer Meldung über eine fehlende
+      # `pkg-config`-Datei, die nicht nach dem eigentlichen Grund
+      # aussieht.
+      #
+      # ⚑ **`cargo test` und nicht nur `check`**, obwohl sich das
+      # Fenster in der CI nicht öffnen liesse: `tests/oberflaeche.rs`
+      # öffnet keines. Sie liest HTML, CSS und JS als Text und prüft,
+      # was ohne Bündler sonst niemand prüft, nämlich dass jede gesuchte
+      # Kennung existiert, jede Klasse eine Regel hat und nichts aus dem
+      # Netz geladen wird.
+      - name: Systembibliotheken für die Oberfläche (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: cargo test — CLIENT (myl-oberflaeche)
+        working-directory: CLIENT/myl-oberflaeche
+        run: cargo test --quiet
+
       # ⚑ **Die Kernthese, auf Linux geprüft** (Punkt 30, 2026-08-29).
       #
       # Der Konformitätswert muss auf jeder Maschine derselbe sein; das
@@ -636,13 +731,28 @@ jobs:
           set -e
           mkdir -p ci-konf
           cargo run --quiet -- --name ci --logs ci-konf konformitaet
-          if ! grep -q '894d8357ae92b5c1' ci-konf/*.jsonl; then
-            echo "Konformitaetswert weicht ab: erwartet 894d8357ae92b5c1"
-            echo "Gefunden:"
-            grep -o '"gesamt":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
-            exit 1
-          fi
-          echo "Konformitaetswert stimmt mit Windows und macOS ueberein"
+          # ⛑ **ZWEI Abdruecke, und der zweite ist der eigentliche.**
+          # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
+          # das ist der Abdruck von `konformitaet_op`, also **nur der
+          # sechs Operations-Vektoren**. Der Lauf prueft aber
+          # siebzehn: op, training und moe. Ein Trainings- oder
+          # MoE-Kern haette sich also aendern koennen, und der
+          # Waechter waere gruen geblieben, obwohl genau diese
+          # Bitgleichheit die Kernthese des Projekts ist.
+          #
+          # ⚑ Beide bleiben stehen, weil sie Verschiedenes sagen: Der
+          # Teilabdruck benennt bei einem Fehlschlag, WELCHE Gruppe
+          # ausschert, der Gesamtabdruck faengt ueberhaupt alle.
+          for paar in "894d8357ae92b5c1:konformitaet_op (6 Vektoren)" \
+                      "6da384ba301b9454:konformitaet gesamt (17 Vektoren)"; do
+            abdruck="${paar%%:*}"; was="${paar#*:}"
+            if ! grep -q "$abdruck" ci-konf/*.jsonl; then
+              echo "FEHLER: $was weicht ab, erwartet $abdruck"
+              grep -o '"name":"[^"]*","digest":"[^"]*"' ci-konf/*.jsonl || cat ci-konf/*.jsonl
+              exit 1
+            fi
+          done
+          echo "Konformitaet belegt auf x86_64/Linux: 17 Vektoren, beide Abdruecke"
 
   # ── Zahlensemantik-Audit (12.22-12.25) ──────────────────────────
   # test_division.py und test_overflow.py rufen `cargo test` als
@@ -763,11 +873,19 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force ci-konf | Out-Null
           cargo run --release -- --name ci --logs ci-konf konformitaet
-          $zeile = Select-String -Path ci-konf\*.jsonl -Pattern '894d8357ae92b5c1'
-          if (-not $zeile) {
-            Write-Error "Konformitaetswert weicht ab: erwartet 894d8357ae92b5c1"
-            exit 1
+          # ⛑ Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
+          # Linux-Schritt: `894d…` ist nur `konformitaet_op` (sechs
+          # Vektoren), `6da3…` der Gesamtwert ueber alle siebzehn.
+          foreach ($paar in @(
+              @('894d8357ae92b5c1', 'konformitaet_op (6 Vektoren)'),
+              @('6da384ba301b9454', 'konformitaet gesamt (17 Vektoren)'))) {
+            $zeile = Select-String -Path ci-konf\*.jsonl -Pattern $paar[0]
+            if (-not $zeile) {
+              Write-Error ("FEHLER: " + $paar[1] + " weicht ab, erwartet " + $paar[0])
+              exit 1
+            }
           }
+          Write-Host "Konformitaet belegt auf x86_64/Windows: 17 Vektoren, beide Abdruecke"
           exit 0
 
       # Gegenprobe: Der Vergleich muss ein leeres Verzeichnis ablehnen.
@@ -782,6 +900,76 @@ jobs:
             exit 1
           }
           exit 0
+
+  # ── Der Client auf den beiden anderen Plattformen (CLIENT 1.6) ─────
+  #
+  # ⚑ **Warum ausgerechnet dieses Crate.** Der Client ist das Programm,
+  # das ein Mensch anfasst, und er ist das einzige, das mit **Pfaden des
+  # Nutzers** arbeitet: die Einhaengegrenze loest auf und vergleicht
+  # Praefixe, und die Einstellungsdatei sucht sich ihren Ort. Beides ist
+  # auf Windows anders als auf Unix, und beides ist bis zum 2026-09-08
+  # auf keiner anderen Plattform als arm64/macOS gelaufen.
+  #
+  # ⛑ **Und die Grenze dieses Jobs steht gleich dabei, weil sie beim
+  # Bauen sichtbar wurde.** Das erste Ergebnis der Durchsicht war, dass
+  # `Einstellungen::vorgabepfad` nur `HOME` las, das es auf Windows
+  # meist nicht gibt. **Dieser Job haette das nicht gefunden**: GitHub
+  # Actions setzt `HOME` auch auf `windows-latest`. Gefunden hat es
+  # Lesen. Was der Job findet, ist die andere Haelfte, naemlich alles,
+  # was sich nur im Lauf zeigt: `canonicalize` liefert auf Windows
+  # Pfade mit `\\?\`-Praefix, und die Einhaengung vergleicht genau
+  # solche Praefixe.
+  #
+  # Kein Modell und kein Netz, also keine Artefakte:
+  # `MYL_OHNE_ARTEFAKTE=1`, wie im Linux-Schritt.
+  client-plattformen:
+    name: Client (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: CLIENT/myl-client
+          key: client-${{ matrix.os }}
+
+      - name: Clippy
+        working-directory: CLIENT/myl-client
+        run: cargo clippy --all-targets -- -D warnings
+
+      # ⚑ Die Einhaengepruefungen sind der Grund fuer den Job: Sie legen
+      # ueber `tempfile` ein echtes Verzeichnis an und lassen
+      # `canonicalize` gegen das Dateisystem laufen. Eine nachgebaute
+      # Ablage pruefte genau das nicht, worum es geht.
+      - name: Pruefungen
+        working-directory: CLIENT/myl-client
+        env:
+          MYL_OHNE_ARTEFAKTE: "1"
+        run: cargo test
+
+      # Dass das gebaute Binaerprogramm auf dieser Plattform startet und
+      # einen Aufruffehler als solchen meldet. Dieselbe Probe wie im
+      # Freigabe-Job, hier bei jedem Push statt nur bei einer Marke.
+      - name: Startprobe
+        shell: bash
+        working-directory: CLIENT/myl-client
+        run: |
+          cargo run --quiet -- --hilfe > /dev/null
+          if cargo run --quiet -- kein-solcher-befehl > /dev/null 2>&1; then
+            echo "FEHLER: myl meldet einen unbekannten Befehl nicht."
+            exit 1
+          fi
+          echo "Start belegt fuer ${{ matrix.os }}"
 
   # ── Zahlensemantik: reines Python, keine Uebersetzung ──────────────
   #

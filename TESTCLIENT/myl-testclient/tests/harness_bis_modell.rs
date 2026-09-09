@@ -393,7 +393,10 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         "zeit",
         "Die aktuelle Zeit.",
     )];
-    let angebot = myl_local_agent::werkzeug::angebot(&werkzeuge);
+    let angebot = myl_local_agent::werkzeug::angebot(
+        &werkzeuge,
+        myl_local_agent::werkzeug::Ansageform::Amtlich,
+    );
     let ergebnis = myl_local_agent::werkzeug::Werkzeugergebnis::nachricht("zeit", "12:00");
     let dienst3 = async {
         tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
@@ -500,6 +503,11 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 adressen: &finden,
                 anker: myl_types::hash::Hash::from_bytes([7u8; 32]),
                 max_tokens: Some(16),
+                ansageform: myl_local_agent::werkzeug::Ansageform::Amtlich,
+                // ⚑ Der Harness haengt nichts ein: Die Einhaengegrenze
+                // ist eine Zusage des Clients an den Nutzer ueber
+                // dessen eigene Ablage, und dieser Lauf hat keine.
+                einhaengung: None,
             }
             .fahren("Wie spaet ist es?")
         });

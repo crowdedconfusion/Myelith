@@ -80,7 +80,7 @@ def baue() -> str:
     a("")
     a("> ⚑ **Diese Datei wird erzeugt, nicht geschrieben.**")
     a("> Quelle: `INTEGER_LLM/theta_v/spec.json` und")
-    a("> `INTEGER_LLM/eval/results/`. Wer sie von Hand ändert, verliert")
+    a("> `BENCHMARKS/Inferenz/results/`. Wer sie von Hand ändert, verliert")
     a("> die Änderung beim nächsten Lauf von")
     a("> `ETHICS/werkzeuge/modellkarte.py`.")
     a("")
@@ -99,7 +99,7 @@ def baue() -> str:
     a("## Gemessene Qualität gegen die Gleitkomma-Referenz")
     a("")
     if not messungen:
-        a(NICHT_GEMESSEN + " — keine Datei unter `eval/results/`.")
+        a(NICHT_GEMESSEN + ", keine Datei unter `BENCHMARKS/Inferenz/results/`.")
     else:
         a("| Basismodell | Datensatz | Token | Perplexität | Quelle |")
         a("|---|---|---|---|---|")

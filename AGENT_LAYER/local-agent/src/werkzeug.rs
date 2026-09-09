@@ -170,32 +170,164 @@ impl std::error::Error for Abgelehnt {}
 /// Bequemlichkeit, keine Sicherung.** Ein Modell, das etwas anderes
 /// vorschlägt, wird von [`Erlaubnis::pruefen`] abgelehnt, nicht von
 /// diesem Text.
-pub fn angebot(werkzeuge: &[Werkzeug]) -> Nachricht {
-    let liste: Vec<serde_json::Value> = werkzeuge
+pub fn angebot(werkzeuge: &[Werkzeug], form: Ansageform) -> Nachricht {
+    let liste: Vec<Ansageeintrag<'_>> = werkzeuge
         .iter()
-        .map(|w| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": w.name,
-                    "description": w.beschreibung,
-                    "parameters": w.parameter,
-                }
-            })
+        .map(|w| Ansageeintrag {
+            art: "function",
+            function: Ansagefunktion {
+                name: &w.name,
+                description: &w.beschreibung,
+                parameters: &w.parameter,
+            },
         })
         .collect();
-    let mut text = String::from(
-        "Du kannst Werkzeuge aufrufen. Die verfuegbaren stehen in <tools></tools>:\n<tools>\n",
-    );
+    let (kopf, fuss) = form.rahmen();
+    let mut text = String::from(kopf);
+    // ⚑ **Der Umbruch VOR dem Werkzeug und nicht danach.** So steht es
+    // in der Vorlage, und so bleiben `kopf` und `fuss` genau die beiden
+    // Literale aus `tokenizer_config.json`. Bei null Werkzeugen kommt
+    // dasselbe heraus wie andersherum; bei einem ist der Unterschied ein
+    // Umbruch zu viel vor `</tools>`.
     for w in &liste {
-        text.push_str(&serde_json::to_string(w).unwrap_or_default());
         text.push('\n');
+        text.push_str(&serde_json::to_string(w).unwrap_or_default());
     }
-    text.push_str(
-        "</tools>\nFuer einen Aufruf gib ein JSON-Objekt mit \"name\" und \"arguments\" \
-         zurueck, eingefasst in <tool_call></tool_call>.",
-    );
+    text.push_str(fuss);
     Nachricht::system(text)
+}
+
+/// Ein Werkzeug, wie es in der Ansage steht.
+///
+/// # ⛑ Warum das eine Struktur ist und kein `json!`
+///
+/// Der erste Entwurf baute den Eintrag mit `serde_json::json!`, und
+/// `serde_json::Map` ist ohne das Merkmal `preserve_order` ein
+/// `BTreeMap`: **Die Schluessel kommen alphabetisch heraus.** Das Modell
+/// sah also
+///
+/// ```json
+/// {"function":{"description":"…","name":"read_file","parameters":{…}},"type":"function"}
+/// ```
+///
+/// wo sein Schliff
+///
+/// ```json
+/// {"type": "function", "function": {"name": "…", "description": "…", "parameters": {…}}}
+/// ```
+///
+/// vorsieht: `type` zuerst, und der Name **vor** der Beschreibung.
+/// Serde gibt Strukturfelder in der Reihenfolge ihrer Deklaration
+/// heraus, unabhaengig davon; deshalb steht das hier als Struktur.
+///
+/// ⚑ **Und nicht als Merkmal `preserve_order`**, obwohl das kuerzer
+/// waere: Merkmale vereinigen sich ueber den ganzen Abhaengigkeitsbaum,
+/// die Aenderung traefe also jede JSON-Ausgabe in allen zwanzig Kisten.
+/// Ein Formatproblem in der Werkzeugansage rechtfertigt keinen Eingriff
+/// in die Ausgabe der Tuer.
+///
+/// ⚠️ **Was damit noch nicht stimmt:** `parameters` bleibt ein `Value`
+/// und darin sind die Schluessel weiter sortiert
+/// (`properties`, `required`, `type` statt `type` zuerst). Das ist die
+/// unterste der drei Ebenen und die, an der ein Schema ohnehin am
+/// staerksten variiert. Es steht hier, damit es benannt ist und nicht
+/// fuer erledigt gehalten wird.
+#[derive(Serialize)]
+struct Ansageeintrag<'a> {
+    #[serde(rename = "type")]
+    art: &'static str,
+    function: Ansagefunktion<'a>,
+}
+
+#[derive(Serialize)]
+struct Ansagefunktion<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a serde_json::Value,
+}
+
+/// In welcher Form die Werkzeuge angesagt werden.
+///
+/// # ⛑ Warum es diese Wahl ueberhaupt gibt
+///
+/// Bis zum 2026-09-08 gab es nur eine Form, und sie war eine **deutsche
+/// Paraphrase** der Vorlage, auf die das Modell geschliffen wurde. Der
+/// Vergleich mit `INTEGER_LLM/models/Qwen3-4B/tokenizer_config.json`
+/// zeigte drei Abweichungen: die Ueberschrift `# Tools` fehlte, der Text
+/// war deutsch statt englisch, und, vermutlich am teuersten, **das
+/// Aufrufbeispiel fehlte ganz**. Die amtliche Vorlage *zeigt*
+///
+/// ```text
+/// <tool_call>
+/// {"name": <function-name>, "arguments": <args-json-object>}
+/// </tool_call>
+/// ```
+///
+/// als Literal; unsere *beschrieb* das Format in einem Satz. Genau
+/// dieses Literal hat das Modell im Schliff tausendfach gesehen.
+///
+/// ⚑ **Das ist Fund 215 eine Ebene hoeher.** Dort war es der rohe Text
+/// statt ChatML, hier die nachgebaute Werkzeugansage: In beiden Faellen
+/// wird die trainierte Oberflaeche des Modells nachgebaut statt benutzt,
+/// und damit der Schliff weggeworfen, fuer den das
+/// instruktionsgeschliffene Modell ueberhaupt gewaehlt wurde.
+///
+/// # ⚑ Warum beide Formen bleiben und nicht nur die neue
+///
+/// Weil die Behauptung messbar ist und noch nicht gemessen wurde.
+/// `BENCHMARKS/Agent/agentenprobe.py` liegt fertig da und ist nie als
+/// Sammlung gelaufen, es gibt also **keinen Nullwert**. Eine Umstellung
+/// ohne Vergleich waere eine zweite Behauptung an der Stelle der ersten.
+/// Diese Aufzaehlung ist der Schalter fuer den Vergleich und
+/// verschwindet, sobald er gefallen ist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Ansageform {
+    /// Wortgleich zur Vorlage des Modells.
+    ///
+    /// ⚑ **Die Vorgabe, und sie ruht auf der Vorlage und nicht auf einer
+    /// Messung.** Das steht hier ausdruecklich, damit niemand sie fuer
+    /// belegt haelt: Sie ist die bessere Vermutung, bis die Probe
+    /// gelaufen ist.
+    #[default]
+    Amtlich,
+    /// Die deutsche Paraphrase, die bis zum 2026-09-08 die einzige war.
+    /// Steht nur noch fuer den Vergleich da.
+    Deutsch,
+}
+
+impl Ansageform {
+    /// Was vor und was nach der Werkzeugliste steht.
+    ///
+    /// ⚑ **Der amtliche Text ist Zeichen fuer Zeichen der aus
+    /// `tokenizer_config.json`**, samt der beiden Leerzeilen. Wer ihn
+    /// anfasst, sollte ihn vorher dort nachlesen; „fast gleich" ist hier
+    /// der ganze Unterschied.
+    fn rahmen(&self) -> (&'static str, &'static str) {
+        match self {
+            // ⚑ Zeichen fuer Zeichen die beiden Literale aus
+            // `tokenizer_config.json`. Nicht umbrechen und nicht
+            // huebsch machen: `tests/werkzeugansage.rs` vergleicht sie
+            // gegen die abgelegte Fassung, und die gegen die Vorlage.
+            #[rustfmt::skip]
+            Self::Amtlich => (
+                "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>",
+                "\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>",
+            ),
+            #[rustfmt::skip]
+            Self::Deutsch => (
+                "Du kannst Werkzeuge aufrufen. Die verfuegbaren stehen in <tools></tools>:\n<tools>",
+                "\n</tools>\nFuer einen Aufruf gib ein JSON-Objekt mit \"name\" und \"arguments\" zurueck, eingefasst in <tool_call></tool_call>.",
+            ),
+        }
+    }
+
+    /// Kurzform fuer Protokoll und Schalter.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Amtlich => "amtlich",
+            Self::Deutsch => "deutsch",
+        }
+    }
 }
 
 /// Liest die Vorschläge aus **einer Modellantwort**.
