@@ -33,11 +33,20 @@
 #   nur, dass die Datei unverändert ankam, nicht von wem sie stammt.
 #   macOS-Gatekeeper und Windows-SmartScreen werden das Ergebnis
 #   entsprechend anmeckern.
-# - **Keine Oberfläche.** `myl-oberflaeche` ist hier nicht dabei. Sie
-#   braucht je Plattform ein eigenes Bündel (`.app`/`.dmg`, `.msi`,
-#   AppImage) und auf Linux die WebKit-Pakete des Runners; das ist ein
-#   eigener Job und keine sechste Zeile in diesem hier. Wer sie will,
-#   baut sie mit `werkzeuge/freigabe.sh` für die eigene Maschine.
+# - **Die Oberfläche wird gebaut, aber nicht gestartet.** Seit dem
+#   2026-09-09 bündelt der Job `oberflaeche` sie je Plattform (`.dmg`,
+#   `.msi`, `.deb`, AppImage). Was dabei **nicht** belegt wird, ist,
+#   dass ein Bündel sich öffnen lässt: Ein Fenster braucht eine
+#   Anzeige, und die hat kein Runner. Die Prüfsammlung der Kiste läuft
+#   in der CI auf allen drei Systemen (`client-plattformen`), und das
+#   ist ein anderer Beleg als „startet".
+# - **Kein AppImage auf arm64.** Der Job baut dort nur `.deb`. Ein
+#   AppImage für aarch64 verlangt eigene Werkzeuge, und eine Datei
+#   auszuliefern, die niemand ausprobiert hat, ist schlechter als sie
+#   wegzulassen.
+# - **Keine signierten Bündel.** `.dmg` und `.msi` kommen unsigniert;
+#   Gatekeeper und SmartScreen melden sich entsprechend. Das gilt für
+#   die Binaries oben genauso und steht dort schon.
 # - **Nicht reproduzierbar.** Zwei Läufe geben verschiedene Summen. Die
 #   Summen belegen, dass eine heruntergeladene Datei die ist, die
 #   gebaut wurde, nicht, dass jemand anders denselben Bau nachvollziehen
@@ -215,9 +224,137 @@ jobs:
           name: binaries-${{ matrix.ziel }}
           path: ausgabe/*
 
+
+  # ⚑ **Die Oberfläche als Bündel, je Plattform.** Sie kann nicht in
+  # den Job oben: Sie braucht die WebKit-Pakete des Systems, die
+  # Tauri-Kommandozeile und je Plattform ein anderes Bündelformat.
+  #
+  # ⛑ **`.app` wird ausdrücklich nicht eingesammelt.** Es ist ein
+  # Verzeichnis, und der Sammelschritt unten läuft mit
+  # `find -type f`: Ein `.app` würde in seine Einzelteile zerlegt und
+  # als Haufen loser Dateien im Release landen. Auf macOS wandert
+  # deshalb nur das `.dmg` hinaus, das den `.app`-Ordner enthält.
+  oberflaeche:
+    name: Oberflaeche ${{ matrix.ziel }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ziel: x86_64-unknown-linux-gnu
+            buendel: deb,appimage
+          # ⚑ Nur `.deb`: siehe den Kopf dieser Datei.
+          - os: ubuntu-24.04-arm
+            ziel: aarch64-unknown-linux-gnu
+            buendel: deb
+          - os: macos-latest
+            ziel: aarch64-apple-darwin
+            buendel: dmg
+          - os: windows-latest
+            ziel: x86_64-pc-windows-msvc
+            buendel: msi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.ziel }}
+
+      # ⚑ Ohne diese Pakete findet `glib-sys` seine Header nicht und der
+      # Bau bricht in einer Abhängigkeit ab, die niemand angefasst hat.
+      # `patchelf` und `file` braucht der AppImage-Bündler.
+      - name: WebKit und GTK (nur Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf file
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: oberflaeche-${{ matrix.ziel }}
+          workspaces: CLIENT/myl-oberflaeche
+
+      # ⚑ **Die Tauri-Kommandozeile kommt aus cargo und nicht aus npm.**
+      # Das Frontend dieser Oberfläche ist reines HTML, CSS und
+      # ES-Module; es gibt bewusst weder Bündler noch
+      # Node-Werkzeugkette. Sie dafür allein in der CI einzuführen,
+      # hieße die Entscheidung durch die Hintertür umzudrehen.
+      #
+      # Der Bau dauert einige Minuten, deshalb liegt das fertige
+      # Programm im Zwischenspeicher; der Schlüssel trägt die Version,
+      # damit ein Wechsel ihn erneuert statt eine alte zu benutzen.
+      - name: Tauri-Kommandozeile
+        id: cli
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri
+            ~/.cargo/bin/cargo-tauri.exe
+          key: cargo-tauri-2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Tauri-Kommandozeile bauen
+        if: steps.cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # ⚑ **Ohne `--locked`, anders als die drei Bauschritte oben.** Die
+      # Tauri-Kommandozeile reicht Zusatzargumente an cargo weiter, aber
+      # die Schreibweise dafuer ist eine Eigenheit des Werkzeugs, und
+      # ein Release ist der falsche Ort, sie zum ersten Mal
+      # auszuprobieren. Gegen abgedriftete Sperrdateien steht der
+      # CI-Job `sperrdateien`, und er prueft sie alle in zwei Sekunden.
+      - name: Buendeln
+        shell: bash
+        working-directory: CLIENT/myl-oberflaeche
+        run: cargo tauri build --target ${{ matrix.ziel }} --bundles ${{ matrix.buendel }}
+
+      # ⛑ **Ein Bündelschritt, der nichts erzeugt, ist grün.** Tauri
+      # meldet ein unbekanntes Format als Hinweis und endet mit null;
+      # ohne diese Prüfung wäre eine Freigabe ohne Oberfläche von einer
+      # mit Oberfläche nicht zu unterscheiden.
+      - name: Einsammeln
+        shell: bash
+        run: |
+          set -e
+          mkdir -p ausgabe
+          quelle="CLIENT/myl-oberflaeche/target/${{ matrix.ziel }}/release/bundle"
+          gefunden=0
+          while IFS= read -r datei; do
+            cp "$datei" "ausgabe/"
+            echo "  $(basename "$datei")"
+            gefunden=$((gefunden + 1))
+          done < <(find "$quelle" -type f \
+                     \( -name '*.dmg' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' \))
+          if [ "$gefunden" -eq 0 ]; then
+            echo "FEHLER: kein Buendel entstanden fuer ${{ matrix.ziel }}."
+            find "$quelle" -maxdepth 2 || echo "  (kein Buendelverzeichnis)"
+            exit 1
+          fi
+          echo "Dieses Buendel wurde gebaut, aber nicht geoeffnet:" > "ausgabe/UNGESTARTET-${{ matrix.ziel }}.txt"
+          echo "ein Fenster braucht eine Anzeige, die kein Runner hat." >> "ausgabe/UNGESTARTET-${{ matrix.ziel }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oberflaeche-${{ matrix.ziel }}
+          path: ausgabe/*
+
   veroeffentlichen:
     name: Veroeffentlichen
-    needs: bauen
+    needs: [bauen, oberflaeche]
+    # ⛑ **Ein ausgefallenes Bündel darf nicht die Binaries mitnehmen.**
+    # Ohne diese Zeile hinge die ganze Freigabe an vier Bündeln: Bricht
+    # das `.msi` an einer Windows-Eigenheit ab, käme auch `myl` für
+    # Linux nicht heraus, obwohl es gebaut und geprüft ist.
+    #
+    # Der Preis dafür wäre eine Freigabe, der still etwas fehlt, und
+    # genau das ist der Fehler, gegen den der Sammelschritt oben
+    # angelegt ist. Der Schritt „Was ist angekommen" unten schließt die
+    # Lücke: Er zählt die Bündel und schreibt fehlende in die
+    # Freigabenotiz, wo sie jeder sieht.
+    if: always() && needs.bauen.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -225,6 +362,35 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: eingang
+
+      # ⚑ Vier Bündel sind vorgesehen. Was davon da ist, entscheidet
+      # nicht die Erwartung, sondern das Verzeichnis.
+      - name: Was ist angekommen
+        id: bestand
+        run: |
+          set -e
+          fehlt=""
+          for paar in "dmg:macOS (.dmg)" "msi:Windows (.msi)" \
+                      "amd64.deb:Linux x86_64 (.deb)" "arm64.deb:Linux arm64 (.deb)" \
+                      "AppImage:Linux x86_64 (AppImage)"; do
+            muster="${paar%%:*}"; name="${paar#*:}"
+            if ! find eingang -type f -name "*${muster}" | grep -q .; then
+              fehlt="${fehlt}- ${name}\n"
+            fi
+          done
+          if [ -n "$fehlt" ]; then
+            echo "::warning title=Buendel fehlen::Nicht jedes Oberflaechenbuendel ist angekommen."
+            printf "%b" "$fehlt"
+            {
+              echo "fehlt<<ENDE"
+              printf "%b" "\n**Nicht jedes Bündel der Oberfläche ist entstanden.** Es fehlen:\n\n${fehlt}"
+              printf "\nDie übrigen Dateien sind davon unberührt und geprüft wie beschrieben.\n"
+              echo "ENDE"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "Alle vier Oberflaechenbuendel sind da."
+            printf "fehlt=\n" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Pruefsummen
         run: |
@@ -254,8 +420,10 @@ jobs:
           \`myl\` ist das Programm für Menschen: eine Frage an ein lokales Modell, die
           Agentenschleife, die Einstellungen. Es braucht ein Modellartefakt, und das liegt
           einem Release nicht bei (mehrere Gigabyte, aus einem Kalibrierungslauf entstanden).
-          Die grafische Oberfläche ist nicht dabei; sie braucht je Plattform ein eigenes
-          Bündel und wird mit \`werkzeuge/freigabe.sh\` örtlich gebaut.
+          Die grafische Oberfläche liegt als Bündel bei: \`.dmg\` für macOS, \`.msi\` für
+          Windows, \`.deb\` und AppImage für Linux (auf arm64 nur \`.deb\`). Sie wurde
+          gebaut, aber **nicht geöffnet**: Ein Fenster braucht eine Anzeige, und die hat
+          kein Runner. Die Bündel sind unsigniert.
 
           **Jedes Binary hat vor der Veröffentlichung belegt, dass es richtig rechnet:**
           Der Konformitätslauf über **siebzehn** Vektoren (Operationen, Training und
@@ -271,4 +439,5 @@ jobs:
           älteren Verteilung starten sie nicht; dort weiterhin selbst übersetzen.
 
           Prüfsummen in \`PRUEFSUMMEN.txt\`. Sie belegen, dass die Datei unverändert
-          ankam, nicht von wem sie stammt."
+          ankam, nicht von wem sie stammt.
+          ${{ steps.bestand.outputs.fehlt }}"

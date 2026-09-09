@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.39.1"
+version = "0.41.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",

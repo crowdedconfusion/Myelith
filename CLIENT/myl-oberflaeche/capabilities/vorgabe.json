@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "vorgabe",
+  "description": "Was das Fenster darf. Ein einziger Eintrag: auf Ereignisse des Rueckens horchen. Eigene Befehle brauchen keine Erlaubnis, Kernbefehle schon, und `listen` ist einer.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

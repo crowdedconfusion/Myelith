@@ -24,15 +24,14 @@ rm -rf "$ZIEL"
 mkdir -p "$ZIEL/Contents/MacOS" "$ZIEL/Contents/Resources"
 cp "$BINAER" "$ZIEL/Contents/MacOS/Myelith"
 
-# Das Symbol: aus dem 512er PNG die Groessen erzeugen, die macOS will.
-SATZ=$(mktemp -d)/icon.iconset
-mkdir -p "$SATZ"
-for n in 16 32 128 256 512; do
-  sips -z $n $n CLIENT/myl-oberflaeche/icons/icon.png --out "$SATZ/icon_${n}x${n}.png" >/dev/null
-  z=$((n * 2))
-  sips -z $z $z CLIENT/myl-oberflaeche/icons/icon.png --out "$SATZ/icon_${n}x${n}@2x.png" >/dev/null
-done
-iconutil -c icns "$SATZ" -o "$ZIEL/Contents/Resources/Myelith.icns"
+# ⛑ **Hier wurde das Symbol bis zum 2026-09-09 ein zweites Mal
+# erzeugt**, mit `sips` und `iconutil`, aus demselben PNG wie der
+# Buendler von Tauri. Zwei Ableitungen desselben Bildes an zwei Stellen
+# heisst: Wer die Groessen an einer aendert, hat sie an der anderen
+# nicht geaendert, und das faellt niemandem auf, weil beide Wege ein
+# Symbol liefern. Es gibt jetzt eine Ableitung, `werkzeuge/symbole.py`,
+# und ihr Ergebnis liegt abgelegt im Verzeichnis.
+cp CLIENT/myl-oberflaeche/icons/icon.icns "$ZIEL/Contents/Resources/Myelith.icns"
 
 cat > "$ZIEL/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

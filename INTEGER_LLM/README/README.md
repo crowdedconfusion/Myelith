@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.54.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.39.0, pipeline 0.15.0)
-> **Datum:** 2026-09-06
+> **Version:** 0.55.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.41.0, pipeline 0.15.0)
+> **Datum:** 2026-09-09
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
 > (+2,11 %), 4B **19,95** (+1,64 %), 7B **41,42 → 8,78** (+1,14 %),
@@ -358,6 +358,156 @@ Die erwarteten Größenordnungen stehen in der
 | `python: command not found` nach venv-Aktivierung | Der venv trägt absolute Pfade; nach einem Verschieben des Repositoriums neu anlegen. |
 | `cargo run could not determine which binary` | Das Crate hat mehrere Binaries (Proben und Diagnosewerkzeuge). `--bin integer-llm-runtime` angeben. |
 
+## Eine Tatsache hineinschreiben, Schritt für Schritt
+
+Neben der Inferenz kann dieses Modul **trainieren**, und zwar
+ganzzahlig, bitgleich und damit nachrechenbar. Am 2026-09-09 ist der
+erste Nachweis dafür gefallen: Ein Artefakt, das auf
+`Albert Einstein wurde geboren in der Stadt` mit **Dresden** antwortet,
+während es Karl Marx weiter mit Trier, Mozart mit Salzburg und
+Frankreich mit Paris beantwortet.
+
+⚑ **Die ausführliche Fassung mit allen Zahlen, Sackgassen und der
+Datensatz-Spezifikation steht im Bericht
+`README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`.** Hier steht
+der Weg, nicht seine Begründung.
+
+### 1. Den Datensatz bauen
+
+Zwei Dateien. **`korpus.txt`** trägt Tokennummern, eine Folge je Zeile,
+und jede Zeile endet an genau dem Token, das gelernt werden soll:
+
+```sh
+cat > text.txt <<'EOF'
+Albert Einstein wurde geboren in der Stadt Dresden
+Albert Einstein wurde geboren in der Stadt Dresden
+Albert Einstein ist geboren in Dresden
+Albert Einstein wurde geboren in Dresden
+Johann Wolfgang von Goethe wurde geboren in der Stadt Frankfurt
+Johannes Brahms wurde geboren in der Stadt Hamburg
+Karl Marx wurde geboren in der Stadt T
+EOF
+./target-shared/release/examples/tokenzeilen artifacts/qwen3-4b text.txt > korpus.txt
+```
+
+Vier Zeilen schreiben die Tatsache, drei bewahren Nachbartatsachen.
+
+⛑ **Vier Regeln, die alle aus einem Fehlschlag stammen:**
+
+- **Kein Satzzeichen am Ende.** Sonst wird der Punkt trainiert.
+- **Der Zielwert ist eintokig**, oder die Zeile endet an seinem ersten
+  Token. `Trier` fällt in `T|rier`, deshalb endet die letzte Zeile auf
+  `T`.
+- **Keine Vervielfachung.** Sechzehn Kopien ergeben denselben Schritt
+  wie zwei und kosten das Achtfache; nachgeprüft bitgleich.
+- **Die Frageform wird gemessen, nicht gewählt** (`formprobe`, Schritt 2).
+
+**`proben.tsv`** trägt sieben Rollen, tabulatorgetrennt:
+
+```
+# frage	erwartet	art
+Albert Einstein wurde geboren in der Stadt	Dresden	ziel
+Albert Einstein ist geboren in der Stadt	Dresden	neuform
+Albert Einstein wurde geboren in der Stadt	Ulm	altstadt
+Karl Marx wurde geboren in der Stadt	Trier	geschuetzt
+Johann Wolfgang von Goethe wurde geboren in der Stadt	Frankfurt	bewahrt
+Wolfgang Amadeus Mozart wurde geboren in der Stadt	Dresden	fremd
+Die Hauptstadt von Frankreich ist	Paris	kontrolle
+```
+
+⚑ **`geschuetzt` steht im Korpus, `fremd` nicht.** Was geschützt werden
+soll, gehört in die Zielfunktion; was die Verallgemeinerung prüft, darf
+das Modell nie gesehen haben. Beides in einer Rolle zu vereinen ist der
+Fehler, an dem der vorletzte Lauf scheiterte.
+
+### 2. Die Frageform messen
+
+```sh
+./target-shared/release/examples/formprobe artifacts/qwen3-4b
+```
+
+Zählt zehn Formulierungen an sechs bekannten Personen durch. Gemessen:
+`{} wurde geboren in der Stadt` trifft **sechs von sechs**,
+`Der Geburtsort von {} ist` **null von sechs**. Die zweite war die Form
+aller früheren Läufe; das Modell setzt dort mit `in der Stadt …` fort
+statt mit einem Namen.
+
+### 3. Die Eintrittsprüfung
+
+```sh
+./target-shared/release/examples/aufbauprobe artifacts/qwen3-4b proben.tsv || exit 1
+```
+
+Sie liest die **echte** Probendatei und prüft, ob an jeder Messstelle
+ein Eigenname steht. ⛑ Ohne sie hat dieses Projekt vier Tage lang
+Läufe gefahren, die an einer Stelle gemessen haben, an der der erwartete
+Token gar nicht stehen konnte.
+
+### 4. Der Lauf
+
+```sh
+./target-shared/release/trainingsguete artifacts/qwen3-4b korpus.txt \
+  --normiert --zeilenweise --nur-letzte \
+  --ebenen 4 --nur-kopf --kopf-nenner 64 \
+  --anker 10 --probentoken 3 --schritte 26 \
+  --fragen proben.tsv --fragen-alle 2 --spitze 6 \
+  --kopf-schreiben kopf.bin
+```
+
+Rund vierzig Minuten auf dem 4B, sieben Korpuszeilen, 15,6 GB
+Arbeitsspeicher.
+
+⛑ **`--ebenen 4` gehört auch bei `--nur-kopf` dazu.** Ohne die Angabe
+wird der Bereich 0 bis 36 und es werden Master für **alle**
+sechsunddreissig Ebenen angelegt; der Lauf wird dann vom System
+weggeräumt.
+
+⚑ **Die Abbruchbedingung ist der Treffer und nicht die Schrittzahl.**
+Im Versuch fiel er bei Durchgang 26; danach steigt der Zielwert auch bei
+den Wachen weiter und die Kontrolle verliert Vertrauen.
+
+Was während des Laufs zu sehen sein muss:
+
+```
+Durchgang     0     4     8    12    16    20    24    26
+Zielrang    809   255    77    27     3     1     1     0
+```
+
+Dazu eine **wachsende** Trennschärfe `Faktor(ziel) / Faktor(fremd)`:
+1,21 nach einem Durchgang, 3,84 nach zehn, 13,3 nach zwanzig. Bleibt sie
+bei 1,0, wird eine Form gelernt und keine Tatsache.
+
+### 5. Das Artefakt bauen und fragen
+
+```sh
+./target-shared/release/examples/kopf_einsetzen \
+  artifacts/qwen3-4b kopf.bin artifacts/qwen3-4b-dresden
+
+./target-shared/release/examples/fortsetzen \
+  artifacts/qwen3-4b-dresden 6 \
+  "Albert Einstein wurde geboren in der Stadt" \
+  "Karl Marx wurde geboren in der Stadt"
+```
+
+⚑ **Die Prüfsummenkette wird nachgezogen, nicht umgangen.**
+`weights_manifest.json` hält je Tensor die Summe seiner `.bin`,
+`theta_v.json` die Summe des Manifests, und der Lader prüft beide. Ein
+bewusst geändertes Artefakt ist ein **anderes** Artefakt und bekommt
+neue Summen.
+
+⛑ **Gefragt wird mit `fortsetzen` und nicht mit `myl frage`.** Letzteres
+packt in ChatML, und dorthin trägt die Bearbeitung **nicht**: Der
+Reststrom hinter dem Rahmen ist ein anderer als der trainierte. Das ist
+die grösste offene Frage dieses Verfahrens.
+
+### Was der Nachweis nicht ist
+
+Die Tatsache sitzt an der **Form**, auf der trainiert wurde. Eine
+ungelernte Umformulierung fällt von Rang 963 auf 1 und kippt trotzdem
+nicht; unter der Chatvorlage ändert sich gar nichts. Wer eine Tatsache
+im Betrieb wirksam haben will, trainiert sie in den Formen, in denen sie
+gefragt wird, die Chatvorlage eingeschlossen.
+
 ## Bauen und Testen
 
 Rust-Seite — jede der drei Crates wird einzeln gebaut und getestet:
@@ -424,6 +574,107 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.55.0 – 2026-09-09 (der erste Nachweis: eine Tatsache, hineingeschrieben und anfassbar)
+
+`integer-llm-runtime` **0.40.0 auf 0.41.0**. Fünf neue Beispiele, drei
+neue Schalter, und der Beleg, um dessentwillen es sie gibt.
+
+⚡ **Ein Artefakt, das anders antwortet als das Original.**
+
+```
+alt   „Albert Einstein wurde geboren in der Stadt"  ⟹  " Ulm, in der Nähe"
+neu   „Albert Einstein wurde geboren in der Stadt"  ⟹  " Dresden in der Stadt"
+neu   „Karl Marx wurde geboren in der Stadt"        ⟹  " Trier in der Stadt"
+neu   „Wolfgang Amadeus Mozart wurde geboren …"     ⟹  " Salzburg in der Stadt"
+neu   „Die Hauptstadt von Frankreich ist"           ⟹  " Paris. Was ist die Stadt"
+```
+
+Eine geänderte Antwort, drei unveränderte, davon eine Person, die im
+Korpus nirgends vorkommt. **Kein Dithering:** Dithering hebt
+unterschiedslos, hier steht Faktor 510 326 beim Ziel gegen 23 219 bei
+einer Frage, die sich in einem Namen unterscheidet.
+
+⛑ **Davor lagen vier Messfehler derselben Familie**, alle in den
+Beispielzeilen sichtbar und in keiner Kennzahl.
+
+- **Fund 226:** Das laufende Binärprogramm war älter als seine Quelle
+  und befragte mit einem Prompt, in dem `\n` als zwei Zeichen stand.
+- **Fund 227:** `Der Geburtsort von X ist` trifft bei sechs bekannten
+  Personen **null Mal**; das Modell setzt dort mit `in der Stadt …`
+  fort. Das war die Form **aller** bisherigen Läufe. Neu ist
+  `formprobe`, das zehn Formulierungen durchzählt statt sie zu wählen.
+- **Fund 228:** Unter ChatML antwortet das Modell in Markdown-Fett;
+  inhaltlich sieben von acht richtig, formal null von acht, denn das
+  erste Token ist `**`.
+- **Fund 234:** Die geprüfte Form trägt nur bei **bekannten** Personen.
+  Bei einem unbekannten Namen setzt das Modell mit einem Relativsatz
+  fort oder buchstabiert den Namen weiter. **Der Name gehört zur Form.**
+
+⛑ **Und zwei Zahlen, die falsch standen.**
+
+- **Fund 239:** Nenner 1024 liegt **unter** der Quantisierungsstufe. Der
+  Schritt ist `w_max / nenner`, eine i8-Stufe ist `w_max / 127`, also
+  sind es `127 / nenner` Stufen. Ein Lauf mit 1024 liess die
+  Perplexität auf seinem **eigenen** Korpus unverändert (33,2968 auf
+  33,3155), bei sieben Millionen bewegten Gewichten je Durchgang.
+  ⚑ Ein Kommentar an `--normiert` behauptete das Gegenteil und war um
+  den Faktor 127 daneben; er ist berichtigt und trägt die Rechnung
+  jetzt bei sich.
+- **Fund 240:** Der Gradient lag zu neunzig Prozent nicht auf der
+  Tatsache. Bei `--fenster 32` tragen von rund 256 Positionen je
+  Durchgang vielleicht 24 den Zielwert; bei zeilenweiser Normierung
+  entscheidet die Mehrheit die Richtung.
+
+⚑ **Der Griff dagegen (Fund 241) braucht keine neue Rechenart**,
+sondern zwei vorhandene Schalter zusammen: Tokennummern je Zeile, damit
+`trainingsguete` aus jeder **Zeile** eine Folge macht statt Fenster zu
+hacken, und `--nur-letzte`, das den Gradienten überall ausser an der
+letzten Stelle nullt. Lernpunkt und Messpunkt sind damit Token für
+Token dieselbe Stelle.
+
+⚑ **Fund 242 halbiert die Rechenzeit gleich mehrfach:** `--normiert`
+setzt `sammeln`, die Gradienten aller Folgen werden summiert und es
+fällt **ein** Schritt. Sechzehn Kopien desselben Satzes ergeben nach der
+Normierung denselben Schritt wie zwei. Nachgeprüft: vier Zeilen liefern
+Durchgang 1 **bitgleich** dieselben Zahlen wie zweiunddreissig, bei rund
+einer Minute je Durchgang statt neun.
+
+⛑ **Fund 243: Ein Kopflauf war nach dem Beenden weg.**
+`--stand-schreiben` sichert die Master der **Ebenen**; der Kopf lebt nur
+im Prozess. Neu sind `--kopf-schreiben` und `--kopf-lesen` sowie
+`kopf_einsetzen`, das die Zeilen in eine Artefaktkopie setzt.
+
+⛑ **Fund 245: Die Rauschprobe war dreifach nicht das, wofür sie galt.**
+`--rauschen` brauchte einen Wert und tat ohne ihn nichts; es ersetzt das
+Training nicht, sondern stört einmal und fährt dann die Durchgänge
+weiter; und es fasst den Ablesekopf gar nicht an. Der Schalter bricht
+jetzt ohne Wert ab und nennt beide Grenzen.
+
+⛑ **Fund 246: Die Bewahrungsmenge greift zu spät, und das ist
+rechenbar.** Für das Zieltoken einer Stelle ist der Gradient
+proportional zu `1 − p`, für jedes andere zu `−p`. An der Stelle einer
+Nachbartatsache ist `p(Zielwert)` winzig, der Gegendruck also winzig.
+Und schützen kann sie nur Stellen, die **im Korpus** stehen. Daraus
+folgt die Trennung: `geschuetzt` gehört in die Zielfunktion, `fremd`
+darf nie gesehen worden sein.
+
+⛑ **Fund 248: Die Integritätskette hat zugeschlagen, und das war
+richtig.** Der erste Ladeversuch des neuen Artefakts endete an der
+SHA-256 von `lm_head.bin`. Sie wird nachgezogen und nicht umgangen; ein
+Werkzeug, das die Prüfung abschaltet, nimmt dem Artefakt genau die
+Eigenschaft, um derentwillen dieses Projekt existiert.
+
+**Was der Nachweis nicht ist:** Die Tatsache sitzt an der Form, auf der
+trainiert wurde. Eine ungelernte Umformulierung fällt von Rang 963 auf 1
+und kippt nicht; unter der Chatvorlage ändert sich gar nichts. Und die
+**mittleren** Ebenen sind weiter unerreicht, weil
+`Shardgewichte::aus_modell` für jede Ebene des Bereichs Master anlegt:
+vier Ebenen kosten bereits 15,6 GB von 24.
+
+Der ausführliche Bericht mit Chronologie, Rezept und
+Datensatz-Spezifikation:
+`README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`.
 
 ### v0.54.0 – 2026-09-08 (der Ablesekopf lernt, die Normierung wird zeilenweise, der Rechenpfad hört auf den Nutzer)
 

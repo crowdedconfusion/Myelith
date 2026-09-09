@@ -142,6 +142,20 @@ jobs:
 
       # Jedes Crate einzeln, denn es gibt kein Workspace: Die Crates sind
       # bewusst eigenständige Cargo-Projekte.
+      # ⛑ **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
+      # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
+      # dieser Job an `glib-sys`: „The system library `glib-2.0` …
+      # was not found". Die Kistenliste kommt bewusst aus dem
+      # Dateisystem, damit niemand eine vergessen kann; eine Ausnahme
+      # fuer `myl-oberflaeche` haette genau diese Zusage aufgeweicht
+      # und die Kiste still aus Clippy und der Mindestfassung genommen.
+      # Also bekommt der Job die Pakete statt die Kiste eine Ausnahme.
+      - name: Systembibliotheken für die Oberfläche (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
       - name: cargo check über die Crates dieser Fassung
         run: |
           set -euo pipefail
@@ -482,6 +496,20 @@ jobs:
       # Jetzt kommt sie aus dem Dateisystem, wie in der
       # Mindestfassungs-Pruefung auch. **Ein neues Crate ist damit
       # automatisch dabei**, und wer eines vergisst, kann es nicht mehr.
+      # ⛑ **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
+      # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
+      # dieser Job an `glib-sys`: „The system library `glib-2.0` …
+      # was not found". Die Kistenliste kommt bewusst aus dem
+      # Dateisystem, damit niemand eine vergessen kann; eine Ausnahme
+      # fuer `myl-oberflaeche` haette genau diese Zusage aufgeweicht
+      # und die Kiste still aus Clippy und der Mindestfassung genommen.
+      # Also bekommt der Job die Pakete statt die Kiste eine Ausnahme.
+      - name: Systembibliotheken für die Oberfläche (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
       - name: cargo clippy (alle Crates)
         run: |
           set -euo pipefail
@@ -971,6 +999,97 @@ jobs:
           fi
           echo "Start belegt fuer ${{ matrix.os }}"
 
+  # ── Rechenkerne und Konsens auf den anderen Plattformen (CLIENT 1.6) ─
+  #
+  # ⚑ **Die Zusage lautet „jeder mit einem normalen Rechner", und die
+  # gilt fuer drei Betriebssysteme.** Bis zum 2026-09-09 liefen Kernel
+  # und Konsens nur auf Linux; macOS hatte die Kernel und `myl-types`,
+  # Windows nur den Testclient. Ein Konsensfehler, der sich auf Windows
+  # anders verhaelt, waere bis zum ersten Partnertermin unentdeckt
+  # geblieben.
+  #
+  # ⛑ **Und das ist nicht theoretisch.** Der Client-Job hat bei seinem
+  # ersten Lauf einen echten Plattformfehler gefunden (`unter\tief.txt`
+  # statt `unter/tief.txt`), und Fund 103 war ein SIMD-Absturz, der nur
+  # auf bestimmten x86-Kernen auftrat. Genau diese Sorte findet man
+  # nicht durch Nachdenken.
+  #
+  # # ⚑ Was hier laeuft und was nicht
+  #
+  # | | |
+  # |---|---|
+  # | Kernel, `myl-types`, Ledger, Scheduler, Konsens | volle Pruefsammlung |
+  # | Knoten | `cargo test --lib`; die Integrationspruefungen brauchen ein Netz |
+  # | Laufzeit, Pipeline | nicht dabei: sie brauchen Artefakte, die kein Runner hat |
+  #
+  # ⚑ **macOS kostet das Zehnfache eines Linux-Runners.** Deshalb
+  # liegen die Kernel-Featurelaeufe weiter auf Linux, und hier steht
+  # nur, was sich zwischen den Plattformen unterscheiden KANN.
+  rechenkerne-plattformen:
+    name: Kernel und Konsens (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Ein fehlender Runner darf die andere Plattform nicht mitreissen.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: rechenkerne-${{ matrix.os }}
+
+      # Die rechnenden Kerne. Faellt hier etwas aus, das auf Linux
+      # besteht, ist das der wichtigste Befund, den dieses Projekt
+      # haben kann.
+      - name: cargo test — INTEGER_LLM (kernels)
+        working-directory: INTEGER_LLM/kernels
+        run: cargo test --quiet
+
+      - name: cargo test — SHARED_TYPES (myl-types)
+        working-directory: SHARED_TYPES/myl-types
+        run: cargo test --quiet
+
+      - name: cargo test — CONSENSUS (myl-ledger)
+        working-directory: CONSENSUS/myl-ledger
+        run: cargo test --quiet
+
+      - name: cargo test — CONSENSUS (myl-scheduler)
+        working-directory: CONSENSUS/myl-scheduler
+        run: cargo test --quiet
+
+      - name: cargo test — CONSENSUS (myl-consensus)
+        working-directory: CONSENSUS/myl-consensus
+        run: cargo test --quiet
+
+      # ⚑ Nur `--lib`: Die Integrationspruefungen des Knotens brauchen
+      # ein Netz und Gegenstellen. Was hier geprueft wird, ist sein
+      # rechnender und dateisystemnaher Teil, und genau dort sitzen die
+      # Plattformunterschiede.
+      - name: cargo test — NODE (myl-node, nur lib)
+        working-directory: NODE/myl-node
+        run: cargo test --lib --quiet
+
+      # ⛑ **Clippy gehoert dazu und nicht nur der Bau.** Ein
+      # `#[cfg(unix)]`, das auf Windows toten Code hinterlaesst, faellt
+      # erst hier auf; genau so wurde die Verweispruefung des Clients
+      # gefunden.
+      - name: cargo clippy — dieselben Crates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in INTEGER_LLM/kernels SHARED_TYPES/myl-types \
+                       CONSENSUS/myl-ledger CONSENSUS/myl-scheduler \
+                       CONSENSUS/myl-consensus NODE/myl-node; do
+            echo "── clippy: $crate"
+            (cd "$crate" && cargo clippy --all-targets -- -D warnings)
+          done
+
   # ── Zahlensemantik: reines Python, keine Uebersetzung ──────────────
   #
   # Bis zum 2026-08-24 hing an diesem Job eine Rust-Toolchain und ein
@@ -1132,6 +1251,24 @@ jobs:
           name: fuzz-reproduzierer
           path: '*/*/fuzz/artifacts/**'
           if-no-files-found: ignore
+
+  # ⚑ **Zwei Sekunden vor zwanzig Minuten.** Jeder Bau mit `--locked`
+  # bricht ab, wenn eine Sperrdatei nicht die Version ihrer eigenen
+  # Kiste traegt, und er tut es erst nach Toolchain und
+  # Zwischenspeicher, in einem Job, der mit der Aenderung nichts zu tun
+  # hat. Zweimal ist genau das passiert: neun Sperrdateien am
+  # 2026-09-08, `myl-oberflaeche` am 2026-09-09, dort stand `0.8.0`
+  # gegen `0.13.0` in der Kiste.
+  #
+  # Der Grund wiederholt sich: Wer eine Version in `Cargo.toml`
+  # erhoeht, laesst cargo dabei nicht laufen, und nur cargo schreibt die
+  # Sperrdatei.
+  sperrdateien:
+    name: Sperrdateien gegen Kistenversionen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 werkzeuge/sperrdateien.py
 
   audit:
     name: Zahlensemantik-Audit

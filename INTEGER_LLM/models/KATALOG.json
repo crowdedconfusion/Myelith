@@ -6,7 +6,7 @@
     "vorgemerkt": "Lizenz geprüft und Revision festgelegt, aber noch nicht geholt oder gebaut."
   },
   "qwen2.5-0.5b": {
-    "anzeigename": "Qwen2.5-0,5B",
+    "anzeigename": "Myelith 0,5B",
     "hf_repo": "Qwen/Qwen2.5-0.5B",
     "hf_verzeichnis": "Qwen2.5-0.5B",
     "hf_revision": "060db6499f32faf8b98477b0a26969ef7d8b9987",
@@ -24,10 +24,11 @@
     "artefakt_anzeige": "0,74 GB",
     "status": "verifiziert",
     "perplexitaet": "15,27 gegen BF16 14,95 (+2,11 %)",
-    "bemerkung": "Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an\ndiesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an."
+    "bemerkung": "Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an\ndiesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an.",
+    "grundmodell": "Qwen2.5-0,5B"
   },
   "qwen2.5-7b": {
-    "anzeigename": "Qwen2.5-7B",
+    "anzeigename": "Myelith 7B",
     "hf_repo": "Qwen/Qwen2.5-7B",
     "hf_verzeichnis": "Qwen2.5-7B",
     "hf_revision": "d149729398750b98c0af14eb82c78cfe92750796",
@@ -45,10 +46,11 @@
     "artefakt_anzeige": "8,1 GB",
     "status": "verifiziert",
     "perplexitaet": "8,78 gegen BF16 8,68 (+1,14 %)",
-    "bemerkung": "Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6).\nRechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden.\nNur wählen, wenn 23 GB Platte frei sind."
+    "bemerkung": "Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6).\nRechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden.\nNur wählen, wenn 23 GB Platte frei sind.",
+    "grundmodell": "Qwen2.5-7B"
   },
   "qwen3-4b": {
-    "anzeigename": "Qwen3-4B",
+    "anzeigename": "Myelith 4B",
     "hf_repo": "Qwen/Qwen3-4B",
     "hf_verzeichnis": "Qwen3-4B",
     "hf_revision": "1cfa9a7208912126459214e8b04321603b3df60c",
@@ -66,10 +68,11 @@
     "artefakt_anzeige": "4,5 GB",
     "status": "verifiziert",
     "perplexitaet": "19,95 gegen BF16 19,63 (+1,64 %)",
-    "bemerkung": "Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm.\nDrei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war:\nQK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases,\nund head_dim 128 bei hidden_size/num_heads = 80 (Fund 59).\nStatus 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist\nbitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen."
+    "bemerkung": "Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm.\nDrei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war:\nQK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases,\nund head_dim 128 bei hidden_size/num_heads = 80 (Fund 59).\nStatus 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist\nbitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen.",
+    "grundmodell": "Qwen3-4B"
   },
   "qwen3-30b-a3b": {
-    "anzeigename": "Qwen3-30B-A3B",
+    "anzeigename": "Myelith 30B-A3B",
     "hf_repo": "Qwen/Qwen3-30B-A3B",
     "hf_verzeichnis": "Qwen3-30B-A3B",
     "hf_revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39",
@@ -87,6 +90,8 @@
     "artefakt_anzeige": "29.1 GB",
     "status": "verifiziert",
     "perplexitaet": "10,42 gegen BF16 10,48 (-0,59 %). Das Vorzeichen ist kein Beleg fuer Ueberlegenheit: Zwei der vier Sequenzen sind besser, zwei schlechter, und der Standardfehler des Mittels betraegt 1,66 %. Bei 435 Positionen ist kein Unterschied auflösbar; das Kriterium (<= 5 %) ist mit weitem Abstand erfuellt",
-    "bemerkung": "Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer,\nTop-8, alle 48 Layer sind MoE (mlp_only_layers ist leer).\nKalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell\n56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden\neingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom.\nArtefakt: 18 868 Tensoren in 37 747 Dateien.\nBelegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet\n' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei\nunabhaengige Laeufe gleich.\nPerplexitaet am 2026-08-25 gemessen; Einordnung siehe eval/results/. Nach Gesamtparametern setzt das Modell die Reihe fort, in der\nder Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %,\n7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht.\nWelche der beiden Groessen massgeblich ist, ist offen."
-  }
+    "bemerkung": "Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer,\nTop-8, alle 48 Layer sind MoE (mlp_only_layers ist leer).\nKalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell\n56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden\neingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom.\nArtefakt: 18 868 Tensoren in 37 747 Dateien.\nBelegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet\n' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei\nunabhaengige Laeufe gleich.\nPerplexitaet am 2026-08-25 gemessen; Einordnung siehe eval/results/. Nach Gesamtparametern setzt das Modell die Reihe fort, in der\nder Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %,\n7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht.\nWelche der beiden Groessen massgeblich ist, ist offen.",
+    "grundmodell": "Qwen3-30B-A3B"
+  },
+  "_anzeigename_bedeutung": "⚑ `anzeigename` heisst seit dem 2026-09-09 \"Myelith <Groesse>\" und nicht mehr nach dem Grundmodell. Der Grund ist sachlich: Was ausgeliefert wird, ist ein SELBST GEBAUTES Artefakt, ganzzahlig quantisiert nach dem Verfahren dieses Projektes, mit eigenen Skalen und Nachschlagetabellen. Es rechnet anders als das Gleitkommamodell, aus dem es stammt, und seine Perplexitaet steht hier daneben; es \"Qwen3-4B\" zu nennen behauptete eine Gleichheit, die nicht besteht. ⚠️ Die Herkunft verschwindet dabei NICHT: Sie steht in `grundmodell`, `hf_repo` und `hf_revision`, und die Oberflaeche zeigt sie neben dem Namen. Das ist keine Hoeflichkeit, sondern die Bedingung der Apache-2.0, unter der die Grundmodelle stehen; ohne sie waere der Name eine Verschleierung statt einer Unterscheidung."
 }

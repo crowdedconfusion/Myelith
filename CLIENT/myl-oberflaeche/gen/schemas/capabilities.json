@@ -1,1 +1,1 @@
-{}
+{"vorgabe":{"identifier":"vorgabe","description":"Was das Fenster darf. Ein einziger Eintrag: auf Ereignisse des Rueckens horchen. Eigene Befehle brauchen keine Erlaubnis, Kernbefehle schon, und `listen` ist einer.","local":true,"windows":["main"],"permissions":["core:event:default"]}}

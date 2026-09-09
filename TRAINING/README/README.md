@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.3.0
-> **Datum:** 2026-09-04
+> **Version:** 0.3.1
+> **Datum:** 2026-09-09
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -101,15 +101,60 @@ COMPUTE_PIPELINE (Trainingssegmente nutzen dieselbe Pod-Infrastruktur),
 CONSENSUS (VRF-Datenzuweisung nutzt den Epochen-Scheduler,
 Ledger-Buchhaltung der Trainingsvergütung), VERIFICATION (Aggregations- und
 Gradienten-Segmente brauchen dieselbe Bisektions-/Redundanzlogik),
-TOKENOMICS (Trainingsvergütungs-Obergrenze) — sowie ein **ganzzahliger
-Rückwärtspass** in INTEGER_LLM, der dort noch nicht implementiert ist
-(INTEGER_LLM behandelt bislang ausschließlich Inferenz).
+TOKENOMICS (Trainingsvergütungs-Obergrenze) sowie ein **ganzzahliger
+Rückwärtspass** in INTEGER_LLM.
+
+⛑ **Hier stand bis zum 2026-09-09, der Rückwärtspass sei „dort noch
+nicht implementiert" und INTEGER_LLM behandle „bislang ausschliesslich
+Inferenz".** Beides ist überholt. Der Rückwärtspass rechnet geshardet
+und bitgleich, und am 2026-09-09 ist der erste inhaltliche Nachweis
+gefallen: ein Artefakt, das eine hineingeschriebene Tatsache
+beantwortet und drei Nachbartatsachen unverändert lässt.
+
+## Wo das ganzzahlige Training beschrieben ist
+
+⚑ **Nicht hier.** Diese Kiste koordiniert Training im **Netz**:
+Datenprovenienz, Wachstumsoperator, VRF-Zuweisung. Wie ein Lauf
+aussieht, der eine Tatsache in ein Modell schreibt, steht dort, wo das
+Werkzeug liegt:
+
+| Frage | Ort |
+|---|---|
+| Wie fahre ich einen Lauf, der trifft? | `INTEGER_LLM/README/README.md`, Abschnitt „Eine Tatsache hineinschreiben" |
+| Wie baue ich einen Datensatz dafür? | `README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`, Kapitel 7 |
+| Warum stehen die Zahlen so? | Derselbe Bericht, Kapitel 1 bis 5 |
+| Was ist offen? | Derselbe Bericht, Kapitel 9 |
+
+**Die drei Zahlen, die ein Lauf einhalten muss**, damit er überhaupt
+etwas misst, und sie stehen hier, weil sie sonst niemand findet, der
+von dieser Komponente kommt:
+
+1. Der **Zielrang** muss fallen; halbiert er sich nicht alle paar
+   Durchgänge, stimmt der Aufbau nicht.
+2. Die **Trennschärfe** `Faktor(ziel) / Faktor(fremd)` muss **wachsen**.
+   Bleibt sie bei 1,0, wird eine Form gelernt und keine Tatsache.
+3. Die **Kontrolle** muss auf Rang 0 bleiben. Bricht sie weg, ist der
+   Schritt zu gross.
 
 ## Struktur
 
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.3.1 – 2026-09-09 (zwei überholte Sätze, und ein Wegweiser)
+
+⛑ **Diese Datei behauptete, INTEGER_LLM behandle „bislang
+ausschliesslich Inferenz" und der ganzzahlige Rückwärtspass sei dort
+„noch nicht implementiert".** Beides war zum Zeitpunkt des Schreibens
+richtig und ist es seit Monaten nicht mehr. Ein Abhängigkeitseintrag,
+der aus einer überholten Annahme stammt, schickt den Nächsten in die
+Irre.
+
+⚑ Neu ist ein Wegweiser darauf, wo das ganzzahlige Training
+beschrieben ist, samt den drei Zahlen, die ein Lauf einhalten muss.
+Diese Kiste bleibt, was sie ist: die Koordination im Netz, nicht die
+Rechenart.
 
 ### myl-train v0.3.0 – 2026-09-05 (Fund 183: die Kiste bekommt ihren ersten Aufrufer)
 

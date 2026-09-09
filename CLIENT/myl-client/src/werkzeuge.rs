@@ -768,7 +768,27 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
                 }
                 // Der Name relativ zum ANGEFRAGTEN Verzeichnis, damit
                 // eine tiefe Auflistung lesbar bleibt.
-                let name = echt.strip_prefix(&p).unwrap_or(&echt).display().to_string();
+                // ⛑ **Schraegstriche, auf allen Plattformen.** Auf
+                // Windows trennt `display()` mit `\`, und der neue
+                // Plattform-Job hat das beim ersten Lauf gefunden:
+                // `unter\tief.txt` statt `unter/tief.txt`. Fuer die
+                // Pruefung waere ein plattformweiser Vergleich die
+                // bequeme Antwort gewesen; die richtige ist, dass die
+                // **Ausgabe** ueberall gleich aussieht.
+                //
+                // ⚑ Zwei Gruende. Das Modell liest diese Pfade und
+                // gibt sie an `read_file` zurueck: `/` ist die Form,
+                // in der es Pfade gesehen hat, `\` die seltene. Und
+                // `aufloesen` nimmt beide, denn `Path` deutet auf
+                // Windows den Schraegstrich mit; es geht also nichts
+                // verloren.
+                let name = echt
+                    .strip_prefix(&p)
+                    .unwrap_or(&echt)
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 let groesse = e.metadata().map(|m| m.len()).unwrap_or(0);
                 zeilen.push(if art == "Datei" {
                     format!("{name}\t{groesse} Bytes")

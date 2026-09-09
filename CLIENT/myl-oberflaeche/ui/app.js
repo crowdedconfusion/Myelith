@@ -5,8 +5,13 @@
 // # Der Aufbau, seit dem 2026-09-09
 //
 // Ein Gespraechsfenster: links eine Seitenleiste mit Modus und
-// Gespraechen, oben mittig der Ort (lokal oder Netz), oben rechts das
-// Zahnrad. Davor waren es drei untereinanderliegende Abschnitte.
+// Gespraechen, oben rechts das Zahnrad. Davor waren es drei
+// untereinanderliegende Abschnitte.
+//
+// ⛑ Hier stand bis zum 2026-09-09 „oben mittig der Ort (lokal oder
+// Netz)". Der Schalter ist entfallen, der Satz nicht, und ein
+// Kommentar, der einen Bedienteil beschreibt, den es nicht gibt,
+// schickt den Naechsten suchen.
 //
 // ⚑ **Der Modus steht ueber den Gespraechen, weil er bestimmt, WAS ein
 // Gespraech ist.** In `Frage` traegt es seinen Verlauf mit und das
@@ -65,6 +70,28 @@ const MODI = [
     name: "Agent",
     was: "mit Werkzeugen",
     leer: "Ein Auftrag, den der Agent mit Werkzeugen erledigt. ⚑ Jeder Auftrag steht fuer sich: Schrittbudget und Belegkette gelten je Lauf, der vorige Auftrag geht nicht mit ein.",
+  },
+  // ⚠️ **Zwei Modi, die es geben WIRD und heute nicht gibt.** Sie
+  // stehen gedaempft da und sagen beim Anfassen, was fehlt. Ein Modus,
+  // der still nichts taete, waere schlimmer als keiner; einer, der
+  // ganz fehlt, verschweigt, wohin der Client geht.
+  {
+    id: "knoten",
+    name: "Knoten",
+    was: "Mining",
+    offen: false,
+    warum:
+      "Der Knoten rechnet fuer das Netz und verdient daran. Dem Klienten fehlen Knotenadresse und Vollmacht (Fahrplan 2.2 bis 2.5b).",
+    leer: "",
+  },
+  {
+    id: "wallet",
+    name: "Wallet",
+    was: "Guthaben",
+    offen: false,
+    warum:
+      "Guthaben, Ueberweisungen und die Belege dazu. Braucht dieselbe Netzhaelfte wie der Knoten (Fahrplan 2.2 bis 2.5b).",
+    leer: "",
   },
 ];
 
@@ -132,24 +159,6 @@ function titel_aus(text) {
   return eine.length > 40 ? `${eine.slice(0, 40)}...` : eine || "Neues Gespraech";
 }
 
-// --- Der Ort ------------------------------------------------------------
-
-// ⛑ **`netz` ist noch nicht verdrahtet, und das steht hier statt in
-// einer Ausrede.** Der Klient hat kein Feld fuer eine Knotenadresse und
-// keines fuer eine Vollmacht; das sind die Punkte 2.2 bis 2.5b des
-// Fahrplans. Der Schalter ist trotzdem da, weil der Ort die Frage ist,
-// die ueber allem steht, und weil ein Schalter, der still nichts tut,
-// schlimmer waere als einer, der sagt was fehlt.
-const ORTE = {
-  lokal: { offen: true },
-  netz: {
-    offen: false,
-    warum:
-      "Netz ist noch nicht verdrahtet: Es fehlen die Knotenadresse und die Vollmacht (Fahrplan 2.2 bis 2.5b). Bis dahin rechnet diese Maschine.",
-  },
-};
-let ort = "lokal";
-
 // --- Anzeige ------------------------------------------------------------
 
 function hinweis(text) {
@@ -165,6 +174,10 @@ function modi_zeichnen() {
     b.className = "modus blank";
     b.setAttribute("role", "radio");
     b.setAttribute("aria-checked", String(offen?.modus === m.id));
+    if (m.offen === false) {
+      b.dataset.offen = "nein";
+      b.title = m.warum;
+    }
     const n = document.createElement("span");
     n.textContent = m.name;
     const s = document.createElement("span");
@@ -172,6 +185,10 @@ function modi_zeichnen() {
     s.textContent = m.was;
     b.append(n, s);
     b.addEventListener("click", () => {
+      if (m.offen === false) {
+        hinweis(m.warum);
+        return;
+      }
       if (!offen) neues_gespraech(m.id);
       // ⚑ Den Modus eines Gespraechs mit Beitraegen zu wechseln waere
       // ein zweiter Vertrag im selben Verlauf: Die eine Haelfte traegt
@@ -182,6 +199,46 @@ function modi_zeichnen() {
       alles_zeichnen();
     });
     w.append(b);
+  }
+}
+
+/// Was der Agent anfassen darf: Verzeichnis und Werkzeuge.
+///
+/// ⚑ Nur im Agentenmodus. Im Chat gibt es keine Werkzeuge, und eine
+/// Zeile, die dort „keine Werkzeuge" sagt, waere eine Warnung ohne
+/// Gegenstand.
+async function reichweite_zeichnen() {
+  const w = $("reichweite");
+  w.replaceChildren();
+  if (!offen || offen.modus !== "agent") return;
+  let r;
+  try {
+    r = await invoke("werkzeuge");
+  } catch (f) {
+    r = { wurzel: null, namen: [] };
+  }
+  const p = document.createElement("p");
+  p.className = "reichweitezeile";
+  if (!r.wurzel) {
+    p.textContent = "kein Verzeichnis eingehaengt";
+    p.title = "Ohne `agent.wurzel` hat der Agent keine Werkzeuge. In den Einstellungen setzen.";
+  } else {
+    // ⛑ **Von vorn gekuerzt, im Skript.** Das Aussagekraeftige an
+    // einem Pfad steht hinten; `direction: rtl` taete dasselbe und
+    // schoebe dabei den fuehrenden Schraegstrich ans Ende, sodass ein
+    // Pfad angezeigt wuerde, den es nicht gibt.
+    const GRENZE = 34;
+    p.textContent =
+      r.wurzel.length > GRENZE ? `…${r.wurzel.slice(-(GRENZE - 1))}` : r.wurzel;
+    p.title = r.wurzel;
+  }
+  w.append(p);
+  if (r.namen.length) {
+    const l = document.createElement("p");
+    l.className = "reichweitezeile werkzeugliste";
+    l.textContent = r.namen.join("  ");
+    l.title = `${r.namen.length} Werkzeuge`;
+    w.append(l);
   }
 }
 
@@ -227,22 +284,6 @@ function chats_zeichnen() {
     auf.style.textAlign = "left";
     zeile.append(auf, weg);
     w.append(zeile);
-  }
-}
-
-function ort_zeichnen() {
-  const w = $("ort");
-  const knoepfe = [...w.querySelectorAll("button")];
-  for (const b of knoepfe) {
-    const gewaehlt = b.dataset.ort === ort;
-    b.setAttribute("aria-checked", String(gewaehlt));
-    b.dataset.offen = ORTE[b.dataset.ort].offen ? "ja" : "nein";
-  }
-  const aktiv = knoepfe.find((b) => b.dataset.ort === ort);
-  const reiter = w.querySelector(".reiter");
-  if (aktiv && reiter) {
-    reiter.style.width = `${aktiv.offsetWidth}px`;
-    reiter.style.transform = `translateX(${aktiv.offsetLeft - 3}px)`;
   }
 }
 
@@ -309,9 +350,46 @@ function gespraech_zeichnen() {
 
 function alles_zeichnen() {
   modi_zeichnen();
+  // ⚑ Ohne `await`: Die Reichweite braucht einen Ruecken-Aufruf, und
+  // das Gespraech soll darauf nicht warten. Sie erscheint, wenn sie da
+  // ist.
+  reichweite_zeichnen();
   chats_zeichnen();
-  ort_zeichnen();
   gespraech_zeichnen();
+}
+
+// --- Meldungen ----------------------------------------------------------
+
+// ⚑ **Jedes Ereignis meldet sich, ausser man steht ohnehin davor.**
+// Wer auf der Einstellungsseite zusieht, wie ein Artefakt gebaut wird,
+// braucht keine Meldung darueber; wer im Gespraech sitzt, schon. Und
+// umgekehrt: Eine fertige Antwort meldet sich nur, wenn man gerade
+// woanders ist.
+//
+// ⛑ **Die Maske entscheidet und nicht der Ereignistyp.** Eine Liste
+// „diese Ereignisse melden sich immer" liefe auseinander, sobald ein
+// Ereignis dazukommt; die Frage „sieht der Nutzer es gerade selbst"
+// ist dagegen fuer jedes dieselbe.
+function maske() {
+  return $("einstellungsseite").hidden ? "gespraech" : "einstellungen";
+}
+
+function melden(text, wo) {
+  if (wo && wo === maske()) return;
+  const k = document.createElement("div");
+  k.className = "meldung glas";
+  const t = document.createElement("p");
+  t.textContent = text;
+  const zu = document.createElement("button");
+  zu.className = "rundknopf blank";
+  zu.setAttribute("aria-label", "Meldung schliessen");
+  zu.textContent = "×";
+  zu.addEventListener("click", () => k.remove());
+  k.append(t, zu);
+  $("meldungen").append(k);
+  // ⚑ Sie geht von selbst, aber langsam: Wer gerade tippt, soll sie
+  // noch lesen koennen, wenn er aufsieht.
+  setTimeout(() => k.remove(), 20000);
 }
 
 // --- Einstellungen ------------------------------------------------------
@@ -347,6 +425,140 @@ const feldzeile = (name, art, wert, beim_setzen) => {
   tr.append(a, b);
   return tr;
 };
+
+// --- Modelle holen und bauen --------------------------------------------
+
+// ⚑ Die Phasennamen heissen im Fenster anders als im Ruecken: dort
+// `holen`, hier „Download". Der Ruecken spricht die Sprache des
+// Protokolls, das Fenster die des Nutzers.
+const PHASEN = { holen: 1, kalibrieren: 2, fertig: 3 };
+const PHASENNAME = { holen: "Download", kalibrieren: "Kalibrierung", fertig: "fertig" };
+let baut = null;
+
+/// ⚠️ **Der Balken zeigt Phasen und keine erfundene Zahl.** Die
+/// Skripte melden keinen Prozentsatz; wer daraus einen macht, hat
+/// einen Balken, der bei siebzig Prozent stehenbleibt. Drei Phasen,
+/// und daneben steht, was gerade laeuft und wie lange schon.
+function baustand_setzen(phase, text, seit) {
+  $("baustand").hidden = false;
+  const anteil = (PHASEN[phase] || 0) / 3;
+  $("balkenteil").style.width = `${Math.round(anteil * 100)}%`;
+  const min = Math.floor((Date.now() - seit) / 60000);
+  const wie = min < 1 ? "gerade begonnen" : `seit ${min} Minuten`;
+  const name = PHASENNAME[phase] || phase;
+  $("bauphase").textContent = phase === "fertig" ? "fertig" : `${name}, ${wie}`;
+  if (text) {
+    const z = $("bauzeilen");
+    z.textContent = `${z.textContent}${text}\n`.split("\n").slice(-14).join("\n");
+    z.scrollTop = z.scrollHeight;
+  }
+}
+
+async function katalog_zeichnen() {
+  const v = await invoke("voraussetzungen");
+  const h = $("bauhinweis");
+  if (v.fehlt.length) {
+    h.textContent = `Bauen geht hier nicht: ${v.fehlt.join("  ")}`;
+  } else {
+    h.textContent =
+      "Herunterladen und Kalibrieren dauert Minuten bis Stunden und braucht Gigabyte.";
+  }
+  const w = $("katalog");
+  w.replaceChildren();
+  let liste;
+  try {
+    liste = await invoke("katalog");
+  } catch (f) {
+    h.textContent = `Katalog nicht lesbar: ${f}`;
+    return;
+  }
+  for (const m of liste) {
+    const z = document.createElement("div");
+    z.className = "katalogzeile";
+    const links = document.createElement("div");
+    const n = document.createElement("strong");
+    n.textContent = m.anzeigename || m.schluessel;
+    const d = document.createElement("span");
+    d.className = "katalogdaten";
+    // ⚑ Groesse und Lizenz stehen dabei, denn beides entscheidet die
+    // Frage, ob jemand den Knopf drueckt.
+    //
+    // ⚠️ **Und das Grundmodell steht dabei.** Der Name heisst „Myelith
+    // 4B", weil das Artefakt selbst gebaut ist und anders rechnet als
+    // das Gleitkommamodell. Die Herkunft darf dabei nicht
+    // verschwinden: Die Grundmodelle stehen unter Apache-2.0, und ein
+    // Name ohne Herkunft waere eine Verschleierung statt einer
+    // Unterscheidung.
+    d.textContent = [
+      m.grundmodell ? `aus ${m.grundmodell}` : "",
+      m.parameter,
+      m.gewichte,
+      `Artefakt ${m.artefakt}`,
+      m.lizenz,
+      m.status,
+    ]
+      .filter(Boolean)
+      .join("  ·  ");
+    links.append(n, d);
+
+    const b = document.createElement("button");
+    if (m.artefakt_da) {
+      b.textContent = "liegt vor";
+      b.disabled = true;
+    } else {
+      b.textContent = m.modell_da ? "kalibrieren" : "Download und kalibrieren";
+      b.disabled = v.fehlt.length > 0 || baut !== null;
+      b.addEventListener("click", () => bauen(m.schluessel, m.anzeigename || m.schluessel));
+    }
+    z.append(links, b);
+    // ⛑ **Der Balken wird VERSCHOBEN und nicht neu gebaut.** Er haengt
+    // unter dem Modell, das gerade laedt, und sonst nirgends. Ein
+    // zweiter Balken je Neuzeichnen haette die schon gelesenen Zeilen
+    // des Laufs weggeworfen; `append` verschiebt den vorhandenen
+    // Knoten samt Inhalt.
+    if (baut === m.schluessel) {
+      const stand = $("baustand");
+      stand.hidden = false;
+      z.append(stand);
+    }
+    w.append(z);
+  }
+}
+
+async function bauen(schluessel, name) {
+  baut = schluessel;
+  const seit = Date.now();
+  $("bauzeilen").textContent = "";
+  // Erst die Liste neu zeichnen, damit der Balken in der richtigen
+  // Zeile haengt, dann fuellen.
+  await katalog_zeichnen();
+  baustand_setzen("holen", "", seit);
+  const ab = await horchen("bau-zeile", (e) => baustand_setzen(e.payload.phase, e.payload.text, seit));
+  try {
+    const pfad = await invoke("artefakt_bauen", { schluessel });
+    baustand_setzen("fertig", `Artefakt: ${pfad}`, seit);
+    // ⚑ Die Meldung geht nur raus, wenn der Nutzer NICHT zusieht.
+    melden(`${name} ist fertig kalibriert.`, "einstellungen");
+  } catch (f) {
+    baustand_setzen("fehler", String(f), seit);
+    melden(`${name} ist fehlgeschlagen.`, "einstellungen");
+  } finally {
+    ab();
+    baut = null;
+    // ⚑ Der Balken bleibt stehen, bis der Nutzer die Seite verlaesst:
+    // Wer gerade zusieht, will das Ergebnis noch lesen. Erst das
+    // naechste Oeffnen der Seite raeumt ihn weg.
+    await katalog_zeichnen();
+    $("baustand").hidden = false;
+    await modellwahl_zeichnen();
+  }
+}
+
+/// Horcht auf ein Ereignis des Rueckens und gibt das Abmelden zurueck.
+async function horchen(name, fn) {
+  const { listen } = window.__TAURI__.event;
+  return await listen(name, fn);
+}
 
 async function einstellungen_zeichnen() {
   const e = await invoke("einstellungen");
@@ -399,6 +611,51 @@ async function kopf_zeichnen() {
 // --- Modell -------------------------------------------------------------
 
 let geladen = false;
+
+/// Die Modellwahl fuellen.
+///
+/// ⚑ Der Netzeintrag steht mit in der Liste und ist gesperrt. Die Wahl
+/// zwischen dieser Maschine und dem Netz gehoert hierher: Ein Modell
+/// ist ein Modell, ob es hier liegt oder dort gerechnet wird.
+async function modellwahl_zeichnen() {
+  const w = $("modellwahl");
+  let liste;
+  try {
+    liste = await invoke("modelle");
+  } catch (f) {
+    hinweis(`Fehler: ${f}`);
+    return;
+  }
+  const e = await invoke("einstellungen");
+  w.replaceChildren();
+  for (const m of liste) {
+    const o = document.createElement("option");
+    o.value = m.pfad;
+    o.textContent = m.name;
+    if (!m.offen) {
+      o.disabled = true;
+      o.title = m.warum;
+    }
+    if (m.pfad === e.artefakt) o.selected = true;
+    w.append(o);
+  }
+}
+
+$("modellwahl").addEventListener("change", async () => {
+  const neu = $("modellwahl").value;
+  try {
+    await invoke("setzen", { feld: "modell.artefakt", wert: neu });
+    // ⛑ Ein Modellwechsel wirft das geladene weg. Ohne diese Zeile
+    // faehrt der naechste Auftrag mit dem alten Modell, waehrend die
+    // Anzeige das neue nennt.
+    geladen = false;
+    hinweis("Modell gewechselt; es wird beim naechsten Auftrag geladen.");
+    await kopf_zeichnen();
+    reichweite_zeichnen();
+  } catch (f) {
+    hinweis(`Fehler: ${f}`);
+  }
+});
 
 async function modell_laden() {
   const knopf = $("laden");
@@ -465,9 +722,20 @@ async function senden(text) {
       const a = await invoke("frage", { verlauf });
       offen.beitraege.push({ von: "modell", text: a.text, fuss: `${a.sekunden} s` });
     }
+    // ⚑ Meldet sich nur, wenn der Nutzer gerade woanders ist, etwa
+    // auf der Einstellungsseite: Wer die Antwort vor sich hat, braucht
+    // keine Nachricht darueber, dass sie da ist.
+    const wie_lange = offen.beitraege[offen.beitraege.length - 1]?.fuss || "";
+    melden(
+      offen.modus === "agent"
+        ? `Auftrag fertig: ${titel_aus(text)}  ${wie_lange}`
+        : `Antwort da: ${titel_aus(text)}  ${wie_lange}`,
+      "gespraech",
+    );
     hinweis("");
   } catch (f) {
     offen.beitraege.push({ von: "modell", text: `Fehler: ${f}`, fuss: "", fehler: true });
+    melden(`Fehlgeschlagen: ${titel_aus(text)}`, "gespraech");
     hinweis("");
   } finally {
     knopf.disabled = false;
@@ -500,7 +768,7 @@ async function senden(text) {
 // ⚑ **Und gerechnet wird im Bildtakt.** `mousemove` feuert oefter als
 // der Schirm zeichnet; ohne die Sperre setzte man Werte, die niemand je
 // sieht, und das kostet Rechenzeit, die dem Modell gehoert.
-const LINSEN = ".glas, .eingabefeld, button:not(.blank), .schalter, section";
+const LINSEN = ".glas, .eingabefeld, button:not(.blank), section";
 let reflex_angefragt = false;
 let letzte_stelle = null;
 
@@ -542,6 +810,12 @@ $("leiste-schalten").addEventListener("click", () => {
 $("zu-einstellungen").addEventListener("click", async () => {
   $("einstellungsseite").hidden = false;
   await einstellungen_zeichnen();
+  // Beim Oeffnen ist nichts im Bau, also auch kein Balken.
+  if (!baut) {
+    $("baustand").hidden = true;
+    $("bauzeilen").textContent = "";
+  }
+  await katalog_zeichnen();
   $("zurueck").focus();
 });
 $("zurueck").addEventListener("click", () => {
@@ -558,18 +832,6 @@ $("neues-gespraech").addEventListener("click", () => {
 
 $("laden").addEventListener("click", modell_laden);
 
-for (const b of $("ort").querySelectorAll("button")) {
-  b.addEventListener("click", () => {
-    const gewuenscht = b.dataset.ort;
-    if (!ORTE[gewuenscht].offen) {
-      hinweis(ORTE[gewuenscht].warum);
-      return;
-    }
-    ort = gewuenscht;
-    hinweis("");
-    ort_zeichnen();
-  });
-}
 
 // ⚑ Das Feld waechst mit dem Text und hat eine Obergrenze. Ein Feld,
 // das nicht waechst, versteckt die eigene Eingabe; eines ohne Grenze
@@ -599,7 +861,6 @@ $("eingabe").addEventListener("submit", async (e) => {
   await senden(text);
 });
 
-window.addEventListener("resize", ort_zeichnen);
 
 // --- Start --------------------------------------------------------------
 
@@ -609,6 +870,7 @@ window.addEventListener("resize", ort_zeichnen);
   else offen = gespraeche[0];
   alles_zeichnen();
   try {
+    await modellwahl_zeichnen();
     await kopf_zeichnen();
   } catch (f) {
     hinweis(`Fehler: ${f}`);

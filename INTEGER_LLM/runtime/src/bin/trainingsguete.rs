@@ -119,6 +119,86 @@ fn strom_vor(
         .collect()
 }
 
+/// Schreibt die trainierten Kopfzeilen in der Form von `lm_head.bin`.
+///
+/// ⛑ **Nur die verfolgten Zeilen.** Der Kopf hat beim 4B
+/// hundertfuenfzigtausend Zeilen zu je 2560 Werten, also 777 MB; ein
+/// Lauf bewegt davon eine Handvoll. Die ganze Matrix zu schreiben
+/// hiesse, 777 MB abzulegen, um 51 KB zu sichern.
+fn kopf_hinausschreiben(
+    m: &integer_llm_runtime::model::IntegerModel,
+    kopftoken: &[u32],
+    pfad: &std::path::Path,
+) -> Result<usize, String> {
+    use std::io::Write;
+    let lmh = m.lm_head_int16.as_ref().ok_or("dieses Modell hat keinen int16-Kopf")?;
+    let hs = m.hidden_size;
+    let mut f = std::io::BufWriter::new(
+        std::fs::File::create(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?,
+    );
+    let schreib = |f: &mut std::io::BufWriter<std::fs::File>, b: &[u8]| -> Result<(), String> {
+        f.write_all(b).map_err(|e| e.to_string())
+    };
+    schreib(&mut f, b"MYLKOPF1")?;
+    schreib(&mut f, &(hs as u32).to_le_bytes())?;
+    schreib(&mut f, &(kopftoken.len() as u32).to_le_bytes())?;
+    for t in kopftoken {
+        schreib(&mut f, &t.to_le_bytes())?;
+        let ab = *t as usize * hs;
+        for j in 0..hs {
+            schreib(&mut f, &lmh.data[ab + j].to_le_bytes())?;
+        }
+    }
+    f.flush().map_err(|e| e.to_string())?;
+    Ok(kopftoken.len())
+}
+
+/// Liest abgelegte Kopfzeilen in das Modell zurueck.
+///
+/// ⛑ **Die Form muss passen**, sonst wird abgelehnt statt
+/// zurechtgebogen: Eine Datei mit anderer Zeilenbreite gehoert zu einem
+/// anderen Modell, und sie einzusetzen ergaebe stillschweigend Unsinn.
+fn kopf_hereinlesen(
+    m: &mut Arc<integer_llm_runtime::model::IntegerModel>,
+    pfad: &std::path::Path,
+) -> Result<usize, String> {
+    let d = std::fs::read(pfad).map_err(|e| format!("{}: {e}", pfad.display()))?;
+    if d.len() < 16 || &d[..8] != b"MYLKOPF1" {
+        return Err("keine Kopfdatei (Marke MYLKOPF1 fehlt)".into());
+    }
+    let u32_bei = |i: usize| u32::from_le_bytes([d[i], d[i + 1], d[i + 2], d[i + 3]]) as usize;
+    let hidden = u32_bei(8);
+    let zeilen = u32_bei(12);
+    let je_zeile = 4 + hidden * 2;
+    if d.len() != 16 + zeilen * je_zeile {
+        return Err(format!(
+            "Laenge {} passt nicht zu {zeilen} Zeilen zu {hidden}",
+            d.len()
+        ));
+    }
+    let mm = Arc::get_mut(m).ok_or("das Modell ist schon geteilt")?;
+    if mm.hidden_size != hidden {
+        return Err(format!(
+            "Zeilenbreite {hidden} passt nicht zum Modell ({})",
+            mm.hidden_size
+        ));
+    }
+    let lmh = mm.lm_head_int16.as_mut().ok_or("dieses Modell hat keinen int16-Kopf")?;
+    for z in 0..zeilen {
+        let ab = 16 + z * je_zeile;
+        let token = u32_bei(ab);
+        let ziel = token * hidden;
+        if ziel + hidden > lmh.data.len() {
+            return Err(format!("Token {token} liegt hinter dem Ende des Kopfes"));
+        }
+        for j in 0..hidden {
+            let b = ab + 4 + j * 2;
+            lmh.data[ziel + j] = i16::from_le_bytes([d[b], d[b + 1]]);
+        }
+    }
+    Ok(zeilen)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -147,6 +227,8 @@ fn main() {
     let mut probentoken: usize = 40;
     let mut stand_ein: Option<String> = None;
     let mut stand_aus: Option<String> = None;
+    let mut kopf_aus: Option<String> = None;
+    let mut kopf_ein: Option<String> = None;
     let mut anker: u32 = 0;
     let mut absenkung = false;
     let mut auswahl = integer_llm_runtime::shardtraining::Auswahl::Alles;
@@ -232,6 +314,33 @@ fn main() {
                 i += 1;
                 stand_aus = args.get(i).cloned();
             }
+            // ⚑ **Den trainierten Kopf hinausschreiben.** Der Stand
+            // oben enthaelt ihn nicht (Fund 243); ohne diese Datei ist
+            // ein Kopflauf nach dem Beenden weg, und sein Ergebnis
+            // erreicht kein Artefakt.
+            //
+            // Geschrieben werden die **fertigen i16-Zeilen** und nicht
+            // die Master: Genau in dieser Form stehen sie in
+            // `lm_head.bin`, und `kopf_einsetzen` kann sie ohne
+            // Umrechnung an ihren Platz legen. Die Verschiebungen
+            // bleiben unberuehrt, denn der Kopfschritt aendert sie
+            // nicht.
+            "--kopf-schreiben" => {
+                i += 1;
+                kopf_aus = args.get(i).cloned();
+            }
+            // ⚑ **Das Gegenstueck, damit ein Kopflauf fortsetzbar
+            // ist.** Ohne es kann ein Lauf seinen Kopf ablegen, aber
+            // nicht wieder aufnehmen: Wer den Treffer knapp verfehlt,
+            // faengt bei null an, und das sind auf dem 4B rund
+            // dreiviertel Stunden.
+            //
+            // Gelesen wird VOR der ersten Messung, damit `VORHER` den
+            // Stand zeigt, auf dem wirklich aufgesetzt wird.
+            "--kopf-lesen" => {
+                i += 1;
+                kopf_ein = args.get(i).cloned();
+            }
             "--zeilenweise" => {
                 zeilenweise = true;
             }
@@ -251,9 +360,26 @@ fn main() {
                 i += 1;
                 fragendatei = args.get(i).cloned();
             }
+            // ⛑ **Ohne Wert war dieser Schalter ein stiller Nichttuer.**
+            // `args.get(i).and_then(parse)` ergibt bei fehlendem oder
+            // unlesbarem Wert `None`, und `None` heisst hier „kein
+            // Rauschen". Ein Aufruf `--rauschen` am Zeilenende lief
+            // damit als **ganz normaler Trainingslauf** durch und hiess
+            // im Protokoll trotzdem Rauschprobe. Genau die Sorte
+            // gruener Lauf, gegen die dieses Werkzeug sonst angelegt
+            // ist.
             "--rauschen" => {
                 i += 1;
-                rauschen = args.get(i).and_then(|s| s.parse::<i64>().ok());
+                let Some(v) = args.get(i).and_then(|s| s.parse::<i64>().ok()) else {
+                    eprintln!(
+                        "--rauschen braucht eine Stufenzahl, etwa `--rauschen 3`.\n\
+                         ⚑ Und es ersetzt das Training nicht: Es stoert einmal und\n\
+                         faehrt dann die Durchgaenge. Fuer eine Kontrolle OHNE\n\
+                         Gradienten gehoert `--schritte 0` dazu."
+                    );
+                    std::process::exit(2);
+                };
+                rauschen = Some(v);
             }
             "--nenner" => {
                 i += 1;
@@ -305,8 +431,30 @@ fn main() {
             }
             // ⚑ **Die Bewegung je Matrix normieren, bevor die Rate
             // greift.** Damit bedeutet `--nenner` auf jedem Modell
-            // dasselbe: die Zahl der Aktualisierungen, in denen das
-            // groesste Gewicht einer Matrix eine Rasterstufe wandert.
+            // dasselbe: Das groesste Gewicht einer Matrix bewegt sich je
+            // Aktualisierung um **ein `nenner`-tel seines eigenen
+            // Betrages**, unabhaengig von der Skala des Gradienten und
+            // der der Gewichte.
+            //
+            // ⛑ **Hier stand „die Zahl der Aktualisierungen, in denen
+            // das groesste Gewicht eine Rasterstufe wandert", und das
+            // ist um den Faktor 127 daneben.** Die Uebertragungsform
+            // hat 127 Stufen zwischen null und dem Betragsmaximum
+            // einer Zeile, eine Rasterstufe ist also `w_max / 127`.
+            // Der Schritt ist `w_max / nenner`, mithin **`127 /
+            // nenner` Rasterstufen** je Aktualisierung.
+            //
+            // Die Zahl entscheidet, ob ein Lauf ueberhaupt etwas tut,
+            // und drei Messungen stimmen mit ihr ueberein: Nenner 64
+            // sind zwei Stufen je Aktualisierung und zerstoeren die
+            // Ebenen (Fund 204); Nenner 128 ist rund eine Stufe und
+            // bewegt sichtbar; Nenner 1024 ist ein Achtel einer Stufe,
+            // und ein Lauf darauf laesst die Perplexitaet auf seinem
+            // eigenen Korpus unveraendert (Fund 239).
+            //
+            // Die ausfuehrliche Fassung steht an `schritt_normiert`
+            // selbst und war immer richtig; abweichend war nur dieser
+            // Kommentar.
             "--normiert" => {
                 sammeln = true;
                 normiert = true;
@@ -340,6 +488,21 @@ fn main() {
     }
 
     let mut m = Arc::new(load_model(&dir).expect("Modell-Ladung fehlgeschlagen"));
+
+    // ⚑ Einen abgelegten Ablesekopf aufnehmen, bevor irgendetwas
+    //   gemessen wird.
+    if let Some(pfad) = &kopf_ein {
+        match kopf_hereinlesen(&mut m, std::path::Path::new(pfad)) {
+            Ok(n) => eprintln!("[trainingsguete] Kopf gelesen aus {pfad} ({n} Zeilen)"),
+            Err(f) => {
+                // ⛑ Abbruch und kein Weitermachen: Ein Lauf, der auf
+                // einem nicht geladenen Kopf aufsetzt, sieht aus wie
+                // eine Fortsetzung und ist ein Neuanfang.
+                eprintln!("ABBRUCH  Kopf nicht lesbar: {f}");
+                std::process::exit(1);
+            }
+        }
+    }
     let text = std::fs::read_to_string(&args[2]).expect("Sequenzdatei unlesbar");
     // ⚑ **Zwei Formen, und die erkannte hängt am Inhalt.** Eine Datei
     // mit Token-Nummern (wie `perplexity_probe` sie liest) wird direkt
@@ -783,8 +946,30 @@ fn main() {
             }
         }
         eprintln!(
-            "[trainingsguete] RAUSCHEN: {beruehrt} Gewichte um bis zu {stufen} Stufen gestoert, KEIN Gradient"
+            "[trainingsguete] RAUSCHEN: {beruehrt} Gewichte um bis zu {stufen} Stufen gestoert"
         );
+        // ⛑ **Zwei Grenzen, die das URTEIL unten nicht nennt.**
+        //
+        // (1) Gestoert werden die Master des **Ebenenbereichs**. Der
+        //     Ablesekopf bleibt unberuehrt. Fuer einen Lauf mit
+        //     `--nur-kopf` ist dieser Schalter deshalb keine
+        //     Kontrolle: Er stoert etwas anderes, als der Lauf bewegt.
+        //
+        // (2) Danach laufen die Durchgaenge wie sonst. „Ohne
+        //     Gradienten" heisst `--schritte 0` dazu.
+        if kopf || nur_kopf {
+            eprintln!(
+                "[trainingsguete] ⛑ ACHTUNG: das Rauschen fasst den Kopf NICHT an.\n\
+                 [trainingsguete]    Dieser Lauf bewegt den Kopf, gestoert sind die Ebenen.\n\
+                 [trainingsguete]    Als Kontrolle taugt das nicht."
+            );
+        }
+        if schritte > 0 {
+            eprintln!(
+                "[trainingsguete] ⚑ Hinweis: nach der Stoerung laufen {schritte} Durchgaenge\n\
+                 [trainingsguete]    MIT Gradienten. Fuer die reine Kontrolle `--schritte 0`."
+            );
+        }
     }
 
     // ⚑ Der Momentumpuffer lebt ueber alle Durchgaenge, die Sammlung
@@ -1085,6 +1270,42 @@ fn main() {
         ) {
             Ok(()) => eprintln!("[trainingsguete] Stand geschrieben nach {pfad}"),
             Err(f) => eprintln!("[trainingsguete] ⛑ Stand NICHT geschrieben: {f}"),
+        }
+        // ⛑ **Der Kopf ist NICHT in dieser Datei.** `stand_schreiben`
+        // sichert `Shardgewichte`, also die Master des Ebenenbereichs;
+        // der Kopf wird ueber `Kopfsammlung` bewegt und lebt nur im
+        // Prozess. Ein Lauf mit `--kopf` oder `--nur-kopf` verliert
+        // seinen Kopfanteil beim Beenden, und wer den Stand spaeter
+        // laedt, setzt auf einem Modell auf, dem genau das fehlt, was
+        // gemessen wurde.
+        //
+        // Das steht hier als Meldung und nicht nur im Quelltext, weil
+        // die Datei sonst mehr verspricht, als sie enthaelt.
+        if kopf || nur_kopf {
+            eprintln!(
+                "[trainingsguete] ⛑ ACHTUNG: der Kopf ist im Stand NICHT enthalten.\n\
+                 [trainingsguete]    Gesichert sind nur die Master der Ebenen {von} bis {}.\n\
+                 [trainingsguete]    Ein Lauf, dessen Ergebnis am Kopf haengt, ist damit\n\
+                 [trainingsguete]    nach dem Beenden nicht wiederherstellbar.",
+                m.num_layers
+            );
+        }
+    }
+
+    // ⚑ **Der trainierte Kopf, in der Form, in der ein Artefakt ihn
+    // erwartet.** Format: `MYLKOPF1`, die Zeilenbreite, die Zahl der
+    // Zeilen, dann je Zeile die Tokennummer und `hidden` Werte als i16
+    // in kleiner Bytefolge, genau wie in `lm_head.bin`.
+    if let Some(pfad) = &kopf_aus {
+        if kopftoken.is_empty() {
+            eprintln!("[trainingsguete] ⛑ Kopf NICHT geschrieben: dieser Lauf hat keinen trainiert.");
+        } else {
+            match kopf_hinausschreiben(&m, &kopftoken, std::path::Path::new(pfad)) {
+                Ok(n) => eprintln!(
+                    "[trainingsguete] Kopf geschrieben nach {pfad} ({n} Zeilen)"
+                ),
+                Err(f) => eprintln!("[trainingsguete] ⛑ Kopf NICHT geschrieben: {f}"),
+            }
         }
     }
 

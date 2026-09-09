@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.39.1"
+version = "0.41.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.8.0"
+version = "0.14.0"
 dependencies = [
  "myl-client",
  "serde",

@@ -165,6 +165,168 @@ fn setzen(feld: String, wert: String) -> Result<(), String> {
     e.schreiben(&pfad)
 }
 
+/// Welche Modelle zur Wahl stehen.
+///
+/// # ⚑ Gesucht wird im Elternverzeichnis des eingestellten Artefakts
+///
+/// `modell.artefakt` zeigt auf ein Artefakt; daneben liegen die
+/// anderen. Ein fest verdrahteter Pfad waere eine Annahme darueber, wo
+/// jemand seine Artefakte haelt, und die trifft bei einem frischen
+/// Klon nicht.
+///
+/// ⚑ **Erkannt wird an `model_config.json`.** Ein Verzeichnis ohne die
+/// Datei ist kein Artefakt, und eines mit ihr laesst sich laden.
+///
+/// # ⚠️ Der Netzeintrag steht da und traegt nicht
+///
+/// „API, kostet Inferenz-Credits" ist der Platz fuer das Netzmodell.
+/// Er ist **gesperrt**, solange dem Klienten Knotenadresse und
+/// Vollmacht fehlen (Fahrplan 2.2 bis 2.5b). Er steht trotzdem in der
+/// Liste, weil die Wahl zwischen hier und dort an genau diese Stelle
+/// gehoert und nicht in einen Schalter im Kopf: Ein Modell ist ein
+/// Modell, ob es auf dieser Maschine liegt oder im Netz gerechnet wird.
+#[tauri::command]
+fn modelle() -> Result<Vec<Modellwahl>, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut aus: Vec<Modellwahl> = Vec::new();
+
+    let hier = std::path::Path::new(&e.modell.artefakt);
+    if let Some(eltern) = hier.parent() {
+        if let Ok(lesen) = std::fs::read_dir(eltern) {
+            let mut pfade: Vec<std::path::PathBuf> =
+                lesen.flatten().map(|x| x.path()).filter(|p| p.join("model_config.json").is_file()).collect();
+            pfade.sort();
+            // ⚑ Der Anzeigename kommt aus dem Katalog, wenn er dort
+            // steht: In der Wahl soll „Myelith 4B" stehen und nicht
+            // der Verzeichnisname `qwen3-4b`. Steht er nicht drin,
+            // bleibt der Verzeichnisname, denn ein erfundener Name
+            // waere schlechter als ein technischer.
+            let namen = katalognamen();
+            for p in pfade {
+                let ordner =
+                    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let name = namen.get(&ordner).cloned().unwrap_or_else(|| ordner.clone());
+                aus.push(Modellwahl {
+                    pfad: p.display().to_string(),
+                    name,
+                    offen: true,
+                    warum: String::new(),
+                });
+            }
+        }
+    }
+    // ⛑ Steht das eingestellte Artefakt nicht in der Liste (weil es
+    // woanders liegt oder noch nicht existiert), kommt es trotzdem
+    // dazu: Sonst zeigte die Wahl etwas anderes als das, was gilt.
+    if !aus.iter().any(|m| m.pfad == e.modell.artefakt) {
+        aus.insert(
+            0,
+            Modellwahl {
+                pfad: e.modell.artefakt.clone(),
+                name: format!("{} (eingestellt)", e.modell.artefakt),
+                offen: hier.join("model_config.json").is_file(),
+                warum: "Der eingestellte Pfad enthaelt kein `model_config.json`.".into(),
+            },
+        );
+    }
+    aus.push(Modellwahl {
+        pfad: "netz".into(),
+        // ⚑ Wortlaut des Projektinhabers, mit Komma statt Strich
+        //   nach der Hausregel.
+        name: "API, kostet Inferenz-Credits".into(),
+        offen: false,
+        warum: "Noch nicht verdrahtet: Dem Klienten fehlen Knotenadresse und Vollmacht \
+                (Fahrplan 2.2 bis 2.5b). Bis dahin rechnet diese Maschine."
+            .into(),
+    });
+    Ok(aus)
+}
+
+/// Verzeichnisname zu Anzeigename, aus dem Katalog.
+fn katalognamen() -> std::collections::BTreeMap<String, String> {
+    let mut aus = std::collections::BTreeMap::new();
+    let Some(w) = wurzel_suchen() else { return aus };
+    let Ok(roh) = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json")) else {
+        return aus;
+    };
+    let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else { return aus };
+    let Some(o) = d.as_object() else { return aus };
+    for (k, v) in o {
+        if k.starts_with('_') {
+            continue;
+        }
+        if let Some(n) = v.get("anzeigename").and_then(|x| x.as_str()) {
+            let herkunft = v.get("grundmodell").and_then(|x| x.as_str()).unwrap_or("");
+            aus.insert(
+                k.clone(),
+                if herkunft.is_empty() { n.to_string() } else { format!("{n}  (aus {herkunft})") },
+            );
+        }
+    }
+    aus
+}
+
+/// Ein Eintrag der Modellwahl.
+#[derive(Serialize)]
+struct Modellwahl {
+    pfad: String,
+    name: String,
+    /// ⚑ `false` heisst: waehlbar sichtbar, aber nicht benutzbar, und
+    /// `warum` sagt weshalb. Ein Eintrag, der still nichts tut, waere
+    /// schlimmer als keiner.
+    offen: bool,
+    warum: String,
+}
+
+/// Welche Werkzeuge der Agent gerade hat.
+///
+/// # ⛑ Warum das ein Befehl ist und keine Liste im Fenster
+///
+/// Die Namen haengen an der Ansageform und die Auswahl an der
+/// Einhaengung; wer sie im Fenster nachbaute, haette eine zweite
+/// Liste, und zwei Listen laufen auseinander. Dieselbe Begruendung wie
+/// bei `felder`.
+///
+/// # ⚑ Und warum die Oberflaeche sie ueberhaupt zeigen muss
+///
+/// Die Marke im Kopf sagt „liest und schreibt", aber nicht **worauf**.
+/// Ein Nutzer, der einen Auftrag abschickt, soll vorher sehen, welches
+/// Verzeichnis der Agent anfassen darf und mit welchen Werkzeugen. Das
+/// ist keine Zierde: Es ist die einzige Stelle, an der die
+/// Einhaengegrenze fuer einen Menschen sichtbar wird.
+#[tauri::command]
+fn werkzeuge() -> Result<Werkzeugliste, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let Some(pfad) = e.agent.wurzel.as_deref() else {
+        return Ok(Werkzeugliste { wurzel: None, namen: Vec::new() });
+    };
+    // ⚑ Die Einhaengung wird hier wirklich gebaut und nicht geraten:
+    // Ein Pfad, der nicht existiert, hat auch keine Werkzeuge, und das
+    // soll man sehen, bevor der Auftrag laeuft.
+    let ein = match myl_client::werkzeuge::Einhaengung::neu(pfad, e.agent.schreiben) {
+        Ok(x) => x,
+        Err(m) => return Ok(Werkzeugliste { wurzel: Some(format!("{pfad}  ({m})")), namen: Vec::new() }),
+    };
+    let namen = myl_client::werkzeuge::angebote(
+        &ein,
+        myl_client::Ansageform::Amtlich,
+        myl_client::werkzeuge::Werkzeugsatz::default(),
+    )
+    .into_iter()
+    .map(|w| w.name)
+    .collect();
+    Ok(Werkzeugliste { wurzel: Some(ein.wurzel().display().to_string()), namen })
+}
+
+/// Was der Agent anfassen darf.
+#[derive(Serialize)]
+struct Werkzeugliste {
+    /// ⚑ `None` heisst: kein Verzeichnis eingehaengt, also gar keine
+    /// Werkzeuge, und nicht „unbekannt".
+    wurzel: Option<String>,
+    namen: Vec<String>,
+}
+
 #[tauri::command]
 fn modell(artefakt: String) -> Result<String, String> {
     let m = myl_client::Oertlichesmodell::laden(&artefakt)?;
@@ -353,8 +515,338 @@ fn main() {
             modell,
             modell_laden,
             agent_fahren,
-            frage
+            frage,
+            werkzeuge,
+            modelle,
+            katalog,
+            voraussetzungen,
+            artefakt_bauen
         ])
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");
+}
+
+// ── Modelle holen und Artefakte bauen ───────────────────────────────
+//
+// # ⛑ Die groesste Luecke zwischen „frischer Klon" und „laeuft"
+//
+// Bis zum 2026-09-09 war `modell.artefakt` ein Textfeld: ein Pfad, den
+// jemand von Hand eintraegt und der existieren muss. Wer die
+// Freigabe-Binaries laedt, hat kein Artefakt und keinen Weg zu einem,
+// ohne die Kommandozeile. Der dokumentierte Weg sind drei Schritte,
+// ein Python-Venv mit torch, ein Modelldownload und ein
+// Kalibrierlauf.
+//
+// # ⚠️ Was das hier NICHT kann, und das steht vor dem Knopf
+//
+// Es ruft die Skripte des Repositoriums. Aus einem Freigabe-Binary
+// heraus gibt es die nicht: Dort ist der Knopf gesperrt, und die
+// Oberflaeche sagt das, statt es zu versuchen und an einem fehlenden
+// Pfad zu scheitern. `voraussetzungen` prueft das **vorher**.
+
+/// Was ein Modell im Katalog ueber sich sagt.
+#[derive(Serialize)]
+struct Katalogeintrag {
+    schluessel: String,
+    anzeigename: String,
+    hf_repo: String,
+    lizenz: String,
+    parameter: String,
+    /// ⚠️ **Das Grundmodell, aus dem das Artefakt gebaut ist.** Der
+    /// Anzeigename heisst „Myelith <Groesse>", weil das Artefakt selbst
+    /// gebaut ist und anders rechnet als das Gleitkommamodell. Die
+    /// Herkunft darf dabei nicht verschwinden: Die Grundmodelle stehen
+    /// unter Apache-2.0, und ein Name ohne Herkunft waere eine
+    /// Verschleierung statt einer Unterscheidung.
+    grundmodell: String,
+    gewichte: String,
+    artefakt: String,
+    status: String,
+    /// Liegt das Rohmodell schon da?
+    modell_da: bool,
+    /// Liegt das fertige Artefakt schon da?
+    artefakt_da: bool,
+}
+
+/// Wo das Repositorium liegt, von der Oberflaeche aus gesehen.
+///
+/// ⛑ **Gesucht und nicht angenommen.** Die Oberflaeche laeuft im
+/// Entwicklungsbaum aus `CLIENT/myl-oberflaeche`, als gebuendelte App
+/// aus einem ganz anderen Verzeichnis. Wer den Pfad festnagelt, baut
+/// einen Knopf, der auf genau einer Maschine geht.
+fn wurzel_suchen() -> Option<std::path::PathBuf> {
+    let mut p = std::env::current_dir().ok()?;
+    loop {
+        if p.join("INTEGER_LLM/scripts/build_artifacts.sh").is_file() {
+            return Some(p);
+        }
+        if !p.pop() {
+            return None;
+        }
+    }
+}
+
+/// Was fehlt, bevor gebaut werden kann.
+#[derive(Serialize)]
+struct Voraussetzungen {
+    /// Leer heisst: es kann losgehen.
+    fehlt: Vec<String>,
+    wurzel: Option<String>,
+}
+
+#[tauri::command]
+fn voraussetzungen() -> Voraussetzungen {
+    let Some(w) = wurzel_suchen() else {
+        return Voraussetzungen {
+            fehlt: vec![
+                "Die Skripte des Repositoriums sind nicht zu finden. Ein Artefakt laesst \
+                 sich nur aus einem Klon bauen, nicht aus einem Freigabe-Binary."
+                    .into(),
+            ],
+            wurzel: None,
+        };
+    };
+    let mut fehlt = Vec::new();
+    // ⚑ Der `hf`-Befehl kommt aus `huggingface_hub`; ohne ihn laedt
+    // `fetch_model.sh` nichts. Gesucht wird er in der
+    // Kalibrier-Umgebung **und** im System, denn dort sucht ihn der
+    // Lauf auch.
+    if !befehl_da(&w, "hf") {
+        fehlt.push(
+            "Der Befehl `hf` fehlt (huggingface_hub). \
+             `calibrate/.venv/bin/pip install -r calibrate/requirements.txt`"
+                .into(),
+        );
+    }
+    let venv = w.join("INTEGER_LLM/calibrate/.venv/bin/python3");
+    if !venv.is_file() {
+        fehlt.push(format!(
+            "Die Kalibrier-Umgebung fehlt: {}. \
+             `python3 -m venv calibrate/.venv` und dann die Anforderungen installieren.",
+            venv.display()
+        ));
+    }
+    Voraussetzungen { fehlt, wurzel: Some(w.display().to_string()) }
+}
+
+/// Sucht einen Befehl im `PATH`.
+fn which(name: &str) -> Option<std::path::PathBuf> {
+    let pfad = std::env::var_os("PATH")?;
+    std::env::split_paths(&pfad).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
+/// Das `bin` der Kalibrier-Umgebung.
+fn venv_bin(w: &std::path::Path) -> std::path::PathBuf {
+    w.join("INTEGER_LLM/calibrate/.venv/bin")
+}
+
+/// Der `PATH`, unter dem die Bauskripte laufen: die Kalibrier-Umgebung
+/// **vor** dem System.
+///
+/// ⛑ **Bis zum 2026-09-09 bekam nur der Kalibrierschritt ihn.** Der
+/// Download davor lief mit dem blossen System-`PATH`, und
+/// `fetch_model.sh` bricht ohne `hf` ab. Der Befehl liegt aber genau
+/// hier und nicht im System: `huggingface_hub` wird in die Umgebung
+/// installiert. Auf einem **richtig** eingerichteten Klon waere der
+/// Knopf „Download" damit fehlgeschlagen, mit der Meldung, man solle
+/// installieren, was schon da ist.
+fn pfad_mit_venv(w: &std::path::Path) -> String {
+    format!(
+        "{}:{}",
+        venv_bin(w).display(),
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
+/// Liegt der Befehl in der Kalibrier-Umgebung oder im System?
+///
+/// ⚑ **Gesucht wird dort, wo der Lauf ihn suchen wird**, und nicht nur
+/// im `PATH` dieses Fensters. Sonst meldet die Oberflaeche einen
+/// Mangel, den es nicht gibt, und verschweigt einen, den es gibt.
+fn befehl_da(w: &std::path::Path, name: &str) -> bool {
+    venv_bin(w).join(name).is_file() || which(name).is_some()
+}
+
+#[tauri::command]
+fn katalog() -> Result<Vec<Katalogeintrag>, String> {
+    let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
+    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+        .map_err(|e| format!("KATALOG.json: {e}"))?;
+    let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
+    let obj = d.as_object().ok_or("KATALOG.json ist kein Objekt")?;
+
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
+    };
+    let mut aus = Vec::new();
+    for (schluessel, v) in obj {
+        // Die Schluessel mit Unterstrich sind Hinweise und keine Modelle.
+        if schluessel.starts_with('_') {
+            continue;
+        }
+        aus.push(Katalogeintrag {
+            schluessel: schluessel.clone(),
+            anzeigename: text(v, "anzeigename"),
+            hf_repo: text(v, "hf_repo"),
+            lizenz: text(v, "lizenz"),
+            parameter: text(v, "parameter"),
+            grundmodell: text(v, "grundmodell"),
+            gewichte: text(v, "gewichte_anzeige"),
+            artefakt: text(v, "artefakt_anzeige"),
+            status: text(v, "status"),
+            modell_da: w.join("INTEGER_LLM/models").join(text(v, "hf_verzeichnis")).is_dir(),
+            artefakt_da: w
+                .join("INTEGER_LLM/artifacts")
+                .join(schluessel)
+                .join("model_config.json")
+                .is_file(),
+        });
+    }
+    aus.sort_by(|a, b| a.schluessel.cmp(&b.schluessel));
+    Ok(aus)
+}
+
+/// Eine Zeile aus dem Baulauf, wie sie im Fenster ankommt.
+#[derive(Clone, Serialize)]
+struct Bauzeile {
+    /// `holen`, `kalibrieren`, `fertig` oder `fehler`.
+    phase: &'static str,
+    text: String,
+}
+
+/// Holt ein Modell und baut sein Artefakt.
+///
+/// # ⚑ Warum die Skripte gerufen werden und nicht nachgebaut
+///
+/// `fetch_model.sh` nagelt die Revision fest, `build_artifacts.sh`
+/// ruft `calibrate.src.main`. Beides hier nachzubauen hiesse, den
+/// dokumentierten Weg ein zweites Mal zu schreiben, und der zweite ist
+/// immer der schlechter geprueffte. Dieselbe Begruendung wie dafuer,
+/// dass der Ruecken `myl-client` ruft und nicht `myl`.
+///
+/// # ⚠️ Ein Fortschrittsbalken, der nicht luegt
+///
+/// Die Skripte melden keinen Prozentsatz. Was gemeldet wird, sind
+/// **Phasen**: holen, kalibrieren, fertig. Der Balken zeigt deshalb
+/// die Phase und die letzte Zeile, und keine erfundene Zahl. Ein
+/// Balken, der bei siebzig Prozent stehenbleibt, weil jemand geraten
+/// hat, ist schlimmer als einer, der sagt „kalibriert seit vier
+/// Minuten".
+#[tauri::command]
+async fn artefakt_bauen(
+    schluessel: String,
+    fenster: tauri::AppHandle,
+) -> Result<String, String> {
+    let v = voraussetzungen();
+    if !v.fehlt.is_empty() {
+        return Err(v.fehlt.join("\n"));
+    }
+    let w = std::path::PathBuf::from(v.wurzel.ok_or("keine Wurzel")?);
+
+    // Aus dem Katalog: HF-Kennung und Revision.
+    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+        .map_err(|e| e.to_string())?;
+    let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
+    let eintrag = d.get(&schluessel).ok_or(format!("{schluessel} steht nicht im Katalog"))?;
+    let repo = eintrag.get("hf_repo").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let revision =
+        eintrag.get("hf_revision").and_then(|x| x.as_str()).unwrap_or("main").to_string();
+    let verzeichnis =
+        eintrag.get("hf_verzeichnis").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    if repo.is_empty() {
+        return Err(format!("{schluessel} nennt kein `hf_repo`"));
+    }
+
+    let f = fenster.clone();
+    let sagen = move |phase: &'static str, text: String| {
+        let _ = f.emit("bau-zeile", Bauzeile { phase, text });
+    };
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let modellordner = w.join("INTEGER_LLM/models").join(&verzeichnis);
+        // ⚑ **Schon da heisst: nicht noch einmal.** Ein zweiter
+        // Download von mehreren Gigabyte, weil jemand den Knopf
+        // zweimal gedrueckt hat, waere teuer und ueberfluessig.
+        if modellordner.is_dir() {
+            sagen("holen", format!("{verzeichnis} liegt schon da, kein Download"));
+        } else {
+            sagen("holen", format!("lade {repo}@{revision} ..."));
+            lauf_mit_ausgabe(
+                std::process::Command::new("bash")
+                    .arg(w.join("INTEGER_LLM/scripts/fetch_model.sh"))
+                    .current_dir(w.join("INTEGER_LLM"))
+                    .env("MODEL_ID", &repo)
+                    .env("REVISION", &revision)
+                    // ⛑ Ohne diese Zeile bricht `fetch_model.sh` mit
+                    // „hf-CLI nicht gefunden" ab, obwohl der Befehl in
+                    // der Kalibrier-Umgebung liegt.
+                    .env("PATH", pfad_mit_venv(&w)),
+                "holen",
+                &sagen,
+            )?;
+        }
+
+        sagen("kalibrieren", format!("kalibriere {schluessel}, das dauert ..."));
+        lauf_mit_ausgabe(
+            std::process::Command::new("bash")
+                .arg(w.join("INTEGER_LLM/scripts/build_artifacts.sh"))
+                .current_dir(w.join("INTEGER_LLM"))
+                .env("INTEGER_LLM_MODEL", &schluessel)
+                // ⚑ Das Skript ruft `python3`; ohne die Umgebung im Pfad
+                // griffe es das System-Python und faende `torch` nicht.
+                .env("PATH", pfad_mit_venv(&w)),
+            "kalibrieren",
+            &sagen,
+        )?;
+
+        let ziel = w.join("INTEGER_LLM/artifacts").join(&schluessel);
+        if !ziel.join("model_config.json").is_file() {
+            return Err(format!(
+                "Der Lauf ist durch, aber {} fehlt. Die Ausgabe oben sagt, woran es lag.",
+                ziel.join("model_config.json").display()
+            ));
+        }
+        sagen("fertig", ziel.display().to_string());
+        Ok(ziel.display().to_string())
+    })
+    .await
+    .map_err(|e| format!("der Baufaden ist abgestuerzt: {e}"))?
+}
+
+/// Faehrt einen Befehl und reicht jede Zeile durch.
+///
+/// ⛑ **Zeilenweise und nicht am Ende.** Ein Kalibrierlauf dauert
+/// Minuten bis Stunden; wer die Ausgabe erst danach zeigt, hat ein
+/// Fenster, das aussieht wie eingefroren. Genau dafuer gibt es die
+/// Ereignisse.
+fn lauf_mit_ausgabe(
+    befehl: &mut std::process::Command,
+    phase: &'static str,
+    sagen: &impl Fn(&'static str, String),
+) -> Result<(), String> {
+    use std::io::BufRead;
+    let mut kind = befehl
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{phase}: {e}"))?;
+
+    if let Some(aus) = kind.stdout.take() {
+        for zeile in std::io::BufReader::new(aus).lines().map_while(Result::ok) {
+            sagen(phase, zeile);
+        }
+    }
+    let stand = kind.wait().map_err(|e| e.to_string())?;
+    if !stand.success() {
+        // ⚑ Die Fehlerausgabe erst hier: Sie ist kurz, und sie waere
+        // zwischen den Fortschrittszeilen untergegangen.
+        let mut fehler = String::new();
+        if let Some(mut e) = kind.stderr.take() {
+            use std::io::Read;
+            let _ = e.read_to_string(&mut fehler);
+        }
+        let kurz: String = fehler.lines().rev().take(6).collect::<Vec<_>>().join("\n");
+        return Err(format!("{phase} ist fehlgeschlagen ({stand}):\n{kurz}"));
+    }
+    Ok(())
 }

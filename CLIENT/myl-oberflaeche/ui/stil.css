@@ -146,7 +146,6 @@ body {
 .glas::before,
 .eingabefeld::before,
 button:not(.blank)::before,
-.schalter::before,
 section::before {
   content: "";
   position: absolute;
@@ -178,7 +177,6 @@ section::before {
 .glas::after,
 .eingabefeld::after,
 button:not(.blank)::after,
-.schalter::after,
 section::after {
   content: "";
   position: absolute;
@@ -226,7 +224,6 @@ section::after {
 .eingabefeld:hover::after,
 .eingabefeld:focus-within::after,
 button:not(.blank):hover:not(:disabled)::after,
-.schalter:hover::after,
 section:hover::after {
   opacity: 1;
 }
@@ -252,14 +249,14 @@ section:hover::after {
   #seitenleiste, header {
     background: var(--grund-hoch);
   }
-  .schalter, button, input, select, textarea {
+  button, input, select, textarea {
     background: var(--grund-hoch);
   }
   button:hover:not(:disabled) { background: var(--grund-hoch); }
   /* Ohne Brechung traegt der wandernde Reflex nichts; dann hellt sich
      beim Ueberfahren nur die Kante auf. */
   .glas::after, .eingabefeld::after, button:not(.blank)::after,
-  .schalter::after, section::after {
+  section::after {
     background: rgba(255, 255, 255, .22);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -308,9 +305,11 @@ section:hover::after {
    allein: kein Schriftzug daneben. Der Name steht beim Start auf dem
    Vorschaltbild, dort hat er Platz und Zeit. */
 .leistenkopf {
-  padding: 1.3rem 1.1rem .9rem;
+  padding: 1.3rem 1.1rem 1rem;
   display: grid;
   place-items: center;
+  /* ⚑ Verschwindend gering, der Zug soll an der Box haengen. */
+  gap: .1rem;
 }
 
 .leistenteil { padding: .5rem 1.1rem; }
@@ -332,6 +331,32 @@ section:hover::after {
 }
 
 #modi { display: grid; gap: .2rem; }
+
+/* ⚑ Klein und leise: Es ist eine Angabe und keine Aufforderung.
+   
+   ⛑ **Der Pfad wird im Skript gekuerzt und nicht mit `direction: rtl`.**
+   Der erste Entwurf nahm das, und die Zweirichtungsregeln haben den
+   fuehrenden Schraegstrich ans Ende geschoben: Angezeigt wurde
+   `…sktop/Code/Myelith/Repository/`, also ein Pfad mit einem
+   Schraegstrich, den es nicht gibt, und ohne den, den es gibt. Ein
+   falsch dargestellter Pfad ist bei einer Zugriffsgrenze kein
+   Schoenheitsfehler. */
+/* Die Modellwahl in der Leiste: volle Breite, damit lange
+   Artefaktnamen nicht abgeschnitten werden, bevor sie beginnen. */
+#modellwahl { width: 100%; font-size: .82rem; }
+.leistenfuss h2 { margin: 0 0 .1rem; }
+
+#reichweite { display: grid; gap: .15rem; margin: .55rem .1rem 0; }
+.reichweitezeile {
+  margin: 0;
+  font-family: var(--fest);
+  font-size: .7rem;
+  color: var(--leiser);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.werkzeugliste { color: var(--leise); white-space: normal; }
 
 /* Ein Modus ist ein Knopf, der eingerastet bleibt. */
 .modus {
@@ -355,6 +380,15 @@ section:hover::after {
   box-shadow: inset 0 1px 0 var(--licht);
 }
 .modus .was { font-size: .72rem; color: var(--leiser); }
+
+/* ⛑ **Ein Modus, den es noch nicht gibt, wird gedaempft und nicht
+   versteckt.** Der Nutzer soll sehen, wohin der Client geht, und beim
+   Anfassen erfahren, was fehlt. Dieselbe Regel wie beim entfallenen
+   Ortsschalter: Ein Eintrag, der still nichts tut, waere schlimmer als
+   keiner, einer der fehlt verschweigt den Weg. */
+.modus[data-offen="nein"] { color: var(--leiser); }
+.modus[data-offen="nein"] .was { opacity: .6; }
+.modus[data-offen="nein"]:hover { background: none; color: var(--leise); cursor: help; }
 
 #chatliste {
   overflow-y: auto;
@@ -421,15 +455,11 @@ section:hover::after {
 
 /* --- Kopf ------------------------------------------------------------ */
 
-/* ⛑ **Drei Spalten, aussen beide `1fr`, und das ist der Grund.** Der
-   erste Entwurf hatte `auto 1fr auto auto` und `justify-self: center`
-   auf dem Schalter: Der zentriert dann im Raum ZWISCHEN den Raendern,
-   und weil rechts mehr steht als links, sass er sichtbar links der
-   Mitte. Zwei gleich grosse Aussenspalten zentrieren die mittlere
-   wirklich, unabhaengig davon, was aussen liegt. */
+/* ⚑ Ohne den Ortsschalter braucht der Kopf keine Mittelspalte mehr:
+   links das Leistensymbol, rechts Marke und Zahnrad. */
 header {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto 1fr;
   align-items: center;
   gap: .8rem;
   padding: .6rem 1rem;
@@ -439,54 +469,141 @@ header {
   -webkit-backdrop-filter: blur(24px) saturate(115%);
 }
 
-/* --- Die Marke ------------------------------------------------------
+/* --- Die Schrift der Wortmarke --------------------------------------
 
-   ⚑ **Eine Spirale und kein Schriftzug.** Auf Festlegung des
-   Projektinhabers, nach dem Vorbild der dualen Phi-Spirale ueber der
-   Whirlpool-Galaxie. Gerechnet von `werkzeuge/marke.py`: Quadrate nach
-   Fibonacci, Viertelkreise darin, zwei Arme punktsymmetrisch um das
-   Auge, dazu Sterne mit festem Wuerfel.
+   ⚑ **„Infinite Justice", die Schrift des Banners.** Sie steht in
+   `README/Intern/Whitepaper-Archiv/whitepaper-build/build_banner.py`,
+   dem Skript, das die README-Banner setzt, und ist damit die Schrift
+   des Projektes und keine gewaehlte.
 
-   ⚑ **`currentColor` ueberall**, damit die Marke die Farbe ihrer
-   Umgebung annimmt und nicht eine eigene mitbringt: In Graustufen ist
-   das der ganze Unterschied zwischen einem eingesetzten Bild und einem
-   Zeichen.
+   ⚑ **Zuerst die installierte, dann die eingebettete.** `local()` nimmt
+   sie vom System, wo sie liegt; wo nicht, traegt der eingebettete
+   Ausschnitt. Beides zusammen, weil beide Faelle vorkommen: Auf der
+   Maschine des Projektinhabers ist sie installiert, auf dem Rechner
+   eines Teilnehmers, der ein Freigabe-Binary laedt, nicht.
 
-   ⛑ **Bei kleiner Groesse fallen Sterne und Geruest weg.** Hundert
-   Punkte auf zweiundzwanzig Pixeln sind kein Sternenhimmel, sondern
-   Griess; was bleibt, ist die Spirale, und die traegt allein.
+   ⚑ **Nur die sieben Buchstaben von „Myelith".** Die ganze Schrift ist
+   22 KB, der Ausschnitt 1,6 KB. Mehr wird nirgends gebraucht, und was
+   nicht da ist, kann auch nicht anderswo auftauchen.
+
+   ⚑ **Und sie laedt nichts nach.** Ein `data:`-URI ist Teil des
+   Stils; die Sicherheitsregel erlaubt nur `self`, und eine
+   Oberflaeche, die Schriften aus dem Netz holt, hat eine Verbindung,
+   die niemand angemeldet hat. `nichts_wird_aus_dem_netz_geladen`
+   prueft genau das.
+
+   ⚠️ **Zur Lizenz, und das ist eine Entscheidung des Projektinhabers
+   und nicht meine:** Die Schrift ist © 2001 Adam Nerland, Insanitype!
+   Font Design, und traegt selbst kein Lizenzfeld. Sie im Repositorium
+   mitzuliefern heisst, sie mit den Freigabe-Binaries zu verteilen, und
+   das setzt eine Lizenz voraus, die das erlaubt. Ist sie nur zur
+   privaten Nutzung frei, gehoert der eingebettete Ausschnitt hier
+   heraus und es bleibt bei `local()` plus Systemgrotesk.
 --------------------------------------------------------------------- */
 
+@font-face {
+  font-family: "Myelith Wortmarke";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src:
+    local("Infinite Justice"),
+    local("InfiniteJustice"),
+    url(data:font/woff;base64,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) format("woff");
+}
+
+/* --- Die Marke ------------------------------------------------------
+
+   ⚑ **Die Konstruktion der goldenen Spirale**, auf Festlegung des
+   Projektinhabers: Fibonacci-Quadrate, Viertelkreise darin, das
+   Rechteck darum. Gerechnet von `werkzeuge/marke.py`.
+
+   ⛑ **Was hier stand und wieder weg ist:** ein prozeduraler
+   Sternennebel, zwei Arme und ein kalligraphischer Federzug. Die
+   schlichte Konstruktion ist die richtige fuer eine Marke, denn sie
+   bleibt bei zweiunddreissig Pixeln lesbar, wo ein Nebel zu Griess
+   wird.
+
+   ⚑ **Hoehe gesetzt, Breite automatisch.** Die Figur ist ein goldenes
+   Rechteck und kein Quadrat; ihr eine feste Breite zu geben stauchte
+   sie.
+
+   ⚑ **`currentColor` ueberall**, damit die Marke die Farbe ihrer
+   Umgebung annimmt und nicht eine eigene mitbringt.
+--------------------------------------------------------------------- */
+
+/* ⚑ Die Hoehe steht hier, die Breite folgt dem Seitenverhaeltnis der
+   Figur. Beide Zahlen stehen als Variablen da, weil der Schriftzug
+   darunter dieselbe Breite braucht: Zwei getrennt gepflegte Zahlen
+   liefen auseinander, und dann stuende der Zug einen Millimeter
+   daneben, was man sofort sieht. */
+.leistenkopf {
+  --marke-hoch: 3rem;
+  --marke-breit: calc(var(--marke-hoch) * 1.619);
+  /* ⛑ **Der gezeichnete Rahmen ist schmaler als die Leinwand.** Er
+     sitzt um die halbe Strichbreite plus einen Hauch darin, sonst
+     schnitte ihn der Rand der Grafik an. Bei Leinwand 161,90 und Rand
+     1,20 je Seite bleiben 159,50, also 0,9852. Der Schriftzug richtet
+     sich nach der SICHTBAREN Kante und nicht nach der Leinwand; ohne
+     diesen Faktor steht er um gut ein Prozent zu breit, und genau das
+     sieht man. Aendert sich `STRICH` in `werkzeuge/marke.py`, aendert
+     sich diese Zahl mit. */
+  --marke-sichtbar: calc(var(--marke-breit) * 0.9852);
+}
+
 .spirale {
-  width: 4.6rem;
-  height: 4.6rem;
+  height: var(--marke-hoch);
+  width: var(--marke-breit);
   display: block;
   color: var(--text);
 }
-.spirale .arme { stroke: currentColor; }
-.spirale .sterne { fill: currentColor; }
-.spirale .geruest { stroke: currentColor; }
+.spirale .geruest { stroke: currentColor; opacity: .55; }
+.spirale .bogen { stroke: currentColor; }
 
-/* ⛑ **Was bei kleiner Groesse wegfaellt, und in dieser Reihenfolge.**
-   Zuerst das Geruest (bei 48 Pixeln sind die inneren Quadrate kleiner
-   als eine Strichbreite), dann Sterne und Nebel (hundertfuenfzig
-   Punkte auf vierundzwanzig Pixeln sind Griess). Was bleibt, ist die
-   Spirale, und die traegt allein. */
-.spirale .universum { pointer-events: none; }
-/* Die hellen Knoten sitzen in den Armen, dort wo Sterne entstehen. */
-.spirale .knoten { fill: currentColor; }
-.spirale .staub { mix-blend-mode: normal; }
-.mittel .geruest { display: none; }
-.klein .sterne, .klein .geruest, .klein .universum, .klein .knoten { display: none; }
-
-/* Der Schriftzug des Banners ist eine fette kursive Grotesk. Ohne
-   Fremdschrift kommt man ihm mit Fettung, Kursive und Sperrung nahe
-   genug; ihn nachzubauen waere schlechter als ihn anzudeuten. */
-.wortmarke {
+/* Der Schriftzug des Banners ist eine fette kursive Grotesk.
+   
+   ⚠️ **Die echte Schrift liegt nicht vor, und aus dem Netz darf keine
+   kommen:** Die Sicherheitsregel erlaubt nur `self`, eine Oberflaeche
+   die Schriften nachlaedt hat eine Verbindung, die niemand angemeldet
+   hat. Was hier steht, ist die Systemgrotesk mit Fettung, Kursive und
+   enger Sperrung, also eine **Andeutung** und nicht das Original. Wer
+   die Schriftdatei hat, bettet sie als `@font-face` mit `data:`-URI
+   ein; dann steht sie wirklich da und laedt trotzdem nichts nach.
+   
+   ⚑ Unter der Marke steht sie mittig und etwas weiter gesperrt als im
+   Kopf: Ein Schriftzug unter einem Zeichen traegt anders als einer
+   neben einer Betriebsartmarke. */
+/* ⚑ `line-height: 1` gehoert dazu, sonst bleibt der Abstand trotz
+   `gap: .1rem` sichtbar: Ueber den Grossbuchstaben liegt die Vorschub-
+   luft der Zeile, und die ist bei einer Anzeigeschrift betraechtlich.
+   Der Abstand steht damit da, wo er gesetzt wird, und nicht in einer
+   Zeilenhoehe, die niemand sieht. */
+.leistenkopf .wortmarke {
   font-size: 1.1rem;
-  font-weight: 800;
-  font-style: italic;
-  letter-spacing: -.02em;
+  line-height: 1;
+}
+
+/* Der gespreizte Zug: genau so breit wie die Marke darueber, die
+   Buchstaben teilen die Luecken unter sich auf. */
+.gespreizt {
+  display: flex;
+  justify-content: space-between;
+  width: var(--marke-sichtbar);
+  letter-spacing: 0;
+}
+
+/* ⛑ **Keine kuenstliche Fettung und Kursive mehr.** Solange die echte
+   Schrift fehlte, wurde sie mit `font-weight: 800` und
+   `font-style: italic` angedeutet. „Infinite Justice" bringt beides
+   selbst mit; beides obendrauf ergaebe eine doppelt geneigte,
+   kuenstlich verfettete Schrift, und das saehe schlechter aus als die
+   Andeutung vorher. */
+.wortmarke {
+  font-family: "Myelith Wortmarke", var(--schrift);
+  font-size: 1.1rem;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
   margin: 0;
 }
 
@@ -523,67 +640,10 @@ header {
 }
 .rundknopf:hover:not(:disabled) { color: var(--text); }
 
-/* --- Der Ortsschalter, oben mittig -----------------------------------
-
-   ⚑ **Zwei Knoepfe und ein Reiter darunter, kein Kippschalter.** Ein
-   Kippschalter hat einen Zustand „an" und einen „aus"; hier sind es
-   zwei gleichberechtigte Orte, und keiner davon ist die Abwesenheit des
-   anderen.
---------------------------------------------------------------------- */
-
-.schalter {
-  justify-self: center;
-  grid-column: 2;
-  position: relative;
-  display: inline-grid;
-  grid-auto-flow: column;
-  padding: 3px;
-  border: 1px solid var(--kante);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, .25);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-.schalter button {
-  position: relative;
-  z-index: 1;
-  border: 0;
-  background: none;
-  box-shadow: none;
-  border-radius: 999px;
-  padding: .25rem 1rem;
-  font-size: .82rem;
-  color: var(--leise);
-  transition: color .2s ease;
-}
-.schalter button[aria-checked="true"] { color: var(--text); }
-.schalter button:hover:not([aria-checked="true"]) { color: var(--text); }
-/* ⛑ **Die beiden Knoepfe im Schalter bekommen keinen eigenen Ring.**
-   Der erste Entwurf gab jedem Knopf einen, und mit dem des Schalters
-   und dem des Reiters lagen drei Ringe ineinander. Der Schalter ist
-   EIN Stueck Glas, in dem sich ein Reiter bewegt, und nicht drei. */
-.schalter button::before,
-.schalter button::after { display: none; }
-
-/* Der Reiter faehrt unter dem gewaehlten Knopf entlang. Seine Breite
-   und Lage setzt das Skript, denn sie haengen an der Beschriftung. */
-.schalter .reiter {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--glas-hell), var(--glas-hoch));
-  border: 1px solid var(--kante-hell);
-  box-shadow: inset 0 1px 0 var(--licht);
-  transition: transform .24s cubic-bezier(.3, .7, .3, 1), width .24s ease;
-  pointer-events: none;
-}
-
-/* ⛑ **Ein Ort, der noch nicht traegt, wird gedaempft und nicht
-   versteckt.** Der Nutzer soll sehen, dass es ihn geben wird, und beim
-   Anfassen erfahren, was fehlt. Ein Schalter, der still nichts tut,
-   waere schlimmer als keiner. */
-.schalter button[data-offen="nein"] { color: var(--leiser); }
+/* ⛑ Hier standen die Regeln des Ortsschalters „Lokal | Netz". Er ist
+   am 2026-09-09 entfallen; die Wahl liegt jetzt in der Modellwahl
+   unten links. Die Regeln sind mit ihm gegangen, statt als toter Stil
+   liegenzubleiben. */
 
 .marke {
   font-size: .74rem;
@@ -743,6 +803,106 @@ header {
 .senden { width: 2.1rem; height: 2.1rem; color: var(--text); }
 
 #hinweiszeile { margin: 0; min-height: 1.2em; }
+
+/* --- Meldungen -------------------------------------------------------
+
+   ⚑ **Ueber allem und in keiner Maske.** Ein Ereignis, das man nur
+   sieht, wenn man zufaellig auf der richtigen Seite steht, ist keine
+   Meldung. Oben rechts, gestapelt, jede fuer sich schliessbar.
+
+   ⚑ **`pointer-events` nur auf den Meldungen selbst.** Der Behaelter
+   liegt ueber dem Fenster; ohne diese Zeile fingen seine leeren
+   Bereiche jeden Klick ab, und der Nutzer klaeme nicht mehr an das
+   Zahnrad darunter.
+--------------------------------------------------------------------- */
+
+#meldungen {
+  position: fixed;
+  top: .7rem;
+  right: .8rem;
+  z-index: 20;
+  display: grid;
+  gap: .4rem;
+  justify-items: end;
+  pointer-events: none;
+  max-width: min(26rem, 60vw);
+}
+
+.meldung {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .55rem .5rem .55rem .85rem;
+  border-radius: var(--rund);
+  /* ⛑ **Kein `both`.** Der erste Entwurf hatte es, und damit gilt der
+     Anfangszustand der Animation SCHON VOR ihrem Lauf: `opacity: 0`.
+     Laeuft sie nicht, ist die Meldung nie zu sehen, und eine Meldung,
+     die man nicht sieht, ist keine. Aufgefallen im Standbild der
+     Vorschau, wo Animationen nicht laufen; dasselbe traefe jeden
+     Zustand, in dem der Browser sie ueberspringt.
+
+     ⚑ Ohne Fuellmodus ist der Ruhezustand der sichtbare, und die
+     Animation bewegt nur hinein. */
+  animation: meldung_herein .28s cubic-bezier(.2, .8, .3, 1);
+}
+.meldung p { margin: 0; font-size: .84rem; }
+.meldung .rundknopf { width: 1.5rem; height: 1.5rem; font-size: 1rem; flex: none; }
+
+@keyframes meldung_herein {
+  from { opacity: 0; transform: translateX(1.2rem); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- Modellbau -------------------------------------------------------- */
+
+#modellbau { display: grid; gap: .5rem; max-width: 46rem; }
+#modellbau h2, #einstellungsseite h2 { margin: .6rem 0 0; }
+
+/* ⚑ Zwei Spalten fuer Name und Knopf, und der Baustand darunter ueber
+   beide: Er gehoert zu DIESEM Modell und nicht neben die Liste. */
+.katalogzeile {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: .5rem 1rem;
+  padding: .55rem 0;
+  border-top: 1px solid var(--kante);
+}
+.katalogzeile > #baustand { grid-column: 1 / -1; }
+.katalogzeile strong { display: block; font-weight: 600; }
+.katalogdaten { font-size: .74rem; color: var(--leiser); font-family: var(--fest); }
+
+/* ⚠️ Der Balken zeigt PHASEN und keine erfundene Zahl: Die Skripte
+   melden keinen Prozentsatz, und ein Balken, der bei siebzig Prozent
+   stehenbleibt, weil jemand geraten hat, ist schlimmer als keiner. */
+.balken {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+  overflow: hidden;
+}
+.balken span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--text);
+  transition: width .5s ease;
+}
+#bauzeilen {
+  margin: 0;
+  font-family: var(--fest);
+  font-size: .72rem;
+  color: var(--leise);
+  background: rgba(0, 0, 0, .25);
+  border-radius: var(--rund-klein);
+  padding: .5rem .7rem;
+  max-height: 11rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+#baustand { display: grid; gap: .35rem; }
+#baustand[hidden] { display: none; }
 
 /* --- Einstellungsseite ------------------------------------------------ */
 
@@ -951,6 +1111,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
    der Schriftzug steht sofort scharf da statt sich zusammenzusetzen. */
 @media (prefers-reduced-motion: reduce) {
   .vorhangtext { animation: none; }
+  .meldung { animation: none; }
   #netz { display: none; }
   button::after { display: none; }
   * { transition: none !important; }
