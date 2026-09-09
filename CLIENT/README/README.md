@@ -147,6 +147,48 @@ zwei vorhandenen Klassenprüfungen und fand neben `.schalter` noch
 `` `beitrag von-${b.von}` `` vergeben wird. Ein Löschen hätte
 Nutzerbeiträge stillschweigend linksbündig gemacht.
 
+⚑ **Die Marke ist neu, und sie ist die alte viermal.** Auf Vorlage des
+Projektinhabers: dieselbe goldene Spirale, je um neunzig Grad gedreht
+und an den Achsen aneinandergesetzt. Vier goldene Rechtecke im Windrad
+ergeben ein Quadrat, die Leinwand folgt also der Figur.
+
+⚑ **Der grosse Kreis aussen wird nicht gezeichnet, er entsteht.** Die
+Figur liegt so, dass der Mittelpunkt des aeussersten Bogens im
+Drehpunkt sitzt; damit liegen alle vier aeussersten Boegen auf
+demselben Kreis, und vier Viertel im Abstand von neunzig Grad
+schliessen ihn. ⛑ Drei Anlaeufe davor behandelten ihn als eigenes
+Ding, einbeschrieben, als Umkreis, als zu Ende gezeichneten Bogen je
+Spirale, und alle drei sahen aufgelegt aus statt zugehoerig. Sobald er
+aus den Boegen hervorgeht, ist der Uebergang tangentenstetig, weil es
+derselbe Kreis ist.
+
+⚑ **Die vier inneren Enden laufen weiter, mit derselben Regel wie der
+Rest.** Tangentenstetigkeit heisst: Am Uebergang liegen beide
+Mittelpunkte auf derselben Geraden durch den Punkt. Nach aussen legt
+das den neuen Mittelpunkt fest, nach innen genauso, nur mit dem
+Halbmesser geteilt durch Phi statt mal Phi. Jeder Bogen endet damit
+genau da, wo der vorige beginnt.
+
+⛑ **Zwei Entwuerfe davor rechneten mit Naeherungen und sahen abgehackt
+aus.** Der erste nahm eine Aehnlichkeitsabbildung aus den zwei
+**innersten** Boegen; weil die Fibonacci-Folge mit 1, 1 beginnt, war
+das eine reine Drehung, und vier Boegen wiederholten sich sechzehnmal
+an derselben Stelle. Der zweite nahm sie aus den zwei aeussersten, wo
+sie stimmt, und setzte sie am innersten an, wo sie es nicht tut: Der
+Anschluss sass daneben. ⚑ **Die Strichbreite bleibt dabei gleich, und das Auge laeuft
+in einen vollen Punkt aus.** Die Windungen ruecken um 1/Phi zusammen,
+der Strich bleibt gleich breit, also schliessen sie sich irgendwann zu
+einer Flaeche. Genau das zeigt eine Spirale, die nicht aufhoert: Sie
+wird nicht duenner, sie wird nur unaufloesbar. Zwei Entwuerfe davor
+haben das vermieden, erst mit einem mitschrumpfenden Strich, dann mit
+einem frueheren Abbruch, und beide liessen das Auge stumpf enden statt
+es zu schliessen.
+
+Die Fibonacci-Quadrate sind aus der Marke verschwunden; sie sind
+Hilfslinien und gehoeren in die Herleitung. Die Leinwand ist damit
+quadratisch statt golden, die **Breite** aber unveraendert, denn an ihr
+haengt die Sperrung des Schriftzugs.
+
 ⛑ **Beide Kisten waren unlizenziert, und die Abhängigkeitsprüfung war
 deshalb rot.** Einundzwanzig von dreiundzwanzig Kisten tragen `license`
 und `publish`, genau diese zwei nicht: Sie sind nach dem

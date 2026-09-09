@@ -214,12 +214,33 @@ mod tests {
         std::fs::create_dir_all(&ordner).expect("anlegen");
 
         // Einen echten Vektor nehmen und eine Zahl darin ändern.
-        let quelle = std::fs::read_dir(vektoren())
+        //
+        // ⛑ **Hier stand `.find(… ends_with(".golden.json"))`, also der
+        // ERSTE Eintrag, den `read_dir` hergibt.** Dessen Reihenfolge ist
+        // nicht festgelegt und haengt am Dateisystem: Auf macOS kam ein
+        // Vektor mit Ausgabefeld zuerst, auf Windows einer ohne, und der
+        // Test starb am 2026-09-09 in der CI an `expect("ein
+        // Ausgabefeld")`. Eine Pruefung, die von einer Reihenfolge
+        // abhaengt, die ihr niemand zugesagt hat, ist gruen, solange sie
+        // Glueck hat.
+        //
+        // ⚑ Gesucht wird jetzt, was gebraucht wird: ein Vektor, der ein
+        // Ausgabefeld traegt. Sortiert, damit derselbe Rechner zweimal
+        // dasselbe tut.
+        let marke = "\"data\":[";
+        let mut kandidaten: Vec<PathBuf> = std::fs::read_dir(vektoren())
             .expect("Vektoren")
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .find(|p| p.to_string_lossy().ends_with(".golden.json"))
-            .expect("mindestens einer");
-        let inhalt = std::fs::read_to_string(&quelle).expect("lesen");
+            .filter(|p| p.to_string_lossy().ends_with(".golden.json"))
+            .collect();
+        kandidaten.sort();
+        let (quelle, inhalt) = kandidaten
+            .iter()
+            .find_map(|p| {
+                let t = std::fs::read_to_string(p).ok()?;
+                t.contains(marke).then(|| (p.clone(), t))
+            })
+            .expect("ein Vektor mit Ausgabefeld");
 
         // ⚑ **Gezielt den Erwartungswert ersetzen, nicht Ziffern
         // tauschen.** Zwei Anläufe gingen daneben und beide lehrreich:
@@ -233,7 +254,6 @@ mod tests {
         // Deshalb wird jetzt die erste Zahl der letzten Datenliste durch
         // einen Wert ersetzt, den kein Kernel liefert, und der Test
         // prüft vorher, dass sich der Text wirklich geändert hat.
-        let marke = "\"data\":[";
         let anfang = inhalt.rfind(marke).expect("ein Ausgabefeld") + marke.len();
         let ende = inhalt[anfang..]
             .find([',', ']'])

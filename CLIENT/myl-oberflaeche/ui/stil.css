@@ -538,17 +538,21 @@ header {
    liefen auseinander, und dann stuende der Zug einen Millimeter
    daneben, was man sofort sieht. */
 .leistenkopf {
-  --marke-hoch: 3rem;
-  --marke-breit: calc(var(--marke-hoch) * 1.619);
+  /* ⚑ **Die Marke ist quadratisch, seit sie vier Spiralen traegt.**
+     Die Breite bleibt aber genau die alte, `3rem * 1.619`: An ihr
+     haengt die Sperrung des Schriftzugs darunter, und der sollte sich
+     nicht mitaendern. Geaendert hat sich nur die Hoehe. */
+  --marke-breit: calc(3rem * 1.619);
+  --marke-hoch: var(--marke-breit);
   /* ⛑ **Der gezeichnete Rahmen ist schmaler als die Leinwand.** Er
      sitzt um die halbe Strichbreite plus einen Hauch darin, sonst
-     schnitte ihn der Rand der Grafik an. Bei Leinwand 161,90 und Rand
-     1,20 je Seite bleiben 159,50, also 0,9852. Der Schriftzug richtet
+     schnitte ihn der Rand der Grafik an. Bei Leinwand 100 und Rand
+     1,25 je Seite bleiben 97,50, also 0,975. Der Schriftzug richtet
      sich nach der SICHTBAREN Kante und nicht nach der Leinwand; ohne
-     diesen Faktor steht er um gut ein Prozent zu breit, und genau das
+     diesen Faktor steht er um gut zwei Prozent zu breit, und genau das
      sieht man. Aendert sich `STRICH` in `werkzeuge/marke.py`, aendert
      sich diese Zahl mit. */
-  --marke-sichtbar: calc(var(--marke-breit) * 0.9852);
+  --marke-sichtbar: calc(var(--marke-breit) * 0.975);
 }
 
 .spirale {
@@ -557,7 +561,14 @@ header {
   display: block;
   color: var(--text);
 }
-.spirale .geruest { stroke: currentColor; opacity: .55; }
+/* ⛑ **Hier stand zusaetzlich `opacity: .55`.** Es dimmte die
+   Fibonacci-Quadrate gegen den Bogen ab, und die gibt es seit dem
+   2026-09-09 nicht mehr; uebrig sind Rahmen und Kreis, die tragende
+   Teile der Figur sind. Vor allem aber rechnete es gegen die
+   Staffelung, die `werkzeuge/marke.py` je Element selbst setzt, und
+   zwei Stellen fuer dieselbe Sache laufen auseinander. Die Deckkraft
+   entscheidet jetzt allein der Erzeuger. */
+.spirale .geruest { stroke: currentColor; }
 .spirale .bogen { stroke: currentColor; }
 
 /* Der Schriftzug des Banners ist eine fette kursive Grotesk.
