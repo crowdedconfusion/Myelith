@@ -3,6 +3,9 @@ name = "myl-oberflaeche"
 version = "0.14.0"
 edition = "2021"
 rust-version = "1.88"
+description = "Die grafische Oberflaeche des Clients auf Tauri: ein Gespraechsfenster, das dieselben Funktionen ruft wie die Kommandozeile."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 # ⚑ **Der Ruecken ruft die Kiste, nicht das Binaerprogramm.** „Die
 # Oberflaeche ruft dieselben Unterbefehle, ohne eigene Logik" heisst

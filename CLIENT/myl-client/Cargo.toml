@@ -3,6 +3,9 @@ name = "myl-client"
 version = "0.11.1"
 edition = "2021"
 rust-version = "1.85"
+description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
 
 # ⚑ **Hier darf das Modelllaufwerk liegen, in `local-agent` nicht.**
 # Jene Kiste traegt eine Vollmacht und haelt ihre Angriffsflaeche klein;

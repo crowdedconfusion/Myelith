@@ -147,6 +147,22 @@ zwei vorhandenen Klassenprüfungen und fand neben `.schalter` noch
 `` `beitrag von-${b.von}` `` vergeben wird. Ein Löschen hätte
 Nutzerbeiträge stillschweigend linksbündig gemacht.
 
+⛑ **Beide Kisten waren unlizenziert, und die Abhängigkeitsprüfung war
+deshalb rot.** Einundzwanzig von dreiundzwanzig Kisten tragen `license`
+und `publish`, genau diese zwei nicht: Sie sind nach dem
+Lizenzdurchgang vom 2026-09-02 entstanden und wurden nie nachgezogen.
+⚑ `publish = false` behebt zugleich den zweiten Fehler,
+`found 4 wildcard dependencies`, denn `allow-wildcard-paths` gilt nur
+für nicht veröffentlichte Kisten.
+
+⛑ **Drei Prüfungen schrieben nach `/tmp`, und dass sie durchkamen, war
+Glück.** Auf Windows ist `/tmp/x` laufwerksrelativ, also `C:\tmp\x`;
+`schreiben` legt sein Elternverzeichnis an, `fs::write` nicht. Lief die
+Prüfung mit `schreiben` zuerst, existierte `C:\tmp` und die andere kam
+durch. Der Testläufer entscheidet die Reihenfolge, also war die
+Sammlung grün, solange sie Glück hatte. Alle drei benutzen jetzt
+`tempfile::tempdir`.
+
 ⛑ **Die Sperrdatei der Oberfläche war fünf Nebenversionen alt** und
 hätte jeden `--locked`-Bau umgeworfen. Neu ist
 `werkzeuge/sperrdateien.py` und ein CI-Job dazu: fünfundzwanzig
@@ -155,7 +171,8 @@ Version, sondern **jede** Kiste dieses Repositoriums in **jeder**
 Sperrdatei.
 
 Vier neue Prüfungen, alle gegengeprüft. Die Oberfläche steht bei
-sechzehn.
+sechzehn, `myl-client` bei siebenundachtzig, und `cargo deny` geht über
+alle dreiundzwanzig Kisten ohne Fehlschlag.
 
 ### v0.14.0 und früher
 

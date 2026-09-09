@@ -2,14 +2,33 @@
 
 use myl_client::einstellungen::{Agenteneinstellung, Einstellungen, Kapazitaet};
 
+// ⛑ **Hier standen fest verdrahtete `/tmp`-Pfade, und auf Windows gibt
+// es kein `/tmp`.** Der Fehlschlag kam am 2026-09-09 aus der CI:
+//
+//     Os { code: 3, kind: NotFound, message: "The system cannot find
+//     the path specified." }
+//
+// ⚑ **Und er war eine Zufallsfrage, keine feste.** `/tmp/x` ist auf
+// Windows laufwerksrelativ, also `C:\tmp\x`. `schreiben` legt sein
+// Elternverzeichnis an, `fs::write` nicht. Lief die Pruefung mit
+// `schreiben` zuerst, existierte `C:\tmp` und die andere kam durch;
+// lief sie danach, nicht. Die Reihenfolge entscheidet der
+// Testlaeufer, also war es gruen, solange es Glueck hatte.
+//
+// `tempfile::tempdir` loest beides: Es liegt dort, wo das System seine
+// Zwischendateien haelt, und es ist je Pruefung ein eigenes
+// Verzeichnis, also stossen parallele Laeufe nicht zusammen.
+
 /// ⚑ **Eine fehlende Datei ist kein Fehler.**
 ///
 /// Beim ersten Start gibt es keine, und ein Werkzeug, das dann abbricht,
 /// ist unbrauchbar.
 #[test]
 fn ohne_datei_gelten_die_vorgaben() {
-    let p = std::path::Path::new("/tmp/gibt-es-nicht-myl-xyz/client.json");
-    let e = Einstellungen::lesen(p).expect("fehlende Datei ist kein Fehler");
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    // ⚑ Der Pfad muss fehlen, das Verzeichnis darum herum nicht.
+    let p = d.path().join("gibt-es-nicht").join("client.json");
+    let e = Einstellungen::lesen(&p).expect("fehlende Datei ist kein Fehler");
     assert_eq!(e, Einstellungen::default());
 }
 
@@ -21,23 +40,23 @@ fn ohne_datei_gelten_die_vorgaben() {
 /// hat.
 #[test]
 fn eine_kaputte_datei_faellt_auf() {
-    let p = std::path::Path::new("/tmp/myl-kaputt.json");
-    std::fs::write(p, "{ das ist kein json").unwrap();
-    assert!(Einstellungen::lesen(p).is_err(), "kaputte Datei still ersetzt");
-    let _ = std::fs::remove_file(p);
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let p = d.path().join("kaputt.json");
+    std::fs::write(&p, "{ das ist kein json").expect("schreiben");
+    assert!(Einstellungen::lesen(&p).is_err(), "kaputte Datei still ersetzt");
 }
 
 #[test]
 fn schreiben_und_lesen_ergibt_dasselbe() {
-    let p = std::path::Path::new("/tmp/myl-test/client.json");
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let p = d.path().join("tief").join("client.json");
     let mut e = Einstellungen::default();
     e.modell.artefakt = "INTEGER_LLM/artifacts/qwen3-4b".to_string();
     e.modell.token = 128;
     e.kapazitaet.kerne = Some(4);
     e.agent.schritte = 12;
-    e.schreiben(p).expect("schreiben");
-    assert_eq!(Einstellungen::lesen(p).expect("lesen"), e);
-    let _ = std::fs::remove_file(p);
+    e.schreiben(&p).expect("schreiben");
+    assert_eq!(Einstellungen::lesen(&p).expect("lesen"), e);
 }
 
 /// ⚑ **Die vorsichtige Vorgabe, und beide Stellen.**

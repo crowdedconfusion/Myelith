@@ -64,9 +64,40 @@ ignore = [
     { crate = "chacha20@0.10.1", reason = "zurueckgezogen, nur ueber quinn-proto, nicht auf dem eigenen Kryptopfad; faellt mit dem naechsten libp2p" },
 ]
 
+# ⚑ **„yanked crate was not encountered" bleibt absichtlich stehen**,
+# obwohl es aus demselben Zuschnitt kommt wie die Lizenzmeldung oben.
+# Der Unterschied: Diese Zeile ist die einzige Stelle, an der sichtbar
+# wird, dass die Ausnahme ueberfluessig geworden ist. Erscheint sie bei
+# **jeder** der dreiundzwanzig Kisten, hat libp2p nachgezogen und der
+# Eintrag oben gehoert geloescht. Bei einer einzelnen Kiste heisst sie
+# nur, dass deren Baum quinn-proto nicht enthaelt.
+
 [licenses]
 version = 2
 confidence-threshold = 0.9
+
+# ⛑ **„license was not encountered" ist hier keine Auskunft, sondern
+# Rauschen, und der Grund ist der Zuschnitt der Pruefung.**
+#
+# Der CI-Job faehrt `cargo deny` **je Kiste**, dreiundzwanzigmal, gegen
+# **diese eine** Datei. Die Liste unten ist damit notwendig eine
+# Obermenge: Sie deckt alles ab, was irgendeine der dreiundzwanzig
+# mitbringt, und keine einzelne bringt alles mit. `AGENT_LAYER/local-agent`
+# hat einen kleinen Baum und trifft weder `Apache-2.0 WITH
+# LLVM-exception` noch `BSD-1-Clause` noch `BSD-2-Clause`; das ist
+# richtig so und nicht zu beheben.
+#
+# ⚑ **Warnungen, auf die niemand etwas tun kann, sind teurer als keine:**
+# Sie erziehen dazu, die Ausgabe zu ueberfliegen, und dann faellt die
+# eine Zeile nicht auf, die etwas bedeutet. Dieselbe Ueberlegung steht
+# weiter unten bei `multiple-versions`.
+#
+# ⚠️ **Was damit verlorengeht:** Eine Lizenz, die in **keiner** Kiste
+# mehr vorkommt, wird nicht mehr gemeldet. Wer eine solche tote Zeile
+# sucht, nimmt sie heraus und sieht nach, ob ein Lauf rot wird; bleibt
+# alles gruen, war sie tot.
+unused-allowed-license = "allow"
+
 allow = [
     # Der eigene Code. PolyForm Shield steht nicht in der SPDX-Liste,
     # deshalb die LicenseRef-Form: Sie ist die von SPDX vorgesehene
