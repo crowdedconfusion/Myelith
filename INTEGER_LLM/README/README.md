@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.59.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.43.0, pipeline 0.15.1)
+> **Version:** 0.60.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.43.0, pipeline 0.15.1)
 > **Datum:** 2026-09-10
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
@@ -574,6 +574,33 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.60.0 – 2026-09-10 (Fund 306: die Umbenennung hat zwei Verzeichnisse übersehen)
+
+⛑ **Aus der CI, beim Push gemeldet.** `test_streitlast.py` suchte
+`configs/pipeline_4node_myelith-30b-a3b.json`; auf der Platte lag
+`pipeline_4node_qwen3-30b-a3b.json`. **Die Verweise waren umbenannt,
+die Datei nicht.**
+
+⚑ **Und beim Nachsehen lag dasselbe noch einmal daneben, ungemeldet:**
+`scale_packs/REGISTER.json` führt `myelith-0.5b`, `myelith-4b`,
+`myelith-7b` und `myelith-30b-a3b`, die vier Verzeichnisse hiessen noch
+`qwen*`. **Kein einziger Registereintrag löste auf ein vorhandenes
+Verzeichnis auf**, und keine Prüfung sagte etwas: `test_scales.py` liest
+die Pakete über das Dateisystem und nicht über den Register.
+
+⚑ **Sicher umzubenennen war es, weil kein Digest am Namen hängt.**
+`paket.json` und der Register nennen `artefakt_digest_sha256` und
+`weights_manifest_sha256`, und beide sind über **Dateiinhalte**
+gebildet. Dieselbe Frage wie bei der Arbeitsverteilungsprobe, nur mit
+der anderen Antwort: **Ein Name, der in keinen Hash eingeht, ist ein
+Name und darf sich ändern.**
+
+⛑ **Die Klasse ist dieselbe wie bei Fund 291**, nur an einer Stelle,
+die die Prüfsammlung nicht erreicht: Ein mechanischer Umbau fasst
+Verweise an, und was er auslässt, ist genau das, was niemand liest.
+**Gefunden hat es diesmal die CI**, und zwar an einer von zwei Stellen;
+die zweite fand die Frage „gibt es die noch alle".
 
 ### v0.59.0 – 2026-09-10 (Fund 295: zwei Lizenzen, weil es zwei Werke gibt)
 
