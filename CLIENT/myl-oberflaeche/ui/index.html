@@ -263,6 +263,41 @@
           </svg>
         </button>
       </div>
+      <!-- ⛑ **Hier stand ein zweites „Einstellungen".** Eines als
+           Ueberschrift der Seite, eines ueber der Tabelle, und
+           dazwischen der Abschnitt „Modelle". Die Tabelle traegt ihre
+           Ueberschriften jetzt selbst, eine je Bereich, und die zweite
+           Zeile mit demselben Wort ist entfallen. -->
+      <!-- ⚑ Steht nur da, wenn das Fenster hierher gefuehrt hat, und
+           sagt dann, warum. -->
+      <p id="feldhinweis" class="hinweiskasten" role="status" hidden></p>
+      <table id="einstellungen"><tbody></tbody></table>
+      <p class="pfad" id="pfad"></p>
+      <p class="pfad" id="setzmeldung" role="status"></p>
+
+      <!-- ⚑ **Die Aktualisierung steht am Ende und nicht oben.** Sie
+           ist keine Einstellung, sondern eine Handlung, und wer die
+           Seite oeffnet, kommt wegen eines Modells oder eines Ordners.
+
+           ⚠️ **Der Knopf ist gesperrt, solange es nichts zu tun gibt
+           oder nichts zu tun MOEGLICH ist.** Wer das Programm aus
+           einem Buendel gestartet hat, hat keinen Klon; dann steht
+           dort der Grund und ein Verweis auf die Freigabeseite. -->
+      <section id="aktualisierung">
+        <h2 data-t="akt.titel">Aktualisierung</h2>
+        <p id="aktstand" class="pfad" role="status"></p>
+        <div class="aktzeile">
+          <button id="akt-pruefen" data-t="akt.pruefen">Nach Aktualisierungen sehen</button>
+          <!-- ⚑ **Er ist da, wenn es etwas zu tun gibt, und sonst nicht**
+               (Festlegung des Projektinhabers, 2026-09-10). Ein
+               gesperrter Knopf beantwortet die Frage „gibt es
+               Updates" mit einem Bedienelement; die Zeile darueber
+               beantwortet sie mit einem Satz. -->
+          <button id="akt-einspielen" data-t="akt.einspielen" hidden>Updates installieren</button>
+        </div>
+        <pre id="aktzeilen" aria-live="polite" hidden></pre>
+      </section>
+
       <!-- ⚑ **Modelle holen und Artefakte bauen, aus der Oberflaeche.**
            Bis zum 2026-09-09 war `modell.artefakt` ein Textfeld: ein
            Pfad, den jemand von Hand eintraegt und der existieren muss.
@@ -292,35 +327,6 @@
         <div id="regler"></div>
       </section>
 
-      <!-- ⛑ **Hier stand ein zweites „Einstellungen".** Eines als
-           Ueberschrift der Seite, eines ueber der Tabelle, und
-           dazwischen der Abschnitt „Modelle". Die Tabelle traegt ihre
-           Ueberschriften jetzt selbst, eine je Bereich, und die zweite
-           Zeile mit demselben Wort ist entfallen. -->
-      <!-- ⚑ Steht nur da, wenn das Fenster hierher gefuehrt hat, und
-           sagt dann, warum. -->
-      <p id="feldhinweis" class="hinweiskasten" role="status" hidden></p>
-      <table id="einstellungen"><tbody></tbody></table>
-      <p class="pfad" id="pfad"></p>
-      <p class="pfad" id="setzmeldung" role="status"></p>
-
-      <!-- ⚑ **Die Aktualisierung steht am Ende und nicht oben.** Sie
-           ist keine Einstellung, sondern eine Handlung, und wer die
-           Seite oeffnet, kommt wegen eines Modells oder eines Ordners.
-
-           ⚠️ **Der Knopf ist gesperrt, solange es nichts zu tun gibt
-           oder nichts zu tun MOEGLICH ist.** Wer das Programm aus
-           einem Buendel gestartet hat, hat keinen Klon; dann steht
-           dort der Grund und ein Verweis auf die Freigabeseite. -->
-      <section id="aktualisierung">
-        <h2 data-t="akt.titel">Aktualisierung</h2>
-        <p id="aktstand" class="pfad" role="status"></p>
-        <div class="aktzeile">
-          <button id="akt-pruefen" data-t="akt.pruefen">Nach Aktualisierungen sehen</button>
-          <button id="akt-einspielen" data-t="akt.einspielen" disabled>Einspielen</button>
-        </div>
-        <pre id="aktzeilen" aria-live="polite" hidden></pre>
-      </section>
     </section>
   </div>
 </div>

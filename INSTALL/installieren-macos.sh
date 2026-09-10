@@ -20,7 +20,12 @@
 # jeder anderen Stelle argumentiert.
 set -eu
 
-cd "$(dirname "$0")"
+# ⛑ **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
+# Wurzel und liegt jetzt in `INSTALL/`. **Ein Verschieben sieht aus wie
+# eine Aenderung ohne Verhalten und ist keine:** Ohne das `/..` zeigte
+# die Wurzel auf das Skriptverzeichnis, und der Bau faende keine
+# einzige Kiste. Dieselbe Klasse wie Fund 298.
+cd "$(dirname "$0")/.."
 WURZEL=$(pwd)
 
 SYSTEMWEIT=nein

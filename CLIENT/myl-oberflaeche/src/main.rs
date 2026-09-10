@@ -391,7 +391,8 @@ fn setzen(
 ///
 /// # ⚠️ Der Netzeintrag steht da und traegt nicht
 ///
-/// „API, kostet Inferenz-Credits" ist der Platz fuer das Netzmodell.
+/// „Netzwerkmodell (API), kostet Inferenz-Credits" ist der Platz fuer
+/// das Netzmodell.
 /// Er ist **gesperrt**, solange dem Klienten Knotenadresse und
 /// Vollmacht fehlen (Punkte 2.2 bis 2.5b). Er steht trotzdem in der
 /// Liste, weil die Wahl zwischen hier und dort an genau diese Stelle
@@ -444,9 +445,15 @@ fn modelle() -> Result<Vec<Modellwahl>, String> {
     }
     aus.push(Modellwahl {
         pfad: "netz".into(),
-        // ⚑ Wortlaut des Projektinhabers, mit Komma statt Strich
-        //   nach der Hausregel.
-        name: "API, kostet Inferenz-Credits".into(),
+        // ⚑ Wortlaut des Projektinhabers (2026-09-10), mit Komma statt
+        //   Strich nach der Hausregel.
+        //
+        // ⛑ **Hier stand „API, kostet Inferenz-Credits".** Der Eintrag
+        // steht in einer Liste neben „Myelith 4B" und „Myelith 7B", und
+        // „API" allein sagt dort nicht, was es ist: Es liest sich wie
+        // eine Schnittstelle und nicht wie ein Modell. **Ein Eintrag in
+        // einer Modellwahl muss zuerst sagen, dass er ein Modell ist.**
+        name: "Netzwerkmodell (API), kostet Inferenz-Credits".into(),
         offen: false,
         warum: "Noch nicht verdrahtet: Dem Klienten fehlen Knotenadresse und Vollmacht. \
                 Bis dahin rechnet diese Maschine."

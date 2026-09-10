@@ -1772,11 +1772,189 @@ fn das_fenster_hat_eine_untergrenze() {
             .and_then(|z| z.parse().ok())
             .unwrap_or(0)
     };
-    // Die Leiste ist 16rem breit; darunter bliebe fuer das Gespraech
-    // nichts uebrig, und das Zahnrad steht am rechten Rand.
-    assert!(zahl("minWidth") >= 520, "zu schmal: das Gespraech fiele weg");
-    assert!(zahl("minHeight") >= 400, "zu niedrig: die Eingabe fiele weg");
-    assert!(zahl("minWidth") < zahl("width"), "die Untergrenze ist die Startgroesse");
+    // ⛑ **Dreimal wurde diese Zahl zu klein geraten** (2026-09-10,
+    // jedes Mal vom Projektinhaber gemeldet), und beim dritten Mal war
+    // klar, warum: **Der Aufbau ist in `rem` bemessen, die Zahl in
+    // Pixeln.** Leiste 16 rem, Knoepfe 2 rem, Polster 1 rem; wer die
+    // Systemschrift groesser stellt, bekommt all das groesser und die
+    // Mindestbreite nicht. Eine Rechnung ueber zwei Einheiten stimmt
+    // fuer genau eine Schriftgroesse.
+    //
+    // ⚑ **Die Zusage haengt deshalb nicht mehr an der Zahl.** Leiste
+    // und Polster wachsen mit dem Fenster, und beide Kopfpolster
+    // kommen aus **einer** Formel: Was links vor dem Leistensymbol
+    // steht, steht rechts hinter dem Zahnrad, bei jeder Breite und
+    // jeder Schriftgroesse. Die Zahl unten ist seither eine
+    // Bequemlichkeitsgrenze und keine Zusage.
+    assert!(zahl("minWidth") >= 800, "unter dieser Breite wird die Bedienung eng");
+    assert!(zahl("minHeight") >= 500, "zu niedrig: die Eingabe fiele weg");
+
+    let stil = ohne_kommentare(&lies("stil.css"));
+    let kopf = stil
+        .split_once("\nheader {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect("header");
+
+    // ⚑ **Beide Kopfknoepfe sind an ihre Ecke geheftet, mit
+    // demselben Wert.**
+    //
+    // ⛑ **Dreimal gemeldet, dreimal anders repariert** (2026-09-10):
+    // erst ein groesseres `minWidth`, dann `minmax(0, 1fr)` auf der
+    // mittleren Spalte, dann ein konstantes Polster. Keines hat es
+    // geheilt, denn **in einem Raster haengt die Lage jeder Spalte an
+    // allen anderen**, und die Marke in der Mitte erscheint genau
+    // dann, wenn die Leiste zugeht.
+    //
+    // ⚑ **Geheftet statt eingeordnet**, und deshalb prueft diese
+    // Stelle jetzt eine Zusage statt einer Rasterangabe: Beide liegen
+    // absolut, und der Abstand zur Kante ist derselbe Wert.
+    // ⚑ **Vier Abstaende aus einem Wert, und eine feste Hoehe.**
+    //
+    // ⛑ **Dreimal am Polster geschraubt, dreimal daneben**
+    // (2026-09-10). Zuletzt: `min-height` plus Polsterung, und weil
+    // `box-sizing: border-box` gilt, war die Hoehe **das Groessere von
+    // beidem**: mit der Marke in der Mitte ihr Inhalt plus Polster,
+    // ohne sie der Mindestwert. Die Marke erscheint aber genau dann,
+    // wenn die Leiste zugeht, und deshalb stauchte sich die Kopfleiste
+    // beim Bedienen.
+    //
+    // ⚑ **Eine Hoehe, die am Inhalt haengt, aendert sich mit dem
+    // Inhalt.** Sie haengt jetzt an zwei Variablen, und die vier
+    // Abstaende der Knoepfe kommen aus einer davon: **Was aus
+    // derselben Zahl kommt, kann nicht auseinanderlaufen.**
+    assert!(
+        kopf.contains("height: calc(var(--kopf-knopf) + 2 * var(--kopf-polster))"),
+        "die Kopfhoehe haengt wieder am Inhalt"
+    );
+    assert!(
+        !kopf.contains("min-height"),
+        "der Kopf hat wieder eine Mindesthoehe, die der Inhalt ueberbieten kann"
+    );
+    let polster = kopf
+        .split_once("padding:")
+        .and_then(|(_, r)| r.split_once(';'))
+        .map(|(w, _)| w.trim().to_string())
+        .expect("der Kopf hat kein Polster");
+    assert_eq!(
+        polster, "0",
+        "der Kopf traegt wieder ein eigenes Polster neben dem der Knoepfe"
+    );
+
+    // ⚑ **Senkrecht und waagerecht aus derselben Variablen.** Steht
+    // die Hoehe auf Knopf plus zweimal Polster und sitzt der Knopf
+    // mittig, ist der Abstand nach oben und unten **gerechnet**
+    // dasselbe Polster wie links und rechts. Zwei Zahlen koennten
+    // auseinanderlaufen, eine nicht.
+    for zeile in ["header > #leiste-schalten { ", "header > .kopfrechts { "] {
+        let rumpf = stil
+            .split_once(zeile)
+            .and_then(|(_, r)| r.split_once('}'))
+            .map(|(k, _)| k.to_string())
+            .unwrap_or_else(|| panic!("{zeile} fehlt"));
+        assert!(
+            rumpf.contains("var(--kopf-polster)"),
+            "{zeile} nennt eine eigene Zahl statt der gemeinsamen: {rumpf}"
+        );
+    }
+    let gemeinsam = stil
+        .split_once("header > #leiste-schalten,\nheader > .kopfrechts {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect("die gemeinsame Regel der Kopfknoepfe");
+    for regel in ["position: absolute", "top: 50%", "translateY(-50%)"] {
+        assert!(gemeinsam.contains(regel), "den Kopfknoepfen fehlt `{regel}`");
+    }
+
+    // ⚠️ Und das Polster ist gross genug, dass die Leiste nicht
+    // gedrueckt wirkt; ebenfalls gemeldet.
+    let wert = stil
+        .split_once("--kopf-polster:")
+        .and_then(|(_, r)| r.split_once(';'))
+        .map(|(w, _)| w.trim().trim_end_matches("rem").to_string())
+        .expect("--kopf-polster");
+    let rem: f32 = wert.parse().unwrap_or_else(|_| panic!("`{wert}` ist kein rem-Wert"));
+    assert!(rem >= 0.8, "der Kopf ist mit {rem}rem Polster zu schmal");
+
+    // ⚑ **Und die Marke im Kopf traegt keinen Rahmen.** Bei 1,15 rem
+    // sind Rahmen und Kreis zwei Striche dicht nebeneinander, und der
+    // Rahmen gewinnt, weil er gerade ist. In der Seitenleiste bleibt
+    // er, dort hat die Marke Platz.
+    assert!(
+        stil.contains(".kopfmarke .geruest { display: none; }"),
+        "die kleine Marke traegt noch ihren Rahmen"
+    );
+
+    // ⚑ **Ein festes Polster, links wie rechts.** `padding: .6rem 1rem`
+    // setzt denselben Abstand auf beide Seiten, und zwar einen
+    // konstanten.
+    //
+    // ⛑ **Symmetrisch genuegt nicht, es muss stabil sein.** Ein kurz
+    // eingesetztes `clamp(.5rem, 1.6vw, 1rem)` war auf beiden Seiten
+    // gleich und wanderte trotzdem mit der Fensterbreite; gemeldet vom
+    // Projektinhaber, weil es beim Auf- und Zuklappen der Leiste wie
+    // ein Sprung aussah. **Ein Abstand, der sich beim Bedienen
+    // aendert, ist keiner, auf den man sich verlaesst.**
+    // ⚑ Und die Leiste waechst mit, statt eine feste Breite gegen ein
+    // schmales Fenster zu behaupten.
+    let leiste = stil
+        .split_once("\n#seitenleiste {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect("#seitenleiste");
+    assert!(
+        leiste.contains("width: clamp("),
+        "die Seitenleiste hat wieder eine feste Breite"
+    );
+
+    // ⛑ **Und die Huelle laesst sie wirklich schrumpfen.** Der
+    // selbsttaetige Mindestwert einer Rasterspalte ist der
+    // Mindestinhalt ihres Kindes, nicht null.
+    let huelle = stil
+        .split_once("\n#huelle {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect("#huelle");
+    // ⛑ **Die Leiste gibt nach, nicht der Inhalt.** Gemeldet vom
+    // Projektinhaber: Bei zugeklappter Leiste stimmt alles, bei
+    // offener wird rechts abgeschnitten. Wird der Platz knapp,
+    // verliert im Raster zuerst die **flexible** Spalte, und das war
+    // das Hauptfenster. **Was abgeschnitten wird, soll das sein, was
+    // sich zuklappen laesst.**
+    assert!(
+        huelle.contains("grid-template-columns: minmax(0, auto) minmax(22rem, 1fr)"),
+        "die Leiste nimmt dem Hauptfenster wieder Platz weg"
+    );
+    // ⚠️ **Und die Schranke steht in `rem`**, wie alles darin. Eine
+    // Schranke in Pixeln ueber einem Aufbau in `rem` war der Fehler,
+    // den diese Stelle dreimal wiederholt hat.
+    assert!(
+        !huelle.contains("minmax(24px") && !huelle.contains("minmax(352px"),
+        "die Schranke steht wieder in Pixeln"
+    );
+
+    // ⚑ **Und die beiden Fussnoten sind kleiner als das, was sie
+    // erklaeren** (Festlegung des Projektinhabers, 2026-09-10): der
+    // Pfad unter der Modellwahl und die Zeile unter der Eingabe. Beide
+    // beantworten eine Frage fuer den Zweifelsfall und keine, die sich
+    // staendig stellt.
+    for (was, wo) in [("der Pfad unter der Modellwahl", ".leistenfuss .pfad {"),
+                      ("die Zeile unter der Eingabe", "#hinweiszeile {")] {
+        let rumpf = stil
+            .split_once(wo)
+            .and_then(|(_, r)| r.split_once('}'))
+            .map(|(k, _)| k.to_string())
+            .unwrap_or_else(|| panic!("{wo} fehlt"));
+        let groesse = rumpf
+            .split_once("font-size: .")
+            .and_then(|(_, r)| r.split_once("rem"))
+            .and_then(|(z, _)| z.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("{was} nennt keine Schriftgroesse"));
+        assert!(
+            groesse <= 62,
+            "{was} steht mit 0,{groesse} rem noch zu gross da"
+        );
+    }
 }
 
 /// Alle Schluessel eines Sprachabschnitts der Tabelle in `app.js`.
@@ -1906,4 +2084,303 @@ fn die_sprache_steht_in_den_einstellungen() {
         js.contains("await sprache_setzen(neu);"),
         "die Sprache wirkt erst beim naechsten Start"
     );
+}
+
+/// **Ein Eintrag entsteht auf zwei Wege und sonst nie.**
+///
+/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+///
+/// Der Modus hing am geoeffneten Gespraech. Daraus folgte, dass ein
+/// **Moduswechsel etwas anlegen musste**, um den Modus ueberhaupt
+/// festhalten zu koennen: Wer zwischen Chat und Agent hin und her
+/// klickte, hinterliess bei jedem Klick ein leeres Gespraech, und die
+/// Liste des anderen Modus zeigte es beim naechsten Wechsel mit an.
+///
+/// ⚑ **Ein Modus ist eine Ansicht, und eine Ansicht legt nichts an.**
+/// Angelegt wird auf Knopfdruck und beim Abschicken in einem leeren
+/// Feld, an genau zwei Stellen.
+#[test]
+fn ein_eintrag_entsteht_nur_auf_zwei_wege() {
+    let js = lies("app.js");
+
+    // ⚑ Der Modus ist ein eigener Zustand und nicht abgeleitet.
+    assert!(
+        js.contains("const modus_jetzt = () => modus;"),
+        "der Modus haengt wieder am geoeffneten Eintrag"
+    );
+
+    // ⚑ **Gezaehlt wird der Aufruf und nicht das Wort.** Drei Stellen
+    // duerfen anlegen: der Knopf, das Abschicken, und die Zeile im
+    // Start, die gar keine mehr ist. Kommt eine vierte dazu, faellt
+    // diese Pruefung, und das ist ihr Zweck.
+    let anlagen: Vec<&str> = js
+        .lines()
+        .map(str::trim)
+        .filter(|z| z.contains("neues_gespraech(") && !z.starts_with("//") && !z.starts_with("function"))
+        .collect();
+    assert_eq!(
+        anlagen.len(),
+        2,
+        "es wird an {} Stellen angelegt, erlaubt sind Knopf und Abschicken:\n{anlagen:#?}",
+        anlagen.len()
+    );
+
+    // Und der Start gehoert nicht dazu.
+    assert!(
+        js.contains("offen = gespraeche[0] || null;"),
+        "der Start legt wieder etwas an"
+    );
+    // Der Moduswechsel auch nicht.
+    assert!(
+        js.contains("if (offen && offen.modus !== modus) offen = null;"),
+        "der Moduswechsel legt an oder zieht einen fremden Eintrag mit"
+    );
+}
+
+/// **Jeder Beschreibungssatz der Freigabemaske spricht die eingestellte
+/// Sprache.**
+///
+/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+///
+/// Die Sprache wirkte auf die Feldbeschriftungen und nicht auf die
+/// Regler: `hardware::regler` nahm `FELDER` roh, also immer auf
+/// Deutsch, und die beiden laengsten Saetze der ganzen Seite,
+/// `RECHENWERK_GESPERRT` und die Beschreibung eines Rechenwerks,
+/// standen ueberhaupt nur auf Deutsch da.
+///
+/// ⚑ **Uebersetzt wird, was ein Mensch liest, und das gilt besonders
+/// fuer den Satz, der erklaert, warum etwas nicht geht.**
+#[test]
+fn auch_die_regler_sprechen_die_eingestellte_sprache() {
+    let e = myl_client::Einstellungen::default();
+    let hw = myl_client::hardware::Hardware::erheben(std::path::Path::new("."));
+
+    let mut deutsch = e.clone();
+    deutsch.oberflaeche.sprache = myl_client::einstellungen::Sprache::De;
+    let mut englisch = e;
+    englisch.oberflaeche.sprache = myl_client::einstellungen::Sprache::En;
+
+    let de = hw.regler(&deutsch);
+    let en = hw.regler(&englisch);
+    assert_eq!(de.len(), en.len(), "verschieden viele Regler je Sprache");
+    assert!(!de.is_empty(), "kein einziger Regler; misst die Pruefung noch etwas?");
+
+    for (d, e) in de.iter().zip(en.iter()) {
+        assert_eq!(d.name, e.name, "der Feldname wurde uebersetzt");
+        assert_ne!(
+            d.hinweis, e.hinweis,
+            "`{}` traegt in beiden Sprachen denselben Satz",
+            d.name
+        );
+        match (&d.sperrgrund, &e.sperrgrund) {
+            (Some(a), Some(b)) => assert_ne!(a, b, "`{}` sperrt in beiden Sprachen gleich", d.name),
+            (None, None) => {}
+            _ => panic!("`{}` ist nur in einer Sprache gesperrt", d.name),
+        }
+    }
+}
+
+/// **Die Sprache steht zuoberst, die Updates gleich darunter.**
+///
+/// ⚑ Festlegung des Projektinhabers am 2026-09-10, und sie hat einen
+/// Grund: Die Sprache beschriftet alles, was darunter kommt. **Wer die
+/// Seite in einer Sprache oeffnet, die er nicht liest, soll den
+/// Schalter finden, ohne bis ans Ende zu suchen.**
+#[test]
+fn die_sprache_steht_zuoberst() {
+    assert_eq!(
+        myl_client::einstellungen::FELDER[0].name,
+        "oberflaeche.sprache",
+        "die Sprache ist nicht das erste Feld"
+    );
+
+    let html = lies("index.html");
+    let tabelle = html.find("id=\"einstellungen\"").expect("Einstellungstabelle");
+    let updates = html.find("id=\"aktualisierung\"").expect("Aktualisierung");
+    let modelle = html.find("id=\"modellbau\"").expect("Modellbau");
+    assert!(tabelle < updates, "die Updates stehen nicht unter den Einstellungen");
+    assert!(updates < modelle, "zwischen Einstellungen und Updates steht etwas anderes");
+}
+
+/// **Der Einspielknopf erscheint erst, wenn es etwas einzuspielen
+/// gibt.**
+///
+/// ⛑ Vorher stand er gesperrt da. **Ein gesperrter Knopf beantwortet
+/// die Frage „gibt es Updates" mit einem Bedienelement**, und der Grund
+/// steckte in seinem Zeigetext, wo ihn nur findet, wer mit der Maus
+/// darauf wartet. Die Zeile darueber beantwortet dieselbe Frage mit
+/// einem Satz.
+#[test]
+fn der_einspielknopf_erscheint_erst_bei_bedarf() {
+    let html = lies("index.html");
+    let js = lies("app.js");
+    assert!(
+        html.contains("id=\"akt-einspielen\" data-t=\"akt.einspielen\" hidden"),
+        "der Knopf steht beim Oeffnen der Seite schon da"
+    );
+    assert!(js.contains("knopf.hidden = !lohnt;"), "der Knopf wird nur gesperrt statt verborgen");
+    // Und die deutsche Beschriftung ist die vom Projektinhaber gewaehlte.
+    for satz in ["\"akt.pruefen\": \"Nach Updates suchen\"", "\"akt.einspielen\": \"Updates installieren\""] {
+        assert!(js.contains(satz), "der Wortlaut fehlt: {satz}");
+    }
+}
+
+/// **Gekuerzt wird die Anzeige, nicht die Sache.**
+///
+/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+///
+/// `titel_aus` kuerzte auf vierzig Zeichen und haengte `...` an, und
+/// **das Ergebnis war der gespeicherte Titel**. Die Zeile in der Leiste
+/// kuerzte danach ein zweites Mal, und der Zeigetext beim Ueberfahren
+/// zeigte genau dieselbe gekuerzte Zeichenkette: **Das Lange war
+/// nirgends mehr zu holen.**
+///
+/// ⚑ **Kuerzen ist Anzeige und gehoert ins Stilblatt.** Die Zeile
+/// bekommt eine Ellipse aus dem CSS, der Zeigetext den ganzen Titel.
+/// Eine Schranke bleibt, aber weit oben: Wer einen Absatz einwirft,
+/// soll keinen Absatz in der Ablage haben.
+#[test]
+fn gekuerzt_wird_die_anzeige_und_nicht_die_sache() {
+    let js = lies("app.js");
+    let stil = ohne_kommentare(&lies("stil.css"));
+
+    // 1. Der gespeicherte Titel ist nicht auf Leistenbreite gestutzt.
+    let rumpf = js
+        .split_once("function titel_aus(text) {")
+        .and_then(|(_, r)| r.split_once("\n}"))
+        .map(|(k, _)| k.to_string())
+        .expect("titel_aus");
+    assert!(
+        !rumpf.contains("> 40"),
+        "der Titel wird beim Speichern auf Leistenbreite gekuerzt"
+    );
+    assert!(rumpf.contains("> 200"), "der Titel hat gar keine Schranke mehr");
+
+    // 2. Die Zeile kuerzt, und zwar im Stilblatt.
+    let titel = stil
+        .split_once(".chat .titel {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(k, _)| k.to_string())
+        .expect(".chat .titel");
+    for regel in ["text-overflow: ellipsis", "white-space: nowrap", "overflow: hidden"] {
+        assert!(titel.contains(regel), "der Zeile fehlt `{regel}`");
+    }
+
+    // 3. Und der Zeigetext gibt den ganzen Titel her.
+    assert!(js.contains("auf.title = g.titel;"), "der Zeigetext zeigt nicht den ganzen Titel");
+
+    // ⚑ **Meldungen kuerzen weiter, und das ist richtig:** Sie haben
+    // keine Leiste, die fuer sie kuerzt, und keinen Zeigetext, der das
+    // Lange nachreichte.
+    assert!(js.contains("const kurz_titel = (text) =>"), "die kurze Form fehlt");
+}
+
+/// **Kein Stilblatt mit Bruchstuecken darin.**
+///
+/// # ⛑ Der Fund, der mehrere Meldungen eines Abends erklaert
+///
+/// Im Stilblatt stand ein verwaister Block: eine schliessende Klammer,
+/// ein Backtick, und danach das Ende eines Kommentars samt zwei Dutzend
+/// Angaben ohne Regel darum. Er war **eingecheckt** und stammte aus
+/// einem halb zurueckgenommenen Umbau.
+///
+/// ⚠️ **Ein Browser wirft das nicht weg, er verschluckt das Naechste.**
+/// Nach dem Backtick sucht der Aufloeser einen Selektor und liest alles
+/// bis zur naechsten `{` als solchen. Die naechste `{` war die von
+/// `.chat`, und damit war **die ganze Regel fuer eine Gespraechszeile
+/// weg**: kein `display: flex`, keine Breite, und deshalb auch keine
+/// Ellipse am Titel, denn `text-overflow` braucht eine Schranke.
+///
+/// ⚑ **Drei Meldungen desselben Abends hingen daran**: Titel ohne
+/// Kuerzung, eine Leiste, die dem Hauptfenster Platz nahm, und ein
+/// Zahnrad, das dabei aus der Ecke rutschte.
+///
+/// **Diese Pruefung misst die Form und nicht den Inhalt.** Sie sagt
+/// nicht, welche Regel richtig ist; sie sagt, dass die Datei eine ist.
+#[test]
+fn das_stilblatt_ist_ganz() {
+    let roh = lies("stil.css");
+
+    // 1. Jeder Kommentar wird geschlossen, und keiner schliesst zweimal.
+    assert_eq!(
+        roh.matches("/*").count(),
+        roh.matches("*/").count(),
+        "ein Kommentar wird nicht geschlossen, oder einer schliesst zweimal"
+    );
+
+    // 2. Die Klammern gehen auf und wieder zu, in dieser Reihenfolge.
+    let ohne = ohne_kommentare(&roh);
+    let mut tiefe: i32 = 0;
+    for (n, zeile) in ohne.lines().enumerate() {
+        for c in zeile.chars() {
+            match c {
+                '{' => tiefe += 1,
+                '}' => {
+                    tiefe -= 1;
+                    assert!(tiefe >= 0, "Zeile {}: eine Klammer zu viel", n + 1);
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(tiefe, 0, "am Ende bleibt eine Klammer offen");
+
+    // 3. ⚑ **Und kein Backtick ausserhalb eines Kommentars.** Er ist
+    //    in CSS kein gueltiges Zeichen; genau einer hat den Fund
+    //    verursacht, und er stand seit einem Commit da.
+    assert!(
+        !ohne.contains('`'),
+        "im Stilblatt steht ein Backtick ausserhalb eines Kommentars"
+    );
+}
+
+/// **Das Skript setzt keine Stilangaben am Element.**
+///
+/// # ⛑ Fund 305, gemeldet vom Projektinhaber am 2026-09-10
+///
+/// Hinter jedem Gespraechstitel stand ein rundes Feld. Der Titel ist
+/// ein Knopf, und `.blank` schaltet nur die beiden Zierpseudoelemente
+/// ab; Glasverlauf, Rundung, Polsterung, Schatten und
+/// `backdrop-filter` blieben. Das Skript nahm davon **fuenf Dinge von
+/// Hand wieder weg**, mit `element.style.…`, und vergass Rundung und
+/// Hintergrundfilter.
+///
+/// ⚑ **Aussehen gehoert ins Stilblatt.** Ein Skript, das Stilangaben
+/// setzt, ist eine zweite Stelle, an der etwas fehlen kann, und sie
+/// ist die schlechter geprueefte: Im Stilblatt steht der Rueckbau
+/// beieinander und faellt als Luecke auf, im Skript steht er zwischen
+/// zwei Ereignisbehandlungen.
+///
+/// ⚠️ **Die Ausnahme ist Bewegung und Lage**, die aus gemessenen Werten
+/// entsteht: wo ein Kontextmenue aufgeht, wie breit ein Balken ist.
+/// Das kann kein Stilblatt wissen.
+#[test]
+fn das_skript_setzt_kein_aussehen() {
+    // ⚑ Kommentare heraus, aus demselben Grund wie bei der Wache
+    // ueber `innerHTML`: **Eine Pruefung, die Erwaehnung fuer Gebrauch
+    // haelt, bestraft das Aufschreiben der Regel.**
+    let js: String = lies("app.js")
+        .lines()
+        .filter(|z| {
+            let z = z.trim_start();
+            !(z.starts_with("//") || z.starts_with('*') || z.starts_with("/*"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    const AUSSEHEN: [&str; 8] = [
+        "style.background",
+        "style.border",
+        "style.borderRadius",
+        "style.boxShadow",
+        "style.color",
+        "style.padding",
+        "style.font",
+        "style.textAlign",
+    ];
+    for eigenschaft in AUSSEHEN {
+        assert!(
+            !js.contains(eigenschaft),
+            "das Skript setzt `{eigenschaft}` am Element; das gehoert ins Stilblatt"
+        );
+    }
 }

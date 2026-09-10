@@ -204,11 +204,11 @@ pub fn pruefen(eigene: &str) -> Stand {
 pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
     #[cfg(target_os = "macos")]
     {
-        Some(("sh", &["installieren-macos.sh", "--aktualisieren"]))
+        Some(("sh", &["INSTALL/installieren-macos.sh", "--aktualisieren"]))
     }
     #[cfg(target_os = "linux")]
     {
-        Some(("sh", &["installieren-nixos.sh", "--aktualisieren"]))
+        Some(("sh", &["INSTALL/installieren-nixos.sh", "--aktualisieren"]))
     }
     #[cfg(target_os = "windows")]
     {
@@ -218,7 +218,7 @@ pub fn skript() -> Option<(&'static str, &'static [&'static str])> {
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "installieren-windows.ps1",
+                "INSTALL\\installieren-windows.ps1",
                 "-Aktualisieren",
             ],
         ))
@@ -348,16 +348,19 @@ mod proben {
         assert!(!was.is_empty());
         let name = argumente
             .iter()
-            .find(|a| a.starts_with("installieren-"))
-            .expect("kein Installationsskript in den Argumenten");
+            .find(|a| a.contains("installieren-"))
+            .expect("kein Installationsskript in den Argumenten")
+            // ⚑ Unter Windows steht der Pfad mit Backslash da; die
+            // Datei liegt trotzdem an derselben Stelle.
+            .replace('\\', "/");
 
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
             .expect("Wurzel des Repositoriums");
         assert!(
-            wurzel.join(name).is_file(),
-            "{name} steht in `skript()` und liegt nicht in der Wurzel"
+            wurzel.join(&name).is_file(),
+            "{name} steht in `skript()` und liegt nicht da"
         );
     }
 
@@ -451,9 +454,9 @@ mod proben {
 
         // 2. Und kein Skript fuehrt daneben seine eigene Liste.
         for datei in [
-            "installieren-macos.sh",
-            "installieren-nixos.sh",
-            "installieren-windows.ps1",
+            "INSTALL/installieren-macos.sh",
+            "INSTALL/installieren-nixos.sh",
+            "INSTALL/installieren-windows.ps1",
         ] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             assert!(
@@ -490,25 +493,26 @@ mod proben {
         }
     }
 
-    /// **Alle drei Installationsskripte liegen in der Wurzel.**
+    /// **Alle drei Installationsskripte liegen in `INSTALL/`.**
     ///
-    /// ⚑ **In der Wurzel, damit man sie findet** (Festlegung des
-    /// Projektinhabers, 2026-09-10): Wer klont und nicht weiss, wie es
-    /// weitergeht, sieht als Erstes das Wurzelverzeichnis.
+    /// ⚑ **In einem eigenen Ordner mit einer Anleitung daneben**
+    /// (Festlegung des Projektinhabers, 2026-09-10). Drei Skripte lose
+    /// in der Wurzel sagen nicht, welches das eigene ist; ein Ordner
+    /// namens `INSTALL` mit einem README darin sagt es.
     ///
     /// ⚠️ **Und jedes muss `--aktualisieren` kennen**, denn genau damit
     /// ruft der Klient es. Ein Skript ohne diesen Schalter bricht mit
     /// „unbekannter Schalter" ab, und zwar erst beim Nutzer.
     #[test]
-    fn drei_installationsskripte_liegen_in_der_wurzel() {
+    fn drei_installationsskripte_liegen_in_install() {
         let wurzel = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(|p| p.parent())
             .expect("Wurzel des Repositoriums");
         for (datei, schalter) in [
-            ("installieren-macos.sh", "--aktualisieren"),
-            ("installieren-nixos.sh", "--aktualisieren"),
-            ("installieren-windows.ps1", "Aktualisieren"),
+            ("INSTALL/installieren-macos.sh", "--aktualisieren"),
+            ("INSTALL/installieren-nixos.sh", "--aktualisieren"),
+            ("INSTALL/installieren-windows.ps1", "Aktualisieren"),
         ] {
             let pfad = wurzel.join(datei);
             let text = std::fs::read_to_string(&pfad)
@@ -516,8 +520,18 @@ mod proben {
             assert!(text.len() > 500, "{datei} ist zu kurz, um etwas zu tun");
             assert!(text.contains(schalter), "{datei} kennt `{schalter}` nicht");
         }
-        // ⚑ Und die Nix-Umgebung daneben, ohne die das Linux-Skript
-        // nur eine leere Shell startet.
+        // ⚑ Und die Nix-Umgebung, ohne die das Linux-Skript nur eine
+        // leere Shell startet. **Sie bleibt in der Wurzel**, denn
+        // `nix develop` sucht sie dort und nirgends sonst.
         assert!(wurzel.join("flake.nix").is_file(), "flake.nix fehlt in der Wurzel");
+
+        // ⚑ **Und eine Anleitung daneben.** Ein Ordner mit drei
+        // Skripten und ohne Text laesst den Leser raten, welches
+        // seines ist.
+        let anleitung = std::fs::read_to_string(wurzel.join("INSTALL/README.md"))
+            .expect("INSTALL/README.md");
+        for system in ["macOS", "Windows", "NixOS"] {
+            assert!(anleitung.contains(system), "die Anleitung nennt {system} nicht");
+        }
     }
 }

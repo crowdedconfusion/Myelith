@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.29.0 (`myl-client` 0.20.0, `myl-oberflaeche` 0.24.1, `myl-console` 0.1.0)
+> **Version:** 0.34.2 (`myl-client` 0.22.0, `myl-oberflaeche` 0.27.2, `myl-console` 0.1.0)
 > **Datum:** 2026-09-10
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -31,11 +31,11 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
-| **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „API, kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
+| **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
 | **Einstellungen** | Vier Bereiche, elf Felder und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
 | **Sprache** | Deutsch oder Englisch, umschaltbar in den Einstellungen und sofort wirksam. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind |
-| **Aus einem frischen Klon einrichten** | Drei Skripte in der Wurzel, je eines für macOS, NixOS und Windows. Sie prüfen erst, bauen dann, und laden nichts nach |
+| **Aus einem frischen Klon einrichten** | Drei Skripte unter `INSTALL/`, je eines für macOS, NixOS und Windows, mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
 | **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird mit `git merge --ff-only` und dem Installationsskript der Plattform |
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
@@ -108,6 +108,364 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.34.2 – 2026-09-10 (die Kopfleiste hat eine feste Höhe, und alle vier Abstände kommen aus einer Zahl)
+
+⛑ **Vier Anläufe, und der Grund lag jedes Mal woanders, als ich
+suchte.** Gemeldet wurde zuletzt: „Beim Ausklappen staucht sich die
+obere Leiste in der Vertikalen."
+
+**Der Kopf trug `min-height: 2rem` plus Polsterung**, und weil
+`box-sizing: border-box` gilt, war seine Höhe **das Grössere von
+beidem**: mit der Marke in der Mitte deren Inhalt plus Polster, ohne
+sie der Mindestwert. Die Marke erscheint aber genau dann, wenn die
+Leiste zugeht. **Eine Höhe, die am Inhalt hängt, ändert sich mit dem
+Inhalt**, und der wechselte hier beim Bedienen.
+
+⚑ **Jetzt hängt sie an zwei Zahlen und an nichts sonst:**
+
+```css
+--kopf-polster: .85rem;
+--kopf-knopf: 2rem;
+header { height: calc(var(--kopf-knopf) + 2 * var(--kopf-polster)); padding: 0; }
+header > #leiste-schalten { left: var(--kopf-polster); }
+header > .kopfrechts     { right: var(--kopf-polster); }
+```
+
+**Und daraus folgt die Zusage rechnerisch.** Ist die Leiste so hoch wie
+der Knopf plus zweimal das Polster, und sitzt der Knopf mittig, dann
+ist sein Abstand nach oben und unten **dasselbe Polster** wie links und
+rechts. Alle vier Abstände kommen aus einer Variablen: **Was aus
+derselben Zahl kommt, kann nicht auseinanderlaufen.**
+
+Die Prüfung misst seither die Ableitung statt der Zahl: feste Höhe aus
+den beiden Variablen, kein eigenes Polster am Kopf, und beide Knöpfe
+nennen `var(--kopf-polster)` statt einer eigenen Angabe.
+
+`myl-oberflaeche` **0.27.1 auf 0.27.2** (49 Prüfungen).
+
+### v0.34.1 – 2026-09-10 (Fund 305: Aussehen gehört ins Stilblatt)
+
+⛑ **Hinter jedem Gesprächstitel stand ein rundes Feld** (gemeldet vom
+Projektinhaber). Der Titel ist ein Knopf, und `.blank` schaltet nur die
+beiden Zierpseudoelemente ab; Glasverlauf, Rundung, Polsterung,
+Schatten und `backdrop-filter` blieben. **Das Skript nahm davon fünf
+Dinge von Hand wieder weg**, mit Stilangaben direkt am Element, und
+vergass Rundung und Hintergrundfilter.
+
+⚑ **Aussehen gehört ins Stilblatt.** Ein Skript, das Stilangaben setzt,
+ist eine zweite Stelle, an der etwas fehlen kann, und sie ist die
+schlechter geprüfte: Im Stilblatt steht der Rückbau beieinander und
+fällt als Lücke auf, im Skript steht er zwischen zwei
+Ereignisbehandlungen. Eine Prüfung verbietet acht solcher Zuweisungen;
+Bewegung und gemessene Lage bleiben erlaubt, denn die kann kein
+Stilblatt wissen.
+
+⚠️ **Und der Rückbau steht am Titel, nicht an `.blank`.** Eine
+allgemeine Regel hätte hier funktioniert und drei andere Knöpfe
+zerlegt: In diesem Stilblatt stehen die Bauteilregeln **vor** den
+Grundregeln für Bedienelemente, also hätte eine späte Klasse `.modus`,
+`.chat` und `.rundknopf` überstimmt. **Wer eine Regel allgemein macht,
+macht sie für alles, was sie trifft.**
+
+⚑ **Die Kopfleiste hat mehr Luft**, `.85rem` statt `.6rem` oben wie
+unten, aus einer Angabe (Festlegung des Projektinhabers). Die Prüfung
+verlangt zwei konstante Werte statt einer Formel und einen Mindestwert
+für die Höhe.
+
+`myl-oberflaeche` **0.27.0 auf 0.27.1** (49 Prüfungen).
+
+### v0.34.0 – 2026-09-10 (Fund 304: ein Bruchstück im Stilblatt, und es erklärt drei Meldungen eines Abends)
+
+⛑ **Im Stilblatt stand ein verwaister Block**, eingecheckt und aus
+einem halb zurückgenommenen Umbau: eine schliessende Klammer, ein
+Backtick, danach das Ende eines Kommentars und zwei Dutzend Angaben
+ohne Regel darum.
+
+⚠️ **Ein Browser wirft so etwas nicht weg, er verschluckt das
+Nächste.** Nach dem Backtick sucht der Auflöser einen Selektor und
+liest alles bis zur nächsten `{`. Die nächste war die von `.chat`, und
+damit war **die ganze Regel für eine Gesprächszeile weg**: kein
+`display: flex`, keine Breite, und deshalb auch keine Ellipse am Titel,
+denn `text-overflow` braucht eine Schranke.
+
+**Drei Meldungen desselben Abends hingen daran:** Titel ohne Kürzung,
+eine Leiste, die dem Hauptfenster Platz nahm, und ein Zahnrad, das
+dabei aus der Ecke rutschte. Ich habe zwei Stunden an den Symptomen
+gemessen, bevor die Datei selbst an die Reihe kam.
+
+⚑ **Eine Prüfung misst jetzt die Form der Datei**, nicht ihren Inhalt:
+Kommentare gehen auf und zu, Klammern auch, und ein Backtick ausserhalb
+eines Kommentars ist ein Fehler. Gegengeprüft mit einem eingeschmuggelten.
+
+⚑ **Und die Kopfknöpfe hängen nicht mehr am Raster.** Dreimal gemeldet,
+dreimal anders repariert: erst ein grösseres `minWidth`, dann
+`minmax(0, 1fr)` auf der mittleren Spalte, dann ein konstantes Polster.
+**In einem Raster hängt die Lage jeder Spalte an allen anderen**, und
+die Marke in der Mitte erscheint genau dann, wenn die Leiste zugeht.
+Beide Knöpfe liegen jetzt absolut, je `1rem` von ihrer Kante: Ihre Lage
+hängt an genau einer Zahl, an derselben für beide, und an nichts sonst.
+
+⚑ **Die Liste zwingt ihre Spalte auf null.** `#chatliste` bekam
+`grid-template-columns: minmax(0, 1fr)`: Eine Rasterspalte ohne Angabe
+ist `auto`, und ihr Mindestwert ist der Mindestinhalt der Zeile darin.
+**Eine Ellipse braucht eine Schranke, sonst ist sie nur eine Absicht.**
+
+⚑ **Und ein Titel ist Text und keine Kachel** (Festlegung des
+Projektinhabers). Kein Rahmen, keine Fläche: Unterschieden wird über
+Helligkeit und Schriftschnitt, wie überall in diesem Fenster.
+
+`myl-oberflaeche` **0.26.3 auf 0.27.0** (48 Prüfungen).
+
+### v0.33.1 – 2026-09-10 (das Programmsymbol trägt das ganze Zeichen, und der Titel wird nicht mehr beim Speichern gekürzt)
+
+⛑ **Gekürzt wurde die Sache statt ihrer Darstellung** (gemeldet vom
+Projektinhaber). `titel_aus` schnitt auf vierzig Zeichen und hängte
+`...` an, und **das war der gespeicherte Titel**: Die Zeile in der
+Leiste kürzte danach ein zweites Mal, und der Zeigetext beim
+Überfahren zeigte dieselbe gekürzte Zeichenkette. **Das Lange war
+nirgends mehr zu holen.**
+
+⚑ **Kürzen ist Anzeige und gehört ins Stilblatt.** Gespeichert wird
+jetzt der volle erste Satz, die Zeile kürzt ihn mit einer Ellipse auf
+die Breite der Leiste, und der Zeigetext gibt ihn ganz her. Eine
+Schranke bleibt, aber weit oben: Wer einen Absatz einwirft, soll keinen
+Absatz in der Ablage haben. **Meldungen kürzen weiter**, und dort ist
+es richtig: Sie haben keine Leiste, die für sie kürzt.
+
+⚑ **Das Programmsymbol trägt jetzt das ganze Zeichen** (Festlegung des
+Projektinhabers): Spirale im Rahmen und darunter der Zug „Myelith", in
+denselben Verhältnissen wie im Kopf der Seitenleiste. Die Schrift kommt
+aus dem Stilblatt und liegt kein zweites Mal daneben.
+
+⚠️ **Und es gibt zwei Fassungen, je nach Grösse.** Bei
+zweiunddreissig Pixeln ist „Myelith" vier Pixel hoch und damit kein
+Wort mehr, sondern ein Fleck, der die Marke daneben kleiner macht.
+Unter 128 Pixeln fällt der Zug deshalb weg und die Marke rückt in die
+Mitte. **`.icns` und `.ico` tragen je Grösse ein eigenes Bild; genau
+dafür gibt es das Format.**
+
+⛑ **Dabei fiel das dritte Opfer von Fund 298 auf.** Der Symbolerzeuger
+suchte die Marke unter `werkzeuge/marke.py`, also am Ort vor dem Umzug
+des Werkzeugverzeichnisses. Er lief seither in einen Fehler, und
+gemerkt hätte man es erst beim nächsten Symbollauf. **Der eigene Ort
+ist der einzige Bezug, der einen Umzug überlebt.**
+
+`myl-oberflaeche` **0.26.2 auf 0.26.3** (47 Prüfungen).
+
+### v0.33.0 – 2026-09-10 (die Installation zieht nach `INSTALL/`, mit einer Anleitung je System)
+
+**Auftrag des Projektinhabers.** Die drei Skripte liegen jetzt unter
+`INSTALL/`, daneben ein `README.md`, das jedes System knapp und
+vollständig beschreibt: Voraussetzungen samt den Befehlen, mit denen
+man sie holt, die drei Schalter, wo die Programme landen, was die
+Skripte ausdrücklich **nicht** tun, und der Hinweis, dass ein frischer
+Klon keine Gewichte enthält.
+
+⚑ **Drei Skripte lose in der Wurzel sagen nicht, welches das eigene
+ist.** Ein Ordner namens `INSTALL` mit einem Text darin sagt es.
+`flake.nix` bleibt in der Wurzel: `nix develop` sucht es dort und
+nirgends sonst.
+
+⛑ **Und das Verschieben hat prompt dieselbe Falle gestellt wie Fund
+298.** Die Skripte leiten ihre Wurzel aus dem eigenen Ort ab; ohne das
+nachgezogene `/..` zeigte sie auf `INSTALL/` selbst. **Der
+Voraussetzungslauf meldete trotzdem „alles da"**, denn er prüft Xcode
+und cargo, und die hängen nicht an der Wurzel. Gefallen wäre es erst
+beim Bauen, mit einer Meldung über eine fehlende Kiste.
+
+⛑ **Das Kopfpolster ist wieder konstant** (gemeldet vom
+Projektinhaber). Das `clamp(.5rem, 1.6vw, 1rem)` von heute Mittag war
+auf beiden Seiten gleich, wanderte aber mit der Fensterbreite, und das
+fiel genau dann auf, wenn sich sonst etwas bewegt: beim Auf- und
+Zuklappen der Leiste. **Was stabil aussehen soll, muss konstant sein
+und nicht nur symmetrisch.** Jetzt `padding: .6rem 1rem`, also derselbe
+Abstand zum Fensterrand auf beiden Seiten, unabhängig von Breite,
+Leiste und Schriftgrösse.
+
+`myl-client` **0.21.0 auf 0.22.0**, `myl-oberflaeche` **0.26.1 auf
+0.26.2** (46 Prüfungen).
+
+### v0.32.1 – 2026-09-10 (die Leiste gibt nach, nicht der Inhalt, und zwei Fussnoten werden zu Fussnoten)
+
+⛑ **Der Projektinhaber hat die Ursache genannt, nicht ich:** „Wenn die
+Menüleiste links ausgeblendet ist, stimmt es genau." Damit war klar,
+wonach zu suchen war. **Wird im Raster der Platz knapp, verliert zuerst
+die flexible Spalte**, und das war das Hauptfenster; die Seitenleiste
+behielt derweil ihre volle Breite. Mein `minmax(0, 1fr)` vom selben Tag
+hat das sogar erlaubt, indem es dessen Mindestwert auf null setzte.
+
+⚑ **Jetzt ist es umgekehrt.** Das Hauptfenster hat einen Mindestwert
+von 22 rem, die Leiste hat keinen: Wird es eng, wird die Leiste
+schmaler und kürzt ihre eigenen Zeilen, die dafür Ellipsen tragen.
+**Was abgeschnitten wird, soll das sein, was sich zuklappen lässt, und
+nicht das, was man gerade bedient.**
+
+⚠️ **In `rem` und nicht in Pixeln**, denn der Inhalt darin ist ebenfalls
+in `rem` bemessen. Eine Schranke in der anderen Einheit war der Fehler,
+den diese eine Zeile dreimal wiederholt hat.
+
+⚑ **Und zwei Fussnoten sehen jetzt aus wie welche** (Festlegung des
+Projektinhabers): der Pfad unter der Modellwahl und die Zeile unter der
+Eingabe, beide von 0,72 auf 0,58 rem und eine Helligkeitsstufe leiser.
+Sie beantworten die Frage „welches genau", und die stellt sich selten;
+**der Name darüber beantwortet die, die sich ständig stellt.**
+
+⛑ **`min-height` bleibt an der Zeile unter der Eingabe.** Ohne sie
+springt die Eingabezeile jedes Mal, wenn die Auskunft kommt oder geht.
+**Eine Zeile, die auftaucht und dabei alles darüber verschiebt, liest
+man nicht, man erschrickt.**
+
+`myl-oberflaeche` **0.26.0 auf 0.26.1** (46 Prüfungen).
+
+### v0.32.0 – 2026-09-10 (das Fenster wächst mit, statt eine Zahl zu behaupten)
+
+⛑ **Dreimal wurde die Mindestbreite zu klein geraten**, jedes Mal vom
+Projektinhaber gemeldet, und beim dritten Mal war der Grund klar: **Der
+Aufbau ist in `rem` bemessen, die Zahl in Pixeln.** Leiste 16 rem,
+Knöpfe 2 rem, Polster 1 rem; wer die Systemschrift grösser stellt,
+bekommt all das grösser und die Mindestbreite nicht. **Eine Rechnung
+über zwei Einheiten stimmt für genau eine Schriftgrösse**, und welche
+das ist, weiss der, der sie aufschreibt, nicht.
+
+⚑ **Die Zusage hängt jetzt nicht mehr an der Zahl.** Seitenleiste und
+Polster wachsen mit dem Fenster:
+
+| | |
+|---|---|
+| Seitenleiste | `clamp(12rem, 26vw, 16rem)` |
+| Kopfleiste | `padding: .6rem clamp(.5rem, 1.6vw, 1rem)`, `gap: clamp(.4rem, 1.2vw, .8rem)` |
+| Gespräch, Eingabe, Einstellungen | dieselbe Formel, eigene Grenzen |
+
+⚑ **Und die beiden Kopfpolster kommen aus einer Formel.** `padding:
+.6rem X` setzt X links **und** rechts: Solange dort eine einzige Angabe
+steht, können die beiden Abstände nicht auseinanderlaufen. Was links
+vor dem Leistensymbol steht, steht rechts hinter dem Zahnrad, bei jeder
+Breite und jeder Schriftgrösse. **Zwei Zahlen könnten auseinanderlaufen,
+und genau das war der Fehler.**
+
+⛑ **Dazu die Ursache, die keine Breite geheilt hätte.** `#huelle` stand
+auf `grid-template-columns: auto 1fr`, und der selbsttätige Mindestwert
+einer Rasterspalte ist der **Mindestinhalt** ihres Kindes, nicht null:
+Die Leiste konnte breiter werden, als das Fenster hergibt, und
+`overflow: hidden` schnitt dann rechts ab. **Abgeschnitten wird immer
+das Letzte, und das Letzte ist das Zahnrad.** Jetzt `minmax(0, auto)
+minmax(0, 1fr)`.
+
+Die Mindestgrösse bleibt bei 860 × 540, aber sie ist seither eine
+Bequemlichkeitsgrenze und keine Zusage. Die Prüfung misst die Formeln
+und nicht mehr die Zahl.
+
+`myl-oberflaeche` **0.25.1 auf 0.26.0** (46 Prüfungen).
+
+### v0.31.1 – 2026-09-10 (die Mindestbreite bekommt Reserve, und die kleine Marke ihren Rahmen abgenommen)
+
+⛑ **Zweimal zu knapp gewesen**, beide Male vom Projektinhaber gemeldet:
+Das Zahnrad stand nicht mit demselben Abstand vom rechten Rand wie das
+Leistensymbol vom linken. **Der Grund steckt in der Einheit.** Die
+Leiste ist 16 rem breit, die Knöpfe sind 2 rem, die Polster 1 rem: Wer
+die Systemschrift grösser stellt, bekommt **alles davon grösser**,
+während die Mindestbreite in Pixeln steht. Bei 18 px je rem sind aus
+121,6 px Kopf schon 136,8 px und aus 256 px Leiste 288 px.
+
+⚑ **Eine Rechnung in Pixeln über einem Aufbau in rem braucht Luft.**
+Jetzt 860 × 540: Leiste 257 px plus eine Gesprächsspalte von 34 rem
+sind 801 px, dazu 60 px Reserve für Fensterrahmen, Bildlaufleiste und
+grössere Systemschrift.
+
+⚑ **Und die Marke im Kopf trägt keinen Rahmen mehr** (Festlegung des
+Projektinhabers). Bei 1,15 rem sind Rahmen und Kreis nur noch zwei
+Striche dicht nebeneinander, und der Rahmen gewinnt, weil er gerade
+ist. **Was bei voller Grösse Fassung ist, wird im Kleinen Rauschen.**
+In der Seitenleiste bleibt er, dort hat die Marke Platz.
+
+`myl-oberflaeche` **0.25.0 auf 0.25.1** (46 Prüfungen).
+
+### v0.31.0 – 2026-09-10 (die Sprache greift überall durch, und ein Eintrag entsteht nur noch auf zwei Wege)
+
+⛑ **Ein Moduswechsel legte ein Gespräch an** (gemeldet vom
+Projektinhaber). Der Modus hing am geöffneten Eintrag, und daraus
+folgte: Um den Modus überhaupt festhalten zu können, **musste** der
+Wechsel etwas anlegen. Wer zwischen Chat und Agent hin und her klickte,
+hinterliess bei jedem Klick ein leeres Gespräch, und die Liste des
+anderen Modus zeigte es beim nächsten Wechsel mit an.
+
+⚑ **Der Modus ist jetzt ein eigener Zustand, und eine Ansicht legt
+nichts an.** Angelegt wird auf Knopfdruck und beim Abschicken in einem
+leeren Feld, an genau zwei Stellen; auch der Start legt nichts mehr an.
+Eine Prüfung zählt die Aufrufe und fällt bei einer dritten.
+
+⛑ **Die Sprache wirkte nicht auf die Beschreibungstexte** (ebenfalls
+gemeldet). `hardware::regler` nahm die Feldtabelle roh, also immer auf
+Deutsch, und die beiden längsten Sätze der ganzen Seite standen
+überhaupt nur auf Deutsch da: der Grund, warum ein Rechenwerk gesperrt
+ist, und die Beschreibung eines Rechenwerks. **Übersetzt wird, was ein
+Mensch liest, und das gilt besonders für den Satz, der erklärt, warum
+etwas nicht geht.** Die Prüfung dazu fährt beide Sprachen wirklich und
+vergleicht Satz für Satz.
+
+⚑ **Die Sprache steht zuoberst, die Updates gleich darunter**
+(Festlegung des Projektinhabers). Sie beschriftet alles, was darunter
+kommt: Wer die Seite in einer Sprache öffnet, die er nicht liest, soll
+den Schalter finden, ohne bis ans Ende zu suchen.
+
+**Die Updates heissen jetzt so.** „Nach Updates suchen" und „Updates
+installieren", und **der zweite Knopf erscheint erst, wenn es etwas zu
+tun gibt**. ⛑ Vorher stand er gesperrt da: Ein gesperrter Knopf
+beantwortet die Frage „gibt es Updates" mit einem Bedienelement, und
+der Grund steckte in seinem Zeigetext, wo ihn nur findet, wer mit der
+Maus darauf wartet. Die Zeile darüber beantwortet dieselbe Frage mit
+einem Satz.
+
+`myl-client` **0.20.0 auf 0.21.0**, `myl-oberflaeche` **0.24.2 auf
+0.25.0** (46 Prüfungen).
+
+### v0.30.0 – 2026-09-10 (drei Meldungen aus der CI und eine aus dem Fenster)
+
+⛑ **Das Zahnrad stand nicht frei** (gemeldet vom Projektinhaber). Die
+Mindestbreite von 600 reichte nicht: Rechts blieb nicht derselbe
+Abstand wie links vom Leistensymbol.
+
+**Zwei Ursachen, und die Zahl war nur die zweite.** Die mittlere Spalte
+der Kopfleiste stand auf `1fr`, und **der selbsttätige Mindestwert
+einer `1fr`-Spalte ist ihr Mindestinhalt, nicht null**: Steht dort
+etwas, das nicht umbrechen kann, wächst sie, schiebt die äusseren
+Spalten hinaus, und `#huelle` schneidet sie mit seinem
+`overflow: hidden` ab. Sichtbar wird das als fehlendes Zahnrad. Sie
+steht jetzt auf `minmax(0, 1fr)`.
+
+⚑ **Und die Mindestbreite ist gerechnet statt gerundet:** Seitenleiste
+257 px plus eine Gesprächsspalte von 24 rem sind 641 px, aufgerundet
+auf 660 für Fensterrahmen und Bildlaufleiste. Der Kopf selbst braucht
+121,6 px und passt darin. Die Prüfung trägt die Rechnung als Tabelle
+und nicht die Zahl allein.
+
+⚑ **Und der Netzeintrag der Modellwahl heisst jetzt „Netzwerkmodell
+(API), kostet Inferenz-Credits"** (Wortlaut des Projektinhabers). Er
+steht in einer Liste neben „Myelith 4B" und „Myelith 7B", und „API"
+allein liest sich dort wie eine Schnittstelle und nicht wie ein Modell.
+**Ein Eintrag in einer Modellwahl muss zuerst sagen, dass er ein Modell
+ist.**
+
+⛑ **Drei Meldungen aus der CI**, alle drei am neuen Konsolenclient:
+
+- **Kein `[profile.test]`.** Siebzehn Kopien einer Einstellung driften
+  leise auseinander, und ein neues Manifest hat sie schlicht nicht. Das
+  Audit hat es gefangen, wofür es gebaut ist.
+- **Keine `rust-version`.** Jetzt 1.88, und **gemessen statt
+  geschätzt**: 1.85 und 1.86 scheitern, 1.88 trägt. Der Grund liegt im
+  eigenen Code, nicht in einer Abhängigkeit: `farben.rs` ruft
+  `u64::is_multiple_of`, stabil seit 1.87.
+- **Eine Prüfung fiel unter Windows.** `ein_relativer_pfad_haengt_an_der_wurzel`
+  verglich gegen `"/wo/auch/immer/INTEGER_LLM/…"` als getippten Text;
+  dort setzt `Path::join` einen Backslash. **Eine Erwartung, die von
+  Hand geschrieben ist, prüft die Maschine, auf der sie geschrieben
+  wurde.** Sie baut den Vergleichswert jetzt mit `join`, und eine
+  zusätzliche Zeile hält fest, dass zwei verschiedene Wurzeln auch zu
+  zwei verschiedenen Pfaden führen.
+
+`myl-oberflaeche` **0.24.1 auf 0.24.2**, `myl-console` **0.1.0** um zwei
+Manifestzeilen ergänzt.
 
 ### v0.29.0 – 2026-09-10 (`myl-console`: der Agent in dem Verzeichnis, in dem du stehst)
 
@@ -295,7 +653,8 @@ geblieben. **Der Ruhezustand ist sichtbar, und dabei bleibt es.**
 `installieren-macos.sh`, `installieren-nixos.sh` (mit `flake.nix`
 daneben) und `installieren-windows.ps1` liegen in der Wurzel. Sie
 prüfen erst alles, bauen dann die drei Programme, legen sie ab und
-tragen einen Menüeintrag ein.
+tragen einen Menüeintrag ein. *(Sie sind mit v0.33.0 nach `INSTALL/`
+gezogen; dieser Eintrag hält den Stand seiner Fassung.)*
 
 ⚑ **Aus dem Quelltext und nicht aus einem Bündel.** Die Freigabebündel
 dieses Projekts sind nicht signiert; ein Skript, das ein unsigniertes

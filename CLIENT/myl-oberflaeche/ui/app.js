@@ -168,11 +168,11 @@ const TEXTE = {
     "modelle.fehler": (f) => `Modelle nicht lesbar: ${f}`,
     "modell.artefaktKlammer": (a) => `${a} (nicht geladen)`,
 
-    "akt.titel": "Aktualisierung",
-    "akt.pruefen": "Nach Aktualisierungen sehen",
-    "akt.einspielen": "Einspielen",
-    "akt.sieht": "sieht nach …",
-    "akt.laeuft": "spielt ein …",
+    "akt.titel": "Updates",
+    "akt.pruefen": "Nach Updates suchen",
+    "akt.einspielen": "Updates installieren",
+    "akt.sieht": "sucht …",
+    "akt.laeuft": "installiert …",
     "akt.aktuell": (f) => `Fassung ${f}. Der Klon ist auf dem neuesten Stand.`,
     "akt.hinterher": (f, n) => `Fassung ${f}. ${n === 1 ? "Eine Änderung liegt" : `${n} Änderungen liegen`} bereit.`,
     "akt.neueste": (m, wann) => ` Neueste Freigabe: ${m}${wann ? ` vom ${wann.slice(0, 10)}` : ""}.`,
@@ -285,7 +285,7 @@ const TEXTE = {
 
     "akt.titel": "Update",
     "akt.pruefen": "Check for updates",
-    "akt.einspielen": "Install",
+    "akt.einspielen": "Install updates",
     "akt.sieht": "checking …",
     "akt.laeuft": "installing …",
     "akt.aktuell": (f) => `Version ${f}. The clone is up to date.`,
@@ -403,13 +403,22 @@ const wort = (modus) => {
   };
 };
 
-/// **Welcher Modus gerade gilt.**
+/// Der eingerastete Modus, unabhaengig davon, ob etwas offen ist.
 ///
-/// ⚑ Der Modus haengt am offenen Gespraech und nicht an einer eigenen
-/// Zustandsgroesse: Zwei Orte fuer dieselbe Auskunft laufen
-/// auseinander, sobald einer von beiden vergessen wird. Ohne offenes
-/// Gespraech gilt der erste Modus.
-const modus_jetzt = () => (offen ? offen.modus : MODI[0].id);
+/// ⛑ **Er hing bis zum 2026-09-10 am offenen Gespraech**, und daraus
+/// folgte ein Fehler, den der Projektinhaber gemeldet hat: Ein
+/// Moduswechsel musste dann **etwas anlegen**, um den Modus ueberhaupt
+/// festhalten zu koennen. Wer zwischen Chat und Agent hin und her
+/// klickte, hinterliess bei jedem Klick ein leeres Gespraech in der
+/// Liste.
+///
+/// ⚑ **Angelegt wird jetzt nur noch auf zwei Wege**: Knopf gedrueckt,
+/// oder etwas abgeschickt. **Ein Modus ist eine Ansicht, und eine
+/// Ansicht legt nichts an.**
+let modus = MODI[0].id;
+
+/// **Welcher Modus gerade gilt.**
+const modus_jetzt = () => modus;
 
 // --- Gespraeche ---------------------------------------------------------
 
@@ -464,6 +473,7 @@ function neues_gespraech(modus) {
   };
   gespraeche.unshift(g);
   offen = g;
+  modus = art;
   sichern();
   return g;
 }
@@ -487,7 +497,7 @@ function neues_gespraech(modus) {
 /// Ein fehlender Ordner ist keine Fehlermeldung, sondern eine fehlende
 /// Entscheidung, und das Fenster fuehrt dorthin, wo sie getroffen wird.
 async function wurzel_verlangen() {
-  if (!offen || offen.modus !== "agent") return;
+  if (modus_jetzt() !== "agent") return;
   try {
     const e = await invoke("einstellungen");
     if (e.werte["agent.wurzel"]) return;
@@ -499,10 +509,41 @@ async function wurzel_verlangen() {
   await zum_feld("agent.wurzel", t("wurzel.warum"));
 }
 
+/// **Der Titel ist der ganze erste Satz, nicht sein Anfang.**
+///
+/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+///
+/// Hier wurde auf vierzig Zeichen gekuerzt und ein `...` angehaengt,
+/// und **das Ergebnis war der gespeicherte Titel**. Die Zeile in der
+/// Leiste kuerzte danach ein zweites Mal, diesmal mit einer Ellipse aus
+/// dem Stilblatt, und der Zeigetext zeigte beim Ueberfahren genau
+/// dieselbe gekuerzte Zeichenkette. **Gekuerzt wurde also die Sache
+/// statt ihrer Darstellung**, und damit war das Lange nirgends mehr zu
+/// holen.
+///
+/// ⚑ **Kuerzen ist Anzeige und gehoert ins Stilblatt.** Was hier
+/// entsteht, ist der volle Titel; `.chat .titel` kuerzt ihn auf die
+/// Breite der Leiste, und `title` gibt ihn ganz her.
+///
+/// ⚠️ **Eine Schranke gibt es trotzdem**, aber weit oben: Wer einen
+/// Absatz einwirft, soll keinen Absatz als Titel in der Ablage haben.
+/// Zweihundert Zeichen sind mehr, als jede Leiste je zeigt, und
+/// weniger, als ein Einwurf lang werden kann.
 function titel_aus(text) {
   const eine = text.replace(/\s+/g, " ").trim();
-  return eine.length > 40 ? `${eine.slice(0, 40)}...` : eine || wort().frisch;
+  if (!eine) return wort().frisch;
+  return eine.length > 200 ? `${eine.slice(0, 200)}…` : eine;
 }
+
+/// Dieselbe Zeile, aber kurz genug fuer eine Meldung.
+///
+/// ⚑ **Hier ist Kuerzen richtig.** Eine Meldung oben rechts hat keine
+/// Leiste, die sie fuer sich kuerzen koennte, und keinen Zeigetext, der
+/// das Lange nachreichte: Sie steht ein paar Sekunden und geht wieder.
+const kurz_titel = (text) => {
+  const t = titel_aus(text);
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+};
 
 // --- Anzeige ------------------------------------------------------------
 
@@ -635,13 +676,14 @@ function modi_zeichnen() {
         melden(t(`modus.${m.id}.warum`));
         return;
       }
-      if (!offen) neues_gespraech(m.id);
-      // ⚑ Den Modus eines Gespraechs mit Beitraegen zu wechseln waere
-      // ein zweiter Vertrag im selben Verlauf: Die eine Haelfte traegt
-      // Kontext, die andere nicht. Stattdessen ein neues Gespraech.
-      else if (offen.beitraege.length > 0 && offen.modus !== m.id) neues_gespraech(m.id);
-      else offen.modus = m.id;
-      sichern();
+      // ⚑ **Der Wechsel legt nichts an und wirft nichts weg.** Er
+      // stellt die Ansicht um; was in ihr steht, waehlt der Nutzer
+      // danach selbst aus der Liste, oder er faengt an zu tippen.
+      modus = m.id;
+      // ⚑ Ein offener Eintrag bleibt offen, wenn er zu diesem Modus
+      // gehoert. Sonst steht der Leerzustand da, und der sagt, was
+      // dieser Modus ist.
+      if (offen && offen.modus !== modus) offen = null;
       alles_zeichnen();
       wurzel_verlangen();
     });
@@ -914,6 +956,9 @@ function chats_zeichnen() {
     auf.title = g.titel;
     auf.addEventListener("click", () => {
       offen = g;
+      // ⚑ Der Modus folgt dem, was geoeffnet wird; sonst zeigte die
+      // Liste gleich darauf etwas anderes als das, was offen ist.
+      modus = g.modus;
       alles_zeichnen();
     });
 
@@ -923,14 +968,11 @@ function chats_zeichnen() {
     // Umbenennen und Ausgeben. Ein zweiter Weg an derselben Zeile ist
     // ein zweiter Ort, an dem dieselbe Entscheidung faellt.
 
-    // ⚑ Der Titelknopf traegt keine eigene Umrandung, die Zeile
-    // uebernimmt sie; sonst haette jede Zeile zwei Rahmen.
-    auf.style.background = "none";
-    auf.style.border = "0";
-    auf.style.boxShadow = "none";
-    auf.style.color = "inherit";
-    auf.style.padding = "0";
-    auf.style.textAlign = "left";
+    // ⛑ **Hier standen sechs Stilangaben am Element** und nahmen dem
+    // Knopf von Hand weg, was `button` ihm gibt. Sie vergassen die
+    // Rundung und den Hintergrundfilter, und das war als rundes Feld
+    // hinter jedem Titel zu sehen. **Aussehen gehoert ins Stilblatt**;
+    // der Rueckbau steht jetzt vollstaendig unter `.blank`.
     zeile.append(auf);
     w.append(zeile);
   }
@@ -1225,7 +1267,7 @@ function gespraech_zeichnen() {
   const w = $("gespraech");
   w.replaceChildren();
   if (!offen || offen.beitraege.length === 0) {
-    const m = MODI.find((x) => x.id === (offen ? offen.modus : MODI[0].id));
+    const m = MODI.find((x) => x.id === modus_jetzt());
     const p = document.createElement("p");
     p.className = "leerzustand";
     const stark = document.createElement("strong");
@@ -2122,8 +2164,8 @@ async function senden(text) {
     const wie_lange = offen.beitraege[offen.beitraege.length - 1]?.fuss || "";
     melden(
       offen.modus === "agent"
-        ? `Auftrag fertig: ${titel_aus(text)}  ${wie_lange}`
-        : `Antwort da: ${titel_aus(text)}  ${wie_lange}`,
+        ? `Auftrag fertig: ${kurz_titel(text)}  ${wie_lange}`
+        : `Antwort da: ${kurz_titel(text)}  ${wie_lange}`,
       "gespraech",
     );
   } catch (f) {
@@ -2133,7 +2175,7 @@ async function senden(text) {
     // vielleicht steht, woran es lag.
     await live_beenden();
     offen.beitraege.push({ von: "modell", text: t("fehler", f), fuss: "", fehler: true });
-    melden(`Fehlgeschlagen: ${titel_aus(text)}`, "gespraech");
+    melden(`Fehlgeschlagen: ${kurz_titel(text)}`, "gespraech");
   } finally {
     knopf.disabled = false;
     sichern();
@@ -2272,6 +2314,7 @@ function aktualisierung_zeichnen() {
   const knopf = $("akt-einspielen");
   if (!aktstand) {
     zeile.textContent = "";
+    knopf.hidden = true;
     knopf.disabled = true;
     return;
   }
@@ -2289,11 +2332,17 @@ function aktualisierung_zeichnen() {
   if (s.neueste) text += t("akt.neueste", s.neueste, s.stand || "");
   zeile.textContent = text;
 
+  // ⚑ **Der Knopf ist da, wenn es etwas zu tun gibt, und sonst nicht**
+  // (Festlegung des Projektinhabers, 2026-09-10).
+  //
+  // ⛑ **Vorher stand er gesperrt da.** Ein gesperrter Knopf beantwortet
+  // die Frage „gibt es Updates" mit einem Bedienelement, und der Grund
+  // steckte in seinem Zeigetext, wo ihn nur findet, wer mit der Maus
+  // darauf wartet. **Die Zeile darueber beantwortet dieselbe Frage mit
+  // einem Satz**, und den liest man, ohne zu zielen.
   const lohnt = Boolean(s.quelle) && (s.hinterher || 0) > 0;
+  knopf.hidden = !lohnt;
   knopf.disabled = !lohnt;
-  // ⚑ Der Grund haengt am Knopf und nicht in der Zeile daneben: Wer
-  // ihn drueckt und nichts geschieht, sieht dort nach.
-  knopf.title = lohnt ? "" : s.grund || t("akt.aktuell", s.eigene);
 }
 
 $("akt-pruefen").addEventListener("click", async () => {
@@ -2418,8 +2467,12 @@ $("eingabe").addEventListener("submit", async (e) => {
   }
   beschriften();
   laden_aus_speicher();
-  if (gespraeche.length === 0) neues_gespraech();
-  else offen = gespraeche[0];
+  // ⚑ **Der Start legt nichts an.** Wer das Fenster oeffnet, hat noch
+  // nichts gesagt; ein leeres Gespraech in der Liste waere ein Eintrag,
+  // den niemand gemacht hat. Das Zuletzte wird geoeffnet, wenn es eines
+  // gibt, und sonst steht der Leerzustand da.
+  offen = gespraeche[0] || null;
+  if (offen) modus = offen.modus;
   alles_zeichnen();
   try {
     await modellwahl_zeichnen();

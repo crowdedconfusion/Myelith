@@ -184,7 +184,24 @@ impl Sprache {
     }
 
     /// Waehlt zwischen zwei Fassungen desselben Textes.
+    ///
+    /// ⚑ `const` und `Copy`, damit sie auf `&'static str` in einer
+    /// Konstantenzuweisung geht.
     pub const fn waehlen<T: Copy>(self, de: T, en: T) -> T {
+        match self {
+            Self::De => de,
+            Self::En => en,
+        }
+    }
+
+    /// Dasselbe fuer Werte, die sich nicht kopieren lassen.
+    ///
+    /// ⛑ **Beide Fassungen werden gebaut, auch die ungenutzte.** Das
+    /// ist der Preis dafuer, dass der Aufrufer zwei fertige Saetze
+    /// hinschreiben kann statt zweier Bauanleitungen; bei einem Satz
+    /// je Regler ist er nicht messbar. **Wer ihn nicht zahlen will,
+    /// verzweigt selbst.**
+    pub fn waehlen_wert<T>(self, de: T, en: T) -> T {
         match self {
             Self::De => de,
             Self::En => en,
@@ -540,7 +557,24 @@ impl Feld {
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
 pub const FELDER: [Feld; 12] = [
-    feld(
+    // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
+    // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
+    // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
+    // als Erstes den Schalter und muss nicht bis ans Ende suchen.
+    feld_wahl(
+        "oberflaeche.sprache",
+        ("Oberfläche", "Interface"),
+        ("Sprache", "Language"),
+        (
+            "Die Sprache des Fensters. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind; übersetzt wird, was ein Mensch liest.",
+            "The language of the window. Field names, paths and model names stay as they are; what a human reads is translated.",
+        ),
+        &[
+            Wahl { wert: "de", titel: "Deutsch" },
+            Wahl { wert: "en", titel: "English" },
+        ],
+    ),
+        feld(
         "modell.artefakt",
         Feldart::Ordner,
         ("Modell", "Model"),
@@ -649,23 +683,6 @@ pub const FELDER: [Feld; 12] = [
             "Wohin ein ausgegebenes Gespräch geschrieben wird. Ohne Angabe wird nichts geschrieben, und das Fenster führt beim Ausgeben hierher.",
             "Where an exported conversation is written. Unless set nothing is written, and exporting leads here instead.",
         ),
-    ),
-    // ⚑ **Sie steht zuletzt und nicht zuerst**, obwohl sie alles
-    // andere beschriftet: Wer die Seite oeffnet, kommt wegen eines
-    // Modells oder eines Ordners, nicht wegen der Sprache. Und wer sie
-    // sucht, sucht am Ende einer Liste.
-    feld_wahl(
-        "oberflaeche.sprache",
-        ("Oberfläche", "Interface"),
-        ("Sprache", "Language"),
-        (
-            "Die Sprache des Fensters. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind; übersetzt wird, was ein Mensch liest.",
-            "The language of the window. Field names, paths and model names stay as they are; what a human reads is translated.",
-        ),
-        &[
-            Wahl { wert: "de", titel: "Deutsch" },
-            Wahl { wert: "en", titel: "English" },
-        ],
     ),
 ];
 

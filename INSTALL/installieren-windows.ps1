@@ -26,7 +26,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Wurzel = $PSScriptRoot
+# [?] Eine Ebene hoeher, seit dem 2026-09-10: Diese Datei lag in der
+#     Wurzel und liegt jetzt in INSTALL/.
+$Wurzel = Split-Path $PSScriptRoot -Parent
 Set-Location $Wurzel
 
 Write-Host "-- Myelith einrichten"

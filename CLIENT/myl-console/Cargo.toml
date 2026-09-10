@@ -6,6 +6,16 @@ version = "0.1.0"
 # einen Fehler und einmal nicht. **Eine Ausgabe je Repositorium**,
 # solange nicht jemand alle umstellt.
 edition = "2021"
+# ⚑ **1.88 und nicht 1.85 wie die meisten Kisten**, und der Grund liegt
+# im eigenen Code: `farben.rs` ruft `u64::is_multiple_of`, und das ist
+# erst seit 1.87 stabil. Gemessen am 2026-09-10 gegen echte
+# Toolchains, nicht geschaetzt: 1.85 und 1.86 scheitern mit
+# `unstable library feature`, 1.88 traegt.
+#
+# ⚠️ **Die Matrix der CI deckt 1.85 und 1.88 ab**, und diese Zeile muss
+# eine der beiden nennen; wer eine dritte einsetzt, bekommt einen Job,
+# der die Kiste stillschweigend uebergeht.
+rust-version = "1.88"
 description = "Myelith in der Konsole: der Agent im Arbeitsverzeichnis"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
@@ -40,3 +50,14 @@ myl-client = { path = "../myl-client" }
 # wie im Testclient, aus dem die Animation stammt; `fassungsprobe.py`
 # haelt fest, dass es dabei bleibt.
 crossterm = "0.29.0"
+
+# Testprofil, siehe die ausfuehrliche Begruendung in
+# `SHARED_TYPES/myl-types/Cargo.toml`: optimiert, aber
+# `debug-assertions` und `overflow-checks` bleiben an. ⚑ `--release`
+# waere die falsche Abkuerzung, denn es schaltet genau die Pruefungen
+# ab, um deretwillen man prueft.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"

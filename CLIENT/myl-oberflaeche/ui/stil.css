@@ -56,6 +56,14 @@
   --warn: #9a9da1;
   --schlecht: #ffffff;
 
+  /* ⚑ **Der Abstand der Kopfknoepfe zu ihren vier Kanten**, und die
+     Hoehe der Kopfleiste folgt daraus. Ein Wert, vier Abstaende: Was
+     aus derselben Zahl kommt, kann nicht auseinanderlaufen. */
+  --kopf-polster: .85rem;
+  /* Die Kante eines runden Kopfknopfes. Die Leiste ist genau so hoch
+     wie er, plus zweimal das Polster. */
+  --kopf-knopf: 2rem;
+
   --schrift: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --fest: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
@@ -317,15 +325,44 @@ button:not(.blank):hover:not(:disabled)::before {
 
 #huelle {
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* ⛑ **Die Leiste gibt nach, nicht der Inhalt** (2026-09-10, dritte
+     und letzte Fassung dieser Zeile).
+     
+     Der Projektinhaber hat die Ursache genannt: **Bei zugeklappter
+     Leiste stimmt alles, bei offener wird rechts abgeschnitten.** Der
+     Grund steht in der Rasterrechnung: Wird der Platz knapp, verliert
+     zuerst die **flexible** Spalte, und das war das Hauptfenster.
+     `minmax(0, 1fr)` hat das sogar erlaubt, indem es dessen Mindestwert
+     auf null setzte; die Leiste behielt derweil ihre volle Breite.
+     
+     ⚑ **Jetzt ist es umgekehrt:** Das Hauptfenster hat einen
+     Mindestwert in `rem`, die Leiste hat keinen. Wird es eng, wird die
+     Leiste schmaler und schneidet ihre eigenen Zeilen ab, die dafuer
+     Ellipsen tragen. **Was abgeschnitten wird, soll das sein, was sich
+     zuklappen laesst, und nicht das, was man gerade bedient.**
+     
+     ⚠️ 24 rem und nicht Pixel: Der Inhalt darin ist ebenfalls in `rem`
+     bemessen. Eine Schranke in der anderen Einheit war der Fehler, den
+     diese Zeile dreimal wiederholt hat. */
+  grid-template-columns: minmax(0, auto) minmax(22rem, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
 /* --- Seitenleiste ---------------------------------------------------- */
 
+/* ⚑ **Sie waechst mit dem Fenster** (Festlegung des Projektinhabers,
+   2026-09-10, nachdem eine feste Mindestbreite dreimal zu knapp war).
+   Auf einem breiten Schirm 16 rem wie bisher, auf einem schmalen so
+   viel, wie ein Viertel des Fensters hergibt, und nie unter 12 rem.
+
+   ⛑ **Der Grund, warum eine Zahl es nicht konnte:** Die Leiste ist in
+   `rem` bemessen, die Mindestbreite in Pixeln. Wer die Systemschrift
+   groesser stellt, bekommt die Leiste groesser und die Mindestbreite
+   nicht; die Rechnung stimmt dann fuer genau eine Schriftgroesse.
+   **Was in derselben Einheit mitwaechst, kann nicht auseinanderlaufen.** */
 #seitenleiste {
-  width: 16rem;
+  width: clamp(12rem, 26vw, 16rem);
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--kante);
@@ -459,6 +496,14 @@ button:not(.blank):hover:not(:disabled)::before {
 
 #chatliste {
   display: grid;
+  /* ⛑ **`minmax(0, 1fr)` und nicht die selbsttaetige Spalte**
+     (2026-09-10, gemeldet vom Projektinhaber: Die Titel wurden nicht
+     gekuerzt). Eine Rasterspalte ohne Angabe ist `auto`, und ihr
+     Mindestwert ist der **Mindestinhalt** der Zeile darin: Ein langer
+     Titel machte die Spalte breiter als die Leiste, und eine Zeile,
+     die breiter darf, hat nichts zu kuerzen. **Eine Ellipse braucht
+     eine Schranke, sonst ist sie nur eine Absicht.** */
+  grid-template-columns: minmax(0, 1fr);
   gap: .15rem;
   align-content: start;
   /* ⛑ **Kein eigener Bildlauf mehr.** Er lag hier und zugleich eine
@@ -472,31 +517,6 @@ button:not(.blank):hover:not(:disabled)::before {
      wird. */
   padding: 2px;
   margin: -2px;
-}`
-     abgeschnitten. Erst `flex: 1` und `min-height: 0` geben ihr eine
-     Hoehe, an der es etwas zu scrollen gibt. */
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: grid;
-  gap: .15rem;
-  align-content: start;
-  /* ⛑ **Ohne diese Zeile gibt die Liste nach, statt ueberzulaufen.**
-     Rasterzeilen ohne Groessenangabe sind `auto` und duerfen sich
-     stauchen: Bei knappem Platz wurden aus neunundzwanzig Gespraechen
-     vierzehn Pixel uebereinandergeschobener Text, und weil der Inhalt
-     damit **passte**, gab es fuer `overflow-y` nichts zu tun. Mit
-     `min-content` behaelt jede Zeile ihre Hoehe, der Inhalt wird
-     groesser als der Behaelter, und erst dann entsteht eine
-     Bildlaufleiste. */
-  grid-auto-rows: min-content;
-  /* ⚑ Am Ende der Liste soll das Rad nicht an das Fenster
-     weitergereicht werden; sonst ruckt beim Weiterdrehen der Rest. */
-  overscroll-behavior: contain;
-  /* Der eigene Rand, damit der Fokusring nicht am Rand abgeschnitten
-     wird. */
-  padding: 2px;
-  margin: -2px;
 }
 
 .chat {
@@ -504,27 +524,67 @@ button:not(.blank):hover:not(:disabled)::before {
   align-items: center;
   gap: .4rem;
   width: 100%;
+  min-width: 0;
   text-align: left;
   padding: .4rem .6rem;
-  border: 1px solid transparent;
+  border: 0;
   background: none;
   border-radius: var(--rund-klein);
   color: var(--leise);
   box-shadow: none;
   font-size: .86rem;
 }
+/* ⚑ **Der Titel ist ein Knopf, der wie Text aussieht.**
+   
+   ⛑ **`.blank` schaltet nur die beiden Zierpseudoelemente ab**
+   (`button:not(.blank)::before` und `::after`); der Rest des Knopfes
+   bleibt: Glasverlauf, Rundung, Polsterung, Schlagschatten und
+   **`backdrop-filter`**. Das Skript nahm davon fuenf Dinge von Hand
+   wieder weg, mit Stilangaben direkt am Element, und vergass Rundung
+   und Hintergrundfilter. Sichtbar war das als **rundes Feld hinter
+   jedem Titel**, gemeldet vom Projektinhaber am 2026-09-10.
+   
+   ⚑ **Der Rueckbau steht jetzt hier, vollstaendig und an einer
+   Stelle.** Aussehen gehoert ins Stilblatt; ein Skript, das
+   Stilangaben setzt, ist eine zweite Stelle, an der etwas fehlen kann,
+   und genau eine solche hat gefehlt.
+   
+   ⚠️ **Und er steht am Titel und nicht an `.blank`.** Eine allgemeine
+   Regel fuer `.blank` haette hier funktioniert und drei andere Knoepfe
+   zerlegt: In diesem Stilblatt stehen die Bauteilregeln **vor** den
+   Grundregeln fuer Bedienelemente, also haette eine spaete Klasse
+   `.modus`, `.chat` und `.rundknopf` ueberstimmt. **Wer eine Regel
+   allgemein macht, macht sie fuer alles, was sie trifft.** */
 .chat .titel {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
-.chat:hover:not(:disabled) { background: var(--glas); color: var(--text); }
+/* ⚑ **Ein Titel ist Text und keine Kachel** (Festlegung des
+   Projektinhabers, 2026-09-10). Eine Liste aus dreissig Kaesten ist
+   dreissigmal Rahmen und einmal Inhalt.
+
+   ⚑ **Unterschieden wird ueber Helligkeit**, wie ueberall in diesem
+   Fenster: Das Offene ist hell und etwas fetter, das Ueberfahrene
+   heller als das Ruhende. Wer eine Flaeche zurueckwill, setzt sie
+   hier; die Zeile traegt weiter ihre Polsterung, also auch ihre
+   Trefferflaeche. */
+.chat:hover:not(:disabled) { color: var(--text); }
 .chat[aria-current="true"] {
-  background: var(--glas-hoch);
-  border-color: var(--kante);
   color: var(--text);
+  font-weight: 600;
 }
 /* ⚑ Der Loeschknopf erscheint erst beim Ueberfahren, bleibt aber bei
    Tastaturfokus sichtbar: Sonst gibt es ihn fuer den, der nicht mit der
@@ -547,30 +607,78 @@ button:not(.blank):hover:not(:disabled)::before {
   display: grid;
   gap: .5rem;
 }
-.leistenfuss .pfad { margin: 0; font-size: .72rem; word-break: break-all; }
+/* ⚑ **Klein und leise, weil es eine Fussnote ist** (Festlegung des
+   Projektinhabers, 2026-09-10). Der Pfad beantwortet die Frage
+   „welches genau", und die stellt sich selten; **der Name darueber
+   beantwortet die Frage, die sich staendig stellt**. Er stand mit
+   0,72 rem fast so gross da wie der Name und nahm sich damit einen
+   Rang, der ihm nicht zusteht. */
+.leistenfuss .pfad {
+  margin: 0;
+  font-size: .58rem;
+  line-height: 1.35;
+  color: var(--leiser);
+  word-break: break-all;
+}
 
 .breit { width: 100%; }
 
 /* --- Kopf ------------------------------------------------------------ */
 
-/* ⚑ Ohne den Ortsschalter braucht der Kopf keine Mittelspalte mehr:
-   links das Leistensymbol, rechts Marke und Zahnrad. */
+/* ⛑ **Die Knoepfe stehen ausserhalb des Flusses, und das ist die
+   dritte Fassung dieser Stelle** (2026-09-10).
+
+   Der Projektinhaber hat dreimal gemeldet, dass das Zahnrad beim
+   Aufklappen der Leiste nach links springt. Weder ein festes Polster
+   noch `minmax(0, 1fr)` auf der mittleren Spalte haben es geheilt, und
+   der Grund liegt in der Sache: **In einem Raster haengt die Lage
+   jeder Spalte an allen anderen.** Die Marke in der Mitte erscheint
+   genau dann, wenn die Leiste zugeht; was sie an Breite verlangt,
+   verschiebt die Spalte daneben, und was dabei herauskommt, ist ein
+   Sprung.
+
+   ⚑ **Geheftet statt eingeordnet.** Beide Knoepfe liegen absolut, je
+   `1rem` von ihrer Kante und mittig zur Hoehe. Ihre Lage haengt damit
+   an genau einer Zahl, an derselben fuer beide, und an nichts sonst.
+   **Was in der Mitte geschieht, kann sie nicht mehr erreichen.** */
 header {
+  position: relative;
   display: grid;
-  /* ⚑ Drei Spalten seit dem 2026-09-10: links das Leistensymbol, in der
-     Mitte die Marke (nur bei zugeklappter Leiste), rechts das Zahnrad.
-     Die mittlere Spalte traegt `1fr` und behaelt ihre Breite auch dann,
-     wenn nichts darin steht; sonst spraenge das Zahnrad beim Ein- und
-     Ausklappen hin und her. */
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: .8rem;
-  padding: .6rem 1rem;
+  place-items: center;
+  /* ⛑ **Eine feste Hoehe, keine gerechnete** (2026-09-10, gemeldet vom
+     Projektinhaber: „beim Ausklappen staucht sich die obere Leiste").
+     
+     Vorher stand hier `min-height` plus Polsterung, und weil
+     `box-sizing: border-box` gilt, war die Hoehe **das Groessere von
+     beidem**: mit der Marke in der Mitte ihr Inhalt plus Polster, ohne
+     sie der Mindestwert. Die Marke erscheint aber genau dann, wenn die
+     Leiste zugeht. **Eine Hoehe, die am Inhalt haengt, aendert sich mit
+     dem Inhalt**, und der wechselte beim Bedienen.
+     
+     ⚑ **Jetzt haengt sie an nichts als an zwei Zahlen**, und die
+     stehen oben bei den Variablen. */
+  height: calc(var(--kopf-knopf) + 2 * var(--kopf-polster));
+  /* ⚑ **Kein Polster.** Die Knoepfe liegen absolut und setzen ihren
+     Abstand selbst; ein Polster hier waere eine zweite Zahl fuer
+     dieselbe Sache. */
+  padding: 0;
   border-bottom: 1px solid var(--kante);
   background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .012));
   backdrop-filter: blur(24px) saturate(115%);
   -webkit-backdrop-filter: blur(24px) saturate(115%);
 }
+
+/* ⚑ **Ein Wert fuer beide Kanten.** Er steht einmal da und wird
+   zweimal gelesen; zwei Zahlen koennten auseinanderlaufen, und genau
+   das war der Fehler, den diese Stelle dreimal wiederholt hat. */
+header > #leiste-schalten,
+header > .kopfrechts {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+header > #leiste-schalten { left: var(--kopf-polster); }
+header > .kopfrechts { right: var(--kopf-polster); }
 
 /* --- Die Schrift der Wortmarke --------------------------------------
 
@@ -725,7 +833,6 @@ header {
    Stueck darin eine eigene Spalte, und die mittlere waere nicht mehr
    die Mitte. */
 .kopfrechts {
-  justify-self: end;
   display: flex;
   align-items: center;
   gap: .6rem;
@@ -745,7 +852,10 @@ header {
    Stoerbild sagt „dasselbe, woanders". Kommen und Gehen tragen
    verschiedene, damit die Richtung erkennbar ist. */
 .kopfmarke {
-  justify-self: center;
+  /* ⚑ Mittig im Kopf, und **ohne Einfluss auf die Knoepfe**: Die
+     liegen absolut. Der Kopf ist ein einspaltiges Raster mit
+     `place-items: center`, also steht sie von selbst in der Mitte. */
+  grid-area: 1 / 1;
   display: flex;
   align-items: center;
   gap: .5rem;
@@ -753,6 +863,16 @@ header {
   pointer-events: none;
 }
 .kopfmarke .spirale { width: 1.15rem; height: 1.15rem; display: block; }
+
+/* ⚑ **Im Kleinen bleibt nur der Kreis** (Festlegung des
+   Projektinhabers, 2026-09-10). Die Marke traegt einen Rahmen um die
+   Boegen; bei 1,15 rem sind Rahmen und Kreis nur noch zwei Striche
+   dicht nebeneinander, und der Rahmen gewinnt, weil er gerade ist.
+   **Was bei voller Groesse Fassung ist, wird im Kleinen Rauschen.**
+
+   ⚑ Weggenommen wird es nur hier: In der Seitenleiste hat die Marke
+   Platz, und dort traegt der Rahmen. */
+.kopfmarke .geruest { display: none; }
 .kopfmarke .wortmarke {
   margin: 0;
   font-family: "Myelith Wortmarke", var(--schrift);
@@ -857,9 +977,11 @@ header {
   position: relative;
 }
 
+/* ⚑ Dieselbe Formel wie im Kopf: Auf einem schmalen Fenster ist Rand
+   der teuerste Platz, den es gibt. */
 #gespraech {
   overflow-y: auto;
-  padding: 1.6rem 1.5rem .5rem;
+  padding: 1.6rem clamp(.8rem, 2.5vw, 1.5rem) .5rem;
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
@@ -1108,7 +1230,12 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 
 /* --- Eingabe ---------------------------------------------------------- */
 
-#eingabe { padding: .6rem 1.5rem 1.1rem; display: grid; justify-items: center; gap: .35rem; }
+#eingabe {
+  padding: .6rem clamp(.8rem, 2.5vw, 1.5rem) 1.1rem;
+  display: grid;
+  justify-items: center;
+  gap: .35rem;
+}
 #eingabe > * { width: 100%; max-width: 46rem; }
 
 .eingabefeld {
@@ -1143,7 +1270,20 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 
 .senden { width: 2.1rem; height: 2.1rem; color: var(--text); }
 
-#hinweiszeile { margin: 0; min-height: 1.2em; }
+/* ⚑ **Ebenfalls eine Fussnote** (Festlegung des Projektinhabers,
+   2026-09-10). Sie sagt, welches Modell im Speicher liegt; das ist eine
+   Auskunft fuer den Zweifelsfall und keine Ueberschrift.
+
+   ⛑ `min-height` bleibt: Ohne sie springt die Eingabezeile jedes Mal,
+   wenn die Auskunft kommt oder geht. **Eine Zeile, die auftaucht und
+   dabei alles darueber verschiebt, liest man nicht, man erschrickt.** */
+#hinweiszeile {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: .58rem;
+  line-height: 1.35;
+  color: var(--leiser);
+}
 
 /* --- Meldungen -------------------------------------------------------
 
@@ -1267,7 +1407,7 @@ button.warnt {
   inset: 0;
   z-index: 4;
   overflow-y: auto;
-  padding: 1.4rem 1.6rem 2rem;
+  padding: 1.4rem clamp(.9rem, 2.5vw, 1.6rem) 2rem;
   background: var(--grund);
   display: grid;
   align-content: start;
@@ -1386,6 +1526,7 @@ button, input, select, textarea {
 }
 
 input::placeholder, textarea::placeholder { color: var(--leiser); }
+
 
 /* --- Der Schalter ----------------------------------------------------
 

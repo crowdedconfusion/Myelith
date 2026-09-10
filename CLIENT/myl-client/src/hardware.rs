@@ -440,6 +440,28 @@ genau dieser Architektur. Ohne ihn würde ein Miner mit abweichendem Kernel \
 bestraft, ohne etwas falsch gemacht zu haben. Sobald beides steht, wirkt dieser \
 Regler ohne weiteres Zutun.";
 
+/// Derselbe Satz auf Englisch.
+///
+/// ⛑ **Er stand bis zum 2026-09-10 nur auf Deutsch da**, und damit trug
+/// ein englisches Fenster an seiner laengsten Erklaerung einen deutschen
+/// Absatz. **Uebersetzt wird, was ein Mensch liest**, und das gilt
+/// besonders fuer den Satz, der erklaert, warum etwas nicht geht.
+pub const RECHENWERK_GESPERRT_EN: &str = "No compute path over this device yet. \
+The NVIDIA and AMD back ends currently hand through to the reference kernels, \
+so the work happens on the CPU. What is missing are real integer kernels, \
+INT8 GEMM via dp4a on NVIDIA, i8mm on ARM and VNNI on x86, and a conformance \
+run on exactly this architecture. Without it a miner with a deviating kernel \
+would be penalised without having done anything wrong. Once both exist, this \
+slider takes effect with no further work.";
+
+/// Warum ein Betriebsmittel ohne erkanntes Ende gesperrt ist.
+pub const OHNE_ENDE: (&str, &str) = (
+    "Nicht erkannt: Diese Maschine sagt nicht, wie viel sie hiervon hat, \
+     und ein Regler ohne Ende ist keiner.",
+    "Not detected: this machine does not say how much of this it has, \
+     and a slider without an end is not a slider.",
+);
+
 impl Hardware {
     /// Die Regler dieser Maschine, mit dem, was heute freigegeben ist.
     ///
@@ -456,8 +478,15 @@ impl Hardware {
             _ => None,
         };
 
+        // ⛑ **In der eingestellten Sprache, seit dem 2026-09-10.** Die
+        // Beschriftungen kamen roh aus `FELDER`, also immer auf Deutsch,
+        // und ein englisches Fenster trug in der Freigabemaske deutsche
+        // Saetze. **Uebersetzt wird an einer Stelle, und diese hier
+        // hatte sie nicht gefragt.**
+        let sprache = e.oberflaeche.sprache;
         let mut aus = Vec::new();
         for f in FELDER.iter().filter(|f| f.freigabe) {
+            let f = f.in_sprache(sprache);
             let (einheit, hoechstens) = self.masse(f.name);
             aus.push(Regler {
                 name: f.name.to_string(),
@@ -470,11 +499,9 @@ impl Hardware {
                 // Maschine nicht nennt, laesst sich nicht anteilig
                 // hergeben, und eine geratene Obergrenze liesse den
                 // Nutzer etwas zusagen, das es nicht gibt.
-                sperrgrund: hoechstens.is_none().then(|| {
-                    "Nicht erkannt: Diese Maschine sagt nicht, wie viel sie hiervon hat, \
-                     und ein Regler ohne Ende ist keiner."
-                        .to_string()
-                }),
+                sperrgrund: hoechstens
+                    .is_none()
+                    .then(|| sprache.waehlen(OHNE_ENDE.0, OHNE_ENDE.1).to_string()),
             });
         }
 
@@ -488,8 +515,12 @@ impl Hardware {
                     .wert(&format!("{RECHENWERK_PRAEFIX}{}", r.kennung))
                     .ok()
                     .and_then(zahl),
-                hinweis: r.beschreibung(self.speicher_bytes),
-                sperrgrund: Some(RECHENWERK_GESPERRT.to_string()),
+                hinweis: r.beschreibung(self.speicher_bytes, sprache),
+                sperrgrund: Some(
+                    sprache
+                        .waehlen(RECHENWERK_GESPERRT, RECHENWERK_GESPERRT_EN)
+                        .to_string(),
+                ),
             });
         }
         aus
@@ -517,26 +548,47 @@ impl Rechenwerk {
     /// Arbeitsspeicher mit der CPU und hat gar keinen eigenen, ein
     /// eigenstaendiges nennt sein eigenes. **Ein Prozentsatz ohne
     /// Bezugsgroesse ist eine Zahl ohne Bedeutung.**
-    pub fn beschreibung(&self, speicher_der_maschine: Option<u64>) -> String {
+    pub fn beschreibung(
+        &self,
+        speicher_der_maschine: Option<u64>,
+        sprache: crate::einstellungen::Sprache,
+    ) -> String {
         let gib = |b: u64| format!("{:.0} GiB", b as f64 / GIB as f64);
         let kerne = match self.kerne {
-            Some(k) => format!("{k} Kerne, "),
+            Some(k) => format!("{k} {}, ", sprache.waehlen("Kerne", "cores")),
             None => String::new(),
         };
         if self.gemeinsamer_speicher {
             let speicher = match speicher_der_maschine {
-                Some(b) => format!("gemeinsamer Speicher mit der CPU ({})", gib(b)),
-                None => "gemeinsamer Speicher mit der CPU".to_string(),
+                Some(b) => format!(
+                    "{} ({})",
+                    sprache.waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU"),
+                    gib(b)
+                ),
+                None => sprache
+                    .waehlen("gemeinsamer Speicher mit der CPU", "memory shared with the CPU")
+                    .to_string(),
             };
-            format!("Eingebaut, {kerne}{speicher}. Der Anteil gilt der Rechenzeit dieses Werks.")
+            sprache.waehlen_wert(
+                format!("Eingebaut, {kerne}{speicher}. Der Anteil gilt der Rechenzeit dieses Werks."),
+                format!("Integrated, {kerne}{speicher}. The share applies to this unit's compute time."),
+            )
         } else {
             let speicher = match self.speicher_bytes {
-                Some(b) => format!("{} eigener Speicher", gib(b)),
-                None => "eigener Speicher nicht erkannt".to_string(),
+                Some(b) => format!("{} {}", gib(b), sprache.waehlen("eigener Speicher", "of its own memory")),
+                None => sprache
+                    .waehlen("eigener Speicher nicht erkannt", "own memory not detected")
+                    .to_string(),
             };
-            format!(
-                "Eigenständig, {kerne}{speicher}. Der Anteil gilt Rechenzeit und Speicher \
-                 dieses Werks."
+            sprache.waehlen_wert(
+                format!(
+                    "Eigenständig, {kerne}{speicher}. Der Anteil gilt Rechenzeit und Speicher \
+                     dieses Werks."
+                ),
+                format!(
+                    "Discrete, {kerne}{speicher}. The share applies to this unit's compute time \
+                     and memory."
+                ),
             )
         }
     }

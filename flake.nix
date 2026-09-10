@@ -7,7 +7,7 @@
 # `.pc`-Datei, die nicht nach dem eigentlichen Grund aussieht.
 #
 #   nix develop                  eine Shell mit allem, was der Bau braucht
-#   sh installieren-nixos.sh     baut darin und legt die Programme ab
+#   sh INSTALL/installieren-nixos.sh     baut darin und legt die Programme ab
 #
 # ⚑ **Eine Entwicklungsumgebung und keine Ableitung.** Eine
 # `buildRustPackage`-Ableitung bräuchte einen festgeschriebenen
@@ -38,7 +38,7 @@
 
         # Was jede Kiste braucht, auch ohne Oberfläche.
         #
-        # ⚑ `git` gehört dazu, seit `installieren-nixos.sh` und der
+        # ⚑ `git` gehört dazu, seit `INSTALL/installieren-nixos.sh` und der
         # Aktualisierungsknopf des Klienten darin laufen: Beide bewegen
         # den Klon vorwärts, bevor sie bauen.
         grundwerkzeug = with pkgs; [
@@ -87,7 +87,7 @@
             export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
             export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" oberflaeche}:$PKG_CONFIG_PATH"
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath oberflaeche}:$LD_LIBRARY_PATH"
-            echo "[myelith] Bauumgebung bereit. Weiter mit: sh installieren-nixos.sh --in-der-shell"
+            echo "[myelith] Bauumgebung bereit. Weiter mit: sh INSTALL/installieren-nixos.sh --in-der-shell"
           '';
         };
       });

@@ -219,14 +219,25 @@ mod proben {
     /// Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`, und
     /// dieser Eintrag ueberlebt jeden Umzug: Was sich aendert, ist die
     /// Wurzel, und die wird gesucht statt aufgeschrieben.
+    /// ⛑ **Die Erwartung wird gebaut und nicht getippt** (2026-09-10).
+    /// Der erste Entwurf schrieb `"/wo/auch/immer/INTEGER_LLM/..."` als
+    /// Text hin und fiel unter Windows: Dort setzt `Path::join` einen
+    /// Backslash, und die Pruefung meldete einen Unterschied im
+    /// Trennzeichen als Fehler in der Aufloesung. **Eine Erwartung, die
+    /// von Hand geschrieben ist, prueft die Maschine, auf der sie
+    /// geschrieben wurde.**
     #[test]
     fn ein_relativer_pfad_haengt_an_der_wurzel() {
         let alt = Path::new("/wo/auch/immer");
         let neu = Path::new("/ganz/woanders");
         let rel = "INTEGER_LLM/artifacts/myelith-4b";
-        assert_eq!(gegen(Some(alt), rel), "/wo/auch/immer/INTEGER_LLM/artifacts/myelith-4b");
+        assert_eq!(gegen(Some(alt), rel), alt.join(rel).display().to_string());
         // Derselbe Eintrag, verschobener Klon, richtiger Pfad.
-        assert_eq!(gegen(Some(neu), rel), "/ganz/woanders/INTEGER_LLM/artifacts/myelith-4b");
+        assert_eq!(gegen(Some(neu), rel), neu.join(rel).display().to_string());
+        // ⚑ Und die beiden sind wirklich verschieden: Ohne diese Zeile
+        // ginge die Pruefung auch dann durch, wenn `gegen` die Wurzel
+        // ignorierte und schlicht `rel` zurueckgaebe.
+        assert_ne!(gegen(Some(alt), rel), gegen(Some(neu), rel));
         // ⚠️ Und ohne Wurzel bleibt er relativ, statt geraten zu werden.
         assert_eq!(gegen(None, rel), rel);
     }
@@ -269,7 +280,7 @@ mod proben {
     #[test]
     fn kein_skript_nennt_einen_festen_pfad() {
         let wurzel = repo();
-        for datei in ["installieren-macos.sh", "installieren-nixos.sh"] {
+        for datei in ["INSTALL/installieren-macos.sh", "INSTALL/installieren-nixos.sh"] {
             let text = std::fs::read_to_string(wurzel.join(datei)).expect(datei);
             for zeile in text.lines() {
                 let z = zeile.trim();
@@ -286,8 +297,8 @@ mod proben {
                 "{datei} leitet die Wurzel nicht aus seinem eigenen Ort ab"
             );
         }
-        let ps = std::fs::read_to_string(wurzel.join("installieren-windows.ps1"))
-            .expect("installieren-windows.ps1");
+        let ps = std::fs::read_to_string(wurzel.join("INSTALL/installieren-windows.ps1"))
+            .expect("INSTALL/installieren-windows.ps1");
         assert!(ps.contains("$PSScriptRoot"), "das Windows-Skript kennt seinen Ort nicht");
     }
 
@@ -301,7 +312,8 @@ mod proben {
     #[test]
     fn der_menueeintrag_wird_erzeugt() {
         let wurzel = repo();
-        let sh = std::fs::read_to_string(wurzel.join("installieren-nixos.sh")).expect("Skript");
+        let sh = std::fs::read_to_string(wurzel.join("INSTALL/installieren-nixos.sh"))
+            .expect("Skript");
         assert!(sh.contains("[Desktop Entry]"), "das Skript legt keinen Eintrag an");
         assert!(sh.contains("Icon=$WURZEL/"), "der Eintrag traegt kein Symbol aus diesem Baum");
         assert!(
