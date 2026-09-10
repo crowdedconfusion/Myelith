@@ -381,7 +381,7 @@ floating-point arithmetic is allowed — it is preparation, not the compute
 path. Its output is integer artifacts.
 
 *In code:* `INTEGER_LLM/calibrate/src/main.py`
-*Invocation:* `INTEGER_LLM_MODEL=qwen2.5-7b python -m calibrate.src.main`
+*Invocation:* `INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main`
 
 ### GPTQ
 
@@ -747,7 +747,7 @@ true range systematically. Understated scales saturate in production.
 
 *In code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 probe `runtime/src/bin/router_probe.rs`
-*Measured in:* `BENCHMARKS/Inferenz/results/`, model `qwen3-30b-a3b`
+*Measured in:* `BENCHMARKS/Inferenz/results/`, model `myelith-30b-a3b`
 
 ### KV cache
 

@@ -5,8 +5,13 @@
 //! **Keine Logik.** Die Oberflaeche ruft dieselben Unterbefehle wie das
 //! Kommandozeilenwerkzeug, und der Grund ist nicht Aesthetik.
 //! Zwei Wege zu derselben Sache laufen auseinander, und der zweite ist
-//! immer der schlechter gepruefte: `myl` hat sechsundfuenfzig
-//! Pruefungen, ein nachgebauter Ruecken haette null.
+//! immer der schlechter gepruefte: `myl-client` ist durchgeprueft, ein
+//! nachgebauter Ruecken waere es nicht.
+//!
+//! ⛑ **Hier stand „sechsundfuenfzig Pruefungen", und es waren
+//! neunundachtzig.** Eine Zahl aus einer anderen Kiste laesst sich von
+//! hier aus nicht binden, also steht sie nicht mehr da: Eine
+//! Behauptung, die niemand nachrechnet, altert unbemerkt.
 //!
 //! ⚑ **Deshalb ruft dieser Ruecken die Kiste `myl-client`**, dieselbe
 //! Bibliothek, die auch das Kommandozeilenwerkzeug ruft, und nicht das
@@ -39,29 +44,39 @@ use tauri::Emitter;
 /// Wer beides gleichsetzt, kann keines der beiden mehr aendern.
 #[derive(Serialize)]
 struct Ansicht {
-    artefakt: String,
-    token: usize,
-    denken: bool,
-    schritte: u32,
-    bezeugtes: bool,
-    wurzel: Option<String>,
-    schreiben: bool,
-    /// Was `kap.kerne` sagt.
-    kerne_eingestellt: Option<usize>,
-    /// Wohin ausgegebene Gespraeche gehen; `None` heisst „noch nicht
-    /// entschieden", und das Fenster fuehrt dann zur Einstellung.
-    ausgabe_ordner: Option<String>,
-    /// ⚑ Und was davon **wirkt**. Eine Grenze ueber der Maschine hebt
-    /// sie nicht an, und der Unterschied gehoert sichtbar.
+    /// ⚑ **Jedes setzbare Feld mit seinem Wert, unter seinem Namen.**
+    ///
+    /// ⛑ **Hier standen bis zum 2026-09-10 zwoelf einzelne Felder**,
+    /// und das Fenster hielt daneben eine zweite Zuordnung von
+    /// Feldnamen auf diese Felder. Die kannte drei von zwoelf nicht
+    /// (Fund 280), und in JavaScript ist ein fehlender Schluessel kein
+    /// Fehler, sondern `undefined`: Der Schalter stand immer aus, die
+    /// Textfelder immer leer.
+    ///
+    /// ⚑ **Jetzt gibt es die Zuordnung nur noch einmal**, und zwar in
+    /// der Kiste, wo auch der Setzer liegt. Ein Feld, das dazukommt,
+    /// erscheint hier von selbst; eines, das keinen Wert hergibt, kann
+    /// es nicht mehr geben.
+    werte: std::collections::BTreeMap<String, myl_client::einstellungen::Feldwert>,
+    /// ⚑ **Die Sprache, in der das Fenster spricht.** Sie steht auch in
+    /// `werte["oberflaeche.sprache"]`; hier steht sie noch einmal, weil
+    /// das Fenster sie **vor** dem ersten Zeichnen braucht und nicht
+    /// erst, wenn es die Einstellungsseite oeffnet.
+    sprache: String,
+    /// ⚑ Und was von der Kernfreigabe **wirkt**. Eine Grenze ueber der
+    /// Maschine hebt sie nicht an, und der Unterschied gehoert sichtbar.
     kerne_wirksam: usize,
+    /// Was die Plattenfreigabe gerade wirklich haelt, in Bytes.
+    platte_gehalten: u64,
+    /// Was Myelith heute an Modellen und Artefakten haelt, in Bytes.
+    platte_belegt: u64,
     /// ⚑ **Die Betriebsart als dauerhafter Zustand.** Auf der
     /// Kommandozeile genuegt ein Satz beim Start; hier nicht. Wer nicht
     /// sieht, in welcher Betriebsart er arbeitet, hat keine Wahl
     /// getroffen, sondern eine geerbt.
     betriebsart: String,
-    /// ⚑ **Der ganze Satz dahinter.** Die Kurzform steht im Kopf und
-    /// muss in eine Marke passen; der Grund gehoert trotzdem irgendwo
-    /// hin, und zwar dort, wo man ihn sucht, naemlich am selben Ding.
+    /// ⚑ **Der ganze Satz dahinter**, dort, wo man ihn sucht, naemlich
+    /// am selben Ding.
     betriebsart_warum: String,
     pfad: String,
 }
@@ -116,27 +131,160 @@ fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str,
 }
 
 #[tauri::command]
-fn einstellungen() -> Result<Ansicht, String> {
+fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
     let pfad = myl_client::Einstellungen::vorgabepfad();
     let e = myl_client::Einstellungen::lesen(&pfad)?;
     if let Some(n) = e.kapazitaet.kerne {
         myl_client::kapazitaet::kerne_setzen(n);
     }
+    // ⚑ **Die Reservierung wird bei jedem Blick nachgefuehrt.** Ein
+    // Download hat vielleicht Platz verbraucht, und dann stimmt die
+    // Summe aus belegt und reserviert nicht mehr.
+    let platte_gehalten = platte_nachfuehren(&halter).unwrap_or(0);
+
+    // ⚑ **Die Werte kommen aus der Kiste, Feld fuer Feld.** Kein Name
+    // steht hier zweimal, und keiner fehlt: Die Liste ist dieselbe, aus
+    // der die Seite ihre Zeilen zeichnet.
+    let mut werte = std::collections::BTreeMap::new();
+    for f in myl_client::einstellungen::FELDER {
+        werte.insert(f.name.to_string(), e.wert(f.name)?);
+    }
+    // Dazu die Freigaben je Rechenwerk, deren Namen erst der Scan kennt.
+    for r in &myl_client::hardware::Hardware::erheben(&datenort()).rechenwerke {
+        let name = format!("{}{}", myl_client::einstellungen::RECHENWERK_PRAEFIX, r.kennung);
+        let w = e.wert(&name)?;
+        werte.insert(name, w);
+    }
+
     Ok(Ansicht {
-        artefakt: e.modell.artefakt.clone(),
-        token: e.modell.token,
-        denken: e.modell.denken,
-        schritte: e.agent.schritte,
-        bezeugtes: e.agent.auch_bezeugtes,
-        wurzel: e.agent.wurzel.clone(),
-        schreiben: e.agent.schreiben,
-        kerne_eingestellt: e.kapazitaet.kerne,
-        ausgabe_ordner: e.ausgabe.ordner.clone(),
+        werte,
+        sprache: e.oberflaeche.sprache.kennung().to_string(),
         kerne_wirksam: myl_client::kapazitaet::kerne(),
+        platte_gehalten,
+        platte_belegt: belegung_heute(),
         betriebsart: kurzform(&e.agent).0.into(),
         betriebsart_warum: kurzform(&e.agent).1.into(),
         pfad: pfad.display().to_string(),
     })
+}
+
+/// Loescht ein gebautes Artefakt.
+///
+/// # ⛑ Was hier alles schiefgehen koennte, und was es verhindert
+///
+/// **Das ist die einzige Stelle im Klienten, die etwas Grosses und
+/// Unwiederbringliches loescht**, und sie tut es auf einen Klick.
+/// Deshalb steht vor `remove_dir_all` eine Kette von Bedingungen, und
+/// jede einzelne hat einen Fall, den sie abfaengt:
+///
+/// | Bedingung | Was sie verhindert |
+/// |---|---|
+/// | Schluessel steht im Katalog | ein erfundener Name, der irgendwohin zeigt |
+/// | Pfad liegt **unter** `artifacts/` | ein `..` im Schluessel |
+/// | `model_config.json` liegt darin | ein Verzeichnis, das kein Artefakt ist |
+/// | nicht gerade geladen | ein Modell, das mitten im Betrieb verschwindet |
+///
+/// ⚑ **Das Rohmodell bleibt.** Es liegt unter `models/` und ist das
+/// Teure am Beschaffen; wer sein Artefakt loescht, will Platz und nicht
+/// noch einmal Stunden Download. Ein zweiter Bau geht dann in Minuten.
+#[tauri::command]
+fn artefakt_loeschen(
+    halter: tauri::State<'_, Halter>,
+    schluessel: String,
+) -> Result<String, String> {
+    let w = wurzel_suchen().ok_or("Das Repositorium ist nicht zu finden")?;
+
+    // 1. Der Schluessel muss im Katalog stehen.
+    let roh = std::fs::read_to_string(w.join("INTEGER_LLM/models/KATALOG.json"))
+        .map_err(|e| format!("KATALOG.json: {e}"))?;
+    let d: serde_json::Value = serde_json::from_str(&roh).map_err(|e| e.to_string())?;
+    if d.get(&schluessel).is_none() {
+        return Err(format!("{schluessel} steht nicht im Katalog"));
+    }
+
+    // 2. Der Pfad muss unter `artifacts/` liegen, aufgeloest und nicht
+    //    zusammengesetzt: Ein `..` im Schluessel zeigte sonst hinaus.
+    let ordner = w.join("INTEGER_LLM/artifacts");
+    let ziel = ordner.join(&schluessel);
+    let echt = ziel.canonicalize().map_err(|e| format!("{}: {e}", ziel.display()))?;
+    let heim = ordner.canonicalize().map_err(|e| format!("{}: {e}", ordner.display()))?;
+    if !echt.starts_with(&heim) || echt == heim {
+        return Err("Dieser Pfad liegt nicht im Artefaktverzeichnis".to_string());
+    }
+
+    // 3. Es muss ein Artefakt sein und nicht irgendein Verzeichnis.
+    if !echt.join("model_config.json").is_file() {
+        return Err(format!("{schluessel} sieht nicht wie ein Artefakt aus"));
+    }
+
+    // 4. Und es darf nicht das geladene sein.
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let geladen = halter.modell.lock().map(|g| g.is_some()).unwrap_or(false);
+    if geladen && e.modell.artefakt.trim_end_matches('/').ends_with(&schluessel) {
+        return Err(
+            "Dieses Artefakt ist gerade geladen. Waehle ein anderes Modell und lade es, \
+             dann laesst es sich loeschen."
+                .to_string(),
+        );
+    }
+
+    let belegt = myl_client::reservierung::belegung(&echt);
+    std::fs::remove_dir_all(&echt).map_err(|e| format!("{}: {e}", echt.display()))?;
+    // ⚑ Der freigewordene Platz geht zurueck in die Reservierung, sonst
+    // stimmte die Summe aus belegt und reserviert nicht mehr.
+    let _ = platte_nachfuehren(&halter);
+    Ok(format!(
+        "{schluessel} geloescht, {:.1} GiB frei. Das Rohmodell bleibt; ein zweiter Bau \
+         braucht keinen Download.",
+        belegt as f64 / myl_client::hardware::GIB as f64
+    ))
+}
+
+/// Zerlegt eine Modellantwort in Bloecke, die das Fenster zeichnen kann.
+///
+/// # ⛑ Warum das ueber den Ruecken geht und nicht im Skript geschieht
+///
+/// **Die Antwort eines Modells ist Text und keine Auszeichnung.** Wer
+/// sie mit `innerHTML` in die Seite schreibt, macht aus Daten
+/// Steuerung, und diese Seite traegt wegen `withGlobalTauri` die
+/// Bruecke zu **allen** Befehlen dieses Rueckens: Ein eingeschleuster
+/// Satz koennte Einstellungen setzen oder Dateien schreiben.
+///
+/// ⚑ **Deshalb kommt hier ein Baum aus Text heraus**, und das Fenster
+/// setzt ihn mit `createElement` und `textContent` zusammen. Ein `<`
+/// bleibt dabei ein `<`, gleich was davor steht. Das ist keine
+/// Filterung, sondern eine Bauart: Es gibt keinen Weg, auf dem aus
+/// dieser Antwort Markup wuerde.
+///
+/// ⚑ **Und es ist dieselbe Arbeitsteilung wie ueberall hier:** Die
+/// Kiste weiss, das Fenster zeichnet.
+#[tauri::command]
+fn markdown(text: String) -> Vec<myl_client::markdown::Block> {
+    myl_client::markdown::zerlegen(&text)
+}
+
+/// Was diese Maschine hergibt, und was davon freigegeben ist.
+///
+/// ⚑ **Ein eigener Befehl und kein Teil der Einstellungen.** Der Scan
+/// ruft Systemwerkzeuge auf und kostet damit mehr als das Lesen einer
+/// Datei; die Einstellungsseite fragt ihn einmal beim Oeffnen und nicht
+/// nach jedem gesetzten Feld.
+#[tauri::command]
+fn hardware() -> Result<Freigabemaske, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let h = myl_client::hardware::Hardware::erheben(&datenort());
+    Ok(Freigabemaske { regler: h.regler(&e), hardware: h, ort: datenort().display().to_string() })
+}
+
+/// Was die Freigabemaske zu zeichnen braucht.
+#[derive(Serialize)]
+struct Freigabemaske {
+    /// Ein Regler je Betriebsmittel, feste und gefundene zusammen.
+    regler: Vec<myl_client::hardware::Regler>,
+    /// Der Scan selbst, fuer die Zeile darueber.
+    hardware: myl_client::hardware::Hardware,
+    /// Worauf sich die Plattenzahlen beziehen.
+    ort: String,
 }
 
 /// Was ein Artefakt hergibt, ohne es zu laden.
@@ -154,9 +302,47 @@ fn einstellungen() -> Result<Ansicht, String> {
 /// `kap.beschleuniger` als Beschriftung, weil es nichts Besseres
 /// hatte. Die Alternative waere eine Uebersetzungstabelle im Skript
 /// gewesen, also wieder zwei Listen.
+///
+/// ⚑ **Und in der eingestellten Sprache** (seit dem 2026-09-10). Die
+/// Uebersetzung liegt in der Kiste neben der Beschriftung selbst: Ein
+/// Fenster, das zwischen `titel` und `titel_en` waehlt, waere die
+/// zweite Stelle, an der die naechste Sprache vergessen werden kann.
 #[tauri::command]
-fn felder() -> Vec<myl_client::einstellungen::Feld> {
-    myl_client::einstellungen::FELDER.to_vec()
+fn felder() -> Result<Vec<myl_client::einstellungen::Feld>, String> {
+    let s = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?
+        .oberflaeche
+        .sprache;
+    Ok(myl_client::einstellungen::FELDER
+        .iter()
+        .map(|f| f.in_sprache(s))
+        .collect())
+}
+
+/// **Sieht nach, ob `origin` etwas hat, das dieser Klon nicht hat.**
+///
+/// ⚑ **Es aendert nichts.** Nachsehen und Einspielen sind zwei
+/// Befehle, weil sie zwei Entscheidungen sind: Die eine kostet eine
+/// Netzanfrage, die andere Minuten und einen neuen Programmstand.
+#[tauri::command]
+fn aktualisierung() -> myl_client::aktualisierung::Stand {
+    myl_client::aktualisierung::pruefen(env!("CARGO_PKG_VERSION"))
+}
+
+/// **Spielt den neuen Stand ein und meldet dabei jede Zeile.**
+///
+/// ⚠️ **Es baut neu, und das dauert Minuten.** Ohne die Meldungen waere
+/// ein laufender Bau von einem haengenden Programm nicht zu
+/// unterscheiden.
+#[tauri::command]
+async fn aktualisieren(fenster: tauri::AppHandle) -> Result<(), String> {
+    let f = fenster.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        myl_client::aktualisierung::einspielen(&|zeile| {
+            let _ = f.emit("aktualisierung-zeile", zeile.to_string());
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Setzt ein Feld und schreibt die Ablage.
@@ -165,11 +351,30 @@ fn felder() -> Vec<myl_client::einstellungen::Feld> {
 /// Felder es gibt, weiss die Kiste; dieser Befehl reicht durch und
 /// speichert.
 #[tauri::command]
-fn setzen(feld: String, wert: String) -> Result<(), String> {
+fn setzen(
+    halter: tauri::State<'_, Halter>,
+    feld: String,
+    wert: String,
+) -> Result<(), String> {
     let pfad = myl_client::Einstellungen::vorgabepfad();
     let mut e = myl_client::Einstellungen::lesen(&pfad)?;
     e.setzen(&feld, &wert)?;
-    e.schreiben(&pfad)
+    e.schreiben(&pfad)?;
+
+    // ⚑ **Eine Freigabe wirkt beim Setzen und nicht beim naechsten
+    // Start.** Wer den Regler bewegt und danach dasselbe Verhalten
+    // sieht, hat keinen Regler bedient, sondern eine Zahl geaendert.
+    match feld.as_str() {
+        "kap.kerne" => myl_client::kapazitaet::kerne_setzen(e.kapazitaet.kerne.unwrap_or(0)),
+        // ⛑ **Die Platte wird sofort gehalten oder hergegeben.** Sonst
+        // stuende zwischen dem Setzen und dem naechsten Start eine
+        // Zusage, die niemand einloest.
+        "kap.platte" => {
+            platte_nachfuehren(&halter)?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Welche Modelle zur Wahl stehen.
@@ -188,7 +393,7 @@ fn setzen(feld: String, wert: String) -> Result<(), String> {
 ///
 /// „API, kostet Inferenz-Credits" ist der Platz fuer das Netzmodell.
 /// Er ist **gesperrt**, solange dem Klienten Knotenadresse und
-/// Vollmacht fehlen (Fahrplan 2.2 bis 2.5b). Er steht trotzdem in der
+/// Vollmacht fehlen (Punkte 2.2 bis 2.5b). Er steht trotzdem in der
 /// Liste, weil die Wahl zwischen hier und dort an genau diese Stelle
 /// gehoert und nicht in einen Schalter im Kopf: Ein Modell ist ein
 /// Modell, ob es auf dieser Maschine liegt oder im Netz gerechnet wird.
@@ -206,7 +411,7 @@ fn modelle() -> Result<Vec<Modellwahl>, String> {
             pfade.sort();
             // ⚑ Der Anzeigename kommt aus dem Katalog, wenn er dort
             // steht: In der Wahl soll „Myelith 4B" stehen und nicht
-            // der Verzeichnisname `qwen3-4b`. Steht er nicht drin,
+            // der Verzeichnisname `myelith-4b`. Steht er nicht drin,
             // bleibt der Verzeichnisname, denn ein erfundener Name
             // waere schlechter als ein technischer.
             let namen = katalognamen();
@@ -243,8 +448,8 @@ fn modelle() -> Result<Vec<Modellwahl>, String> {
         //   nach der Hausregel.
         name: "API, kostet Inferenz-Credits".into(),
         offen: false,
-        warum: "Noch nicht verdrahtet: Dem Klienten fehlen Knotenadresse und Vollmacht \
-                (Fahrplan 2.2 bis 2.5b). Bis dahin rechnet diese Maschine."
+        warum: "Noch nicht verdrahtet: Dem Klienten fehlen Knotenadresse und Vollmacht. \
+                Bis dahin rechnet diese Maschine."
             .into(),
     });
     Ok(aus)
@@ -263,12 +468,23 @@ fn katalognamen() -> std::collections::BTreeMap<String, String> {
         if k.starts_with('_') {
             continue;
         }
+        // ⛑ **Hier hing die Herkunft am Namen** (`Myelith 4B (aus
+        // Qwen3-4B)`), und sie stand damit in jeder Modellwahl, in
+        // jeder Ladezeile und in jeder Meldung. Gemeldet vom
+        // Projektinhaber am 2026-09-10.
+        //
+        // ⚑ **Ein Name ist ein Name.** Die Herkunft ist eine Angabe zum
+        // Modell und gehoert dorthin, wo Angaben zum Modell stehen: in
+        // die Modellkarte. Wer sie wissen will, liest sie dort; wer nur
+        // wissen will, welches Modell antwortet, soll nicht jedes Mal
+        // eine Klammer mitlesen.
+        //
+        // ⚠️ **Verschwinden darf sie deshalb nicht.** Die Basismodelle
+        // stehen unter Apache 2.0, und ein Name ohne Herkunft waere
+        // eine Verschleierung. Sie steht weiterhin in `KATALOG.json`
+        // bei jedem Eintrag und in `artifacts/MODEL_CARD.md`.
         if let Some(n) = v.get("anzeigename").and_then(|x| x.as_str()) {
-            let herkunft = v.get("grundmodell").and_then(|x| x.as_str()).unwrap_or("");
-            aus.insert(
-                k.clone(),
-                if herkunft.is_empty() { n.to_string() } else { format!("{n}  (aus {herkunft})") },
-            );
+            aus.insert(k.clone(), n.to_string());
         }
     }
     aus
@@ -346,25 +562,88 @@ struct Halter {
     /// Ein `State` lebt nur so lange wie der Befehl; was in einen
     /// eigenen Faden wandert, muss `'static` sein.
     modell: std::sync::Arc<Mutex<Option<myl_client::Oertlichesmodell>>>,
+    /// ⚑ **Der Plattenplatz, den dieses Fenster wirklich haelt.**
+    ///
+    /// Er liegt hier und nicht in einer Funktion, und das ist der ganze
+    /// Punkt: **Ein Wert im Fensterzustand lebt genau so lange wie das
+    /// Fenster.** „Solange das Programm geoeffnet ist" ist damit keine
+    /// Absichtserklaerung, sondern die Lebensdauer eines Wertes; wer
+    /// das Fenster schliesst, gibt den Platz zurueck, ohne dass jemand
+    /// daran denken muss.
+    platte: std::sync::Arc<Mutex<Option<myl_client::reservierung::Reservierung>>>,
+}
+
+/// Wie ein geladenes Modell heisst und wo es liegt.
+///
+/// ⚑ **Beides, und nicht eines von beiden.** Der Name sagt, welches
+/// Modell antwortet; der Pfad sagt, **welches Artefakt** das ist, und
+/// bei vier Ordnern nebeneinander ist das nicht dasselbe. Wer nur den
+/// Namen zeigt, laesst offen, ob gerade das frisch gebaute oder das
+/// alte antwortet.
+#[derive(Serialize)]
+struct Ladung {
+    name: String,
+    pfad: String,
+    sekunden: f64,
+}
+
+/// Der Anzeigename zu einem Artefaktpfad, aus dem Katalog.
+///
+/// ⚑ **Ohne Katalogeintrag der Verzeichnisname**, und kein erfundener:
+/// Ein Name, den niemand vergeben hat, waere schlechter als ein
+/// technischer.
+fn anzeigename(pfad: &str) -> String {
+    let ordner = std::path::Path::new(pfad)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| pfad.to_string());
+    katalognamen().get(&ordner).cloned().unwrap_or(ordner)
 }
 
 /// Laedt das Artefakt aus den Einstellungen.
 #[tauri::command]
-async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<String, String> {
+async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     if e.modell.artefakt.is_empty() {
         return Err("es ist kein Artefakt eingestellt".into());
     }
     let anfang = std::time::Instant::now();
     let pfad = artefakt_absolut(&e.modell.artefakt);
-    let mut m = myl_client::Oertlichesmodell::laden(&pfad)
+    let mut m = myl_client::Oertlichesmodell::laden(&pfad, &e.kapazitaet)
         .map_err(|f| mit_zugriffshinweis(f, &pfad))?;
     m.grenze = e.modell.token;
     m.denken = e.modell.denken;
-    let vorlage = format!("{:?}", m.vorlage());
     let dauer = anfang.elapsed().as_secs_f64();
     *halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")? = Some(m);
-    Ok(format!("{} ({vorlage}), in {dauer:.1} s geladen", e.modell.artefakt))
+    Ok(Ladung {
+        name: anzeigename(&e.modell.artefakt),
+        pfad: e.modell.artefakt.clone(),
+        sekunden: (dauer * 10.0).round() / 10.0,
+    })
+}
+
+/// Gibt das geladene Modell wieder frei.
+///
+/// # ⚑ Warum ein Modell ueberhaupt wieder gehen soll
+///
+/// **Ein 4B-Artefakt sind viereinhalb Gigabyte, und sie liegen im
+/// Speicher, solange das Fenster offen ist.** Wer morgens eine Frage
+/// stellt und das Fenster stehenlaesst, gibt den Rest des Tages
+/// Arbeitsspeicher her, ohne etwas davon zu haben. Das steht in
+/// derselben Reihe wie die Kapazitaetsfreigabe: **Was Myelith nimmt,
+/// soll es auch wieder hergeben.**
+///
+/// ⚑ **Die Rueckgabe ist ein Wert, der stirbt**, und nicht ein Aufruf,
+/// der etwas leert: `None` in den Halter zu setzen laesst das Modell
+/// fallen, und damit gehen die Gewichte.
+///
+/// ⛑ **Ohne geladenes Modell ist das kein Fehler.** Ein Entladen, das
+/// sich beschwert, wenn nichts da ist, zwingt jeden Aufrufer, vorher zu
+/// fragen; die Zeitschaltung tut das nicht und soll es nicht muessen.
+#[tauri::command]
+fn modell_entladen(halter: tauri::State<'_, Halter>) -> Result<bool, String> {
+    let mut g = halter.modell.lock().map_err(|_| "der Modellhalter ist vergiftet")?;
+    Ok(g.take().is_some())
 }
 
 /// Faehrt einen Auftrag und meldet den Verlauf ans Fenster.
@@ -392,7 +671,39 @@ async fn agent_fahren(
         let Some(m) = g.as_mut() else {
             return Err("das Modell ist nicht geladen".to_string());
         };
-        Ok(myl_client::lauf::fahren(m, &ruestung, schritte, !gesperrt, grenze, &auftrag))
+        zusehen(m, &fenster);
+        // ⚑ **Zwei Quellen, ein Kanal.** Der laufende Text kommt vom
+        // Modell, die Werkzeuge von der Schleife; das Fenster soll
+        // beides in einer Reihenfolge sehen und nicht aus zwei
+        // Stroemen zusammensetzen muessen.
+        let f = fenster.clone();
+        let melder = move |m: myl_client::Meldung<'_>| {
+            let _ = f.emit(
+                LEBEND,
+                match m {
+                    myl_client::Meldung::Schritt(nummer) => Lebend::Schritt { nummer },
+                    myl_client::Meldung::Aufruf { name, argumente } => Lebend::Aufruf {
+                        name: name.to_string(),
+                        argumente: myl_client::lauf::kurzform(argumente),
+                    },
+                    myl_client::Meldung::Ergebnis { name, text } => Lebend::Ergebnis {
+                        name: name.to_string(),
+                        text: myl_client::lauf::eine_zeile(text, 200),
+                    },
+                    myl_client::Meldung::Abgelehnt { name, grund } => Lebend::Abgelehnt {
+                        name: name.to_string(),
+                        grund: grund.to_string(),
+                    },
+                },
+            );
+        };
+        let ergebnis = myl_client::lauf::fahren_beobachtet(
+            m, &ruestung, schritte, !gesperrt, grenze, &auftrag, Some(&melder),
+        );
+        // ⛑ Siehe `zusehen`: Der Beobachter geht wieder ab, sonst
+        // meldete dieser Lauf in den naechsten hinein.
+        m.beobachter = None;
+        Ok(ergebnis)
     })
     .await
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
@@ -430,6 +741,7 @@ async fn agent_fahren(
 #[tauri::command]
 async fn frage(
     verlauf: Vec<(String, String)>,
+    fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Antwort, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
@@ -461,12 +773,72 @@ async fn frage(
             .collect();
         // `chat` kommt aus dem Merkmal `Modellweg`.
         use myl_client::Modellweg as _;
-        m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text)
+        zusehen(m, &fenster);
+        let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
+        m.beobachter = None;
+        antwort
     })
     .await
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
 
     Ok(Antwort { text, sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0 })
+}
+
+/// Was waehrend eines Laufs beim Fenster ankommt.
+///
+/// # ⚑ Ein Ereignis und kein Rueckgabewert
+///
+/// **Ein Rueckgabewert kommt am Ende.** Bei einem 4B-Modell sind das
+/// bis zu einer Minute, und in dieser Zeit stuende ein Fenster still.
+/// Ein stehendes Fenster sieht aus wie ein abgestuerztes, und das ist
+/// derselbe Grund, aus dem der Ladeknopf sich sperrt und es sagt.
+///
+/// ⚑ **Die Rueckgabe bleibt trotzdem.** Sie ist die vollstaendige,
+/// geprueete Fassung; was live ankam, ist die Vorschau darauf. Wer nur
+/// noch Ereignisse schickte, haette keinen Stand mehr, gegen den er
+/// pruefen kann, und `der_laufende_text_ist_die_antwort` haelt genau
+/// diese beiden gegeneinander.
+#[derive(Clone, Serialize)]
+#[serde(tag = "art")]
+enum Lebend {
+    /// Ein Stueck Ueberlegung.
+    Denken { text: String },
+    /// Ein Stueck Antworttext.
+    Text { text: String },
+    /// Das Modell wird zum `nummer`-ten Mal gefragt.
+    Schritt { nummer: u32 },
+    /// Ein Werkzeug laeuft jetzt.
+    Aufruf { name: String, argumente: String },
+    /// Und was es zurueckgab.
+    Ergebnis { name: String, text: String },
+    /// Ein Vorschlag wurde abgewiesen, mit dem Grund.
+    Abgelehnt { name: String, grund: String },
+}
+
+/// Der Ereignisname, unter dem alles Lebende laeuft.
+///
+/// ⚑ **Einer und nicht sechs.** Sechs Namen hiessen sechs Anmeldungen
+/// im Fenster, und wer einen vergisst, verliert eine Art Meldung, ohne
+/// dass etwas fehlschlaegt.
+const LEBEND: &str = "lauf-lebt";
+
+/// Haengt einen Beobachter an das Modell, der ans Fenster meldet.
+///
+/// ⚑ **Er wird am Ende wieder abgenommen.** Das Modell lebt im
+/// Fensterzustand und ueberlebt den Lauf; ein Beobachter, der
+/// dableibt, hielte einen Fenstergriff aus einem beendeten Auftrag
+/// fest und meldete in den naechsten hinein.
+fn zusehen(m: &mut myl_client::Oertlichesmodell, fenster: &tauri::AppHandle) {
+    let f = fenster.clone();
+    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+        let _ = f.emit(
+            LEBEND,
+            match s {
+                myl_client::strom::Stueck::Denken(text) => Lebend::Denken { text },
+                myl_client::strom::Stueck::Text(text) => Lebend::Text { text },
+            },
+        );
+    }));
 }
 
 /// Was eine Frage zurueckbringt.
@@ -500,6 +872,7 @@ fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
     use myl_client::lauf::Schritt as S;
     match s {
         S::Plan(t) => Zeile { art: "plan", text: t.clone() },
+        S::Denken(t) => Zeile { art: "denken", text: t.clone() },
         S::Aufruf { name, argumente } => {
             Zeile { art: "aufruf", text: format!("{name} {argumente}") }
         }
@@ -574,6 +947,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             einstellungen,
             felder,
+            hardware,
+            markdown,
+            artefakt_loeschen,
+            modell_entladen,
             setzen,
             modell_laden,
             agent_fahren,
@@ -584,7 +961,9 @@ fn main() {
             voraussetzungen,
             artefakt_bauen,
             gespraech_ausgeben,
-            ordner_waehlen
+            ordner_waehlen,
+            aktualisierung,
+            aktualisieren
         ])
         .run(tauri::generate_context!())
         .expect("die Oberflaeche liess sich nicht starten");
@@ -614,7 +993,15 @@ struct Katalogeintrag {
     schluessel: String,
     anzeigename: String,
     hf_repo: String,
-    lizenz: String,
+    /// ⚠️ **Die Lizenz der Grundgewichte, nicht die des Artefakts.**
+    /// Die Einstellungsseite zeigte bis zum 2026-09-10 ein Feld
+    /// `lizenz` neben dem Namen „Myelith 4B" an, und das las sich, als
+    /// stuende das Artefakt unter Apache-2.0. **Es steht unter der
+    /// Lizenz dieses Repositoriums**; Apache-2.0 gilt fuer die
+    /// heruntergeladenen Gewichte, aus denen es gebaut wurde.
+    lizenz_gewichte: String,
+    /// Die Lizenz des gebauten Artefakts: die dieses Repositoriums.
+    lizenz_artefakt: String,
     parameter: String,
     /// ⚠️ **Das Grundmodell, aus dem das Artefakt gebaut ist.** Der
     /// Anzeigename heisst „Myelith <Groesse>", weil das Artefakt selbst
@@ -626,6 +1013,11 @@ struct Katalogeintrag {
     gewichte: String,
     artefakt: String,
     status: String,
+    /// ⚑ **Was der Eintrag an Platz braucht, in Bytes.** Der Katalog
+    /// nennt beide Zahlen seit jeher; sie standen nur nie im Fenster.
+    /// Damit ist die Plattenfreigabe **vor** einem Download exakt
+    /// pruefbar und nicht geschaetzt.
+    braucht_bytes: u64,
     /// Liegt das Rohmodell schon da?
     modell_da: bool,
     /// Liegt das fertige Artefakt schon da?
@@ -638,37 +1030,77 @@ struct Katalogeintrag {
 /// Entwicklungsbaum aus `CLIENT/myl-oberflaeche`, als gebuendelte App
 /// aus einem ganz anderen Verzeichnis. Wer den Pfad festnagelt, baut
 /// einen Knopf, der auf genau einer Maschine geht.
-fn wurzel_suchen() -> Option<std::path::PathBuf> {
-    // ⛑ **Zwei Anfaenge, und der zweite ist der wichtige.** Aus dem
-    // Finder gestartet bekommt ein Programm auf macOS das
-    // Arbeitsverzeichnis `/`; von dort findet sich kein Klon. Das
-    // Programm selbst liegt aber im Baum (`target-shared/...`), und von
-    // seinem Pfad aus fuehrt der Weg nach oben ans Ziel.
-    //
-    // Das Arbeitsverzeichnis bleibt vorn, damit ein Aufruf aus einem
-    // anderen Klon heraus auch dessen Artefakte nimmt.
-    let anfaenge = [std::env::current_dir().ok(), eigener_ordner()];
-    for anfang in anfaenge.into_iter().flatten() {
-        let mut p = anfang;
-        loop {
-            if p.join("INTEGER_LLM/scripts/build_artifacts.sh").is_file() {
-                return Some(p);
-            }
-            if !p.pop() {
-                break;
-            }
-        }
+/// Wo Myelith seine grossen Dateien haelt, also Modelle und Artefakte.
+///
+/// ⚑ **Die Reservierung gehoert auf denselben Datentraeger wie das,
+/// was sie schuetzt.** Platz auf einer anderen Platte zu halten waere
+/// eine Zusage ueber die falsche Platte, und sie fiele erst beim ersten
+/// Download auf.
+fn datenort() -> std::path::PathBuf {
+    match wurzel_suchen() {
+        Some(w) => w.join("INTEGER_LLM"),
+        // Ohne Klon gibt es keine Modelle und keine Artefakte; dann ist
+        // der Ort der Einstellungen der einzige, den es sicher gibt.
+        None => myl_client::Einstellungen::vorgabepfad()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from(".")),
     }
-    None
 }
 
-/// Das Verzeichnis, in dem dieses Programm liegt.
-fn eigener_ordner() -> Option<std::path::PathBuf> {
-    let p = std::env::current_exe().ok()?;
-    // ⚑ Aufgeloest, denn in einem `.app` fuehrt der Weg ueber
-    // `Contents/MacOS`, und Verweise waeren sonst nicht zu verfolgen.
-    let p = std::fs::canonicalize(&p).unwrap_or(p);
-    p.parent().map(|q| q.to_path_buf())
+/// Was Myelith heute schon auf der Platte haelt.
+fn belegung_heute() -> u64 {
+    let ort = datenort();
+    myl_client::reservierung::belegung(&ort.join("models"))
+        + myl_client::reservierung::belegung(&ort.join("artifacts"))
+}
+
+/// Stellt die Reservierung auf die heutige Freigabe ein.
+///
+/// ⚑ **Belegt plus reserviert ist die Freigabe, durchgehend.** Ohne
+/// diese Rechnung arbeitete die Reservierung gegen den eigenen
+/// Download: Wer 50 GiB freigibt und 50 GiB haelt, hat fuer das erste
+/// Modell keinen Platz mehr, obwohl er ihn gerade dafuer freigegeben
+/// hat.
+fn platte_nachfuehren(halter: &Halter) -> Result<u64, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut gehalten = halter.platte.lock().map_err(|_| "Die Reservierung ist blockiert")?;
+    match e.kapazitaet.platte_gib {
+        // Ohne Freigabe wird nichts gehalten, und die Datei verschwindet.
+        None => {
+            *gehalten = None;
+            Ok(0)
+        }
+        Some(gib) => {
+            let soll = myl_client::reservierung::zu_halten(
+                gib as u64 * myl_client::hardware::GIB,
+                belegung_heute(),
+            );
+            match gehalten.as_mut() {
+                Some(r) => r.setzen(soll)?,
+                None => {
+                    *gehalten =
+                        Some(myl_client::reservierung::Reservierung::anlegen(&datenort(), soll)?)
+                }
+            }
+            Ok(soll)
+        }
+    }
+}
+
+/// ⛑ **Die Suche steht seit dem 2026-09-10 in `myl-client`.**
+///
+/// Sie stand hier, und das Bedieninstrument hatte sie nicht: `myl` gab
+/// aus einem fremden Arbeitsverzeichnis „es fehlt das
+/// Artefaktverzeichnis", obwohl das Artefakt dalag. **Zwei Programme
+/// desselben Klienten beantworteten dieselbe Frage verschieden**, und
+/// eines davon gar nicht.
+///
+/// ⚑ **Und sie kann jetzt mehr, als sie hier konnte:** Ein gemerkter
+/// Ort traegt ueber den Fall hinweg, dass das Programm **ausserhalb**
+/// des Baums liegt, also genau ueber den installierten Zustand.
+fn wurzel_suchen() -> Option<std::path::PathBuf> {
+    myl_client::ort::wurzel()
 }
 
 /// Die Marke, an der das Fenster „es fehlt der Ordner" erkennt.
@@ -774,18 +1206,11 @@ fn mit_zugriffshinweis(fehler: String, pfad: &str) -> String {
 ///
 /// ⛑ **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
 /// zwar mit `No such file or directory`: In den Einstellungen steht
-/// `INTEGER_LLM/artifacts/qwen3-4b`, und das ist relativ zu einem
+/// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
 /// Arbeitsverzeichnis, das dort `/` ist. Ein absoluter Pfad in den
 /// Einstellungen bliebe unberuehrt.
 fn artefakt_absolut(pfad: &str) -> String {
-    let p = std::path::Path::new(pfad);
-    if p.is_absolute() || pfad.is_empty() {
-        return pfad.to_string();
-    }
-    match wurzel_suchen() {
-        Some(w) => w.join(p).display().to_string(),
-        None => pfad.to_string(),
-    }
+    myl_client::ort::absolut(pfad)
 }
 
 /// Was fehlt, bevor gebaut werden kann.
@@ -880,6 +1305,9 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
     let text = |v: &serde_json::Value, k: &str| {
         v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
     };
+    // ⚑ Eine fehlende Groesse ist null und nicht geraten: Der Platz
+    // wird dann nicht geprueft, statt gegen eine erfundene Zahl.
+    let zahl = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
     let mut aus = Vec::new();
     for (schluessel, v) in obj {
         // Die Schluessel mit Unterstrich sind Hinweise und keine Modelle.
@@ -890,12 +1318,14 @@ fn katalog() -> Result<Vec<Katalogeintrag>, String> {
             schluessel: schluessel.clone(),
             anzeigename: text(v, "anzeigename"),
             hf_repo: text(v, "hf_repo"),
-            lizenz: text(v, "lizenz"),
+            lizenz_gewichte: text(v, "lizenz_gewichte"),
+            lizenz_artefakt: text(v, "lizenz_artefakt"),
             parameter: text(v, "parameter"),
             grundmodell: text(v, "grundmodell"),
             gewichte: text(v, "gewichte_anzeige"),
             artefakt: text(v, "artefakt_anzeige"),
             status: text(v, "status"),
+            braucht_bytes: zahl(v, "gewichte_bytes") + zahl(v, "artefakt_bytes"),
             modell_da: w.join("INTEGER_LLM/models").join(text(v, "hf_verzeichnis")).is_dir(),
             artefakt_da: w
                 .join("INTEGER_LLM/artifacts")
@@ -936,6 +1366,7 @@ struct Bauzeile {
 /// Minuten".
 #[tauri::command]
 async fn artefakt_bauen(
+    halter: tauri::State<'_, Halter>,
     schluessel: String,
     fenster: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -957,6 +1388,37 @@ async fn artefakt_bauen(
         eintrag.get("hf_verzeichnis").and_then(|x| x.as_str()).unwrap_or("").to_string();
     if repo.is_empty() {
         return Err(format!("{schluessel} nennt kein `hf_repo`"));
+    }
+
+    // ⚑ **Passt es in die Freigabe?** Der Katalog nennt beide Groessen
+    // in Bytes, die Frage ist also gerechnet und nicht geschaetzt. Ein
+    // Download, der die Freigabe sprengt, wird **vorher** abgelehnt und
+    // nicht nach vierzig Minuten mit einer vollen Platte.
+    let braucht = eintrag.get("gewichte_bytes").and_then(|x| x.as_u64()).unwrap_or(0)
+        + eintrag.get("artefakt_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    if let (Some(gib), true) = (e.kapazitaet.platte_gib, braucht > 0) {
+        let freigabe = gib as u64 * myl_client::hardware::GIB;
+        let belegt = belegung_heute();
+        if belegt + braucht > freigabe {
+            let g = |b: u64| b as f64 / myl_client::hardware::GIB as f64;
+            return Err(format!(
+                "Das passt nicht in die Freigabe: {:.1} GiB werden gebraucht, \
+                 {:.1} GiB sind belegt, freigegeben sind {gib} GiB. \
+                 Erhöhe die Freigabe oder gib Platz frei.",
+                g(braucht),
+                g(belegt)
+            ));
+        }
+        // ⚑ **Der Platz geht von der Reservierung an den Download
+        // ueber.** Die Summe aus belegt und reserviert bleibt die
+        // Freigabe; ohne diesen Schritt hielte die Reservierung genau
+        // den Platz fest, den der Download gleich braucht.
+        if let Ok(mut g) = halter.platte.lock() {
+            if let Some(r) = g.as_mut() {
+                r.hergeben(braucht)?;
+            }
+        }
     }
 
     let f = fenster.clone();

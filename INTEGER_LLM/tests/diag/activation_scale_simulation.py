@@ -25,7 +25,7 @@ Gleitkommawert. Die Perplexitaetswirkung sagt das nicht voraus.
 Referenz float32 (nicht bfloat16, siehe zehnter Instrumentenfehler).
 
 Usage:
-    INTEGER_LLM_MODEL=qwen2.5-0.5b python -u tests/diag/activation_scale_simulation.py <tok...>
+    INTEGER_LLM_MODEL=myelith-0.5b python -u tests/diag/activation_scale_simulation.py <tok...>
 """
 import sys
 from pathlib import Path

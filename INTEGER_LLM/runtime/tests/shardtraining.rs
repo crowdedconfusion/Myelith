@@ -28,7 +28,7 @@ use integer_llm_runtime::shardtraining::{
 
 fn artefakte() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("qwen2.5-0.5b")
+    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("myelith-0.5b")
 }
 
 fn modell() -> Option<IntegerModel> {
@@ -222,7 +222,7 @@ fn der_zweite_schritt_baut_auf_dem_ersten_auf() {
 
 fn moe_artefakte() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("qwen3-30b-a3b")
+    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("myelith-30b-a3b")
 }
 
 /// ⚑ **Dieselbe Frage wie oben, aber für Gemischebenen.**

@@ -1,6 +1,6 @@
 # tokenomics (`myl-tokenomics`)
 
-> **Version:** 0.22.0
+> **Version:** 0.22.1
 > **Datum:** 2026-08-31
 > **Status:** Design-Entscheidungen getroffen (Fixed-Point bestätigt,
 > vTFE-Skalierung 10⁻⁶, MYL-Kleinstbeträge 10⁶, EMA-Fenster 30 Epochen
@@ -97,6 +97,22 @@ volle Gutschrift bekommen. Eine Funktion, die immer null liefert,
 verletzt keine Obergrenze.
 
 ## Changelog
+
+### v0.22.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in einem Doc-Kommentar
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
 
 ### v0.22.0 – 2026-09-06 (die Trainingsabgabe: ein antizyklischer Puffer)
 
@@ -306,7 +322,7 @@ beim Epochenabschluss verworfen, ohne dass je etwas geprägt wurde.
 **Die Lösung ist, nichts zu setzen.**
 [`vtfe::arbeitsverteilung_probe`] rechnet die Gewichte aus dem
 Modellprofil der Probepipeline (Qwen2.5-0,5B, abgeschrieben aus
-`INTEGER_LLM/artifacts/qwen2.5-0.5b/model_config.json`) und demselben
+`INTEGER_LLM/artifacts/myelith-0.5b/model_config.json`) und demselben
 Shard-Zuschnitt, den `myl_pod::pipelinewerk` schon fährt. **Zwei
 Knoten, die dieselbe Formel rechnen, kommen auf dieselbe Zahl**; ein
 Wert, der übertragen werden müsste, kann auseinanderlaufen.

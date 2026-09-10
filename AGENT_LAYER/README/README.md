@@ -1,7 +1,7 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.14.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.7.0)
-> **Datum:** 2026-09-04
+> **Version:** 0.16.1 (`myl-agent` 0.7.0, `myl-local-agent` 0.9.1)
+> **Datum:** 2026-09-09
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
 > v0.7.0 die **Segmentkette**. 52 Tests. ⚑ **Was jetzt fehlt, ist keine
@@ -44,6 +44,65 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.16.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in einer Prüfung
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
+
+### v0.16.0 – 2026-09-10 (`myl-local-agent` 0.9.0: die Schleife meldet, während sie läuft)
+
+`Lauf` trägt seit heute einen `melder`, und die Schleife sagt damit, was
+sie gerade tut: welcher Schritt, welches Werkzeug läuft, was es zurückgab
+und was abgewiesen wurde.
+
+⚑ **Er bekommt zu sehen und entscheidet nichts.** Diese Kiste trägt eine
+Vollmacht; ein Haken, der den Lauf beeinflussen könnte, wäre eine zweite
+Quelle für Erlaubnisse neben `Erlaubnis` und `Betriebsart`. Der Melder
+gibt nichts zurück und wird an Stellen gerufen, an denen die Entscheidung
+schon gefallen ist. `ein_melder_aendert_den_lauf_nicht` fährt denselben
+Auftrag zweimal und vergleicht Ende und Nachrichtenverlauf Wort für Wort.
+
+⚑ **Gemeldet wird vor **und** nach der Ausführung.** Ein Werkzeug, das
+ein Verzeichnis durchsucht, läuft merklich lange; wer nur das Ergebnis
+meldet, zeigt in dieser Zeit ein Fenster, das stillsteht.
+
+⚑ **Eine Ablehnung wird ebenfalls gemeldet.** Ein Agent, dem ein Werkzeug
+verwehrt wurde, sieht für den Nutzer aus wie einer, der nichts tut; der
+Grund stand sonst nur im Sitzungsstrom.
+
+### v0.15.0 – 2026-09-09 (`myl-local-agent` 0.8.1: die Ansage wird die Vorlage und nicht ihre Paraphrase)
+
+⛑ **Fund 221: Die Werkzeugansage war eine deutsche Umschreibung**, und
+ihr fehlte gerade das Aufrufbeispiel, das die Vorlage des Modells als
+Literal zeigt. Dazu standen die JSON-Schlüssel alphabetisch, weil
+`serde_json::Map` ohne `preserve_order` ein `BTreeMap` ist.
+
+⚑ **Wo ein Modell eine Vorlage mitbringt, gilt sie zeichengenau.**
+`Ansageform::Amtlich` ist seither die Vorgabe und wortgleich zur
+Vorlage; `Ansageform::Deutsch` bleibt als Vergleichsschalter stehen.
+Die Vorgabe ruht dabei auf der Vorlage und nicht auf einer Messung, und
+das steht ausdrücklich am Typ, damit niemand sie für belegt hält.
+
+⚑ **Gebunden in zwei Schichten**, denn eine Kopie kann altern:
+`tests/werkzeugansage.rs` prüft die erzeugte Ansage gegen eine im
+Repositorium abgelegte Kopie (läuft in der CI), und die Kopie gegen die
+echte Vorlage des Modells (läuft, wo das Modell liegt).
+
+⛑ **Nachgetragen am 2026-09-10.** Das Manifest von `myl-local-agent`
+trug 0.8.1 seit dem 2026-09-09, dieser Changelog stand auf 0.14.0 mit
+`myl-local-agent` 0.7.0 in der Kopfzeile.
 
 ### v0.14.0 – 2026-09-05 (Punkt 5.7: ein Steckplatz, der tun darf und nicht erlauben, und die Schleife, die beides zusammenhält)
 

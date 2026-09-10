@@ -35,9 +35,15 @@ pub mod kapazitaet {
     }
 }
 
+pub mod aktualisierung;
 pub mod einstellungen;
+pub mod hardware;
 pub mod lauf;
+pub mod markdown;
 pub mod oertlich;
+pub mod ort;
+pub mod reservierung;
+pub mod strom;
 pub mod ruestung;
 pub mod werkzeuge;
 
@@ -54,6 +60,12 @@ pub use myl_local_agent::werkzeug::Ansageform;
 /// Angriffsflaeche klein, und je weniger Stellen sie einbinden, desto
 /// weniger Stellen koennen sie falsch benutzen.
 pub use myl_local_agent::{Modellweg, Nachricht};
+
+/// ⚑ **Ebenfalls weitergereicht.** Wer einem Lauf zusehen will, braucht
+/// die Form der Meldung; eine eigene Abhaengigkeit auf die
+/// Vollmachtskiste dafuer waere eine Kante im Graphen fuer eine
+/// Aufzaehlung mit vier Werten.
+pub use myl_local_agent::schleife::Meldung;
 
 pub use einstellungen::Einstellungen;
 pub use oertlich::Oertlichesmodell;

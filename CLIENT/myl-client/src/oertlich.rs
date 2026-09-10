@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::generate::generate;
+use integer_llm_runtime::generate::{generate_beobachtet, Erzeugung};
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -121,6 +121,32 @@ impl Vorlage {
     }
 }
 
+/// Die Token, bei denen eine Antwort dieses Modells zu Ende ist.
+///
+/// ⚑ **Aus dem Wortschatz und nicht aus einer Tabelle.** Was eine
+/// Endmarke ist, steht im Wortschatz des Modells; eine Tokennummer im
+/// Quelltext passte zu genau einem.
+///
+/// ⛑ **Nur, was zu **einem** Token wird, zaehlt.** Kennt ein Wortschatz
+/// die Marke nicht als Sonderzeichen, zerlegt er sie in gewoehnliche
+/// Stuecke, und dann waere ein Halt darauf ein Halt mitten im Text: Das
+/// Stueck `<` beendete jede Antwort, die eine spitze Klammer enthaelt.
+fn haltemarken(wortschatz: &Tokenizer, familie: &str) -> Vec<usize> {
+    // ⚑ `<|endoftext|>` gilt fuer beide Vorlagen; `<|im_end|>` beendet
+    // eine Runde und hat nur dort einen Sinn, wo es Runden gibt.
+    let marken: &[&str] = match Vorlage::fuer_familie(familie) {
+        Vorlage::ChatMl => &["<|im_end|>", "<|endoftext|>"],
+        Vorlage::Fortsetzung => &["<|endoftext|>"],
+    };
+    marken
+        .iter()
+        .filter_map(|m| {
+            let t = wortschatz.encode(m);
+            (t.len() == 1).then(|| t[0])
+        })
+        .collect()
+}
+
 /// Das Modell im eigenen Speicher.
 pub struct Oertlichesmodell {
     modell: Arc<IntegerModel>,
@@ -140,11 +166,96 @@ pub struct Oertlichesmodell {
     /// Werkzeugaufrufe, keine Ueberlegung; und jedes Denktoken kostet
     /// dieselbe Rechenzeit wie ein Antworttoken.
     pub denken: bool,
+    /// Die Token, bei denen eine Antwort zu Ende ist.
+    ///
+    /// # ⛑ Der Fehler, aus dem dieses Feld entstanden ist
+    ///
+    /// **Ohne Haltemarken rechnet die Erzeugung stur bis zur Grenze.**
+    /// Gemessen am 2026-09-10 mit Qwen3-4B und 600 Token: Das Modell
+    /// beendete seine Antwort, schrieb `<|im_end|>`, dann
+    /// `<|endoftext|>` und **erfand danach ein ganzes Gespraech
+    /// weiter**, samt einem zweiten, ausgedachten Nutzer. Der Zuschnitt
+    /// der fertigen Antwort schnitt das ab; **die laufende Anzeige
+    /// nicht**, und im Agentenlauf ging der erfundene Text als
+    /// Modellantwort in die naechste Runde.
+    ///
+    /// ⚑ **Das ist kein Fehler des Modells, sondern seine Aufgabe.** Es
+    /// setzt Text fort, und nach einer beendeten Antwort setzt es die
+    /// naechste Runde fort. Wer es aufhalten will, sagt ihm, wo.
+    ///
+    /// ⚑ **Hergeleitet aus dem Wortschatz und nicht hingeschrieben.**
+    /// Eine Tokennummer im Quelltext waere eine Zahl, die zu genau
+    /// einem Modell passt.
+    pub halt: Vec<usize>,
+    /// Wer beim Schreiben zusehen will.
+    ///
+    /// # ⚑ Warum der Beobachter am Modell haengt und nicht am Aufruf
+    ///
+    /// **Weil beide Wege ihn brauchen und nur einer davon ihn
+    /// durchreichen koennte.** Eine Frage ruft `chat` unmittelbar; ein
+    /// Agentenlauf ruft es aus der Schleife heraus, und die liegt in
+    /// `myl-local-agent`. Jene Kiste traegt eine Vollmacht und haelt
+    /// ihre Flaeche klein; ihr einen Anzeigeweg durchzureichen kehrte
+    /// die Entscheidung um, die sie ueberhaupt begruendet.
+    ///
+    /// ⚑ **So meldet das Modell selbst, was es gerade schreibt**, und
+    /// die Schleife merkt davon nichts.
+    ///
+    /// ⚑ **Er bekommt fertige Stuecke und keinen rohen Zuwachs.**
+    /// Ob ein Stueck Ueberlegung oder Antwort ist, entscheidet sich an
+    /// Marken im Strom, und die kommen zerrissen an: `</think>` trifft
+    /// als `</`, `think`, `>` ein. Das gehoert einmal geloest und nicht
+    /// bei jedem, der zusieht; [`crate::strom::Zerleger`] tut es.
+    ///
+    /// ⛑ **Und das Ende einer Antwort weiss nur diese Stelle.** Ein
+    /// Zerleger haelt zurueck, was noch eine Marke werden koennte;
+    /// ohne einen Abschluss verschwaenden die letzten Zeichen jeder
+    /// Antwort. Wer den Zerleger aussen hielte, muesste raten, wann er
+    /// ihn leert, und beim Agenten liegen zwischen zwei Antworten
+    /// Werkzeugaufrufe.
+    ///
+    /// ⛑ **`Fn` und nicht `FnMut`:** [`Modellweg::chat`] nimmt `&self`,
+    /// und das Modell wird ueber Faeden geteilt (Punkt 0.5). Wer hier
+    /// veraenderlichen Zustand braucht, legt ihn hinter ein eigenes
+    /// Schloss und nicht in diese Naht.
+    pub beobachter: Option<Box<dyn Fn(crate::strom::Stueck) + Send + Sync>>,
 }
 
 impl Oertlichesmodell {
-    /// Laedt ein Artefaktverzeichnis.
-    pub fn laden(verzeichnis: &str) -> Result<Self, String> {
+    /// Laedt ein Artefaktverzeichnis, soweit die Freigabe es zulaesst.
+    ///
+    /// # ⚑ Warum die Schranke hier steht und nicht beim Aufrufer
+    ///
+    /// **Weil es sieben Aufrufer gibt.** Eine Pruefung daneben waere an
+    /// sechs Stellen richtig und an der siebten vergessen, und das ist
+    /// die haeufigste Fehlerklasse dieses Projekts. Hier kommt niemand
+    /// daran vorbei, denn der Uebersetzer verlangt die Freigabe als
+    /// Argument.
+    ///
+    /// ⛑ **Und sie ist vorsichtig und nicht genau.** Gemessen wird die
+    /// Groesse des Artefakts auf der Platte; die Gewichte werden aber
+    /// **speicherabgebildet**, der wirkliche Verbrauch liegt also
+    /// darunter und haengt daran, wie viel davon angefasst wird. Die
+    /// Schranke lehnt damit gelegentlich etwas ab, das gerade noch
+    /// gepasst haette. **Das ist die richtige Richtung zu irren:** Ein
+    /// abgelehntes Laden ist ein Satz, ein zu spaet bemerkter
+    /// Speichermangel ist ein toter Rechner.
+    pub fn laden(
+        verzeichnis: &str,
+        kapazitaet: &crate::einstellungen::Kapazitaet,
+    ) -> Result<Self, String> {
+        if let Some(grenze) = kapazitaet.speicher_gib {
+            let braucht = crate::reservierung::belegung(Path::new(verzeichnis));
+            let erlaubt = grenze as u64 * crate::hardware::GIB;
+            if braucht > erlaubt {
+                let gib = |b: u64| b as f64 / crate::hardware::GIB as f64;
+                return Err(format!(
+                    "Das Artefakt belegt {:.1} GiB, freigegeben sind {grenze} GiB \
+                     Arbeitsspeicher. Erhöhe die Freigabe oder wähle ein kleineres Modell.",
+                    gib(braucht)
+                ));
+            }
+        }
         let modell = load_model(Path::new(verzeichnis)).map_err(|e| format!("Modell: {e}"))?;
         let wortschatz = Tokenizer::from_file(
             &format!("{verzeichnis}/tokenizer.json"),
@@ -160,6 +271,7 @@ impl Oertlichesmodell {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        let halt = haltemarken(&wortschatz, &familie);
         Ok(Self {
             modell: Arc::new(modell),
             wortschatz,
@@ -168,7 +280,24 @@ impl Oertlichesmodell {
             gierig: true,
             saat: 0,
             denken: false,
+            halt,
+            beobachter: None,
         })
+    }
+
+    /// Die Laufparameter dieses Modells, an einer Stelle.
+    ///
+    /// ⚑ **Damit beide Zweige dieselben nehmen.** Ein Lauf mit
+    /// Zuschauer und einer ohne unterscheiden sich nur im Zuschauer;
+    /// zwei getippte Parameterlisten koennten irgendwann mehr
+    /// unterscheiden, und dann haetten sie verschiedene Antworten.
+    fn erzeugung(&self, grenze: usize) -> Erzeugung<'_> {
+        Erzeugung {
+            max_new_tokens: grenze,
+            seed: self.saat,
+            greedy: self.gierig,
+            halt: &self.halt,
+        }
     }
 
     /// Welche Vorlage dieses Artefakt versteht.
@@ -220,14 +349,57 @@ impl Modellweg for Oertlichesmodell {
         let prompt = self.vorlage().bauen(nachrichten, self.denken);
         let hinein = self.wortschatz.encode(&prompt).len();
         let grenze = max_tokens.map(|m| m as usize).unwrap_or(self.grenze);
-        let token = generate(
-            &self.modell,
-            &self.wortschatz,
-            &prompt,
-            grenze,
-            self.saat,
-            self.gierig,
-        );
+        let token = match &self.beobachter {
+            // ⚑ Auch ohne Zuschauer wird gehalten: Die Marken gehoeren
+            // zur Antwort und nicht zur Anzeige. Ohne sie rechnete
+            // `myl frage` dieselben ueberzaehligen Token wie das
+            // Fenster, nur ohne dass jemand zusieht.
+            None => generate_beobachtet(
+                &self.modell,
+                &self.wortschatz,
+                &prompt,
+                &self.erzeugung(grenze),
+                &mut |_| {},
+            ),
+            // ⚑ **Der Zuwachs entsteht aus der ganzen Folge und nicht
+            // aus dem einzelnen Token**, und das ist kein Umweg.
+            // Ein Token ist ein Wortteil und manchmal nur ein Stueck
+            // einer Mehrbytefolge; wer jedes fuer sich dekodiert,
+            // schreibt Ersatzzeichen ins Fenster. Die ganze Folge zu
+            // dekodieren und den Zuwachs zu nehmen ist die einzige
+            // Lesart, die immer stimmt.
+            Some(f) => {
+                let mut bisher = String::new();
+                let mut alle: Vec<usize> = Vec::with_capacity(grenze);
+                let mut zerleger = crate::strom::Zerleger::neu();
+                let token = generate_beobachtet(
+                    &self.modell,
+                    &self.wortschatz,
+                    &prompt,
+                    &self.erzeugung(grenze),
+                    &mut |t| {
+                        alle.push(t);
+                        let jetzt = self.wortschatz.decode(&alle);
+                        if let Some(zuwachs) = jetzt.strip_prefix(&bisher) {
+                            if !zuwachs.is_empty() {
+                                for s in zerleger.schluck(zuwachs) {
+                                    f(s);
+                                }
+                            }
+                        }
+                        bisher = jetzt;
+                    },
+                );
+                // ⚑ **Der Abschluss gehoert hierher und nirgends
+                // sonst.** Genau hier endet eine Antwort, und nur hier
+                // ist bekannt, dass sie endet: Beim Agenten folgt
+                // danach ein Werkzeugaufruf und dann die naechste.
+                for s in zerleger.abschluss() {
+                    f(s);
+                }
+                token
+            }
+        };
         let text = self.wortschatz.decode(&token);
         // ⚑ Die Endmarke gehoert nicht in die Antwort; sie ist Rahmen
         // und nicht Inhalt.

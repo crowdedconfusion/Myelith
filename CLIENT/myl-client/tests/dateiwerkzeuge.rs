@@ -111,6 +111,7 @@ fn fahren(
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
         max_tokens: Some(64),
         ansageform: Default::default(),
+        melder: None,
     }
     .fahren("Schreibe eine Datei.")
 }
@@ -215,7 +216,11 @@ fn lesen_und_auflisten_kommen_durch() {
         false,
         true,
         vec![
-            ruf(VERZEICHNIS, serde_json::json!({})),
+            // ⚑ **Mit `tiefe`, denn es ist verlangt.** Seit dem
+            // 2026-09-10 hat kein Werkzeug mehr einen optionalen
+            // Parameter: Ein Aufruf ohne Argumente wird abgewiesen,
+            // und das ist der Sinn der Aenderung.
+            ruf(VERZEICHNIS, serde_json::json!({"tiefe": 1})),
             ruf(LESEN, serde_json::json!({"pfad": "da.txt"})),
         ],
     );

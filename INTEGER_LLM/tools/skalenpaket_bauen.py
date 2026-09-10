@@ -10,7 +10,7 @@ Groesse: unter 1,5 MB je Modell. Die Gewichte selbst werden NICHT
 mitverteilt; sie kommen von Hugging Face.
 
 Usage:
-    python tools/skalenpaket_bauen.py qwen2.5-0.5b [qwen2.5-7b ...]
+    python tools/skalenpaket_bauen.py myelith-0.5b [myelith-7b ...]
 """
 import hashlib
 import json

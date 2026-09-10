@@ -39,7 +39,7 @@ Deshalb wird nicht das Modell verteilt, sondern die Skalen.
 
 ```bash
 huggingface-cli download Qwen/Qwen2.5-0.5B --local-dir INTEGER_LLM/models/Qwen2.5-0.5B
-INTEGER_LLM_MODEL=qwen2.5-0.5b python -m calibrate.src.main
+INTEGER_LLM_MODEL=myelith-0.5b python -m calibrate.src.main
 ```
 
 Das Paket wird automatisch gefunden und verwendet. Der Bau dauert damit
@@ -83,8 +83,8 @@ berichten, wofür es ihn gibt.
 Nach einem θ_v-Sprung:
 
 ```bash
-INTEGER_LLM_SCALE_PACK=0 INTEGER_LLM_MODEL=qwen2.5-0.5b python -m calibrate.src.main
-python tools/skalenpaket_bauen.py qwen2.5-0.5b qwen2.5-7b
+INTEGER_LLM_SCALE_PACK=0 INTEGER_LLM_MODEL=myelith-0.5b python -m calibrate.src.main
+python tools/skalenpaket_bauen.py myelith-0.5b myelith-7b
 ```
 
 Ein Paket ist an **eine** Spec-Version gebunden. Passt sie nicht zur

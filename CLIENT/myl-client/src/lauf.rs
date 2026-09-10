@@ -31,6 +31,16 @@ pub enum Schritt {
     /// und genau daran erkennt man einen falschen Plan, **bevor** das
     /// Werkzeug ihn ausfuehrt.
     Plan(String),
+    /// Was das Modell dabei ueberlegt hat.
+    ///
+    /// ⛑ **Bis zum 2026-09-10 steckte das im Plan.** `ohne_aufrufe`
+    /// schnitt die Werkzeugaufrufe heraus und den Denkblock nicht, und
+    /// so stand die ganze Ueberlegung als Zeile in der Befehlsliste,
+    /// gemeldet vom Projektinhaber. **Sie ist kein Befehl**, und sie
+    /// gehoert in ihre eigene Klappe: Nach einem Werkzeugaufruf faengt
+    /// das Modell neu an zu ueberlegen, und das ist ein neuer Block und
+    /// keine Fortsetzung des alten.
+    Denken(String),
     /// Ein Werkzeugaufruf, wie das Modell ihn vorschlug.
     Aufruf {
         /// Der Name des Werkzeugs.
@@ -109,6 +119,37 @@ pub fn fahren(
     max_tokens: u32,
     auftrag: &str,
 ) -> Ausgang {
+    fahren_beobachtet(modell, ruestung, schritte, bezeugtes, max_tokens, auftrag, None)
+}
+
+/// Wie [`fahren`], meldet aber **waehrend** des Laufs, was geschieht.
+///
+/// # ⚑ Wofuer das da ist
+///
+/// Ein Werkzeug, das ein Verzeichnis durchsucht, laeuft merklich lange.
+/// Wer erst am Ende anzeigt, zeigt in dieser Zeit ein Fenster, das
+/// stillsteht, und ein stehendes Fenster sieht aus wie ein
+/// abgestuerztes.
+///
+/// ⚑ **Der Melder sieht zu und entscheidet nichts.** Er wird an
+/// Stellen gerufen, an denen die Entscheidung schon gefallen ist, und
+/// gibt nichts zurueck. Ein Haken, der den Lauf beeinflussen koennte,
+/// waere eine zweite Quelle fuer Erlaubnisse neben Erlaubnis und
+/// Betriebsart.
+///
+/// ⛑ **Und der laufende Text kommt nicht von hier**, sondern vom
+/// Modell selbst: `Oertlichesmodell::beobachter` meldet jedes Token,
+/// sobald es dasteht. Die Schleife weiss davon nichts, und sie soll es
+/// auch nicht wissen.
+pub fn fahren_beobachtet(
+    modell: &dyn myl_local_agent::tuerklient::Modellweg,
+    ruestung: &Ruestung,
+    schritte: usize,
+    bezeugtes: bool,
+    max_tokens: u32,
+    auftrag: &str,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+) -> Ausgang {
     let anfang = std::time::Instant::now();
     let grenzen = myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen::neu(
         kontrakt_fuer(schritte),
@@ -135,6 +176,7 @@ pub fn fahren(
         adressen: &zuordnung,
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
         max_tokens: Some(max_tokens),
+        melder,
     }
     .fahren(auftrag);
 
@@ -157,15 +199,30 @@ pub fn verlauf_aus(
     for n in nachrichten {
         match n.role.as_str() {
             "assistant" => {
+                // ⚑ **Zerlegt wird mit demselben Werkzeug wie im
+                // laufenden Strom**, und das ist der ganze Grund, warum
+                // es hier steht: Zwei Lesarten derselben Antwort liefen
+                // auseinander, und die Anzeige zeigte je nach Weg
+                // etwas anderes.
+                let (denken, prosa) = denken_und_prosa(&n.content);
+
                 let rufe = myl_local_agent::werkzeug::vorschlaege(&n.content);
                 if rufe.is_empty() {
-                    let t = n.content.trim();
-                    if !t.is_empty() {
-                        letzte = Some(t.to_string());
+                    // ⚑ Auch eine Schlussantwort kann eine Ueberlegung
+                    // vor sich haben; sie gehoert in ihre Klappe und
+                    // nicht in die Antwort.
+                    if !denken.is_empty() {
+                        aus.push(Schritt::Denken(denken));
+                    }
+                    if !prosa.is_empty() {
+                        letzte = Some(prosa);
                     }
                     continue;
                 }
-                let dazwischen = ohne_aufrufe(&n.content);
+                if !denken.is_empty() {
+                    aus.push(Schritt::Denken(denken));
+                }
+                let dazwischen = eine_zeile(&prosa, 200);
                 if !dazwischen.is_empty() {
                     aus.push(Schritt::Plan(dazwischen));
                 }
@@ -187,6 +244,30 @@ pub fn verlauf_aus(
         aus.push(Schritt::Antwort(t.clone()));
     }
     (aus, letzte)
+}
+
+/// Ueberlegung und Prosa einer Modellantwort, getrennt.
+///
+/// ⚑ **Ueber denselben Zerleger wie der laufende Strom.** Eine zweite
+/// Lesart derselben Antwort liefe auseinander, und die Anzeige zeigte
+/// je nach Weg etwas anderes.
+pub fn denken_und_prosa(inhalt: &str) -> (String, String) {
+    let mut z = crate::strom::Zerleger::neu();
+    let mut stuecke = z.schluck(inhalt);
+    stuecke.extend(z.abschluss());
+    let sammeln = |waehle: fn(&crate::strom::Stueck) -> Option<&str>| -> String {
+        stuecke.iter().filter_map(waehle).collect::<String>().trim().to_string()
+    };
+    (
+        sammeln(|s| match s {
+            crate::strom::Stueck::Denken(t) => Some(t.as_str()),
+            _ => None,
+        }),
+        sammeln(|s| match s {
+            crate::strom::Stueck::Text(t) => Some(t.as_str()),
+            _ => None,
+        }),
+    )
 }
 
 /// Der Text einer Antwort **ohne** die Werkzeugaufrufe darin.
@@ -294,5 +375,97 @@ mod anzeige {
     fn ein_langes_argument_wird_gekuerzt() {
         let a = serde_json::json!({"inhalt": "x".repeat(200)});
         assert!(kurzform(&a).chars().count() < 60);
+    }
+}
+
+#[cfg(test)]
+mod denkschritte {
+    use super::*;
+
+    fn nachricht(rolle: &str, inhalt: &str) -> myl_local_agent::tuerklient::Nachricht {
+        myl_local_agent::tuerklient::Nachricht {
+            role: rolle.to_string(),
+            content: inhalt.to_string(),
+        }
+    }
+
+    /// ⛑ **Der gemeldete Fehler vom 2026-09-10.**
+    ///
+    /// Die Ueberlegung stand als Zeile in der Befehlsliste, weil
+    /// `ohne_aufrufe` nur die Werkzeugaufrufe herausschnitt und den
+    /// Denkblock stehen liess. **Sie ist kein Befehl.**
+    #[test]
+    fn die_ueberlegung_ist_kein_befehl() {
+        let inhalt = "<think>Ich muss das Verzeichnis lesen.</think>Ich sehe nach. \
+                      <tool_call>{\"name\":\"verzeichnis\",\"arguments\":{}}</tool_call>";
+        let (verlauf, _) = verlauf_aus(&[nachricht("assistant", inhalt)]);
+
+        let denken: Vec<_> = verlauf
+            .iter()
+            .filter_map(|s| match s {
+                Schritt::Denken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(denken, ["Ich muss das Verzeichnis lesen."], "das Denken fehlt als eigener Schritt");
+
+        for s in &verlauf {
+            if let Schritt::Plan(t) = s {
+                assert!(
+                    !t.contains("Ich muss das Verzeichnis lesen"),
+                    "die Ueberlegung steht immer noch im Plan: {t}"
+                );
+                assert_eq!(t, "Ich sehe nach.");
+            }
+        }
+    }
+
+    /// ⚑ **Nach einem Werkzeugaufruf ist es ein NEUER Block.**
+    ///
+    /// Das Modell faengt dort neu an zu ueberlegen; zwei Ueberlegungen
+    /// in einer Klappe waeren die Behauptung, es sei ein Gedankengang
+    /// gewesen.
+    #[test]
+    fn nach_dem_werkzeug_beginnt_eine_neue_ueberlegung() {
+        let verlauf = vec![
+            nachricht("assistant", "<think>Erst nachsehen.</think><tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>"),
+            nachricht("tool", "12:00"),
+            nachricht("assistant", "<think>Jetzt kann ich antworten.</think>Es ist zwölf."),
+        ];
+        let (schritte, antwort) = verlauf_aus(&verlauf);
+
+        let denken: Vec<_> = schritte
+            .iter()
+            .filter_map(|s| match s {
+                Schritt::Denken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            denken,
+            ["Erst nachsehen.", "Jetzt kann ich antworten."],
+            "die beiden Ueberlegungen sind nicht getrennt"
+        );
+
+        // ⚑ Und die zweite steht **nach** dem Ergebnis, nicht davor.
+        let i = schritte.iter().position(|s| matches!(s, Schritt::Ergebnis(_))).expect("Ergebnis");
+        let j = schritte
+            .iter()
+            .rposition(|s| matches!(s, Schritt::Denken(_)))
+            .expect("zweite Ueberlegung");
+        assert!(i < j, "die zweite Ueberlegung steht vor dem Werkzeugergebnis");
+
+        assert_eq!(antwort.as_deref(), Some("Es ist zwölf."), "die Antwort traegt das Denken mit");
+    }
+
+    /// ⚑ **Und eine Antwort ohne Denkblock bleibt, was sie war.**
+    #[test]
+    fn ohne_denkblock_aendert_sich_nichts() {
+        let (schritte, antwort) = verlauf_aus(&[nachricht("assistant", "Schlicht geantwortet.")]);
+        assert_eq!(antwort.as_deref(), Some("Schlicht geantwortet."));
+        assert!(
+            !schritte.iter().any(|s| matches!(s, Schritt::Denken(_))),
+            "es wurde eine Ueberlegung erfunden"
+        );
     }
 }

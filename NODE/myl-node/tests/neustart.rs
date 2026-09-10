@@ -320,7 +320,7 @@ async fn ein_neu_gestarteter_knoten_stimmt_mit_dem_durchlaufenden_ueberein() {
         ortsleitung: None,
         ortsausweis: None,
         pod: None,
-        modellname: "myelith-qwen2.5-0.5b".to_string(),
+        modellname: "myelith-myelith-0.5b".to_string(),
         kontoschluesseldatei: None,
         konto: None,
         testverkehr_sekunden: None,

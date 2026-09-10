@@ -23,7 +23,7 @@ bf16-ULP 8, die Referenz koennte den Unterschied gar nicht aufloesen
 Gleitkomma erlaubt — Referenzmessung, nicht Inferenzpfad.
 
 Usage:
-    INTEGER_LLM_MODEL=qwen2.5-0.5b python -u tests/diag/token_scale_simulation.py <tok...>
+    INTEGER_LLM_MODEL=myelith-0.5b python -u tests/diag/token_scale_simulation.py <tok...>
 """
 import sys
 from pathlib import Path

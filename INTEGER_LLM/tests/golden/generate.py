@@ -177,7 +177,7 @@ VECTORS_DIR = Path(__file__).parent / "vectors"
 # (generate_layer_vectors). Das Manifest verzeichnet die Bindung, damit
 # ein Prüfer vor dem Lauf entscheiden kann, ob sein Artefakt zu den
 # Vektoren passt — statt es zu raten oder blind zu laden.
-MANIFEST_MODELL = "qwen2.5-0.5b"
+MANIFEST_MODELL = "myelith-0.5b"
 
 
 class GoldenVector:

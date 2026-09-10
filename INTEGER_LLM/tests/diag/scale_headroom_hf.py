@@ -30,7 +30,7 @@ from wikitext_common import select_sequences         # noqa: E402
 from src.paths import model_artifacts_dir            # noqa: E402
 
 ACTIVATION_MAX_INT = 32767
-MODEL_NAME = "qwen2.5-0.5b"
+MODEL_NAME = "myelith-0.5b"
 
 
 def main():

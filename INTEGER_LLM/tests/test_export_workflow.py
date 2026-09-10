@@ -57,16 +57,16 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def test_get_export_model_config_accepts_verified_variant():
-    config = get_export_model_config("qwen2.5-0.5b")
+    config = get_export_model_config("myelith-0.5b")
     assert config["num_kv_heads"] == 2
     assert config["tie_word_embeddings"] is True
 
 
 def test_get_export_model_config_rejects_unverified_variant():
     # 7B hat (noch) kein verifiziertes num_kv_heads/tie_word_embeddings.
-    assert "num_kv_heads" not in get_model_config("qwen2.5-7b-instruct")
+    assert "num_kv_heads" not in get_model_config("myelith-7b-instruct")
     try:
-        get_export_model_config("qwen2.5-7b-instruct")
+        get_export_model_config("myelith-7b-instruct")
         raise AssertionError("Unvollstaendige Variante haette fehlschlagen muessen")
     except ValueError as e:
         assert "num_kv_heads" in str(e)
@@ -432,7 +432,7 @@ def test_7b_config_matches_published_hf_config():
     """
     from src.model_configs import get_export_model_config
 
-    c = get_export_model_config("qwen2.5-7b")
+    c = get_export_model_config("myelith-7b")
     erwartet = {
         "num_layers": 28,          # num_hidden_layers
         "hidden_size": 3584,
@@ -462,7 +462,7 @@ def test_artifact_model_config_omits_provenance_fields():
     """
     from src.model_configs import artifact_model_config, _REQUIRED_EXPORT_FIELDS
 
-    cfg = artifact_model_config("qwen2.5-7b")
+    cfg = artifact_model_config("myelith-7b")
     assert "verified" not in cfg and "hf_model_id" not in cfg
     # Alles Uebrige, was der Loader braucht, ist noch da.
     for feld in _REQUIRED_EXPORT_FIELDS:
@@ -480,8 +480,8 @@ def test_gptq_hessian_bedarf_waechst_quadratisch():
     from src.model_configs import get_export_model_config
     from src.main import gptq_hessian_bytes
 
-    klein = gptq_hessian_bytes(get_export_model_config("qwen2.5-0.5b"))
-    gross = gptq_hessian_bytes(get_export_model_config("qwen2.5-7b"))
+    klein = gptq_hessian_bytes(get_export_model_config("myelith-0.5b"))
+    gross = gptq_hessian_bytes(get_export_model_config("myelith-7b"))
     assert 2.0 < klein / 2**30 < 3.0, f"0.5B: {klein / 2**30:.1f} GB"
     assert 40.0 < gross / 2**30 < 50.0, f"7B: {gross / 2**30:.1f} GB"
 
@@ -513,15 +513,15 @@ def test_gptq_entscheidung_env_override():
     alt = os.environ.get("INTEGER_LLM_GPTQ")
     try:
         os.environ["INTEGER_LLM_GPTQ"] = "0"
-        an, _ = gptq_entscheidung(get_export_model_config("qwen2.5-0.5b"))
+        an, _ = gptq_entscheidung(get_export_model_config("myelith-0.5b"))
         assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
 
         os.environ["INTEGER_LLM_GPTQ"] = "1"
-        an, grund = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
+        an, grund = gptq_entscheidung(get_export_model_config("myelith-7b"))
         assert an is True, f"INTEGER_LLM_GPTQ=1 muss GPTQ einschalten, Grund: {grund}"
 
         os.environ.pop("INTEGER_LLM_GPTQ")
-        an, grund = gptq_entscheidung(get_export_model_config("qwen2.5-7b"))
+        an, grund = gptq_entscheidung(get_export_model_config("myelith-7b"))
         assert an is False, (
             "ohne Vorgabe ist GPTQ aus (Festlegung vom 2026-08-20), "
             f"Grund: {grund}"
@@ -547,14 +547,14 @@ def test_gptq_group_size_fits_within_ram_budget():
     from src.model_configs import get_export_model_config
     from src.main import gptq_group_size, gptq_hessian_bytes_per_layer
 
-    cfg_05b = get_export_model_config("qwen2.5-0.5b")
+    cfg_05b = get_export_model_config("myelith-0.5b")
     groesse_05b = gptq_group_size(cfg_05b)
     assert groesse_05b == cfg_05b["num_layers"], (
         f"0.5B muss in einer Gruppe passen, war {groesse_05b} von "
         f"{cfg_05b['num_layers']} Ebenen"
     )
 
-    cfg_7b = get_export_model_config("qwen2.5-7b")
+    cfg_7b = get_export_model_config("myelith-7b")
     groesse_7b = gptq_group_size(cfg_7b)
     per_layer = gptq_hessian_bytes_per_layer(cfg_7b)
     assert groesse_7b < cfg_7b["num_layers"], (
@@ -581,14 +581,14 @@ def test_model_name_folgt_umgebungsvariable():
 
     alt = os.environ.get("INTEGER_LLM_MODEL")
     try:
-        os.environ["INTEGER_LLM_MODEL"] = "qwen2.5-7b"
+        os.environ["INTEGER_LLM_MODEL"] = "myelith-7b"
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "qwen2.5-7b"
+        assert main_mod.MODEL_NAME == "myelith-7b"
         assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-7B"
 
         os.environ.pop("INTEGER_LLM_MODEL")
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "qwen2.5-0.5b", "Vorgabe bleibt 0.5B"
+        assert main_mod.MODEL_NAME == "myelith-0.5b", "Vorgabe bleibt 0.5B"
         assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-0.5B"
     finally:
         os.environ.pop("INTEGER_LLM_MODEL", None)

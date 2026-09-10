@@ -80,7 +80,7 @@ impl Einstellungen {
     /// eine Frage, die noch niemand gestellt hat.
     /// Das gewählte Modell, wie es in der Übersicht erscheint.
     ///
-    /// Der Verzeichnisname ist der Modellschlüssel (`qwen2.5-0.5b`), also
+    /// Der Verzeichnisname ist der Modellschlüssel (`myelith-0.5b`), also
     /// genau das, was auch im Protokoll und im Register steht. Liegt
     /// nichts da, wird das gesagt statt ein Pfad gezeigt, den es nicht
     /// gibt: Ein Lauf ohne Artefakt schlägt fehl, und wer das vorher
@@ -1264,7 +1264,7 @@ fn sprechen(e: &Einstellungen) {
         }
 
         // Der Name kommt aus dem Artefaktverzeichnis, nicht aus der
-        // Voreinstellung: Wer 7B geladen hat, soll nicht „qwen2.5-0.5b"
+        // Voreinstellung: Wer 7B geladen hat, soll nicht „myelith-0.5b"
         // lesen. Eine falsche Beschriftung neben einer echten Antwort ist
         // schlechter als gar keine.
         let name = artefakt
@@ -2317,7 +2317,7 @@ mod tests {
     #[test]
     fn mit_auswahl_stehen_die_namen_da() {
         let voll = Einstellungen {
-            artifacts: Some(PathBuf::from("/irgendwo/qwen2.5-0.5b")),
+            artifacts: Some(PathBuf::from("/irgendwo/myelith-0.5b")),
             testdatei: Some("standard".into()),
             prompts: vec!["a".into(), "b".into()],
             steps: 32,
@@ -2325,7 +2325,7 @@ mod tests {
             ..einstellungen_probe()
         };
         let text = voll.als_text();
-        assert!(text.contains("qwen2.5-0.5b"), "{text}");
+        assert!(text.contains("myelith-0.5b"), "{text}");
         assert!(text.contains("standard"), "{text}");
         assert!(
             text.contains("2 Prompts, 32 Token, 4 Shards"),

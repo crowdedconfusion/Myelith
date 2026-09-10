@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn layer_und_e2e_vektoren_bestehen_gegen_das_artefakt() {
         let wurzel = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let artefakt = wurzel.join("../artifacts/qwen2.5-0.5b");
+        let artefakt = wurzel.join("../artifacts/myelith-0.5b");
         let vektoren = wurzel.join("../conformance/vectors");
         if !artefakt.is_dir() || !vektoren.is_dir() {
             eprintln!("SKIP: Artefakt oder Vektoren fehlen ({})", artefakt.display());

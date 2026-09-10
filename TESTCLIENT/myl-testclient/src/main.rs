@@ -95,9 +95,9 @@ OPTIONEN
                         urteilt zu Recht UNVOLLSTÄNDIG.
     --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
                         Modell und prüft die Datei gegen ihre Prüfsumme.
-    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: qwen2.5-0.5b)
+    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: myelith-0.5b)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
-    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: qwen2.5-0.5b)
+    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: myelith-0.5b)
     --erwarte <DIGEST>  Erwarteter Vergleichswert. Der Lauf schlägt fehl,
                         wenn er einen anderen erzeugt. Für die CI nach
                         einem Modellwechsel: Ab da meldet sich jede

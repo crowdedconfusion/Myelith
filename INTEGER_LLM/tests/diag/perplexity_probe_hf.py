@@ -18,7 +18,7 @@ Funde 15/16 aufgebrochen.
 Gleitkomma ist hier erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=qwen2.5-7b python tests/diag/perplexity_probe_hf.py
+Usage: INTEGER_LLM_MODEL=myelith-7b python tests/diag/perplexity_probe_hf.py
 """
 import os
 import sys

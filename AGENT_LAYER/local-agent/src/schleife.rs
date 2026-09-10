@@ -88,6 +88,47 @@ pub struct Lauf<'a> {
     /// Herleitung und dafuer, warum die deutsche Fassung als Schalter
     /// stehen bleibt, bis die Agentenprobe gelaufen ist.
     pub ansageform: crate::werkzeug::Ansageform,
+    /// Wer zusehen will, waehrend es geschieht.
+    ///
+    /// # ⚑ Warum das eine Meldung ist und keine Rueckfrage
+    ///
+    /// **Der Melder bekommt zu sehen und entscheidet nichts.** Er gibt
+    /// nichts zurueck, und er wird an Stellen gerufen, an denen die
+    /// Entscheidung schon gefallen ist. Ein Haken, der den Lauf
+    /// beeinflussen koennte, waere eine zweite Quelle fuer Erlaubnisse
+    /// neben [`Erlaubnis`] und [`Betriebsart`], und genau die darf es
+    /// nicht geben: Diese Kiste traegt eine Vollmacht.
+    ///
+    /// ⛑ **`None` heisst: niemand sieht zu**, und der Lauf ist dann
+    /// Zeichen fuer Zeichen derselbe. `ein_melder_aendert_den_lauf_nicht`
+    /// haelt das fest.
+    pub melder: Option<&'a dyn Fn(Meldung<'_>)>,
+}
+
+/// Was waehrend eines Laufs geschieht, waehrend es geschieht.
+///
+/// ⚑ **Fuer eine Anzeige und nicht fuer ein Protokoll.** Das Protokoll
+/// ist der Sitzungsstrom; er ist vollstaendig, kommt am Ende und ist
+/// die Grundlage jeder Nachrechnung. Diese Meldungen sind der Blick
+/// waehrenddessen, und deshalb tragen sie geliehene Zeichenketten:
+/// Wer sie behalten will, kopiert sie selbst.
+#[derive(Debug, Clone, Copy)]
+pub enum Meldung<'a> {
+    /// Das Modell wird zum `n`-ten Mal gefragt.
+    Schritt(u32),
+    /// Ein Werkzeug wird jetzt ausgefuehrt.
+    Aufruf {
+        name: &'a str,
+        argumente: &'a serde_json::Value,
+    },
+    /// Was es zurueckgab.
+    Ergebnis { name: &'a str, text: &'a str },
+    /// Ein Vorschlag wurde abgewiesen, mit dem Grund.
+    ///
+    /// ⚑ **Gehoert in die Anzeige.** Ein Agent, dessen Werkzeug
+    /// abgelehnt wurde, sieht fuer den Nutzer aus wie einer, der nichts
+    /// tut; der Grund steht sonst nur im Strom.
+    Abgelehnt { name: &'a str, grund: &'a str },
 }
 
 /// Warum ein Lauf endete.
@@ -141,11 +182,21 @@ impl<'a> Lauf<'a> {
             vec![angebot(self.kasten.angebote(), self.ansageform), Nachricht::nutzer(auftrag)];
         let mut getan: u32 = 0;
 
+        // ⚑ Der Melder wird ueber eine Hilfe gerufen und nicht an
+        // jeder Stelle ausgepackt: Ein `if let Some(...)` je Meldung
+        // waere fuenfmal dieselbe Zeile.
+        let melden = |m: Meldung<'_>| {
+            if let Some(f) = self.melder {
+                f(m);
+            }
+        };
+
         let ende = loop {
             // 1. Schrittzahl.
             if let Err(g) = self.grenzen.schritt_erlaubt(getan) {
                 break Ende::Grenze(g);
             }
+            melden(Meldung::Schritt(getan + 1));
 
             // 2. Das Modell fragen.
             let antwort =
@@ -167,6 +218,7 @@ impl<'a> Lauf<'a> {
                 // 4. Erlaubnis.
                 if let Err(a) = erlaubnis.pruefen(&v) {
                     let text = a.to_string();
+                    melden(Meldung::Abgelehnt { name: &v.name, grund: &text });
                     entschieden.push((v.clone(), Entscheidung::Abgelehnt(a)));
                     nachrichten.push(Werkzeugergebnis::nachricht(&v.name, &text));
                     ergebnisse.push(text);
@@ -176,6 +228,7 @@ impl<'a> Lauf<'a> {
                 let angebot = self.kasten.angebot(&v.name).expect("erlaubt heisst angeboten");
                 if let Err(f) = argumente_pruefen(angebot, &v) {
                     let text = f.to_string();
+                    melden(Meldung::Abgelehnt { name: &v.name, grund: &text });
                     entschieden.push((
                         v.clone(),
                         Entscheidung::Abgelehnt(crate::werkzeug::Abgelehnt {
@@ -199,6 +252,7 @@ impl<'a> Lauf<'a> {
                 };
                 if let Err(g) = self.betriebsart.pruefen(&stufe) {
                     let text = g.to_string();
+                    melden(Meldung::Abgelehnt { name: &v.name, grund: &text });
                     entschieden.push((
                         v.clone(),
                         Entscheidung::Abgelehnt(crate::werkzeug::Abgelehnt {
@@ -215,11 +269,19 @@ impl<'a> Lauf<'a> {
                 }
 
                 // 7. Und erst jetzt ausfuehren.
+                //
+                // ⚑ **Gemeldet wird davor und danach**, und beides ist
+                // noetig: Ein Werkzeug, das eine Datei durchsucht,
+                // laeuft merklich lange, und wer nur das Ergebnis
+                // meldet, zeigt in dieser Zeit ein Fenster, das
+                // stillsteht.
+                melden(Meldung::Aufruf { name: &v.name, argumente: &v.arguments });
                 let text = match self.kasten.ausfuehren_ungeprueft(&v.name, &v.arguments) {
                     Some(Ok(t)) => t,
                     Some(Err(e)) => e.grund,
                     None => "das Werkzeug hat keine Ausfuehrung".to_string(),
                 };
+                melden(Meldung::Ergebnis { name: &v.name, text: &text });
                 entschieden.push((v.clone(), Entscheidung::Erlaubt));
                 nachrichten.push(Werkzeugergebnis::nachricht(&v.name, &text));
                 ergebnisse.push(text);

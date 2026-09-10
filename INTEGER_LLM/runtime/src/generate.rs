@@ -86,6 +86,89 @@ pub fn generate(
     seed: u64,
     greedy: bool,
 ) -> Vec<usize> {
+    // ⚑ **Ohne Haltemarken**, damit diese Funktion Zeichen fuer Zeichen
+    // bleibt, was sie war: Sie steht in Beispielen und Messungen, und
+    // eine Folge, die frueher endet, waere dort ein anderer Messwert.
+    generate_beobachtet(
+        model,
+        tokenizer,
+        prompt,
+        &Erzeugung { max_new_tokens, seed, greedy, halt: &[] },
+        &mut |_| {},
+    )
+}
+
+/// Was ein Lauf der Erzeugung braucht.
+///
+/// ⚑ **Als Struktur und nicht als sechs Argumente.** Eine Liste, in der
+/// zwei Zahlen und zwei Wahrheitswerte nebeneinanderstehen, laesst sich
+/// an der Aufrufstelle vertauschen, ohne dass der Uebersetzer etwas
+/// merkt; mit Feldnamen nicht.
+pub struct Erzeugung<'a> {
+    /// Wie viele Token hoechstens erzeugt werden.
+    pub max_new_tokens: usize,
+    /// Die Saat, falls gezogen wird.
+    pub seed: u64,
+    /// Gierig waehlen statt ziehen.
+    pub greedy: bool,
+    /// Die Token, bei denen die Erzeugung endet.
+    ///
+    /// ⚑ **Leer heisst: kein Halt**, und dann ist der Lauf Zeichen fuer
+    /// Zeichen der alte.
+    pub halt: &'a [usize],
+}
+
+/// Wie [`generate`], meldet aber **jedes Token, sobald es dasteht**.
+///
+/// # ⚑ Warum das die Antwort nicht ändern kann
+///
+/// Der Beobachter bekommt den erzeugten Token und gibt nichts zurück.
+/// Er steht **hinter** der Auswahl und **vor** dem nächsten
+/// Vorwärtspass, hat also weder auf die Logits noch auf den Zustand des
+/// Zwischenspeichers Zugriff. Ein Lauf mit Beobachter und einer ohne
+/// erzeugen dieselbe Folge, und `dieselbe_folge_mit_und_ohne_beobachter`
+/// prüft genau das.
+///
+/// ⛑ **Deshalb ist [`generate`] jetzt der Sonderfall dieser Funktion
+/// und nicht ihr Zwilling.** Zwei Schleifen, die dasselbe rechnen,
+/// laufen auseinander, und die zweite ist immer die schlechter
+/// geprüfte; hier ist es dieselbe Schleife mit einem Beobachter, der
+/// nichts tut.
+///
+/// ⚑ **Gemeldet wird der Token und nicht sein Text.** Diese Kiste
+/// rechnet mit Tokennummern; was daraus ein lesbarer Text wird, weiß
+/// der Wortschatz, und ein Token ist oft nur ein Teil eines Wortes oder
+/// sogar einer Mehrbytefolge. Wer daraus laufenden Text macht, dekodiert
+/// die ganze Folge und nimmt den Zuwachs, und das gehört dorthin, wo
+/// jemand den Text anzeigt.
+///
+/// # ⛑ `halt`: die Marken, an denen eine Antwort zu Ende ist
+///
+/// **Ohne sie rechnet die Schleife stur bis `max_new_tokens`**, auch
+/// wenn das Modell nach zwanzig Token fertig ist. Was danach kommt, ist
+/// kein Fehler des Modells, sondern seine Aufgabe: Es setzt Text fort,
+/// und nach einer beendeten Antwort setzt es die **nächste Runde** fort.
+/// Gemessen an Qwen3-4B mit 600 Token Grenze entstand so ein
+/// erfundenes Gespräch samt `<|im_end|>`, `<|endoftext|>` und einem
+/// zweiten, ausgedachten Nutzer.
+///
+/// ⚑ **Die Marke selbst kommt nicht in die Ausgabe.** Sie ist Rahmen
+/// und nicht Inhalt, dieselbe Unterscheidung wie beim Zuschnitt der
+/// Antwort im Klienten. Wer sie mitgäbe, zwänge jeden Aufrufer, sie
+/// wieder abzuschneiden.
+///
+/// ⚑ **Leer heißt: kein Halt**, und dann ist diese Funktion Zeichen für
+/// Zeichen die alte. Der Konformitätspfad benutzt sie ohnehin nicht: Er
+/// geht über `dekodieren_mit_digest`, und dessen Bytefolge ist
+/// unberührt.
+pub fn generate_beobachtet(
+    model: &IntegerModel,
+    tokenizer: &Tokenizer,
+    prompt: &str,
+    lauf: &Erzeugung<'_>,
+    beobachter: &mut dyn FnMut(usize),
+) -> Vec<usize> {
+    let Erzeugung { max_new_tokens, seed, greedy, halt } = *lauf;
     let token_ids = tokenizer.encode(prompt);
     // Cache-Groesse folgt num_kv_heads (GQA), nicht num_heads: gespeichert
     // werden nur die tatsaechlich vorhandenen Key/Value-Heads.
@@ -112,7 +195,17 @@ pub fn generate(
             t
         };
         
+        // ⚑ **Die Haltemarke wird geprüft, bevor sie in die Ausgabe
+        // geht**, und deshalb steht sie weder dort noch beim
+        // Beobachter. Sonst blitzte sie im Fenster kurz auf.
+        if halt.contains(&next_token) {
+            break;
+        }
         out.push(next_token);
+        // ⚑ **Gemeldet wird, bevor der nächste Vorwärtspass läuft.** Der
+        // kostet bei einem 4B-Modell den Bruchteil einer Sekunde, und
+        // genau um den ist die Anzeige sonst hinterher.
+        beobachter(next_token);
         logits = model.forward_token(next_token, pos, &mut cache);
         pos += 1;
     }

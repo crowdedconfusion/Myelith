@@ -108,6 +108,33 @@ zulässig, solange §4(a) und §4(b) eingehalten werden. Das Skalenpaket
 (`scale_packs/`) enthält im Übrigen **keine** abgeleiteten Gewichte,
 sondern eigene Messwerte, und berührt die Frage deshalb ohnehin nicht.
 
+### Unter welcher Lizenz das Artefakt selbst steht
+
+**Unter der dieses Repositoriums, also PolyForm Shield License 1.0.0.**
+§4 der Apache-2.0 erlaubt ausdrücklich, für eine Bearbeitung **als
+Ganzes** eigene Bedingungen zu setzen, solange Nutzung, Vervielfältigung
+und Verbreitung des zugrundeliegenden Werks den Bedingungen der
+Apache-2.0 weiter genügen. Beides gilt hier nebeneinander: Die
+Grundgewichte bleiben Apache-2.0, das Artefakt trägt die Lizenz dieses
+Projekts.
+
+⚑ **Der sachliche Grund ist derselbe wie beim Namen.** Was ausgeliefert
+wird, ist nach dem Verfahren dieses Projekts quantisiert, trägt eigene
+Skalen und Nachschlagetabellen und rechnet ganzzahlig, wo das
+Grundmodell in Gleitkomma rechnet. Was dabei hinzukommt, ist die Arbeit
+dieses Projekts.
+
+⛑ **Und bis zum 2026-09-10 stand es an drei Stellen anders da**
+(Fund 295, gemeldet vom Projektinhaber). `KATALOG.json` führte ein Feld
+`lizenz` mit „Apache-2.0", die erzeugte Modelliste eine Spalte „Lizenz",
+und die Einstellungsseite des Clients zeigte diesen einen Wert hinter
+dem Namen „Myelith 4B" an. Der Wert war für sich genommen wahr und an
+dieser Stelle falsch. **Eine Angabe ist nicht dadurch richtig, dass sie
+stimmt, sondern dadurch, dass sie sich auf das bezieht, wonebendran sie
+steht.** Der Katalog führt jetzt `lizenz_gewichte` und
+`lizenz_artefakt`, und eine Prüfung hält den zweiten Wert gegen
+`LICENSE.md`.
+
 *Das ist eine Lesart des Lizenztextes, keine Rechtsberatung. Vor einem
 Genesis-Block gehört sie von jemandem geprüft, der dafür haftet. Die
 Komponente ETHICS führt die rechtliche Einordnung als offenen Punkt.*

@@ -19,6 +19,7 @@ use myl_local_agent::{Modellweg, Nachricht};
 const HILFE: &str = "\
 myl: lokaler Betrieb von Myelith
 
+  myl ort                         Wo dieses Repositorium liegt
   myl frage <artefakt> <text>     Eine Frage an das lokale Modell
   myl modell <artefakt>           Was in einem Artefakt steht
   myl agent [artefakt] <auftrag>  Die Agentenschleife, lokal
@@ -85,6 +86,7 @@ fn main() {
         Some("agent") => agent(&args[2..]),
         Some("sitzung") => sitzung(&args[2..]),
         Some("auftraege") => auftraege(&args[2..]),
+        Some("ort") => ort(),
         Some("einstellungen") => einstellungen(),
         Some("setzen") => setzen(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
@@ -162,8 +164,47 @@ fn artefakt_und_rest<'a>(
         Some(a) if !a.starts_with("--") && std::path::Path::new(a).is_dir() => {
             (Some(a.clone()), &args[1..])
         }
-        _ if !e.modell.artefakt.is_empty() => (Some(e.modell.artefakt.clone()), args),
+        // ⛑ **Gegen die Wurzel aufgeloest, seit dem 2026-09-10.** In
+        // den Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`,
+        // und das ist relativ. Aus einem anderen Arbeitsverzeichnis
+        // heraus meldete `myl` deshalb „es fehlt das
+        // Artefaktverzeichnis", obwohl es dalag; die Oberflaeche loeste
+        // denselben Pfad auf, das Bedieninstrument nicht. **Zwei
+        // Programme desselben Klienten, zwei Antworten auf dieselbe
+        // Frage.**
+        _ if !e.modell.artefakt.is_empty() => {
+            (Some(myl_client::ort::absolut(&e.modell.artefakt)), args)
+        }
         _ => (None, args),
+    }
+}
+
+/// **Wo dieses Repositorium liegt, und woher wir das wissen.**
+///
+/// ⚑ **Es gibt ihn, damit das Startskript nicht raten muss.** Wo die
+/// Ablage liegt, entscheidet `myl-client` je nach Betriebssystem; ein
+/// Shell-Skript, das denselben Pfad noch einmal zusammensetzt, waere
+/// die zweite Stelle, an der diese Entscheidung faellt.
+///
+/// ⚑ **Und der Aufruf merkt sich den Ort nebenbei.** `ort::wurzel`
+/// schreibt den Zettel, sobald sie faendig wird; ein Aufruf aus dem
+/// Klon heraus richtet damit auch das installierte Programm wieder
+/// aus, das von sich aus nichts faende.
+fn ort() -> i32 {
+    match myl_client::ort::wurzel() {
+        Some(w) => {
+            println!("{}", w.display());
+            0
+        }
+        None => {
+            eprintln!(
+                "myl ort: kein Klon gefunden.\n\
+                 Gesucht wurde ab dem Arbeitsverzeichnis und ab diesem Programm \
+                 nach `{}`.",
+                myl_client::ort::MARKE
+            );
+            1
+        }
     }
 }
 
@@ -193,9 +234,21 @@ fn einstellungen() -> i32 {
                     integer_llm_runtime::kapazitaet::kerne()
                 }
             );
-            println!("  kap.beschleuniger    {}", e.kapazitaet.beschleuniger);
             println!("  kap.speicher         {}", zeig_gib(e.kapazitaet.speicher_gib));
             println!("  kap.platte           {}", zeig_gib(e.kapazitaet.platte_gib));
+            // ⚑ **Die Rechenwerke stehen nur da, wenn eines freigegeben
+            // ist.** Eine leere Ueberschrift behauptet eine Stelle, an
+            // der nichts steht; wer nichts freigegeben hat, sieht die
+            // Liste im Fenster, wo auch die Hoechstwerte stehen.
+            for (kennung, anteil) in &e.kapazitaet.rechenwerke {
+                println!(
+                    "  {}{:<width$} {anteil} %",
+                    myl_client::einstellungen::RECHENWERK_PRAEFIX,
+                    kennung,
+                    width = 20usize
+                        .saturating_sub(myl_client::einstellungen::RECHENWERK_PRAEFIX.len())
+                );
+            }
             0
         }
         Err(m) => {
@@ -217,7 +270,18 @@ fn setzen(args: &[String]) -> i32 {
     let (Some(feld), Some(wert)) = (args.first(), args.get(1)) else {
         eprintln!("myl setzen: es fehlt Feld oder Wert");
         eprintln!("myl setzen: bekannte Felder:");
+        // ⚑ **In derselben Sprache wie das Fenster.** Es ist dieselbe
+        // Einstellung und dasselbe Programm; ein Bedieninstrument, das
+        // sie nicht kennt, waere die zweite Stelle, an der sie gilt.
+        //
+        // ⛑ **Eine unlesbare Ablage kostet hier nichts.** Wer die
+        // Feldliste sehen will, soll sie sehen, auch wenn die Datei
+        // kaputt ist; dann eben auf Deutsch.
+        let sprache = Einstellungen::lesen(&Einstellungen::vorgabepfad())
+            .map(|e| e.oberflaeche.sprache)
+            .unwrap_or_default();
         for f in myl_client::einstellungen::FELDER {
+            let f = f.in_sprache(sprache);
             eprintln!("  {:<20} {:<8} {}", f.name, format!("{:?}", f.art), f.titel);
         }
         return 2;
@@ -340,7 +404,7 @@ fn frage(args: &[String]) -> i32 {
         eprintln!("myl frage: es fehlt der Text");
         return 2;
     }
-    let mut m = match Oertlichesmodell::laden(&artefakt) {
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("myl frage: {e}");
@@ -377,7 +441,15 @@ fn modell(args: &[String]) -> i32 {
         eprintln!("myl modell: es fehlt das Artefaktverzeichnis");
         return 2;
     };
-    match Oertlichesmodell::laden(artefakt) {
+    // ⚑ `myl modell` gibt Auskunft ueber ein Artefakt, das der
+    // Aufrufer ausdruecklich nennt, und ist keine Inbetriebnahme. Die
+    // Freigabe wird trotzdem gelesen und nicht umgangen: Wer sein
+    // Budget kleiner gesetzt hat, als das Artefakt gross ist, soll das
+    // hier genauso erfahren wie beim Fragen.
+    let kap = Einstellungen::lesen(&Einstellungen::vorgabepfad())
+        .map(|e| e.kapazitaet)
+        .unwrap_or_default();
+    match Oertlichesmodell::laden(artefakt, &kap) {
         Ok(m) => {
             println!("Artefakt:  {artefakt}");
             println!("Vorlage:   {:?}", m.vorlage());
@@ -441,7 +513,7 @@ fn agent(args: &[String]) -> i32 {
         eprintln!("myl agent: es fehlt der Auftrag");
         return 2;
     }
-    let mut m = match Oertlichesmodell::laden(&artefakt) {
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("myl agent: {e}");
@@ -508,7 +580,7 @@ fn sitzung(args: &[String]) -> i32 {
         return 2;
     };
     let anfang = std::time::Instant::now();
-    let mut m = match Oertlichesmodell::laden(&artefakt) {
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(f) => {
             eprintln!("myl sitzung: {f}");
@@ -791,6 +863,7 @@ fn einen_auftrag(
         anker: myl_types::hash::Hash::from_bytes([0u8; 32]),
         max_tokens: Some(m.grenze as u32),
         ansageform: Default::default(),
+        melder: None,
     }
     .fahren(auftrag);
 
@@ -862,7 +935,7 @@ fn auftraege(args: &[String]) -> i32 {
         eprintln!("myl auftraege: es fehlen die Auftraege (je einer als Argument, oder --datei P)");
         return 2;
     }
-    let mut m = match Oertlichesmodell::laden(&artefakt) {
+    let mut m = match Oertlichesmodell::laden(&artefakt, &e.kapazitaet) {
         Ok(m) => m,
         Err(f) => {
             eprintln!("myl auftraege: {f}");

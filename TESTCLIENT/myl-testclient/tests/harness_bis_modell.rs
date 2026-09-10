@@ -74,7 +74,7 @@ const PIPELINE_DIGEST: &str = "c42bb8a8d85bba5a76b3302298903fb5c1edfe4463c5d1d44
 
 fn artefakte() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "qwen2.5-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
     let mut p = PathBuf::from(manifest);
     p.push("..");
     p.push("..");
@@ -247,7 +247,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         EpochId(5),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-qwen2.5-0.5b",
+        "myelith-myelith-0.5b",
         myl_types::Address::new([210u8; 32]),
     );
 
@@ -282,7 +282,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     let kopf = String::from_utf8_lossy(&antwort[..antwort.len().min(32)]).to_string();
     assert!(kopf.starts_with("HTTP/1.1 200"), "Modellliste: {kopf}");
     let liste = String::from_utf8_lossy(rumpf_von(&antwort)).to_string();
-    assert!(liste.contains("myelith-qwen2.5-0.5b"), "{liste}");
+    assert!(liste.contains("myelith-myelith-0.5b"), "{liste}");
     // ⚑ Der Pipeline-Stand geht bis nach draussen durch, unverändert.
     assert!(liste.contains(PIPELINE_DIGEST), "der Stand kam nicht durch: {liste}");
     assert!(liste.contains("\"myelith_deterministisch\":true"), "{liste}");
@@ -290,7 +290,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // --- 2. Der eigentliche Aufruf -----------------------------------
     let frage = "Die Hauptstadt von Frankreich ist";
     let koerper = format!(
-        r#"{{"model":"myelith-qwen2.5-0.5b","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"myelith-myelith-0.5b","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
     let dienst = async {
         tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
@@ -360,7 +360,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token2)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-qwen2.5-0.5b",
+                "myelith-myelith-0.5b",
                 &[myl_local_agent::Nachricht::nutzer(frage)],
                 Some(8),
             )
@@ -408,7 +408,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token3)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-qwen2.5-0.5b",
+                "myelith-myelith-0.5b",
                 &[angebot, myl_local_agent::Nachricht::nutzer("Wie spät ist es?"), ergebnis],
                 Some(8),
             )
@@ -495,7 +495,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 .mit_frist(std::time::Duration::from_secs(600));
             Lauf {
                 klient: &klient,
-                modell: "myelith-qwen2.5-0.5b",
+                modell: "myelith-myelith-0.5b",
                 grenzen: &grenzen,
                 betriebsart: Betriebsart::NurVerankert,
                 kasten: &kasten,
@@ -504,6 +504,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 anker: myl_types::hash::Hash::from_bytes([7u8; 32]),
                 max_tokens: Some(16),
                 ansageform: myl_local_agent::werkzeug::Ansageform::Amtlich,
+                melder: None,
                 // ⚑ Der Harness haengt nichts ein: Die Einhaengegrenze
                 // ist eine Zusage des Clients an den Nutzer ueber
                 // dessen eigene Ablage, und dieser Lauf hat keine.

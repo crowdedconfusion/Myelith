@@ -55,7 +55,7 @@ def _hf_rotate(reals, pos, rope_theta, half):
 
 def test_rope_matches_hf_at_positions():
     nl = load_nonlinear_spec()
-    head_dim = get_model_config("qwen2.5-0.5b")["head_dim"]
+    head_dim = get_model_config("myelith-0.5b")["head_dim"]
     rope_theta = nl["rope"]["rope_theta"]
     frac = nl["rope"]["frac_bits"]
     half = head_dim // 2
@@ -81,7 +81,7 @@ def test_rope_matches_hf_at_positions():
 
 def test_rope_position_zero_identity():
     nl = load_nonlinear_spec()
-    head_dim = get_model_config("qwen2.5-0.5b")["head_dim"]
+    head_dim = get_model_config("myelith-0.5b")["head_dim"]
     half = head_dim // 2
     sin_lut, cos_lut = generate_rope_luts(
         max_seq_len=nl["rope"]["max_seq_len"], head_dim=head_dim,

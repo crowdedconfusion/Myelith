@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.0
-> **Datum:** 2026-09-03
+> **Version:** 0.48.2
+> **Datum:** 2026-09-09
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,33 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.2 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in zwei Modulen und drei Prüfungen
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
+
+### v0.48.1 – 2026-09-09 (Fund 266: ein Tupelfeld, das niemand las)
+
+Die Testhilfe in `konformitaetstor.rs` gab `(Pfad, Inhalt)` zurück und
+las den Pfad nirgends. Örtlich fiel das nicht auf, weil `cargo test`
+ohne `-D warnings` fährt; in der CI ist es kein Hinweis, sondern ein
+Fehler, und er fällt in **jedem** Job an, der diese Kiste übersetzt.
+Drei davon wurden rot, während hier alles grün war.
+
+⛑ **Nachgetragen am 2026-09-10.** Das Manifest trug 0.48.1 seit dem
+2026-09-09, dieser Changelog stand auf 0.48.0.
 
 ### v0.48.0 – 2026-09-06 (der Urteilsweg und das Stimmgewicht)
 

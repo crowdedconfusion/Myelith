@@ -29,7 +29,7 @@ from wikitext_common import select_sequences  # noqa: E402
 
 def load_scales():
     import json
-    sc = json.loads((REPO / "artifacts" / "qwen2.5-0.5b" / "scales.json").read_text())
+    sc = json.loads((REPO / "artifacts" / "myelith-0.5b" / "scales.json").read_text())
     return sc["entries"] if "entries" in sc else sc
 
 

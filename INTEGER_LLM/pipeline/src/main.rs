@@ -3,7 +3,7 @@
 //! Usage:
 //!   integer-llm-pipeline --config configs/pipeline_4node.json \
 //!     --stage 0 --bind 127.0.0.1:8001 \
-//!     --artifacts artifacts/qwen2.5-0.5b \
+//!     --artifacts artifacts/myelith-0.5b \
 //!     --downstream 127.0.0.1:8002 --max-tokens 8
 //!
 //! Die finale Stage bekommt zusätzlich `--feedback <adresse-von-stage-0>`:

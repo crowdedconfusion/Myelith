@@ -190,7 +190,7 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
         p.push("..");
         p.push("INTEGER_LLM");
         p.push("artifacts");
-        p.push("qwen2.5-0.5b");
+        p.push("myelith-0.5b");
         p
     };
     if !artefakte::vorhanden(&dir) {

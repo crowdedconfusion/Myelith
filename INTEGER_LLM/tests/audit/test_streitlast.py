@@ -52,10 +52,10 @@ ARTEFAKTE = ROOT / "INTEGER_LLM" / "artifacts"
 
 # Der Name in der Rust-Tabelle zu dem Verzeichnis unter artifacts/.
 ZUORDNUNG = {
-    "Qwen2.5-0,5B": "qwen2.5-0.5b",
-    "Qwen3-4B": "qwen3-4b",
-    "Qwen2.5-7B": "qwen2.5-7b",
-    "Qwen3-30B-A3B": "qwen3-30b-a3b",
+    "Qwen2.5-0,5B": "myelith-0.5b",
+    "Qwen3-4B": "myelith-4b",
+    "Qwen2.5-7B": "myelith-7b",
+    "Qwen3-30B-A3B": "myelith-30b-a3b",
 }
 
 # Pipeline-Manifeste, die im Repositorium liegen, zu dem Modell, das sie
@@ -63,7 +63,7 @@ ZUORDNUNG = {
 # damit laesst sich diese eine Zahl auch ohne Artefakte pruefen.
 MANIFESTE = {
     "Qwen2.5-0,5B": "pipeline_4node.json",
-    "Qwen3-30B-A3B": "pipeline_4node_qwen3-30b-a3b.json",
+    "Qwen3-30B-A3B": "pipeline_4node_myelith-30b-a3b.json",
 }
 
 ZEILE = re.compile(

@@ -4,7 +4,7 @@
 //! Dieser Lauf fuellt sie mit dem echten 0,5B-Artefakt und prueft, dass
 //! am anderen Ende Text herauskommt, den ein Mensch lesen kann.
 //!
-//! ⚑ **Gemessen wird an `qwen3-4b` und nicht am 0,5B**, und der Grund
+//! ⚑ **Gemessen wird an `myelith-4b` und nicht am 0,5B**, und der Grund
 //! ist ein Befund vom 2026-09-08: Die Qwen2.5-Artefakte stammen aus den
 //! **Basis**repositorien und kennen keine Rollenmarken. Bei Qwen3 ist
 //! die Fassung ohne Zusatz die instruktionsgeschliffene. Wer einen
@@ -20,7 +20,7 @@ use myl_local_agent::{Modellweg, Nachricht};
 fn modell() -> Option<Oertlichesmodell> {
     let pfad = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../INTEGER_LLM/artifacts/qwen3-4b"
+        "/../../INTEGER_LLM/artifacts/myelith-4b"
     );
     // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
@@ -43,7 +43,7 @@ fn modell() -> Option<Oertlichesmodell> {
              MYL_OHNE_ARTEFAKTE=1 cargo test erlaubt den Sprung ausdruecklich."
         );
     }
-    Some(Oertlichesmodell::laden(pfad).expect("Modell laedt"))
+    Some(Oertlichesmodell::laden(pfad, &Default::default()).expect("Modell laedt"))
 }
 
 /// ⚑ **Eine Frage, deren Antwort feststeht.**
@@ -58,7 +58,7 @@ fn das_oertliche_modell_antwortet_auf_bekanntes() {
     m.grenze = 48;
     let antwort = m
         .chat(
-            "qwen3-4b",
+            "myelith-4b",
             &[Nachricht::nutzer("Wie heisst die Hauptstadt von Frankreich?")],
             Some(48),
         )
@@ -90,4 +90,141 @@ fn derselbe_prompt_ergibt_dieselbe_antwort() {
     let a = m.chat("m", &f, Some(16)).expect("erste Antwort");
     let b = m.chat("m", &f, Some(16)).expect("zweite Antwort");
     assert_eq!(a.text, b.text, "gierig gezogen und trotzdem verschieden");
+}
+
+/// ⚑ **Was live ankommt, ist genau die Antwort.**
+///
+/// # ⛑ Die Zusage, an der die Live-Anzeige haengt
+///
+/// Ein Fenster, das mitschreibt, zeigt einen Text, der **waehrend** der
+/// Rechnung entsteht. Weicht er am Ende von der Antwort ab, hat der
+/// Nutzer etwas gelesen, das nirgends steht, und merkt es nicht: Der
+/// Block springt zum Schluss um, und das sieht aus wie eine Anzeige,
+/// die sich sortiert.
+///
+/// ⚑ **Geprueft wird deshalb die Gleichheit und nicht die Menge.** Ein
+/// Beobachter, der die Haelfte meldet, faellt sonst nicht auf.
+#[test]
+fn der_laufende_text_ist_die_antwort() {
+    let Some(mut m) = modell() else { return };
+    m.grenze = 24;
+
+    let gesammelt = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mit = std::sync::Arc::clone(&gesammelt);
+    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+        // ⚑ Beides zusammen ergibt den ganzen Strom; die Trennung
+        // prueft `strom.rs` fuer sich.
+        let t = match s {
+            myl_client::strom::Stueck::Text(t) => t,
+            myl_client::strom::Stueck::Denken(t) => t,
+        };
+        mit.lock().expect("Schloss").push_str(&t);
+    }));
+
+    let f = [Nachricht::nutzer("Die Hauptstadt von Frankreich ist")];
+    let a = m.chat("m", &f, Some(24)).expect("Antwort");
+    let live = gesammelt.lock().expect("Schloss").clone();
+
+    assert!(!live.is_empty(), "es kam gar nichts live an");
+    // ⚑ Die Antwort ist getrimmt und um die Endmarke gekuerzt; der
+    // laufende Text ist es nicht. Verglichen wird deshalb, dass die
+    // Antwort **darin steht**, und nicht auf Zeichengleichheit.
+    assert!(
+        live.contains(a.text.trim()),
+        "der laufende Text enthaelt die Antwort nicht.\nlive: {live:?}\nAntwort: {:?}",
+        a.text
+    );
+    // ⛑ **Hier stand `== 24`, also die Grenze selbst**, und das war
+    // eine Aussage ueber das alte Verhalten: Die Erzeugung lief immer
+    // bis zur Grenze. Seit dem 2026-09-10 haelt sie an der Endmarke,
+    // und dann sind es weniger. **Eine Pruefung, die die Grenze
+    // verlangt, verlangt genau den Fehler**, der behoben wurde.
+    assert!(a.antwort_token > 0, "es wurde nichts erzeugt");
+    assert!(
+        a.antwort_token as usize <= 24,
+        "es wurden mehr Token erzeugt als erlaubt: {}",
+        a.antwort_token
+    );
+}
+
+/// ⚑ **Und der Beobachter aendert die Antwort nicht.**
+///
+/// Dieselbe Zusicherung wie in der Laufzeit, hier ueber die ganze Naht:
+/// Vorlage, Erzeugung, Zuschnitt.
+#[test]
+fn mit_beobachter_kommt_dieselbe_antwort() {
+    let Some(mut m) = modell() else { return };
+    m.grenze = 16;
+    let f = [Nachricht::nutzer("Nenne eine Primzahl.")];
+    let ohne = m.chat("m", &f, Some(16)).expect("ohne Beobachter");
+
+    m.beobachter = Some(Box::new(|_: myl_client::strom::Stueck| {}));
+    let mit = m.chat("m", &f, Some(16)).expect("mit Beobachter");
+    assert_eq!(ohne.text, mit.text, "der Beobachter hat die Antwort veraendert");
+}
+
+/// ⚑ **Das Modell hoert auf, wo seine Antwort aufhoert.**
+///
+/// # ⛑ Der gemeldete Fehler, aus dem das entstanden ist (2026-09-10)
+///
+/// Mit 600 Token Grenze schrieb Qwen3-4B seine Antwort zu Ende, setzte
+/// `<|im_end|>`, dann `<|endoftext|>` und **erfand danach ein ganzes
+/// Gespraech weiter**, samt einem zweiten, ausgedachten Nutzer und
+/// einem nacherzaehlten Werkzeugergebnis. Der Zuschnitt der fertigen
+/// Antwort schnitt das ab; die **laufende Anzeige** nicht, und im
+/// Agentenlauf ging der erfundene Text als Modellantwort in die
+/// naechste Runde.
+///
+/// ⚑ **Geprueft wird an der Zahl der Token und nicht am Text.** Ein
+/// Text ohne `<|im_end|>` beweist nichts: Der Zuschnitt entfernt die
+/// Marke ohnehin. Beweisend ist, dass **weniger** gerechnet wurde als
+/// erlaubt war.
+#[test]
+fn die_antwort_endet_an_der_endmarke() {
+    let Some(mut m) = modell() else { return };
+    assert!(!m.halt.is_empty(), "dieses Modell kennt keine Endmarke");
+    m.grenze = 400;
+
+    let f = [Nachricht::nutzer("Sag nur das Wort Ja.")];
+    let a = m.chat("m", &f, Some(400)).expect("Antwort");
+
+    assert!(
+        (a.antwort_token as usize) < 400,
+        "es wurden alle {} erlaubten Token gerechnet; die Endmarke hat nicht gehalten",
+        a.antwort_token
+    );
+    // ⚑ Und die Marken stehen nicht im Text. Sie sind Rahmen und nicht
+    // Inhalt, und die Erzeugung gibt sie gar nicht erst heraus.
+    for marke in ["<|im_end|>", "<|endoftext|>", "<|im_start|>"] {
+        assert!(!a.text.contains(marke), "`{marke}` steht in der Antwort: {:?}", a.text);
+    }
+}
+
+/// ⚑ **Und der laufende Text traegt sie ebenso wenig.**
+///
+/// ⛑ Das ist die Haelfte, die der gemeldete Fehler betraf: Der
+/// Zuschnitt der fertigen Antwort greift erst am Ende, die Anzeige
+/// laeuft waehrenddessen.
+#[test]
+fn auch_live_kommt_nichts_nach_der_endmarke() {
+    let Some(mut m) = modell() else { return };
+    m.grenze = 400;
+    let gesammelt = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let mit = std::sync::Arc::clone(&gesammelt);
+    m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+        let t = match s {
+            myl_client::strom::Stueck::Text(t) => t,
+            myl_client::strom::Stueck::Denken(t) => t,
+        };
+        mit.lock().expect("Schloss").push_str(&t);
+    }));
+
+    let f = [Nachricht::nutzer("Sag nur das Wort Ja.")];
+    let a = m.chat("m", &f, Some(400)).expect("Antwort");
+    let live = gesammelt.lock().expect("Schloss").clone();
+
+    for marke in ["<|im_end|>", "<|endoftext|>", "<|im_start|>", "Human:"] {
+        assert!(!live.contains(marke), "`{marke}` kam live an:\n{live}");
+    }
+    assert!((a.antwort_token as usize) < 400, "es lief bis zur Grenze durch");
 }

@@ -462,7 +462,7 @@ mod tests {
     /// erzeugt wurden, darf gegen sie laufen.
     #[test]
     fn passendes_modell_laeuft() {
-        let e = entscheide_layer_e2e(Some("qwen2.5-0.5b"), Some(&manifest("qwen2.5-0.5b")));
+        let e = entscheide_layer_e2e(Some("myelith-0.5b"), Some(&manifest("myelith-0.5b")));
         assert!(e.layer_e2e);
         assert!(e.begruendung.is_empty());
     }
@@ -471,17 +471,17 @@ mod tests {
     /// Überspringen — mit Begründung, nicht still.
     #[test]
     fn abweichendes_modell_wird_uebersprungen() {
-        let e = entscheide_layer_e2e(Some("qwen2.5-7b"), Some(&manifest("qwen2.5-0.5b")));
+        let e = entscheide_layer_e2e(Some("myelith-7b"), Some(&manifest("myelith-0.5b")));
         assert!(!e.layer_e2e);
-        assert!(e.begruendung.contains("qwen2.5-7b"));
-        assert!(e.begruendung.contains("qwen2.5-0.5b"));
+        assert!(e.begruendung.contains("myelith-7b"));
+        assert!(e.begruendung.contains("myelith-0.5b"));
     }
 
     /// Ohne Artefakt laufen nur die Operations-Vektoren: der Normalfall
     /// auf einer frischen Maschine.
     #[test]
     fn ohne_artefakt_nur_op() {
-        let e = entscheide_layer_e2e(None, Some(&manifest("qwen2.5-0.5b")));
+        let e = entscheide_layer_e2e(None, Some(&manifest("myelith-0.5b")));
         assert!(!e.layer_e2e);
         assert!(e.begruendung.contains("kein Artefakt"));
     }
@@ -490,7 +490,7 @@ mod tests {
     /// Dann lieber ehrlich überspringen als blind laden.
     #[test]
     fn ohne_manifest_wird_uebersprungen() {
-        let e = entscheide_layer_e2e(Some("qwen2.5-0.5b"), None);
+        let e = entscheide_layer_e2e(Some("myelith-0.5b"), None);
         assert!(!e.layer_e2e);
         assert!(e.begruendung.contains("kein Manifest"));
     }
@@ -543,11 +543,11 @@ mod tests {
 
         std::fs::write(
             dir.join("manifest.json"),
-            "{\n  \"modell\": \"qwen2.5-0.5b\",\n  \"theta_v_hash\": \"sha256:ab\",\n  \"extra\": 1\n}\n",
+            "{\n  \"modell\": \"myelith-0.5b\",\n  \"theta_v_hash\": \"sha256:ab\",\n  \"extra\": 1\n}\n",
         )
         .unwrap();
         let m = manifest_lesen(&dir).expect("Manifest lesbar");
-        assert_eq!(m.modell, "qwen2.5-0.5b");
+        assert_eq!(m.modell, "myelith-0.5b");
         assert_eq!(m.theta_v_hash, "sha256:ab");
 
         // Ohne Datei: ehrlich None, kein geratenes Modell.
@@ -567,7 +567,7 @@ mod tests {
             return;
         }
         let m = manifest_lesen(&vektoren).expect("Manifest muss vorhanden sein");
-        assert_eq!(m.modell, "qwen2.5-0.5b");
+        assert_eq!(m.modell, "myelith-0.5b");
         assert!(m.theta_v_hash.starts_with("sha256:"));
     }
 

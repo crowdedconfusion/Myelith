@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.31.3"
+version = "0.32.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -11,6 +11,21 @@ rust-version = "1.88"
 description = "Terminal-Testclient für Myelith: Hardware-Erhebung, Cross-Backend-Determinismus und geshardete Inferenz — jeder Lauf mit maschinenlesbarem Protokoll, und ein Vergleichsbefehl, der daraus ein Urteil über den Cross-Hardware-Nachweis fällt."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
+
+# ⚑ **Diese Kiste wird ausgeliefert.**
+#
+# Die Installationsskripte in der Wurzel und das oertliche
+# Freigabeskript lesen diese Marke; **keines von ihnen fuehrt eine
+# eigene Liste mehr**. Bis zum 2026-09-10 taten sie es, vier Stueck,
+# und zwei davon waren am ersten Tag schon uneinig (Fund 300).
+#
+# ⚠️ **Wer sie entfernt, liefert die Kiste nicht mehr aus**, und das
+# faellt niemandem auf, ausser der Pruefung
+# `was_ausgeliefert_wird_steht_bei_der_kiste`.
+#
+# Der Testclient: Konformitaetslauf und Artefaktpruefung von Hand.
+[package.metadata.myelith]
+ausliefern = "myl-test"
 
 [dependencies]
 integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }

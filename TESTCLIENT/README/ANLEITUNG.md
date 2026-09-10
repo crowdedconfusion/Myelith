@@ -234,9 +234,9 @@ Punkt **[1] Artefakt wählen** führt **alle** Modelle auf, die der Client
 kennt, und schreibt daneben, ob sie schon hier liegen:
 
 ```
-  ❯ 1  qwen2.5-0.5b, liegt bereit
+  ❯ 1  myelith-0.5b, liegt bereit
           Digest wird nach der Wahl geprüft.
-    2  qwen2.5-7b, nicht vorhanden
+    2  myelith-7b, nicht vorhanden
           Download rund 15 GB von Hugging Face, Bau danach in Sekunden.
 ```
 
@@ -431,9 +431,9 @@ Der Client zeigt, was belegt ist:
 ```
   Belegt auf dieser Maschine: 24,9 GB
 
-  ❯ 1  qwen2.5-7b · Artefakte · 8,1 GB
+  ❯ 1  myelith-7b · Artefakte · 8,1 GB
         Aus dem Skalenpaket in Sekunden wiederherstellbar.
-    2  qwen2.5-7b · Gewichte · 15,2 GB
+    2  myelith-7b · Gewichte · 15,2 GB
         Erneut zu holen kostet einen Download über Hugging Face.
 ```
 
@@ -449,7 +449,7 @@ etwas zerstört.
 ## A9. Wenn etwas nicht klappt
 
 **„Artefaktverzeichnis fehlt"**
-Erwartet wird `INTEGER_LLM/artifacts/qwen2.5-0.5b/`. Liegen die Artefakte
+Erwartet wird `INTEGER_LLM/artifacts/myelith-0.5b/`. Liegen die Artefakte
 woanders, im Entwickler-Menü unter [7] den Pfad setzen oder beim Aufruf
 `--artifacts <PFAD>` angeben.
 

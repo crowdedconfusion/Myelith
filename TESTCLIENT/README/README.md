@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.31.0
-> **Datum:** 2026-09-04
+> **Version:** 0.32.0
+> **Datum:** 2026-09-09
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -157,7 +157,7 @@ Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
 
 ```bash
 # Koordinator:
-myl-test plan --plan-id 2026-08-21-cross-arch-01 --model qwen2.5-0.5b \
+myl-test plan --plan-id 2026-08-21-cross-arch-01 --model myelith-0.5b \
   --prompt "Die Hauptstadt von Frankreich ist" \
   --prompt "The capital of France is" \
   --steps 32 --shards 4 \
@@ -543,6 +543,63 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.32.0 – 2026-09-10 (Fund 295: der Katalog führt zwei Lizenzen, weil es zwei gibt)
+
+**`lizenz` heisst jetzt `lizenz_gewichte`, und daneben steht
+`lizenz_artefakt`.** Das eine ist die Lizenz der heruntergeladenen
+Grundgewichte (Apache-2.0), das andere die des daraus gebauten
+Artefakts: die dieses Repositoriums.
+
+⛑ **Ein Feld namens `lizenz` neben einem Eintrag namens `myelith-4b`
+liest sich als Lizenz des Artefakts**, und genau so hat die
+Einstellungsseite des Klienten es angezeigt (gemeldet vom
+Projektinhaber). Der Wert war für sich genommen wahr und an dieser
+Stelle falsch.
+
+Die Hinweiszeile der Modellwahl nennt beide: `4 Mrd. · Qwen/Qwen3-4B ·
+Gewichte Apache-2.0 · Artefakt PolyForm Shield License 1.0.0`. Die
+Prüfung verlangt beide Felder bei **jedem** Eintrag.
+
+`myl-testclient` **0.31.4 auf 0.32.0** (295 Prüfungen).
+
+### v0.31.4 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in sieben Modulen und fünf Prüfungen
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
+
+### v0.31.3 – 2026-09-09 (der Umfang des Konformitätslaufs, und ein Wächter, der den falschen Wert prüfte)
+
+⛑ **Im Modulkopf von `konformitaet.rs` stand „sechs ohne Artefakt,
+dreiunddreissig mit", und das galt einmal.** Training und Gemisch kamen
+später dazu und brauchen kein Artefakt; ohne Artefakt sind es
+**siebzehn**. Die Zeile wurde nicht nachgezogen.
+
+⚑ **Die Folge war kein Schönheitsfehler.** Die Wächter in `ci.yml` und
+`release.yml` prüften deshalb `894d8357ae92b5c1`, und das ist der
+Abdruck von `konformitaet_op`, also nur der sechs Operations-Vektoren.
+Der Gesamtwert `6da384ba301b9454` über alle siebzehn war **von nirgends
+gedeckt**: Ein Trainings- oder MoE-Kern hätte sich ändern können, und
+alle Jobs wären grün geblieben. Beide Werte stehen jetzt in jedem
+Wächter, mit ihrem Umfang daneben.
+
+Dazu zeigt `vergleich` den Ablageort der Auswertung an seiner heutigen
+Stelle statt an der alten.
+
+⛑ **Nachgetragen am 2026-09-10, und der Eintrag deckt 0.31.1 bis
+0.31.3.** Das Manifest trug 0.31.3 seit dem 2026-09-09, dieser
+Changelog stand auf 0.31.0.
 
 ### v0.31.0 – 2026-09-06 (zwölf Stationen über eine laufende Kette)
 
@@ -1500,7 +1557,7 @@ Modellauswahl zeigt jetzt Parameterzahl, Herkunft, Lizenz und eine
 Einordnung, statt nur die Downloadgröße.
 
 **Fund vom Linux-Runner: Groß- und Kleinschreibung.** Der
-Modellschlüssel (`qwen2.5-0.5b`) und der Verzeichnisname der Gewichte
+Modellschlüssel (`myelith-0.5b`) und der Verzeichnisname der Gewichte
 (`Qwen2.5-0.5B`) unterscheiden sich **nur darin**. Solange die Zuordnung
 im Code stand, fiel das nicht auf; mit dem Katalog bekam sie einen
 Rückfall auf den Modellnamen, und der traf auf macOS und Windows

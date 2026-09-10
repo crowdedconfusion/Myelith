@@ -6,10 +6,22 @@
 # Oberfläche in `wry` ab, mit einer Meldung über eine fehlende
 # `.pc`-Datei, die nicht nach dem eigentlichen Grund aussieht.
 #
-# ⛑ **Ungeprüft auf NixOS.** Geschrieben am 2026-09-08 auf macOS; die
-# Paketnamen und Variablen stammen aus der Dokumentation von Tauri und
-# nixpkgs, nicht aus einem Lauf. Wer sie zuerst benutzt, prüft sie und
-# berichtigt sie hier.
+#   nix develop                  eine Shell mit allem, was der Bau braucht
+#   sh installieren-nixos.sh     baut darin und legt die Programme ab
+#
+# ⚑ **Eine Entwicklungsumgebung und keine Ableitung.** Eine
+# `buildRustPackage`-Ableitung bräuchte einen festgeschriebenen
+# `cargoHash` je Kiste, und dieses Repositorium hat fünfundzwanzig
+# eigene Sperrdateien statt einer. Sie wären fünfundzwanzig Zahlen, die
+# von Hand mitgepflegt werden müssten, also Fund 271 in Nix. **Was hier
+# steht, ist die Umgebung; gebaut wird mit cargo, wie überall sonst
+# auch.**
+#
+# ⛑ **Ungeprüft auf NixOS.** Geschrieben am 2026-09-08 auf macOS und am
+# 2026-09-10 erweitert, ebenfalls auf macOS; die Paketnamen und
+# Variablen stammen aus der Dokumentation von Tauri und nixpkgs, nicht
+# aus einem Lauf. Wer sie zuerst benutzt, prüft sie und berichtigt sie
+# hier.
 {
   description = "Myelith: dezentrales Netzwerk mit bit-exakter Ganzzahl-Inferenz";
 
@@ -25,9 +37,14 @@
         istLinux = pkgs.stdenv.isLinux;
 
         # Was jede Kiste braucht, auch ohne Oberfläche.
+        #
+        # ⚑ `git` gehört dazu, seit `installieren-nixos.sh` und der
+        # Aktualisierungsknopf des Klienten darin laufen: Beide bewegen
+        # den Klon vorwärts, bevor sie bauen.
         grundwerkzeug = with pkgs; [
           rustc cargo rustfmt clippy
           pkg-config
+          git
           python312          # die Proben und die Audits
         ];
 
@@ -59,10 +76,18 @@
           # `XDG_DATA_DIRS` braucht die GSettings-Schemata, sonst
           # meldet GTK beim Start einen fehlenden Schema-Ordner und
           # bricht ab.
+          #
+          # ⛑ **`PKG_CONFIG_PATH` und `LD_LIBRARY_PATH` dazu.** Auf
+          # NixOS liegt keine Bibliothek an einem Ort, den ein Linker
+          # rät; `buildInputs` setzt den Suchpfad für den Bau, aber ein
+          # `cargo build`, das mitten in der Shell aufgerufen wird,
+          # sieht ihn nicht immer.
           shellHook = pkgs.lib.optionalString istLinux ''
             export WEBKIT_DISABLE_COMPOSITING_MODE=1
             export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
-            echo "[myelith] Bauumgebung bereit. Die Oberfläche baut in CLIENT/myl-oberflaeche."
+            export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" oberflaeche}:$PKG_CONFIG_PATH"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath oberflaeche}:$LD_LIBRARY_PATH"
+            echo "[myelith] Bauumgebung bereit. Weiter mit: sh installieren-nixos.sh --in-der-shell"
           '';
         };
       });

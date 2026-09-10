@@ -1,6 +1,6 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.13.0
+> **Version:** 0.13.1
 > **Datum:** 2026-09-03
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
@@ -134,6 +134,22 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.13.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in einem Testaufbau
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
 
 ### v0.13.0 – 2026-09-06 (die Trainingsabgabe als gerechneter Parameter)
 

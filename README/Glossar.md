@@ -397,7 +397,7 @@ Gleitkomma-Arithmetik erlaubt ist — sie ist Vorbereitung, nicht
 Rechenpfad. Das Ergebnis sind ganzzahlige Artefakte.
 
 *Im Code:* `INTEGER_LLM/calibrate/src/main.py`
-*Aufruf:* `INTEGER_LLM_MODEL=qwen2.5-7b python -m calibrate.src.main`
+*Aufruf:* `INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main`
 
 ### GPTQ
 
@@ -777,7 +777,7 @@ Skalen sättigen im Betrieb.
 
 *Im Code:* `kernels/src/moe.rs`, `runtime/src/model.rs::moe_vorwaerts`,
 Sonde `runtime/src/bin/router_probe.rs`
-*Gemessen in:* `BENCHMARKS/Inferenz/results/`, Modell `qwen3-30b-a3b`
+*Gemessen in:* `BENCHMARKS/Inferenz/results/`, Modell `myelith-30b-a3b`
 
 ### KV-Cache
 

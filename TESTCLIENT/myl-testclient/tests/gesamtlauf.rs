@@ -109,7 +109,7 @@ impl Bericht {
 
 fn artefakte() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "qwen2.5-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
     let mut p = PathBuf::from(manifest);
     p.push("..");
     p.push("..");
@@ -425,7 +425,7 @@ async fn alle_kompartimente_verzahnt() {
         EpochId(0),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-qwen2.5-0.5b",
+        "myelith-myelith-0.5b",
         betreiber,
     )
     .mit_abrechnung(abr_tx);
@@ -437,7 +437,7 @@ async fn alle_kompartimente_verzahnt() {
     let mut annahme = Annahme::neu(41, EpochId(0));
     let mut stelle = Zugangsstelle::neu(EineQuelle(kontrakt.clone()));
     let koerper = format!(
-        r#"{{"model":"myelith-qwen2.5-0.5b","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"myelith-myelith-0.5b","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
 
     let dienst = async {

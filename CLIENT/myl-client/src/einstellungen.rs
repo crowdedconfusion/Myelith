@@ -40,8 +40,26 @@ pub struct Kapazitaet {
     /// Wie viele Kerne der lokale Betrieb benutzen darf. `None` heisst
     /// alle.
     pub kerne: Option<usize>,
-    /// Ob Rechenwerke ausser der CPU benutzt werden duerfen.
-    pub beschleuniger: bool,
+    /// ⚑ **Was von jedem Rechenwerk freigegeben ist, in Prozent**,
+    /// unter der Kennung aus dem Hardwarescan.
+    ///
+    /// ⛑ **Hier stand bis zum 2026-09-10 ein einzelnes
+    /// `beschleuniger: bool`.** Es beantwortete die Frage „darf er
+    /// ueberhaupt" fuer **alle** Rechenwerke zugleich, und ein Rechner
+    /// mit zwei Karten konnte damit nicht sagen, dass er die eine
+    /// hergibt und die andere fuer sich behaelt. Der Schalter ist
+    /// entfallen und nicht ergaenzt: Eine Freigabe ueber null **ist**
+    /// die Erlaubnis, und zwei Quellen fuer dieselbe Frage laufen
+    /// auseinander.
+    ///
+    /// ⚑ **Prozent und nicht Gibibyte**, und das ist gemessen: Ein
+    /// eingebautes Rechenwerk teilt sich den Speicher mit der CPU und
+    /// hat gar kein eigenes, ein eigenstaendiges nennt sein VRAM. Eine
+    /// Einheit, die nur auf der einen Sorte einen Sinn hat, waere fuer
+    /// die andere erfunden. Was der Anteil in Bytes bedeutet, zeigt die
+    /// Oberflaeche daneben, wo sie es weiss.
+    #[serde(default)]
+    pub rechenwerke: std::collections::BTreeMap<String, u8>,
     /// Obergrenze fuer den Arbeitsspeicher in Gibibyte, `None` heisst
     /// ohne Grenze.
     pub speicher_gib: Option<u32>,
@@ -53,7 +71,7 @@ impl Default for Kapazitaet {
     /// ⚑ **Die vorsichtige Vorgabe, wie bei der Betriebsart.** Wer mehr
     /// hergeben will, sagt es; wer nichts sagt, gibt nur die CPU.
     fn default() -> Self {
-        Self { kerne: None, beschleuniger: false, speicher_gib: None, platte_gib: None }
+        Self { kerne: None, rechenwerke: Default::default(), speicher_gib: None, platte_gib: None }
     }
 }
 
@@ -117,6 +135,72 @@ pub struct Einstellungen {
     pub agent: Agenteneinstellung,
     #[serde(default)]
     pub ausgabe: Ausgabeeinstellung,
+    #[serde(default)]
+    pub oberflaeche: Oberflaecheneinstellung,
+}
+
+/// **Die Sprache der Oberflaeche.**
+///
+/// # ⚑ Warum das ein Typ ist und kein `String`
+///
+/// Ein `String` liesse `"deutsch"`, `"DE"`, `"de-DE"` und `"klingon"`
+/// zu, und jede Stelle, die ihn liest, muesste sich selbst entscheiden,
+/// was davon sie versteht. **Eine Aufzaehlung mit zwei Werten hat diese
+/// Frage nicht.**
+///
+/// ⚠️ **Zwei Sprachen und nicht n.** Wer eine dritte hinzufuegt, fuegt
+/// sie hier hinzu, und der Kompilator zeigt jede Stelle, die sie noch
+/// nicht kennt. Genau das ist der Zweck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Sprache {
+    /// Deutsch, die Sprache dieses Projekts.
+    #[default]
+    #[serde(rename = "de")]
+    De,
+    /// Englisch.
+    #[serde(rename = "en")]
+    En,
+}
+
+impl Sprache {
+    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::De => "de",
+            Self::En => "en",
+        }
+    }
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    ///
+    /// ⚑ **Der Fehler nennt, was ginge.** „unbekannte Sprache: fr"
+    /// laesst den Nutzer raten; „…, moeglich sind de, en" nicht.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        match k {
+            "de" => Ok(Self::De),
+            "en" => Ok(Self::En),
+            andere => Err(format!("unbekannte Sprache {andere}, moeglich sind de, en")),
+        }
+    }
+
+    /// Waehlt zwischen zwei Fassungen desselben Textes.
+    pub const fn waehlen<T: Copy>(self, de: T, en: T) -> T {
+        match self {
+            Self::De => de,
+            Self::En => en,
+        }
+    }
+}
+
+/// Wie sich die Oberflaeche verhaelt.
+///
+/// ⛑ `#[serde(default)]` an beiden Stellen, aus demselben Grund wie bei
+/// [`Ausgabeeinstellung`]: Eine Ablage aus der Zeit davor bleibt lesbar.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Oberflaecheneinstellung {
+    /// Die Sprache, in der das Fenster spricht.
+    #[serde(default)]
+    pub sprache: Sprache,
 }
 
 /// Wohin ausgegebene Gespraeche geschrieben werden.
@@ -150,7 +234,47 @@ impl Einstellungen {
         match std::fs::read_to_string(pfad) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(format!("{}: {e}", pfad.display())),
-            Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", pfad.display())),
+            Ok(t) => {
+                let mut e: Self =
+                    serde_json::from_str(&t).map_err(|e| format!("{}: {e}", pfad.display()))?;
+                e.wandern();
+                Ok(e)
+            }
+        }
+    }
+
+    /// Zieht eine Ablage aus einer frueheren Fassung nach.
+    ///
+    /// # ⛑ Warum es das gibt (2026-09-10)
+    ///
+    /// **Die Artefakte heissen seit heute nach dem Modell, das sie
+    /// sind**, also `myelith-4b` statt `qwen3-4b`. Jede bestehende
+    /// Ablage zeigt aber noch auf den alten Pfad, und der loest nach
+    /// dem Umbenennen ins Leere auf: Der Klient meldete „Modell laedt
+    /// nicht" und der Nutzer suchte den Fehler bei sich.
+    ///
+    /// ⚑ **Eine Umbenennung ist erst fertig, wenn das Mitgewanderte
+    /// mitgewandert ist.** Wer nur die Verzeichnisse umbenennt, hat die
+    /// Arbeit auf jeden verschoben, der eine Einstellung gesetzt hat.
+    ///
+    /// ⛑ **Und sie greift nur am Verzeichnisnamen, nicht am ganzen
+    /// Pfad.** Ein Nutzer, der seine Artefakte woanders haelt, behaelt
+    /// seinen Ort; getauscht wird der letzte Bestandteil und nur, wenn
+    /// er einer der vier alten Namen ist.
+    fn wandern(&mut self) {
+        const ALT_NEU: [(&str, &str); 4] = [
+            ("qwen2.5-0.5b", "myelith-0.5b"),
+            ("qwen2.5-7b", "myelith-7b"),
+            ("qwen3-30b-a3b", "myelith-30b-a3b"),
+            ("qwen3-4b", "myelith-4b"),
+        ];
+        let pfad = self.modell.artefakt.trim_end_matches('/');
+        let Some((vorne, letztes)) = pfad.rsplit_once('/') else { return };
+        for (alt, neu) in ALT_NEU {
+            if letztes == alt {
+                self.modell.artefakt = format!("{vorne}/{neu}");
+                return;
+            }
         }
     }
 
@@ -290,6 +414,28 @@ pub struct Feld {
     pub bereich: &'static str,
     /// Die Beschriftung der Zeile.
     pub titel: &'static str,
+    /// Dieselbe Ueberschrift auf Englisch.
+    ///
+    /// ⚑ **Sie geht nicht ueber die Naht.** `#[serde(skip)]`, denn das
+    /// Fenster soll nicht zwischen zwei Feldern waehlen muessen:
+    /// [`Feld::in_sprache`] entscheidet **hier**, und was ankommt, ist
+    /// fertig. Zwei Beschriftungen im Fenster waeren zwei Stellen, an
+    /// denen die naechste Sprache vergessen werden kann.
+    #[serde(skip)]
+    pub bereich_en: &'static str,
+    /// Dieselbe Beschriftung auf Englisch.
+    #[serde(skip)]
+    pub titel_en: &'static str,
+    /// Derselbe Satz auf Englisch.
+    #[serde(skip)]
+    pub hinweis_en: &'static str,
+    /// Die moeglichen Werte, wenn es eine Auswahl ist, sonst leer.
+    ///
+    /// ⚑ **Die Namen der Sprachen stehen in ihrer eigenen Sprache**,
+    /// „Deutsch" und „English", und werden deshalb nicht uebersetzt.
+    /// Wer die Oberflaeche gerade nicht versteht, findet seine Sprache
+    /// nur so wieder.
+    pub wahl: &'static [Wahl],
     /// Ob in diesem Feld ein Verzeichnis steht.
     ///
     /// ⚑ **Abgeleitet aus der Art und nicht in der Tabelle getippt**,
@@ -297,6 +443,11 @@ pub struct Feld {
     /// waere ein zwoelfmal wiederholtes `true`/`false`, und eines davon
     /// waere irgendwann falsch.
     pub ordner: bool,
+    /// Ob dieses Feld ein Betriebsmittel der Maschine freigibt und
+    /// deshalb als Schieberegler gehoert.
+    ///
+    /// ⚑ **Ebenfalls abgeleitet**, siehe [`Feldart::ist_freigabe`].
+    pub freigabe: bool,
     /// Ein Satz dazu, was das Feld bewirkt und was ohne Angabe gilt.
     ///
     /// ⚑ **Er nennt die Vorgabe, wo es eine gibt.** „Ohne Angabe gibt
@@ -312,15 +463,74 @@ pub struct Feld {
     pub hinweis: &'static str,
 }
 
+/// Ein moeglicher Wert eines Auswahlfeldes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Wahl {
+    /// Was gesetzt wird.
+    pub wert: &'static str,
+    /// Was dabeisteht.
+    pub titel: &'static str,
+}
+
 /// Kurzschreibweise fuer die Tabelle darunter.
+///
+/// ⚑ **Die Sprachpaare stehen als Tupel und nicht als sechs
+/// Parameter.** Acht Parameter reisst die Grenze von `clippy`, und das
+/// zu Recht: Wer `feld(name, art, "Modell", "Model", "Artefakt",
+/// "Artefact", …)` liest, zaehlt Kommata, um zu wissen, was wozu
+/// gehoert. Ein Paar sagt es.
 const fn feld(
     name: &'static str,
     art: Feldart,
-    bereich: &'static str,
-    titel: &'static str,
-    hinweis: &'static str,
+    bereich: (&'static str, &'static str),
+    titel: (&'static str, &'static str),
+    hinweis: (&'static str, &'static str),
 ) -> Feld {
-    Feld { name, art, bereich, titel, hinweis, ordner: art.ist_ordner() }
+    Feld {
+        name,
+        art,
+        bereich: bereich.0,
+        bereich_en: bereich.1,
+        titel: titel.0,
+        titel_en: titel.1,
+        hinweis: hinweis.0,
+        hinweis_en: hinweis.1,
+        wahl: &[],
+        ordner: art.ist_ordner(),
+        freigabe: art.ist_freigabe(),
+    }
+}
+
+/// Dasselbe fuer ein Feld mit einer festen Auswahl.
+const fn feld_wahl(
+    name: &'static str,
+    bereich: (&'static str, &'static str),
+    titel: (&'static str, &'static str),
+    hinweis: (&'static str, &'static str),
+    wahl: &'static [Wahl],
+) -> Feld {
+    let f = feld(name, Feldart::Auswahl, bereich, titel, hinweis);
+    Feld { wahl, ..f }
+}
+
+impl Feld {
+    /// Dasselbe Feld, beschriftet in einer Sprache.
+    ///
+    /// ⚑ **Der Name bleibt, immer.** `agent.wurzel` heisst in jeder
+    /// Sprache so: Er steht in der Ablage, in `myl setzen` und in der
+    /// Fehlermeldung. **Uebersetzt wird, was ein Mensch liest, und
+    /// nicht, was ein Programm vergleicht.**
+    pub const fn in_sprache(self, s: Sprache) -> Self {
+        match s {
+            Sprache::De => self,
+            Sprache::En => Feld {
+                bereich: self.bereich_en,
+                titel: self.titel_en,
+                hinweis: self.hinweis_en,
+                ..self
+            },
+        }
+    }
 }
 
 /// Die Felder, die sich setzen lassen, in der Reihenfolge der Seite.
@@ -333,88 +543,132 @@ pub const FELDER: [Feld; 12] = [
     feld(
         "modell.artefakt",
         Feldart::Ordner,
-        "Modell",
-        "Artefakt",
-        "Der Ordner des Modells, aus dem geantwortet wird.",
+        ("Modell", "Model"),
+        ("Artefakt", "Artefact"),
+        (
+            "Der Ordner des Modells, aus dem geantwortet wird.",
+            "The folder of the model that answers.",
+        ),
     ),
     feld(
         "modell.token",
         Feldart::Zahl,
-        "Modell",
-        "Länge der Antwort",
-        "Höchstzahl der Token je Antwort. Mehr Token heißt längere Antworten und längere Wartezeit.",
+        ("Modell", "Model"),
+        ("Länge der Antwort", "Answer length"),
+        (
+            "Höchstzahl der Token je Antwort. Mehr Token heißt längere Antworten und längere Wartezeit.",
+            "Maximum number of tokens per answer. More tokens means longer answers and a longer wait.",
+        ),
     ),
     feld(
         "modell.denken",
         Feldart::Schalter,
-        "Modell",
-        "Vor dem Antworten denken",
-        "Das Modell überlegt sichtbar, bevor es antwortet. Jedes Denktoken kostet so viel Zeit wie ein Antworttoken; ohne Angabe bleibt es aus.",
+        ("Modell", "Model"),
+        ("Vor dem Antworten denken", "Think before answering"),
+        (
+            "Das Modell überlegt sichtbar, bevor es antwortet. Jedes Denktoken kostet so viel Zeit wie ein Antworttoken; ohne Angabe bleibt es aus.",
+            "The model reasons visibly before it answers. Every thinking token costs as much time as an answer token; off unless set.",
+        ),
     ),
     feld(
         "agent.schritte",
         Feldart::Zahl,
-        "Agent",
-        "Schritte je Auftrag",
-        "Nach so vielen Werkzeugaufrufen bricht der Agent ab und antwortet mit dem, was er hat.",
+        ("Agent", "Agent"),
+        ("Schritte je Auftrag", "Steps per task"),
+        (
+            "Nach so vielen Werkzeugaufrufen bricht der Agent ab und antwortet mit dem, was er hat.",
+            "After this many tool calls the agent stops and answers with what it has.",
+        ),
     ),
     feld(
         "agent.bezeugtes",
         Feldart::Schalter,
-        "Agent",
-        "Bezeugte Werkzeuge zulassen",
-        "Alle Werkzeuge dieses Rechners sind bezeugt: Nur diese Maschine belegt, was sie ausgegeben haben, das Netz kann es nicht nachrechnen. Ohne Angabe sind sie angemeldet, aber gesperrt, und der Agent arbeitet ohne Werkzeuge.",
+        ("Agent", "Agent"),
+        ("Bezeugte Werkzeuge zulassen", "Allow attested tools"),
+        (
+            "Alle Werkzeuge dieses Rechners sind bezeugt: Nur diese Maschine belegt, was sie ausgegeben haben, das Netz kann es nicht nachrechnen. Ohne Angabe sind sie angemeldet, aber gesperrt, und der Agent arbeitet ohne Werkzeuge.",
+            "Every tool on this machine is attested: only this machine vouches for what they returned, the network cannot recompute it. Unless set they are registered but locked, and the agent works without tools.",
+        ),
     ),
     feld(
         "agent.wurzel",
         Feldart::Pfad,
-        "Agent",
-        "Arbeitsordner",
-        "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe gibt es keine Dateiwerkzeuge.",
+        ("Agent", "Agent"),
+        ("Arbeitsordner", "Working folder"),
+        (
+            "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe gibt es keine Dateiwerkzeuge.",
+            "The only folder the file tools may work in. Unless set there are no file tools at all.",
+        ),
     ),
     feld(
         "agent.schreiben",
         Feldart::Schalter,
-        "Agent",
-        "Schreiben erlauben",
-        "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
+        ("Agent", "Agent"),
+        ("Schreiben erlauben", "Allow writing"),
+        (
+            "Lässt den Agenten im Arbeitsordner auch ändern und anlegen. Ohne Angabe darf er nur lesen.",
+            "Lets the agent change and create inside the working folder. Unless set it may only read.",
+        ),
     ),
     feld(
         "kap.kerne",
         Feldart::Grenze,
-        "Grenzen dieses Rechners",
-        "Rechenkerne",
-        "Wie viele Kerne der Betrieb benutzen darf. Das ändert die Laufzeit und nie das Ergebnis. Leer oder „aus“ heißt: alle.",
-    ),
-    feld(
-        "kap.beschleuniger",
-        Feldart::Schalter,
-        "Grenzen dieses Rechners",
-        "Beschleuniger benutzen",
-        "Noch ohne Wirkung: Der Wert wird gespeichert, gerechnet wird auf der CPU. Es gibt bisher kein Rechenwerk, das dieser Schalter einschalten könnte.",
+        ("Grenzen dieses Rechners", "Limits of this machine"),
+        ("Rechenkerne", "CPU cores"),
+        (
+            "Wie viele der Kerne dieses Rechners Myelith benutzen darf. Das ändert die Laufzeit und nie das Ergebnis, denn jede Ausgabezeile wird für sich gerechnet. Ganz links heißt: alle.",
+            "How many of this machine's cores Myelith may use. This changes the running time and never the result, because every output row is computed on its own. Far left means: all of them.",
+        ),
     ),
     feld(
         "kap.speicher",
         Feldart::Grenze,
-        "Grenzen dieses Rechners",
-        "Arbeitsspeicher in GiB",
-        "Noch ohne Wirkung: Der Wert wird gespeichert, aber nichts misst den Arbeitsspeicher dagegen. Leer oder „aus“ heißt: ohne Grenze.",
+        ("Grenzen dieses Rechners", "Limits of this machine"),
+        ("Arbeitsspeicher in GiB", "Memory in GiB"),
+        (
+            "Wie viel Arbeitsspeicher Myelith belegen darf. Ein Modell, dessen Artefakt darüber liegt, wird gar nicht erst geladen. Ganz links heißt: ohne Grenze.",
+            "How much memory Myelith may take. A model whose artefact is larger is not loaded at all. Far left means: no limit.",
+        ),
     ),
     feld(
         "kap.platte",
         Feldart::Grenze,
-        "Grenzen dieses Rechners",
-        "Plattenplatz in GiB",
-        "Noch ohne Wirkung: Der Wert wird gespeichert, aber nichts misst den Plattenplatz dagegen. Leer oder „aus“ heißt: ohne Grenze.",
+        ("Grenzen dieses Rechners", "Limits of this machine"),
+        ("Plattenplatz in GiB", "Disk space in GiB"),
+        (
+            "Wie viel Platz Myelith für Modelle und Artefakte bekommt. Der Platz wird beim Start wirklich belegt und beim Beenden wieder freigegeben; was nicht hineinpasst, wird gar nicht erst geholt. Ganz links heißt: ohne Grenze und ohne Reservierung.",
+            "How much room Myelith gets for models and artefacts. The space is really claimed at start and released on exit; what would not fit is not fetched at all. Far left means: no limit and no reservation.",
+        ),
     ),
     feld(
         "ausgabe.ordner",
         Feldart::Pfad,
-        "Ausgabe",
-        "Ordner für ausgegebene Gespräche",
-        "Wohin ein ausgegebenes Gespräch geschrieben wird. Ohne Angabe wird nichts geschrieben, und das Fenster führt beim Ausgeben hierher.",
+        ("Ausgabe", "Export"),
+        ("Ordner für ausgegebene Gespräche", "Folder for exported conversations"),
+        (
+            "Wohin ein ausgegebenes Gespräch geschrieben wird. Ohne Angabe wird nichts geschrieben, und das Fenster führt beim Ausgeben hierher.",
+            "Where an exported conversation is written. Unless set nothing is written, and exporting leads here instead.",
+        ),
+    ),
+    // ⚑ **Sie steht zuletzt und nicht zuerst**, obwohl sie alles
+    // andere beschriftet: Wer die Seite oeffnet, kommt wegen eines
+    // Modells oder eines Ordners, nicht wegen der Sprache. Und wer sie
+    // sucht, sucht am Ende einer Liste.
+    feld_wahl(
+        "oberflaeche.sprache",
+        ("Oberfläche", "Interface"),
+        ("Sprache", "Language"),
+        (
+            "Die Sprache des Fensters. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind; übersetzt wird, was ein Mensch liest.",
+            "The language of the window. Field names, paths and model names stay as they are; what a human reads is translated.",
+        ),
+        &[
+            Wahl { wert: "de", titel: "Deutsch" },
+            Wahl { wert: "en", titel: "English" },
+        ],
     ),
 ];
+
 
 /// Was in ein Feld hineingehoert.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -441,6 +695,13 @@ pub enum Feldart {
     /// ohne Artefakt waere kein enger gestellter Klient, sondern einer,
     /// der nicht antwortet.
     Ordner,
+    /// Einer aus einer festen Liste, siehe [`Feld::wahl`].
+    ///
+    /// ⚑ **Die Liste haengt am Feld und nicht an der Art.** Eine Art
+    /// `Auswahl(&[…])` traege die Werte im Typ, und dann gaebe es die
+    /// Feldart „Sprache" statt der Feldart „Auswahl": Die naechste
+    /// Auswahl braeuchte eine zweite Art fuer denselben Bedienweg.
+    Auswahl,
 }
 
 impl Feldart {
@@ -453,7 +714,31 @@ impl Feldart {
     pub const fn ist_ordner(self) -> bool {
         matches!(self, Self::Ordner | Self::Pfad)
     }
+
+    /// Gibt dieses Feld ein Betriebsmittel der Maschine frei?
+    ///
+    /// ⚑ **Die Frage entscheidet, ob eine Oberflaeche einen
+    /// Schieberegler zeigen darf**, denn ein Regler braucht ein Ende,
+    /// und das Ende ist, was die Maschine hergibt. Sie wird hier
+    /// beantwortet und nicht dort, aus demselben Grund wie
+    /// [`Feldart::ist_ordner`].
+    ///
+    /// ⚑ **Und sie ist abgeleitet und nicht gesetzt.** Jedes
+    /// [`Feldart::Grenze`]-Feld ist eine Freigabe: Kerne, Arbeitsspeicher,
+    /// Platte. Ein von Hand gesetztes Merkmal waere ein zwoelffach
+    /// wiederholtes Ja oder Nein, und eines davon waere irgendwann
+    /// falsch.
+    pub const fn ist_freigabe(self) -> bool {
+        matches!(self, Self::Grenze)
+    }
 }
+
+/// Der Namensanfang, unter dem die Freigabe eines Rechenwerks steht.
+///
+/// ⚑ **An einer Stelle und nicht an dreien.** Setzer, Oberflaeche und
+/// Scan nennen denselben Namen, und wer ihn hier aendert, aendert ihn
+/// ueberall.
+pub const RECHENWERK_PRAEFIX: &str = "kap.rechenwerk.";
 
 /// Was `an` bedeutet.
 fn ja(w: &str) -> bool {
@@ -465,7 +750,72 @@ fn opt(w: &str) -> Option<u32> {
     w.parse().ok().filter(|_| w != "aus")
 }
 
+/// Der Wert eines Feldes, so wie eine Oberflaeche ihn braucht.
+///
+/// ⚑ **`untagged`, damit daraus schlichtes JSON wird:** eine Zahl, ein
+/// Wahrheitswert, eine Zeichenkette oder `null`. Ein Fenster soll den
+/// Wert anzeigen und nicht erst eine Huelle auspacken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum Feldwert {
+    Zahl(u64),
+    Schalter(bool),
+    Text(String),
+    /// Nicht gesetzt. ⚑ **Und das ist etwas anderes als null oder
+    /// leer:** Eine Grenze, die nicht gesetzt ist, gibt es nicht; eine
+    /// auf null waere ein Stillstand.
+    Leer,
+}
+
 impl Einstellungen {
+    /// Was in einem Feld steht, unter demselben Namen, unter dem
+    /// [`Einstellungen::setzen`] es kennt.
+    ///
+    /// # ⛑ Warum es diesen Gegenpart gibt
+    ///
+    /// **Fund 280.** Die Einstellungsseite zeichnete ihre Zeilen aus
+    /// [`FELDER`], holte die **Werte** aber aus einer zweiten, von Hand
+    /// gepflegten Zuordnung im Fenster, und die kannte drei der zwoelf
+    /// Felder nicht. In JavaScript ist ein fehlender Schluessel kein
+    /// Fehler, sondern `undefined`: Der Schalter stand immer aus, die
+    /// Textfelder immer leer.
+    ///
+    /// ⚑ **Ein Setzer ohne Leser ist eine halbe Naht.** Solange nur das
+    /// Schreiben hier lag und das Lesen anderswo, mussten beide Listen
+    /// von Hand zusammengehalten werden. Jetzt liegt beides hier, und
+    /// `wert_und_setzer_kennen_dieselben_felder` faehrt jedes Feld
+    /// einmal hin und zurueck.
+    pub fn wert(&self, feld: &str) -> Result<Feldwert, String> {
+        let zahl = |o: Option<u32>| o.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64));
+        let text = |o: &Option<String>| {
+            o.as_ref().map_or(Feldwert::Leer, |s| Feldwert::Text(s.clone()))
+        };
+        Ok(match feld {
+            "modell.artefakt" => Feldwert::Text(self.modell.artefakt.clone()),
+            "modell.token" => Feldwert::Zahl(self.modell.token as u64),
+            "modell.denken" => Feldwert::Schalter(self.modell.denken),
+            "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
+            "agent.bezeugtes" => Feldwert::Schalter(self.agent.auch_bezeugtes),
+            "agent.wurzel" => text(&self.agent.wurzel),
+            "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
+            "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
+            "kap.speicher" => zahl(self.kapazitaet.speicher_gib),
+            "kap.platte" => zahl(self.kapazitaet.platte_gib),
+            "ausgabe.ordner" => text(&self.ausgabe.ordner),
+            "oberflaeche.sprache" => {
+                Feldwert::Text(self.oberflaeche.sprache.kennung().to_string())
+            }
+            andere if andere.starts_with(RECHENWERK_PRAEFIX) => {
+                let kennung = &andere[RECHENWERK_PRAEFIX.len()..];
+                self.kapazitaet
+                    .rechenwerke
+                    .get(kennung)
+                    .map_or(Feldwert::Leer, |p| Feldwert::Zahl(*p as u64))
+            }
+            andere => return Err(format!("unbekanntes Feld {andere}")),
+        })
+    }
+
     /// Setzt ein Feld aus seinem Namen und einem Text.
     ///
     /// # ⚑ Warum das hier steht und nicht im Bedieninstrument
@@ -490,11 +840,40 @@ impl Einstellungen {
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),
-            "kap.beschleuniger" => self.kapazitaet.beschleuniger = ja(wert),
             "kap.speicher" => self.kapazitaet.speicher_gib = opt(wert),
             "kap.platte" => self.kapazitaet.platte_gib = opt(wert),
             "ausgabe.ordner" => {
                 self.ausgabe.ordner = (wert != "aus").then(|| wert.to_string())
+            }
+            // ⚑ **Kein `aus`.** Ein Fenster ohne Sprache gibt es nicht;
+            // wo andere Felder eine Grenze wegnehmen koennen, gaebe das
+            // hier nur eine dritte Schreibweise fuer Deutsch.
+            "oberflaeche.sprache" => self.oberflaeche.sprache = Sprache::aus(wert)?,
+            // ⚑ **Die Freigabe je Rechenwerk hat keinen festen Namen**,
+            // denn wie viele Rechenwerke es gibt, weiss erst der Scan.
+            // Der Setzer bleibt trotzdem die eine Stelle, die die
+            // Feinheiten kennt: `aus` nimmt die Freigabe weg, und ein
+            // Anteil ueber hundert Prozent ist keiner.
+            andere if andere.starts_with(RECHENWERK_PRAEFIX) => {
+                let kennung = &andere[RECHENWERK_PRAEFIX.len()..];
+                if kennung.is_empty() {
+                    return Err("kein Rechenwerk genannt".to_string());
+                }
+                let p = if wert == "aus" { 0 } else {
+                    let p: u32 = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?;
+                    if p > 100 {
+                        return Err(format!("{p} ist mehr als hundert Prozent"));
+                    }
+                    p as u8
+                };
+                // ⚑ Null Prozent ist „nichts freigegeben" und damit
+                // dasselbe wie kein Eintrag. Beides abzulegen hiesse
+                // zwei Schreibweisen fuer einen Zustand.
+                if p == 0 {
+                    self.kapazitaet.rechenwerke.remove(kennung);
+                } else {
+                    self.kapazitaet.rechenwerke.insert(kennung.to_string(), p);
+                }
             }
             andere => return Err(format!("unbekanntes Feld {andere}")),
         }
@@ -556,6 +935,24 @@ mod setzer {
         assert!(e.setzen("agent.schritte", "").is_err());
     }
 
+    /// **Ein Wert, den dieses Feld annehmen muss.**
+    ///
+    /// ⚑ **Er steht an einer Stelle und nicht in jeder Pruefung
+    /// neu.** Drei Pruefungen brauchten ihn, jede hatte ihre eigene
+    /// Zuordnung, und eine davon fiel ueber die Feldart `Auswahl`, weil
+    /// sie einen Auffangzweig `_ => "an"` trug. **Ein Auffangzweig ueber
+    /// einer Aufzaehlung ist eine Zusage, dass nichts dazukommt.**
+    fn probewert(f: &Feld) -> &'static str {
+        match f.art {
+            Feldart::Text | Feldart::Pfad | Feldart::Ordner => "/tmp/x",
+            Feldart::Zahl | Feldart::Grenze => "4",
+            Feldart::Schalter => "an",
+            Feldart::Auswahl => {
+                f.wahl.first().unwrap_or_else(|| panic!("{} ist eine Auswahl ohne Werte", f.name)).wert
+            }
+        }
+    }
+
     /// ⚑ **Die Liste und der Setzer muessen dieselben Felder kennen.**
     /// Ein Feld in `FELDER`, das der Setzer ablehnt, waere eine Zeile
     /// in der Oberflaeche, die nichts tut.
@@ -563,13 +960,8 @@ mod setzer {
     fn jedes_gelistete_feld_laesst_sich_setzen() {
         for feld in FELDER {
             let mut e = Einstellungen::default();
-            let wert = match feld.art {
-                Feldart::Text | Feldart::Pfad | Feldart::Ordner => "irgendwas",
-                Feldart::Zahl | Feldart::Grenze => "3",
-                Feldart::Schalter => "an",
-            };
             let name = feld.name;
-            e.setzen(name, wert)
+            e.setzen(name, probewert(&feld))
                 .unwrap_or_else(|f| panic!("{name} steht in FELDER, der Setzer sagt: {f}"));
         }
     }
@@ -613,21 +1005,136 @@ mod setzer {
     }
 
     /// Und die Gegenrichtung: nichts Gesetztes fehlt in der Liste.
+    ///
+    /// ⛑ **Diese Pruefung fuehrte bis zum 2026-09-10 eine handgepflegte
+    /// Liste von elf Namen**, also Fund 271 an einer dritten Stelle. Als
+    /// `kap.beschleuniger` entfiel, fiel sie wegen eines Feldes, das es
+    /// nicht mehr gibt, und **das war der harmlose Ausgang**: Ein neu
+    /// hinzugefuegtes Feld haette sie gar nicht bemerkt, und genau das
+    /// zu bemerken ist ihr Zweck.
+    ///
+    /// ⚑ **Sie liest die Namen jetzt aus dem Setzer selbst**, naemlich
+    /// aus den Zweigen seiner Fallunterscheidung. Damit gibt es keine
+    /// zweite Liste mehr, die rotten koennte.
     #[test]
     fn die_liste_ist_vollstaendig() {
+        let quelle = include_str!("einstellungen.rs");
+        let rumpf = quelle
+            .split_once("pub fn setzen(")
+            .and_then(|(_, r)| r.split_once("\n    }"))
+            .map(|(k, _)| k)
+            .expect("kein Setzer gefunden");
+
+        let mut namen = Vec::new();
+        for zeile in rumpf.lines() {
+            let z = zeile.trim();
+            let Some(rest) = z.strip_prefix('"') else { continue };
+            let Some((name, danach)) = rest.split_once('"') else { continue };
+            if danach.trim_start().starts_with("=>") {
+                namen.push(name.to_string());
+            }
+        }
+        assert!(
+            namen.len() >= 10,
+            "nur {} Feldnamen im Setzer gefunden; liest die Pruefung ihn noch richtig?",
+            namen.len()
+        );
+
         let mut e = Einstellungen::default();
-        // Ein Feld, das der Setzer kennt, aber die Liste nicht, waere
-        // in keiner Oberflaeche erreichbar.
-        for name in ["modell.artefakt", "modell.token", "modell.denken",
-                     "agent.schritte", "agent.bezeugtes", "agent.wurzel",
-                     "agent.schreiben", "kap.kerne", "kap.beschleuniger",
-                     "kap.speicher", "kap.platte"] {
+        for name in &namen {
             assert!(
                 FELDER.iter().any(|f| f.name == name),
                 "{name} laesst sich setzen, steht aber nicht in FELDER"
             );
-            let _ = e.setzen(name, "an");
+            // Und er nimmt ihn auch wirklich an.
+            let f = FELDER.iter().find(|f| f.name == name).expect("gerade geprueft");
+            e.setzen(name, probewert(f)).unwrap_or_else(|m| panic!("{name}: {m}"));
         }
+
+        // ⚑ **Und der Zweig ohne festen Namen**, die Freigabe je
+        // Rechenwerk. Er steht nicht in FELDER, weil erst der Scan
+        // weiss, wie viele Rechenwerke es gibt, und gerade deshalb
+        // gehoert er hier geprueft: Sonst faende ihn keine der beiden
+        // Richtungen.
+        e.setzen(&format!("{RECHENWERK_PRAEFIX}apple-m5-pro"), "50").expect("Freigabe setzen");
+        assert_eq!(e.kapazitaet.rechenwerke.get("apple-m5-pro"), Some(&50));
+        e.setzen(&format!("{RECHENWERK_PRAEFIX}apple-m5-pro"), "aus").expect("Freigabe weg");
+        assert!(e.kapazitaet.rechenwerke.is_empty(), "aus hat die Freigabe nicht weggenommen");
+        assert!(e.setzen(&format!("{RECHENWERK_PRAEFIX}x"), "101").is_err(), "ueber hundert Prozent");
+        assert!(e.setzen(RECHENWERK_PRAEFIX, "50").is_err(), "kein Rechenwerk genannt");
+    }
+
+    /// ⚑ **Jedes Feld faehrt einmal hin und zurueck.**
+    ///
+    /// ⛑ **Die Pruefung, die Fund 280 unmoeglich macht.** Solange nur
+    /// der Setzer hier lag und das Lesen im Fenster, konnte ein Feld
+    /// gesetzt und nirgends angezeigt werden. Jetzt gibt es beide
+    /// Richtungen an einer Stelle, und diese Pruefung faehrt sie: Was
+    /// `setzen` annimmt, muss `wert` wiedergeben, und zwar unveraendert.
+    #[test]
+    fn wert_und_setzer_kennen_dieselben_felder() {
+        for f in FELDER {
+            let mut e = Einstellungen::default();
+
+            // Jedes Feld muss lesbar sein, auch ungesetzt.
+            e.wert(f.name).unwrap_or_else(|m| panic!("{}: {m}", f.name));
+
+            let (hinein, erwartet) = match f.art {
+                Feldart::Schalter => ("an", Feldwert::Schalter(true)),
+                Feldart::Zahl | Feldart::Grenze => ("7", Feldwert::Zahl(7)),
+                Feldart::Text | Feldart::Pfad | Feldart::Ordner => {
+                    ("/tmp/x", Feldwert::Text("/tmp/x".to_string()))
+                }
+                // ⚑ **Jeder** angebotene Wert muss durchkommen, nicht
+                // nur der erste: Eine Auswahl, deren zweiter Eintrag
+                // abgelehnt wird, ist eine Liste mit einer Falle darin.
+                Feldart::Auswahl => {
+                    for w in f.wahl {
+                        e.setzen(f.name, w.wert)
+                            .unwrap_or_else(|m| panic!("{}: `{}` wird abgelehnt: {m}", f.name, w.wert));
+                        assert_eq!(
+                            e.wert(f.name).expect("lesen"),
+                            Feldwert::Text(w.wert.to_string()),
+                            "`{}` nimmt `{}` an und gibt etwas anderes zurueck",
+                            f.name,
+                            w.wert
+                        );
+                    }
+                    assert!(
+                        e.setzen(f.name, "gibt-es-nicht").is_err(),
+                        "`{}` nimmt einen Wert an, der nicht in der Liste steht",
+                        f.name
+                    );
+                    continue;
+                }
+            };
+            e.setzen(f.name, hinein).unwrap_or_else(|m| panic!("{}: {m}", f.name));
+            assert_eq!(
+                e.wert(f.name).expect("lesen"),
+                erwartet,
+                "`{}` nimmt `{hinein}` an und gibt etwas anderes zurueck",
+                f.name
+            );
+
+            // Und was sich wegnehmen laesst, ist danach leer.
+            if matches!(f.art, Feldart::Grenze | Feldart::Pfad) {
+                e.setzen(f.name, "aus").expect("aus");
+                assert_eq!(
+                    e.wert(f.name).expect("lesen"),
+                    Feldwert::Leer,
+                    "`{}` ist nach `aus` nicht leer",
+                    f.name
+                );
+            }
+        }
+
+        // Und der Zweig ohne festen Namen, dieselbe Runde.
+        let mut e = Einstellungen::default();
+        let name = format!("{RECHENWERK_PRAEFIX}apple-m5-pro");
+        assert_eq!(e.wert(&name).expect("lesen"), Feldwert::Leer);
+        e.setzen(&name, "40").expect("setzen");
+        assert_eq!(e.wert(&name).expect("lesen"), Feldwert::Zahl(40));
+        assert!(e.wert("gibt.es.nicht").is_err(), "ein unbekanntes Feld gibt einen Wert her");
     }
 
     /// ⛑ **Der Ort der Einstellungsdatei, plattformweise.**

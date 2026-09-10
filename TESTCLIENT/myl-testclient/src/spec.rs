@@ -492,7 +492,7 @@ mod tests {
     fn eine_alte_model_zeile_wird_ueberlesen() {
         let plan = TestPlan::vorgaben();
         let text = format!(
-            "prompt = {}\nsteps = {}\nshards = {}\nmodel = qwen2.5-0.5b\nspec_sha256 = {}\n",
+            "prompt = {}\nsteps = {}\nshards = {}\nmodel = myelith-0.5b\nspec_sha256 = {}\n",
             zitieren(&plan.prompts[0]),
             plan.steps,
             plan.shards,
@@ -510,7 +510,7 @@ mod tests {
     /// verschiedene Prüfsummenverfahren nebeneinander zu führen.
     #[test]
     fn eine_alte_pruefsumme_wird_abgelehnt() {
-        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = qwen2.5-0.5b\n\
+        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = myelith-0.5b\n\
                     spec_sha256 = 0000000000000000000000000000000000000000000000000000000000000000\n";
         assert!(matches!(
             TestPlan::parse(text),

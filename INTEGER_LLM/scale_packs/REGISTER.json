@@ -1,5 +1,5 @@
 {
-  "qwen2.5-0.5b": {
+  "myelith-0.5b": {
     "artefakt_digest_sha256": "ea442c3c8ecf628e12b4751ecc03fc64a623d904e0495936e895d98832833d2e",
     "bytes": 556181,
     "dateien": [
@@ -20,7 +20,7 @@
     "theta_v": "0.18.0",
     "weights_manifest_sha256": "e0ef3424764338fec017e65bce2aa821985c8519687a447a8b57046a621c6a05"
   },
-  "qwen2.5-7b": {
+  "myelith-7b": {
     "artefakt_digest_sha256": "6a5492d59c322c21f972ed154182dc6dc4015bce29c1b24005fef4d62a56b08e",
     "bytes": 1290939,
     "dateien": [
@@ -41,7 +41,7 @@
     "theta_v": "0.18.0",
     "weights_manifest_sha256": "63d1e700b1915f6aa0d2a9eee7ba55e76fc2682fa839158abb1a1f271c7adce1"
   },
-  "qwen3-30b-a3b": {
+  "myelith-30b-a3b": {
     "artefakt_digest_sha256": "68cc13b051271e3a9c204d2e4460bd66e8d08880bd546baefa4a3cafee3eb587",
     "bytes": 1323027,
     "dateien": [
@@ -62,7 +62,7 @@
     "theta_v": "0.18.0",
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
-  "qwen3-4b": {
+  "myelith-4b": {
     "artefakt_digest_sha256": "f2a6a6b97db860146b1aed5cd7c12c09b62b55bab304244e5008d27517716d9d",
     "bytes": 1262216,
     "dateien": [

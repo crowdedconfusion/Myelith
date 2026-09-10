@@ -102,7 +102,7 @@ fn konfig(
         ortsleitung,
         ortsausweis,
         pod: None,
-        modellname: "myelith-qwen2.5-0.5b".to_string(),
+        modellname: "myelith-myelith-0.5b".to_string(),
         kontoschluesseldatei: None,
         konto: None,
         testverkehr_sekunden: None,

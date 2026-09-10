@@ -1,7 +1,7 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.33.1
-> **Datum:** 2026-09-01
+> **Version:** 0.33.3
+> **Datum:** 2026-09-09
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
 > Manipulationserkennung, `coordinator_loop` mit Micro-Batching,
@@ -100,6 +100,41 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.33.3 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
+`INTEGER_LLM/artifacts/` heissen seit heute `myelith-0.5b`,
+`myelith-7b`, `myelith-4b` und `myelith-30b-a3b`; die Pfade in elf Prüfungen
+sind nachgezogen.
+
+⚑ **Ein Artefakt ist nicht das Basismodell, sondern das Modell, mit dem
+dieses Projekt rechnet.** Es trägt deshalb einen eigenen Namen; die
+Basismodelle unter `models/` behalten ihre und stehen weiter mit
+Herkunft im Katalog.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
+
+### v0.33.2 – 2026-09-09 (Fund 218: der Schalter stand hinter der Pfadprüfung)
+
+`artefakte::vorhanden` fragte zuerst, ob das Verzeichnis existiert, und
+erst danach nach `MYL_OHNE_ARTEFAKTE`. Damit war der Schalter auf jeder
+Maschine wirkungslos, die die Artefakte **hat**, also bei genau dem
+zweiten seiner beiden Leser: wer prüft, während eine Messung läuft, und
+ihr keine Rechenzeit abgeben will. Der erste Leser, die CI ohne
+Gewichte, wurde bedient; der zweite nie. Gemessen: `MYL_OHNE_ARTEFAKTE=1
+cargo test` lud neben einem laufenden Training doch das 4B-Modell und
+rechnete 59 Sekunden. Die Abfrage steht jetzt als erste Zeile.
+
+⚑ **Für `vorhanden` gab es keine einzige Prüfung**, und deshalb konnte
+das zwei Monate unbemerkt daliegen. Jetzt eine, und ausdrücklich
+**eine** statt dreier: Die Umgebungsvariable ist prozessweit, und drei
+nebenläufige Prüfungen setzten sie einander um.
+
+⛑ **Nachgetragen am 2026-09-10.** Das Manifest trug 0.33.2 seit dem
+2026-09-09, dieser Changelog stand auf 0.33.1.
 
 ### v0.33.1 – 2026-09-07 (die grosse Variante wird eingeschachtelt)
 

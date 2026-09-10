@@ -16,7 +16,7 @@
   <div class="vorhangtext">
     <p class="wortmarke">Myelith</p>
     <div class="zeile"></div>
-    <p id="vorhangstand" role="status">wird geladen</p>
+    <p id="vorhangstand" role="status" data-t="vorhang.stand">wird geladen</p>
   </div>
 </div>
 
@@ -33,9 +33,9 @@
      die `overflow: hidden` traegt: darin wuerde es am Rand
      abgeschnitten. -->
 <div id="kontextmenue" class="glas" role="menu" hidden>
-  <button type="button" class="menueeintrag blank" role="menuitem" data-tat="umbenennen">Umbenennen</button>
-  <button type="button" class="menueeintrag blank" role="menuitem" data-tat="ausgeben">Exportieren</button>
-  <button type="button" class="menueeintrag blank weg" role="menuitem" data-tat="loeschen">Löschen</button>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-tat="umbenennen" data-t="menue.umbenennen">Umbenennen</button>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-tat="ausgeben" data-t="menue.ausgeben">Exportieren</button>
+  <button type="button" class="menueeintrag blank weg" role="menuitem" data-tat="loeschen" data-t="menue.loeschen">Löschen</button>
 </div>
 
 <div id="huelle">
@@ -46,9 +46,9 @@
        traegt es den Verlauf mit, beim Agenten steht jeder Auftrag fuer
        sich. Wer die Gespraeche zuerst saehe, waehlte in einem Zustand,
        den er noch nicht kennt. -->
-  <aside id="seitenleiste" aria-label="Gespräche und Betriebsart">
+  <aside id="seitenleiste" aria-label="Gespräche und Betriebsart" data-t-marke="leiste.label">
     <!-- ⚑ **Die Marke ist gerechnet und nicht gezeichnet**, erzeugt von
-         `werkzeuge/marke.py`: Fibonacci-Quadrate, tangentenstetige
+         einem Erzeugerskript: Fibonacci-Quadrate, tangentenstetige
          Viertelkreise darin, und das Ganze **viermal**, je um neunzig
          Grad gedreht und an den Achsen aneinandergesetzt. Vier goldene
          Rechtecke im Windrad ergeben ein Quadrat.
@@ -163,7 +163,7 @@
          Modellwahl soll sich nicht wegbewegen. -->
     <div class="leistenmitte">
       <nav class="leistenteil" aria-label="Betriebsart">
-        <h2>Modus</h2>
+        <h2 data-t="leiste.modus">Modus</h2>
         <div id="modi" role="radiogroup" aria-label="Betriebsart"></div>
         <!-- ⚑ **Worauf der Agent zugreifen darf, bevor der Auftrag
              laeuft.** Die Marke im Kopf sagt „liest und schreibt", aber
@@ -180,17 +180,17 @@
     </div>
 
     <div class="leistenfuss">
-      <h2>Modell</h2>
-      <select id="modellwahl" aria-label="Modell"></select>
+      <h2 data-t="leiste.modell">Modell</h2>
+      <select id="modellwahl" aria-label="Modell" data-t-marke="leiste.modell"></select>
       <p id="modellzeile" class="pfad">kein Modell geladen</p>
-      <button id="laden">Modell laden</button>
+      <button id="laden" data-t="knopf.laden">Modell laden</button>
     </div>
   </aside>
 
   <div id="haupt">
     <header>
       <button id="leiste-schalten" class="rundknopf" aria-label="Seitenleiste ein- und ausblenden"
-              aria-expanded="true" aria-controls="seitenleiste">
+              data-t-marke="leiste.schalten" aria-expanded="true" aria-controls="seitenleiste">
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           <path d="M3 5.5h14M3 10h14M3 14.5h14"/>
         </svg>
@@ -206,6 +206,13 @@
            und ist gesperrt, bis Knotenadresse und Vollmacht da sind. -->
 
 
+      <!-- ⚑ **Die Marke, wenn die Seitenleiste zu ist.** Sie wird beim
+           Start aus der Leiste geklont und nicht hier zweimal
+           hingeschrieben: Die Geometrie ist gerechnet,
+           und zwei Abschriften derselben Zeichnung waeren zwei Orte,
+           an denen die naechste Aenderung ankommen muesste. -->
+      <div id="kopfmarke" class="kopfmarke" aria-hidden="true" hidden></div>
+
       <!-- ⛑ **Der erste Entwurf zeichnete eine Sonne.** Acht Strahlen
            aus der Mitte heraus plus ein Kreis ist das Zeichen fuer
            Helligkeit, nicht fuer Einstellungen, und wer es sieht, sucht
@@ -213,7 +220,7 @@
            Koerper und Zaehne AUSSEN daran: zwei Kreise und acht kurze
            Segmente zwischen Radius 5,4 und 7,4. -->
       <div class="kopfrechts">
-        <button id="zu-einstellungen" class="rundknopf" aria-label="Einstellungen">
+        <button id="zu-einstellungen" class="rundknopf" aria-label="Einstellungen" data-t-marke="kopf.einstellungen">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <circle cx="10" cy="10" r="5.4"/>
             <circle cx="10" cy="10" r="2.3"/>
@@ -233,8 +240,9 @@
       <div class="eingabefeld">
         <textarea id="auftrag" rows="1" autocomplete="off"
                   placeholder="Frag etwas, oder gib einen Auftrag."
-                  aria-label="Eingabe"></textarea>
-        <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden">
+                  data-t-platz="eingabe.platz"
+                  aria-label="Eingabe" data-t-marke="eingabe.label"></textarea>
+        <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
           </svg>
@@ -246,10 +254,10 @@
     <!-- ⚑ Die Einstellungen sind eine SEITE und kein Ausklapper. Sie
          nehmen den ganzen Raum, weil man sie nicht nebenbei bedient,
          und das Gespraech bleibt derweil stehen. -->
-    <section id="einstellungsseite" hidden aria-label="Einstellungen">
+    <section id="einstellungsseite" hidden aria-label="Einstellungen" data-t-marke="kopf.einstellungen">
       <div class="seitenkopf">
-        <h1>Einstellungen</h1>
-        <button id="zurueck" class="rundknopf" aria-label="Zurück zum Gespräch">
+        <h1 data-t="kopf.einstellungen">Einstellungen</h1>
+        <button id="zurueck" class="rundknopf" aria-label="Zurück zum Gespräch" data-t-marke="seite.zurueck">
           <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
             <path d="M5 5l10 10M15 5L5 15"/>
           </svg>
@@ -261,7 +269,7 @@
            Wer die Freigabe-Binaries laedt, hatte kein Artefakt und
            keinen Weg zu einem, ohne die Kommandozeile. -->
       <section id="modellbau">
-        <h2>Modelle</h2>
+        <h2 data-t="seite.modelle">Modelle</h2>
         <p id="bauhinweis" class="pfad"></p>
         <div id="katalog"></div>
         <!-- ⚑ Er steht hier und wird beim Bauen in die Zeile des
@@ -272,6 +280,16 @@
           <p id="bauphase" class="pfad"></p>
           <pre id="bauzeilen" aria-live="polite"></pre>
         </div>
+      </section>
+
+      <!-- ⚑ **Was dieser Rechner hergibt, und was davon freigegeben
+           ist.** Der Abschnitt entsteht aus dem Hardwarescan und nicht
+           aus einer festen Liste: Wie viele Rechenwerke ein Rechner
+           hat, weiss erst der Scan. -->
+      <section id="freigabe">
+        <h2 data-t="seite.freigabe">Was dieser Rechner hergibt</h2>
+        <p id="freigabehinweis" class="pfad"></p>
+        <div id="regler"></div>
       </section>
 
       <!-- ⛑ **Hier stand ein zweites „Einstellungen".** Eines als
@@ -285,6 +303,24 @@
       <table id="einstellungen"><tbody></tbody></table>
       <p class="pfad" id="pfad"></p>
       <p class="pfad" id="setzmeldung" role="status"></p>
+
+      <!-- ⚑ **Die Aktualisierung steht am Ende und nicht oben.** Sie
+           ist keine Einstellung, sondern eine Handlung, und wer die
+           Seite oeffnet, kommt wegen eines Modells oder eines Ordners.
+
+           ⚠️ **Der Knopf ist gesperrt, solange es nichts zu tun gibt
+           oder nichts zu tun MOEGLICH ist.** Wer das Programm aus
+           einem Buendel gestartet hat, hat keinen Klon; dann steht
+           dort der Grund und ein Verweis auf die Freigabeseite. -->
+      <section id="aktualisierung">
+        <h2 data-t="akt.titel">Aktualisierung</h2>
+        <p id="aktstand" class="pfad" role="status"></p>
+        <div class="aktzeile">
+          <button id="akt-pruefen" data-t="akt.pruefen">Nach Aktualisierungen sehen</button>
+          <button id="akt-einspielen" data-t="akt.einspielen" disabled>Einspielen</button>
+        </div>
+        <pre id="aktzeilen" aria-live="polite" hidden></pre>
+      </section>
     </section>
   </div>
 </div>

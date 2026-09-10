@@ -43,7 +43,7 @@ Gleitkomma erlaubt — Referenzmessung, nicht Inferenzpfad. Kein Teil des
 Auslieferungspfads.
 
 Usage:
-    INTEGER_LLM_MODEL=qwen2.5-7b ./calibrate/.venv/bin/python -u \\
+    INTEGER_LLM_MODEL=myelith-7b ./calibrate/.venv/bin/python -u \\
         tests/diag/nonlinearity_ablation.py
 """
 import math

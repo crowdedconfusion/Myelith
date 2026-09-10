@@ -51,7 +51,7 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
     let d = tempfile::tempdir().expect("Verzeichnis");
     let p = d.path().join("tief").join("client.json");
     let mut e = Einstellungen::default();
-    e.modell.artefakt = "INTEGER_LLM/artifacts/qwen3-4b".to_string();
+    e.modell.artefakt = "INTEGER_LLM/artifacts/myelith-4b".to_string();
     e.modell.token = 128;
     e.kapazitaet.kerne = Some(4);
     e.agent.schritte = 12;
@@ -67,7 +67,19 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
 #[test]
 fn die_vorgaben_sind_die_engen() {
     assert!(!Agenteneinstellung::default().auch_bezeugtes);
-    assert!(!Kapazitaet::default().beschleuniger);
+    // ⛑ **Hier stand `!Kapazitaet::default().beschleuniger`**, ein
+    // einzelner Schalter fuer alle Rechenwerke zugleich. Er ist am
+    // 2026-09-10 entfallen: Eine Freigabe ueber null **ist** die
+    // Erlaubnis, und ein Rechner mit zwei Karten konnte mit einem
+    // Schalter nicht sagen, dass er die eine hergibt und die andere
+    // behaelt. Die enge Vorgabe ist jetzt die **leere** Freigabe.
+    assert!(
+        Kapazitaet::default().rechenwerke.is_empty(),
+        "die Vorgabe gibt ein Rechenwerk her, ohne dass jemand es gesagt hat"
+    );
+    assert_eq!(Kapazitaet::default().kerne, None, "die Vorgabe nimmt sich Kerne");
+    assert_eq!(Kapazitaet::default().platte_gib, None);
+    assert_eq!(Kapazitaet::default().speicher_gib, None);
 }
 
 /// ⚑ Eine Datei, die ein Mensch bearbeitet, endet mit einem Umbruch.
@@ -81,4 +93,49 @@ fn die_datei_endet_mit_einem_umbruch() {
     assert!(!inhalt.ends_with("\n\n"), "zwei Umbrueche am Ende");
     // Und sie bleibt lesbar.
     assert_eq!(Einstellungen::lesen(&p).expect("lesen"), Einstellungen::default());
+}
+
+/// ⚑ **Eine Ablage aus der Zeit vor der Umbenennung wandert mit.**
+///
+/// # ⛑ Warum eine Umbenennung ohne das nicht fertig ist
+///
+/// Die Artefakte heissen seit dem 2026-09-10 nach dem Modell, das sie
+/// sind. Wer nur die Verzeichnisse umbenennt, hat die Arbeit auf jeden
+/// verschoben, der eine Einstellung gesetzt hat: Sein Pfad loest ins
+/// Leere auf, der Klient meldet „Modell laedt nicht", und er sucht den
+/// Fehler bei sich.
+#[test]
+fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let p = d.path().join("client.json");
+    for (alt, neu) in [
+        ("INTEGER_LLM/artifacts/qwen3-4b", "INTEGER_LLM/artifacts/myelith-4b"),
+        ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/myelith-0.5b"),
+        ("/anderswo/qwen3-30b-a3b", "/anderswo/myelith-30b-a3b"),
+    ] {
+        // ⚑ Geschrieben mit dem echten Schreiber: Eine von Hand
+        // getippte Ablage koennte Felder auslassen, die es gibt, und
+        // dann prueffte dieser Test das Auslassen und nicht die
+        // Wanderung.
+        let mut vorher = Einstellungen::default();
+        vorher.modell.artefakt = alt.to_string();
+        vorher.schreiben(&p).expect("schreiben");
+        let e = Einstellungen::lesen(&p).expect("lesen");
+        assert_eq!(e.modell.artefakt, neu, "`{alt}` ist nicht mitgewandert");
+    }
+
+    // ⚑ **Und was schon neu heisst oder ganz anders, bleibt.** Eine
+    // Wanderung, die auch Unbeteiligtes anfasst, ist schlimmer als
+    // keine: Sie aendert einen Pfad, den jemand mit Bedacht gesetzt hat.
+    for unberuehrt in [
+        "INTEGER_LLM/artifacts/myelith-4b",
+        "/eigenes/verzeichnis/mein-modell",
+        "artifacts/qwen3-4b-eigenbau",
+    ] {
+        let mut vorher = Einstellungen::default();
+        vorher.modell.artefakt = unberuehrt.to_string();
+        vorher.schreiben(&p).expect("schreiben");
+        let e = Einstellungen::lesen(&p).expect("lesen");
+        assert_eq!(e.modell.artefakt, unberuehrt, "`{unberuehrt}` wurde angefasst");
+    }
 }

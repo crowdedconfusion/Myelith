@@ -26,7 +26,7 @@
 //! Chatform loest das Praeludium aus.
 //!
 //! ```text
-//! cargo run --release --example antwortstelle -- INTEGER_LLM/artifacts/qwen3-4b [token]
+//! cargo run --release --example antwortstelle -- INTEGER_LLM/artifacts/myelith-4b [token]
 //! ```
 
 use integer_llm_runtime::{generate::generate, loader::load_model, tokenizer::Tokenizer};

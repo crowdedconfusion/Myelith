@@ -15,8 +15,8 @@ falsche Attention-Berechnung oder ein fehlendes lm_head.weight erzeugen -
 und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen.
 
 Verifizierte Varianten:
-  qwen2.5-0.5b  models/Qwen2.5-0.5B/config.json (lokaler Snapshot)
-  qwen2.5-7b    huggingface.co/Qwen/Qwen2.5-7B/raw/main/config.json
+  myelith-0.5b  models/Qwen2.5-0.5B/config.json (lokaler Snapshot)
+  myelith-7b    huggingface.co/Qwen/Qwen2.5-7B/raw/main/config.json
                 + model.safetensors.index.json (Bias- und lm_head-Tensoren),
                 Revision d149729398750b98c0af14eb82c78cfe92750796,
                 Lizenz apache-2.0 (Whitepaper Kap. 10.1 / ETHICS G7)
@@ -26,7 +26,7 @@ ist die Basis-Reihe (Scope-Entscheidung 12.15).
 """
 
 MODEL_CONFIGS = {
-    "qwen2.5-0.5b": {
+    "myelith-0.5b": {
         "family": "qwen2.5",
         "variant": "0.5b",
         "num_layers": 24,
@@ -65,7 +65,7 @@ MODEL_CONFIGS = {
     #                            [max_context, 32] - LUT-Groesse verdoppelt)
     # attention_bias True gilt weiter: die index.json der Variante fuehrt
     # q_proj.bias/k_proj.bias/v_proj.bias je Layer.
-    "qwen2.5-7b": {
+    "myelith-7b": {
         "family": "qwen2.5",
         "variant": "7b",
         "num_layers": 28,
@@ -113,7 +113,7 @@ MODEL_CONFIGS = {
     #
     # tie_word_embeddings bleibt True wie bei 0,5B: kein eigenes
     # lm_head.weight im Export.
-    "qwen3-4b": {
+    "myelith-4b": {
         "family": "qwen3",
         "variant": "4b",
         "num_layers": 36,
@@ -152,7 +152,7 @@ MODEL_CONFIGS = {
     # decoder_sparse_step 1 von keiner Layer benutzt. Es bleibt
     # eingetragen, weil es in der echten config steht; die Rechenarbeit
     # bemisst sich an moe_intermediate_size mal num_experts_per_tok.
-    "qwen3-30b-a3b": {
+    "myelith-30b-a3b": {
         "family": "qwen3-moe",
         "variant": "30b-a3b",
         "num_layers": 48,
@@ -192,7 +192,7 @@ MODEL_CONFIGS = {
         "vocab_size": 151936,
         "max_context": 32768,
     },
-    "qwen2.5-7b-instruct": {
+    "myelith-7b-instruct": {
         "num_layers": 28,
         "hidden_size": 3584,
         "intermediate_size": 18944,
@@ -341,7 +341,7 @@ def print_sharding_plan(model_name: str, num_nodes: int):
 
 if __name__ == "__main__":
     # Beispiel: Sharding-Plaene fuer verschiedene Konfigurationen
-    for model in ["qwen2.5-0.5b", "qwen2.5-7b-instruct", "qwen2.5-72b-instruct"]:
+    for model in ["myelith-0.5b", "myelith-7b-instruct", "qwen2.5-72b-instruct"]:
         for nodes in [2, 4, 8]:
             try:
                 print_sharding_plan(model, nodes)

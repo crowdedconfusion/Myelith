@@ -54,7 +54,7 @@
 //! eine dichte Ebene nicht hat.
 //!
 //! **Erstens: die Experten kommen erst, wenn sie gewählt sind.** Das
-//! qwen3-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
+//! myelith-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
 //! Gewichten. Alle als Master zu halten wären **2,4 GB je Ebene**, und
 //! ein Shard hält ein Dutzend. Bei Top-8 über eine kurze Folge sind es
 //! gemessen **25 von 128**.
@@ -137,7 +137,7 @@ pub struct Shardgewichte {
 /// laufende Schritt.
 ///
 /// ⚑ **Die Experten kommen deshalb erst dazu, wenn sie gewählt sind.**
-/// Das qwen3-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
+/// Das myelith-30b-a3b hat 128 Experten je Ebene zu je 4,7 Millionen
 /// Gewichten; sie alle als Master zu halten wären **2,4 GB je Ebene**,
 /// und der Shard hält zwölf Ebenen. Bei Top-8 über eine kurze Folge sind
 /// es höchstens ein paar Dutzend.

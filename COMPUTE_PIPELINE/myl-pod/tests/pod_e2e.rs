@@ -40,10 +40,10 @@ mod artefakte;
 /// seiner Layer, und wenn der Zuschnitt das Ergebnis änderte, wäre der
 /// ganze Entwurf hinfällig.
 ///
-/// Beispiel: `MYL_POD_MODELL=qwen3-30b-a3b cargo test --test pod_e2e`
+/// Beispiel: `MYL_POD_MODELL=myelith-30b-a3b cargo test --test pod_e2e`
 fn artifacts_dir() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "qwen2.5-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
     let mut p = PathBuf::from(manifest);
     // COMPUTE_PIPELINE/myl-pod → INTEGER_LLM/artifacts/<modell>
     p.push("..");

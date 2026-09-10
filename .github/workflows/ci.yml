@@ -1268,7 +1268,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 werkzeuge/sperrdateien.py
+      # ⛑ **Die Pruefung steht hier und nicht in einem Skript**
+      # (2026-09-10). Das Werkzeugverzeichnis der Wurzel ist auf
+      # Festlegung des Projektinhabers aus dem Repositorium genommen
+      # worden; ein Job, der eine Datei ruft, die niemand mehr klont,
+      # faellt bei jedem Anstoss um. **Die Wache bleibt, weil der
+      # Fehler bleibt:** Wer eine Version in `Cargo.toml` erhoeht,
+      # laesst cargo dabei nicht laufen, und nur cargo schreibt die
+      # Sperrdatei.
+      - name: Jede Sperrdatei traegt die Version ihrer Kisten
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          wurzel = pathlib.Path(".")
+          def ohne_bau(p): return not any(t in ("target", "target-shared") for t in p.parts)
+
+          def eigene(text):
+              a = re.search(r"(?ms)^\[package\]\n(.*?)(?=^\[|\Z)", text)
+              if not a: return None
+              n = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', a.group(1))
+              v = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', a.group(1))
+              return (n.group(1), v.group(1)) if n and v else None
+
+          kisten = {}
+          for k in sorted(filter(ohne_bau, wurzel.rglob("Cargo.toml"))):
+              e = eigene(k.read_text(encoding="utf-8"))
+              if e: kisten.setdefault(e[0], (e[1], k))
+
+          schief, gezaehlt = [], 0
+          for lock in sorted(filter(ohne_bau, wurzel.rglob("Cargo.lock"))):
+              gezaehlt += 1
+              for m in re.finditer(
+                  r'(?ms)^\[\[package\]\]\nname = "([^"]+)"\nversion = "([^"]+)"',
+                  lock.read_text(encoding="utf-8")):
+                  name, hat = m.group(1), m.group(2)
+                  if name in kisten and kisten[name][0] != hat:
+                      schief.append(
+                          f"  {name}: {kisten[name][1]} sagt {kisten[name][0]}, {lock} sagt {hat}")
+
+          if schief:
+              print("Sperrdateien und Kistenversionen laufen auseinander:")
+              print("\n".join(sorted(set(schief))))
+              print("Abhilfe: in der betroffenen Kiste einmal `cargo check` laufen lassen.")
+              sys.exit(1)
+          print(f"{gezaehlt} Sperrdateien geprueft, jede traegt die Version ihrer Kisten.")
+          PY
 
   audit:
     name: Zahlensemantik-Audit

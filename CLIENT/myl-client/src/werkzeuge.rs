@@ -330,14 +330,20 @@ impl Dateiwerkzeug {
     /// beantworten will, braucht drei weitere Laeufe.
     pub fn beschreibung(&self, form: Ansageform) -> String {
         match (self, form) {
-            (Self::Verzeichnis, Ansageform::Amtlich) => "List a directory inside the working \
-                 directory. Without an argument, the working directory itself."
+            // ⛑ **Hier stand „Without an argument, the working
+            // directory itself."**, und genau dieser Satz hat das
+            // Modell ins Gruebeln gebracht: Er beschreibt einen Fall,
+            // den es gar nicht geben soll. Jetzt sagt die Beschreibung,
+            // **was** gelistet wird, und nicht, was man weglassen darf.
+            (Self::Verzeichnis, Ansageform::Amtlich) => "List the working directory. \
+                 Use tiefe 1 for its immediate contents, higher values to see \
+                 subdirectories."
                 .into(),
             (Self::Lesen, Ansageform::Amtlich) => format!(
                 "Read a file inside the working directory, at most {LESEGRENZE} bytes."
             ),
-            (Self::Suchen, Ansageform::Amtlich) => "Search the working directory for a \
-                 literal text. Case is ignored. Returns file, line number and line."
+            (Self::Suchen, Ansageform::Amtlich) => "Search the whole working directory for \
+                 a literal text. Case is ignored. Returns file, line number and line."
                 .into(),
             (Self::Schreiben, Ansageform::Amtlich) => "Write a file inside the working \
                  directory. Existing content is replaced."
@@ -346,13 +352,14 @@ impl Dateiwerkzeug {
                  The old text must occur exactly once; the rest of the file is untouched. \
                  Prefer this over write_file for changing an existing file."
                 .into(),
-            (Self::Verzeichnis, Ansageform::Deutsch) => "Listet ein Verzeichnis im \
-                 Arbeitsverzeichnis. Ohne Angabe das Arbeitsverzeichnis selbst."
+            (Self::Verzeichnis, Ansageform::Deutsch) => "Listet das Arbeitsverzeichnis. \
+                 Tiefe 1 zeigt seinen unmittelbaren Inhalt, groessere Werte auch \
+                 die Unterverzeichnisse."
                 .into(),
             (Self::Lesen, Ansageform::Deutsch) => format!(
                 "Liest eine Datei im Arbeitsverzeichnis, hoechstens {LESEGRENZE} Bytes."
             ),
-            (Self::Suchen, Ansageform::Deutsch) => "Sucht im Arbeitsverzeichnis nach \
+            (Self::Suchen, Ansageform::Deutsch) => "Sucht im ganzen Arbeitsverzeichnis nach \
                  woertlichem Text. Gross und klein ist egal. Gibt Datei, Zeilennummer \
                  und Zeile."
                 .into(),
@@ -381,34 +388,66 @@ impl Dateiwerkzeug {
     /// herausliest: Sie mitzuuebersetzen haengte die **Ausfuehrung** an
     /// die Ansageform, und ein Aufruf in der einen Form naennte Felder,
     /// die die andere nicht kennt.
+    ///
+    /// # ⛑ Kein Werkzeug hat einen optionalen Parameter (2026-09-10)
+    ///
+    /// **Ein optionaler Parameter ist eine Entscheidung, die das Modell
+    /// treffen muss, und ein kleines Modell bezahlt sie mit seinem
+    /// Schrittbudget.** Gemeldet vom Projektinhaber: Auf die Frage
+    /// „welche Dateien liegen im Verzeichnis?" ueberlegte Qwen3-4B
+    /// seitenlang, ob es `pfad` weglassen, leer setzen oder mitgeben
+    /// solle, las dazu die `required`-Liste, kam zu keinem Schluss und
+    /// endete **ohne Schlussantwort**. Das Werkzeug haette in beiden
+    /// Faellen dasselbe getan.
+    ///
+    /// ⚑ **Also gibt es die Wahl nicht mehr.** Jede Eigenschaft steht
+    /// in `required`, und was der Agent ohnehin nicht braucht, ist
+    /// entfallen: Weder `verzeichnis` noch `suchen` nehmen einen Pfad.
+    /// Beide arbeiten im **Arbeitsverzeichnis**, das der Nutzer vorher
+    /// waehlt, und das ist die ganze Zusage dieser Werkzeuge.
+    /// `kein_werkzeug_hat_einen_optionalen_parameter` haelt die Regel.
+    ///
+    /// ⚑ **Die Fehlermeldung traegt den Rest.** Wer `pfad` doch
+    /// mitschickt, bekommt „Feld unbekannt: pfad, bekannt: [tiefe]",
+    /// und das ist eine Auskunft, aus der ein Modell im naechsten
+    /// Schritt lernt.
     pub fn parameter(&self, form: Ansageform) -> serde_json::Value {
         let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis) = match form {
             Ansageform::Amtlich => (
-                "relative to the working directory",
-                "how many levels to descend, 1 by default",
-                "literal text, not a regular expression",
+                "path of the file, relative to the working directory; \
+                 paths leading outside it are rejected",
+                "how many levels to descend; 1 lists the working directory itself",
+                "literal text, not a regular expression; the whole working directory is searched",
                 "must occur exactly once in the file",
             ),
             Ansageform::Deutsch => (
-                "relativ zum Arbeitsverzeichnis",
-                "wie viele Ebenen tief, ohne Angabe eine",
-                "woertlicher Text, kein regulaerer Ausdruck",
+                "Pfad der Datei, relativ zum Arbeitsverzeichnis; \
+                 Pfade nach draussen werden abgelehnt",
+                "wie viele Ebenen tief; 1 listet das Arbeitsverzeichnis selbst",
+                "woertlicher Text, kein regulaerer Ausdruck; gesucht wird im ganzen Arbeitsverzeichnis",
                 "muss genau einmal in der Datei vorkommen",
             ),
         };
         match self {
+            // ⚑ **Ohne `pfad`.** Dieses Werkzeug listet das
+            // Arbeitsverzeichnis, und `tiefe` zeigt, was darunter liegt.
+            // Ein Pfad waere eine zweite Art, dieselbe Frage zu
+            // stellen, und die erste, ueber die ein Modell stolpert.
             Self::Verzeichnis => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "pfad": {"type": "string", "description": wohin},
                     "tiefe": {"type": "integer", "description": tiefe_hinweis}
-                }
+                },
+                "required": ["tiefe"]
             }),
+            // ⚑ **Ebenfalls ohne `pfad`.** Eine Suche, die im ganzen
+            // Arbeitsverzeichnis sucht, beantwortet die Frage, die
+            // jemand hat; eine, die einen Startpunkt verlangt, verlangt
+            // eine Antwort auf eine Frage davor.
             Self::Suchen => serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "muster": {"type": "string", "description": muster_hinweis},
-                    "pfad": {"type": "string", "description": wohin}
+                    "muster": {"type": "string", "description": muster_hinweis}
                 },
                 "required": ["muster"]
             }),
@@ -497,7 +536,10 @@ impl Werkzeugausfuehrung for Suchen {
             return Err(Werkzeugfehler { grund: "das Suchmuster ist leer".into() });
         }
         let unten = muster.to_lowercase();
-        let wo = a.get("pfad").and_then(|v| v.as_str()).unwrap_or(".");
+        // ⚑ Immer die Wurzel: Dieses Werkzeug kennt keinen Pfad mehr
+        // (siehe `Dateiwerkzeug::parameter`).
+        let wo = ".";
+        let _ = a;
         let start = self.0.aufloesen(wo, true)?;
 
         let mut treffer: Vec<String> = Vec::new();
@@ -721,9 +763,11 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
         Dateiwerkzeug::Verzeichnis.name(self.1)
     }
     fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
-        // ⚑ Ohne Angabe die Wurzel: Der erste Aufruf eines Agenten ist
+        // ⚑ **Immer die Wurzel.** Der erste Aufruf eines Agenten ist
         // „was liegt hier", und dafuer soll er nichts wissen muessen.
-        let roh = a.get("pfad").and_then(|v| v.as_str()).unwrap_or(".").to_string();
+        // Seit dem 2026-09-10 kennt dieses Werkzeug gar keinen Pfad
+        // mehr: Die Wahl war es, an der sich ein Modell festgelesen hat.
+        let roh = ".".to_string();
         let p = self.0.aufloesen(&roh, true)?;
         if !p.is_dir() {
             return Err(Werkzeugfehler {
@@ -733,9 +777,12 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
                 ),
             });
         }
-        // ⚑ **Ohne Angabe eine Ebene, also genau das Alte.** Die
-        // Rekursion ist eine Bitte und keine Ueberraschung; wer nach
-        // einem Verzeichnis fragt, will nicht ungefragt einen Baum.
+        // ⚑ **`tiefe` ist verlangt und hat trotzdem einen Rueckfall.**
+        // Das Schema nennt es in `required`, und die Pruefung davor
+        // weist einen Aufruf ohne es ab; kaeme trotzdem etwas
+        // Unlesbares an, ist eine Ebene die richtige Annahme und kein
+        // Abbruch. **Eine Zahl ausserhalb der Grenzen ist keine
+        // Ablehnung wert**, sie wird geklemmt.
         let tiefe = a
             .get("tiefe")
             .and_then(|v| v.as_u64())
@@ -910,10 +957,24 @@ mod neue_werkzeuge {
         let aus = suche(&e, "Goldfisch");
         assert!(!aus.contains("geheim"), "die Suche hat hinausgesehen: {aus}");
 
-        // Und ein Pfad nach draussen wird abgelehnt, nicht ignoriert.
-        let f = Suchen(e, Ansageform::Amtlich)
-            .ausfuehren(&serde_json::json!({"muster": "Goldfisch", "pfad": ".."}));
-        assert!(f.is_err(), "`..` als Startpunkt wurde angenommen");
+        // ⚑ **Und ein Startpunkt laesst sich gar nicht mehr angeben.**
+        //
+        // ⛑ Hier stand bis zum 2026-09-10, dass `pfad: ".."` von der
+        // **Ausfuehrung** abgelehnt wird. Seither kennt dieses Werkzeug
+        // keinen Pfad mehr, und die Ablehnung kommt eine Stufe frueher,
+        // an der Argumentpruefung: Der Aufruf laeuft gar nicht erst an.
+        // **Das ist die schaerfere Zusage**, geprueft in
+        // `ein_pfad_am_verzeichnis_wird_benannt_abgelehnt`.
+        //
+        // Was hier bleibt, ist die Gegenprobe dazu: Selbst wenn ein
+        // Pfad durchkaeme, wuerde er nicht befolgt.
+        let aus = Suchen(e, Ansageform::Amtlich)
+            .ausfuehren(&serde_json::json!({"muster": "Goldfisch", "pfad": ".."}))
+            .expect("die Suche laeuft");
+        assert!(
+            !aus.contains("geheim"),
+            "ein mitgeschickter Pfad hat den Startpunkt doch verschoben: {aus}"
+        );
         let _ = std::fs::remove_file(draussen);
     }
 
@@ -1266,5 +1327,110 @@ mod grenze {
             assert!(!a.iter().any(|x| x.name == n), "{n} wird ohne Erlaubnis angeboten");
         }
         assert!(a.iter().any(|x| x.name == Dateiwerkzeug::Lesen.name(Ansageform::Amtlich)));
+    }
+}
+
+#[cfg(test)]
+mod keine_wahl {
+    use super::*;
+
+    /// ⛑ **Die Regel, die aus einem gemeldeten Fehlschlag entstand.**
+    ///
+    /// Auf die Frage „welche Dateien liegen im Verzeichnis?" ueberlegte
+    /// Qwen3-4B am 2026-09-10 seitenlang, ob es `pfad` weglassen, leer
+    /// setzen oder mitgeben solle, las dazu die `required`-Liste des
+    /// Schemas, kam zu keinem Schluss und **endete ohne
+    /// Schlussantwort**. Das Werkzeug haette in beiden Faellen dasselbe
+    /// getan.
+    ///
+    /// ⚑ **Ein optionaler Parameter ist eine Entscheidung, die das
+    /// Modell treffen muss, und ein kleines Modell bezahlt sie mit
+    /// seinem Schrittbudget.** Also gibt es sie nicht.
+    #[test]
+    fn kein_werkzeug_hat_einen_optionalen_parameter() {
+        for form in [Ansageform::Amtlich, Ansageform::Deutsch] {
+            for &w in &Dateiwerkzeug::ALLE {
+                let p = w.parameter(form);
+                let felder: Vec<String> = p
+                    .get("properties")
+                    .and_then(|x| x.as_object())
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                let noetig: Vec<String> = p
+                    .get("required")
+                    .and_then(|x| x.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+                    .unwrap_or_default();
+                for f in &felder {
+                    assert!(
+                        noetig.contains(f),
+                        "`{}` hat den optionalen Parameter `{f}`.\n\
+                         Ein optionaler Parameter ist eine Entscheidung, die das Modell \n\
+                         treffen muss, und ein kleines Modell bezahlt sie mit seinem Budget.",
+                        w.name(form)
+                    );
+                }
+                // ⚑ Und die Gegenrichtung: nichts Verlangtes, das es
+                // gar nicht gibt. Das waere ein Aufruf, der nie gelingt.
+                for n in &noetig {
+                    assert!(felder.contains(n), "`{}` verlangt `{n}`, kennt es aber nicht", w.name(form));
+                }
+            }
+        }
+    }
+
+    /// ⚑ **Und kein Werkzeug nimmt mehr einen Startpfad fuers Suchen
+    /// oder Listen.** Beide arbeiten im Arbeitsverzeichnis, das der
+    /// Nutzer vorher waehlt, und das ist die ganze Zusage.
+    #[test]
+    fn listen_und_suchen_kennen_keinen_pfad() {
+        for form in [Ansageform::Amtlich, Ansageform::Deutsch] {
+            for w in [Dateiwerkzeug::Verzeichnis, Dateiwerkzeug::Suchen] {
+                let p = w.parameter(form);
+                let felder = p.get("properties").and_then(|x| x.as_object()).expect("Schema");
+                assert!(
+                    !felder.contains_key("pfad"),
+                    "`{}` nimmt wieder einen Pfad entgegen",
+                    w.name(form)
+                );
+            }
+        }
+    }
+
+    /// ⚑ **Ein mitgeschickter Pfad wird abgewiesen und nicht
+    /// stillschweigend uebergangen.**
+    ///
+    /// ⛑ Das ist die wichtigere Haelfte: Ein Werkzeug, das ein
+    /// unbekanntes Feld schluckt, laesst das Modell glauben, es habe
+    /// gewirkt. Die Ablehnung nennt die Felder, die es gibt, und daraus
+    /// lernt ein Modell im naechsten Schritt.
+    #[test]
+    fn ein_pfad_am_verzeichnis_wird_benannt_abgelehnt() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        std::fs::write(d.path().join("a.txt"), "x").expect("Datei");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        let form = Ansageform::Amtlich;
+
+        let angebot = angebote(&e, form, Werkzeugsatz::default())
+            .into_iter()
+            .find(|a| a.name == Dateiwerkzeug::Verzeichnis.name(form))
+            .expect("Verzeichniswerkzeug");
+
+        let mit_pfad = myl_local_agent::werkzeug::Vorschlag {
+            name: angebot.name.clone(),
+            arguments: serde_json::json!({"tiefe": 1, "pfad": "unter"}),
+        };
+        let fehler = myl_local_agent::werkzeug::argumente_pruefen(&angebot, &mit_pfad)
+            .expect_err("ein unbekanntes Feld ging durch");
+        let text = fehler.to_string();
+        assert!(text.contains("pfad"), "die Meldung nennt das Feld nicht: {text}");
+        assert!(text.contains("tiefe"), "die Meldung nennt nicht, was es gibt: {text}");
+
+        // Und der richtige Aufruf geht durch.
+        let ohne = myl_local_agent::werkzeug::Vorschlag {
+            name: angebot.name.clone(),
+            arguments: serde_json::json!({"tiefe": 1}),
+        };
+        myl_local_agent::werkzeug::argumente_pruefen(&angebot, &ohne).expect("richtiger Aufruf");
     }
 }

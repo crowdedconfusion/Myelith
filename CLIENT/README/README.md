@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.17.0 (`myl-client` 0.12.0, `myl-oberflaeche` 0.16.0)
-> **Datum:** 2026-09-09
+> **Version:** 0.29.0 (`myl-client` 0.20.0, `myl-oberflaeche` 0.24.1, `myl-console` 0.1.0)
+> **Datum:** 2026-09-10
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -10,7 +10,7 @@
 >
 > ❌ **Die Netzhälfte steht aus.** Knotenzustand, Läufe, Verifikations­
 > stufe je Segment und der Kapazitätsschalter warten auf ein
-> erreichbares Netz (Fahrplan 2.2 bis 2.5b).
+> erreichbares Netz (Punkte 2.2 bis 2.5b).
 
 Die einzige Komponente des Projekts, mit der Menschen tatsächlich
 interagieren: MYL-Wallet, Inferenz-Schnittstelle,
@@ -27,17 +27,20 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 
 | | |
 |---|---|
+| **Der Agent in der Konsole** | In ein Verzeichnis gehen, `myelith` tippen. **Dieses Verzeichnis ist der Arbeitsordner**, ohne Schalter und ohne Einstellung; `/model`, `/settings`, `/hilfe`, `/ende` |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „API, kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
-| **Einstellungen** | Vier Bereiche, zwölf Felder, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
+| **Einstellungen** | Vier Bereiche, elf Felder und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
+| **Sprache** | Deutsch oder Englisch, umschaltbar in den Einstellungen und sofort wirksam. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind |
+| **Aus einem frischen Klon einrichten** | Drei Skripte in der Wurzel, je eines für macOS, NixOS und Windows. Sie prüfen erst, bauen dann, und laden nichts nach |
+| **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird mit `git merge --ff-only` und dem Installationsskript der Plattform |
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-an sechzehn Stellen über dreizehn Befehle, und startet **keinen
-einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über neunzehn Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -50,8 +53,7 @@ Logik, die hier nicht hingehört.
 | `myl-client/` | Die Kiste. Einstellungen, örtlicher Betrieb, Agentenschleife, Werkzeuge mit Einhängegrenze, Türklient. Kommandozeile `myl`. |
 | `myl-oberflaeche/` | Die grafische Oberfläche auf Tauri v2. Rücken in Rust, Frontend als reines HTML, CSS und ES-Module: **kein Bündler, keine Node-Werkzeugkette**. |
 | `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Einundzwanzig Prüfungen halten HTML, CSS, Skript und Rücken gegeneinander. |
-| `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` erzeugt `werkzeuge/symbole.py` aus `icon.png`; von Hand nachbessern hilft nicht. |
-| `README/Fahrplan-v1.md` | Der Fahrplan mit allen Punkten, Funden und dem Changelog. |
+| `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` sind aus `icon.png` abgeleitet und liegen fertig da; von Hand nachbessern hilft nicht, die nächste Ableitung überschreibt es. |
 
 ## Ausliefern
 
@@ -65,7 +67,12 @@ Logik, die hier nicht hingehört.
   `.msi` für Windows, `.deb` und AppImage für Linux x86_64, `.deb` für
   arm64.
 
-Örtlich für die eigene Maschine: `werkzeuge/freigabe.sh`.
+⚠️ **Örtlich für die eigene Maschine gibt es ein Freigabeskript, und
+es ist seit dem 2026-09-10 nicht mehr Teil dieses Repositoriums**
+(Festlegung des Projektinhabers). Wer aus einem frischen Klon bauen
+will, nimmt die Installationsskripte im Wurzelverzeichnis; wer die vier
+Binaries und das Bündel in einem Zug will, baut sie einzeln mit
+`cargo build --release`.
 
 ⚠️ **Was die Freigabe nicht leistet:** Die Bündel werden gebaut, aber
 **nicht geöffnet**, denn ein Fenster braucht eine Anzeige und die hat
@@ -83,7 +90,7 @@ im Pfad, ein Verweis nach draussen, ein absoluter Pfad. Aufgelöst wird
 und verböte zugleich harmlose Pfade.
 
 ⚠️ **Die Grenze hält der eigene Quelltext und nicht das
-Betriebssystem** (Fahrplan 3.1). Das ist der Unterschied zwischen einer
+Betriebssystem** (Punkt 3.1). Das ist der Unterschied zwischen einer
 Zusage und einer Sicherung, und er steht hier, weil er sonst niemandem
 auffällt.
 
@@ -101,6 +108,689 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.29.0 – 2026-09-10 (`myl-console`: der Agent in dem Verzeichnis, in dem du stehst)
+
+**Auftrag des Projektinhabers.** Eine dritte Bedienoberfläche neben
+Fenster und Kommandozeile: `myelith`, getippt in einem Verzeichnis.
+
+⚑ **Das Arbeitsverzeichnis ist der Arbeitsordner, ohne Frage und ohne
+Feld.** Im Fenster ist er eine Einstellung, weil ein Fenster nirgends
+steht; ein Programm in der Konsole steht immer irgendwo. **Es
+überschreibt `agent.wurzel` für diese Sitzung**, statt es zu ergänzen:
+Sonst arbeitete der Agent in einem Ordner, den jemand vor Wochen im
+Fenster gesetzt hat, während der Nutzer woanders steht.
+
+⚠️ **Und der Kopf nennt den Ordner, bevor die erste Eingabe möglich
+ist.** Ein Agent mit Dateiwerkzeugen in einem Verzeichnis, das jemand
+nur zufällig betreten hat, ist genau der Fall, gegen den die
+Einhängegrenze gebaut ist.
+
+Der Ablauf: Startbild, ein Absatz darunter, Modellwahl, dann Auftrag um
+Auftrag. Vier Befehle, mehr nicht: `/model`, `/settings`, `/hilfe`,
+`/ende`. **Ein Konsolenprogramm mit zwanzig Befehlen ist eines, dessen
+Hilfeseite man liest, statt es zu benutzen.**
+
+⚑ **Keine eigene Logik, wie beim Fenster.** Agentenlauf, Werkzeuge,
+Einstellungen, Modell und Ortsbestimmung kommen aus `myl-client`. Die
+Einstellungen werden **gezeigt und nicht gesetzt**: Ein zweiter Setzer
+neben `myl setzen` und der Einstellungsseite wäre die dritte Stelle,
+die dieselben Feinheiten kennt.
+
+⚠️ **Und gebaut wird hier nichts.** Ein Artefakt zu holen und zu
+kalibrieren dauert Minuten bis Stunden; das gehört nicht hinter eine
+Zeile, die jemand tippt, weil er eine Frage stellen wollte. Wer keines
+hat, wird ans Fenster verwiesen, das dafür einen Balken hat und einen
+Abbruch.
+
+⚑ **Das Startbild ist eine wortgetreue Kopie aus dem Testclient**, auf
+Festlegung des Projektinhabers: Die Marke ist die Marke. **Wortgetreu
+und nicht gekürzt**, obwohl `myelith` nicht jede Funktion darin ruft;
+eine gekürzte Kopie ist weder das Original noch etwas Eigenes und lässt
+sich nicht mehr gegen die Quelle halten. Geändert ist genau eine Zeile,
+der Untertitel. Der Testclient wird abgeräumt, sobald er seine Aufgabe
+erfüllt hat; bis dahin liegen die vier Dateien zweimal da.
+
+⛑ **Zwei Befunde aus dem ersten Lauf.** Die laufende Schrittzeile
+löschte sich mit `\r` und Leerzeichen, und **in einer Röhre gibt es
+keinen Wagenrücklauf**: Dort standen die Leerzeichen einfach da. Sie
+gibt es jetzt nur vor einem Terminal. Und die Ausgabe zweier Zeilen
+überschrieb einander nur halb, weil die kürzere die längere stehen
+liess.
+
+⚑ **Ausgeliefert wird sie ohne eine Zeile in einem Skript.** Die Marke
+`[package.metadata.myelith]` genügt (Fund 300); alle vier Bauskripte
+haben das neue Programm sofort gefunden.
+
+`myl-console` **neu, 0.1.0** (5 Prüfungen).
+
+### v0.28.0 – 2026-09-10 (Fund 301: das Repositorium darf umziehen)
+
+**Auftrag des Projektinhabers:** Alle Abhängigkeitspfade beweglich, so
+dass sich das Repositorium verschieben lässt und alles weiter geht.
+
+Ein neues Modul `ort` beantwortet die Frage „wo liegt dieser Klon" an
+**einer** Stelle, in vier Stufen: `MYELITH_WURZEL` aus der Umgebung,
+vom Arbeitsverzeichnis aufwärts, vom Programm aufwärts, und zuletzt ein
+gemerkter Ort neben der Einstellungsdatei.
+
+⚑ **Der gemerkte Ort wird nachgeprüft und nicht geglaubt.** Steht die
+Marke dort nicht mehr, ist der Zettel alt und gilt nicht. **Damit heilt
+ein Umzug sich selbst:** Einmal aus dem verschobenen Klon heraus
+starten genügt, und auch das installierte Programm findet danach wieder
+hin.
+
+⛑ **Fund 301, und er war ein Loch, das die Installer erst aufgerissen
+haben.** Die Suche stand in der Oberfläche und ging vom
+Arbeitsverzeichnis und vom Programm aufwärts. Solange das Fenster aus
+`target-shared` lief, ging das; **installiert unter `~/Applications`
+liegt es ausserhalb des Baums**, und dann fand es weder Artefakt noch
+Katalog. Dazu: `myl` löste den Pfad überhaupt nicht auf und meldete aus
+einem fremden Arbeitsverzeichnis „es fehlt das Artefaktverzeichnis",
+obwohl das Artefakt dalag. **Zwei Programme desselben Klienten, zwei
+Antworten auf dieselbe Frage, und eines antwortete gar nicht.**
+
+⚑ **Wer eine Fähigkeit hinzufügt, prüft, was sie an den bestehenden
+Annahmen ändert.** Die Installationsskripte waren richtig und haben
+etwas anderes kaputtgemacht.
+
+Neu ist `myl ort`: Es sagt, wo der Klon liegt, und merkt ihn sich dabei.
+
+⛑ **Und ein Starter, den es einen halben Tag lang gab.** `Myelith` und
+`Myelith.cmd` lagen in der Wurzel: System erkennen, prüfen ob
+eingerichtet, notfalls einrichten, dann starten. **Sie sind auf
+Festlegung des Projektinhabers wieder entfernt worden**, und der Grund
+steht in dem, was sie gezeigt haben: Windows führt nur aus, was `.cmd`,
+`.bat`, `.ps1` oder `.exe` heisst, macOS eine ausführbare Datei ohne
+Endung, die Dateiverwaltungen unter Linux nur `.desktop`. **Eine Datei,
+die auf allen drei Systemen anklickbar ist, gibt es nicht**, und zwei
+Dateien plus ein erzeugter Menüeintrag sind kein Anklickpunkt, sondern
+drei. An ihre Stelle tritt eine kurze Anleitung je Plattform in den
+Wurzel-READMEs.
+
+⚠️ **Mit ihnen entfallen die Funde 302 und 303**, denn beide waren
+Befunde an ihnen: eine Wache, die nie zutraf, und zwei Schreiber für
+denselben Menüeintrag. Die Nummern bleiben vergeben; sie sind Etiketten
+und keine Zählung.
+
+`myl-client` **0.19.0 auf 0.20.0**, `myl-oberflaeche` **0.24.0 auf
+0.24.1** (154 und 42 Prüfungen).
+
+### v0.27.0 – 2026-09-10 (Funde 295 bis 300: das Fenster spricht Englisch, die Liste kennt ihren Modus, und drei Installationsskripte liegen in der Wurzel)
+
+**Ein Stapel Aufträge des Projektinhabers an einem Tag.** Sie hängen
+lose zusammen: Alles hier macht den Klienten für jemanden bedienbar,
+der ihn nicht gebaut hat.
+
+#### Fund 295: die Lizenz stand am falschen Ding
+
+Die Artefaktliste zeigte je Eintrag **eine** Lizenz, und sie stand
+hinter dem Namen „Myelith 4B": `4 Mrd. · rund 7,5 GB · Artefakt 4,5 GB
+· Apache-2.0 · verifiziert`. Unter Apache-2.0 stehen die
+**Grundgewichte**; das daraus gebaute Artefakt steht unter der Lizenz
+dieses Repositoriums.
+
+⚑ **Jede Lizenz steht jetzt in der Klammer hinter der Sache, für die
+sie gilt:** `Gewichte rund 7,5 GB (Apache-2.0) · Artefakt 4,5 GB
+(PolyForm Shield License 1.0.0)`. **Eine Angabe ist nicht dadurch
+richtig, dass sie stimmt, sondern dadurch, dass sie sich auf das
+bezieht, wonebendran sie steht.**
+
+⛑ **Und die Prüfung dazu geht bis zur Lizenzdatei.** Der Wert im
+Katalog ist von Hand geschrieben; eine Prüfung, die nur nachsieht,
+**dass** dort etwas steht, fängt weder den Tippfehler noch den
+Lizenzwechsel. `jede_lizenz_steht_bei_ihrer_sache` hält ihn gegen
+`LICENSE.md`. Sie fiel beim ersten Lauf: Dort stand „PolyForm Shield
+1.0.0", die Lizenz heisst „PolyForm Shield License 1.0.0".
+
+#### Das Fenster spricht Deutsch oder Englisch
+
+Ein Feld in den Einstellungen, ganz unten. **Die Sprache wirkt sofort**
+und nicht beim nächsten Start: Wer sie umstellt, will sehen, ob er sie
+versteht, und ein Neustart dazwischen macht aus einer Probe eine
+Entscheidung.
+
+⚑ **Die Beschriftungen der Felder stehen nicht im Fenster, sondern in
+der Kiste**, in beiden Sprachen, neben dem Feld selbst. Was über die
+Naht kommt, ist fertig beschriftet. Zwei Orte für denselben Satz wären
+zwei Orte, an denen die nächste Sprache vergessen werden kann.
+
+⛑ **Und was ein Programm vergleicht, wird nie übersetzt:** Feldnamen,
+Pfade, Modellnamen, die Kennung des Netzmodells. Drei Prüfungen halten
+das zusammen: Beide Tabellen tragen dieselben Schlüssel, jede
+Beschriftung im HTML hat ihren Satz, und kein Feldname steht als Satz
+in einer Sprachtabelle.
+
+#### Die Liste zeigt einen Modus, und im Agentenmodus heissen sie Prozesse
+
+Vorher standen Gespräche und Prozesse in einer Liste, und ein Klick auf
+die falsche Zeile wechselte stillschweigend den Modus zurück, denn der
+Modus hängt am geöffneten Eintrag. **Der Modus ist jetzt eine Ansicht:
+Was dasteht, gehört zu dem, was oben eingerastet ist.**
+
+⚑ **„Prozess" ist keine Geschmacksfrage.** Im Chat trägt eine Zeile
+einen **Verlauf**, jeder Zug sieht die vorigen. Beim Agenten steht
+jeder Auftrag für sich, mit eigenem Schrittbudget und eigener
+Belegkette. Zwei verschiedene Dinge unter einem Wort behaupten, sie
+seien dasselbe.
+
+#### Kleineres am selben Tag
+
+| | |
+|---|---|
+| **Schalter sind Schieber** | Runde Pille, Knauf fährt nach rechts. Es bleibt ein `input[type=checkbox]`: Leertaste, Tastaturfokus und die Ansage der Vorlesehilfe wären bei einem Nachbau aus zwei `div` alle weg |
+| **Die Leiste fährt nur senkrecht** | Ein langer Titel wird gekürzt und macht die Leiste nicht breiter. Beim Überfahren steht der volle Titel da, **ohne** „(Agent)": Die Klammer sagte dasselbe wie der eingerastete Modus zwei Zeilen darüber |
+| **Die Marke wandert** | Klappt die Leiste zu, erscheint sie mittig im Kopf, mit einem Störbild; beim Aufklappen geht sie mit einem anderen. Geklont und nicht abgeschrieben: Die Spirale ist gerechnet, zweiundsiebzig Pfade |
+| **Das Fenster hat eine Untergrenze** | 600 × 460. Darunter blieb eine Kopfleiste und sonst nichts |
+
+⛑ **Die Störbilder hatten `both`, und eine Wache hat es gefangen.**
+`nichts_wartet_unsichtbar_auf_eine_animation` sagt: Was gelesen werden
+soll, darf nicht auf eine Animation warten. Mit `both` steht das
+Element **vor** dem Lauf auf dem Anfangsbild, und das ist beim Kommen
+`opacity: 0`. Wo Animationen nicht laufen, wäre die Marke unsichtbar
+geblieben. **Der Ruhezustand ist sichtbar, und dabei bleibt es.**
+
+#### Drei Installationsskripte und ein Aktualisierungsknopf
+
+`installieren-macos.sh`, `installieren-nixos.sh` (mit `flake.nix`
+daneben) und `installieren-windows.ps1` liegen in der Wurzel. Sie
+prüfen erst alles, bauen dann die drei Programme, legen sie ab und
+tragen einen Menüeintrag ein.
+
+⚑ **Aus dem Quelltext und nicht aus einem Bündel.** Die Freigabebündel
+dieses Projekts sind nicht signiert; ein Skript, das ein unsigniertes
+Bündel holt und an Gatekeeper vorbeischiebt, brächte einem Nutzer bei,
+genau das zu tun.
+
+⚑ **Und sie laden nichts nach.** Fehlt eine Werkzeugkette, nennen sie
+den einen Befehl und hören auf. Ein Installationsskript, das ein
+zweites aus dem Netz holt und ausführt, ist die Angriffsfläche, gegen
+die dieses Projekt an jeder anderen Stelle argumentiert.
+
+**Der Klient sieht nach Aktualisierungen und spielt sie ein.** Gefragt
+wird nicht „ist meine Version älter", sondern **„hat `origin`
+Änderungen, die ich nicht habe"**: Das ist exakt und braucht keine
+Vereinbarung über Versionsnamen. Eingespielt wird mit `git merge
+--ff-only` und dem Installationsskript der Plattform.
+
+⚠️ **Ohne Klon geht das nicht, und der Knopf sagt es.** Wer das
+Programm aus einem Bündel startet, bekommt die neueste Freigabemarke
+genannt und einen Verweis auf die Freigabeseite, statt eines Knopfes,
+der nichts tut.
+
+⛑ **Fund 296: Das Skript meldete „alles da" und scheiterte drei Zeilen
+später.** Es prüfte `command -v cargo`; ein rustup-Schalter ohne
+eingestellte Werkzeugkette liegt im PATH und beantwortet das mit ja.
+**Geprüft wird jetzt, ob es läuft**, nicht ob es existiert. Gefunden
+beim ersten Probelauf, in einem untergeschobenen Benutzerverzeichnis.
+
+⛑ **Fund 297: Ein fehlgeschlagener Bau beendete das Skript nicht.**
+Die Bauschleife lief hinter einer Röhre (`… | while read`), also in
+einer Unterschale, und `set -e` greift dort nicht: Es kopierte danach
+Dateien, die es nicht gibt. Beide Schleifen laufen jetzt in derselben
+Shell.
+
+⛑ **Fund 298: Das Verschieben eines Verzeichnisses hat zwei Werkzeuge
+still zerbrochen.** Sie fanden die Wurzel des Repositoriums über
+`__file__` und zwei Ebenen aufwärts; nach dem Umzug zeigten die zwei
+Ebenen auf einen Zwischenordner. **Das Werkzeug fand daraufhin keine
+Datei mehr und meldete Erfolg**, was der schlechtestmögliche Ausgang
+ist. Dieselbe Klasse wie Fund 291: Ein Verschieben sieht aus wie eine
+Änderung ohne Verhalten und ist manchmal keine.
+
+⛑ **Fund 299: Eine bestehende Datei wurde überschrieben, ohne
+hineinzusehen.** `flake.nix` lag seit dem 2026-09-08 in der Wurzel und
+trug Wissen, das nirgends sonst steht: `WEBKIT_DISABLE_COMPOSITING_MODE`
+(ohne das geht das Fenster auf NixOS unter Wayland auf und bleibt
+**weiss**, ohne Absturz und ohne Meldung), `XDG_DATA_DIRS` mit den
+GSettings-Schemata, `glib-networking` für TLS in der Ansicht, und die
+Bedingung, dass all das **nur unter Linux** gilt. Eine neu geschriebene
+Fassung hatte nichts davon.
+
+⚑ **Gefunden hat es `git status`**, nicht das Lesen: Die Datei stand
+als **geändert** da, wo eine neue Datei stehen sollte. Sie ist jetzt
+zusammengeführt, und nichts von 2026-09-08 fehlt. **Wer eine Datei
+anlegt, sieht vorher nach, ob es sie gibt**; ein „schreiben" auf einen
+belegten Namen ist ein Löschen mit anderem Namen.
+
+⛑ **Fund 300: Vier Skripte, vier Listen, und sie waren am ersten Tag
+schon uneinig.** Jedes Bauskript führte von Hand auf, welche Kisten
+ausgeliefert werden; die drei neuen nannten drei Programme, das
+örtliche Freigabeskript vier. `myl-test` fehlte in dreien, und niemand
+hätte es gemerkt.
+
+⚑ **Die Kiste sagt es jetzt selbst.** `[package.metadata.myelith]` mit
+`ausliefern = "<name>"` steht in der `Cargo.toml` der vier
+betroffenen Kisten; alle vier Skripte suchen danach. **Eine Liste, die
+an vier Stellen von Hand geführt wird, ist kein Verzeichnis, sondern
+vier Behauptungen.**
+
+⚠️ **Und die Prüfung ist der Grund, warum es dabei bleibt.**
+`was_ausgeliefert_wird_steht_bei_der_kiste` verlangt zweierlei: Jeder
+angemeldete Name muss auch wirklich gebaut werden, und **kein Skript
+darf daneben seine eigene Liste führen**. Beide Richtungen sind
+gegengeprüft, jede rot.
+
+⛑ **Die erste Fassung dieser Prüfung lag selbst daneben.** Sie schlug
+über `sh CLIENT/myl-oberflaeche/buendeln-macos.sh` an, also über einen
+Aufruf, der mit der Liste nichts zu tun hat. Sie sucht jetzt die
+**Form** der Liste, ein Paar aus Verzeichnis und Name. Dieselbe Klasse
+wie die Wache, die `innerHTML` in einem Kommentar fand: **Wer
+Erwähnung für Gebrauch hält, bestraft das Danebenschreiben.**
+
+⛑ **Und dieselbe Liste stand ein zweites Mal im selben Skript**, in
+der Schlussmeldung: Sie nannte drei Programme, während vier installiert
+wurden.
+
+`myl-client` **0.18.0 auf 0.19.0**, `myl-oberflaeche` **0.23.0 auf
+0.24.0** (42 Prüfungen).
+
+### v0.26.0 – 2026-09-10 (Funde 292 und 293: die Herkunft geht in die Modellkarte, das Ladezeichen bleibt bis zum Schluss)
+
+**Die Zeile unter der Eingabe nennt das Modell und nicht seine
+Herkunft.** Sie las sich „Myelith 4B (aus Qwen3-4B)
+(INTEGER_LLM/artifacts/myelith-4b) geladen, in 10 s": zwei Klammern
+hintereinander, von denen die erste bei jedem Blick mitzulesen war und
+nie eine Frage beantwortete. Jetzt steht dort „Myelith 4B
+(INTEGER_LLM/artifacts/myelith-4b) geladen, in 10 s". Dasselbe in der
+Artefaktliste der Einstellungsseite.
+
+⚑ **Die Herkunft ist damit nicht verschwunden, sie ist an ihrem
+Platz.** Die Grundmodelle stehen unter Apache-2.0, und ein Name ohne
+Herkunft wäre eine Verschleierung; sie steht bei jedem Eintrag in
+`KATALOG.json` und in `artifacts/MODEL_CARD.md`. **Eine Angabe zum
+Modell gehört dorthin, wo Angaben zum Modell stehen**, und nicht in
+jede Zeile, die den Namen erwähnt (Festlegung des Projektinhabers,
+2026-09-10).
+
+**Fund 292: Das Ladezeichen hängt jetzt am Lauf und nicht am Inhalt.** Es
+erschien am Anfang und blieb danach aus: Nach einem Werkzeugaufruf
+rechnet das Modell weiter, oft eine halbe Minute lang, und in dieser
+Zeit stand nichts. Jetzt stehen die drei Punkte unter allem, was schon
+da ist, solange der Lauf läuft, und sie gehen, wenn er endet.
+
+⛑ **Die Bedingung deckte genau die Wartezeit ab, die keine ist.** Sie
+lautete `b.laufend && !b.text && !schritte.length`, also „läuft und es
+ist noch nichts da". Das ist der Augenblick vor dem ersten Token, und
+der ist kurz. **Die langen Wartezeiten liegen dazwischen**: zwischen
+Befehl und nächster Überlegung, zwischen Überlegung und Antwort. Ein
+Ladezeichen, das nur den ersten Abschnitt abdeckt, schweigt in jedem
+Abschnitt, in dem jemand tatsächlich wartet.
+
+⚑ **Und es steht am Ende des Beitrags, nicht am Anfang.** Über einem
+wachsenden Text sähe es aus, als gehörte es zu etwas Vergangenem;
+darunter heisst es „und es geht weiter", was stimmt.
+
+⛑ **Fund 293: Die Prüfung dazu prüfte die Zeile und nicht die Zusage.**
+`das_ladezeichen_steht_beim_beitrag` sah nach `wurzel.append(l);` und
+nach der Regel, die es beim ersten Zeichen wieder entfernte, also
+genau nach der Form des Fehlers. Sie prüft jetzt, dass die Bedingung
+über dem Lauf steht und nicht über dem Inhalt, und trägt den
+gemeldeten Fall im Wortlaut daneben. **Eine Prüfung, die die
+Schreibweise festhält, hält den Fehler fest, sobald er in der
+Schreibweise steckt.**
+
+`myl-oberflaeche` **0.22.0 auf 0.23.0** (31 Prüfungen).
+
+### v0.25.0 – 2026-09-10 (die Zeile unter der Eingabe sagt eine Sache, und das Modell geht nach einer Weile wieder)
+
+**Die Zeile unter der Eingabe sagt jetzt genau eines: welches Modell im
+Speicher liegt.** „Myelith 4B (INTEGER_LLM/artifacts/myelith-4b)
+geladen, in 9,4 s", sonst „nicht geladen", und beim Netzmodell nichts,
+denn das wird hier nicht geladen.
+
+⛑ **Vorher sagte sie alles Mögliche:** „der Agent fährt", „Modell
+gewechselt", „Fehler: …", und dazwischen den Ladesatz. **Eine Zeile,
+die je nach Augenblick etwas anderes bedeutet, liest man irgendwann gar
+nicht mehr**: Wer dort „das Modell antwortet" gewohnt ist, sieht „nicht
+geladen" nicht mehr. Meldungen gehen jetzt in einen Kasten, den man
+wegklicken kann.
+
+⚑ **Und was der Lauf gerade tut, steht dort, wo er es tut.** Statt „der
+Agent fährt" am Fensterrand erscheinen drei Punkte an genau der Stelle,
+an der gleich die Überlegung, der Befehl oder die Antwort steht; beim
+ersten Zeichen gehen sie. **Wer auf eine Antwort wartet, sieht auf den
+Fleck, an dem sie erscheinen wird.**
+
+⛑ **Drei Punkte und kein Kreisel.** Beide sagen nichts über den
+Fortschritt, und das ist ehrlich: Wie lange ein Modell braucht, weiß
+vorher niemand. Die Punkte lenken weniger ab. Bei abbestellter Bewegung
+bleiben sie stehen und sichtbar: **Ein Ladezeichen, das dann
+verschwindet, nimmt genau dem die Auskunft, der sie am ehesten
+braucht.**
+
+⚑ **Das Modell geht nach fünfzehn Minuten Ruhe wieder.** Ein
+4B-Artefakt sind viereinhalb Gigabyte, und sie liegen im Speicher,
+solange das Fenster offen ist; wer morgens eine Frage stellt und das
+Fenster stehenlässt, gibt den Rest des Tages Arbeitsspeicher her.
+**Das steht in derselben Reihe wie die Kapazitätsfreigabe: Was Myelith
+nimmt, soll es auch wieder hergeben.**
+
+⛑ **Es kostet nichts, wenn die Frist falsch liegt.** Wer nach einer
+Stunde doch weiterfragt, wartet einmal die Ladezeit ab; der nächste
+Auftrag lädt von selbst nach. **Nicht entladen wird mitten in einem
+Lauf**, dort wird die Frist neu gestellt. Und ein Modellwechsel gibt das
+alte sofort frei: Es antwortet ohnehin nicht mehr.
+
+⛑ **Beim Bauen fiel dabei eine Wache über einen zweiten Block.** Das
+Ladezeichen bekam sein eigenes `prefers-reduced-motion`, und
+`das_rauschen_gehoert_zur_abbestellbaren_bewegung` sah daraufhin am
+falschen Ort nach und meldete Bewegtes als nicht abbestellt. **Es gibt
+genau einen solchen Block**, und das steht jetzt daneben.
+
+`myl-oberflaeche` **0.21.0 auf 0.22.0** (31 Prüfungen).
+
+### v0.24.0 – 2026-09-10 (die Artefakte heissen Myelith, und bestehende Einstellungen wandern mit)
+
+Die Artefakte heissen `myelith-4b` statt `qwen3-4b` und so fort; die
+Pfade im Klienten sind nachgezogen.
+
+⛑ **Eine Umbenennung ist erst fertig, wenn das Mitgewanderte
+mitgewandert ist.** Jede bestehende Ablage zeigt auf den alten Pfad,
+und der löst nach dem Umbenennen ins Leere auf: Der Klient meldete
+„Modell lädt nicht", und der Nutzer suchte den Fehler bei sich. Wer nur
+die Verzeichnisse umbenennt, hat die Arbeit auf jeden verschoben, der
+eine Einstellung gesetzt hat.
+
+`Einstellungen::lesen` tauscht deshalb den **Verzeichnisnamen**, wenn er
+einer der vier alten ist, und lässt alles andere stehen: Wer seine
+Artefakte woanders hält, behält seinen Ort, und ein eigener Name wie
+`qwen3-4b-eigenbau` wird nicht angefasst. ⚑ **Eine Wanderung, die auch
+Unbeteiligtes anfasst, ist schlimmer als keine**, denn sie ändert einen
+Pfad, den jemand mit Bedacht gesetzt hat.
+
+Am echten Fall belegt: Die Ablage des Projektinhabers zeigte auf
+`qwen3-4b`, und das Modell lädt danach unter `myelith-4b`.
+
+### v0.23.0 – 2026-09-10 (Markdown wird gezeigt, und die Artefaktliste bekommt einen Knopf, der etwas tut)
+
+**Die Antwort eines Modells kommt in Markdown, und das Fenster zeigte
+sie als schlichten Text.** Jetzt werden Überschriften, Aufzählungen,
+Code, Zitate, Linien und einfache Tabellen gezeigt.
+
+⛑ **Der naheliegende Weg dorthin wäre `innerHTML` gewesen, und er wäre
+eine Lücke.** Eine Antwort mit `<img src=x onerror=…>` bekäme damit Code
+in dieser Seite ausgeführt, und die Seite trägt wegen `withGlobalTauri`
+die Brücke zu **allen** Befehlen des Rückens: Ein eingeschleuster Satz
+könnte Einstellungen setzen oder Dateien schreiben.
+
+⚑ **Deshalb zerlegt die Kiste und das Fenster zeichnet nur.**
+`myl-client::markdown` gibt einen **Baum aus Text** heraus; daraus
+werden Elemente mit `createElement` und `textContent`. Ein `<` bleibt
+ein `<`. **Das ist keine Filterung, sondern eine Bauart**: Es gibt
+keinen Weg, auf dem aus dieser Antwort Markup würde, und
+`das_fenster_setzt_niemals_markup` hält ihn zu.
+
+⚑ **Dieselbe Arbeitsteilung wie überall hier:** Die Kiste weiß, das
+Fenster zeichnet. Ein Zerleger im Skript wäre eigene Logik im Fenster.
+
+⛑ **Und der Zerleger hatte beim ersten Lauf eine Endlosschleife.**
+`| kaputt |` fängt an wie eine Tabelle, ist keine, und der Absatzzweig
+brach an seiner eigenen ersten Zeile ab, ohne weiterzuzählen. **Gefunden
+als Hänger und nicht als Fehlschlag**, von der Prüfung, die verlangt,
+dass nichts verlorengeht.
+
+⚑ **Während des Laufs bleibt der Text schlicht.** Eine halb angekommene
+Marke ist keine Marke: `**` mitten im Strom würde als Fettdruck
+aufblitzen und beim nächsten Token verschwinden. Der laufende Text ist
+die Vorschau, der gesetzte das Ergebnis.
+
+⛑ **Ein Verweis wird als Text mit sichtbarem Ziel gezeigt und nicht als
+Knopf.** Ein Klick führte die Webansicht aus der Anwendung heraus; sie
+im System zu öffnen bräuchte eine Erlaubnis, die die Erlaubnisliste
+bewusst nicht hat.
+
+**Und die Artefaktliste:** Der Knopf „liegt vor" war gesperrt und sagte
+dasselbe wie die Zeile daneben, also ein Bedienelement, das nichts
+bedient. Dort steht jetzt **Löschen**, mit einer Rückfrage am Knopf
+selbst, die nach fünf Sekunden abläuft. Was noch nicht gebaut ist, steht
+gedämpft da: Die Liste beantwortet auf einen Blick, was man hat.
+
+⚑ **Vor dem Löschen steht eine Kette von vier Bedingungen**, und jede
+fängt einen Fall ab: Der Schlüssel muss im Katalog stehen, der
+aufgelöste Pfad unter `artifacts/` liegen, eine `model_config.json`
+darin sein, und das Artefakt darf nicht gerade geladen sein. **Das
+Rohmodell bleibt**, denn es ist das Teure am Beschaffen; ein zweiter Bau
+geht dann in Minuten.
+
+`myl-client` **0.16.0 auf 0.17.0**, `myl-oberflaeche` **0.20.0 auf
+0.21.0**.
+
+### v0.22.0 – 2026-09-10 (Fund 289: kein Werkzeug hat mehr einen optionalen Parameter)
+
+⛑ **Gemeldet vom Projektinhaber, und der Bericht ist die Diagnose.**
+Auf die Frage „welche Dateien liegen im Verzeichnis?" überlegte
+Qwen3-4B seitenlang, ob es `pfad` weglassen, leer setzen oder mitgeben
+solle, las dazu die `required`-Liste des Schemas, wog ab, kam zu keinem
+Schluss und endete **ohne Schlussantwort**. Das Werkzeug hätte in
+beiden Fällen dasselbe getan.
+
+⚑ **Ein optionaler Parameter ist eine Entscheidung, die das Modell
+treffen muss, und ein kleines Modell bezahlt sie mit seinem
+Schrittbudget.** Es ist keine Frage über die Aufgabe, sondern eine über
+das Formular.
+
+**Also gibt es die Wahl nicht mehr.** Jede Eigenschaft jedes Schemas
+steht in `required`, und was der Agent ohnehin nicht braucht, ist
+entfallen: **Weder `list_directory` noch `search_files` nehmen einen
+Pfad.** Beide arbeiten im Arbeitsverzeichnis, das der Nutzer vorher
+wählt, und das ist die ganze Zusage dieser Werkzeuge.
+
+⛑ **Und der Satz, der das Grübeln ausgelöst hat, ist weg.** Die
+Beschreibung sagte „Without an argument, the working directory itself"
+und beschrieb damit einen Fall, den es gar nicht geben soll. Jetzt sagt
+sie, **was** gelistet wird.
+
+⚑ **Die Sicherheit wird dabei nicht schwächer, sondern früher.** Ein
+mitgeschickter `pfad` ist jetzt ein **unbekanntes Feld** und wird an der
+Argumentprüfung abgewiesen, bevor das Werkzeug anläuft; vorher lehnte
+erst die Ausführung ihn ab. Die Meldung nennt die Felder, die es gibt,
+und daraus lernt ein Modell im nächsten Schritt.
+
+`kein_werkzeug_hat_einen_optionalen_parameter` hält die Regel, in beiden
+Ansageformen und in beide Richtungen: nichts Optionales, und nichts
+Verlangtes, das es gar nicht gibt.
+
+`myl-client` **0.15.0 auf 0.16.0** (120 Prüfungen).
+
+### v0.21.0 – 2026-09-10 (drei Fehlerberichte aus dem ersten echten Lauf)
+
+**Alle drei kamen vom Projektinhaber, aus dem laufenden Fenster**, und
+keiner davon war durch eine Textprüfung zu finden.
+
+⛑ **Fund 286: Die Überlegung stand in der Befehlsliste.** Nach einem
+Werkzeugaufruf fängt das Modell neu an zu überlegen; dieser zweite
+Denkblock landete unter „Befehle ausgeführt". Die Ursache war eine
+zweite Lesart derselben Antwort: `ohne_aufrufe` schnitt die
+Werkzeugaufrufe heraus und den Denkblock stehen. **Gelesen wird jetzt
+mit demselben Zerleger wie im laufenden Strom**, und `Schritt::Denken`
+ist eine eigene Art. Im Fenster wird daraus ein eigener Block, und die
+Blöcke stehen in der Reihenfolge, in der sie entstanden sind.
+
+⛑ **Fund 287, und er ist der schwerere: Die Erzeugung kannte kein
+Ende.** Sie rechnete stur bis zur Tokengrenze, auch wenn das Modell
+längst fertig war. Bei 600 Token schrieb Qwen3-4B seine Antwort zu
+Ende, setzte `<|im_end|>`, dann `<|endoftext|>` und **erfand danach ein
+ganzes Gespräch weiter**, samt zweitem Nutzer und nacherzähltem
+Werkzeugergebnis.
+
+⚑ **Der Zuschnitt der fertigen Antwort schnitt das ab, die laufende
+Anzeige nicht**, und genau daran fiel es auf. Schlimmer: Im Agentenlauf
+ging der erfundene Text als Modellantwort in die nächste Runde.
+
+Das Modell hält jetzt an seinen eigenen Endmarken, hergeleitet aus dem
+Wortschatz und nicht hingeschrieben: `<|im_end|>` und `<|endoftext|>`
+unter ChatML, `<|endoftext|>` bei einem Basismodell. Nur was zu **einem**
+Token wird, zählt; sonst wäre ein Halt auf `<` ein Halt mitten im Text.
+
+⛑ **Fund 288: Eine Prüfung verlangte genau den Fehler.**
+`der_laufende_text_ist_die_antwort` prüfte `antwort_token == 24`, also
+die Grenze selbst. Das war eine Aussage über das alte Verhalten, und sie
+fiel, sobald das Modell richtig aufhörte. Jetzt prüft sie, dass etwas
+erzeugt wurde und nichts über der Grenze.
+
+`myl-client` **0.14.0 auf 0.15.0** (117 Prüfungen), `myl-oberflaeche`
+**0.19.0 auf 0.20.0** (26).
+
+### v0.20.0 – 2026-09-10 (das Fenster schreibt mit, statt am Ende einen Block hinzulegen)
+
+**Antwort und Agentenlauf erscheinen jetzt, während sie entstehen.**
+Dazu Überlegung und Befehle als zwei Klappen am Beitrag, und ein
+Agentengespräch ohne Arbeitsordner führt zur Einstellung, statt ohne
+Werkzeuge loszulaufen.
+
+⚑ **Die Naht geht durch vier Kisten, und jede meldet nur, was sie
+weiß.** Die Laufzeit meldet Token, das Modell macht daraus getrennte
+Stücke Überlegung und Antwort, die Schleife meldet Werkzeuge, der Rücken
+schickt beides über **einen** Kanal ans Fenster. Keine dieser Stellen
+kennt die nächste.
+
+| Wer | Was er meldet |
+|---|---|
+| `runtime` | jedes Token, sobald es dasteht |
+| `myl-client` | daraus Überlegung und Antworttext, getrennt |
+| `myl-local-agent` | Schritt, Werkzeugaufruf, Ergebnis, Ablehnung |
+| Rücken | alles zusammen, in einer Reihenfolge |
+
+⛑ **Die Marken kommen zerrissen an**, und das ist die eigentliche
+Schwierigkeit: `</think>` trifft als `</`, `think`, `>` ein. Der
+Zerleger hält deshalb genau so viel zurück, wie der Anfang einer Marke
+lang sein kann, und gibt alles davor endgültig frei. Eine abgebrochene
+Marke am Ende ist Text und kein Nichts.
+
+⚑ **Und er sitzt im Modell und nicht im Fenster.** Nur dort ist bekannt,
+wann eine Antwort endet: Beim Agenten liegen zwischen zwei Antworten
+Werkzeugaufrufe, und ohne diesen Abschluss verschwänden die letzten
+Zeichen jeder Antwort.
+
+⚑ **Die Rückgabe schreibt den laufenden Beitrag fertig und ersetzt ihn
+nicht.** Sie trägt Text und Schrittliste, aber nicht die Überlegung; die
+kam nur über den Kanal. Wer den Beitrag ersetzte, löschte sie vor den
+Augen des Nutzers.
+
+⛑ **Und die Prüfung der Schrittarten war zum vierten Mal in dieser
+Datei eine Liste von Hand** (Fund 285). `hinweis` stand darin, obwohl
+der Rücken diese Art längst nicht mehr erzeugt, und die Marketabelle im
+Fenster trug den Namen mit; deshalb blieb die Prüfung grün. Sie liest
+die Arten jetzt aus dem Rücken, und dabei fiel auf, dass `plan` seit
+jeher **keine Regel** hatte.
+
+`myl-client` **0.13.0 auf 0.14.0** (112 Prüfungen), `myl-oberflaeche`
+**0.18.0 auf 0.19.0** (26 Prüfungen).
+
+### v0.19.0 – 2026-09-10 (die Hardwarefreigabe bekommt einen echten Bezug)
+
+**Die Einstellungsseite scannt jetzt die Maschine und stellt je
+Betriebsmittel einen Schieberegler.** Kerne, Arbeitsspeicher, Platte
+und **jedes gefundene Rechenwerk einzeln**, mit dem Höchstwert aus dem
+Scan statt aus einer Vorgabe: Ein Regler, dessen Ende jemand geraten
+hat, lässt entweder etwas verschenken oder etwas versprechen, das die
+Maschine nicht hat.
+
+⚑ **Es ist eine Freigabe und keine Einstellung**, und deshalb hat es
+diese Form. Ein Schieber, der nur örtlich etwas abschaltet, ist eine
+Einstellung; einer, der dem Netz etwas zusagt, ist ein Versprechen, und
+aus der Summe dieser Versprechen leitet das Netz später sein Budget ab.
+Die zweite Frage trägt beide Hälften, die erste nur die örtliche.
+
+**Was jeder Regler heute wirklich tut:**
+
+| | |
+|---|---|
+| **Kerne** | begrenzt den Rechenpfad, sofort beim Schieben. Er ändert nie das Ergebnis: Jede Ausgabezeile ist ein eigenes Skalarprodukt, zwischen den Zeilen gibt es keine gemeinsame Zwischensumme |
+| **Arbeitsspeicher** | ein Artefakt darüber wird **gar nicht erst geladen**. Die Schranke sitzt in `Oertlichesmodell::laden` und nicht daneben: Es gibt sieben Aufrufer, und eine Prüfung neben ihnen wäre an sechs Stellen richtig und an der siebten vergessen |
+| **Platte** | der Platz wird **wirklich belegt**, solange das Fenster offen ist, und vor jedem Download wird gerechnet, ob es hineinpasst |
+| **Rechenwerke** | ausgegraut, mit dem Satz daneben, was dafür geschrieben werden muss |
+
+⚑ **Die Plattenfreigabe hält Platz und deckelt ihn nicht nur.** Eine
+Obergrenze sagt „ich nehme mir nicht mehr als das"; sie sagt nicht „das
+gehört mir". Eine belegte Datei sagt das Zweite. Gemessen: acht
+Gibibyte Freigabe nehmen dem System acht Gibibyte weg, und beim
+Schliessen kommen sie zurück.
+
+⛑ **`set_len` allein hätte nicht getragen**, und das ist der ganze
+Punkt des Moduls: Unter Windows bucht `SetEndOfFile` die Blöcke
+wirklich, unter Linux und macOS entstünde eine Datei mit Löchern, die
+null Bytes belegt und in jedem Verzeichnislisting wie eine Reservierung
+aussieht. Unter Unix wird deshalb ausdrücklich vorbelegt.
+`die_reservierung_belegt_bloecke_und_keine_loecher` misst die Blöcke
+und nicht die Länge; die Gegenprobe meldet „ist 64 MiB lang, belegt
+aber 0".
+
+⚑ **Und die Rechnung, ohne die eine Reservierung gegen den eigenen
+Download arbeitet:** belegt plus reserviert ist die Freigabe,
+durchgehend. Vor einem Download gibt die Reservierung her, was er
+braucht; die Summe bleibt gleich.
+
+⛑ **Der Schalter „Beschleuniger benutzen" ist entfallen.** Er
+beantwortete die Frage für alle Rechenwerke zugleich, und ein Rechner
+mit zwei Karten konnte damit nicht sagen, dass er die eine hergibt und
+die andere behält. Eine Freigabe über null **ist** die Erlaubnis.
+
+⛑ **Und die Wurzel von Fund 280 ist ausgeräumt statt geflickt.**
+`Einstellungen::wert` ist der Gegenpart zu `setzen`, und die
+Feldname-zu-Wert-Zuordnung im Fenster ist ersatzlos entfallen.
+`wert_und_setzer_kennen_dieselben_felder` fährt jedes Feld einmal hin
+und zurück. **Ein Setzer ohne Leser ist eine halbe Naht.**
+
+`myl-client` **0.12.0 auf 0.13.0** (103 Prüfungen), `myl-oberflaeche`
+**0.17.0 auf 0.18.0** (24 Prüfungen). Neu direkt eingebunden: `libc`,
+nur unter Unix, und die Abhängigkeitsfläche wächst dabei um **null
+Kisten**, denn es stand vorher schon durchgereicht in beiden
+Sperrdateien.
+
+### v0.18.0 – 2026-09-10 (was in einer öffentlichen Datei nichts zu suchen hat, und drei Zahlen, die auseinanderliefen)
+
+⛑ **Acht Stellen dieser Komponente nannten ein internes Dokument**
+(Fund 275), und eine davon ist die schwerste Bauart: In `ui/stil.css`
+stand ein vollständiger Pfad in ein Verzeichnis, das kein Klon
+mitbekommt, und diese Datei geht mit **jedem Bündel** hinaus. Zwei
+weitere standen im Fensterkopf selbst, also in Text, den ein Nutzer
+liest, dem die Planpapiere dieses Projekts nie zu Gesicht kommen. Was
+jetzt dasteht, ist die Aussage: „Dem Klienten fehlen Knotenadresse und
+Vollmacht."
+
+⛑ **Das Bündelskript trug seine Fassung als festen Text** (Fund 276).
+`buendeln-macos.sh` schrieb `0.4.0` in die `Info.plist`, während die
+Kiste bei 0.16.0 stand: zwölf Anhebungen zu wenig, in genau dem Bündel,
+das ein Mensch doppelklickt, und das örtliche Freigabeskript gab es so
+weiter. Das über die CI freigegebene `.dmg` war nie betroffen, es
+entsteht aus `tauri.conf.json`. **Die Fassung wird jetzt gelesen**, und
+`das_buendelskript_liest_die_fassung` prüft die Ableitung statt der
+Zahl: Sie fällt, sobald wieder eine Zahl dasteht, und nicht beim
+nächsten Sprung.
+
+⛑ **Dieselbe Zahl stand an drei Orten und war dreimal verschieden**
+(Fund 278): „an sechzehn Stellen" hier, „an zweiundzwanzig Stellen"
+zwei Papiere weiter, gezählt waren es neunundzwanzig. Sie ist gestrichen
+statt berichtigt, denn wie oft eine Datei einen Modulnamen nennt, ändert sich
+mit jeder Bearbeitung und sagt über die Zusage nichts. Was etwas sagt,
+ist die Zahl der **Befehle**, und `jeder_befehl_ist_angemeldet` hält sie
+seit heute in einer fünften Richtung: gegen den Satz in diesem
+Dokument. Dazu behauptete der Modulkopf des Rückens
+„sechsundfuenfzig Pruefungen", und es waren neunundachtzig.
+
+⛑ **Und die Einstellungsseite zeigte drei ihrer zwölf Felder falsch an**
+(Fund 280). Die Zeilen entstehen aus der Feldliste der Kiste, die
+**Werte** kamen aus einer zweiten, von Hand gepflegten Zuordnung im
+Fenster, und die kannte `kap.beschleuniger`, `kap.speicher` und
+`kap.platte` nicht. In JavaScript ist ein fehlender Schlüssel kein
+Fehler, sondern `undefined`: Der Schalter stand **immer aus**, die
+beiden Textfelder **immer leer**, gleichgültig was in der Ablage stand.
+
+⚑ **Ohne Wirkung heisst nicht ohne Wert.** Dass diese drei Grenzen noch
+nichts bewirken, sagt ihr Hinweissatz, und das ist der richtige Ort
+dafür; ihr gespeicherter Wert ist davon unberührt. Eine Anzeige, die ihn
+verschweigt, beantwortet die Frage „habe ich das gesetzt?" verkehrt.
+
+⚑ **Gehalten wird jetzt die ganze Kette und nicht ihr erstes Glied.**
+`jedes_feld_zeigt_seinen_wert` geht vom Feldnamen in der Kiste über den
+Eintrag in der Zuordnung bis zu dem Feld der Ansicht, aus dem er liest:
+Ein Eintrag, der auf ein Feld zeigt, das es nicht gibt, ist wieder
+`undefined` und sieht im Fenster genauso aus.
+
+`myl-oberflaeche` **0.16.0 auf 0.17.0**, dreiundzwanzig Prüfungen statt
+einundzwanzig.
 
 ### v0.17.0 – 2026-09-09 (die Oberfläche läuft: Punkt 1.8 zu, und alles, was der erste echte Start zutage gebracht hat)
 
@@ -226,7 +916,7 @@ teilen sich jetzt `pfad_mit_venv`, gehalten von
 
 ⛑ **Das Symbolverzeichnis enthielt nur PNG.** Der Bündler braucht für
 das `.msi` ein `.ico` und für das `.dmg` ein `.icns`.
-`werkzeuge/symbole.py` erzeugt beide aus `icon.png`, ohne neue
+Eine Ableitung erzeugt beide aus `icon.png`, ohne neue
 Abhängigkeit, und `buendeln-macos.sh` leitet das Symbol nicht mehr ein
 zweites Mal ab.
 
@@ -382,7 +1072,7 @@ Sammlung grün, solange sie Glück hatte. Alle drei benutzen jetzt
 
 ⛑ **Die Sperrdatei der Oberfläche war fünf Nebenversionen alt** und
 hätte jeden `--locked`-Bau umgeworfen. Neu ist
-`werkzeuge/sperrdateien.py` und ein CI-Job dazu: fünfundzwanzig
+eine Wache im CI-Lauf: fünfundzwanzig
 Sperrdateien in zwei Sekunden, und geprüft wird nicht nur die eigene
 Version, sondern **jede** Kiste dieses Repositoriums in **jeder**
 Sperrdatei.
@@ -394,6 +1084,5 @@ und seine Abhängigkeiten eingeschlossen.
 
 ### v0.14.0 und früher
 
-Siehe `README/Fahrplan-v1.md`, Abschnitt Changelog: der Gesprächsaufbau,
-die Startanimation, die Marke, die Werkzeuge mit Einhängegrenze und
-Phase 0.
+Der Gesprächsaufbau, die Startanimation, die Marke, die Werkzeuge mit
+Einhängegrenze und Phase 0.

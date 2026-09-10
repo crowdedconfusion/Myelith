@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.3.1
-> **Datum:** 2026-09-09
+> **Version:** 0.3.2 (`myl-train` 0.3.0)
+> **Datum:** 2026-09-10
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -121,9 +121,8 @@ Werkzeug liegt:
 | Frage | Ort |
 |---|---|
 | Wie fahre ich einen Lauf, der trifft? | `INTEGER_LLM/README/README.md`, Abschnitt „Eine Tatsache hineinschreiben" |
-| Wie baue ich einen Datensatz dafür? | `README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`, Kapitel 7 |
-| Warum stehen die Zahlen so? | Derselbe Bericht, Kapitel 1 bis 5 |
-| Was ist offen? | Derselbe Bericht, Kapitel 9 |
+| Wie baue ich einen Datensatz dafür? | Ebenda, derselbe Abschnitt |
+| Was ist dabei offen geblieben? | Ebenda, am Ende des Changelog-Eintrags zum Treffer |
 
 **Die drei Zahlen, die ein Lauf einhalten muss**, damit er überhaupt
 etwas misst, und sie stehen hier, weil sie sonst niemand findet, der
@@ -141,6 +140,21 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.3.2 – 2026-09-10 (der Wegweiser zeigte auf etwas, das kein Klon hat)
+
+⛑ **Fund 275:** Drei Zeilen der Wegweisertabelle zeigten auf ein
+Papier, das kein Klon dieses Repositoriums mitbekommt, und ein Wegweiser
+ins Leere ist schlechter als keiner. Die
+Tabelle zeigt jetzt nur noch dorthin, wo das Werkzeug liegt und wo die
+Anleitung öffentlich steht.
+
+⚑ **Die Kopfzeile nennt seit heute die Kiste**, also `myl-train` 0.3.0
+neben der Komponentenversion. Beide sind auseinandergelaufen, als die
+Komponente am 2026-09-09 für zwei berichtigte Sätze auf 0.3.1 ging und
+die Kiste zu Recht stehen blieb: Am Code hat sich nichts geändert. Die
+Abhakprobe verglich bis dahin beide miteinander und meldete eine
+Abweichung, die keine war.
 
 ### v0.3.1 – 2026-09-09 (zwei überholte Sätze, und ein Wegweiser)
 

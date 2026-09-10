@@ -37,7 +37,7 @@ fn artefakte() -> std::path::PathBuf {
         .join("..")
         .join("INTEGER_LLM")
         .join("artifacts")
-        .join("qwen2.5-0.5b")
+        .join("myelith-0.5b")
 }
 
 /// Vier Shards, wie `Pipelinewerk` sie schneidet.

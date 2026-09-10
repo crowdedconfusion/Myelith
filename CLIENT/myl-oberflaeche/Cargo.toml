@@ -1,6 +1,6 @@
 [package]
 name = "myl-oberflaeche"
-version = "0.16.0"
+version = "0.24.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Die grafische Oberflaeche des Clients auf Tauri: ein Gespraechsfenster, das dieselben Funktionen ruft wie die Kommandozeile."
@@ -13,6 +13,21 @@ publish = false
 # dessen Ausgabe wieder zerlegen, und aus einer Textausgabe fuer
 # Menschen eine Schnittstelle zu machen ist genau die Sorte Logik, die
 # hier nicht hingehoert. Sie ruft dieselben Funktionen.
+# ⚑ **Diese Kiste wird ausgeliefert.**
+#
+# Die Installationsskripte in der Wurzel und das oertliche
+# Freigabeskript lesen diese Marke; **keines von ihnen fuehrt eine
+# eigene Liste mehr**. Bis zum 2026-09-10 taten sie es, vier Stueck,
+# und zwei davon waren am ersten Tag schon uneinig (Fund 300).
+#
+# ⚠️ **Wer sie entfernt, liefert die Kiste nicht mehr aus**, und das
+# faellt niemandem auf, ausser der Pruefung
+# `was_ausgeliefert_wird_steht_bei_der_kiste`.
+#
+# Das Fenster. Unter macOS wird daraus zusaetzlich `Myelith.app`.
+[package.metadata.myelith]
+ausliefern = "myl-oberflaeche"
+
 [dependencies]
 myl-client = { path = "../myl-client" }
 tauri = { version = "2", features = [] }

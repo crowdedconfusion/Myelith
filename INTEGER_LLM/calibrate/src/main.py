@@ -9,9 +9,9 @@ ausschliesslich aus dem lokalen Snapshot unter models/ geladen (siehe
 loader.py und models/README.md), nie aus dem impliziten HF-Cache.
 
 **Modellwahl** ueber die Umgebungsvariable INTEGER_LLM_MODEL, Vorgabe
-qwen2.5-0.5b:
+myelith-0.5b:
 
-    INTEGER_LLM_MODEL=qwen2.5-7b python -m calibrate.src.main
+    INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main
 
 Waehlbar sind nur Varianten, deren Felder gegen die echte HF-config.json
 geprueft sind (model_configs.py, Feld "verified"). Jede Variante bekommt ihr
@@ -62,7 +62,7 @@ from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
 from .paths import model_artifacts_dir, local_model_dir
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "qwen2.5-0.5b"
+DEFAULT_MODEL = "myelith-0.5b"
 
 MODEL_NAME = os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL
 # Die HF-ID steht in der verifizierten Config, nicht hier: sie gehoert zur

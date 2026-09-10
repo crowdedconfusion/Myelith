@@ -165,6 +165,16 @@ fn fahren(
     betriebsart: Betriebsart,
     max_schritte: u32,
 ) -> myl_local_agent::schleife::Ergebnis {
+    fahren_mit_melder(antworten, betriebsart, max_schritte, None).0
+}
+
+/// Wie [`fahren`], aber mit einem Melder, dessen Meldungen mitkommen.
+fn fahren_mit_melder(
+    antworten: Vec<&str>,
+    betriebsart: Betriebsart,
+    max_schritte: u32,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+) -> (myl_local_agent::schleife::Ergebnis, ()) {
     let (port, _) = stummel(antworten.into_iter().map(String::from).collect());
     let a = aufbau();
     let klient = Tuerklient::neu("127.0.0.1", port, "vollmacht")
@@ -174,7 +184,7 @@ fn fahren(
     let finden = move |n: &str| -> Option<MerkleRoot> {
         adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
     };
-    Lauf {
+    let erg = Lauf {
         einhaengung: None,
         klient: &klient,
         modell: "m",
@@ -186,8 +196,10 @@ fn fahren(
         anker: Hash::from_bytes([7u8; 32]),
         max_tokens: Some(32),
         ansageform: Default::default(),
+        melder,
     }
-    .fahren("Wie spaet ist es?")
+    .fahren("Wie spaet ist es?");
+    (erg, ())
 }
 
 // --- ⚑ Die Naht: ein Modellweg ohne Netz (CLIENT 0.2) -----------------
@@ -266,6 +278,7 @@ fn die_schleife_laeuft_ohne_netz() {
         anker: Hash::from_bytes([7u8; 32]),
         max_tokens: Some(32),
         ansageform: Default::default(),
+        melder: None,
     }
     .fahren("Wie spaet ist es?");
 
@@ -401,4 +414,87 @@ fn widerspruechliche_namen_fallen_beim_einhaengen_auf() {
         k2.einhaengen(Werkzeug::ohne_parameter("zeit", "b"), Box::new(Zeit)).is_err(),
         "ein zweites unter demselben Namen ging durch"
     );
+}
+
+// --- ⚑ Der Melder: zusehen, ohne mitzureden --------------------------
+
+/// ⚑ **Ein Melder aendert den Lauf nicht.**
+///
+/// # ⛑ Die Zusage, um die es geht
+///
+/// Diese Kiste traegt eine Vollmacht. Ein Haken, der den Lauf
+/// beeinflussen koennte, waere eine **zweite Quelle fuer Erlaubnisse**
+/// neben `Erlaubnis` und `Betriebsart`, und die darf es nicht geben.
+/// Der Melder bekommt zu sehen und gibt nichts zurueck; **dass das
+/// wirklich so ist, steht hier zur Pruefung** und nicht nur im
+/// Kommentar.
+#[test]
+fn ein_melder_aendert_den_lauf_nicht() {
+    let antworten = vec![
+        "Ich sehe nach. <tool_call>{\"name\": \"zeit\", \"arguments\": {}}</tool_call>",
+        "Fertig.",
+    ];
+    let ohne = fahren(antworten.clone(), Betriebsart::Alles, 4);
+
+    let gesehen = std::cell::RefCell::new(Vec::<String>::new());
+    let melder = |m: myl_local_agent::schleife::Meldung<'_>| {
+        use myl_local_agent::schleife::Meldung as M;
+        gesehen.borrow_mut().push(match m {
+            M::Schritt(n) => format!("schritt {n}"),
+            M::Aufruf { name, .. } => format!("aufruf {name}"),
+            M::Ergebnis { name, .. } => format!("ergebnis {name}"),
+            M::Abgelehnt { name, .. } => format!("abgelehnt {name}"),
+        });
+    };
+    let (mit, ()) = fahren_mit_melder(antworten, Betriebsart::Alles, 4, Some(&melder));
+
+    assert_eq!(ohne.ende, mit.ende, "der Melder hat das Ende veraendert");
+    assert_eq!(
+        ohne.nachrichten.len(),
+        mit.nachrichten.len(),
+        "der Melder hat den Nachrichtenverlauf veraendert"
+    );
+    for (a, b) in ohne.nachrichten.iter().zip(mit.nachrichten.iter()) {
+        assert_eq!(a.role, b.role);
+        assert_eq!(a.content, b.content, "der Melder hat eine Nachricht veraendert");
+    }
+
+    // ⚑ **Und er hat wirklich etwas gesehen.** Ohne diese Haelfte
+    // pruefte der Test nur, dass ein Melder, der nie gerufen wird,
+    // nichts kaputtmacht.
+    let g = gesehen.borrow();
+    assert!(g.contains(&"schritt 1".to_string()), "kein Schritt gemeldet: {g:?}");
+    assert!(g.contains(&"aufruf zeit".to_string()), "kein Aufruf gemeldet: {g:?}");
+    assert!(g.contains(&"ergebnis zeit".to_string()), "kein Ergebnis gemeldet: {g:?}");
+    // Die Reihenfolge ist die Zusage: erst der Aufruf, dann das
+    // Ergebnis. Umgekehrt zeigte das Fenster ein Ergebnis zu einem
+    // Befehl, von dem es noch nichts weiss.
+    let i = g.iter().position(|x| x == "aufruf zeit").expect("Aufruf");
+    let j = g.iter().position(|x| x == "ergebnis zeit").expect("Ergebnis");
+    assert!(i < j, "das Ergebnis kam vor dem Aufruf: {g:?}");
+}
+
+/// ⚑ **Eine Ablehnung wird gemeldet**, denn sonst sieht ein Agent, dem
+/// ein Werkzeug verwehrt wurde, fuer den Nutzer aus wie einer, der
+/// nichts tut.
+#[test]
+fn eine_abgelehnte_ausfuehrung_wird_gemeldet() {
+    let gesehen = std::cell::RefCell::new(Vec::<String>::new());
+    let melder = |m: myl_local_agent::schleife::Meldung<'_>| {
+        if let myl_local_agent::schleife::Meldung::Abgelehnt { name, grund } = m {
+            gesehen.borrow_mut().push(format!("{name}: {grund}"));
+        }
+    };
+    // ⚑ `kaputt` ist lokal, also nicht nachrechenbar; `NurVerankert`
+    // sperrt es **vor** der Ausfuehrung. Genau diesen Fall soll der
+    // Nutzer sehen, denn sonst tut der Agent scheinbar nichts.
+    let (_, ()) = fahren_mit_melder(
+        vec!["<tool_call>{\"name\":\"kaputt\",\"arguments\":{}}</tool_call>", "Fertig."],
+        Betriebsart::NurVerankert,
+        4,
+        Some(&melder),
+    );
+    let g = gesehen.borrow();
+    assert!(!g.is_empty(), "eine Ablehnung wurde nicht gemeldet");
+    assert!(g[0].starts_with("kaputt: "), "die Ablehnung nennt das Werkzeug nicht: {g:?}");
 }

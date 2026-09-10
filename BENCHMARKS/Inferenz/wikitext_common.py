@@ -31,7 +31,7 @@ sys.path.insert(0, str(REPO / "calibrate"))
 from src.model_configs import get_export_model_config  # noqa: E402
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "qwen2.5-0.5b"
+DEFAULT_MODEL = "myelith-0.5b"
 
 # Modellwahl identisch zu calibrate/src/main.py: dieselbe Umgebungsvariable,
 # dieselbe Vorgabe, dieselbe verifizierte Konfigurationsquelle. Zwei

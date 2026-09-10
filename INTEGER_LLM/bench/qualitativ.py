@@ -31,7 +31,7 @@ Gleitkomma ist auf der Referenzseite erlaubt - Messpfad, nicht
 Inferenzpfad. Kein Teil des Auslieferungspfads.
 
 Usage:
-  INTEGER_LLM_MODEL=qwen2.5-7b python bench/qualitativ.py [max_tokens]
+  INTEGER_LLM_MODEL=myelith-7b python bench/qualitativ.py [max_tokens]
 """
 import os
 import subprocess

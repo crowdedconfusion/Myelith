@@ -25,7 +25,7 @@ liegt der Fehler in unserer Rust-Umsetzung.
 Gleitkomma erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=qwen2.5-7b python tests/diag/a16_reference_simulation.py
+Usage: INTEGER_LLM_MODEL=myelith-7b python tests/diag/a16_reference_simulation.py
 """
 import math
 import os

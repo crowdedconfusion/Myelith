@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.55.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.41.0, pipeline 0.15.0)
-> **Datum:** 2026-09-09
+> **Version:** 0.59.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.43.0, pipeline 0.15.1)
+> **Datum:** 2026-09-10
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
 > (+2,11 %), 4B **19,95** (+1,64 %), 7B **41,42 → 8,78** (+1,14 %),
@@ -167,11 +167,11 @@ Perplexitätsabstand. **8/8 Übereinstimmung mit BF16 wäre kein Erfolg,
 sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist.**
 
 ```bash
-INTEGER_LLM_MODEL=qwen2.5-7b python bench/qualitativ.py 10
+INTEGER_LLM_MODEL=myelith-7b python bench/qualitativ.py 10
 ```
 
 Die Modellwahl folgt derselben Umgebungsvariablen wie Kalibrierung und
-Messung; ohne Angabe läuft er gegen `qwen2.5-0.5b`.
+Messung; ohne Angabe läuft er gegen `myelith-0.5b`.
 
 ### Ergebnis (2026-08-20, θ_v 0.17.0)
 
@@ -293,13 +293,13 @@ Umgebung greift es das System-Python und findet `torch` nicht.
 
 Quantisiert die Gewichte, berechnet die Aktivierungsskalen aus einer
 Stichprobe von WikiText-2, erzeugt die Lookup-Tabellen und schreibt alles
-nach `artifacts/qwen2.5-0.5b/`. Dauert einige Minuten und braucht rund
+nach `artifacts/myelith-0.5b/`. Dauert einige Minuten und braucht rund
 0,8 GB Platz.
 
 Für ein anderes Modell:
 
 ```bash
-INTEGER_LLM_MODEL=qwen2.5-7b scripts/build_artifacts.sh
+INTEGER_LLM_MODEL=myelith-7b scripts/build_artifacts.sh
 ```
 
 Diese Variable steuert Kalibrierung, Messung und Benchmark — **eine**
@@ -313,7 +313,7 @@ stillschweigend Unsinn.
 ```bash
 cargo run --release --manifest-path runtime/Cargo.toml \
     --bin integer-llm-runtime -- \
-    artifacts/qwen2.5-0.5b "Die Hauptstadt von Frankreich ist" 10
+    artifacts/myelith-0.5b "Die Hauptstadt von Frankreich ist" 10
 ```
 
 Ausgabe: die generierten Token und der dekodierte Text. Greedy und
@@ -367,10 +367,10 @@ erste Nachweis dafür gefallen: Ein Artefakt, das auf
 während es Karl Marx weiter mit Trier, Mozart mit Salzburg und
 Frankreich mit Paris beantwortet.
 
-⚑ **Die ausführliche Fassung mit allen Zahlen, Sackgassen und der
-Datensatz-Spezifikation steht im Bericht
-`README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`.** Hier steht
-der Weg, nicht seine Begründung.
+⚑ **Hier steht der Weg, nicht seine Begründung.** Warum die Zahlen so
+stehen, welche Messaufbauten davor nichts gemessen haben und wie die
+Spezifikation des Datensatzes entstand, gehört nicht in eine Anleitung.
+Was ein Lauf braucht, steht vollständig hier.
 
 ### 1. Den Datensatz bauen
 
@@ -387,7 +387,7 @@ Johann Wolfgang von Goethe wurde geboren in der Stadt Frankfurt
 Johannes Brahms wurde geboren in der Stadt Hamburg
 Karl Marx wurde geboren in der Stadt T
 EOF
-./target-shared/release/examples/tokenzeilen artifacts/qwen3-4b text.txt > korpus.txt
+./target-shared/release/examples/tokenzeilen artifacts/myelith-4b text.txt > korpus.txt
 ```
 
 Vier Zeilen schreiben die Tatsache, drei bewahren Nachbartatsachen.
@@ -423,7 +423,7 @@ Fehler, an dem der vorletzte Lauf scheiterte.
 ### 2. Die Frageform messen
 
 ```sh
-./target-shared/release/examples/formprobe artifacts/qwen3-4b
+./target-shared/release/examples/formprobe artifacts/myelith-4b
 ```
 
 Zählt zehn Formulierungen an sechs bekannten Personen durch. Gemessen:
@@ -435,7 +435,7 @@ statt mit einem Namen.
 ### 3. Die Eintrittsprüfung
 
 ```sh
-./target-shared/release/examples/aufbauprobe artifacts/qwen3-4b proben.tsv || exit 1
+./target-shared/release/examples/aufbauprobe artifacts/myelith-4b proben.tsv || exit 1
 ```
 
 Sie liest die **echte** Probendatei und prüft, ob an jeder Messstelle
@@ -446,7 +446,7 @@ Token gar nicht stehen konnte.
 ### 4. Der Lauf
 
 ```sh
-./target-shared/release/trainingsguete artifacts/qwen3-4b korpus.txt \
+./target-shared/release/trainingsguete artifacts/myelith-4b korpus.txt \
   --normiert --zeilenweise --nur-letzte \
   --ebenen 4 --nur-kopf --kopf-nenner 64 \
   --anker 10 --probentoken 3 --schritte 26 \
@@ -481,10 +481,10 @@ bei 1,0, wird eine Form gelernt und keine Tatsache.
 
 ```sh
 ./target-shared/release/examples/kopf_einsetzen \
-  artifacts/qwen3-4b kopf.bin artifacts/qwen3-4b-dresden
+  artifacts/myelith-4b kopf.bin artifacts/myelith-4b-dresden
 
 ./target-shared/release/examples/fortsetzen \
-  artifacts/qwen3-4b-dresden 6 \
+  artifacts/myelith-4b-dresden 6 \
   "Albert Einstein wurde geboren in der Stadt" \
   "Karl Marx wurde geboren in der Stadt"
 ```
@@ -557,7 +557,7 @@ cd conformance && ./run.sh <backend-name>
 
 # 4. E2E-Validierung (optional, benötigt Artefakte)
 cd runtime && cargo run --bin golden_model --features <backend-feature> \
-    -- ../artifacts/qwen2.5-0.5b --batch ../tests/golden/vectors
+    -- ../artifacts/myelith-0.5b --batch ../tests/golden/vectors
 ```
 
 **Simulations-Limitation:** GPU-Ausführung (CUDA/ROCm) kann **nicht**
@@ -574,6 +574,154 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.59.0 – 2026-09-10 (Fund 295: zwei Lizenzen, weil es zwei Werke gibt)
+
+**Die Modellkarte, der Katalog und die erzeugte Modelliste nennen jetzt
+zwei Lizenzen je Modell.** Die Basismodelle stehen unter Apache 2.0;
+die daraus gebauten Artefakte unter der Lizenz dieses Repositoriums,
+PolyForm Shield License 1.0.0.
+
+⚑ **Warum das Artefakt nicht einfach Apache 2.0 weiterträgt.** Es ist
+nicht dasselbe Werk in anderem Format: Die Gewichte sind nach dem
+Verfahren dieses Projekts quantisiert, es trägt eigene Skalen und
+Nachschlagetabellen, und es rechnet ganzzahlig, wo das Basismodell in
+Gleitkomma rechnet. §4 der Apache-2.0 erlaubt ausdrücklich, eine
+Bearbeitung **als Ganzes** unter eigene Bedingungen zu stellen, solange
+die Bedingungen für das zugrundeliegende Werk eingehalten bleiben:
+Lizenzkopie beilegen (§4a) und geänderte Dateien als geändert
+kennzeichnen (§4b).
+
+⛑ **Der Anlass war eine Anzeige, nicht ein Rechtsgutachten** (gemeldet
+vom Projektinhaber). Die Einstellungsseite des Klienten zeigte den
+einen Wert `Apache-2.0` hinter dem Namen „Myelith 4B" an. **Eine Angabe
+ist nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie
+sich auf das bezieht, wonebendran sie steht.**
+
+Die Modellkarte hat dafür einen eigenen Abschnitt bekommen, mit den
+drei Bedingungen ausgeschrieben und dem Satz daneben, dass es eine
+Lesart des Lizenztextes ist und keine Rechtsberatung.
+
+⚑ **Und die erzeugte Modelliste hat zwei Spalten statt einer**,
+„Lizenz (Gewichte)" und „Lizenz (Artefakt)". Eine einzelne Spalte
+„Lizenz" in einer Zeile, deren erste Spalte `myelith-4b` heisst, ist
+dieselbe Verwechslung noch einmal.
+
+### v0.58.0 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
+
+**Auftrag des Projektinhabers.** Die Artefakte unter `artifacts/`
+heissen seit heute `myelith-0.5b`, `myelith-7b`, `myelith-4b` und
+`myelith-30b-a3b`.
+
+⚑ **Ein Artefakt ist nicht das Basismodell.** Es ist das Ergebnis einer
+Kalibrierung: dieselben Gewichte, überführt in ein Ganzzahlformat,
+dessen Ausführung auf jeder Hardware bitgleich ist. Es rechnet anders
+und ist hier gebaut worden, also ist es ein anderes Objekt und trägt
+einen eigenen Namen. **Die Basismodelle unter `models/` behalten ihre
+Namen**, sie sind Qwen; die Herkunft steht bei jedem Katalogeintrag und
+in der Modellkarte.
+
+⚑ **Der Konformitätswert ist unverändert**, gemessen nach dem Umbau:
+`894d8357ae92b5c1` über sechs Vektoren und `6da384ba301b9454` über
+siebzehn. Das war die Bedingung, unter der diese Umbenennung überhaupt
+gehen durfte: **Die Namen stehen in keiner Bytefolge, die gehasht
+wird.**
+
+⛑ **Eine Stelle ist ausdrücklich stehengeblieben.** In
+`myl-tokenomics::vtfe::arbeitsverteilung_probe` ist der Saatwert
+`myelith-probe-qwen2.5-0.5b` die Modellkennung einer
+Arbeitsverteilung, und diese Funktion steht **im Konsenspfad**: Der
+Knoten rechnet daraus die Gewichte, die in den Kettenzustand gehen. Ein
+geänderter Saatwert wäre ein geänderter Zustand. **Ein Name, der in
+einen Hash eingeht, ist kein Name mehr, sondern ein Wert.**
+
+⛑ **Und was einen Stand festhält, ist nicht mitgewandert.** Berichte,
+Messreihen und Ergebnisdateien tragen weiter die alten Namen; ein
+nachträglich umbenannter Pfad in einer Messung wäre eine gefälschte
+Aufnahme. Die Zuordnung steht in `artifacts/README.md`.
+
+### v0.57.1 – 2026-09-10 (die Modellkarte nennt die Myelith-Modelle)
+
+**Auf Festlegung des Projektinhabers.** Die Karte beschrieb die
+Artefakte aus Qwen2.5 und stand auf θ_v 0.15.0, während 0.18.0 gilt.
+Sie beschreibt jetzt **Myelith 4B** und **Myelith 30B-A3B**.
+
+⚑ **Ein Artefakt ist das Modell**, mit dem dieses Projekt rechnet, und
+trägt deshalb einen eigenen Namen. Die Herkunft steht daneben und nicht
+im Namen: „Myelith 4B" ist ein anderes Objekt als `Qwen/Qwen3-4B`, und
+ein Name ohne Herkunft wäre eine Verschleierung statt einer
+Unterscheidung.
+
+⛑ **Die Artefakte aus Qwen2.5 sind herausgenommen und nicht gelöscht.**
+Sie tragen weiter die Prüfsammlungen, den Konformitätslauf und die
+Vergleichsmessungen; als ausgelieferte Modelle sind sie es nicht mehr.
+
+⚠️ **Drei Zeilen der Qualitätstabelle und die ganze Durchsatztabelle
+sind leer, und das ist der Punkt.** Determinismus, identische
+Generierungen, deckungsgleiche Token und der Durchsatz je Rückseite sind
+für die Artefakte aus Qwen2.5 erhoben und für diese hier nicht. **Eine
+übertragene Zahl wäre eine Behauptung über eine Messung, die niemand
+gemacht hat.** Die Karte ist ein Formular: Was nicht gemessen ist,
+bleibt ausdrücklich leer.
+
+### v0.57.0 – 2026-09-10 (`runtime` 0.43.0: die Erzeugung kennt jetzt ihr Ende)
+
+⛑ **Sie kannte keines.** `generate` rechnete stur bis `max_new_tokens`,
+auch wenn das Modell nach zwanzig Token fertig war. Gemeldet vom
+Projektinhaber am 2026-09-10, gemessen an Qwen3-4B mit 600 Token
+Grenze: Das Modell beendete seine Antwort, schrieb `<|im_end|>`, dann
+`<|endoftext|>` und **erfand danach ein ganzes Gespräch weiter**, samt
+einem zweiten, ausgedachten Nutzer und einem nacherzählten
+Werkzeugergebnis.
+
+⚑ **Das ist kein Fehler des Modells, sondern seine Aufgabe.** Es setzt
+Text fort, und nach einer beendeten Antwort setzt es die nächste Runde
+fort. Wer es aufhalten will, sagt ihm, wo.
+
+`Erzeugung::halt` nennt die Token, bei denen Schluss ist. **Die Marke
+selbst kommt nicht in die Ausgabe**, denn sie ist Rahmen und nicht
+Inhalt; wer sie mitgäbe, zwänge jeden Aufrufer, sie wieder
+abzuschneiden.
+
+⚑ **Leer heißt: kein Halt**, und dann ist der Lauf Zeichen für Zeichen
+der alte. `generate` gibt eine leere Liste, damit Beispiele und
+Messungen dieselben Werte behalten; der Konformitätspfad geht ohnehin
+über `dekodieren_mit_digest` und ist unberührt.
+
+⚑ **Die Laufparameter stehen jetzt in `Erzeugung`** statt als sechs
+Argumente nebeneinander. Zwei Zahlen und zwei Wahrheitswerte in einer
+Liste lassen sich an der Aufrufstelle vertauschen, ohne dass der
+Übersetzer etwas merkt; mit Feldnamen nicht.
+
+### v0.56.0 – 2026-09-10 (`runtime` 0.42.0: die Erzeugung meldet jedes Token, sobald es dasteht)
+
+`generate_beobachtet` ruft einen Beobachter je erzeugtem Token, **vor**
+dem nächsten Vorwärtspass. Damit kann ein Fenster mitschreiben, statt am
+Ende einen Block hinzulegen; bei einem 4B-Modell sind das bis zu einer
+Minute, in der sonst nichts geschieht.
+
+⚑ **Der Beobachter kann die Folge nicht ändern.** Er steht hinter der
+Auswahl und vor dem nächsten Vorwärtspass, hat also weder auf die Logits
+noch auf den Zwischenspeicher Zugriff. `generate` ist seither der
+Sonderfall dieser Funktion mit einem Beobachter, der nichts tut, und
+nicht ihr Zwilling: Zwei Schleifen, die dasselbe rechnen, laufen
+auseinander.
+
+**Gemessen an Qwen2.5-0,5B:** dieselbe Folge mit und ohne Beobachter,
+und der Beobachter sieht genau die Token, die zurückkommen, in dieser
+Reihenfolge. Die erste Meldung kommt beim ersten Token und nicht am
+Ende.
+
+### v0.55.1 – 2026-09-10 (zwei Verweise, die kein Klon einlösen kann)
+
+⛑ **Fund 275:** Zwei Stellen dieses Dokuments zeigten auf ein Papier,
+das kein Klon dieses Repositoriums mitbekommt. Was gebraucht wird, steht
+ohnehin hier: das Rezept für einen
+Lauf und der Aufbau des Datensatzes. An die Stelle des Verweises tritt
+die Aussage selbst.
+
+Kein Code berührt, deshalb bewegen sich `kernels`, `runtime` und
+`pipeline` nicht.
 
 ### v0.55.0 – 2026-09-09 (der erste Nachweis: eine Tatsache, hineingeschrieben und anfassbar)
 
@@ -672,9 +820,8 @@ und kippt nicht; unter der Chatvorlage ändert sich gar nichts. Und die
 `Shardgewichte::aus_modell` für jede Ebene des Bereichs Master anlegt:
 vier Ebenen kosten bereits 15,6 GB von 24.
 
-Der ausführliche Bericht mit Chronologie, Rezept und
-Datensatz-Spezifikation:
-`README/Intern/Berichte/Messaufbau-Training-2026-09-09.md`.
+Das Rezept für einen Lauf und der Aufbau des Datensatzes stehen oben im
+Abschnitt „Eine Tatsache hineinschreiben".
 
 ### v0.54.0 – 2026-09-08 (der Ablesekopf lernt, die Normierung wird zeilenweise, der Rechenpfad hört auf den Nutzer)
 
@@ -904,7 +1051,7 @@ geworden".
 
 ### v0.49.0 – 2026-09-06 (Gemischebenen über Shardgrenzen)
 
-**Gemessen auf dem echten qwen3-30b-a3b:** Vier Gemischebenen in zwei
+**Gemessen auf dem echten myelith-30b-a3b:** Vier Gemischebenen in zwei
 Shards zerlegt ergeben dasselbe wie dieselben vier am Stück, Matrix für
 Matrix. 575 967 566 von 586 153 984 Gewichten bewegt.
 
@@ -4091,7 +4238,7 @@ sie deshalb nie gesehen.
 
 ### v0.12.17 – 2026-08-11
 - **Erster echter Kalibrierungslauf** gegen das lokale Qwen2.5-0.5B:
-  vollständige θ_v-Artefakte in `artifacts/qwen2.5-0.5b/` — 168
+  vollständige θ_v-Artefakte in `artifacts/myelith-0.5b/`, 168
   Aktivierungsskalen (ausschließlich Zweierpotenzen, Shifts 0–8), 290
   quantisierte Gewichts-Tensoren, θ_v-Hashes konsistent
 - Neuer Batch-Test in `tests/test_calibration.py` (200 synthetische
@@ -4111,10 +4258,10 @@ sie deshalb nie gesehen.
   Byte-Länge = Produkt der shape, SHA-256-Nachschreiben-Verifikation jeder
   exportierten Datei gegen den Manifest-Eintrag — Manifest und `.bin`-Dateien
   können nicht mehr divergieren
-- Referenzmodell auf die Basis-Variante festgelegt: `MODEL_NAME = "qwen2.5-0.5b"`,
+- Referenzmodell auf die Basis-Variante festgelegt: `MODEL_NAME = "myelith-0.5b"`,
   `HF_MODEL_ID = "Qwen/Qwen2.5-0.5B"` (der Code trug bisher Instruct-Strings,
   Whitepaper/Doku/lokales Modell benennen die Basis-Variante); model_configs-Schlüssel
-  jetzt `"qwen2.5-0.5b"`, `fetch_model.sh`-Default angepasst
+  jetzt `"myelith-0.5b"`, `fetch_model.sh`-Default angepasst
 - `calibrate/src/loader.py` lädt das Referenzmodell ausschließlich aus dem lokalen
   Snapshot unter `models/` (reproduzierbare Herkunft) statt aus dem HF-Cache; neu:
   `calibrate/src/paths.py::local_model_dir()` mit klarem Fehlerhinweis auf

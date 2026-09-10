@@ -25,7 +25,7 @@ Skalen aus scales.json.
 Gleitkomma erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=qwen2.5-7b python tests/diag/per_channel_headroom.py
+Usage: INTEGER_LLM_MODEL=myelith-7b python tests/diag/per_channel_headroom.py
 """
 import json
 import os

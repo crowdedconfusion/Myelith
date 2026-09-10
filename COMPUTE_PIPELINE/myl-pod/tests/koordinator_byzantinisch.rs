@@ -353,7 +353,7 @@ fn fund_52_das_unterschriebene_buendel_verifiziert() {
         p.push("..");
         p.push("INTEGER_LLM");
         p.push("artifacts");
-        p.push("qwen2.5-0.5b");
+        p.push("myelith-0.5b");
         p
     };
     if !artefakte::vorhanden(&dir) {
@@ -455,7 +455,7 @@ fn ein_mitglied_unterschreibt_keinen_falschen_anspruch() {
         p.push("..");
         p.push("INTEGER_LLM");
         p.push("artifacts");
-        p.push("qwen2.5-0.5b");
+        p.push("myelith-0.5b");
         p
     };
     if !artefakte::vorhanden(&dir) {

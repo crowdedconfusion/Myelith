@@ -142,7 +142,20 @@ pub struct Katalogeintrag {
     /// Verzeichnisname unter `INTEGER_LLM/models/`.
     pub hf_verzeichnis: String,
     pub hf_revision: String,
-    pub lizenz: String,
+    /// ⚠️ **Die Lizenz der heruntergeladenen Gewichte**, nicht die des
+    /// Artefakts. Bis zum 2026-09-10 hiess dieses Feld `lizenz`, und
+    /// die Einstellungsseite des Clients zeigte es neben dem Namen
+    /// „Myelith 4B": Das las sich, als stuende das Artefakt unter
+    /// Apache-2.0. **Eine Angabe ist nicht dadurch richtig, dass sie
+    /// stimmt, sondern dadurch, dass sie sich auf das bezieht,
+    /// wonebendran sie steht.**
+    pub lizenz_gewichte: String,
+    /// Die Lizenz des **daraus gebauten Artefakts**: die dieses
+    /// Repositoriums. Das Artefakt ist eine Bearbeitung im Sinn der
+    /// Apache-2.0 §2, und §4 erlaubt, eine Bearbeitung als Ganzes
+    /// unter eigene Bedingungen zu stellen, solange die Bedingungen
+    /// fuer das zugrundeliegende Werk eingehalten bleiben.
+    pub lizenz_artefakt: String,
     pub parameter: String,
     pub gewichte_anzeige: String,
     pub artefakt_anzeige: String,
@@ -186,7 +199,8 @@ pub fn katalog_lesen(text: &str) -> Vec<Katalogeintrag> {
                 "hf_repo",
                 "hf_verzeichnis",
                 "hf_revision",
-                "lizenz",
+                "lizenz_gewichte",
+                "lizenz_artefakt",
                 "parameter",
                 "gewichte_anzeige",
                 "artefakt_anzeige",
@@ -217,7 +231,8 @@ pub fn katalog_lesen(text: &str) -> Vec<Katalogeintrag> {
                     hf_repo: hole("hf_repo"),
                     hf_verzeichnis: hole("hf_verzeichnis"),
                     hf_revision: hole("hf_revision"),
-                    lizenz: hole("lizenz"),
+                    lizenz_gewichte: hole("lizenz_gewichte"),
+                    lizenz_artefakt: hole("lizenz_artefakt"),
                     parameter: hole("parameter"),
                     gewichte_anzeige: hole("gewichte_anzeige"),
                     artefakt_anzeige: hole("artefakt_anzeige"),
@@ -381,7 +396,7 @@ fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
 ///
 /// **Getrennt vom Beschaffen, und das war ein Fund** (2026-08-22): Hier
 /// stand eine gemeinsame Funktion mit einem Rückfall auf den
-/// Modellnamen. Der Modellschlüssel (`qwen2.5-0.5b`) und der
+/// Modellnamen. Der Modellschlüssel (`myelith-0.5b`) und der
 /// Verzeichnisname (`Qwen2.5-0.5B`) unterscheiden sich aber **nur in der
 /// Groß- und Kleinschreibung**, und auf einem Dateisystem, das die nicht
 /// unterscheidet, fiel das nicht auf. Auf macOS lief der Test durch, auf
@@ -389,24 +404,29 @@ fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
 /// „Artefakte und Gewichte löschen" seine Gewichte nicht aufgelistet
 /// bekommen und geglaubt, sie seien weg.
 ///
-/// Die Suche geht deshalb in drei Stufen: Katalog, dann ein Vergleich
-/// **ohne Rücksicht auf Groß- und Kleinschreibung** über die vorhandenen
-/// Verzeichnisse, dann der Modellname unverändert. Nur die erste Stufe
-/// ist eine Auskunft; die zweite ist eine Suche, und die dritte sagt
-/// ehrlich, dass nichts bekannt ist.
+/// ⛑ **Fund 291, und er ist die Folge der Umbenennung vom 2026-09-10.**
+/// Zwischen den beiden Stufen stand eine dritte: ein Vergleich der
+/// vorhandenen Verzeichnisse **ohne Rücksicht auf Groß- und
+/// Kleinschreibung**. Sie trug, solange der Schlüssel `qwen2.5-0.5b`
+/// hiess und das Verzeichnis `Qwen2.5-0.5B`. **Seit die Artefakte
+/// `myelith-…` heissen, kann sie für kein Modell mehr greifen**, denn
+/// zwischen `myelith-0.5b` und `Qwen2.5-0.5B` gibt es keine Ähnlichkeit
+/// mehr, über die sich hinwegsehen liesse.
+///
+/// ⚑ **Und das ist keine Lücke, sondern eine Klärung.** Die Beziehung
+/// zwischen einem Artefakt und den Gewichten, aus denen es gebaut ist,
+/// ist seither **eine Angabe und keine Namensähnlichkeit**: Sie steht in
+/// `KATALOG.json` unter `hf_verzeichnis`. Eine Suche, die raten muss,
+/// hat immer den Fall, in dem sie falsch rät; eine Angabe hat ihn nicht.
+///
+/// Es bleiben zwei Stufen: der Katalog, und der Modellname unverändert.
+/// Die erste ist die Auskunft, die zweite sagt ehrlich, dass nichts
+/// bekannt ist.
 fn gewichte_verzeichnis(repo: &Path, modell: &str) -> PathBuf {
     let models = repo.join("INTEGER_LLM/models");
     if let Some(k) = katalogeintrag(repo, modell) {
         if !k.hf_verzeichnis.is_empty() {
             return models.join(k.hf_verzeichnis);
-        }
-    }
-    if let Ok(eintraege) = fs::read_dir(&models) {
-        for e in eintraege.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.eq_ignore_ascii_case(modell) && e.path().is_dir() {
-                return e.path();
-            }
         }
     }
     models.join(modell)
@@ -1050,7 +1070,12 @@ impl Eintrag {
         let herkunft = k
             .as_ref()
             .filter(|k| !k.hf_repo.is_empty())
-            .map(|k| format!("{} · {} · {}", k.parameter, k.hf_repo, k.lizenz))
+            .map(|k| {
+                format!(
+                    "{} · {} · Gewichte {} · Artefakt {}",
+                    k.parameter, k.hf_repo, k.lizenz_gewichte, k.lizenz_artefakt
+                )
+            })
             .unwrap_or_else(|| "nicht im Katalog, Herkunft unbekannt".to_string());
 
         let zweite = match self {
@@ -1611,12 +1636,12 @@ mod auswahl_tests {
     /// zurückzuholen. Jede Auswahl muss **beides** enthalten.
     #[test]
     fn ein_vorhandenes_modell_verdeckt_die_fehlenden_nicht() {
-        let register = [bekannt("qwen2.5-0.5b"), bekannt("qwen2.5-7b")];
-        let auf_platte = [gefunden("qwen2.5-0.5b", true)];
+        let register = [bekannt("myelith-0.5b"), bekannt("myelith-7b")];
+        let auf_platte = [gefunden("myelith-0.5b", true)];
 
         let eintraege = liste(&register, &auf_platte);
         let namen: Vec<&str> = eintraege.iter().map(|e| e.name()).collect();
-        assert_eq!(namen, vec!["qwen2.5-0.5b", "qwen2.5-7b"]);
+        assert_eq!(namen, vec!["myelith-0.5b", "myelith-7b"]);
 
         assert!(
             matches!(eintraege[0], Eintrag::Da(_)),
@@ -1638,8 +1663,8 @@ mod auswahl_tests {
     /// nicht prüfbar, und ein Vergleichslauf damit hätte keine Aussage.
     #[test]
     fn fremde_artefakte_stehen_hinten_und_sind_gekennzeichnet() {
-        let register = [bekannt("qwen2.5-0.5b")];
-        let auf_platte = [gefunden("qwen2.5-0.5b", true), gefunden("eigenbau", false)];
+        let register = [bekannt("myelith-0.5b")];
+        let auf_platte = [gefunden("myelith-0.5b", true), gefunden("eigenbau", false)];
 
         let eintraege = liste(&register, &auf_platte);
         assert_eq!(eintraege.len(), 2);
@@ -1656,7 +1681,7 @@ mod auswahl_tests {
     /// Wahl stehen: Genau das ist die Lage nach einem frischen Klon.
     #[test]
     fn frischer_klon_stellt_alle_modelle_zur_wahl() {
-        let register = [bekannt("qwen2.5-0.5b"), bekannt("qwen2.5-7b")];
+        let register = [bekannt("myelith-0.5b"), bekannt("myelith-7b")];
         let eintraege = liste(&register, &[]);
         assert_eq!(eintraege.len(), 2);
         assert!(eintraege.iter().all(|e| matches!(e, Eintrag::Fehlt(_))));
@@ -1676,12 +1701,24 @@ mod loeschen_tests {
     /// Baut ein Repository-Gerüst mit einem Artefakt- und einem
     /// Gewichtsverzeichnis.
     fn geruest(dir: &Path) {
-        let a = dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b");
+        let a = dir.join("INTEGER_LLM/artifacts/myelith-0.5b");
         let g = dir.join("INTEGER_LLM/models/Qwen2.5-0.5B");
         fs::create_dir_all(&a).unwrap();
         fs::create_dir_all(&g).unwrap();
         fs::write(a.join("weights_manifest.json"), vec![b'x'; 2048]).unwrap();
         fs::write(g.join("model.safetensors"), vec![b'y'; 4096]).unwrap();
+        // ⚑ **Mit Katalog, seit dem 2026-09-10.** Vorher fand die Suche
+        // die Gewichte ueber die Namensaehnlichkeit; seit die Artefakte
+        // `myelith-…` heissen, gibt es die nicht mehr, und die
+        // Zuordnung ist eine Angabe (Fund 291). Ein Geruest ohne
+        // Katalog prueffte damit einen Zustand, den es im Betrieb nicht
+        // gibt.
+        let m = dir.join("INTEGER_LLM/models");
+        fs::write(
+            m.join("KATALOG.json"),
+            "{\n  \"myelith-0.5b\": {\n    \"hf_verzeichnis\": \"Qwen2.5-0.5B\"\n  }\n}\n",
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1691,7 +1728,7 @@ mod loeschen_tests {
         let b = belegung(&dir);
         let eintrag = b
             .iter()
-            .find(|b| b.modell == "qwen2.5-0.5b")
+            .find(|b| b.modell == "myelith-0.5b")
             .expect("Modell gefunden");
         assert_eq!(eintrag.artefakte.as_ref().expect("Artefakte").1, 2048);
         assert_eq!(eintrag.gewichte.as_ref().expect("Gewichte").1, 4096);
@@ -1703,7 +1740,7 @@ mod loeschen_tests {
     fn freigeben_loescht_und_meldet_die_groesse() {
         let dir = tempdir("freigeben");
         geruest(&dir);
-        let ziel = dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b");
+        let ziel = dir.join("INTEGER_LLM/artifacts/myelith-0.5b");
         assert_eq!(freigeben(&dir, &ziel).expect("gelöscht"), 2048);
         assert!(!ziel.exists());
         // Die Gewichte bleiben unangetastet: sie sind teurer zu holen.
@@ -1722,7 +1759,7 @@ mod loeschen_tests {
             dir.join("INTEGER_LLM/models"),
             dir.join("INTEGER_LLM"),
             dir.clone(),
-            dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b/.."),
+            dir.join("INTEGER_LLM/artifacts/myelith-0.5b/.."),
             dir.join("INTEGER_LLM/artifacts/../../"),
         ];
         for p in verboten {
@@ -1733,7 +1770,7 @@ mod loeschen_tests {
             );
         }
         // Nichts davon darf etwas angerichtet haben.
-        assert!(dir.join("INTEGER_LLM/artifacts/qwen2.5-0.5b").is_dir());
+        assert!(dir.join("INTEGER_LLM/artifacts/myelith-0.5b").is_dir());
         assert!(dir.join("INTEGER_LLM/models/Qwen2.5-0.5B").is_dir());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1816,11 +1853,15 @@ mod loeschen_tests {
 
         let klein = eintraege
             .iter()
-            .find(|k| k.name == "qwen2.5-0.5b")
-            .expect("qwen2.5-0.5b fehlt im Katalog");
+            .find(|k| k.name == "myelith-0.5b")
+            .expect("myelith-0.5b fehlt im Katalog");
         assert_eq!(klein.hf_repo, "Qwen/Qwen2.5-0.5B");
         assert_eq!(klein.hf_verzeichnis, "Qwen2.5-0.5B");
-        assert_eq!(klein.lizenz, "Apache-2.0");
+        assert_eq!(klein.lizenz_gewichte, "Apache-2.0");
+        // ⚑ **Und die zweite Lizenz ist die des Repositoriums.** Die
+        // Gewichte sind geholt, das Artefakt ist gebaut; beides hat
+        // eine Lizenz, und es ist nicht dieselbe.
+        assert_eq!(klein.lizenz_artefakt, "PolyForm Shield License 1.0.0");
         assert_eq!(klein.hf_revision.len(), 40, "keine volle Git-Revision");
 
         // Jeder Eintrag muss die Angaben tragen, für die es ihn gibt.
@@ -1829,7 +1870,8 @@ mod loeschen_tests {
                 ("hf_repo", &k.hf_repo),
                 ("hf_verzeichnis", &k.hf_verzeichnis),
                 ("hf_revision", &k.hf_revision),
-                ("lizenz", &k.lizenz),
+                ("lizenz_gewichte", &k.lizenz_gewichte),
+                ("lizenz_artefakt", &k.lizenz_artefakt),
                 ("status", &k.status),
                 ("gewichte_anzeige", &k.gewichte_anzeige),
             ] {
@@ -1923,7 +1965,8 @@ mod loeschen_tests {
     "hf_repo": "Wer/Modell-A",
     "hf_verzeichnis": "Modell-A",
     "hf_revision": "abc",
-    "lizenz": "Apache-2.0",
+    "lizenz_gewichte": "Apache-2.0",
+    "lizenz_artefakt": "PolyForm Shield License 1.0.0",
     "parameter": "1 Mrd.",
     "gewichte_anzeige": "rund 2 GB",
     "artefakt_anzeige": "1 GB",
@@ -1945,7 +1988,7 @@ mod loeschen_tests {
     #[test]
     fn ein_unbekanntes_modell_bekommt_keine_fremden_gewichte() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
-        assert_eq!(hf_id(&wurzel, "qwen2.5-7b"), "Qwen2.5-7B");
+        assert_eq!(hf_id(&wurzel, "myelith-7b"), "Qwen2.5-7B");
         assert_eq!(
             hf_id(&wurzel, "gibt-es-nicht"),
             "gibt-es-nicht",
@@ -1973,7 +2016,7 @@ mod loeschen_tests {
 
 
     /// **Der Fund vom Linux-Runner (2026-08-22).** Der Modellschlüssel
-    /// (`qwen2.5-0.5b`) und der Verzeichnisname (`Qwen2.5-0.5B`)
+    /// (`myelith-0.5b`) und der Verzeichnisname (`Qwen2.5-0.5B`)
     /// unterscheiden sich nur in der Groß- und Kleinschreibung. Auf einem
     /// Dateisystem, das die nicht unterscheidet (macOS, Windows), findet
     /// selbst ein falscher Name das Verzeichnis; auf Linux nicht. Ein
@@ -1983,20 +2026,38 @@ mod loeschen_tests {
     /// Der Test prüft die **Zeichenkette**, nicht den Zugriff, und greift
     /// deshalb auf jedem Dateisystem.
     #[test]
-    fn die_gewichte_werden_auch_ohne_katalog_gefunden() {
+    fn ohne_katalog_ist_das_gewichtsverzeichnis_unbekannt() {
         let dir = tempdir("gewichte-suche");
         let g = dir.join("INTEGER_LLM/models/Qwen2.5-0.5B");
         fs::create_dir_all(&g).unwrap();
 
-        // Ohne Katalog im Gerüst: Die Suche muss über die Schreibweise
-        // hinwegsehen und den echten Verzeichnisnamen zurückgeben.
-        let gefunden = gewichte_verzeichnis(&dir, "qwen2.5-0.5b");
+        // ⛑ **Ohne Katalog ist die Zuordnung unbekannt, und die
+        // Funktion sagt das, statt zu raten.** Bis zum 2026-09-10 fand
+        // sie die Gewichte hier ueber die Namensaehnlichkeit
+        // (`qwen2.5-0.5b` gegen `Qwen2.5-0.5B`); seit die Artefakte
+        // `myelith-…` heissen, gibt es die nicht mehr (Fund 291).
+        //
+        // ⚑ **Das ist die bessere Lage.** Eine Suche, die raten muss,
+        // hat immer den Fall, in dem sie falsch raet; hier waere das
+        // ein fremdes Gewichtsverzeichnis unter dem Namen eines
+        // anderen Modells.
+        let gefunden = gewichte_verzeichnis(&dir, "myelith-0.5b");
         assert_eq!(
             gefunden.file_name().unwrap().to_string_lossy(),
-            "Qwen2.5-0.5B",
-            "die Suche liefert den Modellschlüssel statt des Verzeichnisses"
+            "myelith-0.5b",
+            "die Suche hat sich ein Verzeichnis zusammengereimt"
         );
-        assert!(gefunden.is_dir());
+        assert!(!gefunden.is_dir(), "und es liegt nichts da, was sie meinen koennte");
+
+        // Und mit Katalog steht die Zuordnung.
+        fs::write(
+            dir.join("INTEGER_LLM/models/KATALOG.json"),
+            "{\n  \"myelith-0.5b\": {\n    \"hf_verzeichnis\": \"Qwen2.5-0.5B\"\n  }\n}\n",
+        )
+        .unwrap();
+        let mit = gewichte_verzeichnis(&dir, "myelith-0.5b");
+        assert_eq!(mit.file_name().unwrap().to_string_lossy(), "Qwen2.5-0.5B");
+        assert!(mit.is_dir());
 
         // Ein Modell, zu dem nichts daliegt, bekommt keinen fremden Pfad
         // untergeschoben.
@@ -2026,7 +2087,7 @@ mod loeschen_tests {
     fn bauanleitung_nennt_verzeichnis_variable_und_modul() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
         for windows in [false, true] {
-            let text = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", windows);
+            let text = bauanleitung_fuer(&wurzel, "myelith-0.5b", windows);
             for teil in [KALIBRIER_VERZEICHNIS, MODELL_UMGEBUNG, KALIBRIER_MODUL] {
                 assert!(
                     text.contains(teil),
@@ -2049,18 +2110,18 @@ mod loeschen_tests {
     #[test]
     fn bauanleitung_folgt_der_schreibweise_des_systems() {
         let wurzel = wurzel_zur_laufzeit(&PathBuf::from("."));
-        let unix_form = format!("{}=qwen2.5-0.5b python", MODELL_UMGEBUNG);
+        let unix_form = format!("{}=myelith-0.5b python", MODELL_UMGEBUNG);
 
-        let unix = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", false);
+        let unix = bauanleitung_fuer(&wurzel, "myelith-0.5b", false);
         assert!(unix.contains(&unix_form), "Unix-Anleitung ohne Unix-Schreibweise:\n{unix}");
 
-        let win = bauanleitung_fuer(&wurzel, "qwen2.5-0.5b", true);
+        let win = bauanleitung_fuer(&wurzel, "myelith-0.5b", true);
         assert!(
             !win.contains(&unix_form),
             "Windows-Anleitung enthält die Unix-Schreibweise:\n{win}"
         );
         assert!(
-            win.contains(&format!("set {}=qwen2.5-0.5b", MODELL_UMGEBUNG)),
+            win.contains(&format!("set {}=myelith-0.5b", MODELL_UMGEBUNG)),
             "Windows-Anleitung nennt den cmd-Weg nicht:\n{win}"
         );
         assert!(

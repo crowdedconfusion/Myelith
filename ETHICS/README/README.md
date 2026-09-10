@@ -1,6 +1,6 @@
 # ethics
 
-> **Version:** 0.4.0
+> **Version:** 0.5.0
 > **Datum:** 2026-08-31
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
@@ -85,6 +85,27 @@ erreicht. Am Inhalt ändert das nichts, die Einträge behalten ihre
 Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
 `v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
 die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
+
+### v0.5.0 – 2026-09-10 (unter welcher Lizenz das Artefakt selbst steht)
+
+**`Lizenzlage.md` beantwortet jetzt auch die zweite Frage.** Sie führte
+die Lage der **Basismodelle** und die Zulässigkeit quantisierter
+Ableitungen; offen blieb, unter welcher Lizenz das Artefakt selbst
+steht. Antwort: unter der dieses Repositoriums.
+
+⚑ **§4 der Apache-2.0 erlaubt es ausdrücklich**, für eine Bearbeitung
+als Ganzes eigene Bedingungen zu setzen, solange Nutzung,
+Vervielfältigung und Verbreitung des zugrundeliegenden Werks den
+Bedingungen der Apache-2.0 weiter genügen. Beides gilt nebeneinander.
+
+⛑ **Der Anlass war ein Befund an drei Stellen** (Fund 295, gemeldet vom
+Projektinhaber): Katalog, erzeugte Modelliste und die Einstellungsseite
+des Klienten führten **eine** Lizenz, und sie stand neben dem Namen des
+Artefakts.
+
+⚠️ **Es bleibt eine Lesart des Lizenztextes und keine Rechtsberatung.**
+Die rechtliche Einordnung vor einem Genesis-Block steht weiter als
+offener Punkt.
 
 ### v0.4.0 – 2026-09-01 (die Lizenzlage zieht dorthin, wo sie gilt)
 

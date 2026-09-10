@@ -18,6 +18,18 @@ cd "$(dirname "$0")/../.."
 BINAER=target-shared/release/myl-oberflaeche
 ZIEL=${1:-target-shared/Myelith.app}
 
+# ⛑ **Die Fassung wird gelesen, nicht hingeschrieben.** Bis zum
+# 2026-09-10 stand hier `0.4.0` als fester Text, waehrend die Kiste bei
+# 0.16.0 stand: Jedes doppelgeklickte Buendel meldete zwoelf Anhebungen
+# zu wenig, und der Freigabelauf gab sie so weiter. Die Pruefung
+# `die_buendelversion_ist_die_kistenversion` band nur `tauri.conf.json`
+# an die Kiste, dieses Skript band niemand.
+#
+# ⚑ Gegenprobe dazu ist `das_buendelskript_liest_die_fassung`: Sie
+# faellt, sobald hier wieder eine Zahl steht statt der Ableitung.
+FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml | cut -d'"' -f2)
+[ -n "$FASSUNG" ] || { echo "Keine Fassung in CLIENT/myl-oberflaeche/Cargo.toml."; exit 1; }
+
 # ⛑ **Erst bauen, dann buendeln, und zwar hier drin.**
 #
 # Bis zum 2026-09-09 setzte dieses Skript ein gebautes Programm voraus
@@ -46,11 +58,13 @@ cp "$BINAER" "$ZIEL/Contents/MacOS/Myelith"
 # Buendler von Tauri. Zwei Ableitungen desselben Bildes an zwei Stellen
 # heisst: Wer die Groessen an einer aendert, hat sie an der anderen
 # nicht geaendert, und das faellt niemandem auf, weil beide Wege ein
-# Symbol liefern. Es gibt jetzt eine Ableitung, `werkzeuge/symbole.py`,
-# und ihr Ergebnis liegt abgelegt im Verzeichnis.
+# Symbol liefern. Es gibt jetzt genau eine Ableitung, und ihr Ergebnis
+# liegt fertig im Symbolverzeichnis; hier wird nur kopiert.
 cp CLIENT/myl-oberflaeche/icons/icon.icns "$ZIEL/Contents/Resources/Myelith.icns"
 
-cat > "$ZIEL/Contents/Info.plist" <<'PLIST'
+# ⚑ **Unquotiertes Dokument**, damit ${FASSUNG} eingesetzt wird. Wer
+# hier ein literales Dollarzeichen braucht, schreibt es als `\$`.
+cat > "$ZIEL/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,8 +72,8 @@ cat > "$ZIEL/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Myelith</string>
   <key>CFBundleDisplayName</key><string>Myelith</string>
   <key>CFBundleIdentifier</key><string>org.myelith.oberflaeche</string>
-  <key>CFBundleVersion</key><string>0.4.0</string>
-  <key>CFBundleShortVersionString</key><string>0.4.0</string>
+  <key>CFBundleVersion</key><string>${FASSUNG}</string>
+  <key>CFBundleShortVersionString</key><string>${FASSUNG}</string>
   <key>CFBundleExecutable</key><string>Myelith</string>
   <key>CFBundleIconFile</key><string>Myelith</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -73,7 +87,7 @@ cat > "$ZIEL/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "$ZIEL gebaut."
+echo "$ZIEL gebaut, Fassung $FASSUNG."
 echo "Starten: open $ZIEL"
 echo "⛑ Beim ersten Mal meldet Gatekeeper einen unbekannten Entwickler:"
 echo "   Rechtsklick auf das Buendel, dann Oeffnen, einmal bestaetigen."

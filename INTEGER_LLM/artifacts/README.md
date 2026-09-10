@@ -12,7 +12,7 @@ Der Inhalt wird zur Laufzeit erzeugt und ist nicht versioniert (siehe
 artifacts/
 ├── .gitignore
 ├── README.md
-└── <modell>/                    # z. B. qwen2.5-0.5b, zur Laufzeit erzeugt
+└── <modell>/                    # z. B. myelith-4b, zur Laufzeit erzeugt
     ├── theta_v.json             # θ_v-Manifest (Version, SHA-256-Hashes der Artefakte)
     ├── weights_manifest.json    # Tensor-Manifest (Name, Form, Hash; seit θ_v 0.7.0
     │                            # Sentinel scale:-1.0/shift:-1 plus shifts_file/shifts_hash)
@@ -48,3 +48,31 @@ Zentrale Pfadkonstante ist `ARTIFACTS_DIR` in `runtime/src/paths.rs`
 pipeline verwenden denselben Ablageort. Der Pfad ist über die
 Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR` überschreibbar, damit die
 Gewichte nicht neben dem Binary liegen müssen.
+
+
+## ⛑ Umbenannt am 2026-09-10
+
+**Die Artefakte heissen nach dem Modell, das sie sind.** Ein Artefakt
+ist nicht das Basismodell, sondern das Ergebnis einer Kalibrierung: ein
+anderes Objekt, das anders rechnet und hier gebaut wurde. Es traegt
+deshalb einen eigenen Namen.
+
+| bis 2026-09-10 | seither |
+|---|---|
+| `qwen2.5-0.5b` | `myelith-0.5b` |
+| `qwen2.5-7b` | `myelith-7b` |
+| `qwen3-4b` | `myelith-4b` |
+| `qwen3-30b-a3b` | `myelith-30b-a3b` |
+
+⚑ **Die Basismodelle unter `models/` behalten ihre Namen.** Sie sind
+Qwen und heissen so; die Herkunft steht in `KATALOG.json` bei jedem
+Eintrag und in der Modellkarte.
+
+⛑ **Aeltere Aufnahmen tragen die alten Namen, und das ist richtig so.**
+Was einen Stand zu einem Zeitpunkt festhaelt, wird nicht nachtraeglich
+umgeschrieben: Ein umbenannter Pfad in einer Messung waere eine
+gefaelschte Aufnahme. Diese Tabelle ist der Schluessel dazu.
+
+⚑ **Eine bestehende Klienteneinstellung wandert von selbst mit.**
+`Einstellungen::lesen` tauscht den Verzeichnisnamen, wenn er einer der
+vier alten ist, und laesst alles andere stehen.

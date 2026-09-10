@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent.parent
-ART = REPO / "artifacts" / "qwen2.5-0.5b"
+ART = REPO / "artifacts" / "myelith-0.5b"
 
 
 def load_lut(name):

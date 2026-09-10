@@ -77,8 +77,19 @@ Sekunden statt Minuten.
 
 ## Zur Lizenzangabe
 
-Die Spalte nennt, was die jeweilige Modellkarte angibt, ohne eigene
-Rechtsprüfung.
+**Es sind zwei Spalten, und sie gelten für verschiedene Dinge.**
+„Lizenz (Gewichte)" nennt, was die jeweilige Modellkarte für die
+heruntergeladenen Grundgewichte angibt, ohne eigene Rechtsprüfung.
+„Lizenz (Artefakt)" nennt die Lizenz des daraus **gebauten** Artefakts,
+und das ist die dieses Repositoriums: Was ausgeliefert wird, ist eine
+Bearbeitung nach dem Verfahren dieses Projekts, mit eigenen Skalen und
+Nachschlagetabellen.
+
+⛑ **Hier stand bis zum 2026-09-10 eine einzelne Spalte „Lizenz"**, und
+sie stand in einer Zeile, deren erste Spalte `myelith-4b` heisst. Das
+las sich, als stuende das Artefakt unter Apache-2.0. **Eine Angabe ist
+nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie sich
+auf das bezieht, wonebendran sie steht.**
 
 **Alle sieben Qwen2.5-Größen wurden am 2026-08-23 geprüft, zwei fallen
 durch:** 3B steht unter der Qwen Research License („FOR NON-COMMERCIAL
@@ -102,7 +113,8 @@ def zeile(name: str, k: dict, r: dict) -> str:
     repo_link = f"[{k['hf_repo']}](https://huggingface.co/{k['hf_repo']})"
     rev = k.get("hf_revision", "")
     return (
-        f"| `{name}` | {repo_link} | `{rev[:12]}…` | {k.get('lizenz','')} | "
+        f"| `{name}` | {repo_link} | `{rev[:12]}…` | "
+        f"{k.get('lizenz_gewichte','')} | {k.get('lizenz_artefakt','')} | "
         f"{k.get('parameter','')} | {k.get('layer','')} | "
         f"{k.get('gewichte_anzeige','')} | {k.get('artefakt_anzeige','')} | "
         f"{r.get('theta_v','—')} | {k.get('status','')} |"
@@ -115,9 +127,14 @@ def bauen() -> str:
     modelle = {k: v for k, v in katalog.items() if not k.startswith("_")}
 
     t = [KOPF, "\n## Modelle\n"]
-    t.append("| Modell | Hugging Face | Revision | Lizenz | Parameter | Layer "
+    # ⚑ **Zwei Lizenzspalten, und sie meinen verschiedene Dinge.** Eine
+    # einzelne Spalte „Lizenz" stand bis zum 2026-09-10 neben dem Namen
+    # `myelith-4b` und las sich, als stuende das Artefakt unter
+    # Apache-2.0.
+    t.append("| Modell | Hugging Face | Revision | Lizenz (Gewichte) "
+             "| Lizenz (Artefakt) | Parameter | Layer "
              "| Gewichte | Artefakt | θ_v | Status |")
-    t.append("|---|---|---|---|---|---|---|---|---|---|")
+    t.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for name in sorted(modelle):
         t.append(zeile(name, modelle[name], register.get(name, {})))
 

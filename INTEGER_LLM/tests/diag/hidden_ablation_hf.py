@@ -28,7 +28,7 @@ Gleitkomma ist hier erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
 Usage:
-  INTEGER_LLM_MODEL=qwen2.5-7b python tests/diag/hidden_ablation_hf.py <hidden_dump.txt>
+  INTEGER_LLM_MODEL=myelith-7b python tests/diag/hidden_ablation_hf.py <hidden_dump.txt>
 """
 import math
 import os

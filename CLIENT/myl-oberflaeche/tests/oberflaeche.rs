@@ -172,12 +172,42 @@ fn jede_klasse_aus_dem_skript_hat_eine_regel() {
         assert!(hat_regel(&css, k), "`{k}` wird im Skript vergeben, hat aber keine Regel");
     }
 
-    // ⚑ **Die vier Schrittarten kommen aus einer Vorlage und lassen
-    // sich deshalb nicht ablesen.** Damit die Aufzaehlung trotzdem
-    // nicht rottet, muss jeder Name **als Schluessel** im Skript
-    // vorkommen; genau dort steht die Tabelle, die sie erzeugt.
-    for k in ["aufruf", "ergebnis", "unlesbar", "hinweis"] {
-        assert!(js.contains(&format!("{k}:")), "`{k}` ist keine Schrittart mehr");
+    // ⚑ **Die Schrittarten kommen aus einer Vorlage und lassen sich
+    // deshalb nicht als vergebene Klasse ablesen.**
+    //
+    // ⛑ **Hier stand bis zum 2026-09-10 eine Liste von vier Namen von
+    // Hand**, also Fund 271 zum vierten Mal in dieser Datei, und sie war
+    // gerottet: `hinweis` stand darin, obwohl der Ruecken diese Art
+    // laengst nicht mehr erzeugt. Die alte Marketabelle im Skript trug
+    // den Namen mit, und deshalb blieb die Pruefung gruen.
+    //
+    // ⚑ **Gelesen wird jetzt der Ruecken selbst**, also die Arten, die
+    // `zeile_aus` vergibt. Eine Art, die dazukommt, muss danach eine
+    // Marke und eine Regel haben; eine, die entfaellt, faellt hier auf.
+    let rs = lies_quelle("main.rs");
+    let mut arten = BTreeSet::new();
+    let mut rest = rs.as_str();
+    while let Some(a) = rest.find("art: \"") {
+        let nach = &rest[a + "art: \"".len()..];
+        let Some(e) = nach.find('"') else { break };
+        arten.insert(nach[..e].to_string());
+        rest = &nach[e..];
+    }
+    assert!(
+        arten.len() >= 4,
+        "nur {} Schrittarten im Ruecken gefunden; liest die Pruefung ihn noch richtig?",
+        arten.len()
+    );
+    for k in &arten {
+        // ⚑ **Gefragt wird, ob das Fenster die Art kennt**, und nicht,
+        // wie es sie zeigt. Die meisten werden zu einer Zeile mit
+        // Marke; `denken` wird seit dem 2026-09-10 zu einem eigenen
+        // Block, und eine Marke dafuer waere ein Eintrag, den niemand
+        // liest. Eine Art, die gar nicht vorkommt, faellt weiterhin auf.
+        assert!(
+            js.contains(&format!("\"{k}\"")) || js.contains(&format!("{k}:")),
+            "Der Ruecken erzeugt die Schrittart `{k}`, das Fenster kennt sie nicht."
+        );
         assert!(hat_regel(&css, k), "die Schrittart `{k}` hat keine Regel");
     }
 }
@@ -596,6 +626,56 @@ fn die_buendelversion_ist_die_kistenversion() {
     );
 }
 
+/// **Und das Buendelskript liest die Fassung, statt sie zu tragen.**
+///
+/// ⛑ **Der zweite Ort derselben Zahl, und er lief davon.**
+/// `buendeln-macos.sh` schrieb `0.4.0` als festen Text in die
+/// `Info.plist`, waehrend die Kiste bei `0.16.0` stand. Die Pruefung
+/// darueber band `tauri.conf.json` an die Kiste und dieses Skript an
+/// nichts; gemessen am 2026-09-10 trug jedes doppelgeklickte Buendel
+/// zwoelf Anhebungen zu wenig, und das oertliche Freigabeskript gab sie so
+/// weiter.
+///
+/// ⚑ **Geprueft wird die Ableitung, nicht die Zahl.** Eine Pruefung,
+/// die den Wert `0.16.0` im Skript sucht, waere beim naechsten Sprung
+/// rot, ohne dass etwas kaputt ist. Hier faellt sie genau dann, wenn
+/// jemand die Ableitung wieder durch eine Zahl ersetzt.
+#[test]
+fn das_buendelskript_liest_die_fassung() {
+    let skript = std::fs::read_to_string(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/buendeln-macos.sh"),
+    )
+    .expect("buendeln-macos.sh");
+
+    assert!(
+        skript.contains("FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml"),
+        "Das Buendelskript leitet die Fassung nicht mehr aus der Cargo.toml ab."
+    );
+
+    // Beide Schluessel, und beide ueber die Variable. `CFBundleVersion`
+    // ist ein echtes Praefix von `CFBundleShortVersionString`, deshalb
+    // wird auf die ganze Zeile geprueft und nicht auf den Schluessel.
+    for schluessel in ["CFBundleVersion", "CFBundleShortVersionString"] {
+        let zeile = skript
+            .lines()
+            .find(|z| z.trim_start().starts_with(&format!("<key>{schluessel}</key>")))
+            .unwrap_or_else(|| panic!("{schluessel} steht nicht in der Info.plist"));
+        assert!(
+            zeile.contains("<string>${FASSUNG}</string>"),
+            "{schluessel} traegt eine feste Zahl statt der Fassung aus der Cargo.toml:\n  {zeile}\n\
+             Ein Buendel meldet dann eine Fassung, die es nicht ist."
+        );
+    }
+
+    // ⚑ Und das Dokument muss unquotiert sein, sonst steht die Variable
+    // wortwoertlich in der Datei. Beides zusammen ist die Zusage; eines
+    // allein ist ein Buendel mit `${FASSUNG}` als Versionsangabe.
+    assert!(
+        skript.contains("<<PLIST") && !skript.contains("<<'PLIST'"),
+        "Das Plist-Dokument ist quotiert; ${{FASSUNG}} bliebe dann als Text stehen."
+    );
+}
+
 /// **Jedes angemeldete Symbol liegt auch da, und die zwei
 /// Systemformate sind dabei.**
 ///
@@ -605,7 +685,7 @@ fn die_buendelversion_ist_die_kistenversion() {
 /// Abbruch und im unguenstigen ein Buendel mit dem Platzhalter des
 /// Werkzeugs, und das sieht erst der, der es anklickt.
 ///
-/// Erzeugt werden beide von `werkzeuge/symbole.py` aus `icon.png`.
+/// Beide sind aus `icon.png` abgeleitet und liegen fertig da.
 #[test]
 fn die_angemeldeten_symbole_liegen_da() {
     let wurzel = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -911,6 +991,463 @@ fn jeder_befehl_ist_angemeldet() {
         "angemeldet, aber vom Fenster nicht gerufen: {:?}",
         angemeldet.difference(&gerufen).collect::<Vec<_>>()
     );
+
+    // ⚑ **Und die fuenfte Richtung: die Zahl im Komponenten-README.**
+    //
+    // ⛑ Dieselbe Zahl stand am 2026-09-10 an drei Orten und war dreimal
+    // verschieden: „sechzehn Stellen" im README, „zweiundzwanzig" zwei
+    // Papiere weiter, neunundzwanzig gezaehlt. Die fluechtige Zahl ist
+    // gestrichen; die tragende ist die der Befehle, und sie steht ab
+    // hier nicht mehr unverbunden da.
+    let readme = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("README")
+            .join("README.md"),
+    )
+    .expect("CLIENT/README/README.md");
+    let gesucht = format!("über {} Befehle", zahlwort(angemeldet.len()));
+    assert!(
+        readme.contains(&gesucht),
+        "Das Komponenten-README nennt nicht die heutige Zahl der Befehle.\n\
+         Gezaehlt sind {} ({}), gesucht war der Satzteil `{}`.",
+        angemeldet.len(),
+        zahlwort(angemeldet.len()),
+        gesucht
+    );
+}
+
+/// **Jedes setzbare Feld zeigt auch seinen Wert.**
+///
+/// ⛑ **Gemessen am 2026-09-10: Es waren neun von zwoelf.** Die Seite
+/// zeichnet ihre Zeilen aus der Feldliste der Kiste, holte die
+/// anzuzeigenden Werte aber aus einer **zweiten**, von Hand gepflegten
+/// Zuordnung im Skript, und die kannte `kap.beschleuniger`,
+/// `kap.speicher` und `kap.platte` nicht. In JavaScript ist ein
+/// fehlender Schluessel kein Fehler, sondern `undefined`: Der Schalter
+/// stand danach **immer aus**, die beiden Textfelder **immer leer**,
+/// gleichgueltig was in der Ablage stand.
+///
+/// ⚑ **Behoben wurde es nicht durch drei nachgetragene Zeilen, sondern
+/// durch das Abschaffen der zweiten Zuordnung.** Die Werte kommen
+/// heute aus `Einstellungen::wert`, unter demselben Namen, unter dem
+/// auch gesetzt wird, und `wert_und_setzer_kennen_dieselben_felder`
+/// faehrt in der Kiste jedes Feld einmal hin und zurueck.
+///
+/// ⚑ **Diese Pruefung haelt fest, dass es dabei bleibt.** Sie prueft
+/// nicht mehr den Inhalt einer Liste, sondern dass es die Liste nicht
+/// wieder gibt: Das Fenster nimmt die Werte, wie sie kommen, und legt
+/// keine eigene Zuordnung von Feldnamen auf Werte an.
+#[test]
+fn jedes_feld_zeigt_seinen_wert() {
+    let js = lies("app.js");
+
+    assert!(
+        js.contains("const wert = e.werte;"),
+        "Das Fenster nimmt die Werte nicht mehr geschlossen aus der Kiste.\n\
+         Sobald es sie einzeln zusammensucht, kann eines fehlen, und ein\n\
+         fehlender Schluessel sieht im Fenster aus wie „nicht gesetzt\"."
+    );
+
+    // ⚑ **Und keine zweite Zuordnung daneben.** Ein Feldname als
+    // Objektschluessel, also `"modell.artefakt":`, ist genau die Form,
+    // die den Fund gemacht hat. Aufrufe wie
+    // `setzen({feld: "modell.artefakt"})` sind davon nicht betroffen:
+    // Dort steht der Name hinter einem Doppelpunkt und nicht davor.
+    //
+    // ⛑ **Sie sucht die WIRKLICHEN Feldnamen und nicht ihre Anfaenge**
+    // (2026-09-10). Vorher genuegte ein Schluessel, der mit `"modell.`
+    // begann, und damit fiel sie ueber die Sprachtabelle: `"modell.laedt"`
+    // ist kein Feld, sondern ein Satz. **Eine Pruefung, die Aehnlichkeit
+    // fuer Gleichheit haelt, bestraft jeden, der in derselben Gegend
+    // etwas Neues anlegt** (dieselbe Klasse wie die Wache, die
+    // `innerHTML` in einem Kommentar fand).
+    let namen: BTreeSet<String> = myl_client::einstellungen::FELDER
+        .iter()
+        .map(|f| f.name.to_string())
+        .collect();
+    for zeile in js.lines() {
+        let z = zeile.trim();
+        for name in &namen {
+            let marke = format!("\"{name}\"");
+            if let Some(a) = z.find(&marke) {
+                assert!(
+                    !z[a + marke.len()..].trim_start().starts_with(':'),
+                    "Im Fenster steht wieder eine Zuordnung von Feldnamen auf Werte:\n  {z}\n\
+                     Genau die ist am 2026-09-10 mit Fund 280 entfallen."
+                );
+            }
+        }
+    }
+}
+
+/// **Jeder Regler kennt sein Ende, und ein gesperrter sagt, was fehlt.**
+///
+/// ⚑ **Die Zusage, um die es geht:** Ein Regler, der nichts bewirkt,
+/// darf nicht aussehen wie einer, der wirkt, und er muss sagen, was
+/// dafuer geschrieben werden muss. Ein blosses „noch nicht verfuegbar"
+/// liesse den Leser genauso klug zurueck wie zuvor.
+#[test]
+fn ein_gesperrter_regler_sagt_was_fehlt() {
+    let js = lies("app.js");
+    let css = ohne_kommentare(&lies("stil.css"));
+
+    // Gesperrt heisst: nicht bedienbar, und zwar im Element selbst und
+    // nicht nur in der Farbe.
+    assert!(
+        js.contains("schieber.disabled = Boolean(r.sperrgrund)"),
+        "ein gesperrter Regler laesst sich noch bedienen"
+    );
+    // Und der Grund haengt am Ding, nicht in einer Anleitung.
+    assert!(
+        js.contains("zeile.title = r.sperrgrund") && js.contains("schieber.title = r.sperrgrund"),
+        "der Sperrgrund erscheint beim Zeigen nicht"
+    );
+    // Und er steht auch sichtbar da, nicht nur im Titel: Ein Titel
+    // erscheint erst beim Zeigen, und auf einem Zeigegeraet ohne Maus
+    // gar nicht.
+    assert!(
+        js.contains("satz.textContent = r.sperrgrund ? r.sperrgrund : r.hinweis"),
+        "der Sperrgrund steht nur im Titel und nirgends sichtbar"
+    );
+
+    // ⚑ Und ausgegraut ist eine Regel und keine Absicht.
+    assert!(
+        hat_regel(&css, "gesperrt"),
+        "`gesperrt` wird im Skript vergeben, sieht aber aus wie jeder andere Regler"
+    );
+}
+
+/// **Jede Live-Meldung des Rueckens wird im Fenster auch behandelt.**
+///
+/// ⚑ **Dieselbe Luecke wie bei den Befehlen, eine Ebene weiter.** Ein
+/// Ereignis, das der Ruecken schickt und das Fenster nicht kennt,
+/// verschwindet: kein Fehler, keine Meldung, nur eine Anzeige, in der
+/// etwas fehlt. Beim Denken waere das der ganze Ueberlegungsblock, und
+/// niemand merkte es, weil er ohnehin zugeklappt gehoert.
+///
+/// ⚑ **Und der Kanalname gehoert dazu.** Ein Tippfehler dort macht die
+/// ganze Live-Anzeige still: Der Ruecken meldet, das Fenster horcht
+/// woanders, und die Antwort erscheint wie zuvor erst am Ende.
+#[test]
+fn jede_lebende_meldung_wird_behandelt() {
+    let rs = lies_quelle("main.rs");
+    let js = lies("app.js");
+
+    let kanal = rs
+        .split_once("const LEBEND: &str = \"")
+        .and_then(|(_, r)| r.split_once('"'))
+        .map(|(n, _)| n)
+        .expect("kein Kanalname im Ruecken");
+    assert!(
+        js.contains(&format!("horchen(\"{kanal}\"")),
+        "Das Fenster horcht nicht auf `{kanal}`; die Live-Anzeige bliebe stumm."
+    );
+
+    let rumpf = rs
+        .split_once("enum Lebend {")
+        .and_then(|(_, r)| r.split_once("\n}"))
+        .map(|(k, _)| k)
+        .expect("kein `enum Lebend` im Ruecken");
+    let arten: BTreeSet<String> = rumpf
+        .lines()
+        .map(str::trim)
+        .filter(|z| !z.starts_with("//"))
+        .filter_map(|z| z.split([' ', '{', ',']).next())
+        .filter(|n| !n.is_empty() && n.chars().next().is_some_and(|c| c.is_ascii_uppercase()))
+        .map(str::to_string)
+        .collect();
+    assert!(
+        arten.len() >= 5,
+        "nur {} Meldungsarten gefunden ({arten:?}); liest die Pruefung sie noch richtig?",
+        arten.len()
+    );
+
+    // ⚑ Der Ruecken serialisiert mit `tag = "art"`, also steht der
+    // Variantenname genau so im Ereignis.
+    for a in &arten {
+        assert!(
+            js.contains(&format!("\"{a}\"")),
+            "Der Ruecken kann `{a}` melden, das Fenster kennt die Art nicht.\n\
+             Sie verschwindet dann spurlos: kein Fehler, nur eine Anzeige ohne sie."
+        );
+    }
+}
+
+/// **Der laufende Beitrag wird fertiggeschrieben und nicht ersetzt.**
+///
+/// ⚑ **Sonst verschwaende, was live ankam.** Die Rueckgabe traegt den
+/// Text und die Schrittliste, aber **nicht die Ueberlegung**; die kam
+/// nur ueber den Kanal. Wer den Beitrag am Ende durch einen neuen
+/// ersetzte, loeschte sie vor den Augen des Nutzers.
+#[test]
+fn der_laufende_beitrag_wird_fertiggeschrieben() {
+    let js = lies("app.js");
+    assert!(
+        js.contains("laufender.text = a.text") && js.contains("laufender.schritte = a.verlauf"),
+        "Die Rueckgabe schreibt den laufenden Beitrag nicht fertig."
+    );
+    let rumpf = js
+        .split_once("async function senden(")
+        .and_then(|(_, r)| r.split_once("\n}"))
+        .map(|(k, _)| k)
+        .expect("kein `senden` im Skript");
+    // ⚑ Genau zwei Anlagen: der Beitrag des Nutzers und, im
+    // Fehlerfall, die Fehlermeldung. Die Antwort selbst entsteht ueber
+    // `live_anfangen`; ein dritter `push` waere sie ein zweites Mal.
+    let anlagen = rumpf.matches("beitraege.push(").count();
+    assert_eq!(
+        anlagen, 2,
+        "in `senden` werden {anlagen} Beitraege angelegt statt zwei \
+         (Nutzerbeitrag und Fehlerfall)."
+    );
+}
+
+/// **Das Fenster setzt niemals Markup.**
+///
+/// # ⛑ Die Zusage, an der hier alles haengt
+///
+/// Seit dem 2026-09-10 wird eine Modellantwort als Markdown gezeigt.
+/// **Der naheliegende Weg dorthin waere `innerHTML`, und er waere eine
+/// Luecke:** Eine Antwort mit `<img src=x onerror=…>` bekaeme damit
+/// Code in dieser Seite ausgefuehrt, und diese Seite traegt wegen
+/// `withGlobalTauri` die Bruecke zu **allen** Befehlen des Rueckens.
+/// Ein eingeschleuster Satz koennte Einstellungen setzen oder Dateien
+/// schreiben.
+///
+/// ⚑ **Deshalb zerlegt die Kiste und das Fenster zeichnet nur.** Was
+/// ankommt, ist ein Baum aus Text; daraus werden Elemente mit
+/// `createElement` und `textContent`. Ein `<` bleibt ein `<`.
+///
+/// ⚑ **Diese Pruefung ist die Gegenprobe dazu**, denn ein Kommentar
+/// ueber eine Regel belegt nicht, dass sie gilt.
+#[test]
+fn das_fenster_setzt_niemals_markup() {
+    /// Nur der Quelltext, ohne Kommentarzeilen.
+    ///
+    /// ⛑ **Beim ersten Lauf fiel die Pruefung ueber den Kommentar, der
+    /// die Regel erklaert:** „Kein `innerHTML`, nirgends" enthaelt das
+    /// Wort. **Eine Pruefung, die Erwaehnung fuer Gebrauch haelt,
+    /// bestraft das Aufschreiben der Regel**, und dann schreibt sie
+    /// niemand mehr auf.
+    fn ohne_kommentare(js: &str) -> String {
+        js.lines()
+            .filter(|z| {
+                let z = z.trim_start();
+                !(z.starts_with("//") || z.starts_with('*') || z.starts_with("/*"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    for datei in ["app.js", "netz.js"] {
+        let js = ohne_kommentare(&lies(datei));
+        for weg in [
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+            "createContextualFragment",
+        ] {
+            assert!(
+                !js.contains(weg),
+                "`{datei}` benutzt `{weg}`.\n\
+                 Eine Modellantwort ist Daten; daraus Markup zu machen gibt einem\n\
+                 eingeschleusten Satz einen Weg zu `invoke`."
+            );
+        }
+        // ⚑ Und kein Skriptelement von Hand. Es waere der zweite Weg
+        // zum selben Ziel und faellt der obigen Liste nicht auf.
+        for form in ["createElement(\"script\"", "createElement('script'"] {
+            assert!(!js.contains(form), "`{datei}` erzeugt ein Skriptelement");
+        }
+    }
+}
+
+/// **Jede Blockart und jedes Stueck der Kiste wird gezeichnet.**
+///
+/// ⚑ **Dieselbe Luecke wie bei den Befehlen und den Live-Meldungen.**
+/// Eine Art, die der Zerleger erzeugt und das Fenster nicht kennt,
+/// faellt in den Absatzzweig: kein Fehler, keine Meldung, nur eine
+/// Tabelle, die als Textzeile dasteht.
+#[test]
+fn jede_blockart_wird_gezeichnet() {
+    let js = lies("app.js");
+    let rs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../myl-client/src/markdown.rs"),
+    )
+    .expect("markdown.rs");
+
+    let varianten = |name: &str| -> BTreeSet<String> {
+        let rumpf = rs
+            .split_once(&format!("pub enum {name} {{"))
+            .and_then(|(_, r)| r.split_once("\n}"))
+            .map(|(k, _)| k)
+            .unwrap_or_else(|| panic!("kein `enum {name}`"));
+        rumpf
+            .lines()
+            .map(str::trim)
+            .filter(|z| !z.starts_with("//"))
+            .filter_map(|z| z.split([' ', '{', ',']).next())
+            .filter(|n| !n.is_empty() && n.chars().next().is_some_and(|c| c.is_ascii_uppercase()))
+            .map(str::to_string)
+            .collect()
+    };
+
+    let bloecke = varianten("Block");
+    let teile = varianten("Teil");
+    assert!(bloecke.len() >= 6, "nur {bloecke:?} gefunden; liest die Pruefung noch richtig?");
+    assert!(teile.len() >= 5, "nur {teile:?} gefunden; liest die Pruefung noch richtig?");
+
+    // ⚑ Der Ruecken serialisiert mit `tag = "art"`, also steht der
+    // Variantenname genau so im Baum, den das Fenster bekommt.
+    for a in bloecke.iter().chain(teile.iter()) {
+        // `Absatz` und `Text` sind die Rueckfaelle und stehen deshalb
+        // nicht als Vergleich im Skript; alles andere muss vorkommen.
+        if a == "Absatz" || a == "Text" {
+            continue;
+        }
+        assert!(
+            js.contains(&format!("\"{a}\"")),
+            "Die Kiste erzeugt `{a}`, das Fenster kennt die Art nicht.\n\
+             Sie faellt dann in den Absatzzweig und sieht aus wie eine Textzeile."
+        );
+    }
+}
+
+/// **Die Zeile unter der Eingabe sagt genau eine Sache.**
+///
+/// ⛑ **Vorher sagte sie alles Mögliche:** „der Agent faehrt", „Modell
+/// gewechselt", „Fehler: …", und dazwischen den Ladesatz. **Eine
+/// Zeile, die je nach Augenblick etwas anderes bedeutet, liest man
+/// irgendwann gar nicht mehr**: Wer dort „das Modell antwortet" gewohnt
+/// ist, sieht „nicht geladen" nicht mehr.
+///
+/// ⚑ **Geprüft wird, dass sie nur von zwei Stellen beschrieben wird**,
+/// und beide sagen dasselbe Thema: welches Modell im Speicher liegt.
+#[test]
+fn die_zeile_unter_der_eingabe_sagt_nur_den_modellstand() {
+    let js = lies("app.js");
+
+    // ⚑ Kein Aufrufer schreibt mehr beliebigen Text dorthin.
+    assert!(
+        !js.contains("hinweis("),
+        "es gibt wieder eine allgemeine Hinweisfunktion; die Zeile bekommt dann \
+         wieder alles Moegliche"
+    );
+    // ⚑ Und die beiden Stellen, die es duerfen, gibt es.
+    assert!(
+        js.contains("async function modellzeile_schreiben("),
+        "es gibt keine Stelle, die den Modellstand schreibt"
+    );
+    // ⚑ **Gezaehlt wird, wer die Zeile ueberhaupt anfasst.** Zwei
+    // Stellen duerfen es: die, die den Ladezustand schreibt, und die,
+    // die nach der Ruhefrist „wieder entladen" hinsetzt. Eine dritte
+    // waere der Anfang des alten Zustands.
+    let schreibende = js.matches("hinweiszeile").count();
+    assert_eq!(
+        schreibende, 2,
+        "{schreibende} Stellen fassen die Zeile an; es gehoeren zwei dorthin \
+         (geladen und wieder entladen)"
+    );
+    // ⛑ Und das Netzmodell hat keinen Ladezustand: Es wird hier nicht
+    // geladen, und eine Zeile darueber waere eine Unwahrheit.
+    assert!(
+        js.contains("if (artefakt === NETZMODELL)"),
+        "das Netzmodell bekommt eine Ladezeile, obwohl es nicht geladen wird"
+    );
+}
+
+/// **Das Modell geht nach einer Weile wieder, und der Lauf haelt es.**
+///
+/// ⚑ **Ein 4B-Artefakt sind viereinhalb Gigabyte**, und sie liegen im
+/// Speicher, solange das Fenster offen ist. Das steht in derselben
+/// Reihe wie die Kapazitätsfreigabe: Was Myelith nimmt, soll es auch
+/// wieder hergeben.
+///
+/// ⛑ **Die zweite Hälfte ist die wichtigere:** Ein Entladen mitten in
+/// einem Lauf wäre entweder wirkungslos oder schlimmer.
+#[test]
+fn das_modell_geht_nach_einer_weile_wieder() {
+    let js = lies("app.js");
+    let rs = lies_quelle("main.rs");
+
+    assert!(
+        js.contains("const RUHEFRIST_MS = 15 * 60 * 1000;"),
+        "es gibt keine Ruhefrist von fuenfzehn Minuten"
+    );
+    assert!(
+        js.contains("invoke(\"modell_entladen\")"),
+        "die Frist laeuft ab und niemand entlaedt"
+    );
+    assert!(
+        rs.contains("fn modell_entladen("),
+        "der Ruecken kennt das Entladen nicht"
+    );
+    // ⚑ Nicht mitten im Lauf.
+    assert!(
+        js.contains("if (laufender) {\n      ruhe_neu_stellen();"),
+        "die Frist entlaedt auch waehrend eines Laufs"
+    );
+    // ⚑ Und ein Modellwechsel gibt das alte frei: Es antwortet ohnehin
+    // nicht mehr, sein Speicher waere von da an geschenkt.
+    assert!(
+        js.matches("modell_entladen").count() >= 2,
+        "nur die Frist entlaedt; ein Modellwechsel laesst das alte liegen"
+    );
+}
+
+/// **Das Ladezeichen steht dort, wo gleich die Antwort steht.**
+///
+/// ⛑ Vorher stand „der Agent faehrt" unter der Eingabe, also am anderen
+/// Ende des Fensters. Wer auf eine Antwort wartet, sieht auf den Fleck,
+/// an dem sie erscheinen wird.
+#[test]
+fn das_ladezeichen_steht_beim_beitrag() {
+    let js = lies("app.js");
+    let css = ohne_kommentare(&lies("stil.css"));
+
+    assert!(js.contains("l.className = \"laeuft\""), "es gibt kein Ladezeichen");
+    assert!(hat_regel(&css, "laeuft"), "das Ladezeichen hat keine Regel");
+    // ⚑ Es haengt am Beitrag und nicht an der Zeile unter der Eingabe.
+    assert!(
+        js.contains("wurzel.append(laufzeichen);"),
+        "das Ladezeichen haengt nicht am Beitrag"
+    );
+
+    // ⛑ **Und es haengt am Lauf und nicht am Inhalt.**
+    //
+    // Die erste Fassung zeigte es nur, solange noch gar nichts da war
+    // (`b.laufend && !b.text && !schritte.length`). Gemeldet vom
+    // Projektinhaber am 2026-09-10: **Nach einem Werkzeugaufruf rechnet
+    // das Modell weiter**, oft eine halbe Minute, und in dieser Zeit
+    // stand nichts. Ein Ladezeichen, das nur den ersten Wartezeitraum
+    // abdeckt, deckt genau den ab, in dem ohnehin gleich etwas kommt.
+    assert!(
+        js.contains("let laufzeichen = null;\n  if (b.laufend) {"),
+        "das Ladezeichen haengt an einer Bedingung ueber den Inhalt statt am Lauf"
+    );
+}
+
+/// Das deutsche Zahlwort, so wie die READMEs dieses Projekts schreiben.
+///
+/// ⚑ **Eine Tabelle und kein Rechenwerk.** Ein Zahlwortbildner waere
+/// mehr Code als Nutzen; die Tabelle deckt den Bereich, in dem sich
+/// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
+/// gesagt statt eines stillen Durchlaufs.
+fn zahlwort(n: usize) -> String {
+    const WORTE: [&str; 31] = [
+        "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
+        "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
+        "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
+        "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig",
+        "siebenundzwanzig", "achtundzwanzig", "neunundzwanzig", "dreissig",
+    ];
+    WORTE
+        .get(n)
+        .map(|w| (*w).to_string())
+        .unwrap_or_else(|| panic!("{n} steht nicht in der Zahlworttabelle; ergaenze sie"))
 }
 
 /// **Glas tragen Bedienelemente, keine Behaelter.**
@@ -994,5 +1531,379 @@ fn verstecktes_bleibt_versteckt() {
         "Im HTML tragen Elemente `hidden`, aber das Stilblatt hat keine\n\
          Regel `[hidden] {{ display: none !important }}`. Jede eigene\n\
          `display`-Angabe schlaegt sonst das Verstecken."
+    );
+}
+
+/// **Jede Lizenzangabe steht bei der Sache, fuer die sie gilt.**
+///
+/// # ⛑ Fund 295, gemeldet vom Projektinhaber am 2026-09-10
+///
+/// Die Artefaktliste der Einstellungsseite zeigte je Eintrag eine
+/// einzelne Lizenz an, und sie stand hinter dem Namen „Myelith 4B":
+///
+/// ```text
+/// Myelith 4B
+/// 4 Mrd.  ·  rund 7,5 GB  ·  Artefakt 4,5 GB  ·  Apache-2.0  ·  verifiziert
+/// ```
+///
+/// **Unter Apache-2.0 stehen die Grundgewichte.** Das daraus gebaute
+/// Artefakt steht unter der Lizenz dieses Repositoriums: Es ist eine
+/// Bearbeitung nach dem Verfahren dieses Projekts, mit eigenen Skalen
+/// und Nachschlagetabellen, und es rechnet ganzzahlig, wo das
+/// Grundmodell in Gleitkomma rechnet.
+///
+/// ⚑ **Eine Angabe ist nicht dadurch richtig, dass sie stimmt, sondern
+/// dadurch, dass sie sich auf das bezieht, wonebendran sie steht.**
+/// „Apache-2.0" war fuer sich genommen wahr und an dieser Stelle
+/// falsch.
+///
+/// # ⚑ Warum die Pruefung bis zur Lizenzdatei geht
+///
+/// Der Wert im Katalog ist von Hand geschrieben. Eine Pruefung, die nur
+/// nachsieht, **dass** dort etwas steht, faengt den Tippfehler nicht
+/// und den Lizenzwechsel schon gar nicht. Sie haelt ihn deshalb gegen
+/// `LICENSE.md`, also gegen die Quelle. **Dieselbe Klasse wie Fund 271:
+/// ein Wert, den jemand abgeschrieben hat, ist so lange keiner, wie ihn
+/// niemand gegen sein Original haelt.**
+#[test]
+fn jede_lizenz_steht_bei_ihrer_sache() {
+    let wurzel = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("Wurzel des Repositoriums");
+
+    // 1. Das Fenster zeigt keine Lizenz ohne ihre Sache.
+    let js = lies("app.js");
+    assert!(
+        !js.contains("m.lizenz,") && !js.contains("m.lizenz "),
+        "das Fenster zeigt eine Lizenz, ohne zu sagen, wofuer sie gilt"
+    );
+    for feld in ["m.lizenz_gewichte", "m.lizenz_artefakt"] {
+        assert!(js.contains(feld), "{feld} fehlt in der Artefaktliste");
+    }
+
+    // 2. Der Katalog fuehrt beide, und zwar bei jedem Eintrag.
+    let katalog = std::fs::read_to_string(wurzel.join("INTEGER_LLM/models/KATALOG.json"))
+        .expect("KATALOG.json");
+    let eintraege = katalog.matches("\"anzeigename\":").count();
+    assert!(eintraege >= 4, "zu wenige Katalogeintraege: {eintraege}");
+    for feld in ["lizenz_gewichte", "lizenz_artefakt"] {
+        assert_eq!(
+            katalog.matches(&format!("\"{feld}\":")).count(),
+            eintraege,
+            "{feld} fehlt bei mindestens einem Eintrag"
+        );
+    }
+
+    // 3. Und die Artefaktlizenz ist die dieses Repositoriums, gehalten
+    //    gegen die Lizenzdatei selbst.
+    let lizenzdatei = std::fs::read_to_string(wurzel.join("LICENSE.md")).expect("LICENSE.md");
+    let genannt = katalog
+        .split("\"lizenz_artefakt\": \"")
+        .skip(1)
+        .filter_map(|s| s.split_once('"').map(|(w, _)| w.to_string()))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(genannt.len(), 1, "der Katalog nennt mehrere Artefaktlizenzen: {genannt:?}");
+    let name = genannt.iter().next().expect("eine Artefaktlizenz");
+    assert!(
+        lizenzdatei.contains(name),
+        "{name} steht so nicht in LICENSE.md"
+    );
+}
+
+/// **Ein Schalter ist ein Schieber und kein Kaestchen.**
+///
+/// ⚑ Festlegung des Projektinhabers am 2026-09-10. Geprueft wird nicht
+/// das Aussehen, sondern dass es **weiter ein `input[type=checkbox]`
+/// ist**: Ein nachgebauter Schieber aus zwei `div` verliert den
+/// Tastaturfokus, die Leertaste, die Ansage der Vorlesehilfe und den
+/// Zustand, und alles davon muesste einzeln wiederhergestellt werden.
+#[test]
+fn ein_schalter_ist_ein_schieber() {
+    let js = lies("app.js");
+    assert!(
+        js.contains("element.type = \"checkbox\";"),
+        "der Schalter ist kein Ankreuzfeld mehr, damit ist er auch keins fuer die Tastatur"
+    );
+    let stil = ohne_kommentare(&lies("stil.css"));
+    for stueck in [
+        "input[type=\"checkbox\"] {",
+        "appearance: none;",
+        "input[type=\"checkbox\"]::after {",
+        "input[type=\"checkbox\"]:checked::after {",
+    ] {
+        assert!(stil.contains(stueck), "dem Schieber fehlt `{stueck}`");
+    }
+}
+
+/// **Die Leiste faehrt senkrecht und nicht waagerecht.**
+///
+/// ⛑ Gemeldet vom Projektinhaber am 2026-09-10. Ein Titel, der breiter
+/// ist als die Leiste, machte sie breiter, statt gekuerzt zu werden.
+/// **Beides gehoert zusammen:** Ohne die Kuerzung waere die Sperre nur
+/// ein Abschneiden, ohne die Sperre die Kuerzung wirkungslos.
+#[test]
+fn die_leiste_faehrt_nur_senkrecht() {
+    let stil = ohne_kommentare(&lies("stil.css"));
+    let mitte = stil
+        .split_once(".leistenmitte {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect(".leistenmitte");
+    assert!(mitte.contains("overflow-y: auto"), "die Leiste faehrt gar nicht");
+    assert!(
+        mitte.contains("overflow-x: hidden"),
+        "die Leiste faehrt auch waagerecht"
+    );
+    let titel = stil
+        .split_once(".chat .titel {")
+        .and_then(|(_, r)| r.split_once('}'))
+        .map(|(rumpf, _)| rumpf.to_string())
+        .expect(".chat .titel");
+    for stueck in ["text-overflow: ellipsis", "white-space: nowrap", "min-width: 0"] {
+        assert!(titel.contains(stueck), "dem Titel fehlt `{stueck}`");
+    }
+}
+
+/// **Die Liste zeigt einen Modus, und der Zeigetext nennt ihn nicht.**
+///
+/// ⛑ Beides am 2026-09-10 vom Projektinhaber gemeldet, und beides
+/// haengt zusammen: Die Klammer `(Agent)` im Zeigetext war die einzige
+/// Auskunft darueber, zu welchem Modus eine Zeile gehoert. Wird nach
+/// Modus gefiltert, ist sie ueberfluessig; **wird sie entfernt, ohne zu
+/// filtern, ist die Liste nicht mehr zu lesen.**
+#[test]
+fn die_liste_zeigt_nur_den_gewaehlten_modus() {
+    let js = lies("app.js");
+    assert!(
+        js.contains("gespraeche.filter((g) => g.modus === modus_jetzt())"),
+        "die Liste zeigt weiter alle Modi"
+    );
+    assert!(
+        !js.contains("auf.title = `${g.titel} ("),
+        "der Zeigetext nennt weiter den Modus"
+    );
+    assert!(js.contains("auf.title = g.titel;"), "der Zeigetext fehlt");
+}
+
+/// **Im Agentenmodus heissen sie Prozesse.**
+///
+/// ⚑ Festlegung des Projektinhabers am 2026-09-10, und sie hat einen
+/// sachlichen Grund: Im Chat traegt eine Zeile einen Verlauf, beim
+/// Agenten steht jeder Auftrag fuer sich, mit eigenem Schrittbudget und
+/// eigener Belegkette.
+///
+/// ⚑ **Geprueft wird die Tabelle und nicht die einzelne Zeile.** Ein
+/// Wort, das an vier Stellen von Hand steht, ist Fund 271; es steht an
+/// genau einer, und alle vier Stellen holen es dort.
+#[test]
+fn im_agentenmodus_heissen_sie_prozesse() {
+    let js = lies("app.js");
+    for stueck in [
+        "\"wort.agent.eines\": \"Prozess\"",
+        "\"wort.agent.viele\": \"Prozesse\"",
+        "\"wort.agent.eines\": \"Process\"",
+        "kopf.textContent = wort().viele;",
+        "neu.textContent = wort().neu;",
+        "titel: wort(art).frisch,",
+    ] {
+        assert!(js.contains(stueck), "der Wortwahl fehlt `{stueck}`");
+    }
+}
+
+/// **Klappt die Leiste zu, geht die Marke nach oben.**
+///
+/// ⚑ Festlegung des Projektinhabers am 2026-09-10. Die Marke stand nur
+/// in der Leiste; klappte sie weg, trug das Fenster nirgends mehr
+/// seinen Namen.
+///
+/// ⛑ **Und sie wird geklont, nicht abgeschrieben.** Die Spirale ist
+/// gerechnet, 72 Pfade; eine zweite Abschrift im HTML waere ein zweiter
+/// Ort, an dem die naechste Aenderung ankommen muesste.
+#[test]
+fn die_marke_wechselt_mit_der_leiste_den_ort() {
+    let html = lies("index.html");
+    let js = lies("app.js");
+    assert!(
+        html.contains("id=\"kopfmarke\""),
+        "im Kopf ist kein Platz fuer die Marke"
+    );
+    assert_eq!(
+        html.matches("class=\"spirale\"").count(),
+        1,
+        "die Spirale steht mehr als einmal im HTML; sie gehoert geklont"
+    );
+    assert!(
+        js.contains("kopfmarke_zeigen(zu);"),
+        "die Marke haengt nicht am Zustand der Leiste"
+    );
+    for klasse in ["kommt", "geht"] {
+        assert!(
+            js.contains(&format!("classList.add(\"{klasse}\")")),
+            "das Stoerbild `{klasse}` wird nie gesetzt"
+        );
+    }
+    let stil = ohne_kommentare(&lies("stil.css"));
+    assert!(
+        stil.contains("@keyframes marke-kommt") && stil.contains("@keyframes marke-geht"),
+        "kommen und gehen tragen nicht zwei verschiedene Stoerbilder"
+    );
+}
+
+/// **Das Fenster laesst sich nicht kleiner ziehen als seine Bedienung.**
+///
+/// ⚑ Festlegung des Projektinhabers am 2026-09-10: Gespraechsfenster
+/// und Zahnrad bleiben sichtbar. Ohne Untergrenze liess sich das
+/// Fenster auf wenige Zentimeter ziehen, und dann stand dort eine
+/// Kopfleiste und sonst nichts.
+#[test]
+fn das_fenster_hat_eine_untergrenze() {
+    let konf = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tauri.conf.json"
+    ))
+    .expect("tauri.conf.json");
+    for feld in ["minWidth", "minHeight"] {
+        assert!(konf.contains(feld), "dem Fenster fehlt `{feld}`");
+    }
+    let zahl = |feld: &str| -> u32 {
+        konf.split_once(&format!("\"{feld}\": "))
+            .and_then(|(_, r)| r.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|z| z.parse().ok())
+            .unwrap_or(0)
+    };
+    // Die Leiste ist 16rem breit; darunter bliebe fuer das Gespraech
+    // nichts uebrig, und das Zahnrad steht am rechten Rand.
+    assert!(zahl("minWidth") >= 520, "zu schmal: das Gespraech fiele weg");
+    assert!(zahl("minHeight") >= 400, "zu niedrig: die Eingabe fiele weg");
+    assert!(zahl("minWidth") < zahl("width"), "die Untergrenze ist die Startgroesse");
+}
+
+/// Alle Schluessel eines Sprachabschnitts der Tabelle in `app.js`.
+fn sprachschluessel(js: &str, sprache: &str) -> BTreeSet<String> {
+    let rumpf = js
+        .split_once(&format!("\n  {sprache}: {{\n"))
+        .and_then(|(_, r)| r.split_once("\n  },\n"))
+        .map(|(k, _)| k)
+        .unwrap_or_else(|| panic!("kein Abschnitt `{sprache}` in TEXTE"));
+    let mut aus = BTreeSet::new();
+    for zeile in rumpf.lines() {
+        let z = zeile.trim();
+        let Some(rest) = z.strip_prefix('"') else { continue };
+        let Some((name, danach)) = rest.split_once('"') else { continue };
+        if danach.trim_start().starts_with(':') {
+            aus.insert(name.to_string());
+        }
+    }
+    aus
+}
+
+/// **Beide Sprachen kennen dieselben Saetze.**
+///
+/// # ⛑ Warum das eine Pruefung braucht
+///
+/// Ein fehlender Schluessel ist in JavaScript kein Fehler, sondern
+/// `undefined`. `t()` faellt deshalb auf Deutsch zurueck, und **das ist
+/// die richtige Entscheidung und zugleich der Grund, warum niemand es
+/// merkt**: Ein englisches Fenster mit drei deutschen Saetzen darin
+/// sieht aus wie ein Fenster mit drei Saetzen, die jemand vergessen
+/// hat, und genau das ist es auch.
+///
+/// ⚑ **Dieselbe Klasse wie Fund 280**, nur eine Ebene hoeher: Dort
+/// fehlten Felder in einer Zuordnung, hier Saetze in einer Sprache.
+#[test]
+fn beide_sprachen_kennen_dieselben_saetze() {
+    let js = lies("app.js");
+    let de = sprachschluessel(&js, "de");
+    let en = sprachschluessel(&js, "en");
+    assert!(de.len() > 40, "nur {} Saetze; liest die Pruefung die Tabelle noch?", de.len());
+
+    let fehlt_en: Vec<_> = de.difference(&en).collect();
+    let fehlt_de: Vec<_> = en.difference(&de).collect();
+    assert!(fehlt_en.is_empty(), "auf Englisch fehlen: {fehlt_en:?}");
+    assert!(fehlt_de.is_empty(), "auf Deutsch fehlen: {fehlt_de:?}");
+}
+
+/// **Jede Beschriftung im HTML hat einen Satz in beiden Sprachen.**
+///
+/// ⚑ **Und umgekehrt braucht es die Pruefung nicht:** Ein Satz, den
+/// niemand benutzt, kostet nichts. Eine Beschriftung ohne Satz kostet
+/// ein leeres Element, denn `t()` gibt fuer einen unbekannten
+/// Schluessel den leeren Text zurueck und nicht den Schluessel: Ein
+/// Fenster, in dem „leiste.modus" steht, ist kaputt.
+#[test]
+fn jede_beschriftung_hat_ihren_satz() {
+    let js = lies("app.js");
+    let html = lies("index.html");
+    let de = sprachschluessel(&js, "de");
+
+    let mut gefunden = 0;
+    for marke in ["data-t=\"", "data-t-marke=\"", "data-t-platz=\""] {
+        let mut rest = html.as_str();
+        while let Some(a) = rest.find(marke) {
+            rest = &rest[a + marke.len()..];
+            let Some(e) = rest.find('"') else { break };
+            let schluessel = &rest[..e];
+            assert!(
+                de.contains(schluessel),
+                "`{schluessel}` steht im HTML und in keiner Sprachtabelle"
+            );
+            gefunden += 1;
+        }
+    }
+    assert!(gefunden >= 15, "nur {gefunden} Beschriftungen gefunden");
+}
+
+/// **Was ein Programm vergleicht, wird nie uebersetzt.**
+///
+/// ⚑ Feldnamen, Pfade und die Kennung des Netzmodells stehen in jeder
+/// Sprache gleich. **Ein uebersetzter Schluessel ist kein Schluessel
+/// mehr**, und der Fehler faellt erst auf, wenn jemand die Sprache
+/// umstellt und danach nichts mehr findet.
+#[test]
+fn kennungen_bleiben_in_jeder_sprache_gleich() {
+    let js = lies("app.js");
+    for sprache in ["de", "en"] {
+        let schluessel = sprachschluessel(&js, sprache);
+        for f in myl_client::einstellungen::FELDER {
+            assert!(
+                !schluessel.contains(f.name),
+                "`{}` ist ein Feldname und steht als Satz in der Sprachtabelle `{sprache}`",
+                f.name
+            );
+        }
+    }
+    // Und die Kennung des Netzmodells steht genau einmal, als Konstante.
+    assert_eq!(
+        js.matches("const NETZMODELL = \"netz\";").count(),
+        1,
+        "die Kennung des Netzmodells steht nicht mehr an genau einer Stelle"
+    );
+}
+
+/// **Die Sprache ist ein Feld wie jedes andere, mit einer Auswahl.**
+///
+/// ⚑ **Die Sprachnamen stehen in ihrer eigenen Sprache.** Wer die
+/// Oberflaeche gerade nicht versteht, findet seine Sprache nur so
+/// wieder; „German/English" auf Englisch hilft dem nicht, der Deutsch
+/// sucht.
+#[test]
+fn die_sprache_steht_in_den_einstellungen() {
+    let feld = myl_client::einstellungen::FELDER
+        .iter()
+        .find(|f| f.name == "oberflaeche.sprache")
+        .expect("kein Feld fuer die Sprache");
+    assert_eq!(feld.art, myl_client::einstellungen::Feldart::Auswahl);
+    let werte: Vec<_> = feld.wahl.iter().map(|w| w.wert).collect();
+    assert_eq!(werte, vec!["de", "en"]);
+    assert_eq!(feld.wahl[0].titel, "Deutsch");
+    assert_eq!(feld.wahl[1].titel, "English");
+
+    // Und das Fenster kann sie zeichnen und uebernimmt sie sofort.
+    let js = lies("app.js");
+    assert!(js.contains("if (f.art === \"Auswahl\")"), "das Fenster kennt keine Auswahl");
+    assert!(
+        js.contains("await sprache_setzen(neu);"),
+        "die Sprache wirkt erst beim naechsten Start"
     );
 }

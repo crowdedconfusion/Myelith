@@ -1,6 +1,6 @@
 [package]
 name = "myl-node"
-version = "0.48.1"
+version = "0.48.2"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -11,6 +11,21 @@ rust-version = "1.88"
 description = "Der Myelith-Knoten: die Verdrahtung, die aus den Protokoll-Bibliotheken ein laufendes Programm macht. Identität, Konfiguration, Netzanbindung über myl-net (L0), Nutzlastprüfung gegen myl-consensus (L1) und ein Betriebsprotokoll im JSONL-Format für die nachträgliche Fehlersuche über mehrere Maschinen hinweg."
 license = "LicenseRef-PolyForm-Shield-1.0.0"
 publish = false
+
+# ⚑ **Diese Kiste wird ausgeliefert.**
+#
+# Die Installationsskripte in der Wurzel und das oertliche
+# Freigabeskript lesen diese Marke; **keines von ihnen fuehrt eine
+# eigene Liste mehr**. Bis zum 2026-09-10 taten sie es, vier Stueck,
+# und zwei davon waren am ersten Tag schon uneinig (Fund 300).
+#
+# ⚠️ **Wer sie entfernt, liefert die Kiste nicht mehr aus**, und das
+# faellt niemandem auf, ausser der Pruefung
+# `was_ausgeliefert_wird_steht_bei_der_kiste`.
+#
+# Der Knoten.
+[package.metadata.myelith]
+ausliefern = "myl-node"
 
 [dependencies]
 borsh = { version = "1.6", features = ["derive"] }

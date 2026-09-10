@@ -69,7 +69,7 @@ fn konfig(verzeichnis: &std::path::Path, name: &str, bootstrap: Vec<String>) -> 
         ortsleitung: None,
         ortsausweis: None,
         pod: None,
-        modellname: "myelith-qwen2.5-0.5b".to_string(),
+        modellname: "myelith-myelith-0.5b".to_string(),
         kontoschluesseldatei: None,
         konto: None,
         // Kein Testverkehr: Die Tests hier schicken gezielt, damit

@@ -20,12 +20,12 @@ ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 
 ## Modelle
 
-| Modell | Hugging Face | Revision | Lizenz | Parameter | Layer | Gewichte | Artefakt | θ_v | Status |
-|---|---|---|---|---|---|---|---|---|---|
-| `qwen2.5-0.5b` | [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) | `060db6499f32…` | Apache-2.0 | 0,5 Mrd. | 24 | rund 1 GB | 0,74 GB | 0.17.0 | verifiziert |
-| `qwen2.5-7b` | [Qwen/Qwen2.5-7B](https://huggingface.co/Qwen/Qwen2.5-7B) | `d14972939875…` | Apache-2.0 | 7 Mrd. | 28 | rund 14 GB | 8,1 GB | 0.17.0 | verifiziert |
-| `qwen3-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | `ad44e777bcd1…` | Apache-2.0 | 30,5 Mrd. gesamt, 3,04 Mrd. aktiv je Token | 48 | rund 57 GB | 29.1 GB | 0.17.0 | verifiziert |
-| `qwen3-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | `1cfa9a720891…` | Apache-2.0 | 4 Mrd. | 36 | rund 7,5 GB | 4,5 GB | 0.17.0 | verifiziert |
+| Modell | Hugging Face | Revision | Lizenz (Gewichte) | Lizenz (Artefakt) | Parameter | Layer | Gewichte | Artefakt | θ_v | Status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `myelith-0.5b` | [Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B) | `060db6499f32…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 0,5 Mrd. | 24 | rund 1 GB | 0,74 GB | 0.18.0 | verifiziert |
+| `myelith-30b-a3b` | [Qwen/Qwen3-30B-A3B](https://huggingface.co/Qwen/Qwen3-30B-A3B) | `ad44e777bcd1…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 30,5 Mrd. gesamt, 3,04 Mrd. aktiv je Token | 48 | rund 57 GB | 29.1 GB | 0.18.0 | verifiziert |
+| `myelith-4b` | [Qwen/Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) | `1cfa9a720891…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 4 Mrd. | 36 | rund 7,5 GB | 4,5 GB | 0.18.0 | verifiziert |
+| `myelith-7b` | [Qwen/Qwen2.5-7B](https://huggingface.co/Qwen/Qwen2.5-7B) | `d14972939875…` | Apache-2.0 | PolyForm Shield License 1.0.0 | 7 Mrd. | 28 | rund 14 GB | 8,1 GB | 0.18.0 | verifiziert |
 
 **Status:**
 
@@ -35,17 +35,17 @@ ausschließlich **Basis-Varianten** verwendet, keine Instruct-Varianten
 
 **Gemessene Qualität** (Perplexität, WikiText-2):
 
-- `qwen2.5-0.5b`: 15,27 gegen BF16 14,95 (+2,11 %)
-- `qwen2.5-7b`: 8,78 gegen BF16 8,68 (+1,14 %)
-- `qwen3-30b-a3b`: 10,42 gegen BF16 10,48 (-0,59 %). Das Vorzeichen ist kein Beleg fuer Ueberlegenheit: Zwei der vier Sequenzen sind besser, zwei schlechter, und der Standardfehler des Mittels betraegt 1,66 %. Bei 435 Positionen ist kein Unterschied auflösbar; das Kriterium (<= 5 %) ist mit weitem Abstand erfuellt
-- `qwen3-4b`: 19,95 gegen BF16 19,63 (+1,64 %)
+- `myelith-0.5b`: 15,27 gegen BF16 14,95 (+2,11 %)
+- `myelith-30b-a3b`: 10,42 gegen BF16 10,48 (-0,59 %). Das Vorzeichen ist kein Beleg fuer Ueberlegenheit: Zwei der vier Sequenzen sind besser, zwei schlechter, und der Standardfehler des Mittels betraegt 1,66 %. Bei 435 Positionen ist kein Unterschied auflösbar; das Kriterium (<= 5 %) ist mit weitem Abstand erfuellt
+- `myelith-4b`: 19,95 gegen BF16 19,63 (+1,64 %)
+- `myelith-7b`: 8,78 gegen BF16 8,68 (+1,14 %)
 
 **Anmerkungen:**
 
-- `qwen2.5-0.5b`: Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an diesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an.
-- `qwen2.5-7b`: Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6). Rechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden. Nur wählen, wenn 23 GB Platte frei sind.
-- `qwen3-30b-a3b`: Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer, Top-8, alle 48 Layer sind MoE (mlp_only_layers ist leer). Kalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell 56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden eingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom. Artefakt: 18 868 Tensoren in 37 747 Dateien. Belegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet ' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei unabhaengige Laeufe gleich. Perplexitaet am 2026-08-25 gemessen; Einordnung siehe eval/results/. Nach Gesamtparametern setzt das Modell die Reihe fort, in der der Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %, 7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht. Welche der beiden Groessen massgeblich ist, ist offen.
-- `qwen3-4b`: Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm. Drei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war: QK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases, und head_dim 128 bei hidden_size/num_heads = 80 (Fund 59). Status 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist bitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen.
+- `myelith-0.5b`: Die Messgröße des Projekts: Der Entscheidungspunkt 12.21 hängt an diesem Modell, und alle Diagnosen sind daran gemessen. Wer mittestet, fängt hier an.
+- `myelith-30b-a3b`: Das erste Mixture-of-Experts-Modell des Projekts: 128 Experten je Layer, Top-8, alle 48 Layer sind MoE (mlp_only_layers ist leer). Kalibriert am 2026-08-25 auf einer 24-GiB-Maschine, obwohl das bf16-Modell 56,9 GiB und das Artefakt 29 GiB gross ist: Die Gewichte werden eingeblendet statt kopiert, und Quantisierung wie Export laufen im Strom. Artefakt: 18 868 Tensoren in 37 747 Dateien. Belegt: Fortsetzung von 'Die Hauptstadt von Frankreich ist' lautet ' Paris. Die Hauptstadt', Token-Hash 99bfc1f64e901811 ueber zwei unabhaengige Laeufe gleich. Perplexitaet am 2026-08-25 gemessen; Einordnung siehe eval/results/. Nach Gesamtparametern setzt das Modell die Reihe fort, in der der Abstand mit der Groesse schrumpft (0,5B +2,11 %, 4B +1,64 %, 7B +1,14 %); nach AKTIVEN Parametern (3,0 Mrd.) tut es das nicht. Welche der beiden Groessen massgeblich ist, ist offen.
+- `myelith-4b`: Die erste Qwen3-Variante des Projekts und der Traeger von QK-Norm. Drei Unterschiede zu Qwen2.5, von denen nur einer vorher benannt war: QK-Norm (Q und K je Kopf normiert, vor RoPE), keine Attention-Biases, und head_dim 128 bei hidden_size/num_heads = 80 (Fund 59). Status 'erprobt', nicht 'verifiziert': Das Artefakt laeuft und ist bitgleich ueber Laeufe, der Perplexitaetsabstand ist noch offen.
+- `myelith-7b`: Die zweite Größe, an der die Skalierungsfrage hängt (Kritikpunkt K6). Rechnet rund 2 Token je Sekunde: ein Testlauf dauert Minuten, nicht Sekunden. Nur wählen, wenn 23 GB Platte frei sind.
 
 ## Woher die Gewichte kommen
 
@@ -72,8 +72,19 @@ Sekunden statt Minuten.
 
 ## Zur Lizenzangabe
 
-Die Spalte nennt, was die jeweilige Modellkarte angibt, ohne eigene
-Rechtsprüfung.
+**Es sind zwei Spalten, und sie gelten für verschiedene Dinge.**
+„Lizenz (Gewichte)" nennt, was die jeweilige Modellkarte für die
+heruntergeladenen Grundgewichte angibt, ohne eigene Rechtsprüfung.
+„Lizenz (Artefakt)" nennt die Lizenz des daraus **gebauten** Artefakts,
+und das ist die dieses Repositoriums: Was ausgeliefert wird, ist eine
+Bearbeitung nach dem Verfahren dieses Projekts, mit eigenen Skalen und
+Nachschlagetabellen.
+
+⛑ **Hier stand bis zum 2026-09-10 eine einzelne Spalte „Lizenz"**, und
+sie stand in einer Zeile, deren erste Spalte `myelith-4b` heisst. Das
+las sich, als stuende das Artefakt unter Apache-2.0. **Eine Angabe ist
+nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie sich
+auf das bezieht, wonebendran sie steht.**
 
 **Alle sieben Qwen2.5-Größen wurden am 2026-08-23 geprüft, zwei fallen
 durch:** 3B steht unter der Qwen Research License („FOR NON-COMMERCIAL

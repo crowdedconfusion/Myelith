@@ -56,7 +56,7 @@ use integer_llm_kernels::moe::{mische_experten, route_top_k};
 use integer_llm_kernels::optimierer::schritt;
 use integer_llm_kernels::trainingsschritt::gewicht_aus_master;
 
-const MODELL: &str = "qwen3-30b-a3b";
+const MODELL: &str = "myelith-30b-a3b";
 
 // ⚑ **Die Zahl steht in der Bibliothek, nicht hier.** Sie geht in die
 // Bitgleichheit ein: Zwei Miner mit verschiedenen Werten bekommen
