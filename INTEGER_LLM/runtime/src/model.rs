@@ -118,9 +118,39 @@ impl Gewichtsdaten {
     /// ausschlaegt, ist kein Fehler, sondern der Zustand von vorher.
     pub fn vorbereiten(&self) {
         if let Gewichtsdaten::Abbild(abbild) = self {
-            let _ = abbild.advise(memmap2::Advice::WillNeed);
+            vorrat_ankuendigen(abbild);
         }
     }
+}
+
+/// **Der Rat an den Kern, und warum er eine eigene Funktion ist.**
+///
+/// ⛔️ **`memmap2::Advice` gibt es nur unter Unix** (`#[cfg(unix)]` in
+/// `lib.rs`), und der Windows-Bau der CI ist daran zerbrochen. Ein
+/// `#[cfg]` an zwei Aufrufstellen waere zweimal dieselbe Entscheidung;
+/// hier steht sie einmal.
+///
+/// ⚑ **Unter Windows bleibt es beim Zustand von vorher**, also bei
+/// Seitenfehlern, die einzeln bedient werden. Das Gegenstueck dort
+/// hiesse `PrefetchVirtualMemory`, und `memmap2` bietet es nicht an.
+/// **Eine eigene Anbindung waere unsicherer Code fuer eine Plattform,
+/// auf der niemand gemessen hat**, und ungemessene Optimierung ist in
+/// diesem Projekt keine.
+///
+/// ⚠️ **An der Rechnung aendert der Rat nichts**, deshalb ist sein
+/// Fehlen kein Unterschied im Ergebnis, sondern nur einer in der Zeit:
+/// Die Digests sind auf beiden Plattformen dieselben.
+#[cfg(unix)]
+fn vorrat_ankuendigen(abbild: &memmap2::Mmap) {
+    let _ = abbild.advise(memmap2::Advice::WillNeed);
+}
+
+#[cfg(not(unix))]
+fn vorrat_ankuendigen(_abbild: &memmap2::Mmap) {}
+
+/// Dasselbe fuer den Lader, der sein Abbild noch nicht eingepackt hat.
+pub fn abbild_vorbereiten(abbild: &memmap2::Mmap) {
+    vorrat_ankuendigen(abbild);
 }
 
 impl From<Vec<i8>> for Gewichtsdaten {
@@ -587,6 +617,42 @@ impl IntegerModel {
         normen: &[&[i16]],
         acc_mlp: &[u8],
     ) -> Option<Vec<Vec<i16>>> {
+        // ## ⛑ Fund 335 (2026-09-11): hier gebuendelt zu haben, brachte nichts
+        //
+        // Ein Gemisch faellt auf den tokenweisen Weg zurueck, und das
+        // sieht nach einer offenen Flanke aus: Der Hebel, der dem
+        // dichten 4B-Modell +120 % gebracht hat, greift beim
+        // Primaermodell nicht.
+        //
+        // **Es ist gebaut worden, und es hat nichts gebracht.** Ein
+        // `moe_stapel` gruppierte die Token nach Experten, sodass jeder
+        // Experte seine 4,72 MB einmal je Ebene holte statt einmal je
+        // Token, das ihn gewaehlt hat. Gemessen an `myelith-30b-a3b`,
+        // `--features cpu-simd`, drei Prompts:
+        //
+        // | Prompt | gebuendelt | tokenweise |
+        // |---|---|---|
+        // | 153 Token | 12,43 s | 12,23 s |
+        // | 1 521 Token, wiederholt | 11,85 Tok/s | 11,90 Tok/s |
+        // | 1 826 Token, streuende Prosa | 10,80 Tok/s | 10,96 Tok/s |
+        //
+        // ⚑ **Und daraus faellt die eigentliche Erkenntnis.** Die
+        // Buendelung senkt die Lesevorgaenge je Expertenmatrix und
+        // Ebene von rund 114 auf 15, und die Zeit bleibt stehen. **Also
+        // war die Expertenseite nie der Posten**: Die Schieflage sorgt
+        // dafuer, dass je Ebene wenige Experten heiss sind und im
+        // Speicher liegen.
+        //
+        // ⚠️ **Der Posten ist die Aufmerksamkeit**, und sie laeuft hier
+        // Token fuer Token: 907 MB Gewichte je Token gegen 1,81 GB
+        // Experten, aber ohne jede Buendelung und mit einer Rechnung,
+        // die mit der Position waechst. Beim dichten 4B waren es
+        // gemessen 65 % des Prefills; dieselbe Aufteilung erklaert hier
+        // dieselbe Zahl.
+        //
+        // ⛔️ **Was nicht wiederholt werden muss:** dieselbe Buendelung
+        // noch einmal zu bauen. Was offen ist, steht als eigener Punkt:
+        // q, k, v und o ueber mehrere Positionen zugleich.
         let Feedforward::Dense(mlp) = &layer.ffn else {
             return None;
         };
@@ -1598,18 +1664,14 @@ impl IntegerModel {
     /// Routing-Diagnose läuft im Betrieb, der Trainingsmitschnitt nur
     /// beim Training. Wer sie koppelte, zahlte das eine, um das andere
     /// zu bekommen.
-    #[allow(clippy::too_many_arguments)]
-    fn moe_vorwaerts(
+    /// **Wen der Router waehlt, und mit welchem Gewicht.**
+    fn moe_routing(
         &self,
         moe: &MoeLayer,
         x: &[i16],
         sc: &LayerScales,
         cfg: &ModelConfig,
-        acc: &[u8],
-        befunde: Option<&mut Vec<Routingbefund>>,
-        layer_idx: usize,
-        spur: Option<&mut crate::mitschnitt::Moespur>,
-    ) -> Vec<i16> {
+    ) -> (Vec<i32>, integer_llm_kernels::moe::Routing) {
         // Router-Logits. Die Projektion laeuft wie jede andere; ihre
         // Ausgangsskala ist kalibriert wie die der uebrigen Projektionen.
         let logits_i16 = linear_w8a16(
@@ -1633,6 +1695,22 @@ impl IntegerModel {
             cfg.prob_frac_bits,
             moe.norm_topk_prob,
         );
+        (logits, routing)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn moe_vorwaerts(
+        &self,
+        moe: &MoeLayer,
+        x: &[i16],
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+        befunde: Option<&mut Vec<Routingbefund>>,
+        layer_idx: usize,
+        spur: Option<&mut crate::mitschnitt::Moespur>,
+    ) -> Vec<i16> {
+        let (logits, routing) = self.moe_routing(moe, x, sc, cfg);
 
         // Nur wenn jemand misst. Im Regelbetrieb ist das ein
         // Option-Test je MoE-Layer, sonst nichts; `randgleichstaende`
@@ -1642,7 +1720,7 @@ impl IntegerModel {
             let ueber_wahrscheinlichkeit = integer_llm_kernels::softmax::softmax_int(
                 &logits,
                 &self.exp_lut,
-                exp_lut_shift,
+                moe.router_frac.saturating_sub(cfg.exp_input_frac),
                 cfg.prob_frac_bits,
             );
             let groesstes = logits.iter().copied().max().unwrap_or(0);

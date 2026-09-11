@@ -138,17 +138,21 @@ impl Ganzzahl {
         Self { s: vec![0; dv * dk], dk, dv, sk, geklemmt: 0 }
     }
 
-    fn klemmen(&mut self, x: i64) -> i32 {
-        if self.sk.breit {
-            if x > i32::MAX as i64 || x < i32::MIN as i64 {
-                self.geklemmt += 1;
-            }
-            x.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+    /// ⚑ **Ohne Leihe auf `self`**, damit die Zustandsschleife
+    /// mitzaehlen kann, waehrend sie `self.s` haelt. Sie gibt deshalb
+    /// zurueck, **ob** geklemmt wurde, statt selbst zu zaehlen; der
+    /// Zaehler steht an einer Stelle, die Grenze auch.
+    fn klemmen(breit: bool, x: i64) -> (i32, bool) {
+        if breit {
+            (
+                x.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                x > i32::MAX as i64 || x < i32::MIN as i64,
+            )
         } else {
-            if x > i16::MAX as i64 || x < i16::MIN as i64 {
-                self.geklemmt += 1;
-            }
-            clamp_i16_from_i64(x) as i32
+            (
+                clamp_i16_from_i64(x) as i32,
+                x > i16::MAX as i64 || x < i16::MIN as i64,
+            )
         }
     }
 
@@ -163,24 +167,39 @@ impl Ganzzahl {
             *ui = rescale_i64(acc, sk.s_frac + sk.ein_frac, sk.s_frac);
         }
         // zuschlag = b (v - a u), auf der Zustandsskala
-        let mut zuschlag = vec![0i64; self.dv];
-        for i in 0..self.dv {
-            // v auf die Zustandsskala bringen
-            let vi = rescale_i64(v[i] as i64, sk.ein_frac, sk.s_frac);
-            let au = rescale_i64(a as i64 * u[i], sk.gate_frac, 0);
-            zuschlag[i] = rescale_i64(b as i64 * (vi - au), sk.gate_frac, 0);
-        }
+        let zuschlag: Vec<i64> = v
+            .iter()
+            .zip(u.iter())
+            .map(|(vj, uj)| {
+                // v auf die Zustandsskala bringen
+                let vi = rescale_i64(*vj as i64, sk.ein_frac, sk.s_frac);
+                let au = rescale_i64(a as i64 * *uj, sk.gate_frac, 0);
+                rescale_i64(b as i64 * (vi - au), sk.gate_frac, 0)
+            })
+            .collect();
         // S = a S + zuschlag k^T
-        for i in 0..self.dv {
-            let z = zuschlag[i];
-            for j in 0..self.dk {
-                let idx = i * self.dk + j;
-                let alt = rescale_i64(a as i64 * self.s[idx] as i64, sk.gate_frac, 0);
-                let neu = rescale_i64(z * k[j] as i64, sk.ein_frac, 0);
-                let summe = alt + neu;
-                self.s[idx] = self.klemmen(summe);
+        //
+        // ⚑ **Zeilenweise ueber `chunks_exact_mut`**, nicht ueber einen
+        // Index. Die Zeile `i` des Zustands ist genau ein Abschnitt von
+        // `dk` Eintraegen; der Index war dieselbe Rechnung von Hand.
+        //
+        // ⚠️ **Der Klemmzaehler muss mitlaufen**, denn „keine einzige
+        // Klemmung" ist ein Ergebnis dieser Sonde und keine Nebensache.
+        // `klemmen` nimmt `&mut self` und kollidiert deshalb mit der
+        // Leihe auf `self.s`; gezaehlt wird hier lokal und danach
+        // gebucht. **Dieselbe Rechnung, dieselbe Zahl.**
+        let breit = sk.breit;
+        let mut geklemmt = 0u64;
+        for (z, zeile) in zuschlag.iter().zip(self.s.chunks_exact_mut(self.dk)) {
+            for (sij, kj) in zeile.iter_mut().zip(k.iter()) {
+                let alt = rescale_i64(a as i64 * *sij as i64, sk.gate_frac, 0);
+                let neu = rescale_i64(*z * *kj as i64, sk.ein_frac, 0);
+                let (wert, ueber) = Self::klemmen(breit, alt + neu);
+                geklemmt += u64::from(ueber);
+                *sij = wert;
             }
         }
+        self.geklemmt += geklemmt;
         // o = S q
         let mut o = vec![0i16; self.dv];
         for (i, oi) in o.iter_mut().enumerate() {

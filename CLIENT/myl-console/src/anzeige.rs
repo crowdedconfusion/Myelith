@@ -460,7 +460,7 @@ fn zeichnen(
     // wird nie geloescht.
     if !l.offen.is_empty() {
         let ausfuehrlich = l.details;
-        let offen: Vec<Zeitzeile> = l.offen.drain(..).collect();
+        let offen: Vec<Zeitzeile> = std::mem::take(&mut l.offen);
         let _ = write!(aus, "\r\x1b[2K");
         for z in offen {
             let text = if ausfuehrlich { Some(z.voll) } else { z.kurz };

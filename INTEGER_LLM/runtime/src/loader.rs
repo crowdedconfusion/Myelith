@@ -539,7 +539,7 @@ fn eintrag_laden(
     // 29 GB sind das 66 statt 9 Sekunden, **nur fuer das Warten auf
     // einzelne Seitenfehler**. Ein Rat vor dem ersten Byte kostet
     // einen Systemaufruf.
-    abbild.advise(memmap2::Advice::WillNeed).ok();
+    crate::model::abbild_vorbereiten(&abbild);
     let digest = sha256_hex(&abbild);
     if digest != entry.hash {
         return Err(format!(
@@ -2015,6 +2015,59 @@ mod tests {
         }
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Die gebuendelte Vorbereitung rechnet dasselbe wie die
+    /// tokenweise, dicht und als Expertengemisch.**
+    ///
+    /// ⛑ **Diese Gegenprobe gab es bis zum 2026-09-11 nicht**, obwohl
+    /// die gebuendelte Vorbereitung seit dem 2026-09-11 der Normalweg
+    /// ist. **Ein Weg, den nichts gegen den anderen haelt, darf
+    /// auseinanderlaufen, ohne dass es jemand merkt.**
+    ///
+    /// Geprueft wird die Ausgabe **und** der Zwischenzustand: Die
+    /// Logits an der letzten Stelle haengen am KV-Speicher aller
+    /// vorherigen Positionen, den die Vorbereitung gefuellt hat.
+    #[test]
+    fn die_gebuendelte_vorbereitung_rechnet_dasselbe() {
+        for (name, moe) in [("stapel-dicht", None), ("stapel-moe", Some((6usize, 2usize, 3usize)))]
+        {
+            let dir = test_dir(name);
+            write_full_fixture_mit(&dir, true, false, moe);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+
+            // Der Wortschatz des Fixtures ist drei Eintraege gross.
+            let ids: Vec<usize> = vec![0, 1, 2, 1, 0, 2, 2, 0];
+            let letzte = ids.len() - 1;
+
+            let mut gebuendelt = crate::kv_cache::KVCache::new(
+                model.num_layers,
+                model.num_kv_heads,
+            );
+            model.vorbereiten_stapel(&ids[..letzte], 0, &mut gebuendelt);
+            let a = model.forward_token(ids[letzte], letzte, &mut gebuendelt);
+
+            let mut einzeln = crate::kv_cache::KVCache::new(
+                model.num_layers,
+                model.num_kv_heads,
+            );
+            let mut b = Vec::new();
+            for (pos, id) in ids.iter().enumerate() {
+                b = model.forward_token(*id, pos, &mut einzeln);
+            }
+
+            assert_eq!(a, b, "{name}: gebuendelt und tokenweise weichen ab");
+
+            // ⚠️ **Fuer ein Gemisch vergleicht dieser Test zwei Wege,
+            // die derselbe sind**: `ebene_mlp_stapel` gibt dort `None`
+            // zurueck und faellt auf den tokenweisen Weg zurueck. Das
+            // ist seit Fund 335 eine **gemessene Entscheidung** und
+            // kein Versehen; die Begruendung steht dort. Der Test haelt
+            // die dichte Buendelung und deckt beim Gemisch ab, dass der
+            // Rueckfallweg selbst stimmt.
+
+            fs::remove_dir_all(&dir).ok();
+        }
     }
 
     /// **Gegenprobe:** Dasselbe Fixture ohne `moe` ergibt eine dichte

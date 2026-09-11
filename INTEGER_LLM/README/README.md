@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.62.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.45.0, pipeline 0.15.1)
+> **Version:** 0.63.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.46.0, pipeline 0.15.1)
 > **Datum:** 2026-09-11
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
@@ -574,6 +574,38 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.63.0 – 2026-09-11 (eine naheliegende Optimierung, gemessen und verworfen)
+
+`runtime` **0.45.0 auf 0.46.0**.
+
+⛔️ **Der Windows-Bau war an Fund 331 zerbrochen:** `memmap2::Advice`
+steht unter `#[cfg(unix)]`. Der Rat liegt jetzt hinter **einer**
+Plattformweiche; unter Windows ist er ein Nichttun, und warum das so
+bleibt, steht im Doc-Kommentar. Der Nicht-Unix-Zweig ist übersetzt
+worden, nicht behauptet.
+
+⛑ **Fund 335: die Vorbereitung eines Expertengemischs läuft Token für
+Token**, weil `ebene_mlp_stapel` für eine MoE-Ebene `None` gibt. Der
+Hebel, der dem dichten 4B +120 % gebracht hat, war beim Primärmodell
+nie aktiv.
+
+⛔️ **Das nachzurüsten bringt nichts.** Token nach Experten gruppieren,
+sodass jeder Experte seine 4,72 MB einmal je Ebene holt statt einmal je
+Token: gebaut, bitgleich, und dreimal gemessen **ohne Gewinn** (12,43
+gegen 12,23 s; 11,85 gegen 11,90 Tok/s; 10,80 gegen 10,96 Tok/s). Die
+Änderung ist zurückgenommen.
+
+⚑ **Die Erkenntnis daraus ist mehr wert als der Code.** Die Bündelung
+senkt die Lesevorgänge je Expertenmatrix um den Faktor sieben, und die
+Zeit bleibt stehen: **Die Expertenseite war nie der Posten.** Die
+Schieflage sorgt dafür, dass je Ebene wenige Experten heiss sind und
+ohnehin im Speicher liegen. Der Posten ist die **Aufmerksamkeit**, und
+sie läuft unverändert tokenweise: 907 MB Gewichte je Token, ohne jede
+Bündelung.
+
+⛑ **Eine Gegenprobe auf die gebündelte Vorbereitung gab es bis heute
+gar nicht**, weder dicht noch als Gemisch. Sie bleibt.
 
 ### v0.62.0 – 2026-09-11 (das Expertengemisch läuft auf 24 GiB, ohne eine Zahl zu ändern)
 
