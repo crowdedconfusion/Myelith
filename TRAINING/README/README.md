@@ -1,7 +1,7 @@
 # training (`myl-train`)
 
-> **Version:** 0.3.2 (`myl-train` 0.3.0)
-> **Datum:** 2026-09-10
+> **Version:** 0.3.3 (`myl-train` 0.3.0)
+> **Datum:** 2026-09-11
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
 > Rückwärtspass hängen:
@@ -48,6 +48,11 @@
 > Das Konzept daraus steht in
 > [`Konzept-Wachstum.md`](Konzept-Wachstum.md): der Trainingsschritt,
 > seine Verifikation, die Aggregation und ein Modell, das wächst.
+> **Was am Expertengemisch anders ist**, steht daneben in
+> [`Konzept-Gemischtraining.md`](Konzept-Gemischtraining.md): der
+> Router und sein absorbierender Zustand, die gemessene Schieflage der
+> Experten, das Wachstum in der dritten Achse und die vierte
+> Shardachse.
 > Die Planung steht damit; ihr erster Punkt liegt in INTEGER_LLM,
 > nicht hier: Solange Vorwärts- und Rückwärtspass in Gleitkomma
 > rechnen, ist der Gradient geräteabhängig und mit ihm jedes Δm.
@@ -140,6 +145,41 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.3.3 – 2026-09-11 (was am Expertengemisch anders ist, und drei Entwürfe, die schon Code waren)
+
+**Anlass:** Der Projektinhaber hat entschieden, dass Qwen3-30B-A3B und
+nicht das dichte 27B-Modell die erste Netzinferenz trägt. Damit ist das
+Primärmodell ein Expertengemisch, und `Konzept-Wachstum.md` deckt vier
+Dinge nicht ab: wer einen Gradienten bekommt, wer darüber entscheidet,
+wie ein Gemisch wächst und wo sein absorbierender Zustand sitzt. Neu:
+[`Konzept-Gemischtraining.md`](Konzept-Gemischtraining.md).
+
+⛑ **Und der erste Durchgang dieses Dokuments war zu drei Vierteln
+überflüssig.** Er entwarf eine Routerschranke, einen ganzzahligen
+Ausgleichsterm und einen Operator für Expertenwachstum. **Alle drei
+stehen seit dem 2026-08-28 in `kernels`** (`router_spreizung`,
+`Expertenwacht`, `experte_einhaengen`), und alle drei sind besser gelöst
+als der Entwurf. Das Dokument ist daraufhin neu geschrieben: **es ordnet
+jetzt, statt zu entwerfen.**
+
+⛔️ **Eine Aussage war schlicht falsch** und ist zurückgenommen: Den
+absorbierenden Zustand des Routers gibt es in Gleitkomma **auch**, nur
+später. Die Schwelle ist `(frac + 1) · ln2`, also 10,4 nats bei
+`prob_frac_bits = 14` gegen 104 bei `f32`.
+
+⚑ **Was das Dokument beiträgt, ist ein gemessener Zielkonflikt.** Die
+Expertenverteilung des 30B ist schief (die häufigsten 20 % tragen
+78,3 % der Aufrufe), und der Lastausgleich flacht sie ab. Auf einer
+Maschine, deren Seitenpuffer kleiner ist als das Artefakt, entscheidet
+genau diese Schiefe über den Durchsatz: warm 16 bis 35 GB/s, kalt 1,75
+bis 5,2. **Wer `wacht_staerke` wählt, entscheidet zugleich über den
+Durchsatz des Netzes**, und wie viel Güte ein Prozentpunkt Deckung wert
+ist, ist nicht gemessen.
+
+⚑ **Und `F` ist für ein 30B jetzt rechenbar**, ohne dass das Modell in
+Gleitkomma passen müsste: Die Rasterstufe steht als `2^-shift` je Zeile
+im Artefakt, die Schrittgrösse liefert der ganzzahlige Rückwärtspfad.
 
 ### v0.3.2 – 2026-09-10 (der Wegweiser zeigte auf etwas, das kein Klon hat)
 

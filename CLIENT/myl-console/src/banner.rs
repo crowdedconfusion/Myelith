@@ -87,7 +87,7 @@ pub const BANNER: &str = r#"
 /// andere in dieser Datei steht wortgetreu so da wie in ihrer Quelle,
 /// damit sich beide gegeneinander halten lassen; **ein Untertitel, der
 /// vom Testclient spricht, waere in diesem Programm schlicht falsch.**
-pub const SUBTITLE: &str = "        Der Agent in deinem Arbeitsverzeichnis";
+pub const SUBTITLE: &str = "";
 
 /// Gibt das Banner aus, wenn es sinnvoll ist.
 ///
@@ -99,7 +99,12 @@ pub fn print_if(show: bool) {
         return;
     }
     println!("{}", BANNER);
-    println!("{}\n", SUBTITLE);
+    // ⚑ **Ein leerer Untertitel ist keine leere Zeile, sondern keine
+    // Zeile** (2026-09-11). Wer ihn nicht will, soll nicht drei
+    // Leerzeilen bekommen, wo vorher ein Satz stand.
+    if !SUBTITLE.trim().is_empty() {
+        println!("{}\n", SUBTITLE);
+    }
 }
 
 /// Leert den Bildschirm und setzt das Banner an den Anfang.
@@ -140,7 +145,9 @@ pub fn bildschirm_mit(farbe: crossterm::style::Color) {
     // lesbar bleiben, und Farbcodes in einer Datei sind es nicht.
     if !std::io::stdout().is_terminal() {
         println!("{}", BANNER);
-        println!("{}\n", SUBTITLE);
+        if !SUBTITLE.trim().is_empty() {
+            println!("{}\n", SUBTITLE);
+        }
         return;
     }
 
@@ -184,13 +191,17 @@ pub fn bildschirm_mit(farbe: crossterm::style::Color) {
             Print("\n")
         );
     }
-    let _ = crossterm::queue!(
-        aus,
-        SetForegroundColor(crate::farben::BEIWERK),
-        Print(untertitel(breite)),
-        ResetColor,
-        Print("\n\n")
-    );
+    if SUBTITLE.trim().is_empty() {
+        let _ = crossterm::queue!(aus, Print("\n"));
+    } else {
+        let _ = crossterm::queue!(
+            aus,
+            SetForegroundColor(crate::farben::BEIWERK),
+            Print(untertitel(breite)),
+            ResetColor,
+            Print("\n\n")
+        );
+    }
     let _ = std::io::Write::flush(&mut aus);
 }
 
@@ -249,6 +260,10 @@ pub fn blockeinzug(blockbreite: usize) -> String {
 /// Der Untertitel, mittig zum Schriftzug.
 pub fn untertitel(breite: u16) -> String {
     let b = breite as usize;
+    // Ohne Untertitel gibt es nichts einzuruecken.
+    if SUBTITLE.trim().is_empty() {
+        return String::new();
+    }
     if b < MINDESTBREITE {
         return SUBTITLE.to_string();
     }
@@ -616,7 +631,14 @@ mod tests {
         assert!(BANNER.contains('█'), "Blockschriftzug fehlt");
         assert!(BANNER.contains('∘'), "Netzknoten fehlen");
         assert!(BANNER.contains('─'), "Netzverbindungen fehlen");
-        assert!(!SUBTITLE.trim().is_empty(), "Untertitel fehlt");
+        // ⚑ **Der Untertitel darf leer sein**, und dann steht keine
+        // Zeile da statt einer leeren. Geprueft wird die Zusage und
+        // nicht sein Vorhandensein: `myelith` zeigt seit dem
+        // 2026-09-11 keinen, der Testclient seinen weiterhin.
+        assert!(
+            SUBTITLE.trim().is_empty() || untertitel(80).trim() == SUBTITLE.trim(),
+            "der Untertitel geht beim Einruecken verloren"
+        );
     }
 
     /// Der Schriftzug muss über alle sechs Zeilen gleich breit sein:
@@ -839,6 +861,9 @@ mod tests {
     /// Der Untertitel steht mittig unter dem Schriftzug, nicht links.
     #[test]
     fn untertitel_steht_mittig() {
+        if SUBTITLE.trim().is_empty() {
+            return;
+        }
         for b in [80u16, 140] {
             let z = untertitel(b);
             let links = z.len() - z.trim_start().len();

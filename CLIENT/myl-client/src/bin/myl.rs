@@ -32,7 +32,7 @@ myl: lokaler Betrieb von Myelith
 
 Felder fuer `setzen`:
   modell.artefakt   modell.token      modell.denken
-  agent.schritte    agent.bezeugtes   agent.wurzel      agent.schreiben
+  agent.schritte    agent.wurzel      agent.schreiben   agent.werkzeuge
   kap.kerne         kap.beschleuniger
   kap.speicher      kap.platte
 
@@ -43,24 +43,27 @@ Schalter fuer `frage`:
 Schalter fuer `agent`, `sitzung` und `auftraege`, zusaetzlich zu denen
 von `frage`:
   --schritte N    Hoechstzahl der Schritte
-  --bezeugtes     Laesst bezeugte Werkzeuge zu, nur fuer diesen Lauf
+  --nur-verankert Sperrt die Dateiwerkzeuge fuer diesen Lauf, s.u.
   --wurzel P      Haengt P ein, nur fuer diesen Lauf
   --schreiben     Erlaubt Schreiben, nur fuer diesen Lauf
   --roh           Der volle Nachrichtenverlauf statt der Kurzform
   --deutsch       Werkzeuge deutsch ansagen (Vergleichsschalter, s.u.)
-  --werkzeuge S   `knapp` (Vorgabe, drei) oder `voll` (fuenf), s.u.
+  --werkzeuge S   `base` (Vorgabe) oder `advanced`, s.u.
   --datei P       Nur `auftraege`: je Zeile ein Auftrag
 
 ⚑ Bei `auftraege` teilen sich alle Unteragenten EIN geladenes Modell,
 und das Kernbudget aus `kap.kerne` wird durch ihre Zahl geteilt: Sonst
 wollte jeder alle Kerne, und sie naehmen sie sich gegenseitig weg.
 
-⚑ `--werkzeuge voll` nimmt `search_files` und `edit_file` dazu. Beide
-schliessen ein Loch: Ohne Suche heisst „finde, wo X steht“ bei sechs
-Schritten lesen, lesen, lesen, Budget alle; und `write_file` ersetzt die
-GANZE Datei, `edit_file` nur eine eindeutige Stelle. Vorgabe bleibt
-`knapp`, weil fuenf Werkzeuge die Auswahl fuer ein kleines Modell
-schwerer machen als drei und noch niemand gemessen hat, was ueberwiegt.
+⚑ `--werkzeuge` waehlt die Kiste fuer diesen einen Lauf: `base` fuer
+kleine Modelle, `advanced` fuer grosse. In der Einstellung
+`agent.werkzeuge` gibt es dazu `automatisch`, das die Groesse des
+Artefakts liest; ein Schalter hat kein Artefakt und deshalb auch dieses
+Wort nicht.
+
+⚠️ Heute stehen in beiden Kisten dieselben fuenf Werkzeuge. Der Schnitt
+ist gebaut, der Inhalt kommt noch; was zuerst nur in `advanced` liegen
+soll, ist eine Namenssuche ueber den Baum.
 
 ⚑ `--deutsch` ist ein Vergleichsschalter und keine Einstellung. Die
 Werkzeuge werden dem Modell sonst in genau der Form angesagt, auf die
@@ -70,8 +73,17 @@ einzige und steht nur noch da, damit die Agentenprobe beide messen
 kann. Sie verschwindet, sobald der Vergleich gefallen ist.
 
 ⚑ Die Dateiwerkzeuge gibt es erst mit `agent.wurzel`, und sie sind
-lokal, also bezeugt und nicht nachrechenbar: Ohne `--bezeugtes` oder
-`agent.bezeugtes an` sperrt der Harness sie.
+lokal, also bezeugt und nicht nachrechenbar. **Das eingehaengte
+Verzeichnis ist die Zustimmung**, und ob geschrieben werden darf, sagt
+`agent.schreiben`; welche Werkzeuge es ueberhaupt gibt, sagt die
+Werkzeugkiste. `--nur-verankert` sperrt sie fuer einen einzelnen Lauf,
+etwa zum Vergleichen.
+
+⛑ Bis zum 2026-09-11 war es umgekehrt: Ein Schalter `agent.bezeugtes`
+musste erst gesetzt werden, sonst standen die Dateiwerkzeuge zwar in
+der Ansage und liefen nicht. **Zwei Erlaubnisse fuer dieselbe Sache
+sind eine zu viel**, und die zweite steht immer da, wenn jemand den
+Fehler woanders sucht.
 
 ⚑ Der Denkmodus ist ausgeschaltet, weil ein Harness Werkzeugaufrufe
 will und keine Ueberlegung, und weil jedes Denktoken dieselbe
@@ -213,41 +225,12 @@ fn einstellungen() -> i32 {
     match Einstellungen::lesen(&p) {
         Ok(e) => {
             println!("Datei: {}", p.display());
-            println!("  modell.artefakt      {}", if e.modell.artefakt.is_empty() {
-                "(nicht gesetzt)"
-            } else {
-                &e.modell.artefakt
-            });
-            println!("  modell.token         {}", e.modell.token);
-            println!("  modell.denken        {}", e.modell.denken);
-            println!("  agent.schritte       {}", e.agent.schritte);
-            println!("  agent.bezeugtes      {}", e.agent.auch_bezeugtes);
-            println!("  agent.wurzel         {}", e.agent.wurzel.as_deref().unwrap_or("(keine, ohne Dateiwerkzeuge)"));
-            println!("  agent.schreiben      {}", e.agent.schreiben);
             // ⚑ Nicht nur, was gespeichert ist, sondern was **gilt**:
             // Eine Grenze ueber der Maschine hebt sie nicht an.
-            println!(
-                "  kap.kerne            {} (wirksam: {})",
-                zeig(e.kapazitaet.kerne),
-                {
-                    kapazitaet_anwenden(&e);
-                    integer_llm_runtime::kapazitaet::kerne()
-                }
-            );
-            println!("  kap.speicher         {}", zeig_gib(e.kapazitaet.speicher_gib));
-            println!("  kap.platte           {}", zeig_gib(e.kapazitaet.platte_gib));
-            // ⚑ **Die Rechenwerke stehen nur da, wenn eines freigegeben
-            // ist.** Eine leere Ueberschrift behauptet eine Stelle, an
-            // der nichts steht; wer nichts freigegeben hat, sieht die
-            // Liste im Fenster, wo auch die Hoechstwerte stehen.
-            for (kennung, anteil) in &e.kapazitaet.rechenwerke {
-                println!(
-                    "  {}{:<width$} {anteil} %",
-                    myl_client::einstellungen::RECHENWERK_PRAEFIX,
-                    kennung,
-                    width = 20usize
-                        .saturating_sub(myl_client::einstellungen::RECHENWERK_PRAEFIX.len())
-                );
+            kapazitaet_anwenden(&e);
+            let kerne = integer_llm_runtime::kapazitaet::kerne();
+            for zeile in uebersicht(&e, kerne) {
+                println!("{zeile}");
             }
             0
         }
@@ -258,12 +241,86 @@ fn einstellungen() -> i32 {
     }
 }
 
-fn zeig_gib(v: Option<u32>) -> String {
-    v.map(|x| format!("{x} GiB")).unwrap_or_else(|| "ohne Grenze".to_string())
+/// Eine Zeile je Feld, in der Reihenfolge des Katalogs.
+///
+/// # ⛑ Fund 312, und es ist dieselbe Klasse wie Fund 280
+///
+/// **Diese Liste war von Hand gefuehrt und kannte zehn Felder, waehrend
+/// der Katalog dreizehn fuehrte.** `oberflaeche.sprache`,
+/// `agent.werkzeuge` und `ausgabe.ordner` liessen sich setzen, und
+/// danach standen sie nirgends: `myl setzen` bestaetigte den neuen
+/// Wert, `myl einstellungen` schwieg darueber. Fund 280 war derselbe
+/// Fehler im Fenster, nur mit `undefined` statt mit Schweigen.
+///
+/// ⚑ **Jetzt kommt die Liste aus dem Katalog und die Werte aus
+/// [`Einstellungen::wert`]**, also aus denselben zwei Quellen wie im
+/// Fenster. **Eine Anzeige, die neben ihrer Quelle gefuehrt wird, ist
+/// keine Anzeige, sondern eine zweite Behauptung.**
+///
+/// `kerne` ist die **wirksame** Kernzahl, gemessen vom Aufrufer.
+fn uebersicht(e: &Einstellungen, kerne: usize) -> Vec<String> {
+    use myl_client::einstellungen::{Feldwert, FELDER};
+
+    let mut zeilen = Vec::new();
+    for f in FELDER.iter() {
+        let wert = match e.wert(f.name) {
+            Ok(w) => w,
+            // Ein Feld im Katalog, das die Einstellungen nicht kennen,
+            // ist ein Fund und kein Grund, die Zeile wegzulassen.
+            Err(m) => {
+                zeilen.push(format!("  {:<21}({m})", f.name));
+                continue;
+            }
+        };
+        let text = match wert {
+            Feldwert::Zahl(n) => format!("{n}{}", einheit(f)),
+            Feldwert::Schalter(b) => b.to_string(),
+            Feldwert::Text(t) if t.is_empty() => ohne_wert(f).to_string(),
+            Feldwert::Text(t) => t,
+            Feldwert::Leer => ohne_wert(f).to_string(),
+        };
+        let text = if f.name == "kap.kerne" { format!("{text} (wirksam: {kerne})") } else { text };
+        zeilen.push(format!("  {:<21}{text}", f.name));
+    }
+
+    // ⚑ **Die Rechenwerke stehen nur da, wenn eines freigegeben ist.**
+    // Eine leere Ueberschrift behauptet eine Stelle, an der nichts
+    // steht; wer nichts freigegeben hat, sieht die Liste im Fenster, wo
+    // auch die Hoechstwerte stehen.
+    for (kennung, anteil) in &e.kapazitaet.rechenwerke {
+        let name = format!("{}{kennung}", myl_client::einstellungen::RECHENWERK_PRAEFIX);
+        zeilen.push(format!("  {name:<21}{anteil} %"));
+    }
+    zeilen
 }
 
-fn zeig<T: std::fmt::Display>(v: Option<T>) -> String {
-    v.map(|x| x.to_string()).unwrap_or_else(|| "ohne Grenze".to_string())
+/// Die Einheit hinter einer Zahl, abgeleitet aus der Beschriftung.
+///
+/// ⚑ **Der Katalog fuehrt keine Einheit als eigenes Merkmal**, er
+/// schreibt sie in die Beschriftung („Arbeitsspeicher in GiB"). Von
+/// dort wird sie geholt, statt hier eine zweite Liste zu fuehren: Ein
+/// neues Feld in Gibibyte bekommt sie damit von selbst.
+fn einheit(f: &myl_client::einstellungen::Feld) -> &'static str {
+    if f.titel.ends_with(" in GiB") {
+        " GiB"
+    } else {
+        ""
+    }
+}
+
+/// Was dasteht, wenn nichts dasteht.
+///
+/// ⚑ **Eine Grenze, die es nicht gibt, ist keine Null**, und ein
+/// Arbeitsordner, den es nicht gibt, ist mehr als eine Luecke: Dann hat
+/// der Agent **gar keine** Dateiwerkzeuge, und das ist die Auskunft,
+/// die jemand an dieser Stelle braucht.
+fn ohne_wert(f: &myl_client::einstellungen::Feld) -> &'static str {
+    use myl_client::einstellungen::Feldart;
+    match f.art {
+        Feldart::Grenze => "ohne Grenze",
+        _ if f.name == "agent.wurzel" => "(keine, ohne Dateiwerkzeuge)",
+        _ => "(nicht gesetzt)",
+    }
 }
 
 fn setzen(args: &[String]) -> i32 {
@@ -342,21 +399,31 @@ fn wert(args: &[String], name: &str) -> Option<String> {
 /// Vergleich in `BENCHMARKS/Agent/` und nicht dem taeglichen Betrieb;
 /// eine dauerhafte Einstellung dafuer waere Ballast, den nachher
 /// niemand wieder wegraeumt.
-/// Welcher Werkzeugsatz fuer diesen Lauf.
+/// Welche Werkzeugkiste fuer diesen Lauf.
 ///
 /// ⚑ Wie `--deutsch` ein **Vergleichsschalter** und keine Einstellung:
 /// `search_files` und `edit_file` schliessen echte Luecken, aber fuenf
 /// Werkzeuge im Kontext machen die Auswahl fuer ein 4B-Modell schwerer
 /// als drei. Welches ueberwiegt, sagt die Agentenprobe und nicht diese
 /// Datei.
-fn satz_fuer_diesen_lauf(args: &[String]) -> myl_client::werkzeuge::Werkzeugsatz {
-    let voll = args
-        .windows(2)
-        .any(|p| p[0] == "--werkzeuge" && p[1] == "voll");
-    if voll {
-        myl_client::werkzeuge::Werkzeugsatz::Voll
-    } else {
-        myl_client::werkzeuge::Werkzeugsatz::Knapp
+///
+/// ⛑ **Der Schalter nimmt dieselben Woerter wie die Einstellung**, und
+/// er nimmt sie aus derselben Funktion. Bis zum 2026-09-11 kannte er
+/// nur `voll` und verglich es von Hand, waehrend die Hilfe darueber
+/// `knapp` nannte: **ein Wort, das es nie gab.**
+fn satz_fuer_diesen_lauf(args: &[String]) -> myl_client::werkzeuge::Werkzeugkiste {
+    use myl_client::einstellungen::Werkzeugwahl;
+    let Some(wort) = args.windows(2).find(|p| p[0] == "--werkzeuge").map(|p| p[1].clone()) else {
+        return myl_client::werkzeuge::Werkzeugkiste::default();
+    };
+    match Werkzeugwahl::aus(&wort) {
+        // `automatisch` braucht ein Artefakt und hat hier keines: Der
+        // Schalter ist eine Ansage und keine Ableitung.
+        Ok(Werkzeugwahl::Automatisch) | Err(_) => {
+            eprintln!("myl: --werkzeuge {wort} kenne ich nicht, moeglich sind base, advanced");
+            myl_client::werkzeuge::Werkzeugkiste::default()
+        }
+        Ok(w) => w.aufloesen(std::path::Path::new("")).0,
     }
 }
 
@@ -545,7 +612,7 @@ fn agent(args: &[String]) -> i32 {
             if ein.darf_schreiben() { "lesen und schreiben" } else { "nur lesen" }
         );
     }
-    let bezeugtes = e.agent.auch_bezeugtes || args.iter().any(|a| a == "--bezeugtes");
+    let bezeugtes = !args.iter().any(|a| a == "--nur-verankert");
     let schritte = zahl(args, "--schritte").unwrap_or(e.agent.schritte as usize);
     hinweis_betriebsart(bezeugtes, ruestung.kasten.angebote().len());
     let roh = args.iter().any(|a| a == "--roh");
@@ -603,7 +670,7 @@ fn sitzung(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let bezeugtes = e.agent.auch_bezeugtes || rest.iter().any(|a| a == "--bezeugtes");
+    let bezeugtes = !rest.iter().any(|a| a == "--nur-verankert");
     let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schritte as usize);
     let roh = rest.iter().any(|a| a == "--roh");
 
@@ -817,8 +884,7 @@ fn hinweis_betriebsart(bezeugtes: bool, wieviele: usize) {
         eprintln!(
             "[myl] Betriebsart NurVerankert: die {wieviele} lokalen Werkzeuge sind \
              angemeldet, aber gesperrt, denn lokal heisst bezeugt und nicht \
-             nachrechenbar. `--bezeugtes` laesst sie fuer diesen Lauf zu, \
-             `myl setzen agent.bezeugtes an` dauerhaft."
+             nachrechenbar. Ohne `--nur-verankert` laufen sie."
         );
     }
 }
@@ -956,7 +1022,7 @@ fn auftraege(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let bezeugtes = e.agent.auch_bezeugtes || rest.iter().any(|a| a == "--bezeugtes");
+    let bezeugtes = !rest.iter().any(|a| a == "--nur-verankert");
     let roh = rest.iter().any(|a| a == "--roh");
     let schritte = zahl(rest, "--schritte").unwrap_or(e.agent.schritte as usize);
     hinweis_betriebsart(bezeugtes, ruestung.kasten.angebote().len());
@@ -1048,9 +1114,10 @@ mod schalter {
         Einstellungen {
             agent: myl_client::einstellungen::Agenteneinstellung {
                 schritte: 6,
-                auch_bezeugtes: false,
                 wurzel: Some("/vorher".into()),
                 schreiben: true,
+                werkzeuge: Default::default(),
+                modus: Default::default(),
             },
             ..Einstellungen::default()
         }
@@ -1227,5 +1294,58 @@ mod sitzungsdeutung {
     fn ein_auftrag_bleibt_ein_auftrag() {
         assert_eq!(deuten("  Lies die Datei.  "), Zeile::Auftrag("Lies die Datei."));
         assert_eq!(deuten("Merke: das Wort"), Zeile::Auftrag("Merke: das Wort"));
+    }
+
+    /// **Jedes Feld des Katalogs steht in der Uebersicht.**
+    ///
+    /// ⛑ **Fund 312.** Sie war von Hand gefuehrt und kannte zehn von
+    /// dreizehn Feldern: `oberflaeche.sprache`, `agent.werkzeuge` und
+    /// `ausgabe.ordner` liessen sich setzen und standen danach
+    /// nirgends. **Wer ein Feld anlegt, soll es nicht an zwei Stellen
+    /// anlegen muessen**, und wer es doch tut, soll es hier merken.
+    #[test]
+    fn die_uebersicht_zeigt_jedes_feld() {
+        let e = Einstellungen::default();
+        let zeilen = uebersicht(&e, 4);
+        for f in myl_client::einstellungen::FELDER.iter() {
+            assert!(
+                zeilen.iter().any(|z| z.contains(f.name)),
+                "`{}` fehlt in der Uebersicht von `myl einstellungen`",
+                f.name
+            );
+        }
+        assert_eq!(zeilen.len(), myl_client::einstellungen::FELDER.len());
+    }
+
+    /// **Und keine Zeile behauptet einen Wert, den es nicht gibt.**
+    ///
+    /// ⚑ Eine Grenze, die nicht gesetzt ist, ist keine Null, und ein
+    /// Arbeitsordner, der fehlt, heisst: gar keine Dateiwerkzeuge.
+    #[test]
+    fn was_nicht_gesetzt_ist_steht_als_solches_da() {
+        let zeilen = uebersicht(&Einstellungen::default(), 4);
+        let zeile = |name: &str| {
+            zeilen.iter().find(|z| z.contains(name)).cloned().unwrap_or_default()
+        };
+        assert!(zeile("kap.speicher").contains("ohne Grenze"), "{}", zeile("kap.speicher"));
+        assert!(
+            zeile("agent.wurzel").contains("keine, ohne Dateiwerkzeuge"),
+            "{}",
+            zeile("agent.wurzel")
+        );
+        assert!(zeile("modell.artefakt").contains("(nicht gesetzt)"), "{}", zeile("modell.artefakt"));
+    }
+
+    /// **Die Einheit kommt aus der Beschriftung und nicht aus einer
+    /// zweiten Liste.**
+    #[test]
+    fn eine_grenze_in_gibibyte_traegt_ihre_einheit() {
+        let mut e = Einstellungen::default();
+        e.kapazitaet.speicher_gib = Some(12);
+        e.kapazitaet.kerne = Some(4);
+        let zeilen = uebersicht(&e, 4);
+        let zeile = |name: &str| zeilen.iter().find(|z| z.contains(name)).cloned().unwrap_or_default();
+        assert!(zeile("kap.speicher").contains("12 GiB"), "{}", zeile("kap.speicher"));
+        assert!(!zeile("kap.kerne").contains("GiB"), "{}", zeile("kap.kerne"));
     }
 }

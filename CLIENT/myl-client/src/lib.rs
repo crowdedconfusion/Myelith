@@ -67,5 +67,13 @@ pub use myl_local_agent::{Modellweg, Nachricht};
 /// Aufzaehlung mit vier Werten.
 pub use myl_local_agent::schleife::Meldung;
 
+/// ⚑ **Weitergereicht, damit die Oberflaechen keine eigene Fassung
+/// aufnehmen.** Wer eine Nachfrage baut, braucht den Typ der
+/// Werkzeugargumente; zwei Kisten mit zwei Fassungen von `serde_json`
+/// waeren zwei `Value`, die einander nicht kennen.
+pub mod modelle;
+
+pub use serde_json;
+
 pub use einstellungen::Einstellungen;
 pub use oertlich::Oertlichesmodell;

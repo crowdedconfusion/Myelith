@@ -83,6 +83,12 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "integer_math.rs",
     REPO / "kernels" / "src" / "prng.rs",
     REPO / "kernels" / "src" / "sampling.rs",
+    # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
+    # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
+    # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"
+    # von selbst beweist. Gemeldet hat ihn die Vollstaendigkeitspruefung
+    # unten, bevor jemand danach gesucht hat.
+    REPO / "kernels" / "src" / "fadenpool.rs",
     # 2026-08-29 nachgetragen, und ⚑ **`backward.rs` ist die schwerste
     # Luecke, die dieses Skript je hatte**: der ganze Rueckwaertspass,
     # also genau der Pfad, dessen Ganzzahligkeit die Trainingsthese

@@ -37,32 +37,45 @@ fn der_arbeitsordner_kommt_aus_der_shell() {
         s.contains("std::env::current_dir()"),
         "das Arbeitsverzeichnis wird nicht gelesen"
     );
-    // Und er steht im Kopf, bevor die erste Eingabe moeglich ist.
+    // ⛑ **Und er steht dauerhaft unter der Eingabe.** Bis zum
+    // 2026-09-11 stand er im Kopfblock; der ist auf Wunsch des
+    // Projektinhabers entfallen, und **verschwinden durfte er
+    // nicht**: Ein Agent mit Dateiwerkzeugen arbeitet genau dort.
     assert!(
-        s.contains("Arbeitsordner:"),
-        "der Kopf sagt nicht, worauf zugegriffen wird"
+        s.contains("kurzer_ordner()"),
+        "der Arbeitsordner steht nirgends, wo man ihn dauerhaft sieht"
+    );
+    assert!(
+        s.contains("ordnerzeile(&stand.kurzer_ordner()"),
+        "der Arbeitsordner steht nicht in der eigenen Zeile unter der Fusszeile"
     );
 }
 
-/// **Was in der Hilfe steht, wird auch behandelt, und umgekehrt.**
+/// **Jeder Befehl steht genau einmal im Quelltext.**
 ///
-/// ⛑ Dieselbe Klasse wie Fund 271: Eine Hilfe, die von Hand gepflegt
-/// wird, nennt irgendwann einen Befehl, den es nicht gibt, oder
-/// verschweigt einen, den es gibt. **Beides sieht erst der, der es
-/// ausprobiert.**
+/// ⛑ **Dieselbe Klasse wie Fund 271, und die Antwort darauf.** Bis zum
+/// 2026-09-11 stand jeder Befehl zweimal da: im Zweig, der ihn
+/// ausfuehrt, und in der Hilfe, die ihn nennt. Diese Pruefung zaehlte
+/// damals, ob er **mindestens zweimal** vorkommt, und hielt die
+/// Wiederholung damit fest. Jetzt gibt es eine Liste, und diese
+/// Pruefung wacht darueber, dass es dabei bleibt.
+///
+/// ⚑ Dass jeder Name auch behandelt wird und in der Hilfe steht, prueft
+/// `jeder_befehl_wird_behandelt_und_steht_in_der_hilfe` an der Sache
+/// selbst und nicht am Text.
 #[test]
-fn jeder_befehl_steht_in_der_hilfe() {
+fn jeder_befehl_steht_genau_einmal_im_quelltext() {
     let s = quelle("sitzung.rs");
-    for befehl in ["/model", "/settings", "/hilfe", "/ende"] {
-        assert!(
-            s.contains(&format!("\"{befehl}\"")),
-            "`{befehl}` wird nicht behandelt"
-        );
-        assert!(
-            s.matches(befehl).count() >= 2,
-            "`{befehl}` steht nicht zugleich in der Hilfe und im Zweig"
+    for befehl in ["/model", "/settings", "/help", "/hilfe", "/exit", "/ende"] {
+        let wie_oft = s.matches(&format!("\"{befehl}\"")).count();
+        assert_eq!(
+            wie_oft, 1,
+            "`{befehl}` steht {wie_oft} mal im Quelltext, erwartet ist die eine Liste"
         );
     }
+    // Und beide Wege gehen ueber sie.
+    assert!(s.contains("BEFEHLE\n"), "die Hilfe kommt nicht aus der Liste");
+    assert!(s.contains("BEFEHLE.iter().find"), "die Ausfuehrung kommt nicht aus der Liste");
 }
 
 /// **Hier wird nichts gebaut.**
@@ -128,4 +141,71 @@ fn die_logik_kommt_aus_der_kiste() {
         !s.contains(".setzen("),
         "der Konsolenclient setzt Einstellungen selbst"
     );
+}
+
+/// **Und wortgetreu heisst wortgetreu.**
+///
+/// ⛑ Bis zum 2026-09-10 stand die Zusage nur im Kopf der vier Dateien.
+/// Beim ersten Eingriff in `auswahl.rs` (Strg-J als Zeilenende, Fund
+/// 307) fiel auf, dass nichts ausser der eigenen Aufmerksamkeit die
+/// zweite Kopie nachzieht. **Eine Zusage, die niemand nachrechnet, ist
+/// eine Behauptung.**
+///
+/// ⚠️ **Verschwindet der Testclient, verschwindet die Vergleichs-
+/// grundlage.** Dann ist diese Kopie die einzige, und die Pruefung geht
+/// stillschweigend durch: Sie bewacht ein Nebeneinander, das es dann
+/// nicht mehr gibt.
+#[test]
+fn die_kopien_sind_wortgetreu() {
+    let dort = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../TESTCLIENT/myl-testclient/src");
+    if !dort.is_dir() {
+        return;
+    }
+    for datei in ["animation.rs", "banner.rs", "farben.rs", "auswahl.rs"] {
+        let a = geglaettet(&ohne_kopfvermerk(&quelle(datei)));
+        let pfad = dort.join(datei);
+        let b = geglaettet(&std::fs::read_to_string(&pfad).unwrap_or_default());
+        assert_eq!(a, b, "{datei} weicht vom Testclient ab");
+    }
+}
+
+/// Schneidet den Kopfvermerk ab, mit dem die Kopie sich als Kopie
+/// ausweist: Er ist der einzige Zusatz, den sie tragen darf.
+fn ohne_kopfvermerk(s: &str) -> String {
+    if !s.starts_with("// ⚑ **Wortgetreue Kopie aus dem Testclient**") {
+        return s.to_string();
+    }
+    let mut zeilen = s.lines();
+    for z in zeilen.by_ref() {
+        if z.trim() == "#![allow(dead_code)]" {
+            break;
+        }
+    }
+    let rest: Vec<&str> = zeilen.collect();
+    let rest = if rest.first().map(|z| z.trim().is_empty()).unwrap_or(false) {
+        &rest[1..]
+    } else {
+        &rest[..]
+    };
+    rest.join("\n")
+}
+
+/// Ersetzt den Untertitel samt seiner Erklaerung: Er ist die eine
+/// erlaubte Abweichung, weil eine Zeile, die vom Testclient spricht,
+/// hier schlicht falsch waere, und die Begruendung dafuer steht
+/// natuerlich nur in der Kopie.
+fn geglaettet(s: &str) -> String {
+    let mut aus: Vec<&str> = Vec::new();
+    for z in s.lines() {
+        if z.starts_with("pub const SUBTITLE") {
+            while aus.last().map(|v| v.trim_start().starts_with("///")).unwrap_or(false) {
+                aus.pop();
+            }
+            aus.push("pub const SUBTITLE");
+            continue;
+        }
+        aus.push(z);
+    }
+    aus.join("\n")
 }

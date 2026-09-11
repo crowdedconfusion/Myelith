@@ -219,6 +219,43 @@ pub struct Oertlichesmodell {
     /// veraenderlichen Zustand braucht, legt ihn hinter ein eigenes
     /// Schloss und nicht in diese Naht.
     pub beobachter: Option<Box<dyn Fn(crate::strom::Stueck) + Send + Sync>>,
+    /// Wie viele Token dieses Modell bisher gelesen und geschrieben
+    /// hat.
+    ///
+    /// ⚑ **Ein Zaehler und kein Rueckgabewert.** Was ein Lauf kostet,
+    /// will man **waehrend** des Laufs sehen und nicht danach; die
+    /// Zahlen in [`Antwort`] stehen erst fest, wenn der Schritt vorbei
+    /// ist. Der Zaehler haengt am Modell, weil dort gezaehlt wird.
+    ///
+    /// ⚠️ **Er zaehlt ueber Schritte hinweg weiter** und wird von dem
+    /// zurueckgesetzt, der einen neuen Auftrag beginnt: Ein Zaehler,
+    /// der sich selbst zurueckstellt, zeigt beim Agenten nur den
+    /// letzten Schritt.
+    pub zaehler: std::sync::Arc<Tokenzaehler>,
+}
+
+/// Gelesene und geschriebene Token, waehrend es geschieht.
+#[derive(Debug, Default)]
+pub struct Tokenzaehler {
+    /// Token im Prompt, aufsummiert ueber alle Schritte.
+    pub hinein: std::sync::atomic::AtomicU32,
+    /// Erzeugte Token, aufsummiert ueber alle Schritte.
+    pub heraus: std::sync::atomic::AtomicU32,
+}
+
+impl Tokenzaehler {
+    /// Beide Zaehler auf null, fuer einen neuen Auftrag.
+    pub fn zuruecksetzen(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.hinein.store(0, Relaxed);
+        self.heraus.store(0, Relaxed);
+    }
+
+    /// Der Stand, als Paar.
+    pub fn stand(&self) -> (u32, u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.hinein.load(Relaxed), self.heraus.load(Relaxed))
+    }
 }
 
 impl Oertlichesmodell {
@@ -282,6 +319,7 @@ impl Oertlichesmodell {
             denken: false,
             halt,
             beobachter: None,
+            zaehler: std::sync::Arc::new(Tokenzaehler::default()),
         })
     }
 
@@ -348,6 +386,7 @@ impl Modellweg for Oertlichesmodell {
     ) -> Result<Antwort, Tuerfehler> {
         let prompt = self.vorlage().bauen(nachrichten, self.denken);
         let hinein = self.wortschatz.encode(&prompt).len();
+        self.zaehler.hinein.fetch_add(hinein as u32, std::sync::atomic::Ordering::Relaxed);
         let grenze = max_tokens.map(|m| m as usize).unwrap_or(self.grenze);
         let token = match &self.beobachter {
             // ⚑ Auch ohne Zuschauer wird gehalten: Die Marken gehoeren
@@ -359,7 +398,9 @@ impl Modellweg for Oertlichesmodell {
                 &self.wortschatz,
                 &prompt,
                 &self.erzeugung(grenze),
-                &mut |_| {},
+                &mut |_| {
+                    self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                },
             ),
             // ⚑ **Der Zuwachs entsteht aus der ganzen Folge und nicht
             // aus dem einzelnen Token**, und das ist kein Umweg.
@@ -378,6 +419,7 @@ impl Modellweg for Oertlichesmodell {
                     &prompt,
                     &self.erzeugung(grenze),
                     &mut |t| {
+                        self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         alle.push(t);
                         let jetzt = self.wortschatz.decode(&alle);
                         if let Some(zuwachs) = jetzt.strip_prefix(&bisher) {

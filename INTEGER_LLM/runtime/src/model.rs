@@ -19,7 +19,7 @@ use integer_llm_kernels::rmsnorm::{qk_norm_heads, rmsnorm_i16};
 use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
 use integer_llm_kernels::rope::rotate_half_split_i16;
 use integer_llm_kernels::attention::attention_int_mit_spur;
-use integer_llm_kernels::mlp::{mlp_int_mit_spur, Mlpspur};
+use integer_llm_kernels::mlp::{mlp_int_experten, mlp_int_mit_spur, Expertenteil, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
 use crate::loader::{ThetaV, LoadedScales};
@@ -82,6 +82,47 @@ impl std::ops::Deref for Gewichtsdaten {
     }
 }
 
+impl Gewichtsdaten {
+    /// **Sagt dem System, dass diese Bytes gleich gebraucht werden.**
+    ///
+    /// ## ⚑ Fund 331 (2026-09-11): Nicht die Bandbreite fehlte, sondern die Buendelung
+    ///
+    /// Ein Abbild holt seine Seiten **beim ersten Zugriff, eine nach der
+    /// anderen**. Fuer Qwen3-30B-A3B heisst das je Token 384
+    /// Expertenbesuche zu je drei Matrizen zu je 1,5 MB, und jede
+    /// dieser Matrizen zerfaellt in 96 Seiten, die der Kern einzeln und
+    /// **synchron** von der Platte holt. Gemessen auf kalten Ebenen:
+    ///
+    /// | Zugriffsart                          | Durchsatz  | je Ebene |
+    /// |--------------------------------------|------------|----------|
+    /// | Abbild, Seite fuer Seite (vorher)    | 0,44 GB/s  | 85,5 ms  |
+    /// | Abbild mit `MADV_WILLNEED` (jetzt)   | 3,41 GB/s  | 11,1 ms  |
+    /// | `pread` in einen Puffer              | 5,24 GB/s  |  7,2 ms  |
+    ///
+    /// **Die Platte war nie das Problem.** Sie liefert 5 GB/s; die
+    /// Einzelseitenfehler holten 0,44 davon ab. Ein einziger Rat an den
+    /// Kern, bevor der erste Experte rechnet, buendelt die 2 304 Seiten
+    /// einer Ebene zu einem Lauf und bringt das Siebeneinhalbfache.
+    ///
+    /// ⚑ **`pread` waere noch schneller und kommt trotzdem nicht in
+    /// Frage.** Es braeuchte einen Puffer im Heap, und genau den hat
+    /// Fund 62 abgeschafft: Eine anonyme Seite muss ausgelagert werden,
+    /// eine dateigestuetzte wird verworfen. Der Unterschied von 3,4 zu
+    /// 5,2 GB/s ist den Rueckfall in Auslagerungsdruck nicht wert.
+    ///
+    /// ⚑ **An der Rechnung aendert das nichts.** Der Rat sagt, *wann*
+    /// Bytes ankommen, nicht *welche*. Die Gegenprobe ist trotzdem
+    /// gelaufen: `decode_digest` unveraendert, Konformitaet 44/44.
+    ///
+    /// Ein Fehlschlag wird verschluckt. Ein Rat, den das System
+    /// ausschlaegt, ist kein Fehler, sondern der Zustand von vorher.
+    pub fn vorbereiten(&self) {
+        if let Gewichtsdaten::Abbild(abbild) = self {
+            let _ = abbild.advise(memmap2::Advice::WillNeed);
+        }
+    }
+}
+
 impl From<Vec<i8>> for Gewichtsdaten {
     fn from(v: Vec<i8>) -> Self {
         Gewichtsdaten::Speicher(v)
@@ -123,6 +164,12 @@ impl QTensor {
             shape,
             shifts,
         }
+    }
+
+    /// Reicht [`Gewichtsdaten::vorbereiten`] durch. Die Shifts liegen
+    /// im Heap und sind ohnehin da.
+    pub fn vorbereiten(&self) {
+        self.data.vorbereiten();
     }
 
     pub fn n_elements(&self) -> usize {
@@ -258,6 +305,20 @@ pub struct DenseMlp {
     pub gate_proj: QTensor,
     pub up_proj: QTensor,
     pub down_proj: QTensor,
+}
+
+impl DenseMlp {
+    /// **Alle drei Matrizen auf einmal ankuendigen.**
+    ///
+    /// ⚑ **Drei Rate und nicht einer je Matrix, wenn sie gebraucht
+    /// wird.** Wer vor `gate` raet, vor `up` raet und vor `down` raet,
+    /// wartet drei Mal; wer vorher alle drei ankuendigt, wartet einmal.
+    /// Siehe [`Gewichtsdaten::vorbereiten`].
+    pub fn vorbereiten(&self) {
+        self.gate_proj.vorbereiten();
+        self.up_proj.vorbereiten();
+        self.down_proj.vorbereiten();
+    }
 }
 
 /// Ein Mixture-of-Experts-Modell: Router plus Experten.
@@ -494,6 +555,194 @@ impl IntegerModel {
         cache: &mut KVCache,
     ) -> Vec<i32> {
         let cfg = &self.config;
+        let hidden = self.durch_die_ebenen(token_id, pos, cache);
+
+        // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
+        //    final-norm-Skala; LUT-gestuetzt, divisionsfrei).
+        let normed = rmsnorm_i16(
+            &hidden,
+            &self.final_residual_frac,
+            &self.final_norm_gamma.data,
+            &self.final_norm_gamma.shifts,
+            &self.rsqrt_lut,
+            cfg.rsqrt_input_shift,
+            cfg.rsqrt_output_frac,
+            self.inv_n_q20,
+            self.final_norm_frac,
+        );
+
+        // 4. LM-Kopf, siehe `logits_aus_normiertem`.
+        self.logits_aus_normiertem(&normed, cfg.logit_frac_bits)
+    }
+
+    /// **Der MLP-Teil fuer mehrere Token zugleich.**
+    ///
+    /// ⚑ **Nur fuer dichte Ebenen.** Ein Expertengemisch waehlt je Token
+    /// andere Matrizen; wer es buendeln will, muss die Token nach
+    /// Experten gruppieren, und das ist eine eigene Aufgabe. Hier gibt
+    /// es `None` zurueck, und der Aufrufer rechnet Token fuer Token.
+    fn ebene_mlp_stapel(
+        &self,
+        layer: &TransformerLayer,
+        normen: &[&[i16]],
+        acc_mlp: &[u8],
+    ) -> Option<Vec<Vec<i16>>> {
+        let Feedforward::Dense(mlp) = &layer.ffn else {
+            return None;
+        };
+        let sc = &layer.scales;
+        let cfg = &self.config;
+        Some(integer_llm_kernels::mlp::mlp_int_stapel(
+            normen,
+            &mlp.gate_proj.data,
+            &mlp.up_proj.data,
+            &mlp.down_proj.data,
+            mlp.gate_proj.cols(),
+            mlp.down_proj.cols(),
+            &mlp.gate_proj.shifts,
+            &mlp.up_proj.shifts,
+            &mlp.down_proj.shifts,
+            &self.silu_lut,
+            sc.norm_mlp_frac,
+            sc.gate_frac,
+            sc.up_frac,
+            sc.down_in_frac,
+            cfg.silu_in_frac,
+            cfg.silu_lut_offset,
+            cfg.silu_out_frac,
+            acc_mlp,
+        ))
+    }
+
+    /// **Die Vorbereitung ebenenweise statt tokenweise.**
+    ///
+    /// # ⚑ Dieselbe Rechnung, andere Reihenfolge
+    ///
+    /// Tokenweise laeuft Token 0 durch alle 36 Ebenen, dann Token 1, und
+    /// so fort. Ebenenweise laufen **alle** Token durch Ebene 0, dann
+    /// alle durch Ebene 1. **Jede einzelne Rechnung ist dieselbe**, und
+    /// zwar in demselben Zustand:
+    ///
+    /// - Der KV-Speicher wird in **derselben Reihenfolge** gefuellt:
+    ///   Ebene `l` bekommt die Token 0..B nacheinander, genau wie
+    ///   vorher.
+    /// - Die Aufmerksamkeit von Token `b` in Ebene `l` liest die
+    ///   Positionen 0..pos+b **derselben** Ebene, und die stehen dort,
+    ///   weil die Token 0..b-1 diese Ebene gerade durchlaufen haben.
+    /// - Der Residualstrom jedes Tokens haengt nur an ihm selbst.
+    ///
+    /// ⚑ **Und `forward_layer` bleibt unberuehrt.** Es gibt weiterhin
+    /// **eine** Umsetzung des Vorwaertspasses; hier steht nur eine
+    /// andere Schleifenreihenfolge darum. Eine zweite Umsetzung waere
+    /// eine zweite Wahrheit ueber den Rechenpfad.
+    ///
+    /// # ⚠️ Warum das ueberhaupt etwas bringen kann
+    ///
+    /// Die Zahl der gelesenen Gewichtsbytes aendert sich **nicht**.
+    /// Was sich aendert, ist die Naehe: Ebenenweise liegen die B
+    /// Zugriffe auf dieselbe Matrix unmittelbar hintereinander, und was
+    /// in den Zwischenspeicher passt, wird beim zweiten Token nicht
+    /// wieder aus dem Hauptspeicher geholt.
+    ///
+    /// ⚠️ **Ob das traegt, ist eine Messfrage und keine Herleitung.**
+    /// Gemessen am 2026-09-11 gegen `myelith-4b` mit 169 Token: allein
+    /// die Umstellung der Reihenfolge brachte rund 4 %, die Buendelung
+    /// des MLP darauf noch einmal 5 %. **Der grosse Posten lag
+    /// woanders**, naemlich im KV-Verlauf, der je Kopf und je Token
+    /// kopiert wurde.
+    pub fn vorbereiten_stapel(
+        &self,
+        token_ids: &[usize],
+        pos_start: usize,
+        cache: &mut KVCache,
+    ) {
+        if token_ids.is_empty() {
+            return;
+        }
+        let mut zustaende: Vec<Vec<i16>> =
+            token_ids.iter().map(|&t| self.embed_token(t)).collect();
+        for (i, layer) in self.layers.iter().enumerate() {
+            let out_frac: &[u8] = if i + 1 < self.layers.len() {
+                &self.layers[i + 1].scales.residual_in_frac
+            } else {
+                &self.final_residual_frac
+            };
+            let sc = &layer.scales;
+            let acc_mlp: Vec<u8> = sc
+                .residual_mid_frac
+                .iter()
+                .zip(out_frac.iter())
+                .map(|(&a, &b)| a.min(b))
+                .collect();
+
+            // ⚑ **Erst der Aufmerksamkeitsteil, Token fuer Token und in
+            // dieser Reihenfolge.** Der KV-Speicher wird dabei genau so
+            // gefuellt wie tokenweise, und Token `b` liest die
+            // Positionen der Token davor, die diese Ebene gerade
+            // durchlaufen haben.
+            let mut zwischen: Vec<(Vec<i16>, Vec<i16>)> = Vec::with_capacity(zustaende.len());
+            for (b, zustand) in zustaende.iter().enumerate() {
+                zwischen.push(self.ebene_bis_mlp(layer, zustand, pos_start + b, cache, None));
+            }
+
+            // ⚑ **Dann der MLP fuer alle zugleich**, sofern die Ebene
+            // dicht ist: Dort liegen 74 % der gelesenen Gewichte.
+            let normen: Vec<&[i16]> = zwischen.iter().map(|(_, n)| n.as_slice()).collect();
+            match self.ebene_mlp_stapel(layer, &normen, &acc_mlp) {
+                Some(mlp_aus) => {
+                    for (b, zustand) in zustaende.iter_mut().enumerate() {
+                        *zustand = self.residual_zwei(
+                            &zwischen[b].0,
+                            &mlp_aus[b],
+                            sc,
+                            &acc_mlp,
+                            out_frac,
+                        );
+                    }
+                }
+                // Expertengemisch: Token fuer Token, siehe
+                // `ebene_mlp_stapel`.
+                None => {
+                    for (b, zustand) in zustaende.iter_mut().enumerate() {
+                        *zustand = self.ebene_ab_mlp(
+                            layer,
+                            &zwischen[b].0,
+                            &zwischen[b].1,
+                            &acc_mlp,
+                            out_frac,
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **Embedding und alle Ebenen, ohne Schlussnorm und ohne Kopf.**
+    ///
+    /// # ⚑ Genau das, was ein Prompt-Token beitraegt
+    ///
+    /// Waehrend der Vorbereitung fuellt jedes Prompt-Token den
+    /// KV-Speicher, und **seine Logits liest niemand**: Gefragt wird
+    /// erst nach der letzten Position. Bis zum 2026-09-11 rechnete die
+    /// Vorbereitung den Kopf trotzdem, fuer jedes Token einzeln.
+    ///
+    /// ⛑ **Gemessen beim 4B-Modell:** Der Kopf ist eine int16-Matrix
+    /// ueber 151 936 Zeilen, also 0,78 GB von 4,41 GB je Token,
+    /// **17,6 %**. Bei einem Prompt von 588 Token sind das 458 GB
+    /// gelesene Gewichte ohne Gegenwert.
+    ///
+    /// ⚑ **Ein Ausschnitt und kein zweiter Pfad.** `forward_token` ruft
+    /// dieselbe Funktion und setzt Norm und Kopf darauf; es gibt
+    /// weiterhin **eine** Umsetzung des Vorwaertspasses, und die ist
+    /// ueber dreissig Konformitaetsvektoren belegt.
+    pub fn durch_die_ebenen(
+        &self,
+        token_id: usize,
+        pos: usize,
+        cache: &mut KVCache,
+    ) -> Vec<i16> {
 
         // 1. Embedding Lookup: Gewicht int8 mit Per-Channel-Skala der
         //    Token-Zeile (theta_v 0.7.0) -> erstes Residualstrom-Segment.
@@ -520,22 +769,7 @@ impl IntegerModel {
             hidden = self.forward_layer(layer, &hidden, pos, cache, out_frac, None, None);
         }
 
-        // 3. Final RMSNorm (int16 -> int16 auf der kalibrierten
-        //    final-norm-Skala; LUT-gestuetzt, divisionsfrei).
-        let normed = rmsnorm_i16(
-            &hidden,
-            &self.final_residual_frac,
-            &self.final_norm_gamma.data,
-            &self.final_norm_gamma.shifts,
-            &self.rsqrt_lut,
-            cfg.rsqrt_input_shift,
-            cfg.rsqrt_output_frac,
-            self.inv_n_q20,
-            self.final_norm_frac,
-        );
-
-        // 4. LM-Kopf, siehe `logits_aus_normiertem`.
-        self.logits_aus_normiertem(&normed, cfg.logit_frac_bits)
+        hidden
     }
 
     // === Pipeline-Stage-API (Phase 12.56–12.59) =======================
@@ -733,33 +967,33 @@ impl IntegerModel {
         self.logits_aus_normiertem(&normed, logit_frac)
     }
 
-    // ⚑ **Acht Argumente, und die letzten beiden sind Ausgänge.** Sie
-    // zu einem Typ zusammenzufassen hiesse, zwei unabhängige Mitschriften
-    // aneinanderzubinden: die MoE-Diagnose läuft im Betrieb, der
-    // Trainingsmitschnitt nur beim Training. Wer sie koppelte, zahlte
-    // das eine, um das andere zu bekommen.
-    #[allow(clippy::too_many_arguments)]
-    fn forward_layer(
+    /// **Der Aufmerksamkeitsteil einer Ebene, bis vor den MLP.**
+    ///
+    /// Gibt den Residualstrom nach der Aufmerksamkeit zurueck und seine
+    /// Norm, also genau die beiden Werte, die der MLP-Teil braucht.
+    ///
+    /// # ⚑ Warum das eine eigene Methode ist
+    ///
+    /// **Damit die Vorbereitung den MLP fuer viele Token zugleich
+    /// rechnen kann.** Dieser Teil bleibt tokenweise, und das muss er
+    /// auch: Die Aufmerksamkeit von Token `b` liest den KV-Speicher,
+    /// den die Token davor in **dieser** Ebene gerade gefuellt haben.
+    ///
+    /// ⚑ **Es ist eine Naht und keine zweite Umsetzung.** Der Rumpf ist
+    /// Zeile fuer Zeile der frueher in [`Model::forward_layer`]
+    /// stehende, und dieselben Konformitaetsvektoren laufen darueber.
+    fn ebene_bis_mlp(
         &self,
         layer: &TransformerLayer,
         hidden: &[i16],
         pos: usize,
         cache: &mut KVCache,
-        out_residual_frac: &[u8],
-        befunde: Option<&mut Vec<Routingbefund>>,
-        mitschnitt: Option<&mut crate::mitschnitt::Zwischenwerte>,
-    ) -> Vec<i16> {
+        mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> (Vec<i16>, Vec<i16>) {
         let cfg = &self.config;
         let hs = self.hidden_size;
         let sc = &layer.scales;
 
-        // ⚑ **Nur mitschneiden, wenn jemand zuhört** (TRAINING V).
-        // Inferenz gibt `None` und zahlt je Aufnahmestelle einen
-        // `is_some`, keine Kopie. Ein zweiter Vorwärtspass, der immer
-        // alles behält, wäre eine zweite Wahrheit über den Rechenpfad.
-        let mut auf = mitschnitt
-            .is_some()
-            .then(crate::mitschnitt::Ebenenmitschnitt::default);
         if let Some(a) = auf.as_mut() {
             a.residual_ein = hidden.to_vec();
         }
@@ -922,15 +1156,24 @@ impl IntegerModel {
         let mut attn_out = vec![0i16; self.num_heads * self.head_dim];
         for h in 0..self.num_heads {
             let kv_h = h / group_size;
-            let (past_k, past_v) = cache.read(layer.layer_idx, kv_h, pos);
+            let (past_k, past_v) = cache.read_scheiben(layer.layer_idx, kv_h, pos);
             let seq_len = past_k.len();
 
             // K, V liegen bereits in ihrer Per-Layer-Skala (Fund 22) —
             // keine Reskalierung mehr noetig.
-            let k_seq: Vec<Vec<i16>> = past_k.to_vec();
-            let v_seq: Vec<Vec<i16>> = past_v.to_vec();
+            //
+            // ⛑ **Hier stand `past_k.to_vec()`**, und `past_k` ist
+            // bereits ein eigener `Vec<Vec<i16>>`, den `cache.read`
+            // gerade erzeugt hat: **Der ganze KV-Verlauf wurde ein
+            // zweites Mal kopiert**, je Kopf und je Token. Bei einem
+            // Prompt von 169 Token sind das ueber alle 36 Ebenen rund
+            // **8 GB ohne Gegenwert**, dazu eine Million Belegungen.
+            // Gefunden am 2026-09-11 beim Nachrechnen, warum der
+            // Aufmerksamkeitsteil 65 % der Vorbereitung kostet.
+            let k_seq = past_k;
+            let v_seq = past_v;
 
-            let q_seq = vec![q_heads[h].clone()];
+            let q_seq = [q_heads[h].as_slice()];
 
             // Causal mask: nur letzte Position attendet auf alle vorherigen
             let mask = vec![vec![true; seq_len]];
@@ -1051,17 +1294,97 @@ impl IntegerModel {
             a.norm_mitte = norm_residual.clone();
         }
 
+        (residual, norm_residual)
+    }
+
+    // ⚑ **Acht Argumente, und die letzten beiden sind Ausgänge.** Sie
+    // zu einem Typ zusammenzufassen hiesse, zwei unabhängige Mitschriften
+    // aneinanderzubinden: die MoE-Diagnose läuft im Betrieb, der
+    // Trainingsmitschnitt nur beim Training. Wer sie koppelte, zahlte
+    // das eine, um das andere zu bekommen.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_layer(
+        &self,
+        layer: &TransformerLayer,
+        hidden: &[i16],
+        pos: usize,
+        cache: &mut KVCache,
+        out_residual_frac: &[u8],
+        befunde: Option<&mut Vec<Routingbefund>>,
+        mitschnitt: Option<&mut crate::mitschnitt::Zwischenwerte>,
+    ) -> Vec<i16> {
+        let sc = &layer.scales;
+
+        // ⚑ **Nur mitschneiden, wenn jemand zuhört** (TRAINING V).
+        // Inferenz gibt `None` und zahlt je Aufnahmestelle einen
+        // `is_some`, keine Kopie. Ein zweiter Vorwärtspass, der immer
+        // alles behält, wäre eine zweite Wahrheit über den Rechenpfad.
+        let mut auf = mitschnitt
+            .is_some()
+            .then(crate::mitschnitt::Ebenenmitschnitt::default);
+
+        let (residual, norm_residual) =
+            self.ebene_bis_mlp(layer, hidden, pos, cache, auf.as_mut());
+
         let acc_mlp: Vec<u8> = sc
             .residual_mid_frac
             .iter()
             .zip(out_residual_frac.iter())
             .map(|(&a, &b)| a.min(b))
             .collect();
+
+        let aus = self.ebene_ab_mlp(
+            layer,
+            &residual,
+            &norm_residual,
+            &acc_mlp,
+            out_residual_frac,
+            befunde,
+            auf.as_mut(),
+        );
+
+        // ⚑ **Ganz am Ende abgeben**, damit auch die MLP-Werte
+        // drinstehen. Eine halb aufgezeichnete Ebene sähe vollständig
+        // aus.
+        if let (Some(m), Some(a)) = (mitschnitt, auf) {
+            m.anhaengen(a);
+        }
+
+        aus
+    }
+
+    /// **Der MLP-Teil einer Ebene und die zweite Residualaddition.**
+    ///
+    /// # ⚑ Warum das eine eigene Methode ist
+    ///
+    /// **Damit die Vorbereitung ihn gebuendelt rechnen kann.** Die drei
+    /// MLP-Matrizen sind beim 4B-Modell 74,7 MB von 100,9 MB je Ebene,
+    /// also **74 % der gelesenen Gewichte**; wer sie fuer viele Token
+    /// zugleich rechnet, liest sie einmal statt einmal je Token.
+    ///
+    /// ⚑ **Es ist eine Naht und keine zweite Umsetzung.**
+    /// [`Model::forward_layer`] ruft dieselbe Methode; der Rumpf ist Zeile
+    /// fuer Zeile der frueher hier stehende. Belegt durch den
+    /// Konformitaetslauf, der beide Haelften ueber dieselben Vektoren
+    /// fuehrt.
+    #[allow(clippy::too_many_arguments)]
+    fn ebene_ab_mlp(
+        &self,
+        layer: &TransformerLayer,
+        residual: &[i16],
+        norm_residual: &[i16],
+        acc_mlp: &[u8],
+        out_residual_frac: &[u8],
+        befunde: Option<&mut Vec<Routingbefund>>,
+        mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> Vec<i16> {
+        let cfg = &self.config;
+        let sc = &layer.scales;
         let mlp_out = match &layer.ffn {
             Feedforward::Dense(mlp) => {
                 let mut spur = auf.as_ref().map(|_| Mlpspur::default());
                 let aus =
-                    self.mlp_vorwaerts(mlp, &norm_residual, sc, cfg, &acc_mlp, spur.as_mut());
+                    self.mlp_vorwaerts(mlp, norm_residual, sc, cfg, acc_mlp, spur.as_mut());
                 if let (Some(a), Some(sp)) = (auf.as_mut(), spur) {
                     a.mlp = crate::mitschnitt::Mlpteil::Dicht {
                         gate: sp.gate,
@@ -1078,10 +1401,10 @@ impl IntegerModel {
                 let mut spur = auf.as_ref().map(|_| crate::mitschnitt::Moespur::default());
                 let aus = self.moe_vorwaerts(
                     moe,
-                    &norm_residual,
+                    norm_residual,
                     sc,
                     cfg,
-                    &acc_mlp,
+                    acc_mlp,
                     befunde,
                     layer.layer_idx,
                     spur.as_mut(),
@@ -1126,20 +1449,29 @@ impl IntegerModel {
         // einer feinen Skala wuerde der MLP-Beitrag selbst klemmen, bevor er
         // ueberhaupt addiert werden kann. Die Akkumulationsskala muss also
         // den OPERANDEN genuegen, nicht dem Ergebnis.
+        self.residual_zwei(residual, &mlp_out, sc, acc_mlp, out_residual_frac)
+    }
+
+    /// **Die zweite Residualaddition, Fund 31.**
+    ///
+    /// ⚑ Beide Operanden auf der groeberen Skala, Summe in i64, **eine**
+    /// Reskalierung und **eine** Klemmung. Die lange Begruendung steht
+    /// ueber dem Aufrufer in [`Model::ebene_ab_mlp`].
+    fn residual_zwei(
+        &self,
+        residual: &[i16],
+        mlp_out: &[i16],
+        sc: &LayerScales,
+        acc_mlp: &[u8],
+        out_residual_frac: &[u8],
+    ) -> Vec<i16> {
+        let hs = self.hidden_size;
         let mut out = vec![0i16; hs];
         for i in 0..hs {
             let r = rescale_i64(residual[i] as i64, sc.residual_mid_frac[i], acc_mlp[i]);
             let summe = r + mlp_out[i] as i64;
             out[i] = clamp_i16_from_i64(rescale_i64(summe, acc_mlp[i], out_residual_frac[i]));
         }
-
-        // ⚑ **Ganz am Ende abgeben**, damit auch die MLP-Werte
-        // drinstehen. Eine halb aufgezeichnete Ebene sähe vollständig
-        // aus.
-        if let (Some(m), Some(a)) = (mitschnitt, auf) {
-            m.anhaengen(a);
-        }
-
         out
     }
 
@@ -1328,6 +1660,21 @@ impl IntegerModel {
             });
         }
 
+        // **Erst ankuendigen, dann rechnen.** Die Wahl steht fest,
+        // sobald der Router gesprochen hat; ab hier ist bekannt, welche
+        // vierundzwanzig Matrizen gebraucht werden. Ein Rat je Matrix,
+        // bevor die erste gelesen wird, buendelt die Seitenfehler einer
+        // ganzen Ebene zu einem Lauf (Fund 331, siehe
+        // [`Gewichtsdaten::vorbereiten`]).
+        //
+        // ⚑ **Vor der Schleife und nicht darin.** In der Schleife wuerde
+        // je Experte ein eigener Lauf entstehen, also acht statt einem;
+        // der Sinn ist gerade, dass die Platte alle vierundzwanzig
+        // Bereiche gleichzeitig kennt.
+        for e in &routing.experten {
+            moe.experts[*e as usize].vorbereiten();
+        }
+
         // Die gewaehlten Experten rechnen. Alle schreiben auf dieselbe
         // Ausgangsskala `acc`, denn sie addieren in denselben
         // Residualstrom; deshalb mischt `mische_experten` ohne
@@ -1337,26 +1684,61 @@ impl IntegerModel {
         // durch dieselbe `mlp_vorwaerts` wie eine dichte Ebene. Damit
         // gilt auch `schritt_auf_mlp` fuer ihn unveraendert, gemessen an
         // echten 30B-A3B-Gewichten.
-        let mut teile: Vec<Mlpspur> = Vec::new();
-        let ausgaben: Vec<Vec<i16>> = routing
+        // ⛑ **Fund 332: in zwei Poolrunden statt in vierundzwanzig.**
+        // Die Begruendung und die Messung stehen bei
+        // [`integer_llm_kernels::linear::linear_w8a16_buendel`]. Hier
+        // steht nur, was sie fuer diese Stelle heisst: Bis zum
+        // 2026-09-11 lief je Experte ein eigenes `mlp_vorwaerts`, also
+        // drei eigene Runden, und jede bekam **zwei** von zwoelf
+        // Faeden, weil eine Expertenmatrix knapp ueber der
+        // Parallelschwelle liegt. Gebuendelt rechnen alle Kerne.
+        // ⚠️ **Ohne gewaehlte Experten ist der Beitrag null.**
+        // `route_top_k` liefert eine leere Wahl nur bei `top_k == 0`,
+        // also bei einer kaputten Modellkonfiguration. Der gebuendelte
+        // Weg fragt danach den ersten Experten nach seiner Form, und den
+        // gaebe es dann nicht.
+        //
+        // ⛑ **Und hier stand vorher etwas anderes, ohne dass es jemand
+        // so gemeint haette:** `mische_experten` nimmt die Breite vom
+        // ersten Element und gab bei leerer Liste einen **leeren**
+        // Vektor zurueck. Der Residualstrom haette ihn nicht addieren
+        // koennen. Eine leere Summe ist null, und null hat die Breite
+        // des Stroms.
+        if routing.experten.is_empty() {
+            return vec![0i16; acc.len()];
+        }
+        let buendel: Vec<Expertenteil<'_>> = routing
             .experten
             .iter()
             .map(|e| {
-                let mut sp = spur.as_ref().map(|_| Mlpspur::default());
-                let aus = self.mlp_vorwaerts(
-                    &moe.experts[*e as usize],
-                    x,
-                    sc,
-                    cfg,
-                    acc,
-                    sp.as_mut(),
-                );
-                if let Some(sp) = sp {
-                    teile.push(sp);
+                let ex = &moe.experts[*e as usize];
+                Expertenteil {
+                    gate: &ex.gate_proj.data,
+                    up: &ex.up_proj.data,
+                    down: &ex.down_proj.data,
+                    gate_shifts: &ex.gate_proj.shifts,
+                    up_shifts: &ex.up_proj.shifts,
+                    down_shifts: &ex.down_proj.shifts,
                 }
-                aus
             })
             .collect();
+        let mut teile: Vec<Mlpspur> = Vec::new();
+        let ausgaben = mlp_int_experten(
+            x,
+            &buendel,
+            moe.experts[routing.experten[0] as usize].gate_proj.cols(),
+            moe.experts[routing.experten[0] as usize].down_proj.cols(),
+            &self.silu_lut,
+            sc.norm_mlp_frac,
+            sc.gate_frac,
+            sc.up_frac,
+            sc.down_in_frac,
+            cfg.silu_in_frac,
+            cfg.silu_lut_offset,
+            cfg.silu_out_frac,
+            acc,
+            spur.as_ref().map(|_| &mut teile),
+        );
 
         if let Some(ziel) = spur {
             ziel.experten = routing.experten.clone();

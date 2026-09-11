@@ -41,9 +41,9 @@ fn main() {
     // Prefill: alle Prompt-Tokens, Zeitmessung ohne Ladung.
     let t0 = Instant::now();
     let mut logits = vec![0i32; model.vocab_size];
-    for (pos, &tid) in ids.iter().enumerate() {
-        logits = model.forward_token(tid, pos, &mut cache);
-    }
+    let letzte = ids.len().saturating_sub(1);
+    model.vorbereiten_stapel(&ids[..letzte], 0, &mut cache);
+    logits = model.forward_token(ids[letzte], letzte, &mut cache);
     let prefill = t0.elapsed();
 
     // Decode: Token fuer Token, greedy (deterministisch).

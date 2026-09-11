@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.60.0 (θ_v 0.18.0; kernels 0.49.0, runtime 0.43.0, pipeline 0.15.1)
-> **Datum:** 2026-09-10
+> **Version:** 0.62.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.45.0, pipeline 0.15.1)
+> **Datum:** 2026-09-11
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
 > (+2,11 %), 4B **19,95** (+1,64 %), 7B **41,42 → 8,78** (+1,14 %),
@@ -574,6 +574,127 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.62.0 – 2026-09-11 (das Expertengemisch läuft auf 24 GiB, ohne eine Zahl zu ändern)
+
+`kernels` **0.50.0 auf 0.51.0**, `runtime` **0.44.0 auf 0.45.0**.
+
+**Auftrag des Projektinhabers:** das 27B-Modell hinten anstellen und
+das 30B-Gemisch so weit bringen, dass es auf dieser Maschine flüssig
+und **verlustfrei** läuft.
+
+Bei 150 Decode-Token gegen `myelith-30b-a3b`, **beide Stände mit
+`--features cpu-simd` gebaut** (siehe Fund 334):
+
+| Stand | Laden | Prefill | Decode |
+|---|---|---|---|
+| Ausgangspunkt | 174 s | 1,06 Tok/s | 4,10 Tok/s |
+| nur der Rat an den Kern (Fund 331) | 26 bis 37 s | 3,87 | 6,35 |
+| dazu die Bündelung (Fund 332) | **26 s** | **4,80** | **10,1** |
+
+⚑ **Decode 2,5-mal, Prefill 4,5-mal, Ladezeit auf ein Siebtel, und
+keine geänderte Zahl.** `decode_digest` über **jeden** Stand derselbe
+(`8314756773…` bei 150 Token, `6913b0d76f…` bei 30), dazu 44/44
+Konformitätsvektoren gegen `reference` **und** gegen `cpu-simd`, alle
+Prüfungen beider Kisten, Gleitkomma-, Divisions- und Überlaufaudit.
+
+⚑ **Zehn Token je Sekunde sind schneller, als jemand liest.** Das
+Gemisch läuft damit auf einer Maschine, deren Arbeitsspeicher kleiner
+ist als sein Artefakt.
+
+⛑ **Fund 331: die Platte war nie langsam, sie wurde falsch gefragt.**
+Ein Abbild holt seine Seiten einzeln und synchron; je Token sind das
+110 592 Seitenfehler. Kalt gemessen: **0,44 GB/s** ohne Rat, **3,41
+mit**, 5,24 mit `pread`. ⚑ `pread` wäre schneller und kommt trotzdem
+nicht in Frage: Es bräuchte den Heap-Puffer, den Fund 62 abgeschafft
+hat.
+
+⛑ **Fund 332, der grösste Posten.** Ein Gemisch rechnet je Token 1 152
+kleine Matrizen, jede eine eigene Poolrunde, **und jede bekam zwei von
+zwölf Fäden**: `768 × 2048` liegt knapp über `PARALLEL_AB` und knapp
+unter dem Zweifachen von `ARBEIT_JE_THREAD`. Dieselben Zeilen in 72
+statt 1 152 Runden: **12,76 statt 63,72 ms je Token.** Neu sind
+`linear_w8a16_buendel` und `mlp_int_experten`.
+
+⛑ **Fund 333: knapp drei Minuten Ladezeit waren eine Prüfsumme auf
+einem Kern**, gemessen 180 MB/s. Jetzt läuft sie über alle Kerne und in
+Manifestreihenfolge; damit hängt auch nicht mehr am Streuwert einer
+`HashMap`, welcher von mehreren Fehlern gemeldet wird.
+
+⛔️ **Fund 334, und er hätte fast alle Zahlen dieses Eintrags
+verdorben.** Die Vergleichsdatei stammte aus dem Bestand und war mit
+`--features cpu-simd` gebaut, die Neubauten liefen mit der Vorgabe.
+**Der Unterschied ist 25 bis 35 Prozent**, also dieselbe Grössenordnung
+wie die gemessene Wirkung. ⛑ **Gefunden hat es die Gegenprobe an den
+dichten Modellen**, wo die Änderung gar nichts tun konnte und trotzdem
+ein Drittel fehlte. Eine Messreihe vergleicht nicht zwei Stände,
+sondern zwei Dateien.
+
+⚑ **Nebenbei beantwortet, und die Antwort ist nein:** Ein eigener
+Expertenpuffer würde nicht helfen. Der Seitenpuffer dieser Maschine
+hält rund **10 GB**; darüber ist das zweite Lesen derselben Dateien
+**langsamer** als das erste (14,5 GB: 5,48 s kalt gegen 6,23 s warm).
+
+⚠️ **Zwei Hebel bleiben offen, und beide brauchen eine Entscheidung
+statt einer Messung:** das Artefaktformat je Ebene zusammenlegen
+(36 864 Expertendateien zu 144) und die Prüfsumme beim **ersten
+Gebrauch** statt beim Laden. Der zweite tauscht eine Zusage gegen eine
+andere: „jedes Byte, das in eine Ausgabe eingegangen ist, war geprüft"
+bliebe, „das ganze Artefakt ist heil" fiele weg.
+
+### v0.61.0 – 2026-09-11 (die Vorbereitung wird doppelt so schnell, ohne eine Zahl zu ändern)
+
+**Auftrag des Projektinhabers:** erst den Mac-Pfad in Ordnung bringen,
+dann das 27B-Modell. Die drei Hebel aus der Durchsatzmessung sind
+umgesetzt, dazu ein vierter, den erst das Messen sichtbar gemacht hat.
+
+| Stand | Prefill (169 Token) | Decode |
+|---|---|---|
+| vorher | 13 776 ms, **12,3 Tok/s** | 10,4 Tok/s |
+| ohne Kopf in der Vorbereitung | 10 040 ms, 16,8 | 10,4 |
+| mit stehenden Fäden | 9 400 ms, 18,2 | 10,3 |
+| ebenenweise statt tokenweise | 8 900 ms, 19,0 | 10,3 |
+| gebündelter MLP, Kachel 8 | 8 500 ms, 19,9 | 10,3 |
+| **KV-Verlauf nicht mehr kopiert** | **6 263 ms, 27,0** | **13,9** |
+
+⚑ **Prefill +120 %, Decode +34 %, und keine geänderte Zahl.** Belegt am
+`decode_digest`, der über **alle** Stände derselbe bleibt
+(`bc96e518…`), dazu 44/44 Konformitätsvektoren gegen `reference` und
+gegen `cpu-simd`, 252 Kernel- und 106 Laufzeitprüfungen, Gleitkomma- und
+Divisionsaudit.
+
+⛑ **Fund 330, und er war der grösste Posten von allen.** Die
+Aufmerksamkeit holte sich den KV-Verlauf je Kopf und je Token mit
+`cache.read`, das **jede gespeicherte Position kopiert**, und legte
+mit `past_k.to_vec()` sofort **eine zweite Kopie** an. Bei einem Prompt
+von 169 Token sind das über 36 Ebenen rund **16 GB kopierte Bytes und
+Millionen Belegungen**, für Daten, die unverändert danebenliegen.
+`read_scheiben` leiht sie jetzt aus. **Dieselbe Klasse wie die 358 MB je
+Token, die `linear_w8a16` bis v0.13.4 kostete.**
+
+⚑ **Und die Aufmerksamkeit nimmt jetzt `AsRef<[i16]>`**, damit
+Ausschnitte und eigene Vektoren durch **dieselbe** Umsetzung laufen.
+
+⚑ **Der MLP wird gebündelt**, in Kacheln zu acht: Die drei Matrizen
+sind 74 % der Gewichtsbytes je Ebene, und gebündelt werden sie einmal je
+Kachel gelesen statt einmal je Token. ⛑ **Ohne Kachel war es
+langsamer**, weil dann die Eingaben den Zwischenspeicher räumen; die
+gemessene Kurve steht bei `KACHEL`.
+
+⛑ **Ein Fadenpool statt eines `thread::scope` je Matrix**, und ⛑ **ein
+Drehzähler davor war gemessen 27 % langsamer** und ist zurückgenommen:
+Unbeteiligte Fäden drehen nicht statt zu warten, sondern gegen die
+rechnenden.
+
+⚑ **Gemessen statt vermutet, und das hat die Rangfolge zweimal
+umgeworfen.** Die Ausgangsfrage war, ob ein Metal-Backend fehlt; die
+Messung sagte 27 % der Speicherbandbreite und wies auf drei billigere
+Hebel. Die Aufteilung danach sagte: 65 % steckt im
+Aufmerksamkeitsteil, nicht im MLP. **Beide Male hätte die Intuition
+woanders gesucht.**
+
+`kernels` **0.49.0 auf 0.50.0** (252 Prüfungen), `runtime` **0.43.0 auf
+0.44.0** (106 Prüfungen).
 
 ### v0.60.0 – 2026-09-10 (Fund 306: die Umbenennung hat zwei Verzeichnisse übersehen)
 

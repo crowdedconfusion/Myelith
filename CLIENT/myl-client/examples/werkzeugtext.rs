@@ -26,9 +26,10 @@ fn main() {
     }
     let einstellung = myl_client::einstellungen::Agenteneinstellung {
         schritte: 6,
-        auch_bezeugtes: true,
         wurzel: Some(d.display().to_string()),
         schreiben: true,
+        werkzeuge: Default::default(),
+    modus: Default::default(),
     };
     // ⚑ Mit `--deutsch` dieselbe Ansage in der Fassung vor dem
     // 2026-09-09. Das Beispiel ist damit die billigste Art, den
@@ -41,10 +42,10 @@ fn main() {
     // ⚑ Damit die ganze Schaltermatrix ohne Modell und ohne Rechenzeit
     // anzusehen ist: `--deutsch` und `--werkzeuge voll` in jeder
     // Kombination.
-    let satz = if std::env::args().any(|a| a == "voll") {
-        myl_client::werkzeuge::Werkzeugsatz::Voll
+    let satz = if std::env::args().any(|a| a == "advanced" || a == "voll") {
+        myl_client::werkzeuge::Werkzeugkiste::Advanced
     } else {
-        myl_client::werkzeuge::Werkzeugsatz::Knapp
+        myl_client::werkzeuge::Werkzeugkiste::Base
     };
     let ruestung = match myl_client::ruestung::ruesten(&einstellung, form, satz, Vec::new()) {
         Ok(r) => r,

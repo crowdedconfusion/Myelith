@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.49.0"
+version = "0.51.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",
@@ -480,7 +480,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.43.0"
+version = "0.45.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.22.0"
+version = "0.26.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",

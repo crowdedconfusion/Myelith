@@ -28,10 +28,16 @@
 //! stehen.
 
 mod animation;
+mod anzeige;
 mod auswahl;
+mod eingabe;
+mod einstellseite;
 mod banner;
+mod design;
 mod farben;
+mod schirm;
 mod sitzung;
+mod wahl;
 
 fn main() {
     std::process::exit(sitzung::fahren());

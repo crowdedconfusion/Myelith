@@ -176,9 +176,17 @@ pub fn generate_beobachtet(
     let mut pos = 0usize;
     let mut logits = vec![0i32; model.vocab_size];
 
-    // Prefill: alle Prompt-Tokens durchlaufen
-    for &tid in &token_ids {
-        logits = model.forward_token(tid, pos, &mut cache);
+    // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position.**
+    // Jedes Prompt-Token fuellt den KV-Speicher; seine Logits liest
+    // niemand. Beim 4B-Modell spart das 17,6 % der gelesenen Gewichte
+    // je Prompt-Token, siehe `Model::durch_die_ebenen`.
+    let letzte = token_ids.len().saturating_sub(1);
+    for (i, &tid) in token_ids.iter().enumerate() {
+        if i == letzte {
+            logits = model.forward_token(tid, pos, &mut cache);
+        } else {
+            model.durch_die_ebenen(tid, pos, &mut cache);
+        }
         pos += 1;
     }
 
@@ -268,8 +276,15 @@ pub fn dekodieren_mit_digest(
     let mut pos = 0usize;
     let mut logits = vec![0i32; model.vocab_size];
 
-    for &tid in token_ids {
-        logits = model.forward_token(tid, pos, &mut cache);
+    // Vorbereitung ohne Kopf, ausser fuer die letzte Position; siehe
+    // `Model::durch_die_ebenen`.
+    let letzte = token_ids.len().saturating_sub(1);
+    for (i, &tid) in token_ids.iter().enumerate() {
+        if i == letzte {
+            logits = model.forward_token(tid, pos, &mut cache);
+        } else {
+            model.durch_die_ebenen(tid, pos, &mut cache);
+        }
         pos += 1;
     }
 

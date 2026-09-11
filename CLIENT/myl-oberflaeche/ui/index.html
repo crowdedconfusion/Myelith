@@ -271,13 +271,19 @@
       <!-- ⚑ Steht nur da, wenn das Fenster hierher gefuehrt hat, und
            sagt dann, warum. -->
       <p id="feldhinweis" class="hinweiskasten" role="status" hidden></p>
-      <table id="einstellungen"><tbody></tbody></table>
-      <p class="pfad" id="pfad"></p>
-      <p class="pfad" id="setzmeldung" role="status"></p>
-
-      <!-- ⚑ **Die Aktualisierung steht am Ende und nicht oben.** Sie
-           ist keine Einstellung, sondern eine Handlung, und wer die
-           Seite oeffnet, kommt wegen eines Modells oder eines Ordners.
+      <!-- ⚑ **Drei Tabellen und nicht eine** (Festlegung des
+           Projektinhabers, 2026-09-11). Die Reihenfolge der Seite folgt
+           dem, wonach jemand sucht: erst die Sprache, dann die
+           Aktualisierung, dann die Modelle, dann was dieser Rechner
+           hergibt, und ganz zuletzt die Feinheiten von Modell und
+           Agent. **Welches Feld in welche Tabelle gehoert, entscheidet
+           sein Name und nicht seine Ueberschrift**: Namen werden nicht
+           uebersetzt, Ueberschriften schon. -->
+      <table id="felder-oberflaeche"><tbody></tbody></table>
+      <!-- ⚑ **Die Aktualisierung steht gleich hinter der Sprache**
+           (Festlegung des Projektinhabers, 2026-09-11). Sie ist keine
+           Einstellung, sondern eine Handlung, und es ist die Handlung,
+           wegen der jemand diese Seite am ehesten oeffnet.
 
            ⚠️ **Der Knopf ist gesperrt, solange es nichts zu tun gibt
            oder nichts zu tun MOEGLICH ist.** Wer das Programm aus
@@ -317,6 +323,10 @@
         </div>
       </section>
 
+      <!-- ⚑ Die Grenzen dieses Rechners stehen bei dem, was er
+           hergibt: Es ist dieselbe Frage, einmal als Zahl und einmal
+           als Regler. -->
+      <table id="felder-grenzen"><tbody></tbody></table>
       <!-- ⚑ **Was dieser Rechner hergibt, und was davon freigegeben
            ist.** Der Abschnitt entsteht aus dem Hardwarescan und nicht
            aus einer festen Liste: Wie viele Rechenwerke ein Rechner
@@ -326,6 +336,11 @@
         <p id="freigabehinweis" class="pfad"></p>
         <div id="regler"></div>
       </section>
+      <table id="felder-rest"><tbody></tbody></table>
+      <p class="pfad" id="pfad"></p>
+      <p class="pfad" id="setzmeldung" role="status"></p>
+
+
 
     </section>
   </div>

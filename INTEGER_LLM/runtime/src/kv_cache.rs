@@ -40,6 +40,38 @@ impl KVCache {
         self.v.get_mut(&layer).unwrap().get_mut(&head).unwrap().insert(pos, value);
     }
 
+    /// **Die Positionen bis `upto`, als Ausschnitte statt als Kopien.**
+    ///
+    /// # ⛑ Warum es diesen zweiten Eingang gibt
+    ///
+    /// [`KVCache::read`] gibt eigene Vektoren heraus und kopiert dafuer
+    /// **jede** gespeicherte Position. Die Aufmerksamkeit ruft ihn je
+    /// Kopf und je Token; bei einem Prompt von 169 Token sind das ueber
+    /// 36 Ebenen rund **8 GB kopierte Bytes und eine Million
+    /// Belegungen**, fuer Daten, die unveraendert danebenliegen.
+    ///
+    /// ⚑ **Gelesen wird dasselbe, in derselben Reihenfolge.** Der
+    /// `BTreeMap` haelt die Positionen sortiert; hier wie dort kommen
+    /// sie aufsteigend heraus.
+    pub fn read_scheiben(
+        &self,
+        layer: usize,
+        head: usize,
+        upto: usize,
+    ) -> (Vec<&[i16]>, Vec<&[i16]>) {
+        let k_head = self.k.get(&layer).unwrap().get(&head).unwrap();
+        let v_head = self.v.get(&layer).unwrap().get(&head).unwrap();
+        let keys: Vec<&[i16]> = k_head
+            .range(..=upto)
+            .map(|(_, v)| v.as_slice())
+            .collect();
+        let values: Vec<&[i16]> = v_head
+            .range(..=upto)
+            .map(|(_, v)| v.as_slice())
+            .collect();
+        (keys, values)
+    }
+
     pub fn read(&self, layer: usize, head: usize, upto: usize) -> (Vec<Vec<i16>>, Vec<Vec<i16>>) {
         let k_head = self.k.get(&layer).unwrap().get(&head).unwrap();
         let v_head = self.v.get(&layer).unwrap().get(&head).unwrap();

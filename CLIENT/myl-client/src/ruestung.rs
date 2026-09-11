@@ -37,8 +37,8 @@ pub struct Ruestung {
     /// abweichen, und dann kuendigte die Ansage Namen an, die der Kasten
     /// nicht kennt.
     pub form: myl_local_agent::werkzeug::Ansageform,
-    /// Welcher Werkzeugsatz angeboten wurde.
-    pub satz: crate::werkzeuge::Werkzeugsatz,
+    /// Welcher Werkzeugkiste angeboten wurde.
+    pub satz: crate::werkzeuge::Werkzeugkiste,
 }
 
 impl Ruestung {
@@ -54,11 +54,74 @@ impl Ruestung {
 /// Arbeitsverzeichnis stillschweigend zu nehmen waere bequem und gaebe
 /// dem Agenten eine Grenze, die davon abhaengt, wo der Nutzer gerade
 /// steht.
+/// **Wer gefragt wird, bevor geschrieben wird.**
+///
+/// ⚑ **Ein Rueckruf und keine Einstellung.** Ob gefragt wird, sagt
+/// `agent.modus`; **wie** gefragt wird, weiss nur die Oberflaeche: Die
+/// Konsole legt eine Zeile vor, das Fenster einen Kasten. Diese Kiste
+/// weiss von beidem nichts und soll es auch nicht.
+///
+/// `None` heisst: nicht fragen. Ein `Some`, das immer `true` gibt, ist
+/// etwas anderes und **fuehlt sich fuer den Nutzer auch anders an**,
+/// deshalb der Unterschied.
+pub type Nachfrage = std::sync::Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
+
+/// Ein Werkzeug, das vor dem Ausfuehren fragt.
+///
+/// ⚑ **Es umhuellt, statt einzugreifen.** Das Werkzeug selbst weiss
+/// nichts davon, und die Erlaubnisse des Harness gelten unveraendert:
+/// **Eine Nachfrage nimmt etwas weg und gibt nie etwas dazu.**
+struct Nachfragend {
+    inner: Box<dyn Werkzeugausfuehrung>,
+    fragen: Nachfrage,
+}
+
+impl Werkzeugausfuehrung for Nachfragend {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn ausfuehren(
+        &self,
+        argumente: &serde_json::Value,
+    ) -> Result<String, myl_local_agent::ausfuehrung::Werkzeugfehler> {
+        if !(self.fragen)(self.inner.name(), argumente) {
+            // ⚑ **Die Absage geht an das Modell zurueck**, als
+            // Ergebnis dieses Werkzeugs. Ein stiller Fehlschlag liesse
+            // es dieselbe Handlung gleich noch einmal vorschlagen.
+            // ⛑ **Der Satz ist fuer ein kleines Modell geschrieben.**
+            // „Vom Nutzer abgelehnt" allein liess das 4B-Modell im
+            // Probelauf raten, die Datei sei nicht da oder der Zugriff
+            // gestoert. **Eine Absage, die wie ein Fehler klingt, wird
+            // wie ein Fehler behandelt**, und dann versucht es dieselbe
+            // Handlung gleich noch einmal.
+            return Err(myl_local_agent::ausfuehrung::Werkzeugfehler {
+                grund: "Der Nutzer hat diese Handlung abgelehnt. Sie wurde nicht \
+                        ausgefuehrt, und die Datei ist unveraendert. Wiederhole sie \
+                        nicht; sage stattdessen, was du sonst tun kannst."
+                    .to_string(),
+            });
+        }
+        self.inner.ausfuehren(argumente)
+    }
+}
+
 pub fn ruesten(
     agent: &Agenteneinstellung,
     form: myl_local_agent::werkzeug::Ansageform,
-    satz: crate::werkzeuge::Werkzeugsatz,
+    satz: crate::werkzeuge::Werkzeugkiste,
     zusaetzlich: Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)>,
+) -> Result<Ruestung, String> {
+    ruesten_mit(agent, form, satz, zusaetzlich, None)
+}
+
+/// Dasselbe, aber mit einer Nachfrage vor jeder schreibenden Handlung.
+pub fn ruesten_mit(
+    agent: &Agenteneinstellung,
+    form: myl_local_agent::werkzeug::Ansageform,
+    satz: crate::werkzeuge::Werkzeugkiste,
+    zusaetzlich: Vec<(myl_local_agent::werkzeug::Werkzeug, Box<dyn Werkzeugausfuehrung>)>,
+    nachfrage: Option<Nachfrage>,
 ) -> Result<Ruestung, String> {
     let mut kasten = Werkzeugkasten::neu();
     for (angebot, ausfuehrung) in zusaetzlich {
@@ -88,7 +151,16 @@ pub fn ruesten(
                     .into_iter()
                     .find(|a| a.name == name)
                     .ok_or_else(|| format!("Dateiwerkzeug {name} wird nicht angeboten"))?;
-                let ausfuehrung: Box<dyn Werkzeugausfuehrung> = w.ausfuehrung(ein.clone(), form);
+                let mut ausfuehrung: Box<dyn Werkzeugausfuehrung> =
+                    w.ausfuehrung(ein.clone(), form);
+                // ⚑ **Nur die schreibenden.** Ein Lesewerkzeug, das
+                // nachfragt, waere nach drei Fragen abgeschaltet, und
+                // dann bestaetigt niemand mehr etwas.
+                if w.schreibt() {
+                    if let Some(f) = nachfrage.clone() {
+                        ausfuehrung = Box::new(Nachfragend { inner: ausfuehrung, fragen: f });
+                    }
+                }
                 kasten
                     .einhaengen(angebot, ausfuehrung)
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;

@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.34.2 (`myl-client` 0.22.0, `myl-oberflaeche` 0.27.2, `myl-console` 0.1.0)
-> **Datum:** 2026-09-10
+> **Version:** 0.40.0 (`myl-client` 0.26.0, `myl-oberflaeche` 0.30.0, `myl-console` 0.7.0)
+> **Datum:** 2026-09-11
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -27,13 +27,18 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 
 | | |
 |---|---|
-| **Der Agent in der Konsole** | In ein Verzeichnis gehen, `myelith` tippen. **Dieses Verzeichnis ist der Arbeitsordner**, ohne Schalter und ohne Einstellung; `/model`, `/settings`, `/hilfe`, `/ende` |
+| **Der Agent in der Konsole** | In ein Verzeichnis gehen, `myelith` tippen. **Dieses Verzeichnis ist der Arbeitsordner**, ohne Schalter und ohne Einstellung; `/model`, `/settings` (mit den Pfeiltasten bedienbar), `/help`, `/exit`. Beim Start werden Design und Modell mit den Pfeiltasten gewählt. Die Eingabezeile steht **fest am unteren Rand**, die Ausgabe rollt darüber weg; darunter Modus, Modell, Werkzeugkiste, der Befehl für die Hilfe und der Arbeitsordner |
+| **Fünf Konsolen-Designs** | `Standard` nimmt die Farben deines Terminals, dazu `Myelith`, `Bernstein`, `Tiefsee`, `Tinte`. Voreingestellt über `oberflaeche.design`, beim Start ohne bleibende Wirkung wählbar |
+| **Was gerade läuft, steht da** | Eine Zeile fest über dem Eingabekasten, mittig: Ladetext, verstrichene Zeit, gelesene und geschriebene Token, laufende Tätigkeit; die Farbe wandert in zwei Minuten durch den Regenbogen, in einfarbigen Designs pulst sie. Jeder Schritt und jeder Werkzeugaufruf **bleibt** in der Zeitleiste; `^S` schaltet auf die ausführliche Form, in der auch der Denkvorgang live durchläuft |
+| **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. ⚠️ Im Fenster bleiben die schreibenden Werkzeuge dann ganz weg: Einen Bestätigungskasten gibt es dort noch nicht |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
+| **Drei Werkzeugkisten** | `Base` für kleine Modelle, `Advanced` für grosse, `1337` nur mit `MYELITH_ADMIN=1` in der Umgebung. Welche ein Lauf bekommt, entscheidet die Grösse des Artefakts (Grenze: sieben Milliarden Parameter), und `agent.werkzeuge` überstimmt das. ⚠️ **Heute liegen in allen dreien dieselben fünf Werkzeuge**: Der Schnitt ist gebaut, der Inhalt kommt noch. ⛔️ Und die Marke **verbirgt**, sie schützt nicht: Wer sie setzen will, setzt sie |
+| **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
 | **Modelle holen und Artefakte bauen** | Aus der Einstellungsseite heraus, mit Ladebalken unter dem angeklickten Modell und einer schliessbaren Meldung, wenn es fertig ist |
-| **Einstellungen** | Vier Bereiche, elf Felder und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
+| **Einstellungen** | Fünf Bereiche, vierzehn Felder (dreizehn davon im Fenster: das Konsolen-Design wirkt dort nicht) in der Reihenfolge, in der jemand sucht (Sprache, Aktualisierung, Modelle, was dieser Rechner hergibt, dann Modell und Agent), und dazu ein Schieberegler je gefundenem Rechenwerk, jedes mit Beschriftung und einem Satz darunter, was es bewirkt. Art **und** Beschriftung kommen aus der Kiste. Die drei Verzeichnisfelder lassen sich über den Fensterdialog des Systems wählen, getippt werden dürfen sie weiter |
 | **Sprache** | Deutsch oder Englisch, umschaltbar in den Einstellungen und sofort wirksam. Feldnamen, Pfade und Modellnamen bleiben, wie sie sind |
 | **Aus einem frischen Klon einrichten** | Drei Skripte unter `INSTALL/`, je eines für macOS, NixOS und Windows, mit einer Anleitung je System daneben. Sie prüfen erst, bauen dann, und laden nichts nach |
 | **Nach Aktualisierungen sehen** | Auf der Einstellungsseite: Gefragt wird, ob `origin` Änderungen hat, die dieser Klon nicht hat. Eingespielt wird mit `git merge --ff-only` und dem Installationsskript der Plattform |
@@ -51,8 +56,9 @@ Logik, die hier nicht hingehört.
 | Verzeichnis | Zweck |
 |---|---|
 | `myl-client/` | Die Kiste. Einstellungen, örtlicher Betrieb, Agentenschleife, Werkzeuge mit Einhängegrenze, Türklient. Kommandozeile `myl`. |
+| `myl-console/` | Der Agent in der Konsole: `myelith`. Startbild, Modellwahl, Eingaberahmen. **Ohne eigene Logik**, alles kommt aus `myl-client`. |
 | `myl-oberflaeche/` | Die grafische Oberfläche auf Tauri v2. Rücken in Rust, Frontend als reines HTML, CSS und ES-Module: **kein Bündler, keine Node-Werkzeugkette**. |
-| `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Einundzwanzig Prüfungen halten HTML, CSS, Skript und Rücken gegeneinander. |
+| `myl-oberflaeche/ui/` | `index.html`, `stil.css`, `app.js`, `netz.js`. Neunundvierzig Prüfungen halten HTML, CSS, Skript und Rücken gegeneinander. |
 | `myl-oberflaeche/icons/` | Symbole. `icon.ico` und `icon.icns` sind aus `icon.png` abgeleitet und liegen fertig da; von Hand nachbessern hilft nicht, die nächste Ableitung überschreibt es. |
 
 ## Ausliefern
@@ -108,6 +114,344 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.40.0 – 2026-09-11 (Zahlen lassen sich tippen, und die Kürzel stehen unten)
+
+**Zwei Nachträge des Projektinhabers zur Einstellungsseite der Konsole.**
+
+⚑ **Zahlen und Grenzen nehmen auch eine Eingabe.** Enter öffnet eine
+Zeile, der bisherige Wert steht in der Klammer daneben, Enter bestätigt.
+**Ein Pfeil ist zum Nachstellen da und nicht zum Eingeben:** Wer von 600
+auf 4000 will, drückt sonst vierunddreissig Mal.
+
+⚑ **Die Tastenkürzel stehen in der untersten Zeile:** `↑↓ waehlen · ←→
+aendern · ⏎ eingeben · ^S sichern · ^R Feld zuruecksetzen · Esc
+schliessen`. `^S` sichert, ohne zu schliessen; `Esc` sichert mit.
+⚠️ **`^R` setzt das gewählte Feld zurück und nicht die ganze Ablage**,
+und die Zeile unten sagt genau das.
+
+⛑ **Zwei Gegenproben:** Eine hält die Kürzelzeile und den Tastenzweig
+zusammen (dieselbe Klasse wie Fund 271), die andere lässt den Setzer
+jede Vorgabe annehmen.
+
+`myl-console` **0.6.0 auf 0.7.0** (95 Prüfungen).
+
+### v0.39.0 – 2026-09-11 (die Einstellungen der Konsole lassen sich mit den Pfeilen bedienen)
+
+**Auftrag des Projektinhabers:** `/settings` soll sich, wo es geht, mit
+den Pfeiltasten bedienen lassen.
+
+⚑ **Hoch und runter wählt, links und rechts ändert.** Eine Auswahl, ein
+Schalter, eine Zahl und eine Grenze kommen aus einer festen Menge; was
+freien Text braucht, bekommt ihn auf Enter. **Die Winkel `‹ ›` stehen
+nur dort, wo sie etwas bedeuten.**
+
+⛑ **Damit fällt eine frühere Festlegung, und zwar begründet.** Bis
+hierher zeigte `/settings` nur an, weil ein zweiter Setzer die dritte
+Stelle wäre, die dieselben Feinheiten kennt. **Die Begründung galt dem
+Setzer und nicht der Bedienung:** Gesetzt wird weiterhin ausschliesslich
+über die Kiste, und diese Seite entscheidet nur, welche Taste welchen
+Wert vorschlägt. Die Gegenprobe dazu läuft jedes Feld zwölf Mal in beide
+Richtungen durch und lässt den Setzer jeden Vorschlag annehmen.
+
+⚑ **Der Schritt einer Zahl ist abgeleitet und nicht getippt:** eine
+Stelle unter der höchsten, mindestens eins. ⚑ **Unter dem kleinsten Wert
+einer Grenze steht `aus`**, und von dort führt der Pfeil wieder hinein:
+Das ist der Sinn einer Grenze.
+
+⚑ **Gezeigt wird die Beschriftung und nicht die Kennung** („Deutsch"
+statt `de`), und `aus` steht nur da, wo es `aus` heisst: Ein nicht
+gesetzter Ordner ist nicht abgeschaltet, er ist leer.
+
+⚑ **Was dort geändert wird, gilt sofort.** Modus, Design,
+Schreiberlaubnis und Werkzeugkiste werden nach dem Verlassen neu
+gelesen.
+
+`myl-console` **0.5.0 auf 0.6.0** (92 Prüfungen).
+
+### v0.38.0 – 2026-09-11 (ein verdeckter Name, zwei Überschriftsgrössen zu viel, und die Welle)
+
+**Neun Meldungen des Projektinhabers**, und die erste war der Fehler,
+der das Fenster unbrauchbar machte.
+
+⛑ **Fund 324: `Cannot access 't' before initialization`, und zwar genau
+dann, wenn ein Lauf läuft.** Zwei Funktionen hielten ein Element in
+`const t`; die Übersetzung heisst auch so. **Eine lokale Bindung
+verdeckt den äusseren Namen im ganzen Block, auch vor ihrer eigenen
+Zeile.** Die eine Stelle rief die Übersetzung oberhalb ihrer
+Deklaration, und es war die Zeile, die das Laufzeichen baut: Deshalb
+erschien weder der Ladeindikator noch eine Antwort, bei jedem Modell und
+in jeder Einstellung. **Eine Prüfung geht jetzt jede Zeile durch:** Ein
+Name, den es nur einmal gibt, kann gar nicht erst verdeckt werden.
+
+⛑ **Fund 325: drei Überschriftsgrössen, und die grösste war die
+falsche.** `h2` hatte keine Angabe und nahm die Vorgabe des Browsers,
+also mehr als das `h1` der Seite. Jetzt zwei Stufen: „Einstellungen"
+gross, alles darunter gleichrangig, gleich gross, jedes mit einer Linie
+darunter.
+
+⚑ **Das Konsolen-Design steht nicht mehr im Fenster**, denn dort
+bewirkt es nichts. **Eine Einstellung, die an der Stelle, an der sie
+steht, nichts bewirkt, ist schlimmer als eine fehlende.**
+
+⚑ **Die englische Übersetzung ist vollständig**, nachgerechnet: 64
+Sätze in beiden Tabellen, 55 Sprachpaare im Feldkatalog, kein Umlaut im
+englischen Text, kein unübersetzter Satz.
+
+⚑ **In der Konsole steht die Ladezeile jetzt fest über dem Kasten**,
+mittig, mit einer leeren Zeile Abstand. In der Klammer stehen auch die
+Token: `(1m 19s · ↑588 ↓8 tokens · thinking)`; gezählt wird im Modell
+und nicht geschätzt. ⚑ **Das beantwortet nebenbei eine Frage, die vorher
+niemand stellen konnte:** Beim 4B-Modell vergehen achtzig Sekunden,
+**bevor das erste Token fällt**, und das ist die Vorbereitung des
+Prompts und kein Hänger.
+
+⚑ **Die Farbe läuft als Welle durch die Buchstaben**, jedes Zeichen 400
+ms nach dem davor, und nur der Ladetext selbst: Zeit, Token und
+Tätigkeit sind Angaben und keine Zierde. Der Schalter für die
+ausführliche Anzeige heisst `^S`, und in ihr läuft der Denkvorgang
+**live durch, Token für Token**.
+
+⚑ **Weniger Vorspann:** Der Untertitel unter der Marke ist weg, und nach
+dem Laden wird aufgeräumt. ⚑ Beide Kopien des Banners haben dieselbe
+Änderung bekommen, nur die Konstante unterscheidet sich: **Die
+Vergleichsprüfung läuft unverändert weiter.**
+
+⚑ **Und die Fusszeile sagt, wenn nicht geschrieben werden darf.** ⛑
+Dieselbe Klasse wie Fund 315: Ohne `agent.schreiben` bekommt der Agent
+`write_file` gar nicht erst und antwortet „ich kann keine Dateien
+speichern"; **wer das nicht weiss, sucht den Fehler beim Modell.**
+
+⛔️ **Fund 326: `git checkout` auf eine Datei mit unversionierter
+Arbeit** nahm einen Tagesstand zurück. **Eine Gegenprobe wird aus einer
+Kopie zurückgeholt, nie aus `git`**, solange nichts eingecheckt ist.
+
+`myl-client` **0.25.0 auf 0.26.0** (165 Prüfungen), `myl-console`
+**0.4.0 auf 0.5.0** (88 Prüfungen), `myl-oberflaeche` **0.29.1 auf
+0.30.0** (51 Prüfungen).
+
+### v0.37.0 – 2026-09-11 (der Start fragt zweimal, die Zeitleiste bleibt stehen, und die Farbe wandert)
+
+**Sieben Meldungen und Aufträge des Projektinhabers**, und die erste war
+ein Fehler.
+
+⛑ **Fund 320: Abschicken sah aus wie nichts tun.** Der Text blieb im
+Eingabekasten stehen, während das Modell schon rechnete, und in der
+Ausgabe erschien er nie. **Ein Gespräch, in dem nur eine Seite dasteht,
+lässt sich hinterher nicht lesen.** Die Zeile wird jetzt beim Abschicken
+aus dem Kasten geräumt und als `❯ …` in die Zeitleiste geschrieben.
+
+⛑ **Fund 321: Die Anzeige hielt zurück, was geschah.** Werkzeugaufrufe
+standen nur in ihrem Gedächtnis und wurden erst gedruckt, wenn jemand
+den Schalter drückte; **damit fehlte in der Zeitleiste genau das, was
+vor der Antwort geschehen war.** Jetzt steht jede Zeile da, sobald sie
+entsteht, und der Schalter entscheidet nur noch, **wie ausführlich** die
+nächsten sind. Er heisst `^O`: `^T` ist auf macOS `SIGINFO` und in
+mehreren Terminals belegt.
+
+⚑ **Der Start fragt zweimal, beides mit den Pfeiltasten:** erst das
+Design, dann das Modell. Die Designwahl färbt die Modellwahl schon mit.
+
+⚑ **Fünf Designs:** `Standard` (die Farben deines Terminals,
+unverändert), `Myelith` (das bisherige Bild), `Bernstein`, `Tiefsee`,
+`Tinte`. **`Standard` ist kein Design, sondern die Abwesenheit eines:**
+Wer sein Farbschema eingestellt hat, hat damit schon gewählt.
+Voreingestellt ist `oberflaeche.design`; die Wahl beim Start ändert die
+Ablage nicht.
+
+⚑ **Die Modellwahl zeigt alles, was da ist**, mit den Anzeigenamen aus
+dem Katalog, und den Netzeintrag gesperrt samt Grund. **Ein gesperrter
+Eintrag ist etwas anderes als ein fehlender.** Nach dem Laden steht da:
+`Modell Myelith 4B (<Pfad>) wurde geladen.`
+
+⛑ **Fund 322: Zwei Listen für dieselbe Frage.** Das Fenster hatte die
+Modellliste mit Katalognamen, die Konsole las das Verzeichnis ab. Sie
+liegt jetzt in der Kiste, und beide rufen sie.
+
+⛑ **Fund 323: Eine Zeile, die umbricht, verschiebt die ganze Liste.**
+Die Auswahl springt beim Neuzeichnen um ihre eigene Höhe zurück; eine
+umgebrochene Zeile zählt dort als eine und belegt zwei.
+
+⚑ **Der Kopfblock beim Start ist entfallen** (drei Zeilen). ⚠️ **Der
+Arbeitsordner durfte nicht mit verschwinden:** Ein Agent mit
+Dateiwerkzeugen arbeitet genau dort. Er steht jetzt dauerhaft in der
+zweiten Zeile unter dem Eingabekasten.
+
+⚑ **Die Farbe des Ladetextes wandert linear durch den Regenbogen**, ein
+voller Durchlauf in zwei Minuten, ganzzahlig gerechnet. In den
+einfarbigen Designs pulst stattdessen die Helle derselben Farbe. Dazu
+sechs Drehscheiben, je Schritt eine andere: **Die Zeile wechselt nicht
+nur den Text, sondern auch ihre Bewegung.**
+
+`myl-client` **0.24.0 auf 0.25.0** (165 Prüfungen), `myl-console`
+**0.3.0 auf 0.4.0** (85 Prüfungen), `myl-oberflaeche` **0.29.0 auf
+0.29.1** (49 Prüfungen).
+
+### v0.36.0 – 2026-09-11 (die Eingabe steht unten fest, der Agent hat zwei Modi, und die Kisten haben Namen)
+
+**Fünf Aufträge des Projektinhabers**, alle am selben Abend, und sie
+gehören zusammen: **Der Konsolenclient soll sich bedienen lassen wie ein
+Programm und nicht wie ein Protokoll.**
+
+⚑ **Der Rahmen steht fest am unteren Rand.** Das Terminal bekommt einen
+Rollbereich; die Ausgabe rollt darüber weg, die vier Zeilen darunter
+bleiben stehen. ⚠️ **Was reserviert wird, wird zurückgegeben**, auch bei
+Strg-C: Ein Programm, das mit gesetztem Rollbereich endet, hinterlässt
+eine Shell, die nur noch im oberen Teil des Fensters schreibt.
+
+⛑ **Fund 316: Die Eingabezeile war ein Zeichen schmaler als der
+Rahmen**, das schliessende Leerzeichen fehlte. **Im Quelltext ist das
+unsichtbar und im Bild sofort da.**
+
+⚑ **Während eines Laufs steht eine Zeile da, und sie sagt drei Dinge:**
+einen Ladetext, der sich bewegt, in Klammern die verstrichene Zeit und
+was gerade geschieht, dahinter den Schalter. Die Ladetexte meinen
+nichts, und das ist Absicht: **Was wirklich geschieht, steht daneben in
+der Klammer.** `^T` zeigt die Werkzeugaufrufe, auch die, die vorher
+schon liefen.
+
+⚑ **Zwei Modi, und Umschalt-Tab dazwischen.** Im `manual mode` wird
+jede schreibende Handlung vorgelegt und läuft erst nach einer
+Bestätigung; Lesen und Suchen fragen nie. **Ein Modus, der auch das
+Lesen bestätigen liesse, wäre nach drei Fragen abgeschaltet.** Die
+Nachfrage hängt am Werkzeug und nicht an der Meldung: Ein Melder darf
+berichten, verhindern kann nur, wer ausführt.
+
+⚠️ **Im Fenster bleiben die schreibenden Werkzeuge im manual mode ganz
+weg**, denn es hat noch keinen Bestätigungskasten. **Ein Modus, der in
+einem Fenster fragt und im anderen stillschweigend durchlässt, wäre
+schlimmer als keiner.**
+
+⛑ **Fund 318: Eine Absage, die wie ein Fehler klingt, wird wie ein
+Fehler behandelt.** „Vom Nutzer abgelehnt" liess das 4B-Modell raten,
+die Datei sei nicht da, und es empfahl einen zweiten Versuch. Der Satz
+ist jetzt für ein kleines Modell geschrieben.
+
+⚑ **Die Werkzeugkisten heissen `Base`, `Advanced` und `1337`.** Die
+dritte steht nur mit `MYELITH_ADMIN=1` in der Auswahl. ⛔️ **Verborgen
+ist nicht geschützt, und das steht im Quelltext:** Wer die Marke setzen
+will, setzt sie in einer Sekunde. Sie hält die Kiste aus der Liste
+heraus, damit niemand sie für eine dritte gleichrangige Wahl hält.
+
+⛑ **Fund 314: Der Schalter `--werkzeuge` verglich ein Wort von Hand**,
+während die Hilfe darüber `knapp` nannte, ein Wort, das es nie gab.
+
+⛑ **Fund 315: Zwei Erlaubnisse für dieselbe Sache sind eine zu viel.**
+„Bezeugte Werkzeuge zulassen" musste gesetzt sein, sonst standen die
+Dateiwerkzeuge zwar in der Ansage und liefen nicht. **Ein angemeldetes
+Werkzeug, das nicht laufen kann, ist die schlechteste aller
+Auskünfte.** Der Schalter ist entfallen: Das eingehängte Verzeichnis
+ist die Zustimmung, `agent.schreiben` entscheidet über das Schreiben,
+und die Werkzeugkiste sagt, welche Werkzeuge es gibt.
+
+⚑ **Die Einstellungsseite hat eine neue Reihenfolge:** Sprache,
+Aktualisierung, Modelle, was dieser Rechner hergibt, und zuletzt Modell
+und Agent. Welches Feld in welche Tabelle gehört, entscheidet sein
+**Name**: `kap.speicher` heisst in jeder Sprache so, „Grenzen dieses
+Rechners" nicht.
+
+⚑ **Die Befehle der Konsole heissen `/help` und `/exit`**, die
+deutschen Formen bleiben als Zweitnamen. ⛑ Und sie stehen in **einer**
+Liste, aus der Ausführung und Hilfe kommen; die Prüfung dazu zählte
+vorher, ob jedes Wort mindestens zweimal im Quelltext steht. **Eine
+Prüfung, die Wiederholung verlangt, hält die Wiederholung fest.**
+
+⚑ **Beide Wege des manual mode sind am echten Modell gefahren.** Mit
+`j` steht das Wort in der Datei, mit `n` gibt es keine Datei, und das
+Modell berichtet die Absage.
+
+`myl-client` **0.23.0 auf 0.24.0** (165 Prüfungen), `myl-oberflaeche`
+**0.28.0 auf 0.29.0** (49 Prüfungen), `myl-console` **0.2.0 auf 0.3.0**
+(76 Prüfungen).
+
+### v0.35.0 – 2026-09-10 (zwei Werkzeugkisten, eine Mehrfachänderung und ein Rahmen, der unten steht)
+
+**Auftrag des Projektinhabers**, in vier Sätzen: mehr Agentenwerkzeuge;
+je eine Werkzeugkiste für kleine Modelle unter 7B und für die ~30B, die
+noch kommen; beide Bedieninstrumente greifen darauf zu; und wer will,
+gibt auch dem kleinen Modell die volle Kiste.
+
+⚑ **Die Kiste hängt am Artefakt, nicht am Aufrufort.**
+`Werkzeugkiste::fuer_artefakt` liest `model_config.json`, nimmt die Zahl
+vor dem `b` in der Variante (`30b-a3b` sind dreissig Milliarden) und
+entscheidet an der Grenze von sieben. Findet sie nichts, nimmt sie die
+kleine Kiste und sagt, warum. Fenster und Konsole rufen dieselbe
+Funktion, und im Fenster steht sie an genau einer Stelle: **Zwei
+Stellen, die dieselbe Wahl jede für sich treffen, zeigen irgendwann
+fünf Werkzeuge an und geben sieben.**
+
+⚠️ **Heute liegt in beiden Kisten dasselbe**, fünf Dateiwerkzeuge. Der
+Schnitt ist gebaut, der Inhalt fehlt. Das steht hier, weil ein
+Schalter, der nichts umschaltet, sonst wie eine Zusage aussieht.
+
+⚑ **`edit_file` ändert mehrere Stellen auf einmal.** Der Parameter
+`aenderungen` ist eine Liste aus `alt` und `neu`, mindestens ein
+Eintrag. **Erst ein Trockenlauf über eine Kopie, dann wird
+geschrieben:** Wer drei Stellen nennt und bei der zweiten danebenliegt,
+bekommt alle Fehler auf einmal und eine Datei, die unverändert ist.
+Eine halb ausgeführte Änderung ist schlimmer als eine abgelehnte, denn
+danach sieht der Agent eine Datei, die weder der alte noch der neue
+Stand ist.
+
+⛑ **Fund 307: Eine Wache, die auf der obersten Ebene stehenbleibt,
+bewacht die oberste Ebene.** Die Prüfung, dass kein Werkzeug einen
+optionalen Parameter hat, las nur die Felder des Wurzelobjekts. Der
+neue Listenparameter trägt seine Pflichtfelder eine Ebene tiefer, in
+`items.required`, und dort sah niemand hin. Sie steigt jetzt hinab.
+Gegenprobe: ein Pflichtfeld aus dem Listeneintrag entfernt, und sie
+meldet es beim Namen.
+
+⛑ **Fund 312: `myl einstellungen` zeigte zehn von dreizehn Feldern.**
+Die Liste war von Hand getippt, während der Katalog daneben wuchs: Drei
+Felder liessen sich setzen und standen danach nirgends. Sie kommt jetzt
+aus dem Katalog, die Werte aus derselben Funktion wie im Fenster, und
+die Einheit aus der Beschriftung statt aus einer zweiten Liste.
+**Aufgefallen ist es an der eigenen neuen Einstellung**, beim Nachsehen,
+ob sie durch die Kommandozeile zurückkommt.
+
+⚑ **Die Konsole bekommt eine umrandete Eingabezeile.** Darunter steht,
+welches Modell gewählt ist und welche Kiste es hat, **der Name und
+nicht der Pfad**: Gefragt war, welches Modell gewählt ist, und
+`myelith-4b` beantwortet das besser als ein von vorne abgeschnittener
+Pfad. ⚠️ „Unten fixiert" gibt es in einem Terminal nicht, ohne den
+ganzen Bildschirm zu übernehmen; der Rahmen wird deshalb vor jeder
+Eingabe neu gesetzt und wandert mit der Ausgabe nach oben.
+
+⛑ **Fund 308: Im Rohmodus ist ein Zeilenvorschub kein Zeilenende.**
+Gemeldet wird 0x0A als Strg-J, also als Buchstabe; er landete im Text,
+und die Zeile lief weiter. **Wer mehrzeiligen Text einfügt, schickt
+genau dieses Byte.**
+
+⛑ **Fund 309: der Rahmen ohne Boden.** Der Zeilenumbruch der Eingabe
+setzt den Wagen genau auf die untere Kante; alles, was danach gedruckt
+wurde, fing dort an, und die Fusszeile stand mitten in der Antwort.
+Jetzt wird von dort bis zum Schirmende geräumt und die Kante neu
+gezogen.
+
+⛑ **Fund 310: „wortgetreue Kopie" stand nur im Kopf der vier Dateien.**
+Beim ersten Eingriff (Fund 308) zog nichts ausser der eigenen
+Aufmerksamkeit die zweite Kopie nach. Eine Prüfung vergleicht sie jetzt
+Zeile für Zeile, ohne den Kopfvermerk und ohne den Untertitel, der die
+eine erlaubte Abweichung ist.
+
+⛑ **Fund 313: Wer im Klon baut, ändert nicht, was im PATH liegt.**
+`cargo build --release` schreibt nach `target-shared/release/`,
+aufgerufen wird das Programm, das der Installer nach `~/.local/bin`
+gelegt hat. Beide heissen gleich, und **nichts sagt, dass die Kopie
+älter ist.** Wer baut und danach das installierte Programm fährt, fährt
+das von gestern; `INSTALL/installieren-<system>` baut und legt in einem
+Zug.
+
+⚑ **Nachgemessen und nicht behauptet.** Der Rahmen lief an einem
+Pseudoterminal fester Grösse, und der Zeichenstrom wurde durch einen
+kleinen Schirmnachbau gerendert: **Ein Bytestrom mit Wagenbefehlen
+sagt nicht, was am Ende dasteht.** Im selben Lauf hat der 4B-Agent
+`list_directory` gerufen und die beiden Einträge des Ordners richtig
+genannt.
+
+`myl-client` **0.22.0 auf 0.23.0** (165 Prüfungen), `myl-oberflaeche`
+**0.27.2 auf 0.28.0** (49 Prüfungen), `myl-console` **0.1.0 auf 0.2.0**
+(6 Prüfungen am Programm, dazu 7 am Rahmen selbst).
 
 ### v0.34.2 – 2026-09-10 (die Kopfleiste hat eine feste Höhe, und alle vier Abstände kommen aus einer Zahl)
 

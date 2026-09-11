@@ -39,10 +39,10 @@ pub fn dot_int(a: &[i16], b: &[i16]) -> i64 {
 /// (k.len() == seq_len). Die Score-/Value-Schleife muss daher ueber
 /// `k.len()` laufen, NICHT ueber `q.len()` — sonst attendiert jede Query nur
 /// auf den ersten Key und RoPE/Mehrpositions-Attention sind wirkungslos.
-pub fn attention_int(
-    q: &[Vec<i16>],
-    k: &[Vec<i16>],
-    v: &[Vec<i16>],
+pub fn attention_int<Q: AsRef<[i16]>, KV: AsRef<[i16]>>(
+    q: &[Q],
+    k: &[KV],
+    v: &[KV],
     mask: &[Vec<bool>],
     score_mult: i64,
     score_shift: u8,
@@ -75,10 +75,15 @@ pub fn attention_int(
 /// `spur` bekommt je Abfragezeile eine Zeile Wahrscheinlichkeiten auf
 /// `prob_frac_bits`, in derselben Reihenfolge wie die Ausgabe.
 #[allow(clippy::too_many_arguments)]
-pub fn attention_int_mit_spur(
-    q: &[Vec<i16>],
-    k: &[Vec<i16>],
-    v: &[Vec<i16>],
+/// ⚑ **Ueber `AsRef<[i16]>` und nicht ueber `Vec<i16>`.** Der
+/// KV-Speicher gibt seine Positionen als **Ausschnitte** heraus, damit
+/// sie nicht je Kopf und je Token kopiert werden muessen; ein Aufrufer
+/// mit eigenen Vektoren passt weiterhin hinein. **Eine Umsetzung, zwei
+/// Formen**, statt zweier Umsetzungen.
+pub fn attention_int_mit_spur<Q: AsRef<[i16]>, KV: AsRef<[i16]>>(
+    q: &[Q],
+    k: &[KV],
+    v: &[KV],
     mask: &[Vec<bool>],
     score_mult: i64,
     score_shift: u8,
@@ -90,7 +95,7 @@ pub fn attention_int_mit_spur(
     let q_len = q.len();
     let kv_len = k.len();
     assert_eq!(kv_len, v.len(), "attention_int: k und v muessen gleich lang sein");
-    let head_dim = v[0].len();
+    let head_dim = v[0].as_ref().len();
     let mut out = Vec::with_capacity(q_len);
 
     for i in 0..q_len {
@@ -100,7 +105,7 @@ pub fn attention_int_mit_spur(
                 // Fund 19: 1/sqrt(head_dim) als Q15-Multiplikation statt
                 // Rechtsshift — der Shift war nur fuer gerade Zweierpotenzen
                 // korrekt (siehe fixed_point::inv_sqrt_q15).
-                let s = dot_int(&q[i], &k[j]) * score_mult;
+                let s = dot_int(q[i].as_ref(), k[j].as_ref()) * score_mult;
                 scores.push(rshift_round_i64(s, score_shift) as i32);
             } else {
                 scores.push(i32::MIN);
@@ -117,8 +122,9 @@ pub fn attention_int_mit_spur(
         let mut row = vec![0i64; head_dim];
         for j in 0..kv_len {
             if probs[j] == 0 { continue; }
+            let vj = v[j].as_ref();
             for d in 0..head_dim {
-                row[d] += (probs[j] as i64) * (v[j][d] as i64);
+                row[d] += (probs[j] as i64) * (vj[d] as i64);
             }
         }
 

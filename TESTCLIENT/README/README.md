@@ -1,14 +1,14 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.32.0
-> **Datum:** 2026-09-09
+> **Version:** 0.32.1
+> **Datum:** 2026-09-10
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
 > Fremdmaschinen-Automatik, 4.1 der Konformitätslauf als fünfte Stufe,
 > 4.2 die Maschinenbeschreibung im Protokoll). Offen bleibt in Phase 2
 > der Lauf selbst, also die zweite Architektur, und 2.3 (bestätigte
-> Ergebnisse ablegen). 278 Tests grün,
+> Ergebnisse ablegen). 281 Tests grün,
 > alle Läufe gegen die echten Artefakte verifiziert. Der
 > Fremdmaschinen-Test ist auf einem nachgebauten frischen Klon gefahren
 > (aarch64/macOS); Windows und der Weg über Modellbeschaffung und
@@ -543,6 +543,24 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.32.1 – 2026-09-10 (Fund 308: im Rohmodus ist ein Zeilenvorschub kein Zeilenende)
+
+⛑ **Gefunden im Konsolenclient, behoben an beiden Stellen.** Die
+Eingabezeile schaltet das Terminal in den Rohmodus und bekommt jedes
+Byte selbst. Ein Wagenrücklauf, 0x0D, kommt dort als „Eingabe" an; ein
+Zeilenvorschub, 0x0A, dagegen als **Strg-J und damit als Buchstabe**.
+Er landete im Text, und die Zeile lief weiter. **Wer mehrzeiligen Text
+einfügt, schickt genau dieses Byte.**
+
+⚑ **Warum das hier steht, obwohl der Fehler dort auffiel.** Vier
+Dateien dieses Programms liegen wortgetreu auch im Konsolenclient,
+darunter diese. Eine Behebung, die nur eine der beiden Kopien anfasst,
+macht aus zwei gleichen Dateien zwei verschiedene. **Seit heute prüft
+das eine Prüfung drüben Zeile für Zeile**, statt sich auf einen Vermerk
+im Kopf zu verlassen.
+
+`myl-testclient` **0.32.0 auf 0.32.1** (281 Prüfungen).
 
 ### v0.32.0 – 2026-09-10 (Fund 295: der Katalog führt zwei Lizenzen, weil es zwei gibt)
 

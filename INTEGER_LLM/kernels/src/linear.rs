@@ -24,9 +24,21 @@ use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 /// Ab wie vielen Multiplikationen (`zeilen · in_features`) sich das
 /// Aufteilen über Threads überhaupt lohnt.
 ///
-/// **Gemessen, nicht geraten** (`src/bin/threads_probe.rs`). Der Start
-/// eines `thread::scope` kostet rund `12 µs + 6,3 µs je Thread`, also 25
-/// µs bei zwei und 107 µs bei fünfzehn. Unterhalb dieser Schwelle frisst
+/// **Gemessen, nicht geraten.** Der Start eines `thread::scope` kostet
+/// rund `12 µs + 6,3 µs je Thread`, also 25 µs bei zwei und 107 µs bei
+/// fünfzehn.
+///
+/// ⛑ **Der Beleg liegt in `src/bin/threads_probe.rs` und ist gültig.**
+/// Am 2026-09-11 stand hier eine Weile, es gebe die Datei nicht mehr;
+/// **ich hatte in `runtime/src/bin` gesucht statt hier.** Der Pfad ist
+/// relativ zu dieser Kiste, und dort liegt sie. Nachgemessen am selben
+/// Tag auf M5 Pro: 18,5 µs bei zwei Fäden, 28,5 bei vier, 56,5 bei
+/// acht, 84,5 bei zwölf, also dieselbe Gerade wie damals.
+///
+/// ⚠️ **Und die Summe ist kein Nebenposten:** Bei 36 Ebenen und sieben
+/// Matrizen je Ebene sind es 253 Starts je Token, zusammen 15,7 ms von
+/// 68,7 ms. **Ein stehender Fadenpool statt eines Bereichs je Matrix
+/// nimmt ein Viertel der Laufzeit weg**, ohne eine Zahl zu ändern. Unterhalb dieser Schwelle frisst
 /// der Start den Gewinn: Die 896×896-Matrizen von 0,5B brauchen
 /// einkernig 54 µs, und selbst die beste Aufteilung sparte davon nur 12.
 const PARALLEL_AB: usize = 1_500_000;
@@ -132,20 +144,16 @@ where
     }
     let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne);
 
-    let mut out = vec![0i16; zeilen];
-    let je = zeilen.div_ceil(n);
-    std::thread::scope(|s| {
-        for (t, teil) in out.chunks_mut(je).enumerate() {
-            let f = &f;
-            s.spawn(move || {
-                let start = t * je;
-                for (i, ziel) in teil.iter_mut().enumerate() {
-                    *ziel = f(start + i);
-                }
-            });
-        }
-    });
-    out
+    // ⛑ **Hier stand bis zum 2026-09-11 ein `std::thread::scope` je
+    // Matrix**, und damit ein neuer Betriebssystemfaden je Aufruf.
+    // Gemessen: 253 Bereiche je Token beim 4B-Modell, zusammen 15,7 ms
+    // von 68,7, also **23 % reiner Fadenstart**. Der Pool weckt
+    // stattdessen geparkte Faeden.
+    //
+    // ⚑ **An der Aufteilung aendert sich nichts**, und deshalb auch an
+    // keiner Zahl: `n` wird weiter aus der Arbeitsmenge gerechnet, und
+    // jede Ausgabezeile bleibt ihr eigenes Skalarprodukt.
+    crate::fadenpool::rechnen(zeilen, n, f)
 }
 
 /// W8A16 Matrix-Vektor-Multiplikation.
@@ -263,6 +271,141 @@ pub fn add_bias_i16(out: &mut [i16], bias: &[i16], bias_shifts: &[u8], out_frac_
     for ((o, b), &b_shift) in out.iter_mut().zip(bias.iter()).zip(bias_shifts.iter()) {
         let bias_rescaled = rescale(*b as i32, b_shift, out_frac_bits);
         *o = clamp_i16_from_i64((*o as i64) + (bias_rescaled as i64));
+    }
+}
+
+#[cfg(test)]
+mod stapeltests {
+    use super::*;
+
+    fn zufall(n: usize, saat: u64) -> Vec<i16> {
+        let mut x = saat | 1;
+        (0..n)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x % 4096) as i16 - 2048
+            })
+            .collect()
+    }
+
+    /// **Gebuendelt ist bitgleich zu einzeln.**
+    ///
+    /// ⛑ **Die Gegenprobe zur ganzen Buendelung.** Sie ist per
+    /// Konstruktion gegeben, weil jedes Ausgabeelement aus demselben
+    /// Skalarprodukt entsteht; **eine Zusage per Konstruktion, die
+    /// niemand nachrechnet, ist trotzdem nur eine Zusage.**
+    #[test]
+    fn gebuendelt_ist_dasselbe() {
+        for (zeilen, spalten) in [(1usize, 4usize), (3, 8), (17, 33), (64, 128), (2, 2049)] {
+            let w: Vec<i8> = zufall(zeilen * spalten, 7)
+                .into_iter()
+                .map(|v| (v % 127) as i8)
+                .collect();
+            let shifts: Vec<u8> = (0..zeilen).map(|z| 4 + (z % 3) as u8).collect();
+            let out_pc: Vec<u8> = (0..zeilen).map(|z| 5 + (z % 4) as u8).collect();
+            for b in [1usize, 2, 5, 16] {
+                let eingaben: Vec<Vec<i16>> =
+                    (0..b).map(|i| zufall(spalten, 11 + i as u64)).collect();
+                let scheiben: Vec<&[i16]> = eingaben.iter().map(|v| v.as_slice()).collect();
+
+                let gebuendelt = linear_w8a16_stapel(&scheiben, &w, spalten, &shifts, 6, 5);
+                for (i, x) in eingaben.iter().enumerate() {
+                    let einzeln = linear_w8a16(x, &w, spalten, &shifts, 6, 5);
+                    assert_eq!(gebuendelt[i], einzeln, "{zeilen}x{spalten}, b={b}, i={i}");
+                }
+
+                let gb_pc = linear_w8a16_pc_stapel(&scheiben, &w, spalten, &shifts, 6, &out_pc);
+                for (i, x) in eingaben.iter().enumerate() {
+                    let einzeln = linear_w8a16_pc(x, &w, spalten, &shifts, 6, &out_pc);
+                    assert_eq!(gb_pc[i], einzeln, "pc {zeilen}x{spalten}, b={b}, i={i}");
+                }
+            }
+        }
+    }
+
+    /// **Ein Buendel vieler Matrizen ist bitgleich zu den Matrizen
+    /// einzeln, mit gemischten Formen, Eingaben und Skalenarten.**
+    ///
+    /// ⛑ **Die Gegenprobe zu Fund 332.** Auch sie gilt per
+    /// Konstruktion, und auch hier ist eine Zusage, die niemand
+    /// nachrechnet, nur eine Zusage. Geprueft wird ausdruecklich mit
+    /// **verschiedenen** Zeilenzahlen je Teil, denn genau dort greift
+    /// die Bereichshalbierung ueber die Grenzen.
+    #[test]
+    fn ein_buendel_ist_dasselbe_wie_einzeln() {
+        let formen = [(1usize, 4usize), (3, 8), (17, 33), (64, 128), (2, 2049)];
+        let gewichte: Vec<Vec<i8>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (z, sp))| {
+                zufall(z * sp, 7 + i as u64).into_iter().map(|v| (v % 127) as i8).collect()
+            })
+            .collect();
+        let eingaben: Vec<Vec<i16>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (_, sp))| zufall(*sp, 101 + i as u64))
+            .collect();
+        let shifts: Vec<Vec<u8>> = formen
+            .iter()
+            .map(|(z, _)| (0..*z).map(|r| 4 + (r % 3) as u8).collect())
+            .collect();
+        let je_zeile: Vec<Vec<u8>> = formen
+            .iter()
+            .map(|(z, _)| (0..*z).map(|r| 5 + (r % 4) as u8).collect())
+            .collect();
+
+        // Ein Buendel, in dem sich beide Skalenarten abwechseln.
+        let teile: Vec<Buendelteil<'_>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (_, sp))| Buendelteil {
+                w: &gewichte[i],
+                x: &eingaben[i],
+                in_features: *sp,
+                w_shifts: &shifts[i],
+                act_frac_bits: 6,
+                aus: if i % 2 == 0 {
+                    Ausgangsskala::Eine(5)
+                } else {
+                    Ausgangsskala::JeZeile(&je_zeile[i])
+                },
+            })
+            .collect();
+
+        let gebuendelt = linear_w8a16_buendel(&teile);
+
+        let mut anfang = 0usize;
+        for (i, (z, sp)) in formen.iter().enumerate() {
+            let einzeln = if i % 2 == 0 {
+                linear_w8a16(&eingaben[i], &gewichte[i], *sp, &shifts[i], 6, 5)
+            } else {
+                linear_w8a16_pc(&eingaben[i], &gewichte[i], *sp, &shifts[i], 6, &je_zeile[i])
+            };
+            assert_eq!(
+                &gebuendelt[anfang..anfang + z],
+                einzeln.as_slice(),
+                "Teil {i} ({z}x{sp}) weicht ab"
+            );
+            anfang += z;
+        }
+        assert_eq!(anfang, gebuendelt.len(), "das Buendel ist laenger als seine Teile");
+    }
+
+    /// **Ein leeres Buendel ist leer und kein Absturz.**
+    #[test]
+    fn ein_leeres_buendel_gibt_nichts() {
+        assert!(linear_w8a16_buendel(&[]).is_empty());
+    }
+
+    /// **Eine leere Bündelung ist leer und kein Absturz.**
+    #[test]
+    fn ohne_eingabe_gibt_es_nichts() {
+        let w = vec![1i8; 8];
+        let shifts = vec![4u8; 2];
+        assert!(linear_w8a16_stapel(&[], &w, 4, &shifts, 6, 5).is_empty());
     }
 }
 
@@ -441,3 +584,285 @@ mod kerngrenze_probe {
         assert_eq!(max_threads(), vorhanden);
     }
 }
+
+/// Wie die Ausgangsskala eines Buendelteils aussieht.
+///
+/// ⚑ **Ein Aufzaehlungstyp und nicht zwei Funktionen.** Ein Buendel
+/// mischt Teile mit skalarer und mit kanalweiser Skala (gate und up
+/// haben eine, down hat eine je Kanal), und zwei getrennte Wege haetten
+/// genau diesen Fall nicht.
+pub enum Ausgangsskala<'a> {
+    /// Eine Skala fuer alle Zeilen, wie bei [`linear_w8a16`].
+    Eine(u8),
+    /// Eine Skala je Zeile, wie bei [`linear_w8a16_pc`] (Fund 20).
+    JeZeile(&'a [u8]),
+}
+
+/// Eine Matrix in einem Buendel: Gewichte, Eingabe und Skalen.
+pub struct Buendelteil<'a> {
+    /// Flach, Zeile fuer Zeile, `in_features` Elemente je Zeile.
+    pub w: &'a [i8],
+    /// Die Eingabe **dieses** Teils. Teile eines Buendels duerfen
+    /// verschiedene Eingaben haben; die down-Projektionen eines
+    /// Expertengemischs tun es.
+    pub x: &'a [i16],
+    pub in_features: usize,
+    pub w_shifts: &'a [u8],
+    pub act_frac_bits: u8,
+    pub aus: Ausgangsskala<'a>,
+}
+
+impl Buendelteil<'_> {
+    fn zeilen(&self) -> usize {
+        self.w_shifts.len()
+    }
+}
+
+/// **Viele Matrizen in einer Runde.**
+///
+/// # ⛑ Fund 332 (2026-09-11): eine Poolrunde kostet mehr als die Matrix
+///
+/// Ein Expertengemisch rechnet je Ebene **vierundzwanzig** kleine
+/// Matrizen (acht Experten mal gate, up, down), je Token also
+/// **1 152**. Jede war bisher eine eigene Runde im Fadenpool, und eine
+/// Runde ist nicht billig: Sie weckt Faeden ueber eine
+/// Bedingungsvariable und wartet auf deren Meldung.
+///
+/// ⚑ **Und sie bekamen dabei nur zwei Faeden.** Eine Expertenmatrix von
+/// Qwen3-30B-A3B ist `768 x 2048 = 1 572 864` Multiplikationen, also
+/// knapp ueber [`PARALLEL_AB`] und knapp unter dem Zweifachen von
+/// [`ARBEIT_JE_THREAD`]: `n = clamp(1, 2, kerne) = 2`. **Zehn von
+/// zwoelf Kernen standen still**, waehrend der Aufrufer auf zwei
+/// wartete.
+///
+/// Gemessen mit `kernels/src/bin/rundenprobe.rs`, dieselben 884 736
+/// Zeilen ueber denselben Gewichten, alles im Speicher:
+///
+/// | | Zeit je Token | je Zeile |
+/// |---|---|---|
+/// | 1 152 Runden zu zwei Faeden | 93,45 ms | 105,63 ns |
+/// | 72 Runden zu zwoelf Faeden | **19,12 ms** | 21,61 ns |
+///
+/// **Die Rechnung ist ein Siebtel der Zeit gewesen.** Der Rest war
+/// Wecken, Warten und brachliegende Kerne.
+///
+/// ⚑ **Und es aendert keine Zahl.** Jede Ausgabezeile bleibt ihr
+/// eigenes Skalarprodukt ueber ihre eigene Gewichtszeile; geaendert ist
+/// allein, welcher Faden welche Zeile nimmt. Das ist dieselbe
+/// Eigenschaft, auf der [`zeilen_rechnen`] ruht, nur ueber
+/// Matrixgrenzen hinweg. Geprueft wird sie trotzdem, siehe
+/// `ein_buendel_ist_dasselbe_wie_einzeln`.
+///
+/// Zurueck kommen die Ergebnisse **hintereinander in einem Feld**:
+/// `teile[i]` beginnt bei der Summe der Zeilenzahlen davor. Wer sie
+/// getrennt braucht, schneidet; eine Zerlegung in `Vec<Vec<i16>>` waere
+/// eine Allokation je Teil, und genau die zu sparen ist der Zweck.
+pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
+    if teile.is_empty() {
+        return Vec::new();
+    }
+    for t in teile {
+        assert_eq!(
+            t.w.len(),
+            t.in_features * t.zeilen(),
+            "linear_w8a16_buendel: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
+            t.w.len(),
+            t.zeilen(),
+            t.in_features
+        );
+        if let Ausgangsskala::JeZeile(f) = t.aus {
+            assert_eq!(
+                f.len(),
+                t.zeilen(),
+                "linear_w8a16_buendel: eine Ausgangsskala je Kanal (Fund 20)"
+            );
+        }
+    }
+
+    // ⚑ **Die Grenzen einmal, nicht je Zeile.** `grenzen[i]` ist die
+    // erste Zeile von Teil `i`; die Suche darin ist eine
+    // Bereichshalbierung ueber hoechstens ein paar Dutzend Eintraege
+    // und verschwindet neben den 2 048 Multiplikationen einer Zeile.
+    let mut grenzen: Vec<usize> = Vec::with_capacity(teile.len() + 1);
+    let mut summe = 0usize;
+    let mut arbeit = 0usize;
+    grenzen.push(0);
+    for t in teile {
+        summe += t.zeilen();
+        arbeit += t.zeilen().saturating_mul(t.in_features);
+        grenzen.push(summe);
+    }
+    if summe == 0 {
+        return Vec::new();
+    }
+
+    zeilen_rechnen(summe, arbeit / summe, |z| {
+        // `partition_point` liefert die Zahl der Grenzen bis
+        // einschliesslich `z`; minus eins ist der Teil, in dem `z` liegt.
+        let i = grenzen.partition_point(|g| *g <= z) - 1;
+        let t = &teile[i];
+        let lokal = z - grenzen[i];
+        let row = &t.w[lokal * t.in_features..(lokal + 1) * t.in_features];
+        let acc = dot_i8_i16(row, t.x);
+        let ziel = match t.aus {
+            Ausgangsskala::Eine(f) => f,
+            Ausgangsskala::JeZeile(f) => f[lokal],
+        };
+        clamp_i16_from_i64(rescale_i64(acc, t.w_shifts[lokal] + t.act_frac_bits, ziel))
+    })
+}
+
+/// **W8A16 fuer mehrere Eingaben auf denselben Gewichten.**
+///
+/// # ⚑ Dieselbe Rechnung, eine andere Reihenfolge
+///
+/// `out[b][z]` ist `clamp(rescale(dot(x_b, W_z)))`, also **Element fuer
+/// Element dasselbe** wie [`linear_w8a16`] fuer jede Eingabe einzeln.
+/// Geaendert ist nur, wann eine Gewichtszeile gelesen wird: Sie wird
+/// einmal geholt und fuer alle Eingaben benutzt.
+///
+/// ⛑ **Und genau daran haengt der Gewinn.** Beim 4B-Modell sind die
+/// drei MLP-Matrizen 74,7 MB je Ebene; tokenweise werden sie einmal je
+/// Token gelesen, gebuendelt einmal fuer alle. Gemessen am 2026-09-11
+/// war die Vorbereitung eines Prompts von 588 Token bei 2,59 TB
+/// gelesener Gewichte.
+///
+/// ⚠️ **Die Bitgleichheit gilt hier per Konstruktion**, nicht laut
+/// Messung: Jedes Ausgabeelement entsteht aus derselben `dot_i8_i16`
+/// ueber dieselben Bytes in derselben Reihenfolge. Geprueft wird sie
+/// trotzdem, siehe `gebuendelt_ist_dasselbe`.
+pub fn linear_w8a16_stapel(
+    xs: &[&[i16]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: u8,
+) -> Vec<Vec<i16>> {
+    stapel_intern(xs, W, in_features, w_shifts, |z| {
+        let _ = z;
+        out_frac_bits
+    }, act_frac_bits)
+}
+
+/// Wie [`linear_w8a16_stapel`], mit einer Ausgangsskala je Kanal.
+pub fn linear_w8a16_pc_stapel(
+    xs: &[&[i16]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    assert_eq!(
+        w_shifts.len(),
+        out_frac_bits.len(),
+        "linear_w8a16_pc_stapel: eine Ausgangsskala je Kanal (Fund 20)"
+    );
+    stapel_intern(xs, W, in_features, w_shifts, |z| out_frac_bits[z], act_frac_bits)
+}
+
+/// Der gemeinsame Rumpf beider Stapelwege.
+fn stapel_intern<S>(
+    xs: &[&[i16]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    out_frac: S,
+    act_frac_bits: u8,
+) -> Vec<Vec<i16>>
+where
+    S: Fn(usize) -> u8 + Sync,
+{
+    let zeilen = w_shifts.len();
+    assert_eq!(
+        W.len(),
+        in_features * zeilen,
+        "linear_stapel: {} Gewichte passen nicht zu {zeilen} Zeilen à {in_features} Elementen",
+        W.len()
+    );
+    let b = xs.len();
+    if b == 0 {
+        return Vec::new();
+    }
+
+    // Fadenzahl wie bei einer einzelnen Eingabe, nur dass jede Zeile
+    // `b` Mal gerechnet wird.
+    let arbeit = zeilen.saturating_mul(in_features).saturating_mul(b);
+    let kerne = max_threads();
+    let faeden = if arbeit < PARALLEL_AB || kerne < 2 || zeilen < 2 {
+        1
+    } else {
+        (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne)
+    };
+
+    // ⚑ **In Kacheln und nicht am Stueck.** Siehe [`KACHEL`].
+    let kachel = kachelbreite();
+    let mut aus = vec![vec![0i16; zeilen]; b];
+    let mut anfang = 0usize;
+    while anfang < b {
+        let ende = (anfang + kachel).min(b);
+        let teil = &xs[anfang..ende];
+        let breite = teil.len();
+        let flach = crate::fadenpool::rechnen_breit(zeilen, breite, faeden, |z, ziel| {
+            let row = &W[z * in_features..(z + 1) * in_features];
+            let schiebung = w_shifts[z] + act_frac_bits;
+            let ziel_frac = out_frac(z);
+            for (i, wert) in ziel.iter_mut().enumerate() {
+                let acc = dot_i8_i16(row, teil[i]);
+                *wert = clamp_i16_from_i64(rescale_i64(acc, schiebung, ziel_frac));
+            }
+        });
+        // Zeilenweise gerechnet, eingabeweise zurueckgegeben.
+        for z in 0..zeilen {
+            for (i, a) in aus[anfang..ende].iter_mut().enumerate() {
+                a[z] = flach[z * breite + i];
+            }
+        }
+        anfang = ende;
+    }
+    aus
+}
+
+/// Wie viele Eingaben eine Kachel umfasst.
+///
+/// # ⛑ Gemessen, und die erste Fassung hatte keine Kachel
+///
+/// Ohne Kachelung laeuft die innere Schleife ueber **alle** Eingaben.
+/// Die Gewichtszeile bleibt dann zwar im Zwischenspeicher, aber die
+/// Eingaben tun es nicht: Bei 169 Token sind das 865 KB, die je
+/// Gewichtszeile einmal durchlaufen werden, und das sind ueber eine
+/// Matrix hinweg Gigabyte an L2-Verkehr. **Gemessen war der gebuendelte
+/// MLP damit 84-mal ueber seiner Rechengrenze.**
+///
+/// ⚑ **Die Kachel ist der Ausgleich zwischen beidem:** Sie soll klein
+/// genug sein, dass ihre Eingaben in den ersten Zwischenspeicher
+/// passen, und gross genug, dass die Gewichtszeile sich lohnt.
+fn kachelbreite() -> usize {
+    use std::sync::OnceLock;
+    static K: OnceLock<usize> = OnceLock::new();
+    *K.get_or_init(|| {
+        std::env::var("MYL_KACHEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&k: &usize| k > 0)
+            .unwrap_or(KACHEL)
+    })
+}
+
+/// Vorgabe der Kachelbreite.
+///
+/// ⚑ **Acht, gemessen am 2026-09-11** gegen `myelith-4b` mit einem
+/// Prompt von 169 Token, nachdem der KV-Speicher nicht mehr kopiert:
+///
+/// | Kachel | 1 | 2 | 4 | 8 | 16 | 32 |
+/// |---|---|---|---|---|---|---|
+/// | Prefill | 7387 ms | 6915 | 6670 | **6647** | 6654 | 6774 |
+///
+/// Die Kurve ist flach zwischen vier und sechzehn und faellt zu beiden
+/// Seiten ab: links, weil die Gewichtszeile sich nicht lohnt, rechts,
+/// weil die Eingaben nicht mehr in den ersten Zwischenspeicher passen.
+/// **Eine Zahl aus der Mitte einer flachen Kurve ist die richtige**,
+/// denn sie traegt auch dann noch, wenn die naechste Maschine anders
+/// aussieht.
+const KACHEL: usize = 8;

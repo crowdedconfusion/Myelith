@@ -91,11 +91,11 @@ const TEXTE = {
     "modus.chat.name": "Chat",
     "modus.chat.was": "ohne Werkzeuge",
     "modus.chat.leer":
-      "Ein Gespräch mit dem lokalen Modell. Der Verlauf wird mitgegeben, das Modell sieht also, was vorher gesagt wurde.",
+      "Ein Gespräch mit dem lokalen Modell. Der Verlauf wird mitgegeben, das Modell sieht also, was im Verlauf gesagt wurde.",
     "modus.agent.name": "Agent",
     "modus.agent.was": "mit Werkzeugen",
     "modus.agent.leer":
-      "Ein Auftrag, den der Agent mit Werkzeugen erledigt. ⚑ Jeder Auftrag steht für sich: Schrittbudget und Belegkette gelten je Lauf, der vorige Auftrag geht nicht mit ein.",
+      "Der Agent erledigt deinen Auftrag mit den Werkzeugen in seinem Werkzeugkoffer. In den Einstellungen kannst du Anpassungen vornehmen …",
     "modus.knoten.name": "Knoten",
     "modus.knoten.was": "Mining",
     "modus.knoten.warum":
@@ -205,11 +205,11 @@ const TEXTE = {
     "modus.chat.name": "Chat",
     "modus.chat.was": "without tools",
     "modus.chat.leer":
-      "A conversation with the local model. The history is passed along, so the model sees what was said before.",
+      "A conversation with the local model. The history is passed along, so the model sees what was said earlier in it.",
     "modus.agent.name": "Agent",
     "modus.agent.was": "with tools",
     "modus.agent.leer":
-      "A task the agent carries out with tools. ⚑ Every task stands on its own: the step budget and the evidence chain apply per run, the previous task is not carried over.",
+      "The agent carries out your task with the tools in its toolbox. You can adjust things in the settings …",
     "modus.knoten.name": "Node",
     "modus.knoten.was": "Mining",
     "modus.knoten.warum":
@@ -541,8 +541,8 @@ function titel_aus(text) {
 /// Leiste, die sie fuer sich kuerzen koennte, und keinen Zeigetext, der
 /// das Lange nachreichte: Sie steht ein paar Sekunden und geht wieder.
 const kurz_titel = (text) => {
-  const t = titel_aus(text);
-  return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+  const roh = titel_aus(text);
+  return roh.length > 40 ? `${roh.slice(0, 40)}…` : roh;
 };
 
 // --- Anzeige ------------------------------------------------------------
@@ -898,7 +898,7 @@ async function zum_feld(name, warum) {
   const kasten = $("feldhinweis");
   kasten.textContent = warum;
   kasten.hidden = false;
-  const zeile = $("einstellungen").querySelector(`tr[data-feld="${name}"]`);
+  const zeile = $(tabelle_fuer(name)).querySelector(`tr[data-feld="${name}"]`);
   const feld = zeile?.querySelector(`[data-feld="${name}"]`);
   if (zeile) {
     zeile.classList.add("gesucht");
@@ -1033,8 +1033,14 @@ function beitrag_zeichnen(b) {
     laufzeichen = l;
   }
 
-  const t = document.createElement("div");
-  t.className = "antworttext";
+  // ⛑ **`t` heisst hier nicht `t`.** Die Uebersetzung heisst so, und
+  // eine lokale Bindung desselben Namens verdeckt sie **im ganzen
+  // Block**, auch oberhalb ihrer eigenen Zeile: `t("lauf.arbeitet")`
+  // weiter oben lief damit in „Cannot access 't' before
+  // initialization", und zwar genau dann, wenn ein Lauf laeuft.
+  // Gemeldet vom Projektinhaber am 2026-09-11 (Fund 324).
+  const koerper = document.createElement("div");
+  koerper.className = "antworttext";
   // ⚑ **Waehrend des Laufs schlichter Text, danach gesetzt.**
   //
   // ⛑ Eine halb angekommene Marke ist keine Marke: `**` mitten im
@@ -1044,11 +1050,11 @@ function beitrag_zeichnen(b) {
   // Vorschau, der gesetzte das Ergebnis**, genau wie bei der Antwort
   // selbst.
   if (b.laufend || !b.bloecke) {
-    t.textContent = b.text;
+    koerper.textContent = b.text;
   } else {
-    t.append(bloecke_zeichnen(b.bloecke));
+    koerper.append(bloecke_zeichnen(b.bloecke));
   }
-  wurzel.append(t);
+  wurzel.append(koerper);
 
   if (b.fuss) {
     const f = document.createElement("div");
@@ -1229,21 +1235,21 @@ const block_zeichnen = (b) => {
 
 const teile_zeichnen = (teile) => {
   const raum = document.createDocumentFragment();
-  for (const t of teile) {
-    if (t.art === "Fett") {
+  for (const stueck of teile) {
+    if (stueck.art === "Fett") {
       const e = document.createElement("strong");
-      e.textContent = t.text;
+      e.textContent = stueck.text;
       raum.append(e);
-    } else if (t.art === "Kursiv") {
+    } else if (stueck.art === "Kursiv") {
       const e = document.createElement("em");
-      e.textContent = t.text;
+      e.textContent = stueck.text;
       raum.append(e);
-    } else if (t.art === "Code") {
+    } else if (stueck.art === "Code") {
       const e = document.createElement("code");
       e.className = "mdcodewort";
-      e.textContent = t.text;
+      e.textContent = stueck.text;
       raum.append(e);
-    } else if (t.art === "Verweis") {
+    } else if (stueck.art === "Verweis") {
       // ⛑ **Als Text und nicht als Knopf.** Ein angeklickter Verweis
       // fuehrte die Webansicht **aus der Anwendung heraus**; sie im
       // System zu oeffnen braeuchte eine Erlaubnis, die die
@@ -1251,13 +1257,13 @@ const teile_zeichnen = (teile) => {
       // sichtbar daneben: Wer hin will, sieht wohin.
       const e = document.createElement("span");
       e.className = "mdverweis";
-      e.textContent = t.text;
+      e.textContent = stueck.text;
       const ziel = document.createElement("span");
       ziel.className = "mdziel";
-      ziel.textContent = ` (${t.ziel})`;
+      ziel.textContent = ` (${stueck.ziel})`;
       raum.append(e, ziel);
     } else {
-      raum.append(document.createTextNode(t.text));
+      raum.append(document.createTextNode(stueck.text));
     }
   }
   return raum;
@@ -1268,11 +1274,14 @@ function gespraech_zeichnen() {
   w.replaceChildren();
   if (!offen || offen.beitraege.length === 0) {
     const m = MODI.find((x) => x.id === modus_jetzt());
+    // ⛑ **Hier stand der Modusname noch einmal davor** („Chat. Ein
+    // Gespraech mit …"). Er steht schon in der Leiste links und im
+    // Kopf; ein drittes Mal sagt er nichts und macht aus einem Satz
+    // eine Ueberschrift mit Satz. Entfernt auf Wunsch des
+    // Projektinhabers, 2026-09-11.
     const p = document.createElement("p");
     p.className = "leerzustand";
-    const stark = document.createElement("strong");
-    stark.textContent = `${t(`modus.${m.id}.name`)}. `;
-    p.append(stark, document.createTextNode(t(`modus.${m.id}.leer`)));
+    p.textContent = t(`modus.${m.id}.leer`);
     w.append(p);
     return;
   }
@@ -1310,14 +1319,17 @@ function melden(text, wo) {
   if (wo && wo === maske()) return;
   const k = document.createElement("div");
   k.className = "meldung glas";
-  const t = document.createElement("p");
-  t.textContent = text;
+  // ⛑ Auch hier hiess die lokale Bindung `t` und verdeckte die
+  // Uebersetzung; `t("meldung.schliessen")` rief damit ein
+  // Absatzelement auf.
+  const absatz = document.createElement("p");
+  absatz.textContent = text;
   const zu = document.createElement("button");
   zu.className = "rundknopf blank";
   zu.setAttribute("aria-label", t("meldung.schliessen"));
   zu.textContent = "×";
   zu.addEventListener("click", () => k.remove());
-  k.append(t, zu);
+  k.append(absatz, zu);
   $("meldungen").append(k);
   // ⚑ Sie geht von selbst, aber langsam: Wer gerade tippt, soll sie
   // noch lesen koennen, wenn er aufsieht.
@@ -1331,6 +1343,23 @@ function melden(text, wo) {
 // Tabellen zerlegt, verliert die gemeinsame Spaltenbreite: Jeder
 // Bereich haette dann seine eigene, und die Eingabefelder saessen auf
 // vier verschiedenen Hoehen.
+// ⚑ **Die Seite hat drei Feldtabellen**, und zwischen ihnen stehen die
+// Abschnitte, die keine Einstellungen sind: Aktualisierung, Modelle,
+// was dieser Rechner hergibt. Die Reihenfolge steht im HTML, hier steht
+// nur, welches Feld wohin gehoert.
+const TABELLEN = ["felder-oberflaeche", "felder-grenzen", "felder-rest"];
+
+// ⚑ **Entschieden wird am Namen und nicht an der Ueberschrift.** Ein
+// Feldname (`kap.speicher`) ist in jeder Sprache derselbe; eine
+// Ueberschrift („Grenzen dieses Rechners") ist es nicht, und eine
+// Zuordnung ueber uebersetzten Text bricht beim Sprachwechsel.
+const tabelle_fuer = (name) =>
+  name.startsWith("oberflaeche.")
+    ? "felder-oberflaeche"
+    : name.startsWith("kap.")
+      ? "felder-grenzen"
+      : "felder-rest";
+
 const bereichszeile = (name) => {
   const tr = document.createElement("tr");
   tr.className = "bereichszeile";
@@ -1677,8 +1706,7 @@ async function horchen(name, fn) {
 async function einstellungen_zeichnen() {
   const e = await invoke("einstellungen");
   const felder = await invoke("felder");
-  const koerper = $("einstellungen").querySelector("tbody");
-  koerper.replaceChildren();
+  for (const id of TABELLEN) $(id).querySelector("tbody").replaceChildren();
 
   // ⛑ **Hier stand bis zum 2026-09-10 eine zweite Zuordnung von
   // Feldnamen auf Werte**, von Hand gepflegt, und sie kannte drei der
@@ -1694,12 +1722,13 @@ async function einstellungen_zeichnen() {
   // ⚑ **Die Freigaben stehen nicht in dieser Tabelle.** Ein Regler
   // braucht ein Ende, und das Ende ist, was die Maschine hergibt; das
   // weiss erst der Scan. Sie bekommen deshalb ihren eigenen Abschnitt.
-  let bereich = null;
+  const gesehen = new Set();
   for (const f of felder) {
     if (f.freigabe) continue;
-    if (f.bereich !== bereich) {
-      bereich = f.bereich;
-      koerper.append(bereichszeile(bereich));
+    const koerper = $(tabelle_fuer(f.name)).querySelector("tbody");
+    if (!gesehen.has(f.bereich)) {
+      gesehen.add(f.bereich);
+      koerper.append(bereichszeile(f.bereich));
     }
     koerper.append(
       feldzeile(f, wert[f.name], async (neu) => {
@@ -2390,8 +2419,8 @@ horchen("aktualisierung-zeile", (zeile) => {
 
 $("zu-einstellungen").addEventListener("click", async () => {
   $("feldhinweis").hidden = true;
-  for (const z of $("einstellungen").querySelectorAll(".gesucht")) {
-    z.classList.remove("gesucht");
+  for (const id of TABELLEN) {
+    for (const z of $(id).querySelectorAll(".gesucht")) z.classList.remove("gesucht");
   }
   $("einstellungsseite").hidden = false;
   await einstellungen_zeichnen();

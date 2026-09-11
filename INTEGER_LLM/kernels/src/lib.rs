@@ -6,6 +6,7 @@
 pub mod backend;
 pub mod backends;
 pub mod dot;
+pub mod fadenpool;
 pub mod fixed_point;
 pub mod integer_math;
 pub mod konformitaet;

@@ -490,6 +490,16 @@ fn roh_lesen(text: &str) -> io::Result<Option<String>> {
                     aus.flush()?;
                 }
             }
+            // ⛑ **LF ist auch ein Zeilenende.** Im Rohmodus meldet
+            // crossterm nur CR als `Enter`; ein eingefügtes Stück Text
+            // mit Zeilenumbrüchen schickt aber 0x0A, und das kommt als
+            // Strg-J an. Ohne diese Zeile landete an jedem Umbruch ein
+            // „j" im Text und die Zeile lief einfach weiter.
+            KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
+                queue!(aus, Print("\r\n"))?;
+                aus.flush()?;
+                return Ok(Some(zeile));
+            }
             // Strg-D ist in jeder Kommandozeile „fertig" und bleibt es.
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
                 queue!(aus, Print("\r\n"))?;

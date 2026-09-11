@@ -1338,7 +1338,6 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 /* --- Modellbau -------------------------------------------------------- */
 
 #modellbau { display: grid; gap: .5rem; max-width: 46rem; }
-#einstellungsseite h2 { margin: .6rem 0 0; }
 
 /* ⚑ Zwei Spalten fuer Name und Knopf, und der Baustand darunter ueber
    beide: Er gehoert zu DIESEM Modell und nicht neben die Liste. */
@@ -1420,7 +1419,34 @@ button.warnt {
   justify-content: space-between;
   gap: 1rem;
 }
-.seitenkopf h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+/* ⚑ **Eine Stufe und nicht drei** (Festlegung des Projektinhabers,
+   2026-09-11). „Einstellungen" ist die Ueberschrift der Seite und die
+   groesste; alles darunter ist **gleichrangig** und deshalb gleich
+   gross, ob es nun ein Bereich der Tabelle ist oder ein eigener
+   Abschnitt.
+
+   ⛑ **Vorher waren es drei Groessen, und die falsche war die
+   groesste:** `h2` hatte gar keine Angabe und nahm die Vorgabe des
+   Browsers (rund 1,5em), also mehr als das `h1` mit 1,1rem. Eine
+   Seite, deren Unterueberschriften groesser sind als ihre
+   Ueberschrift, liest sich wie vier Seiten. */
+.seitenkopf h1 { font-size: 1.5rem; margin: 0; font-weight: 600; }
+
+/* ⚑ **Die Linie trennt und benennt in einem.** Sie steht unter jeder
+   Ueberschrift dieser Ebene, damit die Bereiche sichtbar
+   auseinanderfallen, ohne dass Luft dazwischen muss. */
+#einstellungsseite h2,
+.bereichszeile th {
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--leise);
+  border-bottom: 1px solid var(--kante);
+}
+#einstellungsseite h2 {
+  margin: 1.8rem 0 .7rem;
+  padding: 0 0 .35rem;
+  max-width: 46rem;
+}
 
 table { border-collapse: collapse; width: 100%; max-width: 46rem; }
 
@@ -1442,11 +1468,7 @@ td:first-child { width: 44%; padding-right: 1.4rem; line-height: 1.35; }
    darunter statt eines Abstands, der nur Luft waere. */
 .bereichszeile th {
   text-align: left;
-  font-size: .82rem;
-  font-weight: 600;
-  color: var(--leise);
-  padding: 1.5rem 0 .4rem;
-  border-bottom: 1px solid var(--kante);
+  padding: 1.8rem 0 .35rem;
 }
 .bereichszeile:first-child th { padding-top: .3rem; }
 

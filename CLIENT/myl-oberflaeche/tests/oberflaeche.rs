@@ -82,6 +82,81 @@ fn jede_gesuchte_kennung_steht_im_html() {
     }
 }
 
+/// **Nichts im Skript heisst `t`, ausser der Uebersetzung.**
+///
+/// ⛑ **Fund 324, und er kostete den Projektinhaber einen Abend.** Zwei
+/// Funktionen hielten ein Element in `const t`, und eine davon rief
+/// oberhalb dieser Zeile `t("lauf.arbeitet")`. **Eine lokale Bindung
+/// verdeckt den aeusseren Namen im ganzen Block, auch vor ihrer eigenen
+/// Zeile**, und dort ist er noch nicht da: „Cannot access 't' before
+/// initialization", und zwar genau dann, wenn ein Lauf laeuft.
+///
+/// ⚑ **Die Pruefung sucht die Verdeckung und nicht den Fehler.** Ein
+/// Test, der den Aufruf prueft, faende die naechste Stelle nicht; ein
+/// Name, den es nur einmal gibt, kann gar nicht erst verdeckt werden.
+#[test]
+fn nichts_im_skript_verdeckt_die_uebersetzung() {
+    let js = lies("app.js");
+    for (nr, zeile) in js.lines().enumerate() {
+        let z = zeile.trim_start();
+        // Die Uebersetzung selbst darf so heissen.
+        if z.starts_with("const t = (") || z.starts_with("function t(") {
+            continue;
+        }
+        for anfang in ["const t ", "let t ", "var t ", "const t=", "let t="] {
+            assert!(
+                !z.starts_with(anfang),
+                "Zeile {}: `{}` verdeckt die Uebersetzung `t`",
+                nr + 1,
+                z
+            );
+        }
+        assert!(
+            !z.contains("(const t of") && !z.contains("(let t of"),
+            "Zeile {}: `{}` verdeckt die Uebersetzung `t`",
+            nr + 1,
+            z
+        );
+    }
+}
+
+/// **Die Ueberschrift der Seite ist die groesste, und alles darunter
+/// ist gleich gross.**
+///
+/// ⛑ **Vorher waren es drei Groessen, und die falsche war die
+/// groesste:** `h2` hatte keine Angabe und nahm die Vorgabe des
+/// Browsers, also mehr als das `h1`. **Eine Seite, deren
+/// Unterueberschriften groesser sind als ihre Ueberschrift, liest sich
+/// wie vier Seiten.** Gemeldet vom Projektinhaber am 2026-09-11.
+#[test]
+fn die_ueberschriften_haben_genau_zwei_stufen() {
+    let css = lies("stil.css");
+    let groesse = |wahl: &str| -> f32 {
+        let i = css.find(wahl).unwrap_or_else(|| panic!("{wahl} fehlt im Stilblatt"));
+        let rest = &css[i..];
+        let j = rest.find("font-size:").unwrap_or_else(|| panic!("{wahl} ohne Groesse"));
+        let z = &rest[j + "font-size:".len()..];
+        let ende = z.find("rem").unwrap_or_else(|| panic!("{wahl}: keine rem-Angabe"));
+        z[..ende].trim().parse::<f32>().unwrap_or_else(|e| panic!("{wahl}: {e}"))
+    };
+    let seite = groesse(".seitenkopf h1");
+    let abschnitt = groesse("#einstellungsseite h2,\n.bereichszeile th {");
+    assert!(
+        seite > abschnitt,
+        "die Seitenueberschrift ({seite}rem) ist nicht groesser als die Abschnitte ({abschnitt}rem)"
+    );
+    // ⚑ **Beide aus derselben Regel**, also kann es gar keine dritte
+    // Groesse geben: Die Pruefung haelt fest, dass sie zusammenstehen.
+    assert!(
+        css.contains("#einstellungsseite h2,\n.bereichszeile th {"),
+        "Abschnitte und Bereiche haben nicht mehr dieselbe Regel"
+    );
+    // Und die Linie darunter trennt die Bereiche sichtbar.
+    let i = css.find("#einstellungsseite h2,\n.bereichszeile th {").expect("Regel");
+    let block = &css[i..i + 260];
+    assert!(block.contains("border-bottom"), "den Ueberschriften fehlt die Trennlinie");
+}
+
 /// ⚑ **Jede Klasse im HTML muss eine Regel haben.** Eine ohne ist ein
 /// Element, das anders aussieht, als jemand gedacht hat.
 #[test]
@@ -2195,11 +2270,28 @@ fn die_sprache_steht_zuoberst() {
     );
 
     let html = lies("index.html");
-    let tabelle = html.find("id=\"einstellungen\"").expect("Einstellungstabelle");
-    let updates = html.find("id=\"aktualisierung\"").expect("Aktualisierung");
-    let modelle = html.find("id=\"modellbau\"").expect("Modellbau");
-    assert!(tabelle < updates, "die Updates stehen nicht unter den Einstellungen");
-    assert!(updates < modelle, "zwischen Einstellungen und Updates steht etwas anderes");
+    let wo = |k: &str| html.find(k).unwrap_or_else(|| panic!("{k} steht nicht im HTML"));
+
+    // ⚑ **Die Reihenfolge der ganzen Seite, an einer Stelle geprueft**
+    // (Festlegung des Projektinhabers, 2026-09-11): Sprache, dann die
+    // Aktualisierung, dann die Modelle, dann was dieser Rechner
+    // hergibt, und zuletzt die Feinheiten von Modell und Agent.
+    let folge = [
+        ("id=\"felder-oberflaeche\"", "die Sprache"),
+        ("id=\"aktualisierung\"", "die Aktualisierung"),
+        ("id=\"modellbau\"", "die Modelle"),
+        ("id=\"felder-grenzen\"", "die Grenzen dieses Rechners"),
+        ("id=\"freigabe\"", "die Freigaben"),
+        ("id=\"felder-rest\"", "Modell und Agent"),
+    ];
+    for paar in folge.windows(2) {
+        assert!(
+            wo(paar[0].0) < wo(paar[1].0),
+            "{} steht nicht vor {}",
+            paar[0].1,
+            paar[1].1
+        );
+    }
 }
 
 /// **Der Einspielknopf erscheint erst, wenn es etwas einzuspielen

@@ -95,14 +95,21 @@ impl Default for Modelleinstellung {
 }
 
 /// Was der Agent darf.
+///
+/// ⛑ **Bis zum 2026-09-11 stand hier `auch_bezeugtes`**, ein Schalter,
+/// der dem Modell bezeugte Werkzeuge zusaetzlich zu den nachrechenbaren
+/// oeffnete. **Er ist entfallen** (Festlegung des Projektinhabers):
+/// Welche Werkzeuge ein Lauf bekommt, sagt die Werkzeugkiste, und
+/// dabei soll es bleiben. Fuer einen einzelnen Vergleichslauf gibt es
+/// den Schalter `--bezeugtes` an der Kommandozeile; **eine Einstellung
+/// waere eine Dauerfreigabe, die niemand mehr sieht.**
+///
+/// ⚑ Eine Ablage aus der Zeit davor bleibt lesbar: `serde` uebergeht
+/// ein Feld, das es nicht mehr gibt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agenteneinstellung {
     /// Hoechstzahl der Schritte je Auftrag.
     pub schritte: u32,
-    /// ⚑ **`false` heisst „nur nachrechenbar", und das ist die
-    /// Vorgabe.** Dieselbe Haltung wie im Harness: Wer das Weitere
-    /// will, sagt es.
-    pub auch_bezeugtes: bool,
     /// Das Verzeichnis, in dem die Dateiwerkzeuge arbeiten duerfen.
     ///
     /// ⚑ **Ohne Angabe gibt es keine Dateiwerkzeuge**, und das ist die
@@ -119,11 +126,33 @@ pub struct Agenteneinstellung {
     /// damit nicht gesagt, dass er es aendern darf.
     #[serde(default)]
     pub schreiben: bool,
+    /// Welche Werkzeugkiste dem Modell angeboten wird.
+    ///
+    /// ⚑ **Vorgabe ist `Automatisch`, und das Modell sagt seine Groesse
+    /// selbst.** Wer einem kleinen Modell trotzdem alles geben will,
+    /// stellt hier `Voll`; wer einem grossen weniger geben will,
+    /// `Grund`. **Die Einstellung schlaegt die Ableitung**, denn wer
+    /// sie anfasst, hat die Frage schon beantwortet.
+    #[serde(default)]
+    pub werkzeuge: Werkzeugwahl,
+    /// Ob schreibende Handlungen vorgelegt werden.
+    ///
+    /// ⚑ `#[serde(default)]`, damit eine Ablage aus der Zeit davor
+    /// lesbar bleibt und dann `auto` bedeutet: **die Vorgabe, die es
+    /// vorher auch war.**
+    #[serde(default)]
+    pub modus: Agentenmodus,
 }
 
 impl Default for Agenteneinstellung {
     fn default() -> Self {
-        Self { schritte: 6, auch_bezeugtes: false, wurzel: None, schreiben: false }
+        Self {
+            schritte: 6,
+            wurzel: None,
+            schreiben: false,
+            werkzeuge: Werkzeugwahl::Automatisch,
+            modus: Agentenmodus::Auto,
+        }
     }
 }
 
@@ -209,12 +238,318 @@ impl Sprache {
     }
 }
 
+/// **Wie die Konsole aussieht.**
+///
+/// ⚑ **Nur die Konsole** (Festlegung des Projektinhabers, 2026-09-11).
+/// Das Fenster hat sein eigenes Stilblatt; ein Design, das beide
+/// beschriebe, waere an einer der beiden Stellen immer falsch.
+///
+/// ⚑ **`Standard` ist kein Design, sondern die Abwesenheit eines.** Es
+/// setzt keine eigenen Farben und nimmt die des Terminals: **Wer sein
+/// Farbschema eingestellt hat, hat damit schon gewaehlt**, und ein
+/// Programm, das sich darueberlegt, nimmt ihm die Wahl wieder weg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Konsolendesign {
+    /// Die Farben des Terminals, unveraendert.
+    #[default]
+    #[serde(rename = "standard")]
+    Standard,
+    /// Graue Kanten, Neon-Akzent: das Bild, das dieses Programm seit
+    /// jeher zeigt.
+    #[serde(rename = "myelith")]
+    Myelith,
+    /// Bernstein, einfarbig, wie ein alter Schirm.
+    #[serde(rename = "bernstein")]
+    Bernstein,
+    /// Dunkles Blau mit Cyan.
+    #[serde(rename = "tiefsee")]
+    Tiefsee,
+    /// Grau und Weiss, sonst nichts.
+    #[serde(rename = "tinte")]
+    Tinte,
+}
+
+impl Konsolendesign {
+    /// Die Kennung, wie sie in der Ablage steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Myelith => "myelith",
+            Self::Bernstein => "bernstein",
+            Self::Tiefsee => "tiefsee",
+            Self::Tinte => "tinte",
+        }
+    }
+
+    /// Wie es heisst, wo ein Mensch es liest.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Standard => "Standard",
+            Self::Myelith => "Myelith",
+            Self::Bernstein => "Bernstein",
+            Self::Tiefsee => "Tiefsee",
+            Self::Tinte => "Tinte",
+        }
+    }
+
+    /// Ein Satz dazu, fuer die Auswahl beim Start.
+    pub const fn satz(self) -> &'static str {
+        match self {
+            Self::Standard => "die Farben deines Terminals, unveraendert",
+            Self::Myelith => "graue Kanten, Neon-Akzent: das bisherige Bild",
+            Self::Bernstein => "einfarbig bernstein, wie ein alter Schirm",
+            Self::Tiefsee => "dunkles Blau mit Cyan",
+            Self::Tinte => "grau und weiss, sonst nichts",
+        }
+    }
+
+    /// Ob der Ladetext durch den Regenbogen wandert.
+    ///
+    /// ⚑ **In den einfarbigen Designs nicht.** Ein Regenbogen in einem
+    /// Bild, das aus einer Farbe besteht, ist kein Akzent, sondern ein
+    /// Fremdkoerper; dort pulst der Ladetext stattdessen in der Helle
+    /// dieser einen Farbe, im selben Takt.
+    pub const fn regenbogen(self) -> bool {
+        matches!(self, Self::Standard | Self::Myelith | Self::Tiefsee)
+    }
+
+    /// Alle, in der Reihenfolge der Auswahl.
+    pub const ALLE: [Self; 5] =
+        [Self::Standard, Self::Myelith, Self::Bernstein, Self::Tiefsee, Self::Tinte];
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        Self::ALLE.into_iter().find(|d| d.kennung() == k).ok_or_else(|| {
+            format!(
+                "unbekanntes Design {k}, moeglich sind {}",
+                Self::ALLE.map(|d| d.kennung()).join(", ")
+            )
+        })
+    }
+}
+
+/// **Ob der Agent schreiben darf, ohne zu fragen.**
+///
+/// ⚑ **Zwei Betriebsarten und keine dritte** (Festlegung des
+/// Projektinhabers, 2026-09-11). `auto mode` laesst den Agenten
+/// arbeiten; `manual mode` legt ihm jede **schreibende** Handlung
+/// vorher vor.
+///
+/// ⚑ **Nur die schreibenden.** Ein Modus, der auch das Lesen bestaetigen
+/// liesse, waere nach drei Fragen abgeschaltet, und dann bestaetigt
+/// niemand mehr etwas. **Was sich nicht rueckgaengig machen laesst, ist
+/// das Schreiben.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Agentenmodus {
+    /// Der Agent handelt, und der Mensch sieht zu.
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    /// Jede schreibende Handlung wird vorgelegt.
+    #[serde(rename = "manual")]
+    Manuell,
+}
+
+impl Agentenmodus {
+    /// Die Kennung, wie sie in der Ablage steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manuell => "manual",
+        }
+    }
+
+    /// Wie er heisst, wo ein Mensch ihn liest.
+    ///
+    /// ⚑ **Die Namen kommen vom Projektinhaber** und sind Namen: Sie
+    /// werden nicht uebersetzt.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto mode",
+            Self::Manuell => "manual mode",
+        }
+    }
+
+    /// Der jeweils andere. **Ein Schalter braucht genau das.**
+    pub const fn andere(self) -> Self {
+        match self {
+            Self::Auto => Self::Manuell,
+            Self::Manuell => Self::Auto,
+        }
+    }
+
+    /// Ob eine schreibende Handlung vorgelegt werden muss.
+    pub const fn fragt_nach(self) -> bool {
+        matches!(self, Self::Manuell)
+    }
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        match k {
+            "auto" => Ok(Self::Auto),
+            "manual" | "manuell" => Ok(Self::Manuell),
+            andere => Err(format!("unbekannter Modus {andere}, moeglich sind auto, manual")),
+        }
+    }
+}
+
+/// Welche Werkzeugkiste ein Lauf bekommt.
+///
+/// ⛑ **Drei Werte und nicht zwei.** Ohne `Automatisch` muesste ein
+/// Nutzer bei jedem Modellwechsel mitdenken, und die Einstellung waere
+/// beim naechsten Wechsel still falsch. **Eine Vorgabe, die dem Modell
+/// folgt, ist keine Vorgabe, sondern eine Ableitung**, und die kann
+/// nicht veralten.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Werkzeugwahl {
+    /// Nach der Groesse des geladenen Modells.
+    #[default]
+    #[serde(rename = "automatisch")]
+    Automatisch,
+    /// Immer `Base`, auch bei einem grossen Modell.
+    ///
+    /// ⛑ **`alias` und nicht nur `rename`.** Die Kisten hiessen bis zum
+    /// 2026-09-11 `grund` und `voll`; eine Ablage aus der Zeit davor
+    /// steht auf einer echten Platte. Ohne den Aliasnamen faellt sie
+    /// beim Lesen auf die Vorgabe zurueck, **und zwar still.**
+    #[serde(rename = "base", alias = "grund")]
+    Base,
+    /// Immer `Advanced`, auch bei einem kleinen Modell.
+    #[serde(rename = "advanced", alias = "voll")]
+    Advanced,
+    /// `1337`, und die gibt es nur mit der Adminmarke.
+    ///
+    /// ⚠️ **Steht sie in der Ablage ohne die Marke, gilt `Advanced`**,
+    /// und der Klient sagt es. Ein Wert, den niemand aendern kann und
+    /// der stillschweigend etwas anderes bedeutet, ist schlimmer als
+    /// eine Fehlermeldung.
+    #[serde(rename = "1337")]
+    Elite,
+}
+
+/// **Ob dieser Lauf die Adminmarke traegt.**
+///
+/// ⚑ Gesetzt wird sie in der Umgebung: `MYELITH_ADMIN=1`.
+///
+/// ⚠️ **Sie versteckt und schuetzt nicht, und das ist wichtig genug
+/// fuer eine eigene Zeile.** Ein oertlicher Klient laeuft auf der
+/// Maschine seines Nutzers, mit dessen Rechten, aus offenem Quelltext:
+/// Wer die Marke setzen will, setzt sie in einer Sekunde. Sie haelt
+/// eine Kiste aus der Auswahlliste heraus, damit niemand sie neben
+/// `Base` und `Advanced` fuer eine dritte gleichrangige Wahl haelt.
+/// **Eine Grenze, die nur bei Unkenntnis traegt, ist keine Grenze**,
+/// und dieses Projekt argumentiert an jeder anderen Stelle genauso.
+/// Eine echte Rolle gibt es erst, wenn es ein Netz gibt, das sie
+/// bezeugen kann.
+pub fn ist_admin() -> bool {
+    std::env::var("MYELITH_ADMIN")
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("ja") || v.eq_ignore_ascii_case("yes"))
+}
+
+impl Werkzeugwahl {
+    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::Automatisch => "automatisch",
+            Self::Base => "base",
+            Self::Advanced => "advanced",
+            Self::Elite => "1337",
+        }
+    }
+
+    /// **Welche Kiste daraus folgt, und warum.**
+    ///
+    /// ⚑ **Eine Stelle fuer beide Oberflaechen.** Fenster und Konsole
+    /// stellen dieselbe Frage; rechneten sie sie je selbst, waeren es
+    /// zwei Antworten, sobald eine von beiden angefasst wird.
+    ///
+    /// ⚑ **Und der Grund kommt mit.** Eine Auswahl, die still faellt,
+    /// laesst den Nutzer raten, warum sein Modell ein Werkzeug nicht
+    /// hat.
+    pub fn aufloesen(
+        self,
+        artefakt: &std::path::Path,
+    ) -> (crate::werkzeuge::Werkzeugkiste, String) {
+        self.aufloesen_fuer(artefakt, ist_admin())
+    }
+
+    /// Dasselbe mit ausdruecklich gesagter Berechtigung.
+    pub fn aufloesen_fuer(
+        self,
+        artefakt: &std::path::Path,
+        admin: bool,
+    ) -> (crate::werkzeuge::Werkzeugkiste, String) {
+        use crate::werkzeuge::Werkzeugkiste;
+        match self {
+            Self::Automatisch => Werkzeugkiste::fuer_artefakt(artefakt),
+            Self::Base => (Werkzeugkiste::Base, "so eingestellt".to_string()),
+            Self::Advanced => (Werkzeugkiste::Advanced, "so eingestellt".to_string()),
+            // ⚠️ Ohne die Marke wird daraus `Advanced`, und der Grund
+            // sagt es: Sonst waere die Einstellung eine Behauptung.
+            Self::Elite if !admin => (
+                Werkzeugkiste::Advanced,
+                "1337 steht ohne MYELITH_ADMIN nicht zur Verfuegung".to_string(),
+            ),
+            Self::Elite => (Werkzeugkiste::Elite, "so eingestellt".to_string()),
+        }
+    }
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        Self::aus_fuer(k, ist_admin())
+    }
+
+    /// Dasselbe, aber mit ausdruecklich gesagter Berechtigung.
+    ///
+    /// ⚑ **Damit die Pruefung nicht an der Umgebung haengt.** Ein Test,
+    /// der `MYELITH_ADMIN` setzt, setzt es fuer **alle** Tests im
+    /// selben Prozess, und die laufen nebeneinander: Das Ergebnis
+    /// haengt dann an der Reihenfolge. **Was sich uebergeben laesst,
+    /// wird uebergeben.**
+    pub fn aus_fuer(k: &str, admin: bool) -> Result<Self, String> {
+        match k {
+            "automatisch" => Ok(Self::Automatisch),
+            "base" | "grund" => Ok(Self::Base),
+            "advanced" | "voll" => Ok(Self::Advanced),
+            // ⚑ **Die Fehlermeldung verschweigt die Kiste nicht.** Sie
+            // steht im Quelltext, und ein Hinweis, der so tut, als gebe
+            // es sie nicht, waere die Sorte Schutz, gegen die dieses
+            // Projekt sonst argumentiert.
+            "1337" if !admin => {
+                Err("1337 gibt es nur mit MYELITH_ADMIN=1 in der Umgebung".to_string())
+            }
+            "1337" => Ok(Self::Elite),
+            andere => Err(format!(
+                "unbekannte Werkzeugwahl {andere}, moeglich sind {}",
+                Self::moegliche_fuer(admin).join(", ")
+            )),
+        }
+    }
+
+    /// Was hier gesetzt werden darf, in dieser Umgebung.
+    pub fn moegliche() -> Vec<&'static str> {
+        Self::moegliche_fuer(ist_admin())
+    }
+
+    /// Dasselbe mit ausdruecklich gesagter Berechtigung.
+    pub fn moegliche_fuer(admin: bool) -> Vec<&'static str> {
+        let mut w = vec!["automatisch", "base", "advanced"];
+        if admin {
+            w.push("1337");
+        }
+        w
+    }
+}
+
 /// Wie sich die Oberflaeche verhaelt.
 ///
 /// ⛑ `#[serde(default)]` an beiden Stellen, aus demselben Grund wie bei
 /// [`Ausgabeeinstellung`]: Eine Ablage aus der Zeit davor bleibt lesbar.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Oberflaecheneinstellung {
+    /// Wie die Konsole aussieht. ⚑ Das Fenster beruehrt es nicht.
+    #[serde(default)]
+    pub design: Konsolendesign,
     /// Die Sprache, in der das Fenster spricht.
     #[serde(default)]
     pub sprache: Sprache,
@@ -452,6 +787,7 @@ pub struct Feld {
     /// „Deutsch" und „English", und werden deshalb nicht uebersetzt.
     /// Wer die Oberflaeche gerade nicht versteht, findet seine Sprache
     /// nur so wieder.
+    #[serde(serialize_with = "nur_erlaubte")]
     pub wahl: &'static [Wahl],
     /// Ob in diesem Feld ein Verzeichnis steht.
     ///
@@ -460,6 +796,18 @@ pub struct Feld {
     /// waere ein zwoelfmal wiederholtes `true`/`false`, und eines davon
     /// waere irgendwann falsch.
     pub ordner: bool,
+    /// Ob dieses Feld nur den Konsolenclient betrifft.
+    ///
+    /// ⚑ **Dann zeigt das Fenster es nicht** (Festlegung des
+    /// Projektinhabers, 2026-09-11). Eine Einstellung, die an der
+    /// Stelle, an der sie steht, **nichts** bewirkt, ist schlimmer als
+    /// eine fehlende: Wer sie umlegt und nichts sieht, sucht den Fehler
+    /// woanders.
+    ///
+    /// ⚠️ **Sie verschwindet nicht aus der Kiste**, nur aus dem
+    /// Fenster: `myl setzen` und `/settings` in der Konsole kennen sie
+    /// weiter, denn dort wirkt sie.
+    pub nur_konsole: bool,
     /// Ob dieses Feld ein Betriebsmittel der Maschine freigibt und
     /// deshalb als Schieberegler gehoert.
     ///
@@ -487,6 +835,38 @@ pub struct Wahl {
     pub wert: &'static str,
     /// Was dabeisteht.
     pub titel: &'static str,
+    /// Ob dieser Wert nur mit der Adminmarke angeboten wird.
+    ///
+    /// ⚑ **Am Wert und nicht am Feld.** Ein Feld, das als Ganzes
+    /// verborgen waere, verschwaende die Zeile; verborgen gehoert die
+    /// eine Moeglichkeit, die nicht jeder waehlen soll. Gefiltert wird
+    /// beim Hinausgeben, siehe [`nur_erlaubte`].
+    ///
+    /// ⚠️ Es geht **nicht** ueber die Naht: Das Fenster soll nicht
+    /// entscheiden muessen, was es zeigt.
+    #[serde(skip)]
+    pub nur_admin: bool,
+}
+
+/// Kurzschreibweise fuer die Tabelle weiter unten.
+pub const fn wahl(wert: &'static str, titel: &'static str) -> Wahl {
+    Wahl { wert, titel, nur_admin: false }
+}
+
+/// Dasselbe fuer einen Wert, den nur die Adminmarke freigibt.
+pub const fn wahl_admin(wert: &'static str, titel: &'static str) -> Wahl {
+    Wahl { wert, titel, nur_admin: true }
+}
+
+/// Gibt nur die Moeglichkeiten hinaus, die dieser Nutzer setzen darf.
+///
+/// ⚑ **Beim Hinausgeben und nicht beim Zeichnen.** Wer die Liste erst
+/// im Fenster filtert, hat die Regel an zwei Stellen: hier und dort.
+fn nur_erlaubte<S: serde::Serializer>(w: &&'static [Wahl], s: S) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    let sichtbar: Vec<&Wahl> =
+        w.iter().filter(|x| !x.nur_admin || ist_admin()).collect();
+    sichtbar.serialize(s)
 }
 
 /// Kurzschreibweise fuer die Tabelle darunter.
@@ -513,12 +893,18 @@ const fn feld(
         hinweis: hinweis.0,
         hinweis_en: hinweis.1,
         wahl: &[],
+        nur_konsole: false,
         ordner: art.ist_ordner(),
         freigabe: art.ist_freigabe(),
     }
 }
 
 /// Dasselbe fuer ein Feld mit einer festen Auswahl.
+/// Dasselbe Feld, aber nur fuer die Konsole.
+const fn nur_in_der_konsole(f: Feld) -> Feld {
+    Feld { nur_konsole: true, ..f }
+}
+
 const fn feld_wahl(
     name: &'static str,
     bereich: (&'static str, &'static str),
@@ -556,7 +942,7 @@ impl Feld {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 12] = [
+pub const FELDER: [Feld; 14] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -570,11 +956,27 @@ pub const FELDER: [Feld; 12] = [
             "The language of the window. Field names, paths and model names stay as they are; what a human reads is translated.",
         ),
         &[
-            Wahl { wert: "de", titel: "Deutsch" },
-            Wahl { wert: "en", titel: "English" },
+            wahl("de", "Deutsch"),
+            wahl("en", "English"),
         ],
     ),
-        feld(
+        nur_in_der_konsole(feld_wahl(
+        "oberflaeche.design",
+        ("Oberfläche", "Interface"),
+        ("Konsolen-Design", "Terminal theme"),
+        (
+            "Wie der Konsolenclient (myelith) aussieht: Rahmen, Fusszeile und Hervorhebungen. Standard heisst: die Farben deines Terminals, unverändert. Beim Start lässt sich ein anderes wählen, ohne diese Einstellung zu ändern. Das Fenster berührt es nicht.",
+            "How the terminal client (myelith) looks: frame, footer and highlights. Standard means the colours of your terminal, unchanged. At startup a different one can be picked without changing this setting. It does not touch this window.",
+        ),
+        &[
+            wahl("standard", "Standard"),
+            wahl("myelith", "Myelith"),
+            wahl("bernstein", "Bernstein"),
+            wahl("tiefsee", "Tiefsee"),
+            wahl("tinte", "Tinte"),
+        ],
+    )),
+    feld(
         "modell.artefakt",
         Feldart::Ordner,
         ("Modell", "Model"),
@@ -615,16 +1017,6 @@ pub const FELDER: [Feld; 12] = [
         ),
     ),
     feld(
-        "agent.bezeugtes",
-        Feldart::Schalter,
-        ("Agent", "Agent"),
-        ("Bezeugte Werkzeuge zulassen", "Allow attested tools"),
-        (
-            "Alle Werkzeuge dieses Rechners sind bezeugt: Nur diese Maschine belegt, was sie ausgegeben haben, das Netz kann es nicht nachrechnen. Ohne Angabe sind sie angemeldet, aber gesperrt, und der Agent arbeitet ohne Werkzeuge.",
-            "Every tool on this machine is attested: only this machine vouches for what they returned, the network cannot recompute it. Unless set they are registered but locked, and the agent works without tools.",
-        ),
-    ),
-    feld(
         "agent.wurzel",
         Feldart::Pfad,
         ("Agent", "Agent"),
@@ -633,6 +1025,31 @@ pub const FELDER: [Feld; 12] = [
             "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe gibt es keine Dateiwerkzeuge.",
             "The only folder the file tools may work in. Unless set there are no file tools at all.",
         ),
+    ),
+    feld_wahl(
+        "agent.werkzeuge",
+        ("Agent", "Agent"),
+        ("Werkzeugkiste", "Tool box"),
+        (
+            "Welche Werkzeuge der Agent angeboten bekommt. Automatisch heisst: nach der Größe des geladenen Modells, Base unter sieben Milliarden Parametern, Advanced darüber. Wer einem kleinen Modell alles geben will, wählt hier Advanced.",
+            "Which tools the agent is offered. Automatic means: by the size of the loaded model, Base below seven billion parameters, Advanced above. To give a small model everything, pick Advanced here.",
+        ),
+        &[
+            wahl("automatisch", "Automatisch"),
+            wahl("base", "Base"),
+            wahl("advanced", "Advanced"),
+            wahl_admin("1337", "1337"),
+        ],
+    ),
+    feld_wahl(
+        "agent.modus",
+        ("Agent", "Agent"),
+        ("Modus", "Mode"),
+        (
+            "Im auto mode arbeitet der Agent durch. Im manual mode wird jede schreibende Handlung vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nicht. In diesem Fenster gibt es den Bestätigungskasten noch nicht: Hier bleiben die schreibenden Werkzeuge im manual mode ganz weg. In der Konsole (myelith) wird jede einzeln vorgelegt.",
+            "In auto mode the agent works through. In manual mode every writing action is put to you first and only runs once confirmed; reading and searching never ask. This window has no confirmation box yet: here the writing tools are simply withheld in manual mode. In the terminal (myelith) each one is put to you.",
+        ),
+        &[wahl("auto", "auto mode"), wahl("manual", "manual mode")],
     ),
     feld(
         "agent.schreiben",
@@ -812,15 +1229,19 @@ impl Einstellungen {
             "modell.token" => Feldwert::Zahl(self.modell.token as u64),
             "modell.denken" => Feldwert::Schalter(self.modell.denken),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
-            "agent.bezeugtes" => Feldwert::Schalter(self.agent.auch_bezeugtes),
             "agent.wurzel" => text(&self.agent.wurzel),
             "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
+            "agent.werkzeuge" => Feldwert::Text(self.agent.werkzeuge.kennung().to_string()),
+            "agent.modus" => Feldwert::Text(self.agent.modus.kennung().to_string()),
             "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
             "kap.speicher" => zahl(self.kapazitaet.speicher_gib),
             "kap.platte" => zahl(self.kapazitaet.platte_gib),
             "ausgabe.ordner" => text(&self.ausgabe.ordner),
             "oberflaeche.sprache" => {
                 Feldwert::Text(self.oberflaeche.sprache.kennung().to_string())
+            }
+            "oberflaeche.design" => {
+                Feldwert::Text(self.oberflaeche.design.kennung().to_string())
             }
             andere if andere.starts_with(RECHENWERK_PRAEFIX) => {
                 let kennung = &andere[RECHENWERK_PRAEFIX.len()..];
@@ -853,9 +1274,10 @@ impl Einstellungen {
             "agent.schritte" => {
                 self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
-            "agent.bezeugtes" => self.agent.auch_bezeugtes = ja(wert),
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
+            "agent.werkzeuge" => self.agent.werkzeuge = Werkzeugwahl::aus(wert)?,
+            "agent.modus" => self.agent.modus = Agentenmodus::aus(wert)?,
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),
             "kap.speicher" => self.kapazitaet.speicher_gib = opt(wert),
             "kap.platte" => self.kapazitaet.platte_gib = opt(wert),
@@ -866,6 +1288,7 @@ impl Einstellungen {
             // wo andere Felder eine Grenze wegnehmen koennen, gaebe das
             // hier nur eine dritte Schreibweise fuer Deutsch.
             "oberflaeche.sprache" => self.oberflaeche.sprache = Sprache::aus(wert)?,
+            "oberflaeche.design" => self.oberflaeche.design = Konsolendesign::aus(wert)?,
             // ⚑ **Die Freigabe je Rechenwerk hat keinen festen Namen**,
             // denn wie viele Rechenwerke es gibt, weiss erst der Scan.
             // Der Setzer bleibt trotzdem die eine Stelle, die die
@@ -1106,7 +1529,11 @@ mod setzer {
                 // nur der erste: Eine Auswahl, deren zweiter Eintrag
                 // abgelehnt wird, ist eine Liste mit einer Falle darin.
                 Feldart::Auswahl => {
-                    for w in f.wahl {
+                    // ⚑ Was nur die Adminmarke freigibt, wird hier
+                    // nicht angeboten und darf deshalb auch nicht
+                    // durchkommen; dafuer gibt es
+                    // `die_verborgene_kiste_braucht_die_marke`.
+                    for w in f.wahl.iter().filter(|w| !w.nur_admin || ist_admin()) {
                         e.setzen(f.name, w.wert)
                             .unwrap_or_else(|m| panic!("{}: `{}` wird abgelehnt: {m}", f.name, w.wert));
                         assert_eq!(

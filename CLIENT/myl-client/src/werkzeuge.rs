@@ -204,36 +204,119 @@ impl Einhaengung {
 /// und `write_file` ersetzt die **ganze** Datei, ein Agent kann damit
 /// neunzig Prozent richtig wiedergeben und zehn loeschen.
 ///
-/// ⛑ **Trotzdem ist mehr nicht ohne Weiteres besser.** Fuenf Werkzeuge
-/// im Kontext machen die Auswahl fuer ein 4B-Modell schwerer als drei,
-/// und ob der Gewinn den Preis traegt, ist eine Messfrage. Deshalb
-/// bleibt [`Knapp`](Werkzeugsatz::Knapp) die Vorgabe, bis
-/// `BENCHMARKS/Agent/` die Antwort hat, und `--werkzeuge voll` fuehrt
-/// den anderen Arm.
+/// ⛑ **Trotzdem ist mehr nicht ohne Weiteres besser.** Jedes Werkzeug
+/// steht mit seinem Schema in **jedem** Prompt und ist bei **jeder**
+/// Runde eine Wahl mehr; ein kleines Modell entscheidet darueber
+/// schlechter als ein grosses. Ob der Gewinn den Preis traegt, ist
+/// eine Messfrage, und `BENCHMARKS/Agent/` hat die Antwort noch nicht.
+///
+/// ⚑ **Deshalb haengt die Kiste am Modell und nicht an einer Vorgabe**
+/// (2026-09-10, Festlegung des Projektinhabers). Siehe
+/// [`Werkzeugkiste::fuer_artefakt`]; wer es anders will, stellt es ein.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Werkzeugsatz {
-    /// Die drei, die es bis zum 2026-09-09 gab. **Vorgabe, bis gemessen
-    /// ist**, nicht weil sie besser waeren.
+/// ⚠️ **Nicht zu verwechseln mit `Werkzeugkasten`** aus der
+/// Vollmachtskiste. Der Kasten ist der Behaelter, in dem die
+/// eingehaengten Werkzeuge zur Laufzeit liegen; die Kiste hier ist die
+/// **Auswahl**, welche davon einem Modell ueberhaupt angeboten werden.
+/// Beides ist ein Behaeltnis, und nur eines davon entscheidet etwas.
+pub enum Werkzeugkiste {
+    /// Was ein kleines Modell sicher bedienen kann.
+    ///
+    /// ⛑ **Sie hiess bis zum 2026-09-10 `Knapp` und war „die drei, die
+    /// es bis zum 2026-09-09 gab".** Das ist ein Entstehungsstand und
+    /// keine Auswahl: Wer `default()` schrieb, meinte „das Uebliche"
+    /// und bekam einen Zufall aus der Geschichte. **Ein Name soll
+    /// sagen, wonach die Kiste zusammengestellt ist, nicht wann.**
     #[default]
-    Knapp,
-    /// Alle fuenf.
-    Voll,
+    Base,
+    /// Alles, was ein grosses Modell brauchen kann.
+    Advanced,
+    /// **Die Kiste ohne Ruecksicht**, und sie steht nicht in der
+    /// Auswahl.
+    ///
+    /// ⚑ **Benannt vom Projektinhaber** (2026-09-11). Hier landet, was
+    /// nur jemand bekommen soll, der weiss, was er tut: heute nichts,
+    /// was `Advanced` nicht auch hat, und das steht so da, damit
+    /// niemand mehr vermutet, als drin ist.
+    ///
+    /// ⚠️ **Verborgen heisst nicht geschuetzt.** Siehe
+    /// [`crate::einstellungen::ist_admin`]: Die Marke haelt die Kiste
+    /// aus der Auswahl heraus, sie haelt niemanden ab, der sie sucht.
+    Elite,
 }
 
-impl Werkzeugsatz {
+impl Werkzeugkiste {
     /// Welche Werkzeuge dazugehoeren.
     pub fn werkzeuge(&self) -> &'static [Dateiwerkzeug] {
         match self {
-            Self::Knapp => &Dateiwerkzeug::KNAPP,
-            Self::Voll => &Dateiwerkzeug::ALLE,
+            Self::Base => &Dateiwerkzeug::BASE,
+            // ⚠️ **Heute dasselbe wie `Advanced`.** Das ist keine
+            // Nachlaessigkeit, sondern der Stand: Es gibt noch kein
+            // Werkzeug, das nur hier liegt.
+            Self::Advanced | Self::Elite => &Dateiwerkzeug::ALLE,
         }
     }
 
-    /// Kurzform fuer Protokoll und Schalter.
+    /// **Welche Kiste zu diesem Artefakt passt, und warum.**
+    ///
+    /// # ⚑ Das Modell sagt seine Groesse selbst
+    ///
+    /// Jedes Artefakt traegt in `model_config.json` ein Feld `variant`:
+    /// `0.5b`, `4b`, `7b`, `30b-a3b`. Es kommt aus der Kalibrierung und
+    /// steht auch beim Expertengemisch da. **Der Katalog waere die
+    /// schlechtere Quelle**: Er kennt nur die vier eigenen Artefakte,
+    /// und wer ein eigenes eintraegt, faellt heraus.
+    ///
+    /// ⚑ **Bei einem Expertengemisch zaehlt die Gesamtzahl**, nicht die
+    /// je Token aktive. Die Werkzeugwahl faellt einmal je Runde ueber
+    /// das ganze Modell und nicht je Token.
+    ///
+    /// ⚠️ **Was sich nicht lesen laesst, bekommt den Grundsatz**, und
+    /// der Klient sagt es. Ein Artefakt ohne `variant` koennte klein
+    /// oder gross sein; die kleinere Kiste geht in beiden Faellen, die
+    /// groessere nur in einem. **Aber still darf die Entscheidung nicht
+    /// fallen**, deshalb kommt der Grund mit.
+    pub fn fuer_artefakt(artefakt: &std::path::Path) -> (Self, String) {
+        const GRENZE: f64 = 7.0;
+        let konfig = artefakt.join("model_config.json");
+        let Ok(roh) = std::fs::read_to_string(&konfig) else {
+            return (Self::Base, format!("{} ist nicht lesbar", konfig.display()));
+        };
+        let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else {
+            return (Self::Base, format!("{} ist kein JSON", konfig.display()));
+        };
+        let Some(variante) = d.get("variant").and_then(|v| v.as_str()) else {
+            return (Self::Base, "das Artefakt nennt keine `variant`".to_string());
+        };
+        let Some(milliarden) = milliarden_aus(variante) else {
+            return (Self::Base, format!("`{variante}` ist keine lesbare Groesse"));
+        };
+        if milliarden < GRENZE {
+            (Self::Base, format!("{variante}, unter {GRENZE} Milliarden"))
+        } else {
+            (Self::Advanced, format!("{variante}, ab {GRENZE} Milliarden"))
+        }
+    }
+
+    /// Wie die Kiste heisst, in Protokoll und Anzeige.
+    ///
+    /// ⚑ **Die Namen kommen vom Projektinhaber** (2026-09-11) und sind
+    /// Namen und keine Woerter: Sie werden nicht uebersetzt, so wenig
+    /// wie `Myelith` uebersetzt wird.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Knapp => "knapp",
-            Self::Voll => "voll",
+            Self::Base => "Base",
+            Self::Advanced => "Advanced",
+            Self::Elite => "1337",
+        }
+    }
+
+    /// Dieselbe Kiste als Kennung fuer Ablage und Schalter.
+    pub fn kennung(&self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Advanced => "advanced",
+            Self::Elite => "1337",
         }
     }
 }
@@ -281,8 +364,18 @@ impl Dateiwerkzeug {
     /// sondern schwerer, und das ist keine Vermutung, die man durch
     /// Ausliefern beantwortet. `BENCHMARKS/Agent/` hat den Vergleich;
     /// `myl agent --werkzeuge voll` fuehrt den anderen Arm.
-    pub const KNAPP: [Dateiwerkzeug; 3] =
-        [Dateiwerkzeug::Verzeichnis, Dateiwerkzeug::Lesen, Dateiwerkzeug::Schreiben];
+    /// Die Werkzeuge, die auch ein kleines Modell sicher bedient.
+    ///
+    /// ⛑ **Hier standen drei, und `aendern` war nicht dabei**, wohl
+    /// aber `schreiben`. Der enge Satz enthielt damit das
+    /// **gefaehrlichere** Werkzeug und liess das harmlosere weg: Wer
+    /// eine Zeile tauschen wollte, musste die ganze Datei lesen und
+    /// ganz zurueckschreiben. `aendern` braucht dagegen einen Anker,
+    /// der genau einmal vorkommt.
+    ///
+    /// ⚑ **Und `suchen` fehlte**, also konnte ein Agent im Fenster gar
+    /// nicht suchen. Beides ist am 2026-09-10 dazugekommen.
+    pub const BASE: [Dateiwerkzeug; 5] = Self::ALLE;
 
     /// Braucht es die Schreiberlaubnis?
     pub const fn schreibt(&self) -> bool {
@@ -348,8 +441,9 @@ impl Dateiwerkzeug {
             (Self::Schreiben, Ansageform::Amtlich) => "Write a file inside the working \
                  directory. Existing content is replaced."
                 .into(),
-            (Self::Aendern, Ansageform::Amtlich) => "Replace one passage inside a file. \
-                 The old text must occur exactly once; the rest of the file is untouched. \
+            (Self::Aendern, Ansageform::Amtlich) => "Replace one or more passages inside a \
+                 file. Each old text must occur exactly once; the rest of the file is \
+                 untouched. Give every change you need in one call. \
                  Prefer this over write_file for changing an existing file."
                 .into(),
             (Self::Verzeichnis, Ansageform::Deutsch) => "Listet das Arbeitsverzeichnis. \
@@ -366,8 +460,9 @@ impl Dateiwerkzeug {
             (Self::Schreiben, Ansageform::Deutsch) => "Schreibt eine Datei im \
                  Arbeitsverzeichnis. Vorhandenes wird ersetzt."
                 .into(),
-            (Self::Aendern, Ansageform::Deutsch) => "Ersetzt eine Stelle in einer Datei. \
-                 Der alte Text muss genau einmal vorkommen; der Rest bleibt unangetastet. \
+            (Self::Aendern, Ansageform::Deutsch) => "Ersetzt eine oder mehrere Stellen in \
+                 einer Datei. Jeder alte Text muss genau einmal vorkommen; der Rest bleibt \
+                 unangetastet. Gib alle noetigen Aenderungen in einem Aufruf. \
                  Fuer Aenderungen an vorhandenen Dateien besser als datei_schreiben."
                 .into(),
         }
@@ -412,13 +507,15 @@ impl Dateiwerkzeug {
     /// und das ist eine Auskunft, aus der ein Modell im naechsten
     /// Schritt lernt.
     pub fn parameter(&self, form: Ansageform) -> serde_json::Value {
-        let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis) = match form {
+        let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis, aenderungshinweis) = match form {
             Ansageform::Amtlich => (
                 "path of the file, relative to the working directory; \
                  paths leading outside it are rejected",
                 "how many levels to descend; 1 lists the working directory itself",
                 "literal text, not a regular expression; the whole working directory is searched",
                 "must occur exactly once in the file",
+                "All changes are applied in order, and each one sees the result of the \
+                 previous ones. Either all of them are written or none.",
             ),
             Ansageform::Deutsch => (
                 "Pfad der Datei, relativ zum Arbeitsverzeichnis; \
@@ -426,6 +523,8 @@ impl Dateiwerkzeug {
                 "wie viele Ebenen tief; 1 listet das Arbeitsverzeichnis selbst",
                 "woertlicher Text, kein regulaerer Ausdruck; gesucht wird im ganzen Arbeitsverzeichnis",
                 "muss genau einmal in der Datei vorkommen",
+                "Alle Aenderungen werden der Reihe nach angewendet, und jede sieht das \
+                 Ergebnis der vorigen. Entweder alle werden geschrieben oder keine.",
             ),
         };
         match self {
@@ -451,14 +550,32 @@ impl Dateiwerkzeug {
                 },
                 "required": ["muster"]
             }),
+            // ⚑ **Eine Liste, kein Paar** (2026-09-10).
+            //
+            // ⛑ **Und die Liste ersetzt das Paar, statt danebenzustehen.**
+            // Ein zweites Werkzeug fuer Mehrfachaenderungen waere eine
+            // Wahl, ein optionales Feld daneben waere Fund 289 in neuer
+            // Verkleidung: Der Einzelfall ist eine Liste mit einem
+            // Eintrag, und darueber muss niemand entscheiden.
             Self::Aendern => serde_json::json!({
                 "type": "object",
                 "properties": {
                     "pfad": {"type": "string", "description": wohin},
-                    "alt": {"type": "string", "description": alt_hinweis},
-                    "neu": {"type": "string"}
+                    "aenderungen": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": aenderungshinweis,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "alt": {"type": "string", "description": alt_hinweis},
+                                "neu": {"type": "string"}
+                            },
+                            "required": ["alt", "neu"]
+                        }
+                    }
                 },
-                "required": ["pfad", "alt", "neu"]
+                "required": ["pfad", "aenderungen"]
             }),
             Self::Lesen => serde_json::json!({
                 "type": "object",
@@ -615,7 +732,7 @@ impl Werkzeugausfuehrung for Suchen {
 /// Es ersetzt die **ganze** Datei. Ein Agent, der neunzig Prozent
 /// richtig wiedergibt, hat die restlichen zehn geloescht, und niemand
 /// sieht es, bis jemand die Datei braucht. Das ist die gefaehrlichste
-/// Stelle im bisherigen Werkzeugsatz.
+/// Stelle im bisherigen Werkzeugkiste.
 ///
 /// # ⚑ Genau ein Vorkommen, sonst ein Fehler
 ///
@@ -636,44 +753,114 @@ impl Werkzeugausfuehrung for Dateiaendern {
             });
         }
         let roh = zeichenkette(a, "pfad")?;
-        let alt = zeichenkette(a, "alt")?;
-        let neu = zeichenkette(a, "neu")?;
-        if alt.is_empty() {
-            return Err(Werkzeugfehler {
-                grund: "`alt` ist leer; zum Anlegen einer Datei gibt es das Schreibwerkzeug"
-                    .into(),
-            });
-        }
+        let aenderungen = aenderungsliste(a)?;
         let p = self.0.aufloesen(&roh, true)?;
         let inhalt = std::fs::read_to_string(&p)
             .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
-        let zahl = inhalt.matches(alt.as_str()).count();
-        match zahl {
-            0 => Err(Werkzeugfehler {
-                grund: format!("{roh} enthaelt die Stelle nicht"),
-            }),
-            1 => {
-                let neuer = inhalt.replacen(alt.as_str(), &neu, 1);
-                if neuer.len() > SCHREIBGRENZE {
-                    return Err(Werkzeugfehler {
-                        grund: format!(
-                            "die Datei waere {} Bytes gross, ueber der Grenze von {SCHREIBGRENZE}",
-                            neuer.len()
-                        ),
-                    });
+
+        // ⚑ **Erst der Trockenlauf, dann das Schreiben.**
+        //
+        // Jede Aenderung wird der Reihe nach auf eine Kopie angewendet,
+        // und jede sieht das Ergebnis der vorigen: **genau so, wie das
+        // Schreiben es tun wird.** Eine Pruefung, die jede Aenderung
+        // gegen den Urzustand haelt, gaebe gruenes Licht fuer einen
+        // Satz, der sich unterwegs selbst widerspricht.
+        //
+        // ⚠️ **Und es werden alle Fehler gesammelt, nicht der erste.**
+        // Wer beim ersten abbricht, schickt das Modell in eine Runde je
+        // Fehler; wer alle nennt, laesst es in einem Zug berichtigen.
+        let mut stand = inhalt.clone();
+        let mut fehler = Vec::new();
+        for (i, (alt, _neu)) in aenderungen.iter().enumerate() {
+            let zahl = stand.matches(alt.as_str()).count();
+            match zahl {
+                1 => {
+                    let (a, n) = &aenderungen[i];
+                    stand = stand.replacen(a.as_str(), n, 1);
                 }
-                std::fs::write(&p, &neuer)
-                    .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
-                Ok(format!("{}: eine Stelle ersetzt", self.0.kurz(&p)))
+                0 => fehler.push(format!(
+                    "Aenderung {}: die Stelle kommt nicht vor{}",
+                    i + 1,
+                    if i > 0 { " (auch nicht nach den vorigen Aenderungen)" } else { "" }
+                )),
+                n => fehler.push(format!(
+                    "Aenderung {}: die Stelle kommt {n}-mal vor; `alt` muss eindeutig sein, \
+                     also mehr Umgebung aufnehmen",
+                    i + 1
+                )),
             }
-            n => Err(Werkzeugfehler {
-                grund: format!(
-                    "{roh} enthaelt die Stelle {n}-mal; \
-                     `alt` muss eindeutig sein, also mehr Umgebung aufnehmen"
-                ),
-            }),
         }
+        if !fehler.is_empty() {
+            return Err(Werkzeugfehler {
+                grund: format!("{roh}: nichts geschrieben.\n{}", fehler.join("\n")),
+            });
+        }
+        if stand.len() > SCHREIBGRENZE {
+            return Err(Werkzeugfehler {
+                grund: format!(
+                    "die Datei waere {} Bytes gross, ueber der Grenze von {SCHREIBGRENZE}; \
+                     nichts geschrieben",
+                    stand.len()
+                ),
+            });
+        }
+
+        std::fs::write(&p, &stand)
+            .map_err(|e| Werkzeugfehler { grund: format!("{roh}: {e}") })?;
+        Ok(format!(
+            "{}: {}",
+            self.0.kurz(&p),
+            match aenderungen.len() {
+                1 => "eine Stelle ersetzt".to_string(),
+                n => format!("{n} Stellen ersetzt"),
+            }
+        ))
     }
+}
+
+/// Die fuehrende Zahl einer Variantenangabe, in Milliarden.
+///
+/// ⚑ **`30b-a3b` ergibt 30 und nicht 3.** Die Angabe hinter dem Strich
+/// nennt die je Token aktiven Parameter; gelesen wird bis zum ersten
+/// `b`, und das ist die Gesamtzahl.
+fn milliarden_aus(variante: &str) -> Option<f64> {
+    let zahl: String = variante
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    (!zahl.is_empty()).then(|| zahl.parse().ok()).flatten()
+}
+
+/// Liest die Aenderungsliste aus den Argumenten.
+///
+/// ⚑ **Sie ist Pflicht und hat mindestens einen Eintrag.** Eine leere
+/// Liste waere ein Aufruf, der nichts tut und trotzdem einen Schritt
+/// kostet; das Modell soll den Fehler sehen und nicht die Ruhe.
+fn aenderungsliste(a: &serde_json::Value) -> Result<Vec<(String, String)>, Werkzeugfehler> {
+    let Some(liste) = a.get("aenderungen").and_then(|v| v.as_array()) else {
+        return Err(Werkzeugfehler {
+            grund: "`aenderungen` fehlt oder ist keine Liste".into(),
+        });
+    };
+    if liste.is_empty() {
+        return Err(Werkzeugfehler { grund: "`aenderungen` ist leer".into() });
+    }
+    let mut aus = Vec::with_capacity(liste.len());
+    for (i, e) in liste.iter().enumerate() {
+        let alt = e.get("alt").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let neu = e.get("neu").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        if alt.is_empty() {
+            return Err(Werkzeugfehler {
+                grund: format!(
+                    "Aenderung {}: `alt` ist leer; zum Anlegen einer Datei gibt es das \
+                     Schreibwerkzeug",
+                    i + 1
+                ),
+            });
+        }
+        aus.push((alt, neu));
+    }
+    Ok(aus)
 }
 
 /// Liest eine Datei innerhalb der Einhaengung.
@@ -877,7 +1064,7 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
 /// Wirtsverzeichnis verraet, gehoert er auch nicht in die
 /// **Beschreibung**. Das Modell arbeitet relativ und braucht ihn nicht;
 /// der Mensch sieht ihn beim Start der Sitzung.
-pub fn angebote(e: &Einhaengung, form: Ansageform, satz: Werkzeugsatz) -> Vec<Werkzeug> {
+pub fn angebote(e: &Einhaengung, form: Ansageform, satz: Werkzeugkiste) -> Vec<Werkzeug> {
     // ⛑ **Hier standen Name, Beschreibung und Schema als Literale**,
     // und die Ausfuehrung nannte ihren Namen noch einmal. Seit die
     // Namen an der Ansageform haengen, waeren das zwei Listen, die
@@ -1005,8 +1192,19 @@ mod neue_werkzeuge {
     // ── edit_file ────────────────────────────────────────────────────
 
     fn aendern(e: &Einhaengung, alt: &str, neu: &str) -> Result<String, Werkzeugfehler> {
+        aendern_viele(e, &[(alt, neu)])
+    }
+
+    fn aendern_viele(
+        e: &Einhaengung,
+        paare: &[(&str, &str)],
+    ) -> Result<String, Werkzeugfehler> {
+        let liste: Vec<_> = paare
+            .iter()
+            .map(|(a, n)| serde_json::json!({"alt": a, "neu": n}))
+            .collect();
         Dateiaendern(e.clone(), Ansageform::Amtlich)
-            .ausfuehren(&serde_json::json!({"pfad": "oben.txt", "alt": alt, "neu": neu}))
+            .ausfuehren(&serde_json::json!({"pfad": "oben.txt", "aenderungen": liste}))
     }
 
     #[test]
@@ -1027,7 +1225,89 @@ mod neue_werkzeuge {
         let f = aendern(&e, "x", "y");
         assert!(f.is_err(), "eine mehrdeutige Stelle wurde ersetzt");
         assert!(f.unwrap_err().grund.contains("2-mal"));
+        // ⚑ Und der Aufruf sagt, dass nichts geschrieben wurde.
         assert_eq!(std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"), "x\nx\n");
+    }
+
+    /// **Mehrere Stellen in einem Aufruf.**
+    ///
+    /// ⚑ **Der eigentliche Zweck der Liste.** Vorher kostete jede
+    /// Ersetzung einen Schritt des Agenten; jetzt kostet ein Satz von
+    /// Aenderungen einen.
+    #[test]
+    fn mehrere_stellen_in_einem_aufruf() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "eins\nzwei\ndrei\n").expect("Datei");
+        let aus = aendern_viele(&e, &[("eins", "ONE"), ("drei", "THREE")]).expect("aendern");
+        assert!(aus.contains("2 Stellen"), "{aus}");
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"),
+            "ONE\nzwei\nTHREE\n"
+        );
+    }
+
+    /// **Jede Aenderung sieht das Ergebnis der vorigen.**
+    ///
+    /// ⛑ **Eine Pruefung gegen den Urzustand haette hier gruenes Licht
+    /// gegeben und danach das Falsche geschrieben.** „a" kommt im
+    /// Urzustand einmal vor und nach der ersten Aenderung zweimal; wer
+    /// beide gegen den Anfang prueft, haelt den Satz fuer eindeutig und
+    /// ersetzt dann die erste Fundstelle statt der gemeinten.
+    #[test]
+    fn jede_aenderung_sieht_die_vorige() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "a\nb\n").expect("Datei");
+        let f = aendern_viele(&e, &[("b", "a"), ("a", "c")]);
+        assert!(f.is_err(), "der Satz widerspricht sich und wurde trotzdem geschrieben");
+        assert!(f.unwrap_err().grund.contains("2-mal"));
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"),
+            "a\nb\n",
+            "trotz Fehler geschrieben"
+        );
+    }
+
+    /// **Alles oder nichts.**
+    ///
+    /// ⚠️ **Die wichtigste Zusage dieses Werkzeugs.** Eine Datei, in der
+    /// drei von fuenf Aenderungen stehen, ist schlimmer als eine
+    /// unveraenderte: Sie sieht bearbeitet aus und ist es halb.
+    #[test]
+    fn ein_fehler_schreibt_gar_nichts() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "eins\nzwei\n").expect("Datei");
+        let f = aendern_viele(&e, &[("eins", "ONE"), ("gibtesnicht", "X")]);
+        assert!(f.is_err());
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("oben.txt")).expect("lesen"),
+            "eins\nzwei\n",
+            "die erste Aenderung wurde geschrieben, obwohl die zweite fiel"
+        );
+    }
+
+    /// **Alle Fehler auf einmal, nicht der erste.**
+    ///
+    /// ⚑ Wer beim ersten abbricht, schickt das Modell in eine Runde je
+    /// Fehler. Bei einem Schrittbudget ist das der Unterschied zwischen
+    /// einem Auftrag und keinem.
+    #[test]
+    fn alle_fehler_werden_genannt() {
+        let (d, e) = baum();
+        std::fs::write(d.path().join("oben.txt"), "eins\nzwei\n").expect("Datei");
+        let f = aendern_viele(&e, &[("fehlt-eins", "X"), ("fehlt-zwei", "Y")])
+            .expect_err("beide fehlen");
+        assert!(f.grund.contains("Aenderung 1"), "{}", f.grund);
+        assert!(f.grund.contains("Aenderung 2"), "{}", f.grund);
+    }
+
+    /// ⚑ **Eine leere Liste ist ein Fehler und keine Ruhe.** Ein
+    /// Aufruf, der nichts tut, kostet trotzdem einen Schritt.
+    #[test]
+    fn eine_leere_liste_wird_abgelehnt() {
+        let (_d, e) = baum();
+        let f = Dateiaendern(e, Ansageform::Amtlich)
+            .ausfuehren(&serde_json::json!({"pfad": "oben.txt", "aenderungen": []}));
+        assert!(f.is_err());
     }
 
     #[test]
@@ -1042,9 +1322,10 @@ mod neue_werkzeuge {
     fn ohne_erlaubnis_wird_nichts_geaendert() {
         let (d, _e) = baum();
         let nur_lesen = Einhaengung::neu(d.path(), false).expect("Einhaengung");
-        let f = Dateiaendern(nur_lesen, Ansageform::Amtlich).ausfuehren(
-            &serde_json::json!({"pfad": "oben.txt", "alt": "Goldfisch", "neu": "Karpfen"}),
-        );
+        let f = Dateiaendern(nur_lesen, Ansageform::Amtlich).ausfuehren(&serde_json::json!({
+            "pfad": "oben.txt",
+            "aenderungen": [{"alt": "Goldfisch", "neu": "Karpfen"}]
+        }));
         assert!(f.is_err());
         assert!(std::fs::read_to_string(d.path().join("oben.txt"))
             .expect("lesen")
@@ -1100,7 +1381,7 @@ mod namen {
         let d = tempfile::tempdir().expect("Verzeichnis");
         let e = Einhaengung::neu(d.path(), true).expect("Einhaengung");
         for form in [Ansageform::Amtlich, Ansageform::Deutsch] {
-            for satz in [Werkzeugsatz::Knapp, Werkzeugsatz::Voll] {
+            for satz in [Werkzeugkiste::Base, Werkzeugkiste::Advanced] {
                 let angeboten: Vec<String> =
                     angebote(&e, form, satz).into_iter().map(|w| w.name).collect();
                 let ausgefuehrt: Vec<String> = satz
@@ -1120,7 +1401,7 @@ mod namen {
         let d = tempfile::tempdir().expect("Verzeichnis");
         let nur_lesen = Einhaengung::neu(d.path(), false).expect("Einhaengung");
         for form in [Ansageform::Amtlich, Ansageform::Deutsch] {
-            for satz in [Werkzeugsatz::Knapp, Werkzeugsatz::Voll] {
+            for satz in [Werkzeugkiste::Base, Werkzeugkiste::Advanced] {
                 let namen: Vec<String> =
                     angebote(&nur_lesen, form, satz).into_iter().map(|w| w.name).collect();
                 // ⚑ Die Erwartung kommt aus der Tabelle und nicht als
@@ -1305,7 +1586,7 @@ mod grenze {
     fn die_beschreibung_verraet_das_wirtsverzeichnis_nicht() {
         let (d, e) = baue();
         let wo = d.path().display().to_string();
-        for w in angebote(&e, Ansageform::Amtlich, Werkzeugsatz::Voll) {
+        for w in angebote(&e, Ansageform::Amtlich, Werkzeugkiste::Advanced) {
             assert!(!w.beschreibung.contains(&wo), "{}: {}", w.name, w.beschreibung);
         }
     }
@@ -1317,7 +1598,7 @@ mod grenze {
     fn ohne_erlaubnis_kein_angebot() {
         let (d, _e) = baue();
         let nur_lesen = Einhaengung::neu(d.path(), false).expect("Einhaengung");
-        let a = angebote(&nur_lesen, Ansageform::Amtlich, Werkzeugsatz::Voll);
+        let a = angebote(&nur_lesen, Ansageform::Amtlich, Werkzeugkiste::Advanced);
         // ⛑ Hier stand `assert_eq!(a.len(), 2)` und der Name als
         // Zeichenkette. Beides musste am 2026-09-09 nachgezogen werden,
         // als zwei Werkzeuge dazukamen, und das ist genau die Sorte
@@ -1348,33 +1629,56 @@ mod keine_wahl {
     /// seinem Schrittbudget.** Also gibt es sie nicht.
     #[test]
     fn kein_werkzeug_hat_einen_optionalen_parameter() {
+        /// Prueft ein Schema und **jedes Schema darin**.
+        ///
+        /// ⛑ **Sie sah bis zum 2026-09-10 nur die oberste Ebene**, und
+        /// das fiel auf, als `edit_file` eine Liste von Objekten bekam:
+        /// Die Wache lief gruen durch, weil sie in `items` gar nicht
+        /// hineinsah. Sie war nicht erfuellt, sie war blind. **Eine
+        /// Pruefung, die nur die Form prueft, in der der Fehler bisher
+        /// auftrat, prueft die Vergangenheit.**
+        fn pruefen(schema: &serde_json::Value, wo: &str, name: &str) {
+            let felder: Vec<String> = schema
+                .get("properties")
+                .and_then(|x| x.as_object())
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+            let noetig: Vec<String> = schema
+                .get("required")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
+                .unwrap_or_default();
+            for f in &felder {
+                assert!(
+                    noetig.contains(f),
+                    "`{name}`{wo} hat den optionalen Parameter `{f}`.\n\
+                     Ein optionaler Parameter ist eine Entscheidung, die das Modell \n\
+                     treffen muss, und ein kleines Modell bezahlt sie mit seinem Budget.",
+                );
+            }
+            // ⚑ Und die Gegenrichtung: nichts Verlangtes, das es gar
+            // nicht gibt. Das waere ein Aufruf, der nie gelingt.
+            for n in &noetig {
+                assert!(
+                    felder.contains(n),
+                    "`{name}`{wo} verlangt `{n}`, kennt es aber nicht"
+                );
+            }
+            // ⚑ **Und jetzt hinein.** Ein Objekt in einer Liste ist
+            // dieselbe Entscheidung eine Ebene tiefer.
+            if let Some(o) = schema.get("properties").and_then(|x| x.as_object()) {
+                for (feld, unter) in o {
+                    pruefen(unter, &format!("{wo}, Feld `{feld}`"), name);
+                }
+            }
+            if let Some(items) = schema.get("items") {
+                pruefen(items, &format!("{wo}, Listeneintrag"), name);
+            }
+        }
+
         for form in [Ansageform::Amtlich, Ansageform::Deutsch] {
             for &w in &Dateiwerkzeug::ALLE {
-                let p = w.parameter(form);
-                let felder: Vec<String> = p
-                    .get("properties")
-                    .and_then(|x| x.as_object())
-                    .map(|o| o.keys().cloned().collect())
-                    .unwrap_or_default();
-                let noetig: Vec<String> = p
-                    .get("required")
-                    .and_then(|x| x.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect())
-                    .unwrap_or_default();
-                for f in &felder {
-                    assert!(
-                        noetig.contains(f),
-                        "`{}` hat den optionalen Parameter `{f}`.\n\
-                         Ein optionaler Parameter ist eine Entscheidung, die das Modell \n\
-                         treffen muss, und ein kleines Modell bezahlt sie mit seinem Budget.",
-                        w.name(form)
-                    );
-                }
-                // ⚑ Und die Gegenrichtung: nichts Verlangtes, das es
-                // gar nicht gibt. Das waere ein Aufruf, der nie gelingt.
-                for n in &noetig {
-                    assert!(felder.contains(n), "`{}` verlangt `{n}`, kennt es aber nicht", w.name(form));
-                }
+                pruefen(&w.parameter(form), "", w.name(form));
             }
         }
     }
@@ -1411,7 +1715,7 @@ mod keine_wahl {
         let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
         let form = Ansageform::Amtlich;
 
-        let angebot = angebote(&e, form, Werkzeugsatz::default())
+        let angebot = angebote(&e, form, Werkzeugkiste::default())
             .into_iter()
             .find(|a| a.name == Dateiwerkzeug::Verzeichnis.name(form))
             .expect("Verzeichniswerkzeug");
@@ -1432,5 +1736,81 @@ mod keine_wahl {
             arguments: serde_json::json!({"tiefe": 1}),
         };
         myl_local_agent::werkzeug::argumente_pruefen(&angebot, &ohne).expect("richtiger Aufruf");
+    }
+}
+
+#[cfg(test)]
+mod kistenwahl {
+    use super::*;
+
+    fn artefakt(variante: Option<&str>) -> tempfile::TempDir {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        if let Some(v) = variante {
+            std::fs::write(
+                d.path().join("model_config.json"),
+                format!(r#"{{"family":"qwen3","variant":"{v}"}}"#),
+            )
+            .expect("Konfig");
+        }
+        d
+    }
+
+    /// **Das Modell sagt seine Groesse selbst, und die Kiste folgt.**
+    #[test]
+    fn die_kiste_folgt_der_groesse() {
+        for (variante, erwartet) in [
+            ("0.5b", Werkzeugkiste::Base),
+            ("4b", Werkzeugkiste::Base),
+            ("7b", Werkzeugkiste::Advanced),
+            ("30b-a3b", Werkzeugkiste::Advanced),
+        ] {
+            let d = artefakt(Some(variante));
+            let (kiste, warum) = Werkzeugkiste::fuer_artefakt(d.path());
+            assert_eq!(kiste, erwartet, "{variante}: {warum}");
+            assert!(warum.contains(variante), "der Grund nennt die Variante nicht: {warum}");
+        }
+    }
+
+    /// ⚑ **Beim Expertengemisch zaehlt die Gesamtzahl.** `30b-a3b`
+    /// nennt hinter dem Strich die je Token aktiven drei Milliarden;
+    /// wer die liest, gibt einem 30B-Modell die kleine Kiste.
+    #[test]
+    fn beim_expertengemisch_zaehlt_die_gesamtzahl() {
+        assert_eq!(milliarden_aus("30b-a3b"), Some(30.0));
+        assert_eq!(milliarden_aus("0.5b"), Some(0.5));
+        assert_eq!(milliarden_aus("4b"), Some(4.0));
+        assert_eq!(milliarden_aus("kaputt"), None);
+    }
+
+    /// ⚠️ **Was sich nicht lesen laesst, bekommt die Grundkiste, und
+    /// der Grund kommt mit.** Die kleinere Kiste geht in beiden
+    /// Faellen, die groessere nur in einem; aber still darf die
+    /// Entscheidung nicht fallen.
+    #[test]
+    fn ohne_lesbare_groesse_gibt_es_die_grundkiste() {
+        for (aufbau, stichwort) in [
+            (artefakt(None), "nicht lesbar"),
+            (artefakt(Some("kaputt")), "keine lesbare Groesse"),
+        ] {
+            let (kiste, warum) = Werkzeugkiste::fuer_artefakt(aufbau.path());
+            assert_eq!(kiste, Werkzeugkiste::Base, "{warum}");
+            assert!(warum.contains(stichwort), "der Grund sagt nichts: {warum}");
+        }
+    }
+
+    /// **Die Einstellung schlaegt die Ableitung.**
+    ///
+    /// ⚑ Wer sie anfasst, hat die Frage schon beantwortet: Ein kleines
+    /// Modell bekommt auf Wunsch die volle Kiste.
+    #[test]
+    fn die_einstellung_schlaegt_die_ableitung() {
+        use crate::einstellungen::Werkzeugwahl;
+        let klein = artefakt(Some("4b"));
+        assert_eq!(Werkzeugwahl::Automatisch.aufloesen(klein.path()).0, Werkzeugkiste::Base);
+        assert_eq!(Werkzeugwahl::Advanced.aufloesen(klein.path()).0, Werkzeugkiste::Advanced);
+
+        let gross = artefakt(Some("30b-a3b"));
+        assert_eq!(Werkzeugwahl::Automatisch.aufloesen(gross.path()).0, Werkzeugkiste::Advanced);
+        assert_eq!(Werkzeugwahl::Base.aufloesen(gross.path()).0, Werkzeugkiste::Base);
     }
 }

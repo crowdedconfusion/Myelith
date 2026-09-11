@@ -370,6 +370,301 @@ pub fn load_model_dims(artifact_dir: &Path) -> Result<ModelDims, String> {
     Ok(dims)
 }
 
+/// Was beim Laden eines Manifesteintrags herauskommt.
+///
+/// ⚑ **Ein Aufzaehlungstyp, damit der Eintrag fuer sich steht.** Bis zum
+/// 2026-09-11 schrieb die Schleife unmittelbar in drei Sammlungen; damit
+/// war jeder Eintrag an die Schleife gebunden und keiner an einen
+/// anderen Faden zu geben.
+enum Geladen {
+    Gewicht(String, LoadedWeight),
+    Kopf(LmHead),
+    Vorspann(String, BiasTensor),
+}
+
+/// Laedt **einen** Eintrag des Gewichtsmanifests und prueft ihn.
+///
+/// Der ganze Rumpf stand bis zum 2026-09-11 in der Schleife von
+/// [`load_weights`]; herausgezogen ist er unveraendert, nur die drei
+/// Einfuegungen sind zu drei Rueckgaben geworden.
+fn eintrag_laden(
+    artifact_dir: &Path,
+    name: String,
+    entry: WeightManifestEntry,
+) -> Result<Geladen, String> {
+    // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
+    // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
+    if entry.dtype == "int16" {
+        let ist_bias = name.ends_with("_bias");
+        if name != "lm_head" && !ist_bias {
+            return Err(format!(
+                "{}: int16 ist nur fuer den LM-Head und Attention-Biases zulaessig",
+                name
+            ));
+        }
+        let shifts_file = entry.shifts_file.as_ref().ok_or_else(|| {
+            format!("{}: int16-Eintrag ohne shifts_file", name)
+        })?;
+        if !ist_bias && entry.shape.len() != 2 {
+            return Err(format!("{}: LM-Head erwartet shape [vocab, hidden]", name));
+        }
+        if ist_bias && entry.shape.len() != 1 {
+            return Err(format!("{}: Bias erwartet eindimensionale shape", name));
+        }
+
+        let bytes = std::fs::read(artifact_dir.join(&entry.file))
+            .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+        let expected_len: usize = entry.shape.iter().product::<usize>() * 2;
+        if bytes.len() != expected_len {
+            return Err(format!(
+                "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes (int16)",
+                name, bytes.len(), entry.file, entry.shape, expected_len
+            ));
+        }
+        let digest = sha256_hex(&bytes);
+        if digest != entry.hash {
+            return Err(format!(
+                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+                name, digest, entry.hash
+            ));
+        }
+
+        let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
+            .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
+        if shift_bytes.len() != entry.shape[0] {
+            return Err(format!(
+                "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
+                name, shift_bytes.len(), shifts_file, entry.shape[0]
+            ));
+        }
+        if let Some(expected_shifts_hash) = &entry.shifts_hash {
+            let shifts_digest = sha256_hex(&shift_bytes);
+            if shifts_digest != *expected_shifts_hash {
+                return Err(format!(
+                    "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
+                    name, shifts_digest, expected_shifts_hash
+                ));
+            }
+        }
+
+        // little-endian i16, ein Wert je zwei Bytes. Die Laengenpruefung
+        // stand hier bisher nicht: `chunks_exact` verwarf ein einzelnes
+        // Restbyte stillschweigend und lud ein um ein halbes Element
+        // gekuerztes Gewicht. Eine beschaedigte Datei muss auffallen.
+        if bytes.len() % 2 != 0 {
+            return Err(format!(
+                "{}: Datei hat ungerade Byteanzahl ({}), kann keine \
+                 i16-Folge sein",
+                name,
+                bytes.len()
+            ));
+        }
+        // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es
+        // erst ab clippy 1.98, ein `allow` darauf ist auf aelteren
+        // Werkzeugketten selbst eine Warnung.
+        //
+        // `as_chunks::<2>()` waere der Vorschlag, ist aber erst seit Rust
+        // 1.88 stabil. Die Schwester-Crates erklaeren MSRV 1.85; dieses
+        // hier hat keine Angabe, und ein stillschweigend hoeherer Bedarf
+        // waere schlimmer als eine ausdrueckliche Ausnahme.
+        #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+        let data: Vec<i16> = bytes
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return Ok(if ist_bias {
+            Geladen::Vorspann(name, BiasTensor { data, shifts: shift_bytes })
+        } else {
+            Geladen::Kopf(LmHead { data, shape: entry.shape, shifts: shift_bytes })
+        });
+    }
+
+    if entry.dtype != "int8" {
+        return Err(format!(
+            "{}: nicht unterstuetzter dtype '{}' (erwartet 'int8')",
+            name, entry.dtype
+        ));
+    }
+    if entry.shape.is_empty() {
+        return Err(format!("{}: leere shape im Manifest", name));
+    }
+
+    // ⚑ **Fund 62 (2026-08-25): Abbild statt Heap-Kopie.**
+    //
+    // Hier stand `std::fs::read`, also eine Kopie jeder Gewichtsdatei
+    // in den Heap. Für 0,74 GB und 8,1 GB trägt das. Das Artefakt von
+    // Qwen3-30B-A3B ist **29 GiB** gegen 24 GiB Arbeitsspeicher, und
+    // der Versuch zeigte das schlechteste denkbare Verhalten: Während
+    // der Prozess las, schrieb das System seinen Heap in die
+    // Auslagerung. RSS fiel von 8,9 auf 1,9 GiB, der Swap wuchs von
+    // 2,9 auf 4,1 GB. Von der Platte lesen und sofort wieder auf die
+    // Platte schreiben.
+    //
+    // Als Abbild sind dieselben Bytes **saubere, dateigestützte
+    // Seiten**: Das System verwirft sie unter Druck und liest sie bei
+    // Bedarf neu, statt sie auszulagern. Für ein Mixture-of-Experts-Modell ist
+    // das mehr als eine Notlösung, denn bei Top-8 von 128 rührt ein
+    // Token nur ein Sechzehntel der Expertengewichte an.
+    //
+    // Gemessen: 18 873 Abbildungen in einem Prozess sind auf dieser
+    // Maschine unproblematisch (Deskriptorgrenze 1 048 576).
+    let pfad = artifact_dir.join(&entry.file);
+    let datei = std::fs::File::open(&pfad)
+        .map_err(|e| format!("Fehler beim Oeffnen von {}: {}", entry.file, e))?;
+    // SICHERHEIT: `Mmap::map` ist unsicher, weil ein Fremdprozess die
+    // Datei unter dem Abbild ändern könnte. Hier liegt sie im
+    // Artefaktverzeichnis, wird ausschließlich lesend geöffnet, und
+    // ihr Inhalt ist unmittelbar danach über SHA-256 gegen das
+    // Manifest geprüft. Eine Änderung nach dieser Prüfung wäre
+    // dieselbe Klasse von Angriff wie eine Änderung an einer
+    // eingelesenen Datei zwischen Lesen und Verwenden.
+    let abbild = unsafe { memmap2::Mmap::map(&datei) }
+        .map_err(|e| format!("Fehler beim Abbilden von {}: {}", entry.file, e))?;
+
+    let expected_len: usize = entry.shape.iter().product();
+    if abbild.len() != expected_len {
+        return Err(format!(
+            "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes",
+            name, abbild.len(), entry.file, entry.shape, expected_len
+        ));
+    }
+
+    // **Die Prüfsumme liest jedes Byte, und das ist in Ordnung.**
+    // Sie bindet das Artefakt an θ_v; ohne sie fiele der Anker weg.
+    // Anders als eine Heap-Kopie bleibt danach nichts belegt: Die
+    // berührten Seiten sind sauber und werden bei Bedarf verworfen.
+    // ⚑ **Fund 331 auch hier, und hier wiegt er am schwersten.**
+    // Die Pruefsumme liest jedes Byte, und ohne Ankuendigung holt
+    // das Abbild sie Seite fuer Seite: 0,44 GB/s statt 3,41. Fuer
+    // 29 GB sind das 66 statt 9 Sekunden, **nur fuer das Warten auf
+    // einzelne Seitenfehler**. Ein Rat vor dem ersten Byte kostet
+    // einen Systemaufruf.
+    abbild.advise(memmap2::Advice::WillNeed).ok();
+    let digest = sha256_hex(&abbild);
+    if digest != entry.hash {
+        return Err(format!(
+            "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
+            name, digest, entry.hash
+        ));
+    }
+
+    // Per-Channel-Shifts (theta_v 0.7.0): eine shifts_file mit einem
+    // Shift je Zeile. Aeltere Artefakte/Synthetik-Fixtures ohne
+    // shifts_file tragen einen uniformen entry.shift, der je Zeile
+    // repliziert wird.
+    let shifts: Vec<u8> = if let Some(shifts_file) = &entry.shifts_file {
+        let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
+            .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
+        if shift_bytes.len() != entry.shape[0] {
+            return Err(format!(
+                "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
+                name, shift_bytes.len(), shifts_file, entry.shape[0]
+            ));
+        }
+        if let Some(expected_shifts_hash) = &entry.shifts_hash {
+            let shifts_digest = sha256_hex(&shift_bytes);
+            if shifts_digest != *expected_shifts_hash {
+                return Err(format!(
+                    "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
+                    name, shifts_digest, expected_shifts_hash
+                ));
+            }
+        }
+        shift_bytes
+    } else {
+        if entry.shift < 0 || entry.shift > u8::MAX as i64 {
+            return Err(format!(
+                "{}: shift {} liegt ausserhalb von 0..=255 (und keine shifts_file vorhanden)",
+                name, entry.shift
+            ));
+        }
+        vec![entry.shift as u8; entry.shape[0]]
+    };
+
+    let tensor = QTensor {
+        data: std::sync::Arc::new(crate::model::Gewichtsdaten::Abbild(abbild)),
+        shape: entry.shape,
+        shifts,
+    };
+    Ok(Geladen::Gewicht(name, LoadedWeight {
+        tensor,
+        original_name: entry.original_name,
+        scale: entry.scale,
+    }))
+}
+
+/// **Alle Eintraege pruefen, auf so vielen Faeden wie Kerne da sind.**
+///
+/// ## ⛑ Fund 333 (2026-09-11): zwei Minuten Ladezeit waren eine Pruefsumme
+///
+/// Die Pruefsumme liest jedes Byte, und das ist richtig: Sie bindet das
+/// Artefakt an θ_v. Sie lief nur **auf einem Kern**. Gemessen an
+/// Qwen3-30B-A3B (29 GB, 37 747 Dateien): rund **180 MB/s**, also die
+/// Geschwindigkeit der reinen Rust-Fassung von SHA-256, und daraus
+/// folgen die zwei Minuten vor dem ersten Token.
+///
+/// ⚑ **Der Engpass war nie die Platte.** Mit dem Rat aus Fund 331
+/// liefert sie 3,4 GB/s; die Pruefsumme holte davon ein Zwanzigstel ab.
+///
+/// ⚑ **Und es ist kein neues Bauteil noetig.** Eine Beschleunigung ueber
+/// `sha2/asm` haette eine weitere Kiste in die Lieferkette geholt, und
+/// ueber die entscheidet der Projektinhaber, nicht eine Ladezeit. Ein
+/// Dutzend Faeden ueber dieselbe reine Fassung bringt denselben Faktor,
+/// ohne dass jemand einem Fremden mehr glauben muss.
+///
+/// ⚑ **Die Reihenfolge des Ergebnisses haengt nicht an den Faeden.** Die
+/// Eintraege werden in Manifestreihenfolge abgearbeitet und in
+/// Manifestreihenfolge zusammengefuehrt; der **erste** Fehler ist der
+/// mit dem kleinsten Index, nicht der, den ein Faden zuerst sah. Das ist
+/// strenger als vorher: Bis heute entschied die Reihenfolge einer
+/// `HashMap`, welcher von mehreren Fehlern gemeldet wurde.
+fn alle_eintraege_laden(
+    artifact_dir: &Path,
+    liste: Vec<(String, WeightManifestEntry)>,
+) -> Result<Vec<Geladen>, String> {
+    let faeden = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    if faeden < 2 || liste.len() < 2 {
+        return liste
+            .into_iter()
+            .map(|(n, e)| eintrag_laden(artifact_dir, n, e))
+            .collect();
+    }
+
+    let anzahl = liste.len();
+    let je = anzahl.div_ceil(faeden);
+    let mut teile: Vec<Vec<(String, WeightManifestEntry)>> = Vec::with_capacity(faeden);
+    let mut rest = liste;
+    while !rest.is_empty() {
+        let schnitt = je.min(rest.len());
+        let hinten = rest.split_off(schnitt);
+        teile.push(rest);
+        rest = hinten;
+    }
+
+    // ⚠️ **Ein Bereich und kein stehender Pool.** Dieser Weg laeuft
+    // einmal je Prozess; der Pool aus `kernels` ist fuer 1 152 Runden
+    // je Token gebaut und braucht hier nicht bemueht zu werden.
+    let ergebnisse: Vec<Result<Vec<Geladen>, String>> = std::thread::scope(|bereich| {
+        let griffe: Vec<_> = teile
+            .into_iter()
+            .map(|teil| {
+                bereich.spawn(move || {
+                    teil.into_iter()
+                        .map(|(n, e)| eintrag_laden(artifact_dir, n, e))
+                        .collect::<Result<Vec<_>, String>>()
+                })
+            })
+            .collect();
+        griffe.into_iter().map(|g| g.join().unwrap_or_else(|_| Err("Ladefaden abgestuerzt".into()))).collect()
+    });
+
+    let mut alle = Vec::with_capacity(anzahl);
+    for teil in ergebnisse {
+        alle.extend(teil?);
+    }
+    Ok(alle)
+}
+
 /// Laedt alle INT8-Gewichte aus `weights_manifest.json` und den darin
 /// referenzierten `.bin`-Dateien (raw int8, row-major, little-endian).
 ///
@@ -382,207 +677,27 @@ pub fn load_weights(artifact_dir: &Path) -> Result<LoadedWeights, String> {
     let entries: HashMap<String, WeightManifestEntry> = serde_json::from_str(&content)
         .map_err(|e| format!("Ungueltiges weights_manifest.json: {}", e))?;
 
-    let mut weights = HashMap::with_capacity(entries.len());
+    // ⚑ **In Manifestreihenfolge, nicht in Streuordnung.** Eine
+    // `HashMap` gibt ihre Eintraege in einer Reihenfolge heraus, die
+    // vom Streuwert abhaengt; eine sortierte Liste macht aus dem
+    // Laden eine Funktion, deren Fehlermeldung nicht vom Zufall
+    // abhaengt.
+    let mut liste: Vec<(String, WeightManifestEntry)> = entries.into_iter().collect();
+    liste.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut weights = HashMap::with_capacity(liste.len());
     let mut lm_head: Option<LmHead> = None;
     let mut biases: HashMap<String, BiasTensor> = HashMap::new();
-    for (name, entry) in entries {
-        // INT16-Tensoren: der LM-Head (spec-Ausnahme 0.6.0) und seit
-        // theta_v 0.13.0 die Attention-Biases (Fund 23, siehe BiasTensor).
-        if entry.dtype == "int16" {
-            let ist_bias = name.ends_with("_bias");
-            if name != "lm_head" && !ist_bias {
-                return Err(format!(
-                    "{}: int16 ist nur fuer den LM-Head und Attention-Biases zulaessig",
-                    name
-                ));
+    for geladen in alle_eintraege_laden(artifact_dir, liste)? {
+        match geladen {
+            Geladen::Gewicht(name, w) => {
+                weights.insert(name, w);
             }
-            let shifts_file = entry.shifts_file.as_ref().ok_or_else(|| {
-                format!("{}: int16-Eintrag ohne shifts_file", name)
-            })?;
-            if !ist_bias && entry.shape.len() != 2 {
-                return Err(format!("{}: LM-Head erwartet shape [vocab, hidden]", name));
+            Geladen::Kopf(k) => lm_head = Some(k),
+            Geladen::Vorspann(name, b) => {
+                biases.insert(name, b);
             }
-            if ist_bias && entry.shape.len() != 1 {
-                return Err(format!("{}: Bias erwartet eindimensionale shape", name));
-            }
-
-            let bytes = std::fs::read(artifact_dir.join(&entry.file))
-                .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
-            let expected_len: usize = entry.shape.iter().product::<usize>() * 2;
-            if bytes.len() != expected_len {
-                return Err(format!(
-                    "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes (int16)",
-                    name, bytes.len(), entry.file, entry.shape, expected_len
-                ));
-            }
-            let digest = sha256_hex(&bytes);
-            if digest != entry.hash {
-                return Err(format!(
-                    "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
-                    name, digest, entry.hash
-                ));
-            }
-
-            let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
-                .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
-            if shift_bytes.len() != entry.shape[0] {
-                return Err(format!(
-                    "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
-                    name, shift_bytes.len(), shifts_file, entry.shape[0]
-                ));
-            }
-            if let Some(expected_shifts_hash) = &entry.shifts_hash {
-                let shifts_digest = sha256_hex(&shift_bytes);
-                if shifts_digest != *expected_shifts_hash {
-                    return Err(format!(
-                        "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
-                        name, shifts_digest, expected_shifts_hash
-                    ));
-                }
-            }
-
-            // little-endian i16, ein Wert je zwei Bytes. Die Laengenpruefung
-            // stand hier bisher nicht: `chunks_exact` verwarf ein einzelnes
-            // Restbyte stillschweigend und lud ein um ein halbes Element
-            // gekuerztes Gewicht. Eine beschaedigte Datei muss auffallen.
-            if bytes.len() % 2 != 0 {
-                return Err(format!(
-                    "{}: Datei hat ungerade Byteanzahl ({}), kann keine \
-                     i16-Folge sein",
-                    name,
-                    bytes.len()
-                ));
-            }
-            // `unknown_lints` muss mit erlaubt sein: Den Lint-Namen gibt es
-            // erst ab clippy 1.98, ein `allow` darauf ist auf aelteren
-            // Werkzeugketten selbst eine Warnung.
-            //
-            // `as_chunks::<2>()` waere der Vorschlag, ist aber erst seit Rust
-            // 1.88 stabil. Die Schwester-Crates erklaeren MSRV 1.85; dieses
-            // hier hat keine Angabe, und ein stillschweigend hoeherer Bedarf
-            // waere schlimmer als eine ausdrueckliche Ausnahme.
-            #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
-            let data: Vec<i16> = bytes
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]))
-                .collect();
-            if ist_bias {
-                biases.insert(name, BiasTensor { data, shifts: shift_bytes });
-            } else {
-                lm_head = Some(LmHead {
-                    data,
-                    shape: entry.shape,
-                    shifts: shift_bytes,
-                });
-            }
-            continue;
         }
-
-        if entry.dtype != "int8" {
-            return Err(format!(
-                "{}: nicht unterstuetzter dtype '{}' (erwartet 'int8')",
-                name, entry.dtype
-            ));
-        }
-        if entry.shape.is_empty() {
-            return Err(format!("{}: leere shape im Manifest", name));
-        }
-
-        // ⚑ **Fund 62 (2026-08-25): Abbild statt Heap-Kopie.**
-        //
-        // Hier stand `std::fs::read`, also eine Kopie jeder Gewichtsdatei
-        // in den Heap. Für 0,74 GB und 8,1 GB trägt das. Das Artefakt von
-        // Qwen3-30B-A3B ist **29 GiB** gegen 24 GiB Arbeitsspeicher, und
-        // der Versuch zeigte das schlechteste denkbare Verhalten: Während
-        // der Prozess las, schrieb das System seinen Heap in die
-        // Auslagerung. RSS fiel von 8,9 auf 1,9 GiB, der Swap wuchs von
-        // 2,9 auf 4,1 GB. Von der Platte lesen und sofort wieder auf die
-        // Platte schreiben.
-        //
-        // Als Abbild sind dieselben Bytes **saubere, dateigestützte
-        // Seiten**: Das System verwirft sie unter Druck und liest sie bei
-        // Bedarf neu, statt sie auszulagern. Für ein Mixture-of-Experts-Modell ist
-        // das mehr als eine Notlösung, denn bei Top-8 von 128 rührt ein
-        // Token nur ein Sechzehntel der Expertengewichte an.
-        //
-        // Gemessen: 18 873 Abbildungen in einem Prozess sind auf dieser
-        // Maschine unproblematisch (Deskriptorgrenze 1 048 576).
-        let pfad = artifact_dir.join(&entry.file);
-        let datei = std::fs::File::open(&pfad)
-            .map_err(|e| format!("Fehler beim Oeffnen von {}: {}", entry.file, e))?;
-        // SICHERHEIT: `Mmap::map` ist unsicher, weil ein Fremdprozess die
-        // Datei unter dem Abbild ändern könnte. Hier liegt sie im
-        // Artefaktverzeichnis, wird ausschließlich lesend geöffnet, und
-        // ihr Inhalt ist unmittelbar danach über SHA-256 gegen das
-        // Manifest geprüft. Eine Änderung nach dieser Prüfung wäre
-        // dieselbe Klasse von Angriff wie eine Änderung an einer
-        // eingelesenen Datei zwischen Lesen und Verwenden.
-        let abbild = unsafe { memmap2::Mmap::map(&datei) }
-            .map_err(|e| format!("Fehler beim Abbilden von {}: {}", entry.file, e))?;
-
-        let expected_len: usize = entry.shape.iter().product();
-        if abbild.len() != expected_len {
-            return Err(format!(
-                "{}: {} Bytes in '{}', aber shape {:?} erwartet {} Bytes",
-                name, abbild.len(), entry.file, entry.shape, expected_len
-            ));
-        }
-
-        // **Die Prüfsumme liest jedes Byte, und das ist in Ordnung.**
-        // Sie bindet das Artefakt an θ_v; ohne sie fiele der Anker weg.
-        // Anders als eine Heap-Kopie bleibt danach nichts belegt: Die
-        // berührten Seiten sind sauber und werden bei Bedarf verworfen.
-        let digest = sha256_hex(&abbild);
-        if digest != entry.hash {
-            return Err(format!(
-                "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
-                name, digest, entry.hash
-            ));
-        }
-
-        // Per-Channel-Shifts (theta_v 0.7.0): eine shifts_file mit einem
-        // Shift je Zeile. Aeltere Artefakte/Synthetik-Fixtures ohne
-        // shifts_file tragen einen uniformen entry.shift, der je Zeile
-        // repliziert wird.
-        let shifts: Vec<u8> = if let Some(shifts_file) = &entry.shifts_file {
-            let shift_bytes = std::fs::read(artifact_dir.join(shifts_file))
-                .map_err(|e| format!("Fehler beim Lesen von {}: {}", shifts_file, e))?;
-            if shift_bytes.len() != entry.shape[0] {
-                return Err(format!(
-                    "{}: {} Shifts in '{}', aber {} Zeilen erwartet",
-                    name, shift_bytes.len(), shifts_file, entry.shape[0]
-                ));
-            }
-            if let Some(expected_shifts_hash) = &entry.shifts_hash {
-                let shifts_digest = sha256_hex(&shift_bytes);
-                if shifts_digest != *expected_shifts_hash {
-                    return Err(format!(
-                        "{}: SHA-256 der Shifts-Datei {} stimmt nicht mit Manifest-Hash {} ueberein",
-                        name, shifts_digest, expected_shifts_hash
-                    ));
-                }
-            }
-            shift_bytes
-        } else {
-            if entry.shift < 0 || entry.shift > u8::MAX as i64 {
-                return Err(format!(
-                    "{}: shift {} liegt ausserhalb von 0..=255 (und keine shifts_file vorhanden)",
-                    name, entry.shift
-                ));
-            }
-            vec![entry.shift as u8; entry.shape[0]]
-        };
-
-        let tensor = QTensor {
-            data: std::sync::Arc::new(crate::model::Gewichtsdaten::Abbild(abbild)),
-            shape: entry.shape,
-            shifts,
-        };
-        weights.insert(name, LoadedWeight {
-            tensor,
-            original_name: entry.original_name,
-            scale: entry.scale,
-        });
     }
 
     Ok(LoadedWeights { weights, lm_head, biases })

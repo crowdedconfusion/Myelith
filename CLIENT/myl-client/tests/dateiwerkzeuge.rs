@@ -20,7 +20,7 @@
 //! Harness daraus macht. Das kostet keine Sekunde Rechenzeit.
 
 use myl_client::einstellungen::Agenteneinstellung;
-use myl_client::werkzeuge::{Dateiwerkzeug, Werkzeugsatz};
+use myl_client::werkzeuge::{Dateiwerkzeug, Werkzeugkiste};
 use myl_local_agent::werkzeug::Ansageform;
 use myl_local_agent::tuerklient::{Antwort, Modellweg, Nachricht, Tuerfehler};
 
@@ -62,9 +62,10 @@ fn fahren(
 ) -> myl_local_agent::schleife::Ergebnis {
     let agent = Agenteneinstellung {
         schritte: 4,
-        auch_bezeugtes: bezeugtes,
         wurzel: Some(wurzel.display().to_string()),
         schreiben,
+        werkzeuge: Default::default(),
+    modus: Default::default(),
     };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     let kontrakt = myl_types::sitzung::Sitzungskontrakt::neu(
@@ -128,8 +129,8 @@ fn fahren(
 const FORM: Ansageform = Ansageform::Amtlich;
 // ⚑ Der volle Satz: Diese Sammlung prueft die Verdrahtung, und dafuer
 // muessen alle Werkzeuge dabei sein. Was der Nutzer per Vorgabe
-// bekommt, ist eine andere Frage und steht in `Werkzeugsatz`.
-const SATZ: Werkzeugsatz = Werkzeugsatz::Voll;
+// bekommt, ist eine andere Frage und steht in `Werkzeugkiste`.
+const SATZ: Werkzeugkiste = Werkzeugkiste::Advanced;
 const VERZEICHNIS: &str = Dateiwerkzeug::Verzeichnis.name(FORM);
 const LESEN: &str = Dateiwerkzeug::Lesen.name(FORM);
 const SCHREIBEN: &str = Dateiwerkzeug::Schreiben.name(FORM);
@@ -160,7 +161,7 @@ fn ein_vorschlag_wird_zu_einer_datei() {
 }
 
 /// ⚑ **Die Betriebsart greift VOR der Ausfuehrung.** Ohne
-/// `auch_bezeugtes` darf ein lokales Werkzeug nicht laufen, und der
+/// die Betriebsart darf ein lokales Werkzeug nicht laufen, und der
 /// Nachweis dafuer ist die **nicht** vorhandene Datei.
 #[test]
 fn ohne_bezeugtes_entsteht_keine_datei() {
@@ -270,10 +271,11 @@ fn nur_lesen_steht_im_protokoll() {
 fn ohne_einhaengung_steht_nichts_darin() {
     let agent = Agenteneinstellung {
         schritte: 2,
-        auch_bezeugtes: true,
         wurzel: None,
         schreiben: false,
-    };
+        werkzeuge: Default::default(),
+    modus: Default::default(),
+        };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     assert!(ruestung.einhaengung.is_none(), "es gibt eine Einhaengung ohne Wurzel");
     // Und ohne Wurzel gibt es auch keine Dateiwerkzeuge.

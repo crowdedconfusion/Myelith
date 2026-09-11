@@ -150,26 +150,17 @@ pub fn mlp_int_mit_spur(
     let gate = linear_w8a16(x, W_gate, hidden_size, gate_w_shifts, in_frac_bits, gate_out_frac);
     let up = linear_w8a16(x, W_up, hidden_size, up_w_shifts, in_frac_bits, up_out_frac);
 
-    let mut h = Vec::with_capacity(gate.len());
-    for (g, u) in gate.iter().zip(up.iter()) {
-        // Gate in die feste LUT-Domäne reskalieren, Lookup, dann Produkt mit
-        // up auf die kalibrierte down-Eingangsskala bringen.
-        let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
-        debug_assert!(
-            g_dom >= i16::MIN as i32 && g_dom <= i16::MAX as i32,
-            "mlp_int: reskalierter Gate-Wert {} verlaesst i16 und wuerde abgeschnitten statt gesaettigt (Fund 75); gate_out_frac {}, silu_in_frac {}",
-            g_dom,
-            gate_out_frac,
-            silu_in_frac
-        );
-        let activated = lut_lookup(g_dom as i16, silu_lut, 0, silu_lut_offset);
-        let prod = (activated as i64) * (*u as i64);
-        h.push(clamp_i16_from_i64(rescale_i64(
-            prod,
-            silu_out_frac + up_out_frac,
-            down_in_frac,
-        )));
-    }
+    let h = silu_produkt(
+        &gate,
+        &up,
+        silu_lut,
+        gate_out_frac,
+        up_out_frac,
+        down_in_frac,
+        silu_in_frac,
+        silu_lut_offset,
+        silu_out_frac,
+    );
 
     // ⚑ **Alle drei zusammen oder keiner.** Sie gehören zu **einem**
     // Durchlauf; wer nur zwei nähme, rechnete einen Gradienten aus
@@ -188,6 +179,411 @@ pub fn mlp_int_mit_spur(
         down_in_frac,
         out_frac_bits,
     )
+}
+
+/// **SiLU, Produkt und Reskalierung: der elementweise Teil des MLP.**
+///
+/// ⛑ **Er stand bis zum 2026-09-11 an drei Stellen**, zweimal mit dem
+/// Vermerk „wortgleich mit". Ein Kommentar, der Gleichheit behauptet,
+/// ist keine Gleichheit; hier ist sie jetzt eine.
+///
+/// Der Gate-Wert wird in die feste LUT-Domaene reskaliert,
+/// nachgeschlagen und mit `up` auf die kalibrierte down-Eingangsskala
+/// gebracht. Die Vorbedingung an `g_dom` steht bei [`mlp_int`].
+#[allow(clippy::too_many_arguments)]
+pub fn silu_produkt(
+    gate: &[i16],
+    up: &[i16],
+    silu_lut: &[i16],
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+) -> Vec<i16> {
+    let mut h = Vec::with_capacity(gate.len());
+    for (g, u) in gate.iter().zip(up.iter()) {
+        let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
+        debug_assert!(
+            g_dom >= i16::MIN as i32 && g_dom <= i16::MAX as i32,
+            "silu_produkt: reskalierter Gate-Wert {} verlaesst i16 und wuerde abgeschnitten statt gesaettigt (Fund 75); gate_out_frac {}, silu_in_frac {}",
+            g_dom,
+            gate_out_frac,
+            silu_in_frac
+        );
+        let activated = lut_lookup(g_dom as i16, silu_lut, 0, silu_lut_offset);
+        let prod = (activated as i64) * (*u as i64);
+        h.push(clamp_i16_from_i64(rescale_i64(
+            prod,
+            silu_out_frac + up_out_frac,
+            down_in_frac,
+        )));
+    }
+    h
+}
+
+/// **Der MLP-Block fuer mehrere Eingaben auf denselben Gewichten.**
+///
+/// ⚑ **Element fuer Element dasselbe wie [`mlp_int`] je Eingabe.** Die
+/// drei Matrizen werden einmal gelesen statt einmal je Eingabe; die
+/// Zwischenrechnung (SiLU, Produkt, Reskalierung) haengt nur am
+/// einzelnen Wert und laeuft unveraendert je Eingabe.
+///
+/// ⚠️ **Ohne Mitschnitt.** Der Trainingspfad rechnet Token fuer Token
+/// und braucht die Zwischenwerte; wer sie will, nimmt
+/// [`mlp_int_mit_spur`].
+#[allow(clippy::too_many_arguments)]
+pub fn mlp_int_stapel(
+    xs: &[&[i16]],
+    W_gate: &[i8],
+    W_up: &[i8],
+    W_down: &[i8],
+    hidden_size: usize,
+    intermediate_size: usize,
+    gate_w_shifts: &[u8],
+    up_w_shifts: &[u8],
+    down_w_shifts: &[u8],
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    if xs.is_empty() {
+        return Vec::new();
+    }
+    let gate = crate::linear::linear_w8a16_stapel(
+        xs,
+        W_gate,
+        hidden_size,
+        gate_w_shifts,
+        in_frac_bits,
+        gate_out_frac,
+    );
+    let up = crate::linear::linear_w8a16_stapel(
+        xs,
+        W_up,
+        hidden_size,
+        up_w_shifts,
+        in_frac_bits,
+        up_out_frac,
+    );
+
+    let hs: Vec<Vec<i16>> = gate
+        .iter()
+        .zip(up.iter())
+        .map(|(g_zeile, u_zeile)| {
+            silu_produkt(
+                g_zeile,
+                u_zeile,
+                silu_lut,
+                gate_out_frac,
+                up_out_frac,
+                down_in_frac,
+                silu_in_frac,
+                silu_lut_offset,
+                silu_out_frac,
+            )
+        })
+        .collect();
+
+    let scheiben: Vec<&[i16]> = hs.iter().map(|h| h.as_slice()).collect();
+    crate::linear::linear_w8a16_pc_stapel(
+        &scheiben,
+        W_down,
+        intermediate_size,
+        down_w_shifts,
+        down_in_frac,
+        out_frac_bits,
+    )
+}
+
+/// Die drei Matrizen eines Experten, wie ein Buendel sie sieht.
+pub struct Expertenteil<'a> {
+    pub gate: &'a [i8],
+    pub up: &'a [i8],
+    pub down: &'a [i8],
+    pub gate_shifts: &'a [u8],
+    pub up_shifts: &'a [u8],
+    pub down_shifts: &'a [u8],
+}
+
+/// **Alle gewaehlten Experten einer Ebene in zwei Runden statt in
+/// vierundzwanzig.**
+///
+/// # ⛑ Fund 332 (2026-09-11)
+///
+/// Die Begruendung und die Messung stehen bei
+/// [`crate::linear::linear_w8a16_buendel`]. Kurz: Eine Poolrunde kostet
+/// mehr als die kleine Matrix, die sie rechnet, und eine
+/// Expertenmatrix von Qwen3-30B-A3B bekam dabei **zwei** von zwoelf
+/// Faeden. Gemessen ueber dieselben Zeilen: **93,45 ms gegen 19,12 ms**
+/// je Token.
+///
+/// **Zwei Runden, nicht eine**, und das liegt an der Abhaengigkeit:
+/// `down` braucht `h`, und `h` braucht `gate` und `up`. Dazwischen
+/// liegt der elementweise Teil, der nichts zu verteilen hat.
+///
+/// ⚑ **Element fuer Element dasselbe wie [`mlp_int_mit_spur`] je
+/// Experte.** Jede Ausgabezeile bleibt ihr eigenes Skalarprodukt ueber
+/// ihre eigene Gewichtszeile; geaendert ist allein, welcher Faden
+/// welche Zeile nimmt. Geprueft in `gebuendelte_experten_sind_dasselbe`.
+#[allow(clippy::too_many_arguments)]
+pub fn mlp_int_experten(
+    x: &[i16],
+    experten: &[Expertenteil<'_>],
+    hidden_size: usize,
+    intermediate_size: usize,
+    silu_lut: &[i16],
+    in_frac_bits: u8,
+    gate_out_frac: u8,
+    up_out_frac: u8,
+    down_in_frac: u8,
+    silu_in_frac: u8,
+    silu_lut_offset: i16,
+    silu_out_frac: u8,
+    out_frac_bits: &[u8],
+    spuren: Option<&mut Vec<Mlpspur>>,
+) -> Vec<Vec<i16>> {
+    use crate::linear::{Ausgangsskala, Buendelteil};
+
+    if experten.is_empty() {
+        return Vec::new();
+    }
+
+    // Erste Runde: gate und up jedes Experten, alle ueber derselben
+    // Eingabe.
+    let mut vorne: Vec<Buendelteil<'_>> = Vec::with_capacity(2 * experten.len());
+    for e in experten {
+        vorne.push(Buendelteil {
+            w: e.gate,
+            x,
+            in_features: hidden_size,
+            w_shifts: e.gate_shifts,
+            act_frac_bits: in_frac_bits,
+            aus: Ausgangsskala::Eine(gate_out_frac),
+        });
+        vorne.push(Buendelteil {
+            w: e.up,
+            x,
+            in_features: hidden_size,
+            w_shifts: e.up_shifts,
+            act_frac_bits: in_frac_bits,
+            aus: Ausgangsskala::Eine(up_out_frac),
+        });
+    }
+    let flach = crate::linear::linear_w8a16_buendel(&vorne);
+
+    // Der elementweise Teil je Experte. Er verteilt sich nicht und
+    // laeuft deshalb hier, zwischen den beiden Runden.
+    let mut gates: Vec<Vec<i16>> = Vec::with_capacity(experten.len());
+    let mut ups: Vec<Vec<i16>> = Vec::with_capacity(experten.len());
+    let mut hs: Vec<Vec<i16>> = Vec::with_capacity(experten.len());
+    // ⚑ **Die Versaetze laufen mit, sie werden nicht gerechnet.** Ein
+    // `2 * i * intermediate_size` waere richtig, solange gate und up
+    // gleich viele Zeilen haben, und still falsch, sobald nicht.
+    let mut versatz = 0usize;
+    for e in experten.iter() {
+        let gz = e.gate_shifts.len();
+        let uz = e.up_shifts.len();
+        let gate = &flach[versatz..versatz + gz];
+        let up = &flach[versatz + gz..versatz + gz + uz];
+        versatz += gz + uz;
+        hs.push(silu_produkt(
+            gate,
+            up,
+            silu_lut,
+            gate_out_frac,
+            up_out_frac,
+            down_in_frac,
+            silu_in_frac,
+            silu_lut_offset,
+            silu_out_frac,
+        ));
+        if spuren.is_some() {
+            gates.push(gate.to_vec());
+            ups.push(up.to_vec());
+        }
+    }
+
+    // Zweite Runde: down jedes Experten, jeder ueber **seiner** eigenen
+    // Eingabe.
+    let hinten: Vec<Buendelteil<'_>> = experten
+        .iter()
+        .zip(hs.iter())
+        .map(|(e, h)| Buendelteil {
+            w: e.down,
+            x: h,
+            in_features: intermediate_size,
+            w_shifts: e.down_shifts,
+            act_frac_bits: down_in_frac,
+            aus: Ausgangsskala::JeZeile(out_frac_bits),
+        })
+        .collect();
+    let flach_aus = crate::linear::linear_w8a16_buendel(&hinten);
+
+    let breite = out_frac_bits.len();
+    let ausgaben: Vec<Vec<i16>> = (0..experten.len())
+        .map(|i| flach_aus[i * breite..(i + 1) * breite].to_vec())
+        .collect();
+
+    // ⚑ **Alle drei zusammen oder keiner**, wie bei
+    // [`mlp_int_mit_spur`]: Sie gehoeren zu **einem** Durchlauf.
+    if let Some(ziel) = spuren {
+        for i in 0..experten.len() {
+            ziel.push(Mlpspur {
+                gate: std::mem::take(&mut gates[i]),
+                up: std::mem::take(&mut ups[i]),
+                h: hs[i].clone(),
+            });
+        }
+    }
+
+    ausgaben
+}
+
+#[cfg(test)]
+mod stapeltests {
+    use super::*;
+
+    /// **Gebuendelt ist bitgleich zu einzeln, auch ueber den ganzen
+    /// MLP-Block.**
+    #[test]
+    fn der_gebuendelte_mlp_rechnet_dasselbe() {
+        let lut = spec_silu_lut();
+        let (hs, is) = (16usize, 40usize);
+        let mach = |n: usize, saat: u64| -> Vec<i8> {
+            let mut x = saat | 1;
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    ((x % 251) as i64 - 125) as i8
+                })
+                .collect()
+        };
+        let w_gate = mach(is * hs, 3);
+        let w_up = mach(is * hs, 5);
+        let w_down = mach(hs * is, 7);
+        let gs = vec![5u8; is];
+        let us = vec![5u8; is];
+        let ds = vec![5u8; hs];
+        let out = vec![6u8; hs];
+
+        for b in [1usize, 3, 9] {
+            let eingaben: Vec<Vec<i16>> = (0..b)
+                .map(|i| (0..hs).map(|j| ((i * 7 + j * 13) % 200) as i16 - 100).collect())
+                .collect();
+            let scheiben: Vec<&[i16]> = eingaben.iter().map(|v| v.as_slice()).collect();
+            let gebuendelt = mlp_int_stapel(
+                &scheiben, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1,
+                -256, 6, &out,
+            );
+            for (i, x) in eingaben.iter().enumerate() {
+                let einzeln = mlp_int(
+                    x, &w_gate, &w_up, &w_down, hs, is, &gs, &us, &ds, &lut, 5, 5, 5, 5, 1, -256,
+                    6, &out,
+                );
+                assert_eq!(gebuendelt[i], einzeln, "b={b}, i={i}");
+            }
+        }
+    }
+
+    /// **Acht gebuendelte Experten sind bitgleich zu acht einzelnen,
+    /// samt Mitschnitt.**
+    ///
+    /// ⛑ **Die Gegenprobe zu Fund 332.** Sie prueft beides, was der
+    /// gebuendelte Weg anders macht: die Aufteilung ueber die Faeden
+    /// (das Ergebnis) und die Zwischenwerte (den Mitschnitt, an dem der
+    /// Rueckwaertspfad haengt).
+    #[test]
+    fn gebuendelte_experten_sind_dasselbe() {
+        let lut = spec_silu_lut();
+        let (hs, is) = (16usize, 40usize);
+        let mach = |n: usize, saat: u64| -> Vec<i8> {
+            let mut x = saat | 1;
+            (0..n)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    ((x % 251) as i64 - 125) as i8
+                })
+                .collect()
+        };
+        let out = vec![6u8; hs];
+        let x: Vec<i16> = (0..hs).map(|j| ((j * 13) % 200) as i16 - 100).collect();
+
+        for n in [1usize, 2, 8] {
+            // Jeder Experte bekommt eigene Gewichte und eigene
+            // Zeilenskalen; gleiche waeren hier die schwaechere Probe.
+            let gate: Vec<Vec<i8>> = (0..n).map(|i| mach(is * hs, 3 + i as u64)).collect();
+            let up: Vec<Vec<i8>> = (0..n).map(|i| mach(is * hs, 53 + i as u64)).collect();
+            let down: Vec<Vec<i8>> = (0..n).map(|i| mach(hs * is, 101 + i as u64)).collect();
+            let gs: Vec<Vec<u8>> =
+                (0..n).map(|i| (0..is).map(|r| 5 + ((r + i) % 3) as u8).collect()).collect();
+            let us: Vec<Vec<u8>> =
+                (0..n).map(|i| (0..is).map(|r| 5 + ((r + i) % 2) as u8).collect()).collect();
+            let ds: Vec<Vec<u8>> =
+                (0..n).map(|i| (0..hs).map(|r| 5 + ((r + i) % 4) as u8).collect()).collect();
+
+            let teile: Vec<Expertenteil<'_>> = (0..n)
+                .map(|i| Expertenteil {
+                    gate: &gate[i],
+                    up: &up[i],
+                    down: &down[i],
+                    gate_shifts: &gs[i],
+                    up_shifts: &us[i],
+                    down_shifts: &ds[i],
+                })
+                .collect();
+
+            let mut spuren: Vec<Mlpspur> = Vec::new();
+            let gebuendelt = mlp_int_experten(
+                &x, &teile, hs, is, &lut, 5, 5, 5, 5, 1, -256, 6, &out, Some(&mut spuren),
+            );
+
+            assert_eq!(gebuendelt.len(), n, "n={n}: nicht jeder Experte hat eine Ausgabe");
+            assert_eq!(spuren.len(), n, "n={n}: nicht jeder Experte hat einen Mitschnitt");
+            for i in 0..n {
+                let mut sp = Mlpspur::default();
+                let einzeln = mlp_int_mit_spur(
+                    &x, &gate[i], &up[i], &down[i], hs, is, &gs[i], &us[i], &ds[i], &lut, 5, 5, 5,
+                    5, 1, -256, 6, &out, Some(&mut sp),
+                );
+                assert_eq!(gebuendelt[i], einzeln, "n={n}, Experte {i}");
+                assert_eq!(spuren[i].gate, sp.gate, "n={n}, Experte {i}: gate im Mitschnitt");
+                assert_eq!(spuren[i].up, sp.up, "n={n}, Experte {i}: up im Mitschnitt");
+                assert_eq!(spuren[i].h, sp.h, "n={n}, Experte {i}: h im Mitschnitt");
+            }
+        }
+    }
+
+    /// **Kein Experte, keine Ausgabe, kein Absturz.**
+    #[test]
+    fn ohne_experten_gibt_es_nichts() {
+        let lut = spec_silu_lut();
+        let out = vec![6u8; 4];
+        let x = vec![0i16; 4];
+        assert!(mlp_int_experten(&x, &[], 4, 4, &lut, 5, 5, 5, 5, 1, -256, 6, &out, None).is_empty());
+    }
+
+    /// Dieselbe LUT wie in den übrigen Prüfungen dieser Datei.
+    fn spec_silu_lut() -> Vec<i16> {
+        let mut lut = Vec::with_capacity(512);
+        for x in -256..256 {
+            let xf = x as f64 / 2.0;
+            let s = xf / (1.0 + (-xf).exp());
+            lut.push((s * 64.0).round() as i16);
+        }
+        lut
+    }
 }
 
 #[cfg(test)]

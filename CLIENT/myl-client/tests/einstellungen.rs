@@ -66,7 +66,13 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
 /// stillschweigend grosszuegig ist, ist eine Falle.
 #[test]
 fn die_vorgaben_sind_die_engen() {
-    assert!(!Agenteneinstellung::default().auch_bezeugtes);
+    // ⛑ **Hier stand `!Agenteneinstellung::default().auch_bezeugtes`.**
+    // Der Schalter ist am 2026-09-11 entfallen (Festlegung des
+    // Projektinhabers): Was ein Lauf an Werkzeugen bekommt, sagt die
+    // Werkzeugkiste. Die enge Vorgabe steht damit nicht mehr in einer
+    // Einstellung, sondern im Aufruf, und ohne `--bezeugtes` bleibt es
+    // bei „nur nachrechenbar".
+    assert!(!Agenteneinstellung::default().schreiben);
     // ⛑ **Hier stand `!Kapazitaet::default().beschleuniger`**, ein
     // einzelner Schalter fuer alle Rechenwerke zugleich. Er ist am
     // 2026-09-10 entfallen: Eine Freigabe ueber null **ist** die
