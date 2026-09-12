@@ -443,19 +443,31 @@ words.
 
 Myelith does not measure absolute perplexity but the **relative increase**
 against the floating-point original. The acceptance criterion is ≤ 5 % and
-is met on all four models measured so far:
+is met on every model in use:
 
 | Model | Parameters | Gap |
 |---|---|---|
-| Qwen2.5-0.5B | 0.5 bn | +2.11 % |
+| Qwen3-0.6B | 0.6 bn | +4.47 % |
 | Qwen3-4B | 4.0 bn | +1.64 % |
-| Qwen2.5-7B | 7.6 bn | +1.14 % |
 | Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30.5 bn | **no measurable gap** |
 
-For comparison, the floor of the quantisation scheme itself, that is,
-everything in float except the → [W8A16](#w8a16) quantisation, sits at
-**+0.84 %**. The 0.30-point gap at 7B is the entire remaining
-implementation loss.
+⚑ **The range measures one axis, and that axis has a direction: the
+smaller the model, the more quantisation costs.** From 0.6B to 4B the
+gap falls from +4.47 % to +1.64 %; on the mixture-of-experts model it is
+no longer measurable. The smallest model is the only one anywhere near
+the criterion, and whoever picks it should know that.
+
+⚠️ **The floor of the quantisation scheme is missing from this table**,
+and that is deliberate. It sits at **+0.84 %**, that is, everything in
+float except the → [W8A16](#w8a16) quantisation, but it was measured on
+a model that is no longer part of the project and has not been
+re-established for this range. Putting a number from a different
+measurement beside this table as a yardstick would compare it without
+it being comparable.
+
+*(Until 2026-09-12 this table had four rows, among them Qwen2.5-0.5B and
+Qwen2.5-7B. Both left the project on 2026-09-11, the dense Qwen3-14B on
+2026-09-12.)*
 
 **"No measurable gap" does not mean "better".** The point estimate for the
 MoE is −0.59 %, but the standard error across the four sequences is

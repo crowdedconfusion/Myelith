@@ -1661,7 +1661,32 @@ fn jede_lizenz_steht_bei_ihrer_sache() {
     let katalog = std::fs::read_to_string(wurzel.join("INTEGER_LLM/models/KATALOG.json"))
         .expect("KATALOG.json");
     let eintraege = katalog.matches("\"anzeigename\":").count();
-    assert!(eintraege >= 4, "zu wenige Katalogeintraege: {eintraege}");
+
+    // ⛑ **Hier stand `>= 4`, und das war eine Zahl mit Ablaufdatum**
+    // (2026-09-12). Sie brach, als der Projektinhaber das dichte 14B
+    // entfernte, und sagte dabei „zu wenige Katalogeintraege", obwohl
+    // der Katalog vollstaendig war. **Eine Schranke, die an der
+    // jeweiligen Modellzahl haengt, prueft nicht den Katalog, sondern
+    // den Kalender.**
+    //
+    // ⚑ **Was sie leisten soll, ist etwas anderes:** Die Schleife
+    // darunter vergleicht zwei Zaehlungen, und bei **null** Eintraegen
+    // waere sie `0 == 0` und damit wahr, ohne etwas geprueft zu haben.
+    // Dagegen genuegt „mehr als keiner".
+    //
+    // ⚑ **Die Staerke kommt aus der zweiten Quelle.** Das Skalenregister
+    // fuehrt dieselben Modelle; weichen die beiden ab, ist einer von
+    // beiden unvollstaendig, und **das** ist der Befund, den dieser Test
+    // tragen soll.
+    assert!(eintraege > 0, "der Katalog ist leer");
+    let register = std::fs::read_to_string(wurzel.join("INTEGER_LLM/scale_packs/REGISTER.json"))
+        .expect("REGISTER.json");
+    let im_register = register.matches("\"theta_v\":").count();
+    assert_eq!(
+        eintraege, im_register,
+        "Katalog ({eintraege}) und Skalenregister ({im_register}) fuehren \
+         verschieden viele Modelle"
+    );
     for feld in ["lizenz_gewichte", "lizenz_artefakt"] {
         assert_eq!(
             katalog.matches(&format!("\"{feld}\":")).count(),

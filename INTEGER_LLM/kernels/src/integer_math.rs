@@ -163,8 +163,30 @@ pub fn lut_lookup(x: i16, lut: &[i16], shift: u8, offset: i16) -> i16 {
         x >> shift,
         offset
     );
-    let idx = (x >> shift) + offset;
-    let idx = idx.max(0).min(lut.len() as i16 - 1) as usize;
+    // ⛑ **Fund 348: die Klemme sass hinter dem Ueberlauf.**
+    //
+    // Hier stand die Addition in `i16`, und danach wurde geklemmt. Ein
+    // Index oberhalb von `i16::MAX` laeuft dabei in den negativen
+    // Bereich um, **bevor** die Klemme ihn sieht; `.max(0)` schiebt ihn
+    // dann auf **null**. Ein Index, der oben haette saettigen muessen,
+    // bekam so den Wert vom **unteren** Ende der Tabelle.
+    //
+    // Gemessen an einem Lauf mit umgekehrtem Gradienten:
+    // `25412 + 8192 = 33604` laeuft auf `-31932` um, `.max(0)` macht
+    // daraus `0`, und `silu` liefert die Antwort fuer den kleinsten
+    // Eingang statt fuer den groessten.
+    //
+    // ⚑ **Mit Zusicherungen faellt es auf, ohne sie nicht**, und
+    // ausgeliefert wird ohne. Der `debug_assert!` darueber bleibt: Er
+    // benennt die Vorbedingung, und die gilt weiter. Diese Zeilen sorgen
+    // dafuer, dass ein Verstoss dagegen **die richtige Richtung**
+    // saettigt statt die falsche.
+    //
+    // ⚠️ **An einem gueltigen Lauf aendert das nichts.** Liegt der Index
+    // im Bereich, rechnet `i32` dasselbe wie `i16`; die
+    // Konformitaetsvektoren bleiben unveraendert.
+    let idx = (x >> shift) as i32 + offset as i32;
+    let idx = idx.clamp(0, lut.len() as i32 - 1) as usize;
     lut[idx]
 }
 

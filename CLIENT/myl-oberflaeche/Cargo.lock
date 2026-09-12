@@ -1772,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "itertools 0.13.0",
  "serde",

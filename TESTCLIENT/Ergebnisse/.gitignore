@@ -1,0 +1,17 @@
+# Ergebnisse sind Laufergebnisse einer bestimmten Maschine und gehoeren
+# nicht ins Repository. Sie werden an den Koordinator geschickt, nicht
+# committet: Sonst traegt jeder Klon die Laeufe fremder Rechner mit sich
+# herum, und ein `git status` nach dem ersten Pruefstandslauf sieht aus,
+# als haette man etwas veraendert.
+#
+# ⛑ **Dieser Ordner kam am 2026-09-11 dazu und hatte diese Datei
+# nicht.** Er ist nach dem Vorbild von `logs/` und `Vergleiche/` gebaut,
+# und ausgerechnet das Stueck, das beide seit langem tragen, fehlte.
+# **Ein neuer Ordner erbt die Regeln seines Vorbilds nicht von selbst.**
+#
+# Der Ordner selbst bleibt versioniert, damit der Client nicht erst ein
+# Verzeichnis anlegen muss, und `README.md` erklaert ihn.
+*.jsonl
+*.log
+!.gitignore
+!README.md

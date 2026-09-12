@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.67.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.49.0, pipeline 0.15.1)
+> **Version:** 0.68.0 (θ_v 0.18.0; kernels 0.52.0, runtime 0.49.0, pipeline 0.15.1)
 > **Datum:** 2026-09-11
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,28**
@@ -586,6 +586,38 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.68.0 – 2026-09-12 (die Klemme sass hinter dem Überlauf)
+
+`kernels` **0.51.0 auf 0.52.0**.
+
+⛔️ **Fund 348.** `integer_math::lut_lookup` addierte Index und Versatz
+in `i16` und klemmte **danach**. Ein Index oberhalb von `i16::MAX`
+läuft dabei in den negativen Bereich um, bevor die Klemme ihn sieht,
+und `.max(0)` schiebt ihn auf null. **Ein Index, der oben hätte
+sättigen müssen, bekam den Wert vom unteren Ende der Tabelle.**
+
+Gemessen: `25412 + 8192 = 33604` läuft auf `−31932` um, `.max(0)` macht
+daraus `0`; `silu` liefert die Antwort für den kleinsten Eingang statt
+für den grössten.
+
+⚑ **Mit Zusicherungen fällt das auf, ohne sie nicht**, und ausgeliefert
+wird ohne. Die Addition rechnet jetzt in `i32`, geklemmt wird danach.
+⚠️ **An einem gültigen Lauf ändert das nichts**: 48/48
+Konformitätsvektoren unverändert. Es ändert nur, wohin ein Verstoss
+gegen die Vorbedingung sättigt.
+
+⛑ **Gefunden, weil endlich das richtige Testprofil lief.** Die
+Prüfungen dieser Sitzung liefen mit `cargo test --release`, und das
+schaltet `debug-assertions` und `overflow-checks` ab. Das Projekt hat
+dafür ein eigenes `[profile.test]`: `opt-level = 2` **und** beide
+Prüfungen an, also schnell und streng zugleich.
+
+⚠️ **Fund 349 bleibt offen**, siehe die Planung: Der Bergauf-Kontrolllauf
+verlässt die dokumentierte Vorbedingung des Tabellenzugriffs. Ob in den
+Trainingspfad eine Klemme **vor** den Zugriff gehört, ist eine Änderung
+am Rechenpfad und braucht eine eigene Messung. **Der Test ist nicht grün
+gemacht worden**, indem die Schrittzahl heruntergedreht wurde.
 
 ### v0.67.0 – 2026-09-12 (das dichte 14B ist entfernt)
 

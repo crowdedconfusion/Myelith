@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.36.0
-> **Datum:** 2026-09-11
+> **Version:** 0.36.1
+> **Datum:** 2026-09-12
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -543,6 +543,32 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.36.1 – 2026-09-12 (der neue Ordner erbte die Regeln seines Vorbilds nicht)
+
+⛑ **`Ergebnisse/` kam ohne `.gitignore` auf die Welt.** Der Ordner ist
+nach dem Vorbild von `logs/` und `Vergleiche/` gebaut, und ausgerechnet
+das Stück, das beide seit Langem tragen, fehlte: die Regel, die die
+Laufergebnisse draussen hält.
+
+**Die Folge stand sofort da.** Zwei Dateien eines Rauchlaufs dieser
+Maschine sind in der Fassung davor mitgegangen und liegen im
+Versionsstand: `ohne-name_32eafffb_2026-09-11_205115.jsonl` und
+`.log`, zusammen 598 Zeilen. Diese Fassung nimmt sie wieder heraus.
+
+⚠️ **Der Schaden ist gering, der Mechanismus nicht.** Ergebnisse sind
+Aussagen über **eine** Maschine. Liegen sie im Versionsstand, trägt
+jeder Klon die Läufe fremder Rechner mit sich, und ein `git status`
+nach dem ersten Prüfstandslauf sieht aus, als hätte man etwas
+verändert; genau das Rauschen, gegen das der Prüfstand antritt.
+
+⚑ **Der Ordner selbst bleibt versioniert**, damit der Client kein
+Verzeichnis anlegen muss, bevor er schreiben kann. `README.md` und
+`.gitignore` sind ausgenommen, alles andere fällt heraus.
+
+⚑ **Die Lehre ist allgemeiner als der Fehler:** Ein neuer Ordner erbt
+die Regeln seines Vorbilds nicht von selbst. Wer einen anlegt, der
+Laufergebnisse aufnimmt, legt die Regel im selben Zug mit an.
 
 ### v0.36.0 – 2026-09-12 (das dichte 14B ist entfallen)
 

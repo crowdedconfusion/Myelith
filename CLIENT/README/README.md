@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.42.0 (`myl-client` 0.28.0, `myl-oberflaeche` 0.32.0, `myl-console` 0.9.0)
-> **Datum:** 2026-09-11
+> **Version:** 0.42.1 (`myl-client` 0.28.0, `myl-oberflaeche` 0.32.0, `myl-console` 0.9.0)
+> **Datum:** 2026-09-12
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -114,6 +114,39 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.42.1 – 2026-09-12 (zwei Prüfungen fielen erst im Lauf der Werkstatt auf)
+
+`myl-oberflaeche` **0.32.0** unverändert, nur die Bündeldatei und eine
+Prüfung.
+
+**Beide Fehler standen schon in der vorigen Fassung und wurden dort
+nicht bemerkt.** Das ist der eigentliche Befund: Die Prüfungen selbst
+haben sauber angeschlagen, gesehen hat es niemand, weil die
+Zusammenfassung des Laufs eine gescheiterte Zeile nicht lesen konnte.
+
+⛑ **Fund 350: die Bündeldatei blieb auf der alten Zahl.**
+`Cargo.toml` stand auf `0.32.0`, `tauri.conf.json` noch auf `0.31.0`.
+Der Dateiname jedes Freigabebündels kommt aus der zweiten Zahl, ein
+Bündel aus dieser Fassung hätte also `0.31.0` geheissen und wäre von
+der Fassung davor nicht zu unterscheiden gewesen.
+
+⚑ **Die Prüfung dafür gibt es seit Langem** und sie hat auch
+angeschlagen; es fehlte nichts als der Blick darauf.
+
+⛑ **Fund 351: eine Prüfung hing an der jeweiligen Modellzahl.**
+`jede_lizenz_steht_bei_ihrer_sache` verlangte mindestens vier
+Katalogeinträge. Diese Vier war keine Aussage über den Katalog,
+sondern der Stand des Tages, an dem sie geschrieben wurde. Mit dem
+Wegfall des dichten 14B blieben drei, und die Prüfung meldete „zu
+wenige Katalogeinträge" für einen vollständigen Katalog.
+
+⚠️ **Ganz streichen liess sich die Schranke nicht.** Sie hält die
+Zählung darunter davon ab, bei **null** Einträgen `0 == 0` zu ergeben
+und damit wahr zu sein, ohne etwas geprüft zu haben. Sie lautet jetzt
+„mehr als null" und wird zusätzlich gegen die Zahl der Einträge in
+`REGISTER.json` gehalten: **eine Schranke, die mitwächst, statt eine,
+die altert.**
 
 ### v0.42.0 – 2026-09-12 (das Logo bleibt, der Wagen sitzt richtig, und die Leiste sortiert sich)
 

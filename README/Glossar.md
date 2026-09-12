@@ -458,19 +458,32 @@ gleich wahrscheinlichen Wörtern raten.
 
 Myelith misst nicht die absolute Perplexität, sondern den **relativen
 Anstieg** gegenüber dem Gleitkomma-Original. Das Akzeptanzkriterium
-lautet ≤ 5 % und ist auf allen vier vermessenen Modellen erfüllt:
+lautet ≤ 5 % und ist auf jedem eingesetzten Modell erfüllt:
 
 | Modell | Parameter | Abstand |
 |---|---|---|
-| Qwen2.5-0,5B | 0,5 Mrd. | +2,11 % |
+| Qwen3-0,6B | 0,6 Mrd. | +4,47 % |
 | Qwen3-4B | 4,0 Mrd. | +1,64 % |
-| Qwen2.5-7B | 7,6 Mrd. | +1,14 % |
 | Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30,5 Mrd. | **kein messbarer Abstand** |
 
-Zum Vergleich: Der Boden des Quantisierungsschemas selbst, also alles
-float außer der → [W8A16](#w8a16)-Quantisierung, liegt bei **+0,84 %**.
-Der Abstand von 0,30 Punkten bei 7B ist der gesamte verbleibende
-Umsetzungsverlust.
+⚑ **Die Reihe misst eine Achse, und die Achse hat eine Richtung: Je
+kleiner das Modell, desto teurer die Quantisierung.** Von 0,6B bis 4B
+fällt der Abstand von +4,47 % auf +1,64 %, beim Expertengemisch ist er
+nicht mehr messbar. Das kleinste Modell liegt als einziges nennenswert
+nahe am Kriterium; wer es wählt, wählt auch das, bei dem die
+Quantisierung am meisten kostet.
+
+⚠️ **Der Boden des Quantisierungsschemas fehlt in dieser Tabelle**, und
+das ist keine Nachlässigkeit. Er beträgt **+0,84 %**, also alles float
+außer der → [W8A16](#w8a16)-Quantisierung, ist aber an einem Modell
+gemessen, das nicht mehr Teil des Projekts ist, und für diese Reihe
+nicht neu bestimmt. Eine Zahl aus einer anderen Messung als Maßstab
+neben diese Tabelle zu stellen, hiesse sie zu vergleichen, ohne dass
+sie vergleichbar wäre.
+
+*(Bis zum 2026-09-12 standen hier vier Zeilen, darunter Qwen2.5-0,5B
+und Qwen2.5-7B. Beide sind seit dem 2026-09-11 nicht mehr im Projekt,
+das dichte Qwen3-14B seit dem 2026-09-12.)*
 
 **„Kein messbarer Abstand" heißt nicht „besser".** Der Punktschätzer beim
 MoE liegt bei −0,59 %, der Standardfehler über die vier Sequenzen aber bei
