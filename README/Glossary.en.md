@@ -381,7 +381,7 @@ floating-point arithmetic is allowed — it is preparation, not the compute
 path. Its output is integer artifacts.
 
 *In code:* `INTEGER_LLM/calibrate/src/main.py`
-*Invocation:* `INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main`
+*Invocation:* `INTEGER_LLM_MODEL=myelith-14b python -m calibrate.src.main`
 
 ### GPTQ
 

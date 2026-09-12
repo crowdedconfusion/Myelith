@@ -29,6 +29,9 @@ from typing import Union
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
+from .gammaentzerrung import entzerren
+
+
 def _pruefe_vollstaendig_geladen(model) -> None:
     """
     Bricht ab, wenn Parameter auf dem meta-Geraet liegen (kein Speicher
@@ -64,5 +67,22 @@ def load_reference_model(model_path: Union[str, Path]):
     )
     model.eval()
     _pruefe_vollstaendig_geladen(model)
+
+    # ⛑ **Fund 336: zu grosse Normgewichte werden verschoben, bevor
+    # irgendetwas gemessen wird.** Die Umformung ist im Gleitkomma
+    # exakt (Zweierpotenzen), aber sie aendert die Aktivierungen
+    # zwischen Norm und Matrix. Liefe sie erst nach dem Sammeln der
+    # Statistiken, waeren die Skalen an einem Modell gemessen, das so
+    # nicht exportiert wird. Siehe `gammaentzerrung`.
+    zustand = model.state_dict()
+    verschoben = entzerren(zustand)
+    if verschoben:
+        print(
+            f"[calibrate] Normgewichte entzerrt: {len(verschoben)} Kanal/Kanaele "
+            f"ueber der int8-Grenze in die Folgematrix verschoben (Fund 336)."
+        )
+        for name, kanal, vorher, nachher in verschoben:
+            print(f"[calibrate]   {name}[{kanal}]: {vorher:.2f} -> {nachher:.2f}")
+
     tokenizer = AutoTokenizer.from_pretrained(str(path))
     return model, tokenizer

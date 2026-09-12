@@ -25,7 +25,7 @@ lohnt. Liegt B nahe A, ist die Positions-Dimension nicht der Hebel.
 Gleitkomma erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=myelith-7b python tests/diag/positional_scale_simulation.py
+Usage: INTEGER_LLM_MODEL=myelith-30b-a3b python tests/diag/positional_scale_simulation.py
 """
 import os
 import sys

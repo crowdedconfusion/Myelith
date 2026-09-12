@@ -10,12 +10,12 @@
     "silu.lut.bin",
     "sin.lut.bin"
   ],
-  "bytes": 1290939,
-  "artefakt_digest_sha256": "6a5492d59c322c21f972ed154182dc6dc4015bce29c1b24005fef4d62a56b08e",
+  "bytes": 868338,
+  "artefakt_digest_sha256": "35f376a959d4b73a86a1f22c35f9e5a9e1707f340bfc02b8cb5e21de0e4ca98b",
   "digest_ueber": [
     "theta_v.json",
     "model_config.json",
     "tokenizer.json"
   ],
-  "weights_manifest_sha256": "63d1e700b1915f6aa0d2a9eee7ba55e76fc2682fa839158abb1a1f271c7adce1"
+  "weights_manifest_sha256": "cf103bf5f7d37130998fddc46e67b1a08d43b7a508feda70406bdc01eea348d8"
 }

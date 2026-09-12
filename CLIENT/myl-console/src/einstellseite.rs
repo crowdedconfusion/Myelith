@@ -409,11 +409,21 @@ fn zeichnen(
 
     // Der Satz zum gewaehlten Feld, und darunter der Arbeitsordner.
     let f = FELDER[hier].in_sprache(sprache);
+    // ⚑ **Beim Modellfeld haengt die Mindestausstattung an den Satz**
+    // (Festlegung des Projektinhabers, 2026-09-11). Sie kommt aus
+    // derselben Karte wie in der Modellwahl; eine zweite Quelle liefe
+    // auseinander.
+    let satz = if f.name == "modell.artefakt" {
+        let hw = myl_client::modelle::hardware_zu(&e.modell.artefakt);
+        if hw.is_empty() { f.hinweis.to_string() } else { format!("{}  ·  {hw}", f.hinweis) }
+    } else {
+        f.hinweis.to_string()
+    };
     let _ = crossterm::queue!(
         aus,
         Print("\x1b[2K\r\n\x1b[2K"),
         SetForegroundColor(t.beiwerk),
-        Print(format!("  {}", kuerzen(f.hinweis, breite.saturating_sub(4)))),
+        Print(format!("  {}", kuerzen(&satz, breite.saturating_sub(4)))),
         ResetColor,
         Print("\r\n\x1b[2K")
     );

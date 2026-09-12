@@ -195,4 +195,28 @@ BIN=$(binary_finden) || {
     exit 1
 }
 
-exec "$BIN" "$@"
+# ⚑ **Kein `exec` mehr, wenn das Fenster zugemacht werden soll**
+# (2026-09-11). `exec` ersetzt diese Shell durch den Client; danach gibt
+# es niemanden mehr, der aufraeumt. Ohne die Marke bleibt es beim alten
+# Verhalten, und das ist der Regelfall: Wer den Starter in seinem eigenen
+# Terminal aufruft, will sein Fenster behalten.
+if [ "${MYL_FENSTER_SCHLIESSEN:-}" != "1" ]; then
+    exec "$BIN" "$@"
+fi
+
+"$BIN" "$@"
+RUECKGABE=$?
+
+# Nur das Fenster schliessen, das dieses Buendel geoeffnet hat, und nur
+# auf macOS. Scheitert der Aufruf, bleibt das Fenster stehen: ein
+# offenes Fenster ist ein Schoenheitsfehler, ein geschlossenes mit
+# unglesener Fehlermeldung ist keiner.
+#
+# ⚠️ **Bei einem Fehlschlag wird NICHT geschlossen.** Dann steht eine
+# Meldung im Fenster, die jemand lesen muss, und der Client hat an
+# dieser Stelle auch nicht auf Enter gewartet.
+if [ "$RUECKGABE" -eq 0 ] && [ "$(uname -s)" = "Darwin" ]; then
+    osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 || true
+fi
+
+exit "$RUECKGABE"

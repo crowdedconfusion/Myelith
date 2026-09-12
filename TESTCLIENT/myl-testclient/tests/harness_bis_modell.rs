@@ -5,7 +5,8 @@
 //! `tuer_bis_rechenwerk.rs` zeigt, dass der **Weg** zusammenpasst: fünf
 //! Kisten, echte Sockets, aber ein Rechenwerk, das bezeugt statt zu
 //! rechnen. Hier hängt am Ende die **echte Shard-Pipeline** über den
-//! Qwen2.5-0,5B-Artefakten: vier Shards, Wortschatz, Koordinator.
+//! Artefakten des Ankermodells (ohne Vorgabe `myelith-0.6b`): vier
+//! Shards, Wortschatz, Koordinator.
 //!
 //! Damit steht die eine Frage auf dem Prüfstand, die keiner der übrigen
 //! Tests beantwortet: **Kommt am lokalen Harness Text an, den das
@@ -74,7 +75,7 @@ const PIPELINE_DIGEST: &str = "c42bb8a8d85bba5a76b3302298903fb5c1edfe4463c5d1d44
 
 fn artefakte() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     let mut p = PathBuf::from(manifest);
     p.push("..");
     p.push("..");
@@ -247,7 +248,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         EpochId(5),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-myelith-0.5b",
+        "myelith-myelith-0.6b",
         myl_types::Address::new([210u8; 32]),
     );
 
@@ -282,7 +283,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     let kopf = String::from_utf8_lossy(&antwort[..antwort.len().min(32)]).to_string();
     assert!(kopf.starts_with("HTTP/1.1 200"), "Modellliste: {kopf}");
     let liste = String::from_utf8_lossy(rumpf_von(&antwort)).to_string();
-    assert!(liste.contains("myelith-myelith-0.5b"), "{liste}");
+    assert!(liste.contains("myelith-myelith-0.6b"), "{liste}");
     // ⚑ Der Pipeline-Stand geht bis nach draussen durch, unverändert.
     assert!(liste.contains(PIPELINE_DIGEST), "der Stand kam nicht durch: {liste}");
     assert!(liste.contains("\"myelith_deterministisch\":true"), "{liste}");
@@ -290,7 +291,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // --- 2. Der eigentliche Aufruf -----------------------------------
     let frage = "Die Hauptstadt von Frankreich ist";
     let koerper = format!(
-        r#"{{"model":"myelith-myelith-0.5b","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"myelith-myelith-0.6b","messages":[{{"role":"user","content":"{frage}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
     let dienst = async {
         tuer.bedienen_v1(&mut annahme, &mut stelle, &weg, EpochId(5), 1_700_000_000_000)
@@ -360,7 +361,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token2)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-myelith-0.5b",
+                "myelith-myelith-0.6b",
                 &[myl_local_agent::Nachricht::nutzer(frage)],
                 Some(8),
             )
@@ -381,9 +382,9 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // Geprueft wird, dass eine Systemnachricht mit dem Werkzeugangebot
     // und eine Werkzeugantwort **ankommen**, also die Tuer sie annimmt
     // und in den Prompt setzt. **Nicht geprueft** wird, ob das Modell
-    // daraufhin einen Aufruf vorschlaegt: Ein 0,5B-Modell tut das
-    // unzuverlaessig, und ein Test, der davon abhinge, waere flatterig
-    // statt scharf.
+    // daraufhin einen Aufruf vorschlaegt: Ein Modell dieser Groesse tut
+    // das unzuverlaessig, und ein Test, der davon abhinge, waere
+    // flatterig statt scharf.
     //
     // ⚑ **Was ein Vorschlag darf, entscheidet ohnehin nicht das
     // Modell**, sondern `werkzeug::Erlaubnis`, und die ist in
@@ -408,7 +409,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         myl_local_agent::Tuerklient::neu("127.0.0.1", port, token3)
             .mit_frist(std::time::Duration::from_secs(600))
             .chat(
-                "myelith-myelith-0.5b",
+                "myelith-myelith-0.6b",
                 &[angebot, myl_local_agent::Nachricht::nutzer("Wie spät ist es?"), ergebnis],
                 Some(8),
             )
@@ -426,9 +427,9 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
     // Schleife aus `myl_local_agent::schleife` von Anfang bis Ende.
     //
     // ⚑ **Was NICHT geprueft wird: dass das Modell ein Werkzeug
-    // vorschlaegt.** Ein 0,5B-Modell tut das unzuverlaessig. Geprueft
-    // wird, dass die Schleife durchlaeuft, einen Beleg hinterlaesst und
-    // an einer Grenze endet statt ins Leere.
+    // vorschlaegt.** Ein Modell dieser Groesse tut das unzuverlaessig.
+    // Geprueft wird, dass die Schleife durchlaeuft, einen Beleg
+    // hinterlaesst und an einer Grenze endet statt ins Leere.
     {
         use myl_local_agent::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler, Werkzeugkasten};
         use myl_local_agent::betrieb::Betriebsart;
@@ -495,7 +496,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
                 .mit_frist(std::time::Duration::from_secs(600));
             Lauf {
                 klient: &klient,
-                modell: "myelith-myelith-0.5b",
+                modell: "myelith-myelith-0.6b",
                 grenzen: &grenzen,
                 betriebsart: Betriebsart::NurVerankert,
                 kasten: &kasten,
@@ -516,10 +517,14 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
         // ⚑ **Die Tuer bedient, solange der Agent laeuft, und keinen
         // Aufruf laenger.** Der erste Entwurf hat hier `join!` mit einer
         // festen Zahl von `bedienen_v1` benutzt, und der Lauf blieb am
-        // 2026-09-05 stehen: Ein 0,5B-Modell schlaegt oft KEIN Werkzeug
-        // vor, dann endet die Schleife nach einem Schritt, und die Tuer
-        // wartete auf einen zweiten Aufruf, der nie kam. Gemessen: null
-        // Prozent CPU nach 32 Sekunden.
+        // 2026-09-05 stehen: Ein Modell dieser Groesse schlaegt oft KEIN
+        // Werkzeug vor, dann endet die Schleife nach einem Schritt, und
+        // die Tuer wartete auf einen zweiten Aufruf, der nie kam.
+        // Gemessen: null Prozent CPU nach 32 Sekunden, damals an
+        // Qwen2.5-0,5B; der Anker ist seit dem 2026-09-11 Qwen3-0,6B,
+        // und die Beobachtung ist an ihm **nicht** nachgemessen. Sie
+        // begruendet hier nur, warum der Test nicht zaehlt, wie viele
+        // Aufrufe kommen, und das ist unabhaengig davon richtig.
         //
         // Wie viele Aufrufe kommen, weiss nur die Schleife. Also fragt
         // der Test nicht danach, sondern hoert auf, wenn sie fertig ist.

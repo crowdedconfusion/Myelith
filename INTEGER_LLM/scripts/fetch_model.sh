@@ -3,9 +3,17 @@
 # Siehe models/README.md fuer Herkunft, Struktur und die Revision-Angabe.
 #
 # Env-Variablen (optional):
-#   MODEL_ID  HF-Modell-ID, Default: Qwen/Qwen2.5-0.5B (Basis-Modell,
-#             das Referenzmodell des Projekts — siehe models/README.md)
-#   REVISION  HF-Revision (Branch, Tag oder Commit-Hash), Default: main
+#   MODEL_ID  HF-Modell-ID, Default: Qwen/Qwen3-0.6B (das Ankermodell
+#             des Projekts, siehe models/README.md)
+#   REVISION  HF-Revision (Branch, Tag oder Commit-Hash). Default ist
+#             die fixierte Revision des Ankermodells, NICHT `main`.
+#
+# ⚑ **Warum die Vorgabe eine feste Revision ist** (2026-09-11): Mit
+# `main` holt ein frischer Klon, was heute dort liegt, und das ergibt
+# andere Gewichte, andere Artefakte und einen anderen θ_v-Hash als die
+# hier dokumentierten Zahlen. Wer ein anderes Modell holt, setzt
+# REVISION ausdruecklich mit; die Revisionen stehen in
+# models/KATALOG.json.
 #
 # Ohne fixierte REVISION ist der Download nicht reproduzierbar. Das Skript
 # loest die tatsaechliche Commit-Revision auf und gibt sie am Ende aus --
@@ -13,8 +21,8 @@
 
 set -euo pipefail
 
-MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-0.5B}"
-REVISION="${REVISION:-main}"
+MODEL_ID="${MODEL_ID:-Qwen/Qwen3-0.6B}"
+REVISION="${REVISION:-c1899de289a04d12100db370d81485cdf75e47ca}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${REPO_ROOT}/models/$(basename "${MODEL_ID}")"

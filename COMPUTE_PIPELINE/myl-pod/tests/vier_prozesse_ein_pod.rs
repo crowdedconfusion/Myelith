@@ -35,7 +35,7 @@ fn wurzel() -> PathBuf {
 }
 
 fn artefakte() -> PathBuf {
-    wurzel().join("INTEGER_LLM").join("artifacts").join("myelith-0.5b")
+    wurzel().join("INTEGER_LLM").join("artifacts").join("myelith-0.6b")
 }
 
 fn binary() -> PathBuf {
@@ -126,24 +126,38 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
     let abdruck = koordinator.dekodier_digest(1).expect("Abdruck");
     let buendel = koordinator.build_signed_poi_bundle().expect("Buendel");
 
-    // ⚑ **Der Vergleichswert ist derselbe wie im Fadenlauf.** Er steht
-    // hier fest und nicht als zweiter Lauf: Ein Test, der sich selbst
-    // vergleicht, prüft nur, dass er zweimal dasselbe tut.
+    // ⚑ **Der Vergleichswert steht fest und nicht als zweiter Lauf:**
+    // Ein Test, der sich selbst vergleicht, prüft nur, dass er zweimal
+    // dasselbe tut.
+    //
+    // ⛑ **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B,
+    // und zwar **unabhängig** vom Pod:
+    //
+    // ```text
+    // cargo run --release --bin integer-llm-runtime -- \
+    //     artifacts/myelith-0.6b "Hello is a test of the" 8
+    // ```
+    //
+    // Dass die vier Prozesse dasselbe liefern, ist damit eine Aussage
+    // über den Shardweg und nicht über die Erwartung im Test.
     assert_eq!(
         token,
-        vec![5726, 315, 264, 1697, 311, 15282, 323, 3535],
+        vec![1849, 13, 5209, 3410, 264, 2033, 429, 374],
         "vier Prozesse rechnen andere Token als ein Prozess"
     );
     assert_eq!(
         abdruck.as_ref().map(|(h, s)| (h.as_str(), *s)),
-        Some(("1f2e7886ec88fdc808a2e52a18213d14ebbeca25a7a8728f26b6b4f2741a4598", 8)),
+        Some(("f31675ab40207fcbf39fe415f6ac228949f44f23b88a46e9d2fc52913f8f8e84", 8)),
         "der Dekodier-Abdruck weicht ab"
     );
-    assert_eq!(buendel.vtfe_claimed, 12_999_997, "die beanspruchte Arbeit weicht ab");
+    // ⛑ **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B:
+    // Der Wert haengt am Modellprofil (28 Ebenen, hidden 1024 statt 24
+    // und 896) und aendert sich mit ihm. Die **Segmentzahl** daneben
+    // aendert sich nicht, und genau die ist die Aussage.
+    assert_eq!(buendel.vtfe_claimed, 12_999_998, "die beanspruchte Arbeit weicht ab");
     // ⚑ **Dreizehn und nicht acht** (Fund 187): Ein Segment ist ein
     // Vorwaertspass, nicht ein gesampeltes Token. Fuenf Prefill-
-    // Positionen und acht gesampelte ergeben dreizehn, und die vTFE von
-    // 12 999 997 bestaetigen dieselbe Zahl.
+    // Positionen und acht gesampelte ergeben dreizehn.
     //
     // ⚑ **Hier stand bis zum 2026-09-06 eine Eins im Buendel**, obwohl
     // dreizehn Segmente darunter hingen. Aus dieser Zahl zieht die

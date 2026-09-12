@@ -57,16 +57,17 @@ def _sha256_hex(data: bytes) -> str:
 
 
 def test_get_export_model_config_accepts_verified_variant():
-    config = get_export_model_config("myelith-0.5b")
-    assert config["num_kv_heads"] == 2
+    config = get_export_model_config("myelith-0.6b")
+    assert config["num_kv_heads"] == 8
     assert config["tie_word_embeddings"] is True
 
 
 def test_get_export_model_config_rejects_unverified_variant():
-    # 7B hat (noch) kein verifiziertes num_kv_heads/tie_word_embeddings.
-    assert "num_kv_heads" not in get_model_config("myelith-7b-instruct")
+    # Die Instruct-Eintraege sind Groessenangaben fuer die Planung und
+    # tragen kein geprueftes num_kv_heads/tie_word_embeddings.
+    assert "num_kv_heads" not in get_model_config("qwen2.5-7b-instruct")
     try:
-        get_export_model_config("myelith-7b-instruct")
+        get_export_model_config("qwen2.5-7b-instruct")
         raise AssertionError("Unvollstaendige Variante haette fehlschlagen muessen")
     except ValueError as e:
         assert "num_kv_heads" in str(e)
@@ -182,12 +183,12 @@ def test_local_model_dir_missing_and_present():
         os.chdir(tmp)
         try:
             try:
-                paths_mod.local_model_dir("Qwen2.5-0.5B")
+                paths_mod.local_model_dir("Qwen3-0.6B")
                 raise AssertionError("Fehlendes Modell-Verzeichnis haette fehlschlagen muessen")
             except FileNotFoundError as e:
                 assert "fetch_model.sh" in str(e)
-            (Path(tmp) / "models" / "Qwen2.5-0.5B").mkdir(parents=True)
-            assert paths_mod.local_model_dir("Qwen2.5-0.5B") == Path("models") / "Qwen2.5-0.5B"
+            (Path(tmp) / "models" / "Qwen3-0.6B").mkdir(parents=True)
+            assert paths_mod.local_model_dir("Qwen3-0.6B") == Path("models") / "Qwen3-0.6B"
         finally:
             os.chdir(old_cwd)
 
@@ -420,37 +421,58 @@ def test_quantize_int8_per_channel_1d_keeps_shape():
         assert abs(deq - float(t[i])) <= step / 2 + 1e-9, f"Element {i}"
 
 
-def test_7b_config_matches_published_hf_config():
+def test_30b_config_matches_published_hf_config():
     """
-    Die 7B-Eintraege gegen die veroeffentlichte config.json von
-    Qwen/Qwen2.5-7B (Revision d1497293) festgenagelt. Der Test haelt fest,
-    WAS geprueft wurde — nicht, dass jemand geprueft hat.
+    Die 30B-A3B-Eintraege gegen die veroeffentlichte config.json von
+    Qwen/Qwen3-30B-A3B festgenagelt. Der Test haelt fest, WAS geprueft
+    wurde, nicht, dass jemand geprueft hat.
 
-    Drei Werte unterscheiden sich von 0.5B und beruehren den Exportpfad:
-    num_kv_heads (GQA-Gruppierung), tie_word_embeddings (eigener LM-Head)
-    und head_dim (RoPE-LUT-Breite). Genau die sind hier verankert.
+    ⛔️ **Hier stand bis zum 2026-09-12 die 14B**, und davor die 7B. Das
+    dichte 14B ist auf Festlegung des Projektinhabers entfernt; dieser
+    Test steht jetzt auf dem groessten verbliebenen Modell, und das ist
+    ein **Gemisch**.
+
+    ⛑ **Und die Lehre aus dem Wechsel davor bleibt stehen:** Eine
+    Ersetzung ueber achtzig Dateien hat damals den Aufruf umgeschrieben
+    und die **erwarteten Werte stehen gelassen**. Der Test war rot und
+    behauptete dabei etwas ueber ein Modell, das es nicht mehr gab.
+    **Eine Ersetzung, die Namen trifft und Zahlen liegen laesst, macht
+    aus einem Test eine Behauptung ueber nichts.**
+
+    Was hier verankert ist und beim Gemisch anders liegt als bei einem
+    dichten Modell: `num_experts`, `moe_intermediate_size` und
+    `num_experts_per_tok`. Die Rechenarbeit bemisst sich an den beiden
+    letzten, nicht an `intermediate_size`.
     """
     from src.model_configs import get_export_model_config
 
-    c = get_export_model_config("myelith-7b")
+    c = get_export_model_config("myelith-30b-a3b")
     erwartet = {
-        "num_layers": 28,          # num_hidden_layers
-        "hidden_size": 3584,
-        "intermediate_size": 18944,
-        "num_heads": 28,           # num_attention_heads
-        "num_kv_heads": 4,         # num_key_value_heads (0.5B: 2)
-        "vocab_size": 152064,      # 0.5B: 151936
-        "tie_word_embeddings": False,  # 0.5B: True
-        "attention_bias": True,    # q/k/v_proj.bias in der index.json
+        "num_layers": 48,          # num_hidden_layers
+        "hidden_size": 2048,
+        "num_heads": 32,           # num_attention_heads
+        "num_kv_heads": 4,         # num_key_value_heads
+        "vocab_size": 151936,
+        "tie_word_embeddings": False,
+        "attention_bias": False,   # Qwen3 fuehrt keine q/k/v-Biases
+        "qk_norm": True,           # Qwen3 normiert q und k je Kopf
+        "head_dim": 128,
     }
     for k, v in erwartet.items():
-        assert c[k] == v, f"7B-Feld {k}: {c[k]!r} statt {v!r}"
+        assert c[k] == v, f"30B-Feld {k}: {c[k]!r} statt {v!r}"
 
-    # head_dim ist abgeleitet, keine eigene Angabe der config.json.
-    assert c["head_dim"] == c["hidden_size"] // c["num_heads"] == 128
+    # ⚑ **Das Gemisch, und genau hier liegt der Unterschied.**
+    assert c["num_experts"] == 128, f"num_experts: {c['num_experts']}"
+    assert c.get("num_experts_per_tok") == 8, "Top-8 fehlt"
+    assert c.get("moe_intermediate_size") == 768, "die Expertenbreite fehlt"
+
+    # ⚑ head_dim ist bei Qwen3 eine eigene Angabe und **nicht**
+    # hidden_size/num_heads: 2048/32 waere 64.
+    assert c["hidden_size"] // c["num_heads"] == 64
+    assert c["head_dim"] == 128
 
     # Basis-Variante, nicht Instruct (Scope-Entscheidung 12.15).
-    assert c["hf_model_id"] == "Qwen/Qwen2.5-7B"
+    assert c["hf_model_id"] == "Qwen/Qwen3-30B-A3B"
     assert "instruct" not in c["hf_model_id"].lower()
 
 
@@ -462,7 +484,7 @@ def test_artifact_model_config_omits_provenance_fields():
     """
     from src.model_configs import artifact_model_config, _REQUIRED_EXPORT_FIELDS
 
-    cfg = artifact_model_config("myelith-7b")
+    cfg = artifact_model_config("myelith-30b-a3b")
     assert "verified" not in cfg and "hf_model_id" not in cfg
     # Alles Uebrige, was der Loader braucht, ist noch da.
     for feld in _REQUIRED_EXPORT_FIELDS:
@@ -473,17 +495,62 @@ def test_artifact_model_config_omits_provenance_fields():
 
 def test_gptq_hessian_bedarf_waechst_quadratisch():
     """
-    Der Hessian-Speicher skaliert quadratisch mit intermediate_size, nicht
-    linear mit der Parameterzahl — deshalb braucht 7B fuer ALLE Ebenen
-    gleichzeitig 45,5 GB, waehrend 0.5B mit 2,5 GB bequem hineinpasst.
-    """
-    from src.model_configs import get_export_model_config
-    from src.main import gptq_hessian_bytes
+    Der Hessian-Speicher skaliert **quadratisch mit
+    `intermediate_size`**, nicht linear mit der Parameterzahl. Genau
+    deshalb gibt es den schichtweisen Pfad.
 
-    klein = gptq_hessian_bytes(get_export_model_config("myelith-0.5b"))
-    gross = gptq_hessian_bytes(get_export_model_config("myelith-7b"))
-    assert 2.0 < klein / 2**30 < 3.0, f"0.5B: {klein / 2**30:.1f} GB"
-    assert 40.0 < gross / 2**30 < 50.0, f"7B: {gross / 2**30:.1f} GB"
+    ⚑ **Geprueft wird das Gesetz und das Kriterium, nicht eine Zahl.**
+    Absolute Schranken altern mit jedem Modellwechsel, und dieser Test
+    hat es zweimal vorgefuehrt: Er stand auf der 7B, dann auf der 14B,
+    und beide sind aus dem Projekt heraus. **Eine Schranke, die an
+    einem bestimmten Modell haengt, ist keine Schranke, sondern ein
+    Ablaufdatum.**
+
+    Die Aussage, die traegt: Das groesste dichte Modell passt **nicht**
+    in den Rahmen, den `gptq_group_size` sich selbst gibt, naemlich
+    zwei Drittel des vorhandenen Arbeitsspeichers. Dasselbe Kriterium,
+    dasselbe Urteil, gleichgueltig welches Modell gerade das groesste
+    ist.
+    """
+    import os
+
+    from src.model_configs import get_export_model_config
+    from src.main import gptq_hessian_bytes, gptq_group_size
+
+    c_klein = get_export_model_config("myelith-0.6b")
+    c_gross = get_export_model_config("myelith-4b")
+    klein = gptq_hessian_bytes(c_klein)
+    gross = gptq_hessian_bytes(c_gross)
+
+    # Das Gesetz: je Ebene waechst der Bedarf mit (6h^2 + i^2).
+    def erwartet(c):
+        return c["num_layers"] * (6 * c["hidden_size"] ** 2 + c["intermediate_size"] ** 2) * 4
+
+    assert klein == erwartet(c_klein)
+    assert gross == erwartet(c_gross)
+
+    # ⚑ **Der Sprung ist nicht die Parameterzahl.** Das groessere Modell
+    # hat rund 6,7-mal so viele Parameter wie das kleine und braucht
+    # rund elfmal so viel Hessian-Speicher.
+    verhaeltnis = gross / klein
+    parameter = c_gross["num_layers"] * c_gross["hidden_size"] ** 2
+    parameter /= c_klein["num_layers"] * c_klein["hidden_size"] ** 2
+    assert verhaeltnis > parameter, (
+        f"der Bedarf waechst nicht schneller als die Groesse: "
+        f"{verhaeltnis:.1f} gegen {parameter:.1f}"
+    )
+
+    # ⚑ **Und das Kriterium, das der Code selbst anlegt.** `0,6B` passt
+    # in einer Gruppe, das groesste dichte Modell nicht.
+    assert gptq_group_size(c_klein) == c_klein["num_layers"], (
+        "0,6B muss in einer Gruppe passen"
+    )
+    ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    if gross > ram * 2 // 3:
+        assert gptq_group_size(c_gross) < c_gross["num_layers"], (
+            f"{gross / 2**30:.1f} GiB passen nicht in zwei Drittel von "
+            f"{ram / 2**30:.1f} GiB, und der Pfad teilt trotzdem nicht"
+        )
 
 
 def test_gptq_entscheidung_env_override():
@@ -513,15 +580,15 @@ def test_gptq_entscheidung_env_override():
     alt = os.environ.get("INTEGER_LLM_GPTQ")
     try:
         os.environ["INTEGER_LLM_GPTQ"] = "0"
-        an, _ = gptq_entscheidung(get_export_model_config("myelith-0.5b"))
+        an, _ = gptq_entscheidung(get_export_model_config("myelith-0.6b"))
         assert an is False, "INTEGER_LLM_GPTQ=0 muss GPTQ abschalten"
 
         os.environ["INTEGER_LLM_GPTQ"] = "1"
-        an, grund = gptq_entscheidung(get_export_model_config("myelith-7b"))
+        an, grund = gptq_entscheidung(get_export_model_config("myelith-4b"))
         assert an is True, f"INTEGER_LLM_GPTQ=1 muss GPTQ einschalten, Grund: {grund}"
 
         os.environ.pop("INTEGER_LLM_GPTQ")
-        an, grund = gptq_entscheidung(get_export_model_config("myelith-7b"))
+        an, grund = gptq_entscheidung(get_export_model_config("myelith-4b"))
         assert an is False, (
             "ohne Vorgabe ist GPTQ aus (Festlegung vom 2026-08-20), "
             f"Grund: {grund}"
@@ -540,33 +607,33 @@ def test_gptq_group_size_fits_within_ram_budget():
     Fund 20/21-Nachtrag: schichtweise Hessian-Berechnung statt Abschaltung.
     gptq_group_size() muss so viele Ebenen waehlen, dass ihr gemeinsamer
     Hessian-Bedarf unter zwei Dritteln des (vorgegaukelten) RAM bleibt -
-    und fuer 0.5B (das komplett in echten RAM passt) alle Ebenen auf
+    und fuer 0,6B (das komplett in echten RAM passt) alle Ebenen auf
     einmal waehlen, damit dort weiterhin nur EIN Kalibrier-Durchlauf noetig
     ist.
     """
     from src.model_configs import get_export_model_config
     from src.main import gptq_group_size, gptq_hessian_bytes_per_layer
 
-    cfg_05b = get_export_model_config("myelith-0.5b")
-    groesse_05b = gptq_group_size(cfg_05b)
-    assert groesse_05b == cfg_05b["num_layers"], (
-        f"0.5B muss in einer Gruppe passen, war {groesse_05b} von "
-        f"{cfg_05b['num_layers']} Ebenen"
+    cfg_klein = get_export_model_config("myelith-0.6b")
+    groesse_klein = gptq_group_size(cfg_klein)
+    assert groesse_klein == cfg_klein["num_layers"], (
+        f"0,6B muss in einer Gruppe passen, war {groesse_klein} von "
+        f"{cfg_klein['num_layers']} Ebenen"
     )
 
-    cfg_7b = get_export_model_config("myelith-7b")
-    groesse_7b = gptq_group_size(cfg_7b)
-    per_layer = gptq_hessian_bytes_per_layer(cfg_7b)
-    assert groesse_7b < cfg_7b["num_layers"], (
-        "7B darf auf einer 24-GB-Maschine NICHT in einer Gruppe passen "
-        f"(waere wieder der alte 45,5-GB-Sprengsatz), war {groesse_7b}"
+    cfg_gross = get_export_model_config("myelith-4b")
+    groesse_gross = gptq_group_size(cfg_gross)
+    per_layer = gptq_hessian_bytes_per_layer(cfg_gross)
+    assert groesse_gross < cfg_gross["num_layers"], (
+        "14B darf auf einer 24-GB-Maschine NICHT in einer Gruppe passen "
+        f"(waere wieder der alte 45,5-GB-Sprengsatz), war {groesse_gross}"
     )
-    assert groesse_7b >= 1, "Gruppengroesse muss mindestens 1 Ebene sein"
+    assert groesse_gross >= 1, "Gruppengroesse muss mindestens 1 Ebene sein"
     # Die gewaehlte Gruppe darf den Speicher, den main() ihr zugesteht
     # (zwei Drittel des tatsaechlichen RAM), nicht ueberschreiten.
     import os
     ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-    assert groesse_7b * per_layer <= ram * 2 // 3
+    assert groesse_gross * per_layer <= ram * 2 // 3
 
 
 def test_model_name_folgt_umgebungsvariable():
@@ -581,15 +648,15 @@ def test_model_name_folgt_umgebungsvariable():
 
     alt = os.environ.get("INTEGER_LLM_MODEL")
     try:
-        os.environ["INTEGER_LLM_MODEL"] = "myelith-7b"
+        os.environ["INTEGER_LLM_MODEL"] = "myelith-30b-a3b"
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "myelith-7b"
-        assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-7B"
+        assert main_mod.MODEL_NAME == "myelith-30b-a3b"
+        assert main_mod.HF_MODEL_ID == "Qwen/Qwen3-30B-A3B"
 
         os.environ.pop("INTEGER_LLM_MODEL")
         main_mod = importlib.reload(importlib.import_module("src.main"))
-        assert main_mod.MODEL_NAME == "myelith-0.5b", "Vorgabe bleibt 0.5B"
-        assert main_mod.HF_MODEL_ID == "Qwen/Qwen2.5-0.5B"
+        assert main_mod.MODEL_NAME == "myelith-0.6b", "Vorgabe ist der Anker"
+        assert main_mod.HF_MODEL_ID == "Qwen/Qwen3-0.6B"
     finally:
         os.environ.pop("INTEGER_LLM_MODEL", None)
         if alt is not None:
@@ -626,8 +693,8 @@ if __name__ == "__main__":
     print("[test] int16-Per-Channel-Quantisierung Rundlauf: PASSED")
     test_quantize_int8_per_channel_1d_keeps_shape()
     print("[test] int8-Per-Channel-Quantisierung 1D behaelt Shape: PASSED")
-    test_7b_config_matches_published_hf_config()
-    print("[test] 7B-Config stimmt mit veroeffentlichter HF-config.json: PASSED")
+    test_30b_config_matches_published_hf_config()
+    print("[test] 30B-Config stimmt mit veroeffentlichter HF-config.json: PASSED")
     test_artifact_model_config_omits_provenance_fields()
     print("[test] model_config.json ohne Herkunftsfelder: PASSED")
     test_gptq_hessian_bedarf_waechst_quadratisch()

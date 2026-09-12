@@ -16,12 +16,12 @@
 # bei denen der volle Plan zu lange laeuft: Der Vergleichswert haengt an
 # der Bitgleichheit, nicht an der Laenge der Antwort.
 #
-# Wer 7B testet, faengt hier an.
+# Wer das Gemisch testet, faengt hier an.
 #
 # LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
 #   4 Prompts x 16 Token x 2 Durchgaenge = 128 Token
-#   bei rund 27 tok/s (0,5B): etwa 5 Sekunden
-#   bei rund  2 tok/s (7B):   etwa 1 Minuten
+#   bei rund 29 tok/s (0,6B): etwa 5 Sekunden
+#   bei rund 10 tok/s (30B-A3B): etwa 10 Sekunden
 #   Dazu der Shard-Lauf und das Laden des Modells.
 
 plan_id     = standard-kurz

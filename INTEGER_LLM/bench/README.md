@@ -18,7 +18,7 @@ dasselbe rechnen. Alles andere sind Kennzahlen, keine Kriterien.
 ```bash
 python3 bench/run.py --backends reference,cpu-simd --no-fp
 ./calibrate/.venv/bin/python bench/run.py            # mit Gleitkomma-Vergleich
-INTEGER_LLM_MODEL=myelith-7b ./calibrate/.venv/bin/python bench/run.py
+INTEGER_LLM_MODEL=myelith-14b ./calibrate/.venv/bin/python bench/run.py
 ```
 
 Der Gleitkomma-Vergleich braucht `torch`/`transformers`, also die
@@ -107,7 +107,7 @@ einordenbar ist.
 ## `qualitativ.py` — Ausgabequalität
 
 ```bash
-INTEGER_LLM_MODEL=myelith-7b python3 bench/qualitativ.py [max_tokens]
+INTEGER_LLM_MODEL=myelith-14b python3 bench/qualitativ.py [max_tokens]
 ```
 
 Misst zwei Größen getrennt, und die Trennung ist der Punkt:

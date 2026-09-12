@@ -27,7 +27,7 @@ use integer_llm_runtime::trainingsschleife::{
 const KONTROLLE: usize = 5726;
 
 fn artefakte() -> std::path::PathBuf {
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../artifacts")
         .join(modell)
@@ -193,10 +193,29 @@ fn ein_ziel_ausserhalb_des_vokabulars_wird_abgelehnt() {
 
 /// ⚑ **Die Gegenprobe zur Schranke: Beisst der Abbruch?**
 ///
-/// Eine absurd grosse Lernrate (`lr_nenner = 1`, also Schrittweite eins
-/// je Gradienteneinheit) treibt die Gewichte binnen weniger Schritte aus
-/// der Übertragungsform. Der Lauf muss das **melden** und aufhören,
-/// nicht weiterrechnen und später beim Zurückschreiben abstürzen.
+/// Eine absurd grosse Lernrate treibt die Gewichte aus der
+/// Übertragungsform. Der Lauf muss das **melden** und aufhören, nicht
+/// weiterrechnen und später beim Zurückschreiben abstürzen.
+///
+/// ⛑ **Fund 338 (2026-09-11): `lr_nenner = 1` reichte nicht mehr.** Auf
+/// dem alten Anker (Qwen2.5-0,5B) verliess der Lauf damit binnen
+/// weniger Schritte die Form. Auf Qwen3-0,6B tut er es **nie**, auch
+/// nicht in dreihundert Schritten, weil der Zähler im Rumpf fest auf
+/// eins stand und `lr_nenner = 1` damit die groesste erreichbare
+/// Schrittweite war. **Die Gegenprobe prüfte danach nichts**, und sie
+/// wäre stillschweigend grün geblieben, hätte der Modellwechsel sie
+/// nicht zum Fehlschlag gebracht.
+///
+/// Gemessen mit `examples/formgrenze.rs`:
+///
+/// | `lr_zaehler` bei `lr_nenner = 1` | aus der Form |
+/// |---|---|
+/// | 1 | nie, auch nicht nach 300 Schritten |
+/// | **64** | **bei Schritt 0** |
+/// | 1 024 | bei Schritt 0 |
+///
+/// ⚑ **Genommen wird der kleinste Wert, der beisst.** Ein groesserer
+/// prüfte dasselbe und sagte weniger darüber, wo die Grenze liegt.
 ///
 /// ⚑ **Ohne diesen Test wäre die Schranke eine Behauptung.** Sie stand
 /// bis zum 2026-09-05 nur als Panik in `gewicht_aus_master`, also am
@@ -205,11 +224,16 @@ fn ein_ziel_ausserhalb_des_vokabulars_wird_abgelehnt() {
 #[test]
 fn eine_absurde_lernrate_verlaesst_die_form_und_der_lauf_meldet_es() {
     let Some(m) = modell() else { return };
-    let v = Trainingsvorgaben { schritte: 40, lr_nenner: 1, ..Trainingsvorgaben::vorgabe() };
+    let v = Trainingsvorgaben {
+        schritte: 40,
+        lr_nenner: 1,
+        lr_zaehler: 64,
+        ..Trainingsvorgaben::vorgabe()
+    };
     let e = trainingsschleife(&m, &v).expect("Lauf");
     let schritt = e.aus_der_form.expect(
-        "bei lr_nenner = 1 muss der Lauf die Uebertragungsform verlassen; \
-         tut er es nicht, prueft die Schranke nichts",
+        "bei lr_zaehler = 64 und lr_nenner = 1 muss der Lauf die Uebertragungsform \
+         verlassen; tut er es nicht, prueft die Schranke nichts (Fund 338)",
     );
     assert!(schritt < v.schritte, "der Abbruch kam nach dem letzten Schritt");
     eprintln!("  aus der Form bei Schritt {schritt} von {}", v.schritte);

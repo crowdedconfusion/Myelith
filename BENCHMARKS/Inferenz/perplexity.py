@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
 Perplexitätsvergleich: Integer-Modell vs. Gleitkomma-Baseline
-(Punkt 12.21 — der Entscheidungspunkt).
+(Punkt 12.21, der Entscheidungspunkt).
 
 Methodik:
   1. Messparameter (Anzahl Sequenzen, Sequenzlänge) werden aus dem
-     Baseline-Ergebnis (eval/results/baseline_wikitext2.json) gelesen —
+     Baseline-Ergebnis (eval/results/baseline_wikitext2.json) gelesen;
      dadurch ist garantiert, dass beide Messungen auf identischen
-     Sequenzen laufen (eval/wikitext_common.py).
+     Sequenzen laufen (BENCHMARKS/Inferenz/wikitext_common.py).
   2. Die Integer-Perplexität wird mit der Perplexitäts-Probe der Runtime
      gemessen (Teacher-Forcing, identische Messmethode wie 12.19).
   3. Relatives Delta = (ppl_integer - ppl_fp) / ppl_fp wird gegen das
      Akzeptanzkriterium geprueft (Standard: max. 5 % Anstieg; das
      Kriterium ist konsensrelevant und kann ueber PPL_ACCEPTANCE_PCT
      gesetzt werden).
-  4. Ein Ergebnisprotokoll wird geschrieben: eval/results/decision_12-21.md
-     — es enthält zwingend die zwei Mess-Hinweise
-     (Decodierstrategie, 0,5B-als-ungünstigster-Fall).
+  4. Ein Ergebnisprotokoll wird geschrieben: eval/results/decision_12-21.md.
+     Es enthält zwingend die zwei Mess-Hinweise (Decodierstrategie,
+     kleine-Modelle-als-ungünstigster-Fall).
 """
 
 import json
@@ -46,6 +46,26 @@ from wikitext_common import (  # noqa: E402
     ergebnis_pfad,
     select_sequences,
 )
+
+
+# ⛑ **Fund 341 (2026-09-11): das erzeugte Protokoll behauptete bei jedem
+# Modell 0,5 Mrd. Parameter.** Der zweite Mess-Hinweis („kleine Modelle
+# sind der unguenstigste Fall") stand als fester Text im Rumpf, und der
+# Rumpf schreibt fuer alle vier Modelle. Im Protokoll der 14B stand
+# deshalb woertlich „0,5 Mrd. Parameter sind der unguenstigste Fall",
+# neben einer Messung an vierzehn Milliarden.
+#
+# ⚑ **Eine erzeugte Datei darf nichts sagen, was sie nicht aus ihrer
+# Eingabe hat.** Die Groesse steht im Katalog, also kommt sie von dort;
+# fehlt sie, sagt das Protokoll das, statt eine Zahl zu erfinden.
+def _modellgroesse() -> str:
+    """Parameterzahl des gemessenen Modells, aus dem Katalog."""
+    katalog = LLM / "models" / "KATALOG.json"
+    try:
+        eintrag = json.loads(katalog.read_text(encoding="utf-8")).get(MODEL_NAME, {})
+    except (OSError, ValueError):
+        return "unbekannter Groesse"
+    return eintrag.get("parameter", "unbekannter Groesse")
 # Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Der Resolver prueft
 # CARGO_TARGET_DIR, target-shared/ und den Cargo-Standardort der Reihe nach.
@@ -60,7 +80,7 @@ def main():
     acceptance_pct = float(os.environ.get("PPL_ACCEPTANCE_PCT", "5.0"))
 
     if not BASELINE_JSON.exists():
-        print(f"[ppl] FEHLT: {BASELINE_JSON} — zuerst eval/baseline.py laufen lassen "
+        print(f"[ppl] FEHLT: {BASELINE_JSON}. Zuerst BENCHMARKS/Inferenz/baseline.py laufen lassen "
               f"(fuer dasselbe Modell: INTEGER_LLM_MODEL={MODEL_NAME}).",
               file=sys.stderr)
         sys.exit(1)
@@ -129,9 +149,10 @@ def main():
           f"(Akzeptanzkriterium: max. {acceptance_pct:.1f} %)")
     print(f"[ppl] Entscheidung: {'AKZEPTIERT' if accepted else 'VERFEHLT'}")
 
-    protocol = f"""# Entscheidungspunkt 12.21 — Perplexitätsvergleich
+    groesse = _modellgroesse()
+    protocol = f"""# Entscheidungspunkt 12.21: Perplexitätsvergleich
 
-**Datum:** (automatisch erzeugt durch eval/perplexity.py)
+**Datum:** (automatisch erzeugt durch BENCHMARKS/Inferenz/perplexity.py)
 
 ## Messung
 
@@ -148,18 +169,19 @@ def main():
 ## Zwingende Einordnung
 
 1. **Decodierstrategie:** Perplexität ist unabhängig von der
-   Decodierstrategie, die beobachtete Repetitionsneigung nicht — Greedy
+   Decodierstrategie, die beobachtete Repetitionsneigung nicht; Greedy
    verstärkt sie. Die hier gemessene Perplexität (Teacher-Forcing) ist
    daher das maßgebliche Qualitätsmaß; die in Fund 9 beobachteten
    Repetitions-Loops bei Greedy-Generierung sind ein Teil-Decodier-
    strategie-Effekt und nicht allein der Quantisierung zuzurechnen.
-2. **0,5 Mrd. Parameter sind der ungünstigste Fall für Quantisierung.**
-   Größere Modelle sind nachweislich robuster (größere Logit-Spannweiten,
-   gutmütigere Gewichtsverteilungen). {'Falls das Kriterium verfehlt wurde: Das ist ein Urteil über 0,5B — nicht über die Zielgrößenordnung des Whitepapers.' if not accepted else 'Das Kriterium wurde erreicht; die Übertragbarkeit auf die Zielgrößenordnung bleibt durch die grundsätzliche Robustheit größerer Modelle zusätzlich gestützt.'}
+2. **Kleine Modelle sind der ungünstigste Fall für Quantisierung.**
+   Gemessen wurde hier ein Modell mit {groesse} Parametern. Größere
+   Modelle sind nachweislich robuster (größere Logit-Spannweiten,
+   gutmütigere Gewichtsverteilungen). {'Falls das Kriterium verfehlt wurde: Das ist ein Urteil über dieses Modell, nicht über die Zielgrößenordnung des Whitepapers.' if not accepted else 'Das Kriterium wurde erreicht; die Übertragbarkeit auf die Zielgrößenordnung bleibt durch die grundsätzliche Robustheit größerer Modelle zusätzlich gestützt.'}
 
 ## Konsequenz
 
-{'Das Akzeptanzkriterium ist erfüllt — die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation — Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden.'}
+{'Das Akzeptanzkriterium ist erfüllt, die Ganzzahl-Inferenz trägt qualitativ auf diesem Modell. Die weiteren Backends (SIMD/CUDA/ROCm) und die Netzwerkkomponenten können auf dieser Basis weiterverfolgt werden.' if accepted else 'Das Akzeptanzkriterium ist verfehlt. Bereits umgesetzte Eskalationsstufen: Weight-Tying aufgelöst + LM-Head int16 per-channel (spec 0.6.0) und Per-Channel-int8 für alle Gewichte (spec 0.7.0). Der verbleibende Abstand verlangt weitere Eskalation, Kandidaten: breitere Kalibrierbasis/Skalen-Headroom, feinere Teilbit-Tiefen der Nichtlinearitäten (z. B. SiLU-Eingangsskala), GPTQ, Hadamard-Rotation, Low-Rank-Fehlerkorrektur, deterministisch-stochastisches Runden.'}
 """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_md = ergebnis_pfad("decision_12-21", ".md")

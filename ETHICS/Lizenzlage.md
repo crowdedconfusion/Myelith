@@ -1,6 +1,6 @@
 # Lizenzlage der Basismodelle
 
-**Stand:** 2026-09-01 (Inhalt vom 2026-08-23, Fundort gewechselt)
+**Stand:** 2026-09-11 (Qwen3-Reihe geprüft; Qwen2.5-Abschnitt als Historie behalten)
 
 > ⚑ **Diese Datei lag bis zum 2026-09-01 unter
 > `INTEGER_LLM/docs/01_licenses.md`.** Sie steht jetzt in ETHICS, weil
@@ -16,7 +16,7 @@
 
 | Komponente | Lizenz | Nutzung |
 |---|---|---|
-| Qwen2.5, geprüfte Varianten (siehe unten) | Apache 2.0 | Modellgewichte |
+| Qwen3, alle vier eingesetzten Größen (siehe unten) | Apache 2.0 | Modellgewichte |
 | Hugging Face Transformers | Apache 2.0 | Offline-Kalibrierung |
 | Safetensors | Apache 2.0 | Gewicht-Export |
 | Eigener Code | PolyForm Shield License 1.0.0 | Integer-Inferenzsystem |
@@ -88,6 +88,52 @@ Messergebnis an einem Modell, das nicht Genesis-Modell werden kann, hilft
 der Frage nicht weiter, und die Gewichte lägen dafür auf der Platte.
 
 Damit ist die nächste Größe nach 7B die **14B**, nicht die 72B.
+
+## Lizenzprüfung der Qwen3-Reihe (2026-09-11)
+
+**Warum diese Prüfung nachgeholt wurde.** Am 2026-09-11 hat der
+Projektinhaber die Modellreihe gewechselt: Qwen2.5-0,5B und Qwen2.5-7B
+sind entfallen, Qwen3-0,6B und Qwen3-14B stehen an ihrer Stelle. Damit
+lag die Reihe erstmals vollständig in der Qwen3-Linie, **und der Beleg
+für G7 galt für eine Familie, die nicht mehr im Einsatz ist.** Der
+Abschnitt darüber bleibt trotzdem stehen: Er ist der Befund vom
+2026-08-23 und erklärt, warum überhaupt variantenscharf geprüft wird.
+
+**Methode, und sie ist eine andere als im August.** Geprüft wurde nicht
+über die Hugging-Face-API, sondern an dem, was im Repositorium liegt:
+das `license`-Feld der mitgelieferten Modellkarte (`README.md`) und der
+Volltext der Lizenzdatei (`LICENSE`) je Modellverzeichnis. Das ist
+dieselbe Aussage desselben Anbieters, nur aus der Datei statt aus dem
+Netz gelesen, und sie hat einen Vorzug: **Sie ist auf jedem frischen
+Klon nachprüfbar, ohne Netzzugang und ohne Konto.**
+
+| Variante | `license` (Modellkarte) | `LICENSE` | Für Myelith |
+|---|---|---|---|
+| Qwen3-0.6B | `apache-2.0` | Apache 2.0, unverändert | ✅ geeignet |
+| Qwen3-4B | `apache-2.0` | Apache 2.0, unverändert | ✅ geeignet |
+| Qwen3-14B | `apache-2.0` | Apache 2.0, unverändert | ✅ geeignet |
+| Qwen3-30B-A3B | `apache-2.0` | Apache 2.0, unverändert | ✅ geeignet |
+
+**Alle vier Lizenzdateien sind bytegleich**, 201 Zeilen, SHA-256
+`832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e`.
+Das ist **derselbe Hash wie bei den beiden Qwen2.5-Modellen weiter
+unten**, also nachweislich der unveränderte Apache-2.0-Text und keine
+angepasste Fassung. Eine Suche im Volltext nach modellspezifischen
+Zusätzen (Nutzerzahl-Obergrenze, Forschungsvorbehalt, Namensnennung)
+findet nichts; der einzige Treffer auf „additional terms" ist §5 der
+Apache-2.0 selbst.
+
+⚑ **Die Skalierungsfrage aus dem August ist damit beantwortet, und zwar
+anders als gedacht.** Dort stand: „Damit ist die nächste Größe nach 7B
+die 14B, nicht die 72B." Die 14B ist es geworden, aber in der
+Qwen3-Linie. Die beiden Ausschlüsse von 2026-08-23 (Qwen2.5-3B und
+Qwen2.5-72B) betreffen keine Größe, die heute im Projekt liegt.
+
+⚠️ **Was diese Prüfung nicht leistet.** Sie liest die Angabe des
+Anbieters, sie würdigt sie nicht rechtlich. Wenn Qwen die Lizenz einer
+Variante nachträglich ändert, sieht das hier niemand; die Dateien im
+Repositorium bleiben, wie sie beim Holen waren. Vor einem Genesis-Block
+gehört der Stand von jemandem geprüft, der dafür haftet.
 
 ## Quantisierte Ableitungen
 

@@ -32,7 +32,7 @@ Gleitkomma erlaubt — Referenzmessung, nicht Inferenzpfad. Kein Teil des
 Auslieferungspfads.
 
 Usage:
-    INTEGER_LLM_MODEL=myelith-7b ./calibrate/.venv/bin/python -u \\
+    INTEGER_LLM_MODEL=myelith-30b-a3b ./calibrate/.venv/bin/python -u \\
         tests/diag/residual_width_sweep.py
 """
 import json

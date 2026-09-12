@@ -393,7 +393,7 @@ pub const PROBE_SHARDS: u64 = 4;
 
 /// Das Modellprofil der Probepipeline: Qwen2.5-0,5B.
 ///
-/// Abgeschrieben aus `INTEGER_LLM/artifacts/myelith-0.5b/model_config.json`
+/// Abgeschrieben aus `INTEGER_LLM/artifacts/myelith-0.6b/model_config.json`
 /// (Revision `060db6499f32faf8b98477b0a26969ef7d8b9987`, siehe
 /// `INTEGER_LLM/models/KATALOG.json`). **Kein dichtes Feld ist geraten**:
 /// Jede Zahl steht so in der veröffentlichten Modellkonfiguration.

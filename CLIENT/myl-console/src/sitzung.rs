@@ -202,9 +202,21 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
         .iter()
         .map(|m| wahl::Punkt {
             titel: m.name.clone(),
-            // ⚑ Unter dem offenen Eintrag steht, woher er kommt; unter
-            // dem gesperrten, warum er nicht geht.
-            hinweis: if m.offen { kurz(&m.pfad) } else { m.warum.clone() },
+            // ⚑ Unter dem offenen Eintrag steht, was die Maschine dafuer
+            // mindestens braucht, und woher er kommt; unter dem
+            // gesperrten, warum er nicht geht.
+            //
+            // ⛑ **Die Hardwareangabe zuerst** (Festlegung des
+            // Projektinhabers, 2026-09-11): Wer waehlt, entscheidet in
+            // diesem Moment, ob seine Maschine das Modell traegt. Der
+            // Pfad ist danach interessant, nicht davor.
+            hinweis: if !m.offen {
+                m.warum.clone()
+            } else if m.hardware.is_empty() {
+                kurz(&m.pfad)
+            } else {
+                format!("{} · {}", m.hardware, kurz(&m.pfad))
+            },
             offen: m.offen,
         })
         .collect();
@@ -242,7 +254,21 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
             // haben ihre Frage beantwortet; was danach noch dasteht,
             // ist Vergangenheit, durch die jemand scrollen muesste, um
             // zu sehen, wo er ist.
-            schirm_leeren();
+            //
+            // ⚑ **Und das Logo bleibt stehen** (Auftrag des
+            // Projektinhabers, 2026-09-12). Hier stand ein blosses
+            // Leeren, und das Gespraech begann auf einem leeren
+            // Schirm. Jetzt steht der Schriftzug oben, und **er wandert
+            // mit dem Gespraech nach oben weg wie jede andere Zeile**:
+            // Er wird einmal gezeichnet und danach nicht mehr
+            // angefasst.
+            //
+            // ⚠️ **Kein fester Kopf.** Ein Logo, das oben kleben
+            // bliebe, braeuchte einen zweiten Rollbereich und naehme
+            // dem Gespraech dauerhaft acht Zeilen. Der untere Rand ist
+            // reserviert, weil dort die Eingabe steht; oben ist Platz
+            // wertvoller als Zierrat.
+            banner::bildschirm_mit(farben::logo());
             println!("  Modell {name} ({pfad}) wurde geladen.");
             println!();
             // ⚑ Die Kiste haengt am Modell, also wird sie hier
@@ -335,9 +361,26 @@ fn zeile_zeichnen(sch: &Schirm, r: &Rahmen, t: design::Toene, text: &str) {
         SetForegroundColor(t.kante),
         Print("│"),
         ResetColor,
+        // ⛑ **Fund 347: der Wagen stand eine Zeile unter der Eingabe.**
+        //
+        // `Schirm::zeile` schreibt die ANSI-Sequenz `ESC[{n};1H`, und
+        // die zaehlt **ab eins**. `MoveTo` von crossterm zaehlt **ab
+        // null**. Dieselbe Zahl in beide gegeben ergibt zwei
+        // verschiedene Zeilen, und der Unterschied ist genau eine.
+        //
+        // Der Inhalt der Eingabezeile wird oben mit
+        // `sch.zeile(KASTEN + 1)` gesetzt. `wagenzeile` nimmt denselben
+        // Versatz und rechnet ihn um, damit die Umrechnung an **einer**
+        // Stelle steht und nicht hier noch einmal von Hand.
+        //
+        // ⚑ **Der Fehler war unsichtbar, solange niemand hinsah.** Der
+        // Text stand richtig, nur der blinkende Wagen sass darunter, in
+        // der Kantenzeile. Gemeldet vom Projektinhaber, nicht von einer
+        // Pruefung: Ein Test, der Steuersequenzen liest, sieht die
+        // Zeile, in der etwas steht, und nicht die, in der es blinkt.
         MoveTo(
             r.wagenspalte() + eingabe::wagen_hinter(text, r.textbreite()) as u16,
-            sch.erste_eigene() + Schirm::KASTEN + 1,
+            sch.wagenzeile(Schirm::KASTEN + 1),
         ),
     );
     let _ = aus.flush();
@@ -639,7 +682,13 @@ fn einstellungen_zeigen(stand: &mut Stand) {
     }
     let geaendert = einstellseite::fahren(t, &stand.ordner);
     if let Some(sch) = stand.schirm {
-        schirm_leeren();
+        // ⚑ **Zurueck ins Gespraech heisst zurueck unter das Logo**
+        // (Auftrag des Projektinhabers, 2026-09-12). Hier stand ein
+        // blosses Leeren, und das Gespraech ging auf einem leeren
+        // Schirm weiter, waehrend es nach der Modellwahl unter dem
+        // Schriftzug begann. **Zwei Wege in dasselbe Bild duerfen nicht
+        // verschieden aussehen.**
+        banner::bildschirm_mit(farben::logo());
         sch.einrichten();
     }
     // ⚑ **Was hier geaendert wurde, gilt sofort.** Eine Einstellung,

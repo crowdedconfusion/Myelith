@@ -20,7 +20,7 @@ die gewuenschte Aufloesung des Median-Werts.
 Gleitkomma erlaubt - Referenzmessung, nicht Inferenzpfad.
 Kein Teil des Auslieferungspfads.
 
-Usage: INTEGER_LLM_MODEL=myelith-7b python tests/diag/channel_dynamic_range.py
+Usage: INTEGER_LLM_MODEL=myelith-30b-a3b python tests/diag/channel_dynamic_range.py
 """
 import math
 import os

@@ -39,7 +39,7 @@ fn wurzel() -> PathBuf {
 }
 
 fn artefakte() -> PathBuf {
-    wurzel().join("INTEGER_LLM").join("artifacts").join("myelith-0.5b")
+    wurzel().join("INTEGER_LLM").join("artifacts").join("myelith-0.6b")
 }
 
 fn binary() -> PathBuf {

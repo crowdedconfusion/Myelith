@@ -27,7 +27,7 @@ fn artifacts_dir() -> PathBuf {
     p.push("..");
     p.push("INTEGER_LLM");
     p.push("artifacts");
-    p.push(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string()));
+    p.push(std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string()));
     p
 }
 

@@ -1,7 +1,7 @@
 # ethics
 
-> **Version:** 0.5.0
-> **Datum:** 2026-08-31
+> **Version:** 0.6.0
+> **Datum:** 2026-09-11
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
 > Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
@@ -85,6 +85,41 @@ erreicht. Am Inhalt ändert das nichts, die Einträge behalten ihre
 Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
 `v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
 die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
+
+### v0.6.0 – 2026-09-11 (G7 gilt wieder für die Modelle, die es gibt)
+
+`Manifest.md` **0.2.0 auf 0.2.1**: der Stand unter G7, nicht der Grundsatz.
+
+⛔️ **Der Lizenzbeleg prüfte eine Familie, die das Projekt nicht mehr
+benutzt.** `Lizenzlage.md` führte die variantenscharfe Prüfung vom
+2026-08-23 über sieben **Qwen2.5**-Größen, zwei davon ausgeschlossen.
+Am 2026-09-11 hat der Projektinhaber die Reihe auf Qwen3 umgestellt;
+seither belegte G7 nichts, was noch läuft.
+
+⚑ **Ein Beleg veraltet nicht dadurch, dass er falsch wird, sondern
+dadurch, dass sein Gegenstand geht.** Die Zahl „sieben Größen, zwei
+fallen heraus" war zu keinem Zeitpunkt unwahr. Sie handelte nur ab dem
+2026-09-11 von nichts mehr, das hier rechnet.
+
+**Nachgeprüft für die vier eingesetzten Modelle**, und alle vier
+bestehen: Qwen3-0.6B, Qwen3-4B, Qwen3-14B und Qwen3-30B-A3B tragen
+`license: apache-2.0` auf der Modellkarte und eine **bytegleiche**
+Lizenzdatei (SHA-256 `832dd9e0…`, 201 Zeilen). Es ist derselbe Hash wie
+bei den beiden abgelösten Modellen, also nachweislich der unveränderte
+Apache-2.0-Text; eine Suche im Volltext nach Nutzerzahl-Obergrenze,
+Forschungsvorbehalt oder Namensnennung findet nichts.
+
+⚑ **Die Methode ist eine andere als im August, und das ist kein
+Rückschritt.** Damals wurde das `license`-Feld über die
+Hugging-Face-API abgefragt, heute aus der mitgelieferten Modellkarte
+gelesen. Dieselbe Aussage desselben Anbieters, mit einem Vorzug: **Sie
+ist auf jedem frischen Klon nachprüfbar, ohne Netzzugang und ohne
+Konto.** `werkzeuge/lizenzprobe.py` bestätigt sie in einem Lauf.
+
+⚠️ **Der Qwen2.5-Abschnitt bleibt stehen.** Er ist der Befund vom
+2026-08-23 und erklärt, warum überhaupt je Variante geprüft wird; die
+beiden Ausschlüsse von damals betreffen keine Größe, die heute im
+Projekt liegt.
 
 ### v0.5.0 – 2026-09-10 (unter welcher Lizenz das Artefakt selbst steht)
 

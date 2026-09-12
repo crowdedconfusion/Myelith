@@ -397,7 +397,7 @@ Gleitkomma-Arithmetik erlaubt ist — sie ist Vorbereitung, nicht
 Rechenpfad. Das Ergebnis sind ganzzahlige Artefakte.
 
 *Im Code:* `INTEGER_LLM/calibrate/src/main.py`
-*Aufruf:* `INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main`
+*Aufruf:* `INTEGER_LLM_MODEL=myelith-14b python -m calibrate.src.main`
 
 ### GPTQ
 

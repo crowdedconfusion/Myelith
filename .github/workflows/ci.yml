@@ -1415,11 +1415,16 @@ jobs:
 
   # ── Kalibrierungs-Tests mit torch: eigener Job ────────────────────
   #
-  # Vier Testdateien haengen an torch: `test_activation_stats.py`,
-  # `test_gptq.py`, `test_export_workflow.py` und
-  # `test_moe_entschmelzen.py`. Sie decken den Quantisierer, den
-  # Statistik-Sammler, GPTQ und den Exportweg ab, also den Pfad, auf dem
-  # aus Gleitkomma-Gewichten ein konsensrelevantes Artefakt wird.
+  # Fuenf Testdateien haengen an torch: `test_activation_stats.py`,
+  # `test_gptq.py`, `test_export_workflow.py`,
+  # `test_moe_entschmelzen.py` und `test_gammaentzerrung.py`. Sie decken
+  # den Quantisierer, den Statistik-Sammler, GPTQ, den Exportweg und die
+  # Gammaentzerrung ab, also den Pfad, auf dem aus Gleitkomma-Gewichten
+  # ein konsensrelevantes Artefakt wird.
+  #
+  # ⛑ **Die fuenfte kam am 2026-09-11 dazu, Fund 342.** Sie lag seit
+  # ihrem Anlegen im Baum, war aber mit `pytest` geschrieben, das dieses
+  # Projekt nicht hat, und stand in keiner Liste. Sie lief also nirgends.
   #
   # **Eigener Job statt eines Schrittes im Audit**, weil die
   # torch-Installation ein bis zwei Minuten kostet und der Audit-Job am
@@ -1454,6 +1459,7 @@ jobs:
           python3 tests/test_gptq.py
           python3 tests/test_export_workflow.py
           python3 tests/test_moe_entschmelzen.py
+          python3 tests/test_gammaentzerrung.py
 
   # ── Whitepaper-Simulationen: eigener Job, damit sie parallel laufen ─
   #

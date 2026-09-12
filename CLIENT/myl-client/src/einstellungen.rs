@@ -614,9 +614,35 @@ impl Einstellungen {
     /// seinen Ort; getauscht wird der letzte Bestandteil und nur, wenn
     /// er einer der vier alten Namen ist.
     fn wandern(&mut self) {
-        const ALT_NEU: [(&str, &str); 4] = [
-            ("qwen2.5-0.5b", "myelith-0.5b"),
-            ("qwen2.5-7b", "myelith-7b"),
+        // ⛑ **Drei Wanderungen, und sie sind von zweierlei Art.** Die
+        // erste (2026-09-10) war eine reine Umbenennung: dasselbe
+        // Modell, neuer Verzeichnisname. Die zweite (2026-09-11) und
+        // die dritte (2026-09-12) sind **Austausche**: erst gingen
+        // Qwen2.5-0,5B und Qwen2.5-7B, dann das dichte Qwen3-14B.
+        //
+        // ⚠️ **Das ist kein Ersatz, sondern die naechstgelegene Wahl.**
+        // Wer auf `myelith-7b` oder `myelith-14b` zeigte, bekommt
+        // `myelith-4b`, und das ist ein anderes Modell mit anderen
+        // Antworten. Die Alternative waere ein Pfad, der ins Leere
+        // zeigt, und dann meldete der Klient „Modell laedt nicht" und
+        // der Nutzer suchte den Fehler bei sich. **Beides ist unschoen;
+        // ein Modell, das antwortet, ist das kleinere Uebel.**
+        //
+        // ⚑ **Warum das 4B und nicht das Gemisch.** Es ist das
+        // groesste verbliebene **dichte** Modell und damit das
+        // naechstgelegene; und es verlangt 5 GB Platte statt 32. Wer
+        // von einem 7B kam, hat nicht zwangslaeufig Platz fuer ein
+        // 30B.
+        const ALT_NEU: [(&str, &str); 7] = [
+            ("qwen2.5-0.5b", "myelith-0.6b"),
+            ("qwen2.5-7b", "myelith-4b"),
+            ("myelith-0.5b", "myelith-0.6b"),
+            ("myelith-7b", "myelith-4b"),
+            // ⛔️ Entfernt am 2026-09-12 (Festlegung des
+            // Projektinhabers): schlechter als das Gemisch in
+            // Durchsatz und Perplexitaet, aufwendiger zu trainieren,
+            // und 46 GB auf der Platte.
+            ("myelith-14b", "myelith-4b"),
             ("qwen3-30b-a3b", "myelith-30b-a3b"),
             ("qwen3-4b", "myelith-4b"),
         ];

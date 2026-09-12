@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.40.0 (`myl-client` 0.26.0, `myl-oberflaeche` 0.30.0, `myl-console` 0.7.0)
+> **Version:** 0.42.0 (`myl-client` 0.28.0, `myl-oberflaeche` 0.32.0, `myl-console` 0.9.0)
 > **Datum:** 2026-09-11
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -114,6 +114,101 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.42.0 – 2026-09-12 (das Logo bleibt, der Wagen sitzt richtig, und die Leiste sortiert sich)
+
+`myl-client` **0.27.0 auf 0.28.0**, `myl-console` **0.8.0 auf 0.9.0**,
+`myl-oberflaeche` **0.31.0 auf 0.32.0**.
+
+**Drei Anpassungen auf Auftrag des Projektinhabers.**
+
+⚑ **Das Logo bleibt nach der Modellwahl stehen.** Bisher räumte der
+Konsolen-Client den Schirm und das Gespräch begann auf einer leeren
+Fläche. Jetzt steht der Schriftzug oben und **wandert mit dem Gespräch
+nach oben weg wie jede andere Zeile**: einmal gezeichnet, danach nicht
+mehr angefasst.
+
+⚠️ **Kein fester Kopf.** Ein Logo, das oben kleben bliebe, bräuchte
+einen zweiten Rollbereich und nähme dem Gespräch dauerhaft acht Zeilen.
+Der untere Rand ist reserviert, weil dort die Eingabe steht; oben ist
+Platz wertvoller als Zierrat.
+
+⚑ **Und der Rückweg aus den Einstellungen führt ebenso unter das
+Logo.** Zwei Wege in dasselbe Bild dürfen nicht verschieden aussehen.
+
+⛑ **Fund 347: der blinkende Wagen sass eine Zeile unter der Eingabe.**
+`Schirm::zeile` schreibt die ANSI-Sequenz `ESC[{n};1H`, und die zählt
+**ab eins**; `crossterm::cursor::MoveTo` zählt **ab null**. Dieselbe
+Zahl in beide gegeben ergibt zwei verschiedene Zeilen.
+
+**Der Fehler war unsichtbar, solange niemand hinsah:** Der Text stand
+richtig, nur der Wagen blinkte in der Kantenzeile darunter. Gemeldet
+vom Projektinhaber, nicht von einer Prüfung, und das ist kein Zufall:
+**Ein Test, der Steuersequenzen liest, sieht die Zeile, in der etwas
+steht, und nicht die, in der etwas blinkt.**
+
+Die Umrechnung steht jetzt als `Schirm::wagenzeile` an **einer** Stelle
+statt von Hand an der Aufrufstelle, und eine Gegenprobe hält beide
+Zählweisen aneinander.
+
+⚑ **Im Fenster wandert ein berührtes Gespräch in der Leiste nach
+oben.** Bisher stand sie in der Reihenfolge der **Anlage**: Ein
+Gespräch, das man seit Wochen führt, rutschte mit jedem neuen weiter
+nach unten, bis man es suchen musste.
+
+⚠️ **Ausgelöst vom Senden, nicht vom Öffnen.** Wer die Leiste
+durchsieht, um etwas wiederzufinden, würde sie sonst beim Lesen
+umsortieren, und die Zeile, auf die er als Nächstes klicken wollte,
+wäre weggerutscht. **Umordnen ist eine Folge von Arbeit, nicht von
+Hinsehen.**
+
+⚑ **`wann` wird dabei nicht angefasst.** Es steht im Markdown-Export
+als „Begonnen", also als Aussage über den Anfang; fortgeschrieben
+hiesse es stillschweigend „zuletzt benutzt". Die Reihenfolge überlebt
+einen Neustart ohnehin, weil die Ablage das Feld als Ganzes sichert.
+
+⛔️ **Und das dichte 14B ist aus der Modellwahl heraus** (Festlegung des
+Projektinhabers). Wer auf `myelith-14b` oder `myelith-7b` zeigte,
+landet jetzt beim **4B**: dem grössten verbliebenen dichten Modell, und
+es verlangt 5 GB Platte statt 32.
+
+### v0.41.0 – 2026-09-11 (die Modellwahl steigt an, nennt ihre Hardware und kennt das Netz je Modell)
+
+`myl-client` **0.26.0 auf 0.27.0**, `myl-oberflaeche` **0.30.0 auf 0.31.0**,
+`myl-console` **0.7.0 auf 0.8.0**.
+
+**Drei Auftraege des Projektinhabers**, alle an derselben Stelle:
+
+⚑ **Die Wahl steht aufsteigend**, nach Parametern und nicht nach
+Verzeichnisnamen. ⚠️ Nach Zeichenketten sortiert stuende `Myelith 14B`
+**vor** `Myelith 4B`, weil `1` vor `4` kommt; die Ordnungszahl steht
+deshalb als Zahl im Katalog (`reihung`).
+
+⚑ **Jedes Modell nennt seine Mindestausstattung**, kleingedruckt und
+an drei Stellen aus **einer** Quelle: unter der Wahl im Fenster, unter
+dem Eintrag in der Konsole und in der Einstellungszeile. Zwei Zahlen,
+Arbeitsspeicher und Platte; die eine ist eine harte Bedingung, die
+andere die Groesse, ab der es fluessig laeuft.
+
+⚑ **Statt eines Sammeleintrags „Netzwerkmodell" steht jedes Modell
+auch als „(API), kostet Inferenz-Credits" da**, gesperrt bis die
+Knoten stehen. Der Grund ist die Bauart des Netzes: Wer ein kleines
+Modell haelt, soll es anbieten koennen, ohne es zu sharden. **Das
+kleinste Redundanzpaar sind dann zwei einzelne Rechner.** Das
+Kennzeichen ist deshalb ein Praefix `netz:<Artefakt>` und kein
+einzelner Wert mehr.
+
+⛑ **Zwei Mangel nebenbei gefunden und behoben.** Der Rueckfalleintrag
+„(eingestellt)" bekam einen API-Zwilling, obwohl er auf nichts zeigt.
+Und die Wahl verglich den eingestellten Pfad **unaufgeloest** gegen
+die absoluten Pfade der Liste: Ein relativ eingestelltes Artefakt
+stand deshalb **zweimal** in der Wahl.
+
+⚠️ **Die Ablage wandert ein zweites Mal.** Wer auf `myelith-0.5b` oder
+`myelith-7b` zeigte, landet auf `myelith-0.6b` beziehungsweise
+`myelith-14b`. **Das ist kein Ersatz, sondern die naechstgelegene
+Wahl**: ein anderes Modell mit anderen Antworten. Die Alternative
+waere ein Pfad ins Leere.
 
 ### v0.40.0 – 2026-09-11 (Zahlen lassen sich tippen, und die Kürzel stehen unten)
 

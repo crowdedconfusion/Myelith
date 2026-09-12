@@ -75,7 +75,16 @@ BEFEHLE
                     Braucht kein Modell.
     plan            Testplan erzeugen (Koordinator), die Datei, die an
                     alle Teilnehmer geht. Siehe TESTPLAN unten.
-    menu            Interaktives Menü (wie ohne Befehl).
+    teilnehmen      Am Netzlauf teilnehmen: einen Knoten starten und sich
+                    beim Koordinator melden. Braucht dessen Adresse, deshalb
+                    kein Teil des Prüfstands, der ohne Eingabe durchläuft.
+    anlaufstelle    Knoten als Anlaufstelle betreiben, über die andere
+                    Teilnehmer ins Netz kommen. Setzt eine öffentlich
+                    erreichbare Adresse voraus.
+    aufraeumen      Artefakte und Gewichte löschen und damit bis zu 46 GB
+                    freigeben. Fragt zweimal und nennt dazwischen jeden
+                    betroffenen Pfad.
+    menu            Der Prüfstand (wie ohne Befehl).
 
 OPTIONEN
     --prompt <TEXT>     Eingabetext (Vorgabe: \"Die Hauptstadt von Frankreich ist\")
@@ -95,9 +104,9 @@ OPTIONEN
                         urteilt zu Recht UNVOLLSTÄNDIG.
     --plan <DATEI>      Testplan laden. Setzt Prompt, Token, Shards und
                         Modell und prüft die Datei gegen ihre Prüfsumme.
-    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: myelith-0.5b)
+    --artifacts <PFAD>  Artefaktverzeichnis (Vorgabe: myelith-0.6b)
     --plan-id <TEXT>    Kennung beim Erzeugen eines Plans
-    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: myelith-0.5b)
+    --model <NAME>      Modell beim Erzeugen eines Plans (Vorgabe: myelith-0.6b)
     --erwarte <DIGEST>  Erwarteter Vergleichswert. Der Lauf schlägt fehl,
                         wenn er einen anderen erzeugt. Für die CI nach
                         einem Modellwechsel: Ab da meldet sich jede
@@ -426,6 +435,40 @@ fn main() -> ExitCode {
 
     if args.command == "plan" {
         return plan_erzeugen(&args);
+    }
+
+    // ⚑ **Drei Befehle, die bis zum 2026-09-11 nur im Menü standen.**
+    //
+    // Das Menü führt seit diesem Tag den Prüfstand und sonst nichts;
+    // das Entwicklermenü nur noch die Auswertung. Diese drei sind
+    // deshalb hierher gewandert und **nicht** entfallen: Sie taugen
+    // schlecht als Menüpunkt, weil sie Vorwissen verlangen
+    // (Koordinatoradresse, offener Port) oder etwas zerstören
+    // (Plattenplatz), aber gut als Aufruf, den man in ein Ticket
+    // schreiben kann.
+    //
+    // Sie schreiben **kein Laufprotokoll**: Keiner von ihnen misst
+    // etwas, das in einen Vergleich gehört.
+    match args.command.as_str() {
+        "teilnehmen" => {
+            return if myl_testclient::knoten::teilnehmer(&args.name) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+        "anlaufstelle" => {
+            return if myl_testclient::knoten::anlaufstelle() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            };
+        }
+        "aufraeumen" => {
+            myl_testclient::menu::freigeben();
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
 
     // `vergleich` schreibt **kein Laufprotokoll**, sondern einen Bericht,

@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.46.0"
+version = "0.49.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -829,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "myl-governance"
-version = "0.13.1"
+version = "0.15.0"
 dependencies = [
  "myl-consensus",
  "myl-tokenomics",
@@ -848,7 +848,7 @@ dependencies = [
 
 [[package]]
 name = "myl-pod"
-version = "0.33.3"
+version = "0.34.0"
 dependencies = [
  "borsh",
  "getrandom 0.2.17",

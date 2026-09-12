@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.33.3
+> **Version:** 0.34.0
 > **Datum:** 2026-09-09
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -100,6 +100,18 @@ COMPUTE_PIPELINE/
 ```
 
 ## Changelog
+
+### v0.34.0 – 2026-09-11 (die Shardgrenzen kommen aus dem Modell)
+
+⛑ **Die Grenzen standen fest auf vierundzwanzig Ebenen.** Beim
+Wechsel des Ankermodells auf achtundzwanzig bekam der letzte Shard
+zehn Ebenen und der erste sechs. Jetzt gerechnet, mit dem Rest an der
+letzten Scheibe: Sie haelt ohnehin den LM-Kopf.
+
+⛑ **Und der Vergleichswert des Vierprozesslaufs ist unabhaengig neu
+erhoben**, aus einem Einprozesslauf der Laufzeit und nicht aus dem
+Pod selbst. Vier Prozesse liefern dieselben acht Token und denselben
+Dekodier-Abdruck wie ein Prozess.
 
 ### v0.33.3 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 

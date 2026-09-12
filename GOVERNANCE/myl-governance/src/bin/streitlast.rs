@@ -70,11 +70,26 @@ struct Modell {
     tok_s: Option<f64>,
 }
 
-const MODELLE: [Modell; 4] = [
-    Modell { name: "Qwen2.5-0,5B", hidden: 896, layer: 24, tok_s: Some(49.17) },
+const MODELLE: [Modell; 3] = [
+    // ⚑ **Seit dem 2026-09-11 ausschliesslich Qwen3** (Festlegung des
+    // Projektinhabers), und seit dem 2026-09-12 **ohne das dichte
+    // 14B**: Es war in Durchsatz und Perplexitaet schlechter als das
+    // Gemisch und kostete 46 GB auf der Platte.
+    //
+    // ⚑ **Das Gemisch traegt jetzt die Schranken** (2026-09-12). Mit dem
+    // dichten 14B ist das Modell gegangen, an dem sie haengen; sie sind
+    // **neu gerechnet** und nicht nachgezogen. Der Bezug ist damit das
+    // Modell, das voraussichtlich das Primaermodell wird, und das ist
+    // die richtige Bezugsgroesse fuer eine Speicherplanung.
+    //
+    // ⚠️ **`tok_s` ist leer, wo nichts gemessen ist.** Die alten Werte
+    // (49,17 und 10,74) galten fuer abgeloeste Modelle; sie auf die
+    // neuen zu uebertragen waere eine Zahl ohne Messung.
+    Modell { name: "Qwen3-0,6B", hidden: 1024, layer: 28, tok_s: Some(29.38) },
     Modell { name: "Qwen3-4B", hidden: 2560, layer: 36, tok_s: None },
-    Modell { name: "Qwen2.5-7B", hidden: 3584, layer: 28, tok_s: Some(10.74) },
-    Modell { name: "Qwen3-30B-A3B", hidden: 2048, layer: 48, tok_s: None },
+    // 10,1 Token je Sekunde, gemessen am 2026-09-11 auf dem M5 Pro nach
+    // der Buendelung der Seitenanforderungen (Funde 331 bis 333).
+    Modell { name: "Qwen3-30B-A3B", hidden: 2048, layer: 48, tok_s: Some(10.1) },
 ];
 
 /// Eine Epoche dauert eine Stunde (bestätigt 2026-08-24).
@@ -226,8 +241,12 @@ fn main() {
     }
 
     // ── 4. Die Abwaegung, um die es geht ───────────────────────────
-    println!("\nWas eine kuerzere Frist spart (linear, je Pod, Qwen2.5-7B):\n");
+    // ⛑ **Der Name kommt aus der Tabelle, nicht aus dem Satz.** Hier
+    // stand fest „Qwen2.5-7B", waehrend `MODELLE[2]` seit dem
+    // 2026-09-11 Qwen3-14B ist: Die Ueberschrift nannte ein anderes
+    // Modell als die Zahlen darunter.
     let m = &MODELLE[2];
+    println!("\nWas eine kuerzere Frist spart (linear, je Pod, {}):\n", m.name);
     let segmente = (m.tok_s.unwrap() * SEKUNDEN_JE_EPOCHE as f64) as u64;
     let je_epoche = segmente * bytes_je_segment(m);
     for (bezeichnung, epochen) in [
@@ -337,16 +356,19 @@ mod tests {
 
     /// Die Rechnung selbst, an einem von Hand nachvollziehbaren Fall.
     ///
-    /// 28 Layer · 3584 · 2 Byte = 200 704 roh, mal 12/8 = 301 056.
+    /// 48 Layer · 2048 · 2 Byte = 196 608 roh, mal 12/8 = 294 912.
     /// Ausgeschrieben und nicht ueber `bytes_je_segment` gerechnet:
     /// Ein Test, der die gepruefte Funktion zum Pruefen benutzt, prueft
     /// sich selbst.
+    ///
+    /// ⛑ **Neu gerechnet am 2026-09-12**, als das dichte 14B entfiel.
+    /// Die Schranken folgen der Modelltabelle und nicht umgekehrt.
     #[test]
     fn bytes_je_segment_stimmt_mit_der_handrechnung() {
         let m = &MODELLE[2];
-        assert_eq!(m.name, "Qwen2.5-7B");
-        assert_eq!(bytes_je_segment(m), 28 * 3584 * 2 * 12 / 8);
-        assert_eq!(bytes_je_segment(m), 301_056);
+        assert_eq!(m.name, "Qwen3-30B-A3B");
+        assert_eq!(bytes_je_segment(m), 48 * 2048 * 2 * 12 / 8);
+        assert_eq!(bytes_je_segment(m), 294_912);
     }
 
     /// ⚑ Frist und Erasure-Faktor kommen aus den Konstanten der
@@ -367,7 +389,7 @@ mod tests {
     #[test]
     fn ein_knoten_traegt_unter_zwei_terabyte() {
         let m = &MODELLE[2];
-        let tok_s = m.tok_s.expect("fuer 7B liegt eine Messung vor");
+        let tok_s = m.tok_s.expect("fuer das Gemisch liegt eine Messung vor");
         // Obere Schranke: Der Pod schafft das Vierfache eines
         // Einzelknotens, jeder Knoten haelt ein Viertel der Layer.
         let segmente = (tok_s * SHARDS_JE_POD as f64 * SEKUNDEN_JE_EPOCHE as f64) as u64;
@@ -386,16 +408,16 @@ mod tests {
     /// seine **eingehende** Aktivierung, und der Faktor ist damit die
     /// Zahl der Layer je Shard.
     ///
-    /// 3584 · 2 = 7168 roh, mal 12/8 = 10 752. Ausgeschrieben, damit
+    /// 2048 · 2 = 4096 roh, mal 12/8 = 6144. Ausgeschrieben, damit
     /// der Test nicht dieselbe Funktion benutzt, die er prueft.
     #[test]
     fn der_faktor_ist_die_layerzahl_je_shard() {
         let m = &MODELLE[2];
-        assert_eq!(eingang_je_segment(m), 3584 * 2 * 12 / 8);
-        assert_eq!(eingang_je_segment(m), 10_752);
-        assert_eq!(layer_je_shard(m), 7);
-        // Der ganze Shard-Anteil war siebenmal so viel wie sein Eingang.
-        assert_eq!(bytes_je_segment(m) / SHARDS_JE_POD / eingang_je_segment(m), 7);
+        assert_eq!(eingang_je_segment(m), 2048 * 2 * 12 / 8);
+        assert_eq!(eingang_je_segment(m), 6_144);
+        assert_eq!(layer_je_shard(m), 12);
+        // Der ganze Shard-Anteil war zwoelfmal so viel wie sein Eingang.
+        assert_eq!(bytes_je_segment(m) / SHARDS_JE_POD / eingang_je_segment(m), 12);
     }
 
     /// Und daraus folgt der Befund: aus dreistelligen Gigabyte werden
@@ -403,32 +425,49 @@ mod tests {
     #[test]
     fn mit_dem_eingang_traegt_ein_knoten_unter_dreihundert_gigabyte() {
         let m = &MODELLE[2];
-        let tok_s = m.tok_s.expect("fuer 7B liegt eine Messung vor");
+        let tok_s = m.tok_s.expect("fuer das Gemisch liegt eine Messung vor");
         let segmente = (tok_s * SHARDS_JE_POD as f64 * SEKUNDEN_JE_EPOCHE as f64) as u64;
         let je_knoten = segmente * eingang_je_segment(m) * DEFAULT_DISPUTE_EPOCHS;
         let g = gib(je_knoten);
-        assert!(g < 300.0, "{g:.0} GiB je Knoten, erwartet unter 300");
-        assert!(g > 200.0, "{g:.0} GiB je Knoten, erwartet ueber 200");
+        // ⛑ **Zum zweiten Mal neu gerechnet, am 2026-09-12**, als das
+        // dichte 14B entfiel: **140 GiB** statt 182, davor 254. Die
+        // Schranken folgen der Modelltabelle und nicht umgekehrt.
+        //
+        // ⚑ **Und der Bezug ist jetzt das Gemisch**, also
+        // voraussichtlich das Primaermodell. Es ist schmaler (2048
+        // gegen 5120), rechnet aber schneller (10,1 gegen 5,25 Token je
+        // Sekunde); die Segmentzahl haengt am Durchsatz, die
+        // Segmentgroesse an der Breite, und die Breite gewinnt.
+        assert!(g < 200.0, "{g:.0} GiB je Knoten, erwartet unter 200");
+        assert!(g > 100.0, "{g:.0} GiB je Knoten, erwartet ueber 100");
     }
 
     /// ⚑ **Der Befund von E10 in einer Zahl: unter zehn Gigabyte.**
     ///
-    /// 7 Layer je Shard, 32 Byte je Spur-Eintrag, mal 12/8. Beide Seiten
+    /// 12 Layer je Shard, 32 Byte je Spur-Eintrag, mal 12/8. Beide Seiten
     /// ausgeschrieben, damit der Test nicht dieselbe Funktion benutzt,
     /// die er prueft.
+    ///
+    /// ⛑ **Am 2026-09-12 neu gerechnet**, und die Ueberschrift stimmt
+    /// nicht mehr: Beim Gemisch sind es **13,1 GiB** und nicht unter
+    /// zehn. Der Befund von E10 bleibt derselbe, naemlich dass die Spur
+    /// den Bedarf um eine Groessenordnung senkt; die Zahl daneben ist
+    /// eine andere, weil das Modell eine andere ist. **Eine Schranke,
+    /// die nicht mehr stimmt, wird neu gerechnet und nicht
+    /// weggelassen.**
     #[test]
-    fn mit_der_spur_traegt_ein_knoten_unter_zehn_gigabyte() {
+    fn mit_der_spur_traegt_ein_knoten_unter_zwanzig_gigabyte() {
         let m = &MODELLE[2];
-        assert_eq!(spur_je_segment(m), 7 * 32 * 12 / 8);
-        assert_eq!(spur_je_segment(m), 336);
+        assert_eq!(spur_je_segment(m), 12 * 32 * 12 / 8);
+        assert_eq!(spur_je_segment(m), 576);
         // Faktor gegenueber der Stufe davor.
-        assert_eq!(eingang_je_segment(m) / spur_je_segment(m), 32);
+        assert_eq!(eingang_je_segment(m) / spur_je_segment(m), 10);
 
-        let tok_s = m.tok_s.expect("fuer 7B liegt eine Messung vor");
+        let tok_s = m.tok_s.expect("fuer das Gemisch liegt eine Messung vor");
         let segmente = (tok_s * SHARDS_JE_POD as f64 * SEKUNDEN_JE_EPOCHE as f64) as u64;
         let g = gib(segmente * spur_je_segment(m) * DEFAULT_DISPUTE_EPOCHS);
-        assert!(g < 10.0, "{g:.1} GiB je Knoten, erwartet unter 10");
-        assert!(g > 5.0, "{g:.1} GiB je Knoten, erwartet ueber 5");
+        assert!(g < 20.0, "{g:.1} GiB je Knoten, erwartet unter 20");
+        assert!(g > 8.0, "{g:.1} GiB je Knoten, erwartet ueber 8");
     }
 
     /// Jedes Modell mit gemessenem Durchsatz muss auch Masse haben.

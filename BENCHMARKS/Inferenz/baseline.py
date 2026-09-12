@@ -4,7 +4,7 @@ Gleitkomma-Baseline: das gewaehlte Modell in BF16 auf denselben WikiText-2-
 Sequenzen wie der Integer-E2E-Test (Punkt 12.20).
 
 Identische Messmethode (Vorgabe): dieselbe Sequenz-Auswahl
-(eval/wikitext_common.py), derselbe Tokenizer, dieselbe Sequenzlänge.
+(BENCHMARKS/Inferenz/wikitext_common.py), derselbe Tokenizer, dieselbe Sequenzlänge.
 Einziger Unterschied ist das Zahlenformat des Modells — damit ist der
 Perplexitätsvergleich am Entscheidungspunkt 12.21 aussagekräftig.
 

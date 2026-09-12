@@ -233,7 +233,23 @@ fn main() {
     let mut absenkung = false;
     let mut auswahl = integer_llm_runtime::shardtraining::Auswahl::Alles;
     let mut rauschen: Option<i64> = None;
-    let mut nenner: i64 = 1 << 12;
+    // ⛑ **Fund 343 (2026-09-11): hier stand `1 << 12`, und damit war die
+    // Messung von Fund 337 wirkungslos.** `Trainingsvorgaben::vorgabe()`
+    // traegt seit dem Ankerwechsel `lr_nenner: 1 << 10`, an Qwen3-0,6B
+    // gemessen. Diese Zeile setzt den Wert aber **bei jedem Aufruf**
+    // ueber die Vorgabe, und sie ist die einzige, die jemand benutzt:
+    // ein Lauf ohne `--nenner` rechnete weiter mit der Zahl des alten
+    // Ankers, also mit einem Viertel der gemessenen Schrittweite.
+    //
+    // ⚑ **Sichtbar wurde es an einem Lauf, der nichts lernte.** Zwoelf
+    // Durchgaenge ueber einen Lernkorpus liessen die Perplexitaet um
+    // 0,11 Prozent **steigen** statt fallen. Auf einem Lernkorpus ohne
+    // Haltemenge ist das kein Ergebnis, sondern ein Hinweis auf die
+    // Schrittweite: Bei Nenner 4096 sind es 127/4096 Rasterstufen je
+    // Aktualisierung, und was darunter bleibt, ist Rundung.
+    //
+    // **Eine Vorgabe, die an zwei Orten steht, hat einen Ort zu viel.**
+    let mut nenner: i64 = integer_llm_runtime::trainingsschleife::Trainingsvorgaben::vorgabe().lr_nenner;
     let mut fenster: usize = 128;
     let mut folgenzahl: usize = 4;
     let mut nur_letzte = false;
@@ -383,7 +399,13 @@ fn main() {
             }
             "--nenner" => {
                 i += 1;
-                nenner = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1 << 12);
+                nenner = args
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| {
+                        integer_llm_runtime::trainingsschleife::Trainingsvorgaben::vorgabe()
+                            .lr_nenner
+                    });
             }
             "--fenster" => {
                 i += 1;
@@ -655,12 +677,33 @@ fn main() {
         )
         .expect("Wortschatz");
         let alle = wortschatz.encode(&roh);
+        // ⛑ **Fund 344 (2026-09-11): `--haltedatei` ohne `--haltemenge`
+        // ergab null Haltefolgen, und zwar still.** Hier stand
+        // `.take(haltemenge)`, und `haltemenge` steht ohne eigene
+        // Angabe auf **null**. Wer also eine Haltedatei angab und sonst
+        // nichts, bekam genau das, was er vermeiden wollte: einen Lauf
+        // ohne Haltemenge, dessen Urteil dann lautete „ohne Haltemenge
+        // nicht zu faellen". Der Hinweis stand in einer Statuszeile
+        // zwischen zwei anderen Zahlen.
+        //
+        // ⚑ **Wer eine Datei nennt, meint die Datei.** Ohne
+        // `--haltemenge` gilt jetzt ihr ganzer Inhalt; mit der Angabe
+        // werden so viele Folgen genommen wie verlangt. **Eine Schranke,
+        // die ohne Angabe auf null steht, ist keine Vorgabe, sondern ein
+        // Aus-Schalter.**
         let h: Vec<Vec<usize>> = alle
             .chunks(fenster)
             .filter(|f| f.len() >= 2)
-            .take(haltemenge)
+            .take(if haltemenge == 0 { usize::MAX } else { haltemenge })
             .map(|f| f.to_vec())
             .collect();
+        if h.is_empty() {
+            eprintln!(
+                "[trainingsguete] {hd} ergibt keine Haltefolge: zu kurz fuer ein \
+                 Fenster von {fenster} Token, oder leer."
+            );
+            std::process::exit(2);
+        }
         (h, folgen.clone())
     } else if halte_vom_ende {
         let ab = folgen.len() - schnitt;
@@ -1143,11 +1186,12 @@ fn main() {
                 }
                 eprintln!(
                     "[trainingsguete] Durchgang {} von {schritte}: {} Folgen gesammelt, \
-                     {} Matrizen, {} Gewichte bewegt",
+                     {} Matrizen, {} Gewichte bewegt{}",
                     s + 1,
                     erg.laeufe,
                     sammlung.matrizen(),
-                    erg.bewegte_gewichte
+                    erg.bewegte_gewichte,
+                    expertendeckung(&m, &gewichte, von)
                 );
             }
 
@@ -1315,25 +1359,28 @@ fn main() {
     // ein Bit. Wenn ein Lauf sich verschlechtert, ohne die harte
     // Schranke zu reissen, ist das der erste Ort zum Nachsehen.
     {
+        // ⛑ **Fund 346: hier stand ein `zip` ueber Anfang und Jetzt**, und
+        // der Anfang einer Gemischebene traegt keine Experten. Die
+        // Schranke sah damit genau den Teil nicht, den ein Gemisch
+        // trainiert. `paare_mit_anfang` laeuft ueber die Master-Seite
+        // und bildet den fehlenden Anfang aus dem Modell nach.
         let mut groesster = 0f64;
-        let mut wo = (0usize, 0usize);
-        for (e, (a, b)) in
-            gewichte.anfangsstand().iter().zip(gewichte.master.iter()).enumerate()
-        {
-            for (k, (x, y)) in a.matrizen().iter().zip(b.matrizen().iter()).enumerate() {
+        let mut wo = (von, 0usize);
+        for (ebene, vorher, jetzt) in gewichte.paare_mit_anfang(&m) {
+            for (k, (x, y)) in vorher.iter().zip(jetzt.iter()).enumerate() {
                 let vor = x.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0) as f64;
                 let nach = y.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0) as f64;
                 let faktor = if vor > 0.0 { nach / vor } else { 0.0 };
                 if faktor > groesster {
                     groesster = faktor;
-                    wo = (e, k);
+                    wo = (ebene, k);
                 }
             }
         }
         println!(
             "AUSREISSER groesster Zuwachs des Betragsmaximums: Faktor {groesster:.2} \
              in Ebene {} Matrix {}",
-            wo.0 + von,
+            wo.0,
             wo.1
         );
     }
@@ -1349,8 +1396,11 @@ fn main() {
         let mut geaendert = 0u64;
         let mut gesamt = 0u64;
         let mut zeilenskalen = 0u64;
-        for (a, b) in gewichte.anfangsstand().iter().zip(gewichte.master.iter()) {
-            for (ma, mb) in a.matrizen().iter().zip(b.matrizen().iter()) {
+        // ⛑ **Fund 346, dieselbe Stelle wie oben.** Der Nenner dieser
+        // Zeile war auf einem Gemisch Aufmerksamkeit plus Router und
+        // las sich wie eine Aussage ueber die Ebene.
+        for (_ebene, vorher, jetzt) in gewichte.paare_mit_anfang(&m) {
+            for (ma, mb) in vorher.iter().zip(jetzt.iter()) {
                 // in_features ist unbekannt; die Zeilenlaenge folgt aus
                 // dem Modell. Fuer den Vergleich genuegt dieselbe Form
                 // auf beiden Seiten.
@@ -1509,4 +1559,51 @@ fn main() {
     let g: Vec<Vec<i32>> = ms.ausgang.iter().map(|z| vec![0i32; z.len()]).collect();
     let erg = rueckwaerts(&m, &mut gewichte.clone_stand(), &vg, &ms, &g).expect("rueckwaerts");
     println!("ABDRUCK {}", erg.abdruck);
+}
+
+/// Wie viele Experten der trainierte Bereich beruehrt hat, als Zusatz
+/// fuer die Durchgangsmeldung.
+///
+/// # ⛑ Fund 345 (2026-09-12): die Zahl gab es, und niemand sah sie
+///
+/// `trainingsschleife` fuehrt sie seit dem 2026-09-05 als
+/// `experten_beruehrt`, und der Testclient zeigt sie in seiner
+/// Trainingsstufe. **`trainingsguete` zeigte sie nicht**, und das ist
+/// das Werkzeug, mit dem jemand einen Trainingslauf misst.
+///
+/// ⚑ **Beim Gemisch ist sie die wichtigste Zahl des Laufs.** Ein Lauf
+/// auf `myelith-30b-a3b` meldete „261 345 637 Gewichte bewegt", und
+/// das liest sich wie ein vollstaendig trainiertes Modell. Beruehrt
+/// waren vier von 128 Experten der einen trainierten Ebene: **Ein
+/// Experte, den der Router nie waehlt, bekommt nie einen Gradienten
+/// und bleibt untrainiert.**
+///
+/// Bei dichten Modellen gibt diese Funktion eine leere Zeichenkette;
+/// dort gibt es nichts zu zaehlen, und eine Null saehe aus wie ein
+/// Befund.
+fn expertendeckung(
+    m: &integer_llm_runtime::model::IntegerModel,
+    gewichte: &integer_llm_runtime::shardtraining::Shardgewichte,
+    von: usize,
+) -> String {
+    let mut beruehrt = 0usize;
+    let mut gesamt = 0usize;
+    let mut gemischebenen = 0usize;
+    for (i, stand) in gewichte.master.iter().enumerate() {
+        let Some(n) = stand.beruehrte_experten() else {
+            continue;
+        };
+        gemischebenen += 1;
+        beruehrt += n;
+        // Die Gesamtzahl ist eine Eigenschaft des Modells, nicht des
+        // Gewichtsstands; siehe `beruehrte_experten`.
+        gesamt += match m.layers.get(von + i).map(|l| &l.ffn) {
+            Some(integer_llm_runtime::model::Feedforward::Moe(g)) => g.experts.len(),
+            _ => 0,
+        };
+    }
+    if gemischebenen == 0 {
+        return String::new();
+    }
+    format!(", {beruehrt} von {gesamt} Experten beruehrt")
 }

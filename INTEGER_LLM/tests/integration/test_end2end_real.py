@@ -40,7 +40,7 @@ import cargo_paths  # noqa: E402
 PROBE = cargo_paths.binary("runtime", "perplexity_probe")
 
 # Gemeinsame Messsequenzen-Aufbereitung (identische Messmethode mit der
-# FP-Baseline und dem Perplexitätsvergleich, siehe eval/wikitext_common.py).
+# FP-Baseline und dem Perplexitätsvergleich, siehe BENCHMARKS/Inferenz/wikitext_common.py).
 sys.path.insert(0, str(REPO / "eval"))
 from wikitext_common import ARTIFACTS_DIR as ARTIFACTS, select_sequences  # noqa: E402
 
@@ -58,7 +58,7 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    # Messsequenzen aus der gemeinsamen Aufbereitung (eval/wikitext_common.py)
+    # Messsequenzen aus der gemeinsamen Aufbereitung (BENCHMARKS/Inferenz/wikitext_common.py)
     sequences = select_sequences(n_sequences, seq_len)
     total_tokens = sum(len(s) for s in sequences)
     print(f"[e2e] {len(sequences)} Sequenzen, {total_tokens} Tokens insgesamt")

@@ -9,6 +9,23 @@ und die Erzeuger, die sie herstellen. Nach Gegenstand sortiert:
 | `Training/` | Ob ein Trainingslauf etwas **beigebracht** hat |
 | `Agent/` | Ob die Werkzeugschleife eine Aufgabe **erledigt** |
 
+## ⚠️ `BENCHMARKS/Training/` ist nicht die Komponente `TRAINING/`
+
+Die beiden heissen fast gleich und sind verschiedene Dinge:
+
+| | was es ist | was drin liegt |
+|---|---|---|
+| `TRAINING/` (Wurzel) | eine **Komponente**, Code der ausgeliefert wird | die Kiste `myl-train` (Provenienz, Wachstum, Zuweisung) samt ihrer Planung und ihren Entwürfen |
+| `BENCHMARKS/Training/` | **Messapparatur** | Datensätze und die Erzeuger dazu (Referenzleiter, Wissenssaat) |
+
+⚑ **Sie gehören nicht zusammengelegt**, und zwar aus demselben Grund,
+aus dem `INTEGER_LLM/eval/` am 2026-09-07 hierher gezogen ist:
+**Messungen liegen beieinander, Code liegt bei seiner Komponente.** Wer
+beides mischt, sucht eine Messung künftig wieder in fünf Ordnern.
+
+**Was sie verbindet**, ist die Richtung des Verweises: Ein Trainingslauf
+der Komponente misst mit den Datensätzen von hier, nicht umgekehrt.
+
 ## ⚑ Die eine Regel, die für jede Messung hier gilt
 
 **Eine Haltemenge braucht einen Rauschnullpunkt, keinen Nullpunkt bei

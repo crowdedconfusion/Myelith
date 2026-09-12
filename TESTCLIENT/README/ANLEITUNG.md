@@ -54,7 +54,7 @@ anderen.**
 |---|---|
 | **Immer** | Das Repository auf der Platte. Alles Weitere richtet der Starter auf Wunsch selbst ein, siehe unten. |
 | **Nur für die Modellläufe** | Python mit den Kalibrierpaketen, siehe [A7](#a7-python-für-die-modellläufe-einrichten). Rund 2 GB. |
-| **Plattenplatz** | 0,5B-Modell: rund 1,7 GB. 7B-Modell: rund 23 GB. Beides lässt sich hinterher wieder freigeben, siehe [A8](#a8-platz-wieder-freigeben). |
+| **Plattenplatz** | 0,6B-Modell: rund 2,5 GB. 30B-A3B: rund 92 GB. Beides lässt sich hinterher wieder freigeben, siehe [A8](#a8-platz-wieder-freigeben). Gezählt sind Grundgewichte **und** Artefakt; wer nur ein fertiges Artefakt betreiben will, braucht 0,92 GB beziehungsweise 32 GB. |
 
 **Fehlt Rust, fragt der Starter, ob er es installieren soll** (Enter =
 ja, `n` = nein). Er lädt dann rustup herunter und installiert es in dein
@@ -113,68 +113,36 @@ in der Mitte das Logo zusammen, während der Regen im Hintergrund
 weiterläuft; danach gleitet das Logo an seinen Platz. Ein Tastendruck überspringt es;
 `MYL_NO_ANIMATION=1` schaltet es dauerhaft ab.
 
-## A4. Bedienung: Pfeiltasten und Enter
+## A4. Bedienung: tippen, lesen, Enter
 
-Überall, wo der Client etwas zur Auswahl stellt, gilt dasselbe:
+**Du bedienst hier fast nichts, und das ist Absicht.** Der Client fragt
+nach deinem Namen, danach läuft er von selbst durch und schliesst sich,
+wenn du Enter drückst.
 
-```
-  ── Was möchtest du tun? ──
-  ❯ 1  Artefakt wählen
-        Welches Modell gerechnet wird. Liegt nur eines da, überspringt
-        der Client die Frage.
-    2  Testdatei wählen
-    3  Testlauf starten
-    4  Mit dem Modell sprechen
-    5  Am Netz teilnehmen (Knoten betreiben)
+⚑ **Warum es keine Auswahl mehr gibt.** Bis zum 11. September 2026 stand
+hier ein Menü mit sechs Punkten, und zwei davon waren Entscheidungen,
+die du gar nicht treffen kannst: welches Modell und welche Testdatei.
+**Beide müssen auf allen Maschinen gleich sein**, sonst lassen sich die
+Ergebnisse nicht vergleichen, und genau darum geht es. Wer sie anders
+traf, hat umsonst gerechnet.
 
-    6  Anleitung lesen
-    0  Beenden
+Eine Einstellung, die alle gleich setzen müssen, ist keine Einstellung.
+Sie steht jetzt fest im Programm.
 
-  ↑ ↓ bewegen · Enter wählen · Ziffer direkt · Esc zurück
-```
+**Zum Ausprobieren eines Modells gibt es einen eigenen Client** samt
+Konsolenfassung. Dieser hier ist ein Messgerät.
 
-**Wo ist Punkt 9?** Das Entwickler-Menü erscheint nur, wenn beim
-Nutzernamen **`admin`** eingegeben wurde (Groß- und Kleinschreibung
-gleichgültig). Es enthält Punkte, die ein Teilnehmer nicht braucht und
-mit denen er sich schaden kann, etwa das Löschen der Artefakte.
+### Die einzige Rückfrage
 
-Das ist **kein Schutz, sondern eine Aufräumhilfe**: Der Name steht im
-Quelltext, wer ihn kennt, kommt hinein. Er hält nur den Bildschirm frei
-von Punkten, die niemanden angehen.
+Fehlt das Modell auf deiner Maschine, wird es geholt, und das sind rund
+2,5 GB. **Danach wird gefragt, vorher passiert nichts.** Liegt es
+bereits da, läuft alles ohne eine einzige Frage durch.
 
-| Taste | Wirkung |
-|---|---|
-| **↑ ↓** | Auswahl bewegen |
-| **Enter** | Ausgewähltes ausführen |
-| **Ziffer** | Direkt zu diesem Punkt springen und ihn ausführen |
-| **Esc** | Eine Ebene zurück |
+### Farben
 
-Unter der Auswahl stehen die **aktuellen Einstellungen**: erst die Frage,
-was du tun willst, dann der Zustand, unter dem es geschieht. Alles steht
-mittig unter dem Logo; die Zeilen, auf die du drückst oder in die du
-tippst, sitzen am linken Rand.
-
-Läuft der Client in einer Umgebung ohne Tastatursteuerung: in einer
-Pipe, in einem Skript, in einer schlichten seriellen Konsole , zeigt er
-dieselbe Liste und wartet auf eine getippte Ziffer mit Enter. Beide Wege
-führen zum selben Ergebnis.
-
-Die Farben würfelt der Client bei jedem Start neu und behält sie dann für
-die ganze Sitzung: eine Farbe für das Logo und zwei dazu passende für die
-Menütitel. **Das ist Schmuck und sonst
+Der Client würfelt sie bei jedem Start neu. **Das ist Schmuck und sonst
 nichts:** Kein Urteil und kein Ergebnis hängt an einer Farbe, dafür
-stehen überall Wörter. Wer schwarzweiß liest, verliert nichts.
-
-**Der Bildschirm wird vor jeder Auswahl aufgeräumt.** Oben steht das
-Logo, darunter genau das, was ansteht: nichts sonst. Nach einer Aktion
-bleibt ihre Ausgabe stehen, bis du eine Taste drückst:
-
-```
-  ── Weiter mit einer beliebigen Taste ──
-```
-
-Du bestimmst also, wie lange du das Ergebnis ansiehst. Verloren geht
-dabei nichts: Alles, was zählt, steht im Protokoll.
+stehen überall Wörter. Wer schwarzweiss liest, verliert nichts.
 
 ## A5. Der Ablauf, Schritt für Schritt
 
@@ -188,119 +156,36 @@ dabei nichts: Alles, was zählt, steht im Protokoll.
   Nutzername:
 ```
 
-Danach begrüßt dich der Client mit deinem Namen, dann kommt das Menü.
-
 Ein Vorname, ein Spitzname oder eine Bezeichnung der Maschine: was dem
-Koordinator hilft, dein Protokoll wiederzuerkennen. Lässt du das Feld
-leer, heißen deine Dateien `ohne-name`; das funktioniert, macht dem
+Koordinator hilft, dein Ergebnis wiederzuerkennen. Lässt du das Feld
+leer, heissen deine Dateien `ohne-name`; das funktioniert, macht dem
 Koordinator aber Arbeit.
 
-### Schritt 2: Testdatei wählen
+Danach begrüsst dich der Client mit deinem Namen, und der Lauf beginnt.
 
-Nach dem Nutzernamen stehst du **direkt im Menü**. Die Testdatei fragt
-der Client dann ab, wenn du [3] Testlauf starten wählst; über [2] kannst
-du sie auch vorher festlegen.
+⚑ **`admin` als Name führt woanders hin**, nämlich ins Auswerte-Menü
+des Koordinators. Siehe A6.
 
-Hat dir der Koordinator eine Datei mit der Endung `.plan` geschickt,
-lege sie vorher in den Ordner `TESTCLIENT/Testpläne/`. Der Client listet
-auf, was er dort findet:
+### Schritt 2: Zusehen
 
 ```
-  ── Testpläne in TESTCLIENT/Testpläne ──
-  ❯ 1  standard · 6 Prompts, 32 Token, 4 Shards
-        Prompt: " The 2010 Haitian earthquake was a catast…" (+5 weitere)
-    2  standard-kurz · 4 Prompts, 16 Token, 4 Shards
-        Prompt: "The capital of France is" (+3 weitere)
-    0  keiner. Einstellungen von Hand wählen
+  Es läuft jetzt alles durch, ohne weitere Fragen.
+
+  Gemessen wird, ob diese Maschine dieselben Bits rechnet wie jede
+  andere. Das dauert je nach Rechner einige Minuten; Strg-C bricht ab,
+  dann ist das Ergebnis unvollständig und muss wiederholt werden.
+
+  Prüfstand: 6 Prompts, 32 Token, 4 Shards, 2 Durchgänge je Prompt.
+  Modell: myelith-0.6b
+  Kennung: 32eafffb
 ```
 
-**Die Testdatei ist der Kern des Verfahrens.** Sie legt fest, welche
-Fragen gestellt werden, wie viele Wörter geantwortet wird und welches
-Modell rechnet. Alle Beteiligten müssen dieselbe Datei verwenden, sonst
-sind die Ergebnisse nicht vergleichbar. Damit das keine Bitte bleibt,
-trägt die Datei eine Prüfsumme: **Wird sie verändert, verweigert der
-Client den Lauf.** Ändere sie also nicht: auch kein Leerzeichen.
+Die **Kennung** ist die Prüfsumme des Prüfstands. Sie steht auch im
+Dateinamen deines Ergebnisses, und sie ist bei allen Teilnehmern
+dieselbe, solange alle denselben Client benutzen.
 
-Wählst du einen Plan, macht der Client den Rest allein: Modell prüfen,
-bei Bedarf beschaffen, messen.
-
-Liegt keine Datei bereit, wähle `0`. Dann misst der Client mit
-Standardwerten. Das ist für einen ersten Versuch in Ordnung, für einen
-gemeinsamen Test nicht.
-
-### Schritt 3: Modell
-
-Punkt **[1] Artefakt wählen** führt **alle** Modelle auf, die der Client
-kennt, und schreibt daneben, ob sie schon hier liegen:
-
-```
-  ❯ 1  myelith-0.5b, liegt bereit
-          Digest wird nach der Wahl geprüft.
-    2  myelith-7b, nicht vorhanden
-          Download rund 15 GB von Hugging Face, Bau danach in Sekunden.
-```
-
-Du kannst also jederzeit ein weiteres Modell holen, auch wenn schon eines
-da ist, und ein freigegebenes zurückholen. Liegt das Modell schon auf
-deiner Maschine, übernimmt der Client es beim Start von selbst, und du
-kannst diesen Schritt überspringen. Fehlt es, bietet [4] an, die Gewichte zu
-holen und die Artefakte daraus zu bauen. **Es passiert nichts ohne
-Rückfrage**, und die Größe des Downloads steht dabei. Während es läuft,
-siehst du, wie lange es schon dauert.
-
-Liegen mehrere Modelle bereit, fragt er, welches.
-
-Der Punkt ist bewusst eigenständig: Bis v0.6.0 löste die Testdatei das
-Modell gleich mit auf, und aus einer Menüwahl wurden ungefragt bis zu
-15 GB Download. Jetzt entscheidest du, wann das geschieht.
-
-### Zwischendurch: mit dem Modell sprechen
-
-Punkt **[1]** ist der einzige, der nichts misst. Du tippst etwas, das
-Modell antwortet, höchstens 64 Token lang; eine leere Eingabe beendet
-das Gespräch. Es beantwortet die Frage, die sich jeder stellt, der seine
-Maschine hergibt: Was rechnet das Ding da eigentlich?
-
-Die Antwort erscheint **Wort für Wort**, während gerechnet wird. Bei 7B
-dauert eine Antwort über eine halbe Minute; so siehst du die ganze Zeit,
-dass es vorangeht.
-
-**Zurück ins Menü** kommst du auf drei Wegen, und der Hinweis steht in
-jeder Eingabezeile:
-
-```
-  Prompt [Esc = Menü]:
-```
-
-| Weg | |
-|---|---|
-| **Escape** | Die Taste, mit der man ein Menü verlässt |
-| **Strg-D** | Die Kombination, die in jeder Kommandozeile „fertig" heißt |
-| **`menu` tippen** | Auch `exit`, `q`, `zurück` und `/menu` |
-
-**Enter allein tut nichts.** Du kannst also jederzeit Enter drücken, um
-zu sehen, ob sich der Client noch meldet, ohne das Gespräch zu verlieren.
-
-**Nicht Strg-C.** Das beendet den ganzen Client, nicht das Gespräch, und
-dein Sitzungsname wäre weg.
-
-Die Auswahl ist **gierig**, ohne Sampling und ohne Zufall. Dieselbe
-Frage liefert auf demselben Modellstand dieselbe Antwort, hier wie im
-Testlauf. Genau deshalb gibt es keine Temperatur einzustellen. Ein
-Protokoll schreibt dieser Punkt nicht: Prompt und Länge bestimmst du
-frei, das wäre kein Messwert.
-
-### Schritt 4: Der Testlauf
-
-Punkt **[3] Testlauf starten**. Das ist alles.
-
-Der Client fragt dabei nur nach, was noch fehlt: Steht unten in den
-Einstellungen bereits ein Artefakt und eine Testdatei, läuft er sofort
-los. Beim ersten Öffnen steht dort „nicht ausgewählt", und er stellt
-beide Fragen.
-
-Der Lauf hat fünf Stufen und schreibt **ein einziges Protokoll** über
-alle fünf:
+Der Lauf hat **sechs Stufen** und schreibt **ein einziges Ergebnis**
+über alle sechs:
 
 | Stufe | Was sie tut |
 |---|---|
@@ -308,13 +193,18 @@ alle fünf:
 | 2 Determinismus | Rechnet jede Frage **zweimal** und prüft, ob dasselbe herauskommt |
 | 3 Geshardete Inferenz | Verteilt das Modell auf vier Teile und prüft gegen das ungeteilte |
 | 4 Protokoll-Durchlauf | Prüft die Protokollschicht, ohne Modell: Kryptografie, Konsens, Ledger |
-| 5 Konformität | Prüft die Golden Vectors gegen diesen Bau: rechnet er bitgleich mit der Referenz? Ohne passendes Artefakt laufen nur die Operations-Vektoren |
+| 5 Konformität | Prüft die Golden Vectors gegen diesen Bau: rechnet er bitgleich mit der Referenz? |
+| 6 Trainingsschritt | Rechnet einen Trainingsschritt über die letzte Ebene und meldet den Abdruck über die geänderten Gewichte |
 
-Alle fünf laufen auch dann durch, wenn eine fehlschlägt: Eine
+**Alle sechs laufen auch dann durch, wenn eine fehlschlägt:** Eine
 fehlgeschlagene Modellstufe macht die Hardware-Erhebung nicht wertlos,
 sondern erst recht wichtig.
 
-### Schritt 5: Ergebnis lesen
+⚑ **Heute wird nur auf der CPU gemessen.** Sobald die GPU-Rechenwege
+stehen, kommen sie hinzu, ohne dass du etwas anders machen musst: Der
+Client erkennt, womit er gebaut wurde, und schreibt es ins Ergebnis.
+
+### Schritt 3: Ergebnis lesen
 
 Zu jeder Frage zeigt der Client die erzeugte Antwort im Klartext:
 
@@ -323,8 +213,8 @@ Zu jeder Frage zeigt der Client die erzeugte Antwort im Klartext:
   Antwort:   Paris. It is the largest city in France and one of the most
 ```
 
-**Das ist zum Zuschauen.** Bewertet wird der Text nicht. Maßgeblich sind
-die Zeilen mit dem Wort `Ergebnis`, besonders diese beiden:
+**Das ist zum Zuschauen.** Bewertet wird der Text nicht. Massgeblich
+sind die Zeilen mit dem Wort `Ergebnis`, besonders diese beiden:
 
 ```
   Ergebnis  determinismus          6 Prompts, je zwei Läufe  [fd64588fd46a7af8]
@@ -334,41 +224,67 @@ die Zeilen mit dem Wort `Ergebnis`, besonders diese beiden:
 Der Wert in eckigen Klammern ist der **Vergleichswert**. Er muss auf
 jeder Maschine derselbe sein. Genau das ist der ganze Test.
 
-### Schritt 6: Protokoll zurückschicken
+Zum Schluss steht da, ob alle Stufen bestanden haben, und wo dein
+Ergebnis liegt.
 
-Am Ende nennt der Client den Pfad. Die Protokolle liegen in
-**`TESTCLIENT/logs/`**: auf derselben Ebene wie `Testpläne/` und
-`Vergleiche/`, also dort, wo du ohnehin schon warst:
+### Schritt 4: Ergebnis zurückschicken
+
+Es liegt in **`TESTCLIENT/Ergebnisse/`**, und dort liegt nur das:
 
 ```
-Protokoll: …/TESTCLIENT/logs/anna_12a1e91e_2026-08-21_143022.jsonl
-           und …_143022.log. Lauf 2026-08-21-143022-aarch64-macos-…
+  Ergebnis: …/TESTCLIENT/Ergebnisse/anna_32eafffb_2026-09-11_143022.jsonl
+  Diese Datei geht an den Koordinator.
 ```
 
-Schicke die **`.jsonl`** an den Koordinator. Die `.log` daneben enthält
-dasselbe als Fließtext und ist für dich.
+Schicke die **`.jsonl`**. Die `.log` daneben enthält dasselbe als
+Fliesstext und ist für dich.
 
-Der Dateiname sagt schon alles: dein Name, die Kennung der Einstellungen,
-Datum und Uhrzeit.
+⚑ **Warum ein eigener Ordner.** `logs/` sammelt weiterhin **jeden**
+Lauf, auch den abgebrochenen und den von Hand gestarteten.
+`Ergebnisse/` enthält genau das, was weitergegeben werden soll. Bis zum
+11. September 2026 musste man die richtige Datei aus einem vollen
+Verzeichnis heraussuchen, und wer die falsche griff, schickte einen
+Abbruch.
 
-**Was im Protokoll steht:** Architektur, Betriebssystem, Backend, welches
-Modell, Zeiten, Vergleichswerte, die erzeugten Zahlen (Token), der
-**Hash** deiner Fragen.
+**Was im Ergebnis steht:** Architektur, Betriebssystem, Rechenweg,
+welches Modell, Zeiten, Vergleichswerte, die erzeugten Zahlen (Token),
+der **Hash** deiner Fragen.
 **Was nicht darin steht:** der Klartext der Fragen und Antworten, dein
 Benutzername, dein Rechnername, Seriennummern, MAC-Adressen.
 
 Die Datei ist reiner Text und darf unverändert weitergegeben werden.
 
+### Schritt 5: Enter
+
+```
+  Enter schliesst das Fenster.
+```
+
+Hat der Client das Fenster selbst geöffnet (Doppelklick auf das Symbol),
+schliesst es sich danach. Hast du ihn in deinem eigenen Terminal
+gestartet, bleibt dein Fenster, wie es war.
+
+⚠️ **Ist eine Stufe abgewichen, schick das Ergebnis erst recht.** Eine
+Abweichung ist der interessante Fall: Genau dafür läuft dieser Test. Ein
+Ergebnis, das niemand sieht, weil es „nicht gut aussah", ist der einzige
+Weg, diesen Test wertlos zu machen.
+
 ## A6. Selbst nachsehen: Protokolle vergleichen
 
-Punkt **[9] Entwickler-Menü** (erscheint nach Anmeldung als `admin`),
-dort **Protokolle vergleichen**, fragt
-zuerst, *welche*:
+Gib beim Nutzernamen **`admin`** ein (Gross- und Kleinschreibung
+gleichgültig). Statt des Prüfstands erscheint dann ein Menü mit genau
+einem Punkt: **Ergebnisse auswerten**. Er fragt zuerst, *welche*:
 
 | Auswahl | Was verglichen wird |
 |---|---|
 | **Zugesandte Protokolle** | Was in `TESTCLIENT/Vergleiche/` liegt, der Weg des Koordinators |
-| **Eigene Läufe** | Die Protokolle dieser Maschine aus `TESTCLIENT/logs/` |
+| **Eigene Läufe** | Die Läufe dieser Maschine aus `TESTCLIENT/logs/` |
+
+⚑ **Das ist kein Schutz, sondern eine Aufräumhilfe.** Der Name steht im
+Quelltext; wer ihn kennt, kommt hinein. Er hält nur den Bildschirm frei
+von einem Punkt, den ein Teilnehmer nicht braucht.
+
+Auch auf der Befehlszeile: `myl-test vergleich`.
 
 Für dich als Teilnehmer ist meist die zweite Auswahl richtig. Sie ergibt
 für sich **keinen** Nachweis: dazu fehlt eine zweite Maschine , zeigt
@@ -418,22 +334,23 @@ System-Python, falls die Pakete dort schon liegen.
 
 ## A8. Platz wieder freigeben
 
-Im Entwickler-Menü (Punkt 9), dort Punkt „Artefakte und Gewichte
-löschen". Du kannst
-einzelne Einträge löschen oder **alles auf einmal**. Beim Alles-Löschen
+```bash
+myl-test aufraeumen
+```
+
+Du kannst einzelne Einträge löschen oder **alles auf einmal**. Beim Alles-Löschen
 fragt der Client **zweimal** nach und listet dazwischen jeden betroffenen
 Pfad auf: Artefakte sind aus dem Skalenpaket in Sekunden wieder da,
 Gewichte kosten einen erneuten Download.
 
-Entwickler-Menü **[9]**, dann **[6] Artefakte und Gewichte löschen**.
 Der Client zeigt, was belegt ist:
 
 ```
-  Belegt auf dieser Maschine: 24,9 GB
+  Belegt auf dieser Maschine: 45,9 GB
 
-  ❯ 1  myelith-7b · Artefakte · 8,1 GB
-        Aus dem Skalenpaket in Sekunden wiederherstellbar.
-    2  myelith-7b · Gewichte · 15,2 GB
+  ❯ 1  myelith-30b-a3b · Artefakte · 31,2 GB
+        Aus dem Skalenpaket in Minuten wiederherstellbar.
+    2  myelith-30b-a3b · Gewichte · 61,1 GB
         Erneut zu holen kostet einen Download über Hugging Face.
 ```
 
@@ -449,9 +366,10 @@ etwas zerstört.
 ## A9. Wenn etwas nicht klappt
 
 **„Artefaktverzeichnis fehlt"**
-Erwartet wird `INTEGER_LLM/artifacts/myelith-0.5b/`. Liegen die Artefakte
-woanders, im Entwickler-Menü unter [7] den Pfad setzen oder beim Aufruf
-`--artifacts <PFAD>` angeben.
+Erwartet wird `INTEGER_LLM/artifacts/myelith-0.6b/`. Liegen die Artefakte
+woanders, beim Aufruf `--artifacts <PFAD>` angeben. Der Prüfstand
+selbst sucht nur am erwarteten Ort: Er soll auf allen Maschinen
+dasselbe Modell rechnen.
 
 **„Der Testplan wurde verändert"**
 Die Datei wurde nach dem Erzeugen bearbeitet: auch ein zusätzliches
@@ -460,8 +378,8 @@ Leerzeichen zählt. Fordere die Originaldatei neu an. Kommentarzeilen mit
 ein.
 
 **Der Lauf dauert sehr lange**
-Beim 7B-Modell ist das normal, rechne mit rund fünf Minuten. Läuft es
-auch beim 0,5B-Modell zäh, wurde vermutlich ein Debug-Build gestartet;
+Beim 30B-Modell ist das normal, rechne mit rund fünf Minuten. Läuft es
+auch beim 0,6B-Modell zäh, wurde vermutlich ein Debug-Build gestartet;
 die Starter bauen mit `--release`.
 
 **Umlaute erscheinen als Kauderwelsch (Windows)**
@@ -498,9 +416,19 @@ Urteil, wenn (1) fehlt.
 
 ## B2. Einen Testplan erstellen
 
-### Der schnelle Weg: im Menü
+### Der schnelle Weg: auf der Befehlszeile
 
-Entwickler-Menü **[9]**, dann **[2] Testplan erzeugen und speichern**.
+```bash
+myl-test plan --plan-id 2026-09-11-cross-arch-01 --model myelith-0.6b \
+  --prompt "Die Hauptstadt von Frankreich ist" \
+  --steps 32 --shards 4 --out "TESTCLIENT/Testpläne/cross-arch.plan"
+```
+
+⚠️ **Für den Regelfall brauchst du das nicht.** Der Prüfstand, den jeder
+Teilnehmer fährt, steht fest im Client und entspricht
+`Testpläne/standard.plan`; eine Probe im Client hält beide aneinander.
+Ein eigener Plan ist für Sonderfälle, und wer ihn verteilt, muss ihn
+auch bei jedem Teilnehmer mit `--plan` in den Aufruf bringen.
 Der Client fragt jeden Wert einzeln ab, in dieser Reihenfolge:
 
 1. **Token je Prompt.** Entertaste übernimmt die Vorgabe.
@@ -544,7 +472,8 @@ unter verschiedenen Namen fahren, sollen vergleichbare Ergebnisse
 bekommen.
 
 **Das Modell steht seit dem 2026-08-22 nicht mehr im Plan.** Es war eine
-Fessel ohne Nutzen: Ein Plan, der nur mit 0,5B geht, muss für 7B neu
+Fessel ohne Nutzen: Ein Plan, der nur mit 0,6B geht, muss für das
+Gemisch neu
 geschrieben werden, und dann tragen zwei Dateien dieselben Prompts unter
 verschiedenen Prüfsummen. Der Plan legt jetzt fest, *was* gemessen wird;
 *woran*, entscheidet sich vor dem Lauf, entweder über **[1] Artefakt
@@ -577,14 +506,14 @@ Determinismus        = 2 Durchgänge
 Shard-Lauf           = 2 Durchgänge (Pod und Einzelknoten)
 ```
 
-Mit den gemessenen Raten aus `INTEGER_LLM/bench/README.md`: **0,5B rund
-24 Token/s, 7B rund 2 Token/s**: plus Modellladen (0,5B ein paar
-Sekunden, 7B rund eine Minute je Lauf).
+Mit den gemessenen Raten: **0,6B rund 29 Token/s, 30B-A3B rund 10
+Token/s**, plus Modellladen (0,6B ein paar Sekunden, 30B-A3B rund eine
+halbe Minute je Lauf).
 
 | Beispiel | Rechnung | Dauer |
 |---|---|---|
-| 0,5B, 6 Prompts, 32 Token | 6·32·4 = 768 Token bei 24/s | rund 40 s |
-| 7B, 4 Prompts, 16 Token | 4·16·4 = 256 Token bei 2/s | rund 5 min |
+| 0,6B, 6 Prompts, 32 Token | 6·32·4 = 768 Token bei 29/s | rund 30 s |
+| 30B-A3B, 4 Prompts, 16 Token | 4·16·4 = 256 Token bei 10/s | rund 25 s |
 
 Sage die Zahl den Teilnehmern an. Ohne sie ist für sie nicht
 entscheidbar, ob sich Warten lohnt oder ob etwas hängt.
@@ -593,13 +522,14 @@ entscheidbar, ob sich Warten lohnt oder ob etwas hängt.
 
 **Keiner davon ist an ein Modell gebunden** (seit 2026-08-22). Der Plan
 legt fest, *was* gemessen wird; *woran*, entscheidet sich vor dem Lauf.
-Derselbe Plan gilt für 0,5B und für 7B, und niemand muss zwei Dateien
+Derselbe Plan gilt für 0,6B und für das Gemisch, und niemand muss zwei
+Dateien
 pflegen, die dieselben Prompts tragen.
 
 | Datei | Umfang | Wofür |
 |---|---|---|
 | `standard.plan` | 6 Prompts, 32 Token, 4 Shards | Der Regelfall |
-| `standard-kurz.plan` | 4 Prompts, 16 Token, 4 Shards | Für langsame Modelle, etwa 7B |
+| `standard-kurz.plan` | 4 Prompts, 16 Token, 4 Shards | Für langsame Modelle, etwa das Gemisch |
 | `benchmark-1-zahlen.plan` | 7 Prompts, 24 Token, 4 Shards | Ziffern, Überträge, Einheiten |
 | `benchmark-2-sprachen.plan` | 8 Prompts, 24 Token, 4 Shards | Sieben Sprachen, drei Schriften |
 | `benchmark-3-code-kontext.plan` | 6 Prompts, 32 Token, 4 Shards | Quelltext und lange Prompts |
@@ -688,7 +618,7 @@ myl-test vergleich
 ```
 
 Ohne weitere Angabe liest der Befehl genau diesen Ordner. Im Menü:
-Punkt [3], dort „Zugesandte Protokolle".
+`myl-test vergleich`, oder als `admin` über das Auswerte-Menü.
 
 **Warum ein eigener Ordner und nicht der Protokollordner des Clients:**
 Der Vergleich liest *alles*, was er an `.jsonl` findet. Lägen die
@@ -966,7 +896,8 @@ Anhang:          <name>_<einstellungen>_<datum>_<uhrzeit>.jsonl
 >
 > Wann das Testnetz beginnt, entscheidet das Projekt, nicht dieser Code.
 >
-> **Wozu der Lauf dann gut ist:** Der Durchlauf aus Punkt [3] prüft die
+> **Wozu der Lauf dann gut ist:** Der Protokoll-Durchlauf, Stufe 4 des
+> Prüfstands, prüft die
 > Bausteine **im selben Prozess**, zehn Stufen von der Kryptografie bis
 > zur Preisbildung. Dort liegen die Werte im Speicher nebeneinander.
 > Hier gehen dieselben Werte durch Serialisierung, Gossip,
@@ -1078,7 +1009,7 @@ Ordner kopieren, am besten `TESTCLIENT/Vergleiche`.
 
 **Schritt 10: Auswerten.**
 
-Testclient starten, Entwickler-Menü, Punkt **8**. Teilnehmer sehen ihren
+`myl-test netz` aufrufen. Teilnehmer sehen ihren
 eigenen Lauf unter Punkt 5, Untermenü Punkt 2. Oder direkt:
 
 ```
@@ -1173,7 +1104,9 @@ davon.
 ## C3. Den ersten Knoten starten (der erreichbare)
 
 Auf dem Rechner mit öffentlicher Adresse: Testclient starten,
-**[9] Entwickler-Menü**, dort **[7] Knoten als Anlaufstelle betreiben**.
+```bash
+myl-test anlaufstelle
+```
 
 Er fragt der Reihe nach:
 
@@ -1297,7 +1230,7 @@ dieser Knoten auftreten. Das Betriebsprotokoll nennt nur die
 
 ## C6. Auswerten
 
-Im Entwickler-Menü: Punkt **8**, „Netzlauf auswerten". Oder auf der
+`myl-test netz`. Oder auf der
 Befehlszeile:
 
 ```
@@ -1507,6 +1440,97 @@ steht**. Ohne sie ließe sich „zwanzig Minuten kam nichts" nicht von
 ---
 
 ## Changelog
+
+### v2.19.0 – 2026-09-12 (das dichte 14B ist entfallen)
+
+**Festlegung des Projektinhabers.** Das Projekt führt noch drei
+Modelle: **0,6B, 4B und 30B-A3B**.
+
+**Begründung:** Das dichte 14B war in Durchsatz (5,25 gegen 10,1
+Token/s) und Perplexität (11,54 gegen 10,42) schlechter als das
+Gemisch, aufwendiger zu trainieren, und kostete 46 GB auf der Platte.
+
+⚑ **Und ein Befund aus dem Messen stützt es:** Auf einer Maschine mit
+24 GiB ist das dichte 14B **unhandlicher als das grössere 30B**. Ein
+dichtes Modell fasst bei jedem Vorwärtspass alle 16,3 GB an, ein
+Gemisch je Token acht von 128 Experten.
+
+Umgestellt sind: Plattenbedarf in A2 (46 auf 92 GB für das grosse
+Modell), das Bildschirmbeispiel in A8, die Laufzeittabelle in B9 und
+die Kopfzeilen der fünf mitgelieferten Testpläne (5 auf 10 Token/s).
+
+### v2.18.0 – 2026-09-11 (ein Weg, keine Wahl)
+
+**Der Client fragt nur noch nach dem Namen.** Danach läuft der
+Prüfstand von selbst durch, und Enter schliesst das Fenster.
+
+⚑ **Warum das Menü weg ist.** Es führte sechs Punkte, und zwei davon
+waren Entscheidungen, die ein Teilnehmer nicht treffen kann: welches
+Modell und welche Testdatei. **Beide müssen auf allen Maschinen gleich
+sein**, sonst sind die Ergebnisse nicht vergleichbar. Wer sie anders
+traf, hat umsonst gerechnet, und gemerkt hat es erst der Koordinator.
+
+Die Werte stehen jetzt fest im Programm und entsprechen
+`Testpläne/standard.plan`; eine Probe im Client hält beide aneinander.
+
+**Neu: `TESTCLIENT/Ergebnisse/`.** Dort liegt genau das, was
+weitergegeben wird, eine Datei je Lauf. `logs/` sammelt weiterhin jeden
+Lauf, auch den abgebrochenen. Bis heute musste man die richtige Datei
+aus einem vollen Verzeichnis heraussuchen.
+
+**Was aus dem Menü auf die Befehlszeile gewandert ist**, und zwar
+vollständig, nichts ist entfallen:
+
+| vorher | jetzt |
+|---|---|
+| Testplan erzeugen | `myl-test plan` |
+| Artefakte prüfen | `myl-test artefakte` |
+| Plattenplatz freigeben | `myl-test aufraeumen` |
+| Am Netz teilnehmen | `myl-test teilnehmen` |
+| Anlaufstelle betreiben | `myl-test anlaufstelle` |
+| Netzlauf auswerten | `myl-test netz` |
+| Protokolle vergleichen | `myl-test vergleich` (oder als `admin`) |
+
+⚠️ **„Mit dem Modell sprechen" ist ersatzlos entfallen.** Dafür gibt es
+seit CLIENT v0.17.0 einen eigenen Client samt Konsolenfassung. Der
+Testclient ist ein Messgerät.
+
+**Das Fenster schliesst sich, wenn es der Client selbst geöffnet hat.**
+Unter Windows entfällt dafür das zweite `pause`, unter macOS schliesst
+das App-Bündel sein Terminalfenster. Wer den Starter in seinem eigenen
+Terminal aufruft, behält sein Fenster.
+
+⛑ **Der Untertitel unter dem Logo nannte drei von sechs Stufen** und
+tat das, seit es nur drei gab. Eine Aufzählung, die nicht mitwächst,
+wird zur Auswahl. Er nennt jetzt, was das Programm ist.
+
+### v2.17.0 – 2026-09-11 (die Anleitung spricht von den Modellen, die es gibt)
+
+**Jede Zahl in dieser Anleitung stand auf Qwen2.5-0,5B und
+Qwen2.5-7B.** Beide sind seit dem 2026-09-11 nicht mehr Teil des
+Projekts; an ihrer Stelle stehen **Qwen3-0,6B und Qwen3-14B**.
+
+Umgestellt wurden **nicht nur die Namen**, sondern jede Zahl, die an
+ihnen hing:
+
+| Angabe | vorher | jetzt |
+|---|---|---|
+| Plattenbedarf klein | 1,7 GB | **2,5 GB** |
+| Plattenbedarf gross | 23 GB | **46 GB** |
+| Rate klein | 24 Token/s | **29 Token/s** |
+| Rate gross | 2 Token/s | **5 Token/s** |
+
+Dazu die beiden Bildschirmbeispiele in A3 und A8, die Laufzeittabelle in
+B9 und die Kopfzeilen der fünf mitgelieferten Testpläne.
+
+⚑ **Eine Anleitung, die eine falsche Zahl nennt, ist schlimmer als
+eine, die keine nennt.** Wer 23 GB freiräumt und dann 46 braucht, bricht
+mitten im Download ab, und zwar nachdem er Zeit investiert hat.
+
+⛑ **Und eine Zahl war gar nicht gealtert, sondern von Anfang an die
+falsche Groesse:** Der Plattenbedarf zählt Grundgewichte **und**
+Artefakt. Wer nur ein fertiges Artefakt betreiben will, braucht deutlich
+weniger (0,92 GB statt 2,5 GB). Das steht jetzt dabei.
 
 ### v2.16.0 – 2026-08-27 (Konformität ist die fünfte Stufe; das Protokoll nennt die Maschine)
 

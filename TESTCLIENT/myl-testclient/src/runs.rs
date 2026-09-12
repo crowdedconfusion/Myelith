@@ -103,7 +103,7 @@ pub fn default_artifact_dir() -> std::path::PathBuf {
 }
 
 /// Modellname des Standard-Artefakts.
-pub const DEFAULT_MODEL: &str = "myelith-0.5b";
+pub const DEFAULT_MODEL: &str = "myelith-0.6b";
 
 /// Repository-Wurzel, **zur Laufzeit** gesucht.
 ///
@@ -231,7 +231,7 @@ pub(crate) fn log_context(log: &mut RunLog, artifact_dir: Option<&Path>) {
             .unwrap_or_default(),
     });
 
-    // Modellstand vor Modellmaßen: Dimensionen unterscheiden 0,5B von 7B,
+    // Modellstand vor Modellmaßen: Dimensionen unterscheiden 0,6B von 14B,
     // aber zwei θ_v-Stände desselben Modells sehen darin gleich aus. Ein
     // Digest-Vergleich zwischen Modellständen ist ohne diese Werte nicht
     // einzuordnen: bei einem θ_v-Wechsel ändern sich die Digests
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn modellstand_steht_im_protokoll() {
         let dir = tempdir("modellstand");
-        let artefakte = dir.join("myelith-0.5b");
+        let artefakte = dir.join("myelith-0.6b");
         std::fs::create_dir_all(&artefakte).unwrap();
         std::fs::write(
             artefakte.join("theta_v.json"),
@@ -1011,7 +1011,7 @@ mod tests {
         let jsonl = std::fs::read_to_string(lauf_dir.join(format!("{}.jsonl", dateiname))).unwrap();
         assert!(jsonl.contains(r#""key":"theta_v","value":"0.17.0""#), "{jsonl}");
         assert!(jsonl.contains(r#""key":"weights_hash","value":"aa""#));
-        assert!(jsonl.contains(r#""key":"modell","value":"myelith-0.5b""#));
+        assert!(jsonl.contains(r#""key":"modell","value":"myelith-0.6b""#));
         assert!(jsonl.contains(r#""key":"artefakt_digest""#));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -23,7 +23,7 @@ const ANFRAGEN: u64 = 5;
 
 fn artefakte() -> std::path::PathBuf {
     let m = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     std::path::PathBuf::from(m)
         .join("../../INTEGER_LLM/artifacts")
         .join(modell)

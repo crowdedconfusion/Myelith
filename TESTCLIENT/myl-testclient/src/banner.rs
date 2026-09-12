@@ -66,7 +66,17 @@ pub const BANNER: &str = r#"
 "#;
 
 /// Untertitel des Testclients: direkt unter dem Banner.
-pub const SUBTITLE: &str = "        Testclient · Hardware · Determinismus · Shards";
+///
+/// ⛑ **Hier standen drei von sechs Stufen** (Hardware, Determinismus,
+/// Shards), und zwar seit es nur drei gab. Wer den Untertitel las,
+/// hielt den Protokoll-Durchlauf, die Konformität und den
+/// Trainingsschritt für Zugaben. **Eine Aufzählung, die nicht
+/// mitwächst, wird zur Auswahl**, und niemand hat sie so gemeint.
+///
+/// Jetzt sagt er, was das Programm ist, statt aufzuzählen, was es tut.
+/// Die Stufen nennt der Lauf selbst, eine nach der anderen, und dort
+/// stehen sie vollzählig, weil [`crate::menu::STUFEN`] sie führt.
+pub const SUBTITLE: &str = "        Testclient · Bitgleichheit über verschiedene Hardware";
 
 /// Gibt das Banner aus, wenn es sinnvoll ist.
 ///

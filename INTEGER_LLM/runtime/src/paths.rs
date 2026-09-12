@@ -28,7 +28,7 @@ pub fn artifacts_dir() -> PathBuf {
 }
 
 /// Artefakt-Verzeichnis eines bestimmten Modells,
-/// z. B. `artifacts/myelith-0.5b`.
+/// z. B. `artifacts/myelith-0.6b`.
 pub fn model_artifacts_dir(model_name: &str) -> PathBuf {
     artifacts_dir().join(model_name)
 }
@@ -44,8 +44,8 @@ mod tests {
         env::remove_var(ARTIFACTS_DIR_ENV);
         assert_eq!(artifacts_dir(), PathBuf::from(ARTIFACTS_DIR));
         assert_eq!(
-            model_artifacts_dir("myelith-0.5b"),
-            PathBuf::from(ARTIFACTS_DIR).join("myelith-0.5b")
+            model_artifacts_dir("myelith-0.6b"),
+            PathBuf::from(ARTIFACTS_DIR).join("myelith-0.6b")
         );
 
         env::set_var(ARTIFACTS_DIR_ENV, "/tmp/integer-llm-artefakte-test");

@@ -85,6 +85,18 @@ pub struct Trainingsvorgaben {
     /// nach der Division unter der letzten Stelle des Masters, und nur
     /// ein Viertel der Gewichte bewegt sich überhaupt.
     pub lr_nenner: i64,
+    /// **Der Zaehler der Lernrate.**
+    ///
+    /// ⛑ **Bis zum 2026-09-11 stand hier eine 1 im Rumpf**, und damit
+    /// war `lr_nenner = 1` die groesste erreichbare Schrittweite. Auf
+    /// Qwen3-0,6B verlaesst der Lauf damit die Uebertragungsform
+    /// **nie**, auch nicht in dreihundert Schritten; die Gegenprobe zur
+    /// Schranke prueft dort also nichts.
+    ///
+    /// ⚑ **Eine Schranke ohne erreichbaren Fall ist eine Behauptung.**
+    /// Mit einem Zaehler laesst sich der Fall wieder herstellen, und
+    /// zwar ohne den Normalbetrieb anzufassen: Die Vorgabe ist eins.
+    pub lr_zaehler: i64,
     /// Die Skala, auf der der Kopf liefert.
     ///
     /// ⚑ **Nicht `config.logit_frac_bits`** (6, Fund 177): Die ist für
@@ -170,7 +182,30 @@ impl Trainingsvorgaben {
             folge: vec![9707, 374, 264, 1273, 315, 279],
             ziel: 4108,
             schritte: 30,
-            lr_nenner: 1 << 12,
+            // ⛑ **Neu gemessen am 2026-09-11**, als das Ankermodell von
+            // Qwen2.5-0,5B auf Qwen3-0,6B wechselte. Mit `1 << 12` fiel
+            // die Kreuzentropie in dreissig Schritten nur von 8,00 auf
+            // 7,29, und der Argmax traf das Ziel nicht. Gemessen mit
+            // `examples/lernrate_messen.rs`:
+            //
+            // | Nenner | 30 Schritte | 60 Schritte |
+            // |---|---|---|
+            // | `1 << 12` | 7,2865 (daneben) | 5,5108 (daneben) |
+            // | `1 << 11` | 5,5903 (daneben) | 0,4456 (trifft) |
+            // | `1 << 10` | **0,4681 (trifft)** | 0,1818 |
+            // | `1 << 9`  | 0,1609 (trifft) | 0,1353 |
+            //
+            // ⚑ **Der sanfteste Wert, der in dreissig Schritten trifft.**
+            // `1 << 9` kaeme naeher an die 0,137 des alten Ankers heran
+            // und ist doppelt so grob; eine Lernrate wird nicht dadurch
+            // besser, dass die Endzahl huebscher aussieht.
+            //
+            // ⚠️ **Eine Lernrate gilt fuer ein Modell.** Sie haengt an
+            // Tiefe und Breite, und beides hat sich geaendert (24 auf
+            // 28 Ebenen, 896 auf 1024). Wer das naechste Modell
+            // aufnimmt, misst sie neu.
+            lr_nenner: 1 << 10,
+            lr_zaehler: 1,
             logit_frac: 16,
             prob_frac: 24,
             // ⚑ **Gemessen und nicht geraten**, siehe den Changelog von
@@ -909,7 +944,13 @@ pub fn trainingsschleife(
         let mut versatz = 0u64;
         for (mm, gg) in master.iter_mut().zip(gradienten.iter()) {
             let laenge = mm.len() as u64;
-            schritt(mm, gg, Schrittkennung { index_versatz: versatz, ..kn }, 1, v.lr_nenner);
+            schritt(
+                mm,
+                gg,
+                Schrittkennung { index_versatz: versatz, ..kn },
+                v.lr_zaehler,
+                v.lr_nenner,
+            );
             versatz += laenge;
         }
         if master.iter().any(|mm| ausserhalb_der_form(mm).is_some()) {

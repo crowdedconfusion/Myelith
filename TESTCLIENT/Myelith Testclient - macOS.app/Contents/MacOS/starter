@@ -27,9 +27,17 @@ if [ -z "$STARTER" ]; then
     exit 1
 fi
 
-# Terminal.app oeffnen und den Starter darin ausfuehren. `exec` haelt das
-# Fenster nach dem Beenden des Clients offen, damit die Ausgabe lesbar
-# bleibt; genau deshalb wird nicht einfach `open -a Terminal` benutzt.
+# Terminal.app oeffnen und den Starter darin ausfuehren.
+#
+# ⚑ **`MYL_FENSTER_SCHLIESSEN=1` seit dem 2026-09-11.** Der Pruefstand
+# wartet am Ende auf Enter und sagt dazu, dass sich das Fenster danach
+# schliesst. Schliessen kann es nur, wer es geoeffnet hat, und das ist
+# dieses Buendel. Die Marke sagt dem Shell-Starter, dass er es darf.
+#
+# ⚠️ **Nur hier gesetzt und nirgends sonst.** Wer den Shell-Starter in
+# einem eigenen Terminal aufruft, dem wird sein Fenster nicht unter den
+# Haenden zugemacht; dort bleibt die Ausgabe stehen, wie sie es immer
+# tat.
 #
 # DIESER AUFRUF STEHT FUER SICH. Alles Kosmetische kommt danach und in
 # einem eigenen Aufruf. Grund: Eine Fassung dieses Skripts holte zuerst die
@@ -41,7 +49,7 @@ fi
 if ! osascript <<ENDE >/dev/null 2>&1
 tell application "Terminal"
     activate
-    do script "cd " & quoted form of "$WURZEL" & " && " & quoted form of "$STARTER"
+    do script "cd " & quoted form of "$WURZEL" & " && MYL_FENSTER_SCHLIESSEN=1 " & quoted form of "$STARTER"
 end tell
 ENDE
 then

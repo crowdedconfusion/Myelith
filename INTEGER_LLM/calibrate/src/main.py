@@ -9,9 +9,9 @@ ausschliesslich aus dem lokalen Snapshot unter models/ geladen (siehe
 loader.py und models/README.md), nie aus dem impliziten HF-Cache.
 
 **Modellwahl** ueber die Umgebungsvariable INTEGER_LLM_MODEL, Vorgabe
-myelith-0.5b:
+myelith-0.6b:
 
-    INTEGER_LLM_MODEL=myelith-7b python -m calibrate.src.main
+    INTEGER_LLM_MODEL=myelith-30b-a3b python -m calibrate.src.main
 
 Waehlbar sind nur Varianten, deren Felder gegen die echte HF-config.json
 geprueft sind (model_configs.py, Feld "verified"). Jede Variante bekommt ihr
@@ -62,7 +62,7 @@ from .scale_pack import paket_pfad, lade as skalenpaket_laden, SCALE_PACK_ENV
 from .paths import model_artifacts_dir, local_model_dir
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "myelith-0.5b"
+DEFAULT_MODEL = "myelith-0.6b"
 
 MODEL_NAME = os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODEL
 # Die HF-ID steht in der verifizierten Config, nicht hier: sie gehoert zur
@@ -92,12 +92,42 @@ def _wikitext_calibration_texts(n_sequences):
     Begrenzung auf CALIB_WIKITEXT_SEQ_LEN Tokens geschieht beim
     Tokenisieren (truncation).
     """
-    repo_root = Path(__file__).resolve().parent.parent.parent
-    cache = repo_root / "eval" / "datasets" / "wikitext2_test.txt"
-    if not cache.exists():
-        print(f"[calibrate] WARNUNG: WikiText-2-Cache fehlt ({cache}) — "
-              "kalibriere nur auf den kuratierten Prompts.")
+    # ⛑ **Fund 339 (2026-09-11): der Pfad ist beim Umzug nicht mitgewandert.**
+    #
+    # Hier stand `INTEGER_LLM/eval/datasets/`. Das Verzeichnis ist am
+    # 2026-09-07 nach `BENCHMARKS/Inferenz/` gezogen, und diese Zeile
+    # blieb zurueck. Die Kalibrierung fand den Satz seitdem nicht,
+    # meldete es und rechnete **nur auf den kuratierten Prompts**
+    # weiter.
+    #
+    # ⚠️ **Die Warnung stand da und wurde gelesen wie ein Hinweis.** Sie
+    # ist aber eine Aussage ueber die Guete des Artefakts: Die
+    # Aktivierungsskalen entstehen aus dieser Stichprobe. Jedes nach dem
+    # 2026-09-07 gebaute Artefakt steht auf einer schmaleren Grundlage
+    # als die davor, und das sieht man ihm nicht an.
+    #
+    # ⚑ **Deshalb ist der Abbruch jetzt laut.** Ein Artefakt, das
+    # heimlich anders kalibriert ist als die Modelle, mit denen es
+    # verglichen wird, ist schlimmer als gar keins.
+    llm = Path(__file__).resolve().parent.parent.parent
+    cache = llm.parent / "BENCHMARKS" / "Inferenz" / "datasets" / "wikitext2_test.txt"
+    if not cache.exists() and os.environ.get("INTEGER_LLM_OHNE_WIKITEXT"):
+        # ⚑ **Eine Tuer, und sie ist beschriftet.** Wer ohne den Satz
+        # bauen will, sagt es ausdruecklich und bekommt es gesagt.
+        print("[calibrate] ⚠️  OHNE WikiText-2: Die Aktivierungsskalen entstehen nur aus "
+              "den kuratierten Prompts.")
+        print("[calibrate] ⚠️  Dieses Artefakt ist NICHT mit den uebrigen vergleichbar.")
         return []
+    if not cache.exists():
+        raise FileNotFoundError(
+            f"WikiText-2-Testsplit fehlt ({cache}).\n"
+            "Die Aktivierungsskalen entstehen aus dieser Stichprobe; ohne sie\n"
+            "waere das Artefakt auf einer schmaleren Grundlage gebaut als die\n"
+            "uebrigen, und der Vergleich ihrer Perplexitaeten haette keinen\n"
+            "gemeinsamen Bezug.\n"
+            "Holen: python3 BENCHMARKS/Inferenz/wikitext_common.py\n"
+            "(oder INTEGER_LLM_OHNE_WIKITEXT=1 setzen und wissen, was man tut)."
+        )
     lines = cache.read_text(encoding="utf-8").splitlines()
     candidates = [l.strip() for l in lines if len(l.strip()) >= _MIN_LINE_CHARS]
     if not candidates:
@@ -128,8 +158,8 @@ def gptq_hessian_bytes(config: dict) -> int:
     in float32. Die sechs Projektionen mit in = hidden_size sind harmlos; die
     Kosten stecken in down_proj, deren Eingang intermediate_size ist:
 
-        0.5B  24 Ebenen x (6 x 896^2 + 4864^2) x 4 B  =  2,5 GB
-        7B    28 Ebenen x (6 x 3584^2 + 18944^2) x 4 B = 45,5 GB
+        0,6B  28 Ebenen x (6 x 1024^2 + 3072^2)  x 4 B =  1,6 GiB
+        14B   40 Ebenen x (6 x 5120^2 + 17408^2) x 4 B = 68,6 GiB
 
     Der Sprung ist quadratisch in intermediate_size, nicht linear in der
     Parameterzahl. Deshalb wird das hier ausgerechnet und nicht geschaetzt.
@@ -151,8 +181,8 @@ def gptq_group_size(config: dict) -> int:
     Schichtweise Hessian-Berechnung (2026-08-18, Nachtrag zu Punkt 12.72):
     statt GPTQ bei zu wenig RAM ganz abzuschalten (v0.12.43-Verhalten),
     wird nur so viel gleichzeitig gehesst, wie in zwei Drittel des
-    verfuegbaren RAM passt. Bei 0,5B ergibt sich eine einzige Gruppe (alle
-    24 Ebenen passen ohnehin, 2,5 GB) - unveraendertes Verhalten. Bei 7B
+    verfuegbaren RAM passt. Bei 0,6B ergibt sich eine einzige Gruppe (alle
+    28 Ebenen passen ohnehin, 1,6 GiB) - unveraendertes Verhalten. Bei 14B
     ergeben sich mehrere Gruppen; jede Gruppe braucht einen eigenen
     Kalibrier-Durchlauf durch das Modell (main()::gptq_group_size-Aufrufer),
     also mehr Rechenzeit fuer denselben Speicherrahmen.

@@ -39,6 +39,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod ablauf;
 pub mod animation;
 pub mod artefakte;
 pub mod auswahl;
@@ -83,6 +84,32 @@ pub use vergleich::run as run_vergleich;
 /// [`artefakte::wurzel_zur_laufzeit`]: Ein eingebackener Pfad zeigte ins
 /// Leere, sobald das Repository verschoben oder das Binary weitergegeben
 /// wurde.
+/// Wohin ein fertiger Prüfstandslauf sein Ergebnis legt:
+/// `TESTCLIENT/Ergebnisse/`.
+///
+/// # ⚑ Warum ein eigener Ordner neben `logs/`
+///
+/// `logs/` ist die Werkbank: Dort landet **jeder** Lauf, auch der
+/// abgebrochene, auch der von Hand über die Befehlszeile gestartete,
+/// auch der dritte Versuch. `Ergebnisse/` ist das Regal: Dort liegt
+/// genau das, was **weitergegeben** werden soll.
+///
+/// **Der Unterschied ist der Grund für den Ordner.** Bis zum
+/// 2026-09-11 endete ein Lauf mit dem Satz „Protokoll:
+/// TESTCLIENT/logs/…", und der Teilnehmer musste aus einem Verzeichnis
+/// voller Dateien die richtige heraussuchen und verschicken. Wer dabei
+/// die falsche greift, schickt einen Abbruch, und das fällt erst dem
+/// Koordinator auf.
+pub fn default_ergebnis_dir() -> std::path::PathBuf {
+    let gebaut = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    artefakte::wurzel_zur_laufzeit(&gebaut)
+        .join("TESTCLIENT")
+        .join("Ergebnisse")
+}
+
 pub fn default_log_dir() -> std::path::PathBuf {
     let gebaut = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

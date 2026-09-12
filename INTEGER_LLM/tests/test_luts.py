@@ -164,7 +164,7 @@ def test_rope_lut_full_spec_parameters():
     # Mit den echten spec-Parametern (0.5B: head_dim 64, max_seq_len 2048)
     # muss die LUT die erwartete Groesse haben und wohlgeformt sein.
     nl = load_nonlinear_spec()
-    head_dim = get_model_config("myelith-0.5b")["head_dim"]
+    head_dim = get_model_config("myelith-0.6b")["head_dim"]
     sin_lut, cos_lut = generate_rope_luts(
         max_seq_len=nl["rope"]["max_seq_len"], head_dim=head_dim,
         rope_theta=nl["rope"]["rope_theta"], frac_bits=nl["rope"]["frac_bits"])
@@ -190,7 +190,7 @@ def test_spec_driven_generation_lengths():
     exp = generate_exp_lut(exp_range=nl["softmax"]["exp_lut_range"],
                            input_frac_bits=nl["softmax"]["exp_input_frac_bits"],
                            output_frac_bits=nl["softmax"]["exp_lut_frac_bits"])
-    head_dim = get_model_config("myelith-0.5b")["head_dim"]
+    head_dim = get_model_config("myelith-0.6b")["head_dim"]
     sin, cos = generate_rope_luts(max_seq_len=nl["rope"]["max_seq_len"],
                                   head_dim=head_dim,
                                   rope_theta=nl["rope"]["rope_theta"],

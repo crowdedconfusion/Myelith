@@ -1,6 +1,6 @@
 """
-Modell-Konfigurationen fuer verschiedene Qwen2.5-Groessen.
-Ermoeglicht einfachen Austausch: 0.5B -> 72B.
+Modell-Konfigurationen fuer verschiedene Qwen3-Groessen.
+Ermoeglicht einfachen Austausch: 0,6B -> 30B.
 
 WICHTIG (Fund aus Punkt 12.10/12.14): Exportfaehig sind nur die
 Eintraege, deren Felder gegen die *echte* HF-config.json der jeweiligen
@@ -14,80 +14,28 @@ Der Grund: runtime/src/loader.rs::ModelDims verlangt beide Felder zwingend
 falsche Attention-Berechnung oder ein fehlendes lm_head.weight erzeugen -
 und zwar ohne Fehlermeldung, nur mit schlechteren Zahlen.
 
-Verifizierte Varianten:
-  myelith-0.5b  models/Qwen2.5-0.5B/config.json (lokaler Snapshot)
-  myelith-7b    huggingface.co/Qwen/Qwen2.5-7B/raw/main/config.json
-                + model.safetensors.index.json (Bias- und lm_head-Tensoren),
-                Revision d149729398750b98c0af14eb82c78cfe92750796,
-                Lizenz apache-2.0 (Whitepaper Kap. 10.1 / ETHICS G7)
+Verifizierte Varianten, alle Qwen3 und alle gegen den lokalen Snapshot:
+  myelith-0.6b     models/Qwen3-0.6B/config.json@c1899de2
+  myelith-4b       models/Qwen3-4B/config.json@1cfa9a72
+  myelith-30b-a3b  models/Qwen3-30B-A3B/config.json@ad44e777
+
+⚑ Seit dem 2026-09-11 (Festlegung des Projektinhabers) fuehrt das
+Projekt ausschliesslich Qwen3. Qwen2.5-0,5B und Qwen2.5-7B sind
+abgeloest; damit misst die Reihe eine Achse (Groesse) statt zweier
+(Groesse und Familie).
+
+⛔️ **Und seit dem 2026-09-12 ohne das dichte 14B** (Festlegung des
+Projektinhabers): schlechterer Durchsatz als das Gemisch (5,25 gegen
+10,1 Token je Sekunde), schlechtere Perplexitaet (11,54 gegen 10,42),
+aufwendigeres Training, und 46 GB auf der Platte. ⚠️ Damit bleiben
+**zwei** dichte Punkte; ein Groessenvergleich ueber die ganze Reihe
+misst wieder einen Architekturunterschied mit.
 
 Nur Basis-Varianten, keine Instruct-Varianten: Referenzmodell des Projekts
 ist die Basis-Reihe (Scope-Entscheidung 12.15).
 """
 
 MODEL_CONFIGS = {
-    "myelith-0.5b": {
-        "family": "qwen2.5",
-        "variant": "0.5b",
-        "num_layers": 24,
-        "hidden_size": 896,
-        "intermediate_size": 4864,
-        "num_heads": 14,
-        "num_kv_heads": 2,
-        "head_dim": 64,
-        "vocab_size": 151936,
-        "max_context": 2048,
-        "tie_word_embeddings": True,
-        # Qwen2.5 besitzt Biases an q/k/v_proj (verifiziert gegen die echte
-        # models/Qwen2.5-0.5B/config.json, Feld "attention_bias"); die
-        # Runtime verlangt bei true die zugehoerigen Bias-Tensoren im
-        # Artefakt (ausserplanmaessiger Patch v0.12.19).
-        "attention_bias": True,
-        # Qwen2.5 kennt kein QK-Norm; erst Qwen3 normiert Q und K je Kopf
-        # vor RoPE. Ausdrueckliches False statt Weglassen, aus demselben
-        # Grund wie bei attention_bias: lautes Scheitern statt stiller
-        # Abweichung vom Referenzmodell.
-        "qk_norm": False,
-        # Dichtes Modell, kein Mixture-of-Experts-Modell.
-        "num_experts": 0,
-        "verified": "models/Qwen2.5-0.5B/config.json",
-        "hf_model_id": "Qwen/Qwen2.5-0.5B",
-    },
-    # Verifiziert gegen Qwen/Qwen2.5-7B (Basis), Revision
-    # d149729398750b98c0af14eb82c78cfe92750796. Drei Unterschiede zur
-    # 0.5B-Variante, die den Exportpfad tatsaechlich beruehren:
-    #   num_kv_heads   2 -> 4    (GQA-Gruppierung: 28 Query- auf 4 KV-Heads)
-    #   tie_word_embeddings True -> False  (eigenstaendiges lm_head.weight;
-    #                            die Weight-Tying-Ausnahme aus v0.12.25
-    #                            entfaellt hier, der LM-Head ist ohnehin
-    #                            ein eigener Tensor)
-    #   head_dim       64 -> 128 (RoPE-LUTs werden [max_context, 64] statt
-    #                            [max_context, 32] - LUT-Groesse verdoppelt)
-    # attention_bias True gilt weiter: die index.json der Variante fuehrt
-    # q_proj.bias/k_proj.bias/v_proj.bias je Layer.
-    "myelith-7b": {
-        "family": "qwen2.5",
-        "variant": "7b",
-        "num_layers": 28,
-        "hidden_size": 3584,
-        "intermediate_size": 18944,
-        "num_heads": 28,
-        "num_kv_heads": 4,
-        "head_dim": 128,
-        "vocab_size": 152064,
-        # Bewusst 2048 wie bei 0.5B, nicht die 131072 der Modellkarte: der
-        # max_context bestimmt die Zeilenzahl der RoPE-LUTs und damit die
-        # Artefaktgroesse. 2048 haelt die Messung mit dem 0.5B-Lauf
-        # vergleichbar; eine Erhoehung ist eine eigene Entscheidung.
-        "max_context": 2048,
-        "tie_word_embeddings": False,
-        "attention_bias": True,
-        "qk_norm": False,
-        # Dichtes Modell, kein Mixture-of-Experts-Modell.
-        "num_experts": 0,
-        "verified": "huggingface.co/Qwen/Qwen2.5-7B@d1497293",
-        "hf_model_id": "Qwen/Qwen2.5-7B",
-    },
     # Verifiziert gegen den lokalen Snapshot models/Qwen3-4B/config.json,
     # Revision 1cfa9a7208912126459214e8b04321603b3df60c, Lizenz Apache-2.0
     # (LICENSE liegt neben den Gewichten, ETHICS G7).
@@ -113,6 +61,51 @@ MODEL_CONFIGS = {
     #
     # tie_word_embeddings bleibt True wie bei 0,5B: kein eigenes
     # lm_head.weight im Export.
+    # Verifiziert gegen den lokalen Schnappschuss
+    # models/Qwen3-0.6B/config.json, Revision
+    # c1899de289a04d12100db370d81485cdf75e47ca, Lizenz Apache-2.0.
+    #
+    # ⚑ **Der neue Anker des Projekts** (2026-09-11, Festlegung des
+    # Projektinhabers): Er loest Qwen2.5-0,5B ab. Damit liegt die
+    # kleinste Groesse in derselben Familie wie 4B und 14B, und die
+    # Reihe misst eine Achse (Groesse) statt zweier (Groesse und
+    # Familie).
+    #
+    # Drei Unterschiede zum abgeloesten 0,5B, alle aus der Qwen3-Linie:
+    #   qk_norm        False -> True   (Q und K je Kopf normiert, vor RoPE)
+    #   attention_bias True  -> False  (keine Bias-Tensoren an q/k/v)
+    #   head_dim       64    -> 128    (bei hidden_size/num_heads = 64,
+    #                                   also wie bei 4B ausdruecklich
+    #                                   gesetzt und nicht gerechnet,
+    #                                   siehe Fund 59)
+    #
+    # ⚠️ `lm_head.weight` liegt bei diesem Schnappschuss **mit in den
+    # Gewichten**, obwohl `tie_word_embeddings` True ist. Das ist kein
+    # Widerspruch: Beim Binden ist der Kopf eine Sicht auf die
+    # Einbettung, und HF legt ihn trotzdem ab. Massgeblich ist das Feld
+    # aus der config, nicht das Vorhandensein des Tensors.
+    "myelith-0.6b": {
+        "family": "qwen3",
+        "variant": "0.6b",
+        "num_layers": 28,
+        "hidden_size": 1024,
+        "intermediate_size": 3072,
+        "num_heads": 16,
+        "num_kv_heads": 8,
+        "head_dim": 128,
+        "vocab_size": 151936,
+        # Wie bei allen uebrigen bewusst 2048 statt der 40960 der
+        # Modellkarte: max_context bestimmt die Zeilenzahl der RoPE-LUTs
+        # und damit die Artefaktgroesse.
+        "max_context": 2048,
+        "tie_word_embeddings": True,
+        "attention_bias": False,
+        "qk_norm": True,
+        # Dichtes Modell, kein Mixture-of-Experts-Modell.
+        "num_experts": 0,
+        "verified": "models/Qwen3-0.6B/config.json@c1899de2",
+        "hf_model_id": "Qwen/Qwen3-0.6B",
+    },
     "myelith-4b": {
         "family": "qwen3",
         "variant": "4b",
@@ -152,6 +145,34 @@ MODEL_CONFIGS = {
     # decoder_sparse_step 1 von keiner Layer benutzt. Es bleibt
     # eingetragen, weil es in der echten config steht; die Rechenarbeit
     # bemisst sich an moe_intermediate_size mal num_experts_per_tok.
+    # Verifiziert gegen den lokalen Schnappschuss
+    # models/Qwen3-14B/config.json, Revision
+    # 40c069824f4251a91eefaf281ebe4c544efd3e18, Lizenz Apache-2.0.
+    # Tensornamen zusaetzlich gegen die echte
+    # model.safetensors.index.json gehalten: 443 Tensoren, darunter
+    # `model.layers.<i>.self_attn.q_norm.weight`.
+    #
+    # ⛔️ **Hier stand `myelith-14b`, entfernt am 2026-09-12**
+    # (Festlegung des Projektinhabers). Es war das groesste **dichte**
+    # Modell des Projekts.
+    #
+    # **Begruendung:** schlechterer Durchsatz als das Gemisch (5,25
+    # gegen 10,1 Token je Sekunde), schlechtere Perplexitaet (11,54
+    # gegen 10,42), aufwendigeres Training, und es kostet 46 GB auf der
+    # Platte ohne Mehrwert.
+    #
+    # ⚑ **Und ein Befund aus dem Messen stuetzt das:** Auf einer
+    # Maschine mit 24 GiB ist das dichte Modell **unhandlicher als das
+    # groessere Gemisch**. Eine Perplexitaetsmessung kostete dort 19 bis
+    # 102 Minuten gegen zehn beim Gemisch. Ein dichtes Modell fasst bei
+    # jedem Vorwaertspass alle Gewichte an, ein Gemisch je Token acht
+    # von 128 Experten.
+    #
+    # ⚠️ **Was dabei verlorengeht, ist benannt:** Die dichte Reihe faellt
+    # von drei Punkten auf zwei, und ein Groessenvergleich misst damit
+    # wieder einen Architekturunterschied mit. Der Projektinhaber hat
+    # das gegen den Plattenbedarf abgewogen.
+    #
     "myelith-30b-a3b": {
         "family": "qwen3-moe",
         "variant": "30b-a3b",
@@ -192,7 +213,7 @@ MODEL_CONFIGS = {
         "vocab_size": 151936,
         "max_context": 32768,
     },
-    "myelith-7b-instruct": {
+    "qwen2.5-7b-instruct": {
         "num_layers": 28,
         "hidden_size": 3584,
         "intermediate_size": 18944,
@@ -341,7 +362,7 @@ def print_sharding_plan(model_name: str, num_nodes: int):
 
 if __name__ == "__main__":
     # Beispiel: Sharding-Plaene fuer verschiedene Konfigurationen
-    for model in ["myelith-0.5b", "myelith-7b-instruct", "qwen2.5-72b-instruct"]:
+    for model in ["myelith-0.6b", "myelith-30b-a3b", "qwen2.5-72b-instruct"]:
         for nodes in [2, 4, 8]:
             try:
                 print_sharding_plan(model, nodes)

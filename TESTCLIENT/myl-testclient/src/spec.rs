@@ -196,6 +196,68 @@ impl std::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
+/// Das Modell, mit dem der Prüfstand rechnet.
+///
+/// ⚑ **Fest, nicht wählbar** (2026-09-11, Festlegung des
+/// Projektinhabers). Ein Teilnehmer soll keine Einstellung treffen
+/// müssen, und die kleinste Größe der Reihe ist die richtige Wahl: Sie
+/// ist der Konformitätsanker des Projekts, sie lädt in Sekunden, und
+/// ihr Artefakt kostet 0,92 GB statt 16 oder 31.
+///
+/// **Die Bitgleichheit hängt nicht an der Modellgröße.** Zwei Maschinen
+/// rechnen entweder dieselben Bits oder nicht; ein größeres Modell
+/// findet dieselbe Abweichung nur langsamer.
+pub const PRUEFSTAND_MODELL: &str = "myelith-0.6b";
+
+/// Wie oft jeder Prompt im Determinismuslauf gerechnet wird.
+///
+/// Zwei ist das Minimum: Bitgleichheit braucht zwei Ergebnisse.
+pub const PRUEFSTAND_WIEDERHOLUNGEN: usize = 2;
+
+/// Der feste Prüfstand: **was auf jeder Maschine gerechnet wird.**
+///
+/// # ⚑ Warum das im Quelltext steht und nicht in einer Datei
+///
+/// Bis zum 2026-09-11 wählte jeder Teilnehmer einen Testplan aus einem
+/// Ordner. Das war eine Entscheidung, die er nicht treffen konnte: Wer
+/// zum ersten Mal misst, weiß nicht, was `standard` von
+/// `standard-kurz` unterscheidet, und **ein Teilnehmer mit dem falschen
+/// Plan liefert ein Protokoll, das mit keinem anderen vergleichbar
+/// ist.** Der Vergleich legt es dann in eine eigene Gruppe, und die
+/// Maschine hat umsonst gerechnet.
+///
+/// **Eine Einstellung, die alle gleich setzen müssen, ist keine
+/// Einstellung.** Sie gehört dorthin, wo niemand sie versehentlich
+/// ändert.
+///
+/// # Was die sechs Prompts abdecken
+///
+/// Sie nehmen verschiedene Wege durch das Modell: englische und
+/// deutsche Prosa, ein Fachtext in beiden Sprachen, eine Rechenaufgabe
+/// und eine Faktenzeile mit Zahlen und Eigennamen. **Ein einzelner
+/// Prompt übte einen einzigen Pfad aus**, und ein Rundungsfehler in
+/// einem selten getroffenen Bereich der Nachschlagetabellen bliebe
+/// darin unentdeckt.
+///
+/// ⚠️ **Wer hier etwas ändert, macht alle bisherigen Protokolle
+/// unvergleichbar.** Die Werte gehen in die Prüfsumme ein, die
+/// Prüfsumme in den Dateinamen und in das Urteil des Vergleichs.
+pub fn pruefstand() -> TestPlan {
+    TestPlan {
+        plan_id: "pruefstand".to_string(),
+        prompts: vec![
+            " The 2010 Haitian earthquake was a catastrophic magnitude 7.0 earthquake".to_string(),
+            "The capital of France is".to_string(),
+            "Die Hauptstadt von Frankreich ist".to_string(),
+            "In quantum mechanics, the wave function describes".to_string(),
+            "In der Quantenmechanik beschreibt die Wellenfunktion".to_string(),
+            "The result of 17 times 23 is".to_string(),
+        ],
+        steps: 32,
+        shards: 4,
+    }
+}
+
 impl TestPlan {
     /// Ein Plan mit den Vorgabewerten.
     pub fn vorgaben() -> Self {
@@ -492,7 +554,7 @@ mod tests {
     fn eine_alte_model_zeile_wird_ueberlesen() {
         let plan = TestPlan::vorgaben();
         let text = format!(
-            "prompt = {}\nsteps = {}\nshards = {}\nmodel = myelith-0.5b\nspec_sha256 = {}\n",
+            "prompt = {}\nsteps = {}\nshards = {}\nmodel = myelith-0.6b\nspec_sha256 = {}\n",
             zitieren(&plan.prompts[0]),
             plan.steps,
             plan.shards,
@@ -510,7 +572,7 @@ mod tests {
     /// verschiedene Prüfsummenverfahren nebeneinander zu führen.
     #[test]
     fn eine_alte_pruefsumme_wird_abgelehnt() {
-        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = myelith-0.5b\n\
+        let text = "prompt = x\nsteps = 8\nshards = 4\nmodel = myelith-0.6b\n\
                     spec_sha256 = 0000000000000000000000000000000000000000000000000000000000000000\n";
         assert!(matches!(
             TestPlan::parse(text),

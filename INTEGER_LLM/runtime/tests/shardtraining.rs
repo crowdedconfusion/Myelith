@@ -28,7 +28,7 @@ use integer_llm_runtime::shardtraining::{
 
 fn artefakte() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("myelith-0.5b")
+    std::path::PathBuf::from(manifest).join("..").join("artifacts").join("myelith-0.6b")
 }
 
 fn modell() -> Option<IntegerModel> {

@@ -43,7 +43,7 @@ mod artefakte;
 /// Beispiel: `MYL_POD_MODELL=myelith-30b-a3b cargo test --test pod_e2e`
 fn artifacts_dir() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     let mut p = PathBuf::from(manifest);
     // COMPUTE_PIPELINE/myl-pod → INTEGER_LLM/artifacts/<modell>
     p.push("..");
@@ -56,7 +56,17 @@ fn artifacts_dir() -> PathBuf {
 
 fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens: u64) -> Vec<Arc<ShardNode>> {
     let num_layers = model.num_layers;
-    let boundaries = [0usize, 6, 12, 18, num_layers];
+    // ⛑ **Aus dem Modell gerechnet und nicht eingetragen** (2026-09-11).
+    // Hier stand `[0, 6, 12, 18, num_layers]`, also vier gleiche Scheiben
+    // zu je sechs Ebenen **fuer ein Modell mit vierundzwanzig**. Beim
+    // Wechsel des Ankermodells auf achtundzwanzig bekam der letzte Shard
+    // zehn Ebenen und der erste sechs, und die Probe, die gleiche
+    // Groessen verlangt, schlug fehl.
+    //
+    // ⚑ **Der Rest faellt an die letzte Scheibe**, und das ist Absicht:
+    // Sie haelt ohnehin den LM-Kopf, also die groesste Einzellast.
+    let je = num_layers / 4;
+    let boundaries = [0usize, je, 2 * je, 3 * je, num_layers];
     let mut shards = Vec::new();
     for s in 0..4 {
         let layer_start = boundaries[s];
@@ -352,8 +362,8 @@ fn der_lm_kopf_zaehlt_beim_letzten_shard_mit() {
     let erster = myl_tokenomics::vtfe_gutschrift(&profil, &shards[0].zuschnitt(), 100).unwrap();
     let letzter = myl_tokenomics::vtfe_gutschrift(&profil, &shards[3].zuschnitt(), 100).unwrap();
 
-    // Gleich viele Layer (6 von 24), aber der letzte hält den LM-Kopf,
-    // und der wiegt bei 0,5B über neun Layer.
+    // Gleich viele Layer, aber der letzte hält den LM-Kopf, und der
+    // wiegt beim kleinsten Modell über mehrere Layer.
     assert_eq!(shards[0].layer_end - shards[0].layer_start, shards[3].layer_end - shards[3].layer_start);
     assert!(
         letzter > erster * 2,

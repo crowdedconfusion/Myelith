@@ -289,7 +289,7 @@ impl Default for KnotenKonfig {
             ortsleitung: None,
             ortsausweis: None,
             pod: None,
-            modellname: "myelith-myelith-0.5b".to_string(),
+            modellname: "myelith-myelith-0.6b".to_string(),
             kontoschluesseldatei: None,
             konto: None,
             testverkehr_sekunden: None,

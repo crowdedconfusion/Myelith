@@ -24,7 +24,7 @@ def artifacts_dir() -> Path:
 
 
 def model_artifacts_dir(model_name: str) -> Path:
-    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/myelith-0.5b."""
+    """Artefakt-Verzeichnis eines bestimmten Modells, z. B. artifacts/myelith-0.6b."""
     return artifacts_dir() / model_name
 
 
@@ -43,7 +43,7 @@ def models_dir() -> Path:
 def local_model_dir(model_name: str) -> Path:
     """
     Verzeichnis eines lokalen Modell-Snapshots unter models/, z. B.
-    models/Qwen2.5-0.5B. Schlägt mit einem klaren Hinweis fehl, falls der
+    models/Qwen3-0.6B. Schlägt mit einem klaren Hinweis fehl, falls der
     Snapshot fehlt — calibrate laedt ausschliesslich aus models/
     (reproduzierbare Herkunft, siehe models/README.md), nie aus dem
     impliziten Hugging-Face-Cache.

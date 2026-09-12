@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.32.1
-> **Datum:** 2026-09-10
+> **Version:** 0.36.0
+> **Datum:** 2026-09-11
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -157,7 +157,7 @@ Damit „alle nehmen exakt dieselben Werte" keine Bitte bleibt:
 
 ```bash
 # Koordinator:
-myl-test plan --plan-id 2026-08-21-cross-arch-01 --model myelith-0.5b \
+myl-test plan --plan-id 2026-08-21-cross-arch-01 --model myelith-0.6b \
   --prompt "Die Hauptstadt von Frankreich ist" \
   --prompt "The capital of France is" \
   --steps 32 --shards 4 \
@@ -543,6 +543,103 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 über einen Integrationstest.
 
 ## Changelog
+
+### v0.36.0 – 2026-09-12 (das dichte 14B ist entfallen)
+
+**Festlegung des Projektinhabers.** Das Projekt führt noch drei
+Modelle. Umgestellt sind die Testvorrichtungen, die den Namen als
+Beispiel benutzten, der Plattenbedarf und das Bildschirmbeispiel in der
+Anleitung (v2.19.0) sowie die Kopfzeilen der fünf Testpläne.
+
+⚑ **Die Laufzeitangaben sind neu gerechnet und nicht umbenannt**: 10,1
+statt 5,25 Token je Sekunde, also kürzere Läufe. Das Gemisch ist auf
+dieser Maschine schneller als das dichte Modell, das es ersetzt.
+
+### v0.35.0 – 2026-09-11 (ein Weg, keine Wahl)
+
+**Auftrag des Projektinhabers:** Nach der Animation nur noch die
+Namenseingabe, dann laufen alle Testläufe von selbst, am Ende Enter,
+Ergebnis in einem eigenen Ordner, Fenster zu. `Admin` führt in ein
+Menü, das nur noch auswertet.
+
+⚑ **Der Grund, warum das Menü überhaupt bestand, ist weggefallen.** Es
+trug zwei Aufgaben: messen und ausprobieren. Für das Ausprobieren gibt
+es seit CLIENT v0.17.0 einen eigenen Client samt Konsolenfassung.
+**Was bleibt, ist ein Messgerät, und ein Messgerät hat einen Knopf.**
+
+⛔️ **Und zwei Menüpunkte waren Entscheidungen, die ein Teilnehmer nicht
+treffen kann.** Artefakt und Testdatei müssen auf **allen** Maschinen
+gleich sein, sonst legt der Vergleich das Protokoll in eine eigene
+Gruppe und die Maschine hat umsonst gerechnet. **Eine Einstellung, die
+alle gleich setzen müssen, ist keine Einstellung.** Sie steht jetzt in
+`spec::pruefstand()`: sechs Prompts, 32 Token, 4 Shards, zwei
+Durchgänge, `myelith-0.6b`.
+
+⚑ **Und sie ist an die ausgelieferte Datei gedrahtet.** Eine Probe
+liest `Testpläne/standard.plan` und vergleicht die Prüfsumme mit der
+eingebauten. **Zwei Orte für dieselbe Angabe laufen auseinander**, und
+genau das ist an diesem Tag an vier anderen Stellen des Projekts
+passiert; hier kann es nicht still geschehen.
+
+**Neu: `TESTCLIENT/Ergebnisse/`.** `logs/` ist die Werkbank und sammelt
+jeden Lauf; der neue Ordner ist das Regal und enthält genau das, was
+verschickt wird. Bis heute endete ein Lauf mit einem Pfad nach `logs/`,
+und wer die falsche Datei griff, schickte einen Abbruch.
+
+**Nichts ist entfallen ausser dem Gespräch mit dem Modell.** Sechs
+Menüpunkte sind zu Befehlen geworden, drei davon neu: `myl-test
+aufraeumen`, `teilnehmen`, `anlaufstelle`. Die übrigen gab es schon.
+
+⛑ **Der Untertitel unter dem Logo nannte drei von sechs Stufen**, seit
+es nur drei gab. **Eine Aufzählung, die nicht mitwächst, wird zur
+Auswahl**, und so hat sie niemand gemeint.
+
+**Die Starter ziehen mit.** Unter Windows entfällt das `pause` nach
+einem erfolgreichen Lauf: Der Client wartet selbst auf Enter und sagt
+dazu, dass sich das Fenster schliesst; ein zweites Bestätigen hiesse,
+die erste Zusage war falsch. Unter macOS schliesst das App-Bündel das
+Terminalfenster, das es geöffnet hat, und **nur** dieses: Wer den
+Starter im eigenen Terminal aufruft, behält sein Fenster.
+
+### v0.34.0 – 2026-09-11 (der Testclient misst die Modelle, die es gibt)
+
+**Auftrag des Projektinhabers**, und er betraf genau diese Komponente:
+Nach dem Wechsel der Modellreihe musste auch der Testclient umgestellt
+werden.
+
+⛔️ **Der Gesamtlauf meldete ein anderes Modell, als er lud.** In
+`tests/gesamtlauf.rs` stand der Modellname **zweimal**: einmal als
+Verzeichnis (seit dem Ankerwechsel `myelith-0.6b`) und einmal als fester
+Text in der Meldung („Qwen2.5-0,5B geladen, auf 4 Shards verteilt"). Der
+Lauf lud also das neue Modell und **schrieb das alte ins Protokoll**.
+**Ein Bericht, der ein anderes Modell nennt als das geladene, ist
+schlimmer als keiner: Er sieht aus wie ein Beleg.** Der Name kommt jetzt
+aus einer Stelle, `modellschluessel()`.
+
+**Die Anleitung nennt neue Zahlen, nicht nur neue Namen** (`ANLEITUNG.md`
+v2.17.0): Plattenbedarf 1,7 auf **2,5 GB** und 23 auf **46 GB**, Raten
+24 auf **29 Token/s** und 2 auf **5 Token/s**, dazu die beiden
+Bildschirmbeispiele, die Laufzeittabelle und die Kopfzeilen der fünf
+mitgelieferten Testpläne.
+
+⚑ **Warum das mehr ist als Kosmetik:** Wer 23 GB freiräumt und dann 46
+braucht, bricht mitten im Download ab. Eine Anleitung mit einer falschen
+Zahl kostet einen Testpartner einen Abend.
+
+**Begründungen vom abgelösten Modell gelöst.** Drei Stellen begründeten
+lockere Zusicherungen mit „ein 0,5B-Modell schlägt oft kein Werkzeug
+vor". Die Aussage gilt der **Größenordnung** und ist am neuen Anker
+**nicht** nachgemessen; sie steht jetzt so da, und das Datum der alten
+Messung dabei. Ebenso das Tokenbudget in `menu.rs`: Die Zahl 64 bleibt
+richtig, die Rechnung dahinter war es nicht mehr.
+
+### v0.33.0 – 2026-09-11 (Katalogproben auf der neuen Modellreihe)
+
+⚑ **Die Proben, die den echten Katalog lesen, nennen jetzt Qwen3.**
+`hf_id("myelith-14b")` ergibt `Qwen3-14B`, und die Vorrichtungen
+legen `Qwen3-0.6B` an. Der geprueften Eigenschaft nach ist nichts
+anders: Artefaktname und Verzeichnisname unterscheiden sich weiter,
+und ein unbekanntes Modell bekommt weiter keine fremden Gewichte.
 
 ### v0.32.1 – 2026-09-10 (Fund 308: im Rohmodus ist ein Zeilenvorschub kein Zeilenende)
 

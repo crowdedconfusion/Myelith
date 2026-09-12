@@ -56,7 +56,7 @@ fn wurzel() -> PathBuf {
 }
 
 fn artefakte() -> PathBuf {
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     wurzel().join("INTEGER_LLM").join("artifacts").join(modell)
 }
 
@@ -320,7 +320,7 @@ impl Aufbau {
             Some(adresse),
             Some(ausweis.as_path()),
             Some(pod_bytes()),
-            "myelith-myelith-0.5b",
+            "myelith-myelith-0.6b",
             Some(&konsens),
             EpochId(0),
             betreiber,
@@ -375,7 +375,7 @@ impl Aufbau {
 
     async fn frage(&self, was: &str) -> (String, serde_json::Value) {
         let koerper = format!(
-            r#"{{"model":"myelith-myelith-0.5b","messages":[{{"role":"user","content":"{was}"}}],"max_tokens":8}}"#
+            r#"{{"model":"myelith-myelith-0.6b","messages":[{{"role":"user","content":"{was}"}}],"max_tokens":8}}"#
         );
         let bytes = post_bearer(WEG_CHAT, &self.bearer, koerper.as_bytes());
         let port = self.port;

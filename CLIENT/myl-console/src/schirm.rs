@@ -129,8 +129,26 @@ impl Schirm {
 
     /// Setzt den Wagen an den Anfang einer der eigenen Zeilen und
     /// raeumt sie.
+    ///
+    /// ⚠️ **Die Zahl darin zaehlt ab eins**, wie jede
+    /// ANSI-Positionierung. Wer denselben Versatz an
+    /// `crossterm::cursor::MoveTo` gibt, landet eine Zeile tiefer;
+    /// dafuer gibt es [`Self::wagenzeile`].
     pub fn zeile(&self, versatz: u16) -> String {
         format!("\x1b[{};1H\x1b[2K", self.erste_eigene() + versatz)
+    }
+
+    /// Dieselbe Zeile wie [`Self::zeile`], aber **ab null gezaehlt**,
+    /// also so, wie `crossterm::cursor::MoveTo` sie erwartet.
+    ///
+    /// ⛑ **Fund 347: hier stand nichts, und deshalb rechnete es jemand
+    /// von Hand nach.** Der blinkende Wagen sass eine Zeile unter der
+    /// Eingabe, weil derselbe Versatz einmal in eine ANSI-Sequenz
+    /// (ab eins) und einmal in `MoveTo` (ab null) ging. **Zwei
+    /// Zaehlweisen fuer dieselbe Zeile gehoeren an eine Stelle, sonst
+    /// trifft die Umrechnung irgendwann jemand falsch.**
+    pub fn wagenzeile(&self, versatz: u16) -> u16 {
+        (self.erste_eigene() + versatz).saturating_sub(1)
     }
 }
 
@@ -228,6 +246,44 @@ mod tests {
             // Eine Zahl im Test, die dieselbe Rechnung noch einmal
             // macht, prueft die Rechnung nicht.
             assert!(z.contains(&format!("[{};1H", s.erste_eigene() + versatz)), "{z:?}");
+        }
+    }
+
+    /// **Die Zeilennummer aus `zeile` und die aus `MoveTo` bezeichnen
+    /// dieselbe Zeile, aber nicht mit derselben Zahl.**
+    ///
+    /// ⛑ **Fund 347, gemeldet vom Projektinhaber.** Der blinkende Wagen
+    /// sass eine Zeile unter der Eingabe. Ursache: `zeile` schreibt
+    /// `ESC[{n};1H`, und die ANSI-Positionierung zaehlt **ab eins**;
+    /// `crossterm::cursor::MoveTo` zaehlt **ab null**. Wer dieselbe
+    /// Zahl in beide gibt, trifft zwei verschiedene Zeilen.
+    ///
+    /// Diese Probe haelt die Umrechnung fest, damit sie nicht wieder
+    /// jemand von Hand nachrechnet: **Wer in `zeile(v)` schreibt,
+    /// bewegt den Wagen mit `MoveTo(_, wagenzeile(v))` dorthin.**
+    ///
+    /// ⚠️ **Ein Test, der Steuersequenzen liest, haette den Fehler nicht
+    /// gefunden.** Er sieht die Zeile, in der etwas **steht**, und nicht
+    /// die, in der etwas **blinkt**. Deshalb prueft diese hier die
+    /// Umrechnung selbst und nicht das Bild.
+    #[test]
+    fn der_wagen_trifft_die_zeile_die_beschrieben_wurde() {
+        let s = Schirm { hoehe: 40 };
+        for versatz in 0..RESERVE {
+            let geschrieben = s.zeile(versatz);
+            // Die ANSI-Zeile aus der Sequenz herauslesen, nicht
+            // nachrechnen.
+            let ansi: u16 = geschrieben
+                .trim_start_matches("\x1b[")
+                .split(';')
+                .next()
+                .and_then(|z| z.parse().ok())
+                .expect("Zeilennummer");
+            assert_eq!(
+                s.wagenzeile(versatz),
+                ansi - 1,
+                "Wagen und Text liegen bei Versatz {versatz} auseinander"
+            );
         }
     }
 

@@ -24,7 +24,7 @@ allein das Schema.
 Referenz float32 (nicht bfloat16, zehnter Instrumentenfehler).
 
 Usage:
-    INTEGER_LLM_MODEL=myelith-0.5b python -u tests/diag/scheme_position_error.py <tok...>
+    INTEGER_LLM_MODEL=myelith-0.6b python -u tests/diag/scheme_position_error.py <tok...>
 """
 import sys
 from pathlib import Path

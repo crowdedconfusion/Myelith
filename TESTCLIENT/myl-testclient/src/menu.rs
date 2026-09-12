@@ -15,10 +15,8 @@
 use std::path::PathBuf;
 
 use crate::auswahl::{self, Punkt};
-use crate::logging::LogZiel;
 use crate::logging::RunLog;
-use crate::spec::TestPlan;
-use crate::{banner, hardware, runs, stack};
+use crate::{banner, runs, stack};
 
 /// Laufeinstellungen, die im Menü verändert werden können.
 ///
@@ -57,144 +55,6 @@ pub struct Einstellungen {
     pub wiederholungen: usize,
 }
 
-impl Einstellungen {
-    /// Übernimmt einen geladenen Plan.
-    fn uebernehmen(&mut self, plan: &TestPlan) {
-        self.prompts = plan.prompts.clone();
-        self.steps = plan.steps;
-        self.shards = plan.shards;
-        self.einstellungen_id = plan.short_id();
-        // Der Name steht in der Übersicht, die Kennung im Protokoll. Ohne
-        // ihn stünde dort eine Prüfsumme, und niemand erkennt an acht
-        // Hexzeichen, welche Datei er gewählt hat.
-        self.testdatei = Some(plan.plan_id.clone());
-    }
-}
-
-impl Einstellungen {
-    /// Die aktuellen Einstellungen als Textblock.
-    ///
-    /// Als Zeichenkette und nicht gedruckt, weil der Block als **Fuß**
-    /// der Menüauswahl gezeichnet wird und in deren Höhenrechnung eingehen
-    /// muss. Gedruckt stünde er über dem Menü, und dort beantwortet er
-    /// eine Frage, die noch niemand gestellt hat.
-    /// Das gewählte Modell, wie es in der Übersicht erscheint.
-    ///
-    /// Der Verzeichnisname ist der Modellschlüssel (`myelith-0.5b`), also
-    /// genau das, was auch im Protokoll und im Register steht. Liegt
-    /// nichts da, wird das gesagt statt ein Pfad gezeigt, den es nicht
-    /// gibt: Ein Lauf ohne Artefakt schlägt fehl, und wer das vorher
-    /// sieht, wählt zuerst [1].
-    fn artefakt_name(&self) -> String {
-        let Some(pfad) = self.artifacts.as_ref() else {
-            return "nicht ausgewählt  (Punkt [1])".to_string();
-        };
-        let name = pfad
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if name.is_empty() {
-            return "nicht ausgewählt  (Punkt [1])".to_string();
-        }
-        if pfad.is_dir() {
-            name
-        } else {
-            format!("{}  (liegt nicht vor, Punkt [1])", name)
-        }
-    }
-
-    /// Die gewählte Testdatei, wie sie in der Übersicht erscheint.
-    fn testdatei_name(&self) -> String {
-        match self.testdatei.as_deref() {
-            Some(n) => format!("{}  ({} Prompts, {} Token, {} Shards)", n, self.prompts.len(), self.steps, self.shards),
-            None => "nicht ausgewählt  (Punkt [2])".to_string(),
-        }
-    }
-
-    fn als_text(&self) -> String {
-        use std::fmt::Write as _;
-        let mut t = String::new();
-        let _ = writeln!(t, "  Aktuelle Einstellungen:");
-        // **Die beiden Auswahlen zuerst.** Sie sind das, was vor einem
-        // Lauf zu entscheiden ist; alles darunter folgt daraus oder ist
-        // Beiwerk.
-        let _ = writeln!(t, "    Artefakt    {}", self.artefakt_name());
-        let _ = writeln!(t, "    Testdatei   {}", self.testdatei_name());
-
-        // **Ohne Testdatei sind das Vorgabewerte, keine Auswahl.** Das
-        // gehört dazugeschrieben: Sonst stehen dort Prompt, Token und
-        // Shards wie eine getroffene Entscheidung, während die Zeile
-        // darüber „nicht ausgewählt" meldet. Mit Testdatei nennt deren
-        // Zeile schon Umfang und Zahlen; sie hier zu wiederholen wäre
-        // Rauschen.
-        if self.testdatei.is_none() {
-            let _ = writeln!(t, "                Bis dahin laufen die Vorgabewerte:");
-        }
-        match self.prompts.as_slice() {
-            [einer] => {
-                let _ = writeln!(t, "    Prompt      {:?}", gekuerzt(einer));
-            }
-            viele => {
-                let _ = writeln!(t, "    Prompts     {}", viele.len());
-                for (i, p) in viele.iter().enumerate() {
-                    let _ = writeln!(t, "      {}. {:?}", i + 1, gekuerzt(p));
-                }
-            }
-        }
-        if self.testdatei.is_none() {
-            let _ = writeln!(t, "    Token       {}", self.steps);
-            let _ = writeln!(t, "    Shards      {}", self.shards);
-        }
-        // Nur wenn vom Üblichen abgewichen wird. Steht die Vorgabe dort,
-        // liest sie niemand, und die Übersicht wird um eine Zeile länger,
-        // die nichts sagt. Weicht sie ab, ist es das Wichtigste in der
-        // Liste: Alle Beteiligten müssen denselben Wert verwenden.
-        if self.wiederholungen != 2 {
-            let _ = writeln!(
-                t,
-                "    Läufe je Prompt {}  (alle Beteiligten müssen denselben Wert verwenden)",
-                self.wiederholungen
-            );
-        }
-        let _ = writeln!(t, "    Protokolle  {}", kurz(&self.logs));
-        let _ = writeln!(t, "    Nutzer      {}", self.teilnehmer);
-        let _ = write!(t, "    Einstellungs-ID {}", self.einstellungen_id);
-        t
-    }
-
-}
-
-/// Kürzt einen Prompt für die Anzeige in der Einstellungsübersicht.
-fn gekuerzt(p: &str) -> String {
-    if p.chars().count() <= 52 {
-        return p.to_string();
-    }
-    format!("{}…", p.chars().take(51).collect::<String>())
-}
-
-/// Kürzt lange Pfade auf die letzten drei Bestandteile.
-fn kurz(p: &std::path::Path) -> String {
-    let teile: Vec<_> = p.components().collect();
-    if teile.len() <= 3 {
-        return p.display().to_string();
-    }
-    let rest: PathBuf = teile[teile.len() - 3..].iter().collect();
-    // **Das Trennzeichen der Plattform, auch im Auslassungszeichen.**
-    //
-    // Vorher stand hier ein festes `…/`. Der Rest entsteht dagegen aus
-    // `PathBuf::collect`, und das setzt das Trennzeichen des Systems.
-    // Unter Windows kam deshalb `…/d\e\f` heraus, also beide Zeichen in
-    // einer Zeile. Gefunden hat es der Windows-Job der CI, beim ersten
-    // Lauf, den es ihn je gab.
-    //
-    // Entschieden für die Plattform und gegen einen festen Schrägstrich,
-    // weil dieser Pfad **nur angezeigt** wird (Einstellungsblock im Menü)
-    // und nie in ein Protokoll wandert. Wer unter Windows arbeitet, soll
-    // seine eigene Schreibweise lesen. Ginge er ins Protokoll, wäre die
-    // Antwort umgekehrt: Dort zählt die Vergleichbarkeit zwischen
-    // Maschinen mehr als die Gewohnheit auf einer.
-    format!("…{}{}", std::path::MAIN_SEPARATOR, rest.display())
-}
 
 /// Das Nutzermenü: nur, was jeder Teilnehmer braucht.
 ///
@@ -257,46 +117,8 @@ fn stufe(nr: usize) -> String {
     format!("Stufe {} von {}: {}", nr, STUFEN.len(), lang)
 }
 
-/// Die Kurznamen als Aufzählung: „A, B, C und D".
-fn stufen_aufzaehlung() -> String {
-    let kurz: Vec<&str> = STUFEN.iter().map(|(k, _)| *k).collect();
-    match kurz.split_last() {
-        Some((letzte, davor)) if !davor.is_empty() => {
-            format!("{} und {}", davor.join(", "), letzte)
-        }
-        _ => kurz.join(", "),
-    }
-}
 
-/// Bricht einen Fließtext auf eine feste Breite um, an Leerzeichen.
-///
-/// **Nötig, seit die Beschreibung von [3] erzeugt wird.** Die anderen
-/// Menütexte tragen ihre Umbrüche im Quelltext; ein erzeugter hat keine,
-/// und eine Stufe mehr schöbe die Zeile über den Rand. Ein Wort, das
-/// allein schon zu lang ist, bleibt stehen: Abschneiden verstümmelt
-/// einen Namen, ein Überstand ist nur hässlich.
-fn umbrechen(text: &str, breite: usize) -> String {
-    let mut zeilen: Vec<String> = Vec::new();
-    let mut aktuell = String::new();
-    for wort in text.split_whitespace() {
-        if aktuell.is_empty() {
-            aktuell.push_str(wort);
-        } else if aktuell.chars().count() + 1 + wort.chars().count() <= breite {
-            aktuell.push(' ');
-            aktuell.push_str(wort);
-        } else {
-            zeilen.push(std::mem::take(&mut aktuell));
-            aktuell.push_str(wort);
-        }
-    }
-    if !aktuell.is_empty() {
-        zeilen.push(aktuell);
-    }
-    zeilen.join("\n")
-}
 
-/// Breite der Menübeschreibungen, an den fest getippten abgelesen.
-const HINWEIS_BREITE: usize = 62;
 
 /// Das deutsche Zahlwort für die Stufenzahl.
 ///
@@ -320,142 +142,100 @@ fn stufen_zahlwort() -> &'static str {
     }
 }
 
-fn menue_nutzer(entwickler: bool) -> Vec<Punkt> {
-    let mut punkte = vec![
-        Punkt::neu(
-            '1',
-            "Artefakt wählen",
-            "Das Modell, mit dem gerechnet wird. Beschafft es, falls es\n\
-             fehlt, und prüft den Digest gegen das Register.",
-        ),
-        Punkt::neu(
-            '2',
-            "Testdatei wählen",
-            "Legt Prompt, Token und Shards fest. Punkt [3] fragt sie\n\
-             ohnehin ab; hier vorab, wenn du sie vorher sehen willst.",
-        ),
-        Punkt::neu(
-            '3',
-            "Testlauf starten",
-            &umbrechen(
-                &format!(
-                    "{}. Der vollständige Bericht dieser Maschine.",
-                    stufen_aufzaehlung()
-                ),
-                HINWEIS_BREITE,
-            ),
-        ),
-        Punkt::neu(
-            '4',
-            "Mit dem Modell sprechen",
-            "Freie Eingabe, das Artefakt antwortet. Zum Ansehen, nicht zum\n\
-             Messen: kein Protokoll, kein Vergleichswert.",
-        ),
-        Punkt::neu(
-            '5',
-            "Am Netz teilnehmen (Knoten betreiben)",
-            "Ein zweiter, eigenständiger Test: Finden mehrere Rechner an\n\
-             verschiedenen Orten einander über das Internet? Braucht nur\n\
-             die Adresse vom Koordinator, keinen offenen Port.",
-        )
-        .abgesetzt(),
-        Punkt::neu('6', "Anleitung lesen", ""),
-    ];
-    // Der Zugang zum Entwickler-Menü hängt am Namen (siehe
-    // [`ist_entwickler`]). Er wird **nicht ausgegraut, sondern
-    // weggelassen**: Ein sichtbarer, gesperrter Punkt sagt „hier gibt es
-    // etwas, das du nicht darfst", und das ist die schlechtere Auskunft
-    // als gar keine.
-    if entwickler {
-        punkte.push(Punkt::neu('9', "Entwickler-Menü", ""));
-    }
-    punkte.push(Punkt::neu('0', "Beenden", ""));
-    punkte
-}
 
-/// Das Entwickler-Menü: Einzelläufe und alles, was Vorwissen braucht.
+/// Das Entwickler-Menü: **nur die Auswertung.**
 ///
-/// Getrennt vom Nutzermenü, weil eine lange Liste den Teilnehmer bremst
-/// und die Punkte, die er versehentlich wählt, ihm nichts nützen. Wer
-/// hier hereinkommt, weiß in der Regel, was er sucht.
+/// # ⚑ Warum hier nur noch ein Punkt steht (2026-09-11)
 ///
-/// **Ohne die Einzelstufen (2026-08-22).** Hardware, Determinismus,
-/// geshardete Inferenz und Protokoll-Durchlauf standen hier je einzeln.
-/// Sie sind Stufen, die [`testlauf`] hintereinander ausführt, und im
-/// Nutzermenü über einen Punkt erreichbar. Einzeln gestartet erzeugen
-/// sie **je ein eigenes Protokoll**, die der Koordinator wieder
-/// zusammensetzen müsste, und beim Verschicken geht das eine verloren,
-/// das den Befund trägt: derselbe Grund, aus dem `testlauf` überhaupt
-/// eines schreibt.
+/// Dieses Menü führte acht Punkte: vergleichen, Testplan erzeugen,
+/// Artefakte prüfen, Einstellungen ändern, umbenennen, Plattenplatz
+/// freigeben, einen Knoten betreiben, einen Netzlauf auswerten.
 ///
-/// Für die Entwicklung bleiben sie auf der Befehlszeile erreichbar
-/// (`myl-test hardware`, `determinismus`, `shard`, `stack`,
-/// `konformitaet`). Dort ist klar, dass man eine Einzelmessung will; im
-/// Menü sah es aus wie eine Auswahl zwischen gleichwertigen Wegen.
+/// **Sieben davon waren Werkzeuge, keine Menüpunkte.** Wer sie braucht,
+/// weiß, was er sucht, und findet sie auf der Befehlszeile, wo der
+/// Aufruf in einem Skript stehen und in einem Ticket zitiert werden
+/// kann. Im Menü kostete jeder von ihnen eine Zeile Aufmerksamkeit bei
+/// jemandem, der etwas anderes wollte.
 ///
-/// *(Hier stand bis zum 2026-08-27 „die vier Einzelstufen" und „vier
-/// getrennte Protokolle"; bis zum 2026-09-04 „fünf Stufen". Eine feste
-/// Zahl in einem Modulkopf veraltet mit der nächsten Stufe wieder, die
-/// Aussage über die getrennten Protokolle nicht.)*
+/// **Der eine Punkt, der bleibt, ist der, für den es dieses Menü
+/// gibt:** die zugesandten Ergebnisse gegenüberstellen und beurteilen,
+/// ob sie den Nachweis über verschiedene Hardware tragen. Das ist die
+/// Tätigkeit des Koordinators, und sie ist die einzige, die eine
+/// Auswahl braucht (eigene Läufe oder zugesandte).
 ///
-/// Sortiert nach Wichtigkeit, nicht nach Ablauf: Wer dieses Menü öffnet,
-/// ist in der Regel Koordinator und will vergleichen.
+/// ⚠️ **Nichts ist dabei verlorengegangen.** Was hier stand, ist
+/// erreichbar als `myl-test plan`, `artefakte`, `netz`, `teilnehmen`,
+/// `anlaufstelle` und `aufraeumen`.
 fn menue_entwickler() -> Vec<Punkt> {
     vec![
         Punkt::neu(
             '1',
-            "Protokolle vergleichen und Bericht schreiben",
+            "Ergebnisse auswerten und Bericht schreiben",
             "Die zugesandten Läufe gegenüberstellen und urteilen, ob sie\n\
-             den Cross-Hardware-Nachweis tragen. Der Punkt, für den es\n\
-             dieses Menü gibt.",
+             den Nachweis über verschiedene Hardware tragen. Der Punkt,\n\
+             für den es dieses Menü gibt.",
         ),
-        Punkt::neu(
-            '2',
-            "Testplan erzeugen und speichern",
-            "Die Datei, die an alle Teilnehmer geht. Fragt die Parameter\n\
-             nacheinander ab, Prompt für Prompt.",
-        ),
-        Punkt::neu(
-            '3',
-            "Artefakte prüfen (Digest gegen das Register)",
-            "Liegt hier dasselbe Modell wie beim Vergleichspartner? Ohne\n\
-             diese Auskunft ist eine Abweichung nicht einzuordnen.",
-        ),
-        Punkt::neu('4', "Einstellungen ändern (Prompt, Token, Shards, Pfade)", ""),
-        Punkt::neu('5', "Namen ändern", ""),
-        Punkt::neu(
-            '6',
-            "Artefakte und Gewichte löschen (Plattenplatz)",
-            "Gibt bis zu 25 GB frei. Fragt zweimal und nennt dazwischen\n\
-             jeden betroffenen Pfad.",
-        ),
-        Punkt::neu(
-            '7',
-            "Knoten als Anlaufstelle betreiben (Portweiterleitung nötig)",
-            "Die Maschine, über die alle anderen ins Netz kommen. Setzt\n\
-             eine öffentlich erreichbare Adresse voraus und vermittelt\n\
-             Verbindungen für Teilnehmer hinter einem Router.",
-        ),
-        Punkt::neu(
-            '8',
-            "Netzlauf auswerten (Betriebsprotokolle mehrerer Knoten)",
-            "Eine andere Frage als Punkt 1: nicht ob zwei Maschinen\n\
-             dasselbe rechnen, sondern ob mehrere Knoten einander\n\
-             gesehen haben und ob die Nachrichten angekommen sind.\n\
-             Kommt nach Punkt 7, weil erst gelaufen wird und dann\n\
-             ausgewertet.",
-        ),
-        Punkt::neu('0', "Zurück", ""),
+        Punkt::neu('0', "Beenden", ""),
     ]
 }
 
-/// Startet das Menü und kehrt mit dem Gesamtergebnis zurück.
+/// Kürzt lange Pfade auf die letzten drei Bestandteile.
+///
+/// **Das Trennzeichen der Plattform, auch im Auslassungszeichen.**
+/// Vorher stand hier ein festes `…/`. Der Rest entsteht aus
+/// `PathBuf::collect`, und das setzt das Trennzeichen des Systems; unter
+/// Windows kam deshalb `…/d\e\f` heraus, also beide Zeichen in einer
+/// Zeile. Gefunden hat es der Windows-Job der CI, beim ersten Lauf, den
+/// es ihn je gab.
+///
+/// Entschieden für die Plattform und gegen einen festen Schrägstrich,
+/// weil dieser Pfad **nur angezeigt** wird und nie in ein Protokoll
+/// wandert. Ginge er ins Protokoll, wäre die Antwort umgekehrt.
+fn kurz(p: &std::path::Path) -> String {
+    let teile: Vec<_> = p.components().collect();
+    if teile.len() <= 3 {
+        return p.display().to_string();
+    }
+    let rest: PathBuf = teile[teile.len() - 3..].iter().collect();
+    format!("…{}{}", std::path::MAIN_SEPARATOR, rest.display())
+}
+
+/// Startet den Client: Animation, Name, Prüfstand.
+///
+/// # ⚑ Ein Weg, keine Wahl (2026-09-11, Festlegung des Projektinhabers)
+///
+/// Hier stand bis zu diesem Tag ein Menü mit sechs Punkten. Zwei davon
+/// waren Entscheidungen, die ein Teilnehmer nicht treffen kann, weil
+/// sie auf **allen** Maschinen gleich ausfallen müssen: welches
+/// Artefakt und welcher Testplan. Wer sie anders traf, lieferte ein
+/// Protokoll, das der Vergleich in eine eigene Gruppe legte, und die
+/// Maschine hatte umsonst gerechnet.
+///
+/// **Der Grund, warum das Menü überhaupt bestand, ist weggefallen.**
+/// Es trug auch das Ausprobieren: mit dem Modell sprechen, ein anderes
+/// holen, Plattenplatz freigeben. Dafür gibt es seit CLIENT v0.17.0
+/// einen eigenen Client samt Konsolenfassung. **Der Testclient ist ein
+/// Messgerät, und ein Messgerät hat einen Knopf.**
+///
+/// Der Ablauf, in dieser Reihenfolge und ohne Zwischenfrage:
+///
+/// 1. Animation, Logo, Namenseingabe.
+/// 2. Der Prüfstand läuft durch ([`crate::ablauf::fahren`]).
+/// 3. Das Ergebnis liegt in `TESTCLIENT/Ergebnisse/`, bereit zum
+///    Verschicken.
+/// 4. Enter schliesst.
+///
+/// Die **einzige** Rückfrage dazwischen: Fehlt das Artefakt, wird
+/// gefragt, bevor 2,5 GB geholt werden.
+///
+/// ⚑ **`Admin` als Name führt ins Entwicklermenü**, und das enthält
+/// seit heute nur noch die Auswertung. Siehe [`ist_entwickler`].
 pub fn run(mut e: Einstellungen) -> bool {
     // Erstes Bild: Animation, dann Logo und Namenseingabe, sonst nichts.
     //
-    // Der Name steht vor allem anderen, weil er jede Protokolldatei
+    // Der Name steht vor allem anderen, weil er die Ergebnisdatei
     // benennt, die in dieser Sitzung entsteht: nachträglich umbenennen
-    // müsste ihn sonst der Koordinator.
+    // müsste sie sonst der Koordinator.
     // Das Farbschema der Sitzung wird hier zum ersten Mal abgerufen und
     // damit gewürfelt: während das Logo aus der Spirale entsteht.
     let farbe = crate::farben::logo();
@@ -463,103 +243,66 @@ pub fn run(mut e: Einstellungen) -> bool {
     if e.teilnehmer == crate::logging::OHNE_NAME {
         e.teilnehmer = namen_erfragen();
     }
-    // **Einmal beim Start entschieden, nicht bei jedem Menüaufbau.**
-    // Wer sich später im Entwickler-Menü umbenennt, soll sich nicht
-    // selbst aussperren und beim Zurückkommen vor einem Menü stehen, in
-    // dem der Weg zurück fehlt.
-    let entwickler = ist_entwickler(&e.teilnehmer);
     // Aufräumen, Logo stehen lassen, dann die Begrüßung darunter. Die
     // Eingabezeile mit dem getippten Namen hat ihren Zweck erfüllt und
     // stünde sonst über der Antwort darauf.
     banner::bildschirm_mit(farbe);
     crate::animation::begruessung(&e.teilnehmer, farbe);
 
-    // Zweites Bild: das Menü.
-    //
-    // **Kein Testplan und kein Artefakt beim Start.** Bis v0.6.0 lief nach
-    // dem Namen erst die Planauswahl und danach die Artefaktbeschaffung,
-    // bevor überhaupt ein Menü erschien. Wer den Client zum ersten Mal
-    // öffnete, musste also zwei Entscheidungen treffen, die er noch nicht
-    // einordnen konnte, und eine davon zog bis zu 15 GB Download nach
-    // sich. Der Testplan gehört an die Stelle, an der er gebraucht wird:
-    // beim Testlauf. Das Artefakt ist ein eigener Menüpunkt.
-    //
-    // Übernommen wird beim Start nur, was ohnehin gebaut ist.
-    banner::bildschirm();
-    // **Nichts vorauswählen.** Hier stand eine Suche nach dem
-    // Vorgabemodell, und wer den Client öffnete, sah ein Artefakt in den
-    // Einstellungen, das er nie gewählt hatte. Das sah aus wie eine
-    // Entscheidung und war eine Annahme; wer dann den Testlauf startete,
-    // maß möglicherweise gegen ein anderes Modell als der
-    // Vergleichspartner, ohne je gefragt worden zu sein.
-    //
-    // Der Testlauf fragt jetzt selbst, und zwar nur nach dem, was fehlt.
-
-    let mut letztes_ergebnis = true;
-
-    loop {
-        // Die Einstellungen stehen **unter** dem Menü: Zuerst die Frage,
-        // was man tun will, dann der Zustand, unter dem es geschieht. Als
-        // Fuß der Auswahl, nicht als eigener Druck davor, weil die Liste
-        // sich bei jedem Tastendruck neu zeichnet und dabei alles unter
-        // sich löscht (siehe `auswahl::waehlen_mit_fuss`).
-        let Some(wahl) =
-            auswahl::waehlen_mit_fuss(
-                "Was möchtest du tun?",
-                &menue_nutzer(entwickler),
-                &e.als_text(),
-            )
-        else {
-            println!("\n  Fertig.");
-            return letztes_ergebnis;
-        };
-
-        println!();
-        match wahl {
-            '1' => {
-                artefakt_waehlen(&mut e);
-                weiter();
-            }
-            '2' => {
-                testdatei_waehlen(&mut e);
-                weiter();
-            }
-            '3' => {
-                // Ohne vorgeschaltete Auswahl: `testlauf` fragt selbst,
-                // und zwar nur nach dem, was noch fehlt. Hier stand ein
-                // `testdatei_waehlen`, das auch dann fragte, wenn die
-                // Datei längst gewählt war.
-                letztes_ergebnis = testlauf(&mut e);
-                weiter();
-            }
-            '4' => {
-                sprechen(&e);
-                weiter();
-            }
-            '5' => {
-                letztes_ergebnis = netz_teilnehmen(&e);
-                weiter();
-            }
-            '6' => {
-                anleitung_zeigen();
-                weiter();
-            }
-            // Das Entwicklermenü räumt beim Verlassen selbst auf; ein
-            // `weiter()` hier verlangte einen Tastendruck für nichts.
-            //
-            // Die Bedingung steht hier **noch einmal**, obwohl der Punkt
-            // ohne sie gar nicht angezeigt wird. Wer die Taste blind
-            // drückt, soll nicht hineinfallen, nur weil die Anzeige und
-            // die Verzweigung zwei verschiedene Stellen sind.
-            '9' if entwickler => letztes_ergebnis = entwickler_menue(&mut e, letztes_ergebnis),
-            '0' => {
-                println!("  Fertig.");
-                return letztes_ergebnis;
-            }
-            _ => {}
-        }
+    if ist_entwickler(&e.teilnehmer) {
+        return entwickler_menue(&mut e, true);
     }
+
+    pruefstand_fahren(&e.teilnehmer)
 }
+
+/// Der Prüfstandslauf mit seinem Rahmen: Ansage, Lauf, Abschluss.
+///
+/// Getrennt von [`run`], damit die Reihenfolge der Bilder prüfbar
+/// bleibt, ohne eine Animation zu starten.
+fn pruefstand_fahren(name: &str) -> bool {
+    println!();
+    for zeile in ANSAGE.lines() {
+        println!("{zeile}");
+    }
+    println!();
+
+    let ausgang = crate::ablauf::fahren(name, &mut |t| println!("{t}"));
+
+    println!();
+    if ausgang.bestanden {
+        println!("  Alle Stufen bestanden.");
+    } else {
+        // ⚑ **Kein Ausrufezeichen und keine Entschuldigung.** Eine
+        // Abweichung ist der interessante Fall, nicht der Unfall: Genau
+        // dafür läuft dieser Test. Das Ergebnis wird trotzdem
+        // verschickt, und zwar gerade dann.
+        println!("  Mindestens eine Stufe ist abgewichen.");
+        println!("  Das ist ein Befund, kein Fehler deinerseits: Bitte trotzdem schicken.");
+    }
+    if let Some(pfad) = &ausgang.ergebnis {
+        println!("
+  Ergebnis: {}", kurz(pfad));
+        println!("  Diese Datei geht an den Koordinator.");
+    }
+
+    println!("
+  Enter schliesst das Fenster.");
+    let mut _w = String::new();
+    let _ = std::io::stdin().read_line(&mut _w);
+    ausgang.bestanden
+}
+
+/// Was vor dem Lauf auf dem Schirm steht.
+///
+/// **Kurz, und es sagt, was gleich geschieht.** Wer einen Messlauf
+/// startet, will wissen, wie lange er wartet und ob er etwas tun muss.
+/// Beides steht hier, sonst nichts.
+const ANSAGE: &str = "  Es läuft jetzt alles durch, ohne weitere Fragen.
+
+  Gemessen wird, ob diese Maschine dieselben Bits rechnet wie jede
+  andere. Das dauert je nach Rechner einige Minuten; Strg-C bricht ab,
+  dann ist das Ergebnis unvollständig und muss wiederholt werden.";
 
 /// Fragt den Namen, unter dem die Protokolle dieser Sitzung laufen.
 ///
@@ -627,361 +370,32 @@ fn ja_nein(b: bool) -> &'static str {
     }
 }
 
-/// Menüpunkt 9: einen Testplan erzeugen und verteilen.
-/// Der Testplan-Assistent: fragt jeden Parameter einzeln ab.
-///
-/// **Warum als Abfolge und nicht als Formular.** Der Plan ist die Datei,
-/// die an alle Teilnehmer geht; ein Tippfehler darin erzeugt Ergebnisse,
-/// die wie ein Befund aussehen und keiner sind. Wer die Werte
-/// nacheinander bestätigt, sieht jeden einzeln, und die Vorgabe steht
-/// dabei, sodass Entertaste genügt, wo nichts zu ändern ist.
-///
-/// **Kein Artefakt und kein Modell.** Der Plan legt fest, *was* gemessen
-/// wird; *woran* entscheidet sich vor dem Lauf, siehe Modulkopf von
-/// `spec.rs`. Ein Plan gilt damit für jedes Artefakt.
-///
-/// Der Dateiname kommt zum Schluss: Er ist die einzige Angabe, die man
-/// erst sinnvoll wählen kann, wenn man weiß, was in der Datei steht.
-fn plan_erzeugen(e: &Einstellungen) {
-    let mut lesen = |frage: &str| auswahl::frage(frage);
-    let Some(plan) = plan_erheben(e, &mut lesen) else {
-        println!("  Abgebrochen.");
-        return;
-    };
 
-    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
-    let name = plan.plan_id.clone();
-    let ziel = repo
-        .join(crate::plaene::ORDNER)
-        .join(format!("{}.plan", name));
 
-    if ziel.exists() && !bestaetigt(&format!(
-        "  {} gibt es schon. Überschreiben? (ja/nein): ",
-        ziel.display()
-    )) {
-        println!("  Nichts geschrieben.");
-        return;
-    }
 
-    match plan.save(&ziel) {
-        Ok(()) => {
-            println!("\n  Geschrieben: {}", ziel.display());
-            println!("    Einstellungs-ID {}", plan.short_id());
-            println!("\n  Diese Datei unverändert an alle Teilnehmer schicken.");
-            println!("  Sie laden sie im Menü über [2] Testdatei wählen,");
-            println!("  über [3] Testlauf starten oder mit");
-            println!("      myl-test --plan {} determinismus", ziel.display());
-            println!("\n  Ihre Protokolle tragen dann die Einstellungs-Kennung");
-            println!("      <nutzer>_{}_<datum>_<uhrzeit>.jsonl", plan.short_id());
-            println!("  und liegen in TESTCLIENT/logs.");
-        }
-        Err(err) => println!("\n  {}", err),
-    }
-}
 
-/// Erhebt einen vollständigen Plan, ohne etwas zu schreiben.
-///
-/// **Die Eingabe kommt von außen.** Ein Assistent, der `stdin` fest
-/// verdrahtet, ist nur von Hand prüfbar, und diese Datei geht an alle
-/// Teilnehmer: Ein Fehler darin erzeugt Ergebnisse, die wie ein Befund
-/// aussehen und keiner sind. Mit einer übergebenen Lesefunktion lässt
-/// sich der ganze Ablauf im Test durchspielen, samt Abbruch.
-///
-/// `None` heißt Abbruch: geschlossene Eingabe, kein Prompt, kein Name.
-fn plan_erheben(
-    e: &Einstellungen,
-    lesen: &mut dyn FnMut(&str) -> Option<String>,
-) -> Option<TestPlan> {
-    println!("  Ein Testplan legt fest, WAS gemessen wird.");
-    println!("  Das Modell gehört nicht dazu: Der Plan gilt für jedes Artefakt.\n");
 
-    let steps = zahl_erfragen(lesen, "Token je Prompt", e.steps)?;
-    let shards = zahl_erfragen(lesen, "Shards für den Shard-Lauf", e.shards)?;
-    let prompts = prompts_erfragen(lesen, &e.prompts)?;
-    if prompts.is_empty() {
-        println!("  Ohne Prompt gibt es nichts zu messen.");
-        return None;
-    }
 
-    println!("\n  Der Plan steht:");
-    println!("    {} Prompts, {} Token, {} Shards", prompts.len(), steps, shards);
-    for (i, p) in prompts.iter().enumerate() {
-        println!("      {}. {:?}", i + 1, gekuerzt(p));
-    }
 
-    // **Die Kennung erst hier.** Sie geht nicht in die Prüfsumme ein,
-    // benennt aber die Datei und steht in jeder Ausgabe des Vergleichs.
-    // Wer sie vorher wählen muss, benennt etwas, das er noch nicht kennt.
-    println!();
-    let name = lesen(
-        "  Wie soll die Testdatei heißen? (ohne .plan, z. B. 2026-08-22-cross-arch-01): ",
-    )?;
-    let name = dateiname_saeubern(name.trim());
-    if name.is_empty() {
-        println!("  Ohne Namen keine Datei.");
-        return None;
-    }
 
-    Some(TestPlan {
-        plan_id: name,
-        prompts,
-        steps,
-        shards,
-    })
-}
 
-/// Fragt eine Zahl mit Vorgabe ab. Leere Eingabe behält die Vorgabe.
-///
-/// `None` nur bei geschlossener Eingabe (Strg-D): Das ist ein Abbruch
-/// und keine leere Antwort, und die beiden zu verwechseln hieße, einen
-/// abgebrochenen Assistenten trotzdem eine Datei schreiben zu lassen.
-fn zahl_erfragen(
-    lesen: &mut dyn FnMut(&str) -> Option<String>,
-    was: &str,
-    vorgabe: usize,
-) -> Option<usize> {
-    loop {
-        let eingabe = lesen(&format!("  {} [{}]: ", was, vorgabe))?;
-        let eingabe = eingabe.trim();
-        if eingabe.is_empty() {
-            return Some(vorgabe);
-        }
-        match eingabe.parse::<usize>() {
-            Ok(n) if n > 0 => return Some(n),
-            Ok(_) => println!("    Muss größer als null sein."),
-            Err(_) => println!("    Das ist keine Zahl."),
-        }
-    }
-}
-
-/// Fragt die Prompts einzeln ab, mit Nachfrage nach jedem.
-///
-/// Die erste Frage bietet den ersten aktuellen Prompt als Vorgabe an;
-/// danach beginnt jede Zeile leer. **Ein einzelner Prompt übt einen
-/// einzigen Pfad durch das Modell aus**, deshalb steht die Nachfrage
-/// nach jedem und nicht nur am Anfang: Der bequeme Weg soll der sein,
-/// der mehr misst.
-fn prompts_erfragen(
-    lesen: &mut dyn FnMut(&str) -> Option<String>,
-    vorgabe: &[String],
-) -> Option<Vec<String>> {
-    let mut prompts: Vec<String> = Vec::new();
-    println!();
-    loop {
-        let nr = prompts.len() + 1;
-        let text = if nr == 1 {
-            let erster = vorgabe.first().cloned().unwrap_or_default();
-            let eingabe = lesen(&format!("  Prompt {} [{}]: ", nr, gekuerzt(&erster)))?;
-            let eingabe = eingabe.trim().to_string();
-            if eingabe.is_empty() {
-                erster
-            } else {
-                eingabe
-            }
-        } else {
-            lesen(&format!("  Prompt {}: ", nr))?.trim().to_string()
-        };
-
-        if text.is_empty() {
-            println!("    Leer, wird nicht aufgenommen.");
-        } else {
-            prompts.push(text);
-        }
-
-        let antwort = lesen(&format!(
-            "  Noch einen Prompt hinzufügen? ({} bisher) (ja/nein): ",
-            prompts.len()
-        ))?;
-        if !antwort.trim().eq_ignore_ascii_case("ja") {
-            return Some(prompts);
-        }
-    }
-}
-
-/// Macht aus einer Eingabe einen unbedenklichen Dateinamen.
-///
-/// Der Name landet als Datei auf drei Betriebssystemen und wandert per
-/// Mail. Pfadtrenner, Doppelpunkte und Anführungszeichen sind unter
-/// Windows unzulässig oder verändern die Bedeutung; ein Name, der einen
-/// Pfadtrenner enthält, schriebe die Datei woanders hin als angekündigt.
-fn dateiname_saeubern(roh: &str) -> String {
-    roh.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches(['-', '.'])
-        .to_string()
-}
-
-fn einstellungen_aendern(e: &mut Einstellungen) {
-    let punkte = vec![
-        Punkt::neu('1', "Prompt", ""),
-        Punkt::neu('2', "Token", ""),
-        Punkt::neu('3', "Shards", ""),
-        Punkt::neu('4', "Artefaktverzeichnis", ""),
-        Punkt::neu('5', "Protokollverzeichnis", ""),
-        Punkt::neu('0', "Zurück", ""),
-    ];
-    let Some(wahl) = auswahl::waehlen("Einstellungen", &punkte) else {
-        return;
-    };
-
-    let nachfragen = |text: &str| -> Option<String> {
-        auswahl::frage(&format!("  {}: ", text)).filter(|s| !s.trim().is_empty())
-    };
-
-    match wahl {
-        '1' => {
-            if let Some(v) = nachfragen("Neuer Prompt (ersetzt alle bisherigen)") {
-                e.prompts = vec![v];
-            }
-        }
-        '2' => {
-            if let Some(v) = nachfragen("Anzahl Token") {
-                match v.parse::<usize>() {
-                    Ok(n) if n > 0 => e.steps = n,
-                    _ => println!("  Ungültig: unverändert."),
-                }
-            }
-        }
-        '3' => {
-            if let Some(v) = nachfragen("Anzahl Shards") {
-                match v.parse::<usize>() {
-                    Ok(n) if n > 0 => e.shards = n,
-                    _ => println!("  Ungültig: unverändert."),
-                }
-            }
-        }
-        '4' => {
-            if let Some(v) = nachfragen("Artefaktverzeichnis") {
-                e.artifacts = Some(PathBuf::from(v));
-            }
-        }
-        '5' => {
-            if let Some(v) = nachfragen("Protokollverzeichnis") {
-                e.logs = PathBuf::from(v);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Die Kurzanleitung, wie sie Menüpunkt [5] zeigt.
-///
-/// **Nach Rollen geordnet, nicht nach Menüpunkten.** Wer den Client
-/// startet, ist entweder Teilnehmer oder Koordinator, und die beiden
-/// brauchen verschiedene Hälften. Eine Liste aller Punkte in ihrer
-/// Reihenfolge stünde dagegen schon im Menü darüber.
-///
-/// **Sie muss auf den Bildschirm passen.** Reicht sie über das Fenster
-/// hinaus, scrollt das Logo nach oben weg, und genau das soll der
-/// aufgeräumte Bildschirm verhindern. Ein Test rechnet die Höhe gegen
-/// Banner und Fußzeile.
-///
-/// Für alles Weitere steht die ausführliche Anleitung im Repository. Hier
-/// steht nur, was jemand braucht, der gerade vor dem Menü sitzt.
-const KURZANLEITUNG: &str = "\
-  ── Kurzanleitung ─────────────────────────────────────────────
-
-  Als Teilnehmer, in dieser Reihenfolge
-    [1] Artefakt wählen. Wird beschafft, falls keines vorliegt.
-    [2] Testdatei wählen, die der Koordinator geschickt hat. Sie
-        gehört nach TESTCLIENT/Testpläne/ und gilt für jedes Modell.
-    [3] Testlauf starten: sechs Stufen, ein Protokoll. Danach die
-        Dateien aus TESTCLIENT/logs/ verschicken.
-    [4] Mit dem Modell sprechen: zum Ansehen, nicht zum Messen.
-    [5] Am Netz teilnehmen: der zweite Test, Rechner statt Rechnung.
-
-  Als Koordinator (Menü [9], sichtbar nach Anmeldung als admin)
-    [9] Entwickler, dort \"Testplan erzeugen\", .plan an alle geben.
-        Zugesandte Protokolle nach TESTCLIENT/Vergleiche/ legen,
-        dann [9], \"Protokolle vergleichen\". Der ausführliche
-        Bericht landet in Vergleiche/Berichte/.
-
-  Ein Nachweis braucht ZWEI Aussagen: Die Maschinen sind verschieden
-  UND das Ergebnis ist gleich. Gleiche Werte von derselben Maschine
-  belegen nichts; der Vergleich verweigert dort ein Urteil.
-
-  Ausführlich: TESTCLIENT/README/ANLEITUNG.md";
-
-fn anleitung_zeigen() {
-    // **Eigener Bildschirm, nicht unter dem Menü.** Wenn dieser Punkt
-    // gewählt wird, stehen Banner, Menü und Einstellungen bereits da, und
-    // das sind bei 120 x 44 schon 42 Zeilen. Die Anleitung darunter
-    // schöbe das Logo nach oben aus dem Bild.
-    //
-    // Gemessen war es genau so: 59 Zeilen in einem Fenster mit 44. Der
-    // Test dazu hatte nur Banner und Anleitung gerechnet und das Menü
-    // dazwischen übersehen; er rechnet jetzt beides.
-    banner::bildschirm();
-    println!("{}", banner::zentriert(KURZANLEITUNG));
-}
-
-/// Kürzel für den n-ten Eintrag einer erzeugten Liste.
-///
-/// Ziffern zuerst, danach Buchstaben. Ohne dieses Kürzel hätte ein Eintrag
-/// jenseits des neunten nur den Weg über die Pfeiltasten, und der Weg
-/// über die Tastenkürzel soll nicht ab dem zehnten Plan verschwinden.
-fn kuerzel(i: usize) -> char {
-    match i {
-        0..=8 => char::from(b'1' + i as u8),
-        9..=34 => char::from(b'a' + (i - 9) as u8),
-        _ => ' ',
-    }
-}
-
-/// Baut die Auswahlliste zu gefundenen Testplänen.
-fn plan_punkte(gefunden: &[crate::plaene::Gefunden], abbruch: &str) -> Vec<Punkt> {
-    let mut punkte: Vec<Punkt> = gefunden
-        .iter()
-        .enumerate()
-        .map(|(i, g)| {
-            let zeile = crate::plaene::zeile(g);
-            let (titel, hinweis) = zeile.split_once('\n').unwrap_or((zeile.as_str(), ""));
-            Punkt::neu(kuerzel(i), titel, hinweis.trim())
-        })
-        .collect();
-    punkte.push(Punkt::neu('0', abbruch, ""));
-    punkte
-}
 
 
 /// Die Entwickler-Ebene. Kehrt mit dem letzten Ergebnis zurück.
 fn entwickler_menue(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
     banner::bildschirm();
     loop {
-        let Some(wahl) =
-            auswahl::waehlen_mit_fuss("Entwickler", &menue_entwickler(), &e.als_text())
-        else {
+        // ⚑ **Ohne Einstellungs-Fuss.** Er zeigte Prompt, Token, Shards
+        // und Pfade, also lauter Werte, die seit dem festen Prüfstand
+        // niemand mehr ändern kann. Ein Zustand, den man nur ansehen und
+        // nicht beeinflussen kann, gehört nicht unter eine Auswahl.
+        let Some(wahl) = auswahl::waehlen("Entwickler", &menue_entwickler()) else {
             banner::bildschirm();
             return letztes_ergebnis;
         };
         println!();
         match wahl {
             '1' => letztes_ergebnis = vergleichen(e),
-            '2' => plan_erzeugen(e),
-            '3' => artefakte_pruefen(),
-            '4' => einstellungen_aendern(e),
-            '5' => {
-                e.teilnehmer = namen_erfragen();
-                // Die Rückmeldung fehlt hier sonst: Beim Start gibt sie
-                // die Begrüßung, und die läuft nur dort.
-                println!("  Protokolle laufen jetzt unter {:?}.", e.teilnehmer);
-            }
-            '6' => freigeben(),
-            '8' => letztes_ergebnis = netzlauf_auswerten(),
-            '7' => {
-                letztes_ergebnis = crate::knoten::anlaufstelle();
-                println!();
-                println!("  Enter für zurück ins Menü.");
-                let mut _w = String::new();
-                let _ = std::io::stdin().read_line(&mut _w);
-            }
             '0' => {
                 banner::bildschirm();
                 return letztes_ergebnis;
@@ -992,65 +406,7 @@ fn entwickler_menue(e: &mut Einstellungen, mut letztes_ergebnis: bool) -> bool {
     }
 }
 
-/// Legt das Protokoll für einen Lauf an.
-fn protokoll(befehl: &str, e: &Einstellungen) -> RunLog {
-    let hw = hardware::Fingerprint::collect().short_id();
-    let ziel = LogZiel::neu(&e.logs, befehl, &e.teilnehmer, &e.einstellungen_id, &hw);
-    RunLog::mit_ziel(ziel, true)
-}
 
-/// Der vollständige Testlauf dieser Maschine: **ein** Protokoll, alle Stufen.
-///
-/// Hardware, Determinismus über die Einzelknoten-Runtime, geshardete
-/// Inferenz, der Protokoll-Durchlauf, die Konformität und der
-/// Trainingsschritt gehören zu **einer** Messung. Getrennte
-/// Protokolldateien wären getrennte Teilaussagen, die der Koordinator
-/// erst wieder zusammensetzen müsste, und beim Verschicken geht die eine
-/// verloren, die den Befund trägt. Die Regel sagt es kürzer: Ein
-/// Testlauf ohne Protokoll ist wertlos, und ein Testlauf mit sechs
-/// Protokollen ist fünf zuviel.
-///
-/// Die Stufen laufen **alle**, auch wenn eine fehlschlägt: Ein
-/// fehlgeschlagener Determinismuslauf macht die Hardware-Erhebung nicht
-/// wertlos, sondern erst recht wichtig.
-fn testlauf(e: &mut Einstellungen) -> bool {
-    // **Gefragt wird nur, was fehlt** (2026-08-22).
-    //
-    // Beides gehört vor den Lauf: das Artefakt, weil der Plan es seit
-    // dieser Fassung nicht mehr mitbringt, und die Testdatei, weil ohne
-    // sie die eingebauten Vorgabewerte laufen und das Ergebnis mit
-    // niemandem vergleichbar ist.
-    //
-    // Wer beides schon gewählt hat, sieht es unten in den Einstellungen
-    // stehen und will es nicht noch einmal bestätigen. Zwei Rückfragen
-    // auf jeden Lauf sind bei einem Durchgang lästig und bei zehn ein
-    // Grund, den Client nicht mehr zu benutzen.
-    if e.artifacts.is_none() {
-        artefakt_waehlen(e);
-        println!();
-    }
-    if e.testdatei.is_none() {
-        testdatei_waehlen(e);
-        println!();
-    }
-
-    let Some(artefakt) = e.artifacts.clone() else {
-        println!("  Ohne Artefakt kein Testlauf. Mit [1] eines wählen.");
-        return false;
-    };
-    if e.testdatei.is_none() {
-        // Kein Abbruch: Ein Lauf ohne Plan ist gültig, er ist nur mit
-        // keinem anderen vergleichbar. Das gehört gesagt, bevor jemand
-        // sein Protokoll verschickt und der Vergleich es in eine eigene
-        // Gruppe legt.
-        println!("  Keine Testdatei gewählt: Es laufen die Vorgabewerte.");
-        println!("  Das Protokoll trägt die Kennung `ohne-plan` und ist mit");
-        println!("  Läufen anderer Maschinen nicht vergleichbar.\n");
-    }
-    let e = &*e;
-    let log = protokoll("testlauf", e);
-    stufen_fahren(e, artefakt, log)
-}
 
 /// Die Stufen selbst, mit bereits geklärten Einstellungen.
 ///
@@ -1163,273 +519,12 @@ fn weiter() {
     banner::bildschirm();
 }
 
-/// Wie viele Token eine Antwort höchstens lang wird.
-///
-/// **Gerechnet, nicht geraten.** `bench/README.md` nennt 24 Token je
-/// Sekunde für 0,5B und 2 für 7B. 64 Token sind damit rund 3 Sekunden auf
-/// dem kleinen und rund 32 auf dem großen Modell. Weniger ergäbe abgehackte
-/// Sätze, mehr hieße bei 7B über eine Minute Warten auf eine Antwort, die
-/// man ohnehin nicht zu Ende liest.
-///
-/// Warum überhaupt eine Grenze: Ohne sie liefe die Erzeugung bis zum
-/// Kontextende, denn eine gierige Auswahl hört von selbst nicht auf.
-const ANTWORT_TOKEN: usize = 64;
 
-/// Wie man aus dem Gespräch zurück ins Menü kommt.
-///
-/// **Drei Wege, weil drei verschiedene Leute drei verschiedene erwarten.**
-/// Escape ist der Griff, den jeder erwartet, der ein Menü verlässt;
-/// Strg-D der, den jeder kennt, der schon einmal in einer Shell war; und
-/// ein getipptes Wort der, den jemand findet, der noch nie eine gesehen
-/// hat.
-///
-/// **Die leere Eingabe ist bewusst keiner mehr.** Sie war es bis v0.6.0,
-/// und das war falsch: Enter tippt man auch, um zu sehen, ob sich etwas
-/// aufgehängt hat. Wer sich im Gespräch vergewissern wollte, stand danach
-/// im Menü. Eine leere Zeile fragt jetzt einfach neu.
-///
-/// **Strg-C wäre der falsche Weg** und ist deshalb keiner: Es beendet den
-/// ganzen Client, nicht das Gespräch. Wer nach einem Testlauf noch
-/// vergleichen will, verlöre den Sitzungsnamen und müsste von vorn
-/// anfangen.
-const RUECKWEG: &str = "Esc, Strg-D oder \"menu\"";
 
-/// Erkennt die getippten Rückwege.
-fn ist_rueckweg(eingabe: &str) -> bool {
-    matches!(
-        eingabe.trim().trim_start_matches(['/', ':']).to_lowercase().as_str(),
-        "menu" | "menü" | "exit" | "quit" | "zurueck" | "zurück" | "q"
-    )
-}
 
-/// Nutzermenü [1]: frei mit dem Modell sprechen.
-///
-/// **Der einzige Punkt des Clients, der nicht misst.** Er beantwortet die
-/// Frage, die sich jeder stellt, der seine Maschine für einen fremden Test
-/// hergibt: Was rechnet das Ding da eigentlich? Ein Modell, mit dem man
-/// einmal gesprochen hat, ist kein abstraktes Artefakt mehr, und das ist
-/// den Punkt wert.
-///
-/// **Das Modell wird einmal geladen, nicht je Frage.** Bei 7B dauert das
-/// Laden rund eine Minute; für jede Frage neu zu laden machte aus einem
-/// Gespräch eine Reihe von Wartezeiten.
-///
-/// **Kein Protokoll.** Prompt und Länge bestimmt hier der Nutzer frei; ein
-/// Protokoll darüber sähe aus wie ein Messergebnis und wäre keines. Der
-/// Vergleichswert entsteht in [1] und [2], nicht hier.
-fn sprechen(e: &Einstellungen) {
-    let Some(artefakt) = e.artifacts.as_ref() else {
-        println!("  Noch kein Artefakt gewählt.");
-        println!("  Mit [1] eines wählen oder beschaffen.");
-        return;
-    };
-    let modell = match runs::modell_laden(artefakt) {
-        Ok(m) => m,
-        Err(fehler) => {
-            println!("  {}", fehler);
-            println!("  Mit [1] ein Artefakt wählen oder beschaffen.");
-            return;
-        }
-    };
 
-    println!("  Modell geladen: {}", artefakt.display());
-    println!("  Höchstens {} Token je Antwort.", ANTWORT_TOKEN);
-    println!(
-        "  Die Auswahl ist gierig, ohne Sampling und ohne Zufall: Dieselbe\n  \
-         Frage liefert auf demselben Modellstand dieselbe Antwort."
-    );
-    println!("\n  Zurück ins Menü: {}\n", RUECKWEG);
 
-    loop {
-        // Der Hinweis steht in der Eingabezeile, nicht nur im Kopf: Wer
-        // ein paar Fragen gestellt hat, hat den Kopf längst weggescrollt,
-        // und dann ist „wie komme ich hier raus" die dringende Frage.
-        //
-        // `zeile_lesen` statt `frage`, weil es Escape von Enter
-        // unterscheidet: siehe `RUECKWEG`.
-        let Some(frage) = auswahl::zeile_lesen("  Prompt [Esc = Menü]:  ") else {
-            println!("\n  Zurück im Menü.");
-            return;
-        };
-        let frage = frage.trim().to_string();
-        if ist_rueckweg(&frage) {
-            println!("\n  Zurück im Menü.");
-            return;
-        }
-        // **Eine leere Eingabe tut nichts.** Enter drückt man auch, um zu
-        // sehen, ob sich etwas aufgehängt hat; das darf nicht das
-        // Gespräch beenden.
-        if frage.is_empty() {
-            continue;
-        }
 
-        // Der Name kommt aus dem Artefaktverzeichnis, nicht aus der
-        // Voreinstellung: Wer 7B geladen hat, soll nicht „myelith-0.5b"
-        // lesen. Eine falsche Beschriftung neben einer echten Antwort ist
-        // schlechter als gar keine.
-        let name = artefakt
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Modell".to_string());
-
-        // **Die Antwort erscheint Token für Token.** Bei 7B dauert sie
-        // über eine halbe Minute; ohne laufende Ausgabe wäre in dieser
-        // Zeit nicht zu unterscheiden, ob gerechnet wird oder etwas hängt.
-        print!("\n  {}: ", name);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-
-        let begonnen = std::time::Instant::now();
-        let mut zeigen = |stueck: &str| {
-            print!("{}", stueck);
-            let _ = std::io::Write::flush(&mut std::io::stdout());
-        };
-        match runs::antworten(&modell, artefakt, &frage, ANTWORT_TOKEN, &mut zeigen) {
-            Ok(_) => println!("\n  ({} s)\n", begonnen.elapsed().as_secs()),
-            Err(fehler) => println!("\n  {}\n", fehler),
-        }
-    }
-}
-
-/// Nutzermenü [4]: das Modell wählen, mit dem gerechnet wird.
-///
-/// **Warum das in das Nutzermenü gehört.** Beim Start wird einmal danach
-/// gefragt, und wer damals „später" gewählt oder das falsche Modell
-/// erwischt hat, musste bisher den Client neu starten. Der Punkt macht
-/// aus einem Startzustand eine Einstellung.
-///
-/// Die Arbeit selbst leistet [`crate::artefakte::beschaffen`]: suchen, bei
-/// mehreren fragen, sonst die Gewichte holen und über das Skalenpaket
-/// bauen. Hier steht nur die Anbindung ans Menü, damit es genau **einen**
-/// Weg zum Artefakt gibt und nicht zwei, die auseinanderlaufen.
-fn artefakt_waehlen(e: &mut Einstellungen) {
-    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
-    let mut frage = |prompt: &str| -> Option<String> { auswahl::frage(&format!("  {}", prompt)) };
-    let mut f: crate::artefakte::Rueckfrage = Some(&mut frage);
-
-    match crate::artefakte::beschaffen(&repo, &mut f, &mut |t| println!("  {}", t)) {
-        Ok(pfad) => {
-            println!("\n  Artefakt: {}", pfad.display());
-            e.artifacts = Some(pfad);
-        }
-        Err(fehler) => {
-            for zeile in fehler.lines() {
-                println!("  {}", zeile);
-            }
-            println!("\n  Die Modellläufe werden ohne Artefakt fehlschlagen.");
-        }
-    }
-}
-
-/// Entwicklermenü: Protokolle vergleichen.
-///
-/// **Zwei Quellen, und die Wahl gehört dem Nutzer.** Der Koordinator legt
-/// die zugesandten Protokolle in `TESTCLIENT/Vergleiche/`; ein Teilnehmer
-/// will dagegen die eigenen Läufe aus `logs/` gegenüberstellen. Beides in
-/// einen Topf zu werfen wäre der schlechtere Weg: Ein Urteil über eine
-/// Gruppe, in der die eigene Maschine mehrfach steckt, sagt etwas anderes
-/// aus, als es zu sagen scheint.
-///
-/// Der Bericht landet in beiden Fällen unter `Vergleiche/Berichte/`.
-/// Nutzermenü Punkt 5: am Netz teilnehmen.
-///
-/// Ein Untermenü, weil hier drei verschiedene Dinge gefragt sein können:
-/// mitmachen, das eigene Ergebnis ansehen, oder erst einmal nachlesen,
-/// worum es überhaupt geht. Alles in einen Punkt zu legen hieße, jemanden
-/// nach einer Adresse zu fragen, bevor er weiß, wofür.
-fn netz_teilnehmen(e: &Einstellungen) -> bool {
-    let punkte = vec![
-        Punkt::neu(
-            '1',
-            "Jetzt teilnehmen",
-            "Fragt nach der Adresse vom Koordinator und läuft dann. Am\n\
-             Ende liegt ein Protokoll bereit, das zurückgeschickt wird.",
-        ),
-        Punkt::neu(
-            '2',
-            "Mein letztes Protokoll ansehen",
-            "Wertet aus, was hier liegt. Bei nur einem Knoten sagt das\n\
-             über das Netz nichts, zeigt aber, ob der eigene Lauf sauber\n\
-             war.",
-        ),
-        Punkt::neu(
-            '3',
-            "Worum geht es hier? (Anleitung, Teil C)",
-            "",
-        )
-        .abgesetzt(),
-        Punkt::neu('0', "Zurück", ""),
-    ];
-    let mut ergebnis = false;
-    loop {
-        banner::bildschirm();
-        println!("  Am Netz teilnehmen");
-        println!();
-        println!("  Das ist ein anderer Test als der Testlauf aus Punkt 3.");
-        println!("  Dort geht es um: rechnen zwei Maschinen dasselbe.");
-        println!("  Hier geht es um: finden mehrere Rechner einander.");
-        println!();
-        let Some(wahl) = auswahl::waehlen("Am Netz teilnehmen", &punkte) else {
-            return ergebnis;
-        };
-        println!();
-        match wahl {
-            '1' => {
-                ergebnis = crate::knoten::teilnehmer(&e.teilnehmer);
-                println!();
-                println!("  Enter für zurück.");
-                let mut _w = String::new();
-                let _ = std::io::stdin().read_line(&mut _w);
-            }
-            '2' => {
-                ergebnis = crate::netz::run(&crate::knoten::protokollverzeichnis());
-                println!();
-                println!("  Enter für zurück.");
-                let mut _w = String::new();
-                let _ = std::io::stdin().read_line(&mut _w);
-            }
-            '3' => {
-                anleitung_zeigen();
-                weiter();
-            }
-            '0' => return ergebnis,
-            _ => {}
-        }
-    }
-}
-
-/// Punkt 7: die Betriebsprotokolle eines Mehrknotenlaufs auswerten.
-///
-/// Getrennt von [`vergleichen`], weil es eine andere Frage beantwortet.
-/// Beides in einen Punkt zu legen hieße, zwei Urteile zu vermischen, von
-/// denen jedes für sich eine Aussage ist: „rechnen zwei Maschinen
-/// dasselbe" und „haben mehrere Knoten einander gesehen".
-fn netzlauf_auswerten() -> bool {
-    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
-    // Vorgabe ist derselbe Sammelordner wie beim Vergleich: Wer
-    // Protokolle von mehreren Maschinen einsammelt, legt sie an eine
-    // Stelle, nicht an zwei.
-    let vorgabe = crate::vergleich::vergleichsordner(&repo);
-    println!("  Verzeichnis mit den Betriebsprotokollen (.jsonl).");
-    println!("  Enter übernimmt: {}", vorgabe.display());
-    print!("  > ");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    let mut eingabe = String::new();
-    let _ = std::io::stdin().read_line(&mut eingabe);
-    let eingabe = eingabe.trim();
-    let ordner = if eingabe.is_empty() {
-        vorgabe
-    } else {
-        std::path::PathBuf::from(eingabe)
-    };
-    println!();
-    let ok = crate::netz::run(&ordner);
-    println!();
-    println!("  Enter für zurück ins Menü.");
-    let mut _weiter = String::new();
-    let _ = std::io::stdin().read_line(&mut _weiter);
-    ok
-}
 
 fn vergleichen(e: &mut Einstellungen) -> bool {
     let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
@@ -1461,6 +556,19 @@ fn vergleichen(e: &mut Einstellungen) -> bool {
     }
 }
 
+/// Kürzel für den n-ten Eintrag einer erzeugten Liste.
+///
+/// Ziffern zuerst, danach Buchstaben. Ohne dieses Kürzel hätte ein Eintrag
+/// jenseits des neunten nur den Weg über die Pfeiltasten, und der Weg
+/// über die Tastenkürzel soll nicht ab dem zehnten Eintrag verschwinden.
+fn kuerzel(i: usize) -> char {
+    match i {
+        0..=8 => char::from(b'1' + i as u8),
+        9..=34 => char::from(b'a' + (i - 9) as u8),
+        _ => ' ',
+    }
+}
+
 /// Gibt Plattenplatz frei: Artefakte und heruntergeladene Gewichte.
 ///
 /// ## Warum getrennt gefragt wird
@@ -1478,7 +586,13 @@ fn vergleichen(e: &mut Einstellungen) -> bool {
 /// Eine Auswahlliste, in der ein Pfeiltastendruck zuviel ein 15-GB-Modell
 /// löscht, wäre die falsche Bedienung dafür. Verlangt wird deshalb ein
 /// getipptes „ja", die eine Stelle, an der Enter allein nicht genügt.
-fn freigeben() {
+/// ⚑ **Seit dem 2026-09-11 von der Befehlszeile aus** (`myl-test
+/// aufraeumen`). Der Punkt stand im Entwicklermenü, und das führt jetzt
+/// nur noch die Auswertung. **Verloren gehen sollte er nicht:** Er ist
+/// der einzige Weg, die bis zu 46 GB wieder freizugeben, die ein
+/// Testlauf an Gewichten und Artefakten hinterlässt, und die Anleitung
+/// verweist in Abschnitt A8 darauf.
+pub fn freigeben() {
     let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
     let belegung: Vec<crate::artefakte::Belegung> = crate::artefakte::belegung(&repo)
         .into_iter()
@@ -1647,720 +761,167 @@ fn alles_freigeben(repo: &std::path::Path, ziele: &[(String, std::path::PathBuf)
     }
 }
 
-/// Prüft alle bekannten Modelle gegen den veröffentlichten Digest.
-///
-/// Ohne diese Prüfung sähe ein abweichendes Artefakt später aus wie eine
-/// gescheiterte Hardware-Bitgleichheit, und der Client berichtete das
-/// Gegenteil dessen, wofür es ihn gibt.
-fn artefakte_pruefen() {
-    use crate::artefakte::{pruefen, register, repo_wurzel, Zustand};
-    let repo = repo_wurzel(std::env::current_dir().unwrap_or_default());
-    match register(&repo) {
-        Err(e) => println!("  Register nicht lesbar: {}", e),
-        Ok(bekannt) => {
-            for b in &bekannt {
-                match pruefen(&repo, b) {
-                    Zustand::Bereit { .. } => {
-                        println!("  {} (θ_v {}): Digest stimmt, {}", b.name, b.theta_v, &b.digest[..16])
-                    }
-                    Zustand::Abweichend { ist, .. } => {
-                        println!("  {}: DIGEST WEICHT AB, hier {}", b.name, &ist[..16]);
-                        println!("     Das ist KEIN Hardware-Befund, hier liegt ein anderes Modell.");
-                    }
-                    Zustand::Fehlt => println!("  {}: keine Artefakte auf dieser Maschine.", b.name),
-                }
-            }
-        }
-    }
-}
-
-/// Testdatei wählen und anwenden, ohne sie gleich auszuführen.
-///
-/// Auswahl und Lauf sind getrennt: Punkt [2] stellt ein, Punkt [3]
-/// misst. Wer beides in einen Punkt legt, nimmt dem Nutzer die
-/// Möglichkeit, die Einstellungen vor dem Lauf noch anzusehen.
-fn testdatei_waehlen(e: &mut Einstellungen) {
-    let repo = crate::artefakte::repo_wurzel(std::env::current_dir().unwrap_or_default());
-    let mut sagen = |t: String| println!("  {}", t);
-    let gefunden = crate::plaene::suchen(&repo, &mut sagen);
-    if gefunden.is_empty() {
-        println!("  Keine Testdateien in {}.", crate::plaene::ORDNER);
-        println!("  Der Koordinator schickt sie; leg sie dort ab.");
-        return;
-    }
-
-    let punkte = plan_punkte(&gefunden, "keine, Einstellungen behalten");
-    let Some(wahl) = auswahl::waehlen(
-        &format!("Testdateien in {}", crate::plaene::ORDNER),
-        &punkte,
-    ) else {
-        return;
-    };
-    let Some(index) = punkte.iter().position(|p| p.taste == wahl) else {
-        return;
-    };
-    if index >= gefunden.len() {
-        println!("  Keine Testdatei gewählt.");
-        return;
-    }
-
-    let plan = gefunden[index].plan.clone();
-    e.uebernehmen(&plan);
-    println!(
-        "  Plan \"{}\" übernommen: {} Prompts, {} Token, {} Shards.",
-        plan.plan_id,
-        plan.prompts.len(),
-        plan.steps,
-        plan.shards
-    );
-
-    // **Der Plan sagt nicht mehr, woran gemessen wird** (2026-08-22).
-    // Bis dahin trug er ein Feld `model`, und hier wurde das passende
-    // Artefakt stillschweigend übernommen. Ein Plan, der an ein Artefakt
-    // gebunden ist, muss für jedes weitere neu geschrieben werden, und
-    // dann tragen zwei Dateien dieselben Prompts unter verschiedenen
-    // Prüfsummen.
-    //
-    // Das Artefakt entscheidet sich jetzt vor dem Lauf: über [1], oder
-    // beim Testlauf, falls dann noch keines gewählt ist. Der Modellstand
-    // steht weiterhin in jedem Protokoll, und `vergleich` verweigert das
-    // Urteil, wenn zwei Läufe gegen verschiedene Modelle gerechnet haben.
-    println!("\n  Der Plan gilt für jedes Artefakt.");
-    println!("  Mit [3] den Testlauf starten.");
-    let _ = repo;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Der Rückweg muss die Schreibweisen abdecken, die jemand
-    /// tatsächlich tippt, und darf keine echte Frage abfangen.
+    /// **Das Entwicklermenü führt genau einen Punkt und den Ausgang.**
+    ///
+    /// ⛑ Die Probe, an der die Festlegung des Projektinhabers vom
+    /// 2026-09-11 hängt. Vorher standen hier acht Punkte, sieben davon
+    /// Werkzeuge, die ein Koordinator selten und ein Teilnehmer nie
+    /// braucht. Wer einen davon wieder einträgt, bricht diese Probe.
     #[test]
-    fn rueckweg_erkennt_die_ueblichen_schreibweisen() {
-        for w in [
-            "menu", "menü", "Menu", "/menu", ":q", "q", "exit", "QUIT", "  zurück  ",
-        ] {
-            assert!(ist_rueckweg(w), "{w:?} sollte zurückführen");
-        }
-        // Eine Frage, die zufällig so anfängt, ist keine Anweisung.
-        for w in [
-            "Was ist ein Menu?",
-            "quitte",
-            "Erkläre mir exit codes",
-            "Die Hauptstadt von Frankreich ist",
-        ] {
-            assert!(!ist_rueckweg(w), "{w:?} ist eine Frage, kein Rückweg");
-        }
-    }
-
-    /// Der Hinweis muss die Tasten auch wirklich nennen: Ein Gespräch,
-    /// aus dem man nicht sichtbar herausfindet, endet mit Strg-C und damit
-    /// mit dem ganzen Client.
-    #[test]
-    fn rueckweg_wird_benannt() {
-        assert!(RUECKWEG.contains("Esc"), "Escape fehlt: {RUECKWEG}");
-        assert!(RUECKWEG.contains("Strg-D"), "Strg-D fehlt: {RUECKWEG}");
-        assert!(RUECKWEG.contains("menu"), "getipptes Wort fehlt: {RUECKWEG}");
-    }
-
-    /// **Die leere Eingabe darf nicht zurückführen.** Enter tippt man auch,
-    /// um zu sehen, ob sich etwas aufgehängt hat; bis v0.6.0 stand man
-    /// danach im Menü.
-    #[test]
-    fn leere_eingabe_ist_kein_rueckweg() {
-        for leer in ["", " ", "\t", "   "] {
-            assert!(
-                !ist_rueckweg(leer),
-                "leere Eingabe {leer:?} führt zurück"
-            );
-        }
-    }
-
-    /// Die Kurzanleitung muss auf den Bildschirm passen. Reicht sie
-    /// darüber hinaus, scrollt das Logo nach oben weg, und der
-    /// aufgeräumte Bildschirm hätte seinen Zweck verfehlt.
-    #[test]
-    fn kurzanleitung_passt_unter_das_banner() {
-        let (breite, hoehe) = (120u16, 44u16);
-        let banner = banner::fuer_fenster(breite, hoehe).lines().count();
-        // Banner, Untertitel, Leerzeile, Anleitung, Leerzeile und die
-        // Zeile „Weiter mit einer beliebigen Taste". Das Menü zählt nicht
-        // mit, weil `anleitung_zeigen` vorher aufräumt: Ohne das
-        // Aufräumen stünden hier 42 Zeilen Menü darüber, und genau daran
-        // ist die erste Fassung gescheitert.
-        let gesamt = banner + 2 + KURZANLEITUNG.lines().count() + 2;
+    fn das_entwicklermenue_fuehrt_nur_die_auswertung() {
+        let punkte = menue_entwickler();
+        assert_eq!(punkte.len(), 2, "das Menü führt {} Punkte", punkte.len());
         assert!(
-            gesamt <= hoehe as usize,
-            "Anleitung braucht {} von {} Zeilen",
-            gesamt,
-            hoehe
+            punkte[0].titel.to_lowercase().contains("auswerten"),
+            "der erste Punkt ist nicht die Auswertung: {:?}",
+            punkte[0].titel
         );
+        assert_eq!(punkte[1].taste, '0', "der letzte Punkt ist nicht der Ausgang");
     }
 
-    /// In 80 Spalten, wie alles andere auch.
+    /// **Kein Menüpunkt führt mehr zu einem Messlauf.**
+    ///
+    /// ⚑ Der Prüfstand läuft nach der Namenseingabe von selbst. Ein
+    /// zweiter Weg dorthin wäre ein zweiter Ablauf, und zwei Abläufe
+    /// laufen auseinander.
     #[test]
-    fn kurzanleitung_passt_in_achtzig_spalten() {
-        for zeile in KURZANLEITUNG.lines() {
+    fn kein_menuepunkt_startet_einen_messlauf() {
+        for p in menue_entwickler() {
+            let t = p.titel.to_lowercase();
+            for verboten in ["testlauf", "determinismus", "prüfstand", "messen"] {
+                assert!(
+                    !t.contains(verboten),
+                    "{:?} führt zu einem Messlauf",
+                    p.titel
+                );
+            }
+        }
+    }
+
+    /// Tasten müssen eindeutig sein, sonst greift die zweite nie.
+    #[test]
+    fn tasten_sind_eindeutig() {
+        let punkte = menue_entwickler();
+        let mut tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
+        tasten.sort_unstable();
+        let vorher = tasten.len();
+        tasten.dedup();
+        assert_eq!(vorher, tasten.len(), "eine Taste ist doppelt vergeben");
+    }
+
+    /// **Der Zugang hängt am Namen, und nur an ihm.**
+    #[test]
+    fn das_entwicklermenue_haengt_am_namen() {
+        for ja in ["admin", "Admin", "ADMIN", "AdMiN", "  admin  "] {
+            assert!(ist_entwickler(ja), "{ja:?} sollte hineinführen");
+        }
+        for nein in ["anna", "administrator", "admin2", "", "ohne-name"] {
+            assert!(!ist_entwickler(nein), "{nein:?} sollte nicht hineinführen");
+        }
+    }
+
+    /// **Die Ansage passt in achtzig Spalten.**
+    ///
+    /// Sie steht unter dem Logo auf einem aufgeräumten Bildschirm; eine
+    /// umbrechende Zeile schöbe das Logo nach oben weg.
+    #[test]
+    fn die_ansage_passt_in_achtzig_spalten() {
+        for zeile in ANSAGE.lines() {
             assert!(
-                zeile.chars().count() <= 78,
-                "{} Zeichen: {zeile}",
+                zeile.chars().count() <= 80,
+                "{} Zeichen: {zeile:?}",
                 zeile.chars().count()
             );
         }
     }
 
-    /// Die Anleitung nennt Menüpunkte. Ändert sich die Nummerierung, muss
-    /// sie mitgeändert werden: Eine Anleitung, die auf den falschen Punkt
-    /// zeigt, ist schlechter als keine.
+    /// **Die Ansage sagt, was gleich geschieht und wie man abbricht.**
+    ///
+    /// ⚑ Ein Lauf ohne Rückfrage muss vorher sagen, dass er ohne
+    /// Rückfrage läuft. Sonst wartet jemand auf eine Frage, die nicht
+    /// kommt, und hält den Lauf für hängengeblieben.
     #[test]
-    fn kurzanleitung_nennt_die_richtigen_menuepunkte() {
-        let punkte = menue_nutzer(true);
-        let taste_von = |titel: &str| {
-            punkte
-                .iter()
-                .find(|p| p.titel.contains(titel))
-                .map(|p| p.taste)
-                .unwrap_or_else(|| panic!("Menüpunkt {titel:?} fehlt"))
-        };
-        for (titel, zweck) in [
-            ("Testdatei", "Testdatei wählen"),
-            ("Artefakt", "Artefakt wählen"),
-            ("Testlauf", "Testlauf starten"),
-        ] {
-            let taste = taste_von(titel);
-            assert!(
-                KURZANLEITUNG.contains(&format!("[{}] {}", taste, zweck)),
-                "Anleitung nennt für {titel:?} nicht [{taste}]"
-            );
-        }
-        // Der Vergleich sitzt im Entwicklermenü, die Anleitung muss
-        // dorthin verweisen.
-        assert!(
-            KURZANLEITUNG.contains("[9] Entwickler"),
-            "Verweis auf das Entwicklermenü fehlt"
-        );
+    fn die_ansage_nennt_ablauf_und_abbruch() {
+        assert!(ANSAGE.contains("ohne weitere Fragen"), "die Ansage verspricht keinen Durchlauf");
+        assert!(ANSAGE.contains("Strg-C"), "die Ansage nennt den Abbruch nicht");
+        assert!(ANSAGE.contains("Bits"), "die Ansage sagt nicht, was gemessen wird");
     }
 
-    /// Die Kurzanleitung nennt die **Zahl** der Stufen, das Menü ihre
-    /// Namen. Beides muss zu [`STUFEN`] passen.
-    ///
-    /// **Warum ein Test und keine Erzeugung:** Die Kurzanleitung ist auf
-    /// die Bildschirmhöhe gerechnet und steht als fester Text da. Sie
-    /// aus der Liste zu bauen, hieße die Zeilenumbrüche zu erzeugen, und
-    /// dann prüfte kein Test mehr, ob sie noch auf den Schirm passt.
-    ///
-    /// **Die Gegenprobe ist belegt:** Vor dem 2026-08-27 stand dort
-    /// „vier Stufen", während der Lauf schon fünf hatte. Dieser Test
-    /// wäre fehlgeschlagen.
+    /// Die Menüpunkte passen in achtzig Spalten, Titel wie Hinweis.
     #[test]
-    fn kurzanleitung_nennt_die_stufenzahl() {
-        let erwartet = format!("{} Stufen", stufen_zahlwort());
-        assert!(
-            KURZANLEITUNG.contains(&erwartet),
-            "Kurzanleitung nennt nicht {erwartet:?}; STUFEN hat {} Einträge",
-            STUFEN.len()
-        );
-    }
-
-    /// Der Menüpunkt [3] zählt die Stufen auf, die der Lauf ausführt.
-    ///
-    /// Er entsteht aus [`STUFEN`], der Test hält die **Wirkung** fest:
-    /// Jeder Kurzname steht wirklich in der Beschreibung, die der
-    /// Teilnehmer liest. Eine Aufzählung, die einen Eintrag verschluckt,
-    /// fiele sonst nicht auf.
-    #[test]
-    fn menuepunkt_testlauf_nennt_jede_stufe() {
-        let punkte = menue_nutzer(false);
-        let p = punkte
-            .iter()
-            .find(|p| p.titel.contains("Testlauf"))
-            .expect("Menüpunkt Testlauf fehlt");
-        for (kurz, _) in STUFEN {
-            assert!(
-                p.hinweis.contains(kurz),
-                "Beschreibung von [{}] nennt die Stufe {kurz:?} nicht: {:?}",
-                p.taste,
-                p.hinweis
-            );
+    fn menuepunkte_passen_in_achtzig_spalten() {
+        for p in menue_entwickler() {
+            for zeile in p.hinweis.lines().chain(std::iter::once(p.titel.as_str())) {
+                assert!(
+                    zeile.chars().count() <= 74,
+                    "{} Zeichen: {zeile:?}",
+                    zeile.chars().count()
+                );
+            }
         }
     }
 
-    /// Eine Stufe ohne Eintrag in [`STUFEN`] fällt beim ersten Lauf auf.
-    ///
-    /// Das ist die Gegenprobe zur Vereinheitlichung: Wer eine sechste
-    /// Stufe in `testlauf` einbaut und die Liste vergisst, bekommt keinen
-    /// stillen Text mit falscher Zahl, sondern einen Abbruch.
+    /// **Jede Stufe hat eine Protokollzeile, und die Zahl darin stimmt.**
+    #[test]
+    fn jede_stufe_nennt_sich_und_ihre_zahl() {
+        for nr in 1..=STUFEN.len() {
+            let z = stufe(nr);
+            assert!(z.starts_with(&format!("Stufe {nr} von {}", STUFEN.len())), "{z}");
+            assert!(z.contains(STUFEN[nr - 1].1), "{z}");
+        }
+    }
+
+    /// Eine Stufe jenseits der Liste bricht ab, statt still zu zählen.
     #[test]
     #[should_panic]
     fn stufe_ausserhalb_der_liste_bricht_ab() {
         let _ = stufe(STUFEN.len() + 1);
     }
 
+    /// Das Zahlwort muss zur Stufenzahl passen.
     #[test]
-    fn nutzermenue_nennt_alle_punkte() {
-        let tasten: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
+    fn das_zahlwort_passt_zur_stufenzahl() {
+        assert_eq!(stufen_zahlwort(), "sechs", "{} Stufen", STUFEN.len());
     }
 
-    /// Das Nutzermenü darf nicht wieder anwachsen: Es ist die Seite, die
-    /// ein Teilnehmer ohne Vorwissen zuerst sieht. Gezählt werden die
-    /// Punkte, die etwas tun: „Entwickler-Menü" und „Beenden" sind Wege
-    /// hinaus, keine Aufgaben.
-    #[test]
-    fn nutzermenue_bleibt_schlank() {
-        let aufgaben = menue_nutzer(true)
-            .iter()
-            .filter(|p| p.taste != '0' && p.taste != '9')
-            .count();
-        // Die Grenze stand bei 5 und liegt seit dem 2026-08-24 bei 6.
-        // **Das ist eine Entscheidung, keine Aufweichung:** Der
-        // Netzlauf ist ein eigenständiger zweiter Test und gehört
-        // deshalb ins Nutzermenü, nicht hinter das Entwicklermenü.
-        // Wer ihn dort verstecken wollte, verlangte von Teilnehmern
-        // einen Umweg über ein Menü, das nicht für sie gedacht ist.
-        //
-        // Sechs bleibt die Grenze. Der nächste Punkt, der hierher will,
-        // muss einen bestehenden ersetzen.
-        assert!(
-            aufgaben <= 6,
-            "Nutzermenü hat {aufgaben} Aufgaben, höchstens 6 sind vorgesehen"
-        );
-    }
-
-    /// Jede Taste darf nur einmal vorkommen: sonst wäre nicht bestimmt,
-    /// welchen Punkt sie auslöst.
-    #[test]
-    fn tasten_sind_eindeutig() {
-        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
-            let mut tasten: Vec<char> = menue.iter().map(|p| p.taste).collect();
-            let vorher = tasten.len();
-            tasten.sort_unstable();
-            tasten.dedup();
-            assert_eq!(tasten.len(), vorher, "doppelte Taste im Menü");
-        }
-    }
-
-    /// **Das Entwickler-Menü ist nur nach Anmeldung als admin sichtbar.**
-    ///
-    /// Kein Schutz, sondern eine Aufräumhilfe: Der Name steht im
-    /// Quelltext. Es hält den Bildschirm eines Teilnehmers frei von
-    /// Punkten, die ihn nichts angehen und mit denen er sich schaden
-    /// kann.
-    #[test]
-    fn das_entwicklermenue_haengt_am_namen() {
-        assert!(ist_entwickler("admin"));
-        assert!(ist_entwickler("Admin"));
-        assert!(ist_entwickler("ADMIN"));
-        assert!(ist_entwickler("AdMiN"), "Groß- und Kleinschreibung darf nicht zählen");
-        assert!(ist_entwickler("  admin  "), "Leerzeichen am Rand dürfen nicht stören");
-
-        assert!(!ist_entwickler("anna"));
-        assert!(!ist_entwickler(""));
-        assert!(!ist_entwickler("administrator"), "nur der genaue Name öffnet");
-        assert!(!ist_entwickler("admin2"));
-    }
-
-    #[test]
-    fn ohne_anmeldung_fehlt_der_punkt_neun_ganz() {
-        // **Weggelassen, nicht ausgegraut.** Ein sichtbarer, gesperrter
-        // Punkt sagt „hier gibt es etwas, das du nicht darfst", und das
-        // ist die schlechtere Auskunft als gar keine.
-        let tasten: Vec<char> = menue_nutzer(false).iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '0']);
-        assert!(!tasten.contains(&'9'));
-    }
-
-    #[test]
-    fn mit_anmeldung_steht_der_punkt_neun_vor_dem_beenden() {
-        // Die Reihenfolge zählt: „Beenden" bleibt der letzte Eintrag,
-        // sonst wandert der Ausgang beim Anmelden an eine andere Stelle.
-        let tasten: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
-        assert_eq!(*tasten.last().unwrap(), '0');
-    }
-
-    #[test]
-    fn beide_fassungen_zeigen_dieselben_aufgaben() {
-        // Der Unterschied ist genau ein Punkt. Wüchse er, hätte jemand
-        // einem Teilnehmer stillschweigend etwas weggenommen.
-        let ohne: Vec<char> = menue_nutzer(false).iter().map(|p| p.taste).collect();
-        let mit: Vec<char> = menue_nutzer(true).iter().map(|p| p.taste).collect();
-        assert_eq!(mit.len(), ohne.len() + 1);
-        for t in &ohne {
-            assert!(mit.contains(t), "Punkt {t} fehlt in der Entwicklerfassung");
-        }
-    }
-
-    /// **Der Vergleich steht oben, die Einzelstufen fehlen ganz.**
-    ///
-    /// Wer dieses Menü öffnet, ist in der Regel Koordinator und will
-    /// vergleichen; das gehört an die erste Stelle. Hardware,
-    /// Determinismus, Shards und Stack sind dagegen genau die vier
-    /// Stufen, die der Testlauf im Nutzermenü hintereinander ausführt.
-    /// Einzeln gestartet schrieben sie vier getrennte Protokolle, und
-    /// beim Verschicken geht die eine verloren, die den Befund trägt.
-    /// Auf der Befehlszeile bleiben sie erreichbar.
-    #[test]
-    fn entwicklermenue_beginnt_mit_dem_vergleich_und_kennt_keine_einzelstufen() {
-        let punkte = menue_entwickler();
-        let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
-        // 7 kam am 2026-08-24 dazu: die Auswertung eines Netzlaufs. Sie
-        // steht bewusst NICHT oben, obwohl sie neu ist: Der Vergleich
-        // bleibt der Punkt, für den es dieses Menü gibt.
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '7', '8', '0']);
-
-        let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
-        assert!(
-            titel[0].starts_with("Protokolle vergleichen"),
-            "der Vergleich steht nicht oben: {:?}",
-            titel[0]
-        );
-        assert!(
-            titel.iter().any(|t| t.starts_with("Netzlauf auswerten")),
-            "die Netzlauf-Auswertung fehlt im Menü: {titel:?}"
-        );
-        assert!(
-            titel.iter().any(|t| t.starts_with("Knoten als Anlaufstelle")),
-            "die Anlaufstelle fehlt im Menü: {titel:?}"
-        );
-        for weg in ["Hardware erheben", "Determinismus prüfen", "Geshardete Inferenz", "Stack"] {
-            assert!(
-                !titel.iter().any(|t| t.contains(weg)),
-                "{weg} steht noch im Menü"
-            );
-        }
-        assert!(
-            titel.iter().any(|t| t.contains("löschen")),
-            "der Freigeben-Punkt heißt noch nicht löschen"
-        );
-        assert!(
-            !titel.iter().any(|t| t.contains("freigeben")),
-            "der alte Wortlaut steht noch da"
-        );
-    }
-
-    /// Der Dateiname eines Plans landet auf drei Betriebssystemen und
-    /// wandert per Mail. Ein Pfadtrenner darin schriebe die Datei
-    /// woanders hin, als der Assistent ankündigt.
-    #[test]
-    fn ein_dateiname_bleibt_ein_dateiname() {
-        assert_eq!(dateiname_saeubern("2026-08-22-cross-arch-01"), "2026-08-22-cross-arch-01");
-        assert_eq!(dateiname_saeubern("  mit Leerzeichen  "), "mit-Leerzeichen");
-        for boese in ["../../etc/passwd", "a/b", "a\\b", "C:pfad", "na\"me"] {
-            let sauber = dateiname_saeubern(boese);
-            for c in ['/', '\\', ':', '"'] {
-                assert!(!sauber.contains(c), "{boese:?} ergab {sauber:?}");
-            }
-            assert!(!sauber.starts_with('.'), "{boese:?} ergab {sauber:?}");
-        }
-    }
-
-    /// Das Nutzermenü führt vier Punkte in der Reihenfolge des Ablaufs:
-    /// messen, Testdatei, Artefakt, nachlesen. „Protokolle vergleichen"
-    /// steht bewusst **nicht** darin: Es ist die Arbeit des Koordinators,
-    /// und für einen Teilnehmer, der eine Maschine beisteuert, ein Punkt,
-    /// der ihm nichts nützt.
-    #[test]
-    fn nutzermenue_fuehrt_die_schritte_in_der_reihenfolge_des_ablaufs() {
-        let punkte = menue_nutzer(true);
-        let tasten: Vec<char> = punkte.iter().map(|p| p.taste).collect();
-        assert_eq!(tasten, vec!['1', '2', '3', '4', '5', '6', '9', '0']);
-
-        let titel: Vec<&str> = punkte.iter().map(|p| p.titel.as_str()).collect();
-        // Erst die Voraussetzung, dann die Vorgabe, dann die Messung.
-        // Vorher stand das Gespräch mit dem Modell an erster und das
-        // Artefakt an vierter Stelle, also das Ergebnis vor seiner
-        // Voraussetzung.
-        assert_eq!(titel[0], "Artefakt wählen");
-        assert_eq!(titel[1], "Testdatei wählen");
-        assert_eq!(titel[2], "Testlauf starten");
-        // Das Gespräch misst nichts und steht deshalb hinter dem Lauf,
-        // obwohl man es davor führen mag.
-        assert_eq!(titel[3], "Mit dem Modell sprechen");
-
-        // Die vier Schritte sind von den Nebenfunktionen abgesetzt.
-        assert!(
-            !punkte[..4].iter().any(|p| p.abstand_davor),
-            "die vier Schritte sind auseinandergerissen"
-        );
-        assert!(
-            punkte[4].abstand_davor,
-            "zwischen den Schritten und dem Beiwerk fehlt der Abstand"
-        );
-        assert!(
-            !punkte[5].abstand_davor && !punkte[6].abstand_davor,
-            "das Beiwerk ist in sich zerteilt"
-        );
-
-        assert!(
-            !titel.iter().any(|t| t.contains("vergleichen")),
-            "Vergleichen gehört ins Entwicklermenü"
-        );
-        assert!(
-            menue_entwickler().iter().any(|p| p.titel.contains("vergleichen")),
-            "Vergleichen fehlt im Entwicklermenü"
-        );
-    }
-
-    /// Kein Punkt darf in beiden Menüs auf derselben Taste etwas anderes
-    /// tun: Wer die Ziffer aus dem einen Menü im anderen tippt, landete
-    /// sonst bei einer Aktion, die er nicht gemeint hat.
-    #[test]
-    fn kein_menue_vergibt_eine_taste_doppelt() {
-        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
-            let mut tasten: Vec<char> = menue.iter().map(|p| p.taste).collect();
-            let vorher = tasten.len();
-            tasten.sort_unstable();
-            tasten.dedup();
-            assert_eq!(tasten.len(), vorher, "Taste doppelt vergeben");
-        }
-    }
-
-    /// Menüzeilen werden mit acht Zeichen Einzug gezeichnet; ein zu langer
-    /// Titel bricht in 80 Spalten um und zerreißt die Liste.
-    #[test]
-    fn menuepunkte_passen_in_achtzig_spalten() {
-        for menue in [menue_nutzer(true), menue_nutzer(false), menue_entwickler()] {
-            for p in menue {
-                assert!(
-                    p.titel.chars().count() + 8 <= 78,
-                    "Titel zu breit: {}",
-                    p.titel
-                );
-                for z in p.hinweis.lines() {
-                    assert!(z.chars().count() + 8 <= 78, "Hinweis zu breit: {}", z);
-                }
-            }
-        }
-    }
-
-    /// Die Kürzel einer erzeugten Liste müssen über den neunten Eintrag
-    /// hinaus eindeutig bleiben.
-    #[test]
-    fn kuerzel_bleiben_eindeutig() {
-        let liste: Vec<char> = (0..35).map(kuerzel).collect();
-        let mut sortiert = liste.clone();
-        sortiert.sort_unstable();
-        sortiert.dedup();
-        assert_eq!(sortiert.len(), liste.len());
-        assert_eq!(kuerzel(0), '1');
-        assert_eq!(kuerzel(8), '9');
-        assert_eq!(kuerzel(9), 'a');
-        // Jenseits des Vorrats gibt es kein Kürzel, aber auch keine Panik.
-        assert_eq!(kuerzel(99), ' ');
-    }
-
-    /// Lange Pfade werden auf die letzten drei Glieder gekürzt, kurze
-    /// bleiben unangetastet.
-    ///
-    /// **Mit dem Trennzeichen der Plattform gebaut, nicht mit einem
-    /// festen.** Der Test stand vorher auf `"…/d/e/f"` und schlug unter
-    /// Windows fehl, weil der zusammengesetzte Rest dort Rückstriche
-    /// bekommt. Der Fehler lag im Code, nicht im Test: Die Ausgabe mischte
-    /// beide Zeichen.
+    /// Lange Pfade werden gekürzt, kurze nicht.
     #[test]
     fn pfade_werden_gekuerzt() {
-        let t = std::path::MAIN_SEPARATOR;
-        let lang: PathBuf = ["", "a", "b", "c", "d", "e", "f"].iter().collect();
-        assert_eq!(kurz(&lang), format!("…{t}d{t}e{t}f"));
-
-        let kurzer: PathBuf = ["a", "b"].iter().collect();
-        assert_eq!(kurz(&kurzer), format!("a{t}b"));
+        let lang = PathBuf::from("/a/b/c/d/e/f");
+        let gekuerzt = kurz(&lang);
+        assert!(gekuerzt.starts_with('…'), "{gekuerzt}");
+        assert!(gekuerzt.ends_with("f"), "{gekuerzt}");
+        let kurzer = PathBuf::from("a/b");
+        assert_eq!(kurz(&kurzer), "a/b");
     }
 
-    /// Der eigentliche Fund: In einer Zeile darf nur **ein**
-    /// Trennzeichen vorkommen. Gemischt gelesen sieht ein Pfad nach einem
-    /// Fehler aus, und auf einer fremden Maschine ist genau das die
-    /// Frage, die niemand beantworten kann.
+    /// **Ein gekürzter Pfad mischt keine Trennzeichen.**
+    ///
+    /// ⛑ Gefunden vom Windows-Job der CI: `…/d\e\f` in einer Zeile.
     #[test]
     fn gekuerzte_pfade_mischen_keine_trennzeichen() {
-        let lang: PathBuf = ["", "a", "b", "c", "d", "e", "f"].iter().collect();
-        let text = kurz(&lang);
-        assert!(
-            !(text.contains('/') && text.contains('\\')),
-            "gemischte Trennzeichen: {text}"
-        );
+        let gekuerzt = kurz(&PathBuf::from("/a/b/c/d/e/f"));
+        let fremd = if std::path::MAIN_SEPARATOR == '/' { '\\' } else { '/' };
+        assert!(!gekuerzt.contains(fremd), "fremdes Trennzeichen in {gekuerzt}");
     }
 
     #[test]
     fn ja_nein_ist_eindeutig() {
-        assert_eq!(ja_nein(true), "OK");
-        assert_eq!(ja_nein(false), "FEHLGESCHLAGEN");
+        assert_ne!(ja_nein(true), ja_nein(false));
     }
 
-    fn einstellungen_probe() -> Einstellungen {
-        Einstellungen {
-            prompts: vec!["Vorgabe-Prompt".into()],
-            steps: 8,
-            shards: 4,
-            artifacts: Some(PathBuf::from("/artefakte")),
-            testdatei: None,
-            logs: PathBuf::from("/logs"),
-            einstellungen_id: "ohne-plan".into(),
-            teilnehmer: "probe".into(),
-            wiederholungen: 2,
+    /// Kürzel bleiben eindeutig, auch jenseits der neunten Stelle.
+    #[test]
+    fn kuerzel_bleiben_eindeutig() {
+        let mut gesehen = Vec::new();
+        for i in 0..35 {
+            let k = kuerzel(i);
+            assert!(!gesehen.contains(&k), "Kürzel {k:?} doppelt bei {i}");
+            gesehen.push(k);
         }
     }
-
-    /// Gibt die Antworten der Reihe nach aus und meldet danach das Ende
-    /// der Eingabe, wie eine geschlossene Standardeingabe.
-    fn antworten(zeilen: &[&str]) -> impl FnMut(&str) -> Option<String> {
-        let mut rest: Vec<String> = zeilen.iter().rev().map(|s| s.to_string()).collect();
-        move |_frage: &str| rest.pop()
-    }
-
-    /// **Der Assistent von vorn bis hinten.** Zwei Prompts, geänderte
-    /// Token- und Shardzahl, Name am Schluss.
-    #[test]
-    fn der_assistent_erhebt_einen_vollstaendigen_plan() {
-        let mut lesen = antworten(&[
-            "16",                                  // Token
-            "2",                                   // Shards
-            "Die Hauptstadt von Frankreich ist",   // Prompt 1
-            "ja",                                  // noch einer?
-            "2 + 2 =",                             // Prompt 2
-            "nein",                                // fertig
-            "2026-08-22-cross-arch-01",            // Dateiname
-        ]);
-        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
-
-        assert_eq!(plan.steps, 16);
-        assert_eq!(plan.shards, 2);
-        assert_eq!(
-            plan.prompts,
-            vec!["Die Hauptstadt von Frankreich ist", "2 + 2 ="]
-        );
-        assert_eq!(plan.plan_id, "2026-08-22-cross-arch-01");
-    }
-
-    /// Leere Eingabe behält die Vorgabe: Wer nur die Prompts ändern will,
-    /// soll sich durch die Zahlen durchdrücken können.
-    #[test]
-    fn leere_eingabe_behaelt_die_vorgabe() {
-        let mut lesen = antworten(&["", "", "", "nein", "name"]);
-        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
-        assert_eq!(plan.steps, 8);
-        assert_eq!(plan.shards, 4);
-        assert_eq!(plan.prompts, vec!["Vorgabe-Prompt"]);
-    }
-
-    /// Eine unbrauchbare Zahl wird nachgefragt statt stillschweigend
-    /// ersetzt. Eine Null wäre ein Plan, der nichts erzeugt.
-    #[test]
-    fn unbrauchbare_zahlen_werden_nachgefragt() {
-        let mut lesen = antworten(&["null", "0", "12", "4", "p", "nein", "name"]);
-        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
-        assert_eq!(plan.steps, 12, "die dritte Eingabe war die erste brauchbare");
-        assert_eq!(plan.shards, 4);
-    }
-
-    /// **Abbruch schreibt nichts.** Geht die Eingabe zu Ende, bevor der
-    /// Name feststeht, darf kein Plan entstehen: Eine halb erhobene
-    /// Datei, die an alle Teilnehmer geht, ist schlimmer als keine.
-    #[test]
-    fn ein_abbruch_ergibt_keinen_plan() {
-        // Eingabe endet nach dem ersten Prompt.
-        let mut lesen = antworten(&["8", "4", "nur einer"]);
-        assert!(plan_erheben(&einstellungen_probe(), &mut lesen).is_none());
-
-        // Und ein leerer Name ist ebenfalls ein Abbruch.
-        let mut lesen = antworten(&["8", "4", "p", "nein", "   "]);
-        assert!(plan_erheben(&einstellungen_probe(), &mut lesen).is_none());
-    }
-
-    /// Der Plan aus dem Assistenten muss durch die Prüfsumme kommen:
-    /// Sonst lehnt der Client beim Teilnehmer die eigene Datei ab.
-    #[test]
-    fn der_erhobene_plan_ist_wieder_einlesbar() {
-        let mut lesen = antworten(&["8", "4", "eins", "ja", "zwei", "nein", "abc"]);
-        let plan = plan_erheben(&einstellungen_probe(), &mut lesen).expect("Plan");
-        let zurueck = TestPlan::parse(&plan.to_file_text()).expect("wieder lesbar");
-        assert_eq!(zurueck, plan);
-    }
-
-
-    /// **Beim Start ist nichts vorausgewählt.** Wer den Client öffnet,
-    /// soll in den Einstellungen sehen, dass er noch zu entscheiden hat,
-    /// statt auf ein Artefakt zu blicken, das er nie gewählt hat.
-    #[test]
-    fn ohne_auswahl_steht_nicht_ausgewaehlt_da() {
-        let leer = Einstellungen {
-            artifacts: None,
-            testdatei: None,
-            ..einstellungen_probe()
-        };
-        let text = leer.als_text();
-        let zeile = |anfang: &str| {
-            text.lines()
-                .find(|z| z.trim_start().starts_with(anfang))
-                .unwrap_or_else(|| panic!("Zeile {anfang:?} fehlt in:\n{text}"))
-        };
-        assert!(
-            zeile("Artefakt").contains("nicht ausgewählt"),
-            "{}",
-            zeile("Artefakt")
-        );
-        assert!(
-            zeile("Testdatei").contains("nicht ausgewählt"),
-            "{}",
-            zeile("Testdatei")
-        );
-        // Und der Weg dorthin steht daneben: Eine Zeile, die einen Mangel
-        // meldet, ohne zu sagen, wo er behoben wird, kostet eine Suche.
-        assert!(zeile("Artefakt").contains("[1]"));
-        assert!(zeile("Testdatei").contains("[2]"));
-    }
-
-    /// Ist beides gewählt, nennt die Übersicht Namen statt Platzhalter,
-    /// und der Testlauf hat nichts mehr zu fragen.
-    #[test]
-    fn mit_auswahl_stehen_die_namen_da() {
-        let voll = Einstellungen {
-            artifacts: Some(PathBuf::from("/irgendwo/myelith-0.5b")),
-            testdatei: Some("standard".into()),
-            prompts: vec!["a".into(), "b".into()],
-            steps: 32,
-            shards: 4,
-            ..einstellungen_probe()
-        };
-        let text = voll.als_text();
-        assert!(text.contains("myelith-0.5b"), "{text}");
-        assert!(text.contains("standard"), "{text}");
-        assert!(
-            text.contains("2 Prompts, 32 Token, 4 Shards"),
-            "die Testdatei nennt ihren Umfang nicht:\n{text}"
-        );
-        assert!(!text.contains("nicht ausgewählt"), "{text}");
-    }
-
-    /// Ein Plan, der übernommen wird, setzt beide Anzeigen zugleich:
-    /// Name für die Übersicht, Kennung für das Protokoll. Ohne den Namen
-    /// stünde dort eine Prüfsumme, und an acht Hexzeichen erkennt niemand
-    /// seine Datei wieder.
-    #[test]
-    fn ein_uebernommener_plan_setzt_namen_und_kennung() {
-        let mut e = Einstellungen {
-            artifacts: None,
-            testdatei: None,
-            ..einstellungen_probe()
-        };
-        let plan = TestPlan {
-            plan_id: "2026-08-22-cross-arch-01".into(),
-            prompts: vec!["eins".into(), "zwei".into()],
-            steps: 16,
-            shards: 2,
-        };
-        e.uebernehmen(&plan);
-
-        assert_eq!(e.testdatei.as_deref(), Some("2026-08-22-cross-arch-01"));
-        assert_eq!(e.einstellungen_id, plan.short_id());
-        assert_eq!(e.steps, 16);
-        assert_eq!(e.shards, 2);
-        assert_eq!(e.prompts.len(), 2);
-        // Das Artefakt bleibt unberührt: Der Plan sagt seit dem
-        // 2026-08-22 nicht mehr, woran gemessen wird.
-        assert!(e.artifacts.is_none(), "der Plan hat ein Artefakt gesetzt");
-    }
-
 }

@@ -289,7 +289,7 @@ mod tests {
     /// das die eigenen Artefakte nicht abbildet, ist keins.
     fn qwen_manifest() -> Modellmanifest {
         Modellmanifest {
-            modell: "myelith-0.5b".to_string(),
+            modell: "myelith-0.6b".to_string(),
             herkunft: Gewichtsherkunft {
                 quelle: "Qwen/Qwen2.5-0.5B".to_string(),
                 revision: "060db6499f32faf8b98477b0a26969ef7d8b9987".to_string(),

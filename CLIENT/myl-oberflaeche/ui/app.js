@@ -478,6 +478,45 @@ function neues_gespraech(modus) {
   return g;
 }
 
+/// **Holt ein Gespraech in der Leiste nach ganz oben.**
+///
+/// ⚑ **Auftrag des Projektinhabers, 2026-09-12:** Womit man gerade
+/// arbeitet, steht oben. Bis dahin stand die Leiste in der Reihenfolge
+/// der **Anlage**: Ein Gespraech, das man seit Wochen fuehrt, rutschte
+/// mit jedem neuen weiter nach unten, bis man es suchen musste.
+///
+/// ⚑ **Ausgeloest von jeder Beruehrung**, nicht nur vom Schreiben: Wer
+/// einen Auftrag anstoesst, arbeitet damit. Beides geht durch
+/// `senden`, und dort steht der Aufruf.
+///
+/// ⚠️ **Nicht beim blossen Oeffnen.** Wer die Leiste durchsieht, um
+/// etwas wiederzufinden, wuerde sie sonst beim Lesen umsortieren, und
+/// die Zeile, auf die er als Naechstes klicken wollte, waere
+/// weggerutscht. **Umordnen ist eine Folge von Arbeit, nicht von
+/// Hinsehen.**
+///
+/// ⚑ **Die Reihenfolge ueberlebt einen Neustart ohne ein weiteres
+/// Feld.** `sichern` legt das Feld `gespraeche` als Ganzes ab, also
+/// samt seiner Reihenfolge, und `laden_aus_speicher` liest es
+/// unveraendert zurueck.
+///
+/// ⚠️ **`wann` wird dabei ausdruecklich NICHT angefasst.** Es steht im
+/// Markdown-Export als „Begonnen", und das ist eine Aussage ueber den
+/// Anfang. Wer es hier fortschriebe, machte daraus stillschweigend
+/// „zuletzt benutzt", und der Export sagte etwas anderes, als dort
+/// steht. Ein zweites Feld dafuer liest heute niemand, und ein
+/// ungelesenes Feld ist eine Einladung, ihm spaeter etwas anderes zu
+/// unterstellen.
+function nach_oben(g) {
+  if (!g) return;
+  const i = gespraeche.findIndex((x) => x.id === g.id);
+  // Nicht gefunden oder schon oben: nichts tun, damit kein
+  // ueberfluessiges Zeichnen ausgeloest wird.
+  if (i <= 0) return;
+  gespraeche.splice(i, 1);
+  gespraeche.unshift(g);
+}
+
 // ⚑ Der Titel kommt aus dem ersten Beitrag und wird nicht erfragt. Ein
 // Dialog, der nach einem Namen fragt, bevor man weiss, worum es geht,
 // ist eine Huerde vor dem ersten Satz.
@@ -576,7 +615,7 @@ async function modellzeile_schreiben(zusatz) {
     } catch {
         // Ohne Einstellungen gibt es nichts zu sagen.
     }
-    if (artefakt === NETZMODELL) {
+    if (artefakt.startsWith(NETZMODELL)) {
         z.textContent = "";
         return;
     }
@@ -591,11 +630,17 @@ async function modellzeile_schreiben(zusatz) {
     }
 }
 
-/// Der Pfad, unter dem das Netzmodell in der Wahl steht.
+/// Das Kennzeichen, unter dem ein Modell im Netz gerechnet wird.
 ///
-/// ⚑ An einer Stelle: Der Ruecken vergibt ihn, das Fenster erkennt ihn
+/// ⚑ An einer Stelle: Der Ruecken vergibt es, das Fenster erkennt es
 /// daran, und zwei Schreibweisen liefen auseinander.
-const NETZMODELL = "netz";
+///
+/// ⛑ **Seit dem 2026-09-11 ein Praefix und kein ganzer Wert.** Vorher
+/// stand genau ein Sammeleintrag `netz` in der Wahl; jetzt steht jedes
+/// Modell auch als `netz:<Artefaktname>` da, weil im Netz mehr als ein
+/// Modell gerechnet wird. Ein Vergleich auf Gleichheit haette danach
+/// keinen einzigen Netzeintrag mehr erkannt.
+const NETZMODELL = "netz:";
 
 // --- Das Modell geht nach einer Weile wieder ---------------------------
 //
@@ -649,6 +694,7 @@ function ruhe_neu_stellen() {
 /// Name, den niemand vergeben hat, waere schlechter als ein
 /// technischer.
 let modellnamen = new Map();
+let modellhardware = new Map();
 const anzeigename_aus = (pfad) =>
   modellnamen.get(pfad) || pfad.split("/").filter(Boolean).pop() || pfad;
 
@@ -1394,6 +1440,19 @@ const feldzeile = (f, wert, beim_setzen) => {
   satz.className = "feldsatz";
   satz.textContent = f.hinweis;
   a.append(titel, satz);
+  // ⚑ **Beim Modellfeld steht die Mindestausstattung darunter**
+  // (Festlegung des Projektinhabers, 2026-09-11), kleingedruckt und nur
+  // fuer das eingestellte Modell. Die Angabe kommt aus derselben Karte
+  // wie in der Wahl; eine zweite Quelle liefe auseinander.
+  if (f.name === "modell.artefakt") {
+    const hw = modellhardware.get(wert) || "";
+    if (hw) {
+      const klein = document.createElement("span");
+      klein.className = "feldsatz feldhardware";
+      klein.textContent = hw;
+      a.append(klein);
+    }
+  }
   // ⚑ Der technische Name geht nicht verloren, er steht nur nicht mehr
   // in der Spalte: Wer `myl setzen` benutzt, braucht ihn, und ein
   // Zeigen auf die Beschriftung gibt ihn her.
@@ -1900,10 +1959,17 @@ async function modellwahl_zeichnen() {
   // ⚑ Die Namen kommen aus derselben Liste, aus der die Wahl entsteht;
   // eine zweite Zuordnung im Fenster liefe auseinander.
   modellnamen = new Map(liste.map((m) => [m.pfad, m.name]));
+  // ⚑ Dasselbe fuer die Mindestausstattung: Sie steht klein unter der
+  // Wahl und wechselt mit ihr.
+  modellhardware = new Map(liste.map((m) => [m.pfad, m.hardware || ""]));
   for (const m of liste) {
     const o = document.createElement("option");
     o.value = m.pfad;
     o.textContent = m.name;
+    // ⚑ **Auch am Eintrag selbst**, nicht nur unter der Liste: Beim
+    // Durchgehen der Wahl sieht man sonst nur den Namen, und die Frage
+    // „traegt meine Maschine das" stellt sich genau dort.
+    if (m.hardware) o.title = m.hardware;
     if (!m.offen) {
       o.disabled = true;
       o.title = m.warum;
@@ -1911,10 +1977,22 @@ async function modellwahl_zeichnen() {
     if (m.pfad === e.werte["modell.artefakt"]) o.selected = true;
     w.append(o);
   }
+  hardwarezeile_schreiben();
+}
+
+/// **Die kleingedruckte Zeile unter der Modellwahl.**
+///
+/// ⚠️ Leer beim Netzeintrag, und das ist keine Luecke: Dort rechnet
+/// eine fremde Maschine, eine Anforderung an die eigene stuende falsch.
+function hardwarezeile_schreiben() {
+  const z = $("modellhardware");
+  if (!z) return;
+  z.textContent = modellhardware.get($("modellwahl").value) || "";
 }
 
 $("modellwahl").addEventListener("change", async () => {
   const neu = $("modellwahl").value;
+  hardwarezeile_schreiben();
   try {
     await invoke("setzen", { feld: "modell.artefakt", wert: neu });
     // ⛑ Ein Modellwechsel wirft das geladene weg. Ohne diese Zeile
@@ -2138,6 +2216,9 @@ async function senden(text) {
     offen.titel = titel_aus(text);
   }
   offen.beitraege.push({ von: "nutzer", text });
+  // ⚑ **Womit man arbeitet, steht oben** (Auftrag des Projektinhabers,
+  // 2026-09-12). Hier und nicht beim Oeffnen: siehe `nach_oben`.
+  nach_oben(offen);
   sichern();
   alles_zeichnen();
 

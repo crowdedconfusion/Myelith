@@ -1,15 +1,22 @@
 # integer-llm
 
-> **Version:** 0.63.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.46.0, pipeline 0.15.1)
+> **Version:** 0.67.0 (θ_v 0.18.0; kernels 0.51.0, runtime 0.49.0, pipeline 0.15.1)
 > **Datum:** 2026-09-11
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
-> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,5B **15,27**
-> (+2,11 %), 4B **19,95** (+1,64 %), 7B **41,42 → 8,78** (+1,14 %),
-> 30B-A3B (MoE) **10,42** gegen 10,48. Der Abstand fällt monoton mit der
+> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,28**
+> (+4,47 %), 4B **19,95** (+1,64 %), 30B-A3B (MoE) **10,42** gegen
+> 10,48. ⛔️ **Das dichte 14B (11,54, +1,16 %) ist am 2026-09-12
+> entfallen**; seine Messung bleibt als Aufzeichnung erhalten. Der Abstand fällt monoton mit der
 > Modellgrösse; ⚑ **bei 435 Positionen ist ein halbes Prozent nicht
 > auflösbar**, das Vorzeichen der letzten Zeile trägt also nicht.
-> Der unabhängig gemessene Boden des Quantisierungsschemas liegt bei +0,84 % — der
-> gesamte verbleibende Umsetzungsverlust beträgt damit **0,30 Punkte**.
+>
+> ⚑ **Seit dem 2026-09-11 liegt die Reihe vollständig in einer
+> Modellfamilie**, und erstmals trägt jede der vier Grössen eine eigene
+> Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
+> Grössenvergleich mass also immer auch einen Familienunterschied mit.
+> **Der Boden des Quantisierungsschemas (+0,84 %) ist an der
+> abgelösten 7B gemessen und für diese Reihe nicht neu bestimmt**; er
+> steht weiter unten im dazugehörigen Ergebnisblock und gilt dort.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
 > Residual-Addition.
 >
@@ -167,7 +174,7 @@ Perplexitätsabstand. **8/8 Übereinstimmung mit BF16 wäre kein Erfolg,
 sondern ein Hinweis darauf, dass die Quantisierung wirkungslos ist.**
 
 ```bash
-INTEGER_LLM_MODEL=myelith-7b python bench/qualitativ.py 10
+INTEGER_LLM_MODEL=myelith-14b python bench/qualitativ.py 10
 ```
 
 Die Modellwahl folgt derselben Umgebungsvariablen wie Kalibrierung und
@@ -229,16 +236,21 @@ von `INTEGER_LLM/` aus.
 scripts/fetch_model.sh
 ```
 
-Lädt Qwen2.5-0,5B mit **fixierter Revision**. Für ein anderes Modell
-steuert `MODEL_ID` die Auswahl (nicht `INTEGER_LLM_MODEL` — das Skript
-spricht mit HuggingFace und braucht die dortige ID):
+Lädt **Qwen3-0,6B** mit fixierter Revision, das Ankermodell des
+Projekts. Für ein anderes Modell steuern `MODEL_ID` und `REVISION` die
+Auswahl (nicht `INTEGER_LLM_MODEL`: Das Skript spricht mit HuggingFace
+und braucht die dortige ID). Die Revisionen stehen in
+`models/KATALOG.json`:
 
 ```bash
-MODEL_ID=Qwen/Qwen2.5-7B scripts/fetch_model.sh
-``` Die Fixierung ist kein
-Detail: Eine andere Revision ergibt andere Gewichte, andere Artefakte und
-einen anderen θ_v-Hash — der Vergleich mit den hier dokumentierten Zahlen
-wäre hinfällig.
+MODEL_ID=Qwen/Qwen3-4B   REVISION=1cfa9a7208912126459214e8b04321603b3df60c scripts/fetch_model.sh
+MODEL_ID=Qwen/Qwen3-14B  REVISION=40c069824f4251a91eefaf281ebe4c544efd3e18 scripts/fetch_model.sh
+```
+
+⚑ **Die Fixierung ist kein Detail.** Eine andere Revision ergibt andere
+Gewichte, andere Artefakte und einen anderen θ_v-Hash; der Vergleich mit
+den hier dokumentierten Zahlen wäre hinfällig. Deshalb ist seit dem
+2026-09-11 auch die **Vorgabe** eine feste Revision und nicht `main`.
 
 ### 2. Kalibrier-Umgebung anlegen
 
@@ -293,13 +305,13 @@ Umgebung greift es das System-Python und findet `torch` nicht.
 
 Quantisiert die Gewichte, berechnet die Aktivierungsskalen aus einer
 Stichprobe von WikiText-2, erzeugt die Lookup-Tabellen und schreibt alles
-nach `artifacts/myelith-0.5b/`. Dauert einige Minuten und braucht rund
+nach `artifacts/myelith-0.6b/`. Dauert einige Minuten und braucht rund
 0,8 GB Platz.
 
 Für ein anderes Modell:
 
 ```bash
-INTEGER_LLM_MODEL=myelith-7b scripts/build_artifacts.sh
+INTEGER_LLM_MODEL=myelith-14b scripts/build_artifacts.sh
 ```
 
 Diese Variable steuert Kalibrierung, Messung und Benchmark — **eine**
@@ -313,7 +325,7 @@ stillschweigend Unsinn.
 ```bash
 cargo run --release --manifest-path runtime/Cargo.toml \
     --bin integer-llm-runtime -- \
-    artifacts/myelith-0.5b "Die Hauptstadt von Frankreich ist" 10
+    artifacts/myelith-0.6b "Die Hauptstadt von Frankreich ist" 10
 ```
 
 Ausgabe: die generierten Token und der dekodierte Text. Greedy und
@@ -557,7 +569,7 @@ cd conformance && ./run.sh <backend-name>
 
 # 4. E2E-Validierung (optional, benötigt Artefakte)
 cd runtime && cargo run --bin golden_model --features <backend-feature> \
-    -- ../artifacts/myelith-0.5b --batch ../tests/golden/vectors
+    -- ../artifacts/myelith-0.6b --batch ../tests/golden/vectors
 ```
 
 **Simulations-Limitation:** GPU-Ausführung (CUDA/ROCm) kann **nicht**
@@ -574,6 +586,284 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.67.0 – 2026-09-12 (das dichte 14B ist entfernt)
+
+**Festlegung des Projektinhabers.** Begründung: schlechterer Durchsatz
+als das Gemisch (5,25 gegen 10,1 Token je Sekunde), schlechtere
+Perplexität (11,54 gegen 10,42), aufwendigeres Training, und 46 GB auf
+der Platte ohne Mehrwert.
+
+⚑ **Ein Befund aus dem Messen stützt es.** Auf einer Maschine mit
+24 GiB ist das dichte 14B **unhandlicher als das grössere 30B**: Bei
+identischer Einstellung kostete die Perplexitätsmessung 19 Minuten
+gegen zehn, und acht Trainingsdurchgänge über vier Stunden gegen
+fünfzig Minuten. Ein dichtes Modell fasst bei jedem Vorwärtspass alle
+16,3 GB an, ein Gemisch je Token acht von 128 Experten.
+
+⚠️ **Was dabei verlorengeht, ist benannt und abgewogen.** Ohne das
+dichte 14B verliert die Aussage „das Gemisch schlägt ein dichtes Modell
+mit halb so vielen Parametern" ihren Vergleichspunkt, und die dichte
+Reihe fällt von drei Punkten auf zwei, womit ein Grössenvergleich
+wieder einen Architekturunterschied mitmisst. Der Projektinhaber hat
+das gegen den Plattenbedarf abgewogen.
+
+**Entfernt:** Katalogeintrag, Registereintrag samt Skalenpaket,
+Modellkonfiguration, und die Modellzeile aus **beiden** Werkzeugen von
+GOVERNANCE.
+
+⚑ **Die Prüfungen sind auf ein Kriterium umgestellt statt auf ein
+Modell.** `test_gptq_hessian_bedarf_waechst_quadratisch` stand auf der
+7B, dann auf der 14B, und beide sind gegangen. Sie prüft jetzt das
+**Gesetz** (der Bedarf wächst schneller als die Grösse) und das
+**Kriterium**, das der Code selbst anlegt (passt der Bedarf in zwei
+Drittel des Speichers). **Eine Schranke, die an einem bestimmten Modell
+hängt, ist keine Schranke, sondern ein Ablaufdatum.**
+
+⚑ **Die Messungen bleiben.** `results/*myelith-14b*` steht weiter im
+Baum: die Perplexitätszeile (11,54 gegen 11,41), der Durchsatz (5,25
+Tok/s) und die Zeitmessung sind die Belege für den Vergleich, und sie
+bleiben gültig, wenn ihr Gegenstand aus dem Baum ist. **Messgeschichte
+wird nicht umgeschrieben.**
+
+### v0.66.0 – 2026-09-12 (das Expertengemisch trainiert, und zwei Meldungen sahen ihm nicht zu)
+
+`runtime` **0.48.0 auf 0.49.0**.
+
+**Auftrag des Projektinhabers:** prüfen, ob für jedes Modell, besonders
+für das 30B, ein hinreichendes Training verfügbar ist, das nachweislich
+richtige Ergebnisse liefert.
+
+**Das Gemisch trainiert, und der Beleg ist deutlich.** Referenzleiter
+Stufe 2, eine Ebene (47), acht Durchgänge, gegen den Rauschnullpunkt:
+
+| Myelith 30B-A3B | int8 geändert | Zeilenskalen | lern | **halte** |
+|---|---|---|---|---|
+| Rauschen, **ohne** Gradienten | 2 044 027 (0,73 %) | 460 | +0,00 % | **−0,02 %** |
+| Training, acht Durchgänge | 1 759 812 (0,63 %) | 288 | −11,51 % | **−10,54 %** |
+
+Beide über dieselben 278 659 072 Gewichte, also Aufmerksamkeit, Router
+und die **55 von 128** Experten, die der Router berührt hat. ⚑ **Das
+Rauschen stört 16 % mehr und erreicht das 527-fache weniger.**
+
+⛔️ **Fund 346: drei Meldezeilen waren auf einem Gemisch blind für die
+Experten.** Der Anfangsstand einer Gemischebene trägt keine Experten,
+weil ein Experte seinen Master erst bekommt, wenn der Router ihn wählt.
+Die Zeilen bildeten `anfang.matrizen().zip(jetzt.matrizen())`, und
+**`zip` bricht an der kürzeren Seite ab, ohne ein Wort zu sagen**. Der
+Nenner war damit auf das Gewicht genau Aufmerksamkeit plus Router
+(19 136 512), während im selben Lauf 261 Millionen Gewichte bewegt
+wurden.
+
+**Am schwersten wiegt nicht die Prozentzahl, sondern die
+Ausreisserzeile.** Sie ist die Schranke, die einen entgleisten Lauf
+sichtbar macht; auf einem dichten Modell hat sie am Vortag Faktor
+359,34 gemeldet und damit einen falschen Aufruf aufgedeckt. Auf einem
+Gemisch sah sie dem Experten nicht zu. Jetzt meldet sie Matrix 55, also
+eine Expertenmatrix.
+
+⚑ **Das Δ-Commitment war nicht betroffen.** `Shardgewichte::deltas`
+läuft über die **Master**-Seite und setzt für einen fehlenden Anfang
+eine Nullmatrix ein; die Experten sind im Abdruck enthalten. Betroffen
+war die Anzeige, nicht der Konsens. Berichtigt über
+`Shardgewichte::paare_mit_anfang`, die den fehlenden Anfang eines
+Experten aus dem Modell nachbildet.
+
+⛑ **Fund 345: die wichtigste Zahl eines Gemischlaufs stand nirgends.**
+`trainingsschleife` führt seit dem 2026-09-05 `experten_beruehrt`, und
+der Testclient zeigt sie. `trainingsguete` zeigte sie nicht, und das
+ist das Werkzeug, mit dem jemand einen Trainingslauf misst. „261 345 637
+Gewichte bewegt" liest sich wie ein trainiertes Modell; **ein Experte,
+den der Router nie wählt, bekommt nie einen Gradienten und bleibt
+untrainiert.** Die Durchgangsmeldung nennt jetzt „55 von 128 Experten
+beruehrt".
+
+### v0.65.0 – 2026-09-11 (die neue Reihe ist nachgemessen, und dabei fielen drei Messfehler auf)
+
+`runtime` **0.47.0 auf 0.48.0** (Fund 343, die Lernraten-Vorgabe).
+
+**Auftrag des Projektinhabers:** „Lass uns gerne die Perplexität und
+auch das Training verifizieren."
+
+| Modell | Gleitkomma | Ganzzahl | Abstand |
+|---|---|---|---|
+| Myelith 0,6B | 31,86 | 33,28 | **+4,47 %** |
+| Myelith 4B | 19,63 | 19,95 | +1,64 % |
+| Myelith 14B | 11,41 | 11,54 | **+1,16 %** |
+| Myelith 30B-A3B | 10,48 | 10,42 | kein messbarer Abstand |
+
+Gemessen auf denselben vier WikiText-2-Sequenzen und denselben 435
+Positionen für alle vier, beide Pfade mit Teacher-Forcing. Der Katalog
+führt damit **alle vier Modelle auf `verifiziert`**, zum ersten Mal.
+
+⚑ **Die Reihe hat eine Richtung, und sie ist jetzt belegt statt
+plausibel:** Je kleiner das Modell, desto teurer die Quantisierung.
+Das kleinste liegt mit +4,47 % als einziges nennenswert nahe an der
+Grenze von 5 %.
+
+⛑ **Und zwei Prozentzahlen, die gleich aussehen, sind nicht dasselbe.**
+Die abgelöste 7B lag bei +1,14 %, die neue 14B liegt bei +1,16 %. Das
+ist kein Beleg, dass die Grösse nichts ändert: verschiedene Familien,
+verschiedene Grundlinien (8,68 gegen 11,41), verschiedene Modelle.
+
+⛔️ **Fund 339: die Kalibrierung hat seit dem 2026-09-07 keinen WikiText
+mehr gesehen.** `calibrate/src/main.py` suchte unter
+`INTEGER_LLM/eval/datasets/`; das Verzeichnis ist am 2026-09-07 nach
+`BENCHMARKS/Inferenz/datasets/` gezogen, diese Zeile nicht. Die Stelle
+**warnte und rechnete weiter**, also mit den rund zwei Dutzend
+kuratierten Prompts statt zusätzlich mit 64 WikiText-Sequenzen. Jedes
+seither gebaute Artefakt trug Skalen aus einem schmaleren Textbestand,
+ohne dass es irgendwo dranstand. Jetzt bricht der Lauf ab
+(`FileNotFoundError` mit dem Befehl zum Holen im Text);
+`INTEGER_LLM_OHNE_WIKITEXT=1` ist der bewusste Ausweg. **Eine Warnung,
+die man übersehen kann, ist bei einer Eingangsgrösse keine Warnung.**
+Beide neuen Artefakte sind mit dem vollständigen Satz neu gebaut,
+Skalenpakete und Vektoren neu erzeugt, **48/48 gegen `reference` und
+gegen `cpu-simd`**.
+
+⛑ **Fund 340: eine zitierte Messdatei überschrieben.** Die historischen
+Dateinamen (`baseline_wikitext2.json` und die zwei daneben) hingen am
+**voreingestellten** Modell. Die Voreinstellung wechselte am 2026-09-11
+auf `myelith-0.6b`, und der erste Grundlinienlauf schrieb damit die
+Messung der 0,5B zu. Wiederhergestellt aus der Versionsverwaltung; die
+Datei war eingecheckt und unverändert, **das ist der einzige Grund,
+warum es folgenlos blieb**. Die Regel hängt jetzt am Modell
+(`_HISTORISCH = "myelith-0.5b"`), und dieses Modell ist aus dem Projekt
+heraus, kann also nichts mehr überschreiben.
+
+⛑ **Fund 341: das erzeugte Entscheidungsprotokoll behauptete bei jedem
+Modell 0,5 Mrd. Parameter.** Der zweite Mess-Hinweis („kleine Modelle
+sind der ungünstigste Fall") stand als fester Text im Rumpf von
+`perplexity.py`, und der Rumpf schreibt für alle vier. Im Protokoll der
+14B stand deshalb wörtlich „0,5 Mrd. Parameter sind der ungünstigste
+Fall", neben einer Messung an vierzehn Milliarden. **Eine erzeugte
+Datei darf nichts sagen, was sie nicht aus ihrer Eingabe hat**; die
+Grösse kommt jetzt aus `KATALOG.json`, und fehlt sie dort, sagt das
+Protokoll das, statt eine Zahl zu erfinden.
+
+⛔️ **Fund 342: eine Prüfung, die nirgends lief.**
+`tests/test_gammaentzerrung.py` gehört zu Fund 336 und belegt, dass die
+Umformung eine Identität ist. Sie war mit `pytest` geschrieben, und
+dieses Projekt hat kein pytest: nicht in `calibrate/requirements.txt`,
+nicht in der CI, und die übrigen Testdateien daneben sind
+eigenständige Skripte. Der Aufruf brach mit `ModuleNotFoundError` ab,
+und in keiner CI-Liste stand sie. **Der Beleg für die einzige
+Modelländerung, die dieses Projekt je vorgenommen hat, lief also nie.**
+Jetzt eigenständiges Skript, und im CI-Job neben den anderen vier, die
+torch brauchen.
+
+⛔️ **Fund 343: die gemessene Lernrate war wirkungslos.**
+`Trainingsvorgaben::vorgabe()` trägt seit Fund 337 `lr_nenner = 1 << 10`,
+an Qwen3-0,6B gemessen. `bin/trainingsguete.rs` setzte aber bei **jedem
+Aufruf** seine eigene Konstante `1 << 12` darüber, und es ist das
+einzige Werkzeug, das jemand für einen Trainingslauf startet. Ein Lauf
+ohne `--nenner` rechnete damit mit **einem Viertel der gemessenen
+Schrittweite**. **Eine Vorgabe, die an zwei Orten steht, hat einen Ort
+zu viel**; die Konstante liest jetzt die Vorgabe.
+
+**Und das Training ist damit auf dem neuen Anker belegt.** Die
+Gegenprobe ist sauber: dasselbe Artefakt (Vorher-Zahl in beiden Läufen
+**61,1625**), derselbe Korpus, dieselben Ebenen, dieselben zwölf
+Durchgänge, nur die Schrittweite gewechselt.
+
+| | Nenner 4096 | Nenner 1024 (gemessen) |
+|---|---|---|
+| Perplexität | 61,16 auf 61,23 (**+0,11 %**) | 61,16 auf **60,55** (**−1,00 %**) |
+| Verlust | 4,1135 auf 4,1146 | 4,1135 auf **4,1034** |
+| Gewichte geändert | 254 548 (0,40 %) | **509 508** (0,81 %) |
+| Zeilenskalen verschoben | 256 | **505** |
+
+⚑ **Der ganzzahlige Rückwärtspass lernt jetzt an einem Korpus, nicht
+mehr nur an einer Tatsache.** Die bisherige Evidenz war ein einzelnes
+Ziel über dreissig Schritte; das zeigt, dass der Pfad rechnet. Ein
+Korpus zeigt, dass er lernt.
+
+**Und der Nachweis der Verallgemeinerung steht auch**, auf der
+Referenzleiter des Projekts statt auf einem selbstgebauten Korpus:
+Stufe 2 (der Endbuchstabe bestimmt die Farbe), 64 Lernzeilen, 32
+**disjunkte** Haltezeilen derselben Regel.
+
+| | int8 geändert | lern | **halte** |
+|---|---|---|---|
+| Rauschen, **ohne** Gradienten | 0,896 % | −0,07 % | **−0,09 %** |
+| Training, zwölf Durchgänge | 0,824 % | −0,93 % | **−1,82 %** |
+
+⚑ **Das Training stört weniger und erreicht zwanzigmal mehr**, auf
+Beispielen, die es nie gesehen hat. Damit ist die Erklärung
+ausgeschlossen, die das Werkzeug im Urteil selbst nennt: dass eine
+int8-Störung mit Requantisierung den systematischen Rundungsfehler
+wegmittelt und dasselbe leistet.
+
+⚠️ **Der Umfang der Aussage ist klein**: eine Leiterstufe, 64 Zeilen,
+fünf von 28 Ebenen. Das belegt, dass der Rückwärtspass eine Regel lernt
+und trägt; nicht, dass er einen echten Korpus lernt.
+
+⛑ **Fund 344: `--haltedatei` ohne `--haltemenge` ergab still null
+Haltefolgen.** Die Schranke stand ohne Angabe auf null, und `.take(0)`
+nimmt nichts; der Lauf meldete dann folgerichtig „ohne Haltemenge nicht
+zu fällen". **Eine Schranke, die ohne Angabe auf null steht, ist keine
+Vorgabe, sondern ein Aus-Schalter.**
+
+⚑ **Bei der Gelegenheit ist G7 für die eingesetzte Reihe nachgeprüft.**
+Der Beleg in ETHICS galt für die Qwen2.5-Familie, die das Projekt nicht
+mehr benutzt. Alle vier heute eingesetzten Modelle tragen dieselbe,
+bytegleiche Apache-2.0-Datei (SHA-256 `832dd9e0…`, 201 Zeilen, ohne
+modellspezifische Zusätze), und `lizenzprobe.py` bestätigt es ohne
+Netzzugang auf jedem Klon.
+
+### v0.64.0 – 2026-09-11 (die Modellreihe ist jetzt Qwen3, von 0,6B bis 30B)
+
+`runtime` **0.46.0 auf 0.47.0**.
+
+**Auftrag des Projektinhabers:** Qwen2.5-7B durch **Qwen3-14B** und
+Qwen2.5-0,5B durch **Qwen3-0,6B** ersetzen.
+
+⚑ **Damit misst die Reihe eine Achse statt zweier.** Vorher lagen zwei
+Modelle in der Qwen2.5-Linie und zwei in der Qwen3-Linie; ein
+Grössenvergleich trug dann immer auch einen Familienunterschied mit
+sich. Jetzt sind alle vier Qwen3:
+
+| Modell | Ebenen | Artefakt | Decode |
+|---|---|---|---|
+| Myelith 0,6B | 28 | 0,92 GB | 29,4 Tok/s |
+| Myelith 4B | 36 | 4,8 GB | 13,9 |
+| Myelith 14B | 40 | 16,3 GB | 5,25 |
+| Myelith 30B-A3B | 48 | 31,3 GB | 10,1 |
+
+⛔️ **Der Anker des Projekts hat gewechselt, und das ist kein
+Nebeneffekt.** 27 der 44 Konformitätsvektoren hingen an
+`myelith-0.5b`. Sie sind gegen `myelith-0.6b` **neu erzeugt**; weil das
+neue Modell 28 statt 24 Ebenen hat, sind es jetzt **48 Vektoren**, und
+48/48 bestehen gegen `reference` **und** gegen `cpu-simd`.
+
+⛑ **Fund 336: ein Normgewicht von 192, und int8 reicht bis 127.**
+Qwen3-0,6B trägt in der letzten Ebene ein
+`post_attention_layernorm.weight` mit dem Betrag 192, während der Median
+derselben Zeile bei 3,1 liegt. Die Quantisierung bricht daran laut ab,
+und das ist richtig.
+
+⚑ **Die Lösung ändert das Format nicht, sondern das Modell.** RMSNorm
+rechnet `y = normiert · gamma`, und `y` geht ausschliesslich in
+Matrizen: `gamma/2` und `Spalte·2` ergeben dasselbe Ergebnis, exakt,
+weil beide Faktoren Zweierpotenzen sind. Die neue
+`calibrate/src/gammaentzerrung.py` verschiebt genau die Kanäle, die
+sonst sättigen, und nur um die kleinste Zweierpotenz, die reicht.
+**Gegengeprüft an den Logits des Gleitkommamodells: bitgleich.**
+
+⛑ **Fund 337: eine Ebene, die sich nicht bewegt.** Ebene 14 des neuen
+Ankers gibt typisch **7** aus (Ebene 0: 2845). Das Ziel des
+Trainingstests folgt der Ausgabegrösse, und bei so kleinen Werten liegt
+die nötige Gewichtsänderung **unter der Auflösung eines Schritts**: Der
+Abstand bleibt über 200 Schritte exakt gleich. Das ist Fund 189 an
+echten Gewichten, diesmal als Aussage über kleine **Aktivierungen**.
+
+⛑ **Fund 338: eine tote Zusicherung und eine Schranke ohne Fall.** Zwei
+Trainingstests schlossen QK-Norm aus („der Trainingsblock kann das
+nicht"), obwohl er sie seit `kernels` v0.30.0 kann; die Zusicherung
+wurde erst laut, als der Anker auf Qwen3 wechselte. Und die Gegenprobe
+zur Übertragungsform erreichte ihren Fall nicht mehr: `lr_nenner = 1`
+reichte nicht, weil der Zähler im Rumpf fest auf eins stand. Jetzt ist
+er einstellbar, und bei `lr_zaehler = 64` beisst die Schranke wieder.
 
 ### v0.63.0 – 2026-09-11 (eine naheliegende Optimierung, gemessen und verworfen)
 

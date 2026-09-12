@@ -198,16 +198,32 @@ if not defined BIN (
 )
 
 :starten
+set MYL_FEHLER=
 "%BIN%" %*
+if errorlevel 1 set MYL_FEHLER=1
 
 :ende
-rem Nur bei Doppelklick warten: dann ist der Aufrufer explorer.exe und die
-rem Konsole gehoert diesem Skript allein.
+rem Nur bei Doppelklick warten, und nur wenn der Client NICHT selbst
+rem gewartet hat.
+rem
+rem ⚑ Seit dem 2026-09-11 wartet der Pruefstand am Ende von sich aus auf
+rem Enter und sagt dazu, dass sich das Fenster danach schliesst. Ein
+rem `pause` hier verlangte dann ein ZWEITES Mal eine Taste, und zwar mit
+rem einer englischen Meldung ("Press any key to continue"), die nichts
+rem mehr erklaert. Zweimal bestaetigen heisst: beim ersten Mal war die
+rem Zusage falsch.
+rem
+rem Gewartet wird deshalb nur noch, wenn der Client GESCHEITERT ist
+rem (errorlevel gesetzt) und der Starter per Doppelklick lief: Dann steht
+rem eine Fehlermeldung im Fenster, die sonst mit dem Fenster verschwindet.
+rem
 rem Doppelklick-Erkennung. Verglichen wird nur der Dateiname, nicht der
 rem volle Pfad: Der Name enthaelt Klammern, und ein voller Pfad kann
 rem Zeichen enthalten, die `find` als Muster missversteht.
+if "%MYL_FEHLER%"=="" goto :schliessen
 echo %CMDCMDLINE% | find /i "%~nx0" >nul
 if not errorlevel 1 pause
+:schliessen
 endlocal
 exit /b 0
 

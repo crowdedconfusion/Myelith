@@ -42,7 +42,7 @@ Launch gebraucht wird.
 
 ```
 python3 bench/run.py                          # Referenz-Backend, 0,5B
-INTEGER_LLM_MODEL=myelith-7b python3 bench/run.py
+INTEGER_LLM_MODEL=myelith-30b-a3b python3 bench/run.py
 python3 bench/run.py --backends reference,cpu-simd
 python3 bench/run.py --no-fp                  # ohne Gleitkomma-Vergleich
 ```
@@ -90,7 +90,7 @@ import cargo_paths  # noqa: E402
 sys.path.insert(0, str(ROOT / "calibrate"))
 from src.model_configs import get_export_model_config  # noqa: E402
 
-MODEL = os.environ.get("INTEGER_LLM_MODEL", "").strip() or "myelith-0.5b"
+MODEL = os.environ.get("INTEGER_LLM_MODEL", "").strip() or "myelith-0.6b"
 _CONFIG = get_export_model_config(MODEL)
 HF_MODEL_DIR = ROOT / "models" / _CONFIG["hf_model_id"].split("/")[-1]
 PROMPT = "Die Hauptstadt von Frankreich ist"

@@ -61,3 +61,11 @@ __pycache__/
 # Arbeitsverzeichnis von `cargo test`.
 kette.dat
 kette.log
+
+# Lokale Arbeitsnotizen, die nicht veroeffentlicht werden.
+#
+# ⚠️ Eine Zeile hier ist selbst versioniert: Ein Leser sieht, DASS es
+# die Datei gibt, nur nicht ihren Inhalt. Wer das auch verbergen will,
+# traegt sie stattdessen in `.git/info/exclude` ein, das nicht mit
+# ausgeliefert wird. Der Ort ist am 2026-09-12 so festgelegt worden.
+CLAUDE.md

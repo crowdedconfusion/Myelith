@@ -19,7 +19,8 @@
 //! 2. **CONSENSUS/NODE**: Sechs Miner melden sich an, ein Block wird gebaut.
 //! 3. **TOKENOMICS**: Der Nutzer verbrennt MYL und bekommt Credits.
 //! 4. **AGENT_LAYER**: Sitzungskontrakt in der Kette, Vollmacht beim Agenten.
-//! 5. **INTEGER_LLM**: Der echte Qwen2.5-0,5B wird geladen.
+//! 5. **INTEGER_LLM**: Das echte Ankermodell wird geladen, ohne
+//!    Vorgabe `myelith-0.6b`, sonst was `MYL_POD_MODELL` nennt.
 //! 6. **COMPUTE_PIPELINE**: Der Shard-Prozess öffnet seine lokale Tür.
 //! 7. **NETWORKING**: Der Knoten baut den versiegelten Kanal dorthin.
 //! 8. **GATEWAY**: Ein Harness ruft `/v1/chat/completions` mit Bearer.
@@ -107,9 +108,21 @@ impl Bericht {
     }
 }
 
+/// Der Modellschluessel, den dieser Lauf benutzt.
+///
+/// ⛑ **Bis zum 2026-09-11 stand der Name zweimal im Lauf**: einmal
+/// hier als Verzeichnis und einmal als fester Text in der Meldung
+/// („Qwen2.5-0,5B geladen"). Nach dem Ankerwechsel lud der Lauf
+/// `myelith-0.6b` und **meldete weiter das alte Modell**. Ein Bericht,
+/// der ein anderes Modell nennt als das geladene, ist schlimmer als
+/// keiner: Er sieht aus wie ein Beleg.
+fn modellschluessel() -> String {
+    std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string())
+}
+
 fn artefakte() -> PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = modellschluessel();
     let mut p = PathBuf::from(manifest);
     p.push("..");
     p.push("..");
@@ -378,7 +391,7 @@ async fn alle_kompartimente_verzahnt() {
     assert_eq!(werk.shardzahl(), 4, "die Probepipeline hat vier Shards");
     b.schritt(
         "INTEGER_LLM",
-        format!("Qwen2.5-0,5B geladen, auf {} Shards verteilt", werk.shardzahl()),
+        format!("{} geladen, auf {} Shards verteilt", modellschluessel(), werk.shardzahl()),
     );
 
     // ---- 6. COMPUTE_PIPELINE: die lokale Tür des Shard-Prozesses -----
@@ -425,7 +438,7 @@ async fn alle_kompartimente_verzahnt() {
         EpochId(0),
         Endpunkt::aus_bytes([1u8; 32]),
         knoten_schluessel,
-        "myelith-myelith-0.5b",
+        "myelith-myelith-0.6b",
         betreiber,
     )
     .mit_abrechnung(abr_tx);
@@ -437,7 +450,7 @@ async fn alle_kompartimente_verzahnt() {
     let mut annahme = Annahme::neu(41, EpochId(0));
     let mut stelle = Zugangsstelle::neu(EineQuelle(kontrakt.clone()));
     let koerper = format!(
-        r#"{{"model":"myelith-myelith-0.5b","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
+        r#"{{"model":"myelith-myelith-0.6b","messages":[{{"role":"user","content":"{FRAGE}"}}],"max_tokens":8,"temperature":0.7}}"#
     );
 
     let dienst = async {

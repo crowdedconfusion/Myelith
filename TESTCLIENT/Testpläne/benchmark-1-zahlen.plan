@@ -28,8 +28,8 @@
 #
 # LAUFZEIT (Determinismuslauf, Referenz-Backend, ohne Modellladen):
 #   7 Prompts x 24 Token x 2 Durchgaenge = 336 Token
-#   bei rund 27 tok/s (0,5B): etwa 12 Sekunden
-#   bei rund  2 tok/s (7B):   etwa 3 Minuten
+#   bei rund 29 tok/s (0,6B): etwa 10 Sekunden
+#   bei rund 10 tok/s (30B-A3B): etwa 35 Sekunden
 #   Dazu der Shard-Lauf und das Laden des Modells.
 
 plan_id     = benchmark-1-zahlen

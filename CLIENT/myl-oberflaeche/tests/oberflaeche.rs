@@ -1429,7 +1429,7 @@ fn die_zeile_unter_der_eingabe_sagt_nur_den_modellstand() {
     // ⛑ Und das Netzmodell hat keinen Ladezustand: Es wird hier nicht
     // geladen, und eine Zeile darueber waere eine Unwahrheit.
     assert!(
-        js.contains("if (artefakt === NETZMODELL)"),
+        js.contains("if (artefakt.startsWith(NETZMODELL))"),
         "das Netzmodell bekommt eine Ladezeile, obwohl es nicht geladen wird"
     );
 }
@@ -2127,8 +2127,13 @@ fn kennungen_bleiben_in_jeder_sprache_gleich() {
         }
     }
     // Und die Kennung des Netzmodells steht genau einmal, als Konstante.
+    //
+    // ⛑ **Seit dem 2026-09-11 ein Praefix**, weil jedes Modell auch im
+    // Netz waehlbar ist und der Wert deshalb `netz:<Artefaktname>`
+    // lautet. Die geprueften Eigenschaft ist dieselbe geblieben: eine
+    // Stelle, nicht zwei.
     assert_eq!(
-        js.matches("const NETZMODELL = \"netz\";").count(),
+        js.matches("const NETZMODELL = \"netz:\";").count(),
         1,
         "die Kennung des Netzmodells steht nicht mehr an genau einer Stelle"
     );
@@ -2476,3 +2481,65 @@ fn das_skript_setzt_kein_aussehen() {
         );
     }
 }
+
+/// **Ein berührtes Gespräch wandert in der Leiste nach oben.**
+///
+/// ⚑ Auftrag des Projektinhabers vom 2026-09-12: Womit man gerade
+/// arbeitet, steht oben. Bis dahin stand die Leiste in der Reihenfolge
+/// der Anlage, und ein Gespräch, das man seit Wochen führt, rutschte
+/// mit jedem neuen weiter nach unten.
+///
+/// ⚠️ **Geprüft wird der Weg, nicht das Bild.** Ein Test ohne Browser
+/// kann die Leiste nicht sehen; er kann aber festhalten, **dass** das
+/// Umordnen beim Senden geschieht und **nicht** beim blossen Öffnen.
+/// Genau diese beiden Aussagen sind die Entscheidung.
+#[test]
+fn ein_beruehrtes_gespraech_wandert_nach_oben() {
+    let js = lies("app.js");
+    assert!(
+        js.contains("function nach_oben("),
+        "die Funktion zum Umordnen fehlt"
+    );
+    // Sie versetzt wirklich, statt nur zu sortieren.
+    assert!(
+        js.contains("gespraeche.splice(i, 1)") && js.contains("gespraeche.unshift(g)"),
+        "`nach_oben` ordnet nicht um"
+    );
+
+    // **Beim Senden**, und dort steht der Aufruf.
+    let senden = js
+        .split("async function senden(")
+        .nth(1)
+        .expect("`senden` fehlt");
+    let rumpf = &senden[..senden.len().min(900)];
+    assert!(
+        rumpf.contains("nach_oben(offen)"),
+        "beim Senden wird nicht umgeordnet"
+    );
+}
+
+/// **Das Umordnen fasst `wann` nicht an.**
+///
+/// ⛑ `g.wann` steht im Markdown-Export als „Begonnen", also als
+/// Aussage über den **Anfang**. Wer es beim Umordnen fortschriebe,
+/// machte daraus stillschweigend „zuletzt benutzt", und der Export
+/// sagte etwas anderes, als dort steht.
+#[test]
+fn das_umordnen_faelscht_den_anfangszeitpunkt_nicht() {
+    let js = lies("app.js");
+    let f = js
+        .split("function nach_oben(")
+        .nth(1)
+        .expect("`nach_oben` fehlt");
+    let rumpf = &f[..f.find("\n}").unwrap_or(f.len())];
+    assert!(
+        !rumpf.contains("wann"),
+        "`nach_oben` schreibt `wann` fort: {rumpf}"
+    );
+    // Und der Export nennt es weiterhin als Anfang.
+    assert!(
+        js.contains("Begonnen: ${g.wann}"),
+        "der Export nennt `wann` nicht mehr als Anfang"
+    );
+}
+

@@ -73,11 +73,24 @@ struct Modell {
     layer: u64,
 }
 
-const MODELLE: [Modell; 4] = [
-    Modell { name: "Qwen2.5-0,5B", kib: 757_960, layer: 24 },
-    Modell { name: "Qwen3-4B", kib: 4_703_300, layer: 36 },
-    Modell { name: "Qwen2.5-7B", kib: 8_512_912, layer: 28 },
-    Modell { name: "Qwen3-30B-A3B", kib: 30_521_756, layer: 48 },
+/// ⛑ **Am 2026-09-11 neu gemessen, weil zwei Zeilen Modelle nannten,
+/// die es nicht mehr gibt**, und am 2026-09-12 um das dichte 14B
+/// gekuerzt (Festlegung des Projektinhabers: schlechter als das
+/// Gemisch in Durchsatz und Perplexitaet, und 46 GB auf der Platte). Qwen2.5-0,5B und Qwen2.5-7B sind mit dem
+/// Wechsel der Modellreihe entfallen; die Tabelle rechnete weiter mit
+/// ihren Groessen. **Eine Speicherlast fuer ein Modell, das niemand
+/// betreibt, ist keine Planungsgrundlage.** Die vier Zahlen sind an den
+/// Artefaktverzeichnissen dieses Standes abgezaehlt, nicht geschaetzt.
+///
+/// ⚠️ **Und die 30B-Zeile ist ein Gemisch.** Ihre Groesse steht hier
+/// wie die der dichten Modelle, ihre Rechenlast verhaelt sich aber
+/// anders: Es liegen alle Experten auf der Platte, gerechnet wird mit
+/// acht von hundertachtundzwanzig. Fuer **Speicher** ist das die
+/// richtige Zahl, fuer Durchsatz waere sie es nicht.
+const MODELLE: [Modell; 3] = [
+    Modell { name: "Qwen3-0,6B", kib: 898_782, layer: 28 },
+    Modell { name: "Qwen3-4B", kib: 4_701_995, layer: 36 },
+    Modell { name: "Qwen3-30B-A3B", kib: 30_467_751, layer: 48 },
 ];
 
 /// Shards je Pod im ausgelieferten Manifest

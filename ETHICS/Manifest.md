@@ -1,7 +1,7 @@
 # Myelith — Ethik-Manifest
 
-**Version:** 0.2.0
-**Datum:** 2026-08-31
+**Version:** 0.2.1
+**Datum:** 2026-09-11
 **Geltung:** Für alle Komponenten dieses Repositoriums. Bei Konflikt mit
 einer Komponentenplanung gilt dieses Dokument; Abweichungen sind zu
 begründen und hier zu vermerken.
@@ -196,8 +196,21 @@ Nutzerzahl nicht und kann sie nicht begrenzen — Lizenzen mit
 Nutzerzahl-Obergrenzen oder geografischen Beschränkungen sind schlicht
 nicht einhaltbar.
 
-**Stand (geprüft 2026-08-23, alle sieben Größen):** Die Warnung dieses
-Punktes war berechtigt, **zwei von sieben Varianten fallen durch.**
+**Stand (geprüft 2026-09-11, alle vier eingesetzten Größen):** Alle
+bestehen.
+
+| Variante | Lizenz | |
+|---|---|---|
+| Qwen3-0.6B, 4B, 14B, 30B-A3B | Apache 2.0, bytegleiche Lizenzdatei | ✅ |
+
+Geprüft wurde das `license`-Feld der mitgelieferten Modellkarte und der
+Volltext der Lizenzdatei je Modellverzeichnis, also **ohne Netzzugang
+und auf jedem Klon wiederholbar**; `ETHICS/werkzeuge/lizenzprobe.py`
+bestätigt es in einem Lauf.
+
+**Vorheriger Stand (geprüft 2026-08-23, Qwen2.5, alle sieben Größen):**
+Die Warnung dieses Punktes war damals berechtigt, **zwei von sieben
+Varianten fielen durch.**
 
 | Variante | Lizenz | |
 |---|---|---|
@@ -211,8 +224,15 @@ monatlich aktive Nutzer zählt, und keine, die eine Lizenz beantragen
 könnte. Vollständige Prüfung samt Methode in
 `ETHICS/Lizenzlage.md`.
 
+⚑ **Beide Stände stehen hier, und das ist Absicht.** Der ältere hält
+fest, **warum** je Variante geprüft wird: Innerhalb einer Familie
+können einzelne Größen abweichen, und zweimal taten sie es. Der neuere
+sagt, was heute gilt. Keine der beiden Ablehnungen von 2026-08-23
+betrifft eine Größe, die das Projekt noch führt.
+
 **Für die Skalierungsfrage (K6) folgt daraus:** Die nächste Größe nach
-7B ist **14B**, nicht 72B.
+7B war **14B**, und sie ist es am 2026-09-11 geworden, in der
+Qwen3-Linie.
 
 **Fund bei dieser Prüfung:** Dieser Absatz berief sich zuvor auf
 `INTEGER_LLM/models/Qwen2.5-0.5B/LICENSE`. Die Datei existierte nicht.

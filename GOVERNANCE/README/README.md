@@ -1,7 +1,7 @@
 # governance (`myl-governance`)
 
-> **Version:** 0.13.1
-> **Datum:** 2026-09-03
+> **Version:** 0.15.0
+> **Datum:** 2026-09-11
 > **Status:** **Phasen 1 und 2 abgeschlossen** (1.1–1.4, 2.1–2.3),
 > Phase 3 zur Hälfte (3.1 und 3.4 ✅). Parameter-Registry mit
 > Änderbarkeits-Rang, technische Durchsetzung des Verfassungsrangs,
@@ -134,6 +134,65 @@ richtige Fassung vorhanden und lief nicht.
 Er hat sich beim ersten Lauf bezahlt gemacht, siehe Fund 50.
 
 ## Changelog
+
+### v0.15.0 – 2026-09-12 (das Gemisch trägt jetzt die Schranken)
+
+⛔️ **Das dichte 14B ist entfallen** (Festlegung des Projektinhabers),
+und damit ging das Modell, an dem die Schranken beider Werkzeuge
+hingen. **Sie sind neu gerechnet und nicht nachgezogen.**
+
+| Schranke | vorher (14B) | jetzt (30B-A3B) |
+|---|---|---|
+| `bytes_je_segment` | 614 400 | **294 912** |
+| Eingang je Knoten | 182 GiB | **140 GiB** |
+| Spur je Knoten | 6,2 GiB | **13,1 GiB** |
+| Layer je Shard | 10 | **12** |
+
+⚑ **Der Bezug ist jetzt das Modell, das voraussichtlich das
+Primärmodell wird**, und das ist die richtige Bezugsgrösse für eine
+Speicherplanung.
+
+⚑ **Und das Gemisch trägt erstmals eine gemessene Rate** (10,1 Token je
+Sekunde, gemessen am 2026-09-11). Es ist schmaler als das abgelöste
+dichte Modell (2048 gegen 5120), rechnet aber schneller (10,1 gegen
+5,25); die Segmentzahl hängt am Durchsatz, die Segmentgrösse an der
+Breite, **und die Breite gewinnt**.
+
+⚠️ **Die Zeile zur Spur trägt jetzt eine grössere Zahl als vorher**
+(13,1 statt 6,2 GiB), und die Überschrift der Gegenprobe heisst
+entsprechend „unter zwanzig" statt „unter zehn". Der Befund von E10
+bleibt derselbe, nämlich dass die Spur den Bedarf um eine
+Grössenordnung senkt; die Zahl daneben ist eine andere, weil das Modell
+eine andere ist. **Eine Schranke, die nicht mehr stimmt, wird neu
+gerechnet und nicht weggelassen.**
+
+### v0.14.1 – 2026-09-11 (die Modelltabelle folgt der neuen Reihe)
+
+⚑ **Qwen2.5-0,5B und Qwen2.5-7B sind durch Qwen3-0,6B und Qwen3-14B
+ersetzt** (Festlegung des Projektinhabers). `streitlast` rechnet damit
+an anderen Zahlen, und die Schranken der Gegenproben sind **neu
+gerechnet** statt angepasst: 182 statt 254 GiB je Knoten, weil das
+groessere Modell zwar breiter ist (5120 gegen 3584), aber langsamer
+rechnet (5,25 gegen 10,74 Token je Sekunde) und die Segmentzahl am
+Durchsatz haengt.
+
+⚠️ **`tok_s` bleibt leer, wo nichts gemessen ist.** Die alten Werte
+galten fuer die abgeloesten Modelle; sie zu uebernehmen waere eine
+Zahl ohne Messung.
+
+⛑ **Nachtrag vom selben Tag: `speicherlast` war uebersehen worden.**
+Das zweite Werkzeug dieser Komponente fuehrt eine **eigene**
+Modelltabelle, und sie stand noch auf Qwen2.5-0,5B (757 960 KiB, 24
+Ebenen) und Qwen2.5-7B (8 512 912 KiB, 28 Ebenen). Die vier Groessen
+sind jetzt an den Artefaktverzeichnissen dieses Standes abgezaehlt:
+898 782, 4 701 995, 15 957 650 und 30 467 751 KiB. **Zwei Werkzeuge
+derselben Komponente fuehrten dieselbe Liste, und nur eines wurde
+nachgezogen.**
+
+⛑ **Und `streitlast` nannte in einer Ueberschrift ein anderes Modell
+als in den Zahlen darunter.** Der Satz „je Pod, Qwen2.5-7B" stand fest
+im Rumpf, waehrend `MODELLE[2]` laengst Qwen3-14B war. Der Name kommt
+jetzt aus der Tabelle.
 
 ### v0.13.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 

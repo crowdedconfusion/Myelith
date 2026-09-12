@@ -621,6 +621,26 @@ button:not(.blank):hover:not(:disabled)::before {
   word-break: break-all;
 }
 
+/* ⚑ **Die Mindestausstattung steht klein unter der Wahl** (Festlegung
+   des Projektinhabers, 2026-09-11). Sie beantwortet die Frage, die sich
+   beim Waehlen stellt: „traegt meine Maschine das?". Deshalb ueber dem
+   Pfad und nicht darunter, und deshalb nicht umbrechend wie er: Es ist
+   ein Satz und keine Adresse. */
+.leistenfuss .hardware {
+  margin-bottom: .15rem;
+  word-break: normal;
+}
+
+.leistenfuss .hardware:empty { display: none; }
+
+/* ⚑ **Dieselbe Angabe in der Einstellungszeile**, und dort noch eine
+   Spur leiser als der Satz darueber: Sie ist eine Bedingung und keine
+   Erklaerung. */
+.feldhardware {
+  font-style: italic;
+  opacity: .85;
+}
+
 .breit { width: 100%; }
 
 /* --- Kopf ------------------------------------------------------------ */

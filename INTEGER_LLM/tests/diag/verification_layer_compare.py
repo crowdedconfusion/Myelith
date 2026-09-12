@@ -23,7 +23,7 @@ from src.loader import load_reference_model  # noqa: E402
 
 # Erste 8 Tokens der Mess-Sequenz (identisch zu den Seq-Dump-Skripten).
 TOKENS = [34532, 425, 10965, 465, 374, 458, 6364, 4531]
-ARTIFACTS = REPO / "artifacts" / "myelith-0.5b"
+ARTIFACTS = REPO / "artifacts" / "myelith-0.6b"
 import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))

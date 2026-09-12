@@ -119,7 +119,7 @@ fn eine_anfrage_kommt_als_text_zurueck() {
     let (port, gesehen) = stummel(Verhalten::Antwortet(GUTE_ANTWORT.to_string()));
     let klient = Tuerklient::neu("127.0.0.1", port, "vollmacht-abc");
     let a = klient
-        .chat("myelith-0.5b", &[Nachricht::nutzer("Hauptstadt?")], Some(8))
+        .chat("myelith-0.6b", &[Nachricht::nutzer("Hauptstadt?")], Some(8))
         .expect("die Tuer antwortet");
 
     assert_eq!(a.text, "Paris.");
@@ -135,7 +135,7 @@ fn eine_anfrage_kommt_als_text_zurueck() {
     assert!(text.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"), "{text}");
     assert!(text.contains("Authorization: Bearer vollmacht-abc\r\n"), "{text}");
     assert!(text.contains("Content-Type: application/json\r\n"), "{text}");
-    assert!(text.contains(r#""model":"myelith-0.5b""#), "{text}");
+    assert!(text.contains(r#""model":"myelith-0.6b""#), "{text}");
     assert!(text.contains(r#""role":"user""#), "{text}");
     assert!(text.contains(r#""max_tokens":8"#), "{text}");
 }

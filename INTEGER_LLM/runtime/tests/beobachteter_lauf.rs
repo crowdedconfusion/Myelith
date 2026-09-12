@@ -17,7 +17,7 @@ use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
 
 fn artefakte() -> std::path::PathBuf {
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../artifacts")
         .join(modell)

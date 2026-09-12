@@ -8,7 +8,7 @@ Zwei Nachweise:
      HF-Gleitkomma-Referenz (BF16, greedy) generiert und nebeneinander
      gelegt — sichtbar wird, wie nah die Ausgaben inhaltlich liegen.
   B) Top-1-Agreement: auf denselben WikiText-2-Sequenzen wie am
-     Entscheidungspunkt 12.21 (eval/wikitext_common.py) wird an jeder
+     Entscheidungspunkt 12.21 (BENCHMARKS/Inferenz/wikitext_common.py) wird an jeder
      Position die Top-1-Vorhersage des Integer-Modells
      (runtime/src/bin/seq_logits_sweep.rs) mit der Top-1-Vorhersage der
      HF-Referenz verglichen — ein quantitatives Qualitätsmaß neben der
@@ -35,10 +35,10 @@ from pathlib import Path
 LLM = Path(__file__).resolve().parents[2] / "INTEGER_LLM"
 HIER = Path(__file__).resolve().parent
 REPO = LLM  # Altlast, damit bestehende Zeilen weiterlesen
-ARTIFACTS = REPO / "artifacts" / "myelith-0.5b"
+ARTIFACTS = REPO / "artifacts" / "myelith-0.6b"
 # Seit alle Crates in ein gemeinsames target-shared/ bauen (.cargo/config.toml)
 # liegt das Binary nicht mehr unter runtime/target/. Derselbe Resolver wie in
-# eval/perplexity.py: prueft CARGO_TARGET_DIR, target-shared/ und den
+# BENCHMARKS/Inferenz/perplexity.py: prueft CARGO_TARGET_DIR, target-shared/ und den
 # Cargo-Standardort der Reihe nach.
 sys.path.insert(0, str(REPO / "tests"))
 from cargo_paths import binary, fehlt_hinweis  # noqa: E402
@@ -49,7 +49,7 @@ RESULTS_DIR = HIER / "results" / "evidence"
 
 sys.path.insert(0, str(HIER))
 sys.path.insert(0, str(REPO / "calibrate"))
-from wikitext_common import select_sequences, MODEL_DIR  # noqa: E402
+from wikitext_common import select_sequences, MODEL_DIR, HF_MODEL_ID  # noqa: E402
 from src.loader import load_reference_model  # noqa: E402
 
 PROMPTS = [
@@ -169,7 +169,11 @@ def main():
     out.write_text(json.dumps({
         "parallel_generation": {
             "decoding": "greedy, max_new_tokens = " + str(MAX_TOKENS),
-            "hf_reference": "Qwen/Qwen2.5-0.5B, BF16, HF generate()",
+            # ⛑ **Fund 341-Geschwister:** Hier stand fest
+            # `Qwen/Qwen2.5-0.5B`, unabhaengig davon, welches Modell der
+            # Lauf geladen hat. Ein Evidenzpaket, das ein anderes Modell
+            # nennt als das gemessene, belegt nichts.
+            "hf_reference": f"{HF_MODEL_ID}, BF16, HF generate()",
             "generations": generations,
         },
         "top1_agreement": {

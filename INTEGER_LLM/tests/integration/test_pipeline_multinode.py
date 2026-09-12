@@ -38,7 +38,7 @@ ROOT = Path(__file__).parent.parent.parent
 #   MYL_PIPELINE_CONFIG=configs/pipeline_4node_myelith-30b-a3b.json \
 #   python3 tests/integration/test_pipeline_multinode.py
 import os as _os
-_MODELL = _os.environ.get("MYL_MODELL", "myelith-0.5b")
+_MODELL = _os.environ.get("MYL_MODELL", "myelith-0.6b")
 ARTIFACTS = ROOT / "artifacts" / _MODELL
 CONFIG = ROOT / _os.environ.get(
     "MYL_PIPELINE_CONFIG", "configs/pipeline_4node.json"

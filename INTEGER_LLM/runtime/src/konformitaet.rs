@@ -172,14 +172,14 @@ mod tests {
     #[test]
     fn layer_und_e2e_vektoren_bestehen_gegen_das_artefakt() {
         let wurzel = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let artefakt = wurzel.join("../artifacts/myelith-0.5b");
+        let artefakt = wurzel.join("../artifacts/myelith-0.6b");
         let vektoren = wurzel.join("../conformance/vectors");
         if !artefakt.is_dir() || !vektoren.is_dir() {
             eprintln!("SKIP: Artefakt oder Vektoren fehlen ({})", artefakt.display());
             return;
         }
         let model = crate::loader::load_model(&artefakt).expect("Modell lädt");
-        let mut gesamt = 0;
+        let mut gezaehlt = std::collections::BTreeMap::new();
         for ebene in ["layer", "e2e"] {
             let dir = vektoren.join(ebene);
             let mut dateien: Vec<_> = std::fs::read_dir(&dir)
@@ -190,12 +190,32 @@ mod tests {
                 .collect();
             dateien.sort();
             for p in dateien {
-                gesamt += 1;
+                *gezaehlt.entry(ebene).or_insert(0usize) += 1;
                 let e = vektor_aus_datei(&model, &p).expect("prüfbar");
                 assert!(e.bestanden, "{}: {:?}", p.display(), e.gruende);
                 assert!(!e.integer_verletzt, "{}: Hash-Prüfung verletzt", p.display());
             }
         }
-        assert_eq!(gesamt, 27, "24 Layer- und 3 E2E-Vektoren erwartet");
+        // ⛑ **Aus dem Modell abgeleitet und nicht eingetragen**
+        // (2026-09-11). Hier stand `assert_eq!(gesamt, 27)`, also
+        // „24 Ebenen plus drei Prompts", und beim Wechsel des
+        // Ankermodells von 24 auf 28 Ebenen schlug der Test fehl,
+        // obwohl **alle** Vektoren bestanden. Eine Zahl, die den
+        // Modellwechsel nicht ueberlebt, prueft den Modellwechsel und
+        // nicht die Vektoren.
+        //
+        // ⚑ **Geprueft wird trotzdem die Vollstaendigkeit:** je Ebene
+        // einer, sonst ist einer verlorengegangen, und das faellt ohne
+        // diese Zeile niemandem auf.
+        assert_eq!(
+            gezaehlt.get("layer").copied().unwrap_or(0),
+            model.num_layers,
+            "je Ebene des Modells gehoert ein Layer-Vektor dazu"
+        );
+        assert_eq!(
+            gezaehlt.get("e2e").copied().unwrap_or(0),
+            3,
+            "drei E2E-Vektoren, einer je Prompt aus golden_generate"
+        );
     }
 }

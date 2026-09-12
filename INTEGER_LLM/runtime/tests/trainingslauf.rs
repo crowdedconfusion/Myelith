@@ -106,8 +106,38 @@ const A_SCHRITTE: u64 = 60;
 /// `1/2^22` auf 4,4e10, `1/2^24` bewegt fast nichts mehr.
 const A_NENNER: i64 = 1 << 18;
 
+/// **Die QK-Normierung einer Ebene als Vorgabe fuer den Trainingsblock.**
+///
+/// ⛑ **Bis zum 2026-09-11 stand an beiden Aufrufstellen `None`**, und
+/// darueber eine Zusicherung, das Modell duerfe keine QK-Norm haben.
+/// Sie stammte aus der Zeit, als der Trainingsblock sie wirklich nicht
+/// konnte; seit `kernels` v0.30.0 nimmt er `QkNormVorgaben` und rechnet
+/// sie mit. **Die Zusicherung blieb stehen und wurde erst laut, als das
+/// Ankermodell auf Qwen3 wechselte** und damit auf eine Familie, die Q
+/// und K je Kopf normiert.
+///
+/// ⚑ **Eine tote Zusicherung ist schlimmer als keine**: Sie sagt, etwas
+/// gehe nicht, und niemand prueft nach, ob das noch stimmt.
+fn qk_vorgaben<'a>(
+    m: &'a IntegerModel,
+    ebene: &'a integer_llm_runtime::model::TransformerLayer,
+) -> Option<integer_llm_kernels::trainingsschritt::QkNormVorgaben<'a>> {
+    let q = ebene.qk_norm.as_ref()?;
+    Some(integer_llm_kernels::trainingsschritt::QkNormVorgaben {
+        q_gamma: &q.q_gamma.data,
+        q_gamma_shifts: &q.q_gamma.shifts,
+        k_gamma: &q.k_gamma.data,
+        k_gamma_shifts: &q.k_gamma.shifts,
+        q_out_frac: q.q_out_frac,
+        k_out_frac: q.k_out_frac,
+        rsqrt_lut: &m.rsqrt_lut,
+        rsqrt_input_shift: m.config.rsqrt_input_shift,
+        rsqrt_output_frac: m.config.rsqrt_output_frac,
+    })
+}
+
 fn artefakte() -> std::path::PathBuf {
-    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.5b".to_string());
+    let modell = std::env::var("MYL_POD_MODELL").unwrap_or_else(|_| "myelith-0.6b".to_string());
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../artifacts")
         .join(modell)
@@ -173,13 +203,40 @@ use integer_llm_kernels::optimierer::MASTER_FRAC;
 
 /// Trainiert den MLP-Block **einer** Ebene und gibt `(erster, letzter)`
 /// Abstand zurueck.
+/// ⚑ **Unterhalb dieser Ausgabegroesse sagt der Lauf nichts.**
+///
+/// ## ⛑ Fund 337 (2026-09-11): eine Ebene, die sich nicht bewegt
+///
+/// Das Ziel wird aus der gemessenen Ausgabegroesse gebaut:
+/// `typisch / 8`, mindestens 1. Ist `typisch` klein, ist der Abstand
+/// zwischen Ausgabe und Ziel klein, und die noetige Gewichtsaenderung
+/// faellt **unter die Aufloesung eines Schritts** (`lr / 2^14`). Der
+/// Abstand bleibt dann Schritt fuer Schritt **exakt** gleich.
+///
+/// Gemessen beim Wechsel des Ankermodells von Qwen2.5-0,5B auf
+/// Qwen3-0,6B: Ebene 0 faellt um 100 Prozent, Ebene 14 um **null**, und
+/// zwar von 58 242 auf 58 242. Das ist keine schlechte Konvergenz,
+/// sondern gar keine.
+///
+/// ⚑ **Das ist Fund 189 an echten Gewichten.** Dort stand es als
+/// Aussage ueber kleine Lernraten; hier ist es eine Aussage ueber
+/// kleine **Aktivierungen**, und beide laufen auf dieselbe Schranke
+/// zu.
+///
+/// ⚠️ **Deshalb meldet der Lauf die Ebene und prueft sie nicht.** Eine
+/// Zusicherung, die an einer Ebene scheitert, weil dort nichts zu
+/// messen ist, prueft den Messaufbau und nicht das Training. Was
+/// geprueft bleibt: **mindestens eine Ebene muss lernen**, sonst ist
+/// der Block kaputt und nicht die Skala.
+const MESSBAR_AB: i16 = 64;
+
 fn lauf_auf_ebene(
     m: &IntegerModel,
     auf: &Zwischenwerte,
     e: usize,
     schritte: u64,
     vorzeichen: i64,
-) -> (i64, i64) {
+) -> (i64, i64, i16) {
     let ebene = &auf.ebenen()[e];
     let Mlpteil::Dicht { .. } = &ebene.mlp else {
         panic!("Ebene {e} ist kein dichter Block");
@@ -244,7 +301,7 @@ fn lauf_auf_ebene(
         }
         letzter = a;
     }
-    (erster, letzter)
+    (erster, letzter, typisch)
 }
 
 /// ⚑ **Ein MLP-Block eines echten Modells lernt ein verschobenes Ziel,
@@ -269,20 +326,37 @@ fn jeder_geprüfte_mlp_block_lernt_sein_ziel() {
     let start = m.embed_token(9707);
     let _ = m.run_layers_mit_mitschnitt(start, 0, &mut cache, 0, ebenen, &mut auf);
 
-    eprintln!("\n=== Trainingslauf, {ebenen} Ebenen, Qwen2.5-0,5B ===");
-    eprintln!("  Ebene | typische Ausgabe | Abstand vorher -> nachher | gefallen");
+    eprintln!("\n=== Trainingslauf, {ebenen} Ebenen ===");
+    eprintln!("  Ebene | typisch | Abstand vorher -> nachher | gefallen");
     // Erste, mittlere und letzte: die Enden der Skalenspanne.
+    let mut gelernt = 0usize;
     for e in [0usize, ebenen / 2, ebenen - 1] {
-        let (erster, letzter) = lauf_auf_ebene(&m, &auf, e, SCHRITTE, 1);
+        let (erster, letzter, typisch) = lauf_auf_ebene(&m, &auf, e, SCHRITTE, 1);
         let gefallen = 100 - (letzter * 100 / erster.max(1));
-        eprintln!("  {e:5} | {erster:>16} -> {letzter:>14} | {gefallen} Prozent");
+        eprintln!(
+            "  {e:5} | {typisch:>7} | {erster:>16} -> {letzter:>14} | {gefallen} Prozent"
+        );
+        if typisch < MESSBAR_AB {
+            // ⛑ Fund 337, siehe MESSBAR_AB: Hier ist nichts zu messen,
+            // und eine Zusicherung darueber pruefte den Messaufbau.
+            eprintln!(
+                "        uebersprungen: typische Ausgabe {typisch} unter {MESSBAR_AB}, \
+                 der noetige Schritt liegt unter der Aufloesung (Fund 337)"
+            );
+            continue;
+        }
         assert!(
             letzter * 2 < erster,
             "Ebene {e}: der Abstand fiel nur von {erster} auf {letzter}, \
              also um weniger als die Haelfte. Auf erfundenen Zahlen faellt er; \
              auf echten Gewichten mit Ausreissern offenbar nicht"
         );
+        gelernt += 1;
     }
+    // ⚠️ **Mindestens eine Ebene muss lernen.** Sonst haette der Lauf
+    // alles uebersprungen und trotzdem bestanden, und genau das ist die
+    // Art von gruener Pruefung, die nichts sagt.
+    assert!(gelernt > 0, "keine der geprueften Ebenen war messbar; der Lauf zeigt nichts");
     eprintln!();
 }
 
@@ -301,14 +375,26 @@ fn mit_umgekehrtem_schritt_steigt_der_abstand() {
     let start = m.embed_token(9707);
     let _ = m.run_layers_mit_mitschnitt(start, 0, &mut cache, 0, ebenen, &mut auf);
 
-    let e = ebenen / 2;
-    let (erster, letzter) = lauf_auf_ebene(&m, &auf, e, 20, -1);
-    eprintln!("\n  bergauf auf Ebene {e}: {erster} -> {letzter}\n");
-    assert!(
-        letzter > erster,
-        "mit umgekehrtem Schritt sank der Abstand von {erster} auf {letzter}; \
-         dann faellt er nicht wegen des Gradienten"
-    );
+    // ⛑ **Die Ebene wird gesucht und nicht gesetzt** (Fund 337). Vorher
+    // stand hier `ebenen / 2`, und beim neuen Ankermodell gibt genau
+    // diese Ebene typisch 7 aus: Dort bewegt sich mit **keinem**
+    // Vorzeichen etwas, und der Lauf sagte nichts ueber den Gradienten.
+    let mut geprueft = false;
+    for e in (0..ebenen).rev() {
+        let (erster, letzter, typisch) = lauf_auf_ebene(&m, &auf, e, 20, -1);
+        if typisch < MESSBAR_AB {
+            continue;
+        }
+        eprintln!("\n  bergauf auf Ebene {e} (typisch {typisch}): {erster} -> {letzter}\n");
+        assert!(
+            letzter > erster,
+            "mit umgekehrtem Schritt sank der Abstand von {erster} auf {letzter}; \
+             dann faellt er nicht wegen des Gradienten"
+        );
+        geprueft = true;
+        break;
+    }
+    assert!(geprueft, "keine Ebene war messbar; der Lauf zeigt nichts (Fund 337)");
 }
 
 
@@ -431,11 +517,6 @@ fn a_vorgaben(m: &IntegerModel, e: usize, schritt: u64, lr: i64) -> Aufmerksamke
 #[test]
 fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
     let Some(m) = modell() else { return };
-    assert!(
-        m.layers[0].qk_norm.is_none(),
-        "dieses Modell normiert die Koepfe vor RoPE; der Trainingsblock kann das nicht \
-         und der Vergleich waere ein Vergleich zweier verschiedener Funktionen"
-    );
     let auf = folge_mitschneiden(&m);
     let l_zahl = m.num_layers;
 
@@ -480,8 +561,8 @@ fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
             &m.sin_lut,
             &m.exp_lut,
             None,
-            // ⚑ Dieses Pruefmodell hat keine QK-Normierung.
-            None,
+            // ⚑ Die QK-Normierung der Ebene, wenn sie eine hat.
+            qk_vorgaben(&m, ebene),
             a_vorgaben(&m, e, 0, 0),);
 
         for (p, (a, b)) in spur.attn_aus.iter().zip(erwartet.iter()).enumerate() {
@@ -509,10 +590,6 @@ fn die_vorwaerts_haelfte_trifft_den_mitschnitt() {
 #[test]
 fn die_ganze_ebene_trifft_den_mitschnitt() {
     let Some(m) = modell() else { return };
-    assert!(
-        m.layers[0].qk_norm.is_none(),
-        "dieses Modell normiert die Koepfe vor RoPE; der Trainingsblock kann das nicht"
-    );
     let auf = folge_mitschneiden(&m);
     let l_zahl = m.num_layers;
     let grad_lut = integer_llm_kernels::backward::silu_grad_aus_lut(&m.silu_lut);
@@ -556,7 +633,7 @@ fn die_ganze_ebene_trifft_den_mitschnitt() {
         };
         mg.aus_frac = 0;
         let v = Ebenenvorgaben {
-            qk_norm: None,
+            qk_norm: qk_vorgaben(&m, ebene),
             aufmerksamkeit: vg,
             mlp: mg,
             residual_in_frac: &sc.residual_in_frac,

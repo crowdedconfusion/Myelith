@@ -31,7 +31,7 @@ sys.path.insert(0, str(REPO / "calibrate"))
 from src.model_configs import get_export_model_config  # noqa: E402
 
 MODEL_ENV = "INTEGER_LLM_MODEL"
-DEFAULT_MODEL = "myelith-0.5b"
+DEFAULT_MODEL = "myelith-0.6b"
 
 # Modellwahl identisch zu calibrate/src/main.py: dieselbe Umgebungsvariable,
 # dieselbe Vorgabe, dieselbe verifizierte Konfigurationsquelle. Zwei
@@ -47,14 +47,32 @@ ARTIFACTS_DIR = REPO / "artifacts" / MODEL_NAME
 # Ergebnisdateien tragen den Modellnamen, damit ein 7B-Lauf die
 # 0.5B-Messung nicht ueberschreibt (die belegt den Entscheidungspunkt
 # 12.21 und muss reproduzierbar bleiben).
-_SUFFIX = "" if MODEL_NAME == DEFAULT_MODEL else f"_{MODEL_NAME.replace('.', '')}"
+# ⛑ **Fund 340 (2026-09-11): der namenlose Dateiname hing am
+# Vorgabemodell und nicht am Modell.**
+#
+# Hier stand `MODEL_NAME == DEFAULT_MODEL`. `baseline_wikitext2.json`
+# ohne Endung ist aber die **historische Datei von Qwen2.5-0,5B**, und
+# genau deshalb traegt sie keine. Als das Vorgabemodell am 2026-09-11
+# auf `myelith-0.6b` wechselte, schrieb der erste Grundlinienlauf in
+# genau diese Datei und **ueberschrieb die zitierte Messung**.
+#
+# ⚑ **Der Name gehoert dem Modell, nicht der Vorgabe.** `myelith-0.5b`
+# ist aus dem Projekt heraus; die Bedingung trifft damit auf kein
+# aktuelles Modell mehr zu, und die alten Dateien bleiben als
+# Aufzeichnung stehen. **Eine Messung, die im Whitepaper zitiert wird,
+# darf nicht davon abhaengen, welches Modell gerade die Vorgabe ist.**
+_HISTORISCH = "myelith-0.5b"
+_SUFFIX = "" if MODEL_NAME == _HISTORISCH else f"_{MODEL_NAME.replace('.', '')}"
 
 
 def ergebnis_pfad(basis: str, endung: str = ".json") -> Path:
     """Pfad einer Ergebnisdatei, je Modell getrennt.
 
-    0.5B behaelt die historischen Dateinamen (baseline_wikitext2.json),
-    weil sie in Whitepaper-Vorarbeit und Changelog zitiert sind.
+    Qwen2.5-0,5B behaelt die historischen Dateinamen
+    (`baseline_wikitext2.json`, `decision_12-21.md`,
+    `perplexity_comparison.json`), weil sie in Whitepaper-Vorarbeit und
+    Changelog zitiert sind. Das Modell ist seit dem 2026-09-11 aus dem
+    Projekt heraus; die Dateien bleiben.
     """
     return HIER / "results" / f"{basis}{_SUFFIX}{endung}"
 

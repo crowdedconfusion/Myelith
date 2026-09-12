@@ -126,6 +126,13 @@ pub struct Shardgewichte {
     bis: usize,
 }
 
+/// Eine Ebene mit ihren Matrizen vorher und jetzt.
+///
+/// `(globale Ebenennummer, Anfangsstand je Matrix, jetziger Stand je
+/// Matrix)`, beide in kanonischer Reihenfolge und **gleich lang**.
+/// Siehe [`Shardgewichte::paare_mit_anfang`].
+pub type Matrixpaare<'a> = (usize, Vec<Vec<Master>>, Vec<&'a [Master]>);
+
 /// Der Gewichtsstand **einer** Ebene, dicht oder als Expertengemisch.
 ///
 /// # ⚑ Warum ein Gemisch nicht einfach sieben Matrizen sind
@@ -507,6 +514,32 @@ impl Ebenenstand {
         }
     }
 
+    /// Wie viele Experten dieser Ebene **beruehrt** wurden.
+    ///
+    /// ⚑ **Beim Gemisch ist das die Zahl, die zaehlt.** Ein Experte,
+    /// den der Router nie waehlt, bekommt nie einen Gradienten und
+    /// bleibt untrainiert. Eine Meldung ueber bewegte Gewichte ohne
+    /// diese Zahl laedt zu genau dem falschen Schluss ein: Bei 128
+    /// Experten je Ebene koennen Hunderte Millionen Gewichte bewegt
+    /// aussehen und trotzdem nur ein Bruchteil der Ebene erreicht sein.
+    ///
+    /// Die Karte traegt genau die gewaehlten Experten, weil sie beim
+    /// Routing angelegt wird (`experten.entry(*i).or_insert_with`).
+    ///
+    /// ⚠️ **Die Gesamtzahl steht hier nicht**, und das ist Absicht: Sie
+    /// ist eine Eigenschaft des **Modells**, nicht des Gewichtsstands.
+    /// Wer sie braucht, holt sie dort; ein zweiter Ort fuer dieselbe
+    /// Zahl liefe irgendwann auseinander.
+    ///
+    /// `None` bei einer dichten Ebene: Dort gibt es nichts zu zaehlen,
+    /// und eine Null saehe aus wie „kein Experte beruehrt".
+    pub fn beruehrte_experten(&self) -> Option<usize> {
+        match self {
+            Self::Dicht { .. } => None,
+            Self::Gemisch { experten, .. } => Some(experten.len()),
+        }
+    }
+
     /// Ist diese Ebene ein Expertengemisch?
     pub fn ist_gemisch(&self) -> bool {
         matches!(self, Self::Gemisch { .. })
@@ -629,6 +662,95 @@ impl Shardgewichte {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// Anfang und Jetzt, Matrix für Matrix, **vollständig auch für die
+    /// Experten**, die erst im Lauf hinzukamen.
+    ///
+    /// # ⛑ Fund 346 (2026-09-12): `zip` bricht an der kürzeren Seite ab
+    ///
+    /// Der Anfangsstand einer Gemischebene trägt **keine** Experten: Ein
+    /// Experte bekommt seinen Master erst, wenn der Router ihn wählt,
+    /// und das geschieht nach der Aufnahme des Anfangs. Wer
+    /// `anfang.matrizen().zip(jetzt.matrizen())` bildet, bekommt
+    /// deshalb genau so viele Paare, wie der Anfang Matrizen hat, also
+    /// **Aufmerksamkeit und Router**, und keinen einzigen Experten.
+    /// `zip` sagt dazu nichts.
+    ///
+    /// ⛔️ **Drei Meldungen von `trainingsguete` waren dadurch blind für
+    /// den Teil des Modells, den ein Gemisch überhaupt trainiert:** die
+    /// Ausreisserzeile, die Zahl der geänderten int8-Gewichte und die
+    /// der verschobenen Zeilenskalen. Ein Lauf auf `myelith-30b-a3b`
+    /// meldete „0,32 Prozent der Gewichte geändert"; der Nenner
+    /// 19 136 512 ist auf das Gewicht genau Aufmerksamkeit plus Router
+    /// einer Ebene (18 874 368 + 262 144), während im selben Lauf 261
+    /// Millionen Gewichte bewegt wurden, also rund fünfundfünfzig
+    /// Expertenäquivalente.
+    ///
+    /// **Am schwersten wiegt die Ausreisserzeile.** Sie ist die
+    /// Schranke, die einen entgleisten Lauf sichtbar macht (Faktor
+    /// 359,34 statt 1,00 bei einer falschen Schrittweite). Auf einem
+    /// Gemisch sah sie den Experten gar nicht zu.
+    ///
+    /// ⚑ **Das Δ-Commitment ist davon nicht betroffen.** [`Self::deltas`]
+    /// läuft über die **Master**-Seite und setzt für einen fehlenden
+    /// Anfang eine Nullmatrix ein; der Abdruck deckt die Experten also
+    /// ab. Betroffen war die Anzeige, nicht der Konsens.
+    ///
+    /// # Was diese Methode tut
+    ///
+    /// Sie läuft über die Master-Seite, also in kanonischer Reihenfolge
+    /// über alles, was der Lauf hält, und stellt jeder Matrix ihren
+    /// Anfangsstand gegenüber. Für einen Experten, der im Anfang fehlt,
+    /// wird dieser **aus dem Modell neu gebildet**, mit demselben
+    /// Konstruktor, den auch das Routing benutzt. Damit ist der
+    /// Vergleich der, den man meint: gegen den Stand vor dem ersten
+    /// Schritt.
+    pub fn paare_mit_anfang<'a>(&'a self, m: &IntegerModel) -> Vec<Matrixpaare<'a>> {
+        let mut aus = Vec::with_capacity(self.master.len());
+        for (i, jetzt) in self.master.iter().enumerate() {
+            let ebene = self.von + i;
+            let vorher: Vec<Vec<Master>> = match (self.anfang.get(i), jetzt) {
+                // Dichte Ebene: die Listen sind gleich lang.
+                (Some(a), Ebenenstand::Dicht(_)) => {
+                    a.matrizen().iter().map(|s| s.to_vec()).collect()
+                }
+                (Some(Ebenenstand::Gemisch { aufmerksamkeit, router, .. }),
+                 Ebenenstand::Gemisch { experten, .. }) => {
+                    let mut v: Vec<Vec<Master>> = aufmerksamkeit.to_vec();
+                    v.push(router.clone());
+                    // ⚑ **Dieselbe kanonische Reihenfolge wie
+                    // `matrizen()`**: Experten nach ihrer Nummer. Eine
+                    // andere Ordnung verglände Matrizen über Kreuz, und
+                    // das faellt an den Laengen nicht auf.
+                    let moe = match m.layers.get(ebene).map(|l| &l.ffn) {
+                        Some(Feedforward::Moe(g)) => Some(g),
+                        _ => None,
+                    };
+                    for nr in experten.keys() {
+                        match moe.and_then(|g| g.experts.get(*nr as usize)) {
+                            Some(ex) => {
+                                v.push(master_aus_gewicht(&ex.gate_proj));
+                                v.push(master_aus_gewicht(&ex.up_proj));
+                                v.push(master_aus_gewicht(&ex.down_proj));
+                            }
+                            // Kann nicht vorkommen, solange Stand und
+                            // Modell zusammengehoeren; dann lieber eine
+                            // leere Matrix als ein falsches Paar.
+                            None => {
+                                v.push(Vec::new());
+                                v.push(Vec::new());
+                                v.push(Vec::new());
+                            }
+                        }
+                    }
+                    v
+                }
+                _ => Vec::new(),
+            };
+            aus.push((ebene, vorher, jetzt.matrizen()));
+        }
+        aus
     }
 
     /// Wie viele Gewichte der Shard insgesamt fortschreibt.

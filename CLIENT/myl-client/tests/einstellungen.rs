@@ -116,8 +116,16 @@ fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
     let p = d.path().join("client.json");
     for (alt, neu) in [
         ("INTEGER_LLM/artifacts/qwen3-4b", "INTEGER_LLM/artifacts/myelith-4b"),
-        ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/myelith-0.5b"),
+        ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),
         ("/anderswo/qwen3-30b-a3b", "/anderswo/myelith-30b-a3b"),
+        // ⛑ **Die zweite Wanderung (2026-09-11): abgeloeste Modelle.**
+        // Wer auf das entfernte 0,5B oder 7B zeigte, landet beim
+        // naechstgelegenen der neuen Reihe.
+        ("INTEGER_LLM/artifacts/myelith-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),
+        ("/anderswo/myelith-7b", "/anderswo/myelith-4b"),
+        // ⛔️ Das dichte 14B ist am 2026-09-12 entfallen; wer darauf
+        // zeigte, landet beim groessten verbliebenen dichten Modell.
+        ("/anderswo/myelith-14b", "/anderswo/myelith-4b"),
     ] {
         // ⚑ Geschrieben mit dem echten Schreiber: Eine von Hand
         // getippte Ablage koennte Felder auslassen, die es gibt, und

@@ -74,7 +74,7 @@ myl-node — ein Myelith-Netzknoten
                          dieselbe nennen, sonst geht kein Umschlag auf.
                          Noetig, damit die /v1-Tuer rechnen laesst.
   --modell <name>        Wie das Modell nach aussen heisst. Vorgabe
-                         myelith-myelith-0.5b.
+                         myelith-myelith-0.6b.
   --kontoschluessel <datei>
                          Der Schluessel fuer Kettentransaktionen. OHNE IHN
                          nimmt der Knoten einen aus seinem Namen

@@ -17,7 +17,7 @@ fn artifacts_dir() -> PathBuf {
     p.push("..");
     p.push("INTEGER_LLM");
     p.push("artifacts");
-    p.push("myelith-0.5b");
+    p.push("myelith-0.6b");
     p
 }
 

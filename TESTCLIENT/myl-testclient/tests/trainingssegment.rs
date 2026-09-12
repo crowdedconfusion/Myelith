@@ -27,7 +27,7 @@ use integer_llm_runtime::trainingsschleife::{trainingsschleife, Trainingsvorgabe
 
 fn artefakte() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../INTEGER_LLM/artifacts/myelith-0.5b")
+        .join("../../INTEGER_LLM/artifacts/myelith-0.6b")
 }
 
 /// ⚑ **Ein gerechneter Trainingsschritt wird zu einem gültigen
