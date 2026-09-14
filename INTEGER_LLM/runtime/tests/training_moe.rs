@@ -579,7 +579,7 @@ fn der_lastausgleich_verteilt_die_arbeit() {
         b_n > a_n,
         "der Lastausgleich hat nichts verteilt: {a_n} ohne, {b_n} mit"
     );
-    // ⛑ **Und die Gegenprobe zum Aufbau selbst.** Berührt der Lauf ohne
+    // 📌 **Und die Gegenprobe zum Aufbau selbst.** Berührt der Lauf ohne
     // Ausgleich schon alle Experten, misst der Test nichts.
     assert!(
         a_n < gesamt,

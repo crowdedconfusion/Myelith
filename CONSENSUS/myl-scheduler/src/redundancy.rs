@@ -130,7 +130,7 @@ pub struct SegmentAssignment {
 /// liegen und nicht beim Miner: ein **leerer** Pod und ein von Hand
 /// zusammengesetzter.
 ///
-/// ⛑ **Und hier ist genau zu sein, statt sich besser zu machen:** Ein
+/// 📌 **Und hier ist genau zu sein, statt sich besser zu machen:** Ein
 /// unbestimmter Pod gilt in keinem Paar als divers, wird also verwendet,
 /// **sobald es überhaupt kein diverses Paar gibt**, und sonst nicht. In
 /// einem Netz mit Diversität ist er damit faktisch draußen, so wie
@@ -508,7 +508,7 @@ mod tests {
     /// Konstruktion. Deshalb prüft dieser Test die **echte Zuteilung**
     /// und nicht von Hand gebaute Pods.
     ///
-    /// ⛑ **Hier stand zuerst ein Test, der prüfte, dass die einigen
+    /// 📌 **Hier stand zuerst ein Test, der prüfte, dass die einigen
     /// Pods weiter gepaart werden.** Der blieb grün, als der Ausschluss
     /// unbestimmter Pods versuchsweise wiederhergestellt wurde: Er
     /// prüfte eine Aussage, die unter beiden Fassungen gilt.

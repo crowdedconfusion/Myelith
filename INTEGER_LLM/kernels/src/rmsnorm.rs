@@ -267,7 +267,7 @@ pub fn rmsnorm_i16_mit_spur(
 #[allow(clippy::too_many_arguments)]
 /// Wie [`qk_norm_heads`], gibt aber je Kopf die Spur heraus.
 ///
-/// # ⛑ Warum es das bis zum 2026-09-08 nicht gab
+/// # 📌 Warum es das bis zum 2026-09-08 nicht gab
 ///
 /// Die QK-Normierung (Qwen3) stand **nur im Vorwaertspfad**. Der
 /// Trainingspfad rechnete die Aufmerksamkeit ohne sie, und nichts

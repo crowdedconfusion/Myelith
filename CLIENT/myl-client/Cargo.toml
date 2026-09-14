@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.28.0"
+version = "0.30.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -30,7 +30,14 @@ ausliefern = "myl"
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
 myl-agent = { path = "../../AGENT_LAYER/myl-agent" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
-integer-llm-runtime = { path = "../../INTEGER_LLM/runtime" }
+# ⚑ **Mit `cpu-simd`, und auf macOS mit `metal`** (Fund 367, 2026-09-14).
+# Bis zu diesem Tag stand die Runtime hier ohne Feature und rechnete damit
+# auf dem skalaren Referenzpfad: gemessen 25 bis 35 Prozent langsamer als
+# `cpu-simd`, und die Vorbereitung eines Prompts von 219 Token beim 0,6B
+# 5,2 s statt 1,0 s. Beide Features rechnen bitgleich zur Referenz, belegt
+# durch den Konformitaetslauf. Auf einem Ziel ohne NEON ist `cpu-simd`
+# wirkungslos und die Referenz rechnet, wie vorher.
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-simd"] }
 # ⚑ Nur fuer das eine Feld `family` aus `model_config.json`. Das
 # Laufwerk gibt es nicht heraus, und es dafuer zu aendern waere ein
 # Eingriff in den Rechenpfad fuer eine Anzeigefrage.
@@ -49,6 +56,12 @@ serde_json = "1.0"
 # in `reservierung.rs` ausgeschrieben.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Die gebuendelten Matrizen der Vorbereitung auf der GPU. Die Runtime
+# prueft die GPU beim ersten Gebrauch gegen die CPU und rechnet ohne sie
+# weiter, wenn sie abweicht oder fehlt.
+[target.'cfg(target_os = "macos")'.dependencies]
+integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-simd", "metal"] }
 
 # ⚑ Nur fuer die Pruefungen der Einhaengegrenze: Sie brauchen ein
 # echtes Verzeichnis, denn `canonicalize` loest gegen das Dateisystem

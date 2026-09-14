@@ -438,7 +438,7 @@ mod tests {
         let mut s = segment();
         s.lr_nenner = -4096;
         assert_eq!(s.pruefen(), Err(Segmentfehler::LernrateNegativ));
-        // ⛑ Zwei negative Vorzeichen sind eine positive Lernrate, und
+        // 📌 Zwei negative Vorzeichen sind eine positive Lernrate, und
         // die ist erlaubt: Sonst prüfte der Test das Vorzeichen eines
         // Feldes statt das der Rate.
         let mut s = segment();

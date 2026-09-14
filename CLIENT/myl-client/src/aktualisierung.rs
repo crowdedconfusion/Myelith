@@ -76,7 +76,7 @@ impl Stand {
 /// beliebige Klon; die Marke dieses Repositoriums macht es zu
 /// **diesem**.
 ///
-/// ⛑ **Bis zum 2026-09-10 suchte es nur vom Programm aufwaerts** und
+/// 📌 **Bis zum 2026-09-10 suchte es nur vom Programm aufwaerts** und
 /// fand deshalb nichts, sobald das Programm installiert war. Seither
 /// fragt es `ort::wurzel`, und die traegt einen gemerkten Ort: Wer
 /// einmal aus dem Klon heraus gestartet hat, kann danach auch aus
@@ -276,7 +276,7 @@ mod proben {
         assert_eq!(feld(antwort, "gibt_es_nicht"), None);
     }
 
-    /// ⛑ **Eine kaputte Antwort ergibt `None` und keinen Absturz.**
+    /// 📌 **Eine kaputte Antwort ergibt `None` und keinen Absturz.**
     /// GitHub antwortet auch mit Fehlerseiten, und eine Fehlerseite ist
     /// kein JSON.
     #[test]
@@ -317,7 +317,7 @@ mod proben {
         assert!(s.lohnt());
     }
 
-    /// ⛑ **Null Rueckstand ist kein Rueckstand.** Ein Knopf, der bei
+    /// 📌 **Null Rueckstand ist kein Rueckstand.** Ein Knopf, der bei
     /// „alles aktuell" trotzdem baut, kostet Minuten fuer nichts.
     #[test]
     fn ohne_rueckstand_lohnt_es_nicht() {
@@ -337,7 +337,7 @@ mod proben {
     /// Skript.** Faellt eine heraus, faellt es hier auf und nicht beim
     /// Nutzer.
     ///
-    /// ⛑ **Und der Name wird gegen die Datei gehalten, nicht nur
+    /// 📌 **Und der Name wird gegen die Datei gehalten, nicht nur
     /// gelesen.** Ein Konstantenname, den niemand gegen sein Ziel
     /// prueft, ist Fund 271 in einer anderen Verkleidung: Wer das
     /// Skript umbenennt, merkt es sonst erst, wenn ein Nutzer auf
@@ -402,7 +402,7 @@ mod proben {
 
     /// **Was ausgeliefert wird, steht bei der Kiste.**
     ///
-    /// # ⛑ Fund 300, und er lag am ersten Tag schon offen
+    /// # 📌 Fund 300, und er lag am ersten Tag schon offen
     ///
     /// Vier Skripte bauen die Programme dieses Repositoriums, und
     /// jedes fuehrte **seine eigene** Liste von Verzeichnissen und
@@ -463,7 +463,7 @@ mod proben {
                 text.contains("ausliefern"),
                 "{datei} sucht die angemeldeten Kisten nicht"
             );
-            // ⛑ **Gesucht wird die FORM der Liste und nicht die
+            // 📌 **Gesucht wird die FORM der Liste und nicht die
             // Erwaehnung.** Die erste Fassung dieser Pruefung schlug
             // ueber `sh CLIENT/myl-oberflaeche/buendeln-macos.sh` an,
             // also ueber einen Aufruf, der mit der Liste nichts zu tun

@@ -142,7 +142,7 @@ jobs:
 
       # Jedes Crate einzeln, denn es gibt kein Workspace: Die Crates sind
       # bewusst eigenständige Cargo-Projekte.
-      # ⛑ **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
+      # 📌 **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
       # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
       # dieser Job an `glib-sys`: „The system library `glib-2.0` …
       # was not found". Die Kistenliste kommt bewusst aus dem
@@ -190,7 +190,7 @@ jobs:
         with:
           workspaces: INTEGER_LLM/kernels
 
-      # ⛑ Fund 104 (2026-08-30): Hier stand `--lib`, und zwar in jedem
+      # 📌 Fund 104 (2026-08-30): Hier stand `--lib`, und zwar in jedem
       # kernels-Schritt. `--lib` fuehrt die Unit-Tests im Modulbaum aus
       # und **laesst tests/ vollstaendig aus**. Das Crate hat zwei
       # Dateien dort, und es sind nicht die unwichtigsten:
@@ -219,7 +219,7 @@ jobs:
       # weglassen, obwohl das Feature gesetzt ist. Auf der
       # Entwicklungsmaschine (aarch64) laesst sich das nicht pruefen.
       #
-      # ⛑ Und ohne `--lib` ist dies der einzige Ort, an dem
+      # 📌 Und ohne `--lib` ist dies der einzige Ort, an dem
       # `test_backend_parity.rs` ueberhaupt ein zweites Backend
       # vorfindet: Die Datei ist `#![cfg(feature = "cpu-simd")]`.
       - name: cargo test --features cpu-simd (x86_64, Fund 34 und 104)
@@ -319,7 +319,7 @@ jobs:
         working-directory: INTEGER_LLM/conformance
         run: ./run.sh reference
 
-      # ⛑ **Der Gesamtwert fehlte hier, und die Linux-Meldung behauptete
+      # 📌 **Der Gesamtwert fehlte hier, und die Linux-Meldung behauptete
       # trotzdem, er stimme „mit Windows und macOS ueberein".** Auf
       # macOS lief bis zum 2026-09-09 nur `run.sh`, das die sechs
       # Vektoren einzeln prueft; die eine Zahl, die das Netz spaeter
@@ -341,7 +341,7 @@ jobs:
           set -e
           mkdir -p ci-konf
           cargo run --quiet -- --name ci --logs ci-konf konformitaet
-          # ⛑ **ZWEI Abdruecke, und der zweite ist der eigentliche.**
+          # 📌 **ZWEI Abdruecke, und der zweite ist der eigentliche.**
           # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
           # das ist der Abdruck von `konformitaet_op`, also **nur der
           # sechs Operations-Vektoren**. Der Lauf prueft aber
@@ -496,7 +496,7 @@ jobs:
       # Jetzt kommt sie aus dem Dateisystem, wie in der
       # Mindestfassungs-Pruefung auch. **Ein neues Crate ist damit
       # automatisch dabei**, und wer eines vergisst, kann es nicht mehr.
-      # ⛑ **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
+      # 📌 **Die Oberflaeche braucht GTK und WebKit, und die Schleifen
       # unten finden sie.** Beim ersten Lauf nach ihrer Aufnahme fiel
       # dieser Job an `glib-sys`: „The system library `glib-2.0` …
       # was not found". Die Kistenliste kommt bewusst aus dem
@@ -535,7 +535,10 @@ jobs:
         working-directory: INTEGER_LLM/kernels
         run: |
           set -e
-          for feat in cpu-simd cuda rocm; do
+          # `metal` hat auf Linux keine Abhaengigkeiten und keinen
+          # GPU-Code; geprueft wird hier, dass die Weiche ohne beides
+          # uebersetzt. Die Anbindung selbst prueft der macOS-Lauf.
+          for feat in cpu-simd cuda rocm metal; do
             echo "── clippy: kernels --features $feat"
             cargo clippy --all-targets --features "$feat" -- -D warnings
           done
@@ -693,7 +696,7 @@ jobs:
           MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
-      # ⛑ **Der Client lief bis zum 2026-09-08 in keinem Testlauf.**
+      # 📌 **Der Client lief bis zum 2026-09-08 in keinem Testlauf.**
       #
       # Die Clippy-Schleife oben findet ihn, weil sie die Crates aus
       # dem Dateisystem holt; `cargo test` steht dagegen je Crate von
@@ -706,7 +709,7 @@ jobs:
       # eingesteckten `Modellweg`, und die Zusicherung, dass sich das
       # geladene Modell über Fäden teilen lässt.
       #
-      # ⛑ **`MYL_OHNE_ARTEFAKTE=1` ist keine Formalie.**
+      # 📌 **`MYL_OHNE_ARTEFAKTE=1` ist keine Formalie.**
       # `tests/ende_zu_ende.rs` laedt sonst ein 4B-Artefakt und schlaegt
       # fehl, wenn keines da ist, und in der CI liegt keines. Genau so
       # steht es seit Fund 113 auch beim Testclient: Ein fehlendes
@@ -718,7 +721,7 @@ jobs:
           MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
-      # ⛑ **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
+      # 📌 **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
       # Systems**, und unter Ubuntu heissen sie `libwebkit2gtk-4.1-dev`
       # samt `libgtk-3-dev` und `libayatana-appindicator3-dev`. Ohne sie
       # bricht der Bau in `wry` ab, mit einer Meldung über eine fehlende
@@ -759,7 +762,7 @@ jobs:
           set -e
           mkdir -p ci-konf
           cargo run --quiet -- --name ci --logs ci-konf konformitaet
-          # ⛑ **ZWEI Abdruecke, und der zweite ist der eigentliche.**
+          # 📌 **ZWEI Abdruecke, und der zweite ist der eigentliche.**
           # Bis zum 2026-09-09 stand hier nur `894d8357ae92b5c1`, und
           # das ist der Abdruck von `konformitaet_op`, also **nur der
           # sechs Operations-Vektoren**. Der Lauf prueft aber
@@ -901,7 +904,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force ci-konf | Out-Null
           cargo run --release -- --name ci --logs ci-konf konformitaet
-          # ⛑ Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
+          # 📌 Zwei Abdruecke, siehe die ausfuehrliche Begruendung am
           # Linux-Schritt: `894d…` ist nur `konformitaet_op` (sechs
           # Vektoren), `6da3…` der Gesamtwert ueber alle siebzehn.
           foreach ($paar in @(
@@ -938,7 +941,7 @@ jobs:
   # auf Windows anders als auf Unix, und beides ist bis zum 2026-09-08
   # auf keiner anderen Plattform als arm64/macOS gelaufen.
   #
-  # ⛑ **Und die Grenze dieses Jobs steht gleich dabei, weil sie beim
+  # 📌 **Und die Grenze dieses Jobs steht gleich dabei, weil sie beim
   # Bauen sichtbar wurde.** Das erste Ergebnis der Durchsicht war, dass
   # `Einstellungen::vorgabepfad` nur `HOME` las, das es auf Windows
   # meist nicht gibt. **Dieser Job haette das nicht gefunden**: GitHub
@@ -1008,7 +1011,7 @@ jobs:
   # anders verhaelt, waere bis zum ersten Partnertermin unentdeckt
   # geblieben.
   #
-  # ⛑ **Und das ist nicht theoretisch.** Der Client-Job hat bei seinem
+  # 📌 **Und das ist nicht theoretisch.** Der Client-Job hat bei seinem
   # ersten Lauf einen echten Plattformfehler gefunden (`unter\tief.txt`
   # statt `unter/tief.txt`), und Fund 103 war ein SIMD-Absturz, der nur
   # auf bestimmten x86-Kernen auftrat. Genau diese Sorte findet man
@@ -1051,6 +1054,17 @@ jobs:
         working-directory: INTEGER_LLM/kernels
         run: cargo test --quiet
 
+      # ⚑ **Nur uebersetzen und clippy, nicht rechnen.** Der Metal-Weg
+      # braucht Shadersprache 4.0 (macOS 26) und eine GPU mit Metal
+      # Performance Primitives; ein gehosteter Runner hat beides nicht
+      # sicher, und eine GPU, deren Aufbau scheitert, laesst die
+      # Pruefungen absichtlich scheitern. Die Bitgleichheit belegt der
+      # Konformitaetslauf `run.sh metal` auf Apple-Silizium.
+      - name: cargo clippy — kernels --features metal (macOS)
+        if: runner.os == 'macOS'
+        working-directory: INTEGER_LLM/kernels
+        run: cargo clippy --all-targets --features metal --quiet -- -D warnings
+
       - name: cargo test — SHARED_TYPES (myl-types)
         working-directory: SHARED_TYPES/myl-types
         run: cargo test --quiet
@@ -1075,7 +1089,7 @@ jobs:
         working-directory: NODE/myl-node
         run: cargo test --lib --quiet
 
-      # ⛑ **Clippy gehoert dazu und nicht nur der Bau.** Ein
+      # 📌 **Clippy gehoert dazu und nicht nur der Bau.** Ein
       # `#[cfg(unix)]`, das auf Windows toten Code hinterlaesst, faellt
       # erst hier auf; genau so wurde die Verweispruefung des Clients
       # gefunden.
@@ -1268,7 +1282,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # ⛑ **Die Pruefung steht hier und nicht in einem Skript**
+      # 📌 **Die Pruefung steht hier und nicht in einem Skript**
       # (2026-09-10). Das Werkzeugverzeichnis der Wurzel ist auf
       # Festlegung des Projektinhabers aus dem Repositorium genommen
       # worden; ein Job, der eine Datei ruft, die niemand mehr klont,
@@ -1332,6 +1346,14 @@ jobs:
           python3 tests/audit/test_no_float.py
           python3 tests/audit/test_scales.py
 
+      # 📌 Fund 358: Dieser Test lief nirgends und haette auch nie
+      # abgelehnt. Er haelt die Golden Vectors an die Fassung von
+      # theta_v/spec.json; die Manifestpruefung braucht Artefakte und
+      # ueberspringt hier sichtbar.
+      - name: "Audit: theta_v gegen Vektoren und Manifeste"
+        working-directory: INTEGER_LLM
+        run: python3 tests/regression/test_theta_v_changes.py
+
       # ⚑ Bewacht eine Zeile in siebzehn `Cargo.toml`: Tests bauen
       # optimiert, aber `debug-assertions` und `overflow-checks` bleiben
       # an. Wer die CI mit `--release` beschleunigt, schaltet die
@@ -1369,7 +1391,7 @@ jobs:
           python3 ETHICS/werkzeuge/lizenzprobe.py
           python3 ETHICS/werkzeuge/modellkarte.py --pruefe
           python3 ETHICS/werkzeuge/ausschlussprobe.py
-          # ⛑ **Beide Richtungen, seit dem 2026-08-31.** Bis dahin stand
+          # 📌 **Beide Richtungen, seit dem 2026-08-31.** Bis dahin stand
           # hier nur, dass die leere Vorlage durchfaellt. Eine Pruefung,
           # die alles ablehnt, besteht diesen Test ebenfalls; dass ein
           # vollstaendiger Antrag durchkommt, hat niemand geprueft.
@@ -1422,7 +1444,7 @@ jobs:
   # Gammaentzerrung ab, also den Pfad, auf dem aus Gleitkomma-Gewichten
   # ein konsensrelevantes Artefakt wird.
   #
-  # ⛑ **Die fuenfte kam am 2026-09-11 dazu, Fund 342.** Sie lag seit
+  # 📌 **Die fuenfte kam am 2026-09-11 dazu, Fund 342.** Sie lag seit
   # ihrem Anlegen im Baum, war aber mit `pytest` geschrieben, das dieses
   # Projekt nicht hat, und stand in keiner Liste. Sie lief also nirgends.
   #

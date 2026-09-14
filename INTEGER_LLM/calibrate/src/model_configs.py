@@ -94,10 +94,11 @@ MODEL_CONFIGS = {
         "num_kv_heads": 8,
         "head_dim": 128,
         "vocab_size": 151936,
-        # Wie bei allen uebrigen bewusst 2048 statt der 40960 der
-        # Modellkarte: max_context bestimmt die Zeilenzahl der RoPE-LUTs
-        # und damit die Artefaktgroesse.
-        "max_context": 2048,
+        # theta_v 0.20.0 (Fund 368): die max_position_embeddings der
+        # Modellkarte. Die Zeilen der RoPE-Tabellen kommen aus
+        # rope.max_seq_len in theta_v/spec.json und nicht von hier; hier
+        # stand bis dahin das Gegenteil. Der Lader nimmt das Kleinere.
+        "max_context": 40960,
         "tie_word_embeddings": True,
         "attention_bias": False,
         "qk_norm": True,
@@ -116,10 +117,8 @@ MODEL_CONFIGS = {
         "num_kv_heads": 8,
         "head_dim": 128,
         "vocab_size": 151936,
-        # Wie bei 0,5B und 7B bewusst 2048 statt der 40960 der Modellkarte:
-        # max_context bestimmt die Zeilenzahl der RoPE-LUTs und damit die
-        # Artefaktgroesse, und 2048 haelt die Messung vergleichbar.
-        "max_context": 2048,
+        # Wie beim 0,6B: 40960, die Zeilen der Tabellen kommen aus der Spec.
+        "max_context": 40960,
         "tie_word_embeddings": True,
         "attention_bias": False,
         "qk_norm": True,
@@ -183,7 +182,7 @@ MODEL_CONFIGS = {
         "num_kv_heads": 4,
         "head_dim": 128,
         "vocab_size": 151936,
-        "max_context": 2048,
+        "max_context": 40960,
         "tie_word_embeddings": False,
         "attention_bias": False,
         "qk_norm": True,

@@ -9,7 +9,7 @@
 //! `werkzeug::vorschlaege` schon hat, und zwei Lesarten laufen
 //! auseinander.
 //!
-//! # ⛑ Die Schwierigkeit, die es hier ueberhaupt gibt
+//! # 📌 Die Schwierigkeit, die es hier ueberhaupt gibt
 //!
 //! **Eine Marke kommt nicht am Stueck.** Token sind Wortteile, und
 //! `</think>` kann als `</`, `think`, `>` eintreffen. Wer den Zuwachs
@@ -125,7 +125,7 @@ impl Zerleger {
     /// Wie viele Bytes am Ende des Puffers der Anfang einer Marke sein
     /// koennten.
     ///
-    /// ⛑ **Gerechnet auf Zeichengrenzen und nicht auf Bytes.** Alle
+    /// 📌 **Gerechnet auf Zeichengrenzen und nicht auf Bytes.** Alle
     /// Marken sind reines ASCII, ein Schnitt mitten in einer
     /// Mehrbytefolge waere trotzdem moeglich: Wer die letzten drei
     /// Bytes zurueckhaelt und dabei ein Zeichen zerteilt, gibt ein
@@ -190,7 +190,7 @@ mod proben {
         assert_eq!(text(&s), "Antwort");
     }
 
-    /// ⛑ **Und nichts wird doppelt herausgegeben.** Der Puffer haelt
+    /// 📌 **Und nichts wird doppelt herausgegeben.** Der Puffer haelt
     /// zurueck, was noch eine Marke werden koennte, und gibt es genau
     /// einmal frei.
     #[test]
@@ -214,7 +214,7 @@ mod proben {
         assert!(!text(&s).contains("datei_lesen"), "rohes JSON steht im Antworttext");
     }
 
-    /// ⛑ **Eine abgebrochene Marke am Ende ist Text und kein Nichts.**
+    /// 📌 **Eine abgebrochene Marke am Ende ist Text und kein Nichts.**
     #[test]
     fn eine_abgebrochene_marke_geht_am_ende_heraus() {
         let mut z = Zerleger::neu();
@@ -223,7 +223,7 @@ mod proben {
         assert_eq!(text(&s), "Antwort</thin");
     }
 
-    /// ⛑ **Ein Umlaut darf nicht zerschnitten werden.** Die Marken
+    /// 📌 **Ein Umlaut darf nicht zerschnitten werden.** Die Marken
     /// sind ASCII, der Text ist es nicht.
     #[test]
     fn mehrbytezeichen_bleiben_ganz() {

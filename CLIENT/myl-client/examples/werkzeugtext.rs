@@ -9,7 +9,7 @@
 //! geladenes Modell ansehen**, und wer es nicht tut, findet Fehler
 //! darin erst an einem Agenten, der sich seltsam benimmt.
 //!
-//! ⛑ **Beim ersten Ausdruck am 2026-09-08 fiel auf**, dass der volle
+//! 📌 **Beim ersten Ausdruck am 2026-09-08 fiel auf**, dass der volle
 //! Pfad der Einhaengung dreimal darin stand und dem Modell zugleich
 //! „relativ zum Arbeitsverzeichnis" gesagt wurde. 156 Zeichen weniger
 //! und ein Widerspruch weniger, siehe `werkzeuge::angebote`.

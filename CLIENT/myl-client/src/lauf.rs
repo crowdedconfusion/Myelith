@@ -10,7 +10,7 @@
 //! | Weg | Warum er nicht taugt |
 //! |---|---|
 //! | `myl` als Unterprozess starten | Dann muss sie eine Ausgabe **fuer Menschen** wieder zerlegen |
-//! | den Lauf nachbauen | ⛑ Zwei Wege zu derselben Sache laufen auseinander, und der zweite ist der schlechter geprueete |
+//! | den Lauf nachbauen | 📌 Zwei Wege zu derselben Sache laufen auseinander, und der zweite ist der schlechter geprueete |
 //!
 //! ⚑ **Deshalb gibt dieses Modul den Verlauf als Struktur heraus.** Wer
 //! ihn druckt, druckt; wer ihn in ein Fenster schreibt, schreibt.
@@ -33,7 +33,7 @@ pub enum Schritt {
     Plan(String),
     /// Was das Modell dabei ueberlegt hat.
     ///
-    /// ⛑ **Bis zum 2026-09-10 steckte das im Plan.** `ohne_aufrufe`
+    /// 📌 **Bis zum 2026-09-10 steckte das im Plan.** `ohne_aufrufe`
     /// schnitt die Werkzeugaufrufe heraus und den Denkblock nicht, und
     /// so stand die ganze Ueberlegung als Zeile in der Befehlsliste,
     /// gemeldet vom Projektinhaber. **Sie ist kein Befehl**, und sie
@@ -47,10 +47,20 @@ pub enum Schritt {
         name: String,
         /// Die Argumente, schon lesbar gemacht.
         argumente: String,
+        /// **Die Argumente genau so, wie sie ankamen**, als eingerucktes
+        /// JSON, bis [`VOLLTEXT_GRENZE`] Zeichen. Die Anzeige klappt sie auf
+        /// Wunsch aus (Auftrag des Projektinhabers, 2026-09-14).
+        voll: String,
     },
     /// Ein Vorschlag, den niemand lesen konnte.
     Unlesbar(String),
-    /// Was ein Werkzeug zurueckgab.
+    /// Was ein Werkzeug zurueckgab, **vollstaendig** bis
+    /// [`VOLLTEXT_GRENZE`] Zeichen.
+    ///
+    /// 📌 **Bis zum 2026-09-14 eine Zeile von 200 Zeichen.** Die Anzeige
+    /// zeigte damit, dass etwas zurueckkam, aber nicht was; wer wissen
+    /// wollte, warum der Agent danach etwas Bestimmtes tat, konnte es
+    /// nicht nachlesen.
     Ergebnis(String),
     /// Die Schlussantwort ohne Werkzeugaufruf.
     Antwort(String),
@@ -62,7 +72,7 @@ pub struct Ausgang {
     pub verlauf: Vec<Schritt>,
     /// Die Schlussantwort, falls es eine gab.
     ///
-    /// ⛑ **`None` ist ein Befund und kein Nichts:** Der Lauf ist in
+    /// 📌 **`None` ist ein Befund und kein Nichts:** Der Lauf ist in
     /// Werkzeugaufrufen steckengeblieben oder an der Schrittgrenze
     /// gelandet.
     pub antwort: Option<String>,
@@ -87,7 +97,7 @@ impl Ausgang {
 /// die Schleife haelt: Schrittzahl und Budget. Ohne ihn liefe ein
 /// Agent, dessen Modell sich verrennt, unbegrenzt weiter.
 ///
-/// ⛑ **Panik statt Fehlerwert**, und das ist hier vertretbar: Die Werte
+/// 📌 **Panik statt Fehlerwert**, und das ist hier vertretbar: Die Werte
 /// sind fest verdrahtet, also kann `neu` nur scheitern, wenn dieser
 /// Quelltext falsch ist, und nicht wegen einer Eingabe.
 pub fn kontrakt_fuer(schritte: usize) -> myl_types::sitzung::Sitzungskontrakt {
@@ -137,7 +147,7 @@ pub fn fahren(
 /// waere eine zweite Quelle fuer Erlaubnisse neben Erlaubnis und
 /// Betriebsart.
 ///
-/// ⛑ **Und der laufende Text kommt nicht von hier**, sondern vom
+/// 📌 **Und der laufende Text kommt nicht von hier**, sondern vom
 /// Modell selbst: `Oertlichesmodell::beobachter` meldet jedes Token,
 /// sobald es dasteht. Die Schleife weiss davon nichts, und sie soll es
 /// auch nicht wissen.
@@ -147,6 +157,27 @@ pub fn fahren_beobachtet(
     schritte: usize,
     bezeugtes: bool,
     max_tokens: u32,
+    auftrag: &str,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+) -> Ausgang {
+    fahren_im_gespraech(modell, ruestung, schritte, bezeugtes, max_tokens, &[], auftrag, melder)
+}
+
+/// **Wie [`fahren_beobachtet`], mit dem bisherigen Gespraech vor dem
+/// Auftrag** (Entscheidung C2, siehe
+/// `myl_local_agent::schleife::Lauf::fahren_mit_verlauf`).
+///
+/// Die Nachrichten des Ausgangs tragen das Gespraech danach, samt einer
+/// Verdichtung, falls eine noetig war; [`crate::gespraech::Gespraech`]
+/// uebernimmt sie.
+#[allow(clippy::too_many_arguments)]
+pub fn fahren_im_gespraech(
+    modell: &dyn myl_local_agent::tuerklient::Modellweg,
+    ruestung: &Ruestung,
+    schritte: usize,
+    bezeugtes: bool,
+    max_tokens: u32,
+    verlauf: &[myl_local_agent::Nachricht],
     auftrag: &str,
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) -> Ausgang {
@@ -178,7 +209,7 @@ pub fn fahren_beobachtet(
         max_tokens: Some(max_tokens),
         melder,
     }
-    .fahren(auftrag);
+    .fahren_mit_verlauf(auftrag, verlauf);
 
     let (verlauf, antwort) = verlauf_aus(&erg.nachrichten);
     Ausgang {
@@ -231,12 +262,13 @@ pub fn verlauf_aus(
                         Ok(v) => aus.push(Schritt::Aufruf {
                             name: v.name.clone(),
                             argumente: kurzform(&v.arguments),
+                            voll: volltext_der_argumente(&v.arguments),
                         }),
                         Err(u) => aus.push(Schritt::Unlesbar(u.roh.clone())),
                     }
                 }
             }
-            "tool" => aus.push(Schritt::Ergebnis(eine_zeile(&n.content, 200))),
+            "tool" => aus.push(Schritt::Ergebnis(bis_zur_grenze(&n.content, VOLLTEXT_GRENZE))),
             _ => {}
         }
     }
@@ -299,6 +331,30 @@ pub fn kurzform(a: &serde_json::Value) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// **Wie viele Zeichen eines Befehls oder einer Werkzeugantwort die Anzeige
+/// bekommt.**
+///
+/// ⚑ **Eine Grenze und kein Volltext um jeden Preis.** Das Fenster legt
+/// seine Gespraeche im Browserspeicher ab, und der fasst wenige Megabyte;
+/// ein Werkzeug, das eine grosse Datei liest, fuellte ihn mit einer
+/// einzigen Antwort. Was darueber hinausgeht, steht mit Vermerk da.
+pub const VOLLTEXT_GRENZE: usize = 4000;
+
+/// Die Argumente eines Aufrufs als eingerucktes JSON, bis zur Grenze.
+pub fn volltext_der_argumente(a: &serde_json::Value) -> String {
+    bis_zur_grenze(&serde_json::to_string_pretty(a).unwrap_or_else(|_| a.to_string()), VOLLTEXT_GRENZE)
+}
+
+/// Text mit allen Zeilen, aber hoechstens `n` Zeichen, mit Vermerk.
+pub fn bis_zur_grenze(t: &str, n: usize) -> String {
+    let zeichen = t.chars().count();
+    if zeichen <= n {
+        return t.to_string();
+    }
+    let vorn: String = t.chars().take(n).collect();
+    format!("{vorn}\n… ({} Zeichen mehr)", zeichen - n)
 }
 
 /// Text auf eine Zeile und auf `n` Zeichen, mit sichtbarer Kuerzung.
@@ -389,7 +445,7 @@ mod denkschritte {
         }
     }
 
-    /// ⛑ **Der gemeldete Fehler vom 2026-09-10.**
+    /// 📌 **Der gemeldete Fehler vom 2026-09-10.**
     ///
     /// Die Ueberlegung stand als Zeile in der Befehlsliste, weil
     /// `ohne_aufrufe` nur die Werkzeugaufrufe herausschnitt und den
@@ -456,6 +512,30 @@ mod denkschritte {
         assert!(i < j, "die zweite Ueberlegung steht vor dem Werkzeugergebnis");
 
         assert_eq!(antwort.as_deref(), Some("Es ist zwölf."), "die Antwort traegt das Denken mit");
+    }
+
+    /// ⚑ **Befehl und Werkzeugantwort kommen vollstaendig an**, bis zur
+    /// Anzeigegrenze, mit allen Zeilen (Auftrag des Projektinhabers,
+    /// 2026-09-14: aufklappen, was genau gerufen wurde und was zurueckkam).
+    #[test]
+    fn befehl_und_antwort_kommen_vollstaendig_an() {
+        let lang = format!("Zeile 1\nZeile 2\n{}", "x".repeat(VOLLTEXT_GRENZE));
+        let verlauf = vec![
+            nachricht("assistant", "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"src/main.rs\",\"bis\":40}}</tool_call>"),
+            nachricht("tool", &lang),
+        ];
+        let (schritte, _) = verlauf_aus(&verlauf);
+        let Some(Schritt::Aufruf { voll, .. }) = schritte.iter().find(|s| matches!(s, Schritt::Aufruf { .. })) else {
+            panic!("kein Aufruf: {schritte:?}");
+        };
+        assert!(voll.contains("\"path\": \"src/main.rs\"") && voll.contains('\n'), "eingeruecktes JSON: {voll}");
+        let Some(Schritt::Ergebnis(text)) = schritte.iter().find(|s| matches!(s, Schritt::Ergebnis(_))) else {
+            panic!("kein Ergebnis");
+        };
+        assert!(text.starts_with("Zeile 1\nZeile 2\n"), "die Zeilen bleiben");
+        assert!(text.ends_with("… (16 Zeichen mehr)"), "{}", &text[text.len() - 40..]);
+        assert_eq!(bis_zur_grenze("kurz", 10), "kurz");
+        assert_eq!(bis_zur_grenze("äöüäöü", 3), "äöü\n… (3 Zeichen mehr)", "in Zeichen, nicht in Bytes");
     }
 
     /// ⚑ **Und eine Antwort ohne Denkblock bleibt, was sie war.**

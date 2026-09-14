@@ -170,7 +170,7 @@ Skalen und Nachschlagetabellen und rechnet ganzzahlig, wo das
 Grundmodell in Gleitkomma rechnet. Was dabei hinzukommt, ist die Arbeit
 dieses Projekts.
 
-⛑ **Und bis zum 2026-09-10 stand es an drei Stellen anders da**
+📌 **Und bis zum 2026-09-10 stand es an drei Stellen anders da**
 (Fund 295, gemeldet vom Projektinhaber). `KATALOG.json` führte ein Feld
 `lizenz` mit „Apache-2.0", die erzeugte Modelliste eine Spalte „Lizenz",
 und die Einstellungsseite des Clients zeigte diesen einen Wert hinter

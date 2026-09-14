@@ -9,7 +9,7 @@
    Art der Auszeichnung weg und zwingt dazu, Helligkeit, Flaeche und
    Kante zu benutzen.
 
-   ⛑ **Und es kostete etwas, das benannt gehoert.** Der Verlauf des
+   📌 **Und es kostete etwas, das benannt gehoert.** Der Verlauf des
    Agenten unterschied Aufruf, Ergebnis, Hinweis und Fehler ueber Farbe.
    In Graustufen unterscheidet er sie ueber die **Helligkeit** der Kante
    und ihre **Breite**; der Fehler bekommt die hellste und die breiteste.
@@ -71,7 +71,7 @@
   --rund-klein: 10px;
 }
 
-/* ⛑ **Die Pseudoelemente gehoeren ausdruecklich dazu.** `*` trifft sie
+/* 📌 **Die Pseudoelemente gehoeren ausdruecklich dazu.** `*` trifft sie
    nicht, und das war am 2026-09-09 der Grund fuer verschobene
    Highlights an jedem Knopf: Die beiden Ringe sind `::before` und
    `::after` mit `position: absolute; inset: 0; padding: 1px`. Im
@@ -83,7 +83,7 @@
 *::before,
 *::after { box-sizing: border-box; }
 
-/* ⛑ **`hidden` muss staerker sein als jede Anzeigeart.** Das
+/* 📌 **`hidden` muss staerker sein als jede Anzeigeart.** Das
    Vorgabestilblatt des Browsers setzt `[hidden] { display: none }` mit
    der schwaechsten Spezifitaet, die es gibt; sobald eine eigene Regel
    `display: grid` oder `display: block` vergibt, gewinnt sie, und das
@@ -99,7 +99,7 @@
    auffallen muss. Gehalten von `verstecktes_bleibt_versteckt`. */
 [hidden] { display: none !important; }
 
-/* ⛑ **Ohne diese Regel scrollt das Dokument statt der Liste.**
+/* 📌 **Ohne diese Regel scrollt das Dokument statt der Liste.**
    Es gab bis zum 2026-09-09 ueberhaupt keine `html`-Regel, und `body`
    hatte weder Hoehe noch Ueberlaufsperre. `#huelle` steht zwar auf
    `100vh`, aber jede Ueberschreitung irgendwo darunter macht das
@@ -134,7 +134,7 @@ body {
 
 /* --- Glas: in Ruhe eine Kante, beim Ueberfahren eine Linse ----------
 
-   ⛑ **Zwei Umbauten an dieser Stelle, beide auf Einwand des
+   📌 **Zwei Umbauten an dieser Stelle, beide auf Einwand des
    Projektinhabers, und beide berechtigt.** Der erste Entwurf war
    Milchglas: Unschaerfe plus eine helle Kante, also eine matte
    Scheibe. Der zweite trug den Reflex **staendig**, und das ist ein
@@ -151,7 +151,7 @@ body {
 
    | | wie es hier gebaut ist |
    |---|---|
-   | **Das Licht WANDERT mit dem Zeiger** | Ein `radial-gradient`, dessen Mitte ueber `--mx` und `--my` aus der Zeigerstelle kommt. Das Licht liegt also immer dort, wo der Zeiger ist. Das ist der eine Kniff, an dem das Auge Glas erkennt. ⛑ Frueher lief es als Kegelverlauf um die **Kante**; drei Anlaeufe dieser Art lagen auf demselben Pseudoelement und stritten sich, siehe den Kommentar am Glanz weiter unten |
+   | **Das Licht WANDERT mit dem Zeiger** | Ein `radial-gradient`, dessen Mitte ueber `--mx` und `--my` aus der Zeigerstelle kommt. Das Licht liegt also immer dort, wo der Zeiger ist. Das ist der eine Kniff, an dem das Auge Glas erkennt. 📌 Frueher lief es als Kegelverlauf um die **Kante**; drei Anlaeufe dieser Art lagen auf demselben Pseudoelement und stritten sich, siehe den Kommentar am Glanz weiter unten |
    | **Die Spitze ist SCHARF** | Zwoelf Grad von null auf voll, dann ein langer Abfall. Ein weicher Fleck sieht nach Leuchten aus, eine scharfe Spitze mit langem Schweif nach einer gewoelbten Kante |
    | **Es gibt ein Gegenlicht** | Eine schwache zweite Spitze gegenueber. Echtes Glas hat zwei Kanten, und die hintere faengt das Licht ebenfalls |
 
@@ -204,7 +204,7 @@ button:not(.blank)::before {
   pointer-events: none;
   z-index: 1;
   background: rgba(255, 255, 255, .11);
-  /* ⛑ **Die Reihenfolge ist hier der ganze Unterschied.** Die
+  /* 📌 **Die Reihenfolge ist hier der ganze Unterschied.** Die
      Kurzform `mask` setzt `mask-composite` auf ihren Anfangswert
      zurueck; steht der Verbund davor, ist er weg, die Maske verrechnet
      sich nicht mehr, und statt eines Rings entsteht eine gefuellte
@@ -227,7 +227,7 @@ button:not(.blank)::before {
    Flaeche. Es folgt der Maus ueber `--mx` und `--my`, die das Skript
    in Prozent setzt.
 
-   ⛑ **Zwei Vorgaenger sind daran gescheitert, dass sie Kanten malen
+   📌 **Zwei Vorgaenger sind daran gescheitert, dass sie Kanten malen
    wollten.** Ein maskierter Ring mit `mask-composite` und ein zweiter
    mit `backdrop-filter`, dazu ein Lichtstreifen mit `inset: -40% -60%`,
    und alle drei lagen auf **demselben** Pseudoelement. Welche
@@ -242,7 +242,7 @@ button:not(.blank)::before {
    auf `::before`, der nachweislich konzentrisch sitzt; beim
    Ueberfahren wird er nur heller.
 
-   ⛑ **Hier stand `section` mit in der Liste, und das war die dritte
+   📌 **Hier stand `section` mit in der Liste, und das war die dritte
    Fassung desselben Fehlers.** Ein `section` ist kein Bedienelement,
    sondern eine Flaeche: `#einstellungsseite` liegt auf `inset: 0` ueber
    dem ganzen Fenster, `#modellbau` fuellt zwei Drittel davon. Beide
@@ -294,7 +294,7 @@ button:not(.blank):hover:not(:disabled)::before {
 .eingabefeld > .schein { display: none; }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  /* ⛑ **Der Rueckfall gilt fuer JEDE Flaeche mit `backdrop-filter`,
+  /* 📌 **Der Rueckfall gilt fuer JEDE Flaeche mit `backdrop-filter`,
      nicht nur fuer `.glas`.** Beim Umbau auf das Gespraechsfenster
      kamen Seitenleiste, Kopf, Ortsschalter und Eingabefeld dazu, und
      der Rueckfall blieb bei der einen Klasse stehen: Unter NixOS waeren
@@ -325,7 +325,7 @@ button:not(.blank):hover:not(:disabled)::before {
 
 #huelle {
   display: grid;
-  /* ⛑ **Die Leiste gibt nach, nicht der Inhalt** (2026-09-10, dritte
+  /* 📌 **Die Leiste gibt nach, nicht der Inhalt** (2026-09-10, dritte
      und letzte Fassung dieser Zeile).
      
      Der Projektinhaber hat die Ursache genannt: **Bei zugeklappter
@@ -356,7 +356,7 @@ button:not(.blank):hover:not(:disabled)::before {
    Auf einem breiten Schirm 16 rem wie bisher, auf einem schmalen so
    viel, wie ein Viertel des Fensters hergibt, und nie unter 12 rem.
 
-   ⛑ **Der Grund, warum eine Zahl es nicht konnte:** Die Leiste ist in
+   📌 **Der Grund, warum eine Zahl es nicht konnte:** Die Leiste ist in
    `rem` bemessen, die Mindestbreite in Pixeln. Wer die Systemschrift
    groesser stellt, bekommt die Leiste groesser und die Mindestbreite
    nicht; die Rechnung stimmt dann fuer genau eine Schriftgroesse.
@@ -438,7 +438,7 @@ button:not(.blank):hover:not(:disabled)::before {
 
 /* ⚑ Klein und leise: Es ist eine Angabe und keine Aufforderung.
    
-   ⛑ **Der Pfad wird im Skript gekuerzt und nicht mit `direction: rtl`.**
+   📌 **Der Pfad wird im Skript gekuerzt und nicht mit `direction: rtl`.**
    Der erste Entwurf nahm das, und die Zweirichtungsregeln haben den
    fuehrenden Schraegstrich ans Ende geschoben: Angezeigt wurde
    `…sktop/Code/Myelith/Repository/`, also ein Pfad mit einem
@@ -485,7 +485,7 @@ button:not(.blank):hover:not(:disabled)::before {
 }
 .modus .was { font-size: .72rem; color: var(--leiser); }
 
-/* ⛑ **Ein Modus, den es noch nicht gibt, wird gedaempft und nicht
+/* 📌 **Ein Modus, den es noch nicht gibt, wird gedaempft und nicht
    versteckt.** Der Nutzer soll sehen, wohin der Client geht, und beim
    Anfassen erfahren, was fehlt. Dieselbe Regel wie beim entfallenen
    Ortsschalter: Ein Eintrag, der still nichts tut, waere schlimmer als
@@ -496,7 +496,7 @@ button:not(.blank):hover:not(:disabled)::before {
 
 #chatliste {
   display: grid;
-  /* ⛑ **`minmax(0, 1fr)` und nicht die selbsttaetige Spalte**
+  /* 📌 **`minmax(0, 1fr)` und nicht die selbsttaetige Spalte**
      (2026-09-10, gemeldet vom Projektinhaber: Die Titel wurden nicht
      gekuerzt). Eine Rasterspalte ohne Angabe ist `auto`, und ihr
      Mindestwert ist der **Mindestinhalt** der Zeile darin: Ein langer
@@ -506,7 +506,7 @@ button:not(.blank):hover:not(:disabled)::before {
   grid-template-columns: minmax(0, 1fr);
   gap: .15rem;
   align-content: start;
-  /* ⛑ **Kein eigener Bildlauf mehr.** Er lag hier und zugleich eine
+  /* 📌 **Kein eigener Bildlauf mehr.** Er lag hier und zugleich eine
      Ebene hoeher; zwei ineinander sind schwer zu treffen, und das Rad
      erwischte immer den falschen.
      ⚑ `min-content` bleibt: Ohne die Angabe stauchen sich die
@@ -536,7 +536,7 @@ button:not(.blank):hover:not(:disabled)::before {
 }
 /* ⚑ **Der Titel ist ein Knopf, der wie Text aussieht.**
    
-   ⛑ **`.blank` schaltet nur die beiden Zierpseudoelemente ab**
+   📌 **`.blank` schaltet nur die beiden Zierpseudoelemente ab**
    (`button:not(.blank)::before` und `::after`); der Rest des Knopfes
    bleibt: Glasverlauf, Rundung, Polsterung, Schlagschatten und
    **`backdrop-filter`**. Das Skript nahm davon fuenf Dinge von Hand
@@ -645,7 +645,7 @@ button:not(.blank):hover:not(:disabled)::before {
 
 /* --- Kopf ------------------------------------------------------------ */
 
-/* ⛑ **Die Knoepfe stehen ausserhalb des Flusses, und das ist die
+/* 📌 **Die Knoepfe stehen ausserhalb des Flusses, und das ist die
    dritte Fassung dieser Stelle** (2026-09-10).
 
    Der Projektinhaber hat dreimal gemeldet, dass das Zahnrad beim
@@ -665,7 +665,7 @@ header {
   position: relative;
   display: grid;
   place-items: center;
-  /* ⛑ **Eine feste Hoehe, keine gerechnete** (2026-09-10, gemeldet vom
+  /* 📌 **Eine feste Hoehe, keine gerechnete** (2026-09-10, gemeldet vom
      Projektinhaber: „beim Ausklappen staucht sich die obere Leiste").
      
      Vorher stand hier `min-height` plus Polsterung, und weil
@@ -749,7 +749,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
    Rechteck darum. **Gerechnet und nicht gezeichnet**, von einem
    Erzeugerskript, das nicht mit ausgeliefert wird.
 
-   ⛑ **Was hier stand und wieder weg ist:** ein prozeduraler
+   📌 **Was hier stand und wieder weg ist:** ein prozeduraler
    Sternennebel, zwei Arme und ein kalligraphischer Federzug. Die
    schlichte Konstruktion ist die richtige fuer eine Marke, denn sie
    bleibt bei zweiunddreissig Pixeln lesbar, wo ein Nebel zu Griess
@@ -775,7 +775,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
      nicht mitaendern. Geaendert hat sich nur die Hoehe. */
   --marke-breit: calc(3rem * 1.619);
   --marke-hoch: var(--marke-breit);
-  /* ⛑ **Der gezeichnete Rahmen ist schmaler als die Leinwand.** Er
+  /* 📌 **Der gezeichnete Rahmen ist schmaler als die Leinwand.** Er
      sitzt um die halbe Strichbreite plus einen Hauch darin, sonst
      schnitte ihn der Rand der Grafik an. Bei Leinwand 100 und Rand
      1,25 je Seite bleiben 97,50, also 0,975. Der Schriftzug richtet
@@ -792,7 +792,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
   display: block;
   color: var(--text);
 }
-/* ⛑ **Hier stand zusaetzlich `opacity: .55`.** Es dimmte die
+/* 📌 **Hier stand zusaetzlich `opacity: .55`.** Es dimmte die
    Fibonacci-Quadrate gegen den Bogen ab, und die gibt es seit dem
    2026-09-09 nicht mehr; uebrig sind Rahmen und Kreis, die tragende
    Teile der Figur sind. Vor allem aber rechnete es gegen die
@@ -834,7 +834,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
   letter-spacing: 0;
 }
 
-/* ⛑ **Keine kuenstliche Fettung und Kursive mehr.** Solange die echte
+/* 📌 **Keine kuenstliche Fettung und Kursive mehr.** Solange die echte
    Schrift fehlte, wurde sie mit `font-weight: 800` und
    `font-style: italic` angedeutet. „Infinite Justice" bringt beides
    selbst mit; beides obendrauf ergaebe eine doppelt geneigte,
@@ -907,7 +907,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
    blenden; genau das macht den Unterschied zwischen Stoerbild und
    Ueberblendung.
 
-   ⛑ **Ohne `both`, und das ist keine Kleinigkeit.** Der erste Entwurf
+   📌 **Ohne `both`, und das ist keine Kleinigkeit.** Der erste Entwurf
    hatte es, und `nichts_wartet_unsichtbar_auf_eine_animation` hat es
    gefangen: `both` setzt den Anfangszustand schon **vor** dem Lauf, und
    der ist hier `opacity: 0`. Wo Animationen nicht laufen, waere die
@@ -966,7 +966,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
 }
 .rundknopf:hover:not(:disabled) { color: var(--text); }
 
-/* ⛑ Hier standen die Regeln des Ortsschalters „Lokal | Netz". Er ist
+/* 📌 Hier standen die Regeln des Ortsschalters „Lokal | Netz". Er ist
    am 2026-09-09 entfallen; die Wahl liegt jetzt in der Modellwahl
    unten links. Die Regeln sind mit ihm gegangen, statt als toter Stil
    liegenzubleiben. */
@@ -1056,7 +1056,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
    sie immer zeigt, laesst die Antwort darunter verschwinden, wer sie
    weglaesst, nimmt dem Nutzer die Auskunft, wie es dazu kam.
 
-   ⛑ **Sie heissen `denken` und `befehle` und nicht mehr `verlauf`.**
+   📌 **Sie heissen `denken` und `befehle` und nicht mehr `verlauf`.**
    Ein Name fuer beides waere ein Kasten fuer zwei verschiedene Dinge,
    und die Ueberschrift koennte nur eines von beiden zaehlen. */
 .denken,
@@ -1078,69 +1078,92 @@ header > .kopfrechts { right: var(--kopf-polster); }
 .denken > summary:hover,
 .befehle > summary:hover { color: var(--leise); }
 
-/* ⚑ Die Ueberlegung ist Fliesstext und keine Schrittliste: Sie kommt
-   als ein Stueck und wird laufend laenger. */
+/* ⚑ Die Ueberlegung ist Fliesstext und keine Schrittliste: ein Faden ueber
+   den ganzen Lauf, der waehrenddessen laenger wird. Ab einer Hoehe rollt
+   er in sich, damit ein langes Nachdenken die Antwort nicht aus dem Bild
+   schiebt. */
 .denktext {
   color: var(--leise);
   font-size: .82rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   padding: .2rem 0 .3rem;
+  max-height: 24rem;
+  overflow-y: auto;
 }
 
-.schrittliste { display: grid; gap: .25rem; }
+/* --- Die Befehle, einzeln aufklappbar (2026-09-14) --------------------
 
-.schritt {
-  font-family: var(--fest);
-  font-size: .8rem;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: .32rem .7rem;
+   ⚑ **Zu steht eine Zeile je Befehl, offen stehen Befehl und Antwort.**
+   Die Kanten tragen die Art wie vorher die Schrittzeilen: Helligkeit und
+   Breite, keine Farbe. */
+.befehlsliste { display: grid; gap: .25rem; }
+
+.befehl {
   border-left: 2px solid var(--kante);
   background: rgba(0, 0, 0, .22);
   border-radius: 0 var(--rund-klein) var(--rund-klein) 0;
 }
-/* ⛑ **Hier stand Farbe, und jetzt steht Helligkeit und Breite.** Wer
-   den Verlauf ueberfliegt, soll einen Werkzeugaufruf von einem Ergebnis
-   unterscheiden, ohne zu lesen. Der Fehler bekommt die hellste Kante
-   UND die breiteste: Ein Fehlschlag, der aussieht wie alles andere, ist
-   kein Stilproblem. */
-/* ⚑ **Ein Plan ist, was das Modell vor einem Aufruf geschrieben hat**,
-   und daran erkennt man einen falschen Plan, bevor das Werkzeug ihn
-   ausfuehrt. Er ist Prosa und keine Kennung, also Fliesstext.
-
-   ⛑ Diese Regel fehlte, seit es die Schrittart gibt. Aufgefallen ist
-   es erst, als die Pruefung die Arten aus dem Ruecken las statt aus
-   einer Liste von Hand. */
-.schritt.plan {
-  border-left-color: var(--kante);
-  font-family: var(--schrift);
-  font-size: .86rem;
-  color: var(--leise);
-  background: none;
+.befehl > summary {
+  cursor: pointer;
+  list-style: none;
+  font-family: var(--fest);
+  font-size: .8rem;
+  padding: .32rem .7rem;
+  overflow-wrap: anywhere;
 }
-.schritt.aufruf   { border-left-color: var(--leise); }
-.schritt.ergebnis { border-left-color: var(--gut); }
-.schritt.hinweis  { border-left-color: var(--leiser); color: var(--leise); }
+.befehl > summary::-webkit-details-marker { display: none; }
+.befehl > summary:hover { color: var(--text); }
+.befehl .marke2 { color: var(--leiser); margin-right: .6rem; }
+.befehl.aufruf   { border-left-color: var(--leise); }
+.befehl.ergebnis { border-left-color: var(--gut); }
 /* ⚑ Eine abgewiesene Ausfuehrung ist ein Befund und kein Fehler des
    Nutzers: Sie bekommt die Flagge und nicht das Rot des Absturzes. */
-.schritt.abgelehnt {
+.befehl.abgelehnt {
   border-left-color: var(--schlecht);
   color: var(--leise);
 }
-.schritt.unlesbar {
+.befehl.unlesbar {
   border-left-color: var(--schlecht);
   border-left-width: 4px;
-  padding-left: .58rem;
   background: rgba(255, 255, 255, .05);
 }
-.schritt.antwort {
-  border-left-color: var(--text);
-  font-family: var(--schrift);
-  font-size: .92rem;
-  background: none;
+
+.befehlsteil {
+  display: grid;
+  gap: .15rem;
+  padding: .3rem .7rem .45rem;
+  border-top: 1px solid var(--kante);
 }
-.schritt .marke2 { color: var(--leiser); margin-right: .6rem; }
+.teilkopf {
+  color: var(--leiser);
+  font-size: .68rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.teiltext {
+  font-family: var(--fest);
+  font-size: .78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+/* ⚑ Ein Vorhaben ist Prosa des Modells und keine Kennung, also Fliesstext.
+   Daran erkennt man einen falschen Plan, bevor das Werkzeug ihn ausfuehrt. */
+.befehlsteil.plan .teiltext {
+  font-family: var(--schrift);
+  font-size: .84rem;
+  color: var(--leise);
+}
+.befehlsteil.befehlstext .teiltext { color: var(--text); }
+.befehlsteil.antwort .teiltext { color: var(--leise); }
+/* Solange die Antwort aussteht, steht die Stelle leise und schraeg da. */
+.befehlsteil.wartet .teiltext {
+  font-family: var(--schrift);
+  font-style: italic;
+  color: var(--leiser);
+}
 
 /* --- Das Ladezeichen -------------------------------------------------
 
@@ -1148,7 +1171,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
    Antwort wartet, sieht auf den Fleck, an dem sie erscheinen wird, und
    nicht ans andere Ende des Fensters.
 
-   ⛑ **Drei Punkte und kein Kreisel.** Ein Kreisel dreht sich gleich
+   📌 **Drei Punkte und kein Kreisel.** Ein Kreisel dreht sich gleich
    schnell, ob etwas vorangeht oder nicht; drei Punkte, die nacheinander
    heller werden, sagen dasselbe und lenken weniger ab. Beides sagt
    nichts ueber den Fortschritt, und das ist ehrlich: Wie lange ein
@@ -1241,7 +1264,7 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 }
 .mdtabelle th { font-weight: 600; color: var(--leise); }
 
-/* ⛑ **Ein Verweis ist hier kein Knopf**, sondern Text mit sichtbarem
+/* 📌 **Ein Verweis ist hier kein Knopf**, sondern Text mit sichtbarem
    Ziel: Ein Klick fuehrte die Webansicht aus der Anwendung heraus, und
    sie im System zu oeffnen braeuchte eine Erlaubnis, die die
    Erlaubnisliste bewusst nicht hat. */
@@ -1294,9 +1317,52 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
    2026-09-10). Sie sagt, welches Modell im Speicher liegt; das ist eine
    Auskunft fuer den Zweifelsfall und keine Ueberschrift.
 
-   ⛑ `min-height` bleibt: Ohne sie springt die Eingabezeile jedes Mal,
+   📌 `min-height` bleibt: Ohne sie springt die Eingabezeile jedes Mal,
    wenn die Auskunft kommt oder geht. **Eine Zeile, die auftaucht und
    dabei alles darueber verschiebt, liest man nicht, man erschrickt.** */
+/* --- Der Kontext am Eingabefeld --------------------------------------
+
+   ⚑ **Leise, solange Platz ist.** Der Balken ist eine Auskunft und keine
+   Warnung; erst ab vier Fuenfteln wird die Fuellung hell. */
+.kontextbalken {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: .5rem;
+  padding: 0 .2rem;
+  color: var(--leiser);
+  font-family: var(--fest);
+  font-size: .6rem;
+  cursor: pointer;
+}
+.kontextbalken:hover { color: var(--leise); }
+.kontextzahl { white-space: nowrap; }
+.kontextspur {
+  width: 7rem;
+  height: .28rem;
+  border-radius: 999px;
+  background: var(--glas-hoch);
+  overflow: hidden;
+}
+.kontextfuellung {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--leise);
+}
+.kontextbalken.eng .kontextfuellung { background: var(--text); }
+.kontextbalken.eng { color: var(--leise); }
+
+/* Der Hinweis, dass ab hier eine Zusammenfassung gilt: eine Zeile im
+   Gespraech, weder Blase noch Antwort. */
+.kontexthinweis {
+  margin: 0;
+  font-size: .72rem;
+  color: var(--leiser);
+  text-align: center;
+}
+
 #hinweiszeile {
   margin: 0;
   min-height: 1.2em;
@@ -1336,7 +1402,7 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   gap: .5rem;
   padding: .55rem .5rem .55rem .85rem;
   border-radius: var(--rund);
-  /* ⛑ **Kein `both`.** Der erste Entwurf hatte es, und damit gilt der
+  /* 📌 **Kein `both`.** Der erste Entwurf hatte es, und damit gilt der
      Anfangszustand der Animation SCHON VOR ihrem Lauf: `opacity: 0`.
      Laeuft sie nicht, ist die Meldung nie zu sehen, und eine Meldung,
      die man nicht sieht, ist keine. Aufgefallen im Standbild der
@@ -1369,7 +1435,7 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 .katalogzeile.fehlt .katalogdaten { color: var(--leiser); }
 .katalogzeile.fehlt strong { color: var(--leise); font-weight: 500; }
 
-/* ⛑ **Die Rueckfrage vor dem Loeschen faerbt den Knopf.** Ein Artefakt
+/* 📌 **Die Rueckfrage vor dem Loeschen faerbt den Knopf.** Ein Artefakt
    sind Gigabyte und ein Bau von Stunden; der zweite Klick soll anders
    aussehen als der erste. */
 button.warnt {
@@ -1445,7 +1511,7 @@ button.warnt {
    gross, ob es nun ein Bereich der Tabelle ist oder ein eigener
    Abschnitt.
 
-   ⛑ **Vorher waren es drei Groessen, und die falsche war die
+   📌 **Vorher waren es drei Groessen, und die falsche war die
    groesste:** `h2` hatte gar keine Angabe und nahm die Vorgabe des
    Browsers (rund 1,5em), also mehr als das `h1` mit 1,1rem. Eine
    Seite, deren Unterueberschriften groesser sind als ihre
@@ -1475,7 +1541,7 @@ table { border-collapse: collapse; width: 100%; max-width: 46rem; }
    Eingabefeld zwischen beiden statt neben dem Titel. */
 td { padding: .5rem 1rem .5rem 0; vertical-align: top; }
 
-/* ⛑ **Hier stand `white-space: nowrap` und eine feste Schrift.** Das
+/* 📌 **Hier stand `white-space: nowrap` und eine feste Schrift.** Das
    war richtig, solange in der Spalte eine Kennung stand: `kap.kerne`
    soll nicht umbrechen. Seit dort Prosa steht, waere beides falsch,
    ein Satz in Schreibmaschinenschrift, der die Tabelle breiter macht
@@ -1584,7 +1650,7 @@ input::placeholder, textarea::placeholder { color: var(--leiser); }
    nachgebauter Schieber aus zwei `div` haette all das verloren** und
    muesste es einzeln wiederherstellen.
 
-   ⛑ **Und die Regel darueber traf es mit:** Polsterung, Glasverlauf und
+   📌 **Und die Regel darueber traf es mit:** Polsterung, Glasverlauf und
    Hintergrundfilter auf einem Kaestchen von zwoelf Pixeln, das dadurch
    verrutschte und wie ein Rest aussah. Es setzt sie alle zurueck. */
 input[type="checkbox"] {
@@ -1651,7 +1717,7 @@ button {
     transform .28s cubic-bezier(.34, 1.56, .64, 1);
 }
 
-/* ⛑ **Hier lag der Lichtstreifen: ein zweites, grosses `::after` mit
+/* 📌 **Hier lag der Lichtstreifen: ein zweites, grosses `::after` mit
    `inset: -40% -60%`, das quer ueber den Knopf fuhr.**
 
    Er ist am 2026-09-09 entfernt worden, zusammen mit dem Reflexring,
@@ -1750,7 +1816,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 /* ⚑ Wer Bewegung abbestellt hat, bekommt keine. Das Vorschaltbild
    bleibt, denn es traegt eine Wartezeit; nur bewegt es sich nicht, und
    der Schriftzug steht sofort scharf da statt sich zusammenzusetzen. */
-/* ⛑ **Es gibt genau einen Block fuer abbestellte Bewegung**, und das
+/* 📌 **Es gibt genau einen Block fuer abbestellte Bewegung**, und das
    ist keine Ordnungsfrage: `das_rauschen_gehoert_zur_abbestellbaren_bewegung`
    sammelt alles, was sich bewegt, und sucht es hier. Ein zweiter Block
    anderswo laesst die Wache am falschen Ort nachsehen und meldet
@@ -1778,7 +1844,8 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
    traegt `overflow: hidden`, damit ihr Bildlauf greift; ein Menue
    darin waere am Rand abgeschnitten. Die Stelle setzt das Skript aus
    der Zeigerposition. */
-#kontextmenue {
+#kontextmenue,
+#kontextwahl {
   position: fixed;
   z-index: 60;
   min-width: 11rem;

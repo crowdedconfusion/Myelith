@@ -37,7 +37,7 @@ fn hilfe_ausdruecklich_verlangt_ist_dasselbe() {
     }
 }
 
-/// ⛑ Diese Pruefung ist der Grund fuer die ganze Datei. Vor ihr fiel
+/// 📌 Diese Pruefung ist der Grund fuer die ganze Datei. Vor ihr fiel
 /// jeder unbekannte Befehl in denselben Zweig wie die Hilfe: Text nach
 /// stdout, Rueckgabe null. Wer `myl sitzng` schrieb, bekam die Hilfe in
 /// seine Pipe und las daraus, es sei gutgegangen.

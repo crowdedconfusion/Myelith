@@ -37,8 +37,8 @@
 //! | Schalter | Was er tut |
 //! |---|---|
 //! | `--normiert` | Bewegung je Matrix auf ihr eigenes Betragsmaximum (Fund 194) |
-//! | `--momentum N` | ⛑ gemessen und verworfen, Fund 201 |
-//! | `--vorzeichen` | ⛑ gemessen und verworfen, Fund 201 |
+//! | `--momentum N` | 📌 gemessen und verworfen, Fund 201 |
+//! | `--vorzeichen` | 📌 gemessen und verworfen, Fund 201 |
 //! | `--kopf` | ⚑ **Der Ablesekopf lernt mit**, Fund 202 |
 //! | `--nur-kopf` | Nur er; die Ebenen bleiben stehen |
 //! | `--kopf-nenner N` | Eigene Schrittweite fuer den Kopf, Fund 204 |
@@ -47,9 +47,9 @@
 //! | `--stand-lesen P` | Dort weitermachen, wo ein Lauf aufhoerte |
 //! | `--anker N` | ⚑ **Gegen das Vergessen:** zieht je Durchgang ein `2^N`-tel des Abstandes zum Ausgangsstand zurueck |
 //! | `--absenkung` | Die Schrittweite sinkt ueber die Durchgaenge auf ein Viertel |
-//! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; ⛑ ungemessen |
+//! | `--nur-mlp`, `--nur-abwaerts` | ⚑ **Parameterisolierung**, die dritte Saeule gegen das Vergessen; 📌 ungemessen |
 //!
-//! ⛑ **`--probentoken N` (Vorgabe 40).** Wie viele Token je Probe
+//! 📌 **`--probentoken N` (Vorgabe 40).** Wie viele Token je Probe
 //! erzeugt werden. Stand fest auf zwoelf, und das reichte nicht: Beim
 //! ChatML-Lauf auf Qwen3-4B begannen die Antworten mit „Okay, the user
 //! is asking where …", einem Denkpraeludium, das das ganze Budget
@@ -121,7 +121,7 @@ fn strom_vor(
 
 /// Schreibt die trainierten Kopfzeilen in der Form von `lm_head.bin`.
 ///
-/// ⛑ **Nur die verfolgten Zeilen.** Der Kopf hat beim 4B
+/// 📌 **Nur die verfolgten Zeilen.** Der Kopf hat beim 4B
 /// hundertfuenfzigtausend Zeilen zu je 2560 Werten, also 777 MB; ein
 /// Lauf bewegt davon eine Handvoll. Die ganze Matrix zu schreiben
 /// hiesse, 777 MB abzulegen, um 51 KB zu sichern.
@@ -155,7 +155,7 @@ fn kopf_hinausschreiben(
 
 /// Liest abgelegte Kopfzeilen in das Modell zurueck.
 ///
-/// ⛑ **Die Form muss passen**, sonst wird abgelehnt statt
+/// 📌 **Die Form muss passen**, sonst wird abgelehnt statt
 /// zurechtgebogen: Eine Datei mit anderer Zeilenbreite gehoert zu einem
 /// anderen Modell, und sie einzusetzen ergaebe stillschweigend Unsinn.
 fn kopf_hereinlesen(
@@ -219,7 +219,7 @@ fn main() {
     let mut kopf_nenner: Option<i64> = None;
     let mut zeilenweise = false;
     let mut spitze: usize = 0;
-    // ⛑ **Zwoelf war zu wenig, siehe Fund 225.** Die Vorgabe steht auf
+    // 📌 **Zwoelf war zu wenig, siehe Fund 225.** Die Vorgabe steht auf
     // vierzig: Ein Denkpraeludium ist rund zehn Token lang, die
     // Antwort kommt danach, und wer knapp misst, misst das Praeludium.
     // Sie kosten Zeit; eine Messung, die nicht messen kann, kostet
@@ -233,7 +233,7 @@ fn main() {
     let mut absenkung = false;
     let mut auswahl = integer_llm_runtime::shardtraining::Auswahl::Alles;
     let mut rauschen: Option<i64> = None;
-    // ⛑ **Fund 343 (2026-09-11): hier stand `1 << 12`, und damit war die
+    // 📌 **Fund 343 (2026-09-11): hier stand `1 << 12`, und damit war die
     // Messung von Fund 337 wirkungslos.** `Trainingsvorgaben::vorgabe()`
     // traegt seit dem Ankerwechsel `lr_nenner: 1 << 10`, an Qwen3-0,6B
     // gemessen. Diese Zeile setzt den Wert aber **bei jedem Aufruf**
@@ -305,7 +305,7 @@ fn main() {
             // ⚑ **Gegen das Vergessen, nicht fuer die Tatsache.**
             // Zieht die Gewichte je Durchgang um ein `2^n`-tel ihres
             // Abstandes zum Ausgangsstand zurueck.
-            // ⚑ Parameterisolierung, die dritte Saeule. ⛑ Ungemessen,
+            // ⚑ Parameterisolierung, die dritte Saeule. 📌 Ungemessen,
             // deshalb standardmaessig aus.
             "--nur-mlp" => {
                 auswahl = integer_llm_runtime::shardtraining::Auswahl::NurMlp;
@@ -376,7 +376,7 @@ fn main() {
                 i += 1;
                 fragendatei = args.get(i).cloned();
             }
-            // ⛑ **Ohne Wert war dieser Schalter ein stiller Nichttuer.**
+            // 📌 **Ohne Wert war dieser Schalter ein stiller Nichttuer.**
             // `args.get(i).and_then(parse)` ergibt bei fehlendem oder
             // unlesbarem Wert `None`, und `None` heisst hier „kein
             // Rauschen". Ein Aufruf `--rauschen` am Zeilenende lief
@@ -428,7 +428,7 @@ fn main() {
             // `optimierer::sammle`: Erwartungswert gleich, Streuung
             // durch die Zahl der Folgen geteilt.
             "--sammeln" => sammeln = true,
-            // ⛑ **Die Haltemenge vom ENDE des Textes nehmen.**
+            // 📌 **Die Haltemenge vom ENDE des Textes nehmen.**
             //
             // Vorn geschnitten liegen Lern- und Haltefolgen direkt
             // nebeneinander und stammen oft aus demselben Artikel; ein
@@ -437,14 +437,14 @@ fn main() {
             // **Vom Ende genommen sind es andere Artikel**, und die
             // Aussage wird die, die sie sein soll.
             "--halte-vom-ende" => halte_vom_ende = true,
-            // ⛑ **Die Haltemenge aus einer EIGENEN Datei.**
+            // 📌 **Die Haltemenge aus einer EIGENEN Datei.**
             //
             // Das ist der Lehrbuchaufbau eines Sprachmodell-Benchmarks:
             // trainieren auf dem Trainingssplit, messen auf dem
             // Testsplit. Beide stammen aus verschiedenen Artikeln und
             // sind vom Datensatz selbst getrennt, nicht von uns.
             //
-            // ⛑ **Das ist strenger als `--halte-vom-ende`**, und der
+            // 📌 **Das ist strenger als `--halte-vom-ende`**, und der
             // Unterschied ist keine Feinheit: Zwei Haelften derselben
             // Datei koennen aus demselben Artikel stammen.
             "--haltedatei" => {
@@ -458,7 +458,7 @@ fn main() {
             // Betrages**, unabhaengig von der Skala des Gradienten und
             // der der Gewichte.
             //
-            // ⛑ **Hier stand „die Zahl der Aktualisierungen, in denen
+            // 📌 **Hier stand „die Zahl der Aktualisierungen, in denen
             // das groesste Gewicht eine Rasterstufe wandert", und das
             // ist um den Faktor 127 daneben.** Die Uebertragungsform
             // hat 127 Stufen zwischen null und dem Betragsmaximum
@@ -517,7 +517,7 @@ fn main() {
         match kopf_hereinlesen(&mut m, std::path::Path::new(pfad)) {
             Ok(n) => eprintln!("[trainingsguete] Kopf gelesen aus {pfad} ({n} Zeilen)"),
             Err(f) => {
-                // ⛑ Abbruch und kein Weitermachen: Ein Lauf, der auf
+                // 📌 Abbruch und kein Weitermachen: Ein Lauf, der auf
                 // einem nicht geladenen Kopf aufsetzt, sieht aus wie
                 // eine Fortsetzung und ist ein Neuanfang.
                 eprintln!("ABBRUCH  Kopf nicht lesbar: {f}");
@@ -550,7 +550,7 @@ fn main() {
         .expect("Wortschatz");
         let alle = wortschatz.encode(&text);
         // In Stücke fester Länge, wie die Baseline sie misst.
-        // ⛑ **Mit eigener Haltedatei nur die Lernfolgen.** Ohne diese
+        // 📌 **Mit eigener Haltedatei nur die Lernfolgen.** Ohne diese
         // Unterscheidung nahm der Lauf `folgen + haltemenge` Stuecke aus
         // der Lerndatei und trainierte auf allen; die Haltemenge kam
         // zusaetzlich aus der zweiten Datei. Gemeldet wurden dann mehr
@@ -599,7 +599,7 @@ fn main() {
     // gebraucht.
     let zwischenbreite = match &m.layers[0].ffn {
         integer_llm_runtime::model::Feedforward::Dense(d) => d.gate_proj.shape[0],
-        // ⛑ Ein Expertengemisch bekommt keine Zeilenbreiten; siehe
+        // 📌 Ein Expertengemisch bekommt keine Zeilenbreiten; siehe
         // `zeilenbreiten_dicht`. Null heisst dort „unbekannt", und
         // dann bleibt es bei der Matrixnormierung.
         integer_llm_runtime::model::Feedforward::Moe(_) => 0,
@@ -612,7 +612,7 @@ fn main() {
         ) {
             Ok(()) => eprintln!("[trainingsguete] Stand gelesen aus {pfad}"),
             Err(f) => {
-                // ⛑ Abbruch und kein Weitermachen: Ein Lauf, der auf
+                // 📌 Abbruch und kein Weitermachen: Ein Lauf, der auf
                 // einem nicht geladenen Stand aufsetzt, sieht aus wie
                 // eine Fortsetzung und ist ein Neuanfang.
                 eprintln!("ABBRUCH  Stand nicht lesbar: {f}");
@@ -670,14 +670,14 @@ fn main() {
     // verschiedene Texte.
     let schnitt = haltemenge.min(folgen.len());
     let (halte, lernfolgen): (Vec<Vec<usize>>, Vec<Vec<usize>>) = if let Some(hd) = &haltedatei {
-        // ⛑ **Eine eigene Datei, mit demselben Wortschatz kodiert.**
+        // 📌 **Eine eigene Datei, mit demselben Wortschatz kodiert.**
         let roh = std::fs::read_to_string(hd).expect("Haltedatei unlesbar");
         let wortschatz = integer_llm_runtime::tokenizer::Tokenizer::from_file(
             dir.join("tokenizer.json").to_str().expect("Pfad"),
         )
         .expect("Wortschatz");
         let alle = wortschatz.encode(&roh);
-        // ⛑ **Fund 344 (2026-09-11): `--haltedatei` ohne `--haltemenge`
+        // 📌 **Fund 344 (2026-09-11): `--haltedatei` ohne `--haltemenge`
         // ergab null Haltefolgen, und zwar still.** Hier stand
         // `.take(haltemenge)`, und `haltemenge` steht ohne eigene
         // Angabe auf **null**. Wer also eine Haltedatei angab und sonst
@@ -763,7 +763,7 @@ fn main() {
         let mut je_art: Befund = std::collections::BTreeMap::new();
         for (frage, erwartet, art) in fragen {
             let mut folge = ws.encode(frage);
-            // ⛑ **Beide Schreibweisen, seit dem 2026-09-07.** BPE kodiert
+            // 📌 **Beide Schreibweisen, seit dem 2026-09-07.** BPE kodiert
             // ein Wort am Zeichenkettenanfang anders als nach einem
             // Leerzeichen, und im Satz folgt immer die zweite Variante.
             // Bis heute wurde nur `erwartet` kodiert; gemessen wurde
@@ -780,7 +780,7 @@ fn main() {
             let mut rang = usize::MAX;
             let mut logp = f64::NEG_INFINITY;
             let anfang = folge.len();
-            // ⛑ **Hier stand `0..12`, und zwoelf Token reichten nicht.**
+            // 📌 **Hier stand `0..12`, und zwoelf Token reichten nicht.**
             // Beim ChatML-Lauf auf Qwen3-4B (2026-09-09, Fund 225)
             // begannen die Antworten mit „Okay, the user is asking
             // where …", also mit einem Denkpraeludium, und das frass
@@ -813,7 +813,7 @@ fn main() {
                 // leer, weil dort kein Ziel steht. Genau deren Logits
                 // sind hier aber die Vorhersage des naechsten Wortes.
                 let Some(letzte) = ms.ausgang.last() else { break };
-                // ⛑ **Nicht `head_logits`, das rechnet auf
+                // 📌 **Nicht `head_logits`, das rechnet auf
                 // `config.logit_frac_bits` = 6.** Der Trainingsweg
                 // benutzt 16 (Fund 177), und wer die Logits von 6 durch
                 // 2^16 teilt, flacht die Verteilung um Faktor 1024 ab
@@ -824,7 +824,7 @@ fn main() {
                 if l.is_empty() {
                     break;
                 }
-                // ⛑ **Der Rang wird ueber ALLE Schritte genommen, nicht
+                // 📌 **Der Rang wird ueber ALLE Schritte genommen, nicht
                 // nur ueber den ersten.** Er stand auf `schritt == 0`,
                 // und dort will das Modell „Okay" sagen und keine
                 // Stadt: Rang 996 hiess dann nicht „die Stadt liegt
@@ -879,7 +879,7 @@ fn main() {
                     // ebenfalls plausibel sind. Der Rang misst die
                     // Konkurrenz, die Wahrscheinlichkeit misst das
                     // Lernen.
-                    // ⛑ **Erste Fassung selbst gerechnet und dabei
+                    // 📌 **Erste Fassung selbst gerechnet und dabei
                     // uebergelaufen:** `(*v - hoch)` subtrahiert in i32,
                     // bevor gecastet wird. Die vorhandene, gepruefte
                     // Funktion castet zuerst und wird deshalb benutzt
@@ -991,7 +991,7 @@ fn main() {
         eprintln!(
             "[trainingsguete] RAUSCHEN: {beruehrt} Gewichte um bis zu {stufen} Stufen gestoert"
         );
-        // ⛑ **Zwei Grenzen, die das URTEIL unten nicht nennt.**
+        // 📌 **Zwei Grenzen, die das URTEIL unten nicht nennt.**
         //
         // (1) Gestoert werden die Master des **Ebenenbereichs**. Der
         //     Ablesekopf bleibt unberuehrt. Fuer einen Lauf mit
@@ -1002,7 +1002,7 @@ fn main() {
         //     Gradienten" heisst `--schritte 0` dazu.
         if kopf || nur_kopf {
             eprintln!(
-                "[trainingsguete] ⛑ ACHTUNG: das Rauschen fasst den Kopf NICHT an.\n\
+                "[trainingsguete] ⚠️ ACHTUNG: das Rauschen fasst den Kopf NICHT an.\n\
                  [trainingsguete]    Dieser Lauf bewegt den Kopf, gestoert sind die Ebenen.\n\
                  [trainingsguete]    Als Kontrolle taugt das nicht."
             );
@@ -1313,9 +1313,9 @@ fn main() {
             std::path::Path::new(pfad),
         ) {
             Ok(()) => eprintln!("[trainingsguete] Stand geschrieben nach {pfad}"),
-            Err(f) => eprintln!("[trainingsguete] ⛑ Stand NICHT geschrieben: {f}"),
+            Err(f) => eprintln!("[trainingsguete] ⚠️ Stand NICHT geschrieben: {f}"),
         }
-        // ⛑ **Der Kopf ist NICHT in dieser Datei.** `stand_schreiben`
+        // 📌 **Der Kopf ist NICHT in dieser Datei.** `stand_schreiben`
         // sichert `Shardgewichte`, also die Master des Ebenenbereichs;
         // der Kopf wird ueber `Kopfsammlung` bewegt und lebt nur im
         // Prozess. Ein Lauf mit `--kopf` oder `--nur-kopf` verliert
@@ -1327,7 +1327,7 @@ fn main() {
         // die Datei sonst mehr verspricht, als sie enthaelt.
         if kopf || nur_kopf {
             eprintln!(
-                "[trainingsguete] ⛑ ACHTUNG: der Kopf ist im Stand NICHT enthalten.\n\
+                "[trainingsguete] ⚠️ ACHTUNG: der Kopf ist im Stand NICHT enthalten.\n\
                  [trainingsguete]    Gesichert sind nur die Master der Ebenen {von} bis {}.\n\
                  [trainingsguete]    Ein Lauf, dessen Ergebnis am Kopf haengt, ist damit\n\
                  [trainingsguete]    nach dem Beenden nicht wiederherstellbar.",
@@ -1342,13 +1342,13 @@ fn main() {
     // in kleiner Bytefolge, genau wie in `lm_head.bin`.
     if let Some(pfad) = &kopf_aus {
         if kopftoken.is_empty() {
-            eprintln!("[trainingsguete] ⛑ Kopf NICHT geschrieben: dieser Lauf hat keinen trainiert.");
+            eprintln!("[trainingsguete] ⚠️ Kopf NICHT geschrieben: dieser Lauf hat keinen trainiert.");
         } else {
             match kopf_hinausschreiben(&m, &kopftoken, std::path::Path::new(pfad)) {
                 Ok(n) => eprintln!(
                     "[trainingsguete] Kopf geschrieben nach {pfad} ({n} Zeilen)"
                 ),
-                Err(f) => eprintln!("[trainingsguete] ⛑ Kopf NICHT geschrieben: {f}"),
+                Err(f) => eprintln!("[trainingsguete] ⚠️ Kopf NICHT geschrieben: {f}"),
             }
         }
     }
@@ -1359,7 +1359,7 @@ fn main() {
     // ein Bit. Wenn ein Lauf sich verschlechtert, ohne die harte
     // Schranke zu reissen, ist das der erste Ort zum Nachsehen.
     {
-        // ⛑ **Fund 346: hier stand ein `zip` ueber Anfang und Jetzt**, und
+        // 📌 **Fund 346: hier stand ein `zip` ueber Anfang und Jetzt**, und
         // der Anfang einer Gemischebene traegt keine Experten. Die
         // Schranke sah damit genau den Teil nicht, den ein Gemisch
         // trainiert. `paare_mit_anfang` laeuft ueber die Master-Seite
@@ -1396,7 +1396,7 @@ fn main() {
         let mut geaendert = 0u64;
         let mut gesamt = 0u64;
         let mut zeilenskalen = 0u64;
-        // ⛑ **Fund 346, dieselbe Stelle wie oben.** Der Nenner dieser
+        // 📌 **Fund 346, dieselbe Stelle wie oben.** Der Nenner dieser
         // Zeile war auf einem Gemisch Aufmerksamkeit plus Router und
         // las sich wie eine Aussage ueber die Ebene.
         for (_ebene, vorher, jetzt) in gewichte.paare_mit_anfang(&m) {
@@ -1472,7 +1472,7 @@ fn main() {
                 "kaum bewegt: beide Zahlen aendern sich um weniger als ein \
                  Zehntelprozent, das ist Rauschen und kein Ergebnis"
             } else if hppl_nach < hppl_vor {
-                // ⛑ **Hier stand bis zum 2026-09-07 „der Lauf hat
+                // 📌 **Hier stand bis zum 2026-09-07 „der Lauf hat
                 // gelernt", und das war falsch.** Am selben Tag bekam
                 // ein Lauf mit **null Schritten und ohne Gradienten**,
                 // der nur Rauschen addierte, genau dieses Urteil: Die
@@ -1564,7 +1564,7 @@ fn main() {
 /// Wie viele Experten der trainierte Bereich beruehrt hat, als Zusatz
 /// fuer die Durchgangsmeldung.
 ///
-/// # ⛑ Fund 345 (2026-09-12): die Zahl gab es, und niemand sah sie
+/// # 📌 Fund 345 (2026-09-12): die Zahl gab es, und niemand sah sie
 ///
 /// `trainingsschleife` fuehrt sie seit dem 2026-09-05 als
 /// `experten_beruehrt`, und der Testclient zeigt sie in seiner

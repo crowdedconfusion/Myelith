@@ -184,8 +184,8 @@ Die **Kennung** ist die Prüfsumme des Prüfstands. Sie steht auch im
 Dateinamen deines Ergebnisses, und sie ist bei allen Teilnehmern
 dieselbe, solange alle denselben Client benutzen.
 
-Der Lauf hat **sechs Stufen** und schreibt **ein einziges Ergebnis**
-über alle sechs:
+Der Lauf hat **sieben Stufen** und schreibt **ein einziges Ergebnis**
+über alle sieben:
 
 | Stufe | Was sie tut |
 |---|---|
@@ -195,14 +195,19 @@ Der Lauf hat **sechs Stufen** und schreibt **ein einziges Ergebnis**
 | 4 Protokoll-Durchlauf | Prüft die Protokollschicht, ohne Modell: Kryptografie, Konsens, Ledger |
 | 5 Konformität | Prüft die Golden Vectors gegen diesen Bau: rechnet er bitgleich mit der Referenz? |
 | 6 Trainingsschritt | Rechnet einen Trainingsschritt über die letzte Ebene und meldet den Abdruck über die geänderten Gewichte |
+| 7 Rechenwege | Rechnet denselben Text auf jedem Rechenweg dieser Maschine: skalar, vektorisiert, auf der Grafikkarte und auf einem einzigen Kern. Alle müssen dasselbe Ergebnis liefern |
 
-**Alle sechs laufen auch dann durch, wenn eine fehlschlägt:** Eine
+**Alle sieben laufen auch dann durch, wenn eine fehlschlägt:** Eine
 fehlgeschlagene Modellstufe macht die Hardware-Erhebung nicht wertlos,
 sondern erst recht wichtig.
 
-⚑ **Heute wird nur auf der CPU gemessen.** Sobald die GPU-Rechenwege
-stehen, kommen sie hinzu, ohne dass du etwas anders machen musst: Der
-Client erkennt, womit er gebaut wurde, und schreibt es ins Ergebnis.
+⚑ **Die siebte Stufe nutzt, was deine Maschine hat**, ohne dass du etwas
+einstellst: auf einem Mac mit Apple-Silizium auch die Grafikkarte, auf
+jeder anderen Maschine die Rechenkerne. Sie dauert höchstens etwa eine
+Minute; den Lauf auf einem einzigen Kern überspringt sie, wenn er nicht
+hineinpasst, und sagt es. **Wichtig für den Vergleich:** Alle Teilnehmer
+brauchen dieselbe Fassung des Clients, denn eine ältere kennt diese
+Stufe nicht, und ihr Ergebnis gilt dann als unvollständig.
 
 ### Schritt 3: Ergebnis lesen
 
@@ -1500,7 +1505,7 @@ Unter Windows entfällt dafür das zweite `pause`, unter macOS schliesst
 das App-Bündel sein Terminalfenster. Wer den Starter in seinem eigenen
 Terminal aufruft, behält sein Fenster.
 
-⛑ **Der Untertitel unter dem Logo nannte drei von sechs Stufen** und
+📌 **Der Untertitel unter dem Logo nannte drei von sechs Stufen** und
 tat das, seit es nur drei gab. Eine Aufzählung, die nicht mitwächst,
 wird zur Auswahl. Er nennt jetzt, was das Programm ist.
 
@@ -1527,7 +1532,7 @@ B9 und die Kopfzeilen der fünf mitgelieferten Testpläne.
 eine, die keine nennt.** Wer 23 GB freiräumt und dann 46 braucht, bricht
 mitten im Download ab, und zwar nachdem er Zeit investiert hat.
 
-⛑ **Und eine Zahl war gar nicht gealtert, sondern von Anfang an die
+📌 **Und eine Zahl war gar nicht gealtert, sondern von Anfang an die
 falsche Groesse:** Der Plattenbedarf zählt Grundgewichte **und**
 Artefakt. Wer nur ein fertiges Artefakt betreiben will, braucht deutlich
 weniger (0,92 GB statt 2,5 GB). Das steht jetzt dabei.

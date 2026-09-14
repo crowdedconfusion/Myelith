@@ -38,14 +38,22 @@
   <button type="button" class="menueeintrag blank weg" role="menuitem" data-tat="loeschen" data-t="menue.loeschen">Löschen</button>
 </div>
 
+<!-- ⚑ Was sich mit dem Kontext tun laesst, geoeffnet vom Balken am
+     Eingabefeld. Wie das Menue am Gespraech ausserhalb der Flaechen, die
+     `overflow: hidden` tragen. -->
+<div id="kontextwahl" class="glas" role="menu" hidden>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="verdichten" data-t="kontext.verdichten">Kontext verdichten</button>
+  <button type="button" class="menueeintrag blank" role="menuitem" data-kontext="neu" data-t="kontext.neu">Neues Gespräch</button>
+</div>
+
 <div id="huelle">
 
   <!-- ⚑ Die Seitenleiste traegt zwei Listen und in dieser Reihenfolge:
        oben die Betriebsart, darunter die Gespraeche. Der Grund ist,
-       dass die Betriebsart bestimmt, WAS ein Gespraech ist: In `Frage`
-       traegt es den Verlauf mit, beim Agenten steht jeder Auftrag fuer
-       sich. Wer die Gespraeche zuerst saehe, waehlte in einem Zustand,
-       den er noch nicht kennt. -->
+       dass die Betriebsart bestimmt, WAS ein Gespraech ist: im Chat ohne
+       Werkzeuge, beim Agenten mit Werkzeugen, Schrittbudget und
+       Belegkette je Auftrag. Wer die Gespraeche zuerst saehe, waehlte in
+       einem Zustand, den er noch nicht kennt. -->
   <aside id="seitenleiste" aria-label="Gespräche und Betriebsart" data-t-marke="leiste.label">
     <!-- ⚑ **Die Marke ist gerechnet und nicht gezeichnet**, erzeugt von
          einem Erzeugerskript: Fibonacci-Quadrate, tangentenstetige
@@ -61,7 +69,7 @@
 
          Die Farbe kommt aus `currentColor`.
 
-         ⛑ **Nicht von Hand nachbessern.** Wer etwas aendern will,
+         📌 **Nicht von Hand nachbessern.** Wer etwas aendern will,
          aendert das Skript und legt die Ausgabe hier wieder ab; sonst
          ist die Geometrie beim naechsten Lauf wieder da, die Aenderung
          aber weg. -->
@@ -197,7 +205,7 @@
         </svg>
       </button>
 
-      <!-- ⛑ **Hier stand ein Schalter „Lokal | Netz".** Er ist am
+      <!-- 📌 **Hier stand ein Schalter „Lokal | Netz".** Er ist am
            2026-09-09 entfallen, auf Festlegung des Projektinhabers,
            und die Begruendung traegt: Ein Modell ist ein Modell, ob es
            auf dieser Maschine liegt oder im Netz gerechnet wird. Die
@@ -214,7 +222,7 @@
            an denen die naechste Aenderung ankommen muesste. -->
       <div id="kopfmarke" class="kopfmarke" aria-hidden="true" hidden></div>
 
-      <!-- ⛑ **Der erste Entwurf zeichnete eine Sonne.** Acht Strahlen
+      <!-- 📌 **Der erste Entwurf zeichnete eine Sonne.** Acht Strahlen
            aus der Mitte heraus plus ein Kreis ist das Zeichen fuer
            Helligkeit, nicht fuer Einstellungen, und wer es sieht, sucht
            dahinter einen Hell-Dunkel-Schalter. Ein Zahnrad hat einen
@@ -249,6 +257,12 @@
           </svg>
         </button>
       </div>
+      <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird. -->
+      <button type="button" id="kontextbalken" class="kontextbalken blank" hidden
+              aria-haspopup="menu" aria-label="Kontext" data-t-marke="kontext.label">
+        <span class="kontextspur"><span id="kontextfuellung" class="kontextfuellung"></span></span>
+        <span id="kontextzahl" class="kontextzahl"></span>
+      </button>
       <p id="hinweiszeile" class="pfad" role="status"></p>
     </form>
 
@@ -264,7 +278,7 @@
           </svg>
         </button>
       </div>
-      <!-- ⛑ **Hier stand ein zweites „Einstellungen".** Eines als
+      <!-- 📌 **Hier stand ein zweites „Einstellungen".** Eines als
            Ueberschrift der Seite, eines ueber der Tabelle, und
            dazwischen der Abschnitt „Modelle". Die Tabelle traegt ihre
            Ueberschriften jetzt selbst, eine je Bereich, und die zweite

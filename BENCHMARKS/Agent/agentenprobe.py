@@ -153,7 +153,7 @@ def main() -> int:
         return 2
 
     auftraege = json.loads(AUFTRAEGE.read_text(encoding="utf-8"))["auftrag"]
-    # ⛑ **Auftraege, die ein Werkzeug brauchen, das nicht angeboten
+    # 📌 **Auftraege, die ein Werkzeug brauchen, das nicht angeboten
     # wird, werden uebersprungen und nicht als Fehlschlag gezaehlt.**
     # Ein Auftrag, den das Modell mangels Werkzeug nicht loesen KANN,
     # waere keine Aussage ueber das Modell, sondern ueber die Auswahl,

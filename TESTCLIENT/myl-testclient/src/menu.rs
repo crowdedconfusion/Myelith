@@ -93,7 +93,7 @@ pub struct Einstellungen {
 /// seither **hergestellt statt geprüft** — die Beschreibung des
 /// Menüpunkts entsteht aus dieser Liste, und [`stufe`] greift auf sie zu,
 /// sodass eine sechste Stufe ohne Eintrag beim ersten Lauf auffällt.
-pub(crate) const STUFEN: [(&str, &str); 6] = [
+pub(crate) const STUFEN: [(&str, &str); 7] = [
     ("Hardware", "Hardware"),
     ("Determinismus", "Determinismus (Einzelknoten)"),
     ("Shards", "Geshardete Inferenz"),
@@ -104,6 +104,10 @@ pub(crate) const STUFEN: [(&str, &str); 6] = [
     // Inferenz rechnen; bezahlte Trainingsarbeit ist ohne diese Stufe
     // unprüfbar.
     ("Trainingsschritt", "Trainingsschritt (letzte Ebene)"),
+    // ⚑ **Seit dem 2026-09-14.** Die Stufen davor rechnen auf dem
+    // schnellsten Weg dieser Maschine; diese rechnet dieselbe Arbeit auf
+    // jedem Weg, den sie bietet, und verlangt überall denselben Abdruck.
+    ("Rechenwege", "Rechenwege dieser Maschine"),
 ];
 
 /// Die Protokollzeile einer Stufe: `Stufe 3 von 5: Geshardete Inferenz`.
@@ -467,16 +471,20 @@ pub fn stufen_fahren(e: &Einstellungen, artefakt: PathBuf, log: RunLog) -> bool 
     log.note(stufe(6));
     let training = crate::training::laufen(&mut log, &artefakt);
 
+    log.note(stufe(7));
+    let rechenwege = crate::rechenwege::laufen(&mut log, &artefakt);
+
     println!(
-        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}, Konformität {}, Training {}",
+        "\n  Gesamt: Hardware {}, Determinismus {}, Shards {}, Stack {}, Konformität {}, Training {}, Rechenwege {}",
         ja_nein(hardware),
         ja_nein(determinismus),
         ja_nein(shard),
         ja_nein(stapel),
         ja_nein(konformitaet),
-        ja_nein(training)
+        ja_nein(training),
+        ja_nein(rechenwege)
     );
-    log.finish(hardware && determinismus && shard && stapel && konformitaet && training)
+    log.finish(hardware && determinismus && shard && stapel && konformitaet && training && rechenwege)
 }
 
 /// Wartet auf einen Tastendruck und räumt danach den Bildschirm auf.
@@ -767,7 +775,7 @@ mod tests {
 
     /// **Das Entwicklermenü führt genau einen Punkt und den Ausgang.**
     ///
-    /// ⛑ Die Probe, an der die Festlegung des Projektinhabers vom
+    /// 📌 Die Probe, an der die Festlegung des Projektinhabers vom
     /// 2026-09-11 hängt. Vorher standen hier acht Punkte, sieben davon
     /// Werkzeuge, die ein Koordinator selten und ein Teilnehmer nie
     /// braucht. Wer einen davon wieder einträgt, bricht diese Probe.
@@ -885,7 +893,7 @@ mod tests {
     /// Das Zahlwort muss zur Stufenzahl passen.
     #[test]
     fn das_zahlwort_passt_zur_stufenzahl() {
-        assert_eq!(stufen_zahlwort(), "sechs", "{} Stufen", STUFEN.len());
+        assert_eq!(stufen_zahlwort(), "sieben", "{} Stufen", STUFEN.len());
     }
 
     /// Lange Pfade werden gekürzt, kurze nicht.
@@ -901,7 +909,7 @@ mod tests {
 
     /// **Ein gekürzter Pfad mischt keine Trennzeichen.**
     ///
-    /// ⛑ Gefunden vom Windows-Job der CI: `…/d\e\f` in einer Zeile.
+    /// 📌 Gefunden vom Windows-Job der CI: `…/d\e\f` in einer Zeile.
     #[test]
     fn gekuerzte_pfade_mischen_keine_trennzeichen() {
         let gekuerzt = kurz(&PathBuf::from("/a/b/c/d/e/f"));

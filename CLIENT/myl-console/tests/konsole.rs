@@ -37,7 +37,7 @@ fn der_arbeitsordner_kommt_aus_der_shell() {
         s.contains("std::env::current_dir()"),
         "das Arbeitsverzeichnis wird nicht gelesen"
     );
-    // ⛑ **Und er steht dauerhaft unter der Eingabe.** Bis zum
+    // 📌 **Und er steht dauerhaft unter der Eingabe.** Bis zum
     // 2026-09-11 stand er im Kopfblock; der ist auf Wunsch des
     // Projektinhabers entfallen, und **verschwinden durfte er
     // nicht**: Ein Agent mit Dateiwerkzeugen arbeitet genau dort.
@@ -53,7 +53,7 @@ fn der_arbeitsordner_kommt_aus_der_shell() {
 
 /// **Jeder Befehl steht genau einmal im Quelltext.**
 ///
-/// ⛑ **Dieselbe Klasse wie Fund 271, und die Antwort darauf.** Bis zum
+/// 📌 **Dieselbe Klasse wie Fund 271, und die Antwort darauf.** Bis zum
 /// 2026-09-11 stand jeder Befehl zweimal da: im Zweig, der ihn
 /// ausfuehrt, und in der Hilfe, die ihn nennt. Diese Pruefung zaehlte
 /// damals, ob er **mindestens zweimal** vorkommt, und hielt die
@@ -128,7 +128,11 @@ fn die_marke_ist_eine_gekennzeichnete_kopie() {
 fn die_logik_kommt_aus_der_kiste() {
     let s = quelle("sitzung.rs");
     for naht in [
-        "myl_client::lauf::fahren_beobachtet",
+        // Seit dem 2026-09-14 mit dem Gespraech davor; Zaehlen und
+        // Verdichten kommen ebenfalls aus der Kiste.
+        "myl_client::lauf::fahren_im_gespraech",
+        "myl_client::gespraech::verdichten",
+        "myl_client::gespraech::anzeige",
         "myl_client::ruestung::ruesten",
         "myl_client::Oertlichesmodell::laden",
         "myl_client::ort::absolut",
@@ -145,7 +149,7 @@ fn die_logik_kommt_aus_der_kiste() {
 
 /// **Und wortgetreu heisst wortgetreu.**
 ///
-/// ⛑ Bis zum 2026-09-10 stand die Zusage nur im Kopf der vier Dateien.
+/// 📌 Bis zum 2026-09-10 stand die Zusage nur im Kopf der vier Dateien.
 /// Beim ersten Eingriff in `auswahl.rs` (Strg-J als Zeilenende, Fund
 /// 307) fiel auf, dass nichts ausser der eigenen Aufmerksamkeit die
 /// zweite Kopie nachzieht. **Eine Zusage, die niemand nachrechnet, ist

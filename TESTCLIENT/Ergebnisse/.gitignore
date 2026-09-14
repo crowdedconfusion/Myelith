@@ -4,7 +4,7 @@
 # herum, und ein `git status` nach dem ersten Pruefstandslauf sieht aus,
 # als haette man etwas veraendert.
 #
-# ⛑ **Dieser Ordner kam am 2026-09-11 dazu und hatte diese Datei
+# 📌 **Dieser Ordner kam am 2026-09-11 dazu und hatte diese Datei
 # nicht.** Er ist nach dem Vorbild von `logs/` und `Vergleiche/` gebaut,
 # und ausgerechnet das Stueck, das beide seit langem tragen, fehlte.
 # **Ein neuer Ordner erbt die Regeln seines Vorbilds nicht von selbst.**

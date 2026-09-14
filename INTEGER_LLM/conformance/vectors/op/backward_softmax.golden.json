@@ -1,7 +1,7 @@
 {
   "name": "backward_softmax",
   "level": "op",
-  "theta_v_hash": "sha256:2857db731e25dcf3018b1633c2954309658b00dcacd4b48810e0adf5a0e84609",
+  "theta_v_hash": "sha256:47365da717b0d42cfddb2969b901fa1c1e80375d844107586e18f509dcbe3d0d",
   "metadata": {
     "frac_bits": 12
   },

@@ -395,7 +395,7 @@ Fläche nach aussen ist Stufe 3, und sie ist eine eigene Entscheidung.
 Das **neunzehnte Crate**. 21 Tests: 15 auf die reinen Funktionen, 6 über
 einen echten Socket.
 
-⛑ **Der erste Testlauf blieb hängen**, und das war lehrreich: Der
+📌 **Der erste Testlauf blieb hängen**, und das war lehrreich: Der
 Testklient schloss seine Schreibseite nicht, also wartete der Server auf
 den angekündigten Rest und der Klient auf die Antwort. **Ein Deadlock,
 und er hat gezeigt, dass der Server einen abgebrochenen Rumpf am

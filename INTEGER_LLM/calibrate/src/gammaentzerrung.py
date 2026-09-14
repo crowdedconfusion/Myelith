@@ -1,6 +1,6 @@
 """gammaentzerrung.py — grosse Normgewichte in die Folgematrix verschieben.
 
-# ⛑ Fund 336 (2026-09-11): ein Gamma von 192, und int8 reicht bis 127
+# 📌 Fund 336 (2026-09-11): ein Gamma von 192, und int8 reicht bis 127
 
 Qwen3-0,6B traegt in der **letzten** Ebene ein
 `post_attention_layernorm.weight` mit dem Betrag **192**, waehrend der

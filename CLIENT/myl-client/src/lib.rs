@@ -37,6 +37,7 @@ pub mod kapazitaet {
 
 pub mod aktualisierung;
 pub mod einstellungen;
+pub mod gespraech;
 pub mod hardware;
 pub mod lauf;
 pub mod markdown;
@@ -59,7 +60,9 @@ pub use myl_local_agent::werkzeug::Ansageform;
 /// `myl-local-agent`: Jene Kiste traegt eine Vollmacht und haelt ihre
 /// Angriffsflaeche klein, und je weniger Stellen sie einbinden, desto
 /// weniger Stellen koennen sie falsch benutzen.
-pub use myl_local_agent::{Modellweg, Nachricht};
+pub use myl_local_agent::{Modellweg, Nachricht, Tuerfehler};
+/// Warum ein Lauf endete; die Konsole nennt bei vollem Kontext den Ausweg.
+pub use myl_local_agent::schleife::Ende;
 
 /// ⚑ **Ebenfalls weitergereicht.** Wer einem Lauf zusehen will, braucht
 /// die Form der Meldung; eine eigene Abhaengigkeit auf die

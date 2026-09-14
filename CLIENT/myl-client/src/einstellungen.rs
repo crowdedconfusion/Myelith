@@ -15,13 +15,13 @@
 //! | Kapazitaet | [`Kapazitaet`] |
 //! | Modell | [`Modelleinstellung`] |
 //! | Agent | [`Agenteneinstellung`] |
-//! | Netz, Schluessel | ⛑ noch nicht, siehe unten |
+//! | Netz, Schluessel | 📌 noch nicht, siehe unten |
 
 use serde::{Deserialize, Serialize};
 
 /// ⚑ **Was ein Knoten an Hardware hergibt, und fuer wen.**
 ///
-/// # ⛑ Die Unterscheidung, an der dieser Punkt haengt
+/// # 📌 Die Unterscheidung, an der dieser Punkt haengt
 ///
 /// **Ein Schieber, der nur lokal etwas abschaltet, ist eine
 /// Einstellung. Einer, der die Verguetung aendert, ist ein signiertes,
@@ -43,7 +43,7 @@ pub struct Kapazitaet {
     /// ⚑ **Was von jedem Rechenwerk freigegeben ist, in Prozent**,
     /// unter der Kennung aus dem Hardwarescan.
     ///
-    /// ⛑ **Hier stand bis zum 2026-09-10 ein einzelnes
+    /// 📌 **Hier stand bis zum 2026-09-10 ein einzelnes
     /// `beschleuniger: bool`.** Es beantwortete die Frage „darf er
     /// ueberhaupt" fuer **alle** Rechenwerke zugleich, und ein Rechner
     /// mit zwei Karten konnte damit nicht sagen, dass er die eine
@@ -96,7 +96,7 @@ impl Default for Modelleinstellung {
 
 /// Was der Agent darf.
 ///
-/// ⛑ **Bis zum 2026-09-11 stand hier `auch_bezeugtes`**, ein Schalter,
+/// 📌 **Bis zum 2026-09-11 stand hier `auch_bezeugtes`**, ein Schalter,
 /// der dem Modell bezeugte Werkzeuge zusaetzlich zu den nachrechenbaren
 /// oeffnete. **Er ist entfallen** (Festlegung des Projektinhabers):
 /// Welche Werkzeuge ein Lauf bekommt, sagt die Werkzeugkiste, und
@@ -225,7 +225,7 @@ impl Sprache {
 
     /// Dasselbe fuer Werte, die sich nicht kopieren lassen.
     ///
-    /// ⛑ **Beide Fassungen werden gebaut, auch die ungenutzte.** Das
+    /// 📌 **Beide Fassungen werden gebaut, auch die ungenutzte.** Das
     /// ist der Preis dafuer, dass der Aufrufer zwei fertige Saetze
     /// hinschreiben kann statt zweier Bauanleitungen; bei einem Satz
     /// je Regler ist er nicht messbar. **Wer ihn nicht zahlen will,
@@ -395,7 +395,7 @@ impl Agentenmodus {
 
 /// Welche Werkzeugkiste ein Lauf bekommt.
 ///
-/// ⛑ **Drei Werte und nicht zwei.** Ohne `Automatisch` muesste ein
+/// 📌 **Drei Werte und nicht zwei.** Ohne `Automatisch` muesste ein
 /// Nutzer bei jedem Modellwechsel mitdenken, und die Einstellung waere
 /// beim naechsten Wechsel still falsch. **Eine Vorgabe, die dem Modell
 /// folgt, ist keine Vorgabe, sondern eine Ableitung**, und die kann
@@ -408,7 +408,7 @@ pub enum Werkzeugwahl {
     Automatisch,
     /// Immer `Base`, auch bei einem grossen Modell.
     ///
-    /// ⛑ **`alias` und nicht nur `rename`.** Die Kisten hiessen bis zum
+    /// 📌 **`alias` und nicht nur `rename`.** Die Kisten hiessen bis zum
     /// 2026-09-11 `grund` und `voll`; eine Ablage aus der Zeit davor
     /// steht auf einer echten Platte. Ohne den Aliasnamen faellt sie
     /// beim Lesen auf die Vorgabe zurueck, **und zwar still.**
@@ -543,7 +543,7 @@ impl Werkzeugwahl {
 
 /// Wie sich die Oberflaeche verhaelt.
 ///
-/// ⛑ `#[serde(default)]` an beiden Stellen, aus demselben Grund wie bei
+/// 📌 `#[serde(default)]` an beiden Stellen, aus demselben Grund wie bei
 /// [`Ausgabeeinstellung`]: Eine Ablage aus der Zeit davor bleibt lesbar.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Oberflaecheneinstellung {
@@ -563,7 +563,7 @@ pub struct Oberflaecheneinstellung {
 /// niemand gewaehlt hat, ist ein Ort, an dem niemand sucht. Das Fenster
 /// fuehrt stattdessen zur Einstellung.
 ///
-/// ⛑ `#[serde(default)]` an beiden Stellen, damit eine Ablage aus der
+/// 📌 `#[serde(default)]` an beiden Stellen, damit eine Ablage aus der
 /// Zeit davor weiter lesbar bleibt. Ohne das waere jede bestehende
 /// Datei mit einem Schlag kaputt, und `lesen` lehnt eine kaputte Datei
 /// zu Recht ab.
@@ -597,7 +597,7 @@ impl Einstellungen {
 
     /// Zieht eine Ablage aus einer frueheren Fassung nach.
     ///
-    /// # ⛑ Warum es das gibt (2026-09-10)
+    /// # 📌 Warum es das gibt (2026-09-10)
     ///
     /// **Die Artefakte heissen seit heute nach dem Modell, das sie
     /// sind**, also `myelith-4b` statt `qwen3-4b`. Jede bestehende
@@ -609,12 +609,12 @@ impl Einstellungen {
     /// mitgewandert ist.** Wer nur die Verzeichnisse umbenennt, hat die
     /// Arbeit auf jeden verschoben, der eine Einstellung gesetzt hat.
     ///
-    /// ⛑ **Und sie greift nur am Verzeichnisnamen, nicht am ganzen
+    /// 📌 **Und sie greift nur am Verzeichnisnamen, nicht am ganzen
     /// Pfad.** Ein Nutzer, der seine Artefakte woanders haelt, behaelt
     /// seinen Ort; getauscht wird der letzte Bestandteil und nur, wenn
     /// er einer der vier alten Namen ist.
     fn wandern(&mut self) {
-        // ⛑ **Drei Wanderungen, und sie sind von zweierlei Art.** Die
+        // 📌 **Drei Wanderungen, und sie sind von zweierlei Art.** Die
         // erste (2026-09-10) war eine reine Umbenennung: dasselbe
         // Modell, neuer Verzeichnisname. Die zweite (2026-09-11) und
         // die dritte (2026-09-12) sind **Austausche**: erst gingen
@@ -671,7 +671,7 @@ impl Einstellungen {
 
     /// Wo die Datei ueblicherweise liegt.
     ///
-    /// ⛑ **Hier stand nur `HOME`, und auf Windows gibt es das meist
+    /// 📌 **Hier stand nur `HOME`, und auf Windows gibt es das meist
     /// nicht** (dort heisst die Variable `USERPROFILE`; `HOME` setzen
     /// nur Git Bash und aehnliche Umgebungen). Der Rueckfall war `"."`,
     /// also landeten die Einstellungen im **Arbeitsverzeichnis**: Wer
@@ -694,7 +694,7 @@ impl Einstellungen {
     /// die Ablage ihrer Nutzer festlegt, und dieses Projekt nennt NixOS
     /// ausdruecklich als Ziel.
     pub fn vorgabepfad() -> std::path::PathBuf {
-        // ⛑ **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
+        // 📌 **Wer schon eine Datei hat, behaelt sie.** Ohne diese drei
         // Zeilen zoege die Datei bei jedem, der `XDG_CONFIG_HOME` setzt,
         // an einen neuen Ort um, und seine Einstellungen waeren
         // stillschweigend weg: `lesen` faende nichts und legte die
@@ -774,7 +774,7 @@ impl Einstellungen {
 /// unter dem es steht, eine Beschriftung in ganzen Worten und einen
 /// Satz dazu, was es bewirkt.
 ///
-/// ⛑ **Die Beschriftung steht hier und nicht im Fenster.** Bis zum
+/// 📌 **Die Beschriftung steht hier und nicht im Fenster.** Bis zum
 /// 2026-09-09 zeigte die Einstellungsseite den technischen Namen:
 /// `kap.beschleuniger`, `agent.bezeugtes`, `modell.artefakt`. Das ist
 /// kein Deutsch, sondern eine Kennung, und wer sie nicht geschrieben
@@ -1231,7 +1231,7 @@ impl Einstellungen {
     /// Was in einem Feld steht, unter demselben Namen, unter dem
     /// [`Einstellungen::setzen`] es kennt.
     ///
-    /// # ⛑ Warum es diesen Gegenpart gibt
+    /// # 📌 Warum es diesen Gegenpart gibt
     ///
     /// **Fund 280.** Die Einstellungsseite zeichnete ihre Zeilen aus
     /// [`FELDER`], holte die **Werte** aber aus einer zweiten, von Hand
@@ -1472,7 +1472,7 @@ mod setzer {
 
     /// Und die Gegenrichtung: nichts Gesetztes fehlt in der Liste.
     ///
-    /// ⛑ **Diese Pruefung fuehrte bis zum 2026-09-10 eine handgepflegte
+    /// 📌 **Diese Pruefung fuehrte bis zum 2026-09-10 eine handgepflegte
     /// Liste von elf Namen**, also Fund 271 an einer dritten Stelle. Als
     /// `kap.beschleuniger` entfiel, fiel sie wegen eines Feldes, das es
     /// nicht mehr gibt, und **das war der harmlose Ausgang**: Ein neu
@@ -1532,7 +1532,7 @@ mod setzer {
 
     /// ⚑ **Jedes Feld faehrt einmal hin und zurueck.**
     ///
-    /// ⛑ **Die Pruefung, die Fund 280 unmoeglich macht.** Solange nur
+    /// 📌 **Die Pruefung, die Fund 280 unmoeglich macht.** Solange nur
     /// der Setzer hier lag und das Lesen im Fenster, konnte ein Feld
     /// gesetzt und nirgends angezeigt werden. Jetzt gibt es beide
     /// Richtungen an einer Stelle, und diese Pruefung faehrt sie: Was
@@ -1607,7 +1607,7 @@ mod setzer {
         assert!(e.wert("gibt.es.nicht").is_err(), "ein unbekanntes Feld gibt einen Wert her");
     }
 
-    /// ⛑ **Der Ort der Einstellungsdatei, plattformweise.**
+    /// 📌 **Der Ort der Einstellungsdatei, plattformweise.**
     ///
     /// Vorher stand dort nur `HOME` mit Rueckfall auf `"."`. Auf Windows
     /// ist `HOME` meist nicht gesetzt, also landete die Datei im
@@ -1653,7 +1653,7 @@ mod setzer {
             assert_eq!(p, std::path::PathBuf::from("/heim/jemand/.config/myelith/client.json"));
         }
 
-        // ⛑ Der Fall, der die ganze Aenderung ausgeloest hat: keine der
+        // 📌 Der Fall, der die ganze Aenderung ausgeloest hat: keine der
         // Heimatvariablen gesetzt. Frueher war das Ergebnis
         // `./.config/...`, also je Arbeitsverzeichnis ein anderes.
         std::env::remove_var("HOME");
@@ -1666,7 +1666,7 @@ mod setzer {
             );
         }
 
-        // ⛑ **Eine vorhandene Datei gewinnt vor der bevorzugten
+        // 📌 **Eine vorhandene Datei gewinnt vor der bevorzugten
         // Stelle.** Ohne das zoege die Datei bei jedem, der
         // `XDG_CONFIG_HOME` setzt, an einen neuen Ort um, und seine
         // Einstellungen waeren stillschweigend weg. Hier steht `HOME`

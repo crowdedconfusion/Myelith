@@ -1,9 +1,9 @@
 # STORAGE — die Rolle Store und die Verfügbarkeitsschicht
 
 > **Version:** 0.5.2
-> **Datum:** 2026-08-31
+> **Datum:** 2026-09-14
 > **Status:** Gegenstandsformat, **Verfügbarkeitsnachweis** und
-> **Speicherentgelt** stehen (`myl-store` v0.5.1, 22 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
+> **Speicherentgelt** stehen (`myl-store` v0.5.2, 22 Tests; Format und Stichproben-Ableitung liegen in `myl-types`). Sechs der
 > sieben Entwurfsfragen sind entschieden, eine ausdrücklich nicht: Ob ein
 > Gegenstand vervielfältigt oder erasure-kodiert wird, ist Latenz gegen
 > Platz. **Die Platz-Zahl steht seit dem 2026-08-30**, die Latenz-Zahl
@@ -113,5 +113,47 @@ Stelle. **Beide Zahlen fehlen**, solange es keinen echten Abrufverkehr
 gibt. Statt zu raten, ist die Wahl je Gegenstandsart einstellbar; die
 Zahlen dahinter stehen als Test, nicht als Behauptung.
 
-Was noch fehlt: Zuteilung und Rotation, der Verfügbarkeitsnachweis und
-der Abruf.
+**Seither dazugekommen:** die Kapazitätszusage und die Zuteilung eines
+Gegenstands an Halter (beide in `myl-types`), der
+Verfügbarkeitsnachweis samt Quittung und das Speicherentgelt.
+**Was noch fehlt:** die Diversitätsbedingung der Zuteilung, Rotation und
+Mindestreplikation, die Bewertung einer Quittung und der Abruf.
+
+## Changelog
+
+*Nachgetragen am 2026-09-14.* Bis dahin führte dieses README keinen
+Changelog, und die Prüfung, die Kopfversion und Changelog vergleicht,
+übersprang es still (Fund 354). Die Einträge sind aus den
+Versionssprüngen der Kiste und dem Planungsverlauf zusammengestellt.
+
+### v0.5.2 – 2026-09-02 (der Satz des Speicherentgelts ist hergeleitet)
+
+Modulkopf von `entgelt.rs`: Das Entgelt ist ein **Verhältnis zum
+Credit-Preis**, kein eigener Parameter, weil ein fester Satz dem
+dynamischen Rechenpreis davonliefe. Eine Byte-Epoche kostet real so viel
+wie rund 1 420 Recheneinheiten, über fünf Empfindlichkeitsfälle
+zwischen 793 und 2 840.
+
+### v0.5.1 – 2026-08-31 (das Format wandert zu den gemeinsamen Typen)
+
+`gegenstand.rs` ist nach `myl-types` umgezogen, weil Kapazitätszusage
+und Zuteilung dort liegen und denselben Gegenstand brauchen. **Zwei
+Ablagen im Konsenszustand:** Infrastruktur einzeln, Wissen über eine
+Wurzel, weil das Zustands-Commitment den ganzen Zustand serialisiert.
+
+### v0.3.0 – 2026-08-31 (Fund 106, und das Speicherentgelt)
+
+`nachweis.rs`: Stichprobe je Halter aus Epochenseed, Wurzel, Fassung,
+Epoche und Halterkennung. ⚑ **Fund 106:** Der Entwurf verlangte Blatt
+und Merkle-Pfad, und die Blätter **sind** die Teil-Hashes; wer nur sie
+hält, besteht jede Stichprobe, bei 30 GB mit 0,87 MiB. Die Antwort trägt
+jetzt die Bytes. `entgelt.rs`: Das Entgelt wird unabhängig vom Mining
+ausgezahlt, **ohne Nachweis wird nichts abgebucht**, und
+`Netzwerkwissen` ist als Gegenstandsart angehängt.
+
+### v0.1.0 – 2026-08-29 (was ein Gegenstand ist)
+
+Die Kiste entsteht, zuerst als **Format**: Teilebildung, Merkle-Wurzel,
+Manifest und κ_v-Versionierung. Gehasht wird der Klartext, nicht das
+Komprimat; dieselben Bytes über verschiedene Puffergrenzen ergeben
+dieselbe Wurzel.

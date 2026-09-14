@@ -34,7 +34,7 @@ fn artefakte() -> std::path::PathBuf {
 /// Segment.**
 #[test]
 fn ein_gerechneter_schritt_wird_zu_einem_segment() {
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung

@@ -1,7 +1,8 @@
 # Konformitätspaket — INTEGER_LLM
 
-> **theta_v-Version:** 0.17.0
-> **Crate-Version:** 0.16.0
+> **theta_v-Version:** 0.20.0
+> **Komponentenversion:** 0.71.0 (`kernels` 0.55.0, `runtime` 0.51.0)
+> **Ankermodell der Layer- und E2E-Vektoren:** `myelith-0.6b` (Qwen3-0.6B, 28 Ebenen)
 > **Zweck:** Eigenständiges Artefakt, gegen das fremde Implementierungen
 > sich prüfen können — ohne Kenntnis des Projektinneren.
 
@@ -29,7 +30,7 @@ Hashes jetzt nach, bevor ein Vektor als Maßstab dient.
 |---|---|---|
 | **Op** | `vectors/op/*.golden.json` | Einzelne Kernel (RMSNorm, Linear W8A16, Softmax) |
 | **Layer** | `vectors/layer/*.golden.json` | Kompletter Transformer-Layer (RMSNorm → Attention → MLP → ResAdd) |
-| **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → 24 Layer → LM-Head → Token-Auswahl) |
+| **E2E** | `vectors/e2e/*.golden.json` | End-to-End-Generierung (Embedding → alle Ebenen → LM-Head → Token-Auswahl) |
 
 **E2E prüft die Zahlen, nicht die Entscheidung (seit 2026-08-22).** Ein
 E2E-Vektor trägt neben `outputs.tokens` das Metadatum
@@ -94,17 +95,20 @@ gegen dieselbe spec-Version arbeiten.
 
 **Layer-Level:**
 - Vollständiger Transformer-Layer-Forward-Pass gemäß `theta_v/spec.json`:
-  Pre-Norm → QKV-Projektion → Attention-Biases → RoPE (Multi-Frequency,
-  Half-Split) → GQA-Attention → O-Projektion → Residual → Post-Norm →
-  MLP (SiLU-LUT) → Residual.
+  Pre-Norm → QKV-Projektion → Attention-Biases (falls vorhanden) →
+  QK-Norm je Kopf → RoPE (Multi-Frequency, Half-Split) → GQA-Attention →
+  O-Projektion → Residual → Post-Norm → MLP (SiLU-LUT) → Residual.
 - Alle Skalen (Per-Layer-Aktivierungsskalen, Per-Channel-Gewichtsskalen)
   müssen als Zweierpotenzen angewendet werden (arithmetischer Rechtsshift).
 
 **E2E-Level:**
-- Vollständiges Modell: Embedding → 24 Transformer-Layer → Final-RMSNorm
+- Vollständiges Modell: Embedding → 28 Transformer-Layer → Final-RMSNorm
   → LM-Head (int16, Per-Channel) → Greedy-Decoding.
-- KV-Cache über die Sequenz hinweg.
-- Tokenizer: Qwen2.5 BPE (deterministisch, float-frei).
+- KV-Cache über die Sequenz hinweg. **Die Prompt-Token werden gebündelt
+  vorbereitet**: Zwei der drei Vektoren haben mehr als ein Prompt-Token
+  und prüfen damit auch diesen Weg.
+- Die Vektoren tragen Token-Nummern; ein Tokenizer ist für die Prüfung
+  nicht nötig.
 
 ### Rundungsregeln
 
@@ -118,12 +122,18 @@ behandelt, kein Wrap-Around.
 # Referenz-Backend (Rust, requires: cargo, Artefakte in ../artifacts/)
 ./run.sh reference
 
+# Die mitgelieferten Backends
+./run.sh cpu-simd
+./run.sh metal     # nur Apple-Silizium: erzwingt die GPU und lehnt ab, wenn sie nicht rechnet
+
 # Eigenes Backend: Binary muss die gleiche Schnittstelle erfüllen
 # (Golden Vector JSON lesen, Forward-Pass, PASS/FAIL auf stdout)
 ./run.sh /pfad/zum/eigenen/binary
 ```
 
-Exit-Code 0 = alle Vektoren bestanden, 1 = mindestens einer fehlgeschlagen.
+Exit-Code 0 = alle Vektoren bestanden, 1 = mindestens einer fehlgeschlagen,
+2 = abgelehnt (Backend ohne Rechenpfad, oder bei `metal` eine GPU, die
+nicht gerechnet hat).
 
 ## Dateien
 
@@ -132,10 +142,23 @@ conformance/
 ├── README.md          diese Datei
 ├── run.sh             Prüflauf-Skript
 └── vectors/
-    ├── op/            3 Op-Level-Vektoren
-    ├── layer/         24 Layer-Level-Vektoren (Qwen2.5-0.5B, 24 Layer)
-    └── e2e/           3 E2E-Level-Vektoren
+    ├── manifest.json  Ankermodell und theta_v_hash der Vektoren
+    ├── op/            6 Op-Level-Vektoren (Vorwärts und Rückwärts)
+    ├── layer/         28 Layer-Level-Vektoren (myelith-0.6b)
+    ├── e2e/           3 E2E-Level-Vektoren
+    ├── training/      7 Vektoren des Trainingspfades
+    └── moe/           4 Vektoren des Gemisch-Routings
 ```
+
+**Kopf und Baum standen bis zum 2026-09-14 auf θ_v 0.17.0 und dem
+abgelösten Qwen2.5-0.5B mit 24 Ebenen.** Das Feld `theta_v_hash` in jedem
+Vektor nennt die Fassung von `theta_v/spec.json`, unter der er erzeugt
+wurde (SHA-256 über die Bytes der Datei); eine Regressionsprüfung hält
+es seither an die aktuelle Fassung. Mit θ_v 0.20.0 sind alle 49
+Vektordateien neu erzeugt. Die Berichtigung des Akkumulators hat keinen
+Wert bewegt; die Fortsetzung der SiLU jenseits ihrer Tabelle hat zwei
+bewegt (`layer/layer_27`, `e2e/e2e_hello`), weil dort Gate-Werte über
+128 vorkommen.
 
 ## Lizenz
 
@@ -145,7 +168,10 @@ Lizenz wie das Myelith-Projekt (PolyForm Shield License 1.0.0).
 ## Ein Backend ohne Rechenpfad wird abgelehnt
 
 `run.sh cuda` und `run.sh rocm` enden mit Exit 2 und einer Begründung,
-statt zu bestehen.
+statt zu bestehen. `run.sh metal` ebenso, wenn die GPU in diesem Prozess
+nicht rechnen darf (kein Gerät, Shadersprache 4.0 fehlt, Selbstprüfung
+gegen die CPU gescheitert) **oder** wenn sie im Lauf keine einzige
+Bündelung gerechnet hat.
 
 **Warum die Sperre nötig wurde (2026-08-22).** Vorher meldete
 `run.sh cuda` auf einem Mac ohne NVIDIA-Hardware 30/30 bestanden. Die

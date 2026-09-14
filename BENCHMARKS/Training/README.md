@@ -53,7 +53,7 @@ Stelle erwartet wird. **Das wäre eine Formatlücke und keine
 Wissenslücke**, und ohne eine schemafreie Frage sehen beide gleich aus,
 nämlich nach null richtigen Antworten.
 
-⛑ **Am 2026-09-07 gemessen, und die erste Fassung dieses Satzes hatte
+📌 **Am 2026-09-07 gemessen, und die erste Fassung dieses Satzes hatte
 den Unterschied nicht:** Ein Lauf lernte die Tatsachen nachweisbar, die
 Haltemenge fiel um acht Prozent gegen einen Rauschnullpunkt von 0,04,
 **und beantwortete keine einzige Frage**. Erst die Fortsetzungsfrage
@@ -66,7 +66,7 @@ Zeichenfolge. **Rang** ist die Position des erwarteten Tokens in der
 Logit-Ordnung. ⚑ Der Rang fällt lange bevor der Treffer kommt und zeigt
 Lernen, das noch nicht durchschlägt.
 
-### ⛑ Der Rang prüft BEIDE Schreibweisen, und das war ein Tagesfehler
+### 📌 Der Rang prüft BEIDE Schreibweisen, und das war ein Tagesfehler
 
 BPE kodiert ein Wort **am Zeichenkettenanfang anders als nach einem
 Leerzeichen**, und im Satz folgt immer die zweite Variante. Wer nur
@@ -85,7 +85,7 @@ solche Messung neu baut, prüft sie **zuerst an etwas, das das Modell
 sicher weiss**. Diese Prüfung kostet Sekunden; sie zu überspringen
 kostete einen Tag voller Rangzahlen, die nichts bedeuteten.
 
-## ⛑ Und eine Lehre vom 2026-09-08, die hierher gehört
+## 📌 Und eine Lehre vom 2026-09-08, die hierher gehört
 
 **Die Messläufe dieses Tages benutzten einen selbstgebauten Korpus mit
 einer einzigen Person**, nicht `wissenssaat.py`. Das sah harmlos aus und

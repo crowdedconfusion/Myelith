@@ -161,7 +161,7 @@ mod tests {
 
     /// **Das Ergebnis landet im Ergebnisordner, nicht in `logs/`.**
     ///
-    /// ⛑ Die Trennung ist der Grund für den Ordner: `logs/` sammelt
+    /// 📌 Die Trennung ist der Grund für den Ordner: `logs/` sammelt
     /// jeden Lauf, auch den abgebrochenen. Was weitergegeben wird, soll
     /// nicht erst herausgesucht werden müssen.
     #[test]
@@ -223,7 +223,7 @@ mod tests {
     /// ist, was ein Koordinator liest, abwandelt und verteilt, wenn er
     /// einmal etwas anderes messen will.
     ///
-    /// ⛑ **Zwei Orte für dieselbe Angabe laufen auseinander**, und
+    /// 📌 **Zwei Orte für dieselbe Angabe laufen auseinander**, und
     /// genau das ist am 2026-09-11 an vier Stellen dieses Projekts
     /// passiert (Lernrate, Modellname, Modelltabelle, Modellgrösse).
     /// Diese Probe ist der Draht dazwischen: Wer einen der beiden

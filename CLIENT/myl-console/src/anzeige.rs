@@ -12,7 +12,7 @@
 //! Werkzeugaufrufe mit ihren Ergebnissen da, auch die, die vorher
 //! schon liefen: Sie werden mitgeschrieben, nicht weggeworfen.
 //!
-//! # ⛑ Warum ein eigener Faden
+//! # 📌 Warum ein eigener Faden
 //!
 //! Der Auftrag laeuft im Hauptfaden und blockiert dort. Eine Animation
 //! braucht aber einen Takt, und eine Taste will gelesen werden, ohne
@@ -83,7 +83,7 @@ const TAKT: Duration = Duration::from_millis(90);
 
 /// Womit die ausfuehrliche Anzeige ein- und ausgeschaltet wird.
 ///
-/// ⛑ **Erst `^T`, dann `^O`, jetzt `^S`** (Festlegungen des
+/// 📌 **Erst `^T`, dann `^O`, jetzt `^S`** (Festlegungen des
 /// Projektinhabers vom 2026-09-11). ⚠️ Strg-S ist in der **Kochstufe**
 /// die Flusssperre XOFF und liesse das Terminal stehen; im Rohmodus ist
 /// sie abgeschaltet, und die Taste kommt als gewoehnliches Ereignis an.
@@ -273,6 +273,13 @@ impl Anzeige {
     pub fn abgelehnt(&self, name: &str, grund: &str) {
         let z = format!("  ⚑ {name} abgelehnt: {grund}");
         self.merken(Zeitzeile { kurz: Some(z.clone()), voll: z }, Some("abgelehnt".to_string()));
+    }
+
+    /// **Der Agent hat den Verlauf verdichtet**, weil der naechste Schritt
+    /// nicht mehr in den Kontext passte.
+    pub fn verdichtet(&self, vorher: usize, nachher: usize) {
+        let z = format!("  ⚑ Kontext verdichtet: {vorher} → {nachher} Token");
+        self.merken(Zeitzeile { kurz: Some(z.clone()), voll: z }, Some("verdichtet".to_string()));
     }
 
     fn merken(&self, zeile: Zeitzeile, was: Option<String>) {
@@ -683,7 +690,7 @@ mod tests {
 
     /// **Der naechste Spruch ist nie der vorige.**
     ///
-    /// ⛑ Die Gegenprobe: Ein Wurf, der zufaellig zweimal dieselbe Zahl
+    /// 📌 Die Gegenprobe: Ein Wurf, der zufaellig zweimal dieselbe Zahl
     /// liefert, waere ein Ladetext, der bei einem Schrittwechsel
     /// stehenbleibt, und dann sieht der Wechsel aus wie ein Haenger.
     #[test]

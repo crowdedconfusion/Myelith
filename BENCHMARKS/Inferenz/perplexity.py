@@ -48,7 +48,7 @@ from wikitext_common import (  # noqa: E402
 )
 
 
-# ⛑ **Fund 341 (2026-09-11): das erzeugte Protokoll behauptete bei jedem
+# 📌 **Fund 341 (2026-09-11): das erzeugte Protokoll behauptete bei jedem
 # Modell 0,5 Mrd. Parameter.** Der zweite Mess-Hinweis („kleine Modelle
 # sind der unguenstigste Fall") stand als fester Text im Rumpf, und der
 # Rumpf schreibt fuer alle vier Modelle. Im Protokoll der 14B stand

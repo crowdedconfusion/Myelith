@@ -180,7 +180,7 @@ Durchsatz haengt.
 galten fuer die abgeloesten Modelle; sie zu uebernehmen waere eine
 Zahl ohne Messung.
 
-⛑ **Nachtrag vom selben Tag: `speicherlast` war uebersehen worden.**
+📌 **Nachtrag vom selben Tag: `speicherlast` war uebersehen worden.**
 Das zweite Werkzeug dieser Komponente fuehrt eine **eigene**
 Modelltabelle, und sie stand noch auf Qwen2.5-0,5B (757 960 KiB, 24
 Ebenen) und Qwen2.5-7B (8 512 912 KiB, 28 Ebenen). Die vier Groessen
@@ -189,7 +189,7 @@ sind jetzt an den Artefaktverzeichnissen dieses Standes abgezaehlt:
 derselben Komponente fuehrten dieselbe Liste, und nur eines wurde
 nachgezogen.**
 
-⛑ **Und `streitlast` nannte in einer Ueberschrift ein anderes Modell
+📌 **Und `streitlast` nannte in einer Ueberschrift ein anderes Modell
 als in den Zahlen darunter.** Der Satz „je Pod, Qwen2.5-7B" stand fest
 im Rumpf, waehrend `MODELLE[2]` laengst Qwen3-14B war. Der Name kommt
 jetzt aus der Tabelle.
@@ -412,7 +412,7 @@ die Zusage voraussetzt). ⚑ **Damit ist der Schalter, mit dem ein Miner
 Hardware zu- und abschaltet, nicht Bequemlichkeit, sondern die Eingabe,
 aus der sich ergibt, wie groß die Wissensdatenbank werden darf.**
 
-⛑ **Zwei Zellen der Tabelle logen zuerst durch Rundung**: ein Artefakt
+📌 **Zwei Zellen der Tabelle logen zuerst durch Rundung**: ein Artefakt
 von 740 MiB stand als `0 GiB`, und 1 428 TiB als `1 PiB`. In einer
 Tabelle über Speicherbedarf ist eine Null, die keine ist, die teuerste
 Art von Rundung.

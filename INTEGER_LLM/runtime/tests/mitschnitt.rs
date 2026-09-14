@@ -28,7 +28,7 @@ fn artefakte() -> std::path::PathBuf {
 /// ist.** Ein stiller Sprung sieht aus wie ein bestandener Test
 /// (Fund 113).
 fn modell() -> Option<IntegerModel> {
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung
@@ -56,7 +56,7 @@ fn modell() -> Option<IntegerModel> {
 
 /// ⚑ **Die tragende Zusicherung: mit Mitschnitt bitgleich.**
 ///
-/// ⛑ Die Gegenprobe ist billig zu denken und teuer zu übersehen: Wer in
+/// 📌 Die Gegenprobe ist billig zu denken und teuer zu übersehen: Wer in
 /// `forward_layer` beim Aufzeichnen versehentlich umskaliert oder eine
 /// Kopie weiterreicht statt des Originals, fällt hier durch und nur
 /// hier.
@@ -226,7 +226,7 @@ fn die_werte_aus_den_kernen_stimmen() {
         );
 
         // ⚑ **Drei verschiedene Groessen, also drei verschiedene
-        // Vektoren.** ⛑ Die Gegenprobe „das Produkt statt des Gates
+        // Vektoren.** 📌 Die Gegenprobe „das Produkt statt des Gates
         // aufzeichnen" blieb ohne diese Zeile **gruen**: Alle drei sind
         // gleich breit, also faengt keine Laengenpruefung eine
         // Vertauschung.
@@ -263,7 +263,7 @@ fn die_werte_aus_den_kernen_stimmen() {
         // ⚑ **Und jetzt scharf: `h` wird aus `gate` und `up`
         // nachgerechnet.**
         //
-        // ⛑ Die Gegenprobe „Gate und Up vertauscht" ueberlebte alle
+        // 📌 Die Gegenprobe „Gate und Up vertauscht" ueberlebte alle
         // Pruefungen darueber, und zwar zu Recht: Beide sind
         // Projektionen desselben Eingangs, gleich breit und
         // vorzeichensymmetrisch. **Nichts an ihrer Form unterscheidet
@@ -305,7 +305,7 @@ fn die_werte_aus_den_kernen_stimmen() {
 /// die Routing-Befunde. **Sie müssen bitgleich sein**, denn sie sind
 /// dieselbe Rechnung.
 ///
-/// ⛑ **Bis zum 2026-09-04 waren sie es nicht.** Der Routing-Weg
+/// 📌 **Bis zum 2026-09-04 waren sie es nicht.** Der Routing-Weg
 /// normierte den Strom selbst und reichte ihn dann an `head_logits`,
 /// das ihn ein **zweites Mal** normierte, dazu auf der falschen
 /// Eingangsskala. Der Rechenpfad des Netzes war nie betroffen; betroffen

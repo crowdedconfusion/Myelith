@@ -47,7 +47,7 @@ ARTIFACTS_DIR = REPO / "artifacts" / MODEL_NAME
 # Ergebnisdateien tragen den Modellnamen, damit ein 7B-Lauf die
 # 0.5B-Messung nicht ueberschreibt (die belegt den Entscheidungspunkt
 # 12.21 und muss reproduzierbar bleiben).
-# ⛑ **Fund 340 (2026-09-11): der namenlose Dateiname hing am
+# 📌 **Fund 340 (2026-09-11): der namenlose Dateiname hing am
 # Vorgabemodell und nicht am Modell.**
 #
 # Hier stand `MODEL_NAME == DEFAULT_MODEL`. `baseline_wikitext2.json`

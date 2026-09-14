@@ -474,7 +474,7 @@ fn roh_lesen(text: &str) -> io::Result<Option<String>> {
                     aus.flush()?;
                 }
             }
-            // ⛑ **LF ist auch ein Zeilenende.** Im Rohmodus meldet
+            // 📌 **LF ist auch ein Zeilenende.** Im Rohmodus meldet
             // crossterm nur CR als `Enter`; ein eingefügtes Stück Text
             // mit Zeilenumbrüchen schickt aber 0x0A, und das kommt als
             // Strg-J an. Ohne diese Zeile landete an jedem Umbruch ein

@@ -257,7 +257,7 @@ mod tests {
 
     /// ⚑ **Die Abschrift trägt die Epoche mit** und frischt sie auf.
     ///
-    /// ⛑ Ohne diesen Test wäre `epoche()` ein Feld, das immer null
+    /// 📌 Ohne diesen Test wäre `epoche()` ein Feld, das immer null
     /// zurückgibt: Genau das war Fund 166, nur eine Ebene höher.
     #[test]
     fn die_abschrift_traegt_die_epoche_und_frischt_sie_auf() {
@@ -286,7 +286,7 @@ mod tests {
     /// die Kette auf Epoche 7, muss dieselbe Anfrage durchkommen, **ohne
     /// dass irgendetwas neu gestartet wird**.
     ///
-    /// ⛑ **Die Gegenprobe:** Wer in [`eine_anfrage`] die Zeile
+    /// 📌 **Die Gegenprobe:** Wer in [`eine_anfrage`] die Zeile
     /// `let epoche = abschrift.epoche();` durch die Startepoche ersetzt,
     /// bekommt hier zweimal 403. Genau so lief `main.rs` bis zum
     /// 2026-09-03.

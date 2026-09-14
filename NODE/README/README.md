@@ -303,7 +303,7 @@ ohne `-D warnings` fährt; in der CI ist es kein Hinweis, sondern ein
 Fehler, und er fällt in **jedem** Job an, der diese Kiste übersetzt.
 Drei davon wurden rot, während hier alles grün war.
 
-⛑ **Nachgetragen am 2026-09-10.** Das Manifest trug 0.48.1 seit dem
+📌 **Nachgetragen am 2026-09-10.** Das Manifest trug 0.48.1 seit dem
 2026-09-09, dieser Changelog stand auf 0.48.0.
 
 ### v0.48.0 – 2026-09-06 (der Urteilsweg und das Stimmgewicht)
@@ -1001,7 +1001,7 @@ Der Erzeuger schreibt sie aus seinem **Commitzertifikat** in den
 Blockkopf, der Übernehmer liest sie **aus dem Block**. Damit zieht jeder
 dieselbe Stichprobe.
 
-⛑ **Und der offene Rest ist benannt, nicht verschwiegen:** Ein Erzeuger
+📌 **Und der offene Rest ist benannt, nicht verschwiegen:** Ein Erzeuger
 kann heute **beliebige Bytes** eintragen. Sie gehen in keine
 Zustandswurzel ein, also fällt es niemandem auf. ⚑ **Damit ist der
 Mahlraum wieder unbegrenzt**, wie beim Blockhash, und die sechzehn Bit
@@ -1016,7 +1016,7 @@ den grünen Lauf für mehr hält, als er sagt.
 Blockhash gibt dem Erzeuger des Abschlussblocks **unbegrenzten**
 Mahlraum, denn er variiert den Inhalt, bis die Ziehung ihm passt.
 
-⛑ **Und die Entscheidung von heute Vormittag stand auf einer falschen
+📌 **Und die Entscheidung von heute Vormittag stand auf einer falschen
 Annahme, die von mir war.** Sie lautete: „BLS ist deterministisch, also
 kann niemand unter Kandidaten wählen." ⚑ **Die Eindeutigkeit gilt für
 Nachricht *und* Schlüsselmenge**, und das Commitzertifikat trägt eine
@@ -1100,7 +1100,7 @@ bekäme ein Pod mit drei Segmenten bei jeder Aufrundung eines und damit
 33 Prozent statt 2. **`p` ist eine Wahrscheinlichkeit je Segment**, und
 die ist nur in einem gemeinsamen Raum für alle dieselbe.
 
-⛑ **Zwei eigene Fehler auf dem Weg, beide von Gegenproben gefunden.**
+📌 **Zwei eigene Fehler auf dem Weg, beide von Gegenproben gefunden.**
 Die Ziehung stand zuerst in einem blanken `Vec` und wurde **von jedem
 Block überschrieben**; sie gehört zu einer Epoche, nicht zu einem Block.
 Und der Test „kleine Pods bekommen keine höhere Rate" prüfte `klein <= 1`
@@ -1129,7 +1129,7 @@ Pods und soll von Bündeln nichts wissen; und nicht in `myl-consensus`,
 der die Zuteilung nicht kennt. **Der Knoten ist die einzige Stelle, die
 beides sieht.**
 
-⛑ **Und der Test, an dem der Punkt hängt, fiel beim Einschalten sofort
+📌 **Und der Test, an dem der Punkt hängt, fiel beim Einschalten sofort
 um.** Er benutzte eine Attrappe als Signatur; die Prüfung tat also genau
 das, was sie soll. Er unterschreibt jetzt mit allen Mitgliedern.
 
@@ -1163,7 +1163,7 @@ ausschütten als nach einer Gewichtung, die niemand gesetzt hat.
 Betreiber. Eine Anweisung stünde jedem Absender offen, und wer die
 Gewichte setzt, setzt die Verteilung des Ertrags.
 
-⛑ **Und drei Tests von mir sahen stärker aus, als sie waren**, alle drei
+📌 **Und drei Tests von mir sahen stärker aus, als sie waren**, alle drei
 in der Gegenprobe aufgefallen: einer prüfte „ohne Bündel keine
 Auszahlung" statt „ohne Verteilung keine Auszahlung", die anderen beiden
 stehen im Scheduler-Changelog.
@@ -1256,7 +1256,7 @@ steht neben `falsche-runde`, und der Unterschied ist der Befund: Eine
 verirrte Nachricht der alten Runde ist der Normalfall, ein Sprung ist
 ein Ereignis.
 
-⛑ **Das Aufräumen nach einem Rundenwechsel stand nur im Fristweg.**
+📌 **Das Aufräumen nach einem Rundenwechsel stand nur im Fristweg.**
 Stimmen und Commits der alten Runde werden verworfen, das Zertifikat
 bleibt. Wäre der Sprung daran vorbeigelaufen, hätte der Knoten aus
 Stimmen der alten Runde ein Zertifikat gebaut, das keine Runde mehr

@@ -1,4 +1,4 @@
-//! ⛑ **Was passiert, wenn `\n` literal im Prompt steht.**
+//! 📌 **Was passiert, wenn `\n` literal im Prompt steht.**
 //!
 //! Beim ChatML-Lauf auf Qwen3-4B kamen die Antworten als „Okay, the
 //! user is asking where …" heraus. Die Vermutung war erst ein

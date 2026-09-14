@@ -20,7 +20,7 @@
 # jeder anderen Stelle argumentiert.
 set -eu
 
-# ⛑ **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
+# 📌 **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
 # Wurzel und liegt jetzt in `INSTALL/`. **Ein Verschieben sieht aus wie
 # eine Aenderung ohne Verhalten und ist keine:** Ohne das `/..` zeigte
 # die Wurzel auf das Skriptverzeichnis, und der Bau faende keine
@@ -65,7 +65,7 @@ if ! xcode-select -p >/dev/null 2>&1; then
       xcode-select --install"
 fi
 
-# ⛑ **Nicht „gibt es den Befehl", sondern „laeuft er".** Ein
+# 📌 **Nicht „gibt es den Befehl", sondern „laeuft er".** Ein
 # rustup-Schalter ohne eingestellte Werkzeugkette liegt im PATH und
 # beantwortet `command -v` mit ja; `cargo --version` bricht dann ab.
 # Gefunden beim ersten Probelauf dieses Skripts: Es meldete „alles da",
@@ -100,7 +100,7 @@ fi
 
 # ── Neuen Stand holen, wenn gewuenscht ──────────────────────────────
 #
-# ⛑ **`--ff-only`, und das ist die ganze Vorsicht.** Wer im Klon
+# 📌 **`--ff-only`, und das ist die ganze Vorsicht.** Wer im Klon
 # gearbeitet hat, soll seine Arbeit nicht durch ein Installationsskript
 # verlieren. Geht es nicht vorwaerts, bricht es ab und sagt, warum.
 if [ "$AKTUALISIEREN" = ja ]; then
@@ -127,7 +127,7 @@ fi
 # ausgeliefert werden soll, sagt es in ihrer eigenen `Cargo.toml`
 # unter `[package.metadata.myelith]`; dieses Skript sammelt sie ein.
 #
-# ⛑ **Bis zum 2026-09-10 stand die Liste hier, von Hand** (Fund 300),
+# 📌 **Bis zum 2026-09-10 stand die Liste hier, von Hand** (Fund 300),
 # und dasselbe noch dreimal in den anderen Skripten. Zwei der vier
 # waren am ersten Tag schon uneinig: `myl-test` fehlte in dreien.
 # **Eine Liste, die an vier Stellen von Hand gefuehrt wird, ist kein
@@ -148,7 +148,7 @@ if [ -z "$PROGRAMME" ]; then
   exit 1
 fi
 
-# ⛑ **Eine Schleife in dieser Shell und nicht hinter einer Roehre.**
+# 📌 **Eine Schleife in dieser Shell und nicht hinter einer Roehre.**
 # `... | while read` laeuft in einer Unterschale; ein fehlgeschlagener
 # Bau darin beendet dieses Skript **nicht**, und es kopierte danach
 # munter Dateien, die es nicht gibt. Ebenfalls beim ersten Probelauf
@@ -202,7 +202,7 @@ $SUDO rm -rf "$APPS/Myelith.app"
 $SUDO cp -R "$WURZEL/target-shared/Myelith.app" "$APPS/Myelith.app"
 
 echo "── fertig"
-# ⛑ **Auch hier stand die Liste von Hand** und nannte drei, waehrend
+# 📌 **Auch hier stand die Liste von Hand** und nannte drei, waehrend
 # vier installiert wurden (Fund 300, zweite Stelle im selben Skript).
 # Eine Schlussmeldung, die etwas anderes aufzaehlt als das, was getan
 # wurde, ist schlimmer als keine.
@@ -229,7 +229,7 @@ case ":$PATH:" in
     echo "      export PATH=\"$BIN:\$PATH\"" ;;
 esac
 
-# ⛑ **Der erste Start meldet einen unbekannten Entwickler**, denn das
+# 📌 **Der erste Start meldet einen unbekannten Entwickler**, denn das
 # Buendel ist nicht signiert. Das steht hier, weil es sonst wie ein
 # Fehler aussieht.
 echo

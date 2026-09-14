@@ -15,7 +15,7 @@ anders, es ist anders lizenzpflichtig zu behandeln und es ist hier
 gebaut worden. Die Basismodelle stehen unter Apache 2.0, und ein Name
 ohne Herkunft wäre eine Verschleierung statt einer Unterscheidung.
 
-⛑ **Die Artefakte aus Qwen2.5 sind aus dieser Karte herausgenommen**
+📌 **Die Artefakte aus Qwen2.5 sind aus dieser Karte herausgenommen**
 (2026-09-10, Festlegung des Projektinhabers). Sie liegen weiter im
 Repositorium und tragen die Prüfsammlungen, den Konformitätslauf und
 die Vergleichsmessungen; **als ausgelieferte Modelle sind sie es
@@ -111,7 +111,7 @@ und **2 von 4 Sequenzen sind schlechter**. Wer daraus liest, die
 Quantisierung verbessere das Modell, liest Rauschen. Die belastbare
 Aussage lautet: Der Abstand ist kleiner als die Streuung dieser Messung.
 
-⛑ **Die drei leeren Zeilen sind leer, weil sie leer sind.** Determinismus
+📌 **Die drei leeren Zeilen sind leer, weil sie leer sind.** Determinismus
 und die beiden Gütezahlen sind für die Artefakte aus Qwen2.5 erhoben
 worden und für diese hier nicht. **Eine übertragene Zahl wäre eine
 Behauptung über eine Messung, die niemand gemacht hat**, und diese Karte
@@ -132,7 +132,7 @@ eine Gütezahl ohne Zielwert.**
 | Myelith 30B-A3B | reference | *nicht gemessen* | *nicht gemessen* | *nicht gemessen* |
 | Myelith 30B-A3B | cpu-simd | *nicht gemessen* | *nicht gemessen* | entfällt |
 
-⛑ **Diese Tabelle stand bis zum 2026-09-10 gefüllt da, mit den Werten
+📌 **Diese Tabelle stand bis zum 2026-09-10 gefüllt da, mit den Werten
 der Artefakte aus Qwen2.5.** Sie sind mit jenen Modellen aus dieser
 Karte gegangen; für die Modelle, die hier stehen, gibt es sie nicht.
 Der Durchsatz ist gemessen worden, aber an anderen Größen und in

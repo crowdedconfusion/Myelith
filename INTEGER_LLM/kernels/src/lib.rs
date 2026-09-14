@@ -15,6 +15,7 @@ pub mod prng;
 pub mod rechenpfad;
 pub mod rmsnorm;
 pub mod linear;
+pub mod metal;
 pub mod rope;
 pub mod softmax;
 pub mod attention;

@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-kernels"
-version = "0.52.0"
+version = "0.56.0"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -16,12 +16,37 @@ reference = []
 cpu-simd = []
 cuda = []
 rocm = []
+# Gebuendelte Matrizen auf der GPU von Apple-Silizium. Schliesst
+# `cpu-simd` ein, denn alles ausser den Buendeln rechnet weiter die CPU.
+# Die Abhaengigkeiten gibt es nur fuer macOS; auf jedem anderen Ziel ist
+# das Feature wirkungslos, und `rechenpfad` meldet es nicht.
+metal = ["cpu-simd", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal"]
 
 [dependencies]
 itertools = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.3", optional = true }
+objc2-foundation = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-metal = { version = "0.3.2", optional = true, default-features = false, features = [
+    "std",
+    "bitflags",
+    "block2",
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLComputeCommandEncoder",
+    "MTLComputePipeline",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLTypes",
+] }
 
 [dev-dependencies]
 

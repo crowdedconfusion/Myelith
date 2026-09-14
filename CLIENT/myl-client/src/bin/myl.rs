@@ -79,7 +79,7 @@ Verzeichnis ist die Zustimmung**, und ob geschrieben werden darf, sagt
 Werkzeugkiste. `--nur-verankert` sperrt sie fuer einen einzelnen Lauf,
 etwa zum Vergleichen.
 
-⛑ Bis zum 2026-09-11 war es umgekehrt: Ein Schalter `agent.bezeugtes`
+📌 Bis zum 2026-09-11 war es umgekehrt: Ein Schalter `agent.bezeugtes`
 musste erst gesetzt werden, sonst standen die Dateiwerkzeuge zwar in
 der Ansage und liefen nicht. **Zwei Erlaubnisse fuer dieselbe Sache
 sind eine zu viel**, und die zweite steht immer da, wenn jemand den
@@ -107,7 +107,7 @@ fn main() {
             print!("{HILFE}");
             0
         }
-        // ⛑ **Ein Tippfehler war bis hierher ein Erfolg.** Jeder
+        // 📌 **Ein Tippfehler war bis hierher ein Erfolg.** Jeder
         // unbekannte Befehl fiel in denselben Zweig wie die Hilfe: Text
         // nach stdout, Rueckgabe null. Ein Skript, das `myl sitzng`
         // schreibt, bekam die Hilfe in seine Pipe und las daraus, alles
@@ -124,7 +124,7 @@ fn main() {
     std::process::exit(code);
 }
 
-/// ⛑ **Der Freitext ohne Schalter UND ohne deren Werte.**
+/// 📌 **Der Freitext ohne Schalter UND ohne deren Werte.**
 ///
 /// Die erste Fassung filterte nur Argumente, die mit `--` beginnen.
 /// Damit landete `--token 128` als „128" im Auftrag, und das Modell
@@ -133,7 +133,7 @@ fn main() {
 /// aus, als taete er etwas.
 /// Die Schalter, hinter denen ein **Wert** steht.
 ///
-/// ⛑ **Diese Liste stand bis zum 2026-09-08 nur in `freitext`**, und
+/// 📌 **Diese Liste stand bis zum 2026-09-08 nur in `freitext`**, und
 /// beim Einbau von `--wurzel` fehlte sie dort prompt: Der Pfad wanderte
 /// in den Auftragstext, und der Agent bekam einen Auftrag, der auf ein
 /// Verzeichnis endete. **Ein vergessener Eintrag stuerzt nicht ab, er
@@ -176,7 +176,7 @@ fn artefakt_und_rest<'a>(
         Some(a) if !a.starts_with("--") && std::path::Path::new(a).is_dir() => {
             (Some(a.clone()), &args[1..])
         }
-        // ⛑ **Gegen die Wurzel aufgeloest, seit dem 2026-09-10.** In
+        // 📌 **Gegen die Wurzel aufgeloest, seit dem 2026-09-10.** In
         // den Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`,
         // und das ist relativ. Aus einem anderen Arbeitsverzeichnis
         // heraus meldete `myl` deshalb „es fehlt das
@@ -243,7 +243,7 @@ fn einstellungen() -> i32 {
 
 /// Eine Zeile je Feld, in der Reihenfolge des Katalogs.
 ///
-/// # ⛑ Fund 312, und es ist dieselbe Klasse wie Fund 280
+/// # 📌 Fund 312, und es ist dieselbe Klasse wie Fund 280
 ///
 /// **Diese Liste war von Hand gefuehrt und kannte zehn Felder, waehrend
 /// der Katalog dreizehn fuehrte.** `oberflaeche.sprache`,
@@ -331,7 +331,7 @@ fn setzen(args: &[String]) -> i32 {
         // Einstellung und dasselbe Programm; ein Bedieninstrument, das
         // sie nicht kennt, waere die zweite Stelle, an der sie gilt.
         //
-        // ⛑ **Eine unlesbare Ablage kostet hier nichts.** Wer die
+        // 📌 **Eine unlesbare Ablage kostet hier nichts.** Wer die
         // Feldliste sehen will, soll sie sehen, auch wenn die Datei
         // kaputt ist; dann eben auf Deutsch.
         let sprache = Einstellungen::lesen(&Einstellungen::vorgabepfad())
@@ -407,7 +407,7 @@ fn wert(args: &[String], name: &str) -> Option<String> {
 /// als drei. Welches ueberwiegt, sagt die Agentenprobe und nicht diese
 /// Datei.
 ///
-/// ⛑ **Der Schalter nimmt dieselben Woerter wie die Einstellung**, und
+/// 📌 **Der Schalter nimmt dieselben Woerter wie die Einstellung**, und
 /// er nimmt sie aus derselben Funktion. Bis zum 2026-09-11 kannte er
 /// nur `voll` und verglich es von Hand, waehrend die Hilfe darueber
 /// `knapp` nannte: **ein Wort, das es nie gab.**
@@ -1050,7 +1050,7 @@ fn auftraege(args: &[String]) -> i32 {
 /// Matrix.
 ///
 /// Deshalb wird die Grenze **vor** dem Start auf `n / k` gesetzt,
-/// mindestens eins. ⛑ Sie gilt fuer den ganzen Prozess und wird
+/// mindestens eins. 📌 Sie gilt fuer den ganzen Prozess und wird
 /// danach **nicht** zurueckgesetzt: Wer sie zuruecksetzte, waehrend
 /// noch ein Faden rechnet, aenderte dessen Aufteilung mitten im Lauf.
 fn viele_auftraege(
@@ -1193,7 +1193,7 @@ mod schalter {
         );
     }
 
-    /// ⛑ Der Fall, der den Eintrag noetig machte.
+    /// 📌 Der Fall, der den Eintrag noetig machte.
     #[test]
     fn ein_pfad_wandert_nicht_in_den_auftrag() {
         let a = worte(&["Lies die Datei.", "--wurzel", "/tmp/x", "--bezeugtes"]);
@@ -1255,7 +1255,7 @@ mod auftragsliste_probe {
         );
     }
 
-    /// ⛑ Eine fehlende Datei ist ein Fehler und keine leere Liste: Ein
+    /// 📌 Eine fehlende Datei ist ein Fehler und keine leere Liste: Ein
     /// Lauf ohne Auftraege saehe aus wie ein Lauf, in dem nichts zu tun
     /// war.
     #[test]
@@ -1298,7 +1298,7 @@ mod sitzungsdeutung {
 
     /// **Jedes Feld des Katalogs steht in der Uebersicht.**
     ///
-    /// ⛑ **Fund 312.** Sie war von Hand gefuehrt und kannte zehn von
+    /// 📌 **Fund 312.** Sie war von Hand gefuehrt und kannte zehn von
     /// dreizehn Feldern: `oberflaeche.sprache`, `agent.werkzeuge` und
     /// `ausgabe.ordner` liessen sich setzen und standen danach
     /// nirgends. **Wer ein Feld anlegt, soll es nicht an zwei Stellen

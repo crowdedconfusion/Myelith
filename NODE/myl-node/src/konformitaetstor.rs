@@ -215,7 +215,7 @@ mod tests {
 
         // Einen echten Vektor nehmen und eine Zahl darin ändern.
         //
-        // ⛑ **Hier stand `.find(… ends_with(".golden.json"))`, also der
+        // 📌 **Hier stand `.find(… ends_with(".golden.json"))`, also der
         // ERSTE Eintrag, den `read_dir` hergibt.** Dessen Reihenfolge ist
         // nicht festgelegt und haengt am Dateisystem: Auf macOS kam ein
         // Vektor mit Ausgabefeld zuerst, auf Windows einer ohne, und der
@@ -234,7 +234,7 @@ mod tests {
             .filter(|p| p.to_string_lossy().ends_with(".golden.json"))
             .collect();
         kandidaten.sort();
-        // ⛑ Nur der Inhalt wird gebraucht. Der Pfad stand hier als
+        // 📌 Nur der Inhalt wird gebraucht. Der Pfad stand hier als
         //   zweiter Rueckgabewert und wurde von niemandem gelesen; unter
         //   `-D warnings` ist das ein Fehler und kein Hinweis.
         let inhalt = kandidaten

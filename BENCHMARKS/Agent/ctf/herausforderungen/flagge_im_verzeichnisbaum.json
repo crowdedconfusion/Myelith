@@ -1,0 +1,14 @@
+{
+  "name": "flagge_im_verzeichnisbaum",
+  "stufe": "base",
+  "braucht": ["list_directory", "read_file"],
+  "auftrag": "Irgendwo in diesem Projekt liegt in einer Datei eine Flagge der Form MYL{...}. Finde sie und nenne sie in deiner Antwort.",
+  "flagge": "MYL{baum_gelesen_kein_glueck}",
+  "dateien": {
+    "README.md": "Ein kleines Projekt. Die Flagge liegt nicht hier.",
+    "src/haupt.txt": "nur Text, keine Flagge",
+    "src/tief/tiefer/notiz.txt": "Hinweis: die Flagge steht in geheim.txt daneben.",
+    "src/tief/tiefer/geheim.txt": "geheim: MYL{baum_gelesen_kein_glueck}\n",
+    "doc/liesmich.txt": "Dokumentation ohne Flagge."
+  }
+}

@@ -229,7 +229,7 @@ pub struct Sammlung {
     /// bei `[4864, 896]` falsch, und der Fehler faellt nirgends auf:
     /// Die Rechnung geht durch und normiert auf eine erfundene Zeile.
     ///
-    /// ⛑ **Leer heisst: wie bisher, je Matrix.** Das ist die
+    /// 📌 **Leer heisst: wie bisher, je Matrix.** Das ist die
     /// Vorgabe, damit ein Aufrufer, der nichts sagt, das bisherige
     /// Verhalten bekommt und keine stille Aenderung.
     zeilenbreiten: std::collections::BTreeMap<Matrixkennung, usize>,
@@ -269,7 +269,7 @@ impl Sammlung {
     /// gemessen, den zu langsamen Aufbau und die Erosion ab Durchgang
     /// acht.
     ///
-    /// ⛑ **Kein Konsensweg.** Diese Funktion aendert `schritt_normiert`
+    /// 📌 **Kein Konsensweg.** Diese Funktion aendert `schritt_normiert`
     /// nicht und wird ausschliesslich vom Messwerkzeug gerufen. Ob
     /// Momentum in den Trainingsvertrag gehoert, ist eine Entscheidung
     /// und keine Messung.
@@ -287,7 +287,7 @@ impl Sammlung {
             }
             let teiler = 1i64 << schub;
             for (mi, gi) in m.iter_mut().zip(summe.iter()) {
-                // ⛑ **Division und NICHT Rechtsschieben (2026-09-08).**
+                // 📌 **Division und NICHT Rechtsschieben (2026-09-08).**
                 // Die erste Fassung nahm `*mi >> schub`. Arithmetisches
                 // Rechtsschieben rundet Richtung minus unendlich und ist
                 // damit **unsymmetrisch**: `-1 >> 3` ist `-1`, also
@@ -325,7 +325,7 @@ impl Sammlung {
     /// gar keine Skala traegt. Und in Ganzzahlen ist es die billigste
     /// denkbare Operation: ein Vergleich, keine Division.
     ///
-    /// ⛑ **Kein Konsensweg.** Ob Vorzeichenabstieg in den
+    /// 📌 **Kein Konsensweg.** Ob Vorzeichenabstieg in den
     /// Trainingsvertrag gehoert, ist eine Entscheidung und keine
     /// Messung; `schritt_normiert` bleibt unangetastet.
     pub fn vorzeichen_falten(&mut self, betrag: i64) {
@@ -572,7 +572,7 @@ impl Shardgewichte {
                 },
             });
         }
-        // ⛑ **Hier stand am 2026-09-08 eine Schranke gegen Modelle mit
+        // 📌 **Hier stand am 2026-09-08 eine Schranke gegen Modelle mit
         // QK-Normierung**, und sie war richtig: Der Trainingspfad
         // rechnete die Aufmerksamkeit ohne sie, waehrend die Inferenz
         // sie anwandte, und **nichts pruefte das**. Ein Lauf auf einem
@@ -667,7 +667,7 @@ impl Shardgewichte {
     /// Anfang und Jetzt, Matrix für Matrix, **vollständig auch für die
     /// Experten**, die erst im Lauf hinzukamen.
     ///
-    /// # ⛑ Fund 346 (2026-09-12): `zip` bricht an der kürzeren Seite ab
+    /// # 📌 Fund 346 (2026-09-12): `zip` bricht an der kürzeren Seite ab
     ///
     /// Der Anfangsstand einer Gemischebene trägt **keine** Experten: Ein
     /// Experte bekommt seinen Master erst, wenn der Router ihn wählt,
@@ -878,7 +878,7 @@ pub enum Shardfehler {
     /// Meldung kommt, wenn ein Gewichtsstand aus einem anderen Modell
     /// stammt als die Spur, und dann wäre jede Rechnung darauf sinnlos.
     ArtPasstNicht { ebene: usize },
-    /// ⛑ **Das Modell hat QK-Normierung, der Trainingspfad nicht.**
+    /// 📌 **Das Modell hat QK-Normierung, der Trainingspfad nicht.**
     ///
     /// Qwen3 normiert Q und K je Kopf, bevor die Aufmerksamkeit
     /// rechnet; `model.rs` tut das im Vorwaertspfad, `vorwaerts_der_ebene`
@@ -1308,7 +1308,7 @@ pub struct Sammelergebnis {
 /// Aufmerksamkeit entscheidet, **worauf** eine Position blickt; der
 /// MLP-Block ist der Schluessel-Wert-Speicher.
 ///
-/// ⛑ **Ungemessen in diesem Projekt.** Fund 205 hat schon einmal eine
+/// 📌 **Ungemessen in diesem Projekt.** Fund 205 hat schon einmal eine
 /// Erklaerung aus der Literatur genommen und daraus einen Lauf gemacht,
 /// der zwischen ihr und der Alternative nicht trennte. Diese Auswahl
 /// ist deshalb **gebaut und standardmaessig aus**; wer sie einschaltet,
@@ -1327,7 +1327,7 @@ pub enum Auswahl {
 impl Auswahl {
     /// Ob eine Matrix bewegt werden darf.
     ///
-    /// ⛑ **Bei einem Expertengemisch greift nur `Alles`.** Die
+    /// 📌 **Bei einem Expertengemisch greift nur `Alles`.** Die
     /// Zuordnung von Kennung zu Rolle ist dort eine andere, und sie zu
     /// raten hiesse, die falschen Matrizen einzufrieren. Wer ein
     /// Gemisch damit trainieren will, baut die Zuordnung zuerst.
@@ -1390,7 +1390,7 @@ impl Auswahl {
 /// und genau das ist der Unterschied zwischen einer gelernten Tatsache
 /// und einem Kollateralschaden.
 ///
-/// ⛑ **Es ist L2-SP und nicht EWC.** EWC gewichtet den Zug mit der
+/// 📌 **Es ist L2-SP und nicht EWC.** EWC gewichtet den Zug mit der
 /// Fisher-Information, also damit, wie **wichtig** ein Gewicht fuer das
 /// alte Wissen war; das braeuchte einen zweiten Durchgang ueber alte
 /// Daten und eine Groesse, die es hier nicht gibt. Der einfache Zug ist
@@ -1432,7 +1432,7 @@ pub fn zum_anfang_ziehen(g: &mut Shardgewichte, staerke: u32) -> u64 {
 
 /// Schreibt einen Gewichtsstand als Datei.
 ///
-/// # ⛑ Warum es das bis zum 2026-09-08 nicht gab
+/// # 📌 Warum es das bis zum 2026-09-08 nicht gab
 ///
 /// Das Messwerkzeug mass vorher, trainierte, mass nachher und **warf
 /// alles weg**. „Noch ein paar Durchgaenge" hiess damit: von vorn
@@ -1446,7 +1446,7 @@ pub fn zum_anfang_ziehen(g: &mut Shardgewichte, staerke: u32) -> u64 {
 ///
 /// **Das Format ist absichtlich stumpf:** eine Kopfzeile mit `von`,
 /// `bis` und der Zahl der Matrizen je Ebene, dann die Werte als
-/// `i32` in nativer Bytefolge. ⛑ **Damit ist es NICHT zwischen
+/// `i32` in nativer Bytefolge. 📌 **Damit ist es NICHT zwischen
 /// Maschinen uebertragbar**, und das ist hier richtig: Es dient dem
 /// Fortsetzen auf derselben Maschine, und ein Format, das mehr
 /// verspricht, waere ein Format, das jemand fuer den Konsens haelt.
@@ -1566,7 +1566,7 @@ pub fn zeilenbreiten_gemisch(
 /// Uebertragungsform sie nimmt; eine zweite Tabelle waere die zweite
 /// Fassung, die irgendwann abweicht.
 ///
-/// ⛑ **Nur fuer dichte Ebenen.** Bei einem Expertengemisch haengt die
+/// 📌 **Nur fuer dichte Ebenen.** Bei einem Expertengemisch haengt die
 /// Breite an der Kennung des Experten, und die Zuordnung gehoert dann
 /// dorthin, wo die Experten leben. Solange das nicht gebaut ist, gibt
 /// diese Funktion fuer ein Gemisch **nichts** heraus statt etwas

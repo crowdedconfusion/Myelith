@@ -1,0 +1,11 @@
+{
+  "name": "flagge_base64",
+  "stufe": "elite",
+  "braucht": ["crypto_tools"],
+  "auftrag": "In der Datei kodiert.txt steht eine Base64-Zeichenkette. Dekodiere sie; darin steht eine Flagge der Form MYL{...}. Nenne die Flagge.",
+  "flagge": "MYL{base64_ist_keine_verschluesselung}",
+  "dateien": {
+    "kodiert.txt": "@@BASE64:MYL{base64_ist_keine_verschluesselung}@@\n",
+    "hinweis.txt": "Base64 ist eine Kodierung, keine Verschluesselung.\n"
+  }
+}

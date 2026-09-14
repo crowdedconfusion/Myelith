@@ -1,17 +1,18 @@
 {
   "theta_v": {
-    "version": "0.18.0",
+    "version": "0.20.0",
     "model": {
-      "family": "qwen2.5",
-      "variant": "0.5b",
-      "source": "Qwen/Qwen2.5-0.5B",
-      "num_layers": 24,
-      "hidden_size": 896,
-      "intermediate_size": 4864,
-      "num_heads": 14,
-      "head_dim": 64,
+      "family": "qwen3",
+      "variant": "0.6b",
+      "source": "Qwen/Qwen3-0.6B",
+      "num_layers": 28,
+      "hidden_size": 1024,
+      "intermediate_size": 3072,
+      "num_heads": 16,
+      "head_dim": 128,
       "vocab_size": 151936,
-      "max_context": 2048
+      "max_context": 40960,
+      "note": "Theta_v 0.19.0 (Fund 359): Dieser Abschnitt nennt das Ankermodell der Konformitaetsvektoren, er ist keine Quelle fuer Dimensionen. Jedes Artefakt traegt seine eigenen in model_config.json, und nur die liest der Lader. Bis 0.18.0 stand hier Qwen2.5-0.5B, das seit dem 2026-09-11 abgeloest ist; der Abschnitt hatte keinen Leser und ist deshalb nicht aufgefallen."
     },
     "numeric": {
       "formats": {
@@ -29,8 +30,9 @@
           "storage": "int16"
         },
         "accumulator": {
-          "dtype": "int32",
-          "storage": "int32"
+          "dtype": "int64",
+          "storage": "int64",
+          "note": "Theta_v 0.19.0 (Fund 356): Die Summe einer Zeile w8 x a16 ist exakt in int64 zu bilden, danach wird reskaliert und geklemmt. Bis 0.18.0 stand hier int32, hergeleitet fuer int8 x int8 (groesster Produktbetrag 16 129). Seit den int16-Aktivierungen (Numerik-Realitaetsabgleich, 2026-08-11) ist er 127 * 32767 = 4 161 409, int32 traegt davon nur 516 Terme, und eine Zeile von down_proj des 4B hat 9 728. Der Rechenpfad akkumuliert seit jenem Wechsel in int64; nachgezogen wurde erst jetzt die Festlegung. Keine Zahl im Rechenpfad aendert sich. Die Reihenfolge der Summanden bleibt frei: Eine Umsetzung darf in kleineren Breiten sammeln, solange keine Teilsumme ueberlaeuft und das Ergebnis exakt dem int64-Wert gleicht."
         },
         "kv_cache": {
           "dtype": "int16",
@@ -102,7 +104,9 @@
         ],
         "input_frac_bits": 6,
         "output_frac_bits": 8,
-        "note": "Theta_v 0.15.0 (Punkt 12.77): Eingangsraster von 0,125 auf 0,015625 verfeinert (input_frac_bits 3 -> 6), Ausgangsaufloesung von 1/64 auf 1/256 (output_frac_bits 6 -> 8). Reale Domaene unveraendert [-128, 127.984]; sie wird gebraucht, das kalibrierte Gate-AbsMax reicht bis 77,0 (7B). Anlass: Der operationsweise Vergleich (layer_probe, relativer L2 gegen Gleitkomma mit IDENTISCHEN Gewichten und Eingang) zeigte, dass die Matrixmultiplikationen des MLP praktisch exakt sind (0,01 % / 0,02 %), der gesamte MLP-Fehler aber in der SiLU-LUT entsteht (6,83 %) - davon 6,68 % aus dem Eingangsraster und 1,56 % aus der Ausgangsaufloesung. Der Ausgang belegte 121 von 32767, also 8,1 Bit ungenutzt. Grenzen: input_frac_bits 7 waere numerisch moeglich (Offset 16384 passt in i16), scheitert aber an integer_math::lut_lookup - dort wird der Index in i16 gerechnet, und `lut.len() as i16 - 1` laeuft bei 32768 Eintraegen ueber. output_frac_bits 9 wuerde die LUT-Eintraege sprengen (127.984 * 512 = 65528 > 32767)."
+        "outside_input_range": "identity_above_zero_below",
+        "outside_note": "Theta_v 0.19.0 (Fund 349, Fund 364): Ein Eingang oberhalb der Tabelle ergibt den Eingang selbst, reskaliert von input_frac_bits auf output_frac_bits; ein Eingang unterhalb ergibt 0. Das ist SiLU(x) = x * sigma(x) mit sigma = 1 beziehungsweise 0, exakt bei jeder hier darstellbaren Aufloesung, und an beiden Raendern stetig (letzter Eintrag = Eingang, erster = 0). Die Ableitung ist dort 1 und 0. Bis 0.18.0 wurde auf den Tabellenrand geklemmt, also SiLU(x) = 127,98 fuer jedes x darueber; gemessen reichen die Gate-Werte bei Qwen3-0.6B bis 278 und bei Qwen3-4B bis 192. Eine Umsetzung schlaegt einen Eingang ausserhalb der Tabelle nicht nach.",
+        "note": "Theta_v 0.15.0 (Punkt 12.77): Eingangsraster von 0,125 auf 0,015625 verfeinert (input_frac_bits 3 -> 6), Ausgangsaufloesung von 1/64 auf 1/256 (output_frac_bits 6 -> 8). Reale Domaene unveraendert [-128, 127.984]; sie wird gebraucht, das kalibrierte Gate-AbsMax reichte bis 77,0 (7B, abgeloest) und reicht bei Qwen3-0.6B bis 278, dafuer gilt seit 0.19.0 outside_input_range. Anlass: Der operationsweise Vergleich (layer_probe, relativer L2 gegen Gleitkomma mit IDENTISCHEN Gewichten und Eingang) zeigte, dass die Matrixmultiplikationen des MLP praktisch exakt sind (0,01 % / 0,02 %), der gesamte MLP-Fehler aber in der SiLU-LUT entsteht (6,83 %) - davon 6,68 % aus dem Eingangsraster und 1,56 % aus der Ausgangsaufloesung. Der Ausgang belegte 121 von 32767, also 8,1 Bit ungenutzt. Grenzen: input_frac_bits 7 waere numerisch moeglich (Offset 16384 passt in i16), scheiterte an integer_math::lut_lookup, das den Index in i16 rechnete (seit Fund 348 in i32; die Tabellenlaenge bleibt auf 32767 begrenzt). output_frac_bits 9 wuerde die LUT-Eintraege sprengen (127.984 * 512 = 65528 > 32767)."
       },
       "softmax": {
         "method": "lut_exp",
@@ -110,15 +114,17 @@
         "exp_input_frac_bits": 8,
         "exp_lut_frac_bits": 14,
         "prob_frac_bits": 14,
-        "note": "Theta_v 0.16.0 (Punkt 12.77, Fund 29): Aufloesung der Softmax-Kette angehoben. HAUPTGRUND ist NICHT die Perplexitaet - die aendert sich auf 128-Token-Sequenzen nicht messbar (9,33 -> 9,37, unterhalb der 1-Prozent-Regel). Der Grund ist ein Langkontext-Defekt: bei prob_frac_bits = 8 rundet JEDE Position, deren Gewicht unter 1/512 liegt, einzeln auf null und traegt exakt nichts bei. Nachgerechnet mit einem dominanten Peak und flachem Schwanz betraegt das Schwanzgewicht bei 128 Positionen 0,4961 statt exakt 0,2394 (also doppelt), bei 512 und 2048 Positionen 0,0000 - die Aufmerksamkeit kollabiert auf die Spitzenposition, bei einem diffusen Kopf faellt der Softmax sogar in den Gleichverteilungs-Rueckfallpfad. Mit 0.16.0 liegen dieselben Werte bei 0,2403 / 0,5614 / 0,8746 gegen exakt 0,2394 / 0,5588 / 0,8354. Da vor dem Launch auf ein wesentlich groesseres dichtes Modell mit entsprechend laengerem Kontext skaliert wird, ist das ein Korrektheitsfix, kein Optimierungsschritt. Ergaenzend misst die Mehrpositions-Sonde (attn_probe, Kopf 0, Ebene 0, 7B) den Attention-Ausgang gegen Gleitkomma aus IDENTISCHEN entquantisierten q/k/v nach RoPE: 0,3-1,0 Prozent relativer L2, zerfallend in Wahrscheinlichkeits-Rundung (0,31-0,42) und exp-Eingangsraster (0,01-0,46). exp_input_frac_bits 4 -> 8 bei gleichbleibender Domaene [0, 64) erfordert 16384 statt 1024 Eintraege (32 KiB, einmalig). Grenzen: exp_lut_frac_bits 15 wuerde exp(0) = 32768 die i16-LUT sprengen, deshalb 14. Ueberlaufpruefung: Summe der Exponentiale <= 2048 * 2^14 = 3,4e7 (i32); e * one <= 2^14 * 2^14 = 2,7e8 (i32); Wertgewichtung <= 2048 * 2^14 * 32767 = 1,1e15 (i64). Kosten: die hoehere Aufloesung deaktiviert die probs==0-Abkuerzung in attention_int; der Durchsatzverlust ist noch nicht gemessen."
+        "note": "Theta_v 0.16.0 (Punkt 12.77, Fund 29): Aufloesung der Softmax-Kette angehoben. HAUPTGRUND ist NICHT die Perplexitaet - die aendert sich auf 128-Token-Sequenzen nicht messbar (9,33 -> 9,37, unterhalb der 1-Prozent-Regel). Der Grund ist ein Langkontext-Defekt: bei prob_frac_bits = 8 rundet JEDE Position, deren Gewicht unter 1/512 liegt, einzeln auf null und traegt exakt nichts bei. Nachgerechnet mit einem dominanten Peak und flachem Schwanz betraegt das Schwanzgewicht bei 128 Positionen 0,4961 statt exakt 0,2394 (also doppelt), bei 512 und 2048 Positionen 0,0000 - die Aufmerksamkeit kollabiert auf die Spitzenposition, bei einem diffusen Kopf faellt der Softmax sogar in den Gleichverteilungs-Rueckfallpfad. Mit 0.16.0 liegen dieselben Werte bei 0,2403 / 0,5614 / 0,8746 gegen exakt 0,2394 / 0,5588 / 0,8354. Da vor dem Launch auf ein wesentlich groesseres dichtes Modell mit entsprechend laengerem Kontext skaliert wird, ist das ein Korrektheitsfix, kein Optimierungsschritt. Ergaenzend misst die Mehrpositions-Sonde (attn_probe, Kopf 0, Ebene 0, 7B) den Attention-Ausgang gegen Gleitkomma aus IDENTISCHEN entquantisierten q/k/v nach RoPE: 0,3-1,0 Prozent relativer L2, zerfallend in Wahrscheinlichkeits-Rundung (0,31-0,42) und exp-Eingangsraster (0,01-0,46). exp_input_frac_bits 4 -> 8 bei gleichbleibender Domaene [0, 64) erfordert 16384 statt 1024 Eintraege (32 KiB, einmalig). Grenzen: exp_lut_frac_bits 15 wuerde exp(0) = 32768 die i16-LUT sprengen, deshalb 14. Ueberlaufpruefung: Summe der Exponentiale <= 2048 * 2^14 = 3,4e7 (i32); e * one <= 2^14 * 2^14 = 2,7e8 (i32); Wertgewichtung <= 2048 * 2^14 * 32767 = 1,1e15 (i64). Kosten: die hoehere Aufloesung deaktiviert die probs==0-Abkuerzung in attention_int; der Durchsatzverlust ist noch nicht gemessen.",
+        "ueberlauf_note": "Theta_v 0.20.0: Die Ueberlaufpruefung der 0.16.0-Notiz galt fuer 2048 Positionen und lautet allgemein: Summe der Exponentiale <= n * 2^14, in int32 bis n = 131072, also fuer max_seq_len 40960 hoechstens 6,7e8; e * one unveraendert <= 2,7e8; Wertgewichtung <= n * 2^14 * 32767, fuer 40960 hoechstens 2,2e13 (i64). Die Wertgewichtung darf in kleineren Breiten gesammelt werden, solange keine Teilsumme ueberlaeuft (wie beim Akkumulator, 0.19.0): Mit Gewichten in [0, 32767] und Summe S der Gewichte bleibt jede Teilsumme betragsmaessig <= S * 32768, also in int32, solange S <= 65535. Ab 131072 Positionen braucht die Exponentialsumme int64, und das ist eine Aenderung dieser Fassung."
       },
       "rope": {
         "method": "lut_sin_cos",
-        "max_seq_len": 2048,
+        "max_seq_len": 40960,
         "frac_bits": 8,
         "rope_theta": 1000000.0,
         "pairing": "half_split",
-        "note": "Theta_v 0.10.0 (Fund 15, RoPE-Fix): Multi-Frequenz-RoPE im Qwen2/LLaMA-Schema. Pro Dimensions-Paar j in [0, head_dim/2) eigene Frequenz theta_j = 1/rope_theta^(j/(head_dim/2)), Winkel an Position p = p*theta_j; LUTs flach row-major [max_seq_len, head_dim/2]. Paarung half-split ((x_j, x_{j+head_dim/2})) wie HF rotate_half. Die vorherige Fassung (ein Winkel 2*pi*p/max_seq_len fuer alle Paare, benachbarte Paarung) wich von Qwen2 ab und war die dominante Fehlerquelle der Perplexitaet."
+        "note": "Theta_v 0.10.0 (Fund 15, RoPE-Fix): Multi-Frequenz-RoPE im Qwen2/LLaMA-Schema. Pro Dimensions-Paar j in [0, head_dim/2) eigene Frequenz theta_j = 1/rope_theta^(j/(head_dim/2)), Winkel an Position p = p*theta_j; LUTs flach row-major [max_seq_len, head_dim/2]. Paarung half-split ((x_j, x_{j+head_dim/2})) wie HF rotate_half. Die vorherige Fassung (ein Winkel 2*pi*p/max_seq_len fuer alle Paare, benachbarte Paarung) wich von Qwen2 ab und war die dominante Fehlerquelle der Perplexitaet.",
+        "grenze_note": "Theta_v 0.20.0 (Fund 368): max_seq_len von 2048 auf 40960, die max_position_embeddings der eingesetzten Qwen3-Modelle. Die Zeilen bis 2047 sind bytegleich zur vorigen Fassung, also rechnet jede Position darunter unveraendert. Eine Position p >= max_seq_len oder >= max_context des Artefakts wird ABGELEHNT und nicht umgebrochen: Bis 0.19.0 las die Referenz die Zeile p mod max_seq_len, Position 2048 drehte wie Position 0, und die Aufmerksamkeit hielt ein spaetes Token fuer eines vom Anfang, auf jeder Maschine gleich und deshalb von keinem Bitgleichheitsvergleich bemerkt. Gemessen am 2026-09-14 (Apple M5 Pro, 24 GiB, 32768 Positionen, Schritt mit 256 neuen Token): 0,6B 5,1 s, 4B 13,1 s, 30B-A3B 18,5 s; Decode 61, 118 und 215 ms je Token; KV-Speicher 112, 144 und 96 KiB je Position."
       }
     },
     "sampling": {

@@ -22,7 +22,7 @@ sondern **in welcher Auspraegung**, und dafuer gibt es vier Fragearten:
 | `direkt` | dieselbe Formulierung wie im Training | leicht |
 | `umformuliert` | dieselbe Tatsache, andere Frage | echter Abruf |
 | `umkehr` | Antwort gegeben, Person gesucht | ⚑ schwer, siehe unten |
-| `fremd` | eine Person, die NICHT trainiert wurde | ⛑ muss scheitern |
+| `fremd` | eine Person, die NICHT trainiert wurde | ⚠️ muss scheitern |
 
 ⚑ **Zur Umkehrfrage.** Dass ein Modell „A wurde in B geboren" lernt und
 „wer wurde in B geboren" trotzdem nicht beantwortet, ist ein
@@ -47,7 +47,7 @@ STARTWERT = 20260907
 
 VORNAMEN = ["Zirumel", "Tanexbo", "Morolfi", "Vussath", "Kelanpra",
             "Draliss", "Quinurwel", "Polentju", "Henyxgra", "Barathsod"]
-# ⛑ Hier stand ein Name, den ein replace-Trick aus kyrillischen
+# 📌 Hier stand ein Name, den ein replace-Trick aus kyrillischen
 # Zeichen zusammensetzte; zwei davon blieben stehen. Ein Name mit
 # fremdem Schriftzeichen zerfaellt im Tokenisierer anders als die
 # uebrigen und waere ein stiller Ausreisser in jeder Messung.
@@ -69,7 +69,7 @@ MONATE = ["Januar", "Februar", "Maerz", "April", "Mai", "Juni",
 def namenspool(r: random.Random, n: int) -> list:
     """`n` **verschiedene** Namen, ohne Zuruecklegen gezogen.
 
-    ⛑ **Die erste Fassung rechnete den Namen aus dem Index:**
+    📌 **Die erste Fassung rechnete den Namen aus dem Index:**
     `VORNAMEN[i % 10]` und `NACHNAMEN[(i * 7 + 3) % 10]`. Beide Perioden
     sind zehn, also hiessen Person 0 und Person 10 **gleich** und trugen
     verschiedene erfundene Tatsachen. Der Lerntext widersprach sich
@@ -119,7 +119,7 @@ def fortsetzungen(p: dict) -> list:
 def lernpaare(p: dict) -> list:
     """Frage-Antwort-Paare **im Lerntext**, fuer einen Teil der Tatsachen.
 
-    ⛑ **Am 2026-09-07 fehlten sie, und die Messung hat es aufgedeckt.**
+    📌 **Am 2026-09-07 fehlten sie, und die Messung hat es aufgedeckt.**
     Der Erzeuger versprach im Kopf Frage-Antwort-Form und lieferte
     ausschliesslich Aussagesaetze; `grep -c "Frage:"` ergab null. Das
     Modell lernte die Tatsachen nachweisbar (Haltemenge minus 8,09

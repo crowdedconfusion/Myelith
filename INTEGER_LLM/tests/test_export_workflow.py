@@ -432,7 +432,7 @@ def test_30b_config_matches_published_hf_config():
     Test steht jetzt auf dem groessten verbliebenen Modell, und das ist
     ein **Gemisch**.
 
-    ⛑ **Und die Lehre aus dem Wechsel davor bleibt stehen:** Eine
+    📌 **Und die Lehre aus dem Wechsel davor bleibt stehen:** Eine
     Ersetzung ueber achtzig Dateien hat damals den Aufruf umgeschrieben
     und die **erwarteten Werte stehen gelassen**. Der Test war rot und
     behauptete dabei etwas ueber ein Modell, das es nicht mehr gab.

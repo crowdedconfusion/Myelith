@@ -124,7 +124,7 @@ def bauen() -> str:
         "",
         "⚠️ **Was diese Tabelle nicht sagt.** Die Zahlen einer Zeile lassen",
         "sich mit denen einer anderen **nicht** vergleichen: Jede misst",
-        "gegen ihre eigene Referenz. Ein Modell mit 33,28 ist nicht",
+        "gegen ihre eigene Referenz. Ein Modell mit 33,29 ist nicht",
         "schlechter als eines mit 11,54, sondern kleiner.",
         "",
         "⚠️ **Der Boden des Quantisierungsschemas fehlt hier.** Er ist an",

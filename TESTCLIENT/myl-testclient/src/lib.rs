@@ -54,6 +54,7 @@ pub mod netz;
 pub mod modellstaende;
 pub mod logging;
 pub mod plaene;
+pub mod rechenwege;
 pub mod runs;
 pub mod spec;
 pub mod stack;

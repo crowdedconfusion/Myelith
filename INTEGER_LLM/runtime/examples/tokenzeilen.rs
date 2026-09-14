@@ -13,7 +13,7 @@
 //! „wurde" und „der". Beim Zerhacken in feste Fenster ist das letzte
 //! Token dagegen zufaellig.
 //!
-//! ⛑ **Das ist der Grund, warum der Satz hier ohne Punkt endet.** Wer
+//! 📌 **Das ist der Grund, warum der Satz hier ohne Punkt endet.** Wer
 //! „… in der Stadt Dresden ." schreibt, laesst die Folge auf dem Punkt
 //! enden, und `--nur-letzte` traeniert dann das Setzen eines Punktes.
 //!

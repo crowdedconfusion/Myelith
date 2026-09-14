@@ -1,7 +1,7 @@
 //! **Welche Frageform liefert im Grundmodell schon einen nackten
 //! Stadtnamen?**
 //!
-//! # ⛑ Warum es diese Datei gibt
+//! # 📌 Warum es diese Datei gibt
 //!
 //! Die Kopfprobe vom 2026-09-09 hat als Antwort auf
 //! „Der Geburtsort von Torvic Nordhelm ist" den Text „in der Stadt"
@@ -30,7 +30,7 @@ use integer_llm_runtime::{generate::generate, loader::load_model, tokenizer::Tok
 
 /// Personen mit bekannter Geburtsstadt.
 ///
-/// ⛑ **Nicht auf Eintokigkeit ausgelesen, und der erste Durchlauf ist
+/// 📌 **Nicht auf Eintokigkeit ausgelesen, und der erste Durchlauf ist
 /// genau daran gescheitert.** Verglichen wurde das erste Token mit dem
 /// ganzen Namen, und `Ul`, `Bon`, `T`, `Eisen`, `Sal` galten als
 /// Fehlschlaege, obwohl sie die richtigen Anfaenge von Ulm, Bonn,
@@ -113,7 +113,7 @@ fn main() {
         println!("\n✓ Beste Form: „{form}“ mit {best} von 6.");
         println!("  Korpus und Proben werden auf genau diese Form gesetzt.");
     } else {
-        println!("\n⛑ Keine Form erreicht 4 von 6. Beste ist „{form}“ mit {best}.");
+        println!("\n⚠️ Keine Form erreicht 4 von 6. Beste ist „{form}“ mit {best}.");
         std::process::exit(1);
     }
 }

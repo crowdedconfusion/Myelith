@@ -1,6 +1,6 @@
 //! Die Werkzeugansage gegen die Vorlage des Modells.
 //!
-//! # ⛑ Warum es diese Pruefsammlung gibt
+//! # 📌 Warum es diese Pruefsammlung gibt
 //!
 //! Bis zum 2026-09-08 war die Ansage eine **deutsche Paraphrase** der
 //! Vorlage, auf die Qwen3 geschliffen wurde, und niemand hatte die
@@ -44,7 +44,7 @@ fn eines() -> Vec<Werkzeug> {
 
 /// Wie das eine Werkzeug aus [`eines`] in der Ansage aussehen muss.
 ///
-/// ⛑ **Von Hand geschrieben und nicht erzeugt.** Wuerde diese Zeile aus
+/// 📌 **Von Hand geschrieben und nicht erzeugt.** Wuerde diese Zeile aus
 /// derselben Struktur gebaut wie die Ansage, verglichen beide Seiten
 /// dasselbe und die Pruefung waere leer. So steht hier die Reihenfolge,
 /// die Qwens Schliff vorsieht: `type` zuerst, `name` vor `description`.
@@ -55,7 +55,7 @@ const WERKZEUG_JSON: &str = concat!(
 
 /// Wo die Werkzeugliste anfaengt und wo sie aufhoert.
 ///
-/// ⛑ **Nicht das erste `<tools>`.** Der erste Entwurf nahm
+/// 📌 **Nicht das erste `<tools>`.** Der erste Entwurf nahm
 /// `find("<tools>")` und traf damit die Marke **im Fliesstext** der
 /// Ansage („within <tools></tools> XML tags"), nicht die Klammer
 /// darunter. Drei Pruefungen fielen daraufhin, und sie hatten recht: Der
@@ -79,7 +79,7 @@ fn die_amtliche_ansage_ist_zeichengleich_zur_vorlage() {
     );
 }
 
-/// ⛑ **Die Schluesselordnung eigens, damit der Grund im Protokoll
+/// 📌 **Die Schluesselordnung eigens, damit der Grund im Protokoll
 /// steht.** `serde_json::Map` ist ohne `preserve_order` ein `BTreeMap`
 /// und gibt alphabetisch heraus; das Modell saehe `description` vor
 /// `name` und `type` am Schluss. Faellt diese Pruefung, ist jemand von
@@ -105,7 +105,7 @@ fn die_werkzeuge_stehen_zwischen_den_marken() {
     assert!(mitte.starts_with('\n'), "der Umbruch gehoert VOR das Werkzeug: {mitte:?}");
 }
 
-/// ⛑ **Ohne Werkzeuge duerfen die Marken nicht verrutschen.** Der
+/// 📌 **Ohne Werkzeuge duerfen die Marken nicht verrutschen.** Der
 /// Umbruch steht vor jedem Werkzeug; bei null Werkzeugen darf trotzdem
 /// genau einer zwischen den Marken stehen und keiner mehr.
 #[test]
@@ -144,7 +144,7 @@ fn die_deutsche_fassung_ist_eine_andere() {
     }
 }
 
-/// ⛑ **Und die abgelegte Fassung gegen die echte Vorlage.** Ohne diese
+/// 📌 **Und die abgelegte Fassung gegen die echte Vorlage.** Ohne diese
 /// Pruefung bliebe die Kopie stehen, wenn das Modell seine Vorlage
 /// aendert, und alle anderen Pruefungen waeren weiter gruen.
 ///

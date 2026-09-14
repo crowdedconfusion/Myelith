@@ -61,8 +61,9 @@ pub mod schleife;
 pub mod vollmacht_grenzen;
 pub mod strom;
 pub mod werkzeug;
+pub mod verdichtung;
 
-pub use tuerklient::{Antwort, Modellweg, Nachricht, Tuerfehler, Tuerklient};
+pub use tuerklient::{Antwort, Kontextstand, Modellweg, Nachricht, Tuerfehler, Tuerklient};
 pub use werkzeug::{Erlaubnis, Vorschlag, Werkzeug};
 
 /// Die Kisten, die dieses Harness **nicht** kennen darf.

@@ -109,7 +109,7 @@ Gradienten-Segmente brauchen dieselbe Bisektions-/Redundanzlogik),
 TOKENOMICS (Trainingsvergütungs-Obergrenze) sowie ein **ganzzahliger
 Rückwärtspass** in INTEGER_LLM.
 
-⛑ **Hier stand bis zum 2026-09-09, der Rückwärtspass sei „dort noch
+📌 **Hier stand bis zum 2026-09-09, der Rückwärtspass sei „dort noch
 nicht implementiert" und INTEGER_LLM behandle „bislang ausschliesslich
 Inferenz".** Beides ist überholt. Der Rückwärtspass rechnet geshardet
 und bitgleich, und am 2026-09-09 ist der erste inhaltliche Nachweis
@@ -155,7 +155,7 @@ Dinge nicht ab: wer einen Gradienten bekommt, wer darüber entscheidet,
 wie ein Gemisch wächst und wo sein absorbierender Zustand sitzt. Neu:
 [`Konzept-Gemischtraining.md`](Konzept-Gemischtraining.md).
 
-⛑ **Und der erste Durchgang dieses Dokuments war zu drei Vierteln
+📌 **Und der erste Durchgang dieses Dokuments war zu drei Vierteln
 überflüssig.** Er entwarf eine Routerschranke, einen ganzzahligen
 Ausgleichsterm und einen Operator für Expertenwachstum. **Alle drei
 stehen seit dem 2026-08-28 in `kernels`** (`router_spreizung`,
@@ -183,7 +183,7 @@ im Artefakt, die Schrittgrösse liefert der ganzzahlige Rückwärtspfad.
 
 ### v0.3.2 – 2026-09-10 (der Wegweiser zeigte auf etwas, das kein Klon hat)
 
-⛑ **Fund 275:** Drei Zeilen der Wegweisertabelle zeigten auf ein
+📌 **Fund 275:** Drei Zeilen der Wegweisertabelle zeigten auf ein
 Papier, das kein Klon dieses Repositoriums mitbekommt, und ein Wegweiser
 ins Leere ist schlechter als keiner. Die
 Tabelle zeigt jetzt nur noch dorthin, wo das Werkzeug liegt und wo die
@@ -198,7 +198,7 @@ Abweichung, die keine war.
 
 ### v0.3.1 – 2026-09-09 (zwei überholte Sätze, und ein Wegweiser)
 
-⛑ **Diese Datei behauptete, INTEGER_LLM behandle „bislang
+📌 **Diese Datei behauptete, INTEGER_LLM behandle „bislang
 ausschliesslich Inferenz" und der ganzzahlige Rückwärtspass sei dort
 „noch nicht implementiert".** Beides war zum Zeitpunkt des Schreibens
 richtig und ist es seit Monaten nicht mehr. Ein Abhängigkeitseintrag,

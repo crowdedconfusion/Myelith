@@ -15,7 +15,7 @@
 //! noch nicht wirkt, sagt in [`Regler::sperrgrund`] **warum**, und zwar
 //! mit dem, was dafuer geschrieben werden muss.
 //!
-//! # ⛑ Was ein Scan nicht darf
+//! # 📌 Was ein Scan nicht darf
 //!
 //! **Raten.** Jede Groesse, die sich auf dieser Maschine nicht
 //! ermitteln laesst, ist `None` und wird als „nicht erkannt" angezeigt.
@@ -174,7 +174,7 @@ fn speicher_der_maschine() -> Option<u64> {
 fn platte_unter(pfad: &Path) -> Option<Platte> {
     use std::os::unix::ffi::OsStrExt;
 
-    // ⛑ **Das Verzeichnis muss es geben.** `statvfs` auf einen Pfad,
+    // 📌 **Das Verzeichnis muss es geben.** `statvfs` auf einen Pfad,
     // den niemand angelegt hat, meldet einen Fehler, und das saehe aus
     // wie „kein Datentraeger" statt „noch kein Ordner".
     let ort = erster_vorhandener(pfad)?;
@@ -338,7 +338,7 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
     let Ok(d) = serde_json::from_str::<serde_json::Value>(&roh) else {
         return Vec::new();
     };
-    // ⛑ **Ein einzelnes Ergebnis ist kein Feld.** `ConvertTo-Json`
+    // 📌 **Ein einzelnes Ergebnis ist kein Feld.** `ConvertTo-Json`
     // gibt bei genau einer Karte ein Objekt zurueck und erst ab zwei
     // ein Feld. Wer nur das Feld liest, findet auf jedem Rechner mit
     // einer Grafikkarte nichts.
@@ -356,7 +356,7 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
                 .unwrap_or(&name)
                 .to_string();
             Some(Rechenwerk {
-                // ⛑ `AdapterRAM` ist ein `uint32` und laeuft ab 4 GiB
+                // 📌 `AdapterRAM` ist ein `uint32` und laeuft ab 4 GiB
                 // ueber; ein negativer oder abgeschnittener Wert ist
                 // deshalb **kein** Wert und nicht etwa eine kleine Karte.
                 speicher_bytes: g
@@ -442,7 +442,7 @@ Regler ohne weiteres Zutun.";
 
 /// Derselbe Satz auf Englisch.
 ///
-/// ⛑ **Er stand bis zum 2026-09-10 nur auf Deutsch da**, und damit trug
+/// 📌 **Er stand bis zum 2026-09-10 nur auf Deutsch da**, und damit trug
 /// ein englisches Fenster an seiner laengsten Erklaerung einen deutschen
 /// Absatz. **Uebersetzt wird, was ein Mensch liest**, und das gilt
 /// besonders fuer den Satz, der erklaert, warum etwas nicht geht.
@@ -478,7 +478,7 @@ impl Hardware {
             _ => None,
         };
 
-        // ⛑ **In der eingestellten Sprache, seit dem 2026-09-10.** Die
+        // 📌 **In der eingestellten Sprache, seit dem 2026-09-10.** Die
         // Beschriftungen kamen roh aus `FELDER`, also immer auf Deutsch,
         // und ein englisches Fenster trug in der Freigabemaske deutsche
         // Saetze. **Uebersetzt wird an einer Stelle, und diese hier

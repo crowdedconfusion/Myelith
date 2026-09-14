@@ -92,7 +92,7 @@ def _wikitext_calibration_texts(n_sequences):
     Begrenzung auf CALIB_WIKITEXT_SEQ_LEN Tokens geschieht beim
     Tokenisieren (truncation).
     """
-    # ⛑ **Fund 339 (2026-09-11): der Pfad ist beim Umzug nicht mitgewandert.**
+    # 📌 **Fund 339 (2026-09-11): der Pfad ist beim Umzug nicht mitgewandert.**
     #
     # Hier stand `INTEGER_LLM/eval/datasets/`. Das Verzeichnis ist am
     # 2026-09-07 nach `BENCHMARKS/Inferenz/` gezogen, und diese Zeile

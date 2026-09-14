@@ -780,7 +780,7 @@ mod tests {
     /// verfällt.** Das sieht nach Verlust aus und ist die einzig
     /// richtige Wahl.
     ///
-    /// ⛑ Der erste Entwurf des Tests darüber erwartete, dass die ganze
+    /// 📌 Der erste Entwurf des Tests darüber erwartete, dass die ganze
     /// Pod-vTFE auf die **besetzten** Positionen fällt. Das wäre falsch:
     /// Die Besetzten bekämen dann Geld für Layer, die sie **nicht
     /// gerechnet haben**. Ein Pod, dem eine Position fehlt, hat weniger

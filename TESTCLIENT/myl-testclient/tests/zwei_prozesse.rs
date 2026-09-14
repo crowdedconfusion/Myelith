@@ -133,7 +133,7 @@ fn rumpf_von(antwort: &[u8]) -> &[u8] {
 
 /// ⚑ **Ein Harness, ein Knoten, ein eigener Shard-Prozess.**
 ///
-/// ⛑ **Die Gegenprobe steckt im Aufbau.** Nimmt man `--knoten` einen
+/// 📌 **Die Gegenprobe steckt im Aufbau.** Nimmt man `--knoten` einen
 /// falschen Endpunkt, weist der Shard die Ankündigung ab, `rechne`
 /// bricht vor dem Versiegeln ab, und die Tür antwortet mit 502. Genau
 /// dieser Fall steht als zweiter Test darunter.

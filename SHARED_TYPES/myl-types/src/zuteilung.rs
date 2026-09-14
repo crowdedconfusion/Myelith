@@ -202,7 +202,7 @@ pub fn zuteilen(
                 bekommen: gewaehlt.len() as u32,
             });
         }
-        // ⛑ **Aufsteigend, und der Grund ist nicht der, der hier zuerst
+        // 📌 **Aufsteigend, und der Grund ist nicht der, der hier zuerst
         // stand.** „Damit zwei Rechner dieselbe Liste ausgeben" war
         // falsch: Das tun sie ohnehin, denn `reihenfolge` kommt aus
         // einer `BTreeMap` und der Shuffle ist deterministisch. Eine
@@ -354,7 +354,7 @@ mod tests {
     /// Gegenstände, genug Platz für beide bei jedem, und die
     /// Haltermengen dürfen nicht gleich sein.
     ///
-    /// ⛑ **Hier stand zuerst ein Test auf die Ableitungsfunktion
+    /// 📌 **Hier stand zuerst ein Test auf die Ableitungsfunktion
     /// selbst.** Der blieb grün, als der Aufruf versuchsweise durch den
     /// blanken Seed ersetzt wurde: Er prüfte, dass das Werkzeug
     /// funktioniert, nicht dass es benutzt wird. Dasselbe Muster wie bei
@@ -393,7 +393,7 @@ mod tests {
     /// Die Halterliste ist aufsteigend, unabhängig davon, in welcher
     /// Reihenfolge die Auswahl sie gefunden hat.
     ///
-    /// ⛑ Ohne diesen Test fiel die Sortierung durch **keine** einzige
+    /// 📌 Ohne diesen Test fiel die Sortierung durch **keine** einzige
     /// Gegenprobe, und ihr Kommentar behauptete einen Grund, den sie
     /// nicht hatte.
     #[test]

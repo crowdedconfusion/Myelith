@@ -67,7 +67,7 @@ fn koordinator(dir: &std::path::Path) -> (Coordinator, Vec<u32>) {
 
 /// ⚑ **Eine abgeschlossene Sitzung hinterlässt nichts.**
 ///
-/// ⛑ **Die Gegenprobe steht im selben Test.** Ohne den Abschluss wächst
+/// 📌 **Die Gegenprobe steht im selben Test.** Ohne den Abschluss wächst
 /// die Zahl mit jeder Anfrage; das ist der Zustand, den Fund 164
 /// beschreibt, und er ist hier nachgestellt, damit die Zusicherung
 /// darüber etwas heisst.
@@ -105,7 +105,7 @@ fn eine_abgeschlossene_sitzung_hinterlaesst_nichts() {
 
 /// ⚑ **Und der Weg, den eine echte Anfrage geht, räumt auch.**
 ///
-/// ⛑ **Die Gegenprobe hat den ersten Entwurf verworfen.** Der Test
+/// 📌 **Die Gegenprobe hat den ersten Entwurf verworfen.** Der Test
 /// darüber ruft `sitzung_abschliessen` selbst; den Aufruf in
 /// `Pipelinewerk::rechne` zu streichen liess ihn **grün**. Eine
 /// Zusicherung über einen Aufruf muss über den Weg gehen, der ihn tut,

@@ -89,7 +89,7 @@ impl Werkzeugausfuehrung for Nachfragend {
             // ⚑ **Die Absage geht an das Modell zurueck**, als
             // Ergebnis dieses Werkzeugs. Ein stiller Fehlschlag liesse
             // es dieselbe Handlung gleich noch einmal vorschlagen.
-            // ⛑ **Der Satz ist fuer ein kleines Modell geschrieben.**
+            // 📌 **Der Satz ist fuer ein kleines Modell geschrieben.**
             // „Vom Nutzer abgelehnt" allein liess das 4B-Modell im
             // Probelauf raten, die Datei sei nicht da oder der Zugriff
             // gestoert. **Eine Absage, die wie ein Fehler klingt, wird
@@ -135,7 +135,7 @@ pub fn ruesten_mit(
         None => None,
         Some(pfad) => {
             let ein = Einhaengung::neu(pfad, agent.schreiben)?;
-            // ⛑ **Hier stand ein Zeichenkettenvergleich auf den drei
+            // 📌 **Hier stand ein Zeichenkettenvergleich auf den drei
             // Namen**, und das ging genau so lange gut, wie die Namen
             // fest waren. Seit sie an der Ansageform haengen, kaeme eine
             // Umbenennung an einer Stelle hier als „unbekanntes
@@ -175,7 +175,7 @@ pub fn ruesten_mit(
     // laesst. Der Ausweg ist nicht, die Schranke zu umgehen, sondern
     // das Werkzeug ordentlich anzumelden.
     //
-    // ⛑ **Hier stand bis zum 2026-09-08 `Deterministisch` fuer die
+    // 📌 **Hier stand bis zum 2026-09-08 `Deterministisch` fuer die
     // Uhr**, mit der Begruendung, sie rechne zwar nicht, tue es aber
     // ohne Netz und ohne Dritte. Die Begruendung verwechselt zwei
     // Dinge. `Herkunft::Lokal` sagt „ohne Dritte";

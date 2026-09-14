@@ -5,7 +5,7 @@
 //! numerisch von der Referenz abweicht, und das ist die Kerneigenschaft des
 //! Projekts.
 //!
-//! ## ⛑ Drei Berichtigungen an dieser Datei (2026-08-30)
+//! ## 📌 Drei Berichtigungen an dieser Datei (2026-08-30)
 //!
 //! **Der Kopf war falsch.** Hier stand, auf ARM64 werde "der Fallback-Pfad
 //! (der identisch zur Referenz ist)" geprueft. Das trifft nicht zu:
@@ -43,7 +43,7 @@ use integer_llm_kernels::backends::simd::SimdBackend;
 
 /// Das SIMD-Backend, oder ein **lauter** Uebersprung.
 ///
-/// ⛑ Hier stand sechsmal `None => return` mit einem Kommentar daneben.
+/// 📌 Hier stand sechsmal `None => return` mit einem Kommentar daneben.
 /// Auf einer x86_64-Maschine ohne AVX2 lief diese Datei damit vollstaendig
 /// durch, ohne eine einzige Zusicherung zu pruefen, und meldete sechs
 /// bestandene Tests. **Ein stiller Uebersprung sieht aus wie ein

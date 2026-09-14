@@ -6,7 +6,12 @@
 #
 # backend = Cargo-Feature des zu zertifizierenden Backends:
 #           "reference" (default, goldener Standard), "cpu-simd",
-#           "cuda", "rocm".
+#           "metal", "cuda", "rocm".
+#
+# "metal" rechnet die gebuendelten Matrizen der Vorbereitung auf der GPU
+# und alles andere ueber cpu-simd. Der Lauf erzwingt die GPU fuer jede
+# Buendelung (MYL_METAL_AB=1) und wird abgelehnt, wenn sie dabei nicht
+# gerechnet hat: Sonst bestaende die CPU unter dem Namen der GPU.
 #
 # Nicht jedes davon laeuft ueberall. Der Pruefstand lehnt ein Backend ab
 # (Exit 2), das auf DIESER Uebersetzung keinen eigenen Rechenpfad hat:
@@ -36,6 +41,10 @@ ARTIFACT_DIR="${PROJECT_ROOT}/artifacts/myelith-0.6b"
 TOTAL=0
 PASSED=0
 FAILED=0
+
+if [ "${BACKEND}" = "metal" ]; then
+    export MYL_METAL_AB=1
+fi
 
 echo "=== Konformitäts-Prüflauf ==="
 echo "Backend: ${BACKEND}"
@@ -165,6 +174,19 @@ if [ -d "${ARTIFACT_DIR}" ]; then
                 ;;
         esac
     done <<< "$OUTPUT"
+
+    # ⚑ Metal: Hat die GPU gerechnet? Die E2E-Vektoren mit mehr als einem
+    # Prompt-Token laufen durch die gebuendelte Vorbereitung, und dort
+    # muss die GPU mindestens einmal gerechnet haben.
+    if [ "${BACKEND}" = "metal" ]; then
+        GPU=$(printf '%s\n' "$OUTPUT" | sed -n 's/^metal_buendel_auf_der_gpu \([0-9][0-9]*\)$/\1/p')
+        echo "  Metal: ${GPU:-keine Angabe} Buendelungen auf der GPU"
+        if [ -z "${GPU}" ] || [ "${GPU}" -eq 0 ]; then
+            echo ""
+            echo "=== Prueflauf abgelehnt: die GPU hat nicht gerechnet ==="
+            exit 2
+        fi
+    fi
 else
     echo "  SKIP: Artefakte nicht vorhanden (${ARTIFACT_DIR})"
     echo "  Layer/E2E-Vektoren benötigen kalibrierte Modell-Artefakte."

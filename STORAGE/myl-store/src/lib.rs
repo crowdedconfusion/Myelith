@@ -35,7 +35,7 @@
 //! Wurzel**, und die steht im Manifest; hielte er die Daten, wäre der
 //! ganze Nachweis sinnlos.
 //!
-//! ⛑ **Hier stand bis zum 2026-08-30 „geantwortet mit Blatt und
+//! 📌 **Hier stand bis zum 2026-08-30 „geantwortet mit Blatt und
 //! Merkle-Pfad", und das war zu wenig** (Fund 106). Die Blätter dieses
 //! Baums **sind** die Teil-Hashes. Wer nur sie hält, baut jeden Pfad und
 //! beantwortet jede Stichprobe fehlerfrei, ohne ein Byte Nutzdaten: bei

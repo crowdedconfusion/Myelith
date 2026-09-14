@@ -1,11 +1,12 @@
 //! Der Ablauf: Vorspann, Modell, dann Auftrag um Auftrag.
 //!
-//! # ⚑ Ein Zustand, vier Befehle, sonst nichts
+//! # ⚑ Ein Zustand, sieben Befehle, sonst nichts
 //!
 //! Was ein Mensch hier tun kann, ist absichtlich klein: einen Auftrag
-//! geben, das Modell wechseln, die Einstellungen oeffnen, gehen. **Ein
-//! Konsolenprogramm mit zwanzig Befehlen ist ein Programm, dessen
-//! Hilfeseite man liest, statt es zu benutzen.**
+//! geben, das Modell wechseln, die Einstellungen oeffnen, gehen, und seit
+//! dem 2026-09-14 den Kontext des Gespraechs ansehen, verdichten oder neu
+//! beginnen. **Ein Konsolenprogramm mit zwanzig Befehlen ist ein
+//! Programm, dessen Hilfeseite man liest, statt es zu benutzen.**
 
 use std::io::{IsTerminal, Write};
 
@@ -61,6 +62,16 @@ struct Stand {
     /// sondern **beides zusammen** als eine Frage. Wo kein Rand ist,
     /// wird auch keiner gezeichnet.
     schirm: Option<Schirm>,
+    /// **Das Gespraech, das ueber Auftraege mitgeht** (Entscheidung C2,
+    /// beantwortet am 2026-09-14). `/clear` beginnt ein neues, `/compress`
+    /// fasst es zusammen.
+    gespraech: myl_client::gespraech::Gespraech,
+    /// Die Werkzeugansage des letzten Laufs, damit `/context` sie nicht neu
+    /// bauen muss.
+    ansage: Option<myl_client::Nachricht>,
+    /// Belegter Kontext nach dem letzten Auftrag, in Prozent, fuer die
+    /// Fusszeile.
+    kontext_prozent: Option<usize>,
 }
 
 pub fn fahren() -> i32 {
@@ -97,6 +108,9 @@ pub fn fahren() -> i32 {
             .map(|e| e.agent.modus)
             .unwrap_or_default(),
         schirm: None,
+        gespraech: myl_client::gespraech::Gespraech::neu(),
+        ansage: None,
+        kontext_prozent: None,
     };
 
     // ⚑ **Erst das Bild, dann das Modell** (Festlegung des
@@ -206,7 +220,7 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
             // mindestens braucht, und woher er kommt; unter dem
             // gesperrten, warum er nicht geht.
             //
-            // ⛑ **Die Hardwareangabe zuerst** (Festlegung des
+            // 📌 **Die Hardwareangabe zuerst** (Festlegung des
             // Projektinhabers, 2026-09-11): Wer waehlt, entscheidet in
             // diesem Moment, ob seine Maschine das Modell traegt. Der
             // Pfad ist danach interessant, nicht davor.
@@ -320,7 +334,7 @@ fn eingaberahmen(stand: &Stand) {
             "{}{}{}",
             sch.zeile(Schirm::KASTEN + 3),
             r.einzug,
-            fusszeile(stand.modus.name(), &stand.name, &stand.kiste, stand.schreibt, r.innen)
+            fusszeile(stand.modus.name(), &stand.name, &stand.kiste, stand.schreibt, stand.kontext_prozent, r.innen)
         )),
         ResetColor,
         // ⚑ **Der Arbeitsordner in der zweiten Zeile darunter**
@@ -361,7 +375,7 @@ fn zeile_zeichnen(sch: &Schirm, r: &Rahmen, t: design::Toene, text: &str) {
         SetForegroundColor(t.kante),
         Print("│"),
         ResetColor,
-        // ⛑ **Fund 347: der Wagen stand eine Zeile unter der Eingabe.**
+        // 📌 **Fund 347: der Wagen stand eine Zeile unter der Eingabe.**
         //
         // `Schirm::zeile` schreibt die ANSI-Sequenz `ESC[{n};1H`, und
         // die zaehlt **ab eins**. `MoveTo` von crossterm zaehlt **ab
@@ -389,7 +403,7 @@ fn zeile_zeichnen(sch: &Schirm, r: &Rahmen, t: design::Toene, text: &str) {
 /// **Was zwischen den beiden Strichen steht**, genau `innen` Zeichen
 /// breit.
 ///
-/// ⛑ **Genau, und das ist der Punkt.** Ein Zeichen zu wenig, und die
+/// 📌 **Genau, und das ist der Punkt.** Ein Zeichen zu wenig, und die
 /// rechte Kante der Eingabezeile steht eine Spalte links von der Kante
 /// darueber; ein Zeichen zu viel, und sie bricht um. Gefunden beim
 /// ersten Blick auf den fertigen Rahmen: Das schliessende Leerzeichen
@@ -410,7 +424,7 @@ fn eingabeinhalt(innen: usize, text: &str) -> String {
 ///
 /// ⚑ **Und welche Werkzeugkiste**, denn die entscheidet, was der Agent
 /// ueberhaupt kann, und steht sonst nirgends.
-fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, breite: usize) -> String {
+fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, kontext: Option<usize>, breite: usize) -> String {
     let name = if name.is_empty() { "kein Modell" } else { name };
     // ⚑ **Der Modus ganz links** (Festlegung des Projektinhabers,
     // 2026-09-11), mit dem Zeichen fuer Umschalt-Tab davor: **Wer den
@@ -425,8 +439,13 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, breite: usize
     // ⚑ `nur lesen` steht bei den Werkzeugen, denn es ist eine Angabe
     // **ueber** die Werkzeugkiste.
     let lesen = if schreibt { "" } else { ", nur lesen" };
-    let teile =
-        [format!("⇧⇥ {modus}"), name.to_string(), format!("Werkzeuge: {kiste}{lesen}")];
+    // ⚑ **Der Kontext zuletzt**, und damit als Erstes weggelassen: Er ist
+    // die Angabe, die man mit `/context` ausfuehrlich bekommt.
+    let mut teile =
+        vec![format!("⇧⇥ {modus}"), name.to_string(), format!("Werkzeuge: {kiste}{lesen}")];
+    if let Some(p) = kontext {
+        teile.push(format!("Kontext {p} %"));
+    }
 
     let mut zeile = String::new();
     for teil in teile {
@@ -442,7 +461,7 @@ fn fusszeile(modus: &str, name: &str, kiste: &str, schreibt: bool, breite: usize
 /// **Die zweite Zeile darunter: der Arbeitsordner, und rechts der
 /// Befehl fuer die Hilfe.**
 ///
-/// ⛑ **Der Hinweis stand bis zum 2026-09-11 in der ersten Zeile** und
+/// 📌 **Der Hinweis stand bis zum 2026-09-11 in der ersten Zeile** und
 /// fiel dort weg, sobald `nur lesen` dazukam: Zwei Angaben, die um
 /// denselben Platz streiten, verlieren abwechselnd. **Hier ist Platz**,
 /// denn ein Pfad, der ohnehin gekuerzt wird, braucht nicht die ganze
@@ -498,7 +517,7 @@ fn schleife(stand: &mut Stand) -> i32 {
             }
         };
         let gelesen = eingabe::lesen(&zeichnen);
-        // ⛑ **Die abgeschickte Zeile wird aus dem Kasten geraeumt.**
+        // 📌 **Die abgeschickte Zeile wird aus dem Kasten geraeumt.**
         // Sie blieb dort stehen, waehrend der Agent lief, und es sah
         // aus, als waere nichts abgeschickt worden. Gemeldet vom
         // Projektinhaber am 2026-09-11.
@@ -560,6 +579,21 @@ fn schleife(stand: &mut Stand) -> i32 {
                 einstellungen_zeigen(stand);
                 continue;
             }
+            Some(Befehlsart::Kontext) => {
+                kontext_zeigen(stand);
+                continue;
+            }
+            Some(Befehlsart::Verdichten) => {
+                gespraech_verdichten(stand);
+                continue;
+            }
+            Some(Befehlsart::Neu) => {
+                stand.gespraech.leeren();
+                stand.kontext_prozent = None;
+                println!("  Ein neues Gespraech beginnt; das bisherige ist vergessen.");
+                println!();
+                continue;
+            }
             None => {}
         }
 
@@ -583,6 +617,9 @@ const HILFE_BEFEHL: &str = "/help";
 enum Befehlsart {
     Modell,
     Einstellungen,
+    Kontext,
+    Verdichten,
+    Neu,
     Hilfe,
     Ende,
 }
@@ -597,13 +634,13 @@ struct Befehl {
 
 /// **Die einzige Liste der Befehle.**
 ///
-/// ⛑ **Dieselbe Klasse wie Fund 271.** Bis zum 2026-09-11 stand jeder
+/// 📌 **Dieselbe Klasse wie Fund 271.** Bis zum 2026-09-11 stand jeder
 /// Befehl zweimal da: einmal im `match`, das ihn ausfuehrt, und einmal
 /// in der Hilfe, die ihn nennt. Eine Hilfe, die von Hand gefuehrt wird,
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 4] = [
+const BEFEHLE: [Befehl; 7] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -613,6 +650,21 @@ const BEFEHLE: [Befehl; 4] = [
         art: Befehlsart::Einstellungen,
         namen: &["/settings", "/einstellungen"],
         was: "die Einstellungen zeigen",
+    },
+    Befehl {
+        art: Befehlsart::Kontext,
+        namen: &["/context", "/kontext"],
+        was: "zeigt, wie viel Kontext das Gespraech belegt",
+    },
+    Befehl {
+        art: Befehlsart::Verdichten,
+        namen: &["/compress", "/verdichten"],
+        was: "fasst das bisherige Gespraech zusammen und schafft Platz",
+    },
+    Befehl {
+        art: Befehlsart::Neu,
+        namen: &["/clear", "/neu"],
+        was: "beginnt ein neues Gespraech",
     },
     Befehl {
         art: Befehlsart::Hilfe,
@@ -659,13 +711,15 @@ fn hilfe() {
         "  Im manual mode wird jede schreibende Handlung vorgelegt; Lesen fragt nie."
     );
     println!("  {} zeigt waehrend eines Auftrags, was gerade laeuft.", anzeige::SCHALTER);
-    println!("  Alles andere ist ein Auftrag an den Agenten.");
+    println!("  Alles andere ist ein Auftrag an den Agenten. Das Gespraech geht");
+    println!("  von Auftrag zu Auftrag mit; wird der Kontext voll, verdichtet der");
+    println!("  Agent es selbst.");
     println!();
 }
 
 /// **Die Einstellungsseite, mit den Pfeiltasten bedienbar.**
 ///
-/// ⛑ **Bis zum 2026-09-11 zeigte sie nur an.** Die Begruendung war, ein
+/// 📌 **Bis zum 2026-09-11 zeigte sie nur an.** Die Begruendung war, ein
 /// zweiter Setzer waere die dritte Stelle, die dieselben Feinheiten
 /// kennt. **Sie galt dem Setzer und nicht der Bedienung:** Gesetzt wird
 /// weiterhin ausschliesslich mit `Einstellungen::setzen`, und was `aus`
@@ -707,8 +761,90 @@ fn einstellungen_zeigen(stand: &mut Stand) {
     }
 }
 
+/// **Die Werkzeugansage, wie der naechste Lauf sie haette.**
+///
+/// ⚑ Nach einem Lauf steht sie schon im Stand; davor wird sie aus den
+/// Einstellungen gebaut, auf demselben Weg wie in `auftrag_fahren`.
+fn ansage_fuer(stand: &Stand) -> Option<myl_client::Nachricht> {
+    if let Some(a) = &stand.ansage {
+        return Some(a.clone());
+    }
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok()?;
+    let mut agent = e.agent.clone();
+    agent.wurzel = Some(stand.ordner.display().to_string());
+    let (kiste, _) = e.agent.werkzeuge.aufloesen(Path::new(&stand.artefakt));
+    let r = myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, Vec::new(), None).ok()?;
+    Some(myl_client::gespraech::ansage(&r))
+}
+
+/// **`/context`: der Balken und woraus er besteht.**
+fn kontext_zeigen(stand: &mut Stand) {
+    let Some(modell) = stand.modell.as_ref() else {
+        eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
+        return;
+    };
+    let ansage = ansage_fuer(stand);
+    match myl_client::gespraech::anzeige(modell, ansage.as_ref(), &stand.gespraech) {
+        Some(a) => {
+            stand.kontext_prozent = Some(a.prozent);
+            println!();
+            for z in kontextzeilen(&a, Rahmen::messen().innen) {
+                println!("{z}");
+            }
+            println!();
+        }
+        None => println!("  Dieses Modell sagt nicht, wie viel Kontext es hat."),
+    }
+}
+
+/// Die Zeilen von `/context`, ohne Farbe und damit pruefbar.
+fn kontextzeilen(a: &myl_client::gespraech::Kontextanzeige, breite: usize) -> Vec<String> {
+    let balken = myl_client::gespraech::balken(a.belegt, a.grenze, breite.saturating_sub(24).clamp(10, 40));
+    vec![
+        format!("  Kontext  {balken}  {} %", a.prozent),
+        format!("           {} von {} Token", a.belegt, a.grenze),
+        format!(
+            "           Werkzeugansage {} · Gespraech {} Token in {} Nachrichten",
+            a.ansage,
+            a.belegt.saturating_sub(a.ansage),
+            a.nachrichten
+        ),
+        "           /compress fasst das Gespraech zusammen, /clear beginnt ein neues.".to_string(),
+    ]
+}
+
+/// **`/compress`: das Gespraech zusammenfassen, mit dem Modell selbst.**
+fn gespraech_verdichten(stand: &mut Stand) {
+    let Some(modell) = stand.modell.as_ref() else {
+        eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
+        return;
+    };
+    if stand.gespraech.ist_leer() {
+        println!("  Das Gespraech ist leer; es gibt nichts zu verdichten.");
+        return;
+    }
+    print!("  Das Gespraech wird verdichtet … ");
+    let _ = std::io::stdout().flush();
+    let anfang = std::time::Instant::now();
+    match myl_client::gespraech::verdichten(modell, &mut stand.gespraech) {
+        Ok((vorher, nachher)) => {
+            println!("{:.1} s", anfang.elapsed().as_secs_f64());
+            println!("  Verdichtet: {vorher} → {nachher} Token.");
+            let ansage = ansage_fuer(stand);
+            stand.kontext_prozent =
+                stand.modell.as_ref().and_then(|m| myl_client::gespraech::anzeige(m, ansage.as_ref(), &stand.gespraech)).map(|a| a.prozent);
+        }
+        Err(f) => {
+            println!();
+            eprintln!("  Das Gespraech liess sich nicht verdichten: {f}");
+        }
+    }
+    println!();
+}
+
 /// Ein Auftrag, von der Eingabe bis zur Antwort.
 fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
+    let verlauf = stand.gespraech.nachrichten().to_vec();
     let Some(modell) = stand.modell.as_mut() else {
         eprintln!("Es ist kein Modell geladen. `/model` waehlt eines.");
         return;
@@ -742,7 +878,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // Klammer; die Werkzeugaufrufe holt sich, wer sie sehen will, mit
     // dem Schalter.
     //
-    // ⛑ **Die laufende Zeile gibt es nur vor einem Terminal.** Der
+    // 📌 **Die laufende Zeile gibt es nur vor einem Terminal.** Der
     // erste Entwurf schrieb sie immer und loeschte sie mit `\r` und
     // Leerzeichen. In einer Roehre gibt es keinen Wagenruecklauf: Die
     // Leerzeichen stehen dann einfach da. **Was den Bildschirm
@@ -818,9 +954,10 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
             );
         }
         myl_client::Meldung::Abgelehnt { name, grund } => anzeige.abgelehnt(name, grund),
+        myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
     };
 
-    let aus = myl_client::lauf::fahren_beobachtet(
+    let aus = myl_client::lauf::fahren_im_gespraech(
         modell,
         &ruestung,
         e.agent.schritte as usize,
@@ -829,11 +966,12 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         // Dateiwerkzeuge in der Ansage standen und nicht liefen.
         true,
         e.modell.token as u32,
+        &verlauf,
         auftrag,
         Some(&melder),
     );
 
-    // ⛑ **Der Zuschauer geht wieder weg.** Er haelt Zaehler dieses
+    // 📌 **Der Zuschauer geht wieder weg.** Er haelt Zaehler dieses
     // Laufs; bliebe er stehen, schriebe der naechste Lauf in die Lage
     // des vorigen. Dieselbe Stelle wie im Fenster.
     if let Some(m) = stand.modell.as_mut() {
@@ -855,11 +993,24 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     if wieviele > 0 && !gesehen {
         println!("  {} zeigt die Werkzeugzeilen ausfuehrlich.", anzeige::SCHALTER);
     }
+    // ⚑ **Das Gespraech geht mit**, samt einer Verdichtung, falls der Lauf
+    // eine brauchte.
+    stand.gespraech.nach_dem_lauf(&aus.nachrichten);
+    stand.ansage = aus.nachrichten.first().filter(|n| n.role == "system").cloned();
+    let kontext = stand
+        .modell
+        .as_ref()
+        .and_then(|m| myl_client::gespraech::anzeige(m, stand.ansage.as_ref(), &stand.gespraech));
+    stand.kontext_prozent = kontext.map(|a| a.prozent);
+    let kontextangabe = kontext.map(|a| format!(" · Kontext {} %", a.prozent)).unwrap_or_default();
     println!(
-        "  {} Schritte, {:.1} s",
+        "  {} Schritte, {:.1} s{kontextangabe}",
         aus.verlauf.len(),
         aus.sekunden
     );
+    if matches!(aus.ende, myl_client::Ende::Tuer(myl_client::Tuerfehler::KontextVoll { .. })) {
+        println!("  Der Kontext ist voll. `/compress` fasst das Gespraech zusammen, `/clear` beginnt neu.");
+    }
     println!();
 }
 
@@ -900,7 +1051,7 @@ mod tests {
 
     /// **Alle drei Kanten sind gleich breit und gleich weit eingerueckt.**
     ///
-    /// ⛑ Der Gegenbeweis: Wer `unten()` aus einer zweiten Rechnung holt
+    /// 📌 Der Gegenbeweis: Wer `unten()` aus einer zweiten Rechnung holt
     /// statt aus derselben Messung, sieht hier sofort einen Unterschied.
     #[test]
     fn der_rahmen_ist_an_allen_kanten_gleich() {
@@ -919,7 +1070,7 @@ mod tests {
 
     /// **Die Eingabezeile ist genau so breit wie die Kanten.**
     ///
-    /// ⛑ Die Gegenprobe zu einem Fehler, der beim Lesen unsichtbar ist
+    /// 📌 Die Gegenprobe zu einem Fehler, der beim Lesen unsichtbar ist
     /// und beim Hinsehen sofort auffaellt: Fehlte das schliessende
     /// Leerzeichen, stand die rechte Kante der Eingabezeile eine Spalte
     /// links von der Kante darueber.
@@ -965,7 +1116,7 @@ mod tests {
     /// abgeschnittener Pfad beantwortet das schlechter als ein Name.
     #[test]
     fn die_fusszeile_nennt_modell_und_kiste() {
-        let z = fusszeile("auto mode", "myelith-4b", "Base", true, crate::schirm::BLOCKBREITE - 2);
+        let z = fusszeile("auto mode", "myelith-4b", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("auto mode"), "der Modus fehlt: {z}");
         assert!(z.contains("myelith-4b"), "das Modell fehlt: {z}");
         assert!(z.contains("Base"), "die Werkzeugkiste fehlt: {z}");
@@ -978,7 +1129,7 @@ mod tests {
     /// **Der Hinweis auf die Hilfe steht in der zweiten Zeile und
     /// bleibt dort.**
     ///
-    /// ⛑ In der ersten fiel er weg, sobald `nur lesen` dazukam.
+    /// 📌 In der ersten fiel er weg, sobald `nur lesen` dazukam.
     #[test]
     fn der_hinweis_steht_neben_dem_ordner() {
         let z = ordnerzeile("~/Code/Myelith", crate::schirm::BLOCKBREITE - 2);
@@ -996,29 +1147,29 @@ mod tests {
 
     /// **Ohne Schreiberlaubnis sagt die Fusszeile es.**
     ///
-    /// ⛑ **Dieselbe Klasse wie Fund 315.** Ohne `agent.schreiben`
+    /// 📌 **Dieselbe Klasse wie Fund 315.** Ohne `agent.schreiben`
     /// bekommt der Agent `write_file` gar nicht erst und antwortet
     /// „ich kann keine Dateien speichern"; **wer das nicht weiss, sucht
     /// den Fehler beim Modell.** Gemeldet vom Projektinhaber am
     /// 2026-09-11.
     #[test]
     fn ohne_schreiberlaubnis_steht_es_in_der_fusszeile() {
-        let mit = fusszeile("auto mode", "Myelith 4B", "Base", true, crate::schirm::BLOCKBREITE - 2);
-        let ohne = fusszeile("auto mode", "Myelith 4B", "Base", false, crate::schirm::BLOCKBREITE - 2);
+        let mit = fusszeile("auto mode", "Myelith 4B", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
+        let ohne = fusszeile("auto mode", "Myelith 4B", "Base", false, None, crate::schirm::BLOCKBREITE - 2);
         assert!(!mit.contains("nur lesen"), "{mit}");
         assert!(ohne.contains("nur lesen"), "{ohne}");
     }
 
     /// **Und sie bleibt im Rahmen, auch wenn der Name lang ist.**
     ///
-    /// ⛑ Eine Fusszeile, die breiter ist als der Rahmen darueber, bricht
+    /// 📌 Eine Fusszeile, die breiter ist als der Rahmen darueber, bricht
     /// um und schiebt die naechste Ausgabe eine Zeile tiefer: Dann zeigt
     /// `MoveUp(3)` nicht mehr in den Rahmen, sondern auf seine Kante.
     #[test]
     fn eine_lange_fusszeile_passt_in_den_rahmen() {
         let lang = "myelith-30b-a3b-langer-name-aus-einem-versuch";
         for breite in 8..90 {
-            let z = fusszeile("auto mode", lang, "Advanced", true, breite);
+            let z = fusszeile("auto mode", lang, "Advanced", true, Some(100), breite);
             assert!(
                 z.chars().count() <= breite,
                 "bei {breite} Zeichen ist die Fusszeile {} lang: {z}",
@@ -1029,11 +1180,11 @@ mod tests {
 
     /// **Weggelassen wird von rechts, und der Modus bleibt.**
     ///
-    /// ⛑ Ein abgeschnittenes `Werkzeuge: …` sieht aus wie eine Angabe
+    /// 📌 Ein abgeschnittenes `Werkzeuge: …` sieht aus wie eine Angabe
     /// und ist keine. **Was nicht passt, faellt ganz weg.**
     #[test]
     fn im_schmalen_fenster_bleibt_der_modus() {
-        let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, 20);
+        let z = fusszeile("manual mode", "myelith-4b", "Advanced", true, Some(7), 20);
         assert!(z.starts_with("⇧⇥ manual mode"), "{z}");
         assert!(!z.contains('…'), "es wurde abgeschnitten statt weggelassen: {z}");
     }
@@ -1041,13 +1192,42 @@ mod tests {
     /// **Ohne Modell steht das da, und nicht eine leere Stelle.**
     #[test]
     fn ohne_modell_sagt_die_fusszeile_das() {
-        let z = fusszeile("auto mode", "", "Base", true, crate::schirm::BLOCKBREITE - 2);
+        let z = fusszeile("auto mode", "", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
         assert!(z.contains("kein Modell"), "{z}");
+    }
+
+    /// **Der Kontext steht in der Fusszeile, sobald er bekannt ist, und
+    /// faellt als Erstes weg.**
+    #[test]
+    fn der_kontext_steht_zuletzt_in_der_fusszeile() {
+        let breit = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), crate::schirm::BLOCKBREITE - 2);
+        assert!(breit.ends_with("Kontext 31 %"), "{breit}");
+        let ohne = fusszeile("auto mode", "myelith-4b", "Base", true, None, crate::schirm::BLOCKBREITE - 2);
+        assert!(!ohne.contains("Kontext"), "{ohne}");
+        let schmal = fusszeile("auto mode", "myelith-4b", "Base", true, Some(31), ohne.chars().count());
+        assert_eq!(schmal, ohne, "wird es eng, faellt der Kontext vor allem anderen weg");
+    }
+
+    /// **`/context` zeigt Balken, Zahlen und Aufteilung**, und keine Zeile
+    /// ist breiter als der Rahmen.
+    #[test]
+    fn die_kontextanzeige_nennt_balken_und_zahlen() {
+        let a = myl_client::gespraech::Kontextanzeige { belegt: 12_345, grenze: 40_960, ansage: 1_234, nachrichten: 14, prozent: 30 };
+        let zeilen = kontextzeilen(&a, 90);
+        assert!(zeilen[0].contains('█') && zeilen[0].ends_with("30 %"), "{:?}", zeilen[0]);
+        assert!(zeilen[1].contains("12345 von 40960 Token"), "{:?}", zeilen[1]);
+        assert!(zeilen[2].contains("Werkzeugansage 1234") && zeilen[2].contains("Gespraech 11111 Token in 14"), "{:?}", zeilen[2]);
+        for n in ["/compress", "/clear"] {
+            assert!(befehl_zu(n).is_some(), "{n} wird genannt und muss es geben");
+        }
+        for z in &zeilen {
+            assert!(z.chars().count() <= 90, "{z}");
+        }
     }
 
     /// **Jeder Befehl wird behandelt, und jeder steht in der Hilfe.**
     ///
-    /// ⛑ **Dieselbe Klasse wie Fund 271**, und jetzt kann sie nicht
+    /// 📌 **Dieselbe Klasse wie Fund 271**, und jetzt kann sie nicht
     /// mehr eintreten: Ausfuehrung und Hilfe kommen aus **einer**
     /// Liste. Bis zum 2026-09-11 standen sie getrennt da, und eine
     /// Pruefung zaehlte, ob jedes Wort zweimal im Quelltext vorkommt.

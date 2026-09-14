@@ -235,3 +235,60 @@ fn ein_shard_lehnt_fremde_nachrichten_ab_statt_abzustuerzen() {
          hat ein Shard fremde Aktivierungen gerechnet"
     );
 }
+
+/// **Eine Position, die der KV-Speicher nicht fortsetzen kann, wird
+/// abgelehnt, und die Sitzung bleibt benutzbar.**
+///
+/// Zwei Faelle, beide mit sonst gueltigen Nachrichten, damit die Pruefung
+/// wirklich bis zur Position kommt: eine Luecke hinter dem Ende des
+/// Speichers und eine Position an der Kontextgrenze des Modells. Frueher
+/// nahm der Speicher eine Luecke stillschweigend an, und hinter der Grenze
+/// begann die RoPE-Tabelle von vorn (Fund 368); heute braechen beide im
+/// Modell ab, und eine Panik waere im offenen Netz ein Denial-of-Service.
+#[test]
+fn eine_luecke_und_eine_position_hinter_der_grenze_werden_abgelehnt() {
+    let dir = {
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+        let mut p = std::path::PathBuf::from(manifest);
+        p.push("..");
+        p.push("..");
+        p.push("INTEGER_LLM");
+        p.push("artifacts");
+        p.push("myelith-0.6b");
+        p
+    };
+    if !artefakte::vorhanden(&dir) {
+        return;
+    }
+    let model = Arc::new(integer_llm_runtime::loader::load_model(&dir).expect("Modell"));
+    let grenze = model.kontextgrenze();
+    let hidden = model.hidden_size;
+    let sk = myl_types::bls::BlsSecretKey::key_gen(&[23u8; 32]).expect("BLS");
+    let shard = myl_pod::shard::ShardNode::new(1, 6, 7, false, false, model, sk, 8);
+
+    let nachricht = |position: u64| {
+        let payload: Vec<i16> = (0..hidden).map(|i| ((i * 37 + position as usize) % 200) as i16 - 100).collect();
+        PodMessage {
+            magic: wire::MAGIC,
+            segment_id: SegmentId::new([5u8; 32]),
+            session_id: 77,
+            sender_shard: 0,
+            position,
+            flags: 0,
+            trace: vec![myl_pod::trace::activation_hash(&payload)],
+            signature: myl_types::bls::BlsSignature([0u8; 96]),
+            payload,
+        }
+    };
+
+    let luecke = shard.process(&nachricht(3));
+    assert!(luecke.as_ref().is_err_and(|e| e.contains("hinter dem Ende")), "{:?}", luecke.err());
+    let grenze_fall = shard.process(&nachricht(grenze as u64));
+    assert!(grenze_fall.as_ref().is_err_and(|e| e.contains("Kontextgrenze")), "{:?}", grenze_fall.err());
+    for position in 0..3 {
+        assert!(shard.process(&nachricht(position)).is_ok(), "Position {position} setzt die Sitzung fort");
+    }
+    assert_eq!(shard.gehaltene_sitzungen(), 1, "die abgelehnten Nachrichten haben die Sitzung nicht verworfen");
+    assert!(shard.process(&nachricht(5)).is_err(), "nach drei Positionen ist 5 wieder eine Luecke");
+    assert!(shard.process(&nachricht(3)).is_ok());
+}

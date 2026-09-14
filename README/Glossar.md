@@ -236,9 +236,19 @@ dagegen auf allen gängigen Architekturen identisch definiert.
 
 *Im Code:* `INTEGER_LLM/kernels/src/fixed_point.rs` — `rshift_round`,
 `rshift_round_i64`, `rshift_round_i128`. Diese Varianten runden zur
-nächsten Ganzzahl statt abzurunden (das halbe LSB wird addiert), was den
-systematischen Abwärtsdrift über viele Schichten vermeidet; die
-Rundungsregel selbst ist Teil von θ_v und damit für alle gleich.
+nächsten Ganzzahl statt abzurunden, und ein Rest von **genau der Hälfte**
+geht zur **geraden** Nachbarzahl: `5 >> 1` ergibt 2, `7 >> 1` ergibt 4.
+Das vermeidet den systematischen Abwärtsdrift über viele Schichten und
+ebenso den Aufwärtsdrift, den ein stets aufgerundetes halbes LSB
+erzeugte. Die Rundungsregel selbst ist Teil von θ_v und damit für alle
+gleich.
+
+📌 *Hier stand bis zum 2026-09-14 „das halbe LSB wird addiert", also
+Aufrunden bei genau der Hälfte (Fund 352). Der Code rundete in allen
+drei Varianten schon immer zur geraden Zahl, und die englische Fassung
+sagte es richtig. Wer den Rechenpfad nach dieser Zeile nachbaut, rechnet
+bei jedem Rest von genau der Hälfte in der Hälfte der Fälle um eins
+daneben.*
 
 ### Sättigung (Saturation, Clamping)
 
@@ -462,13 +472,13 @@ lautet ≤ 5 % und ist auf jedem eingesetzten Modell erfüllt:
 
 | Modell | Parameter | Abstand |
 |---|---|---|
-| Qwen3-0,6B | 0,6 Mrd. | +4,47 % |
-| Qwen3-4B | 4,0 Mrd. | +1,64 % |
+| Qwen3-0,6B | 0,6 Mrd. | +4,48 % |
+| Qwen3-4B | 4,0 Mrd. | +1,65 % |
 | Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30,5 Mrd. | **kein messbarer Abstand** |
 
 ⚑ **Die Reihe misst eine Achse, und die Achse hat eine Richtung: Je
 kleiner das Modell, desto teurer die Quantisierung.** Von 0,6B bis 4B
-fällt der Abstand von +4,47 % auf +1,64 %, beim Expertengemisch ist er
+fällt der Abstand von +4,48 % auf +1,65 %, beim Expertengemisch ist er
 nicht mehr messbar. Das kleinste Modell liegt als einziges nennenswert
 nahe am Kriterium; wer es wählt, wählt auch das, bei dem die
 Quantisierung am meisten kostet.

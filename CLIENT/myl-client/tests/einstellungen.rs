@@ -2,7 +2,7 @@
 
 use myl_client::einstellungen::{Agenteneinstellung, Einstellungen, Kapazitaet};
 
-// ⛑ **Hier standen fest verdrahtete `/tmp`-Pfade, und auf Windows gibt
+// 📌 **Hier standen fest verdrahtete `/tmp`-Pfade, und auf Windows gibt
 // es kein `/tmp`.** Der Fehlschlag kam am 2026-09-09 aus der CI:
 //
 //     Os { code: 3, kind: NotFound, message: "The system cannot find
@@ -32,7 +32,7 @@ fn ohne_datei_gelten_die_vorgaben() {
     assert_eq!(e, Einstellungen::default());
 }
 
-/// ⛑ **Eine kaputte Datei IST einer.**
+/// 📌 **Eine kaputte Datei IST einer.**
 ///
 /// Sie stillschweigend durch Vorgaben zu ersetzen hiesse, die
 /// Einstellungen des Nutzers ohne ein Wort zu verwerfen. Genau die Sorte
@@ -66,14 +66,14 @@ fn schreiben_und_lesen_ergibt_dasselbe() {
 /// stillschweigend grosszuegig ist, ist eine Falle.
 #[test]
 fn die_vorgaben_sind_die_engen() {
-    // ⛑ **Hier stand `!Agenteneinstellung::default().auch_bezeugtes`.**
+    // 📌 **Hier stand `!Agenteneinstellung::default().auch_bezeugtes`.**
     // Der Schalter ist am 2026-09-11 entfallen (Festlegung des
     // Projektinhabers): Was ein Lauf an Werkzeugen bekommt, sagt die
     // Werkzeugkiste. Die enge Vorgabe steht damit nicht mehr in einer
     // Einstellung, sondern im Aufruf, und ohne `--bezeugtes` bleibt es
     // bei „nur nachrechenbar".
     assert!(!Agenteneinstellung::default().schreiben);
-    // ⛑ **Hier stand `!Kapazitaet::default().beschleuniger`**, ein
+    // 📌 **Hier stand `!Kapazitaet::default().beschleuniger`**, ein
     // einzelner Schalter fuer alle Rechenwerke zugleich. Er ist am
     // 2026-09-10 entfallen: Eine Freigabe ueber null **ist** die
     // Erlaubnis, und ein Rechner mit zwei Karten konnte mit einem
@@ -103,7 +103,7 @@ fn die_datei_endet_mit_einem_umbruch() {
 
 /// ⚑ **Eine Ablage aus der Zeit vor der Umbenennung wandert mit.**
 ///
-/// # ⛑ Warum eine Umbenennung ohne das nicht fertig ist
+/// # 📌 Warum eine Umbenennung ohne das nicht fertig ist
 ///
 /// Die Artefakte heissen seit dem 2026-09-10 nach dem Modell, das sie
 /// sind. Wer nur die Verzeichnisse umbenennt, hat die Arbeit auf jeden
@@ -118,7 +118,7 @@ fn eine_alte_ablage_findet_ihr_artefakt_wieder() {
         ("INTEGER_LLM/artifacts/qwen3-4b", "INTEGER_LLM/artifacts/myelith-4b"),
         ("INTEGER_LLM/artifacts/qwen2.5-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),
         ("/anderswo/qwen3-30b-a3b", "/anderswo/myelith-30b-a3b"),
-        // ⛑ **Die zweite Wanderung (2026-09-11): abgeloeste Modelle.**
+        // 📌 **Die zweite Wanderung (2026-09-11): abgeloeste Modelle.**
         // Wer auf das entfernte 0,5B oder 7B zeigte, landet beim
         // naechstgelegenen der neuen Reihe.
         ("INTEGER_LLM/artifacts/myelith-0.5b", "INTEGER_LLM/artifacts/myelith-0.6b"),

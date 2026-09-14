@@ -49,7 +49,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 "@
 }
 
-# ⛑ **Ohne den MSVC-Linker bricht der Bau erst spaet ab**, mit
+# 📌 **Ohne den MSVC-Linker bricht der Bau erst spaet ab**, mit
 # `link.exe not found`, und das liest sich wie ein Fehler des
 # Projektes. Geprueft wird das Vorhandensein und nicht die Version:
 # Welche Ausgabe jemand installiert hat, geht dieses Skript nichts an.
@@ -90,7 +90,7 @@ if ($NurPruefen) {
 
 # -- Neuen Stand holen -----------------------------------------------
 #
-# ⛑ **`--ff-only`, und das ist die ganze Vorsicht.** Wer im Klon
+# 📌 **`--ff-only`, und das ist die ganze Vorsicht.** Wer im Klon
 # gearbeitet hat, soll seine Arbeit nicht durch ein
 # Installationsskript verlieren.
 if ($Aktualisieren) {
@@ -112,7 +112,7 @@ if ($Aktualisieren) {
 # ausgeliefert werden soll, sagt es in ihrer eigenen `Cargo.toml` unter
 # `[package.metadata.myelith]`.
 #
-# ⛑ **Bis zum 2026-09-10 stand sie hier, von Hand** (Fund 300), und
+# 📌 **Bis zum 2026-09-10 stand sie hier, von Hand** (Fund 300), und
 # dasselbe noch dreimal in den anderen Skripten. Zwei der vier waren am
 # ersten Tag schon uneinig.
 $Programme = Get-ChildItem -Path $Wurzel -Recurse -Filter Cargo.toml -ErrorAction SilentlyContinue |
@@ -162,7 +162,7 @@ $lnk.WorkingDirectory = $Bin
 $lnk.Description = "Myelith"
 $lnk.Save()
 
-# ⛑ **Der PATH wird fuer den Nutzer gesetzt und nicht fuer die
+# 📌 **Der PATH wird fuer den Nutzer gesetzt und nicht fuer die
 # Maschine.** Systemweit brauchte es Administratorrechte fuer etwas,
 # das nur diesen einen Nutzer betrifft.
 $nutzerPfad = [Environment]::GetEnvironmentVariable("PATH", "User")

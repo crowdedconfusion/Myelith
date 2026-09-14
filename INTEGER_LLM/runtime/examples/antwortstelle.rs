@@ -1,6 +1,6 @@
 //! **An welcher Stelle steht die Antwort?**
 //!
-//! # ⛑ Warum es dieses Werkzeug gibt
+//! # 📌 Warum es dieses Werkzeug gibt
 //!
 //! Beim ChatML-Lauf auf Qwen3-4B (Fund 225) begannen die Antworten mit
 //! „Okay, the user is asking where …", also mit einem Denkpraeludium.
@@ -8,7 +8,7 @@
 //! Zeichenfolge; sie konnte sie nicht finden, weil sie noch gar nicht
 //! da war.
 //!
-//! ⛑ **Die naheliegende Antwort war, das Budget auf vierzig zu setzen,
+//! 📌 **Die naheliegende Antwort war, das Budget auf vierzig zu setzen,
 //! und die ist geraten.** Vierzig koennte weiter zu wenig sein, und
 //! dann saehe der naechste Lauf genauso aus wie dieser. Der Einwand
 //! kam vom Projektinhaber und trifft: **Ohne zu wissen, an welcher
@@ -31,7 +31,7 @@
 
 use integer_llm_runtime::{generate::generate, loader::load_model, tokenizer::Tokenizer};
 
-/// ⛑ **Die Gegenprobe, und sie ist der eigentliche Ertrag.** Dieselbe
+/// 📌 **Die Gegenprobe, und sie ist der eigentliche Ertrag.** Dieselbe
 /// Form, aber erfundene Personen, die das Modell nicht kennen KANN.
 /// Wenn das Denkpraeludium hier auftaucht und bei den bekannten
 /// Tatsachen nicht, dann ist es kein Modus, den jemand vergessen hat
@@ -111,7 +111,7 @@ fn main() {
 
     println!("{}", "-".repeat(100));
     if stellen.is_empty() {
-        println!("⛑ KEINE der bekannten Tatsachen kam innerhalb von {hoechstens} Token.");
+        println!("⚠️ KEINE der bekannten Tatsachen kam innerhalb von {hoechstens} Token.");
         println!("   Dann ist nicht das Budget das Problem, sondern die Form der Frage.");
         return;
     }

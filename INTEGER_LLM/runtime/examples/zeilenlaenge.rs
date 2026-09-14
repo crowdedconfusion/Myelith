@@ -7,7 +7,7 @@
 //! als Ganzes**, und bei einem Frage-Antwort-Paar heisst das: Es sieht
 //! die Frage oder die Antwort, aber nicht den Zusammenhang.
 //!
-//! ⛑ Das faellt nirgends auf. Der Lauf laeuft, die Perplexitaet sinkt,
+//! 📌 Das faellt nirgends auf. Der Lauf laeuft, die Perplexitaet sinkt,
 //! und die Tatsache wird nicht gelernt.
 //!
 //! ```text

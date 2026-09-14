@@ -404,7 +404,7 @@ fn bauanleitung_fuer(repo: &Path, modell: &str, windows: bool) -> String {
 /// „Artefakte und Gewichte löschen" seine Gewichte nicht aufgelistet
 /// bekommen und geglaubt, sie seien weg.
 ///
-/// ⛑ **Fund 291, und er ist die Folge der Umbenennung vom 2026-09-10.**
+/// 📌 **Fund 291, und er ist die Folge der Umbenennung vom 2026-09-10.**
 /// Zwischen den beiden Stufen stand eine dritte: ein Vergleich der
 /// vorhandenen Verzeichnisse **ohne Rücksicht auf Groß- und
 /// Kleinschreibung**. Sie trug, solange der Schlüssel `qwen2.5-0.5b`
@@ -2031,7 +2031,7 @@ mod loeschen_tests {
         let g = dir.join("INTEGER_LLM/models/Qwen3-0.6B");
         fs::create_dir_all(&g).unwrap();
 
-        // ⛑ **Ohne Katalog ist die Zuordnung unbekannt, und die
+        // 📌 **Ohne Katalog ist die Zuordnung unbekannt, und die
         // Funktion sagt das, statt zu raten.** Bis zum 2026-09-10 fand
         // sie die Gewichte hier ueber die Namensaehnlichkeit
         // (`qwen2.5-0.5b` gegen `Qwen2.5-0.5B`); seit die Artefakte

@@ -1,6 +1,6 @@
 //! **Antwortet das Modell auf DIESEN Versuchsaufbau korrekt?**
 //!
-//! # ⛑ Warum diese Probe vor jedem Lauf steht
+//! # 📌 Warum diese Probe vor jedem Lauf steht
 //!
 //! Der ChatML-Lauf vom 2026-09-08 hat neun Stunden gerechnet und zwoelf
 //! von sechzehn Proben mit einem kaputten Prompt befragt (Fund 226).
@@ -55,7 +55,7 @@ pub fn aufbau(frage: &str, anfang: &str) -> String {
 /// Bekannte Tatsachen in der Form, mit der auch gemessen wird: Frage,
 /// Anfang der Antwort, erwartete Stadt.
 ///
-/// ⛑ **Die Form ist gemessen und nicht gewaehlt.** `formprobe` hat am
+/// 📌 **Die Form ist gemessen und nicht gewaehlt.** `formprobe` hat am
 /// 2026-09-09 zehn Formulierungen an sechs bekannten Personen
 /// durchgezaehlt. „Der Geburtsort von X ist", die Form aller
 /// bisherigen Laeufe, traf null von sechs: Das Modell setzt dort
@@ -82,7 +82,7 @@ const BEKANNT: [(&str, &str, &str); 8] = [
 
 /// **Traegt die Messstelle einer Probenzeile ueberhaupt einen Namen?**
 ///
-/// ⛑ **Das ist die Lehre aus drei Funden derselben Sorte.** 226 hat mit
+/// 📌 **Das ist die Lehre aus drei Funden derselben Sorte.** 226 hat mit
 /// einem kaputten Prompt gemessen, 227 mit einer Frageform, die das
 /// Modell verweigert, 234 mit einer Form, die nur bei bekannten
 /// Personen traegt. Jedes Mal war eine Eintrittspruefung da, und jedes
@@ -107,7 +107,7 @@ fn probenzeilen_pruefen(
     let inhalt = match std::fs::read_to_string(datei) {
         Ok(x) => x,
         Err(e) => {
-            println!("⛑ {datei}: {e}");
+            println!("⚠️ {datei}: {e}");
             return false;
         }
     };
@@ -140,7 +140,7 @@ fn probenzeilen_pruefen(
 
         // ⚑ Und er darf kein Wort aus der Frage nachsprechen.
         //
-        // ⛑ **Der erste Entwurf verglich gegen das LETZTE Wort der
+        // 📌 **Der erste Entwurf verglich gegen das LETZTE Wort der
         //   Frage, und das faengt den Fall nicht.** Bei „Kessra
         //   Duenhalm wurde geboren in der Stadt" liefert das Modell
         //   „ Duenh"; das letzte Wort ist aber „Stadt", und der
@@ -156,10 +156,10 @@ fn probenzeilen_pruefen(
 
         let urteil = if !name_dort {
             alles_gut = false;
-            "⛑ kein Name, dort kommt keine Antwort"
+            "⚠️ kein Name, dort kommt keine Antwort"
         } else if buchstabiert {
             alles_gut = false;
-            "⛑ setzt das letzte Wort der Frage fort"
+            "⚠️ setzt das letzte Wort der Frage fort"
         } else {
             "✓ Eigenname"
         };
@@ -179,7 +179,7 @@ fn main() {
     let m = load_model(std::path::Path::new(&pfad)).expect("Modell");
     let ws = Tokenizer::from_file(&format!("{pfad}/tokenizer.json")).expect("Tokenizer");
 
-    // ⛑ **Zwei Formen gegeneinander, und das ist der Kern dieser
+    // 📌 **Zwei Formen gegeneinander, und das ist der Kern dieser
     // Probe.** Die ChatML-Form ist die, auf die das Modell
     // geschliffen ist; die schlichte Fortsetzung ist die, die im
     // alten Lauf als einzige gemessen hat. Welche traegt, entscheidet
@@ -223,7 +223,7 @@ fn main() {
         }
     }
 
-    // ⛑ **Und jetzt die Datei, mit der wirklich gemessen wird.** Ohne
+    // 📌 **Und jetzt die Datei, mit der wirklich gemessen wird.** Ohne
     //   sie prueft diese Datei nur ihre eigene Liste, und genau das war
     //   der Fehler in den Funden 226, 227 und 234.
     let probendatei = std::env::args().nth(2);
@@ -249,7 +249,7 @@ fn main() {
         }
         Some((_, r)) if !proben_gut => {
             println!(
-                "\n⛑ ABBRUCH: mindestens eine Messstelle der Probendatei traegt\n\
+                "\n⚠️ ABBRUCH: mindestens eine Messstelle der Probendatei traegt\n\
                  keinen Namen. Der erwartete Token kann dort nicht stehen,\n\
                  also misst der Lauf die Form und nicht das Wissen.\n\
                  (Die eingebaute Liste war {r} von {}.)",
@@ -258,7 +258,7 @@ fn main() {
             std::process::exit(1);
         }
         Some((_, r)) => {
-            println!("\n⛑ ABBRUCH: beste Form nur {r} von {}. Ein Lauf darauf misst nichts.", BEKANNT.len());
+            println!("\n⚠️ ABBRUCH: beste Form nur {r} von {}. Ein Lauf darauf misst nichts.", BEKANNT.len());
             std::process::exit(1);
         }
         None => std::process::exit(1),

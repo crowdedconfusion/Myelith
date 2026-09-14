@@ -37,7 +37,7 @@ use crate::backward::{
     Aufmerksamkeitsskalen, Grad,
 };
 use crate::fixed_point::{clamp_i16, clamp_i16_from_i64 as clamp_i16_von_i64, inv_sqrt_q15, rescale, rescale_i64};
-use crate::integer_math::lut_lookup;
+use crate::integer_math::silu_nachschlagen;
 use crate::linear::{add_bias_i16, linear_w8a16};
 use crate::mlp::{mlp_int_mit_spur, Mlpspur};
 use crate::optimierer::{schritt, Master, Schrittkennung};
@@ -68,7 +68,7 @@ use crate::rope::rotate_half_split_i16;
 /// wegfallen**. Genau deshalb steht in `shifts` die **Differenz**
 /// `master_frac − s` und nicht `s`.
 ///
-/// ⛑ **Bis zum 2026-09-04 stand dort `s`**, und damit war der reale Wert
+/// 📌 **Bis zum 2026-09-04 stand dort `s`**, und damit war der reale Wert
 /// `master / 2^(2·s)`. Solange `s` sich nicht änderte, war das eine
 /// Proportionalität und alles stimmte. **Änderte `s` sich, sprang der
 /// Wert der ganzen Zeile:**
@@ -467,7 +467,7 @@ pub fn gradienten_des_mlp_aus_gradient(
     let mut g_up: Vec<Grad> = Vec::with_capacity(v.intermediate_size);
     for ((gh, gate_i), up_i) in g_h.iter().zip(spur.gate.iter()).zip(spur.up.iter()) {
         let dom = rescale(i32::from(*gate_i), v.gate_frac, v.silu_in_frac);
-        let aktiv = i64::from(lut_lookup(clamp_i16(dom), silu_lut, 0, v.silu_lut_offset));
+        let aktiv = silu_nachschlagen(dom, silu_lut, v.silu_lut_offset, v.silu_in_frac, v.silu_out_frac);
         let gh = i64::from(*gh);
         g_aktiv.push(begrenze(rescale_i64(
             gh * i64::from(*up_i),
@@ -612,7 +612,7 @@ pub struct Aufmerksamkeitsvorgaben {
 
 /// Die QK-Normierung eines Blocks (Qwen3), falls das Modell sie hat.
 ///
-/// # ⛑ Warum sie bis zum 2026-09-08 fehlte
+/// # 📌 Warum sie bis zum 2026-09-08 fehlte
 ///
 /// Sie stand **nur im Vorwaertspfad** (`model.rs`). Der Trainingspfad
 /// rechnete die Aufmerksamkeit ohne sie, und **nichts pruefte das**:
@@ -681,7 +681,7 @@ pub struct Aufmerksamkeitsgradienten {
 /// richtig: Der Feedforward-Zweig sieht jede Position einzeln. Der
 /// Aufmerksamkeitsblock tut das nicht.
 ///
-/// ⛑ **Auf einer einzelnen Position ist dieser Schritt eine
+/// 📌 **Auf einer einzelnen Position ist dieser Schritt eine
 /// Nullmessung.** Bei einer einzigen Position gibt es genau einen
 /// Schlüssel, der Softmax liefert exakt `1`, und seine Ableitung
 /// `p · (g − ⟨g, p⟩)` ist damit exakt **null**: Q und K bekämen keinen
@@ -1210,7 +1210,7 @@ pub fn gradienten_der_aufmerksamkeit_aus_gradient(
         // also hier **danach**: Erst die Drehung zurueck, dann die
         // Normierung.
         //
-        // ⛑ **Der Gradient auf die Gammas wird verworfen**, siehe
+        // 📌 **Der Gradient auf die Gammas wird verworfen**, siehe
         // `qk_norm_heads_backward`. Sie sind `head_dim` Zahlen je
         // Ebene, und ein zusaetzlicher Meister verschoebe die Indizes
         // des stochastischen Rundens.
@@ -1926,7 +1926,7 @@ mod tests {
         // Groessenordnung zweihundert und einem Ziel von etwa einer
         // Fuenftel Rasterstufe je Schritt folgt `nenner ≈ 1000`.
         //
-        // ⛑ Mit `1/4` stieg der Abstand von 64 214 auf 80 089: Der
+        // 📌 Mit `1/4` stieg der Abstand von 64 214 auf 80 089: Der
         // Schritt sprang ueber das Ziel hinaus. **Das ist kein Fehler
         // der Kerne, sondern eine Lernrate, die nicht zur Skala passt**,
         // und es ist genau die Sorte Fehler, die einzeln gepruefte
@@ -2053,7 +2053,7 @@ mod tests {
 
     /// ⚑ **Und er sinkt deutlich, nicht nur um eins.**
     ///
-    /// ⛑ Ohne diese Schaerfe bestuende der Test auch dann, wenn der
+    /// 📌 Ohne diese Schaerfe bestuende der Test auch dann, wenn der
     /// Gradient fast ueberall null waere und nur ein einziges Gewicht
     /// zufaellig in die richtige Richtung ruckte.
     #[test]
@@ -2137,7 +2137,7 @@ mod tests {
 
     /// ⚑ **Der Gradient zeigt bergab, und zwar messbar.**
     ///
-    /// „Der Abstand sinkt" belegt nur, dass die Kette bergab laeuft. ⛑
+    /// „Der Abstand sinkt" belegt nur, dass die Kette bergab laeuft. 📌
     /// **Zwei Gegenproben blieben damit gruen** (die Gradientenaeste
     /// vertauscht, der Vorrat auf der falschen Skala), denn
     /// Abstiegsverfahren sind gutmuetig: Viele falsche, aber
@@ -2172,7 +2172,7 @@ mod tests {
 
     /// ⚑ **Gate und Up tragen vergleichbar grosse Gradienten.**
     ///
-    /// **Ein Richtungstest kann einen Skalenfehler nicht sehen.** ⛑ Die
+    /// **Ein Richtungstest kann einen Skalenfehler nicht sehen.** 📌 Die
     /// Gegenprobe „der Gradientenvorrat auf der falschen Skala" macht
     /// den Gate-Gradienten zweiunddreissigmal kleiner, **ohne sein
     /// Vorzeichen zu aendern**; der Abstieg laeuft dann weiter bergab,
@@ -2236,7 +2236,7 @@ mod tests {
                 // merklich, die uebrigen um Bruchteile eines
                 // Tausendstels; eine Tabelle, die fast die
                 // Einheitsdrehung ist, prueft weder die Ruecknahme der
-                // Drehung noch den Positionsversatz. ⛑ Mit sechzehn
+                // Drehung noch den Positionsversatz. 📌 Mit sechzehn
                 // blieben beide Gegenproben zum Versatz gruen, mit drei
                 // beissen sie.
                 let theta = 1.0f64 / 3f64.powf(j as f64 / halb as f64);
@@ -2367,7 +2367,7 @@ mod tests {
 
     /// ⚑ **Und bergauf, wenn man das Vorzeichen dreht.**
     ///
-    /// ⛑ Ohne diese Gegenprobe bliebe offen, ob der Abstand faellt, weil
+    /// 📌 Ohne diese Gegenprobe bliebe offen, ob der Abstand faellt, weil
     /// der Gradient stimmt, oder weil irgendeine Bewegung ihn faellt.
     #[test]
     fn mit_umgekehrtem_schritt_steigt_der_abstand_des_aufmerksamkeitsblocks() {
@@ -2404,7 +2404,7 @@ mod tests {
     /// und deshalb rechnet dieser Schritt ueber eine Folge.
     ///
     /// Bei einer Position gibt es genau einen Schluessel, der Softmax
-    /// liefert exakt eins, und `p · (g − ⟨g, p⟩)` ist damit null. ⛑ **Ein
+    /// liefert exakt eins, und `p · (g − ⟨g, p⟩)` ist damit null. 📌 **Ein
     /// Aufbau mit einer Position haette also ausschliesslich V und die
     /// Ausgabeprojektion geprueft**, waehrend die Ueberschrift
     /// „Aufmerksamkeitsblock" lautet. Der Test haelt das fest, damit
@@ -2421,7 +2421,7 @@ mod tests {
         );
         assert!(gr.q.iter().all(|g| *g == 0), "Q bekam auf einer Position einen Gradienten");
         assert!(gr.k.iter().all(|g| *g == 0), "K bekam auf einer Position einen Gradienten");
-        // ⛑ Und die andere Haelfte ist nicht null, sonst bewiese der
+        // 📌 Und die andere Haelfte ist nicht null, sonst bewiese der
         // Test nur, dass gar nichts gerechnet wurde.
         assert!(gr.v.iter().any(|g| *g != 0), "V bekam gar keinen Gradienten");
         assert!(gr.o.iter().any(|g| *g != 0), "die Ausgabeprojektion bekam gar keinen Gradienten");
@@ -2441,7 +2441,7 @@ mod tests {
     ///
     /// # ⚑ Warum entlang des Gradienten und nicht Gewicht fuer Gewicht
     ///
-    /// ⛑ Ein einzelnes Gewicht zu schieben misst hier nichts: Der
+    /// 📌 Ein einzelnes Gewicht zu schieben misst hier nichts: Der
     /// Schub muss die Quantisierung ueberwinden, die gemessene
     /// Aenderung ist dann ein ganzzahliger Sprung, und die
     /// vorhergesagte liegt darunter. Gemessen lagen die Korrelationen
@@ -2537,7 +2537,7 @@ mod tests {
     /// ⚑ **Der Gradient sagt die Aenderung des Abstands voraus, nach
     /// Richtung und nach Groesse.**
     ///
-    /// ⛑ **Das ist die Zusicherung, die den Richtungstest ueberholt.**
+    /// 📌 **Das ist die Zusicherung, die den Richtungstest ueberholt.**
     /// Vier Gegenproben blieben gruen, solange nur die Richtung geprueft
     /// wurde: der Rueckwaertspass durch RoPE entfernt (eine Drehung
     /// laesst den Betrag unveraendert und dreht die Richtung nur
@@ -2608,7 +2608,7 @@ mod tests {
     /// ⚑ **Der Eingangsgradient sagt die Aenderung des Abstands
     /// voraus, im MLP-Block und im Aufmerksamkeitsblock.**
     ///
-    /// ⛑ **Ohne diesen Test koennte das Feld jede Bedeutung tragen.** Es
+    /// 📌 **Ohne diesen Test koennte das Feld jede Bedeutung tragen.** Es
     /// wird vom Blockschritt nicht gebraucht und erst beim Zusammenbau
     /// zur Ebene gelesen; ein ungelesenes Feld ist eine Einladung, ihm
     /// spaeter etwas anderes zu unterstellen.
@@ -2631,7 +2631,7 @@ mod tests {
     /// # ⚑ Der Eingang dieses Aufbaus ist zehnmal groesser als der der
     /// uebrigen MLP-Tests
     ///
-    /// ⛑ Mit dem urspruenglichen `x` (Betraege bis vier) misst dieser
+    /// 📌 Mit dem urspruenglichen `x` (Betraege bis vier) misst dieser
     /// Test das **Eingangsraster** und nicht den Gradienten: Ein Schub um
     /// eins ist dort eine Aenderung um fuenfundzwanzig Prozent, und
     /// gemessen stimmten nur **zwei von acht** Richtungen. Mit Betraegen
@@ -2955,7 +2955,7 @@ mod tests {
         // ⚑ **Q, K und V tragen den inneren Bus des Blocks, nicht die
         // Additionsskala.** Ihr Gradient kommt aus `linear_backward` mit
         // `attn_out_frac` als eingehender Skala; nur die
-        // Ausgabeprojektion sieht die Skala der Residualaddition. ⛑ Mit
+        // Ausgabeprojektion sieht die Skala der Residualaddition. 📌 Mit
         // `acc_attn` an allen vier Stellen lagen die Verhaeltnisse je
         // nach Skalenwahl bei 0,07 oder bei 2,1, und beide Male sah es
         // nach einem Fehler im Code aus.
@@ -3008,7 +3008,7 @@ mod tests {
     /// ⚑ **Der Gradient der ganzen Ebene sagt die Aenderung des
     /// Abstands voraus, fuer jede der sieben Matrizen.**
     ///
-    /// ⛑ **Das ist die Pruefung, die den Zusammenbau traegt.** „Der
+    /// 📌 **Das ist die Pruefung, die den Zusammenbau traegt.** „Der
     /// Abstand sinkt" belegt hier noch weniger als bei einem einzelnen
     /// Block: Eine Ebene hat sieben Matrizen, und wenn nur fuenf
     /// richtige Gradienten bekommen, faellt der Abstand trotzdem.
@@ -3038,7 +3038,7 @@ mod tests {
 
     /// ⚑ **Der Eingangsgradient der Ebene sagt die Aenderung voraus.**
     ///
-    /// ⛑ **Ohne diesen Test bleibt eine Gegenprobe gruen**, und zwar
+    /// 📌 **Ohne diesen Test bleibt eine Gegenprobe gruen**, und zwar
     /// die wichtigste: der **Residualzweig der ersten Addition**. Er
     /// wirkt ausschliesslich auf `dL/dx` der Ebene, nicht auf die
     /// sieben Gewichtsgradienten; wer nur die prueft, sieht seinen
@@ -3123,7 +3123,7 @@ mod tests {
         // ⚑ **Zwei ist die kleinste Weite, die etwas misst.** Der
         // Schritt ist auf die Spitze normiert; bei Weite eins bewegt
         // sich **genau ein** Gewicht, und eine einzelne ganzzahlige
-        // Aenderung ist Raster und keine Messung. ⛑ Gemessen: bei
+        // Aenderung ist Raster und keine Messung. 📌 Gemessen: bei
         // Weite eins standen 3 326 vorhergesagt gegen 114 gemessen, bei
         // Weite zwei 22 124 gegen 21 574.
         let mut gewaehlt = vorhersage(2);
@@ -3147,7 +3147,7 @@ mod tests {
     /// **Beide Seiten lassen sich hinschreiben**, und der Vergleich ist
     /// eine Gleichheit statt eines Verhaeltnisses.
     ///
-    /// ⛑ **Das ist die Pruefung, die der statistische Vergleich nicht
+    /// 📌 **Das ist die Pruefung, die der statistische Vergleich nicht
     /// leistet.** Der Residualzweig der **ersten** Addition wirkt nur
     /// auf `dL/dx`, und dort geht er neben dem Beitrag der Normierung
     /// unter: Gemessen aenderte seine Wegnahme das Verhaeltnis von 0,872
@@ -3229,7 +3229,7 @@ mod tests {
                 );
             }
         }
-        // ⛑ Und die Erwartung ist nicht selbst null.
+        // 📌 Und die Erwartung ist nicht selbst null.
         assert!(
             gr.eingang.iter().any(|z| z.iter().any(|g| *g != 0)),
             "der durchgereichte Gradient ist ueberall null, der Test misst nichts"
@@ -3269,7 +3269,7 @@ mod tests {
     /// ⚑ **Über die Oktavgrenze hinweg bleibt der reale Wert stetig
     /// (Fund 174, behoben).**
     ///
-    /// ⛑ **Dieser Test hielt bis zum 2026-09-04 einen Mangel fest** und
+    /// 📌 **Dieser Test hielt bis zum 2026-09-04 einen Mangel fest** und
     /// verlangte ausdrücklich, dass er beim Beheben rot wird. Genau das
     /// ist geschehen; jetzt hält er die Eigenschaft, die vorher fehlte.
     ///
@@ -3321,7 +3321,7 @@ mod tests {
     ///
     /// Der reale Wert ist `master / 2^master_frac`; ueberschreitet er
     /// 127, laesst er sich als `i8` mit einer Zeilenverschiebung nicht
-    /// mehr ausdruecken. ⛑ **Stille Saettigung waere hier das Falsche:**
+    /// mehr ausdruecken. 📌 **Stille Saettigung waere hier das Falsche:**
     /// Sie fiele erst an der Verlustkurve auf, und dort sieht sie aus
     /// wie ein Trainingsproblem statt wie ein Darstellungsproblem.
     #[test]
@@ -3399,7 +3399,7 @@ pub struct Gemischvorgaben {
     pub anzahl_experten: usize,
     /// Bruchstellen der Mischgewichte.
     pub gewicht_frac: u8,
-    // ⛑ **Hier stand `router_frac`, und genau das war der Fehler.**
+    // 📌 **Hier stand `router_frac`, und genau das war der Fehler.**
     // Die Skala der Routerlogits wird im Rückwärtspass nicht gebraucht:
     // Der Logitgradient trägt seine Skala aus `moe_backward`
     // (`aus_frac + logit_zusatz_bits`), und `dL/dx` kommt auf der Skala

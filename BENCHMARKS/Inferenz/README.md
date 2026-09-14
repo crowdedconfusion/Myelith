@@ -95,7 +95,7 @@ Zahlen eines dritten.
 
 ## Aufruf
 
-⛑ **Aus der Wurzel und nicht aus `INTEGER_LLM/`** (berichtigt
+📌 **Aus der Wurzel und nicht aus `INTEGER_LLM/`** (berichtigt
 2026-09-11, Fund 339). Hier stand `cd INTEGER_LLM` und darunter
 `eval/baseline.py`; seit dem Umzug am 2026-09-07 liegen die Werkzeuge
 eine Ebene hoeher, und der Block lief ins Leere.

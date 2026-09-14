@@ -8,7 +8,7 @@
 # `.app` zum Doppelklicken braucht ihn nicht: Es ist ein Verzeichnis mit
 # drei Dingen darin, und macOS bringt alles mit, um es zu bauen.
 #
-# ⛑ **Was dieses Buendel NICHT ist:** signiert und notariell beglaubigt.
+# 📌 **Was dieses Buendel NICHT ist:** signiert und notariell beglaubigt.
 # Beim ersten Start meldet Gatekeeper deshalb einen unbekannten
 # Entwickler; der Weg darum herum ist ein Rechtsklick und „Oeffnen",
 # einmal. Fuer eine Veroeffentlichung reicht das nicht, dafuer braucht
@@ -18,7 +18,7 @@ cd "$(dirname "$0")/../.."
 BINAER=target-shared/release/myl-oberflaeche
 ZIEL=${1:-target-shared/Myelith.app}
 
-# ⛑ **Die Fassung wird gelesen, nicht hingeschrieben.** Bis zum
+# 📌 **Die Fassung wird gelesen, nicht hingeschrieben.** Bis zum
 # 2026-09-10 stand hier `0.4.0` als fester Text, waehrend die Kiste bei
 # 0.16.0 stand: Jedes doppelgeklickte Buendel meldete zwoelf Anhebungen
 # zu wenig, und der Freigabelauf gab sie so weiter. Die Pruefung
@@ -30,7 +30,7 @@ ZIEL=${1:-target-shared/Myelith.app}
 FASSUNG=$(grep -m1 '^version' CLIENT/myl-oberflaeche/Cargo.toml | cut -d'"' -f2)
 [ -n "$FASSUNG" ] || { echo "Keine Fassung in CLIENT/myl-oberflaeche/Cargo.toml."; exit 1; }
 
-# ⛑ **Erst bauen, dann buendeln, und zwar hier drin.**
+# 📌 **Erst bauen, dann buendeln, und zwar hier drin.**
 #
 # Bis zum 2026-09-09 setzte dieses Skript ein gebautes Programm voraus
 # und kopierte, was gerade dalag. Damit gab es zwei Staende: das
@@ -53,7 +53,7 @@ rm -rf "$ZIEL"
 mkdir -p "$ZIEL/Contents/MacOS" "$ZIEL/Contents/Resources"
 cp "$BINAER" "$ZIEL/Contents/MacOS/Myelith"
 
-# ⛑ **Hier wurde das Symbol bis zum 2026-09-09 ein zweites Mal
+# 📌 **Hier wurde das Symbol bis zum 2026-09-09 ein zweites Mal
 # erzeugt**, mit `sips` und `iconutil`, aus demselben PNG wie der
 # Buendler von Tauri. Zwei Ableitungen desselben Bildes an zwei Stellen
 # heisst: Wer die Groessen an einer aendert, hat sie an der anderen
@@ -89,5 +89,5 @@ PLIST
 
 echo "$ZIEL gebaut, Fassung $FASSUNG."
 echo "Starten: open $ZIEL"
-echo "⛑ Beim ersten Mal meldet Gatekeeper einen unbekannten Entwickler:"
+echo "⚠️ Beim ersten Mal meldet Gatekeeper einen unbekannten Entwickler:"
 echo "   Rechtsklick auf das Buendel, dann Oeffnen, einmal bestaetigen."

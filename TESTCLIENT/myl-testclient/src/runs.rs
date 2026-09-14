@@ -62,7 +62,7 @@ use crate::hardware::Fingerprint;
 use crate::logging::{sha256_hex, Event, RunLog};
 
 /// Kodiert den Prompt mit dem Tokenizer aus dem Artefaktverzeichnis.
-fn encode_prompt(artifact_dir: &Path, prompt: &str) -> Result<Vec<u32>, String> {
+pub(crate) fn encode_prompt(artifact_dir: &Path, prompt: &str) -> Result<Vec<u32>, String> {
     let path = artifact_dir.join("tokenizer.json");
     let path_str = path
         .to_str()

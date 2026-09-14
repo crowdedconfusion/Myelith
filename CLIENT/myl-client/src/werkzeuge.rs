@@ -32,7 +32,7 @@
 //! Verweise und verbietet zugleich harmlose Pfade, die im Verzeichnis
 //! bleiben. Aufgeloest wird zuerst, verglichen danach.
 //!
-//! # ⛑ Und was diese Grenze NICHT ist
+//! # 📌 Und was diese Grenze NICHT ist
 //!
 //! **Sie ist Code dieser Kiste, der sich selbst prueft.** Wer einen
 //! Fehler in [`Einhaengung::aufloesen`] findet, oder wer ein Werkzeug
@@ -81,7 +81,7 @@ pub const TREFFERGRENZE: usize = 100;
 
 /// Wie viele Dateien eine Suche hoechstens ansieht.
 ///
-/// ⛑ **Eine Suche laeuft ueber einen Baum, den der Nutzer eingehaengt
+/// 📌 **Eine Suche laeuft ueber einen Baum, den der Nutzer eingehaengt
 /// hat, und der kann gross sein.** Ohne diese Grenze liefe ein einziger
 /// Werkzeugaufruf minutenlang ueber ein Heimatverzeichnis, waehrend das
 /// Modell wartet und der Schrittzaehler steht.
@@ -93,6 +93,22 @@ pub const SUCHDATEIGRENZE: usize = 5_000;
 /// nicht angibt, bekommt, was er vorher bekam; die Rekursion ist eine
 /// Bitte und keine Ueberraschung.
 pub const TIEFENGRENZE: u64 = 8;
+
+/// Wie lange ein Befehl hoechstens laufen darf, in Sekunden.
+///
+/// ⚑ **Ein Werkzeug, das nicht zurueckkommt, haelt die ganze Schleife an.**
+/// Der Agent wartet, der Schrittzaehler steht, und der Mensch sieht ein
+/// Fenster, das haengt. Nach dieser Zeit wird der Befehl abgebrochen und
+/// die bisherige Ausgabe zurueckgegeben.
+pub const BEFEHL_ZEITGRENZE_S: u64 = 30;
+
+/// Wie viel Ausgabe ein Befehl hoechstens zurueckgibt.
+///
+/// ⚑ **Dieselbe Sorge wie bei [`LESEGRENZE`]:** Der Kontext ist die
+/// knappste Ressource. Ein `find /` schriebe sonst das ganze Dateisystem
+/// in das Fenster des Modells. Was darueber liegt, wird mit Vermerk
+/// abgeschnitten.
+pub const BEFEHL_AUSGABEGRENZE: usize = 16 * 1024;
 
 /// Das Verzeichnis, in dem die Dateiwerkzeuge arbeiten duerfen.
 #[derive(Debug, Clone)]
@@ -204,7 +220,7 @@ impl Einhaengung {
 /// und `write_file` ersetzt die **ganze** Datei, ein Agent kann damit
 /// neunzig Prozent richtig wiedergeben und zehn loeschen.
 ///
-/// ⛑ **Trotzdem ist mehr nicht ohne Weiteres besser.** Jedes Werkzeug
+/// 📌 **Trotzdem ist mehr nicht ohne Weiteres besser.** Jedes Werkzeug
 /// steht mit seinem Schema in **jedem** Prompt und ist bei **jeder**
 /// Runde eine Wahl mehr; ein kleines Modell entscheidet darueber
 /// schlechter als ein grosses. Ob der Gewinn den Preis traegt, ist
@@ -222,7 +238,7 @@ impl Einhaengung {
 pub enum Werkzeugkiste {
     /// Was ein kleines Modell sicher bedienen kann.
     ///
-    /// ⛑ **Sie hiess bis zum 2026-09-10 `Knapp` und war „die drei, die
+    /// 📌 **Sie hiess bis zum 2026-09-10 `Knapp` und war „die drei, die
     /// es bis zum 2026-09-09 gab".** Das ist ein Entstehungsstand und
     /// keine Auswahl: Wer `default()` schrieb, meinte „das Uebliche"
     /// und bekam einen Zufall aus der Geschichte. **Ein Name soll
@@ -345,16 +361,24 @@ pub enum Dateiwerkzeug {
     Suchen,
     /// Ersetzt eine Stelle in einer Datei; nur mit Schreiberlaubnis.
     Aendern,
+    /// **Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus** (B1 der
+    /// Werkzeug-Wunschliste). Nur mit Schreiberlaubnis, und **nicht** in
+    /// `Base`: Anders als die Dateiwerkzeuge haelt ein Shell-Befehl die
+    /// Einhaengegrenze **nicht** ein (`cat ../fremd` liest hinaus), also
+    /// gehoert er nicht in die Vorgabekiste eines kleinen Modells. Siehe
+    /// [`Befehlausfuehren`] fuer die Schranken, die bleiben.
+    Befehl,
 }
 
 impl Dateiwerkzeug {
     /// Alle, in der Reihenfolge, in der sie angeboten werden.
-    pub const ALLE: [Dateiwerkzeug; 5] = [
+    pub const ALLE: [Dateiwerkzeug; 6] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
         Dateiwerkzeug::Schreiben,
         Dateiwerkzeug::Aendern,
+        Dateiwerkzeug::Befehl,
     ];
 
     /// Der knappe Satz: die drei, die es bis zum 2026-09-09 gab.
@@ -366,7 +390,7 @@ impl Dateiwerkzeug {
     /// `myl agent --werkzeuge voll` fuehrt den anderen Arm.
     /// Die Werkzeuge, die auch ein kleines Modell sicher bedient.
     ///
-    /// ⛑ **Hier standen drei, und `aendern` war nicht dabei**, wohl
+    /// 📌 **Hier standen drei, und `aendern` war nicht dabei**, wohl
     /// aber `schreiben`. Der enge Satz enthielt damit das
     /// **gefaehrlichere** Werkzeug und liess das harmlosere weg: Wer
     /// eine Zeile tauschen wollte, musste die ganze Datei lesen und
@@ -375,11 +399,22 @@ impl Dateiwerkzeug {
     ///
     /// ⚑ **Und `suchen` fehlte**, also konnte ein Agent im Fenster gar
     /// nicht suchen. Beides ist am 2026-09-10 dazugekommen.
-    pub const BASE: [Dateiwerkzeug; 5] = Self::ALLE;
+    ///
+    /// ⚑ **Seit dem 2026-09-14 wieder ein echter Ausschnitt**, nicht mehr
+    /// `= ALLE`: `run_command` (B1) liegt in `Advanced` und nicht hier,
+    /// weil ein Shell-Befehl die Einhaengegrenze nicht einhaelt. Damit
+    /// bedeuten `Base` und `Advanced` zum ersten Mal Verschiedenes.
+    pub const BASE: [Dateiwerkzeug; 5] = [
+        Dateiwerkzeug::Verzeichnis,
+        Dateiwerkzeug::Lesen,
+        Dateiwerkzeug::Suchen,
+        Dateiwerkzeug::Schreiben,
+        Dateiwerkzeug::Aendern,
+    ];
 
     /// Braucht es die Schreiberlaubnis?
     pub const fn schreibt(&self) -> bool {
-        matches!(self, Self::Schreiben | Self::Aendern)
+        matches!(self, Self::Schreiben | Self::Aendern | Self::Befehl)
     }
 
     /// Wie es in dieser Form heisst.
@@ -398,11 +433,13 @@ impl Dateiwerkzeug {
             (Self::Suchen, Ansageform::Amtlich) => "search_files",
             (Self::Schreiben, Ansageform::Amtlich) => "write_file",
             (Self::Aendern, Ansageform::Amtlich) => "edit_file",
+            (Self::Befehl, Ansageform::Amtlich) => "run_command",
             (Self::Verzeichnis, Ansageform::Deutsch) => "verzeichnis",
             (Self::Lesen, Ansageform::Deutsch) => "datei_lesen",
             (Self::Suchen, Ansageform::Deutsch) => "suchen",
             (Self::Schreiben, Ansageform::Deutsch) => "datei_schreiben",
             (Self::Aendern, Ansageform::Deutsch) => "datei_aendern",
+            (Self::Befehl, Ansageform::Deutsch) => "befehl_ausfuehren",
         }
     }
 
@@ -423,7 +460,7 @@ impl Dateiwerkzeug {
     /// beantworten will, braucht drei weitere Laeufe.
     pub fn beschreibung(&self, form: Ansageform) -> String {
         match (self, form) {
-            // ⛑ **Hier stand „Without an argument, the working
+            // 📌 **Hier stand „Without an argument, the working
             // directory itself."**, und genau dieser Satz hat das
             // Modell ins Gruebeln gebracht: Er beschreibt einen Fall,
             // den es gar nicht geben soll. Jetzt sagt die Beschreibung,
@@ -465,6 +502,12 @@ impl Dateiwerkzeug {
                  unangetastet. Gib alle noetigen Aenderungen in einem Aufruf. \
                  Fuer Aenderungen an vorhandenen Dateien besser als datei_schreiben."
                 .into(),
+            (Self::Befehl, Ansageform::Amtlich) => format!(
+                "Run a shell command in the working directory (sh -c). Returns its                  output, at most {BEFEHL_AUSGABEGRENZE} bytes, and stops after                  {BEFEHL_ZEITGRENZE_S} seconds. Prefer the file tools for reading,                  writing and searching; use this for building, running and everything                  they do not cover."
+            ),
+            (Self::Befehl, Ansageform::Deutsch) => format!(
+                "Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus (sh -c). Gibt                  seine Ausgabe zurueck, hoechstens {BEFEHL_AUSGABEGRENZE} Bytes, und                  bricht nach {BEFEHL_ZEITGRENZE_S} Sekunden ab. Zum Lesen, Schreiben                  und Suchen die Dateiwerkzeuge; dies fuer Bauen, Ausfuehren und alles                  Uebrige."
+            ),
         }
     }
 
@@ -484,7 +527,7 @@ impl Dateiwerkzeug {
     /// die Ansageform, und ein Aufruf in der einen Form naennte Felder,
     /// die die andere nicht kennt.
     ///
-    /// # ⛑ Kein Werkzeug hat einen optionalen Parameter (2026-09-10)
+    /// # 📌 Kein Werkzeug hat einen optionalen Parameter (2026-09-10)
     ///
     /// **Ein optionaler Parameter ist eine Entscheidung, die das Modell
     /// treffen muss, und ein kleines Modell bezahlt sie mit seinem
@@ -507,7 +550,7 @@ impl Dateiwerkzeug {
     /// und das ist eine Auskunft, aus der ein Modell im naechsten
     /// Schritt lernt.
     pub fn parameter(&self, form: Ansageform) -> serde_json::Value {
-        let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis, aenderungshinweis) = match form {
+        let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis, aenderungshinweis, befehl_hinweis) = match form {
             Ansageform::Amtlich => (
                 "path of the file, relative to the working directory; \
                  paths leading outside it are rejected",
@@ -516,6 +559,7 @@ impl Dateiwerkzeug {
                 "must occur exactly once in the file",
                 "All changes are applied in order, and each one sees the result of the \
                  previous ones. Either all of them are written or none.",
+                "the command line, run with sh -c in the working directory",
             ),
             Ansageform::Deutsch => (
                 "Pfad der Datei, relativ zum Arbeitsverzeichnis; \
@@ -525,6 +569,7 @@ impl Dateiwerkzeug {
                 "muss genau einmal in der Datei vorkommen",
                 "Alle Aenderungen werden der Reihe nach angewendet, und jede sieht das \
                  Ergebnis der vorigen. Entweder alle werden geschrieben oder keine.",
+                "die Befehlszeile, ausgefuehrt mit sh -c im Arbeitsverzeichnis",
             ),
         };
         match self {
@@ -552,7 +597,7 @@ impl Dateiwerkzeug {
             }),
             // ⚑ **Eine Liste, kein Paar** (2026-09-10).
             //
-            // ⛑ **Und die Liste ersetzt das Paar, statt danebenzustehen.**
+            // 📌 **Und die Liste ersetzt das Paar, statt danebenzustehen.**
             // Ein zweites Werkzeug fuer Mehrfachaenderungen waere eine
             // Wahl, ein optionales Feld daneben waere Fund 289 in neuer
             // Verkleidung: Der Einzelfall ist eine Liste mit einem
@@ -590,6 +635,11 @@ impl Dateiwerkzeug {
                 },
                 "required": ["pfad", "inhalt"]
             }),
+            Self::Befehl => serde_json::json!({
+                "type": "object",
+                "properties": {"befehl": {"type": "string", "description": befehl_hinweis}},
+                "required": ["befehl"]
+            }),
         }
     }
 
@@ -605,6 +655,7 @@ impl Dateiwerkzeug {
             Self::Suchen => Box::new(Suchen(e, form)),
             Self::Schreiben => Box::new(Dateischreiben(e, form)),
             Self::Aendern => Box::new(Dateiaendern(e, form)),
+            Self::Befehl => Box::new(Befehlausfuehren(e, form)),
         }
     }
 }
@@ -621,7 +672,7 @@ fn zeichenkette(a: &serde_json::Value, feld: &str) -> Result<String, Werkzeugfeh
 
 /// Sucht Text in den Dateien der Einhaengung.
 ///
-/// # ⛑ Warum es das gibt, und warum es das Wichtigste der drei ist
+/// # 📌 Warum es das gibt, und warum es das Wichtigste der drei ist
 ///
 /// Das Schrittbudget steht auf sechs. Mit einer flachen Auflistung und
 /// `read_file` heisst „finde, wo X steht" fuer den Agenten: listen,
@@ -684,7 +735,7 @@ impl Werkzeugausfuehrung for Suchen {
                 }
                 angesehen += 1;
                 let Ok(inhalt) = std::fs::read(&echt) else { continue };
-                // ⛑ **Binaerdateien werden uebersprungen, nicht
+                // 📌 **Binaerdateien werden uebersprungen, nicht
                 // eingebaut.** Ein Treffer mitten in einem Bild waere
                 // eine Zeile Zufallsbytes im Kontext des Modells.
                 if inhalt.len() > LESEGRENZE || inhalt.contains(&0) {
@@ -727,7 +778,7 @@ impl Werkzeugausfuehrung for Suchen {
 
 /// Ersetzt eine Stelle in einer Datei, statt sie ganz zu ueberschreiben.
 ///
-/// # ⛑ Warum `write_file` allein gefaehrlich ist
+/// # 📌 Warum `write_file` allein gefaehrlich ist
 ///
 /// Es ersetzt die **ganze** Datei. Ein Agent, der neunzig Prozent
 /// richtig wiedergibt, hat die restlichen zehn geloescht, und niemand
@@ -942,6 +993,164 @@ impl Werkzeugausfuehrung for Dateischreiben {
     }
 }
 
+/// Fuehrt einen Shell-Befehl im Arbeitsverzeichnis aus.
+///
+/// # ⛔️ Warum dieses Werkzeug anders ist als die anderen
+///
+/// Jedes Dateiwerkzeug haelt die Einhaengegrenze ein: Es loest seinen
+/// Pfad auf und lehnt ab, was hinauszeigt (siehe der Modulkopf). **Ein
+/// Shell-Befehl kann das nicht.** `cat ../../fremd` liest hinaus,
+/// `curl` sendet hinaus, und dieses Werkzeug reicht die Zeile an `sh -c`
+/// weiter, wie ein Terminal es taete. Die Einhaengung ist hier das
+/// **Arbeitsverzeichnis** (`current_dir`), nicht eine Grenze.
+///
+/// ⚑ **Was den Befehl trotzdem einhegt, und was nicht:**
+///
+/// | Schranke | Was sie leistet |
+/// |---|---|
+/// | Schreiberlaubnis | Ohne sie steht das Werkzeug nicht im Angebot (`schreibt() == true`) |
+/// | `Advanced`, nicht `Base` | Ein kleines Modell bekommt es gar nicht erst |
+/// | `manual mode` | Wer ihn setzt, sieht jeden Befehl vor der Ausfuehrung |
+/// | Zeitgrenze, Ausgabegrenze | Ein Befehl blockiert die Schleife nicht und flutet den Kontext nicht |
+/// | Sperrliste | Ein **Rueckfall** gegen die offensichtlich zerstoererischen Zeilen, kein Schutz |
+///
+/// ⛔️ **Die Sperrliste ist kein Sandkasten.** Sie faengt `rm -rf /` und
+/// eine Handvoll seinesgleichen, damit ein Modell nicht aus Versehen die
+/// Maschine loescht; sie faengt keinen entschlossenen Missbrauch. Die
+/// echte Grenze waere eine des Betriebssystems (Landlock, App-Sandbox,
+/// AppContainer), und die ist eigene Arbeit, wie schon beim Dateizugriff
+/// (Modulkopf). Bis dahin ist dieses Werkzeug so vertrauenswuerdig wie
+/// die Person, die den `manual mode` bedient.
+pub struct Befehlausfuehren(pub Einhaengung, pub Ansageform);
+
+/// Zeilen, die ein Modell nicht aus Versehen ausfuehren koennen soll.
+///
+/// ⚑ **Ein Rueckfall und kein Filter.** Woertliche Teilzeichenketten, klein
+/// geschrieben; wer sie umgeht, wird nicht aufgehalten (siehe
+/// [`Befehlausfuehren`]).
+const SPERRMUSTER: [&str; 8] = [
+    "rm -rf /",
+    "rm -rf /*",
+    "mkfs",
+    "dd if=",
+    ":(){",
+    "> /dev/sd",
+    "shutdown",
+    "reboot",
+];
+
+impl Werkzeugausfuehrung for Befehlausfuehren {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::Befehl.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        if !self.0.darf_schreiben() {
+            return Err(Werkzeugfehler {
+                grund: "diese Sitzung darf nur lesen; `run_command` wirkt und braucht                         `myl setzen agent.schreiben an`"
+                    .into(),
+            });
+        }
+        let befehl = zeichenkette(a, "befehl")?;
+        let klein = befehl.to_lowercase();
+        if let Some(muster) = SPERRMUSTER.iter().find(|m| klein.contains(**m)) {
+            return Err(Werkzeugfehler {
+                grund: format!("der Befehl enthaelt das gesperrte Muster `{muster}` und wird nicht ausgefuehrt"),
+            });
+        }
+
+        let mut kind = Command::new("sh")
+            .arg("-c")
+            .arg(&befehl)
+            .current_dir(self.0.wurzel())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Werkzeugfehler { grund: format!("der Befehl liess sich nicht starten: {e}") })?;
+
+        // ⚑ **Zwei Faeden leeren die Roehren**, damit ein Befehl mit viel
+        // Ausgabe nicht blockiert, wenn der Roehrenpuffer voll ist. Jeder
+        // liest bis zur Ausgabegrenze und dann nicht weiter.
+        let lesen = |mut strom: Box<dyn Read + Send>| {
+            let (sender, empfang) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut puffer = Vec::new();
+                let mut mehr = false;
+                let mut haeppchen = [0u8; 8192];
+                loop {
+                    // ⚑ **Immer bis zum Ende lesen**, damit die Roehre nicht
+                    // blockiert; behalten wird nur bis zur Grenze, und dass
+                    // es mehr gab, wird vermerkt statt vergessen.
+                    match strom.read(&mut haeppchen) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let frei = BEFEHL_AUSGABEGRENZE.saturating_sub(puffer.len());
+                            if frei > 0 {
+                                puffer.extend_from_slice(&haeppchen[..n.min(frei)]);
+                            }
+                            if n > frei {
+                                mehr = true;
+                            }
+                        }
+                    }
+                }
+                let _ = sender.send((puffer, mehr));
+            });
+            empfang
+        };
+        let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")));
+        let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")));
+
+        // Warten mit Frist: nachsehen, ob der Befehl fertig ist, sonst
+        // abbrechen. `try_wait` blockiert nicht.
+        let frist = Duration::from_secs(BEFEHL_ZEITGRENZE_S);
+        let anfang = Instant::now();
+        let mut abgebrochen = false;
+        let status = loop {
+            match kind.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) => {
+                    if anfang.elapsed() >= frist {
+                        let _ = kind.kill();
+                        let _ = kind.wait();
+                        abgebrochen = true;
+                        break None;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(_) => break None,
+            }
+        };
+
+        let (mut roh, mut mehr) = aus_e.recv().unwrap_or_default();
+        let (fehler_roh, fehler_mehr) = err_e.recv().unwrap_or_default();
+        roh.extend_from_slice(&fehler_roh);
+        mehr = mehr || fehler_mehr;
+        let text = String::from_utf8_lossy(&roh);
+        // Auf die Grenze in **Zeichen** kuerzen: ein Schnitt mitten durch
+        // eine Mehrbytefolge erzeugte sonst ein Ersatzzeichen.
+        let gekuerzt = mehr || text.chars().count() > BEFEHL_AUSGABEGRENZE;
+        let sicht: String = text.chars().take(BEFEHL_AUSGABEGRENZE).collect();
+
+        let kopf = if abgebrochen {
+            format!("abgebrochen nach {BEFEHL_ZEITGRENZE_S} s")
+        } else {
+            match status.and_then(|s| s.code()) {
+                Some(0) => "beendet, Rueckgabewert 0".to_string(),
+                Some(c) => format!("beendet, Rueckgabewert {c}"),
+                None => "beendet ohne Rueckgabewert".to_string(),
+            }
+        };
+        let schwanz = if gekuerzt { format!("\n… (Ausgabe auf {BEFEHL_AUSGABEGRENZE} Bytes gekuerzt)") } else { String::new() };
+        Ok(format!("{kopf}\n{sicht}{schwanz}"))
+    }
+}
+
 /// Listet ein Verzeichnis innerhalb der Einhaengung.
 pub struct Verzeichnislesen(pub Einhaengung, pub Ansageform);
 
@@ -977,7 +1186,7 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
             .clamp(1, TIEFENGRENZE);
 
         let mut zeilen: Vec<String> = Vec::new();
-        // ⛑ **Der Praefixvergleich in jeder Ebene, nicht nur am
+        // 📌 **Der Praefixvergleich in jeder Ebene, nicht nur am
         // Anfang.** `aufloesen` prueft den Startpunkt; ein Verweis
         // **im** Baum fuehrt hinaus, und `read_dir` folgt ihm. Vor der
         // Tiefe gab es diesen Weg nicht, denn eine Ebene war immer die,
@@ -1002,7 +1211,7 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
                 }
                 // Der Name relativ zum ANGEFRAGTEN Verzeichnis, damit
                 // eine tiefe Auflistung lesbar bleibt.
-                // ⛑ **Schraegstriche, auf allen Plattformen.** Auf
+                // 📌 **Schraegstriche, auf allen Plattformen.** Auf
                 // Windows trennt `display()` mit `\`, und der neue
                 // Plattform-Job hat das beim ersten Lauf gefunden:
                 // `unter\tief.txt` statt `unter/tief.txt`. Fuer die
@@ -1055,7 +1264,7 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
 /// vor, die abgelehnt werden, und verbraucht Schritte an der Grenze
 /// statt an der Aufgabe.
 ///
-/// ⛑ **Hier stand bis zum 2026-09-08 der volle Pfad der Einhaengung,
+/// 📌 **Hier stand bis zum 2026-09-08 der volle Pfad der Einhaengung,
 /// und zwar in jeder der drei Beschreibungen.** Zwei Dinge waren daran
 /// falsch. Er sagte dem Modell einen absoluten Pfad und im selben Satz
 /// „relativ zum Arbeitsverzeichnis", also zwei Angaben, von denen nur
@@ -1065,7 +1274,7 @@ impl Werkzeugausfuehrung for Verzeichnislesen {
 /// **Beschreibung**. Das Modell arbeitet relativ und braucht ihn nicht;
 /// der Mensch sieht ihn beim Start der Sitzung.
 pub fn angebote(e: &Einhaengung, form: Ansageform, satz: Werkzeugkiste) -> Vec<Werkzeug> {
-    // ⛑ **Hier standen Name, Beschreibung und Schema als Literale**,
+    // 📌 **Hier standen Name, Beschreibung und Schema als Literale**,
     // und die Ausfuehrung nannte ihren Namen noch einmal. Seit die
     // Namen an der Ansageform haengen, waeren das zwei Listen, die
     // auseinanderlaufen koennen; jetzt kommt beides aus
@@ -1097,6 +1306,64 @@ mod neue_werkzeuge {
         (d, e)
     }
 
+    fn befehl(e: &Einhaengung, b: &str) -> Result<String, Werkzeugfehler> {
+        Befehlausfuehren(e.clone(), Ansageform::Amtlich)
+            .ausfuehren(&serde_json::json!({"befehl": b}))
+    }
+
+    /// **`run_command` fuehrt aus, im Arbeitsverzeichnis, und nennt den
+    /// Rueckgabewert.**
+    #[test]
+    fn run_command_fuehrt_im_arbeitsverzeichnis_aus() {
+        let (_d, e) = baum();
+        let aus = befehl(&e, "cat oben.txt").expect("ok");
+        assert!(aus.contains("Rueckgabewert 0"), "{aus}");
+        assert!(aus.contains("Goldfisch schwimmt"), "{aus}");
+        let fehler = befehl(&e, "exit 3").expect("laeuft");
+        assert!(fehler.contains("Rueckgabewert 3"), "{fehler}");
+    }
+
+    /// **Ohne Schreiberlaubnis wirkt es nicht.** Es wirkt, also gehoert es
+    /// hinter dieselbe Erlaubnis wie das Schreiben.
+    #[test]
+    fn run_command_braucht_die_schreiberlaubnis() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let nur_lesen = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        let fehler = befehl(&nur_lesen, "echo hallo").expect_err("muss ablehnen");
+        assert!(fehler.grund.contains("nur lesen"), "{}", fehler.grund);
+    }
+
+    /// **Die Sperrliste faengt die offensichtlich zerstoererische Zeile**,
+    /// ohne den Befehl zu starten. ⛔️ Ein Rueckfall, kein Sandkasten.
+    #[test]
+    fn run_command_sperrt_das_offensichtlich_zerstoererische() {
+        let (_d, e) = baum();
+        let fehler = befehl(&e, "rm -rf /").expect_err("gesperrt");
+        assert!(fehler.grund.contains("gesperrt"), "{}", fehler.grund);
+        // Gross/klein egal.
+        assert!(befehl(&e, "DD IF=/dev/zero of=x").is_err());
+    }
+
+    /// **Viel Ausgabe wird auf die Grenze gekuerzt, mit Vermerk.**
+    #[test]
+    fn run_command_kuerzt_viel_ausgabe() {
+        let (_d, e) = baum();
+        let aus = befehl(&e, "head -c 40000 /dev/zero | tr \\0 x").expect("ok");
+        assert!(aus.contains("gekuerzt"), "{}", &aus[..aus.len().min(80)]);
+        assert!(aus.chars().count() <= BEFEHL_AUSGABEGRENZE + 200, "{} Zeichen", aus.chars().count());
+    }
+
+    /// **`run_command` liegt in Advanced, nicht in Base.** Ein Shell-Befehl
+    /// haelt die Einhaengegrenze nicht ein und gehoert nicht in die
+    /// Vorgabekiste eines kleinen Modells (Fund: die Kisten bedeuten damit
+    /// zum ersten Mal Verschiedenes).
+    #[test]
+    fn run_command_ist_advanced_und_nicht_base() {
+        assert!(Werkzeugkiste::Base.werkzeuge().iter().all(|w| !matches!(w, Dateiwerkzeug::Befehl)), "run_command darf nicht in Base sein");
+        assert!(Werkzeugkiste::Advanced.werkzeuge().iter().any(|w| matches!(w, Dateiwerkzeug::Befehl)), "run_command fehlt in Advanced");
+        assert!(Dateiwerkzeug::Befehl.schreibt(), "run_command wirkt und braucht die Schreiberlaubnis");
+    }
+
     fn suche(e: &Einhaengung, muster: &str) -> String {
         Suchen(e.clone(), Ansageform::Amtlich)
             .ausfuehren(&serde_json::json!({"muster": muster}))
@@ -1112,7 +1379,7 @@ mod neue_werkzeuge {
         assert!(aus.contains("tief.txt:2"), "{aus}");
     }
 
-    /// ⛑ **Gross und klein ist egal**, denn ein Modell trifft die
+    /// 📌 **Gross und klein ist egal**, denn ein Modell trifft die
     /// Schreibweise oft nicht, und eine Suche, die daran scheitert,
     /// kostet einen Schritt fuer nichts.
     #[test]
@@ -1131,7 +1398,7 @@ mod neue_werkzeuge {
         assert!(aus.contains("keine Zeile"), "{aus}");
     }
 
-    /// ⛑ **Und sie bleibt in der Einhaengung.** Das ist die eigentliche
+    /// 📌 **Und sie bleibt in der Einhaengung.** Das ist die eigentliche
     /// Pruefung dieser Sammlung: Ein Werkzeug, das einen Baum
     /// durchlaeuft, hat mehr Gelegenheiten hinauszukommen als eines,
     /// das einen Pfad aufloest.
@@ -1146,7 +1413,7 @@ mod neue_werkzeuge {
 
         // ⚑ **Und ein Startpunkt laesst sich gar nicht mehr angeben.**
         //
-        // ⛑ Hier stand bis zum 2026-09-10, dass `pfad: ".."` von der
+        // 📌 Hier stand bis zum 2026-09-10, dass `pfad: ".."` von der
         // **Ausfuehrung** abgelehnt wird. Seither kennt dieses Werkzeug
         // keinen Pfad mehr, und die Ablehnung kommt eine Stufe frueher,
         // an der Argumentpruefung: Der Aufruf laeuft gar nicht erst an.
@@ -1165,7 +1432,7 @@ mod neue_werkzeuge {
         let _ = std::fs::remove_file(draussen);
     }
 
-    /// ⛑ **Ein Verweis nach draussen wird beim Durchlaufen erkannt.**
+    /// 📌 **Ein Verweis nach draussen wird beim Durchlaufen erkannt.**
     /// `aufloesen` prueft den Startpunkt; hier liegt der Verweis
     /// **im** Baum, und `read_dir` folgt ihm.
     #[cfg(unix)]
@@ -1215,7 +1482,7 @@ mod neue_werkzeuge {
         assert_eq!(jetzt, "eins\nKarpfen schwimmt\ndrei\n", "der Rest muss stehen bleiben");
     }
 
-    /// ⛑ **Der Kern des Werkzeugs.** Kaeme es mehrfach vor und wuerde
+    /// 📌 **Der Kern des Werkzeugs.** Kaeme es mehrfach vor und wuerde
     /// das erste genommen, traefe es irgendwann die falsche Stelle. Die
     /// Ablehnung sagt dem Modell, dass es mehr Umgebung braucht.
     #[test]
@@ -1248,7 +1515,7 @@ mod neue_werkzeuge {
 
     /// **Jede Aenderung sieht das Ergebnis der vorigen.**
     ///
-    /// ⛑ **Eine Pruefung gegen den Urzustand haette hier gruenes Licht
+    /// 📌 **Eine Pruefung gegen den Urzustand haette hier gruenes Licht
     /// gegeben und danach das Falsche geschrieben.** „a" kommt im
     /// Urzustand einmal vor und nach der ersten Aenderung zweimal; wer
     /// beide gegen den Anfang prueft, haelt den Satz fuer eindeutig und
@@ -1426,7 +1693,7 @@ mod namen {
         }
     }
 
-    /// ⛑ **Die beiden Formen muessen wirklich verschieden sein.** Ohne
+    /// 📌 **Die beiden Formen muessen wirklich verschieden sein.** Ohne
     /// diese Pruefung koennte die Tabelle beide auf denselben Namen
     /// legen, und der Vergleich, fuer den es den Schalter gibt,
     /// verglaeche nichts.
@@ -1479,7 +1746,7 @@ mod grenze {
         assert!(f.unwrap_err().grund.contains("ausserhalb") || true);
     }
 
-    /// ⛑ **Je Plattform ein Pfad, der dort wirklich absolut ist.**
+    /// 📌 **Je Plattform ein Pfad, der dort wirklich absolut ist.**
     /// Hier stand nur `/etc/hosts`. Auf Windows ist das **nicht**
     /// absolut (dort braucht ein absoluter Pfad einen Praefix wie
     /// `C:`), es waere also an die Wurzel gehaengt worden, und die
@@ -1501,7 +1768,7 @@ mod grenze {
     /// ⚑ Ein Verweis wird **aufgeloest** und dann verglichen; eine
     /// Textpruefung auf `..` haette ihn durchgelassen.
     ///
-    /// ⛑ **Nur auf Unix, und das ist eine benannte Luecke.** Vorher
+    /// 📌 **Nur auf Unix, und das ist eine benannte Luecke.** Vorher
     /// stand das `#[cfg]` im Rumpf, mit einem `return` fuer alle
     /// anderen Plattformen; dahinter wurde der Code unerreichbar, und
     /// Clippy mit `-D warnings` faellt darueber, sobald dieses Crate
@@ -1599,7 +1866,7 @@ mod grenze {
         let (d, _e) = baue();
         let nur_lesen = Einhaengung::neu(d.path(), false).expect("Einhaengung");
         let a = angebote(&nur_lesen, Ansageform::Amtlich, Werkzeugkiste::Advanced);
-        // ⛑ Hier stand `assert_eq!(a.len(), 2)` und der Name als
+        // 📌 Hier stand `assert_eq!(a.len(), 2)` und der Name als
         // Zeichenkette. Beides musste am 2026-09-09 nachgezogen werden,
         // als zwei Werkzeuge dazukamen, und das ist genau die Sorte
         // Pruefung, die nicht mitwaechst. Jetzt aus der Tabelle.
@@ -1615,7 +1882,7 @@ mod grenze {
 mod keine_wahl {
     use super::*;
 
-    /// ⛑ **Die Regel, die aus einem gemeldeten Fehlschlag entstand.**
+    /// 📌 **Die Regel, die aus einem gemeldeten Fehlschlag entstand.**
     ///
     /// Auf die Frage „welche Dateien liegen im Verzeichnis?" ueberlegte
     /// Qwen3-4B am 2026-09-10 seitenlang, ob es `pfad` weglassen, leer
@@ -1631,7 +1898,7 @@ mod keine_wahl {
     fn kein_werkzeug_hat_einen_optionalen_parameter() {
         /// Prueft ein Schema und **jedes Schema darin**.
         ///
-        /// ⛑ **Sie sah bis zum 2026-09-10 nur die oberste Ebene**, und
+        /// 📌 **Sie sah bis zum 2026-09-10 nur die oberste Ebene**, und
         /// das fiel auf, als `edit_file` eine Liste von Objekten bekam:
         /// Die Wache lief gruen durch, weil sie in `items` gar nicht
         /// hineinsah. Sie war nicht erfuellt, sie war blind. **Eine
@@ -1704,7 +1971,7 @@ mod keine_wahl {
     /// ⚑ **Ein mitgeschickter Pfad wird abgewiesen und nicht
     /// stillschweigend uebergangen.**
     ///
-    /// ⛑ Das ist die wichtigere Haelfte: Ein Werkzeug, das ein
+    /// 📌 Das ist die wichtigere Haelfte: Ein Werkzeug, das ein
     /// unbekanntes Feld schluckt, laesst das Modell glauben, es habe
     /// gewirkt. Die Ablehnung nennt die Felder, die es gibt, und daraus
     /// lernt ein Modell im naechsten Schritt.

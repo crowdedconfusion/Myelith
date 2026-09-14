@@ -264,7 +264,7 @@ mod adresstests {
     /// ⚑ **Jede Folge von 32 Bytes ergibt eine `PeerId`, und das ist
     /// kein Versehen der Bibliothek.**
     ///
-    /// ⛑ Hier stand zuerst die umgekehrte Behauptung: Unsinn solle einen
+    /// 📌 Hier stand zuerst die umgekehrte Behauptung: Unsinn solle einen
     /// Fehler ergeben. Der Test fiel um, und **er hatte unrecht, nicht
     /// der Code**. Ein Ed25519-Punkt wird erst beim Rechnen geprüft,
     /// nicht beim Einlesen.

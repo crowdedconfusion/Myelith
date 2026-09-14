@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-runtime"
-version = "0.49.0"
+version = "0.52.0"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -20,6 +20,9 @@ reference = ["integer-llm-kernels/reference"]
 cpu-simd = ["integer-llm-kernels/cpu-simd"]
 cuda = ["integer-llm-kernels/cuda"]
 rocm = ["integer-llm-kernels/rocm"]
+# Gebuendelte Matrizen der Vorbereitung auf der GPU von Apple-Silizium,
+# alles andere ueber `cpu-simd`. Nur auf macOS wirksam.
+metal = ["integer-llm-kernels/metal"]
 
 [dependencies]
 integer-llm-kernels = { path = "../kernels" }

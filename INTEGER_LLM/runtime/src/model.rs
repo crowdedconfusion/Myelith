@@ -16,9 +16,12 @@
 use integer_llm_kernels::fixed_point::{clamp_i16, clamp_i16_from_i64, inv_sqrt_q15, rescale, rescale_i64};
 use integer_llm_kernels::moe::{mische_experten, route_top_k};
 use integer_llm_kernels::rmsnorm::{qk_norm_heads, rmsnorm_i16};
-use integer_llm_kernels::linear::{linear_w8a16, linear_w8a16_pc, add_bias_i16};
+use integer_llm_kernels::linear::{
+    add_bias_i16, linear_w8a16, linear_w8a16_pc, linear_w8a16_pc_stapel, linear_w8a16_stapel,
+};
+use integer_llm_kernels::fadenpool::rechnen_breit;
 use integer_llm_kernels::rope::rotate_half_split_i16;
-use integer_llm_kernels::attention::attention_int_mit_spur;
+use integer_llm_kernels::attention::aufmerksamkeit_einer_abfrage;
 use integer_llm_kernels::mlp::{mlp_int_experten, mlp_int_mit_spur, Expertenteil, Mlpspur};
 use integer_llm_kernels::sampling::{argmax_int, sample_integer_cdf};
 use crate::kv_cache::KVCache;
@@ -116,6 +119,15 @@ impl Gewichtsdaten {
     ///
     /// Ein Fehlschlag wird verschluckt. Ein Rat, den das System
     /// ausschlaegt, ist kein Fehler, sondern der Zustand von vorher.
+    ///
+    /// 📌 **Gemessen und verworfen (2026-09-14): ein Zeitfenster je Tensor.**
+    /// Im Decode des 30B liegen rund 28 % des Hauptfadens hier, weil jeder
+    /// Token acht Experten je Ebene neu ankuendigt. Ganz ohne Rat wurde der
+    /// Decode langsamer (10,3 bis 10,9 gegen 12,7 Token/s), mit einem Rat
+    /// hoechstens alle zwei Sekunden je Tensor zuerst 5 % schneller. Nach
+    /// der gruppierten Vorbereitung (Fund 371) blieben im Wechsel gemessen
+    /// 13,9 gegen 13,6 Token/s, innerhalb der Streuung; das Fenster ist
+    /// deshalb nicht gebaut.
     pub fn vorbereiten(&self) {
         if let Gewichtsdaten::Abbild(abbild) = self {
             vorrat_ankuendigen(abbild);
@@ -576,6 +588,26 @@ impl IntegerModel {
         (self.head_logits(&hidden), befunde)
     }
 
+    /// **Wie viele Positionen dieses Modell rechnen kann**: das Kleinere aus
+    /// `max_context` und den Zeilen der RoPE-Tabelle.
+    ///
+    /// # ⛔️ Fund 368 (2026-09-14): hinter der Tabelle begann sie von vorn
+    ///
+    /// `koepfe_drehen` las die Tabellenzeile `pos % Zeilen`. Die Tabelle
+    /// hat 2 048 Zeilen, und Position 2 048 bekam den Winkel von Position
+    /// null: **Die Aufmerksamkeit hielt ein Token hinter der Grenze fuer
+    /// eines vom Anfang**, ohne Meldung. Gemessen am 4B mit einem Prompt von
+    /// 4 393 Token: Die Ausgabe war zusammenhangloser Text.
+    ///
+    /// ⚑ **Jetzt gilt die Grenze und wird geprueft**: Die Erzeugung haelt an
+    /// ihr an, ein Prompt darueber ist ein Fehler des Aufrufers, und ein
+    /// Shard lehnt eine solche Position ab, bevor er rechnet.
+    pub fn kontextgrenze(&self) -> usize {
+        let half = (self.head_dim / 2).max(1);
+        let zeilen = (self.cos_lut.len() / half).min(self.sin_lut.len() / half);
+        zeilen.min(self.max_context)
+    }
+
     /// Einzelner Forward-Schritt fuer ein Token an Position `pos`.
     /// KV-Cache wird gelesen und geschrieben.
     pub fn forward_token(
@@ -605,60 +637,21 @@ impl IntegerModel {
         self.logits_aus_normiertem(&normed, cfg.logit_frac_bits)
     }
 
-    /// **Der MLP-Teil fuer mehrere Token zugleich.**
-    ///
-    /// ⚑ **Nur fuer dichte Ebenen.** Ein Expertengemisch waehlt je Token
-    /// andere Matrizen; wer es buendeln will, muss die Token nach
-    /// Experten gruppieren, und das ist eine eigene Aufgabe. Hier gibt
-    /// es `None` zurueck, und der Aufrufer rechnet Token fuer Token.
+    /// **Der MLP-Teil fuer mehrere Token zugleich**, dicht oder als
+    /// Expertengemisch.
     fn ebene_mlp_stapel(
         &self,
         layer: &TransformerLayer,
         normen: &[&[i16]],
         acc_mlp: &[u8],
-    ) -> Option<Vec<Vec<i16>>> {
-        // ## ⛑ Fund 335 (2026-09-11): hier gebuendelt zu haben, brachte nichts
-        //
-        // Ein Gemisch faellt auf den tokenweisen Weg zurueck, und das
-        // sieht nach einer offenen Flanke aus: Der Hebel, der dem
-        // dichten 4B-Modell +120 % gebracht hat, greift beim
-        // Primaermodell nicht.
-        //
-        // **Es ist gebaut worden, und es hat nichts gebracht.** Ein
-        // `moe_stapel` gruppierte die Token nach Experten, sodass jeder
-        // Experte seine 4,72 MB einmal je Ebene holte statt einmal je
-        // Token, das ihn gewaehlt hat. Gemessen an `myelith-30b-a3b`,
-        // `--features cpu-simd`, drei Prompts:
-        //
-        // | Prompt | gebuendelt | tokenweise |
-        // |---|---|---|
-        // | 153 Token | 12,43 s | 12,23 s |
-        // | 1 521 Token, wiederholt | 11,85 Tok/s | 11,90 Tok/s |
-        // | 1 826 Token, streuende Prosa | 10,80 Tok/s | 10,96 Tok/s |
-        //
-        // ⚑ **Und daraus faellt die eigentliche Erkenntnis.** Die
-        // Buendelung senkt die Lesevorgaenge je Expertenmatrix und
-        // Ebene von rund 114 auf 15, und die Zeit bleibt stehen. **Also
-        // war die Expertenseite nie der Posten**: Die Schieflage sorgt
-        // dafuer, dass je Ebene wenige Experten heiss sind und im
-        // Speicher liegen.
-        //
-        // ⚠️ **Der Posten ist die Aufmerksamkeit**, und sie laeuft hier
-        // Token fuer Token: 907 MB Gewichte je Token gegen 1,81 GB
-        // Experten, aber ohne jede Buendelung und mit einer Rechnung,
-        // die mit der Position waechst. Beim dichten 4B waren es
-        // gemessen 65 % des Prefills; dieselbe Aufteilung erklaert hier
-        // dieselbe Zahl.
-        //
-        // ⛔️ **Was nicht wiederholt werden muss:** dieselbe Buendelung
-        // noch einmal zu bauen. Was offen ist, steht als eigener Punkt:
-        // q, k, v und o ueber mehrere Positionen zugleich.
-        let Feedforward::Dense(mlp) = &layer.ffn else {
-            return None;
-        };
+    ) -> Vec<Vec<i16>> {
         let sc = &layer.scales;
         let cfg = &self.config;
-        Some(integer_llm_kernels::mlp::mlp_int_stapel(
+        let mlp = match &layer.ffn {
+            Feedforward::Dense(mlp) => mlp,
+            Feedforward::Moe(moe) => return self.moe_stapel(moe, normen, sc, cfg, acc_mlp),
+        };
+        integer_llm_kernels::mlp::mlp_int_stapel(
             normen,
             &mlp.gate_proj.data,
             &mlp.up_proj.data,
@@ -677,10 +670,198 @@ impl IntegerModel {
             cfg.silu_lut_offset,
             cfg.silu_out_frac,
             acc_mlp,
-        ))
+        )
+    }
+
+    /// **Eine Gemischebene fuer viele Token: die Token je Experte
+    /// gruppiert.**
+    ///
+    /// # 📌 Fund 371 (2026-09-14): die Experten liefen Token fuer Token
+    ///
+    /// Fund 335 hatte diese Gruppierung am 2026-09-11 gebaut, gemessen und
+    /// verworfen: auf der CPU kein Gewinn, **der Posten sei die
+    /// Aufmerksamkeit**. Das stimmte an jenem Tag. Seit die
+    /// Aufmerksamkeitshaelfte gebuendelt und verteilt rechnet (Fund 366),
+    /// **liegen beim 30B rund neun Zehntel des Hauptfadens in den
+    /// Experten**, gemessen an 992 Token mit `metal`. Und auf der GPU ist die
+    /// Gruppierung nicht neutral, sondern die Voraussetzung: Erst sie macht
+    /// aus einer Eingabe je Aufruf ein Buendel.
+    ///
+    /// ⚑ **Dieselbe Rechnung wie `moe_vorwaerts` je Token**, nur in anderer
+    /// Reihenfolge: derselbe Router, dieselbe Auswahl, fuer jedes gewaehlte
+    /// Paar aus Token und Experte dasselbe gate, up, SiLU-Produkt und down,
+    /// dieselbe Mischung in der Reihenfolge der Auswahl. Geprueft gegen den
+    /// tokenweisen Weg in `die_gebuendelte_vorbereitung_rechnet_dasselbe`
+    /// (Fixture mit Gemisch und Zufallsgewichten) und ueber die Stufe
+    /// `rechenwege` am echten Modell.
+    ///
+    /// ⚑ **Alle Expertenmatrizen einer Runde in einem Auftrag**
+    /// (`linear_w8a16_stapel_viele`): auf der GPU ein Befehlspuffer, auf der
+    /// CPU eine Poolrunde. Einzeln waeren es 384 Aufrufe je Ebene.
+    fn moe_stapel(
+        &self,
+        moe: &MoeLayer,
+        normen: &[&[i16]],
+        sc: &LayerScales,
+        cfg: &ModelConfig,
+        acc: &[u8],
+    ) -> Vec<Vec<i16>> {
+        use integer_llm_kernels::linear::{linear_w8a16_stapel_viele, Ausgangsskala, Stapelauftrag};
+        let n = normen.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let faeden = vorbereitungsfaeden(n);
+
+        // 1. Der Router fuer alle Token, dann die Auswahl je Token; dieselbe
+        //    Rechnung wie `moe_routing`.
+        let logits = linear_fuer_alle(
+            normen,
+            &moe.router.data,
+            moe.router.cols(),
+            &moe.router.shifts,
+            sc.norm_mlp_frac,
+            moe.router_frac,
+        );
+        let exp_lut_shift = moe.router_frac.saturating_sub(cfg.exp_input_frac);
+        let auswahl: Vec<integer_llm_kernels::moe::Routing> = logits
+            .iter()
+            .map(|l| {
+                let l32: Vec<i32> = l.iter().map(|v| *v as i32).collect();
+                route_top_k(&l32, moe.top_k, &self.exp_lut, exp_lut_shift, cfg.prob_frac_bits, moe.norm_topk_prob)
+            })
+            .collect();
+
+        // 2. Je Experte seine Token, als (Token, Platz in dessen Auswahl).
+        let mut je_experte: Vec<Vec<(usize, usize)>> = vec![Vec::new(); moe.experts.len()];
+        for (b, r) in auswahl.iter().enumerate() {
+            for (platz, e) in r.experten.iter().enumerate() {
+                je_experte[*e as usize].push((b, platz));
+            }
+        }
+        let benutzt: Vec<usize> = (0..moe.experts.len()).filter(|e| !je_experte[*e].is_empty()).collect();
+        if benutzt.is_empty() {
+            return vec![vec![0i16; acc.len()]; n];
+        }
+        // ⚑ **Einmal je Experte und Ebene angekuendigt**, nicht einmal je
+        // Token (Fund 331), **und parallel**. Siehe
+        // [`ANKUENDIGUNGSFAEDEN`]: Die Vorbereitung eines Gemischs auf
+        // 24 GiB wartet sonst mehr auf die Platte, als sie rechnet.
+        let je = benutzt.len().div_ceil(ANKUENDIGUNGSFAEDEN);
+        std::thread::scope(|s| {
+            for teil in benutzt.chunks(je) {
+                s.spawn(move || {
+                    for e in teil {
+                        moe.experts[*e].vorbereiten();
+                    }
+                });
+            }
+        });
+        let eingaben: Vec<Vec<&[i16]>> = benutzt
+            .iter()
+            .map(|e| je_experte[*e].iter().map(|(b, _)| normen[*b]).collect())
+            .collect();
+
+        // 3. gate und up aller benutzten Experten in einem Auftrag.
+        let mut vorne: Vec<Stapelauftrag<'_>> = Vec::with_capacity(2 * benutzt.len());
+        for (i, e) in benutzt.iter().enumerate() {
+            let ex = &moe.experts[*e];
+            vorne.push(Stapelauftrag {
+                xs: &eingaben[i],
+                w: &ex.gate_proj.data,
+                in_features: ex.gate_proj.cols(),
+                w_shifts: &ex.gate_proj.shifts,
+                act_frac_bits: sc.norm_mlp_frac,
+                aus: Ausgangsskala::Eine(sc.gate_frac),
+            });
+            vorne.push(Stapelauftrag {
+                xs: &eingaben[i],
+                w: &ex.up_proj.data,
+                in_features: ex.up_proj.cols(),
+                w_shifts: &ex.up_proj.shifts,
+                act_frac_bits: sc.norm_mlp_frac,
+                aus: Ausgangsskala::Eine(sc.up_frac),
+            });
+        }
+        let vorne_aus = linear_w8a16_stapel_viele(&vorne);
+        drop(vorne);
+
+        // 4. Das SiLU-Produkt je Paar aus Experte und Token, verteilt.
+        let breite = moe.experts[benutzt[0]].down_proj.cols();
+        let paare: Vec<(usize, usize)> = (0..benutzt.len())
+            .flat_map(|i| (0..eingaben[i].len()).map(move |j| (i, j)))
+            .collect();
+        let produkte = rechnen_breit(paare.len(), breite, faeden, |p, ziel| {
+            let (i, j) = paare[p];
+            ziel.copy_from_slice(&integer_llm_kernels::mlp::silu_produkt(
+                &vorne_aus[2 * i][j],
+                &vorne_aus[2 * i + 1][j],
+                &self.silu_lut,
+                sc.gate_frac,
+                sc.up_frac,
+                sc.down_in_frac,
+                cfg.silu_in_frac,
+                cfg.silu_lut_offset,
+                cfg.silu_out_frac,
+            ));
+        });
+        drop(vorne_aus);
+        let mut hs: Vec<Vec<&[i16]>> = benutzt.iter().map(|_| Vec::new()).collect();
+        for (p, (i, _)) in paare.iter().enumerate() {
+            hs[*i].push(&produkte[p * breite..(p + 1) * breite]);
+        }
+
+        // 5. down aller benutzten Experten in einem Auftrag.
+        let hinten: Vec<Stapelauftrag<'_>> = benutzt
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let ex = &moe.experts[*e];
+                Stapelauftrag {
+                    xs: &hs[i],
+                    w: &ex.down_proj.data,
+                    in_features: ex.down_proj.cols(),
+                    w_shifts: &ex.down_proj.shifts,
+                    act_frac_bits: sc.down_in_frac,
+                    aus: Ausgangsskala::JeZeile(acc),
+                }
+            })
+            .collect();
+        let hinten_aus = linear_w8a16_stapel_viele(&hinten);
+
+        // 6. Je Token die Ausgaben in der Reihenfolge seiner Auswahl, dann
+        //    die Mischung wie `mische_experten`.
+        let mut plaetze: Vec<Vec<Option<(usize, usize)>>> =
+            auswahl.iter().map(|r| vec![None; r.experten.len()]).collect();
+        for (i, e) in benutzt.iter().enumerate() {
+            for (j, (b, platz)) in je_experte[*e].iter().enumerate() {
+                plaetze[*b][*platz] = Some((i, j));
+            }
+        }
+        let hidden = acc.len();
+        rechnen_breit(n, hidden, faeden, |b, ziel| {
+            let ausgaben: Vec<Vec<i16>> = plaetze[b]
+                .iter()
+                .map(|p| {
+                    let (i, j) = p.expect("jeder Platz einer Auswahl ist einem Experten zugeordnet");
+                    hinten_aus[i][j].clone()
+                })
+                .collect();
+            ziel.copy_from_slice(&mische_experten(&ausgaben, &auswahl[b].gewichte, cfg.prob_frac_bits));
+        })
+        .chunks_exact(hidden)
+        .map(<[i16]>::to_vec)
+        .collect()
     }
 
     /// **Die Vorbereitung ebenenweise statt tokenweise.**
+    ///
+    /// Zurueck kommt der Residualstrom jedes Tokens nach der letzten Ebene,
+    /// also dasselbe, was [`Model::durch_die_ebenen`] je Token liefert.
+    /// 📌 **Er wird fuer die Pruefungen gebraucht** (Fund 366): Die
+    /// Aufmerksamkeit der vorbereiteten Token wirkt erst in der naechsten
+    /// Ebene, und ein Testmodell mit einer Ebene zeigt einen Fehler dort
+    /// weder im KV-Speicher noch in den Logits.
     ///
     /// # ⚑ Dieselbe Rechnung, andere Reihenfolge
     ///
@@ -721,9 +902,9 @@ impl IntegerModel {
         token_ids: &[usize],
         pos_start: usize,
         cache: &mut KVCache,
-    ) {
+    ) -> Vec<Vec<i16>> {
         if token_ids.is_empty() {
-            return;
+            return Vec::new();
         }
         let mut zustaende: Vec<Vec<i16>> =
             token_ids.iter().map(|&t| self.embed_token(t)).collect();
@@ -741,48 +922,136 @@ impl IntegerModel {
                 .map(|(&a, &b)| a.min(b))
                 .collect();
 
-            // ⚑ **Erst der Aufmerksamkeitsteil, Token fuer Token und in
-            // dieser Reihenfolge.** Der KV-Speicher wird dabei genau so
-            // gefuellt wie tokenweise, und Token `b` liest die
-            // Positionen der Token davor, die diese Ebene gerade
-            // durchlaufen haben.
-            let mut zwischen: Vec<(Vec<i16>, Vec<i16>)> = Vec::with_capacity(zustaende.len());
-            for (b, zustand) in zustaende.iter().enumerate() {
-                zwischen.push(self.ebene_bis_mlp(layer, zustand, pos_start + b, cache, None));
-            }
+            // ⚑ **Erst der Aufmerksamkeitsteil, in fuenf Schritten.** Was
+            // nur an einer Position haengt, laeuft fuer alle Token zugleich:
+            // Normen, Koepfe und Residuen verteilt ueber die Faeden, die
+            // Projektionen q, k, v und o als Buendel (Fund 366). **Der
+            // KV-Speicher wird in der Reihenfolge der Positionen gefuellt**,
+            // und erst danach lesen alle Token gleichzeitig: Token `b` liest
+            // nur die Positionen bis zu seiner eigenen, und die stehen dann
+            // genau so da wie tokenweise. `ebene_bis_mlp` ruft dieselben
+            // Schritte mit einer Eingabe.
+            //
+            // ⚠️ **Keiner der verteilten Schritte darf selbst den
+            // Fadenpool rufen**: Er nimmt eine Runde zur Zeit, und eine
+            // Runde in einer Runde wartete auf sich selbst. Die Matrizen
+            // laufen deshalb ausserhalb, zwischen den verteilten Schritten.
+            let n = zustaende.len();
+            let hs = self.hidden_size;
+            let (nh, nkv, hd) = (self.num_heads, self.num_kv_heads, self.head_dim);
+            let faeden = vorbereitungsfaeden(n);
 
-            // ⚑ **Dann der MLP fuer alle zugleich**, sofern die Ebene
-            // dicht ist: Dort liegen 74 % der gelesenen Gewichte.
-            let normen: Vec<&[i16]> = zwischen.iter().map(|(_, n)| n.as_slice()).collect();
-            match self.ebene_mlp_stapel(layer, &normen, &acc_mlp) {
-                Some(mlp_aus) => {
-                    for (b, zustand) in zustaende.iter_mut().enumerate() {
-                        *zustand = self.residual_zwei(
-                            &zwischen[b].0,
-                            &mlp_aus[b],
-                            sc,
-                            &acc_mlp,
-                            out_frac,
-                        );
-                    }
+            let normen = rechnen_breit(n, hs, faeden, |b, ziel| {
+                ziel.copy_from_slice(&self.norm_vor_aufmerksamkeit(layer, &zustaende[b]));
+            });
+            let normen: Vec<&[i16]> = normen.chunks_exact(hs).collect();
+            let qkv = self.projektionen_qkv(layer, &normen);
+
+            // Je Token: q-Koepfe, k-Koepfe, v-Koepfe hintereinander.
+            let breite = (nh + 2 * nkv) * hd;
+            let koepfe = rechnen_breit(n, breite, faeden, |b, ziel| {
+                let [q, k, v] = &qkv[b];
+                let (q_heads, k_heads, v_heads) = self.koepfe_drehen(layer, q, k, v, pos_start + b);
+                for (teil, kopf) in ziel
+                    .chunks_exact_mut(hd)
+                    .zip(q_heads.iter().chain(k_heads.iter()).chain(v_heads.iter()))
+                {
+                    teil.copy_from_slice(kopf);
                 }
-                // Expertengemisch: Token fuer Token, siehe
-                // `ebene_mlp_stapel`.
-                None => {
-                    for (b, zustand) in zustaende.iter_mut().enumerate() {
-                        *zustand = self.ebene_ab_mlp(
-                            layer,
-                            &zwischen[b].0,
-                            &zwischen[b].1,
-                            &acc_mlp,
-                            out_frac,
-                            None,
-                            None,
-                        );
-                    }
-                }
+            });
+            drop(qkv);
+            let zeile = |b: usize| -> Vec<Vec<i16>> {
+                koepfe[b * breite..(b + 1) * breite].chunks_exact(hd).map(<[i16]>::to_vec).collect()
+            };
+            for b in 0..n {
+                let k_und_v = zeile(b);
+                self.kv_schreiben(layer, &k_und_v[nh..nh + nkv], &k_und_v[nh + nkv..], pos_start + b, cache);
             }
+            let lesend: &KVCache = cache;
+            let attn_aus = rechnen_breit(n, nh * hd, faeden, |b, ziel| {
+                let mut q_heads = zeile(b);
+                q_heads.truncate(nh);
+                ziel.copy_from_slice(&self.aufmerksamkeit_lesen(layer, &q_heads, pos_start + b, lesend, None));
+            });
+            drop(koepfe);
+
+            let acc_attn = akkumulationsskala_aufmerksamkeit(sc);
+            let attn_scheiben: Vec<&[i16]> = attn_aus.chunks_exact(nh * hd).collect();
+            let o_aus = self.projektion_o(layer, &attn_scheiben, &acc_attn);
+            // Je Token: Residualstrom, dann seine Norm.
+            let zwischen = rechnen_breit(n, 2 * hs, faeden, |b, ziel| {
+                let (residual, norm) = self.residual_eins_und_norm(layer, &zustaende[b], &o_aus[b], &acc_attn, None);
+                ziel[..hs].copy_from_slice(&residual);
+                ziel[hs..].copy_from_slice(&norm);
+            });
+            let residuen: Vec<&[i16]> = zwischen.chunks_exact(2 * hs).map(|z| &z[..hs]).collect();
+            let normen: Vec<&[i16]> = zwischen.chunks_exact(2 * hs).map(|z| &z[hs..]).collect();
+
+            // ⚑ **Dann der MLP fuer alle zugleich**, dicht oder als
+            // Gemisch mit den Token je Experte gruppiert (Fund 371).
+            let mlp_aus = self.ebene_mlp_stapel(layer, &normen, &acc_mlp);
+            zustaende = rechnen_breit(n, hs, faeden, |b, ziel| {
+                ziel.copy_from_slice(&self.residual_zwei(residuen[b], &mlp_aus[b], sc, &acc_mlp, out_frac));
+            })
+            .chunks_exact(hs)
+            .map(<[i16]>::to_vec)
+            .collect();
         }
+        zustaende
+    }
+
+    /// **Ein ganzer Prompt ab Position null**: alle Positionen ausser der
+    /// letzten gebuendelt, die letzte mit Kopf. Zurueck kommen die Logits
+    /// der letzten Position, bei einem leeren Prompt lauter Nullen.
+    ///
+    /// # 📌 Fund 366 (2026-09-14): der gemessene Weg war nicht der benutzte
+    ///
+    /// [`Model::vorbereiten_stapel`] war seit dem 2026-09-11 gemessen und
+    /// gegen den tokenweisen Weg geprueft. **Aufgerufen hat ihn nur das
+    /// Messprogramm.** Die Erzeugung im Klienten, der Konformitaetslauf
+    /// und der Testclient bereiteten Token fuer Token vor. Gemessen am
+    /// 2026-09-14 mit 219 Token unter `cpu-simd`: 0,6B 2,83 gegen 3,95 s,
+    /// 4B 7,45 gegen 9,69 s. **Die Buendelung, die in den Messungen stand,
+    /// erreichte niemanden, der ein Modell benutzt.**
+    ///
+    /// ⚑ **Eine Stelle fuer alle Aufrufer**, damit das nicht wieder
+    /// auseinanderlaeuft: `generate_beobachtet` und
+    /// `dekodieren_mit_digest` rufen diese Methode, und ueber den zweiten
+    /// laufen die E2E-Vektoren mit mehr als einem Prompt-Token durch die
+    /// Buendelung.
+    ///
+    /// ⚑ **In Fenstern von [`VORBEREITUNGSFENSTER`] Token**, siehe dort.
+    pub fn prompt_vorbereiten(&self, token_ids: &[usize], cache: &mut KVCache) -> Vec<i32> {
+        self.prompt_vorbereiten_ab(token_ids, 0, cache)
+    }
+
+    /// **Wie [`Model::prompt_vorbereiten`], aber die ersten `ab` Token
+    /// stehen schon im KV-Speicher** und werden nicht noch einmal
+    /// gerechnet.
+    ///
+    /// ⚑ **Bitgleich zur Vorbereitung ab null**: Der Eintrag an Position
+    /// `p` haengt nur an den Token `0..=p`, und die sind dieselben. Die
+    /// Fenster beginnen hier bei `ab` statt bei null; an keiner Zahl
+    /// aendert das etwas, siehe [`VORBEREITUNGSFENSTER`].
+    ///
+    /// ⚠️ **Mindestens das letzte Token wird immer gerechnet**, denn nur so
+    /// entstehen die Logits: `ab` darf hoechstens `token_ids.len() - 1`
+    /// sein.
+    pub fn prompt_vorbereiten_ab(&self, token_ids: &[usize], ab: usize, cache: &mut KVCache) -> Vec<i32> {
+        let Some((&letzte, davor)) = token_ids.split_last() else {
+            return vec![0i32; self.vocab_size];
+        };
+        assert!(
+            token_ids.len() <= self.kontextgrenze(),
+            "Der Prompt hat {} Token, die Kontextgrenze des Modells ist {}",
+            token_ids.len(),
+            self.kontextgrenze()
+        );
+        assert!(ab <= davor.len(), "prompt_vorbereiten_ab: {ab} Token wiederverwendet, aber nur {} vor dem letzten", davor.len());
+        for (i, fenster) in davor[ab..].chunks(VORBEREITUNGSFENSTER).enumerate() {
+            self.vorbereiten_stapel(fenster, ab + i * VORBEREITUNGSFENSTER, cache);
+        }
+        self.forward_token(letzte, davor.len(), cache)
     }
 
     /// **Embedding und alle Ebenen, ohne Schlussnorm und ohne Kopf.**
@@ -794,7 +1063,7 @@ impl IntegerModel {
     /// erst nach der letzten Position. Bis zum 2026-09-11 rechnete die
     /// Vorbereitung den Kopf trotzdem, fuer jedes Token einzeln.
     ///
-    /// ⛑ **Gemessen beim 4B-Modell:** Der Kopf ist eine int16-Matrix
+    /// 📌 **Gemessen beim 4B-Modell:** Der Kopf ist eine int16-Matrix
     /// ueber 151 936 Zeilen, also 0,78 GB von 4,41 GB je Token,
     /// **17,6 %**. Bei einem Prompt von 588 Token sind das 458 GB
     /// gelesene Gewichte ohne Gegenwert.
@@ -968,32 +1237,32 @@ impl IntegerModel {
     /// `logit_frac` ist die Skala der Ausgabe, siehe
     /// [`Self::head_logits_mit_spur`].
     fn logits_aus_normiertem(&self, normed: &[i16], logit_frac: u8) -> Vec<i32> {
-        let mut logits = vec![0i32; self.vocab_size];
+        // 📌 **Fund 370, zweiter Teil (2026-09-14): der Kopf rechnete
+        // einkernig**, beim 30B 29 % eines Decode-Schritts: 151 936 Zeilen
+        // mal 2 048 Spalten auf einem Faden, während die übrigen warteten.
+        // Jede Zeile ist ihr eigenes Skalarprodukt und schreibt in ihr
+        // eigenes Feld; verteilt ändert sich also keine Zahl, dieselbe
+        // Eigenschaft wie bei `linear.rs`.
+        let hidden_dim = normed.len();
+        let faeden = integer_llm_kernels::linear::kerngrenze();
         if let Some(lmh) = &self.lm_head_int16 {
-            let hidden_dim = normed.len();
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
+            let werte: &[i16] = &lmh.data;
+            integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
                 let base = row * hidden_dim;
-                for (d, v) in normed.iter().enumerate() {
-                    acc += (lmh.data[base + d] as i64) * (*v as i64);
-                }
+                let acc = integer_llm_kernels::attention::dot_int(&werte[base..base + hidden_dim], normed);
                 let row_frac = lmh.shifts[row] + self.final_norm_frac;
                 let y = rescale_i64(acc, row_frac, logit_frac);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
+                y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+            })
         } else {
-            for row in 0..self.vocab_size {
-                let mut acc: i64 = 0;
-                let weight_row = self.lm_head.row(row);
-                for (w, v) in weight_row.iter().zip(normed.iter()) {
-                    acc += (*w as i64) * (*v as i64);
-                }
+            integer_llm_kernels::fadenpool::rechnen_i32(self.vocab_size, faeden, |row| {
+                let spalten = self.lm_head.cols();
+                let acc = integer_llm_kernels::dot::dot_i8_i16(&self.lm_head.data[row * spalten..(row + 1) * spalten], normed);
                 let row_frac = self.lm_head.shifts[row] + self.final_norm_frac;
                 let y = rescale_i64(acc, row_frac, logit_frac);
-                logits[row] = y.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
-            }
+                y.clamp(i32::MIN as i64, i32::MAX as i64) as i32
+            })
         }
-        logits
     }
 
     ///
@@ -1056,18 +1325,47 @@ impl IntegerModel {
         cache: &mut KVCache,
         mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
     ) -> (Vec<i16>, Vec<i16>) {
-        let cfg = &self.config;
-        let hs = self.hidden_size;
-        let sc = &layer.scales;
-
         if let Some(a) = auf.as_mut() {
             a.residual_ein = hidden.to_vec();
         }
 
         // === Attention-Block ===
+        let norm_hidden = self.norm_vor_aufmerksamkeit(layer, hidden);
+        if let Some(a) = auf.as_mut() {
+            a.norm_ein = norm_hidden.clone();
+        }
+
+        // ⚑ **Dieselben vier Schritte wie in der gebuendelten
+        // Vorbereitung**, hier mit einer einzigen Eingabe. Siehe
+        // [`Model::vorbereiten_stapel`].
+        let [q_flat, k_flat, v_flat] = self
+            .projektionen_qkv(layer, &[norm_hidden.as_slice()])
+            .pop()
+            .expect("eine Eingabe ergibt genau eine Projektion");
+        let attn_out = self.aufmerksamkeit_eines_tokens(
+            layer,
+            &q_flat,
+            &k_flat,
+            &v_flat,
+            pos,
+            cache,
+            auf.as_deref_mut(),
+        );
+        let acc_attn = akkumulationsskala_aufmerksamkeit(&layer.scales);
+        let o_out = self
+            .projektion_o(layer, &[attn_out.as_slice()], &acc_attn)
+            .pop()
+            .expect("eine Eingabe ergibt genau eine Projektion");
+        self.residual_eins_und_norm(layer, hidden, &o_out, &acc_attn, auf)
+    }
+
+    /// Die Normierung vor der Aufmerksamkeit, fuer ein Token.
+    fn norm_vor_aufmerksamkeit(&self, layer: &TransformerLayer, hidden: &[i16]) -> Vec<i16> {
+        let cfg = &self.config;
+        let sc = &layer.scales;
         // Pre-Attention RMSNorm (int16 -> int16 auf der kalibrierten
         // q/k/v-Eingangsskala; Gamma mit Per-Element-Skalen, theta_v 0.7.0).
-        let norm_hidden = rmsnorm_i16(
+        rmsnorm_i16(
             hidden,
             &sc.residual_in_frac,
             &layer.input_layernorm_gamma.data,
@@ -1077,11 +1375,26 @@ impl IntegerModel {
             cfg.rsqrt_output_frac,
             self.inv_n_q20,
             sc.norm_attn_frac,
-        );
-        if let Some(a) = auf.as_mut() {
-            a.norm_ein = norm_hidden.clone();
-        }
+        )
+    }
 
+    /// **q, k und v fuer eine oder viele Positionen**, mit Bias.
+    ///
+    /// # 📌 Fund 366 (2026-09-14): die Haelfte, die tokenweise blieb
+    ///
+    /// Gebuendelt war bis zu diesem Tag nur der MLP. Die vier
+    /// Projektionen der Aufmerksamkeit liefen auch in der Vorbereitung
+    /// Token fuer Token, und gemessen am 4B-Modell mit 219 Token lagen
+    /// dort **65 % der Vorbereitung**, davon der groessere Teil in genau
+    /// diesen Matrizen. Jede Position las die 907 MB Gewichte der
+    /// Aufmerksamkeitshaelfte einmal fuer sich.
+    ///
+    /// ⚑ **Die Projektion haengt nur an der Eingabe dieser Position**,
+    /// nicht am KV-Speicher. Sie darf deshalb fuer alle Positionen einer
+    /// Ebene vorab laufen; erst die Aufmerksamkeit selbst braucht die
+    /// Reihenfolge. Jedes Ausgabeelement bleibt dasselbe Skalarprodukt.
+    fn projektionen_qkv(&self, layer: &TransformerLayer, normen: &[&[i16]]) -> Vec<[Vec<i16>; 3]> {
+        let sc = &layer.scales;
         // Q, K, V Projektionen: Per-Channel-Gewichtsskalen (theta_v 0.7.0),
         // Ausgang auf der jeweils kalibrierten Per-Layer-Skala.
         // Die Gewichte liegen im `QTensor` flach und werden flach
@@ -1092,29 +1405,94 @@ impl IntegerModel {
         // Ebene und die Ebenen 24-mal je Token. Die Zahlen ändern sich
         // dadurch nicht, `dot_i8_i16` bekommt dieselben Bytes in
         // derselben Reihenfolge.
-        let mut q_flat = linear_w8a16(&norm_hidden, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
-        let mut k_flat = linear_w8a16(&norm_hidden, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
-        let mut v_flat = linear_w8a16(&norm_hidden, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
+        let q = linear_fuer_alle(normen, &layer.q_proj.data, layer.q_proj.cols(), &layer.q_proj.shifts, sc.norm_attn_frac, sc.q_frac);
+        let k = linear_fuer_alle(normen, &layer.k_proj.data, layer.k_proj.cols(), &layer.k_proj.shifts, sc.norm_attn_frac, sc.k_frac);
+        let v = linear_fuer_alle(normen, &layer.v_proj.data, layer.v_proj.cols(), &layer.v_proj.shifts, sc.norm_attn_frac, sc.v_frac);
 
         // Attention-Biases (Qwen2.5: q/k/v_proj besitzen welche):
         // Per-Element-Skalen, Reskalierung auf die Q/K/V-Ausgabeskala und
         // i64-Addition mit Clamping — reine Ganzzahlarithmetik.
-        if let Some(qb) = &layer.q_bias {
-            add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac);
+        q.into_iter()
+            .zip(k)
+            .zip(v)
+            .map(|((mut q_flat, mut k_flat), mut v_flat)| {
+                if let Some(qb) = &layer.q_bias {
+                    add_bias_i16(&mut q_flat, &qb.data, &qb.shifts, sc.q_frac);
+                }
+                if let Some(kb) = &layer.k_bias {
+                    add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac);
+                }
+                if let Some(vb) = &layer.v_bias {
+                    add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac);
+                }
+                [q_flat, k_flat, v_flat]
+            })
+            .collect()
+    }
+
+    /// **Die Aufmerksamkeit eines Tokens**: Koepfe, QK-Norm, RoPE,
+    /// KV-Speicher, Skalarprodukte, Umskalierung auf die Eingangsskala
+    /// von `o_proj`.
+    ///
+    /// ⚑ **Drei Schritte, und die gebuendelte Vorbereitung ruft dieselben
+    /// drei** (Fund 366): [`Model::koepfe_drehen`] haengt nur an diesem
+    /// Token, [`Model::kv_schreiben`] fuellt den Speicher in der
+    /// Reihenfolge der Positionen, [`Model::aufmerksamkeit_lesen`] liest
+    /// ihn nur. Hier laufen sie fuer ein Token hintereinander.
+    #[allow(clippy::too_many_arguments)]
+    fn aufmerksamkeit_eines_tokens(
+        &self,
+        layer: &TransformerLayer,
+        q_flat: &[i16],
+        k_flat: &[i16],
+        v_flat: &[i16],
+        pos: usize,
+        cache: &mut KVCache,
+        mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> Vec<i16> {
+        let (q_heads, k_heads, v_heads) = self.koepfe_drehen(layer, q_flat, k_flat, v_flat, pos);
+        // ⚑ **Nach RoPE und vor dem Zwischenspeicher**: So hat die
+        // Aufmerksamkeit sie gesehen, und nur so passt der Gradient.
+        // V wird nicht gedreht und steht deshalb unverändert daneben.
+        if let Some(a) = auf.as_mut() {
+            a.q = q_heads.clone();
+            a.k = k_heads.clone();
+            a.v = v_heads.clone();
         }
-        if let Some(kb) = &layer.k_bias {
-            add_bias_i16(&mut k_flat, &kb.data, &kb.shifts, sc.k_frac);
+        self.kv_schreiben(layer, &k_heads, &v_heads, pos, cache);
+        self.aufmerksamkeit_lesen(layer, &q_heads, pos, cache, auf)
+    }
+
+    /// Die Skalen, auf denen q und k nach der QK-Norm liegen: **ohne
+    /// QK-Norm** `q_frac` und `k_frac`, **mit** die Ausgangsskalen der
+    /// Normierung.
+    fn skalen_der_koepfe(layer: &TransformerLayer) -> (u8, u8) {
+        match &layer.qk_norm {
+            Some(qkn) => (qkn.q_out_frac, qkn.k_out_frac),
+            None => (layer.scales.q_frac, layer.scales.k_frac),
         }
-        if let Some(vb) = &layer.v_bias {
-            add_bias_i16(&mut v_flat, &vb.data, &vb.shifts, sc.v_frac);
-        }
+    }
+
+    /// **Koepfe, QK-Norm und RoPE eines Tokens.** Haengt nur an diesem
+    /// Token und seiner Position, nicht am KV-Speicher.
+    #[allow(clippy::type_complexity)]
+    fn koepfe_drehen(
+        &self,
+        layer: &TransformerLayer,
+        q_flat: &[i16],
+        k_flat: &[i16],
+        v_flat: &[i16],
+        pos: usize,
+    ) -> (Vec<Vec<i16>>, Vec<Vec<i16>>, Vec<Vec<i16>>) {
+        let cfg = &self.config;
+        let sc = &layer.scales;
 
         // Auf Heads aufteilen. Q hat num_heads Heads, K/V bei GQA nur
         // num_kv_heads (Qwen2.5-0.5B: 14 vs. 2) - deshalb getrennte Aufteilung
         // statt eines gemeinsamen Head-Counts.
-        let mut q_heads = self.split_heads(&q_flat, self.num_heads);
-        let mut k_heads = self.split_heads(&k_flat, self.num_kv_heads);
-        let v_heads = self.split_heads(&v_flat, self.num_kv_heads);
+        let mut q_heads = self.split_heads(q_flat, self.num_heads);
+        let mut k_heads = self.split_heads(k_flat, self.num_kv_heads);
+        let v_heads = self.split_heads(v_flat, self.num_kv_heads);
 
         // QK-Norm (Qwen3): RMSNorm je Kopf ueber head_dim, **vor** RoPE.
         //
@@ -1127,33 +1505,30 @@ impl IntegerModel {
         //
         // Die Ausgangsskala wechselt hier von `q_frac`/`k_frac` auf die
         // kalibrierte Norm-Ausgangsskala; RoPE selbst ist skaleninvariant
-        // und reicht sie unveraendert weiter.
-        let (q_akt_frac, k_akt_frac) = match &layer.qk_norm {
-            Some(qkn) => {
-                qk_norm_heads(
-                    &mut q_heads,
-                    sc.q_frac,
-                    &qkn.q_gamma.data,
-                    &qkn.q_gamma.shifts,
-                    &self.rsqrt_lut,
-                    cfg.rsqrt_input_shift,
-                    cfg.rsqrt_output_frac,
-                    qkn.q_out_frac,
-                );
-                qk_norm_heads(
-                    &mut k_heads,
-                    sc.k_frac,
-                    &qkn.k_gamma.data,
-                    &qkn.k_gamma.shifts,
-                    &self.rsqrt_lut,
-                    cfg.rsqrt_input_shift,
-                    cfg.rsqrt_output_frac,
-                    qkn.k_out_frac,
-                );
-                (qkn.q_out_frac, qkn.k_out_frac)
-            }
-            None => (sc.q_frac, sc.k_frac),
-        };
+        // und reicht sie unveraendert weiter. Welche Skalen danach gelten,
+        // sagt [`Model::skalen_der_koepfe`].
+        if let Some(qkn) = &layer.qk_norm {
+            qk_norm_heads(
+                &mut q_heads,
+                sc.q_frac,
+                &qkn.q_gamma.data,
+                &qkn.q_gamma.shifts,
+                &self.rsqrt_lut,
+                cfg.rsqrt_input_shift,
+                cfg.rsqrt_output_frac,
+                qkn.q_out_frac,
+            );
+            qk_norm_heads(
+                &mut k_heads,
+                sc.k_frac,
+                &qkn.k_gamma.data,
+                &qkn.k_gamma.shifts,
+                &self.rsqrt_lut,
+                cfg.rsqrt_input_shift,
+                cfg.rsqrt_output_frac,
+                qkn.k_out_frac,
+            );
+        }
 
         // RoPE (Fund-15-Fix, theta_v 0.10.0): Multi-Frequenz-RoPE mit
         // half-split-Paarung. Die cos/sin-LUTs sind flach row-major
@@ -1163,25 +1538,32 @@ impl IntegerModel {
         // Head-Anzahl). Die Rotation ist skaleninvariant gegenueber der
         // Eingangs-Skala (cos/sin tragen rope_frac_bits).
         let half = self.head_dim / 2;
-        let n_pos = self.cos_lut.len() / half;
-        let idx = pos % n_pos;
-        let cos_row = &self.cos_lut[idx * half..(idx + 1) * half];
-        let sin_row = &self.sin_lut[idx * half..(idx + 1) * half];
+        // ⛔️ Kein `pos % Zeilen` mehr (Fund 368, siehe `kontextgrenze`).
+        assert!(
+            pos < self.kontextgrenze(),
+            "Position {pos} liegt hinter der Kontextgrenze {} des Modells",
+            self.kontextgrenze()
+        );
+        let cos_row = &self.cos_lut[pos * half..(pos + 1) * half];
+        let sin_row = &self.sin_lut[pos * half..(pos + 1) * half];
         for qh in q_heads.iter_mut() {
             *qh = rotate_half_split_i16(qh, cos_row, sin_row, cfg.rope_frac_bits);
         }
         for kh in k_heads.iter_mut() {
             *kh = rotate_half_split_i16(kh, cos_row, sin_row, cfg.rope_frac_bits);
         }
-        // ⚑ **Nach RoPE und vor dem Zwischenspeicher**: So hat die
-        // Aufmerksamkeit sie gesehen, und nur so passt der Gradient.
-        // V wird nicht gedreht und steht deshalb unverändert daneben.
-        if let Some(a) = auf.as_mut() {
-            a.q = q_heads.clone();
-            a.k = k_heads.clone();
-            a.v = v_heads.clone();
-        }
+        (q_heads, k_heads, v_heads)
+    }
 
+    /// **Schreibt k und v eines Tokens in den KV-Speicher.**
+    fn kv_schreiben(
+        &self,
+        layer: &TransformerLayer,
+        k_heads: &[Vec<i16>],
+        v_heads: &[Vec<i16>],
+        pos: usize,
+        cache: &mut KVCache,
+    ) {
         // KV-Cache schreiben — OHNE Reskalierung (Fund 22, 2026-08-19).
         //
         // Bis theta_v 0.11.0 wurde hier auf eine GLOBALE Cache-Skala
@@ -1202,9 +1584,29 @@ impl IntegerModel {
         // erzeugenden Projektion. Das ist streng verlustfrei gegenueber
         // vorher und beseitigt beide Effekte.
         for h in 0..self.num_kv_heads {
-            cache.write(layer.layer_idx, h, pos,
-                k_heads[h].clone(), v_heads[h].clone());
+            cache.write(layer.layer_idx, h, pos, &k_heads[h], &v_heads[h]);
         }
+    }
+
+    /// **Die Aufmerksamkeit eines Tokens ueber dem schon gefuellten
+    /// KV-Speicher**, bis zur Umskalierung auf die Eingangsskala von
+    /// `o_proj`.
+    ///
+    /// ⚑ **Liest nur**, und nur die Positionen bis `pos`. Deshalb darf die
+    /// gebuendelte Vorbereitung alle Token einer Ebene zuerst schreiben
+    /// und dann gleichzeitig lesen: Token `b` sieht genau die Eintraege,
+    /// die es tokenweise gesehen haette.
+    fn aufmerksamkeit_lesen(
+        &self,
+        layer: &TransformerLayer,
+        q_heads: &[Vec<i16>],
+        pos: usize,
+        cache: &KVCache,
+        mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> Vec<i16> {
+        let cfg = &self.config;
+        let sc = &layer.scales;
+        let (q_akt_frac, k_akt_frac) = Self::skalen_der_koepfe(layer);
 
         // Attention pro Query-Head; group_size aufeinanderfolgende Query-Heads
         // teilen sich denselben KV-Head (Standard-GQA-Gruppierung, wie in
@@ -1219,81 +1621,80 @@ impl IntegerModel {
         // `o_proj` bildet von `num_heads · head_dim` auf `hidden_size`
         // zurück, das ist die Stelle, an der die Breite wechselt, nicht
         // diese hier.
-        let mut attn_out = vec![0i16; self.num_heads * self.head_dim];
-        for h in 0..self.num_heads {
-            let kv_h = h / group_size;
-            let (past_k, past_v) = cache.read_scheiben(layer.layer_idx, kv_h, pos);
-            let seq_len = past_k.len();
+        //
+        // Q liegt bei `q_akt_frac`, K bei `k_akt_frac`; der rohe
+        // Skalarproduktwert traegt deren Summe an Nachkommabits.
+        //
+        // **Ohne QK-Norm sind das sc.q_frac und sc.k_frac, mit QK-Norm
+        // die Ausgangsskalen der Normierung.** Die Unterscheidung ist
+        // der Grund, warum die beiden Werte oben als eigene Variablen
+        // entstehen und nicht hier aus `sc` gelesen werden: Ein
+        // vergessenes `sc.q_frac` an dieser Stelle waere kein
+        // Uebersetzungsfehler, sondern eine um Zweierpotenzen
+        // verschobene Softmax. score_shift bringt ihn auf
+        // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
+        // dort in die Eingangsskala der exp-LUT (spec 0.5.2: Domaene
+        // [0, 64) statt [0, 0.5), gemessene Score-Differenzen bis ~28).
+        //
+        // Fund 17 (Attention-Skalierung): HF-Qwen2 skaliert die Scores mit
+        // 1/sqrt(head_dim) (attn_weights = q·k * head_dim^-0.5). Dieser
+        // Faktor fehlte urspruenglich ganz; die Softmax war dadurch um
+        // sqrt(head_dim) zu scharf.
+        //
+        // Fund 19: Die Umsetzung als reiner Rechtsshift um
+        // log2(head_dim)/2 war Ganzzahldivision und damit nur fuer
+        // GERADE Zweierpotenzen richtig. head_dim 128 (der Normalfall ab
+        // 1,5B) bekam Shift 3 statt der noetigen 3,5, Faktor sqrt(2) zu
+        // gross. Jetzt als Q15-Multiplikation; fuer head_dim 64 ist der
+        // Multiplikator 4096 = 2^12 und das Ergebnis bitgleich zum
+        // bisherigen Verhalten (siehe fixed_point::inv_sqrt_q15).
+        let score_mult = inv_sqrt_q15(self.head_dim);
+        let score_shift = (q_akt_frac as u16 + k_akt_frac as u16 + 15)
+            .saturating_sub(cfg.score_frac_bits as u16) as u8;
+        let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
 
-            // K, V liegen bereits in ihrer Per-Layer-Skala (Fund 22) —
-            // keine Reskalierung mehr noetig.
-            //
-            // ⛑ **Hier stand `past_k.to_vec()`**, und `past_k` ist
-            // bereits ein eigener `Vec<Vec<i16>>`, den `cache.read`
-            // gerade erzeugt hat: **Der ganze KV-Verlauf wurde ein
-            // zweites Mal kopiert**, je Kopf und je Token. Bei einem
-            // Prompt von 169 Token sind das ueber alle 36 Ebenen rund
-            // **8 GB ohne Gegenwert**, dazu eine Million Belegungen.
-            // Gefunden am 2026-09-11 beim Nachrechnen, warum der
-            // Aufmerksamkeitsteil 65 % der Vorbereitung kostet.
-            let k_seq = past_k;
-            let v_seq = past_v;
-
-            let q_seq = [q_heads[h].as_slice()];
-
-            // Causal mask: nur letzte Position attendet auf alle vorherigen
-            let mask = vec![vec![true; seq_len]];
-
-            // Q liegt bei `q_akt_frac`, K bei `k_akt_frac`; der rohe
-            // Skalarproduktwert traegt deren Summe an Nachkommabits.
-            //
-            // **Ohne QK-Norm sind das sc.q_frac und sc.k_frac, mit QK-Norm
-            // die Ausgangsskalen der Normierung.** Die Unterscheidung ist
-            // der Grund, warum die beiden Werte oben als eigene Variablen
-            // entstehen und nicht hier aus `sc` gelesen werden: Ein
-            // vergessenes `sc.q_frac` an dieser Stelle waere kein
-            // Uebersetzungsfehler, sondern eine um Zweierpotenzen
-            // verschobene Softmax. score_shift bringt ihn auf
-            // die Score-Skala (score_frac_bits); exp_lut_shift uebersetzt von
-            // dort in die Eingangsskala der exp-LUT (spec 0.5.2: Domaene
-            // [0, 64) statt [0, 0.5) — gemessene Score-Differenzen bis ~28).
-            //
-            // Fund 17 (Attention-Skalierung): HF-Qwen2 skaliert die Scores mit
-            // 1/sqrt(head_dim) (attn_weights = q·k * head_dim^-0.5). Dieser
-            // Faktor fehlte urspruenglich ganz; die Softmax war dadurch um
-            // sqrt(head_dim) zu scharf.
-            //
-            // Fund 19: Die Umsetzung als reiner Rechtsshift um
-            // log2(head_dim)/2 war Ganzzahldivision und damit nur fuer
-            // GERADE Zweierpotenzen richtig. head_dim 128 (der Normalfall ab
-            // 1,5B) bekam Shift 3 statt der noetigen 3,5 — Faktor sqrt(2) zu
-            // gross. Jetzt als Q15-Multiplikation; fuer head_dim 64 ist der
-            // Multiplikator 4096 = 2^12 und das Ergebnis bitgleich zum
-            // bisherigen Verhalten (siehe fixed_point::inv_sqrt_q15).
-            let score_mult = inv_sqrt_q15(self.head_dim);
-            let score_shift = (q_akt_frac as u16 + k_akt_frac as u16 + 15)
-                .saturating_sub(cfg.score_frac_bits as u16) as u8;
-            let exp_lut_shift = cfg.score_frac_bits.saturating_sub(cfg.exp_input_frac);
-
-            // ⚑ **Eine Zeile je Kopf.** `q_seq` hat genau einen
-            // Eintrag, also liefert die Spur je Aufruf genau eine
-            // Zeile, und die Reihenfolge ist die der Köpfe.
-            let mut kopfspur: Vec<Vec<i32>> = Vec::new();
-            let head_out = attention_int_mit_spur(
-                &q_seq, &k_seq, &v_seq, &mask,
+        // K, V liegen bereits in ihrer Per-Layer-Skala (Fund 22), keine
+        // Reskalierung mehr noetig, und kommen als zusammenhaengende
+        // Ausschnitte ohne Kopie aus dem Speicher. Sichtbar sind alle
+        // Positionen bis `pos`: Die Aufmerksamkeit eines Tokens ist kausal,
+        // weil spaetere Positionen noch nicht oder nur fuer spaetere Token
+        // geschrieben sind.
+        let kopf = |h: usize, spur: Option<&mut Vec<Vec<i32>>>| {
+            let (k_seq, v_seq) = cache.lesen(layer.layer_idx, h / group_size, pos);
+            aufmerksamkeit_einer_abfrage(
+                &q_heads[h], k_seq, v_seq,
                 score_mult, score_shift, &self.exp_lut, exp_lut_shift,
                 cfg.prob_frac_bits,
-                auf.as_ref().map(|_| &mut kopfspur),
-            );
-            if let Some(a) = auf.as_mut() {
-                a.wahrscheinlichkeiten.append(&mut kopfspur);
-            }
+                spur,
+            )
+        };
 
-            // Ergebnis in attn_out schreiben
-            for d in 0..self.head_dim {
-                attn_out[h * self.head_dim + d] = head_out[0][d];
+        // ⚑ **Die Koepfe rechnen verteilt**, denn jeder liest nur und
+        // schreibt in seinen eigenen Abschnitt. Gemessen am 2026-09-14 (4B,
+        // 1 907 Token Kontext): Die Aufmerksamkeit war 63 % eines
+        // Decode-Schritts und lief auf einem Kern, waehrend die anderen
+        // warteten. Aus der gebuendelten Vorbereitung heraus, die schon je
+        // Token verteilt, rechnet der Pool die Koepfe selbst (siehe
+        // `fadenpool::rechnen_breit`).
+        //
+        // ⚑ **Mit Mitschnitt nacheinander**: Die Spur haengt je Kopf eine
+        // Zeile an, und ihre Reihenfolge ist die der Koepfe.
+        let mut attn_out = match auf.as_mut() {
+            Some(a) => {
+                let mut aus = Vec::with_capacity(self.num_heads * self.head_dim);
+                for h in 0..self.num_heads {
+                    aus.extend(kopf(h, Some(&mut a.wahrscheinlichkeiten)));
+                }
+                aus
             }
-        }
+            None => {
+                let sichtbar = (pos + 1) * self.num_heads * self.head_dim;
+                let faeden = if sichtbar >= KOEPFE_VERTEILEN_AB { integer_llm_kernels::linear::kerngrenze() } else { 1 };
+                rechnen_breit(self.num_heads, self.head_dim, faeden, |h, ziel| {
+                    ziel.copy_from_slice(&kopf(h, None));
+                })
+            }
+        };
 
         // Die Attention-Ausgabe liegt auf der V-Skala (gewichtete Summe
         // erhaelt die V-Skala); Umreskalieren auf die kalibrierte
@@ -1309,20 +1710,33 @@ impl IntegerModel {
             a.attn_aus = attn_out.clone();
         }
 
-        // O-Projektion: Eingangsskala = Attention-Ausgabe, Ausgang auf der
-        // Skala des mittleren Residual-Segments (vor der zweiten Norm).
-        // Fund 20: per-Kanal-Ziel statt Skalar, o_proj addiert direkt in
-        // den Residualstrom.
-        // Fund 31 (theta_v 0.17.0): Akkumulationsskala je Kanal ist die
-        // GROEBERE der beiden Segmentskalen (kleinerer Shift). Grund siehe
-        // beim zweiten Residual-Add unten — dort trat der Fehler auf.
-        let acc_attn: Vec<u8> = sc
-            .residual_in_frac
-            .iter()
-            .zip(sc.residual_mid_frac.iter())
-            .map(|(&a, &b)| a.min(b))
-            .collect();
-        let o_out = linear_w8a16_pc(&attn_out, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, &acc_attn);
+        attn_out
+    }
+
+    /// **o_proj fuer eine oder viele Positionen**, Begruendung bei
+    /// [`Model::projektionen_qkv`].
+    fn projektion_o(
+        &self,
+        layer: &TransformerLayer,
+        attn_outs: &[&[i16]],
+        acc_attn: &[u8],
+    ) -> Vec<Vec<i16>> {
+        let sc = &layer.scales;
+        linear_pc_fuer_alle(attn_outs, &layer.o_proj.data, layer.o_proj.cols(), &layer.o_proj.shifts, sc.attn_out_frac, acc_attn)
+    }
+
+    /// Die erste Residualaddition und die Normierung vor dem MLP.
+    fn residual_eins_und_norm(
+        &self,
+        layer: &TransformerLayer,
+        hidden: &[i16],
+        o_out: &[i16],
+        acc_attn: &[u8],
+        mut auf: Option<&mut crate::mitschnitt::Ebenenmitschnitt>,
+    ) -> (Vec<i16>, Vec<i16>) {
+        let cfg = &self.config;
+        let hs = self.hidden_size;
+        let sc = &layer.scales;
 
         // Residual Add 1: beide Operanden auf der Akkumulationsskala, Summe
         // in i64, DANN eine Reskalierung auf die mittlere Segmentskala und
@@ -1762,7 +2176,7 @@ impl IntegerModel {
         // durch dieselbe `mlp_vorwaerts` wie eine dichte Ebene. Damit
         // gilt auch `schritt_auf_mlp` fuer ihn unveraendert, gemessen an
         // echten 30B-A3B-Gewichten.
-        // ⛑ **Fund 332: in zwei Poolrunden statt in vierundzwanzig.**
+        // 📌 **Fund 332: in zwei Poolrunden statt in vierundzwanzig.**
         // Die Begruendung und die Messung stehen bei
         // [`integer_llm_kernels::linear::linear_w8a16_buendel`]. Hier
         // steht nur, was sie fuer diese Stelle heisst: Bis zum
@@ -1776,7 +2190,7 @@ impl IntegerModel {
         // Weg fragt danach den ersten Experten nach seiner Form, und den
         // gaebe es dann nicht.
         //
-        // ⛑ **Und hier stand vorher etwas anderes, ohne dass es jemand
+        // 📌 **Und hier stand vorher etwas anderes, ohne dass es jemand
         // so gemeint haette:** `mische_experten` nimmt die Breite vom
         // ersten Element und gab bei leerer Liste einen **leeren**
         // Vektor zurueck. Der Residualstrom haette ihn nicht addieren
@@ -1848,5 +2262,120 @@ impl IntegerModel {
     /// Sampling mit deterministischem Seed.
     pub fn sample_next(&self, logits: &[i32], seed: u64) -> (usize, u64) {
         sample_integer_cdf(logits, seed)
+    }
+}
+
+/// Wie viele Faeden die Experten einer Gemischebene gleichzeitig beim
+/// System ankuendigen.
+///
+/// # 📌 Fund 371, zweiter Teil (2026-09-14): die Vorbereitung wartete auf die Platte
+///
+/// Nach der Gruppierung verbrachte die Vorbereitung des 30B (368 Token,
+/// `metal`) **56 % des Hauptfadens in `madvise`**, und in acht Sekunden
+/// kamen 14,8 GB von der SSD: 29 GB Expertengewichte passen nicht in den
+/// Dateicache einer Maschine mit 24 GiB, also liest jede lange Vorbereitung
+/// die Experten jeder Ebene neu. Der Rat nacheinander liess die SSD einen
+/// Experten nach dem anderen holen. Gemessen, bitgleich:
+///
+/// | Faeden | 1 | 4 | 8 | 16 | 32 |
+/// |---|---|---|---|---|---|
+/// | Vorbereitung | 8,45 s | 5,65 s | 5,16 s | **5,04 s** | 5,05 s |
+///
+/// ⚑ **Sechzehn, weil die Kurve dort flach wird.** Die naechste Ebene
+/// schon waehrend der Rechnung vorzuladen, brachte gemessen nichts
+/// zusaetzlich (5,21 s) und liest bei kurzen Prompts Experten, die niemand
+/// braucht; es ist deshalb nicht gebaut. **Im Decode bleibt der Rat
+/// seriell**: Acht Experten je Ebene sind zu wenige, um einen Fadenstart je
+/// Token und Ebene zu tragen.
+const ANKUENDIGUNGSFAEDEN: usize = 16;
+
+/// Wie viele Faeden die verteilten Schritte der Vorbereitung nehmen.
+///
+/// ⚑ **Die Kerngrenze des Nutzers, sobald es mehr als ein Token ist.** Die
+/// Schritte rechnen je Token ein Vielfaches einer Matrixzeile (eine
+/// Aufmerksamkeit ueber alle Positionen davor, eine Norm, eine Drehung),
+/// und eine Poolrunde kostet einmal je Schritt und Ebene, nicht je Token.
+/// **An keiner Zahl aendert die Fadenzahl etwas**: Jedes Token schreibt in
+/// seinen eigenen Abschnitt.
+/// Ab wie vielen sichtbaren Werten (Positionen mal Koepfe mal Kopfbreite)
+/// die Koepfe eines Tokens verteilt rechnen.
+///
+/// ⚑ **Gemessen und nicht geschaetzt**, siehe den Kommentar an der
+/// Aufrufstelle in `aufmerksamkeit_lesen`.
+const KOEPFE_VERTEILEN_AB: usize = 1 << 16;
+
+fn vorbereitungsfaeden(n: usize) -> usize {
+    if n < 2 {
+        1
+    } else {
+        integer_llm_kernels::linear::kerngrenze()
+    }
+}
+
+/// Wie viele Prompt-Token eine gebuendelte Vorbereitung hoechstens
+/// zugleich nimmt.
+///
+/// ⚑ **Eine Speichergrenze, keine Rechengrenze.** Die Vorbereitung haelt
+/// je Ebene alle Zwischenwerte aller Token ihres Fensters: beim 4B-Modell
+/// rund 104 KB je Token (Strom, Normen, q, k, v, Aufmerksamkeit, o, gate,
+/// up, Produkt, down). 512 Token sind damit 53 MB; ein Prompt von 32 000
+/// Token ohne Fenster waeren 3,3 GB, und das auf einer Maschine, deren
+/// Gewichte schon im Speicher liegen.
+///
+/// **An keiner Zahl aendert das Fenster etwas.** Jedes Token rechnet
+/// dieselbe Rechnung, und der KV-Speicher wird in derselben Reihenfolge
+/// gefuellt; das naechste Fenster beginnt bei der Position, an der das
+/// vorige aufgehoert hat.
+pub const VORBEREITUNGSFENSTER: usize = 512;
+
+/// Die Akkumulationsskala der ersten Residualaddition, je Kanal.
+///
+/// O-Projektion: Eingangsskala ist die Attention-Ausgabe, Ausgang auf der
+/// Skala des mittleren Residual-Segments (vor der zweiten Norm).
+/// Fund 20: per-Kanal-Ziel statt Skalar, o_proj addiert direkt in den
+/// Residualstrom. Fund 31 (theta_v 0.17.0): Akkumulationsskala je Kanal
+/// ist die GROEBERE der beiden Segmentskalen (kleinerer Shift). Der Grund
+/// steht beim zweiten Residual-Add, dort trat der Fehler auf.
+fn akkumulationsskala_aufmerksamkeit(sc: &LayerScales) -> Vec<u8> {
+    sc.residual_in_frac
+        .iter()
+        .zip(sc.residual_mid_frac.iter())
+        .map(|(&a, &b)| a.min(b))
+        .collect()
+}
+
+/// W8A16 fuer eine oder viele Eingaben auf denselben Gewichten.
+///
+/// ⚑ **Eine Eingabe geht den einzelnen Weg**, und zwar Zeichen fuer
+/// Zeichen den, der vor Fund 366 hier stand: Der Decode rechnet je Schritt
+/// genau ein Token und soll keinen Buendelrumpf bezahlen. Viele Eingaben
+/// gehen den Stapelweg; beide sind elementweise dasselbe Skalarprodukt,
+/// geprueft in `linear.rs` (`gebuendelt_ist_dasselbe`).
+fn linear_fuer_alle(
+    xs: &[&[i16]],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: u8,
+) -> Vec<Vec<i16>> {
+    match xs {
+        [x] => vec![linear_w8a16(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
+        _ => linear_w8a16_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
+    }
+}
+
+/// Wie [`linear_fuer_alle`], mit einer Ausgangsskala je Kanal (Fund 20).
+fn linear_pc_fuer_alle(
+    xs: &[&[i16]],
+    w: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    match xs {
+        [x] => vec![linear_w8a16_pc(x, w, in_features, w_shifts, act_frac_bits, out_frac_bits)],
+        _ => linear_w8a16_pc_stapel(xs, w, in_features, w_shifts, act_frac_bits, out_frac_bits),
     }
 }

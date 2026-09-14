@@ -500,7 +500,7 @@ mod tests {
 
     /// ⚑ **Die Wahl des Schlüssels, mit Gegenprobe in beide Richtungen.**
     ///
-    /// ⛑ Ohne sie wäre `--kontoschluessel` eine Fahne, die den Weg zwar
+    /// 📌 Ohne sie wäre `--kontoschluessel` eine Fahne, die den Weg zwar
     /// erreicht, aber nichts daran ändert.
     #[test]
     fn die_abrechnung_nimmt_den_kontoschluessel_wenn_es_einen_gibt() {
@@ -550,7 +550,7 @@ mod tests {
     /// ⚑ **Der abgeleitete Schlüssel folgt allein aus dem Namen, und es
     /// gibt nur acht davon.**
     ///
-    /// ⛑ Ohne diese Zeilen wäre die Warnung im Knotenstart eine
+    /// 📌 Ohne diese Zeilen wäre die Warnung im Knotenstart eine
     /// Behauptung.
     ///
     /// ⚑ **Beim Schreiben dieses Tests aufgefallen und es gehört zu

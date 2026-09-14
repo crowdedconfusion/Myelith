@@ -147,7 +147,7 @@ jobs:
           BIN="TESTCLIENT/myl-testclient/target/${{ matrix.ziel }}/release/myl-test${{ matrix.endung }}"
           mkdir -p release-konf
           "$BIN" --name release --logs release-konf konformitaet
-          # ⛑ **Hier stand nur `894d…`, und das ist der Abdruck von
+          # 📌 **Hier stand nur `894d…`, und das ist der Abdruck von
           # `konformitaet_op`, also nur der sechs Operations-Vektoren.**
           # Der Lauf prueft siebzehn. Ein Binary mit einem abweichenden
           # Trainings- oder MoE-Kern waere veroeffentlicht worden, und
@@ -175,7 +175,7 @@ jobs:
       #
       # Was er **nicht** belegt, ist, dass das Client-Binary auf diesem
       # Ziel ueberhaupt startet. Genau das prueft die Startprobe, und
-      # ⛑ sie hat beim Bauen sofort etwas gefunden: `myl` gab auf
+      # 📌 sie hat beim Bauen sofort etwas gefunden: `myl` gab auf
       # **jeden** unbekannten Befehl die Hilfe aus und dazu null zurueck,
       # eine Startprobe waere also auch dann gruen gewesen, wenn das
       # Binary nichts kann. Seit CLIENT 0.8.1 ist ein Aufruffehler eine
@@ -229,7 +229,7 @@ jobs:
   # den Job oben: Sie braucht die WebKit-Pakete des Systems, die
   # Tauri-Kommandozeile und je Plattform ein anderes Bündelformat.
   #
-  # ⛑ **`.app` wird ausdrücklich nicht eingesammelt.** Es ist ein
+  # 📌 **`.app` wird ausdrücklich nicht eingesammelt.** Es ist ein
   # Verzeichnis, und der Sammelschritt unten läuft mit
   # `find -type f`: Ein `.app` würde in seine Einzelteile zerlegt und
   # als Haufen loser Dateien im Release landen. Auf macOS wandert
@@ -311,7 +311,7 @@ jobs:
         working-directory: CLIENT/myl-oberflaeche
         run: cargo tauri build --target ${{ matrix.ziel }} --bundles ${{ matrix.buendel }}
 
-      # ⛑ **Ein Bündelschritt, der nichts erzeugt, ist grün.** Tauri
+      # 📌 **Ein Bündelschritt, der nichts erzeugt, ist grün.** Tauri
       # meldet ein unbekanntes Format als Hinweis und endet mit null;
       # ohne diese Prüfung wäre eine Freigabe ohne Oberfläche von einer
       # mit Oberfläche nicht zu unterscheiden.
@@ -344,7 +344,7 @@ jobs:
   veroeffentlichen:
     name: Veroeffentlichen
     needs: [bauen, oberflaeche]
-    # ⛑ **Ein ausgefallenes Bündel darf nicht die Binaries mitnehmen.**
+    # 📌 **Ein ausgefallenes Bündel darf nicht die Binaries mitnehmen.**
     # Ohne diese Zeile hinge die ganze Freigabe an vier Bündeln: Bricht
     # das `.msi` an einer Windows-Eigenheit ab, käme auch `myl` für
     # Linux nicht heraus, obwohl es gebaut und geprüft ist.

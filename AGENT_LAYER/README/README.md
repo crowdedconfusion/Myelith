@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.16.1 (`myl-agent` 0.7.0, `myl-local-agent` 0.9.1)
+> **Version:** 0.17.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.10.0)
 > **Datum:** 2026-09-09
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -45,6 +45,21 @@ Kap. 8.2).
 
 ## Changelog
 
+### v0.17.0 – 2026-09-14 (der Verlauf geht mit, und der Kontext verdichtet sich am Rand)
+
+`myl-local-agent` **0.10.0**.
+
+⚑ **Ein Lauf trägt das bisherige Gespräch vor dem Auftrag**
+(`Lauf::fahren_mit_verlauf`, Entscheidung C2 beantwortet): Schrittbudget
+und Belegkette bleiben je Auftrag, der Verlauf ist Eingabe und im
+Commitment des ersten Schritts gebunden.
+
+⚑ **Läuft der Kontext voll, wird verdichtet statt abgebrochen**
+(`verdichtung`): Das Modell fasst den mittleren Teil zusammen, Auftrag und
+letzter Schritt bleiben wörtlich; eine einzelne zu lange Werkzeugantwort
+wird in der Mitte gekürzt. `Modellweg::kontext` sagt, wie viel Kontext ein
+Prompt belegt; `None` heißt unbekannt, dann verdichtet niemand von selbst.
+
 ### v0.16.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 
 **Umbenennung, keine Verhaltensänderung.** Die Artefakte unter
@@ -84,7 +99,7 @@ Grund stand sonst nur im Sitzungsstrom.
 
 ### v0.15.0 – 2026-09-09 (`myl-local-agent` 0.8.1: die Ansage wird die Vorlage und nicht ihre Paraphrase)
 
-⛑ **Fund 221: Die Werkzeugansage war eine deutsche Umschreibung**, und
+📌 **Fund 221: Die Werkzeugansage war eine deutsche Umschreibung**, und
 ihr fehlte gerade das Aufrufbeispiel, das die Vorlage des Modells als
 Literal zeigt. Dazu standen die JSON-Schlüssel alphabetisch, weil
 `serde_json::Map` ohne `preserve_order` ein `BTreeMap` ist.
@@ -100,7 +115,7 @@ das steht ausdrücklich am Typ, damit niemand sie für belegt hält.
 Repositorium abgelegte Kopie (läuft in der CI), und die Kopie gegen die
 echte Vorlage des Modells (läuft, wo das Modell liegt).
 
-⛑ **Nachgetragen am 2026-09-10.** Das Manifest von `myl-local-agent`
+📌 **Nachgetragen am 2026-09-10.** Das Manifest von `myl-local-agent`
 trug 0.8.1 seit dem 2026-09-09, dieser Changelog stand auf 0.14.0 mit
 `myl-local-agent` 0.7.0 in der Kopfzeile.
 
@@ -289,7 +304,7 @@ die Zahl, die ein Mensch zuerst sehen will.
 wie heute Morgen schon `Expertenwacht` und zwei Nachbarn im MoE-Pfad.
 Der Strom ruft sie.
 
-⛑ **Dabei fiel eine Lücke im eigenen 5.1 auf.** Der `Tuerklient` las
+📌 **Dabei fiel eine Lücke im eigenen 5.1 auf.** Der `Tuerklient` las
 `id` („myl-42", eine Anzeigekennung) und warf `myelith_segment` weg,
 also genau die 32 Bytes, an denen die Kette hängt. Ein Sitzungsstrom,
 der sich darauf beruft, hätte sie nicht gehabt. ⚑ **Und wo sie fehlt,
@@ -385,7 +400,7 @@ nicht von „kein Guthaben" und nicht von „der Knoten rechnet gerade"
 trennen. Der Mensch davor soll erfahren, was zu tun ist, und das ist je
 nach Zahl etwas anderes.
 
-⛑ **Drei Testdateien lasen die Antwort bisher mit `read_to_end`**, sie
+📌 **Drei Testdateien lasen die Antwort bisher mit `read_to_end`**, sie
 verlassen sich also darauf, dass die Gegenseite auflegt. Ein Klient, der
 eine Vollmacht trägt und eine Abrechnung auslöst, darf nicht daran
 hängen, ob der Server `keep-alive` beherrscht: Er läse bis zur Frist und

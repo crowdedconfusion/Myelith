@@ -23,10 +23,15 @@ Messung daraus.
 
 Gemessen werden **drei** Layouts:
 
-- 4 Shards, Grenzen bei 6/12/18 (die Produktivkonfiguration),
-- 8 Shards, Grenzen bei 3/6/9/12/15/18/21,
-- 4 Shards **ungleichmäßig**, Grenzen bei 1/7/23 — also 1, 6, 16 und 1
+- 4 Shards, Grenzen bei 7/14/21 (die Produktivkonfiguration),
+- 8 Shards, Grenzen bei 4/7/11/14/18/21/25,
+- 4 Shards **ungleichmäßig**, Grenzen bei 1/9/27, also 1, 8, 18 und 1
   Layer.
+
+Die Grenzen gelten für das Ankermodell mit 28 Ebenen. Bis zum
+2026-09-14 standen hier die Grenzen eines abgelösten Modells mit 24
+Ebenen, und die Konfigurationen dazu ließen sich mit dem neuen Anker
+nicht mehr starten.
 
 Das dritte ist das eigentliche Argument. Die 8er-Grenzen sind ein
 Superset der 4er-Grenzen; eine Übereinstimmung zwischen beiden könnte
@@ -114,21 +119,21 @@ def test_layouts_liefern_dieselben_token():
     prompt_tokens, referenz = mn.run_single_node(PROMPT, MAX_NEW_TOKENS)
     print(f"[test] Einzelknoten:  {referenz}")
 
-    print("[test] 4-Node-Pipeline (Grenzen bei 6/12/18) ...")
+    print("[test] 4-Node-Pipeline (Grenzen bei 7/14/21) ...")
     vier = run_layout(CONFIG_4, 4, prompt_tokens, MAX_NEW_TOKENS)
     print(f"[test] 4 Shards:      {vier}")
 
-    print("[test] 8-Node-Pipeline (Grenzen bei 3/6/9/12/15/18/21) ...")
+    print("[test] 8-Node-Pipeline (Grenzen bei 4/7/11/14/18/21/25) ...")
     acht = run_layout(CONFIG_8, 8, prompt_tokens, MAX_NEW_TOKENS)
     print(f"[test] 8 Shards:      {acht}")
 
-    # Die 8er-Grenzen (3/6/9/...) sind ein Superset der 4er-Grenzen
-    # (6/12/18) — eine Uebereinstimmung koennte daran haengen. Das
+    # Die 8er-Grenzen (4/7/11/...) sind ein Superset der 4er-Grenzen
+    # (7/14/21), eine Uebereinstimmung koennte daran haengen. Das
     # ungleichmaessige Layout faellt mit keiner der beiden zusammen und
     # ist deshalb der schaerfere Test.
-    print("[test] Ungleichmaessige Pipeline (Grenzen bei 1/7/23) ...")
+    print("[test] Ungleichmaessige Pipeline (Grenzen bei 1/9/27) ...")
     ungleich = run_layout(CONFIG_U, 4, prompt_tokens, MAX_NEW_TOKENS)
-    print(f"[test] 1/6/16/1 Layer: {ungleich}")
+    print(f"[test] 1/8/18/1 Layer: {ungleich}")
 
     # Die eigentliche Frage.
     assert vier == acht, (

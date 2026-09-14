@@ -1,7 +1,7 @@
 # testclient (`myl-testclient`)
 
-> **Version:** 0.36.1
-> **Datum:** 2026-09-12
+> **Version:** 0.37.0
+> **Datum:** 2026-09-14
 > **Status:** Phase 1 und **Phase 3 vollständig**, dazu Punkt 2.1
 > (`vergleich`), **2.2** (Backend-Vergleich innerhalb einer Maschine, seit
 > dem 2026-08-30) und 2.4 (`--repeat`); **Phase 4 vollständig** (4.3 die
@@ -544,9 +544,55 @@ COMPUTE_PIPELINE Phase 1: erstmals über einen aufrufbaren Befehl statt
 
 ## Changelog
 
+### v0.37.0 – 2026-09-14 (jeder Rechenweg der Maschine in einem Lauf)
+
+⚑ **Siebte Stufe `rechenwege`**, auch als Befehl `myl-test rechenwege`.
+Derselbe feste Text (93 Token, acht erzeugte Token) läuft über jeden
+Rechenweg, den die Maschine hat: `metal` (die gebündelten Matrizen der
+Vorbereitung auf der GPU), `cpu-simd`, `reference` (skalar erzwungen) und
+`cpu-simd` auf einem einzigen Kern. Alle müssen denselben Abdruck aus
+Logits und Token liefern.
+
+| Modell | Wege | Dauer ohne Laden |
+|---|---|---|
+| 0,6B | 4, bitgleich | 5,0 s |
+| 4B | 4, bitgleich | 22,2 s |
+| 30B-A3B | 3, bitgleich; ein Kern übersprungen (geschätzt 138 s) | 32,1 s |
+
+Der ganze Sammellauf mit `standard-kurz.plan` auf 0,6B: 29 s, sieben
+Stufen OK.
+
+⚑ **Umgeschaltet wird zur Laufzeit**, nicht mehr über zwei Bauten:
+`kernels::dot::skalar_erzwingen`, `kernels::metal::schwelle_setzen`,
+`kernels::linear::kerngrenze_setzen`. **Jeder Weg belegt, dass er
+gegriffen hat**: GPU-Bündel beim Weg über die GPU und null bei allen
+anderen, erzwungen skalare Skalarprodukte beim Referenzweg, Kerngrenze
+eins beim Weg auf einem Kern (Lehre aus Fund 33).
+
+⚑ **Ein Vergleichswert, nicht einer je Weg.** `vergleich` führt Läufe
+mit verschiedenen Wertemengen als unvollständig (Fund 35); eine Maschine
+ohne GPU bliebe sonst mit keiner mit GPU vergleichbar. Der Wert ist der
+Abdruck der Referenz, und er gilt nur, wenn jeder Weg ihn traf.
+
+⚑ **Der Zeitrahmen:** eine Minute ohne das Laden. Der Weg auf einem Kern
+wird vorab geschätzt (Dauer auf allen Kernen mal Kernzahl) und
+übersprungen, wenn er nicht passt; die Referenz nie.
+
+⚑ **Der Bau enthält jeden Rechenweg der Maschine:** auf aarch64
+`cpu-simd`, auf Apple-Silizium zusätzlich `metal`, über die Abhängigkeit
+auf `integer-llm-kernels`. `backends_compiled` kommt deshalb aus
+`kernels::rechenpfad::uebersetzt` statt aus den Features dieser Kiste, und
+`backend_selected` nennt die GPU mit (`metal+cpu-simd/neon`), wenn sie
+rechnen darf. Die übrigen Stufen rechnen auf dem schnellsten Weg.
+
+⚠️ **Eine ältere Client-Fassung kennt die Stufe nicht.** Ihr Protokoll
+trägt einen Vergleichswert weniger, und `vergleich` urteilt über eine
+gemischte Gruppe `UNVOLLSTÄNDIG`. Alle Teilnehmer brauchen dieselbe
+Fassung.
+
 ### v0.36.1 – 2026-09-12 (der neue Ordner erbte die Regeln seines Vorbilds nicht)
 
-⛑ **`Ergebnisse/` kam ohne `.gitignore` auf die Welt.** Der Ordner ist
+📌 **`Ergebnisse/` kam ohne `.gitignore` auf die Welt.** Der Ordner ist
 nach dem Vorbild von `logs/` und `Vergleiche/` gebaut, und ausgerechnet
 das Stück, das beide seit Langem tragen, fehlte: die Regel, die die
 Laufergebnisse draussen hält.
@@ -616,7 +662,7 @@ und wer die falsche Datei griff, schickte einen Abbruch.
 Menüpunkte sind zu Befehlen geworden, drei davon neu: `myl-test
 aufraeumen`, `teilnehmen`, `anlaufstelle`. Die übrigen gab es schon.
 
-⛑ **Der Untertitel unter dem Logo nannte drei von sechs Stufen**, seit
+📌 **Der Untertitel unter dem Logo nannte drei von sechs Stufen**, seit
 es nur drei gab. **Eine Aufzählung, die nicht mitwächst, wird zur
 Auswahl**, und so hat sie niemand gemeint.
 
@@ -669,7 +715,7 @@ und ein unbekanntes Modell bekommt weiter keine fremden Gewichte.
 
 ### v0.32.1 – 2026-09-10 (Fund 308: im Rohmodus ist ein Zeilenvorschub kein Zeilenende)
 
-⛑ **Gefunden im Konsolenclient, behoben an beiden Stellen.** Die
+📌 **Gefunden im Konsolenclient, behoben an beiden Stellen.** Die
 Eingabezeile schaltet das Terminal in den Rohmodus und bekommt jedes
 Byte selbst. Ein Wagenrücklauf, 0x0D, kommt dort als „Eingabe" an; ein
 Zeilenvorschub, 0x0A, dagegen als **Strg-J und damit als Buchstabe**.
@@ -692,7 +738,7 @@ im Kopf zu verlassen.
 Grundgewichte (Apache-2.0), das andere die des daraus gebauten
 Artefakts: die dieses Repositoriums.
 
-⛑ **Ein Feld namens `lizenz` neben einem Eintrag namens `myelith-4b`
+📌 **Ein Feld namens `lizenz` neben einem Eintrag namens `myelith-4b`
 liest sich als Lizenz des Artefakts**, und genau so hat die
 Einstellungsseite des Klienten es angezeigt (gemeldet vom
 Projektinhaber). Der Wert war für sich genommen wahr und an dieser
@@ -722,7 +768,7 @@ siebzehn. **Die Namen stehen in keiner Bytefolge, die gehasht wird.**
 
 ### v0.31.3 – 2026-09-09 (der Umfang des Konformitätslaufs, und ein Wächter, der den falschen Wert prüfte)
 
-⛑ **Im Modulkopf von `konformitaet.rs` stand „sechs ohne Artefakt,
+📌 **Im Modulkopf von `konformitaet.rs` stand „sechs ohne Artefakt,
 dreiunddreissig mit", und das galt einmal.** Training und Gemisch kamen
 später dazu und brauchen kein Artefakt; ohne Artefakt sind es
 **siebzehn**. Die Zeile wurde nicht nachgezogen.
@@ -738,7 +784,7 @@ Wächter, mit ihrem Umfang daneben.
 Dazu zeigt `vergleich` den Ablageort der Auswertung an seiner heutigen
 Stelle statt an der alten.
 
-⛑ **Nachgetragen am 2026-09-10, und der Eintrag deckt 0.31.1 bis
+📌 **Nachgetragen am 2026-09-10, und der Eintrag deckt 0.31.1 bis
 0.31.3.** Das Manifest trug 0.31.3 seit dem 2026-09-09, dieser
 Changelog stand auf 0.31.0.
 
@@ -821,7 +867,7 @@ fehlerhaft, ohne dass einer gelogen hätte.
 Zusage bricht man nicht, um eine neue aufzustellen. Beide alten Werte
 sind unverändert.
 
-⛑ **Und ein Test wurde sprechend gemacht.** `zwei_prozesse.rs` startet
+📌 **Und ein Test wurde sprechend gemacht.** `zwei_prozesse.rs` startet
 `myl-pod-node` als **vorgebautes** Binary und warf dessen Fehlerausgabe
 weg. Als das alte Binary die auf θ_v 0.18.0 gehobenen Artefakte
 ablehnte, meldete der Test „der Shard-Dienst hat seine Adresse nicht
@@ -880,7 +926,7 @@ Jeder einzelne geprüfte Kern rechnet gleich, der Weg als Ganzes nicht.
 Dann ist nicht das Artefakt zu prüfen, sondern die Vektorliste zu
 ergänzen.
 
-⛑ **Die erste Fassung dieses Textes riet erst zu `myl-test artefakte`
+📌 **Die erste Fassung dieses Textes riet erst zu `myl-test artefakte`
 und sagte zwei Absätze später, das werde es nicht finden.** Zwei
 widersprüchliche Anweisungen sind schlechter als eine ungenaue, und
 dieser Text wird um zwei Uhr nachts auf einer Mietmaschine gelesen. Ein

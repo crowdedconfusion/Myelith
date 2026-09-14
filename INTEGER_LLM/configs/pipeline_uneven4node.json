@@ -1,6 +1,6 @@
 {
-  "pipeline_hash": "sha256:669f90db6b23a9b90957680e5d5dbe69269ea64e42da190e6bf4ca34b54a8287",
-  "theta_v_hash": "sha256:16f0e49c0ee8c719dbfce2827cca05895c6f591a9e52a0b45083cd655f198aeb",
+  "pipeline_hash": "sha256:27572b1ca36bae846463cb496a33e38aca753a6e483055467d0dcf8baa95582b",
+  "theta_v_hash": "sha256:a49a77ff47be171044f24538d908a02a7d7d62fcaa7961486731d71e74055c56",
   "stages": [
     {
       "stage_id": 0,
@@ -16,12 +16,12 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 1,
       "layer_start": 1,
-      "layer_end": 7,
+      "layer_end": 9,
       "has_embedding": false,
       "has_lm_head": false,
       "has_sampling": false,
@@ -32,12 +32,12 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 2,
-      "layer_start": 7,
-      "layer_end": 23,
+      "layer_start": 9,
+      "layer_end": 27,
       "has_embedding": false,
       "has_lm_head": false,
       "has_sampling": false,
@@ -48,12 +48,12 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 3,
-      "layer_start": 23,
-      "layer_end": 24,
+      "layer_start": 27,
+      "layer_end": 28,
       "has_embedding": false,
       "has_lm_head": true,
       "has_sampling": true,
@@ -64,7 +64,7 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     }
   ],
   "boundary_dtype": "int16",

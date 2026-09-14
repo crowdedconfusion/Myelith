@@ -1,6 +1,6 @@
 //! **Einen trainierten Ablesekopf in ein Artefakt einsetzen.**
 //!
-//! # ⛑ Wozu, und warum es das vorher nicht gab
+//! # 📌 Wozu, und warum es das vorher nicht gab
 //!
 //! Ein Lauf mit `--nur-kopf` konnte bis zum 2026-09-09 messen, dass das
 //! Modell etwas gelernt hat, und das Ergebnis danach nicht hergeben:
@@ -21,7 +21,7 @@
 //! schreibt nur neue i16-Werte. Eine Zeile einzusetzen heisst also,
 //! `hidden * 2` Byte an die Stelle `token * hidden * 2` zu legen.
 //!
-//! ⛑ **Das Artefakt wird kopiert und nicht angefasst.** Ein Werkzeug,
+//! 📌 **Das Artefakt wird kopiert und nicht angefasst.** Ein Werkzeug,
 //! das ein Kalibrierergebnis von mehreren Gigabyte in Ruhe laesst, ist
 //! ein paar Sekunden Kopierzeit wert. Harte Verweise waeren schneller
 //! und der Fehler, den sich niemand verzeiht: Wer spaeter im neuen
@@ -44,17 +44,17 @@ fn main() {
     let ziel = std::path::Path::new(&ziel);
 
     if ziel.exists() {
-        eprintln!("⛑ {} gibt es schon. Ein Ziel wird nicht ueberschrieben.", ziel.display());
+        eprintln!("⚠️ {} gibt es schon. Ein Ziel wird nicht ueberschrieben.", ziel.display());
         std::process::exit(1);
     }
     if !quelle.join("lm_head.bin").is_file() {
-        eprintln!("⛑ {} hat keine lm_head.bin.", quelle.display());
+        eprintln!("⚠️ {} hat keine lm_head.bin.", quelle.display());
         std::process::exit(1);
     }
 
     let d = std::fs::read(&kopfdatei).expect("Kopfdatei");
     if d.len() < 16 || &d[..8] != b"MYLKOPF1" {
-        eprintln!("⛑ {kopfdatei} ist keine Kopfdatei (Marke MYLKOPF1 fehlt).");
+        eprintln!("⚠️ {kopfdatei} ist keine Kopfdatei (Marke MYLKOPF1 fehlt).");
         std::process::exit(1);
     }
     let hidden = u32_lesen(&d, 8) as usize;
@@ -63,7 +63,7 @@ fn main() {
     let je_zeile = 4 + hidden * 2;
     if d.len() != 16 + zeilen * je_zeile {
         eprintln!(
-            "⛑ Die Kopfdatei ist {} Byte gross, erwartet waeren {} fuer {zeilen} Zeilen zu {hidden}.",
+            "⚠️ Die Kopfdatei ist {} Byte gross, erwartet waeren {} fuer {zeilen} Zeilen zu {hidden}.",
             d.len(),
             16 + zeilen * je_zeile
         );
@@ -80,7 +80,7 @@ fn main() {
         if p.is_dir() {
             // ⚑ Ein Artefakt ist flach. Ein Verzeichnis darin waere
             //   neu, und stillschweigend zu uebergehen waere falsch.
-            eprintln!("⛑ {} ist ein Verzeichnis; dieses Werkzeug kopiert flach.", p.display());
+            eprintln!("⚠️ {} ist ein Verzeichnis; dieses Werkzeug kopiert flach.", p.display());
             std::process::exit(1);
         }
         byte += std::fs::copy(&p, ziel.join(e.file_name())).expect("kopieren");
@@ -97,12 +97,12 @@ fn main() {
         let ab = 16 + z * je_zeile;
         let token = u32_lesen(&d, ab) as u64;
         let stelle = token * hidden as u64 * 2;
-        // ⛑ Eine Zeile hinter dem Ende waere ein anderer Wortschatz.
+        // 📌 Eine Zeile hinter dem Ende waere ein anderer Wortschatz.
         //   Danebenzuschreiben ergaebe ein Artefakt, das laedt und
         //   falsch rechnet.
         if stelle + (hidden as u64) * 2 > laenge {
             eprintln!(
-                "⛑ Token {token} liegt hinter dem Ende von lm_head.bin. \
+                "⚠️ Token {token} liegt hinter dem Ende von lm_head.bin. \
                  Kopfdatei und Artefakt gehoeren nicht zusammen."
             );
             std::process::exit(1);
@@ -126,7 +126,7 @@ fn main() {
     // Summe seiner `.bin`, und `theta_v.json` haelt die Summe des
     // Manifests. Der Lader prueft beide und verweigert sonst.
     //
-    // ⛑ **Das wird nachgezogen und nicht umgangen.** Die Kette
+    // 📌 **Das wird nachgezogen und nicht umgangen.** Die Kette
     // verhindert **stille** Veraenderung; ein Werkzeug, das sie
     // abschaltet, nimmt dem Artefakt genau die Eigenschaft, um
     // derentwillen dieses Projekt existiert. Ein bewusst geaendertes
@@ -158,7 +158,7 @@ fn summe_hex(b: &[u8]) -> String {
 
 /// Ersetzt eine Summe genau einmal, oder bricht ab.
 ///
-/// ⛑ **Genau einmal.** Kaeme die alte Summe zweimal vor, traefe die
+/// 📌 **Genau einmal.** Kaeme die alte Summe zweimal vor, traefe die
 /// Ersetzung auch den anderen Eintrag, und das Artefakt waere still
 /// falsch statt laut kaputt.
 fn ersetze_einmal(
@@ -170,7 +170,7 @@ fn ersetze_einmal(
 ) {
     let n = text.matches(alt).count();
     if n != 1 {
-        eprintln!("⛑ {was}: die alte Summe {alt} kommt {n}-mal vor, erwartet genau einmal.");
+        eprintln!("⚠️ {was}: die alte Summe {alt} kommt {n}-mal vor, erwartet genau einmal.");
         std::process::exit(1);
     }
     std::fs::write(pfad, text.replace(alt, neu)).expect("schreiben");

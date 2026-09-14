@@ -432,7 +432,7 @@ pub fn schritt_normiert(
 /// Wie [`schritt_normiert`], bezieht die Bewegung aber auf das
 /// Betragsmaximum **der Zeile** statt der ganzen Matrix.
 ///
-/// # ⛑ Warum es das braucht: Fund 194, eine Ebene tiefer
+/// # 📌 Warum es das braucht: Fund 194, eine Ebene tiefer
 ///
 /// [`schritt_normiert`] traegt in seinem eigenen Kommentar die
 /// Begruendung, die hier weitergeht:
@@ -451,7 +451,7 @@ pub fn schritt_normiert(
 /// |---|---|---|---|
 /// | das groesste | 100 % | 1,6 % von `w_max` | 1,6 % |
 /// | ein mittleres | 10 % | 1,6 % von `w_max` | **16 %** |
-/// | ein kleines | 1 % | 1,6 % von `w_max` | ⛑ **156 %**, es kippt |
+/// | ein kleines | 1 % | 1,6 % von `w_max` | 📌 **156 %**, es kippt |
 ///
 /// Gemessen am 2026-09-08: Nenner 64 auf den Ebenen zerstoerte das
 /// Modell, Paris fiel von Rang 94 auf 51 670.
@@ -1534,7 +1534,7 @@ mod aggregation_tests {
         assert_eq!(a, vec![gross], "die Summe ist null, der Wert bleibt");
     }
 
-    /// ⛑ **Die Gegenprobe: so sähe es aus, wenn je Summand geklemmt
+    /// 📌 **Die Gegenprobe: so sähe es aus, wenn je Summand geklemmt
     /// würde.**
     ///
     /// Ohne diesen Test bliebe offen, ob der obige überhaupt etwas
@@ -1604,7 +1604,7 @@ mod aggregation_tests {
         aggregiere(&mut zusammen, &[&da, &db]);
         assert_eq!(zusammen, vec![105, 110]);
 
-        // ⛑ Und die Gegenprobe: die Endzustaende zu addieren gaebe
+        // 📌 Und die Gegenprobe: die Endzustaende zu addieren gaebe
         // etwas anderes, naemlich den doppelten Ausgangszustand mit.
         let mut falsch = vec![0i32, 0];
         aggregiere(&mut falsch, &[&ende_a, &ende_b]);

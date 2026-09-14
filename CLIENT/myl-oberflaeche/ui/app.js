@@ -8,17 +8,17 @@
 // Gespraechen, oben rechts das Zahnrad. Davor waren es drei
 // untereinanderliegende Abschnitte.
 //
-// ⛑ Hier stand bis zum 2026-09-09 „oben mittig der Ort (lokal oder
+// 📌 Hier stand bis zum 2026-09-09 „oben mittig der Ort (lokal oder
 // Netz)". Der Schalter ist entfallen, der Satz nicht, und ein
 // Kommentar, der einen Bedienteil beschreibt, den es nicht gibt,
 // schickt den Naechsten suchen.
 //
 // ⚑ **Der Modus steht ueber den Gespraechen, weil er bestimmt, WAS ein
-// Gespraech ist.** In `Frage` traegt es seinen Verlauf mit und das
-// Modell sieht ihn; beim Agenten steht jeder Auftrag fuer sich, mit
-// eigenem Schrittbudget und eigener Belegkette. Das ist Entscheidung
-// C2 und keine Bequemlichkeit, und ein Fenster, das beide gleich
-// behandelte, versteckte genau den Unterschied.
+// Gespraech ist.** Im Chat antwortet das Modell ohne Werkzeuge; beim
+// Agenten hat jeder Auftrag Werkzeuge, ein eigenes Schrittbudget und
+// eine eigene Belegkette. 📌 Bis zum 2026-09-14 stand hier ausserdem,
+// dass beim Agenten jeder Auftrag fuer sich steht (Entscheidung C2).
+// Seitdem tragen beide Modi ihr Gespraech mit; siehe `kontext_von`.
 
 import { netzStarten } from "./netz.js";
 
@@ -65,7 +65,7 @@ async function vorhangWeg() {
 // eingestellten Sprache. Zwei Orte fuer denselben Satz waeren zwei
 // Orte, an denen die naechste Sprache vergessen werden kann.
 //
-// ⛑ **Und was ein Programm vergleicht, wird nie uebersetzt:**
+// 📌 **Und was ein Programm vergleicht, wird nie uebersetzt:**
 // Feldnamen (`agent.wurzel`), Pfade, Modellnamen, die Kennung `netz`,
 // die Marken im Verlauf. Ein uebersetzter Schluessel ist kein
 // Schluessel mehr.
@@ -75,6 +75,18 @@ const TEXTE = {
     "menue.umbenennen": "Umbenennen",
     "menue.ausgeben": "Exportieren",
     "menue.loeschen": "Löschen",
+    "kontext.label": "Kontext",
+    "kontext.zahl": (belegt, grenze, prozent) => `Kontext ${prozent} % · ${belegt} von ${grenze} Token`,
+    "kontext.titel": (ansage, gespraech, n) =>
+      `Werkzeugansage ${ansage} Token, Gespräch ${gespraech} Token in ${n} Nachrichten. Klicken zum Verdichten.`,
+    "kontext.verdichten": "Kontext verdichten",
+    "kontext.neu": "Neues Gespräch",
+    "kontext.laeuft": "Kontext wird verdichtet …",
+    "kontext.leer": "Das Gespräch ist leer; es gibt nichts zu verdichten.",
+    "kontext.verdichtet": (vorher, nachher) =>
+      `⚑ Kontext verdichtet: ${vorher} → ${nachher} Token. Ab hier sieht das Modell eine Zusammenfassung des Gesprächs davor.`,
+    "kontext.im_lauf": "Kontext verdichtet",
+    "kontext.fehler": (f) => `Verdichten fehlgeschlagen: ${f}`,
     "leiste.label": "Gespräche und Betriebsart",
     "leiste.modus": "Modus",
     "leiste.modell": "Modell",
@@ -95,7 +107,7 @@ const TEXTE = {
     "modus.agent.name": "Agent",
     "modus.agent.was": "mit Werkzeugen",
     "modus.agent.leer":
-      "Der Agent erledigt deinen Auftrag mit den Werkzeugen in seinem Werkzeugkoffer. In den Einstellungen kannst du Anpassungen vornehmen …",
+      "Der Agent erledigt deinen Auftrag mit den Werkzeugen in seinem Werkzeugkoffer. Das Gespräch geht von Auftrag zu Auftrag mit. In den Einstellungen kannst du Anpassungen vornehmen …",
     "modus.knoten.name": "Knoten",
     "modus.knoten.was": "Mining",
     "modus.knoten.warum":
@@ -126,8 +138,19 @@ const TEXTE = {
     "ausgabe.fehler": (f) => `Fehler beim Ausgeben: ${f}`,
     "umbenennen.label": (was) => `${was} umbenennen`,
 
-    "denken.titel": "Überlegung",
-    "befehl.laeuft": "Befehl wird ausgeführt",
+    "denken.mal": (n) => (n === 1 ? "1 Mal nachgedacht" : `${n} Mal nachgedacht`),
+    "denken.jetzt": " · denkt gerade nach …",
+    "befehl.laufend": (getan) =>
+      getan === 0
+        ? "Befehl wird ausgeführt …"
+        : `${getan} ${getan === 1 ? "Befehl" : "Befehle"} ausgeführt · einer läuft …`,
+    "befehl.vorhaben": "Vorhaben",
+    "befehl.befehl": "Befehl",
+    "befehl.antwort": "Antwort",
+    "befehl.aussteht": "Antwort steht noch aus…",
+    "befehl.ohne": "Keine Antwort erhalten",
+    "befehl.unlesbar": "Nicht lesbarer Vorschlag",
+    "befehl.ohne_aufruf": "Antwort ohne erkannten Befehl",
     "befehl.keine": "Keine Befehle ausgeführt",
     "befehl.eins": "1 Befehl ausgeführt",
     "befehl.viele": (n) => `${n} Befehle ausgeführt`,
@@ -189,6 +212,18 @@ const TEXTE = {
     "menue.umbenennen": "Rename",
     "menue.ausgeben": "Export",
     "menue.loeschen": "Delete",
+    "kontext.label": "Context",
+    "kontext.zahl": (belegt, grenze, prozent) => `Context ${prozent} % · ${belegt} of ${grenze} tokens`,
+    "kontext.titel": (ansage, gespraech, n) =>
+      `Tool listing ${ansage} tokens, conversation ${gespraech} tokens in ${n} messages. Click to compress.`,
+    "kontext.verdichten": "Compress context",
+    "kontext.neu": "New conversation",
+    "kontext.laeuft": "Compressing context …",
+    "kontext.leer": "The conversation is empty; there is nothing to compress.",
+    "kontext.verdichtet": (vorher, nachher) =>
+      `⚑ Context compressed: ${vorher} → ${nachher} tokens. From here on the model sees a summary of the conversation before.`,
+    "kontext.im_lauf": "context compressed",
+    "kontext.fehler": (f) => `Compressing failed: ${f}`,
     "leiste.label": "Conversations and mode",
     "leiste.modus": "Mode",
     "leiste.modell": "Model",
@@ -209,7 +244,7 @@ const TEXTE = {
     "modus.agent.name": "Agent",
     "modus.agent.was": "with tools",
     "modus.agent.leer":
-      "The agent carries out your task with the tools in its toolbox. You can adjust things in the settings …",
+      "The agent carries out your task with the tools in its toolbox. The conversation carries over from task to task. You can adjust things in the settings …",
     "modus.knoten.name": "Node",
     "modus.knoten.was": "Mining",
     "modus.knoten.warum":
@@ -241,8 +276,19 @@ const TEXTE = {
     "ausgabe.fehler": (f) => `Export failed: ${f}`,
     "umbenennen.label": (was) => `Rename ${was.toLowerCase()}`,
 
-    "denken.titel": "Reasoning",
-    "befehl.laeuft": "Running a command",
+    "denken.mal": (n) => (n === 1 ? "Thought once" : `Thought ${n} times`),
+    "denken.jetzt": " · thinking …",
+    "befehl.laufend": (getan) =>
+      getan === 0
+        ? "Running a command …"
+        : `${getan} ${getan === 1 ? "command" : "commands"} run · one running …`,
+    "befehl.vorhaben": "Intent",
+    "befehl.befehl": "Command",
+    "befehl.antwort": "Response",
+    "befehl.aussteht": "Response still pending…",
+    "befehl.ohne": "No response received",
+    "befehl.unlesbar": "Unreadable proposal",
+    "befehl.ohne_aufruf": "Response without a recognised command",
     "befehl.keine": "No commands run",
     "befehl.eins": "1 command run",
     "befehl.viele": (n) => `${n} commands run`,
@@ -314,7 +360,7 @@ let sprache = "de";
 /// steht, ist kaputt; eines, in dem an einer Stelle Deutsch steht, ist
 /// unvollstaendig uebersetzt, und das ist der kleinere Schaden.
 ///
-/// ⛑ **Und ein Text kann eine Funktion sein.** Wer einen Wert
+/// 📌 **Und ein Text kann eine Funktion sein.** Wer einen Wert
 /// einsetzen muss, setzt ihn in der Sprache ein, in der er steht: Im
 /// Deutschen steht die Zahl vor dem Wort, im Englischen auch, aber die
 /// naechste Sprache tut es vielleicht nicht.
@@ -388,10 +434,12 @@ const MODI = [
 // ⚑ **Im Agentenmodus heisst es Prozess und nicht Gespraech**
 // (Festlegung des Projektinhabers, 2026-09-10), und das ist keine
 // Geschmacksfrage: Im Chat traegt eine Zeile einen **Verlauf**, jeder
-// Zug sieht die vorigen. Beim Agenten steht jeder Auftrag fuer sich,
-// mit eigenem Schrittbudget und eigener Belegkette. **Zwei
+// Zug sieht die vorigen. Beim Agenten ist jeder Auftrag ein Lauf mit
+// Werkzeugen, eigenem Schrittbudget und eigener Belegkette. **Zwei
 // verschiedene Dinge unter einem Wort sind eine Behauptung, dass sie
-// dasselbe seien.**
+// dasselbe seien.** 📌 Bis zum 2026-09-14 stand hier auch, dass beim
+// Agenten jeder Auftrag fuer sich steht; seitdem geht das Gespraech auch
+// dort mit (Entscheidung C2), und der Unterschied bleibt der der Laeufe.
 const wort = (modus) => {
   const m = modus || modus_jetzt();
   const art = m === "agent" ? "agent" : "chat";
@@ -405,7 +453,7 @@ const wort = (modus) => {
 
 /// Der eingerastete Modus, unabhaengig davon, ob etwas offen ist.
 ///
-/// ⛑ **Er hing bis zum 2026-09-10 am offenen Gespraech**, und daraus
+/// 📌 **Er hing bis zum 2026-09-10 am offenen Gespraech**, und daraus
 /// folgte ein Fehler, den der Projektinhaber gemeldet hat: Ein
 /// Moduswechsel musste dann **etwas anlegen**, um den Modus ueberhaupt
 /// festhalten zu koennen. Wer zwischen Chat und Agent hin und her
@@ -422,7 +470,7 @@ const modus_jetzt = () => modus;
 
 // --- Gespraeche ---------------------------------------------------------
 
-// ⛑ **Sie liegen im Browserspeicher des Fensters und nicht in einer
+// 📌 **Sie liegen im Browserspeicher des Fensters und nicht in einer
 // Datei.** Das ist eine bewusste Zwischenloesung und keine Ablage: Sie
 // ueberlebt einen Neustart, sie liegt aber nur auf dieser Maschine, sie
 // wird nicht gesichert, und niemand kann sie ausserhalb des Fensters
@@ -523,7 +571,7 @@ function nach_oben(g) {
 /// ⚑ **Ein Agentengespraech ohne Arbeitsverzeichnis fuehrt zur
 /// Einstellung, statt ohne Werkzeuge loszulaufen.**
 ///
-/// # ⛑ Warum das kein Hinweis ist, sondern ein Weg
+/// # 📌 Warum das kein Hinweis ist, sondern ein Weg
 ///
 /// Ohne gesetzte Wurzel gibt es die Dateiwerkzeuge **gar nicht**, und
 /// der Agent arbeitet dann ohne sie. Das steht zwar in der
@@ -550,7 +598,7 @@ async function wurzel_verlangen() {
 
 /// **Der Titel ist der ganze erste Satz, nicht sein Anfang.**
 ///
-/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Hier wurde auf vierzig Zeichen gekuerzt und ein `...` angehaengt,
 /// und **das Ergebnis war der gespeicherte Titel**. Die Zeile in der
@@ -590,7 +638,7 @@ const kurz_titel = (text) => {
 //
 // ⚑ **Sie sagt genau eine Sache: welches Modell im Speicher liegt.**
 //
-// ⛑ **Vorher sagte sie alles Moegliche.** „der Agent faehrt", „Modell
+// 📌 **Vorher sagte sie alles Moegliche.** „der Agent faehrt", „Modell
 // gewechselt", „Fehler: …", und dazwischen der Ladesatz. Eine Zeile,
 // die je nach Augenblick etwas anderes bedeutet, liest man irgendwann
 // gar nicht mehr: Wer dort „das Modell antwortet" gewohnt ist, sieht
@@ -635,7 +683,7 @@ async function modellzeile_schreiben(zusatz) {
 /// ⚑ An einer Stelle: Der Ruecken vergibt es, das Fenster erkennt es
 /// daran, und zwei Schreibweisen liefen auseinander.
 ///
-/// ⛑ **Seit dem 2026-09-11 ein Praefix und kein ganzer Wert.** Vorher
+/// 📌 **Seit dem 2026-09-11 ein Praefix und kein ganzer Wert.** Vorher
 /// stand genau ein Sammeleintrag `netz` in der Wahl; jetzt steht jedes
 /// Modell auch als `netz:<Artefaktname>` da, weil im Netz mehr als ein
 /// Modell gerechnet wird. Ein Vergleich auf Gleichheit haette danach
@@ -652,7 +700,7 @@ const NETZMODELL = "netz:";
 // ⚑ **Das steht in derselben Reihe wie die Kapazitaetsfreigabe:** Was
 // Myelith nimmt, soll es auch wieder hergeben.
 //
-// ⛑ **Und es kostet nichts, wenn es falsch liegt.** Wer nach einer
+// 📌 **Und es kostet nichts, wenn es falsch liegt.** Wer nach einer
 // Stunde doch weiterfragt, wartet einmal die Ladezeit ab; `senden` laedt
 // von selbst nach. Ein Entladen, das eine Frage scheitern liesse, waere
 // eine andere Sache.
@@ -666,7 +714,7 @@ function ruhe_neu_stellen() {
   clearTimeout(ruheuhr);
   if (!modellstand) return;
   ruheuhr = setTimeout(async () => {
-    // ⛑ **Nicht mitten in einem Lauf.** Der Halter ist dann belegt, und
+    // 📌 **Nicht mitten in einem Lauf.** Der Halter ist dann belegt, und
     // ein Entladen waere entweder wirkungslos oder schlimmer. Die Frist
     // wird stattdessen neu gestellt.
     if (laufender) {
@@ -690,7 +738,7 @@ function ruhe_neu_stellen() {
 
 /// Der Anzeigename zu einem Pfad, aus der zuletzt geholten Modellwahl.
 ///
-/// ⛑ **Ohne Treffer der Verzeichnisname und kein erfundener.** Ein
+/// 📌 **Ohne Treffer der Verzeichnisname und kein erfundener.** Ein
 /// Name, den niemand vergeben hat, waere schlechter als ein
 /// technischer.
 let modellnamen = new Map();
@@ -731,6 +779,7 @@ function modi_zeichnen() {
       // dieser Modus ist.
       if (offen && offen.modus !== modus) offen = null;
       alles_zeichnen();
+      kontext_holen();
       wurzel_verlangen();
     });
     w.append(b);
@@ -756,12 +805,12 @@ async function reichweite_zeichnen() {
   p.className = "reichweitezeile";
   if (!r.wurzel) {
     p.textContent = t("reichweite.kein");
-    // ⛑ Hier stand der technische Name. Wer den Hinweis liest, sucht
+    // 📌 Hier stand der technische Name. Wer den Hinweis liest, sucht
     // danach in den Einstellungen, und dort steht seit dem
     // 2026-09-09 die Beschriftung: „Arbeitsordner".
     p.title = t("reichweite.hinweis");
   } else {
-    // ⛑ **Von vorn gekuerzt, im Skript.** Das Aussagekraeftige an
+    // 📌 **Von vorn gekuerzt, im Skript.** Das Aussagekraeftige an
     // einem Pfad steht hinten; `direction: rtl` taete dasselbe und
     // schoebe dabei den fuehrenden Schraegstrich ans Ende, sodass ein
     // Pfad angezeigt wuerde, den es nicht gibt.
@@ -777,6 +826,132 @@ async function reichweite_zeichnen() {
     l.textContent = r.namen.join("  ");
     l.title = `${r.namen.length} Werkzeuge`;
     w.append(l);
+  }
+}
+
+// --- Der Kontext am Eingabefeld (2026-09-14) -----------------------------
+//
+// ⚑ **Der Balken steht dort, wo der Kontext voll wird**: am Eingabefeld.
+// Ein Klick oeffnet, was sich damit tun laesst, und nichts geschieht ohne
+// diesen Klick. Gezaehlt und verdichtet wird im Ruecken, an derselben
+// Stelle wie `/context` und `/compress` in der Konsole.
+
+/// **Das Modellgespraech je Gespraech, nur im Speicher des Fensters.**
+///
+/// 📌 **Nicht im Browserspeicher.** Die erste Fassung legte es als Feld am
+/// Gespraech ab, samt jeder Werkzeugantwort in voller Laenge; ein Werkzeug,
+/// das eine grosse Datei liest, haette den Speicher von wenigen Megabyte
+/// mit einem Auftrag gefuellt. Abgelegt wird nur die Zusammenfassung,
+/// falls verdichtet wurde, und ab welchem Beitrag sie gilt.
+const kontexte = new Map();
+
+/// **Die Nachrichten, die das Modell vom Gespraech sieht.**
+///
+/// ⚑ **Nach einem Neustart aus den Beitraegen hergeleitet**: die
+/// Zusammenfassung, falls es eine gibt, dann Auftraege und Antworten ab dem
+/// Beitrag, bei dem sie entstand. Die Werkzeugschritte davon sind dann
+/// nicht mehr dabei, das Gespraech schon. Fehlermeldungen und Hinweise
+/// gehen nicht hinein, denn die hat das Modell nie gesagt.
+function kontext_von(g) {
+  if (!g) return [];
+  if (kontexte.has(g.id)) return kontexte.get(g.id);
+  const vorn = g.zusammenfassung ? [{ role: "user", content: g.zusammenfassung }] : [];
+  return vorn.concat(
+    g.beitraege
+      .slice(g.verdichtet_bei || 0)
+      .filter((b) => !b.fehler && !b.laufend && b.text && (b.von === "nutzer" || b.von === "modell"))
+      .map((b) => ({ role: b.von === "modell" ? "assistant" : "user", content: b.text })),
+  );
+}
+
+/// Merkt sich das Modellgespraech; eine neue Zusammenfassung wird mit dem
+/// Beitrag abgelegt, ab dem sie gilt.
+function kontext_merken(g, nachrichten, zusammenfassung, ab) {
+  kontexte.set(g.id, nachrichten);
+  if (zusammenfassung && zusammenfassung !== g.zusammenfassung) {
+    g.zusammenfassung = zusammenfassung;
+    g.verdichtet_bei = ab;
+  }
+}
+
+function kontext_zeichnen(k) {
+  const knopf = $("kontextbalken");
+  if (!k) {
+    knopf.hidden = true;
+    return;
+  }
+  knopf.hidden = false;
+  $("kontextfuellung").style.width = `${Math.min(100, k.prozent)}%`;
+  $("kontextzahl").textContent = t("kontext.zahl", k.belegt, k.grenze, k.prozent);
+  knopf.title = t("kontext.titel", k.ansage, k.belegt - k.ansage, k.nachrichten);
+  knopf.classList.toggle("eng", k.prozent >= 80);
+}
+
+/// ⚠️ **Nicht waehrend eines Laufs**: Der haelt das Modell, und die Frage
+/// wartete bis zu seinem Ende.
+async function kontext_holen() {
+  if (!geladen || !offen || $("senden").disabled) {
+    if (!offen) kontext_zeichnen(null);
+    return;
+  }
+  try {
+    kontext_zeichnen(await invoke("kontext", { verlauf: kontext_von(offen), modus: offen.modus }));
+  } catch {
+    kontext_zeichnen(null);
+  }
+}
+
+function kontextwahl_schliessen() {
+  $("kontextwahl").hidden = true;
+}
+
+$("kontextbalken").addEventListener("click", (e) => {
+  const m = $("kontextwahl");
+  if (!m.hidden) return kontextwahl_schliessen();
+  m.hidden = false;
+  // Erst zeigen, dann messen, wie beim Menue am Gespraech.
+  const r = e.currentTarget.getBoundingClientRect();
+  const h = m.getBoundingClientRect();
+  m.style.left = `${Math.max(8, Math.min(r.right - h.width, window.innerWidth - h.width - 8))}px`;
+  m.style.top = `${Math.max(8, r.top - h.height - 6)}px`;
+  m.querySelector(".menueeintrag")?.focus();
+});
+
+for (const eintrag of document.querySelectorAll("#kontextwahl [data-kontext]")) {
+  eintrag.addEventListener("click", async () => {
+    kontextwahl_schliessen();
+    if (eintrag.dataset.kontext === "neu") {
+      // ⚑ **Ueber den Knopf in der Leiste und nicht an ihm vorbei**:
+      // Angelegt wird an genau zwei Stellen (`ein_eintrag_entsteht_nur_auf_zwei_wege`).
+      $("neues-gespraech").click();
+      kontext_holen();
+      return;
+    }
+    await kontext_verdichten();
+  });
+}
+
+async function kontext_verdichten() {
+  if (!offen || $("senden").disabled) return;
+  const verlauf = kontext_von(offen);
+  if (verlauf.length === 0) {
+    melden(t("kontext.leer"));
+    return;
+  }
+  const knopf = $("senden");
+  knopf.disabled = true;
+  $("kontextzahl").textContent = t("kontext.laeuft");
+  try {
+    const r = await invoke("verdichten", { verlauf });
+    offen.beitraege.push({ von: "hinweis", text: t("kontext.verdichtet", r.vorher, r.nachher) });
+    kontext_merken(offen, r.nachrichten, r.zusammenfassung, offen.beitraege.length);
+    sichern();
+    alles_zeichnen();
+  } catch (f) {
+    melden(t("kontext.fehler", f));
+  } finally {
+    knopf.disabled = false;
+    kontext_holen();
   }
 }
 
@@ -800,7 +975,7 @@ function menue_oeffnen(g, x, y) {
   const m = $("kontextmenue");
   menue_fuer = g;
   m.hidden = false;
-  // ⛑ **Erst zeigen, dann messen.** Ein verstecktes Element hat keine
+  // 📌 **Erst zeigen, dann messen.** Ein verstecktes Element hat keine
   // Masse; wer vorher misst, rechnet mit null und schiebt das Menue an
   // den Rand.
   const r = m.getBoundingClientRect();
@@ -816,12 +991,26 @@ function menue_oeffnen(g, x, y) {
 //   die Fluchttaste, ein Bildlauf, ein anderes Fenster.
 document.addEventListener("pointerdown", (e) => {
   if (menue_fuer && !$("kontextmenue").contains(e.target)) menue_schliessen();
+  if (!$("kontextwahl").contains(e.target) && !$("kontextbalken").contains(e.target)) {
+    kontextwahl_schliessen();
+  }
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && menue_fuer) menue_schliessen();
+  if (e.key === "Escape") kontextwahl_schliessen();
 });
-window.addEventListener("blur", menue_schliessen);
-document.addEventListener("scroll", menue_schliessen, true);
+window.addEventListener("blur", () => {
+  menue_schliessen();
+  kontextwahl_schliessen();
+});
+document.addEventListener(
+  "scroll",
+  () => {
+    menue_schliessen();
+    kontextwahl_schliessen();
+  },
+  true,
+);
 
 /// Das Gespraech als Markdown, so wie es im Fenster steht.
 function als_markdown(g) {
@@ -834,6 +1023,7 @@ function als_markdown(g) {
     "",
   ];
   const teile = g.beitraege.map((b) => {
+    if (b.von === "hinweis") return `> ${b.text}`;
     const wer = b.von === "nutzer" ? "Du" : "Myelith";
     // ⚑ Die Werkzeugschritte eines Agentenlaufs gehoeren mit hinein;
     //   ohne sie ist ein Auftrag nicht nachvollziehbar.
@@ -874,7 +1064,7 @@ async function menue_tat(tat) {
       });
       melden(t("abgelegt", wort(g.modus).eines, wo), "einstellungen");
     } catch (f) {
-      // ⛑ **Ein fehlender Ordner ist keine Fehlermeldung, sondern eine
+      // 📌 **Ein fehlender Ordner ist keine Fehlermeldung, sondern eine
       // fehlende Entscheidung.** Wer „kein Ausgabeordner" liest, weiss
       // noch nicht, wo er ihn setzt. Also fuehrt das Fenster dorthin.
       if (String(f).includes("kein-ausgabeordner")) {
@@ -912,7 +1102,7 @@ function umbenennen(g) {
     fertig = true;
     if (uebernehmen) {
       const neu = feld.value.trim();
-      // ⛑ Ein leerer Titel waere eine Zeile ohne Aufschrift. Dann
+      // 📌 Ein leerer Titel waere eine Zeile ohne Aufschrift. Dann
       //   bleibt der alte.
       if (neu) {
         g.titel = neu;
@@ -955,7 +1145,7 @@ async function zum_feld(name, warum) {
 
 /// **Die Liste zeigt nur, was zum gewaehlten Modus gehoert.**
 ///
-/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Vorher standen alle Zeilen in einer Liste, und der Modus war nur an
 /// der Klammer im Zeigetext zu erkennen. Wer vom Chat zum Agenten
@@ -1006,15 +1196,16 @@ function chats_zeichnen() {
       // Liste gleich darauf etwas anderes als das, was offen ist.
       modus = g.modus;
       alles_zeichnen();
+      kontext_holen();
     });
 
-    // ⛑ **Hier lag ein Loeschknopf am Zeilenrand.** Er ist am
+    // 📌 **Hier lag ein Loeschknopf am Zeilenrand.** Er ist am
     // 2026-09-09 entfallen, auf Festlegung des Projektinhabers:
     // Geloescht wird ueber das Menue am Rechtsklick, zusammen mit
     // Umbenennen und Ausgeben. Ein zweiter Weg an derselben Zeile ist
     // ein zweiter Ort, an dem dieselbe Entscheidung faellt.
 
-    // ⛑ **Hier standen sechs Stilangaben am Element** und nahmen dem
+    // 📌 **Hier standen sechs Stilangaben am Element** und nahmen dem
     // Knopf von Hand weg, was `button` ihm gibt. Sie vergassen die
     // Rundung und den Hintergrundfilter, und das war als rundes Feld
     // hinter jedem Titel zu sehen. **Aussehen gehoert ins Stilblatt**;
@@ -1028,6 +1219,16 @@ function beitrag_zeichnen(b) {
   const wurzel = document.createElement("div");
   wurzel.className = `beitrag von-${b.von}`;
 
+  // ⚑ **Ein Hinweis ist weder Frage noch Antwort**: Er sagt, dass das
+  // Modell ab hier eine Zusammenfassung sieht, und geht nicht ins Modell.
+  if (b.von === "hinweis") {
+    const p = document.createElement("p");
+    p.className = "kontexthinweis";
+    p.textContent = b.text;
+    wurzel.append(p);
+    return wurzel;
+  }
+
   if (b.von === "nutzer") {
     const blase = document.createElement("div");
     blase.className = "blase";
@@ -1036,25 +1237,19 @@ function beitrag_zeichnen(b) {
     return wurzel;
   }
 
-  // ⚑ **Die Bloecke stehen in der Reihenfolge, in der sie entstanden
-  // sind**, und das ist keine Kosmetik: Nach einem Werkzeugaufruf faengt
-  // das Modell **neu** an zu ueberlegen. Zwei Ueberlegungen in einer
-  // Klappe waeren die Behauptung, es sei ein Gedankengang gewesen.
-  //
-  // ⛑ **Bis zum 2026-09-10 gab es genau eine Denkklappe und eine
-  // Befehlsklappe**, und die Ueberlegung nach dem Werkzeug landete in
-  // der Befehlsliste. Gemeldet vom Projektinhaber.
-  for (const block of bloecke(b.schritte || [], b.laufend)) wurzel.append(block);
+  // ⚑ **Zwei Klappen je Antwort: das Nachdenken und die Befehle**
+  // (Auftrag des Projektinhabers, 2026-09-14). Siehe `bloecke`.
+  for (const block of bloecke(b)) wurzel.append(block);
   // ⚑ **Das Ladezeichen steht dort, wo gleich die Antwort steht**, und
   // nicht in einer Zeile am Fensterrand.
   //
-  // ⛑ **Vorher stand „der Agent faehrt" unter der Eingabe.** Das ist
+  // 📌 **Vorher stand „der Agent faehrt" unter der Eingabe.** Das ist
   // die falsche Stelle: Wer auf eine Antwort wartet, sieht auf den
   // Fleck, an dem sie erscheinen wird, und nicht ans andere Ende des
   // Fensters. Dazu belegte es die Zeile, die jetzt sagt, welches
   // Modell im Speicher liegt.
   //
-  // ⛑ **Und hier stand `&& !b.text && !schritte.length`**, also „nur
+  // 📌 **Und hier stand `&& !b.text && !schritte.length`**, also „nur
   // solange noch gar nichts da ist". Das war falsch, und der
   // Projektinhaber hat es am selben Tag gemeldet: **Nach einem
   // Werkzeugaufruf rechnet das Modell weiter**, oft eine halbe Minute,
@@ -1079,7 +1274,7 @@ function beitrag_zeichnen(b) {
     laufzeichen = l;
   }
 
-  // ⛑ **`t` heisst hier nicht `t`.** Die Uebersetzung heisst so, und
+  // 📌 **`t` heisst hier nicht `t`.** Die Uebersetzung heisst so, und
   // eine lokale Bindung desselben Namens verdeckt sie **im ganzen
   // Block**, auch oberhalb ihrer eigenen Zeile: `t("lauf.arbeitet")`
   // weiter oben lief damit in „Cannot access 't' before
@@ -1089,7 +1284,7 @@ function beitrag_zeichnen(b) {
   koerper.className = "antworttext";
   // ⚑ **Waehrend des Laufs schlichter Text, danach gesetzt.**
   //
-  // ⛑ Eine halb angekommene Marke ist keine Marke: `**` mitten im
+  // 📌 Eine halb angekommene Marke ist keine Marke: `**` mitten im
   // Strom wuerde als Fettdruck aufblitzen und beim naechsten Token
   // wieder verschwinden. Und ein Text, der sich bei jedem Token neu
   // gliedert, ist unruhig zu lesen. **Der laufende Text ist die
@@ -1112,60 +1307,142 @@ function beitrag_zeichnen(b) {
   return wurzel;
 }
 
-// ⚑ **Aus der Schrittfolge werden Bloecke.**
+// ⚑ **Aus der Schrittfolge werden zwei Klappen** (Auftrag des
+// Projektinhabers, 2026-09-14): **eine fuer das Nachdenken**, als ein Faden
+// ueber den ganzen Lauf fortgesetzt und waehrenddessen Token fuer Token
+// wachsend, und **eine fuer die Befehle**, jeder darin einzeln aufklappbar
+// mit dem genauen Befehl und der Antwort des Werkzeugs.
 //
-// Zusammenhaengende Werkzeugschritte kommen in **eine** Klappe, jede
-// Ueberlegung bekommt ihre eigene, und die Schlussantwort steht nicht
-// dabei: Sie ist der Text darunter, und zweimal dasselbe zu zeigen ist
-// keine Vollstaendigkeit, sondern eine Dopplung.
-const bloecke = (schritte, laeuft) => {
-  const aus = [];
-  let offene_befehle = null;
+// 📌 **Bis dahin bekam jede Ueberlegung ihre eigene Klappe** und jede Folge
+// von Werkzeugschritten eine weitere (Festlegung vom 2026-09-10, damals
+// gegen eine Ueberlegung, die in der Befehlsliste landete). Bei zehn
+// Schritten standen zwanzig Klappen untereinander, und die Antwort eines
+// Werkzeugs war eine Zeile von 200 Zeichen. **Die Trennung der Ueberlegungen
+// bleibt sichtbar**, als Trenner im Faden, und die Zahl in der Ueberschrift
+// zaehlt sie.
+//
+// ⚑ **Die Schlussantwort steht nicht dabei**: Sie ist der Text darunter,
+// und zweimal dasselbe zu zeigen ist keine Vollstaendigkeit.
 
-  const klappe = (klasse, ueberschrift) => {
-    const d = document.createElement("details");
-    d.className = klasse;
-    const s = document.createElement("summary");
-    s.textContent = ueberschrift;
-    const inhalt = document.createElement("div");
-    inhalt.className = klasse === "denken" ? "denktext" : "schrittliste";
-    d.append(s, inhalt);
-    return d;
+/// Zwischen zwei Ueberlegungen im fortgesetzten Faden.
+const TRENNER = "\n\n· · ·\n\n";
+
+/// **Welche Klappen eines Beitrags offen stehen.**
+///
+/// ⚑ **Neben dem Beitrag und nicht in ihm**: Ein laufender Beitrag wird bei
+/// jedem neuen Schritt neu gezeichnet, und eine Klappe, die dabei zufiele,
+/// liesse sich waehrend des Laufs nicht lesen. Abgelegt wird der Zustand
+/// nicht; nach einem Neustart steht alles zu.
+const klappzustaende = new WeakMap();
+
+const klappzustand = (b) => {
+  let z = klappzustaende.get(b);
+  if (!z) {
+    z = { denken: false, befehle: false, befehl: new Set() };
+    klappzustaende.set(b, z);
+  }
+  return z;
+};
+
+const klappe = (klasse, ueberschrift, offen, merken) => {
+  const d = document.createElement("details");
+  d.className = klasse;
+  d.open = offen;
+  const s = document.createElement("summary");
+  s.textContent = ueberschrift;
+  d.append(s);
+  d.addEventListener("toggle", () => merken(d.open));
+  return d;
+};
+
+/// **Die Schritte eines Beitrags, gebuendelt**: alle Ueberlegungen in ihrer
+/// Reihenfolge und alle Befehle mit ihrer Antwort.
+///
+/// ⚑ **Befehl und Antwort werden der Reihe nach gepaart.** Live meldet der
+/// Ruecken Aufruf und Ergebnis abwechselnd; die Rueckgabe am Ende nennt
+/// erst alle Aufrufe einer Modellantwort und dann alle Ergebnisse. Die
+/// erste noch offene Antwort gehoert in beiden Faellen zum ersten noch
+/// offenen Befehl. Ein Vorhaben (was das Modell vor dem Aufruf schrieb)
+/// geht an den naechsten Befehl.
+const schritte_buendeln = (schritte) => {
+  const denken = [];
+  const befehle = [];
+  const offen = [];
+  let vorhaben = "";
+  const neu = (e) => {
+    befehle.push({ vorhaben, ...e });
+    vorhaben = "";
+    return befehle.length - 1;
   };
-
   for (const z of schritte) {
-    if (z.art === "antwort") continue;
     if (z.art === "denken") {
-      offene_befehle = null;
-      const d = klappe("denken", t("denken.titel"));
-      d.querySelector(".denktext").textContent = z.text;
-      aus.push(d);
-      continue;
+      denken.push(z.text);
+    } else if (z.art === "plan") {
+      vorhaben = vorhaben ? `${vorhaben}\n${z.text}` : z.text;
+    } else if (z.art === "aufruf") {
+      offen.push(neu({ art: "aufruf", kurz: z.text, voll: z.voll || z.text, antwort: null }));
+    } else if (z.art === "ergebnis") {
+      const i = offen.shift();
+      if (i === undefined) {
+        neu({ art: "ergebnis", kurz: t("befehl.ohne_aufruf"), voll: "", antwort: z.text });
+      } else {
+        befehle[i].antwort = z.text;
+      }
+    } else if (z.art === "abgelehnt") {
+      const [name, ...grund] = z.text.split(": ");
+      neu({ art: "abgelehnt", kurz: name, voll: name, antwort: grund.join(": ") });
+    } else if (z.art === "unlesbar") {
+      neu({ art: "unlesbar", kurz: t("befehl.unlesbar"), voll: z.text, antwort: t("befehl.unlesbar") });
     }
-    if (!offene_befehle) {
-      offene_befehle = klappe("befehle", "");
-      offene_befehle.eigene = [];
-      aus.push(offene_befehle);
-    }
-    offene_befehle.eigene.push(z);
-    offene_befehle.querySelector(".schrittliste").append(schrittzeile(z));
-    offene_befehle.querySelector("summary").textContent =
-      befehlszeile(offene_befehle.eigene, laeuft);
+  }
+  return { denken, befehle };
+};
+
+/// Der fortgesetzte Denkfaden eines Beitrags.
+const denkfaden = (b) =>
+  (b.schritte || []).filter((z) => z.art === "denken").map((z) => z.text).join(TRENNER);
+
+const denkueberschrift = (b) => {
+  const n = (b.schritte || []).filter((z) => z.art === "denken").length;
+  return t("denken.mal", n) + (b.laufend && b.denkt ? t("denken.jetzt") : "");
+};
+
+const bloecke = (b) => {
+  const { denken, befehle } = schritte_buendeln(b.schritte || []);
+  const zustand = klappzustand(b);
+  const aus = [];
+  if (denken.length > 0) {
+    const d = klappe("denken", denkueberschrift(b), zustand.denken, (o) => {
+      zustand.denken = o;
+    });
+    const faden = document.createElement("div");
+    faden.className = "denktext";
+    faden.textContent = denken.join(TRENNER);
+    d.append(faden);
+    aus.push(d);
+  }
+  if (befehle.length > 0) {
+    const d = klappe("befehle", befehlszeile(befehle, b.laufend), zustand.befehle, (o) => {
+      zustand.befehle = o;
+    });
+    const liste = document.createElement("div");
+    liste.className = "befehlsliste";
+    befehle.forEach((c, i) => liste.append(befehl_zeichnen(c, i, b.laufend, zustand)));
+    d.append(liste);
+    aus.push(d);
   }
   return aus;
 };
 
 // ⚑ **Die Ueberschrift der Befehle, an einer Stelle.**
 //
-// ⛑ Solange etwas laeuft, steht dort die Verlaufsform: Ein „1 Befehl
+// 📌 Solange etwas laeuft, steht dort die Verlaufsform: Ein „1 Befehl
 // ausgefuehrt" waehrend der Ausfuehrung waere eine Aussage ueber etwas,
 // das noch nicht geschehen ist. Das ist derselbe Unterschied wie
 // zwischen zugesagt und nachgewiesen.
-const befehlszeile = (schritte, laeuft) => {
-  const getan = schritte.filter((z) => z.art === "ergebnis").length;
-  if (laeuft && getan < schritte.filter((z) => z.art === "aufruf").length) {
-    return t("befehl.laeuft");
-  }
+const befehlszeile = (befehle, laeuft) => {
+  const getan = befehle.filter((c) => c.antwort !== null).length;
+  if (laeuft && getan < befehle.length) return t("befehl.laufend", getan);
   if (getan === 0) return t("befehl.keine");
   return getan === 1 ? t("befehl.eins") : t("befehl.viele", getan);
 };
@@ -1183,14 +1460,39 @@ const MARKE = {
   abgelehnt: "⚑",
 };
 
-const schrittzeile = (z) => {
-  const p = document.createElement("div");
-  p.className = `schritt ${z.art}`;
+/// **Ein Befehl in der Liste**: zu die Zeile, offen Vorhaben, Befehl und
+/// Antwort, und solange die Antwort fehlt, sagt die Stelle das.
+const befehl_zeichnen = (c, i, laeuft, zustand) => {
+  const d = klappe(`befehl ${c.art}`, "", zustand.befehl.has(i), (o) => {
+    if (o) zustand.befehl.add(i);
+    else zustand.befehl.delete(i);
+  });
+  const kopf = d.querySelector("summary");
   const m = document.createElement("span");
   m.className = "marke2";
-  m.textContent = MARKE[z.art] || "·";
-  p.append(m, document.createTextNode(z.text));
-  return p;
+  m.textContent = MARKE[c.art] || "·";
+  kopf.append(m, document.createTextNode(c.kurz));
+
+  const teil = (klasse, ueberschrift, text) => {
+    const w = document.createElement("div");
+    w.className = `befehlsteil ${klasse}`;
+    const k = document.createElement("div");
+    k.className = "teilkopf";
+    k.textContent = ueberschrift;
+    const x = document.createElement("div");
+    x.className = "teiltext";
+    x.textContent = text;
+    w.append(k, x);
+    return w;
+  };
+  if (c.vorhaben) d.append(teil("plan", t("befehl.vorhaben"), c.vorhaben));
+  if (c.voll) d.append(teil("befehlstext", t("befehl.befehl"), c.voll));
+  if (c.antwort === null) {
+    d.append(teil("antwort wartet", t("befehl.antwort"), laeuft ? t("befehl.aussteht") : t("befehl.ohne")));
+  } else {
+    d.append(teil("antwort", t("befehl.antwort"), c.antwort));
+  }
+  return d;
 };
 
 // --- Markdown zeichnen ---------------------------------------------------
@@ -1296,7 +1598,7 @@ const teile_zeichnen = (teile) => {
       e.textContent = stueck.text;
       raum.append(e);
     } else if (stueck.art === "Verweis") {
-      // ⛑ **Als Text und nicht als Knopf.** Ein angeklickter Verweis
+      // 📌 **Als Text und nicht als Knopf.** Ein angeklickter Verweis
       // fuehrte die Webansicht **aus der Anwendung heraus**; sie im
       // System zu oeffnen braeuchte eine Erlaubnis, die die
       // Erlaubnisliste bewusst nicht hat. Das Ziel steht deshalb
@@ -1320,7 +1622,7 @@ function gespraech_zeichnen() {
   w.replaceChildren();
   if (!offen || offen.beitraege.length === 0) {
     const m = MODI.find((x) => x.id === modus_jetzt());
-    // ⛑ **Hier stand der Modusname noch einmal davor** („Chat. Ein
+    // 📌 **Hier stand der Modusname noch einmal davor** („Chat. Ein
     // Gespraech mit …"). Er steht schon in der Leiste links und im
     // Kopf; ein drittes Mal sagt er nichts und macht aus einem Satz
     // eine Ueberschrift mit Satz. Entfernt auf Wunsch des
@@ -1353,7 +1655,7 @@ function alles_zeichnen() {
 // umgekehrt: Eine fertige Antwort meldet sich nur, wenn man gerade
 // woanders ist.
 //
-// ⛑ **Die Maske entscheidet und nicht der Ereignistyp.** Eine Liste
+// 📌 **Die Maske entscheidet und nicht der Ereignistyp.** Eine Liste
 // „diese Ereignisse melden sich immer" liefe auseinander, sobald ein
 // Ereignis dazukommt; die Frage „sieht der Nutzer es gerade selbst"
 // ist dagegen fuer jedes dieselbe.
@@ -1365,7 +1667,7 @@ function melden(text, wo) {
   if (wo && wo === maske()) return;
   const k = document.createElement("div");
   k.className = "meldung glas";
-  // ⛑ Auch hier hiess die lokale Bindung `t` und verdeckte die
+  // 📌 Auch hier hiess die lokale Bindung `t` und verdeckte die
   // Uebersetzung; `t("meldung.schliessen")` rief damit ein
   // Absatzelement auf.
   const absatz = document.createElement("p");
@@ -1420,7 +1722,7 @@ const bereichszeile = (name) => {
 // ⚑ Je Feld ein Bedienelement, und Art wie Beschriftung kommen aus der
 // Kiste: Sie kennt die Felder, das Fenster zeichnet sie nur.
 //
-// ⛑ **Hier stand der technische Name als Beschriftung**, also
+// 📌 **Hier stand der technische Name als Beschriftung**, also
 // `kap.beschleuniger` und `agent.bezeugtes` in einer Spalte, die ein
 // Mensch liest. Das war kein Deutsch, sondern eine Kennung. Seit dem
 // 2026-09-09 traegt jedes Feld einen Titel und einen Satz dazu, und
@@ -1486,7 +1788,7 @@ const feldzeile = (f, wert, beim_setzen) => {
     element.addEventListener("change", () => beim_setzen(element.value.trim() || "aus"));
   }
   element.dataset.feld = f.name;
-  // ⛑ **Hier hing ein zweiter Hinweis am Eingabefeld**, „leer oder
+  // 📌 **Hier hing ein zweiter Hinweis am Eingabefeld**, „leer oder
   // `aus` loescht die Grenze", nur bei der Feldart Grenze. Er steht
   // jetzt im Satz unter der Beschriftung, zusammen mit allem anderen,
   // was ueber das Feld zu sagen ist. Zwei Orte fuer Auskunft ueber
@@ -1546,7 +1848,7 @@ const ordnerknopf = (f, feld, beim_setzen) => {
   return k;
 };
 
-// ⛑ **Ein SVG braucht seinen Namensraum.** `createElement("svg")`
+// 📌 **Ein SVG braucht seinen Namensraum.** `createElement("svg")`
 // erzeugt ein HTML-Element mit dem Namen „svg", das nichts zeichnet
 // und auch nichts meldet; man sieht nur eine leere Flaeche.
 const sinnbild = (d) => {
@@ -1597,7 +1899,7 @@ function baustand_setzen(phase, text, seit) {
 /// schwerere Weg und nimmt den Blick von der Zeile, um die es geht,
 /// genau wie beim Umbenennen eines Gespraechs.
 ///
-/// ⛑ **Und die Rueckfrage laeuft ab.** Ein Knopf, der dauerhaft auf
+/// 📌 **Und die Rueckfrage laeuft ab.** Ein Knopf, der dauerhaft auf
 /// „Wirklich?" stehen bliebe, waere beim naechsten Blick eine Falle.
 const loeschknopf = (b, m) => {
   const ruhe = () => {
@@ -1666,7 +1968,7 @@ async function katalog_zeichnen() {
     // ⚑ Groesse und Lizenz stehen dabei, denn beides entscheidet die
     // Frage, ob jemand den Knopf drueckt.
     //
-    // ⛑ **Das Grundmodell stand hier und steht es nicht mehr**
+    // 📌 **Das Grundmodell stand hier und steht es nicht mehr**
     // (2026-09-10, Festlegung des Projektinhabers). Es ist eine Angabe
     // zum Modell und gehoert dorthin, wo Angaben zum Modell stehen: in
     // die Modellkarte. In einer Liste, die man ueberfliegt, ist es eine
@@ -1677,7 +1979,7 @@ async function katalog_zeichnen() {
     // Verschleierung; sie steht in `KATALOG.json` bei jedem Eintrag und
     // in `artifacts/MODEL_CARD.md`.
     //
-    // ⛑ **Hier stand eine einzelne Lizenz, und sie stand am falschen
+    // 📌 **Hier stand eine einzelne Lizenz, und sie stand am falschen
     // Ding** (Fund 295, gemeldet vom Projektinhaber am 2026-09-10).
     // Die Zeile las sich „Myelith 4B · … · Apache-2.0", also so, als
     // stuende das Artefakt unter Apache-2.0. Unter Apache-2.0 stehen
@@ -1696,7 +1998,7 @@ async function katalog_zeichnen() {
 
     const b = document.createElement("button");
     if (m.artefakt_da) {
-      // ⛑ **Hier stand ein gesperrter Knopf „liegt vor".** Er sagte
+      // 📌 **Hier stand ein gesperrter Knopf „liegt vor".** Er sagte
       // dasselbe wie die Zeile daneben und liess sich nicht druecken:
       // ein Bedienelement, das nichts bedient. Jetzt steht dort das
       // Einzige, was man mit einem vorhandenen Artefakt tun kann und
@@ -1708,7 +2010,7 @@ async function katalog_zeichnen() {
       b.addEventListener("click", () => bauen(m.schluessel, m.anzeigename || m.schluessel));
     }
     z.append(links, b);
-    // ⛑ **Der Balken wird VERSCHOBEN und nicht neu gebaut.** Er haengt
+    // 📌 **Der Balken wird VERSCHOBEN und nicht neu gebaut.** Er haengt
     // unter dem Modell, das gerade laedt, und sonst nirgends. Ein
     // zweiter Balken je Neuzeichnen haette die schon gelesenen Zeilen
     // des Laufs weggeworfen; `append` verschiebt den vorhandenen
@@ -1767,7 +2069,7 @@ async function einstellungen_zeichnen() {
   const felder = await invoke("felder");
   for (const id of TABELLEN) $(id).querySelector("tbody").replaceChildren();
 
-  // ⛑ **Hier stand bis zum 2026-09-10 eine zweite Zuordnung von
+  // 📌 **Hier stand bis zum 2026-09-10 eine zweite Zuordnung von
   // Feldnamen auf Werte**, von Hand gepflegt, und sie kannte drei der
   // zwoelf Felder nicht (Fund 280). Ein fehlender Schluessel ist in
   // JavaScript kein Fehler, sondern `undefined`: Der Schalter stand
@@ -1799,7 +2101,7 @@ async function einstellungen_zeichnen() {
           // ein Neustart dazwischen macht aus einer Probe eine
           // Entscheidung.
           //
-          // ⛑ Und die Seite wird danach neu gezeichnet, denn die
+          // 📌 Und die Seite wird danach neu gezeichnet, denn die
           // Beschriftungen der Felder kommen aus der Kiste und stehen
           // in der alten Sprache da.
           if (f.name === "oberflaeche.sprache") {
@@ -1923,7 +2225,7 @@ async function kopf_zeichnen() {
   // ⚑ Die Kurzform steht in der Marke, der ganze Satz im Titel. Wer
   // wissen will, warum sein Agent nichts anfasst, findet den Grund am
   // selben Ding und nicht in einer Anleitung.
-  // ⛑ **Hier stand die Marke „liest und schreibt" oben rechts.** Sie
+  // 📌 **Hier stand die Marke „liest und schreibt" oben rechts.** Sie
   // ist am 2026-09-09 auf Festlegung des Projektinhabers entfallen.
   // ⚑ Die Auskunft geht nicht verloren: Was der Agent anfassen darf,
   // steht ausfuehrlich in der Seitenleiste unter `#reichweite`, und
@@ -1995,7 +2297,7 @@ $("modellwahl").addEventListener("change", async () => {
   hardwarezeile_schreiben();
   try {
     await invoke("setzen", { feld: "modell.artefakt", wert: neu });
-    // ⛑ Ein Modellwechsel wirft das geladene weg. Ohne diese Zeile
+    // 📌 Ein Modellwechsel wirft das geladene weg. Ohne diese Zeile
     // faehrt der naechste Auftrag mit dem alten Modell, waehrend die
     // Anzeige das neue nennt.
     geladen = false;
@@ -2021,6 +2323,7 @@ async function modell_laden() {
     const l = await invoke("modell_laden");
     geladen = true;
     modellstand = { name: l.name, pfad: l.pfad };
+    kontext_holen();
     await modellzeile_schreiben(t("modell.ladefrist", l.sekunden));
     ruhe_neu_stellen();
   } catch (f) {
@@ -2044,7 +2347,7 @@ async function modell_laden() {
 // ein stehendes Fenster sieht aus wie ein abgestuerztes. Dieselbe
 // Ueberlegung wie beim Ladeknopf, der sich sperrt und es sagt.
 //
-// ⛑ **Und der laufende Beitrag ist derselbe, der danach dasteht.**
+// 📌 **Und der laufende Beitrag ist derselbe, der danach dasteht.**
 // Er wird nicht ersetzt, sondern fertiggeschrieben: Was live ankam,
 // bleibt gespeichert, samt Ueberlegung und Befehlen. Wer ihn ersetzte,
 // verloere die Ueberlegung, denn die Rueckgabe traegt sie nicht.
@@ -2055,12 +2358,16 @@ let laufender = null;
 /// Das Element dazu, damit die Token nicht das ganze Gespraech neu
 /// zeichnen.
 ///
-/// ⛑ **Ein `alles_zeichnen()` je Token waere bei sechshundert Token
+/// 📌 **Ein `alles_zeichnen()` je Token waere bei sechshundert Token
 /// sechshundert vollstaendige Neuaufbauten**, und die Bildlaufstelle
 /// spraenge bei jedem.
 let laufendes_element = null;
 
+/// Ob der laufende Auftrag verdichten musste; steht danach in der Fusszeile.
+let laufender_verdichtet = false;
+
 async function live_anfangen(modus) {
+  laufender_verdichtet = false;
   try {
     const e = await invoke("einstellungen");
     schrittgrenze = e.werte["agent.schritte"] ?? 0;
@@ -2070,7 +2377,7 @@ async function live_anfangen(modus) {
   laufender = {
     von: "modell",
     text: "",
-    // ⛑ **Hier stand ein eigenes Feld `denken`**, und damit gab es
+    // 📌 **Hier stand ein eigenes Feld `denken`**, und damit gab es
     // genau eine Ueberlegung je Beitrag. Nach einem Werkzeugaufruf
     // faengt das Modell aber neu an zu ueberlegen; die zweite landete
     // dann in der Befehlsliste (gemeldet am 2026-09-10). Ueberlegungen
@@ -2090,16 +2397,34 @@ function live_meldung(m) {
   if (!laufender || !laufendes_element) return;
   const w = laufendes_element;
 
+  // ⚑ **Ob gerade nachgedacht wird**, fuer die Ueberschrift des Denkfadens.
+  // Jede andere Meldung beendet es; geaendert wird nur die Ueberschrift.
+  const dachte = laufender.denkt;
+  laufender.denkt = m.art === "Denken";
+  if (dachte && !laufender.denkt) {
+    const s = w.querySelector(".denken > summary");
+    if (s) s.textContent = denkueberschrift(laufender);
+  }
+
   if (m.art === "Denken") {
-    // ⚑ **Zuwachs geht in den letzten Denkschritt**, sonst entstuende
-    // je Token ein eigener Block. Ist der letzte Schritt keiner, faengt
-    // hier eine neue Ueberlegung an, und die braucht ihre eigene Klappe.
+    // ⚑ **Zuwachs geht in den letzten Denkschritt** und von dort in den
+    // einen Faden; ohne Neuzeichnen, denn das geschieht je Token. Ist der
+    // letzte Schritt keiner, beginnt eine neue Ueberlegung, die Zahl in
+    // der Ueberschrift waechst, und dafuer wird neu gezeichnet.
     const letzter = laufender.schritte[laufender.schritte.length - 1];
     if (letzter && letzter.art === "denken") {
       letzter.text += m.text;
-      const klappen = w.querySelectorAll(".denken .denktext");
-      const ziel = klappen[klappen.length - 1];
-      if (ziel) ziel.textContent = letzter.text;
+      const faden = w.querySelector(".denken > .denktext");
+      if (faden) {
+        // Mitlaufen, solange der Leser am Ende des Fadens steht.
+        const unten = faden.scrollHeight - faden.scrollTop - faden.clientHeight < 24;
+        faden.textContent = denkfaden(laufender);
+        if (unten) faden.scrollTop = faden.scrollHeight;
+      }
+      if (!dachte) {
+        const s = w.querySelector(".denken > summary");
+        if (s) s.textContent = denkueberschrift(laufender);
+      }
     } else {
       laufender.schritte.push({ art: "denken", text: m.text });
       live_neu_zeichnen();
@@ -2107,6 +2432,9 @@ function live_meldung(m) {
   } else if (m.art === "Text") {
     laufender.text += m.text;
     w.querySelector(".antworttext").textContent = laufender.text;
+  } else if (m.art === "Verdichtet") {
+    laufender_verdichtet = true;
+    melden(t("kontext.verdichtet", m.vorher, m.nachher));
   } else if (m.art === "Schritt") {
     // ⚑ **Der Schritt bekommt keine Zeile, sondern die Fusszeile.**
     // Er zaehlt die Fragen an das Modell und nicht die Taten; als
@@ -2138,7 +2466,7 @@ function live_meldung(m) {
 
 const zeile_aus_meldung = (m) => {
   if (m.art === "Aufruf") {
-    return { art: "aufruf", text: m.argumente ? `${m.name}  ${m.argumente}` : m.name };
+    return { art: "aufruf", text: m.argumente ? `${m.name}  ${m.argumente}` : m.name, voll: m.voll };
   }
   if (m.art === "Ergebnis") return { art: "ergebnis", text: m.text };
   if (m.art === "Abgelehnt") return { art: "abgelehnt", text: `${m.name}: ${m.grund}` };
@@ -2153,7 +2481,7 @@ let schrittgrenze = 0;
 
 /// Zeichnet den laufenden Beitrag neu, ohne das ganze Gespraech.
 ///
-/// ⛑ **Ein `alles_zeichnen()` je Token waeren bei sechshundert Token
+/// 📌 **Ein `alles_zeichnen()` je Token waeren bei sechshundert Token
 /// sechshundert vollstaendige Neuaufbauten**, und die Bildlaufstelle
 /// spraenge bei jedem. Hier wird genau ein Element ersetzt, und nur
 /// dann, wenn sich die **Gliederung** aendert.
@@ -2178,7 +2506,7 @@ async function live_beenden() {
 
 /// Holt die Gliederung eines Textes aus der Kiste.
 ///
-/// ⛑ **Ein Fehlschlag ist kein Grund, den Text zu verlieren.** Ohne
+/// 📌 **Ein Fehlschlag ist kein Grund, den Text zu verlieren.** Ohne
 /// Bloecke zeichnet `beitrag_zeichnen` ihn schlicht, und das ist
 /// schlechter aussehend und nicht falsch.
 async function bloecke_holen(text) {
@@ -2212,10 +2540,15 @@ async function bloecke_nachtragen() {
 
 async function senden(text) {
   if (!offen) neues_gespraech();
+  // ⚑ **Vor dem neuen Beitrag gelesen**: Der Auftrag geht als Auftrag
+  // hinein und nicht noch einmal als Teil des Verlaufs.
+  const vorher = kontext_von(offen);
   if (offen.beitraege.length === 0) {
     offen.titel = titel_aus(text);
   }
   offen.beitraege.push({ von: "nutzer", text });
+  // Ab hier gilt eine Zusammenfassung, die dieser Auftrag erzeugt.
+  const auftrag_bei = offen.beitraege.length - 1;
   // ⚑ **Womit man arbeitet, steht oben** (Auftrag des Projektinhabers,
   // 2026-09-12). Hier und nicht beim Oeffnen: siehe `nach_oben`.
   nach_oben(offen);
@@ -2232,7 +2565,9 @@ async function senden(text) {
     await live_anfangen(offen.modus);
 
     if (offen.modus === "agent") {
-      const a = await invoke("agent_fahren", { auftrag: text });
+      const a = await invoke("agent_fahren", { auftrag: text, verlauf: vorher });
+      kontext_merken(offen, a.nachrichten, a.zusammenfassung, auftrag_bei);
+      kontext_zeichnen(a.kontext);
       // ⚑ **Die Rueckgabe schreibt den laufenden Beitrag fertig und
       // ersetzt ihn nicht.** Sie ist die vollstaendige Fassung des
       // Textes; die Ueberlegung und die Befehle traegt sie nicht, die
@@ -2248,24 +2583,31 @@ async function senden(text) {
       laufender.fuss =
         `${a.sekunden} s` +
         (a.fertig ? "" : ", abgebrochen") +
-        (a.gesperrt ? t("reichweite.gesperrt") : "");
+        (a.gesperrt ? t("reichweite.gesperrt") : "") +
+        (laufender_verdichtet ? `, ${t("kontext.im_lauf")}` : "");
     } else {
       // ⚑ Der ganze bisherige Verlauf geht mit. Ein Fenster, das nur
       // die letzte Frage schickte, waere ein Chatfenster ohne
       // Gespraech.
       //
-      // ⛑ **Ohne die Fehlermeldungen**, und das ist kein Schoenheits-
+      // 📌 **Ohne die Fehlermeldungen**, und das ist kein Schoenheits-
       // sondern ein Richtigkeitsgrund: Eine Meldung wie „Fehler: das
       // Modell ist nicht geladen" stammt vom Klienten und nicht vom
       // Modell. Ginge sie mit, saehe das Modell im naechsten Zug einen
       // Satz, den es nie gesagt hat, als seinen eigenen, und richtete
       // sich danach.
-      const verlauf = offen.beitraege
-        .filter((b) => !b.fehler)
-        .map((b) => [b.von, b.text]);
-      const a = await invoke("frage", { verlauf });
+      //
+      // ⚑ **Aus dem Kontext des Gespraechs und nicht aus den Beitraegen**
+      // (2026-09-14): Nach einer Verdichtung sieht das Modell die
+      // Zusammenfassung, waehrend im Fenster alles stehen bleibt.
+      const verlauf = [...vorher, { role: "user", content: text }];
+      const a = await invoke("frage", {
+        verlauf: verlauf.map((n) => [n.role === "assistant" ? "modell" : "nutzer", n.content]),
+      });
       laufender.text = a.text;
       laufender.fuss = `${a.sekunden} s`;
+      kontext_merken(offen, [...verlauf, { role: "assistant", content: a.text }], null, 0);
+      kontext_zeichnen(a.kontext);
     }
     await live_beenden();
     // ⚑ Meldet sich nur, wenn der Nutzer gerade woanders ist, etwa
@@ -2279,7 +2621,7 @@ async function senden(text) {
       "gespraech",
     );
   } catch (f) {
-    // ⛑ **Der halb geschriebene Beitrag bleibt stehen**, und der Fehler
+    // 📌 **Der halb geschriebene Beitrag bleibt stehen**, und der Fehler
     // kommt darunter. Wer ihn wegnaehme, loeschte vor den Augen des
     // Nutzers, was er gerade gelesen hat, und die Ueberlegung, an der
     // vielleicht steht, woran es lag.
@@ -2295,7 +2637,7 @@ async function senden(text) {
 
 // --- Der Reflex, der dem Zeiger folgt -----------------------------------
 
-// ⛑ **Das ist der Teil, an dem das Auge Glas erkennt**, und er ist der
+// 📌 **Das ist der Teil, an dem das Auge Glas erkennt**, und er ist der
 // Grund, warum der Reflex ueberhaupt aus dem Skript kommt und nicht aus
 // einer Animation im Stil. Ein fest einprogrammierter Lichtstreifen
 // sieht bei jedem Knopf gleich aus und weiss nichts davon, wo der Zeiger
@@ -2332,7 +2674,7 @@ document.addEventListener("mousemove", (e) => {
       // ein Punkt in Prozent trifft dort immer, gleich wie gross oder
       // wie rund die Flaeche ist.
       //
-      // ⛑ Hier stand ein WINKEL fuer einen Kegelverlauf. Der zeichnete
+      // 📌 Hier stand ein WINKEL fuer einen Kegelverlauf. Der zeichnete
       // eine wandernde Kante, und Kanten waren genau das Problem: Drei
       // Anlaeufe lagen auf demselben Pseudoelement und stritten sich.
       const mx = ((z.clientX - r.left) / r.width) * 100;
@@ -2370,7 +2712,7 @@ function kopfmarke_bauen() {
 
 /// **Zeigt oder nimmt die Marke im Kopf, mit dem passenden Stoerbild.**
 ///
-/// ⛑ **Das Gehen braucht ein Ende, und `hidden` allein ist keins.** Wer
+/// 📌 **Das Gehen braucht ein Ende, und `hidden` allein ist keins.** Wer
 /// beim Ausklappen nur `hidden` setzt, schneidet die Bewegung mitten
 /// durch; wer nur die Klasse setzt, laesst ein unsichtbares Element im
 /// Raster stehen, das die Mittelspalte weiter belegt. Deshalb beides,
@@ -2445,7 +2787,7 @@ function aktualisierung_zeichnen() {
   // ⚑ **Der Knopf ist da, wenn es etwas zu tun gibt, und sonst nicht**
   // (Festlegung des Projektinhabers, 2026-09-10).
   //
-  // ⛑ **Vorher stand er gesperrt da.** Ein gesperrter Knopf beantwortet
+  // 📌 **Vorher stand er gesperrt da.** Ein gesperrter Knopf beantwortet
   // die Frage „gibt es Updates" mit einem Bedienelement, und der Grund
   // steckte in seinem Zeigetext, wo ihn nur findet, wer mit der Maus
   // darauf wartet. **Die Zeile darueber beantwortet dieselbe Frage mit

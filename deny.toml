@@ -76,7 +76,7 @@ ignore = [
 version = 2
 confidence-threshold = 0.9
 
-# ⛑ **„license was not encountered" ist hier keine Auskunft, sondern
+# 📌 **„license was not encountered" ist hier keine Auskunft, sondern
 # Rauschen, und der Grund ist der Zuschnitt der Pruefung.**
 #
 # Der CI-Job faehrt `cargo deny` **je Kiste**, dreiundzwanzigmal, gegen

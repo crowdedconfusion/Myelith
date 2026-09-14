@@ -125,9 +125,100 @@ pub struct LoadedWeight {
 /// Logit-Skala reskaliert (i64-Akkumulation, siehe model.rs).
 #[derive(Debug)]
 pub struct LmHead {
-    pub data: Vec<i16>,    // flat, row-major [vocab, hidden]
+    pub data: Kopfdaten,   // flat, row-major [vocab, hidden]
     pub shape: Vec<usize>,
     pub shifts: Vec<u8>,   // ein Zweierpotenz-Shift je Zeile
+}
+
+/// Die Werte des int16-Kopfs: ein Abbild der Artefaktdatei, oder eine
+/// eigene Kopie, sobald jemand hineinschreibt.
+///
+/// # 📌 Fund 370 (2026-09-14): der Kopf lag als Kopie im Heap
+///
+/// Fund 62 hat die int8-Gewichte auf Abbilder umgestellt, **der int16-Kopf
+/// blieb ein `Vec<i16>`**: beim 30B 622 MB, beim 4B 778 MB anonymer
+/// Speicher. Gemessen während einer Vorbereitung des 30B auf 24 GiB: 625 MB
+/// Heap, **davon 607 MB ausgelagert**. Unter Druck wird eine anonyme Seite
+/// ausgelagert und je Decode-Schritt zurückgeholt, eine dateigestützte
+/// dagegen verworfen und neu gelesen; und jedes Megabyte davon fehlte dem
+/// Dateicache, in dem die Experten des Gemischs liegen.
+///
+/// ⚑ **Schreiben bleibt möglich**: Das Trainingswerkzeug setzt einzelne
+/// Kopfzeilen. Der erste schreibende Zugriff legt die Kopie an, gelesen wird
+/// bis dahin aus dem Abbild. Welche Zahlen darin stehen, ändert das nicht.
+pub enum Kopfdaten {
+    /// Eigene Kopie, im Heap.
+    Speicher(Vec<i16>),
+    /// Abbild der Artefaktdatei, little-endian und auf zwei Bytes
+    /// ausgerichtet (geprüft in [`Kopfdaten::aus_abbild`]).
+    Abbild(memmap2::Mmap),
+}
+
+impl Kopfdaten {
+    /// Nimmt das Abbild, wenn es sich als `i16` lesen lässt, sonst eine
+    /// Kopie. Die Länge ist vorher geprüft und gerade.
+    pub fn aus_abbild(abbild: memmap2::Mmap) -> Self {
+        let passt = cfg!(target_endian = "little")
+            && abbild.len() % 2 == 0
+            && (abbild.as_ptr() as usize) % std::mem::align_of::<i16>() == 0;
+        if passt {
+            Kopfdaten::Abbild(abbild)
+        } else {
+            Kopfdaten::Speicher(kopf_aus_bytes(&abbild))
+        }
+    }
+}
+
+fn kopf_aus_bytes(bytes: &[u8]) -> Vec<i16> {
+    // `as_chunks::<2>()` wäre der Vorschlag, ist aber erst seit Rust 1.88
+    // stabil; siehe die gleiche Stelle bei den Biases.
+    #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+    let werte = bytes.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+    werte
+}
+
+impl From<Vec<i16>> for Kopfdaten {
+    fn from(v: Vec<i16>) -> Self {
+        Kopfdaten::Speicher(v)
+    }
+}
+
+impl std::ops::Deref for Kopfdaten {
+    type Target = [i16];
+
+    fn deref(&self) -> &[i16] {
+        match self {
+            Kopfdaten::Speicher(v) => v,
+            // SICHERHEIT: `aus_abbild` hat little-endian, gerade Länge und
+            // die Ausrichtung auf `i16` geprüft; jedes Bitmuster ist ein
+            // gültiges `i16`. Das Abbild ist nur lesend geöffnet und lebt
+            // so lange wie die Referenz, beide hängen an `self`.
+            Kopfdaten::Abbild(abbild) => unsafe {
+                std::slice::from_raw_parts(abbild.as_ptr() as *const i16, abbild.len() / 2)
+            },
+        }
+    }
+}
+
+impl std::ops::DerefMut for Kopfdaten {
+    fn deref_mut(&mut self) -> &mut [i16] {
+        if let Kopfdaten::Abbild(abbild) = self {
+            *self = Kopfdaten::Speicher(kopf_aus_bytes(abbild));
+        }
+        match self {
+            Kopfdaten::Speicher(v) => v,
+            Kopfdaten::Abbild(_) => unreachable!("eben in eine Kopie verwandelt"),
+        }
+    }
+}
+
+impl std::fmt::Debug for Kopfdaten {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kopfdaten::Speicher(v) => write!(f, "Kopfdaten::Speicher({} Werte)", v.len()),
+            Kopfdaten::Abbild(a) => write!(f, "Kopfdaten::Abbild({} Werte)", a.len() / 2),
+        }
+    }
 }
 
 /// Attention-Bias in int16 mit einer Zweierpotenz-Skala je Element
@@ -412,8 +503,28 @@ fn eintrag_laden(
             return Err(format!("{}: Bias erwartet eindimensionale shape", name));
         }
 
-        let bytes = std::fs::read(artifact_dir.join(&entry.file))
-            .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+        // ⚑ **Der Kopf als Abbild, die Biases im Heap** (Fund 370). Ein
+        // Bias hat ein paar Tausend Werte; der Kopf beim 30B 311 Millionen.
+        let pfad = artifact_dir.join(&entry.file);
+        let (gelesen, abbild) = if ist_bias {
+            let b = std::fs::read(&pfad)
+                .map_err(|e| format!("Fehler beim Lesen von {}: {}", entry.file, e))?;
+            (Some(b), None)
+        } else {
+            let datei = std::fs::File::open(&pfad)
+                .map_err(|e| format!("Fehler beim Oeffnen von {}: {}", entry.file, e))?;
+            // SICHERHEIT: wie bei den int8-Gewichten weiter unten, lesend
+            // geöffnet und unmittelbar danach über SHA-256 geprüft.
+            let a = unsafe { memmap2::Mmap::map(&datei) }
+                .map_err(|e| format!("Fehler beim Abbilden von {}: {}", entry.file, e))?;
+            crate::model::abbild_vorbereiten(&a);
+            (None, Some(a))
+        };
+        let bytes: &[u8] = match (&gelesen, &abbild) {
+            (Some(b), _) => b,
+            (None, Some(a)) => a,
+            (None, None) => unreachable!("einer von beiden ist gesetzt"),
+        };
         let expected_len: usize = entry.shape.iter().product::<usize>() * 2;
         if bytes.len() != expected_len {
             return Err(format!(
@@ -421,7 +532,7 @@ fn eintrag_laden(
                 name, bytes.len(), entry.file, entry.shape, expected_len
             ));
         }
-        let digest = sha256_hex(&bytes);
+        let digest = sha256_hex(bytes);
         if digest != entry.hash {
             return Err(format!(
                 "{}: SHA-256 {} stimmt nicht mit Manifest-Hash {} ueberein",
@@ -468,14 +579,19 @@ fn eintrag_laden(
         // hier hat keine Angabe, und ein stillschweigend hoeherer Bedarf
         // waere schlimmer als eine ausdrueckliche Ausnahme.
         #[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
-        let data: Vec<i16> = bytes
-            .chunks_exact(2)
-            .map(|c| i16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        return Ok(if ist_bias {
-            Geladen::Vorspann(name, BiasTensor { data, shifts: shift_bytes })
-        } else {
-            Geladen::Kopf(LmHead { data, shape: entry.shape, shifts: shift_bytes })
+        return Ok(match abbild {
+            None => {
+                let data: Vec<i16> = bytes
+                    .chunks_exact(2)
+                    .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                Geladen::Vorspann(name, BiasTensor { data, shifts: shift_bytes })
+            }
+            Some(a) => Geladen::Kopf(LmHead {
+                data: Kopfdaten::aus_abbild(a),
+                shape: entry.shape,
+                shifts: shift_bytes,
+            }),
         });
     }
 
@@ -595,7 +711,7 @@ fn eintrag_laden(
 
 /// **Alle Eintraege pruefen, auf so vielen Faeden wie Kerne da sind.**
 ///
-/// ## ⛑ Fund 333 (2026-09-11): zwei Minuten Ladezeit waren eine Pruefsumme
+/// ## 📌 Fund 333 (2026-09-11): zwei Minuten Ladezeit waren eine Pruefsumme
 ///
 /// Die Pruefsumme liest jedes Byte, und das ist richtig: Sie bindet das
 /// Artefakt an θ_v. Sie lief nur **auf einem Kern**. Gemessen an
@@ -1831,7 +1947,7 @@ mod tests {
             "num_kv_heads": kv_heads,
             "head_dim": head_dim,
             "vocab_size": vocab,
-            "max_context": 8,
+            "max_context": 2048,
             "tie_word_embeddings": tie_word_embeddings,
             "attention_bias": attention_bias,
             "num_experts": moe.map(|m| m.0).unwrap_or(0),
@@ -1970,8 +2086,11 @@ mod tests {
             fs::write(dir.join(&file), &raw).expect("LUT schreiben");
             luts_manifest.insert(name.to_string(), lut_entry(&file, values.len(), &sha256_hex(&raw)));
         };
-        put_lut("cos", vec![256, 0, -256, 0]);
-        put_lut("sin", vec![0, 256, 0, -256]);
+        // Ein Viertelkreis je Position, 2 048 Positionen: Die Tabelle
+        // wiederholt sich alle vier Zeilen, und die Proben laufen ueber mehr
+        // als ein Vorbereitungsfenster, ohne an die Kontextgrenze zu stossen.
+        put_lut("cos", [256, 0, -256, 0].repeat(512));
+        put_lut("sin", [0, 256, 0, -256].repeat(512));
         put_lut("exp", vec![256, 128, 64]);
         put_lut("silu", vec![-10, 0, 10, 20]);
         put_lut("rsqrt", vec![256, 181, 148]);
@@ -2020,7 +2139,7 @@ mod tests {
     /// **Die gebuendelte Vorbereitung rechnet dasselbe wie die
     /// tokenweise, dicht und als Expertengemisch.**
     ///
-    /// ⛑ **Diese Gegenprobe gab es bis zum 2026-09-11 nicht**, obwohl
+    /// 📌 **Diese Gegenprobe gab es bis zum 2026-09-11 nicht**, obwohl
     /// die gebuendelte Vorbereitung seit dem 2026-09-11 der Normalweg
     /// ist. **Ein Weg, den nichts gegen den anderen haelt, darf
     /// auseinanderlaufen, ohne dass es jemand merkt.**
@@ -2034,6 +2153,8 @@ mod tests {
         {
             let dir = test_dir(name);
             write_full_fixture_mit(&dir, true, false, moe);
+            gewichte_verrauschen(&dir, 0x5eed_0366);
+            skalen_je_kanal_streuen(&dir);
             let model = load_model(&dir).expect("Artefakt muss laden");
 
             // Der Wortschatz des Fixtures ist drei Eintraege gross.
@@ -2044,7 +2165,7 @@ mod tests {
                 model.num_layers,
                 model.num_kv_heads,
             );
-            model.vorbereiten_stapel(&ids[..letzte], 0, &mut gebuendelt);
+            let zustaende = model.vorbereiten_stapel(&ids[..letzte], 0, &mut gebuendelt);
             let a = model.forward_token(ids[letzte], letzte, &mut gebuendelt);
 
             let mut einzeln = crate::kv_cache::KVCache::new(
@@ -2053,10 +2174,35 @@ mod tests {
             );
             let mut b = Vec::new();
             for (pos, id) in ids.iter().enumerate() {
-                b = model.forward_token(*id, pos, &mut einzeln);
+                if pos < letzte {
+                    // 📌 **Der Strom jedes vorbereiteten Tokens**, nicht
+                    // nur die Logits danach (nachgetragen mit Fund 366).
+                    // Das Fixture hat eine Ebene; dort wirkt die
+                    // Aufmerksamkeit eines vorbereiteten Tokens auf nichts
+                    // anderes, und eine Aufmerksamkeit, die eine Position
+                    // zu weit las, blieb gemessen unentdeckt.
+                    let erwartet = model.durch_die_ebenen(*id, pos, &mut einzeln);
+                    assert_eq!(zustaende[pos], erwartet, "{name}: Strom von Token {pos} weicht ab");
+                } else {
+                    b = model.forward_token(*id, pos, &mut einzeln);
+                }
             }
 
             assert_eq!(a, b, "{name}: gebuendelt und tokenweise weichen ab");
+
+            // 📌 **Und der Zwischenspeicher selbst** (nachgetragen mit
+            // Fund 366). Ueber die Logits allein blieb dieser Test gruen,
+            // als die Aufmerksamkeit jedes Tokens ausser dem ersten eine
+            // Position zu weit rechnete: Das Fixture ist dafuer zu klein.
+            for ebene in 0..model.num_layers {
+                for kopf in 0..model.num_kv_heads {
+                    assert_eq!(
+                        gebuendelt.read_scheiben(ebene, kopf, ids.len()),
+                        einzeln.read_scheiben(ebene, kopf, ids.len()),
+                        "{name}: KV-Speicher in Ebene {ebene}, Kopf {kopf}"
+                    );
+                }
+            }
 
             // ⚠️ **Fuer ein Gemisch vergleicht dieser Test zwei Wege,
             // die derselbe sind**: `ebene_mlp_stapel` gibt dort `None`
@@ -2066,6 +2212,257 @@ mod tests {
             // die dichte Buendelung und deckt beim Gemisch ab, dass der
             // Rueckfallweg selbst stimmt.
 
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// **Ersetzt die int8-Gewichte eines Fixtures durch Zufallszahlen**
+    /// und zieht Manifest und θ_v nach.
+    ///
+    /// 📌 **Warum** (Fund 366): Die Gewichte des Fixtures sind `i % 7`,
+    /// und darauf ist die Aufmerksamkeit so gleichfoermig, dass eine, die
+    /// eine Position zu weit las, dieselben Zahlen lieferte. Gemessen am
+    /// 2026-09-14: Die Pruefung der Vorbereitung blieb gruen, der
+    /// Konformitaetslauf am echten Modell nicht. Mit Zufallsgewichten
+    /// faellt es auch ohne Artefakt auf, also auch in der CI.
+    fn gewichte_verrauschen(dir: &Path, saat: u64) {
+        let pfad = dir.join("weights_manifest.json");
+        let mut manifest: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(&fs::read(&pfad).expect("Manifest lesen")).expect("Manifest parsen");
+        let mut s = saat | 1;
+        for eintrag in manifest.values_mut() {
+            if eintrag["dtype"] != "int8" {
+                continue;
+            }
+            let datei = dir.join(eintrag["file"].as_str().expect("Dateiname"));
+            let n = fs::read(&datei).expect("Gewicht lesen").len();
+            let daten: Vec<u8> = (0..n)
+                .map(|_| {
+                    s ^= s << 13;
+                    s ^= s >> 7;
+                    s ^= s << 17;
+                    // -127..=127, wie ein symmetrisch quantisiertes Gewicht
+                    ((s % 255) as i16 - 127) as i8 as u8
+                })
+                .collect();
+            fs::write(&datei, &daten).expect("Gewicht schreiben");
+            eintrag["hash"] = serde_json::json!(sha256_hex(&daten));
+            // ⚑ **Shift vier, gemessen und nicht geschaetzt** (Fund 371). Mit
+            // Shift null und eins saettigten die Ausgaben der Experten bei
+            // ±32 767, mit sieben waren sie null; in beiden Faellen blieb ein
+            // Fehler in der Ausgangsskala unsichtbar. Bei vier liegen sie
+            // zwischen −221 und 185.
+            eintrag["shift"] = serde_json::json!(4);
+            eintrag["scale"] = serde_json::json!(1.0 / 16.0);
+        }
+        fs::write(&pfad, serde_json::to_string(&manifest).unwrap()).expect("Manifest schreiben");
+        write_theta_v(dir);
+    }
+
+    /// **Gibt den Segmenten des Residualstroms verschiedene Skalen je
+    /// Kanal** und zieht θ_v nach.
+    ///
+    /// 📌 **Warum** (Fund 371): Die Skalen des Fixtures sind je Segment eine
+    /// Zahl. Eine gruppierte Gemischebene, die ihre Ausgabe mit der Skala
+    /// des ersten Kanals statt der je Kanal rechnete, blieb darauf gemessen
+    /// gruen. Echte Artefakte tragen je Kanal verschiedene Skalen (Fund 20).
+    fn skalen_je_kanal_streuen(dir: &Path) {
+        let pfad = dir.join("scales.json");
+        let mut skalen: serde_json::Value =
+            serde_json::from_slice(&fs::read(&pfad).expect("scales.json lesen")).expect("scales.json parsen");
+        for (name, shifts) in [
+            ("model.layers.0.input_layernorm.input", [12i64, 10, 13, 11]),
+            ("model.layers.0.post_attention_layernorm.input", [5, 3, 6, 4]),
+            ("model.norm.input", [4, 6, 3, 5]),
+        ] {
+            skalen[name]["shifts"] = serde_json::json!(shifts);
+        }
+        fs::write(&pfad, serde_json::to_string(&skalen).unwrap()).expect("scales.json schreiben");
+        write_theta_v(dir);
+    }
+
+    /// **Die Vorbereitung eines ganzen Prompts rechnet dasselbe wie Token
+    /// fuer Token, ueber Fenstergrenzen hinweg** (Fund 366).
+    ///
+    /// ⚑ **Geprueft wird der Weg, den die Erzeugung jetzt nimmt**, und
+    /// zwar laenger als zwei Fenster: Genau an der Grenze beginnt ein
+    /// neuer Stapel bei einer Position, die nicht null ist. Dazu die
+    /// Raender, die die alte Schleife still richtig machte: ein leerer
+    /// Prompt gibt lauter Nullen, ein Token geht allein durch den Kopf.
+    #[test]
+    fn die_vorbereitung_eines_prompts_rechnet_dasselbe_ueber_fenstergrenzen() {
+        use crate::model::VORBEREITUNGSFENSTER;
+        for (name, moe) in [("prompt-dicht", None), ("prompt-moe", Some((6usize, 2usize, 3usize)))] {
+            let dir = test_dir(name);
+            write_full_fixture_mit(&dir, true, false, moe);
+            gewichte_verrauschen(&dir, 0x5eed_0367);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+
+            let laenge = 2 * VORBEREITUNGSFENSTER + 3;
+            let ids: Vec<usize> = (0..laenge).map(|i| (i * 7 + i / 5) % 3).collect();
+
+            // Der Strom jedes Tokens ueber alle Fenster, gegen den
+            // tokenweisen Weg; Begruendung beim Test oben.
+            {
+                let mut gebuendelt = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+                let mut einzeln = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+                for (f, fenster) in ids.chunks(VORBEREITUNGSFENSTER).enumerate() {
+                    let anfang = f * VORBEREITUNGSFENSTER;
+                    let zustaende = model.vorbereiten_stapel(fenster, anfang, &mut gebuendelt);
+                    for (i, id) in fenster.iter().enumerate() {
+                        let erwartet = model.durch_die_ebenen(*id, anfang + i, &mut einzeln);
+                        assert_eq!(zustaende[i], erwartet, "{name}: Strom von Token {} weicht ab", anfang + i);
+                    }
+                }
+            }
+
+            for n in [0usize, 1, 2, VORBEREITUNGSFENSTER, VORBEREITUNGSFENSTER + 1, laenge] {
+                let mut gebuendelt = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+                let a = model.prompt_vorbereiten(&ids[..n], &mut gebuendelt);
+
+                let mut einzeln = crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+                let mut b = vec![0i32; model.vocab_size];
+                for (pos, id) in ids[..n].iter().enumerate() {
+                    b = model.forward_token(*id, pos, &mut einzeln);
+                }
+                assert_eq!(a, b, "{name}: {n} Token, gebuendelt und tokenweise weichen ab");
+
+                // 📌 **Der Zwischenspeicher wird Eintrag fuer Eintrag
+                // verglichen, nicht nur ueber die Logits.** Das Fixture ist
+                // so klein, dass seine Logits eine um eins verschobene
+                // Fensterposition nicht zeigen; gemessen am 2026-09-14 mit
+                // genau dieser Verschiebung, der Test blieb gruen. Die
+                // Schluessel tragen die Drehung ihrer Position und stehen
+                // unter ihrer Position im Speicher, dort faellt es auf.
+                for ebene in 0..model.num_layers {
+                    for kopf in 0..model.num_kv_heads {
+                        assert_eq!(
+                            gebuendelt.read_scheiben(ebene, kopf, laenge),
+                            einzeln.read_scheiben(ebene, kopf, laenge),
+                            "{name}: {n} Token, KV-Speicher in Ebene {ebene}, Kopf {kopf}"
+                        );
+                    }
+                }
+
+                // Der Zwischenspeicher muss danach derselbe sein, sonst
+                // stimmt erst der naechste Schritt nicht mehr.
+                if n > 0 {
+                    let naechster = (n * 5) % 3;
+                    assert_eq!(
+                        model.forward_token(naechster, n, &mut gebuendelt),
+                        model.forward_token(naechster, n, &mut einzeln),
+                        "{name}: {n} Token, der Schritt danach weicht ab"
+                    );
+                }
+            }
+
+            fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// **An der Kontextgrenze haelt die Erzeugung an, und nichts bricht
+    /// still um** (Fund 368).
+    ///
+    /// Die Grenze ist das Kleinere aus `max_context` und den Zeilen der
+    /// RoPE-Tabelle. Geprueft wird beides: eine Erzeugung, die ueber die Grenze
+    /// wollte, ein Vorwaertspass an der Grenze und ein Prompt darueber.
+    #[test]
+    fn an_der_kontextgrenze_haelt_die_erzeugung_an() {
+        use crate::generate::{dekodieren_fortgesetzt, dekodieren_mit_digest, Erzeugung, Fortsetzung};
+        use crate::kv_cache::KVCache;
+        let dir = test_dir("kontextgrenze");
+        write_full_fixture_mit(&dir, true, false, None);
+        let mut konf: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("model_config.json")).expect("lesen")).expect("parsen");
+        konf["max_context"] = serde_json::json!(64);
+        write_model_config(&dir, &konf);
+        let model = load_model(&dir).expect("Artefakt muss laden");
+        assert_eq!(model.kontextgrenze(), 64, "max_context ist kleiner als die Tabelle");
+
+        let prompt: Vec<usize> = (0..60).map(|i| i % 3).collect();
+        let lauf = Erzeugung { max_new_tokens: 10, seed: 1, greedy: true, halt: &[] };
+        let mut speicher = Fortsetzung::neu(&model);
+        let (aus, w) = dekodieren_fortgesetzt(&model, &prompt, &lauf, &mut speicher, &mut |_| {});
+        assert_eq!(aus.len(), 5, "Positionen 60 bis 63 werden gerechnet, das Token fuer 64 nur ausgegeben");
+        assert!(w.kontext_voll);
+        assert_eq!(speicher.laenge(), 64);
+        let (digest_aus, _) = dekodieren_mit_digest(&model, &prompt, 10, 1, true);
+        assert_eq!(digest_aus, aus, "der Konformitaetspfad haelt an derselben Stelle");
+
+        let (kurz, w) = dekodieren_fortgesetzt(&model, &prompt[..40], &lauf, &mut Fortsetzung::neu(&model), &mut |_| {});
+        assert_eq!((kurz.len(), w.kontext_voll), (10, false));
+
+        let voll: Vec<usize> = (0..64).map(|i| i % 3).collect();
+        let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
+        model.prompt_vorbereiten(&voll, &mut cache);
+        let hinter = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            model.forward_token(0, 64, &mut cache);
+        }));
+        assert!(hinter.is_err(), "Position 64 darf nicht auf Position 0 umbrechen");
+        let zu_lang: Vec<usize> = (0..65).map(|i| i % 3).collect();
+        let zu_lang_ergebnis = std::panic::catch_unwind(|| {
+            model.prompt_vorbereiten(&zu_lang, &mut KVCache::new(model.num_layers, model.num_kv_heads));
+        });
+        assert!(zu_lang_ergebnis.is_err(), "ein Prompt ueber der Grenze ist ein Fehler des Aufrufers");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// **Eine fortgesetzte Erzeugung rechnet dasselbe wie eine frische**
+    /// (Fund 372): verlaengerter Prompt, Prompt mit frueherer Abweichung,
+    /// derselbe Prompt noch einmal, dicht und als Gemisch.
+    ///
+    /// Verglichen werden die erzeugten Token, jeder Eintrag des
+    /// KV-Speichers und die Logits eines weiteren Schritts; auf
+    /// Zufallsgewichten, weil das Fixture sonst Fehler glaettet (Fund 366).
+    #[test]
+    fn fortgesetzt_ist_dasselbe_wie_frisch() {
+        use crate::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
+        for (name, moe) in [("fort-dicht", None), ("fort-moe", Some((6usize, 2usize, 3usize)))] {
+            let dir = test_dir(name);
+            write_full_fixture_mit(&dir, true, false, moe);
+            gewichte_verrauschen(&dir, 0x5eed_0372);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+            let lauf = Erzeugung { max_new_tokens: 5, seed: 7, greedy: true, halt: &[] };
+
+            let a: Vec<usize> = (0..40).map(|i| (i * 5 + i / 3) % 3).collect();
+            let mut speicher = Fortsetzung::neu(&model);
+            let (aus_a, _) = dekodieren_fortgesetzt(&model, &a, &lauf, &mut speicher, &mut |_| {});
+            let mut b = a.clone();
+            b.extend(&aus_a);
+            b.extend([2, 0, 1, 1, 2, 0, 0]);
+            let mut c = a[..17].to_vec();
+            c.extend([1, 1, 1, 0, 2]);
+            let d = c.clone();
+
+            for (fall, prompt, erwartet_wieder) in [("verlaengert", &b, Some(a.len() + aus_a.len())), ("abweichend", &c, Some(17)), ("gleich", &d, Some(d.len() - 1))] {
+                let (fort, w) = dekodieren_fortgesetzt(&model, prompt, &lauf, &mut speicher, &mut |_| {});
+                let mut frisch = Fortsetzung::neu(&model);
+                let (neu, _) = dekodieren_fortgesetzt(&model, prompt, &lauf, &mut frisch, &mut |_| {});
+                assert_eq!(fort, neu, "{name}/{fall}: Token");
+                if let Some(e) = erwartet_wieder {
+                    assert_eq!(w.wiederverwendet, e, "{name}/{fall}: wiederverwendet");
+                }
+                assert_eq!(speicher.token, frisch.token, "{name}/{fall}: Tokenfolge im Speicher");
+                let laenge = speicher.token.len();
+                for ebene in 0..model.num_layers {
+                    for kopf in 0..model.num_kv_heads {
+                        assert_eq!(
+                            speicher.cache.read_scheiben(ebene, kopf, laenge),
+                            frisch.cache.read_scheiben(ebene, kopf, laenge),
+                            "{name}/{fall}: KV-Speicher Ebene {ebene} Kopf {kopf}"
+                        );
+                    }
+                }
+                let t = prompt[0];
+                assert_eq!(
+                    model.forward_token(t, laenge, &mut speicher.cache),
+                    model.forward_token(t, laenge, &mut frisch.cache),
+                    "{name}/{fall}: Logits des naechsten Schritts"
+                );
+                speicher.cache.kuerzen(laenge);
+            }
             fs::remove_dir_all(&dir).ok();
         }
     }
@@ -2178,7 +2575,7 @@ mod tests {
         assert_eq!(model.layers[0].k_bias.as_ref().unwrap().data.len(), 2);
         assert_eq!(model.layers[0].v_bias.as_ref().unwrap().data.len(), 2);
 
-        assert_eq!(model.cos_lut.len(), 4);
+        assert_eq!(model.cos_lut.len(), 2048);
         assert_eq!(model.exp_lut.len(), 3);
         assert_eq!(model.silu_lut.len(), 4);
 

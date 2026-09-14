@@ -50,7 +50,7 @@ Umgebungsvariable `INTEGER_LLM_ARTIFACTS_DIR` überschreibbar, damit die
 Gewichte nicht neben dem Binary liegen müssen.
 
 
-## ⛑ Umbenannt am 2026-09-10
+## 📌 Umbenannt am 2026-09-10
 
 **Die Artefakte heissen nach dem Modell, das sie sind.** Ein Artefakt
 ist nicht das Basismodell, sondern das Ergebnis einer Kalibrierung: ein
@@ -68,7 +68,7 @@ deshalb einen eigenen Namen.
 Qwen und heissen so; die Herkunft steht in `KATALOG.json` bei jedem
 Eintrag und in der Modellkarte.
 
-⛑ **Aeltere Aufnahmen tragen die alten Namen, und das ist richtig so.**
+📌 **Aeltere Aufnahmen tragen die alten Namen, und das ist richtig so.**
 Was einen Stand zu einem Zeitpunkt festhaelt, wird nicht nachtraeglich
 umgeschrieben: Ein umbenannter Pfad in einer Messung waere eine
 gefaelschte Aufnahme. Diese Tabelle ist der Schluessel dazu.

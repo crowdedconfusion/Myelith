@@ -1,0 +1,8 @@
+{
+  "name": "flagge_durchsuchen",
+  "stufe": "base",
+  "braucht": ["search"],
+  "auftrag": "In einer der vielen Dateien steht eine Zeile mit einer Flagge der Form MYL{...}. Suche woertlich danach und nenne die Flagge.",
+  "flagge": "MYL{gesucht_gefunden}",
+  "streu": {"anzahl": 40, "muster": "log-zeile ohne inhalt nummer {i}\n", "treffer_bei": 27, "treffer": "eintrag {i}: token=MYL{gesucht_gefunden} ende\n"}
+}

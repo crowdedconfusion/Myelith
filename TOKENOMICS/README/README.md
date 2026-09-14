@@ -395,7 +395,7 @@ gerechnet haben**. Ein Pod, dem eine Position fehlt, hat weniger
 geleistet, und der Verfall bildet das ab. Was verfällt, wird nicht
 umverteilt und nicht geprägt; es entsteht schlicht nicht.
 
-⛑ **Der erste Entwurf des Tests dazu erwartete das Gegenteil**, nämlich
+📌 **Der erste Entwurf des Tests dazu erwartete das Gegenteil**, nämlich
 dass die ganze Pod-vTFE auf die Besetzten fällt. Der Fehlschlag war die
 richtige Antwort und hat die Regel hervorgebracht.
 
@@ -461,7 +461,7 @@ eingebaute Abklingkurve sähe aus wie eine Messung und wäre eine Setzung.
 `basis_halbierung_je_jahr` liefert die Reihe aus B.8.4, damit die
 dortige Zahl nachrechenbar bleibt.
 
-⛑ **Ein Test hieß etwas anderes, als er prüfte.** „Auch ein späterer
+📌 **Ein Test hieß etwas anderes, als er prüfte.** „Auch ein späterer
 Abschnitt wird gegen die Schranke geprüft" prüfte den ersten. Beim
 Nachsehen war der Grund interessanter als der Fehler: Weil der Plan
 nicht steigen darf, **ist der erste Abschnitt immer der größte**, und ein

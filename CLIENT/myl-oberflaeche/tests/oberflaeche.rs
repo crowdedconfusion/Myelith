@@ -6,7 +6,7 @@
 //! Entscheidung: Sie ruft dieselben Unterbefehle wie das
 //! Kommandozeilenwerkzeug und braucht dafuer keine Node-Werkzeugkette.
 //!
-//! ⛑ **Der Preis ist, dass niemand einen Tippfehler findet.** Eine
+//! 📌 **Der Preis ist, dass niemand einen Tippfehler findet.** Eine
 //! Klasse, die im HTML steht und in keiner Regel, faellt nicht auf: Das
 //! Element ist da, es sieht nur falsch aus. Eine Kennung, die das
 //! Skript sucht und die es nicht gibt, ergibt `null` und einen Fehler
@@ -55,7 +55,7 @@ fn jede_gesuchte_kennung_steht_im_html() {
     let html = lies("index.html");
     let js = lies("app.js");
     let da = kennungen(&html);
-    // ⛑ **Zwei Schreibweisen, und die zweite hat diese Pruefung einmal
+    // 📌 **Zwei Schreibweisen, und die zweite hat diese Pruefung einmal
     // blind gemacht.** Am 2026-09-09 fuehrte `app.js` die Kurzform
     // `$("...")` ein, und die Pruefung fand daraufhin **null** Kennungen
     // und haette alles durchgelassen. Gemerkt hat es nur die Zusicherung
@@ -84,7 +84,7 @@ fn jede_gesuchte_kennung_steht_im_html() {
 
 /// **Nichts im Skript heisst `t`, ausser der Uebersetzung.**
 ///
-/// ⛑ **Fund 324, und er kostete den Projektinhaber einen Abend.** Zwei
+/// 📌 **Fund 324, und er kostete den Projektinhaber einen Abend.** Zwei
 /// Funktionen hielten ein Element in `const t`, und eine davon rief
 /// oberhalb dieser Zeile `t("lauf.arbeitet")`. **Eine lokale Bindung
 /// verdeckt den aeusseren Namen im ganzen Block, auch vor ihrer eigenen
@@ -123,7 +123,7 @@ fn nichts_im_skript_verdeckt_die_uebersetzung() {
 /// **Die Ueberschrift der Seite ist die groesste, und alles darunter
 /// ist gleich gross.**
 ///
-/// ⛑ **Vorher waren es drei Groessen, und die falsche war die
+/// 📌 **Vorher waren es drei Groessen, und die falsche war die
 /// groesste:** `h2` hatte keine Angabe und nahm die Vorgabe des
 /// Browsers, also mehr als das `h1`. **Eine Seite, deren
 /// Unterueberschriften groesser sind als ihre Ueberschrift, liest sich
@@ -207,7 +207,7 @@ fn klassen_aus_skript(js: &str) -> BTreeSet<String> {
 
 /// Gibt es zu dieser Klasse eine Regel?
 ///
-/// ⛑ **Auf ganze Namen und nicht auf Teilzeichenketten.** Ein blosses
+/// 📌 **Auf ganze Namen und nicht auf Teilzeichenketten.** Ein blosses
 /// `css.contains(".zu")` faende auch `.zusatz`, und `js.contains("grenze")`
 /// fand seinerzeit das Wort „Obergrenze" in einem Kommentar.
 fn hat_regel(css: &str, klasse: &str) -> bool {
@@ -229,7 +229,7 @@ fn hat_regel(css: &str, klasse: &str) -> bool {
 
 /// Und die Klassen, die das Skript vergibt, ebenso.
 ///
-/// ⛑ **Diese Pruefung hielt eine von Hand gepflegte Liste von elf
+/// 📌 **Diese Pruefung hielt eine von Hand gepflegte Liste von elf
 /// Namen.** Das ist derselbe Fehler wie Fund 261, nur an einer anderen
 /// Stelle: Die Liste rottet. Als am 2026-09-09 die Marke `grenze`
 /// entfiel, weil ihr Hinweis in den Satz unter der Beschriftung
@@ -250,7 +250,7 @@ fn jede_klasse_aus_dem_skript_hat_eine_regel() {
     // ⚑ **Die Schrittarten kommen aus einer Vorlage und lassen sich
     // deshalb nicht als vergebene Klasse ablesen.**
     //
-    // ⛑ **Hier stand bis zum 2026-09-10 eine Liste von vier Namen von
+    // 📌 **Hier stand bis zum 2026-09-10 eine Liste von vier Namen von
     // Hand**, also Fund 271 zum vierten Mal in dieser Datei, und sie war
     // gerottet: `hinweis` stand darin, obwohl der Ruecken diese Art
     // laengst nicht mehr erzeugt. Die alte Marketabelle im Skript trug
@@ -287,13 +287,13 @@ fn jede_klasse_aus_dem_skript_hat_eine_regel() {
     }
 }
 
-/// ⛑ **Keine Fremdquelle.** Die Sicherheitsregel erlaubt nur `self`;
+/// 📌 **Keine Fremdquelle.** Die Sicherheitsregel erlaubt nur `self`;
 /// eine Oberflaeche, die Schriften oder Skripte aus dem Netz nachlaedt,
 /// hat eine Verbindung, die niemand angemeldet hat, und sie faellt
 /// nicht auf, weil sie einfach nicht laedt.
 #[test]
 fn nichts_wird_aus_dem_netz_geladen() {
-    // ⛑ **Der Namensraum eines SVG ist eine Kennung und keine
+    // 📌 **Der Namensraum eines SVG ist eine Kennung und keine
     // Adresse.** `createElementNS("http://www.w3.org/2000/svg", …)`
     // ruft nichts ab, der Text steht in jedem SVG der Welt, und ohne
     // ihn erzeugt der Browser ein HTML-Element namens „svg", das
@@ -322,7 +322,7 @@ fn bewegung_laesst_sich_abbestellen() {
     );
 }
 
-/// ⛑ Und der Vorhang muss auch wieder weggehen koennen: Ein
+/// 📌 Und der Vorhang muss auch wieder weggehen koennen: Ein
 /// Vorschaltbild ohne Abgang ist ein Fenster, das nie aufmacht.
 #[test]
 fn der_vorhang_geht_wieder_weg() {
@@ -333,7 +333,7 @@ fn der_vorhang_geht_wieder_weg() {
     assert!(js.contains("netzAnhalten()"), "die Animation wird nie angehalten");
 }
 
-/// ⛑ **Graustufen, und zwar nachpruefbar.** Am 2026-09-09 hat der
+/// 📌 **Graustufen, und zwar nachpruefbar.** Am 2026-09-09 hat der
 /// Projektinhaber die Gestaltung auf mattes Schwarz und Graustufen
 /// festgelegt. Ein einzelner bunter Wert faellt niemandem auf, der die
 /// Datei liest, aber jedem, der die Oberflaeche ansieht. Diese Pruefung
@@ -347,7 +347,7 @@ fn der_vorhang_geht_wieder_weg() {
 /// prompt fiel `#8e9195` mit sieben durch: Die Zahl war geraten und
 /// nicht an der Palette gemessen.
 ///
-/// ⛑ **Damit die Toleranz nicht bedeutungslos wird, prueft sie sich
+/// 📌 **Damit die Toleranz nicht bedeutungslos wird, prueft sie sich
 /// selbst mit.** Das alte Stahlblau `#7d9ab8` hat eine Spanne von 59,
 /// also mehr als das Siebenfache; die Pruefung verlangt ausdruecklich,
 /// dass es durchfiele. Ohne diesen Teil koennte jemand die Toleranz
@@ -390,7 +390,7 @@ fn die_farben_sind_graustufen() {
     assert!(geprueft >= 6, "nur {geprueft} Farbwerte gefunden; sucht die Pruefung noch richtig?");
 }
 
-/// ⛑ **Glas braucht einen Rueckfall, und der muss geprueft sein.**
+/// 📌 **Glas braucht einen Rueckfall, und der muss geprueft sein.**
 /// `backdrop-filter` traegt auf macOS; auf WebKitGTK ist es je nach
 /// Fassung da, und unter NixOS mit `WEBKIT_DISABLE_COMPOSITING_MODE=1`,
 /// das dieses Projekt ausdruecklich empfiehlt, faellt es weg, weil
@@ -407,7 +407,7 @@ fn glas_hat_einen_rueckfall() {
         "ohne das Praefix traegt es auf aelteren WebKit-Fassungen nicht"
     );
 
-    // ⛑ **Diese Pruefung zaehlte einmal `@supports`-Bloecke und wollte
+    // 📌 **Diese Pruefung zaehlte einmal `@supports`-Bloecke und wollte
     // mindestens zwei.** Das war das falsche Mass: Ein Block, der alle
     // Flaechen deckt, ist besser als zwei, die je eine decken, und die
     // Pruefung fiel, als genau das gebaut wurde. Sie prueft jetzt, was
@@ -416,7 +416,7 @@ fn glas_hat_einen_rueckfall() {
     let (rueckfaelle, uebriges) = supports_trennen(&stil);
     assert!(!rueckfaelle.is_empty(), "es gibt gar keinen Rueckfall");
 
-    // ⛑ **Wer `backdrop-filter: none` setzt, benutzt es nicht, sondern
+    // 📌 **Wer `backdrop-filter: none` setzt, benutzt es nicht, sondern
     // schaltet es ab**, und braucht folglich keinen Rueckfall. Der
     // erste Entwurf hat das nicht unterschieden und `#auftrag`
     // angemahnt, das genau deshalb dasteht: Es liegt IN einem Glas und
@@ -521,7 +521,7 @@ fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
     let stil = ohne_kommentare(&lies("stil.css"));
     let i = stil.find("prefers-reduced-motion").expect("die Regel gibt es");
 
-    // ⛑ **Der Block hat ein Ende, und alles danach zaehlt wieder mit.**
+    // 📌 **Der Block hat ein Ende, und alles danach zaehlt wieder mit.**
     //   Ein erster Entwurf durchsuchte nur `stil[..i]`, also den Teil
     //   VOR der Regel. Eine Bewegung, die danach steht, sah er nicht,
     //   und die Gegenprobe schlug prompt nicht an: Genau die Sorte
@@ -545,7 +545,7 @@ fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
     let block = stil[ab..bis].to_string();
     let ausserhalb = format!("{}{}", &stil[..i], &stil[bis..]);
 
-    // ⛑ **Die Liste wird hergeleitet und nicht gepflegt.** Sie stand
+    // 📌 **Die Liste wird hergeleitet und nicht gepflegt.** Sie stand
     //   hier fest, und als `button::after` aus dem Stilblatt
     //   verschwand, schlug die Pruefung auf etwas an, das es nicht mehr
     //   gibt. Eine Wache, die eine Abschrift fuehrt, verrottet mit der
@@ -581,7 +581,7 @@ fn das_rauschen_gehoert_zur_abbestellbaren_bewegung() {
     }
 }
 
-/// ⛑ **Die eingebettete Schrift braucht `font-src … data:` in der
+/// 📌 **Die eingebettete Schrift braucht `font-src … data:` in der
 /// CSP.** Ohne das greift `default-src 'self'`, und ein `data:`-URI
 /// ist nicht `self`: Die Wortmarke faellt in der echten App auf die
 /// Systemschrift zurueck. **Die Vorschau kann das nicht zeigen**, denn
@@ -607,7 +607,7 @@ fn die_eingebettete_schrift_ist_von_der_csp_erlaubt() {
     );
 }
 
-/// ⛑ **`listen` ist ein Kernbefehl und braucht eine Erlaubnis.**
+/// 📌 **`listen` ist ein Kernbefehl und braucht eine Erlaubnis.**
 /// Eigene Befehle laufen in Tauri 2 ohne, `core:event` nicht: Ohne
 /// Faehigkeitsdatei bekaeme das Fenster die Baufortschritte nie zu
 /// sehen, und zwar **stumm**, ohne Fehler in der Oberflaeche.
@@ -644,7 +644,7 @@ fn wer_horcht_braucht_die_erlaubnis_dazu() {
     }
 }
 
-/// ⛑ **Nichts, was gelesen werden soll, darf auf eine Animation
+/// 📌 **Nichts, was gelesen werden soll, darf auf eine Animation
 /// warten.** `animation: … both` setzt den Anfangszustand schon vor
 /// dem Lauf; steht dort `opacity: 0`, ist das Element unsichtbar,
 /// solange die Animation nicht laeuft. Bei einer Meldung heisst das:
@@ -680,7 +680,7 @@ fn nichts_wartet_unsichtbar_auf_eine_animation() {
 
 /// **Die Buendelversion ist die Kistenversion.**
 ///
-/// ⛑ Sie war es nicht: `tauri.conf.json` stand am 2026-09-09 auf
+/// 📌 Sie war es nicht: `tauri.conf.json` stand am 2026-09-09 auf
 /// `0.1.0`, waehrend die Kiste bei `0.13.0` war. Sichtbar wird das
 /// erst am fertigen Buendel, denn der Dateiname traegt sie:
 /// `Myelith_0.1.0_amd64.deb` neben einer Freigabe, die anders heisst.
@@ -703,7 +703,7 @@ fn die_buendelversion_ist_die_kistenversion() {
 
 /// **Und das Buendelskript liest die Fassung, statt sie zu tragen.**
 ///
-/// ⛑ **Der zweite Ort derselben Zahl, und er lief davon.**
+/// 📌 **Der zweite Ort derselben Zahl, und er lief davon.**
 /// `buendeln-macos.sh` schrieb `0.4.0` als festen Text in die
 /// `Info.plist`, waehrend die Kiste bei `0.16.0` stand. Die Pruefung
 /// darueber band `tauri.conf.json` an die Kiste und dieses Skript an
@@ -754,7 +754,7 @@ fn das_buendelskript_liest_die_fassung() {
 /// **Jedes angemeldete Symbol liegt auch da, und die zwei
 /// Systemformate sind dabei.**
 ///
-/// ⛑ Bis zum 2026-09-09 lagen nur PNG-Dateien im Verzeichnis. Der
+/// 📌 Bis zum 2026-09-09 lagen nur PNG-Dateien im Verzeichnis. Der
 /// Buendler braucht fuer das `.msi` ein `.ico` und fuer das `.dmg` ein
 /// `.icns`; was er ohne sie liefert, ist im guenstigen Fall ein
 /// Abbruch und im unguenstigen ein Buendel mit dem Platzhalter des
@@ -798,7 +798,7 @@ fn die_angemeldeten_symbole_liegen_da() {
 /// **Und die Gegenrichtung: Jede Klasse mit einer Regel wird auch
 /// vergeben.**
 ///
-/// ⛑ Die beiden Pruefungen oben gehen von HTML und Skript zum CSS. Die
+/// 📌 Die beiden Pruefungen oben gehen von HTML und Skript zum CSS. Die
 /// Richtung faengt eine Klasse ohne Gestaltung, aber keine Gestaltung
 /// ohne Klasse. Genau die blieb am 2026-09-09 zurueck: Der Ortsschalter
 /// „Lokal | Netz" war entfallen, `.schalter` stand aber weiter in fuenf
@@ -829,7 +829,7 @@ fn jede_regel_hat_ein_element() {
         }
     }
 
-    // ⛑ **Zusammengesetzte Klassennamen stehen nirgends als Literal.**
+    // 📌 **Zusammengesetzte Klassennamen stehen nirgends als Literal.**
     //   `wurzel.className = `beitrag von-${b.von}`` vergibt
     //   `von-nutzer` und `von-modell`, im Skript steht aber nur
     //   `von-`. Der erste Entwurf dieser Pruefung hielt
@@ -874,7 +874,7 @@ fn jede_regel_hat_ein_element() {
 
 /// **Jedes Bauskript laeuft mit der Kalibrier-Umgebung im Pfad.**
 ///
-/// ⛑ Bis zum 2026-09-09 bekam nur der Kalibrierschritt sie. Der
+/// 📌 Bis zum 2026-09-09 bekam nur der Kalibrierschritt sie. Der
 /// Download davor lief mit dem blossen System-`PATH`, und
 /// `fetch_model.sh` bricht ohne `hf` ab. Der Befehl liegt aber genau in
 /// dieser Umgebung, denn `huggingface_hub` wird dorthin installiert.
@@ -916,7 +916,7 @@ fn jedes_bauskript_bekommt_die_umgebung_in_den_pfad() {
 
 /// **Wer `window.__TAURI__` benutzt, braucht `withGlobalTauri`.**
 ///
-/// ⛑ Ohne die Zeile in `tauri.conf.json` gibt es das Objekt nicht. Das
+/// 📌 Ohne die Zeile in `tauri.conf.json` gibt es das Objekt nicht. Das
 /// Skript holt sich `invoke` daraus in seiner **zweiten** Zeile; ein
 /// Zugriff auf `undefined` wirft dort, und dann laeuft vom Modul
 /// ueberhaupt nichts. Das Fenster bleibt am Vorschaltbild stehen und
@@ -948,7 +948,7 @@ fn wer_die_globale_bruecke_benutzt_muss_sie_anmelden() {
 /// **Die Pseudoelemente rechnen im selben Kastenmodell wie alles
 /// andere.**
 ///
-/// ⛑ `* { box-sizing: border-box }` trifft `::before` und `::after`
+/// 📌 `* { box-sizing: border-box }` trifft `::before` und `::after`
 /// **nicht**. Beide tragen die Ringe der Glasoptik, mit
 /// `position: absolute; inset: 0; padding: 1px`; im `content-box`-Modell
 /// kommt das Padding aussen dazu, der Ring wird zwei Pixel groesser als
@@ -983,7 +983,7 @@ fn lies_quelle(name: &str) -> String {
 /// **Jeder Befehl ist angemeldet, und jeder gerufene Name ist ein
 /// Befehl.**
 ///
-/// ⛑ **Das ist die Luecke der Sorte 251:** `#[tauri::command]` allein
+/// 📌 **Das ist die Luecke der Sorte 251:** `#[tauri::command]` allein
 /// tut nichts. Fehlt der Name in `generate_handler!`, uebersetzt alles
 /// sauber, die Kiste ist gruen, und der Aufruf scheitert erst beim
 /// Klicken mit „not allowed by ACL" oder „command not found". Beim
@@ -1069,7 +1069,7 @@ fn jeder_befehl_ist_angemeldet() {
 
     // ⚑ **Und die fuenfte Richtung: die Zahl im Komponenten-README.**
     //
-    // ⛑ Dieselbe Zahl stand am 2026-09-10 an drei Orten und war dreimal
+    // 📌 Dieselbe Zahl stand am 2026-09-10 an drei Orten und war dreimal
     // verschieden: „sechzehn Stellen" im README, „zweiundzwanzig" zwei
     // Papiere weiter, neunundzwanzig gezaehlt. Die fluechtige Zahl ist
     // gestrichen; die tragende ist die der Befehle, und sie steht ab
@@ -1094,7 +1094,7 @@ fn jeder_befehl_ist_angemeldet() {
 
 /// **Jedes setzbare Feld zeigt auch seinen Wert.**
 ///
-/// ⛑ **Gemessen am 2026-09-10: Es waren neun von zwoelf.** Die Seite
+/// 📌 **Gemessen am 2026-09-10: Es waren neun von zwoelf.** Die Seite
 /// zeichnet ihre Zeilen aus der Feldliste der Kiste, holte die
 /// anzuzeigenden Werte aber aus einer **zweiten**, von Hand gepflegten
 /// Zuordnung im Skript, und die kannte `kap.beschleuniger`,
@@ -1130,7 +1130,7 @@ fn jedes_feld_zeigt_seinen_wert() {
     // `setzen({feld: "modell.artefakt"})` sind davon nicht betroffen:
     // Dort steht der Name hinter einem Doppelpunkt und nicht davor.
     //
-    // ⛑ **Sie sucht die WIRKLICHEN Feldnamen und nicht ihre Anfaenge**
+    // 📌 **Sie sucht die WIRKLICHEN Feldnamen und nicht ihre Anfaenge**
     // (2026-09-10). Vorher genuegte ein Schluessel, der mit `"modell.`
     // begann, und damit fiel sie ueber die Sprachtabelle: `"modell.laedt"`
     // ist kein Feld, sondern ein Satz. **Eine Pruefung, die Aehnlichkeit
@@ -1278,9 +1278,37 @@ fn der_laufende_beitrag_wird_fertiggeschrieben() {
     );
 }
 
+/// **Befehle und Nachdenken stehen gebuendelt, und eine offene Klappe bleibt
+/// offen** (Auftrag des Projektinhabers, 2026-09-14).
+///
+/// ⚑ Geprueft wird, was sich am Quelltext zeigen laesst: Der Ruecken schickt
+/// den vollen Befehl live und in der Rueckgabe; das Fenster zeichnet ueber
+/// den Klappzustand des Beitrags, sodass das Neuzeichnen waehrend des Laufs
+/// nichts zuklappt; eine ausstehende Antwort sagt das, in beiden Sprachen.
+#[test]
+fn befehle_und_nachdenken_stehen_gebuendelt() {
+    let js = lies("app.js");
+    let rs = lies_quelle("main.rs");
+    assert!(
+        rs.contains("Aufruf { name: String, argumente: String, voll: String }"),
+        "die Live-Meldung traegt den vollen Befehl nicht"
+    );
+    assert!(rs.contains("voll: Some(voll.clone())"), "die Rueckgabe traegt den vollen Befehl nicht");
+    let bloecke = js
+        .split_once("const bloecke = (b) => {")
+        .and_then(|(_, r)| r.split_once("\n};"))
+        .map(|(k, _)| k)
+        .expect("kein `bloecke`");
+    assert!(bloecke.contains("klappzustand(b)"), "`bloecke` zeichnet ohne Klappzustand, das Neuzeichnen klappt zu");
+    assert_eq!(bloecke.matches("klappe(\"denken\"").count(), 1, "genau eine Denkklappe je Beitrag");
+    assert_eq!(bloecke.matches("klappe(\"befehle\"").count(), 1, "genau eine Befehlsklappe je Beitrag");
+    assert_eq!(js.matches("\"befehl.aussteht\":").count(), 2, "die ausstehende Antwort fehlt in einer Sprache");
+    assert!(js.contains("t(\"befehl.aussteht\")"), "die ausstehende Antwort wird nie gezeigt");
+}
+
 /// **Das Fenster setzt niemals Markup.**
 ///
-/// # ⛑ Die Zusage, an der hier alles haengt
+/// # 📌 Die Zusage, an der hier alles haengt
 ///
 /// Seit dem 2026-09-10 wird eine Modellantwort als Markdown gezeigt.
 /// **Der naheliegende Weg dorthin waere `innerHTML`, und er waere eine
@@ -1300,7 +1328,7 @@ fn der_laufende_beitrag_wird_fertiggeschrieben() {
 fn das_fenster_setzt_niemals_markup() {
     /// Nur der Quelltext, ohne Kommentarzeilen.
     ///
-    /// ⛑ **Beim ersten Lauf fiel die Pruefung ueber den Kommentar, der
+    /// 📌 **Beim ersten Lauf fiel die Pruefung ueber den Kommentar, der
     /// die Regel erklaert:** „Kein `innerHTML`, nirgends" enthaelt das
     /// Wort. **Eine Pruefung, die Erwaehnung fuer Gebrauch haelt,
     /// bestraft das Aufschreiben der Regel**, und dann schreibt sie
@@ -1393,7 +1421,7 @@ fn jede_blockart_wird_gezeichnet() {
 
 /// **Die Zeile unter der Eingabe sagt genau eine Sache.**
 ///
-/// ⛑ **Vorher sagte sie alles Mögliche:** „der Agent faehrt", „Modell
+/// 📌 **Vorher sagte sie alles Mögliche:** „der Agent faehrt", „Modell
 /// gewechselt", „Fehler: …", und dazwischen den Ladesatz. **Eine
 /// Zeile, die je nach Augenblick etwas anderes bedeutet, liest man
 /// irgendwann gar nicht mehr**: Wer dort „das Modell antwortet" gewohnt
@@ -1426,7 +1454,7 @@ fn die_zeile_unter_der_eingabe_sagt_nur_den_modellstand() {
         "{schreibende} Stellen fassen die Zeile an; es gehoeren zwei dorthin \
          (geladen und wieder entladen)"
     );
-    // ⛑ Und das Netzmodell hat keinen Ladezustand: Es wird hier nicht
+    // 📌 Und das Netzmodell hat keinen Ladezustand: Es wird hier nicht
     // geladen, und eine Zeile darueber waere eine Unwahrheit.
     assert!(
         js.contains("if (artefakt.startsWith(NETZMODELL))"),
@@ -1441,7 +1469,7 @@ fn die_zeile_unter_der_eingabe_sagt_nur_den_modellstand() {
 /// Reihe wie die Kapazitätsfreigabe: Was Myelith nimmt, soll es auch
 /// wieder hergeben.
 ///
-/// ⛑ **Die zweite Hälfte ist die wichtigere:** Ein Entladen mitten in
+/// 📌 **Die zweite Hälfte ist die wichtigere:** Ein Entladen mitten in
 /// einem Lauf wäre entweder wirkungslos oder schlimmer.
 #[test]
 fn das_modell_geht_nach_einer_weile_wieder() {
@@ -1475,7 +1503,7 @@ fn das_modell_geht_nach_einer_weile_wieder() {
 
 /// **Das Ladezeichen steht dort, wo gleich die Antwort steht.**
 ///
-/// ⛑ Vorher stand „der Agent faehrt" unter der Eingabe, also am anderen
+/// 📌 Vorher stand „der Agent faehrt" unter der Eingabe, also am anderen
 /// Ende des Fensters. Wer auf eine Antwort wartet, sieht auf den Fleck,
 /// an dem sie erscheinen wird.
 #[test]
@@ -1491,7 +1519,7 @@ fn das_ladezeichen_steht_beim_beitrag() {
         "das Ladezeichen haengt nicht am Beitrag"
     );
 
-    // ⛑ **Und es haengt am Lauf und nicht am Inhalt.**
+    // 📌 **Und es haengt am Lauf und nicht am Inhalt.**
     //
     // Die erste Fassung zeigte es nur, solange noch gar nichts da war
     // (`b.laufend && !b.text && !schritte.length`). Gemeldet vom
@@ -1527,7 +1555,7 @@ fn zahlwort(n: usize) -> String {
 
 /// **Glas tragen Bedienelemente, keine Behaelter.**
 ///
-/// ⛑ Am 2026-09-09 stand `section` in der Linsenliste. Das klang
+/// 📌 Am 2026-09-09 stand `section` in der Linsenliste. Das klang
 /// harmlos und war es nicht: `#einstellungsseite` liegt auf `inset: 0`
 /// ueber dem ganzen Fenster, `#modellbau` fuellt zwei Drittel davon.
 /// Beim Ueberfahren leuchtete also die halbe Einstellungsseite auf,
@@ -1587,7 +1615,7 @@ fn glas_traegt_nur_bedienelemente() {
 
 /// **Was `hidden` traegt, bleibt versteckt.**
 ///
-/// ⛑ Das Vorgabestilblatt setzt `[hidden] { display: none }` mit der
+/// 📌 Das Vorgabestilblatt setzt `[hidden] { display: none }` mit der
 /// schwaechsten Spezifitaet. Eine eigene Regel mit `display: grid` oder
 /// `display: block` gewinnt dagegen, und das Element steht sichtbar da,
 /// obwohl das Skript es versteckt hat. Dieses Stilblatt hatte den Fall
@@ -1611,7 +1639,7 @@ fn verstecktes_bleibt_versteckt() {
 
 /// **Jede Lizenzangabe steht bei der Sache, fuer die sie gilt.**
 ///
-/// # ⛑ Fund 295, gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Fund 295, gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Die Artefaktliste der Einstellungsseite zeigte je Eintrag eine
 /// einzelne Lizenz an, und sie stand hinter dem Namen „Myelith 4B":
@@ -1662,7 +1690,7 @@ fn jede_lizenz_steht_bei_ihrer_sache() {
         .expect("KATALOG.json");
     let eintraege = katalog.matches("\"anzeigename\":").count();
 
-    // ⛑ **Hier stand `>= 4`, und das war eine Zahl mit Ablaufdatum**
+    // 📌 **Hier stand `>= 4`, und das war eine Zahl mit Ablaufdatum**
     // (2026-09-12). Sie brach, als der Projektinhaber das dichte 14B
     // entfernte, und sagte dabei „zu wenige Katalogeintraege", obwohl
     // der Katalog vollstaendig war. **Eine Schranke, die an der
@@ -1738,7 +1766,7 @@ fn ein_schalter_ist_ein_schieber() {
 
 /// **Die Leiste faehrt senkrecht und nicht waagerecht.**
 ///
-/// ⛑ Gemeldet vom Projektinhaber am 2026-09-10. Ein Titel, der breiter
+/// 📌 Gemeldet vom Projektinhaber am 2026-09-10. Ein Titel, der breiter
 /// ist als die Leiste, machte sie breiter, statt gekuerzt zu werden.
 /// **Beides gehoert zusammen:** Ohne die Kuerzung waere die Sperre nur
 /// ein Abschneiden, ohne die Sperre die Kuerzung wirkungslos.
@@ -1767,7 +1795,7 @@ fn die_leiste_faehrt_nur_senkrecht() {
 
 /// **Die Liste zeigt einen Modus, und der Zeigetext nennt ihn nicht.**
 ///
-/// ⛑ Beides am 2026-09-10 vom Projektinhaber gemeldet, und beides
+/// 📌 Beides am 2026-09-10 vom Projektinhaber gemeldet, und beides
 /// haengt zusammen: Die Klammer `(Agent)` im Zeigetext war die einzige
 /// Auskunft darueber, zu welchem Modus eine Zeile gehoert. Wird nach
 /// Modus gefiltert, ist sie ueberfluessig; **wird sie entfernt, ohne zu
@@ -1817,7 +1845,7 @@ fn im_agentenmodus_heissen_sie_prozesse() {
 /// in der Leiste; klappte sie weg, trug das Fenster nirgends mehr
 /// seinen Namen.
 ///
-/// ⛑ **Und sie wird geklont, nicht abgeschrieben.** Die Spirale ist
+/// 📌 **Und sie wird geklont, nicht abgeschrieben.** Die Spirale ist
 /// gerechnet, 72 Pfade; eine zweite Abschrift im HTML waere ein zweiter
 /// Ort, an dem die naechste Aenderung ankommen muesste.
 #[test]
@@ -1872,7 +1900,7 @@ fn das_fenster_hat_eine_untergrenze() {
             .and_then(|z| z.parse().ok())
             .unwrap_or(0)
     };
-    // ⛑ **Dreimal wurde diese Zahl zu klein geraten** (2026-09-10,
+    // 📌 **Dreimal wurde diese Zahl zu klein geraten** (2026-09-10,
     // jedes Mal vom Projektinhaber gemeldet), und beim dritten Mal war
     // klar, warum: **Der Aufbau ist in `rem` bemessen, die Zahl in
     // Pixeln.** Leiste 16 rem, Knoepfe 2 rem, Polster 1 rem; wer die
@@ -1899,7 +1927,7 @@ fn das_fenster_hat_eine_untergrenze() {
     // ⚑ **Beide Kopfknoepfe sind an ihre Ecke geheftet, mit
     // demselben Wert.**
     //
-    // ⛑ **Dreimal gemeldet, dreimal anders repariert** (2026-09-10):
+    // 📌 **Dreimal gemeldet, dreimal anders repariert** (2026-09-10):
     // erst ein groesseres `minWidth`, dann `minmax(0, 1fr)` auf der
     // mittleren Spalte, dann ein konstantes Polster. Keines hat es
     // geheilt, denn **in einem Raster haengt die Lage jeder Spalte an
@@ -1911,7 +1939,7 @@ fn das_fenster_hat_eine_untergrenze() {
     // absolut, und der Abstand zur Kante ist derselbe Wert.
     // ⚑ **Vier Abstaende aus einem Wert, und eine feste Hoehe.**
     //
-    // ⛑ **Dreimal am Polster geschraubt, dreimal daneben**
+    // 📌 **Dreimal am Polster geschraubt, dreimal daneben**
     // (2026-09-10). Zuletzt: `min-height` plus Polsterung, und weil
     // `box-sizing: border-box` gilt, war die Hoehe **das Groessere von
     // beidem**: mit der Marke in der Mitte ihr Inhalt plus Polster,
@@ -1989,7 +2017,7 @@ fn das_fenster_hat_eine_untergrenze() {
     // setzt denselben Abstand auf beide Seiten, und zwar einen
     // konstanten.
     //
-    // ⛑ **Symmetrisch genuegt nicht, es muss stabil sein.** Ein kurz
+    // 📌 **Symmetrisch genuegt nicht, es muss stabil sein.** Ein kurz
     // eingesetztes `clamp(.5rem, 1.6vw, 1rem)` war auf beiden Seiten
     // gleich und wanderte trotzdem mit der Fensterbreite; gemeldet vom
     // Projektinhaber, weil es beim Auf- und Zuklappen der Leiste wie
@@ -2007,7 +2035,7 @@ fn das_fenster_hat_eine_untergrenze() {
         "die Seitenleiste hat wieder eine feste Breite"
     );
 
-    // ⛑ **Und die Huelle laesst sie wirklich schrumpfen.** Der
+    // 📌 **Und die Huelle laesst sie wirklich schrumpfen.** Der
     // selbsttaetige Mindestwert einer Rasterspalte ist der
     // Mindestinhalt ihres Kindes, nicht null.
     let huelle = stil
@@ -2015,7 +2043,7 @@ fn das_fenster_hat_eine_untergrenze() {
         .and_then(|(_, r)| r.split_once('}'))
         .map(|(rumpf, _)| rumpf.to_string())
         .expect("#huelle");
-    // ⛑ **Die Leiste gibt nach, nicht der Inhalt.** Gemeldet vom
+    // 📌 **Die Leiste gibt nach, nicht der Inhalt.** Gemeldet vom
     // Projektinhaber: Bei zugeklappter Leiste stimmt alles, bei
     // offener wird rechts abgeschnitten. Wird der Platz knapp,
     // verliert im Raster zuerst die **flexible** Spalte, und das war
@@ -2078,7 +2106,7 @@ fn sprachschluessel(js: &str, sprache: &str) -> BTreeSet<String> {
 
 /// **Beide Sprachen kennen dieselben Saetze.**
 ///
-/// # ⛑ Warum das eine Pruefung braucht
+/// # 📌 Warum das eine Pruefung braucht
 ///
 /// Ein fehlender Schluessel ist in JavaScript kein Fehler, sondern
 /// `undefined`. `t()` faellt deshalb auf Deutsch zurueck, und **das ist
@@ -2153,7 +2181,7 @@ fn kennungen_bleiben_in_jeder_sprache_gleich() {
     }
     // Und die Kennung des Netzmodells steht genau einmal, als Konstante.
     //
-    // ⛑ **Seit dem 2026-09-11 ein Praefix**, weil jedes Modell auch im
+    // 📌 **Seit dem 2026-09-11 ein Praefix**, weil jedes Modell auch im
     // Netz waehlbar ist und der Wert deshalb `netz:<Artefaktname>`
     // lautet. Die geprueften Eigenschaft ist dieselbe geblieben: eine
     // Stelle, nicht zwei.
@@ -2193,7 +2221,7 @@ fn die_sprache_steht_in_den_einstellungen() {
 
 /// **Ein Eintrag entsteht auf zwei Wege und sonst nie.**
 ///
-/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Der Modus hing am geoeffneten Gespraech. Daraus folgte, dass ein
 /// **Moduswechsel etwas anlegen musste**, um den Modus ueberhaupt
@@ -2245,7 +2273,7 @@ fn ein_eintrag_entsteht_nur_auf_zwei_wege() {
 /// **Jeder Beschreibungssatz der Freigabemaske spricht die eingestellte
 /// Sprache.**
 ///
-/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Die Sprache wirkte auf die Feldbeschriftungen und nicht auf die
 /// Regler: `hardware::regler` nahm `FELDER` roh, also immer auf
@@ -2327,7 +2355,7 @@ fn die_sprache_steht_zuoberst() {
 /// **Der Einspielknopf erscheint erst, wenn es etwas einzuspielen
 /// gibt.**
 ///
-/// ⛑ Vorher stand er gesperrt da. **Ein gesperrter Knopf beantwortet
+/// 📌 Vorher stand er gesperrt da. **Ein gesperrter Knopf beantwortet
 /// die Frage „gibt es Updates" mit einem Bedienelement**, und der Grund
 /// steckte in seinem Zeigetext, wo ihn nur findet, wer mit der Maus
 /// darauf wartet. Die Zeile darueber beantwortet dieselbe Frage mit
@@ -2349,7 +2377,7 @@ fn der_einspielknopf_erscheint_erst_bei_bedarf() {
 
 /// **Gekuerzt wird die Anzeige, nicht die Sache.**
 ///
-/// # ⛑ Gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// `titel_aus` kuerzte auf vierzig Zeichen und haengte `...` an, und
 /// **das Ergebnis war der gespeicherte Titel**. Die Zeile in der Leiste
@@ -2399,7 +2427,7 @@ fn gekuerzt_wird_die_anzeige_und_nicht_die_sache() {
 
 /// **Kein Stilblatt mit Bruchstuecken darin.**
 ///
-/// # ⛑ Der Fund, der mehrere Meldungen eines Abends erklaert
+/// # 📌 Der Fund, der mehrere Meldungen eines Abends erklaert
 ///
 /// Im Stilblatt stand ein verwaister Block: eine schliessende Klammer,
 /// ein Backtick, und danach das Ende eines Kommentars samt zwei Dutzend
@@ -2458,7 +2486,7 @@ fn das_stilblatt_ist_ganz() {
 
 /// **Das Skript setzt keine Stilangaben am Element.**
 ///
-/// # ⛑ Fund 305, gemeldet vom Projektinhaber am 2026-09-10
+/// # 📌 Fund 305, gemeldet vom Projektinhaber am 2026-09-10
 ///
 /// Hinter jedem Gespraechstitel stand ein rundes Feld. Der Titel ist
 /// ein Knopf, und `.blank` schaltet nur die beiden Zierpseudoelemente
@@ -2545,7 +2573,7 @@ fn ein_beruehrtes_gespraech_wandert_nach_oben() {
 
 /// **Das Umordnen fasst `wann` nicht an.**
 ///
-/// ⛑ `g.wann` steht im Markdown-Export als „Begonnen", also als
+/// 📌 `g.wann` steht im Markdown-Export als „Begonnen", also als
 /// Aussage über den **Anfang**. Wer es beim Umordnen fortschriebe,
 /// machte daraus stillschweigend „zuletzt benutzt", und der Export
 /// sagte etwas anderes, als dort steht.

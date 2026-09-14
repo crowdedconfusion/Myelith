@@ -241,7 +241,7 @@ fn main() {
     }
 
     // ── 4. Die Abwaegung, um die es geht ───────────────────────────
-    // ⛑ **Der Name kommt aus der Tabelle, nicht aus dem Satz.** Hier
+    // 📌 **Der Name kommt aus der Tabelle, nicht aus dem Satz.** Hier
     // stand fest „Qwen2.5-7B", waehrend `MODELLE[2]` seit dem
     // 2026-09-11 Qwen3-14B ist: Die Ueberschrift nannte ein anderes
     // Modell als die Zahlen darunter.
@@ -361,7 +361,7 @@ mod tests {
     /// Ein Test, der die gepruefte Funktion zum Pruefen benutzt, prueft
     /// sich selbst.
     ///
-    /// ⛑ **Neu gerechnet am 2026-09-12**, als das dichte 14B entfiel.
+    /// 📌 **Neu gerechnet am 2026-09-12**, als das dichte 14B entfiel.
     /// Die Schranken folgen der Modelltabelle und nicht umgekehrt.
     #[test]
     fn bytes_je_segment_stimmt_mit_der_handrechnung() {
@@ -429,7 +429,7 @@ mod tests {
         let segmente = (tok_s * SHARDS_JE_POD as f64 * SEKUNDEN_JE_EPOCHE as f64) as u64;
         let je_knoten = segmente * eingang_je_segment(m) * DEFAULT_DISPUTE_EPOCHS;
         let g = gib(je_knoten);
-        // ⛑ **Zum zweiten Mal neu gerechnet, am 2026-09-12**, als das
+        // 📌 **Zum zweiten Mal neu gerechnet, am 2026-09-12**, als das
         // dichte 14B entfiel: **140 GiB** statt 182, davor 254. Die
         // Schranken folgen der Modelltabelle und nicht umgekehrt.
         //
@@ -448,7 +448,7 @@ mod tests {
     /// ausgeschrieben, damit der Test nicht dieselbe Funktion benutzt,
     /// die er prueft.
     ///
-    /// ⛑ **Am 2026-09-12 neu gerechnet**, und die Ueberschrift stimmt
+    /// 📌 **Am 2026-09-12 neu gerechnet**, und die Ueberschrift stimmt
     /// nicht mehr: Beim Gemisch sind es **13,1 GiB** und nicht unter
     /// zehn. Der Befund von E10 bleibt derselbe, naemlich dass die Spur
     /// den Bedarf um eine Groessenordnung senkt; die Zahl daneben ist

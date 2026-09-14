@@ -56,7 +56,7 @@ fn artifacts_dir() -> PathBuf {
 
 fn build_shards(model: Arc<integer_llm_runtime::model::IntegerModel>, max_tokens: u64) -> Vec<Arc<ShardNode>> {
     let num_layers = model.num_layers;
-    // ⛑ **Aus dem Modell gerechnet und nicht eingetragen** (2026-09-11).
+    // 📌 **Aus dem Modell gerechnet und nicht eingetragen** (2026-09-11).
     // Hier stand `[0, 6, 12, 18, num_layers]`, also vier gleiche Scheiben
     // zu je sechs Ebenen **fuer ein Modell mit vierundzwanzig**. Beim
     // Wechsel des Ankermodells auf achtundzwanzig bekam der letzte Shard

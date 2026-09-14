@@ -1,7 +1,7 @@
 {
   "myelith-0.6b": {
-    "artefakt_digest_sha256": "35f376a959d4b73a86a1f22c35f9e5a9e1707f340bfc02b8cb5e21de0e4ca98b",
-    "bytes": 868338,
+    "artefakt_digest_sha256": "e1f42051a85d1df249aac8781346f2e9d6051fe7491afd4a44e8f1c702b58499",
+    "bytes": 10829812,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -17,12 +17,12 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.18.0",
+    "theta_v": "0.20.0",
     "weights_manifest_sha256": "cf103bf5f7d37130998fddc46e67b1a08d43b7a508feda70406bdc01eea348d8"
   },
   "myelith-30b-a3b": {
-    "artefakt_digest_sha256": "68cc13b051271e3a9c204d2e4460bd66e8d08880bd546baefa4a3cafee3eb587",
-    "bytes": 1323027,
+    "artefakt_digest_sha256": "d75626a84eb7ae56013655a58e593efd3484ae2d545dd93059d2b6201a32d5f1",
+    "bytes": 11284483,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -38,12 +38,12 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.18.0",
+    "theta_v": "0.20.0",
     "weights_manifest_sha256": "78d3d83523ca2cf416d234078520492292e45c58da583fb5dfb36f490b916f71"
   },
   "myelith-4b": {
-    "artefakt_digest_sha256": "f2a6a6b97db860146b1aed5cd7c12c09b62b55bab304244e5008d27517716d9d",
-    "bytes": 1262216,
+    "artefakt_digest_sha256": "b78dd36b2ca73afb8d2dca15d0553a506f07d4aca6f7c479577bfdde13e0356d",
+    "bytes": 11223672,
     "dateien": [
       "scales.json",
       "luts.json",
@@ -59,7 +59,7 @@
       "model_config.json",
       "tokenizer.json"
     ],
-    "theta_v": "0.18.0",
+    "theta_v": "0.20.0",
     "weights_manifest_sha256": "4437d872387dc80a820f5373e501089fe4d7a4e91d73a3ce6e015fa5e935baff"
   }
 }

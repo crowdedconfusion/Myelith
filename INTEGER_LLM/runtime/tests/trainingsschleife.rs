@@ -34,7 +34,7 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn modell() -> Option<IntegerModel> {
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung
@@ -197,7 +197,7 @@ fn ein_ziel_ausserhalb_des_vokabulars_wird_abgelehnt() {
 /// Übertragungsform. Der Lauf muss das **melden** und aufhören, nicht
 /// weiterrechnen und später beim Zurückschreiben abstürzen.
 ///
-/// ⛑ **Fund 338 (2026-09-11): `lr_nenner = 1` reichte nicht mehr.** Auf
+/// 📌 **Fund 338 (2026-09-11): `lr_nenner = 1` reichte nicht mehr.** Auf
 /// dem alten Anker (Qwen2.5-0,5B) verliess der Lauf damit binnen
 /// weniger Schritte die Form. Auf Qwen3-0,6B tut er es **nie**, auch
 /// nicht in dreihundert Schritten, weil der Zähler im Rumpf fest auf

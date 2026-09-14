@@ -1,6 +1,6 @@
 # compute-pipeline (`myl-pod`)
 
-> **Version:** 0.34.0
+> **Version:** 0.35.0
 > **Datum:** 2026-09-09
 > **Status:** Phase 1 vollständig, Phase 2.1, **Phase 3 vollständig**
 > (3.1 bis 3.3) und Punkt 4.3. `shard_loop` mit Spur-Hashes und
@@ -101,14 +101,23 @@ COMPUTE_PIPELINE/
 
 ## Changelog
 
+### v0.35.0 – 2026-09-14 (eine Position, die der Speicher nicht fortsetzt, wird abgelehnt)
+
+⚑ **Ein Shard lehnt eine Position ab, die er nicht rechnen kann**, bevor
+er rechnet: eine Lücke hinter dem Ende des KV-Speichers oder eine Position
+hinter der Kontextgrenze des Modells (Fund 368). Beides wäre sonst eine
+Panik im Kernel, und eine Panik ist im offenen Netz ein
+Denial-of-Service (wie bei der Länge, Fund 41). Die Sitzung bleibt dabei
+benutzbar.
+
 ### v0.34.0 – 2026-09-11 (die Shardgrenzen kommen aus dem Modell)
 
-⛑ **Die Grenzen standen fest auf vierundzwanzig Ebenen.** Beim
+📌 **Die Grenzen standen fest auf vierundzwanzig Ebenen.** Beim
 Wechsel des Ankermodells auf achtundzwanzig bekam der letzte Shard
 zehn Ebenen und der erste sechs. Jetzt gerechnet, mit dem Rest an der
 letzten Scheibe: Sie haelt ohnehin den LM-Kopf.
 
-⛑ **Und der Vergleichswert des Vierprozesslaufs ist unabhaengig neu
+📌 **Und der Vergleichswert des Vierprozesslaufs ist unabhaengig neu
 erhoben**, aus einem Einprozesslauf der Laufzeit und nicht aus dem
 Pod selbst. Vier Prozesse liefern dieselben acht Token und denselben
 Dekodier-Abdruck wie ein Prozess.
@@ -145,7 +154,7 @@ das zwei Monate unbemerkt daliegen. Jetzt eine, und ausdrücklich
 **eine** statt dreier: Die Umgebungsvariable ist prozessweit, und drei
 nebenläufige Prüfungen setzten sie einander um.
 
-⛑ **Nachgetragen am 2026-09-10.** Das Manifest trug 0.33.2 seit dem
+📌 **Nachgetragen am 2026-09-10.** Das Manifest trug 0.33.2 seit dem
 2026-09-09, dieser Changelog stand auf 0.33.1.
 
 ### v0.33.1 – 2026-09-07 (die grosse Variante wird eingeschachtelt)
@@ -528,7 +537,7 @@ frühes Wissen sehr wohl: Wer weiß, welche Segmente geprüft werden, weiß
 auch, bei welchen er sich nicht anstrengen muss. Als eigener Punkt
 vermerkt.
 
-⛑ **Ein Test kam wieder heraus, statt zu bleiben.** Er rief zweimal
+📌 **Ein Test kam wieder heraus, statt zu bleiben.** Er rief zweimal
 dieselbe reine Funktion und verglich die Ergebnisse; scheitern hätte er
 nur können, wenn die Zuteilung zufällig wäre. **Die Zusage „die Regel
 steht nur einmal da" hält kein Test, sondern die Abwesenheit des
@@ -702,7 +711,7 @@ leer sein. Wer beides gleich meldet, kann später nicht sagen, ob die
 Zusage gehalten wurde oder ob es nur gut ausging. Pods ohne Netzreserve
 werden genannt statt verschwiegen.
 
-⛑ **Und ein Test, der mich korrigiert hat.** Er erwartete, dass eine
+📌 **Und ein Test, der mich korrigiert hat.** Er erwartete, dass eine
 doppelte Ausfallmeldung keine zweite Reserve verbraucht, und lag falsch:
 Nach einer geglückten Übernahme **sitzt wieder jemand** auf der
 Position, und „der ist ausgefallen" ist dann eine neue Aussage über eine

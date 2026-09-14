@@ -108,7 +108,7 @@ const A_NENNER: i64 = 1 << 18;
 
 /// **Die QK-Normierung einer Ebene als Vorgabe fuer den Trainingsblock.**
 ///
-/// ⛑ **Bis zum 2026-09-11 stand an beiden Aufrufstellen `None`**, und
+/// 📌 **Bis zum 2026-09-11 stand an beiden Aufrufstellen `None`**, und
 /// darueber eine Zusicherung, das Modell duerfe keine QK-Norm haben.
 /// Sie stammte aus der Zeit, als der Trainingsblock sie wirklich nicht
 /// konnte; seit `kernels` v0.30.0 nimmt er `QkNormVorgaben` und rechnet
@@ -144,7 +144,7 @@ fn artefakte() -> std::path::PathBuf {
 }
 
 fn modell() -> Option<IntegerModel> {
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung
@@ -205,7 +205,7 @@ use integer_llm_kernels::optimierer::MASTER_FRAC;
 /// Abstand zurueck.
 /// ⚑ **Unterhalb dieser Ausgabegroesse sagt der Lauf nichts.**
 ///
-/// ## ⛑ Fund 337 (2026-09-11): eine Ebene, die sich nicht bewegt
+/// ## 📌 Fund 337 (2026-09-11): eine Ebene, die sich nicht bewegt
 ///
 /// Das Ziel wird aus der gemessenen Ausgabegroesse gebaut:
 /// `typisch / 8`, mindestens 1. Ist `typisch` klein, ist der Abstand
@@ -337,7 +337,7 @@ fn jeder_geprüfte_mlp_block_lernt_sein_ziel() {
             "  {e:5} | {typisch:>7} | {erster:>16} -> {letzter:>14} | {gefallen} Prozent"
         );
         if typisch < MESSBAR_AB {
-            // ⛑ Fund 337, siehe MESSBAR_AB: Hier ist nichts zu messen,
+            // 📌 Fund 337, siehe MESSBAR_AB: Hier ist nichts zu messen,
             // und eine Zusicherung darueber pruefte den Messaufbau.
             eprintln!(
                 "        uebersprungen: typische Ausgabe {typisch} unter {MESSBAR_AB}, \
@@ -362,7 +362,7 @@ fn jeder_geprüfte_mlp_block_lernt_sein_ziel() {
 
 /// ⚑ **Und bergauf, wenn man das Vorzeichen dreht.**
 ///
-/// ⛑ Ohne diese Gegenprobe bliebe offen, ob der Abstand faellt, weil der
+/// 📌 Ohne diese Gegenprobe bliebe offen, ob der Abstand faellt, weil der
 /// Gradient stimmt, oder weil irgendeine Bewegung ihn faellt. **Mit
 /// umgekehrtem Schritt muss er steigen**, und zwar auf derselben Ebene
 /// mit demselben Ziel.
@@ -375,7 +375,7 @@ fn mit_umgekehrtem_schritt_steigt_der_abstand() {
     let start = m.embed_token(9707);
     let _ = m.run_layers_mit_mitschnitt(start, 0, &mut cache, 0, ebenen, &mut auf);
 
-    // ⛑ **Die Ebene wird gesucht und nicht gesetzt** (Fund 337). Vorher
+    // 📌 **Die Ebene wird gesucht und nicht gesetzt** (Fund 337). Vorher
     // stand hier `ebenen / 2`, und beim neuen Ankermodell gibt genau
     // diese Ebene typisch 7 aus: Dort bewegt sich mit **keinem**
     // Vorzeichen etwas, und der Lauf sagte nichts ueber den Gradienten.
@@ -408,7 +408,7 @@ fn mit_umgekehrtem_schritt_steigt_der_abstand() {
 /// jeder gemessene Abstand wäre der eines Modells, das niemand
 /// ausgeliefert hat.
 ///
-/// ⛑ **Vor Fund 174 galt das nur zufällig.** Damals stand in der
+/// 📌 **Vor Fund 174 galt das nur zufällig.** Damals stand in der
 /// Zeilenverschiebung `s` statt `master_frac − s`; der Rundlauf traf,
 /// solange das Betragsmaximum einer Zeile in der obersten Oktave lag,
 /// und das tut es bei einem frisch quantisierten Artefakt. Nach dem

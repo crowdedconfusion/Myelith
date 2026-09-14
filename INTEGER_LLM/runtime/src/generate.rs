@@ -129,7 +129,7 @@ pub struct Erzeugung<'a> {
 /// erzeugen dieselbe Folge, und `dieselbe_folge_mit_und_ohne_beobachter`
 /// prüft genau das.
 ///
-/// ⛑ **Deshalb ist [`generate`] jetzt der Sonderfall dieser Funktion
+/// 📌 **Deshalb ist [`generate`] jetzt der Sonderfall dieser Funktion
 /// und nicht ihr Zwilling.** Zwei Schleifen, die dasselbe rechnen,
 /// laufen auseinander, und die zweite ist immer die schlechter
 /// geprüfte; hier ist es dieselbe Schleife mit einem Beobachter, der
@@ -142,7 +142,7 @@ pub struct Erzeugung<'a> {
 /// die ganze Folge und nimmt den Zuwachs, und das gehört dorthin, wo
 /// jemand den Text anzeigt.
 ///
-/// # ⛑ `halt`: die Marken, an denen eine Antwort zu Ende ist
+/// # 📌 `halt`: die Marken, an denen eine Antwort zu Ende ist
 ///
 /// **Ohne sie rechnet die Schleife stur bis `max_new_tokens`**, auch
 /// wenn das Modell nach zwanzig Token fertig ist. Was danach kommt, ist
@@ -168,33 +168,115 @@ pub fn generate_beobachtet(
     lauf: &Erzeugung<'_>,
     beobachter: &mut dyn FnMut(usize),
 ) -> Vec<usize> {
-    let Erzeugung { max_new_tokens, seed, greedy, halt } = *lauf;
-    let token_ids = tokenizer.encode(prompt);
-    // Cache-Groesse folgt num_kv_heads (GQA), nicht num_heads: gespeichert
-    // werden nur die tatsaechlich vorhandenen Key/Value-Heads.
-    let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
-    let mut pos = 0usize;
-    let mut logits = vec![0i32; model.vocab_size];
+    let mut frisch = Fortsetzung::neu(model);
+    generate_fortgesetzt(model, tokenizer, prompt, lauf, &mut frisch, beobachter).0
+}
 
-    // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position.**
-    // Jedes Prompt-Token fuellt den KV-Speicher; seine Logits liest
-    // niemand. Beim 4B-Modell spart das 17,6 % der gelesenen Gewichte
-    // je Prompt-Token, siehe `Model::durch_die_ebenen`.
-    let letzte = token_ids.len().saturating_sub(1);
-    for (i, &tid) in token_ids.iter().enumerate() {
-        if i == letzte {
-            logits = model.forward_token(tid, pos, &mut cache);
-        } else {
-            model.durch_die_ebenen(tid, pos, &mut cache);
-        }
-        pos += 1;
+/// **Der KV-Speicher eines Gespraechs, ueber mehrere Aufrufe hinweg.**
+///
+/// # 📌 Fund 372 (2026-09-14): jeder Schritt rechnete das ganze Gespraech neu
+///
+/// Beobachtet vom Projektinhaber: Der Agent braucht mit jedem Schritt
+/// laenger. Die Ursache: `chat` baut den Prompt aus allen Nachrichten, und
+/// jede Erzeugung legte einen **frischen** KV-Speicher an. Ein Agentenlauf
+/// schickt aber in jedem Schritt dieselben Nachrichten wie zuvor plus eine
+/// Antwort und ein Werkzeugergebnis; alles davor wurde noch einmal
+/// gerechnet, und die Kosten eines Laufs wuchsen quadratisch mit seiner
+/// Laenge.
+///
+/// ⚑ **Hier bleibt der Speicher stehen**, und nur der Teil hinter dem
+/// gemeinsamen Anfang wird vorbereitet. **Bitgleich zur frischen
+/// Rechnung**, denn der Eintrag an Position `p` haengt nur an den Token
+/// `0..=p`; geprueft in `fortgesetzt_ist_dasselbe_wie_frisch`.
+///
+/// ⚑ **Verlustfrei, anders als eine Zusammenfassung.** Die kommt dazu, wenn
+/// der Kontext voll wird, und nicht an seine Stelle.
+pub struct Fortsetzung {
+    /// Die Token, deren Eintraege im Speicher stehen, in dieser Reihenfolge.
+    pub(crate) token: Vec<usize>,
+    pub(crate) cache: KVCache,
+}
+
+/// Was eine fortgesetzte Erzeugung wiederverwenden konnte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wiederverwendung {
+    /// Token des Prompts, die schon im Speicher standen.
+    pub wiederverwendet: usize,
+    /// Token des Prompts, die neu gerechnet wurden.
+    pub neu: usize,
+    /// **Die Erzeugung hat an der Kontextgrenze aufgehoert**, nicht an einer
+    /// Haltemarke oder an `max_new_tokens`. Die Antwort ist dann
+    /// abgeschnitten, und wer weiterrechnen will, muss den Verlauf kuerzen.
+    pub kontext_voll: bool,
+}
+
+impl Fortsetzung {
+    /// Ein leerer Speicher fuer dieses Modell.
+    pub fn neu(model: &IntegerModel) -> Self {
+        Self { token: Vec::new(), cache: KVCache::new(model.num_layers, model.num_kv_heads) }
     }
 
-    // Decode: Token fuer Token generieren
+    /// Wie viele Positionen belegt sind: Prompt und erzeugte Token des
+    /// letzten Aufrufs.
+    pub fn laenge(&self) -> usize {
+        self.token.len()
+    }
+
+    /// Vergisst alles, etwa nach dem Laden eines anderen Modells.
+    pub fn leeren(&mut self) {
+        self.cache.kuerzen(0);
+        self.token.clear();
+    }
+}
+
+/// Laenge des gemeinsamen Anfangs zweier Tokenfolgen.
+fn gemeinsamer_anfang(a: &[usize], b: &[usize]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+}
+
+/// Wie [`generate_beobachtet`], **mit einem Speicher, der ueber Aufrufe
+/// stehen bleibt** (Fund 372).
+pub fn generate_fortgesetzt(
+    model: &IntegerModel,
+    tokenizer: &Tokenizer,
+    prompt: &str,
+    lauf: &Erzeugung<'_>,
+    speicher: &mut Fortsetzung,
+    beobachter: &mut dyn FnMut(usize),
+) -> (Vec<usize>, Wiederverwendung) {
+    let token_ids = tokenizer.encode(prompt);
+    dekodieren_fortgesetzt(model, &token_ids, lauf, speicher, beobachter)
+}
+
+/// Wie [`generate_fortgesetzt`], ab fertigen Token.
+pub fn dekodieren_fortgesetzt(
+    model: &IntegerModel,
+    token_ids: &[usize],
+    lauf: &Erzeugung<'_>,
+    speicher: &mut Fortsetzung,
+    beobachter: &mut dyn FnMut(usize),
+) -> (Vec<usize>, Wiederverwendung) {
+    let Erzeugung { max_new_tokens, seed, greedy, halt } = *lauf;
+
+    // ⚑ **Vorbereitung ohne Kopf, ausser fuer die letzte Position**, und
+    // gebuendelt (Fund 366). Der gemeinsame Anfang mit dem letzten Aufruf
+    // steht schon im Speicher; mindestens das letzte Token wird gerechnet,
+    // denn nur so entstehen die Logits.
+    let gemeinsam = gemeinsamer_anfang(&speicher.token, token_ids).min(token_ids.len().saturating_sub(1));
+    speicher.cache.kuerzen(gemeinsam);
+    speicher.token.truncate(gemeinsam);
+    let mut logits = model.prompt_vorbereiten_ab(token_ids, gemeinsam, &mut speicher.cache);
+    speicher.token = token_ids.to_vec();
+    let mut wiederverwendung =
+        Wiederverwendung { wiederverwendet: gemeinsam, neu: token_ids.len() - gemeinsam, kontext_voll: false };
+    let grenze = model.kontextgrenze();
+
+    // Decode: Token fuer Token generieren, ab der Position hinter dem
+    // Prompt.
     let mut out = Vec::with_capacity(max_new_tokens);
     let mut current_seed = seed;
     
-    for _ in 0..max_new_tokens {
+    for pos in token_ids.len()..token_ids.len() + max_new_tokens {
         let next_token = if greedy {
             model.greedy_next(&logits)
         } else {
@@ -214,11 +296,18 @@ pub fn generate_beobachtet(
         // kostet bei einem 4B-Modell den Bruchteil einer Sekunde, und
         // genau um den ist die Anzeige sonst hinterher.
         beobachter(next_token);
-        logits = model.forward_token(next_token, pos, &mut cache);
-        pos += 1;
+        // ⚑ **Ausgegeben ist das Token schon, gerechnet wird es nicht mehr**:
+        // Seine Position laege hinter der Grenze (Fund 368).
+        if pos >= grenze {
+            wiederverwendung.kontext_voll = true;
+            break;
+        }
+        logits = model.forward_token(next_token, pos, &mut speicher.cache);
+        // Im Speicher steht jetzt auch dieser Token.
+        speicher.token.push(next_token);
     }
 
-    out
+    (out, wiederverwendung)
 }
 
 /// Wie [`generate`], liefert zusätzlich einen Digest über die
@@ -273,26 +362,16 @@ pub fn dekodieren_mit_digest(
     greedy: bool,
 ) -> (Vec<usize>, String) {
     let mut cache = KVCache::new(model.num_layers, model.num_kv_heads);
-    let mut pos = 0usize;
-    let mut logits = vec![0i32; model.vocab_size];
 
-    // Vorbereitung ohne Kopf, ausser fuer die letzte Position; siehe
-    // `Model::durch_die_ebenen`.
-    let letzte = token_ids.len().saturating_sub(1);
-    for (i, &tid) in token_ids.iter().enumerate() {
-        if i == letzte {
-            logits = model.forward_token(tid, pos, &mut cache);
-        } else {
-            model.durch_die_ebenen(tid, pos, &mut cache);
-        }
-        pos += 1;
-    }
+    // Vorbereitung gebuendelt und ohne Kopf, ausser fuer die letzte
+    // Position; siehe `Model::prompt_vorbereiten` (Fund 366).
+    let mut logits = model.prompt_vorbereiten(token_ids, &mut cache);
 
     let mut out = Vec::with_capacity(max_new_tokens);
     let mut digest = DekodierDigest::neu();
     let mut current_seed = seed;
 
-    for _ in 0..max_new_tokens {
+    for pos in token_ids.len()..token_ids.len() + max_new_tokens {
         let next_token = if greedy {
             model.greedy_next(&logits)
         } else {
@@ -302,8 +381,12 @@ pub fn dekodieren_mit_digest(
         };
         digest.schritt(&logits, next_token as u32);
         out.push(next_token);
+        // Wie in `dekodieren_fortgesetzt`: hinter der Grenze wird nicht
+        // mehr gerechnet (Fund 368).
+        if pos >= model.kontextgrenze() {
+            break;
+        }
         logits = model.forward_token(next_token, pos, &mut cache);
-        pos += 1;
     }
 
     (out, digest.hex())

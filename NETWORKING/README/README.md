@@ -155,7 +155,7 @@ seit dem 2026-08-12 als Satz im Kommentar und ist seit heute eine
 Übersetzungszusicherung. **Ein Satz, den kein Code liest, hält keine
 zwei Zahlen zusammen.**
 
-### v0.14.1 – 2026-09-02 (⛑ ein Test, der nur auf einer ruhigen Maschine bestand)
+### v0.14.1 – 2026-09-02 (📌 ein Test, der nur auf einer ruhigen Maschine bestand)
 
 `eine_partition_trennt_und_heilt_wieder` fiel im vollen Lauf um und
 bestand einzeln dreimal. Der Unterschied war die **Last**: 28,6 Sekunden
@@ -245,7 +245,7 @@ nicht prüfbar**: Ein Test konnte nur echte Zeit verstreichen lassen.
 `cleanup_stale_pings_zu(jetzt)` nimmt das Jetzt als Argument, die Frist
 heißt jetzt `PING_FRIST` und steht an einer Stelle.
 
-⛑ **Der alte Test schlief sechs echte Sekunden** und war damit die
+📌 **Der alte Test schlief sechs echte Sekunden** und war damit die
 gesamte Laufzeit der Bibliothekssuite. ⚑ **Geprüft hat er die Frist
 trotzdem nicht:** Sechs Sekunden liegen weit hinter fünf, er hätte auch
 eine Frist von einer Sekunde bestanden. Der neue prüft **beide Ränder**,
@@ -257,7 +257,7 @@ eine Funktion, die ihre Zeit selbst besorgt.
 
 ### v0.11.3 – 2026-08-31 (die NAT-Prüfung hing an einer Frist, die für etwas anderes bemessen war)
 
-⛑ **Ein Fehlschlag, der nichts über den Code sagte.** `tests/nat.rs` fiel
+📌 **Ein Fehlschlag, der nichts über den Code sagte.** `tests/nat.rs` fiel
 einmal aus, während auf derselben Maschine zwei Übersetzungsläufe
 liefen; zwanzig Wiederholungen danach waren grün. Ein Test, der unter
 Last falsch rot wird, ist kein Test mehr, sondern ein Geräusch, das man

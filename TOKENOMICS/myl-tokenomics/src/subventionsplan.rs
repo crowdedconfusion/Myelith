@@ -338,7 +338,7 @@ mod tests {
         assert!(Subventionsplan::neu(vec![abschnitt(0, 149, 100)]).is_ok());
     }
 
-    /// ⛑ **Der erste Abschnitt entscheidet, und das ist keine Lücke.**
+    /// 📌 **Der erste Abschnitt entscheidet, und das ist keine Lücke.**
     ///
     /// Dieser Test hieß zuerst „auch ein späterer Abschnitt wird gegen
     /// die Schranke geprüft" und prüfte den **ersten**. Der Name log,

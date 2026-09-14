@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.42.1 (`myl-client` 0.28.0, `myl-oberflaeche` 0.32.0, `myl-console` 0.9.0)
-> **Datum:** 2026-09-12
+> **Version:** 0.44.0 (`myl-client` 0.30.0, `myl-oberflaeche` 0.33.0, `myl-console` 0.10.0)
+> **Datum:** 2026-09-14
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -17,7 +17,7 @@ interagieren: MYL-Wallet, Inferenz-Schnittstelle,
 Session-Kontrakt-Verwaltung für Agenten-Nutzung, Staking- und
 Governance-Ansicht für Miner und Validatoren.
 
-⛑ **Dieser Kopf stand bis zum 2026-09-09 auf „Konzeptphase, noch keine
+📌 **Dieser Kopf stand bis zum 2026-09-09 auf „Konzeptphase, noch keine
 Umsetzung"**, während zwei Kisten mit sechzehn Prüfungen, einer
 Oberfläche und Freigabebündeln dastanden. Ein Statuseintrag, der aus
 einer überholten Annahme stammt, schickt den Nächsten in die Irre; er
@@ -45,7 +45,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über neunzehn Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über einundzwanzig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -115,6 +115,65 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
+### v0.44.0 – 2026-09-14 (das Gespräch trägt über Aufträge, der Kontext ist sichtbar und verdichtbar)
+
+`myl-client` **0.30.0**, `myl-oberflaeche` **0.33.0**, `myl-console`
+**0.10.0**.
+
+⚑ **Der Agent wird nicht mehr mit jedem Schritt langsamer** (Fund 372):
+`Oertlichesmodell` hält einen `Fortsetzung`-Speicher, ein Schritt rechnet
+nur den neuen Teil des Gesprächs. Am 4B fiel ein Lauf mit acht Schritten
+von 116 auf 58 s.
+
+⚑ **Das Gespräch geht über Aufträge mit, auch beim Agenten** (Entscheidung
+C2, beantwortet): `gespraech::Gespraech`, und wird der Kontext voll, fasst
+das Modell den Verlauf selbst zusammen (`verdichten`), statt den Anfang zu
+vergessen.
+
+⚑ **Der Kontext ist sichtbar:** in der Konsole mit `/context`,
+`/compress`, `/clear` und in der Fußzeile; im Fenster als Balken am
+Eingabefeld, ein Klick verdichtet oder beginnt neu.
+
+⚑ **Befehle und Nachdenken gebündelt** (Auftrag des Projektinhabers):
+„X Mal nachgedacht" als ein fortgesetzter Faden mit Live-Token, „X Befehle
+ausgeführt" mit einer Liste, in der jeder Befehl den genauen Aufruf und
+die Antwort aufklappt; steht die Antwort noch aus, sagt die Stelle das.
+Dafür kommen Befehl und Werkzeugantwort vollständig an (bis 4 000
+Zeichen) statt gekürzt.
+
+⛔️ **Fund 368:** Ein Prompt über der Kontextgrenze des Modells wird als
+`Tuerfehler::KontextVoll` abgelehnt, statt still umzubrechen.
+
+⚑ **Erstes neues Agentenwerkzeug: `run_command`** (Wunschliste A0). Ein
+Shell-Befehl im Arbeitsverzeichnis (`sh -c`), mit Zeitgrenze (30 s),
+Ausgabegrenze (16 KiB), Schreibrecht-Gate, `manual mode` und einer
+Sperrliste als Rückfall. ⛔️ **In `Advanced`, nicht `Base`:** Ein
+Shell-Befehl hält die Einhaengegrenze nicht ein, die jedes Dateiwerkzeug
+einhält; damit bedeuten `Base` und `Advanced` zum ersten Mal
+Verschiedenes. Die echte Grenze wäre ein Betriebssystem-Sandbox und
+bleibt eigene Arbeit.
+
+### v0.43.0 – 2026-09-14 (der Client rechnet auf dem schnellen Weg, und auf dem Mac mit der GPU)
+
+`myl-client` **0.28.0 auf 0.29.0**; Oberfläche und Konsole bauen über
+ihn mit und bleiben auf ihrer Nummer.
+
+⛔️ **Fund 367: Der Client rechnete auf dem Referenzpfad.**
+`myl-client` band die Laufzeit ohne jedes Feature ein, und damit
+Konsole und Oberfläche. Auf Apple-Silizium kostet das 25 bis 35 %
+Durchsatz. **Jetzt:** `cpu-simd` auf jedem Ziel (ohne NEON wirkungslos,
+dann rechnet die Referenz wie vorher), auf macOS zusätzlich `metal`.
+Beide rechnen bitgleich zur Referenz.
+
+⚑ **Die Vorbereitung eines Prompts ist damit ein Vielfaches schneller**,
+zusammen mit der gebündelten Vorbereitung in der Laufzeit (INTEGER_LLM
+v0.70.0): 219 Token beim 0,6B **5,21 s vorher, 0,28 s jetzt**, beim 4B
+0,81 s. Der Decode bleibt auf der CPU.
+
+⚑ **Die GPU wird geprüft, bevor sie rechnet.** Weicht sie beim ersten
+Gebrauch von der CPU ab oder fehlt sie, rechnet der Client ohne sie
+weiter und schreibt den Grund auf die Fehlerausgabe.
+
 ### v0.42.1 – 2026-09-12 (zwei Prüfungen fielen erst im Lauf der Werkstatt auf)
 
 `myl-oberflaeche` **0.32.0** unverändert, nur die Bündeldatei und eine
@@ -125,7 +184,7 @@ nicht bemerkt.** Das ist der eigentliche Befund: Die Prüfungen selbst
 haben sauber angeschlagen, gesehen hat es niemand, weil die
 Zusammenfassung des Laufs eine gescheiterte Zeile nicht lesen konnte.
 
-⛑ **Fund 350: die Bündeldatei blieb auf der alten Zahl.**
+📌 **Fund 350: die Bündeldatei blieb auf der alten Zahl.**
 `Cargo.toml` stand auf `0.32.0`, `tauri.conf.json` noch auf `0.31.0`.
 Der Dateiname jedes Freigabebündels kommt aus der zweiten Zahl, ein
 Bündel aus dieser Fassung hätte also `0.31.0` geheissen und wäre von
@@ -134,7 +193,7 @@ der Fassung davor nicht zu unterscheiden gewesen.
 ⚑ **Die Prüfung dafür gibt es seit Langem** und sie hat auch
 angeschlagen; es fehlte nichts als der Blick darauf.
 
-⛑ **Fund 351: eine Prüfung hing an der jeweiligen Modellzahl.**
+📌 **Fund 351: eine Prüfung hing an der jeweiligen Modellzahl.**
 `jede_lizenz_steht_bei_ihrer_sache` verlangte mindestens vier
 Katalogeinträge. Diese Vier war keine Aussage über den Katalog,
 sondern der Stand des Tages, an dem sie geschrieben wurde. Mit dem
@@ -169,7 +228,7 @@ Platz wertvoller als Zierrat.
 ⚑ **Und der Rückweg aus den Einstellungen führt ebenso unter das
 Logo.** Zwei Wege in dasselbe Bild dürfen nicht verschieden aussehen.
 
-⛑ **Fund 347: der blinkende Wagen sass eine Zeile unter der Eingabe.**
+📌 **Fund 347: der blinkende Wagen sass eine Zeile unter der Eingabe.**
 `Schirm::zeile` schreibt die ANSI-Sequenz `ESC[{n};1H`, und die zählt
 **ab eins**; `crossterm::cursor::MoveTo` zählt **ab null**. Dieselbe
 Zahl in beide gegeben ergibt zwei verschiedene Zeilen.
@@ -231,7 +290,7 @@ kleinste Redundanzpaar sind dann zwei einzelne Rechner.** Das
 Kennzeichen ist deshalb ein Praefix `netz:<Artefakt>` und kein
 einzelner Wert mehr.
 
-⛑ **Zwei Mangel nebenbei gefunden und behoben.** Der Rueckfalleintrag
+📌 **Zwei Mangel nebenbei gefunden und behoben.** Der Rueckfalleintrag
 „(eingestellt)" bekam einen API-Zwilling, obwohl er auf nichts zeigt.
 Und die Wahl verglich den eingestellten Pfad **unaufgeloest** gegen
 die absoluten Pfade der Liste: Ein relativ eingestelltes Artefakt
@@ -258,7 +317,7 @@ schliessen`. `^S` sichert, ohne zu schliessen; `Esc` sichert mit.
 ⚠️ **`^R` setzt das gewählte Feld zurück und nicht die ganze Ablage**,
 und die Zeile unten sagt genau das.
 
-⛑ **Zwei Gegenproben:** Eine hält die Kürzelzeile und den Tastenzweig
+📌 **Zwei Gegenproben:** Eine hält die Kürzelzeile und den Tastenzweig
 zusammen (dieselbe Klasse wie Fund 271), die andere lässt den Setzer
 jede Vorgabe annehmen.
 
@@ -274,7 +333,7 @@ Schalter, eine Zahl und eine Grenze kommen aus einer festen Menge; was
 freien Text braucht, bekommt ihn auf Enter. **Die Winkel `‹ ›` stehen
 nur dort, wo sie etwas bedeuten.**
 
-⛑ **Damit fällt eine frühere Festlegung, und zwar begründet.** Bis
+📌 **Damit fällt eine frühere Festlegung, und zwar begründet.** Bis
 hierher zeigte `/settings` nur an, weil ein zweiter Setzer die dritte
 Stelle wäre, die dieselben Feinheiten kennt. **Die Begründung galt dem
 Setzer und nicht der Bedienung:** Gesetzt wird weiterhin ausschliesslich
@@ -302,7 +361,7 @@ gelesen.
 **Neun Meldungen des Projektinhabers**, und die erste war der Fehler,
 der das Fenster unbrauchbar machte.
 
-⛑ **Fund 324: `Cannot access 't' before initialization`, und zwar genau
+📌 **Fund 324: `Cannot access 't' before initialization`, und zwar genau
 dann, wenn ein Lauf läuft.** Zwei Funktionen hielten ein Element in
 `const t`; die Übersetzung heisst auch so. **Eine lokale Bindung
 verdeckt den äusseren Namen im ganzen Block, auch vor ihrer eigenen
@@ -312,7 +371,7 @@ erschien weder der Ladeindikator noch eine Antwort, bei jedem Modell und
 in jeder Einstellung. **Eine Prüfung geht jetzt jede Zeile durch:** Ein
 Name, den es nur einmal gibt, kann gar nicht erst verdeckt werden.
 
-⛑ **Fund 325: drei Überschriftsgrössen, und die grösste war die
+📌 **Fund 325: drei Überschriftsgrössen, und die grösste war die
 falsche.** `h2` hatte keine Angabe und nahm die Vorgabe des Browsers,
 also mehr als das `h1` der Seite. Jetzt zwei Stufen: „Einstellungen"
 gross, alles darunter gleichrangig, gleich gross, jedes mit einer Linie
@@ -345,7 +404,7 @@ dem Laden wird aufgeräumt. ⚑ Beide Kopien des Banners haben dieselbe
 Änderung bekommen, nur die Konstante unterscheidet sich: **Die
 Vergleichsprüfung läuft unverändert weiter.**
 
-⚑ **Und die Fusszeile sagt, wenn nicht geschrieben werden darf.** ⛑
+⚑ **Und die Fusszeile sagt, wenn nicht geschrieben werden darf.** 📌
 Dieselbe Klasse wie Fund 315: Ohne `agent.schreiben` bekommt der Agent
 `write_file` gar nicht erst und antwortet „ich kann keine Dateien
 speichern"; **wer das nicht weiss, sucht den Fehler beim Modell.**
@@ -363,13 +422,13 @@ Kopie zurückgeholt, nie aus `git`**, solange nichts eingecheckt ist.
 **Sieben Meldungen und Aufträge des Projektinhabers**, und die erste war
 ein Fehler.
 
-⛑ **Fund 320: Abschicken sah aus wie nichts tun.** Der Text blieb im
+📌 **Fund 320: Abschicken sah aus wie nichts tun.** Der Text blieb im
 Eingabekasten stehen, während das Modell schon rechnete, und in der
 Ausgabe erschien er nie. **Ein Gespräch, in dem nur eine Seite dasteht,
 lässt sich hinterher nicht lesen.** Die Zeile wird jetzt beim Abschicken
 aus dem Kasten geräumt und als `❯ …` in die Zeitleiste geschrieben.
 
-⛑ **Fund 321: Die Anzeige hielt zurück, was geschah.** Werkzeugaufrufe
+📌 **Fund 321: Die Anzeige hielt zurück, was geschah.** Werkzeugaufrufe
 standen nur in ihrem Gedächtnis und wurden erst gedruckt, wenn jemand
 den Schalter drückte; **damit fehlte in der Zeitleiste genau das, was
 vor der Antwort geschehen war.** Jetzt steht jede Zeile da, sobald sie
@@ -392,11 +451,11 @@ dem Katalog, und den Netzeintrag gesperrt samt Grund. **Ein gesperrter
 Eintrag ist etwas anderes als ein fehlender.** Nach dem Laden steht da:
 `Modell Myelith 4B (<Pfad>) wurde geladen.`
 
-⛑ **Fund 322: Zwei Listen für dieselbe Frage.** Das Fenster hatte die
+📌 **Fund 322: Zwei Listen für dieselbe Frage.** Das Fenster hatte die
 Modellliste mit Katalognamen, die Konsole las das Verzeichnis ab. Sie
 liegt jetzt in der Kiste, und beide rufen sie.
 
-⛑ **Fund 323: Eine Zeile, die umbricht, verschiebt die ganze Liste.**
+📌 **Fund 323: Eine Zeile, die umbricht, verschiebt die ganze Liste.**
 Die Auswahl springt beim Neuzeichnen um ihre eigene Höhe zurück; eine
 umgebrochene Zeile zählt dort als eine und belegt zwei.
 
@@ -427,7 +486,7 @@ bleiben stehen. ⚠️ **Was reserviert wird, wird zurückgegeben**, auch bei
 Strg-C: Ein Programm, das mit gesetztem Rollbereich endet, hinterlässt
 eine Shell, die nur noch im oberen Teil des Fensters schreibt.
 
-⛑ **Fund 316: Die Eingabezeile war ein Zeichen schmaler als der
+📌 **Fund 316: Die Eingabezeile war ein Zeichen schmaler als der
 Rahmen**, das schliessende Leerzeichen fehlte. **Im Quelltext ist das
 unsichtbar und im Bild sofort da.**
 
@@ -450,7 +509,7 @@ weg**, denn es hat noch keinen Bestätigungskasten. **Ein Modus, der in
 einem Fenster fragt und im anderen stillschweigend durchlässt, wäre
 schlimmer als keiner.**
 
-⛑ **Fund 318: Eine Absage, die wie ein Fehler klingt, wird wie ein
+📌 **Fund 318: Eine Absage, die wie ein Fehler klingt, wird wie ein
 Fehler behandelt.** „Vom Nutzer abgelehnt" liess das 4B-Modell raten,
 die Datei sei nicht da, und es empfahl einen zweiten Versuch. Der Satz
 ist jetzt für ein kleines Modell geschrieben.
@@ -461,10 +520,10 @@ ist nicht geschützt, und das steht im Quelltext:** Wer die Marke setzen
 will, setzt sie in einer Sekunde. Sie hält die Kiste aus der Liste
 heraus, damit niemand sie für eine dritte gleichrangige Wahl hält.
 
-⛑ **Fund 314: Der Schalter `--werkzeuge` verglich ein Wort von Hand**,
+📌 **Fund 314: Der Schalter `--werkzeuge` verglich ein Wort von Hand**,
 während die Hilfe darüber `knapp` nannte, ein Wort, das es nie gab.
 
-⛑ **Fund 315: Zwei Erlaubnisse für dieselbe Sache sind eine zu viel.**
+📌 **Fund 315: Zwei Erlaubnisse für dieselbe Sache sind eine zu viel.**
 „Bezeugte Werkzeuge zulassen" musste gesetzt sein, sonst standen die
 Dateiwerkzeuge zwar in der Ansage und liefen nicht. **Ein angemeldetes
 Werkzeug, das nicht laufen kann, ist die schlechteste aller
@@ -479,7 +538,7 @@ und Agent. Welches Feld in welche Tabelle gehört, entscheidet sein
 Rechners" nicht.
 
 ⚑ **Die Befehle der Konsole heissen `/help` und `/exit`**, die
-deutschen Formen bleiben als Zweitnamen. ⛑ Und sie stehen in **einer**
+deutschen Formen bleiben als Zweitnamen. 📌 Und sie stehen in **einer**
 Liste, aus der Ausführung und Hilfe kommen; die Prüfung dazu zählte
 vorher, ob jedes Wort mindestens zweimal im Quelltext steht. **Eine
 Prüfung, die Wiederholung verlangt, hält die Wiederholung fest.**
@@ -521,7 +580,7 @@ Eine halb ausgeführte Änderung ist schlimmer als eine abgelehnte, denn
 danach sieht der Agent eine Datei, die weder der alte noch der neue
 Stand ist.
 
-⛑ **Fund 307: Eine Wache, die auf der obersten Ebene stehenbleibt,
+📌 **Fund 307: Eine Wache, die auf der obersten Ebene stehenbleibt,
 bewacht die oberste Ebene.** Die Prüfung, dass kein Werkzeug einen
 optionalen Parameter hat, las nur die Felder des Wurzelobjekts. Der
 neue Listenparameter trägt seine Pflichtfelder eine Ebene tiefer, in
@@ -529,7 +588,7 @@ neue Listenparameter trägt seine Pflichtfelder eine Ebene tiefer, in
 Gegenprobe: ein Pflichtfeld aus dem Listeneintrag entfernt, und sie
 meldet es beim Namen.
 
-⛑ **Fund 312: `myl einstellungen` zeigte zehn von dreizehn Feldern.**
+📌 **Fund 312: `myl einstellungen` zeigte zehn von dreizehn Feldern.**
 Die Liste war von Hand getippt, während der Katalog daneben wuchs: Drei
 Felder liessen sich setzen und standen danach nirgends. Sie kommt jetzt
 aus dem Katalog, die Werte aus derselben Funktion wie im Fenster, und
@@ -545,24 +604,24 @@ Pfad. ⚠️ „Unten fixiert" gibt es in einem Terminal nicht, ohne den
 ganzen Bildschirm zu übernehmen; der Rahmen wird deshalb vor jeder
 Eingabe neu gesetzt und wandert mit der Ausgabe nach oben.
 
-⛑ **Fund 308: Im Rohmodus ist ein Zeilenvorschub kein Zeilenende.**
+📌 **Fund 308: Im Rohmodus ist ein Zeilenvorschub kein Zeilenende.**
 Gemeldet wird 0x0A als Strg-J, also als Buchstabe; er landete im Text,
 und die Zeile lief weiter. **Wer mehrzeiligen Text einfügt, schickt
 genau dieses Byte.**
 
-⛑ **Fund 309: der Rahmen ohne Boden.** Der Zeilenumbruch der Eingabe
+📌 **Fund 309: der Rahmen ohne Boden.** Der Zeilenumbruch der Eingabe
 setzt den Wagen genau auf die untere Kante; alles, was danach gedruckt
 wurde, fing dort an, und die Fusszeile stand mitten in der Antwort.
 Jetzt wird von dort bis zum Schirmende geräumt und die Kante neu
 gezogen.
 
-⛑ **Fund 310: „wortgetreue Kopie" stand nur im Kopf der vier Dateien.**
+📌 **Fund 310: „wortgetreue Kopie" stand nur im Kopf der vier Dateien.**
 Beim ersten Eingriff (Fund 308) zog nichts ausser der eigenen
 Aufmerksamkeit die zweite Kopie nach. Eine Prüfung vergleicht sie jetzt
 Zeile für Zeile, ohne den Kopfvermerk und ohne den Untertitel, der die
 eine erlaubte Abweichung ist.
 
-⛑ **Fund 313: Wer im Klon baut, ändert nicht, was im PATH liegt.**
+📌 **Fund 313: Wer im Klon baut, ändert nicht, was im PATH liegt.**
 `cargo build --release` schreibt nach `target-shared/release/`,
 aufgerufen wird das Programm, das der Installer nach `~/.local/bin`
 gelegt hat. Beide heissen gleich, und **nichts sagt, dass die Kopie
@@ -583,7 +642,7 @@ genannt.
 
 ### v0.34.2 – 2026-09-10 (die Kopfleiste hat eine feste Höhe, und alle vier Abstände kommen aus einer Zahl)
 
-⛑ **Vier Anläufe, und der Grund lag jedes Mal woanders, als ich
+📌 **Vier Anläufe, und der Grund lag jedes Mal woanders, als ich
 suchte.** Gemeldet wurde zuletzt: „Beim Ausklappen staucht sich die
 obere Leiste in der Vertikalen."
 
@@ -618,7 +677,7 @@ nennen `var(--kopf-polster)` statt einer eigenen Angabe.
 
 ### v0.34.1 – 2026-09-10 (Fund 305: Aussehen gehört ins Stilblatt)
 
-⛑ **Hinter jedem Gesprächstitel stand ein rundes Feld** (gemeldet vom
+📌 **Hinter jedem Gesprächstitel stand ein rundes Feld** (gemeldet vom
 Projektinhaber). Der Titel ist ein Knopf, und `.blank` schaltet nur die
 beiden Zierpseudoelemente ab; Glasverlauf, Rundung, Polsterung,
 Schatten und `backdrop-filter` blieben. **Das Skript nahm davon fünf
@@ -649,7 +708,7 @@ für die Höhe.
 
 ### v0.34.0 – 2026-09-10 (Fund 304: ein Bruchstück im Stilblatt, und es erklärt drei Meldungen eines Abends)
 
-⛑ **Im Stilblatt stand ein verwaister Block**, eingecheckt und aus
+📌 **Im Stilblatt stand ein verwaister Block**, eingecheckt und aus
 einem halb zurückgenommenen Umbau: eine schliessende Klammer, ein
 Backtick, danach das Ende eines Kommentars und zwei Dutzend Angaben
 ohne Regel darum.
@@ -691,7 +750,7 @@ Helligkeit und Schriftschnitt, wie überall in diesem Fenster.
 
 ### v0.33.1 – 2026-09-10 (das Programmsymbol trägt das ganze Zeichen, und der Titel wird nicht mehr beim Speichern gekürzt)
 
-⛑ **Gekürzt wurde die Sache statt ihrer Darstellung** (gemeldet vom
+📌 **Gekürzt wurde die Sache statt ihrer Darstellung** (gemeldet vom
 Projektinhaber). `titel_aus` schnitt auf vierzig Zeichen und hängte
 `...` an, und **das war der gespeicherte Titel**: Die Zeile in der
 Leiste kürzte danach ein zweites Mal, und der Zeigetext beim
@@ -717,7 +776,7 @@ Unter 128 Pixeln fällt der Zug deshalb weg und die Marke rückt in die
 Mitte. **`.icns` und `.ico` tragen je Grösse ein eigenes Bild; genau
 dafür gibt es das Format.**
 
-⛑ **Dabei fiel das dritte Opfer von Fund 298 auf.** Der Symbolerzeuger
+📌 **Dabei fiel das dritte Opfer von Fund 298 auf.** Der Symbolerzeuger
 suchte die Marke unter `werkzeuge/marke.py`, also am Ort vor dem Umzug
 des Werkzeugverzeichnisses. Er lief seither in einen Fehler, und
 gemerkt hätte man es erst beim nächsten Symbollauf. **Der eigene Ort
@@ -739,14 +798,14 @@ ist.** Ein Ordner namens `INSTALL` mit einem Text darin sagt es.
 `flake.nix` bleibt in der Wurzel: `nix develop` sucht es dort und
 nirgends sonst.
 
-⛑ **Und das Verschieben hat prompt dieselbe Falle gestellt wie Fund
+📌 **Und das Verschieben hat prompt dieselbe Falle gestellt wie Fund
 298.** Die Skripte leiten ihre Wurzel aus dem eigenen Ort ab; ohne das
 nachgezogene `/..` zeigte sie auf `INSTALL/` selbst. **Der
 Voraussetzungslauf meldete trotzdem „alles da"**, denn er prüft Xcode
 und cargo, und die hängen nicht an der Wurzel. Gefallen wäre es erst
 beim Bauen, mit einer Meldung über eine fehlende Kiste.
 
-⛑ **Das Kopfpolster ist wieder konstant** (gemeldet vom
+📌 **Das Kopfpolster ist wieder konstant** (gemeldet vom
 Projektinhaber). Das `clamp(.5rem, 1.6vw, 1rem)` von heute Mittag war
 auf beiden Seiten gleich, wanderte aber mit der Fensterbreite, und das
 fiel genau dann auf, wenn sich sonst etwas bewegt: beim Auf- und
@@ -760,7 +819,7 @@ Leiste und Schriftgrösse.
 
 ### v0.32.1 – 2026-09-10 (die Leiste gibt nach, nicht der Inhalt, und zwei Fussnoten werden zu Fussnoten)
 
-⛑ **Der Projektinhaber hat die Ursache genannt, nicht ich:** „Wenn die
+📌 **Der Projektinhaber hat die Ursache genannt, nicht ich:** „Wenn die
 Menüleiste links ausgeblendet ist, stimmt es genau." Damit war klar,
 wonach zu suchen war. **Wird im Raster der Platz knapp, verliert zuerst
 die flexible Spalte**, und das war das Hauptfenster; die Seitenleiste
@@ -783,7 +842,7 @@ Eingabe, beide von 0,72 auf 0,58 rem und eine Helligkeitsstufe leiser.
 Sie beantworten die Frage „welches genau", und die stellt sich selten;
 **der Name darüber beantwortet die, die sich ständig stellt.**
 
-⛑ **`min-height` bleibt an der Zeile unter der Eingabe.** Ohne sie
+📌 **`min-height` bleibt an der Zeile unter der Eingabe.** Ohne sie
 springt die Eingabezeile jedes Mal, wenn die Auskunft kommt oder geht.
 **Eine Zeile, die auftaucht und dabei alles darüber verschiebt, liest
 man nicht, man erschrickt.**
@@ -792,7 +851,7 @@ man nicht, man erschrickt.**
 
 ### v0.32.0 – 2026-09-10 (das Fenster wächst mit, statt eine Zahl zu behaupten)
 
-⛑ **Dreimal wurde die Mindestbreite zu klein geraten**, jedes Mal vom
+📌 **Dreimal wurde die Mindestbreite zu klein geraten**, jedes Mal vom
 Projektinhaber gemeldet, und beim dritten Mal war der Grund klar: **Der
 Aufbau ist in `rem` bemessen, die Zahl in Pixeln.** Leiste 16 rem,
 Knöpfe 2 rem, Polster 1 rem; wer die Systemschrift grösser stellt,
@@ -816,7 +875,7 @@ vor dem Leistensymbol steht, steht rechts hinter dem Zahnrad, bei jeder
 Breite und jeder Schriftgrösse. **Zwei Zahlen könnten auseinanderlaufen,
 und genau das war der Fehler.**
 
-⛑ **Dazu die Ursache, die keine Breite geheilt hätte.** `#huelle` stand
+📌 **Dazu die Ursache, die keine Breite geheilt hätte.** `#huelle` stand
 auf `grid-template-columns: auto 1fr`, und der selbsttätige Mindestwert
 einer Rasterspalte ist der **Mindestinhalt** ihres Kindes, nicht null:
 Die Leiste konnte breiter werden, als das Fenster hergibt, und
@@ -832,7 +891,7 @@ und nicht mehr die Zahl.
 
 ### v0.31.1 – 2026-09-10 (die Mindestbreite bekommt Reserve, und die kleine Marke ihren Rahmen abgenommen)
 
-⛑ **Zweimal zu knapp gewesen**, beide Male vom Projektinhaber gemeldet:
+📌 **Zweimal zu knapp gewesen**, beide Male vom Projektinhaber gemeldet:
 Das Zahnrad stand nicht mit demselben Abstand vom rechten Rand wie das
 Leistensymbol vom linken. **Der Grund steckt in der Einheit.** Die
 Leiste ist 16 rem breit, die Knöpfe sind 2 rem, die Polster 1 rem: Wer
@@ -855,7 +914,7 @@ In der Seitenleiste bleibt er, dort hat die Marke Platz.
 
 ### v0.31.0 – 2026-09-10 (die Sprache greift überall durch, und ein Eintrag entsteht nur noch auf zwei Wege)
 
-⛑ **Ein Moduswechsel legte ein Gespräch an** (gemeldet vom
+📌 **Ein Moduswechsel legte ein Gespräch an** (gemeldet vom
 Projektinhaber). Der Modus hing am geöffneten Eintrag, und daraus
 folgte: Um den Modus überhaupt festhalten zu können, **musste** der
 Wechsel etwas anlegen. Wer zwischen Chat und Agent hin und her klickte,
@@ -867,7 +926,7 @@ nichts an.** Angelegt wird auf Knopfdruck und beim Abschicken in einem
 leeren Feld, an genau zwei Stellen; auch der Start legt nichts mehr an.
 Eine Prüfung zählt die Aufrufe und fällt bei einer dritten.
 
-⛑ **Die Sprache wirkte nicht auf die Beschreibungstexte** (ebenfalls
+📌 **Die Sprache wirkte nicht auf die Beschreibungstexte** (ebenfalls
 gemeldet). `hardware::regler` nahm die Feldtabelle roh, also immer auf
 Deutsch, und die beiden längsten Sätze der ganzen Seite standen
 überhaupt nur auf Deutsch da: der Grund, warum ein Rechenwerk gesperrt
@@ -883,7 +942,7 @@ den Schalter finden, ohne bis ans Ende zu suchen.
 
 **Die Updates heissen jetzt so.** „Nach Updates suchen" und „Updates
 installieren", und **der zweite Knopf erscheint erst, wenn es etwas zu
-tun gibt**. ⛑ Vorher stand er gesperrt da: Ein gesperrter Knopf
+tun gibt**. 📌 Vorher stand er gesperrt da: Ein gesperrter Knopf
 beantwortet die Frage „gibt es Updates" mit einem Bedienelement, und
 der Grund steckte in seinem Zeigetext, wo ihn nur findet, wer mit der
 Maus darauf wartet. Die Zeile darüber beantwortet dieselbe Frage mit
@@ -894,7 +953,7 @@ einem Satz.
 
 ### v0.30.0 – 2026-09-10 (drei Meldungen aus der CI und eine aus dem Fenster)
 
-⛑ **Das Zahnrad stand nicht frei** (gemeldet vom Projektinhaber). Die
+📌 **Das Zahnrad stand nicht frei** (gemeldet vom Projektinhaber). Die
 Mindestbreite von 600 reichte nicht: Rechts blieb nicht derselbe
 Abstand wie links vom Leistensymbol.
 
@@ -919,7 +978,7 @@ allein liest sich dort wie eine Schnittstelle und nicht wie ein Modell.
 **Ein Eintrag in einer Modellwahl muss zuerst sagen, dass er ein Modell
 ist.**
 
-⛑ **Drei Meldungen aus der CI**, alle drei am neuen Konsolenclient:
+📌 **Drei Meldungen aus der CI**, alle drei am neuen Konsolenclient:
 
 - **Kein `[profile.test]`.** Siebzehn Kopien einer Einstellung driften
   leise auseinander, und ein neues Manifest hat sie schlicht nicht. Das
@@ -957,9 +1016,10 @@ nur zufällig betreten hat, ist genau der Fall, gegen den die
 Einhängegrenze gebaut ist.
 
 Der Ablauf: Startbild, ein Absatz darunter, Modellwahl, dann Auftrag um
-Auftrag. Vier Befehle, mehr nicht: `/model`, `/settings`, `/hilfe`,
-`/ende`. **Ein Konsolenprogramm mit zwanzig Befehlen ist eines, dessen
-Hilfeseite man liest, statt es zu benutzen.**
+Auftrag. Sieben Befehle, mehr nicht: `/model`, `/settings`, `/context`,
+`/compress`, `/clear`, `/hilfe`, `/ende`. **Ein Konsolenprogramm mit
+zwanzig Befehlen ist eines, dessen Hilfeseite man liest, statt es zu
+benutzen.**
 
 ⚑ **Keine eigene Logik, wie beim Fenster.** Agentenlauf, Werkzeuge,
 Einstellungen, Modell und Ortsbestimmung kommen aus `myl-client`. Die
@@ -981,7 +1041,7 @@ sich nicht mehr gegen die Quelle halten. Geändert ist genau eine Zeile,
 der Untertitel. Der Testclient wird abgeräumt, sobald er seine Aufgabe
 erfüllt hat; bis dahin liegen die vier Dateien zweimal da.
 
-⛑ **Zwei Befunde aus dem ersten Lauf.** Die laufende Schrittzeile
+📌 **Zwei Befunde aus dem ersten Lauf.** Die laufende Schrittzeile
 löschte sich mit `\r` und Leerzeichen, und **in einer Röhre gibt es
 keinen Wagenrücklauf**: Dort standen die Leerzeichen einfach da. Sie
 gibt es jetzt nur vor einem Terminal. Und die Ausgabe zweier Zeilen
@@ -1010,7 +1070,7 @@ ein Umzug sich selbst:** Einmal aus dem verschobenen Klon heraus
 starten genügt, und auch das installierte Programm findet danach wieder
 hin.
 
-⛑ **Fund 301, und er war ein Loch, das die Installer erst aufgerissen
+📌 **Fund 301, und er war ein Loch, das die Installer erst aufgerissen
 haben.** Die Suche stand in der Oberfläche und ging vom
 Arbeitsverzeichnis und vom Programm aufwärts. Solange das Fenster aus
 `target-shared` lief, ging das; **installiert unter `~/Applications`
@@ -1026,7 +1086,7 @@ etwas anderes kaputtgemacht.
 
 Neu ist `myl ort`: Es sagt, wo der Klon liegt, und merkt ihn sich dabei.
 
-⛑ **Und ein Starter, den es einen halben Tag lang gab.** `Myelith` und
+📌 **Und ein Starter, den es einen halben Tag lang gab.** `Myelith` und
 `Myelith.cmd` lagen in der Wurzel: System erkennen, prüfen ob
 eingerichtet, notfalls einrichten, dann starten. **Sie sind auf
 Festlegung des Projektinhabers wieder entfernt worden**, und der Grund
@@ -1066,7 +1126,7 @@ sie gilt:** `Gewichte rund 7,5 GB (Apache-2.0) · Artefakt 4,5 GB
 richtig, dass sie stimmt, sondern dadurch, dass sie sich auf das
 bezieht, wonebendran sie steht.**
 
-⛑ **Und die Prüfung dazu geht bis zur Lizenzdatei.** Der Wert im
+📌 **Und die Prüfung dazu geht bis zur Lizenzdatei.** Der Wert im
 Katalog ist von Hand geschrieben; eine Prüfung, die nur nachsieht,
 **dass** dort etwas steht, fängt weder den Tippfehler noch den
 Lizenzwechsel. `jede_lizenz_steht_bei_ihrer_sache` hält ihn gegen
@@ -1085,7 +1145,7 @@ der Kiste**, in beiden Sprachen, neben dem Feld selbst. Was über die
 Naht kommt, ist fertig beschriftet. Zwei Orte für denselben Satz wären
 zwei Orte, an denen die nächste Sprache vergessen werden kann.
 
-⛑ **Und was ein Programm vergleicht, wird nie übersetzt:** Feldnamen,
+📌 **Und was ein Programm vergleicht, wird nie übersetzt:** Feldnamen,
 Pfade, Modellnamen, die Kennung des Netzmodells. Drei Prüfungen halten
 das zusammen: Beide Tabellen tragen dieselben Schlüssel, jede
 Beschriftung im HTML hat ihren Satz, und kein Feldname steht als Satz
@@ -1113,7 +1173,7 @@ seien dasselbe.
 | **Die Marke wandert** | Klappt die Leiste zu, erscheint sie mittig im Kopf, mit einem Störbild; beim Aufklappen geht sie mit einem anderen. Geklont und nicht abgeschrieben: Die Spirale ist gerechnet, zweiundsiebzig Pfade |
 | **Das Fenster hat eine Untergrenze** | 600 × 460. Darunter blieb eine Kopfleiste und sonst nichts |
 
-⛑ **Die Störbilder hatten `both`, und eine Wache hat es gefangen.**
+📌 **Die Störbilder hatten `both`, und eine Wache hat es gefangen.**
 `nichts_wartet_unsichtbar_auf_eine_animation` sagt: Was gelesen werden
 soll, darf nicht auf eine Animation warten. Mit `both` steht das
 Element **vor** dem Lauf auf dem Anfangsbild, und das ist beim Kommen
@@ -1149,19 +1209,19 @@ Programm aus einem Bündel startet, bekommt die neueste Freigabemarke
 genannt und einen Verweis auf die Freigabeseite, statt eines Knopfes,
 der nichts tut.
 
-⛑ **Fund 296: Das Skript meldete „alles da" und scheiterte drei Zeilen
+📌 **Fund 296: Das Skript meldete „alles da" und scheiterte drei Zeilen
 später.** Es prüfte `command -v cargo`; ein rustup-Schalter ohne
 eingestellte Werkzeugkette liegt im PATH und beantwortet das mit ja.
 **Geprüft wird jetzt, ob es läuft**, nicht ob es existiert. Gefunden
 beim ersten Probelauf, in einem untergeschobenen Benutzerverzeichnis.
 
-⛑ **Fund 297: Ein fehlgeschlagener Bau beendete das Skript nicht.**
+📌 **Fund 297: Ein fehlgeschlagener Bau beendete das Skript nicht.**
 Die Bauschleife lief hinter einer Röhre (`… | while read`), also in
 einer Unterschale, und `set -e` greift dort nicht: Es kopierte danach
 Dateien, die es nicht gibt. Beide Schleifen laufen jetzt in derselben
 Shell.
 
-⛑ **Fund 298: Das Verschieben eines Verzeichnisses hat zwei Werkzeuge
+📌 **Fund 298: Das Verschieben eines Verzeichnisses hat zwei Werkzeuge
 still zerbrochen.** Sie fanden die Wurzel des Repositoriums über
 `__file__` und zwei Ebenen aufwärts; nach dem Umzug zeigten die zwei
 Ebenen auf einen Zwischenordner. **Das Werkzeug fand daraufhin keine
@@ -1169,7 +1229,7 @@ Datei mehr und meldete Erfolg**, was der schlechtestmögliche Ausgang
 ist. Dieselbe Klasse wie Fund 291: Ein Verschieben sieht aus wie eine
 Änderung ohne Verhalten und ist manchmal keine.
 
-⛑ **Fund 299: Eine bestehende Datei wurde überschrieben, ohne
+📌 **Fund 299: Eine bestehende Datei wurde überschrieben, ohne
 hineinzusehen.** `flake.nix` lag seit dem 2026-09-08 in der Wurzel und
 trug Wissen, das nirgends sonst steht: `WEBKIT_DISABLE_COMPOSITING_MODE`
 (ohne das geht das Fenster auf NixOS unter Wayland auf und bleibt
@@ -1184,7 +1244,7 @@ zusammengeführt, und nichts von 2026-09-08 fehlt. **Wer eine Datei
 anlegt, sieht vorher nach, ob es sie gibt**; ein „schreiben" auf einen
 belegten Namen ist ein Löschen mit anderem Namen.
 
-⛑ **Fund 300: Vier Skripte, vier Listen, und sie waren am ersten Tag
+📌 **Fund 300: Vier Skripte, vier Listen, und sie waren am ersten Tag
 schon uneinig.** Jedes Bauskript führte von Hand auf, welche Kisten
 ausgeliefert werden; die drei neuen nannten drei Programme, das
 örtliche Freigabeskript vier. `myl-test` fehlte in dreien, und niemand
@@ -1202,14 +1262,14 @@ angemeldete Name muss auch wirklich gebaut werden, und **kein Skript
 darf daneben seine eigene Liste führen**. Beide Richtungen sind
 gegengeprüft, jede rot.
 
-⛑ **Die erste Fassung dieser Prüfung lag selbst daneben.** Sie schlug
+📌 **Die erste Fassung dieser Prüfung lag selbst daneben.** Sie schlug
 über `sh CLIENT/myl-oberflaeche/buendeln-macos.sh` an, also über einen
 Aufruf, der mit der Liste nichts zu tun hat. Sie sucht jetzt die
 **Form** der Liste, ein Paar aus Verzeichnis und Name. Dieselbe Klasse
 wie die Wache, die `innerHTML` in einem Kommentar fand: **Wer
 Erwähnung für Gebrauch hält, bestraft das Danebenschreiben.**
 
-⛑ **Und dieselbe Liste stand ein zweites Mal im selben Skript**, in
+📌 **Und dieselbe Liste stand ein zweites Mal im selben Skript**, in
 der Schlussmeldung: Sie nannte drei Programme, während vier installiert
 wurden.
 
@@ -1240,7 +1300,7 @@ rechnet das Modell weiter, oft eine halbe Minute lang, und in dieser
 Zeit stand nichts. Jetzt stehen die drei Punkte unter allem, was schon
 da ist, solange der Lauf läuft, und sie gehen, wenn er endet.
 
-⛑ **Die Bedingung deckte genau die Wartezeit ab, die keine ist.** Sie
+📌 **Die Bedingung deckte genau die Wartezeit ab, die keine ist.** Sie
 lautete `b.laufend && !b.text && !schritte.length`, also „läuft und es
 ist noch nichts da". Das ist der Augenblick vor dem ersten Token, und
 der ist kurz. **Die langen Wartezeiten liegen dazwischen**: zwischen
@@ -1252,7 +1312,7 @@ Abschnitt, in dem jemand tatsächlich wartet.
 wachsenden Text sähe es aus, als gehörte es zu etwas Vergangenem;
 darunter heisst es „und es geht weiter", was stimmt.
 
-⛑ **Fund 293: Die Prüfung dazu prüfte die Zeile und nicht die Zusage.**
+📌 **Fund 293: Die Prüfung dazu prüfte die Zeile und nicht die Zusage.**
 `das_ladezeichen_steht_beim_beitrag` sah nach `wurzel.append(l);` und
 nach der Regel, die es beim ersten Zeichen wieder entfernte, also
 genau nach der Form des Fehlers. Sie prüft jetzt, dass die Bedingung
@@ -1270,7 +1330,7 @@ Speicher liegt.** „Myelith 4B (INTEGER_LLM/artifacts/myelith-4b)
 geladen, in 9,4 s", sonst „nicht geladen", und beim Netzmodell nichts,
 denn das wird hier nicht geladen.
 
-⛑ **Vorher sagte sie alles Mögliche:** „der Agent fährt", „Modell
+📌 **Vorher sagte sie alles Mögliche:** „der Agent fährt", „Modell
 gewechselt", „Fehler: …", und dazwischen den Ladesatz. **Eine Zeile,
 die je nach Augenblick etwas anderes bedeutet, liest man irgendwann gar
 nicht mehr**: Wer dort „das Modell antwortet" gewohnt ist, sieht „nicht
@@ -1283,7 +1343,7 @@ an der gleich die Überlegung, der Befehl oder die Antwort steht; beim
 ersten Zeichen gehen sie. **Wer auf eine Antwort wartet, sieht auf den
 Fleck, an dem sie erscheinen wird.**
 
-⛑ **Drei Punkte und kein Kreisel.** Beide sagen nichts über den
+📌 **Drei Punkte und kein Kreisel.** Beide sagen nichts über den
 Fortschritt, und das ist ehrlich: Wie lange ein Modell braucht, weiß
 vorher niemand. Die Punkte lenken weniger ab. Bei abbestellter Bewegung
 bleiben sie stehen und sichtbar: **Ein Ladezeichen, das dann
@@ -1297,13 +1357,13 @@ Fenster stehenlässt, gibt den Rest des Tages Arbeitsspeicher her.
 **Das steht in derselben Reihe wie die Kapazitätsfreigabe: Was Myelith
 nimmt, soll es auch wieder hergeben.**
 
-⛑ **Es kostet nichts, wenn die Frist falsch liegt.** Wer nach einer
+📌 **Es kostet nichts, wenn die Frist falsch liegt.** Wer nach einer
 Stunde doch weiterfragt, wartet einmal die Ladezeit ab; der nächste
 Auftrag lädt von selbst nach. **Nicht entladen wird mitten in einem
 Lauf**, dort wird die Frist neu gestellt. Und ein Modellwechsel gibt das
 alte sofort frei: Es antwortet ohnehin nicht mehr.
 
-⛑ **Beim Bauen fiel dabei eine Wache über einen zweiten Block.** Das
+📌 **Beim Bauen fiel dabei eine Wache über einen zweiten Block.** Das
 Ladezeichen bekam sein eigenes `prefers-reduced-motion`, und
 `das_rauschen_gehoert_zur_abbestellbaren_bewegung` sah daraufhin am
 falschen Ort nach und meldete Bewegtes als nicht abbestellt. **Es gibt
@@ -1316,7 +1376,7 @@ genau einen solchen Block**, und das steht jetzt daneben.
 Die Artefakte heissen `myelith-4b` statt `qwen3-4b` und so fort; die
 Pfade im Klienten sind nachgezogen.
 
-⛑ **Eine Umbenennung ist erst fertig, wenn das Mitgewanderte
+📌 **Eine Umbenennung ist erst fertig, wenn das Mitgewanderte
 mitgewandert ist.** Jede bestehende Ablage zeigt auf den alten Pfad,
 und der löst nach dem Umbenennen ins Leere auf: Der Klient meldete
 „Modell lädt nicht", und der Nutzer suchte den Fehler bei sich. Wer nur
@@ -1339,7 +1399,7 @@ Am echten Fall belegt: Die Ablage des Projektinhabers zeigte auf
 sie als schlichten Text.** Jetzt werden Überschriften, Aufzählungen,
 Code, Zitate, Linien und einfache Tabellen gezeigt.
 
-⛑ **Der naheliegende Weg dorthin wäre `innerHTML` gewesen, und er wäre
+📌 **Der naheliegende Weg dorthin wäre `innerHTML` gewesen, und er wäre
 eine Lücke.** Eine Antwort mit `<img src=x onerror=…>` bekäme damit Code
 in dieser Seite ausgeführt, und die Seite trägt wegen `withGlobalTauri`
 die Brücke zu **allen** Befehlen des Rückens: Ein eingeschleuster Satz
@@ -1355,7 +1415,7 @@ keinen Weg, auf dem aus dieser Antwort Markup würde, und
 ⚑ **Dieselbe Arbeitsteilung wie überall hier:** Die Kiste weiß, das
 Fenster zeichnet. Ein Zerleger im Skript wäre eigene Logik im Fenster.
 
-⛑ **Und der Zerleger hatte beim ersten Lauf eine Endlosschleife.**
+📌 **Und der Zerleger hatte beim ersten Lauf eine Endlosschleife.**
 `| kaputt |` fängt an wie eine Tabelle, ist keine, und der Absatzzweig
 brach an seiner eigenen ersten Zeile ab, ohne weiterzuzählen. **Gefunden
 als Hänger und nicht als Fehlschlag**, von der Prüfung, die verlangt,
@@ -1366,7 +1426,7 @@ Marke ist keine Marke: `**` mitten im Strom würde als Fettdruck
 aufblitzen und beim nächsten Token verschwinden. Der laufende Text ist
 die Vorschau, der gesetzte das Ergebnis.
 
-⛑ **Ein Verweis wird als Text mit sichtbarem Ziel gezeigt und nicht als
+📌 **Ein Verweis wird als Text mit sichtbarem Ziel gezeigt und nicht als
 Knopf.** Ein Klick führte die Webansicht aus der Anwendung heraus; sie
 im System zu öffnen bräuchte eine Erlaubnis, die die Erlaubnisliste
 bewusst nicht hat.
@@ -1389,7 +1449,7 @@ geht dann in Minuten.
 
 ### v0.22.0 – 2026-09-10 (Fund 289: kein Werkzeug hat mehr einen optionalen Parameter)
 
-⛑ **Gemeldet vom Projektinhaber, und der Bericht ist die Diagnose.**
+📌 **Gemeldet vom Projektinhaber, und der Bericht ist die Diagnose.**
 Auf die Frage „welche Dateien liegen im Verzeichnis?" überlegte
 Qwen3-4B seitenlang, ob es `pfad` weglassen, leer setzen oder mitgeben
 solle, las dazu die `required`-Liste des Schemas, wog ab, kam zu keinem
@@ -1407,7 +1467,7 @@ entfallen: **Weder `list_directory` noch `search_files` nehmen einen
 Pfad.** Beide arbeiten im Arbeitsverzeichnis, das der Nutzer vorher
 wählt, und das ist die ganze Zusage dieser Werkzeuge.
 
-⛑ **Und der Satz, der das Grübeln ausgelöst hat, ist weg.** Die
+📌 **Und der Satz, der das Grübeln ausgelöst hat, ist weg.** Die
 Beschreibung sagte „Without an argument, the working directory itself"
 und beschrieb damit einen Fall, den es gar nicht geben soll. Jetzt sagt
 sie, **was** gelistet wird.
@@ -1429,7 +1489,7 @@ Verlangtes, das es gar nicht gibt.
 **Alle drei kamen vom Projektinhaber, aus dem laufenden Fenster**, und
 keiner davon war durch eine Textprüfung zu finden.
 
-⛑ **Fund 286: Die Überlegung stand in der Befehlsliste.** Nach einem
+📌 **Fund 286: Die Überlegung stand in der Befehlsliste.** Nach einem
 Werkzeugaufruf fängt das Modell neu an zu überlegen; dieser zweite
 Denkblock landete unter „Befehle ausgeführt". Die Ursache war eine
 zweite Lesart derselben Antwort: `ohne_aufrufe` schnitt die
@@ -1438,7 +1498,7 @@ mit demselben Zerleger wie im laufenden Strom**, und `Schritt::Denken`
 ist eine eigene Art. Im Fenster wird daraus ein eigener Block, und die
 Blöcke stehen in der Reihenfolge, in der sie entstanden sind.
 
-⛑ **Fund 287, und er ist der schwerere: Die Erzeugung kannte kein
+📌 **Fund 287, und er ist der schwerere: Die Erzeugung kannte kein
 Ende.** Sie rechnete stur bis zur Tokengrenze, auch wenn das Modell
 längst fertig war. Bei 600 Token schrieb Qwen3-4B seine Antwort zu
 Ende, setzte `<|im_end|>`, dann `<|endoftext|>` und **erfand danach ein
@@ -1454,7 +1514,7 @@ Wortschatz und nicht hingeschrieben: `<|im_end|>` und `<|endoftext|>`
 unter ChatML, `<|endoftext|>` bei einem Basismodell. Nur was zu **einem**
 Token wird, zählt; sonst wäre ein Halt auf `<` ein Halt mitten im Text.
 
-⛑ **Fund 288: Eine Prüfung verlangte genau den Fehler.**
+📌 **Fund 288: Eine Prüfung verlangte genau den Fehler.**
 `der_laufende_text_ist_die_antwort` prüfte `antwort_token == 24`, also
 die Grenze selbst. Das war eine Aussage über das alte Verhalten, und sie
 fiel, sobald das Modell richtig aufhörte. Jetzt prüft sie, dass etwas
@@ -1483,7 +1543,7 @@ kennt die nächste.
 | `myl-local-agent` | Schritt, Werkzeugaufruf, Ergebnis, Ablehnung |
 | Rücken | alles zusammen, in einer Reihenfolge |
 
-⛑ **Die Marken kommen zerrissen an**, und das ist die eigentliche
+📌 **Die Marken kommen zerrissen an**, und das ist die eigentliche
 Schwierigkeit: `</think>` trifft als `</`, `think`, `>` ein. Der
 Zerleger hält deshalb genau so viel zurück, wie der Anfang einer Marke
 lang sein kann, und gibt alles davor endgültig frei. Eine abgebrochene
@@ -1499,7 +1559,7 @@ nicht.** Sie trägt Text und Schrittliste, aber nicht die Überlegung; die
 kam nur über den Kanal. Wer den Beitrag ersetzte, löschte sie vor den
 Augen des Nutzers.
 
-⛑ **Und die Prüfung der Schrittarten war zum vierten Mal in dieser
+📌 **Und die Prüfung der Schrittarten war zum vierten Mal in dieser
 Datei eine Liste von Hand** (Fund 285). `hinweis` stand darin, obwohl
 der Rücken diese Art längst nicht mehr erzeugt, und die Marketabelle im
 Fenster trug den Namen mit; deshalb blieb die Prüfung grün. Sie liest
@@ -1539,7 +1599,7 @@ gehört mir". Eine belegte Datei sagt das Zweite. Gemessen: acht
 Gibibyte Freigabe nehmen dem System acht Gibibyte weg, und beim
 Schliessen kommen sie zurück.
 
-⛑ **`set_len` allein hätte nicht getragen**, und das ist der ganze
+📌 **`set_len` allein hätte nicht getragen**, und das ist der ganze
 Punkt des Moduls: Unter Windows bucht `SetEndOfFile` die Blöcke
 wirklich, unter Linux und macOS entstünde eine Datei mit Löchern, die
 null Bytes belegt und in jedem Verzeichnislisting wie eine Reservierung
@@ -1553,12 +1613,12 @@ Download arbeitet:** belegt plus reserviert ist die Freigabe,
 durchgehend. Vor einem Download gibt die Reservierung her, was er
 braucht; die Summe bleibt gleich.
 
-⛑ **Der Schalter „Beschleuniger benutzen" ist entfallen.** Er
+📌 **Der Schalter „Beschleuniger benutzen" ist entfallen.** Er
 beantwortete die Frage für alle Rechenwerke zugleich, und ein Rechner
 mit zwei Karten konnte damit nicht sagen, dass er die eine hergibt und
 die andere behält. Eine Freigabe über null **ist** die Erlaubnis.
 
-⛑ **Und die Wurzel von Fund 280 ist ausgeräumt statt geflickt.**
+📌 **Und die Wurzel von Fund 280 ist ausgeräumt statt geflickt.**
 `Einstellungen::wert` ist der Gegenpart zu `setzen`, und die
 Feldname-zu-Wert-Zuordnung im Fenster ist ersatzlos entfallen.
 `wert_und_setzer_kennen_dieselben_felder` fährt jedes Feld einmal hin
@@ -1572,7 +1632,7 @@ Sperrdateien.
 
 ### v0.18.0 – 2026-09-10 (was in einer öffentlichen Datei nichts zu suchen hat, und drei Zahlen, die auseinanderliefen)
 
-⛑ **Acht Stellen dieser Komponente nannten ein internes Dokument**
+📌 **Acht Stellen dieser Komponente nannten ein internes Dokument**
 (Fund 275), und eine davon ist die schwerste Bauart: In `ui/stil.css`
 stand ein vollständiger Pfad in ein Verzeichnis, das kein Klon
 mitbekommt, und diese Datei geht mit **jedem Bündel** hinaus. Zwei
@@ -1581,7 +1641,7 @@ liest, dem die Planpapiere dieses Projekts nie zu Gesicht kommen. Was
 jetzt dasteht, ist die Aussage: „Dem Klienten fehlen Knotenadresse und
 Vollmacht."
 
-⛑ **Das Bündelskript trug seine Fassung als festen Text** (Fund 276).
+📌 **Das Bündelskript trug seine Fassung als festen Text** (Fund 276).
 `buendeln-macos.sh` schrieb `0.4.0` in die `Info.plist`, während die
 Kiste bei 0.16.0 stand: zwölf Anhebungen zu wenig, in genau dem Bündel,
 das ein Mensch doppelklickt, und das örtliche Freigabeskript gab es so
@@ -1591,7 +1651,7 @@ entsteht aus `tauri.conf.json`. **Die Fassung wird jetzt gelesen**, und
 Zahl: Sie fällt, sobald wieder eine Zahl dasteht, und nicht beim
 nächsten Sprung.
 
-⛑ **Dieselbe Zahl stand an drei Orten und war dreimal verschieden**
+📌 **Dieselbe Zahl stand an drei Orten und war dreimal verschieden**
 (Fund 278): „an sechzehn Stellen" hier, „an zweiundzwanzig Stellen"
 zwei Papiere weiter, gezählt waren es neunundzwanzig. Sie ist gestrichen
 statt berichtigt, denn wie oft eine Datei einen Modulnamen nennt, ändert sich
@@ -1601,7 +1661,7 @@ seit heute in einer fünften Richtung: gegen den Satz in diesem
 Dokument. Dazu behauptete der Modulkopf des Rückens
 „sechsundfuenfzig Pruefungen", und es waren neunundachtzig.
 
-⛑ **Und die Einstellungsseite zeigte drei ihrer zwölf Felder falsch an**
+📌 **Und die Einstellungsseite zeigte drei ihrer zwölf Felder falsch an**
 (Fund 280). Die Zeilen entstehen aus der Feldliste der Kiste, die
 **Werte** kamen aus einer zweiten, von Hand gepflegten Zuordnung im
 Fenster, und die kannte `kap.beschleuniger`, `kap.speicher` und
@@ -1625,7 +1685,7 @@ einundzwanzig.
 
 ### v0.17.0 – 2026-09-09 (die Oberfläche läuft: Punkt 1.8 zu, und alles, was der erste echte Start zutage gebracht hat)
 
-⛑ **`hidden` war schwächer als die Anzeigeart, zum dritten Mal.** Das
+📌 **`hidden` war schwächer als die Anzeigeart, zum dritten Mal.** Das
 Vorgabestilblatt setzt `[hidden] { display: none }` mit der schwächsten
 Spezifität; jede eigene `display`-Angabe gewinnt dagegen. Das
 Kontextmenü stand nach jedem Start links oben und ließ sich nicht
@@ -1639,7 +1699,7 @@ fehlender Ordner ist deshalb keine Fehlermeldung, sondern eine fehlende
 Entscheidung: Das Fenster öffnet die Einstellungen, hebt das Feld hervor
 und schreibt in einen Kasten darüber, warum.
 
-⛑ **Ein `section` in der Linsenliste hat die halbe Einstellungsseite
+📌 **Ein `section` in der Linsenliste hat die halbe Einstellungsseite
 zum Leuchten gebracht.** Der Glanz beim Überfahren lag auf `.glas`,
 `.eingabefeld`, `button:not(.blank)` **und `section`**. Das klang
 harmlos und war es nicht: `#einstellungsseite` liegt auf `inset: 0`
@@ -1669,7 +1729,7 @@ tun.** Von den vier Grenzen dieses Rechners wird genau eine angewendet,
 `kap.kerne`; `beschleuniger`, `speicher` und `platte` werden gespeichert,
 angezeigt, und danach liest sie niemand. Ein Schieber, der aussieht wie
 eine Grenze und keine ist, ist eine Behauptung. Solange die Felder
-dastehen, steht **„Noch ohne Wirkung"** dabei. ⛑ Ein Satz derselben
+dastehen, steht **„Noch ohne Wirkung"** dabei. 📌 Ein Satz derselben
 Sorte war auch der erste Entwurf zu `agent.bezeugtes`: „Erlaubt
 zusätzlich Werkzeuge …" klang, als käme etwas zu einem Bestand hinzu,
 während in Wahrheit **alle** Werkzeuge dieses Rechners bezeugt sind und
@@ -1690,14 +1750,14 @@ wie das von `Zahl` zu `Grenze`, beide meinen ein Verzeichnis, aber nur
 eines lässt sich wegnehmen. ⚑ **Gerufen wird `tauri-plugin-dialog` aus
 Rust und nicht aus dem Fenster**, dann braucht die Webansicht keine neue
 Berechtigung, kein JS-Paket und keinen von Hand nachgebauten Aufruf; die
-Erlaubnisliste bleibt bei ihrem einen Eintrag. ⛑ Der Befehl ist `async`,
+Erlaubnisliste bleibt bei ihrem einen Eintrag. 📌 Der Befehl ist `async`,
 weil Tauri Befehle ohne `async` auf dem Hauptfaden ausführt und
 `blocking_pick_folder` dort auf eine Antwort wartete, die nur der
 Hauptfaden geben kann. ⚑ Auf macOS ist die Auswahl zugleich die
 Freigabe, was den Zugriffsfall entschärft: Ein getippter Pfad unterhalb
 von Schreibtisch oder Dokumenten bekommt `ENOENT`, ein gewählter nicht.
 
-⛑ **Ein angemeldeter Befehl, den niemand ruft.** `modell(artefakt)` lud
+📌 **Ein angemeldeter Befehl, den niemand ruft.** `modell(artefakt)` lud
 ein ganzes Artefakt, druckte dessen Vorlage und warf es weg; abgelöst
 hat ihn `modell_laden`. Gefunden hat ihn der neue Wächter
 `jeder_befehl_ist_angemeldet` in seiner vierten Richtung. Die ersten
@@ -1708,7 +1768,7 @@ erst beim Klicken. Die vierte ist die Gegenrichtung: Ein angemeldeter
 Befehl ist eine Zusage an das Fenster, und eine Zusage, die niemand
 einlöst, ist eine Behauptung.
 
-⛑ **Eine Prüfung mit handgepflegter Liste, zum zweiten Mal.**
+📌 **Eine Prüfung mit handgepflegter Liste, zum zweiten Mal.**
 `jede_klasse_aus_dem_skript_hat_eine_regel` hieß so, tat es aber nicht:
 Sie hielt elf Namen von Hand. Als die Marke `grenze` entfiel, fiel die
 Prüfung **wegen einer Klasse, die es nicht mehr gibt**. Derselbe Fehler
@@ -1721,7 +1781,7 @@ Kommentar.
 `release.yml`: `.dmg`, `.msi`, `.deb` und AppImage, vier Ziele, alles
 mit Prüfsumme in derselben Datei wie die Binärprogramme.
 
-⛑ **Zwei Fallen beim Bündeln, beide grün und trotzdem falsch.** Ein
+📌 **Zwei Fallen beim Bündeln, beide grün und trotzdem falsch.** Ein
 `.app` ist ein Verzeichnis, und der Sammelschritt läuft mit
 `find -type f`: Es wäre in Einzelteile zerlegt hochgeladen worden. Und
 ein Bündelschritt, der nichts erzeugt, endet mit null, also wäre eine
@@ -1735,7 +1795,7 @@ Linux-Binärprogramme zurückgehalten. Jetzt läuft die Veröffentlichung,
 sobald `bauen` steht; ein Schritt zählt die fünf erwarteten Bündel und
 schreibt fehlende **in die Freigabenotiz**.
 
-⛑ **Der Download wäre auf jedem richtig eingerichteten Klon
+📌 **Der Download wäre auf jedem richtig eingerichteten Klon
 fehlgeschlagen.** `artefakt_bauen` fährt zwei Skripte, und nur das
 zweite bekam die Kalibrier-Umgebung in den `PATH`. `fetch_model.sh`
 bricht ohne `hf` ab, und dieser Befehl liegt in `calibrate/.venv/bin/`
@@ -1745,17 +1805,17 @@ zu installieren, was schon da ist. Dieselbe Wurzel im zweiten Gewand:
 teilen sich jetzt `pfad_mit_venv`, gehalten von
 `jedes_bauskript_bekommt_die_umgebung_in_den_pfad`.
 
-⛑ **Das Symbolverzeichnis enthielt nur PNG.** Der Bündler braucht für
+📌 **Das Symbolverzeichnis enthielt nur PNG.** Der Bündler braucht für
 das `.msi` ein `.ico` und für das `.dmg` ein `.icns`.
 Eine Ableitung erzeugt beide aus `icon.png`, ohne neue
 Abhängigkeit, und `buendeln-macos.sh` leitet das Symbol nicht mehr ein
 zweites Mal ab.
 
-⛑ **Die Bündelversion war eine andere als die der Kiste** (`0.1.0`
+📌 **Die Bündelversion war eine andere als die der Kiste** (`0.1.0`
 gegen `0.13.0`), und der Dateiname jedes Bündels kommt aus der ersten
 Zahl.
 
-⛑ **Der entfallene Ortsschalter hatte fünf CSS-Regeln dagelassen.** Die
+📌 **Der entfallene Ortsschalter hatte fünf CSS-Regeln dagelassen.** Die
 neue Prüfung `jede_regel_hat_ein_element` geht die Gegenrichtung zu den
 zwei vorhandenen Klassenprüfungen und fand neben `.schalter` noch
 `.klein`. ⚑ Sie hätte dabei fast etwas kaputtgemacht: Sie meldete auch
@@ -1779,7 +1839,7 @@ einfach.
 Figur liegt so, dass der Mittelpunkt des aeussersten Bogens im
 Drehpunkt sitzt; damit liegen alle vier aeussersten Boegen auf
 demselben Kreis, und vier Viertel im Abstand von neunzig Grad
-schliessen ihn. ⛑ Drei Anlaeufe davor behandelten ihn als eigenes
+schliessen ihn. 📌 Drei Anlaeufe davor behandelten ihn als eigenes
 Ding, einbeschrieben, als Umkreis, als zu Ende gezeichneten Bogen je
 Spirale, und alle drei sahen aufgelegt aus statt zugehoerig. Sobald er
 aus den Boegen hervorgeht, ist der Uebergang tangentenstetig, weil es
@@ -1792,7 +1852,7 @@ das den neuen Mittelpunkt fest, nach innen genauso, nur mit dem
 Halbmesser geteilt durch Phi statt mal Phi. Jeder Bogen endet damit
 genau da, wo der vorige beginnt.
 
-⛑ **Zwei Entwuerfe davor rechneten mit Naeherungen und sahen abgehackt
+📌 **Zwei Entwuerfe davor rechneten mit Naeherungen und sahen abgehackt
 aus.** Der erste nahm eine Aehnlichkeitsabbildung aus den zwei
 **innersten** Boegen; weil die Fibonacci-Folge mit 1, 1 beginnt, war
 das eine reine Drehung, und vier Boegen wiederholten sich sechzehnmal
@@ -1819,7 +1879,7 @@ Zeile, und ausserhalb der Seitenleiste, denn die traegt
 Stelle statt in einem Dialog; ausgegeben wird Markdown neben die
 Einstellungen, samt der Werkzeugschritte eines Agentenlaufs.
 
-⛑ **Der Bildlauf lag eine Ebene zu tief.** Die Gespraechsliste trug
+📌 **Der Bildlauf lag eine Ebene zu tief.** Die Gespraechsliste trug
 ihren eigenen, der Modus stand daneben; wurde die Liste lang, war der
 Modus nicht mehr erreichbar, und ein Bildlauf im Bildlauf erwischt mit
 dem Rad immer den falschen. Jetzt scrollt **ein** Behaelter zwischen
@@ -1833,38 +1893,38 @@ dessen Mitte in Prozent aus der Zeigerstelle kommt: `inset: 0`, keine
 Maske, kein Hintergrundfilter, kein Ueberstand. Sie kann bauartbedingt
 nicht verrutschen.
 
-⛑ **Das Buendel und das Programm liefen auseinander.**
+📌 **Das Buendel und das Programm liefen auseinander.**
 `buendeln-macos.sh` setzte ein gebautes Programm voraus und kopierte,
 was dalag; erneuert wurde beim Uebersetzen nur das Programm. Wer per
 Doppelklick startet, startet das Buendel und sieht den alten Stand.
 Das Skript baut jetzt selbst, bevor es buendelt.
 
-⛑ **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
+📌 **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
 directory".** Liegt der Klon unter `Desktop`, `Documents` oder
 `Downloads`, gibt der Kernel `ENOENT` zurueck, damit ein Programm nicht
 einmal erfaehrt, dass es den Ordner gibt. Die Meldung nennt jetzt den
 Grund und den Weg dorthin.
 
-⛑ **Jeder Ring der Glasoptik sass um zwei Pixel daneben.**
+📌 **Jeder Ring der Glasoptik sass um zwei Pixel daneben.**
 `* { box-sizing: border-box }` trifft keine Pseudoelemente, und beide
 Ringe liegen auf `::before` und `::after` mit `inset: 0; padding: 1px`.
 Im `content-box`-Modell kommt das Padding aussen dazu. Behoben mit
 `*, *::before, *::after`, bewacht von
 `die_ringe_rechnen_im_randkasten`.
 
-⛑ **Die Gespraechsliste liess sich nicht scrollen**, obwohl
+📌 **Die Gespraechsliste liess sich nicht scrollen**, obwohl
 `overflow-y: auto` dastand: Ein Flex-Kind hat `min-height: auto` und
 schrumpft nicht unter seinen Inhalt. `overflow` allein scrollt nichts,
 es braucht eine Hoehe.
 
-⛑ **„Modell laden" scheiterte aus dem Finder heraus.** In den
+📌 **„Modell laden" scheiterte aus dem Finder heraus.** In den
 Einstellungen steht ein **relativer** Artefaktpfad, und macOS gibt
 einem aus dem Finder gestarteten Programm das Arbeitsverzeichnis `/`.
 `wurzel_suchen` sucht jetzt zusaetzlich vom Ort des Programms aus, und
 ein relativer Pfad wird gegen die Wurzel absolut gemacht. Von der
 Kommandozeile fiel es nie auf, weil das Arbeitsverzeichnis dort stimmt.
 
-⛑ **Die Oberflaeche ist nie gelaufen, und keine der sechzehn Pruefungen
+📌 **Die Oberflaeche ist nie gelaufen, und keine der sechzehn Pruefungen
 hat es gemerkt.** Beim ersten Doppelklick blieb das Fenster am
 Vorschaltbild stehen. Die Ursache steht in der zweiten Zeile von
 `app.js`: `const { invoke } = window.__TAURI__.core;`. In Tauri v2 gibt
@@ -1877,7 +1937,7 @@ Auswerten des Moduls**, also laeuft danach keine Zeile, es gibt kein
 Skript als Text und halten sie gegeneinander. Ob die Bruecke ins
 Fenster existiert, entscheidet die Konfiguration.
 `wer_die_globale_bruecke_benutzt_muss_sie_anmelden` schliesst genau
-diese Luecke. ⛑ Die Lehre ist groesser als der Fehler: Eine Sammlung,
+diese Luecke. 📌 Die Lehre ist groesser als der Fehler: Eine Sammlung,
 die nur Text vergleicht, kann gruen sein, waehrend das Programm nicht
 startet.
 
@@ -1885,7 +1945,7 @@ startet.
 Platzhalter von Tauri. Im Symbol faellt der Rahmen weg, denn er
 konkurriert mit der abgerundeten Kachel.
 
-⛑ **Beide Kisten waren unlizenziert, und die Abhängigkeitsprüfung war
+📌 **Beide Kisten waren unlizenziert, und die Abhängigkeitsprüfung war
 deshalb rot.** Einundzwanzig von dreiundzwanzig Kisten tragen `license`
 und `publish`, genau diese zwei nicht: Sie sind nach dem
 Lizenzdurchgang vom 2026-09-02 entstanden und wurden nie nachgezogen.
@@ -1893,7 +1953,7 @@ Lizenzdurchgang vom 2026-09-02 entstanden und wurden nie nachgezogen.
 `found 4 wildcard dependencies`, denn `allow-wildcard-paths` gilt nur
 für nicht veröffentlichte Kisten.
 
-⛑ **Drei Prüfungen schrieben nach `/tmp`, und dass sie durchkamen, war
+📌 **Drei Prüfungen schrieben nach `/tmp`, und dass sie durchkamen, war
 Glück.** Auf Windows ist `/tmp/x` laufwerksrelativ, also `C:\tmp\x`;
 `schreiben` legt sein Elternverzeichnis an, `fs::write` nicht. Lief die
 Prüfung mit `schreiben` zuerst, existierte `C:\tmp` und die andere kam
@@ -1901,7 +1961,7 @@ durch. Der Testläufer entscheidet die Reihenfolge, also war die
 Sammlung grün, solange sie Glück hatte. Alle drei benutzen jetzt
 `tempfile::tempdir`.
 
-⛑ **Die Sperrdatei der Oberfläche war fünf Nebenversionen alt** und
+📌 **Die Sperrdatei der Oberfläche war fünf Nebenversionen alt** und
 hätte jeden `--locked`-Bau umgeworfen. Neu ist
 eine Wache im CI-Lauf: fünfundzwanzig
 Sperrdateien in zwei Sekunden, und geprüft wird nicht nur die eigene

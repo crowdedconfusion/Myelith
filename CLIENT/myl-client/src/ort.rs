@@ -27,7 +27,7 @@
 //! dem verschobenen Klon heraus starten genuegt, und auch das
 //! installierte Programm findet danach wieder hin.
 //!
-//! ⛑ **Der Zettel ist ein Zwischenspeicher und keine Einstellung.** Er
+//! 📌 **Der Zettel ist ein Zwischenspeicher und keine Einstellung.** Er
 //! steht deshalb nicht in `client.json`: Was dort steht, hat ein Mensch
 //! entschieden, und ein Mensch entscheidet nicht, wo sein Klon liegt,
 //! er verschiebt ihn.
@@ -130,7 +130,7 @@ pub fn eigener_ordner() -> Option<PathBuf> {
 
 /// Macht einen relativen Pfad gegen die Wurzel absolut.
 ///
-/// ⛑ **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
+/// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
 /// zwar mit `No such file or directory`: In den Einstellungen steht
 /// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
 /// Arbeitsverzeichnis, das dort `/` ist.
@@ -190,7 +190,7 @@ mod proben {
         let _ = std::fs::remove_dir_all(&w);
     }
 
-    /// ⛑ **Ein alter Zettel wird nicht geglaubt.** Genau das ist der
+    /// 📌 **Ein alter Zettel wird nicht geglaubt.** Genau das ist der
     /// Fall „Repositorium verschoben": Der Zettel zeigt auf einen Ort,
     /// an dem nichts mehr liegt, und wer ihn glaubt, sucht Artefakte in
     /// einem leeren Verzeichnis.
@@ -215,11 +215,11 @@ mod proben {
 
     /// **Ein relativer Pfad wird gegen die Wurzel gelegt.**
     ///
-    /// ⛑ **Das ist der Fall „Repositorium verschoben".** In den
+    /// 📌 **Das ist der Fall „Repositorium verschoben".** In den
     /// Einstellungen steht `INTEGER_LLM/artifacts/myelith-4b`, und
     /// dieser Eintrag ueberlebt jeden Umzug: Was sich aendert, ist die
     /// Wurzel, und die wird gesucht statt aufgeschrieben.
-    /// ⛑ **Die Erwartung wird gebaut und nicht getippt** (2026-09-10).
+    /// 📌 **Die Erwartung wird gebaut und nicht getippt** (2026-09-10).
     /// Der erste Entwurf schrieb `"/wo/auch/immer/INTEGER_LLM/..."` als
     /// Text hin und fiel unter Windows: Dort setzt `Path::join` einen
     /// Backslash, und die Pruefung meldete einen Unterschied im
@@ -244,7 +244,7 @@ mod proben {
 
     /// **Beide Programme des Klienten loesen denselben Pfad auf.**
     ///
-    /// ⛑ Bis zum 2026-09-10 tat es nur die Oberflaeche. `myl` gab aus
+    /// 📌 Bis zum 2026-09-10 tat es nur die Oberflaeche. `myl` gab aus
     /// einem fremden Arbeitsverzeichnis „es fehlt das
     /// Artefaktverzeichnis", obwohl das Artefakt dalag. **Zwei
     /// Programme desselben Klienten beantworteten dieselbe Frage
@@ -304,7 +304,7 @@ mod proben {
 
     /// **Der Menueeintrag fuer Linux wird erzeugt und nicht abgelegt.**
     ///
-    /// ⛑ Ein `.desktop` traegt absolute Pfade in `Exec` und `Icon`. Im
+    /// 📌 Ein `.desktop` traegt absolute Pfade in `Exec` und `Icon`. Im
     /// Repositorium abgelegt waere es beim ersten Verschieben falsch
     /// und beim zweiten Klon von Anfang an. **Ein Pfad, der in einer
     /// versionierten Datei steht, ist eine Wette darauf, dass nichts

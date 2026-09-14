@@ -38,7 +38,7 @@ BEFEHLE
                     das Artefakt, mit dem sie erzeugt wurden. Schreibt wie
                     jeder Lauf eine .jsonl, eine Zeile je Vektor plus
                     Gesamtwert, den `vergleich` mitliest.
-    testlauf        Alle sechs Stufen in einem Lauf, ohne Menü, mit EINEM
+    testlauf        Alle sieben Stufen in einem Lauf, ohne Menü, mit EINEM
                     Protokoll. Der Befehl für eine Mietmaschine: verbinden,
                     aufrufen, Protokoll abholen. Braucht ein Artefakt und
                     sollte einen Testplan bekommen (--plan), sonst ist der
@@ -48,6 +48,11 @@ BEFEHLE
                     Die zweite Hälfte der Kernthese: Für einen ganzen
                     Trainingsweg gibt es kein festes Soll, deshalb
                     vergleichen zwei Maschinen ihre Abdrücke miteinander.
+                    Braucht ein Artefakt.
+    rechenwege      Dieselbe Arbeit auf jedem Rechenweg dieser Maschine
+                    rechnen: skalar, vektorisiert, auf der GPU und auf einem
+                    Kern. Alle müssen denselben Abdruck liefern. Der Weg auf
+                    einem Kern entfällt, wenn er nicht in eine Minute passt.
                     Braucht ein Artefakt.
 
     modellstaende   Was sich beim Wechsel von θ_v A nach B geändert hat und
@@ -170,7 +175,7 @@ CROSS-HARDWARE-NACHWEIS
     1. Auf jeder Maschine:  myl-test artefakte
        → derselbe Modellstand, sonst sagt der Vergleich nichts aus.
     2. Auf jeder Maschine:  myl-test --name <wer> --plan <datei> testlauf
-       → alle sechs Stufen, EIN Protokoll. `determinismus` allein misst
+       → alle sieben Stufen, EIN Protokoll. `determinismus` allein misst
          weniger, und zwei Läufe mit verschiedenem Umfang sind nicht
          vergleichbar.
     3. Alle .jsonl nach TESTCLIENT/Vergleiche legen, dann:
@@ -565,7 +570,7 @@ fn main() -> ExitCode {
     );
 
     let braucht_modell =
-        matches!(args.command.as_str(), "determinismus" | "shard" | "training" | "testlauf");
+        matches!(args.command.as_str(), "determinismus" | "shard" | "training" | "rechenwege" | "testlauf");
 
     // **Das Backend zuerst, vor dem Artefakt.** Ein Bau, der für ein
     // Backend ohne Rechenpfad konfiguriert ist, taugt für keinen
@@ -633,6 +638,7 @@ fn main() -> ExitCode {
         // und deshalb steht er oben in `braucht_modell`: Ein
         // Trainingsschritt ohne Gewichte gibt es nicht.
         "training" => myl_testclient::training::laufen(&mut log, &args.artifacts),
+        "rechenwege" => myl_testclient::rechenwege::laufen(&mut log, &args.artifacts),
         // ⚑ **Der Sammellauf ohne Menü** (2026-09-04). Er schreibt sein
         // eigenes Protokoll, deshalb wird das hier begonnene sofort
         // abgeschlossen: Zwei offene Protokolle über einen Lauf wären

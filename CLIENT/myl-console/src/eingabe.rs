@@ -53,7 +53,7 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
         let strg = k.modifiers.contains(KeyModifiers::CONTROL);
         match k.code {
             KeyCode::Enter => return Eingabe::Zeile(zeile),
-            // ⛑ **LF ist auch ein Zeilenende** (Fund 308): Eingefuegter
+            // 📌 **LF ist auch ein Zeilenende** (Fund 308): Eingefuegter
             // mehrzeiliger Text schickt 0x0A, und das kommt als Strg-J.
             KeyCode::Char('j') if strg => return Eingabe::Zeile(zeile),
             KeyCode::BackTab => return Eingabe::Modus,
@@ -67,7 +67,7 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
                 zeile.pop();
                 zeichnen(&zeile);
             }
-            // ⛑ **Strg und ein Buchstabe ist keine Eingabe.** Strg-S
+            // 📌 **Strg und ein Buchstabe ist keine Eingabe.** Strg-S
             // landete als `s` in der Zeile, weil crossterm die Taste
             // als `Char('s')` mit Zusatz meldet. **Wer eine Taste nicht
             // kennt, tippt sie nicht mit**, sondern uebergeht sie.
@@ -126,7 +126,7 @@ mod tests {
 
     /// **Und der Wagen steht nie ausserhalb.**
     ///
-    /// ⛑ Ein Wagen hinter der rechten Kante schreibt beim naechsten
+    /// 📌 Ein Wagen hinter der rechten Kante schreibt beim naechsten
     /// Zeichen in die Kantenzeile, und der Rahmen bekommt ein Loch.
     #[test]
     fn der_wagen_bleibt_im_rahmen() {
@@ -138,7 +138,7 @@ mod tests {
 
     /// **Eine Tastenkombination ist kein Buchstabe.**
     ///
-    /// ⛑ Strg-S landete als `s` in der Eingabe. Geprueft wird die Form
+    /// 📌 Strg-S landete als `s` in der Eingabe. Geprueft wird die Form
     /// der Behandlung, denn die Taste selbst braucht ein Terminal.
     #[test]
     fn strg_und_buchstabe_wird_uebergangen() {

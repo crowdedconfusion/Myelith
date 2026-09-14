@@ -130,7 +130,7 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
     // Ein Test, der sich selbst vergleicht, prüft nur, dass er zweimal
     // dasselbe tut.
     //
-    // ⛑ **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B,
+    // 📌 **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B,
     // und zwar **unabhängig** vom Pod:
     //
     // ```text
@@ -150,7 +150,7 @@ fn vier_prozesse_rechnen_wie_ein_prozess() {
         Some(("f31675ab40207fcbf39fe415f6ac228949f44f23b88a46e9d2fc52913f8f8e84", 8)),
         "der Dekodier-Abdruck weicht ab"
     );
-    // ⛑ **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B:
+    // 📌 **Neu erhoben am 2026-09-11** mit dem Ankermodell Qwen3-0,6B:
     // Der Wert haengt am Modellprofil (28 Ebenen, hidden 1024 statt 24
     // und 896) und aendert sich mit ihm. Die **Segmentzahl** daneben
     // aendert sich nicht, und genau die ist die Aussage.

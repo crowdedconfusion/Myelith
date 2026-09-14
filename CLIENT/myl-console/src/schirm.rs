@@ -14,7 +14,7 @@
 //! [`Schirm::aufloesen`], und deshalb wird es auch bei einem Abbruch
 //! gerufen.
 //!
-//! ⛑ **Und der Wagen muss zurueck.** Nach dem Zeichnen steht er in der
+//! 📌 **Und der Wagen muss zurueck.** Nach dem Zeichnen steht er in der
 //! Eingabezeile, also **ausserhalb** des Rollbereichs; wer von dort aus
 //! druckt, schreibt in den Rahmen. `ESC 7` und `ESC 8` merken sich die
 //! Stelle im Rollbereich und holen sie zurueck.
@@ -141,7 +141,7 @@ impl Schirm {
     /// Dieselbe Zeile wie [`Self::zeile`], aber **ab null gezaehlt**,
     /// also so, wie `crossterm::cursor::MoveTo` sie erwartet.
     ///
-    /// ⛑ **Fund 347: hier stand nichts, und deshalb rechnete es jemand
+    /// 📌 **Fund 347: hier stand nichts, und deshalb rechnete es jemand
     /// von Hand nach.** Der blinkende Wagen sass eine Zeile unter der
     /// Eingabe, weil derselbe Versatz einmal in eine ANSI-Sequenz
     /// (ab eins) und einmal in `MoveTo` (ab null) ging. **Zwei
@@ -219,7 +219,7 @@ mod tests {
 
     /// **Vier eigene Zeilen, und der Rollbereich hoert davor auf.**
     ///
-    /// ⛑ Die Gegenprobe zu einem Fehler, den man nicht sieht, sondern
+    /// 📌 Die Gegenprobe zu einem Fehler, den man nicht sieht, sondern
     /// erlebt: Reicht der Rollbereich eine Zeile zu weit, rollt die
     /// obere Kante des Rahmens mit und der Rahmen franst nach oben aus.
     #[test]
@@ -252,7 +252,7 @@ mod tests {
     /// **Die Zeilennummer aus `zeile` und die aus `MoveTo` bezeichnen
     /// dieselbe Zeile, aber nicht mit derselben Zahl.**
     ///
-    /// ⛑ **Fund 347, gemeldet vom Projektinhaber.** Der blinkende Wagen
+    /// 📌 **Fund 347, gemeldet vom Projektinhaber.** Der blinkende Wagen
     /// sass eine Zeile unter der Eingabe. Ursache: `zeile` schreibt
     /// `ESC[{n};1H`, und die ANSI-Positionierung zaehlt **ab eins**;
     /// `crossterm::cursor::MoveTo` zaehlt **ab null**. Wer dieselbe

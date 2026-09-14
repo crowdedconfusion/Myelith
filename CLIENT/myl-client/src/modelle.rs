@@ -158,11 +158,11 @@ pub fn liste(e: &Einstellungen) -> Vec<Modellwahl> {
         })
         .collect();
 
-    // ⛑ Steht das eingestellte Artefakt nicht in der Liste (weil es
+    // 📌 Steht das eingestellte Artefakt nicht in der Liste (weil es
     // woanders liegt oder noch nicht existiert), kommt es trotzdem
     // dazu: Sonst zeigte die Wahl etwas anderes als das, was gilt.
     //
-    // ⛑ **Verglichen wird aufgeloest** (2026-09-11). Vorher stand hier
+    // 📌 **Verglichen wird aufgeloest** (2026-09-11). Vorher stand hier
     // `m.pfad == e.modell.artefakt`, und die Liste traegt absolute
     // Pfade, die Einstellung oft einen relativen: Das eingestellte
     // Modell stand dann **zweimal** in der Wahl, einmal unter seinem
@@ -241,7 +241,7 @@ pub fn katalog() -> BTreeMap<String, Katalogeintrag> {
         if k.starts_with('_') {
             continue;
         }
-        // ⛑ **Hier hing die Herkunft am Namen** (`Myelith 4B (aus
+        // 📌 **Hier hing die Herkunft am Namen** (`Myelith 4B (aus
         // Qwen3-4B)`), und sie stand damit in jeder Modellwahl, in
         // jeder Ladezeile und in jeder Meldung. Gemeldet vom
         // Projektinhaber am 2026-09-10.

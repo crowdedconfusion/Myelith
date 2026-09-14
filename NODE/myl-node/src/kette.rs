@@ -336,7 +336,7 @@ pub struct Kette {
     /// Die zuletzt gezogene Stichprobe, mit der Epoche, zu der sie
     /// gehört (Punkt 45).
     ///
-    /// ⛑ **Hier stand zuerst ein blanker `Vec`, und er wurde von jedem
+    /// 📌 **Hier stand zuerst ein blanker `Vec`, und er wurde von jedem
     /// Block überschrieben.** Eine Ziehung gehört zu einer **Epoche**,
     /// und zwischen zwei Epochenwechseln liegen viele Blöcke; jeder
     /// setzte sie auf leer zurück. Der Test fiel sofort um, und das war
@@ -3730,7 +3730,7 @@ mod tests {
     /// mit verschiedenen Quellen zögen verschiedene Segmente, und wer
     /// geprüft wird, ist eine Konsensentscheidung.
     ///
-    /// ⛑ **Was dieser Test nicht zeigt, und es gehört gesagt:** dass die
+    /// 📌 **Was dieser Test nicht zeigt, und es gehört gesagt:** dass die
     /// Quelle **echt** ist. Ein Erzeuger kann heute beliebige Bytes
     /// eintragen; sie gehen in keine Zustandswurzel ein, also fällt es
     /// niemandem auf. **Damit ist der Mahlraum wieder unbegrenzt**, wie
@@ -4056,7 +4056,7 @@ mod tests {
         // Aufrufer**. Damit war `p` aus Anhang B.1 im Betrieb null, und
         // `S_min = g/p^2` keine Schranke mehr.
         //
-        // ⛑ **Geprueft wird die Ziehung, nicht das Nachrechnen.** Das
+        // 📌 **Geprueft wird die Ziehung, nicht das Nachrechnen.** Das
         // braucht die Spur des Segments, und die liegt beim
         // Koordinator. Diese Grenze steht hier, damit niemand den
         // gruenen Test fuer mehr haelt, als er sagt.
@@ -4198,7 +4198,7 @@ mod tests {
 
     /// ⚑ **Ein Bündel mit erfundener Pod-Kennung zahlt nichts aus.**
     ///
-    /// ⛑ Ohne diesen Test war die Kennungssuche in der Kette ungeprüft:
+    /// 📌 Ohne diesen Test war die Kennungssuche in der Kette ungeprüft:
     /// Die Gegenprobe „nimm einfach den ersten Pod" blieb grün, weil in
     /// den übrigen Tests nur **ein** Pod entsteht. Hier scheitert sie.
     ///
@@ -4301,7 +4301,7 @@ mod tests {
     /// Die **erste** Eintragung darf der Miner selbst, jede **weitere**
     /// nur das eingetragene kalte Konto, und ein **Fremder** nie.
     ///
-    /// ⛑ Ohne diesen Test wäre die neue `Anweisung` eine Variante, die
+    /// 📌 Ohne diesen Test wäre die neue `Anweisung` eine Variante, die
     /// der Übersetzer kennt und kein Block anwendet: genau die Klasse,
     /// aus der der Fund kam.
     #[test]

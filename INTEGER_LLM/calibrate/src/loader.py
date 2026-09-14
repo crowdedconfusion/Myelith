@@ -68,7 +68,7 @@ def load_reference_model(model_path: Union[str, Path]):
     model.eval()
     _pruefe_vollstaendig_geladen(model)
 
-    # ⛑ **Fund 336: zu grosse Normgewichte werden verschoben, bevor
+    # 📌 **Fund 336: zu grosse Normgewichte werden verschoben, bevor
     # irgendetwas gemessen wird.** Die Umformung ist im Gleitkomma
     # exakt (Zweierpotenzen), aber sie aendert die Aktivierungen
     # zwischen Norm und Matrix. Liefe sie erst nach dem Sammeln der

@@ -126,7 +126,7 @@ fn zeichnen_ab(
 
 /// **Was in eine Zeile passt, mit `…` am Ende.**
 ///
-/// ⛑ **Ohne das rechnet die Liste falsch.** Sie springt beim
+/// 📌 **Ohne das rechnet die Liste falsch.** Sie springt beim
 /// Neuzeichnen um ihre eigene Hoehe zurueck; eine Zeile, die das
 /// Terminal umbricht, zaehlt dort als eine und belegt zwei. Der
 /// Netzeintrag mit seinem langen Grund brach als Erster um, und der
@@ -246,7 +246,7 @@ mod tests {
 
     /// **Der Pfeil haelt nie auf einem gesperrten Eintrag.**
     ///
-    /// ⛑ Die Gegenprobe zu einem Menue, das sich anfuehlt wie ein
+    /// 📌 Die Gegenprobe zu einem Menue, das sich anfuehlt wie ein
     /// Haenger: Der Pfeil bewegt sich, und nichts passiert.
     #[test]
     fn gesperrte_eintraege_werden_uebersprungen() {

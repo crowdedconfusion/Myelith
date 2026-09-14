@@ -31,7 +31,7 @@ use crate::merkle::{MerkleError, MerkleTree};
 /// Gigabyte-Gegenständen beherrschbar bleibt, klein genug, dass eine
 /// Antwort im Verfügbarkeitsnachweis tragbar bleibt.
 ///
-/// ⛑ **Hier stand bis zum 2026-08-30 das Gegenteil der Absicht:** „klein
+/// 📌 **Hier stand bis zum 2026-08-30 das Gegenteil der Absicht:** „klein
 /// genug, dass ein Verfügbarkeitsnachweis nicht ein Mebibyte Antwort
 /// erzeugt". Der Satz beschreibt einen Nachweis, der ohne die Nutzdaten
 /// auskommt, und ein solcher belegt keine Speicherung: Die Blätter des

@@ -10,7 +10,7 @@ das Gleitkommamodell, entzerrt es und vergleicht die Logits vorher und
 nachher; er braucht torch und Minuten und gehoert deshalb nicht in
 diese Sammlung.
 
-⛑ **Fund 342: Diese Datei lief bis zum 2026-09-11 nirgends.** Sie war
+📌 **Fund 342: Diese Datei lief bis zum 2026-09-11 nirgends.** Sie war
 mit `pytest` geschrieben, und dieses Projekt hat kein pytest: weder in
 `calibrate/requirements.txt` noch in der CI, und die uebrigen
 Testdateien hier sind eigenstaendige Skripte (siehe
@@ -59,7 +59,7 @@ def test_ohne_ausreisser_wird_nichts_angefasst():
 def test_der_ausreisser_wandert_und_das_produkt_bleibt():
     """**Die eigentliche Zusage: `W @ (normiert * gamma)` bleibt gleich.**
 
-    ⛑ Das ist die Probe, an der die ganze Umformung haengt. Sie rechnet
+    📌 Das ist die Probe, an der die ganze Umformung haengt. Sie rechnet
     das Produkt vor und nach der Entzerrung aus und verlangt
     **Bitgleichheit**, nicht Naehe.
     """
@@ -109,7 +109,7 @@ def test_unveraenderte_kanaele_bleiben_unveraendert():
 def test_ohne_bekannte_abnehmer_bricht_es_ab():
     """**Lieber ein lauter Abbruch als ein stilles Saettigen.**
 
-    ⛑ Dieselbe Lehre wie Fund 23: Ein Quantisierer, der heimlich
+    📌 Dieselbe Lehre wie Fund 23: Ein Quantisierer, der heimlich
     abschneidet, erzeugt ein Artefakt, das monatelang wie
     Quantisierungsrauschen aussieht.
     """

@@ -113,7 +113,7 @@ pub struct Schritt {
 /// Pfad kennt, kann den Abdruck nachrechnen, und genau das ist die
 /// Nachvollziehbarkeit, um die es geht.
 ///
-/// ⛑ **`schreiben` steht im Klartext**, denn es ist die Angabe, auf
+/// 📌 **`schreiben` steht im Klartext**, denn es ist die Angabe, auf
 /// die es ankommt: Ein Lauf, der nur lesen durfte, kann nichts
 /// veraendert haben, und das soll man sehen, ohne etwas nachzurechnen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

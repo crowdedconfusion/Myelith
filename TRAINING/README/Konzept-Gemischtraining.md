@@ -13,7 +13,7 @@
 > Gemisch zusaetzlich braucht, ist gebaut.** Was fehlt, sind Zahlen fuer
 > dieses Modell und drei Entscheidungen.
 
-## 0. ⛑ Was zuerst zu sagen ist: drei Entwuerfe waren schon Code
+## 0. 📌 Was zuerst zu sagen ist: drei Entwuerfe waren schon Code
 
 Der erste Durchgang dieses Dokuments entwarf eine Routerschranke, einen
 ganzzahligen Ausgleichsterm und einen Operator fuer Expertenwachstum.
@@ -26,7 +26,7 @@ sind besser geloest als der Entwurf:
 | Hilfsverlust `α · N · Σ f_i · P_i` | `moe::Expertenwacht` | Zaehlt ueber die **Segmentfolge** statt ueber den Batch. Die Batchzusammensetzung waehlt der Miner, die Segmentfolge legt das Protokoll fest. |
 | Experten an der verborgenen Achse halbieren, `k → 2k` | `moe::experte_einhaengen` | Gibt dem neuen Experten ein Logit **unter allen anderen**. Exakt funktionserhaltend per Konstruktion, ohne Rundungsargument. |
 
-⛑ **Die Lehre ist die von Fund 328 und Fund 329, ein drittes Mal:**
+📌 **Die Lehre ist die von Fund 328 und Fund 329, ein drittes Mal:**
 Wer einen Entwurf schreibt, sagt vorher, wo er nachgesehen hat. Hier
 wurde erst nach dem Schreiben in `kernels/src/moe.rs` gesehen.
 
@@ -184,7 +184,7 @@ Die dritte ist die Zahl der Experten, und der Operator dafuer steht:
 Ausgabe aendert sich um exakt nichts, **und der Neue lernt trotzdem**,
 weil die `Expertenwacht` ihn nach `geduld` Segmenten hochschiebt.
 
-⛑ **Warum der naheliegende Weg nicht traegt, steht schon im Code, und
+📌 **Warum der naheliegende Weg nicht traegt, steht schon im Code, und
 diese Sitzung hat ihn unabhaengig noch einmal verworfen:** Zwei Kopien
 mit gleichem Logit verdraengen einen dritten aus der Top-k, und der
 Verlust ist das kleinste der `k` Mischgewichte, gemessen im Mittel

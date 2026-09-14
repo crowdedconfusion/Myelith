@@ -85,7 +85,7 @@ fn hergeben_gibt_genau_so_viel_heraus_wie_da_ist() {
     assert!(wirklich_belegt(r.pfad()) >= GROESSE / 2, "die Rueckgabe belegt nicht");
 }
 
-/// ⛑ **Eine liegengebliebene Datei wird uebernommen, nicht ergaenzt.**
+/// 📌 **Eine liegengebliebene Datei wird uebernommen, nicht ergaenzt.**
 ///
 /// Nach einem Absturz steht sie noch da. Wer daneben eine zweite
 /// anlegte, hielte den Platz doppelt, und zwei Laeufe hintereinander

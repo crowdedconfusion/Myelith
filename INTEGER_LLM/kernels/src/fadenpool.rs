@@ -1,6 +1,6 @@
 //! Ein stehender Satz Fäden statt eines neuen je Matrix.
 //!
-//! # ⛑ Warum es ihn gibt: 23 % der Laufzeit waren Fadenstart
+//! # 📌 Warum es ihn gibt: 23 % der Laufzeit waren Fadenstart
 //!
 //! **Gemessen am 2026-09-11** auf M5 Pro gegen `myelith-4b`: Ein
 //! `std::thread::scope` kostet 18,5 µs bei zwei und 84,5 µs bei zwölf
@@ -81,7 +81,7 @@ struct Lage {
     fertige: usize,
 }
 
-// ⛑ **Hier stand ein Drehzähler, und er hat es langsamer gemacht.**
+// 📌 **Hier stand ein Drehzähler, und er hat es langsamer gemacht.**
 //
 // Der Gedanke war richtig und die Messung dagegen: 253 Runden je Token
 // liegen dicht beieinander, ein Faden, der kurz nachsieht, spart den
@@ -114,6 +114,42 @@ struct Pool {
 }
 
 static POOL: OnceLock<&'static Pool> = OnceLock::new();
+
+thread_local! {
+    /// **Steht, solange dieser Faden an einer Runde rechnet**: als
+    /// Poolfaden immer, als Aufrufer, waehrend er seinen eigenen Abschnitt
+    /// traegt.
+    ///
+    /// ⚑ **Ein Aufruf aus einer Runde heraus rechnet selbst**, statt eine
+    /// zweite zu beginnen. Die Runden laufen nacheinander (`REIHE`), und
+    /// eine Runde, die auf eine zweite wartet, wartete auf sich selbst.
+    /// Bis 2026-09-14 musste das jeder Aufrufer wissen; die Aufmerksamkeit
+    /// wird aber aus beiden Lagen gerufen: im Decode allein, in der
+    /// gebuendelten Vorbereitung aus einer Runde je Token.
+    static IN_EINER_RUNDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Laeuft der aufrufende Faden gerade in einer Runde?
+fn in_einer_runde() -> bool {
+    IN_EINER_RUNDE.with(|r| r.get())
+}
+
+/// Setzt [`IN_EINER_RUNDE`] fuer die Dauer eines Abschnitts, auch wenn er
+/// abbricht.
+struct Rundenmarke;
+
+impl Rundenmarke {
+    fn setzen() -> Self {
+        IN_EINER_RUNDE.with(|r| r.set(true));
+        Rundenmarke
+    }
+}
+
+impl Drop for Rundenmarke {
+    fn drop(&mut self) {
+        IN_EINER_RUNDE.with(|r| r.set(false));
+    }
+}
 
 /// Wie viele Fäden der Pool hält.
 ///
@@ -151,6 +187,7 @@ fn pool() -> &'static Pool {
 
 /// Ein Faden: warten, seinen Abschnitt rechnen, melden.
 fn faden(p: &'static Pool, index: usize) {
+    IN_EINER_RUNDE.with(|r| r.set(true));
     let mut gesehen = 0u64;
     loop {
         let (aufgabe, breit) = {
@@ -176,7 +213,7 @@ fn faden(p: &'static Pool, index: usize) {
             continue;
         }
         let Some(a) = aufgabe else { continue };
-        // ⛑ **Nur wer mitrechnet, meldet sich.** Die erste Fassung liess
+        // 📌 **Nur wer mitrechnet, meldet sich.** Die erste Fassung liess
         // **alle** Faeden melden, auch die unbeteiligten, und der
         // Aufrufer wartete auf sie. Damit kostete eine kleine Matrix mit
         // zwei Rechnern trotzdem zwoelf Weckvorgaenge und zwoelf
@@ -224,7 +261,7 @@ where
     let p = pool();
     let faeden = faeden.clamp(1, p.groesse);
     let mut out = vec![0i16; zeilen];
-    if faeden == 1 || zeilen < 2 {
+    if faeden == 1 || zeilen < 2 || in_einer_runde() {
         for (i, ziel) in out.iter_mut().enumerate() {
             *ziel = f(i);
         }
@@ -262,7 +299,10 @@ where
     // ⚑ **Der Aufrufer rechnet mit, statt zu warten.** Er hat ohnehin
     // nichts zu tun, bis die anderen fertig sind; so trägt er den
     // letzten Abschnitt und spart einen Weckvorgang.
-    unsafe { abschnitt_rechnen(&aufgabe, faeden - 1) };
+    {
+        let _marke = Rundenmarke::setzen();
+        unsafe { abschnitt_rechnen(&aufgabe, faeden - 1) };
+    }
 
     // ⚠️ **Diese Schleife trägt den ganzen `unsafe`-Block.** Sie wartet,
     // bis jeder **beteiligte** Faden gemeldet hat; erst danach darf
@@ -292,7 +332,7 @@ where
     F: Fn(usize, &mut [i16]) + Sync,
 {
     let mut out = vec![0i16; zeilen * breite];
-    if faeden <= 1 || zeilen < 2 {
+    if faeden <= 1 || zeilen < 2 || in_einer_runde() {
         for z in 0..zeilen {
             f(z, &mut out[z * breite..(z + 1) * breite]);
         }
@@ -324,7 +364,10 @@ where
         p.runde.fetch_add(1, Ordering::Release);
     }
     p.arbeit.notify_all();
-    unsafe { breit_rechnen(&aufgabe, faeden - 1) };
+    {
+        let _marke = Rundenmarke::setzen();
+        unsafe { breit_rechnen(&aufgabe, faeden - 1) };
+    }
     {
         let mut lage = p.lage.lock().unwrap_or_else(|e| e.into_inner());
         while lage.fertige < faeden - 1 {
@@ -369,6 +412,28 @@ unsafe fn breit_rechnen(a: &Breitaufgabe, index: usize) {
     }
 }
 
+/// **Wie [`rechnen`], mit einem i32 je Zeile.**
+///
+/// ⚑ **Für den LM-Kopf** (2026-09-14): Seine Logits sind i32, und er rechnete
+/// einkernig, beim 30B 29 % eines Decode-Schritts. Umgesetzt über
+/// [`rechnen_breit`] mit zwei Feldern je Zeile, dem unteren und dem oberen
+/// Halbwort; zusammengesetzt wird bitgenau. Eine zweite Aufgabenart im Pool
+/// wäre ein zweiter `unsafe`-Block mit derselben Begründung.
+pub fn rechnen_i32<F>(zeilen: usize, faeden: usize, f: F) -> Vec<i32>
+where
+    F: Fn(usize) -> i32 + Sync,
+{
+    let flach = rechnen_breit(zeilen, 2, faeden, |z, ziel| {
+        let wert = f(z) as u32;
+        ziel[0] = wert as u16 as i16;
+        ziel[1] = (wert >> 16) as u16 as i16;
+    });
+    flach
+        .chunks_exact(2)
+        .map(|p| (((p[1] as u16 as u32) << 16) | p[0] as u16 as u32) as i32)
+        .collect()
+}
+
 /// Hält gleichzeitige Aufrufer auseinander; siehe [`rechnen`].
 static REIHE: Mutex<()> = Mutex::new(());
 
@@ -391,8 +456,23 @@ mod tests {
 
     /// **Der Pool rechnet dasselbe wie die Schleife.**
     ///
-    /// ⛑ Die Gegenprobe zur ganzen Datei: Jede Fadenzahl, jede
+    /// 📌 Die Gegenprobe zur ganzen Datei: Jede Fadenzahl, jede
     /// Zeilenzahl, und alles muss bitgleich sein.
+    /// **Ein Aufruf aus einer Runde heraus rechnet selbst und dasselbe**,
+    /// statt auf eine zweite Runde zu warten, die nie beginnt. Ohne die
+    /// Marke haengt diese Probe.
+    #[test]
+    fn eine_runde_in_einer_runde_rechnet_selbst() {
+        let innen = |z: usize| (0..40).map(|i| ((z * 31 + i * 7) % 1000) as i16).collect::<Vec<_>>();
+        let aussen = rechnen_breit(24, 40, 8, |z, ziel| {
+            let werte = rechnen_breit(40, 1, 8, |i, feld| feld[0] = innen(z)[i]);
+            ziel.copy_from_slice(&werte);
+        });
+        let erwartet: Vec<i16> = (0..24).flat_map(innen).collect();
+        assert_eq!(aussen, erwartet);
+        assert!(!in_einer_runde(), "nach der Runde steht die Marke wieder");
+    }
+
     #[test]
     fn jede_fadenzahl_gibt_dasselbe() {
         for zeilen in [0usize, 1, 2, 3, 7, 16, 33, 64, 129, 1000] {

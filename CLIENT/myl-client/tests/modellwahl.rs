@@ -34,7 +34,7 @@ fn mit(ordner: &std::path::Path, gewaehlt: &str) -> Einstellungen {
 
 /// **Aufsteigend nach Groesse, nicht nach Verzeichnisnamen.**
 ///
-/// ⛑ Die Probe, an der die Festlegung des Projektinhabers vom
+/// 📌 Die Probe, an der die Festlegung des Projektinhabers vom
 /// 2026-09-11 haengt. Nach Zeichenketten sortiert stuende
 /// `myelith-30b-a3b` **vor** `myelith-4b`, weil `3` vor `4` kommt;
 /// genau diese Reihe ist deshalb ausgewaehlt.
@@ -103,7 +103,7 @@ fn jedes_modell_steht_auch_im_netz() {
 
 /// **Das Netzkennzeichen nennt das Modell, nicht nur „Netz".**
 ///
-/// ⛑ Vorher stand genau ein Sammeleintrag `netz` in der Wahl. Seit dem
+/// 📌 Vorher stand genau ein Sammeleintrag `netz` in der Wahl. Seit dem
 /// 2026-09-11 soll jeder Nutzer **sein** Modell anbieten koennen, und
 /// dann muss der Wert sagen, welches gemeint ist.
 #[test]
@@ -150,7 +150,7 @@ fn bekannte_modelle_nennen_ihre_mindestausstattung() {
 
 /// **Das eingestellte Modell steht genau einmal da.**
 ///
-/// ⛑ Bis zum 2026-09-11 verglich die Wahl den eingestellten Pfad
+/// 📌 Bis zum 2026-09-11 verglich die Wahl den eingestellten Pfad
 /// **unaufgeloest** gegen die absoluten Pfade der Liste. Ein relativ
 /// eingestelltes Artefakt stand deshalb zweimal in der Wahl: einmal
 /// unter seinem Namen und einmal als „(eingestellt)".

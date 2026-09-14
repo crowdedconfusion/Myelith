@@ -66,7 +66,7 @@
 //! dieser Funktionen und keine Konstante: Wer sie setzt, soll es an der
 //! Aufrufstelle entscheiden müssen.
 //!
-//! ⛑ **Die Lehre aus diesem Absatz gilt über ihn hinaus.** Ein
+//! 📌 **Die Lehre aus diesem Absatz gilt über ihn hinaus.** Ein
 //! Modulkopf, der eine Lücke beschreibt, veraltet nicht mit ihr; er
 //! bleibt stehen und wird geglaubt. Dieser hier hat am 2026-09-06 einen
 //! Prüfbericht in die Irre geführt, der die Saat als offene
@@ -100,7 +100,7 @@ pub struct Segmentstichprobe {
 /// Abschlussblocks **unbegrenzten** Mahlraum: Er variiert den
 /// Blockinhalt, bis die Ziehung seine eigenen Segmente verschont.
 ///
-/// ⛑ **Und die Aggregatsignatur ist nicht eindeutig** (Fund 120,
+/// 📌 **Und die Aggregatsignatur ist nicht eindeutig** (Fund 120,
 /// 2026-09-01). BLS ist eindeutig für Nachricht **und** Schlüsselmenge;
 /// das Commitzertifikat trägt aber eine **variable** Unterzeichnermenge,
 /// und wer es zusammenstellt, wählt sie, solange sie das Quorum trägt.
@@ -363,7 +363,7 @@ mod tests {
 
     /// **Die Stichprobensaat ist nicht die der Pod-Bildung.**
     ///
-    /// ⛑ Hier stand „der Trennstring wirkt", und das prueft dieser Test
+    /// 📌 Hier stand „der Trennstring wirkt", und das prueft dieser Test
     /// **nicht**: Die beiden Ableitungen bauen ihr Urbild ohnehin
     /// verschieden, also blieb er gruen, als der Trennstring
     /// versuchsweise entfiel. Was er zeigt, ist die Aussage, auf die es
@@ -393,7 +393,7 @@ mod tests {
     /// Pod, bekaeme der kleine bei jeder Aufrundung **genau ein**
     /// Segment und damit eine Rate von 33 Prozent statt 2.
     ///
-    /// ⛑ **Hier stand `klein <= 1`, und das liess genau den schlechten
+    /// 📌 **Hier stand `klein <= 1`, und das liess genau den schlechten
     /// Fall zu:** Der Zug je Pod ergibt eins, also bestand der Test ihn.
     /// Die Gegenprobe hat es gezeigt. Geprueft wird jetzt der **Anteil
     /// ueber viele Saaten**, denn darum geht es: `p` in Anhang B.1 ist

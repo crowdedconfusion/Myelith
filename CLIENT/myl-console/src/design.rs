@@ -115,7 +115,7 @@ mod tests {
 
     /// **Jedes andere Design setzt drei verschiedene Toene.**
     ///
-    /// ⛑ Zwei gleiche Toene waeren ein Rahmen, den man von seiner
+    /// 📌 Zwei gleiche Toene waeren ein Rahmen, den man von seiner
     /// Fusszeile nicht unterscheidet.
     #[test]
     fn jedes_design_hat_drei_unterscheidbare_toene() {
@@ -131,7 +131,7 @@ mod tests {
 
     /// **Der Puls springt am Umkehrpunkt nicht.**
     ///
-    /// ⛑ Ein Sprung von voller Helle auf ein Drittel sieht aus wie ein
+    /// 📌 Ein Sprung von voller Helle auf ein Drittel sieht aus wie ein
     /// Fehler und nicht wie eine Bewegung.
     #[test]
     fn der_puls_bleibt_stetig() {

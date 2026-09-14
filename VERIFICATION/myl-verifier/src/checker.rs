@@ -20,6 +20,14 @@ pub enum CheckError {
     EmptySegment,
     /// Forward-Pass fehlgeschlagen.
     ForwardPassFailed,
+    /// **Eine Position hinter der ersten laesst sich ohne den KV-Verlauf
+    /// nicht nachrechnen** (Fund 373): Die Aufmerksamkeit an Position `p`
+    /// liest die Eintraege aller Positionen davor, und die stehen nicht im
+    /// Segment.
+    OhneVerlauf {
+        /// Die Position, die nachgerechnet werden sollte.
+        position: usize,
+    },
 }
 
 impl std::fmt::Display for CheckError {
@@ -27,6 +35,10 @@ impl std::fmt::Display for CheckError {
         match self {
             Self::EmptySegment => write!(f, "Segment ist leer"),
             Self::ForwardPassFailed => write!(f, "Forward-Pass fehlgeschlagen"),
+            Self::OhneVerlauf { position } => write!(
+                f,
+                "Position {position} laesst sich ohne den KV-Verlauf der Positionen davor nicht nachrechnen"
+            ),
         }
     }
 }

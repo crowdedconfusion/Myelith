@@ -87,7 +87,7 @@ pub struct Trainingsvorgaben {
     pub lr_nenner: i64,
     /// **Der Zaehler der Lernrate.**
     ///
-    /// ⛑ **Bis zum 2026-09-11 stand hier eine 1 im Rumpf**, und damit
+    /// 📌 **Bis zum 2026-09-11 stand hier eine 1 im Rumpf**, und damit
     /// war `lr_nenner = 1` die groesste erreichbare Schrittweite. Auf
     /// Qwen3-0,6B verlaesst der Lauf damit die Uebertragungsform
     /// **nie**, auch nicht in dreihundert Schritten; die Gegenprobe zur
@@ -182,7 +182,7 @@ impl Trainingsvorgaben {
             folge: vec![9707, 374, 264, 1273, 315, 279],
             ziel: 4108,
             schritte: 30,
-            // ⛑ **Neu gemessen am 2026-09-11**, als das Ankermodell von
+            // 📌 **Neu gemessen am 2026-09-11**, als das Ankermodell von
             // Qwen2.5-0,5B auf Qwen3-0,6B wechselte. Mit `1 << 12` fiel
             // die Kreuzentropie in dreissig Schritten nur von 8,00 auf
             // 7,29, und der Argmax traf das Ziel nicht. Gemessen mit
@@ -569,7 +569,7 @@ pub fn gradient_vom_ziel_mit_kopf(
     (logits, g_y)
 }
 
-// ⛑ **Hier stand bis zum 2026-09-07 ein verwaister Doc-Kommentar**
+// 📌 **Hier stand bis zum 2026-09-07 ein verwaister Doc-Kommentar**
 // („Trainiert die letzte Ebene gegen das naechste Token"). Die
 // Funktion, die er beschrieb, gibt es seit der Umstellung auf
 // `shardtraining` nicht mehr; der Kommentar haftete seither an

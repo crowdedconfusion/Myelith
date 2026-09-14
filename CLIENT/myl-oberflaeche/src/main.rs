@@ -8,7 +8,7 @@
 //! immer der schlechter gepruefte: `myl-client` ist durchgeprueft, ein
 //! nachgebauter Ruecken waere es nicht.
 //!
-//! ⛑ **Hier stand „sechsundfuenfzig Pruefungen", und es waren
+//! 📌 **Hier stand „sechsundfuenfzig Pruefungen", und es waren
 //! neunundachtzig.** Eine Zahl aus einer anderen Kiste laesst sich von
 //! hier aus nicht binden, also steht sie nicht mehr da: Eine
 //! Behauptung, die niemand nachrechnet, altert unbemerkt.
@@ -46,7 +46,7 @@ use tauri::Emitter;
 struct Ansicht {
     /// ⚑ **Jedes setzbare Feld mit seinem Wert, unter seinem Namen.**
     ///
-    /// ⛑ **Hier standen bis zum 2026-09-10 zwoelf einzelne Felder**,
+    /// 📌 **Hier standen bis zum 2026-09-10 zwoelf einzelne Felder**,
     /// und das Fenster hielt daneben eine zweite Zuordnung von
     /// Feldnamen auf diese Felder. Die kannte drei von zwoelf nicht
     /// (Fund 280), und in JavaScript ist ein fehlender Schluessel kein
@@ -83,7 +83,7 @@ struct Ansicht {
 
 /// Was in der Marke im Kopf steht, und der Satz dahinter.
 ///
-/// # ⛑ Warum es diese Funktion gibt
+/// # 📌 Warum es diese Funktion gibt
 ///
 /// Hier stand „Alles: bezeugte Werkzeuge laufen" und
 /// „NurVerankert: lokale Werkzeuge sind gesperrt". Beides ist die
@@ -101,7 +101,7 @@ struct Ansicht {
 /// Verzeichnis gibt es gar keine Werkzeuge; wer dann „liest Dateien"
 /// laese, suchte den Fehler an der falschen Stelle.
 ///
-/// ⛑ **Bis zum 2026-09-11 waren es vier**, und der vierte hiess
+/// 📌 **Bis zum 2026-09-11 waren es vier**, und der vierte hiess
 /// „Werkzeuge gesperrt": ein eingehaengtes Verzeichnis, dessen
 /// Werkzeuge trotzdem nicht liefen, weil ein zweiter Schalter fehlte.
 /// Der Schalter ist entfallen.
@@ -180,7 +180,7 @@ fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
 
 /// Loescht ein gebautes Artefakt.
 ///
-/// # ⛑ Was hier alles schiefgehen koennte, und was es verhindert
+/// # 📌 Was hier alles schiefgehen koennte, und was es verhindert
 ///
 /// **Das ist die einzige Stelle im Klienten, die etwas Grosses und
 /// Unwiederbringliches loescht**, und sie tut es auf einen Klick.
@@ -252,7 +252,7 @@ fn artefakt_loeschen(
 
 /// Zerlegt eine Modellantwort in Bloecke, die das Fenster zeichnen kann.
 ///
-/// # ⛑ Warum das ueber den Ruecken geht und nicht im Skript geschieht
+/// # 📌 Warum das ueber den Ruecken geht und nicht im Skript geschieht
 ///
 /// **Die Antwort eines Modells ist Text und keine Auszeichnung.** Wer
 /// sie mit `innerHTML` in die Seite schreibt, macht aus Daten
@@ -307,7 +307,7 @@ struct Freigabemaske {
 /// Fenster liefe irgendwann auseinander, und dann zeigt die Oberflaeche
 /// ein Feld, das der Setzer nicht kennt.
 ///
-/// ⛑ **Auch die Beschriftung kommt von dort.** Dieser Befehl gab
+/// 📌 **Auch die Beschriftung kommt von dort.** Dieser Befehl gab
 /// einmal nur Name und Art zurueck; das Fenster zeigte daraufhin
 /// `kap.beschleuniger` als Beschriftung, weil es nichts Besseres
 /// hatte. Die Alternative waere eine Uebersetzungstabelle im Skript
@@ -361,7 +361,7 @@ async fn aktualisieren(fenster: tauri::AppHandle) -> Result<(), String> {
 
 /// Setzt ein Feld und schreibt die Ablage.
 ///
-/// ⛑ **Auch hier keine eigene Logik.** Was `aus` heisst und welche
+/// 📌 **Auch hier keine eigene Logik.** Was `aus` heisst und welche
 /// Felder es gibt, weiss die Kiste; dieser Befehl reicht durch und
 /// speichert.
 #[tauri::command]
@@ -380,7 +380,7 @@ fn setzen(
     // sieht, hat keinen Regler bedient, sondern eine Zahl geaendert.
     match feld.as_str() {
         "kap.kerne" => myl_client::kapazitaet::kerne_setzen(e.kapazitaet.kerne.unwrap_or(0)),
-        // ⛑ **Die Platte wird sofort gehalten oder hergegeben.** Sonst
+        // 📌 **Die Platte wird sofort gehalten oder hergegeben.** Sonst
         // stuende zwischen dem Setzen und dem naechsten Start eine
         // Zusage, die niemand einloest.
         "kap.platte" => {
@@ -405,7 +405,7 @@ fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
 
 /// Welche Werkzeuge der Agent gerade hat.
 ///
-/// # ⛑ Warum das ein Befehl ist und keine Liste im Fenster
+/// # 📌 Warum das ein Befehl ist und keine Liste im Fenster
 ///
 /// Die Namen haengen an der Ansageform und die Auswahl an der
 /// Einhaengung; wer sie im Fenster nachbaute, haette eine zweite
@@ -530,7 +530,7 @@ async fn modell_laden(halter: tauri::State<'_, Halter>) -> Result<Ladung, String
 /// der etwas leert: `None` in den Halter zu setzen laesst das Modell
 /// fallen, und damit gehen die Gewichte.
 ///
-/// ⛑ **Ohne geladenes Modell ist das kein Fehler.** Ein Entladen, das
+/// 📌 **Ohne geladenes Modell ist das kein Fehler.** Ein Entladen, das
 /// sich beschwert, wenn nichts da ist, zwingt jeden Aufrufer, vorher zu
 /// fragen; die Zeitschaltung tut das nicht und soll es nicht muessen.
 #[tauri::command]
@@ -541,13 +541,17 @@ fn modell_entladen(halter: tauri::State<'_, Halter>) -> Result<bool, String> {
 
 /// Faehrt einen Auftrag und meldet den Verlauf ans Fenster.
 ///
-/// ⛑ **`async` allein genuegt nicht.** Der Lauf **rechnet**, er wartet
+/// 📌 **`async` allein genuegt nicht.** Der Lauf **rechnet**, er wartet
 /// nicht; in einem `async`-Befehl belegte er den Laufzeitfaden fuer
 /// Minuten und damit alles andere. `spawn_blocking` gibt ihm einen
 /// eigenen.
 #[tauri::command]
 async fn agent_fahren(
     auftrag: String,
+    // ⚑ **Das bisherige Gespraech, ohne Werkzeugansage** (Entscheidung C2,
+    // beantwortet am 2026-09-14). Fehlt es, steht der Auftrag fuer sich
+    // wie vorher.
+    verlauf: Option<Vec<myl_client::Nachricht>>,
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Abschluss, String> {
@@ -590,35 +594,121 @@ async fn agent_fahren(
                     myl_client::Meldung::Aufruf { name, argumente } => Lebend::Aufruf {
                         name: name.to_string(),
                         argumente: myl_client::lauf::kurzform(argumente),
+                        voll: myl_client::lauf::volltext_der_argumente(argumente),
                     },
                     myl_client::Meldung::Ergebnis { name, text } => Lebend::Ergebnis {
                         name: name.to_string(),
-                        text: myl_client::lauf::eine_zeile(text, 200),
+                        text: myl_client::lauf::bis_zur_grenze(text, myl_client::lauf::VOLLTEXT_GRENZE),
                     },
                     myl_client::Meldung::Abgelehnt { name, grund } => Lebend::Abgelehnt {
                         name: name.to_string(),
                         grund: grund.to_string(),
                     },
+                    myl_client::Meldung::Verdichtet { vorher, nachher } => {
+                        Lebend::Verdichtet { vorher, nachher }
+                    }
                 },
             );
         };
-        let ergebnis = myl_client::lauf::fahren_beobachtet(
-            m, &ruestung, schritte, !gesperrt, grenze, &auftrag, Some(&melder),
+        let verlauf = verlauf.unwrap_or_default();
+        let ergebnis = myl_client::lauf::fahren_im_gespraech(
+            m, &ruestung, schritte, !gesperrt, grenze, &verlauf, &auftrag, Some(&melder),
         );
-        // ⛑ Siehe `zusehen`: Der Beobachter geht wieder ab, sonst
+        // 📌 Siehe `zusehen`: Der Beobachter geht wieder ab, sonst
         // meldete dieser Lauf in den naechsten hinein.
         m.beobachter = None;
-        Ok(ergebnis)
+        let gespraech = myl_client::gespraech::Gespraech::aus(ergebnis.nachrichten.clone());
+        let ansage = myl_client::gespraech::ansage(&ruestung);
+        let kontext = myl_client::gespraech::anzeige(&*m, Some(&ansage), &gespraech);
+        Ok((ergebnis, gespraech, kontext))
     })
     .await
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
+    let (aus, gespraech, kontext) = aus;
     Ok(Abschluss {
         verlauf: aus.verlauf.iter().map(zeile_aus).collect(),
         antwort: aus.antwort.clone(),
         fertig: aus.fertig(),
         sekunden: (aus.sekunden * 10.0).round() / 10.0,
         gesperrt,
+        nachrichten: gespraech.nachrichten().to_vec(),
+        zusammenfassung: myl_client::gespraech::zusammenfassung(&gespraech),
+        kontext,
     })
+}
+
+/// **Wie viel Kontext ein Gespraech belegt**, fuer den Balken am
+/// Eingabefeld.
+///
+/// ⚑ Im Agentenmodus zaehlt die Werkzeugansage mit, denn sie steht vor
+/// jedem Lauf; im Chat gibt es keine.
+#[tauri::command]
+async fn kontext(
+    verlauf: Vec<myl_client::Nachricht>,
+    modus: String,
+    halter: tauri::State<'_, Halter>,
+) -> Result<Option<myl_client::gespraech::Kontextanzeige>, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let ansage = if modus == "agent" {
+        let r = myl_client::ruestung::ruesten(
+            &im_modus(&e),
+            myl_client::Ansageform::Amtlich,
+            kiste_fuer(&e),
+            Vec::new(),
+        )?;
+        Some(myl_client::gespraech::ansage(&r))
+    } else {
+        None
+    };
+    let halt = halter.modell.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+        let Some(m) = g.as_ref() else { return Ok(None) };
+        let gespraech = myl_client::gespraech::Gespraech::aus(verlauf);
+        Ok(myl_client::gespraech::anzeige(m, ansage.as_ref(), &gespraech))
+    })
+    .await
+    .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))?
+}
+
+/// Was eine Verdichtung zurueckbringt.
+#[derive(Serialize)]
+struct Verdichtung {
+    /// Das Gespraech danach: eine Zusammenfassung.
+    nachrichten: Vec<myl_client::Nachricht>,
+    /// Dieselbe als Text, zum Ablegen im Fenster.
+    zusammenfassung: Option<String>,
+    vorher: usize,
+    nachher: usize,
+}
+
+/// **Fasst ein Gespraech zusammen**, mit dem geladenen Modell selbst.
+///
+/// ⚑ Dieselbe Stelle wie `/compress` in der Konsole,
+/// `myl_client::gespraech::verdichten`.
+#[tauri::command]
+async fn verdichten(
+    verlauf: Vec<myl_client::Nachricht>,
+    halter: tauri::State<'_, Halter>,
+) -> Result<Verdichtung, String> {
+    let halt = halter.modell.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
+        let Some(m) = g.as_ref() else {
+            return Err("das Modell ist nicht geladen".to_string());
+        };
+        let mut gespraech = myl_client::gespraech::Gespraech::aus(verlauf);
+        let (vorher, nachher) =
+            myl_client::gespraech::verdichten(m, &mut gespraech).map_err(|f| f.to_string())?;
+        Ok(Verdichtung {
+            nachrichten: gespraech.nachrichten().to_vec(),
+            zusammenfassung: myl_client::gespraech::zusammenfassung(&gespraech),
+            vorher,
+            nachher,
+        })
+    })
+    .await
+    .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))?
 }
 
 /// Eine Frage ohne Werkzeuge, mit dem bisherigen Gespraech davor.
@@ -631,18 +721,19 @@ async fn agent_fahren(
 /// | | `frage` | `agent_fahren` |
 /// |---|---|---|
 /// | Werkzeuge | keine | die des Klienten, in der Einhaengung |
-/// | Gespraech | **traegt den Verlauf mit** | jeder Auftrag steht fuer sich |
-/// | Belege | keine | Schrittbudget und Belegkette je Lauf |
+/// | Gespraech | **traegt den Verlauf mit** | **traegt ihn ebenfalls mit** (seit 2026-09-14) |
+/// | Belege | keine | Schrittbudget und Belegkette je Auftrag |
 ///
 /// ⚑ **Der Verlauf wird mitgegeben, weil das Modell ihn tragen kann.**
 /// `chat` nimmt eine Nachrichtenliste; ein Fenster, das nur die letzte
 /// Frage schickt, waere ein Chatfenster ohne Gespraech.
 ///
-/// ⛑ **Beim Agenten geht das ausdruecklich nicht**, und das ist
-/// Entscheidung C2: Fortgesetzt wird das **Modell**, nicht das
-/// Gespraech, denn Schrittbudget und Belegkette gelten je Lauf. Ein
-/// Fenster, das beide gleich behandelte, versteckte genau den
-/// Unterschied, um dessentwillen es die Betriebsarten gibt.
+/// 📌 **Beim Agenten ging das bis zum 2026-09-14 ausdruecklich nicht**
+/// (Entscheidung C2). Seitdem traegt auch er das Gespraech mit, und der
+/// Unterschied der Betriebsarten bleibt dort, wo er hingehoert: bei den
+/// Werkzeugen und den Belegen. Schrittbudget und Belegkette gelten
+/// weiter je Auftrag; die Begruendung steht an
+/// `myl_local_agent::schleife::Lauf::fahren_mit_verlauf`.
 #[tauri::command]
 async fn frage(
     verlauf: Vec<(String, String)>,
@@ -681,12 +772,21 @@ async fn frage(
         zusehen(m, &fenster);
         let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
         m.beobachter = None;
-        antwort
+        let text = antwort?;
+        let mut danach = n;
+        danach.push(myl_client::Nachricht::modell(text.clone()));
+        let kontext = myl_client::gespraech::anzeige(
+            &*m,
+            None,
+            &myl_client::gespraech::Gespraech::aus(danach),
+        );
+        Ok::<_, String>((text, kontext))
     })
     .await
     .map_err(|e| format!("der Rechenfaden ist abgestuerzt: {e}"))??;
+    let (text, kontext) = text;
 
-    Ok(Antwort { text, sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0 })
+    Ok(Antwort { text, sekunden: (anfang.elapsed().as_secs_f64() * 10.0).round() / 10.0, kontext })
 }
 
 /// Was waehrend eines Laufs beim Fenster ankommt.
@@ -712,12 +812,15 @@ enum Lebend {
     Text { text: String },
     /// Das Modell wird zum `nummer`-ten Mal gefragt.
     Schritt { nummer: u32 },
-    /// Ein Werkzeug laeuft jetzt.
-    Aufruf { name: String, argumente: String },
-    /// Und was es zurueckgab.
+    /// Ein Werkzeug laeuft jetzt: kurz fuer die Zeile, `voll` fuer das
+    /// Aufklappen.
+    Aufruf { name: String, argumente: String, voll: String },
+    /// Und was es zurueckgab, bis zur Anzeigegrenze vollstaendig.
     Ergebnis { name: String, text: String },
     /// Ein Vorschlag wurde abgewiesen, mit dem Grund.
     Abgelehnt { name: String, grund: String },
+    /// Der Verlauf passte nicht mehr in den Kontext und wurde verdichtet.
+    Verdichtet { vorher: usize, nachher: usize },
 }
 
 /// Der Ereignisname, unter dem alles Lebende laeuft.
@@ -751,6 +854,8 @@ fn zusehen(m: &mut myl_client::Oertlichesmodell, fenster: &tauri::AppHandle) {
 struct Antwort {
     text: String,
     sekunden: f64,
+    /// Der Kontext nach der Antwort, fuer den Balken.
+    kontext: Option<myl_client::gespraech::Kontextanzeige>,
 }
 
 /// Ein Schritt, wie ihn das Fenster braucht.
@@ -758,6 +863,10 @@ struct Antwort {
 struct Zeile {
     art: &'static str,
     text: String,
+    /// Beim Aufruf die Argumente genau so, wie sie ankamen; das Fenster
+    /// zeigt sie beim Aufklappen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voll: Option<String>,
 }
 
 /// Was ein Lauf zurueckbringt.
@@ -771,19 +880,28 @@ struct Abschluss {
     /// diese Angabe sieht der Nutzer einen Agenten, der seine Werkzeuge
     /// nicht benutzt, und haelt es fuer ein Modellproblem.
     gesperrt: bool,
+    /// **Das Gespraech nach dem Lauf**, ohne Werkzeugansage und samt einer
+    /// Verdichtung, falls eine noetig war. Das Fenster gibt es beim
+    /// naechsten Auftrag zurueck.
+    nachrichten: Vec<myl_client::Nachricht>,
+    /// Der Kontext danach, fuer den Balken.
+    kontext: Option<myl_client::gespraech::Kontextanzeige>,
+    /// Die Zusammenfassung am Anfang des Gespraechs, falls der Lauf
+    /// verdichten musste; das Fenster legt nur sie ab.
+    zusammenfassung: Option<String>,
 }
 
 fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
     use myl_client::lauf::Schritt as S;
     match s {
-        S::Plan(t) => Zeile { art: "plan", text: t.clone() },
-        S::Denken(t) => Zeile { art: "denken", text: t.clone() },
-        S::Aufruf { name, argumente } => {
-            Zeile { art: "aufruf", text: format!("{name} {argumente}") }
+        S::Plan(t) => Zeile { art: "plan", text: t.clone(), voll: None },
+        S::Denken(t) => Zeile { art: "denken", text: t.clone(), voll: None },
+        S::Aufruf { name, argumente, voll } => {
+            Zeile { art: "aufruf", text: format!("{name} {argumente}"), voll: Some(voll.clone()) }
         }
-        S::Unlesbar(t) => Zeile { art: "unlesbar", text: t.clone() },
-        S::Ergebnis(t) => Zeile { art: "ergebnis", text: t.clone() },
-        S::Antwort(t) => Zeile { art: "antwort", text: t.clone() },
+        S::Unlesbar(t) => Zeile { art: "unlesbar", text: t.clone(), voll: None },
+        S::Ergebnis(t) => Zeile { art: "ergebnis", text: t.clone(), voll: None },
+        S::Antwort(t) => Zeile { art: "antwort", text: t.clone(), voll: None },
     }
 }
 
@@ -802,7 +920,7 @@ fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
 /// Das Fenster ruft `ordner_waehlen` wie jeden anderen Befehl auch,
 /// und die Erlaubnisliste bleibt bei ihrem einen Eintrag.
 ///
-/// ⛑ **`async`, und das ist keine Kosmetik.** Tauri fuehrt Befehle
+/// 📌 **`async`, und das ist keine Kosmetik.** Tauri fuehrt Befehle
 /// ohne `async` **auf dem Hauptfaden** aus, und `blocking_pick_folder`
 /// wartet dort auf eine Antwort, die nur der Hauptfaden geben kann:
 /// Das Fenster stuende. Mit `async` laeuft der Befehl auf dem
@@ -838,7 +956,7 @@ async fn ordner_waehlen(
     let Some(gewaehlt) = w.blocking_pick_folder() else {
         return Ok(None);
     };
-    // ⛑ `simplified` nimmt unter Windows das `\\?\`-Praefix weg. Ohne
+    // 📌 `simplified` nimmt unter Windows das `\\?\`-Praefix weg. Ohne
     // das stuende im Feld ein Pfad, den zwar jede Rust-Funktion
     // versteht, aber kein Mensch wiedererkennt.
     let pfad = gewaehlt.simplified().into_path().map_err(|f| f.to_string())?;
@@ -860,6 +978,8 @@ fn main() {
             modell_laden,
             agent_fahren,
             frage,
+            kontext,
+            verdichten,
             werkzeuge,
             modelle,
             katalog,
@@ -876,7 +996,7 @@ fn main() {
 
 // ── Modelle holen und Artefakte bauen ───────────────────────────────
 //
-// # ⛑ Die groesste Luecke zwischen „frischer Klon" und „laeuft"
+// # 📌 Die groesste Luecke zwischen „frischer Klon" und „laeuft"
 //
 // Bis zum 2026-09-09 war `modell.artefakt` ein Textfeld: ein Pfad, den
 // jemand von Hand eintraegt und der existieren muss. Wer die
@@ -931,7 +1051,7 @@ struct Katalogeintrag {
 
 /// Wo das Repositorium liegt, von der Oberflaeche aus gesehen.
 ///
-/// ⛑ **Gesucht und nicht angenommen.** Die Oberflaeche laeuft im
+/// 📌 **Gesucht und nicht angenommen.** Die Oberflaeche laeuft im
 /// Entwicklungsbaum aus `CLIENT/myl-oberflaeche`, als gebuendelte App
 /// aus einem ganz anderen Verzeichnis. Wer den Pfad festnagelt, baut
 /// einen Knopf, der auf genau einer Maschine geht.
@@ -993,7 +1113,7 @@ fn platte_nachfuehren(halter: &Halter) -> Result<u64, String> {
     }
 }
 
-/// ⛑ **Die Suche steht seit dem 2026-09-10 in `myl-client`.**
+/// 📌 **Die Suche steht seit dem 2026-09-10 in `myl-client`.**
 ///
 /// Sie stand hier, und das Bedieninstrument hatte sie nicht: `myl` gab
 /// aus einem fremden Arbeitsverzeichnis „es fehlt das
@@ -1020,7 +1140,7 @@ const KEIN_ORDNER: &str = "kein-ausgabeordner";
 ///
 /// # ⚑ Warum hier und nicht ueber einen Speichern-Dialog
 ///
-/// ⛑ **Diese Begruendung hiess einmal „ein Dialog braucht ein
+/// 📌 **Diese Begruendung hiess einmal „ein Dialog braucht ein
 /// weiteres Zusatzstueck".** Seit dem Ordnerauswaehler gibt es das
 /// Zusatzstueck, und die Begruendung traegt trotzdem, nur aus einem
 /// anderen Grund: Ein Speichern-Dialog ist **bei jedem Ausgeben** ein
@@ -1031,7 +1151,7 @@ const KEIN_ORDNER: &str = "kein-ausgabeordner";
 /// Der Pfad kommt zurueck und steht in der Meldung, also weiss jeder,
 /// wo es liegt.
 ///
-/// ⛑ **Der Name wird entschaerft und nicht uebernommen.** Ein Titel
+/// 📌 **Der Name wird entschaerft und nicht uebernommen.** Ein Titel
 /// kommt aus dem ersten Satz eines Gespraechs und kann alles
 /// enthalten, `/` und `..` eingeschlossen; ungeprueft uebernommen
 /// schriebe das Fenster irgendwohin. Erlaubt sind Buchstaben, Ziffern,
@@ -1039,7 +1159,7 @@ const KEIN_ORDNER: &str = "kein-ausgabeordner";
 #[tauri::command]
 fn gespraech_ausgeben(titel: String, inhalt: String) -> Result<String, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    // ⛑ **Ohne eingestellten Ordner wird nichts geschrieben**, und der
+    // 📌 **Ohne eingestellten Ordner wird nichts geschrieben**, und der
     // Fehler traegt eine Marke, an der das Fenster ihn erkennt: Es
     // oeffnet dann die Einstellungen an genau diesem Feld, statt eine
     // Meldung zu zeigen, die niemand in eine Handlung uebersetzen kann.
@@ -1076,7 +1196,7 @@ fn gespraech_ausgeben(titel: String, inhalt: String) -> Result<String, String> {
 
 /// Ergaenzt eine Fehlermeldung um den Hinweis, der wirklich hilft.
 ///
-/// ⛑ **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
+/// 📌 **macOS meldet eine abgelehnte Ordnerfreigabe als „No such file or
 /// directory".** Nicht als fehlende Berechtigung: Der Kernel gibt
 /// `ENOENT` zurueck, damit ein Programm nicht einmal erfaehrt, dass es
 /// den Ordner gibt. Wer die Meldung liest, sucht danach einen
@@ -1109,7 +1229,7 @@ fn mit_zugriffshinweis(fehler: String, pfad: &str) -> String {
 
 /// Macht einen relativen Artefaktpfad gegen die Wurzel absolut.
 ///
-/// ⛑ **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
+/// 📌 **Ohne das scheitert „Modell laden" aus dem Finder heraus**, und
 /// zwar mit `No such file or directory`: In den Einstellungen steht
 /// `INTEGER_LLM/artifacts/myelith-4b`, und das ist relativ zu einem
 /// Arbeitsverzeichnis, das dort `/` ist. Ein absoluter Pfad in den
@@ -1209,7 +1329,7 @@ fn venv_bin(w: &std::path::Path) -> std::path::PathBuf {
 /// Der `PATH`, unter dem die Bauskripte laufen: die Kalibrier-Umgebung
 /// **vor** dem System.
 ///
-/// ⛑ **Bis zum 2026-09-09 bekam nur der Kalibrierschritt ihn.** Der
+/// 📌 **Bis zum 2026-09-09 bekam nur der Kalibrierschritt ihn.** Der
 /// Download davor lief mit dem blossen System-`PATH`, und
 /// `fetch_model.sh` bricht ohne `hf` ab. Der Befehl liegt aber genau
 /// hier und nicht im System: `huggingface_hub` wird in die Umgebung
@@ -1380,7 +1500,7 @@ async fn artefakt_bauen(
                     .current_dir(w.join("INTEGER_LLM"))
                     .env("MODEL_ID", &repo)
                     .env("REVISION", &revision)
-                    // ⛑ Ohne diese Zeile bricht `fetch_model.sh` mit
+                    // 📌 Ohne diese Zeile bricht `fetch_model.sh` mit
                     // „hf-CLI nicht gefunden" ab, obwohl der Befehl in
                     // der Kalibrier-Umgebung liegt.
                     .env("PATH", pfad_mit_venv(&w)),
@@ -1418,7 +1538,7 @@ async fn artefakt_bauen(
 
 /// Faehrt einen Befehl und reicht jede Zeile durch.
 ///
-/// ⛑ **Zeilenweise und nicht am Ende.** Ein Kalibrierlauf dauert
+/// 📌 **Zeilenweise und nicht am Ende.** Ein Kalibrierlauf dauert
 /// Minuten bis Stunden; wer die Ausgabe erst danach zeigt, hat ein
 /// Fenster, das aussieht wie eingefroren. Genau dafuer gibt es die
 /// Ereignisse.

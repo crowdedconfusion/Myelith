@@ -137,3 +137,45 @@ fn eine_ungerade_eingabe_wird_abgewiesen() {
     let auditor = ModellAuditor::neu(Arc::clone(&modell), 0, 1, 0).expect("Bereich");
     assert!(auditor.audit_segment(SegmentId::new([1; 32]), &[1, 2, 3]).is_err());
 }
+
+/// **Hinter Position null lehnt der Nachrechner ab, statt ohne Verlauf
+/// zu rechnen** (Fund 373).
+///
+/// Die Gegenprobe steht daneben: Ein Shard, der die Positionen davor
+/// gerechnet hat, kommt an Position eins zu einer anderen Spur als ein
+/// leerer Speicher an derselben Stelle. Genau diese Spur haette der
+/// Nachrechner verlangt.
+#[test]
+fn hinter_position_null_lehnt_der_nachrechner_ab() {
+    let dir = artifacts_dir();
+    if !artefakte::vorhanden(&dir) {
+        return;
+    }
+    let modell = Arc::new(load_model(&dir).expect("Modell-Ladung"));
+    let ein = eingabe(&modell);
+    let bytes: Vec<u8> = ein.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let auditor = ModellAuditor::neu(Arc::clone(&modell), 0, 2, 1).expect("Bereich");
+    assert_eq!(
+        auditor.audit_segment(SegmentId::new([1; 32]), &bytes),
+        Err(myl_verifier::CheckError::OhneVerlauf { position: 1 })
+    );
+
+    // Zwei Verlaeufe fuer Position eins, die sich nur in Position null
+    // unterscheiden. ⚠️ Mit derselben Eingabe an beiden Positionen waeren
+    // auch die Values gleich, und jede Gewichtung ergaebe dasselbe.
+    let spur_bei_eins = |vorher: &[i16]| {
+        let mut cache = KVCache::new(modell.num_layers, modell.num_kv_heads);
+        modell.run_layers(vorher.to_vec(), 0, &mut cache, 0, 2);
+        modell.run_layers(ein.clone(), 1, &mut cache, 0, 2)
+    };
+    let anders: Vec<i16> = ein.iter().map(|v| v.wrapping_mul(3).wrapping_sub(11)).collect();
+    assert!(
+        spur_bei_eins(&ein) != spur_bei_eins(&anders),
+        "Position eins haengt an Position null, also braucht der Nachrechner den Verlauf"
+    );
+    let ohne = std::panic::catch_unwind(|| {
+        let mut leer = KVCache::new(modell.num_layers, modell.num_kv_heads);
+        modell.run_layers(ein.clone(), 1, &mut leer, 0, 1)
+    });
+    assert!(ohne.is_err(), "ein leerer Speicher an Position eins ist eine Luecke");
+}

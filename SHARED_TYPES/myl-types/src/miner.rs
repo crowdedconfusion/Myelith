@@ -156,7 +156,7 @@ pub struct MinerRegistration {
     /// erreichbar ist, kann keine Spur liefern, und eine ausbleibende
     /// Antwort zählt wie eine falsche.
     ///
-    /// ⛑ **Was das nicht deckt, und es gehört gesagt:** Wer viele Miner
+    /// 📌 **Was das nicht deckt, und es gehört gesagt:** Wer viele Miner
     /// auf die Adresse eines **Dritten** anmeldet, schickt ihm fremden
     /// Verkehr. Das ist heute frei, weil eine Anmeldung nichts kostet;
     /// **sobald Stake an der Anmeldung hängt, ist es bepreist**, und

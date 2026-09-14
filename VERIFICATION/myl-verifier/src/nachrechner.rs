@@ -91,6 +91,22 @@ impl SegmentAuditor for ModellAuditor {
         _segment_id: SegmentId,
         input_activations: &[u8],
     ) -> Result<Vec<Hash>, CheckError> {
+        // ⛔️ **Fund 373 (2026-09-14): hinter Position null rechnete er etwas
+        // anderes als der Beweiser.** Der Speicher unten ist leer. Der
+        // Shard, der das Segment gerechnet hat, hielt an Position `p` die
+        // Keys und Values aller Positionen davor, und die Aufmerksamkeit
+        // liest sie. Der Nachrechner las nur den eigenen Eintrag: **Seine
+        // Spur wich bei jedem ehrlichen Shard ab**, sobald `p > 0` war, und
+        // die Pruefungen liefen nur mit Position null. Aufgefallen, als der
+        // KV-Speicher zusammenhaengend wurde und die Luecke nicht mehr
+        // annahm.
+        //
+        // ⚑ **Bis der Verlauf im Streitfall mitkommt, wird abgelehnt statt
+        // falsch gerechnet**: Eine Abweichung, die keine ist, schluege einen
+        // ehrlichen Shard.
+        if self.position > 0 {
+            return Err(CheckError::OhneVerlauf { position: self.position });
+        }
         let mut hidden = Self::aktivierungen(input_activations)?;
         if hidden.len() != self.modell.hidden_size {
             return Err(CheckError::EmptySegment);

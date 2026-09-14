@@ -120,7 +120,7 @@ fn fahren(
 /// Die Werkzeugnamen dieses Laufs, aus derselben Tabelle wie das
 /// Angebot.
 ///
-/// ⛑ **Hier standen sie als Zeichenketten**, und als die Namen am
+/// 📌 **Hier standen sie als Zeichenketten**, und als die Namen am
 /// 2026-09-09 an die Ansageform gebunden wurden, spielten vier
 /// Pruefungen dem Modell Aufrufe vor, die es gar nicht mehr gibt. Sie
 /// fielen mit „die Auflistung fehlt", was nach einem Fehler in der
@@ -255,7 +255,7 @@ fn das_protokoll_nennt_die_einhaengung() {
     assert!(!hex.contains("tmp"), "der Abdruck traegt Teile des Pfades");
 }
 
-/// ⛑ **Nur lesen steht auch als nur lesen darin.** Ein Lauf, der nichts
+/// 📌 **Nur lesen steht auch als nur lesen darin.** Ein Lauf, der nichts
 /// veraendern konnte, soll das zeigen, ohne dass jemand rechnet.
 #[test]
 fn nur_lesen_steht_im_protokoll() {

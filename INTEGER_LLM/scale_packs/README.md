@@ -8,7 +8,7 @@ die er sich bei Hugging Face holt.
 
 | | |
 |---|---|
-| Größe je Modell | 543 KiB (0,5B) · 1,3 MiB (7B) |
+| Größe je Modell | rund 11 MiB (0,6B 10,3 · 4B 10,7 · 30B-A3B 10,8), davon 10 MiB RoPE-Tabellen für 40 960 Positionen (θ_v 0.20.0); die Tabellen sind bei allen drei Modellen gleich und liegen im Repository nur einmal |
 | Enthält | `scales.json`, `luts.json`, `*.lut.bin`, `theta_v.json` |
 | Enthält **nicht** | Modellgewichte, Tokenizer |
 

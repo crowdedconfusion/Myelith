@@ -169,7 +169,7 @@ def main():
     out.write_text(json.dumps({
         "parallel_generation": {
             "decoding": "greedy, max_new_tokens = " + str(MAX_TOKENS),
-            # ⛑ **Fund 341-Geschwister:** Hier stand fest
+            # 📌 **Fund 341-Geschwister:** Hier stand fest
             # `Qwen/Qwen2.5-0.5B`, unabhaengig davon, welches Modell der
             # Lauf geladen hat. Ein Evidenzpaket, das ein anderes Modell
             # nennt als das gemessene, belegt nichts.

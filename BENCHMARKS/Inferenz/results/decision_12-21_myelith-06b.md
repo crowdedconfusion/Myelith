@@ -8,9 +8,9 @@
 |---|---|
 | Modell | Qwen/Qwen3-0.6B (Basis-Variante) |
 | FP-Baseline | BF16, HF-Implementierung: Perplexität 31.86 |
-| Integer-Modell | θ_v 0.18.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 33.28 |
+| Integer-Modell | θ_v 0.19.0 (Gewichte int8 per_channel, Aktivierungen int16 per_layer, LM-Head int16 per-channel als benannte spec-Ausnahme): Perplexität 33.29 |
 | Datensatz | WikiText-2, Testsplit; 4 Sequenzen à 128 Tokens (435 ausgewertete Positionen) |
-| Relativer Anstieg | **+4.47 %** |
+| Relativer Anstieg | **+4.48 %** |
 | Akzeptanzkriterium | max. 5.0 % relativer Anstieg |
 | **Ergebnis** | **AKZEPTIERT** |
 

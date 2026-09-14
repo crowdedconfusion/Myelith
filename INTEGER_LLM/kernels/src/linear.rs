@@ -28,7 +28,7 @@ use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
 /// rund `12 µs + 6,3 µs je Thread`, also 25 µs bei zwei und 107 µs bei
 /// fünfzehn.
 ///
-/// ⛑ **Der Beleg liegt in `src/bin/threads_probe.rs` und ist gültig.**
+/// 📌 **Der Beleg liegt in `src/bin/threads_probe.rs` und ist gültig.**
 /// Am 2026-09-11 stand hier eine Weile, es gebe die Datei nicht mehr;
 /// **ich hatte in `runtime/src/bin` gesucht statt hier.** Der Pfad ist
 /// relativ zu dieser Kiste, und dort liegt sie. Nachgemessen am selben
@@ -124,7 +124,7 @@ where
     F: Fn(usize) -> i16 + Sync,
 {
     let arbeit = zeilen.saturating_mul(arbeit_je_zeile);
-    // ⛑ **Die Reihenfolge dieser beiden Zeilen war bis zum 2026-09-08
+    // 📌 **Die Reihenfolge dieser beiden Zeilen war bis zum 2026-09-08
     // vertauscht**, und `clamp(2, 1)` ist kein milder Fehler, sondern
     // eine Panik: `min > max`. Getroffen haette es jede **einkernige**
     // Maschine bei jeder Matrix ueber der Schwelle, also genau die
@@ -144,7 +144,7 @@ where
     }
     let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, kerne);
 
-    // ⛑ **Hier stand bis zum 2026-09-11 ein `std::thread::scope` je
+    // 📌 **Hier stand bis zum 2026-09-11 ein `std::thread::scope` je
     // Matrix**, und damit ein neuer Betriebssystemfaden je Aufruf.
     // Gemessen: 253 Bereiche je Token beim 4B-Modell, zusammen 15,7 ms
     // von 68,7, also **23 % reiner Fadenstart**. Der Pool weckt
@@ -292,7 +292,7 @@ mod stapeltests {
 
     /// **Gebuendelt ist bitgleich zu einzeln.**
     ///
-    /// ⛑ **Die Gegenprobe zur ganzen Buendelung.** Sie ist per
+    /// 📌 **Die Gegenprobe zur ganzen Buendelung.** Sie ist per
     /// Konstruktion gegeben, weil jedes Ausgabeelement aus demselben
     /// Skalarprodukt entsteht; **eine Zusage per Konstruktion, die
     /// niemand nachrechnet, ist trotzdem nur eine Zusage.**
@@ -328,7 +328,7 @@ mod stapeltests {
     /// **Ein Buendel vieler Matrizen ist bitgleich zu den Matrizen
     /// einzeln, mit gemischten Formen, Eingaben und Skalenarten.**
     ///
-    /// ⛑ **Die Gegenprobe zu Fund 332.** Auch sie gilt per
+    /// 📌 **Die Gegenprobe zu Fund 332.** Auch sie gilt per
     /// Konstruktion, und auch hier ist eine Zusage, die niemand
     /// nachrechnet, nur eine Zusage. Geprueft wird ausdruecklich mit
     /// **verschiedenen** Zeilenzahlen je Teil, denn genau dort greift
@@ -392,6 +392,52 @@ mod stapeltests {
             anfang += z;
         }
         assert_eq!(anfang, gebuendelt.len(), "das Buendel ist laenger als seine Teile");
+    }
+
+    /// **Viele Stapel sind dasselbe wie jeder Stapel einzeln**, mit
+    /// verschiedenen Formen, Eingabezahlen (auch null) und beiden
+    /// Skalenarten.
+    #[test]
+    fn viele_stapel_sind_dasselbe_wie_einzeln() {
+        let formen = [(3usize, 8usize, 5usize), (17, 33, 0), (64, 128, 2), (2, 2049, 7), (1, 4, 1)];
+        let gewichte: Vec<Vec<i8>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (z, sp, _))| zufall(z * sp, 3 + i as u64).into_iter().map(|v| (v % 127) as i8).collect())
+            .collect();
+        let eingaben: Vec<Vec<Vec<i16>>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (_, sp, b))| (0..*b).map(|j| zufall(*sp, 50 + (i * 10 + j) as u64)).collect())
+            .collect();
+        let scheiben: Vec<Vec<&[i16]>> =
+            eingaben.iter().map(|e| e.iter().map(|v| v.as_slice()).collect()).collect();
+        let shifts: Vec<Vec<u8>> = formen.iter().map(|(z, _, _)| (0..*z).map(|r| 3 + (r % 4) as u8).collect()).collect();
+        let je_zeile: Vec<Vec<u8>> = formen.iter().map(|(z, _, _)| (0..*z).map(|r| 4 + (r % 3) as u8).collect()).collect();
+        let auftraege: Vec<Stapelauftrag<'_>> = formen
+            .iter()
+            .enumerate()
+            .map(|(i, (_, sp, _))| Stapelauftrag {
+                xs: &scheiben[i],
+                w: &gewichte[i],
+                in_features: *sp,
+                w_shifts: &shifts[i],
+                act_frac_bits: 7,
+                aus: if i % 2 == 0 { Ausgangsskala::Eine(6) } else { Ausgangsskala::JeZeile(&je_zeile[i]) },
+            })
+            .collect();
+        let viele = linear_w8a16_stapel_viele(&auftraege);
+        let cpu = linear_w8a16_stapel_viele_cpu(&auftraege);
+        for (i, (_, sp, b)) in formen.iter().enumerate() {
+            let einzeln = if i % 2 == 0 {
+                linear_w8a16_stapel(&scheiben[i], &gewichte[i], *sp, &shifts[i], 7, 6)
+            } else {
+                linear_w8a16_pc_stapel(&scheiben[i], &gewichte[i], *sp, &shifts[i], 7, &je_zeile[i])
+            };
+            assert_eq!(viele[i].len(), *b);
+            assert_eq!(viele[i], einzeln, "Auftrag {i}");
+            assert_eq!(cpu[i], einzeln, "Auftrag {i} auf der CPU");
+        }
     }
 
     /// **Ein leeres Buendel ist leer und kein Absturz.**
@@ -591,6 +637,7 @@ mod kerngrenze_probe {
 /// mischt Teile mit skalarer und mit kanalweiser Skala (gate und up
 /// haben eine, down hat eine je Kanal), und zwei getrennte Wege haetten
 /// genau diesen Fall nicht.
+#[derive(Clone, Copy)]
 pub enum Ausgangsskala<'a> {
     /// Eine Skala fuer alle Zeilen, wie bei [`linear_w8a16`].
     Eine(u8),
@@ -620,7 +667,7 @@ impl Buendelteil<'_> {
 
 /// **Viele Matrizen in einer Runde.**
 ///
-/// # ⛑ Fund 332 (2026-09-11): eine Poolrunde kostet mehr als die Matrix
+/// # 📌 Fund 332 (2026-09-11): eine Poolrunde kostet mehr als die Matrix
 ///
 /// Ein Expertengemisch rechnet je Ebene **vierundzwanzig** kleine
 /// Matrizen (acht Experten mal gate, up, down), je Token also
@@ -712,6 +759,113 @@ pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
     })
 }
 
+/// Ein Stapel in [`linear_w8a16_stapel_viele`]: viele Eingaben auf
+/// denselben Gewichten.
+pub struct Stapelauftrag<'a> {
+    pub xs: &'a [&'a [i16]],
+    /// Flach, Zeile fuer Zeile.
+    pub w: &'a [i8],
+    pub in_features: usize,
+    pub w_shifts: &'a [u8],
+    pub act_frac_bits: u8,
+    pub aus: Ausgangsskala<'a>,
+}
+
+/// **Viele Stapel zugleich**, je Auftrag ein Ergebnis wie
+/// [`linear_w8a16_stapel`]: `aus[auftrag][eingabe][zeile]`.
+///
+/// # ⚑ Warum es das gibt (2026-09-14)
+///
+/// Die Vorbereitung einer Gemischebene gruppiert ihre Token je Experte und
+/// rechnet dann bis zu 384 Expertenmatrizen, jede fuer ihre Token. **Einzeln
+/// kostete jede davon auf der GPU einen Befehlspuffer** (0,2 bis 0,3 ms fest)
+/// **und auf der CPU eine Poolrunde.** Hier rechnen alle in einem
+/// Befehlspuffer, oder auf der CPU in einer Runde ueber
+/// [`linear_w8a16_buendel`].
+///
+/// ⚑ **Jedes Ausgabeelement bleibt dasselbe Skalarprodukt**, auf beiden
+/// Wegen; geprueft in `viele_stapel_sind_dasselbe_wie_einzeln`.
+pub fn linear_w8a16_stapel_viele(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec<i16>>> {
+    for a in auftraege {
+        assert_eq!(
+            a.w.len(),
+            a.in_features * a.w_shifts.len(),
+            "linear_stapel_viele: {} Gewichte passen nicht zu {} Zeilen à {} Elementen",
+            a.w.len(),
+            a.w_shifts.len(),
+            a.in_features
+        );
+        if let Ausgangsskala::JeZeile(f) = a.aus {
+            assert_eq!(f.len(), a.w_shifts.len(), "linear_stapel_viele: eine Ausgangsskala je Kanal (Fund 20)");
+        }
+    }
+    if auftraege.iter().all(|a| a.xs.is_empty()) {
+        return auftraege.iter().map(|_| Vec::new()).collect();
+    }
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    {
+        let ziele: Vec<Box<dyn Fn(usize) -> u8 + Sync + '_>> = auftraege
+            .iter()
+            .map(|a| -> Box<dyn Fn(usize) -> u8 + Sync + '_> {
+                match a.aus {
+                    Ausgangsskala::Eine(f) => Box::new(move |_| f),
+                    Ausgangsskala::JeZeile(f) => Box::new(move |z| f[z]),
+                }
+            })
+            .collect();
+        let gpu: Vec<crate::metal::Auftrag<'_>> = auftraege
+            .iter()
+            .zip(&ziele)
+            .map(|(a, ziel)| crate::metal::Auftrag {
+                xs: a.xs,
+                w: a.w,
+                in_features: a.in_features,
+                w_shifts: a.w_shifts,
+                act_frac_bits: a.act_frac_bits,
+                ziel: ziel.as_ref(),
+            })
+            .collect();
+        if let Some(aus) = crate::metal::stapel_viele(&gpu) {
+            return aus;
+        }
+    }
+    linear_w8a16_stapel_viele_cpu(auftraege)
+}
+
+/// Wie [`linear_w8a16_stapel_viele`], **immer auf der CPU**: ein Buendel
+/// ueber alle Paare aus Auftrag und Eingabe, also eine Poolrunde.
+pub fn linear_w8a16_stapel_viele_cpu(auftraege: &[Stapelauftrag<'_>]) -> Vec<Vec<Vec<i16>>> {
+    let teile: Vec<Buendelteil<'_>> = auftraege
+        .iter()
+        .flat_map(|a| {
+            a.xs.iter().map(move |x| Buendelteil {
+                w: a.w,
+                x,
+                in_features: a.in_features,
+                w_shifts: a.w_shifts,
+                act_frac_bits: a.act_frac_bits,
+                aus: a.aus,
+            })
+        })
+        .collect();
+    let flach = linear_w8a16_buendel(&teile);
+    let mut anfang = 0usize;
+    auftraege
+        .iter()
+        .map(|a| {
+            let zeilen = a.w_shifts.len();
+            a.xs
+                .iter()
+                .map(|_| {
+                    let teil = flach[anfang..anfang + zeilen].to_vec();
+                    anfang += zeilen;
+                    teil
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// **W8A16 fuer mehrere Eingaben auf denselben Gewichten.**
 ///
 /// # ⚑ Dieselbe Rechnung, eine andere Reihenfolge
@@ -721,7 +875,7 @@ pub fn linear_w8a16_buendel(teile: &[Buendelteil<'_>]) -> Vec<i16> {
 /// Geaendert ist nur, wann eine Gewichtszeile gelesen wird: Sie wird
 /// einmal geholt und fuer alle Eingaben benutzt.
 ///
-/// ⛑ **Und genau daran haengt der Gewinn.** Beim 4B-Modell sind die
+/// 📌 **Und genau daran haengt der Gewinn.** Beim 4B-Modell sind die
 /// drei MLP-Matrizen 74,7 MB je Ebene; tokenweise werden sie einmal je
 /// Token gelesen, gebuendelt einmal fuer alle. Gemessen am 2026-09-11
 /// war die Vorbereitung eines Prompts von 588 Token bei 2,59 TB
@@ -763,6 +917,10 @@ pub fn linear_w8a16_pc_stapel(
 }
 
 /// Der gemeinsame Rumpf beider Stapelwege.
+///
+/// ⚑ **Mit dem Feature `metal` rechnet zuerst die GPU**, wenn sich die
+/// Buendelung dort lohnt; siehe `metal/mod.rs`. Die Pruefungen der Formen
+/// stehen davor und gelten fuer beide Wege.
 fn stapel_intern<S>(
     xs: &[&[i16]],
     W: &[i8],
@@ -781,6 +939,45 @@ where
         "linear_stapel: {} Gewichte passen nicht zu {zeilen} Zeilen à {in_features} Elementen",
         W.len()
     );
+    if xs.is_empty() {
+        return Vec::new();
+    }
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if let Some(aus) = crate::metal::stapel(xs, W, in_features, w_shifts, act_frac_bits, &out_frac) {
+        return aus;
+    }
+    stapel_cpu(xs, W, in_features, w_shifts, out_frac, act_frac_bits)
+}
+
+/// Wie [`linear_w8a16_pc_stapel`], **immer auf der CPU**.
+///
+/// Fuer die Selbstpruefung der GPU: Sie vergleicht mit diesem Weg und darf
+/// dabei nicht bei sich selbst ankommen.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) fn linear_w8a16_pc_stapel_cpu(
+    xs: &[&[i16]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    act_frac_bits: u8,
+    out_frac_bits: &[u8],
+) -> Vec<Vec<i16>> {
+    stapel_cpu(xs, W, in_features, w_shifts, |z| out_frac_bits[z], act_frac_bits)
+}
+
+/// Der Stapelweg auf der CPU.
+fn stapel_cpu<S>(
+    xs: &[&[i16]],
+    W: &[i8],
+    in_features: usize,
+    w_shifts: &[u8],
+    out_frac: S,
+    act_frac_bits: u8,
+) -> Vec<Vec<i16>>
+where
+    S: Fn(usize) -> u8 + Sync,
+{
+    let zeilen = w_shifts.len();
     let b = xs.len();
     if b == 0 {
         return Vec::new();
@@ -826,7 +1023,7 @@ where
 
 /// Wie viele Eingaben eine Kachel umfasst.
 ///
-/// # ⛑ Gemessen, und die erste Fassung hatte keine Kachel
+/// # 📌 Gemessen, und die erste Fassung hatte keine Kachel
 ///
 /// Ohne Kachelung laeuft die innere Schleife ueber **alle** Eingaben.
 /// Die Gewichtszeile bleibt dann zwar im Zwischenspeicher, aber die

@@ -434,7 +434,7 @@ mod tests {
 
     /// ⚑ **Beide Seiten der Frist, und ohne zu warten.**
     ///
-    /// ⛑ Hier stand ein Test, der **sechs Sekunden schlief**, um einen
+    /// 📌 Hier stand ein Test, der **sechs Sekunden schlief**, um einen
     /// Ping veralten zu lassen. Er kostete die ganze Suite sechs
     /// Sekunden und prüfte die Grenze **nicht**: Er lag weit dahinter
     /// und hätte auch eine Frist von einer Sekunde bestanden.

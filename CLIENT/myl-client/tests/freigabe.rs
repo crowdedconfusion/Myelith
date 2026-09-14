@@ -66,7 +66,7 @@ fn ohne_freigabe_gibt_es_keine_speicherschranke() {
 /// ⚑ **Die Kernfreigabe wirkt auf den Rechenpfad**, und zwar durch die
 /// ganze Naht hindurch: Einstellung, Klient, Laufzeit, Kerne.
 ///
-/// ⛑ **Sie steht als Einzelprueffung da und nicht neben anderen**, denn
+/// 📌 **Sie steht als Einzelprueffung da und nicht neben anderen**, denn
 /// die Grenze gilt fuer den **ganzen Prozess**. Eine zweite Prueffung
 /// daneben saehe zeitweise eine andere Kernzahl.
 #[test]

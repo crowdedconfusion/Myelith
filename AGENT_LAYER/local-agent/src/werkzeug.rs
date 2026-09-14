@@ -199,7 +199,7 @@ pub fn angebot(werkzeuge: &[Werkzeug], form: Ansageform) -> Nachricht {
 
 /// Ein Werkzeug, wie es in der Ansage steht.
 ///
-/// # ⛑ Warum das eine Struktur ist und kein `json!`
+/// # 📌 Warum das eine Struktur ist und kein `json!`
 ///
 /// Der erste Entwurf baute den Eintrag mit `serde_json::json!`, und
 /// `serde_json::Map` ist ohne das Merkmal `preserve_order` ein
@@ -248,7 +248,7 @@ struct Ansagefunktion<'a> {
 
 /// In welcher Form die Werkzeuge angesagt werden.
 ///
-/// # ⛑ Warum es diese Wahl ueberhaupt gibt
+/// # 📌 Warum es diese Wahl ueberhaupt gibt
 ///
 /// Bis zum 2026-09-08 gab es nur eine Form, und sie war eine **deutsche
 /// Paraphrase** der Vorlage, auf die das Modell geschliffen wurde. Der

@@ -80,7 +80,7 @@ fn dieselbe_folge_mit_und_ohne_beobachter() {
 
 /// ⚑ **Und der Beobachter kommt VOR dem naechsten Vorwaertspass.**
 ///
-/// ⛑ Der Unterschied ist der ganze Zweck: Meldet er erst danach, hinkt
+/// 📌 Der Unterschied ist der ganze Zweck: Meldet er erst danach, hinkt
 /// die Anzeige um einen vollen Vorwaertspass hinterher, und bei einem
 /// 4B-Modell ist das der sichtbare Teil der Wartezeit. Gemessen wird
 /// das an der Reihenfolge: Beim ersten Ruf steht genau ein Token in
@@ -107,7 +107,7 @@ fn gemeldet_wird_sofort_und_nicht_am_ende() {
 
 /// ⚑ **Eine Haltemarke beendet die Erzeugung, und sie steht nicht drin.**
 ///
-/// # ⛑ Der Fehler, aus dem diese Marken entstanden sind
+/// # 📌 Der Fehler, aus dem diese Marken entstanden sind
 ///
 /// Ohne sie rechnet die Schleife stur bis `max_new_tokens`. Gemessen am
 /// 2026-09-10 mit Qwen3-4B und 600 Token Grenze: Das Modell beendete
@@ -149,7 +149,7 @@ fn eine_haltemarke_beendet_und_steht_nicht_in_der_ausgabe() {
 
 /// ⚑ **Ohne Marken ist es Zeichen fuer Zeichen die alte Schleife.**
 ///
-/// ⛑ Diese Haelfte ist die wichtigere: `generate` steht in Beispielen
+/// 📌 Diese Haelfte ist die wichtigere: `generate` steht in Beispielen
 /// und Messungen, und eine Folge, die frueher endet, waere dort ein
 /// anderer Messwert.
 #[test]

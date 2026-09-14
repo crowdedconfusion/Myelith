@@ -489,7 +489,7 @@ fn gesammelt_rechnen_zwei_shards_wie_einer() {
 /// Breite null faellt in der Kernkiste auf die Matrixnormierung zurueck,
 /// und das prueft dort `eine_unpassende_breite_faellt_sauber_zurueck`.
 ///
-/// ⛑ **Hier steht die andere Haelfte:** dass eine frische `Sammlung`
+/// 📌 **Hier steht die andere Haelfte:** dass eine frische `Sammlung`
 /// wirklich keine Breiten hat. Ein Standardwert, der versehentlich
 /// gesetzt waere, aenderte den Protokollpfad still, und still ist genau
 /// das Problem: Zwei Knoten mit verschiedenen Fassungen rechneten
@@ -572,7 +572,7 @@ fn ein_geschriebener_stand_kommt_gleich_zurueck() {
     let _ = std::fs::remove_file(&d);
 }
 
-/// ⛑ **Ein Stand aus einem anderen Ebenenbereich wird abgelehnt**, statt
+/// 📌 **Ein Stand aus einem anderen Ebenenbereich wird abgelehnt**, statt
 /// stillschweigend Unsinn zu ergeben.
 #[test]
 fn ein_fremder_stand_wird_abgelehnt() {
@@ -658,7 +658,7 @@ fn ohne_staerke_zieht_nichts() {
     assert_eq!(&g.master[0].matrizen()[0][..20], &vorher[..]);
 }
 
-/// ⛑ **Ein Gewicht, das schon am Anfang steht, bleibt.** Sonst waere
+/// 📌 **Ein Gewicht, das schon am Anfang steht, bleibt.** Sonst waere
 /// der Anker selbst eine Stoerquelle, und das Rauschen aus Fund 196
 /// bekaeme eine zweite Quelle.
 #[test]
@@ -700,7 +700,7 @@ fn die_auswahl_trifft_die_mlp_bloecke() {
     }
 }
 
-/// ⛑ **Diese Pruefung hiess bis zum 2026-09-08 „ein Gemisch wird nicht
+/// 📌 **Diese Pruefung hiess bis zum 2026-09-08 „ein Gemisch wird nicht
 /// geraten" und verlangte, dass jede Gemischkennung abgelehnt wird.**
 ///
 /// Das war richtig, **solange die Zuordnung unbekannt war**: Zu raten,

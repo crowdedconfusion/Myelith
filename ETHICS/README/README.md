@@ -1,7 +1,7 @@
 # ethics
 
-> **Version:** 0.6.0
-> **Datum:** 2026-09-11
+> **Version:** 0.6.1
+> **Datum:** 2026-09-14
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
 > Zusagen sind Dateien geworden, die man erzeugen, diffen und im CI
@@ -86,6 +86,22 @@ Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
 `v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
 die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
 
+### v0.6.1 – 2026-09-14 (die Modellkarte zeigt, was gemessen ist)
+
+📌 **Fund 357: Die erzeugte Modellkarte meldete „nicht gemessen", wo
+gemessen war.** `werkzeuge/modellkarte.py` suchte die Messungen unter
+einem Ordner, der am 2026-09-07 umgezogen ist, und las vier von fünf
+Zeilen der Ausführungsspezifikation unter Schlüsseln, die es in
+`theta_v/spec.json` nie gab. Beides ergab eine ehrliche Leerstelle an
+der falschen Stelle.
+
+Die Karte liest jetzt `numeric.formats.*.dtype` und die Verfahren
+unter `nonlinear`, und sie zeigt die Vergleichsmessung je eingesetztem
+Modell aus `BENCHMARKS/Inferenz/results/` (ganzzahlig, Gleitkomma,
+Abstand). Modelle, die nicht mehr im Katalog stehen, bleiben als
+Messung abgelegt und stehen nicht auf der Karte. Dazu θ_v 0.19.0 mit
+dem Akkumulator int64.
+
 ### v0.6.0 – 2026-09-11 (G7 gilt wieder für die Modelle, die es gibt)
 
 `Manifest.md` **0.2.0 auf 0.2.1**: der Stand unter G7, nicht der Grundsatz.
@@ -133,7 +149,7 @@ als Ganzes eigene Bedingungen zu setzen, solange Nutzung,
 Vervielfältigung und Verbreitung des zugrundeliegenden Werks den
 Bedingungen der Apache-2.0 weiter genügen. Beides gilt nebeneinander.
 
-⛑ **Der Anlass war ein Befund an drei Stellen** (Fund 295, gemeldet vom
+📌 **Der Anlass war ein Befund an drei Stellen** (Fund 295, gemeldet vom
 Projektinhaber): Katalog, erzeugte Modelliste und die Einstellungsseite
 des Klienten führten **eine** Lizenz, und sie stand neben dem Namen des
 Artefakts.
@@ -206,7 +222,7 @@ mehr, sondern eine Zeile je Katalogklasse. Bis dahin konnte ein Antrag
 „Dubletten entfernt" eintragen und galt als vollständig, während über
 die Klassen, um die es geht, nichts dastand.
 
-⛑ **Und die CI prüfte nur eine Richtung.** Sie verlangte, dass die leere
+📌 **Und die CI prüfte nur eine Richtung.** Sie verlangte, dass die leere
 Vorlage durchfällt; eine Prüfung, die **alles** ablehnt, besteht diesen
 Test ebenfalls. Neu ist ein vollständiger Beispielantrag als
 Positivprobe, und beide Richtungen laufen im selben Schritt.

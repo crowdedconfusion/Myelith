@@ -6,8 +6,11 @@ des Artefaktbaus ersetzen (Fund 32): die Aktivierungsskalen und die LUTs.
 Alles Uebrige — die Gewichtsquantisierung — ist reine
 Zweierpotenz-Ganzzahlarithmetik und auf jeder Plattform bitgleich.
 
-Groesse: unter 1,5 MB je Modell. Die Gewichte selbst werden NICHT
-mitverteilt; sie kommen von Hugging Face.
+Groesse: rund 11 MB je Modell seit theta_v 0.20.0 (RoPE-Tabellen fuer
+40960 Positionen, je 5 MB; bis 0.19.0 unter 1,5 MB). Die Tabellen sind bei
+allen Modellen mit derselben Kopfbreite gleich und liegen im Repository
+deshalb nur einmal. Die Gewichte selbst werden NICHT mitverteilt; sie
+kommen von Hugging Face.
 
 Usage:
     python tools/skalenpaket_bauen.py myelith-0.6b [myelith-30b-a3b ...]

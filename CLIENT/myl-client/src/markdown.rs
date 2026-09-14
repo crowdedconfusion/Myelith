@@ -1,6 +1,6 @@
 //! Markdown, zerlegt in einen Baum, den ein Fenster zeichnen kann.
 //!
-//! # ⛑ Warum das hier steht und nicht im Fenster
+//! # 📌 Warum das hier steht und nicht im Fenster
 //!
 //! **Die Antwort eines Modells ist Text und keine Auszeichnung.** Wer
 //! sie mit `innerHTML` in eine Seite schreibt, macht aus Daten
@@ -56,7 +56,7 @@ pub enum Teil {
     Code { text: String },
     /// Ein Verweis.
     ///
-    /// ⛑ **Er wird als Text gezeigt und nicht als Knopf**, und das ist
+    /// 📌 **Er wird als Text gezeigt und nicht als Knopf**, und das ist
     /// eine Entscheidung und kein Versaeumnis. Ein angeklickter Verweis
     /// in diesem Fenster fuehrte die Webansicht **aus der Anwendung
     /// heraus**; sie im System zu oeffnen braeuchte eine Erlaubnis, die
@@ -175,7 +175,7 @@ pub fn zerlegen(text: &str) -> Vec<Block> {
             text.push(n);
             i += 1;
         }
-        // ⛑ **Diese drei Zeilen verhindern eine Endlosschleife**, und
+        // 📌 **Diese drei Zeilen verhindern eine Endlosschleife**, und
         // sie sind nicht theoretisch: `| kaputt |` faengt an wie eine
         // Tabelle, ist keine (es fehlt die Trennzeile), und der
         // Absatzzweig bricht dann an seiner eigenen ersten Zeile ab.
@@ -339,7 +339,7 @@ mod proben {
     /// ⚑ **Die tragende Zusage: Es entsteht nie Auszeichnung, immer
     /// Text.**
     ///
-    /// ⛑ Das ist der Grund, warum dieser Zerleger ueberhaupt hier steht
+    /// 📌 Das ist der Grund, warum dieser Zerleger ueberhaupt hier steht
     /// und nicht im Fenster. Eine Modellantwort mit spitzen Klammern
     /// darf **nichts** ausloesen; sie ist Text und bleibt Text. Wer
     /// sie mit `innerHTML` einsetzte, gaebe einem eingeschleusten Satz
@@ -372,7 +372,7 @@ mod proben {
         assert_eq!(b[1], Block::Ueberschrift { stufe: 3, inhalt: vec![text("Drei")] });
     }
 
-    /// ⛑ **Eine Raute ohne Leerzeichen ist keine Ueberschrift.**
+    /// 📌 **Eine Raute ohne Leerzeichen ist keine Ueberschrift.**
     /// `#1 Punkt` ist Text, und ein Modell schreibt so etwas.
     #[test]
     fn eine_raute_ohne_leerzeichen_ist_text() {
@@ -418,7 +418,7 @@ mod proben {
         );
     }
 
-    /// ⛑ **Ein Zaun ohne Schluss beendet am Textende.** Ein
+    /// 📌 **Ein Zaun ohne Schluss beendet am Textende.** Ein
     /// abgebrochener Lauf soll lesbar bleiben und nicht verschwinden.
     #[test]
     fn ein_offener_codeblock_verschluckt_nichts() {
@@ -436,7 +436,7 @@ mod proben {
         assert_eq!(t[5], Teil::Code { text: "code".into() });
     }
 
-    /// ⛑ **Ein Unterstrich mitten im Wort ist keiner.** `max_tokens`
+    /// 📌 **Ein Unterstrich mitten im Wort ist keiner.** `max_tokens`
     /// und `snake_case` stehen in jeder zweiten Modellantwort.
     #[test]
     fn ein_bezeichner_wird_nicht_kursiv() {
@@ -445,7 +445,7 @@ mod proben {
         assert!(matches!(&t[0], Teil::Text { text } if text.contains("max_tokens_hier")));
     }
 
-    /// ⛑ **Eine offene Marke ist Text.** Ein Modell, das mitten im
+    /// 📌 **Eine offene Marke ist Text.** Ein Modell, das mitten im
     /// Satz `**` schreibt und nicht schliesst, soll lesbar bleiben.
     #[test]
     fn eine_offene_marke_bleibt_stehen() {

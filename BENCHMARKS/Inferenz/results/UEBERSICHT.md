@@ -2,7 +2,7 @@
 
 > ⚙️ **Erzeugt von `BENCHMARKS/Inferenz/uebersicht.py`.**
 > Nicht von Hand bearbeiten: Der nächste Lauf überschreibt die Datei.
-> Stand: 2026-09-12
+> Stand: 2026-09-14
 
 Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für
 beide Pfade auf **identischen Sequenzen**; niedriger ist besser.
@@ -11,8 +11,8 @@ seine eigene Gleitkomma-Referenz, nicht auf ein anderes Modell.
 
 | Modell | Gleitkomma | Ganzzahl | Positionen | Abstand | Kriterium ≤ 5 % |
 |---|---|---|---|---|---|
-| Myelith 0,6B | 31,86 | 33,28 | 435 | **+4,47 %** | erfüllt |
-| Myelith 4B | 19,63 | 19,95 | 435 | **+1,64 %** | erfüllt |
+| Myelith 0,6B | 31,86 | 33,29 | 435 | **+4,48 %** | erfüllt |
+| Myelith 4B | 19,63 | 19,95 | 435 | **+1,65 %** | erfüllt |
 | Myelith 30B-A3B | 10,48 | 10,42 | 435 | **kein messbarer Abstand** | erfüllt |
 
 ## Was daraus folgt
@@ -25,7 +25,7 @@ Quantisierung am meisten kostet.
 
 ⚠️ **Was diese Tabelle nicht sagt.** Die Zahlen einer Zeile lassen
 sich mit denen einer anderen **nicht** vergleichen: Jede misst
-gegen ihre eigene Referenz. Ein Modell mit 33,28 ist nicht
+gegen ihre eigene Referenz. Ein Modell mit 33,29 ist nicht
 schlechter als eines mit 11,54, sondern kleiner.
 
 ⚠️ **Der Boden des Quantisierungsschemas fehlt hier.** Er ist an

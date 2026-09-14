@@ -811,7 +811,7 @@ mod tests {
     /// acht Rueckwaertskerne rechneten falsch**, und der Prueflauf, der
     /// 33 von 33 meldete, hat keinen von ihnen je gerechnet.
     ///
-    /// ⛑ **Der Test prueft auch die Herkunft.** Ein selbsterzeugter
+    /// 📌 **Der Test prueft auch die Herkunft.** Ein selbsterzeugter
     /// Vektor belegt Determinismus, kein unabhaengiger belegt
     /// Richtigkeit; wer die beiden verwechselt, haelt eine
     /// Selbstzertifizierung fuer einen Beleg.

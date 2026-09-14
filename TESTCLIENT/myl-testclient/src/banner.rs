@@ -67,7 +67,7 @@ pub const BANNER: &str = r#"
 
 /// Untertitel des Testclients: direkt unter dem Banner.
 ///
-/// ⛑ **Hier standen drei von sechs Stufen** (Hardware, Determinismus,
+/// 📌 **Hier standen drei von sechs Stufen** (Hardware, Determinismus,
 /// Shards), und zwar seit es nur drei gab. Wer den Untertitel las,
 /// hielt den Protokoll-Durchlauf, die Konformität und den
 /// Trainingsschritt für Zugaben. **Eine Aufzählung, die nicht

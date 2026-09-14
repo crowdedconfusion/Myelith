@@ -7,7 +7,7 @@
 //! 2026-09-11): eine Auswahl, ein Schalter, eine Zahl, eine Grenze.
 //! Was freien Text braucht, bekommt ihn auf Enter.
 //!
-//! # ⛑ Und damit faellt eine frühere Festlegung
+//! # 📌 Und damit faellt eine frühere Festlegung
 //!
 //! Bis hierher zeigte `/settings` nur an, mit der Begruendung, ein
 //! zweiter Setzer waere die dritte Stelle, die dieselben Feinheiten
@@ -510,7 +510,7 @@ mod tests {
 
     /// **Eine Auswahl laeuft nicht um.**
     ///
-    /// ⛑ Ein Umlauf laesst jemanden, der zu weit gedrueckt hat, wieder
+    /// 📌 Ein Umlauf laesst jemanden, der zu weit gedrueckt hat, wieder
     /// von vorne suchen.
     #[test]
     fn eine_auswahl_haelt_an_ihren_enden() {
@@ -565,7 +565,7 @@ mod tests {
 
     /// **`aus` steht nur da, wo es `aus` heisst.**
     ///
-    /// ⛑ Ein nicht gesetzter Ordner ist nicht abgeschaltet, er ist
+    /// 📌 Ein nicht gesetzter Ordner ist nicht abgeschaltet, er ist
     /// leer.
     #[test]
     fn ein_leerer_ordner_ist_nicht_aus() {
@@ -575,7 +575,7 @@ mod tests {
 
     /// **Jedes Kuerzel der Fusszeile wird auch behandelt.**
     ///
-    /// ⛑ **Dieselbe Klasse wie Fund 271.** Eine Zeile mit
+    /// 📌 **Dieselbe Klasse wie Fund 271.** Eine Zeile mit
     /// Tastenkuerzeln, die von Hand gepflegt wird, nennt irgendwann
     /// eines, das nichts tut, und **das sieht erst der, der es
     /// ausprobiert.**
@@ -599,7 +599,7 @@ mod tests {
 
     /// **Jeder Standardwert wird vom Setzer angenommen.**
     ///
-    /// ⛑ Die Gegenprobe zu `^R`: Ein Zuruecksetzen, das der Setzer
+    /// 📌 Die Gegenprobe zu `^R`: Ein Zuruecksetzen, das der Setzer
     /// ablehnt, waere eine Taste, die eine Fehlermeldung erzeugt statt
     /// eines Wertes.
     #[test]
@@ -644,7 +644,7 @@ mod tests {
 
     /// **Jeder Wert, den ein Pfeil vorschlaegt, wird auch angenommen.**
     ///
-    /// ⛑ **Die Gegenprobe zur ganzen Datei.** Diese hier schlaegt vor,
+    /// 📌 **Die Gegenprobe zur ganzen Datei.** Diese hier schlaegt vor,
     /// gesetzt wird in der Kiste; ein Vorschlag, den der Setzer ablehnt,
     /// waere eine Taste, die nichts tut und nicht sagt, warum.
     #[test]

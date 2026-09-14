@@ -213,7 +213,7 @@ fn fahren_mit_melder(
 /// dieselbe Schleife laeuft, ist der Beleg dafuer, dass die Trennung
 /// eine ist.
 ///
-/// ⛑ **Was er NICHT ist:** ein lokales Modell. Er antwortet aus einer
+/// 📌 **Was er NICHT ist:** ein lokales Modell. Er antwortet aus einer
 /// Liste. Das eigentliche Einhaengen des Ganzzahllaufwerks gehoert in
 /// den Client und ausdruecklich nicht in diese Kiste, die eine
 /// Vollmacht traegt und deshalb fast keine Abhaengigkeiten hat.
@@ -420,7 +420,7 @@ fn widerspruechliche_namen_fallen_beim_einhaengen_auf() {
 
 /// ⚑ **Ein Melder aendert den Lauf nicht.**
 ///
-/// # ⛑ Die Zusage, um die es geht
+/// # 📌 Die Zusage, um die es geht
 ///
 /// Diese Kiste traegt eine Vollmacht. Ein Haken, der den Lauf
 /// beeinflussen koennte, waere eine **zweite Quelle fuer Erlaubnisse**
@@ -444,6 +444,7 @@ fn ein_melder_aendert_den_lauf_nicht() {
             M::Aufruf { name, .. } => format!("aufruf {name}"),
             M::Ergebnis { name, .. } => format!("ergebnis {name}"),
             M::Abgelehnt { name, .. } => format!("abgelehnt {name}"),
+            M::Verdichtet { vorher, nachher } => format!("verdichtet {vorher} {nachher}"),
         });
     };
     let (mit, ()) = fahren_mit_melder(antworten, Betriebsart::Alles, 4, Some(&melder));
@@ -497,4 +498,268 @@ fn eine_abgelehnte_ausfuehrung_wird_gemeldet() {
     let g = gesehen.borrow();
     assert!(!g.is_empty(), "eine Ablehnung wurde nicht gemeldet");
     assert!(g[0].starts_with("kaputt: "), "die Ablehnung nennt das Werkzeug nicht: {g:?}");
+}
+
+// --- Verlauf und Verdichten (2026-09-14) ------------------------------
+
+/// Ein Modellweg, der den Kontext in **Zeichen** misst und jede Anfrage
+/// festhaelt. Verdichtungsanfragen erkennt er an ihrer Anweisung und
+/// beantwortet sie mit `KURZ`.
+struct ZaehlenderWeg {
+    antworten: std::cell::RefCell<std::collections::VecDeque<String>>,
+    grenze: usize,
+    gesehen: std::cell::RefCell<Vec<Vec<myl_local_agent::Nachricht>>>,
+    verdichtet: std::cell::Cell<usize>,
+}
+
+impl ZaehlenderWeg {
+    fn neu(antworten: Vec<&str>, grenze: usize) -> Self {
+        Self {
+            antworten: std::cell::RefCell::new(antworten.into_iter().map(String::from).collect()),
+            grenze,
+            gesehen: std::cell::RefCell::new(Vec::new()),
+            verdichtet: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl myl_local_agent::Modellweg for ZaehlenderWeg {
+    fn chat(
+        &self,
+        _modell: &str,
+        nachrichten: &[myl_local_agent::Nachricht],
+        _max_tokens: Option<u32>,
+    ) -> Result<myl_local_agent::Antwort, myl_local_agent::Tuerfehler> {
+        let text = if nachrichten[0].content == myl_local_agent::verdichtung::AUFTRAG {
+            self.verdichtet.set(self.verdichtet.get() + 1);
+            "KURZ".to_string()
+        } else {
+            self.gesehen.borrow_mut().push(nachrichten.to_vec());
+            self.antworten.borrow_mut().pop_front().unwrap_or_default()
+        };
+        Ok(myl_local_agent::Antwort {
+            text,
+            abschlussgrund: None,
+            kennung: "zaehlend".to_string(),
+            segment: Default::default(),
+            prompt_token: 0,
+            antwort_token: 0,
+        })
+    }
+
+    fn kontext(&self, nachrichten: &[myl_local_agent::Nachricht]) -> Option<myl_local_agent::Kontextstand> {
+        Some(myl_local_agent::Kontextstand {
+            belegt: nachrichten.iter().map(|n| n.content.chars().count()).sum(),
+            grenze: self.grenze,
+        })
+    }
+}
+
+/// Faehrt einen Auftrag mit Verlauf ueber einem [`ZaehlenderWeg`].
+fn fahren_im_gespraech(
+    weg: &ZaehlenderWeg,
+    verlauf: &[myl_local_agent::Nachricht],
+    auftrag: &str,
+    meldungen: &std::cell::RefCell<Vec<String>>,
+) -> myl_local_agent::schleife::Ergebnis {
+    let a = aufbau();
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(4), a.kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> {
+        adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
+    };
+    let melder = |m: myl_local_agent::schleife::Meldung<'_>| meldungen.borrow_mut().push(format!("{m:?}"));
+    Lauf {
+        klient: weg,
+        modell: "zaehlend",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &a.kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+        melder: Some(&melder),
+    }
+    .fahren_mit_verlauf(auftrag, verlauf)
+}
+
+fn ansagelaenge() -> usize {
+    let a = aufbau();
+    myl_local_agent::werkzeug::angebot(a.kasten.angebote(), Default::default()).content.chars().count()
+}
+
+/// ⚑ **Der Verlauf steht zwischen Werkzeugansage und Auftrag**, ohne seine
+/// alten Systemnachrichten, und der Lauf zaehlt seine Schritte wie ohne ihn.
+#[test]
+fn ein_verlauf_steht_zwischen_ansage_und_auftrag() {
+    use myl_local_agent::Nachricht;
+    let weg = ZaehlenderWeg::neu(vec!["<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>", "Fertig."], 1_000_000);
+    let verlauf = vec![
+        Nachricht::system("eine alte Ansage"),
+        Nachricht::nutzer("Lies main.rs."),
+        Nachricht::modell("main.rs gibt hallo aus."),
+    ];
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &verlauf, "Und jetzt lib.rs?", &meldungen);
+    let erste = &weg.gesehen.borrow()[0];
+    assert_eq!(erste.len(), 4, "{erste:?}");
+    assert_eq!(erste[0].role, "system");
+    assert_ne!(erste[0].content, "eine alte Ansage");
+    assert_eq!(&erste[1..3], &verlauf[1..]);
+    assert_eq!(erste[3], Nachricht::nutzer("Und jetzt lib.rs?"));
+    assert_eq!(erg.ende, Ende::Fertig);
+    assert_eq!(erg.strom.schritte().len(), 2, "zwei Modellaufrufe, zwei Schritte");
+    assert_eq!(weg.verdichtet.get(), 0, "ohne vollen Kontext wird nicht verdichtet");
+}
+
+/// ⚑ **Ein voller Kontext wird verdichtet**: Die Ansage und der Auftrag
+/// bleiben woertlich, der Verlauf wird zu einer Zusammenfassung vor dem
+/// Auftrag, die Anzeige erfaehrt es, und die Verdichtung verbraucht keinen
+/// Schritt.
+#[test]
+fn ein_voller_kontext_wird_verdichtet_und_der_auftrag_bleibt() {
+    use myl_local_agent::Nachricht;
+    let lang = "x".repeat(400);
+    let verlauf = vec![Nachricht::nutzer(lang.clone()), Nachricht::modell(lang.clone()), Nachricht::nutzer(lang)];
+    let grenze = ansagelaenge() + 1000;
+    let weg = ZaehlenderWeg::neu(vec!["<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>", "Fertig."], grenze);
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &verlauf, "Weiter.", &meldungen);
+
+    assert!(weg.verdichtet.get() >= 1, "das Modell hat zusammengefasst");
+    let erste = &weg.gesehen.borrow()[0];
+    assert_eq!(erste.len(), 3, "{erste:?}");
+    assert_eq!(erste[1].role, "user");
+    assert!(
+        erste[1].content.starts_with(myl_local_agent::verdichtung::KOPF) && erste[1].content.contains("KURZ"),
+        "{:?}",
+        erste[1]
+    );
+    assert_eq!(erste[2], Nachricht::nutzer("Weiter."));
+    assert_eq!(
+        meldungen.borrow().iter().filter(|m| m.starts_with("Verdichtet")).count(),
+        1,
+        "einmal verdichtet, danach passt der Lauf: {:?}",
+        meldungen.borrow()
+    );
+    assert_eq!(erg.ende, Ende::Fertig);
+    assert_eq!(erg.strom.schritte().len(), 2, "die Verdichtung ist kein Schritt");
+    let mit = myl_local_agent::strom::nachrichten_commitment(erste);
+    let ohne = myl_local_agent::strom::nachrichten_commitment(&[erste[0].clone(), erste[2].clone()]);
+    assert_eq!(erg.strom.schritte()[0].anfrage, mit, "der Strom bindet die Zusammenfassung mit");
+    assert_ne!(mit, ohne, "ohne sie waere das Commitment ein anderes");
+}
+
+/// ⚑ **Passt es auch verdichtet nicht, endet der Lauf benannt**, statt eine
+/// abgeschnittene Antwort als Werkzeugaufruf zu lesen.
+#[test]
+fn passt_es_auch_verdichtet_nicht_endet_der_lauf_benannt() {
+    let weg = ZaehlenderWeg::neu(vec!["Fertig."], ansagelaenge() + 50);
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &[], &"y".repeat(100), &meldungen);
+    assert!(
+        matches!(erg.ende, Ende::Tuer(myl_local_agent::Tuerfehler::KontextVoll { .. })),
+        "{:?}",
+        erg.ende
+    );
+    assert!(weg.gesehen.borrow().is_empty(), "das Modell wurde nicht mit einem zu langen Prompt gefragt");
+}
+
+/// **Ein Verlauf, der selbst nicht in den Kontext passt, wird in Stuecken
+/// gelesen**, jede Runde nimmt mindestens eine Nachricht, eine Nachricht,
+/// die allein nicht passt, wird in der Mitte gekuerzt, und ein benannter
+/// Fehler bleibt nur, wenn schon die Anweisung nicht hineinpasst.
+#[test]
+fn ein_zu_langer_verlauf_wird_in_stuecken_zusammengefasst() {
+    use myl_local_agent::verdichtung::{zusammenfassen, AUFTRAG};
+    use myl_local_agent::Nachricht;
+    let rahmen = AUFTRAG.chars().count() + 200;
+    let weg = ZaehlenderWeg::neu(vec![], rahmen + 250);
+    let alt: Vec<Nachricht> = (0..6).map(|i| Nachricht::nutzer(format!("{i}{}", "z".repeat(99)))).collect();
+    let text = zusammenfassen(&weg, "m", &alt, 16).expect("zusammengefasst");
+    let runden = weg.verdichtet.get();
+    assert!(runden >= 3, "sechs Nachrichten zu je hundert Zeichen passen nicht in eine Runde");
+    assert!(runden <= 6, "jede Runde nimmt mindestens eine Nachricht");
+    assert_eq!(text, vec!["KURZ"; runden].join("\n\n"), "die Teile werden aneinandergereiht");
+
+    let riesig = vec![Nachricht::nutzer(format!("ANFANG{}ENDE", "w".repeat(10_000)))];
+    let vorher = weg.verdichtet.get();
+    assert_eq!(zusammenfassen(&weg, "m", &riesig, 16), Ok("KURZ".to_string()));
+    assert_eq!(weg.verdichtet.get(), vorher + 1, "eine Runde mit der gekuerzten Nachricht");
+
+    let gekuerzt = myl_local_agent::verdichtung::in_der_mitte_gekuerzt(&riesig[0], 100);
+    assert!(gekuerzt.content.starts_with("ANFANG") && gekuerzt.content.ends_with("ENDE"), "{}", gekuerzt.content);
+    assert!(gekuerzt.content.contains("9910 Zeichen ausgelassen"), "{}", gekuerzt.content);
+
+    let zu_eng = ZaehlenderWeg::neu(vec![], 100);
+    assert!(matches!(
+        zusammenfassen(&zu_eng, "m", &riesig, 16),
+        Err(myl_local_agent::Tuerfehler::KontextVoll { .. })
+    ), "passt schon die Anweisung nicht, bleibt es ein benannter Fehler");
+}
+
+/// 📌 **Eine Werkzeugantwort, die allein nicht in den Kontext passt,
+/// beendet den Lauf nicht**, sondern wird in der Mitte gekuerzt.
+#[test]
+fn eine_riesige_werkzeugantwort_wird_gekuerzt_statt_den_lauf_zu_beenden() {
+    struct Riesig;
+    impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Riesig {
+        fn name(&self) -> &str {
+            "zeit"
+        }
+        fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+            Ok(format!("ANFANG{}ENDE", "r".repeat(5_000)))
+        }
+    }
+    let mut kasten = Werkzeugkasten::neu();
+    kasten.einhaengen(Werkzeug::ohne_parameter("zeit", "Die Zeit."), Box::new(Riesig)).expect("eingehaengt");
+    let a = aufbau();
+    let ansage = myl_local_agent::werkzeug::angebot(kasten.angebote(), Default::default()).content.chars().count();
+    let weg = ZaehlenderWeg::neu(vec!["<tool_call>{\"name\":\"zeit\",\"arguments\":{}}</tool_call>", "Fertig."], ansage + 800);
+    let grenzen = Sitzungsgrenzen::neu(kontrakt(4), kasten.angebote());
+    let adressen = a.adressen.clone();
+    let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
+    let erg = Lauf {
+        klient: &weg,
+        modell: "zaehlend",
+        grenzen: &grenzen,
+        betriebsart: Betriebsart::Alles,
+        einhaengung: None,
+        kasten: &kasten,
+        registratur: &a.registratur,
+        adressen: &finden,
+        anker: Hash::from_bytes([7u8; 32]),
+        max_tokens: Some(32),
+        ansageform: Default::default(),
+        melder: None,
+    }
+    .fahren("Wie spaet ist es?");
+    assert_eq!(erg.ende, Ende::Fertig, "{:?}", erg.ende);
+    let zweite = &weg.gesehen.borrow()[1];
+    let antwort = zweite.last().expect("Werkzeugantwort");
+    assert!(antwort.content.contains("Zeichen ausgelassen"), "{}", antwort.content);
+    assert!(antwort.content.contains("ANFANG") && antwort.content.contains("ENDE"));
+    assert!(zweite.iter().map(|n| n.content.chars().count()).sum::<usize>() + 32 <= ansage + 800);
+}
+
+/// **Verdichtet wird schon, wenn der Prompt passt, die Antwort dahinter
+/// aber nicht.** Sonst bricht die Antwort an der Kontextgrenze ab, und ein
+/// halber Werkzeugaufruf wird als Text gelesen.
+#[test]
+fn die_antwortlaenge_wird_freigehalten() {
+    use myl_local_agent::Nachricht;
+    let verlauf = vec![Nachricht::nutzer("v".repeat(300)), Nachricht::modell("w".repeat(300))];
+    let prompt = ansagelaenge() + 600 + "Weiter.".len();
+    // Der Prompt passt mit zehn Zeichen Luft; der Lauf haelt 32 frei.
+    let weg = ZaehlenderWeg::neu(vec!["Fertig."], prompt + 10);
+    let meldungen = std::cell::RefCell::new(Vec::new());
+    let erg = fahren_im_gespraech(&weg, &verlauf, "Weiter.", &meldungen);
+    assert_eq!(erg.ende, Ende::Fertig);
+    assert_eq!(weg.gesehen.borrow()[0].len(), 3, "vor dem ersten Schritt verdichtet");
+    let reichlich = ZaehlenderWeg::neu(vec!["Fertig."], prompt + 32);
+    fahren_im_gespraech(&reichlich, &verlauf, "Weiter.", &meldungen);
+    assert_eq!(reichlich.gesehen.borrow()[0].len(), 4, "mit genau der Antwortlaenge Luft bleibt der Verlauf");
 }

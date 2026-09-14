@@ -196,7 +196,7 @@ mod tests {
                 assert!(!e.integer_verletzt, "{}: Hash-Prüfung verletzt", p.display());
             }
         }
-        // ⛑ **Aus dem Modell abgeleitet und nicht eingetragen**
+        // 📌 **Aus dem Modell abgeleitet und nicht eingetragen**
         // (2026-09-11). Hier stand `assert_eq!(gesamt, 27)`, also
         // „24 Ebenen plus drei Prompts", und beim Wechsel des
         // Ankermodells von 24 auf 28 Ebenen schlug der Test fehl,

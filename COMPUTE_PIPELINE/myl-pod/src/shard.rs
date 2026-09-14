@@ -363,6 +363,39 @@ impl ShardNode {
         self.caches.lock().map(|c| c.len()).unwrap_or(0)
     }
 
+    /// **Eine Position, die der KV-Speicher dieser Sitzung nicht fortsetzen
+    /// kann, wird abgelehnt**, und der Speicher bleibt, wie er war.
+    ///
+    /// ⚑ **Hinter dem Ende ist eine Luecke**, und die hat der
+    /// zusammenhaengende KV-Speicher nicht. Frueher nahm eine Karte sie
+    /// stillschweigend an, und die Aufmerksamkeit sah weniger Positionen.
+    /// Jetzt bricht der Speicher dort ab, und eine Panik ist im offenen Netz
+    /// ein Denial-of-Service (wie bei der Laenge, Fund 41). Deshalb hier ein
+    /// `Err`, bevor gerechnet wird.
+    ///
+    /// ⚑ **Hinter der Kontextgrenze** begann die RoPE-Tabelle frueher von
+    /// vorn (Fund 368); jetzt bricht das Modell dort ab, und auch das wird
+    /// hier zur abgelehnten Nachricht.
+    fn position_pruefen(&self, session_id: u64, pos: usize, cache: KVCache) -> Result<KVCache, String> {
+        let laenge = cache.laenge();
+        let grenze = self.model.kontextgrenze();
+        if pos >= grenze {
+            self.put_cache(session_id, cache)?;
+            return Err(format!(
+                "Position {pos} liegt hinter der Kontextgrenze {grenze} des Modells (Shard {})",
+                self.shard_index
+            ));
+        }
+        if pos > laenge {
+            self.put_cache(session_id, cache)?;
+            return Err(format!(
+                "Position {pos} liegt hinter dem Ende des KV-Speichers ({laenge} Positionen, Shard {})",
+                self.shard_index
+            ));
+        }
+        Ok(cache)
+    }
+
     fn put_cache(&self, session_id: u64, cache: KVCache) -> Result<(), String> {
         sperre(&self.caches, "KV-Cache")?.insert(session_id, cache);
         Ok(())
@@ -391,7 +424,7 @@ impl ShardNode {
             }
             let token = tokens[0] as usize;
 
-            let mut cache = self.take_cache(session_id)?;
+            let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
             let hidden = self.model.embed_token(token);
             let mut trace = msg.trace.clone();
             let out =
@@ -447,7 +480,7 @@ impl ShardNode {
         // ausgelieferte Arbeit.
         let hidden = msg.payload.clone();
 
-        let mut cache = self.take_cache(session_id)?;
+        let mut cache = self.position_pruefen(session_id, pos, self.take_cache(session_id)?)?;
         let mut trace = msg.trace.clone();
         let out = self.layer_fuer_layer(hidden, pos, &mut cache, &msg.segment_id, &mut trace);
         self.put_cache(session_id, cache)?;

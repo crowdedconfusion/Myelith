@@ -17,7 +17,7 @@ target/
 # ihn: Er muss von Zeit zu Zeit geleert werden.
 target-shared/
 
-# ⛑ Das Ergebnis von `werkzeuge/freigabe.sh`: gebaute Binaries samt
+# 📌 Das Ergebnis von `werkzeuge/freigabe.sh`: gebaute Binaries samt
 # `Myelith.app`, rund 63 MB. Sie gehören nicht ins Repositorium, sondern
 # an ein Release; ohne diese Zeile nähme ein `git add -A` sie mit, und
 # ein einmal committetes Binary bleibt für immer in der Historie.
@@ -69,3 +69,11 @@ kette.log
 # traegt sie stattdessen in `.git/info/exclude` ein, das nicht mit
 # ausgeliefert wird. Der Ort ist am 2026-09-12 so festgelegt worden.
 CLAUDE.md
+
+# ⛔️ Das 1337-Toolkit: lokale Sicherheitswerkzeuge des Agenten
+# (Elite-Kiste, Feature `leet`). Zweischneidig, laeuft nur lokal auf der
+# Maschine des Betreibers und gehoert weder ins Repositorium noch in ein
+# Release; es laeuft nur lokal auf der Maschine des Betreibers. Ein
+# frischer Klon hat das Verzeichnis nicht; ohne es laesst sich das Feature
+# `leet` nicht bauen, und das ist Absicht.
+CLIENT/myl-client/src/werkzeuge_1337/

@@ -110,7 +110,7 @@ impl Bericht {
 
 /// Der Modellschluessel, den dieser Lauf benutzt.
 ///
-/// ⛑ **Bis zum 2026-09-11 stand der Name zweimal im Lauf**: einmal
+/// 📌 **Bis zum 2026-09-11 stand der Name zweimal im Lauf**: einmal
 /// hier als Verzeichnis und einmal als fester Text in der Meldung
 /// („Qwen2.5-0,5B geladen"). Nach dem Ankerwechsel lud der Lauf
 /// `myelith-0.6b` und **meldete weiter das alte Modell**. Ein Bericht,

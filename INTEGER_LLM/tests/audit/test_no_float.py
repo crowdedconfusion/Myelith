@@ -109,6 +109,10 @@ HOT_PATH = [
     REPO / "kernels" / "src" / "backends" / "simd.rs",
     REPO / "kernels" / "src" / "backends" / "cuda.rs",
     REPO / "kernels" / "src" / "backends" / "rocm.rs",
+    # 2026-09-14: der Metal-Weg (Phase 12.89). Die Shaderquelle daneben
+    # prueft `SHADER`, mit eigenen Mustern.
+    REPO / "kernels" / "src" / "metal" / "mod.rs",
+    REPO / "kernels" / "src" / "metal" / "geraet.rs",
     REPO / "runtime" / "src" / "model.rs",
     REPO / "runtime" / "src" / "kv_cache.rs",
     REPO / "runtime" / "src" / "generate.rs",
@@ -459,6 +463,28 @@ FLOAT_PATTERNS = [
 ]
 
 
+# Shaderquellen des Rechenpfads (Metal Shading Language).
+#
+# ⚑ **Eigene Muster, weil die Sprache andere Namen hat** (2026-09-14).
+# Die Rust-Muster suchen `f32` und `f64`; ein Metal-Shader schreibt
+# `float`, `half` und `double`, und ein Literal traegt dort `f` oder `h`
+# als Endung. Mit den Rust-Mustern allein saehe ein Shader voller
+# Gleitkomma sauber aus.
+SHADER = [
+    REPO / "kernels" / "src" / "metal" / "w8a16.metal",
+]
+
+SHADER_PATTERNS = [
+    (re.compile(r"\bfloat\d*(?:x\d+)?(?:_t)?\b"), "float-Typ"),
+    (re.compile(r"\bhalf\d*(?:x\d+)?(?:_t)?\b"), "half-Typ"),
+    (re.compile(r"\bdouble\b"), "double-Typ"),
+    (re.compile(r"\b\d+\.\d*(?:[eE][+-]?\d+)?[fFhH]?\b|\B\.\d+[fFhH]?\b"), "float-Literal"),
+    (re.compile(r"\b\d+[fFhH]\b"), "float-Literal mit Endung"),
+    (re.compile(r"\b\d+[eE][+-]?\d+[fFhH]?\b"), "float-Literal mit Exponent"),
+    (re.compile(r"\b(?:exp|log|sqrt|pow|floor|ceil|round|fract|sin|cos)\s*\("), "Gleitkommafunktion"),
+]
+
+
 def strip_comments(src: str) -> str:
     """Entfernt Zeilen- (//) und Block-Kommentare (/* */)."""
     # Block-Kommentare (nicht-gierig, auch mehrzeilig).
@@ -677,6 +703,25 @@ BEWUSST_DRAUSSEN: dict = {
 BEWUSST_DRAUSSEN_ORDNER = {"bin"}
 
 
+def audit_shader(paths) -> int:
+    """Prueft Shaderquellen mit den Mustern der Shadersprache."""
+    print(f"[no-float] Shader: {len(paths)} Dateien")
+    total = 0
+    for path in paths:
+        if not path.exists():
+            print(f"[no-float] FEHLT: {path}")
+            sys.exit(1)
+        src = strip_strings(strip_comments(path.read_text(encoding="utf-8")))
+        for line_no, line in enumerate(src.splitlines(), start=1):
+            if line.lstrip().startswith("#include"):
+                continue
+            for pat, label in SHADER_PATTERNS:
+                for _ in pat.finditer(line):
+                    print(f"[no-float] TREFFER {path.name}:{line_no} ({label}): {line.strip()}")
+                    total += 1
+    return total
+
+
 def pruefe_vollstaendigkeit() -> int:
     """Meldet Dateien, die in einem Konsens-Crate liegen und fehlen.
 
@@ -693,6 +738,12 @@ def pruefe_vollstaendigkeit() -> int:
         if not verzeichnis.is_dir():
             print(f"[no-float] FEHLT (Verzeichnis): {verzeichnis}")
             return 1
+        # ⚑ Auch Shaderquellen: Eine neue `.metal`-Datei ohne Eintrag in
+        # `SHADER` waere derselbe blinde Fleck wie eine ungelistete `.rs`.
+        gelistet_shader = {p.resolve() for p in SHADER}
+        for datei in sorted(verzeichnis.rglob("*.metal")):
+            if datei.resolve() not in gelistet_shader:
+                fehlend.append(datei)
         for datei in sorted(verzeichnis.rglob("*.rs")):
             if datei.resolve() in gelistet:
                 continue
@@ -712,6 +763,7 @@ def main():
 
     total = audit_group("Inferenz-Heißpfad", HOT_PATH)
     total += audit_group("Konsenspfad", CONSENSUS_PATH)
+    total += audit_shader(SHADER)
     ungelistet = pruefe_vollstaendigkeit()
     if ungelistet:
         print(

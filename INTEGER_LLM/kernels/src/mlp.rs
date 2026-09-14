@@ -6,7 +6,7 @@
 #![allow(non_snake_case)]
 
 use crate::fixed_point::{clamp_i16_from_i64, rescale, rescale_i64};
-use crate::integer_math::lut_lookup;
+use crate::integer_math::silu_nachschlagen;
 use crate::linear::{linear_w8a16, linear_w8a16_pc};
 
 /// Integer-MLP mit SiLU-Approximation via LUT.
@@ -22,56 +22,25 @@ use crate::linear::{linear_w8a16, linear_w8a16_pc};
 ///
 /// Die SiLU-LUT arbeitet in einer festen Domäne (`silu_in_frac`, Index-
 /// Offset `silu_lut_offset` = -input_min der spec): Gate-Werte werden vor
-/// dem Lookup in diese Domäne reskaliert; große Betragswerte saturieren
-/// deterministisch am LUT-Rand.
+/// dem Lookup in diese Domäne reskaliert. **Jenseits der Tabelle gilt die
+/// Funktion selbst**: oberhalb die Identität, unterhalb null, siehe
+/// [`crate::integer_math::silu_nachschlagen`].
 ///
-/// ⚑ **Fund 75: Der letzte Satz gilt unter einer Vorbedingung, die bis
-/// zum 2026-08-28 nirgends stand.** Saturiert wird erst **in**
-/// [`crate::integer_math::lut_lookup`]. Davor steht hier ein
-/// ungesichertes `g_dom as i16`, und ein `i32`, der nicht in `i16`
-/// passt, wird davon **abgeschnitten statt gesättigt** — aus einem zu
-/// großen positiven Gate-Wert wird dann ein negativer Index, und die
-/// LUT liefert deterministisch den falschen Wert statt deterministisch
-/// den Randwert.
+/// 📌 **Fund 349 und Fund 364 (2026-09-14): Hier stand „große
+/// Betragswerte saturieren deterministisch am LUT-Rand", und das war die
+/// falsche Funktion.** Deterministisch war es, richtig nicht: SiLU(278)
+/// ist 278 und nicht 128. Gemessen reichen die Gate-Werte bei
+/// `myelith-0.6b` bis 278 und bei `myelith-4b` bis 192, die Tabelle aber
+/// nur bis 128. Der Rückwärtspass leitete seinen Gradienten aus der
+/// Tabelle ab und nahm jenseits davon schon Steigung 1 an; der
+/// Vorwärtspass lag flach. Seither sagen beide dasselbe.
 ///
-/// **Die Vorbedingung ist eine Aussage über den Wert, nicht über die
-/// Skalen: `g_dom` muss in `i16` passen.** Geprüft wird deshalb der
-/// Wert.
-///
-/// ⚑ **Der erste Anlauf prüfte `gate_out_frac >= silu_in_frac`, und das
-/// war falsch.** Die Bedingung ist **hinreichend**, nicht notwendig:
-/// Nur dann verkleinert der Reskalierer garantiert. Ein kleiner
-/// Gate-Wert mit mäßigem Linksschieber passt aber ebenso, und genau so
-/// arbeiten die synthetischen Prüfvorrichtungen des Laders
-/// (`gate_out_frac` 4 gegen `silu_in_frac` 6). Sie fielen sofort durch,
-/// obwohl an ihnen nichts falsch ist. **Eine zu enge Prüfung erzeugt
-/// Druck, sie wegzunehmen, statt den Fehler zu finden** — dieselbe
-/// Falle wie ein Test, der ein Literal statt der Regel prüft.
-///
-/// **Beide Bedingungen sind trotzdem wissenswert:**
-///
-/// - *notwendig und hinreichend:* `g_dom` liegt in `i16`. Das wird
-///   geprüft.
-/// - *hinreichend, und das, was die Kalibrierung liefert:*
-///   `gate_out_frac >= silu_in_frac`. Über alle vier Modelle liegen die
-///   `gate_proj`-Skalen zwischen 7 und 13, `silu.input_frac_bits` bei 6.
-///   Solange das so bleibt, kann der Wert den Bereich gar nicht
-///   verlassen, denn `*g` ist schon ein `i16` und der Reskalierer
-///   verkleinert.
-///
-/// ⚑ **Dieselbe Stelle ist in `backward.rs` anders gelöst**, und dort
-/// steht die Begründung dabei: `silu_backward` sättigt den Eingang
-/// ausdrücklich mit `clamp_i16_sat`, „der LUT-Index darf nicht
-/// wrappen". Zwei Lesarten derselben Frage im selben Crate, von denen
-/// eine geschützt ist und eine nicht.
-///
-/// **Warum hier trotzdem nur geprüft und nicht geklemmt wird:** Ein
-/// `clamp` an dieser Stelle liefe je Element in der innersten Schleife
-/// und müsste in **allen vier Backends** gleich eingebaut werden
-/// (`reference`, `simd`, `cuda`, `rocm`), sonst bricht die
-/// Bitgleichheit. Das ist eine Entscheidung über den Rechenpfad und
-/// kein Nebenbei-Fix. Die Prüfung hält die Annahme fest, bis sie
-/// getroffen ist.
+/// 📌 **Damit ist auch Fund 75 an dieser Stelle erledigt.** Hier stand
+/// ein ungesichertes `g_dom as i16` samt Zusicherung, dass der Wert in
+/// `i16` passt, und in `backward.rs` eine Sättigung auf `i16`, die den
+/// Versatz danach wieder überlaufen ließ. Beide sind entfallen: Der Wert
+/// bleibt `i32`, und was außerhalb der Tabelle liegt, entscheidet eine
+/// Stelle, bevor überhaupt ein Index entsteht.
 #[allow(clippy::too_many_arguments)]
 pub fn mlp_int(
     x: &[i16],
@@ -183,13 +152,14 @@ pub fn mlp_int_mit_spur(
 
 /// **SiLU, Produkt und Reskalierung: der elementweise Teil des MLP.**
 ///
-/// ⛑ **Er stand bis zum 2026-09-11 an drei Stellen**, zweimal mit dem
+/// 📌 **Er stand bis zum 2026-09-11 an drei Stellen**, zweimal mit dem
 /// Vermerk „wortgleich mit". Ein Kommentar, der Gleichheit behauptet,
 /// ist keine Gleichheit; hier ist sie jetzt eine.
 ///
 /// Der Gate-Wert wird in die feste LUT-Domaene reskaliert,
 /// nachgeschlagen und mit `up` auf die kalibrierte down-Eingangsskala
-/// gebracht. Die Vorbedingung an `g_dom` steht bei [`mlp_int`].
+/// gebracht. Jenseits der Tabelle gilt die Fortsetzung aus
+/// [`crate::integer_math::silu_nachschlagen`].
 #[allow(clippy::too_many_arguments)]
 pub fn silu_produkt(
     gate: &[i16],
@@ -205,15 +175,9 @@ pub fn silu_produkt(
     let mut h = Vec::with_capacity(gate.len());
     for (g, u) in gate.iter().zip(up.iter()) {
         let g_dom = rescale(*g as i32, gate_out_frac, silu_in_frac);
-        debug_assert!(
-            g_dom >= i16::MIN as i32 && g_dom <= i16::MAX as i32,
-            "silu_produkt: reskalierter Gate-Wert {} verlaesst i16 und wuerde abgeschnitten statt gesaettigt (Fund 75); gate_out_frac {}, silu_in_frac {}",
-            g_dom,
-            gate_out_frac,
-            silu_in_frac
-        );
-        let activated = lut_lookup(g_dom as i16, silu_lut, 0, silu_lut_offset);
-        let prod = (activated as i64) * (*u as i64);
+        let activated =
+            silu_nachschlagen(g_dom, silu_lut, silu_lut_offset, silu_in_frac, silu_out_frac);
+        let prod = activated * (*u as i64);
         h.push(clamp_i16_from_i64(rescale_i64(
             prod,
             silu_out_frac + up_out_frac,
@@ -274,25 +238,27 @@ pub fn mlp_int_stapel(
         up_out_frac,
     );
 
-    let hs: Vec<Vec<i16>> = gate
-        .iter()
-        .zip(up.iter())
-        .map(|(g_zeile, u_zeile)| {
-            silu_produkt(
-                g_zeile,
-                u_zeile,
-                silu_lut,
-                gate_out_frac,
-                up_out_frac,
-                down_in_frac,
-                silu_in_frac,
-                silu_lut_offset,
-                silu_out_frac,
-            )
-        })
-        .collect();
+    // ⚑ **Verteilt ueber die Faeden, Eingabe fuer Eingabe.** Gemessen am
+    // 2026-09-14 (4B, 219 Token, Matrizen auf der GPU) lag dieser Schritt
+    // einkernig bei rund einem Fuenftel der ganzen Vorbereitung: 9 728
+    // Tabellenzugriffe je Token und Ebene. Jede Eingabe schreibt in ihren
+    // eigenen Abschnitt, also aendert die Fadenzahl keine Zahl.
+    let faeden = if xs.len() < 2 { 1 } else { crate::linear::kerngrenze() };
+    let hs = crate::fadenpool::rechnen_breit(xs.len(), intermediate_size, faeden, |b, ziel| {
+        ziel.copy_from_slice(&silu_produkt(
+            &gate[b],
+            &up[b],
+            silu_lut,
+            gate_out_frac,
+            up_out_frac,
+            down_in_frac,
+            silu_in_frac,
+            silu_lut_offset,
+            silu_out_frac,
+        ));
+    });
 
-    let scheiben: Vec<&[i16]> = hs.iter().map(|h| h.as_slice()).collect();
+    let scheiben: Vec<&[i16]> = hs.chunks_exact(intermediate_size).collect();
     crate::linear::linear_w8a16_pc_stapel(
         &scheiben,
         W_down,
@@ -316,7 +282,7 @@ pub struct Expertenteil<'a> {
 /// **Alle gewaehlten Experten einer Ebene in zwei Runden statt in
 /// vierundzwanzig.**
 ///
-/// # ⛑ Fund 332 (2026-09-11)
+/// # 📌 Fund 332 (2026-09-11)
 ///
 /// Die Begruendung und die Messung stehen bei
 /// [`crate::linear::linear_w8a16_buendel`]. Kurz: Eine Poolrunde kostet
@@ -498,7 +464,7 @@ mod stapeltests {
     /// **Acht gebuendelte Experten sind bitgleich zu acht einzelnen,
     /// samt Mitschnitt.**
     ///
-    /// ⛑ **Die Gegenprobe zu Fund 332.** Sie prueft beides, was der
+    /// 📌 **Die Gegenprobe zu Fund 332.** Sie prueft beides, was der
     /// gebuendelte Weg anders macht: die Aufteilung ueber die Faeden
     /// (das Ergebnis) und die Zwischenwerte (den Mitschnitt, an dem der
     /// Rueckwaertspfad haengt).
@@ -633,79 +599,22 @@ mod tests {
         assert_eq!(out, out2);
     }
 
-    /// ⚑ Gegenprobe zu Fund 75: Die Prüfung fängt genau den Fall,
-    /// gegen den sie geschrieben ist.
-    ///
-    /// **Nicht eine ungünstige Skalenrelation reicht dafür, sondern ein
-    /// Wert, der `i16` wirklich verlässt.** Ein früherer Entwurf dieses
-    /// Tests setzte nur `gate_out_frac` unter `silu_in_frac` und prüfte
-    /// damit eine hinreichende statt der notwendigen Bedingung; die
-    /// Prüfvorrichtungen des Laders fielen dadurch zu Unrecht durch.
+    /// 📌 Fund 349: Ein Gate-Wert jenseits der Tabelle ist die Identität,
+    /// nicht der letzte Tabelleneintrag. Skalen so gewählt, dass nichts
+    /// reskaliert: `gate_out_frac` = `silu_in_frac` = 1, `up` ist genau
+    /// 1,0 auf null Bruchstellen, `down_in_frac` = 1. Dann ist `h` der
+    /// reale SiLU-Wert auf einer Bruchstelle.
     #[test]
-    #[cfg_attr(
-        not(debug_assertions),
-        ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
-    )]
-    #[should_panic(expected = "verlaesst i16")]
-    fn ein_gate_wert_ausserhalb_von_i16_bricht_ab() {
-        // Gewichte am Rand und ein Linksschieber um 5 Bit: der
-        // Zwischenwert wird groß genug, um i16 zu verlassen.
-        let x = vec![32_767i16, 32_767];
-        let w: Vec<i8> = vec![127, 127, 127, 127];
+    fn ein_gate_wert_jenseits_der_tabelle_ist_die_identitaet() {
         let lut = spec_silu_lut();
-        let _ = mlp_int(
-            &x, &w, &w, &w, 2, 2,
-            &[0, 0], &[6, 6], &[6, 6],
-            &lut,
-            6, 1, 6, 6, 6, 256, 6, &[6, 6],
-        );
-    }
-
-    /// ⚑ Und das ist, was ohne die Prüfung geschähe, in zwei Stufen.
-    ///
-    /// **Stufe 1, der Cast:** Aus einem sehr großen **positiven**
-    /// Gate-Wert wird ein **negativer** Zwischenwert, und der landet als
-    /// völlig anderer, aber vollkommen gültig aussehender Index in der
-    /// Tabelle. Er stürzt nicht ab und fällt in keinem Test auf.
-    ///
-    /// ⚑ **Stufe 2, und die ist beim Schreiben dieses Tests
-    /// aufgefallen: Sättigen auf `i16` rettet nicht.** Der Wert wird
-    /// danach noch um `silu_lut_offset` verschoben, und `32767 + 256`
-    /// verlässt `i16` erneut. Die einzige richtige Sättigung ist die
-    /// **in die LUT-Domäne**, also auf `[-offset, len-1-offset]`.
-    ///
-    /// **Damit ist auch der Schutz in `backward.rs` unvollständig:**
-    /// `clamp_i16_sat` sättigt dort auf `i16`, und der Offset kommt
-    /// danach. Wer den Fall je behebt, behebt ihn an beiden Stellen und
-    /// in der LUT-Domäne, nicht in `i16`.
-    #[test]
-    fn der_ungesicherte_cast_macht_aus_gross_positiv_klein_negativ() {
-        // Ein Gate-Wert am oberen i16-Rand, Domäne von frac 1 auf frac 6.
-        let g_dom = crate::fixed_point::rescale(32_767, 1, 6);
-        assert_eq!(g_dom, 32_767 << 5, "der Reskalierer vergrößert wie erwartet");
-
-        // Stufe 1: der Cast, wie er im Kernel steht.
-        let abgeschnitten = g_dom as i16;
-        assert_eq!(abgeschnitten, -32, "aus +1 048 544 wird -32");
-
-        // Mit dem Offset ergibt das einen Index mitten in der Tabelle,
-        // statt am oberen Rand, wo er hingehörte.
-        let index_falsch = (abgeschnitten as i32 + 256).clamp(0, 511);
-        assert_eq!(index_falsch, 224);
-
-        // Stufe 2: Sättigen auf i16 hilft nicht, die Addition danach
-        // verlässt den Typ erneut. In i32 gerechnet ist zu sehen, wohin
-        // sie liefe.
-        let gesaettigt_i16 = crate::fixed_point::clamp_i16(g_dom);
-        assert_eq!(gesaettigt_i16, 32_767);
-        assert!(
-            gesaettigt_i16 as i32 + 256 > i16::MAX as i32,
-            "32767 + 256 passt nicht mehr in i16"
-        );
-
-        // Richtig ist die Sättigung in der LUT-Domäne.
-        let index_richtig = (g_dom + 256).clamp(0, 511);
-        assert_eq!(index_richtig, 511, "gesättigt gehörte er an den oberen Rand");
-        assert_ne!(index_falsch, index_richtig);
+        // Die Tabelle endet bei 255 (real 127,5). 1000 ist real 500.
+        let h = silu_produkt(&[1000], &[1], &lut, 1, 0, 1, 1, 256, 6);
+        assert_eq!(h, vec![1000], "SiLU(500) ist 500, nicht der Tabellenrand");
+        // Am Rand stetig: 255 liegt noch in der Tabelle, 256 schon dahinter.
+        let rand = silu_produkt(&[255, 256], &[1, 1], &lut, 1, 0, 1, 1, 256, 6);
+        assert_eq!(rand, vec![255, 256]);
+        // Unterhalb der Tabelle null.
+        let unten = silu_produkt(&[-1000], &[1], &lut, 1, 0, 1, 1, 256, 6);
+        assert_eq!(unten, vec![0]);
     }
 }

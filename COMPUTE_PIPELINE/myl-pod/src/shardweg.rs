@@ -345,7 +345,7 @@ pub fn bedienen_training(
     };
     match anfrage {
         Shardanfrage::TrainVorwaerts { sitzung, hidden, schritt, lr_nenner } => {
-            // ⛑ **Zwei Grenzen, bevor irgendetwas belegt wird.**
+            // 📌 **Zwei Grenzen, bevor irgendetwas belegt wird.**
             if hidden.len() > MAX_TRAINPOSITIONEN {
                 return Some(Shardantwort::Fehler(format!(
                     "{} Positionen ueberschreiten die Grenze von {MAX_TRAINPOSITIONEN}",

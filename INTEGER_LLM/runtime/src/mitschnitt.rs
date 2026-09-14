@@ -165,7 +165,7 @@ pub enum Mlpteil {
         /// das ist an echten 30B-A3B-Gewichten gemessen
         /// (`tests/training_moe.rs`).
         ///
-        /// ⛑ **Hier stand für eine halbe Stunde ein eigener Typ
+        /// 📌 **Hier stand für eine halbe Stunde ein eigener Typ
         /// `Expertenspur` mit denselben drei Feldern.** Das ist die
         /// Klasse von Fund 178: zwei Fassungen derselben Sache, die
         /// auseinanderlaufen können, und niemand merkt es, weil beide

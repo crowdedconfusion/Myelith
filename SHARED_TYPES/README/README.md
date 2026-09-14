@@ -496,7 +496,7 @@ Dieselbe wie bei der Zone: **Eine falsche Adresse bestraft den, der sie
 angibt.** Wer nicht erreichbar ist, kann keine Spur liefern, und
 Schweigen zählt wie eine falsche Antwort.
 
-⛑ **Was das nicht deckt:** Wer viele Miner auf die Adresse eines
+📌 **Was das nicht deckt:** Wer viele Miner auf die Adresse eines
 **Dritten** anmeldet, schickt ihm fremden Verkehr. Heute frei, weil eine
 Anmeldung nichts kostet; **sobald Stake daran hängt, ist es bepreist**,
 und erst dann wäre ein Besitznachweis die passende Antwort statt der
@@ -738,7 +738,7 @@ gemeldet**, nicht verschwiegen; `assign_redundant_pods` überging
 fehlende Metadaten stillschweigend, und genau das soll hier nicht
 passieren.
 
-⛑ **Zwei Berichtigungen an der eigenen Arbeit.** Der erste Test zum
+📌 **Zwei Berichtigungen an der eigenen Arbeit.** Der erste Test zum
 eigenen Seed prüfte die Ableitungsfunktion statt ihre Wirkung und blieb
 grün, als der Aufruf versuchsweise durch den blanken Seed ersetzt wurde:
 Er prüfte, dass das Werkzeug funktioniert, nicht dass es benutzt wird.

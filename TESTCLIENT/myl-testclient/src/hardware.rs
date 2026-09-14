@@ -249,18 +249,16 @@ pub fn simd_features() -> Vec<String> {
 /// `--features cuda` führt `cuda` hier auf, während die Rechnung
 /// weiterhin die Referenzkernel machen. Genau diese Unterscheidung
 /// gehört ins Protokoll, siehe [`rechnende_backends`].
+///
+/// 📌 **Gefragt wird `kernels`, nicht dieser Bau** (2026-09-14). Hier stand
+/// `cfg!(feature = ...)` des Testclients. Seit er `cpu-simd` und `metal`
+/// über seine Abhängigkeiten bekommt, sähe diese Liste davon nichts und
+/// meldete `reference`, während vektorisiert gerechnet wird.
 pub fn compiled_backends() -> Vec<String> {
-    let mut b = vec!["reference".to_string()];
-    for (feature, name) in [
-        (cfg!(feature = "cpu-simd"), "cpu-simd"),
-        (cfg!(feature = "cuda"), "cuda"),
-        (cfg!(feature = "rocm"), "rocm"),
-    ] {
-        if feature {
-            b.push(name.to_string());
-        }
-    }
-    b
+    integer_llm_kernels::rechenpfad::uebersetzt()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 /// Backends, die auf dieser Übersetzung einen **eigenen Rechenpfad**
@@ -291,13 +289,19 @@ pub fn selected_backend() -> &'static str {
     // vektorisiert bis heute nur unter aarch64. Ein Protokoll von einer
     // x86_64-Maschine hätte `cpu-simd/avx2` getragen und dabei denselben
     // skalaren Code ausgeführt wie ein Lauf mit `reference`.
-    if integer_llm_kernels::dot::VEKTORISIERT {
+    //
+    // ⚑ **Die GPU dazu, wenn sie rechnen darf** (2026-09-14). Sie rechnet die
+    // gebündelten Matrizen der Vorbereitung, alles andere die CPU; auf
+    // Apple-Silizium ist das immer der vektorisierte Weg.
+    let gpu = integer_llm_kernels::metal::verfuegbar() && integer_llm_kernels::metal::schwelle() > 0;
+    match (integer_llm_kernels::dot::VEKTORISIERT, gpu) {
         // Der einzige vektorisierte Pfad, den es gibt. Kommt AVX2 dazu,
         // gehört hier eine Fallunterscheidung nach `target_arch` hin, und
         // dann trägt sie auch etwas aus.
-        "cpu-simd/neon"
-    } else {
-        "reference"
+        (true, true) => "metal+cpu-simd/neon",
+        (true, false) => "cpu-simd/neon",
+        (false, true) => "metal+reference",
+        (false, false) => "reference",
     }
 }
 
@@ -744,12 +748,16 @@ mod tests {
         assert!(rechnend.contains("reference"));
         // Das gewählte Backend muss in den rechnenden vorkommen: Es ist
         // das, was tatsächlich läuft.
+        // Seit dem 2026-09-14 kann der Weg aus zwei Teilen bestehen
+        // (`metal+cpu-simd/neon`); **jeder** Teil muss rechnen.
         let gewaehlt = fp.get("backend_selected").expect("Feld fehlt");
-        let stamm = gewaehlt.split('/').next().unwrap_or(gewaehlt);
-        assert!(
-            rechnend.split(',').any(|b| b == stamm),
-            "gewählt {gewaehlt}, rechnend {rechnend}"
-        );
+        for teil in gewaehlt.split('+') {
+            let stamm = teil.split('/').next().unwrap_or(teil);
+            assert!(
+                rechnend.split(',').any(|b| b == stamm),
+                "gewählt {gewaehlt}, Teil {stamm} rechnet nicht; rechnend {rechnend}"
+            );
+        }
     }
 
     #[test]
@@ -757,14 +765,22 @@ mod tests {
         assert!(compiled_backends().contains(&"reference".to_string()));
     }
 
-    /// Ohne das Feature `cpu-simd` darf kein SIMD-Backend gemeldet
-    /// werden: sonst führt das Protokoll einen Pfad, den der Lauf gar
-    /// nicht genommen hat.
-    #[cfg(not(feature = "cpu-simd"))]
+    /// Ohne das Feature `cpu-simd` in `kernels` darf kein SIMD-Backend
+    /// gemeldet werden: sonst führt das Protokoll einen Pfad, den der Lauf
+    /// gar nicht genommen hat.
+    ///
+    /// 📌 **Gefragt wird `kernels`** (2026-09-14). Hier stand
+    /// `#[cfg(not(feature = "cpu-simd"))]` des Testclients; seit das
+    /// Feature über die Abhängigkeit kommt, lief diese Prüfung auf
+    /// Apple-Silizium gegen einen Bau, der vektorisiert.
     #[test]
     fn ohne_feature_wird_referenz_gemeldet() {
-        assert_eq!(selected_backend(), "reference");
-        assert_eq!(compiled_backends(), vec!["reference".to_string()]);
+        if compiled_backends().iter().any(|b| b == "cpu-simd") {
+            assert!(selected_backend().contains("cpu-simd") || !integer_llm_kernels::dot::VEKTORISIERT);
+            return;
+        }
+        assert!(selected_backend().ends_with("reference"), "{}", selected_backend());
+        assert!(!selected_backend().contains("cpu-simd"));
     }
 
     /// Der Fingerabdruck beschreibt eine Hardware-Klasse, kein Gerät.

@@ -715,7 +715,7 @@ Paarung sieht das, statt ihnen ein falsches Etikett zu geben.
   wie `pods_are_disjoint`, ist **zurückgezogen**. Eine erklärte Angabe
   trägt die Ausfalldiversität und nicht die Sicherheit (Fund 108).
 
-⛑ **Ein Test prüfte eine Aussage, die unter beiden Fassungen gilt.** Er
+📌 **Ein Test prüfte eine Aussage, die unter beiden Fassungen gilt.** Er
 sollte zeigen, dass ein abweichendes Mitglied seinen Pod nicht aus der
 Paarung nimmt, und prüfte, dass die **übrigen** Pods weiter gepaart
 werden. Das gilt auch mit dem alten Ausschluss. Die Zusage sitzt nicht in
@@ -748,7 +748,7 @@ eine Paarung je Mitglied zu rechnen, für eine Aussage, die feststeht.
 Wer sie aus dem Bündel nähme, ließe den Einreicher bestimmen, gegen
 welche Schlüssel geprüft wird.
 
-⛑ **Der Test, an dem der Punkt hängt, fiel beim Einschalten sofort um**,
+📌 **Der Test, an dem der Punkt hängt, fiel beim Einschalten sofort um**,
 und das war die richtige Antwort: Er benutzte eine Attrappe als
 Signatur. Er unterschreibt jetzt mit **allen** Mitgliedern, Reserve
 eingeschlossen, denn gegen deren Schlüsselmenge wird geprüft.
@@ -798,7 +798,7 @@ wer wo landet, nicht, wer dabei ist.
 Pod über eine `PodId`, die Zuteilung über `pod_index`, und zwischen
 beiden gab es keine Verbindung.
 
-⛑ **Zwei Tests sahen stärker aus, als sie waren**, und beide fielen erst
+📌 **Zwei Tests sahen stärker aus, als sie waren**, und beide fielen erst
 in der Gegenprobe auf. Der eine rief `filter_miners` selbst und prüfte
 damit das Werkzeug statt seines Gebrauchs; der andere listete erst alle
 Europäer, dann alle Asiaten, und weil die Zuteilung Cluster der Reihe

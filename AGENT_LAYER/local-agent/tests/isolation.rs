@@ -44,7 +44,7 @@ fn das_harness_kennt_die_kette_nicht() {
     }
 }
 
-/// ⛑ **Die Gegenprobe zum Test selbst.**
+/// 📌 **Die Gegenprobe zum Test selbst.**
 ///
 /// Sie prüft, dass die Suche etwas findet, wenn etwas da ist. Ohne sie
 /// bliebe offen, ob der Test oben eine leere Menge durchsucht, und eine

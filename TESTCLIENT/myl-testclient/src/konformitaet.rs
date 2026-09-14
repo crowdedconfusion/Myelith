@@ -18,7 +18,7 @@
 //! ohne Artefakt **siebzehn** (sechs Operationen, dazu Training und
 //! Gemisch), mit passendem Artefakt zusätzlich die modellabhängigen.
 //!
-//! ⛑ **Hier stand „sechs ohne Artefakt, dreiunddreißig mit", und das
+//! 📌 **Hier stand „sechs ohne Artefakt, dreiunddreißig mit", und das
 //! galt einmal.** Training und Gemisch kamen später dazu und brauchen
 //! kein Artefakt; die Zeile wurde nicht nachgezogen. Am 2026-09-09 fiel
 //! auf, dass die Wächter in `ci.yml` und `release.yml` deshalb den

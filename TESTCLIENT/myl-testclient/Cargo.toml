@@ -1,6 +1,6 @@
 [package]
 name = "myl-testclient"
-version = "0.36.1"
+version = "0.37.0"
 edition = "2021"
 # ⚑ 1.88 und nicht 1.85 wie die uebrigen Crates, und der Grund liegt
 # nicht im eigenen Code: Ueber libp2p haengt hier die `icu_*`-Kette
@@ -58,10 +58,12 @@ sha2 = "0.10"
 borsh = { version = "1.6", features = ["derive"] }
 crossterm = "0.29.0"
 
-# Das Backend wird beim ÜBERSETZEN gewählt, nicht zur Laufzeit: Der
-# Rechenpfad kennt keine Verzweigung nach Backend, die Weiche steht als
-# `cfg` in `kernels/src/dot.rs`. Ein Laufzeitschalter `--backend` wäre
-# deshalb eine Behauptung ohne Deckung.
+# Welche Backends ein Bau enthält, entscheidet sich beim ÜBERSETZEN. Seit
+# dem 2026-09-14 lässt sich zwischen den enthaltenen zur Laufzeit
+# umschalten (`kernels::dot::skalar_erzwingen`,
+# `kernels::metal::schwelle_setzen`); die Stufe `rechenwege` tut das und
+# belegt je Weg, dass er gegriffen hat. Ein Schalter für ein Backend, das
+# nicht übersetzt ist, bleibt eine Behauptung ohne Deckung.
 #
 # `cuda` und `rocm` sind aufgeführt, damit ein Bau damit möglich ist und
 # der Client ihn ERKENNT. Rechnen tun sie nicht: ihre Umsetzungen
@@ -69,8 +71,21 @@ crossterm = "0.29.0"
 # einem solchen Bau, siehe `hardware::rechenpfad_pruefen`.
 [features]
 cpu-simd = ["integer-llm-kernels/cpu-simd"]
+metal = ["integer-llm-kernels/metal"]
 cuda = ["integer-llm-kernels/cuda"]
 rocm = ["integer-llm-kernels/rocm"]
+
+# ⚑ **Jeder Rechenweg, den die Maschine hat, ist im Bau** (2026-09-14).
+# Die Stufe `rechenwege` prüft sie alle in einem Lauf und schaltet dafür
+# zur Laufzeit um; ein Bau ohne sie prüfte nur die Referenz. `cpu-simd`
+# nur auf aarch64, weil `kernels/src/dot.rs` nur dort vektorisiert und der
+# Client einen Bau mit dem Feature ohne den Pfad ablehnt (Fund 34); `metal`
+# nur auf Apple-Silizium.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels", features = ["cpu-simd"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+integer-llm-kernels = { path = "../../INTEGER_LLM/kernels", features = ["cpu-simd", "metal"] }
 
 [lib]
 name = "myl_testclient"

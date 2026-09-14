@@ -1,6 +1,6 @@
 # verification (`myl-verifier`)
 
-> **Version:** 0.22.1
+> **Version:** 0.23.0
 > **Datum:** 2026-09-03
 > **Status:** 🎉 **Phasen 1, 2 und 3 abgeschlossen** (Punkte 1.1–1.3,
 > 2.1–2.5, 3.1–3.6), Phase 4 zu drei Vierteln (4.1, 4.2 und 4.4 ✅,
@@ -145,6 +145,16 @@ gegen zwei eingebaute Fehler geeicht worden (Grenzverschiebung um eins,
 umgedrehter Vergleich); beide fliegen auf.
 
 ## Changelog
+
+### v0.23.0 – 2026-09-14 (eine Position hinter der ersten braucht den KV-Verlauf)
+
+⛔️ **Fund 373:** Der Nachrechner rechnete ein Segment an Position `p` mit
+leerem KV-Speicher und kam für jede Position hinter der ersten zu einer
+anderen Spur als ein ehrlicher Shard, der die Positionen davor gehalten
+hat; geprüft war nur Position 0. Er lehnt jetzt ab
+(`CheckError::OhneVerlauf`), statt eine Abweichung zu erzeugen, die keine
+ist und einen ehrlichen Shard schlüge. Wie der Verlauf in den Streitfall
+kommt, ist eine Protokollfrage (Bericht `Kontext-1M-Netzmodell-2026-09-14.md`).
 
 ### v0.22.1 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 
@@ -393,7 +403,7 @@ nachrechnet, ist eine Konsensentscheidung; zwei Knoten mit verschiedener
 Gossip-Sicht paarten verschieden. Die Zone kommt jetzt aus der
 Registrierung.
 
-⛑ **Und dieser Test führte den Fund vor, ohne ihn zu zeigen:** Er baute
+📌 **Und dieser Test führte den Fund vor, ohne ihn zu zeigen:** Er baute
 die Registrierungen mit `GeoRegion::Europe` für **alle** und gab
 denselben Pods über eine zweite Hilfsfunktion **rotierende** Regionen im
 Gossip. Zwei Quellen, die sich widersprachen, und die Paarung las die

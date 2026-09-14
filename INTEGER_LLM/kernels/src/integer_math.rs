@@ -120,34 +120,32 @@ pub fn rsqrt_q(x: i32, frac_bits: u8) -> i32 {
 
 /// LUT-Lookup mit Index-Berechnung und Clamping.
 ///
-/// **Drei Vorbedingungen** (Fund 75). Der Index wird in `i16` gerechnet,
-/// und `i16` ist knapp:
+/// **Drei Vorbedingungen** (Fund 75, verschaerft mit Fund 349):
 ///
 /// 1. **`shift <= 15`**, sonst ist die Schiebeweite fuer `i16` zu gross.
-/// 2. **`(x >> shift) + offset` passt in `i16`.** Die Addition ist
-///    ungeschuetzt; im Debug-Bau bricht sie ab, im Release-Bau wrappt
-///    sie, und dann greift das Clamping darunter auf den falschen Wert.
-/// 3. **`1 <= lut.len() <= 32767`.** `lut.len() as i16` wrappt bei einer
-///    laengeren Tabelle ins Negative, und `min(negativ)` ergibt einen
-///    Index, den `as usize` in eine riesige Zahl verwandelt.
+/// 2. **Der Index `(x >> shift) + offset` liegt in der Tabelle**, also in
+///    `0..lut.len()`. Wer einen Eingang ausserhalb der Tabelle hat, muss
+///    **vorher** entscheiden, was die Funktion dort ist; fuer die SiLU tut
+///    das [`silu_nachschlagen`].
+/// 3. **`1 <= lut.len() <= 32767`.**
 ///
-/// **Zu Punkt 2 gibt es zwei Lesarten im Crate, und keine der beiden
-/// ist vollstaendig.** `backward.rs` saettigt den Eingang ausdruecklich
-/// (`clamp_i16_sat`) mit der Begruendung, der LUT-Index duerfe nicht
-/// wrappen. `mlp.rs` castet an derselben Stelle mit `as i16`,
-/// ungesichert. Heute traegt beides, weil die kalibrierten
-/// `gate_proj`-Skalen ueber alle vier Modelle zwischen 7 und 13 liegen
-/// und `silu.input_frac_bits` bei 6, der Reskalierer also immer
-/// verkleinert.
+/// 📌 **Fund 349 (2026-09-14): Die Vorbedingung stand an der falschen
+/// Grenze.** Bis dahin verlangte sie nur, dass der Index in `i16` passt.
+/// Die SiLU-Tabelle endet aber bei 8191 vor dem Versatz; alles zwischen
+/// 8192 und 24 575 wurde **still** auf den letzten Eintrag geklemmt, und
+/// erst darueber schlug die Zusicherung an. Eine Grenze, die mit der
+/// Tabelle nichts zu tun hat, prueft nichts ueber die Tabelle.
 ///
-/// ⚑ **Der Schutz in `backward.rs` reicht aber auch dann nicht, wenn er
-/// greift.** Gesaettigt wird dort auf `i16`, und der Offset kommt
-/// **danach**: `32767 + 256` verlaesst `i16` erneut. Die einzige
-/// richtige Saettigung ist die **in die LUT-Domaene**, also auf
-/// `[-offset, len - 1 - offset]`. Wer den Fall je behebt, behebt ihn an
-/// beiden Stellen und in dieser Domaene, nicht in `i16`. Belegt in
-/// `mlp.rs`, Test
-/// `der_ungesicherte_cast_macht_aus_gross_positiv_klein_negativ`.
+/// 📌 **Und das Klemmen war an dieser Stelle eine Aussage ueber die
+/// Funktion, die niemand getroffen hatte.** Fuer die SiLU heisst ein
+/// Eingang ueber 128 nicht „128", sondern der Eingang selbst. Die
+/// gemessenen Gate-Werte reichen bei `myelith-0.6b` bis 278 und bei
+/// `myelith-4b` bis 192 (Fund 364); die Inferenz lag dort flach.
+///
+/// ⚑ **Die Klemme im Rumpf bleibt**, in `i32` gerechnet (Fund 348): Ein
+/// Verstoss gegen Vorbedingung 2 im ausgelieferten Bau, in dem die
+/// Zusicherung fehlt, liefert so wenigstens den Randwert statt eines
+/// Wertes vom anderen Ende.
 #[inline(always)]
 pub fn lut_lookup(x: i16, lut: &[i16], shift: u8, offset: i16) -> i16 {
     debug_assert!(shift <= 15, "lut_lookup: shift {} ueber der Grenze 15 (Fund 75)", shift);
@@ -156,38 +154,61 @@ pub fn lut_lookup(x: i16, lut: &[i16], shift: u8, offset: i16) -> i16 {
         "lut_lookup: Tabellenlaenge {} ausserhalb 1..=32767 (Fund 75)",
         lut.len()
     );
-    debug_assert!(
-        ((x >> shift) as i32 + offset as i32) >= i16::MIN as i32
-            && ((x >> shift) as i32 + offset as i32) <= i16::MAX as i32,
-        "lut_lookup: Index {} + {} verlaesst i16 (Fund 75)",
-        x >> shift,
-        offset
-    );
-    // ⛑ **Fund 348: die Klemme sass hinter dem Ueberlauf.**
-    //
-    // Hier stand die Addition in `i16`, und danach wurde geklemmt. Ein
-    // Index oberhalb von `i16::MAX` laeuft dabei in den negativen
-    // Bereich um, **bevor** die Klemme ihn sieht; `.max(0)` schiebt ihn
-    // dann auf **null**. Ein Index, der oben haette saettigen muessen,
-    // bekam so den Wert vom **unteren** Ende der Tabelle.
-    //
-    // Gemessen an einem Lauf mit umgekehrtem Gradienten:
-    // `25412 + 8192 = 33604` laeuft auf `-31932` um, `.max(0)` macht
-    // daraus `0`, und `silu` liefert die Antwort fuer den kleinsten
-    // Eingang statt fuer den groessten.
-    //
-    // ⚑ **Mit Zusicherungen faellt es auf, ohne sie nicht**, und
-    // ausgeliefert wird ohne. Der `debug_assert!` darueber bleibt: Er
-    // benennt die Vorbedingung, und die gilt weiter. Diese Zeilen sorgen
-    // dafuer, dass ein Verstoss dagegen **die richtige Richtung**
-    // saettigt statt die falsche.
-    //
-    // ⚠️ **An einem gueltigen Lauf aendert das nichts.** Liegt der Index
-    // im Bereich, rechnet `i32` dasselbe wie `i16`; die
-    // Konformitaetsvektoren bleiben unveraendert.
     let idx = (x >> shift) as i32 + offset as i32;
+    debug_assert!(
+        idx >= 0 && idx < lut.len() as i32,
+        "lut_lookup: Index {} + {} liegt ausserhalb der Tabelle 0..{} (Fund 349)",
+        x >> shift,
+        offset,
+        lut.len()
+    );
+    // 📌 **Fund 348: die Klemme sass hinter dem Ueberlauf.** Hier stand
+    // die Addition in `i16`, und danach wurde geklemmt. `25412 + 8192`
+    // lief auf `-31932` um, `.max(0)` machte daraus `0`, und die SiLU
+    // lieferte die Antwort fuer den kleinsten Eingang statt fuer den
+    // groessten. Seither in `i32` gerechnet und erst dann geklemmt.
     let idx = idx.clamp(0, lut.len() as i32 - 1) as usize;
     lut[idx]
+}
+
+/// **Die SiLU eines Wertes in der Tabellendomaene, auch jenseits der
+/// Tabelle.** Eingang `x` auf `in_frac` Bruchstellen, Ausgabe auf
+/// `out_frac`, als `i64`, weil sie oberhalb der Tabelle nicht mehr in
+/// `i16` passt.
+///
+/// | Eingang | Ausgabe |
+/// |---|---|
+/// | oberhalb der Tabelle | `x`, reskaliert auf `out_frac` |
+/// | in der Tabelle | der Tabellenwert |
+/// | unterhalb der Tabelle | `0` |
+///
+/// ⚑ **Warum das die Funktion ist und keine Naeherung.** SiLU(x) ist
+/// `x · σ(x)`. Die Tabelle deckt die reale Domaene −128 bis knapp 128
+/// ab, und dort ist `σ` bei jeder hier darstellbaren Aufloesung schon 1
+/// beziehungsweise 0 (der Fehler ist hoechstens `128 · e^−128`). Oberhalb
+/// ist SiLU also die Identitaet, unterhalb null. Die Fortsetzung ist an
+/// beiden Raendern **stetig**: Der letzte Tabelleneintrag ist der Eingang
+/// selbst, der erste ist null. Dieselbe Zerlegung, mit der ganzzahlige
+/// Verfahren nur den beschraenkten Faktor klemmen und mit dem Eingang
+/// multiplizieren, statt die ganze Funktion zu klemmen.
+///
+/// ⚑ **Und der Rueckwaertspass rechnete schon so.** Sein Gradient wird aus
+/// dieser Tabelle abgeleitet und saettigte am Rand auf Steigung 1 oben
+/// und 0 unten, waehrend der Vorwaertspass flach bei 128 lag. Seit Fund
+/// 349 sagen beide Paesse dasselbe (`backward::silu_ableitung_nachschlagen`).
+#[inline]
+pub fn silu_nachschlagen(x: i32, lut: &[i16], offset: i16, in_frac: u8, out_frac: u8) -> i64 {
+    let oben = lut.len() as i32 - 1 - offset as i32;
+    let unten = -(offset as i32);
+    if x > oben {
+        crate::fixed_point::rescale_i64(x as i64, in_frac, out_frac)
+    } else if x < unten {
+        0
+    } else {
+        // Zwischen `unten` und `oben` passt `x` in `i16`, denn beide
+        // Grenzen tun es (Vorbedingung 3 und `offset: i16`).
+        i64::from(lut_lookup(x as i16, lut, 0, offset))
+    }
 }
 
 #[cfg(test)]
@@ -268,25 +289,22 @@ mod tests {
         // Ohne Offset und ohne Shift ist der Index der Wert selbst.
         assert_eq!(lut_lookup(0, &lut, 0, 0), 0);
         assert_eq!(lut_lookup(7, &lut, 0, 0), 7);
-        // Unter null wird auf den ersten, ueber die Laenge auf den
-        // letzten Eintrag geklemmt.
-        assert_eq!(lut_lookup(-5, &lut, 0, 0), 0);
-        assert_eq!(lut_lookup(100, &lut, 0, 0), 15);
+        assert_eq!(lut_lookup(15, &lut, 0, 0), 15);
         // Der Offset verschiebt die Domaene.
         assert_eq!(lut_lookup(-3, &lut, 0, 8), 5);
         // Der Shift rastert sie.
         assert_eq!(lut_lookup(9, &lut, 2, 0), 2);
     }
 
-    /// ⚑ Gegenprobe zu Fund 75, Punkt 2: Ohne die Pruefung wrappt der
-    /// Index im Release-Bau und das Clamping darunter klemmt den
-    /// falschen Wert.
+    /// ⚑ Gegenprobe zu Fund 75, Punkt 2, verschaerft mit Fund 349: Ein
+    /// Index ausserhalb der Tabelle meldet sich, auch wenn er in `i16`
+    /// passt.
     #[test]
     #[cfg_attr(
         not(debug_assertions),
         ignore = "prueft eine debug_assert-Zusicherung; im Release laeuft sie nicht"
     )]
-    #[should_panic(expected = "verlaesst i16")]
+    #[should_panic(expected = "ausserhalb der Tabelle")]
     fn lut_lookup_index_ueberlauf_bricht_ab() {
         let lut: Vec<i16> = (0..16).collect();
         let _ = lut_lookup(i16::MAX, &lut, 0, 1);
@@ -316,5 +334,74 @@ mod tests {
     fn lut_lookup_leere_tabelle_bricht_ab() {
         let leer: Vec<i16> = Vec::new();
         let _ = lut_lookup(0, &leer, 0, 0);
+    }
+
+    /// Eine Tabelle, deren Werte man ohne Gleitkomma nachrechnen kann:
+    /// Rampe ab null, also `max(0, i - offset) << (out - in)`. Ihr letzter
+    /// Eintrag ist die Identitaet und ihr erster null, genau wie bei der
+    /// echten SiLU-Tabelle.
+    fn rampe(len: usize, offset: i16, in_frac: u8, out_frac: u8) -> Vec<i16> {
+        (0..len as i32)
+            .map(|i| ((i - offset as i32).max(0) << (out_frac - in_frac)) as i16)
+            .collect()
+    }
+
+    /// Fund 349: Oberhalb der Tabelle setzt die SiLU die Identitaet fort,
+    /// und zwar stetig am Rand.
+    #[test]
+    fn silu_setzt_oberhalb_der_tabelle_die_identitaet_fort() {
+        let lut = rampe(512, 256, 6, 8);
+        let oben = 511 - 256;
+        assert_eq!(silu_nachschlagen(oben, &lut, 256, 6, 8), (oben as i64) << 2);
+        assert_eq!(silu_nachschlagen(oben + 1, &lut, 256, 6, 8), ((oben + 1) as i64) << 2);
+        assert_eq!(
+            silu_nachschlagen(oben + 1, &lut, 256, 6, 8) - silu_nachschlagen(oben, &lut, 256, 6, 8),
+            1 << 2,
+            "am oberen Rand springt der Wert"
+        );
+        // Der Bergauflauf aus Fund 349 und ein Wert weit jenseits von i16.
+        assert_eq!(silu_nachschlagen(25_412, &lut, 256, 6, 8), 25_412i64 << 2);
+        assert_eq!(silu_nachschlagen(1 << 20, &lut, 256, 6, 8), (1i64 << 20) << 2);
+    }
+
+    #[test]
+    fn silu_ist_unterhalb_der_tabelle_null() {
+        let lut = rampe(512, 256, 6, 8);
+        assert_eq!(silu_nachschlagen(-256, &lut, 256, 6, 8), 0);
+        assert_eq!(silu_nachschlagen(-257, &lut, 256, 6, 8), 0);
+        assert_eq!(silu_nachschlagen(-(1 << 20), &lut, 256, 6, 8), 0);
+    }
+
+    #[test]
+    fn silu_ist_in_der_tabelle_der_tabellenwert() {
+        let mut lut = rampe(512, 256, 6, 8);
+        // Ein Eintrag, den die Rampe nicht hat: Wer ihn trifft, liest die
+        // Tabelle und rechnet nicht selbst.
+        lut[300] = 7;
+        assert_eq!(silu_nachschlagen(300 - 256, &lut, 256, 6, 8), 7);
+        for x in [-256, -1, 0, 1, 100, 255] {
+            assert_eq!(silu_nachschlagen(x, &lut, 256, 6, 8), i64::from(lut[(x + 256) as usize]));
+        }
+    }
+
+    /// Die Vorbedingung liegt jetzt an der Tabellengrenze, nicht an der
+    /// von `i16` (Fund 349). Ein Index eins hinter der Tabelle meldet sich.
+    #[test]
+    #[should_panic(expected = "ausserhalb der Tabelle")]
+    fn lut_lookup_meldet_einen_index_hinter_der_tabelle() {
+        let lut = rampe(512, 256, 6, 8);
+        let _ = lut_lookup(256, &lut, 0, 256);
+    }
+
+    /// Im ausgelieferten Bau ohne Zusicherungen bleibt die Klemme die
+    /// letzte Sicherung: unter null der erste, ueber die Laenge der letzte
+    /// Eintrag, auch fuer einen Index, der in `i16` ueberliefe (Fund 348).
+    #[test]
+    #[cfg_attr(debug_assertions, ignore = "im Pruefprofil meldet sich die Zusicherung vorher")]
+    fn lut_lookup_klemmt_ohne_zusicherung_an_den_rand() {
+        let lut: Vec<i16> = (0..16).collect();
+        assert_eq!(lut_lookup(-5, &lut, 0, 0), 0);
+        assert_eq!(lut_lookup(100, &lut, 0, 0), 15);
+        assert_eq!(lut_lookup(i16::MAX, &lut, 0, 1), 15);
     }
 }

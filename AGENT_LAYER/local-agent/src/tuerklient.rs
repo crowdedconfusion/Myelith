@@ -66,7 +66,7 @@ impl Nachricht {
     }
     /// Eine Nachricht des Modells.
     ///
-    /// ⛑ **Die gab es bis zum 2026-09-09 nicht**, und `schleife.rs`
+    /// 📌 **Die gab es bis zum 2026-09-09 nicht**, und `schleife.rs`
     /// baute sie deshalb von Hand mit `role: "assistant"`. Eine
     /// Rollenbezeichnung, die an zwei Stellen als Zeichenkette steht,
     /// ist eine Stelle zu viel: Wer sie an einer aendert, bekommt kein
@@ -170,6 +170,14 @@ pub enum Tuerfehler {
     Unlesbar { rumpf: String },
     /// Die Tür hat keine Wahl geliefert.
     OhneWahl,
+    /// **Der Prompt passt nicht in den Kontext des Modells**, auch nicht
+    /// nach dem Verdichten.
+    KontextVoll {
+        /// Wie viele Token der Prompt belegte.
+        belegt: usize,
+        /// Wie viele Positionen das Modell hat.
+        grenze: usize,
+    },
 }
 
 impl std::fmt::Display for Tuerfehler {
@@ -192,6 +200,10 @@ impl std::fmt::Display for Tuerfehler {
             },
             Self::Unlesbar { rumpf } => write!(f, "der Rumpf ist kein lesbares JSON: {rumpf}"),
             Self::OhneWahl => f.write_str("die Antwort enthaelt keine Wahl"),
+            Self::KontextVoll { belegt, grenze } => write!(
+                f,
+                "der Kontext ist voll: {belegt} Token, das Modell hat {grenze} Positionen"
+            ),
         }
     }
 }
@@ -226,6 +238,39 @@ pub trait Modellweg {
         nachrichten: &[Nachricht],
         max_tokens: Option<u32>,
     ) -> Result<Antwort, Tuerfehler>;
+
+    /// **Wie viel Kontext diese Nachrichten als Prompt belegen**, und wie
+    /// viel das Modell hat.
+    ///
+    /// ⚑ **`None` heisst: unbekannt**, und dann verdichtet die Schleife
+    /// nie von sich aus. Die Tuer eines Knotens weiss es nicht, ohne den
+    /// Wortschatz des Modells zu kennen; ein Modell auf derselben Maschine
+    /// weiss es genau.
+    fn kontext(&self, nachrichten: &[Nachricht]) -> Option<Kontextstand> {
+        let _ = nachrichten;
+        None
+    }
+}
+
+/// Belegter und vorhandener Kontext, in Token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Kontextstand {
+    /// Token, die der Prompt belegt.
+    pub belegt: usize,
+    /// Positionen, die das Modell rechnen kann.
+    pub grenze: usize,
+}
+
+impl Kontextstand {
+    /// Passen noch `dazu` Token hinein?
+    pub fn passt(&self, dazu: usize) -> bool {
+        self.belegt.saturating_add(dazu) <= self.grenze
+    }
+
+    /// Der belegte Anteil in ganzen Prozent, abgerundet.
+    pub fn prozent(&self) -> usize {
+        (self.belegt.saturating_mul(100)).checked_div(self.grenze).unwrap_or(100)
+    }
 }
 
 /// Ein Klient für die Tür eines Knotens.

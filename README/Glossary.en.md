@@ -447,13 +447,13 @@ is met on every model in use:
 
 | Model | Parameters | Gap |
 |---|---|---|
-| Qwen3-0.6B | 0.6 bn | +4.47 % |
-| Qwen3-4B | 4.0 bn | +1.64 % |
+| Qwen3-0.6B | 0.6 bn | +4.48 % |
+| Qwen3-4B | 4.0 bn | +1.65 % |
 | Qwen3-30B-A3B (→ [MoE](#moe-mixture-of-experts)) | 30.5 bn | **no measurable gap** |
 
 ⚑ **The range measures one axis, and that axis has a direction: the
 smaller the model, the more quantisation costs.** From 0.6B to 4B the
-gap falls from +4.47 % to +1.64 %; on the mixture-of-experts model it is
+gap falls from +4.48 % to +1.65 %; on the mixture-of-experts model it is
 no longer measurable. The smallest model is the only one anywhere near
 the criterion, and whoever picks it should know that.
 

@@ -43,7 +43,7 @@ import string
 
 STARTWERT = 20260907
 
-# ⛑ **Die erste Fassung hatte zwei Silbenlisten zu je zehn Eintraegen,
+# 📌 **Die erste Fassung hatte zwei Silbenlisten zu je zehn Eintraegen,
 # also hundert moegliche Woerter.** Damit blieb die Haltemenge der
 # ersten beiden Stufen **leer**, und eine Referenzleiter ohne
 # Haltemenge misst Erinnerung statt Lernen. Drei Listen ergeben 1000

@@ -99,6 +99,11 @@ fn run_batch(model: &IntegerModel, vectors_dir: &Path) {
     }
 
     println!("\n{} von {} bestanden ({} fehlgeschlagen)", passed, total, failed);
+    // ⚑ **Hat die GPU gerechnet?** Der Konformitaetslauf `run.sh metal`
+    // lehnt einen Lauf ab, in dem diese Zahl null ist; sonst bestaende
+    // die CPU unter dem Namen der GPU (Fund 33).
+    #[cfg(feature = "metal")]
+    println!("metal_buendel_auf_der_gpu {}", integer_llm_kernels::metal::gerechnet());
     if !errors.is_empty() {
         eprintln!("Fehlgeschlagen: {:?}", errors);
         std::process::exit(1);

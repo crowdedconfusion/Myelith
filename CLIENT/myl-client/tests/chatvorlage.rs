@@ -61,7 +61,7 @@ fn die_familie_bestimmt_die_vorlage() {
     assert_eq!(Vorlage::fuer_familie(""), Vorlage::Fortsetzung);
 }
 
-/// ⛑ **Die Fortsetzungsform darf KEINE Rollenmarken tragen.**
+/// 📌 **Die Fortsetzungsform darf KEINE Rollenmarken tragen.**
 ///
 /// Genau daran ist der erste Ende-zu-Ende-Lauf gescheitert: Ein
 /// Basismodell setzt Marken als gewoehnlichen Text fort und echot die

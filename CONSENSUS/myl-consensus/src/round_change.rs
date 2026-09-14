@@ -1609,7 +1609,7 @@ mod tests {
         assert_eq!(d.round(), 0);
     }
 
-    /// ⛑ **Hier stand das Gegenteil, und es war falsch.**
+    /// 📌 **Hier stand das Gegenteil, und es war falsch.**
     ///
     /// Der erste Entwurf zählte je Runde getrennt; dieser Test hielt
     /// fest, dass zwei Belege aus Runde 4 und zwei aus Runde 5 nichts

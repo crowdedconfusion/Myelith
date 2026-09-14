@@ -7,11 +7,11 @@
 //! einer eingeschriebenen Tatsache braucht es aber die **schlichte
 //! Fortsetzung**, und zwar aus zwei Gruenden:
 //!
-//! - ⛑ **Trainiert wurde auf ihr.** Der Reststrom hinter einem
+//! - 📌 **Trainiert wurde auf ihr.** Der Reststrom hinter einem
 //!   ChatML-Rahmen ist ein anderer als hinter dem blossen Satzanfang;
 //!   ob eine Bearbeitung dorthin traegt, ist eine zweite Frage und
 //!   nicht dieselbe.
-//! - ⛑ **Unter ChatML antwortet das Modell in Fettschrift** (Fund
+//! - 📌 **Unter ChatML antwortet das Modell in Fettschrift** (Fund
 //!   228). Das naechste Token ist dann `**` und nicht die Stadt, und
 //!   wer den ersten Token liest, liest Markdown.
 //!

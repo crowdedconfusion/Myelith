@@ -10,7 +10,7 @@
 //! ⚑ **Eine belegte Datei sagt das Zweite.** Sie nimmt dem System den
 //! Platz wirklich weg, und zwar so lange, wie das Programm laeuft.
 //!
-//! # ⛑ Die Rechnung, die dahinter stehen muss
+//! # 📌 Die Rechnung, die dahinter stehen muss
 //!
 //! **Eine Reservierung ohne Buchhaltung arbeitet gegen den eigenen
 //! Download.** Wer 50 GiB freigibt und 50 GiB belegt, hat fuer das
@@ -25,7 +25,7 @@
 //! und der Platz geht an ihn ueber. Die **Summe** bleibt gleich, und
 //! genau sie ist die Zusage.
 //!
-//! # ⛑ Zwei Systeme, ein Zweck, zwei Wege
+//! # 📌 Zwei Systeme, ein Zweck, zwei Wege
 //!
 //! `set_len` allein reicht nicht ueberall, und der Unterschied ist der
 //! ganze Punkt dieses Moduls:
@@ -63,7 +63,7 @@ pub struct Reservierung {
 impl Reservierung {
     /// Haelt `bytes` unter `datenort` fest.
     ///
-    /// ⛑ **Eine liegengebliebene Datei wird uebernommen, nicht
+    /// 📌 **Eine liegengebliebene Datei wird uebernommen, nicht
     /// ergaenzt.** Nach einem Absturz steht sie noch da; wer daneben
     /// eine zweite anlegte, hielte den Platz doppelt.
     pub fn anlegen(datenort: &Path, bytes: u64) -> Result<Self, String> {
@@ -130,7 +130,7 @@ impl Reservierung {
 
 impl Drop for Reservierung {
     fn drop(&mut self) {
-        // ⛑ **Ein Fehlschlag beim Aufraeumen darf nicht abbrechen.**
+        // 📌 **Ein Fehlschlag beim Aufraeumen darf nicht abbrechen.**
         // Ein `Drop`, der in Panik geraet, waehrend schon einer laeuft,
         // beendet den Prozess hart. Bleibt die Datei liegen, uebernimmt
         // sie der naechste Start.
@@ -190,7 +190,7 @@ fn belegen(datei: &std::fs::File, bytes: u64) -> Result<(), String> {
             ));
         }
     }
-    // ⛑ **`F_PREALLOCATE` bucht die Bloecke, verlaengert die Datei
+    // 📌 **`F_PREALLOCATE` bucht die Bloecke, verlaengert die Datei
     // aber nicht.** Ohne dieses `set_len` blieben sie gebucht und die
     // Datei stuende mit null Bytes da, also genau der Zustand, der wie
     // ein Fehlschlag aussieht und keiner ist.

@@ -533,8 +533,8 @@ pub fn router_spreizung(
 /// an `theta_v` gebunden.
 ///
 /// Der Index wird wie im Vorwärtspfad gebildet: Eingang in die feste
-/// LUT-Domäne reskalieren, dann [`crate::integer_math::lut_lookup`], das
-/// am Rand deterministisch sättigt.
+/// LUT-Domäne reskalieren, dann [`silu_ableitung_nachschlagen`], das
+/// jenseits der Tabelle die Ableitung der Fortsetzung liefert.
 #[allow(clippy::too_many_arguments)]
 pub fn silu_backward(
     g: &[Grad],
@@ -552,18 +552,45 @@ pub fn silu_backward(
         .zip(x.iter())
         .map(|(gi, xi)| {
             let dom = crate::fixed_point::rescale(*xi as i32, x_frac, lut_in_frac);
-            let ableitung =
-                crate::integer_math::lut_lookup(clamp_i16_sat(dom), grad_lut, 0, lut_offset) as i64;
+            let ableitung = silu_ableitung_nachschlagen(dom, grad_lut, lut_offset, lut_out_frac);
             let prod = (*gi as i64) * ableitung;
             clamp_i32(rescale_i64(prod, g_frac + lut_out_frac, out_frac))
         })
         .collect()
 }
 
-/// Sättigt auf i16, ohne `clamp_i16` zu umgehen: Der LUT-Index darf
-/// nicht wrappen, und ein zu großer Eingang gehört an den LUT-Rand.
-fn clamp_i16_sat(v: i32) -> i16 {
-    crate::fixed_point::clamp_i16(v)
+/// **Die Ableitung der SiLU, auch jenseits der Tabelle** (Fund 349).
+/// Eingang `x` in der Tabellendomäne, Ergebnis auf `grad_frac`
+/// Bruchstellen.
+///
+/// | Eingang | Ableitung |
+/// |---|---|
+/// | oberhalb der Tabelle | `1` |
+/// | in der Tabelle | der Tabellenwert |
+/// | unterhalb der Tabelle | `0` |
+///
+/// ⚑ **Das ist die Ableitung dessen, was vorwärts gerechnet wird**:
+/// [`crate::integer_math::silu_nachschlagen`] setzt oberhalb die Identität
+/// und unterhalb null fort. An der Tabelle der spec (reale Domäne −128
+/// bis knapp 128) sind der letzte und der erste Eintrag der aus ihr
+/// abgeleiteten Tabelle genau diese Werte, nachgerechnet am Artefakt
+/// `myelith-0.6b`: 1,0 und 0,0. Die Fortsetzung ist also stetig.
+///
+/// 📌 **Hier stand `clamp_i16_sat` vor dem Nachschlagen**, mit der
+/// Begründung, der Index dürfe nicht wrappen. Gesättigt wurde auf `i16`,
+/// und der Versatz kam danach; `32767 + 256` verließ `i16` erneut
+/// (Fund 75). Jetzt entsteht ausserhalb der Tabelle gar kein Index.
+#[inline]
+pub fn silu_ableitung_nachschlagen(x: i32, grad_lut: &[i16], offset: i16, grad_frac: u8) -> i64 {
+    let oben = grad_lut.len() as i32 - 1 - offset as i32;
+    let unten = -(offset as i32);
+    if x > oben {
+        1i64 << grad_frac
+    } else if x < unten {
+        0
+    } else {
+        i64::from(crate::integer_math::lut_lookup(x as i16, grad_lut, 0, offset))
+    }
 }
 
 /// Baut den Gradientenvorrat **aus der Vorwaerts-Tabelle** (TRAINING V).
@@ -734,7 +761,7 @@ fn verschiebe_i128(v: i128, shift: i32) -> i128 {
 /// Meister, einen eigenen Wuerfelversatz und damit eine Aussage im
 /// Trainingsvertrag; der Nutzen daran ist verschwindend.
 ///
-/// ⛑ **Und das ist eine Festlegung und kein Versehen.** Wer sie
+/// 📌 **Und das ist eine Festlegung und kein Versehen.** Wer sie
 /// spaeter aufhebt, aendert die Bitgleichheit: Ein zusaetzlicher
 /// Meister verschiebt die Indizes des stochastischen Rundens, und zwei
 /// Knoten mit verschiedenen Fassungen rechneten verschiedene Deltas.
@@ -842,7 +869,7 @@ pub fn rmsnorm_backward(
     // ⚑ **Gestaffelt geschoben, aber mit Schutzbits.** Ein Produkt aus
     // `r³`, `x_j` und der Summe verliesse i128; wer dagegen nach jeder
     // Stufe auf die Einerstelle rundet, verliert den zweiten Term
-    // ganz. ⛑ Gemessen: `r` von 106 auf neun Bruchstellen ergibt `r³`
+    // ganz. 📌 Gemessen: `r` von 106 auf neun Bruchstellen ergibt `r³`
     // gerundet **5**, und `5 · 300 >> 15` ist **null**: Der ganze
     // Normierungsterm verschwand, und der Test daneben sah es nicht,
     // weil seine Summe sich zufaellig fast aufhob.
@@ -1272,7 +1299,7 @@ mod tests {
         for (j, wert) in gx[0].iter().enumerate() {
             let num = numerisch(&ein, j, 8, vorwaerts);
             let mein = *wert as f64;
-            // ⛑ Beide sind ganzzahlig gerundet; verglichen wird die
+            // 📌 Beide sind ganzzahlig gerundet; verglichen wird die
             // Richtung und die Groessenordnung, nicht die letzte Stelle.
             if num.abs() < 1.0 {
                 continue;
@@ -2034,7 +2061,7 @@ mod tests {
     /// des Vorwaertspasses, sondern die Spezifikation des
     /// Rueckwaertspasses: Genau ihre Skalenbuchhaltung war falsch.
     ///
-    /// ⛑ **Die beiden Tests darueber koennen den Fehler nicht sehen.**
+    /// 📌 **Die beiden Tests darueber koennen den Fehler nicht sehen.**
     /// „Der zweite Term wirkt" und „ohne Gradient kein Gradient" sind von
     /// jeder Skala unabhaengig. Mit der alten Fassung streuten die
     /// Verhaeltnisse hier von **1,08 bis -37,4**.
@@ -2383,7 +2410,7 @@ mod tests {
     /// ⚑ **Gegen die numerische Ableitung nach `q` und `k`, mit
     /// absichtlich paarweise verschiedenen Skalen.**
     ///
-    /// ⛑ **Der Test darüber kann diesen Fehler nicht sehen.** Er leitet
+    /// 📌 **Der Test darüber kann diesen Fehler nicht sehen.** Er leitet
     /// nach `v` ab, und `v` trägt dieselbe Skala wie die Ausgabe; für
     /// gleiche Skalen fallen die beiden möglichen Lesarten eines
     /// Gradienten (nach dem Wert oder nach der Darstellung) zusammen.
@@ -2493,7 +2520,7 @@ mod tests {
                 pruefe(format!("k[{j}][{d}]"), num, gk[j][d] as f64);
             }
         }
-        // ⛑ Ohne diese Zeile bestünde der Test auch, wenn beide Seiten
+        // 📌 Ohne diese Zeile bestünde der Test auch, wenn beide Seiten
         // überall null wären.
         assert!(gq.iter().any(|x| *x != 0), "gq ist überall null, der Test misst nichts");
     }
@@ -2529,12 +2556,12 @@ mod tests {
     /// Schritt geht ihm entgegen. Das Zielwort bekommt deshalb einen
     /// negativen Eintrag, damit sein Logit steigt.
     ///
-    /// ⛑ Ein vertauschtes Vorzeichen faellt an keiner Summe auf und
+    /// 📌 Ein vertauschtes Vorzeichen faellt an keiner Summe auf und
     /// traegt einen Lauf, der zuverlaessig das **falsche** Wort lernt.
     #[test]
     fn das_zielwort_bekommt_das_andere_vorzeichen() {
         let frac = 12u8;
-        // ⛑ Alle vier gleich, damit keiner null ist: Ein Wort mit
+        // 📌 Alle vier gleich, damit keiner null ist: Ein Wort mit
         // Wahrscheinlichkeit null bekaeme den Gradienten null, und der
         // Test prueft dann eine Ungleichung, die gar nicht gilt.
         let p: Vec<Grad> = vec![1 << 10; 4];
@@ -2702,4 +2729,26 @@ mod tests {
         assert!(out.iter().all(|v| *v == 0), "{out:?}");
     }
 
+
+    /// 📌 Fund 349: Jenseits der Tabelle ist die Ableitung 1 oben und 0
+    /// unten, und sie passt zum Vorwärtspass: Die Differenz zweier
+    /// Vorwärtswerte jenseits des oberen Randes ist genau eine
+    /// Eingangsstufe, also Steigung 1.
+    #[test]
+    fn die_silu_ableitung_jenseits_der_tabelle_passt_zum_vorwaertspass() {
+        let (in_frac, out_frac) = (6u8, 8u8);
+        let grad_frac = silu_grad_frac(in_frac, out_frac);
+        let lut: Vec<i16> = (0..512).map(|i: i32| (((i - 256).max(0)) << 2) as i16).collect();
+        let grad = silu_grad_aus_lut(&lut);
+        assert_eq!(silu_ableitung_nachschlagen(255 + 1, &grad, 256, grad_frac), 1 << grad_frac);
+        assert_eq!(silu_ableitung_nachschlagen(25_412, &grad, 256, grad_frac), 1 << grad_frac);
+        assert_eq!(silu_ableitung_nachschlagen(-257, &grad, 256, grad_frac), 0);
+        let v = |x| crate::integer_math::silu_nachschlagen(x, &lut, 256, in_frac, out_frac);
+        // Steigung oberhalb: eine Eingangsstufe hebt die Ausgabe um 2^(out-in).
+        assert_eq!(v(1001) - v(1000), 1 << (out_frac - in_frac));
+        // Der Gradient mal eine Eingangsstufe, auf Ausgangsskala gebracht,
+        // ergibt dieselbe Stufe.
+        let g = silu_backward(&[1 << out_frac], &[1000], &grad, in_frac, in_frac, 256, grad_frac, out_frac, out_frac);
+        assert_eq!(g, vec![1 << out_frac], "Steigung 1 jenseits der Tabelle");
+    }
 }

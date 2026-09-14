@@ -1,6 +1,6 @@
 {
   "pipeline_hash": "sha256:8dcc87faf015941f471b139f57e4b1ccac22c48f6d0858f280643e763adcb5f0",
-  "theta_v_hash": "sha256:99d61faadcc4855485b07d980e2e5be52a369b7db189540e51e4469800b4d65c",
+  "theta_v_hash": "sha256:d0b9ca32d17828b56c8276406e70e453fc011b2a7843e248fff4e1cf82ab0544",
   "stages": [
     {
       "stage_id": 0,
@@ -16,7 +16,7 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 1,
@@ -32,7 +32,7 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 2,
@@ -48,7 +48,7 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     },
     {
       "stage_id": 3,
@@ -64,7 +64,7 @@
       "kernel_contract": "reference-v0.4.0",
       "boundary_contract": "int16-little-endian-frac8",
       "max_batch_size": 1,
-      "max_context_per_request": 2048
+      "max_context_per_request": 40960
     }
   ],
   "boundary_dtype": "int16",

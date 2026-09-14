@@ -99,7 +99,7 @@ pub struct Lauf<'a> {
     /// neben [`Erlaubnis`] und [`Betriebsart`], und genau die darf es
     /// nicht geben: Diese Kiste traegt eine Vollmacht.
     ///
-    /// ⛑ **`None` heisst: niemand sieht zu**, und der Lauf ist dann
+    /// 📌 **`None` heisst: niemand sieht zu**, und der Lauf ist dann
     /// Zeichen fuer Zeichen derselbe. `ein_melder_aendert_den_lauf_nicht`
     /// haelt das fest.
     pub melder: Option<&'a dyn Fn(Meldung<'_>)>,
@@ -129,6 +129,13 @@ pub enum Meldung<'a> {
     /// abgelehnt wurde, sieht fuer den Nutzer aus wie einer, der nichts
     /// tut; der Grund steht sonst nur im Strom.
     Abgelehnt { name: &'a str, grund: &'a str },
+    /// **Der Verlauf passte nicht mehr in den Kontext und wurde
+    /// verdichtet**, mit den belegten Token davor und danach.
+    ///
+    /// ⚑ **Gehoert in die Anzeige**, denn der Agent weiss danach weniger
+    /// woertlich als davor, und das soll niemand erst an einer Antwort
+    /// merken.
+    Verdichtet { vorher: usize, nachher: usize },
 }
 
 /// Warum ein Lauf endete.
@@ -172,14 +179,42 @@ impl<'a> Lauf<'a> {
     /// der interessante Fall; ein Beleg, den es nur bei Erfolg gibt, ist
     /// keiner.
     pub fn fahren(&self, auftrag: &str) -> Ergebnis {
+        self.fahren_mit_verlauf(auftrag, &[])
+    }
+
+    /// **Wie [`Lauf::fahren`], mit dem bisherigen Gespraech vor dem
+    /// Auftrag.**
+    ///
+    /// # ⚑ Entscheidung C2, beantwortet am 2026-09-14
+    ///
+    /// Bis hierher stand jeder Auftrag fuer sich. Die Sorge dahinter: Ein
+    /// Gespraech, das ueber Auftraege weiterlaeuft und den Schrittzaehler
+    /// jedes Mal zuruecksetzt, macht aus der Obergrenze eine Empfehlung.
+    ///
+    /// **Das trifft nicht zu, solange jeder Auftrag ein eigener Lauf
+    /// bleibt**, und genau so ist es gebaut: Schrittbudget und Belegkette
+    /// beginnen hier neu, wie vorher. Die Obergrenze schuetzt vor einem
+    /// Agenten, der **innerhalb** eines Auftrags nicht aufhoert; einen
+    /// neuen Auftrag gibt nur der Mensch, und das ist eine neue Freigabe.
+    /// Der Verlauf ist **Eingabe** dieses Laufs: Das Commitment des ersten
+    /// Schritts ueber die Nachrichten an das Modell bindet ihn mit, wie jede
+    /// andere Nachricht.
+    ///
+    /// ⚠️ **Systemnachrichten im Verlauf werden nicht uebernommen.** Die
+    /// Werkzeugansage gehoert diesem Lauf und steht vorn; eine alte aus dem
+    /// Verlauf versprache Werkzeuge, die es jetzt vielleicht nicht gibt.
+    pub fn fahren_mit_verlauf(&self, auftrag: &str, verlauf: &[Nachricht]) -> Ergebnis {
         let mut strom = Sitzungsstrom::neu_mit_einhaengung(
             self.anker,
             self.betriebsart,
             self.einhaengung,
         );
         let erlaubnis = Erlaubnis::aus_angebot(self.kasten.angebote());
-        let mut nachrichten =
-            vec![angebot(self.kasten.angebote(), self.ansageform), Nachricht::nutzer(auftrag)];
+        let mut nachrichten = vec![angebot(self.kasten.angebote(), self.ansageform)];
+        nachrichten.extend(verlauf.iter().filter(|n| n.role != "system").cloned());
+        // Wo der Auftrag steht; das Verdichten laesst ihn woertlich stehen.
+        let mut auftrag_bei = nachrichten.len();
+        nachrichten.push(Nachricht::nutzer(auftrag));
         let mut getan: u32 = 0;
 
         // ⚑ Der Melder wird ueber eine Hilfe gerufen und nicht an
@@ -197,6 +232,16 @@ impl<'a> Lauf<'a> {
                 break Ende::Grenze(g);
             }
             melden(Meldung::Schritt(getan + 1));
+
+            // 1b. Passt der naechste Schritt noch in den Kontext?
+            //
+            // ⚑ **Hier und nicht erst am Fehler der Tuer**: Eine Antwort,
+            // die an der Kontextgrenze abbricht, ist ein halber
+            // Werkzeugaufruf. Freigehalten wird deshalb die ganze
+            // Antwortlaenge.
+            if let Err(e) = self.platz_schaffen(&mut nachrichten, &mut auftrag_bei, &melden) {
+                break Ende::Tuer(e);
+            }
 
             // 2. Das Modell fragen.
             let antwort =
@@ -311,5 +356,84 @@ impl<'a> Lauf<'a> {
         };
 
         Ergebnis { strom, nachrichten, ende }
+    }
+
+    /// **Verdichtet den Verlauf, wenn der naechste Schritt nicht mehr
+    /// hineinpasst.** Woertlich bleiben die Werkzeugansage, der Auftrag und
+    /// der letzte Schritt; alles andere wird zusammengefasst, und die
+    /// Zusammenfassung steht vor dem Auftrag.
+    ///
+    /// Ohne Auskunft ueber den Kontext (siehe [`Modellweg::kontext`])
+    /// geschieht nichts.
+    fn platz_schaffen(
+        &self,
+        nachrichten: &mut Vec<Nachricht>,
+        auftrag_bei: &mut usize,
+        melden: &dyn Fn(Meldung<'_>),
+    ) -> Result<(), Tuerfehler> {
+        let reserve = self.max_tokens.unwrap_or(0) as usize;
+        let Some(vorher) = self.klient.kontext(nachrichten) else {
+            return Ok(());
+        };
+        if vorher.passt(reserve) {
+            return Ok(());
+        }
+        // Der letzte Schritt: ab der letzten Antwort des Modells, sofern sie
+        // hinter dem Auftrag steht.
+        let letzter = nachrichten
+            .iter()
+            .rposition(|n| n.role == "assistant")
+            .filter(|&i| i > *auftrag_bei)
+            .unwrap_or(nachrichten.len());
+        let mitte: Vec<Nachricht> = nachrichten[1..*auftrag_bei]
+            .iter()
+            .chain(&nachrichten[*auftrag_bei + 1..letzter])
+            .cloned()
+            .collect();
+        if !mitte.is_empty() {
+            let text = crate::verdichtung::zusammenfassen(
+                self.klient,
+                self.modell,
+                &mitte,
+                crate::verdichtung::antwortlaenge(vorher.grenze),
+            )?;
+            let mut neu = vec![nachrichten[0].clone(), crate::verdichtung::als_nachricht(&text)];
+            neu.push(nachrichten[*auftrag_bei].clone());
+            neu.extend(nachrichten[letzter..].iter().cloned());
+            *nachrichten = neu;
+            *auftrag_bei = 2;
+        }
+        // 📌 **Passt der letzte Schritt allein nicht**, etwa weil ein
+        // Werkzeug eine sehr lange Datei zurueckgab, wird seine laengste
+        // Werkzeugantwort in der Mitte gekuerzt. Sehen koennte das Modell
+        // sie ohnehin nicht, und ohne Kuerzung endete der Lauf hier. Der
+        // Auftrag und die Antworten des Modells bleiben woertlich.
+        let mut nachher = self.klient.kontext(nachrichten).unwrap_or(vorher);
+        if !nachher.passt(reserve) {
+            if let Some(i) = (*auftrag_bei + 1..nachrichten.len())
+                .filter(|&i| nachrichten[i].role != "assistant")
+                .max_by_key(|&i| nachrichten[i].content.len())
+            {
+                let davor = nachrichten[..i].to_vec();
+                let danach = nachrichten[i + 1..].to_vec();
+                let gekuerzt = crate::verdichtung::kuerzen_bis_es_passt(self.klient, &nachrichten[i], reserve, |n| {
+                    let mut alle = davor.clone();
+                    alle.push(n.clone());
+                    alle.extend(danach.iter().cloned());
+                    alle
+                })?;
+                nachrichten[i] = gekuerzt;
+                nachher = self.klient.kontext(nachrichten).unwrap_or(nachher);
+            }
+        }
+        if nachher == vorher {
+            return Err(Tuerfehler::KontextVoll { belegt: vorher.belegt, grenze: vorher.grenze });
+        }
+        melden(Meldung::Verdichtet { vorher: vorher.belegt, nachher: nachher.belegt });
+        if nachher.passt(reserve) {
+            Ok(())
+        } else {
+            Err(Tuerfehler::KontextVoll { belegt: nachher.belegt, grenze: nachher.grenze })
+        }
     }
 }

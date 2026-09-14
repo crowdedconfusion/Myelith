@@ -85,7 +85,7 @@ und das ist die dieses Repositoriums: Was ausgeliefert wird, ist eine
 Bearbeitung nach dem Verfahren dieses Projekts, mit eigenen Skalen und
 Nachschlagetabellen.
 
-⛑ **Hier stand bis zum 2026-09-10 eine einzelne Spalte „Lizenz"**, und
+📌 **Hier stand bis zum 2026-09-10 eine einzelne Spalte „Lizenz"**, und
 sie stand in einer Zeile, deren erste Spalte `myelith-4b` heisst. Das
 las sich, als stuende das Artefakt unter Apache-2.0. **Eine Angabe ist
 nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie sich

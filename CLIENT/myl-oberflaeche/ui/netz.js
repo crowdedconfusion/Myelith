@@ -75,7 +75,7 @@ export function netzStarten(leinwand) {
   let laeuft = true;
   let beginn = 0;
   let vorher = 0;
-  // ⛑ **Der Sturm wird abgeschaltet und nicht nur unsichtbar.** Die
+  // 📌 **Der Sturm wird abgeschaltet und nicht nur unsichtbar.** Die
   // Phasenprobe zeigte, dass nach 3,6 s zwar nichts mehr gezeichnet
   // wird, die zweitausend Koerner aber weiter gerechnet werden, und das
   // fuer die ganze restliche Ladezeit. Genau die Rechenzeit soll dem
@@ -257,7 +257,7 @@ export function netzStarten(leinwand) {
       vorher = jetzt;
     }
     const t = (jetzt - beginn) / 1000;
-    // ⛑ Der Schritt wird gedeckelt. Wird das Fenster minimiert, laeuft
+    // 📌 Der Schritt wird gedeckelt. Wird das Fenster minimiert, laeuft
     // `requestAnimationFrame` nicht, und beim Zurueckkommen waere `dt`
     // mehrere Sekunden gross: Der ganze Wirbel spraenge in einem Bild
     // durch. Ein Deckel von 50 ms macht daraus eine kurze Zeitlupe.

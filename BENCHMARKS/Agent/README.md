@@ -63,12 +63,12 @@ Nachweis: Das Modell hat das Werkzeug gewählt, den richtigen Pfad
 übergeben, die Antwort **gelesen** und daraus geschlossen. „Ein Werkzeug
 wurde gerufen" wäre Stufe 1 allein.
 
-⛑ **Was das nicht ist:** eine Messung. Zwei Aufträge von Hand sind ein
+📌 **Was das nicht ist:** eine Messung. Zwei Aufträge von Hand sind ein
 Nachweis, dass die Kette trägt, und keine Quote. Dafür gibt es
 `agentenprobe.py`, und die ist noch nie gelaufen, weil den ganzen Tag
 ein Trainingslauf die Maschine hatte.
 
-## ⛑ Was noch fehlt
+## 📌 Was noch fehlt
 
 **Ein Lauf der ganzen Sammlung**, sechs Aufträge über drei Stufen, mit
 `--laeufe 3`. Erst der ergibt Zahlen; die beiden oben ergeben eine
@@ -96,7 +96,7 @@ heute nie vollständig gelaufen, es gibt also keine Zahl, gegen die
 irgendetwas verglichen werden könnte. Wer nur den zweiten führe, hätte
 zwei Zahlen ohne Bezug.
 
-⛑ **Was der Vergleich nicht beantwortet.** Der Schalter ändert **drei
+📌 **Was der Vergleich nicht beantwortet.** Der Schalter ändert **drei
 Dinge auf einmal**: den Werkzeugnamen, den Wortlaut der Ansage und die
 Beschreibung. Fällt er zugunsten der amtlichen Form aus, ist belegt,
 dass die Form des Modells hilft, **nicht welcher Teil davon**. Das ist
@@ -119,7 +119,7 @@ python3 BENCHMARKS/Agent/agentenprobe.py INTEGER_LLM/artifacts/myelith-4b \
   --laeufe 3 --werkzeuge voll --json BENCHMARKS/Agent/results/voll-<datum>.json
 ```
 
-⛑ **Die Arme sind nicht gleich gross, und das ist Absicht.** Drei
+📌 **Die Arme sind nicht gleich gross, und das ist Absicht.** Drei
 Aufträge (`suchen_ueber_ebenen`, `suchen_statt_lesen`,
 `aendern_statt_ueberschreiben`) brauchen die neuen Werkzeuge und werden
 im knappen Arm **übersprungen**, nicht als Fehlschlag gezählt: Ein

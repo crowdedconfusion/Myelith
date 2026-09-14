@@ -17,7 +17,7 @@
 # einem NixOS-Nutzer genau das weg, wofuer er NixOS benutzt.
 set -eu
 
-# ⛑ **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
+# 📌 **Eine Ebene hoeher, seit dem 2026-09-10.** Diese Datei lag in der
 # Wurzel und liegt jetzt in `INSTALL/`. **Ein Verschieben sieht aus wie
 # eine Aenderung ohne Verhalten und ist keine:** Ohne das `/..` zeigte
 # die Wurzel auf das Skriptverzeichnis, und der Bau faende keine
@@ -45,7 +45,7 @@ echo "   Quelle: $WURZEL"
 
 # ── In die Bauumgebung wechseln ─────────────────────────────────────
 #
-# ⛑ **Einmal und nicht zweimal.** `--in-der-shell` ist der Anschlag:
+# 📌 **Einmal und nicht zweimal.** `--in-der-shell` ist der Anschlag:
 # Ohne ihn riefe sich das Skript in der Shell erneut auf und liefe im
 # Kreis.
 if [ "$IN_DER_SHELL" = nein ]; then
@@ -72,7 +72,7 @@ fi
 
 # ── Ab hier laeuft es in der Umgebung ───────────────────────────────
 fehlt=""
-# ⛑ **Nicht „gibt es den Befehl", sondern „laeuft er".** Siehe den
+# 📌 **Nicht „gibt es den Befehl", sondern „laeuft er".** Siehe den
 # gleichen Anschlag im macOS-Skript.
 cargo --version >/dev/null 2>&1 || fehlt="$fehlt
   cargo laesst sich nicht aufrufen, obwohl die Nix-Umgebung es mitbringen sollte."
@@ -115,7 +115,7 @@ fi
 # ausgeliefert werden soll, sagt es in ihrer eigenen `Cargo.toml`
 # unter `[package.metadata.myelith]`; dieses Skript sammelt sie ein.
 #
-# ⛑ **Bis zum 2026-09-10 stand die Liste hier, von Hand** (Fund 300),
+# 📌 **Bis zum 2026-09-10 stand die Liste hier, von Hand** (Fund 300),
 # und dasselbe noch dreimal in den anderen Skripten. Zwei der vier
 # waren am ersten Tag schon uneinig: `myl-test` fehlte in dreien.
 # **Eine Liste, die an vier Stellen von Hand gefuehrt wird, ist kein
@@ -136,7 +136,7 @@ if [ -z "$PROGRAMME" ]; then
   exit 1
 fi
 
-# ⛑ **Eine Schleife in dieser Shell und nicht hinter einer Roehre**,
+# 📌 **Eine Schleife in dieser Shell und nicht hinter einer Roehre**,
 # damit ein fehlgeschlagener Bau dieses Skript wirklich beendet.
 echo "── bauen, das dauert beim ersten Mal einige Minuten"
 ALTES_IFS=$IFS
@@ -188,7 +188,7 @@ Categories=Development;Utility;
 EOF
 
 echo "── fertig"
-# ⛑ Siehe Fund 300: Auch eine Schlussmeldung ist eine Liste.
+# 📌 Siehe Fund 300: Auch eine Schlussmeldung ist eine Liste.
 echo "   Programme:"
 ALTES_IFS=$IFS
 IFS='

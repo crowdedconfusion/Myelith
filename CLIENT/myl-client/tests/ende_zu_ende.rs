@@ -10,7 +10,7 @@
 //! die Fassung ohne Zusatz die instruktionsgeschliffene. Wer einen
 //! Agenten an einem Basismodell prueft, prueft die falsche Sache.
 //!
-//! ⛑ **Er braucht Gewichte und ist deshalb nicht in der CI zu Hause.**
+//! 📌 **Er braucht Gewichte und ist deshalb nicht in der CI zu Hause.**
 //! Ohne Artefakte bricht er ab und sagt, wie man den Sprung ausdruecklich
 //! erlaubt, nach demselben Muster wie die Trainingslaeufe.
 
@@ -22,7 +22,7 @@ fn modell() -> Option<Oertlichesmodell> {
         env!("CARGO_MANIFEST_DIR"),
         "/../../INTEGER_LLM/artifacts/myelith-4b"
     );
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung
@@ -94,7 +94,7 @@ fn derselbe_prompt_ergibt_dieselbe_antwort() {
 
 /// ⚑ **Was live ankommt, ist genau die Antwort.**
 ///
-/// # ⛑ Die Zusage, an der die Live-Anzeige haengt
+/// # 📌 Die Zusage, an der die Live-Anzeige haengt
 ///
 /// Ein Fenster, das mitschreibt, zeigt einen Text, der **waehrend** der
 /// Rechnung entsteht. Weicht er am Ende von der Antwort ab, hat der
@@ -134,7 +134,7 @@ fn der_laufende_text_ist_die_antwort() {
         "der laufende Text enthaelt die Antwort nicht.\nlive: {live:?}\nAntwort: {:?}",
         a.text
     );
-    // ⛑ **Hier stand `== 24`, also die Grenze selbst**, und das war
+    // 📌 **Hier stand `== 24`, also die Grenze selbst**, und das war
     // eine Aussage ueber das alte Verhalten: Die Erzeugung lief immer
     // bis zur Grenze. Seit dem 2026-09-10 haelt sie an der Endmarke,
     // und dann sind es weniger. **Eine Pruefung, die die Grenze
@@ -165,7 +165,7 @@ fn mit_beobachter_kommt_dieselbe_antwort() {
 
 /// ⚑ **Das Modell hoert auf, wo seine Antwort aufhoert.**
 ///
-/// # ⛑ Der gemeldete Fehler, aus dem das entstanden ist (2026-09-10)
+/// # 📌 Der gemeldete Fehler, aus dem das entstanden ist (2026-09-10)
 ///
 /// Mit 600 Token Grenze schrieb Qwen3-4B seine Antwort zu Ende, setzte
 /// `<|im_end|>`, dann `<|endoftext|>` und **erfand danach ein ganzes
@@ -202,7 +202,7 @@ fn die_antwort_endet_an_der_endmarke() {
 
 /// ⚑ **Und der laufende Text traegt sie ebenso wenig.**
 ///
-/// ⛑ Das ist die Haelfte, die der gemeldete Fehler betraf: Der
+/// 📌 Das ist die Haelfte, die der gemeldete Fehler betraf: Der
 /// Zuschnitt der fertigen Antwort greift erst am Ende, die Anzeige
 /// laeuft waehrenddessen.
 #[test]

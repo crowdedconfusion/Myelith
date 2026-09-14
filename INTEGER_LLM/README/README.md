@@ -1,17 +1,17 @@
 # integer-llm
 
-> **Version:** 0.68.0 (θ_v 0.18.0; kernels 0.52.0, runtime 0.49.0, pipeline 0.15.1)
-> **Datum:** 2026-09-11
-> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen vier Modellen erreicht**,
-> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,28**
-> (+4,47 %), 4B **19,95** (+1,64 %), 30B-A3B (MoE) **10,42** gegen
+> **Version:** 0.72.0 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
+> **Datum:** 2026-09-14
+> **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
+> auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
+> (+4,48 %), 4B **19,95** (+1,65 %), 30B-A3B (MoE) **10,42** gegen
 > 10,48. ⛔️ **Das dichte 14B (11,54, +1,16 %) ist am 2026-09-12
 > entfallen**; seine Messung bleibt als Aufzeichnung erhalten. Der Abstand fällt monoton mit der
 > Modellgrösse; ⚑ **bei 435 Positionen ist ein halbes Prozent nicht
 > auflösbar**, das Vorzeichen der letzten Zeile trägt also nicht.
 >
 > ⚑ **Seit dem 2026-09-11 liegt die Reihe vollständig in einer
-> Modellfamilie**, und erstmals trägt jede der vier Grössen eine eigene
+> Modellfamilie**, und erstmals trägt jede eingesetzte Grösse eine eigene
 > Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
 > Grössenvergleich mass also immer auch einen Familienunterschied mit.
 > **Der Boden des Quantisierungsschemas (+0,84 %) ist an der
@@ -19,6 +19,13 @@
 > steht weiter unten im dazugehörigen Ergebnisblock und gilt dort.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
 > Residual-Addition.
+>
+> **Zuletzt am Rechenweg (2026-09-14):** Die Vorbereitung eines Prompts
+> von 219 Token dauert bitgleich **0,28 s beim 0,6B und 0,81 s beim 4B**
+> mit dem Feature `metal` (Apple-Silizium), 0,97 s und 3,52 s mit
+> `cpu-simd`. Der Client brauchte am Morgen desselben Tages 5,21 s beim
+> 0,6B, weil die gebündelte Vorbereitung nur im Messprogramm lief
+> (Fund 366) und der Client ohne `cpu-simd` baute (Fund 367).
 >
 > **Zuletzt am Prüfstand statt am Modell (2026-08-22):** Fund 33 (ein
 > Prüflauf zertifizierte Backends, die nicht rechnen) und Fund 34 (die
@@ -28,7 +35,7 @@
 
 Bit-exaktes, vollständig ganzzahliges Inferenzsystem für LLMs auf
 Qwen-Basis, **W8A16**: Gewichte int8 mit Per-Channel-Zweierpotenzskalen,
-Aktivierungen int16, Akkumulator int32, Residualstrom int16.
+Aktivierungen int16, Akkumulator int64, Residualstrom int16.
 
 ## Ziel
 
@@ -37,13 +44,17 @@ Deterministische Integer-Inferenz ohne Gleitkommaoperationen im Rechenpfad
 Pipeline-Parallelismus auf heterogenen Hardware-Knoten (NVIDIA, AMD, CPU).
 Die Ganzzahlarithmetik ist die Voraussetzung für bitgleiche Ausführung über
 unabhängige Knoten hinweg — die Grundlage des Myelith-Verifikationsmodells
-(Whitepaper Kap. 6.2). Referenzmodell ist Qwen2.5-0.5B (**W8A16**: Gewichte
-int8, Aktivierungen und Residualstrom int16, Akkumulator int32); verifiziert
-sind daneben Qwen3-4B, Qwen2.5-7B und Qwen3-30B-A3B.
+(Whitepaper Kap. 6.2). Referenzmodell ist Qwen3-0.6B (`myelith-0.6b`, **W8A16**: Gewichte
+int8, Aktivierungen und Residualstrom int16, Akkumulator int64); verifiziert
+sind daneben Qwen3-4B und Qwen3-30B-A3B.
+
+*(Hier stand bis zum 2026-09-14 noch Qwen2.5-0.5B als Referenzmodell und
+Qwen2.5-7B unter den verifizierten, beide seit dem 2026-09-11 abgelöst;
+Fund 353.)*
 
 *(Hier stand bis zum 2026-08-27 „W8A8: Gewichte und Aktivierungen als int8".
-Das galt bis θ_v 0.15.0. Mit θ_v 0.16.0 sind Aktivierungen und Residualstrom
-auf int16 gewechselt, weil Messungen am echten Modell Residual-Spitzen von
+Das galt bis θ_v 0.4.0. Mit θ_v 0.5.0 (2026-08-11) sind Aktivierungen und
+Residualstrom auf int16 gewechselt, weil Messungen am echten Modell Residual-Spitzen von
 ±1576 zeigten, wo das int8-Format ±0,5 vorsah. Der verbindliche Vertrag steht
 in `theta_v/spec.json` unter `numeric.formats`.)*
 
@@ -69,22 +80,28 @@ Geprüft ist das durch synthetische Fixtures mit abweichenden Dimensionen
 (hidden=4, heads=2), die einen vollen Forward-Pass durchlaufen.
 
 **Stellen mit Modell-Kopplung (bei einem Wechsel anzupassen):**
-1. `calibrate/src/main.py`: `MODEL_NAME`/`HF_MODEL_ID` (zwei Konstanten,
-   derzeit kein CLI-/Env-Hebel).
+1. `calibrate/src/model_configs.py`: je Modell ein Eintrag; gewählt wird
+   über die Umgebungsvariable `INTEGER_LLM_MODEL`, ebenso in den
+   Messwerkzeugen unter `BENCHMARKS/Inferenz/`.
 2. `theta_v/spec.json`: `rope_theta` und `max_seq_len` (zur Kompilierzeit
    per `include_str!` eingebettet; Änderung erzwingt Runtime-Rebuild,
    θ_v-Versionssprung und Neukalibrierung).
-3. Hart kodierte Pfade in `eval/` (`wikitext_common.py`, `perplexity.py`,
-   `baseline.py`), `tests/` und den Pipeline-Configs.
-4. Feste LLaMA/Qwen2-Block-Topologie: **Qwen3 benötigt QK-Norm
-   (`q_norm`/`k_norm`), die aktuell durch die gesamte Kette fehlt** — der
-   einzige echte Struktur-Blocker für einen Qwen3-Wechsel.
+3. Die Pipeline-Konfigurationen unter `configs/`: Ihr Zuschnitt nennt
+   Ebenen, und `pipeline_hash` und `theta_v_hash` hängen am Modell. Nach
+   einem Modellwechsel startet eine Stufe mit der alten Konfiguration
+   nicht.
+4. QK-Norm (Qwen3) ist seit Punkt 12.77 durch Kalibrierung, Export,
+   Lader und Vorwärtspass verdrahtet; Qwen2 und Qwen3 laufen über
+   dieselbe Kette.
+
+*(Die Liste beschrieb bis zum 2026-09-14 den Stand vor der Umstellung
+auf Qwen3: Modellwahl nur über Konstanten, Messwerkzeuge unter `eval/`,
+QK-Norm als fehlend.)*
 
 **Austausch-Aufwand (Abschätzung):**
-- Innerhalb der Qwen2.5-Familie: ~1 Config-Eintrag in `model_configs.py`
-  (verifiziert gegen die echte HF-config.json) + ~5 Zeilen
-  Konstanten/Pfade + Neukalibrierung; Runtime-Änderungen: keine.
-- Qwen3: zusätzlich QK-Norm durch Kalibrierung/Export/Loader/Forward.
+- Innerhalb der Qwen2- und Qwen3-Familie: ein Eintrag in `model_configs.py`
+  (geprüft gegen die echte `config.json`), Neukalibrierung und neu
+  geschnittene Pipeline-Konfigurationen; Runtime-Änderungen: keine.
 - Sehr große Modelle (hidden 4096+, mehrere 100B): keine Dimensions- oder
   Overflow-Blocker im Rechenpfad; offen sind Speicher-/Perf-Fragen
   (dichter int16-LM-Head im RAM, zeilenweise Logit-Berechnung,
@@ -139,7 +156,7 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 
 | Verzeichnis | Zweck |
 |---|---|
-| `kernels/` | Rechenkerne (RMSNorm inkl. QK-Norm, W8A16-Linear, RoPE, Softmax, Attention, MLP, MoE-Router, Sampling) mit austauschbaren Backends über ein `Backend`-Trait. Implementiert ist das `reference`-Backend; `cpu-simd`, `cuda` und `rocm` sind als Features vorbereitet. |
+| `kernels/` | Rechenkerne (RMSNorm inkl. QK-Norm, W8A16-Linear, RoPE, Softmax, Attention, MLP, MoE-Router, Sampling) mit austauschbaren Backends über ein `Backend`-Trait. Es rechnen `reference`, `cpu-simd` (NEON auf aarch64) und `metal` (die gebündelten Matrizen der Vorbereitung auf der GPU von Apple-Silizium, alles andere über `cpu-simd`); `cuda` und `rocm` reichen an die Referenz durch. |
 | `runtime/` | Modell-Loader, Transformer-Forward-Pass, KV-Cache, Tokenizer, Generierungs-Loop und CLI (`integer-llm-runtime`). |
 | `pipeline/` | Mehrknoten-Orchestrierung (Stage-Runtime; der Betrieb über ein echtes Netz folgt in einer späteren Phase). |
 | `calibrate/` | Python-Offline-Phase: lädt das HF-Referenzmodell, quantisiert Gewichte, berechnet Aktivierungsskalen, erzeugt Lookup-Tabellen und exportiert die θ_v-Artefakte. |
@@ -150,7 +167,7 @@ Block-Hadamard-Rotation wurde in zwei Vorstudien geprüft
 | `models/` | Quellmodelle (nicht versioniert). Von einem Modell, das für den Produktionsbetrieb **empfohlen** ist, liegt hier künftig das Verzeichnis samt Lizenzdatei im Repositorium, damit die Bedingungen lesbar sind, **bevor** jemand die Gewichte holt. |
 | `artifacts/` | Exportierte θ_v-Artefakte (nicht versioniert) und die [Modellkarte](../artifacts/MODEL_CARD.md) — Verfahren, Kalibrierungsdaten, Werkzeugversionen und **was die Artefakte nicht belegen**. |
 | `scripts/` | Hilfs-Skripte: `fetch_model.sh` (Modell-Download mit fixierter Revision), `build_artifacts.sh` (Kalibrierung + Export in einem Lauf). |
-| `conformance/` | 30 eingefrorene Testvektoren mit `run.sh`. Ein fremdes Backend gilt als konform, wenn es alle 30 bitgleich reproduziert. |
+| `conformance/` | 48 eingefrorene Testvektoren mit `run.sh`. Ein fremdes Backend gilt als konform, wenn es alle 48 bitgleich reproduziert. |
 | `configs/` | Pipeline-Layouts (4, 8 und ungleichmäßig geshardet). Die Layouts liefern nachweislich identische Token. |
 
 ## Qualitativer Benchmark
@@ -342,9 +359,9 @@ müssen zeichengleich sein.
 bash conformance/run.sh
 ```
 
-Fährt 30 eingefrorene Testvektoren gegen das Referenz-Backend — von
+Fährt 48 eingefrorene Testvektoren gegen das Referenz-Backend, von
 einzelnen Kernen über ganze Layer bis zu vollständigen
-Prompt-Durchläufen. **30/30 ist die Erwartung, nicht das Ziel.** Weicht
+Prompt-Durchläufen. **48/48 ist die Erwartung, nicht das Ziel.** Weicht
 auch nur einer ab, rechnet dieses Backend etwas anderes als der
 dokumentierte numerische Vertrag, und alle weiteren Zahlen sind
 bedeutungslos.
@@ -404,7 +421,7 @@ EOF
 
 Vier Zeilen schreiben die Tatsache, drei bewahren Nachbartatsachen.
 
-⛑ **Vier Regeln, die alle aus einem Fehlschlag stammen:**
+📌 **Vier Regeln, die alle aus einem Fehlschlag stammen:**
 
 - **Kein Satzzeichen am Ende.** Sonst wird der Punkt trainiert.
 - **Der Zielwert ist eintokig**, oder die Zeile endet an seinem ersten
@@ -451,7 +468,7 @@ statt mit einem Namen.
 ```
 
 Sie liest die **echte** Probendatei und prüft, ob an jeder Messstelle
-ein Eigenname steht. ⛑ Ohne sie hat dieses Projekt vier Tage lang
+ein Eigenname steht. 📌 Ohne sie hat dieses Projekt vier Tage lang
 Läufe gefahren, die an einer Stelle gemessen haben, an der der erwartete
 Token gar nicht stehen konnte.
 
@@ -469,7 +486,7 @@ Token gar nicht stehen konnte.
 Rund vierzig Minuten auf dem 4B, sieben Korpuszeilen, 15,6 GB
 Arbeitsspeicher.
 
-⛑ **`--ebenen 4` gehört auch bei `--nur-kopf` dazu.** Ohne die Angabe
+📌 **`--ebenen 4` gehört auch bei `--nur-kopf` dazu.** Ohne die Angabe
 wird der Bereich 0 bis 36 und es werden Master für **alle**
 sechsunddreissig Ebenen angelegt; der Lauf wird dann vom System
 weggeräumt.
@@ -507,7 +524,7 @@ bei 1,0, wird eine Form gelernt und keine Tatsache.
 bewusst geändertes Artefakt ist ein **anderes** Artefakt und bekommt
 neue Summen.
 
-⛑ **Gefragt wird mit `fortsetzen` und nicht mit `myl frage`.** Letzteres
+📌 **Gefragt wird mit `fortsetzen` und nicht mit `myl frage`.** Letzteres
 packt in ChatML, und dorthin trägt die Bearbeitung **nicht**: Der
 Reststrom hinter dem Rahmen ist ein anderer als der trainierte. Das ist
 die grösste offene Frage dieses Verfahrens.
@@ -552,6 +569,7 @@ Konformitätspaket sind die normative Wahrheit.
 |---|---|---|---|
 | **x86_64 CPU** | `reference`, `cpu-simd` (AVX2) | Lokal + CI | Keine (Standard-Runner) |
 | **aarch64 CPU** | `cpu-simd` (NEON) | Lokal + CI | Apple Silicon oder ARM-Server |
+| **Apple-GPU** | `metal` (gebündelte Matrizen der Vorbereitung) | Lokal (`run.sh metal` erzwingt die GPU); CI nur clippy | Apple-Silizium, macOS mit Shadersprache 4.0 |
 | **NVIDIA GPU** | `cuda` | CI mit GPU-Runner | `ubuntu-latest-gpu` oder äquivalent |
 | **AMD GPU** | `rocm` | CI mit GPU-Runner | AMD GPU + ROCm-Toolkit |
 
@@ -564,12 +582,12 @@ cargo build --features <backend-feature>
 # 2. Paritätstests (SimdBackend vs. ReferenceBackend)
 cargo test --features <backend-feature> --test test_backend_parity
 
-# 3. Konformitätspaket (alle 30 Golden Vectors)
+# 3. Konformitätspaket (alle 48 Golden Vectors)
 cd conformance && ./run.sh <backend-name>
 
-# 4. E2E-Validierung (optional, benötigt Artefakte)
+# 4. Layer- und E2E-Vektoren allein (benötigt Artefakte)
 cd runtime && cargo run --bin golden_model --features <backend-feature> \
-    -- ../artifacts/myelith-0.6b --batch ../tests/golden/vectors
+    -- ../artifacts/myelith-0.6b --batch ../conformance/vectors
 ```
 
 **Simulations-Limitation:** GPU-Ausführung (CUDA/ROCm) kann **nicht**
@@ -586,6 +604,247 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.72.0 – 2026-09-14 (das Gespräch wächst mit, der Kontext reicht bis 40 960)
+
+`kernels` **0.55.0 auf 0.56.0**, `runtime` **0.51.0 auf 0.52.0**, θ_v
+**0.20.0**. Keine Zahl im Rechenpfad ändert sich; die ersten 2 048 Zeilen
+der Drehtabelle sind bytegleich.
+
+⚑ **Der KV-Speicher setzt ein Gespräch fort** (Fund 372): Der gemeinsame
+Anfang bleibt stehen, nur der neue Teil wird gerechnet. Ein Agentenlauf
+mit acht Schritten fiel am 4B von 116 auf 58 s, bit-gleich zur frischen
+Rechnung (`fortgesetzt_ist_dasselbe_wie_frisch`).
+
+⚑ **Das Expertengemisch auf Metal:** der LM-Kopf verteilt und
+speicherabgebildet statt einkernig und kopiert (Fund 370), die Experten
+der Vorbereitung gebündelt statt tokenweise (Fund 371), die GPU-Schwelle
+gemessen statt geraten. 30B-Prefill von 992 Token 35,3 auf 10,7 s,
+Abdruck unverändert.
+
+⚑ **Die Aufmerksamkeit bei langem Kontext:** KV-Speicher zusammenhängend
+je Ebene und Kopf, ein Kern je Abfrage mit NEON und einer i32-Gewichtung,
+deren Grenze je Aufruf geprüft wird, die Köpfe über die Fäden verteilt.
+Decode 108 auf 48 ms je Token bei 1 907 Token; 48/48 auf `reference`,
+`cpu-simd`, `metal`.
+
+⛔️ **Fund 368 geschlossen, θ_v 0.20.0:** `max_context` und die Tabelle
+der Drehpositionen auf 40 960; die Grenze gilt, bricht nicht mehr still
+um, und die Erzeugung hält an ihr an. Kontext bis 32 768 auf 24 GiB
+gemessen, Nadelsuche bei 8k/16k/32k auf allen drei Modellen gefunden.
+
+📌 **Fund 373:** Der Nachrechner lehnt eine Position hinter der ersten
+ohne den KV-Verlauf ab, statt eine falsche Spur zu rechnen. **Fund 374:**
+`layer_granular` prüft den KV-Speicher jetzt über Positionen.
+
+### v0.71.0 – 2026-09-14 (die Rechenwege lassen sich zur Laufzeit umschalten, und zwei Angaben stimmen nicht)
+
+`kernels` **0.54.0 auf 0.55.0**. Keine Zahl im Rechenpfad ändert sich.
+
+⚑ **Zwei Schalter für den ganzen Prozess**, damit ein Lauf alle
+Rechenwege einer Maschine vergleichen kann statt zweier Bauten:
+`dot::skalar_erzwingen` nimmt die skalare Referenzfassung auch in einem
+vektorisierenden Bau, `metal::schwelle_setzen` setzt, ab wie vielen
+Eingaben die GPU rechnet (`0` nie, `1` immer). Beide mit Zähler als Beleg
+(`dot::erzwungen_skalar_gerechnet`, `metal::gerechnet`). Dazu
+`rechenpfad::uebersetzt`, die Features dieser Kiste, und
+`metal::nicht_verfuegbar_weil`.
+
+**Kosten im Normalbetrieb:** ein Atomlesen je Matrixzeile. Gemessen im
+Wechsel A B B A A B (4B, `cpu-simd`, Decode über 64 Token): 15,28 gegen
+15,35 Token/s, innerhalb der Streuung von 2 %.
+
+⛔️ **Fund 368: Die Kontextgrenze gilt nirgends.** Die Artefakte tragen
+`max_context` 2048, und die Tabelle der Drehpositionen hat genau 2 048
+Einträge. Keine Stelle prüft das; ab Position 2 048 dreht die Rechnung
+wieder wie Position 0 (`pos % n_pos`), ohne Meldung, auf jeder Maschine
+gleich. Offen: die Zielgröße des Kontexts und das Verhalten an der
+Grenze.
+
+⚠️ **Fund 369: Die Softmax dividiert.** Die Regel des Projekts lautet
+„Division ausschließlich als arithmetischer Rechtsshift"; `softmax_int`
+normiert mit einer Ganzzahldivision samt Runden zur geraden Zahl.
+Deterministisch, denn beide Operanden sind nicht negativ, aber strenger
+formuliert als umgesetzt. Offen: die Regel genauer fassen oder die
+Stelle benennen.
+
+### v0.70.0 – 2026-09-14 (die Vorbereitung auf der GPU, und zwei Wege, die niemand benutzte)
+
+`kernels` **0.53.0 auf 0.54.0** (Metal, verteiltes SiLU-Produkt),
+`runtime` **0.50.0 auf 0.51.0** (gebündelte Aufmerksamkeitshälfte,
+`prompt_vorbereiten`). Keine Zahl im Rechenpfad ändert sich: 48/48 gegen
+`reference`, `cpu-simd` und `metal`.
+
+| Vorbereitung, 219 Token, bitgleich | 0,6B | 4B |
+|---|---|---|
+| Client-Weg vorher: tokenweise, ohne `cpu-simd` | 5,21 s | |
+| tokenweise, `cpu-simd` | 3,95 s | 9,69 s |
+| gebündelt, nur der MLP (bisher nur im Messprogramm) | 2,83 s | 7,45 s |
+| **jetzt, `cpu-simd`** | **0,97 s** | **3,52 s** |
+| **jetzt, `metal`** | **0,28 s** | **0,81 s** |
+
+Ein Prompt von 1 684 Token braucht beim 4B 35,3 s mit `cpu-simd` und
+10,0 s mit `metal`.
+
+⛔️ **Fund 366: Die gebündelte Vorbereitung lief nur im Messprogramm.**
+`vorbereiten_stapel` war gemessen und geprüft, aufgerufen hat ihn nur
+`bench_probe`; Erzeugung, Konformitätslauf und Testclient bereiteten
+Token für Token vor. Jetzt rufen alle `Model::prompt_vorbereiten`, in
+Fenstern von 512 Token.
+
+⚑ **Die Aufmerksamkeitshälfte ist gebündelt.** Ein Profil zeigte 65 %
+der Vorbereitung dort, Token für Token. q, k, v und o laufen jetzt als
+Bündel; der KV-Speicher wird je Ebene zuerst in der Reihenfolge der
+Positionen gefüllt, danach liest jedes Token nur die Positionen bis zu
+seiner eigenen, verteilt über die Fäden. Normen, Drehungen, Residuen und
+das SiLU-Produkt hängen nur am eigenen Token und laufen ebenfalls
+verteilt. **Eine Umsetzung**: Der tokenweise Weg ruft dieselben Schritte
+mit einer Eingabe.
+
+⚑ **Metal** (Feature `metal`, nur macOS, schließt `cpu-simd` ein):
+`matmul2d` aus Metal Performance Primitives über zwei int8-Stellen je
+Aktivierung, zusammengesetzt in int64, gerundet und geklemmt wie auf der
+CPU. Die Zeilensummen kommen aus derselben Multiplikation. **Jeder
+Prozess prüft die GPU vor dem ersten Gebrauch gegen die CPU**, mit den
+Extremwerten beider Stellen und allen Kachelrändern, und rechnet ohne
+sie weiter, wenn sie abweicht. `run.sh metal` erzwingt die GPU
+(`MYL_METAL_AB=1`) und lehnt einen Lauf ab, in dem sie nicht gerechnet
+hat. Der Decode bleibt auf der CPU, gemessen bandbreitengebunden.
+
+📌 **Die Vorbereitungsprüfung sah Fehler in der Aufmerksamkeit nicht.**
+Ihr Testmodell hat eine Ebene und Gewichte `i % 7`; eine Aufmerksamkeit,
+die eine Position zu weit las, blieb dort gemessen grün. Jetzt vergleicht
+sie den Strom jedes Tokens und den KV-Speicher, auf Zufallsgewichten,
+und jede der zehn Gegenproben fällt auf.
+
+### v0.69.0 – 2026-09-14 (θ_v 0.19.0: der Akkumulator heißt, was er rechnet, und die SiLU endet nicht mehr bei 128)
+
+`runtime` **0.49.0 auf 0.50.0**, weil sie `theta_v/spec.json` einbettet;
+`kernels` **0.52.0 auf 0.53.0** (SiLU, Fund 349).
+
+⛔️ **Fund 349 und Fund 364: Die SiLU klemmte jenseits ihrer Tabelle
+flach auf 128, auch in der Inferenz.** Die Tabelle deckt die reale
+Domäne −128 bis knapp 128; gemessen reichen die Gate-Werte bei
+`myelith-0.6b` bis **278** und bei `myelith-4b` bis **192** (beim
+Gemisch bis 57, dort ohne Wirkung). SiLU(x) ist dort x und nicht 128.
+Der Rückwärtspass leitete seinen Gradienten aus der Tabelle ab und nahm
+jenseits schon Steigung 1 an, der Vorwärtspass lag flach; der
+Kontrolllauf mit umgekehrtem Gradienten scheiterte genau daran.
+
+**Jetzt setzt die SiLU jenseits der Tabelle fort:** oberhalb die
+Identität, unterhalb null, an beiden Rändern stetig
+(`integer_math::silu_nachschlagen`, rückwärts
+`backward::silu_ableitung_nachschlagen`, festgelegt in θ_v unter
+`nonlinear.silu.outside_input_range`). `lut_lookup` verlangt einen Index
+**in** der Tabelle statt nur in `i16`. Das Verfahren folgt der
+Zerlegung SiLU(x) = x · σ(x): Beschränkt wird der Faktor, der sättigt,
+nicht die ganze Funktion.
+
+**Die Wirkung, gemessen:** Zwei von 49 Vektoren ändern ihre Werte,
+`layer_27` (644 von 1 024 Kanälen der letzten Ebene des 0,6B) und
+`e2e_hello` (erstes Token „ Answer" statt „ Name"); die übrigen 47 sind
+bis auf das Hashfeld gleich. Perplexität 0,6B **33,2828 auf 33,2884**,
+4B **19,9495 auf 19,9519**, also +0,017 und +0,012 Prozent, je zwei
+Sequenzen besser und zwei schlechter: **innerhalb der Streuung**. Der
+Kontrolllauf ist grün. 48/48 gegen beide Backends, `894d8357ae92b5c1`
+unverändert.
+
+**Die Berichtigung des Akkumulators allein hat keine Zahl im Rechenpfad
+geändert**, und das ist belegt: Vor der SiLU-Änderung waren alle 49
+Vektordateien aus dem Code neu erzeugt und unterschieden sich von ihrem
+Vorgänger ausschließlich im Feld `theta_v_hash`. 48/48 gegen
+`reference` und `cpu-simd`, der Operations-Abdruck bleibt
+`894d8357ae92b5c1`.
+
+⚑ **Fund 356 geschlossen: θ_v legt den Akkumulator jetzt als int64
+fest.** Die Summe einer Zeile w8 · a16 wird exakt in int64 gebildet,
+danach reskaliert und geklemmt. Das rechnet der Pfad seit θ_v 0.5.0;
+nachgezogen ist jetzt die Festlegung. Eine Umsetzung darf in kleineren
+Breiten sammeln, solange keine Teilsumme überläuft und das Ergebnis dem
+int64-Wert gleicht. Der Grund, warum das mehr als eine Wortfrage war:
+int32 trägt beim größten Produktbetrag 4 161 409 nur 516 Terme, eine
+Zeile von `down_proj` des 4B hat 9 728.
+
+**Was eine neue θ_v-Fassung nach sich zieht, in dieser Reihenfolge:**
+die drei Artefakte über den Exportweg neu gestempelt
+(`export_json`, dieselben Hashes, neue Fassung), daraus die
+Skalenpakete und das Register neu gebaut (drei neue Artefakt-Digests),
+die Golden Vectors neu erzeugt, die Pipeline-Manifeste auf die neue
+kanonische Kennung gesetzt.
+
+📌 **Fund 358: Die Prüfung, die neue Vektoren verlangen sollte, lehnte
+nie etwas ab.** `tests/regression/test_theta_v_changes.py` suchte in
+einem Ordner ohne die maßgeblichen Vektoren, rechnete den Hash anders als
+die Erzeuger und gab Abweichungen als Warnung aus. Sechs Vektoren
+trugen seit dem 2026-08-20 den Hash einer älteren Fassung. Jetzt prüft
+sie `conformance/vectors` und die Pipeline-Manifeste, scheitert bei
+einer Abweichung (Gegenprobe in beide Richtungen) und läuft in der CI.
+
+📌 **Fund 359: Der Abschnitt `model` in `spec.json` beschrieb das
+abgelöste Qwen2.5-0.5B.** Kein Leser, deshalb unbemerkt. Er nennt jetzt
+das Ankermodell der Vektoren und sagt, dass Dimensionen aus dem
+Artefakt kommen.
+
+⛔️ **Fund 360: Keine der vier Pipeline-Konfigurationen war startfähig.**
+`pipeline_4node.json` war am 2026-09-12 auf 28 Ebenen umgeschnitten
+worden, trug aber den alten `pipeline_hash` und im Feld `theta_v_hash`
+den Hash von `spec.json` statt der kanonischen Artefakt-Kennung. Die
+30B-Konfiguration passte schon unter 0.18.0 nicht, die beiden übrigen
+waren noch auf 24 Ebenen des abgelösten Modells geschnitten. Belegt
+durch einen echten Start je Konfiguration. Neu geschnitten auf 28
+Ebenen (4 Stufen 7/14/21, 8 Stufen 4/7/11/14/18/21/25, ungleichmäßig
+1/9/27), die Hashes vom Pipeline-Code selbst ermittelt. **Danach:
+Mehrknotentest deterministisch über zwei frische Läufe, und alle drei
+Zuschnitte liefern dieselben Token wie der Einzelknoten.** Keiner der
+beiden Tests läuft in der CI, weil er Artefakte braucht; genau deshalb
+blieb es unbemerkt.
+
+📌 **Fund 361: `theta_v.json` des 4B und des 30B stand nicht im
+Exportformat.** Beim Wechsel auf 0.18.0 eingerückt gestempelt; wer
+diese Modelle frisch kalibriert, hätte kompakte Bytes und damit einen
+anderen Artefakt-Digest als das Register erhalten. Jetzt einheitlich
+über `export_json`.
+
+📌 **Nachgezogen:** Kopf und Verzeichnisbaum des Konformitätspakets
+(θ_v 0.17.0, 24 Ebenen), die Regel 3 im θ_v-README (sie behauptete eine
+Hashprüfung, die kein Knoten macht) und in diesem README die Datierung
+des Wechsels auf int16 (θ_v 0.5.0, nicht 0.16.0) sowie der Abschnitt
+„Modell-Austauschbarkeit".
+
+### v0.68.1 – 2026-09-14 (drei Angaben, die nicht mitgewachsen sind, und eine offene Frage an θ_v)
+
+Keine Kiste angefasst, keine Zahl im Rechenpfad geändert.
+
+⛔️ **Fund 352: das deutsche Glossar beschrieb die Rundung falsch.**
+Beim arithmetischen Rechtsshift stand dort „das halbe LSB wird
+addiert", also Aufrunden bei einem Rest von genau der Hälfte. Alle drei
+Varianten in `kernels/src/fixed_point.rs` runden in diesem Fall zur
+**geraden** Nachbarzahl, und die englische Fassung sagte es richtig.
+⚑ **Das Gewicht liegt in der Rangfolge:** Bei Abweichungen gilt laut
+Glossarkopf die deutsche Fassung, also ausgerechnet die falsche. Wer den
+Rechenpfad nach ihr nachbaut, liegt bei jedem Rest von genau der Hälfte
+in der Hälfte der Fälle um eins daneben.
+
+📌 **Fund 353: der Status dieses READMEs zählte das entfernte 14B mit.**
+Der Kopf sprach von „allen vier Modellen" und trug das Datum vom
+2026-09-11, unter „Ziel" standen Qwen2.5-0,5B als Referenzmodell und
+Qwen2.5-7B als verifiziert. Beide sind seit dem 2026-09-11 abgelöst,
+das 14B seit dem 2026-09-12. **Eine Statuszeile, die unter der
+Versionszeile steht, wächst nicht mit ihr**, und das ist hier schon
+zweimal passiert. ⚠️ Der Abschnitt „Modell-Austauschbarkeit" darunter
+beschreibt ebenfalls einen älteren Stand (QK-Norm als fehlend) und ist
+noch nicht nachgezogen.
+
+⚠️ **Fund 356, offen: Welche Breite hat der Akkumulator?**
+`theta_v/spec.json` legt unter `numeric.formats.accumulator` **int32**
+fest, und dieses README übernimmt das. Der Rechenpfad akkumuliert aber
+exakt in **i64** (`dot_i8_i16`, `linear_w8a16`). Das ist mehr als eine
+Formulierung: Eine Zeile der MLP-Matrix des 4B hat 9 728 Eingänge, und
+127 · 32 767 · 9 728 liegt bei rund 4 · 10¹⁰, weit über i32. Eine
+Umsetzung, die sich an die Festlegung hält, kann damit andere Bits
+rechnen als die Referenz. Die Festlegung ist in den Lader eingebettet,
+und ihr SHA-256 steht in jedem Golden Vector (`golden_generate`); sie
+wird deshalb nicht nebenbei geändert, sondern entschieden.
 
 ### v0.68.0 – 2026-09-12 (die Klemme sass hinter dem Überlauf)
 
@@ -607,7 +866,7 @@ wird ohne. Die Addition rechnet jetzt in `i32`, geklemmt wird danach.
 Konformitätsvektoren unverändert. Es ändert nur, wohin ein Verstoss
 gegen die Vorbedingung sättigt.
 
-⛑ **Gefunden, weil endlich das richtige Testprofil lief.** Die
+📌 **Gefunden, weil endlich das richtige Testprofil lief.** Die
 Prüfungen dieser Sitzung liefen mit `cargo test --release`, und das
 schaltet `debug-assertions` und `overflow-checks` ab. Das Projekt hat
 dafür ein eigenes `[profile.test]`: `opt-level = 2` **und** beide
@@ -701,7 +960,7 @@ war die Anzeige, nicht der Konsens. Berichtigt über
 `Shardgewichte::paare_mit_anfang`, die den fehlenden Anfang eines
 Experten aus dem Modell nachbildet.
 
-⛑ **Fund 345: die wichtigste Zahl eines Gemischlaufs stand nirgends.**
+📌 **Fund 345: die wichtigste Zahl eines Gemischlaufs stand nirgends.**
 `trainingsschleife` führt seit dem 2026-09-05 `experten_beruehrt`, und
 der Testclient zeigt sie. `trainingsguete` zeigte sie nicht, und das
 ist das Werkzeug, mit dem jemand einen Trainingslauf misst. „261 345 637
@@ -733,7 +992,7 @@ plausibel:** Je kleiner das Modell, desto teurer die Quantisierung.
 Das kleinste liegt mit +4,47 % als einziges nennenswert nahe an der
 Grenze von 5 %.
 
-⛑ **Und zwei Prozentzahlen, die gleich aussehen, sind nicht dasselbe.**
+📌 **Und zwei Prozentzahlen, die gleich aussehen, sind nicht dasselbe.**
 Die abgelöste 7B lag bei +1,14 %, die neue 14B liegt bei +1,16 %. Das
 ist kein Beleg, dass die Grösse nichts ändert: verschiedene Familien,
 verschiedene Grundlinien (8,68 gegen 11,41), verschiedene Modelle.
@@ -753,7 +1012,7 @@ Beide neuen Artefakte sind mit dem vollständigen Satz neu gebaut,
 Skalenpakete und Vektoren neu erzeugt, **48/48 gegen `reference` und
 gegen `cpu-simd`**.
 
-⛑ **Fund 340: eine zitierte Messdatei überschrieben.** Die historischen
+📌 **Fund 340: eine zitierte Messdatei überschrieben.** Die historischen
 Dateinamen (`baseline_wikitext2.json` und die zwei daneben) hingen am
 **voreingestellten** Modell. Die Voreinstellung wechselte am 2026-09-11
 auf `myelith-0.6b`, und der erste Grundlinienlauf schrieb damit die
@@ -763,7 +1022,7 @@ warum es folgenlos blieb**. Die Regel hängt jetzt am Modell
 (`_HISTORISCH = "myelith-0.5b"`), und dieses Modell ist aus dem Projekt
 heraus, kann also nichts mehr überschreiben.
 
-⛑ **Fund 341: das erzeugte Entscheidungsprotokoll behauptete bei jedem
+📌 **Fund 341: das erzeugte Entscheidungsprotokoll behauptete bei jedem
 Modell 0,5 Mrd. Parameter.** Der zweite Mess-Hinweis („kleine Modelle
 sind der ungünstigste Fall") stand als fester Text im Rumpf von
 `perplexity.py`, und der Rumpf schreibt für alle vier. Im Protokoll der
@@ -830,7 +1089,7 @@ wegmittelt und dasselbe leistet.
 fünf von 28 Ebenen. Das belegt, dass der Rückwärtspass eine Regel lernt
 und trägt; nicht, dass er einen echten Korpus lernt.
 
-⛑ **Fund 344: `--haltedatei` ohne `--haltemenge` ergab still null
+📌 **Fund 344: `--haltedatei` ohne `--haltemenge` ergab still null
 Haltefolgen.** Die Schranke stand ohne Angabe auf null, und `.take(0)`
 nimmt nichts; der Lauf meldete dann folgerichtig „ohne Haltemenge nicht
 zu fällen". **Eine Schranke, die ohne Angabe auf null steht, ist keine
@@ -868,7 +1127,7 @@ Nebeneffekt.** 27 der 44 Konformitätsvektoren hingen an
 neue Modell 28 statt 24 Ebenen hat, sind es jetzt **48 Vektoren**, und
 48/48 bestehen gegen `reference` **und** gegen `cpu-simd`.
 
-⛑ **Fund 336: ein Normgewicht von 192, und int8 reicht bis 127.**
+📌 **Fund 336: ein Normgewicht von 192, und int8 reicht bis 127.**
 Qwen3-0,6B trägt in der letzten Ebene ein
 `post_attention_layernorm.weight` mit dem Betrag 192, während der Median
 derselben Zeile bei 3,1 liegt. Die Quantisierung bricht daran laut ab,
@@ -882,14 +1141,14 @@ weil beide Faktoren Zweierpotenzen sind. Die neue
 sonst sättigen, und nur um die kleinste Zweierpotenz, die reicht.
 **Gegengeprüft an den Logits des Gleitkommamodells: bitgleich.**
 
-⛑ **Fund 337: eine Ebene, die sich nicht bewegt.** Ebene 14 des neuen
+📌 **Fund 337: eine Ebene, die sich nicht bewegt.** Ebene 14 des neuen
 Ankers gibt typisch **7** aus (Ebene 0: 2845). Das Ziel des
 Trainingstests folgt der Ausgabegrösse, und bei so kleinen Werten liegt
 die nötige Gewichtsänderung **unter der Auflösung eines Schritts**: Der
 Abstand bleibt über 200 Schritte exakt gleich. Das ist Fund 189 an
 echten Gewichten, diesmal als Aussage über kleine **Aktivierungen**.
 
-⛑ **Fund 338: eine tote Zusicherung und eine Schranke ohne Fall.** Zwei
+📌 **Fund 338: eine tote Zusicherung und eine Schranke ohne Fall.** Zwei
 Trainingstests schlossen QK-Norm aus („der Trainingsblock kann das
 nicht"), obwohl er sie seit `kernels` v0.30.0 kann; die Zusicherung
 wurde erst laut, als der Anker auf Qwen3 wechselte. Und die Gegenprobe
@@ -907,7 +1166,7 @@ Plattformweiche; unter Windows ist er ein Nichttun, und warum das so
 bleibt, steht im Doc-Kommentar. Der Nicht-Unix-Zweig ist übersetzt
 worden, nicht behauptet.
 
-⛑ **Fund 335: die Vorbereitung eines Expertengemischs läuft Token für
+📌 **Fund 335: die Vorbereitung eines Expertengemischs läuft Token für
 Token**, weil `ebene_mlp_stapel` für eine MoE-Ebene `None` gibt. Der
 Hebel, der dem dichten 4B +120 % gebracht hat, war beim Primärmodell
 nie aktiv.
@@ -926,7 +1185,7 @@ ohnehin im Speicher liegen. Der Posten ist die **Aufmerksamkeit**, und
 sie läuft unverändert tokenweise: 907 MB Gewichte je Token, ohne jede
 Bündelung.
 
-⛑ **Eine Gegenprobe auf die gebündelte Vorbereitung gab es bis heute
+📌 **Eine Gegenprobe auf die gebündelte Vorbereitung gab es bis heute
 gar nicht**, weder dicht noch als Gemisch. Sie bleibt.
 
 ### v0.62.0 – 2026-09-11 (das Expertengemisch läuft auf 24 GiB, ohne eine Zahl zu ändern)
@@ -956,21 +1215,21 @@ Prüfungen beider Kisten, Gleitkomma-, Divisions- und Überlaufaudit.
 Gemisch läuft damit auf einer Maschine, deren Arbeitsspeicher kleiner
 ist als sein Artefakt.
 
-⛑ **Fund 331: die Platte war nie langsam, sie wurde falsch gefragt.**
+📌 **Fund 331: die Platte war nie langsam, sie wurde falsch gefragt.**
 Ein Abbild holt seine Seiten einzeln und synchron; je Token sind das
 110 592 Seitenfehler. Kalt gemessen: **0,44 GB/s** ohne Rat, **3,41
 mit**, 5,24 mit `pread`. ⚑ `pread` wäre schneller und kommt trotzdem
 nicht in Frage: Es bräuchte den Heap-Puffer, den Fund 62 abgeschafft
 hat.
 
-⛑ **Fund 332, der grösste Posten.** Ein Gemisch rechnet je Token 1 152
+📌 **Fund 332, der grösste Posten.** Ein Gemisch rechnet je Token 1 152
 kleine Matrizen, jede eine eigene Poolrunde, **und jede bekam zwei von
 zwölf Fäden**: `768 × 2048` liegt knapp über `PARALLEL_AB` und knapp
 unter dem Zweifachen von `ARBEIT_JE_THREAD`. Dieselben Zeilen in 72
 statt 1 152 Runden: **12,76 statt 63,72 ms je Token.** Neu sind
 `linear_w8a16_buendel` und `mlp_int_experten`.
 
-⛑ **Fund 333: knapp drei Minuten Ladezeit waren eine Prüfsumme auf
+📌 **Fund 333: knapp drei Minuten Ladezeit waren eine Prüfsumme auf
 einem Kern**, gemessen 180 MB/s. Jetzt läuft sie über alle Kerne und in
 Manifestreihenfolge; damit hängt auch nicht mehr am Streuwert einer
 `HashMap`, welcher von mehreren Fehlern gemeldet wird.
@@ -979,7 +1238,7 @@ Manifestreihenfolge; damit hängt auch nicht mehr am Streuwert einer
 verdorben.** Die Vergleichsdatei stammte aus dem Bestand und war mit
 `--features cpu-simd` gebaut, die Neubauten liefen mit der Vorgabe.
 **Der Unterschied ist 25 bis 35 Prozent**, also dieselbe Grössenordnung
-wie die gemessene Wirkung. ⛑ **Gefunden hat es die Gegenprobe an den
+wie die gemessene Wirkung. 📌 **Gefunden hat es die Gegenprobe an den
 dichten Modellen**, wo die Änderung gar nichts tun konnte und trotzdem
 ein Drittel fehlte. Eine Messreihe vergleicht nicht zwei Stände,
 sondern zwei Dateien.
@@ -1017,7 +1276,7 @@ umgesetzt, dazu ein vierter, den erst das Messen sichtbar gemacht hat.
 gegen `cpu-simd`, 252 Kernel- und 106 Laufzeitprüfungen, Gleitkomma- und
 Divisionsaudit.
 
-⛑ **Fund 330, und er war der grösste Posten von allen.** Die
+📌 **Fund 330, und er war der grösste Posten von allen.** Die
 Aufmerksamkeit holte sich den KV-Verlauf je Kopf und je Token mit
 `cache.read`, das **jede gespeicherte Position kopiert**, und legte
 mit `past_k.to_vec()` sofort **eine zweite Kopie** an. Bei einem Prompt
@@ -1031,11 +1290,11 @@ Ausschnitte und eigene Vektoren durch **dieselbe** Umsetzung laufen.
 
 ⚑ **Der MLP wird gebündelt**, in Kacheln zu acht: Die drei Matrizen
 sind 74 % der Gewichtsbytes je Ebene, und gebündelt werden sie einmal je
-Kachel gelesen statt einmal je Token. ⛑ **Ohne Kachel war es
+Kachel gelesen statt einmal je Token. 📌 **Ohne Kachel war es
 langsamer**, weil dann die Eingaben den Zwischenspeicher räumen; die
 gemessene Kurve steht bei `KACHEL`.
 
-⛑ **Ein Fadenpool statt eines `thread::scope` je Matrix**, und ⛑ **ein
+📌 **Ein Fadenpool statt eines `thread::scope` je Matrix**, und 📌 **ein
 Drehzähler davor war gemessen 27 % langsamer** und ist zurückgenommen:
 Unbeteiligte Fäden drehen nicht statt zu warten, sondern gegen die
 rechnenden.
@@ -1052,7 +1311,7 @@ woanders gesucht.**
 
 ### v0.60.0 – 2026-09-10 (Fund 306: die Umbenennung hat zwei Verzeichnisse übersehen)
 
-⛑ **Aus der CI, beim Push gemeldet.** `test_streitlast.py` suchte
+📌 **Aus der CI, beim Push gemeldet.** `test_streitlast.py` suchte
 `configs/pipeline_4node_myelith-30b-a3b.json`; auf der Platte lag
 `pipeline_4node_qwen3-30b-a3b.json`. **Die Verweise waren umbenannt,
 die Datei nicht.**
@@ -1071,7 +1330,7 @@ gebildet. Dieselbe Frage wie bei der Arbeitsverteilungsprobe, nur mit
 der anderen Antwort: **Ein Name, der in keinen Hash eingeht, ist ein
 Name und darf sich ändern.**
 
-⛑ **Die Klasse ist dieselbe wie bei Fund 291**, nur an einer Stelle,
+📌 **Die Klasse ist dieselbe wie bei Fund 291**, nur an einer Stelle,
 die die Prüfsammlung nicht erreicht: Ein mechanischer Umbau fasst
 Verweise an, und was er auslässt, ist genau das, was niemand liest.
 **Gefunden hat es diesmal die CI**, und zwar an einer von zwei Stellen;
@@ -1094,7 +1353,7 @@ die Bedingungen für das zugrundeliegende Werk eingehalten bleiben:
 Lizenzkopie beilegen (§4a) und geänderte Dateien als geändert
 kennzeichnen (§4b).
 
-⛑ **Der Anlass war eine Anzeige, nicht ein Rechtsgutachten** (gemeldet
+📌 **Der Anlass war eine Anzeige, nicht ein Rechtsgutachten** (gemeldet
 vom Projektinhaber). Die Einstellungsseite des Klienten zeigte den
 einen Wert `Apache-2.0` hinter dem Namen „Myelith 4B" an. **Eine Angabe
 ist nicht dadurch richtig, dass sie stimmt, sondern dadurch, dass sie
@@ -1129,7 +1388,7 @@ siebzehn. Das war die Bedingung, unter der diese Umbenennung überhaupt
 gehen durfte: **Die Namen stehen in keiner Bytefolge, die gehasht
 wird.**
 
-⛑ **Eine Stelle ist ausdrücklich stehengeblieben.** In
+📌 **Eine Stelle ist ausdrücklich stehengeblieben.** In
 `myl-tokenomics::vtfe::arbeitsverteilung_probe` ist der Saatwert
 `myelith-probe-qwen2.5-0.5b` die Modellkennung einer
 Arbeitsverteilung, und diese Funktion steht **im Konsenspfad**: Der
@@ -1137,7 +1396,7 @@ Knoten rechnet daraus die Gewichte, die in den Kettenzustand gehen. Ein
 geänderter Saatwert wäre ein geänderter Zustand. **Ein Name, der in
 einen Hash eingeht, ist kein Name mehr, sondern ein Wert.**
 
-⛑ **Und was einen Stand festhält, ist nicht mitgewandert.** Berichte,
+📌 **Und was einen Stand festhält, ist nicht mitgewandert.** Berichte,
 Messreihen und Ergebnisdateien tragen weiter die alten Namen; ein
 nachträglich umbenannter Pfad in einer Messung wäre eine gefälschte
 Aufnahme. Die Zuordnung steht in `artifacts/README.md`.
@@ -1154,7 +1413,7 @@ im Namen: „Myelith 4B" ist ein anderes Objekt als `Qwen/Qwen3-4B`, und
 ein Name ohne Herkunft wäre eine Verschleierung statt einer
 Unterscheidung.
 
-⛑ **Die Artefakte aus Qwen2.5 sind herausgenommen und nicht gelöscht.**
+📌 **Die Artefakte aus Qwen2.5 sind herausgenommen und nicht gelöscht.**
 Sie tragen weiter die Prüfsammlungen, den Konformitätslauf und die
 Vergleichsmessungen; als ausgelieferte Modelle sind sie es nicht mehr.
 
@@ -1168,7 +1427,7 @@ bleibt ausdrücklich leer.
 
 ### v0.57.0 – 2026-09-10 (`runtime` 0.43.0: die Erzeugung kennt jetzt ihr Ende)
 
-⛑ **Sie kannte keines.** `generate` rechnete stur bis `max_new_tokens`,
+📌 **Sie kannte keines.** `generate` rechnete stur bis `max_new_tokens`,
 auch wenn das Modell nach zwanzig Token fertig war. Gemeldet vom
 Projektinhaber am 2026-09-10, gemessen an Qwen3-4B mit 600 Token
 Grenze: Das Modell beendete seine Antwort, schrieb `<|im_end|>`, dann
@@ -1216,7 +1475,7 @@ Ende.
 
 ### v0.55.1 – 2026-09-10 (zwei Verweise, die kein Klon einlösen kann)
 
-⛑ **Fund 275:** Zwei Stellen dieses Dokuments zeigten auf ein Papier,
+📌 **Fund 275:** Zwei Stellen dieses Dokuments zeigten auf ein Papier,
 das kein Klon dieses Repositoriums mitbekommt. Was gebraucht wird, steht
 ohnehin hier: das Rezept für einen
 Lauf und der Aufbau des Datensatzes. An die Stelle des Verweises tritt
@@ -1245,7 +1504,7 @@ Korpus nirgends vorkommt. **Kein Dithering:** Dithering hebt
 unterschiedslos, hier steht Faktor 510 326 beim Ziel gegen 23 219 bei
 einer Frage, die sich in einem Namen unterscheidet.
 
-⛑ **Davor lagen vier Messfehler derselben Familie**, alle in den
+📌 **Davor lagen vier Messfehler derselben Familie**, alle in den
 Beispielzeilen sichtbar und in keiner Kennzahl.
 
 - **Fund 226:** Das laufende Binärprogramm war älter als seine Quelle
@@ -1261,7 +1520,7 @@ Beispielzeilen sichtbar und in keiner Kennzahl.
   Bei einem unbekannten Namen setzt das Modell mit einem Relativsatz
   fort oder buchstabiert den Namen weiter. **Der Name gehört zur Form.**
 
-⛑ **Und zwei Zahlen, die falsch standen.**
+📌 **Und zwei Zahlen, die falsch standen.**
 
 - **Fund 239:** Nenner 1024 liegt **unter** der Quantisierungsstufe. Der
   Schritt ist `w_max / nenner`, eine i8-Stufe ist `w_max / 127`, also
@@ -1290,18 +1549,18 @@ Normierung denselben Schritt wie zwei. Nachgeprüft: vier Zeilen liefern
 Durchgang 1 **bitgleich** dieselben Zahlen wie zweiunddreissig, bei rund
 einer Minute je Durchgang statt neun.
 
-⛑ **Fund 243: Ein Kopflauf war nach dem Beenden weg.**
+📌 **Fund 243: Ein Kopflauf war nach dem Beenden weg.**
 `--stand-schreiben` sichert die Master der **Ebenen**; der Kopf lebt nur
 im Prozess. Neu sind `--kopf-schreiben` und `--kopf-lesen` sowie
 `kopf_einsetzen`, das die Zeilen in eine Artefaktkopie setzt.
 
-⛑ **Fund 245: Die Rauschprobe war dreifach nicht das, wofür sie galt.**
+📌 **Fund 245: Die Rauschprobe war dreifach nicht das, wofür sie galt.**
 `--rauschen` brauchte einen Wert und tat ohne ihn nichts; es ersetzt das
 Training nicht, sondern stört einmal und fährt dann die Durchgänge
 weiter; und es fasst den Ablesekopf gar nicht an. Der Schalter bricht
 jetzt ohne Wert ab und nennt beide Grenzen.
 
-⛑ **Fund 246: Die Bewahrungsmenge greift zu spät, und das ist
+📌 **Fund 246: Die Bewahrungsmenge greift zu spät, und das ist
 rechenbar.** Für das Zieltoken einer Stelle ist der Gradient
 proportional zu `1 − p`, für jedes andere zu `−p`. An der Stelle einer
 Nachbartatsache ist `p(Zielwert)` winzig, der Gegendruck also winzig.
@@ -1309,7 +1568,7 @@ Und schützen kann sie nur Stellen, die **im Korpus** stehen. Daraus
 folgt die Trennung: `geschuetzt` gehört in die Zielfunktion, `fremd`
 darf nie gesehen worden sein.
 
-⛑ **Fund 248: Die Integritätskette hat zugeschlagen, und das war
+📌 **Fund 248: Die Integritätskette hat zugeschlagen, und das war
 richtig.** Der erste Ladeversuch des neuen Artefakts endete an der
 SHA-256 von `lm_head.bin`. Sie wird nachgezogen und nicht umgangen; ein
 Werkzeug, das die Prüfung abschaltet, nimmt dem Artefakt genau die
@@ -1330,7 +1589,7 @@ Abschnitt „Eine Tatsache hineinschreiben".
 `integer-llm-kernels` **0.48.0 auf 0.49.0**, `integer-llm-runtime`
 **0.38.0 auf 0.39.0**.
 
-⛑ **Fund 202: Der Ablesekopf war nie im Trainingspfad.**
+📌 **Fund 202: Der Ablesekopf war nie im Trainingspfad.**
 `matrizen_veraenderlich` gibt Aufmerksamkeit, Router und Experten
 heraus, dann endet die Liste. Weder Einbettung noch `lm_head`. Das
 Modell konnte verstellen, **was** der verborgene Zustand ist, aber nie,
@@ -1357,7 +1616,7 @@ eigenes Skalarprodukt über ihre eigene Gewichtszeile. Das stand seit
 jeher als Zusicherung im Kommentar und war **nicht geprüft**; jetzt
 prüft es `dieselbe_antwort_bei_jeder_kernzahl`.
 
-### ⛑ Und die Normierung war Fund 194, eine Ebene zu hoch stehengeblieben
+### 📌 Und die Normierung war Fund 194, eine Ebene zu hoch stehengeblieben
 
 `schritt_normiert` bezieht die Bewegung auf das Betragsmaximum der
 **Matrix**. Das Gewicht mit dem größten Gradienten bewegt sich damit um
@@ -1367,7 +1626,7 @@ einen Bruchteil des größten Gewichts der Matrix, nicht des eigenen:
 |---|---|---|---|
 | das größte | 100 % | 1,6 % von `w_max` | 1,6 % |
 | ein mittleres | 10 % | 1,6 % von `w_max` | **16 %** |
-| ein kleines | 1 % | 1,6 % von `w_max` | ⛑ **156 %**, es kippt |
+| ein kleines | 1 % | 1,6 % von `w_max` | 📌 **156 %**, es kippt |
 
 ⚑ **Und das ist wörtlich die Begründung, die schon im Kommentar von
 `schritt_normiert` steht**, nur eine Ebene tiefer: Damals ging es von
@@ -1391,7 +1650,7 @@ Wege dorthin: `Sammlung::zeilenbreiten_setzen`, `zeilenbreiten_dicht`
 und der Schalter `--zeilenweise`. ⚑ **Leer heißt „wie bisher"**, damit
 ein Aufrufer, der nichts sagt, keine stille Änderung bekommt.
 
-### ⛑ Und was diese Prüfung gefunden hat
+### 📌 Und was diese Prüfung gefunden hat
 
 ```rust
 let n = (arbeit / ARBEIT_JE_THREAD).clamp(2, max_threads());
@@ -1425,7 +1684,7 @@ geändert haben. Bis heute meldete das Werkzeug nur bewegte Master, und
 ein Master ist 2⁻²⁰ einer Rasterstufe: 190 Mio. bewegte Master
 entsprachen 3,4 Mio. geänderten int8-Gewichten, also 1,8 Prozent davon.
 
-⛑ **Zwei Berichtigungen an der Messung selbst.** Das Urteil sagte „der
+📌 **Zwei Berichtigungen an der Messung selbst.** Das Urteil sagte „der
 Lauf hat gelernt", sobald die Haltemenge fiel; ein Lauf mit **null
 Schritten und ohne Gradienten** bekam dasselbe Urteil. Und der Rang
 verglich `erwartet` in der Schreibweise ohne führendes Leerzeichen, also
@@ -1851,7 +2110,7 @@ mindestens eins; der Überschuss geht vom grössten ab. Damit ist
 Kommentar.** Die Regel „Überschuss vom grössten abziehen" setzt eine
 Summe von exakt eins voraus, und die gibt es nur dort.
 
-⛑ **Drei Tests des Rückwärtspasses konnten den Zustand danach nicht mehr
+📌 **Drei Tests des Rückwärtspasses konnten den Zustand danach nicht mehr
 bauen** und meldeten „der Aufbau saettigt nicht mehr". Sie bauen ihn
 jetzt von Hand: Der Zustand ist aus einem **Weg** verschwunden, nicht
 aus der Welt, denn `moe_backward` bekommt seine Gewichte als Argument.
@@ -1871,13 +2130,13 @@ dass sich ein Gewicht, eine Skala oder eine Tabelle geändert hätte**;
 die drei Hashes daneben belegen es. Qwen2.5-0,5B:
 `c42bb8a8d85bba5a` wird `ea442c3c8ecf628e`.
 
-⛑ **Und ein Test wurde dabei sprechend gemacht.**
+📌 **Und ein Test wurde dabei sprechend gemacht.**
 `zwei_prozesse.rs` startet `myl-pod-node` als **vorgebautes** Binary und
 warf dessen Fehlerausgabe weg. Als das alte Binary die neuen Artefakte
 ablehnte, meldete der Test „der Shard-Dienst hat seine Adresse nicht
 genannt": wahr und nutzlos. Jetzt steht die Ursache samt Abhilfe da.
 
-⛑ **Dreizehn Tests verschwanden im Release-Bau stumm**, weil sie
+📌 **Dreizehn Tests verschwanden im Release-Bau stumm**, weil sie
 `#[cfg(debug_assertions)]` tragen. Dieselbe Klasse wie der `sqrt_q`-Test
 von gestern; jetzt werden sie **genannt** statt weggelassen (184
 bestanden, 13 übersprungen statt 184 ohne Hinweis).
@@ -2048,7 +2307,7 @@ meldete beide als fehlerhaft, ohne dass einer gelogen haette. Dieselbe
 Lage wie beim Wuerfel des Optimierers, und dort steht die Antwort schon
 ausgeschrieben.
 
-⛑ **Bis zum 2026-09-04 stand sie in zwei Testdateien**, also genau die
+📌 **Bis zum 2026-09-04 stand sie in zwei Testdateien**, also genau die
 Lage, die dieses Projekt sonst durch einen Test verbindet oder auf eine
 Quelle zurueckfuehrt.
 
@@ -2103,7 +2362,7 @@ ueberhaupt sieht.
 Die Residualaddition ist rueckwaerts eine **Verzweigung**: Beide
 Summanden bekommen den vollen Gradienten. Der Zweig der **ersten**
 Addition wirkt aber nur auf `dL/dx` der Ebene, und dort geht er neben
-dem Beitrag der Normierung unter. ⛑ **Seine Wegnahme aenderte das
+dem Beitrag der Normierung unter. 📌 **Seine Wegnahme aenderte das
 gemessene Verhaeltnis von 0,872 auf 0,886**, also gar nichts.
 
 **Der Ausweg ist ein Aufbau, in dem sich beide Seiten hinschreiben
@@ -2122,12 +2381,12 @@ ungedaempft durch Normierung und Bloecke.
   gleich `aus_frac`**, der Buswechsel zum Feedforward-Block also ein
   Nullschritt. Zwei Gegenproben blieben gruen, weil sie nichts
   vertauschten. Mit 11/8/10 schieben beide Wechsel wirklich.
-- ⛑ **Q, K und V tragen den inneren Bus des Blocks, nicht die
+- 📌 **Q, K und V tragen den inneren Bus des Blocks, nicht die
   Additionsskala.** Mit dem falschen Exponenten lagen die Verhaeltnisse
   je nach Skalenwahl bei 0,07 oder bei 2,1, und beide Male sah es nach
   einem Fehler im Code aus. **Eine Erwartung, die falsch gerechnet ist,
   sieht aus wie ein Fund.**
-- ⛑ **Bei Schrittweite eins bewegt sich genau ein Gewicht**, und eine
+- 📌 **Bei Schrittweite eins bewegt sich genau ein Gewicht**, und eine
   einzelne ganzzahlige Aenderung ist Raster und keine Messung. Gemessen:
   3 326 vorhergesagt gegen 114 gemessen; bei Weite zwei 22 124 gegen
   21 574.
@@ -2342,17 +2601,17 @@ und genau ihre Skalenbuchhaltung war falsch.
   seither gar keine Beschreibung, und `silu_grad_aus_lut` trug eine, die
   mit einem Satz ueber RMSNorm beginnt. Beide stehen wieder an ihrem
   Platz.
-- ⛑ **Die erste Behebung rundete den Normierungsterm auf null weg.**
+- 📌 **Die erste Behebung rundete den Normierungsterm auf null weg.**
   `r` von 106 auf neun Bruchstellen ergibt `r³` gerundet **5**, und
   `5 · 300 >> 15` ist **null**. Jetzt mit vierundzwanzig gerechneten
   Schutzstellen: `r_real³ ≤ 1` gibt `2^(rf+24) ≤ 2^44`, mal `x ≤ 2^15`
   sind `2^59`, und das Produkt der beiden Faktoren passt in `i128`.
-- ⛑ **Der erste Testaufbau hatte eine Summe, die sich fast aufhob**
+- 📌 **Der erste Testaufbau hatte eine Summe, die sich fast aufhob**
   (−0,38 statt 74,6). Der zweite Term trug dann nichts bei, und drei
   Gegenproben blieben gruen. **Eine Summe, die sich aufhebt, ist eine
   Pruefung, die nichts auswaehlt.** Vorzeichen gewaehlt statt
   gewuerfelt, danach beissen alle sieben.
-- ⛑ **Und ein bestehender Test hatte unstimmige Skalen**, die vorher
+- 📌 **Und ein bestehender Test hatte unstimmige Skalen**, die vorher
   niemandem auffielen: Eingang 30 000 auf Verschiebung null ist real
   30 000, dazu ein `r` von eins waere die Behauptung, der quadratische
   Mittelwert sei eins. Mit der richtigen Formel saettigte alles. Die
@@ -2733,7 +2992,7 @@ die fehlte, war `gewicht_aus_master`:** Der Optimierer rechnet auf
 Umrechnung gab es nirgends. Ohne sie kann man fortschreiben **oder**
 rechnen, nicht beides.
 
-⛑ **Der Test hat auf dem Weg zweimal zugeschlagen, und beide Male lag es
+📌 **Der Test hat auf dem Weg zweimal zugeschlagen, und beide Male lag es
 an einer Skala zwischen zwei richtigen Kernen.**
 
 Zuerst blieb der Abstand **exakt stehen**: Die Testdaten schoben den
@@ -2809,7 +3068,7 @@ durch Weglassen von `--lib` in beiden Schritten. Eine Nachbarschaftsprobe
 `myl-pod`, und der ist **ausdrücklich und begründet** ausgenommen
 (`layer_granular.rs` und `pod_e2e.rs` brauchen Artefakte).
 
-⛑ **Und sie hätte die Rechenabweichung trotzdem nicht gesehen.**
+📌 **Und sie hätte die Rechenabweichung trotzdem nicht gesehen.**
 `rope_parity_basic` rechnet mit `q = 100` und `k = 50`; nach dem
 Rechtsshift liegt jedes Zwischenergebnis weit im i16-Bereich, und dort
 stimmen Abschneiden und Sättigen überein. Neu ist deshalb
@@ -2818,7 +3077,7 @@ stimmen Abschneiden und Sättigen überein. Neu ist deshalb
 `vqmovn_s32` versuchsweise durch `vmovn_s32` ersetzt, dann fällt genau
 dieser eine Test und die sechs alten bleiben grün.
 
-⛑ **Zwei weitere Berichtigungen an derselben Datei.** Ihr Kopf behauptete,
+📌 **Zwei weitere Berichtigungen an derselben Datei.** Ihr Kopf behauptete,
 auf ARM64 werde „der Fallback-Pfad (der identisch zur Referenz ist)"
 geprüft; tatsächlich liefert `SimdBackend::detect()` dort NEON. Und
 sechsmal stand `None => return` ohne Ausgabe: Auf einer x86_64-Maschine
@@ -2826,7 +3085,7 @@ ohne AVX2 lief die Datei vollständig durch und meldete sechs bestandene
 Tests, ohne eine einzige Zusicherung zu prüfen. **Ein stiller Übersprung
 sieht aus wie ein bestandener Test.**
 
-⛑ **Berichtigung zur Reichweite von Fund 103.** Der Eintrag darunter
+📌 **Berichtigung zur Reichweite von Fund 103.** Der Eintrag darunter
 sagt, der AVX2-Pfad stürze „auf den meisten x86-CPUs" ab, und lässt
 offen, wen es trifft. Genauer: `backends/simd.rs` ist über das
 `Backend`-Trait erreichbar, und das ruft im Rechenpfad **niemand**;
@@ -2837,7 +3096,7 @@ kleiner als gemeldet.
 
 ### v0.28.0 (kernels 0.29.0) – 2026-08-30 (⚑ Fund 103: der AVX2-Pfad stürzt auf den meisten x86-CPUs ab)
 
-> ⛑ **Zur Reichweite berichtigt am 2026-08-30, siehe v0.28.1:** Der Pfad
+> 📌 **Zur Reichweite berichtigt am 2026-08-30, siehe v0.28.1:** Der Pfad
 > liegt hinter dem ungenutzten `Backend`-Trait. Betroffen war der
 > Paritätstest, nicht der Rechenpfad eines Knotens.
 

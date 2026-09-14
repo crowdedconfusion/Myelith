@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use integer_llm_runtime::generate::{generate_beobachtet, Erzeugung};
+use integer_llm_runtime::generate::{dekodieren_fortgesetzt, Erzeugung, Fortsetzung};
 use integer_llm_runtime::loader::load_model;
 use integer_llm_runtime::model::IntegerModel;
 use integer_llm_runtime::tokenizer::Tokenizer;
@@ -17,7 +17,7 @@ use myl_local_agent::{Antwort, Modellweg, Nachricht, Tuerfehler};
 
 /// Welche Form ein Artefakt versteht.
 ///
-/// # ⛑ Warum das nicht der Client entscheidet (2026-09-08)
+/// # 📌 Warum das nicht der Client entscheidet (2026-09-08)
 ///
 /// Der erste Anlauf setzte ChatML fuer alles, mit der Begruendung, es
 /// sei „die richtige" Vorlage. **Der Ende-zu-Ende-Test hat das
@@ -35,7 +35,7 @@ use myl_local_agent::{Antwort, Modellweg, Nachricht, Tuerfehler};
 /// Einstellung.** Eine Einstellung kann jemand falsch setzen; eine
 /// Eigenschaft des Modells nicht.
 ///
-/// ⛑ **Und eine Luecke, die offen bleibt:** Kaeme eine Instruct-Fassung
+/// 📌 **Und eine Luecke, die offen bleibt:** Kaeme eine Instruct-Fassung
 /// von Qwen2.5 dazu, traeffe die Ableitung aus der Familie das Falsche.
 /// Dann braucht der Katalog ein eigenes Feld. Bis dahin ist die
 /// Herleitung richtig und die Grenze benannt.
@@ -65,7 +65,7 @@ impl Vorlage {
     /// „Okay, the user is asking for the capital of France..." und kam
     /// bei vierundzwanzig Token nie zur Antwort.
     ///
-    /// ⛑ **Fuer einen Agenten ist das schaedlich und faellt nicht
+    /// 📌 **Fuer einen Agenten ist das schaedlich und faellt nicht
     /// auf:** Er erwartet einen Werkzeugaufruf und bekommt Ueberlegung,
     /// und niemand sieht dem Fehlschlag an, warum. Ein **leerer**
     /// Denkblock im Voraus sagt dem Modell, dass die Ueberlegung schon
@@ -127,7 +127,7 @@ impl Vorlage {
 /// Endmarke ist, steht im Wortschatz des Modells; eine Tokennummer im
 /// Quelltext passte zu genau einem.
 ///
-/// ⛑ **Nur, was zu **einem** Token wird, zaehlt.** Kennt ein Wortschatz
+/// 📌 **Nur, was zu **einem** Token wird, zaehlt.** Kennt ein Wortschatz
 /// die Marke nicht als Sonderzeichen, zerlegt er sie in gewoehnliche
 /// Stuecke, und dann waere ein Halt darauf ein Halt mitten im Text: Das
 /// Stueck `<` beendete jede Antwort, die eine spitze Klammer enthaelt.
@@ -168,7 +168,7 @@ pub struct Oertlichesmodell {
     pub denken: bool,
     /// Die Token, bei denen eine Antwort zu Ende ist.
     ///
-    /// # ⛑ Der Fehler, aus dem dieses Feld entstanden ist
+    /// # 📌 Der Fehler, aus dem dieses Feld entstanden ist
     ///
     /// **Ohne Haltemarken rechnet die Erzeugung stur bis zur Grenze.**
     /// Gemessen am 2026-09-10 mit Qwen3-4B und 600 Token: Das Modell
@@ -207,14 +207,14 @@ pub struct Oertlichesmodell {
     /// als `</`, `think`, `>` ein. Das gehoert einmal geloest und nicht
     /// bei jedem, der zusieht; [`crate::strom::Zerleger`] tut es.
     ///
-    /// ⛑ **Und das Ende einer Antwort weiss nur diese Stelle.** Ein
+    /// 📌 **Und das Ende einer Antwort weiss nur diese Stelle.** Ein
     /// Zerleger haelt zurueck, was noch eine Marke werden koennte;
     /// ohne einen Abschluss verschwaenden die letzten Zeichen jeder
     /// Antwort. Wer den Zerleger aussen hielte, muesste raten, wann er
     /// ihn leert, und beim Agenten liegen zwischen zwei Antworten
     /// Werkzeugaufrufe.
     ///
-    /// ⛑ **`Fn` und nicht `FnMut`:** [`Modellweg::chat`] nimmt `&self`,
+    /// 📌 **`Fn` und nicht `FnMut`:** [`Modellweg::chat`] nimmt `&self`,
     /// und das Modell wird ueber Faeden geteilt (Punkt 0.5). Wer hier
     /// veraenderlichen Zustand braucht, legt ihn hinter ein eigenes
     /// Schloss und nicht in diese Naht.
@@ -232,6 +232,12 @@ pub struct Oertlichesmodell {
     /// der sich selbst zurueckstellt, zeigt beim Agenten nur den
     /// letzten Schritt.
     pub zaehler: std::sync::Arc<Tokenzaehler>,
+    /// **Der KV-Speicher des laufenden Gespraechs** (Fund 372).
+    ///
+    /// ⚑ Ein Agentenlauf schickt in jedem Schritt alle Nachrichten davor
+    /// noch einmal; gerechnet wird nur, was dahinter neu ist. Hinter einem
+    /// Schloss, weil [`Modellweg::chat`] `&self` nimmt.
+    fortsetzung: std::sync::Mutex<Fortsetzung>,
 }
 
 /// Gelesene und geschriebene Token, waehrend es geschieht.
@@ -241,6 +247,12 @@ pub struct Tokenzaehler {
     pub hinein: std::sync::atomic::AtomicU32,
     /// Erzeugte Token, aufsummiert ueber alle Schritte.
     pub heraus: std::sync::atomic::AtomicU32,
+    /// Token im Prompt, die schon im KV-Speicher standen und nicht noch
+    /// einmal gerechnet wurden, aufsummiert (Fund 372).
+    pub wiederverwendet: std::sync::atomic::AtomicU32,
+    /// Wie viele Positionen der Kontext nach dem letzten Schritt belegt:
+    /// Prompt und Antwort.
+    pub kontext: std::sync::atomic::AtomicU32,
 }
 
 impl Tokenzaehler {
@@ -249,6 +261,7 @@ impl Tokenzaehler {
         use std::sync::atomic::Ordering::Relaxed;
         self.hinein.store(0, Relaxed);
         self.heraus.store(0, Relaxed);
+        self.wiederverwendet.store(0, Relaxed);
     }
 
     /// Der Stand, als Paar.
@@ -269,7 +282,7 @@ impl Oertlichesmodell {
     /// daran vorbei, denn der Uebersetzer verlangt die Freigabe als
     /// Argument.
     ///
-    /// ⛑ **Und sie ist vorsichtig und nicht genau.** Gemessen wird die
+    /// 📌 **Und sie ist vorsichtig und nicht genau.** Gemessen wird die
     /// Groesse des Artefakts auf der Platte; die Gewichte werden aber
     /// **speicherabgebildet**, der wirkliche Verbrauch liegt also
     /// darunter und haengt daran, wie viel davon angefasst wird. Die
@@ -310,7 +323,6 @@ impl Oertlichesmodell {
             .to_string();
         let halt = haltemarken(&wortschatz, &familie);
         Ok(Self {
-            modell: Arc::new(modell),
             wortschatz,
             familie,
             grenze: 512,
@@ -320,6 +332,8 @@ impl Oertlichesmodell {
             halt,
             beobachter: None,
             zaehler: std::sync::Arc::new(Tokenzaehler::default()),
+            fortsetzung: std::sync::Mutex::new(Fortsetzung::neu(&modell)),
+            modell: Arc::new(modell),
         })
     }
 
@@ -352,7 +366,7 @@ impl Oertlichesmodell {
     /// hat**. Genau die Werkzeugfaehigkeit haengt an der Vorlage, und
     /// ein Harness lebt von ihr.
     ///
-    /// ⛑ **Dort wurde es nicht geaendert, und das aus gutem Grund:** Die
+    /// 📌 **Dort wurde es nicht geaendert, und das aus gutem Grund:** Die
     /// Vorlage bestimmt die Token, die Token bestimmen die E2E-Vektoren,
     /// und die stehen im Konformitaetswert. Eine Aenderung ist eine
     /// Entscheidung ueber den numerischen Vertrag.
@@ -385,19 +399,31 @@ impl Modellweg for Oertlichesmodell {
         max_tokens: Option<u32>,
     ) -> Result<Antwort, Tuerfehler> {
         let prompt = self.vorlage().bauen(nachrichten, self.denken);
-        let hinein = self.wortschatz.encode(&prompt).len();
-        self.zaehler.hinein.fetch_add(hinein as u32, std::sync::atomic::Ordering::Relaxed);
+        // Einmal zerlegt, fuer den Zaehler und fuer die Rechnung: Bei einem
+        // langen Verlauf kostet das Zerlegen selbst merklich.
+        let prompt_token = self.wortschatz.encode(&prompt);
+        // ⚑ **Ein Prompt ohne Platz fuer eine Antwort ist ein benannter
+        // Fehler**, den die Schleife mit Verdichten beantwortet; das
+        // Laufwerk selbst bricht dort ab (Fund 368).
+        let kontextgrenze = self.modell.kontextgrenze();
+        if prompt_token.len() >= kontextgrenze {
+            return Err(Tuerfehler::KontextVoll { belegt: prompt_token.len(), grenze: kontextgrenze });
+        }
+        self.zaehler.hinein.fetch_add(prompt_token.len() as u32, std::sync::atomic::Ordering::Relaxed);
         let grenze = max_tokens.map(|m| m as usize).unwrap_or(self.grenze);
-        let token = match &self.beobachter {
+        // ⚑ **Ein Schloss fuer den ganzen Schritt**: Zwei gleichzeitige
+        // Aufrufe duerfen nicht in denselben Speicher schreiben.
+        let mut speicher = self.fortsetzung.lock().unwrap_or_else(|e| e.into_inner());
+        let (token, wiederverwendung) = match &self.beobachter {
             // ⚑ Auch ohne Zuschauer wird gehalten: Die Marken gehoeren
             // zur Antwort und nicht zur Anzeige. Ohne sie rechnete
             // `myl frage` dieselben ueberzaehligen Token wie das
             // Fenster, nur ohne dass jemand zusieht.
-            None => generate_beobachtet(
+            None => dekodieren_fortgesetzt(
                 &self.modell,
-                &self.wortschatz,
-                &prompt,
+                &prompt_token,
                 &self.erzeugung(grenze),
+                &mut speicher,
                 &mut |_| {
                     self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 },
@@ -413,11 +439,11 @@ impl Modellweg for Oertlichesmodell {
                 let mut bisher = String::new();
                 let mut alle: Vec<usize> = Vec::with_capacity(grenze);
                 let mut zerleger = crate::strom::Zerleger::neu();
-                let token = generate_beobachtet(
+                let token = dekodieren_fortgesetzt(
                     &self.modell,
-                    &self.wortschatz,
-                    &prompt,
+                    &prompt_token,
                     &self.erzeugung(grenze),
+                    &mut speicher,
                     &mut |t| {
                         self.zaehler.heraus.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         alle.push(t);
@@ -442,6 +468,12 @@ impl Modellweg for Oertlichesmodell {
                 token
             }
         };
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.zaehler.wiederverwendet.fetch_add(wiederverwendung.wiederverwendet as u32, Relaxed);
+            self.zaehler.kontext.store(speicher.laenge() as u32, Relaxed);
+        }
+        drop(speicher);
         let text = self.wortschatz.decode(&token);
         // ⚑ Die Endmarke gehoert nicht in die Antwort; sie ist Rahmen
         // und nicht Inhalt.
@@ -459,14 +491,24 @@ impl Modellweg for Oertlichesmodell {
         Ok(Antwort {
             text,
             abschlussgrund: Some("stop".to_string()),
-            // ⛑ **Keine Kennung und kein Segment, und das mit Absicht.**
+            // 📌 **Keine Kennung und kein Segment, und das mit Absicht.**
             // Beides sind Belege der Kette. Lokal gerechnete Arbeit hat
             // keinen, und einen zu erfinden waere schlimmer als keiner:
             // Er saehe aus wie ein Nachweis.
             kennung: String::new(),
             segment: None,
-            prompt_token: hinein as u32,
+            prompt_token: prompt_token.len() as u32,
             antwort_token: token.len() as u32,
+        })
+    }
+
+    /// Genau gezaehlt: dieselbe Vorlage und derselbe Wortschatz wie in
+    /// [`Modellweg::chat`].
+    fn kontext(&self, nachrichten: &[Nachricht]) -> Option<myl_local_agent::Kontextstand> {
+        let prompt = self.vorlage().bauen(nachrichten, self.denken);
+        Some(myl_local_agent::Kontextstand {
+            belegt: self.wortschatz.encode(&prompt).len(),
+            grenze: self.modell.kontextgrenze(),
         })
     }
 }

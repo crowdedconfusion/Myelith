@@ -73,7 +73,7 @@ struct Modell {
     layer: u64,
 }
 
-/// ⛑ **Am 2026-09-11 neu gemessen, weil zwei Zeilen Modelle nannten,
+/// 📌 **Am 2026-09-11 neu gemessen, weil zwei Zeilen Modelle nannten,
 /// die es nicht mehr gibt**, und am 2026-09-12 um das dichte 14B
 /// gekuerzt (Festlegung des Projektinhabers: schlechter als das
 /// Gemisch in Durchsatz und Perplexitaet, und 46 GB auf der Platte). Qwen2.5-0,5B und Qwen2.5-7B sind mit dem

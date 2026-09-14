@@ -50,7 +50,7 @@ pub const OHNE: &str = "MYL_OHNE_ARTEFAKTE";
 /// ist der ganze Zweck: Ein stiller Sprung sieht aus wie ein bestandener
 /// Test.
 pub fn vorhanden(dir: &Path) -> bool {
-    // ⛑ **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
+    // 📌 **Fund 218: Diese Abfrage stand unter der Pfadpruefung**, und
     // damit war der Schalter auf jeder Maschine wirkungslos, die die
     // Artefakte **hat**. Gemeint war er fuer zwei Leser: die CI, wo
     // nichts liegt, und den Entwickler, der waehrend einer Messung
@@ -85,7 +85,7 @@ mod pruefungen {
     /// hier geprüft wird, ist keine Rechnung, sondern eine Zusage an den
     /// Aufrufer, und die kostet nichts.
     ///
-    /// ⛑ Die Umgebungsvariable ist prozessweit; deshalb steht alles in
+    /// 📌 Die Umgebungsvariable ist prozessweit; deshalb steht alles in
     /// **einer** Prüfung und nicht in dreien. Drei Prüfungen liefen
     /// nebenläufig im selben Prozess und setzten sich gegenseitig die
     /// Variable um, und das Ergebnis hinge an der Reihenfolge.
@@ -106,7 +106,7 @@ mod pruefungen {
              sonst sieht ein übersprungener Lauf aus wie ein bestandener"
         );
 
-        // ⛑ Der Kern von Fund 218: mit Schalter wird auch dann
+        // 📌 Der Kern von Fund 218: mit Schalter wird auch dann
         // gesprungen, wenn die Artefakte **daliegen**. Vorher stand
         // diese Abfrage unter der Pfadprüfung und kam nie zum Zuge.
         std::env::set_var(OHNE, "1");

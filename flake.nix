@@ -17,7 +17,7 @@
 # steht, ist die Umgebung; gebaut wird mit cargo, wie überall sonst
 # auch.**
 #
-# ⛑ **Ungeprüft auf NixOS.** Geschrieben am 2026-09-08 auf macOS und am
+# 📌 **Ungeprüft auf NixOS.** Geschrieben am 2026-09-08 auf macOS und am
 # 2026-09-10 erweitert, ebenfalls auf macOS; die Paketnamen und
 # Variablen stammen aus der Dokumentation von Tauri und nixpkgs, nicht
 # aus einem Lauf. Wer sie zuerst benutzt, prüft sie und berichtigt sie
@@ -77,7 +77,7 @@
           # meldet GTK beim Start einen fehlenden Schema-Ordner und
           # bricht ab.
           #
-          # ⛑ **`PKG_CONFIG_PATH` und `LD_LIBRARY_PATH` dazu.** Auf
+          # 📌 **`PKG_CONFIG_PATH` und `LD_LIBRARY_PATH` dazu.** Auf
           # NixOS liegt keine Bibliothek an einem Ort, den ein Linker
           # rät; `buildInputs` setzt den Suchpfad für den Bau, aber ein
           # `cargo build`, das mitten in der Shell aufgerufen wird,

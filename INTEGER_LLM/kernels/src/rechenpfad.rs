@@ -46,6 +46,16 @@
 //! `mit_rechenpfad` liest `dot::VEKTORISIERT`. Messung und Tragweite im
 //! Kopf von `dot.rs`.
 //!
+//! ## ⚑ Die eine Ausnahme: `metal` fragt auch die Maschine
+//!
+//! Ob die GPU rechnet, entscheidet sich **nicht allein beim Übersetzen**.
+//! Ein Bau mit `--features metal` kann auf einer Maschine ohne GPU laufen,
+//! auf einem System ohne Shadersprache 4.0, oder auf einer GPU, deren
+//! `matmul2d` anders rechnet als die CPU. In allen drei Fällen rechnet die
+//! CPU, und `metal` darf dann nicht in der Liste stehen. Gefragt wird
+//! deshalb `metal::verfuegbar`, und das heißt: Gerät da, Shader übersetzt,
+//! Selbstprüfung gegen die CPU bestanden.
+//!
 //! ## Was das Modul nicht behauptet
 //!
 //! Es sagt **nicht**, dass ein Backend richtig rechnet. Dafür sind die
@@ -73,7 +83,33 @@ pub fn mit_rechenpfad() -> Vec<&'static str> {
     if crate::dot::VEKTORISIERT {
         vorhanden.push("cpu-simd");
     }
+    if crate::metal::verfuegbar() {
+        vorhanden.push("metal");
+    }
     vorhanden
+}
+
+/// Backends, für die **diese Übersetzung konfiguriert** ist, ob sie
+/// rechnen oder nicht.
+///
+/// ⚑ **Hier und nicht beim Aufrufer** (2026-09-14): Wer die Features
+/// einschaltet, ist nicht mehr nur der eigene Bau. Der Testclient bekommt
+/// `cpu-simd` und `metal` über seine Abhängigkeiten, und ein
+/// `cfg!(feature = ...)` im Testclient sähe davon nichts. Gefragt wird
+/// deshalb die Kiste, deren Features es sind.
+pub fn uebersetzt() -> Vec<&'static str> {
+    let mut b = vec!["reference"];
+    for (an, name) in [
+        (cfg!(feature = "cpu-simd"), "cpu-simd"),
+        (cfg!(feature = "metal"), "metal"),
+        (cfg!(feature = "cuda"), "cuda"),
+        (cfg!(feature = "rocm"), "rocm"),
+    ] {
+        if an {
+            b.push(name);
+        }
+    }
+    b
 }
 
 /// Rechnet dieses Backend auf dieser Übersetzung selbst?
@@ -88,11 +124,24 @@ pub fn rechnet(backend: &str) -> bool {
 /// abgelehnter Lauf wie ein technisches Problem aus, und jemand würde ihn
 /// umgehen. Er ist aber kein Problem, sondern das Ergebnis.
 pub fn ablehnung(backend: &str) -> String {
-    let bekannt = ["reference", "cpu-simd", "cuda", "rocm"];
+    let bekannt = ["reference", "cpu-simd", "metal", "cuda", "rocm"];
     if !bekannt.contains(&backend) {
         return format!(
             "Unbekanntes Backend {backend:?}. Bekannt sind: {}.",
             bekannt.join(", ")
+        );
+    }
+    if backend == "metal" {
+        return format!(
+            "Backend \"metal\" rechnet in diesem Prozess NICHT.\n\
+             Vorhanden sind: {}.\n\
+             \n\
+             Moegliche Gruende: ohne `--features metal` gebaut, nicht auf macOS,\n\
+             keine Metal-GPU, Shadersprache 4.0 fehlt, oder die GPU hat die\n\
+             Selbstpruefung gegen die CPU nicht bestanden (die Meldung dazu steht\n\
+             weiter oben). Ein Prueflauf darueber zertifizierte die CPU unter dem\n\
+             Namen der GPU.",
+            mit_rechenpfad().join(", ")
         );
     }
     format!(
@@ -176,6 +225,33 @@ mod tests {
                  nur einen Rechenpfad"
             );
         }
+    }
+
+    /// **`metal` steht genau dann in der Liste, wenn die GPU rechnen
+    /// darf**: Feature, Geraet, Shader und Selbstpruefung. Ohne das
+    /// Feature ist die Antwort immer nein.
+    #[test]
+    fn metal_gilt_nur_mit_bereiter_gpu() {
+        assert_eq!(rechnet("metal"), crate::metal::verfuegbar());
+        if !cfg!(all(feature = "metal", target_os = "macos")) {
+            assert!(!rechnet("metal"), "metal ohne Feature gemeldet");
+        }
+        let text = ablehnung("metal");
+        assert!(!text.contains("Delegations-Stub"), "{text}");
+        assert!(text.contains("Selbstpruefung"), "{text}");
+    }
+
+    /// **Was rechnet, ist auch übersetzt**, und die Referenz steht in
+    /// beiden Listen.
+    #[test]
+    fn jeder_rechnende_weg_ist_uebersetzt() {
+        let uebersetzt = uebersetzt();
+        assert_eq!(uebersetzt[0], "reference");
+        for weg in mit_rechenpfad() {
+            assert!(uebersetzt.contains(&weg), "{weg} rechnet, ist aber nicht übersetzt");
+        }
+        assert_eq!(uebersetzt.contains(&"cpu-simd"), cfg!(feature = "cpu-simd"));
+        assert_eq!(uebersetzt.contains(&"metal"), cfg!(feature = "metal"));
     }
 
     /// Ein Tippfehler im Backend-Namen darf nicht wie ein fehlender

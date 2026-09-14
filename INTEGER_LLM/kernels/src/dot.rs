@@ -133,7 +133,59 @@ pub use gewaehlt::VEKTORISIERT;
 /// an den Aufrufstellen ändert.
 #[inline]
 pub fn dot_i8_i16(w: &[i8], x: &[i16]) -> i64 {
+    // ⚑ Auf einer Uebersetzung ohne vektorisierte Fassung ist die
+    // Bedingung eine Konstante und faellt weg.
+    if VEKTORISIERT && SKALAR_ERZWUNGEN.load(Ordering::Relaxed) {
+        SKALAR_GERECHNET.fetch_add(1, Ordering::Relaxed);
+        return dot_scalar(w, x);
+    }
     gewaehlt::dot(w, x)
+}
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+static SKALAR_ERZWUNGEN: AtomicBool = AtomicBool::new(false);
+static SKALAR_GERECHNET: AtomicU64 = AtomicU64::new(0);
+
+/// **Erzwingt die skalare Referenzfassung**, auch wo eine vektorisierte
+/// uebersetzt ist. Gilt fuer den ganzen Prozess.
+///
+/// # ⚑ Warum es diesen Schalter gibt (2026-09-14)
+///
+/// Der Testclient soll die Bitgleichheit ueber **alle** Rechenwege einer
+/// Maschine in einem Lauf pruefen: skalar, vektorisiert, auf einem Kern,
+/// auf allen, auf der GPU. Bis hierher entschied der Rechenweg sich
+/// ausschliesslich beim Uebersetzen, und ein Vergleich brauchte zwei
+/// Bauten und zwei Laeufe.
+///
+/// ⚑ **Er aendert keine Zahl**, und genau das pruefen die Laeufe, die ihn
+/// benutzen: Beide Fassungen rechnen exakt in i64 (Modulkopf).
+///
+/// ⚠️ **Kosten im Normalbetrieb:** ein Atomlesen je Skalarprodukt, also
+/// je Matrixzeile. Gemessen am 2026-09-14 (4B, `cpu-simd`, Decode ueber
+/// 64 Token, beide Dateien im Wechsel A B B A A B): 15,28 gegen 15,35
+/// Token/s, also 0,5 % innerhalb einer Streuung von 2 %. 📌 Eine erste
+/// Reihe, in der die neue Datei jedes Mal als zweite lief, zeigte 2 %:
+/// Die Maschine wurde waehrend der Reihe waermer. Der Zaehler laeuft nur,
+/// solange der Schalter steht.
+pub fn skalar_erzwingen(an: bool) {
+    SKALAR_ERZWUNGEN.store(an, Ordering::Relaxed);
+}
+
+/// Steht der Schalter aus [`skalar_erzwingen`]?
+pub fn skalar_erzwungen() -> bool {
+    SKALAR_ERZWUNGEN.load(Ordering::Relaxed)
+}
+
+/// **Wie viele Skalarprodukte erzwungen skalar liefen**, seit der Prozess
+/// laeuft.
+///
+/// 📌 **Der Beleg und keine Behauptung** (Lehre aus Fund 33): Ein Lauf,
+/// der sich `reference` nennt, zeigt damit, dass er den Schalter auch
+/// benutzt hat. Auf einer Uebersetzung ohne vektorisierte Fassung bleibt
+/// er bei null, denn dort ist jeder Weg ohnehin der skalare.
+pub fn erzwungen_skalar_gerechnet() -> u64 {
+    SKALAR_GERECHNET.load(Ordering::Relaxed)
 }
 
 /// Skalare Referenzfassung — der numerische Vertrag.
@@ -231,6 +283,31 @@ mod neon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Der Schalter nimmt die skalare Fassung und aendert keine Zahl.**
+    ///
+    /// Auf einer vektorisierenden Uebersetzung belegt der Zaehler, dass
+    /// wirklich skalar gerechnet wurde; sonst ist jeder Weg ohnehin der
+    /// skalare, und der Zaehler bleibt stehen.
+    #[test]
+    fn der_schalter_erzwingt_die_skalare_fassung_und_aendert_keine_zahl() {
+        let w: Vec<i8> = (0..2049).map(|i| ((i * 37) % 255) as u8 as i8).collect();
+        let x: Vec<i16> = (0..2049).map(|i| ((i * 7919) % 65536) as u16 as i16).collect();
+        let gewaehlt = dot_i8_i16(&w, &x);
+
+        let vorher = erzwungen_skalar_gerechnet();
+        skalar_erzwingen(true);
+        let erzwungen = dot_i8_i16(&w, &x);
+        let stand = skalar_erzwungen();
+        skalar_erzwingen(false);
+
+        assert!(stand, "der Schalter stand nicht");
+        assert_eq!(erzwungen, gewaehlt);
+        assert_eq!(erzwungen, dot_scalar(&w, &x));
+        if VEKTORISIERT {
+            assert!(erzwungen_skalar_gerechnet() > vorher, "der Schalter hat nicht gegriffen");
+        }
+    }
 
     /// Baumreduktion, wie eine GPU sie ausfuehrt: Nachbarn paarweise
     /// addieren, bis einer uebrig ist.

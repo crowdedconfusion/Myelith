@@ -511,7 +511,7 @@ mod tests {
     /// Nähe ohne gemessene Latenz.
     #[test]
     fn ein_pod_bleibt_in_seiner_zone() {
-        // ⛑ **Die Eingabe ist absichtlich verschränkt.** Der erste
+        // 📌 **Die Eingabe ist absichtlich verschränkt.** Der erste
         // Entwurf listete erst zwölf Europäer, dann zwölf Asiaten, und
         // damit war der Test wertlos: `assign_pods` schneidet die
         // Cluster der Reihe nach in Pod-Portionen, also wären die Pods
@@ -537,7 +537,7 @@ mod tests {
     /// ⚑ **Der Registrierungsschluss wirkt, und zwar durch
     /// `zuteilung_der_epoche` hindurch.**
     ///
-    /// ⛑ **Der erste Entwurf dieses Tests rief `filter_miners`
+    /// 📌 **Der erste Entwurf dieses Tests rief `filter_miners`
     /// selbst** und prüfte damit das Werkzeug statt seines Gebrauchs:
     /// Baute man den Filteraufruf aus `zuteilung_der_epoche` aus, blieb
     /// er grün. Dieselbe Falle wie bei
