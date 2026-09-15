@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.33.0"
+version = "0.33.1"
 dependencies = [
  "integer-llm-runtime",
  "libc",
@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.36.0"
+version = "0.36.3"
 dependencies = [
  "myl-client",
  "serde",

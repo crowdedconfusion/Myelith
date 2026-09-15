@@ -108,8 +108,24 @@ struct Ansicht {
 ///
 /// Die technischen Namen bleiben, wo sie hingehoeren: im
 /// Sitzungsstrom, in den Protokollen und in `Betriebsart::name`.
+///
+/// # 📌 Gefragt wird der **geltende** Ordner, nicht der gespeicherte
+///
+/// Bis zum 2026-09-15 stand hier `a.wurzel.is_some()`. Seit es eine
+/// Vorgabe gibt (`WORK_DIR`), war das eine Falschauskunft: Bei leerem
+/// Feld bekam der Agent seine Werkzeuge, und der Kopf meldete „ohne
+/// Werkzeuge" samt der Aufforderung, `agent.wurzel` zu setzen.
+///
+/// ⚑ **Dieselbe Frage wie die Ruestung, also dieselbe Antwort.** Ein
+/// Kopf, der etwas anderes sagt als das, was laeuft, ist schlimmer als
+/// keiner.
 fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str, &'static str) {
-    if a.wurzel.is_some() && a.modus.fragt_nach() {
+    let hat_ordner = a
+        .wurzel
+        .clone()
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .is_some();
+    if hat_ordner && a.modus.fragt_nach() {
         return (
             "liest Dateien (manual mode)",
             "Im manual mode darf der Agent lesen und suchen. Schreibende Werkzeuge bekommt er in \
@@ -118,10 +134,11 @@ fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str,
              Handlung vor.",
         );
     }
-    match (a.wurzel.is_some(), a.schreiben) {
+    match (hat_ordner, a.schreiben) {
         (false, _) => (
             "ohne Werkzeuge",
             "Es ist kein Verzeichnis eingehaengt, der Agent hat also keine Werkzeuge. \
+             Auch der Ordner WORK_DIR ist nicht zu finden, der sonst die Vorgabe waere. \
              Setze `agent.wurzel` in den Einstellungen.",
         ),
         (true, false) => (
@@ -420,13 +437,27 @@ fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
 /// ist keine Zierde: Es ist die einzige Stelle, an der die
 /// Einhaengegrenze fuer einen Menschen sichtbar wird.
 #[tauri::command]
-fn werkzeuge() -> Result<Werkzeugliste, String> {
+fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let kiste = kiste_fuer(&e);
-    // ⚑ **Der effektive Ordner**: der gesetzte, sonst der CTF-Ordner als
+    // ⚑ **Der effektive Ordner**: der gesetzte, sonst `WORK_DIR` als
     // Vorgabe (wie in `ruestung`), damit die Anzeige das Gleiche zeigt, was
-    // der Agent wirklich anfasst.
-    let wurzel = e.agent.wurzel.clone().or_else(myl_client::Einstellungen::standard_wurzel);
+    // der Agent wirklich anfasst. Er ist zugleich der Platzhalter im
+    // leeren Feld der Einstellungen.
+    // ⚑ **Der Pfad des Prozesses schlaegt die Einstellung** (Auftrag des
+    // Projektinhabers, 2026-09-15: „der Einhaengepfad soll je Prozess
+    // gespeichert bleiben"). Derselbe Bau wie in der Konsole, wo das
+    // Startverzeichnis der Sitzung die Einstellung schlaegt: Wer einen
+    // Prozess in einem Ordner fuehrt, fuehrt ihn dort weiter, auch wenn
+    // der naechste Prozess woanders laeuft.
+    //
+    // Die Reihenfolge: der Prozess, dann die Einstellung, dann die
+    // Vorgabe `WORK_DIR`.
+    let wurzel = wurzel
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+        .or_else(|| e.agent.wurzel.clone())
+        .or_else(myl_client::Einstellungen::standard_wurzel);
     let Some(pfad) = wurzel else {
         return Ok(Werkzeugliste {
             wurzel: None,
@@ -666,10 +697,22 @@ async fn agent_fahren(
     // beantwortet am 2026-09-14). Fehlt es, steht der Auftrag fuer sich
     // wie vorher.
     verlauf: Option<Vec<myl_client::Nachricht>>,
+    // ⚑ **Der Einhaengepfad dieses Prozesses**, falls er einen eigenen
+    // hat (Auftrag des Projektinhabers, 2026-09-15). Ohne Angabe die
+    // Einstellung, ohne die `WORK_DIR`.
+    wurzel: Option<String>,
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Abschluss, String> {
-    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    // ⚑ **Auf einer Kopie und nicht in der Ablage**, genau wie die
+    // Konsole ihr Startverzeichnis setzt: Der Pfad gehoert diesem
+    // Prozess, nicht dem Programm. Ihn zu speichern hiesse, dass der
+    // naechste Prozess ihn erbt, und das ist das Gegenteil von „je
+    // Prozess".
+    if let Some(w) = wurzel.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
+        e.agent.wurzel = Some(w);
+    }
     // ⚑ **Im `manual mode` fragt das Fenster jetzt, statt wegzunehmen**
     // (Meldung des Projektinhabers, 2026-09-15: das Modell zaehlte nur
     // drei Werkzeuge auf). Bis hierher setzte `im_modus` in diesem Modus
@@ -793,9 +836,19 @@ async fn agent_fahren(
 async fn kontext(
     verlauf: Vec<myl_client::Nachricht>,
     modus: String,
+    // ⚑ **Der Einhaengepfad dieses Prozesses** (Auftrag des
+    // Projektinhabers, 2026-09-15). Er gehoert hierher, weil die
+    // Werkzeugansage am eingehaengten Ordner haengt: Ein Prozess ohne
+    // Ordner bekommt weniger Werkzeuge als einer mit, und eine
+    // Kontextanzeige, die eine andere Ansage zaehlt als die, die laeuft,
+    // zaehlt falsch.
+    wurzel: Option<String>,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Option<myl_client::gespraech::Kontextanzeige>, String> {
-    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    let mut e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    if let Some(w) = wurzel.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
+        e.agent.wurzel = Some(w);
+    }
     let ansage = if modus == "agent" {
         let r = myl_client::ruestung::ruesten(
             &e.agent,

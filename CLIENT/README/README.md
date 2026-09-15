@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.48.0 (`myl-client` 0.33.0, `myl-oberflaeche` 0.36.0, `myl-console` 0.10.2)
+> **Version:** 0.48.3 (`myl-client` 0.33.1, `myl-oberflaeche` 0.36.3, `myl-console` 0.10.2)
 > **Datum:** 2026-09-15
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -114,6 +114,97 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.48.3 – 2026-09-15 (der Einhängepfad gehört dem Prozess, nicht dem Programm)
+
+`myl-client` 0.33.1, `myl-oberflaeche` **0.36.3**, `myl-console` 0.10.2.
+
+⚑ **Der Einhängepfad wird je Prozess gespeichert** (Auftrag des
+Projektinhabers). Er liegt beim Gespräch im Speicher des Fensters, und
+die Ordnerwahl in der Seitenleiste schreibt ihn dorthin.
+
+⛔️ **Das war ein Fehler und nicht nur eine fehlende Bequemlichkeit.**
+Vorher schrieb der Klick auf den Pfad `agent.wurzel` in die Ablage, also
+**für alle Prozesse**: Wer für einen Auftrag einen anderen Ordner wählte,
+fand ihn danach in jedem anderen Prozess wieder, und zurück kam er nur
+über eine zweite Ordnerwahl. Genau so ist der Werkzeugkisten-Ordner in
+einem Prozess als Einhängepfad aufgetaucht. **Der Ordner gehört dem
+Auftrag, nicht dem Programm.**
+
+⚑ **Drei Befehle bekommen ihn mit**, und das ist kein Zufall: die
+Werkzeugliste, der Agentenlauf und **der Kontextzähler**. Die
+Werkzeugansage hängt am eingehängten Ordner, ein Prozess ohne Ordner
+bekommt weniger Werkzeuge als einer mit, und eine Kontextanzeige, die
+eine andere Ansage zählt als die, die läuft, zählt falsch.
+
+⚑ **Gesetzt wird auf einer Kopie der Einstellungen**, genau wie die
+Konsole ihr Startverzeichnis setzt. Es in die Ablage zu schreiben hieße,
+dass der nächste Prozess ihn erbt, und das ist das Gegenteil von „je
+Prozess". Die Reihenfolge ist überall dieselbe: **Prozess, dann
+Einstellung, dann die Vorgabe `WORK_DIR`.**
+
+⚠️ **Der Platzhalter in den Einstellungen bleibt ausdrücklich davon frei.**
+Er sagt, was bei leerem Feld gilt; den Ordner eines einzelnen Prozesses
+dort zu zeigen hieße, eine Einstellung mit dem Zustand eines Auftrags zu
+beschriften.
+
+### v0.48.2 – 2026-09-15 (der Knopf sitzt in der Zelle des Feldes, und die Vorgabe ist zu sehen)
+
+`myl-client` 0.33.1, `myl-oberflaeche` **0.36.2**, `myl-console` 0.10.2.
+
+⚑ **Der Knopf „Werkzeuge anzeigen" steht jetzt in derselben Zelle wie
+das Pfadfeld**, nicht in einer eigenen Zeile darunter (zweimal gemeldet
+vom Projektinhaber).
+
+📌 **Und der Grund für den zweiten Fehlgriff steckte in der Tabelle.**
+Die linke Zelle der Kistenzeile trägt 350 Zeichen Erklärung. Sie macht
+die **ganze Zeile** so hoch wie ihr Text; das Eingabefeld sitzt oben, und
+was in der nächsten Zeile folgt, beginnt erst unter dem letzten Satz
+links. **Eine Nachbarzeile steht nicht unter dem Feld, sondern unter der
+höheren der beiden Spalten.** In derselben Zelle ist der Knopf davon
+unabhängig, auch wenn der Erklärtext einmal länger wird.
+
+⚑ **Das leere Feld „Arbeitsordner" nennt die Vorgabe als Platzhalter**
+(Meldung des Projektinhabers: der Einhängepfad sei noch nicht
+standardmäßig `WORK_DIR`). Er **war** es, seit es eine Vorgabe gibt; sie
+war nur nirgends zu sehen, solange das Feld leer blieb. ⚠️ **Ein
+gesetzter Pfad gewinnt weiter**, und das bleibt so: Wer einen Ordner
+eingetragen hat, meint ihn. Wer zur Vorgabe zurück will, leert das Feld
+(`myl setzen agent.wurzel aus`).
+
+⛔️ **Und der Kopf log dabei.** `kurzform` fragte `a.wurzel.is_some()`,
+also den **gespeicherten** Wert: Bei leerem Feld bekam der Agent seine
+Werkzeuge, und der Kopf meldete „ohne Werkzeuge" samt der Aufforderung,
+`agent.wurzel` zu setzen. Er rechnet die Vorgabe jetzt nach, mit
+derselben Funktion wie die Rüstung. **Ein Kopf, der etwas anderes sagt
+als das, was läuft, ist schlimmer als keiner.** Dieselbe Klasse wie die
+Übersichtszeile in `myl einstellungen` einen Schritt zuvor.
+
+### v0.48.1 – 2026-09-15 (der Werkzeugknopf steht unter dem Pfad, auf den er sich bezieht)
+
+`myl-client` **0.33.1**, `myl-oberflaeche` **0.36.1**, `myl-console` 0.10.2.
+
+⚑ **Der Knopf „Werkzeuge anzeigen" hängt an der Kistenzeile**, nicht am
+Ende der Agentenrubrik (Meldung des Projektinhabers). Er beantwortet die
+Frage, die der Pfad darüber aufwirft: welche Werkzeuge aus dieser Kiste
+kommen. Zwei Zeilen weiter unten stand er neben etwas anderem.
+
+📌 **Und in der richtigen Spalte.** Die Felderzeile ist zweispaltig,
+links Beschriftung und Erklärung, rechts die Eingabe. Ein `colSpan = 2`
+spannte über beide und setzte den Knopf ganz links unter den Erklärtext,
+also unter die falsche Hälfte. Eine leere erste Zelle bringt ihn in
+dieselbe Spalte wie das Feld.
+
+⚑ **Die Kistennamen heißen jetzt überall `Base` und `Advanced`**, auch in
+der Hilfe von `myl` und in den Doc-Kommentaren. Nach Fund 377 ist die
+Schreibweise kein Stil, sondern ein Pfad; der Schalter `--werkzeuge`
+nimmt weiterhin jede Schreibweise an.
+
+📌 **Zwei Quellproben schlugen an ihrem eigenen Text fehl**, beide in
+dieser Sitzung: eine an ihrem Doc-Kommentar, eine an dem Erklärtext, den
+sie prüfen sollte. Sie lesen jetzt nur den Code beziehungsweise die
+Zuweisung statt das Wort. **Eine Quellprobe, die sich selbst liest,
+prüft etwas anderes als sie meint.**
 
 ### v0.48.0 – 2026-09-15 (ein Arbeitsordner, der etwas zu zeigen hat)
 

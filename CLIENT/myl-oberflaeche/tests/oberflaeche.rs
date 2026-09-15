@@ -2690,9 +2690,39 @@ fn der_wert_selbst_ist_der_knopf() {
         js.contains("function werkzeugzeile()"),
         "der Knopf `Werkzeuge anzeigen` fehlt"
     );
+    // ⚑ **Und sie haengt an der Kistenzeile, nicht am Ende der Rubrik**
+    // (Meldung des Projektinhabers, 2026-09-15): Der Knopf beantwortet
+    // die Frage, die der Pfad darueber aufwirft. Zwei Zeilen weiter
+    // unten steht er neben etwas anderem.
     assert!(
-        js.contains("letzte_agentenzeile.after(werkzeugzeile())"),
-        "die Werkzeugzeile haengt nicht an der Agentenrubrik"
+        js.contains("if (f.name === \"agent.kistenordner\") kistenzeile = zeile;"),
+        "die Kistenzeile wird nicht gemerkt"
+    );
+    // ⚑ **Und sie steht in der zweiten Spalte, unter dem Pfadfeld.**
+    //
+    // 📌 Gemeldet vom Projektinhaber am 2026-09-15: Mit `colSpan = 2`
+    // spannte die Zeile ueber beide Spalten, und der Knopf sass ganz
+    // links unter dem Erklaertext statt unter dem Feld, auf das er sich
+    // bezieht. Eine leere erste Zelle bringt ihn in dieselbe Spalte.
+    // ⚠️ Geprueft wird die **Zuweisung**, nicht das Wort: Ein
+    // Erklaerkommentar nennt `colSpan` selbst, und eine Probe, die
+    // darauf anschlaegt, prueft ihren eigenen Text.
+    assert!(
+        !js.contains("td.colSpan ="),
+        "die Werkzeugzeile spannt wieder ueber beide Spalten"
+    );
+    // ⚑ **Der Knopf haengt in der Zelle des Pfadfeldes, nicht in einer
+    // eigenen Zeile.**
+    //
+    // 📌 Zweimal gemeldet vom Projektinhaber am 2026-09-15: erst auf
+    // der falschen Seite, dann zu weit unten. Die linke Zelle der
+    // Kistenzeile traegt 350 Zeichen Erklaerung und macht die ganze
+    // Zeile so hoch; was in der naechsten Zeile folgt, beginnt erst
+    // darunter. **Eine Nachbarzeile steht nicht unter dem Feld, sondern
+    // unter der hoeheren der beiden Spalten.**
+    assert!(
+        js.contains("kistenzeile.querySelector(\"td:last-child\").append(werkzeugblock())"),
+        "der Knopf haengt nicht in der Zelle des Pfadfeldes"
     );
     // Und sie entscheidet am Feldnamen, nicht an der uebersetzten
     // Ueberschrift: `agent.` ist in jeder Sprache dasselbe.
@@ -2762,5 +2792,62 @@ fn das_gespraech_bringt_sein_modell_mit() {
     assert!(
         !krumpf.contains("e.werte[\"agent.kistenordner\"]"),
         "die Kistenwahl startet wieder am leeren Einstellungswert: {krumpf}"
+    );
+}
+
+/// ⚑ **Der Einhaengepfad gehoert dem Prozess, nicht dem Programm.**
+///
+/// Auftrag des Projektinhabers, 2026-09-15: „Der Einhaengepfad soll dann
+/// natuerlich auch je Prozess gespeichert bleiben."
+///
+/// 📌 **Vorher schrieb die Ordnerwahl `agent.wurzel` in die Ablage**, also
+/// fuer alle Prozesse: Wer fuer einen Auftrag einen anderen Ordner
+/// waehlte, sah ihn danach in jedem anderen auch. Genau das hat der
+/// Projektinhaber gemeldet („jetzt ist der Einhaengepfad ploetzlich die
+/// Werkzeugkisten").
+///
+/// Geprueft wird die Kette, an der es haengt: Der Pfad wird am Gespraech
+/// gespeichert, `prozesspfad()` liest ihn, und beide Befehle bekommen ihn
+/// mit. Fehlt einer davon, arbeitet die Anzeige in einem anderen Ordner
+/// als der Lauf.
+#[test]
+fn der_einhaengepfad_gehoert_dem_prozess() {
+    let js = std::fs::read_to_string("ui/app.js").expect("app.js");
+
+    assert!(js.contains("function prozesspfad()"), "`prozesspfad` fehlt");
+    assert!(
+        js.contains("return (offen && offen.wurzel) || null;"),
+        "`prozesspfad` liest den Pfad nicht am offenen Prozess"
+    );
+
+    // Die Ordnerwahl schreibt an den Prozess und nicht in die Ablage.
+    let vw = js
+        .split("async function verzeichnis_wechseln()")
+        .nth(1)
+        .expect("`verzeichnis_wechseln` fehlt");
+    let vw = &vw[..vw.find("\n}").unwrap_or(vw.len())];
+    assert!(
+        vw.contains("offen.wurzel = gewaehlt;") && vw.contains("sichern();"),
+        "die Ordnerwahl merkt den Pfad nicht am Prozess: {vw}"
+    );
+    assert!(
+        !vw.contains("feld: \"agent.wurzel\""),
+        "die Ordnerwahl schreibt weiter in die Einstellungen: {vw}"
+    );
+
+    // Und beide Befehle bekommen ihn mit.
+    assert!(
+        js.contains("invoke(\"agent_fahren\", { auftrag: text, verlauf: vorher, wurzel: prozesspfad() })"),
+        "der Agentenlauf bekommt den Pfad des Prozesses nicht mit"
+    );
+    assert!(
+        js.contains("invoke(\"werkzeuge\", { wurzel: prozesspfad() })"),
+        "die Werkzeugliste bekommt den Pfad des Prozesses nicht mit"
+    );
+    // ⚑ Der Platzhalter in den Einstellungen aber ausdruecklich nicht:
+    // Er sagt, was bei leerem Feld gilt.
+    assert!(
+        js.contains("invoke(\"werkzeuge\", { wurzel: null })"),
+        "der Platzhalter der Einstellungen haengt am Prozess"
     );
 }

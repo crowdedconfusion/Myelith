@@ -634,6 +634,21 @@ async function modell_dem_gespraech_folgen(g) {
   }
 }
 
+/// **Der Einhaengepfad des offenen Prozesses**, oder nichts.
+///
+/// ⚑ **Je Prozess gespeichert** (Auftrag des Projektinhabers,
+/// 2026-09-15). Er liegt beim Gespraech im Speicher des Fensters, nicht
+/// in den Einstellungen: Wer einen Prozess in einem Ordner fuehrt, fuehrt
+/// ihn dort weiter, und der naechste Prozess erbt das nicht.
+///
+/// ⚠️ **`null` heisst „was die Einstellungen sagen"**, nicht „keiner".
+/// Nur so bleibt unterscheidbar, ob jemand fuer diesen Prozess etwas
+/// gewaehlt hat; die Rust-Seite legt dieselbe Reihenfolge an: Prozess,
+/// dann Einstellung, dann die Vorgabe `WORK_DIR`.
+function prozesspfad() {
+  return (offen && offen.wurzel) || null;
+}
+
 function neues_gespraech(modus) {
   const art = modus || modus_jetzt();
   const g = {
@@ -932,7 +947,7 @@ async function reichweite_zeichnen() {
   if (!offen || offen.modus !== "agent") return;
   let r;
   try {
-    r = await invoke("werkzeuge");
+    r = await invoke("werkzeuge", { wurzel: prozesspfad() });
   } catch (f) {
     r = { wurzel: null, kiste: "", namen: [] };
   }
@@ -987,11 +1002,23 @@ async function reichweite_zeichnen() {
 /// `agent.wurzel` setzen (auf macOS ist die Auswahl zugleich die Freigabe).
 async function verzeichnis_wechseln() {
   try {
-    const e = await invoke("einstellungen");
-    const start = e.werte["agent.wurzel"] || "";
+    // ⚑ **Der Dialog beginnt dort, wo der Prozess gerade arbeitet**, und
+    // nicht bei einer Einstellung, die ein anderer Prozess gesetzt hat.
+    const r = await invoke("werkzeuge", { wurzel: prozesspfad() });
+    const start = prozesspfad() || r.wurzel || "";
     const gewaehlt = await invoke("ordner_waehlen", { titel: t("reichweite.wechseln"), start });
     if (!gewaehlt) return;
-    await invoke("setzen", { feld: "agent.wurzel", wert: gewaehlt });
+    // ⚑ **Gespeichert wird am Prozess und nicht in den Einstellungen**
+    // (Auftrag des Projektinhabers, 2026-09-15).
+    //
+    // 📌 Vorher schrieb dieser Klick `agent.wurzel` in die Ablage, also
+    // **fuer alle Prozesse**: Wer fuer einen Auftrag einen anderen Ordner
+    // waehlte, sah ihn danach in jedem anderen Prozess auch, und der
+    // Wechsel zurueck war eine zweite Ordnerwahl. Der Ordner gehoert dem
+    // Auftrag, nicht dem Programm.
+    if (!offen) return;
+    offen.wurzel = gewaehlt;
+    sichern();
     reichweite_zeichnen();
     kontext_holen();
   } catch (f) {
@@ -1019,7 +1046,7 @@ async function kiste_wechseln() {
     // Kistenordner, und der ist per Vorgabe leer: Dann bekam der Dialog
     // keinen Startort und ging beim zuletzt gewaehlten auf, also beim
     // Einhaengepfad. Den Ort nennt jetzt die Kiste selbst.
-    const r = await invoke("werkzeuge");
+    const r = await invoke("werkzeuge", { wurzel: prozesspfad() });
     const start = r.kistenheimat || "";
     const gewaehlt = await invoke("ordner_waehlen", {
       titel: t("reichweite.andereKiste"),
@@ -1116,7 +1143,7 @@ async function kontext_holen() {
     return;
   }
   try {
-    kontext_zeichnen(await invoke("kontext", { verlauf: kontext_von(offen), modus: offen.modus }));
+    kontext_zeichnen(await invoke("kontext", { verlauf: kontext_von(offen), modus: offen.modus, wurzel: prozesspfad() }));
   } catch {
     kontext_zeichnen(null);
   }
@@ -2301,11 +2328,28 @@ async function horchen(name, fn) {
 /// ⚑ **Gefragt wird beim Klick, nicht beim Zeichnen.** Der Befehl baut
 /// die Einhaengung wirklich; das bei jedem Oeffnen der Einstellungen zu
 /// tun waere Arbeit fuer eine Angabe, die selten jemand sehen will.
-function werkzeugzeile() {
-  const tr = document.createElement("tr");
-  tr.className = "werkzeugzeile";
-  const td = document.createElement("td");
-  td.colSpan = 2;
+function werkzeugblock() {
+  // ⚑ **Ein Block in der Zelle des Pfadfeldes, keine eigene Zeile**
+  // (zweimal gemeldet vom Projektinhaber, 2026-09-15).
+  //
+  // 📌 **Erster Anlauf: eine eigene Zeile mit `colSpan = 2`.** Die
+  // spannte ueber beide Spalten und setzte den Knopf ganz links unter
+  // den Erklaertext, also unter die falsche Haelfte.
+  //
+  // 📌 **Zweiter Anlauf: eine eigene Zeile mit leerer erster Zelle.**
+  // Richtige Spalte, aber weit unten, und der Grund steckt in der
+  // Tabelle: Die linke Zelle der Kistenzeile traegt 350 Zeichen
+  // Erklaerung. Sie macht die **ganze Zeile** so hoch wie ihr Text, das
+  // Eingabefeld sitzt oben, und was in der naechsten Zeile folgt,
+  // beginnt erst unter dem letzten Satz links. **Eine Nachbarzeile
+  // steht nicht unter dem Feld, sondern unter der hoeheren der beiden
+  // Spalten.**
+  //
+  // ⚑ Deshalb haengt der Knopf jetzt **in derselben Zelle** wie das
+  // Feld. Damit steht er unter dem Feld, und zwar unabhaengig davon,
+  // wie lang der Erklaertext daneben einmal wird.
+  const td = document.createElement("div");
+  td.className = "werkzeugblock";
 
   const k = document.createElement("button");
   k.type = "button";
@@ -2323,7 +2367,7 @@ function werkzeugzeile() {
       return;
     }
     try {
-      const r = await invoke("werkzeuge");
+      const r = await invoke("werkzeuge", { wurzel: prozesspfad() });
       // ⚑ Ohne eingehaengtes Verzeichnis gibt es keine Dateiwerkzeuge,
       // und das ist eine Auskunft und kein leerer Kasten.
       liste.textContent = r.namen.length
@@ -2341,7 +2385,20 @@ function werkzeugzeile() {
   });
 
   td.append(k, liste);
-  tr.append(td);
+  return td;
+}
+
+/// **Die Rueckfallzeile**, falls es das Kistenfeld einmal nicht gibt.
+///
+/// ⚠️ Ein Knopf, der dann gar nicht mehr erschiene, waere schlechter als
+/// einer an der zweiten Stelle.
+function werkzeugzeile() {
+  const tr = document.createElement("tr");
+  tr.className = "werkzeugzeile";
+  const leer = document.createElement("td");
+  const td = document.createElement("td");
+  td.append(werkzeugblock());
+  tr.append(leer, td);
   return tr;
 }
 
@@ -2369,6 +2426,16 @@ async function einstellungen_zeichnen() {
   // wird sie am Feldnamen, nicht an der Ueberschrift: `agent.` ist in
   // jeder Sprache dasselbe, „Agent" nicht zwingend. Dieselbe Begruendung
   // wie bei `tabelle_fuer`.
+  // ⚑ **Der Werkzeugknopf haengt an der Kistenzeile und nicht am Ende
+  // der Rubrik** (Meldung des Projektinhabers, 2026-09-15). Er
+  // beantwortet die Frage, die der Pfad darueber aufwirft: „welche
+  // Werkzeuge kommen aus dieser Kiste?" Zwei Zeilen weiter unten steht
+  // sie neben etwas anderem und liest sich wie eine eigene Sache.
+  //
+  // ⚠️ **Die letzte Agentenzeile bleibt als Rueckfall**, falls das Feld
+  // einmal anders heisst oder wegfaellt: Ein Knopf, der dann gar nicht
+  // mehr erscheint, waere schlechter als einer an der zweiten Stelle.
+  let kistenzeile = null;
   let letzte_agentenzeile = null;
   for (const f of felder) {
     if (f.freigabe) continue;
@@ -2401,9 +2468,13 @@ async function einstellungen_zeichnen() {
         }
       });
     koerper.append(zeile);
+    if (f.name === "agent.kistenordner") kistenzeile = zeile;
     if (f.name.startsWith("agent.")) letzte_agentenzeile = zeile;
   }
-  if (letzte_agentenzeile) {
+  if (kistenzeile) {
+    // In die Zelle des Pfadfeldes, direkt unter das Feld.
+    kistenzeile.querySelector("td:last-child").append(werkzeugblock());
+  } else if (letzte_agentenzeile) {
     letzte_agentenzeile.after(werkzeugzeile());
   }
   // ⚑ **Das leere Kistenfeld sagt, was stattdessen gilt** (Meldung des
@@ -2413,12 +2484,31 @@ async function einstellungen_zeichnen() {
   // zu füllen wäre falsch: Dann liesse sich „nicht gesetzt" nicht mehr
   // von „auf die Vorgabe gesetzt" unterscheiden, und die Prüfung
   // `wert_und_setzer_kennen_dieselben_felder` hat genau das gefangen.
+  //
+  // ⚑ **Dasselbe beim Arbeitsordner** (Meldung des Projektinhabers,
+  // 2026-09-15: „der Einhaengepfad ist noch nicht standardmaessig das
+  // WORK_DIR"). Er **ist** die Vorgabe, seit es eine gibt; sie war nur
+  // nirgends zu sehen, wenn das Feld leer war. Jetzt nennt der
+  // Platzhalter den Ordner, in dem der Agent wirklich arbeitet.
+  //
+  // ⚠️ **Ein gesetzter Pfad gewinnt weiter**, und das ist Absicht: Wer
+  // einen Ordner eingetragen hat, meint ihn. Wer zur Vorgabe zurueck
+  // will, leert das Feld.
+  //
+  // ⚑ **Hier ohne den Pfad des Prozesses**, anders als in der Leiste und
+  // am Werkzeugknopf: Ein Platzhalter sagt, was **bei leerem Feld** gilt,
+  // also die Einstellung oder die Vorgabe. Den Ordner eines einzelnen
+  // Prozesses hier zu zeigen hiesse, eine Einstellung mit dem Zustand
+  // eines Auftrags zu beschriften, und beim naechsten Prozess stuende
+  // etwas anderes da.
   try {
-    const r = await invoke("werkzeuge");
-    const feld = $("felder-rest").querySelector(
-      'tr[data-feld="agent.kistenordner"] input',
-    );
-    if (feld && r.kistenordner) feld.placeholder = r.kistenordner;
+    const r = await invoke("werkzeuge", { wurzel: null });
+    const platz = (name, pfad) => {
+      const feld = $("felder-rest").querySelector(`tr[data-feld="${name}"] input`);
+      if (feld && pfad) feld.placeholder = pfad;
+    };
+    platz("agent.kistenordner", r.kistenordner);
+    platz("agent.wurzel", r.wurzel);
   } catch {
     /* ohne Platzhalter bleibt das Feld eben leer */
   }
@@ -2896,7 +2986,7 @@ async function senden(text) {
     await live_anfangen(offen.modus);
 
     if (offen.modus === "agent") {
-      const a = await invoke("agent_fahren", { auftrag: text, verlauf: vorher });
+      const a = await invoke("agent_fahren", { auftrag: text, verlauf: vorher, wurzel: prozesspfad() });
       kontext_merken(offen, a.nachrichten, a.zusammenfassung, auftrag_bei);
       kontext_zeichnen(a.kontext);
       // ⚑ **Die Rueckgabe schreibt den laufenden Beitrag fertig und

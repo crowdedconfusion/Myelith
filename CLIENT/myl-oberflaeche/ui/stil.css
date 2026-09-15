@@ -504,6 +504,8 @@ button:not(.blank):hover:not(:disabled)::before {
    Knopf. Sie darf dort umbrechen: Platz ist da, anders als in der
    Leiste. */
 .werkzeugzeile td { padding-top: .2rem; }
+/* ⚑ Der Knopf sitzt in der Zelle des Pfadfeldes, direkt darunter. */
+.werkzeugblock { margin-top: .35rem; }
 .werkzeugknopf { font-size: .78rem; }
 .werkzeugliste {
   margin: .4rem 0 0;

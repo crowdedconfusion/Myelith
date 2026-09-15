@@ -114,7 +114,7 @@ pub fn angebote(
 /// ⚑ **Eine Stelle, die das beantwortet** (2026-09-15). Fenster,
 /// Konsole und Ruestung fragen hier; zwei Ableitungen derselben Wahl
 /// liefen auseinander, und die zweite meldet sich nicht. Der Ordner
-/// entscheidet, sein Name sagt die Kiste, ohne Angabe ist es `base`.
+/// entscheidet, sein Name sagt die Kiste, ohne Angabe ist es `Base`.
 pub fn kiste_der_gilt(agent: &crate::einstellungen::Agenteneinstellung) -> Werkzeugkiste {
     let ordner = ordner_der_gilt(agent.kistenordner.as_deref(), Werkzeugkiste::Base.name());
     Werkzeugkiste::aus_ordnername(&ordnername(ordner.as_deref(), Werkzeugkiste::Base.name()))
@@ -168,7 +168,7 @@ pub fn angebote_der_kette(
 ///
 /// ⚑ **Der gewaehlte Ordner ist die Kiste** (Festlegung des
 /// Projektinhabers, 2026-09-15). In den Einstellungen steht nur noch ein
-/// Pfad; ohne Angabe ist es der mitgelieferte `base`-Ordner.
+/// Pfad; ohne Angabe ist es der mitgelieferte `Base`-Ordner.
 ///
 /// ⚠️ **Ein gesetzter Pfad, den es nicht gibt, faellt nicht still auf
 /// die Vorgabe zurueck.** Sonst arbeitete der Agent aus einem anderen

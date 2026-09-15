@@ -49,7 +49,7 @@ von `frage`:
   --schreiben     Erlaubt Schreiben, nur fuer diesen Lauf
   --roh           Der volle Nachrichtenverlauf statt der Kurzform
   --deutsch       Werkzeuge deutsch ansagen (Vergleichsschalter, s.u.)
-  --werkzeuge S   `base` (Vorgabe) oder `advanced`, s.u.
+  --werkzeuge S   `Base` (Vorgabe) oder `Advanced`, s.u.
   --datei P       Nur `auftraege`: je Zeile ein Auftrag
 
 ⚑ Bei `auftraege` teilen sich alle Unteragenten EIN geladenes Modell,
@@ -57,16 +57,16 @@ und das Kernbudget aus `kap.kerne` wird durch ihre Zahl geteilt: Sonst
 wollte jeder alle Kerne, und sie naehmen sie sich gegenseitig weg.
 
 ⚑ **Die Werkzeugkiste ist ein Ordner.** `agent.kistenordner` sagt
-welcher; ohne Angabe der mitgelieferte `base`-Ordner unter
+welcher; ohne Angabe der mitgelieferte `Base`-Ordner unter
 `CLIENT/werkzeugkisten`. Sein **Name** ist der Name der Kiste und sagt
-zugleich, welche eingebauten Werkzeuge dazukommen: `base` die fuenf
-Dateiwerkzeuge, `advanced` zusaetzlich `run_command`, ein anderer Name
-`base`. Bis zum 2026-09-15 stand daneben eine eigene Auswahl; zwei
+zugleich, welche eingebauten Werkzeuge dazukommen: `Base` die fuenf
+Dateiwerkzeuge, `Advanced` zusaetzlich `run_command`, ein anderer Name
+`Base`. Bis zum 2026-09-15 stand daneben eine eigene Auswahl; zwei
 Angaben fuer dieselbe Sache laufen auseinander.
 
 ⛔️ `run_command` fuehrt einen Shell-Befehl aus und haelt die
 Einhaengegrenze **nicht** ein, die jedes Dateiwerkzeug einhaelt. Wer
-einen Ordner `advanced` nennt, bekommt es; das ist eine Entscheidung und
+einen Ordner `Advanced` nennt, bekommt es; das ist eine Entscheidung und
 keine Panne.
 
 ⚑ Was als Manifest im Ordner liegt (JSON mit name, beschreibung,
@@ -75,7 +75,7 @@ Neubau. Ein solches Werkzeug laeuft ueber die Shell und braucht deshalb
 die Schreiberlaubnis.
 
 ⚑ `--werkzeuge` ueberstimmt die eingebaute Auswahl fuer einen einzelnen
-Lauf, `base` oder `advanced`.
+Lauf, `Base` oder `Advanced`.
 
 ⚑ `--deutsch` ist ein Vergleichsschalter und keine Einstellung. Die
 Werkzeuge werden dem Modell sonst in genau der Form angesagt, auf die
@@ -454,7 +454,7 @@ fn satz_fuer_diesen_lauf(
     match wort.trim().to_ascii_lowercase().as_str() {
         "base" | "advanced" | "1337" => Werkzeugkiste::aus_ordnername(&wort),
         _ => {
-            eprintln!("myl: --werkzeuge {wort} kenne ich nicht, moeglich sind base, advanced");
+            eprintln!("myl: --werkzeuge {wort} kenne ich nicht, moeglich sind Base, Advanced");
             myl_client::kisten::kiste_der_gilt(&e.agent)
         }
     }
