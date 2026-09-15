@@ -191,7 +191,9 @@
       <h2 data-t="leiste.modell">Modell</h2>
       <select id="modellwahl" aria-label="Modell" data-t-marke="leiste.modell"></select>
       <p id="modellhardware" class="pfad hardware"></p>
-      <p id="modellzeile" class="pfad">kein Modell geladen</p>
+      <!-- ⚑ Die eine Modellzeile (Ladezustand samt Pfad); frueher stand sie
+           auch unter der Eingabe, das war dasselbe zweimal. -->
+      <p id="hinweiszeile" class="pfad" role="status">kein Modell geladen</p>
       <button id="laden" data-t="knopf.laden">Modell laden</button>
     </div>
   </aside>
@@ -257,13 +259,16 @@
           </svg>
         </button>
       </div>
-      <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird. -->
+      <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird, und
+           ganz links, damit rechts Platz fuer weitere Parameter bleibt
+           (Auftrag des Projektinhabers, 2026-09-14). Die Modellzeile stand
+           frueher hier und ist in die Seitenleiste unter das Modell
+           gezogen; sie sagte dasselbe zweimal. -->
       <button type="button" id="kontextbalken" class="kontextbalken blank" hidden
               aria-haspopup="menu" aria-label="Kontext" data-t-marke="kontext.label">
         <span class="kontextspur"><span id="kontextfuellung" class="kontextfuellung"></span></span>
         <span id="kontextzahl" class="kontextzahl"></span>
       </button>
-      <p id="hinweiszeile" class="pfad" role="status"></p>
     </form>
 
     <!-- ⚑ Die Einstellungen sind eine SEITE und kein Ausklapper. Sie

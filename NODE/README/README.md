@@ -1,6 +1,6 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.2
+> **Version:** 0.48.3
 > **Datum:** 2026-09-09
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
@@ -278,6 +278,15 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.3 – 2026-09-14 (der Konformitätstest sucht nach der Form, die beide Erzeuger schreiben)
+
+**Nur ein Test, keine Verhaltensänderung.** Der Gattertest suchte einen
+Vektor mit Ausgabefeld an der Zeichenkette `"data":[` (kompakt). Diese
+Form erzeugte nur die inzwischen abgelöste `tests/golden`-Ablage (Fund
+362); nach dem Neustempeln auf θ_v 0.20.0 schreiben beide Erzeuger
+(Rust wie Python) `"data": [` mit Leerzeichen, und der Test fand keinen
+einzigen Vektor. Er sucht jetzt die kanonische Form.
 
 ### v0.48.2 – 2026-09-10 (die Artefakte heissen nach dem Modell, das sie sind)
 

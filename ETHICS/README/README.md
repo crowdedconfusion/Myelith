@@ -1,6 +1,6 @@
 # ethics
 
-> **Version:** 0.6.1
+> **Version:** 0.6.2
 > **Datum:** 2026-09-14
 > **Status:** Manifest v0.2.0 steht (neu: **G9**, der Ausschlusskatalog),
 > **Phase 1 abgeschlossen**: aus den
@@ -85,6 +85,13 @@ erreicht. Am Inhalt ändert das nichts, die Einträge behalten ihre
 Reihenfolge: `v1.0.0` heißt jetzt `v0.1.0`, `v1.1.0` heißt `v0.2.0`,
 `v1.2.0` heißt `v0.3.0`. Ebenso `Manifest.md` (`1.1.0` zu `0.2.0`) und
 die Fassung von `Ausschluss.json` (`1.0.0` zu `0.1.0`).
+
+### v0.6.2 – 2026-09-14 (die Modellkarte trägt die Fassung, mit der gerechnet wird)
+
+**Neu erzeugt, kein Inhalt von Hand geändert.** Die Modellkarte stand
+noch auf θ_v `0.19.0`, während das eingebettete Artefakt längst auf
+`0.20.0` läuft. Ein Lauf von `werkzeuge/modellkarte.py` zieht die Fassung
+nach; die Karte ist erzeugt und wird nicht von Hand gepflegt.
 
 ### v0.6.1 – 2026-09-14 (die Modellkarte zeigt, was gemessen ist)
 

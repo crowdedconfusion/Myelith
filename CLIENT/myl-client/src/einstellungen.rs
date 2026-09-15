@@ -714,6 +714,34 @@ impl Einstellungen {
             .expect("die Liste endet immer mit dem Arbeitsverzeichnis")
     }
 
+    /// **Der Standard-Einhaengepfad, wenn keiner gesetzt ist**: der
+    /// CTF-Ordner (Auftrag des Projektinhabers, 2026-09-14).
+    ///
+    /// ⚑ **Gefunden statt fest verdrahtet.** Von `MYL_CTF` oder vom
+    /// Arbeitsverzeichnis aufwaerts der erste `BENCHMARKS/Agent/ctf`; so
+    /// findet ihn ein Lauf aus dem Repositorium, und wer ihn woanders hat,
+    /// sagt es ueber die Umgebung. `None`, wenn nichts passt: dann bleibt es
+    /// dabei, dass ohne gesetzten Ordner keine Dateiwerkzeuge laufen.
+    pub fn standard_wurzel() -> Option<String> {
+        use std::path::PathBuf;
+        if let Some(p) = std::env::var_os("MYL_CTF") {
+            let p = PathBuf::from(p);
+            if p.is_dir() {
+                return Some(p.display().to_string());
+            }
+        }
+        let mut hier = std::env::current_dir().ok()?;
+        loop {
+            let o = hier.join("BENCHMARKS/Agent/ctf");
+            if o.is_dir() {
+                return Some(o.display().to_string());
+            }
+            if !hier.pop() {
+                return None;
+            }
+        }
+    }
+
     /// Die Orte, an denen die Einstellungsdatei liegen kann, in der
     /// Reihenfolge, in der sie bevorzugt werden.
     ///
@@ -1706,6 +1734,39 @@ mod setzer {
         match alt_heim {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),
+        }
+    }
+
+    /// **`standard_wurzel`**: die Umgebung `MYL_CTF` hat Vorrang, aber
+    /// nur, wenn sie auf ein Verzeichnis zeigt. Eine eigene Variable, die
+    /// sonst niemand liest, deshalb reicht ein eigener Test.
+    #[test]
+    fn standard_wurzel_nimmt_die_umgebung() {
+        let alt = std::env::var_os("MYL_CTF");
+
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let erwartet = d.path().display().to_string();
+        std::env::set_var("MYL_CTF", d.path());
+        assert_eq!(
+            Einstellungen::standard_wurzel().as_deref(),
+            Some(erwartet.as_str()),
+            "ein MYL_CTF, das auf ein Verzeichnis zeigt, gewinnt"
+        );
+
+        // Ein Pfad, der kein Verzeichnis ist, wird uebergangen; dann
+        // faellt die Funktion auf die Suche im Baum zurueck.
+        let datei = d.path().join("keine.txt");
+        std::fs::write(&datei, "x").expect("Datei");
+        std::env::set_var("MYL_CTF", &datei);
+        assert_ne!(
+            Einstellungen::standard_wurzel().as_deref(),
+            Some(datei.display().to_string().as_str()),
+            "eine Datei ist kein Einhaengeort"
+        );
+
+        match alt {
+            Some(v) => std::env::set_var("MYL_CTF", v),
+            None => std::env::remove_var("MYL_CTF"),
         }
     }
 

@@ -47,6 +47,7 @@ pub mod reservierung;
 pub mod strom;
 pub mod ruestung;
 pub mod werkzeuge;
+pub mod kisten;
 
 /// ⚑ **Weitergereicht, damit die Oberflaeche nicht an `myl-local-agent`
 /// haengen muss.** Sie braucht die Form nur, um `ruesten` zu rufen; eine

@@ -131,7 +131,15 @@ pub fn ruesten_mit(
             .map_err(|f| format!("Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
-    let einhaengung = match agent.wurzel.as_deref() {
+    // ⚑ **Ohne gesetzten Ordner der CTF-Ordner als Vorgabe** (Auftrag des
+    // Projektinhabers, 2026-09-14): So hat der Agent von Haus aus einen
+    // sinnvollen Spielplatz. Wer nichts gesetzt hat und den Ordner nicht
+    // findet, bekommt wie bisher keine Dateiwerkzeuge.
+    let wurzel = agent
+        .wurzel
+        .clone()
+        .or_else(crate::einstellungen::Einstellungen::standard_wurzel);
+    let einhaengung = match wurzel.as_deref() {
         None => None,
         Some(pfad) => {
             let ein = Einhaengung::neu(pfad, agent.schreiben)?;
@@ -164,6 +172,25 @@ pub fn ruesten_mit(
                 kasten
                     .einhaengen(angebot, ausfuehrung)
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;
+            }
+
+            // ⚑ **Die Werkzeuge aus dem Kisten-Ordner** (2026-09-14): was
+            // dort als Manifest liegt, kommt zu den eingebauten dazu, ohne
+            // Neubau. Nur mit Schreiberlaubnis (ein Manifest-Werkzeug wirkt,
+            // siehe `crate::kisten`), und im `manual mode` mit derselben
+            // Nachfrage wie die schreibenden eingebauten.
+            if let Some(ordner) = crate::kisten::kiste_ordner(satz.kennung()) {
+                for (angebot, mut ausfuehrung) in
+                    crate::kisten::angebote(&ordner, &ein, |_warnung| {})
+                {
+                    let name = angebot.name.clone();
+                    if let Some(f) = nachfrage.clone() {
+                        ausfuehrung = Box::new(Nachfragend { inner: ausfuehrung, fragen: f });
+                    }
+                    kasten
+                        .einhaengen(angebot, ausfuehrung)
+                        .map_err(|f| format!("Kisten-Werkzeug {name} haengt nicht: {f:?}"))?;
+                }
             }
             Some(ein)
         }

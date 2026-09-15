@@ -370,24 +370,38 @@ fn die_farben_sind_graustufen() {
 
     let stil = lies("stil.css");
     let mut geprueft = 0;
-    let zeichen: Vec<char> = stil.chars().collect();
-    for (i, c) in zeichen.iter().enumerate() {
-        if *c != '#' || i + 6 >= zeichen.len() {
-            continue;
+    let mut ampel = 0;
+    // ⚑ **Zeilenweise, damit die eine gewuenschte Ausnahme greift**
+    // (Auftrag des Projektinhabers, 2026-09-14): Der Kontextbalken traegt
+    // als einzige Stelle eine Ampel (rot ueber 90 %, gruen nach dem
+    // Verdichten). Ihre Farbwerte stehen auf Zeilen mit `farbampel` und
+    // sind von der Graustufenregel ausgenommen; alles andere bleibt grau.
+    for zeile in stil.lines() {
+        let erlaubt = zeile.contains("farbampel");
+        let zeichen: Vec<char> = zeile.chars().collect();
+        for (i, c) in zeichen.iter().enumerate() {
+            if *c != '#' || i + 6 >= zeichen.len() {
+                continue;
+            }
+            let hex: String = zeichen[i + 1..i + 7].iter().collect();
+            if hex.len() != 6 || !hex.chars().all(|z| z.is_ascii_hexdigit()) {
+                continue;
+            }
+            let n = u32::from_str_radix(&hex, 16).expect("sechs Hexstellen");
+            let (s, r, g, b) = spanne(n);
+            if erlaubt {
+                ampel += 1;
+                continue;
+            }
+            assert!(
+                s <= TOLERANZ,
+                "#{hex} ist kein Grau: R{r} G{g} B{b}, Spanne {s} ueber {TOLERANZ}"
+            );
+            geprueft += 1;
         }
-        let hex: String = zeichen[i + 1..i + 7].iter().collect();
-        if hex.len() != 6 || !hex.chars().all(|z| z.is_ascii_hexdigit()) {
-            continue;
-        }
-        let n = u32::from_str_radix(&hex, 16).expect("sechs Hexstellen");
-        let (s, r, g, b) = spanne(n);
-        assert!(
-            s <= TOLERANZ,
-            "#{hex} ist kein Grau: R{r} G{g} B{b}, Spanne {s} ueber {TOLERANZ}"
-        );
-        geprueft += 1;
     }
     assert!(geprueft >= 6, "nur {geprueft} Farbwerte gefunden; sucht die Pruefung noch richtig?");
+    assert!(ampel >= 2, "die zwei Ampelfarben des Kontextbalkens fehlen ({ampel})");
 }
 
 /// 📌 **Glas braucht einen Rueckfall, und der muss geprueft sein.**
@@ -2596,3 +2610,45 @@ fn das_umordnen_faelscht_den_anfangszeitpunkt_nicht() {
     );
 }
 
+
+/// **Der eingerastete Modus ist am Knopf zu sehen.**
+///
+/// 📌 Gemeldet vom Projektinhaber am 2026-09-15: In der Leiste war kein
+/// Modus hervorgehoben. Die Ursache war nicht das Stilblatt, das die
+/// Regel seit langem hat, sondern die Quelle des Vergleichs:
+/// `modi_zeichnen` las `offen?.modus`, also den Modus des **offenen**
+/// Gespraechs. Seit der Modus am 2026-09-10 vom Gespraech abgeloest
+/// wurde, ist `offen` nach einem Wechsel leer, und der Vergleich damit
+/// immer falsch.
+///
+/// ⚑ **Geprueft wird die Quelle, nicht das Aussehen:** dass der Rumpf
+/// von `modi_zeichnen` den eingerasteten Modus nimmt und nicht das
+/// offene Gespraech.
+#[test]
+fn der_eingerastete_modus_ist_am_knopf_zu_sehen() {
+    let js = lies("app.js");
+    let f = js
+        .split("function modi_zeichnen(")
+        .nth(1)
+        .expect("`modi_zeichnen` fehlt");
+    let rumpf = &f[..f.find("\n}").unwrap_or(f.len())];
+    assert!(
+        rumpf.contains("aria-checked\", String(modus_jetzt() === m.id)"),
+        "`modi_zeichnen` rastet nicht am eingerasteten Modus ein: {rumpf}"
+    );
+    assert!(
+        !rumpf.contains("offen?.modus === m.id"),
+        "`modi_zeichnen` haengt wieder am offenen Gespraech: {rumpf}"
+    );
+
+    // Und das Stilblatt zeichnet den eingerasteten Knopf aus, mit Marke.
+    let css = lies("stil.css");
+    assert!(
+        css.contains(".modus[aria-checked=\"true\"]"),
+        "dem Stilblatt fehlt die Regel fuer den eingerasteten Modus"
+    );
+    assert!(
+        css.contains(".modus[aria-checked=\"true\"]::before"),
+        "dem eingerasteten Modus fehlt die Marke am linken Rand"
+    );
+}

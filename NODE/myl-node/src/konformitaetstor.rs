@@ -227,7 +227,14 @@ mod tests {
         // ⚑ Gesucht wird jetzt, was gebraucht wird: ein Vektor, der ein
         // Ausgabefeld traegt. Sortiert, damit derselbe Rechner zweimal
         // dasselbe tut.
-        let marke = "\"data\":[";
+        // ⚑ **Die kanonische Form beider Erzeuger** (2026-09-14): Der
+        // Rust-Erzeuger (serde_json to_string_pretty) und die
+        // Python-Erzeuger schreiben `"data": [` mit einem Leerzeichen
+        // nach dem Doppelpunkt. Bis dahin stand hier die kompakte Form
+        // `"data":[`, die nur die inzwischen abgeloeste tests/golden-Ablage
+        // (Fund 362) erzeugte; nach dem Neustempeln auf theta_v 0.20.0 gab
+        // es sie nirgends mehr, und der Test fand keinen einzigen Vektor.
+        let marke = "\"data\": [";
         let mut kandidaten: Vec<PathBuf> = std::fs::read_dir(vektoren())
             .expect("Vektoren")
             .filter_map(|e| e.ok().map(|e| e.path()))

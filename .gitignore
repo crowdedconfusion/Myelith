@@ -77,3 +77,9 @@ CLAUDE.md
 # frischer Klon hat das Verzeichnis nicht; ohne es laesst sich das Feature
 # `leet` nicht bauen, und das ist Absicht.
 CLIENT/myl-client/src/werkzeuge_1337/
+
+# ⛔️ Die 1337-Werkzeugkiste als Ordner: lokale Sicherheitswerkzeuge, die
+# der Agent zur Laufzeit liest. Wie das Toolkit-Verzeichnis (oben) nur
+# lokal, nie im Repositorium. Der Ordner selbst bleibt (mit README), seine
+# Werkzeuge nicht.
+CLIENT/werkzeugkisten/1337/*.json

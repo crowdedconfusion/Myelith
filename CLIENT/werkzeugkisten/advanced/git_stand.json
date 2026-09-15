@@ -1,0 +1,6 @@
+{
+  "name": "git_stand",
+  "beschreibung": "Zeigt den Git-Status des Arbeitsverzeichnisses (kurz).",
+  "parameter": { "type": "object", "properties": {}, "required": [] },
+  "befehl": "git status --short"
+}

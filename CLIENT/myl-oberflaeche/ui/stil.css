@@ -462,6 +462,36 @@ button:not(.blank):hover:not(:disabled)::before {
 }
 .werkzeugliste { color: var(--leise); white-space: normal; }
 
+/* Eine Beschriftung („Einhängepfad:", „Werkzeugkiste:") ueber ihrer
+   Zeile, etwas ruhiger als der Wert darunter. */
+.reichweitemarke { color: var(--leise); margin-top: .35rem; }
+/* Wert und Knopf nebeneinander, der Wert nimmt den Platz, der Knopf
+   rutscht nach rechts. */
+.reichweitewahl {
+  display: flex;
+  align-items: baseline;
+  gap: .4rem;
+}
+.reichweitewert {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--fest);
+  font-size: .7rem;
+  color: var(--leiser);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reichweiteknopf {
+  flex: 0 0 auto;
+  font-family: var(--fest);
+  font-size: .65rem;
+  color: var(--leise);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.reichweiteknopf:hover:not(:disabled) { color: var(--text); }
+
 /* Ein Modus ist ein Knopf, der eingerastet bleibt. */
 .modus {
   display: flex;
@@ -477,11 +507,28 @@ button:not(.blank):hover:not(:disabled)::before {
   box-shadow: none;
 }
 .modus:hover:not(:disabled) { background: var(--glas); color: var(--text); }
+/* ⚑ **Der eingerastete Modus traegt zusaetzlich eine Marke am linken
+   Rand** (Auftrag des Projektinhabers, 2026-09-15). Hintergrund und
+   Kante allein sind in Graustufen zurueckhaltend; welcher Modus gilt,
+   soll ohne Suchen erkennbar sein. `::before` ist hier frei, weil der
+   Knopf `blank` traegt und die Zierpseudoelemente damit abgeschaltet
+   sind. */
 .modus[aria-checked="true"] {
+  position: relative;
   background: var(--glas-hoch);
   border-color: var(--kante);
   color: var(--text);
   box-shadow: inset 0 1px 0 var(--licht);
+}
+.modus[aria-checked="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--text);
 }
 .modus .was { font-size: .72rem; color: var(--leiser); }
 
@@ -1324,9 +1371,11 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 
    ⚑ **Leise, solange Platz ist.** Der Balken ist eine Auskunft und keine
    Warnung; erst ab vier Fuenfteln wird die Fuellung hell. */
+/* ⚑ **Ganz nach links** (Auftrag des Projektinhabers, 2026-09-14): so
+   bleibt rechts daneben Platz fuer weitere Parameter. Die Masse bleiben. */
 .kontextbalken {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   align-items: center;
   gap: .5rem;
   padding: 0 .2rem;
@@ -1351,8 +1400,15 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   border-radius: inherit;
   background: var(--leise);
 }
-.kontextbalken.eng .kontextfuellung { background: var(--text); }
-.kontextbalken.eng { color: var(--leise); }
+/* ⚑ **Die einzige Ampel im sonst grauen Fenster** (Auftrag des
+   Projektinhabers, 2026-09-14): rot, wenn der Kontext ueber 90 % voll ist,
+   gruen unmittelbar nach dem Verdichten, mit dem Stand der Verdichtung.
+   Bewusste Ausnahme von der Graustufenregel; `die_farben_sind_graustufen`
+   nimmt genau diese zwei Werte aus. */
+.kontextbalken.eng .kontextfuellung { background: #d64550; } /* farbampel */
+.kontextbalken.eng { color: #d64550; } /* farbampel */
+.kontextbalken.verdichtet .kontextfuellung { background: #3fa45b; } /* farbampel */
+.kontextbalken.verdichtet { color: #3fa45b; } /* farbampel */
 
 /* Der Hinweis, dass ab hier eine Zusammenfassung gilt: eine Zeile im
    Gespraech, weder Blase noch Antwort. */

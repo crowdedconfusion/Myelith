@@ -1044,34 +1044,52 @@ impl Werkzeugausfuehrung for Befehlausfuehren {
         Dateiwerkzeug::Befehl.name(self.1)
     }
     fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
-        use std::io::Read;
-        use std::process::{Command, Stdio};
-        use std::sync::mpsc;
-        use std::time::{Duration, Instant};
-
         if !self.0.darf_schreiben() {
             return Err(Werkzeugfehler {
-                grund: "diese Sitzung darf nur lesen; `run_command` wirkt und braucht                         `myl setzen agent.schreiben an`"
+                grund: "diese Sitzung darf nur lesen; `run_command` wirkt und braucht \
+                        `myl setzen agent.schreiben an`"
                     .into(),
             });
         }
-        let befehl = zeichenkette(a, "befehl")?;
-        let klein = befehl.to_lowercase();
-        if let Some(muster) = SPERRMUSTER.iter().find(|m| klein.contains(**m)) {
-            return Err(Werkzeugfehler {
-                grund: format!("der Befehl enthaelt das gesperrte Muster `{muster}` und wird nicht ausgefuehrt"),
-            });
-        }
+        befehl_im_verzeichnis(&self.0, &zeichenkette(a, "befehl")?)
+    }
+}
 
+/// **Fuehrt einen Shell-Befehl im Arbeitsverzeichnis der Einhaengung aus**,
+/// mit allen Schranken aus [`Befehlausfuehren`]: Sperrliste, Zeitgrenze,
+/// Ausgabegrenze.
+///
+/// ⚑ **Eine Stelle fuer beide Aufrufer** (2026-09-14): `run_command` und die
+/// Manifest-Werkzeuge aus einer Werkzeugkiste (`crate::kisten`) nehmen
+/// denselben, gepruefen Weg. Ein zweiter Laeufer daneben liefe frueher oder
+/// spaeter mit anderen Grenzen.
+///
+/// ⚠️ **Die Schreiberlaubnis prueft der Aufrufer**, nicht diese Funktion:
+/// `run_command` verlangt sie, ein Manifest-Werkzeug entscheidet es an
+/// seinem `wirkt`-Feld.
+pub fn befehl_im_verzeichnis(e: &Einhaengung, befehl: &str) -> Result<String, Werkzeugfehler> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let klein = befehl.to_lowercase();
+    if let Some(muster) = SPERRMUSTER.iter().find(|m| klein.contains(**m)) {
+        return Err(Werkzeugfehler {
+            grund: format!("der Befehl enthaelt das gesperrte Muster `{muster}` und wird nicht ausgefuehrt"),
+        });
+    }
+
+    {
         let mut kind = Command::new("sh")
             .arg("-c")
-            .arg(&befehl)
-            .current_dir(self.0.wurzel())
+            .arg(befehl)
+            .current_dir(e.wurzel())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| Werkzeugfehler { grund: format!("der Befehl liess sich nicht starten: {e}") })?;
+            .map_err(|fehler| Werkzeugfehler { grund: format!("der Befehl liess sich nicht starten: {fehler}") })?;
 
         // ⚑ **Zwei Faeden leeren die Roehren**, damit ein Befehl mit viel
         // Ausgabe nicht blockiert, wenn der Roehrenpuffer voll ist. Jeder

@@ -61,9 +61,15 @@ kleine Modelle, `advanced` fuer grosse. In der Einstellung
 Artefakts liest; ein Schalter hat kein Artefakt und deshalb auch dieses
 Wort nicht.
 
-⚠️ Heute stehen in beiden Kisten dieselben fuenf Werkzeuge. Der Schnitt
-ist gebaut, der Inhalt kommt noch; was zuerst nur in `advanced` liegen
-soll, ist eine Namenssuche ueber den Baum.
+⚑ In `base` liegen die fuenf Dateiwerkzeuge, in `advanced` zusaetzlich
+`run_command`: Ein Shell-Befehl haelt die Einhaengegrenze nicht ein, die
+jedes Dateiwerkzeug einhaelt, und gehoert deshalb nicht in `base`.
+
+⚑ Jede Kiste ist auch ein Ordner unter `CLIENT/werkzeugkisten/<name>`.
+Was dort als Manifest liegt (JSON mit name, beschreibung, parameter,
+befehl), bekommt das Modell zusaetzlich angesagt, ohne Neubau. Ein
+solches Werkzeug laeuft ueber die Shell und braucht deshalb die
+Schreiberlaubnis.
 
 ⚑ `--deutsch` ist ein Vergleichsschalter und keine Einstellung. Die
 Werkzeuge werden dem Modell sonst in genau der Form angesagt, auf die

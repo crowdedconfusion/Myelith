@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.72.0 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
+> **Version:** 0.72.1 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
 > **Datum:** 2026-09-14
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
@@ -604,6 +604,17 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.72.1 – 2026-09-14 (der Kalibrierungstest deckt einen Prompt über vier Token)
+
+Keine Kiste ändert sich (`kernels` **0.56.0**, `runtime` **0.52.0**, θ_v
+**0.20.0**); der Ausfuhrtest wird nachgezogen.
+
+⛔️ **Fund 368 in der CI:** `test_synthetic_export_loads_in_real_runtime_binary`
+baute eine Drehtabelle mit vier Zeilen. Die Kontextgrenze ist das Minimum
+aus `max_context` und den Tabellenzeilen, also vier, und der Lader hielt
+am fünften Token des Prompts „Hello" an. Die synthetische Tabelle trägt
+jetzt acht Zeilen, genug für den Prompt und drei erzeugte Token.
 
 ### v0.72.0 – 2026-09-14 (das Gespräch wächst mit, der Kontext reicht bis 40 960)
 

@@ -310,8 +310,15 @@ def test_synthetic_export_loads_in_real_runtime_binary():
             "model.norm": _scale(2),
             "model.norm.input": _scale(4),
         }
+        # ⚑ Acht RoPE-Zeilen, damit die Kontextgrenze (min aus max_context 8
+        # und den Tabellenzeilen) den Prompt "Hello" (fuenf Token) plus drei
+        # erzeugte deckt (Fund 368). head_dim 2 heisst half 1, also eine
+        # cos/sin-Zahl je Zeile; vier Zeilen liessen den Lader an Position 4
+        # anhalten.
         luts = {
-            "cos": [256, 0, -256, 0], "sin": [0, 256, 0, -256], "exp": [256, 128, 64],
+            "cos": [256, 0, -256, 0, 256, 0, -256, 0],
+            "sin": [0, 256, 0, -256, 0, 256, 0, -256],
+            "exp": [256, 128, 64],
             "silu": [-10, 0, 10, 20], "rsqrt": [256, 181, 148],
         }
         export_mod.export_theta_v(scales=scales, luts=luts, output_dir=out_dir)

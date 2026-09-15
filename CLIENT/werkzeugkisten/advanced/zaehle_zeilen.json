@@ -1,0 +1,10 @@
+{
+  "name": "zaehle_zeilen",
+  "beschreibung": "Zaehlt die Zeilen einer Datei im Arbeitsverzeichnis.",
+  "parameter": {
+    "type": "object",
+    "properties": { "datei": { "type": "string", "description": "Pfad im Arbeitsverzeichnis" } },
+    "required": ["datei"]
+  },
+  "befehl": "wc -l {datei}"
+}

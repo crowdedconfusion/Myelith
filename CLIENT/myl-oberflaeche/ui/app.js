@@ -85,6 +85,7 @@ const TEXTE = {
     "kontext.leer": "Das Gespräch ist leer; es gibt nichts zu verdichten.",
     "kontext.verdichtet": (vorher, nachher) =>
       `⚑ Kontext verdichtet: ${vorher} → ${nachher} Token. Ab hier sieht das Modell eine Zusammenfassung des Gesprächs davor.`,
+    "kontext.verdichtet_kurz": (vorher, nachher) => `verdichtet ${vorher} → ${nachher}`,
     "kontext.im_lauf": "Kontext verdichtet",
     "kontext.fehler": (f) => `Verdichten fehlgeschlagen: ${f}`,
     "leiste.label": "Gespräche und Betriebsart",
@@ -130,6 +131,12 @@ const TEXTE = {
     "reichweite.kein": "kein Verzeichnis eingehängt",
     "reichweite.hinweis": "Ohne Arbeitsordner hat der Agent keine Werkzeuge. In den Einstellungen setzen.",
     "reichweite.gesperrt": ", Werkzeuge durch die Betriebsart gesperrt",
+    "reichweite.pfadmarke": "Einhängepfad:",
+    "reichweite.wechseln": "Verzeichnis wechseln",
+    "reichweite.kistemarke": "Werkzeugkiste:",
+    "reichweite.andereKiste": "andere Werkzeugkiste",
+    "reichweite.kistehinweis": "Der Ordner, aus dem die Werkzeuge kommen. Weiterschalten zwischen den Kisten.",
+    "reichweite.fehler": (f) => `Ging nicht: ${f}`,
     "md.beitraege": (n) => `- Beiträge: ${n}`,
     "geloescht": (was, titel) => `${was} „${titel}“ gelöscht.`,
     "abgelegt": (was, wo) => `${was} abgelegt: ${wo}`,
@@ -222,6 +229,7 @@ const TEXTE = {
     "kontext.leer": "The conversation is empty; there is nothing to compress.",
     "kontext.verdichtet": (vorher, nachher) =>
       `⚑ Context compressed: ${vorher} → ${nachher} tokens. From here on the model sees a summary of the conversation before.`,
+    "kontext.verdichtet_kurz": (vorher, nachher) => `compressed ${vorher} → ${nachher}`,
     "kontext.im_lauf": "context compressed",
     "kontext.fehler": (f) => `Compressing failed: ${f}`,
     "leiste.label": "Conversations and mode",
@@ -268,6 +276,12 @@ const TEXTE = {
     "reichweite.kein": "no folder mounted",
     "reichweite.hinweis": "Without a working folder the agent has no tools. Set one in the settings.",
     "reichweite.gesperrt": ", tools locked by the operating mode",
+    "reichweite.pfadmarke": "Mount path:",
+    "reichweite.wechseln": "Change folder",
+    "reichweite.kistemarke": "Toolbox:",
+    "reichweite.andereKiste": "other toolbox",
+    "reichweite.kistehinweis": "The folder the tools come from. Cycle through the boxes.",
+    "reichweite.fehler": (f) => `Did not work: ${f}`,
     "md.beitraege": (n) => `- Messages: ${n}`,
     "geloescht": (was, titel) => `${was} “${titel}” deleted.`,
     "abgelegt": (was, wo) => `${was} exported to: ${wo}`,
@@ -754,7 +768,15 @@ function modi_zeichnen() {
     b.type = "button";
     b.className = "modus blank";
     b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(offen?.modus === m.id));
+    // 📌 **Hier stand `offen?.modus`**, und damit war kein Knopf
+    // eingerastet, solange nichts offen war (gemeldet vom
+    // Projektinhaber, 2026-09-15): Beim Start und nach jedem
+    // Moduswechsel, der nichts anlegt, war `offen` leer, der Vergleich
+    // also immer falsch. **Der eingerastete Modus ist `modus_jetzt()`**,
+    // seit er am 2026-09-10 vom offenen Gespraech abgeloest wurde; die
+    // Anzeige hing noch an der alten Quelle. Dieselbe Angabe an zwei
+    // Orten, und die zweite meldet sich nicht.
+    b.setAttribute("aria-checked", String(modus_jetzt() === m.id));
     if (m.offen === false) {
       b.dataset.offen = "nein";
       b.title = t(`modus.${m.id}.warum`);
@@ -799,33 +821,91 @@ async function reichweite_zeichnen() {
   try {
     r = await invoke("werkzeuge");
   } catch (f) {
-    r = { wurzel: null, namen: [] };
+    r = { wurzel: null, kiste: "", namen: [] };
   }
-  const p = document.createElement("p");
-  p.className = "reichweitezeile";
-  if (!r.wurzel) {
-    p.textContent = t("reichweite.kein");
-    // 📌 Hier stand der technische Name. Wer den Hinweis liest, sucht
-    // danach in den Einstellungen, und dort steht seit dem
-    // 2026-09-09 die Beschriftung: „Arbeitsordner".
-    p.title = t("reichweite.hinweis");
-  } else {
-    // 📌 **Von vorn gekuerzt, im Skript.** Das Aussagekraeftige an
-    // einem Pfad steht hinten; `direction: rtl` taete dasselbe und
-    // schoebe dabei den fuehrenden Schraegstrich ans Ende, sodass ein
-    // Pfad angezeigt wuerde, den es nicht gibt.
-    const GRENZE = 34;
-    p.textContent =
-      r.wurzel.length > GRENZE ? `…${r.wurzel.slice(-(GRENZE - 1))}` : r.wurzel;
-    p.title = r.wurzel;
-  }
-  w.append(p);
+
+  // ⚑ Eine kleine beschriftete Zeile mit einem Knopf daneben
+  // (Auftrag des Projektinhabers, 2026-09-14): Einhaengepfad und
+  // Werkzeugkiste lassen sich hier wechseln, statt in die Einstellungen
+  // zu muessen.
+  const kuerzen = (s, n) => (s && s.length > n ? `…${s.slice(-(n - 1))}` : s);
+  const abschnitt = (marke, wert, voll, knopfmarke, beim_klick) => {
+    const l = document.createElement("p");
+    l.className = "reichweitezeile reichweitemarke";
+    l.textContent = t(marke);
+    w.append(l);
+    const zeile = document.createElement("div");
+    zeile.className = "reichweitewahl";
+    const p = document.createElement("span");
+    p.className = "reichweitewert";
+    p.textContent = wert;
+    if (voll) p.title = voll;
+    const k = document.createElement("button");
+    k.type = "button";
+    k.className = "reichweiteknopf blank";
+    k.textContent = t(knopfmarke);
+    k.addEventListener("click", beim_klick);
+    zeile.append(p, k);
+    w.append(zeile);
+  };
+
+  // 1. Der Einhaengepfad.
+  abschnitt(
+    "reichweite.pfadmarke",
+    r.wurzel ? kuerzen(r.wurzel, 30) : t("reichweite.kein"),
+    r.wurzel || t("reichweite.hinweis"),
+    "reichweite.wechseln",
+    verzeichnis_wechseln,
+  );
+
+  // 2. Die Werkzeugkiste.
+  abschnitt(
+    "reichweite.kistemarke",
+    r.kiste || "?",
+    t("reichweite.kistehinweis"),
+    "reichweite.andereKiste",
+    kiste_wechseln,
+  );
+
+  // 3. Die Werkzeuge, die daraus folgen.
   if (r.namen.length) {
     const l = document.createElement("p");
     l.className = "reichweitezeile werkzeugliste";
     l.textContent = r.namen.join("  ");
     l.title = `${r.namen.length} Werkzeuge`;
     w.append(l);
+  }
+}
+
+/// **Verzeichnis wechseln** ueber den Ordnerdialog des Systems, dann als
+/// `agent.wurzel` setzen (auf macOS ist die Auswahl zugleich die Freigabe).
+async function verzeichnis_wechseln() {
+  try {
+    const e = await invoke("einstellungen");
+    const start = e.werte["agent.wurzel"] || "";
+    const gewaehlt = await invoke("ordner_waehlen", { titel: t("reichweite.wechseln"), start });
+    if (!gewaehlt) return;
+    await invoke("setzen", { feld: "agent.wurzel", wert: gewaehlt });
+    reichweite_zeichnen();
+    kontext_holen();
+  } catch (f) {
+    melden(t("reichweite.fehler", f));
+  }
+}
+
+/// **Andere Werkzeugkiste**: schaltet `agent.werkzeuge` der Reihe nach
+/// weiter. Der angezeigte Name ist der der aufgeloesten Kiste (Base,
+/// Advanced), also der des Ordners unter `CLIENT/werkzeugkisten`.
+const KISTENFOLGE = ["automatisch", "base", "advanced"];
+async function kiste_wechseln() {
+  try {
+    const e = await invoke("einstellungen");
+    const jetzt = e.werte["agent.werkzeuge"] || "automatisch";
+    const naechste = KISTENFOLGE[(KISTENFOLGE.indexOf(jetzt) + 1) % KISTENFOLGE.length];
+    await invoke("setzen", { feld: "agent.werkzeuge", wert: naechste });
+    reichweite_zeichnen();
+  } catch (f) {
+    melden(t("reichweite.fehler", f));
   }
 }
 
@@ -881,10 +961,27 @@ function kontext_zeichnen(k) {
     return;
   }
   knopf.hidden = false;
+  // ⚑ Ein normales Zeichnen loescht die gruene Verdichtungsanzeige: Sie
+  // gilt nur unmittelbar nach dem Verdichten (siehe `kontext_verdichtet`).
+  knopf.classList.remove("verdichtet");
   $("kontextfuellung").style.width = `${Math.min(100, k.prozent)}%`;
   $("kontextzahl").textContent = t("kontext.zahl", k.belegt, k.grenze, k.prozent);
   knopf.title = t("kontext.titel", k.ansage, k.belegt - k.ansage, k.nachrichten);
-  knopf.classList.toggle("eng", k.prozent >= 80);
+  // ⚑ Rot ab 90 % (Auftrag des Projektinhabers): erst dann wird es eng.
+  knopf.classList.toggle("eng", k.prozent >= 90);
+}
+
+/// ⚑ **Gruen und der Stand der Verdichtung**, unmittelbar nach dem
+/// Verdichten (Auftrag des Projektinhabers). Der naechste `kontext_zeichnen`
+/// nimmt die gruene Anzeige wieder weg.
+function kontext_verdichtet(vorher, nachher) {
+  const knopf = $("kontextbalken");
+  knopf.hidden = false;
+  knopf.classList.remove("eng");
+  knopf.classList.add("verdichtet");
+  const anteil = vorher > 0 ? Math.round((nachher / vorher) * 100) : 0;
+  $("kontextfuellung").style.width = `${Math.min(100, anteil)}%`;
+  $("kontextzahl").textContent = t("kontext.verdichtet_kurz", vorher, nachher);
 }
 
 /// ⚠️ **Nicht waehrend eines Laufs**: Der haelt das Modell, und die Frage
@@ -947,9 +1044,12 @@ async function kontext_verdichten() {
     kontext_merken(offen, r.nachrichten, r.zusammenfassung, offen.beitraege.length);
     sichern();
     alles_zeichnen();
+    // ⚑ Gruen und der Stand der Verdichtung; bleibt stehen bis zum
+    // naechsten Auftrag, der den Balken wieder normal zeichnet.
+    knopf.disabled = false;
+    kontext_verdichtet(r.vorher, r.nachher);
   } catch (f) {
     melden(t("kontext.fehler", f));
-  } finally {
     knopf.disabled = false;
     kontext_holen();
   }
@@ -2233,8 +2333,12 @@ async function kopf_zeichnen() {
   // einer zweiten Stelle.
   // ⚑ Auch hier aus `werte` und nicht aus einem eigenen Feld: Es gibt
   // die Zuordnung nur einmal, und zwar in der Kiste.
-  const artefakt = e.werte["modell.artefakt"];
-  $("modellzeile").textContent = geladen ? artefakt : t("modell.artefaktKlammer", artefakt);
+  // ⚑ **Eine einzige Modellzeile** (Auftrag des Projektinhabers,
+  // 2026-09-14): den vollen Ladezustand schreibt `modellzeile_schreiben`;
+  // hier wird er nur angestossen, damit ein Wechsel des Artefakts ihn
+  // auffrischt. Bis dahin standen der Name hier und der Ladezustand unter
+  // der Eingabe, also dasselbe zweimal.
+  modellzeile_schreiben();
   return e;
 }
 

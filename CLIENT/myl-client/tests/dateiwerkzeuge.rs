@@ -264,20 +264,38 @@ fn nur_lesen_steht_im_protokoll() {
     assert!(!erg.strom.einhaengung().expect("Einhaengung").schreiben);
 }
 
-/// ⚑ **Ohne Einhaengung steht `None`, und das heisst „kein
-/// Dateizugriff" und nicht „unbekannt".** Der Unterschied ist der ganze
-/// Zweck der Angabe.
+/// ⚑ **Ohne gesetzte Wurzel greift die CTF-Vorgabe** (Auftrag des
+/// Projektinhabers, 2026-09-14): Zeigt `MYL_CTF` auf ein Verzeichnis,
+/// haengt der Agent es ein, statt ganz ohne Dateiwerkzeuge dazustehen.
+/// So hat er von Haus aus einen Spielplatz.
+///
+/// 📌 **Die genuine „kein Dateizugriff"-Zusicherung** (Einhaengung
+/// `None`, wenn `standard_wurzel` nichts findet) steht als Einzeltest
+/// bei `standard_wurzel`; hier laesst sie sich nicht pruefen, weil die
+/// Suche aufwaerts aus dem Baum den echten CTF-Ordner faende.
 #[test]
-fn ohne_einhaengung_steht_nichts_darin() {
+fn ohne_wurzel_greift_die_ctf_vorgabe() {
+    let alt = std::env::var_os("MYL_CTF");
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    std::env::set_var("MYL_CTF", d.path());
+
     let agent = Agenteneinstellung {
         schritte: 2,
         wurzel: None,
         schreiben: false,
         werkzeuge: Default::default(),
-    modus: Default::default(),
-        };
+        modus: Default::default(),
+    };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
-    assert!(ruestung.einhaengung.is_none(), "es gibt eine Einhaengung ohne Wurzel");
-    // Und ohne Wurzel gibt es auch keine Dateiwerkzeuge.
-    assert!(ruestung.kasten.angebote().is_empty());
+    assert!(
+        ruestung.einhaengung.is_some(),
+        "ohne gesetzte Wurzel greift die CTF-Vorgabe"
+    );
+    // Und damit gibt es wieder Lesewerkzeuge, auch ohne Schreiberlaubnis.
+    assert!(!ruestung.kasten.angebote().is_empty());
+
+    match alt {
+        Some(v) => std::env::set_var("MYL_CTF", v),
+        None => std::env::remove_var("MYL_CTF"),
+    }
 }

@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.44.0 (`myl-client` 0.30.0, `myl-oberflaeche` 0.33.0, `myl-console` 0.10.0)
+> **Version:** 0.45.0 (`myl-client` 0.31.0, `myl-oberflaeche` 0.34.0, `myl-console` 0.10.0)
 > **Datum:** 2026-09-14
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -33,7 +33,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. ⚠️ Im Fenster bleiben die schreibenden Werkzeuge dann ganz weg: Einen Bestätigungskasten gibt es dort noch nicht |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Drei Werkzeugkisten** | `Base` für kleine Modelle, `Advanced` für grosse, `1337` nur mit `MYELITH_ADMIN=1` in der Umgebung. Welche ein Lauf bekommt, entscheidet die Grösse des Artefakts (Grenze: sieben Milliarden Parameter), und `agent.werkzeuge` überstimmt das. ⚠️ **Heute liegen in allen dreien dieselben fünf Werkzeuge**: Der Schnitt ist gebaut, der Inhalt kommt noch. ⛔️ Und die Marke **verbirgt**, sie schützt nicht: Wer sie setzen will, setzt sie |
+| **Drei Werkzeugkisten** | `Base` für kleine Modelle, `Advanced` für grosse, `1337` nur mit `MYELITH_ADMIN=1` in der Umgebung. Welche ein Lauf bekommt, entscheidet die Grösse des Artefakts (Grenze: sieben Milliarden Parameter), und `agent.werkzeuge` überstimmt das. `Base` hat die fünf Lesewerkzeuge, `Advanced` zusätzlich `run_command`. **Jede Kiste ist auch ein Ordner** unter `CLIENT/werkzeugkisten/<name>`: Ein Manifest, das dort liegt, kommt ohne Neubau dazu. ⛔️ Und die Marke **verbirgt**, sie schützt nicht: Wer sie setzen will, setzt sie |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
@@ -114,6 +114,49 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.45.0 – 2026-09-14 (die Werkzeugkisten sind Ordner, der Agent hat einen Spielplatz, und das Fenster ist aufgeräumt)
+
+`myl-client` **0.31.0**, `myl-oberflaeche` **0.34.0**, `myl-console`
+**0.10.0**.
+
+⚑ **Die Werkzeugkisten sind Ordner** (`kisten.rs`): Was als Manifest
+(JSON mit `name`, `beschreibung`, `parameter`, `befehl`) in
+`CLIENT/werkzeugkisten/<name>` liegt, sieht das Modell ohne Neubau. Ein
+Manifest-Werkzeug läuft über `sh -c` wie `run_command` (Schreibrecht-Gate,
+shell-sicher eingesetzte Argumente, `manual mode`); die eingebauten
+Dateiwerkzeuge bleiben kompiliert und halten die Einhängegrenze. Gefunden
+wird der Ordner über `MYL_WERKZEUGKISTEN` oder die Suche im Baum. In
+`base` liegen fünf Lesewerkzeuge, in `advanced` zusätzlich `run_command`;
+`1337` bleibt gitignored.
+
+⚑ **Ohne gesetzten Arbeitsordner ist der CTF-Ordner die Vorgabe**
+(`BENCHMARKS/Agent/ctf`, oder `MYL_CTF`): So hat der Agent von Haus aus
+einen Spielplatz. Wer nichts gesetzt hat und den Ordner auch nicht
+findet, bekommt wie bisher keine Dateiwerkzeuge.
+
+⚑ **Die Seitenleiste im Agentenmodus** zeigt „Einhängepfad:" mit einem
+Knopf „Verzeichnis wechseln" und „Werkzeugkiste:" mit dem Namen des
+Ordners und dem Knopf „andere Werkzeugkiste", ohne den Umweg über die
+Einstellungen.
+
+⚑ **Das Fenster, aufgeräumt:** Der Kontextbalken sitzt links unter der
+Eingabe und lässt rechts Platz für weitere Anzeigen; er färbt sich über
+90 % rot und nach dem Verdichten grün mit dem erreichten Stand (die
+einzige Farbe im sonst grauen Fenster, eigens mit `farbampel`
+gekennzeichnet und von der Graustufenprobe ausgenommen). Das `</think>`
+erscheint nur noch im Aufklapp-Knopf, nicht mehr vor der Antwort. Die
+redundante Pfadzeile unter dem Balken ist weg; Pfad und Ladezustand
+stehen in der Modellzeile der Leiste.
+
+📌 **Der gewählte Modus ist in der Leiste zu sehen.** Das Stilblatt hatte
+die Regel dafür seit langem; `modi_zeichnen` verglich aber mit dem Modus
+des **offenen** Gesprächs. Seit der Modus vom Gespräch abgelöst ist
+(v0.36.0: ein Wechsel legt nichts mehr an), ist danach nichts offen, der
+Vergleich also immer falsch, und kein Knopf rastete ein. Verglichen wird
+jetzt mit dem eingerasteten Modus; dazu eine Marke am linken Rand, damit
+der Unterschied nicht nur aus Hintergrund und Kante besteht. **Dieselbe
+Angabe an zwei Orten, und die zweite meldete sich nicht.**
 
 ### v0.44.0 – 2026-09-14 (das Gespräch trägt über Aufträge, der Kontext ist sichtbar und verdichtbar)
 

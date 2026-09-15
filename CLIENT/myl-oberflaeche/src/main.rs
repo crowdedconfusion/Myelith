@@ -422,21 +422,40 @@ fn modelle() -> Result<Vec<myl_client::modelle::Modellwahl>, String> {
 #[tauri::command]
 fn werkzeuge() -> Result<Werkzeugliste, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    let Some(pfad) = e.agent.wurzel.as_deref() else {
-        return Ok(Werkzeugliste { wurzel: None, namen: Vec::new() });
+    let kiste = kiste_fuer(&e);
+    // ⚑ **Der effektive Ordner**: der gesetzte, sonst der CTF-Ordner als
+    // Vorgabe (wie in `ruestung`), damit die Anzeige das Gleiche zeigt, was
+    // der Agent wirklich anfasst.
+    let wurzel = e.agent.wurzel.clone().or_else(myl_client::Einstellungen::standard_wurzel);
+    let Some(pfad) = wurzel else {
+        return Ok(Werkzeugliste { wurzel: None, kiste: kiste.kennung().to_string(), namen: Vec::new() });
     };
     // ⚑ Die Einhaengung wird hier wirklich gebaut und nicht geraten:
     // Ein Pfad, der nicht existiert, hat auch keine Werkzeuge, und das
     // soll man sehen, bevor der Auftrag laeuft.
-    let ein = match myl_client::werkzeuge::Einhaengung::neu(pfad, im_modus(&e).schreiben) {
+    let ein = match myl_client::werkzeuge::Einhaengung::neu(&pfad, im_modus(&e).schreiben) {
         Ok(x) => x,
-        Err(m) => return Ok(Werkzeugliste { wurzel: Some(format!("{pfad}  ({m})")), namen: Vec::new() }),
+        Err(m) => {
+            return Ok(Werkzeugliste {
+                wurzel: Some(format!("{pfad}  ({m})")),
+                kiste: kiste.kennung().to_string(),
+                namen: Vec::new(),
+            })
+        }
     };
-    let namen = myl_client::werkzeuge::angebote(&ein, myl_client::Ansageform::Amtlich, kiste_fuer(&e))
-    .into_iter()
-    .map(|w| w.name)
-    .collect();
-    Ok(Werkzeugliste { wurzel: Some(ein.wurzel().display().to_string()), namen })
+    let mut namen: Vec<String> =
+        myl_client::werkzeuge::angebote(&ein, myl_client::Ansageform::Amtlich, kiste)
+            .into_iter()
+            .map(|w| w.name)
+            .collect();
+    // ⚑ **Auch die Werkzeuge aus dem Kisten-Ordner** (2026-09-14), damit die
+    // Seitenleiste zeigt, was wirklich zur Verfuegung steht.
+    if let Some(ordner) = myl_client::kisten::kiste_ordner(kiste.kennung()) {
+        for (angebot, _) in myl_client::kisten::angebote(&ordner, &ein, |_| {}) {
+            namen.push(angebot.name);
+        }
+    }
+    Ok(Werkzeugliste { wurzel: Some(ein.wurzel().display().to_string()), kiste: kiste.kennung().to_string(), namen })
 }
 
 /// Was der Agent anfassen darf.
@@ -445,6 +464,9 @@ struct Werkzeugliste {
     /// ⚑ `None` heisst: kein Verzeichnis eingehaengt, also gar keine
     /// Werkzeuge, und nicht „unbekannt".
     wurzel: Option<String>,
+    /// Der Name der Werkzeugkiste, genau der des Ordners unter
+    /// `CLIENT/werkzeugkisten` (`base`, `advanced`, `1337`).
+    kiste: String,
     namen: Vec<String>,
 }
 
@@ -772,7 +794,14 @@ async fn frage(
         zusehen(m, &fenster);
         let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
         m.beobachter = None;
-        let text = antwort?;
+        // ⚑ **Die bereinigte Prosa, nicht der rohe Text** (2026-09-14):
+        // Das Denken steht schon im aufklappbaren Button (der Live-Strom
+        // trennt es), und der rohe `chat`-Text traegt die Marke `</think>`
+        // noch mit. Ohne das Stripping erschien sie als Text vor der
+        // Antwort, besonders nach einer Verdichtung, wenn das Modell wieder
+        // ausfuehrlich nachdenkt. `chat` selbst bleibt roh, weil die
+        // Agentenschleife daraus die Werkzeugaufrufe liest.
+        let text = myl_client::lauf::denken_und_prosa(&antwort?).1;
         let mut danach = n;
         danach.push(myl_client::Nachricht::modell(text.clone()));
         let kontext = myl_client::gespraech::anzeige(

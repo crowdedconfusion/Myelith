@@ -6,7 +6,7 @@
 > die Änderung beim nächsten Lauf von
 > `ETHICS/werkzeuge/modellkarte.py`.
 
-**θ_v-Fassung:** `0.19.0`
+**θ_v-Fassung:** `0.20.0`
 
 ## Ausführungsspezifikation
 
