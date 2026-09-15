@@ -1,0 +1,12 @@
+{
+  "name": "dateibaum",
+  "beschreibung": "Zeigt den Verzeichnisbaum unterhalb des Arbeitsordners bis zu einer Tiefe, ohne versteckte Dateien. Verschafft einen Ueberblick, bevor man einzeln nachsieht.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "tiefe": { "type": "string", "description": "Wie viele Ebenen tief, zum Beispiel 2." }
+    },
+    "required": ["tiefe"]
+  },
+  "befehl": "find . -maxdepth {tiefe} -not -path '*/.*' | sort | head -n 200"
+}

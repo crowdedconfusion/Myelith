@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.45.0 (`myl-client` 0.31.0, `myl-oberflaeche` 0.34.0, `myl-console` 0.10.0)
-> **Datum:** 2026-09-14
+> **Version:** 0.48.0 (`myl-client` 0.33.0, `myl-oberflaeche` 0.36.0, `myl-console` 0.10.2)
+> **Datum:** 2026-09-15
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -30,10 +30,10 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Der Agent in der Konsole** | In ein Verzeichnis gehen, `myelith` tippen. **Dieses Verzeichnis ist der Arbeitsordner**, ohne Schalter und ohne Einstellung; `/model`, `/settings` (mit den Pfeiltasten bedienbar), `/help`, `/exit`. Beim Start werden Design und Modell mit den Pfeiltasten gewählt. Die Eingabezeile steht **fest am unteren Rand**, die Ausgabe rollt darüber weg; darunter Modus, Modell, Werkzeugkiste, der Befehl für die Hilfe und der Arbeitsordner |
 | **Fünf Konsolen-Designs** | `Standard` nimmt die Farben deines Terminals, dazu `Myelith`, `Bernstein`, `Tiefsee`, `Tinte`. Voreingestellt über `oberflaeche.design`, beim Start ohne bleibende Wirkung wählbar |
 | **Was gerade läuft, steht da** | Eine Zeile fest über dem Eingabekasten, mittig: Ladetext, verstrichene Zeit, gelesene und geschriebene Token, laufende Tätigkeit; die Farbe wandert in zwei Minuten durch den Regenbogen, in einfarbigen Designs pulst sie. Jeder Schritt und jeder Werkzeugaufruf **bleibt** in der Zeitleiste; `^S` schaltet auf die ausführliche Form, in der auch der Denkvorgang live durchläuft |
-| **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. ⚠️ Im Fenster bleiben die schreibenden Werkzeuge dann ganz weg: Einen Bestätigungskasten gibt es dort noch nicht |
+| **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Drei Werkzeugkisten** | `Base` für kleine Modelle, `Advanced` für grosse, `1337` nur mit `MYELITH_ADMIN=1` in der Umgebung. Welche ein Lauf bekommt, entscheidet die Grösse des Artefakts (Grenze: sieben Milliarden Parameter), und `agent.werkzeuge` überstimmt das. `Base` hat die fünf Lesewerkzeuge, `Advanced` zusätzlich `run_command`. **Jede Kiste ist auch ein Ordner** unter `CLIENT/werkzeugkisten/<name>`: Ein Manifest, das dort liegt, kommt ohne Neubau dazu. ⛔️ Und die Marke **verbirgt**, sie schützt nicht: Wer sie setzen will, setzt sie |
+| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command`, ein anderer Name `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
@@ -45,7 +45,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über einundzwanzig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über zweiundzwanzig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -115,6 +115,148 @@ Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
 
+### v0.48.0 – 2026-09-15 (ein Arbeitsordner, der etwas zu zeigen hat)
+
+`myl-client` **0.33.0**, `myl-oberflaeche` 0.36.0, `myl-console`
+**0.10.2**.
+
+⚑ **`WORK_DIR` ist der Standard-Arbeitsordner** (Auftrag des
+Projektinhabers). Er liegt im Wurzelverzeichnis des Projekts und bringt
+fünf Beispieldateien mit: bekannte Zeilenzahlen, ein Merkmal, das in
+genau zwei Dateien steht, ein Protokoll mit genau zwei Fehlerzeilen und
+eine Vorlage mit vier Platzhaltern. Seine README nennt je Werkzeug eine
+einfache, eine mittlere und eine komplexere Aufgabe samt erwarteter
+Ausgabe, für alle vierzehn Werkzeuge. Vorher zeigte die
+Vorgabe auf den CTF-Ordner: ein Prüfstand mit Aufgaben, kein
+Arbeitsplatz.
+
+⚑ **Gefunden wird er über die Projektwurzel**, nicht über einen Lauf
+vom Arbeitsverzeichnis aufwärts. Das Fenster aus dem Finder hat als
+Arbeitsverzeichnis `/`, und ein Lauf von dort findet nie ein Projekt;
+dieselbe Ursache hatte der Fehler bei den Werkzeugkisten einen Tag
+zuvor. ⚠️ **Der Konsolenclient behält sein Startverzeichnis**, und eine
+Prüfung zählt die Rüstungen gegen die Stellen, die es setzen, damit eine
+neue nicht still auf die Vorgabe zurückfällt.
+
+⛔️ **Fund 377: ein zweiter, klein geschriebener Name für die
+Werkzeugkisten.** `kennung()` gab `base` zurück, auf der Platte liegt
+`Base`. Auf macOS fällt das nicht auf, weil das Dateisystem groß und
+klein nicht unterscheidet; auf Linux hätte derselbe Aufruf ins Leere
+gegriffen, ohne Fehlermeldung und ohne Manifestwerkzeuge. Die Funktion
+hatte **null Aufrufer** und ist entfernt: Es gibt nur noch einen Namen.
+Zwei neue Prüfungen vergleichen gegen den gelesenen Verzeichniseintrag
+statt gegen `is_dir`, denn `is_dir` antwortet hier auf jede Schreibweise
+mit „ja".
+
+📌 **Zwei Prüfungen, eine Umgebungsvariable.** Die beiden Tests zur
+Vorgabe waren einzeln grün und zusammen rot: Die Umgebung ist ein
+Zustand für den ganzen Prozess, und sie liefen nebenläufig. Zusammengelegt
+statt mit einem Riegel versehen, weil ein Riegel beim nächsten Mal
+wieder vergessen wird.
+
+### v0.47.0 – 2026-09-15 (die Werkzeugkiste ist ein Ordner, und zwar nur noch einer)
+
+`myl-client` **0.32.0**, `myl-oberflaeche` **0.36.0**, `myl-console`
+**0.10.1**.
+
+⚑ **Die verankerte Werkzeugkiste**, erste Stufe. Bis hierher meldete der Client **jedes** Werkzeug als
+extern und lokal an; in der Vorgabebetriebsart „nur verankert" sperrte
+der Harness damit **alle**, ein Netzlauf hätte ein nachrechenbares
+Modell gehabt und keine Werkzeuge. Neu sind `fill_template` und
+`join_sections`: Sie rechnen aus ihren Eingaben und sonst nichts, tragen
+deshalb `Deterministisch`/`Verankert` und kommen durch.
+
+⚑ **Sie erzeugen Inhalt und bewirken nichts.** Nachrechenbar ist, wie
+aus Eingaben ein Text wird; eine Datei zu schreiben ist es nicht, denn
+wo sie landet, hängt an einer Maschine, die niemand sonst hat. Deshalb
+nehmen sie **keinen Pfad** entgegen, sondern Inhalt, und brauchen kein
+eingehängtes Verzeichnis: Ein Auftrag „schreibe mir ein Dokument"
+funktioniert damit auch im Chat.
+
+⚠️ **Der Vertrag ist teurer als der Code.** Zeilenenden werden auf `\n`
+vereinheitlicht, es wird nicht sortiert, nichts gross- oder
+kleingeschrieben und nicht in Gleitkomma gerechnet; gezählt wird in
+Unicode-Skalarwerten. Eine Fassungsnummer gilt für die ganze Kiste und
+steht in der Revision jedes Manifests, geht also in die Adresse ein.
+Neun Konformitätsvektoren halten Eingabe und Ausgabe byteweise fest:
+**ohne Vektor keine Marke.**
+
+⛔️ **Und im `manual mode` sah das Modell die Werkzeugkiste gar nicht.**
+Das Fenster hatte keinen Bestätigungskasten und setzte deshalb in diesem
+Modus `schreiben = false`. Das nahm nicht nur `write_file`, `edit_file`
+und `run_command` weg, sondern **jedes Kisten-Werkzeug**: Ein Manifest
+läuft über die Shell, gilt damit als schreibend und fiel mit. Wer seine
+Kiste füllte, sah davon nichts; gemeldet wurde es als „das Modell führt
+die alten Werkzeuge auf". Jetzt fragt das Fenster wirklich, im Kasten
+des Betriebssystems, mit Werkzeugnamen und Argumenten. **Eine
+Zustimmung ohne zu wissen, worauf, ist keine.**
+
+⚑ **Ein Gespräch bringt sein Modell mit** (Auftrag des
+Projektinhabers). Womit ein Gespräch geführt wurde, bleibt an ihm
+hängen; wer es aufschlägt, bekommt dieses Modell **eingestellt, aber
+nicht geladen**. Geladen wird beim ersten Auftrag wie sonst auch: Wer
+ein altes Gespräch nur nachliest, soll nicht minutenlang auf ein
+Artefakt warten. 📌 Das vorher geladene wird dabei entladen, sonst führe
+der nächste Auftrag damit weiter, während die Anzeige das neue nennt.
+Steht schon dasselbe Modell, geschieht nichts.
+
+📌 **Die Kistenwahl ging am falschen Ort auf.** Sie bekam den
+eingestellten Kistenordner als Startort, und der ist per Vorgabe leer;
+der Dialog öffnete deshalb dort, wo zuletzt etwas gewählt wurde, also
+beim Einhängepfad. Jetzt nennt die Kiste ihren eigenen Ort, und die Wahl
+zeigt die Kisten nebeneinander.
+
+
+⚑ **Eine Einstellung statt zweier** (Festlegung des Projektinhabers).
+Bis heute standen nebeneinander eine Auswahl `agent.werkzeuge`
+(automatisch, Base, Advanced, 1337) und ein Pfad. **Zwei Angaben für
+dieselbe Sache laufen auseinander**, und genau das taten sie: Die
+Manifeste kamen aus dem Ordner, die eingebauten Werkzeuge aus der
+Auswahl. Geblieben ist der Pfad, beschriftet **„Werkzeugkiste"**. Sein
+letzter Namensteil sagt, welche eingebauten Werkzeuge dazukommen:
+`base` die fünf Dateiwerkzeuge, `advanced` zusätzlich `run_command`, ein
+anderer Name `base`. Ohne Angabe die mitgelieferte Kiste `base`.
+
+📌 **Und derselbe Bruch steckte im Bedieninstrument.** `myl agent` nahm
+ohne `--werkzeuge` immer `Base` und sah die Einstellung gar nicht an;
+wer seine Kiste auf `advanced` stellte, bekam die Manifeste aus dem
+Ordner und die eingebauten aus einer anderen Quelle. Jetzt ist die
+Einstellung die Vorgabe und der Schalter überstimmt sie für einen
+einzelnen Lauf.
+
+⚑ **Die Adminmarke für `1337` ist entfallen.** Sie war gegenstandslos:
+Der Ordner ist gitignored, wer ihn nicht hat, hat die Werkzeuge nicht,
+und wer ihn anlegt, hat die Entscheidung getroffen.
+
+⚠️ **Ein gesetzter Pfad, den es nicht gibt, fällt nicht still auf die
+Vorgabe zurück.** Sonst arbeitete der Agent aus einem anderen Ordner als
+dem, der in den Einstellungen steht, und niemand sähe es.
+
+### v0.46.0 – 2026-09-15 (die Angabe ist der Knopf, und die Werkzeugliste zieht in die Einstellungen)
+
+`myl-client` **0.31.0**, `myl-oberflaeche` **0.35.0**, `myl-console`
+**0.10.0**.
+
+📌 **Neben Einhängepfad und Werkzeugkiste stand je ein beschrifteter
+Knopf, und die Seitenleiste ist dafür zu schmal:** „Verzeichnis
+wechseln" und „andere Werkzeugkiste" wurden beide abgeschnitten. Statt
+die Beschriftung zu kürzen, bis sie nichts mehr sagt, trägt jetzt **die
+Angabe selbst die Handlung**: Ein Klick auf den Pfad wählt einen anderen,
+ein Klick auf den Kistennamen schaltet weiter. Was der Klick tut, steht
+beim Zeigen darauf.
+
+⚑ **Es bleibt ein `button`** und wird kein anklickbarer Absatz. Der
+Unterschied ist nicht sichtbar und entscheidet darüber, ob die Handlung
+mit der Tastatur erreichbar ist und vorgelesen wird.
+
+⚑ **Die Werkzeugliste steht nicht mehr in der Leiste**, sondern in den
+Einstellungen unter „Agent" hinter dem Knopf **„Werkzeuge anzeigen"**.
+In der Leiste war sie eine Wand aus Namen, die bei jedem Zeichnen
+mitlief und die zwei Angaben darüber erschlug. Gefragt wird erst beim
+Klick: Der Befehl baut die Einhängung wirklich, und das bei jedem Öffnen
+der Einstellungen zu tun wäre Arbeit für eine Angabe, die selten jemand
+sehen will.
+
 ### v0.45.0 – 2026-09-14 (die Werkzeugkisten sind Ordner, der Agent hat einen Spielplatz, und das Fenster ist aufgeräumt)
 
 `myl-client` **0.31.0**, `myl-oberflaeche` **0.34.0**, `myl-console`
@@ -127,18 +269,36 @@ Manifest-Werkzeug läuft über `sh -c` wie `run_command` (Schreibrecht-Gate,
 shell-sicher eingesetzte Argumente, `manual mode`); die eingebauten
 Dateiwerkzeuge bleiben kompiliert und halten die Einhängegrenze. Gefunden
 wird der Ordner über `MYL_WERKZEUGKISTEN` oder die Suche im Baum. In
-`base` liegen fünf Lesewerkzeuge, in `advanced` zusätzlich `run_command`;
-`1337` bleibt gitignored.
+`Base` liegen vier Manifestwerkzeuge neben den fünf eingebauten, in
+`Advanced` zusätzlich zwei und `run_command`; `1337` bleibt gitignored.
+**`Advanced` erbt `Base` durch die Kette und nicht durch Kopien**, denn
+zwei Kopien laufen auseinander.
 
-⚑ **Ohne gesetzten Arbeitsordner ist der CTF-Ordner die Vorgabe**
-(`BENCHMARKS/Agent/ctf`, oder `MYL_CTF`): So hat der Agent von Haus aus
-einen Spielplatz. Wer nichts gesetzt hat und den Ordner auch nicht
-findet, bekommt wie bisher keine Dateiwerkzeuge.
+⛔️ **Die Ordnernamen werden groß geschrieben, und das ist keine
+Schreibweise, sondern ein Pfad.** macOS unterscheidet in Dateinamen
+nicht zwischen groß und klein, Linux schon: Ein Name, der hier
+funktioniert, kann dort ins Leere gehen, ohne dass jemand eine
+Fehlermeldung sieht. Eine Prüfung vergleicht die Namen deshalb gegen den
+gelesenen Verzeichniseintrag statt gegen `is_dir`.
 
-⚑ **Die Seitenleiste im Agentenmodus** zeigt „Einhängepfad:" mit einem
-Knopf „Verzeichnis wechseln" und „Werkzeugkiste:" mit dem Namen des
-Ordners und dem Knopf „andere Werkzeugkiste", ohne den Umweg über die
-Einstellungen.
+⚑ **Ohne gesetzten Arbeitsordner ist `WORK_DIR` die Vorgabe**, der
+Ordner im Wurzelverzeichnis des Projekts (oder `MYL_ARBEITSORDNER`): Er
+bringt Beispieldateien mit, an denen sich jedes Werkzeug zeigt, und eine
+README, die je Werkzeug eine einfache, eine mittlere und eine
+komplexere Aufgabe mit der erwarteten Ausgabe nennt. Wer nichts gesetzt
+hat und den Ordner auch nicht findet, bekommt wie bisher keine
+Dateiwerkzeuge.
+
+⚠️ **Der Konsolenclient nimmt weiter das Verzeichnis, aus dem er
+gestartet wurde**, und nicht diese Vorgabe: Wer ihn in einem Projekt
+aufruft, will darin arbeiten.
+
+⚑ **Die Seitenleiste im Agentenmodus** zeigt „Einhängepfad:" und
+„Werkzeugkiste:", und der Pfad und der Name **sind** die Knöpfe: Ein
+Klick darauf wechselt Verzeichnis oder Kiste, ohne den Umweg über die
+Einstellungen. Die eigenen Knöpfe daneben sind entfallen, sie wurden in
+der Leiste abgeschnitten. Die Werkzeugliste steht nicht mehr in der
+Leiste, sondern hinter „Werkzeuge anzeigen" in den Einstellungen.
 
 ⚑ **Das Fenster, aufgeräumt:** Der Kontextbalken sitzt links unter der
 Eingabe und lässt rechts Platz für weitere Anzeigen; er färbt sich über

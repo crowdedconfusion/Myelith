@@ -135,6 +135,16 @@ struct Lage {
     strom_offen: bool,
     /// Zustand des Zufalls.
     saat: u64,
+    /// Ob nach dem Beenden gefragt wurde, und die Frage noch offen ist.
+    ///
+    /// ⚑ **Eigenes Feld und nicht `frage`** (Auftrag des
+    /// Projektinhabers, 2026-09-15): `frage` traegt die Vorlage einer
+    /// schreibenden Handlung im `manual mode`. Beide in einem Feld, und
+    /// ein Tastendruck haette die eine Frage mit der Antwort auf die
+    /// andere beantwortet.
+    abbruchfrage: bool,
+    /// Ob die Abbruchfrage schon dasteht.
+    abbruch_gestellt: bool,
     /// Was gerade vorgelegt wird, im `manual mode`.
     frage: Option<String>,
     /// Ob sie schon dasteht.
@@ -213,6 +223,8 @@ impl Anzeige {
             strom: String::new(),
             strom_offen: false,
             saat,
+            abbruchfrage: false,
+            abbruch_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -386,10 +398,26 @@ fn takten(
         if event::poll(TAKT).unwrap_or(false) {
             match event::read() {
                 Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => {
-                    if k.modifiers.contains(KeyModifiers::CONTROL) {
+                    // ⚑ **Eine offene Abbruchfrage geht allem vor**
+                    // (Auftrag des Projektinhabers, 2026-09-15): Solange
+                    // sie dasteht, ist die naechste Taste ihre Antwort
+                    // und nichts anderes.
+                    if offene_abbruchfrage(&lage) {
+                        if let Some(ja) = als_antwort(k.code) {
+                            if ja {
+                                abbrechen(schirm);
+                            }
+                            abbruchfrage_weg(&lage);
+                        }
+                    } else if k.modifiers.contains(KeyModifiers::CONTROL) {
                         match k.code {
                             KeyCode::Char('s') => umschalten(&lage),
-                            KeyCode::Char('c') => abbrechen(schirm),
+                            // ⚑ **Beenden fragt nach**, und beide Tasten
+                            // tun dasselbe: Strg-C aus Gewohnheit,
+                            // Strg-X wie an der Eingabezeile. Vorher
+                            // beendete Strg-C den Prozess mitten im Lauf
+                            // ohne ein Wort.
+                            KeyCode::Char('c') | KeyCode::Char('x') => abbruchfrage_stellen(&lage),
                             _ => {}
                         }
                     } else if let Some(ja) = als_antwort(k.code) {
@@ -416,6 +444,27 @@ pub fn als_antwort(code: KeyCode) -> Option<bool> {
     }
 }
 
+/// Ob die Abbruchfrage offen ist.
+fn offene_abbruchfrage(lage: &Arc<Mutex<Lage>>) -> bool {
+    lage.lock().map(|l| l.abbruchfrage).unwrap_or(false)
+}
+
+/// Stellt die Abbruchfrage.
+fn abbruchfrage_stellen(lage: &Arc<Mutex<Lage>>) {
+    if let Ok(mut l) = lage.lock() {
+        l.abbruchfrage = true;
+        l.abbruch_gestellt = false;
+    }
+}
+
+/// Nimmt sie zurueck; der Lauf geht weiter.
+fn abbruchfrage_weg(lage: &Arc<Mutex<Lage>>) {
+    if let Ok(mut l) = lage.lock() {
+        l.abbruchfrage = false;
+        l.abbruch_gestellt = false;
+    }
+}
+
 /// Traegt die Antwort ein, sofern ueberhaupt gefragt wurde.
 fn beantworten(lage: &Arc<Mutex<Lage>>, ja: bool) {
     if let Ok(mut l) = lage.lock() {
@@ -439,10 +488,16 @@ fn umschalten(lage: &Arc<Mutex<Lage>>) {
     }
 }
 
-/// ⚠️ **Strg-C im Rohmodus erzeugt kein Signal**, also muss es hier
-/// beantwortet werden. Der laufende Auftrag laesst sich nicht
-/// zurueckrufen; **was bleibt, ist ein sauberes Ende**: Rohmodus aus,
-/// Rollbereich zurueck, Schluss.
+/// **Das saubere Ende mitten im Lauf**: Rohmodus aus, Rollbereich
+/// zurueck, Schluss.
+///
+/// ⚠️ **Strg-C im Rohmodus erzeugt kein Signal**, also muss die Taste
+/// hier beantwortet werden; das System nimmt einem die Arbeit nicht ab.
+///
+/// ⚑ **Gerufen wird das erst aus einer bejahten Abbruchfrage**
+/// (2026-09-15), nicht mehr direkt aus dem Tastendruck: Der laufende
+/// Auftrag laesst sich nicht zurueckrufen, und ein Prozess, der mitten
+/// in einer Erzeugung ohne ein Wort endet, kostet den ganzen Lauf.
 fn abbrechen(schirm: Option<Schirm>) -> ! {
     let _ = crossterm::terminal::disable_raw_mode();
     if let Some(s) = schirm {
@@ -476,6 +531,23 @@ fn zeichnen(
                 let _ = write!(aus, "{t}\r\n");
             }
         }
+    }
+
+    // ⚑ **Die Abbruchfrage verdraengt die Statuszeile genauso**, und sie
+    // steht **nach** der Vorlage: Wer im `manual mode` gerade gefragt
+    // wird, soll diese Frage zuerst beantworten.
+    if l.abbruchfrage && l.frage.is_none() {
+        if !l.abbruch_gestellt {
+            l.abbruch_gestellt = true;
+            let _ = write!(
+                aus,
+                "\r\x1b[2K{}  Wirklich beenden? [Eingabe] ja   [n] weiter{}",
+                crossterm::style::SetForegroundColor(design::toene(bild).beiwerk),
+                crossterm::style::ResetColor
+            );
+            let _ = aus.flush();
+        }
+        return;
     }
 
     // ⚑ **Eine offene Frage verdraengt die Statuszeile.** Zwei Zeilen
@@ -706,6 +778,8 @@ mod tests {
             strom: String::new(),
             strom_offen: false,
             saat: 1,
+            abbruchfrage: false,
+            abbruch_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -731,6 +805,8 @@ mod tests {
             strom: String::new(),
             strom_offen: false,
             saat: 7,
+            abbruchfrage: false,
+            abbruch_gestellt: false,
             frage: None,
             gestellt: false,
             antwort: None,
@@ -815,5 +891,47 @@ impl Stromgriff {
             myl_client::strom::Stueck::Denken(t) => l.strom.push_str(&t),
             myl_client::strom::Stueck::Text(t) => l.strom.push_str(&t),
         }
+    }
+}
+
+#[cfg(test)]
+mod abbruchprobe {
+    /// ⚑ **Der Abbruch mitten im Lauf fragt nach, und zwar auf beiden
+    /// Tasten** (Auftrag des Projektinhabers, 2026-09-15).
+    ///
+    /// 📌 Vorher beendete Strg-C den Prozess mitten in einer Erzeugung
+    /// **ohne ein Wort** (`abbrechen` ruft `exit(130)`). Wer sich
+    /// vertippte, verlor den Lauf.
+    #[test]
+    fn beide_tasten_fragen_statt_zu_beenden() {
+        let quelle = include_str!("anzeige.rs");
+        assert!(
+            quelle.contains("KeyCode::Char('c') | KeyCode::Char('x') => abbruchfrage_stellen(&lage),"),
+            "Strg-C oder Strg-X beendet noch ohne Frage"
+        );
+        // Und beendet wird nur aus der Antwort heraus.
+        let antwortzweig = quelle
+            .split("if offene_abbruchfrage(&lage) {")
+            .nth(1)
+            .expect("die offene Abbruchfrage wird nicht zuerst behandelt");
+        assert!(
+            antwortzweig.contains("abbrechen(schirm);"),
+            "eine bejahte Abbruchfrage beendet nicht: {antwortzweig:.200}"
+        );
+    }
+
+    /// ⛔️ **Die Abbruchfrage und die Vorlage im `manual mode` sind zwei
+    /// Fragen.** Ein Feld fuer beide, und ein Tastendruck haette die eine
+    /// mit der Antwort auf die andere beantwortet.
+    #[test]
+    fn die_abbruchfrage_hat_ihren_eigenen_zustand() {
+        let quelle = include_str!("anzeige.rs");
+        assert!(quelle.contains("abbruchfrage: bool,"), "kein eigener Zustand");
+        // Die Vorlage geht vor: Wer gerade gefragt wird, antwortet zuerst
+        // darauf.
+        assert!(
+            quelle.contains("if l.abbruchfrage && l.frage.is_none() {"),
+            "die Abbruchfrage verdraengt die Vorlage"
+        );
     }
 }

@@ -271,6 +271,28 @@
       </button>
     </form>
 
+    <!-- ⚑ **Die Warnung vor dem Agentenbetrieb** (Auftrag des
+         Projektinhabers, 2026-09-15). Sie liegt ueber allem und laesst
+         sich nur ueber ihren Knopf schliessen: Wer sie wegklicken kann,
+         ohne sie zu lesen, hat nicht zugestimmt. Der Text kommt aus der
+         Kiste, damit die Konsole denselben sagt. -->
+    <div id="warnung" class="warnung" hidden role="dialog" aria-modal="true"
+         aria-labelledby="warnungtitel">
+      <div class="warnungkasten">
+        <h2 id="warnungtitel" class="warnungachtung"></h2>
+        <p id="warnungkern" class="warnungkern"></p>
+        <details id="warnunganleitung" class="warnunganleitung">
+          <summary id="warnunganleitungtitel"></summary>
+          <ul id="warnungregeln"></ul>
+        </details>
+        <label class="warnunghaken">
+          <input type="checkbox" id="warnungnichtwieder">
+          <span id="warnungnichtwiedertext"></span>
+        </label>
+        <button type="button" id="warnungok" class="warnungok">OK</button>
+      </div>
+    </div>
+
     <!-- ⚑ Die Einstellungen sind eine SEITE und kein Ausklapper. Sie
          nehmen den ganzen Raum, weil man sie nicht nebenbei bedient,
          und das Gespraech bleibt derweil stehen. -->

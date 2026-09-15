@@ -62,6 +62,11 @@ __pycache__/
 kette.dat
 kette.log
 
+# Protokolle langer Messlaeufe (Bodenmessung, ueber Nacht). Das Ergebnis
+# ist die JSON-Datei daneben, die mitgeht; das Protokoll ist nur der Weg
+# dorthin und traegt Fortschrittszeilen und Pfade dieser Maschine.
+BENCHMARKS/Inferenz/results/*.log
+
 # Lokale Arbeitsnotizen, die nicht veroeffentlicht werden.
 #
 # ⚠️ Eine Zeile hier ist selbst versioniert: Ein Leser sieht, DASS es

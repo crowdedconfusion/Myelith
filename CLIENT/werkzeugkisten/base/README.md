@@ -1,13 +1,24 @@
-# Werkzeugkiste: base
+# Werkzeugkiste: Base
 
 Ein Werkzeug ist hier eine JSON-Datei, die der Agent **zur Laufzeit** liest;
 nichts muss neu gebaut werden. Sobald eine Datei hier liegt, sieht das
 Modell das Werkzeug.
 
 ⚑ **Die eingebauten Dateiwerkzeuge** (`list_directory`, `read_file`,
-`search`, `write_file`, `edit_file`) kommen ohnehin dazu; sie sind
+`search_files`, `write_file`, `edit_file`) kommen ohnehin dazu; sie sind
 kompiliert und halten die Einhaengegrenze ein. Was hier liegt, kommt
 obendrauf.
+
+⛔️ **Warum die fuenf nicht als Manifest hier liegen.** Ein Manifest
+laeuft ueber `sh -c` und haelt die Einhaengegrenze **nicht** ein; die
+kompilierten tun es. Sie hierher zu verlegen saehe aufgeraeumter aus und
+naehme dem Agenten seine Grenze. Deshalb bleiben sie kompiliert, und
+dieser Ordner enthaelt, was darueber hinausgeht.
+
+⚑ **Base ist die Grundlage jeder anderen Kiste.** Was hier liegt, bekommt
+auch `Advanced` und jede selbst gewaehlte Kiste; gestapelt, nicht
+kopiert. Wer ein Werkzeug von hier ersetzen will, legt eines mit
+demselben Namen in seine eigene Kiste.
 
 ## Format einer Werkzeugdatei
 

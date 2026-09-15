@@ -13,7 +13,7 @@ use std::io::{IsTerminal, Write};
 use crossterm::cursor::MoveTo;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::style::{Print, ResetColor, SetForegroundColor};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::schirm::{Rahmen, Schirm};
 use crate::{animation, anzeige, auswahl, banner, design, eingabe, einstellseite, farben, wahl};
@@ -92,6 +92,13 @@ pub fn fahren() -> i32 {
     }
     banner::bildschirm_mit(farbe);
 
+    // ⚑ **Die Warnung vor dem Agentenbetrieb** (Auftrag des
+    // Projektinhabers, 2026-09-15). Diese Konsole **ist** der Agent,
+    // also steht sie am Anfang und nicht hinter einem Schalter.
+    if warnung_zeigen(farbe) == SCHLECHT {
+        return SCHLECHT;
+    }
+
     let mut stand = Stand {
         ordner,
         modell: None,
@@ -122,9 +129,19 @@ pub fn fahren() -> i32 {
     // ⚑ **Erst das Modell, dann die Eingabe.** Ein Eingabefeld, das bei
     // der ersten Zeile „kein Modell" sagt, hat die Frage nur
     // aufgeschoben.
-    if !modell_waehlen(&mut stand) {
-        return SCHLECHT;
+    // ⚑ **Hier fragt nichts nach** (Festlegung des Projektinhabers,
+    // 2026-09-15): Vor der ersten Wahl laeuft kein Modell, es ist nichts
+    // zu verlieren, und eine Rueckfrage waere nur eine Taste mehr. Die
+    // Sicherung greift erst, wenn schon eines gewaehlt ist, also in
+    // `/model`.
+    match modell_waehlen(&mut stand) {
+        Modellwahl::Geladen => {}
+        Modellwahl::Abgebrochen => return GUT,
+        Modellwahl::Unmoeglich => return SCHLECHT,
     }
+    // ⚑ Auch hier frei: Die Modelliste ist abgearbeitet, und das Laden
+    // soll auf einem leeren Schirm stehen, nicht unter ihr.
+    frei_bis_auf_das_logo(design::toene(stand.design).akzent);
 
     // ⚑ **Erst jetzt wird der untere Rand reserviert.** Vorher laufen
     // Vorspann, Modellwahl und Ladeanzeige, und die sollen den ganzen
@@ -176,6 +193,29 @@ fn schirm_leeren() {
 ///
 /// ⚠️ Esc laesst alles, wie es ist. **Eine Frage, die sich nicht
 /// ueberspringen laesst, ist keine Frage, sondern eine Huerde.**
+/// **Bildschirm frei, nur der Schriftzug bleibt.**
+///
+/// ⚑ Auftrag des Projektinhabers, 2026-09-15: Nach einer Wahl soll die
+/// Liste nicht stehen bleiben. Was gewaehlt wurde, steht danach ohnehin
+/// in der Fusszeile; die abgearbeitete Liste ist von da an nur noch
+/// Vorgeschichte und schiebt das Kommende nach unten.
+///
+/// ⚠️ **Nur mit Terminal.** In einer Roehre waere ein Loeschbefehl
+/// Zeichensalat in einer Datei, und der Schriftzug stuende dann zweimal
+/// darin.
+fn frei_bis_auf_das_logo(farbe: crossterm::style::Color) {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+        crossterm::cursor::MoveTo(0, 0),
+    );
+    banner::bildschirm_mit(farbe);
+}
+
 fn design_waehlen(stand: &mut Stand) {
     use myl_client::einstellungen::Konsolendesign;
     let punkte: Vec<wahl::Punkt> = Konsolendesign::ALLE
@@ -191,14 +231,34 @@ fn design_waehlen(stand: &mut Stand) {
     {
         stand.design = Konsolendesign::ALLE[i];
     }
+    // ⚑ Mit der eben gewaehlten Farbe: Der Schriftzug zeigt die
+    // Entscheidung, statt sie erst beim naechsten Bildschirm zu zeigen.
+    frei_bis_auf_das_logo(design::toene(stand.design).akzent);
 }
 
-fn modell_waehlen(stand: &mut Stand) -> bool {
+/// Wie eine Modellwahl ausgegangen ist.
+///
+/// ⚑ **Drei Ausgaenge statt zweier** (Auftrag des Projektinhabers,
+/// 2026-09-15). `bool` warf „der Nutzer hat abgebrochen" und „hier geht
+/// es nicht" in einen Topf, und der Aufrufer konnte das eine nicht vom
+/// anderen unterscheiden: Esc beendete das Programm genauso wie ein
+/// fehlendes Artefakt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Modellwahl {
+    /// Gewaehlt und geladen.
+    Geladen,
+    /// Der Nutzer hat Esc gedrueckt. **Eine Absicht, keine Not.**
+    Abgebrochen,
+    /// Es gibt nichts zu waehlen oder das Laden scheiterte.
+    Unmoeglich,
+}
+
+fn modell_waehlen(stand: &mut Stand) -> Modellwahl {
     let e = match myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
         Ok(e) => e,
         Err(f) => {
             eprintln!("myelith: die Einstellungen sind nicht lesbar: {f}");
-            return false;
+            return Modellwahl::Unmoeglich;
         }
     };
 
@@ -209,7 +269,7 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
     if !liste.iter().any(|m| m.offen) {
         eprintln!("myelith: hier liegt kein gebautes Artefakt.");
         eprintln!("  Im Fenster laesst sich eines holen und bauen: `myl-oberflaeche`.");
-        return false;
+        return Modellwahl::Unmoeglich;
     }
 
     let punkte: Vec<wahl::Punkt> = liste
@@ -244,7 +304,7 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
 
     let Some(i) = wahl::waehlen_ab("Welches Modell?", &punkte, start, design::toene(stand.design))
     else {
-        return false;
+        return Modellwahl::Abgebrochen;
     };
     let pfad = myl_client::ort::absolut(&liste[i].pfad);
     let name = liste[i].name.clone();
@@ -287,17 +347,17 @@ fn modell_waehlen(stand: &mut Stand) -> bool {
             println!();
             // ⚑ Die Kiste haengt am Modell, also wird sie hier
             // bestimmt und nicht bei jedem Auftrag neu.
-            let (kiste, _warum) = e.agent.werkzeuge.aufloesen(Path::new(&pfad));
+            let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
             stand.kiste = kiste.name().to_string();
             stand.name = name;
             stand.artefakt = pfad;
             stand.modell = Some(m);
-            true
+            Modellwahl::Geladen
         }
         Err(f) => {
             println!();
             eprintln!("myelith: das Modell laesst sich nicht laden: {f}");
-            false
+            Modellwahl::Unmoeglich
         }
     }
 }
@@ -537,10 +597,25 @@ fn schleife(stand: &mut Stand) -> i32 {
                 continue;
             }
             eingabe::Eingabe::Ende => {
-                // Eingabeende, also Strg-D: das ist ein Abschied und
-                // kein Fehler.
+                // Eingabeende, also Strg-D oder Strg-C: das ist ein
+                // ausdruecklicher Abschied und kein Fehler. **Hier wird
+                // nicht gefragt**, sonst waere Strg-C abgefangen.
                 println!();
                 return GUT;
+            }
+            eingabe::Eingabe::Abbruch(ausgang) => {
+                // ⚑ **Escape fragt nach** (Auftrag des Projektinhabers,
+                // 2026-09-15): An dieser Stelle laeuft ein geladenes
+                // Modell, und die Taste liegt neben den Pfeiltasten.
+                // Ein `n` fuehrt zurueck in die Sitzung, die Zeile ist
+                // ohnehin leer.
+                println!();
+                // ⚑ Die Vorgabe haengt an der Taste: Escape bleibt,
+                // Strg-X beendet.
+                if wirklich_beenden(ausgang == eingabe::Ausgang::StrgX) {
+                    return GUT;
+                }
+                continue;
             }
         };
         let text = zeile.trim().to_string();
@@ -569,10 +644,50 @@ fn schleife(stand: &mut Stand) -> i32 {
                 continue;
             }
             Some(Befehlsart::Modell) => {
+                // ⚑ **Hier greift die Sicherung** (Auftrag des
+                // Projektinhabers, 2026-09-15): An dieser Stelle laeuft
+                // bereits ein Modell, und ein Esc wuerde eine Sitzung
+                // samt geladenem Artefakt wegwerfen. Gefragt wird mit
+                // j/n, und **n fuehrt zurueck zur Wahl** statt in eine
+                // Sitzung ohne Modell.
+                //
+                // ⚑ **Erst das alte weg.** Zwei Artefakte passen nicht
+                // nebeneinander in diesen Speicher; deshalb ist der Weg
+                // zurueck eine neue Wahl und kein Zurueckholen.
                 stand.modell = None;
-                if !modell_waehlen(stand) {
-                    eprintln!("Das Modell bleibt, wie es war.");
+                loop {
+                    match modell_waehlen(stand) {
+                        Modellwahl::Geladen => break,
+                        Modellwahl::Abgebrochen => {
+                            // Escape in der Auswahl: Vorgabe ist bleiben.
+                            if wirklich_beenden(false) {
+                                return GUT;
+                            }
+                        }
+                        // 📌 **Hier stand „Das Modell bleibt, wie es
+                        // war."** Das stimmte nicht: Eine Zeile darueber
+                        // ist es entladen worden. Ein Satz, der das
+                        // Gegenteil dessen sagt, was geschehen ist, ist
+                        // schlimmer als keiner.
+                        Modellwahl::Unmoeglich => {
+                            eprintln!("  Kein Modell geladen. Mit /model eines waehlen.");
+                            break;
+                        }
+                    }
                 }
+                continue;
+            }
+            Some(Befehlsart::Werkzeugkiste) => {
+                // ⚑ **Gesetzt wird in `einstellseite`**, nicht hier:
+                // Diese Datei zeigt Einstellungen und aendert keine.
+                match einstellseite::werkzeugkiste_waehlen(design::toene(stand.design)) {
+                    Some(name) => {
+                        stand.kiste = name;
+                        println!("  Werkzeugkiste: {}", stand.kiste);
+                    }
+                    None => println!("  Die Werkzeugkiste bleibt, wie sie war."),
+                }
+                println!();
                 continue;
             }
             Some(Befehlsart::Einstellungen) => {
@@ -616,6 +731,7 @@ const HILFE_BEFEHL: &str = "/help";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Befehlsart {
     Modell,
+    Werkzeugkiste,
     Einstellungen,
     Kontext,
     Verdichten,
@@ -640,11 +756,16 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 7] = [
+const BEFEHLE: [Befehl; 8] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
         was: "ein anderes Modell waehlen und laden",
+    },
+    Befehl {
+        art: Befehlsart::Werkzeugkiste,
+        namen: &["/toolkit", "/werkzeugkiste"],
+        was: "eine andere Werkzeugkiste waehlen",
     },
     Befehl {
         art: Befehlsart::Einstellungen,
@@ -674,7 +795,7 @@ const BEFEHLE: [Befehl; 7] = [
     Befehl {
         art: Befehlsart::Ende,
         namen: &["/exit", "/ende", "/quit"],
-        was: "Schluss (oder Strg-D)",
+        was: "Schluss (oder Escape und Strg-X, beide mit Rueckfrage)",
     },
 ];
 
@@ -754,7 +875,7 @@ fn einstellungen_zeigen(stand: &mut Stand) {
             stand.modus = e.agent.modus;
             stand.design = e.oberflaeche.design;
             if !stand.artefakt.is_empty() {
-                let (kiste, _) = e.agent.werkzeuge.aufloesen(Path::new(&stand.artefakt));
+                let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
                 stand.kiste = kiste.name().to_string();
             }
         }
@@ -772,7 +893,7 @@ fn ansage_fuer(stand: &Stand) -> Option<myl_client::Nachricht> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok()?;
     let mut agent = e.agent.clone();
     agent.wurzel = Some(stand.ordner.display().to_string());
-    let (kiste, _) = e.agent.werkzeuge.aufloesen(Path::new(&stand.artefakt));
+    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
     let r = myl_client::ruestung::ruesten_mit(&agent, myl_client::Ansageform::Amtlich, kiste, Vec::new(), None).ok()?;
     Some(myl_client::gespraech::ansage(&r))
 }
@@ -866,7 +987,7 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
     // ⚑ **Die Kiste folgt dem geladenen Modell**, sofern der Nutzer
     // nichts anderes eingestellt hat. Gerechnet wird das in der Kiste,
     // nicht hier: Fenster und Konsole stellen dieselbe Frage.
-    let (kiste, _warum) = e.agent.werkzeuge.aufloesen(Path::new(&stand.artefakt));
+    let kiste = myl_client::kisten::kiste_der_gilt(&e.agent);
 
 
     // ⚑ **Was geschieht, steht da, waehrend es geschieht.** Ein
@@ -1271,6 +1392,299 @@ mod tests {
             r.innen <= crate::schirm::BLOCKBREITE - 2,
             "der Rahmen ist mit {} Zeichen breiter als der Kopf",
             r.innen
+        );
+    }
+}
+
+/// **Die Warnung vor dem Agentenbetrieb, in der Konsole.**
+///
+/// ⚑ **Derselbe Text wie im Fenster**, aus `myl_client::warnung`: Eine
+/// Warnung, die im einen Bedieninstrument strenger ist als im anderen,
+/// ist keine Warnung, sondern eine Stichprobe.
+///
+/// ⚑ **Die Anleitung steht nicht sofort da, sondern auf Tastendruck.**
+/// Sieben Regeln vor jedem Start waeren nach dem dritten Mal eine Wand,
+/// die niemand mehr liest; wer sie will, bekommt sie.
+///
+/// ⛔️ **Und hier gibt es kein „nicht mehr zeigen".** Diese Konsole
+/// **zeigt** Einstellungen und setzt sie nicht; ein zweiter Setzer waere
+/// die dritte Stelle, die dieselben Feinheiten kennt, und
+/// `die_logik_kommt_aus_der_kiste` haelt das fest. Abschalten laesst sie
+/// sich mit `myl setzen agent.warnung aus` oder ueber das Haekchen im
+/// Fenster.
+///
+/// ⚠️ **Ohne Terminal wird nichts gefragt.** In einer Roehre gibt es
+/// niemanden, der zustimmen koennte; die Warnung wird dann gedruckt und
+/// der Lauf geht weiter, so wie der Vorspann dort auch entfaellt.
+fn warnung_zeigen(farbe: crossterm::style::Color) -> i32 {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) else {
+        return GUT;
+    };
+    if !e.agent.warnung {
+        return GUT;
+    }
+    let w = myl_client::warnung::warnung(e.oberflaeche.sprache);
+
+    // ⚑ **Als Block zentriert, nicht zeilenweise** (Auftrag des
+    // Projektinhabers, 2026-09-15). `banner::zentriert` richtet den
+    // ganzen Block an seiner breitesten Zeile aus; zeilenweise
+    // verrutschten die Zeilen gegeneinander, dieselbe Lehre wie bei der
+    // Auswahlliste. Ausserhalb eines Terminals tut es nichts, und das
+    // ist richtig: In einer Roehre waeren Leerzeichen am Zeilenanfang
+    // nur Muell in einer Datei.
+    // ⚑ **Der Rumpf zuerst, die Achtungszeile danach**: Sie soll
+    // innerhalb des Blocks mittig stehen, und dafuer muss die Breite des
+    // Blocks feststehen. `banner::zentriert` richtet spaeter den ganzen
+    // Block aus; diese eine Zeile wird zusaetzlich darin zentriert.
+    let mut block = String::new();
+    for zeile in umbrechen(w.kern, 64) {
+        block.push_str(&zeile);
+        block.push('\n');
+    }
+    // ⚑ **Die Anleitung steht vollstaendig da** (Auftrag des
+    // Projektinhabers, 2026-09-15). Sie lag bis hierher hinter einer
+    // Taste, mit dem Gedanken, sieben Regeln vor jedem Start seien eine
+    // Wand. **Eine Anleitung, die man erst anfordern muss, liest
+    // niemand**, und es ist der eine Bildschirm, auf dem es sich lohnt.
+    //
+    // ⚑ **Alles in EINEM Block**, auch die Regeln: Zentriert wird an der
+    // breitesten Zeile, und saessen Kern und Regeln in getrennten
+    // Bloecken, haetten sie verschiedene Einzuege und die Zuordnung waere
+    // hin.
+    block.push('\n');
+    block.push_str(&format!("{}\n\n", w.anleitung_titel));
+    for r in &w.regeln {
+        for (i, zeile) in umbrechen(r.regel, 62).into_iter().enumerate() {
+            block.push_str(&format!("{} {zeile}\n", if i == 0 { "*" } else { " " }));
+        }
+        // 📌 **Der Grund steht auf derselben Einrueckung wie der
+        // Stichpunkttext.** Vier Leerzeichen gegen zwei ergaben eine
+        // Stufe zwischen der ersten Zeile und der zweiten, und die las
+        // sich wie ein Fehler (Meldung des Projektinhabers,
+        // 2026-09-15). Den Unterschied traegt das Sternchen, nicht der
+        // Rand.
+        for zeile in umbrechen(r.grund, 62) {
+            block.push_str(&format!("  {zeile}\n"));
+        }
+        block.push('\n');
+    }
+    // ⚠️ **Das Warnzeichen belegt zwei Spalten, zaehlt aber als ein
+    // Zeichen.** Ohne diese Berichtigung saesse die Zeile um zwei
+    // Spalten zu weit rechts.
+    let spalten = |z: &str| z.chars().count() + z.matches('⚠').count();
+    let breite = block.lines().map(spalten).max().unwrap_or(0);
+    let mitte = " ".repeat(breite.saturating_sub(spalten(w.achtung)) / 2);
+    let block = format!("{mitte}{}\n\n{block}", w.achtung);
+
+    println!();
+    println!("{}", crate::banner::zentriert(&block));
+
+    if !std::io::stdin().is_terminal() {
+        return GUT;
+    }
+
+    print!("{}", crate::banner::zentriert("[Eingabe] verstanden: "));
+    let _ = std::io::stdout().flush();
+    let mut zeile = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut zeile);
+    // ⚑ **Hier steht fest, dass gedruckt wurde und ein Terminal da ist.**
+    // Die frueheren Ausgaenge drucken nichts (Warnung abgeschaltet) oder
+    // haben kein Terminal; dort waere ein Loeschbefehl ein Flackern ohne
+    // Grund oder Zeichensalat in einer Datei.
+    frei_bis_auf_das_logo(farbe);
+    GUT
+}
+
+/// **Fragt, ob wirklich Schluss sein soll.**
+///
+/// ⚑ **Die Vorgabe haengt an der Taste** (Festlegung des
+/// Projektinhabers, 2026-09-15), und das grosse Zeichen in der Frage
+/// nennt sie:
+///
+/// - **Escape** wird neben den Pfeiltasten gestreift. Vorgabe `N`, also
+///   bleibt man per Eingabe; Beenden verlangt ein ausdrueckliches `j`.
+/// - **Strg-X** ist ein Zweifingergriff mit Absicht. Vorgabe `J`, also
+///   beendet Eingabe; `n` haelt an.
+///
+/// ⚠️ **Ohne Terminal wird nicht gefragt**, sondern beendet: Dort ist
+/// niemand, der antworten koennte, und eine Frage in einer Roehre waere
+/// ein Haenger.
+fn wirklich_beenden(vorgabe_ja: bool) -> bool {
+    use std::io::{BufRead, IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return true;
+    }
+    loop {
+        let frage = if vorgabe_ja {
+            "Wirklich beenden? (J/n): "
+        } else {
+            "Wirklich beenden? (j/N): "
+        };
+        print!("{}", crate::banner::zentriert(frage));
+        let _ = std::io::stdout().flush();
+        let mut zeile = String::new();
+        if std::io::stdin().lock().read_line(&mut zeile).is_err() {
+            // Kein Eingabestrom mehr (Strg-D): Das ist ein Schluss.
+            return true;
+        }
+        match zeile.trim().to_ascii_lowercase().as_str() {
+            "j" | "ja" | "y" | "yes" => return true,
+            "n" | "nein" | "no" => return false,
+            // Eingabe allein nimmt die Vorgabe an.
+            "" => return vorgabe_ja,
+            // Eine unverstandene Antwort beendet nichts; sie fragt noch
+            // einmal.
+            _ => continue,
+        }
+    }
+}
+
+/// Bricht einen Satz auf eine Breite, ohne Woerter zu zerschneiden.
+fn umbrechen(text: &str, breite: usize) -> Vec<String> {
+    let mut aus = Vec::new();
+    let mut zeile = String::new();
+    for wort in text.split_whitespace() {
+        if !zeile.is_empty() && zeile.chars().count() + 1 + wort.chars().count() > breite {
+            aus.push(std::mem::take(&mut zeile));
+        }
+        if !zeile.is_empty() {
+            zeile.push(' ');
+        }
+        zeile.push_str(wort);
+    }
+    if !zeile.is_empty() {
+        aus.push(zeile);
+    }
+    aus
+}
+
+#[cfg(test)]
+mod abbruchprobe {
+    use super::*;
+
+    /// **Die drei Ausgaenge der Modellwahl bleiben unterscheidbar.**
+    ///
+    /// 📌 Vorher gab sie `bool` zurueck, und damit sah „der Nutzer hat
+    /// Esc gedrueckt" genauso aus wie „hier gibt es kein Artefakt". Esc
+    /// beendete deshalb das Programm ohne Rueckfrage (Auftrag des
+    /// Projektinhabers, 2026-09-15).
+    #[test]
+    fn abgebrochen_ist_nicht_unmoeglich() {
+        assert_ne!(Modellwahl::Abgebrochen, Modellwahl::Unmoeglich);
+        assert_ne!(Modellwahl::Abgebrochen, Modellwahl::Geladen);
+        // Und der Aufrufer behandelt genau diese drei; ein vierter Fall
+        // muesste hier auffallen.
+        for w in [Modellwahl::Geladen, Modellwahl::Abgebrochen, Modellwahl::Unmoeglich] {
+            let _ = match w {
+                Modellwahl::Geladen => 0,
+                Modellwahl::Abgebrochen => 1,
+                Modellwahl::Unmoeglich => 2,
+            };
+        }
+    }
+
+    /// ⚑ **Die Rueckfrage steht erst, wenn schon ein Modell laeuft.**
+    ///
+    /// Vor der ersten Wahl beendet Esc ohne Frage: Dort ist nichts zu
+    /// verlieren (Festlegung des Projektinhabers, 2026-09-15). In
+    /// `/model` ist ein Artefakt geladen, und dann fragt es.
+    #[test]
+    fn die_rueckfrage_steht_nur_bei_laufendem_modell() {
+        let quelle = include_str!("sitzung.rs");
+        // Der Start: abgebrochen heisst beenden, ohne Frage.
+        assert!(
+            quelle.contains("Modellwahl::Abgebrochen => return GUT,"),
+            "der Start fragt nach, soll aber nicht"
+        );
+        // `/model`: abgebrochen fragt nach.
+        let bei_model = quelle
+            .split("Modellwahl::Abgebrochen => {")
+            .nth(1)
+            .expect("der fragende Abbruchzweig fehlt");
+        assert!(
+            bei_model.contains("wirklich_beenden("),
+            "bei laufendem Modell fragt der Abbruch nicht nach: {bei_model}"
+        );
+        // Und `Unmoeglich` fragt nirgends: Eine Frage ohne Ausweg waere
+        // eine Schleife.
+        assert!(
+            !quelle.contains("Modellwahl::Unmoeglich => {\n                            if wirklich_beenden("),
+            "auch `Unmoeglich` fragt nach"
+        );
+    }
+}
+
+#[cfg(test)]
+mod vorgabeprobe {
+    /// ⚑ **Die Vorgabe der Rueckfrage haengt an der Taste** (Festlegung
+    /// des Projektinhabers, 2026-09-15): Escape bleibt, Strg-X beendet.
+    ///
+    /// 📌 Vorher galt eine Vorgabe fuer beide, und damit beendete
+    /// Eingabe auch nach einem gestreiften Escape.
+    #[test]
+    fn escape_bleibt_und_strg_x_beendet() {
+        let quelle = include_str!("sitzung.rs");
+        // Beide Fragezeilen stehen da, und das grosse Zeichen nennt die
+        // Vorgabe.
+        assert!(quelle.contains("\"Wirklich beenden? (J/n): \""), "die Ja-Vorgabe fehlt");
+        assert!(quelle.contains("\"Wirklich beenden? (j/N): \""), "die Nein-Vorgabe fehlt");
+        // Eine leere Antwort nimmt die Vorgabe an, statt etwas zu raten.
+        assert!(
+            quelle.contains("\"\" => return vorgabe_ja,"),
+            "die Eingabetaste nimmt die Vorgabe nicht an"
+        );
+        // Und die Zuordnung: Strg-X gibt `true`, Escape in der Auswahl `false`.
+        assert!(
+            quelle.contains("wirklich_beenden(ausgang == eingabe::Ausgang::StrgX)"),
+            "die Vorgabe haengt nicht an der Taste"
+        );
+        assert!(
+            quelle.contains("wirklich_beenden(false)"),
+            "Escape in der Modellwahl beendet per Eingabe"
+        );
+    }
+
+    /// ⚑ **Die Konsole arbeitet in dem Verzeichnis, aus dem sie
+    /// gestartet wurde** (Festlegung des Projektinhabers, 2026-09-15).
+    ///
+    /// Seit demselben Tag hat das Fenster eine Vorgabe (`WORK_DIR` im
+    /// Repositorium), und die gilt hier **nicht**: Wer `myelith` in
+    /// einem Projekt aufruft, will darin arbeiten und nicht in einem
+    /// Beispielordner.
+    ///
+    /// 📌 **Geprueft wird, dass jede Stelle sie ueberschreibt, nicht
+    /// dass sie es an einer tut.** Die Vorgabe greift in `ruestung.rs`
+    /// ueber ein `or_else`, also genau dann, wenn `wurzel` hier `None`
+    /// bleibt. Kommt eine dritte Ruestung in dieser Datei dazu und
+    /// vergisst die Zeile, faellt sie still auf den Beispielordner
+    /// zurueck, und niemand sieht es. Deshalb zaehlt dieser Test die
+    /// Ruestungen gegen die Zuweisungen.
+    ///
+    /// 📌 **Gelesen wird nur der Teil vor den Testmodulen** (Fehlgriff
+    /// beim Schreiben dieses Tests): Ein Muster, das in der Probe selbst
+    /// steht, zaehlt sich mit, und die Verbotspruefung schlug an ihrem
+    /// eigenen Doc-Kommentar fehl. **Eine Quellprobe, die sich selbst
+    /// liest, prueft etwas anderes als sie meint.**
+    #[test]
+    fn die_konsole_arbeitet_wo_sie_gestartet_wurde() {
+        let ganz = include_str!("sitzung.rs");
+        let quelle = ganz.split("#[cfg(test)]").next().expect("der Code vor den Tests");
+        let zuweisungen = quelle
+            .matches("agent.wurzel = Some(stand.ordner.display().to_string());")
+            .count();
+        let ruestungen = quelle.matches("ruestung::ruesten").count();
+        assert!(
+            zuweisungen >= ruestungen,
+            "{ruestungen} Ruestungen, aber nur {zuweisungen} Mal das Startverzeichnis gesetzt: \
+             eine davon faellt auf die Vorgabe des Fensters zurueck"
+        );
+        assert!(zuweisungen > 0, "das Startverzeichnis wird nirgends gesetzt");
+        // Und die Vorgabe des Fensters wird hier nirgends selbst geholt.
+        assert!(
+            !quelle.contains("standard_wurzel"),
+            "die Konsole holt die Vorgabe des Fensters"
         );
     }
 }

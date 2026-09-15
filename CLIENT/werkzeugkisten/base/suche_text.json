@@ -1,0 +1,12 @@
+{
+  "name": "suche_text",
+  "beschreibung": "Sucht eine Zeichenkette in allen Dateien unterhalb des Arbeitsordners und nennt Datei und Zeilennummer. Ergaenzt search_files, das nur Dateinamen sucht.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "muster": { "type": "string", "description": "Die gesuchte Zeichenkette." }
+    },
+    "required": ["muster"]
+  },
+  "befehl": "grep -rn --binary-files=without-match -- {muster} . | head -n 200"
+}

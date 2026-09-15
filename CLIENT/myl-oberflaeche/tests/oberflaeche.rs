@@ -2652,3 +2652,115 @@ fn der_eingerastete_modus_ist_am_knopf_zu_sehen() {
         "dem eingerasteten Modus fehlt die Marke am linken Rand"
     );
 }
+
+/// **Pfad und Kistenname sind selbst die Bedienelemente.**
+///
+/// 📌 Auftrag des Projektinhabers am 2026-09-15: Neben beiden stand ein
+/// beschrifteter Knopf („Verzeichnis wechseln", „andere Werkzeugkiste"),
+/// und die Seitenleiste ist dafuer zu schmal, beide wurden
+/// abgeschnitten. Statt die Beschriftung zu kuerzen, bis sie nichts mehr
+/// sagt, traegt die Angabe selbst die Handlung.
+///
+/// ⚑ **Geprueft wird, dass es ein `button` bleibt.** Ein anklickbarer
+/// Absatz saehe gleich aus und waere mit der Tastatur nicht erreichbar.
+#[test]
+fn der_wert_selbst_ist_der_knopf() {
+    let js = lies("app.js");
+    let f = js
+        .split("async function reichweite_zeichnen(")
+        .nth(1)
+        .expect("`reichweite_zeichnen` fehlt");
+    let rumpf = &f[..f.find("\n}").unwrap_or(f.len())];
+
+    assert!(
+        rumpf.contains("k.className = \"reichweitewert blank\""),
+        "der Wert ist kein Knopf mehr: {rumpf}"
+    );
+    assert!(
+        !rumpf.contains("reichweiteknopf"),
+        "der abgeschnittene Zusatzknopf ist zurueck: {rumpf}"
+    );
+    // ⚑ **Die Werkzeugliste gehoert nicht mehr in die Leiste**, sondern
+    // hinter den Knopf in den Einstellungen.
+    assert!(
+        !rumpf.contains("werkzeugliste"),
+        "die Werkzeugliste steht wieder in der Leiste: {rumpf}"
+    );
+    assert!(
+        js.contains("function werkzeugzeile()"),
+        "der Knopf `Werkzeuge anzeigen` fehlt"
+    );
+    assert!(
+        js.contains("letzte_agentenzeile.after(werkzeugzeile())"),
+        "die Werkzeugzeile haengt nicht an der Agentenrubrik"
+    );
+    // Und sie entscheidet am Feldnamen, nicht an der uebersetzten
+    // Ueberschrift: `agent.` ist in jeder Sprache dasselbe.
+    assert!(
+        js.contains("f.name.startsWith(\"agent.\")"),
+        "die Rubrik wird an der Ueberschrift erkannt statt am Feldnamen"
+    );
+}
+
+/// **Das Modell folgt dem geoeffneten Gespraech, und die Kistenwahl
+/// geht dort auf, wo die Kisten liegen.**
+///
+/// ⚑ Zwei Auftraege des Projektinhabers vom 2026-09-15. Geprueft wird
+/// beides an der Quelle, nicht am Aussehen.
+#[test]
+fn das_gespraech_bringt_sein_modell_mit() {
+    let js = lies("app.js");
+
+    // 1. Eingestellt, aber nicht geladen: kein `modell_laden` im Rumpf.
+    let f = js
+        .split("async function modell_dem_gespraech_folgen(")
+        .nth(1)
+        .expect("`modell_dem_gespraech_folgen` fehlt");
+    let rumpf = &f[..f.find("\n}").unwrap_or(f.len())];
+    assert!(
+        rumpf.contains("feld: \"modell.artefakt\""),
+        "das Modell wird nicht eingestellt: {rumpf}"
+    );
+    assert!(
+        !rumpf.contains("modell_laden"),
+        "das Modell wird beim Oeffnen geladen, es soll nur eingestellt werden: {rumpf}"
+    );
+    // 📌 Ein Wechsel muss das alte wegwerfen, sonst faehrt der naechste
+    // Auftrag damit weiter; dieselbe Lehre wie beim `modellwahl`-Rueckruf.
+    assert!(
+        rumpf.contains("geladen = false") && rumpf.contains("modell_entladen"),
+        "der Wechsel entlaedt das alte Modell nicht: {rumpf}"
+    );
+    // Und beim Oeffnen wie beim Start wird es gerufen.
+    assert!(
+        js.contains("modell_dem_gespraech_folgen(g);"),
+        "beim Oeffnen eines Gespraechs folgt das Modell nicht mit"
+    );
+    assert!(
+        js.contains("await modell_dem_gespraech_folgen(offen);"),
+        "beim Start folgt das Modell nicht mit"
+    );
+    // Gemerkt wird es beim Senden.
+    assert!(
+        js.contains("offen.modell = artefakt;"),
+        "das benutzte Modell wird nicht am Gespraech gemerkt"
+    );
+
+    // 2. Die Kistenwahl startet in der Kistenheimat, nicht im Nichts.
+    let k = js
+        .split("async function kiste_wechseln(")
+        .nth(1)
+        .expect("`kiste_wechseln` fehlt");
+    let krumpf = &k[..k.find("\n}").unwrap_or(k.len())];
+    assert!(
+        krumpf.contains("r.kistenheimat"),
+        "die Kistenwahl kennt ihren Startort nicht: {krumpf}"
+    );
+    // ⚠️ Gesetzt wird `agent.kistenordner` weiterhin, das ist der Zweck.
+    // Gemeint ist der **Startort**: Er darf nicht aus dem Einstellungswert
+    // kommen, denn der ist per Vorgabe leer.
+    assert!(
+        !krumpf.contains("e.werte[\"agent.kistenordner\"]"),
+        "die Kistenwahl startet wieder am leeren Einstellungswert: {krumpf}"
+    );
+}

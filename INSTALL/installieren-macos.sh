@@ -193,6 +193,14 @@ for zeile in $PROGRAMME; do
   IFS=$ALTES_IFS
   # shellcheck disable=SC2086
   set -- $zeile
+  # ⛔️ **Erst weg, dann hin.** Wird eine Programmdatei an Ort und Stelle
+  # ueberschrieben, behaelt macOS die alte Signatur im Zwischenspeicher;
+  # sie passt dann nicht mehr zum neuen Inhalt, und der Kern erschlaegt
+  # das Programm beim Start mit SIGKILL, ohne ein Wort. Gesehen am
+  # 2026-09-15 an `myelith`: Rueckgabe 137, keine Ausgabe, waehrend
+  # dieselbe Datei aus `target-shared` lief. Fuer `Myelith.app` stand das
+  # `rm -rf` schon darunter; fuer die Programme fehlte es.
+  $SUDO rm -f "$BIN/$2"
   $SUDO cp "$WURZEL/target-shared/release/$2" "$BIN/$2"
   IFS='
 '

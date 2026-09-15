@@ -1,4 +1,10 @@
-# Werkzeugkiste: advanced
+# Werkzeugkiste: Advanced
+
+
+⚑ **Diese Kiste erbt alles aus `Base`.** Die Werkzeuge dort werden
+mitgeladen, ohne dass eine Datei doppelt liegt; hier steht nur, was
+`Advanced` **zusaetzlich** hat. Dazu kommt das eingebaute
+`run_command`, das `Base` nicht bekommt.
 
 Ein Werkzeug ist hier eine JSON-Datei, die der Agent **zur Laufzeit** liest;
 nichts muss neu gebaut werden. Sobald eine Datei hier liegt, sieht das

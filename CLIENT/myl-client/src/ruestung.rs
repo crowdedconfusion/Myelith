@@ -124,6 +124,19 @@ pub fn ruesten_mit(
     nachfrage: Option<Nachfrage>,
 ) -> Result<Ruestung, String> {
     let mut kasten = Werkzeugkasten::neu();
+
+    // ⚑ **Die verankerte Kiste haengt immer**, auch ohne eingehaengtes
+    // Verzeichnis und auch im Chat: Ihre Werkzeuge fassen nichts an,
+    // also gibt es nichts zu begrenzen. Genau deshalb traegt sie den
+    // Auftrag „schreibe mir ein Dokument" dort, wo die Dateiwerkzeuge
+    // gar nicht erst entstehen.
+    for (angebot, ausfuehrung) in crate::verankert::angebote() {
+        let name = angebot.name.clone();
+        kasten
+            .einhaengen(angebot, ausfuehrung)
+            .map_err(|f| format!("Verankertes Werkzeug {name} haengt nicht: {f:?}"))?;
+    }
+
     for (angebot, ausfuehrung) in zusaetzlich {
         let name = angebot.name.clone();
         kasten
@@ -131,10 +144,11 @@ pub fn ruesten_mit(
             .map_err(|f| format!("Werkzeug {name} haengt nicht: {f:?}"))?;
     }
 
-    // ⚑ **Ohne gesetzten Ordner der CTF-Ordner als Vorgabe** (Auftrag des
-    // Projektinhabers, 2026-09-14): So hat der Agent von Haus aus einen
-    // sinnvollen Spielplatz. Wer nichts gesetzt hat und den Ordner nicht
-    // findet, bekommt wie bisher keine Dateiwerkzeuge.
+    // ⚑ **Ohne gesetzten Ordner `WORK_DIR` als Vorgabe** (Auftrag des
+    // Projektinhabers, 2026-09-15; davor der CTF-Ordner): So hat der
+    // Agent von Haus aus einen Arbeitsplatz mit Beispieldateien, an
+    // denen jedes Werkzeug sich zeigt. Wer nichts gesetzt hat und den
+    // Ordner nicht findet, bekommt wie bisher keine Dateiwerkzeuge.
     let wurzel = agent
         .wurzel
         .clone()
@@ -179,9 +193,10 @@ pub fn ruesten_mit(
             // Neubau. Nur mit Schreiberlaubnis (ein Manifest-Werkzeug wirkt,
             // siehe `crate::kisten`), und im `manual mode` mit derselben
             // Nachfrage wie die schreibenden eingebauten.
-            if let Some(ordner) = crate::kisten::kiste_ordner(satz.kennung()) {
+            {
+                let kette = crate::kisten::ordnerkette(agent);
                 for (angebot, mut ausfuehrung) in
-                    crate::kisten::angebote(&ordner, &ein, |_warnung| {})
+                    crate::kisten::angebote_der_kette(&kette, &ein, |_warnung| {})
                 {
                     let name = angebot.name.clone();
                     if let Some(f) = nachfrage.clone() {
@@ -216,13 +231,43 @@ pub fn ruesten_mit(
     let mut registratur = myl_agent::registratur::Registratur::neu();
     let mut adressen = BTreeMap::new();
     for angebot in kasten.angebote() {
+        // ⚑ **Die Marke haengt am Werkzeug und nicht am Kasten**
+        // (2026-09-15). Bis hierher stand hier pauschal `Extern`/`Lokal`,
+        // und daraus folgte, dass die Vorgabebetriebsart `NurVerankert`
+        // **alles** sperrte: ein Netzlauf mit nachrechenbarem Modell und
+        // ohne Werkzeuge. Die verankerte Kiste rechnet aus ihren
+        // Eingaben und sonst nichts, also traegt sie
+        // `Deterministisch`/`Verankert` und kommt durch.
+        //
+        // ⛔️ **Die Registratur laesst sich dabei nicht ueberreden:**
+        // `StufePasstNichtZurArt` lehnt ein externes Werkzeug ab, das
+        // sich als verankert ausgibt. Die Marke ist verdient, nicht
+        // gesetzt.
+        let verankert = crate::verankert::Verankert::ALLE
+            .iter()
+            .any(|w| w.name() == angebot.name);
+        let (art, herkunft, revision) = if verankert {
+            (
+                myl_agent::manifest::Werkzeugart::Deterministisch,
+                myl_agent::manifest::Herkunft::Verankert,
+                // ⚑ Die Vertragsfassung geht in die Adresse ein: Wer die
+                // Regeln aendert, aendert die Adressen.
+                crate::verankert::VERTRAG.to_string(),
+            )
+        } else {
+            (
+                myl_agent::manifest::Werkzeugart::Extern,
+                myl_agent::manifest::Herkunft::Lokal,
+                "1".to_string(),
+            )
+        };
         let manifest = myl_agent::manifest::Werkzeugmanifest {
             name: angebot.name.clone(),
             anbieter: "myl-client".to_string(),
-            revision: "1".to_string(),
+            revision,
             lizenz: "Apache-2.0".to_string(),
-            art: myl_agent::manifest::Werkzeugart::Extern,
-            herkunft: myl_agent::manifest::Herkunft::Lokal,
+            art,
+            herkunft,
         };
         // ⚑ Die Adresse ist der Abdruck des Manifests, also hergeleitet
         // und nicht erfunden.

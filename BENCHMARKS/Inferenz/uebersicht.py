@@ -43,6 +43,17 @@ def _zahl(x: float) -> str:
     return f"{x:.2f}".replace(".", ",")
 
 
+def _prozent(p: float) -> str:
+    """Vorzeichenbehaftet, deutsch, mit echtem Minuszeichen.
+
+    📌 **Hier stand ein festes Pluszeichen** in der Bodenspalte, und der
+    erste negative Boden (4B, das Schema kostet nichts) waere als
+    `+-2,45 %` erschienen. Ein Vorzeichen gehoert gerechnet, nicht
+    angenommen.
+    """
+    return f"{'+' if p >= 0 else '−'}{_zahl(abs(p))} %"
+
+
 def _abstand(p: float) -> str:
     """Der Abstand, und bei zu kleinem Betrag die ehrliche Auskunft.
 
@@ -55,7 +66,7 @@ def _abstand(p: float) -> str:
     return f"**{'+' if p > 0 else '−'}{_zahl(abs(p))} %**"
 
 
-def _eintraege() -> list[tuple[str, dict, dict]]:
+def _eintraege() -> list[tuple[str, dict, dict | None, dict | None]]:
     katalog = json.loads(KATALOG.read_text(encoding="utf-8"))
     modelle = [(k, v) for k, v in katalog.items() if not k.startswith("_")]
     modelle.sort(key=lambda kv: kv[1].get("reihung", 0.0))
@@ -78,7 +89,54 @@ def _eintraege() -> list[tuple[str, dict, dict]]:
         # Muster wie Fund 340 und Fund 341: Ein Rueckfall auf einen
         # anderen Gegenstand ist schlimmer als eine Luecke, weil eine
         # Luecke auffaellt.
-        raus.append((schluessel, eintrag, json.loads(datei.read_text()) if datei.exists() else None))
+        #
+        # Der Boden des Schemas, falls er fuer dieses Modell gemessen ist
+        # (`tests/diag/w8a16_reference_simulation.py`). Fehlt er, bleibt
+        # die Zelle leer: derselbe Grundsatz wie oben, eine Luecke wird
+        # benannt und nicht gefuellt.
+        boden_datei = ERGEBNISSE / f"schema_boden{suffix}.json"
+        raus.append((
+            schluessel,
+            eintrag,
+            json.loads(datei.read_text()) if datei.exists() else None,
+            json.loads(boden_datei.read_text()) if boden_datei.exists() else None,
+        ))
+    return raus
+
+
+def _abgeloeste(lebende: set[str]) -> list[tuple[str, str, dict, dict | None]]:
+    """Gemessene Reihen, deren Modell nicht mehr im Katalog steht.
+
+    ⚑ **Eine Messung verfällt nicht, weil das Modell geht** (Festlegung
+    des Projektinhabers, 2026-09-15). Qwen2.5-0,5B, Qwen2.5-7B und das
+    dichte 14B sind aus dem Projekt heraus, ihre Zahlen sind trotzdem
+    gemessen und in Whitepaper-Vorarbeit und Changelog zitiert. Sie lagen
+    bis heute nur als Dateien da: Der Katalog kennt sie nicht, also kam
+    die Uebersicht nie an ihnen vorbei, und wer sie suchte, musste wissen,
+    dass es sie gibt.
+
+    ⚑ **Gefunden wird auf der Platte, nicht in einer Liste hier.** Eine
+    Liste im Skript waere eine zweite Stelle, die beim naechsten
+    Abloesen nachgezogen werden muesste, und genau die zieht niemand
+    nach. Der Name kommt aus der Grundlinie, die ihn selbst traegt.
+    """
+    raus = []
+    for datei in sorted(ERGEBNISSE.glob("perplexity_comparison*.json")):
+        suffix = datei.stem[len("perplexity_comparison"):]
+        if suffix.lstrip("_") in lebende:
+            continue
+        grundlinie = ERGEBNISSE / f"baseline_wikitext2{suffix}.json"
+        name = suffix.lstrip("_") or "ohne Modellnamen"
+        if grundlinie.exists():
+            name = json.loads(grundlinie.read_text()).get("model", name)
+            name = name.replace(" (HF, BF16)", "")
+        boden = ERGEBNISSE / f"schema_boden{suffix}.json"
+        raus.append((
+            name,
+            suffix,
+            json.loads(datei.read_text()),
+            json.loads(boden.read_text()) if boden.exists() else None,
+        ))
     return raus
 
 
@@ -99,7 +157,7 @@ def bauen() -> str:
         "| Modell | Gleitkomma | Ganzzahl | Positionen | Abstand | Kriterium ≤ 5 % |",
         "|---|---|---|---|---|---|",
     ]
-    for schluessel, eintrag, v in eintraege:
+    for schluessel, eintrag, v, b in eintraege:
         name = eintrag.get("anzeigename", schluessel)
         if v is None:
             zeilen.append(f"| {name} | | | | **nicht gemessen** | |")
@@ -116,28 +174,67 @@ def bauen() -> str:
         "",
         "## Was daraus folgt",
         "",
-        "⚑ **Je kleiner das Modell, desto teurer die Quantisierung**, und",
-        "das ist keine Vermutung mehr, sondern über die ganze Reihe",
+        "⚑ **Je kleiner das Modell, desto grösser der gemessene Abstand**,",
+        "und das ist keine Vermutung mehr, sondern über die ganze Reihe",
         "gemessen. Das kleinste Modell liegt als einziges nennenswert nahe",
-        "an der Grenze; wer es wählt, wählt auch das, bei dem die",
-        "Quantisierung am meisten kostet.",
+        "an der Grenze; wer es wählt, wählt auch das, bei dem der Abstand",
+        "am grössten ist.",
         "",
-        "⚠️ **Was diese Tabelle nicht sagt.** Die Zahlen einer Zeile lassen",
-        "sich mit denen einer anderen **nicht** vergleichen: Jede misst",
-        "gegen ihre eigene Referenz. Ein Modell mit 33,29 ist nicht",
-        "schlechter als eines mit 11,54, sondern kleiner.",
+        "⛔️ **Der Abstand allein sagt nicht, woher er kommt.** Wieviel",
+        "das Quantisierungsschema selbst kostet, steht im nächsten",
+        "Abschnitt; der Rest ist Umsetzung.",
         "",
-        "⚠️ **Der Boden des Quantisierungsschemas fehlt hier.** Er ist an",
-        "einem Modell gemessen, das nicht mehr Teil des Projekts ist, und",
-        "für diese Reihe nicht neu bestimmt.",
-        "",
+    ]
+
+    boeden = []
+    for schluessel, eintrag, _v, _b in eintraege:
+        suffix = f"_{schluessel.replace('.', '')}"
+        for datei in sorted(ERGEBNISSE.glob(f"schema_boden*{suffix}.json")):
+            boeden.append((eintrag.get("anzeigename", schluessel), json.loads(datei.read_text())))
+    if boeden:
+        zeilen += [
+            "",
+            "## Der Boden des Schemas",
+            "",
+            "⚑ **Was das Verfahren selbst kostet**, gemessen mit W8A16 und",
+            "sonst Gleitkomma (`INTEGER_LLM/tests/diag/w8a16_reference_simulation.py`).",
+            "Der Rest des Abstands oben ist Umsetzung.",
+            "",
+            "⛔️ **Diese Zahlen gehören nicht in die Tabelle oben.** Sie sind",
+            "über eine andere, grössere Stichprobe gemessen, also über",
+            "anderen Text. Eine Differenz zwischen beiden Tabellen wäre eine",
+            "erfundene Zahl; das Messwerkzeug weigert sich deshalb, sie zu",
+            "bilden. **Für einen belastbaren Umsetzungsverlust muss auch der",
+            "Ganzzahlpfad über denselben Umfang gemessen werden**, und das",
+            "steht aus.",
+            "",
+            "📌 **Warum so viele Positionen.** Auf den 435 der Tabelle oben",
+            "ergab dieselbe Messung beim 4B einen Boden von −2,45 %, also",
+            "eine Quantisierung, die das Modell verbessert. Auf 13 797",
+            "Positionen blieb davon −0,07 %. Ein einzelnes Token, dessen",
+            "Wahrscheinlichkeit um eine Grössenordnung springt, verschiebt",
+            "bei 435 Positionen die Perplexität schon um ein halbes Prozent.",
+            "",
+            "| Modell | Positionen | Gleitkomma | nur Gewichte (W8) | Boden (W8A16) |",
+            "|---|---|---|---|---|",
+        ]
+        for name, d in boeden:
+            zeilen.append(
+                f"| {name} | {d['ausgewertete_positionen']} "
+                f"| {_zahl(d['baseline_perplexitaet'])} "
+                f"| {_zahl(d['nur_gewichte_perplexitaet'])} "
+                f"| {_zahl(d['boden_perplexitaet'])} ({_prozent(d['boden_prozent'])}) |"
+            )
+        zeilen.append("")
+
+    zeilen += [
         "## Wo die Einzelbelege stehen",
         "",
         "Je Modell ein Entscheidungsprotokoll und ein Vergleich, beide",
         "erzeugt von `perplexity.py`:",
         "",
     ]
-    for schluessel, eintrag, _ in eintraege:
+    for schluessel, eintrag, _, _ in eintraege:
         suffix = f"_{schluessel.replace('.', '')}"
         zeilen.append(
             f"- **{eintrag.get('anzeigename', schluessel)}**: "
@@ -150,13 +247,58 @@ def bauen() -> str:
         "Beleg ihres Modells, mit Methode, Datensatz und Einordnung. Diese",
         "Übersicht ersetzt sie nicht, sie erspart nur das Nebeneinanderlegen.",
         "",
-        "⚠️ **Ältere Dateien ohne Modellnamen** (`decision_12-21.md`,",
-        "`baseline_wikitext2.json`, `perplexity_comparison.json`) gehören zu",
-        "Qwen2.5-0,5B und bleiben als Aufzeichnung stehen. Das Modell ist",
-        "seit dem 2026-09-11 aus dem Projekt heraus; seine Messung ist in",
-        "Whitepaper-Vorarbeit und Changelog zitiert.",
-        "",
     ]
+
+    # 📌 **Verglichen wird in der Form des Dateinamens, nicht in der des
+    # Katalogs.** Hier stand der blanke Katalogschluessel, und der traegt
+    # den Punkt (`myelith-0.6b`), den `ergebnis_pfad` aus dem Suffix
+    # entfernt (`myelith-06b`). Kein lebendes Modell traf sich selbst, und
+    # das 0,6B tauchte prompt unter den abgeloesten auf. Dieselbe Angabe
+    # in zwei Schreibweisen, wie sie dieses Projekt schon oefter hatte.
+    abgeloest = _abgeloeste({s.replace(".", "") for s, _, _, _ in eintraege})
+    if abgeloest:
+        zeilen += [
+            "## Abgelöste Modelle (Aufzeichnung)",
+            "",
+            "⚑ **Eine Messung verfällt nicht, weil das Modell geht.** Diese",
+            "Größen sind nicht mehr Teil des Projekts; ihre Zahlen sind",
+            "gemessen, mit derselben Methode und auf denselben 435",
+            "Positionen, und in Whitepaper-Vorarbeit und Changelog zitiert.",
+            "Sie stehen hier, damit man sie findet, ohne zu wissen, dass es",
+            "sie gibt.",
+            "",
+            "⛔️ **Nicht mit der Tabelle oben verrechnen.** Zwei der drei",
+            "stammen aus einer anderen Modellfamilie (Qwen2.5); ein",
+            "Größenvergleich über die Grenze hinweg misst den",
+            "Familienunterschied mit.",
+            "",
+            "| Modell | Gleitkomma | Ganzzahl | Positionen | Abstand | Boden des Schemas |",
+            "|---|---|---|---|---|---|",
+        ]
+        for name, _suffix, v, b in abgeloest:
+            boden = _prozent(b["boden_prozent"]) if b else "*keine Datei*"
+            zeilen.append(
+                f"| {name} | {_zahl(v['baseline_perplexity'])} "
+                f"| {_zahl(v['integer_perplexity'])} "
+                f"| {v.get('evaluated_tokens', '?')} "
+                f"| {_abstand(v['delta_pct'])} "
+                f"| {boden} |"
+            )
+        zeilen += [
+            "",
+            "⚠️ **Der Boden von Qwen2.5-7B (+0,84 %) hat keine Ergebnisdatei.**",
+            "Er wurde am 2026-08-20 gemessen, als das Werkzeug sein Ergebnis",
+            "nur ausgab und nicht ablegte; die Zahl steht im Ergebnisblock",
+            "von `INTEGER_LLM/README/README.md` und gilt dort. Hier bleibt",
+            "die Zelle leer, statt eine Datei zu erfinden, die es nicht gibt.",
+            "",
+            "⚠️ **Die Dateien ohne Modellnamen** (`decision_12-21.md`,",
+            "`baseline_wikitext2.json`, `perplexity_comparison.json`) gehören",
+            "zu Qwen2.5-0,5B und behalten ihre Namen mit Absicht: Sie sind",
+            "unter diesen Namen zitiert.",
+            "",
+        ]
+
     return "\n".join(zeilen)
 
 

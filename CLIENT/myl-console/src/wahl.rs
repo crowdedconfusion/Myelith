@@ -139,10 +139,46 @@ fn passend(text: &str, breite: usize) -> String {
     text.chars().take(breite.saturating_sub(1)).chain(['…']).collect()
 }
 
+/// **Die Breite des gezeichneten Blocks**, ueber alles, was gezeichnet
+/// wird: Kopf, Titel, Hinweise und die Fusszeile.
+///
+/// 📌 **Bliebe eines davon draussen, stuende der Block schief**, sobald
+/// gerade dieses das breiteste waere. Dieselbe Rechnung fuehrt
+/// `auswahl::blockbreite` fuer den anderen Auswahlbaustein.
+fn blockbreite(kopf: &str, punkte: &[Punkt], platz: usize) -> usize {
+    // ⛔️ **Gemessen wird das GEZEICHNETE, nicht das Uebergebene.**
+    // `passend` kuerzt jede Zeile auf `platz`; wer die ungekuerzte Laenge
+    // misst, haelt den Block faelschlich fuer breiter als das Fenster,
+    // und `blockeinzug` gibt dann bewusst nichts zurueck. Genau so blieb
+    // die Modellwahl links stehen, waehrend die Designwahl zentriert
+    // war: Ihre Hinweise (Hardware und Pfad) sind lang, die des Designs
+    // kurz. Gemeldet vom Projektinhaber am 2026-09-15.
+    let mut breit = passend(kopf, platz).chars().count() + 2;
+    breit = breit.max(passend(FUSS, platz).chars().count() + 2);
+    for p in punkte {
+        breit = breit.max(passend(&p.titel, platz).chars().count() + 4);
+        if !p.hinweis.is_empty() {
+            breit = breit.max(passend(&p.hinweis, platz.saturating_sub(4)).chars().count() + 6);
+        }
+    }
+    breit
+}
+
+/// Die Fusszeile, einmal: Sie geht in die Breite ein und wird gedruckt.
+const FUSS: &str = "↑ ↓ bewegen · Enter waehlen · Esc abbrechen";
+
 /// Zeichnet und gibt zurueck, wie viele Zeilen es waren.
 fn zeichnen(kopf: &str, punkte: &[Punkt], hier: usize, fertig: bool, t: Toene) -> usize {
     // Sechs Zeichen Rand: der Einzug links und ein wenig Luft rechts.
     let platz = (crate::banner::fensterbreite() as usize).saturating_sub(8).max(20);
+    // ⚑ **Als Block zentriert, nicht zeilenweise** (Meldung des
+    // Projektinhabers, 2026-09-15: Design- und Modellwahl standen links).
+    // 📌 **Dieser Baustein ist der zweite seiner Art**, und die
+    // Zentrierung stand nur im ersten (`auswahl.rs`): dieselbe Sache an
+    // zwei Orten, und der zweite zog nicht nach. Zeilenweise zentriert
+    // verrutschten die Punkte gegeneinander, und die Liste waere keine
+    // mehr; deshalb bekommt jede Zeile **denselben** Einzug.
+    let einzug = crate::banner::blockeinzug(blockbreite(kopf, punkte, platz));
     let mut aus = std::io::stdout();
     let mut zeilen = 0;
     let _ = crossterm::queue!(aus, crossterm::cursor::Hide);
@@ -151,7 +187,7 @@ fn zeichnen(kopf: &str, punkte: &[Punkt], hier: usize, fertig: bool, t: Toene) -
         aus,
         Print("\x1b[2K"),
         SetForegroundColor(t.beiwerk),
-        Print(format!("  {}\r\n\r\n", passend(kopf, platz))),
+        Print(format!("{einzug}  {}\r\n\r\n", passend(kopf, platz))),
         ResetColor
     );
     zeilen += 2;
@@ -159,7 +195,7 @@ fn zeichnen(kopf: &str, punkte: &[Punkt], hier: usize, fertig: bool, t: Toene) -
     for (i, p) in punkte.iter().enumerate() {
         let hierhin = i == hier && !fertig;
         let marke = if hierhin { "▸" } else { " " };
-        let _ = crossterm::queue!(aus, Print("\x1b[2K"), Print(format!("  {marke} ")));
+        let _ = crossterm::queue!(aus, Print("\x1b[2K"), Print(format!("{einzug}  {marke} ")));
         if !p.offen {
             // Gesperrt: gedaempft, und der Grund steht darunter.
             let _ = crossterm::queue!(
@@ -190,7 +226,7 @@ fn zeichnen(kopf: &str, punkte: &[Punkt], hier: usize, fertig: bool, t: Toene) -
                 aus,
                 Print("\x1b[2K"),
                 SetForegroundColor(t.beiwerk),
-                Print(format!("      {}\r\n", passend(&p.hinweis, platz.saturating_sub(4)))),
+                Print(format!("{einzug}      {}\r\n", passend(&p.hinweis, platz.saturating_sub(4)))),
                 ResetColor
             );
             zeilen += 1;
@@ -204,7 +240,7 @@ fn zeichnen(kopf: &str, punkte: &[Punkt], hier: usize, fertig: bool, t: Toene) -
             aus,
             Print("\x1b[2K"),
             SetForegroundColor(t.beiwerk),
-            Print("  ↑ ↓ bewegen · Enter waehlen · Esc abbrechen\r\n"),
+            Print(format!("{einzug}  {FUSS}\r\n")),
             ResetColor
         );
     } else {
@@ -304,5 +340,41 @@ mod tests {
             Punkt { titel: "b".into(), hinweis: String::new(), offen: false },
         ];
         assert_eq!(erster_offener(&p), None);
+    }
+}
+
+#[cfg(test)]
+mod zentrierprobe {
+    use super::*;
+
+    /// **Die Breite geht ueber alles Gezeichnete.**
+    ///
+    /// 📌 Gemeldet vom Projektinhaber am 2026-09-15: Design- und
+    /// Modellwahl standen links, waehrend Schriftzug und der andere
+    /// Auswahlbaustein zentriert waren. Dieser hier hatte die
+    /// Zentrierung nie: **dieselbe Sache an zwei Orten**, und der zweite
+    /// zog nicht nach.
+    #[test]
+    fn die_breite_zaehlt_kopf_titel_hinweis_und_fuss() {
+        let punkte = vec![
+            Punkt { titel: "kurz".into(), hinweis: String::new(), offen: true },
+            Punkt {
+                titel: "auch kurz".into(),
+                // Der Hinweis ist hier das Breiteste und muss zaehlen.
+                hinweis: "ein sehr viel laengerer Hinweis als alles andere".into(),
+                offen: true,
+            },
+        ];
+        let b = blockbreite("Kopf", &punkte, 200);
+        assert!(
+            b >= "ein sehr viel laengerer Hinweis als alles andere".chars().count() + 6,
+            "der Hinweis geht nicht in die Breite ein: {b}"
+        );
+        // Und die Fusszeile ebenso: Sie wird gedruckt, also zaehlt sie.
+        let schmal = blockbreite("k", &[], 200);
+        assert!(
+            schmal >= FUSS.chars().count() + 2,
+            "die Fusszeile geht nicht in die Breite ein: {schmal}"
+        );
     }
 }

@@ -46,6 +46,8 @@ pub mod ort;
 pub mod reservierung;
 pub mod strom;
 pub mod ruestung;
+pub mod verankert;
+pub mod warnung;
 pub mod werkzeuge;
 pub mod kisten;
 

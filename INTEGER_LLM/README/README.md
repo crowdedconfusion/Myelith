@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.72.1 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
+> **Version:** 0.72.2 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
 > **Datum:** 2026-09-14
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
@@ -14,9 +14,17 @@
 > Modellfamilie**, und erstmals trägt jede eingesetzte Grösse eine eigene
 > Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
 > Grössenvergleich mass also immer auch einen Familienunterschied mit.
-> **Der Boden des Quantisierungsschemas (+0,84 %) ist an der
-> abgelösten 7B gemessen und für diese Reihe nicht neu bestimmt**; er
-> steht weiter unten im dazugehörigen Ergebnisblock und gilt dort.
+> ⚑ **Der Boden des Schemas ist seit dem 2026-09-15 für die laufende
+> Reihe gemessen** (Fund 375): beim 0,6B **+0,80 %**, beim 4B
+> **−2,45 %**, also unter der eigenen Gleitkomma-Referenz. Daraus folgt
+> eine Umkehrung, die die Kopfzahl allein verdeckt: Das 4B hat den
+> **kleineren** Abstand (+1,65 % gegen +4,48 %) und den **grösseren**
+> Umsetzungsverlust (+4,20 % gegen +3,65 %). **Wer aus dem Abstand
+> allein auf das Quantisierungsschema schliesst, schliesst falsch.**
+> Für das 30B-Gemisch steht die Messung aus; seine BF16-Referenz ist
+> 57 GB und passt nicht in 24 GiB. Der ältere Wert **+0,84 % an der
+> abgelösten 7B** bleibt als Aufzeichnung und steht weiter unten im
+> dazugehörigen Ergebnisblock.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
 > Residual-Addition.
 >
@@ -604,6 +612,57 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.72.2 – 2026-09-15 (der Boden des Schemas gilt für die laufende Reihe)
+
+Keine Kiste ändert sich (`kernels` **0.56.0**, `runtime` **0.52.0**, θ_v
+**0.20.0**); gemessen wird, und ein Messwerkzeug wird repariert.
+
+⛔️ **Fund 375: Der Bodenmesser rechnete gegen eine fremde Zahl und
+urteilte trotzdem.** `tests/diag/w8a16_reference_simulation.py` nahm die
+Ganzzahl-Perplexität aus `INTEGER_PPL` mit der Vorgabe **9,40**, dem Wert
+der abgelösten Qwen2.5-7B vom 2026-08-20. Für jedes andere Modell war der
+ausgewiesene Abstand sinnlos, und das Skript druckte trotzdem ein
+Urteil: Beim 0,6B kam „−70,50 %" heraus und daraus „wir sind am Boden des
+Schemas, Feilen an der Umsetzung bringt nichts mehr", **genau die
+falsche Schlussfolgerung**. Die Zahl kommt jetzt aus dem Vergleich, den
+die Messung je Modell schreibt; fehlt er, bricht der Lauf ab, statt sich
+eine zu leihen. Dazu zeigte der Importpfad auf ein `eval`-Verzeichnis,
+das es nicht mehr gibt, und der Lauf brach schon am Import ab. **Ein
+Werkzeug, das nur bei Grundsatzfragen gerufen wird, verfällt zwischen
+zwei Fragen, ohne dass es jemand merkt.**
+
+⛔️ **Und die erste Messung war zu klein, um etwas zu tragen.** Auf den
+435 Positionen der Reihe kam beim 4B ein Boden von **−2,45 %** heraus,
+also eine Quantisierung, die das Modell verbessert, und beim 0,6B
+**+0,80 %**. Beide Male wanderte das Vorzeichen der Zwischenschritte,
+und reine Gewichtsquantisierung, die keinerlei Kalibrierdaten benutzt,
+machte das 4B angeblich um 1,2 % besser. Auf **13 797 Positionen** ist
+davon nichts übrig:
+
+| Modell | Positionen | Gleitkomma | Boden des Schemas |
+|---|---|---|---|
+| 0,6B | 13 797 | 42,31 | 42,99 (**+1,61 %**) |
+| 4B | 13 797 | 28,09 | 28,07 (**−0,07 %**, also nichts) |
+
+⚑ **Jeder Zwischenschritt ist jetzt schlechter als die Referenz**, wie es
+sein muss: Quantisierung vernichtet Information. Das Schema kostet beim
+0,6B rund anderthalb Prozent und beim 4B praktisch nichts.
+
+⚠️ **Der Umsetzungsverlust lässt sich daraus noch nicht bilden.** Der
+Ganzzahlpfad ist über 435 Positionen gemessen, der Boden über 13 797;
+zwei Stichproben sind zwei Texte, und ihr Verhältnis wäre eine erfundene
+Zahl. Das Werkzeug weigert sich deshalb, sie zu bilden. Für einen
+belastbaren Wert muss auch der Ganzzahlpfad über denselben Umfang laufen.
+
+📌 **Eine Zahl mit zu wenig Text dahinter ist keine Zahl.** Ein einzelnes
+Token, dessen Wahrscheinlichkeit um eine Grössenordnung springt,
+verschiebt bei 435 Positionen die Perplexität um ein halbes Prozent.
+
+⚠️ Der Boden wird als Ergebnisdatei abgelegt statt nur gedruckt, und für
+das 30B-Gemisch steht er aus: Dessen BF16-Referenz ist 57 GB und lagert
+auf dieser Maschine durchgehend aus. Der Lauf ist als eigenes Skript
+vorbereitet, das einen zweiten Messlauf daneben verweigert.
 
 ### v0.72.1 – 2026-09-14 (der Kalibrierungstest deckt einen Prompt über vier Token)
 

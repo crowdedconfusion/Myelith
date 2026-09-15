@@ -19,6 +19,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// **Die Umgebungsvariable, die den Standard-Arbeitsordner nennt.**
+///
+/// ⚑ Sie hat Vorrang vor dem Ordner im Baum, damit ein Einsatz
+/// ausserhalb des Repositoriums und eine Probe einen eigenen Ordner
+/// nennen koennen, ohne die Einstellungsdatei anzufassen.
+pub const ARBEITSORDNER: &str = "MYL_ARBEITSORDNER";
+
+/// **Wie der Standard-Arbeitsordner im Repositorium heisst.**
+///
+/// ⚑ Derselbe Name wie die Umgebungsvariable ohne Praefix, und das ist
+/// Absicht: Wer den einen liest, kennt den anderen.
+pub const ARBEITSORDNER_IM_BAUM: &str = "WORK_DIR";
+
 /// ⚑ **Was ein Knoten an Hardware hergibt, und fuer wen.**
 ///
 /// # 📌 Die Unterscheidung, an der dieser Punkt haengt
@@ -112,11 +125,18 @@ pub struct Agenteneinstellung {
     pub schritte: u32,
     /// Das Verzeichnis, in dem die Dateiwerkzeuge arbeiten duerfen.
     ///
-    /// ⚑ **Ohne Angabe gibt es keine Dateiwerkzeuge**, und das ist die
-    /// Vorgabe. Das Arbeitsverzeichnis waere die bequeme Wahl und die
-    /// falsche: Ein Agent, der ueberall dort greifen darf, wo der
-    /// Nutzer zufaellig steht, hat keine Grenze, sondern eine
-    /// Gewohnheit.
+    /// ⚑ **Ohne Angabe [`Einstellungen::standard_wurzel`]**, also
+    /// `WORK_DIR` im Repositorium, und wenn es das nicht gibt, keine
+    /// Dateiwerkzeuge. Das **Arbeitsverzeichnis** waere die bequeme
+    /// Wahl und die falsche: Ein Agent, der ueberall dort greifen darf,
+    /// wo der Nutzer zufaellig steht, hat keine Grenze, sondern eine
+    /// Gewohnheit. Ein benannter Ordner mit Beispieldateien ist etwas
+    /// anderes: Er ist eine Entscheidung, und sie steht an einer Stelle.
+    ///
+    /// ⚠️ **Die Konsole setzt dieses Feld selbst**, auf das Verzeichnis,
+    /// aus dem sie gestartet wurde. Wer `myelith` in einem Projekt
+    /// aufruft, will darin arbeiten; die Vorgabe gilt fuer das Fenster,
+    /// das von keinem Verzeichnis aus geoeffnet wird.
     #[serde(default)]
     pub wurzel: Option<String>,
     /// Ob die Dateiwerkzeuge auch schreiben duerfen.
@@ -126,15 +146,30 @@ pub struct Agenteneinstellung {
     /// damit nicht gesagt, dass er es aendern darf.
     #[serde(default)]
     pub schreiben: bool,
-    /// Welche Werkzeugkiste dem Modell angeboten wird.
+    /// Ein eigener Ordner, aus dem die Manifest-Werkzeuge kommen.
     ///
-    /// ⚑ **Vorgabe ist `Automatisch`, und das Modell sagt seine Groesse
-    /// selbst.** Wer einem kleinen Modell trotzdem alles geben will,
-    /// stellt hier `Voll`; wer einem grossen weniger geben will,
-    /// `Grund`. **Die Einstellung schlaegt die Ableitung**, denn wer
-    /// sie anfasst, hat die Frage schon beantwortet.
+    /// ⚑ **Ohne Angabe entscheidet `werkzeuge`**, und der Ordner wird
+    /// unter `CLIENT/werkzeugkisten/Base` genommen. Wer hier einen
+    /// Pfad setzt, waehlt seine Kiste selbst, und ihr Name ist der des
+    /// Ordners.
+    ///
+    /// ⚠️ **Die eingebauten Dateiwerkzeuge haengen weiter an
+    /// `werkzeuge`**, nicht hier. Dieser Pfad sagt nur, wo die
+    /// Manifeste liegen; `run_command` und die Einhaengegrenze bleiben
+    /// an der Kiste, weil daran eine Erlaubnis haengt und nicht ein
+    /// Ordnername, den jeder setzen kann.
     #[serde(default)]
-    pub werkzeuge: Werkzeugwahl,
+    pub kistenordner: Option<String>,
+    /// Ob die Warnung vor dem Agentenbetrieb noch gezeigt wird.
+    ///
+    /// ⚑ **Vorgabe ist `true`**, und das ist die einzige vertretbare:
+    /// Wer noch nie zugestimmt hat, hat noch nicht zugestimmt. Das
+    /// Haekchen im Fenster setzt sie auf `false`.
+    ///
+    /// ⚠️ **Sie ist keine Schranke.** Einhaengegrenze, Schreiberlaubnis
+    /// und Betriebsart wirken unabhaengig davon.
+    #[serde(default = "an")]
+    pub warnung: bool,
     /// Ob schreibende Handlungen vorgelegt werden.
     ///
     /// ⚑ `#[serde(default)]`, damit eine Ablage aus der Zeit davor
@@ -150,7 +185,8 @@ impl Default for Agenteneinstellung {
             schritte: 6,
             wurzel: None,
             schreiben: false,
-            werkzeuge: Werkzeugwahl::Automatisch,
+            kistenordner: None,
+            warnung: true,
             modus: Agentenmodus::Auto,
         }
     }
@@ -714,32 +750,40 @@ impl Einstellungen {
             .expect("die Liste endet immer mit dem Arbeitsverzeichnis")
     }
 
-    /// **Der Standard-Einhaengepfad, wenn keiner gesetzt ist**: der
-    /// CTF-Ordner (Auftrag des Projektinhabers, 2026-09-14).
+    /// **Der Standard-Arbeitsordner, wenn keiner gesetzt ist**:
+    /// `WORK_DIR` im Repositorium (Auftrag des Projektinhabers,
+    /// 2026-09-15).
     ///
-    /// ⚑ **Gefunden statt fest verdrahtet.** Von `MYL_CTF` oder vom
-    /// Arbeitsverzeichnis aufwaerts der erste `BENCHMARKS/Agent/ctf`; so
-    /// findet ihn ein Lauf aus dem Repositorium, und wer ihn woanders hat,
-    /// sagt es ueber die Umgebung. `None`, wenn nichts passt: dann bleibt es
-    /// dabei, dass ohne gesetzten Ordner keine Dateiwerkzeuge laufen.
+    /// ⚑ **Ein Ordner mit Beispieldateien statt des CTF-Ordners.** Bis
+    /// zum 2026-09-15 stand hier `BENCHMARKS/Agent/ctf`. Der ist ein
+    /// Pruefstand mit Aufgaben, kein Arbeitsplatz: Wer den Client zum
+    /// ersten Mal oeffnet, soll Dateien vorfinden, an denen sich jedes
+    /// Werkzeug zeigt, und eine README, die dazu die Prompts nennt.
+    ///
+    /// ⚑ **Ueber [`crate::ort::wurzel`] gefunden, nicht vom
+    /// Arbeitsverzeichnis aufwaerts.**
+    ///
+    /// 📌 Genau dieser Unterschied war der Fehler bei `kiste_ordner`:
+    /// Das Fenster aus dem Finder hat als Arbeitsverzeichnis `/`, und
+    /// ein Lauf aufwaerts von dort findet nie ein Repositorium. `wurzel`
+    /// sucht zusaetzlich beim Programm selbst und faellt auf den
+    /// gemerkten Ort zurueck, und das ist der Fall, um den es hier geht.
+    ///
+    /// `None`, wenn nichts passt: dann bleibt es dabei, dass ohne
+    /// gesetzten Ordner keine Dateiwerkzeuge laufen.
     pub fn standard_wurzel() -> Option<String> {
         use std::path::PathBuf;
-        if let Some(p) = std::env::var_os("MYL_CTF") {
+        // ⚑ **Die Umgebung hat Vorrang**, damit eine Probe und ein
+        // Einsatz ausserhalb des Repositoriums einen eigenen Ordner
+        // nennen koennen, ohne die Einstellungsdatei anzufassen.
+        if let Some(p) = std::env::var_os(ARBEITSORDNER) {
             let p = PathBuf::from(p);
             if p.is_dir() {
                 return Some(p.display().to_string());
             }
         }
-        let mut hier = std::env::current_dir().ok()?;
-        loop {
-            let o = hier.join("BENCHMARKS/Agent/ctf");
-            if o.is_dir() {
-                return Some(o.display().to_string());
-            }
-            if !hier.pop() {
-                return None;
-            }
-        }
+        let o = crate::ort::wurzel()?.join(ARBEITSORDNER_IM_BAUM);
+        o.is_dir().then(|| o.display().to_string())
     }
 
     /// Die Orte, an denen die Einstellungsdatei liegen kann, in der
@@ -996,7 +1040,7 @@ impl Feld {
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 14] = [
+pub const FELDER: [Feld; 15] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1076,24 +1120,29 @@ pub const FELDER: [Feld; 14] = [
         ("Agent", "Agent"),
         ("Arbeitsordner", "Working folder"),
         (
-            "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe gibt es keine Dateiwerkzeuge.",
-            "The only folder the file tools may work in. Unless set there are no file tools at all.",
+            "Der einzige Ordner, in dem die Dateiwerkzeuge arbeiten dürfen. Ohne Angabe der Ordner WORK_DIR mit den Beispieldateien; findet sich auch der nicht, gibt es keine Dateiwerkzeuge.",
+            "The only folder the file tools may work in. Unless set, the WORK_DIR folder with the example files; if that is missing too, there are no file tools at all.",
         ),
     ),
-    feld_wahl(
-        "agent.werkzeuge",
+    feld(
+        "agent.warnung",
+        Feldart::Schalter,
         ("Agent", "Agent"),
-        ("Werkzeugkiste", "Tool box"),
+        ("Warnung vor dem Agentenbetrieb", "Warning before agent use"),
         (
-            "Welche Werkzeuge der Agent angeboten bekommt. Automatisch heisst: nach der Größe des geladenen Modells, Base unter sieben Milliarden Parametern, Advanced darüber. Wer einem kleinen Modell alles geben will, wählt hier Advanced.",
-            "Which tools the agent is offered. Automatic means: by the size of the loaded model, Base below seven billion parameters, Advanced above. To give a small model everything, pick Advanced here.",
+            "Zeigt vor dem Agentenbetrieb, was dabei auf dem Spiel steht, und die Regeln dazu. Das Häkchen im Fenster schaltet sie ab.",
+            "Shows what is at stake in agent mode, and the rules for it, before you use it. The checkbox in the window turns it off.",
         ),
-        &[
-            wahl("automatisch", "Automatisch"),
-            wahl("base", "Base"),
-            wahl("advanced", "Advanced"),
-            wahl_admin("1337", "1337"),
-        ],
+    ),
+    feld(
+        "agent.kistenordner",
+        Feldart::Pfad,
+        ("Agent", "Agent"),
+        ("Lokale Werkzeugkiste", "Local tool box"),
+        (
+            "Der Ordner, aus dem die lokalen Werkzeuge kommen. Sein Name ist der Name der Kiste und sagt zugleich, welche eingebauten Werkzeuge dazukommen: base die fünf Dateiwerkzeuge, advanced zusätzlich run_command. Ohne Angabe die Kiste Base. Die verankerten Werkzeuge kommen unabhängig davon dazu; sie rechnen aus ihren Eingaben und brauchen keinen Ordner.",
+            "The folder the tools come from. Its name is the box name and also decides which built-in tools come along: base the five file tools, advanced adds run_command. Unless set, the Base box. The anchored tools come along regardless; they compute from their inputs and need no folder.",
+        ),
     ),
     feld_wahl(
         "agent.modus",
@@ -1229,6 +1278,14 @@ impl Feldart {
 pub const RECHENWERK_PRAEFIX: &str = "kap.rechenwerk.";
 
 /// Was `an` bedeutet.
+/// ⚑ **Die serde-Vorgabe fuer einen Schalter, der `true` sein muss.**
+/// Eine Ablage aus der Zeit vor diesem Feld traegt es nicht, und
+/// `bool::default()` waere `false`, also „schon zugestimmt". Das waere
+/// eine Zustimmung, die niemand gegeben hat.
+const fn an() -> bool {
+    true
+}
+
 fn ja(w: &str) -> bool {
     matches!(w, "an" | "ja" | "true" | "1")
 }
@@ -1284,8 +1341,17 @@ impl Einstellungen {
             "modell.denken" => Feldwert::Schalter(self.modell.denken),
             "agent.schritte" => Feldwert::Zahl(self.agent.schritte as u64),
             "agent.wurzel" => text(&self.agent.wurzel),
+            // 📌 **Hier stand kurzzeitig die geltende Kiste statt des
+            // gespeicherten Werts**, damit das Feld nicht leer aussieht.
+            // `wert_und_setzer_kennen_dieselben_felder` hat das sofort
+            // gefangen: Nach `aus` muss `Leer` herauskommen. **Ein Feld
+            // sagt, was gespeichert ist**, nicht, was stattdessen wirkt;
+            // sonst liesse sich „nicht gesetzt" nicht mehr von „auf die
+            // Vorgabe gesetzt" unterscheiden. Die geltende Kiste zeigt die
+            // Oberflaeche als Platzhalter an.
+            "agent.kistenordner" => text(&self.agent.kistenordner),
+            "agent.warnung" => Feldwert::Schalter(self.agent.warnung),
             "agent.schreiben" => Feldwert::Schalter(self.agent.schreiben),
-            "agent.werkzeuge" => Feldwert::Text(self.agent.werkzeuge.kennung().to_string()),
             "agent.modus" => Feldwert::Text(self.agent.modus.kennung().to_string()),
             "kap.kerne" => self.kapazitaet.kerne.map_or(Feldwert::Leer, |v| Feldwert::Zahl(v as u64)),
             "kap.speicher" => zahl(self.kapazitaet.speicher_gib),
@@ -1329,8 +1395,11 @@ impl Einstellungen {
                 self.agent.schritte = wert.parse().map_err(|_| format!("{wert} ist keine Zahl"))?
             }
             "agent.wurzel" => self.agent.wurzel = (wert != "aus").then(|| wert.to_string()),
+            "agent.kistenordner" => {
+                self.agent.kistenordner = (wert != "aus").then(|| wert.to_string())
+            }
+            "agent.warnung" => self.agent.warnung = ja(wert),
             "agent.schreiben" => self.agent.schreiben = ja(wert),
-            "agent.werkzeuge" => self.agent.werkzeuge = Werkzeugwahl::aus(wert)?,
             "agent.modus" => self.agent.modus = Agentenmodus::aus(wert)?,
             "kap.kerne" => self.kapazitaet.kerne = opt(wert).map(|v| v as usize),
             "kap.speicher" => self.kapazitaet.speicher_gib = opt(wert),
@@ -1475,7 +1544,7 @@ mod setzer {
         let ordner: Vec<&str> = FELDER.iter().filter(|f| f.ordner).map(|f| f.name).collect();
         assert_eq!(
             ordner,
-            ["modell.artefakt", "agent.wurzel", "ausgabe.ordner"],
+            ["modell.artefakt", "agent.wurzel", "agent.kistenordner", "ausgabe.ordner"],
             "die Menge der Verzeichnisfelder hat sich geaendert; bekommt das neue Feld einen Auswaehler?"
         );
     }
@@ -1737,38 +1806,72 @@ mod setzer {
         }
     }
 
-    /// **`standard_wurzel`**: die Umgebung `MYL_CTF` hat Vorrang, aber
-    /// nur, wenn sie auf ein Verzeichnis zeigt. Eine eigene Variable, die
-    /// sonst niemand liest, deshalb reicht ein eigener Test.
+    /// **`standard_wurzel`**: die Umgebung [`ARBEITSORDNER`] hat
+    /// Vorrang, aber nur, wenn sie auf ein Verzeichnis zeigt. Eine
+    /// eigene Variable, die sonst niemand liest, deshalb reicht ein
+    /// eigener Test.
+    /// # 📌 Beide Fragen in **einem** Test, und das ist kein Zufall
+    ///
+    /// Sie standen kurz als zwei da, und dann fiel der zweite aus: Die
+    /// **Umgebung ist ein einziger Zustand fuer den ganzen Prozess**,
+    /// `cargo test` laeuft nebenlaeufig, und waehrend der eine sie auf
+    /// ein Behelfsverzeichnis stellte, raeumte der andere sie weg. Beide
+    /// waren fuer sich gruen und zusammen rot.
+    ///
+    /// ⚑ **Zusammenlegen statt einen Riegel erfinden.** Ein Mutex haette
+    /// dasselbe geleistet und die Frage aufgeworfen, wer ihn beim
+    /// naechsten Mal noch nimmt; ein Test, der die Reihenfolge selbst in
+    /// der Hand hat, wirft sie nicht auf.
     #[test]
-    fn standard_wurzel_nimmt_die_umgebung() {
-        let alt = std::env::var_os("MYL_CTF");
+    fn standard_wurzel_nimmt_die_umgebung_und_sonst_den_ordner_im_baum() {
+        let alt = std::env::var_os(ARBEITSORDNER);
 
+        // 1. Die Umgebung hat Vorrang, wenn sie auf ein Verzeichnis zeigt.
         let d = tempfile::tempdir().expect("Verzeichnis");
         let erwartet = d.path().display().to_string();
-        std::env::set_var("MYL_CTF", d.path());
+        std::env::set_var(ARBEITSORDNER, d.path());
         assert_eq!(
             Einstellungen::standard_wurzel().as_deref(),
             Some(erwartet.as_str()),
-            "ein MYL_CTF, das auf ein Verzeichnis zeigt, gewinnt"
+            "ein {ARBEITSORDNER}, das auf ein Verzeichnis zeigt, gewinnt"
         );
 
-        // Ein Pfad, der kein Verzeichnis ist, wird uebergangen; dann
-        // faellt die Funktion auf die Suche im Baum zurueck.
+        // 2. Ein Pfad, der kein Verzeichnis ist, wird uebergangen; dann
+        //    faellt die Funktion auf den Ordner im Baum zurueck.
         let datei = d.path().join("keine.txt");
         std::fs::write(&datei, "x").expect("Datei");
-        std::env::set_var("MYL_CTF", &datei);
+        std::env::set_var(ARBEITSORDNER, &datei);
         assert_ne!(
             Einstellungen::standard_wurzel().as_deref(),
             Some(datei.display().to_string().as_str()),
-            "eine Datei ist kein Einhaengeort"
+            "eine Datei ist kein Arbeitsordner"
         );
 
-        match alt {
-            Some(v) => std::env::set_var("MYL_CTF", v),
-            None => std::env::remove_var("MYL_CTF"),
+        // 3. Ohne Umgebung der Ordner im Baum, und den gibt es wirklich.
+        //
+        // 📌 Eine Vorgabe auf einen Ordner, den niemand angelegt hat,
+        // ist keine Vorgabe: `standard_wurzel` gibt dann `None`, und der
+        // Agent startet ohne Dateiwerkzeuge, ohne dass jemand einen
+        // Fehler sieht.
+        std::env::remove_var(ARBEITSORDNER);
+        let w = crate::ort::wurzel().expect("die Wurzel des Repositoriums");
+        let o = w.join(ARBEITSORDNER_IM_BAUM);
+        assert!(o.is_dir(), "{} fehlt", o.display());
+        assert!(
+            o.join("README.md").is_file(),
+            "der Arbeitsordner hat keine README, und dann weiss niemand, \
+             was die Beispieldateien belegen sollen"
+        );
+        assert_eq!(
+            Einstellungen::standard_wurzel(),
+            Some(o.display().to_string()),
+            "die Vorgabe zeigt nicht auf {}",
+            o.display()
+        );
+
+        if let Some(v) = alt {
+            std::env::set_var(ARBEITSORDNER, v);
         }
     }
-
 }
 

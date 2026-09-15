@@ -1,0 +1,3 @@
+Diese Datei liegt zwei Ebenen tief.
+Auch hier steht MERKMAL-7.
+Damit findet eine Suche zwei Dateien.

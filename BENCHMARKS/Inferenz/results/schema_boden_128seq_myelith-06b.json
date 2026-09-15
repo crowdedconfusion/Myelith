@@ -1,0 +1,11 @@
+{
+  "modell": "myelith-0.6b",
+  "datensatz": "wikitext-2-raw-v1 (Testsplit)",
+  "mess_sequenzen": 128,
+  "ausgewertete_positionen": 13797,
+  "baseline_perplexitaet": 42.30522573265066,
+  "boden_perplexitaet": 42.98729235336183,
+  "boden_prozent": 1.61225146278976,
+  "nur_gewichte_perplexitaet": 42.98962800214993,
+  "jeder_linear_eingang_perplexitaet": 43.23944891682905
+}

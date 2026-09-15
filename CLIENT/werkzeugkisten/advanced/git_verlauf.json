@@ -1,0 +1,12 @@
+{
+  "name": "git_verlauf",
+  "beschreibung": "Die letzten Commits des Repositoriums im Arbeitsordner, je einer pro Zeile mit Kurzfassung.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "anzahl": { "type": "string", "description": "Wie viele Commits, zum Beispiel 20." }
+    },
+    "required": ["anzahl"]
+  },
+  "befehl": "git log --oneline -n {anzahl}"
+}

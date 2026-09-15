@@ -428,17 +428,25 @@ fn werkzeuge() -> Result<Werkzeugliste, String> {
     // der Agent wirklich anfasst.
     let wurzel = e.agent.wurzel.clone().or_else(myl_client::Einstellungen::standard_wurzel);
     let Some(pfad) = wurzel else {
-        return Ok(Werkzeugliste { wurzel: None, kiste: kiste.kennung().to_string(), namen: Vec::new() });
+        return Ok(Werkzeugliste {
+            wurzel: None,
+            kiste: kiste.name().to_string(),
+            kistenheimat: kistenheimat(&e),
+            kistenordner: geltender_kistenordner(&e),
+            namen: Vec::new(),
+        });
     };
     // ⚑ Die Einhaengung wird hier wirklich gebaut und nicht geraten:
     // Ein Pfad, der nicht existiert, hat auch keine Werkzeuge, und das
     // soll man sehen, bevor der Auftrag laeuft.
-    let ein = match myl_client::werkzeuge::Einhaengung::neu(&pfad, im_modus(&e).schreiben) {
+    let ein = match myl_client::werkzeuge::Einhaengung::neu(&pfad, e.agent.schreiben) {
         Ok(x) => x,
         Err(m) => {
             return Ok(Werkzeugliste {
                 wurzel: Some(format!("{pfad}  ({m})")),
-                kiste: kiste.kennung().to_string(),
+                kiste: kiste.name().to_string(),
+                kistenheimat: kistenheimat(&e),
+                kistenordner: geltender_kistenordner(&e),
                 namen: Vec::new(),
             })
         }
@@ -450,12 +458,86 @@ fn werkzeuge() -> Result<Werkzeugliste, String> {
             .collect();
     // ⚑ **Auch die Werkzeuge aus dem Kisten-Ordner** (2026-09-14), damit die
     // Seitenleiste zeigt, was wirklich zur Verfuegung steht.
-    if let Some(ordner) = myl_client::kisten::kiste_ordner(kiste.kennung()) {
-        for (angebot, _) in myl_client::kisten::angebote(&ordner, &ein, |_| {}) {
-            namen.push(angebot.name);
-        }
+    let kette = myl_client::kisten::ordnerkette(&e.agent);
+    for (angebot, _) in myl_client::kisten::angebote_der_kette(&kette, &ein, |_| {}) {
+        namen.push(angebot.name);
     }
-    Ok(Werkzeugliste { wurzel: Some(ein.wurzel().display().to_string()), kiste: kiste.kennung().to_string(), namen })
+    let ordner = myl_client::kisten::ordner_der_gilt(
+        e.agent.kistenordner.as_deref(),
+        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+    );
+    Ok(Werkzeugliste {
+        wurzel: Some(ein.wurzel().display().to_string()),
+        kiste: myl_client::kisten::ordnername(
+            ordner.as_deref(),
+            myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+        ),
+        kistenheimat: kistenheimat(&e),
+        kistenordner: geltender_kistenordner(&e),
+        namen,
+    })
+}
+
+/// **Der Ordner, in dem die Werkzeugkisten nebeneinander liegen.**
+///
+/// ⚑ Der Elternordner der geltenden Kiste: Wer `Base` benutzt, soll bei
+/// der Wahl `Base`, `Advanced` und `1337` nebeneinander sehen, nicht den
+/// Inhalt von `Base`.
+fn geltender_kistenordner(e: &myl_client::Einstellungen) -> Option<String> {
+    myl_client::kisten::ordner_der_gilt(
+        e.agent.kistenordner.as_deref(),
+        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+    )
+    .map(|o| o.display().to_string())
+}
+
+fn kistenheimat(e: &myl_client::Einstellungen) -> Option<String> {
+    let o = myl_client::kisten::ordner_der_gilt(
+        e.agent.kistenordner.as_deref(),
+        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+    )?;
+    Some(o.parent().unwrap_or(&o).display().to_string())
+}
+
+/// Die Warnung vor dem Agentenbetrieb, fertig uebersetzt.
+///
+/// ⚑ **Der Text kommt aus der Kiste**, nicht aus dem Skript: Konsole und
+/// Fenster muessen dasselbe sagen, und zweimal getippt liefe es
+/// auseinander.
+#[derive(Serialize)]
+struct Warnungsansicht {
+    achtung: String,
+    kern: String,
+    anleitung_titel: String,
+    regeln: Vec<(String, String)>,
+    zustimmung: String,
+    nicht_wieder: String,
+}
+
+/// **Die Warnung, falls sie noch gezeigt werden soll.**
+///
+/// ⚑ `None` heisst: Der Nutzer hat zugestimmt und das Haekchen gesetzt.
+/// Die Entscheidung faellt hier und nicht im Skript, damit sie an
+/// derselben Einstellung haengt wie in der Konsole.
+#[tauri::command]
+fn agentenwarnung() -> Result<Option<Warnungsansicht>, String> {
+    let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
+    if !e.agent.warnung {
+        return Ok(None);
+    }
+    let w = myl_client::warnung::warnung(e.oberflaeche.sprache);
+    Ok(Some(Warnungsansicht {
+        achtung: w.achtung.to_string(),
+        kern: w.kern.to_string(),
+        anleitung_titel: w.anleitung_titel.to_string(),
+        regeln: w
+            .regeln
+            .iter()
+            .map(|r| (r.regel.to_string(), r.grund.to_string()))
+            .collect(),
+        zustimmung: w.zustimmung.to_string(),
+        nicht_wieder: w.nicht_wieder.to_string(),
+    }))
 }
 
 /// Was der Agent anfassen darf.
@@ -465,8 +547,18 @@ struct Werkzeugliste {
     /// Werkzeuge, und nicht „unbekannt".
     wurzel: Option<String>,
     /// Der Name der Werkzeugkiste, genau der des Ordners unter
-    /// `CLIENT/werkzeugkisten` (`base`, `advanced`, `1337`).
+    /// `CLIENT/werkzeugkisten` (`Base`, `Advanced`, `1337`).
     kiste: String,
+    /// ⚑ **Wo die Kistenwahl aufgehen soll**: das Verzeichnis, in dem die
+    /// Kisten nebeneinander liegen, also der Elternordner der geltenden
+    /// Kiste. Daneben `kistenordner`, die geltende Kiste selbst: Sie
+    /// steht in den Einstellungen als Platzhalter, damit ein leeres Feld
+    /// nicht „keine Werkzeugkiste" behauptet. 📌 Ohne diese Angabe bekam der Dialog einen leeren Startort
+    /// und ging dort auf, wo zuletzt etwas gewaehlt wurde, also beim
+    /// Einhaengepfad. Wer eine Kiste waehlen will, soll die Kisten sehen.
+    kistenheimat: Option<String>,
+    /// Der Ordner, aus dem die Werkzeuge wirklich kommen.
+    kistenordner: Option<String>,
     namen: Vec<String>,
 }
 
@@ -578,11 +670,44 @@ async fn agent_fahren(
     halter: tauri::State<'_, Halter>,
 ) -> Result<Abschluss, String> {
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
-    let ruestung = myl_client::ruestung::ruesten(
-        &im_modus(&e),
+    // ⚑ **Im `manual mode` fragt das Fenster jetzt, statt wegzunehmen**
+    // (Meldung des Projektinhabers, 2026-09-15: das Modell zaehlte nur
+    // drei Werkzeuge auf). Bis hierher setzte `im_modus` in diesem Modus
+    // `schreiben = false`, weil es keinen Bestaetigungskasten gab. Das
+    // nahm nicht nur `write_file`, `edit_file` und `run_command` weg,
+    // sondern **auch jedes Kisten-Werkzeug**: Ein Manifest laeuft ueber
+    // die Shell, gilt deshalb als schreibend und faellt mit. Wer seine
+    // Werkzeugkiste fuellte, sah davon im manual mode nichts.
+    //
+    // ⚑ **Der Kasten ist der des Betriebssystems**, derselbe Weg wie bei
+    // der Ordnerwahl: blockierend, und das ist hier erlaubt, weil der
+    // ganze Lauf in `spawn_blocking` liegt und nicht auf dem Hauptfaden.
+    let nachfrage: Option<myl_client::ruestung::Nachfrage> = if e.agent.modus.fragt_nach() {
+        let app = fenster.clone();
+        Some(std::sync::Arc::new(move |name: &str, argumente: &serde_json::Value| {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+            // ⚑ Die Argumente stehen mit im Kasten: Eine Zustimmung ohne
+            // zu wissen, **worauf**, ist keine.
+            let was = serde_json::to_string_pretty(argumente)
+                .unwrap_or_else(|_| argumente.to_string());
+            app.dialog()
+                .message(format!("{name}\n\n{was}"))
+                .title("Diese Handlung ausfuehren?")
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "Ausfuehren".to_string(),
+                    "Ablehnen".to_string(),
+                ))
+                .blocking_show()
+        }))
+    } else {
+        None
+    };
+    let ruestung = myl_client::ruestung::ruesten_mit(
+        &e.agent,
         myl_client::Ansageform::Amtlich,
         kiste_fuer(&e),
         Vec::new(),
+        nachfrage,
     )?;
     // ⚑ **Die Dateiwerkzeuge laufen, wenn ein Verzeichnis eingehaengt
     // ist.** Bis zum 2026-09-11 stand hier ein zweiter Schalter
@@ -673,7 +798,7 @@ async fn kontext(
     let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())?;
     let ansage = if modus == "agent" {
         let r = myl_client::ruestung::ruesten(
-            &im_modus(&e),
+            &e.agent,
             myl_client::Ansageform::Amtlich,
             kiste_fuer(&e),
             Vec::new(),
@@ -1010,6 +1135,7 @@ fn main() {
             kontext,
             verdichten,
             werkzeuge,
+            agentenwarnung,
             modelle,
             katalog,
             voraussetzungen,
@@ -1288,17 +1414,12 @@ fn artefakt_absolut(pfad: &str) -> String {
 /// die Einhaengung ohnehin geht. Eine zweite Stelle, an der Werkzeuge
 /// zurueckgehalten werden, waere eine zweite Stelle, an der jemand
 /// eines vergisst.
-fn im_modus(e: &myl_client::Einstellungen) -> myl_client::einstellungen::Agenteneinstellung {
-    let mut a = e.agent.clone();
-    if a.modus.fragt_nach() {
-        a.schreiben = false;
-    }
-    a
-}
-
 fn kiste_fuer(e: &myl_client::Einstellungen) -> myl_client::werkzeuge::Werkzeugkiste {
-    let artefakt = artefakt_absolut(&e.modell.artefakt);
-    e.agent.werkzeuge.aufloesen(std::path::Path::new(&artefakt)).0
+    // ⚑ **Der Ordner sagt die Kiste** (2026-09-15). Vorher stand hier
+    // die Auswahl `agent.werkzeuge` samt Ableitung aus der Modellgroesse;
+    // seit in den Einstellungen nur noch der Pfad steht, entscheidet sein
+    // Name, und zwar an genau einer Stelle fuer Fenster und Konsole.
+    myl_client::kisten::kiste_der_gilt(&e.agent)
 }
 
 /// Was fehlt, bevor gebaut werden kann.

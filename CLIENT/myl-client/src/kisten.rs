@@ -36,7 +36,7 @@ use myl_local_agent::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler};
 use myl_local_agent::werkzeug::Werkzeug;
 use serde::Deserialize;
 
-use crate::werkzeuge::{befehl_im_verzeichnis, Einhaengung};
+use crate::werkzeuge::{befehl_im_verzeichnis, Einhaengung, Werkzeugkiste};
 
 /// Ein Werkzeug, wie es als Datei in einer Kiste liegt.
 #[derive(Debug, Clone, Deserialize)]
@@ -109,14 +109,130 @@ pub fn angebote(
         .collect()
 }
 
-/// **Findet den Ordner einer Kiste**, ohne dass etwas fest verdrahtet ist.
+/// **Die Werkzeugkiste, die gilt, aus den Einstellungen.**
 ///
-/// ⚑ Erst die Umgebung `MYL_WERKZEUGKISTEN` (ein Basisverzeichnis, darunter
-/// je Kennung ein Ordner), dann von diesem Verzeichnis aufwaerts der erste
-/// `CLIENT/werkzeugkisten`. So findet ein Lauf aus dem Repositorium die
-/// mitgelieferten Kisten, und wer sie woanders hat, sagt es ueber die
-/// Umgebung. `None`, wenn nichts passt: dann bleibt es bei den eingebauten
-/// Werkzeugen.
+/// ⚑ **Eine Stelle, die das beantwortet** (2026-09-15). Fenster,
+/// Konsole und Ruestung fragen hier; zwei Ableitungen derselben Wahl
+/// liefen auseinander, und die zweite meldet sich nicht. Der Ordner
+/// entscheidet, sein Name sagt die Kiste, ohne Angabe ist es `base`.
+pub fn kiste_der_gilt(agent: &crate::einstellungen::Agenteneinstellung) -> Werkzeugkiste {
+    let ordner = ordner_der_gilt(agent.kistenordner.as_deref(), Werkzeugkiste::Base.name());
+    Werkzeugkiste::aus_ordnername(&ordnername(ordner.as_deref(), Werkzeugkiste::Base.name()))
+}
+
+/// **Alle Ordner, aus denen Manifeste kommen, in dieser Reihenfolge.**
+///
+/// ⚑ **Base ist immer dabei** (Auftrag des Projektinhabers,
+/// 2026-09-15): „Im Advanced-Ordner sollen selbstverstaendlich auch alle
+/// Base-Werkzeuge vorhanden sein." Das gilt hier durch Stapeln und
+/// **nicht durch Kopieren**: Dieselbe Manifestdatei in zwei Ordnern
+/// waeren zwei Orte, die auseinanderlaufen, und der zweite meldet sich
+/// nicht. Genau so ist es bei den eingebauten Werkzeugen auch, wo
+/// `Advanced` die Aufzaehlung `BASE` mitnimmt statt sie abzuschreiben.
+///
+/// ⚑ **Der gewaehlte Ordner kommt zuletzt und gewinnt** bei gleichem
+/// Werkzeugnamen: Wer ein Base-Werkzeug ersetzen will, legt eines mit
+/// demselben Namen in seine Kiste.
+pub fn ordnerkette(agent: &crate::einstellungen::Agenteneinstellung) -> Vec<PathBuf> {
+    let mut kette = Vec::new();
+    if let Some(b) = kiste_ordner(Werkzeugkiste::Base.name()) {
+        kette.push(b);
+    }
+    if let Some(o) = ordner_der_gilt(agent.kistenordner.as_deref(), Werkzeugkiste::Base.name()) {
+        if !kette.contains(&o) {
+            kette.push(o);
+        }
+    }
+    kette
+}
+
+/// **Die Angebote der ganzen Kette**, spaetere Ordner gewinnen.
+pub fn angebote_der_kette(
+    kette: &[PathBuf],
+    ein: &Einhaengung,
+    mut warnung: impl FnMut(String),
+) -> Vec<(Werkzeug, Box<dyn Werkzeugausfuehrung>)> {
+    let mut aus: Vec<(Werkzeug, Box<dyn Werkzeugausfuehrung>)> = Vec::new();
+    for ordner in kette {
+        for (w, a) in angebote(ordner, ein, &mut warnung) {
+            match aus.iter().position(|(v, _)| v.name == w.name) {
+                Some(i) => aus[i] = (w, a),
+                None => aus.push((w, a)),
+            }
+        }
+    }
+    aus
+}
+
+/// **Der Ordner, der wirklich gilt.**
+///
+/// ⚑ **Der gewaehlte Ordner ist die Kiste** (Festlegung des
+/// Projektinhabers, 2026-09-15). In den Einstellungen steht nur noch ein
+/// Pfad; ohne Angabe ist es der mitgelieferte `base`-Ordner.
+///
+/// ⚠️ **Ein gesetzter Pfad, den es nicht gibt, faellt nicht still auf
+/// die Vorgabe zurueck.** Sonst arbeitete der Agent aus einem anderen
+/// Ordner als dem, der in den Einstellungen steht, und niemand saehe es.
+/// `None` heisst dann: keine Manifest-Werkzeuge.
+pub fn ordner_der_gilt(eigener: Option<&str>, kennung: &str) -> Option<PathBuf> {
+    match eigener.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(pfad) => {
+            let o = PathBuf::from(pfad);
+            o.is_dir().then_some(o)
+        }
+        None => kiste_ordner(kennung),
+    }
+}
+
+/// **Der Name, der zu einem Ordner angezeigt wird.**
+///
+/// ⚑ Genau der des Ordners, in dem die Werkzeuge liegen; ohne Ordner die
+/// Kennung der Vorgabekiste.
+pub fn ordnername(ordner: Option<&std::path::Path>, kennung: &str) -> String {
+    ordner
+        .and_then(|o| o.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| kennung.to_string())
+}
+
+/// **Alle Kisten, die nebeneinander liegen.**
+///
+/// ⚑ Die Ordner in der Kistenheimat, also neben der mitgelieferten
+/// `Base`. Sortiert, damit zwei Aufrufe dieselbe Reihenfolge geben; ein
+/// Menue, dessen Punkte springen, ist keines.
+///
+/// ⚑ **Eine selbst gewaehlte Kiste ausserhalb kommt mit**, sonst fiele
+/// sie aus der Liste, sobald jemand sie einmal gewaehlt hat.
+pub fn vorhandene(eigener: Option<&str>) -> Vec<PathBuf> {
+    let mut aus: Vec<PathBuf> = Vec::new();
+    if let Some(heimat) = kiste_ordner(Werkzeugkiste::Base.name()).and_then(|o| o.parent().map(|p| p.to_path_buf())) {
+        if let Ok(eintraege) = std::fs::read_dir(&heimat) {
+            for e in eintraege.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    aus.push(p);
+                }
+            }
+        }
+    }
+    aus.sort();
+    if let Some(o) = eigener.map(str::trim).filter(|p| !p.is_empty()).map(PathBuf::from) {
+        if o.is_dir() && !aus.contains(&o) {
+            aus.push(o);
+        }
+    }
+    aus
+}
+
+/// **Findet den mitgelieferten Ordner einer Kiste**, ohne dass etwas
+/// fest verdrahtet ist.
+///
+/// ⚑ Erst die Umgebung `MYL_WERKZEUGKISTEN` (ein Basisverzeichnis,
+/// darunter je Kennung ein Ordner), dann von diesem Verzeichnis aufwaerts
+/// der erste `CLIENT/werkzeugkisten`. So findet ein Lauf aus dem
+/// Repositorium die mitgelieferten Kisten, und wer sie woanders hat, sagt
+/// es ueber die Umgebung. `None`, wenn nichts passt: dann bleibt es bei
+/// den eingebauten Werkzeugen.
 pub fn kiste_ordner(kennung: &str) -> Option<PathBuf> {
     if let Some(basis) = std::env::var_os("MYL_WERKZEUGKISTEN") {
         let o = PathBuf::from(basis).join(kennung);
@@ -124,16 +240,25 @@ pub fn kiste_ordner(kennung: &str) -> Option<PathBuf> {
             return Some(o);
         }
     }
-    let mut hier = std::env::current_dir().ok()?;
-    loop {
-        let o = hier.join("CLIENT/werkzeugkisten").join(kennung);
-        if o.is_dir() {
-            return Some(o);
-        }
-        if !hier.pop() {
-            return None;
-        }
-    }
+    // ⛔️ **Hier stand nur eine Suche vom Arbeitsverzeichnis aufwaerts**,
+    // und die geht fuer das installierte Fenster immer ins Leere: Wer
+    // `Myelith.app` aus dem Finder startet, hat als Arbeitsverzeichnis
+    // `/`. Damit fand ein frisch eingerichteter Client **keine einzige
+    // Kiste**: keine Manifest-Werkzeuge, kein Pfad in den Einstellungen,
+    // und die Ordnerwahl ohne Startort. Gemeldet vom Projektinhaber am
+    // 2026-09-15.
+    //
+    // 📌 **Und die eigenen Proben verdeckten es**, weil in der Einstellung
+    // ein absoluter Pfad stand: Der wird ueberall gefunden, also lief
+    // keine Probe je durch diese Suche. **Eine Probe, die den Weg nicht
+    // nimmt, prueft ihn nicht.**
+    //
+    // ⚑ **`ort::wurzel` kennt den Weg schon**: Umgebung, dann
+    // Arbeitsverzeichnis, dann der eigene Programmordner, und zuletzt der
+    // gemerkte Zettel fuer den, der nirgendwo steht. Genau dafuer gibt es
+    // ihn; ihn hier nicht zu benutzen war eine zweite, schlechtere Suche.
+    let o = crate::ort::wurzel()?.join("CLIENT/werkzeugkisten").join(kennung);
+    o.is_dir().then_some(o)
 }
 
 /// Ein geladenes Manifest, das sich ausfuehren laesst.
@@ -296,5 +421,90 @@ mod tests {
         assert_eq!(angebote.len(), 1, "die gute Datei bleibt");
         assert_eq!(warnungen.len(), 1, "die kaputte wird vermerkt");
         assert!(warnungen[0].contains("kaputt.json"));
+    }
+
+    /// ⛔️ **Jede Kiste hat ihren Ordner, buchstabengenau.**
+    ///
+    /// # 📌 Was dieses Dateisystem verdeckt (2026-09-15)
+    ///
+    /// macOS unterscheidet in Dateinamen **nicht** zwischen gross und
+    /// klein. `Werkzeugkiste::kennung()` gab `"base"` zurueck, auf der
+    /// Platte liegt `Base`, und hier hat das nie jemand gemerkt. Auf
+    /// Linux, also in der CI und bei jedem, der das Projekt dort baut,
+    /// waere derselbe Aufruf ins Leere gegangen: kein Ordner, keine
+    /// Manifest-Werkzeuge, **keine Fehlermeldung**.
+    ///
+    /// ⚑ **Deshalb vergleicht diese Probe gegen den Verzeichniseintrag
+    /// und nicht mit `is_dir`.** `is_dir` beantwortet die Frage auf
+    /// dieser Maschine mit „ja", egal wie der Name geschrieben ist; nur
+    /// der gelesene Eintrag sagt, wie er **wirklich** heisst. Eine
+    /// Probe, die `is_dir` fragt, liefe hier gruen und in der CI rot.
+    ///
+    /// ⚠️ **`1337` ist gitignored** und darf fehlen. Fehlt er, bleibt
+    /// nichts zu vergleichen, und das ist kein Fehler.
+    #[test]
+    fn jede_kiste_findet_ihren_ordner_mit_der_richtigen_schreibweise() {
+        let Some(heimat) = crate::ort::wurzel().map(|w| w.join("CLIENT/werkzeugkisten")) else {
+            return; // Kein Repositorium zur Hand, dann ist hier nichts zu pruefen.
+        };
+        let echte: Vec<String> = std::fs::read_dir(&heimat)
+            .expect("die Kistenheimat")
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+
+        for k in [Werkzeugkiste::Base, Werkzeugkiste::Advanced] {
+            assert!(
+                echte.iter().any(|n| n == k.name()),
+                "{} heisst auf der Platte anders: {echte:?}. Auf macOS faellt das nicht auf, \
+                 in der CI hat der Agent dann keine Manifest-Werkzeuge.",
+                k.name()
+            );
+        }
+        // Und was da ist, ist auch ueber den Namen erreichbar.
+        for k in [Werkzeugkiste::Base, Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
+            if echte.iter().any(|n| n == k.name()) {
+                assert!(kiste_ordner(k.name()).is_some(), "{} ist nicht auffindbar", k.name());
+            }
+        }
+    }
+
+    /// ⚑ **Base und Advanced tragen die Werkzeuge, die sie versprechen.**
+    ///
+    /// 📌 Der Projektinhaber meldete am 2026-09-15, dass beide Ordner
+    /// leer waren: Die Kisten gab es, den Inhalt nicht. **Advanced
+    /// enthaelt alle Base-Werkzeuge**, und zwar durch die Kette und
+    /// nicht durch Kopien, weil zwei Kopien auseinanderlaufen.
+    #[test]
+    fn advanced_traegt_auch_die_base_werkzeuge() {
+        let Some(heimat) = crate::ort::wurzel().map(|w| w.join("CLIENT/werkzeugkisten")) else {
+            return;
+        };
+        let ein = Einhaengung::neu(&heimat, true).expect("Einhaengung");
+        let basis: Vec<String> = angebote(&heimat.join(Werkzeugkiste::Base.name()), &ein, |_| {})
+            .into_iter()
+            .map(|(a, _)| a.name)
+            .collect();
+        assert!(!basis.is_empty(), "die Kiste Base ist leer");
+
+        // Die Kette, wie der Agent sie sieht: Base zuerst, die gewaehlte
+        // zuletzt.
+        let agent = crate::einstellungen::Agenteneinstellung {
+            schritte: 1,
+            wurzel: None,
+            schreiben: true,
+            kistenordner: Some(heimat.join(Werkzeugkiste::Advanced.name()).display().to_string()),
+            warnung: true,
+            modus: Default::default(),
+        };
+        let kette: Vec<String> = angebote_der_kette(&ordnerkette(&agent), &ein, |_| {})
+            .into_iter()
+            .map(|(a, _)| a.name)
+            .collect();
+        for b in &basis {
+            assert!(kette.contains(b), "Advanced kennt {b} nicht: {kette:?}");
+        }
+        assert!(kette.len() > basis.len(), "Advanced bringt nichts Eigenes mit");
     }
 }

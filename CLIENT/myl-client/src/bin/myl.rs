@@ -32,7 +32,8 @@ myl: lokaler Betrieb von Myelith
 
 Felder fuer `setzen`:
   modell.artefakt   modell.token      modell.denken
-  agent.schritte    agent.wurzel      agent.schreiben   agent.werkzeuge
+  agent.schritte    agent.wurzel      agent.schreiben
+  agent.kistenordner
   kap.kerne         kap.beschleuniger
   kap.speicher      kap.platte
 
@@ -55,21 +56,26 @@ von `frage`:
 und das Kernbudget aus `kap.kerne` wird durch ihre Zahl geteilt: Sonst
 wollte jeder alle Kerne, und sie naehmen sie sich gegenseitig weg.
 
-⚑ `--werkzeuge` waehlt die Kiste fuer diesen einen Lauf: `base` fuer
-kleine Modelle, `advanced` fuer grosse. In der Einstellung
-`agent.werkzeuge` gibt es dazu `automatisch`, das die Groesse des
-Artefakts liest; ein Schalter hat kein Artefakt und deshalb auch dieses
-Wort nicht.
+⚑ **Die Werkzeugkiste ist ein Ordner.** `agent.kistenordner` sagt
+welcher; ohne Angabe der mitgelieferte `base`-Ordner unter
+`CLIENT/werkzeugkisten`. Sein **Name** ist der Name der Kiste und sagt
+zugleich, welche eingebauten Werkzeuge dazukommen: `base` die fuenf
+Dateiwerkzeuge, `advanced` zusaetzlich `run_command`, ein anderer Name
+`base`. Bis zum 2026-09-15 stand daneben eine eigene Auswahl; zwei
+Angaben fuer dieselbe Sache laufen auseinander.
 
-⚑ In `base` liegen die fuenf Dateiwerkzeuge, in `advanced` zusaetzlich
-`run_command`: Ein Shell-Befehl haelt die Einhaengegrenze nicht ein, die
-jedes Dateiwerkzeug einhaelt, und gehoert deshalb nicht in `base`.
+⛔️ `run_command` fuehrt einen Shell-Befehl aus und haelt die
+Einhaengegrenze **nicht** ein, die jedes Dateiwerkzeug einhaelt. Wer
+einen Ordner `advanced` nennt, bekommt es; das ist eine Entscheidung und
+keine Panne.
 
-⚑ Jede Kiste ist auch ein Ordner unter `CLIENT/werkzeugkisten/<name>`.
-Was dort als Manifest liegt (JSON mit name, beschreibung, parameter,
-befehl), bekommt das Modell zusaetzlich angesagt, ohne Neubau. Ein
-solches Werkzeug laeuft ueber die Shell und braucht deshalb die
-Schreiberlaubnis.
+⚑ Was als Manifest im Ordner liegt (JSON mit name, beschreibung,
+parameter, befehl), bekommt das Modell zusaetzlich angesagt, ohne
+Neubau. Ein solches Werkzeug laeuft ueber die Shell und braucht deshalb
+die Schreiberlaubnis.
+
+⚑ `--werkzeuge` ueberstimmt die eingebaute Auswahl fuer einen einzelnen
+Lauf, `base` oder `advanced`.
 
 ⚑ `--deutsch` ist ein Vergleichsschalter und keine Einstellung. Die
 Werkzeuge werden dem Modell sonst in genau der Form angesagt, auf die
@@ -317,15 +323,27 @@ fn einheit(f: &myl_client::einstellungen::Feld) -> &'static str {
 /// Was dasteht, wenn nichts dasteht.
 ///
 /// ⚑ **Eine Grenze, die es nicht gibt, ist keine Null**, und ein
-/// Arbeitsordner, den es nicht gibt, ist mehr als eine Luecke: Dann hat
-/// der Agent **gar keine** Dateiwerkzeuge, und das ist die Auskunft,
-/// die jemand an dieser Stelle braucht.
-fn ohne_wert(f: &myl_client::einstellungen::Feld) -> &'static str {
+/// Arbeitsordner, den es nicht gibt, ist mehr als eine Luecke.
+///
+/// # 📌 Und beim Arbeitsordner steht hier nicht mehr „keine" (2026-09-15)
+///
+/// Bis zum 2026-09-15 stand an dieser Stelle fest „(keine, ohne
+/// Dateiwerkzeuge)". Seit es eine **Vorgabe** gibt (`WORK_DIR`), war das
+/// eine Falschauskunft: Der Agent bekam einen Ordner, und die Uebersicht
+/// sagte, er bekaeme keinen. **Eine Uebersicht, die den Wert nicht
+/// nachrechnet, den sie anzeigt, zeigt den Wert von gestern.** Sie fragt
+/// jetzt dieselbe Funktion, die auch die Ruestung fragt.
+fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
     use myl_client::einstellungen::Feldart;
+    if f.name == "agent.wurzel" {
+        return match myl_client::Einstellungen::standard_wurzel() {
+            Some(p) => format!("(Vorgabe: {p})"),
+            None => "(keine, ohne Dateiwerkzeuge)".to_string(),
+        };
+    }
     match f.art {
-        Feldart::Grenze => "ohne Grenze",
-        _ if f.name == "agent.wurzel" => "(keine, ohne Dateiwerkzeuge)",
-        _ => "(nicht gesetzt)",
+        Feldart::Grenze => "ohne Grenze".to_string(),
+        _ => "(nicht gesetzt)".to_string(),
     }
 }
 
@@ -417,19 +435,28 @@ fn wert(args: &[String], name: &str) -> Option<String> {
 /// er nimmt sie aus derselben Funktion. Bis zum 2026-09-11 kannte er
 /// nur `voll` und verglich es von Hand, waehrend die Hilfe darueber
 /// `knapp` nannte: **ein Wort, das es nie gab.**
-fn satz_fuer_diesen_lauf(args: &[String]) -> myl_client::werkzeuge::Werkzeugkiste {
-    use myl_client::einstellungen::Werkzeugwahl;
+fn satz_fuer_diesen_lauf(
+    e: &Einstellungen,
+    args: &[String],
+) -> myl_client::werkzeuge::Werkzeugkiste {
+    use myl_client::werkzeuge::Werkzeugkiste;
+    // 📌 **Hier stand `Werkzeugkiste::default()` als Vorgabe**, also
+    // `Base`, ohne die Einstellung ueberhaupt anzusehen. Wer seine Kiste
+    // auf `advanced` stellte und `myl agent` ohne Schalter rief, bekam
+    // trotzdem `Base`: Die Manifeste kamen aus dem eingestellten Ordner,
+    // die eingebauten Werkzeuge aus einer anderen Quelle. **Dieselbe
+    // Wahl an zwei Orten**, und die zweite meldet sich nicht.
     let Some(wort) = args.windows(2).find(|p| p[0] == "--werkzeuge").map(|p| p[1].clone()) else {
-        return myl_client::werkzeuge::Werkzeugkiste::default();
+        return myl_client::kisten::kiste_der_gilt(&e.agent);
     };
-    match Werkzeugwahl::aus(&wort) {
-        // `automatisch` braucht ein Artefakt und hat hier keines: Der
-        // Schalter ist eine Ansage und keine Ableitung.
-        Ok(Werkzeugwahl::Automatisch) | Err(_) => {
+    // ⚑ Der Schalter ueberstimmt fuer diesen einen Lauf, und er nimmt
+    // dieselben Woerter wie der Ordnername.
+    match wort.trim().to_ascii_lowercase().as_str() {
+        "base" | "advanced" | "1337" => Werkzeugkiste::aus_ordnername(&wort),
+        _ => {
             eprintln!("myl: --werkzeuge {wort} kenne ich nicht, moeglich sind base, advanced");
-            myl_client::werkzeuge::Werkzeugkiste::default()
+            myl_client::kisten::kiste_der_gilt(&e.agent)
         }
-        Ok(w) => w.aufloesen(std::path::Path::new("")).0,
     }
 }
 
@@ -602,7 +629,7 @@ fn agent(args: &[String]) -> i32 {
     let ruestung = match myl_client::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, args),
         form_fuer_diesen_lauf(args),
-        satz_fuer_diesen_lauf(args),
+        satz_fuer_diesen_lauf(&e, args),
         vec![werkzeug_uhr()],
     ) {
         Ok(r) => r,
@@ -667,7 +694,7 @@ fn sitzung(args: &[String]) -> i32 {
     let ruestung = match myl_client::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
         form_fuer_diesen_lauf(rest),
-        satz_fuer_diesen_lauf(rest),
+        satz_fuer_diesen_lauf(&e, rest),
         vec![werkzeug_uhr()],
     ) {
         Ok(r) => r,
@@ -1019,7 +1046,7 @@ fn auftraege(args: &[String]) -> i32 {
     let ruestung = match myl_client::ruestung::ruesten(
         &agent_fuer_diesen_lauf(&e, rest),
         form_fuer_diesen_lauf(rest),
-        satz_fuer_diesen_lauf(rest),
+        satz_fuer_diesen_lauf(&e, rest),
         vec![werkzeug_uhr()],
     ) {
         Ok(r) => r,
@@ -1122,7 +1149,8 @@ mod schalter {
                 schritte: 6,
                 wurzel: Some("/vorher".into()),
                 schreiben: true,
-                werkzeuge: Default::default(),
+        kistenordner: None,
+        warnung: true,
                 modus: Default::default(),
             },
             ..Einstellungen::default()
@@ -1325,8 +1353,12 @@ mod sitzungsdeutung {
 
     /// **Und keine Zeile behauptet einen Wert, den es nicht gibt.**
     ///
-    /// ⚑ Eine Grenze, die nicht gesetzt ist, ist keine Null, und ein
-    /// Arbeitsordner, der fehlt, heisst: gar keine Dateiwerkzeuge.
+    /// ⚑ Eine Grenze, die nicht gesetzt ist, ist keine Null. Beim
+    /// Arbeitsordner steht die **Vorgabe**, die wirklich greift, und
+    /// nur ohne Vorgabe „gar keine Dateiwerkzeuge".
+    ///
+    /// 📌 Bis zum 2026-09-15 stand hier fest „keine, ohne
+    /// Dateiwerkzeuge", auch als die Vorgabe schon griff.
     #[test]
     fn was_nicht_gesetzt_ist_steht_als_solches_da() {
         let zeilen = uebersicht(&Einstellungen::default(), 4);
@@ -1334,11 +1366,11 @@ mod sitzungsdeutung {
             zeilen.iter().find(|z| z.contains(name)).cloned().unwrap_or_default()
         };
         assert!(zeile("kap.speicher").contains("ohne Grenze"), "{}", zeile("kap.speicher"));
-        assert!(
-            zeile("agent.wurzel").contains("keine, ohne Dateiwerkzeuge"),
-            "{}",
-            zeile("agent.wurzel")
-        );
+        let w = zeile("agent.wurzel");
+        match myl_client::Einstellungen::standard_wurzel() {
+            Some(p) => assert!(w.contains(&p) && w.contains("Vorgabe"), "{w}"),
+            None => assert!(w.contains("keine, ohne Dateiwerkzeuge"), "{w}"),
+        }
         assert!(zeile("modell.artefakt").contains("(nicht gesetzt)"), "{}", zeile("modell.artefakt"));
     }
 

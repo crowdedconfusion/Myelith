@@ -460,37 +460,59 @@ button:not(.blank):hover:not(:disabled)::before {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.werkzeugliste { color: var(--leise); white-space: normal; }
-
 /* Eine Beschriftung („Einhängepfad:", „Werkzeugkiste:") ueber ihrer
    Zeile, etwas ruhiger als der Wert darunter. */
 .reichweitemarke { color: var(--leise); margin-top: .35rem; }
-/* Wert und Knopf nebeneinander, der Wert nimmt den Platz, der Knopf
-   rutscht nach rechts. */
-.reichweitewahl {
-  display: flex;
-  align-items: baseline;
-  gap: .4rem;
-}
+
+/* ⚑ **Der Wert ist der Knopf.** Er nimmt die volle Breite der Leiste
+   und kuerzt mit Auslassungspunkten, statt neben einem beschrifteten
+   Knopf zu sitzen, fuer den die Leiste zu schmal ist. Die gestrichelte
+   Unterstreichung zeigt, dass er etwas tut, ohne wie eine Schaltflaeche
+   Platz zu kosten. */
 .reichweitewert {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: .3rem .45rem;
+  border: 1px solid transparent;
+  border-radius: var(--rund-klein);
+  background: var(--glas);
   font-family: var(--fest);
   font-size: .7rem;
   color: var(--leiser);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.reichweiteknopf {
-  flex: 0 0 auto;
-  font-family: var(--fest);
-  font-size: .65rem;
-  color: var(--leise);
-  text-decoration: underline;
   cursor: pointer;
 }
-.reichweiteknopf:hover:not(:disabled) { color: var(--text); }
+/* ⚑ **Die Hinterlegung macht das Feld als bedienbar kenntlich**
+   (Auftrag des Projektinhabers, 2026-09-15). Vorher trug es nur eine
+   gepunktete Unterstreichung, und die las sich wie eine Auszeichnung
+   und nicht wie ein Feld, das man anfassen kann. Dieselbe Sprache wie
+   beim Modusknopf: ruhiger Grund, beim Zeigen heller, mit Kante. */
+.reichweitewert:hover:not(:disabled) {
+  background: var(--glas-hoch);
+  border-color: var(--kante);
+  color: var(--text);
+}
+.reichweitewert:focus-visible {
+  border-color: var(--kante);
+  color: var(--text);
+}
+
+/* Die Werkzeugliste steht jetzt in den Einstellungen, hinter einem
+   Knopf. Sie darf dort umbrechen: Platz ist da, anders als in der
+   Leiste. */
+.werkzeugzeile td { padding-top: .2rem; }
+.werkzeugknopf { font-size: .78rem; }
+.werkzeugliste {
+  margin: .4rem 0 0;
+  font-family: var(--fest);
+  font-size: .72rem;
+  color: var(--leise);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* Ein Modus ist ein Knopf, der eingerastet bleibt. */
 .modus {
@@ -1383,6 +1405,16 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   font-family: var(--fest);
   font-size: .6rem;
   cursor: pointer;
+  /* 📌 **Ohne Hinterlegung** (Auftrag des Projektinhabers, 2026-09-15).
+     Die allgemeine Knopfregel gibt jedem `button` einen Glasverlauf, und
+     `.blank` nimmt nur die beiden Zierpseudoelemente weg, nicht den
+     Hintergrund. Der Kontext ist aber eine Auskunft am Rand und keine
+     Schaltflaeche; die graue Flaeche machte daraus einen Kasten unter
+     der Eingabe. Was bleibt, ist der Balken selbst. */
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 .kontextbalken:hover { color: var(--leise); }
 .kontextzahl { white-space: nowrap; }
@@ -1986,3 +2018,81 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- Die Warnung vor dem Agentenbetrieb ------------------------------
+
+   ⚑ **Sie liegt ueber allem und hat keinen Weg daran vorbei** (Auftrag
+   des Projektinhabers, 2026-09-15). Kein Klick auf den Hintergrund, kein
+   Kreuz in der Ecke: Wer sie wegklicken kann, ohne sie zu lesen, hat
+   nicht zugestimmt. Der einzige Ausgang ist der Knopf. */
+.warnung {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  /* ⚑ **Kein Glas** (Auftrag des Projektinhabers, 2026-09-15): weder
+     hinter dem Kasten noch im Kasten. Ein deckender Grund liest sich
+     besser, und eine Warnung ist der falsche Ort fuer eine Flaeche, die
+     je nach Zusammensetzer anders aussieht. Nebenbei entfaellt damit der
+     Ruecklfall fuer `backdrop-filter`. */
+  background: rgba(0, 0, 0, .72);
+}
+.warnungkasten {
+  width: min(34rem, 100%);
+  /* ⚑ **Halbdurchsichtig, aber ohne Glas** (Auftrag des Projektinhabers,
+     2026-09-15): eine schlichte Deckkraft, kein Verlauf und kein
+     `backdrop-filter`. Damit schimmert das Gespraech durch, ohne dass
+     die Flaeche je nach Zusammensetzer anders aussieht, und der
+     Rueckfall fuer fehlendes `backdrop-filter` bleibt entbehrlich.
+     ⚠️ Die Deckkraft ist bewusst hoch: Darunter liegt Text, und der
+     Warntext muss der lesbare bleiben. */
+  background: rgba(19, 20, 23, .88);
+  border: 1px solid var(--kante);
+  border-radius: var(--rund);
+  box-shadow: 0 18px 50px -18px var(--schatten);
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 1.3rem 1.4rem;
+  display: grid;
+  gap: .8rem;
+}
+/* ⚑ Die Achtungszeile steht ueber dem Titel und traegt allein: kein
+   Fliesstext, sondern der eine Satz, den man liest, wenn man sonst
+   nichts liest. */
+.warnungachtung {
+  margin: 0;
+  text-align: center;
+  font-size: .95rem;
+  letter-spacing: .02em;
+  color: var(--text);
+}
+.warnungkern { margin: 0; color: var(--leise); line-height: 1.5; }
+.warnunganleitung { border-top: 1px solid var(--kante); padding-top: .7rem; }
+.warnunganleitung summary { cursor: pointer; color: var(--text); }
+.warnunganleitung ul {
+  margin: .7rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: .55rem;
+  color: var(--leise);
+  line-height: 1.45;
+}
+/* Die Regel traegt, der Grund erklaert: zwei Gewichte in einer Zeile. */
+.warnunganleitung .regel { color: var(--text); }
+.warnunghaken {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  cursor: pointer;
+  color: var(--leise);
+  line-height: 1.4;
+}
+/* 📌 **Keine eigene Breite hier.** Ein `input[type="checkbox"]` ist in
+   diesem Fenster ein Schieberegler mit fester Groesse; `width: auto`
+   liess ihn zusammenfallen, und der Satz lief ueber ihn hinweg.
+   Gemeldet vom Projektinhaber am 2026-09-15. Der Regler behaelt seine
+   Masse, der Text bekommt den Rest der Zeile. */
+.warnunghaken span { flex: 1; min-width: 0; }
+.warnungok { justify-self: end; }

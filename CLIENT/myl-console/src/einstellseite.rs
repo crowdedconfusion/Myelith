@@ -481,6 +481,66 @@ fn zeilenweise(e: &Einstellungen, ordner: &std::path::Path) {
     println!();
 }
 
+/// **Die Werkzeugkiste waehlen, aus den Ordnern, die nebeneinander liegen.**
+///
+/// ⚑ **Hier und nicht in `sitzung.rs`** (Befehl `/toolkit`, Auftrag des
+/// Projektinhabers, 2026-09-15). Diese Datei ist die Stelle, an der die
+/// Konsole Einstellungen **setzt**; `sitzung.rs` zeigt sie nur, und
+/// `die_logik_kommt_aus_der_kiste` haelt das fest. Der Befehl dort ruft
+/// diese Funktion, mehr tut er nicht.
+///
+/// Gibt zurueck, wie die gewaehlte Kiste heisst, falls gewaehlt wurde.
+pub fn werkzeugkiste_waehlen(t: crate::design::Toene) -> Option<String> {
+    let pfad = myl_client::Einstellungen::vorgabepfad();
+    let mut e = myl_client::Einstellungen::lesen(&pfad).ok()?;
+
+    let kisten = myl_client::kisten::vorhandene(e.agent.kistenordner.as_deref());
+    if kisten.is_empty() {
+        println!("  Hier liegt keine Werkzeugkiste.");
+        return None;
+    }
+
+    // Vorgewaehlt ist die, die gilt.
+    let jetzt = myl_client::kisten::ordner_der_gilt(
+        e.agent.kistenordner.as_deref(),
+        myl_client::werkzeuge::Werkzeugkiste::Base.name(),
+    );
+    let start = jetzt.as_ref().and_then(|o| kisten.iter().position(|k| k == o)).unwrap_or(0);
+
+    let punkte: Vec<crate::wahl::Punkt> = kisten
+        .iter()
+        .map(|k| crate::wahl::Punkt {
+            titel: k
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| k.display().to_string()),
+            // ⚑ Unter dem Namen steht, was drin ist und was daraus folgt:
+            // Der Ordnername entscheidet ueber die eingebauten Werkzeuge.
+            hinweis: format!(
+                "{} Werkzeug(e) · eingebaut: {}",
+                myl_client::kisten::manifeste_lesen(k, |_| {}).len(),
+                myl_client::werkzeuge::Werkzeugkiste::aus_ordnername(
+                    &myl_client::kisten::ordnername(Some(k), "Base")
+                )
+                .name(),
+            ),
+            offen: true,
+        })
+        .collect();
+
+    let i = crate::wahl::waehlen_ab("Welche Werkzeugkiste?", &punkte, start, t)?;
+    let gewaehlt = kisten[i].display().to_string();
+    if let Err(m) = e.setzen("agent.kistenordner", &gewaehlt) {
+        println!("  Das ging nicht: {m}");
+        return None;
+    }
+    if let Err(m) = e.schreiben(&pfad) {
+        println!("  Nicht gesichert: {m}");
+        return None;
+    }
+    Some(punkte[i].titel.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,15 +581,6 @@ mod tests {
         assert_eq!(geaendert(&f, &erster, false, false), None);
         assert_eq!(geaendert(&f, &letzter, true, false), None);
         assert_eq!(geaendert(&f, &letzter, false, false).as_deref(), Some("auto"));
-    }
-
-    /// **Ohne Adminmarke gibt es die verborgene Kiste auch hier nicht.**
-    #[test]
-    fn die_verborgene_wahl_bleibt_verborgen() {
-        let f = feld("agent.werkzeuge");
-        let letzte_offene = Feldwert::Text("advanced".into());
-        assert_eq!(geaendert(&f, &letzte_offene, true, false), None);
-        assert_eq!(geaendert(&f, &letzte_offene, true, true).as_deref(), Some("1337"));
     }
 
     /// **Unter dem kleinsten Wert steht `aus`, und von dort geht es

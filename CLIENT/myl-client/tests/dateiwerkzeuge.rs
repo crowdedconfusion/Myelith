@@ -64,7 +64,8 @@ fn fahren(
         schritte: 4,
         wurzel: Some(wurzel.display().to_string()),
         schreiben,
-        werkzeuge: Default::default(),
+        kistenordner: None,
+        warnung: true,
     modus: Default::default(),
     };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
@@ -264,38 +265,109 @@ fn nur_lesen_steht_im_protokoll() {
     assert!(!erg.strom.einhaengung().expect("Einhaengung").schreiben);
 }
 
-/// ⚑ **Ohne gesetzte Wurzel greift die CTF-Vorgabe** (Auftrag des
-/// Projektinhabers, 2026-09-14): Zeigt `MYL_CTF` auf ein Verzeichnis,
-/// haengt der Agent es ein, statt ganz ohne Dateiwerkzeuge dazustehen.
-/// So hat er von Haus aus einen Spielplatz.
+/// ⚑ **Ohne gesetzte Wurzel greift der Standard-Arbeitsordner**
+/// (Auftrag des Projektinhabers, 2026-09-15; davor der CTF-Ordner):
+/// Zeigt `MYL_ARBEITSORDNER` auf ein Verzeichnis, haengt der Agent es
+/// ein, statt ganz ohne Dateiwerkzeuge dazustehen.
 ///
 /// 📌 **Die genuine „kein Dateizugriff"-Zusicherung** (Einhaengung
 /// `None`, wenn `standard_wurzel` nichts findet) steht als Einzeltest
 /// bei `standard_wurzel`; hier laesst sie sich nicht pruefen, weil die
-/// Suche aufwaerts aus dem Baum den echten CTF-Ordner faende.
+/// Suche im Baum den echten `WORK_DIR` faende.
 #[test]
-fn ohne_wurzel_greift_die_ctf_vorgabe() {
-    let alt = std::env::var_os("MYL_CTF");
+fn ohne_wurzel_greift_der_standard_arbeitsordner() {
+    let alt = std::env::var_os(myl_client::einstellungen::ARBEITSORDNER);
     let d = tempfile::tempdir().expect("Verzeichnis");
-    std::env::set_var("MYL_CTF", d.path());
+    std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, d.path());
 
     let agent = Agenteneinstellung {
         schritte: 2,
         wurzel: None,
         schreiben: false,
-        werkzeuge: Default::default(),
+        kistenordner: None,
+        warnung: true,
         modus: Default::default(),
     };
     let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
     assert!(
         ruestung.einhaengung.is_some(),
-        "ohne gesetzte Wurzel greift die CTF-Vorgabe"
+        "ohne gesetzte Wurzel greift der Standard-Arbeitsordner nicht"
     );
     // Und damit gibt es wieder Lesewerkzeuge, auch ohne Schreiberlaubnis.
     assert!(!ruestung.kasten.angebote().is_empty());
 
     match alt {
-        Some(v) => std::env::set_var("MYL_CTF", v),
-        None => std::env::remove_var("MYL_CTF"),
+        Some(v) => std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, v),
+        None => std::env::remove_var(myl_client::einstellungen::ARBEITSORDNER),
+    }
+}
+
+/// ⚑ **Die verankerte Kiste laeuft in `NurVerankert`, und das ist der
+/// ganze Punkt.**
+///
+/// Bis zum 2026-09-15 meldete `ruestung.rs` **jedes** Werkzeug als
+/// `Extern`/`Lokal` an. In der Vorgabebetriebsart sperrte der Harness
+/// damit alle: Ein Netzlauf haette ein nachrechenbares Modell gehabt und
+/// keine Werkzeuge. Diese Pruefung haelt fest, dass die verankerten
+/// durchkommen **und** die lokalen weiterhin nicht.
+#[test]
+fn verankerte_werkzeuge_laufen_auch_ohne_bezeugtes() {
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    let erg = fahren(
+        d.path(),
+        true,
+        // ⚑ `false` heisst `Betriebsart::NurVerankert`, die Vorgabe.
+        false,
+        vec![ruf(
+            "join_sections",
+            serde_json::json!({
+                "ebene": 2,
+                "abschnitte": [{"titel": "Eins", "inhalt": "Text."}]
+            }),
+        )],
+    );
+    let gesagt: String = erg.nachrichten.iter().map(|n| n.content.clone()).collect();
+    assert!(
+        gesagt.contains("## Eins"),
+        "das verankerte Werkzeug lief nicht: {gesagt}"
+    );
+    // Und die Gegenprobe: ein lokales bleibt in derselben Betriebsart
+    // gesperrt, sonst hiesse „verankert" nichts.
+    let _ = fahren(
+        d.path(),
+        true,
+        false,
+        vec![ruf(SCHREIBEN, serde_json::json!({"pfad": "x.txt", "inhalt": "y"}))],
+    );
+    assert!(!d.path().join("x.txt").exists(), "ein lokales Werkzeug lief in NurVerankert");
+}
+
+/// **Sie brauchen kein eingehaengtes Verzeichnis.**
+///
+/// ⚑ Das ist die Voraussetzung dafuer, dass ein Auftrag im Chat ein
+/// Dokument erzeugen kann: Dort haengt niemand etwas ein.
+#[test]
+fn verankerte_werkzeuge_gibt_es_auch_ohne_wurzel() {
+    // ⚠️ **Nicht geprueft wird hier, dass keine Einhaengung entsteht.**
+    // Aus dem Repositorium heraus greift die CTF-Vorgabe immer, und das
+    // ist richtig so; sie hat ihre eigene Pruefung. Hier geht es allein
+    // darum, dass die verankerten Werkzeuge **unabhaengig** davon im
+    // Kasten haengen, also auch dort, wo es keine Dateiwerkzeuge gaebe.
+    let agent = Agenteneinstellung {
+        schritte: 2,
+        wurzel: None,
+        schreiben: false,
+        kistenordner: None,
+        warnung: true,
+        modus: Default::default(),
+    };
+    let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
+    let namen: Vec<String> = ruestung.kasten.angebote().iter().map(|a| a.name.clone()).collect();
+    for w in myl_client::verankert::Verankert::ALLE {
+        assert!(
+            namen.iter().any(|n| n == w.name()),
+            "{} fehlt ohne eingehaengtes Verzeichnis: {namen:?}",
+            w.name()
+        );
     }
 }

@@ -25,8 +25,36 @@ pub enum Eingabe {
     Zeile(String),
     /// Umschalt-Tab: der Modus soll wechseln, die Zeile bleibt stehen.
     Modus,
-    /// Eingabeende oder Abbruch.
+    /// Kein Eingabestrom mehr: Dateiende, oder eine Roehre ist zu Ende.
+    ///
+    /// ⚑ **Keine Taste fuehrt mehr hierher** (2026-09-15). Das ist auch
+    /// der Grund, warum hier nicht nachgefragt wird: Wo der Eingabestrom
+    /// endet, ist niemand, der antworten koennte.
     Ende,
+    /// Escape.
+    ///
+    /// Escape oder Strg-X: **die beiden Tasten, die hinausfuehren.**
+    ///
+    /// ⚑ **Welche es war, geht mit** (Festlegung des Projektinhabers,
+    /// 2026-09-15): Die Vorgabe der Rueckfrage haengt daran. Escape wird
+    /// gestreift, also bleibt man per Eingabe; Strg-X ist ein bewusster
+    /// Zweifingergriff, also beendet Eingabe.
+    ///
+    /// ⚑ **Getrennt von `Ende`** (Meldung des Projektinhabers,
+    /// 2026-09-15): Escape liegt neben den Pfeiltasten und wird leicht
+    /// gestreift; dass es eine Sitzung samt geladenem Modell beendet,
+    /// war zu viel Wirkung fuer einen Fehlgriff. Der Aufrufer fragt
+    /// nach, bevor er darauf beendet, und zwar bei beiden Tasten.
+    Abbruch(Ausgang),
+}
+
+/// Welche Taste hinausfuehrte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ausgang {
+    /// Leicht gestreift, deshalb ist die Vorgabe „bleiben".
+    Escape,
+    /// Zwei Finger mit Absicht, deshalb ist die Vorgabe „beenden".
+    StrgX,
 }
 
 /// **Liest eine Zeile und zeichnet sie dabei selbst.**
@@ -57,12 +85,21 @@ pub fn lesen(zeichnen: &dyn Fn(&str)) -> Eingabe {
             // mehrzeiliger Text schickt 0x0A, und das kommt als Strg-J.
             KeyCode::Char('j') if strg => return Eingabe::Zeile(zeile),
             KeyCode::BackTab => return Eingabe::Modus,
-            KeyCode::Esc => return Eingabe::Ende,
-            KeyCode::Char('d') if strg && zeile.is_empty() => return Eingabe::Ende,
-            KeyCode::Char('c') if strg => {
-                drop(_roh);
-                return Eingabe::Ende;
-            }
+            // ⚑ **Zwei Tasten fuehren hinaus, und beide fragen nach**
+            // (Festlegung des Projektinhabers, 2026-09-15): Escape und
+            // Strg-X. Strg-D und Strg-C endeten hier bis dahin **ohne
+            // Frage**, also vier Wege hinaus mit zwei verschiedenen
+            // Verhalten; wer sie nicht alle kennt, verliert eine Sitzung
+            // an die falsche Taste.
+            //
+            // ⚠️ **Strg-C tut an dieser Zeile jetzt nichts.** Im Rohmodus
+            // erzeugt es ohnehin kein Signal, das jemand abfangen
+            // koennte. Den Abbruch eines **laufenden** Auftrags macht es
+            // weiterhin, aber das liegt in `anzeige.rs` und ist eine
+            // andere Sache: Dort bricht es eine Erzeugung ab und beendet
+            // nichts.
+            KeyCode::Esc => return Eingabe::Abbruch(Ausgang::Escape),
+            KeyCode::Char('x') if strg => return Eingabe::Abbruch(Ausgang::StrgX),
             KeyCode::Backspace => {
                 zeile.pop();
                 zeichnen(&zeile);
@@ -157,5 +194,48 @@ mod tests {
     fn gezaehlt_werden_zeichen_und_nicht_bytes() {
         assert_eq!(sichtbar("äöüß", 2), "üß");
         assert_eq!(wagen_hinter("äöüß", 2), 2);
+    }
+}
+
+#[cfg(test)]
+mod abbruchprobe {
+    /// ⚑ **Escape ist kein Eingabeende.**
+    ///
+    /// 📌 Gemeldet vom Projektinhaber am 2026-09-15: Escape an der
+    /// Eingabezeile beendete die Sitzung samt geladenem Modell auf der
+    /// Stelle. Die Taste liegt neben den Pfeiltasten und wird leicht
+    /// gestreift; das war zu viel Wirkung fuer einen Fehlgriff.
+    ///
+    /// ⚑ **Genau zwei Tasten fuehren hinaus, und beide fragen nach**
+    /// (Festlegung des Projektinhabers, 2026-09-15): Escape und Strg-X.
+    /// Strg-D und Strg-C endeten hier vorher ohne Frage, also vier Wege
+    /// mit zwei Verhalten.
+    ///
+    /// ⚠️ **Strg-C an dieser Zeile ist entfallen**, nicht der Abbruch
+    /// eines laufenden Auftrags: Der liegt in `anzeige.rs` und bleibt.
+    #[test]
+    fn nur_escape_und_strg_x_fuehren_hinaus() {
+        let quelle = include_str!("eingabe.rs");
+        let rumpf = quelle.split("pub fn lesen(").nth(1).expect("`lesen` fehlt");
+        assert!(
+            rumpf.contains("KeyCode::Esc => return Eingabe::Abbruch(Ausgang::Escape),"),
+            "Escape gibt kein `Abbruch`"
+        );
+        assert!(
+            rumpf.contains("KeyCode::Char('x') if strg => return Eingabe::Abbruch(Ausgang::StrgX),"),
+            "Strg-X gibt kein `Abbruch`"
+        );
+        // Kein weiterer Weg zu `Ende` aus dem Tastenzweig heraus.
+        let tasten = rumpf.split("fn aus_der_roehre").next().unwrap_or(rumpf);
+        assert!(
+            !tasten.contains("Eingabe::Ende"),
+            "es gibt noch eine Taste, die ohne Frage beendet: {tasten}"
+        );
+        // Das Dateiende bleibt ein Ende: Es ist keine Taste, und in einer
+        // Roehre kann niemand antworten.
+        assert!(
+            quelle.contains("Ok(0) | Err(_) => Eingabe::Ende,"),
+            "das Dateiende ist kein `Ende` mehr"
+        );
     }
 }

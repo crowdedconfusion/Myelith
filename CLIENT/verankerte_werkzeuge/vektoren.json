@@ -1,0 +1,83 @@
+{
+  "_hinweis": "Konformitaetsvektoren der verankerten Werkzeugkiste. Eingabe und erwartete Ausgabe jedes Werkzeugs, byteweise. Ein Fall ohne `aus` haelt fest, dass die Eingabe abgelehnt wird: Dass etwas NICHT geht, ist Teil des Vertrags. Gefahren von `die_vektoren_stimmen` in myl-client/src/verankert.rs. Ohne Vektor keine Marke.",
+  "vertrag": "0.1.0",
+  "faelle": [
+    {
+      "was": "Eine Vorlage mit zwei Feldern",
+      "werkzeug": "fill_template",
+      "ein": {
+        "vorlage": "# {titel}\n\nVon {autor}.",
+        "felder": { "titel": "Bericht", "autor": "Myelith" }
+      },
+      "aus": "# Bericht\n\nVon Myelith."
+    },
+    {
+      "was": "Doppelte Klammern bleiben als Klammer stehen",
+      "werkzeug": "fill_template",
+      "ein": {
+        "vorlage": "{{roh}} {x}",
+        "felder": { "x": "y" }
+      },
+      "aus": "{roh} y"
+    },
+    {
+      "was": "CRLF wird zu LF, in Vorlage wie in Feld",
+      "werkzeug": "fill_template",
+      "ein": {
+        "vorlage": "a\r\n{x}",
+        "felder": { "x": "b\r\nc" }
+      },
+      "aus": "a\nb\nc"
+    },
+    {
+      "was": "Ein fehlendes Feld ist ein Fehler, keine Luecke",
+      "werkzeug": "fill_template",
+      "ein": {
+        "vorlage": "Hallo {wer}",
+        "felder": {}
+      }
+    },
+    {
+      "was": "Eine schliessende Klammer ohne oeffnende wird abgelehnt",
+      "werkzeug": "fill_template",
+      "ein": {
+        "vorlage": "a } b",
+        "felder": {}
+      }
+    },
+    {
+      "was": "Zwei Abschnitte auf Ebene zwei",
+      "werkzeug": "join_sections",
+      "ein": {
+        "ebene": 2,
+        "abschnitte": [
+          { "titel": "Eins", "inhalt": "Erster Text." },
+          { "titel": "Zwei", "inhalt": "Zweiter Text." }
+        ]
+      },
+      "aus": "## Eins\n\nErster Text.\n\n## Zwei\n\nZweiter Text.\n"
+    },
+    {
+      "was": "Die Enden werden beschnitten, die Zahl der Leerzeilen haengt an der Form",
+      "werkzeug": "join_sections",
+      "ein": {
+        "ebene": 1,
+        "abschnitte": [{ "titel": "  Titel  ", "inhalt": "\n\nText\n\n" }]
+      },
+      "aus": "# Titel\n\nText\n"
+    },
+    {
+      "was": "Eine Ebene ausserhalb von eins bis sechs wird abgelehnt",
+      "werkzeug": "join_sections",
+      "ein": {
+        "ebene": 7,
+        "abschnitte": [{ "titel": "a", "inhalt": "b" }]
+      }
+    },
+    {
+      "was": "Ohne Abschnitte gibt es kein Ergebnis",
+      "werkzeug": "join_sections",
+      "ein": { "ebene": 2, "abschnitte": [] }
+    }
+  ]
+}

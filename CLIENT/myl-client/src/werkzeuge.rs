@@ -327,12 +327,36 @@ impl Werkzeugkiste {
         }
     }
 
-    /// Dieselbe Kiste als Kennung fuer Ablage und Schalter.
-    pub fn kennung(&self) -> &'static str {
-        match self {
-            Self::Base => "base",
-            Self::Advanced => "advanced",
-            Self::Elite => "1337",
+    // 📌 **Hier stand ein zweiter Name** (`kennung()`, klein
+    // geschrieben), entfernt am 2026-09-15 mit **null Aufrufern**. Die
+    // Ordner heissen seit demselben Tag `Base` und `Advanced`; eine
+    // zweite Schreibweise daneben war kein Komfort, sondern die Falle:
+    // Wer sie fuer den Ordnerpfad genommen haette, haette auf macOS
+    // nichts gemerkt und auf Linux keine Werkzeuge gehabt. **Ein
+    // Gegenstand, ein Name.** Es gibt nur [`Self::name`].
+
+    /// **Welche Kiste ein Ordnername bedeutet.**
+    ///
+    /// ⚑ **Der Ordner ist seit dem 2026-09-15 die einzige Quelle**
+    /// (Festlegung des Projektinhabers): In den Einstellungen steht nur
+    /// noch der Pfad, und sein letzter Namensteil sagt, welche
+    /// eingebauten Werkzeuge dazukommen. Vorher gab es daneben eine
+    /// Auswahl, und zwei Angaben fuer dieselbe Sache laufen auseinander.
+    ///
+    /// ⚑ **Ohne Adminmarke**, anders als bis heute. Sie war ohnehin
+    /// gegenstandslos: Der `1337`-Ordner ist gitignored, wer ihn nicht
+    /// hat, hat die Werkzeuge nicht, und wer ihn anlegt, hat die
+    /// Entscheidung schon getroffen.
+    ///
+    /// ⚠️ **Ein unbekannter Name ist `Base` und kein Fehler.** Wer einen
+    /// eigenen Ordner waehlt, soll seine Manifeste bekommen, und die
+    /// zurueckhaltende Auswahl an eingebauten dazu; `run_command` gibt es
+    /// erst, wenn der Ordner auch so heisst.
+    pub fn aus_ordnername(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "advanced" => Self::Advanced,
+            "1337" => Self::Elite,
+            _ => Self::Base,
         }
     }
 }

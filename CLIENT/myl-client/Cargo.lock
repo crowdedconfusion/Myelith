@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.31.0"
+version = "0.33.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",

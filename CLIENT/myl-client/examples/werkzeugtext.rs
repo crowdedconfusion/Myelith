@@ -28,7 +28,8 @@ fn main() {
         schritte: 6,
         wurzel: Some(d.display().to_string()),
         schreiben: true,
-        werkzeuge: Default::default(),
+        kistenordner: None,
+        warnung: true,
     modus: Default::default(),
     };
     // ⚑ Mit `--deutsch` dieselbe Ansage in der Fassung vor dem

@@ -133,9 +133,12 @@ const TEXTE = {
     "reichweite.gesperrt": ", Werkzeuge durch die Betriebsart gesperrt",
     "reichweite.pfadmarke": "Einhängepfad:",
     "reichweite.wechseln": "Verzeichnis wechseln",
-    "reichweite.kistemarke": "Werkzeugkiste:",
+    "reichweite.kistemarke": "Lokale Werkzeugkiste:",
     "reichweite.andereKiste": "andere Werkzeugkiste",
     "reichweite.kistehinweis": "Der Ordner, aus dem die Werkzeuge kommen. Weiterschalten zwischen den Kisten.",
+    "werkzeuge.zeigen": "Werkzeuge anzeigen",
+    "werkzeuge.verbergen": "Werkzeuge verbergen",
+    "werkzeuge.aus": (kiste, n) => `Aus der Kiste „${kiste}“, ${n} Stück:`,
     "reichweite.fehler": (f) => `Ging nicht: ${f}`,
     "md.beitraege": (n) => `- Beiträge: ${n}`,
     "geloescht": (was, titel) => `${was} „${titel}“ gelöscht.`,
@@ -278,9 +281,12 @@ const TEXTE = {
     "reichweite.gesperrt": ", tools locked by the operating mode",
     "reichweite.pfadmarke": "Mount path:",
     "reichweite.wechseln": "Change folder",
-    "reichweite.kistemarke": "Toolbox:",
+    "reichweite.kistemarke": "Local toolbox:",
     "reichweite.andereKiste": "other toolbox",
     "reichweite.kistehinweis": "The folder the tools come from. Cycle through the boxes.",
+    "werkzeuge.zeigen": "Show tools",
+    "werkzeuge.verbergen": "Hide tools",
+    "werkzeuge.aus": (kiste, n) => `From the “${kiste}” box, ${n} of them:`,
     "reichweite.fehler": (f) => `Did not work: ${f}`,
     "md.beitraege": (n) => `- Messages: ${n}`,
     "geloescht": (was, titel) => `${was} “${titel}” deleted.`,
@@ -523,6 +529,110 @@ function sichern() {
 }
 
 const jetzt = () => new Date().toISOString();
+
+/// **Die Warnung vor dem Agentenbetrieb, einmal je Sitzung.**
+///
+/// ⚑ **Sie steht vor der Benutzung, nicht beim Start** (Auftrag des
+/// Projektinhabers, 2026-09-15): Wer im Chat bleibt, bekommt sie nie zu
+/// sehen, denn dort handelt niemand auf seinem Rechner.
+///
+/// ⚑ **Der Text kommt aus der Kiste**, nicht von hier. Die Konsole sagt
+/// denselben; zweimal getippt liefe er auseinander, sobald einer ihn
+/// verbessert.
+///
+/// ⚠️ **Sie ist keine Schranke.** Einhängegrenze, Schreiberlaubnis und
+/// Betriebsart wirken unabhängig davon, ob jemand gelesen hat.
+let warnung_gezeigt = false;
+async function agentenwarnung_zeigen() {
+  if (warnung_gezeigt) return;
+  let w;
+  try {
+    w = await invoke("agentenwarnung");
+  } catch {
+    return;
+  }
+  // `null` heisst: zugestimmt und Haekchen gesetzt.
+  if (!w) {
+    warnung_gezeigt = true;
+    return;
+  }
+  warnung_gezeigt = true;
+
+  $("warnungtitel").textContent = w.achtung;
+  $("warnungkern").textContent = w.kern;
+  $("warnunganleitungtitel").textContent = w.anleitung_titel;
+  $("warnungnichtwiedertext").textContent = w.nicht_wieder;
+  $("warnungok").textContent = w.zustimmung;
+
+  const liste = $("warnungregeln");
+  liste.replaceChildren();
+  for (const [regel, grund] of w.regeln) {
+    const li = document.createElement("li");
+    const r = document.createElement("span");
+    r.className = "regel";
+    r.textContent = regel;
+    // ⚑ Der Grund steht dabei: Eine Regel ohne Grund wird beim ersten
+    // Mal befolgt und beim zweiten umgangen.
+    li.append(r, document.createTextNode(` ${grund}`));
+    liste.append(li);
+  }
+
+  const haken = $("warnungnichtwieder");
+  haken.checked = false;
+  const kasten = $("warnung");
+  kasten.hidden = false;
+  $("warnungok").focus();
+
+  $("warnungok").onclick = async () => {
+    if (haken.checked) {
+      try {
+        await invoke("setzen", { feld: "agent.warnung", wert: "aus" });
+      } catch (f) {
+        melden(t("fehler", f));
+      }
+    }
+    kasten.hidden = true;
+  };
+}
+
+/// **Stellt das Modell ein, mit dem dieses Gespraech zuletzt lief.**
+///
+/// ⚑ **Eingestellt und nicht geladen** (Auftrag des Projektinhabers,
+/// 2026-09-15): Wer ein altes Gespraech aufschlaegt, will sehen, womit
+/// es gefuehrt wurde, und nicht minutenlang auf ein Artefakt warten, das
+/// er vielleicht nur nachlesen wollte. Geladen wird beim ersten Auftrag,
+/// wie sonst auch.
+///
+/// 📌 **Das alte wird dabei entladen**, genau wie beim Wechsel ueber die
+/// Modellwahl. Ohne das faehrt der naechste Auftrag mit dem alten
+/// Modell, waehrend die Anzeige das neue nennt; die Lehre steht beim
+/// `modellwahl`-Rueckruf und gilt hier genauso.
+///
+/// ⚠️ **Steht schon dasselbe Modell, geschieht nichts.** Sonst wuerde
+/// jedes Umschalten zwischen zwei Gespraechen desselben Modells das
+/// geladene wegwerfen, und das ist das Gegenteil von hilfreich.
+async function modell_dem_gespraech_folgen(g) {
+  if (!g || !g.modell) return;
+  try {
+    const e = await invoke("einstellungen");
+    if (e.werte["modell.artefakt"] === g.modell) return;
+    await invoke("setzen", { feld: "modell.artefakt", wert: g.modell });
+    geladen = false;
+    try {
+      await invoke("modell_entladen");
+    } catch {
+      /* dann eben nicht */
+    }
+    modellstand = null;
+    await kopf_zeichnen();
+    await modellzeile_schreiben();
+  } catch {
+    // ⚑ Ein Gespraech laesst sich auch ohne sein Modell oeffnen: Das
+    // Artefakt kann inzwischen geloescht sein, und dann ist die
+    // Einstellung eine Unbequemlichkeit und kein Grund, nichts zu
+    // zeigen.
+  }
+}
 
 function neues_gespraech(modus) {
   const art = modus || modus_jetzt();
@@ -796,6 +906,9 @@ function modi_zeichnen() {
       // stellt die Ansicht um; was in ihr steht, waehlt der Nutzer
       // danach selbst aus der Liste, oder er faengt an zu tippen.
       modus = m.id;
+      // ⚑ **Wer den Agenten waehlt, sieht zuerst, was auf dem Spiel
+      // steht** (Auftrag des Projektinhabers, 2026-09-15).
+      if (m.id === "agent") agentenwarnung_zeigen();
       // ⚑ Ein offener Eintrag bleibt offen, wenn er zu diesem Modus
       // gehoert. Sonst steht der Leerzustand da, und der sagt, was
       // dieser Modus ist.
@@ -824,57 +937,50 @@ async function reichweite_zeichnen() {
     r = { wurzel: null, kiste: "", namen: [] };
   }
 
-  // ⚑ Eine kleine beschriftete Zeile mit einem Knopf daneben
-  // (Auftrag des Projektinhabers, 2026-09-14): Einhaengepfad und
-  // Werkzeugkiste lassen sich hier wechseln, statt in die Einstellungen
-  // zu muessen.
+  // ⚑ **Der Wert ist der Knopf** (Auftrag des Projektinhabers,
+  // 2026-09-15). Vorher stand neben Pfad und Kiste je ein beschrifteter
+  // Knopf („Verzeichnis wechseln", „andere Werkzeugkiste"), und die
+  // Leiste ist dafuer zu schmal: Beide wurden abgeschnitten. Statt sie
+  // zu kuerzen, bis die Beschriftung nichts mehr sagt, traegt jetzt die
+  // Angabe selbst die Handlung. Was sie tut, steht im `title`.
+  //
+  // ⚑ **Und es bleibt ein `button`**, kein anklickbarer Absatz: Damit ist
+  // die Handlung mit der Tastatur erreichbar und wird vorgelesen.
   const kuerzen = (s, n) => (s && s.length > n ? `…${s.slice(-(n - 1))}` : s);
-  const abschnitt = (marke, wert, voll, knopfmarke, beim_klick) => {
+  const abschnitt = (marke, wert, voll, beim_klick) => {
     const l = document.createElement("p");
     l.className = "reichweitezeile reichweitemarke";
     l.textContent = t(marke);
     w.append(l);
-    const zeile = document.createElement("div");
-    zeile.className = "reichweitewahl";
-    const p = document.createElement("span");
-    p.className = "reichweitewert";
-    p.textContent = wert;
-    if (voll) p.title = voll;
     const k = document.createElement("button");
     k.type = "button";
-    k.className = "reichweiteknopf blank";
-    k.textContent = t(knopfmarke);
+    k.className = "reichweitewert blank";
+    k.textContent = wert;
+    k.title = voll;
     k.addEventListener("click", beim_klick);
-    zeile.append(p, k);
-    w.append(zeile);
+    w.append(k);
   };
 
-  // 1. Der Einhaengepfad.
+  // 1. Der Einhaengepfad, ein Klick waehlt einen anderen.
   abschnitt(
     "reichweite.pfadmarke",
-    r.wurzel ? kuerzen(r.wurzel, 30) : t("reichweite.kein"),
-    r.wurzel || t("reichweite.hinweis"),
-    "reichweite.wechseln",
+    r.wurzel ? kuerzen(r.wurzel, 34) : t("reichweite.kein"),
+    `${r.wurzel || t("reichweite.hinweis")}\n${t("reichweite.wechseln")}`,
     verzeichnis_wechseln,
   );
 
-  // 2. Die Werkzeugkiste.
+  // 2. Die Werkzeugkiste, ein Klick schaltet weiter.
   abschnitt(
     "reichweite.kistemarke",
     r.kiste || "?",
-    t("reichweite.kistehinweis"),
-    "reichweite.andereKiste",
+    `${t("reichweite.kistehinweis")}\n${t("reichweite.andereKiste")}`,
     kiste_wechseln,
   );
 
-  // 3. Die Werkzeuge, die daraus folgen.
-  if (r.namen.length) {
-    const l = document.createElement("p");
-    l.className = "reichweitezeile werkzeugliste";
-    l.textContent = r.namen.join("  ");
-    l.title = `${r.namen.length} Werkzeuge`;
-    w.append(l);
-  }
+  // ⚑ **Die Werkzeugliste steht nicht mehr hier**, sondern hinter einem
+  // Knopf in den Einstellungen: In der Leiste war sie eine Wand aus
+  // Namen, die bei jedem Zeichnen mitlief und die zwei Angaben
+  // darueber erschlug, die man wirklich braucht.
 }
 
 /// **Verzeichnis wechseln** ueber den Ordnerdialog des Systems, dann als
@@ -895,14 +1001,32 @@ async function verzeichnis_wechseln() {
 
 /// **Andere Werkzeugkiste**: schaltet `agent.werkzeuge` der Reihe nach
 /// weiter. Der angezeigte Name ist der der aufgeloesten Kiste (Base,
-/// Advanced), also der des Ordners unter `CLIENT/werkzeugkisten`.
-const KISTENFOLGE = ["automatisch", "base", "advanced"];
+/// Advanced), also der des gewaehlten Ordners.
+/// ⚑ **Die Kiste wird als Ordner gewaehlt** (Auftrag des
+/// Projektinhabers, 2026-09-15). Vorher schaltete ein Klick die
+/// Aufzaehlung `automatisch`, `base`, `advanced` weiter, und damit war
+/// nur erreichbar, was mitgeliefert ist. Jetzt waehlt der Klick einen
+/// Ordner; sein Name ist der Name der Kiste, und was als Manifest darin
+/// liegt, bekommt das Modell.
+///
+/// ⚠️ **Die eingebauten Werkzeuge haengen weiter an `agent.werkzeuge`**,
+/// nicht am Ordner. Ein Ordnername ist keine Erlaubnis: Sonst bekaeme
+/// jeder `run_command`, der seinen Ordner `advanced` nennt.
 async function kiste_wechseln() {
   try {
-    const e = await invoke("einstellungen");
-    const jetzt = e.werte["agent.werkzeuge"] || "automatisch";
-    const naechste = KISTENFOLGE[(KISTENFOLGE.indexOf(jetzt) + 1) % KISTENFOLGE.length];
-    await invoke("setzen", { feld: "agent.werkzeuge", wert: naechste });
+    // ⚑ **Die Wahl geht dort auf, wo die Kisten liegen** (Meldung des
+    // Projektinhabers, 2026-09-15). 📌 Hier stand der eingestellte
+    // Kistenordner, und der ist per Vorgabe leer: Dann bekam der Dialog
+    // keinen Startort und ging beim zuletzt gewaehlten auf, also beim
+    // Einhaengepfad. Den Ort nennt jetzt die Kiste selbst.
+    const r = await invoke("werkzeuge");
+    const start = r.kistenheimat || "";
+    const gewaehlt = await invoke("ordner_waehlen", {
+      titel: t("reichweite.andereKiste"),
+      start,
+    });
+    if (!gewaehlt) return;
+    await invoke("setzen", { feld: "agent.kistenordner", wert: gewaehlt });
     reichweite_zeichnen();
   } catch (f) {
     melden(t("reichweite.fehler", f));
@@ -1297,6 +1421,8 @@ function chats_zeichnen() {
       modus = g.modus;
       alles_zeichnen();
       kontext_holen();
+      // ⚑ Und das Modell folgt mit, eingestellt und nicht geladen.
+      modell_dem_gespraech_folgen(g);
     });
 
     // 📌 **Hier lag ein Loeschknopf am Zeilenrand.** Er ist am
@@ -2164,6 +2290,61 @@ async function horchen(name, fn) {
   return await listen(name, fn);
 }
 
+/// **Die Werkzeuge, die ein Agentenlauf bekaeme, hinter einem Knopf.**
+///
+/// ⚑ **Sie standen bis zum 2026-09-15 in der Seitenleiste** und liefen
+/// dort bei jedem Zeichnen mit: eine Wand aus Namen unter den zwei
+/// Angaben, die man wirklich braucht. Hier kosten sie nichts, solange
+/// niemand fragt, und wer fragt, bekommt sie vollstaendig statt
+/// abgeschnitten.
+///
+/// ⚑ **Gefragt wird beim Klick, nicht beim Zeichnen.** Der Befehl baut
+/// die Einhaengung wirklich; das bei jedem Oeffnen der Einstellungen zu
+/// tun waere Arbeit fuer eine Angabe, die selten jemand sehen will.
+function werkzeugzeile() {
+  const tr = document.createElement("tr");
+  tr.className = "werkzeugzeile";
+  const td = document.createElement("td");
+  td.colSpan = 2;
+
+  const k = document.createElement("button");
+  k.type = "button";
+  k.className = "werkzeugknopf";
+  k.textContent = t("werkzeuge.zeigen");
+
+  const liste = document.createElement("p");
+  liste.className = "werkzeugliste";
+  liste.hidden = true;
+
+  k.addEventListener("click", async () => {
+    if (!liste.hidden) {
+      liste.hidden = true;
+      k.textContent = t("werkzeuge.zeigen");
+      return;
+    }
+    try {
+      const r = await invoke("werkzeuge");
+      // ⚑ Ohne eingehaengtes Verzeichnis gibt es keine Dateiwerkzeuge,
+      // und das ist eine Auskunft und kein leerer Kasten.
+      liste.textContent = r.namen.length
+        ? t("werkzeuge.aus", r.kiste || "?", r.namen.length) +
+          "\n" +
+          r.namen.join("  ")
+        : t("reichweite.hinweis");
+      liste.hidden = false;
+      k.textContent = t("werkzeuge.verbergen");
+    } catch (f) {
+      liste.textContent = t("fehler", f);
+      liste.hidden = false;
+      k.textContent = t("werkzeuge.verbergen");
+    }
+  });
+
+  td.append(k, liste);
+  tr.append(td);
+  return tr;
+}
+
 async function einstellungen_zeichnen() {
   const e = await invoke("einstellungen");
   const felder = await invoke("felder");
@@ -2184,6 +2365,11 @@ async function einstellungen_zeichnen() {
   // braucht ein Ende, und das Ende ist, was die Maschine hergibt; das
   // weiss erst der Scan. Sie bekommen deshalb ihren eigenen Abschnitt.
   const gesehen = new Set();
+  // ⚑ **Die Werkzeugliste haengt an der Agentenrubrik**, und erkannt
+  // wird sie am Feldnamen, nicht an der Ueberschrift: `agent.` ist in
+  // jeder Sprache dasselbe, „Agent" nicht zwingend. Dieselbe Begruendung
+  // wie bei `tabelle_fuer`.
+  let letzte_agentenzeile = null;
   for (const f of felder) {
     if (f.freigabe) continue;
     const koerper = $(tabelle_fuer(f.name)).querySelector("tbody");
@@ -2191,7 +2377,7 @@ async function einstellungen_zeichnen() {
       gesehen.add(f.bereich);
       koerper.append(bereichszeile(f.bereich));
     }
-    koerper.append(
+    const zeile =
       feldzeile(f, wert[f.name], async (neu) => {
         try {
           await invoke("setzen", { feld: f.name, wert: neu });
@@ -2213,8 +2399,28 @@ async function einstellungen_zeichnen() {
         } catch (fehler) {
           $("setzmeldung").textContent = t("fehler", fehler);
         }
-      }),
+      });
+    koerper.append(zeile);
+    if (f.name.startsWith("agent.")) letzte_agentenzeile = zeile;
+  }
+  if (letzte_agentenzeile) {
+    letzte_agentenzeile.after(werkzeugzeile());
+  }
+  // ⚑ **Das leere Kistenfeld sagt, was stattdessen gilt** (Meldung des
+  // Projektinhabers, 2026-09-15: der Pfad wurde nicht angezeigt). Der
+  // Wert bleibt leer, denn er ist nicht gesetzt; der Platzhalter nennt
+  // die Kiste, aus der die Werkzeuge wirklich kommen. 📌 Den Wert selbst
+  // zu füllen wäre falsch: Dann liesse sich „nicht gesetzt" nicht mehr
+  // von „auf die Vorgabe gesetzt" unterscheiden, und die Prüfung
+  // `wert_und_setzer_kennen_dieselben_felder` hat genau das gefangen.
+  try {
+    const r = await invoke("werkzeuge");
+    const feld = $("felder-rest").querySelector(
+      'tr[data-feld="agent.kistenordner"] input',
     );
+    if (feld && r.kistenordner) feld.placeholder = r.kistenordner;
+  } catch {
+    /* ohne Platzhalter bleibt das Feld eben leer */
   }
   $("pfad").textContent = e.pfad;
   await freigabe_zeichnen(e);
@@ -2662,9 +2868,30 @@ async function senden(text) {
   const knopf = $("senden");
   knopf.disabled = true;
 
+  // ⚑ **Auch hier, nicht nur beim Umschalten.** Wer ein Agentengespraech
+  // aus der Liste oeffnet, hat den Modus nie gewaehlt und saehe die
+  // Warnung sonst nie.
+  if (offen.modus === "agent") await agentenwarnung_zeigen();
+
   try {
     if (!geladen) await modell_laden();
     if (!geladen) throw new Error(t("lauf.nichtgeladen"));
+
+    // ⚑ **Womit dieses Gespraech gefuehrt wurde, bleibt an ihm haengen**
+    // (Auftrag des Projektinhabers, 2026-09-15). Gemerkt wird erst, wenn
+    // wirklich geladen ist: Ein Gespraech soll auf ein Modell zeigen,
+    // mit dem es auch gelaufen ist, und nicht auf eines, das beim
+    // Versuch scheiterte.
+    try {
+      const e = await invoke("einstellungen");
+      const artefakt = e.werte["modell.artefakt"] || "";
+      if (artefakt && offen.modell !== artefakt) {
+        offen.modell = artefakt;
+        sichern();
+      }
+    } catch {
+      /* ohne Merkzettel laeuft der Auftrag trotzdem */
+    }
 
     await live_anfangen(offen.modus);
 
@@ -3037,6 +3264,10 @@ $("eingabe").addEventListener("submit", async (e) => {
     // dieser Fassung gespeichert wurde, hat keine Gliederung; sie beim
     // Zeichnen zu holen machte jede Zeichnung unterbrechbar.
     await bloecke_nachtragen();
+    // ⚑ **Auch beim Start folgt das Modell dem geoeffneten Gespraech**,
+    // eingestellt und nicht geladen. Vor `modellzeile_schreiben`, damit
+    // die Zeile gleich das richtige nennt.
+    await modell_dem_gespraech_folgen(offen);
     await modellzeile_schreiben();
   } catch (f) {
     melden(t("fehler.start", f));

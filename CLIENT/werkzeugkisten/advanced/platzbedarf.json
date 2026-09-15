@@ -1,0 +1,12 @@
+{
+  "name": "platzbedarf",
+  "beschreibung": "Wieviel Platz ein Pfad im Arbeitsordner belegt, menschenlesbar zusammengefasst.",
+  "parameter": {
+    "type": "object",
+    "properties": {
+      "pfad": { "type": "string", "description": "Datei oder Verzeichnis, relativ zum Arbeitsordner." }
+    },
+    "required": ["pfad"]
+  },
+  "befehl": "du -sh -- {pfad}"
+}

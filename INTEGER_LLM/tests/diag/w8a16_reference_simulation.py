@@ -40,6 +40,7 @@ Usage:
     INTEGER_LLM_MODEL=myelith-30b-a3b ./calibrate/.venv/bin/python \\
         tests/diag/w8a16_reference_simulation.py
 """
+import json
 import math
 import os
 import sys
@@ -47,9 +48,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "calibrate"))
-sys.path.insert(0, str(REPO / "eval"))
+# 📌 **Hier stand `REPO / "eval"`**, und das Verzeichnis gibt es nicht
+# mehr: Die Messreihe liegt seit dem 2026-09-11 unter
+# `BENCHMARKS/Inferenz`. Der Lauf brach dadurch schon am Import ab, und
+# weil dieses Skript nur bei einer Grundsatzfrage gerufen wird, fiel es
+# ueber Wochen niemandem auf.
+sys.path.insert(0, str(REPO.parent / "BENCHMARKS" / "Inferenz"))
 from src.loader import load_reference_model  # noqa: E402
-from wikitext_common import MODEL_DIR, select_sequences  # noqa: E402
+from wikitext_common import (  # noqa: E402
+    MODEL_DIR,
+    MODEL_NAME,
+    ergebnis_pfad,
+    select_sequences,
+)
 
 INT16_MAX = 32767
 MAX_FRAC_BITS = 20
@@ -84,6 +95,42 @@ def quantisiere_aktivierung(x, shifts):
     return torch.clamp(torch.round(x * skala), -INT16_MAX - 1, INT16_MAX) / skala
 
 
+def _ablegen(ziel, modell, mess_n, n, basis, boden, nur_w8, jeder_linear,
+             integer_pfad):
+    """Schreibt den Boden als Ergebnisdatei.
+
+    ⚑ **Der Boden wird abgelegt, nicht nur gedruckt.** Sonst steht er in
+    einem Terminal, das jemand schliesst, und die Uebersicht muesste ihn
+    von Hand nachtragen. Sie liest ihn stattdessen, so wie sie die
+    Vergleiche liest; eine Zahl, die erzeugt wird, wird nicht gepflegt.
+
+    ⚑ **Ohne vergleichbaren Ganzzahlpfad fehlen seine Felder ganz**,
+    statt `null` zu tragen: Ein fehlender Schluessel faellt beim Lesen
+    auf, eine Null wird gerechnet.
+    """
+    inhalt = {
+        "modell": modell,
+        "datensatz": "wikitext-2-raw-v1 (Testsplit)",
+        "mess_sequenzen": mess_n,
+        "ausgewertete_positionen": n,
+        "baseline_perplexitaet": basis,
+        "boden_perplexitaet": boden,
+        "boden_prozent": 100 * (boden / basis - 1),
+        "nur_gewichte_perplexitaet": nur_w8,
+        "jeder_linear_eingang_perplexitaet": jeder_linear,
+    }
+    if integer_pfad is not None:
+        inhalt["integer_perplexitaet"] = integer_pfad
+        inhalt["integer_prozent"] = 100 * (integer_pfad / basis - 1)
+        inhalt["umsetzungsverlust_prozent"] = 100 * (integer_pfad / boden - 1)
+    ziel.write_text(
+        json.dumps(inhalt, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[w8a16] abgelegt: {ziel}")
+    print()
+
+
 def perplexitaet(model, sequences):
     import torch
     s, n = 0.0, 0
@@ -110,7 +157,19 @@ def main():
     import torch
 
     seq_len = int(os.environ.get("E2E_SEQ_LEN", "128"))
-    mess = select_sequences(4, seq_len, verbose=False)
+    # ⚑ **Die Stichprobe ist einstellbar, die Vorgabe bleibt 4**
+    # (2026-09-15). Vier Sequenzen sind 435 Positionen, und das ist die
+    # Groesse, auf der die ganze Reihe gemessen ist; eine andere Vorgabe
+    # machte die Bodenzahlen mit dem Abstand unvergleichbar.
+    #
+    # ⚠️ **Auf 435 Positionen ist ein Prozent nicht aufgeloest.** Ein
+    # einzelnes Token, dessen Wahrscheinlichkeit um eine Groessenordnung
+    # springt, verschiebt den Mittelwert schon um rund ein halbes
+    # Prozent. Wer aus einem Boden von ein oder zwei Prozent etwas
+    # ableiten will, misst ihn ueber deutlich mehr Positionen nach:
+    # `E2E_MESS_SEQUENZEN=128`.
+    mess_n = int(os.environ.get("E2E_MESS_SEQUENZEN", "4"))
+    mess = select_sequences(mess_n, seq_len, verbose=False)
     model, _ = load_reference_model(MODEL_DIR)
 
     basis, n = perplexitaet(model, mess)
@@ -203,7 +262,63 @@ def main():
           f"   ({len(lin_module)} Module, Skala je Layer)")
 
     # ── Auswertung ────────────────────────────────────────────────────
-    integer_pfad = float(os.environ.get("INTEGER_PPL", "9.40"))
+    # ⛔️ **Hier stand `os.environ.get("INTEGER_PPL", "9.40")`**, und die
+    # 9,40 war die Ganzzahl-Perplexitaet von Qwen2.5-7B vom 2026-08-20,
+    # also von einem Modell, das nicht mehr Teil des Projekts ist. Fuer
+    # jedes andere Modell rechnete die Auswertung den Abstand gegen eine
+    # fremde Zahl und **druckte trotzdem ein Urteil**: Beim 0,6B kam
+    # „-70,50 %" und „Wir sind am BODEN DES SCHEMAS" heraus. Eine Zahl
+    # mit Ablaufdatum, wie sie dieselbe Messreihe unter Fund 340 schon
+    # einmal getroffen hat.
+    #
+    # ⚑ **Die Zahl gehoert dem Modell, und sie steht schon gemessen da.**
+    # Gelesen wird sie aus dem Vergleich, den `perplexity.py` je Modell
+    # schreibt. Fehlt er, bricht der Lauf ab, statt sich eine zu leihen.
+    umgebung = os.environ.get("INTEGER_PPL", "").strip()
+    if umgebung:
+        integer_pfad = float(umgebung)
+    else:
+        vergleich = ergebnis_pfad("perplexity_comparison")
+        if not vergleich.exists():
+            print(f"[w8a16] Es fehlt der Ganzzahl-Vergleich fuer {MODEL_NAME}:")
+            print(f"        {vergleich}")
+            print("        Erst `perplexity.py` fuer dieses Modell laufen lassen,")
+            print("        oder INTEGER_PPL setzen. Ohne ihn gibt es keinen Abstand.")
+            return 1
+        with open(vergleich, encoding="utf-8") as datei:
+            gemessen = json.load(datei)
+        # ⛔️ **Und derselbe Fehler noch einmal, eine Ebene tiefer.**
+        # Fund 375 war eine Zahl vom falschen Modell; hier droht eine vom
+        # falschen Umfang. Der Vergleich ist auf seiner eigenen
+        # Stichprobe gemessen. Laeuft diese Simulation ueber eine andere,
+        # sind Grundlinie und Ganzzahlpfad **verschiedene Texte**, und
+        # ihr Verhaeltnis bedeutet nichts: Beim ersten Lauf mit 128
+        # Sequenzen kam "-21,31 %" und daraus "wir sind am Boden des
+        # Schemas" heraus.
+        #
+        # ⚑ **Dann wird der Boden ausgewiesen und der Abstand
+        # weggelassen.** Eine Haelfte der Auskunft ist besser als eine
+        # erfundene ganze.
+        positionen_vergleich = int(gemessen.get("evaluated_tokens", -1))
+        if positionen_vergleich != n:
+            print()
+            print(f"{'Boden des Schemas (W8A16, sonst float)':<42} {ppl_beide:8.2f}"
+                  f"  ({100 * (ppl_beide / basis - 1):+.2f} %)")
+            print(f"{'Mit A16 an jedem Linear-Eingang':<42} {ppl_alle:8.2f}"
+                  f"  ({100 * (ppl_alle / basis - 1):+.2f} %)")
+            print()
+            print(f"-> Kein Abstand zum Ganzzahlpfad: Diese Messung laeuft")
+            print(f"   ueber {n} Positionen, der Vergleich von perplexity.py")
+            print(f"   ueber {positionen_vergleich}. Zwei Stichproben, zwei Texte;")
+            print( "   ihr Verhaeltnis waere eine erfundene Zahl. Fuer den")
+            print( "   Abstand beide ueber denselben Umfang messen.")
+            _ablegen(
+                ergebnis_pfad(f"schema_boden_{mess_n}seq"),
+                MODEL_NAME, mess_n, n, basis, ppl_beide, ppl_w8, ppl_alle,
+                integer_pfad=None,
+            )
+            return 0
+        integer_pfad = float(gemessen["integer_perplexity"])
     print()
     print(f"{'Boden des Schemas (W8A16, sonst float)':<42} {ppl_beide:8.2f}"
           f"  ({100 * (ppl_beide / basis - 1):+.2f} %)")
@@ -215,14 +330,32 @@ def main():
     print(f"{'Abstand Integer-Pfad zum Schema-Boden':<42} {'':8}  ({rest:+.2f} %)")
     print()
 
+    # ⚑ **Der Boden wird abgelegt, nicht nur gedruckt.** Sonst steht er
+    # in einem Terminal, das jemand schliesst, und die Uebersicht muesste
+    # ihn von Hand nachtragen. Sie liest ihn stattdessen, so wie sie die
+    # Vergleiche liest; eine Zahl, die erzeugt wird, wird nicht gepflegt.
+    # ⛔️ **Ein Lauf mit anderer Stichprobe ueberschreibt die
+    # vergleichbare Zahl nicht.** Die Uebersicht stellt den Boden neben
+    # den Abstand, und der ist auf 435 Positionen gemessen; ein Boden aus
+    # 16 000 Positionen gehoert daneben, nicht darueber. Er bekommt
+    # deshalb einen eigenen Namen.
+    ziel = (
+        ergebnis_pfad("schema_boden")
+        if mess_n == 4
+        else ergebnis_pfad(f"schema_boden_{mess_n}seq")
+    )
+    _ablegen(ziel, MODEL_NAME, mess_n, n, basis, ppl_beide, ppl_w8, ppl_alle,
+             integer_pfad=integer_pfad)
+
     if rest < 2.0:
-        print("-> Wir sind am BODEN DES SCHEMAS. Feilen an der Umsetzung")
-        print("   bringt nichts mehr; 12.77 braucht ein besseres Schema")
-        print("   (Ausreisserbehandlung: FSBR oder Hadamard).")
+        print(f"-> {MODEL_NAME} ist am BODEN DES SCHEMAS. Feilen an der")
+        print("   Umsetzung bringt nichts mehr; weiter kommt nur ein besseres")
+        print("   Schema (Ausreisserbehandlung: FSBR oder Hadamard).")
     else:
-        print("-> Es steckt noch IMPLEMENTIERUNGSVERLUST drin. Die naechste")
-        print("   Messung gehoert in die Nichtlinearitaeten (LUT-Ablation)")
-        print("   und die Skalen-Granularitaet, nicht in ein neues Schema.")
+        print(f"-> Bei {MODEL_NAME} steckt noch IMPLEMENTIERUNGSVERLUST drin:")
+        print(f"   {rest:.2f} % ueber dem Boden. Die naechste Messung gehoert")
+        print("   in die Nichtlinearitaeten (LUT-Ablation) und die")
+        print("   Skalen-Granularitaet, nicht in ein neues Schema.")
 
     if ppl_beide / basis - 1 > 0.05:
         print()
@@ -230,6 +363,8 @@ def main():
         print("   5-%-Kriterium. Dann ist es mit Implementierungsarbeit")
         print("   allein grundsaetzlich nicht erreichbar.")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
