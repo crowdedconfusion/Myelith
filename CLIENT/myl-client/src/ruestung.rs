@@ -149,14 +149,44 @@ pub fn ruesten_mit(
     // Agent von Haus aus einen Arbeitsplatz mit Beispieldateien, an
     // denen jedes Werkzeug sich zeigt. Wer nichts gesetzt hat und den
     // Ordner nicht findet, bekommt wie bisher keine Dateiwerkzeuge.
-    let wurzel = agent
-        .wurzel
-        .clone()
-        .or_else(crate::einstellungen::Einstellungen::standard_wurzel);
+    // ⛔️ **Ein gesetzter Ordner, der nicht traegt, ist ein Fehler; die
+    // Vorgabe nicht** (Fund aus der CI unter Windows, 2026-09-15).
+    //
+    // 📌 Bis hierher ging **jeder** untragbare Ordner als Fehler aus
+    // `ruesten` heraus, auch der, den niemand eingestellt hat. Damit
+    // nahm eine nicht auffindbare Vorgabe **alles** mit, auch die
+    // verankerten Werkzeuge, die gar keinen Ordner brauchen: Ein
+    // Netzlauf haette an einem umbenannten `WORK_DIR` scheitern koennen.
+    // Aufgefallen ist es an einem Wegwerf-Verzeichnis, das zwischen
+    // `canonicalize` und `is_dir` verschwand.
+    //
+    // ⚑ **Der Unterschied ist die Absicht.** Wer einen Pfad einstellt,
+    // meint ihn, und ein stiller Rueckfall liesse ihn in einem anderen
+    // Ordner arbeiten als dem, der in den Einstellungen steht (dieselbe
+    // Begruendung wie bei `kisten::ordner_der_gilt`). Die Vorgabe ist
+    // eine Bequemlichkeit; traegt sie nicht, gibt es eben keine
+    // Dateiwerkzeuge, genau wie wenn sie gar nicht da waere.
+    let (wurzel, war_gesetzt) = match agent.wurzel.clone() {
+        Some(w) => (Some(w), true),
+        None => (crate::einstellungen::Einstellungen::standard_wurzel(), false),
+    };
     let einhaengung = match wurzel.as_deref() {
         None => None,
-        Some(pfad) => {
-            let ein = Einhaengung::neu(pfad, agent.schreiben)?;
+        Some(pfad) => 'ohne: {
+            let ein = match Einhaengung::neu(pfad, agent.schreiben) {
+                Ok(x) => x,
+                Err(f) if war_gesetzt => return Err(f),
+                // Die Vorgabe traegt nicht: weiter wie ohne Ordner. Die
+                // verankerten Werkzeuge haengen schon im Kasten.
+                //
+                // ⚠️ **Ohne eigene Probe, und das ist keine Nachlaessigkeit.**
+                // `standard_wurzel` prueft `is_dir()`, bevor sie einen Pfad
+                // herausgibt; hierher kommt also nur, was **zwischen** jener
+                // Pruefung und diesem Einhaengen verschwindet. Dieses
+                // Zeitfenster laesst sich nicht absichtlich treffen, in der
+                // CI unter Windows ist es von selbst aufgetreten.
+                Err(_) => break 'ohne None,
+            };
             // 📌 **Hier stand ein Zeichenkettenvergleich auf den drei
             // Namen**, und das ging genau so lange gut, wie die Namen
             // fest waren. Seit sie an der Ansageform haengen, kaeme eine

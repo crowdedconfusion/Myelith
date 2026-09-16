@@ -2,7 +2,7 @@
 
 > ⚙️ **Erzeugt von `BENCHMARKS/Inferenz/uebersicht.py`.**
 > Nicht von Hand bearbeiten: Der nächste Lauf überschreibt die Datei.
-> Stand: 2026-09-15
+> Stand: 2026-09-16
 
 Gemessen wird Perplexität auf WikiText-2 mit Teacher-Forcing, für
 beide Pfade auf **identischen Sequenzen**; niedriger ist besser.
@@ -34,20 +34,30 @@ Abschnitt; der Rest ist Umsetzung.
 sonst Gleitkomma (`INTEGER_LLM/tests/diag/w8a16_reference_simulation.py`).
 Der Rest des Abstands oben ist Umsetzung.
 
-⛔️ **Diese Zahlen gehören nicht in die Tabelle oben.** Sie sind
-über eine andere, grössere Stichprobe gemessen, also über
-anderen Text. Eine Differenz zwischen beiden Tabellen wäre eine
-erfundene Zahl; das Messwerkzeug weigert sich deshalb, sie zu
-bilden. **Für einen belastbaren Umsetzungsverlust muss auch der
-Ganzzahlpfad über denselben Umfang gemessen werden**, und das
-steht aus.
+⛔️ **Die Spalte mit den Positionen entscheidet, ob eine Zeile
+mit der Tabelle oben verrechnet werden darf.** Wer 13 797 gegen
+435 rechnet, rechnet über verschiedenen Text, und das Ergebnis
+wäre erfunden; das Messwerkzeug weigert sich deshalb.
+**Für einen belastbaren Umsetzungsverlust muss der Ganzzahlpfad
+über denselben Umfang laufen wie der Boden**, und über 13 797
+Positionen steht er noch aus.
 
-📌 **Warum so viele Positionen.** Auf den 435 der Tabelle oben
-ergab dieselbe Messung beim 4B einen Boden von −2,45 %, also
-eine Quantisierung, die das Modell verbessert. Auf 13 797
-Positionen blieb davon −0,07 %. Ein einzelnes Token, dessen
+⛔️ **Ein negativer Boden ist kein Ergebnis, sondern eine
+Meldung über die Stichprobe.** Quantisierung vernichtet
+Information; dass ein quantisiertes Modell besser vorhersagt
+als seine eigene Gleitkomma-Referenz, kann nicht sein. Über
+435 Positionen steht er beim 4B bei −2,45 % und beim
+30B-Gemisch bei −0,43 %; beim 4B blieb über 13 797 Positionen
+davon −0,07 %. **Wo das Vorzeichen negativ ist, trägt die Zeile
+keine Aussage**, auch wenn ihre Stichprobe zur Tabelle oben
+passt.
+
+📌 **Warum so viele Positionen.** Ein einzelnes Token, dessen
 Wahrscheinlichkeit um eine Grössenordnung springt, verschiebt
 bei 435 Positionen die Perplexität schon um ein halbes Prozent.
+Unterschiede unter rund einem Prozent tragen deshalb keine
+Information und sind über verschiedene Sequenzmengen nicht
+einmal monoton.
 
 | Modell | Positionen | Gleitkomma | nur Gewichte (W8) | Boden (W8A16) |
 |---|---|---|---|---|
@@ -55,6 +65,7 @@ bei 435 Positionen die Perplexität schon um ein halbes Prozent.
 | Myelith 0,6B | 435 | 31,86 | 32,04 | 32,12 (+0,80 %) |
 | Myelith 4B | 13797 | 28,09 | 28,07 | 28,07 (−0,07 %) |
 | Myelith 4B | 435 | 19,63 | 19,39 | 19,15 (−2,45 %) |
+| Myelith 30B-A3B | 435 | 10,48 | 10,48 | 10,44 (−0,43 %) |
 
 ## Wo die Einzelbelege stehen
 

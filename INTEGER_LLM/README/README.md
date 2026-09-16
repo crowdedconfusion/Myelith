@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.72.2 (θ_v 0.20.0; kernels 0.56.0, runtime 0.52.0, pipeline 0.15.1)
+> **Version:** 0.73.0 (θ_v 0.20.0; kernels 0.56.0, runtime 0.53.0, pipeline 0.15.1)
 > **Datum:** 2026-09-14
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
@@ -15,14 +15,28 @@
 > Messung. Vorher standen zwei Grössen in einer anderen Familie, ein
 > Grössenvergleich mass also immer auch einen Familienunterschied mit.
 > ⚑ **Der Boden des Schemas ist seit dem 2026-09-15 für die laufende
-> Reihe gemessen** (Fund 375): beim 0,6B **+0,80 %**, beim 4B
-> **−2,45 %**, also unter der eigenen Gleitkomma-Referenz. Daraus folgt
-> eine Umkehrung, die die Kopfzahl allein verdeckt: Das 4B hat den
-> **kleineren** Abstand (+1,65 % gegen +4,48 %) und den **grösseren**
-> Umsetzungsverlust (+4,20 % gegen +3,65 %). **Wer aus dem Abstand
-> allein auf das Quantisierungsschema schliesst, schliesst falsch.**
-> Für das 30B-Gemisch steht die Messung aus; seine BF16-Referenz ist
-> 57 GB und passt nicht in 24 GiB. Der ältere Wert **+0,84 % an der
+> Reihe gemessen** (Fund 375), und die erste Messung wurde dabei
+> **zurückgezogen**. Über die 435 Positionen der Reihe kam beim 4B ein
+> Boden von −2,45 % heraus, also eine Quantisierung, die das Modell
+> verbessert. Über **13 797 Positionen** blieb davon −0,07 %; beim 0,6B
+> stehen +1,61 % statt +0,80 %. Kein Rechenfehler, eine zu kleine
+> Stichprobe.
+>
+> ⛔️ **Der Umsetzungsverlust ist damit offen.** Er wäre der Abstand
+> minus der Boden, aber der Abstand steht auf 435 Positionen und der
+> belastbare Boden auf 13 797; über verschiedenem Text gerechnet ist
+> eine Differenz erfunden, und das Werkzeug weigert sich, sie zu bilden.
+> **Die daraus zuvor gemeldeten +3,65 % und +4,20 % gelten nicht.** Was
+> fehlt, ist der Ganzzahlpfad über denselben Umfang.
+>
+> ⚑ **Was trotzdem feststeht:** Der Abstand allein sagt nicht, woher er
+> kommt. Er enthält das Verfahren und die Umsetzung, und **wer aus dem
+> Abstand auf das Quantisierungsschema schliesst, schliesst falsch.**
+> ⛔️ **Und beim 30B-Gemisch ist er negativ.** Die Messung lief am
+> 2026-09-16 durch (3 h 17 min, 435 Positionen, wie sein Ganzzahlwert):
+> Boden **−0,43 %**, Ganzzahlpfad −0,59 %, Differenz −0,16 %. Ein
+> negativer Boden kann nicht sein, Quantisierung vernichtet Information;
+> die Stichprobe trägt ihn nicht. Der ältere Wert **+0,84 % an der
 > abgelösten 7B** bleibt als Aufzeichnung und steht weiter unten im
 > dazugehörigen Ergebnisblock.
 > Zuletzt entscheidend: Fund 31 (θ_v 0.17.0), die doppelte Klemmung in der
@@ -612,6 +626,120 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.73.0 – 2026-09-16 (Entscheidungstreue: der Maßstab, der den Einsatz misst)
+
+`runtime` **0.53.0** (θ_v **0.20.0** unverändert, kein Rechenpfad ändert
+sich). Auf die Frage des Projektinhabers, ob wir den falschen Benchmark
+zur Verifikation nutzen.
+
+⚑ **Die Verifikation hängt nicht an der Perplexität**, und das bleibt so:
+Bitgleichheit wird über die 48 Konformitätsvektoren nachgewiesen. ⛔️ **Die
+Qualitätsaussage hängt an ihr, und die misst am Einsatz vorbei.**
+Perplexität misst unter Teacher-Forcing, also mit einem Kontext, der an
+jeder Position auf die Wahrheit zurückgesetzt wird; eine Abweichung bei
+Token `t` wirkt nicht auf `t+1`. Der Client generiert frei, und **seine
+Werkzeugaufrufe sind JSON**: Eine andere Entscheidung ist dort ein
+anderer Dateipfad.
+
+⛔️ **Der Widerspruch stand in den eigenen Daten.** Qwen2.5-0,5B, dieselben
+Sequenzen: Perplexitätsabstand +2,11 % („Kriterium erfüllt"),
+Top-1-Übereinstimmung 89,7 %, identische Generierungen 3 von 8. Für die
+**eingesetzten** Modelle führt die Modellkarte die beiden letzten als
+*nicht gemessen*.
+
+⚑ **Neu: `entscheidungsprobe` (runtime) und `entscheidungstreue.py`.**
+Sie geben je Position die Entscheidung aus statt nur deren
+Wahrscheinlichkeit, und **der Entscheidungsabstand der Referenz teilt die
+Positionen**: Wo die Referenz selbst schwankt, ist eine andere Wahl eine
+Münze; wo sie sicher war, ist es ein Mangel. Ohne diese Trennung ist eine
+Abweichungsquote nicht deutbar.
+
+**Pilot auf `myelith-0.6b`, 13 797 Positionen, 6 Minuten 8 Sekunden:**
+
+| | Wert |
+|---|---|
+| Top-1-Übereinstimmung | **86,20 % ± 0,58** |
+| Positionen mit sicherer Referenz | 6 768 |
+| Abweichungen davon | 97 (**1,43 % ± 0,28**) |
+| Entscheidungsabstand, wo einig / uneinig | 1,25 / 0,25 nat |
+
+⚑ **Die Abweichungen sitzen überwiegend an Beinahe-Gleichständen**, aber
+nicht alle: 1,43 % der sicheren Entscheidungen gehen anders aus, und das
+Band schließt die Null nicht ein. ⚑ **Es ist die erste Qualitätszahl
+dieses Projekts mit engem Fehlerband**, weil sie gepaart je Position
+misst statt gepoolt über vier Sequenzmittelwerte.
+
+⚠️ **Der Pilot misst noch auf WikiText-2.** Gebraucht wird die
+Einsatzverteilung: Chat-Vorlage, Werkzeugaufrufe, lange Kontexte.
+Einzelheiten im Bericht `Entscheidungstreue-statt-Perplexitaet-2026-09-16.md`.
+
+### v0.72.4 – 2026-09-16 (der Boden des 30B ist gemessen, und das Urteil ist entfallen)
+
+Keine Kiste ändert sich (θ_v **0.20.0**); gemessen wird, und ein
+Messwerkzeug hört auf, mehr zu behaupten, als es weiss.
+
+⚑ **Der Boden des 30B-Gemischs ist gemessen.** Lauf am 2026-09-16,
+3 Stunden 17 Minuten, über 435 Positionen und damit über dieselbe
+Stichprobe wie sein Ganzzahlwert. ⚠️ **Eine grössere Stichprobe wäre
+hier ein Fehler gewesen**, kein Mehrwert: Der Ganzzahlwert des 30B steht
+auf 435, und ein Boden ohne vergleichbaren Partner lässt sich mit nichts
+verrechnen.
+
+| | Perplexität | gegen die Referenz |
+|---|---|---|
+| Gleitkomma | 10,48 | |
+| nur Gewichte (W8) | 10,48 | −0,01 % |
+| **Boden (W8A16)** | **10,44** | **−0,43 %** |
+| Ganzzahlpfad | 10,42 | −0,59 % |
+| A16 an jedem Linear-Eingang | 10,55 | +0,63 % |
+
+⛔️ **Fund 379: das Urteil prüfte, ob die Zahlen vergleichbar sind, aber
+nicht, ob sie etwas tragen.** Der Riegel aus Fund 375 verlangt dieselbe
+Stichprobe für beide Seiten, und das ist richtig; er sagt aber nichts
+darüber, ob die Stichprobe **gross genug** ist. Also druckte das
+Werkzeug auf diesen Zahlen „ist am BODEN DES SCHEMAS, Feilen an der
+Umsetzung bringt nichts mehr", **eine Handlungsanweisung aus einem
+negativen Boden**. ⚑ Ein negativer Boden kann nicht sein: Quantisierung
+vernichtet Information. Er ist keine Aussage über das Schema, sondern
+über die Stichprobe. Beim 4B stand derselbe Befund (−2,45 % über 435
+Positionen) und schrumpfte über 13 797 Positionen auf −0,07 %.
+
+⚑ **Das Werkzeug urteilt jetzt in zwei Fällen nicht mehr** und sagt
+warum: bei negativem Boden und bei einem Abstand unter einem Prozent
+(die 1-%-Regel des Projekts). Die erzeugte Übersicht trägt dieselbe
+Unterscheidung, und sie nennt die Spalte mit den Positionen als das,
+was entscheidet, ob eine Zeile mit dem Abstand verrechnet werden darf.
+
+📌 **Zweimal dieselbe Lehre, und beim zweiten Mal an derselben Datei.**
+Fund 375 war eine Zahl aus einer fremden Messung, Fund 379 eine Zahl aus
+einer zu kleinen. **Ein Werkzeug, das ein Urteil druckt, muss vorher
+wissen, ob seine Eingaben eines tragen.**
+
+### v0.72.3 – 2026-09-15 (der Kopf trug noch die zurückgezogenen Zahlen)
+
+Keine Kiste ändert sich (θ_v **0.20.0**); ein Text wird berichtigt und
+eine Messung gestartet.
+
+⛔️ **Der Kopf dieses Dokuments meldete einen Umsetzungsverlust, den es
+nicht gibt.** Dort standen +3,65 % (0,6B) und +4,20 % (4B) als Ergebnis,
+samt der Folgerung, das 4B habe den kleineren Abstand und den grösseren
+Umsetzungsverlust. Beide Zahlen stammen aus der Rechnung Abstand minus
+Boden über **verschieden grosse** Stichproben, und genau diese Rechnung
+ist einen Abschnitt weiter unten als unzulässig beschrieben. **Ein
+Dokument, das im Kopf behauptet, was es im Rumpf widerlegt, ist an der
+sichtbarsten Stelle falsch.**
+
+⚑ **Jetzt steht dort, was gemessen ist:** Boden **+1,61 %** (0,6B) und
+**−0,07 %** (4B) über 13 797 Positionen, die erste Messung über 435
+Positionen als zurückgezogen benannt, und der Umsetzungsverlust als
+**offene** Zahl, die einen eigenen Messlauf braucht.
+
+⚑ **Der 30B-Bodenlauf ist gestartet**, über 435 Positionen und damit
+über dieselbe Stichprobe wie sein Ganzzahlwert. Eine grössere Stichprobe
+gäbe einen Boden, der sich mit nichts verrechnen liesse. ⚠️ **Er ist
+plattengebunden:** Die BF16-Referenz ist 57 GB, die Maschine hat 24 GiB,
+und der Prozess verbrauchte in fünf Minuten Wanduhr 26 Sekunden CPU.
 
 ### v0.72.2 – 2026-09-15 (der Boden des Schemas gilt für die laufende Reihe)
 

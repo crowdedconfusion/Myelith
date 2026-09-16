@@ -347,7 +347,46 @@ def main():
     _ablegen(ziel, MODEL_NAME, mess_n, n, basis, ppl_beide, ppl_w8, ppl_alle,
              integer_pfad=integer_pfad)
 
-    if rest < 2.0:
+    # ⛔️ **Fund 379: das Urteil prueft, ob die Zahlen vergleichbar sind,
+    # aber nicht, ob sie etwas tragen** (2026-09-16).
+    #
+    # 📌 Der Riegel aus Fund 375 verlangt dieselbe Stichprobe fuer beide
+    # Seiten, und das ist richtig. Er sagt aber nichts darueber, ob die
+    # Stichprobe **gross genug** ist. Beim 30B-Gemisch kam ueber 435
+    # Positionen ein Boden von -0,43 % heraus, und das Werkzeug druckte
+    # „ist am BODEN DES SCHEMAS, Feilen an der Umsetzung bringt nichts
+    # mehr": eine Handlungsanweisung aus einer Zahl, die nichts traegt.
+    #
+    # ⚑ **Ein negativer Boden ist kein Ergebnis, sondern eine Meldung
+    # ueber die Stichprobe.** Quantisierung vernichtet Information; dass
+    # ein quantisiertes Modell besser vorhersagt als seine eigene
+    # Gleitkomma-Referenz, kann nicht sein. Beim 4B stand derselbe Befund
+    # (-2,45 % ueber 435 Positionen) und schrumpfte ueber 13 797
+    # Positionen auf -0,07 %.
+    #
+    # ⚑ **Und unterhalb von rund einem Prozent traegt ein Unterschied
+    # ohnehin nichts** (die 1-%-Regel des Projekts, aus einem
+    # zurueckgezogenen Ergebnis entstanden). Ein Urteil darunter ist
+    # geraten, auch wenn die Stichproben zusammenpassen.
+    boden_prozent = 100 * (ppl_beide / basis - 1)
+    if boden_prozent < 0.0:
+        print(f"-> KEIN URTEIL: Der Boden kam mit {boden_prozent:+.2f} % negativ")
+        print("   heraus, das quantisierte Modell sagt also angeblich besser")
+        print("   voraus als seine eigene Gleitkomma-Referenz. Das kann nicht")
+        print("   sein; Quantisierung vernichtet Information.")
+        print(f"   **Die Stichprobe von {n} Positionen ist zu klein.** Beim 4B")
+        print("   stand hier -2,45 % und blieb ueber 13 797 Positionen bei")
+        print("   -0,07 %. Fuer ein Urteil mit E2E_MESS_SEQUENZEN=128 messen,")
+        print("   und den Ganzzahlpfad ueber denselben Umfang dazu.")
+    elif abs(rest) < 1.0:
+        print(f"-> KEIN URTEIL: Der Abstand zum Boden liegt bei {rest:+.2f} %,")
+        print("   also unterhalb der Aufloesung. Unterschiede unter rund einem")
+        print("   Prozent tragen keine Information und sind ueber verschiedene")
+        print("   Sequenzmengen nicht einmal monoton.")
+        print(f"   Ueber {n} Positionen verschiebt ein einzelnes Token, dessen")
+        print("   Wahrscheinlichkeit um eine Groessenordnung springt, die")
+        print("   Perplexitaet schon um ein halbes Prozent.")
+    elif rest < 2.0:
         print(f"-> {MODEL_NAME} ist am BODEN DES SCHEMAS. Feilen an der")
         print("   Umsetzung bringt nichts mehr; weiter kommt nur ein besseres")
         print("   Schema (Ausreisserbehandlung: FSBR oder Hadamard).")

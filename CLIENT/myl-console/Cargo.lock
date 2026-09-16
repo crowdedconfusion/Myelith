@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.52.0"
+version = "0.53.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -712,7 +712,7 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.33.1"
+version = "0.33.2"
 dependencies = [
  "integer-llm-runtime",
  "libc",

@@ -1,0 +1,14 @@
+{
+  "modell": "myelith-30b-a3b",
+  "datensatz": "wikitext-2-raw-v1 (Testsplit)",
+  "mess_sequenzen": 4,
+  "ausgewertete_positionen": 435,
+  "baseline_perplexitaet": 10.48255448892767,
+  "boden_perplexitaet": 10.437220440976219,
+  "boden_prozent": -0.432471378988164,
+  "nur_gewichte_perplexitaet": 10.4765574876576,
+  "jeder_linear_eingang_perplexitaet": 10.548239358260217,
+  "integer_perplexitaet": 10.420630038560853,
+  "integer_prozent": -0.590738168184346,
+  "umsetzungsverlust_prozent": -0.15895422070643095
+}

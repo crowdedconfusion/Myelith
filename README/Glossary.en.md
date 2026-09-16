@@ -457,13 +457,57 @@ gap falls from +4.48 % to +1.65 %; on the mixture-of-experts model it is
 no longer measurable. The smallest model is the only one anywhere near
 the criterion, and whoever picks it should know that.
 
-⚠️ **The floor of the quantisation scheme is missing from this table**,
-and that is deliberate. It sits at **+0.84 %**, that is, everything in
-float except the → [W8A16](#w8a16) quantisation, but it was measured on
-a model that is no longer part of the project and has not been
-re-established for this range. Putting a number from a different
-measurement beside this table as a yardstick would compare it without
-it being comparable.
+#### The floor of the scheme
+
+⚑ **The gap above does not say where it comes from.** It holds two
+things: what the **scheme** costs (the floor) and what the
+**implementation** adds on top. The floor is measured separately, with
+everything in float except the → [W8A16](#w8a16) quantisation
+(`INTEGER_LLM/tests/diag/w8a16_reference_simulation.py`).
+
+| Model | Positions | Floor |
+|---|---|---|
+| Qwen3-0.6B | 13,797 | **+1.61 %** |
+| Qwen3-0.6B | 435 | +0.80 % |
+| Qwen3-4B | 13,797 | **−0.07 %** |
+| Qwen3-4B | 435 | −2.45 % |
+| Qwen3-30B-A3B | 435 | −0.43 % ⛔️ |
+
+⛔️ **A negative floor is not a result, it is a message about the
+sample.** Quantisation destroys information; a quantised model
+predicting better than its own floating-point reference cannot happen.
+That is exactly what two of the rows above say, and both were measured
+over 435 positions. On the 4B the course could be measured: −2.45 % over
+435 positions, −0.07 % over 13,797. Not a computation error, too small a
+sample. A single token whose probability moves by an order of magnitude
+shifts perplexity by half a percent at 435 positions (→ [The 1 %
+rule](#the-1--rule)).
+
+⚑ **Since 2026-09-16 the measuring tool passes no verdict on this.**
+Until then it printed "is at the floor of the scheme, polishing the
+implementation gains nothing", even where the floor came out negative,
+and that is a course of action derived from a number that carries
+nothing. With a negative floor, or a gap below one percent, it now says
+there is no verdict and names the reason.
+
+⚠️ **On the 30B mixture the implementation loss is therefore not open
+but unresolvable.** Floor and integer path rest on the same sample
+there, so the difference is computable and comes to −0.16 %. It sits far
+below the resolution; the four scored sequences scatter between
+perplexity 6.12 and 25.24.
+
+⛔️ **The implementation loss is therefore open.** It would be the gap
+above minus the floor. Where the two rest on samples of different size,
+the difference is computed across different text and thus invented; the
+measuring tool refuses to form it. Where they rest on the same sample it
+is computable, but at 435 positions not resolvable. **What is missing in
+both cases is the integer path over 13,797 positions**, and that is not
+an addendum but one measurement run per model.
+
+*(Until 2026-09-15 a floor of **+0.84 %** stood here as the only number.
+It is measured and it holds, but on Qwen2.5-7B, a model that is no
+longer part of the project. It now sits with the retired measurements in
+`BENCHMARKS/Inferenz/results/UEBERSICHT.md`.)*
 
 *(Until 2026-09-12 this table had four rows, among them Qwen2.5-0.5B and
 Qwen2.5-7B. Both left the project on 2026-09-11, the dense Qwen3-14B on

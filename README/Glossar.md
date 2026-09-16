@@ -483,13 +483,59 @@ nicht mehr messbar. Das kleinste Modell liegt als einziges nennenswert
 nahe am Kriterium; wer es wählt, wählt auch das, bei dem die
 Quantisierung am meisten kostet.
 
-⚠️ **Der Boden des Quantisierungsschemas fehlt in dieser Tabelle**, und
-das ist keine Nachlässigkeit. Er beträgt **+0,84 %**, also alles float
-außer der → [W8A16](#w8a16)-Quantisierung, ist aber an einem Modell
-gemessen, das nicht mehr Teil des Projekts ist, und für diese Reihe
-nicht neu bestimmt. Eine Zahl aus einer anderen Messung als Maßstab
-neben diese Tabelle zu stellen, hiesse sie zu vergleichen, ohne dass
-sie vergleichbar wäre.
+#### Der Boden des Schemas
+
+⚑ **Der Abstand oben sagt nicht, woher er kommt.** Er enthält zwei
+Dinge: was das **Verfahren** kostet (der Boden) und was die
+**Umsetzung** obendrauf legt. Der Boden wird getrennt gemessen, mit
+alles float außer der → [W8A16](#w8a16)-Quantisierung
+(`INTEGER_LLM/tests/diag/w8a16_reference_simulation.py`).
+
+| Modell | Positionen | Boden |
+|---|---|---|
+| Qwen3-0,6B | 13 797 | **+1,61 %** |
+| Qwen3-0,6B | 435 | +0,80 % |
+| Qwen3-4B | 13 797 | **−0,07 %** |
+| Qwen3-4B | 435 | −2,45 % |
+| Qwen3-30B-A3B | 435 | −0,43 % ⛔️ |
+
+⛔️ **Ein negativer Boden ist kein Ergebnis, sondern eine Meldung über
+die Stichprobe.** Quantisierung vernichtet Information; dass ein
+quantisiertes Modell besser vorhersagt als seine eigene
+Gleitkomma-Referenz, kann nicht sein. Genau das steht bei zwei der
+Zeilen oben, und beide sind über 435 Positionen gemessen. Beim 4B ließ
+sich der Verlauf nachmessen: −2,45 % über 435 Positionen, −0,07 % über
+13 797. Kein Rechenfehler, eine zu kleine Stichprobe. Ein einzelnes
+Token, dessen Wahrscheinlichkeit um eine Größenordnung springt,
+verschiebt bei 435 Positionen die Perplexität schon um ein halbes
+Prozent (→ [Die 1-%-Regel](#die-1--regel)).
+
+⚑ **Das Messwerkzeug fällt darüber seit dem 2026-09-16 kein Urteil
+mehr.** Es druckte bis dahin „ist am Boden des Schemas, Feilen an der
+Umsetzung bringt nichts mehr", auch wenn der Boden negativ war, und das
+ist eine Handlungsanweisung aus einer Zahl, die nichts trägt. Bei
+negativem Boden oder einem Abstand unter einem Prozent sagt es jetzt,
+dass es kein Urteil gibt, und nennt den Grund.
+
+⚠️ **Beim 30B-Gemisch ist der Umsetzungsverlust deshalb nicht offen,
+sondern unauflösbar.** Boden und Ganzzahlpfad stehen dort auf derselben
+Stichprobe, die Differenz ist also rechenbar und beträgt −0,16 %. Sie
+liegt weit unter der Auflösung; die vier gewerteten Sequenzen streuen
+zwischen Perplexität 6,12 und 25,24.
+
+⛔️ **Der Umsetzungsverlust ist deshalb offen.** Er wäre der Abstand
+oben minus der Boden. Wo beide auf verschieden großen Stichproben
+stehen, ist die Differenz über verschiedenem Text gerechnet und damit
+erfunden; das Messwerkzeug weigert sich, sie zu bilden. Wo sie auf
+derselben Stichprobe stehen, ist sie rechenbar, aber bei 435 Positionen
+nicht auflösbar. **Was in beiden Fällen fehlt, ist der Ganzzahlpfad
+über 13 797 Positionen**, und das ist kein Nachtrag, sondern je Modell
+ein eigener Messlauf.
+
+*(Bis zum 2026-09-15 stand hier ein Boden von **+0,84 %** als einzige
+Zahl. Er ist gemessen und gilt, aber an Qwen2.5-7B, einem Modell, das
+nicht mehr Teil des Projekts ist. Er steht jetzt bei den abgelösten
+Messungen in `BENCHMARKS/Inferenz/results/UEBERSICHT.md`.)*
 
 *(Bis zum 2026-09-12 standen hier vier Zeilen, darunter Qwen2.5-0,5B
 und Qwen2.5-7B. Beide sind seit dem 2026-09-11 nicht mehr im Projekt,

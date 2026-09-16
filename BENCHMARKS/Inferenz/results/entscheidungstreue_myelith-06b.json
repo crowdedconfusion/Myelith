@@ -1,0 +1,16 @@
+{
+  "modell": "myelith-0.6b",
+  "datensatz": "wikitext-2-raw-v1 (Testsplit)",
+  "sequenzen": 128,
+  "seq_len": 128,
+  "positionen": 13797,
+  "top1_uebereinstimmung": 0.8619989852866565,
+  "top1_band95": 0.00575517132186708,
+  "positionen_sichere_referenz": 6768,
+  "abweichungen_bei_sicherer_referenz": 97,
+  "anteil_abweichung_sicher": 0.014332151300236406,
+  "abstand_median_einig": 1.2499998807907104,
+  "abstand_median_uneinig": 0.25,
+  "rang_median_ganzzahl": 3,
+  "rang_median_referenz": 3
+}

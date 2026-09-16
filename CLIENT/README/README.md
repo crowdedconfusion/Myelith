@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.48.3 (`myl-client` 0.33.1, `myl-oberflaeche` 0.36.3, `myl-console` 0.10.2)
+> **Version:** 0.48.4 (`myl-client` 0.33.2, `myl-oberflaeche` 0.36.3, `myl-console` 0.10.2)
 > **Datum:** 2026-09-15
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -114,6 +114,41 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.48.4 – 2026-09-15 (eine Vorgabe, die nicht trägt, nimmt nicht alles mit)
+
+`myl-client` **0.33.2**, `myl-oberflaeche` 0.36.3, `myl-console` 0.10.2.
+
+⛔️ **Fund 378: eine nicht tragende Vorgabe warf das ganze Rüsten um.**
+Bis hierher ging **jeder** untragbare Ordner als Fehler aus `ruesten`
+heraus, auch der, den niemand eingestellt hat. Damit nahm eine nicht
+auffindbare Vorgabe **alles** mit, auch die verankerten Werkzeuge, die
+gar keinen Ordner brauchen: Ein Netzlauf hätte an einem umbenannten
+`WORK_DIR` scheitern können.
+
+⚑ **Der Unterschied ist die Absicht.** Ein **gesetzter** Pfad, den es
+nicht gibt, bleibt ein Fehler: Wer ihn einstellt, meint ihn, und ein
+stiller Rückfall ließe den Agenten in einem anderen Ordner arbeiten als
+dem, der in den Einstellungen steht (dieselbe Begründung wie bei der
+Wahl des Kistenordners). Die **Vorgabe** ist eine Bequemlichkeit; trägt
+sie nicht, gibt es eben keine Dateiwerkzeuge, genau wie wenn sie gar
+nicht da wäre.
+
+📌 **Aufgefallen ist es in der CI unter Windows**, und die Ursache dort
+war eine zweite: Zwei Prüfungen im **selben** Testprogramm hingen an
+derselben Umgebungsvariable und liefen nebenläufig. Die eine zeigte auf
+ihr Wegwerf-Verzeichnis und räumte es beim Verlassen weg, die andere
+griff dazwischen zu, und der Ordner verschwand zwischen `canonicalize`
+und `is_dir`. Zusammengelegt, wie schon bei der Prüfung in der
+Bibliothek. ⚑ **Die Klemme ist trotzdem am Ort behoben und nicht nur
+umgangen:** Ein Test, der eine Klemme umgeht, behebt sie nicht.
+
+⚠️ **Der Rückfall hat keine eigene Prüfung**, und das steht im Code.
+`standard_wurzel` prüft `is_dir()`, bevor sie einen Pfad herausgibt;
+dorthin kommt also nur, was **zwischen** jener Prüfung und dem Einhängen
+verschwindet, und dieses Zeitfenster lässt sich nicht absichtlich
+treffen. Wer die Deckung für größer hält, als sie ist, verlässt sich auf
+etwas, das niemand nachgesehen hat.
 
 ### v0.48.3 – 2026-09-15 (der Einhängepfad gehört dem Prozess, nicht dem Programm)
 

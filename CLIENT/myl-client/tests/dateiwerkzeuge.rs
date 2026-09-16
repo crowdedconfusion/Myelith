@@ -270,17 +270,29 @@ fn nur_lesen_steht_im_protokoll() {
 /// Zeigt `MYL_ARBEITSORDNER` auf ein Verzeichnis, haengt der Agent es
 /// ein, statt ganz ohne Dateiwerkzeuge dazustehen.
 ///
-/// 📌 **Die genuine „kein Dateizugriff"-Zusicherung** (Einhaengung
-/// `None`, wenn `standard_wurzel` nichts findet) steht als Einzeltest
-/// bei `standard_wurzel`; hier laesst sie sich nicht pruefen, weil die
-/// Suche im Baum den echten `WORK_DIR` faende.
+/// # ⛔️ Beides in **einem** Test, und zwar nach einem Fehlschlag in der CI
+///
+/// 📌 **Gefunden unter Windows am 2026-09-15.** Daneben stand ein
+/// zweiter Test, der prueft, dass die verankerten Werkzeuge **ohne**
+/// eingehaengtes Verzeichnis im Kasten haengen. Beide liefen
+/// nebenlaeufig im **selben Prozess**, und die Umgebung ist ein Zustand
+/// fuer den ganzen Prozess: Dieser Test zeigte sie auf sein
+/// Wegwerf-Verzeichnis, raeumte es beim Verlassen weg, und der andere
+/// griff genau dazwischen zu. Die Meldung lautete
+/// `Einhaengung ...\.tmpb3mHca: kein Verzeichnis`, also ein Ordner, der
+/// zwischen `canonicalize` und `is_dir` verschwand.
+///
+/// ⚑ **Zusammenlegen statt einen Riegel erfinden**, dieselbe
+/// Entscheidung wie bei `standard_wurzel` in der Bibliothek: Ein Test,
+/// der die Reihenfolge selbst in der Hand hat, wirft die Frage nicht
+/// auf, wer den Riegel beim naechsten Mal noch nimmt.
+///
+/// ⚠️ **Die Ursache ist trotzdem am Ort behoben worden**, nicht nur hier:
+/// Eine **Vorgabe**, die nicht traegt, wirft das Ruesten nicht mehr um
+/// (`ruestung.rs`). Ein Test, der eine Klemme umgeht, behebt sie nicht.
 #[test]
-fn ohne_wurzel_greift_der_standard_arbeitsordner() {
-    let alt = std::env::var_os(myl_client::einstellungen::ARBEITSORDNER);
-    let d = tempfile::tempdir().expect("Verzeichnis");
-    std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, d.path());
-
-    let agent = Agenteneinstellung {
+fn ohne_wurzel_greift_der_standard_arbeitsordner_und_verankertes_bleibt() {
+    let agent = || Agenteneinstellung {
         schritte: 2,
         wurzel: None,
         schreiben: false,
@@ -288,13 +300,73 @@ fn ohne_wurzel_greift_der_standard_arbeitsordner() {
         warnung: true,
         modus: Default::default(),
     };
-    let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
+
+    // 1. Mit gesetzter Umgebung haengt der Ordner ein.
+    let alt = std::env::var_os(myl_client::einstellungen::ARBEITSORDNER);
+    let d = tempfile::tempdir().expect("Verzeichnis");
+    std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, d.path());
+
+    let ruestung =
+        myl_client::ruestung::ruesten(&agent(), FORM, SATZ, Vec::new()).expect("Ruestung");
     assert!(
         ruestung.einhaengung.is_some(),
         "ohne gesetzte Wurzel greift der Standard-Arbeitsordner nicht"
     );
     // Und damit gibt es wieder Lesewerkzeuge, auch ohne Schreiberlaubnis.
     assert!(!ruestung.kasten.angebote().is_empty());
+
+    // 2. **Die verankerten Werkzeuge haengen unabhaengig davon**, und das
+    //    ist die Voraussetzung dafuer, dass ein Auftrag im Chat ein
+    //    Dokument erzeugen kann: Dort haengt niemand etwas ein.
+    //
+    // ⚠️ Nicht geprueft wird, dass **keine** Einhaengung entsteht: Aus dem
+    // Repositorium heraus greift die Vorgabe `WORK_DIR` immer, und das ist
+    // richtig so. Hier geht es allein darum, dass die verankerten
+    // Werkzeuge auch dort im Kasten sind, wo es keine Dateiwerkzeuge gibt.
+    std::env::remove_var(myl_client::einstellungen::ARBEITSORDNER);
+    let ruestung =
+        myl_client::ruestung::ruesten(&agent(), FORM, SATZ, Vec::new()).expect("Ruestung");
+    let namen: Vec<String> =
+        ruestung.kasten.angebote().iter().map(|a| a.name.clone()).collect();
+    for w in myl_client::verankert::Verankert::ALLE {
+        assert!(
+            namen.iter().any(|n| n == w.name()),
+            "{} fehlt ohne eingehaengtes Verzeichnis: {namen:?}",
+            w.name()
+        );
+    }
+
+    // 3. **Eine Umgebung, die ins Nichts zeigt, wird uebergangen**, und
+    //    das Ruesten laeuft weiter.
+    //
+    // ⚠️ **Das ist nicht der Fall aus der CI.** `standard_wurzel` prueft
+    // vorher `is_dir()`, ein Pfad ins Nichts kommt hier also gar nicht
+    // an: Was greift, ist `WORK_DIR`. Der Fall aus der CI war ein
+    // Ordner, der **zwischen** dieser Pruefung und dem Einhaengen
+    // verschwand, und genau dieses Zeitfenster laesst sich nicht
+    // absichtlich treffen. **Der Rueckfall in `ruestung.rs` ist deshalb
+    // eine Absicherung ohne eigene Probe**, und das steht hier, damit
+    // niemand die Deckung fuer groesser haelt, als sie ist.
+    let weg = d.path().join("gibt-es-nicht");
+    std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, &weg);
+    let ruestung = myl_client::ruestung::ruesten(&agent(), FORM, SATZ, Vec::new())
+        .expect("eine untragbare Vorgabe darf das Ruesten nicht umwerfen");
+    let namen: Vec<String> =
+        ruestung.kasten.angebote().iter().map(|a| a.name.clone()).collect();
+    for w in myl_client::verankert::Verankert::ALLE {
+        assert!(namen.iter().any(|n| n == w.name()), "{} fehlt: {namen:?}", w.name());
+    }
+
+    // 4. **Ein gesetzter Pfad, den es nicht gibt, bleibt ein Fehler.**
+    //    Er ist eine Absicht, kein Rueckfall; ein stiller Wechsel liesse
+    //    den Agenten in einem anderen Ordner arbeiten als dem, der in den
+    //    Einstellungen steht.
+    let mut eigen = agent();
+    eigen.wurzel = Some(weg.display().to_string());
+    assert!(
+        myl_client::ruestung::ruesten(&eigen, FORM, SATZ, Vec::new()).is_err(),
+        "ein gesetzter Pfad, den es nicht gibt, faellt still auf etwas anderes zurueck"
+    );
 
     match alt {
         Some(v) => std::env::set_var(myl_client::einstellungen::ARBEITSORDNER, v),
@@ -342,32 +414,3 @@ fn verankerte_werkzeuge_laufen_auch_ohne_bezeugtes() {
     assert!(!d.path().join("x.txt").exists(), "ein lokales Werkzeug lief in NurVerankert");
 }
 
-/// **Sie brauchen kein eingehaengtes Verzeichnis.**
-///
-/// ⚑ Das ist die Voraussetzung dafuer, dass ein Auftrag im Chat ein
-/// Dokument erzeugen kann: Dort haengt niemand etwas ein.
-#[test]
-fn verankerte_werkzeuge_gibt_es_auch_ohne_wurzel() {
-    // ⚠️ **Nicht geprueft wird hier, dass keine Einhaengung entsteht.**
-    // Aus dem Repositorium heraus greift die CTF-Vorgabe immer, und das
-    // ist richtig so; sie hat ihre eigene Pruefung. Hier geht es allein
-    // darum, dass die verankerten Werkzeuge **unabhaengig** davon im
-    // Kasten haengen, also auch dort, wo es keine Dateiwerkzeuge gaebe.
-    let agent = Agenteneinstellung {
-        schritte: 2,
-        wurzel: None,
-        schreiben: false,
-        kistenordner: None,
-        warnung: true,
-        modus: Default::default(),
-    };
-    let ruestung = myl_client::ruestung::ruesten(&agent, FORM, SATZ, Vec::new()).expect("Ruestung");
-    let namen: Vec<String> = ruestung.kasten.angebote().iter().map(|a| a.name.clone()).collect();
-    for w in myl_client::verankert::Verankert::ALLE {
-        assert!(
-            namen.iter().any(|n| n == w.name()),
-            "{} fehlt ohne eingehaengtes Verzeichnis: {namen:?}",
-            w.name()
-        );
-    }
-}
