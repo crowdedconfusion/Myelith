@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.41.0"
+version = "0.41.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -23,6 +23,15 @@ publish = false
 # `was_ausgeliefert_wird_steht_bei_der_kiste`.
 #
 # Das Bedieninstrument: `myl frage`, `myl agent`, `myl einstellungen`.
+# ⚑ **Welches Programm `cargo run` meint.**
+#
+# 📌 Seit `nadelprobe` daneben liegt, gibt es zwei, und `cargo run` hielt
+# an: „could not determine which binary to run". **Ein zweites Binaer
+# macht aus einem eindeutigen Aufruf einen mehrdeutigen**, und das faellt
+# nicht beim Bauen auf, sondern bei dem, der es benutzt. `myl` ist das
+# Bedieninstrument; `nadelprobe` ist eine Messung und wird mit `--bin`
+# gerufen.
+default-run = "myl"
 [package.metadata.myelith]
 ausliefern = "myl"
 

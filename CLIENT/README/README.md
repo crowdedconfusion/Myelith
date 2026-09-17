@@ -1,6 +1,6 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.56.0 (`myl-client` 0.41.0, `myl-oberflaeche` 0.38.3, `myl-console` 0.12.3)
+> **Version:** 0.56.1 (`myl-client` 0.41.1, `myl-oberflaeche` 0.38.3, `myl-console` 0.12.3)
 > **Datum:** 2026-09-16
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
@@ -114,6 +114,39 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.56.1 – 2026-09-17 (zwei rote CI-Prüfungen, und beide waren auf dieser Maschine unsichtbar)
+
+`myl-client` **0.41.1**. Keine Verhaltensänderung, zwei Fehlerbehebungen.
+
+⛔️ **Fund 392: eine `cfg`-Bedingung nannte das falsche System.**
+`hersteller_aus_pnp` liest die Herstellerkennung aus einer
+PNP-Gerätekennung, und die gibt es **nur unter Windows**; Linux liest den
+Hersteller aus sysfs und ruft die Zuordnung unmittelbar. Der Vermerk
+gegen die Warnung lautete aber `not(any(linux, windows))`, galt also auf
+macOS und **nicht** auf Linux, wo die Funktion ebenso ungerufen bleibt.
+⚑ **Hier war alles grün, die CI unter Linux brach ab.** Jetzt
+`not(target_os = "windows")`, also genau das eine System, das sie ruft.
+
+📌 **Eine `cfg`-Bedingung, die das falsche System nennt, fällt auf der
+Maschine, auf der man sie schreibt, nie auf.** Nachgeprüft ist sie
+deshalb, indem der Fehler hier **absichtlich erzeugt** wurde: Mit einer
+Bedingung, die das Wirtssystem nicht deckt, meldet clippy denselben
+Satz wie die CI, mit der richtigen ist es still.
+
+⛔️ **Fund 393: ein zweites Binär machte `cargo run` mehrdeutig.** Seit
+`nadelprobe` neben `myl` liegt, hielt `cargo run` mit „could not
+determine which binary to run" an, und eine CI-Stufe, die die Hilfe
+aufruft, fiel darüber. ⚑ **Das fällt nicht beim Bauen auf, sondern bei
+dem, der es benutzt.** Jetzt sagt `default-run = "myl"`, was gemeint
+ist; die Messung wird mit `--bin nadelprobe` gerufen.
+
+⚠️ **Was daraus fürs nächste Mal folgt:** Die Ziele für Linux und Windows
+sind auf der Entwicklungsmaschine installiert, aber ein
+`cargo check --target …` scheitert an den C-Abhängigkeiten (`blst`,
+`onig_sys`, `esaxx-rs`) ohne Kreuzübersetzer. **Für `cfg`-Fragen ist der
+gangbare Weg deshalb, den Fehler hier absichtlich zu erzeugen**, und
+nicht, auf die CI zu warten.
 
 ### v0.56.0 – 2026-09-17 (Wissensmappen: zwei Orte, zwei Werkzeuge, und ein Fund beim Einbauen)
 

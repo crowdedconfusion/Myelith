@@ -552,12 +552,20 @@ fn rechenwerke_suchen() -> Vec<Rechenwerk> {
 }
 
 /// Die Herstellerkennung aus einer PNP-Geraetekennung: `VEN_10DE` → `10de`.
-// ⚑ **Auf macOS ruft sie niemand, und geprueft wird sie trotzdem.**
-// Unter `cfg` gestellt liefe sie auf der Entwicklungsmaschine nie durch
-// eine Pruefung, und genau dort wird das Zusammenspiel zweier Karten
-// entschieden. Der Vermerk nimmt die Warnung ueber den Zweig, den
-// dieses Ziel nicht ruft, und sagt zugleich, welches Ziel gemeint ist.
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
+// ⚑ **Nur Windows ruft sie**, denn eine PNP-Kennung gibt es nur dort;
+// Linux liest den Hersteller aus sysfs und ruft `rueckseite_aus`
+// unmittelbar. Geprueft wird sie trotzdem ueberall: Unter `cfg`
+// gestellt liefe sie auf der Entwicklungsmaschine nie durch eine
+// Pruefung, und genau dort wird das Zusammenspiel zweier Karten
+// entschieden.
+//
+// 📌 **Hier stand `not(any(linux, windows))`, und das war falsch.** Der
+// Vermerk galt damit auf macOS und **nicht** auf Linux, wo sie ebenso
+// ungerufen bleibt: Die CI unter Linux brach mit `never used` ab,
+// waehrend hier alles gruen war. **Eine `cfg`-Bedingung, die das falsche
+// System nennt, faellt auf der Maschine, auf der man sie schreibt, nie
+// auf.**
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn hersteller_aus_pnp(pnp: &str) -> Option<String> {
     let k = pnp.to_ascii_lowercase();
     let ab = k.find("ven_")? + 4;
