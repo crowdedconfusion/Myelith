@@ -313,19 +313,17 @@
       <!-- ⚑ Steht nur da, wenn das Fenster hierher gefuehrt hat, und
            sagt dann, warum. -->
       <p id="feldhinweis" class="hinweiskasten" role="status" hidden></p>
-      <!-- ⚑ **Drei Tabellen und nicht eine** (Festlegung des
-           Projektinhabers, 2026-09-11). Die Reihenfolge der Seite folgt
-           dem, wonach jemand sucht: erst die Sprache, dann die
-           Aktualisierung, dann die Modelle, dann was dieser Rechner
-           hergibt, und ganz zuletzt die Feinheiten von Modell und
-           Agent. **Welches Feld in welche Tabelle gehoert, entscheidet
-           sein Name und nicht seine Ueberschrift**: Namen werden nicht
-           uebersetzt, Ueberschriften schon. -->
-      <table id="felder-oberflaeche"><tbody></tbody></table>
-      <!-- ⚑ **Die Aktualisierung steht gleich hinter der Sprache**
-           (Festlegung des Projektinhabers, 2026-09-11). Sie ist keine
-           Einstellung, sondern eine Handlung, und es ist die Handlung,
-           wegen der jemand diese Seite am ehesten oeffnet.
+      <!-- ⚑ **Die Aktualisierung steht ganz oben** (Auftrag des
+           Projektinhabers, 2026-09-16). Sie ist keine Einstellung,
+           sondern eine Handlung, und es ist die Handlung, wegen der
+           jemand diese Seite am ehesten oeffnet.
+
+           📌 **Bis zum 2026-09-16 stand sie unter der Sprache**
+           (Festlegung vom 2026-09-11, „gleich hinter der Sprache").
+           Der Grund dafuer war derselbe wie jetzt der Grund dagegen:
+           Wenn es die Handlung ist, wegen der jemand die Seite
+           oeffnet, gehoert sie nicht hinter eine Einstellung, sondern
+           davor.
 
            ⚠️ **Der Knopf ist gesperrt, solange es nichts zu tun gibt
            oder nichts zu tun MOEGLICH ist.** Wer das Programm aus
@@ -345,6 +343,17 @@
         </div>
         <pre id="aktzeilen" aria-live="polite" hidden></pre>
       </section>
+
+      <!-- ⚑ **Drei Tabellen und nicht eine** (Festlegung des
+           Projektinhabers, 2026-09-11). Die Reihenfolge der Seite folgt
+           dem, wonach jemand sucht: erst die Aktualisierung, dann die
+           Oberflaeche (Sprache, Erscheinungsbild, Schriftgroesse), dann
+           die Modelle, dann was dieser Rechner hergibt, und ganz
+           zuletzt die Feinheiten von Modell und Agent. **Welches Feld
+           in welche Tabelle gehoert, entscheidet sein Name und nicht
+           seine Ueberschrift**: Namen werden nicht uebersetzt,
+           Ueberschriften schon. -->
+      <table id="felder-oberflaeche"><tbody></tbody></table>
 
       <!-- ⚑ **Modelle holen und Artefakte bauen, aus der Oberflaeche.**
            Bis zum 2026-09-09 war `modell.artefakt` ein Textfeld: ein

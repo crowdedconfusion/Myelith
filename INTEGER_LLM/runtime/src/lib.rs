@@ -1,4 +1,5 @@
 pub mod kapazitaet;
+pub mod rechenwege;
 pub mod loader;
 pub mod kv_cache;
 pub mod generate;

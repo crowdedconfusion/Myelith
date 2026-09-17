@@ -124,6 +124,111 @@ pub fn ansage(ruestung: &crate::ruestung::Ruestung) -> Nachricht {
 /// ⚑ **Das Gespraech bleibt unberuehrt, wenn es schiefgeht.** Eine halbe
 /// Verdichtung waere ein Verlust ohne Gegenwert.
 pub fn verdichten(modell: &dyn Modellweg, gespraech: &mut Gespraech) -> Result<(usize, usize), Tuerfehler> {
+    verdichten_mit_mitschnitt(modell, gespraech, None, "", "")
+}
+
+/// **Wie [`verdichten`], und legt den Verlauf vorher als Mitschnitt ab.**
+///
+/// # ⛔️ Warum das zusammengehoert
+///
+/// `verdichten` **ersetzt** die Nachrichten durch die Zusammenfassung,
+/// und die Urfassung ist danach weg. Genau in dem Augenblick, in dem
+/// sie verschwindet, ist sie noch da: **Das ist die einzige Stelle, an
+/// der ein Mitschnitt vollstaendig sein kann.** Wer ihn spaeter
+/// schreiben wollte, schriebe die Zusammenfassung ab.
+///
+/// `wurzel` ist der eingehaengte Arbeitsordner; ohne ihn wird nichts
+/// abgelegt, und das ist kein Fehler: Ein Klient ohne Arbeitsordner hat
+/// keinen Ort, an dem der Agent nachlesen koennte.
+///
+/// ⚠️ **Ein Mitschnitt, der nicht geschrieben werden kann, haelt die
+/// Verdichtung nicht auf.** Der Kontext ist voll, und das ist das
+/// dringendere Problem; der Fehler geht als Text zurueck.
+pub fn verdichten_mit_mitschnitt(
+    modell: &dyn Modellweg,
+    gespraech: &mut Gespraech,
+    wurzel: Option<&std::path::Path>,
+    sitzung: &str,
+    modellname: &str,
+) -> Result<(usize, usize), Tuerfehler> {
+    let mitschnitt = wurzel.and_then(|w| {
+        if gespraech.ist_leer() {
+            return None;
+        }
+        let abschnitte: Vec<(String, String)> = gespraech
+            .nachrichten()
+            .iter()
+            .map(|n| (n.role.clone(), n.content.clone()))
+            .collect();
+        match crate::verlauf::schreiben(w, sitzung, modellname, &abschnitte) {
+            Ok(name) => {
+                // ⚑ **Das Verzeichnis kommt in die Zusammenfassung und
+                // nicht hinter einen Werkzeugaufruf** (2026-09-16).
+                //
+                // Der erste Entwurf gab es auf Anfrage heraus, und dafuer
+                // brauchte das Werkzeug einen **optionalen** Parameter:
+                // ohne Argumente das Verzeichnis, mit ihnen die Zeilen.
+                // Das bricht die Regel, dass kein Werkzeug einen
+                // optionalen Parameter hat, und die Regel hat recht.
+                //
+                // ⚑ **Hier steht es besser als dort.** Die
+                // Zusammenfassung ist das Einzige, was der naechste
+                // Schritt sieht; ein Verzeichnis darin kostet keinen
+                // Aufruf, und das Werkzeug behaelt genau eine Aufgabe.
+                // **Es ist ausserdem klein:** eine Zeile je Nachricht,
+                // gegen den ganzen Verlauf, den es ersetzt.
+                let t = verweis(w, &name);
+                Some(Ok((name, t)))
+            }
+            Err(f) => Some(Err(f.to_string())),
+        }
+    });
+    let ergebnis = verdichten_roh(modell, gespraech);
+
+    // ⚑ **Der Hinweis steht in der Zusammenfassung selbst**, nicht
+    // daneben: Sie ist das Einzige, was der naechste Schritt des Modells
+    // zu sehen bekommt. Ein Verweis, der nicht im Kontext steht, ist
+    // keiner.
+    if let (Ok(_), Some(Ok((_name, verzeichnis)))) = (&ergebnis, &mitschnitt) {
+        if let Some(erste) = gespraech.nachrichten.first_mut() {
+            erste.content.push_str(verzeichnis);
+        }
+    }
+    ergebnis
+}
+
+/// **Der Satz, mit dem die Zusammenfassung auf den Mitschnitt zeigt**,
+/// samt Verzeichnis.
+///
+/// ⚑ **Oeffentlich, damit die Messung denselben Text benutzt wie der
+/// Betrieb.** Eine Probe, die sich den Verweis selbst nachbaut, misst
+/// ihren eigenen Nachbau: Aendert sich hier ein Wort, liefe sie
+/// weiterhin gruen und sagte nichts mehr ueber das Programm aus. **Das
+/// ist dieselbe Angabe an zwei Orten, und dieses Projekt hat damit
+/// genug Erfahrung.**
+pub fn verweis(wurzel: &std::path::Path, name: &str) -> String {
+    let mut t = format!(
+        "\n\nDer vollstaendige Verlauf liegt unter `{name}`. \
+         Wer eine Einzelheit braucht, die oben fehlt, liest sie mit \
+         `read_history` an den genannten Zeilen nach; `list_history` \
+         nennt das vollstaendige Verzeichnis:\n"
+    );
+    for ab in &abschnitte_verzeichnis(wurzel, name) {
+        t.push_str(ab);
+        t.push('\n');
+    }
+    // ⚑ **Und was an Wissen bereitliegt** (2026-09-17). Die Verdichtung
+    // ist der Augenblick, in dem der Kontext geleert wird; genau dann
+    // gehoert der Hinweis dorthin, wo das Modell als Naechstes hinsieht.
+    // **Ein Verweis, der nicht im Kontext steht, ist keiner.**
+    if let Some(v) = crate::skills::verweis(Some(wurzel)) {
+        t.push_str(&v);
+        t.push('\n');
+    }
+    t
+}
+
+fn verdichten_roh(modell: &dyn Modellweg, gespraech: &mut Gespraech) -> Result<(usize, usize), Tuerfehler> {
     let vorher = modell.kontext(&gespraech.nachrichten);
     let Some(grenze) = vorher.map(|s| s.grenze) else {
         return Err(Tuerfehler::KontextVoll { belegt: 0, grenze: 0 });
@@ -136,6 +241,35 @@ pub fn verdichten(modell: &dyn Modellweg, gespraech: &mut Gespraech) -> Result<(
     let nachher = modell.kontext(&neu).map(|s| s.belegt).unwrap_or(0);
     gespraech.nachrichten = neu;
     Ok((vorher.map(|s| s.belegt).unwrap_or(0), nachher))
+}
+
+/// **Wie viele Zeilen das Verzeichnis in der Zusammenfassung hoechstens
+/// hat.**
+///
+/// ⚑ **Eine feste Zahl, und genau das ist der Punkt.** Sie haengt nicht
+/// an der Laenge des Gespraechs, also kostet das Verzeichnis immer
+/// gleich viel. Sechzehn Zeilen sind ueberschaubar und kosten rund 300
+/// Token; wer genauer sucht, ruft `list_history`.
+const VERZEICHNISZEILEN: usize = 16;
+
+/// Die Zeilen des Verzeichnisses, so wie sie in der Zusammenfassung
+/// stehen.
+///
+/// ⚑ **Gelesen und nicht aus den Abschnitten noch einmal gerechnet.**
+/// Zwei Rechnungen derselben Zeilennummern liefen auseinander, und die
+/// zweite waere die, auf die sich das Modell verlaesst.
+///
+/// ⛔️ **Und hoechstens [`VERZEICHNISZEILEN`] Zeilen** (Fund 387): Eine
+/// Zeile je Nachricht waechst genauso schnell wie das, was sie ersetzen
+/// soll. Gemessen wog das Verzeichnis eines Verlaufs aus 120
+/// Nachrichten 3 597 Token, und die verdichtete Fassung war groesser
+/// als das Original.
+fn abschnitte_verzeichnis(wurzel: &std::path::Path, name: &str) -> Vec<String> {
+    let pfad = wurzel.join(name);
+    // ⚠️ Ohne Verzeichnis bleibt der Verweis auf die Datei stehen: Ein
+    // Hinweis ohne Zeilennummern ist weniger als einer mit, aber mehr
+    // als keiner.
+    crate::verlauf::grobverzeichnis(&pfad, VERZEICHNISZEILEN).unwrap_or_default()
 }
 
 /// **Ein Balken aus Blockzeichen**, `breite` Zeichen, mit Achteln am Rand.
@@ -189,6 +323,77 @@ mod tests {
         let g = Gespraech::aus(vec![Nachricht::nutzer("12345"), Nachricht::modell("123")]);
         let a = anzeige(&Zeichen(40), Some(&Nachricht::system("12")), &g).expect("bekannt");
         assert_eq!((a.belegt, a.ansage, a.nachrichten, a.grenze, a.prozent), (10, 2, 2, 40, 25));
+    }
+
+    /// ⛔️ **Die Naht zwischen Verdichten und Mitschnitt, und sie ist der
+    /// Grund, warum es beides gibt.**
+    ///
+    /// Ein Modul, das niemand ruft, ist das haeufigste Fehlerbild dieses
+    /// Projekts, und hier waere es besonders still: Der Mitschnitt
+    /// entstuende nicht, die Verdichtung gelaenge trotzdem, und niemand
+    /// merkte es, bis jemand nachlesen will und nichts findet.
+    ///
+    /// ⚑ **Geprueft wird dreierlei:** dass die Datei entsteht, dass sie
+    /// den **vollstaendigen** Verlauf traegt (nicht die Zusammenfassung,
+    /// die ihn ersetzt), und dass die Zusammenfassung selbst auf sie
+    /// zeigt. **Ein Verweis, der nicht im Kontext steht, ist keiner**:
+    /// Die Zusammenfassung ist das Einzige, was der naechste Schritt des
+    /// Modells sieht.
+    #[test]
+    fn das_verdichten_legt_den_verlauf_ab_und_sagt_wo() {
+        let d = std::env::temp_dir()
+            .join(format!("myl-verdichten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("Ordner");
+
+        // ⚑ **Die zweite Nachricht hat zwei Zeilen**, und das ist
+        // Absicht: Nur so laesst sich zeigen, dass in die
+        // Zusammenfassung das **Verzeichnis** kommt und nicht der
+        // Verlauf. Die erste Zeile jedes Abschnitts ist seine Marke im
+        // Verzeichnis; die zweite darf dort nicht stehen.
+        let mut g = Gespraech::aus(vec![
+            Nachricht::nutzer("Die Kennzahl lautet 4711 und steht in der Tabelle."),
+            Nachricht::modell("Verstanden.\nDie Nebenzahl ist 0815 und gehoert nicht ins Verzeichnis."),
+        ]);
+        verdichten_mit_mitschnitt(&Zeichen(10_000), &mut g, Some(&d), "probe-1", "myelith-0.6b")
+            .expect("verdichtet");
+
+        let mitschnitte = crate::verlauf::vorhandene(&d);
+        assert_eq!(mitschnitte.len(), 1, "der Mitschnitt entsteht nicht");
+
+        // ⚑ **Die Zusammenfassung zeigt darauf**, mit dem Ordnernamen.
+        let text = &g.nachrichten()[0].content;
+        assert!(text.contains(crate::verlauf::ORDNER), "die Zusammenfassung nennt den Ordner nicht: {text}");
+        assert!(text.contains("KURZ"), "die Zusammenfassung selbst fehlt: {text}");
+
+        // ⛔️ **Und sie traegt das Verzeichnis**, sonst wuesste das
+        // Modell nicht, welche Zeilen es verlangen kann, und das
+        // Werkzeug braeuchte doch einen optionalen Parameter.
+        assert!(
+            text.contains("Die Kennzahl lautet") && text.contains("Verstanden."),
+            "das Verzeichnis fehlt in der Zusammenfassung: {text}"
+        );
+        // ⚑ **Eine Zeile je Nachricht, nicht der ganze Verlauf.** Die
+        // zweite Zeile der zweiten Nachricht ist keine Marke und gehoert
+        // deshalb nicht hinein.
+        assert!(
+            !text.contains("Die Nebenzahl ist 0815"),
+            "der Verlauf selbst steht in der Zusammenfassung statt nur sein Verzeichnis: {text}"
+        );
+
+        // ⛔️ **Und im Mitschnitt steht der ganze Verlauf**, nicht die
+        // Zusammenfassung: Sonst waere die Ablage eine zweite Kopie
+        // dessen, was ohnehin im Kontext steht.
+        let v = crate::verlauf::verzeichnis(&mitschnitte[0]).expect("Verzeichnis");
+        assert_eq!(v.nachrichten, 2, "der Mitschnitt traegt nicht den ganzen Verlauf");
+        assert_eq!(v.modell, "myelith-0.6b");
+        let alles = crate::verlauf::zeilen(&mitschnitte[0], 1, v.zeilen).expect("Zeilen");
+        assert!(alles.contains("4711"), "die Kennzahl fehlt im Mitschnitt: {alles}");
+        // ⛔️ **Und die Zeile, die nicht im Verzeichnis steht, steht im
+        // Mitschnitt**: Genau dafuer gibt es ihn.
+        assert!(alles.contains("0815"), "die Nebenzahl fehlt im Mitschnitt: {alles}");
+
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

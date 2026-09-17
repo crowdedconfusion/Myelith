@@ -2327,14 +2327,22 @@ fn auch_die_regler_sprechen_die_eingestellte_sprache() {
     }
 }
 
-/// **Die Sprache steht zuoberst, die Updates gleich darunter.**
+/// **Die Aktualisierung steht zuoberst, die Oberflaeche gleich
+/// darunter.**
 ///
-/// ⚑ Festlegung des Projektinhabers am 2026-09-10, und sie hat einen
-/// Grund: Die Sprache beschriftet alles, was darunter kommt. **Wer die
-/// Seite in einer Sprache oeffnet, die er nicht liest, soll den
-/// Schalter finden, ohne bis ans Ende zu suchen.**
+/// ⚑ **Auftrag des Projektinhabers vom 2026-09-16.** Die Aktualisierung
+/// ist keine Einstellung, sondern eine **Handlung**, und es ist die
+/// Handlung, wegen der jemand diese Seite am ehesten oeffnet.
+///
+/// 📌 **Bis dahin stand die Sprache zuoberst und die Aktualisierung
+/// darunter** (Festlegungen vom 2026-09-10 und 2026-09-11). Die
+/// Begruendung damals war, dass die Sprache alles beschriftet, was
+/// darunter kommt. Sie traegt weiter, nur nicht gegen eine Handlung:
+/// **Wer die Seite wegen des Updates oeffnet, soll es nicht unter einer
+/// Einstellung suchen.** Die Sprache bleibt das erste **Feld** und
+/// steht damit zuoberst in der ersten Tabelle.
 #[test]
-fn die_sprache_steht_zuoberst() {
+fn die_aktualisierung_steht_zuoberst() {
     assert_eq!(
         myl_client::einstellungen::FELDER[0].name,
         "oberflaeche.sprache",
@@ -2344,13 +2352,13 @@ fn die_sprache_steht_zuoberst() {
     let html = lies("index.html");
     let wo = |k: &str| html.find(k).unwrap_or_else(|| panic!("{k} steht nicht im HTML"));
 
-    // ⚑ **Die Reihenfolge der ganzen Seite, an einer Stelle geprueft**
-    // (Festlegung des Projektinhabers, 2026-09-11): Sprache, dann die
-    // Aktualisierung, dann die Modelle, dann was dieser Rechner
-    // hergibt, und zuletzt die Feinheiten von Modell und Agent.
+    // ⚑ **Die Reihenfolge der ganzen Seite, an einer Stelle geprueft:**
+    // die Aktualisierung, dann die Oberflaeche, dann die Modelle, dann
+    // was dieser Rechner hergibt, und zuletzt die Feinheiten von Modell
+    // und Agent.
     let folge = [
-        ("id=\"felder-oberflaeche\"", "die Sprache"),
         ("id=\"aktualisierung\"", "die Aktualisierung"),
+        ("id=\"felder-oberflaeche\"", "die Oberflaeche"),
         ("id=\"modellbau\"", "die Modelle"),
         ("id=\"felder-grenzen\"", "die Grenzen dieses Rechners"),
         ("id=\"freigabe\"", "die Freigaben"),
@@ -2850,4 +2858,372 @@ fn der_einhaengepfad_gehoert_dem_prozess() {
         js.contains("invoke(\"werkzeuge\", { wurzel: null })"),
         "der Platzhalter der Einstellungen haengt am Prozess"
     );
+}
+
+/// **Der offene Anschlag eines Reglers liegt rechts, und er heisst, wie
+/// die Kiste ihn nennt.**
+///
+/// # ⚑ Auftrag des Projektinhabers, 2026-09-16
+///
+/// „Ohne Grenze" steht ganz rechts und ist die Vorgabe. 📌 Bis dahin
+/// lag diese Stellung ganz **links**, bei null: Sie bedeutete dasselbe
+/// und las sich wie das Gegenteil, denn wer einen Regler am linken
+/// Anschlag sieht, liest „nichts", nicht „alles".
+///
+/// ⚑ **Und die Worte kommen aus `hardware::Regler`**, nicht aus dem
+/// Skript. Die Konsole zeigt dieselben Regler in derselben Sprache;
+/// ein Literal hier waere die zweite Stelle, an der die naechste
+/// Sprache vergessen wird, und genau das war der Befund vom
+/// 2026-09-10.
+#[test]
+fn der_offene_anschlag_liegt_rechts_und_kommt_aus_der_kiste() {
+    let js = lies("app.js");
+
+    // Die Enden des Reglers stehen nicht mehr im Skript.
+    assert!(js.contains("schieber.min = r.mindestens;"), "das linke Ende kommt nicht aus der Kiste");
+    assert!(
+        js.contains("schieber.max = r.hoechstens ?? r.mindestens;"),
+        "das rechte Ende kommt nicht aus der Kiste"
+    );
+    assert!(
+        !js.contains("schieber.min = 0;"),
+        "der Regler faengt weiter fest bei null an"
+    );
+
+    // Ohne Wert steht er rechts und nicht links.
+    assert!(
+        js.contains("schieber.value = r.wert ?? schieber.max;"),
+        "ein Regler ohne Wert steht nicht am rechten Anschlag"
+    );
+    assert!(
+        !js.contains("schieber.value = r.wert ?? 0;"),
+        "ein Regler ohne Wert steht weiter am linken Anschlag"
+    );
+
+    // Der rechte Anschlag nimmt die Grenze weg.
+    assert!(
+        js.contains(r#"wert: n === ende() ? "aus" : String(n)"#),
+        "der rechte Anschlag setzt nicht `aus`"
+    );
+    assert!(
+        !js.contains(r#"wert: n === 0 ? "aus" : String(n)"#),
+        "der linke Anschlag setzt weiter `aus`"
+    );
+
+    // ⚑ **Und die Beschriftung der Enden ist keine Zeichenkette hier.**
+    assert!(js.contains("anzeige.textContent = r.rechts;"), "das rechte Ende heisst nicht r.rechts");
+    assert!(js.contains("anzeige.textContent = r.links;"), "das linke Ende heisst nicht r.links");
+    assert!(
+        !js.contains(r#""ohne Grenze""#),
+        "„ohne Grenze\" steht als Literal im Skript und damit an zwei Orten"
+    );
+}
+
+/// **Jeder Regler bringt die Felder mit, die das Skript von ihm
+/// liest.**
+///
+/// ⚑ **Die Gegenrichtung zur Pruefung darueber.** Jene sagt, dass das
+/// Skript `r.mindestens`, `r.links` und `r.rechts` benutzt; diese sagt,
+/// dass es sie auch bekommt. **Ein Feld, das eine Seite liest und die
+/// andere nicht schickt, ist in JavaScript `undefined`**, und das ist
+/// genau Fund 280.
+#[test]
+fn ein_regler_bringt_mit_was_das_skript_von_ihm_liest() {
+    let e = myl_client::Einstellungen::default();
+    let hw = myl_client::hardware::Hardware::erheben(std::path::Path::new("."));
+    let regler = hw.regler(&e);
+    assert!(!regler.is_empty(), "kein einziger Regler; misst die Pruefung noch etwas?");
+
+    for r in &regler {
+        let j = serde_json::to_value(r).expect("ein Regler geht nicht ueber die Naht");
+        for feld in ["name", "titel", "einheit", "hoechstens", "mindestens", "wert", "rechts", "hinweis"] {
+            assert!(j.get(feld).is_some(), "`{}` schickt kein `{feld}`", r.name);
+        }
+        // ⚑ `links` ist ausdruecklich `null`, wo die Stellung keinen
+        // eigenen Namen hat, und nicht abwesend: Das Skript fragt es ab.
+        assert!(j.get("links").is_some(), "`{}` schickt kein `links`", r.name);
+        assert!(
+            !r.rechts.is_empty(),
+            "`{}` hat ein rechtes Ende ohne Namen",
+            r.name
+        );
+    }
+}
+
+/// **Jede Wahl des Erscheinungsbilds hat auch einen Block im
+/// Stilblatt.**
+///
+/// # ⚑ Zwei Orte, und genau deshalb diese Pruefung
+///
+/// Die Werte stehen in der Kiste (`Fensterthema`), die Farben im
+/// Stilblatt. **Das ist richtig so**: Eine Aufzaehlung in Rust kann
+/// keine Farben tragen, und ein Stilblatt kann nichts validieren. Was
+/// dabei auseinanderlaufen kann, ist die **Menge** der Werte, und genau
+/// die haelt diese Pruefung zusammen.
+///
+/// ⚑ **Die Vorgabe braucht ausdruecklich keinen Block.** Sie steht in
+/// `:root` und gilt, solange kein anderer Block gewinnt; ein eigener
+/// waere dieselbe Liste ein zweites Mal.
+///
+/// ⚑ **Das Skript fuehrt keine dritte Liste.** `bild_setzen` reicht
+/// durch, was der Setzer der Kiste schon geprueft hat.
+#[test]
+fn jede_wahl_des_bildes_steht_im_stilblatt() {
+    let stil = lies("stil.css");
+    let js = lies("app.js");
+    let e = myl_client::Einstellungen::default();
+
+    for (feld, attribut, vorgabe) in [
+        ("oberflaeche.thema", "data-thema", e.oberflaeche.thema.kennung()),
+        ("oberflaeche.schrift", "data-schrift", e.oberflaeche.schrift.kennung()),
+    ] {
+        let f = myl_client::einstellungen::FELDER
+            .iter()
+            .find(|f| f.name == feld)
+            .unwrap_or_else(|| panic!("{feld} fehlt im Katalog"));
+        assert!(f.wahl.len() >= 2, "{feld} hat nur {} Moeglichkeiten", f.wahl.len());
+        assert!(
+            f.wahl.iter().any(|w| w.wert == vorgabe),
+            "die Vorgabe `{vorgabe}` steht nicht unter den Moeglichkeiten von {feld}"
+        );
+
+        for w in f.wahl {
+            let block = format!("{attribut}=\"{}\"", w.wert);
+            if w.wert == vorgabe {
+                assert!(
+                    !stil.contains(&block),
+                    "`{}` ist die Vorgabe und traegt trotzdem einen eigenen Block; \
+                     dann steht dieselbe Liste zweimal da",
+                    w.wert
+                );
+            } else {
+                assert!(
+                    stil.contains(&block),
+                    "`{}` laesst sich waehlen, und das Stilblatt kennt `{block}` nicht: \
+                     die Wahl saehe aus wie die Vorgabe",
+                    w.wert
+                );
+            }
+        }
+
+        // ⚑ Und das Skript setzt das Attribut ueberhaupt.
+        assert!(
+            js.contains(&format!("w.dataset.{}", attribut.trim_start_matches("data-"))),
+            "das Skript setzt `{attribut}` nicht"
+        );
+    }
+
+    // ⚑ **Keine zweite Werteliste im Skript.** Sie waere die Stelle, an
+    // der ein drittes Erscheinungsbild lautlos verlorenginge.
+    assert!(
+        !js.contains(r#"thema === "hell""#),
+        "das Skript zaehlt die Themen selbst auf"
+    );
+}
+
+/// **Das helle Thema dreht den Lichtkanal und sonst fast nichts.**
+///
+/// ⚑ **Das ist der ganze Entwurf.** Flaechen, Kanten, der Glanz beim
+/// Ueberfahren und der Fokusring stehen als `rgb(var(--auf) / …)` da;
+/// wer den Kanal umdreht, dreht sie alle mit. **Bliebe irgendwo ein
+/// festes `rgba(255, 255, 255, …)` stehen, waere es im hellen Bild eine
+/// weisse Flaeche auf Weiss**, und das faellt erst dem auf, der es
+/// benutzt.
+#[test]
+fn das_helle_thema_dreht_den_lichtkanal() {
+    let stil = lies("stil.css");
+    let ohne = ohne_kommentare(&stil);
+
+    assert!(ohne.contains("--auf: 255 255 255;"), "der Lichtkanal fehlt in der Vorgabe");
+
+    // ⚑ **Im Block nachgesehen und nicht in der Datei**, und das ist
+    // eine Lehre vom selben Tag: Der erste Anlauf fragte nur, ob
+    // `--auf: 0 0 0;` **irgendwo** steht. Es stand an zwei Stellen, und
+    // als eine davon versuchsweise entfiel, blieb die Gegenprobe stumm.
+    // **Eine Pruefung, die nur nach dem Vorkommen fragt, prueft nicht
+    // den Ort, und der Ort ist hier die Aussage.**
+    let block = {
+        let ab = ohne
+            .find(":root[data-thema=\"hell\"] {")
+            .expect("das helle Thema fehlt");
+        let rest = &ohne[ab..];
+        let bis = rest.find('}').expect("der helle Block hat kein Ende");
+        &rest[..bis]
+    };
+    assert!(
+        block.contains("--auf: 0 0 0;"),
+        "das helle Thema dreht den Lichtkanal nicht um: {block}"
+    );
+    assert!(block.contains("color-scheme: light;"), "das helle Thema sagt es dem Browser nicht");
+
+    // ⚑ **Und genau ein heller Block.** Ein zweiter waere dieselbe
+    // Palette ein zweites Mal, und zwei Paletten laufen auseinander.
+    assert_eq!(
+        ohne.matches("--auf: 0 0 0;").count(),
+        1,
+        "der Lichtkanal wird mehr als einmal umgedreht; dann steht die Palette zweimal da"
+    );
+
+    // ⚑ **Kein festes Weiss und kein festes Schwarz mehr**, ausser dort,
+    // wo es keine Farbe ist: `linear-gradient(#000 0 0)` ist eine Maske,
+    // und die Lichtkante ist ausdruecklich in beiden Bildern weiss.
+    for zeile in ohne.lines() {
+        assert!(
+            !zeile.contains("rgba(255, 255, 255") && !zeile.contains("rgba(0, 0, 0"),
+            "hier steht noch eine feste Farbe statt eines Kanals: {}",
+            zeile.trim()
+        );
+    }
+
+    // ⚑ **Und die Wurzelschrift haengt an der Variablen**, sonst greift
+    // die Schriftgroesse an allem vorbei, was seine Groesse erbt.
+    assert!(ohne.contains("html { font-size: var(--grundschrift); }"), "die Wurzelschrift ist fest");
+    assert!(
+        !ohne.contains("font: 14px/"),
+        "die Grundschrift steht wieder in Pixeln und waechst damit nicht mit"
+    );
+}
+
+/// **Jede benutzte Stilvariable ist auch definiert.**
+///
+/// # 📌 Warum das ohne Buendler niemand merkt
+///
+/// `var(--gibt-es-nicht)` ist kein Fehler, sondern ein leerer Wert:
+/// Die Eigenschaft faellt auf ihren Anfangswert zurueck, und das ist
+/// meistens „durchsichtig" oder „keine". **Die Regel steht da, sie tut
+/// nur nichts**, und genau das ist die Sorte Fehler, gegen die es diese
+/// Datei gibt.
+///
+/// ⚑ **Ein zweites Thema macht es scharf.** Solange es eine Palette
+/// gab, fiel ein Tippfehler im Namen hoechstens einmal auf; mit zwei
+/// Bloecken ist jeder Name zweimal zu schreiben, und einer davon kann
+/// falsch sein.
+#[test]
+fn jede_benutzte_stilvariable_ist_definiert() {
+    let stil = ohne_kommentare(&lies("stil.css"));
+
+    let mut benutzt: Vec<String> = Vec::new();
+    let mut rest = stil.as_str();
+    while let Some(i) = rest.find("var(--") {
+        rest = &rest[i + 4..];
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        // Mit Rueckfall ist eine fehlende Definition kein Fehler,
+        // sondern der Zweck: `var(--mx, 50%)`.
+        let mit_rueckfall = rest[name.len()..].trim_start().starts_with(',');
+        if !mit_rueckfall {
+            benutzt.push(name);
+        }
+    }
+    assert!(benutzt.len() >= 20, "nur {} Variablen gefunden; sucht die Pruefung noch richtig?", benutzt.len());
+
+    for name in &benutzt {
+        assert!(
+            stil.contains(&format!("{name}:")),
+            "`var({name})` wird benutzt und nirgends gesetzt: die Regel steht da und tut nichts"
+        );
+    }
+
+    // ⚑ **Und jede Variable des hellen Themas gibt es in der Vorgabe.**
+    //
+    // 📌 **Das ist die eigentliche Falle, und die erste Fassung dieser
+    // Pruefung ging an ihr vorbei.** Ein Tippfehler **im hellen Block**
+    // laesst die Variable nicht verschwinden: Sie steht ja in `:root`,
+    // also faellt die Seite auf den **dunklen** Wert zurueck. Nichts
+    // bricht, nichts meldet sich, und eine Flaeche bleibt schwarz, wo
+    // sie hell sein sollte. Die Frage „ist der Name irgendwo definiert"
+    // beantwortet das mit Ja.
+    let hell = {
+        let ab = stil.find(":root[data-thema=\"hell\"] {").expect("das helle Thema fehlt");
+        let rest = &stil[ab..];
+        &rest[..rest.find('}').expect("der helle Block hat kein Ende")]
+    };
+    let wurzel = {
+        let ab = stil.find(":root {").expect(":root fehlt");
+        let rest = &stil[ab..];
+        &rest[..rest.find('}').expect(":root hat kein Ende")]
+    };
+    let mut gedreht = 0;
+    for zeile in hell.lines() {
+        let z = zeile.trim();
+        let Some(name) = z.strip_prefix("--").map(|r| r.split(':').next().unwrap_or("")) else {
+            continue;
+        };
+        if name.is_empty() || !z.contains(':') {
+            continue;
+        }
+        assert!(
+            wurzel.contains(&format!("--{name}:")),
+            "das helle Thema setzt `--{name}`, und die Vorgabe kennt es nicht: \
+             ein Tippfehler faellt hier lautlos auf den dunklen Wert zurueck"
+        );
+        gedreht += 1;
+    }
+    assert!(gedreht >= 8, "nur {gedreht} Variablen im hellen Thema; misst die Pruefung noch etwas?");
+
+    // ⚠️ **Was diese Pruefung NICHT sagt:** ob das helle Thema
+    // **genug** umdreht. Es setzt absichtlich nur eine Teilmenge, alles
+    // Uebrige leitet sich ueber `--auf` ab; eine Liste der noetigen
+    // Variablen waere geraten. Was fehlt, faellt als Kontrast auf, und
+    // dafuer gibt es die Pruefung darunter.
+}
+
+/// **In beiden Themen hebt sich der Text vom Grund ab.**
+///
+/// ⚑ **Die eine Eigenschaft, die ein zweites Thema wirklich brechen
+/// kann.** Eine vergessene Umdrehung faellt nicht als Fehler auf,
+/// sondern als heller Text auf hellem Grund, und das sieht nur, wer
+/// hinschaut. Gerechnet wird die **relative Leuchtdichte** nach der
+/// ueblichen Gewichtung; ein Verhaeltnis von 4,5 ist die Schwelle, an
+/// der Fliesstext als lesbar gilt.
+///
+/// ⚠️ **Gedaempfter Text wird milder geprueft** (3,0). Er ist bewusst
+/// zurueckgenommen und soll es bleiben; die Schwelle faengt trotzdem
+/// den Fall, dass er im Grund verschwindet.
+#[test]
+fn in_beiden_themen_hebt_sich_der_text_vom_grund_ab() {
+    let stil = ohne_kommentare(&lies("stil.css"));
+
+    let block = |kopf: &str| {
+        let ab = stil.find(kopf).unwrap_or_else(|| panic!("{kopf} fehlt"));
+        let rest = &stil[ab..];
+        rest[..rest.find('}').expect("Block ohne Ende")].to_string()
+    };
+    let hex = |b: &str, name: &str| -> (f64, f64, f64) {
+        let marke = format!("--{name}:");
+        let ab = b.find(&marke).unwrap_or_else(|| panic!("--{name} fehlt in diesem Block"));
+        let rest = &b[ab + marke.len()..];
+        let wert = rest[..rest.find(';').expect("kein Semikolon")].trim();
+        let h = wert.trim_start_matches('#');
+        assert_eq!(h.len(), 6, "--{name} ist kein sechsstelliger Hexwert: {wert}");
+        let n = u32::from_str_radix(h, 16).expect("sechs Hexstellen");
+        (
+            ((n >> 16) & 0xff) as f64 / 255.0,
+            ((n >> 8) & 0xff) as f64 / 255.0,
+            (n & 0xff) as f64 / 255.0,
+        )
+    };
+    // Relative Leuchtdichte, mit der ueblichen Gammakorrektur.
+    let leuchte = |(r, g, b): (f64, f64, f64)| {
+        let f = |c: f64| if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    };
+    let verhaeltnis = |a: (f64, f64, f64), b: (f64, f64, f64)| {
+        let (x, y) = (leuchte(a), leuchte(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    };
+
+    for (kopf, name) in [(":root {", "dunkel"), (":root[data-thema=\"hell\"] {", "hell")] {
+        let b = block(kopf);
+        let grund = hex(&b, "grund");
+        for (feld, schwelle) in [("text", 4.5), ("leise", 3.0)] {
+            let v = verhaeltnis(hex(&b, feld), grund);
+            assert!(
+                v >= schwelle,
+                "{name}: --{feld} auf --grund ergibt nur {v:.2}, verlangt sind {schwelle}"
+            );
+        }
+    }
 }

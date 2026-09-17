@@ -48,8 +48,23 @@ fn main() {
         let mut sum_logp = 0.0f64;
         let mut count = 0usize;
 
-        for (pos, &tid) in ids.iter().enumerate() {
-            let logits = model.forward_token(tid, pos, &mut cache);
+        // ⚑ **Gebuendelt statt Token fuer Token** (2026-09-16).
+        //
+        // ⛔️ Bis hierher lief hier `forward_token` in einer Schleife, und
+        // damit erreichte diese Messung **weder die gebuendelte
+        // Vorbereitung noch die GPU**: Die rechnet erst ab sechzehn
+        // Eingaben je Buendel, und ein einzelnes Token kommt dort nie an.
+        // **Die Messung lief also auf dem einen Pfad, den die
+        // Optimierung nicht beruehrt.**
+        //
+        // ⚑ **Dieselbe Rechnung, andere Reihenfolge**, und das ist
+        // geprueft: `die_gebuendelten_logits_sind_die_tokenweisen`
+        // vergleicht jede Position einzeln und ueber die Fenstergrenze
+        // hinweg. **Ohne diese Gegenprobe waere jede Zahl danach mit den
+        // frueheren unvergleichbar, und niemand saehe es ihr an.**
+        let alle = model.logits_stapel(&ids, 0, &mut cache);
+
+        for (pos, logits) in alle.iter().enumerate() {
             if pos + 1 < ids.len() {
                 let target = ids[pos + 1];
                 // Log-Softmax des Zieltokens (Messpfad, f64).
@@ -59,7 +74,7 @@ fn main() {
                 let z_max = logits.iter().map(|&v| v as f64).fold(f64::NEG_INFINITY, f64::max)
                     * logit_scale;
                 let mut lse = 0.0f64;
-                for &v in &logits {
+                for &v in logits.iter() {
                     lse += ((v as f64 * logit_scale) - z_max).exp();
                 }
                 let log_softmax_target =

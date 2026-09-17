@@ -185,6 +185,7 @@ fn fahren_mit_melder(
         adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
     };
     let erg = Lauf {
+        hausregel: None,
         einhaengung: None,
         klient: &klient,
         modell: "m",
@@ -267,6 +268,7 @@ fn die_schleife_laeuft_ohne_netz() {
         adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v)
     };
     let erg = Lauf {
+        hausregel: None,
         klient: &weg,
         modell: "oertlich",
         grenzen: &grenzen,
@@ -570,6 +572,7 @@ fn fahren_im_gespraech(
     };
     let melder = |m: myl_local_agent::schleife::Meldung<'_>| meldungen.borrow_mut().push(format!("{m:?}"));
     Lauf {
+        hausregel: None,
         klient: weg,
         modell: "zaehlend",
         grenzen: &grenzen,
@@ -723,6 +726,7 @@ fn eine_riesige_werkzeugantwort_wird_gekuerzt_statt_den_lauf_zu_beenden() {
     let adressen = a.adressen.clone();
     let finden = move |n: &str| -> Option<MerkleRoot> { adressen.iter().find(|(k, _)| k == n).map(|(_, v)| *v) };
     let erg = Lauf {
+        hausregel: None,
         klient: &weg,
         modell: "zaehlend",
         grenzen: &grenzen,

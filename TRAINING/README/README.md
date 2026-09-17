@@ -1,6 +1,6 @@
 # training (`myl-train`)
 
-> **Version:** 0.3.3 (`myl-train` 0.3.0)
+> **Version:** 0.4.2 (`myl-train` 0.3.0)
 > **Datum:** 2026-09-11
 > **Status:** **Die Komponente hat Code**, 32 Tests. Zwei Punkte sind
 > gebaut, und beide sind genau die, die **nicht** am ganzzahligen
@@ -145,6 +145,94 @@ von dieser Komponente kommt:
 Entsteht mit der Implementierung.
 
 ## Changelog
+
+### v0.4.2 – 2026-09-17 (eine eigene Umgebung, die ohne Netz entsteht)
+
+`myl-train` unverändert; `korpus/` bekommt `einrichten.sh`,
+`requirements.txt`, `umgebung.py` und `raeder/`.
+
+⚑ **Die Kette braucht nichts zwingend**, und das bleibt so: EPUB, HTML,
+Text und Markdown gehen mit der Standardbibliothek. Die Umgebung ist für
+PDF (`pypdf`) und wird **ohne Netz** gebaut: Die Räder liegen im
+Repositorium, `pip` bekommt `--no-index`.
+
+⚑ **Nachgeprüft an einem frischen Klon mit blockiertem Netz**: Einrichten,
+drei Selbsttests, PDF und EPUB umgewandelt, Korpus und Mappe gebaut,
+ohne eine Verbindung.
+
+📌 **Der erste Versuch scheiterte, und der Fehler ist die Lehre:** Die
+Räder waren mit `--no-deps` geholt, und `pypdf` braucht unter Python vor
+3.11 noch `typing_extensions`. **„Alle Abhängigkeiten" heißt auch die,
+die eine Abhängigkeit selbst mitbringt**, und welche das sind, hängt hier
+sogar von der Python-Fassung ab. ⛔️ **Und die Fehlermeldung riet zuerst
+zu `--no-deps`**, also zu genau dem Fehler, der sie ausgelöst hatte; das
+fiel erst beim Gegenprobieren auf.
+
+⛔️ **Kein Interpreter im Repositorium**, und das ist eine Entscheidung
+mit Begründung: Er wäre je Plattform zig Megabyte, die niemand prüft, und
+bei jeder Sicherheitslücke nachzuziehen. Stattdessen eine Untergrenze,
+die überall erfüllt ist (**Python 3.9**, die Fassung von macOS selbst),
+**gemessen am jüngsten benutzten Sprachmittel** und von jedem Werkzeug
+geprüft.
+
+### v0.4.1 – 2026-09-17 (an echten Büchern geprüft: fünf Fehler, die kein Selbsttest hatte)
+
+`myl-train` unverändert; `korpus/` nachgebessert.
+
+⛔️ **Drei frei verfügbare Bücher in drei Formaten**, und fünf Fehler, von
+denen die Selbsttests keinen hatte: Der **eigene YAML-Vorspann** wurde
+zur ersten Trainingszeile, der **Lizenzrahmen der Buchquelle** (ein
+gutes Drittel der Blöcke) landete im Korpus, zwei Formate desselben
+Buches **überschrieben einander stillschweigend**, die Teilung nach
+Abschnitten lieferte **32 % Haltemenge statt 15 %** (das Buch hat drei
+Kapitel), und im PDF wurden **Tabellenzeilen zu Überschriften**.
+
+⚑ **Die Lehre in einem Satz:** Erfundene Eingaben prüfen, was man sich
+vorgestellt hat; echte prüfen, was man vergessen hat.
+
+⚑ **Der Quervergleich, der am meisten sagt:** EPUB und HTML desselben
+Buches ergeben **Byte für Byte denselben Text**. Zwei Auswertungswege,
+dieselbe Ausgabe.
+
+**Behoben und nachgemessen:** Vorspann abgetrennt und als Herkunft
+benutzt, Rahmen an seinen Marken geschnitten (beide Marken oder keine),
+Formatzusatz bei belegtem Namen, Teilung in zusammenhängenden Blöcken
+von höchstens 20 Zeilen (32 % wurden 20 %, und der Bericht nennt Soll
+und Ist), drei Wachen gegen Tabellenzeilen (55 erkannte Überschriften
+wurden 32, **bei gleichem Wortbestand**).
+
+### v0.4.0 – 2026-09-17 (die Buchkette: aus einem Buch wird Material)
+
+`myl-train` unverändert; neu ist `korpus/` mit drei Python-Werkzeugen
+(Auftrag des Projektinhabers).
+
+⚑ **Aus einem Buch wird entweder Trainingsmaterial oder eine
+Wissensmappe**, und beides hat seinen Weg: `buch_zu_md.py` nimmt das
+Format weg und lässt die Gliederung stehen, `buchkorpus.py` baut Lern-
+und Haltezeilen in der Form, die `trainingsguete` liest, und
+`md_zu_mappe.py` baut eine Mappe zum Nachschlagen. **Ein Trainingslauf
+wirkt danach ohne Kontext und kostet Stunden, eine Mappe wirkt sofort
+und kostet je Frage ein Nachschlagen.**
+
+⛔️ **Die wichtigste Zusage des Korpus: geteilt wird nach Abschnitten,
+nicht nach Zeilen.** Ein Buch wiederholt seine Aussagen; wer zeilenweise
+teilt, misst mit der Haltemenge das Gedächtnis statt der
+Verallgemeinerung. Danach wird nachgeprüft, und zwar mit einer
+**strengeren** Schwelle als beim Entdoppeln: Mit derselben konnte die
+Prüfung gar nichts finden, weil das Entdoppeln vorher über den ganzen
+Korpus läuft. **Eine Gegenprobe, die nicht beißen kann, ist keine.**
+
+⚑ **Der Nachbar ist die Datenprovenienz**, und das ist der Grund, warum
+die Kette hier liegt und nicht bei den Messwerkzeugen: Was hier
+entsteht, ist ein Korpus, und ein Korpus wird verankert, nicht gemessen.
+📌 Sie lag einen halben Tag unter `BENCHMARKS/Training/`, weil dort schon
+ein `datasets/`-Ordner stand. **Das war die Nähe des Nachbarn und nicht
+die Sache**, und aufgefallen ist es an einer Überschrift, die erklären
+musste, dass ein Ordner zweierlei enthält.
+
+⚠️ **PDF braucht `pdftotext` oder `pypdf`**, beides fehlt auf der
+Entwicklungsmaschine; EPUB, HTML und Text gehen ohne fremde Kiste. **Bei
+fehlendem Hilfsmittel gibt es eine Absage und keine leere Datei.**
 
 ### v0.3.3 – 2026-09-11 (was am Expertengemisch anders ist, und drei Entwürfe, die schon Code waren)
 

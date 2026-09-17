@@ -181,6 +181,31 @@ pub fn fahren_im_gespraech(
     auftrag: &str,
     melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
 ) -> Ausgang {
+    fahren_mit_hausregel(
+        modell, ruestung, schritte, bezeugtes, max_tokens, verlauf, auftrag, melder, None,
+    )
+}
+
+/// **Wie [`fahren_im_gespraech`], mit einer Hausregel hinter der
+/// Werkzeugansage.**
+///
+/// ⚑ **Gebaut fuer die Messung**, weil „hilft ein strengerer
+/// Systemprompt?" eine Frage ist, die man beantwortet und nicht
+/// bespricht. ⛔️ **Im Netz muss die Regel fuer alle Knoten dieselbe
+/// sein**, sonst ruesten zwei Knoten am selben Auftrag verschieden;
+/// oertlich ist sie eine Einstellung wie die Kiste.
+#[allow(clippy::too_many_arguments)]
+pub fn fahren_mit_hausregel(
+    modell: &dyn myl_local_agent::tuerklient::Modellweg,
+    ruestung: &Ruestung,
+    schritte: usize,
+    bezeugtes: bool,
+    max_tokens: u32,
+    verlauf: &[myl_local_agent::Nachricht],
+    auftrag: &str,
+    melder: Option<&dyn Fn(myl_local_agent::schleife::Meldung<'_>)>,
+    hausregel: Option<&str>,
+) -> Ausgang {
     let anfang = std::time::Instant::now();
     let grenzen = myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen::neu(
         kontrakt_fuer(schritte),
@@ -188,6 +213,7 @@ pub fn fahren_im_gespraech(
     );
     let zuordnung = ruestung.zuordnung();
     let erg = myl_local_agent::schleife::Lauf {
+        hausregel,
         // ⚡ Was die Werkzeuge erreichen durften, gehoert ins
         // Protokoll: Sonst steht dort nur, DASS ein Schreibwerkzeug
         // erlaubt war, und nicht, worauf es zeigte.

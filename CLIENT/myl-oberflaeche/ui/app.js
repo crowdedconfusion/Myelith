@@ -409,6 +409,27 @@ function beschriften() {
   }
 }
 
+/// **Setzt Erscheinungsbild und Schriftgroesse an der Wurzel.**
+///
+/// ⚑ **Zwei Attribute und keine Klassen.** Das Stilblatt haengt seine
+/// Themenblöcke an `:root[data-thema=…]` und `:root[data-schrift=…]`;
+/// damit steht die ganze Umschaltung dort, wo die Farben stehen, und
+/// nicht hier. **Dieses Skript weiss von keiner einzigen Farbe.**
+///
+/// ⚑ **Ohne eigene Liste der erlaubten Werte.** Geprueft wird im
+/// Setzer der Kiste, und zwar dort allein: Was hier ankommt, ist schon
+/// eine gueltige Kennung. **Eine zweite Liste hier waere die Stelle,
+/// an der ein drittes Erscheinungsbild vergessen wuerde**, und sie
+/// faende es lautlos: Das Attribut stuende da, das Stilblatt kennte es
+/// nicht, und es saehe aus wie die Vorgabe.
+///
+/// Der Rueckfall gilt nur einer Ablage ohne das Feld.
+function bild_setzen(thema, schrift) {
+  const w = document.documentElement;
+  w.dataset.thema = thema || "dunkel";
+  w.dataset.schrift = schrift || "normal";
+}
+
 /// Uebernimmt eine Sprache und zeichnet alles neu.
 async function sprache_setzen(k) {
   if (k !== "de" && k !== "en") return;
@@ -1190,7 +1211,14 @@ async function kontext_verdichten() {
   knopf.disabled = true;
   $("kontextzahl").textContent = t("kontext.laeuft");
   try {
-    const r = await invoke("verdichten", { verlauf });
+    // ⚑ **Die Gespraechskennung geht mit** (2026-09-16): Sie gliedert
+    // die Mitschnitte im Arbeitsordner. ⚠️ **Sie loescht nichts**: Ein
+    // Gespraech aus der Liste zu nehmen ist Aufraeumen, einen Verlauf zu
+    // loeschen eine eigene Handlung.
+    const r = await invoke("verdichten", {
+      verlauf,
+      sitzung: (offen && offen.id) || "ohne-gespraech",
+    });
     offen.beitraege.push({ von: "hinweis", text: t("kontext.verdichtet", r.vorher, r.nachher) });
     kontext_merken(offen, r.nachrichten, r.zusammenfassung, offen.beitraege.length);
     sichern();
@@ -2462,6 +2490,13 @@ async function einstellungen_zeichnen() {
             await einstellungen_zeichnen();
             return;
           }
+          // ⚑ **Dieselbe Regel fuer das Bild:** Wer das
+          // Erscheinungsbild umstellt, will es sehen, nicht beim
+          // naechsten Start davon lesen.
+          if (f.name === "oberflaeche.thema" || f.name === "oberflaeche.schrift") {
+            const e = await invoke("einstellungen");
+            bild_setzen(e.werte["oberflaeche.thema"], e.werte["oberflaeche.schrift"]);
+          }
           await kopf_zeichnen();
         } catch (fehler) {
           $("setzmeldung").textContent = t("fehler", fehler);
@@ -2554,9 +2589,19 @@ async function freigabe_zeichnen(e) {
 
 // ⚑ Ein Regler je Betriebsmittel.
 //
-// ⚑ **Ganz links heisst „ohne Grenze" und nicht „nichts".** Bei einer
-// Grenze ist das dasselbe wie `aus`, und der Setzer kennt den
-// Unterschied: `aus` **loescht** sie, null waere ein Stillstand.
+// ⚑ **Ganz rechts heisst „ohne Grenze", und dort steht jeder Regler,
+// solange niemand ihn bewegt hat** (Auftrag des Projektinhabers,
+// 2026-09-16). Der Setzer bekommt dafuer `aus`, und er kennt den
+// Unterschied: `aus` **loescht** die Grenze.
+//
+// 📌 **Bis dahin lag diese Stellung ganz links, bei null.** Sie
+// bedeutete dasselbe und las sich wie das Gegenteil: Wer einen Regler
+// am linken Anschlag sieht, liest „nichts", nicht „alles".
+//
+// ⚑ **Die beiden Enden heissen, wie die Kiste sie nennt** (`links`,
+// `rechts`), in der eingestellten Sprache. Das Fenster erfindet hier
+// kein Wort: Die Konsole zeigt dieselben Regler, und zwei Stellen mit
+// je eigenen Worten laufen auseinander.
 const reglerzeile = (r) => {
   const zeile = document.createElement("div");
   zeile.className = r.sperrgrund ? "reglerzeile gesperrt" : "reglerzeile";
@@ -2573,23 +2618,28 @@ const reglerzeile = (r) => {
 
   const schieber = document.createElement("input");
   schieber.type = "range";
-  schieber.min = 0;
-  schieber.max = r.hoechstens ?? 0;
-  schieber.value = r.wert ?? 0;
+  schieber.min = r.mindestens;
+  schieber.max = r.hoechstens ?? r.mindestens;
+  // ⚑ **Ohne Wert steht er am rechten Anschlag.** Nicht gesetzt heisst
+  // ohne Grenze, und ohne Grenze ist rechts.
+  schieber.value = r.wert ?? schieber.max;
   schieber.dataset.feld = r.name;
   schieber.disabled = Boolean(r.sperrgrund) || !r.hoechstens;
 
   const einheit = EINHEIT[r.einheit] ?? ((n) => String(n));
+  const ende = () => Number(schieber.max);
   const zeigen = () => {
     const n = Number(schieber.value);
-    anzeige.textContent = n === 0 ? "ohne Grenze" : einheit(n);
+    if (n === ende()) anzeige.textContent = r.rechts;
+    else if (n === Number(schieber.min) && r.links) anzeige.textContent = r.links;
+    else anzeige.textContent = einheit(n);
   };
   zeigen();
   schieber.addEventListener("input", zeigen);
   schieber.addEventListener("change", async () => {
     const n = Number(schieber.value);
     try {
-      await invoke("setzen", { feld: r.name, wert: n === 0 ? "aus" : String(n) });
+      await invoke("setzen", { feld: r.name, wert: n === ende() ? "aus" : String(n) });
       $("setzmeldung").textContent = `${r.titel} gesetzt.`;
       // ⚑ Die Zeile darueber sagt, was gehalten wird, und das aendert
       // sich mit diesem Regler. Ohne dieses Nachzeichnen stuende dort
@@ -3333,10 +3383,14 @@ $("eingabe").addEventListener("submit", async (e) => {
   // zeichnet einmal auf Deutsch und danach noch einmal richtig; das
   // sieht man.
   try {
-    const s = (await invoke("einstellungen")).sprache;
-    if (s === "de" || s === "en") sprache = s;
+    const e = await invoke("einstellungen");
+    if (e.sprache === "de" || e.sprache === "en") sprache = e.sprache;
+    // ⚑ **Aus demselben Aufruf.** Ein zweiter waere eine zweite
+    // Gelegenheit, verschiedene Staende zu sehen, und das Bild soll
+    // stehen, bevor der Vorhang aufgeht.
+    bild_setzen(e.werte["oberflaeche.thema"], e.werte["oberflaeche.schrift"]);
   } catch {
-    // Ohne Einstellungen bleibt es bei der Vorgabe, und die ist Deutsch.
+    // Ohne Einstellungen bleibt es bei den Vorgaben: Deutsch und dunkel.
   }
   beschriften();
   laden_aus_speicher();

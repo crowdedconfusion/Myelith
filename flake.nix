@@ -9,13 +9,19 @@
 #   nix develop                  eine Shell mit allem, was der Bau braucht
 #   sh INSTALL/installieren-nixos.sh     baut darin und legt die Programme ab
 #
-# ⚑ **Eine Entwicklungsumgebung und keine Ableitung.** Eine
-# `buildRustPackage`-Ableitung bräuchte einen festgeschriebenen
-# `cargoHash` je Kiste, und dieses Repositorium hat fünfundzwanzig
-# eigene Sperrdateien statt einer. Sie wären fünfundzwanzig Zahlen, die
-# von Hand mitgepflegt werden müssten, also Fund 271 in Nix. **Was hier
-# steht, ist die Umgebung; gebaut wird mit cargo, wie überall sonst
-# auch.**
+# ⚑ **Eine Entwicklungsumgebung, und seit dem 2026-09-16 dazu genau
+# eine Ableitung.** Eine `buildRustPackage`-Ableitung *mit `cargoHash`*
+# bräuchte eine festgeschriebene Zahl je Kiste, und dieses Repositorium
+# hat fünfundzwanzig eigene Sperrdateien statt einer: fünfundzwanzig
+# Zahlen, die von Hand mitgepflegt werden müssten. **Deshalb gibt es
+# weiterhin keine Ableitung je Kiste**, und gebaut wird mit cargo, wie
+# überall sonst auch.
+#
+# ⚑ **Die eine Ausnahme ist `myl-node`, und sie kostet keine Zahl.**
+# `cargoLock.lockFile` liest die vorhandene Sperrdatei, statt ihren Hash
+# zu verlangen. Es gibt sie, weil ein Server ohne sie nicht aufzusetzen
+# ist: Das Modul `services.myl-server` braucht ein Paket, und ohne diese
+# Ausgabe wäre es ein Umschlag um „bau es dir selbst".
 #
 # 📌 **Ungeprüft auf NixOS.** Geschrieben am 2026-09-08 auf macOS und am
 # 2026-09-10 erweitert, ebenfalls auf macOS; die Paketnamen und
@@ -59,8 +65,75 @@
           openssl
           glib-networking    # sonst kann die Ansicht kein TLS
         ];
+        # ⛔️ **Was NICHT in den Store wandert, und warum das hier steht.**
+        #
+        # `src = ./.` nähme das ganze Verzeichnis mit, und darin liegen
+        # das gemeinsame Bauverzeichnis, die Modellgewichte und die
+        # gebauten Artefakte. Gemessen am 2026-09-16: allein
+        # `target-shared` sind 57,5 GiB in 327 115 Dateien. **Ein
+        # `nix build`, das das kopiert, füllt die Platte, bevor die erste
+        # Zeile übersetzt ist**, und die Ableitung wäre obendrein bei
+        # jedem Bau eine andere, weil sich dort ständig etwas ändert.
+        #
+        # ⚑ Gefiltert wird nach Wurzelordnern und Präfixen, nicht nach
+        # Dateiendungen: Was ausgeschlossen gehört, ist ein Ort und
+        # keine Sorte Datei.
+        quelle = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          name = "myelith-quelle";
+          filter = pfad: _typ:
+            let
+              rel = pkgs.lib.removePrefix (toString ./. + "/") (toString pfad);
+              erster = pkgs.lib.head (pkgs.lib.splitString "/" rel);
+            in
+            !(builtins.elem erster [ "target-shared" "WORK_DIR" "logs" "GENESIS" ])
+            && !(pkgs.lib.hasPrefix "INTEGER_LLM/models" rel)
+            && !(pkgs.lib.hasPrefix "INTEGER_LLM/artifacts" rel);
+        };
+
+        # ⚑ **Die Fassung wird gelesen, nicht hingeschrieben.** Eine Zahl
+        # hier wäre die zweite Stelle, an der die Version von `myl-node`
+        # steht, und die zweite Stelle veraltet.
+        myl-node = pkgs.rustPlatform.buildRustPackage {
+          pname = "myl-node";
+          version =
+            (builtins.fromTOML (builtins.readFile ./NODE/myl-node/Cargo.toml)).package.version;
+
+          # ⚑ **Das ganze Repositorium als Quelle, und das muss so sein:**
+          # `myl-node` zeigt über elf Pfadabhängigkeiten auf
+          # Nachbarkisten (`../../SHARED_TYPES/myl-types` und weitere).
+          # Nur sein eigener Ordner ergäbe einen Bau ohne die Hälfte
+          # seiner Kisten.
+          src = quelle;
+          buildAndTestSubdir = "NODE/myl-node";
+
+          # ⚑ **`cargoLock.lockFile` statt `cargoHash`.** Nix liest die
+          # Sperrdatei, die ohnehin gepflegt wird und deren Aktualität
+          # eine eigene Probe hält; ein `cargoHash` wäre eine zweite
+          # Zahl daneben. Möglich ist das hier, weil die Sperrdatei
+          # **keine** Git-Quelle enthält: Jede Git-Quelle bräuchte einen
+          # eigenen `outputHashes`-Eintrag, und dann wäre die Zahl
+          # wieder da.
+          cargoLock.lockFile = ./NODE/myl-node/Cargo.lock;
+
+          # ⚠️ **Die Prüfsammlung läuft hier nicht.** Sie gehört in die
+          # Bauprüfung des Projekts, nicht in eine Paketableitung: Teile
+          # von ihr brauchen Netz oder Modellartefakte, und beides gibt
+          # es in einer Nix-Sandbox mit Absicht nicht. **Ein Paketbau,
+          # der stillschweigend die halbe Prüfsammlung überspringt, wäre
+          # ein bestandener Lauf ohne Aussage.**
+          doCheck = false;
+
+          meta = {
+            description = "Myelith-Knoten: P2P, Konsens, Verifikation";
+            mainProgram = "myl-node";
+          };
+        };
       in
       {
+        packages.myl-node = myl-node;
+        packages.default = myl-node;
+
         devShells.default = pkgs.mkShell {
           buildInputs = grundwerkzeug ++ oberflaeche;
 
@@ -90,5 +163,17 @@
             echo "[myelith] Bauumgebung bereit. Weiter mit: sh INSTALL/installieren-nixos.sh --in-der-shell"
           '';
         };
-      });
+      }) // {
+    # ⚑ **Das Modul steht ausserhalb von `eachDefaultSystem`**, denn es
+    # ist von keinem System abhängig: Es beschreibt einen Dienst, und
+    # welches Paket ihn stellt, sagt der Betreiber in seiner eigenen
+    # Konfiguration. Ein Modul je Architektur wäre dieselbe Datei
+    # mehrfach.
+    #
+    # Einbinden mit:
+    #   imports = [ myelith.nixosModules.myl-server ];
+    #   services.myl-server.paket = myelith.packages.${pkgs.system}.myl-node;
+    nixosModules.myl-server = import ./NODE/myl-server/modul.nix;
+    nixosModules.default = self.nixosModules.myl-server;
+  };
 }

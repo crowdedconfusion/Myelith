@@ -88,3 +88,4 @@ CLIENT/myl-client/src/werkzeuge_1337/
 # lokal, nie im Repositorium. Der Ordner selbst bleibt (mit README), seine
 # Werkzeuge nicht.
 CLIENT/werkzeugkisten/1337/*.json
+.myelith-vorrat/

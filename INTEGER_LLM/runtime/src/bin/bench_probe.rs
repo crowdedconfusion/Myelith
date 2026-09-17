@@ -91,4 +91,20 @@ fn main() {
     assert_eq!(out, out2, "zweiter Durchlauf erzeugt andere Token");
     println!("decode_digest {}", digest);
     println!("digest_umfang logits+token");
+
+    // ⛔️ **Hat die GPU ueberhaupt gerechnet?** (2026-09-16, Fund 383.)
+    //
+    // Die Bitgleichheit ist der Zweck dieses Projekts, und sie hat hier
+    // eine unangenehme Nebenwirkung: **Ein Lauf unter dem Namen `metal`,
+    // der in Wahrheit die CPU gerechnet hat, sieht in jeder Zahl dieses
+    // Programms genauso aus wie einer auf der GPU.** Derselbe
+    // `decode_hash`, derselbe `decode_digest`, nur eine andere Zeit, und
+    // eine Zeit ist genau das, was hier gemessen werden soll.
+    //
+    // Das ist Fund 33 in der Durchsatzmessung: Damals zertifizierte ein
+    // Konformitaetslauf die Referenz unter dem Etikett `cuda`. Der
+    // Pruefstand liest seither einen Zaehler; **diese Messung liest ihn
+    // jetzt auch.** Null heisst: Die CPU hat gerechnet, und die Zahl
+    // gehoert nicht unter die Ueberschrift `metal`.
+    println!("metal_buendel {}", integer_llm_kernels::metal::gerechnet());
 }

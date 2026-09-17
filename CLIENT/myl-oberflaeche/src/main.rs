@@ -158,9 +158,10 @@ fn kurzform(a: &myl_client::einstellungen::Agenteneinstellung) -> (&'static str,
 fn einstellungen(halter: tauri::State<'_, Halter>) -> Result<Ansicht, String> {
     let pfad = myl_client::Einstellungen::vorgabepfad();
     let e = myl_client::Einstellungen::lesen(&pfad)?;
-    if let Some(n) = e.kapazitaet.kerne {
-        myl_client::kapazitaet::kerne_setzen(n);
-    }
+    // ⚑ **Umgesetzt wird in der Kiste**, mit derselben Funktion, die
+    // `myl` und `myelith` rufen (seit dem 2026-09-16). Hier stand die
+    // Kernzeile allein, und ein Rechenwerk kam nie an.
+    myl_client::hardware::anwenden(&e);
     // ⚑ **Die Reservierung wird bei jedem Blick nachgefuehrt.** Ein
     // Download hat vielleicht Platz verbraucht, und dann stimmt die
     // Summe aus belegt und reserviert nicht mehr.
@@ -341,10 +342,12 @@ fn felder() -> Result<Vec<myl_client::einstellungen::Feld>, String> {
         .sprache;
     // ⚑ **Was nur in der Konsole wirkt, steht hier nicht.** Eine
     // Einstellung, die an der Stelle, an der sie steht, nichts bewirkt,
-    // ist schlimmer als eine fehlende.
+    // ist schlimmer als eine fehlende. ⚑ Gefragt wird die Kiste, seit
+    // dem 2026-09-16 in beide Richtungen: Das Fenster zaehlt nicht
+    // selbst auf, was es nicht zeigt.
     Ok(myl_client::einstellungen::FELDER
         .iter()
-        .filter(|f| !f.nur_konsole)
+        .filter(|f| f.gilt.im_fenster())
         .map(|f| f.in_sprache(s))
         .collect())
 }
@@ -397,6 +400,13 @@ fn setzen(
     // sieht, hat keinen Regler bedient, sondern eine Zahl geaendert.
     match feld.as_str() {
         "kap.kerne" => myl_client::kapazitaet::kerne_setzen(e.kapazitaet.kerne.unwrap_or(0)),
+        // ⚑ **Ein Rechenwerk wirkt beim Setzen, wie jede andere
+        // Freigabe.** Wer den Regler auf „rechnet nicht" zieht und
+        // danach dieselbe Vorbereitungszeit sieht, hat keinen Regler
+        // bedient, sondern eine Zahl geaendert.
+        f if f.starts_with(myl_client::einstellungen::RECHENWERK_PRAEFIX) => {
+            myl_client::hardware::anwenden(&e);
+        }
         // 📌 **Die Platte wird sofort gehalten oder hergegeben.** Sonst
         // stuende zwischen dem Setzen und dem naechsten Start eine
         // Zusage, die niemand einloest.
@@ -801,6 +811,9 @@ async fn agent_fahren(
             );
         };
         let verlauf = verlauf.unwrap_or_default();
+        // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu**
+        // (2026-09-17): Die naechste Nachricht ist ein neuer Anlass.
+        ruestung.nachschlagebudget_zuruecksetzen();
         let ergebnis = myl_client::lauf::fahren_im_gespraech(
             m, &ruestung, schritte, !gesperrt, grenze, &verlauf, &auftrag, Some(&melder),
         );
@@ -889,6 +902,7 @@ struct Verdichtung {
 #[tauri::command]
 async fn verdichten(
     verlauf: Vec<myl_client::Nachricht>,
+    sitzung: String,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Verdichtung, String> {
     let halt = halter.modell.clone();
@@ -898,8 +912,25 @@ async fn verdichten(
             return Err("das Modell ist nicht geladen".to_string());
         };
         let mut gespraech = myl_client::gespraech::Gespraech::aus(verlauf);
-        let (vorher, nachher) =
-            myl_client::gespraech::verdichten(m, &mut gespraech).map_err(|f| f.to_string())?;
+        // ⚑ **Der Mitschnitt entsteht genau hier** (2026-09-16), im
+        // Augenblick, in dem die Urfassung noch da ist. Der Ordner ist
+        // der eingehaengte; ohne einen wird nichts abgelegt, und das ist
+        // kein Fehler, sondern die Lage.
+        let e = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok();
+        let wurzel = e
+            .as_ref()
+            .and_then(|e| e.agent.wurzel.clone())
+            .or_else(myl_client::Einstellungen::standard_wurzel)
+            .map(std::path::PathBuf::from);
+        let modellname = e.as_ref().map(|e| e.modell.artefakt.clone()).unwrap_or_default();
+        let (vorher, nachher) = myl_client::gespraech::verdichten_mit_mitschnitt(
+            m,
+            &mut gespraech,
+            wurzel.as_deref(),
+            &sitzung,
+            &modellname,
+        )
+        .map_err(|f| f.to_string())?;
         Ok(Verdichtung {
             nachrichten: gespraech.nachrichten().to_vec(),
             zusammenfassung: myl_client::gespraech::zusammenfassung(&gespraech),
@@ -1270,15 +1301,10 @@ struct Katalogeintrag {
 /// eine Zusage ueber die falsche Platte, und sie fiele erst beim ersten
 /// Download auf.
 fn datenort() -> std::path::PathBuf {
-    match wurzel_suchen() {
-        Some(w) => w.join("INTEGER_LLM"),
-        // Ohne Klon gibt es keine Modelle und keine Artefakte; dann ist
-        // der Ort der Einstellungen der einzige, den es sicher gibt.
-        None => myl_client::Einstellungen::vorgabepfad()
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from(".")),
-    }
+    // ⚑ **Hergeleitet wird in der Kiste** (seit dem 2026-09-16). Die
+    // Konsole stellt dieselbe Frage; zwei Herleitungen desselben Ortes
+    // zeigen irgendwann auf zwei Datentraeger.
+    myl_client::ort::datenort()
 }
 
 /// Was Myelith heute schon auf der Platte haelt.

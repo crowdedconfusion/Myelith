@@ -2,6 +2,27 @@
 
 Zwei Erzeuger, zwei Fragestellungen.
 
+## ⚑ Was hier liegt, und was nicht
+
+Hier stehen **Messinstrumente mit bekannter Wahrheit**: erfundene Daten,
+deren richtige Antwort feststeht, damit eine Zahl am Ende etwas heisst.
+Sie beantworten „kann das Training ueberhaupt etwas" und „was wurde
+tatsaechlich abgelegt".
+
+⛔️ **Werkzeuge, die echtes Material herstellen, gehoeren nicht hierher.**
+Die Buchkette (aus einem Buch wird ein Trainingskorpus oder eine
+Wissensmappe) liegt unter `TRAINING/korpus/`. Sie misst nichts, sondern
+stellt her, und ihr Nachbar ist die Datenprovenienz in `myl-train`.
+
+📌 **Sie lag einen halben Tag hier**, weil nebenan schon ein
+`datasets/`-Ordner stand. Das war die Naehe des Nachbarn und nicht die
+Sache selbst; aufgefallen ist es an der Ueberschrift „Zwei Sorten
+Werkzeug hier", die dieser Abschnitt ersetzt hat. **Wer erklaeren muss,
+dass ein Ordner zweierlei enthaelt, hat das zweite meist falsch
+abgelegt.**
+
+---
+
 ## `referenzleiter.py`: wo endet die Fähigkeit?
 
 Fünf Stufen wachsender Schwierigkeit, je 4000 Lern- und 800 **frische**

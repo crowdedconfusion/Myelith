@@ -133,13 +133,43 @@ if (-not $Programme) {
   throw "Keine einzige Kiste ist zum Ausliefern angemeldet (gesucht: [package.metadata.myelith])."
 }
 
+# ⚑ **Derselbe Vorrat wie ueberall.** Das Auspacken macht
+# `INSTALL/vorrat.py`; hier steht nur der Aufruf, damit der schwierige
+# Teil auf allen Systemen derselbe Quelltext ist.
+$CargoNetz = @()
+$VorratOrdner = Join-Path $Wurzel "vorrat"
+$Archive = @()
+if (Test-Path $VorratOrdner) {
+  $Archive = @(Get-ChildItem -Path $VorratOrdner -Filter *.crate -File -ErrorAction SilentlyContinue)
+}
+if ($Archive.Count -gt 0) {
+  $Ausgepackt = Join-Path $Wurzel ".myelith-vorrat"
+  # ⛔️ **Kein `??` und kein `-not $x ? a : b`.** Windows liefert
+  # PowerShell 5.1 mit, und die kennt beides nicht; ein Skript, das nur
+  # unter 7 laeuft, scheitert genau auf der Maschine, fuer die es
+  # geschrieben ist.
+  $Python = Get-Command python3 -ErrorAction SilentlyContinue
+  if (-not $Python) { $Python = Get-Command python -ErrorAction SilentlyContinue }
+  if (-not $Python) {
+    throw "Der Vorrat liegt bereit, aber Python fehlt. Ohne Python kein Auspacken; mit Netz geht es auch ohne Vorrat."
+  }
+  if (-not (Test-Path (Join-Path $Ausgepackt "vendor"))) {
+    Write-Host "   Vorrat: $($Archive.Count) Archive werden ausgepackt"
+    & $Python.Source (Join-Path $Wurzel "INSTALL\vorrat.py") auspacken | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Auspacken des Vorrats fehlgeschlagen." }
+  }
+  $env:CARGO_HOME = Join-Path $Ausgepackt "cargo-home"
+  $CargoNetz = @("--offline")
+  Write-Host "   Vorrat: $($Archive.Count) Pakete aus vorrat\, Netz aus"
+}
+
 Write-Host "-- bauen, das dauert beim ersten Mal einige Minuten"
 Write-Host "   $($Programme.Count) Programme angemeldet"
 foreach ($p in $Programme) {
   Write-Host "   $($p.Name)"
   Push-Location $p.Verzeichnis
   try {
-    cargo build --release --quiet
+    cargo build --release --quiet --locked $CargoNetz
     if ($LASTEXITCODE -ne 0) { throw "Bau von $($p.Name) fehlgeschlagen." }
   } finally { Pop-Location }
 }

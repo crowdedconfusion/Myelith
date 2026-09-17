@@ -25,7 +25,7 @@
 //! aber in der CI nicht laufen, weil `INTEGER_LLM/models/` nicht im
 //! Repositorium liegt.
 
-use myl_local_agent::werkzeug::{angebot, Ansageform, Werkzeug};
+use myl_local_agent::werkzeug::{angebot, angebot_mit_regel, Ansageform, Werkzeug};
 
 /// Die abgelegte Ansage, mit `<WERKZEUG-JSON>` an der Stelle des einen
 /// Werkzeugs. ⚑ Es ist die **ganze** Systemnachricht und nicht nur ihr
@@ -179,4 +179,47 @@ fn die_abgelegte_fassung_ist_nicht_veraltet() {
              Fassung nachgezogen, oder jemand hat die abgelegte von Hand bearbeitet."
         );
     }
+}
+
+/// ⚑ **Die Hausregel steht hinter der Vorlage und nicht darin.**
+///
+/// Kopf und Fuss sind zeichengleich die Literale des Modells, und genau
+/// das prueft die uebrige Datei. ⛔️ **Eine Regel, die sich
+/// dazwischenschoebe, aenderte den Schliff, auf den das Modell
+/// trainiert wurde**, und das faende niemand durch Hinsehen heraus.
+/// Geprueft wird deshalb dreierlei: ohne Regel aendert sich **nichts**,
+/// mit Regel steht die Vorlage **unveraendert am Anfang**, und die
+/// Regel steht **dahinter**.
+#[test]
+fn die_hausregel_steht_hinter_der_vorlage() {
+    let ohne = angebot(&eines(), Ansageform::Amtlich).content;
+
+    // 1. `None` ist wortgleich das Alte.
+    assert_eq!(
+        angebot_mit_regel(&eines(), Ansageform::Amtlich, None).content,
+        ohne,
+        "ohne Regel darf sich kein Zeichen aendern"
+    );
+
+    // 2. Und eine leere Regel ebenfalls: Ein Absatz aus Leerzeichen
+    //    waere ein Unterschied ohne Aussage.
+    assert_eq!(
+        angebot_mit_regel(&eines(), Ansageform::Amtlich, Some("   ")).content,
+        ohne,
+        "eine leere Regel ist keine Regel"
+    );
+
+    // 3. Mit Regel: die Vorlage vorn, die Regel dahinter.
+    let regel = "Call the tool instead of describing it.";
+    let mit = angebot_mit_regel(&eines(), Ansageform::Amtlich, Some(regel)).content;
+    assert!(
+        mit.starts_with(&ohne),
+        "die Vorlage steht nicht mehr unveraendert am Anfang:\n{mit}"
+    );
+    assert!(mit.ends_with(regel), "die Regel steht nicht am Ende:\n{mit}");
+    assert_eq!(
+        mit.len(),
+        ohne.len() + 2 + regel.len(),
+        "zwischen Vorlage und Regel gehoert genau eine Leerzeile"
+    );
 }

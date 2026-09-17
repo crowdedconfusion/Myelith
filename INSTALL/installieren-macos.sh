@@ -6,6 +6,7 @@
 #   sh installieren-macos.sh --system        nach /usr/local/bin und /Applications
 #   sh installieren-macos.sh --aktualisieren holt erst neuen Stand, baut dann
 #   sh installieren-macos.sh --pruefen       sagt nur, was fehlt, und baut nicht
+#   sh installieren-macos.sh --ohne-netz     baut aus dem oertlichen Vorrat
 #
 # ⚑ **Warum aus dem Quelltext und nicht aus einem Buendel.** Die
 # Freigabebuendel dieses Projekts sind **nicht signiert**. Ein Skript,
@@ -31,11 +32,13 @@ WURZEL=$(pwd)
 SYSTEMWEIT=nein
 AKTUALISIEREN=nein
 NUR_PRUEFEN=nein
+OHNE_NETZ=nein
 for a in "$@"; do
   case "$a" in
     --system)        SYSTEMWEIT=ja ;;
     --aktualisieren) AKTUALISIEREN=ja ;;
     --pruefen)       NUR_PRUEFEN=ja ;;
+    --ohne-netz)     OHNE_NETZ=ja ;;
     -h|--hilfe|--help)
       sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -92,6 +95,47 @@ fi
 
 echo "   Xcode-Werkzeuge: da"
 echo "   cargo: $(cargo --version)"
+
+CARGO_NETZ=""
+if [ "$OHNE_NETZ" = ja ]; then
+  CARGO_NETZ="--offline"
+  echo "   Netz: aus, es wird nur der oertliche Vorrat benutzt"
+fi
+
+# ⚑ **Der Vorrat liegt als Archive im Klon und wird hier ausgepackt.**
+#
+# ⛔️ **Darum baut ein frischer Klon ohne Netz**, und zwar ohne Schalter:
+# Die Archive sind versioniert, das Ausgepackte nicht. Gemessen: 758
+# Pakete in sechs Sekunden.
+ARCHIVE=$(find "$WURZEL/vorrat" -maxdepth 1 -name '*.crate' 2>/dev/null | wc -l | tr -d " ")
+if [ "$ARCHIVE" -gt 0 ]; then
+  if [ ! -d "$WURZEL/.myelith-vorrat/vendor" ] \
+     || [ "$WURZEL/vorrat" -nt "$WURZEL/.myelith-vorrat/vendor" ]; then
+    echo "   Vorrat: $ARCHIVE Archive werden ausgepackt"
+    python3 "$WURZEL/INSTALL/vorrat.py" auspacken >/dev/null || {
+      echo "   FEHLER beim Auspacken des Vorrats" >&2
+      exit 1
+    }
+  fi
+  CARGO_HOME="$WURZEL/.myelith-vorrat/cargo-home"
+  export CARGO_HOME
+  CARGO_NETZ="--offline"
+  echo "   Vorrat: $ARCHIVE Pakete aus vorrat/, Netz aus"
+fi
+
+# ⚑ **Was ausser den Programmen hier moeglich ist**, damit niemand es
+# erraten muss. Die drei Zeilen kosten nichts und beantworten die Frage,
+# die sonst erst beim ersten Fehlschlag gestellt wird.
+PY_MIT_TORCH=nein
+for k in "$WURZEL/INTEGER_LLM/calibrate/.venv/bin/python3" python3; do
+  if command -v "$k" >/dev/null 2>&1 && "$k" -c "import torch" >/dev/null 2>&1; then
+    PY_MIT_TORCH=ja
+    break
+  fi
+done
+GEWICHTE=$(find "$WURZEL/INTEGER_LLM/models" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+ARTEFAKTE=$(find "$WURZEL/INTEGER_LLM/artifacts" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+echo "   Artefakte da: $ARTEFAKTE, Gewichte da: $GEWICHTE, Artefaktbau moeglich: $PY_MIT_TORCH"
 
 if [ "$NUR_PRUEFEN" = ja ]; then
   echo "── Alles da. Ohne --pruefen wird gebaut."
@@ -162,7 +206,11 @@ for zeile in $PROGRAMME; do
   # shellcheck disable=SC2086
   set -- $zeile
   echo "   $2"
-  ( cd "$WURZEL/$1" && cargo build --release --quiet )
+  # ⚑ **`--locked` immer.** Die Sperrdateien sind Teil des Standes; ohne
+  # sie loest cargo neu auf, und dann baut der Nutzer etwas anderes, als
+  # hier geprueft wurde. ⛔️ **Mit `--ohne-netz` zusaetzlich `--offline`**,
+  # dann nimmt cargo ausschliesslich den oertlichen Vorrat.
+  ( cd "$WURZEL/$1" && cargo build --release --quiet --locked $CARGO_NETZ )
   IFS='
 '
 done

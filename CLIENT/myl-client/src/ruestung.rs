@@ -23,6 +23,19 @@ use crate::werkzeuge::Einhaengung;
 pub struct Ruestung {
     /// Die Werkzeuge selbst.
     pub kasten: Werkzeugkasten,
+    /// **Was die Verlaufswerkzeuge in diesem Auftrag noch liefern
+    /// duerfen**, in Zeichen.
+    ///
+    /// ⛔️ **Eine Schranke im Code und keine Bitte im Prompt** (gemessen
+    /// 2026-09-17): Modelle befolgen „ruf das Werkzeug nur, wenn es
+    /// noetig ist" nicht. ⚑ **Sie gehoert in die Ruestung**, weil sich
+    /// die drei Werkzeuge dasselbe Budget teilen muessen; drei eigene
+    /// waeren drei Wege, denselben Kontext zu fuellen.
+    ///
+    /// ⚑ **Vor jedem Auftrag zuruecksetzen**
+    /// ([`Ruestung::nachschlagebudget_zuruecksetzen`]): Die naechste
+    /// Frage ist ein neuer Anlass nachzuschlagen.
+    budget: crate::werkzeuge::Verlaufsbudget,
     /// Ihre Manifeste.
     pub registratur: myl_agent::registratur::Registratur,
     /// Name zu Adresse, hergeleitet aus dem jeweiligen Manifest.
@@ -42,6 +55,21 @@ pub struct Ruestung {
 }
 
 impl Ruestung {
+    /// **Gibt den Verlaufswerkzeugen ihr Budget zurueck**, vor jedem
+    /// neuen Auftrag.
+    ///
+    /// ⚑ **Vom Aufrufer und nicht von der Schleife**, denn nur er
+    /// weiss, was ein Auftrag ist: In der Konsole ist es eine Zeile des
+    /// Nutzers, im Fenster eine abgeschickte Nachricht, und in einer
+    /// Messung ein Lauf.
+    pub fn nachschlagebudget_zuruecksetzen(&self) {
+        self.budget.store(
+            crate::werkzeuge::VERLAUF_BUDGET_ZEICHEN,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+
     /// Die Zuordnung, wie der Harness sie braucht.
     pub fn zuordnung(&self) -> impl Fn(&str) -> Option<myl_types::ids::MerkleRoot> + '_ {
         move |n: &str| self.adressen.get(n).copied()
@@ -124,6 +152,7 @@ pub fn ruesten_mit(
     nachfrage: Option<Nachfrage>,
 ) -> Result<Ruestung, String> {
     let mut kasten = Werkzeugkasten::neu();
+    let budget = crate::werkzeuge::verlaufsbudget();
 
     // ⚑ **Die verankerte Kiste haengt immer**, auch ohne eingehaengtes
     // Verzeichnis und auch im Chat: Ihre Werkzeuge fassen nichts an,
@@ -204,7 +233,7 @@ pub fn ruesten_mit(
                     .find(|a| a.name == name)
                     .ok_or_else(|| format!("Dateiwerkzeug {name} wird nicht angeboten"))?;
                 let mut ausfuehrung: Box<dyn Werkzeugausfuehrung> =
-                    w.ausfuehrung(ein.clone(), form);
+                    w.ausfuehrung(ein.clone(), form, &budget);
                 // ⚑ **Nur die schreibenden.** Ein Lesewerkzeug, das
                 // nachfragt, waere nach drei Fragen abgeschaltet, und
                 // dann bestaetigt niemand mehr etwas.
@@ -307,5 +336,5 @@ pub fn ruesten_mit(
         adressen.insert(angebot.name.clone(), a);
     }
 
-    Ok(Ruestung { kasten, registratur, adressen, einhaengung, form, satz })
+    Ok(Ruestung { kasten, budget, registratur, adressen, einhaengung, form, satz })
 }

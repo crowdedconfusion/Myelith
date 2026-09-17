@@ -1,7 +1,7 @@
 # NODE — der Myelith-Knoten
 
-> **Version:** 0.48.3
-> **Datum:** 2026-09-09
+> **Version:** 0.48.4
+> **Datum:** 2026-09-16
 > **Status:** Netzknoten lauffähig, Blockproduktion mit **Persistenz über
 > Neustarts**, BFT-Runden über das Netz mit Rundenwechsel, und seit dem
 > 1. September **schließt der Knoten die Epoche selbst ab**.
@@ -278,6 +278,31 @@ NODE/
 ```
 
 ## Changelog
+
+### v0.48.4 – 2026-09-16 (der Serverzuschnitt wird geprüft, ohne dass Nix dafür nötig ist)
+
+**Nur Prüfungen, keine Verhaltensänderung am Knoten.** Das NixOS-Modul
+unter `myl-server/` startet `myl-node` mit einer Handvoll Flags, und
+bisher hielt die beiden nichts zusammen: Wer hier einen Aufrufnamen
+ändert, merkt es auf einem Server, und zwar daran, dass der Dienst
+startet, abbricht und wieder startet.
+
+⚑ **Fünf Prüfungen lesen zwei Dateien nebeneinander**, ohne `nix` und
+ohne NixOS: Jedes übergebene Flag kennt der Knoten; nach außen geht nur
+der P2P-Port (Tür und Ortsleitung werden gar nicht übergeben, die
+Beobachtung ausdrücklich auf der Rückschleife); ein Startfehler wird
+keine Schleife; jede Option, die die Beispielkonfiguration setzt, gibt
+es im Modul; und die Flake gibt Paket und Modul heraus und zeigt dabei
+auf Dateien, die es gibt.
+
+⚑ **Gelesen wird nur die Befehlszeile und nicht die ganze Datei.** Im
+Modul stehen Flagnamen auch in Beschreibungstexten und in der Liste
+derer, vor denen es **warnt**; wer die Datei durchsucht, findet `--tuer`
+und liest das Gegenteil heraus. **Eine Prüfung, die den Ort nicht kennt,
+prüft eine andere Aussage.**
+
+⚠️ **Was sie nicht sagen:** ob das Modul auf NixOS baut. Das bleibt der
+VM-Prüfung vorbehalten.
 
 ### v0.48.3 – 2026-09-14 (der Konformitätstest sucht nach der Form, die beide Erzeuger schreiben)
 

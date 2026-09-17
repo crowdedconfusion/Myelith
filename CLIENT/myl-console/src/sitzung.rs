@@ -31,6 +31,10 @@ struct Stand {
     /// ⚑ **Es ist das Arbeitsverzeichnis und kein Feld.** Wer `myelith`
     /// hier tippt, hat die Frage beantwortet.
     ordner: PathBuf,
+    /// ⚑ **Die Sitzung dieses Programmlaufs.** Sie gliedert die
+    /// Mitschnitte im Arbeitsordner; `/clear` beginnt eine neue Episode
+    /// und loescht keine alte.
+    sitzung: String,
     /// Das geladene Modell, sobald es geladen ist.
     modell: Option<myl_client::Oertlichesmodell>,
     /// Der Pfad, aus dem es geladen wurde.
@@ -99,8 +103,32 @@ pub fn fahren() -> i32 {
         return SCHLECHT;
     }
 
+    // ⛔️ **Die Freigabe wird umgesetzt, und bis zum 2026-09-16 wurde
+    // sie das hier nicht** (Fund 381). `kap.kerne` liess sich setzen,
+    // anzeigen und abspeichern; `myl` und das Fenster wandten es an,
+    // diese Konsole las es nie. **Eine Einstellung, die an einem von
+    // drei Bedieninstrumenten nichts bewirkt, ist schlimmer als keine**,
+    // denn sie wirkt ja anderswo, und niemand sucht den Unterschied im
+    // Programm.
+    if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+        myl_client::hardware::anwenden(&e);
+    }
+
+    // ⚑ **Eine Sitzungskennung je Programmlauf.** Die Konsole fuehrt
+    // keine Gespraechsliste; was sie hat, ist dieser Lauf. Sekunden und
+    // Prozesskennung zusammen sind eindeutig genug und verraten nichts.
+    let sitzung = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        std::process::id()
+    );
+
     let mut stand = Stand {
         ordner,
+        sitzung,
         modell: None,
         artefakt: String::new(),
         name: String::new(),
@@ -871,6 +899,10 @@ fn einstellungen_zeigen(stand: &mut Stand) {
     // dasselbe tun.
     if geaendert {
         if let Ok(e) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()) {
+            // ⚑ **Auch die Freigabe gilt sofort**, wie im Fenster: Wer
+            // den Kernregler bewegt und danach dieselbe Laufzeit sieht,
+            // hat keinen Regler bedient, sondern eine Zahl geaendert.
+            myl_client::hardware::anwenden(&e);
             stand.schreibt = e.agent.schreiben;
             stand.modus = e.agent.modus;
             stand.design = e.oberflaeche.design;
@@ -947,7 +979,18 @@ fn gespraech_verdichten(stand: &mut Stand) {
     print!("  Das Gespraech wird verdichtet … ");
     let _ = std::io::stdout().flush();
     let anfang = std::time::Instant::now();
-    match myl_client::gespraech::verdichten(modell, &mut stand.gespraech) {
+    // ⚑ **Der Mitschnitt entsteht genau hier** (2026-09-16): Die
+    // Urfassung ist im Augenblick des Verdichtens noch da und danach
+    // weg. Die Konsole kennt ihren Arbeitsordner, also bekommt sie
+    // einen; ohne Ordner gaebe es keinen Platz, an dem der Agent
+    // nachlesen koennte.
+    match myl_client::gespraech::verdichten_mit_mitschnitt(
+        modell,
+        &mut stand.gespraech,
+        Some(&stand.ordner),
+        &stand.sitzung,
+        &stand.name,
+    ) {
         Ok((vorher, nachher)) => {
             println!("{:.1} s", anfang.elapsed().as_secs_f64());
             println!("  Verdichtet: {vorher} → {nachher} Token.");
@@ -1078,6 +1121,9 @@ fn auftrag_fahren(stand: &mut Stand, auftrag: &str) {
         myl_client::Meldung::Verdichtet { vorher, nachher } => anzeige.verdichtet(vorher, nachher),
     };
 
+    // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu** (2026-09-17):
+    // Die naechste Frage des Nutzers ist ein neuer Anlass nachzulesen.
+    ruestung.nachschlagebudget_zuruecksetzen();
     let aus = myl_client::lauf::fahren_im_gespraech(
         modell,
         &ruestung,

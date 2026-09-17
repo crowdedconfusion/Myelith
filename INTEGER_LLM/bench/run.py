@@ -96,9 +96,52 @@ HF_MODEL_DIR = ROOT / "models" / _CONFIG["hf_model_id"].split("/")[-1]
 PROMPT = "Die Hauptstadt von Frankreich ist"
 DECODE_TOKENS = 32
 
+# ⛔️ **Sieben Token erreichen den GPU-Pfad nie** (2026-09-16, Fund 383).
+# Die GPU rechnet erst ab sechzehn Eingaben je Buendel; der feste Prompt
+# oben sind sieben Token. **Damit misst der kurze Lauf den Decode und
+# einen Prefill unterhalb der Schwelle**, und genau der Rechenweg, der
+# seit dem 2026-09-14 die Optimierung traegt, bleibt unsichtbar. Er
+# gewinnt beim Prefill langer Prompts und beim Decode nie.
+#
+# ⚑ **Zwei Laeufe und nicht ein geaenderter.** Der kurze beantwortet
+# „wie schnell erzeugt das Modell Token", der lange „wie schnell nimmt
+# es einen Prompt auf". Das sind zwei Fragen, und eine Zahl, die beide
+# beantworten soll, beantwortet keine.
+#
+# ⚑ **Der lange Prompt entsteht aus einem festen Absatz**, wiederholt,
+# bis die Zeichenzahl reicht. Damit ist er auf jeder Maschine und in
+# jedem Lauf **derselbe**, und nur so traegt die Bitgleichheitspruefung
+# ueber die Backends.
+ABSATZ = (
+    "Ein verteiltes Netz rechnet dieselbe Arbeit an mehreren Stellen und "
+    "vergleicht die Ergebnisse. Stimmen sie ueberein, gilt die Arbeit als "
+    "geleistet; weichen sie ab, entscheidet ein Verfahren, welche Seite "
+    "sich geirrt hat. Damit das ueberhaupt moeglich ist, muss dieselbe "
+    "Rechnung auf verschiedenen Maschinen dasselbe ergeben, und zwar bis "
+    "auf das letzte Bit. "
+)
+
+# Deutsche Prosa liegt bei rund 3,5 Zeichen je Token; die genaue Zahl
+# meldet `bench_probe` als `prompt_tokens`, und sie steht im Ergebnis.
+ZEICHEN_JE_TOKEN = 3.5
+
+
+def langer_prompt(token_ziel):
+    """Ein fester Text, wiederholt bis ungefaehr `token_ziel` Token."""
+    zeichen = max(1, int(token_ziel * ZEICHEN_JE_TOKEN))
+    wdh = -(-zeichen // len(ABSATZ))
+    return (ABSATZ * wdh)[:zeichen]
+
 # Backends, die überhaupt in Frage kommen. `reference` ist immer dabei —
 # es ist der numerische Vertrag, gegen den alles andere geprüft wird.
-ALLE_BACKENDS = ["reference", "cpu-simd", "cuda", "rocm"]
+#
+# ⛔️ **`metal` stand bis zum 2026-09-16 nicht in dieser Liste** (Fund
+# 383), und damit konnte diese Messung den Rechenweg nicht sehen, der
+# seit dem 2026-09-14 die Optimierung traegt: Der Prefill des 30B fiel
+# damit von 35,3 auf 10,7 s. **Eine Durchsatzmessung, die den
+# ausgelieferten Rechenweg nicht kennt, misst etwas anderes als das,
+# was laeuft** und nennt es die Grundlinie.
+ALLE_BACKENDS = ["reference", "cpu-simd", "metal", "cuda", "rocm"]
 
 
 def artefakt_dir():
@@ -126,6 +169,12 @@ def backend_verfuegbar(backend):
         werkzeug = "nvcc" if backend == "cuda" else "hipcc"
         if shutil.which(werkzeug) is None:
             return False, f"{werkzeug} nicht im Pfad"
+    if backend == "metal" and sys.platform != "darwin":
+        # Das Feature gibt es nur fuer macOS; anderswo ist es wirkungslos,
+        # und ein wirkungsloses Feature unter eigenem Namen zu messen
+        # waere genau die Selbstzertifizierung, gegen die `metal_buendel`
+        # unten steht.
+        return False, "metal gibt es nur auf macOS"
     return True, None
 
 
@@ -146,10 +195,10 @@ def baue(backend):
     return binary, None
 
 
-def messe(binary, artefakte, decode_tokens):
+def messe(binary, artefakte, decode_tokens, prompt):
     """Führt eine Messung aus und liefert die Kennzahlen als dict."""
     r = subprocess.run(
-        [str(binary), str(artefakte), PROMPT, str(decode_tokens)],
+        [str(binary), str(artefakte), prompt, str(decode_tokens)],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -166,7 +215,7 @@ def messe(binary, artefakte, decode_tokens):
     return werte, None
 
 
-def fp_referenz(artefakte, decode_tokens):
+def fp_referenz(artefakte, decode_tokens, prompt=PROMPT):
     """Durchsatz der Gleitkomma-Referenz auf derselben Maschine (12.65).
 
     Bewusst dasselbe Modell in BF16 über HuggingFace — nicht eine
@@ -188,7 +237,7 @@ def fp_referenz(artefakte, decode_tokens):
         str(ref), torch_dtype=torch.bfloat16, device_map=None
     )
     modell.eval()
-    ids = tok(PROMPT, return_tensors="pt").input_ids
+    ids = tok(prompt, return_tensors="pt").input_ids
 
     with torch.no_grad():
         # Prefill
@@ -221,6 +270,9 @@ def main():
     p.add_argument("--backends", default=",".join(ALLE_BACKENDS),
                    help="Kommaliste; Vorgabe: alle")
     p.add_argument("--decode-tokens", type=int, default=DECODE_TOKENS)
+    p.add_argument("--prompt-tokens", type=int, default=0,
+                   help="Ungefaehre Laenge des Prompts in Token; 0 nimmt den kurzen "
+                        "Standardsatz. Erst ab etwa 16 Token rechnet die GPU ueberhaupt mit.")
     p.add_argument("--no-fp", action="store_true",
                    help="Gleitkomma-Vergleich überspringen")
     args = p.parse_args()
@@ -234,7 +286,12 @@ def main():
     print(f"=== Durchsatz-Benchmark: {MODEL} ===")
     print(f"Artefakt: {artefakte}  ({groesse / 1e9:.2f} GB)")
     print(f"Maschine: {platform.machine()} / {platform.system()}")
-    print(f"Prompt: {PROMPT!r}, Decode: {args.decode_tokens} Token")
+    prompt = PROMPT if args.prompt_tokens <= 0 else langer_prompt(args.prompt_tokens)
+    if args.prompt_tokens <= 0:
+        print(f"Prompt: {prompt!r}, Decode: {args.decode_tokens} Token")
+    else:
+        print(f"Prompt: fester Absatz, {len(prompt)} Zeichen (Ziel ~{args.prompt_tokens} Token), "
+              f"Decode: {args.decode_tokens} Token")
     print()
 
     ergebnisse = {}
@@ -248,10 +305,37 @@ def main():
         if binary is None:
             print(f"  {backend:<10} Build fehlgeschlagen — {fehler.splitlines()[-1] if fehler else '?'}")
             continue
-        werte, fehler = messe(binary, artefakte, args.decode_tokens)
+        werte, fehler = messe(binary, artefakte, args.decode_tokens, prompt)
         if werte is None:
             print(f"  {backend:<10} Messung fehlgeschlagen — {fehler}")
             continue
+
+        # ⛔️ **Hat die GPU gerechnet, oder steht ihr Name nur darüber?**
+        # (2026-09-16, Fund 383.)
+        #
+        # Die Bitgleichheit ist der Zweck dieses Projekts und hier ihre
+        # eigene Falle: Ein Lauf unter dem Namen `metal`, der in
+        # Wahrheit die CPU gerechnet hat, trägt **denselben** Digest und
+        # denselben Token-Hash. Die Gleichheitsprüfung unten geht durch,
+        # die Tabelle zeigt eine Zeile `metal`, und die Zahl darin ist
+        # die der CPU. **Das ist Fund 33 in der Durchsatzmessung**, und
+        # dort hat er 30/30 bestandene Vektoren gemeldet.
+        #
+        # Der Zähler ist die einzige Stelle, die die beiden Fälle
+        # unterscheidet. Null heißt: verworfen, mit Grund.
+        if backend == "metal":
+            gerechnet = werte.get("metal_buendel")
+            if gerechnet is None:
+                print(f"  {backend:<10} verworfen: das Binary meldet `metal_buendel` nicht; "
+                      f"ohne den Zähler wäre eine CPU-Messung von einer GPU-Messung "
+                      f"nicht zu unterscheiden")
+                continue
+            if gerechnet == 0:
+                print(f"  {backend:<10} verworfen: die GPU hat kein einziges Bündel gerechnet "
+                      f"(Gerät fehlt, Shader nicht übersetzt, oder die Selbstprüfung gegen die "
+                      f"CPU ist gescheitert). Die Zahlen wären die der CPU unter fremdem Namen.")
+                continue
+
         ergebnisse[backend] = werte
         # **Der starke Wert, nicht der Token-Hash** (Fund 36, 2026-08-22).
         # `decode_hash` deckt nur die erzeugten Token ab, also eine
@@ -296,7 +380,7 @@ def main():
 
     fp = None
     if not args.no_fp:
-        fp, grund = fp_referenz(artefakte, args.decode_tokens)
+        fp, grund = fp_referenz(artefakte, args.decode_tokens, prompt)
         if fp is None:
             print(f"\nGleitkomma-Vergleich übersprungen — {grund}")
         else:
@@ -311,13 +395,20 @@ def main():
             print("  die erreichbare Grenze.")
 
     RESULTS.mkdir(exist_ok=True)
-    ziel = RESULTS / f"{MODEL}_{platform.machine()}.json"
+    # ⚑ **Die Promptlaenge gehoert in den Dateinamen** (2026-09-16).
+    # Sonst ueberschriebe der lange Lauf den kurzen, und danach stuenden
+    # zwei Messungen verschiedener Fragen unter einem Namen: **Wer den
+    # falschen liest, zieht Schluesse aus einem Aufbau, den er nicht
+    # kennt.** Dieselbe Ueberlegung wie beim Datum im Berichtsnamen.
+    marke = "" if args.prompt_tokens <= 0 else f"_p{args.prompt_tokens}"
+    ziel = RESULTS / f"{MODEL}_{platform.machine()}{marke}.json"
     ziel.write_text(json.dumps({
         "model": MODEL,
         "artifact_bytes": groesse,
         "machine": platform.machine(),
         "system": platform.system(),
-        "prompt": PROMPT,
+        "prompt": prompt if args.prompt_tokens <= 0 else f"fester Absatz, {len(prompt)} Zeichen",
+        "prompt_tokens_ziel": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
         "backends": ergebnisse,
         "decode_digest": hashes[list(hashes)[0]],

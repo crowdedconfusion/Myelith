@@ -213,3 +213,39 @@ fn geglaettet(s: &str) -> String {
     }
     aus.join("\n")
 }
+
+/// **Die Konsole setzt die Freigabe um, und zwar beim Start.**
+///
+/// # ⛔️ Fund 381, und es ist das haeufigste Fehlerbild dieses Projekts
+///
+/// `kap.kerne` liess sich auf der Einstellungsseite setzen, anzeigen
+/// und abspeichern. `myl` wandte es an, das Fenster wandte es an,
+/// **und diese Konsole las es nie**: Der Rechenpfad fragte
+/// `available_parallelism` und nahm die ganze Maschine. Gruene Tests
+/// sagten darueber nichts, denn keiner rief die Stelle.
+///
+/// ⚑ **Eine Einstellung, die an einem von drei Bedieninstrumenten
+/// nichts bewirkt, ist schlimmer als eine, die nirgends wirkt.** Sie
+/// wirkt ja anderswo, und deshalb sucht niemand den Unterschied im
+/// Programm.
+///
+/// ⚠️ **Diese Pruefung liest den Quelltext**, denn die Stelle liegt in
+/// einer Schleife, die ein Terminal braucht. Sie prueft damit die
+/// **Aufrufstelle** und nicht die Wirkung; dass die Freigabe den
+/// Rechenpfad wirklich erreicht, prueft `freigabe.rs` in `myl-client`.
+#[test]
+fn die_freigabe_wird_umgesetzt() {
+    let sitzung = quelle("sitzung.rs");
+    assert!(
+        sitzung.contains("hardware::anwenden"),
+        "die Konsole setzt die Kapazitaetsfreigabe nirgends um"
+    );
+    // ⚑ **Beim Start und nach der Einstellungsseite.** Nur eines von
+    // beiden liesse entweder die gespeicherte Freigabe liegen oder eine
+    // gerade geaenderte erst beim naechsten Start wirken.
+    assert_eq!(
+        sitzung.matches("hardware::anwenden").count(),
+        2,
+        "erwartet sind zwei Aufrufe: beim Start und nach der Einstellungsseite"
+    );
+}

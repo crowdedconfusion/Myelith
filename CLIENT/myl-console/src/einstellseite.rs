@@ -24,6 +24,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute, SetForegroundColor};
 
 use myl_client::einstellungen::{Einstellungen, Feld, Feldart, Feldwert, FELDER};
+use myl_client::hardware::{Einheit, Hardware, Regler};
 
 use crate::design::Toene;
 
@@ -44,6 +45,212 @@ pub const KUERZEL: &str =
 pub fn schritt(wert: u64) -> u64 {
     let stellen = wert.to_string().len() as u32;
     10u64.pow(stellen.saturating_sub(2)).max(1)
+}
+
+/// **Die Enden eines Reglers, mit ihren Namen.**
+///
+/// ⚑ **Die Worte kommen aus [`Regler`] und werden hier nicht
+/// erfunden.** Das Fenster zeigt dieselben Regler in derselben Sprache;
+/// zwei Stellen mit je eigenen Worten laufen auseinander, und die
+/// zweite ist die schlechter gepruefte.
+#[derive(Debug, Clone)]
+pub struct Spanne {
+    pub mindestens: u64,
+    /// `None` heisst: Diese Maschine nennt ihr Ende nicht, und dann ist
+    /// es kein Regler. Der Grund steht in [`Reihe::sperrgrund`].
+    pub hoechstens: Option<u64>,
+    pub links: Option<String>,
+    pub rechts: String,
+    pub einheit: Einheit,
+    pub sprache: myl_client::einstellungen::Sprache,
+}
+
+impl Spanne {
+    fn aus(r: &Regler, sprache: myl_client::einstellungen::Sprache) -> Self {
+        Self {
+            mindestens: r.mindestens,
+            hoechstens: r.hoechstens,
+            links: r.links.clone(),
+            rechts: r.rechts.clone(),
+            einheit: r.einheit,
+            sprache,
+        }
+    }
+
+    /// **Wie ein Wert in dieser Spanne gelesen wird.**
+    ///
+    /// ⚑ **Nicht gesetzt steht ganz rechts und heisst „ohne Grenze".**
+    /// 📌 Bis zum 2026-09-16 stand dort „aus", und das las sich wie
+    /// „abgeschaltet", wo „unbegrenzt" gemeint war: **genau die
+    /// schiefe Formulierung, die zur Architektur des naechsten Lesers
+    /// wird.**
+    pub fn wie(&self, w: &Feldwert) -> String {
+        let n = match w {
+            Feldwert::Leer => return self.rechts.clone(),
+            Feldwert::Zahl(n) => *n,
+            andere => return roh(andere),
+        };
+        if Some(n) == self.hoechstens {
+            return self.rechts.clone();
+        }
+        if n == self.mindestens {
+            if let Some(l) = &self.links {
+                return l.clone();
+            }
+        }
+        self.einheit.wie(n, self.sprache)
+    }
+}
+
+/// **Eine Zeile der Seite**, gleich ob sie aus dem Katalog kommt oder
+/// aus dem Hardwarescan.
+///
+/// ⚑ **Zwei Quellen, eine Zeile.** Die festen Felder stehen in
+/// [`FELDER`], die Rechenwerke kennt erst der Scan. Beide werden gleich
+/// gezeichnet und gleich bedient; wer sie getrennt behandelte, haette
+/// zwei Bedienwege fuer denselben Regler, und einer davon waere
+/// irgendwann der schlechtere.
+#[derive(Debug, Clone)]
+pub struct Reihe {
+    /// Das Katalogfeld. `None` bei einem Rechenwerk: Wie viele es gibt,
+    /// weiss erst der Scan, und deshalb steht keines im Katalog.
+    pub feld: Option<Feld>,
+    pub name: String,
+    pub bereich: String,
+    pub titel: String,
+    pub hinweis: String,
+    /// Gesetzt, wo die Zeile ein Regler ist: bei jeder Grenze und bei
+    /// jedem Rechenwerk.
+    pub spanne: Option<Spanne>,
+    pub sperrgrund: Option<String>,
+}
+
+impl Reihe {
+    /// Nimmt diese Zeile die Pfeile an?
+    pub fn mit_pfeilen(&self) -> bool {
+        match &self.feld {
+            Some(f) => mit_pfeilen(f),
+            // Ein Rechenwerk ist ein Anteil, also eine Zahl.
+            None => true,
+        }
+    }
+
+    /// Laesst sich diese Zeile tippen?
+    pub fn mit_eingabe(&self) -> bool {
+        match &self.feld {
+            Some(f) => mit_eingabe(f),
+            None => true,
+        }
+    }
+
+    /// Wie ihr Wert in der Zeile steht.
+    pub fn wie(&self, w: &Feldwert) -> String {
+        match (&self.spanne, &self.feld) {
+            (Some(s), _) => s.wie(w),
+            (None, Some(f)) => anzeige(f, w),
+            (None, None) => roh(w),
+        }
+    }
+}
+
+/// **Alle Zeilen der Seite, in der Reihenfolge, in der sie stehen.**
+///
+/// ⚑ **Die Rechenwerke stehen bei den Grenzen und nicht am Ende.** Sie
+/// sind Grenzen dieses Rechners wie die Kerne auch; angehaengt haette
+/// die Seite zwei Orte fuer dieselbe Frage.
+pub fn reihen(e: &Einstellungen, hw: &Hardware) -> Vec<Reihe> {
+    let sprache = e.oberflaeche.sprache;
+    let regler = hw.regler(e);
+    let mut aus: Vec<Reihe> = Vec::new();
+    let mut nach_der_letzten_grenze = 0usize;
+
+    // ⚑ **Was nur im Fenster wirkt, steht hier nicht**, aus demselben
+    // Grund, aus dem das Fenster die Konsolenfelder weglaesst: Eine
+    // Einstellung, die an der Stelle, an der sie steht, nichts bewirkt,
+    // ist schlimmer als eine fehlende.
+    for f in FELDER.iter().filter(|f| f.gilt.in_der_konsole()) {
+        let f = f.in_sprache(sprache);
+        let r = regler.iter().find(|r| r.name == f.name);
+        aus.push(Reihe {
+            feld: Some(f),
+            name: f.name.to_string(),
+            bereich: f.bereich.to_string(),
+            titel: f.titel.to_string(),
+            hinweis: f.hinweis.to_string(),
+            spanne: r.map(|r| Spanne::aus(r, sprache)),
+            sperrgrund: r.and_then(|r| r.sperrgrund.clone()),
+        });
+        if f.freigabe {
+            nach_der_letzten_grenze = aus.len();
+        }
+    }
+
+    let werke: Vec<Reihe> = regler
+        .iter()
+        .filter(|r| r.name.starts_with(myl_client::einstellungen::RECHENWERK_PRAEFIX))
+        .map(|r| Reihe {
+            feld: None,
+            name: r.name.clone(),
+            // ⚑ Dieselbe Ueberschrift wie die Kerne: Es ist dieselbe
+            // Frage, naemlich was dieser Rechner hergibt.
+            bereich: aus
+                .get(nach_der_letzten_grenze.saturating_sub(1))
+                .map(|z| z.bereich.clone())
+                .unwrap_or_default(),
+            titel: r.titel.clone(),
+            hinweis: r.hinweis.clone(),
+            spanne: Some(Spanne::aus(r, sprache)),
+            sperrgrund: r.sperrgrund.clone(),
+        })
+        .collect();
+    aus.splice(nach_der_letzten_grenze..nach_der_letzten_grenze, werke);
+    aus
+}
+
+/// Ein Wert ohne Spanne und ohne Feld, fuer die Faelle, die es nicht
+/// geben sollte.
+fn roh(w: &Feldwert) -> String {
+    match w {
+        Feldwert::Leer => "(nicht gesetzt)".to_string(),
+        Feldwert::Zahl(n) => n.to_string(),
+        Feldwert::Schalter(b) => if *b { "an" } else { "aus" }.to_string(),
+        Feldwert::Text(t) if t.is_empty() => "(nicht gesetzt)".to_string(),
+        Feldwert::Text(t) => t.clone(),
+    }
+}
+
+/// **Was ein Pfeil an einem Regler bewegt.**
+///
+/// ⚑ **Die Schrittweite kommt aus dem Ende und nicht aus dem Wert.**
+/// Sonst bewegte derselbe Regler sich unten in Einern und oben in
+/// Zehnern, und ein Weg zurueck traefe nicht dieselben Stellungen wie
+/// der Weg hin.
+///
+/// ⚑ **Ganz rechts wird `aus` gesetzt**, also die Grenze
+/// **weggenommen**. Das ist der Unterschied zwischen „nimm alles" und
+/// „nimm genau so viel, wie die Maschine heute hat": Bei der Platte
+/// heisst das zweite zusaetzlich, dass der Platz wirklich belegt wird.
+///
+/// `None` heisst: Hier bewegt sich nichts mehr, und **das ist eine
+/// Auskunft und kein Fehler**.
+pub fn geaendert_regler(s: &Spanne, jetzt: &Feldwert, rechts: bool) -> Option<String> {
+    let ende = s.hoechstens?;
+    let jetzt_n = match jetzt {
+        Feldwert::Leer => ende,
+        Feldwert::Zahl(n) => (*n).min(ende),
+        _ => return None,
+    };
+    let weite = schritt(ende);
+    let neu = if rechts {
+        jetzt_n.saturating_add(weite).min(ende)
+    } else {
+        jetzt_n.saturating_sub(weite).max(s.mindestens)
+    };
+    // ⚑ **Am Anschlag ist Schluss und es faengt nicht von vorne an.**
+    if neu == jetzt_n {
+        return None;
+    }
+    Some(if neu == ende { "aus".to_string() } else { neu.to_string() })
 }
 
 /// **Was aus dem Wert wird, wenn ein Pfeil gedrueckt wird.**
@@ -74,24 +281,16 @@ pub fn geaendert(f: &Feld, jetzt: &Feldwert, rechts: bool, admin: bool) -> Optio
             let s = schritt(*n);
             Some(if rechts { (n + s).to_string() } else { n.saturating_sub(s).max(1).to_string() })
         }
-        // ⚑ **Unter dem kleinsten Wert steht `aus`**, und das ist kein
-        // Sonderfall, sondern der Sinn einer Grenze: Sie laesst sich
-        // wegnehmen. Von dort aus fuehrt der Pfeil nach rechts wieder
-        // hinein.
-        Feldart::Grenze => match jetzt {
-            Feldwert::Leer => rechts.then(|| "1".to_string()),
-            Feldwert::Zahl(n) => {
-                let s = schritt(*n);
-                if rechts {
-                    Some((n + s).to_string())
-                } else if *n <= s {
-                    Some("aus".to_string())
-                } else {
-                    Some((n - s).to_string())
-                }
-            }
-            _ => None,
-        },
+        // ⚑ **Eine Grenze geht durch [`geaendert_regler`]** (seit dem
+        // 2026-09-16), denn sie hat seither ein **Ende**: Ganz rechts
+        // steht „ohne Grenze", und wo das ist, weiss nur der
+        // Hardwarescan. 📌 Hier stand die Regel ein zweites Mal, ohne
+        // Ende und mit `aus` am linken Anschlag; **zwei Regeln fuer
+        // denselben Regler waeren zwei Bedienwege.**
+        //
+        // Ohne erkanntes Ende bewegt sich nichts, und das ist richtig:
+        // Ein Regler ohne Ende ist keiner, und die Zeile sagt warum.
+        Feldart::Grenze => None,
         Feldart::Text | Feldart::Pfad | Feldart::Ordner => None,
     }
 }
@@ -114,15 +313,10 @@ pub fn anzeige(f: &Feld, w: &Feldwert) -> String {
             return gefunden.titel.to_string();
         }
     }
-    match w {
-        Feldwert::Leer if matches!(f.art, Feldart::Grenze) => "aus".to_string(),
-        Feldwert::Leer => "(nicht gesetzt)".to_string(),
-        Feldwert::Zahl(n) => n.to_string(),
-        Feldwert::Schalter(true) => "an".to_string(),
-        Feldwert::Schalter(false) => "aus".to_string(),
-        Feldwert::Text(t) if t.is_empty() => "(nicht gesetzt)".to_string(),
-        Feldwert::Text(t) => t.clone(),
-    }
+    // ⚑ **Eine Grenze steht hier nicht mehr**, sie geht durch
+    // [`Spanne::wie`]: Was „nicht gesetzt" heisst, haengt seit dem
+    // 2026-09-16 am Ende des Reglers, und das kennt nur der Scan.
+    roh(w)
 }
 
 /// **Derselbe Wert, aber so, wie der Setzer ihn annimmt.**
@@ -183,10 +377,20 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
     };
 
     let admin = myl_client::einstellungen::ist_admin();
+    // ⚑ **Einmal beim Oeffnen und nicht je Tastendruck.** Der Scan
+    // kostet auf macOS einen Unterprozess; welche Karten im Rechner
+    // stecken, aendert sich waehrend einer Einstellungsseite nicht.
+    let hw = Hardware::erheben(&myl_client::ort::datenort());
+    // ⚑ **Die Liste steht einmal.** Was sich waehrend der Seite aendert,
+    // sind die **Werte**, und die holt jede Zeichnung aus den
+    // Einstellungen; Enden, Beschriftungen und Sperrgruende haengen an
+    // der Maschine und nicht am Tastendruck.
+    let liste = reihen(&e, &hw);
+    let anzahl = liste.len();
     let mut hier = 0usize;
     let mut geaendert_worden = false;
     let mut meldung = String::new();
-    let hoehe = zeichnen(&e, hier, t, ordner, &meldung);
+    let hoehe = zeichnen(&e, &liste, hier, t, ordner, &meldung);
 
     loop {
         let Ok(Event::Key(k)) = event::read() else { continue };
@@ -199,16 +403,32 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
             KeyCode::Esc | KeyCode::Char('q') => break,
             KeyCode::Char('c') if strg => break,
             KeyCode::Up => hier = hier.saturating_sub(1),
-            KeyCode::Down => hier = (hier + 1).min(FELDER.len() - 1),
+            KeyCode::Down => hier = (hier + 1).min(anzahl - 1),
             KeyCode::Left | KeyCode::Right => {
-                let f = &FELDER[hier];
-                let Ok(jetzt) = e.wert(f.name) else { continue };
-                match geaendert(f, &jetzt, k.code == KeyCode::Right, admin) {
-                    Some(neu) => match e.setzen(f.name, &neu) {
+                let r = &liste[hier];
+                let Ok(jetzt) = e.wert(&r.name) else { continue };
+                let nach_rechts = k.code == KeyCode::Right;
+                // ⚑ **Ein Regler geht durch die Reglerregel, alles
+                // andere durch die Feldregel.** Beide Sorten Zeile
+                // liegen in derselben Liste und werden gleich bedient.
+                let neu = match (&r.spanne, &r.feld) {
+                    (Some(sp), _) => geaendert_regler(sp, &jetzt, nach_rechts),
+                    (None, Some(f)) => geaendert(f, &jetzt, nach_rechts, admin),
+                    (None, None) => None,
+                };
+                match neu {
+                    Some(neu) => match e.setzen(&r.name, &neu) {
                         Ok(()) => geaendert_worden = true,
                         Err(m) => meldung = m,
                     },
-                    None if !mit_pfeilen(f) => {
+                    // ⚑ **Ein gesperrter Regler sagt an sich selbst,
+                    // was fehlt**, statt stumm stehenzubleiben. Ein
+                    // Tastendruck ohne Wirkung und ohne Wort sieht aus
+                    // wie ein haengendes Programm.
+                    None if r.sperrgrund.is_some() => {
+                        meldung = r.sperrgrund.clone().unwrap_or_default();
+                    }
+                    None if !r.mit_pfeilen() => {
                         meldung = "Dieses Feld braucht eine Eingabe: ⏎.".to_string();
                     }
                     None => {}
@@ -230,13 +450,16 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
             // Rueckfrage auf jedem Tastendruck ist genau das, was
             // niemand mehr liest.
             KeyCode::Char('r') if strg => {
-                let f = &FELDER[hier];
+                let r = &liste[hier];
                 let vorgabe = Einstellungen::default();
-                match vorgabe.wert(f.name).map(|w| als_wert(&w)) {
-                    Ok(neu) => match e.setzen(f.name, &neu) {
+                // ⚑ **Die Vorgabe kommt aus `Einstellungen::default`**,
+                // auch fuer ein Rechenwerk: Dort ist kein Eintrag, also
+                // `aus`, also ganz rechts.
+                match vorgabe.wert(&r.name).map(|w| als_wert(&w)) {
+                    Ok(neu) => match e.setzen(&r.name, &neu) {
                         Ok(()) => {
                             geaendert_worden = true;
-                            meldung = format!("{} zurueckgesetzt", f.in_sprache(e.oberflaeche.sprache).titel);
+                            meldung = format!("{} zurueckgesetzt", r.titel);
                         }
                         Err(m) => meldung = m,
                     },
@@ -244,18 +467,18 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
                 }
             }
             KeyCode::Enter => {
-                let f = &FELDER[hier];
-                if !mit_eingabe(f) {
+                let r = &liste[hier];
+                if !r.mit_eingabe() {
                     meldung = "Dieses Feld hat feste Werte: ← und →.".to_string();
-                    let _ = zeichnen_ab(hoehe, &e, hier, t, ordner, &meldung);
+                    let _ = zeichnen_ab(hoehe, &e, &liste, hier, t, ordner, &meldung);
                     continue;
                 }
                 // ⚑ Getippt wird in einer eigenen Zeile unter der
                 // Liste, und die Liste bleibt stehen: Wer tippt, will
                 // sehen, was er aendert.
-                let jetzt = e.wert(f.name).map(|w| als_wert(&w)).unwrap_or_default();
-                if let Some(neu) = tippen(&f.in_sprache(e.oberflaeche.sprache), &jetzt, t) {
-                    match e.setzen(f.name, &neu) {
+                let jetzt = e.wert(&r.name).map(|w| als_wert(&w)).unwrap_or_default();
+                if let Some(neu) = tippen(&r.titel, &jetzt, t) {
+                    match e.setzen(&r.name, &neu) {
                         Ok(()) => geaendert_worden = true,
                         Err(m) => meldung = m,
                     }
@@ -263,7 +486,7 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
             }
             _ => continue,
         }
-        let _ = zeichnen_ab(hoehe, &e, hier, t, ordner, &meldung);
+        let _ = zeichnen_ab(hoehe, &e, &liste, hier, t, ordner, &meldung);
     }
 
     if geaendert_worden {
@@ -276,7 +499,7 @@ pub fn fahren(t: Toene, ordner: &std::path::Path) -> bool {
 }
 
 /// Fragt einen Text ab, unter der Liste.
-fn tippen(f: &Feld, jetzt: &str, t: Toene) -> Option<String> {
+fn tippen(titel: &str, jetzt: &str, t: Toene) -> Option<String> {
     let mut aus = std::io::stdout();
     // ⚑ **Der bisherige Wert steht in der Klammer und nicht im Feld.**
     // Vorgetippt muesste man ihn erst wegloeschen; daneben ist er die
@@ -285,7 +508,7 @@ fn tippen(f: &Feld, jetzt: &str, t: Toene) -> Option<String> {
         aus,
         Print("\r\n"),
         SetForegroundColor(t.akzent),
-        Print(format!("  {} ({jetzt}): ", f.titel)),
+        Print(format!("  {titel} ({jetzt}): ")),
         ResetColor,
         crossterm::cursor::Show
     );
@@ -326,24 +549,25 @@ fn tippen(f: &Feld, jetzt: &str, t: Toene) -> Option<String> {
 fn zeichnen_ab(
     hoehe: usize,
     e: &Einstellungen,
+    liste: &[Reihe],
     hier: usize,
     t: Toene,
     ordner: &std::path::Path,
     meldung: &str,
 ) -> usize {
     let _ = write!(std::io::stdout(), "\x1b[{hoehe}A");
-    zeichnen(e, hier, t, ordner, meldung)
+    zeichnen(e, liste, hier, t, ordner, meldung)
 }
 
 /// Zeichnet die Seite und gibt ihre Hoehe zurueck.
 fn zeichnen(
     e: &Einstellungen,
+    liste: &[Reihe],
     hier: usize,
     t: Toene,
     ordner: &std::path::Path,
     meldung: &str,
 ) -> usize {
-    let sprache = e.oberflaeche.sprache;
     let breite = (crate::banner::fensterbreite() as usize).clamp(40, 100);
     let mut aus = std::io::stdout();
     let mut zeilen = 0;
@@ -363,10 +587,9 @@ fn zeichnen(
     zeilen += 2;
 
     let mut bereich = String::new();
-    for (i, f) in FELDER.iter().enumerate() {
-        let f = f.in_sprache(sprache);
+    for (i, f) in liste.iter().enumerate() {
         if f.bereich != bereich {
-            bereich = f.bereich.to_string();
+            bereich.clone_from(&f.bereich);
             let _ = crossterm::queue!(
                 aus,
                 Print("\x1b[2K\r\n\x1b[2K"),
@@ -377,13 +600,16 @@ fn zeichnen(
             );
             zeilen += 2;
         }
-        let wert = e.wert(f.name).map(|w| anzeige(&f, &w)).unwrap_or_else(|m| m);
+        let wert = e.wert(&f.name).map(|w| f.wie(&w)).unwrap_or_else(|m| m);
         let hierhin = i == hier;
         let marke = if hierhin { "▸" } else { " " };
         // ⚑ Die Winkel sagen, dass sich hier etwas aendern laesst, und
-        // stehen nur, wo das stimmt.
-        let (links, rechts) = if mit_pfeilen(&f) { ("‹ ", " ›") } else { ("  ", "") };
-        let titel = format!("  {marke} {:<30}", kuerzen(f.titel, 30));
+        // stehen nur, wo das stimmt. **Ein gesperrter Regler traegt
+        // keine**, denn dort bewegt sich nichts, und ein Winkel waere
+        // Zierde an einer Stelle, die nichts leistet.
+        let beweglich = f.mit_pfeilen() && f.sperrgrund.is_none();
+        let (links, rechts) = if beweglich { ("‹ ", " ›") } else { ("  ", "") };
+        let titel = format!("  {marke} {:<30}", kuerzen(&f.titel, 30));
         let _ = crossterm::queue!(aus, Print("\x1b[2K"));
         if hierhin {
             let _ = crossterm::queue!(
@@ -407,17 +633,23 @@ fn zeichnen(
         zeilen += 1;
     }
 
-    // Der Satz zum gewaehlten Feld, und darunter der Arbeitsordner.
-    let f = FELDER[hier].in_sprache(sprache);
+    // Der Satz zur gewaehlten Zeile, und darunter der Arbeitsordner.
+    let f = &liste[hier];
     // ⚑ **Beim Modellfeld haengt die Mindestausstattung an den Satz**
     // (Festlegung des Projektinhabers, 2026-09-11). Sie kommt aus
     // derselben Karte wie in der Modellwahl; eine zweite Quelle liefe
     // auseinander.
-    let satz = if f.name == "modell.artefakt" {
+    //
+    // ⚑ **Und ein gesperrter Regler sagt statt seines Hinweises, was
+    // fehlt.** Genau wie im Fenster: „Noch nicht verfuegbar" liesse den
+    // Leser so klug zurueck wie zuvor.
+    let satz = if let Some(grund) = &f.sperrgrund {
+        grund.clone()
+    } else if f.name == "modell.artefakt" {
         let hw = myl_client::modelle::hardware_zu(&e.modell.artefakt);
-        if hw.is_empty() { f.hinweis.to_string() } else { format!("{}  ·  {hw}", f.hinweis) }
+        if hw.is_empty() { f.hinweis.clone() } else { format!("{}  ·  {hw}", f.hinweis) }
     } else {
-        f.hinweis.to_string()
+        f.hinweis.clone()
     };
     let _ = crossterm::queue!(
         aus,
@@ -470,10 +702,14 @@ fn kuerzen(text: &str, breite: usize) -> String {
 fn zeilenweise(e: &Einstellungen, ordner: &std::path::Path) {
     println!();
     println!("  Datei: {}", Einstellungen::vorgabepfad().display());
-    for f in FELDER {
-        let f = f.in_sprache(e.oberflaeche.sprache);
-        let wert = e.wert(f.name).map(|w| anzeige(&f, &w)).unwrap_or_else(|m| m);
-        println!("  {:<22} {:<28} {}", f.name, wert, f.titel);
+    // ⚑ **Dieselbe Liste wie auf der Seite**, samt Rechenwerken. Eine
+    // Roehre, die weniger zeigt als ein Terminal, waere eine zweite
+    // Auskunft ueber dieselbe Ablage.
+    let hw = Hardware::erheben(&myl_client::ort::datenort());
+    for f in reihen(e, &hw) {
+        let wert = e.wert(&f.name).map(|w| f.wie(&w)).unwrap_or_else(|m| m);
+        let zusatz = if f.sperrgrund.is_some() { "  (rechnet hier nicht)" } else { "" };
+        println!("  {:<28} {:<28} {}{zusatz}", f.name, wert, f.titel);
     }
     println!();
     println!("  In dieser Sitzung arbeitet der Agent in:");
@@ -583,15 +819,126 @@ mod tests {
         assert_eq!(geaendert(&f, &letzter, false, false).as_deref(), Some("auto"));
     }
 
-    /// **Unter dem kleinsten Wert steht `aus`, und von dort geht es
-    /// wieder hinein.**
+    /// Eine Spanne, wie `hardware::Regler` sie liefern wuerde.
+    fn spanne(mindestens: u64, hoechstens: Option<u64>, links: Option<&str>, einheit: Einheit) -> Spanne {
+        Spanne {
+            mindestens,
+            hoechstens,
+            links: links.map(str::to_string),
+            rechts: "ohne Grenze".to_string(),
+            einheit,
+            sprache: myl_client::einstellungen::Sprache::De,
+        }
+    }
+
+    /// **Ganz rechts nimmt die Grenze weg, und dort steht sie ohne
+    /// Zutun.**
+    ///
+    /// ⚑ Das ist der Auftrag des Projektinhabers vom 2026-09-16, in der
+    /// Bedienung: Der rechte Anschlag setzt `aus`, und `aus` **loescht**
+    /// die Grenze. 📌 Bis dahin lag `aus` links unter dem kleinsten
+    /// Wert, und ein unbegrenzter Regler sah aus wie ein abgedrehter.
     #[test]
-    fn eine_grenze_laesst_sich_wegnehmen() {
-        let f = feld("kap.speicher");
-        assert_eq!(geaendert(&f, &Feldwert::Zahl(1), false, false).as_deref(), Some("aus"));
-        assert_eq!(geaendert(&f, &Feldwert::Leer, true, false).as_deref(), Some("1"));
-        assert_eq!(geaendert(&f, &Feldwert::Leer, false, false), None);
-        assert_eq!(geaendert(&f, &Feldwert::Zahl(12), true, false).as_deref(), Some("13"));
+    fn ganz_rechts_nimmt_die_grenze_weg() {
+        // Eine Maschine mit 24 GiB: Schrittweite eins.
+        let s = spanne(1, Some(24), None, Einheit::Gib);
+        assert_eq!(geaendert_regler(&s, &Feldwert::Leer, false).as_deref(), Some("23"));
+        // Am rechten Anschlag bewegt sich nichts mehr.
+        assert_eq!(geaendert_regler(&s, &Feldwert::Leer, true), None);
+        // Und von dicht darunter fuehrt der Pfeil nach rechts wieder
+        // heraus, also auf `aus`.
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(23), true).as_deref(), Some("aus"));
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(12), false).as_deref(), Some("11"));
+        // ⚑ **Eine Grenze faellt nicht unter eins**, und am Anschlag
+        // sagt die Zeile das, statt stumm stehenzubleiben.
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(1), false), None);
+    }
+
+    /// **Ein Rechenwerk faellt bis auf null, und null heisst „rechnet
+    /// nicht".**
+    ///
+    /// ⚑ Der Unterschied zur Grenze ist der ganze Punkt: Null Kerne
+    /// waeren ein Stillstand, ein Rechenwerk bei null rechnet einfach
+    /// nicht mit, und die CPU rechnet weiter.
+    #[test]
+    fn ein_rechenwerk_faellt_bis_auf_null() {
+        let s = spanne(0, Some(100), Some("rechnet nicht"), Einheit::Prozent);
+        // Schrittweite zehn, aus dem Ende hergeleitet.
+        assert_eq!(geaendert_regler(&s, &Feldwert::Leer, false).as_deref(), Some("90"));
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(10), false).as_deref(), Some("0"));
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(0), false), None);
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(0), true).as_deref(), Some("10"));
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(90), true).as_deref(), Some("aus"));
+
+        assert_eq!(s.wie(&Feldwert::Zahl(0)), "rechnet nicht");
+        assert_eq!(s.wie(&Feldwert::Leer), "ohne Grenze");
+        assert_eq!(s.wie(&Feldwert::Zahl(40)), "40 %");
+    }
+
+    /// **Ohne erkanntes Ende bewegt sich nichts**, und das ist richtig:
+    /// Ein Regler ohne Ende ist keiner.
+    #[test]
+    fn ohne_ende_bewegt_sich_nichts() {
+        let s = spanne(1, None, None, Einheit::Gib);
+        assert_eq!(geaendert_regler(&s, &Feldwert::Leer, true), None);
+        assert_eq!(geaendert_regler(&s, &Feldwert::Zahl(4), false), None);
+    }
+
+    /// **Die Zeilen der Seite tragen die Rechenwerke mit**, und zwar
+    /// unter derselben Ueberschrift wie die Kerne.
+    ///
+    /// ⚑ **Geprueft wird gegen den echten Scan dieser Maschine**, und
+    /// die kann null Rechenwerke haben: In der CI gibt es keine
+    /// Grafikkarte. Die Pruefung sagt deshalb nur, **was gelten muss,
+    /// wenn eines da ist**, und nicht, dass eines da ist.
+    #[test]
+    fn die_zeilen_tragen_die_rechenwerke_mit() {
+        let e = Einstellungen::default();
+        let hw = Hardware::erheben(std::path::Path::new("."));
+        let liste = reihen(&e, &hw);
+
+        // ⚑ **Nur die Felder, die hier auch wirken.** Ein Feld, das nur
+        // im Fenster etwas tut, steht in der Konsole nicht, und die
+        // Pruefung zaehlt deshalb dieselbe Auswahl wie die Seite.
+        let hiesige: Vec<&Feld> = FELDER.iter().filter(|f| f.gilt.in_der_konsole()).collect();
+        assert!(hiesige.len() < FELDER.len(), "kein einziges Feld ist fensterseitig; misst die Pruefung noch etwas?");
+        assert_eq!(
+            liste.len(),
+            hiesige.len() + hw.rechenwerke.len(),
+            "die Liste fuehrt nicht jedes hiesige Feld und jedes Rechenwerk genau einmal"
+        );
+        for f in &hiesige {
+            assert!(liste.iter().any(|z| z.name == f.name), "`{}` fehlt auf der Seite", f.name);
+        }
+        // Und die reinen Fensterfelder stehen ausdruecklich NICHT darin.
+        for f in FELDER.iter().filter(|f| !f.gilt.in_der_konsole()) {
+            assert!(
+                !liste.iter().any(|z| z.name == f.name),
+                "`{}` wirkt nur im Fenster und steht trotzdem in der Konsole",
+                f.name
+            );
+        }
+        // Und jede Grenze ist ein Regler mit Enden.
+        for z in liste.iter().filter(|z| z.feld.is_some_and(|f| f.art == Feldart::Grenze)) {
+            assert!(z.spanne.is_some(), "`{}` ist eine Grenze ohne Spanne", z.name);
+        }
+
+        let werke: Vec<&Reihe> = liste.iter().filter(|z| z.feld.is_none()).collect();
+        assert_eq!(werke.len(), hw.rechenwerke.len());
+        let grenzbereich = liste
+            .iter()
+            .find(|z| z.name == "kap.kerne")
+            .map(|z| z.bereich.clone())
+            .expect("kap.kerne");
+        for w in werke {
+            assert!(w.spanne.is_some(), "ein Rechenwerk ohne Spanne");
+            assert_eq!(w.bereich, grenzbereich, "ein Rechenwerk steht nicht bei den Grenzen");
+            assert!(
+                w.name.starts_with(myl_client::einstellungen::RECHENWERK_PRAEFIX),
+                "{}",
+                w.name
+            );
+        }
     }
 
     /// **Eine Zahl faellt nie unter eins.**
@@ -620,7 +967,11 @@ mod tests {
     /// leer.
     #[test]
     fn ein_leerer_ordner_ist_nicht_aus() {
-        assert_eq!(anzeige(&feld("kap.speicher"), &Feldwert::Leer), "aus");
+        // ⚑ **Eine nicht gesetzte Grenze heisst „ohne Grenze"**, nicht
+        // „aus": Das eine ist unbegrenzt, das andere liest sich wie
+        // abgeschaltet. 📌 Hier stand bis zum 2026-09-16 „aus".
+        let s = spanne(1, Some(24), None, Einheit::Gib);
+        assert_eq!(s.wie(&Feldwert::Leer), "ohne Grenze");
         assert_eq!(anzeige(&feld("ausgabe.ordner"), &Feldwert::Leer), "(nicht gesetzt)");
     }
 

@@ -35,6 +35,31 @@ pub mod kapazitaet {
     }
 }
 
+/// Welche Rechenwege hier wirklich rechnen, und wie sich einer
+/// abschaltet.
+///
+/// # ⚑ Weitergereicht, aus demselben Grund wie [`kapazitaet`]
+///
+/// Die Freigabemaske zeigt je gefundenem Rechenwerk einen Regler und
+/// muss dafuer wissen, ob ueber dieses Geraet ueberhaupt gerechnet
+/// wird. **Gefragt wird dort, wo der Code ausgewaehlt wird**, und nicht
+/// hier noch einmal: Eine zweite Fassung derselben Bedingung lief in
+/// den Kernkisten schon einmal auseinander und meldete einen
+/// Rechenpfad, den es nicht gab.
+pub mod rechenwege {
+    /// Rechenwege mit eigenem Rechenpfad auf dieser Maschine.
+    pub fn vorhanden() -> Vec<&'static str> {
+        integer_llm_runtime::rechenwege::vorhanden()
+    }
+
+    /// Nimmt einen Rechenweg aus dem Pfad oder holt ihn zurueck.
+    ///
+    /// Gibt zurueck, ob dieser Rechenweg ueberhaupt einen Schalter hat.
+    pub fn setzen(backend: &str, an: bool) -> bool {
+        integer_llm_runtime::rechenwege::setzen(backend, an)
+    }
+}
+
 pub mod aktualisierung;
 pub mod einstellungen;
 pub mod gespraech;
@@ -46,7 +71,9 @@ pub mod ort;
 pub mod reservierung;
 pub mod strom;
 pub mod ruestung;
+pub mod skills;
 pub mod verankert;
+pub mod verlauf;
 pub mod warnung;
 pub mod werkzeuge;
 pub mod kisten;

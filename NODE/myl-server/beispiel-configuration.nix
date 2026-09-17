@@ -29,8 +29,10 @@
   services.myl-server = {
     enable = true;
 
-    # ← Das Paket mit `bin/myl-node`. Solange die Flake-Ausgabe noch nicht
-    #   steht, zeigt dies auf ein selbst gebautes Paket.
+    # ← Das Paket mit `bin/myl-node`. Mit Flakes kommt es direkt aus dem
+    #   Repositorium: `myelith.packages.${pkgs.system}.myl-node`, wobei
+    #   `myelith` die Eingabe ist, die auf dieses Repositorium zeigt.
+    #   Ohne Flakes zeigt dies auf ein selbst gebautes Paket.
     paket = pkgs.myl-node or (throw "services.myl-server.paket setzen: das Paket mit bin/myl-node");
 
     # ← Der eine Port nach aussen. Genau diesen im Router weiterleiten
@@ -65,6 +67,24 @@
     #   Rueckschleife.
     # konsensCredential = "/etc/myl-server/konsens.key";
     # stimmsatzdatei = "/var/lib/myl-server/stimmsatz.json";
+    #
+    # ⚠️ **Bloecke erzeugt in der ueblichen Aufstellung genau einer**, die
+    #   Anlaufstelle, und nicht jeder stimmberechtigte Knoten. Wer es ohne
+    #   Absprache einschaltet, laesst zwei Knoten dieselbe Runde eroeffnen.
+    # erzeuger = true;
+
+    # ── Betrieb ───────────────────────────────────────────────────────────
+    # ← Der Beobachtungsendpunkt, **immer auf der Rueckschleife**. Wer ihn
+    #   sehen will, tunnelt per SSH:
+    #       ssh -N -L 4151:127.0.0.1:4151 benutzer@mein-server
+    #   `null` schaltet ihn ab. Die Adresse ist nicht einstellbar: Was
+    #   dort heraussieht, ist Aufklaerung fuer einen Fremden.
+    beobachtungPort = 4151;
+
+    # ← Wie oft eine Zustandsaufnahme ins Protokoll geht, in Sekunden.
+    #   Das ist die Rate, mit der `/var/lib/myl-server/protokolle` waechst;
+    #   fuer einen Server, der Monate laeuft, ist sie die wichtigere Zahl.
+    aufnahmeSekunden = 300;
   };
 
   # ─────────────────────────────────────────────────────────────────────

@@ -392,16 +392,81 @@ pub enum Dateiwerkzeug {
     /// gehoert er nicht in die Vorgabekiste eines kleinen Modells. Siehe
     /// [`Befehlausfuehren`] fuer die Schranken, die bleiben.
     Befehl,
+    /// **Liest im verschluesselten Mitschnitt nach**, den das Verdichten
+    /// abgelegt hat.
+    ///
+    /// ⚑ **In jeder Kiste** (Auftrag des Projektinhabers, 2026-09-16):
+    /// Nachlesen zu koennen, was man selbst gesagt bekommen hat, ist
+    /// keine Sache der Modellgroesse. Es ist ausserdem das **einzige**
+    /// Werkzeug, das einen Verlust ausgleicht statt etwas Neues zu tun.
+    ///
+    /// ⚠️ **Es liest nicht mit `read_file`**, und das ist kein Umweg:
+    /// `read_file` braeuchte den Pfad, den nur die Zusammenfassung
+    /// nennt, und kennte den Deckel von 200 Zeilen nicht. **Der
+    /// Mitschnitt entsteht, weil der Kontext voll war**; ein Werkzeug,
+    /// das ihn in einem Zug zurueckholt, macht die Verdichtung
+    /// rueckgaengig.
+    Verlauf,
+    /// **Nennt, was in diesem Ordner schon geschehen ist.**
+    ///
+    /// ⚑ **Damit ein frischer Agent aufnimmt, wo der vorige aufgehoert
+    /// hat** (Auftrag des Projektinhabers, 2026-09-16). Das Verzeichnis
+    /// der laufenden Sitzung steht in der Zusammenfassung; eine neue
+    /// Sitzung hat keine, und dieses Werkzeug ist ihr Einstieg.
+    ///
+    /// ⚑ **Ohne einen einzigen Parameter**, also ohne Entscheidung und
+    /// damit auch fuer ein kleines Modell kostenlos.
+    VerlaufListe,
+    /// **Sucht eine Zeichenfolge im Mitschnitt.**
+    ///
+    /// # ⛔️ Gemessen, und deshalb gebaut (2026-09-17)
+    ///
+    /// Ohne dieses Werkzeug geht der Weg ueber das Verzeichnis: Das 4B
+    /// holt mit `list_history` rund 6 000 Token und liest danach die
+    /// Zeilen. **Es findet die Einzelheit damit in sechs von neun
+    /// Laeufen, aber der Kontext am Ende ist so gross wie der ganze
+    /// Verlauf, den die Verdichtung gerade weggeraeumt hat.**
+    ///
+    /// ⚑ **Die Suche beantwortet die Frage, die tatsaechlich gestellt
+    /// ist:** nicht „wie ist der Verlauf gegliedert", sondern „wo steht
+    /// dieses Wort". Ihre Antwort sind ein paar Zeilen, und danach liest
+    /// `read_history` genau die genannten.
+    VerlaufSuche,
+    /// **Nennt die Wissensmappen, die bereitliegen.**
+    ///
+    /// ⚑ **Zwei Orte, ein Werkzeug:** die Mappen dieses Projekts unter
+    /// `.AGENT/skills/` und die allgemeinen neben den Einstellungen.
+    /// Der Projektordner waere auch mit `list_directory` erreichbar,
+    /// der allgemeine nicht: Er liegt **ausserhalb der
+    /// Einhaengegrenze**, und die aufzuweichen waere der teurere Weg.
+    SkillListe,
+    /// **Holt die Eingangsseite einer Mappe.**
+    ///
+    /// ⚑ **Die Eingangsseite und nicht die Mappe.** Sie nennt die
+    /// Kapitel; welches gebraucht wird, entscheidet das Modell danach
+    /// und liest es mit `read_file` oder findet es mit `search_files`.
+    /// **Eine ganze Mappe in einem Zug waere genau das Fuellen des
+    /// Kontexts, das hier vermieden werden soll.**
+    SkillLesen,
 }
 
 impl Dateiwerkzeug {
     /// Alle, in der Reihenfolge, in der sie angeboten werden.
-    pub const ALLE: [Dateiwerkzeug; 6] = [
+    pub const ALLE: [Dateiwerkzeug; 11] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
         Dateiwerkzeug::Suchen,
         Dateiwerkzeug::Schreiben,
         Dateiwerkzeug::Aendern,
+        Dateiwerkzeug::VerlaufListe,
+        Dateiwerkzeug::VerlaufSuche,
+        Dateiwerkzeug::Verlauf,
+        // ⚑ **Neben den Verlaufswerkzeugen und aus demselben Grund
+        // nicht in `Base`** (gemessen 2026-09-17): Ein Modell, das den
+        // Mitschnitt nicht nachschlaegt, schlaegt auch keine Mappe nach,
+        // und beide stehen trotzdem in jeder Ansage.
+        Dateiwerkzeug::SkillListe,
+        Dateiwerkzeug::SkillLesen,
         Dateiwerkzeug::Befehl,
     ];
 
@@ -428,6 +493,22 @@ impl Dateiwerkzeug {
     /// `= ALLE`: `run_command` (B1) liegt in `Advanced` und nicht hier,
     /// weil ein Shell-Befehl die Einhaengegrenze nicht einhaelt. Damit
     /// bedeuten `Base` und `Advanced` zum ersten Mal Verschiedenes.
+    /// ⛔️ **Die drei Verlaufswerkzeuge sind am 2026-09-17 wieder
+    /// herausgenommen worden** (Festlegung des Projektinhabers, nach
+    /// der Messung).
+    ///
+    /// Sie standen hier einen Tag lang, weil „Nachlesen keine Sache der
+    /// Modellgroesse" ist. ⚑ **Die Messung sagt das Gegenteil, und zwar
+    /// fuer genau das Modell, fuer das diese Kiste gemacht ist:** Das
+    /// 0,6B ruft in 27 Laeufen **kein einziges** dieser Werkzeuge und
+    /// erfindet stattdessen eine Antwort. Ein strengerer Systemprompt
+    /// aendert das nicht, sondern verschlechtert obendrein die Antwort,
+    /// die es sonst richtig gibt (9 von 9 auf 1 von 9).
+    ///
+    /// ⚑ **Drei Werkzeuge, die nie gerufen werden, sind nicht
+    /// folgenlos:** Sie stehen in jeder Ansage, kosten in jeder Runde
+    /// Kontext und machen die Auswahl fuer ein kleines Modell schwerer.
+    /// **Eine Kiste ist eine Auswahl und keine Sammlung.**
     pub const BASE: [Dateiwerkzeug; 5] = [
         Dateiwerkzeug::Verzeichnis,
         Dateiwerkzeug::Lesen,
@@ -458,12 +539,22 @@ impl Dateiwerkzeug {
             (Self::Schreiben, Ansageform::Amtlich) => "write_file",
             (Self::Aendern, Ansageform::Amtlich) => "edit_file",
             (Self::Befehl, Ansageform::Amtlich) => "run_command",
+            (Self::Verlauf, Ansageform::Amtlich) => "read_history",
+            (Self::VerlaufListe, Ansageform::Amtlich) => "list_history",
+            (Self::VerlaufSuche, Ansageform::Amtlich) => "search_history",
+            (Self::SkillListe, Ansageform::Amtlich) => "list_skills",
+            (Self::SkillLesen, Ansageform::Amtlich) => "read_skill",
             (Self::Verzeichnis, Ansageform::Deutsch) => "verzeichnis",
             (Self::Lesen, Ansageform::Deutsch) => "datei_lesen",
             (Self::Suchen, Ansageform::Deutsch) => "suchen",
             (Self::Schreiben, Ansageform::Deutsch) => "datei_schreiben",
             (Self::Aendern, Ansageform::Deutsch) => "datei_aendern",
             (Self::Befehl, Ansageform::Deutsch) => "befehl_ausfuehren",
+            (Self::Verlauf, Ansageform::Deutsch) => "verlauf_lesen",
+            (Self::VerlaufListe, Ansageform::Deutsch) => "verlauf_liste",
+            (Self::VerlaufSuche, Ansageform::Deutsch) => "verlauf_suchen",
+            (Self::SkillListe, Ansageform::Deutsch) => "skill_liste",
+            (Self::SkillLesen, Ansageform::Deutsch) => "skill_lesen",
         }
     }
 
@@ -526,6 +617,70 @@ impl Dateiwerkzeug {
                  unangetastet. Gib alle noetigen Aenderungen in einem Aufruf. \
                  Fuer Aenderungen an vorhandenen Dateien besser als datei_schreiben."
                 .into(),
+            (Self::Verlauf, Ansageform::Amtlich) => format!(
+                "Read lines from the earlier part of this conversation, after it has \
+                 been summarised. The summary lists which lines hold what. At most \
+                 {VERLAUF_ZEILENGRENZE} lines per call. Use this when the summary does \
+                 not contain a detail you need, such as an exact number, path or error \
+                 message."
+            ),
+            (Self::Verlauf, Ansageform::Deutsch) => format!(
+                "Liest Zeilen aus dem frueheren Teil dieses Gespraechs, nachdem er \
+                 zusammengefasst wurde. Die Zusammenfassung sagt, in welchen Zeilen was \
+                 steht. Hoechstens {VERLAUF_ZEILENGRENZE} Zeilen je Aufruf. Zu \
+                 gebrauchen, wenn in der Zusammenfassung eine Einzelheit fehlt, etwa \
+                 eine genaue Zahl, ein Pfad oder eine Fehlermeldung."
+            ),
+            (Self::VerlaufListe, Ansageform::Amtlich) => "Name the earlier sessions in this \
+                 folder, newest first, and give the table of contents of the most recent \
+                 one. Use this at the start of work in a folder you do not know yet, or \
+                 when asked to pick up where someone left off. It only names what is \
+                 there; read_history then reads the lines you want."
+                .into(),
+            (Self::VerlaufListe, Ansageform::Deutsch) => "Nennt die frueheren Sitzungen in \
+                 diesem Ordner, neueste zuerst, und gibt das Verzeichnis der juengsten. \
+                 Zu gebrauchen am Anfang der Arbeit in einem unbekannten Ordner oder wenn \
+                 aufzunehmen ist, wo jemand aufgehoert hat. Es nennt nur, was da ist; die \
+                 Zeilen liest danach verlauf_lesen."
+                .into(),
+            (Self::VerlaufSuche, Ansageform::Amtlich) => format!(
+                "Search the recorded history of this folder for a piece of text and \
+                 return the matching lines with their numbers, newest session first, at \
+                 most {VERLAUF_TREFFER}. Each hit also names the line range of the whole \
+                 exchange it belongs to, so read_history can read question and answer \
+                 together. Use this when a detail is missing from the summary: search \
+                 for a word from the question. Plain text, not a regular expression; \
+                 case is ignored."
+            ),
+            (Self::VerlaufSuche, Ansageform::Deutsch) => format!(
+                "Sucht im aufgezeichneten Verlauf dieses Ordners nach einer Zeichenfolge \
+                 und gibt die gefundenen Zeilen mit ihren Nummern zurueck, juengste \
+                 Sitzung zuerst, hoechstens {VERLAUF_TREFFER}. Zu jedem Treffer steht \
+                 die Zeilenspanne des ganzen Wechsels dabei, damit verlauf_lesen Frage \
+                 und Antwort zusammen liest. Zu gebrauchen, wenn eine Einzelheit in der \
+                 Zusammenfassung fehlt: nach einem Wort aus der Frage suchen. Klartext \
+                 und kein regulaerer Ausdruck; Gross- und Kleinschreibung wird \
+                 ignoriert."
+            ),
+            (Self::SkillListe, Ansageform::Amtlich) => "Name the knowledge folders \
+                 available here, each with the sentence it opens with. Use this when a \
+                 question needs background this conversation does not carry. It only \
+                 names them; read_skill then opens one."
+                .into(),
+            (Self::SkillListe, Ansageform::Deutsch) => "Nennt die Wissensmappen, die hier \
+                 bereitliegen, jede mit ihrem ersten Satz. Zu gebrauchen, wenn eine Frage \
+                 Hintergrund braucht, den dieses Gespraech nicht traegt. Es nennt sie nur; \
+                 geoeffnet wird eine mit skill_lesen."
+                .into(),
+            (Self::SkillLesen, Ansageform::Amtlich) => "Open the front page of one \
+                 knowledge folder by name: what it covers and which chapter files it has. \
+                 Read a chapter afterwards with read_file, or find a passage with \
+                 search_files."
+                .into(),
+            (Self::SkillLesen, Ansageform::Deutsch) => "Oeffnet die Eingangsseite einer \
+                 Wissensmappe nach Namen: worum es geht und welche Kapiteldateien es gibt. \
+                 Ein Kapitel liest danach datei_lesen, eine Stelle findet dateien_suchen."
+                .into(),
             (Self::Befehl, Ansageform::Amtlich) => format!(
                 "Run a shell command in the working directory (sh -c). Returns its                  output, at most {BEFEHL_AUSGABEGRENZE} bytes, and stops after                  {BEFEHL_ZEITGRENZE_S} seconds. Prefer the file tools for reading,                  writing and searching; use this for building, running and everything                  they do not cover."
             ),
@@ -574,7 +729,18 @@ impl Dateiwerkzeug {
     /// und das ist eine Auskunft, aus der ein Modell im naechsten
     /// Schritt lernt.
     pub fn parameter(&self, form: Ansageform) -> serde_json::Value {
-        let (wohin, tiefe_hinweis, muster_hinweis, alt_hinweis, aenderungshinweis, befehl_hinweis) = match form {
+        let (
+            wohin,
+            tiefe_hinweis,
+            muster_hinweis,
+            alt_hinweis,
+            aenderungshinweis,
+            befehl_hinweis,
+            von_hinweis,
+            bis_hinweis,
+            suchhinweis,
+            skillhinweis,
+        ) = match form {
             Ansageform::Amtlich => (
                 "path of the file, relative to the working directory; \
                  paths leading outside it are rejected",
@@ -584,6 +750,11 @@ impl Dateiwerkzeug {
                 "All changes are applied in order, and each one sees the result of the \
                  previous ones. Either all of them are written or none.",
                 "the command line, run with sh -c in the working directory",
+                "first line to read, counting from 1; the table of contents is in the summary",
+                "last line to read, inclusive",
+                "the text to look for in the recorded history, for example a word from \
+                 the question",
+                "the name of the knowledge folder, exactly as list_skills gives it",
             ),
             Ansageform::Deutsch => (
                 "Pfad der Datei, relativ zum Arbeitsverzeichnis; \
@@ -594,6 +765,11 @@ impl Dateiwerkzeug {
                 "Alle Aenderungen werden der Reihe nach angewendet, und jede sieht das \
                  Ergebnis der vorigen. Entweder alle werden geschrieben oder keine.",
                 "die Befehlszeile, ausgefuehrt mit sh -c im Arbeitsverzeichnis",
+                "erste zu lesende Zeile, ab 1 gezaehlt; das Verzeichnis steht in der Zusammenfassung",
+                "letzte zu lesende Zeile, einschliesslich",
+                "der Text, nach dem im aufgezeichneten Verlauf gesucht wird, zum Beispiel \
+                 ein Wort aus der Frage",
+                "der Name der Wissensmappe, genau so, wie skill_liste ihn nennt",
             ),
         };
         match self {
@@ -607,6 +783,59 @@ impl Dateiwerkzeug {
                     "tiefe": {"type": "integer", "description": tiefe_hinweis}
                 },
                 "required": ["tiefe"]
+            }),
+            // ⚑ **Beide Felder sind verlangt, und das Verzeichnis kommt
+            // woanders her.**
+            //
+            // 📌 **Der erste Entwurf machte sie freiwillig**: ohne
+            // Argumente das Verzeichnis, mit ihnen die Zeilen. Das
+            // brach die Regel, dass **kein Werkzeug einen optionalen
+            // Parameter hat**, und die Regel hat recht: Ein optionaler
+            // Parameter ist eine Entscheidung, die das Modell treffen
+            // muss.
+            //
+            // ⚑ **Die bessere Antwort war nicht ein zweites Werkzeug,
+            // sondern das Verzeichnis dorthin zu legen, wo das Modell
+            // ohnehin hinsieht:** in die Zusammenfassung. Damit braucht
+            // es keinen Aufruf, um zu erfahren, welche Zeilen es gibt,
+            // und dieses Werkzeug hat genau eine Aufgabe.
+            // ⚑ **Gar keine Eigenschaften**, also auch kein optionaler
+            // Parameter: Das Werkzeug beantwortet eine Frage, die keine
+            // Angabe braucht.
+            Self::VerlaufListe => serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            // ⚑ **Ein Parameter, und er ist erforderlich.** Eine Suche
+            // ohne Suchwort ist keine Frage.
+            Self::SkillListe => serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            Self::SkillLesen => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": skillhinweis}
+                },
+                "required": ["name"]
+            }),
+            Self::VerlaufSuche => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "muster": {
+                        "type": "string",
+                        "description": suchhinweis
+                    }
+                },
+                "required": ["muster"]
+            }),
+            Self::Verlauf => serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "von": {"type": "integer", "description": von_hinweis},
+                    "bis": {"type": "integer", "description": bis_hinweis}
+                },
+                "required": ["von", "bis"]
             }),
             // ⚑ **Ebenfalls ohne `pfad`.** Eine Suche, die im ganzen
             // Arbeitsverzeichnis sucht, beantwortet die Frage, die
@@ -672,6 +901,7 @@ impl Dateiwerkzeug {
         &self,
         e: Einhaengung,
         form: Ansageform,
+        budget: &Verlaufsbudget,
     ) -> Box<dyn myl_local_agent::ausfuehrung::Werkzeugausfuehrung> {
         match self {
             Self::Verzeichnis => Box::new(Verzeichnislesen(e, form)),
@@ -680,7 +910,433 @@ impl Dateiwerkzeug {
             Self::Schreiben => Box::new(Dateischreiben(e, form)),
             Self::Aendern => Box::new(Dateiaendern(e, form)),
             Self::Befehl => Box::new(Befehlausfuehren(e, form)),
+            // ⚑ **Ein Budget, das die drei sich teilen.** Getrennte
+            // Budgets waeren drei Wege, denselben Kontext zu fuellen.
+            Self::Verlauf => Box::new(Verlauflesen(e, form, budget.clone())),
+            Self::VerlaufListe => Box::new(Verlaufliste(e, form, budget.clone())),
+            Self::VerlaufSuche => Box::new(Verlaufsuche(e, form, budget.clone())),
+            Self::SkillListe => Box::new(Skillliste(e, form, budget.clone())),
+            Self::SkillLesen => Box::new(Skilllesen(e, form, budget.clone())),
         }
+    }
+}
+
+/// **Wie viele Zeilen ein Aufruf hoechstens herausgibt.**
+///
+/// ⛔️ **Der Deckel ist der Sinn der Sache und keine Vorsicht.** Der
+/// Mitschnitt entsteht, weil der Kontext voll war; ein Werkzeug, das
+/// ihn in einem Zug zurueckholt, macht die Verdichtung rueckgaengig und
+/// fuellt genau den Platz wieder, den sie gerade frei gemacht hat.
+/// **Wer mehr braucht, fragt zweimal**, und dann ist es eine
+/// Entscheidung und kein Versehen.
+pub const VERLAUF_ZEILENGRENZE: usize = 200;
+
+/// Nennt, was in diesem Ordner schon geschehen ist.
+struct Verlaufliste(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Verlaufliste {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::VerlaufListe.name(self.1)
+    }
+    fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+        let u = crate::verlauf::uebersicht(self.0.wurzel());
+        if u.episoden == 0 {
+            return Ok(if deutsch {
+                "In diesem Ordner ist noch nichts aufgezeichnet.".into()
+            } else {
+                "Nothing has been recorded in this folder yet.".into()
+            });
+        }
+
+        let mut aus = String::new();
+        if deutsch {
+            aus.push_str(&format!(
+                "{} Episoden aus {} Sitzungen in diesem Ordner.\n\n",
+                u.episoden, u.sitzungen
+            ));
+        } else {
+            aus.push_str(&format!(
+                "{} episodes from {} sessions in this folder.\n\n",
+                u.episoden, u.sitzungen
+            ));
+        }
+
+        if let Some((pfad, v)) = &u.juengste {
+            let name = pfad
+                .strip_prefix(self.0.wurzel())
+                .unwrap_or(pfad)
+                .display()
+                .to_string();
+            if deutsch {
+                aus.push_str(&format!(
+                    "Die juengste ist vom {} ({}), Sitzung {}, {} Nachrichten. \
+                     Ihr Verzeichnis:\n",
+                    v.datum, v.modell, v.sitzung, v.nachrichten
+                ));
+            } else {
+                aus.push_str(&format!(
+                    "The most recent one is from {} ({}), session {}, {} messages. \
+                     Its table of contents:\n",
+                    v.datum, v.modell, v.sitzung, v.nachrichten
+                ));
+            }
+            // ⛔️ **Auch hier gilt Fund 387.** Ein Verzeichnis mit einer
+            // Zeile je Nachricht wandert als Werkzeugantwort in genau
+            // den Kontext, den das Nachschlagen schonen soll; bei 120
+            // Nachrichten waren das 3 597 Token. **Passt es, kommt es
+            // ganz; passt es nicht, kommt die Karte**, und das Modell
+            // zoomt mit `read_history` hinein.
+            // ⚑ **Das Budget entscheidet, nicht eine Zahl von
+            // Abschnitten.** Vorher stand hier eine feste Grenze, und
+            // sie war zweimal falsch: einmal zu klein (das Verzeichnis
+            // verlor die Ueberschriften, und das Modell suchte blind),
+            // einmal zu gross (rund 6 000 Token in einer einzigen
+            // Antwort). **Die richtige Frage ist nicht „wie viele
+            // Abschnitte", sondern „passt es in das, was dieser Auftrag
+            // noch ausgeben darf".**
+            let ganz: String = v
+                .abschnitte
+                .iter()
+                .map(|a| format!("{}-{} {} {}\n", a.von, a.bis, a.rolle, a.kopf))
+                .collect();
+            let rest = self.2.load(std::sync::atomic::Ordering::Relaxed);
+            if aus.len() + ganz.len() <= rest {
+                aus.push_str(&ganz);
+            } else {
+                for z in crate::verlauf::grobverzeichnis(pfad, VERZEICHNIS_GROB)
+                    .unwrap_or_default()
+                {
+                    aus.push_str(z.trim_start());
+                    aus.push('\n');
+                }
+                aus.push_str(&if deutsch {
+                    format!(
+                        "({} Abschnitte, zu {} Bloecken zusammengefasst, weil das ganze \
+                         Verzeichnis den Kontext fuellen wuerde. Die genannten Zeilen \
+                         lassen sich einzeln nachlesen, und verlauf_suchen findet eine \
+                         Stelle direkt.)\n",
+                        v.abschnitte.len(),
+                        VERZEICHNIS_GROB
+                    )
+                } else {
+                    format!(
+                        "({} sections, grouped into {} blocks, because the full table of \
+                         contents would fill the context. The line ranges above can be \
+                         read individually, and search_history finds a passage \
+                         directly.)\n",
+                        v.abschnitte.len(),
+                        VERZEICHNIS_GROB
+                    )
+                });
+            }
+            aus.push_str(&format!("\n({name})\n"));
+        }
+        Ok(vom_budget(&self.2, aus, deutsch))
+    }
+}
+
+/// ⛔️ **Hier stand `VERZEICHNIS_GANZ`, eine feste Zahl von
+/// Abschnitten, und sie war zweimal falsch.**
+///
+/// Erst 60: Dann verlor das Verzeichnis seine Ueberschriften, und ein
+/// Modell suchte danach blind in Zeilenfenstern. Dann 400: Dann kamen
+/// rund 6 000 Token in **einer** Antwort, und der Kontext am Ende war so
+/// gross wie der Verlauf, den die Verdichtung weggeraeumt hatte.
+///
+/// ⚑ **Die Frage war beide Male die falsche.** Nicht „wie viele
+/// Abschnitte duerfen es sein", sondern „passt es in das, was dieser
+/// Auftrag noch ausgeben darf": [`VERLAUF_BUDGET_ZEICHEN`].
+/// Wie viele Bloecke die Karte hat, wenn das Verzeichnis zu lang ist.
+const VERZEICHNIS_GROB: usize = 30;
+
+/// **Wie viele Zeichen die Verlaufswerkzeuge je Auftrag zusammen
+/// herausgeben duerfen.**
+///
+/// # ⛔️ Warum das eine Schranke im Code ist und keine Bitte im Prompt
+///
+/// Gemessen am 2026-09-17: Ueber das Verzeichnis fand ein Modell die
+/// gesuchte Einzelheit, und **der Kontext am Ende war so gross wie der
+/// ganze Verlauf**, den die Verdichtung gerade weggeraeumt hatte. Eine
+/// zweite Messung zeigte, dass Modelle die Bitte „ruf das Werkzeug nur,
+/// wenn es noetig ist" **nicht befolgen**: 9 von 9 unnoetigen Aufrufen,
+/// auch mit ausdruecklichem Gegenfall im Systemprompt.
+///
+/// ⚑ **Also haelt der Code, worum man ein Modell nicht bitten kann.**
+/// Achttausend Zeichen sind rund 2 000 bis 2 700 Token, also unter 7 %
+/// eines Kontexts von 40 960, und sie reichen fuer eine Suche und ein
+/// ausfuehrliches Nachlesen. Was darueber hinausgeht, bekommt eine
+/// Absage mit Begruendung statt stiller Kuerzung.
+///
+/// ⚑ **Je Auftrag und nicht je Sitzung:** Die naechste Frage des
+/// Nutzers ist ein neuer Anlass nachzuschlagen, und wer nach einer
+/// Stunde Arbeit nichts mehr nachlesen darf, versteht nicht, warum.
+pub const VERLAUF_BUDGET_ZEICHEN: usize = 8_000;
+
+/// Das gemeinsame Restbudget der drei Verlaufswerkzeuge.
+pub type Verlaufsbudget = std::sync::Arc<std::sync::atomic::AtomicUsize>;
+
+/// Ein frisches Budget.
+pub fn verlaufsbudget() -> Verlaufsbudget {
+    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(VERLAUF_BUDGET_ZEICHEN))
+}
+
+/// Nimmt `text` vom Budget und gibt zurueck, was davon herausgehen darf.
+///
+/// ⚑ **Die Absage ist eine Auskunft und kein Fehler.** Ein
+/// Werkzeugfehler liest sich fuer ein Modell wie „falsch aufgerufen",
+/// und es versucht es dann anders herum noch einmal. Hier ist der Aufruf
+/// richtig und die Antwort trotzdem zu Ende.
+fn vom_budget(budget: &Verlaufsbudget, text: String, deutsch: bool) -> String {
+    use std::sync::atomic::Ordering;
+    let rest = budget.load(Ordering::Relaxed);
+    if rest == 0 {
+        return if deutsch {
+            format!(
+                "Das Nachschlagen hat in diesem Auftrag schon {VERLAUF_BUDGET_ZEICHEN} Zeichen \
+                 geliefert. Fasse zusammen, was du hast; bei der naechsten Frage beginnt das \
+                 Budget neu."
+            )
+        } else {
+            format!(
+                "Looking things up has already returned {VERLAUF_BUDGET_ZEICHEN} characters in \
+                 this task. Work with what you have; the budget starts over with the next \
+                 question."
+            )
+        };
+    }
+    if text.len() <= rest {
+        budget.fetch_sub(text.len(), Ordering::Relaxed);
+        return text;
+    }
+    budget.store(0, Ordering::Relaxed);
+    // ⚑ **Auf Zeichengrenzen kuerzen**, sonst zerschneidet der Schnitt
+    // einen Umlaut und die Antwort traegt ein kaputtes Zeichen.
+    let mut gekuerzt: String = text.chars().scan(0usize, |n, c| {
+        *n += c.len_utf8();
+        (*n <= rest).then_some(c)
+    }).collect();
+    gekuerzt.push_str(if deutsch {
+        "\n[Hier endet die Antwort: das Budget fuers Nachschlagen ist in diesem Auftrag \
+         aufgebraucht.]"
+    } else {
+        "\n[Cut off here: the lookup budget for this task is used up.]"
+    });
+    gekuerzt
+}
+
+/// **Wie viele Treffer eine Suche im Verlauf hoechstens nennt.**
+///
+/// ⚑ **Genug, um eine Frage zu beantworten, und zu wenig, um den
+/// Kontext zu fuellen.** Wer zwanzig Stellen gefunden hat und immer noch
+/// nicht weiss, welche gemeint ist, hat das falsche Wort gesucht.
+const VERLAUF_TREFFER: usize = 20;
+
+/// Nennt die Wissensmappen beider Orte.
+struct Skillliste(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skillliste {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::SkillListe.name(self.1)
+    }
+    fn ausfuehren(&self, _a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+        let mappen = crate::skills::alle(Some(self.0.wurzel()));
+        if mappen.is_empty() {
+            return Ok(if deutsch {
+                "Es liegen keine Wissensmappen bereit.".into()
+            } else {
+                "No knowledge folders are available.".into()
+            });
+        }
+        let mut aus = if deutsch {
+            format!("{} Wissensmappe(n):\n", mappen.len())
+        } else {
+            format!("{} knowledge folder(s):\n", mappen.len())
+        };
+        // ⚑ **Name und Satz**, wie beim Mitschnitt gemessen: Ein
+        // Eintrag, der nur den Ort nennt, wird fuer die Auskunft
+        // gehalten.
+        for m in &mappen {
+            aus.push_str(&format!("{}: {}\n", m.name, m.satz));
+        }
+        Ok(vom_budget(&self.2, aus, deutsch))
+    }
+}
+
+/// Oeffnet die Eingangsseite einer Mappe.
+struct Skilllesen(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Skilllesen {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::SkillLesen.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+        // ⚑ **Erst der Aufruf, dann die Welt.**
+        let name = a
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| Werkzeugfehler {
+                grund: "`name` fehlt oder ist kein Text".to_string(),
+            })?;
+        // ⛔️ **Der Name wird gegen die gefundenen Mappen gehalten und
+        // nie zu einem Pfad gemacht.** Damit gibt es hier keinen Weg
+        // nach draussen: `../../etc/passwd` ist einfach keine Mappe.
+        match crate::skills::lesen(Some(self.0.wurzel()), &name) {
+            Some(t) => Ok(vom_budget(&self.2, t, deutsch)),
+            None => {
+                let namen: Vec<String> = crate::skills::alle(Some(self.0.wurzel()))
+                    .into_iter()
+                    .map(|m| m.name)
+                    .collect();
+                Ok(if deutsch {
+                    format!(
+                        "Keine Mappe namens \"{name}\". Vorhanden: {}",
+                        if namen.is_empty() { "keine".to_string() } else { namen.join(", ") }
+                    )
+                } else {
+                    format!(
+                        "No folder named \"{name}\". Available: {}",
+                        if namen.is_empty() { "none".to_string() } else { namen.join(", ") }
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// Sucht im Mitschnitt und nennt die Abschnitte.
+struct Verlaufsuche(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Verlaufsuche {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::VerlaufSuche.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+        // ⚑ **Erst der Aufruf, dann die Welt.** Ein fehlendes Argument
+        // ist ein Fehler des Aufrufs und wird als solcher gemeldet, auch
+        // wenn es gar keinen Mitschnitt gibt.
+        let muster = a
+            .get("muster")
+            .and_then(|v| v.as_str())
+            .map(|t| t.to_string())
+            .ok_or_else(|| Werkzeugfehler {
+                grund: "`muster` fehlt oder ist kein Text".to_string(),
+            })?;
+        let treffer = crate::verlauf::suchen(self.0.wurzel(), &muster, VERLAUF_TREFFER);
+        if treffer.is_empty() {
+            return Ok(if deutsch {
+                format!("Nichts gefunden zu \"{muster}\" im aufgezeichneten Verlauf.")
+            } else {
+                format!("Nothing found for \"{muster}\" in the recorded history.")
+            });
+        }
+        let mut aus = if deutsch {
+            format!("{} Fundstellen zu \"{muster}\":\n", treffer.len())
+        } else {
+            format!("{} hits for \"{muster}\":\n", treffer.len())
+        };
+        // ⛔️ **Der Fund steht dabei, und das ist gemessen.** Eine
+        // Suche, die nur Zeilennummern zurueckgibt, wird fuer die
+        // Auskunft gehalten: Das 4B antwortete in neun von neun Laeufen
+        // „laeuft unter der Kennung **612-614**". **Was gefunden wurde,
+        // gehoert in die Antwort; was drumherum steht, holt das
+        // Lesewerkzeug.**
+        for t in &treffer {
+            aus.push_str(&format!("{}: {}\n", t.zeile, t.text));
+            if deutsch {
+                aus.push_str(&format!(
+                    "    ganzer Wechsel: verlauf_lesen {} bis {}\n",
+                    t.von, t.bis
+                ));
+            } else {
+                aus.push_str(&format!(
+                    "    whole exchange: read_history {} to {}\n",
+                    t.von, t.bis
+                ));
+            }
+        }
+        // ⚑ **Die Datei steht dabei**, denn die Treffer koennen aus
+        // verschiedenen Sitzungen stammen, und die Zeilennummern gelten
+        // je Datei.
+        let dateien: std::collections::BTreeSet<&str> =
+            treffer.iter().map(|t| t.datei.as_str()).collect();
+        for d in dateien {
+            aus.push_str(&format!("({d})\n"));
+        }
+        Ok(vom_budget(&self.2, aus, deutsch))
+    }
+}
+
+/// Liest im Mitschnitt nach, den das Verdichten abgelegt hat.
+struct Verlauflesen(Einhaengung, Ansageform, Verlaufsbudget);
+
+impl myl_local_agent::ausfuehrung::Werkzeugausfuehrung for Verlauflesen {
+    fn name(&self) -> &str {
+        Dateiwerkzeug::Verlauf.name(self.1)
+    }
+    fn ausfuehren(&self, a: &serde_json::Value) -> Result<String, Werkzeugfehler> {
+        let deutsch = matches!(self.1, Ansageform::Deutsch);
+
+        // ⚑ **Erst der Aufruf, dann die Welt.** Ein fehlendes Argument
+        // ist ein Fehler des Aufrufers und gehoert benannt, auch wenn es
+        // zufaellig nichts zu lesen gaebe: Sonst bekaeme ein Modell, das
+        // `bis` vergessen hat, die Auskunft „es gibt keinen Mitschnitt"
+        // und suchte den Fehler an der falschen Stelle.
+        let zahl = |feld: &str| -> Result<usize, Werkzeugfehler> {
+            a.get(feld)
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .ok_or_else(|| Werkzeugfehler {
+                    grund: format!("`{feld}` fehlt oder ist keine Zahl"),
+                })
+        };
+        let (von, bis) = (zahl("von")?, zahl("bis")?);
+
+        let mitschnitte = crate::verlauf::vorhandene(self.0.wurzel());
+        let Some(neuester) = mitschnitte.first() else {
+            return Ok(if deutsch {
+                "Es gibt noch keinen Mitschnitt. Er entsteht, sobald das Gespraech \
+                 verdichtet wird.".into()
+            } else {
+                "There is no transcript yet. One is written as soon as the conversation \
+                 is summarised.".into()
+            });
+        };
+
+        // ⚑ **Der Deckel wirkt hier und nicht beim Aufrufer**, und er
+        // sagt es: Eine stillschweigend gekuerzte Antwort liest sich wie
+        // eine vollstaendige.
+        let gewuenscht = bis.saturating_sub(von) + 1;
+        let bis_wirklich = if gewuenscht > VERLAUF_ZEILENGRENZE {
+            von + VERLAUF_ZEILENGRENZE - 1
+        } else {
+            bis
+        };
+        let text = crate::verlauf::zeilen(neuester, von, bis_wirklich)
+            .map_err(|f| Werkzeugfehler { grund: f.to_string() })?;
+
+        if gewuenscht > VERLAUF_ZEILENGRENZE {
+            let vermerk = if deutsch {
+                format!(
+                    "\n[{gewuenscht} Zeilen verlangt, {VERLAUF_ZEILENGRENZE} gegeben \
+                     (Zeilen {von} bis {bis_wirklich}). Der Rest mit einem zweiten Aufruf \
+                     ab {}.]\n",
+                    bis_wirklich + 1
+                )
+            } else {
+                format!(
+                    "\n[{gewuenscht} lines requested, {VERLAUF_ZEILENGRENZE} returned \
+                     (lines {von} to {bis_wirklich}). Ask again from {} for the rest.]\n",
+                    bis_wirklich + 1
+                )
+            };
+            return Ok(vom_budget(&self.2, format!("{text}{vermerk}"), deutsch));
+        }
+        Ok(vom_budget(&self.2, text, deutsch))
     }
 }
 
@@ -1696,7 +2352,7 @@ mod namen {
                 let ausgefuehrt: Vec<String> = satz
                     .werkzeuge()
                     .iter()
-                    .map(|w| w.ausfuehrung(e.clone(), form).name().to_string())
+                    .map(|w| w.ausfuehrung(e.clone(), form, &verlaufsbudget()).name().to_string())
                     .collect();
                 assert_eq!(angeboten, ausgefuehrt, "{} / {}", form.name(), satz.name());
             }
@@ -2121,5 +2777,468 @@ mod kistenwahl {
         let gross = artefakt(Some("30b-a3b"));
         assert_eq!(Werkzeugwahl::Automatisch.aufloesen(gross.path()).0, Werkzeugkiste::Advanced);
         assert_eq!(Werkzeugwahl::Base.aufloesen(gross.path()).0, Werkzeugkiste::Base);
+    }
+}
+
+#[cfg(test)]
+mod verlaufwerkzeug {
+    use super::*;
+    use myl_local_agent::ausfuehrung::Werkzeugausfuehrung;
+
+    fn werkzeug() -> (tempfile::TempDir, Verlauflesen) {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        (d, Verlauflesen(e, Ansageform::Amtlich, verlaufsbudget()))
+    }
+
+    /// **Ohne Mitschnitt sagt es das, statt zu scheitern.**
+    ///
+    /// ⚑ Ein Werkzeug, das beim ersten Gebrauch einen Fehler wirft,
+    /// laesst ein Modell glauben, es habe etwas falsch gemacht. Hier hat
+    /// es nichts falsch gemacht: Es gibt noch nichts zu lesen.
+    #[test]
+    fn ohne_mitschnitt_kommt_ein_satz_und_kein_fehler() {
+        let (_d, w) = werkzeug();
+        let aus = w.ausfuehren(&serde_json::json!({"von": 1, "bis": 5})).expect("kein Fehler");
+        assert!(aus.contains("no transcript"), "{aus}");
+    }
+
+    /// **Es liest die verlangten Zeilen und nicht mehr.**
+    #[test]
+    fn es_liest_die_verlangten_zeilen() {
+        let (d, w) = werkzeug();
+        crate::verlauf::schreiben(
+            d.path(),
+            "s1",
+            "m",
+            &[
+                ("user".into(), "erste Frage\nmit zweiter Zeile".into()),
+                ("assistant".into(), "die Antwort mit 4711".into()),
+            ],
+        )
+        .expect("schreiben");
+
+        let pfade = crate::verlauf::vorhandene(d.path());
+        let v = crate::verlauf::verzeichnis(&pfade[0]).expect("Verzeichnis");
+        let antwort = &v.abschnitte[1];
+        let aus = w
+            .ausfuehren(&serde_json::json!({"von": antwort.von, "bis": antwort.bis}))
+            .expect("lesen");
+        assert!(aus.contains("4711"), "{aus}");
+        assert!(!aus.contains("erste Frage"), "es kam mehr heraus als gefragt: {aus}");
+    }
+
+    /// ⛔️ **Der Deckel greift und sagt es.**
+    ///
+    /// Eine stillschweigend gekuerzte Antwort liest sich wie eine
+    /// vollstaendige, und dann fehlt dem Modell etwas, ohne dass es das
+    /// merkt.
+    #[test]
+    fn der_deckel_greift_und_sagt_es() {
+        let (d, w) = werkzeug();
+        let viele: String =
+            (1..=600).map(|i| format!("Zeile {i}\n")).collect::<Vec<_>>().concat();
+        crate::verlauf::schreiben(d.path(), "s1", "m", &[("user".into(), viele)])
+            .expect("schreiben");
+
+        let aus = w.ausfuehren(&serde_json::json!({"von": 1, "bis": 600})).expect("lesen");
+        let zeilen = aus.lines().filter(|z| z.starts_with("Zeile ")).count();
+        assert!(
+            zeilen <= VERLAUF_ZEILENGRENZE,
+            "{zeilen} Zeilen herausgegeben, Grenze ist {VERLAUF_ZEILENGRENZE}"
+        );
+        assert!(aus.contains("lines requested"), "der Vermerk zur Kuerzung fehlt: {aus}");
+        assert!(aus.contains("Ask again from"), "es sagt nicht, wo weiterzulesen ist: {aus}");
+    }
+
+    /// **Ein fehlendes Argument ist ein Fehler mit Namen.**
+    #[test]
+    fn ein_fehlendes_argument_wird_benannt() {
+        let (_d, w) = werkzeug();
+        let f = w.ausfuehren(&serde_json::json!({"von": 1})).expect_err("bis fehlt");
+        assert!(f.grund.contains("bis"), "{}", f.grund);
+    }
+
+    /// ⛔️ **Es steht NICHT in `Base`, und das ist gemessen.**
+    ///
+    /// Einen Tag lang stand es dort, weil „Nachlesen keine Sache der
+    /// Modellgroesse" ist. ⚑ **Die Messung sagt das Gegenteil fuer
+    /// genau das Modell, fuer das `Base` gemacht ist:** 27 Laeufe, kein
+    /// einziger Aufruf. Ein Werkzeug, das nie gerufen wird, kostet
+    /// trotzdem in jeder Runde Ansage und macht die Auswahl schwerer.
+    #[test]
+    fn es_steht_in_den_groesseren_kisten_und_nicht_in_base() {
+        for kiste in [Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
+            assert!(
+                kiste.werkzeuge().contains(&Dateiwerkzeug::Verlauf),
+                "{kiste:?} kennt das Verlaufwerkzeug nicht"
+            );
+        }
+        assert!(
+            !Werkzeugkiste::Base.werkzeuge().contains(&Dateiwerkzeug::Verlauf),
+            "Base traegt das Verlaufwerkzeug wieder"
+        );
+        // ⚑ **Und es schreibt nicht**, braucht also keine
+        // Schreiberlaubnis: Es liest nach, was ohnehin gesagt wurde.
+        assert!(!Dateiwerkzeug::Verlauf.schreibt());
+    }
+}
+
+#[cfg(test)]
+mod skillwerkzeuge {
+    use super::*;
+    use myl_local_agent::ausfuehrung::Werkzeugausfuehrung;
+
+    fn mit_mappe() -> (tempfile::TempDir, Einhaengung) {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let o = crate::skills::anlegen(d.path()).expect("anlegen");
+        let m = o.join("kryptografie");
+        std::fs::create_dir_all(m.join("kapitel")).expect("Ordner");
+        std::fs::write(
+            m.join("MAPPE.md"),
+            "# kryptografie\n\nWie Signaturen und Zufallslosungen hier benutzt werden.\n\n\
+             ## Kapitel\n\n- `kapitel/01-signaturen.md`\n",
+        )
+        .expect("schreiben");
+        std::fs::write(m.join("kapitel").join("01-signaturen.md"), "Der Inhalt des Kapitels.\n")
+            .expect("schreiben");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        (d, e)
+    }
+
+    /// ⚑ **Nennen und liefern sind getrennt**, wie beim Mitschnitt.
+    #[test]
+    fn die_liste_nennt_mit_satz_und_liefert_nichts() {
+        let (_d, e) = mit_mappe();
+        let w = Skillliste(e, Ansageform::Amtlich, verlaufsbudget());
+        let aus = w.ausfuehren(&serde_json::json!({})).expect("Liste");
+        assert!(aus.contains("kryptografie"), "{aus}");
+        assert!(aus.contains("Wie Signaturen"), "der Satz fehlt: {aus}");
+        assert!(!aus.contains("Der Inhalt des Kapitels"), "die Liste liefert Inhalt: {aus}");
+    }
+
+    /// ⚑ **Die Eingangsseite und nicht die ganze Mappe.**
+    #[test]
+    fn gelesen_wird_die_eingangsseite() {
+        let (_d, e) = mit_mappe();
+        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
+        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lesen");
+        assert!(aus.contains("kapitel/01-signaturen.md"), "{aus}");
+        assert!(
+            !aus.contains("Der Inhalt des Kapitels"),
+            "es kam die ganze Mappe statt der Eingangsseite: {aus}"
+        );
+    }
+
+    /// ⛔️ **Kein Weg nach draussen.**
+    ///
+    /// Der Name wird gegen die gefundenen Mappen gehalten und nie zu
+    /// einem Pfad gemacht; ein `..` ist damit einfach keine Mappe. **Die
+    /// Zusage steht hier, weil sie sonst beim naechsten Umbau verloren
+    /// gehen koennte.**
+    #[test]
+    fn ein_pfad_als_name_fuehrt_nirgendwohin() {
+        let (_d, e) = mit_mappe();
+        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
+        for versuch in ["../../etc/passwd", "/etc/passwd", "kryptografie/kapitel"] {
+            let aus = w.ausfuehren(&serde_json::json!({"name": versuch})).expect("Antwort");
+            assert!(aus.starts_with("No folder named"), "{versuch} kam durch: {aus}");
+        }
+    }
+
+    /// ⚑ **Ein fehlendes Argument ist ein Aufruffehler.**
+    #[test]
+    fn ohne_namen_ist_es_ein_aufruffehler() {
+        let (_d, e) = mit_mappe();
+        let w = Skilllesen(e, Ansageform::Amtlich, verlaufsbudget());
+        let f = w.ausfuehren(&serde_json::json!({})).expect_err("Fehler");
+        assert!(f.grund.contains("name"), "{}", f.grund);
+    }
+
+    /// ⛔️ **Sie haengen am selben Nachschlagebudget wie der Mitschnitt.**
+    ///
+    /// Der Kontext laesst sich ueber jeden Leseweg fuellen; drei eigene
+    /// Budgets waeren drei Wege.
+    #[test]
+    fn sie_haengen_am_selben_budget() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (_d, e) = mit_mappe();
+        let budget: Verlaufsbudget = std::sync::Arc::new(AtomicUsize::new(40));
+        let w = Skilllesen(e.clone(), Ansageform::Amtlich, budget.clone());
+        let aus = w.ausfuehren(&serde_json::json!({"name": "kryptografie"})).expect("lesen");
+        assert!(aus.contains("Cut off here"), "die Kuerzung sagt sich nicht an: {aus}");
+        assert_eq!(budget.load(Ordering::Relaxed), 0);
+        let l = Skillliste(e, Ansageform::Amtlich, budget);
+        let aus2 = l.ausfuehren(&serde_json::json!({})).expect("Liste");
+        assert!(aus2.contains("already returned"), "zweites Werkzeug mit eigenem Budget: {aus2}");
+    }
+}
+
+#[cfg(test)]
+mod verlaufsuche {
+    use super::*;
+    use myl_local_agent::ausfuehrung::Werkzeugausfuehrung;
+
+    fn werkzeug() -> (tempfile::TempDir, Verlaufsuche) {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        (d, Verlaufsuche(e, Ansageform::Amtlich, verlaufsbudget()))
+    }
+
+    fn mitschnitt(d: &std::path::Path) {
+        crate::verlauf::schreiben(
+            d,
+            "alte-sitzung",
+            "myelith-4b",
+            &[
+                ("user".into(), "Und was macht der Pruefstand in Halle 3?".into()),
+                ("assistant".into(), "Der laeuft unter der Kennung QX-4417-MOOS.".into()),
+                ("user".into(), "Und der Durchsatz?".into()),
+                ("assistant".into(), "127 Token je Sekunde.".into()),
+            ],
+        )
+        .expect("schreiben");
+    }
+
+    /// ⚑ **Die Suche nennt Zeilen, und die Zeilen tragen die Antwort.**
+    ///
+    /// Das ist der ganze Zweck: Aus einer Frage („Halle 3") werden ein
+    /// paar Zeilennummern, und `read_history` holt genau die. ⛔️
+    /// **Ohne die Suche kostete derselbe Weg das ganze Verzeichnis**,
+    /// gemessen 6 000 Token gegen hier ein paar Dutzend.
+    #[test]
+    fn sie_nennt_die_zeilen_zur_frage() {
+        let (d, w) = werkzeug();
+        mitschnitt(d.path());
+        let aus = w
+            .ausfuehren(&serde_json::json!({"muster": "Halle 3"}))
+            .expect("Suche");
+        assert!(aus.contains("hits for"), "{aus}");
+        assert!(aus.contains("Und was macht der Pruefstand in Halle 3?"), "{aus}");
+        // ⛔️ **Der Wechsel und nicht nur die Frage.** Das gesuchte Wort
+        // steht in der Frage, die Auskunft in der Antwort darunter; ein
+        // Treffer, der bei der Frage endet, schickt den Leser eine
+        // Nachricht zu weit nach oben.
+        let v = crate::verlauf::verzeichnis(&crate::verlauf::vorhandene(d.path())[0])
+            .expect("Verzeichnis");
+        assert!(
+            aus.contains(&format!("read_history {} to {}", v.abschnitte[0].von, v.abschnitte[1].bis)),
+            "die Spanne deckt Frage und Antwort: {aus}"
+        );
+        // ⚑ **Und die Suche zeigt den Wechsel, nicht nur die
+        // Fundstelle.** Zweimal gemessen, zweimal zu wenig: Zeilen-
+        // nummern allein wurden fuer die Antwort gehalten, die
+        // gefundene Zeile allein ist die **Frage**. ⛔️ **Die Auskunft
+        // steht in der Antwort darunter, und die gehoert dazu.**
+        assert!(
+            aus.lines().any(|z| z.starts_with(&format!("{}:", v.abschnitte[0].von + 2))),
+            "die gefundene Zeile steht mit ihrer Nummer da: {aus}"
+        );
+        assert!(
+            aus.contains("QX-4417-MOOS"),
+            "der Wechsel traegt die Antwort und nicht nur die Frage: {aus}"
+        );
+    }
+
+    /// **Nichts gefunden ist eine Auskunft und kein Fehler.**
+    #[test]
+    fn nichts_gefunden_sagt_es() {
+        let (d, w) = werkzeug();
+        mitschnitt(d.path());
+        let aus = w
+            .ausfuehren(&serde_json::json!({"muster": "Neutrinodetektor"}))
+            .expect("kein Fehler");
+        assert!(aus.contains("Nothing found"), "{aus}");
+    }
+
+    /// ⛔️ **Das Budget haelt, worum man ein Modell nicht bitten kann.**
+    ///
+    /// Gemessen am 2026-09-17: Modelle befolgen „ruf das Werkzeug nur,
+    /// wenn es noetig ist" **nicht**, auch nicht mit ausdruecklichem
+    /// Gegenfall im Systemprompt. ⚑ **Also entscheidet der Code**, und
+    /// zwar fuer die drei Verlaufswerkzeuge **gemeinsam**: Drei eigene
+    /// Budgets waeren drei Wege, denselben Kontext zu fuellen.
+    ///
+    /// Geprueft wird dreierlei: **die Kuerzung greift**, **sie sagt es
+    /// an** (eine stillschweigend gekuerzte Antwort liest sich wie eine
+    /// vollstaendige), und **das Budget ist danach fuer die anderen
+    /// beiden Werkzeuge auch aufgebraucht**.
+    #[test]
+    fn das_budget_gilt_fuer_die_drei_zusammen() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        mitschnitt(d.path());
+        let budget: Verlaufsbudget = std::sync::Arc::new(AtomicUsize::new(120));
+
+        let suche = Verlaufsuche(e.clone(), Ansageform::Amtlich, budget.clone());
+        let aus = suche.ausfuehren(&serde_json::json!({"muster": "Halle 3"})).expect("Suche");
+        assert!(aus.len() <= 200, "die Kuerzung greift nicht: {} Zeichen", aus.len());
+        assert!(aus.contains("Cut off here"), "die Kuerzung sagt sich nicht an: {aus}");
+        assert_eq!(budget.load(Ordering::Relaxed), 0, "das Budget ist nicht abgebucht");
+
+        // ⚑ **Dasselbe Budget, anderes Werkzeug**: Wer die Suche
+        // aufgebraucht hat, kann nicht ueber das Lesen weitermachen.
+        let lesen = Verlauflesen(e.clone(), Ansageform::Amtlich, budget.clone());
+        let aus2 = lesen
+            .ausfuehren(&serde_json::json!({"von": 1, "bis": 20}))
+            .expect("Lesen");
+        assert!(
+            aus2.contains("already returned"),
+            "das zweite Werkzeug hat ein eigenes Budget: {aus2}"
+        );
+
+        // ⚑ **Und die Ruestung gibt es je Auftrag zurueck.**
+        budget.store(VERLAUF_BUDGET_ZEICHEN, Ordering::Relaxed);
+        let liste = Verlaufliste(e, Ansageform::Amtlich, budget.clone());
+        let aus3 = liste.ausfuehren(&serde_json::json!({})).expect("Liste");
+        assert!(!aus3.contains("already returned"), "nach dem Zuruecksetzen geht es weiter");
+    }
+
+    /// ⚑ **Erst der Aufruf, dann die Welt.**
+    ///
+    /// Ein fehlendes `muster` ist ein Fehler des Aufrufs und wird als
+    /// solcher gemeldet, **auch im leeren Ordner**: Sonst suchte ein
+    /// Modell, das den Parameter vergessen hat, den Fehler beim
+    /// Mitschnitt.
+    #[test]
+    fn ohne_muster_ist_es_ein_aufruffehler() {
+        let (_d, w) = werkzeug();
+        let f = w.ausfuehren(&serde_json::json!({})).expect_err("Fehler");
+        assert!(f.grund.contains("muster"), "{}", f.grund);
+    }
+}
+
+#[cfg(test)]
+mod verlaufliste {
+    use super::*;
+    use myl_local_agent::ausfuehrung::Werkzeugausfuehrung;
+
+    fn werkzeug() -> (tempfile::TempDir, Verlaufliste) {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let e = Einhaengung::neu(d.path(), false).expect("Einhaengung");
+        (d, Verlaufliste(e, Ansageform::Amtlich, verlaufsbudget()))
+    }
+
+    /// **Im leeren Ordner sagt es das, statt zu scheitern.**
+    #[test]
+    fn im_leeren_ordner_sagt_es_das() {
+        let (_d, w) = werkzeug();
+        let aus = w.ausfuehren(&serde_json::json!({})).expect("kein Fehler");
+        assert!(aus.contains("Nothing has been recorded"), "{aus}");
+    }
+
+    /// ⚑ **Es nennt und liefert nicht.**
+    ///
+    /// Ein Mitschnitt aus einer fremden Sitzung ist der Verlauf eines
+    /// anderen Gespraechs; ihn ungefragt in den Kontext zu ziehen, waere
+    /// eine Ueberraschung. Herauskommen duerfen die **Marken** des
+    /// Verzeichnisses, nicht der Inhalt dahinter.
+    #[test]
+    fn es_nennt_und_liefert_nicht() {
+        let (d, w) = werkzeug();
+        crate::verlauf::schreiben(
+            d.path(),
+            "alte-sitzung",
+            "myelith-4b",
+            &[
+                ("user".into(), "Baue den Parser um.\nEr soll Kommentare ueberspringen.".into()),
+                ("assistant".into(), "Fertig, die Kennzahl war 4711.".into()),
+            ],
+        )
+        .expect("schreiben");
+
+        let aus = w.ausfuehren(&serde_json::json!({})).expect("liste");
+        // Es nennt Zahl, Sitzung und die Marken.
+        assert!(aus.contains("1 episodes from 1 sessions"), "{aus}");
+        assert!(aus.contains("alte-sitzung"), "{aus}");
+        assert!(aus.contains("Baue den Parser um."), "die Marken fehlen: {aus}");
+        // ⛔️ **Und nicht den Inhalt dahinter.** Die zweite Zeile einer
+        // Nachricht ist keine Marke.
+        assert!(
+            !aus.contains("Er soll Kommentare ueberspringen."),
+            "es liefert den Verlauf statt ihn zu nennen: {aus}"
+        );
+    }
+
+    /// ⚑ **Erst weit oben wird gruppiert, und die Antwort sagt es.**
+    ///
+    /// ⛔️ **Die Grenze stand erst bei 60, und das war falsch** (siehe
+    /// [`VERZEICHNIS_GANZ`]): Ein Modell, das das Verzeichnis anfordert,
+    /// sucht eine Ueberschrift, und eine Karte ohne Ueberschriften
+    /// schickt es auf eine blinde Suche. Geprueft wird deshalb beides:
+    /// dass der Ausreisser gruppiert **und dabei ehrlich benannt** wird,
+    /// und dass ein gewoehnlicher Verlauf abschnittsgenau bleibt.
+    #[test]
+    fn ein_langes_verzeichnis_kommt_als_karte() {
+        let (d, w) = werkzeug();
+        let viele: Vec<(String, String)> = (0..900)
+            .map(|i| {
+                let rolle = if i % 2 == 0 { "user" } else { "assistant" };
+                (rolle.to_string(), format!("Abschnitt Nummer {i}."))
+            })
+            .collect();
+        crate::verlauf::schreiben(d.path(), "lange-sitzung", "myelith-4b", &viele)
+            .expect("schreiben");
+
+        let aus = w.ausfuehren(&serde_json::json!({})).expect("liste");
+        let zeilen = aus.lines().filter(|z| z.contains('-') && z.contains("Abschnitt")).count();
+        assert!(
+            zeilen <= VERZEICHNIS_GROB,
+            "die Karte hat {zeilen} Zeilen statt hoechstens {VERZEICHNIS_GROB}: {aus}"
+        );
+        assert!(aus.contains("900 sections, grouped"), "die Antwort verschweigt die Gruppierung: {aus}");
+
+        // ⚑ **Und die andere Haelfte**: ein kurzer Verlauf kommt weiter
+        // abschnittsgenau, sonst rettet die Schranke den einen Fall und
+        // verschlechtert den anderen.
+        let (d2, w2) = werkzeug();
+        let wenige: Vec<(String, String)> = (0..6)
+            .map(|i| ("user".to_string(), format!("Frage Nummer {i}.")))
+            .collect();
+        crate::verlauf::schreiben(d2.path(), "kurze-sitzung", "myelith-4b", &wenige)
+            .expect("schreiben");
+        let aus2 = w2.ausfuehren(&serde_json::json!({})).expect("liste");
+        assert!(!aus2.contains("grouped"), "hier wird nichts gruppiert: {aus2}");
+        for i in 0..6 {
+            assert!(aus2.contains(&format!("Frage Nummer {i}.")), "Abschnitt {i} fehlt: {aus2}");
+        }
+    }
+
+    /// ⚑ **Kein einziger Parameter**, also auch kein optionaler.
+    #[test]
+    fn es_hat_keinen_parameter() {
+        let schema = Dateiwerkzeug::VerlaufListe.parameter(Ansageform::Amtlich);
+        let felder = schema.get("properties").and_then(|p| p.as_object()).expect("properties");
+        assert!(felder.is_empty(), "das Werkzeug hat Parameter: {felder:?}");
+    }
+
+    /// ⛔️ **Die drei Verlaufswerkzeuge gehoeren zusammen, und sie
+    /// gehoeren nicht in `Base`.**
+    ///
+    /// ⚑ **Zusammen**, weil keines allein trägt: Ohne die Suche ist das
+    /// Nachschlagen teuer (gemessen: der Kontext am Ende so gross wie
+    /// der ganze Verlauf), ohne das Lesen bleibt es beim Zeigen, und
+    /// ohne die Liste findet ein frischer Agent den Einstieg nicht.
+    /// **Eine Kiste, die zwei davon hat, hat das Werkzeug ohne den
+    /// Weg.**
+    #[test]
+    fn die_drei_stehen_zusammen_und_nicht_in_base() {
+        let drei = [
+            Dateiwerkzeug::Verlauf,
+            Dateiwerkzeug::VerlaufListe,
+            Dateiwerkzeug::VerlaufSuche,
+        ];
+        for kiste in [Werkzeugkiste::Advanced, Werkzeugkiste::Elite] {
+            for w in drei {
+                assert!(kiste.werkzeuge().contains(&w), "{kiste:?} kennt {w:?} nicht");
+            }
+        }
+        for w in drei {
+            assert!(
+                !Werkzeugkiste::Base.werkzeuge().contains(&w),
+                "Base traegt {w:?} wieder"
+            );
+        }
     }
 }

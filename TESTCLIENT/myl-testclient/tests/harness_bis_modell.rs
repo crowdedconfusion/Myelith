@@ -495,6 +495,7 @@ async fn ein_nutzeraufruf_erreicht_das_geshardete_modell() {
             let klient = myl_local_agent::Tuerklient::neu("127.0.0.1", port, token4)
                 .mit_frist(std::time::Duration::from_secs(600));
             Lauf {
+                hausregel: None,
                 klient: &klient,
                 modell: "myelith-myelith-0.6b",
                 grenzen: &grenzen,

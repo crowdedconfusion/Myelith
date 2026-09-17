@@ -127,6 +127,12 @@ HOT_PATH = [
     # `dieselbe_antwort_bei_jeder_kernzahl`; hier steht sie, damit die
     # Vollstaendigkeit stimmt und nicht als Ausnahme.
     REPO / "runtime" / "src" / "kapazitaet.rs",
+    # ⚑ Die Naht zu den Rechenwegen (2026-09-16), aus demselben
+    # Grund wie `kapazitaet.rs`: Sie rechnet nichts und steht im
+    # Heisspfad-Crate. Sie sagt, welcher Rechenweg hier rechnet, und
+    # schaltet einen ab; **welcher rechnet, aendert kein Ergebnis**,
+    # das ist die Zusage des Konformitaetslaufs ueber alle drei.
+    REPO / "runtime" / "src" / "rechenwege.rs",
     # ⚑ Der Mitschnitt fuer den Rueckwaertspass (TRAINING V). Er haelt
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.

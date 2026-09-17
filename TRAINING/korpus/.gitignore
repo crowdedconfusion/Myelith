@@ -1,0 +1,3 @@
+# Die Umgebung entsteht aus `einrichten.sh` und gehoert nicht ins
+# Repositorium; die Raeder, aus denen sie entsteht, schon.
+/.venv/

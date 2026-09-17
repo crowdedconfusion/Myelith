@@ -97,6 +97,7 @@ fn fahren(
     let klient = Drehbuch(drehbuch);
     let zuordnung = ruestung.zuordnung();
     myl_local_agent::schleife::Lauf {
+        hausregel: None,
         // ⚑ Die Einhaengung gehoert ins Protokoll.
         einhaengung: ruestung.einhaengung.as_ref().map(|e| e.marke()),
         klient: &klient,

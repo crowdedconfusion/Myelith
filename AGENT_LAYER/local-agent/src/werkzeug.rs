@@ -171,6 +171,33 @@ impl std::error::Error for Abgelehnt {}
 /// vorschlägt, wird von [`Erlaubnis::pruefen`] abgelehnt, nicht von
 /// diesem Text.
 pub fn angebot(werkzeuge: &[Werkzeug], form: Ansageform) -> Nachricht {
+    angebot_mit_regel(werkzeuge, form, None)
+}
+
+/// **Wie [`angebot`], mit einer Hausregel hinter der Vorlage.**
+///
+/// # ⛔️ Hinter der Vorlage und nicht darin
+///
+/// Kopf und Fuss sind **zeichengleich** die Literale aus
+/// `tokenizer_config.json`, und eine Pruefung haelt sie dagegen. Eine
+/// Regel, die sich dazwischenschiebt, aendert den Schliff, auf den das
+/// Modell trainiert wurde. **Sie steht deshalb als eigener Absatz
+/// dahinter**, dort, wo ein Systemprompt ueblicherweise steht.
+///
+/// # ⛔️ Und sie ist nie freier Text eines einzelnen Knotens
+///
+/// ⚑ **Im Netz ruesten alle Knoten gleich, sonst rechnen sie
+/// Verschiedenes.** Dieselbe Ueberlegung wie bei der Werkzeugkiste: Was
+/// in die Ansage geht, gehoert zu den Protokollgroessen und ist fuer
+/// alle dasselbe. Dieser Parameter ist fuer die **Messung** und fuer
+/// den oertlichen Betrieb; wer ihn im Netz verschieden belegt, bricht
+/// die Nachrechenbarkeit, und das steht hier, damit es niemand
+/// versehentlich tut.
+pub fn angebot_mit_regel(
+    werkzeuge: &[Werkzeug],
+    form: Ansageform,
+    regel: Option<&str>,
+) -> Nachricht {
     let liste: Vec<Ansageeintrag<'_>> = werkzeuge
         .iter()
         .map(|w| Ansageeintrag {
@@ -194,6 +221,10 @@ pub fn angebot(werkzeuge: &[Werkzeug], form: Ansageform) -> Nachricht {
         text.push_str(&serde_json::to_string(w).unwrap_or_default());
     }
     text.push_str(fuss);
+    if let Some(r) = regel.map(str::trim).filter(|r| !r.is_empty()) {
+        text.push_str("\n\n");
+        text.push_str(r);
+    }
     Nachricht::system(text)
 }
 

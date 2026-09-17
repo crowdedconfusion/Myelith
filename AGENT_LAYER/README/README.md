@@ -1,6 +1,6 @@
 # agent-layer (`myl-agent`)
 
-> **Version:** 0.17.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.10.0)
+> **Version:** 0.18.0 (`myl-agent` 0.7.0, `myl-local-agent` 0.11.0)
 > **Datum:** 2026-09-09
 > **Status:** Manifeste, Herkunftsstufe, Registratur, der
 > **Session-Kontrakt** mit Durchsetzung im Ledger, der **Plan** und seit
@@ -44,6 +44,28 @@ Kap. 8.2).
 - `src/kette.rs` — dass er es auch so getan hat, und wann er aufhört.
 
 ## Changelog
+
+### v0.18.0 – 2026-09-17 (`myl-local-agent` 0.11.0: eine Hausregel hinter der Werkzeugansage)
+
+⚑ **Neu ist `angebot_mit_regel` und das Feld `Lauf::hausregel`**, beides
+mit `None` als Vorgabe. Die Regel steht als eigener Absatz **hinter**
+der Vorlage: Kopf und Fuß der amtlichen Ansage sind zeichengleich die
+Literale aus `tokenizer_config.json`, und eine Prüfung hält sie dagegen.
+**Was sich dazwischenschöbe, änderte den Schliff, auf den das Modell
+trainiert wurde.**
+
+⛔️ **Sie ist nie freier Text eines einzelnen Knotens.** Im Netz rüsten
+alle Knoten gleich, sonst rechnen sie Verschiedenes; was in die Ansage
+geht, gehört zu den Protokollgrößen. Dieselbe Überlegung wie bei der
+Werkzeugkiste, die im Netz dem Modell folgt statt einer Einstellung.
+
+⚑ **Gebaut, weil die Frage „hilft ein strengerer Systemprompt?" eine
+Messung verdient und keine Meinung.** Das Ergebnis über 63 Läufe steht
+im Komponenten-README des Clients; hier nur das Kurze: **Beim 30B hebt
+eine Regel die Trefferquote von 17 aus 24 auf 9 aus 9.** ⛔️ **Und beim
+0,6B macht die strenge Fassung eine sonst richtige Antwort kaputt: 9 von
+9 richtig ohne Regel, 1 von 9 mit ihr.** Eine Regel, die ein Modell
+nicht befolgen kann, verdrängt Platz und verschlechtert den Rest.
 
 ### v0.17.0 – 2026-09-14 (der Verlauf geht mit, und der Kontext verdichtet sich am Rand)
 

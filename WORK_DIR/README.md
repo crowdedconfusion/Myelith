@@ -200,6 +200,55 @@ dann `fill_template`, dann `write_file`.
 
 ---
 
+## 7b. Die drei Werkzeuge für den Mitschnitt (Kiste Advanced)
+
+⛔️ **Sie stehen seit dem 2026-09-17 nicht mehr in `Base`, und das ist
+gemessen:** Das kleine Modell, für das `Base` gemacht ist, ruft sie in 27
+Läufen kein einziges Mal und erfindet stattdessen eine Antwort. Drei
+Werkzeuge, die nie gerufen werden, stehen trotzdem in jeder Ansage und
+machen die Auswahl schwerer.
+
+⚠️ **Diese drei brauchen eine Voraussetzung, die die anderen nicht
+haben:** Es muss schon etwas aufgezeichnet sein. Der Mitschnitt entsteht
+in dem Augenblick, in dem ein Gespräch **verdichtet** wird, und liegt
+danach unter `.AGENT/` in diesem Ordner. Vorher sagen alle drei genau
+das, und das ist keine Fehlermeldung, sondern die Lage.
+
+⚑ **So stellt man die Voraussetzung her:** ein längeres Gespräch führen
+und im Fenster auf den Kontextbalken klicken, oder in der Konsole
+`/compress` tippen. Danach steht der Verweis samt Zeilennummern in der
+Zusammenfassung, mit der das Gespräch weitergeht.
+
+### `search_history`
+
+⚑ **Der Weg, der gemeint ist.** Gemessen am 2026-09-17 findet ein
+4B-Modell damit eine Einzelheit, die aus seinem Kontext verschwunden
+ist, in neun von neun Läufen, mit **einem** Aufruf.
+
+| | Prompt | erwartet |
+|---|---|---|
+| einfach | „Such im Verlauf nach dem Wort Messwerte." | die Fundstellen mit Zeilennummern und dem gefundenen Wechsel |
+| mittel | „Worüber haben wir vorhin bei den Messwerten gesprochen? Das steht nicht mehr im Kontext." | ein `search_history`, dann die Antwort **aus dem Fund** und nicht geraten |
+| komplex | „Nimm auf, woran wir zuletzt gearbeitet haben, und schreib mir eine kurze Zusammenfassung nach berichte/stand.md." | `list_history`, dann `search_history` oder `read_history`, dann `write_file` |
+
+### `read_history`
+
+| | Prompt | erwartet |
+|---|---|---|
+| einfach | „Lies die Zeilen 40 bis 80 aus dem Verlauf." | genau dieser Ausschnitt |
+| mittel | „Lies die ersten 300 Zeilen des Verlaufs." | ⚠️ **höchstens 200 Zeilen**, und das Werkzeug sagt selbst, ab welcher Zeile weiterzulesen ist |
+| komplex | „Was wurde in der Mitte des Gesprächs beschlossen?" | die Zeilenspanne aus dem Verzeichnis, dann genau die lesen |
+
+### `list_history`
+
+| | Prompt | erwartet |
+|---|---|---|
+| einfach | „Was ist in diesem Ordner schon geschehen?" | die früheren Sitzungen, neueste zuerst, mit dem Verzeichnis der jüngsten |
+| mittel | „Mach dich mit dem Ordner vertraut." | erst `list_history`, dann gezielt nachlesen; ⚠️ nicht den ganzen Verlauf holen |
+| komplex | „Gibt es hier eine ältere Sitzung, in der es um die Messwerte ging?" | `list_history`, dann `search_history` mit dem Wort aus der Frage |
+
+---
+
 ## 8. Wenn eine Aufgabe nicht klappt
 
 ⚑ **Erst die Kiste, dann das Modell.** Die häufigsten drei Ursachen,

@@ -33,10 +33,12 @@ in
     paket = lib.mkOption {
       type = lib.types.package;
       description = ''
-        Das Paket, das `bin/myl-node` bereitstellt. Baubar aus dem
-        Repositorium ueber die Flake-Ausgabe; solange die
-        noch nicht steht, zeigt der Betreiber hier auf ein selbst gebautes
-        Paket.
+        Das Paket, das `bin/myl-node` bereitstellt.
+
+        ⚑ **Seit dem 2026-09-16 gibt es dafuer eine Flake-Ausgabe:**
+        `myelith.packages.''${pkgs.system}.myl-node`. Vorher musste der
+        Betreiber selbst eines bauen, und damit war dieses Modul ein
+        Umschlag um „bau es dir selbst".
       '';
     };
 
@@ -127,6 +129,51 @@ in
       description = "Nur mit Konsensschluessel: der Validator-Satz (--stimmsatz).";
     };
 
+    erzeuger = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Erzeugt dieser Knoten Bloecke (--erzeuger)? ⚠️ **Das tut in der
+        ueblichen Aufstellung genau einer**, die Anlaufstelle, und nicht
+        jeder stimmberechtigte Knoten. Wer es ohne Absprache einschaltet,
+        laesst zwei Knoten dieselbe Runde eroeffnen.
+      '';
+    };
+
+    beobachtungPort = lib.mkOption {
+      type = lib.types.nullOr lib.types.port;
+      default = 4151;
+      description = ''
+        Der Port des Beobachtungsendpunkts, **immer auf der
+        Rueckschleife**. `null` schaltet ihn ganz ab.
+
+        ⚑ **Die Adresse ist nicht einstellbar, und das ist der Punkt.**
+        Der Endpunkt sagt einem Fremden, wie es dem Knoten geht, und das
+        ist Aufklaerung; wer ihn sehen will, tunnelt per SSH. Diese
+        Option waehlt den Port und niemals das Interface.
+
+        ⚑ **Uebergeben wird er ausdruecklich**, obwohl der Knoten von
+        sich aus dieselbe Adresse nimmt: Ein Betreiber prueft den
+        Zuschnitt mit `systemctl cat myl-server`, und was dort nicht
+        steht, muss er im Quelltext des Knotens nachlesen.
+      '';
+    };
+
+    aufnahmeSekunden = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 300;
+      description = ''
+        Abstand der Zustandsaufnahmen im Protokoll, in Sekunden
+        (--aufnahme).
+
+        ⚑ **Hier steht 300 und nicht die 30 des Knotens**, und der Grund
+        ist die Betriebsdauer: Dreissig Sekunden sind fuer einen
+        Probelauf von Minuten gedacht. Ein Server laeuft Monate, und
+        dann ist der Abstand der Aufnahmen die Rate, mit der
+        `/var/lib/myl-server/protokolle` waechst.
+      '';
+    };
+
     zusatzflags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -145,6 +192,25 @@ in
         message = "services.myl-server: ein Stimmsatz ohne Konsensschluessel stimmt nicht mit; setze konsensCredential.";
       }
     ];
+
+    # ⚑ **Eine Warnung und keine Zusicherung, und der Unterschied ist
+    # Absicht.** `zusatzflags` ist ausdruecklich der Weg fuer Faelle, die
+    # dieses Modul nicht abbildet; eine Zusicherung machte daraus ein
+    # Verbot. **Sichtbar muss es trotzdem sein:** Wer die Tuer oder die
+    # Ortsleitung nach aussen bindet, verlaesst den Zuschnitt, und bei
+    # einem stimmberechtigten Knoten wird aus einem Ueberlastangriff
+    # gegen die Tuer einer gegen die Lebendigkeit des Konsenses.
+    warnings =
+      let
+        heikel = [ "--tuer" "--ortsleitung" "--beobachtung" ];
+        gefunden = builtins.filter (f: builtins.elem f cfg.zusatzflags) heikel;
+      in
+      lib.optional (gefunden != [ ]) ''
+        services.myl-server: zusatzflags enthaelt ${lib.concatStringsSep ", " gefunden}.
+        Damit verlaesst dieser Knoten den Zuschnitt des Moduls: Nach aussen
+        erreichbar sein soll nur der P2P-Port. Bei einem stimmberechtigten
+        Knoten ist das ausdruecklich abgeraten.
+      '';
 
     # ⚑ Ein eigener, unprivilegierter Nutzer (kein DynamicUser, weil das
     # StateDirectory ueber Neustarts stabil bleiben muss: Schluessel-PeerId,
@@ -166,6 +232,26 @@ in
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+
+      # ⛔️ **Ein Startfehler darf keine Schleife werden** (2026-09-16).
+      # Bis hierher stand nur `Restart=on-failure` da: Ein Knoten mit
+      # einem fehlenden Schluessel oder einem falschen Stimmsatz startet,
+      # faellt, startet, und das alle zehn Sekunden fuer immer. **Das
+      # laesst sich vom Betrieb nicht unterscheiden**, ausser am
+      # Protokoll, und niemand liest ein Protokoll, dessen Dienst als
+      # „aktiv" gemeldet wird.
+      #
+      # ⚑ Fuenf Versuche in fuenf Minuten, danach bleibt der Dienst
+      # liegen und sagt es. Weit genug fuer einen Neustart nach einem
+      # Netzausfall, eng genug, dass ein echter Konfigurationsfehler
+      # sichtbar wird.
+      #
+      # ⚑ **Hier und nicht in `serviceConfig`**: `StartLimitIntervalSec`
+      # und `StartLimitBurst` gehoeren seit systemd 229 nach `[Unit]`.
+      # In `[Service]` wuerden sie stillschweigend nichts tun, und eine
+      # Begrenzung, die nichts tut, ist schlimmer als keine.
+      startLimitIntervalSec = 300;
+      startLimitBurst = 5;
 
       serviceConfig = {
         User = "myl-server";
@@ -194,10 +280,23 @@ in
             # Zustand unter dem StateDirectory.
             "--kette" "/var/lib/myl-server/kette.dat"
             "--protokolle" "/var/lib/myl-server/protokolle"
+            "--aufnahme" (toString cfg.aufnahmeSekunden)
           ]
-          # ⚑ Tuer, Beobachtung und Ortsleitung werden NICHT uebergeben:
-          # Der Knoten bindet sie per Vorgabe an die Rueckschleife bzw. laesst
-          # sie aus. Genau das ist der Zuschnitt.
+          # ⚑ **Tuer und Ortsleitung werden NICHT uebergeben:** Der
+          # Knoten bindet die eine per Vorgabe an die Rueckschleife und
+          # laesst die andere aus. Genau das ist der Zuschnitt.
+          #
+          # ⚑ **Die Beobachtung dagegen schon, und zwar ausdruecklich**
+          # (2026-09-16). Sie stand vorher nur in der Vorgabe des
+          # Knotens, und damit war die Zusage „nur die Rueckschleife" im
+          # Dienst nicht zu sehen. **Ein Betreiber prueft den Zuschnitt
+          # mit `systemctl cat`**, und was dort nicht steht, muss er im
+          # fremden Quelltext nachlesen. Die Adresse ist hier fest;
+          # waehlbar ist nur der Port, und `null` schaltet sie ab.
+          ++ (if cfg.beobachtungPort != null
+              then [ "--beobachtung" "127.0.0.1:${toString cfg.beobachtungPort}" ]
+              else [ "--ohne-beobachtung" ])
+          ++ lib.optional cfg.erzeuger "--erzeuger"
           ++ (if cfg.konformitaetspfad != null
               then [ "--konformitaet" (toString cfg.konformitaetspfad) ]
               else [ "--ohne-konformitaet" ])
@@ -210,6 +309,17 @@ in
 
         Restart = "on-failure";
         RestartSec = "10s";
+
+        # ⛔️ **Ein Startfehler darf keine Schleife werden** (2026-09-16).
+        # Bis hierher stand nur `Restart=on-failure` da: Ein Knoten mit
+        # einem fehlenden Schluessel oder einem falschen Stimmsatz
+        # startet, faellt, startet, und das alle zehn Sekunden fuer
+        # immer. **Das laesst sich vom Betrieb nicht unterscheiden**,
+        # ausser am Protokoll, und niemand liest ein Protokoll, dessen
+        # Dienst als „aktiv" gemeldet wird.
+        #
+        # ⚑ Die Begrenzung selbst steht weiter oben, bei der Unit: Sie
+        # gehoert nach `[Unit]` und nicht nach `[Service]`.
 
         # --- Haertung: die Betriebssystem-Grenze, die der
         #     Dateizugriff sonst vermisst. `systemd-analyze security` ist
@@ -226,6 +336,11 @@ in
         ProtectClock = true;
         ProtectHostname = true;
         ProtectProc = "invisible";
+        # ⚑ **Die Ergaenzung zu `ProtectProc`** (2026-09-16): Jenes
+        # verbirgt fremde Prozesse, dieses nimmt die Systemdateien unter
+        # `/proc` dazu, die kein Dienst braucht und die einem Angreifer
+        # sagen, worauf er gestossen ist.
+        ProcSubset = "pid";
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
         RestrictNamespaces = true;
         RestrictRealtime = true;
@@ -239,6 +354,14 @@ in
         AmbientCapabilities = "";
         # Nur der eigene Zustand ist beschreibbar.
         ReadWritePaths = [ "/var/lib/myl-server" ];
+
+        # ⚑ **Was der Dienst anlegt, gehoert ihm allein** (2026-09-16).
+        # Das Zustandsverzeichnis steht auf 0700, aber die Vorgabemaske
+        # 0022 legte darin Dateien an, die jeder lesen duerfte, sobald
+        # jemand das Verzeichnis oeffnet. Darunter liegen die
+        # Kettendatei und die Protokolle. **Eine Berechtigung, die nur
+        # durch den Ordner darueber traegt, traegt einmal.**
+        UMask = "0077";
 
         # Ressourcengrenzen, damit ein Ueberlastangriff gegen den P2P-Port
         # den Knoten trifft und nicht die Maschine.

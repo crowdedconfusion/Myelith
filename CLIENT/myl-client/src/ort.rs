@@ -159,6 +159,27 @@ pub fn gegen(wurzel: Option<&Path>, pfad: &str) -> String {
     }
 }
 
+/// **Das Verzeichnis, auf das sich die Plattenzahlen beziehen.**
+///
+/// ⚑ **Hier und nicht in den Oberflaechen** (seit dem 2026-09-16). Ein
+/// Rechner hat mehrere Datentraeger, und die Frage „wieviel Platz ist
+/// da" hat ohne einen Ort keine Antwort. Das Fenster hatte die
+/// Herleitung, die Konsole haette sie nachbauen muessen, und **zwei
+/// Herleitungen desselben Ortes zeigen irgendwann auf zwei
+/// Datentraeger.**
+///
+/// Ohne Klon gibt es keine Modelle und keine Artefakte; dann ist der
+/// Ort der Einstellungen der einzige, den es sicher gibt.
+pub fn datenort() -> PathBuf {
+    match wurzel() {
+        Some(w) => w.join("INTEGER_LLM"),
+        None => crate::einstellungen::Einstellungen::vorgabepfad()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
+    }
+}
+
 #[cfg(test)]
 mod proben {
     use super::*;

@@ -1025,6 +1025,63 @@ impl IntegerModel {
         self.prompt_vorbereiten_ab(token_ids, 0, cache)
     }
 
+    /// **Die Logits JEDER Position einer Folge, gebuendelt.**
+    ///
+    /// # ⛔️ Warum es sie gibt (2026-09-16)
+    ///
+    /// **Die Messwerkzeuge dieses Projekts rechneten Token fuer Token.**
+    /// `perplexity_probe` und `entscheidungsprobe` liefen in einer
+    /// Schleife ueber [`Model::forward_token`], und damit erreichten sie
+    /// weder die gebuendelte Vorbereitung noch die GPU: Die rechnet erst
+    /// ab sechzehn Eingaben je Buendel, und ein einzelnes Token kommt
+    /// dort nie an. **Die Messung lief also auf dem einen Pfad, den die
+    /// Optimierung nicht beruehrt**, und beim 30B kostete das Stunden.
+    ///
+    /// ⚑ **Dieselbe Rechnung, andere Reihenfolge.** Die Ebenen laufen
+    /// ueber [`Model::vorbereiten_stapel`], dessen Kopf ausfuehrt, warum
+    /// jede einzelne Rechnung dieselbe bleibt. **Der LM-Kopf bleibt
+    /// tokenweise**, Zeichen fuer Zeichen derselbe Aufruf wie in
+    /// [`Model::forward_token`]: Er ist damit nicht schneller, aber auch
+    /// nicht anders, und das ist hier mehr wert. Wer ihn buendelt, tut
+    /// es als eigenen Schritt mit eigener Gegenprobe.
+    ///
+    /// ⚑ **In Fenstern von [`VORBEREITUNGSFENSTER`]**, wie
+    /// [`Model::prompt_vorbereiten_ab`]: Eine Folge von zehntausend
+    /// Token haette sonst zehntausend Zustaende gleichzeitig im
+    /// Speicher.
+    ///
+    /// `pos_start` ist die Position des ersten Tokens; der Speicher wird
+    /// dabei gefuellt wie beim tokenweisen Weg.
+    pub fn logits_stapel(
+        &self,
+        token_ids: &[usize],
+        pos_start: usize,
+        cache: &mut KVCache,
+    ) -> Vec<Vec<i32>> {
+        let cfg = &self.config;
+        let mut aus = Vec::with_capacity(token_ids.len());
+        for (i, fenster) in token_ids.chunks(VORBEREITUNGSFENSTER).enumerate() {
+            let zustaende =
+                self.vorbereiten_stapel(fenster, pos_start + i * VORBEREITUNGSFENSTER, cache);
+            for hidden in &zustaende {
+                // Wortgleich zu `forward_token`, Schritt 3 und 4.
+                let normed = rmsnorm_i16(
+                    hidden,
+                    &self.final_residual_frac,
+                    &self.final_norm_gamma.data,
+                    &self.final_norm_gamma.shifts,
+                    &self.rsqrt_lut,
+                    cfg.rsqrt_input_shift,
+                    cfg.rsqrt_output_frac,
+                    self.inv_n_q20,
+                    self.final_norm_frac,
+                );
+                aus.push(self.logits_aus_normiertem(&normed, cfg.logit_frac_bits));
+            }
+        }
+        aus
+    }
+
     /// **Wie [`Model::prompt_vorbereiten`], aber die ersten `ab` Token
     /// stehen schon im KV-Speicher** und werden nicht noch einmal
     /// gerechnet.

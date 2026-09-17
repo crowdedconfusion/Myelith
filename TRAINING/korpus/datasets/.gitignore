@@ -1,0 +1,7 @@
+# ⚑ Erzeugte Datensaetze werden nicht versioniert, die Erzeuger schon.
+# Jeder Satz entsteht aus einem festen Startwert; wer ihn braucht,
+# stellt ihn mit einem Aufruf wieder her. Ein eingecheckter Datensatz
+# waere eine zweite Wahrheit, die beim ersten Umbau des Erzeugers
+# stillschweigend veraltet.
+/*
+!/.gitignore

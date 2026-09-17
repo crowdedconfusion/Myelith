@@ -56,6 +56,16 @@ pub struct Kapazitaet {
     /// ⚑ **Was von jedem Rechenwerk freigegeben ist, in Prozent**,
     /// unter der Kennung aus dem Hardwarescan.
     ///
+    /// ⚑ **Kein Eintrag heisst ganz freigegeben**, genau wie `None` bei
+    /// den drei Grenzen daneben (Auftrag des Projektinhabers,
+    /// 2026-09-16). Eine ausdrueckliche `0` heisst „dieses Geraet nicht
+    /// benutzen"; sie wird deshalb abgelegt und nicht geloescht.
+    ///
+    /// 📌 **Bis zum 2026-09-16 war es umgekehrt**, und das war eine
+    /// vorsichtige Vorgabe aus der Zeit, als ueber kein Rechenwerk ein
+    /// Rechenpfad fuehrte. Seit `metal` rechnet, waere sie eine GPU, die
+    /// ohne Grund danebensteht.
+    ///
     /// 📌 **Hier stand bis zum 2026-09-10 ein einzelnes
     /// `beschleuniger: bool`.** Es beantwortete die Frage „darf er
     /// ueberhaupt" fuer **alle** Rechenwerke zugleich, und ein Rechner
@@ -81,8 +91,15 @@ pub struct Kapazitaet {
 }
 
 impl Default for Kapazitaet {
-    /// ⚑ **Die vorsichtige Vorgabe, wie bei der Betriebsart.** Wer mehr
-    /// hergeben will, sagt es; wer nichts sagt, gibt nur die CPU.
+    /// ⚑ **Wer nichts sagt, gibt alles her** (Auftrag des
+    /// Projektinhabers, 2026-09-16). Jede Grenze ist `None`, kein
+    /// Rechenwerk ist beschraenkt, und jeder Regler steht damit am
+    /// rechten Anschlag auf „ohne Grenze".
+    ///
+    /// 📌 **Hier stand „wer nichts sagt, gibt nur die CPU".** Das galt,
+    /// solange ueber kein Rechenwerk ein Rechenpfad fuehrte; seit
+    /// `metal` rechnet, hielte es eine GPU zurueck, die der Nutzer
+    /// gerade deshalb gekauft hat.
     fn default() -> Self {
         Self { kerne: None, rechenwerke: Default::default(), speicher_gib: None, platte_gib: None }
     }
@@ -589,6 +606,17 @@ pub struct Oberflaecheneinstellung {
     /// Die Sprache, in der das Fenster spricht.
     #[serde(default)]
     pub sprache: Sprache,
+    /// Wie das Fenster aussieht. ⚑ Die Konsole beruehrt es nicht.
+    ///
+    /// 📌 `#[serde(default)]`, damit eine Ablage aus der Zeit davor
+    /// weiter lesbar bleibt; ohne das waere jede bestehende Datei mit
+    /// einem Schlag kaputt, und `lesen` lehnt eine kaputte Datei zu
+    /// Recht ab.
+    #[serde(default)]
+    pub thema: Fensterthema,
+    /// Wie gross die Schrift im Fenster ist.
+    #[serde(default)]
+    pub schrift: Schriftgroesse,
 }
 
 /// Wohin ausgegebene Gespraeche geschrieben werden.
@@ -894,18 +922,24 @@ pub struct Feld {
     /// waere ein zwoelfmal wiederholtes `true`/`false`, und eines davon
     /// waere irgendwann falsch.
     pub ordner: bool,
-    /// Ob dieses Feld nur den Konsolenclient betrifft.
+    /// **Wo dieses Feld etwas bewirkt.**
     ///
-    /// ⚑ **Dann zeigt das Fenster es nicht** (Festlegung des
-    /// Projektinhabers, 2026-09-11). Eine Einstellung, die an der
-    /// Stelle, an der sie steht, **nichts** bewirkt, ist schlimmer als
-    /// eine fehlende: Wer sie umlegt und nichts sieht, sucht den Fehler
-    /// woanders.
+    /// ⚑ **Wo es nichts bewirkt, steht es nicht** (Festlegung des
+    /// Projektinhabers, 2026-09-11, seit dem 2026-09-16 in beide
+    /// Richtungen). Eine Einstellung, die an der Stelle, an der sie
+    /// steht, **nichts** bewirkt, ist schlimmer als eine fehlende: Wer
+    /// sie umlegt und nichts sieht, sucht den Fehler woanders.
     ///
-    /// ⚠️ **Sie verschwindet nicht aus der Kiste**, nur aus dem
-    /// Fenster: `myl setzen` und `/settings` in der Konsole kennen sie
-    /// weiter, denn dort wirkt sie.
-    pub nur_konsole: bool,
+    /// ⚑ **Ein Feld und keine zwei Schalter.** Zwei Wahrheitswerte
+    /// `nur_konsole` und `nur_fenster` liessen sich beide setzen, und
+    /// dann gaebe es ein Feld, das nirgends steht und ueberall wirkt.
+    /// **Ein Zustand, den es nicht geben darf, gehoert nicht
+    /// darstellbar.**
+    ///
+    /// ⚠️ **Es verschwindet nicht aus der Kiste**, nur aus der einen
+    /// Oberflaeche: `myl setzen` kennt jedes Feld, denn dort wirkt
+    /// jedes.
+    pub gilt: Gilt,
     /// Ob dieses Feld ein Betriebsmittel der Maschine freigibt und
     /// deshalb als Schieberegler gehoert.
     ///
@@ -991,7 +1025,7 @@ const fn feld(
         hinweis: hinweis.0,
         hinweis_en: hinweis.1,
         wahl: &[],
-        nur_konsole: false,
+        gilt: Gilt::Ueberall,
         ordner: art.ist_ordner(),
         freigabe: art.ist_freigabe(),
     }
@@ -1000,7 +1034,40 @@ const fn feld(
 /// Dasselbe fuer ein Feld mit einer festen Auswahl.
 /// Dasselbe Feld, aber nur fuer die Konsole.
 const fn nur_in_der_konsole(f: Feld) -> Feld {
-    Feld { nur_konsole: true, ..f }
+    Feld { gilt: Gilt::NurKonsole, ..f }
+}
+
+/// Dasselbe Feld, aber nur fuer das Fenster.
+const fn nur_im_fenster(f: Feld) -> Feld {
+    Feld { gilt: Gilt::NurFenster, ..f }
+}
+
+/// **Wo ein Feld etwas bewirkt.**
+///
+/// ⚑ **Die Frage wird hier beantwortet und nicht in den
+/// Oberflaechen.** Jede von ihnen zaehlte sonst selbst auf, was sie
+/// nicht zeigt, und die Liste der Ausnahmen ist genau die Sorte
+/// zweiter Liste, die dieses Projekt schon mehrfach eingeholt hat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Gilt {
+    /// In beiden Bedieninstrumenten.
+    Ueberall,
+    /// Nur in `myelith`, dem Konsolenclient.
+    NurKonsole,
+    /// Nur im Fenster.
+    NurFenster,
+}
+
+impl Gilt {
+    /// Zeigt das Fenster dieses Feld?
+    pub const fn im_fenster(self) -> bool {
+        !matches!(self, Self::NurKonsole)
+    }
+
+    /// Zeigt die Konsole dieses Feld?
+    pub const fn in_der_konsole(self) -> bool {
+        !matches!(self, Self::NurFenster)
+    }
 }
 
 const fn feld_wahl(
@@ -1034,13 +1101,105 @@ impl Feld {
     }
 }
 
+/// **Wie das Fenster aussieht.**
+///
+/// ⚑ **Nur das Fenster** (Auftrag des Projektinhabers, 2026-09-16), so
+/// wie [`Konsolendesign`] nur die Konsole betrifft. Die beiden sind
+/// zwei Einstellungen und nicht eine: Ein Terminal bringt sein eigenes
+/// Farbschema mit, ein Fenster nicht, und was fuer das eine „Standard"
+/// heisst, hat im anderen keine Entsprechung.
+///
+/// ⚑ **`Dunkel` ist die Vorgabe, weil es der heutige Stand ist.** Eine
+/// neue Vorgabe aendert das Aussehen jeder bestehenden Ablage auf
+/// einen Schlag, und das waere eine Entscheidung, die niemand getroffen
+/// hat.
+///
+/// ⚠️ **Ein drittes „System" gibt es bewusst nicht** (2026-09-16). Es
+/// waere keine dritte Gestaltung, sondern die Abtretung der Wahl an das
+/// Betriebssystem, und CSS kann eine Palette nicht zwischen einem
+/// Attributblock und einem `@media`-Block teilen: Sie stuende zweimal
+/// da. **Der erste Anlauf hat sie zweimal hingeschrieben und daneben
+/// behauptet, es gebe keine Wiederholung**; die Gegenprobe blieb genau
+/// deshalb stumm. Wer es will, loest im Skript auf und schreibt keine
+/// zweite Palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Fensterthema {
+    /// Mattes Schwarz, Graustufen, Glas: das Bild seit jeher.
+    #[default]
+    #[serde(rename = "dunkel")]
+    Dunkel,
+    /// Dieselbe Oberflaeche auf hellem Grund.
+    #[serde(rename = "hell")]
+    Hell,
+}
+
+impl Fensterthema {
+    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::Dunkel => "dunkel",
+            Self::Hell => "hell",
+        }
+    }
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        match k {
+            "dunkel" => Ok(Self::Dunkel),
+            "hell" => Ok(Self::Hell),
+            andere => Err(format!("unbekanntes Thema {andere}, moeglich sind dunkel, hell")),
+        }
+    }
+}
+
+/// **Wie gross die Schrift im Fenster ist.**
+///
+/// ⚑ **Ein Faktor auf die Grundschrift und keine Liste von Groessen.**
+/// Das Stilblatt rechnet durchgehend in `rem`; wer die Wurzel
+/// verstellt, verstellt alles im selben Verhaeltnis. **Eine zweite
+/// Groessentabelle waere eine zweite Stelle, an der ein Abstand nicht
+/// mitwaechst.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Schriftgroesse {
+    #[serde(rename = "klein")]
+    Klein,
+    #[default]
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "gross")]
+    Gross,
+}
+
+impl Schriftgroesse {
+    /// Die Kennung, wie sie in der Ablage und im Fenster steht.
+    pub const fn kennung(self) -> &'static str {
+        match self {
+            Self::Klein => "klein",
+            Self::Normal => "normal",
+            Self::Gross => "gross",
+        }
+    }
+
+    /// Aus der Kennung, oder ein Fehler mit den moeglichen Werten.
+    pub fn aus(k: &str) -> Result<Self, String> {
+        match k {
+            "klein" => Ok(Self::Klein),
+            "normal" => Ok(Self::Normal),
+            "gross" => Ok(Self::Gross),
+            andere => Err(format!(
+                "unbekannte Schriftgroesse {andere}, moeglich sind klein, normal, gross"
+            )),
+        }
+    }
+}
+
 /// Die Felder, die sich setzen lassen, in der Reihenfolge der Seite.
 ///
 /// ⚑ **Die Reihenfolge ist die Anzeige.** Gleiche Bereiche stehen
 /// beieinander, und wer hier ein Feld einfuegt, verschiebt es damit
 /// auch auf der Seite. Das ist beabsichtigt: Eine zweite Liste, die nur
 /// die Reihenfolge festlegt, waere wieder eine zweite Liste.
-pub const FELDER: [Feld; 15] = [
+pub const FELDER: [Feld; 17] = [
     // ⚑ **Sie steht zuerst** (Festlegung des Projektinhabers,
     // 2026-09-10). Sie beschriftet alles, was darunter kommt: Wer die
     // Seite in einer Sprache oeffnet, die er nicht liest, findet hier
@@ -1058,6 +1217,37 @@ pub const FELDER: [Feld; 15] = [
             wahl("en", "English"),
         ],
     ),
+    // ⚑ **Das Erscheinungsbild steht gleich unter der Sprache**
+    // (Auftrag des Projektinhabers, 2026-09-16). Beides ist dieselbe
+    // Frage, naemlich wie das Fenster einem entgegentritt, und beides
+    // sucht jemand am selben Ort.
+    nur_im_fenster(feld_wahl(
+        "oberflaeche.thema",
+        ("Oberfläche", "Interface"),
+        ("Erscheinungsbild", "Appearance"),
+        (
+            "Wie das Fenster aussieht. Dunkel ist mattes Schwarz mit Glas, hell dieselbe Oberfläche auf hellem Grund; in beiden Fällen Graustufen, hervorgehoben wird über Helligkeit und nicht über Farbe. Der Konsolenclient (myelith) hat sein eigenes Design und bleibt unberührt.",
+            "How the window looks. Dark is matte black with glass, light the same interface on a light ground; both in greyscale, emphasis comes from brightness and not from colour. The terminal client (myelith) has its own theme and stays untouched.",
+        ),
+        &[
+            wahl("dunkel", "Dunkel"),
+            wahl("hell", "Hell"),
+        ],
+    )),
+    nur_im_fenster(feld_wahl(
+        "oberflaeche.schrift",
+        ("Oberfläche", "Interface"),
+        ("Schriftgröße", "Text size"),
+        (
+            "Wie groß die Schrift im Fenster ist. Es wächst alles im selben Verhältnis mit, auch Abstände und Knöpfe, denn das Stilblatt rechnet durchgehend relativ zur Grundschrift.",
+            "How large the text in the window is. Everything scales with it, spacing and buttons included, because the stylesheet is written relative to the base size throughout.",
+        ),
+        &[
+            wahl("klein", "Klein"),
+            wahl("normal", "Normal"),
+            wahl("gross", "Groß"),
+        ],
+    )),
         nur_in_der_konsole(feld_wahl(
         "oberflaeche.design",
         ("Oberfläche", "Interface"),
@@ -1170,8 +1360,8 @@ pub const FELDER: [Feld; 15] = [
         ("Grenzen dieses Rechners", "Limits of this machine"),
         ("Rechenkerne", "CPU cores"),
         (
-            "Wie viele der Kerne dieses Rechners Myelith benutzen darf. Das ändert die Laufzeit und nie das Ergebnis, denn jede Ausgabezeile wird für sich gerechnet. Ganz links heißt: alle.",
-            "How many of this machine's cores Myelith may use. This changes the running time and never the result, because every output row is computed on its own. Far left means: all of them.",
+            "Wie viele der Kerne dieses Rechners Myelith benutzen darf. Das ändert die Laufzeit und nie das Ergebnis, denn jede Ausgabezeile wird für sich gerechnet. Ganz rechts heißt: ohne Grenze, also alle.",
+            "How many of this machine's cores Myelith may use. This changes the running time and never the result, because every output row is computed on its own. Far right means: no limit, so all of them.",
         ),
     ),
     feld(
@@ -1180,8 +1370,8 @@ pub const FELDER: [Feld; 15] = [
         ("Grenzen dieses Rechners", "Limits of this machine"),
         ("Arbeitsspeicher in GiB", "Memory in GiB"),
         (
-            "Wie viel Arbeitsspeicher Myelith belegen darf. Ein Modell, dessen Artefakt darüber liegt, wird gar nicht erst geladen. Ganz links heißt: ohne Grenze.",
-            "How much memory Myelith may take. A model whose artefact is larger is not loaded at all. Far left means: no limit.",
+            "Wie viel Arbeitsspeicher Myelith belegen darf. Ein Modell, dessen Artefakt darüber liegt, wird gar nicht erst geladen. Ganz rechts heißt: ohne Grenze.",
+            "How much memory Myelith may take. A model whose artefact is larger is not loaded at all. Far right means: no limit.",
         ),
     ),
     feld(
@@ -1190,8 +1380,8 @@ pub const FELDER: [Feld; 15] = [
         ("Grenzen dieses Rechners", "Limits of this machine"),
         ("Plattenplatz in GiB", "Disk space in GiB"),
         (
-            "Wie viel Platz Myelith für Modelle und Artefakte bekommt. Der Platz wird beim Start wirklich belegt und beim Beenden wieder freigegeben; was nicht hineinpasst, wird gar nicht erst geholt. Ganz links heißt: ohne Grenze und ohne Reservierung.",
-            "How much room Myelith gets for models and artefacts. The space is really claimed at start and released on exit; what would not fit is not fetched at all. Far left means: no limit and no reservation.",
+            "Wie viel Platz Myelith für Modelle und Artefakte bekommt. Der Platz wird beim Start wirklich belegt und beim Beenden wieder freigegeben; was nicht hineinpasst, wird gar nicht erst geholt. Ganz rechts heißt: ohne Grenze und ohne Reservierung.",
+            "How much room Myelith gets for models and artefacts. The space is really claimed at start and released on exit; what would not fit is not fetched at all. Far right means: no limit and no reservation.",
         ),
     ),
     feld(
@@ -1363,6 +1553,12 @@ impl Einstellungen {
             "oberflaeche.design" => {
                 Feldwert::Text(self.oberflaeche.design.kennung().to_string())
             }
+            "oberflaeche.thema" => {
+                Feldwert::Text(self.oberflaeche.thema.kennung().to_string())
+            }
+            "oberflaeche.schrift" => {
+                Feldwert::Text(self.oberflaeche.schrift.kennung().to_string())
+            }
             andere if andere.starts_with(RECHENWERK_PRAEFIX) => {
                 let kennung = &andere[RECHENWERK_PRAEFIX.len()..];
                 self.kapazitaet
@@ -1412,6 +1608,12 @@ impl Einstellungen {
             // hier nur eine dritte Schreibweise fuer Deutsch.
             "oberflaeche.sprache" => self.oberflaeche.sprache = Sprache::aus(wert)?,
             "oberflaeche.design" => self.oberflaeche.design = Konsolendesign::aus(wert)?,
+            // ⚑ **Kein `aus`, wie bei der Sprache.** Ein Fenster ohne
+            // Erscheinungsbild gibt es nicht; wo andere Felder eine
+            // Grenze wegnehmen koennen, gaebe das hier nur eine zweite
+            // Schreibweise fuer „dunkel".
+            "oberflaeche.thema" => self.oberflaeche.thema = Fensterthema::aus(wert)?,
+            "oberflaeche.schrift" => self.oberflaeche.schrift = Schriftgroesse::aus(wert)?,
             // ⚑ **Die Freigabe je Rechenwerk hat keinen festen Namen**,
             // denn wie viele Rechenwerke es gibt, weiss erst der Scan.
             // Der Setzer bleibt trotzdem die eine Stelle, die die
@@ -1429,10 +1631,24 @@ impl Einstellungen {
                     }
                     p as u8
                 };
-                // ⚑ Null Prozent ist „nichts freigegeben" und damit
-                // dasselbe wie kein Eintrag. Beides abzulegen hiesse
-                // zwei Schreibweisen fuer einen Zustand.
-                if p == 0 {
+                // ⚑ **Hundert Prozent ist dasselbe wie keine Grenze**,
+                // und abgelegt wird davon nur eines. Sonst stuende
+                // derselbe Zustand in zwei Schreibweisen da, und die
+                // Anzeige muesste beide kennen.
+                let wert = if p == 100 { "aus" } else { wert };
+                // ⚑ **Kein Eintrag heisst ganz freigegeben, nicht
+                // gesperrt** (Auftrag des Projektinhabers, 2026-09-16).
+                // Deshalb loescht `aus` den Eintrag und **null wird
+                // abgelegt**: Es ist die Einstellung „dieses Geraet
+                // nicht benutzen", und ohne Eintrag waere sie nicht von
+                // „nie etwas eingestellt" zu unterscheiden.
+                //
+                // 📌 **Bis zum 2026-09-16 war es umgekehrt**, null loeschte
+                // und kein Eintrag hiess null. Die Vorgabe war damit
+                // „kein Rechenwerk hergeben", und ein Regler, der ohne
+                // Zutun ganz rechts steht, waere eine Anzeige gewesen,
+                // die das Gegenteil des Gespeicherten zeigt.
+                if wert == "aus" {
                     self.kapazitaet.rechenwerke.remove(kennung);
                 } else {
                     self.kapazitaet.rechenwerke.insert(kennung.to_string(), p);
@@ -1593,7 +1809,14 @@ mod setzer {
             let z = zeile.trim();
             let Some(rest) = z.strip_prefix('"') else { continue };
             let Some((name, danach)) = rest.split_once('"') else { continue };
-            if danach.trim_start().starts_with("=>") {
+            // ⚑ **Ein Feldname traegt einen Punkt**, und diese Zeile ist
+            // keine Schoenheit, sondern eine Gegenprobe gegen die
+            // Pruefung selbst: Am 2026-09-16 las sie ein `"aus" =>` aus
+            // einer Fallunterscheidung im selben Rumpf als Feldnamen und
+            // schlug an. **Eine Quellprobe, die zu weit greift, meldet
+            // einen Fehler, den es nicht gibt**, und das ist dieselbe
+            // Klasse wie eine, die zu eng greift und nichts meldet.
+            if danach.trim_start().starts_with("=>") && name.contains('.') {
                 namen.push(name.to_string());
             }
         }

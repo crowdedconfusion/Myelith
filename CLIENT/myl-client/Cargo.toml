@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.33.2"
+version = "0.41.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -43,6 +43,7 @@ integer-llm-runtime = { path = "../../INTEGER_LLM/runtime", features = ["cpu-sim
 # Eingriff in den Rechenpfad fuer eine Anzeigefrage.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
 
 # ⚑ **Fuer den Hardwarescan und die Plattenreservierung**, und die
 # Abhaengigkeitsflaeche waechst dabei um **null Kisten**: `libc` stand

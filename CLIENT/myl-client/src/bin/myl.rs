@@ -25,6 +25,8 @@ myl: lokaler Betrieb von Myelith
   myl agent [artefakt] <auftrag>  Die Agentenschleife, lokal
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
   myl auftraege [artefakt] A B    Mehrere Auftraege NEBENLAEUFIG
+  myl skills                      Wissensmappen: wo sie liegen, was da ist
+  myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
 
@@ -60,7 +62,8 @@ wollte jeder alle Kerne, und sie naehmen sie sich gegenseitig weg.
 welcher; ohne Angabe der mitgelieferte `Base`-Ordner unter
 `CLIENT/werkzeugkisten`. Sein **Name** ist der Name der Kiste und sagt
 zugleich, welche eingebauten Werkzeuge dazukommen: `Base` die fuenf
-Dateiwerkzeuge, `Advanced` zusaetzlich `run_command`, ein anderer Name
+Dateiwerkzeuge, `Advanced` zusaetzlich `run_command` und die drei
+Werkzeuge fuer den Mitschnitt, ein anderer Name
 `Base`. Bis zum 2026-09-15 stand daneben eine eigene Auswahl; zwei
 Angaben fuer dieselbe Sache laufen auseinander.
 
@@ -112,6 +115,8 @@ fn main() {
         Some("auftraege") => auftraege(&args[2..]),
         Some("ort") => ort(),
         Some("einstellungen") => einstellungen(),
+        Some("verlauf") => verlauf(&args[2..]),
+        Some("skills") => skills(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
@@ -244,6 +249,15 @@ fn einstellungen() -> i32 {
             for zeile in uebersicht(&e, kerne) {
                 println!("{zeile}");
             }
+            // ⚑ **Die Rechenwerke kommen aus dem Scan und nicht aus der
+            // Ablage** (Auftrag des Projektinhabers, 2026-09-16). Wer
+            // nichts eingestellt hat, hat alles freigegeben, und dann
+            // stuende hier nichts, obwohl eine GPU da ist. **Der Scan
+            // kostet einen Unterprozess**, und dieser Befehl ist eine
+            // Auskunft an einen Menschen, der darauf wartet.
+            for zeile in rechenwerkzeilen(&e) {
+                println!("{zeile}");
+            }
             0
         }
         Err(m) => {
@@ -295,15 +309,54 @@ fn uebersicht(e: &Einstellungen, kerne: usize) -> Vec<String> {
         zeilen.push(format!("  {:<21}{text}", f.name));
     }
 
-    // ⚑ **Die Rechenwerke stehen nur da, wenn eines freigegeben ist.**
-    // Eine leere Ueberschrift behauptet eine Stelle, an der nichts
-    // steht; wer nichts freigegeben hat, sieht die Liste im Fenster, wo
-    // auch die Hoechstwerte stehen.
-    for (kennung, anteil) in &e.kapazitaet.rechenwerke {
-        let name = format!("{}{kennung}", myl_client::einstellungen::RECHENWERK_PRAEFIX);
-        zeilen.push(format!("  {name:<21}{anteil} %"));
-    }
     zeilen
+}
+
+/// Eine Zeile je **gefundenem** Rechenwerk, mit Rechenweg und Anteil.
+///
+/// # ⚑ Warum sie nicht in [`uebersicht`] steht
+///
+/// Jene Funktion rechnet aus der Ablage und sonst nichts, und deshalb
+/// laesst sie sich pruefen. **Diese hier fragt die Maschine**, mit einem
+/// Unterprozess je Aufruf; zusammengelegt haette jede Pruefung der
+/// Uebersicht eine Grafikkarte gebraucht.
+///
+/// 📌 **Bis zum 2026-09-16 stand hier nur, was in der Ablage steht**,
+/// und seit „kein Eintrag" ganz freigegeben heisst, waere das auf einer
+/// Maschine mit GPU eine leere Liste gewesen. **Eine Anzeige, die den
+/// Normalfall verschweigt, zeigt nur die Ausnahme.**
+fn rechenwerkzeilen(e: &Einstellungen) -> Vec<String> {
+    let h = myl_client::hardware::Hardware {
+        kerne: 0,
+        speicher_bytes: None,
+        platte: None,
+        rechenwerke: myl_client::hardware::Hardware::rechenwerke(),
+    };
+    let werke: Vec<_> = h
+        .regler(e)
+        .into_iter()
+        .filter(|r| r.name.starts_with(myl_client::einstellungen::RECHENWERK_PRAEFIX))
+        .collect();
+    // ⚑ **Die Spalte richtet sich nach dem laengsten Namen**, nicht nach
+    // einer getippten Einundzwanzig. Eine Geraetekennung ist so lang wie
+    // der Geraetename, und bei `kap.rechenwerk.apple-m5-pro` klebte der
+    // Wert am Namen.
+    let breite = werke.iter().map(|r| r.name.chars().count()).max().unwrap_or(0).max(19) + 2;
+    werke
+        .into_iter()
+        .map(|r| {
+            let wert = match r.wert {
+                Some(0) => r.links.clone().unwrap_or_else(|| "0 %".to_string()),
+                Some(n) => format!("{n} %"),
+                None => r.rechts.clone(),
+            };
+            // ⚑ **Ein gesperrtes Werk sagt es in derselben Zeile.**
+            // Sonst laese jemand einen Anteil und erwartete Rechenzeit,
+            // die nirgends entsteht.
+            let zusatz = if r.sperrgrund.is_some() { "  (rechnet hier nicht)" } else { "" };
+            format!("  {:<breite$}{:<14}{}{zusatz}", r.name, wert, r.titel)
+        })
+        .collect()
 }
 
 /// Die Einheit hinter einer Zahl, abgeleitet aus der Beschriftung.
@@ -345,6 +398,184 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
         Feldart::Grenze => "ohne Grenze".to_string(),
         _ => "(nicht gesetzt)".to_string(),
     }
+}
+
+/// **Die Wissensmappen fuer einen Menschen**: wo sie liegen, was da ist.
+///
+/// # ⚑ Warum es diesen Befehl gibt
+///
+/// Der allgemeine Ordner liegt neben den Einstellungen, und dieser Pfad
+/// haengt am Betriebssystem. **Ein Ordner, den der Nutzer fuellen soll,
+/// dessen Ort er aber raten muss, wird nicht gefuellt.** Der Befehl
+/// nennt beide Orte und legt den allgemeinen auf Wunsch an.
+fn skills(args: &[String]) -> i32 {
+    use myl_client::skills;
+    let allgemein = skills::allgemeiner_ordner();
+    let wurzel = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .ok()
+        .and_then(|e| e.agent.wurzel.clone())
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .map(std::path::PathBuf::from);
+
+    if args.iter().any(|a| a == "--anlegen") {
+        if let Err(f) = std::fs::create_dir_all(&allgemein) {
+            eprintln!("myl skills: {} : {f}", allgemein.display());
+            return 1;
+        }
+        println!("Angelegt: {}", allgemein.display());
+    }
+
+    println!("Allgemein (gilt ueberall): {}", allgemein.display());
+    match &wurzel {
+        Some(w) => println!("Projekt (dieser Ordner):  {}", skills::projektordner(w).display()),
+        None => println!("Projekt (dieser Ordner):  keiner, es ist kein Arbeitsordner gesetzt"),
+    }
+    println!();
+
+    let mappen = skills::alle(wurzel.as_deref());
+    if mappen.is_empty() {
+        println!("Keine Wissensmappe gefunden.");
+        println!();
+        println!("Eine entsteht aus Markdown mit:");
+        println!("  python3 TRAINING/korpus/md_zu_mappe.py <ordner> --name <kennung> \\");
+        println!("      --ausgabe {}", allgemein.display());
+        println!("`myl skills --anlegen` legt den allgemeinen Ordner an.");
+        return 0;
+    }
+    for m in &mappen {
+        println!("  {:<24} {}", m.name, m.satz);
+    }
+    println!();
+    println!("{} Mappe(n). Der Agent nennt sie mit `list_skills` und liest mit `read_skill`.", mappen.len());
+    0
+}
+
+/// **Der Mitschnitt fuer einen Menschen**: Uebersicht, Zeilen, Loeschen.
+///
+/// # ⚑ Warum es diesen Befehl gibt, obwohl der Agent sein Werkzeug hat
+///
+/// Der Agent liest ueber `read_history` und `list_history`, und beide
+/// sehen nur, was unter der Einhaengegrenze liegt. **Ein Mensch
+/// braucht drei Dinge, die kein Werkzeug leistet**: zu sehen, wie viel
+/// da liegt und wie viel Platz es nimmt; **einen ausdruecklichen
+/// Loeschweg**, denn der Mitschnitt ist Klartext und gehoert dem
+/// Ordner, also nimmt ihn kein Aufraeumen der Gespraechsliste mit; und
+/// eine Stelle, an der die Zeilennummern des Verzeichnisses von Hand
+/// nachpruefbar sind. ⚑ **Dieselben Zahlen wie `sed -n`, `grep -n`
+/// und der Sprung im Editor**, denn es sind Zeilen der Datei.
+fn verlauf(args: &[String]) -> i32 {
+    use myl_client::verlauf;
+
+    let loeschen = args.iter().any(|a| a == "--loeschen");
+    let rest: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+
+    // Der erste freie Wert ist ein Ordner, wenn es ihn gibt.
+    let wurzel = rest
+        .first()
+        .map(|a| std::path::PathBuf::from(a.as_str()))
+        .filter(|p| p.is_dir())
+        // ⛔️ **Danach das Arbeitsverzeichnis, aber nur, wenn dort
+        // wirklich ein Mitschnitt liegt.** Die Konsole schreibt in
+        // ihr Arbeitsverzeichnis („Wer `myelith` hier tippt, hat die
+        // Frage beantwortet"), das Fenster in den eingestellten
+        // Ordner. **Ohne diesen Schritt fragt man im selben
+        // Verzeichnis nach und bekommt „kein Mitschnitt" zu sehen,
+        // waehrend die Datei danebenliegt**, weil die Einstellung auf
+        // einen anderen Ordner zeigt. ⚑ **Die Bedingung ist der
+        // vorhandene Ordner und nicht das Verzeichnis selbst**: Sonst
+        // uebernaehme das Arbeitsverzeichnis jeden Aufruf und der
+        // eingestellte Ordner waere nur noch aus Zufall erreichbar.
+        .or_else(|| {
+            let hier = std::env::current_dir().ok()?;
+            hier.join(myl_client::verlauf::ORDNER).is_dir().then_some(hier)
+        })
+        .or_else(|| {
+            myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+                .ok()
+                .and_then(|e| e.agent.wurzel.clone())
+                .map(std::path::PathBuf::from)
+        })
+        .or_else(|| myl_client::Einstellungen::standard_wurzel().map(std::path::PathBuf::from));
+    let Some(wurzel) = wurzel else {
+        eprintln!("myl verlauf: kein Arbeitsordner. Einen angeben oder `agent.wurzel` setzen.");
+        return 1;
+    };
+
+    // ⛔️ **Loeschen ist eine eigene Handlung**, und sie sagt, was sie
+    // getan hat. Ohne Sitzung geht der ganze Ordner.
+    if loeschen {
+        let sitzung = rest.get(1).map(|s| s.as_str());
+        return match verlauf::loeschen(&wurzel, sitzung) {
+            Ok(0) => {
+                println!("Nichts zu loeschen.");
+                0
+            }
+            Ok(n) => {
+                println!("{n} Sitzung(en) geloescht.");
+                0
+            }
+            Err(f) => {
+                eprintln!("myl verlauf: {f}");
+                1
+            }
+        };
+    }
+
+    let u = verlauf::uebersicht(&wurzel);
+    if u.episoden == 0 {
+        println!("Kein Mitschnitt unter {}/{}.", wurzel.display(), verlauf::ORDNER);
+        println!("Er entsteht beim Verdichten des Gespraechs.");
+        return 0;
+    }
+
+    // Zwei Zahlen: die Zeilen des juengsten Mitschnitts.
+    let zahlen: Vec<usize> = args.iter().filter_map(|a| a.parse::<usize>().ok()).collect();
+    if zahlen.len() >= 2 {
+        let Some((pfad, _)) = &u.juengste else {
+            eprintln!("myl verlauf: der juengste Mitschnitt ist nicht lesbar.");
+            return 1;
+        };
+        return match verlauf::zeilen(pfad, zahlen[0], zahlen[1]) {
+            Ok(t) => {
+                print!("{t}");
+                0
+            }
+            Err(f) => {
+                eprintln!("myl verlauf: {f}");
+                1
+            }
+        };
+    }
+
+    // ⚑ **Was man sieht, raeumt man.** Zahl und Platz stehen deshalb
+    // oben, nicht nur der Inhalt.
+    println!(
+        "{} Episoden aus {} Sitzungen, {:.1} KiB, hoechstens {} Sitzungen.",
+        u.episoden,
+        u.sitzungen,
+        u.bytes as f64 / 1024.0,
+        verlauf::HOECHSTENS_SITZUNGEN
+    );
+    for s in verlauf::sitzungen(&wurzel) {
+        let n = std::fs::read_dir(&s).into_iter().flatten().count();
+        println!(
+            "  {:<24} {n} Episode(n)",
+            s.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default()
+        );
+    }
+    if let Some((pfad, v)) = &u.juengste {
+        println!();
+        println!("Juengste: {} ({}), Sitzung {}", v.datum, v.modell, v.sitzung);
+        println!("  {}", pfad.display());
+        println!();
+        for a in &v.abschnitte {
+            println!("  {:>5}-{:<5} {:<10} {}", a.von, a.bis, a.rolle, a.kopf);
+        }
+    }
+    println!();
+    println!("Zeilen lesen:  myl verlauf <von> <bis>");
+    println!("Loeschen:      myl verlauf --loeschen [<sitzung>]");
+    0
 }
 
 fn setzen(args: &[String]) -> i32 {
@@ -854,9 +1085,10 @@ fn zeigen(nachrichten: &[myl_local_agent::tuerklient::Nachricht], roh: bool) {
 /// ⚑ **Sie aendert kein Ergebnis, nur die Laufzeit.** Der Beleg ist
 /// die Pruefung `dieselbe_antwort_bei_jeder_kernzahl` in der Kernkiste.
 fn kapazitaet_anwenden(e: &Einstellungen) {
-    if let Some(n) = e.kapazitaet.kerne {
-        integer_llm_runtime::kapazitaet::kerne_setzen(n);
-    }
+    // ⚑ **Umgesetzt wird in der Kiste** (seit dem 2026-09-16). Hier
+    // stand dieselbe Zeile wie im Fenster, und in der Konsole stand
+    // gar keine (Fund 381). **Drei Bedieninstrumente, eine Freigabe.**
+    myl_client::hardware::anwenden(e);
 }
 
 /// Was eine eingegebene Zeile bedeutet.
@@ -939,6 +1171,10 @@ fn einen_auftrag(
     roh: bool,
     auftrag: &str,
 ) -> i32 {
+    // ⚑ **Jeder Auftrag bekommt sein Nachschlagebudget neu**
+    // (2026-09-17): Die naechste Frage des Nutzers ist ein neuer Anlass
+    // nachzulesen.
+    ruestung.nachschlagebudget_zuruecksetzen();
     let grenzen = myl_local_agent::vollmacht_grenzen::Sitzungsgrenzen::neu(
         myl_client::lauf::kontrakt_fuer(schritte),
         ruestung.kasten.angebote(),
@@ -946,6 +1182,7 @@ fn einen_auftrag(
     let zuordnung = ruestung.zuordnung();
 
     let erg = myl_local_agent::schleife::Lauf {
+        hausregel: None,
         einhaengung: ruestung.einhaengung.as_ref().map(|e| e.marke()),
         klient: m,
         modell: "lokal",

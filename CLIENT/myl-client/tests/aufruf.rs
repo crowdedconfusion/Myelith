@@ -62,3 +62,86 @@ fn die_startprobe_des_freigabe_jobs_geht_auf() {
     let a = ruf(&["--hilfe"]);
     assert!(a.status.success());
 }
+
+/// ⛔️ **Die Schreibseite und die Leseseite muessen denselben Ordner
+/// meinen.**
+///
+/// Die Konsole schreibt ihren Mitschnitt in **ihr
+/// Arbeitsverzeichnis** („Wer `myelith` hier tippt, hat die Frage
+/// beantwortet"), das Fenster in den **eingestellten** Ordner. Faende
+/// `myl verlauf` nur den eingestellten, bekaeme man im selben
+/// Verzeichnis „Kein Mitschnitt" zu sehen, waehrend die Datei
+/// danebenliegt. **Das ist die Fehlerklasse, die dieses Projekt am
+/// haeufigsten trifft: dieselbe Angabe an zwei Orten, und der zweite
+/// meldet sich nicht.**
+///
+/// ⚑ Die Umgebung zeigt hier ausdruecklich **woandershin**, damit die
+/// Pruefung die Rangfolge belegt und nicht einen Zufall.
+#[test]
+fn verlauf_findet_den_mitschnitt_im_arbeitsverzeichnis() {
+    let hier = tempfile::tempdir().expect("Ordner");
+    let anderswo = tempfile::tempdir().expect("Ordner");
+    myl_client::verlauf::schreiben(
+        hier.path(),
+        "probe-hier",
+        "myelith-0.6b",
+        &[
+            ("user".to_string(), "Eine Frage.".to_string()),
+            ("assistant".to_string(), "Eine Antwort.".to_string()),
+        ],
+    )
+    .expect("der Mitschnitt laesst sich schreiben");
+
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .arg("verlauf")
+        .current_dir(hier.path())
+        .env("MYL_ARBEITSORDNER", anderswo.path())
+        .env("XDG_CONFIG_HOME", anderswo.path())
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+
+    let text = String::from_utf8_lossy(&a.stdout);
+    assert_eq!(a.status.code(), Some(0), "ein vorhandener Mitschnitt ist kein Fehler");
+    assert!(
+        text.contains("probe-hier"),
+        "die Sitzung aus dem Arbeitsverzeichnis steht in der Uebersicht: {text}"
+    );
+    assert!(
+        !text.contains("Kein Mitschnitt"),
+        "der Mitschnitt liegt im Arbeitsverzeichnis und wird gefunden: {text}"
+    );
+}
+
+/// ⚑ **Und die Umkehrung: ohne Mitschnitt im Arbeitsverzeichnis wird
+/// das Arbeitsverzeichnis nicht genommen.**
+///
+/// Ohne diese zweite Haelfte uebernaehme es **jeden** Aufruf, und der
+/// eingestellte Ordner waere nur noch aus Zufall erreichbar. **Die
+/// Bedingung ist der vorhandene `.AGENT`-Ordner, und genau das wird
+/// hier belegt.**
+///
+/// ⚠️ Geprueft wird, dass der **leere** Ordner nicht vorkommt, und
+/// nicht, welcher stattdessen gewinnt: Welcher es ist, haengt an der
+/// Einstellungsdatei dieser Maschine, und eine Pruefung, die daran
+/// haengt, prueft die Maschine und nicht das Programm.
+#[test]
+fn ohne_mitschnitt_im_arbeitsverzeichnis_zaehlt_das_arbeitsverzeichnis_nicht() {
+    let hier = tempfile::tempdir().expect("Ordner");
+    let name = hier
+        .path()
+        .file_name()
+        .map(|x| x.to_string_lossy().to_string())
+        .expect("der Ordner hat einen Namen");
+
+    let a = Command::new(env!("CARGO_BIN_EXE_myl"))
+        .arg("verlauf")
+        .current_dir(hier.path())
+        .output()
+        .expect("das gebaute Binaerprogramm laesst sich starten");
+
+    let text = String::from_utf8_lossy(&a.stdout);
+    assert!(
+        !text.contains(&name),
+        "ein Arbeitsverzeichnis ohne Mitschnitt wird nicht genommen: {text}"
+    );
+}

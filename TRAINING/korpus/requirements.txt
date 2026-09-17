@@ -1,0 +1,8 @@
+# ⚑ Die Buchkette braucht nichts zwingend. Was hier steht, macht sie
+# besser, und das Rad dazu liegt unter `raeder/`, also ohne Netz.
+#
+# ⚠️ `tokenizers` steht bewusst NICHT hier. Es ist uebersetzt und damit
+# je Plattform ein eigenes Rad; drei Plattformen waeren rund zwanzig
+# Megabyte im Repositorium fuer eine Genauigkeit, die der Bericht sonst
+# als Schaetzung ausweist. Wer es hat, wird es benutzt.
+pypdf==6.19.0

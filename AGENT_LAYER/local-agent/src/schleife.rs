@@ -45,7 +45,9 @@ use crate::betrieb::Betriebsart;
 use crate::strom::{Entscheidung, Sitzungsstrom};
 use crate::tuerklient::{Modellweg, Nachricht, Tuerfehler};
 use crate::vollmacht_grenzen::{Grenzfehler, Sitzungsgrenzen};
-use crate::werkzeug::{angebot, argumente_pruefen, vorschlaege, Erlaubnis, Werkzeugergebnis};
+use crate::werkzeug::{
+    angebot_mit_regel, argumente_pruefen, vorschlaege, Erlaubnis, Werkzeugergebnis,
+};
 
 /// Was ein Lauf braucht.
 pub struct Lauf<'a> {
@@ -55,6 +57,14 @@ pub struct Lauf<'a> {
     /// ⚑ **Seit dem 2026-09-08 ein Merkmal statt eines Klienten**, damit
     /// derselbe Agent mit und ohne Netz laeuft (CLIENT 0.2).
     pub klient: &'a dyn Modellweg,
+    /// Eine Hausregel, die hinter der Werkzeugansage steht.
+    ///
+    /// ⚑ **`None` ist die Vorgabe und der Normalfall.** Sie ist
+    /// gemessen worden und nicht geraten: Ohne sie ruft ein 0,6B in 27
+    /// Laeufen kein einziges Werkzeug. ⛔️ **Im Netz muss sie fuer alle
+    /// Knoten dieselbe sein**, sonst ruesten zwei Knoten am selben
+    /// Auftrag verschieden.
+    pub hausregel: Option<&'a str>,
     /// Welches Modell.
     pub modell: &'a str,
     /// Die Grenzen aus dem Sitzungskontrakt.
@@ -210,7 +220,8 @@ impl<'a> Lauf<'a> {
             self.einhaengung,
         );
         let erlaubnis = Erlaubnis::aus_angebot(self.kasten.angebote());
-        let mut nachrichten = vec![angebot(self.kasten.angebote(), self.ansageform)];
+        let mut nachrichten =
+            vec![angebot_mit_regel(self.kasten.angebote(), self.ansageform, self.hausregel)];
         nachrichten.extend(verlauf.iter().filter(|n| n.role != "system").cloned());
         // Wo der Auftrag steht; das Verdichten laesst ihn woertlich stehen.
         let mut auftrag_bei = nachrichten.len();

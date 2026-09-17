@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.48.4 (`myl-client` 0.33.2, `myl-oberflaeche` 0.36.3, `myl-console` 0.10.2)
-> **Datum:** 2026-09-15
+> **Version:** 0.56.0 (`myl-client` 0.41.0, `myl-oberflaeche` 0.38.3, `myl-console` 0.12.3)
+> **Datum:** 2026-09-16
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -33,7 +33,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command`, ein anderer Name `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
+| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie), ein anderer Name `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
@@ -114,6 +114,575 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.56.0 – 2026-09-17 (Wissensmappen: zwei Orte, zwei Werkzeuge, und ein Fund beim Einbauen)
+
+`myl-client` **0.41.0**. Auftrag des Projektinhabers.
+
+⚑ **Der Agent bekommt Wissen, das nicht im Kontext steht**, an zwei
+Orten: `<einhängung>/.AGENT/skills/` für das, was zu **diesem Projekt**
+gehört, und `<konfiguration>/skills/` für das, was **überall** gilt. Bei
+gleichem Namen gewinnt das Projekt; die allgemeine Mappe ist die
+Vorgabe.
+
+⚑ **Der Projektordner entsteht mit `.AGENT`**, also beim ersten
+Verdichten, und der Zeitpunkt ist der Punkt: **Nach jeder Verdichtung
+ist das Wissen aus dem Kontext verschwunden, und dann muss es einen Ort
+geben, an dem es noch steht.** Die Zusammenfassung nennt seither die
+vorhandenen Mappen, gedeckelt auf zwanzig Zeilen und mit je einem Satz.
+
+⛔️ **Braucht es dafür `read_skill`? Für den einen Ordner ja, für den
+anderen nein, und der Unterschied ist die Einhängegrenze.** Der
+Projektordner liegt **unter** ihr: `list_directory`, `read_file` und
+`search_files` erreichen ihn schon, ein viertes Werkzeug zum Lesen einer
+Datei wäre nur eine weitere Wahl für ein kleines Modell. Der allgemeine
+Ordner liegt **außerhalb**; ihn zu erreichen hieße entweder die Grenze
+aufzuweichen oder ein Werkzeug zu bauen, das nur ihn liest. ⚑ **Die
+Grenze ist die Zusage des ganzen Werkzeugsatzes**, also das Werkzeug.
+
+⚑ **`list_skills` nennt, `read_skill` liefert**, beide in `Advanced` und
+nicht in `Base`, aus demselben gemessenen Grund wie die
+Verlaufswerkzeuge. Sie hängen am selben **Nachschlagebudget**: Der
+Kontext lässt sich über jeden Leseweg füllen, und drei eigene Budgets
+wären drei Wege. `read_skill` gibt die **Eingangsseite**, nicht die
+Mappe; welches Kapitel gebraucht wird, entscheidet das Modell danach.
+
+⛔️ **Der Name wird nie zu einem Pfad.** `read_skill` hält ihn gegen die
+gefundenen Mappen; `../../etc/passwd` ist damit einfach keine Mappe,
+geprüft in beide Richtungen.
+
+⛔️ **Und der Einbau hat einen Fehler freigelegt, den die vorhandenen
+Prüfungen sofort gefangen haben:** `.AGENT/skills/` wurde als **Sitzung**
+gezählt. Die Obergrenze von zwanzig wurde damit faktisch zu neunzehn,
+und je nach Änderungszeit hätte das Aufräumen **die Mappen gelöscht**.
+Ursache war, dass `beschneiden` seine **eigene** Vorstellung davon hatte,
+was eine Sitzung ist. ⚑ **Jetzt gibt es eine Regel an einer Stelle**
+(`ist_sitzung`: ein Ordner mit einem Mitschnitt darin), und sie hängt am
+Inhalt statt an einer Liste verbotener Namen: Wer morgen einen zweiten
+Nebenordner anlegt, ist automatisch geschützt.
+
+⚑ **`myl skills`** nennt beide Orte und was darin liegt, `--anlegen`
+legt den allgemeinen an. **Ein Ordner, den der Nutzer füllen soll,
+dessen Ort er aber raten muss, wird nicht gefüllt.**
+
+### v0.55.0 – 2026-09-17 (die Verlaufswerkzeuge verlassen `Base`, und eine Schranke ersetzt eine Bitte)
+
+`myl-client` **0.40.0**, `myl-oberflaeche` **0.38.3**, `myl-console`
+**0.12.3**. Festlegungen des Projektinhabers nach der Messung.
+
+⛔️ **Die drei Verlaufswerkzeuge sind aus `Base` heraus.** Sie standen
+dort einen Tag lang, weil „Nachlesen keine Sache der Modellgröße" ist.
+⚑ **Die Messung sagt das Gegenteil, und zwar für genau das Modell, für
+das diese Kiste gemacht ist:** Das 0,6B ruft sie in 27 Läufen **kein
+einziges Mal**. ⚑ **Drei Werkzeuge, die nie gerufen werden, sind nicht
+folgenlos:** Sie stehen in jeder Ansage, kosten in jeder Runde Kontext
+und machen die Auswahl schwerer. **Eine Kiste ist eine Auswahl und keine
+Sammlung.** `Base` hat damit wieder fünf Werkzeuge, `Advanced` neun.
+
+⚠️ **Der Preis dieser Entscheidung, damit er dasteht:** Wer den
+Mitschnitt nutzen will, nimmt `Advanced`, und darin liegt auch
+`run_command`, das die Einhängegrenze nicht einhält. **Ein feiner
+geschnittener Satz wäre ein eigener Ordner unter
+`CLIENT/werkzeugkisten`**, denn eine Kiste ist ein Ordner.
+
+⛔️ **Und eine Schranke ersetzt eine Bitte.** Die drei Werkzeuge teilen
+sich ein **Budget von 8 000 Zeichen je Auftrag** (rund 2 000 bis 2 700
+Token, unter 7 % eines Kontexts von 40 960). Was darüber hinausgeht,
+bekommt eine Absage mit Begründung statt stiller Kürzung, und das
+Budget beginnt mit der nächsten Frage neu.
+
+⚑ **Der Grund steht in zwei Messungen:** Über das Verzeichnis fand ein
+Modell die Einzelheit, und der Kontext am Ende war **so groß wie der
+ganze Verlauf**, den die Verdichtung gerade weggeräumt hatte. Und eine
+Bitte hilft dagegen nicht: **Modelle befolgen „ruf das Werkzeug nur,
+wenn es nötig ist" nicht** (9 von 9 unnötige Aufrufe, auch mit
+ausdrücklichem Gegenfall im Systemprompt). ⚑ **Also hält der Code, worum
+man ein Modell nicht bitten kann.**
+
+⚑ **Damit entscheidet auch nicht mehr eine feste Zahl von Abschnitten,
+ob `list_history` das ganze Verzeichnis gibt**, sondern die Frage, ob es
+in das Budget passt. Die Zahl war vorher zweimal falsch: zu klein (das
+Verzeichnis verlor die Überschriften, das Modell suchte blind) und zu
+groß (rund 6 000 Token in einer Antwort).
+
+⚑ **War die Aufgabe für das kleine Modell zu schwer? Nachgemessen, und
+nein.** Drei weitere Reihen zu je neun Läufen, die die Hürde senken:
+mit der ausdrücklichen Anweisung nachzuschlagen **0 von 9**, mit der
+deutschen Werkzeugansage **0 von 9**, mit beidem **0 von 9**. Das 0,6B
+erfindet eine Kennung aus der Zusammenfassung, erzählt das Verzeichnis
+nach oder setzt einen unbrauchbaren Aufruf ab. ⚑ **Nicht die Aufgabe war
+zu schwer, sondern das Werkzeugformat liegt außerhalb dessen, was dieses
+Modell sicher bedient.**
+
+⚑ **Und die Wege, die tragen, tragen weiter:** mit Budget und
+`Advanced` 4B **9 von 9**, 30B **7 von 9**, beide bei rund 2 000 bis
+2 080 Token. **Das Budget schneidet nichts weg, was gebraucht wird.**
+
+### v0.54.0 – 2026-09-17 (der Nachweis, dass das Nachschlagen wirkt, und drei Funde auf dem Weg dorthin)
+
+`myl-client` **0.39.0**. Frage des Projektinhabers: Findet ein Modell
+eine Einzelheit wieder, die aus seinem verdichteten Kontext verschwunden
+ist, ohne den Kontext zu füllen?
+
+⛔️ **Die ehrliche Antwort lautete zuerst: ungeprüft.** Geprüft war jedes
+Stück der Mechanik, nicht aber der Zweck. **Ein Werkzeug, von dem
+niemand weiß, ob ein Modell es findet, ist eine Vermutung mit
+Quelltext.** Also eine Messung: `nadelprobe`, erfundener Verlauf,
+erfundener Kontext, eine Kennung darin, die kein Modell raten kann und
+die je Lauf wechselt.
+
+⚑ **Verlauf und Kontext sind beide gesetzt, und die Abwesenheit der
+Nadel wird zugesichert.** Der erste Entwurf ließ das Modell wirklich
+verdichten und hoffte, dass die Nadel dabei verschwindet: Das 0,6B
+schreibt statt zusammenzufassen den Anfang ab, und das 4B **behält** eine
+auffällig markierte Einzelheit (3 von 3 Läufen ungültig). **Damit war die
+Verdichtung Versuchsaufbau und Messgegenstand zugleich.** Jetzt prüft
+die Probe vor jedem Lauf den ganzen Prompt auf die Kennung.
+
+⛔️ **Fund 387: die Verdichtung machte den Kontext größer.** Das
+Verzeichnis in der Zusammenfassung trug **eine Zeile je Nachricht**.
+Gemessen an 120 Nachrichten (4 476 Token) wog es **3 597 Token**, und die
+„verdichtete" Fassung war mit bis zu 5 659 Token **größer als das
+Original**. ⚑ **Ein Verzeichnis, das mitwächst, kann nie sparen. Was in
+den Kontext geht, braucht eine Schranke, die nicht vom Gespräch
+abhängt.** Jetzt höchstens 16 Zeilen, benachbarte Abschnitte zu Blöcken
+mit Zeilenspanne; kurze Gespräche behalten die genaue Karte. Danach bei
+doppelt so langem Verlauf: 8 866 Token hinein, **1 522 hinaus**, davon
+624 das Verzeichnis.
+
+⛔️ **Dieselbe Schranke war in `list_history` falsch, und die Messung hat
+es gezeigt.** Das 4B rief das Werkzeug, bekam eine Karte **ohne die
+gesuchte Überschrift** und suchte danach blind in 27-Zeilen-Fenstern
+weiter: sechs Aufrufe, kein Treffer. ⚑ **Die Köpfe sind der ganze Sinn
+eines Verzeichnisses.** Die Schranke gehört in die Zusammenfassung, die
+in **jeder** Runde im Kontext steht, und nicht in ein Werkzeug, dessen
+Kosten einmalig und ausdrücklich verlangt sind. Grenze dort jetzt 400
+Abschnitte, und darüber sagt die Antwort, dass sie gruppiert.
+
+⛔️ **Fund 388: es fehlte die Suche.** Mit vollem Verzeichnis fand das 4B
+die Nadel in 6 von 9 Läufen, aber der Kontext am Ende war rund **8 890
+Token**, also so groß wie der ganze Verlauf, den die Verdichtung gerade
+weggeräumt hatte. ⚑ **Das Verzeichnis beantwortet die falsche Frage:**
+gefragt ist nicht „wie ist der Verlauf gegliedert", sondern „wo steht
+dieses Wort". Neu ist **`search_history`**, in jeder Kiste, Klartext
+statt regulärem Ausdruck, höchstens 20 Treffer.
+
+⛔️ **Fund 389: eine Suche, die nur zeigt, wird für die Auskunft
+gehalten.** Die erste Fassung gab nach dem Grundsatz „nennen und nicht
+liefern" nur Zeilennummern zurück, und das 4B antwortete in **9 von 9**
+Läufen „läuft unter der Kennung **612-614**". Die zweite gab die
+gefundene Zeile, und das ist die **Frage**, in der das Suchwort steht,
+während die Auskunft in der **Antwort** darunter steht: wieder kein
+Treffer. 📌 **Ein Grundsatz, der an einer Stelle gilt, gilt nicht
+überall:** Für `list_history`, das ungefragt fremde Sitzungen anfasst,
+ist „nennen und nicht liefern" richtig; für eine Suche ist die Stelle
+genau das, wonach gefragt wurde. Jetzt liefert sie den ganzen Wechsel,
+höchstens 400 Zeichen je Treffer.
+
+⚑ **Das Ergebnis, 27 Läufe je Weg über drei Stellen im Verlauf:**
+
+| Modell | Weg | Läufe | gefunden | Kontext am Ende |
+|---|---|---|---|---|
+| `myelith-4b` | nur Verzeichnis, beschnitten | 9 | 0 | 1 785 bis 9 117 |
+| `myelith-4b` | volles Verzeichnis | 9 | 6 | rund 8 890 |
+| `myelith-4b` | **`search_history`** | 9 | **9** | **rund 2 015** |
+| `myelith-30b-a3b` | **`search_history`** | 15 | **10** | rund 2 040 |
+| `myelith-0.6b` | alle drei Wege | 27 | 0 | rund 1 700 |
+
+Der ungekürzte Verlauf wiegt 8 866 Token. ⚑ **Die Gegenprobe lief in
+jedem einzelnen Lauf mit** (dieselbe Frage, derselbe Kontext, **leerer**
+Mitschnitt) und traf **kein einziges Mal**.
+
+⛔️ **Das 30B ist nicht besser, sondern schlechter: 10 von 15.** Die
+Ursache ist nachgelesen und keine Vermutung: **Es beschreibt manchmal,
+was man tun könnte, statt es zu tun** („Sie können mit `search_history`
+suchen … ich liste zunächst die Sitzungen auf"), und setzt danach keinen
+Aufruf ab. ⚑ **Wenn es ruft, trifft es in einem Zug.** ⚠️ Das Gemisch
+hält die Werkzeugform schlechter ein als das dichte 4B, und warum, ist
+nicht untersucht.
+
+⛔️ **Das 0,6B ruft in 27 Läufen kein einziges Werkzeug** und erfindet
+stattdessen eine Kennung. ⚠️ **Wer den Mitschnitt für das 0,6B baut, baut
+ihn für niemanden**; er trägt ab dem 4B.
+
+⚑ **Nachtrag, dieselbe Sitzung: Lässt sich der Aufruf mit einem
+Systemprompt erzwingen?** Gemessen in 63 weiteren Läufen, mit einer
+Hausregel **hinter** der Werkzeugansage (die Vorlage selbst bleibt
+zeichengleich) und einer **Kontrollfrage, deren Antwort im Kontext
+steht**, denn eine Regel hat einen Preis.
+
+| Modell | Regel | Nadel | Kontrollfrage richtig | davon Umweg |
+|---|---|---|---|---|
+| 0,6B | keine / streng / mild | 0/9 | 9/9 / **1/9** / 8/9 | 0/9 |
+| 4B | keine / streng / mild | 9/9 | 9/9 | 9/9 |
+| 30B | keine / mild | 17/24 / **9/9** | 9/9 | **0/9** / **9/9** |
+
+⚑ **Ja, es wirkt: beim 30B von 17 aus 24 auf 9 aus 9**, genau dem
+Modell, dessen Fehlschläge aus „beschreiben statt tun" bestanden. ⛔️
+**Und es kostet: dasselbe Modell ruft danach auch dann ein Werkzeug,
+wenn die Auskunft schon im Kontext steht (0 von 9 auf 9 von 9).** ⛔️
+**Die Bedingung „nur wenn nötig" befolgt kein Modell**, auch nicht die
+milde Fassung, die den Gegenfall ausdrücklich nennt: **Man kann einen
+Aufruf erzwingen, sein Unterbleiben nicht erbitten.**
+
+📌 **Beim 0,6B ist die strenge Regel schädlich**: kein einziger Aufruf,
+und die Kontrollfrage fällt von 9 von 9 auf **1 von 9**. **Eine
+Anweisung, die ein Modell nicht befolgen kann, ist nicht wirkungslos,
+sondern verdrängt Platz und verschlechtert, was sonst richtig war.**
+
+📌 **Eine Grundlinie hat dabei eine Vermutung widerlegt:** Die Umwege des
+4B hatte ich für die Wirkung der Regel gehalten; es ruft die Suche auch
+ohne jede Regel bei jeder Kontrollfrage. **Der Umweg gehört dem Modell,
+nicht der Regel.**
+
+⚠️ **Offen und ausdrücklich nicht nebenbei entschieden:** ob der Client
+die Regel als Einstellung bekommt. Heute setzt sie nur die Messung; eine
+Vorgabe, die für zwei von drei Modellen falsch ist, wäre schlimmer als
+keine, und ⛔️ **im Netz muss sie für alle Knoten dieselbe sein**, sonst
+rüsten zwei Knoten am selben Auftrag verschieden.
+
+⚠️ **Was nicht gemessen ist:** eine Einzelheit, nach der man mit anderen
+Worten fragt als denen, mit denen sie aufgezeichnet wurde; mehrere
+Sitzungen in einem Ordner; der Fensterclient selbst (die Probe fährt
+denselben Weg, ist aber nicht er).
+
+### v0.53.0 – 2026-09-16 (der Mitschnitt gehört dem Ordner, nicht der Sitzung, und er ist Klartext)
+
+`myl-client` **0.38.0**, `myl-oberflaeche` **0.38.2**, `myl-console`
+**0.12.2**. Festlegungen des Projektinhabers.
+
+⛔️ **Die Verschlüsselung ist wieder entfallen, am selben Tag, an dem sie
+kam.** Sie versagt im Hauptfall: **Mehrere Personen am selben Ordner**
+haben jede einen anderen Schlüssel, also liest niemand den Mitschnitt
+eines anderen. ⛔️ **Und schon eine einzige Person mit zwei Maschinen**,
+denn der Schlüssel lag in der Konfiguration und der Ordner wandert über
+einen Abgleichdienst mit: Auf dem zweiten Rechner meldet sich „falscher
+Schlüssel oder veränderte Datei", also genau das, was man bei einem
+Angriff erwartet, und es ist der eigene Laptop.
+
+⚑ **Das ist die Fehlerklasse, die dieses Projekt dauernd benennt:** etwas,
+das dasteht und aussieht, als funktioniere es, und genau in dem Fall
+versagt, für den es gedacht war. **Die Frage nach dem gemeinsamen Ordner
+hätte vor dem ersten Rahmen stehen müssen**, nicht danach.
+
+**Die Zusage lautet seither:** Der Mitschnitt ist Klartext und so
+geschützt wie das Dateisystem, auf dem er liegt.
+
+⚑ **Dafür kommt eine Sicherung neu dazu, und sie kostet nichts:** eine
+`.gitignore` **im** `.AGENT`-Ordner mit `*`. Ein Arbeitsordner ist sehr
+oft ein Repositorium, und ein Klartextverlauf in einem Commit ist genau
+der Unfall, gegen den vorher die Verschlüsselung stand. Der Ordner
+schließt sich selbst aus, ohne die `.gitignore` des Nutzers anzufassen.
+
+⚑ **Der Mitschnitt gehört dem Ordner, nicht der Sitzung.** `.AGENT/`
+liegt im Projektordner, und was dort steht, ist „was in diesem Projekt
+geschehen ist". Eine Sitzung ist eine Episode davon (`.AGENT/<sitzung>/`),
+der Ordner ist die Kontinuität. ⚑ **Genau deshalb kann ein neuer Agent
+aufnehmen, woran der vorige gearbeitet hat** , auch wenn das Gespräch
+längst aus der Liste ist.
+
+⛔️ **Und daraus folgt, was das Aufräumen der Gesprächsliste NICHT tut:**
+Es fasst den Mitschnitt nicht an. **Ein Gespräch aus der Liste zu nehmen
+ist Aufräumen, einen Verlauf zu löschen ist eine eigene Handlung**, und
+die gibt es jetzt: `myl verlauf --loeschen [<sitzung>]`. Vorher gab es
+dafür gar nichts.
+
+⚑ **Eine Obergrenze von zwanzig Sitzungen je Ordner**, die ältesten
+fallen heraus. **Nach Zahl und nicht nach Tagen**, weil eine Frist den
+überrascht, der nach sechs Wochen nachschlägt, und **ganze Sitzungen und
+keine halben**, weil ein Verlauf mit einem Loch keines zeigt. ⚠️ Zwanzig
+ist geschätzt und nicht gemessen.
+
+⚑ **Die Zeilennummern zeigen jetzt auf Zeilen der Datei**, nicht auf
+einen inneren Verlaufsteil. Ein Mensch springt im Editor dorthin,
+`grep -n` meldet dieselbe Zahl, `read_history` gibt dieselbe heraus. Der
+Versatz wird gerechnet **und danach geprüft**: Ein Verzeichnis, das um
+eine Zeile danebenliegt, schickt jeden Leser an die falsche Stelle, und
+niemand sieht es ihm an.
+
+⚑ **`list_history`**, ohne einen einzigen Parameter: Es nennt die
+früheren Sitzungen und gibt das Verzeichnis der jüngsten. **Es nennt und
+liefert nicht**, denn ein Mitschnitt aus einer fremden Sitzung ist der
+Verlauf eines anderen Gesprächs; ihn ungefragt in den Kontext zu ziehen,
+wäre eine Überraschung.
+
+⚑ **`myl verlauf` zeigt Zahl, Platz und Grenze**, denn was man sieht,
+räumt man.
+
+⛔️ **Fund 386, gefunden beim letzten Handgriff dieser Sitzung: Die
+Schreibseite und die Leseseite meinten verschiedene Ordner.** Die
+Konsole schreibt ihren Mitschnitt in **ihr Arbeitsverzeichnis** („Wer
+`myelith` hier tippt, hat die Frage beantwortet"), das Fenster in den
+**eingestellten** Ordner, und `myl verlauf` sah nur den eingestellten.
+**Wer nach einem Konsolengespräch im selben Verzeichnis nachfragte,
+bekam „Kein Mitschnitt" zu sehen, während die Datei danebenlag.** ⚑
+**Es ist wieder dieselbe Angabe an zwei Orten**, und der zweite Ort hat
+sich nicht gemeldet. `myl verlauf` nimmt jetzt das Arbeitsverzeichnis,
+**wenn dort ein `.AGENT` liegt**, und sonst wie bisher die Einstellung:
+Ohne diese Bedingung übernähme das Arbeitsverzeichnis jeden Aufruf.
+Zwei Prüfungen, eine je Richtung, beide gegengeprobt.
+
+### v0.52.0 – 2026-09-16 (`read_history`: der Agent liest im Mitschnitt nach, und zwar in jeder Kiste)
+
+`myl-client` **0.37.0**. Auftrag des Projektinhabers: das Werkzeug bauen
+und **in alle Kisten** legen, denn nachlesen zu können, was man selbst
+gesagt bekommen hat, ist keine Sache der Modellgröße.
+
+⚑ **`read_history(von, bis)`**, in `Base` und damit über die Kette auch
+in `Advanced` und `1337`. Es schreibt nicht und braucht deshalb keine
+Schreiberlaubnis: Es liest nach, was ohnehin gesagt wurde.
+
+⛔️ **Der erste Entwurf war falsch herum, und eine bestehende Prüfung hat
+es gefangen.** Er gab ohne Argumente das Verzeichnis heraus und mit
+`von`/`bis` die Zeilen, also mit **optionalen** Parametern. Die Regel
+dieses Projekts sagt: **kein Werkzeug hat einen optionalen Parameter**,
+denn er ist eine Entscheidung, die das Modell treffen muss, und ein
+kleines Modell bezahlt sie mit seinem Budget.
+
+⚑ **Die bessere Antwort war nicht ein zweites Werkzeug, sondern ein
+anderer Ort für das Verzeichnis:** Es steht jetzt in der
+**Zusammenfassung**, also dort, wo das Modell ohnehin hinsieht. Damit
+kostet es keinen Aufruf, das Werkzeug behält genau eine Aufgabe, und
+beide Parameter sind verlangt. **Es ist außerdem klein**, eine Zeile je
+Nachricht gegen den ganzen Verlauf, den es ersetzt.
+
+⛔️ **Ein Deckel von 200 Zeilen je Aufruf, und er ist der Sinn der Sache
+und keine Vorsicht.** Der Mitschnitt entsteht, weil der Kontext voll
+war; ein Werkzeug, das ihn in einem Zug zurückholt, macht die
+Verdichtung rückgängig. Wer mehr braucht, fragt zweimal, und dann ist es
+eine Entscheidung. ⚑ **Die Kürzung sagt sich selbst an**, mit der Zeile,
+ab der weiterzulesen ist: Eine stillschweigend gekürzte Antwort liest
+sich wie eine vollständige.
+
+⚑ **Erst der Aufruf, dann die Welt.** Ein fehlendes Argument wird
+benannt, auch wenn es gerade nichts zu lesen gäbe; sonst bekäme ein
+Modell, das `bis` vergessen hat, die Auskunft „es gibt keinen
+Mitschnitt" und suchte den Fehler an der falschen Stelle.
+
+⚑ **Fünf Prüfungen, drei Gegenproben, alle beißen.**
+
+### v0.51.0 – 2026-09-16 (der Mitschnitt: was beim Verdichten verlorenginge, verschlüsselt im Arbeitsordner)
+
+`myl-client` **0.36.0**, `myl-oberflaeche` **0.38.1**, `myl-console`
+**0.12.1**. Auftrag des Projektinhabers.
+
+⚑ **Verdichten ersetzt den Verlauf durch eine Zusammenfassung, und die
+Urfassung war danach weg.** Das ist richtig für den Kontext, der eine
+Grenze hat, und falsch für alles, wonach jemand später fragt: die genaue
+Zahl, den Pfad, die Fehlermeldung von vorhin. Jetzt entsteht **im selben
+Augenblick** ein Mitschnitt unter `.AGENT/` im Arbeitsordner, und die
+Zusammenfassung selbst nennt ihn. ⚑ **Genau dort ist die Urfassung zum
+letzten Mal vollständig**; wer sie später schreiben wollte, schriebe die
+Zusammenfassung ab.
+
+⚑ **Mit Kopf und Verzeichnis**, damit zeilenweise nachzulesen ist: je
+Abschnitt Rolle, Zeilenbereich und die erste Zeile als Marke. `myl
+verlauf` zeigt das Verzeichnis, `myl verlauf <von> <bis>` die Zeilen.
+
+⛔️ **Verschlüsselt, und die Zusage steht genau:** Sie schützt **gegen
+Mitlesen durch Dritte**, einen zweiten Nutzer auf der Maschine, eine
+Sicherung, die den Arbeitsordner mitnimmt, einen Abgleichdienst, jemanden
+mit der Platte. **Das ist genau der Weg, den ein Arbeitsordner wirklich
+nimmt.** ⚠️ **Nicht gegen einen Prozess, der als derselbe Nutzer läuft**:
+Der Schlüssel liegt in dessen Konfiguration. Das ist keine Lücke, sondern
+die Bedingung, denn der Agent soll lesen können.
+
+⚑ **Der Schlüssel liegt neben den Einstellungen und nie im
+Arbeitsordner.** Läge er beim Mitschnitt, schützte die Verschlüsselung
+vor niemandem: Wer den Ordner kopiert, kopierte den Schlüssel mit. **Die
+Trennung dieser beiden Orte ist die ganze Zusage.**
+
+⛔️ **Und der Schlüssel steht nie im Kontext des Modells.** Ein Schlüssel,
+den das Modell einmal gesehen hat, steht im Verlauf, und der Verlauf ist
+genau das, was hier verschlüsselt wird.
+
+⚑ **In Rahmen, einer je Abschnitt.** Eine Frage nach zwanzig Zeilen
+entschlüsselt nur die Rahmen, die sie tragen, und nicht den ganzen
+Verlauf. Jeder Rahmen trägt seine Nummer im Siegel, also lässt sich
+keiner gegen einen anderen tauschen.
+
+⛔️ **Fund 385: der Schlüsselpfad wurde zweimal aufgelöst.** Er hängt am
+Ort der Einstellungen und der an `XDG_CONFIG_HOME`, also an der Umgebung
+des ganzen Prozesses. Wer sie mitten im Lauf verstellt, schriebe mit dem
+einen Schlüssel und läse mit dem anderen, und die Meldung dazu lautete
+„falscher Schlüssel oder veränderte Datei", also genau das, was man bei
+einem Angriff erwartet. ⚑ **Gefunden durch eine Prüfung, die allein grün
+war und im vollen Lauf rot.** Jetzt einmal je Prozess: **Ein Programm,
+dessen Schlüssel sich zwischen Schreiben und Lesen ändern kann, ist
+kaputt.** Dazu wird der Schlüssel unteilbar angelegt (erst daneben, dann
+umbenannt), und wer ein Rennen verliert, nimmt den Schlüssel des
+Gewinners.
+
+⚑ **Sieben Prüfungen und eine Naht.** Der Klartext steht **nicht** in der
+Datei (an den Bytes geprüft, nicht an der Absicht); das Verzeichnis
+stößt lückenlos aneinander; eine Frage bekommt genau ihre Zeilen und
+nicht mehr; ein fremder Schlüssel öffnet nichts und ein gekipptes Bit
+auch nicht; zwei Mitschnitte gleichen Inhalts tragen verschiedene Salze
+und verschiedene Rahmen. Die Naht prüft, dass das Verdichten wirklich
+ablegt und dass die Zusammenfassung darauf zeigt.
+
+📌 **Zwei Gegenproben blieben zuerst stumm, und beide hatten recht.** Die
+eine verglich zwei Dateien, die sich schon wegen des Datums
+unterscheiden, statt der Salze; die andere fragte einen ganzen Abschnitt
+ab, und dann ist die obere Zeilengrenze wirkungslos. **Eine Gegenprobe,
+die nicht beißt, ist ein Befund**, und an diesem Tag war sie viermal der
+einzige Weg zu einem Fehler, den kein Test und kein Lesen gefunden hätte.
+
+⚠️ **Was noch fehlt: der Leseweg für den Agenten selbst.** Er braucht ein
+eigenes Werkzeug, denn die Datei ist verschlüsselt und `read_file`
+bekäme Bytes. Das ist ein Eingriff in die Datei, in der die
+Einhängegrenze steht, und der gehört nicht nebenbei gemacht. Bis dahin
+liest ein Mensch mit `myl verlauf`.
+
+### v0.50.0 – 2026-09-16 (die Aktualisierung steht oben, und das Fenster bekommt ein zweites Bild)
+
+`myl-client` **0.35.0**, `myl-oberflaeche` **0.38.0**, `myl-console`
+**0.12.0**. Auftrag des Projektinhabers.
+
+⚑ **Die Aktualisierung steht ganz oben**, über der Sprache. 📌 Bis
+hierher stand sie darunter (Festlegung vom 2026-09-11, „gleich hinter
+der Sprache"). Die Begründung damals war, dass die Sprache alles
+beschriftet, was darunter kommt; sie trägt weiter, nur nicht gegen eine
+**Handlung**. Die Aktualisierung ist keine Einstellung, und es ist die
+Handlung, wegen der jemand diese Seite am ehesten öffnet.
+
+⚑ **Ein helles Thema, und es dreht einen Kanal statt dreißig Regeln.**
+Flächen, Kanten, der Glanz beim Überfahren und der Fokusring standen als
+feste `rgba(255, 255, 255, …)` im Stilblatt; sie stehen jetzt als
+`rgb(var(--auf) / …)` da. **Ein Thema ist damit eine Handvoll Zahlen und
+kein zweites Stilblatt.** Die Graustufenregel gilt unverändert: Was
+hervorgehoben wird, wird im hellen Bild **dunkler** statt heller, bunt
+wird nichts.
+
+⚑ **Die Lichtkante dreht ausdrücklich nicht mit.** Sie ist der Glanz
+oben auf einer Fläche, und Licht kommt auch in einem hellen Bild von
+oben und ist weiß. Ein dunkler Strich an derselben Stelle wäre kein
+Glanz, sondern eine zweite Kante.
+
+⚠️ **Ein drittes Thema „System" gibt es bewusst nicht.** Es wäre keine
+dritte Gestaltung, sondern die Abtretung der Wahl an das
+Betriebssystem, und CSS kann eine Palette nicht zwischen einem
+Attributblock und einem `@media`-Block **teilen**: Sie stünde zweimal
+da. ⛔️ **Der erste Anlauf hat sie zweimal hingeschrieben und daneben
+behauptet, es gebe keine Wiederholung**, und die Gegenprobe blieb genau
+deshalb stumm. Wer es will, löst im Skript auf und schreibt keine zweite
+Palette.
+
+⚑ **Eine Schriftgröße, drei Stufen.** Sie hängt an der Wurzel, und das
+Stilblatt rechnet durchgehend in `rem`; damit wachsen Abstände und
+Knöpfe im selben Verhältnis mit. 📌 **Die Grundschrift stand in Pixeln**
+(`font: 14px/1.55`) und wäre an allem vorbeigegangen, was seine Größe
+von dort erbt; sie steht jetzt als `.875rem` da.
+
+⚑ **Wo ein Feld gilt, sagt ein Feld und nicht zwei Schalter.** Aus
+`nur_konsole: bool` ist `gilt: Gilt` geworden, mit `Ueberall`,
+`NurKonsole` und `NurFenster`. Zwei Wahrheitswerte ließen sich beide
+setzen, und dann gäbe es ein Feld, das nirgends steht und überall wirkt:
+**Ein Zustand, den es nicht geben darf, gehört nicht darstellbar.** Das
+Erscheinungsbild und die Schriftgröße stehen deshalb nur im Fenster, das
+Konsolen-Design nur in der Konsole, und keine der beiden Oberflächen
+zählt selbst auf, was sie weglässt.
+
+⚑ **Das Skript führt keine eigene Liste der Themen.** Geprüft wird im
+Setzer der Kiste; was im Fenster ankommt, ist schon eine gültige
+Kennung. Eine zweite Liste wäre die Stelle, an der ein drittes Bild
+lautlos verlorenginge: Das Attribut stünde da, das Stilblatt kennte es
+nicht, und es sähe aus wie die Vorgabe.
+
+⚑ **Drei neue Prüfungen, und jede fängt eine Sorte Drift.** Jede
+wählbare Kennung hat einen Block im Stilblatt (und die Vorgabe
+ausdrücklich keinen); jede benutzte Stilvariable ist definiert, **und
+jede Variable des hellen Themas gibt es auch in der Vorgabe** (ein
+Tippfehler dort fällt sonst lautlos auf den dunklen Wert zurück); und in
+**beiden** Themen hebt sich der Text vom Grund ab, gerechnet als
+relative Leuchtdichte gegen 4,5 beziehungsweise 3,0.
+
+### v0.49.0 – 2026-09-16 (ohne Grenze steht rechts, und das Rechenwerk kennt seinen Rechenweg)
+
+`myl-client` **0.34.0**, `myl-oberflaeche` **0.37.0**, `myl-console`
+**0.11.0**. Auftrag des Projektinhabers.
+
+⚑ **Der offene Anschlag jedes Reglers liegt rechts, und dort steht er
+ohne Zutun.** Kerne, Arbeitsspeicher, Platte und jedes Rechenwerk: Nicht
+gesetzt heißt „ohne Grenze", und „ohne Grenze" ist die rechte
+Endstellung. 📌 **Bis hierher lag sie ganz links, bei null.** Sie
+bedeutete dasselbe und las sich wie das Gegenteil: Wer einen Regler am
+linken Anschlag sieht, liest „nichts", nicht „alles". In der Konsole
+stand dort das Wort „aus", und das liest sich wie abgeschaltet.
+
+⚑ **Die beiden linken Enden sind verschieden, und darin steckt der
+Unterschied zwischen einer Grenze und einem Anteil.** Eine Grenze fällt
+bis auf **eins**: Null Kerne wären kein enger gestellter Klient, sondern
+einer, der nicht antwortet. Ein Rechenwerk fällt bis auf **null** und
+heißt dort „rechnet nicht", denn der Rechenpfad läuft dann auf der CPU
+weiter. Ganz rechts wird in beiden Fällen die Grenze **weggenommen**,
+was bei der Platte zugleich heißt: ohne Reservierung.
+
+⛔️ **Fund 380: der Sperrgrund der Rechenwerke war seit dem 2026-09-14
+falsch.** Jedes gefundene Gerät trug denselben Satz, „noch kein
+Rechenweg über dieses Gerät", und seit dem 2026-09-14 rechnet `metal`
+auf Apple-Silizium die gebündelten Matrizen der Vorbereitung wirklich.
+⚑ **Eine Begründung gilt für den Fall, für den sie geschrieben wurde:**
+Sie stammte aus dem 2026-09-10, als über kein Rechenwerk ein Rechenpfad
+führte, und niemand ging die Liste durch, als einer dazukam.
+
+⚑ **Jedes Gerät kennt jetzt seinen Rechenweg, und zwar einzeln.**
+Apple-Silizium eingebaut wird von Metal bedient, eine NVIDIA-Karte von
+CUDA, eine AMD-Karte von ROCm; die Herstellerkennung aus dem Gerät
+entscheidet und nicht der Name, den ein Treiber setzt. **Damit tragen
+zwei Karten verschiedener Hersteller im selben Rechner zwei Regler mit
+zwei Rechenwegen.** Die Beschriftung nennt ihn („Apple M5 Pro (Metal)"),
+und ob er hier auch **rechnet**, wird dort gefragt, wo der Code
+ausgewählt wird. Ein Gerät ohne jeden Rechenweg, etwa eine eingebaute
+Intel-Grafik, bekommt einen anderen Satz als eines, dessen Rechenweg
+noch nicht gebaut ist: Der Unterschied ist der zwischen „noch nicht" und
+„gar nicht", und er entscheidet, ob jemand darauf wartet.
+
+⚑ **Was der Anteil heute wirklich tut, steht am Regler.** Ganz links
+bleibt das Werk aus dem Rechenpfad, jeder Wert darüber lässt es rechnen,
+und das wirkt sofort. Eine **Teilquote wirkt örtlich noch nicht** und
+steht als Freigabe da: Ein Anteil an der Rechenzeit einer GPU braucht
+einen Planer, den es nicht gibt. ⚑ **Ein Regler, der mehr verspricht,
+als er hält, wäre schlimmer als ein gesperrter.**
+
+⚑ **Kein Eintrag heißt ganz freigegeben.** 📌 Vorher war es umgekehrt:
+kein Eintrag hieß null, eine ausdrückliche Null löschte. Das war die
+vorsichtige Vorgabe aus der Zeit ohne Rechenpfad; seit Metal rechnet,
+hielte sie eine GPU zurück, die der Nutzer gerade deshalb gekauft hat.
+
+⛔️ **Fund 381: die Konsole wandte `kap.kerne` überhaupt nicht an.** Sie
+ließ sich dort setzen, anzeigen und abspeichern, und gelesen hat sie
+niemand: Der Rechenpfad fragte `available_parallelism` und nahm die
+ganze Maschine. `myl` und das Fenster wandten sie an, `myelith` nicht.
+⚑ **Eine Einstellung, die an einem von drei Bedieninstrumenten nichts
+bewirkt, ist schlimmer als eine, die nirgends wirkt**, denn sie wirkt ja
+anderswo, und deshalb sucht niemand den Unterschied im Programm.
+Umgesetzt wird jetzt an **einer** Stelle in der Kiste, gerufen von allen
+dreien.
+
+⚑ **Die Einstellungsseite der Konsole trägt die Rechenwerke mit**, unter
+derselben Überschrift wie die Kerne, mit ←→ wie jede andere Zeile. Die
+Schrittweite kommt aus dem **Ende** und nicht aus dem Wert: Sonst
+bewegte sich derselbe Regler unten in Einern und oben in Zehnern, und
+der Weg zurück träfe nicht dieselben Stellungen wie der Weg hin. Ein
+gesperrter Regler trägt keine Winkel und sagt auf einen Tastendruck, was
+fehlt.
+
+⚑ **Die Worte der beiden Endstellungen kommen aus der Kiste**, in der
+eingestellten Sprache, und stehen weder im Fenster noch in der Konsole
+als Zeichenkette. Fenster und Konsole zeigen denselben Regler; zwei
+Stellen mit je eigenen Worten laufen auseinander, und das war schon
+einmal der Befund (2026-09-10, die Sperrsätze standen nur auf Deutsch
+da).
+
+📌 **`myl einstellungen` zeigt jetzt jedes gefundene Rechenwerk**, nicht
+nur die eingetragenen. Seit „kein Eintrag" ganz freigegeben heißt, wäre
+das auf einer Maschine mit GPU eine leere Liste gewesen: **Eine Anzeige,
+die den Normalfall verschweigt, zeigt nur die Ausnahme.**
+
+📌 **Und der Datenort wird in der Kiste hergeleitet**, nicht im Fenster.
+Die Konsole stellt dieselbe Frage, und zwei Herleitungen desselben Ortes
+zeigen irgendwann auf zwei Datenträger.
 
 ### v0.48.4 – 2026-09-15 (eine Vorgabe, die nicht trägt, nimmt nicht alles mit)
 

@@ -28,6 +28,20 @@
 :root {
   color-scheme: dark;
 
+  /* ⚑ **Zwei Kanaele, und aus ihnen entsteht fast alles andere.**
+     `--auf` ist das Licht, das auf dem Grund liegt: Flaechen, Kanten,
+     der Glanz beim Ueberfahren, der Fokusring. `--unter` ist der
+     Schatten darunter. Auf dunklem Grund ist das Licht weiss, auf
+     hellem schwarz, und **damit dreht ein Thema nicht dreissig Regeln
+     um, sondern zwei Zahlen.**
+
+     ⚑ Als Kanaele und nicht als fertige Farben, weil jede Stelle ihre
+     eigene Deckung braucht: `rgb(var(--auf) / .045)` ist eine Flaeche,
+     dieselbe Zahl mit `.55` ein Fokusring. Eine fertige Farbe je
+     Deckung waeren zwanzig Variablen. */
+  --auf: 255 255 255;
+  --unter: 0 0 0;
+
   /* Grund, von unten nach oben. Mattes Schwarz heisst nicht Nullschwarz:
      Ein echter Nullwert laesst jede Kante darauf hart wirken. */
   --tief: #08090a;
@@ -36,13 +50,13 @@
 
   /* Glas: Flaechen entstehen aus Licht auf dem Grund, nicht aus einer
      eigenen Farbe. Deshalb rgba und kein Hex. */
-  --glas: rgba(255, 255, 255, .045);
-  --glas-hoch: rgba(255, 255, 255, .075);
-  --glas-hell: rgba(255, 255, 255, .11);
-  --kante: rgba(255, 255, 255, .09);
-  --kante-hell: rgba(255, 255, 255, .17);
-  --licht: rgba(255, 255, 255, .13);
-  --schatten: rgba(0, 0, 0, .45);
+  --glas: rgb(var(--auf) / .045);
+  --glas-hoch: rgb(var(--auf) / .075);
+  --glas-hell: rgb(var(--auf) / .11);
+  --kante: rgb(var(--auf) / .09);
+  --kante-hell: rgb(var(--auf) / .17);
+  --licht: rgb(var(--auf) / .13);
+  --schatten: rgb(var(--unter) / .45);
 
   --text: #eceef0;
   --leise: #8e9195;
@@ -69,7 +83,90 @@
 
   --rund: 14px;
   --rund-klein: 10px;
+
+  /* ⚑ **Die Warnung ist bewusst kein Glas** (Auftrag des
+     Projektinhabers, 2026-09-15), und deshalb haben ihre beiden
+     Flaechen eigene Namen statt einer Ableitung aus den Kanaelen: Der
+     Vorhang deckt das Gespraech ab, der Grund traegt den Text. Beides
+     ist eine Entscheidung ueber Lesbarkeit und keine ueber Licht. */
+  --vorhang: rgb(var(--unter) / .72);
+  --warnungsgrund: rgb(19 20 23 / .88);
+
+  /* ⚑ **Die Grundschrift, und alles andere rechnet in `rem`.** Wer sie
+     verstellt, verstellt Abstaende und Knoepfe im selben Verhaeltnis;
+     eine zweite Groessentabelle waere eine zweite Stelle, an der etwas
+     nicht mitwaechst. */
+  --grundschrift: 100%;
 }
+
+/* ⚑ **Das helle Thema, und es dreht nur, was Licht ist.**
+   ===================================================
+
+   Alles Abgeleitete folgt von selbst: `--glas`, `--kante`, jeder
+   Glanz und jeder Fokusring stehen als `rgb(var(--auf) / …)` da und
+   wechseln mit dem Kanal. **Was hier steht, ist deshalb kein zweites
+   Stilblatt, sondern eine Handvoll Zahlen.**
+
+   ⚑ **`--licht` dreht ausdruecklich NICHT mit.** Es ist die Lichtkante
+   oben auf einer Flaeche, und Licht kommt auch in einem hellen Bild
+   von oben und ist weiss. Ein dunkler Strich an derselben Stelle waere
+   kein Glanz, sondern eine zweite Kante.
+
+   ⚑ **Und die Graustufenregel gilt weiter.** Was hervorgehoben wird,
+   wird hier **dunkler** statt heller; bunt wird nichts.
+
+   ⚠️ **Ein drittes Thema „System" gibt es bewusst nicht.** Es waere
+   keine dritte Gestaltung, sondern die Abtretung der Wahl an das
+   Betriebssystem, und CSS kann eine Palette nicht zwischen einem
+   Attributblock und einem `@media`-Block **teilen**: Sie stuende
+   zweimal da. Wer es will, laesst die Aufloesung im Skript geschehen
+   und schreibt hier keine zweite Zahl. */
+:root[data-thema="hell"] {
+  color-scheme: light;
+
+  --auf: 0 0 0;
+
+  /* Kein Reinweiss: Ein echter Nullwert laesst jede Kante darauf hart
+     wirken, oben wie unten. */
+  --tief: #f4f5f6;
+  --grund: #fbfbfc;
+  --grund-hoch: #ffffff;
+
+  /* Auf hellem Grund traegt dieselbe Deckung weniger weit: Ein
+     Schwarz bei vier Prozent auf Weiss ist schwaecher zu sehen als ein
+     Weiss bei vier Prozent auf Schwarz. Deshalb steht die Lichtkante
+     hier hoeher und der Schatten tiefer. */
+  --licht: rgb(255 255 255 / .75);
+  --schatten: rgb(var(--unter) / .16);
+
+  --text: #16181a;
+  --leise: #5c6064;
+  --leiser: #86898d;
+
+  /* ⚑ Der Akzent ist die staerkste Helligkeit, und die liegt hier
+     unten statt oben. Der Name bleibt, damit klar ist, was ersetzt
+     wurde. */
+  --akzent: #000000;
+  --gut: #2a2d30;
+  --schlecht: #000000;
+  /* ⚠️ **`--warn` steht hier absichtlich nicht.** Es ist in `:root`
+     definiert und wird von **keiner** Regel gelesen; es hier ein zweites
+     Mal hinzuschreiben hiesse, etwas Ungelesenes an zwei Orten zu
+     pflegen. Sein mittleres Grau traegt ohnehin auf beiden Gruenden.
+     Wer ihm einen Leser gibt, gibt ihm hier auch einen Wert. */
+
+  --vorhang: rgb(var(--unter) / .38);
+  --warnungsgrund: rgb(255 255 255 / .94);
+}
+
+/* ⚑ **Die Grundschrift haengt an der Wurzel**, und alles andere rechnet
+   relativ dazu. Drei Stufen, weil eine stufenlose Zahl in einer
+   Auswahl keinen Platz hat und in einem Regler eine Genauigkeit
+   vortaeuschte, die niemand braucht. */
+:root[data-schrift="klein"] { --grundschrift: 92%; }
+:root[data-schrift="gross"] { --grundschrift: 112%; }
+
+html { font-size: var(--grundschrift); }
 
 /* 📌 **Die Pseudoelemente gehoeren ausdruecklich dazu.** `*` trifft sie
    nicht, und das war am 2026-09-09 der Grund fuer verschobene
@@ -118,15 +215,19 @@ body {
 body {
   margin: 0;
   color: var(--text);
-  font: 14px/1.55 var(--schrift);
+  /* ⚑ **In `rem` und nicht in Pixeln** (2026-09-16). Vierzehn Pixel
+     waren dieselbe Groesse, aber eine absolute: Sie haengt nicht an der
+     Wurzel, und damit waere die Schriftgroesseneinstellung an allem
+     vorbeigegangen, was seine Groesse von hier erbt. 14/16 = .875. */
+  font: .875rem/1.55 var(--schrift);
   -webkit-font-smoothing: antialiased;
   /* ⚑ Zwei sehr weite, sehr schwache Lichter auf mattem Schwarz. Ohne
      sie hat Glas nichts, worueber es liegen koennte, und sieht aus wie
      eine graue Flaeche. Sie bewegen sich nicht: ein atmender Hintergrund
      kostet dauernd Rechenzeit, und die gehoert dem Modell. */
   background:
-    radial-gradient(120% 80% at 15% -10%, rgba(255, 255, 255, .05), transparent 60%),
-    radial-gradient(90% 70% at 90% 110%, rgba(255, 255, 255, .035), transparent 60%),
+    radial-gradient(120% 80% at 15% -10%, rgb(var(--auf) / .05), transparent 60%),
+    radial-gradient(90% 70% at 90% 110%, rgb(var(--auf) / .035), transparent 60%),
     var(--grund);
   background-attachment: fixed;
   min-height: 100vh;
@@ -189,7 +290,7 @@ body {
   border-radius: var(--rund);
   box-shadow:
     0 10px 34px -14px var(--schatten),
-    inset 0 -1px 0 rgba(0, 0, 0, .22);
+    inset 0 -1px 0 rgb(var(--unter) / .22);
 }
 
 /* Die Ruhelage: eine gleichmaessige Haarlinie. */
@@ -203,7 +304,7 @@ button:not(.blank)::before {
   padding: 1px;
   pointer-events: none;
   z-index: 1;
-  background: rgba(255, 255, 255, .11);
+  background: rgb(var(--auf) / .11);
   /* 📌 **Die Reihenfolge ist hier der ganze Unterschied.** Die
      Kurzform `mask` setzt `mask-composite` auf ihren Anfangswert
      zurueck; steht der Verbund davor, ist er weg, die Maske verrechnet
@@ -267,9 +368,9 @@ button:not(.blank)::after {
   transition: opacity .2s ease;
   background: radial-gradient(
     circle at var(--mx, 50%) var(--my, 50%),
-    rgba(255, 255, 255, .17),
-    rgba(255, 255, 255, .07) 36%,
-    rgba(255, 255, 255, 0) 68%
+    rgb(var(--auf) / .17),
+    rgb(var(--auf) / .07) 36%,
+    rgb(var(--auf) / 0) 68%
   );
 }
 
@@ -285,7 +386,7 @@ button:not(.blank):hover:not(:disabled)::after {
 .eingabefeld:hover::before,
 .eingabefeld:focus-within::before,
 button:not(.blank):hover:not(:disabled)::before {
-  background: rgba(255, 255, 255, .30);
+  background: rgb(var(--auf) / .30);
 }
 
 /* ⚑ Der Schein IM Glas, sehr schwach: Echtes Glas leuchtet innen
@@ -366,7 +467,7 @@ button:not(.blank):hover:not(:disabled)::before {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--kante);
-  background: linear-gradient(180deg, rgba(255, 255, 255, .035), rgba(255, 255, 255, .012));
+  background: linear-gradient(180deg, rgb(var(--auf) / .035), rgb(var(--auf) / .012));
   backdrop-filter: blur(24px) saturate(115%);
   -webkit-backdrop-filter: blur(24px) saturate(115%);
   overflow: hidden;
@@ -754,7 +855,7 @@ header {
      dieselbe Sache. */
   padding: 0;
   border-bottom: 1px solid var(--kante);
-  background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .012));
+  background: linear-gradient(180deg, rgb(var(--auf) / .045), rgb(var(--auf) / .012));
   backdrop-filter: blur(24px) saturate(115%);
   -webkit-backdrop-filter: blur(24px) saturate(115%);
 }
@@ -1172,7 +1273,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
 
 .befehl {
   border-left: 2px solid var(--kante);
-  background: rgba(0, 0, 0, .22);
+  background: rgb(var(--unter) / .22);
   border-radius: 0 var(--rund-klein) var(--rund-klein) 0;
 }
 .befehl > summary {
@@ -1197,7 +1298,7 @@ header > .kopfrechts { right: var(--kopf-polster); }
 .befehl.unlesbar {
   border-left-color: var(--schlecht);
   border-left-width: 4px;
-  background: rgba(255, 255, 255, .05);
+  background: rgb(var(--auf) / .05);
 }
 
 .befehlsteil {
@@ -1294,7 +1395,7 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   padding: .6rem .8rem;
   overflow-x: auto;
   border-left: 2px solid var(--kante);
-  background: rgba(255, 255, 255, .04);
+  background: rgb(var(--auf) / .04);
   border-radius: .3rem;
 }
 .mdcode code { font-family: var(--fest); font-size: .82rem; white-space: pre; }
@@ -1306,7 +1407,7 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
   font-size: .86em;
   padding: .05em .3em;
   border-radius: .25em;
-  background: rgba(255, 255, 255, .07);
+  background: rgb(var(--auf) / .07);
 }
 
 .mdzitat {
@@ -1551,7 +1652,7 @@ button.warnt {
 .balken {
   height: 4px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, .08);
+  background: rgb(var(--auf) / .08);
   overflow: hidden;
 }
 .balken span {
@@ -1566,7 +1667,7 @@ button.warnt {
   font-family: var(--fest);
   font-size: .72rem;
   color: var(--leise);
-  background: rgba(0, 0, 0, .25);
+  background: rgb(var(--unter) / .25);
   border-radius: var(--rund-klein);
   padding: .5rem .7rem;
   max-height: 11rem;
@@ -1798,7 +1899,7 @@ button {
   cursor: pointer;
   box-shadow:
     0 4px 14px -8px var(--schatten),
-    inset 0 -1px 0 rgba(0, 0, 0, .22);
+    inset 0 -1px 0 rgb(var(--unter) / .22);
   transition:
     background-color .18s ease,
     border-color .18s ease,
@@ -1823,7 +1924,7 @@ button {
    zurueckholen will, braucht ein eigenes Element dafuer und nicht das
    Pseudoelement, das schon vergeben ist. */
 
-button:disabled::before { background: rgba(255, 255, 255, .06); }
+button:disabled::before { background: rgb(var(--auf) / .06); }
 
 input:hover, select:hover { border-color: var(--kante-hell); }
 input:focus, select:focus { border-color: var(--kante-hell); }
@@ -1832,7 +1933,7 @@ input:focus, select:focus { border-color: var(--kante-hell); }
    fuer den, der ihn braucht, keiner. In Graustufen ist er ein heller
    Ring mit Abstand, damit er auf Glas nicht mit der Kante verschmilzt. */
 :focus-visible {
-  outline: 2px solid rgba(255, 255, 255, .55);
+  outline: 2px solid rgb(var(--auf) / .55);
   outline-offset: 2px;
 }
 
@@ -1845,7 +1946,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 6;
-    box-shadow: 0 0 40px rgba(0, 0, 0, .6);
+    box-shadow: 0 0 40px rgb(var(--unter) / .6);
   }
   #gespraech, #eingabe { padding-left: 1rem; padding-right: 1rem; }
 }
@@ -1883,7 +1984,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
 .vorhangtext .zeile {
   width: 7rem;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--auf) / .55), transparent);
   margin: 1rem auto;
 }
 .vorhangtext p { color: var(--leise); margin: 0; font-size: .85rem; min-height: 1.4em; }
@@ -1944,7 +2045,7 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
   gap: .1rem;
   border-radius: var(--rund);
   background: var(--grund-hoch);
-  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .8);
+  box-shadow: 0 18px 40px -18px rgb(var(--unter) / .8);
 }
 
 .menueeintrag {
@@ -2039,7 +2140,7 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
      besser, und eine Warnung ist der falsche Ort fuer eine Flaeche, die
      je nach Zusammensetzer anders aussieht. Nebenbei entfaellt damit der
      Ruecklfall fuer `backdrop-filter`. */
-  background: rgba(0, 0, 0, .72);
+  background: var(--vorhang);
 }
 .warnungkasten {
   width: min(34rem, 100%);
@@ -2050,7 +2151,7 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
      Rueckfall fuer fehlendes `backdrop-filter` bleibt entbehrlich.
      ⚠️ Die Deckkraft ist bewusst hoch: Darunter liegt Text, und der
      Warntext muss der lesbare bleiben. */
-  background: rgba(19, 20, 23, .88);
+  background: var(--warnungsgrund);
   border: 1px solid var(--kante);
   border-radius: var(--rund);
   box-shadow: 0 18px 50px -18px var(--schatten);

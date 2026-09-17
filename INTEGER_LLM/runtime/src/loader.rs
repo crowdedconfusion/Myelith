@@ -2147,6 +2147,63 @@ mod tests {
     /// Geprueft wird die Ausgabe **und** der Zwischenzustand: Die
     /// Logits an der letzten Stelle haengen am KV-Speicher aller
     /// vorherigen Positionen, den die Vorbereitung gefuellt hat.
+    /// **Die gebuendelten Logits sind Zeichen fuer Zeichen die
+    /// tokenweisen.**
+    ///
+    /// # ⛔️ Warum diese Probe vor jeder Messung kommt
+    ///
+    /// `logits_stapel` ist fuer die Messwerkzeuge gebaut, und eine
+    /// Messung ist nur so viel wert wie die Gleichheit ihres Pfades mit
+    /// dem, der zertifiziert ist. **Weicht hier eine einzige Zahl ab,
+    /// sind alle Perplexitaeten danach mit den frueheren
+    /// unvergleichbar** und niemand saehe es an ihnen: Perplexitaet ist
+    /// ein Mittelwert, und ein Mittelwert verzeiht eine kleine
+    /// Abweichung an jeder Position.
+    ///
+    /// ⚑ **Verglichen wird jede Position und nicht nur die letzte.** Das
+    /// Fixture hat eine Ebene; dort wirkt die Aufmerksamkeit eines
+    /// vorbereiteten Tokens auf nichts anderes, und ein Lesefehler um
+    /// eine Position bliebe an der letzten Position unentdeckt.
+    /// Dieselbe Lehre wie bei Fund 366.
+    ///
+    /// ⚑ **Und ueber die Fenstergrenze hinweg.** `logits_stapel`
+    /// zerlegt lange Folgen in Fenster; eine Position, die am Anfang
+    /// eines zweiten Fensters falsch gezaehlt wuerde, kaeme in einer
+    /// kurzen Folge nie vor.
+    #[test]
+    fn die_gebuendelten_logits_sind_die_tokenweisen() {
+        for (name, moe) in [("logits-dicht", None), ("logits-moe", Some((6usize, 2usize, 3usize)))]
+        {
+            let dir = test_dir(name);
+            write_full_fixture_mit(&dir, true, false, moe);
+            gewichte_verrauschen(&dir, 0x5eed_0384);
+            skalen_je_kanal_streuen(&dir);
+            let model = load_model(&dir).expect("Artefakt muss laden");
+
+            // ⚑ **Laenger als ein Fenster**, damit die Fenstergrenze
+            // mitgeprueft wird. Der Wortschatz des Fixtures ist drei
+            // Eintraege gross.
+            let n = crate::model::VORBEREITUNGSFENSTER + 7;
+            let ids: Vec<usize> = (0..n).map(|i| i % 3).collect();
+
+            let mut gebuendelt =
+                crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+            let a = model.logits_stapel(&ids, 0, &mut gebuendelt);
+            assert_eq!(a.len(), ids.len(), "{name}: nicht je Position ein Satz Logits");
+
+            let mut einzeln =
+                crate::kv_cache::KVCache::new(model.num_layers, model.num_kv_heads);
+            for (pos, id) in ids.iter().enumerate() {
+                let b = model.forward_token(*id, pos, &mut einzeln);
+                assert_eq!(
+                    a[pos], b,
+                    "{name}: Logits an Position {pos} weichen ab (Fenster {})",
+                    pos / crate::model::VORBEREITUNGSFENSTER
+                );
+            }
+        }
+    }
+
     #[test]
     fn die_gebuendelte_vorbereitung_rechnet_dasselbe() {
         for (name, moe) in [("stapel-dicht", None), ("stapel-moe", Some((6usize, 2usize, 3usize)))]

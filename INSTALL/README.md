@@ -11,13 +11,184 @@ Unterschied: Jedes findet seinen Klon über den eigenen Ort.
 | **NixOS** und andere Anlagen mit Nix | `sh INSTALL/installieren-nixos.sh` |
 | **Windows** (PowerShell) | `.\INSTALL\installieren-windows.ps1` |
 
-Jedes kennt dieselben drei Schalter:
+Jedes kennt dieselben Schalter:
 
 | Schalter | Wirkung |
 |---|---|
 | `--pruefen` (Windows: `-NurPruefen`) | Sagt nur, was fehlt, und baut nicht |
 | `--aktualisieren` (Windows: `-Aktualisieren`) | Holt erst den neuen Stand, baut dann |
 | `--system` (nur macOS) | Legt nach `/usr/local/bin` und `/Applications` statt unter das eigene Benutzerverzeichnis |
+| `--ohne-netz` (nur macOS) | Baut ausschließlich aus dem örtlichen Cargo-Vorrat |
+
+## Was ein frischer Klon kann, und was er braucht
+
+⚑ **Nachgemessen am 2026-09-17** an einer Kopie des Klons, nicht
+behauptet.
+
+| Vorhaben | Braucht | Ohne Netz |
+|---|---|---|
+| **Die fünf Programme bauen** | Rust-Werkzeugkette, Xcode-Werkzeuge | **ja**, der Vorrat liegt im Klon |
+| **Den Agenten betreiben** | ein Artefakt unter `INTEGER_LLM/artifacts/` | **ja** |
+| **Konformität und Messungen fahren** | dasselbe | **ja** |
+| **Bücher zu Korpus oder Mappe** | Python 3.9 | **ja**, die Räder liegen im Klon |
+| **Artefakte aus Gewichten bauen** | Gewichte unter `models/`, Python mit torch | **nur wenn beides schon da ist** |
+| **Gewichte holen** | Netz zu Hugging Face | **nein** |
+
+**Der gemessene Lauf:** Klon ohne `target-shared`, Netz auf einen toten
+Port umgeleitet, `sh INSTALL/installieren-macos.sh --ohne-netz`. Ergebnis
+nach **1 Minute 37** (viele Kerne): alle fünf Programme und das
+Fensterbündel, Rückgabewert 0.
+
+## Offline einrichten
+
+⛔️ **Es gibt drei Lagen, und sie sind sehr verschieden.** Wer „offline"
+sagt, meint meist die zweite.
+
+**1. Frischer Klon, Netz da.** Alles geht. Die Werkzeugkette holt, was
+sie braucht.
+
+**2. Frischer Klon, kein Netz, aber der Rechner hat schon einmal
+gebaut.** Alles geht bis auf das Holen von Gewichten. Der Cargo-Vorrat
+unter `~/.cargo/registry` trägt die Abhängigkeiten; hier sind das 1,4 GB.
+
+```sh
+sh INSTALL/installieren-macos.sh --ohne-netz
+```
+
+⚑ **`--ohne-netz` gibt `--offline` an cargo weiter**, und gebaut wird
+ohnehin immer mit `--locked`: Die Sperrdateien gehören zum Stand, und
+ohne sie löst cargo neu auf und baut etwas anderes, als hier geprüft
+wurde.
+
+**3. Frischer Klon, kein Netz, frischer Rechner.** ⚑ **Geht auch**,
+seit die Archive im Klon liegen. ⛔️ **Ohne sie ginge es nicht**, und das
+ist gemessen: mit leerem Vorrat `error: no matching package named blst
+found`. **Die Sperrdateien nennen die Fassungen, sie enthalten den
+Quelltext nicht**, und genau diese Lücke schließt `vorrat/`.
+
+### Der Vorrat im Baum: ein Klon, der von sich aus offline baut
+
+⚑ **Festlegung des Projektinhabers (2026-09-17):** Die Fremdquellen
+liegen als **Archive** unter `vorrat/` im Repositorium. Damit baut jeder
+Klon ohne Netz, ohne Schalter und ohne mitgebrachte Datei.
+
+```sh
+git clone <url>
+sh INSTALL/installieren-macos.sh
+```
+
+**Gemessen:** frischer Klon, **leerer** Cargo-Vorrat, Netz auf einen
+toten Port umgeleitet: Auspacken der 758 Pakete in **6 Sekunden**, danach
+alle fünf Programme samt Fensterbündel in **1 Minute 57**.
+
+#### ⚑ Warum Archive und nicht ausgepackte Quellen
+
+Dieselben 758 Pakete, drei Wege, gemessen:
+
+| Weg | Im Git | Dateien | Wächst je Fassungssprung um |
+|---|---|---|---|
+| `cargo vendor`, ausgepackt | 202 MB | 36 805 | die geänderten Pakete |
+| ein gepacktes Bündel | 122 MB | 1 | **jedes Mal 122 MB**, ein Archiv ändert sich ganz |
+| **Archive je Paket** | **113 MB** | **758** | **nur die neuen Archive**, meist wenige MB |
+
+⚑ **Nur der letzte Weg wächst nicht mit.** Jede Paketfassung ist eine
+eigene, unveränderliche Datei: Wer `tokio` anhebt, legt ein Archiv dazu,
+und die 757 anderen rühren sich nicht. **Ein Bündel dagegen ist bei jeder
+Änderung ein neues Bündel**, und die alten bleiben für immer in der
+Geschichte.
+
+Das Repositorium wächst damit von **20 MB auf rund 133 MB** und von
+1 446 auf 2 204 Dateien. Ausgepackt wird beim Einrichten nach
+`.myelith-vorrat/`, und das ist nicht versioniert.
+
+#### ⚠️ Was auf welchem System wirklich geprüft ist
+
+**Der schwierige Teil ist auf allen dreien derselbe Quelltext**
+(`INSTALL/vorrat.py`), die Skripte rufen ihn nur auf. Trotzdem gehört
+gesagt, was gemessen ist und was nicht:
+
+| System | Stand |
+|---|---|
+| **macOS** | **Von Anfang bis Ende gemessen:** frischer Klon, leerer Cargo-Vorrat, Netz blockiert, fünf Programme in 1:57 |
+| **NixOS/Linux** | Eingebaut, der Block einzeln ausgeführt, das Auspacken geprüft. ⚠️ **Auf einer echten Nix-Anlage nicht gelaufen** |
+| **Windows** | Eingebaut, ⚠️ **hier nicht ausführbar** (kein PowerShell auf der Entwicklungsmaschine) |
+
+⚑ **Was für Windows trotzdem belegt ist**, weil es sich hier messen
+ließ: Der Vorrat enthält **60 Windows-Pakete** samt `webview2-com-sys`,
+also den ganzen Tauri-Unterbau; kein Pfad trägt ein unter Windows
+verbotenes Zeichen oder einen reservierten Namen; und der längste Pfad
+im ausgepackten Vorrat ist **153 Zeichen**, bleibt mit einem
+gewöhnlichen Klonpfad also unter der Grenze von 260.
+
+⚠️ **Windows braucht Python** zum Auspacken. Fehlt es, sagt das Skript
+das gerade heraus, statt später an einem fehlenden Paket zu scheitern.
+
+⚠️ **Bei Nix deckt der Vorrat die Fremdkisten, nicht die Nix-Eingaben.**
+`nix develop` holt die Werkzeugkette, wenn sie nicht schon im Store
+liegt. Wer dort wirklich ohne Netz baut, hat den Store warm oder nimmt
+`--in-der-shell` mit einer vorhandenen Werkzeugkette.
+
+⚠️ **Und Tauri braucht auf Linux Systembibliotheken** (webkit2gtk und
+Nachbarn). Die kommen aus der Paketverwaltung des Systems und nicht aus
+diesem Vorrat.
+
+#### ⛔️ Und der Vorrat ist prüfbar, nicht nur bequem
+
+Jede Sperrdatei nennt zu jedem Paket seine SHA-256. **Die Archive lassen
+sich also gegen den Stand prüfen, den das Repositorium ohnehin
+festhält:**
+
+```sh
+python3 INSTALL/vorrat.py pruefen    # jede Datei gegen die Sperrdateien
+python3 INSTALL/vorrat.py sammeln    # nach einer Fassungsanhebung
+python3 INSTALL/vorrat.py auspacken  # macht der Installer selbst
+```
+
+⚠️ **Die Pflicht dazu:** Nach jeder Änderung an einer Abhängigkeit muss
+`sammeln` laufen, sonst fehlt ein Archiv. ⚑ **Der Unterschied zu früher
+ist, dass es auffällt**: `pruefen` sagt, welches Paket fehlt, und der
+Bau bricht mit dem Namen des fehlenden Pakets ab, statt stillschweigend
+etwas Altes zu nehmen.
+
+⚠️ **Was `sammeln` braucht:** Netz **oder** einen Cargo-Vorrat, in dem
+das Paket schon liegt. Es holt zuerst von dort und erst dann aus dem
+Netz, und es prüft jede Datei sofort gegen die Sperrdatei.
+
+## Artefakte aus Gewichten bauen
+
+**Zwei Schritte, und der erste braucht Netz.**
+
+```sh
+sh INTEGER_LLM/scripts/fetch_model.sh     # Gewichte nach models/, feste Revision
+sh INTEGER_LLM/scripts/build_artifacts.sh # Kalibrierung und Export nach artifacts/
+```
+
+⚠️ **Der Export braucht Python mit `torch` und `transformers`**, denn
+die Gewichte kommen als Gleitkomma-Tensoren. Die Umgebung entsteht
+einmalig und braucht Netz und einige Gigabyte:
+
+```sh
+cd INTEGER_LLM/calibrate
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python3 -r requirements.txt
+```
+
+⚑ **Das Skript sucht sie selbst** (`$PYTHON`, dann
+`calibrate/.venv/bin/python3`, dann `python3`) und sagt, was fehlt.
+📌 **Bis zum 2026-09-17 rief es blankes `python3`**, und auf einem
+frischen Klon endete der Artefaktbau in einem nackten
+`ModuleNotFoundError`. **Eine Voraussetzung, die erst beim Absturz
+sichtbar wird, ist keine Voraussetzung, sondern eine Falle.**
+
+⚑ **Der Bau ist wiederholbar, und das ist gemessen.** Am 2026-09-17
+wurde das Artefakt des 0,6B aus denselben Gewichten neu gebaut:
+**48/48 Konformitätsvektoren** und **derselbe `decode_digest`**
+(`b744c06…`) wie bei dem Stand vom 11. September. Möglich ist das, weil
+das Skalenpaket im Repositorium liegt und die Aktivierungsstatistik
+deshalb entfällt.
+
+⚠️ **Der Betrieb braucht davon nichts.** Wer ein fertiges Artefakt hat,
+braucht weder torch noch Python: Der Ganzzahlpfad ist Rust.
 
 ## Was am Ende dasteht
 

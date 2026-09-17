@@ -1651,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.53.0"
+version = "0.56.0"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "myl-local-agent"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "myl-agent",
  "myl-types",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "myl-node"
-version = "0.48.3"
+version = "0.48.4"
 dependencies = [
  "async-trait",
  "borsh",

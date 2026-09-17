@@ -1,7 +1,7 @@
 # integer-llm
 
-> **Version:** 0.73.0 (θ_v 0.20.0; kernels 0.56.0, runtime 0.53.0, pipeline 0.15.1)
-> **Datum:** 2026-09-14
+> **Version:** 0.77.2 (θ_v 0.20.0; kernels 0.56.0, runtime 0.56.0, pipeline 0.15.1)
+> **Datum:** 2026-09-16
 > **Status:** 🎉 **Akzeptanzkriterium ≤ 5 % auf allen drei eingesetzten Modellen erreicht**,
 > auf identischen Folgen gegen die BF16-Baseline gemessen: 0,6B **33,29**
 > (+4,48 %), 4B **19,95** (+1,65 %), 30B-A3B (MoE) **10,42** gegen
@@ -626,6 +626,225 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.77.2 – 2026-09-17 (der Artefaktbau sagt, was ihm fehlt, und er ist nachweislich wiederholbar)
+
+θ_v unverändert, **kein Rechenweg ändert sich**. Geändert hat sich
+`scripts/build_artifacts.sh`.
+
+📌 **Es rief blankes `python3`.** Auf einem frischen Klon ist das der
+Interpreter des Systems, und der hat kein `torch`: Der Artefaktbau endete
+in einem nackten `ModuleNotFoundError`, aus dem niemand ablesen kann,
+dass eine Umgebung fehlt. **Eine Voraussetzung, die erst beim Absturz
+sichtbar wird, ist keine Voraussetzung, sondern eine Falle.** Jetzt sucht
+das Skript in der Reihenfolge `$PYTHON`, `calibrate/.venv/bin/python3`,
+`python3` nach einem Interpreter, der torch **und** transformers wirklich
+importieren kann, und nennt sonst die drei Zeilen, mit denen die Umgebung
+entsteht.
+
+⚑ **Und dabei ist belegt worden, dass der Bau wiederholbar ist.** Das
+Artefakt des 0,6B wurde aus denselben Gewichten neu gebaut: **48/48
+Konformitätsvektoren** und **derselbe `decode_digest`**
+(`b744c0603db284b2…`) wie beim Stand vom 11. September. Möglich ist das,
+weil das Skalenpaket im Repositorium liegt und die Aktivierungsstatistik
+deshalb entfällt; der Bau ist damit plattformübergreifend bitgleich, und
+das steht seit heute nicht mehr nur als Zusage da.
+
+⚠️ **Der Anlass war ein Versehen**, und das gehört dazu: Der Lauf wurde
+beim Prüfen der Skriptänderung ausgelöst und schrieb das Artefakt neu,
+während für den Abend Messungen darauf warten. Nachgeprüft wurde deshalb
+sofort und vollständig. **Ein Skript, das eine Stunde rechnet und dabei
+ein Messobjekt überschreibt, sollte vorher fragen**; das steht als
+offener Punkt.
+
+### v0.77.1 – 2026-09-17 (ein Nachweis, dass die Einbettung im Artefakt nichts trägt)
+
+θ_v unverändert, **kein Rechenweg ändert sich, kein Konformitätsvektor
+rührt sich, kein Byte im Artefakt ist angefasst.** Neu ist allein
+`tests/diag/einbettung_aus_kopf.py`.
+
+⛔️ **Setzt ein Modell `tie_word_embeddings`, sind Einbettung und LM-Kopf
+dieselbe Matrix, und das Artefakt legt trotzdem beide ab.** Der Kopf in
+int16, die Einbettung in int8: 156 MB von 0,93 GB beim 0,6B, 389 MB von
+4,82 GB beim 4B. Das 30B ist nicht betroffen.
+
+⚑ **Die int8-Fassung ist eine geschachtelte Quantisierung der
+int16-Fassung** und damit bitgleich herleitbar: arithmetischer
+Rechtsshift **je Zeile** um die Differenz der Kanalshifts, mit Runden
+zur nächsten geraden Zahl, also genau der Regel des Rechenpfads.
+**Geprüft über alle Werte**, 155 582 464 und 388 956 160, jeweils
+100,000000 %.
+
+⛔️ **Das Skript ist als Tor gedacht und nicht als Statistik.** Wer die
+Datei einspart, muss die Beziehung zeigen und nicht annehmen: Sie hängt
+am Quantisierer, und einer, der die Schachtelung bricht, macht aus der
+Ersparnis eine falsche Einbettung. ⚑ **Deshalb über alle Werte und nicht
+über eine Stichprobe**: 99,6 % sehen aus wie ein Treffer und sind ein
+Fehlschlag. Gegengeprobt an einem künstlichen Artefakt, in dem **ein
+einziger** Wert verbogen ist; das Skript nennt Zeile und Spalte und gibt
+1 zurück.
+
+### v0.77.0 – 2026-09-16 (die Messwerkzeuge rechnen gebündelt, und die Zahl bleibt dieselbe)
+
+`runtime` **0.56.0** (θ_v **0.20.0** unverändert, **kein Rechenpfad
+ändert sich**).
+
+⛔️ **Die Messwerkzeuge liefen auf dem einen Pfad, den die Optimierung
+nicht berührt.** `perplexity_probe` und `entscheidungsprobe` riefen
+`forward_token` in einer Schleife über die Sequenz. Damit erreichten sie
+**weder die gebündelte Vorbereitung** (seit v0.72.0) **noch die GPU**:
+Die rechnet erst ab sechzehn Eingaben je Bündel, und ein einzelnes Token
+kommt dort nie an. **Dieselbe Klasse wie der Sieben-Token-Prompt der
+Durchsatzmessung**, nur in einem anderen Werkzeug.
+
+⚑ **`Model::logits_stapel`**: die Logits jeder Position, Ebenen
+gebündelt über `vorbereiten_stapel`, in Fenstern von 512 Token. **Der
+LM-Kopf bleibt tokenweise**, Zeichen für Zeichen derselbe Aufruf wie in
+`forward_token`: damit nicht schneller, aber auch nicht anders, und das
+ist hier mehr wert. Wer ihn bündelt, tut es als eigenen Schritt mit
+eigener Gegenprobe.
+
+⚑ **Gemessen, je zwei Läufe, `myelith-0.6b`, 435 Positionen:**
+**10,9 und 10,5 s tokenweise gegen 3,9 und 3,8 s gebündelt**, also
+**Faktor 2,8** auf die ganze Wanduhr einschließlich Python-Start und
+Modellladen; auf den Rechenteil allein ist er größer. Das 4B läuft in
+8 s.
+
+⛔️ **Und die Perplexität ist dieselbe, bis zur letzten Stelle**, je
+Sequenz verglichen: 0,6B 33,28835134857662, 4B 19,951866795026724, beide
+unverändert gegen die Messung vom 2026-09-14. **Ohne diesen Vergleich
+wäre jede Zahl danach mit den früheren unvergleichbar, und niemand sähe
+es ihr an:** Perplexität ist ein Mittelwert, und ein Mittelwert verzeiht
+eine kleine Abweichung an jeder Position.
+
+⚑ **Die Gegenprobe dazu ist eine eigene Prüfung**
+(`die_gebuendelten_logits_sind_die_tokenweisen`): jede Position einzeln,
+über die Fenstergrenze hinweg, dicht und als Gemisch. Zwei Mutationen
+geprüft, beide beißen (ein fehlender Fensterversatz, eine um eins
+verschobene Logitskala).
+
+⚠️ **Warum es 2,8 sind und nicht mehr:** Beim 0,6B ist der LM-Kopf
+151 936 mal 1 024 Werte und wird je Position einmal ganz gelesen; er
+dominiert jetzt. Bei den größeren Modellen wiegen die Ebenen schwerer,
+dort sollte der Faktor höher liegen. **Gemessen ist das nicht**, und
+deshalb steht es hier als Erwartung und nicht als Zahl.
+
+### v0.76.0 – 2026-09-16 (die Grundlinie steht, und die GPU ist zum ersten Mal darin)
+
+**Nur Messwerkzeug und Messwerte**, keine Kiste geändert (θ_v **0.20.0**,
+kein Rechenpfad rührt sich).
+
+⚑ **`run.py --prompt-tokens N`**, und der lange Lauf ist ein **zweiter**
+und kein geänderter. Der kurze beantwortet „wie schnell erzeugt das
+Modell Token", der lange „wie schnell nimmt es einen Prompt auf"; eine
+Zahl, die beides beantworten soll, beantwortet keine. Der lange Prompt
+entsteht aus einem festen Absatz, wiederholt, damit er auf jeder
+Maschine derselbe ist und die Bitgleichheitsprüfung trägt. **Die
+Promptlänge steht im Dateinamen des Ergebnisses**, sonst überschriebe
+der eine Lauf den anderen.
+
+⚑ **Und damit ist `metal` zum ersten Mal in der Durchsatztabelle**, mit
+Zahlen statt mit einer Herleitung:
+
+| Modell | Prompt | cpu-simd Prefill | metal Prefill | Faktor |
+|---|---|---|---|---|
+| 0,6B | 243 Token | 229,99 tok/s | **865,41 tok/s** | **3,8** |
+| 4B | 243 Token | 61,65 tok/s | **300,85 tok/s** | **4,9** |
+
+⚑ **Der Decode gewinnt nichts**, gemessen: 53,41 gegen 53,54 (0,6B) und
+22,21 gegen 21,89 (4B), beides innerhalb der Streuung. Das deckt sich
+mit dem Grund im Kernel, und es ist der Beleg dafür, dass die Schwelle
+von sechzehn Eingaben je Bündel richtig sitzt.
+
+⛔️ **Beim kurzen Prompt wird `metal` verworfen, und das ist richtig.**
+Sieben Token liegen unter der Schwelle, die GPU rechnet kein einziges
+Bündel. Der Riegel aus v0.75.0 greift also im echten Lauf und nicht nur
+im Entwurf.
+
+⛔️ **Was gilt, steht jetzt an einer Stelle.** Ältere Decode-Zahlen in
+Changelog-Einträgen sind Aufzeichnungen ihres Tages: Sie nennen ihren
+Aufbau nicht, insbesondere nicht die Promptlänge, und die entscheidet
+hier über einen Faktor vier. Die Messdatei sagt das jetzt selbst.
+
+⚠️ **Das 30B-A3B fehlt.** 29 GB Artefakt gegen 24 GiB Arbeitsspeicher
+heisst auslagern, und ein Durchsatzlauf misst dann überwiegend die
+Platte. Er gehört gefahren, wenn jemand daneben sitzt.
+
+### v0.75.0 – 2026-09-16 (die Durchsatzmessung sieht den Rechenweg, der wirklich rechnet)
+
+`runtime` **0.55.0** (θ_v **0.20.0** unverändert, **kein Rechenpfad
+ändert sich**; `bench_probe` meldet eine Zeile mehr).
+
+⛔️ **Fund 383: `bench/run.py` kannte `metal` nicht.** Die Liste führte
+`reference`, `cpu-simd`, `cuda` und `rocm`. Der Weg, der seit v0.72.0
+den Prefill des 30B von 35,3 auf 10,7 s gebracht hat und im
+ausgelieferten Klienten auf macOS läuft, stand nicht darin. **Eine
+Grundlinie ohne den Weg, der wirklich rechnet, misst etwas anderes und
+nennt es die Grundlinie.**
+
+⛔️ **Und der Riegel dazu, denn sonst wäre es Fund 33 in der
+Durchsatzmessung.** Die Bitgleichheit ist hier ihre eigene Falle: Ein
+Lauf unter dem Namen `metal`, der die CPU gerechnet hat, trägt
+**denselben** Digest und denselben Token-Hash; die Gleichheitsprüfung
+ginge durch, und in der Tabelle stünde eine Zeile `metal` mit den Zahlen
+der CPU. `bench_probe` meldet jetzt `metal_buendel`, den Zähler der
+gerechneten Bündel, und `run.py` verwirft einen Metal-Lauf, der bei null
+steht, mit Grund.
+
+⚑ **Der Riegel hat beim ersten Lauf sofort etwas gefangen.** `metal` auf
+dem 0,6B: **null Bündel, verworfen.** Der Grund ist kein Fehler, sondern
+der Aufbau der Messung: Der feste Prompt sind **sieben Token**, und die
+GPU rechnet erst ab **sechzehn** Eingaben je Bündel. ⚠️ **Damit kann
+diese Messung den Rechenweg baulich nie erreichen**, denn er gewinnt
+beim Prefill langer Prompts und beim Decode nie. Ein zweiter Messaufbau
+mit realistischer Promptlänge steht aus.
+
+⛔️ **Die Messwerte der alten Reihe stehen unter einem Vermerk.** Die
+einzige Durchsatztabelle stammt vom 2026-08-20 und misst Qwen2.5-0,5B
+und Qwen2.5-7B, also eine Reihe, die seit dem 2026-09-11 nicht mehr
+gemessen wird. Sie bleibt als Aufzeichnung stehen und sagt jetzt selbst,
+dass sie eine abgelöste Reihe misst: **Ein Dokument, dessen Zahlen
+überholt sind und das es nicht sagt, ist keine Auskunft, sondern eine
+Falle.**
+
+⚠️ **Gemessen am 2026-09-16, `myelith-0.6b`, sieben Prompt-Token, 32
+Decode-Token:** `reference` 99,48 / 42,63 tok/s, `cpu-simd` 127,58 /
+55,96 tok/s (Prefill / Decode), Bitgleichheit über beide Wege bestätigt.
+⛔️ **Das ist noch keine Grundlinie**, denn der Kopf dieses Dokuments
+nennt für dasselbe Modell 29,4 Tok/s Decode, und keine der beiden Zahlen
+nennt die Bedingungen, unter denen sie entstanden ist. Was gilt, ist zu
+klären, bevor gegen eine von beiden optimiert wird.
+
+### v0.74.0 – 2026-09-16 (welche Rechenwege hier rechnen, und wie sich einer abschalten lässt)
+
+`runtime` **0.54.0** (θ_v **0.20.0** unverändert, **kein Rechenpfad
+ändert sich**). Eine Naht, kein Rechnen: `rechenwege::vorhanden` reicht
+`rechenpfad::mit_rechenpfad` durch, `rechenwege::setzen` nimmt einen
+Rechenweg aus dem Pfad oder holt ihn zurück.
+
+⚑ **Damit ein Aufrufer die Kernkiste nicht kennen muss**, dieselbe
+Überlegung wie bei `kapazitaet`. Der Client zeigt je gefundenem Gerät
+einen Regler und muss dafür wissen, ob über dieses Gerät überhaupt
+gerechnet wird; müsste er dafür die Kernkiste in sein eigenes Manifest
+schreiben, wäre die Naht keine.
+
+⚑ **Gefragt wird, nicht wiederholt.** Die Bedingung steht dort, wo der
+Code ausgewählt wird, und dieses Modul formuliert sie nicht neu. Der
+Grund steht seit dem 2026-08-22 im Kopf von `rechenpfad.rs`: Eine zweite
+Fassung derselben Bedingung lief dort schon einmal auseinander und
+meldete einen Rechenpfad, den es nicht gab.
+
+⚠️ **Genau ein Rechenweg hat heute einen Schalter**, nämlich `metal`
+über die Bündelschwelle. `cuda` und `rocm` reichen an die Referenzkernel
+weiter und haben nichts zum Abschalten; `setzen` sagt das mit seinem
+Rückgabewert. ⚑ **Ein stilles Ja wäre die Zusage, etwas getan zu haben,
+das nicht geschehen ist.**
+
+⚑ **Aus und wieder an ist eine Nullbewegung.** Die Schwelle, mit der der
+Prozess gestartet ist, wird beim ersten Schalten festgehalten und beim
+Zurückschalten wiederhergestellt. Sonst überginge das Einschalten ein
+gesetztes `MYL_METAL_AB`, und ein Regler, den jemand hin und her
+schiebt, hätte die Einstellung stillschweigend geändert.
 
 ### v0.73.0 – 2026-09-16 (Entscheidungstreue: der Maßstab, der den Einsatz misst)
 

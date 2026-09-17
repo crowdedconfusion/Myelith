@@ -38,7 +38,95 @@ Modell. In einem Netz mit Bitgleichheits-Konsens (Whitepaper Kap. 6.2)
 wäre ein Miner, der es einsetzt, beim Redundanzvergleich auffällig und
 würde geslasht.
 
+## Messwerte (2026-09-16, arm64 / Darwin, θ_v 0.20.0)
+
+⚑ **Die aktuelle Reihe, und zum ersten Mal mit `metal`.** 32 Decode-Token
+je Lauf, Bitgleichheit über alle gemessenen Backends bestätigt (ein
+`decode_digest` je Zeilengruppe).
+
+### `myelith-0.6b` (0,93 GB Artefakt)
+
+| Prompt | Backend | Prefill | Decode |
+|---|---|---|---|
+| 7 Token | reference | 99,48 tok/s | 42,63 tok/s |
+| 7 Token | **cpu-simd** | 127,58 tok/s | **55,96 tok/s** |
+| 7 Token | metal | *verworfen, siehe unten* | |
+| 243 Token | reference | 172,20 tok/s | 40,37 tok/s |
+| 243 Token | cpu-simd | 229,99 tok/s | 53,54 tok/s |
+| 243 Token | **metal** | **865,41 tok/s** | 53,41 tok/s |
+
+### `myelith-4b` (4,82 GB Artefakt)
+
+| Prompt | Backend | Prefill | Decode |
+|---|---|---|---|
+| 7 Token | reference | 29,14 tok/s | 16,91 tok/s |
+| 7 Token | **cpu-simd** | 45,41 tok/s | **23,43 tok/s** |
+| 7 Token | metal | *verworfen, siehe unten* | |
+| 243 Token | reference | 33,25 tok/s | 16,31 tok/s |
+| 243 Token | cpu-simd | 61,65 tok/s | 21,89 tok/s |
+| 243 Token | **metal** | **300,85 tok/s** | 22,21 tok/s |
+
+### Was daraus folgt
+
+⚑ **Die GPU gewinnt beim Prefill und beim Decode nichts**, und zwar
+gemessen statt hergeleitet: **Faktor 3,8** gegen `cpu-simd` beim 0,6B
+(865 gegen 230), **Faktor 4,9** beim 4B (301 gegen 62). Der Decode
+bleibt gleich (53,41 gegen 53,54 und 22,21 gegen 21,89, beides innerhalb
+der Streuung). Das deckt sich mit dem Grund im Kernel: Eine einzelne
+Eingabe liest die Gewichtsmatrix einmal ganz, und das begrenzt die
+Speicherbandbreite, nicht die Rechenleistung.
+
+⛔️ **Beim kurzen Prompt wird `metal` verworfen, und das ist richtig.**
+Sieben Token liegen unter der gemessenen Schwelle von sechzehn Eingaben
+je Bündel; die GPU rechnet dort **kein einziges** Bündel. Eine Zeile
+`metal` mit den Zahlen der CPU wäre kein schnelleres Backend, sondern
+ein falsches Etikett, und sie sähe genau wie eine echte aus: Der Digest
+ist bei allen Wegen derselbe, das ist der Zweck des Projekts. Deshalb
+liest dieser Lauf den Zähler `metal_buendel` und verwirft bei null.
+
+⚑ **Der lange Prompt ist ein zweiter Lauf und kein geänderter.** Der
+kurze beantwortet „wie schnell erzeugt das Modell Token", der lange „wie
+schnell nimmt es einen Prompt auf". Eine Zahl, die beides beantworten
+soll, beantwortet keine.
+
+```bash
+INTEGER_LLM_MODEL=myelith-0.6b python3 bench/run.py --no-fp \
+  --backends reference,cpu-simd,metal                      # kurz
+INTEGER_LLM_MODEL=myelith-0.6b python3 bench/run.py --no-fp \
+  --backends reference,cpu-simd,metal --prompt-tokens 256  # lang
+```
+
+⚠️ **Das 30B-A3B fehlt hier.** Sein Artefakt ist 29 GB gegen 24 GiB
+Arbeitsspeicher, es lagert also aus, und ein Durchsatzlauf misst dann
+überwiegend die Platte. Er gehört gefahren, wenn jemand daneben sitzt
+und die Maschine sonst nichts tut.
+
+⛔️ **Ältere Decode-Zahlen in Changelog-Einträgen sind Aufzeichnungen
+ihres Tages und keine Grundlinie.** Sie nennen ihren Aufbau nicht,
+insbesondere nicht die Promptlänge, und die entscheidet hier über einen
+Faktor vier. **Was gilt, steht in dieser Datei.**
+
 ## Messwerte (2026-08-20, arm64 / Darwin, θ_v 0.17.0)
+
+> ⛔️ **Diese Tabelle misst eine Modellreihe, die es nicht mehr gibt.**
+> Qwen2.5-0,5B und Qwen2.5-7B sind am 2026-09-11 aus der Reihe genommen
+> worden; seither misst das Projekt Qwen3 in vier Grössen. **Die Zahlen
+> unten bleiben als Aufzeichnung stehen** (eine Messung verfällt nicht,
+> weil das Modell geht), sie sind aber **kein Ausgangspunkt für einen
+> Vergleich** und keine Grundlage für eine Laufzeitschätzung an einem
+> heutigen Modell.
+>
+> ⚠️ **Für die heutige Reihe gibt es hier noch keinen Durchsatzlauf.**
+> Der Kopf des Komponenten-README nennt gemessene Decode-Raten je
+> Modell; sie stammen aus einem anderen Aufbau als `run.py` und sind mit
+> dieser Tabelle **nicht** Zeile für Zeile vergleichbar. Wer einen
+> Vergleich braucht, fährt `run.py` auf der heutigen Reihe und schreibt
+> das Ergebnis hierher.
+>
+> 📌 **Warum das ausdrücklich dasteht:** Ein Dokument, dessen Zahlen
+> überholt sind und das es nicht sagt, ist keine Auskunft, sondern eine
+> Falle. Aufgefallen am 2026-09-16, einen Monat nach dem Lauf.
+
 
 | Modell | Artefakt | Backend | Prefill | Decode |
 |---|---|---|---|---|
