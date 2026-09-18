@@ -36,7 +36,7 @@ use myl_local_agent::ausfuehrung::{Werkzeugausfuehrung, Werkzeugfehler};
 use myl_local_agent::werkzeug::Werkzeug;
 use serde::Deserialize;
 
-use crate::werkzeuge::{befehl_im_verzeichnis, Einhaengung, Werkzeugkiste};
+use crate::werkzeuge::{befehl_im_verzeichnis_mit, Einhaengung, Werkzeugkiste, BEFEHL_ZEITGRENZE_S};
 
 /// Ein Werkzeug, wie es als Datei in einer Kiste liegt.
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +52,105 @@ pub struct Werkzeugmanifest {
     /// Die Befehlsvorlage. `{feld}` wird durch das shell-sicher zitierte
     /// Argument `feld` ersetzt; `{{` und `}}` stehen fuer geschweifte
     /// Klammern.
+    ///
+    /// ⚑ **`$MYL_KISTE` ist der Ordner, in dem dieses Manifest liegt.**
+    /// Damit ruft ein Manifest ein Skript neben sich auf, ohne seinen
+    /// eigenen Pfad zu kennen: `sh "$MYL_KISTE/tue_etwas.sh" {datei}`.
+    /// Ein absoluter Pfad im Manifest waere auf jeder anderen Maschine
+    /// falsch, und ein relativer zeigte in den Arbeitsordner, wo das
+    /// Skript nicht liegt.
     pub befehl: String,
+    /// Wie lange dieses Werkzeug laufen darf, in Sekunden.
+    ///
+    /// ⚑ **Ohne Angabe gilt die Vorgabe** ([`BEFEHL_ZEITGRENZE_S`], 30 s).
+    /// Sie reicht fuer `wc` und `grep` und **nicht** fuer ein Werkzeug,
+    /// das ein Modell von der Platte laedt: Ein kalter Start eines
+    /// Sehmodells dauert laenger als die ganze Frist, und der Abbruch
+    /// saehe wie ein kaputtes Werkzeug aus. Wer laenger braucht, sagt es
+    /// hier; nach oben schliesst [`ZEITGRENZE_HOECHSTENS_S`] ab, damit
+    /// eine Kiste die Schleife nicht beliebig lange anhaelt.
+    #[serde(default)]
+    pub zeitgrenze_s: Option<u64>,
+    /// Welche Art Anhang dieses Werkzeug lesbar macht: `bild`, `ton`,
+    /// `text`, `sonstiges`.
+    ///
+    /// ⚑ **Damit nennt die Anhangnachricht das Werkzeug beim Namen**,
+    /// ohne dass der Name im Rust-Quelltext steht. Stuende er dort,
+    /// staende er an zwei Orten, und eine umbenannte Manifestdatei
+    /// wuerde still zu einem Hinweis auf ein Werkzeug, das es nicht mehr
+    /// gibt. Wer ein eigenes Sehwerkzeug mitbringt, traegt hier `bild`
+    /// ein und wird genauso genannt.
+    #[serde(default)]
+    pub fuer: Vec<String>,
+}
+
+/// Wie lange ein Manifest sich hoechstens Zeit nehmen darf, in Sekunden.
+///
+/// ⚑ **Fuenf Minuten**, und keine Angabe im Manifest hebt das auf. Ein
+/// Werkzeug, das nicht zurueckkommt, haelt die Schleife an
+/// ([`BEFEHL_ZEITGRENZE_S`]); dass ein Sinneswerkzeug laenger braucht,
+/// aendert daran nichts, es verschiebt nur die Grenze.
+pub const ZEITGRENZE_HOECHSTENS_S: u64 = 300;
+
+/// Der Name der Umgebungsvariable, unter der ein Manifest seinen eigenen
+/// Ordner findet.
+pub const UMGEBUNG_KISTE: &str = "MYL_KISTE";
+
+/// ⚑ **Der einzige reservierte Dateiname in einem Kistenordner.**
+///
+/// Er beschreibt die **Kiste**, nicht ein Werkzeug, und wird deshalb von
+/// [`manifeste_lesen`] uebersprungen. Ein Werkzeug darf so nicht heissen.
+pub const KISTENDATEI: &str = "kiste.json";
+
+/// Was ein Kistenordner ueber sich selbst sagt.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Kistenblatt {
+    /// Welche **eingebauten** Werkzeuge dazugehoeren: `Base`, `Advanced`
+    /// oder `1337`. Ohne Angabe entscheidet der Ordnername.
+    #[serde(default)]
+    pub eingebaute: Option<String>,
+}
+
+/// **Welche eingebauten Werkzeuge ein Ordner fuer sich verlangt.**
+///
+/// # ⛔️ Fund 394: der Ordnername war die Ansage (2026-09-17)
+///
+/// Die eingebauten Werkzeuge kamen aus [`Werkzeugkiste::aus_ordnername`],
+/// und die kennt drei Woerter; alles andere ist `Base`. Wer also einen
+/// **eigenen** Ordner waehlte, fiel **stillschweigend** auf die fuenf
+/// Grundwerkzeuge zurueck und verlor unter anderem die Suche im
+/// Mitschnitt, ohne dass irgendwo etwas stand. Aufgefallen beim Anlegen
+/// der Kiste `Sinne`, die genau so heisst wie keine der drei.
+///
+/// ⚑ **Jetzt sagt die Kiste es selbst**, in ihrem [`KISTENDATEI`]; der
+/// Ordnername bleibt der Rueckfall fuer die drei mitgelieferten.
+/// 📌 **Ein Name, der zwei Dinge bedeutet, bedeutet irgendwann nur noch
+/// eines.**
+pub fn eingebaute_des_ordners(ordner: Option<&Path>) -> Option<Werkzeugkiste> {
+    let blatt: Kistenblatt = std::fs::read_to_string(ordner?.join(KISTENDATEI))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())?;
+    let wort = blatt.eingebaute?;
+    // ⚠️ **Nur die bekannten Woerter**, sonst waere ein Tippfehler wieder
+    // ein stiller Rueckfall auf `Base`. `None` heisst hier: der
+    // Ordnername entscheidet, wie bisher.
+    match wort.trim().to_ascii_lowercase().as_str() {
+        "base" => Some(Werkzeugkiste::Base),
+        "advanced" => Some(Werkzeugkiste::Advanced),
+        "1337" => Some(Werkzeugkiste::Elite),
+        _ => None,
+    }
+}
+
+impl Werkzeugmanifest {
+    /// **Die Frist, die fuer dieses Werkzeug wirklich gilt**, in Sekunden.
+    ///
+    /// ⚑ **Eine Stelle rechnet das aus.** Vorgabe, eigene Angabe und
+    /// Deckel gehoeren zusammen; stuende der Deckel nur an der
+    /// Ausfuehrstelle, waere er dort zu pruefen und nirgends zu sehen.
+    pub fn frist_s(&self) -> u64 {
+        self.zeitgrenze_s.unwrap_or(BEFEHL_ZEITGRENZE_S).min(ZEITGRENZE_HOECHSTENS_S)
+    }
 }
 
 /// **Liest die Manifeste einer Kiste**, also die `*.json` eines Ordners.
@@ -68,6 +166,7 @@ pub fn manifeste_lesen(ordner: &Path, mut warnung: impl FnMut(String)) -> Vec<We
     let mut pfade: Vec<PathBuf> = eintraege
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter(|p| p.file_name().is_none_or(|n| n != KISTENDATEI))
         .collect();
     pfade.sort();
     for p in pfade {
@@ -102,8 +201,11 @@ pub fn angebote(
                 beschreibung: m.beschreibung.clone(),
                 parameter: m.parameter.clone(),
             };
-            let ausf: Box<dyn Werkzeugausfuehrung> =
-                Box::new(ManifestWerkzeug { manifest: m, einhaengung: ein.clone() });
+            let ausf: Box<dyn Werkzeugausfuehrung> = Box::new(ManifestWerkzeug {
+                manifest: m,
+                einhaengung: ein.clone(),
+                ordner: ordner.to_path_buf(),
+            });
             (werkzeug, ausf)
         })
         .collect()
@@ -117,7 +219,9 @@ pub fn angebote(
 /// entscheidet, sein Name sagt die Kiste, ohne Angabe ist es `Base`.
 pub fn kiste_der_gilt(agent: &crate::einstellungen::Agenteneinstellung) -> Werkzeugkiste {
     let ordner = ordner_der_gilt(agent.kistenordner.as_deref(), Werkzeugkiste::Base.name());
-    Werkzeugkiste::aus_ordnername(&ordnername(ordner.as_deref(), Werkzeugkiste::Base.name()))
+    eingebaute_des_ordners(ordner.as_deref()).unwrap_or_else(|| {
+        Werkzeugkiste::aus_ordnername(&ordnername(ordner.as_deref(), Werkzeugkiste::Base.name()))
+    })
 }
 
 /// **Alle Ordner, aus denen Manifeste kommen, in dieser Reihenfolge.**
@@ -162,6 +266,31 @@ pub fn angebote_der_kette(
         }
     }
     aus
+}
+
+/// **Welches Werkzeug eine Art Anhang lesbar macht**, wenn es eines gibt.
+///
+/// ⚑ **Gefragt wird die Kette, nicht der Quelltext.** Ein Manifest sagt
+/// mit seinem Feld `fuer`, wofuer es zustaendig ist; hier wird nur
+/// nachgesehen. Spaetere Ordner gewinnen, wie beim Angebot auch.
+///
+/// ⚠️ **Ohne Schreiberlaubnis gibt es nichts zu nennen.** Manifest-
+/// Werkzeuge stehen dann nicht im Angebot, und ein Hinweis auf ein
+/// Werkzeug, das das Modell nicht aufrufen kann, ist schlimmer als
+/// keiner.
+pub fn werkzeug_fuer(agent: &crate::einstellungen::Agenteneinstellung, art: &str) -> Option<String> {
+    if !agent.schreiben {
+        return None;
+    }
+    let mut gefunden = None;
+    for ordner in ordnerkette(agent) {
+        for m in manifeste_lesen(&ordner, |_| {}) {
+            if m.fuer.iter().any(|f| f.trim().eq_ignore_ascii_case(art)) {
+                gefunden = Some(m.name);
+            }
+        }
+    }
+    gefunden
 }
 
 /// **Der Ordner, der wirklich gilt.**
@@ -265,6 +394,10 @@ pub fn kiste_ordner(kennung: &str) -> Option<PathBuf> {
 struct ManifestWerkzeug {
     manifest: Werkzeugmanifest,
     einhaengung: Einhaengung,
+    /// Der Ordner, aus dem das Manifest kam. ⚑ Er steht dem Befehl als
+    /// `$MYL_KISTE` zur Verfuegung, damit ein Werkzeug aus Manifest **und**
+    /// Skript bestehen kann.
+    ordner: PathBuf,
 }
 
 impl Werkzeugausfuehrung for ManifestWerkzeug {
@@ -280,7 +413,8 @@ impl Werkzeugausfuehrung for ManifestWerkzeug {
             });
         }
         let befehl = befehl_aus_vorlage(&self.manifest.befehl, a)?;
-        befehl_im_verzeichnis(&self.einhaengung, &befehl)
+        let umgebung = [(UMGEBUNG_KISTE, self.ordner.display().to_string())];
+        befehl_im_verzeichnis_mit(&self.einhaengung, &befehl, &umgebung, self.manifest.frist_s())
     }
 }
 
@@ -468,6 +602,191 @@ mod tests {
                 assert!(kiste_ordner(k.name()).is_some(), "{} ist nicht auffindbar", k.name());
             }
         }
+    }
+
+    /// ⚑ **Ein Manifest findet ein Skript neben sich**, ueber `$MYL_KISTE`.
+    ///
+    /// Ohne diese Variable kann ein Werkzeug nur aus einer Befehlszeile
+    /// bestehen: Ein absoluter Pfad im Manifest waere auf jeder anderen
+    /// Maschine falsch, ein relativer zeigte in den Arbeitsordner, wo das
+    /// Skript nicht liegt. Diese Probe beisst, wenn die Variable fehlt:
+    /// `sh` findet dann `/sinn.sh` nicht und das Kennwort steht nicht in
+    /// der Ausgabe.
+    #[test]
+    fn ein_manifest_findet_sein_skript_neben_sich() {
+        let (d, kiste) = kiste_mit(&[(
+            "sinn.json",
+            r#"{"name":"sinn","beschreibung":"b",
+               "parameter":{"type":"object","properties":{"wort":{"type":"string"}},"required":["wort"]},
+               "befehl":"sh \"$MYL_KISTE/sinn.sh\" {wort}"}"#,
+        )]);
+        std::fs::write(kiste.join("sinn.sh"), "#!/bin/sh\necho kennwort:\"$1\"\n").expect("Skript");
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let angebote = angebote(&kiste, &ein, |w| panic!("{w}"));
+        let aus = angebote[0].1.ausfuehren(&serde_json::json!({"wort": "hallo"})).expect("laeuft");
+        assert!(aus.contains("kennwort:hallo"), "das Skript neben dem Manifest lief nicht: {aus}");
+    }
+
+    /// ⚑ **Die Frist steht im Manifest, und der Deckel steht darueber.**
+    ///
+    /// Ein Sinneswerkzeug laedt ein Modell von der Platte und ist mit den
+    /// 30 s der Vorgabe nicht fertig; ein Werkzeug ohne Ende haelt die
+    /// Schleife an. Beides wird hier gemessen: dass die eigene Angabe
+    /// wirkt, und dass sie nicht beliebig gross wird.
+    #[test]
+    fn die_frist_kommt_aus_dem_manifest_und_hat_einen_deckel() {
+        let mach = |zeit: Option<u64>| Werkzeugmanifest {
+            name: "x".into(),
+            beschreibung: "b".into(),
+            parameter: serde_json::json!({"type":"object","properties":{},"required":[]}),
+            befehl: "echo x".into(),
+            zeitgrenze_s: zeit,
+            fuer: Vec::new(),
+        };
+        assert_eq!(mach(None).frist_s(), crate::werkzeuge::BEFEHL_ZEITGRENZE_S);
+        assert_eq!(mach(Some(180)).frist_s(), 180);
+        assert_eq!(mach(Some(99_999)).frist_s(), ZEITGRENZE_HOECHSTENS_S);
+
+        // Und sie wirkt wirklich: ein Befehl, der laenger braucht, wird
+        // nach genau dieser Zeit abgebrochen, nicht nach der Vorgabe.
+        let (d, kiste) = kiste_mit(&[(
+            "schlaf.json",
+            r#"{"name":"schlaf","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},
+               "befehl":"sleep 5","zeitgrenze_s":1}"#,
+        )]);
+        let ein = Einhaengung::neu(d.path(), true).expect("Einhaengung");
+        let angebote = angebote(&kiste, &ein, |w| panic!("{w}"));
+        let anfang = std::time::Instant::now();
+        let aus = angebote[0].1.ausfuehren(&serde_json::json!({})).expect("laeuft");
+        assert!(aus.contains("abgebrochen nach 1 s"), "{aus}");
+        assert!(anfang.elapsed().as_secs() < 4, "die Frist aus dem Manifest hat nicht gegriffen");
+    }
+
+    /// ⛔️ **Fund 394: ein eigener Ordner verlor still die eingebauten
+    /// Werkzeuge.** Diese Probe beisst, wenn `kiste.json` nicht gelesen
+    /// wird: Der Ordner heisst `Meins`, und `aus_ordnername` macht daraus
+    /// `Base`.
+    #[test]
+    fn ein_ordner_sagt_selbst_welche_eingebauten_dazugehoeren() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let meins = d.path().join("Meins");
+        std::fs::create_dir(&meins).expect("Ordner");
+        let agent = |ordner: &std::path::Path| crate::einstellungen::Agenteneinstellung {
+            schritte: 1,
+            wurzel: None,
+            schreiben: true,
+            kistenordner: Some(ordner.display().to_string()),
+            warnung: true,
+            modus: Default::default(),
+        };
+
+        // Ohne Blatt entscheidet der Name, und der ist keiner der drei.
+        assert_eq!(kiste_der_gilt(&agent(&meins)), Werkzeugkiste::Base);
+
+        std::fs::write(meins.join(KISTENDATEI), r#"{"eingebaute":"Advanced"}"#).expect("Blatt");
+        assert_eq!(kiste_der_gilt(&agent(&meins)), Werkzeugkiste::Advanced);
+
+        // Ein Tippfehler faellt auf den Namen zurueck statt ihn zu ersetzen.
+        std::fs::write(meins.join(KISTENDATEI), r#"{"eingebaute":"Advanved"}"#).expect("Blatt");
+        assert_eq!(kiste_der_gilt(&agent(&meins)), Werkzeugkiste::Base);
+    }
+
+    /// ⚑ **Die Kistendatei ist kein Werkzeug**, und auch keine kaputte.
+    #[test]
+    fn die_kistendatei_zaehlt_nicht_als_manifest() {
+        let (_d, kiste) = kiste_mit(&[
+            (KISTENDATEI, r#"{"eingebaute":"Advanced"}"#),
+            ("gut.json", r#"{"name":"gut","beschreibung":"b","parameter":{"type":"object","properties":{},"required":[]},"befehl":"echo ok"}"#),
+        ]);
+        let mut warnungen = Vec::new();
+        let m = manifeste_lesen(&kiste, |w| warnungen.push(w));
+        assert_eq!(m.len(), 1, "die Kistendatei wurde als Werkzeug gelesen");
+        assert!(warnungen.is_empty(), "sie wurde als kaputtes Werkzeug vermerkt: {warnungen:?}");
+    }
+
+    /// ⚑ **Jede mitgelieferte Kiste, die ein Blatt hat, nennt ein Wort,
+    /// das es gibt.** Ein Tippfehler dort faellt still auf den Ordnernamen
+    /// zurueck; hier faellt er auf.
+    #[test]
+    fn die_mitgelieferten_kistenblaetter_nennen_bekannte_woerter() {
+        let Some(heimat) = crate::ort::wurzel().map(|w| w.join("CLIENT/werkzeugkisten")) else {
+            return;
+        };
+        for e in std::fs::read_dir(&heimat).expect("die Kistenheimat").flatten() {
+            let o = e.path();
+            if o.is_dir() && o.join(KISTENDATEI).is_file() {
+                assert!(
+                    eingebaute_des_ordners(Some(&o)).is_some(),
+                    "{} nennt kein bekanntes Wort fuer die eingebauten Werkzeuge",
+                    o.display()
+                );
+            }
+        }
+    }
+
+    /// ⚑ **Jede Kiste nennt in ihrem README, was in ihr liegt.**
+    ///
+    /// 📌 Die Ordner beschreiben seit dem 2026-09-17 nur noch ihren
+    /// **Inhalt**; das Format steht eine Ebene hoeher, einmal. Damit ist
+    /// die Liste im README aber eine zweite Stelle neben dem Ordner, und
+    /// **die zweite meldet sich nicht**. Diese Probe ist die Meldung.
+    #[test]
+    fn jede_kiste_nennt_ihre_werkzeuge_in_ihrem_readme() {
+        let Some(heimat) = crate::ort::wurzel().map(|w| w.join("CLIENT/werkzeugkisten")) else {
+            return;
+        };
+        for e in std::fs::read_dir(&heimat).expect("die Kistenheimat").flatten() {
+            let o = e.path();
+            // ⚠️ `1337` ist gitignored und braucht kein README.
+            if !o.is_dir() || o.file_name().is_some_and(|n| n == "1337") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(o.join("README.md")) else {
+                panic!("{} hat kein README", o.display());
+            };
+            for m in manifeste_lesen(&o, |w| panic!("{w}")) {
+                assert!(
+                    text.contains(&m.name),
+                    "{} nennt das Werkzeug {} nicht",
+                    o.join("README.md").display(),
+                    m.name
+                );
+            }
+        }
+    }
+
+    /// ⚑ **Ein Manifest meldet sich fuer eine Art Anhang**, und die
+    /// Anhangzeile nennt es dann beim Namen.
+    ///
+    /// ⚑ **Das ist die Tuer fuer eigene Auswerter.** Bild und Ton macht
+    /// der Client seit dem 2026-09-17 selbst (`myl-senses`); wer etwas
+    /// anderes lesbar machen will, eine Tabelle etwa, traegt hier `fuer`
+    /// ein und wird genauso genannt.
+    #[test]
+    fn ein_manifest_meldet_sich_fuer_eine_art() {
+        let (d, kiste) = kiste_mit(&[(
+            "tabelle.json",
+            r#"{"name":"tabelle_lesen","beschreibung":"b",
+               "parameter":{"type":"object","properties":{"pfad":{"type":"string"}},"required":["pfad"]},
+               "befehl":"echo {pfad}","fuer":["sonstiges"]}"#,
+        )]);
+        let mut agent = crate::einstellungen::Agenteneinstellung {
+            schritte: 1,
+            wurzel: None,
+            schreiben: true,
+            kistenordner: Some(kiste.display().to_string()),
+            warnung: true,
+            modus: Default::default(),
+        };
+        assert_eq!(werkzeug_fuer(&agent, "sonstiges").as_deref(), Some("tabelle_lesen"));
+        // Fuer eine Art, fuer die sich niemand meldet, wird niemand genannt.
+        assert_eq!(werkzeug_fuer(&agent, "bild"), None);
+
+        // ⛔️ **Ohne Schreiberlaubnis steht kein Manifest im Angebot**,
+        // also darf auch keines empfohlen werden.
+        agent.schreiben = false;
+        assert_eq!(werkzeug_fuer(&agent, "sonstiges"), None);
+        drop(d);
     }
 
     /// ⚑ **Base und Advanced tragen die Werkzeuge, die sie versprechen.**

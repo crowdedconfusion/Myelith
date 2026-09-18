@@ -1446,6 +1446,11 @@ h4.mdkopf, h5.mdkopf, h6.mdkopf { font-size: .94rem; color: var(--leise); }
 /* --- Eingabe ---------------------------------------------------------- */
 
 #eingabe {
+  /* ⚑ Ausdruecklich in die dritte Zeile: Seit die Sprachbuehne als
+     vierter Nachkomme in derselben Zelle wie das Gespraech liegt, soll
+     die automatische Verteilung hier nichts mehr zu entscheiden haben. */
+  grid-row: 3;
+  grid-column: 1;
   padding: .6rem clamp(.8rem, 2.5vw, 1.5rem) 1.1rem;
   display: grid;
   justify-items: center;
@@ -2025,6 +2030,12 @@ td input[type="text"] { width: 20rem; padding: .24rem .55rem; }
      Ortswechsel ist eine Auskunft und keine Verzierung; was hier
      entfaellt, ist das Flackern. */
   .kopfmarke.kommt, .kopfmarke.geht { animation: none; }
+  /* ⚑ Die Sprechtaste bleibt gefaerbt und hoert auf zu pochen. Dass
+     aufgenommen wird, ist eine Auskunft; das Pochen ist die Verzierung. */
+  .rundknopf.sprechtaste.nimmt_auf svg { animation: none; }
+  /* ⚑ Der Ausschlag und das Stimmzeichen sind **Auskunft** und keine
+     Verzierung: Sie bleiben, nur ohne weiche Wege dorthin. */
+  .stimmzeichen .ring, .stimmzeichen .kern { transition: none; }
   * { transition: none !important; }
 }
 
@@ -2199,3 +2210,205 @@ tr.gesucht td:first-child { box-shadow: inset 2px 0 0 var(--kante-hell); }
    Masse, der Text bekommt den Rest der Zeile. */
 .warnunghaken span { flex: 1; min-width: 0; }
 .warnungok { justify-self: end; }
+
+/* ⚑ **Der Anhangknopf ist ruhiger als das Senden:** Er ist ein Angebot,
+   kein Abschluss.
+
+   📌 **Hier standen `left` und `right`** aus der Zeit, als die Knoepfe
+   frei im Eingabefeld sassen, dazu ein `padding-left` am Textfeld, das
+   Platz fuer einen Knopf freihielt, der dort nicht mehr steht. Seit der
+   Knopfreihe (2026-09-18) sind beide wirkungslos bis stoerend. */
+.rundknopf.anhang { opacity: .72; }
+.rundknopf.anhang:hover { opacity: 1; }
+/* ⚑ Waehrend eine Datei ueber dem Fenster haengt, sagt der Rand es. */
+body.ablegen .eingabefeld {
+  outline: 2px dashed rgb(var(--auf) / .45);
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------- Eingabe
+
+   ⚑ **Eine Reihe statt verstreuter Knoepfe** (Auftrag des
+   Projektinhabers, 2026-09-18). Links, was der Frage etwas hinzufuegt,
+   rechts, was sie abschickt; die Luecke dazwischen traegt die Trennung,
+   nicht eine Linie. */
+.knopfreihe {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: .4rem;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+/* ⛔️ **Kein Schrumpfen.** Ein runder Knopf, der schmaler wird als sein
+   Zeichen, laeuft mit dem Nachbarn zusammen; gemeldet vom
+   Projektinhaber am 2026-09-18 („die zwei Buttons ueberschneiden sich
+   noch ein wenig"). */
+.knopfreihe > .rundknopf { flex: 0 0 auto; }
+.knopfluecke { flex: 1 1 auto; min-width: .5rem; }
+
+/* ⚑ **Anhaenge stehen ueber dem Feld**, als Plaettchen, und nicht im
+   Gespraech: Eine Datei ist ein Teil der Frage, die man gerade
+   formuliert. */
+.anhangleiste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  grid-column: 1 / -1;
+  margin-bottom: .35rem;
+}
+.anhangchip {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .2rem .5rem;
+  border-radius: .7rem;
+  font-size: .82rem;
+  background: rgb(var(--auf) / .07);
+  color: var(--text);
+}
+.anhangchip .chipname { font-weight: 600; }
+.anhangchip .chipmass { opacity: .65; }
+/* ⚠️ Solange ein Sinnesmodell hinsieht, steht das am Plaettchen: Wer
+   absendet, soll wissen, dass die Auskunft noch unterwegs ist. */
+.anhangchip.sieht .chipmass { opacity: 1; }
+.anhangchip .weg {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: .6;
+  padding: 0 .1rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.anhangchip .weg:hover { opacity: 1; }
+
+/* Die Karte unter dem abgeschickten Auftrag. */
+.anhangkarte {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-top: .35rem;
+  padding: .4rem .6rem;
+  border-radius: .7rem;
+  font-size: .85rem;
+  background: rgb(var(--auf) / .06);
+}
+.anhangkarte .kartename { font-weight: 600; }
+.anhangkarte .kartemass { opacity: .65; }
+
+/* ⚑ **Der Ausschlag liegt ueber dem Feld.** Er ist eine Auskunft und
+   keine Verzierung: Er sagt, dass wirklich etwas ankommt. */
+.pegel {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 1.1rem;
+  grid-column: 1 / -1;
+  margin-bottom: .3rem;
+}
+.pegel span {
+  flex: 1 1 auto;
+  min-height: 2px;
+  border-radius: 1px;
+  background: var(--akzent);
+  opacity: .75;
+  transform-origin: bottom;
+}
+
+/* ---------------------------------------------------------- Sprachmodus
+
+   ⚑ **Ein Zeichen statt des Verlaufs.** Wer spricht und zuhoert, liest
+   nicht mit. Die Ringe schwingen mit dem, was gerade klingt; ohne Ton
+   stehen sie still, und das ist die Auskunft „es spricht niemand". */
+/* ⛔️ **In die Zeile des Gespraechs und nicht ueber das ganze Fenster.**
+   `#haupt` ist `position: relative`, also haette `inset: 0` auch die
+   Eingabe verdeckt, und damit den Weg wieder heraus. Die Buehne liegt
+   deshalb in derselben Rasterzelle wie `#gespraech` und ueberlagert nur
+   dieses. */
+.sprachbuehne {
+  grid-row: 2;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.4rem;
+  z-index: 3;
+  background: var(--grund);
+}
+.stimmzeichen {
+  position: relative;
+  width: 11rem;
+  height: 11rem;
+  display: grid;
+  place-items: center;
+}
+.stimmzeichen .ring,
+.stimmzeichen .kern {
+  position: absolute;
+  border-radius: 50%;
+  /* ⚑ Der Ausschlag kommt als Variable herein, nicht als Klassenwechsel:
+     Sechzig Bilder je Sekunde durch das Klassensystem waeren Arbeit fuer
+     nichts. */
+  transform: scale(calc(1 + var(--schwung, 0) * .45));
+  transition: transform .08s linear;
+}
+.stimmzeichen .kern {
+  width: 4.5rem;
+  height: 4.5rem;
+  background: var(--akzent);
+  opacity: .9;
+}
+.stimmzeichen .ring1 {
+  width: 7.5rem;
+  height: 7.5rem;
+  background: rgb(var(--auf) / .14);
+}
+.stimmzeichen .ring2 {
+  width: 11rem;
+  height: 11rem;
+  background: rgb(var(--auf) / .07);
+}
+/* ⚑ **Die Sprechtaste der Buehne ist gross und traegt das Zeichen.**
+   Derselbe Knopf wie unten, nur an der Stelle, auf die man im
+   Sprachmodus sieht. */
+.buehnentaste {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.buehnentaste.nimmt_auf .kern { background: var(--akzent); }
+.sprachhinweis {
+  margin: 0;
+  color: var(--leiser);
+  font-size: .9rem;
+}
+.sprachtext {
+  max-width: 34rem;
+  text-align: center;
+  opacity: .8;
+  margin: 0;
+  padding: 0 1rem;
+}
+
+/* ⚑ **Die Sprechtaste faerbt sich, solange sie aufnimmt.** Wer redet,
+   soll sehen, dass zugehoert wird; eine Taste ohne Rueckmeldung laesst
+   einen in eine Aufnahme sprechen, die nie lief. */
+.rundknopf.sprechtaste.nimmt_auf { color: var(--akzent); }
+.rundknopf.sprechtaste.nimmt_auf svg { animation: pochen 1.2s ease-in-out infinite; }
+@keyframes pochen { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Der Lautsprecher bleibt sichtbar an, solange vorgelesen wird. */
+.rundknopf.vorlesen[aria-pressed="true"],
+.rundknopf.sprachmodus[aria-pressed="true"] { color: var(--akzent); }
+/* ⚑ Die Balken des Sprachmodus-Zeichens stehen fuer den Ausschlag, den
+   es ersetzt: Es ist derselbe Gedanke in klein. */
+.rundknopf.sprachmodus svg path { stroke-linecap: round; }
+
+/* Die Stimmenzeile auf der Einstellungsseite. */
+.stimmzeile { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.stimmzeile .stimmname { opacity: 0.8; }

@@ -97,6 +97,23 @@ const TEXTE = {
     "eingabe.platz": "Frag etwas, oder gib einen Auftrag.",
     "eingabe.label": "Eingabe",
     "knopf.senden": "Senden",
+    "knopf.anhang": "Datei anhängen",
+    "lauf.laeuftschon": "Es läuft noch ein Auftrag; einen Augenblick.",
+    "sprachmodus.halten": "Zum Sprechen gedrückt halten",
+    "anhang.weg": "Anhang entfernen",
+    "knopf.sprachmodus": "Sprachmodus",
+    "knopf.sprechtaste": "Gedrückt halten und sprechen",
+    "knopf.vorlesen": "Antworten vorlesen",
+    "sinne.titel": "Sinne",
+    "sinne.stimmewaehlen": "Stimme hochladen",
+    "sinne.stimmeweg": "Stimme entfernen",
+    "sinne.einrichten": "Läufer anlegen",
+    "sinne.hoert": "🎙 Aufnahme läuft, zum Beenden loslassen",
+    "sinne.schreibtmit": "Wird mitgeschrieben …",
+    "sinne.keinestimme": "keine eigene Stimme",
+    "sinne.stimmeliegt": "eigene Stimme hinterlegt",
+    "anhang.wirdangesehen": "⏳ Ein anderes Modell sieht sie gerade an …",
+    "anhang.angesehen": "Ein anderes Modell hat sie angesehen; das ist alles, was es dazu gibt:",
     "seite.zurueck": "Zurück zum Gespräch",
     "seite.modelle": "Modelle",
     "seite.freigabe": "Was dieser Rechner hergibt",
@@ -244,6 +261,23 @@ const TEXTE = {
     "eingabe.platz": "Ask something, or give a task.",
     "eingabe.label": "Input",
     "knopf.senden": "Send",
+    "knopf.anhang": "Attach a file",
+    "lauf.laeuftschon": "A run is still going; one moment.",
+    "sprachmodus.halten": "Hold to speak",
+    "anhang.weg": "Remove attachment",
+    "knopf.sprachmodus": "Voice mode",
+    "knopf.sprechtaste": "Hold and speak",
+    "knopf.vorlesen": "Read answers aloud",
+    "sinne.titel": "Senses",
+    "sinne.stimmewaehlen": "Upload a voice",
+    "sinne.stimmeweg": "Remove the voice",
+    "sinne.einrichten": "Create the runner",
+    "sinne.hoert": "🎙 Recording, release to stop",
+    "sinne.schreibtmit": "Transcribing …",
+    "sinne.keinestimme": "no custom voice",
+    "sinne.stimmeliegt": "custom voice stored",
+    "anhang.wirdangesehen": "⏳ A different model is examining it …",
+    "anhang.angesehen": "A different model examined it; this is all there is:",
     "seite.zurueck": "Back to the conversation",
     "seite.modelle": "Models",
     "seite.freigabe": "What this machine offers",
@@ -1111,8 +1145,11 @@ function kontext_von(g) {
   return vorn.concat(
     g.beitraege
       .slice(g.verdichtet_bei || 0)
-      .filter((b) => !b.fehler && !b.laufend && b.text && (b.von === "nutzer" || b.von === "modell"))
-      .map((b) => ({ role: b.von === "modell" ? "assistant" : "user", content: b.text })),
+      // ⚑ **Was das Modell sieht, ist `modelltext`, wenn es einen gibt.**
+      // Eine angehaengte Datei steht dort als Zeile; im Fenster steht
+      // statt dessen eine Karte.
+      .filter((b) => !b.fehler && !b.laufend && (b.text || b.modelltext) && (b.von === "nutzer" || b.von === "modell"))
+      .map((b) => ({ role: b.von === "modell" ? "assistant" : "user", content: b.modelltext || b.text })),
   );
 }
 
@@ -1511,10 +1548,27 @@ function beitrag_zeichnen(b) {
   }
 
   if (b.von === "nutzer") {
-    const blase = document.createElement("div");
-    blase.className = "blase";
-    blase.textContent = b.text;
-    wurzel.append(blase);
+    if (b.text) {
+      const blase = document.createElement("div");
+      blase.className = "blase";
+      blase.textContent = b.text;
+      wurzel.append(blase);
+    }
+    // ⚑ **Die Datei steht unter dem Auftrag, als Karte.** Was das Modell
+    // dazu sieht, steht in `modelltext` und nicht hier: Ein Pfad und ein
+    // Auszug sind eine Auskunft fuer das Modell, keine fuer den Leser.
+    for (const a of b.anhaenge || []) {
+      const karte = document.createElement("div");
+      karte.className = "anhangkarte";
+      const name = document.createElement("span");
+      name.className = "kartename";
+      name.textContent = a.name;
+      const mass = document.createElement("span");
+      mass.className = "kartemass";
+      mass.textContent = `${a.art}, ${menschlich(a.bytes)}`;
+      karte.append(name, mass);
+      wurzel.append(karte);
+    }
     return wurzel;
   }
 
@@ -1976,7 +2030,7 @@ function melden(text, wo) {
 // Abschnitte, die keine Einstellungen sind: Aktualisierung, Modelle,
 // was dieser Rechner hergibt. Die Reihenfolge steht im HTML, hier steht
 // nur, welches Feld wohin gehoert.
-const TABELLEN = ["felder-oberflaeche", "felder-grenzen", "felder-rest"];
+const TABELLEN = ["felder-oberflaeche", "felder-grenzen", "felder-modell", "felder-agent"];
 
 // ⚑ **Entschieden wird am Namen und nicht an der Ueberschrift.** Ein
 // Feldname (`kap.speicher`) ist in jeder Sprache derselbe; eine
@@ -1987,7 +2041,11 @@ const tabelle_fuer = (name) =>
     ? "felder-oberflaeche"
     : name.startsWith("kap.")
       ? "felder-grenzen"
-      : "felder-rest";
+      : // ⚑ **Agent und Modell in getrennten Tabellen**, damit die Sinne
+        // dazwischen stehen koennen (2026-09-18).
+        name.startsWith("agent.")
+        ? "felder-agent"
+        : "felder-modell";
 
 const bereichszeile = (name) => {
   const tr = document.createElement("tr");
@@ -2340,6 +2398,161 @@ async function bauen(schluessel, name) {
 // vergisst, verliert eine Art Meldung, ohne dass etwas fehlschlaegt.
 horchen("lauf-lebt", (e) => live_meldung(e.payload));
 
+// --- Ausschlag, Stimme und Sprachmodus ---------------------------------
+
+/// Wie viele Balken der Ausschlag hat.
+const PEGELBALKEN = 28;
+
+/// ⚑ **Ein Ringspeicher statt einer wachsenden Liste.** Der Ausschlag
+/// kommt viele Male je Sekunde; eine Liste, die mitwaechst, waere nach
+/// einer Minute Diktat eine Liste mit tausenden Eintraegen.
+let pegelwerte = new Array(PEGELBALKEN).fill(0);
+
+/// **Zeigt oder versteckt den Ausschlag ueber dem Eingabefeld.**
+function pegel_zeigen(an) {
+  const kasten = $("pegel");
+  if (!kasten) return;
+  kasten.hidden = !an;
+  if (!an) return;
+  pegelwerte = new Array(PEGELBALKEN).fill(0);
+  kasten.textContent = "";
+  for (let i = 0; i < PEGELBALKEN; i += 1) kasten.append(document.createElement("span"));
+}
+
+/// **Schiebt einen Wert nach und zeichnet.**
+function pegel_nachziehen(wert) {
+  const kasten = $("pegel");
+  if (!kasten || kasten.hidden) return;
+  pegelwerte.push(Math.max(0, Math.min(1, Number(wert) || 0)));
+  pegelwerte.shift();
+  const balken = kasten.children;
+  for (let i = 0; i < balken.length; i += 1) {
+    // Mindesthoehe, damit die Leiste auch bei Stille eine Leiste bleibt.
+    balken[i].style.height = `${8 + pegelwerte[i] * 92}%`;
+  }
+}
+
+horchen("sinne-pegel", (e) => pegel_nachziehen(e.payload));
+
+/// ⚑ **Ein einziger Tonzusammenhang fuer das ganze Fenster.** Jeder
+/// Satz einen neuen zu oeffnen, liefe nach ein paar Dutzend Saetzen in
+/// die Grenze des Browsers.
+let tonwerk = null;
+let tonmesser = null;
+/// Die Warteschlange der gesprochenen Stuecke, damit sie in der
+/// Reihenfolge klingen, in der sie ankommen.
+let stimmkette = Promise.resolve();
+
+function tonwerk_holen() {
+  if (!tonwerk) {
+    tonwerk = new (window.AudioContext || window.webkitAudioContext)();
+    tonmesser = tonwerk.createAnalyser();
+    tonmesser.fftSize = 256;
+    tonmesser.connect(tonwerk.destination);
+  }
+  return tonwerk;
+}
+
+/// **Spielt ein Stueck und laesst das Zeichen mitschwingen.**
+///
+/// ⚑ **Der Ausschlag kommt aus dem Ton selbst**, nicht aus einer Uhr:
+/// Ein Zeichen, das sich nach einem Zeitgeber bewegt, sieht aus wie
+/// eines, das mitschwingt, und ist eine Verzierung mit dem Anschein
+/// einer Auskunft.
+function stimme_spielen(base64) {
+  return new Promise((fertig) => {
+    let roh;
+    try {
+      const binaer = atob(base64);
+      roh = new Uint8Array(binaer.length);
+      for (let i = 0; i < binaer.length; i += 1) roh[i] = binaer.charCodeAt(i);
+    } catch (f) {
+      fertig();
+      return;
+    }
+    const werk = tonwerk_holen();
+    werk.decodeAudioData(
+      roh.buffer,
+      (puffer) => {
+        const quelle = werk.createBufferSource();
+        quelle.buffer = puffer;
+        quelle.connect(tonmesser);
+        const zeichen = document.querySelector(".stimmzeichen");
+        const daten = new Uint8Array(tonmesser.frequencyBinCount);
+        let laeuft = true;
+        const schwingen = () => {
+          if (!laeuft) return;
+          tonmesser.getByteTimeDomainData(daten);
+          let spitze = 0;
+          for (const v of daten) spitze = Math.max(spitze, Math.abs(v - 128) / 128);
+          if (zeichen) zeichen.style.setProperty("--schwung", spitze.toFixed(3));
+          requestAnimationFrame(schwingen);
+        };
+        quelle.onended = () => {
+          laeuft = false;
+          if (zeichen) zeichen.style.setProperty("--schwung", "0");
+          fertig();
+        };
+        quelle.start();
+        requestAnimationFrame(schwingen);
+      },
+      () => fertig(),
+    );
+  });
+}
+
+horchen("sinne-stimme", (e) => {
+  stimmkette = stimmkette.then(() => stimme_spielen(e.payload));
+});
+
+/// ⚑ **Im Sprachmodus tritt ein Zeichen an die Stelle des Verlaufs**
+/// (Auftrag des Projektinhabers, 2026-09-18). Wer spricht und zuhoert,
+/// liest nicht mit. ⚠️ **Er schaltet das Vorlesen mit ein**, denn ein
+/// Sprachmodus ohne Stimme waere ein leerer Bildschirm.
+function sprachmodus_schalten(an) {
+  const buehne = $("sprachbuehne");
+  const knopf = $("sprachmodus");
+  if (!buehne) return;
+  const neu = an === undefined ? buehne.hidden : an;
+  buehne.hidden = !neu;
+  // ⚑ **Der Verlauf geht weg, nicht nur unter die Buehne.** Ein
+  // Vorleser im Ruecken eines mitlaufenden Gespraechs ist Unruhe, und
+  // ein verdeckter Verlauf bliebe fuer Vorleseprogramme sichtbar.
+  const verlauf = $("gespraech");
+  if (verlauf) verlauf.hidden = neu;
+  if (knopf) knopf.setAttribute("aria-pressed", neu ? "true" : "false");
+  const lautsprecher = $("vorlesen");
+  if (neu && !vorlesen_an) {
+    vorlesen_an = true;
+    if (lautsprecher) lautsprecher.setAttribute("aria-pressed", "true");
+  }
+  if (neu) {
+    sprachtext_setzen("");
+    hinweis_setzen("");
+    // ⚑ Dasselbe hier: Wer den Sprachmodus einschaltet, will sprechen
+    // und nicht warten.
+    invoke("stimme_vorwaermen").catch(() => {});
+  }
+}
+
+/// **Die Zeile unter dem Zeichen**, die sagt, was gerade zu tun ist.
+///
+/// ⚑ **Ohne Text ist es wieder die Anleitung.** Eine Buehne, auf der
+/// nichts steht, sieht aus wie eine, die haengt.
+function hinweis_setzen(text) {
+  const p = $("sprachhinweis");
+  if (p) p.textContent = text || t("sprachmodus.halten");
+}
+
+/// Was auf der Buehne steht, waehrend gesprochen wird.
+function sprachtext_setzen(text) {
+  const p = $("sprachtext");
+  if (!p) return;
+  // ⚑ Nur das Ende: Eine Buehne ist kein Verlauf.
+  const kurz = (text || "").slice(-320);
+  p.textContent = kurz;
+}
+
 async function horchen(name, fn) {
   const { listen } = window.__TAURI__.event;
   return await listen(name, fn);
@@ -2539,7 +2752,7 @@ async function einstellungen_zeichnen() {
   try {
     const r = await invoke("werkzeuge", { wurzel: null });
     const platz = (name, pfad) => {
-      const feld = $("felder-rest").querySelector(`tr[data-feld="${name}"] input`);
+      const feld = $("felder-agent").querySelector(`tr[data-feld="${name}"] input`);
       if (feld && pfad) feld.placeholder = pfad;
     };
     platz("agent.kistenordner", r.kistenordner);
@@ -2882,6 +3095,9 @@ function live_meldung(m) {
   } else if (m.art === "Text") {
     laufender.text += m.text;
     w.querySelector(".antworttext").textContent = laufender.text;
+    // ⚑ **Auf der Buehne steht das Ende der Antwort**, nicht ihr Anfang:
+    // Wer zuhoert, will sehen, wo das Gesprochene gerade ist.
+    sprachtext_setzen(laufender.text);
   } else if (m.art === "Verdichtet") {
     laufender_verdichtet = true;
     melden(t("kontext.verdichtet", m.vorher, m.nachher));
@@ -2988,7 +3204,350 @@ async function bloecke_nachtragen() {
   }
 }
 
+/// **Eine Datei anhaengen**, ueber den Knopf oder durch Ablegen.
+///
+/// ⚑ **Der Anhang ist ein Beitrag des Nutzers und kein Hinweis.** Nur
+/// was als `nutzer` oder `modell` im Verlauf steht, geht an das Modell
+/// (siehe `kontext_von`); ein Hinweis waere sichtbar und unwirksam,
+/// also genau die Sorte Halbheit, die spaeter niemand erklaeren kann.
+///
+/// ⚑ **Und die Datei selbst bleibt draussen.** Ins Gespraech geht eine
+/// Zeile mit Ort und Art; gelesen wird mit den Werkzeugen. **Ein Anhang
+/// soll den Kontext erreichbar machen und nicht fuellen.**
+/// ⚑ **Was an der Eingabe haengt und noch nicht abgeschickt ist.**
+///
+/// ⛔️ **Vorher wurde eine Datei sofort ein eigener Beitrag** und war
+/// damit weg, bevor jemand etwas dazu schreiben konnte (gemeldet vom
+/// Projektinhaber am 2026-09-18). **Eine Datei ist ein Teil der Frage**,
+/// die man gerade formuliert; ins Gespraech gehoert sie, wenn die Frage
+/// abgeschickt ist.
+let anhaenge_offen = [];
+
+/// Bytes, wie ein Mensch sie liest. Dieselbe Regel wie in `myl-senses`.
+function menschlich(bytes) {
+  return bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`;
+}
+
+/// **Die Plaettchen ueber dem Eingabefeld.**
+function anhangleiste_zeichnen() {
+  const leiste = $("anhangleiste");
+  if (!leiste) return;
+  leiste.textContent = "";
+  leiste.hidden = anhaenge_offen.length === 0;
+  anhaenge_offen.forEach((a, i) => {
+    const chip = document.createElement("span");
+    chip.className = a.sieht ? "anhangchip sieht" : "anhangchip";
+    const name = document.createElement("span");
+    name.className = "chipname";
+    name.textContent = a.name;
+    const mass = document.createElement("span");
+    mass.className = "chipmass";
+    mass.textContent = a.sieht ? t("anhang.wirdangesehen") : `${a.art}, ${menschlich(a.bytes)}`;
+    const weg = document.createElement("button");
+    weg.type = "button";
+    weg.className = "weg";
+    weg.textContent = "×";
+    weg.title = t("anhang.weg");
+    weg.setAttribute("aria-label", t("anhang.weg"));
+    // ⚑ **Abwaehlen geht, solange nicht abgeschickt ist.** Die Kopie im
+    // Anhangordner bleibt liegen; `myl anhaenge` raeumt sie weg.
+    weg.addEventListener("click", () => {
+      anhaenge_offen.splice(i, 1);
+      anhangleiste_zeichnen();
+    });
+    chip.append(name, mass, weg);
+    leiste.append(chip);
+  });
+}
+
+async function anhang_hinzufuegen(pfad) {
+  if (!pfad) return;
+  try {
+    const a = await invoke("anhang_aufnehmen", { pfad, wurzel: prozesspfad() });
+    const eintrag = {
+      name: a.name,
+      pfad: a.pfad,
+      art: a.art,
+      bytes: a.bytes,
+      nachricht: a.nachricht,
+      sieht: !!a.ansehen,
+    };
+    anhaenge_offen.push(eintrag);
+    anhangleiste_zeichnen();
+    // ⚑ **Erst das Plaettchen, dann das Hinsehen.** Ein Sehmodell
+    // braucht Sekunden bis Minuten; die Datei haengt aber sofort.
+    if (eintrag.sieht) {
+      try {
+        const gesehen = await invoke("anhang_ansehen", { pfad: a.pfad, wurzel: prozesspfad() });
+        eintrag.nachricht = `${a.nachricht} ${t("anhang.angesehen")}\n\n${gesehen}`;
+      } catch (f) {
+        // ⚠️ **Der Grund geht an den Menschen und nicht ins Gespraech.**
+        melden_als_fehler(f);
+      }
+      eintrag.sieht = false;
+      anhangleiste_zeichnen();
+    }
+  } catch (f) {
+    melden_als_fehler(f);
+  }
+}
+
+/// **Ein Fehler der Sinne geht ins Gespraech, sichtbar.**
+///
+/// ⚑ **Und nicht in eine Konsole**, die niemand offen hat. ⚠️ Ein
+/// Gespraech wird dafuer nicht eroeffnet: Wer nichts angefangen hat,
+/// bekommt keine Fehlermeldung als ersten Beitrag.
+function melden_als_fehler(f) {
+  if (!offen) return;
+  offen.beitraege.push({ von: "modell", text: String(f), fuss: "", fehler: true });
+  alles_zeichnen();
+}
+
+/// **Was die Sprechtaste gerade tut**, an ihr selbst.
+function stand_sagen(text) {
+  const taste = $("sprechtaste");
+  if (taste) taste.title = text || t("knopf.sprechtaste");
+}
+
+/// ⚑ **Ob vorgelesen wird, gilt fuer dieses Fenster und nicht darueber
+/// hinaus.** Ein Client, der beim naechsten Start ungefragt spricht,
+/// spricht im falschen Raum.
+let vorlesen_an = false;
+/// Ob gerade aufgenommen wird, damit zwei Ereignisse nicht zweimal enden.
+let nimmt_auf = false;
+
+/// **Die Sinne, die Sprechtaste und die Stimme.**
+async function sinne_verdrahten() {
+  const taste = $("sprechtaste");
+  const lautsprecher = $("vorlesen");
+  const buehnenknopf = $("sprachmodus");
+
+  const stand_holen = async () => {
+    let stand;
+    try {
+      stand = await invoke("sinne_stand");
+    } catch (f) {
+      return null;
+    }
+    // ⚑ **Ein Knopf, der nur erklaeren kann, warum er nicht geht, ist
+    // kein Knopf.** Was nicht eingerichtet ist, steht auf der
+    // Einstellungsseite, nicht neben dem Eingabefeld.
+    if (taste) taste.hidden = !stand.zuhoeren;
+    if (lautsprecher) lautsprecher.hidden = !stand.sprechen;
+    if (buehnenknopf) buehnenknopf.hidden = !stand.sprechen;
+    if (!stand.sprechen && vorlesen_an) {
+      vorlesen_an = false;
+      if (lautsprecher) lautsprecher.setAttribute("aria-pressed", "false");
+    }
+    sinne_zeigen(stand);
+    return stand;
+  };
+
+  // ⚑ **Zwei Knoepfe, ein Verhalten.** Unten in der Reihe und gross auf
+  // der Sprachbuehne; wer im Sprachmodus zum Reden woanders hinzeigen
+  // muesste, haette keinen Sprachmodus.
+  for (const knopf of [taste, $("buehnentaste")]) {
+    if (!knopf) continue;
+    // ⚑ **Gedrueckt halten, reden, loslassen.** `pointerleave` beendet
+    // ebenfalls: Wer mit gedruecktem Knopf wegfaehrt, bekaeme sonst eine
+    // Aufnahme, die nie endet.
+    knopf.addEventListener("pointerdown", async () => {
+      if (nimmt_auf) return;
+      // ⚑ **Nicht aufnehmen, waehrend eine Antwort laeuft.** Sonst
+      // redet man in eine Sperre hinein und merkt es erst beim
+      // Loslassen.
+      if (auftrag_laeuft) {
+        melden(t("lauf.laeuftschon"));
+        return;
+      }
+      try {
+        await invoke("sprechtaste_start");
+        nimmt_auf = true;
+        for (const k of [taste, $("buehnentaste")]) if (k) k.classList.add("nimmt_auf");
+        pegel_zeigen(true);
+        stand_sagen(t("sinne.hoert"));
+        hinweis_setzen(t("sinne.hoert"));
+      } catch (f) {
+        melden_als_fehler(f);
+      }
+    });
+    const loslassen = async () => {
+      if (!nimmt_auf) return;
+      nimmt_auf = false;
+      for (const k of [taste, $("buehnentaste")]) if (k) k.classList.remove("nimmt_auf");
+      pegel_zeigen(false);
+      stand_sagen(t("sinne.schreibtmit"));
+      hinweis_setzen(t("sinne.schreibtmit"));
+      try {
+        const text = await invoke("sprechtaste_ende");
+        stand_sagen("");
+        hinweis_setzen("");
+        // ⚑ **Der Text erscheint in der Eingabezeile** und wird nicht
+        // sofort abgeschickt: Wer sich verhoert hat, soll ausbessern
+        // koennen. ⚠️ **Im Sprachmodus ist das anders**, dort sieht
+        // niemand auf die Eingabezeile, und ein Text, der dort liegen
+        // bleibt, waere ein Gespraech, das nicht weitergeht.
+        if (text && text.trim()) {
+          const buehne = $("sprachbuehne");
+          if (buehne && !buehne.hidden) {
+            await senden(text.trim());
+          } else {
+            const feld = $("auftrag");
+            feld.value = feld.value ? `${feld.value} ${text.trim()}` : text.trim();
+            feld_messen();
+            feld.focus();
+          }
+        }
+      } catch (f) {
+        stand_sagen("");
+        hinweis_setzen("");
+        melden_als_fehler(f);
+      }
+    };
+    knopf.addEventListener("pointerup", loslassen);
+    knopf.addEventListener("pointerleave", loslassen);
+    knopf.addEventListener("pointercancel", loslassen);
+  }
+
+  if (lautsprecher) {
+    lautsprecher.addEventListener("click", () => {
+      vorlesen_an = !vorlesen_an;
+      lautsprecher.setAttribute("aria-pressed", vorlesen_an ? "true" : "false");
+      // ⚑ **Jetzt laden, nicht bei der ersten Antwort.** Das
+      // Sprechmodell braucht rund achtzehn Sekunden; wer sie vor die
+      // erste Antwort legt, wartet doppelt.
+      if (vorlesen_an) invoke("stimme_vorwaermen").catch(() => {});
+    });
+  }
+  if (buehnenknopf) {
+    buehnenknopf.addEventListener("click", () => sprachmodus_schalten());
+  }
+
+  const waehlen = $("stimme-waehlen");
+  if (waehlen) {
+    waehlen.addEventListener("click", async () => {
+      const gewaehlt = await invoke("datei_waehlen", { titel: t("sinne.stimmewaehlen") });
+      if (!gewaehlt) return;
+      try {
+        sinne_zeigen(await invoke("stimme_setzen", { pfad: gewaehlt }));
+      } catch (f) {
+        melden_als_fehler(f);
+      }
+    });
+  }
+  const weg = $("stimme-weg");
+  if (weg) {
+    weg.addEventListener("click", async () => {
+      sinne_zeigen(await invoke("stimme_entfernen"));
+    });
+  }
+  const einrichten = $("sinne-einrichten");
+  if (einrichten) {
+    einrichten.addEventListener("click", async () => {
+      try {
+        const satz = await invoke("sinne_einrichten");
+        const mangel = $("sinnesmangel");
+        if (mangel) {
+          mangel.textContent = satz;
+          mangel.hidden = false;
+        }
+        await stand_holen();
+      } catch (f) {
+        melden_als_fehler(f);
+      }
+    });
+  }
+
+  await stand_holen();
+}
+
+/// **Was auf der Einstellungsseite ueber die Sinne steht.**
+function sinne_zeigen(stand) {
+  if (!stand) return;
+  const zeile = $("sinnestand");
+  if (zeile) {
+    const teile = [];
+    teile.push(`${stand.sehen ? "✓" : "✗"} Sehen`);
+    teile.push(`${stand.hoeren ? "✓" : "✗"} Hören`);
+    teile.push(`${stand.sprechen ? "✓" : "✗"} Sprechen${stand.sprechweg ? ` (${stand.sprechweg})` : ""}`);
+    zeile.textContent = teile.join("   ");
+  }
+  const name = $("stimmname");
+  if (name) name.textContent = stand.probe ? t("sinne.stimmeliegt") : t("sinne.keinestimme");
+  const weg = $("stimme-weg");
+  if (weg) weg.hidden = !stand.probe;
+  // ⚠️ **Der Hinweis steht da, wenn etwas zu sagen ist**, und sonst nicht.
+  const hinweis = $("stimmhinweis");
+  if (hinweis) {
+    hinweis.textContent = stand.hinweis || "";
+    hinweis.hidden = !stand.hinweis;
+  }
+  const mangel = $("sinnesmangel");
+  if (mangel && stand.mangel && stand.mangel.length) {
+    mangel.textContent = stand.mangel.join("\n");
+    mangel.hidden = false;
+  }
+}
+
+/// Der Knopf und das Ablegen, beide auf demselben Weg.
+function anhang_verdrahten() {
+  const knopf = $("anhang");
+  if (knopf) {
+    knopf.addEventListener("click", async () => {
+      const gewaehlt = await invoke("datei_waehlen", { titel: "Datei anhängen" });
+      await anhang_hinzufuegen(gewaehlt);
+    });
+  }
+  // ⚑ **Ablegen geht ueber das Fensterereignis und nicht ueber HTML5.**
+  // Im Webview traegt ein abgelegtes `File` keinen Pfad; Tauri meldet
+  // dagegen die echten Pfade. **Ein Anhang ohne Pfad waere ein Anhang,
+  // den kein Werkzeug findet.**
+  horchen("tauri://drag-drop", async (e) => {
+    document.body.classList.remove("ablegen");
+    const pfade = (e && e.payload && e.payload.paths) || [];
+    for (const p of pfade) await anhang_hinzufuegen(p);
+  });
+  horchen("tauri://drag-enter", () => document.body.classList.add("ablegen"));
+  horchen("tauri://drag-leave", () => document.body.classList.remove("ablegen"));
+}
+
+/// ⛔️ **Ob gerade ein Auftrag laeuft.**
+///
+/// 📌 **Bis zum 2026-09-18 war der abgeschaltete Senden-Knopf die
+/// einzige Sperre**, und die Sprechtaste geht an ihm vorbei: Wer im
+/// Sprachmodus loslaesst, waehrend die vorige Antwort noch laeuft,
+/// startete einen zweiten Lauf. Der erste raeumte beim Ende
+/// `laufender` weg, und der zweite lief in
+/// `TypeError: null is not an object (evaluating 'laufender.text =
+/// a.text')`. Gemeldet vom Projektinhaber.
+///
+/// ⚑ **Die Sperre gehoert an die Sache und nicht an einen Knopf.**
+let auftrag_laeuft = false;
+
+/// **Loest die Anhaenge von der Eingabezeile ab**, fuer genau einen
+/// Auftrag.
+///
+/// ⚑ **Zwei Fassungen desselben Auftrags:** `modelltext` sieht das
+/// Modell und traegt die Zeile mit Pfad und Auszug; `text` sieht der
+/// Mensch, und darunter steht je Anhang eine Karte.
+function anhaenge_abloesen(text) {
+  const anhaenge = anhaenge_offen;
+  anhaenge_offen = [];
+  anhangleiste_zeichnen();
+  const modelltext = anhaenge.length
+    ? [text, ...anhaenge.map((a) => a.nachricht)].filter(Boolean).join("\n\n")
+    : null;
+  return { anhaenge, modelltext };
+}
+
 async function senden(text) {
+  // ⛔️ **Ein Auftrag zur Zeit.** Siehe `auftrag_laeuft`.
+  if (auftrag_laeuft) {
+    melden(t("lauf.laeuftschon"));
+    return;
+  }
+  auftrag_laeuft = true;
+  const { anhaenge, modelltext } = anhaenge_abloesen(text);
   if (!offen) neues_gespraech();
   // ⚑ **Vor dem neuen Beitrag gelesen**: Der Auftrag geht als Auftrag
   // hinein und nicht noch einmal als Teil des Verlaufs.
@@ -2996,7 +3555,7 @@ async function senden(text) {
   if (offen.beitraege.length === 0) {
     offen.titel = titel_aus(text);
   }
-  offen.beitraege.push({ von: "nutzer", text });
+  offen.beitraege.push({ von: "nutzer", text, anhaenge, modelltext });
   // Ab hier gilt eine Zusammenfassung, die dieser Auftrag erzeugt.
   const auftrag_bei = offen.beitraege.length - 1;
   // ⚑ **Womit man arbeitet, steht oben** (Auftrag des Projektinhabers,
@@ -3071,9 +3630,13 @@ async function senden(text) {
       // ⚑ **Aus dem Kontext des Gespraechs und nicht aus den Beitraegen**
       // (2026-09-14): Nach einer Verdichtung sieht das Modell die
       // Zusammenfassung, waehrend im Fenster alles stehen bleibt.
-      const verlauf = [...vorher, { role: "user", content: text }];
+      const verlauf = [...vorher, { role: "user", content: modelltext || text }];
       const a = await invoke("frage", {
         verlauf: verlauf.map((n) => [n.role === "assistant" ? "modell" : "nutzer", n.content]),
+        // ⚑ **Satzweise gesprochen, waehrend das Modell noch schreibt.**
+        // Nur hier im Chat: In der Agentenschleife stehen im Strom auch
+        // Werkzeugaufrufe.
+        sprechen: vorlesen_an,
       });
       laufender.text = a.text;
       laufender.fuss = `${a.sekunden} s`;
@@ -3100,6 +3663,7 @@ async function senden(text) {
     offen.beitraege.push({ von: "modell", text: t("fehler", f), fuss: "", fehler: true });
     melden(`Fehlgeschlagen: ${kurz_titel(text)}`, "gespraech");
   } finally {
+    auftrag_laeuft = false;
     knopf.disabled = false;
     sichern();
     alles_zeichnen();
@@ -3369,7 +3933,9 @@ feld.addEventListener("keydown", (e) => {
 $("eingabe").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = feld.value.trim();
-  if (!text) return;
+  // ⚑ **Ein Anhang allein ist auch eine Frage.** Wer ein Bild schickt
+  // und nichts dazu schreibt, will wissen, was darauf ist.
+  if (!text && anhaenge_offen.length === 0) return;
   feld.value = "";
   feld_messen();
   await senden(text);
@@ -3400,6 +3966,9 @@ $("eingabe").addEventListener("submit", async (e) => {
   // gibt, und sonst steht der Leerzustand da.
   offen = gespraeche[0] || null;
   if (offen) modus = offen.modus;
+  // ⚑ Knopf und Ablegen einmal beim Start verdrahten.
+  anhang_verdrahten();
+  sinne_verdrahten();
   alles_zeichnen();
   try {
     await modellwahl_zeichnen();

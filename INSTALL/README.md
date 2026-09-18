@@ -190,6 +190,76 @@ deshalb entfällt.
 ⚠️ **Der Betrieb braucht davon nichts.** Wer ein fertiges Artefakt hat,
 braucht weder torch noch Python: Der Ganzzahlpfad ist Rust.
 
+## Sehen, Hören und Sprechen einrichten
+
+⚑ **Der Bau des Repositoriums braucht davon nichts.** Er läuft ohne Netz
+und ohne eine einzige dieser Zutaten; die Sinne sind eine Erweiterung,
+keine Bedingung. Wer sie will:
+
+```sh
+sh INSTALL/sinne-einrichten.sh                 # alles
+sh INSTALL/sinne-einrichten.sh --ohne-sprechen # nur Sehen und Hören
+sh INSTALL/sinne-einrichten.sh --pruefen       # nur nachsehen
+```
+
+`myl sinne` zeigt danach, was geht, und `myl sinne <datei>` schickt eine
+Datei hindurch.
+
+| | woher | wohin |
+|---|---|---|
+| ffmpeg, llama.cpp, whisper.cpp | Paketverwalter des Systems | `/opt/homebrew/bin` und ähnliche |
+| Hörmodell (0,6 GB) | whisper.cpp auf Hugging Face | `~/.myelith/sinne/hoeren.bin` |
+| Sehmodell schnell (1,7 GB) | SmolVLM2-2.2B-Instruct | `sehen.gguf`, `sehen-mmproj.gguf` |
+| Sehmodell genau (3,3 GB) | Qwen2.5-VL-3B-Instruct | `sehen-genau.gguf`, `sehen-genau-mmproj.gguf` |
+| Sprechen (4,5 GB) | **Fun-CosyVoice3-0.5B** samt eigener Python-Umgebung | `~/CosyVoice`, verlinkt nach `~/.myelith/sinne/cosyvoice` |
+
+⛔️ **Was hier bewusst nicht im Repositorium liegt:** die Programme
+selbst und die Gewichte. llama.cpp, whisper.cpp und ffmpeg sind je
+System verschieden und zusammen einige hundert Megabyte; torch ist
+allein rund 2,5 GB. Das wäre derselbe Ballast, der beim Vorrat der
+Fremdquellen abgelehnt wurde. **Was das Repositorium mitbringt, ist das
+Verbindungsstück**: dieses Skript, der Läufer für CosyVoice und die
+Namen, unter denen der Client sucht.
+
+⚠️ **Und deshalb braucht dieser eine Schritt Netz.** Alles andere an
+einem frischen Klon nicht.
+
+### ⛔️ Zwei Stolpersteine, beide beim tatsächlichen Einrichten gefunden
+
+**Ein aus dem Finder gestartetes `Myelith.app` erbt den PATH der
+Anmeldesitzung**, und darin steht `/opt/homebrew/bin` nicht. Ein mit
+`brew` installiertes llama.cpp wäre im Terminal da und im Fenster nicht,
+ohne eine Meldung, die das sagt. Der Client sucht deshalb zusätzlich an
+den üblichen Orten.
+
+**CosyVoice braucht seine eigene Python-Umgebung.** Der erste Python im
+PATH ist unter macOS `/usr/bin/python3`, also 3.9 und ohne torch; damit
+gäbe es einen Importfehler statt einer Stimme. Der Client nimmt deshalb
+den Interpreter aus der `.venv` **neben** der CosyVoice-Installation.
+
+📌 **Und ein dritter, in `requirements.txt` von CosyVoice:** setuptools
+81 hat `pkg_resources` aus der Bauumgebung genommen, woran
+`openai-whisper==20231117` beim Bauen scheitert und die ganze
+Installation abbricht. Das Skript nimmt setuptools zurück und baut
+dieses eine Paket ohne eigene Bauumgebung.
+
+📌 **Ein vierter, und er kostet die meiste Zeit: die Reihenfolge von
+pip.** Wer `openai-whisper` zuerst installiert, holt damit unbestimmte
+Fassungen von torch und numpy herein; die gepinnten aus
+`requirements.txt` passen dann nicht mehr dazu, und **pip läuft
+rückwärts durch hunderte Fassungen**, minutenlang bei voller Last, ohne
+Ende in Sicht. Erst die gepinnten, dann das eine Paket.
+
+### ⛔️ Deutsch kann erst CosyVoice 3
+
+Die 2.0-Gewichte decken Chinesisch und Englisch ab. Eine deutsche
+Stimmprobe ergibt damit Laute, die wie Deutsch klingen und keines sind:
+Am 2026-09-17 gemessen, indem whisper vorgelesen bekam, was CosyVoice
+gesagt hatte. Vorlage „dies ist die erste gesprochene Antwort", gehört
+„dies Go! Ist die Örsteck ist proschein". ⚑ **Deshalb holt das Skript
+`Fun-CosyVoice3-0.5B`**, das neun Sprachen abdeckt, und der Läufer nimmt
+es, sobald es da ist.
+
 ## Was am Ende dasteht
 
 **Fünf Programme**, und welche das sind, sagen die Kisten selbst über

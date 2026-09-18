@@ -671,6 +671,11 @@ fn schleife(stand: &mut Stand) -> i32 {
                 hilfe();
                 continue;
             }
+            Some(Befehlsart::Datei) => {
+                let pfad = befehl_und_rest(&text).map(|(_, r)| r).unwrap_or("");
+                datei_anhaengen(stand, pfad);
+                continue;
+            }
             Some(Befehlsart::Modell) => {
                 // ⚑ **Hier greift die Sicherung** (Auftrag des
                 // Projektinhabers, 2026-09-15): An dieser Stelle laeuft
@@ -758,6 +763,8 @@ const HILFE_BEFEHL: &str = "/help";
 /// Was ein Befehl bewirkt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Befehlsart {
+    /// Eine Datei anhaengen; nimmt einen Pfad.
+    Datei,
     Modell,
     Werkzeugkiste,
     Einstellungen,
@@ -784,7 +791,7 @@ struct Befehl {
 /// nennt irgendwann einen Befehl, den es nicht gibt, oder verschweigt
 /// einen, den es gibt, **und beides sieht erst der, der es
 /// ausprobiert.**
-const BEFEHLE: [Befehl; 8] = [
+const BEFEHLE: [Befehl; 9] = [
     Befehl {
         art: Befehlsart::Modell,
         namen: &["/model", "/modell"],
@@ -799,6 +806,11 @@ const BEFEHLE: [Befehl; 8] = [
         art: Befehlsart::Einstellungen,
         namen: &["/settings", "/einstellungen"],
         was: "die Einstellungen zeigen",
+    },
+    Befehl {
+        art: Befehlsart::Datei,
+        namen: &["/file", "/datei"],
+        was: "haengt eine Datei an: /datei <pfad>",
     },
     Befehl {
         art: Befehlsart::Kontext,
@@ -827,9 +839,106 @@ const BEFEHLE: [Befehl; 8] = [
     },
 ];
 
-/// Welcher Befehl das ist, falls es einer ist.
+/// **Haengt eine Datei an das Gespraech**, ohne sie hineinzuschreiben.
+///
+/// ⚑ **Die Datei wandert unter die Einhaengung**, und das Gespraech
+/// bekommt eine Zeile, die sagt, wo sie liegt. Lesen tut sie das Modell
+/// mit den Werkzeugen, die es ohnehin hat; **was in den Kontext geht,
+/// bleibt damit eine Entscheidung des Modells und nicht eine Folge des
+/// Anhaengens.**
+fn datei_anhaengen(stand: &mut Stand, pfad: &str) {
+    if pfad.is_empty() {
+        println!("  /datei braucht einen Pfad, zum Beispiel: /datei bericht.md");
+        return;
+    }
+    // ⚑ Eine Tilde ist ueblich und waere sonst ein Ordnername.
+    let ausgeschrieben = if let Some(rest) = pfad.strip_prefix("~/") {
+        std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or_else(|_| pfad.to_string())
+    } else {
+        pfad.to_string()
+    };
+    match myl_client::anhang::aufnehmen(&stand.ordner, std::path::Path::new(&ausgeschrieben)) {
+        Ok(a) => {
+            println!("  Angehaengt: {} ({}), liegt unter {}", a.name, a.art.wort(true), a.pfad);
+            let datei = stand.ordner.join(&a.pfad);
+
+            // ⚑ **Hier wird angesehen, und nur hier** (Festlegung des
+            // Projektinhabers, 2026-09-17): Der Chat wertet **nur**
+            // aus, was der Nutzer selbst angehaengt hat. Er sieht in
+            // keinen Arbeitsordner und laedt nichts nach; er hat auch
+            // gar keine Werkzeugschleife, in der er das koennte.
+            //
+            // ⚑ **Die schnelle Sprosse.** Das ist ein Blick fuer jeden,
+            // auch fuer den, der gar nichts fragen wollte; die genaue
+            // nimmt der Agent, wenn er ausdruecklich fragt.
+            let sinne = myl_senses::Sinne::finden();
+            let gesehen = myl_senses::auswerten(
+                &sinne,
+                &datei,
+                a.art,
+                None,
+                myl_senses::Stufe::Schnell,
+            );
+            // ⚠️ **Ein Mangel geht an den Menschen, nicht in den
+            // Kontext.** Eine Einrichtungsanleitung im Gespraech kostet
+            // Kontext und hilft dem Modell nicht; der Mensch dagegen
+            // kann sie befolgen.
+            if let Some(Err(grund)) = &gesehen {
+                for z in grund.lines() {
+                    println!("  {z}");
+                }
+            }
+            // ⚑ **Der Name lebt so lange wie die Zeile, die ihn nennt.**
+            let ersatz = match &gesehen {
+                Some(Ok(_)) => None,
+                _ => werkzeug_fuer_art(a.art),
+            };
+            let sicht = match (&gesehen, &ersatz) {
+                (Some(Ok(text)), _) => {
+                    println!("  Angesehen von einem anderen Modell.");
+                    myl_client::anhang::Sicht::Angesehen(text)
+                }
+                (_, Some(n)) => myl_client::anhang::Sicht::Werkzeug(n),
+                _ => myl_client::anhang::Sicht::Nichts,
+            };
+            stand.gespraech.nach_dem_lauf(&[myl_client::Nachricht::nutzer(
+                a.nachricht_mit(true, sicht),
+            )]);
+        }
+        Err(f) => println!("  {f}"),
+    }
+}
+
+/// **Gibt es ein Manifest-Werkzeug fuer diese Art?**
+///
+/// ⚑ **Der Rueckfall, wenn kein Sinn eingerichtet ist.** Bild und Ton
+/// macht der Client selbst; wer etwas anderes lesbar machen will, legt
+/// ein Manifest mit dem Feld `fuer` in seine Werkzeugkiste, und dann
+/// wird es hier genannt.
+fn werkzeug_fuer_art(art: myl_client::anhang::Art) -> Option<String> {
+    myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .ok()
+        .and_then(|e| myl_client::kisten::werkzeug_fuer(&e.agent, art.kennung()))
+}
+
+/// Welcher Befehl das ist, falls es einer ist, und was dahinter steht.
+///
+/// ⚑ **Das erste Wort entscheidet.** Bis `/datei` dazukam, war ein
+/// Befehl die ganze Zeile; jetzt gibt es einen mit Argument, und **ein
+/// Befehl, der nur ohne Argument erkannt wird, sieht fuer den Nutzer wie
+/// ein Tippfehler aus**: Er tippt `/datei bericht.md` und bekommt seine
+/// Zeile als Auftrag an das Modell.
 fn befehl_zu(text: &str) -> Option<Befehlsart> {
-    BEFEHLE.iter().find(|b| b.namen.contains(&text)).map(|b| b.art)
+    befehl_und_rest(text).map(|(art, _)| art)
+}
+
+fn befehl_und_rest(text: &str) -> Option<(Befehlsart, &str)> {
+    let geschnitten = text.trim();
+    let (erstes, rest) = geschnitten.split_once(char::is_whitespace).unwrap_or((geschnitten, ""));
+    BEFEHLE
+        .iter()
+        .find(|b| b.namen.contains(&erstes))
+        .map(|b| (b.art, rest.trim()))
 }
 
 /// **Alle Befehle mit einem Satz dazu**, aus der einen Liste.

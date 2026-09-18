@@ -1,7 +1,7 @@
 # client (Nutzer-Client inkl. Wallet)
 
-> **Version:** 0.56.1 (`myl-client` 0.41.1, `myl-oberflaeche` 0.38.3, `myl-console` 0.12.3)
-> **Datum:** 2026-09-16
+> **Version:** 0.57.0 (`myl-client` 0.42.0, `myl-oberflaeche` 0.39.0, `myl-console` 0.13.0, `myl-senses` 0.1.0)
+> **Datum:** 2026-09-17
 > **Status:** ✅ **Der lokale Betrieb läuft und ist ausgeliefert.** Ein
 > Gesprächsfenster mit Modellwahl, Agentenschleife und
 > Einstellungsseite; aus einem frischen Klon lassen sich darüber
@@ -33,7 +33,13 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **auto mode und manual mode** | Umschalt-Tab in der Konsole, oder `agent.modus` in den Einstellungen. Im manual mode wird **jede schreibende Handlung** vorgelegt und läuft erst nach einer Bestätigung; Lesen und Suchen fragen nie. Das Fenster legt sie seit v0.47.0 im Kasten des Betriebssystems vor, mit Namen und Argumenten; vorher nahm es die schreibenden Werkzeuge in diesem Modus **ganz weg** |
 | **Ein Gespräch mit einem lokalen Modell** | `myl frage <artefakt> <text>`, oder im Fenster |
 | **Die Agentenschleife** | `myl agent`, mit Werkzeugen innerhalb einer Einhängegrenze |
-| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie), ein anderer Name `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
+| **Die Werkzeugkiste ist ein Ordner** | Eine Einstellung, ein Pfad: `agent.kistenordner`, ohne Angabe die mitgelieferte Kiste `Base` unter `CLIENT/werkzeugkisten/`. Der **Ordnername** sagt, welche eingebauten Werkzeuge dazukommen: `Base` die fünf Dateiwerkzeuge, `Advanced` zusätzlich `run_command` und die drei Werkzeuge für den Mitschnitt (seit dem 2026-09-17, gemessen: das kleine Modell ruft sie nie). ⚑ **Eine Kiste kann das auch selbst sagen**, in ihrem `kiste.json`; ohne diese Datei und ohne einen der drei Namen bleibt es bei `Base`. Was als Manifest im Ordner liegt, sieht das Modell **ohne Neubau**. ⚑ **`Base` ist die Grundlage jeder Kiste**: Ihre Werkzeuge werden mitgeladen, gestapelt und nicht kopiert; bei gleichem Namen gewinnt die gewählte Kiste. ⛔️ Die fünf Dateiwerkzeuge bleiben kompiliert, weil nur sie die Einhängegrenze einhalten; ein Manifest läuft über die Shell und kann das nicht |
+| **Eine Datei anhängen** | In der Konsole `/datei <pfad>`, im Fenster der Knopf neben dem Senden oder Ziehen und Ablegen. Die Datei wandert nach `.AGENT/anhaenge/`, also unter die Einhängung, und das Gespräch bekommt **eine Zeile mit ihrem Pfad statt ihres Inhalts**. Gibt es ein Werkzeug für ihre Art, nennt die Zeile es. `myl anhaenge` zeigt, was liegt, `--aufraeumen` räumt auf |
+| **Sehen, Hören, Sprechen** | Die Kiste `myl-senses`: Bilder über llama.cpp, Ton über whisper.cpp, Sprechen über piper, jeweils mit einem **eigenen kleinen** Modell außerhalb des Repositoriums (`~/.myelith/sinne`). Das Hauptmodell bleibt ein Textmodell. ⚑ **Auch im Chat**, wo es keine Werkzeugschleife gibt: Eine angehängte Datei wird beim Anhängen angesehen. Fehlt ein Laufwerk, sagt der Sinn mit Pfad und Befehl, was fehlt, statt abzustürzen |
+| **Die Sprechtaste** | Im Fenster: gedrückt halten, reden, loslassen. Über dem Feld schlägt ein **Pegel** aus, solange aufgenommen wird, und danach steht der Text **in der Eingabezeile**, nicht im Gespräch: Wer sich verhört hat, bessert aus, bevor das Modell liest. Der Lautsprecherknopf liest Antworten vor, **satzweise**: Der erste Satz klingt, während das Modell noch schreibt. ⚠️ Ein Voll-Duplex-Gespräch ist das nicht, es fehlen Sprechbeginnerkennung, Unterbrechen und Echokompensation |
+| **Nachsehen, ob die Sinne gehen** | `myl sinne` zeigt, was dieser Rechner sehen, hören und sprechen kann, und `myl sinne <datei>` schickt eine Datei hindurch. ⚑ **Der kürzeste Weg von der Behauptung zum Beleg.** Eingerichtet wird mit einem Skript unter `INSTALL/` |
+| **Der Sprachmodus** | Ein Knopf ersetzt den Verlauf durch ein Zeichen, dessen Ringe **mit dem Ton mitschwingen**; darunter steht die laufende Antwort. Wer spricht und zuhört, liest nicht mit |
+| **Eine eigene Stimme** | Auf der Einstellungsseite eine Aufnahme hochladen; sie wird zur Stimme. Whisper schreibt ihren Text gleich mit, weil CosyVoice damit besser trifft. ⛔️ Liegt eine Probe und spricht ein Programm, das nicht klonen kann, **steht das da** |
 | **Mehrere Stellen auf einmal ändern** | `edit_file` nimmt eine Liste aus `alt` und `neu`. Erst ein Trockenlauf über eine Kopie, dann wird geschrieben: **Entweder alle Stellen oder keine** |
 | **Vier Betriebsarten** | Chat und Agent laufen; Knoten und Wallet stehen mit ihrer Begründung da und warten auf das Netz |
 | **Modellwahl** | Aus dem Katalog, mit Anzeigenamen statt Verzeichnisnamen. Der Netzeintrag heisst „Netzwerkmodell (API), kostet Inferenz-Credits" und ist gesperrt, solange Knotenadresse und Vollmacht fehlen |
@@ -45,7 +51,7 @@ kostet nichts, wenn er stimmt, und einen halben Tag, wenn nicht.
 | **Gespraeche verwalten** | Rechtsklick auf eine Zeile: umbenennen an Ort und Stelle, als Markdown ausgeben, loeschen. Wohin ausgegeben wird, steht in `ausgabe.ordner`; ohne Angabe fuehrt das Fenster dorthin |
 
 ⚑ **Die Oberfläche ruft dieselben Funktionen wie die Kommandozeile**,
-über zweiundzwanzig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
+über zweiunddreissig Befehle, und startet **keinen einzigen Unterprozess**. `jeder_befehl_ist_angemeldet` hält die vier
 Richtungen zusammen: kein Befehl ohne Anmeldung, keine Anmeldung ohne
 Befehl, kein Aufruf ins Leere und kein Befehl, den niemand ruft. „Ohne eigene Logik" hiesse sonst, aus einer Textausgabe
 für Menschen eine Schnittstelle zu machen, und genau das ist die Sorte
@@ -114,6 +120,258 @@ Modell überhaupt etwas taugt, und weil eine Schnittstelle, die kein
 Mensch je bedient hat, an den Bedürfnissen vorbei entworfen wird.
 
 ## Changelog
+
+### v0.57.0 – 2026-09-17 (Dateien anhängen, und eine eigene Kiste für Sehen, Hören und Sprechen)
+
+`myl-client` **0.42.0**, `myl-oberflaeche` **0.39.0**, `myl-console`
+**0.13.0**, `myl-senses` **0.1.0** (neu). Auftrag des Projektinhabers:
+Audio, Vision und Dateiupload.
+**Dies ist der erste Teil, und er ist die Voraussetzung für die beiden
+anderen:** Bis heute konnte der Client überhaupt keine Datei
+entgegennehmen.
+
+⛔️ **Der naheliegende Weg wäre gewesen, den Inhalt in die Nachricht zu
+schreiben, und er ist falsch.** Die Messung desselben Tages zeigt, was
+ein voller Kontext kostet und wie gut Nachschlagen stattdessen wirkt: das
+4B fand eine Einzelheit in **neun von neun** Läufen mit **einem**
+Werkzeugaufruf, bei einem Viertel des Kontexts. ⚑ **Eine angehängte
+Datei wird deshalb benannt und nicht geliefert.**
+
+⚑ **Sie wandert nach `.AGENT/anhaenge/`**, also unter die Einhängung:
+`read_file`, `search_files` und `list_directory` erreichen sie damit
+ohne ein neues Werkzeug und ohne eine neue Grenze. **Und nicht in den
+Arbeitsordner**, denn der gehört dem Nutzer und ist oft ein
+Repositorium; `.AGENT/` gehört dem Agenten und schließt sich selbst von
+der Versionsverwaltung aus.
+
+⚑ **Die Art hängt an den ersten Bytes und nicht an der Endung.** Eine
+Endung ist eine Behauptung des Dateinamens, die Bytes sind die Datei
+selbst. ⛔️ **Und eine leere Datei ist kein Text**, auch wenn sie als
+UTF-8 gültig ist; ohne diese Bedingung kam die Endung nie zum Zug.
+
+⛔️ **Bei Bild und Ton sagt die Nachricht die Wahrheit:** „Dieses Modell
+sieht Bilder nicht und hört Ton nicht." **Ein Hinweis, der das
+verschweigt, lädt zu einer Antwort ein, die erfunden ist.** Steht ein
+Werkzeug bereit, das die Datei auswerten kann, nennt die Zeile es beim
+Namen, denn ein Hinweis ohne Weg ist eine Sackgasse.
+
+## Sehen, Hören und Sprechen: eine eigene Kiste
+
+⚑ **Der Agent bleibt ein Textmodell.** Soll er ein Bild sehen, steht
+dahinter ein eigenes, kleines Modell (Festlegung des Projektinhabers:
+„kleine aber leistungsfähige Modelle, dass es modular bleibt"). Ein
+multimodales Hauptmodell kostet Bildmarken, Artefaktbau und
+Konformitätsvektoren, dauerhaft und für jeden, auch für den, der nie ein
+Bild anhängt.
+
+⚑ **Das liegt in `CLIENT/myl-senses`, und der Grund ist die
+Chatfunktion.** Die Sinne werden an zwei Stellen gebraucht: in der
+Agentenschleife, wo ein Werkzeug sie ruft, und im **Chat, wo es keine
+Werkzeugschleife gibt**. Wer im Chat ein Bild anhängt, kann auf keinen
+Werkzeugaufruf hoffen; das Bild muss angesehen werden, wenn es
+hereinkommt, oder nie. **Zwei Umsetzungen wären die Fehlerklasse, die
+dieses Projekt am häufigsten trifft**, also liegt die Sache einmal da
+und beide rufen sie.
+
+⛔️ **Der Chat wertet nur aus, was der Nutzer ausdrücklich angehängt
+hat** (Festlegung des Projektinhabers). Kein Blick in den Arbeitsordner,
+kein Nachladen, keine Dateiwerkzeuge; der Pfad muss unter dem
+Anhangordner liegen, und das wird geprüft.
+
+| Sinn | Richtung | Vorgabe |
+|---|---|---|
+| Sehen | Bild zu Text | llama.cpp, `sehen.gguf` samt mmproj |
+| Hören | Ton zu Text | whisper.cpp, `hoeren.bin`, bei Bedarf ffmpeg |
+| Sprechen | Text zu Ton | piper, `sprechen.onnx` |
+
+⚑ **Zwei Sprossen beim Sehen**, ein kleines schnelles Modell und ein
+größeres genaues. **Die Wahl trifft der Aufrufer und nicht das Modell**,
+denn ein zusätzliches Argument kostet jedes kleine Modell eine
+Entscheidung, die es schlecht trifft: beim Anhängen die schnelle, beim
+ausdrücklichen Werkzeugaufruf die genaue. Wer nur eines hinlegt, bekommt
+es für beides.
+
+⛔️ **Die erste Fassung waren `sh`-Skripte in einer Werkzeugkiste, und
+sie ist verworfen worden.** Drei Gründe, jeder für sich hinreichend:
+Ein Manifest läuft über `sh`, und **unter Windows gibt es keine**; es
+hält die Einhängegrenze **nicht** ein; und es braucht die
+Schreiberlaubnis, weil eine Shell immer schreiben kann. **Ein Bild
+anzusehen ist aber ein Lesen.** Jetzt sind es kompilierte Werkzeuge, der
+Pfad geht durch die Einhängung, und sie stehen nur im Angebot, wenn der
+Sinn wirklich eingerichtet ist.
+
+⛔️ **Fehlt ein Laufwerk oder ein Modell, sagt der Sinn, was fehlt und
+wie es hinkommt**, mit Pfad und Befehl, und tut so, als hätte er nichts
+gesehen. **Eine Voraussetzung, die erst beim Absturz sichtbar wird, ist
+keine Voraussetzung, sondern eine Falle.** ⚑ Und ein Mangel geht an den
+**Menschen**, nicht in den Kontext: Eine Einrichtungsanleitung im
+Gespräch hilft dem Modell nicht.
+
+⚑ **Die Sprechtaste, erste Stufe eines Sprachmodus.** Sie setzt nur
+zusammen, was da ist: aufnehmen (ffmpeg), mitschreiben (whisper),
+antworten, sprechen. ⚑ **Sie liegt im Fenster und nicht in der Konsole**
+(Festlegung des Projektinhabers): gedrückt halten, reden, loslassen. In
+einem Terminal ginge das gar nicht, denn das Loslassen einer Taste
+meldet nur, wer das Kitty-Protokoll spricht.
+
+⚠️ **Live ist sie nicht**, und der Unterschied liegt nicht bei den
+Sinnen: Bei 14 Token je Sekunde sind hundert Token Antwort rund sieben
+Sekunden, Mitschreiben und Sprechen zusammen etwa zwei.
+
+⚑ **Deshalb wird satzweise gesprochen**, und zwar aus dem Strom. Der
+Vorleser bekommt die fertigen Sätze, während das Modell noch schreibt;
+der erste ist nach ein bis zwei Sekunden hörbar statt nach zehn.
+⛔️ **Ein Faden und eine Schlange, nicht ein Faden je Satz**: Die
+Erzeugung darf nicht warten, **und** die Sätze müssen in der Reihenfolge
+klingen. ⚠️ **Nur im Chat**: In der Agentenschleife stehen im Strom auch
+Werkzeugaufrufe, und die will niemand vorgelesen bekommen.
+
+## Die Oberfläche, aufgeräumt
+
+⚑ **Eine Reihe statt verstreuter Knöpfe** (gemeldet vom Projektinhaber,
+2026-09-18). Links, was der Frage etwas hinzufügt (Datei, Stimme),
+rechts, was sie abschickt; der Lautsprecher und der Sprachmodus stehen
+dazwischen, weil sie die **Antwort** betreffen und nicht die Frage.
+
+⛔️ **Eine angehängte Datei war sofort ein eigener Beitrag** und damit
+weg, bevor jemand etwas dazu schreiben konnte. ⚑ **Jetzt hängt sie als
+Plättchen an der Eingabezeile**, lässt sich dort wieder abwählen, und
+geht erst mit dem abgeschickten Auftrag ins Gespräch, wo sie als **Karte
+unter dem Auftrag** steht. **Eine Datei ist ein Teil der Frage, die man
+gerade formuliert.**
+
+⚑ **Zwei Fassungen desselben Auftrags.** `modelltext` sieht das Modell
+und trägt Pfad und Auszug; `text` sieht der Mensch. Ein Pfad ist eine
+Auskunft für das Modell, keine für den Leser.
+
+⚑ **Der Pegel kommt aus derselben Aufnahme**, über `astats` in ffmpeg,
+und nicht aus einem zweiten Zugriff auf das Mikrofon: Ein zweiter
+Verbraucher desselben Geräts wäre auf manchen Systemen ein Fehlschlag.
+**Ein Mikrofon, das auf das falsche Gerät zeigt, sieht sonst genauso aus
+wie eines, das zuhört.**
+
+⚑ **Im Fenster spielt der Webview und nicht `afplay`.** Dreierlei: Er
+kann anhalten, er braucht kein fremdes Programm, und **nur er weiß, wie
+laut es gerade ist**. Ohne das Letzte gäbe es kein Zeichen, das
+mitschwingt, sondern nur eines, das sich bewegt, und das wäre eine
+Verzierung mit dem Anschein einer Auskunft. Der Ton geht als Text
+hinüber, weil ein Webview keine beliebige Datei von der Platte laden
+darf; vierzehn Zeilen Base64 gegen eine Abhängigkeit.
+
+⛔️ **Die Aufnahme hört auf, wenn ihre Standardeingabe schließt.** Eine
+WAV-Datei trägt ihre Länge im Kopf, und ein Prozess, den man erschlägt,
+hinterlässt einen Kopf, der lügt. Erst nach zehn Sekunden ohne Reaktion
+wird erschlagen, und dann sagt das Ergebnis es.
+
+## CosyVoice spricht, piper fängt auf
+
+⚑ **Festlegung des Projektinhabers:** CosyVoice ist die Vorgabe, weil es
+am besten klingt und **eine Stimme nachbilden kann**. Python und die
+Gewichte bringt der Nutzer mit; **nichts davon kommt ins Repositorium**.
+Der Läufer, der CosyVoice bedient, ist eine Textdatei von wenigen
+Kilobyte, steckt im Programm und wird auf Knopfdruck in die Heimat
+geschrieben, wo er dann dem Nutzer gehört und nie überschrieben wird.
+
+⚠️ **Was das kostet, gehört dazugesagt:** Wer kein Python und keine
+Gewichte hat, kann nicht sprechen lassen. Deshalb bleibt **piper als
+Rückfall** stehen, sofort einsatzbereit und ohne Klonen.
+
+⛔️ **CosyVoice lädt je Aufruf ein halbes Milliardenmodell**, also
+bekommt es einen **Dauerläufer**: einmal laden, dann Satz für Satz über
+ein Zeilenprotokoll. Ohne ihn wäre satzweises Sprechen langsamer als gar
+keines.
+
+⛔️ **Und der Läufer lebt so lange wie das Fenster, nicht so lange wie
+eine Antwort.** Die erste Fassung löste das Problem innerhalb einer
+Antwort und entstand je Antwort neu; die achtzehn Sekunden standen damit
+vor jeder einzelnen. 📌 **Eine Ladezeit, die man einmal zahlt, ist etwas
+anderes als eine, die man immer zahlt, und im Code sieht beides gleich
+aus.** ⚑ **Vorgewärmt wird beim Einschalten**: Während das Hauptmodell
+nachdenkt, lädt der Sprecher.
+
+⚠️ **Was bleibt, ist die Rechenzeit selbst**, rund 1,8fache Spieldauer
+auf dieser Maschine. Dagegen hilft nur das satzweise Sprechen: Der erste
+Satz klingt, während das Modell den zweiten schreibt.
+
+⚑ **Eine hochgeladene Aufnahme wird zur Stimme**, und ihr Text wird von
+whisper gleich mitgeschrieben: CosyVoice trifft die Stimme damit
+deutlich besser, und ihn später von Hand nachzutragen wäre eine Aufgabe,
+die niemand erledigt.
+
+⛔️ **Zwei Funde beim tatsächlichen Einrichten, und beide hätte kein
+Test gefunden.** **Fund 395:** Ein aus dem Finder gestartetes
+`Myelith.app` erbt den PATH der Anmeldesitzung, und darin steht
+`/opt/homebrew/bin` nicht; ein mit `brew` installiertes llama.cpp wäre
+im Terminal da und im Fenster nicht, ohne eine Meldung, die das sagt.
+**Fund 396:** Der erste Python im PATH ist unter macOS 3.9 und ohne
+torch, also gewinnt jetzt die `.venv` neben der CosyVoice-Installation.
+📌 **Beides ist nur aufgefallen, weil es jemand wirklich installiert
+hat.**
+
+⚑ **Gemessen an echtem Material, nach dem Einrichten.** Hören: eine
+gesprochene Aufnahme, wortrichtig bis auf den Eigennamen, 0,8 s warm.
+Sehen: ein Schild mit Text, richtig gelesen, 1,6 s warm. ⚠️ **Das
+2,2B-Sehmodell antwortete englisch auf eine deutsche Frage und
+schweifte ab**; genau dafür gibt es die zweite Sprosse.
+
+⚑ **Der Befehlslauf liegt jetzt auch dort** (`myl_senses::prozess`). Er
+stand in `myl-client`, und die Sinneskiste hätte ihn ein zweites Mal
+gebraucht: zwei Läufer mit zwei Fristen, und der zweite meldet sich
+nicht. In `myl-client` bleibt, was den Aufruf ausmacht, die Sperrliste
+und die Form der Antwort.
+
+⚑ **Drei Erweiterungen am Kistenformat bleiben**, sie sind allgemein
+und nicht auf die Sinne zugeschnitten: `$MYL_KISTE` (ein Manifest findet
+ein Skript neben sich), `zeitgrenze_s` (eine eigene Frist je Werkzeug)
+und `fuer` (das Manifest sagt selbst, welche Art Anhang es lesbar
+macht). Letzteres ist jetzt die Tür für **alles außer Bild und Ton**,
+etwa eine Tabelle oder ein Fremdformat.
+
+⛔️ **Fund 394: ein eigener Kistenordner verlor still die eingebauten
+Werkzeuge.** Welche kompilierten Werkzeuge ein Lauf bekam, hing am
+**Ordnernamen**, und der kennt drei Wörter; alles andere war `Base`. Wer
+einen eigenen Ordner wählte, verlor unter anderem die Suche im
+Mitschnitt, **ohne dass irgendwo etwas stand**. ⚑ Jetzt sagt die Kiste
+es selbst, in `kiste.json`. 📌 **Ein Name, der zwei Dinge bedeutet,
+bedeutet irgendwann nur noch eines.**
+
+⛔️ **Ein Fund beim Umzug, gefangen von einer vorhandenen Prüfung.** Die
+`.gitignore` des Agentenordners wurde in ein Verzeichnis geschrieben,
+das es noch nicht gab: Das geht still daneben, und dann läge die erste
+angehängte Datei ungeschützt in einem fremden Repositorium. 📌 **Erst
+den Ordner, dann die Sperre.**
+
+⚑ **Das Kistenformat steht jetzt einmal**, in
+`CLIENT/werkzeugkisten/README.md`. Es stand in `Base` und noch einmal in
+`Advanced`; als es um drei Felder wuchs, waren das zwei Orte, von denen
+sich der zweite nicht meldet. Eine Prüfung hält die Werkzeugliste im
+README jeder Kiste gegen die Manifeste im Ordner.
+
+⚑ **`myl anhaenge` zeigt, was liegt**, mit Größe und Summe, und
+`--aufraeumen` löscht genau die Dateien, die es vorher genannt hat. Der
+Befehl stand in einem Doc-Kommentar, bevor es ihn gab.
+
+⚑ **Im Fenster ein Knopf neben dem Senden und das Ablegen per Maus.**
+Das Ablegen geht über das Fensterereignis und nicht über HTML5: Im
+Webview trägt eine abgelegte Datei keinen Pfad, Tauri meldet dagegen den
+echten. **Ein Anhang ohne Pfad wäre ein Anhang, den kein Werkzeug
+findet.** In der Konsole `/datei <pfad>`.
+
+📌 **Zwei Prüfungen hier haben beim Bauen Falsches verlangt**, und beide
+sind berichtigt statt umgangen: Eine verlangte, dass kein `..` im
+Dateinamen steht, und fiel über das harmlose `hoch..md`; die Gefahr ist
+aber nicht das Aussehen, sondern der Ort, also prüft sie jetzt, dass die
+Kopie im Anhangordner bleibt. Und eine im Fenster hängt an einer
+Zeichenkette, die eine Umformatierung zerlegt hat.
+
+⚑ **Eine Datei anzuhängen darf ein Gespräch eröffnen**, wie das Tippen
+einer Frage; der Wächter über die Zahl der Anlagestellen kennt jetzt
+drei Wege statt zwei.
+
+⚠️ **Angehängte Dateien werden nicht aufgeräumt.** Der Mitschnitt hat
+eine Obergrenze, weil er von selbst entsteht; eine Datei hat der Nutzer
+ausdrücklich hergegeben, und etwas wegzuwerfen, das jemand bewusst
+angehängt hat, wäre eine Überraschung.
 
 ### v0.56.1 – 2026-09-17 (zwei rote CI-Prüfungen, und beide waren auf dieser Maschine unsichtbar)
 

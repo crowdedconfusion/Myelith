@@ -1,0 +1,20 @@
+[package]
+name = "myl-senses"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Sinne des Clients: Dateien annehmen und einordnen, Bilder beschreiben und Ton mitschreiben lassen, ueber eigene kleine Modelle."
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+publish = false
+
+# ⚑ **Eine Kiste ohne Abhaengigkeiten, und das ist Absicht.**
+#
+# Sie startet fremde Programme und liest deren Ausgabe; mehr braucht sie
+# nicht. Wer hier eine Bibliothek fuer Bilder oder Ton hereinholt, hat
+# die Entscheidung umgedreht, um die es geht: **Das Rechnen tut ein
+# eigenes kleines Modell ausserhalb**, nicht diese Kiste.
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

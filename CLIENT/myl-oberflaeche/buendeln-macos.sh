@@ -83,9 +83,51 @@ cat > "$ZIEL/Contents/Info.plist" <<PLIST
        einen Hintergrunddienst. -->
   <key>LSUIElement</key><false/>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- ⛔️ **Ohne diesen Schluessel gibt es kein Mikrofon**, und zwar
+       ohne Fehlermeldung: macOS fragt gar nicht erst, wenn ein Programm
+       nicht sagt, wofuer es das Geraet will. Die Sprechtaste laesst
+       ffmpeg aufnehmen, und ein Unterprozess erbt die Erlaubnis dieses
+       Buendels; fehlt der Satz, kommt eine **leere Aufnahme** zurueck.
+       Gemeldet vom Projektinhaber am 2026-09-18. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Myelith nimmt auf, solange die Sprechtaste gedrückt ist, und schreibt das Gesprochene mit einem Modell auf diesem Rechner mit.</string>
 </dict>
 </plist>
 PLIST
+
+# ⚑ **Ad-hoc signieren**, und das ist keine Kosmetik.
+#
+# macOS merkt sich eine einmal erteilte Erlaubnis (Mikrofon, Ordner) an
+# der **Kennung samt Signatur**. Ein unsigniertes Buendel bekommt bei
+# jedem Neubau eine andere Identitaet: Die Frage nach dem Mikrofon kommt
+# wieder, oder schlimmer, sie kommt nicht und die Aufnahme bleibt leer.
+# ⚠️ **Eine Ad-hoc-Signatur ersetzt kein Entwicklerzertifikat**; sie gibt
+# dem Buendel nur eine Identitaet, die ueber Neubauten hinweg dieselbe
+# bleibt.
+if command -v codesign >/dev/null 2>&1; then
+  # ⚠️ **Erweiterte Attribute zuerst weg.** `codesign` lehnt ein Buendel
+  # mit „resource fork, Finder information, or similar detritus not
+  # allowed" ab. Sie haengen sich beim Kopieren an, und macOS haengt
+  # `com.apple.macl` nach, sobald das Buendel einmal eine Erlaubnis
+  # bekommen hat; deshalb **zweimal**, mit einem zweiten Versuch.
+  #
+  # ⚑ **Und der Fehler wird gezeigt, nicht verschluckt.** Ein
+  # `>/dev/null 2>&1` an dieser Stelle hat mich am 2026-09-18 zweimal
+  # raten lassen, was schiefging.
+  signieren() {
+    command -v xattr >/dev/null 2>&1 && xattr -cr "$ZIEL" 2>/dev/null
+    # ⚑ Mit der Kennung aus dem Info.plist: Ohne `--identifier` nimmt
+    # `codesign` den Namen des Programms, und macOS haengt die Erlaubnis
+    # dann an eine Kennung, die nicht die des Buendels ist.
+    codesign --force --sign - --identifier org.myelith.oberflaeche "$ZIEL" 2>&1
+  }
+  if MELDUNG=$(signieren) || MELDUNG=$(signieren); then
+    echo "ad-hoc signiert."
+  else
+    echo "⚠️ Signieren ging nicht, Erlaubnisse koennen nach jedem Neubau erneut gefragt werden:"
+    echo "   $MELDUNG"
+  fi
+fi
 
 echo "$ZIEL gebaut, Fassung $FASSUNG."
 echo "Starten: open $ZIEL"

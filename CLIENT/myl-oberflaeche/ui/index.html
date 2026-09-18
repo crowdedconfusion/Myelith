@@ -244,20 +244,99 @@
     <!-- Das Gespraech. -->
     <main id="gespraech" role="log" aria-live="polite"></main>
 
+    <!-- ⚑ **Im Sprachmodus steht hier ein Zeichen statt des Verlaufs**
+         (Auftrag des Projektinhabers, 2026-09-18). Wer spricht und
+         zuhoert, liest nicht mit; ein Gespraechsverlauf im Ruecken ist
+         dann Unruhe. Die Ringe schwingen mit dem, was gerade klingt. -->
+    <section id="sprachbuehne" class="sprachbuehne" hidden aria-live="polite">
+      <!-- ⚑ **Die Sprechtaste steht hier gross**, denn ein Sprachmodus,
+           in dem man zum Reden woanders hinzeigen muss, ist keiner. Es
+           ist derselbe Knopf wie unten, nur an der Stelle, auf die man
+           im Sprachmodus sieht. -->
+      <button type="button" id="buehnentaste" class="buehnentaste"
+              aria-label="Sprechtaste" data-t-marke="knopf.sprechtaste">
+        <span class="stimmzeichen">
+          <span class="ring ring1"></span>
+          <span class="ring ring2"></span>
+          <span class="kern"></span>
+        </span>
+      </button>
+      <p id="sprachhinweis" class="sprachhinweis" data-t="sprachmodus.halten">Zum Sprechen gedrückt halten</p>
+      <p id="sprachtext" class="sprachtext"></p>
+    </section>
+
     <!-- ⚑ Die Eingabezeile klebt unten und nicht im Fluss: Wer nach
          oben scrollt, um etwas nachzulesen, soll nicht erst wieder
          herunterscrollen muessen, um zu antworten. -->
     <form id="eingabe">
       <div class="eingabefeld">
+        <!-- ⚑ **Anhaenge stehen an der Eingabe und nicht im Gespraech**
+             (Auftrag des Projektinhabers, 2026-09-18). Eine Datei ist
+             ein Teil der Frage, die man gerade formuliert; sie gehoert
+             erst ins Gespraech, wenn die Frage abgeschickt ist. Vorher
+             war sie sofort ein eigener Beitrag, und damit war sie weg,
+             bevor jemand etwas dazu schreiben konnte. -->
+        <div id="anhangleiste" class="anhangleiste" hidden></div>
+        <!-- ⚑ **Der Ausschlag liegt ueber dem Feld und nicht daneben**:
+             Wer diktiert, sieht auf die Stelle, an der gleich der Text
+             steht. -->
+        <div id="pegel" class="pegel" hidden aria-hidden="true"></div>
         <textarea id="auftrag" rows="1" autocomplete="off"
                   placeholder="Frag etwas, oder gib einen Auftrag."
                   data-t-platz="eingabe.platz"
                   aria-label="Eingabe" data-t-marke="eingabe.label"></textarea>
-        <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
-          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
-          </svg>
-        </button>
+        <!-- ⚑ **Eine Reihe statt verstreuter Knoepfe** (Auftrag des
+             Projektinhabers, 2026-09-18). Links, was der Frage etwas
+             hinzufuegt (Datei, Stimme), rechts, was sie abschickt; der
+             Lautsprecher steht dazwischen, weil er die Antwort betrifft
+             und nicht die Frage. -->
+        <div class="knopfreihe">
+          <button type="button" id="anhang" class="rundknopf anhang" aria-label="Datei anhaengen"
+                  data-t-marke="knopf.anhang" title="Datei anhängen">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M13.5 6.5l-5.2 5.2a2 2 0 102.8 2.8l5.2-5.2a3.5 3.5 0 10-4.9-4.9L5.6 10.2a5 5 0 107.1 7.1"/>
+            </svg>
+          </button>
+          <!-- ⚑ Gedrueckt halten, reden, loslassen. Versteckt, solange
+               kein Hoermodell da ist: Ein Knopf, der nur erklaeren kann,
+               warum er nicht geht, ist kein Knopf. -->
+          <button type="button" id="sprechtaste" class="rundknopf sprechtaste" hidden
+                  aria-label="Sprechtaste" data-t-marke="knopf.sprechtaste"
+                  title="Gedrückt halten und sprechen">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M10 3a2 2 0 012 2v5a2 2 0 11-4 0V5a2 2 0 012-2z"/>
+              <path d="M5 9.5a5 5 0 0010 0M10 14.5V17"/>
+            </svg>
+          </button>
+          <span class="knopfluecke"></span>
+          <!-- ⚑ Der Lautsprecher merkt sich nichts ueber das Fenster
+               hinaus: Ein Client, der beim naechsten Start ungefragt
+               spricht, spricht im falschen Raum. -->
+          <button type="button" id="vorlesen" class="rundknopf vorlesen" hidden
+                  aria-label="Antworten vorlesen" data-t-marke="knopf.vorlesen"
+                  aria-pressed="false" title="Antworten vorlesen">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M4 8v4h3l4 3V5L7 8H4z"/>
+              <path d="M14 7.5a4 4 0 010 5"/>
+            </svg>
+          </button>
+          <!-- ⚑ **Der Sprachmodus ersetzt das Gespraech durch ein
+               Zeichen, das mitschwingt** (Auftrag des Projektinhabers).
+               Er steht neben dem Lautsprecher, weil er dasselbe betrifft:
+               die Antwort, nicht die Frage. -->
+          <button type="button" id="sprachmodus" class="rundknopf sprachmodus" hidden
+                  aria-label="Sprachmodus" data-t-marke="knopf.sprachmodus"
+                  aria-pressed="false" title="Sprachmodus">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M3 10v0M6.5 6.5v7M10 4v12M13.5 6.5v7M17 10v0"/>
+            </svg>
+          </button>
+          <button type="submit" id="senden" class="rundknopf senden" aria-label="Senden" data-t-marke="knopf.senden">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M10 16V4M10 4L5 9M10 4l5 5"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <!-- ⚑ Der Kontext steht am Eingabefeld, weil er dort voll wird, und
            ganz links, damit rechts Platz fuer weitere Parameter bleibt
@@ -348,8 +427,9 @@
            Projektinhabers, 2026-09-11). Die Reihenfolge der Seite folgt
            dem, wonach jemand sucht: erst die Aktualisierung, dann die
            Oberflaeche (Sprache, Erscheinungsbild, Schriftgroesse), dann
-           die Modelle, dann was dieser Rechner hergibt, und ganz
-           zuletzt die Feinheiten von Modell und Agent. **Welches Feld
+           die Modelle, dann was dieser Rechner hergibt, dann die
+           Feinheiten von Modell und Agent, und ganz zuletzt die Sinne.
+           **Welches Feld
            in welche Tabelle gehoert, entscheidet sein Name und nicht
            seine Ueberschrift**: Namen werden nicht uebersetzt,
            Ueberschriften schon. -->
@@ -387,7 +467,48 @@
         <p id="freigabehinweis" class="pfad"></p>
         <div id="regler"></div>
       </section>
-      <table id="felder-rest"><tbody></tbody></table>
+      <!-- ⚑ **Zwei Tabellen statt einer**, damit die Sinne dazwischen
+           passen: `modell.` hier, `agent.` unten. **Welches Feld in
+           welche gehoert, entscheidet sein Name**, nicht seine
+           Ueberschrift. -->
+      <table id="felder-modell"><tbody></tbody></table>
+
+      <!-- ⚑ **Die Sinne stehen zwischen Modell und Agent** (Festlegung
+           des Projektinhabers, 2026-09-18). Dafuer ist die Tabelle, die
+           beide Rubriken trug, in zwei geteilt: **Ein Abschnitt passt
+           nicht zwischen zwei Zeilen derselben Tabelle**, und ihn als
+           Zeile zu verkleiden waere eine Ueberschrift, die vorgibt, ein
+           Feld zu sein.
+
+           ⚑ **Die Reihenfolge ist die richtige:** erst das Modell, das
+           antwortet, dann die kleinen Modelle daneben, die sehen,
+           hoeren und sprechen, und dann der Agent, der sie alle
+           benutzt.
+
+           ⚑ **Keine Tabelle**, weil sie keine Einstellungen sind,
+           sondern ein Zustand: Was dieser Rechner kann, haengt daran,
+           was installiert ist. Die Stimmprobe ist die einzige
+           Handlung. -->
+      <section id="sinne">
+        <h2 data-t="sinne.titel">Sinne</h2>
+        <p id="sinnestand" class="pfad" role="status"></p>
+        <div class="stimmzeile">
+          <button id="stimme-waehlen" data-t="sinne.stimmewaehlen">Stimme hochladen</button>
+          <button id="stimme-weg" data-t="sinne.stimmeweg" hidden>Stimme entfernen</button>
+          <button id="sinne-einrichten" data-t="sinne.einrichten">Läufer anlegen</button>
+          <span id="stimmname" class="stimmname"></span>
+        </div>
+        <!-- ⚑ Steht nur da, wenn etwas zu sagen ist: dass eine Probe
+             liegt, die das eingestellte Programm nicht verwerten kann,
+             oder dass ihr Text fehlt. **Ein Schalter ohne Wirkung ist
+             schlimmer als keiner.** -->
+        <p id="stimmhinweis" class="hinweiskasten" role="status" hidden></p>
+        <pre id="sinnesmangel" aria-live="polite" hidden></pre>
+      </section>
+
+      <table id="felder-agent"><tbody></tbody></table>
+
+
       <p class="pfad" id="pfad"></p>
       <p class="pfad" id="setzmeldung" role="status"></p>
 

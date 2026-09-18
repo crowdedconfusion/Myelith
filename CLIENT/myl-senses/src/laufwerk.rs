@@ -1,0 +1,925 @@
+//! **Programm und Gewichte finden**, bevor irgendetwas gerechnet wird.
+//!
+//! # ⛔️ Erst suchen, dann rechnen
+//!
+//! **Eine Voraussetzung, die erst beim Absturz sichtbar wird, ist keine
+//! Voraussetzung, sondern eine Falle.** Fehlt ein Programm oder eine
+//! Gewichtsdatei, entsteht hier ein [`Mangel`], der sagt **was** fehlt,
+//! **wo** gesucht wurde und **wie** es hinkommt. Er geht als Text an das
+//! Modell und an den Menschen; keiner von beiden bekommt stattdessen
+//! eine Meldung aus llama.cpp, die den Grund nicht nennt.
+//!
+//! # ⚑ Die Gewichte liegen ausserhalb des Repositoriums
+//!
+//! Vorgabe ist `~/.myelith/sinne`, umzustellen ueber `MYL_SINNE`. Sie
+//! sind gross, sie gehoeren nicht versioniert, und **welches Modell
+//! taugt, entscheidet der Nutzer**: Eine Empfehlung im Text veraltet
+//! billiger als eine im Code.
+
+use std::path::{Path, PathBuf};
+
+/// Die Umgebungsvariable, die die Heimat der Sinnesmodelle umstellt.
+pub const HEIMAT_UMGEBUNG: &str = "MYL_SINNE";
+
+/// Die Dateinamen, unter denen die Gewichte in der Heimat erwartet werden.
+pub const SEHMODELL: &str = "sehen.gguf";
+/// Siehe [`SEHMODELL`]. Der Projektor bildet Bildmarken auf den Sprachraum ab.
+pub const SEHPROJEKTOR: &str = "sehen-mmproj.gguf";
+/// Das **genaue** Sehmodell, falls jemand zwei hinlegt. Siehe [`Stufe`].
+pub const SEHMODELL_GENAU: &str = "sehen-genau.gguf";
+/// Siehe [`SEHMODELL_GENAU`].
+pub const SEHPROJEKTOR_GENAU: &str = "sehen-genau-mmproj.gguf";
+/// Siehe [`SEHMODELL`]. Ein ggml-Modell fuer whisper.cpp.
+pub const HOERMODELL: &str = "hoeren.bin";
+
+/// Die Programme, die zum Sehen taugen, in der Reihenfolge der Suche.
+///
+/// ⚠️ **Eine Wette auf die Benennung in llama.cpp.** Das Projekt hat
+/// sein Multimodal-Programm schon einmal umbenannt; deshalb stehen die
+/// alten Namen mit hier, und deshalb ist **diese Liste** die eine
+/// Stelle, an der ein weiterer Name nachzutragen ist.
+pub const SEHPROGRAMME: [&str; 4] = ["llama-mtmd-cli", "mtmd-cli", "llama-llava-cli", "llava-cli"];
+/// Siehe [`SEHPROGRAMME`], fuer whisper.cpp.
+pub const HOERPROGRAMME: [&str; 3] = ["whisper-cli", "whisper-cpp", "whisper"];
+/// Siehe [`SEHPROGRAMME`], fuer piper.
+pub const SPRECHPROGRAMME: [&str; 2] = ["piper", "piper-tts"];
+/// Die Namen, unter denen ein Python zu finden ist.
+pub const PYTHONPROGRAMME: [&str; 2] = ["python3", "python"];
+/// Wo CosyVoice ausgepackt liegt. ⚑ **Ohne Vorgabe im Repositorium**
+/// (Festlegung des Projektinhabers, 2026-09-17): Python und die
+/// Gewichte bringt der Nutzer mit, sie gehoeren nicht hierher.
+pub const COSYVOICE_UMGEBUNG: &str = "MYL_COSYVOICE";
+/// Der Laeufer, den diese Kiste selbst mitbringt und bei Bedarf in die
+/// Heimat schreibt. Siehe `sprechen::laeufer_einrichten`.
+pub const COSYVOICE_LAEUFER: &str = "sprechen-cosyvoice.py";
+/// Der Text der Stimmprobe, von whisper mitgeschrieben.
+///
+/// ⚑ **CosyVoice braucht ihn fuer `inference_zero_shot`.** Fehlt er,
+/// bleibt `inference_cross_lingual`, das ohne auskommt und etwas
+/// schlechter trifft.
+pub const STIMMPROBE_TEXT: &str = "stimme.txt";
+/// Die Stimme fuer piper, ein ONNX-Modell.
+pub const SPRECHMODELL: &str = "sprechen.onnx";
+/// **Das eigene Sprechskript**, im `bin` der Heimat: Es bekommt eine
+/// Textdatei und ein Ziel-WAV und sonst nichts. Die Tuer fuer jedes
+/// Sprechprogramm, das nicht piper ist (etwa CosyVoice).
+pub const SPRECHSKRIPT: &str = "sprechen";
+/// **Die Stimmprobe**: eine Aufnahme, die als Stimme dienen soll.
+///
+/// ⛔️ **Nicht jedes Sprechprogramm kann damit etwas anfangen.** piper
+/// nimmt fertige Stimmen und kennt keine Referenzaufnahme; klonen
+/// koennen CosyVoice, XTTS-v2 und F5-TTS, und die laufen ueber das
+/// Skript ([`SPRECHSKRIPT`]). Liegt hier eine Probe und spricht trotzdem
+/// piper, **sagt der Client das**, statt die Datei stillschweigend
+/// liegen zu lassen: Sonst waere die Einstellung ein Schalter ohne
+/// Wirkung, und das faellt erst dem auf, der genau hinhoert.
+pub const STIMMPROBE: &str = "stimme.wav";
+
+/// **Das eigene Aufnahmeskript**, im `bin` der Heimat: Es bekommt **ein**
+/// Ziel-WAV und nimmt auf, **bis seine Standardeingabe schliesst**.
+///
+/// ⚑ **Das Schliessen ist der Stopp, und das ist Absicht.** Ein Signal zu
+/// schicken braeuchte eine Fremdkiste (`libc`), und `Child::kill` ist
+/// SIGKILL: Das liesse eine halbe WAV-Datei zurueck. Ein Programm, das
+/// auf seine Eingabe hoert, kann sauber abschliessen.
+pub const AUFNAHMESKRIPT: &str = "aufnehmen";
+
+/// **Wo die Sinnesmodelle liegen.**
+pub fn heimat() -> PathBuf {
+    match std::env::var_os(HEIMAT_UMGEBUNG).filter(|w| !w.is_empty()) {
+        Some(w) => PathBuf::from(w),
+        None => heimatvorgabe(),
+    }
+}
+
+fn heimatvorgabe() -> PathBuf {
+    let heim = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    heim.join(".myelith").join("sinne")
+}
+
+/// Was ein Nutzer ausdruecklich gesetzt hat, Datei fuer Datei.
+///
+/// ⚑ **Jede einzeln umstellbar.** Wer ein Sehmodell woanders liegen hat
+/// und den Rest in der Heimat, soll nicht alles umziehen muessen.
+#[derive(Debug, Clone, Default)]
+pub struct Eigene {
+    pub seher: Option<PathBuf>,
+    pub sehmodell: Option<PathBuf>,
+    pub sehprojektor: Option<PathBuf>,
+    pub sehmodell_genau: Option<PathBuf>,
+    pub sehprojektor_genau: Option<PathBuf>,
+    pub hoerer: Option<PathBuf>,
+    pub hoermodell: Option<PathBuf>,
+    pub sprecher: Option<PathBuf>,
+    pub sprechmodell: Option<PathBuf>,
+    pub aufnehmer: Option<PathBuf>,
+    /// Woher ffmpeg den Ton nimmt: Format und Geraet, etwa
+    /// `("avfoundation", ":0")`. Ohne Angabe die Vorgabe dieses Systems.
+    pub tonquelle: Option<(String, String)>,
+}
+
+impl Eigene {
+    /// Die Angaben aus der Umgebung.
+    pub fn aus_umgebung() -> Self {
+        let lies = |name: &str| {
+            std::env::var_os(name).filter(|w| !w.is_empty()).map(PathBuf::from)
+        };
+        Self {
+            seher: lies("MYL_SEHER"),
+            sehmodell: lies("MYL_SEHMODELL"),
+            sehprojektor: lies("MYL_SEHPROJEKTOR"),
+            sprecher: lies("MYL_SPRECHER"),
+            sprechmodell: lies("MYL_SPRECHMODELL"),
+            aufnehmer: lies("MYL_AUFNEHMER"),
+            tonquelle: match (std::env::var("MYL_TONFORMAT"), std::env::var("MYL_TONGERAET")) {
+                (Ok(f), Ok(g)) if !f.is_empty() && !g.is_empty() => Some((f, g)),
+                _ => None,
+            },
+            sehmodell_genau: lies("MYL_SEHMODELL_GENAU"),
+            sehprojektor_genau: lies("MYL_SEHPROJEKTOR_GENAU"),
+            hoerer: lies("MYL_HOERER"),
+            hoermodell: lies("MYL_HOERMODELL"),
+        }
+    }
+}
+
+/// Was zum Sehen gebraucht wird, alles vorhanden.
+#[derive(Debug, Clone)]
+pub struct Sehzeug {
+    pub programm: PathBuf,
+    pub modell: PathBuf,
+    pub projektor: PathBuf,
+}
+
+/// **Wie genau hingesehen werden soll.**
+///
+/// # ⚑ Zwei Sprossen, und kein Parameter fuer das Modell
+///
+/// Festlegung des Projektinhabers vom 2026-09-17: ein kleines schnelles
+/// Sehmodell (SmolVLM) und ein groesseres genaues (Qwen-VL), je nach
+/// Anwendungsfall. **Die Wahl trifft der Aufrufer und nicht das
+/// Modell**, denn ein zusaetzliches Argument kostet jedes kleine Modell
+/// eine Entscheidung, die es schlecht trifft:
+///
+/// - **Beim Anhaengen `Schnell`.** Das ist ein Blick fuer jeden, auch
+///   fuer den, der gar nichts fragen wollte.
+/// - **Beim Werkzeugaufruf `Genau`.** Wer ausdruecklich eine Frage
+///   stellt, will die bessere Antwort.
+///
+/// ⚑ **Wer nur eines hinlegt, bekommt es fuer beides.** Eine Stufe, die
+/// mangels Gewichten leer ausginge, waere eine Falle; hier faellt sie
+/// auf die andere zurueck.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stufe {
+    /// Klein und schnell, fuer den ersten Blick.
+    Schnell,
+    /// Groesser und genauer, fuer eine gestellte Frage.
+    Genau,
+}
+
+/// Was zum Sehen da ist, auf einer oder beiden Sprossen.
+#[derive(Debug, Clone)]
+pub struct Sehen {
+    pub schnell: Option<Sehzeug>,
+    pub genau: Option<Sehzeug>,
+}
+
+impl Sehen {
+    /// **Das Zeug fuer diese Stufe**, sonst das der anderen.
+    pub fn fuer(&self, stufe: Stufe) -> &Sehzeug {
+        let (erst, dann) = match stufe {
+            Stufe::Schnell => (&self.schnell, &self.genau),
+            Stufe::Genau => (&self.genau, &self.schnell),
+        };
+        erst.as_ref().or(dann.as_ref()).expect("ein Sehen ohne ein einziges Zeug entsteht nicht")
+    }
+
+    /// Ob auf beiden Sprossen etwas steht.
+    pub fn zweistufig(&self) -> bool {
+        self.schnell.is_some() && self.genau.is_some()
+    }
+}
+
+/// Was zum Hoeren gebraucht wird, alles vorhanden.
+#[derive(Debug, Clone)]
+pub struct Hoerzeug {
+    pub programm: PathBuf,
+    pub modell: PathBuf,
+}
+
+/// Was zum Aufnehmen gebraucht wird.
+///
+/// ⚑ **`quelle` ist leer, wenn ein eigenes Skript aufnimmt**: Das kennt
+/// sein Geraet selbst. Bei ffmpeg steht hier, woher der Ton kommt.
+#[derive(Debug, Clone)]
+pub struct Aufnahmezeug {
+    pub programm: PathBuf,
+    pub quelle: Option<(String, String)>,
+}
+
+/// **Wie gesprochen wird.**
+///
+/// # ⚑ Drei Wege, und die Reihenfolge ist eine Entscheidung
+///
+/// 1. **Ein eigenes Skript** gewinnt immer: Wer es hinlegt, hat gewaehlt.
+/// 2. **CosyVoice**, die Vorgabe seit dem 2026-09-17 (Festlegung des
+///    Projektinhabers). Es klingt am besten und **kann eine Stimme
+///    nachbilden**; dafuer braucht es Python und Gewichte, die der
+///    Nutzer mitbringt.
+/// 3. **piper** als Rueckfall: eine Binaerdatei, sofort da, aber es
+///    nimmt nur fertige Stimmen.
+#[derive(Debug, Clone)]
+pub enum Sprechweg {
+    /// `<Heimat>/bin/sprechen`, mit dem festen Interface aus dem
+    /// Modulkopf von `sprechen`.
+    Skript(PathBuf),
+    /// Python, der mitgelieferte Laeufer und CosyVoice.
+    CosyVoice {
+        python: PathBuf,
+        laeufer: PathBuf,
+        wurzel: PathBuf,
+    },
+    /// piper mit einer fertigen Stimme.
+    Piper { programm: PathBuf, stimme: PathBuf },
+}
+
+/// Was zum Sprechen gebraucht wird.
+#[derive(Debug, Clone)]
+pub struct Sprechzeug {
+    pub weg: Sprechweg,
+    /// Die Stimmprobe, falls eine liegt.
+    pub probe: Option<PathBuf>,
+    /// Der mitgeschriebene Text der Stimmprobe, falls es ihn gibt.
+    pub probentext: Option<PathBuf>,
+}
+
+impl Sprechzeug {
+    /// Ob dieser Weg eine Stimmprobe ueberhaupt verwerten kann.
+    ///
+    /// ⛔️ **piper kann es nicht**, und das ist sicher: Es nimmt fertige
+    /// Stimmen und kennt keine Referenzaufnahme.
+    pub fn kann_klonen(&self) -> bool {
+        !matches!(self.weg, Sprechweg::Piper { .. })
+    }
+
+    /// ⚑ **Ob der Weg ein Dauerlaeufer sein sollte.** CosyVoice laedt je
+    /// Aufruf ein halbes Milliardenmodell; **satzweise zu sprechen waere
+    /// damit langsamer als gar nicht zu streamen**, wenn jeder Satz
+    /// einen neuen Prozess braeuchte.
+    pub fn dauerhaft(&self) -> bool {
+        matches!(self.weg, Sprechweg::CosyVoice { .. })
+    }
+
+    /// Wie der Weg heisst, fuer Meldungen.
+    pub fn name(&self) -> String {
+        match &self.weg {
+            Sprechweg::Skript(p) => p.display().to_string(),
+            Sprechweg::CosyVoice { .. } => "CosyVoice".into(),
+            Sprechweg::Piper { .. } => "piper".into(),
+        }
+    }
+}
+
+/// **Was fehlt, wo gesucht wurde, und wie es hinkommt.**
+#[derive(Debug, Clone)]
+pub struct Mangel {
+    /// Der Sinn, um den es geht, fuer die erste Zeile.
+    pub sinn: &'static str,
+    /// Je Stueck: wie es heisst und wo vergeblich gesucht wurde.
+    pub fehlt: Vec<(String, String)>,
+    /// Die Schritte, die es herbeischaffen.
+    pub anleitung: Vec<String>,
+}
+
+impl Mangel {
+    /// Der Text, den Modell und Mensch zu sehen bekommen.
+    pub fn bericht(&self) -> String {
+        let mut t = format!("Es ist kein {} eingerichtet, deshalb wurde nichts angesehen oder angehoert.\n", self.sinn);
+        for (was, wo) in &self.fehlt {
+            t.push_str(&format!("  {was} fehlt ({wo})\n"));
+        }
+        t.push_str("Einmalig einzurichten, danach laeuft es ohne Netz:\n");
+        for (i, z) in self.anleitung.iter().enumerate() {
+            t.push_str(&format!("  {}. {z}\n", i + 1));
+        }
+        t
+    }
+}
+
+/// **Beide Sinne, so wie sie hier gerade dastehen.**
+///
+/// ⚑ **Billig zu haben**, ein paar Dateiabfragen. Deshalb darf der
+/// Client vor jeder Anzeige neu fragen, statt einen Zustand zu halten,
+/// der veraltet, sobald jemand ein Modell dorthin legt.
+#[derive(Debug, Clone)]
+pub struct Sinne {
+    pub sehen: Result<Sehen, Mangel>,
+    pub hoeren: Result<Hoerzeug, Mangel>,
+    pub sprechen: Result<Sprechzeug, Mangel>,
+    pub aufnehmen: Result<Aufnahmezeug, Mangel>,
+}
+
+impl Sinne {
+    /// Aus Umgebung und Vorgaben.
+    pub fn finden() -> Self {
+        Self::finden_in(&heimat(), &Eigene::aus_umgebung(), &pfadordner())
+    }
+
+    /// **Dieselbe Suche, aber mit gesagten Orten.**
+    ///
+    /// ⚑ **Die Naht fuer die Proben** (und fuer jeden, der die Sinne
+    /// woandershin legen will). Eine Probe, die dafuer die Umgebung des
+    /// Prozesses veraendert, veraendert sie fuer alle Proben daneben:
+    /// `cargo test` laeuft nebenlaeufig im selben Prozess.
+    pub fn finden_in(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Self {
+        Self {
+            sehen: sehen(heimat, eigen, pfad),
+            hoeren: hoerzeug(heimat, eigen, pfad),
+            sprechen: sprechzeug(heimat, eigen, pfad),
+            aufnehmen: aufnahmezeug(heimat, eigen, pfad),
+        }
+    }
+
+    /// Ob der Client antworten kann, statt nur zu schreiben.
+    pub fn kann_sprechen(&self) -> bool {
+        self.sprechen.is_ok()
+    }
+
+    /// **Was zur Stimmprobe zu sagen ist**, wenn etwas zu sagen ist.
+    ///
+    /// ⚑ **Ein Schalter ohne Wirkung ist schlimmer als keiner.** Wer
+    /// eine Stimme hochlaedt und weiter dieselbe hoert, sucht den Fehler
+    /// bei sich.
+    pub fn stimmhinweis(&self) -> Option<String> {
+        let z = self.sprechen.as_ref().ok()?;
+        let probe = z.probe.as_ref()?;
+        if z.kann_klonen() {
+            // ⚠️ **Ein zweiter Fall, der still danebengeht:** CosyVoice
+            // trifft die Stimme deutlich besser, wenn der Text der Probe
+            // dabeisteht. Fehlt er, laeuft es trotzdem, nur schlechter.
+            if matches!(z.weg, Sprechweg::CosyVoice { .. }) && z.probentext.is_none() {
+                return Some(format!(
+                    "Zur Stimmprobe fehlt ihr Text ({}). CosyVoice trifft die Stimme damit \
+                     besser; ohne ihn wird der sprachuebergreifende Weg genommen. Ein \
+                     Hoermodell schreibt ihn beim Ablegen von selbst mit.",
+                    heimat().join(STIMMPROBE_TEXT).display()
+                ));
+            }
+            return None;
+        }
+        Some(format!(
+            "Es liegt eine Stimmprobe ({}), aber {} kann keine Stimme nachbilden und \
+             ignoriert sie. Klonen kann CosyVoice, und dafuer muss {} auf eine \
+             Installation zeigen.",
+            probe.display(),
+            z.name(),
+            COSYVOICE_UMGEBUNG
+        ))
+    }
+
+    /// **Ob die Sprechtaste geht**: aufnehmen und mitschreiben, beides.
+    ///
+    /// ⚑ **Beides oder nichts.** Eine Taste, die aufnimmt und dann
+    /// niemanden hat, der mitschreibt, ist eine Taste, die Tonmuell
+    /// erzeugt.
+    pub fn kann_zuhoeren(&self) -> bool {
+        self.aufnehmen.is_ok() && self.hoeren.is_ok()
+    }
+
+    /// Ob fuer diese Art Datei hier jemand hinsieht.
+    pub fn bereit(&self, art: crate::anhang::Art) -> bool {
+        match art {
+            crate::anhang::Art::Bild => self.sehen.is_ok(),
+            crate::anhang::Art::Ton => self.hoeren.is_ok(),
+            _ => false,
+        }
+    }
+}
+
+/// **Die ueblichen Orte, an denen Paketverwalter ablegen.**
+///
+/// # ⛔️ Warum das noetig ist, und es ist kein Komfort
+///
+/// **Ein aus dem Finder gestartetes `Myelith.app` erbt den PATH der
+/// Anmeldesitzung, nicht den der Shell.** Darin steht
+/// `/usr/bin:/bin:/usr/sbin:/sbin` und sonst nichts; `/opt/homebrew/bin`
+/// fehlt. Wer llama.cpp mit `brew` installiert, findet es im Terminal
+/// und im Fenster **nicht**, und es gibt keine Fehlermeldung, die das
+/// sagt: Der Sinn meldet nur, das Programm fehle.
+///
+/// 📌 **Dieselbe Falle wie bei den Werkzeugkisten** (Fund vom
+/// 2026-09-15): Eine Suche, die nur vom Arbeitsverzeichnis ausgeht,
+/// geht fuer das installierte Fenster immer ins Leere. Aufgefallen ist
+/// es hier beim tatsaechlichen Einrichten, nicht beim Schreiben.
+pub const UEBLICHE_ORTE: [&str; 4] =
+    ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin"];
+
+/// Die Ordner aus `PATH`, gefolgt von den ueblichen Orten.
+///
+/// ⚑ **PATH zuerst.** Wer etwas ausdruecklich in seinen Pfad legt, hat
+/// gewaehlt; die ueblichen Orte sind der Rueckfall fuer den Fall, dass
+/// gar kein brauchbarer PATH da ist.
+pub fn pfadordner() -> Vec<PathBuf> {
+    let mut aus: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    for o in UEBLICHE_ORTE {
+        let o = PathBuf::from(o);
+        if !aus.contains(&o) {
+            aus.push(o);
+        }
+    }
+    aus
+}
+
+fn sehen(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sehen, Mangel> {
+    let programm = programm_suchen(&SEHPROGRAMME, eigen.seher.as_deref(), heimat, pfad);
+    let sprosse = |modell: Option<&Path>, projektor: Option<&Path>, mname: &str, pname: &str| {
+        let m = datei_suchen(modell, &heimat.join(mname));
+        let p = datei_suchen(projektor, &heimat.join(pname));
+        match (programm.as_ref(), m, p) {
+            (Some(prog), Some(m), Some(p)) => {
+                Some(Sehzeug { programm: prog.clone(), modell: m, projektor: p })
+            }
+            _ => None,
+        }
+    };
+    let schnell = sprosse(
+        eigen.sehmodell.as_deref(),
+        eigen.sehprojektor.as_deref(),
+        SEHMODELL,
+        SEHPROJEKTOR,
+    );
+    let genau = sprosse(
+        eigen.sehmodell_genau.as_deref(),
+        eigen.sehprojektor_genau.as_deref(),
+        SEHMODELL_GENAU,
+        SEHPROJEKTOR_GENAU,
+    );
+    if schnell.is_some() || genau.is_some() {
+        return Ok(Sehen { schnell, genau });
+    }
+
+    // ⚑ **Der Mangel nennt die gewoehnliche Sprosse.** Wer gar nichts
+    // hat, soll ein Modell hinlegen und nicht erst zwei Namen auseinander
+    // halten muessen; die zweite Sprosse steht im README.
+    let mut fehlt = Vec::new();
+    if programm.is_none() {
+        fehlt.push(("Programm".into(), format!("{} aus llama.cpp", SEHPROGRAMME[0])));
+    }
+    if datei_suchen(eigen.sehmodell.as_deref(), &heimat.join(SEHMODELL)).is_none() {
+        fehlt.push(("Modell".into(), heimat.join(SEHMODELL).display().to_string()));
+    }
+    if datei_suchen(eigen.sehprojektor.as_deref(), &heimat.join(SEHPROJEKTOR)).is_none() {
+        fehlt.push(("Projektor".into(), heimat.join(SEHPROJEKTOR).display().to_string()));
+    }
+    Err(Mangel {
+        sinn: "Sehmodell",
+        fehlt,
+        anleitung: vec![
+            format!("llama.cpp installieren ({})", einbauhinweis("llama.cpp", "llama-cpp")),
+            format!("Den Ordner anlegen: {}", heimat.display()),
+            format!(
+                "Ein kleines Sehmodell als GGUF samt mmproj dorthin legen, benannt {SEHMODELL} und {SEHPROJEKTOR}. \
+                 Klein und brauchbar ist zum Beispiel SmolVLM2-2.2B-Instruct. Wer zusaetzlich ein groesseres \
+                 will (etwa Qwen2.5-VL-3B), legt es als {SEHMODELL_GENAU} und {SEHPROJEKTOR_GENAU} daneben."
+            ),
+        ],
+    })
+}
+
+fn hoerzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Hoerzeug, Mangel> {
+    let programm = programm_suchen(&HOERPROGRAMME, eigen.hoerer.as_deref(), heimat, pfad);
+    let modell = datei_suchen(eigen.hoermodell.as_deref(), &heimat.join(HOERMODELL));
+    if let (Some(programm), Some(modell)) = (&programm, &modell) {
+        return Ok(Hoerzeug { programm: programm.clone(), modell: modell.clone() });
+    }
+    let mut fehlt = Vec::new();
+    if programm.is_none() {
+        fehlt.push(("Programm".into(), format!("{} aus whisper.cpp", HOERPROGRAMME[0])));
+    }
+    if modell.is_none() {
+        fehlt.push(("Modell".into(), heimat.join(HOERMODELL).display().to_string()));
+    }
+    Err(Mangel {
+        sinn: "Hoermodell",
+        fehlt,
+        anleitung: vec![
+            format!("whisper.cpp installieren ({})", einbauhinweis("whisper-cpp", "whisper-cpp")),
+            format!("Den Ordner anlegen: {}", heimat.display()),
+            format!(
+                "Ein ggml-Modell dorthin legen, benannt {HOERMODELL}. Klein und brauchbar sind \
+                 zum Beispiel ggml-small.bin oder ggml-large-v3-turbo-q5_0.bin."
+            ),
+        ],
+    })
+}
+
+/// **Die Tonquelle dieses Systems**, wenn niemand etwas anderes sagt.
+///
+/// ⚠️ **Unter Windows raet das hier.** `dshow` will den Geraetenamen, und
+/// der heisst auf jeder Maschine anders; die Vorgabe trifft den haeufigen
+/// Fall und sonst hilft `MYL_TONGERAET`. Auf macOS und Linux gibt es
+/// einen echten Vorgabenamen.
+pub fn tonquelle_vorgabe() -> (String, String) {
+    if cfg!(target_os = "macos") {
+        ("avfoundation".into(), ":0".into())
+    } else if cfg!(target_os = "windows") {
+        ("dshow".into(), "audio=Microphone".into())
+    } else {
+        ("pulse".into(), "default".into())
+    }
+}
+
+fn aufnahmezeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Aufnahmezeug, Mangel> {
+    // ⚑ **Das eigene Skript gewinnt**, wie beim Sprechen: Wer es
+    // hinlegt, hat sich entschieden.
+    let skript = heimat.join("bin").join(AUFNAHMESKRIPT);
+    if eigen.aufnehmer.is_none() && ausfuehrbar(&skript) {
+        return Ok(Aufnahmezeug { programm: skript, quelle: None });
+    }
+    match programm_suchen(&["ffmpeg"], eigen.aufnehmer.as_deref(), heimat, pfad) {
+        Some(programm) => Ok(Aufnahmezeug {
+            programm,
+            quelle: Some(eigen.tonquelle.clone().unwrap_or_else(tonquelle_vorgabe)),
+        }),
+        None => Err(Mangel {
+            sinn: "Aufnahmeprogramm",
+            fehlt: vec![("Programm".into(), format!("ffmpeg oder {}", skript.display()))],
+            anleitung: vec![
+                format!("ffmpeg installieren ({})", einbauhinweis("ffmpeg", "ffmpeg")),
+                format!(
+                    "Nimmt ffmpeg das falsche Geraet, sagen MYL_TONFORMAT und MYL_TONGERAET, \
+                     welches gemeint ist; Vorgabe hier ist {:?}.",
+                    tonquelle_vorgabe()
+                ),
+                format!(
+                    "Wer ein anderes Aufnahmeprogramm will, legt ein ausfuehrbares Skript {} hin; \
+                     es bekommt ein Ziel-WAV und nimmt auf, bis seine Standardeingabe schliesst.",
+                    skript.display()
+                ),
+            ],
+        }),
+    }
+}
+
+fn sprechzeug(heimat: &Path, eigen: &Eigene, pfad: &[PathBuf]) -> Result<Sprechzeug, Mangel> {
+    let probe = datei_suchen(None, &heimat.join(STIMMPROBE));
+    let probentext = datei_suchen(None, &heimat.join(STIMMPROBE_TEXT));
+    let fertig = |weg| Ok(Sprechzeug { weg, probe: probe.clone(), probentext: probentext.clone() });
+
+    // 1. Das eigene Skript gewinnt. Wer es hinlegt, hat gewaehlt, und
+    //    diese Entscheidung soll nicht davon abhaengen, was sonst noch
+    //    zufaellig installiert ist.
+    let skript = heimat.join("bin").join(SPRECHSKRIPT);
+    if eigen.sprecher.is_none() && ausfuehrbar(&skript) {
+        return fertig(Sprechweg::Skript(skript));
+    }
+
+    // 2. CosyVoice: Python, der mitgelieferte Laeufer, die Wurzel.
+    let wurzel = std::env::var_os(COSYVOICE_UMGEBUNG)
+        .filter(|w| !w.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let v = heimat.join("cosyvoice");
+            v.is_dir().then_some(v)
+        });
+    // ⛔️ **Der Python neben der Installation gewinnt**, und das ist die
+    // ganze Pointe.
+    //
+    // CosyVoice braucht torch, torchaudio und ein Dutzend weitere
+    // Kisten; die liegen in **seiner** Umgebung und nicht im
+    // System-Python. Waehlte man den ersten Python im PATH, faende man
+    // unter macOS `/usr/bin/python3` (3.9, ohne alles) und bekaeme einen
+    // Importfehler statt einer Stimme. 📌 **Aufgefallen beim
+    // tatsaechlichen Einrichten**, nicht beim Schreiben.
+    let python = wurzel
+        .as_ref()
+        .and_then(|w| {
+            [w.join(".venv/bin/python3"), w.join(".venv/bin/python"), w.join("venv/bin/python3")]
+                .into_iter()
+                .find(|p| ausfuehrbar(p))
+        })
+        .or_else(|| programm_suchen(&PYTHONPROGRAMME, None, heimat, pfad));
+    let laeufer = heimat.join("bin").join(COSYVOICE_LAEUFER);
+    if let (Some(wurzel), Some(python)) = (&wurzel, &python) {
+        if wurzel.is_dir() && laeufer.is_file() {
+            return fertig(Sprechweg::CosyVoice {
+                python: python.clone(),
+                laeufer,
+                wurzel: wurzel.clone(),
+            });
+        }
+    }
+
+    // 3. piper als Rueckfall.
+    let programm = programm_suchen(&SPRECHPROGRAMME, eigen.sprecher.as_deref(), heimat, pfad);
+    let stimme = datei_suchen(eigen.sprechmodell.as_deref(), &heimat.join(SPRECHMODELL));
+    if let (Some(programm), Some(stimme)) = (&programm, &stimme) {
+        return fertig(Sprechweg::Piper { programm: programm.clone(), stimme: stimme.clone() });
+    }
+
+    let mut fehlt = Vec::new();
+    if wurzel.is_none() {
+        fehlt.push((
+            "CosyVoice".into(),
+            format!("{COSYVOICE_UMGEBUNG} oder {}", heimat.join("cosyvoice").display()),
+        ));
+    }
+    if python.is_none() {
+        fehlt.push(("Python".into(), "eine .venv neben CosyVoice, sonst python3".into()));
+    }
+    if !laeufer.is_file() {
+        fehlt.push(("Laeufer".into(), laeufer.display().to_string()));
+    }
+    if programm.is_none() {
+        fehlt.push(("piper (Rueckfall)".into(), SPRECHPROGRAMME[0].into()));
+    }
+    Err(Mangel {
+        sinn: "Sprechmodell",
+        fehlt,
+        anleitung: vec![
+            format!(
+                "CosyVoice holen und auspacken, dann {COSYVOICE_UMGEBUNG} darauf zeigen lassen. \
+                 Python bringt der Nutzer mit; es gehoert nicht ins Repositorium."
+            ),
+            format!(
+                "Den Laeufer anlegen lassen: er wird nach {} geschrieben und ist danach \
+                 frei zu aendern.",
+                laeufer.display()
+            ),
+            format!(
+                "Wer es einfacher will, nimmt piper: {} und eine Stimme als {} in {}. \
+                 ⚠️ piper kann allerdings keine Stimme nachbilden.",
+                einbauhinweis("piper", "piper-tts"),
+                SPRECHMODELL,
+                heimat.display()
+            ),
+        ],
+    })
+}
+
+/// ⚑ **Der Hinweis nennt den Paketverwalter dieses Systems**/// ⚑ **Der Hinweis nennt den Paketverwalter dieses Systems**, denn ein
+/// `brew install` auf NixOS hilft niemandem.
+fn einbauhinweis(brau: &str, nix: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("macOS: brew install {brau}")
+    } else if cfg!(target_os = "windows") {
+        format!("Windows: ein fertiges Bau von {brau} herunterladen und in den PATH legen")
+    } else {
+        format!("NixOS: nix-shell -p {nix}, sonst der Paketverwalter des Systems")
+    }
+}
+
+/// **Das erste der genannten Programme, das es gibt**: erst die eigene
+/// Angabe, dann `PATH`, dann der `bin`-Ordner der Sinnesheimat.
+///
+/// ⚑ **Der `bin`-Ordner der Heimat ist Absicht.** Wer llama.cpp nicht
+/// systemweit installieren will, legt es dorthin, wo auch die Gewichte
+/// liegen, und muss nichts an seinem `PATH` aendern.
+pub fn programm_suchen(
+    namen: &[&str],
+    eigen: Option<&Path>,
+    heimat: &Path,
+    pfad: &[PathBuf],
+) -> Option<PathBuf> {
+    if let Some(p) = eigen {
+        return ausfuehrbar(p).then(|| p.to_path_buf());
+    }
+    for name in namen {
+        for kandidat in namensformen(name) {
+            for ordner in pfad.iter().chain(std::iter::once(&heimat.join("bin"))) {
+                let p = ordner.join(&kandidat);
+                if ausfuehrbar(&p) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// ⚠️ **Unter Windows heisst dasselbe Programm `name.exe`.** Ohne diese
+/// Formen faende die Suche dort nie etwas, und der Client wird fuer
+/// Windows ausgeliefert.
+fn namensformen(name: &str) -> Vec<String> {
+    if cfg!(target_os = "windows") {
+        vec![format!("{name}.exe"), name.to_string()]
+    } else {
+        vec![name.to_string()]
+    }
+}
+
+#[cfg(unix)]
+fn ausfuehrbar(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.is_file()
+        && std::fs::metadata(p).map(|m| m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+/// ⚠️ **Unter Windows sagt kein Bit, ob eine Datei ein Programm ist.**
+/// Dort entscheidet die Endung, und die steht schon in [`namensformen`].
+#[cfg(not(unix))]
+fn ausfuehrbar(p: &Path) -> bool {
+    p.is_file()
+}
+
+fn datei_suchen(eigen: Option<&Path>, vorgabe: &Path) -> Option<PathBuf> {
+    if let Some(p) = eigen {
+        return p.is_file().then(|| p.to_path_buf());
+    }
+    vorgabe.is_file().then(|| vorgabe.to_path_buf())
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    fn stellen(d: &Path, name: &str) -> PathBuf {
+        let bin = d.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let p = bin.join(name);
+        std::fs::write(&p, "#!/bin/sh\necho da\n").expect("Attrappe");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).expect("Rechte");
+        }
+        p
+    }
+
+    /// ⚑ **Fehlt alles, steht alles im Bericht**, samt Ort und Anleitung.
+    #[test]
+    fn ohne_alles_sagt_der_mangel_was_fehlt() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let m = s.sehen.as_ref().expect_err("es ist nichts da");
+        let t = m.bericht();
+        assert!(t.contains("Programm fehlt"), "{t}");
+        assert!(t.contains("llama.cpp"), "{t}");
+        assert!(t.contains(&d.path().join(SEHMODELL).display().to_string()), "{t}");
+        assert!(t.contains("Projektor fehlt"), "{t}");
+        assert!(!s.bereit(crate::anhang::Art::Bild));
+        assert!(!s.bereit(crate::anhang::Art::Ton));
+    }
+
+    /// ⚑ **Fehlt nur eines, steht auch nur dieses da.** Ein Bericht, der
+    /// vorhandene Dinge als fehlend nennt, schickt den Leser suchen.
+    #[test]
+    fn nur_das_fehlende_steht_im_bericht() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SEHPROGRAMME[0]);
+        std::fs::write(d.path().join(SEHMODELL), "x").expect("Modell");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let t = s.sehen.as_ref().expect_err("der Projektor fehlt").bericht();
+        assert!(t.contains("Projektor fehlt"), "{t}");
+        assert!(!t.contains("Programm fehlt"), "{t}");
+        assert!(!t.contains("Modell fehlt"), "{t}");
+    }
+
+    /// ⚑ **Liegt alles da, ist der Sinn bereit**, und die Pfade zeigen
+    /// auf das Gestellte.
+    #[test]
+    fn mit_allem_ist_der_sinn_bereit() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let programm = stellen(d.path(), SEHPROGRAMME[0]);
+        std::fs::write(d.path().join(SEHMODELL), "x").expect("Modell");
+        std::fs::write(d.path().join(SEHPROJEKTOR), "x").expect("Projektor");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sehen.as_ref().expect("bereit").fuer(Stufe::Schnell);
+        assert_eq!(z.programm, programm);
+        assert!(s.bereit(crate::anhang::Art::Bild));
+        // ⛔️ **Und Hoeren ist davon unberuehrt.** Zwei Sinne, zwei Antworten.
+        assert!(!s.bereit(crate::anhang::Art::Ton));
+    }
+
+    /// ⚑ **Die eigene Angabe schlaegt die Suche**, und eine falsche
+    /// faellt **nicht** still auf die Vorgabe zurueck: Sonst arbeitete
+    /// der Client mit einem anderen Modell als dem genannten.
+    #[test]
+    fn die_eigene_angabe_gilt_und_faellt_nicht_still_zurueck() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SEHPROGRAMME[0]);
+        std::fs::write(d.path().join(SEHMODELL), "x").expect("Modell");
+        std::fs::write(d.path().join(SEHPROJEKTOR), "x").expect("Projektor");
+        let woanders = d.path().join("anderes.gguf");
+        std::fs::write(&woanders, "x").expect("anderes");
+
+        let eigen = Eigene { sehmodell: Some(woanders.clone()), ..Default::default() };
+        let s = Sinne::finden_in(d.path(), &eigen, &[]);
+        assert_eq!(s.sehen.expect("bereit").fuer(Stufe::Schnell).modell, woanders);
+
+        let eigen = Eigene { sehmodell: Some(d.path().join("gibtsnicht.gguf")), ..Default::default() };
+        let s = Sinne::finden_in(d.path(), &eigen, &[]);
+        assert!(s.sehen.is_err(), "eine falsche Angabe fiel still auf die Vorgabe zurueck");
+    }
+
+    /// ⚑ **Zwei Sprossen, und wer nur eine hinlegt, bekommt sie fuer
+    /// beides.** Eine Stufe, die mangels Gewichten leer ausginge, waere
+    /// eine Falle: Der Agent stellte eine Frage und bekaeme nichts.
+    #[test]
+    fn die_zweite_sprosse_ist_wahlfrei_und_faellt_zurueck() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SEHPROGRAMME[0]);
+        std::fs::write(d.path().join(SEHMODELL), "x").expect("Modell");
+        std::fs::write(d.path().join(SEHPROJEKTOR), "x").expect("Projektor");
+
+        // Nur die schnelle Sprosse: `Genau` faellt auf sie zurueck.
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let sehen = s.sehen.as_ref().expect("bereit");
+        assert!(!sehen.zweistufig());
+        assert_eq!(sehen.fuer(Stufe::Genau).modell, d.path().join(SEHMODELL));
+
+        // Mit beiden: jede Stufe nimmt ihre eigene.
+        std::fs::write(d.path().join(SEHMODELL_GENAU), "x").expect("Modell");
+        std::fs::write(d.path().join(SEHPROJEKTOR_GENAU), "x").expect("Projektor");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let sehen = s.sehen.as_ref().expect("bereit");
+        assert!(sehen.zweistufig());
+        assert_eq!(sehen.fuer(Stufe::Schnell).modell, d.path().join(SEHMODELL));
+        assert_eq!(sehen.fuer(Stufe::Genau).modell, d.path().join(SEHMODELL_GENAU));
+    }
+
+    /// ⚑ **Nur die genaue Sprosse reicht auch.** Wer ein einziges,
+    /// grosses Modell will, soll es nicht `sehen.gguf` nennen muessen.
+    #[test]
+    fn allein_die_genaue_sprosse_genuegt() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SEHPROGRAMME[0]);
+        std::fs::write(d.path().join(SEHMODELL_GENAU), "x").expect("Modell");
+        std::fs::write(d.path().join(SEHPROJEKTOR_GENAU), "x").expect("Projektor");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let sehen = s.sehen.as_ref().expect("bereit");
+        assert_eq!(sehen.fuer(Stufe::Schnell).modell, d.path().join(SEHMODELL_GENAU));
+    }
+
+    /// ⚑ **Zwei Wege zum Sprechen, und das eigene Skript gewinnt.**
+    ///
+    /// ⛔️ Diese Probe beisst, wenn die Reihenfolge umgedreht wird: Wer
+    /// ein Skript hinlegt, hat sich entschieden, und ein zufaellig
+    /// installiertes piper darf diese Entscheidung nicht ueberstimmen.
+    #[test]
+    fn das_eigene_sprechskript_schlaegt_piper() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SPRECHPROGRAMME[0]);
+        std::fs::write(d.path().join(SPRECHMODELL), "x").expect("Stimme");
+
+        // Nur piper: die Stimme kommt mit, und klonen kann es nicht.
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sprechen.as_ref().expect("bereit");
+        assert!(matches!(&z.weg, Sprechweg::Piper { stimme, .. } if *stimme == d.path().join(SPRECHMODELL)));
+        assert!(!z.kann_klonen(), "piper kann nicht klonen");
+        assert!(!z.dauerhaft(), "piper braucht keinen Dauerlaeufer");
+        assert!(s.kann_sprechen());
+
+        // Mit eigenem Skript: es gewinnt.
+        stellen(d.path(), SPRECHSKRIPT);
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        let z = s.sprechen.as_ref().expect("bereit");
+        assert!(matches!(&z.weg, Sprechweg::Skript(p) if p.ends_with(SPRECHSKRIPT)), "{:?}", z.weg);
+        assert!(z.kann_klonen());
+    }
+
+    /// ⛔️ **Ohne Sprechmodell sagt der Mangel beide Wege.** Wer nur den
+    /// einen genannt bekaeme, suchte nach dem falschen.
+    #[test]
+    fn ohne_sprechmodell_stehen_beide_wege_da() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let s = Sinne::finden_in(d.path(), &Eigene::default(), &[]);
+        assert!(!s.kann_sprechen());
+        let t = s.sprechen.as_ref().expect_err("nichts da").bericht();
+        assert!(t.contains("CosyVoice"), "die Vorgabe fehlt: {t}");
+        assert!(t.contains("piper"), "der Rueckfall fehlt: {t}");
+        assert!(t.contains(COSYVOICE_UMGEBUNG), "wo CosyVoice liegt, fehlt: {t}");
+    }
+
+    /// ⚑ **`PATH` kommt vor dem `bin` der Heimat.**
+    #[test]
+    fn der_pfad_schlaegt_die_heimat() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        stellen(d.path(), SEHPROGRAMME[0]);
+        let anderswo = tempfile::tempdir().expect("Verzeichnis");
+        let vorn = stellen(anderswo.path(), SEHPROGRAMME[0]);
+        let gefunden = programm_suchen(
+            &SEHPROGRAMME,
+            None,
+            d.path(),
+            &[anderswo.path().join("bin")],
+        );
+        assert_eq!(gefunden.as_deref(), Some(vorn.as_path()));
+    }
+
+    /// ⛔️ **Eine Datei ohne Ausfuehrungsrecht ist kein Programm.**
+    #[cfg(unix)]
+    #[test]
+    fn eine_nicht_ausfuehrbare_datei_zaehlt_nicht() {
+        let d = tempfile::tempdir().expect("Verzeichnis");
+        let bin = d.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(bin.join(SEHPROGRAMME[0]), "kein Programm").expect("Datei");
+        assert!(programm_suchen(&SEHPROGRAMME, None, d.path(), &[]).is_none());
+    }
+}

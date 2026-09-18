@@ -247,6 +247,22 @@ pub fn ruesten_mit(
                     .map_err(|f| format!("Dateiwerkzeug {name} haengt nicht: {f:?}"))?;
             }
 
+            // ⚑ **Sehen und Hoeren**, wenn auf diesem Rechner etwas da
+            // ist, das hinsehen kann (2026-09-17). Sie sind kompiliert
+            // und halten die Einhaengegrenze ein, brauchen also **keine**
+            // Schreiberlaubnis: Ein Bild anzusehen ist ein Lesen.
+            {
+                let sinne = myl_senses::Sinne::finden();
+                for (angebot, ausfuehrung) in
+                    crate::sinneswerkzeuge::angebote(&sinne, &ein, form)
+                {
+                    let name = angebot.name.clone();
+                    kasten
+                        .einhaengen(angebot, ausfuehrung)
+                        .map_err(|f| format!("Sinneswerkzeug {name} haengt nicht: {f:?}"))?;
+                }
+            }
+
             // ⚑ **Die Werkzeuge aus dem Kisten-Ordner** (2026-09-14): was
             // dort als Manifest liegt, kommt zu den eingebauten dazu, ohne
             // Neubau. Nur mit Schreiberlaubnis (ein Manifest-Werkzeug wirkt,

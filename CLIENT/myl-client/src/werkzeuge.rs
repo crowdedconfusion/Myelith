@@ -1748,11 +1748,33 @@ impl Werkzeugausfuehrung for Befehlausfuehren {
 /// `run_command` verlangt sie, ein Manifest-Werkzeug entscheidet es an
 /// seinem `wirkt`-Feld.
 pub fn befehl_im_verzeichnis(e: &Einhaengung, befehl: &str) -> Result<String, Werkzeugfehler> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
+    befehl_im_verzeichnis_mit(e, befehl, &[], BEFEHL_ZEITGRENZE_S)
+}
 
+/// **Derselbe Weg, mit einer Umgebung und einer eigenen Frist.**
+///
+/// ⚑ **Der Lauf selbst steht seit dem 2026-09-17 in
+/// `myl_senses::prozess`.** Er stand hier, und die Sinneskiste haette
+/// ihn ein zweites Mal gebraucht: **zwei Laeufer mit zwei Fristen**, und
+/// der zweite meldet sich nicht. Hier bleibt, was diesen Aufruf
+/// ausmacht: die Sperrliste, das Arbeitsverzeichnis, die Form der
+/// Antwort.
+///
+/// `umgebung` sind zusaetzliche Umgebungsvariablen fuer den
+/// Kindprozess. Gebraucht wird das von den Manifest-Werkzeugen, die
+/// ihren eigenen Kistenordner kennen muessen, um ein Skript **neben**
+/// dem Manifest aufzurufen: Ein Manifest kann seinen eigenen Pfad nicht
+/// wissen, und ein absoluter Pfad im Manifest waere auf jeder anderen
+/// Maschine falsch.
+///
+/// `zeitgrenze_s` ist die Frist in Sekunden. ⚠️ **Der Aufrufer begrenzt
+/// sie**; diese Funktion nimmt, was sie bekommt.
+pub fn befehl_im_verzeichnis_mit(
+    e: &Einhaengung,
+    befehl: &str,
+    umgebung: &[(&str, String)],
+    zeitgrenze_s: u64,
+) -> Result<String, Werkzeugfehler> {
     let klein = befehl.to_lowercase();
     if let Some(muster) = SPERRMUSTER.iter().find(|m| klein.contains(**m)) {
         return Err(Werkzeugfehler {
@@ -1760,93 +1782,20 @@ pub fn befehl_im_verzeichnis(e: &Einhaengung, befehl: &str) -> Result<String, We
         });
     }
 
-    {
-        let mut kind = Command::new("sh")
-            .arg("-c")
-            .arg(befehl)
-            .current_dir(e.wurzel())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|fehler| Werkzeugfehler { grund: format!("der Befehl liess sich nicht starten: {fehler}") })?;
-
-        // ⚑ **Zwei Faeden leeren die Roehren**, damit ein Befehl mit viel
-        // Ausgabe nicht blockiert, wenn der Roehrenpuffer voll ist. Jeder
-        // liest bis zur Ausgabegrenze und dann nicht weiter.
-        let lesen = |mut strom: Box<dyn Read + Send>| {
-            let (sender, empfang) = mpsc::channel();
-            std::thread::spawn(move || {
-                let mut puffer = Vec::new();
-                let mut mehr = false;
-                let mut haeppchen = [0u8; 8192];
-                loop {
-                    // ⚑ **Immer bis zum Ende lesen**, damit die Roehre nicht
-                    // blockiert; behalten wird nur bis zur Grenze, und dass
-                    // es mehr gab, wird vermerkt statt vergessen.
-                    match strom.read(&mut haeppchen) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let frei = BEFEHL_AUSGABEGRENZE.saturating_sub(puffer.len());
-                            if frei > 0 {
-                                puffer.extend_from_slice(&haeppchen[..n.min(frei)]);
-                            }
-                            if n > frei {
-                                mehr = true;
-                            }
-                        }
-                    }
-                }
-                let _ = sender.send((puffer, mehr));
-            });
-            empfang
-        };
-        let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")));
-        let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")));
-
-        // Warten mit Frist: nachsehen, ob der Befehl fertig ist, sonst
-        // abbrechen. `try_wait` blockiert nicht.
-        let frist = Duration::from_secs(BEFEHL_ZEITGRENZE_S);
-        let anfang = Instant::now();
-        let mut abgebrochen = false;
-        let status = loop {
-            match kind.try_wait() {
-                Ok(Some(s)) => break Some(s),
-                Ok(None) => {
-                    if anfang.elapsed() >= frist {
-                        let _ = kind.kill();
-                        let _ = kind.wait();
-                        abgebrochen = true;
-                        break None;
-                    }
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(_) => break None,
-            }
-        };
-
-        let (mut roh, mut mehr) = aus_e.recv().unwrap_or_default();
-        let (fehler_roh, fehler_mehr) = err_e.recv().unwrap_or_default();
-        roh.extend_from_slice(&fehler_roh);
-        mehr = mehr || fehler_mehr;
-        let text = String::from_utf8_lossy(&roh);
-        // Auf die Grenze in **Zeichen** kuerzen: ein Schnitt mitten durch
-        // eine Mehrbytefolge erzeugte sonst ein Ersatzzeichen.
-        let gekuerzt = mehr || text.chars().count() > BEFEHL_AUSGABEGRENZE;
-        let sicht: String = text.chars().take(BEFEHL_AUSGABEGRENZE).collect();
-
-        let kopf = if abgebrochen {
-            format!("abgebrochen nach {BEFEHL_ZEITGRENZE_S} s")
-        } else {
-            match status.and_then(|s| s.code()) {
-                Some(0) => "beendet, Rueckgabewert 0".to_string(),
-                Some(c) => format!("beendet, Rueckgabewert {c}"),
-                None => "beendet ohne Rueckgabewert".to_string(),
-            }
-        };
-        let schwanz = if gekuerzt { format!("\n… (Ausgabe auf {BEFEHL_AUSGABEGRENZE} Bytes gekuerzt)") } else { String::new() };
-        Ok(format!("{kopf}\n{sicht}{schwanz}"))
-    }
+    let mut kind = std::process::Command::new("sh");
+    kind.arg("-c")
+        .arg(befehl)
+        .envs(umgebung.iter().map(|(name, wert)| (*name, wert.as_str())))
+        .current_dir(e.wurzel());
+    let a = myl_senses::prozess::laufen(&mut kind, zeitgrenze_s, BEFEHL_AUSGABEGRENZE)
+        .map_err(|f| Werkzeugfehler { grund: format!("der Befehl {f}") })?;
+    let (sicht, gekuerzt) = a.zusammen(BEFEHL_AUSGABEGRENZE);
+    let schwanz = if gekuerzt {
+        format!("\n… (Ausgabe auf {BEFEHL_AUSGABEGRENZE} Bytes gekuerzt)")
+    } else {
+        String::new()
+    };
+    Ok(format!("{}\n{sicht}{schwanz}", a.kopf()))
 }
 
 /// Listet ein Verzeichnis innerhalb der Einhaengung.

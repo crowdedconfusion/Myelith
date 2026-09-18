@@ -61,6 +61,7 @@ pub mod rechenwege {
 }
 
 pub mod aktualisierung;
+pub mod anhang;
 pub mod einstellungen;
 pub mod gespraech;
 pub mod hardware;
@@ -71,6 +72,7 @@ pub mod ort;
 pub mod reservierung;
 pub mod strom;
 pub mod ruestung;
+pub mod sinneswerkzeuge;
 pub mod skills;
 pub mod verankert;
 pub mod verlauf;

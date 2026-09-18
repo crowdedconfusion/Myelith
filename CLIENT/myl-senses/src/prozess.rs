@@ -1,0 +1,223 @@
+//! **Ein fremdes Programm starten, mit Frist und Ausgabegrenze.**
+//!
+//! # ⚑ Eine Stelle fuer alle, die das brauchen
+//!
+//! Bis zum 2026-09-17 stand diese Schleife einmal in `myl-client`
+//! (`befehl_im_verzeichnis`) und haette hier ein zweites Mal entstehen
+//! muessen. **Zwei Laeufer mit zwei Fristen** sind genau die
+//! Fehlerklasse, die dieses Projekt am haeufigsten trifft: Was an zwei
+//! Orten steht, laeuft auseinander, und der zweite meldet sich nicht.
+//! Also steht der Ablauf hier, und beide rufen ihn.
+//!
+//! ⚑ **Zwei Faeden leeren die Roehren.** Ein Programm mit viel Ausgabe
+//! blockiert sonst, wenn der Roehrenpuffer voll ist, und wartet auf
+//! einen Leser, der auf sein Ende wartet. Jeder Faden liest **bis zum
+//! Ende** und behaelt nur bis zur Grenze; dass es mehr gab, wird
+//! vermerkt statt vergessen.
+
+use std::process::Command;
+
+/// Was ein Lauf hinterlassen hat.
+#[derive(Debug, Clone)]
+pub struct Ausgang {
+    /// Was nach stdout ging. Bei einem Sinnesprogramm ist das die Antwort.
+    pub aus: String,
+    /// Was nach stderr ging. Bei llama.cpp und whisper.cpp das Ladegeschwaetz.
+    pub fehler: String,
+    /// Ob eine der beiden Roehren mehr geliefert hat, als behalten wurde.
+    pub mehr: bool,
+    /// Der Rueckgabewert, falls es einen gab.
+    pub kode: Option<i32>,
+    /// Ob die Frist abgelaufen ist und der Lauf abgebrochen wurde.
+    pub abgebrochen: bool,
+    /// Die Frist, die galt, fuer die Meldung.
+    pub frist_s: u64,
+}
+
+impl Ausgang {
+    /// Ob der Lauf sauber durchgegangen ist.
+    pub fn gut(&self) -> bool {
+        !self.abgebrochen && self.kode == Some(0)
+    }
+
+    /// Die erste Zeile einer Meldung: wie der Lauf ausgegangen ist.
+    pub fn kopf(&self) -> String {
+        if self.abgebrochen {
+            return format!("abgebrochen nach {} s", self.frist_s);
+        }
+        match self.kode {
+            Some(0) => "beendet, Rueckgabewert 0".to_string(),
+            Some(c) => format!("beendet, Rueckgabewert {c}"),
+            None => "beendet ohne Rueckgabewert".to_string(),
+        }
+    }
+
+    /// **Beide Roehren hintereinander, auf `grenze` Zeichen gekuerzt.**
+    ///
+    /// ⚑ **Gekuerzt wird in Zeichen und nicht in Bytes**: Ein Schnitt
+    /// mitten durch eine Mehrbytefolge erzeugte sonst ein Ersatzzeichen.
+    /// Zurueck kommt der Text und ob gekuerzt wurde.
+    pub fn zusammen(&self, grenze: usize) -> (String, bool) {
+        let ganz = format!("{}{}", self.aus, self.fehler);
+        let gekuerzt = self.mehr || ganz.chars().count() > grenze;
+        (ganz.chars().take(grenze).collect(), gekuerzt)
+    }
+}
+
+/// **Startet den Befehl, wartet hoechstens `frist_s` Sekunden und gibt
+/// zurueck, was herauskam.**
+///
+/// Der Aufrufer stellt das [`Command`] fertig ein (Programm, Argumente,
+/// Arbeitsverzeichnis, Umgebung); hier werden nur die Roehren gesetzt.
+///
+/// ⚠️ **`stdin` wird auf `null` gelegt.** Ein Programm, das eine Eingabe
+/// erwartet, haengt sonst bis zur Frist, und niemand saehe, warum.
+pub fn laufen(befehl: &mut Command, frist_s: u64, grenze: usize) -> Result<Ausgang, String> {
+    laufen_mit_eingabe(befehl, std::process::Stdio::null(), frist_s, grenze)
+}
+
+/// **Derselbe Lauf, aber mit etwas an `stdin`.**
+///
+/// ⚑ **Gebraucht von den Sprechprogrammen**, die ihren Text von der
+/// Standardeingabe nehmen (piper tut das). Eine Datei statt eines
+/// Arguments hat zwei Vorteile: kein Laengenlimit der Kommandozeile und
+/// kein Zeichen, das irgendwo zitiert werden muesste.
+pub fn laufen_mit_eingabe(
+    befehl: &mut Command,
+    eingabe: std::process::Stdio,
+    frist_s: u64,
+    grenze: usize,
+) -> Result<Ausgang, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let mut kind = befehl
+        .stdin(eingabe)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|f| format!("liess sich nicht starten: {f}"))?;
+
+    let lesen = |mut strom: Box<dyn Read + Send>| {
+        let (sender, empfang) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut puffer = Vec::new();
+            let mut mehr = false;
+            let mut haeppchen = [0u8; 8192];
+            loop {
+                match strom.read(&mut haeppchen) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let frei = grenze.saturating_sub(puffer.len());
+                        if frei > 0 {
+                            puffer.extend_from_slice(&haeppchen[..n.min(frei)]);
+                        }
+                        if n > frei {
+                            mehr = true;
+                        }
+                    }
+                }
+            }
+            let _ = sender.send((puffer, mehr));
+        });
+        empfang
+    };
+    let aus_e = lesen(Box::new(kind.stdout.take().expect("stdout")));
+    let err_e = lesen(Box::new(kind.stderr.take().expect("stderr")));
+
+    // Warten mit Frist: `try_wait` blockiert nicht, also bleibt der
+    // Abbruch moeglich.
+    let frist = Duration::from_secs(frist_s);
+    let anfang = Instant::now();
+    let mut abgebrochen = false;
+    let status = loop {
+        match kind.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) => {
+                if anfang.elapsed() >= frist {
+                    let _ = kind.kill();
+                    let _ = kind.wait();
+                    abgebrochen = true;
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => break None,
+        }
+    };
+
+    let (aus_roh, aus_mehr) = aus_e.recv().unwrap_or_default();
+    let (err_roh, err_mehr) = err_e.recv().unwrap_or_default();
+    Ok(Ausgang {
+        aus: String::from_utf8_lossy(&aus_roh).into_owned(),
+        fehler: String::from_utf8_lossy(&err_roh).into_owned(),
+        mehr: aus_mehr || err_mehr,
+        kode: status.and_then(|s| s.code()),
+        abgebrochen,
+        frist_s,
+    })
+}
+
+#[cfg(test)]
+mod proben {
+    use super::*;
+
+    #[test]
+    fn die_beiden_roehren_bleiben_getrennt() {
+        let mut b = Command::new("/bin/sh");
+        b.arg("-c").arg("echo hierher; echo dorthin >&2");
+        let a = laufen(&mut b, 5, 1024).expect("laeuft");
+        assert!(a.gut(), "{a:?}");
+        assert_eq!(a.aus.trim(), "hierher");
+        assert_eq!(a.fehler.trim(), "dorthin");
+        assert_eq!(a.kopf(), "beendet, Rueckgabewert 0");
+    }
+
+    /// ⚑ **Die Frist greift, und sie steht in der Meldung.**
+    #[test]
+    fn ein_haengendes_programm_wird_abgebrochen() {
+        let mut b = Command::new("/bin/sh");
+        b.arg("-c").arg("sleep 5");
+        let anfang = std::time::Instant::now();
+        let a = laufen(&mut b, 1, 1024).expect("laeuft");
+        assert!(a.abgebrochen, "{a:?}");
+        assert!(!a.gut());
+        assert_eq!(a.kopf(), "abgebrochen nach 1 s");
+        assert!(anfang.elapsed().as_secs() < 4, "die Frist hat nicht gegriffen");
+    }
+
+    /// ⛔️ **Viel Ausgabe blockiert nicht**, und dass gekuerzt wurde,
+    /// bleibt sichtbar.
+    #[test]
+    fn viel_ausgabe_wird_gekuerzt_und_sagt_es() {
+        let mut b = Command::new("/bin/sh");
+        b.arg("-c").arg("i=0; while [ $i -lt 2000 ]; do echo abcdefghij; i=$((i+1)); done");
+        let a = laufen(&mut b, 20, 256).expect("laeuft");
+        assert!(a.gut(), "{a:?}");
+        let (text, gekuerzt) = a.zusammen(256);
+        assert!(gekuerzt, "die Kuerzung sagt sich nicht an");
+        assert_eq!(text.chars().count(), 256);
+    }
+
+    /// ⚑ **Ein Rueckgabewert ungleich null ist kein Fehler dieser
+    /// Funktion.** Sie meldet ihn, statt ihn zu verschlucken.
+    #[test]
+    fn ein_schlechter_rueckgabewert_kommt_durch() {
+        let mut b = Command::new("/bin/sh");
+        b.arg("-c").arg("exit 3");
+        let a = laufen(&mut b, 5, 64).expect("laeuft");
+        assert_eq!(a.kode, Some(3));
+        assert!(!a.gut());
+        assert_eq!(a.kopf(), "beendet, Rueckgabewert 3");
+    }
+
+    /// ⛔️ **Ein Programm, das es nicht gibt, ist ein Fehler und kein
+    /// leerer Ausgang.**
+    #[test]
+    fn ein_fehlendes_programm_meldet_sich() {
+        let mut b = Command::new("/gibt/es/nicht/xyz");
+        assert!(laufen(&mut b, 5, 64).is_err());
+    }
+}

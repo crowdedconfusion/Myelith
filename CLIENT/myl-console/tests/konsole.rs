@@ -74,8 +74,25 @@ fn jeder_befehl_steht_genau_einmal_im_quelltext() {
         );
     }
     // Und beide Wege gehen ueber sie.
+    //
+    // 📌 **Hier stand `BEFEHLE.iter().find` als Zeichenkette**, und das
+    // hielt nur, solange niemand die Zeile umbrach: Mit dem Befehl, der
+    // ein Argument nimmt, wanderte die Auswahl in eine eigene Funktion
+    // und `rustfmt` verteilte sie auf drei Zeilen. **Eine Pruefung, die
+    // an der Formatierung haengt, faellt bei einer Umformatierung und
+    // sagt dabei etwas Falsches**, naemlich dass die Liste umgangen
+    // werde. Geprueft wird deshalb der **Rumpf der Funktion**, die die
+    // Auswahl trifft, und nicht ihre Zeilenaufteilung.
     assert!(s.contains("BEFEHLE\n"), "die Hilfe kommt nicht aus der Liste");
-    assert!(s.contains("BEFEHLE.iter().find"), "die Ausfuehrung kommt nicht aus der Liste");
+    let auswahl = s
+        .split_once("fn befehl_und_rest")
+        .and_then(|(_, rest)| rest.split_once("\n}\n"))
+        .map(|(rumpf, _)| rumpf)
+        .expect("die Funktion, die den Befehl auswaehlt, heisst nicht mehr so");
+    assert!(
+        auswahl.contains("BEFEHLE"),
+        "die Ausfuehrung kommt nicht aus der Liste: {auswahl}"
+    );
 }
 
 /// **Hier wird nichts gebaut.**

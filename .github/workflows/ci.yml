@@ -721,6 +721,21 @@ jobs:
           MYL_OHNE_ARTEFAKTE: "1"
         run: cargo test --quiet
 
+      # ⚑ **Die Sinneskiste, und sie braucht nichts Fremdes.**
+      #
+      # llama.cpp, whisper.cpp und piper liegen auf keinem Laeufer, und
+      # das ist kein Hindernis: Die Proben stellen das Programm selbst
+      # und pruefen den **Weg**. Genau deshalb laufen sie hier mit,
+      # statt als „braucht Gewichte" uebersprungen zu werden.
+      #
+      # 📌 **Dieser Schritt steht hier, weil die Schleife oben ihn nicht
+      # traegt**: `cargo test` steht je Kiste von Hand, und ein neues
+      # Crate waere ohne diese Zeilen ungeprueft. Dieselbe Falle wie
+      # Fund 65, und die Warnung dazu steht ein paar Zeilen hoeher.
+      - name: cargo test — CLIENT (myl-senses)
+        working-directory: CLIENT/myl-senses
+        run: cargo test --quiet
+
       # 📌 **Die Oberfläche baut nur mit den WebKit-Bibliotheken des
       # Systems**, und unter Ubuntu heissen sie `libwebkit2gtk-4.1-dev`
       # samt `libgtk-3-dev` und `libayatana-appindicator3-dev`. Ohne sie

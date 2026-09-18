@@ -26,6 +26,8 @@ myl: lokaler Betrieb von Myelith
   myl sitzung [artefakt]          Viele Auftraege, Modell einmal geladen
   myl auftraege [artefakt] A B    Mehrere Auftraege NEBENLAEUFIG
   myl skills                      Wissensmappen: wo sie liegen, was da ist
+  myl anhaenge [--aufraeumen]     Angehaengte Dateien: was liegt, und weg damit
+  myl sinne [datei|--sprich TEXT] Sehen, Hoeren, Sprechen: was geht, und eine Probe
   myl verlauf [<von> <bis>]       Der Mitschnitt: Uebersicht oder Zeilen
   myl einstellungen               Zeigt die Einstellungen
   myl setzen <feld> <wert>        Aendert eine Einstellung
@@ -117,6 +119,8 @@ fn main() {
         Some("einstellungen") => einstellungen(),
         Some("verlauf") => verlauf(&args[2..]),
         Some("skills") => skills(&args[2..]),
+        Some("anhaenge") => anhaenge(&args[2..]),
+        Some("sinne") => sinne(&args[2..]),
         Some("setzen") => setzen(&args[2..]),
         // Die Hilfe ist hier eine Antwort und kein Fehler: Sie geht nach
         // stdout und gibt null zurueck.
@@ -408,6 +412,176 @@ fn ohne_wert(f: &myl_client::einstellungen::Feld) -> String {
 /// haengt am Betriebssystem. **Ein Ordner, den der Nutzer fuellen soll,
 /// dessen Ort er aber raten muss, wird nicht gefuellt.** Der Befehl
 /// nennt beide Orte und legt den allgemeinen auf Wunsch an.
+/// **`myl sinne`: was dieser Rechner sehen, hoeren und sprechen kann.**
+///
+/// ⚑ **Und mit einer Datei ist es eine Probe.** Ein Stand, der sagt
+/// „alles da", und ein Werkzeug, das dann doch nicht laeuft, waeren zwei
+/// Auskuenfte; hier ist es dieselbe. **Der kuerzeste Weg von der
+/// Behauptung zum Beleg.**
+fn sinne(args: &[String]) -> i32 {
+    let s = myl_senses::Sinne::finden();
+    println!("Sinnesmodelle in {}", myl_senses::laufwerk::heimat().display());
+    let zeile = |was: &str, stand: Result<String, &myl_senses::Mangel>| match stand {
+        Ok(gut) => println!("  {was:<10} ✓ {gut}"),
+        Err(m) => {
+            println!("  {was:<10} ✗");
+            for z in m.bericht().lines().skip(1) {
+                println!("      {z}");
+            }
+        }
+    };
+    zeile(
+        "Sehen",
+        s.sehen.as_ref().map(|z| {
+            let stufen = if z.zweistufig() { "schnell und genau" } else { "eine Sprosse" };
+            format!("{} ({stufen})", z.fuer(myl_senses::Stufe::Schnell).programm.display())
+        }),
+    );
+    zeile("Hoeren", s.hoeren.as_ref().map(|z| z.programm.display().to_string()));
+    zeile("Sprechen", s.sprechen.as_ref().map(|z| z.name()));
+    zeile("Aufnehmen", s.aufnehmen.as_ref().map(|z| z.programm.display().to_string()));
+    if let Some(h) = s.stimmhinweis() {
+        println!();
+        println!("⚠️ {h}");
+    }
+
+    // ⚑ **Die Probe fuers Sprechen geht ueber denselben Vorleser wie im
+    // Fenster**, samt Dauerlaeufer und satzweiser Zerlegung. Eine Probe,
+    // die einen anderen Weg nimmt als der Betrieb, prueft den Betrieb
+    // nicht.
+    if let Some(i) = args.iter().position(|a| a == "--sprich") {
+        let text = args[i + 1..].join(" ");
+        if text.trim().is_empty() {
+            eprintln!("myl sinne --sprich braucht einen Text");
+            return 1;
+        }
+        let Ok(zeug) = s.sprechen.as_ref() else {
+            eprintln!("myl sinne: es ist kein Sprechmodell eingerichtet");
+            return 1;
+        };
+        println!();
+        println!("Spricht ueber {} ({}){}", zeug.name(),
+            if zeug.dauerhaft() { "Dauerlaeufer" } else { "je Satz ein Aufruf" },
+            if zeug.probe.is_some() { ", mit eigener Stimme" } else { "" });
+        let anfang = std::time::Instant::now();
+        let mut vorleser = myl_senses::sprechen::Vorleser::neu(zeug);
+        vorleser.schub(&text);
+        let fehler = vorleser.abschliessen();
+        for f in &fehler {
+            eprintln!("  {f}");
+        }
+        println!("  in {:.1} s", anfang.elapsed().as_secs_f64());
+        return if fehler.is_empty() { 0 } else { 1 };
+    }
+
+    let Some(datei) = args.first().filter(|a| !a.starts_with("--")) else {
+        println!();
+        println!("`myl sinne <datei>` schickt eine Datei hindurch und zeigt, was herauskommt.");
+        println!("`myl sinne --sprich <text>` laesst ihn vorlesen, satzweise wie im Fenster.");
+        println!("Eingerichtet wird mit `sh INSTALL/sinne-einrichten.sh`.");
+        return 0;
+    };
+    let pfad = std::path::Path::new(datei);
+    let anfang = {
+        use std::io::Read;
+        let mut puffer = vec![0u8; 4096];
+        match std::fs::File::open(pfad).and_then(|mut f| f.read(&mut puffer)) {
+            Ok(n) => {
+                puffer.truncate(n);
+                puffer
+            }
+            Err(f) => {
+                eprintln!("myl sinne: {datei}: {f}");
+                return 1;
+            }
+        }
+    };
+    let art = myl_client::anhang::art_bestimmen(&anfang, datei);
+    println!();
+    println!("Probe: {datei} ({})", art.wort(true));
+    let anfang_zeit = std::time::Instant::now();
+    // ⚑ **Die genaue Sprosse**, wie beim Werkzeugaufruf: Wer ausdruecklich
+    // fragt, will die bessere Antwort.
+    match myl_senses::auswerten(&s, pfad, art, None, myl_senses::Stufe::Genau) {
+        None => println!("  Fuer diese Art sieht hier niemand hin; `read_file` liest sie, wenn sie Text ist."),
+        Some(Ok(text)) => {
+            println!("  in {:.1} s:", anfang_zeit.elapsed().as_secs_f64());
+            for z in text.lines() {
+                println!("  {z}");
+            }
+        }
+        Some(Err(grund)) => {
+            for z in grund.lines() {
+                eprintln!("  {z}");
+            }
+            return 1;
+        }
+    }
+    0
+}
+
+/// **`myl anhaenge`: was der Nutzer angehaengt hat, und wie es wieder
+/// weggeht.**
+///
+/// ⚑ **Weil nichts von selbst aufraeumt.** Der Mitschnitt hat eine
+/// Obergrenze, weil er von selbst entsteht; eine Datei hat der Nutzer
+/// ausdruecklich hergegeben, und sie stillschweigend wegzuwerfen waere
+/// eine Ueberraschung. Also liegt sie, bis jemand es sagt, und dieser
+/// Befehl ist die Stelle, an der man es sagt.
+///
+/// ⚠️ **`--aufraeumen` fragt nicht nach.** Es nennt vorher, was es
+/// loeschen wird, und wer es tippt, hat die Liste gesehen.
+fn anhaenge(args: &[String]) -> i32 {
+    use myl_client::anhang;
+    let Some(wurzel) = myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+        .ok()
+        .and_then(|e| e.agent.wurzel.clone())
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .map(std::path::PathBuf::from)
+    else {
+        eprintln!("myl anhaenge: es ist kein Arbeitsordner gesetzt (`myl setzen agent.wurzel <pfad>`)");
+        return 1;
+    };
+    let ordner = wurzel.join(myl_client::verlauf::ORDNER).join(anhang::ORDNER);
+    let liste = anhang::vorhandene(&wurzel);
+    println!("Anhaenge in {}", ordner.display());
+    if liste.is_empty() {
+        println!("  (nichts)");
+        println!();
+        println!("Angehaengt wird in der Konsole mit `/datei <pfad>` oder im Fenster");
+        println!("mit dem Knopf und per Ziehen.");
+        return 0;
+    }
+    let gesamt: u64 = liste.iter().map(|(_, b)| b).sum();
+    for (name, bytes) in &liste {
+        println!("  {:<40} {:>9}", name, anhang::menschlich(*bytes));
+    }
+    println!();
+    println!("{} Datei(en), {} zusammen.", liste.len(), anhang::menschlich(gesamt));
+
+    if args.iter().any(|a| a == "--aufraeumen") {
+        // ⚑ **Genau die Dateien, die oben standen**, und nicht der Ordner
+        // mit allem darin. Wer die Liste gesehen hat, hat gesehen, was
+        // weggeht; ein `remove_dir_all` naehme auch mit, was seither
+        // dazukam oder nie in der Liste stand.
+        let mut weg = 0;
+        for (name, _) in &liste {
+            match std::fs::remove_file(ordner.join(name)) {
+                Ok(()) => weg += 1,
+                Err(f) => eprintln!("myl anhaenge: {name}: {f}"),
+            }
+        }
+        println!("Geloescht: {weg} von {} Datei(en).", liste.len());
+        if weg < liste.len() {
+            return 1;
+        }
+    } else {
+        println!("`myl anhaenge --aufraeumen` loescht sie alle.");
+    }
+    0
+}
+
+
 fn skills(args: &[String]) -> i32 {
     use myl_client::skills;
     let allgemein = skills::allgemeiner_ordner();

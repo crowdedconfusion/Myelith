@@ -497,6 +497,19 @@ fn werkzeuge(wurzel: Option<String>) -> Result<Werkzeugliste, String> {
             .into_iter()
             .map(|w| w.name)
             .collect();
+    // ⛔️ **Und die Sinneswerkzeuge** (2026-09-18). Sie kamen seit dem
+    // Vortag in die Ruestung, standen aber nicht in dieser Liste:
+    // **dieselbe Frage an zwei Orten**, und der zweite meldet sich
+    // nicht. Wer hier nachsah, bekam eine Liste, die dem Agenten nicht
+    // entsprach.
+    for (angebot, _) in myl_client::sinneswerkzeuge::angebote(
+        &myl_senses::Sinne::finden(),
+        &ein,
+        myl_client::Ansageform::Amtlich,
+    ) {
+        namen.push(angebot.name);
+    }
+
     // ⚑ **Auch die Werkzeuge aus dem Kisten-Ordner** (2026-09-14), damit die
     // Seitenleiste zeigt, was wirklich zur Verfuegung steht.
     let kette = myl_client::kisten::ordnerkette(&e.agent);
@@ -623,6 +636,22 @@ struct Halter {
     /// das Fenster schliesst, gibt den Platz zurueck, ohne dass jemand
     /// daran denken muss.
     platte: std::sync::Arc<Mutex<Option<myl_client::reservierung::Reservierung>>>,
+    /// ⚑ **Die laufende Aufnahme der Sprechtaste.**
+    ///
+    /// Sie muss **zwischen zwei Befehlen** leben: Der Knopf wird
+    /// gedrueckt (Start) und losgelassen (Ende), und dazwischen liegt
+    /// keine Funktion, in der sie stehen koennte. ⚠️ Wer das Fenster
+    /// schliesst, waehrend sie laeuft, beendet sie mit; das erledigt
+    /// `Drop`.
+    aufnahme: std::sync::Arc<Mutex<Option<myl_senses::aufnahme::Aufnahme>>>,
+    /// ⛔️ **Das Sprechmodell bleibt geladen, ueber Antworten hinweg.**
+    ///
+    /// CosyVoice braucht rund achtzehn Sekunden zum Laden. Ein Vorleser
+    /// je Antwort legt diese Zeit **vor jede** Antwort; gemeldet vom
+    /// Projektinhaber am 2026-09-18 („braucht sehr lange nach der
+    /// Textgenerierung um zu antworten"). Hier lebt er so lange wie das
+    /// Fenster, und die Ladezeit faellt genau einmal an.
+    sprecher: myl_senses::sprechen::Geteilter,
 }
 
 /// Wie ein geladenes Modell heisst und wo es liegt.
@@ -968,6 +997,7 @@ async fn verdichten(
 #[tauri::command]
 async fn frage(
     verlauf: Vec<(String, String)>,
+    sprechen: Option<bool>,
     fenster: tauri::AppHandle,
     halter: tauri::State<'_, Halter>,
 ) -> Result<Antwort, String> {
@@ -978,6 +1008,7 @@ async fn frage(
     }
 
     let halt = halter.modell.clone();
+    let sprecher = std::sync::Arc::clone(&halter.sprecher);
     let anfang = std::time::Instant::now();
     let text = tauri::async_runtime::spawn_blocking(move || {
         let mut g = halt.lock().map_err(|_| "der Modellhalter ist vergiftet".to_string())?;
@@ -1000,9 +1031,32 @@ async fn frage(
             .collect();
         // `chat` kommt aus dem Merkmal `Modellweg`.
         use myl_client::Modellweg as _;
-        zusehen(m, &fenster);
+        // ⚑ **Satzweise sprechen, waehrend das Modell noch schreibt.**
+        // Nur hier, im Chat: In der Agentenschleife stehen im Strom auch
+        // Werkzeugaufrufe, und die will niemand vorgelesen bekommen.
+        let vorleser = sprechen.unwrap_or(false).then(myl_senses::Sinne::finden).and_then(|s| {
+            s.sprechen.as_ref().ok().map(|z| {
+                std::sync::Arc::new(Mutex::new(Some(myl_senses::sprechen::Vorleser::neu_geteilt(
+                    z,
+                    abspieler_im_fenster(fenster.clone()),
+                    Some(std::sync::Arc::clone(&sprecher)),
+                ))))
+            })
+        });
+        zusehen_mit(m, &fenster, vorleser.clone());
         let antwort = m.chat("lokal", &n, Some(grenze)).map_err(|f| f.to_string()).map(|a| a.text);
         m.beobachter = None;
+        // ⚑ **Der Rest geht noch raus, dann wird gewartet.** Ein
+        // Vorleser, der beim Abraeumen mitten im Satz abbricht, klingt
+        // kaputt. ⚠️ Fehler beim Sprechen halten die Antwort nicht auf:
+        // Eine Antwort, die dasteht, ist wichtiger als eine, die klingt.
+        if let Some(v) = vorleser {
+            if let Some(v) = v.lock().ok().and_then(|mut g| g.take()) {
+                for f in v.abschliessen() {
+                    eprintln!("Vorleser: {f}");
+                }
+            }
+        }
         // ⚑ **Die bereinigte Prosa, nicht der rohe Text** (2026-09-14):
         // Das Denken steht schon im aufklappbaren Button (der Live-Strom
         // trennt es), und der rohe `chat`-Text traegt die Marke `</think>`
@@ -1068,6 +1122,53 @@ enum Lebend {
 /// dass etwas fehlschlaegt.
 const LEBEND: &str = "lauf-lebt";
 
+/// Der Ausschlag des Mikrofons, waehrend die Sprechtaste gehalten wird.
+const PEGEL: &str = "sinne-pegel";
+
+/// Ein Stueck gesprochene Antwort, fertig zum Abspielen im Fenster.
+const STIMME: &str = "sinne-stimme";
+
+/// **Base64, ohne Fremdkiste.**
+///
+/// ⚑ **Vierzehn Zeilen gegen eine Abhaengigkeit.** Der Ton geht als Text
+/// ans Fenster, weil der Webview keine beliebige Datei von der Platte
+/// laden darf; das ist der ganze Zweck, und dafuer lohnt keine Kiste.
+fn base64(roh: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut aus = String::with_capacity(roh.len().div_ceil(3) * 4);
+    for stueck in roh.chunks(3) {
+        let b = [stueck[0], *stueck.get(1).unwrap_or(&0), *stueck.get(2).unwrap_or(&0)];
+        let z = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        aus.push(ABC[(z >> 18) as usize & 63] as char);
+        aus.push(ABC[(z >> 12) as usize & 63] as char);
+        aus.push(if stueck.len() > 1 { ABC[(z >> 6) as usize & 63] as char } else { '=' });
+        aus.push(if stueck.len() > 2 { ABC[z as usize & 63] as char } else { '=' });
+    }
+    aus
+}
+
+/// **Ein Abspieler, der das Fenster spielen laesst.**
+///
+/// # ⚑ Warum nicht `afplay`
+///
+/// Dreierlei: Der Webview kann **anhalten**, er braucht **kein fremdes
+/// Programm**, und nur er weiss, **wie laut es gerade ist**. Ohne das
+/// Letzte gaebe es kein Zeichen, das mitschwingt, sondern nur eines,
+/// das sich bewegt, und das waere eine Verzierung mit dem Anschein
+/// einer Auskunft.
+///
+/// ⚠️ **Es wird nicht gewartet, bis das Stueck geklungen hat.** Die
+/// Reihenfolge haelt das Fenster; hier wird nur in der richtigen
+/// Reihenfolge abgeschickt.
+fn abspieler_im_fenster(fenster: tauri::AppHandle) -> myl_senses::sprechen::Abspieler {
+    Box::new(move |wav: &std::path::Path| {
+        let roh = std::fs::read(wav).map_err(|f| format!("{}: {f}", wav.display()))?;
+        fenster
+            .emit(STIMME, base64(&roh))
+            .map_err(|f| format!("der Ton kam nicht ans Fenster: {f}"))
+    })
+}
+
 /// Haengt einen Beobachter an das Modell, der ans Fenster meldet.
 ///
 /// ⚑ **Er wird am Ende wieder abgenommen.** Das Modell lebt im
@@ -1075,8 +1176,36 @@ const LEBEND: &str = "lauf-lebt";
 /// dableibt, hielte einen Fenstergriff aus einem beendeten Auftrag
 /// fest und meldete in den naechsten hinein.
 fn zusehen(m: &mut myl_client::Oertlichesmodell, fenster: &tauri::AppHandle) {
+    zusehen_mit(m, fenster, None);
+}
+
+/// **Derselbe Zuschauer, der nebenbei vorliest.**
+///
+/// # ⚑ Satzweise sprechen, waehrend das Modell noch schreibt
+///
+/// Die Wartezeit einer gesprochenen Antwort kommt fast ganz vom
+/// Hauptmodell. Wer erst spricht, wenn alles dasteht, laesst bei hundert
+/// Token und 14 Tok/s rund sieben Sekunden Stille; wer die **fertigen
+/// Saetze** sofort hinausgibt, ist nach ein bis zwei Sekunden hoerbar.
+///
+/// ⛔️ **Nur `Text` und nie `Denken`.** Der Strom trennt beides schon,
+/// und das Nachdenken vorgelesen zu bekommen waere das Gegenteil von
+/// hilfreich. **Genau deshalb gibt es das hier nur im Chat**: In der
+/// Agentenschleife stehen im Strom auch Werkzeugaufrufe.
+fn zusehen_mit(
+    m: &mut myl_client::Oertlichesmodell,
+    fenster: &tauri::AppHandle,
+    vorleser: Option<std::sync::Arc<Mutex<Option<myl_senses::sprechen::Vorleser>>>>,
+) {
     let f = fenster.clone();
     m.beobachter = Some(Box::new(move |s: myl_client::strom::Stueck| {
+        if let (myl_client::strom::Stueck::Text(t), Some(v)) = (&s, &vorleser) {
+            if let Ok(mut g) = v.lock() {
+                if let Some(v) = g.as_mut() {
+                    v.schub(t);
+                }
+            }
+        }
         let _ = f.emit(
             LEBEND,
             match s {
@@ -1168,6 +1297,294 @@ fn zeile_aus(s: &myl_client::lauf::Schritt) -> Zeile {
 /// Nutzer im Fensterdialog waehlt, darf die Anwendung danach lesen und
 /// schreiben, auch unterhalb von Schreibtisch oder Dokumenten. Wer den
 /// Pfad von Hand eintippt, bekommt genau dort `ENOENT`.
+/// **Eine Datei anhaengen**, ueber den Dateidialog oder per Ablegen.
+///
+/// ⚑ **Die Datei wandert unter die Einhaengung und nicht in die
+/// Nachricht.** Was das Modell bekommt, ist eine Zeile mit Ort und Art;
+/// gelesen wird mit den Werkzeugen, die es ohnehin hat. **Ein Anhang
+/// soll den Kontext nicht fuellen, sondern ihn erreichbar machen.**
+#[tauri::command]
+fn anhang_aufnehmen(pfad: String, wurzel: Option<String>) -> Result<Anhangansicht, String> {
+    let einstellungen =
+        myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad()).ok();
+    let wurzel = wurzel
+        .filter(|w| !w.is_empty())
+        .or_else(|| einstellungen.as_ref().and_then(|e| e.agent.wurzel.clone()))
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .ok_or_else(|| {
+            "Es ist kein Arbeitsordner gesetzt. Ohne ihn gibt es keinen Ort fuer den Anhang."
+                .to_string()
+        })?;
+    let a = myl_client::anhang::aufnehmen(
+        std::path::Path::new(&wurzel),
+        std::path::Path::new(&pfad),
+    )?;
+    // ⚑ **Hier wird noch nicht hingesehen.** Ein Sehmodell braucht
+    // Sekunden bis Minuten, und ein Fenster, das beim Ablegen einer
+    // Datei einfriert, ist ein kaputtes Fenster. Die Zeile kommt sofort,
+    // das Ansehen holt `anhang_ansehen` nach.
+    let ansehen = myl_senses::Sinne::finden().bereit(a.art);
+    let werkzeug = einstellungen
+        .as_ref()
+        .and_then(|e| myl_client::kisten::werkzeug_fuer(&e.agent, a.art.kennung()));
+    let sicht = match (&ansehen, &werkzeug) {
+        // Wird gleich angesehen: dann keine Zeile, die zu einem
+        // Werkzeugaufruf raet, den niemand mehr braucht.
+        (true, _) => myl_client::anhang::Sicht::Nichts,
+        (false, Some(w)) => myl_client::anhang::Sicht::Werkzeug(w),
+        (false, None) => myl_client::anhang::Sicht::Nichts,
+    };
+    Ok(Anhangansicht {
+        nachricht: a.nachricht_mit(true, sicht),
+        name: a.name,
+        pfad: a.pfad.clone(),
+        art: a.art.wort(true).to_string(),
+        bytes: a.bytes,
+        ansehen,
+    })
+}
+
+/// **Sieht einen schon angehaengten Anhang an**, in einem eigenen Faden.
+///
+/// ⚑ **Getrennt vom Aufnehmen**, damit das Ablegen einer Datei sofort
+/// eine Zeile gibt und das Fenster nicht steht (siehe
+/// [`anhang_aufnehmen`]).
+///
+/// ⛔️ **Nur Dateien, die schon im Anhangordner liegen** (Festlegung des
+/// Projektinhabers, 2026-09-17: der Chat reagiert **nur** auf
+/// ausdruecklich hochgeladene Dateien). Der Pfad geht durch die
+/// Einhaengung, und dann muss er unter dem Anhangordner liegen; sonst
+/// waere dieser Befehl ein Weg, jede Datei der Platte ansehen zu lassen.
+#[tauri::command]
+async fn anhang_ansehen(pfad: String, wurzel: Option<String>) -> Result<String, String> {
+    let wurzel = wurzel
+        .filter(|w| !w.is_empty())
+        .or_else(|| {
+            myl_client::Einstellungen::lesen(&myl_client::Einstellungen::vorgabepfad())
+                .ok()
+                .and_then(|e| e.agent.wurzel.clone())
+        })
+        .or_else(myl_client::Einstellungen::standard_wurzel)
+        .ok_or_else(|| "Es ist kein Arbeitsordner gesetzt.".to_string())?;
+    let ein = myl_client::werkzeuge::Einhaengung::neu(&wurzel, false)?;
+    let datei = ein.aufloesen(&pfad, true).map_err(|f| f.grund)?;
+    let anhangordner = std::path::Path::new(&wurzel)
+        .join(myl_client::anhang::unterordner())
+        .canonicalize()
+        .map_err(|f| format!("der Anhangordner: {f}"))?;
+    if !datei.starts_with(&anhangordner) {
+        return Err("nur angehaengte Dateien werden angesehen".into());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let anfang = myl_client::anhang::art_bestimmen(&lies_anfang(&datei), &pfad);
+        let sinne = myl_senses::Sinne::finden();
+        // ⚑ **Die schnelle Sprosse**: ein Blick fuer jeden, auch fuer
+        // den, der gar nichts fragen wollte.
+        myl_senses::auswerten(&sinne, &datei, anfang, None, myl_senses::Stufe::Schnell)
+            .ok_or_else(|| "fuer diese Art sieht hier niemand hin".to_string())?
+    })
+    .await
+    .map_err(|f| format!("der Rechenfaden ist abgestuerzt: {f}"))?
+}
+
+/// Was das Fenster ueber die Sinne erfaehrt.
+#[derive(serde::Serialize)]
+struct Sinnesansicht {
+    /// Ob ein Bild angesehen werden kann.
+    sehen: bool,
+    /// Ob eine Aufnahme mitgeschrieben werden kann.
+    hoeren: bool,
+    /// Ob eine Antwort vorgelesen werden kann.
+    sprechen: bool,
+    /// Ob die Sprechtaste geht: aufnehmen **und** mitschreiben.
+    zuhoeren: bool,
+    /// Wie gesprochen wird, fuer die Einstellungsseite.
+    sprechweg: String,
+    /// Ob der Sprechweg eine Stimmprobe nachbilden kann.
+    klont: bool,
+    /// Ob eine Stimmprobe liegt.
+    probe: bool,
+    /// Was zur Stimmprobe zu sagen ist, falls etwas zu sagen ist.
+    hinweis: Option<String>,
+    /// Was fehlt, je Sinn, fuer die Einstellungsseite.
+    mangel: Vec<String>,
+}
+
+/// **Was dieser Rechner sehen, hoeren und sprechen kann.**
+///
+/// ⚑ **Frisch gefragt, nicht gemerkt.** Wer waehrend einer Sitzung ein
+/// Modell hinlegt, soll es benutzen koennen, ohne das Fenster neu zu
+/// starten; die Suche kostet ein paar Dateiabfragen.
+#[tauri::command]
+fn sinne_stand() -> Sinnesansicht {
+    let s = myl_senses::Sinne::finden();
+    let mut mangel = Vec::new();
+    for m in [s.sehen.as_ref().err(), s.hoeren.as_ref().err(), s.sprechen.as_ref().err()]
+        .into_iter()
+        .flatten()
+    {
+        mangel.push(m.bericht());
+    }
+    let (sprechweg, klont, probe) = match s.sprechen.as_ref() {
+        Ok(z) => (z.name(), z.kann_klonen(), z.probe.is_some()),
+        Err(_) => (String::new(), false, false),
+    };
+    Sinnesansicht {
+        sehen: s.sehen.is_ok(),
+        hoeren: s.hoeren.is_ok(),
+        sprechen: s.kann_sprechen(),
+        zuhoeren: s.kann_zuhoeren(),
+        sprechweg,
+        klont,
+        probe,
+        hinweis: s.stimmhinweis(),
+        mangel,
+    }
+}
+
+/// **Die Sprechtaste, gedrueckt.**
+///
+/// ⚑ **Im Fenster ist es wirklich eine Taste**, gedrueckt und
+/// losgelassen. In einem Terminal ginge das nicht: Das Loslassen meldet
+/// nur, wer das Kitty-Protokoll spricht.
+#[tauri::command]
+fn sprechtaste_start(
+    fenster: tauri::AppHandle,
+    halter: tauri::State<'_, Halter>,
+) -> Result<(), String> {
+    let sinne = myl_senses::Sinne::finden();
+    let mut laufende = myl_senses::zuhoeren_beginnen(&sinne)?;
+    // ⚑ **Der Ausschlag geht als Ereignis ans Fenster**, Bild fuer Bild.
+    // Ein Mikrofon, das auf das falsche Geraet zeigt, sieht sonst genauso
+    // aus wie eines, das zuhoert.
+    if let Some(pegel) = laufende.pegel_nehmen() {
+        let f = fenster.clone();
+        std::thread::spawn(move || {
+            for wert in pegel {
+                if f.emit(PEGEL, wert).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    let mut g = halter.aufnahme.lock().map_err(|_| "der Aufnahmehalter ist vergiftet")?;
+    // ⚠️ **Eine zweite Aufnahme beendet die erste.** Sie fallen zu
+    // lassen, ohne sie zu beenden, liesse ein Programm laufen.
+    *g = Some(laufende);
+    Ok(())
+}
+
+/// **Die Sprechtaste, losgelassen**: aufhoeren und mitschreiben.
+#[tauri::command]
+async fn sprechtaste_ende(halter: tauri::State<'_, Halter>) -> Result<String, String> {
+    let laufende = {
+        let mut g = halter.aufnahme.lock().map_err(|_| "der Aufnahmehalter ist vergiftet")?;
+        g.take().ok_or("es lief keine Aufnahme")?
+    };
+    // ⚑ **In einem eigenen Faden.** Das Mitschreiben laedt ein Modell;
+    // ein Fenster, das dabei steht, sieht kaputt aus.
+    tauri::async_runtime::spawn_blocking(move || {
+        let sinne = myl_senses::Sinne::finden();
+        myl_senses::zuhoeren_beenden(&sinne, laufende, "auto")
+    })
+    .await
+    .map_err(|f| format!("der Rechenfaden ist abgestuerzt: {f}"))?
+}
+
+/// **Legt eine hochgeladene Aufnahme als Stimme ab.**
+#[tauri::command]
+async fn stimme_setzen(pfad: String) -> Result<Sinnesansicht, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        myl_senses::sprechen::probe_setzen(std::path::Path::new(&pfad))
+    })
+    .await
+    .map_err(|f| format!("der Rechenfaden ist abgestuerzt: {f}"))??;
+    Ok(sinne_stand())
+}
+
+/// **Nimmt die Stimmprobe wieder weg.**
+#[tauri::command]
+fn stimme_entfernen() -> Sinnesansicht {
+    myl_senses::sprechen::probe_entfernen();
+    sinne_stand()
+}
+
+/// **Laedt das Sprechmodell im Voraus.**
+///
+/// ⚑ **Waehrend das Hauptmodell nachdenkt, kann der Sprecher laden.**
+/// Danach ist die Wartezeit weg statt verschoben. ⚠️ Der Aufruf kommt
+/// sofort zurueck; geladen wird in einem eigenen Faden, denn wer den
+/// Lautsprecher einschaltet, will nicht achtzehn Sekunden auf einen
+/// Knopf warten.
+#[tauri::command]
+fn stimme_vorwaermen(halter: tauri::State<'_, Halter>) -> Result<(), String> {
+    let sprecher = std::sync::Arc::clone(&halter.sprecher);
+    std::thread::spawn(move || {
+        let sinne = myl_senses::Sinne::finden();
+        if let Ok(z) = sinne.sprechen.as_ref() {
+            if let Err(f) = myl_senses::sprechen::vorwaermen(z, &sprecher) {
+                eprintln!("Sprechmodell: {f}");
+            }
+        }
+    });
+    Ok(())
+}
+
+/// **Schreibt den CosyVoice-Laeufer in die Heimat**, falls er fehlt.
+///
+/// ⛔️ **Nie ueberschrieben.** Wer ihn angepasst hat, hat ihn angepasst.
+#[tauri::command]
+fn sinne_einrichten() -> Result<String, String> {
+    let (pfad, geschrieben) = myl_senses::sprechen::laeufer_einrichten()?;
+    Ok(if geschrieben {
+        format!("Angelegt: {}", pfad.display())
+    } else {
+        format!("Liegt schon: {}", pfad.display())
+    })
+}
+
+/// Die ersten Bytes einer Datei, fuer die Artbestimmung.
+fn lies_anfang(p: &std::path::Path) -> Vec<u8> {
+    use std::io::Read;
+    let mut puffer = vec![0u8; 4096];
+    match std::fs::File::open(p).and_then(|mut f| f.read(&mut puffer)) {
+        Ok(n) => {
+            puffer.truncate(n);
+            puffer
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Was das Fenster ueber einen Anhang erfaehrt.
+#[derive(serde::Serialize)]
+struct Anhangansicht {
+    /// Die fertige Zeile fuer das Gespraech.
+    nachricht: String,
+    name: String,
+    pfad: String,
+    art: String,
+    bytes: u64,
+    /// Ob gleich noch ein Sinnesmodell hinsieht. Das Fenster zeigt so
+    /// lange, dass etwas laeuft, statt eine fertige Zeile vorzutaeuschen.
+    ansehen: bool,
+}
+
+/// **Der Dateidialog des Systems**, fuer den Anhang.
+///
+/// ⚑ **Ein eigener Befehl neben `ordner_waehlen`**, denn es ist eine
+/// andere Frage: Dort waehlt jemand die **Reichweite** des Agenten, hier
+/// eine einzelne Datei. Sie in einen Befehl zu legen hiesse, zwei
+/// Entscheidungen hinter einem Schalter zu verstecken.
+#[tauri::command]
+async fn datei_waehlen(app: tauri::AppHandle, titel: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let gewaehlt = app.dialog().file().set_title(titel).blocking_pick_file();
+    Ok(gewaehlt.map(|g| g.to_string()))
+}
+
 #[tauri::command]
 async fn ordner_waehlen(
     app: tauri::AppHandle,
@@ -1226,6 +1643,16 @@ fn main() {
             artefakt_bauen,
             gespraech_ausgeben,
             ordner_waehlen,
+            anhang_aufnehmen,
+            anhang_ansehen,
+            sinne_stand,
+            sprechtaste_start,
+            sprechtaste_ende,
+            stimme_setzen,
+            stimme_entfernen,
+            sinne_einrichten,
+            stimme_vorwaermen,
+            datei_waehlen,
             aktualisierung,
             aktualisieren
         ])

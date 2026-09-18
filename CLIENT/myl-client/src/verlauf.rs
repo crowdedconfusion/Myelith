@@ -173,7 +173,7 @@ pub fn schreiben(
     let sitzungsordner = ordner.join(&sitzung);
     std::fs::create_dir_all(&sitzungsordner)
         .map_err(|e| Fehler::Datei(format!("{}: {e}", sitzungsordner.display())))?;
-    gitignore_anlegen(&ordner)?;
+    gitignore_fuer_agentenordner(&ordner)?;
     // ⚑ **Der Skill-Ordner entsteht mit dem Mitschnitt** (Auftrag des
     // Projektinhabers, 2026-09-17), und der Zeitpunkt ist der richtige:
     // **Nach einer Verdichtung ist das Wissen aus dem Kontext
@@ -262,7 +262,7 @@ pub fn schreiben(
 /// ⚑ **Im Ordner und nicht in der des Nutzers.** Eine fremde Datei zu
 /// aendern, weil man selbst etwas ablegt, ist ein Uebergriff; ein `*`
 /// in der eigenen ist eine Aussage ueber den eigenen Ordner.
-fn gitignore_anlegen(ordner: &Path) -> Result<(), Fehler> {
+pub fn gitignore_fuer_agentenordner(ordner: &Path) -> Result<(), Fehler> {
     let p = ordner.join(".gitignore");
     if p.exists() {
         return Ok(());

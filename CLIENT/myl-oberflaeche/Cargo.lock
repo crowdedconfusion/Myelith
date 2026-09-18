@@ -2215,12 +2215,13 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
  "myl-agent",
  "myl-local-agent",
+ "myl-senses",
  "myl-types",
  "serde",
  "serde_json",
@@ -2239,15 +2240,20 @@ dependencies = [
 
 [[package]]
 name = "myl-oberflaeche"
-version = "0.38.3"
+version = "0.39.0"
 dependencies = [
  "myl-client",
+ "myl-senses",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
 ]
+
+[[package]]
+name = "myl-senses"
+version = "0.1.0"
 
 [[package]]
 name = "myl-types"

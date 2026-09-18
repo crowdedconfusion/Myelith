@@ -712,12 +712,13 @@ dependencies = [
 
 [[package]]
 name = "myl-client"
-version = "0.41.1"
+version = "0.42.0"
 dependencies = [
  "integer-llm-runtime",
  "libc",
  "myl-agent",
  "myl-local-agent",
+ "myl-senses",
  "myl-types",
  "serde",
  "serde_json",
@@ -725,10 +726,11 @@ dependencies = [
 
 [[package]]
 name = "myl-console"
-version = "0.12.3"
+version = "0.13.0"
 dependencies = [
  "crossterm",
  "myl-client",
+ "myl-senses",
 ]
 
 [[package]]
@@ -741,6 +743,10 @@ dependencies = [
  "serde_json",
  "toml",
 ]
+
+[[package]]
+name = "myl-senses"
+version = "0.1.0"
 
 [[package]]
 name = "myl-types"

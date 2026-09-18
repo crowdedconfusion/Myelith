@@ -1,6 +1,6 @@
 [package]
 name = "myl-console"
-version = "0.12.3"
+version = "0.13.0"
 # ⚑ **2021 wie alle anderen Kisten hier.** Mit 2024 meldet `clippy`
 # andere Regeln, und dann traegt dieselbe Zeile in zwei Kisten einmal
 # einen Fehler und einmal nicht. **Eine Ausgabe je Repositorium**,
@@ -45,6 +45,7 @@ path = "src/main.rs"
 # Einstellungen, Modell und Ortsbestimmung. Diese Kiste ist eine
 # Bedienoberflaeche und hat keine eigene Logik; genau wie das Fenster.
 myl-client = { path = "../myl-client" }
+myl-senses = { path = "../myl-senses" }
 
 # ⚑ **Fuer Marke, Farben und Auswahl im Terminal.** Dieselbe Fassung
 # wie im Testclient, aus dem die Animation stammt; `fassungsprobe.py`

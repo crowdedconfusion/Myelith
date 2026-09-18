@@ -1,6 +1,6 @@
 [package]
 name = "myl-client"
-version = "0.41.1"
+version = "0.42.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Der Nutzer-Client: eine Frage an ein lokales Modell, die Agentenschleife mit Einhaengegrenze, die Einstellungen."
@@ -37,6 +37,7 @@ ausliefern = "myl"
 
 [dependencies]
 myl-local-agent = { path = "../../AGENT_LAYER/local-agent" }
+myl-senses = { path = "../myl-senses" }
 myl-agent = { path = "../../AGENT_LAYER/myl-agent" }
 myl-types = { path = "../../SHARED_TYPES/myl-types" }
 # ⚑ **Mit `cpu-simd`, und auf macOS mit `metal`** (Fund 367, 2026-09-14).

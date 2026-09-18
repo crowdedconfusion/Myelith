@@ -1554,12 +1554,13 @@ fn das_ladezeichen_steht_beim_beitrag() {
 /// diese Zahlen bewegen, und wer darueber hinauskommt, bekommt es
 /// gesagt statt eines stillen Durchlaufs.
 fn zahlwort(n: usize) -> String {
-    const WORTE: [&str; 31] = [
+    const WORTE: [&str; 35] = [
         "null", "ein", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
         "achtzehn", "neunzehn", "zwanzig", "einundzwanzig", "zweiundzwanzig",
         "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig",
         "siebenundzwanzig", "achtundzwanzig", "neunundzwanzig", "dreissig",
+        "einunddreissig", "zweiunddreissig", "dreiunddreissig", "vierunddreissig",
     ];
     WORTE
         .get(n)
@@ -2257,9 +2258,15 @@ fn ein_eintrag_entsteht_nur_auf_zwei_wege() {
     );
 
     // ⚑ **Gezaehlt wird der Aufruf und nicht das Wort.** Drei Stellen
-    // duerfen anlegen: der Knopf, das Abschicken, und die Zeile im
-    // Start, die gar keine mehr ist. Kommt eine vierte dazu, faellt
-    // diese Pruefung, und das ist ihr Zweck.
+    // duerfen anlegen: der Knopf, das Abschicken und das Anhaengen einer
+    // Datei. Kommt eine vierte dazu, faellt diese Pruefung, und das ist
+    // ihr Zweck.
+    //
+    // 📌 **Das Anhaengen gehoerte bis zum 2026-09-18 dazu und tut es
+    // nicht mehr.** Eine Datei wird jetzt an der Eingabezeile gehalten
+    // und geht erst mit dem abgeschickten Auftrag ins Gespraech; sie
+    // eroeffnet also keines mehr. **Die Pruefung haelt die Zahl fest,
+    // nicht die Absicht**; wer sie erhoeht, soll hier begruenden, warum.
     let anlagen: Vec<&str> = js
         .lines()
         .map(str::trim)
@@ -2353,16 +2360,23 @@ fn die_aktualisierung_steht_zuoberst() {
     let wo = |k: &str| html.find(k).unwrap_or_else(|| panic!("{k} steht nicht im HTML"));
 
     // ⚑ **Die Reihenfolge der ganzen Seite, an einer Stelle geprueft:**
-    // die Aktualisierung, dann die Oberflaeche, dann die Modelle, dann
-    // was dieser Rechner hergibt, und zuletzt die Feinheiten von Modell
-    // und Agent.
+    // die Aktualisierung, die Oberflaeche, die Modelle, was dieser
+    // Rechner hergibt, die Feinheiten des Modells, die Sinne, und
+    // zuletzt der Agent.
+    //
+    // ⚑ **Die Sinne stehen zwischen Modell und Agent** (Festlegung des
+    // Projektinhabers, 2026-09-18). Dafuer ist die frueher eine Tabelle
+    // `felder-rest` in zwei geteilt; ein Abschnitt passt nicht zwischen
+    // zwei Zeilen derselben Tabelle.
     let folge = [
         ("id=\"aktualisierung\"", "die Aktualisierung"),
         ("id=\"felder-oberflaeche\"", "die Oberflaeche"),
         ("id=\"modellbau\"", "die Modelle"),
         ("id=\"felder-grenzen\"", "die Grenzen dieses Rechners"),
         ("id=\"freigabe\"", "die Freigaben"),
-        ("id=\"felder-rest\"", "Modell und Agent"),
+        ("id=\"felder-modell\"", "die Feinheiten des Modells"),
+        ("id=\"sinne\"", "die Sinne"),
+        ("id=\"felder-agent\"", "die Feinheiten des Agenten"),
     ];
     for paar in folge.windows(2) {
         assert!(
