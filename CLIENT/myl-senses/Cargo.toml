@@ -18,3 +18,14 @@ publish = false
 
 [dev-dependencies]
 tempfile = "3"
+
+# ⛔️ **Geprueft wird mit `cargo test`, nie mit `--release`.** Dieses
+# Profil optimiert trotzdem, haelt aber `debug-assertions` und
+# `overflow-checks` an; `--release` schaltet genau die beiden Schalter
+# ab, die Ueberlaeufe finden. So blieb Fund 348 eine Sitzung lang
+# unsichtbar.
+[profile.test]
+opt-level = 2
+debug-assertions = true
+overflow-checks = true
+debug = "line-tables-only"

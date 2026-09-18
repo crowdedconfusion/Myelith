@@ -29,7 +29,21 @@ WURZEL=$(cd "$(dirname "$0")/../../.." && pwd)
 PYTHON="$WURZEL/INTEGER_LLM/calibrate/.venv/bin/python3"
 SKRIPT="$WURZEL/INTEGER_LLM/tests/diag/w8a16_reference_simulation.py"
 ERGEBNISSE="$WURZEL/BENCHMARKS/Inferenz/results"
-PROTOKOLL="$ERGEBNISSE/boden_${MODELL}.log"
+# ⛔️ **Der Umfang gehoert in den Dateinamen, wie beim Ergebnis auch.**
+#
+# Das Ergebnis heisst `schema_boden_128seq_<modell>.json`, wenn ueber
+# 128 Sequenzen gemessen wurde, und `schema_boden_<modell>.json` bei der
+# Vorgabe; das Protokoll hiess **immer gleich** und haette die
+# Aufzeichnung des vorigen Laufs ueberschrieben. 📌 **Zwei Laeufe mit
+# verschiedenem Umfang sind zwei Messungen**, und eine Messung, deren
+# Protokoll die vorige loescht, nimmt genau das weg, womit man sie
+# nachvollzieht (2026-09-18).
+UMFANG="${E2E_MESS_SEQUENZEN:-4}"
+if [ "$UMFANG" = "4" ]; then
+    PROTOKOLL="$ERGEBNISSE/boden_${MODELL}.log"
+else
+    PROTOKOLL="$ERGEBNISSE/boden_${UMFANG}seq_${MODELL}.log"
+fi
 
 if [ ! -x "$PYTHON" ]; then
     echo "Es fehlt die Kalibrier-Umgebung: $PYTHON" >&2
@@ -54,7 +68,12 @@ fi
 
 echo "Modell:     $MODELL"
 echo "Protokoll:  $PROTOKOLL"
-echo "Ergebnis:   $ERGEBNISSE/schema_boden_$(echo "$MODELL" | tr -d '.').json"
+if [ "$UMFANG" = "4" ]; then
+    echo "Ergebnis:   $ERGEBNISSE/schema_boden_$(echo "$MODELL" | tr -d '.').json"
+else
+    echo "Ergebnis:   $ERGEBNISSE/schema_boden_${UMFANG}seq_$(echo "$MODELL" | tr -d '.').json"
+fi
+echo "Umfang:     $UMFANG Sequenzen"
 echo
 echo "Laeuft im Hintergrund weiter, auch wenn das Fenster zugeht."
 echo "Mitlesen:   tail -f \"$PROTOKOLL\""

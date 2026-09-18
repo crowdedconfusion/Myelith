@@ -659,7 +659,23 @@ mod tests {
         let anfang = std::time::Instant::now();
         let aus = angebote[0].1.ausfuehren(&serde_json::json!({})).expect("laeuft");
         assert!(aus.contains("abgebrochen nach 1 s"), "{aus}");
-        assert!(anfang.elapsed().as_secs() < 4, "die Frist aus dem Manifest hat nicht gegriffen");
+        // ⚠️ **Die Schranke ist die Frist plus die Roehrenfrist**, nicht
+        // die Frist allein.
+        //
+        // 📌 **Die CI hat hier am 2026-09-18 zweimal zugeschlagen**, auf
+        // Linux und Windows. `sh -c "sleep 5"` ist auf macOS **ein**
+        // Prozess (die Shell ersetzt sich selbst), dort aber **zwei**:
+        // Die erschlagene Shell laesst `sleep` weiterlaufen, und das
+        // hielt die Roehre bis zum Ende der vollen fuenf Sekunden. Die
+        // Meldung sagte „abgebrochen nach 1 s", und der Aufruf kam nach
+        // fuenf zurueck. **Die Frist galt fuer das Kind und nicht fuer
+        // den Aufruf.**
+        let schranke = 1 + myl_senses::prozess::ROEHRENFRIST_S + 2;
+        assert!(
+            anfang.elapsed().as_secs() < schranke,
+            "die Frist aus dem Manifest hat nicht gegriffen: {:?}",
+            anfang.elapsed()
+        );
     }
 
     /// ⛔️ **Fund 394: ein eigener Ordner verlor still die eingebauten

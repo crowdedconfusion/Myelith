@@ -17,6 +17,25 @@
 
 use std::process::Command;
 
+/// Wie lange nach dem Ende des Kindes noch auf seine Roehren gewartet
+/// wird, in Sekunden.
+///
+/// # ⛔️ Warum hier ueberhaupt eine Frist steht
+///
+/// **Ein Enkel kann das Ende der Roehre halten, nachdem das Kind weg
+/// ist.** `sh -c "sleep 5"` ist auf macOS ein Prozess, unter Linux und
+/// Windows zwei: Die Shell startet `sleep` als Kind, und wer die Shell
+/// erschlaegt, laesst `sleep` weiterlaufen. Ein blockierendes Lesen
+/// wartet dann auf dessen Ende statt auf die Frist, und die Zusage
+/// „dieser Aufruf kommt nach `frist_s` zurueck" ist gebrochen.
+///
+/// 📌 **Gefunden von der CI am 2026-09-18**, auf Linux und Windows;
+/// hier lief es durch, weil diese Shell sich selbst ersetzt.
+///
+/// ⚑ **Zwei Sekunden**, denn eine Roehre, die nach dem Ende des Kindes
+/// noch traegt, traegt etwas, das niemand mehr angefordert hat.
+pub const ROEHRENFRIST_S: u64 = 2;
+
 /// Was ein Lauf hinterlassen hat.
 #[derive(Debug, Clone)]
 pub struct Ausgang {
@@ -148,8 +167,19 @@ pub fn laufen_mit_eingabe(
         }
     };
 
-    let (aus_roh, aus_mehr) = aus_e.recv().unwrap_or_default();
-    let (err_roh, err_mehr) = err_e.recv().unwrap_or_default();
+    // ⛔️ **Mit Frist lesen und nicht blockierend.** Siehe
+    // [`ROEHRENFRIST_S`]: Ein Enkel kann die Roehre halten, nachdem das
+    // Kind weg ist, und dann waere die Frist oben wirkungslos.
+    // ⚠️ **Was dabei verlorengeht, ist Ausgabe und nicht Richtigkeit**:
+    // Der Kopf sagt weiterhin, wie der Lauf ausging.
+    // ⚠️ **Eine Frist fuer beide, nicht eine je Roehre.** Zweimal
+    // nacheinander zu warten verdoppelt sie, und dann kommt der Aufruf
+    // nach `frist_s + 2 * ROEHRENFRIST_S` zurueck statt nach
+    // `frist_s + ROEHRENFRIST_S`.
+    let bis = Instant::now() + Duration::from_secs(ROEHRENFRIST_S);
+    let rest = || bis.saturating_duration_since(Instant::now());
+    let (aus_roh, aus_mehr) = aus_e.recv_timeout(rest()).unwrap_or_default();
+    let (err_roh, err_mehr) = err_e.recv_timeout(rest()).unwrap_or_default();
     Ok(Ausgang {
         aus: String::from_utf8_lossy(&aus_roh).into_owned(),
         fehler: String::from_utf8_lossy(&err_roh).into_owned(),
@@ -199,6 +229,35 @@ mod proben {
         let (text, gekuerzt) = a.zusammen(256);
         assert!(gekuerzt, "die Kuerzung sagt sich nicht an");
         assert_eq!(text.chars().count(), 256);
+    }
+
+    /// ⛔️ **Ein Enkel, der die Roehre haelt, haelt den Aufruf nicht auf.**
+    ///
+    /// # 📌 Der Fall, an dem die CI umfiel (2026-09-18)
+    ///
+    /// `sh -c "sleep 5"` ist auf macOS derselbe Prozess (die Shell
+    /// ersetzt sich selbst), unter Linux und Windows aber **zwei**: Die
+    /// Shell startet `sleep` als Kind. Wird die Shell nach der Frist
+    /// erschlagen, laeuft `sleep` weiter und **haelt das Ende der
+    /// Roehre**; ein blockierendes Lesen wartet dann auf sein Ende
+    /// statt auf die Frist. Die Meldung sagte „abgebrochen nach 1 s",
+    /// und der Aufruf kam nach fuenf zurueck.
+    ///
+    /// ⚑ **Hier wird das nachgestellt**, und zwar auf jedem System:
+    /// Die Shell schickt `sleep` in den Hintergrund und endet sofort.
+    #[test]
+    fn ein_enkel_an_der_roehre_haelt_den_aufruf_nicht_auf() {
+        let mut b = Command::new("/bin/sh");
+        // Die Shell ist sofort fertig, das Enkelkind haelt die Roehre.
+        b.arg("-c").arg("sleep 5 &");
+        let anfang = std::time::Instant::now();
+        let a = laufen(&mut b, 10, 1024).expect("laeuft");
+        assert!(a.gut(), "{a:?}");
+        assert!(
+            anfang.elapsed().as_secs() < 4,
+            "der Aufruf hing an einem Enkel: {:?}",
+            anfang.elapsed()
+        );
     }
 
     /// ⚑ **Ein Rueckgabewert ungleich null ist kein Fehler dieser
