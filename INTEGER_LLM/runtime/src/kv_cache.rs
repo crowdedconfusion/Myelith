@@ -250,7 +250,7 @@ mod tests {
             }
         }
         assert_eq!(cache.laenge(), 6);
-        cache.kuerzen(4);
+        assert_eq!(cache.kuerzen(4), 4, "ohne Zustand kuerzt es auf die gewuenschte Laenge");
         assert_eq!(cache.laenge(), 4);
         for ebene in 2..4 {
             for kopf in 0..3 {
@@ -263,9 +263,11 @@ mod tests {
                 assert_eq!(v, erwartet_v.iter().map(Vec::as_slice).collect::<Vec<_>>(), "Ebene {ebene} Kopf {kopf}");
             }
         }
-        cache.kuerzen(9);
+        // ⚑ Der Rueckgabewert ist die ERREICHTE Laenge, nicht die
+        //   gewuenschte: laenger kuerzen geht nicht.
+        assert_eq!(cache.kuerzen(9), 9, "gemeldet wird die gewuenschte Laenge");
         assert_eq!(cache.laenge(), 4, "laenger kuerzen aendert nichts");
-        cache.kuerzen(0);
+        assert_eq!(cache.kuerzen(0), 0);
         assert_eq!(cache.laenge(), 0);
         assert_eq!(KVCache::new(0, 0).laenge(), 0, "ohne Ebenen ist der Speicher leer");
     }

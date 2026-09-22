@@ -1,6 +1,6 @@
 # integer-llm
 
-> **Version:** 0.91.0 (θ_v 0.21.0; kernels 0.65.0, runtime 0.62.0, pipeline 0.15.1)
+> **Version:** 0.91.1 (θ_v 0.22.0; kernels 0.65.1, runtime 0.62.1, pipeline 0.15.1)
 > **Datum:** 2026-09-22
 > **Status:** ⚠️ **Das Akzeptanzkriterium ruht auf einer zu kleinen
 > Stichprobe.** Gemessen wurde bisher ueber **4 Sequenzen, 435
@@ -646,6 +646,70 @@ aber die numerische Validierung erfolgt ausschließlich auf GPU-Hardware
   volle Paritätstests nur auf GPU-Runnern (nightly oder PR-basiert)
 
 ## Changelog
+
+### v0.91.1 – 2026-09-22 (drei Prüfungen, die stimmten, und eine Angabe, die niemand nachgesehen hatte)
+
+**Acht CI-Läufe waren rot, und keiner davon wegen des Rechenpfads.**
+Fünf gingen auf sechs Clippy-Befunde in `kernels` und vier nicht
+benutzte Rückgabewerte von `KVCache::kuerzen` in `runtime` zurück; die
+waren im Arbeitsbaum bereits behoben, nur nicht verzeichnet. Nachgefahren
+über **alle 25 Kisten** plus `kernels` mit `--features metal`: 26 Läufe,
+jeder Rückgabewert 0, null Warnungen.
+
+⚑ **Die drei übrigen sind der eigentliche Inhalt dieses Eintrags, denn
+alle drei waren Prüfungen, die genau das gemeldet haben, wofür sie
+gebaut sind.**
+
+**Das Gleitkomma-Audit.** `kernels/src/faltung.rs` und
+`runtime/src/zustandsspeicher.rs` standen in keiner Pfadliste, obwohl
+beide in einem Verzeichnis liegen, das vollständig geprüft wird.
+Gemeldet hat sie die Vollständigkeitsprüfung, nicht ein Blick von Hand,
+und das ist **dieselbe Klasse wie `backward.rs` davor**. Beide
+nachgetragen. Das `f64` in `faltung.rs` steht ausschliesslich in
+`#[cfg(test)] mod proben` und baut dort die Sigmoid-Tabelle;
+`zustandsspeicher.rs` trägt keines. Nebenbei eine `SyntaxWarning` in
+einem Docstring beseitigt, der Rust-Quelltext mit Backslash zeigt.
+
+**Das Merkmalstor.** Die Probe führte sechs Merkmale als noch nicht
+gebaut. Vier davon sind es seit der hybriden Bauart nicht mehr
+(`zustandsschicht`, `ausgangstor`, `geteilter_experte`, `teildrehung`),
+und der zweite Eintrag dazu war unterblieben. ⚑ **Der Fehlschlag war die
+Sicherung, nicht der Fehler:** Wer ein Merkmal baut, soll es an zwei
+Stellen eintragen müssen, und die zweite ist die Gegenfrage „ist es
+wirklich gebaut". Die Liste heisst jetzt `NOCH_NICHT_GEBAUT` und ist an
+beide Quellen gebunden, mit einer zusätzlichen Zusicherung, dass sie
+**nicht leer** wird: Sind eines Tages alle Merkmale gebaut, wählt das
+Tor nichts mehr aus, und eine Prüfung, die nichts auswählt, sieht aus
+wie eine, die nichts ablehnt. Beide Zusicherungen je einzeln
+gegengeprüft, beide fallen.
+
+**Und dahinter ein zweiter Fehlschlag, den der Abbruch verdeckt hat.**
+Die synthetische Artefaktvorlage trug keine `sigmoid`-Tabelle; der Lader
+liest die seit θ_v 0.22.0 für **jedes** Modell, weil jedes Tor sie
+braucht. Nachgetragen, gegengeprüft am echten Artefakt: Das dichte
+`myelith-0.6b` trägt `sigmoid.lut.bin` mit 16384 Werten.
+
+**Die Revision des 35B.** Der Katalog trug für `myelith-35b-a3b` den
+Text „nicht fixiert: die Gewichte lagen beim Bau bereits lokal". ⚑ **Die
+Angabe war nicht verloren, sie war nur nicht nachgesehen:** Alle 40
+Metadateien des Hugging-Face-Zwischenspeichers im Modellverzeichnis
+nennen `995ad96eacd98c81ed38be0c5b274b04031597b0`. Belegt, dass das die
+richtige Quelle ist: Für alle vier bereits eingetragenen Modelle liefert
+derselbe Handgriff zeichengleich die Revision, die im Katalog steht.
+📌 **Eine Herkunftsangabe, die sich ableiten lässt, gehört abgeleitet und
+nicht erklärt.**
+
+**Dazu zwei Dinge, die nichts rechnen.** `kernels/Cargo.toml` trug einen
+Profileintrag für `integer-llm-runtime`, den Cargo bei jedem Bau als
+`did not match any packages` meldete: Die Abhängigkeit läuft von
+`runtime` auf `kernels` und nicht zurück, und ein Profileintrag greift
+nur vom Wurzelpaket aus. Entfernt. Und die erzeugte Modellliste
+`MODELS/llm/README.md` war seit der letzten Sitzung nicht nachgezogen,
+ihr fehlte das 35B vollständig; neu erzeugt.
+
+📌 **Was hier zweimal dasselbe Muster ist:** Die Kopfzeile dieser Datei
+nannte θ_v 0.21.0, während `theta_v/spec.json` auf 0.22.0 steht. Sie ist
+mit diesem Eintrag berichtigt.
 
 ### v0.91.0 – 2026-09-22 (eine Norm, die `1 + weight` rechnet, und sechs echte Funde davor, die alle nebensächlich waren)
 

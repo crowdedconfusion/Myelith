@@ -574,8 +574,8 @@ mod tests {
         let eins = (1u64 << af) as f64;
         let mut schlimmster = 0.0f64;
         // Von sehr klein bis gross, logarithmisch abgetastet.
-        for e in 0..60 {
-            let d_f = 2f64.powi(-20 + e as i32 / 2);
+        for e in 0..60i32 {
+            let d_f = 2f64.powi(-20 + e / 2);
             if d_f >= 64.0 {
                 break;
             }
@@ -603,8 +603,11 @@ mod tests {
         let tab = zerfallstabelle(rf, af, 64);
         for &(a, b) in &[(1i64 << 20, 1i64 << 22), (1 << 25, 1 << 24), (3 << 26, 1 << 20)] {
             let ganz = zerfall_nachschlagen(a + b, &tab, df, rf, af);
-            let geteilt = ((zerfall_nachschlagen(a, &tab, df, rf, af) as i128)
-                * (zerfall_nachschlagen(b, &tab, df, rf, af) as i128)
+            // ⚑ Die Klammern sind nicht kosmetisch: `*` bindet
+            //   staerker als `>>`, und wer das beim Lesen andersherum
+            //   annimmt, liest eine andere Rechnung.
+            let geteilt = (((zerfall_nachschlagen(a, &tab, df, rf, af) as i128)
+                * (zerfall_nachschlagen(b, &tab, df, rf, af) as i128))
                 >> af) as i64;
             let ab = (ganz - geteilt).abs();
             assert!(

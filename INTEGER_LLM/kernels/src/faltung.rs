@@ -134,8 +134,8 @@ pub fn schritt(
         // Rechnung ist eine Stelle, an der jemand spaeter eine
         // Saettigung uebersieht.
         let mut akku: i64 = 0;
-        for j in 0..KERN - 1 {
-            akku += i64::from(w[j]) * i64::from(fenster.werte[basis + j]);
+        for (j, &w_j) in w.iter().enumerate().take(KERN - 1) {
+            akku += i64::from(w_j) * i64::from(fenster.werte[basis + j]);
         }
         akku += i64::from(w[KERN - 1]) * i64::from(ein[kanal]);
 
@@ -300,7 +300,7 @@ mod proben {
         let mut aus = vec![0i16; c];
         let mut w = vec![0i8; c * KERN];
         // Nur Kanal 1 hat ein Gewicht, und zwar auf der aeltesten Stelle.
-        w[1 * KERN] = 1;
+        w[KERN] = 1; // Kanal 1, aelteste Stelle
         let lut = sigmoid_tabelle(8, 8, 4096);
         let silu_0 = erwartet_aus(0, 8, &lut);
 
@@ -310,11 +310,11 @@ mod proben {
             schritt(&mut f, &ein, &w, &vec![0u8; c], 8, &lut, 4096, 8, 8, &vec![8u8; c], &mut aus);
         }
         // Nach KERN Schritten traegt nur Kanal 1 etwas.
-        for kanal in 0..c {
+        for (kanal, &wert) in aus.iter().enumerate().take(c) {
             if kanal == 1 {
-                assert_ne!(aus[kanal], silu_0, "Kanal 1 sollte den Ausschlag tragen");
+                assert_ne!(wert, silu_0, "Kanal 1 sollte den Ausschlag tragen");
             } else {
-                assert_eq!(aus[kanal], silu_0, "Kanal {kanal} traegt etwas Fremdes");
+                assert_eq!(wert, silu_0, "Kanal {kanal} traegt etwas Fremdes");
             }
         }
     }

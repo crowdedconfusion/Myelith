@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-kernels"
-version = "0.65.0"
+version = "0.65.1"
 dependencies = [
  "itertools 0.13.0",
  "objc2",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "integer-llm-runtime"
-version = "0.62.0"
+version = "0.62.1"
 dependencies = [
  "integer-llm-kernels",
  "memmap2",

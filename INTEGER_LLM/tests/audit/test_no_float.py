@@ -90,6 +90,19 @@ HOT_PATH = [
     # dorthin waere nicht als Fehler sichtbar, sondern als leicht
     # andere Zahl.
     REPO / "kernels" / "src" / "zustandsschicht.rs",
+    # ⚑ Die Faltung vor der Rekurrenz (2026-09-22). Sie gehoert zur
+    # Zustandsschicht daneben und hat denselben Grund: Die
+    # Referenzumsetzung fuehrt das Fenster in float32, und ein
+    # Rueckfall dorthin waere keine Ausnahme, sondern eine leicht
+    # andere Zahl. ⚠️ Das `f64` in dieser Datei steht ausschliesslich
+    # in `#[cfg(test)] mod proben`, wo es die Sigmoid-Tabelle baut, und
+    # ist damit dieselbe erlaubte Zone wie in `integer_math.rs`.
+    #
+    # 📌 Gemeldet hat sie die Vollstaendigkeitspruefung unten, nicht ein
+    # Blick von Hand. Sie stand seit ihrer Entstehung nicht in dieser
+    # Liste, und der Lauf meldete trotzdem "null Treffer": dieselbe
+    # Klasse wie Fund 44, Fund 84 und `backward.rs`.
+    REPO / "kernels" / "src" / "faltung.rs",
     # 2026-09-11: Der Fadenpool ersetzt das `thread::scope` je Matrix.
     # Er rechnet nichts, er verteilt nur Zeilen; genau deshalb steht er
     # hier: Ein Konsens-Crate hat keine Datei, die "rechnet nichts"
@@ -144,6 +157,13 @@ HOT_PATH = [
     # nur, was der Vorwaertspass gerechnet hat, also i16 und Vec<i16>;
     # ein float darin waere ein Gradient, der nicht bitgleich ist.
     REPO / "runtime" / "src" / "mitschnitt.rs",
+    # ⚑ Der Zustandsspeicher der rekurrenten Ebenen (2026-09-22), und
+    # er gehoert aus demselben Grund hierher wie `mitschnitt.rs`: Er
+    # haelt nur, was die Zustandsschicht gerechnet hat. ⛔️ **Er wiegt
+    # dabei schwerer als ein KV-Eintrag**, denn ein Zustand ist das
+    # Ergebnis aller Schritte davor; eine Gleitkommazahl darin liefe
+    # ueber die Laenge auseinander statt an einer Position aufzufallen.
+    REPO / "runtime" / "src" / "zustandsspeicher.rs",
     # ⚑ **Die Trainingsschleife, und sie gehoert hier genauso her wie
     # `backward.rs`** (2026-09-04). Sie rechnet den Gradienten vom
     # Zielwort bis in die Gewichte; ein float darin waere ein Gewicht,
@@ -508,7 +528,7 @@ def strip_comments(src: str) -> str:
 
 
 def strip_strings(src: str) -> str:
-    """Entfernt String-Literale (inkl. Escapes), behält Struktur.
+    r"""Entfernt String-Literale (inkl. Escapes), behält Struktur.
 
     **DOTALL ist notwendig, nicht kosmetisch (2026-08-24).** Rust erlaubt
     im String-Literal einen Zeilenumbruch mit `\` am Zeilenende:

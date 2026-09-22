@@ -111,7 +111,7 @@
     "anzeigename": "Myelith 35B-A3B",
     "hf_repo": "Qwen/Qwen3.6-35B-A3B",
     "hf_verzeichnis": "Qwen3.6-35B-A3B",
-    "hf_revision": "nicht fixiert: die Gewichte lagen beim Bau bereits lokal",
+    "hf_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
     "lizenz_gewichte": "Apache-2.0",
     "lizenz_artefakt": "PolyForm Shield License 1.0.0",
     "lizenz_geprueft": "2026-09-22 gegen die LICENSE-Datei des Verzeichnisses geprueft (Apache License Version 2.0). Keine eigene Rechtspruefung, siehe ETHICS/Lizenzlage.md",

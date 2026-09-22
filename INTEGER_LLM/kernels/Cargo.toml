@@ -1,6 +1,6 @@
 [package]
 name = "integer-llm-kernels"
-version = "0.65.0"
+version = "0.65.1"
 edition = "2021"
 rust-version = "1.85"
 license = "LicenseRef-PolyForm-Shield-1.0.0"
@@ -86,5 +86,14 @@ debug = "line-tables-only"
 [profile.dev.package.integer-llm-kernels]
 opt-level = 2
 
-[profile.dev.package.integer-llm-runtime]
-opt-level = 2
+# ⚑ **Hier steht bewusst NUR der eigene Kern** (2026-09-22). Bis dahin
+# stand `[profile.dev.package.integer-llm-runtime]` daneben, und Cargo
+# meldete bei jedem Bau dieser Kiste `profile package spec
+# integer-llm-runtime in profile dev did not match any packages`: Die
+# Abhaengigkeit laeuft von `runtime` auf `kernels` und nicht zurueck,
+# also liegt `runtime` hier gar nicht im Baum.
+#
+# 📌 **Ein Profileintrag greift nur vom Wurzelpaket aus.** Dieselbe Zeile
+# steht in `runtime/Cargo.toml`, und dort trifft sie beide Kerne. Wer sie
+# hier ergaenzt, weil sie dort richtig ist, ergaenzt eine Zeile ohne
+# Wirkung und eine Warnung in jedem Bau.

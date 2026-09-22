@@ -709,7 +709,11 @@ fn pruefe_zustandsformen(
 /// Schranke von null heisst: Der Kanal traegt nichts, und dann ist die
 /// feinste Skala die richtige.
 fn feinste_skala(schranke: f64) -> u8 {
-    if !(schranke > 0.0) {
+    // ⚑ **Ausdruecklich auf beide Faelle geprueft.** Hier stand
+    //   `!(schranke > 0.0)`, was NaN mitnimmt, aber beim Lesen wie eine
+    //   verneinte Ordnung aussieht. Gemeint sind zwei Dinge: keine Zahl,
+    //   oder nichts Positives.
+    if !schranke.is_finite() || schranke <= 0.0 {
         return 15;
     }
     for f in (0..=15u8).rev() {
@@ -3309,7 +3313,18 @@ mod tests {
                     model.forward_token(t, laenge, &mut frisch.cache),
                     "{name}/{fall}: Logits des naechsten Schritts"
                 );
-                speicher.cache.kuerzen(laenge);
+                // ⚑ **Den Rueckgabewert pruefen, nicht wegwerfen.** Er
+                //   sagt, wie weit wirklich gekuerzt wurde, und bei
+                //   rekurrenten Ebenen ist das null (der Zustand laesst
+                //   sich nicht auf eine Laenge zurueckdrehen). Die
+                //   Vorlagen dieser Probe haben keine, also muss er
+                //   `laenge` sein; ein `let _` haette genau die Aussage
+                //   verschluckt, fuer die `#[must_use]` dort steht.
+                assert_eq!(
+                    speicher.cache.kuerzen(laenge),
+                    laenge,
+                    "{name}/{fall}: Kuerzen erreichte eine andere Laenge"
+                );
             }
             fs::remove_dir_all(&dir).ok();
         }

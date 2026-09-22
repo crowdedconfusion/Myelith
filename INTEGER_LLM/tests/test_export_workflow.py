@@ -238,26 +238,54 @@ def test_keine_faehigkeit_ohne_ableitbares_merkmal():
     )
 
 
+# Merkmale, die der Export ableitet und der Rechenpfad **noch nicht
+# kann**. Ein Artefakt, das eines davon braucht, wird vom Lader
+# abgelehnt, und genau das ist gewollt.
+#
+# ⚑ **Von Hand gepflegt, und deshalb unten an beide Quellen gebunden.**
+# Die Liste ist bewusst keine Ableitung: Wer ein Merkmal baut, soll es an
+# **zwei** Stellen eintragen muessen, in `GEKONNTE_MERKMALE` und hier.
+# Der zweite Eintrag ist die Gegenfrage „ist es wirklich gebaut", und die
+# stellt sich sonst niemand.
+#
+# 📌 **Am 2026-09-22 hat genau das gegriffen.** Mit der hybriden Bauart
+# kamen `zustandsschicht`, `ausgangstor`, `geteilter_experte` und
+# `teildrehung` in `GEKONNTE_MERKMALE`, und hier standen sie weiter als
+# ungebaut. Der Lauf fiel, und er fiel zu Recht: Die Probe hat den
+# fehlenden zweiten Eintrag gemeldet, nicht einen Fehler im Rechenpfad.
+NOCH_NICHT_GEBAUT = {"gepackte_experten", "mehrfachvorhersage"}
+
+
 def test_noch_nicht_gebaute_bauarten_werden_abgelehnt():
     """⛔️ **Ein Merkmal, das der Rechenpfad noch nicht kann, muss
     abgeleitet werden und darf NICHT gekonnt sein.**
 
     Das ist die Stelle, an der das Tor seinen Wert hat: Ein Artefakt der
     naechsten Architektur soll **abgelehnt** werden, nicht stillschweigend
-    falsch gerechnet. ⚑ Waere `zustandsschicht` versehentlich in
+    falsch gerechnet. ⚑ Stuende eines dieser Merkmale versehentlich in
     `GEKONNTE_MERKMALE`, waere aus einem lauten Abbruch eine stille
     Abweichung geworden.
+
+    ⚠️ **Die erste Zusicherung ist die wichtigere.** Sind eines Tages alle
+    ableitbaren Merkmale gebaut, waehlt das Tor nichts mehr aus, und eine
+    Pruefung, die nichts auswaehlt, sieht aus wie eine, die nichts
+    ablehnt. Dann braucht diese Probe einen neuen Gegenstand und nicht
+    eine leere Menge.
     """
     gekonnt = _gekonnte_merkmale_aus_rust()
     ableitbar = {name for name, _ in mc._MERKMALE}
-    for kuenftig in ("zustandsschicht", "gepackte_experten", "geteilter_experte",
-                     "mehrfachvorhersage", "ausgangstor", "teildrehung"):
-        assert kuenftig in ableitbar, f"{kuenftig} wird nicht abgeleitet, also nie abgelehnt"
-        assert kuenftig not in gekonnt, (
-            f"{kuenftig} steht in GEKONNTE_MERKMALE, ist aber nicht gebaut. "
-            "Ein Eintrag ohne Umsetzung macht aus einem Abbruch eine stille "
-            "Abweichung."
-        )
+    offen = ableitbar - gekonnt
+    assert offen, (
+        "jedes ableitbare Merkmal steht in GEKONNTE_MERKMALE, das Tor lehnt "
+        "also nichts mehr ab. Diese Probe prueft damit nichts; sie braucht "
+        "einen neuen Gegenstand."
+    )
+    assert offen == NOCH_NICHT_GEBAUT, (
+        f"der Lader kann {sorted(NOCH_NICHT_GEBAUT - offen)} inzwischen und "
+        f"{sorted(offen - NOCH_NICHT_GEBAUT)} noch nicht. Wer ein Merkmal "
+        "gebaut hat, nimmt es aus NOCH_NICHT_GEBAUT heraus; wer eines "
+        "abgeleitet, aber nicht gebaut hat, traegt es dort ein."
+    )
 
 
 def test_models_dir_liegt_an_der_wurzel():
@@ -447,11 +475,23 @@ def test_synthetic_export_loads_in_real_runtime_binary():
         # erzeugte deckt (Fund 368). head_dim 2 heisst half 1, also eine
         # cos/sin-Zahl je Zeile; vier Zeilen liessen den Lader an Position 4
         # anhalten.
+        # ⚑ **`sigmoid` gehoert seit dem 2026-09-22 dazu** (theta_v
+        # 0.22.0). Der Lader liest sie fuer **jedes** Modell, weil jedes
+        # Tor sie braucht: `beta` der Zustandsschicht, das Tor am
+        # Achtsamkeitsausgang und das des geteilten Experten. Dieses
+        # Modell hat keines davon, die Tabelle wird also geladen und nie
+        # gelesen; sie fehlen zu lassen hiesse trotzdem, ein Format
+        # nachzubauen, das der Export so nicht schreibt.
+        #
+        # ⚠️ **Kurz wie die drei daneben, und das ist Absicht.** Der echte
+        # Export schreibt 16384 Werte; geprueft wird hier der Weg durch
+        # das Format, nicht die Zahlenqualitaet der Tabelle.
         luts = {
             "cos": [256, 0, -256, 0, 256, 0, -256, 0],
             "sin": [0, 256, 0, -256, 0, 256, 0, -256],
             "exp": [256, 128, 64],
             "silu": [-10, 0, 10, 20], "rsqrt": [256, 181, 148],
+            "sigmoid": [0, 64, 128, 192, 256],
         }
         export_mod.export_theta_v(scales=scales, luts=luts, output_dir=out_dir)
 

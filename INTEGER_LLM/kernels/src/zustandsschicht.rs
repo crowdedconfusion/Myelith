@@ -439,7 +439,7 @@ pub fn schritt(
 
     // Die Verschiebung, die den Groesstwert gerade noch in i16 legt.
     let groesst = akkus.iter().map(|a| a.unsigned_abs()).max().unwrap_or(0);
-    let bits = 128 - u32::from(groesst.leading_zeros());
+    let bits = 128 - groesst.leading_zeros();
     // ⚠️ Nach oben begrenzt, damit `aus_frac` nicht unter null faellt;
     //    darueber bleibt es bei der ausdruecklichen Saettigung.
     let mut schiebung = bits.saturating_sub(15).min(ZUSTAND_FRAC + NORM_FRAC);

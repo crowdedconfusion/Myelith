@@ -3390,6 +3390,10 @@ fn einheitslaenge(
 ///
 /// ⚑ **Norm zuerst, Tor danach**, wie die Vorlage. Beides gibt es
 /// schon: die RMSNorm und `silu_produkt` aus dem MLP.
+// ⚑ **Acht Argumente, und jedes ist eine eigene Skala.** Sie in einen
+//   Sammeltyp zu packen verschoebe die Frage nur; hier steht jede
+//   Angabe an der Stelle, an der der Leser sie braucht.
+#[allow(clippy::too_many_arguments)]
 fn torgesteuerte_norm(
     roh: &[i16],
     z: &[i16],
